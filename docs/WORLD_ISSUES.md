@@ -7075,6 +7075,50 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-twenty-fourth round: how far the protocol actually is from real
+
+`SYSTEMS.md` has carried **"opcode coverage vs the real space is unmeasured"**
+as the packet row's next probe for as long as the row has existed. Both halves
+were already in the repo -- `message_handlers.tsv` (the client's registration
+table) and `server_handlers.tsv` (the server's request indices) -- so this is a
+join, not a dig.
+
+| | |
+|---|---:|
+| real opcodes the client registers a handler for | **318** |
+| real server request indices | **162** |
+| opcodes srrevamp declares | **143** |
+| **srrevamp opcodes that are real ones** | **0** |
+
+**Zero is the right answer and not a failure.** `PROTOCOL_DECISION.md` reversed
+the project's direction on 2026-08-22 to a full wire-level reimplementation and
+says of the current numbers, in its own words, that they are *"placeholder
+scaffolding, not the destination"*. What had never existed is a number for the
+distance to that destination.
+
+### The useful half: 93 of 162 real handlers are already named
+
+**57 %** of the real server-side request surface has a named function in the
+dump, and 115 of 162 exist there at all. For those the handler is identified, so
+the work left per opcode is the **payload layout**, not finding the code. The
+list is now in `PACKET_FORMAT.md` as a roadmap rather than a statistic.
+
+Several land on systems srrevamp ships today: `GObjPC_HandleShopMsg_046`,
+`GObjPC_HandleIncreaseStr`/`IncreaseInt` (`0x050`/`0x051`), four party handlers
+-- and `Item_HandleUseItem` at real opcode **`0x04c`** replying **`0xb04c`**,
+which is the same message this project relocated to `0x008a` three rounds ago
+after it collided with party-create.
+
+### Why nothing was changed
+
+Adopting the number without the layout would be **worse than the placeholder**:
+a real client would connect, recognise `0x04c` and then misread every byte after
+it. `PROTOCOL_DECISION.md` requires the wire number *and* the payload layout
+before an opcode moves, so this round measures and records and moves nothing.
+
+The row's next probe is now specific: take one named handler and recover its
+payload.
+
 ## Three-hundred-and-twenty-third round: thirteen refusals the client cannot render
 
 Round 322 ended noting three codes absent from `error_codes.md`. That page is

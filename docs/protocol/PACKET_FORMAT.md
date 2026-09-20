@@ -118,3 +118,133 @@ a couple of real opcodes are solid.
 - [ ] Opcode table (`docs/protocol/opcodes/`) — starts empty, grows one documented opcode at a
       time as we implement against it, not speculatively. `observed_opcodes.md` now has ~150 real
       opcode *values* across four binaries; payload layouts are the next tier of work.
+
+
+## Opcode coverage against the real space, measured (round 324)
+
+`docs/SYSTEMS.md` has carried "opcode coverage vs the real space is unmeasured"
+as this row's next probe since the row existed. Measured:
+
+| | |
+|---|---:|
+| real opcodes the client registers a handler for | **318** |
+| real server request indices | **162** |
+| opcodes srrevamp declares | **143** |
+| **srrevamp opcodes that are real ones** | **0** |
+
+Zero is the expected answer, not a failure: `PROTOCOL_DECISION.md` reversed the
+direction on 2026-08-22 to a full wire-level reimplementation and says of the
+current numbers that they are "**placeholder scaffolding, not the destination**".
+This is the first time the distance to that destination has been a number.
+
+### 93 of the 162 real request handlers are already named
+
+**57 %** of the real server-side request surface has a named function in the
+dump, and 115 of 162 exist there at all. That is the adoption roadmap: for these
+the handler is identified, so the remaining work per opcode is the payload
+layout rather than finding the code.
+
+Several land on systems srrevamp ships today -- `Item_HandleUseItem` is real
+opcode **`0x04c`** replying **`0xb04c`**, which is the same message this project
+had to relocate to `0x008a` this week after it collided with party-create.
+
+**A number is not adoption.** Taking a real opcode number without its real
+payload layout is worse than keeping a placeholder: a real client would connect,
+recognise the number and misread the bytes. `PROTOCOL_DECISION.md` requires both
+before an opcode moves, so nothing is changed here.
+
+| real index | handler | reply |
+|---|---|---|
+| `0x031` | `GObjPC_HandleGuildSummonReqMsg_031` | `-` |
+| `0x046` | `GObjPC_HandleShopMsg_046` | `0xb046` |
+| `0x04c` | `Item_HandleUseItem` | `0xb04c` |
+| `0x050` | `GObjPC_HandleIncreaseStr` | `-` |
+| `0x051` | `GObjPC_HandleIncreaseInt` | `-` |
+| `0x05e` | `SiegeFortress_DispatchCommand` | `-` |
+| `0x060` | `GObjPC_HandlePartyMsg_060` | `0xb060` |
+| `0x062` | `CParty::CheckCanJoin` | `0xb060,0xb062` |
+| `0x063` | `GObjPC_HandlePartyMsg_063` | `-` |
+| `0x069` | `OnRegisterPartyReq` | `0xb069` |
+| `0x06a` | `PartyMatch_HandleModify` | `0xb06a` |
+| `0x06b` | `GObjPC_HandlePartyMsg_06b` | `0xb06b` |
+| `0x06c` | `GObjPC_HandlePartyMsg_06c` | `0xb06c` |
+| `0x06d` | `GObjPC_HandlePartyMsg_06d` | `0xb06d` |
+| `0x081` | `GObjPC_HandleTradeMsg_081` | `0xb081` |
+| `0x082` | `GObjPC_HandleTradeMsg_082` | `0xb082` |
+| `0x083` | `Trade_HandleExchange` | `0xb083` |
+| `0x084` | `GObjPC_HandleTradeMsg_084` | `0xb084` |
+| `0x0a1` | `GObjPC_HandleSkillMsg_0a1` | `0xb0a1` |
+| `0x0a2` | `Skill_HandleMasteryLevelUp` | `-` |
+| `0x0b1` | `FleaMarket_HandleOpenStall` | `0xb0b1` |
+| `0x0b2` | `GObjPC_HandleStallMsg_0b2` | `0xb0b2` |
+| `0x0b4` | `FleaMarket_HandleBuyItem` | `0xb0b4` |
+| `0x0b5` | `GObjPC_HandleStallMsg_0b5` | `0xb0b5` |
+| `0x0e1` | `CInstanceCharTrijob::HandleJoinJobGuild` | `0xb0e1` |
+| `0x0e2` | `JobGuild_HandleWithdraw` | `0xb0e2` |
+| `0x0e3` | `GObjPC_HandleAliasMsg_0e3` | `-` |
+| `0x0ea` | `GObjPC_HandleEventGuideMsg_0ea` | `-` |
+| `0x0f0` | `CGuildManager::HandleCreateGuild` | `0xb0f0` |
+| `0x0f1` | `GObjPC_HandleGuildMsg_0f1` | `0xb0f1,0xb0f4` |
+| `0x0f2` | `GObjPC_HandleGuildMsg_0f2` | `0xb0f2` |
+| `0x0f9` | `Guild_HandleNoticeUpdate` | `0xb0f9` |
+| `0x0fa` | `Guild_HandleLevelUpRequest` | `0xb0fa` |
+| `0x0fb` | `GObjPC_HandleGuildMsg_0fb` | `0xb0fb` |
+| `0x0fc` | `GObjPC_HandleGuildMsg_0fc` | `0xb0fc,0xb0fd` |
+| `0x0fd` | `GObjPC_HandleGuildMsg_0fd` | `0xb0fd` |
+| `0x0ff` | `GObjPC_HandleGuildMsg_0ff` | `0xb0ff` |
+| `0x103` | `GObjPC_HandleGuildMsg_103` | `0xb103` |
+| `0x104` | `GObjPC_HandleGuildMsg_104` | `0xb104` |
+| `0x105` | `GObjPC_HandleGuildMsg_105` | `0xb105` |
+| `0x106` | `GObjPC_HandleVoteMsg_106` | `0xb106` |
+| `0x107` | `GObjPC_HandleVoteMsg_107` | `0xb107` |
+| `0x110` | `Guild_HandleWarDeclaration` | `0xb110` |
+| `0x112` | `GObjPC_HandleGuildMsg_112` | `0xb112` |
+| `0x113` | `GObjPC_HandleGuildMsg_113` | `0xb113` |
+| `0x114` | `GObjPC_HandleGuildMsg_114` | `0xb114` |
+| `0x117` | `GObjPC::HandleNameCOS` | `0xb117` |
+| `0x11a` | `GObjPC_HandleItemMallMsg_11a` | `-` |
+| `0x121` | `GObjPC_HandleShopMsg_121` | `0xb121` |
+| `0x150` | `GObjPC_HandleAlchemyReinforceMsg_150` | `-` |
+| `0x151` | `GObjPC_HandleAlchemyReinforceMsg_151` | `-` |
+| `0x157` | `GObjPC_HandleAlchemyDecompEquipmentMsg_157` | `-` |
+| `0x16a` | `GObjPC_HandleSocketMsg_16a` | `-` |
+| `0x202` | `GObjPC_HandleSkillMsg_202` | `0xb202` |
+| `0x203` | `GObjPC_HandleSkillMsg_203` | `0xb203` |
+| `0x250` | `Guild_HandleWarehouseUse` | `0xb250` |
+| `0x251` | `GObjPC_HandleGuildMsg_251` | `0xb251` |
+| `0x256` | `GObjPC_HandleGuildMsg_256` | `0xb256` |
+| `0x258` | `GObjPC_HandleGuildMsg_258` | `0xb258` |
+| `0x259` | `GObjPC_HandleGuildMsg_259` | `0xb259` |
+| `0x302` | `GObjPC_HandleMessengerMsg_302` | `0xb302` |
+| `0x304` | `GObjPC_HandleMessengerMsg_304` | `0xb304` |
+| `0x308` | `GObjPC_HandleMessengerMsg_308` | `0xb308` |
+| `0x309` | `GObjPC_HandleMessengerMsg_309` | `0xb309` |
+| `0x30a` | `GObjPC_HandleMessengerMsg_30a` | `0xb30a` |
+| `0x30b` | `GObjPC_HandleMessengerMsg_30b` | `0xb309,0xb30b` |
+| `0x30c` | `GObjPC_HandleMessengerMsg_30c` | `0xb30c` |
+| `0x470` | `TrainingCamp_HandleOpen` | `0xb470` |
+| `0x471` | `TrainingCamp_HandleDisband` | `0xb470,0xb471` |
+| `0x472` | `TrainingCamp_HandleInvite` | `0xb472` |
+| `0x473` | `TrainingCamp_HandleBan` | `0xb473` |
+| `0x474` | `TrainingCamp_HandleLeave` | `0xb473,0xb474` |
+| `0x475` | `TrainingCamp_HandleGraduation` | `0xb475` |
+| `0x476` | `CInstanceTrainingCamp::CheckMembershipLevel` | `0xb476` |
+| `0x477` | `TrainingCamp_HandleNoticeUpdate` | `0xb477` |
+| `0x478` | `GObjPC_HandleTrainingCampMsg_478` | `0xb478` |
+| `0x47a` | `TrainingCamp_HandleMatchingEntry` | `0xb47a` |
+| `0x47b` | `TrainingCamp_HandleMatchingCorrect` | `0xb47b` |
+| `0x47c` | `GObjPC_HandleTrainingCampMsg_47c` | `0xb47c` |
+| `0x47d` | `GObjPC_HandleTrainingCampMsg_47d` | `0xb47d` |
+| `0x47e` | `GObjPC_HandleTrainingCampMsg_47e` | `0xb47e` |
+| `0x4df` | `GObjPC_HandleAssocReputationMsg_4df` | `-` |
+| `0x4e0` | `GObjPC_HandleAssocReputationMsg_4e0` | `-` |
+| `0x506` | `GObjPC_HandleOpenMarketGoodsDetailReq` | `-` |
+| `0x508` | `GObjPC_HandleOpenMarketPutonGoodsReq` | `-` |
+| `0x509` | `GObjPC_HandleOpenMarketPutoutGoodsReq` | `-` |
+| `0x50a` | `GObjPC_HandleOpenMarketPurchaseGoodsReq` | `-` |
+| `0x50b` | `GObjPC_HandleOpenMarketReceiptReq` | `-` |
+| `0x50c` | `GObjPC_HandleOpenMarketSearchReq` | `-` |
+| `0x50e` | `GObjPC_HandleOpenMarketMsg_50e` | `-` |
+| `0x516` | `GObjPC_HandleSiegeMsg_516` | `0xb516` |
+| `0x51a` | `GObjPC_HandleCallUserMsg_51a` | `0xb51a` |
+| `0x51c` | `GObjPC_HandleSummonPartyUserMsg_51c` | `-` |

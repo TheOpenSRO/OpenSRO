@@ -6008,6 +6008,26 @@ labels like `case 0x6415: goto LAB_007b9116;` that share a block and carry no
 string. A count of syntactic labels is not a count of facts. The re-run was not
 wasted: the 605-row table is now VERIFIED REPRODUCIBLE rather than assumed.
 
+Round 324 (a measurement that closes a probe): HOW FAR THE PROTOCOL IS FROM
+REAL. SYSTEMS.md carried "opcode coverage vs the real space is unmeasured" since
+the packet row existed; both halves were already in the repo
+(message_handlers.tsv, server_handlers.tsv), so it is a join. Real space: 318
+opcodes the client registers a handler for, 162 server request indices.
+srrevamp declares 143 and ZERO of them are real ones -- the expected answer,
+since PROTOCOL_DECISION.md reversed direction on 2026-08-22 to a full wire-level
+reimplementation and calls the current numbers "placeholder scaffolding, not the
+destination"; what never existed was a number for the distance. THE USEFUL HALF:
+93 of the 162 real request handlers (57%) are already NAMED and 115 exist in the
+dump, so per opcode the work left is the PAYLOAD LAYOUT rather than finding the
+code; the list is in PACKET_FORMAT.md as a roadmap. Several land on shipped
+systems -- GObjPC_HandleShopMsg_046, GObjPC_HandleIncreaseStr/Int (0x050/0x051),
+four party handlers, and Item_HandleUseItem at real 0x04c/0xb04c, the same
+message relocated to 0x008a three rounds ago after colliding with party-create.
+NOTHING WAS CHANGED: a real opcode number without the real layout is worse than
+a placeholder, because a real client would connect, recognise the number and
+misread every byte after it. Next probe: take one named handler and recover its
+payload.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.
