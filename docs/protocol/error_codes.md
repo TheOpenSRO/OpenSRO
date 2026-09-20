@@ -812,3 +812,43 @@ The remaining bound on completeness: the narrow scan found 445 distinct codes
 ≥ 0x100 in ax/eax of which 201 are not in this table. Some of that is
 legitimate — a code the client has no message for cannot be named here, and
 `0x38xx` is now a proven example of exactly that.
+
+
+## Thirteen codes the server refuses with have no message at all (round 323)
+
+The table above is the CLIENT's side. Asking the other one -- which codes does
+the server actually hand out? -- finds a set the client cannot render.
+
+`FUN_004e7250` is the refusal sender, with **256 call sites**. Of the codes
+passed to it as literals, thirteen appear as a `case` **nowhere** in the
+decompiled client:
+
+	0x1806  0x1807  0x1811  0x181d
+	0x1c0d  0x1c0e
+	0x3c0f  0x3c2a  0x3c32  0x3c33
+	0x4c33  0x6006  0x6008
+
+**These are holes inside mapped families, not unmapped families.** In the
+storage range the client names `0x1810 STRGERR_HIGHER_LEVEL_REQUIRED`,
+`0x1812 STRGERR_LOCKED_BY_OTHER_ONE` and `0x181e STRGERR_BUSY`, while `0x1806`,
+`0x1807`, `0x1811` and `0x181d` sit between them with nothing. So a player who
+triggers one of those refusals is shown whatever the dispatcher's default does,
+not a message about what went wrong.
+
+`0x8006`-`0x800a` looked like the same thing and are not: they have cases in a
+different client file, so only the thirteen above are genuinely unrenderable.
+
+### And this table is exactly reproducible (checked, round 323)
+
+`recover_error_codes.py` was re-run against `sro_client.exe` and produced **605
+unambiguous codes and 9 category-dependent ones**, matching this page row for
+row -- **605 of 605 identical, zero differences**. For a 605-row table recovered
+through two jump tables, that is worth having checked rather than assumed.
+
+**A miscount worth recording**, because it looked like a gap: counting `case`
+labels in the decompiled switch gives 643, against 605 here, and the 38-odd
+difference reads as missing work. It is not. Twenty-three are small values from
+a different switch arm, seven are the category-dependent codes this page already
+excludes by name, and the rest are labels like `case 0x6415: goto LAB_007b9116;`
+which share a block and carry no string of their own -- so the tool correctly
+declines to give them a unique name.

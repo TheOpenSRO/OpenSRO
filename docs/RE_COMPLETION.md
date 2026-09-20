@@ -5988,6 +5988,26 @@ profile. Still open: the key 0x55494c31, the keeper's tick body, and 0x004ae0c0,
 now characterised (client 0x7034, refuses 0x1812 STRGERR_LOCKED_BY_OTHER_ONE,
 three further codes absent from error_codes.md) rather than read.
 
+Round 323 (a real gap + a verified table): THIRTEEN REFUSALS THE CLIENT CANNOT
+RENDER. error_codes.md is built from the CLIENT's switch, so an absence there
+may only mean "not user-facing"; asking the other side settles it. FUN_004e7250
+is the refusal sender with 256 call sites, and of the literal codes passed to it
+THIRTEEN appear as a case nowhere in the decompiled client: 0x1806 0x1807 0x1811
+0x181d 0x1c0d 0x1c0e 0x3c0f 0x3c2a 0x3c32 0x3c33 0x4c33 0x6006 0x6008. They are
+holes INSIDE mapped families -- the client names 0x1810, 0x1812 and 0x181e in
+the storage range while 0x1806/0x1807/0x1811/0x181d sit among them with nothing
+-- so a player triggering one gets the dispatcher's default, not a reason.
+0x8006-0x800a looked identical and are not: they have cases in a different
+client file, which is the difference between thirteen and seventeen. GOT WRONG
+FIRST: counting case labels gives 643 against the page's 605 and reads as 38
+missing rows. Re-running recover_error_codes.py produced 605 unambiguous and 9
+category-dependent codes, matching the page ROW FOR ROW, 605 of 605, zero
+differences. The shortfall is 23 small values from another switch arm, the 7
+category-dependent codes the page already excludes BY NAME IN ITS OWN TEXT, and
+labels like `case 0x6415: goto LAB_007b9116;` that share a block and carry no
+string. A count of syntactic labels is not a count of facts. The re-run was not
+wasted: the 605-row table is now VERIFIED REPRODUCIBLE rather than assumed.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

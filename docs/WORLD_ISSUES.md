@@ -7075,6 +7075,55 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-twenty-third round: thirteen refusals the client cannot render
+
+Round 322 ended noting three codes absent from `error_codes.md`. That page is
+built from the CLIENT's switch, so an absence there might only mean "not a
+user-facing refusal". Asking the **other** side settles it: which codes does the
+server actually hand out?
+
+`FUN_004e7250` is the refusal sender -- **256 call sites**. Of the literal codes
+passed to it, **thirteen appear as a `case` nowhere in the decompiled client**:
+
+	0x1806  0x1807  0x1811  0x181d
+	0x1c0d  0x1c0e
+	0x3c0f  0x3c2a  0x3c32  0x3c33
+	0x4c33  0x6006  0x6008
+
+**They are holes inside mapped families.** The client names `0x1810`
+STRGERR_HIGHER_LEVEL_REQUIRED, `0x1812` STRGERR_LOCKED_BY_OTHER_ONE and `0x181e`
+STRGERR_BUSY, while `0x1806`, `0x1807`, `0x1811` and `0x181d` sit among them
+with nothing -- so the family is mapped and these specific members are not. A
+player triggering one gets the dispatcher's default, not a reason.
+
+`0x8006`-`0x800a` looked identical and are not: they have cases in a different
+client file. Checking that is the difference between thirteen and seventeen.
+
+### The part I got wrong first, and what it cost
+
+Counting `case` labels in the switch gives **643** against the page's **605**,
+which reads as 38 missing rows. I took that as a documentation gap and went
+looking for the names.
+
+It is not a gap. Re-running `recover_error_codes.py` against the binary produced
+**605 unambiguous and 9 category-dependent** codes, matching the page **row for
+row, 605 of 605, zero differences**. The apparent shortfall is 23 small values
+from a different switch arm, the 7 category-dependent codes the page already
+excludes **by name in its own text**, and labels like
+`case 0x6415: goto LAB_007b9116;` that share a block and carry no string -- so
+the tool rightly declines to name them.
+
+Two lessons, and the second is the one worth keeping:
+
+- the page said "9 are category-dependent ... must not be used to label
+  anything" and I read past it, which is the same docs-first failure this
+  project keeps recording;
+- **a count of syntactic labels is not a count of facts.** 643 `case` labels do
+  not mean 643 recoverable names, and the difference was entirely explicable.
+
+The re-run was not wasted: a 605-row table recovered through two jump tables is
+now **verified reproducible** rather than assumed, which no round had done.
+
 ## Three-hundred-and-twenty-second round: a composite item is a premium item with a use count
 
 Round 321's sweep left two bounded unread regions. One turned out to be closed
