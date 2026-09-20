@@ -40,7 +40,85 @@ never filed as a name until round 340 — the same gap as
 `MsgBuf_ReadUInt32FromTail`, which sat identified in a published table for eleven
 rounds. **Being characterised in prose is not being named.**
 
-## An open lead, and why it is not taken
+## The item-event kind vocabulary (round 341)
+
+Round 340 left `0x00468a80` unnamed because Ghidra's argument order contradicted
+its call sites. **Settled from disassembly, and both readings were true of
+different parameters.** The convention is `__fastcall`:
+
+	push 0x39            <- last push before the call: the first STACK argument
+	mov  edx, ebp        <- second register argument
+	mov  ecx, ebx        <- first register argument (the object)
+	call 0x468a80
+
+ECX and EDX carry the object; the small constant is the next argument along. So
+the decompiler's `param_1 = int *` (ECX) and the call site's `0x9f` (first stack
+arg) were never in conflict — they are different parameters, and the mismatch was
+Ghidra dropping the register ones.
+
+`0x00468a80` is now `ItemEventLog_Record`: the entry point an operation calls to
+record what it did to an item. **49 call sites, 47 carrying a kind immediate, 43
+distinct kinds, every one inside an already-named caller.**
+
+### The cross-check
+
+A kind that appears at several sites should mark the same *action*, not the same
+*function* — and it does:
+
+| kind | raised by | |
+|---|---|---|
+| `0x9f` | `CEnchant_SocketMaker::vslot_009`, `CEnchant_SocketStoneEraser::vslot_009`, `CEnchant_SocketStoneInserter::BlessItem` | three functions, one socket operation |
+| `0x83` | `CEnchant_EnchantMagicStone::MakeAttempt`, `CEnchant_EnchantAvatarItem::MakeAttempt` | two enchant attempts |
+| `0x50` | `CGObjPC::OffsetGold`, `FUN_00513250` | two gold paths |
+
+That is what an event kind should do, and it is why the caller is taken as
+evidence rather than as a coincidence of position.
+
+### The table
+
+Each kind is named by the operation that raises it. **This is a use-site, not a
+curve**: the caller is an already-recovered name, and the kind is the constant it
+passes.
+
+| kind | raised by |
+|---|---|
+| `0x10` | `Item_HandleUseItem` |
+| `0x32`, `0x33` | `TradeMgr::CTradeMgr__OpenTradeSession` |
+| `0x34` | `TradeMgr::CTradeMgr__EstablishTradeSession` |
+| `0x35` | `FUN_004808d0` |
+| `0x36` | `TradeMgr::OfferItemToPartner` |
+| `0x37`, `0x38` | `FUN_00480c70`, `FUN_00480f30` |
+| `0x39`, `0x3b`, `0x3c`, `0x74` | `AQ_ItemXChanger::ValidateItemExchange` |
+| `0x46` | `FleaMarket_HandleOpenStall` |
+| `0x47` | `FUN_00515da0` |
+| `0x48`, `0x49`, `0x4a` | `FUN_00472e20` |
+| `0x4b`, `0x4d` | `FleaMarket::CFleaMarket__SellFMarketItem` |
+| `0x50` | `CGObjPC::OffsetGold`, `FUN_00513250` |
+| `0x5a`, `0x5b` | `CEnchant_Reinforce::MakeAttempt` |
+| `0x6e`, `0x99`, `0xaa` | `CGItemExpendable::UseByKind` (it switches on the item kind) |
+| `0x70`, `0x71` | `FUN_004c7e20`, `GObjPC::FUN_004ed910` |
+| `0x82` | `CEnchant_EnchantMagicStone___BlessItem` |
+| `0x83` | `CEnchant_EnchantMagicStone::MakeAttempt`, `CEnchant_EnchantAvatarItem::MakeAttempt` |
+| `0x84`, `0x87` | `CEnchant__SetEnchantMagicToAttrAssim`, `CEnchant__SetEnchantAttrToAttrAssim` |
+| `0x85`, `0x86` | `CEnchant_EnchantAttrStone::vslot_009` / `::MakeAttempt` |
+| `0x88` | `CMakeStuff_Compound::FUN_00509d00` |
+| `0x89`, `0x8a` | `CMakeStuff_ResolveEquip`, `CMakeStuff_ResolveMaterial` |
+| `0x8b` | `CGObjPC::vslot_358` |
+| `0x94` | `CBless_AvatarItemWithNPC` |
+| `0x97`, `0x98` | `GObjPC::CGObjPC___AsyncQuerySucceeded` |
+| `0x9f` | the three `CEnchant_Socket*` functions above |
+| `0xa0` | `CEnchant_UpperReinforce::MakeAttempt` |
+| `0xa9` | `CTJ_OpenMarketTicketKeeper::FUN_00655670` |
+
+**Two call sites pass no immediate** — `CTimedJobManagerForPC::vslot_005` and
+`CTimedJobManagerForPet::vslot_005` build the kind in a register instead, so they
+are not in the table rather than being guessed at.
+
+**What this does not say.** The kind numbers are the server's own; nothing here
+maps them to a name the game uses for them, because no such table has been found.
+The caller tells you what the event *is*, not what it is *called*.
+
+## The lead as it stood (round 340), now closed above
 
 `0x00468a80` calls `ItemEventLog_FormatRecord` and is itself called from **50
 sites**, each passing a distinctive small constant — `0x9f`, `0x83`, `0x50`,

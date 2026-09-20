@@ -6266,6 +6266,35 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 341 (the fifty-site lead, taken properly): ROUND 340 REFUSED TO LABEL
+0x00468a80's call sites because Ghidra's argument order contradicted them, and
+wrote down the next step -- read the sites in srgs.asm and settle which operand
+is the kind. Done, and BOTH READINGS WERE TRUE OF DIFFERENT PARAMETERS. The
+convention is __fastcall: `mov ecx,<obj>` / `mov edx,<obj2>` carry the first two
+arguments and everything else is pushed, so the last `push <imm>` before the call
+is the first STACK argument. Ghidra's `param_1 = int *` is ECX and the call
+site's 0x9f is the stack arg -- never in conflict, and the apparent contradiction
+was the decompiler dropping the register operands. THE SAME SHAPE THAT FORCED
+ROUND 323'S RETRACTION, read the same way round 326 had to read it. 0x00468a80
+is now ItemEventLog_Record: **49 call sites, 47 with a kind immediate, 43
+distinct kinds, EVERY ONE INSIDE AN ALREADY-NAMED CALLER** -- Item_HandleUseItem
+raises 0x10, the trade manager 0x32-0x38, the flea market 0x46/0x4b/0x4d,
+CGObjPC::OffsetGold 0x50, and the enchant/socket/make-stuff family 0x5a-0xa0.
+THE CROSS-CHECK IS THAT KINDS GROUP BY ACTION, NOT BY FUNCTION: 0x9f is raised by
+CEnchant_SocketMaker, _SocketStoneEraser and _SocketStoneInserter alike, 0x83 by
+two different CEnchant_*::MakeAttempt, 0x50 by two separate gold paths. That is
+what an event kind should do, and it is why the caller counts as evidence rather
+than as a coincidence of position -- a use-site, not a curve. TWO SITES PASS NO
+IMMEDIATE (CTimedJobManagerForPC/ForPet vslot_005 build the kind in a register)
+and are LEFT OUT of the table rather than guessed at. AND WHAT THE TABLE DOES NOT
+SAY: the numbers are the server's own and nothing maps them to a name the game
+uses, because no such table has been found -- the caller tells you what the event
+IS, not what it is CALLED.
+
+**What moved:** no shipped value. A 43-entry item-event vocabulary recovered
+with its evidence, the recorder named, and a deferred lead closed by the method
+that was written down for it.
+
 Round 340 (the event-log family, and a lead left alone on purpose): NEXT ON THE
 SIZE-RANKED WORKLIST WAS 0x00469100, 7,622 bytes, the second-largest unnamed
 function in the game-logic core. THE LEDGER HAD ALREADY CHARACTERISED IT -- the
