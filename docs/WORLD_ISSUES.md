@@ -7075,6 +7075,60 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-eleventh round: the second integer was never a per-column code, and I withdrew it
+
+Round 310 left one thing open and named the probe: the binder inserts into a
+`std::map`, so read the value type. Following it says the question was **posed
+wrongly**, and that three rounds of mine published a column that should not have
+existed.
+
+The disassembly of a single binding:
+
+	call 0x401fc0                     ; build the column-name string
+	lea  ebx,[esp+0x20]               ; EBX -> the KEY
+	mov  DWORD PTR [esp+0xdc],0x66    ; the STRUCT OFFSET  (_CHAR MaxLevel)
+	mov  DWORD PTR [esp+0x20],0x2     ; the key's value
+	call 0x862e40                     ; lower_bound
+
+`FUN_00862e40` dereferences `unaff_EBX` and compares it against each node's key.
+So the second integer **is a lookup key**, not a datum stored per column. It
+selects an entry in a container, and the binder then uses that entry's `+0x48`.
+
+**Each table has its own container**, which is why the key can repeat:
+`_CHAR` `0xd1fbe4`, `_CHARCOS` `0xd1fcec`, `_ITEMS` `0xd2042c`, `_GUILD`
+`0xd2109c`. Keys are small (0..11) and **29 of 50 tables reuse one**, so it is
+neither a column ordinal nor a unique id.
+
+### And the published values were often the wrong slot
+
+For `_CHAR` the key slot is `0x20`. The decompiler's second variable, which
+rounds 308-310 recorded as the "code", was slot `0x2c` -- a different stack
+location entirely. The numbers in that column were partly noise, which is why
+they refused to settle into any story: round 310 measured them against widths
+and against column identity and got incoherence from both. **The incoherence was
+the signal, and I read it as "unsettled" rather than "wrong".**
+
+A corrected key column could only be aligned for **26 of the 50** binders,
+because the compiler keeps EBX live across some bindings and does not re-emit
+the `lea`. Rather than publish a half-aligned column, it is **removed**.
+
+### What survives, and it is the part that matters
+
+The **offsets are untouched and are the doubly-verified artifact**: extracted
+from the decompilation, then again from raw disassembly, identical across all
+50 tables the assembly path covers, 403 of them, with the six single-column
+binders settled by sibling agreement. Nothing in `persistence.ColumnOffsets`
+changes.
+
+**The lesson is about which half of a finding to trust.** The offsets had two
+independent derivations and five controls; the code had neither, and it rode
+along in the same file and the same commits because it came out of the same
+parse. A number that arrives as a by-product is not evidence merely because the
+thing beside it is.
+
+Next probe, sharper than round 310's: read what populates a per-table container
+(`0xd1fbe4` for `_CHAR`) and what lives at entry `+0x48`.
+
 ## Three-hundred-and-tenth round: the offsets verified from a second direction, and what the other integer is not
 
 Rounds 308 and 309 produced three parses of the same data, two of them wrong.

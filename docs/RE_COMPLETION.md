@@ -5752,6 +5752,28 @@ annotation recording that it writes the ODBC column index into the 0x54 record
 at +0x30 and a skip flag at +0x34 -- the runtime half of the structure rounds
 305/306 read, available by opening the file first.
 
+Round 311 (a WITHDRAWAL): THE SECOND INTEGER WAS NEVER A PER-COLUMN CODE.
+Following round 310's own next probe shows the question was posed wrongly.
+Disassembly of one binding: `lea ebx,[esp+0x20]` then the offset into [esp+0xdc]
+then the key into [esp+0x20] then `call 0x862e40`, and FUN_00862e40
+dereferences unaff_EBX and compares it against each node's key -- so the integer
+is a LOOKUP KEY, not a stored per-column datum. It selects an entry in the
+table's OWN container (every binder uses a different global: _CHAR 0xd1fbe4,
+_CHARCOS 0xd1fcec, _ITEMS 0xd2042c, _GUILD 0xd2109c), which is why it repeats:
+small, 0..11, reused in 29 of 50 tables, so neither a column ordinal nor a
+unique id; the binder then uses the found entry's +0x48. WORSE, the published
+values were often the WRONG SLOT -- for _CHAR the key slot is 0x20 while the
+decompiler's second variable was 0x2c -- so the `code` column of rounds 308-310
+was partly noise. That is why round 310's measurements against widths and
+against column identity both returned incoherence: the incoherence was the
+signal and was read as "unsettled" rather than "wrong". A corrected key column
+aligns for only 26 of 50 binders (EBX stays live across some bindings), so
+rather than publish a half-aligned column it is REMOVED from
+db_bind_offsets.tsv. THE OFFSETS ARE UNAFFECTED: still doubly derived, still
+identical across all 50 tables the assembly covers, persistence.ColumnOffsets
+unchanged. Lesson: a number that arrives as a by-product of a good parse is not
+evidence because the thing beside it is.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

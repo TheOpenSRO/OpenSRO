@@ -1,446 +1,449 @@
 # Column -> struct offset for every runtime table, from the 56 DB_Bind__<TABLE>
-# binders. Each binding is a name, then TWO integers, then a std::map lookup:
+# binders. Per binding the compiler emits, before a std::map lookup:
 #
-#     FUN_00401fc0("Strength", 8);
-#     <a> = 0x74;   <b> = 2;
-#     FUN_00862e40();          // std::map lower_bound, i.e. operator[]
+#     call 0x401fc0                       ; build the column-name string
+#     lea  ebx,[esp+0x20]                 ; EBX -> the KEY
+#     mov  DWORD PTR [esp+0xdc],0x66      ; the STRUCT OFFSET
+#     mov  DWORD PTR [esp+0x20],0x2       ; the key's value
+#     call 0x862e40                       ; lower_bound on the table's own container
 #
-# WHICH OF THE TWO IS THE OFFSET IS NOT FIXED BY SOURCE ORDER. Round 308 assumed
-# it was the first and got 18 of 409 wrong; round 309 assumed the more DISTINCT
-# one, which is right for _CHAR but wrong for _SiegeFortress, where the other
-# variable is a dense column INDEX (0,2,3,4..10) and equally distinct.
+# THE OFFSETS ARE VERIFIED TWO WAYS. They were extracted from the Ghidra
+# decompilation and then again from raw disassembly, paths sharing no failure
+# mode, and all 50 tables the assembly covers came out IDENTICAL -- 403 offsets.
+# The other 6 are single-column binders, settled by sibling agreement: all six
+# container tables bind Slot at 0x18.
 #
-# The discriminator that works: an offset is distinct AND sparse. A column index
-# is a near-consecutive run, so its density (distinct / (max-min+1)) approaches 1;
-# a struct offset's is far lower (_CHAR: 43 columns over 0x20..0xf2, density 0.20).
+# Controls, all exact: _CHAR Strength 0x74 and RemainHwanCount 0x86 (both
+# recovered independently by earlier rounds), PosX/PosY/PosZ 0x98/0x9c/0xa0, and
+# _SiegeFortress FortressID 0x18 / Introduction 0x38 -- the last two added
+# because the _CHAR controls passed while two successive parses were wrong.
+# Structural: no (table, offset) pair repeats.
 #
-# CONTROLS, all exact: _CHAR Strength 0x74, RemainHwanCount 0x86 (both recovered
-# independently by earlier rounds), PosX/PosY/PosZ 0x98/0x9c/0xa0, and
-# _SiegeFortress FortressID 0x18 / Introduction 0x38 -- the last two added because
-# the _CHAR controls alone passed while the parse was wrong.
-# STRUCTURAL: no (table, offset) pair repeats in the 409.
-# INDEPENDENTLY RE-DERIVED (round 310): the same offsets were extracted a second time
-# from raw DISASSEMBLY -- per binding the compiler emits `mov DWORD PTR [esp+A], <offset>`
-# then `mov DWORD PTR [esp+B], <code>` then `call 0x862e40`, and slot A is fixed for a
-# whole function. That path shares no failure mode with the decompiler read (no STL
-# reconstruction, no variable naming, no source-order assumption). All 50 tables it
-# covers are IDENTICAL, 403 offsets. The other 6 are the single-column binders, which
-# have too few bindings to identify a slot and are settled by sibling agreement instead.
+# THE FOURTH COLUMN WAS WITHDRAWN IN ROUND 311. Rounds 308-310 published a
+# `code` beside each offset and called it an uninterpreted per-column datum. It
+# is not per-column data at all: EBX is pointed at that slot, and the callee
+# dereferences EBX as a lookup KEY, comparing it against each node's key. So the
+# integer selects an entry in the table's own container -- each binder uses a
+# different global (_CHAR 0xd1fbe4, _CHARCOS 0xd1fcec, _ITEMS 0xd2042c, _GUILD
+# 0xd2109c) -- and the binder then uses the found entry's +0x48.
 #
-# The six `Slot` rows come from single-column binders, where there is no
-# distribution to test. They are resolved instead by agreement: all six sibling
-# container tables bind Slot at 0x18 with code 2, in six separate functions.
+# Worse, the published values were often the WRONG SLOT: for _CHAR the real key
+# slot is 0x20, while the decompiler's second variable was 0x2c. A corrected key
+# column could only be recovered for 26 of the 50 binders (the compiler keeps
+# EBX live across some bindings), so rather than publish a half-aligned column
+# it is removed. Known about the key: small (0..11) and REPEATING -- 29 of 50
+# tables reuse a key -- so it is neither a column ordinal nor a unique id.
 #
-# `code` is RECORDED, NOT INTERPRETED. It is not a width -- it differs from the
-# next-offset delta in 332 of 353 cases. No use-site has been read.
+# NEXT PROBE: read what populates a per-table container (0xd1fbe4 for _CHAR) and
+# what lives at entry +0x48.
 #
-# table	column	offset	code
-_ALLIEDCLANS	ID	0x18	0
-_ALLIEDCLANS	Ally	0x1c	2
-_ALLIEDCLANS	Ally	0x20	2
-_ALLIEDCLANS	Ally	0x24	2
-_ALLIEDCLANS	Ally	0x28	2
-_ALLIEDCLANS	Ally	0x2c	2
-_ALLIEDCLANS	Ally	0x30	2
-_ALLIEDCLANS	Ally	0x34	2
-_ALLIEDCLANS	Ally	0x38	2
-_ALLIEDCLANS	LastCrestRev	0x3c	3
-_ALLIEDCLANS	CurCrestRev	0x40	3
-_AssociationReputation	AssociationCodeName	0x18	0
-_AssociationReputation	Reputation	0x34	2
-_AssociationReputation	PriorOccupation	0x38	2
-_BindingOptionWithItem	nItemDBID	0x18	0
-_BindingOptionWithItem	bOptType	0x20	0
-_BindingOptionWithItem	nSlot	0x21	0
-_BindingOptionWithItem	nOptID	0x24	2
-_BindingOptionWithItem	nOptLvl	0x28	2
-_BindingOptionWithItem	nOptValue	0x2c	2
-_BindingOptionWithItem	nParam1	0x30	2
-_BindingOptionWithItem	nParam2	0x34	2
-_BlockedWhisperers	OwnerID	0x18	0
-_BlockedWhisperers	TargetName	0x1c	2
-_CHAR	CharID	0x20	0
-_CHAR	Deleted	0x24	1
-_CHAR	RefObjID	0x28	1
-_CHAR	CharName16	0x2c	1
-_CHAR	NickName16	0x48	7
-_CHAR	Scale	0x64	1
-_CHAR	CurLevel	0x65	2
-_CHAR	MaxLevel	0x66	2
-_CHAR	ExpOffset	0x68	2
-_CHAR	SExpOffset	0x70	2
-_CHAR	Strength	0x74	2
-_CHAR	Intellect	0x76	2
-_CHAR	RemainGold	0x78	3
-_CHAR	RemainSkillPoint	0x80	4
-_CHAR	RemainStatPoint	0x84	4
-_CHAR	RemainHwanCount	0x86	4
-_CHAR	GatheredExpPoint	0x88	4
-_CHAR	HP	0x8c	6
-_CHAR	MP	0x90	6
-_CHAR	LatestRegion	0x94	5
-_CHAR	PosX	0x98	5
-_CHAR	PosY	0x9c	5
-_CHAR	PosZ	0xa0	5
-_CHAR	AppointedTeleport	0xa4	7
-_CHAR	AutoInvestExp	0xa8	7
-_CHAR	InventorySize	0xac	8
-_CHAR	DailyPK	0xb0	9
-_CHAR	TotalPK	0xb2	9
-_CHAR	PKPenaltyPoint	0xb4	9
-_CHAR	GuildID	0xb8	1
-_CHAR	LastLogout	0xbc	10
-_CHAR	TelRegion	0xcc	11
-_CHAR	TelPosX	0xd0	11
-_CHAR	TelPosY	0xd4	11
-_CHAR	TelPosZ	0xd8	11
-_CHAR	DiedRegion	0xdc	12
-_CHAR	DiedPosX	0xe0	12
-_CHAR	DiedPosY	0xe4	12
-_CHAR	DiedPosZ	0xe8	12
-_CHAR	WorldID	0xec	5
-_CHAR	TelWorldID	0xee	11
-_CHAR	DiedWorldID	0xf0	12
-_CHAR	HwanLevel	0xf2	13
-_CharCollectionBook	CharID	0x18	2
-_CharCollectionBook	ThemeID	0x1c	2
-_CharCollectionBook	SlotIndex	0x20	2
-_CharCollectionBook	RegDate	0x24	2
-_CHARCOS	ID	0x20	0
-_CHARCOS	OwnerCharID	0x24	3
-_CHARCOS	RefCharID	0x28	5
-_CHARCOS	HP	0x2c	2
-_CHARCOS	MP	0x30	2
-_CHARCOS	KeeperNPC	0x34	4
-_CHARCOS	State	0x38	6
-_CHARCOS	CharName	0x3c	7
-_CHARCOS	Lvl	0x58	8
-_CHARCOS	ExpOffset	0x60	8
-_CHARCOS	HGP	0x68	9
-_CHARCOS	PetOption	0x6c	10
-_CHARCOS	RentEndTime	0x70	11
-_CharInstanceWorldData	CharID	0x18	0
-_CharInstanceWorldData	DungeonKeyID	0x1c	2
-_CharInstanceWorldData	WorldID	0x20	0
-_CharInstanceWorldData	LayerID	0x24	2
-_CharInstanceWorldData	OpenedTime	0x28	1
-_CharInstanceWorldData	RegionID	0x38	3
-_CharInstanceWorldData	PosX	0x3c	3
-_CharInstanceWorldData	PosY	0x40	3
-_CharInstanceWorldData	PosZ	0x44	3
-_CharInstanceWorldData	IsActivated	0x48	4
-_CharInstanceWorldData	EnterCount	0x4c	5
-_CharInstanceWorldData	LastEnterTime	0x50	6
-_CHARQUEST	CharID	0x18	0
-_CHARQUEST	QuestID	0x1c	0
-_CHARQUEST	Status	0x20	2
-_CHARQUEST	AchievementCount	0x22	2
-_CHARQUEST	StartTime	0x24	2
-_CHARQUEST	EndTime	0x34	2
-_CHARQUEST	QuestData1	0x48	2
-_CHARQUEST	QuestData2	0x50	2
-_CHARSKILL	CharID	0x18	0
-_CHARSKILL	SkillID	0x1c	0
-_CHARSKILL	Enable	0x20	2
-_CHARSKILLMASTERY	CharID	0x18	0
-_CHARSKILLMASTERY	MasteryID	0x1c	0
-_CHARSKILLMASTERY	Level	0x20	2
-_CharTrijob	CharID	0x18	0
-_CharTrijob	JobType	0x1c	3
-_CharTrijob	Level	0x1d	2
-_CharTrijob	Exp	0x20	2
-_CharTrijob	Contribution	0x24	2
-_CharTrijob	Reward	0x28	4
-_CharTrijobSafeTrade	CharID	0x18	0
-_CharTrijobSafeTrade	AbleCount	0x1c	2
-_CharTrijobSafeTrade	Status	0x20	2
-_CharTrijobSafeTrade	LastSafeTrade	0x24	3
-_CHEST	Slot	0x18	2
-_ChestInfo	JID	0x18	0
-_ChestInfo	ChestSize	0x1c	2
-_ClientConfig	CharID	0x18	0
-_ClientConfig	ConfigType	0x1c	0
-_ClientConfig	SlotSeq	0x1d	0
-_ClientConfig	SlotType	0x1e	2
-_ClientConfig	Data	0x20	2
-_DELETEDCHAR	CharID	0x18	0
-_DELETEDCHAR	UserJID	0x1c	2
-_DELETEDCHAR	DeletedDate	0x20	2
-_FleaMarketNetwork	AbleOpen	0x18	2
-_FleaMarketNetwork	CharID	0x1c	0
-_FleaMarketNetwork	Slot	0x20	0
-_FleaMarketNetwork	TidGroupID	0x24	2
-_FleaMarketNetwork	ItemClass	0x28	2
-_FleaMarketNetwork	ItemCount	0x2c	2
-_FleaMarketNetwork	MakeZone	0x30	2
-_FleaMarketNetwork	Cash	0x38	2
-_Friend	CharID	0x18	0
-_Friend	FriendCharID	0x1c	2
-_Friend	FriendCharName	0x20	2
-_Friend	RefObjID	0x3c	1
-_GPHistory	ID	0x18	0
-_GPHistory	GuildID	0x1c	2
-_GPHistory	UsedTime	0x20	2
-_GPHistory	CharName	0x30	2
-_GPHistory	UsedGP	0x4c	2
-_GPHistory	Reason	0x50	2
-_GUILD	ID	0x18	0
-_GUILD	Name	0x1c	1
-_GUILD	Lvl	0x38	2
-_GUILD	GatheredSP	0x3c	3
-_GUILD	FoundationDate	0x40	1
-_GUILD	Alliance	0x50	4
-_GUILD	MasterCommentTitle	0x54	5
-_GUILD	MasterComment	0x70	5
-_GUILD	Booty	0x8c	6
-_GUILD	LastCrestRev	0x90	7
-_GUILD	CurCrestRev	0x94	7
-_GUILD	MercenaryAttr	0x98	8
-_GUILDCHEST	Slot	0x18	2
-_GUILDMEMBER	GuildID	0x18	0
-_GUILDMEMBER	CharID	0x1c	0
-_GUILDMEMBER	CharName	0x20	1
-_GUILDMEMBER	MemberClass	0x3c	3
-_GUILDMEMBER	CharLevel	0x3d	4
-_GUILDMEMBER	GP_Donation	0x40	2
-_GUILDMEMBER	JoinDate	0x44	1
-_GUILDMEMBER	Permission	0x54	5
-_GUILDMEMBER	Contribution	0x58	6
-_GUILDMEMBER	GuildWarKill	0x5c	7
-_GUILDMEMBER	GuildWarKilled	0x60	8
-_GUILDMEMBER	Nickname	0x64	9
-_GUILDMEMBER	RefObjID	0x80	1
-_GUILDMEMBER	SiegeAuthority	0x84	10
-_GUILDWAR	ID	0x18	0
-_GUILDWAR	WarType	0x1c	2
-_GUILDWAR	VictoryPointIndex	0x1d	2
-_GUILDWAR	LodgedGold	0x20	2
-_GUILDWAR	WarEndTime	0x24	2
-_GUILDWAR	Guild	0x34	3
-_GUILDWAR	Guild	0x38	3
-_GUILDWAR	PointGain	0x3c	3
-_GUILDWAR	PointGain	0x40	3
-_GUILDWAR	Data1	0x44	4
-_GUILDWAR	Data2	0x48	4
-_INVCOS	Slot	0x18	2
-_INVENTORY	Slot	0x18	2
-_INVENTORYFORAVATAR	Slot	0x18	2
-_INVENTORYFORLINKEDSTORAGE	Slot	0x18	2
-_ITEMQUOTATION	ID	0x18	0
-_ITEMQUOTATION	Service	0x1c	1
-_ITEMQUOTATION	AssocNPC	0x20	1
-_ITEMQUOTATION	RefItemID	0x24	1
-_ITEMQUOTATION	BaseQuot	0x28	1
-_ITEMQUOTATION	Quot_LB	0x2c	1
-_ITEMQUOTATION	Quot_UB	0x30	1
-_ITEMQUOTATION	BaseStockAmount	0x34	1
-_ITEMQUOTATION	FluctuateAmount	0x38	1
-_ITEMQUOTATION	CurStockAmount	0x3c	2
-_ITEMS	ID64	0x20	0
-_ITEMS	RefItemID	0x28	1
-_ITEMS	OptLevel	0x2c	3
-_ITEMS	Variance	0x30	4
-_ITEMS	Data	0x38	2
-_ITEMS	CreaterName	0x3c	1
-_ITEMS	MagParamNum	0x58	5
-_ITEMS	MagParam	0x60	5
-_ITEMS	MagParam	0x68	5
-_ITEMS	MagParam	0x70	5
-_ITEMS	MagParam	0x78	5
-_ITEMS	MagParam	0x80	5
-_ITEMS	MagParam	0x88	5
-_ITEMS	MagParam	0x90	5
-_ITEMS	MagParam	0x98	5
-_ITEMS	MagParam	0xa0	5
-_ITEMS	MagParam	0xa8	5
-_ITEMS	MagParam	0xb0	5
-_ITEMS	MagParam	0xb8	5
-_ITEMS	Serial64	0xc0	1
-_LOGEVENTCHAR	EventTime	0x18	2
-_LOGEVENTCHAR	EventID	0x28	2
-_LOGEVENTCHAR	Data1	0x2c	2
-_LOGEVENTCHAR	Data2	0x30	2
-_LOGEVENTCHAR	EventPos	0x34	2
-_LOGEVENTCHAR	strDesc	0x50	2
-_LOGEVENTITEM	EventTime	0x18	2
-_LOGEVENTITEM	ItemRefID	0x28	2
-_LOGEVENTITEM	dwData	0x2c	2
-_LOGEVENTITEM	TargetStorage	0x30	2
-_LOGEVENTITEM	Operation	0x31	2
-_LOGEVENTITEM	Slot_From	0x32	2
-_LOGEVENTITEM	Slot_To	0x33	2
-_LOGEVENTITEM	EventPos	0x34	2
-_LOGEVENTITEM	strDesc	0x50	2
-_LOGEVENTITEM	Serial64	0x70	2
-_LOGEVENTITEM	Gold	0x78	2
-_LOGEVENTSIEGEFORTRESS	FortressID	0x18	2
-_LOGEVENTSIEGEFORTRESS	EventTime	0x1c	2
-_LOGEVENTSIEGEFORTRESS	EventID	0x2c	2
-_LOGEVENTSIEGEFORTRESS	CharID	0x30	2
-_LOGEVENTSIEGEFORTRESS	Data1	0x34	2
-_LOGEVENTSIEGEFORTRESS	Data2	0x38	2
-_LOGEVENTSIEGEFORTRESS	strDesc	0x3c	2
-_LogSchedule	ID	0x18	2
-_LogSchedule	ServerType	0x1c	2
-_LogSchedule	ServerBodyID	0x38	2
-_LogSchedule	ScheduleDefine	0x3c	2
-_LogSchedule	ScheduleIdx	0x58	2
-_LogSchedule	Type	0x5c	2
-_LogSchedule	OccureTime	0x78	2
-_LOGSERVEREVENT	ID	0x18	2
-_LOGSERVEREVENT	EventTime	0x1c	2
-_LOGSERVEREVENT	ServerEventID	0x2c	2
-_LOGSERVEREVENT	LogType	0x30	2
-_LOGSERVEREVENT	strDesc	0x34	2
-_Memo	ID64	0x18	0
-_Memo	FromCharName	0x20	1
-_Memo	Message	0x3c	1000
-_Memo	Date	0x58	1
-_Memo	Status	0x68	2
-_Memo	RefObjID	0x6c	1
-_OpenMarket	JID	0x18	0
-_OpenMarket	PersnalID	0x1c	0
-_OpenMarket	CharName16	0x20	0
-_OpenMarket	Status	0x3c	2
-_OpenMarket	RefItemID	0x40	2
-_OpenMarket	TidGroupID	0x44	2
-_OpenMarket	ItemClass	0x48	2
-_OpenMarket	ItemID	0x50	2
-_OpenMarket	SellCnt	0x58	2
-_OpenMarket	RegDate	0x5c	2
-_OpenMarket	EndDate	0x6c	2
-_OpenMarket	Price	0x80	2
-_OpenMarket	Deposit	0x88	2
-_OpenMarket	SellFee	0x90	2
-_OpenMarket	UseCash	0x98	2
-_OpenMarket	Serial64	0xa0	2
-_RentItemInfo	nItemDBID	0x18	0
-_RentItemInfo	nRentType	0x20	2
-_RentItemInfo	nCanDelete	0x24	2
-_RentItemInfo	nCanRecharge	0x26	2
-_RentItemInfo	PeriodBeginTime	0x28	2
-_RentItemInfo	PeriodEndTime	0x38	2
-_RentItemInfo	MeterRateTime	0x48	2
-_RentItemInfo	nPackingState	0x58	2
-_RentItemInfo	nPackingTime	0x5c	2
-_ServerEvent	ID	0x18	0
-_ServerEvent	CompletionValue	0x1c	2
-_ServerEvent	AchievementCondition	0x20	2
-_ServerEvent	ProgressCount	0x24	2
-_ServerEventReward	ServerEventID	0x18	0
-_ServerEventReward	RewardID	0x1c	2
-_ServerEventReward	RemainRewardTime	0x20	2
-_ShopItemStockQuantity	Service	0x18	0
-_ShopItemStockQuantity	Country	0x1c	0
-_ShopItemStockQuantity	RefShopGroupCodeName	0x20	1
-_ShopItemStockQuantity	RefPackageItemCodeName	0x3c	1
-_ShopItemStockQuantity	ConstStockQuantity	0x58	1
-_ShopItemStockQuantity	StockQuantity	0x5a	2
-_SiegeFortress	FortressID	0x18	0
-_SiegeFortress	GuildID	0x1c	2
-_SiegeFortress	TaxRatio	0x20	3
-_SiegeFortress	Tax	0x28	4
-_SiegeFortress	NPCHired	0x30	5
-_SiegeFortress	TempGuildID	0x34	6
-_SiegeFortress	Introduction	0x38	7
-_SiegeFortress	CreatedDungeonTime	0x54	8
-_SiegeFortress	CreatedDungeonCount	0x64	9
-_SiegeFortress	IntroductionModificationPermission	0x65	10
-_SiegeFortressBattleRecord	FortressID	0x18	0
-_SiegeFortressBattleRecord	CharID	0x1c	0
-_SiegeFortressBattleRecord	KillCount	0x20	2
-_SiegeFortressBattleRecord	KilledCount	0x24	2
-_SiegeFortressBattleRecord	RankUpDate	0x28	3
-_SiegeFortressBattleRecord	CurRank	0x38	3
-_SiegeFortressItemForge	FortressID	0x18	0
-_SiegeFortressItemForge	ItemRefID	0x1c	0
-_SiegeFortressItemForge	Amount	0x20	2
-_SiegeFortressItemForge	Finished	0x22	3
-_SiegeFortressItemForge	StartDate	0x24	1
-_SiegeFortressItemForge	FinishDate	0x34	1
-_SiegeFortressObject	ID	0x20	0
-_SiegeFortressObject	FortressID	0x24	0
-_SiegeFortressObject	OwnerGuildID	0x28	1
-_SiegeFortressObject	RefObjID	0x2c	1
-_SiegeFortressObject	HP	0x30	2
-_SiegeFortressObject	Region	0x34	3
-_SiegeFortressObject	PosX	0x38	3
-_SiegeFortressObject	PosY	0x3c	3
-_SiegeFortressObject	PosZ	0x40	3
-_SiegeFortressObject	Direction	0x44	3
-_SiegeFortressObject	OwnerLevel	0x48	1
-_SiegeFortressRequest	FortressID	0x18	0
-_SiegeFortressRequest	GuildID	0x1c	0
-_SiegeFortressRequest	RequestType	0x20	2
-_SiegeFortressStoneState	FortressID	0x18	0
-_SiegeFortressStoneState	GuildID	0x1c	0
-_SiegeFortressStoneState	AccumulateDamage	0x20	2
-_SIEGEFORTRESSSTRUCT	FortressID	0x20	2
-_SIEGEFORTRESSSTRUCT	OwnerGuildID	0x24	3
-_SIEGEFORTRESSSTRUCT	RefEventStructID	0x28	0
-_SIEGEFORTRESSSTRUCT	RefObjID	0x2c	0
-_SIEGEFORTRESSSTRUCT	HP	0x30	3
-_SIEGEFORTRESSSTRUCT	MakeDate	0x34	3
-_SIEGEFORTRESSSTRUCT	State	0x44	3
-_STATICAVATAR	CharID	0x18	0
-_STATICAVATAR	Param1	0x1c	2
-_TIMEDJOB	ID	0x18	0
-_TIMEDJOB	CharID	0x1c	0
-_TIMEDJOB	Category	0x20	1
-_TIMEDJOB	JobID	0x24	1
-_TIMEDJOB	TimeToKeep	0x28	2
-_TIMEDJOB	Data1	0x2c	3
-_TIMEDJOB	Data2	0x30	3
-_TIMEDJOB	Data3	0x34	3
-_TIMEDJOB	Data4	0x38	3
-_TIMEDJOB	Data5	0x3c	3
-_TIMEDJOB	Data6	0x40	3
-_TIMEDJOB	Data7	0x44	3
-_TIMEDJOB	Data8	0x48	3
-_TIMEDJOB	Serial64	0x50	3
-_TIMEDJOB	JID	0x58	3
-_TIMEDJOBFORPET	ID	0x18	0
-_TIMEDJOBFORPET	CharID	0x1c	0
-_TIMEDJOBFORPET	Category	0x20	1
-_TIMEDJOBFORPET	JobID	0x24	1
-_TIMEDJOBFORPET	TimeToKeep	0x28	2
-_TIMEDJOBFORPET	Data1	0x2c	3
-_TIMEDJOBFORPET	Data2	0x30	3
-_TIMEDJOBFORPET	Data3	0x34	3
-_TIMEDJOBFORPET	Data4	0x38	3
-_TIMEDJOBFORPET	Data5	0x3c	3
-_TIMEDJOBFORPET	Data6	0x40	3
-_TIMEDJOBFORPET	Data7	0x44	3
-_TIMEDJOBFORPET	Data8	0x48	3
-_TIMEDJOBFORPET	Serial64	0x50	3
-_TIMEDJOBFORPET	JID	0x58	3
-_TRAININGCAMP	ID	0x18	0
-_TRAININGCAMP	CreationDate	0x1c	1
-_TRAININGCAMP	Rank	0x2c	2
-_TRAININGCAMP	GraduateCount	0x30	3
-_TRAININGCAMP	EvaluationPoint	0x34	3
-_TRAININGCAMP	LatestEvaluationDate	0x38	3
-_TRAININGCAMP	CommentTitle	0x48	4
-_TRAININGCAMP	Comment	0x64	4
-_TRAININGCAMPBUFFSTATUS	CampID	0x18	0
-_TRAININGCAMPBUFFSTATUS	RecipientCharID	0x1c	0
-_TRAININGCAMPBUFFSTATUS	BuffSlotIdx	0x20	0
-_TRAININGCAMPBUFFSTATUS	DonorCharID	0x24	2
-_TRAININGCAMPBUFFSTATUS	StartingTime	0x28	3
-_TRAININGCAMPBUFFSTATUS	RemainBuffPoint	0x38	4
-_TRAININGCAMPBUFFSTATUS	BuffType	0x3c	3
-_TRAININGCAMPHONORRANK	Ranking	0x18	0
-_TRAININGCAMPHONORRANK	CampID	0x1c	3
-_TRAININGCAMPHONORRANK	Rank	0x20	2
-_TRAININGCAMPMEMBER	CampID	0x18	0
-_TRAININGCAMPMEMBER	CharID	0x1c	0
-_TRAININGCAMPMEMBER	RefObjID	0x20	1
-_TRAININGCAMPMEMBER	CharName	0x24	1
-_TRAININGCAMPMEMBER	JoinDate	0x40	1
-_TRAININGCAMPMEMBER	MemberClass	0x50	1
-_TRAININGCAMPMEMBER	CharJoinedLevel	0x51	1
-_TRAININGCAMPMEMBER	CharCurLevel	0x52	2
-_TRAININGCAMPMEMBER	CharMaxLevel	0x53	2
-_TRAININGCAMPMEMBER	HonorPoint	0x54	3
-_USER	UserJID	0x18	0
-_USER	CharID	0x1c	2
+# table	column	offset
+_ALLIEDCLANS	ID	0x18
+_ALLIEDCLANS	Ally	0x1c
+_ALLIEDCLANS	Ally	0x20
+_ALLIEDCLANS	Ally	0x24
+_ALLIEDCLANS	Ally	0x28
+_ALLIEDCLANS	Ally	0x2c
+_ALLIEDCLANS	Ally	0x30
+_ALLIEDCLANS	Ally	0x34
+_ALLIEDCLANS	Ally	0x38
+_ALLIEDCLANS	LastCrestRev	0x3c
+_ALLIEDCLANS	CurCrestRev	0x40
+_AssociationReputation	AssociationCodeName	0x18
+_AssociationReputation	Reputation	0x34
+_AssociationReputation	PriorOccupation	0x38
+_BindingOptionWithItem	nItemDBID	0x18
+_BindingOptionWithItem	bOptType	0x20
+_BindingOptionWithItem	nSlot	0x21
+_BindingOptionWithItem	nOptID	0x24
+_BindingOptionWithItem	nOptLvl	0x28
+_BindingOptionWithItem	nOptValue	0x2c
+_BindingOptionWithItem	nParam1	0x30
+_BindingOptionWithItem	nParam2	0x34
+_BlockedWhisperers	OwnerID	0x18
+_BlockedWhisperers	TargetName	0x1c
+_CHAR	CharID	0x20
+_CHAR	Deleted	0x24
+_CHAR	RefObjID	0x28
+_CHAR	CharName16	0x2c
+_CHAR	NickName16	0x48
+_CHAR	Scale	0x64
+_CHAR	CurLevel	0x65
+_CHAR	MaxLevel	0x66
+_CHAR	ExpOffset	0x68
+_CHAR	SExpOffset	0x70
+_CHAR	Strength	0x74
+_CHAR	Intellect	0x76
+_CHAR	RemainGold	0x78
+_CHAR	RemainSkillPoint	0x80
+_CHAR	RemainStatPoint	0x84
+_CHAR	RemainHwanCount	0x86
+_CHAR	GatheredExpPoint	0x88
+_CHAR	HP	0x8c
+_CHAR	MP	0x90
+_CHAR	LatestRegion	0x94
+_CHAR	PosX	0x98
+_CHAR	PosY	0x9c
+_CHAR	PosZ	0xa0
+_CHAR	AppointedTeleport	0xa4
+_CHAR	AutoInvestExp	0xa8
+_CHAR	InventorySize	0xac
+_CHAR	DailyPK	0xb0
+_CHAR	TotalPK	0xb2
+_CHAR	PKPenaltyPoint	0xb4
+_CHAR	GuildID	0xb8
+_CHAR	LastLogout	0xbc
+_CHAR	TelRegion	0xcc
+_CHAR	TelPosX	0xd0
+_CHAR	TelPosY	0xd4
+_CHAR	TelPosZ	0xd8
+_CHAR	DiedRegion	0xdc
+_CHAR	DiedPosX	0xe0
+_CHAR	DiedPosY	0xe4
+_CHAR	DiedPosZ	0xe8
+_CHAR	WorldID	0xec
+_CHAR	TelWorldID	0xee
+_CHAR	DiedWorldID	0xf0
+_CHAR	HwanLevel	0xf2
+_CharCollectionBook	CharID	0x18
+_CharCollectionBook	ThemeID	0x1c
+_CharCollectionBook	SlotIndex	0x20
+_CharCollectionBook	RegDate	0x24
+_CHARCOS	ID	0x20
+_CHARCOS	OwnerCharID	0x24
+_CHARCOS	RefCharID	0x28
+_CHARCOS	HP	0x2c
+_CHARCOS	MP	0x30
+_CHARCOS	KeeperNPC	0x34
+_CHARCOS	State	0x38
+_CHARCOS	CharName	0x3c
+_CHARCOS	Lvl	0x58
+_CHARCOS	ExpOffset	0x60
+_CHARCOS	HGP	0x68
+_CHARCOS	PetOption	0x6c
+_CHARCOS	RentEndTime	0x70
+_CharInstanceWorldData	CharID	0x18
+_CharInstanceWorldData	DungeonKeyID	0x1c
+_CharInstanceWorldData	WorldID	0x20
+_CharInstanceWorldData	LayerID	0x24
+_CharInstanceWorldData	OpenedTime	0x28
+_CharInstanceWorldData	RegionID	0x38
+_CharInstanceWorldData	PosX	0x3c
+_CharInstanceWorldData	PosY	0x40
+_CharInstanceWorldData	PosZ	0x44
+_CharInstanceWorldData	IsActivated	0x48
+_CharInstanceWorldData	EnterCount	0x4c
+_CharInstanceWorldData	LastEnterTime	0x50
+_CHARQUEST	CharID	0x18
+_CHARQUEST	QuestID	0x1c
+_CHARQUEST	Status	0x20
+_CHARQUEST	AchievementCount	0x22
+_CHARQUEST	StartTime	0x24
+_CHARQUEST	EndTime	0x34
+_CHARQUEST	QuestData1	0x48
+_CHARQUEST	QuestData2	0x50
+_CHARSKILL	CharID	0x18
+_CHARSKILL	SkillID	0x1c
+_CHARSKILL	Enable	0x20
+_CHARSKILLMASTERY	CharID	0x18
+_CHARSKILLMASTERY	MasteryID	0x1c
+_CHARSKILLMASTERY	Level	0x20
+_CharTrijob	CharID	0x18
+_CharTrijob	JobType	0x1c
+_CharTrijob	Level	0x1d
+_CharTrijob	Exp	0x20
+_CharTrijob	Contribution	0x24
+_CharTrijob	Reward	0x28
+_CharTrijobSafeTrade	CharID	0x18
+_CharTrijobSafeTrade	AbleCount	0x1c
+_CharTrijobSafeTrade	Status	0x20
+_CharTrijobSafeTrade	LastSafeTrade	0x24
+_CHEST	Slot	0x18
+_ChestInfo	JID	0x18
+_ChestInfo	ChestSize	0x1c
+_ClientConfig	CharID	0x18
+_ClientConfig	ConfigType	0x1c
+_ClientConfig	SlotSeq	0x1d
+_ClientConfig	SlotType	0x1e
+_ClientConfig	Data	0x20
+_DELETEDCHAR	CharID	0x18
+_DELETEDCHAR	UserJID	0x1c
+_DELETEDCHAR	DeletedDate	0x20
+_FleaMarketNetwork	AbleOpen	0x18
+_FleaMarketNetwork	CharID	0x1c
+_FleaMarketNetwork	Slot	0x20
+_FleaMarketNetwork	TidGroupID	0x24
+_FleaMarketNetwork	ItemClass	0x28
+_FleaMarketNetwork	ItemCount	0x2c
+_FleaMarketNetwork	MakeZone	0x30
+_FleaMarketNetwork	Cash	0x38
+_Friend	CharID	0x18
+_Friend	FriendCharID	0x1c
+_Friend	FriendCharName	0x20
+_Friend	RefObjID	0x3c
+_GPHistory	ID	0x18
+_GPHistory	GuildID	0x1c
+_GPHistory	UsedTime	0x20
+_GPHistory	CharName	0x30
+_GPHistory	UsedGP	0x4c
+_GPHistory	Reason	0x50
+_GUILD	ID	0x18
+_GUILD	Name	0x1c
+_GUILD	Lvl	0x38
+_GUILD	GatheredSP	0x3c
+_GUILD	FoundationDate	0x40
+_GUILD	Alliance	0x50
+_GUILD	MasterCommentTitle	0x54
+_GUILD	MasterComment	0x70
+_GUILD	Booty	0x8c
+_GUILD	LastCrestRev	0x90
+_GUILD	CurCrestRev	0x94
+_GUILD	MercenaryAttr	0x98
+_GUILDCHEST	Slot	0x18
+_GUILDMEMBER	GuildID	0x18
+_GUILDMEMBER	CharID	0x1c
+_GUILDMEMBER	CharName	0x20
+_GUILDMEMBER	MemberClass	0x3c
+_GUILDMEMBER	CharLevel	0x3d
+_GUILDMEMBER	GP_Donation	0x40
+_GUILDMEMBER	JoinDate	0x44
+_GUILDMEMBER	Permission	0x54
+_GUILDMEMBER	Contribution	0x58
+_GUILDMEMBER	GuildWarKill	0x5c
+_GUILDMEMBER	GuildWarKilled	0x60
+_GUILDMEMBER	Nickname	0x64
+_GUILDMEMBER	RefObjID	0x80
+_GUILDMEMBER	SiegeAuthority	0x84
+_GUILDWAR	ID	0x18
+_GUILDWAR	WarType	0x1c
+_GUILDWAR	VictoryPointIndex	0x1d
+_GUILDWAR	LodgedGold	0x20
+_GUILDWAR	WarEndTime	0x24
+_GUILDWAR	Guild	0x34
+_GUILDWAR	Guild	0x38
+_GUILDWAR	PointGain	0x3c
+_GUILDWAR	PointGain	0x40
+_GUILDWAR	Data1	0x44
+_GUILDWAR	Data2	0x48
+_INVCOS	Slot	0x18
+_INVENTORY	Slot	0x18
+_INVENTORYFORAVATAR	Slot	0x18
+_INVENTORYFORLINKEDSTORAGE	Slot	0x18
+_ITEMQUOTATION	ID	0x18
+_ITEMQUOTATION	Service	0x1c
+_ITEMQUOTATION	AssocNPC	0x20
+_ITEMQUOTATION	RefItemID	0x24
+_ITEMQUOTATION	BaseQuot	0x28
+_ITEMQUOTATION	Quot_LB	0x2c
+_ITEMQUOTATION	Quot_UB	0x30
+_ITEMQUOTATION	BaseStockAmount	0x34
+_ITEMQUOTATION	FluctuateAmount	0x38
+_ITEMQUOTATION	CurStockAmount	0x3c
+_ITEMS	ID64	0x20
+_ITEMS	RefItemID	0x28
+_ITEMS	OptLevel	0x2c
+_ITEMS	Variance	0x30
+_ITEMS	Data	0x38
+_ITEMS	CreaterName	0x3c
+_ITEMS	MagParamNum	0x58
+_ITEMS	MagParam	0x60
+_ITEMS	MagParam	0x68
+_ITEMS	MagParam	0x70
+_ITEMS	MagParam	0x78
+_ITEMS	MagParam	0x80
+_ITEMS	MagParam	0x88
+_ITEMS	MagParam	0x90
+_ITEMS	MagParam	0x98
+_ITEMS	MagParam	0xa0
+_ITEMS	MagParam	0xa8
+_ITEMS	MagParam	0xb0
+_ITEMS	MagParam	0xb8
+_ITEMS	Serial64	0xc0
+_LOGEVENTCHAR	EventTime	0x18
+_LOGEVENTCHAR	EventID	0x28
+_LOGEVENTCHAR	Data1	0x2c
+_LOGEVENTCHAR	Data2	0x30
+_LOGEVENTCHAR	EventPos	0x34
+_LOGEVENTCHAR	strDesc	0x50
+_LOGEVENTITEM	EventTime	0x18
+_LOGEVENTITEM	ItemRefID	0x28
+_LOGEVENTITEM	dwData	0x2c
+_LOGEVENTITEM	TargetStorage	0x30
+_LOGEVENTITEM	Operation	0x31
+_LOGEVENTITEM	Slot_From	0x32
+_LOGEVENTITEM	Slot_To	0x33
+_LOGEVENTITEM	EventPos	0x34
+_LOGEVENTITEM	strDesc	0x50
+_LOGEVENTITEM	Serial64	0x70
+_LOGEVENTITEM	Gold	0x78
+_LOGEVENTSIEGEFORTRESS	FortressID	0x18
+_LOGEVENTSIEGEFORTRESS	EventTime	0x1c
+_LOGEVENTSIEGEFORTRESS	EventID	0x2c
+_LOGEVENTSIEGEFORTRESS	CharID	0x30
+_LOGEVENTSIEGEFORTRESS	Data1	0x34
+_LOGEVENTSIEGEFORTRESS	Data2	0x38
+_LOGEVENTSIEGEFORTRESS	strDesc	0x3c
+_LogSchedule	ID	0x18
+_LogSchedule	ServerType	0x1c
+_LogSchedule	ServerBodyID	0x38
+_LogSchedule	ScheduleDefine	0x3c
+_LogSchedule	ScheduleIdx	0x58
+_LogSchedule	Type	0x5c
+_LogSchedule	OccureTime	0x78
+_LOGSERVEREVENT	ID	0x18
+_LOGSERVEREVENT	EventTime	0x1c
+_LOGSERVEREVENT	ServerEventID	0x2c
+_LOGSERVEREVENT	LogType	0x30
+_LOGSERVEREVENT	strDesc	0x34
+_Memo	ID64	0x18
+_Memo	FromCharName	0x20
+_Memo	Message	0x3c
+_Memo	Date	0x58
+_Memo	Status	0x68
+_Memo	RefObjID	0x6c
+_OpenMarket	JID	0x18
+_OpenMarket	PersnalID	0x1c
+_OpenMarket	CharName16	0x20
+_OpenMarket	Status	0x3c
+_OpenMarket	RefItemID	0x40
+_OpenMarket	TidGroupID	0x44
+_OpenMarket	ItemClass	0x48
+_OpenMarket	ItemID	0x50
+_OpenMarket	SellCnt	0x58
+_OpenMarket	RegDate	0x5c
+_OpenMarket	EndDate	0x6c
+_OpenMarket	Price	0x80
+_OpenMarket	Deposit	0x88
+_OpenMarket	SellFee	0x90
+_OpenMarket	UseCash	0x98
+_OpenMarket	Serial64	0xa0
+_RentItemInfo	nItemDBID	0x18
+_RentItemInfo	nRentType	0x20
+_RentItemInfo	nCanDelete	0x24
+_RentItemInfo	nCanRecharge	0x26
+_RentItemInfo	PeriodBeginTime	0x28
+_RentItemInfo	PeriodEndTime	0x38
+_RentItemInfo	MeterRateTime	0x48
+_RentItemInfo	nPackingState	0x58
+_RentItemInfo	nPackingTime	0x5c
+_ServerEvent	ID	0x18
+_ServerEvent	CompletionValue	0x1c
+_ServerEvent	AchievementCondition	0x20
+_ServerEvent	ProgressCount	0x24
+_ServerEventReward	ServerEventID	0x18
+_ServerEventReward	RewardID	0x1c
+_ServerEventReward	RemainRewardTime	0x20
+_ShopItemStockQuantity	Service	0x18
+_ShopItemStockQuantity	Country	0x1c
+_ShopItemStockQuantity	RefShopGroupCodeName	0x20
+_ShopItemStockQuantity	RefPackageItemCodeName	0x3c
+_ShopItemStockQuantity	ConstStockQuantity	0x58
+_ShopItemStockQuantity	StockQuantity	0x5a
+_SiegeFortress	FortressID	0x18
+_SiegeFortress	GuildID	0x1c
+_SiegeFortress	TaxRatio	0x20
+_SiegeFortress	Tax	0x28
+_SiegeFortress	NPCHired	0x30
+_SiegeFortress	TempGuildID	0x34
+_SiegeFortress	Introduction	0x38
+_SiegeFortress	CreatedDungeonTime	0x54
+_SiegeFortress	CreatedDungeonCount	0x64
+_SiegeFortress	IntroductionModificationPermission	0x65
+_SiegeFortressBattleRecord	FortressID	0x18
+_SiegeFortressBattleRecord	CharID	0x1c
+_SiegeFortressBattleRecord	KillCount	0x20
+_SiegeFortressBattleRecord	KilledCount	0x24
+_SiegeFortressBattleRecord	RankUpDate	0x28
+_SiegeFortressBattleRecord	CurRank	0x38
+_SiegeFortressItemForge	FortressID	0x18
+_SiegeFortressItemForge	ItemRefID	0x1c
+_SiegeFortressItemForge	Amount	0x20
+_SiegeFortressItemForge	Finished	0x22
+_SiegeFortressItemForge	StartDate	0x24
+_SiegeFortressItemForge	FinishDate	0x34
+_SiegeFortressObject	ID	0x20
+_SiegeFortressObject	FortressID	0x24
+_SiegeFortressObject	OwnerGuildID	0x28
+_SiegeFortressObject	RefObjID	0x2c
+_SiegeFortressObject	HP	0x30
+_SiegeFortressObject	Region	0x34
+_SiegeFortressObject	PosX	0x38
+_SiegeFortressObject	PosY	0x3c
+_SiegeFortressObject	PosZ	0x40
+_SiegeFortressObject	Direction	0x44
+_SiegeFortressObject	OwnerLevel	0x48
+_SiegeFortressRequest	FortressID	0x18
+_SiegeFortressRequest	GuildID	0x1c
+_SiegeFortressRequest	RequestType	0x20
+_SiegeFortressStoneState	FortressID	0x18
+_SiegeFortressStoneState	GuildID	0x1c
+_SiegeFortressStoneState	AccumulateDamage	0x20
+_SIEGEFORTRESSSTRUCT	FortressID	0x20
+_SIEGEFORTRESSSTRUCT	OwnerGuildID	0x24
+_SIEGEFORTRESSSTRUCT	RefEventStructID	0x28
+_SIEGEFORTRESSSTRUCT	RefObjID	0x2c
+_SIEGEFORTRESSSTRUCT	HP	0x30
+_SIEGEFORTRESSSTRUCT	MakeDate	0x34
+_SIEGEFORTRESSSTRUCT	State	0x44
+_STATICAVATAR	CharID	0x18
+_STATICAVATAR	Param1	0x1c
+_TIMEDJOB	ID	0x18
+_TIMEDJOB	CharID	0x1c
+_TIMEDJOB	Category	0x20
+_TIMEDJOB	JobID	0x24
+_TIMEDJOB	TimeToKeep	0x28
+_TIMEDJOB	Data1	0x2c
+_TIMEDJOB	Data2	0x30
+_TIMEDJOB	Data3	0x34
+_TIMEDJOB	Data4	0x38
+_TIMEDJOB	Data5	0x3c
+_TIMEDJOB	Data6	0x40
+_TIMEDJOB	Data7	0x44
+_TIMEDJOB	Data8	0x48
+_TIMEDJOB	Serial64	0x50
+_TIMEDJOB	JID	0x58
+_TIMEDJOBFORPET	ID	0x18
+_TIMEDJOBFORPET	CharID	0x1c
+_TIMEDJOBFORPET	Category	0x20
+_TIMEDJOBFORPET	JobID	0x24
+_TIMEDJOBFORPET	TimeToKeep	0x28
+_TIMEDJOBFORPET	Data1	0x2c
+_TIMEDJOBFORPET	Data2	0x30
+_TIMEDJOBFORPET	Data3	0x34
+_TIMEDJOBFORPET	Data4	0x38
+_TIMEDJOBFORPET	Data5	0x3c
+_TIMEDJOBFORPET	Data6	0x40
+_TIMEDJOBFORPET	Data7	0x44
+_TIMEDJOBFORPET	Data8	0x48
+_TIMEDJOBFORPET	Serial64	0x50
+_TIMEDJOBFORPET	JID	0x58
+_TRAININGCAMP	ID	0x18
+_TRAININGCAMP	CreationDate	0x1c
+_TRAININGCAMP	Rank	0x2c
+_TRAININGCAMP	GraduateCount	0x30
+_TRAININGCAMP	EvaluationPoint	0x34
+_TRAININGCAMP	LatestEvaluationDate	0x38
+_TRAININGCAMP	CommentTitle	0x48
+_TRAININGCAMP	Comment	0x64
+_TRAININGCAMPBUFFSTATUS	CampID	0x18
+_TRAININGCAMPBUFFSTATUS	RecipientCharID	0x1c
+_TRAININGCAMPBUFFSTATUS	BuffSlotIdx	0x20
+_TRAININGCAMPBUFFSTATUS	DonorCharID	0x24
+_TRAININGCAMPBUFFSTATUS	StartingTime	0x28
+_TRAININGCAMPBUFFSTATUS	RemainBuffPoint	0x38
+_TRAININGCAMPBUFFSTATUS	BuffType	0x3c
+_TRAININGCAMPHONORRANK	Ranking	0x18
+_TRAININGCAMPHONORRANK	CampID	0x1c
+_TRAININGCAMPHONORRANK	Rank	0x20
+_TRAININGCAMPMEMBER	CampID	0x18
+_TRAININGCAMPMEMBER	CharID	0x1c
+_TRAININGCAMPMEMBER	RefObjID	0x20
+_TRAININGCAMPMEMBER	CharName	0x24
+_TRAININGCAMPMEMBER	JoinDate	0x40
+_TRAININGCAMPMEMBER	MemberClass	0x50
+_TRAININGCAMPMEMBER	CharJoinedLevel	0x51
+_TRAININGCAMPMEMBER	CharCurLevel	0x52
+_TRAININGCAMPMEMBER	CharMaxLevel	0x53
+_TRAININGCAMPMEMBER	HonorPoint	0x54
+_USER	UserJID	0x18
+_USER	CharID	0x1c

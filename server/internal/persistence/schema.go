@@ -572,11 +572,18 @@ type ColumnOffset struct {
 // FortressID 0x18 and Introduction 0x38 are now controls too, precisely because
 // they are the case the _CHAR ones could not see.
 //
-// The binder also writes a second per-column code (2 for Strength, 1 for
-// CharName16, 0xa for LastLogout). It is deliberately NOT modelled here: it is
-// not a width -- deltas give code 2 a width of 4 in only 71 of 121 cases, and
-// codes 84, 100 and 1000 exist -- and no use-site has been read. See
-// docs/protocol/db_bind_offsets.tsv, which records it without interpreting it.
+// The binder passes a second integer, which rounds 308-310 recorded beside each
+// offset as an uninterpreted "code". ROUND 311 WITHDREW IT: it is not
+// per-column data. EBX is pointed at that stack slot and the callee dereferences
+// EBX as a lookup KEY, comparing it against each node's key, so the integer
+// selects an entry in the table's own container -- every binder uses a different
+// global (_CHAR 0xd1fbe4, _CHARCOS 0xd1fcec, _ITEMS 0xd2042c, _GUILD 0xd2109c).
+// The published values were frequently the wrong stack slot as well: for _CHAR
+// the key slot is 0x20 while the decompiler's second variable was 0x2c.
+//
+// The offsets are unaffected and are verified twice over -- once from the
+// decompilation, once from raw disassembly, identical across all 50 tables the
+// assembly path covers.
 var ColumnOffsets = []ColumnOffset{
 	{"_ALLIEDCLANS", "Ally", 0x1c},
 	{"_ALLIEDCLANS", "Ally", 0x20},
