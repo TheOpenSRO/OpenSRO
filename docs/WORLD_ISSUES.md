@@ -7075,6 +7075,39 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-eightieth round: the hair says 0x341, and the alpha survives
+
+The RE tick for 2026-09-20 took the question the previous round's correction left standing --
+bit 0 of the `.bmt` flag word is used by shipped code on a correlation, not a citation -- and
+went at it from the data side rather than the binary side.
+
+**The character materials are an independent family, and they agree.** Every layer in
+`BMT_FORMAT.md`'s evidence table is scenery. `chinaman_fighter.bmt` has exactly two layers:
+`chinaman_body` at **`0x0340`** and `chinaman_hair` at **`0x0341`**. Bit 0 separates body from
+hair exactly as it separates bark from leaf, in a family that did not exist in the sample when
+the rule was written.
+
+**A hypothesis, formed and then killed by the measurement.** DXT1 is commonly said to lose its
+1-bit alpha when an engine takes it as BC1 -- which would have made the flag moot and explained
+the playtest's "hair looks like a solid block" in one stroke. `chinaman_fighter_hair.ddj` is
+indeed DXT1. Decoding it through this project's own reader and counting: **2,136 of 32,768
+texels are non-opaque, 6.52 %**. The alpha survives. The tidy explanation was wrong, and the
+count is what said so rather than a look at the picture.
+
+**So the chain is correct end to end**, which is the round's real result. The flag is read
+(`LAYER_FLAG_MASK` 0x40 set, so the word is trusted; `LAYER_FLAG_ALPHA` 0x1 set), the hair mesh
+names its material `chinaman_hair` and the layer is matched by name rather than by index, the
+mask is intact, and `_build_foliage_material` applies a scissor at 0.5 on full-resolution alpha.
+Nothing in that path explains a solid block.
+
+That **narrows** the playtest item instead of closing it: either the report predates a fix, or
+the player's dressed body takes a path the undressed material does not. A render is the honest
+next step -- a picture to show a human the geometry, now that the numbers have settled what the
+data says.
+
+Bit 0 is still inferred rather than cited. What would settle it is unchanged and was already
+written down: find where material+0x60 is tested. Round 279 found only its writers.
+
 ## Two-hundred-and-seventy-ninth round: the client ships its own source file names
 
 The RE tick for 2026-09-20 went looking for one dword and found a lever for the whole

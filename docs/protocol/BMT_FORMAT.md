@@ -128,9 +128,32 @@ no solid layer does. And the flag **draws a line the pixels cannot**: `blade_14`
 non-opaque yet is not an alpha layer, because that alpha is a graded gloss ramp rather than a
 cutout mask, and no threshold on "how transparent is this texture" can tell those apart.
 
-**Not yet confirmed against the client binary.** The evidence is a perfect correlation across ~25
-real layers in four unrelated real materials, plus the naming convention. Reading the flag out of
-the real material loader would settle it, and is worth doing.
+### The character materials say the same thing (2026-09-20, round 280)
+
+Every layer in the table above is scenery. Characters are an entirely separate material family,
+authored by different people for a different pipeline, and they agree:
+
+| Material | Layer | Flags | |
+|---|---|---|---|
+| `chinaman_fighter.bmt` | `chinaman_body` | `0x0340` | solid |
+| `chinaman_fighter.bmt` | `chinaman_hair` | **`0x0341`** | the hair cutout |
+
+`chinaman_adventurer.bmt` has the same two-layer shape. So bit 0 separates body from hair in
+exactly the way it separates bark from leaf, in a family nobody had checked when the rule was
+written.
+
+The hair texture backs it up as a measurement rather than an impression:
+`chinaman_fighter_hair.ddj` is **DXT1**, and decoding it through this project's own reader leaves
+**6.52 % of its 32,768 texels non-opaque** -- a real cutout mask, not a gloss ramp.
+
+That last number also disproved a hypothesis worth recording: DXT1 is often said to lose its
+1-bit alpha when handed to an engine as BC1, which would have made the flag moot. It does not --
+measured, not assumed.
+
+**Not yet confirmed against the client binary.** The evidence is now a perfect correlation across
+~25 scenery layers in four unrelated materials plus the character family, and the naming
+convention. Reading the flag out of the real material loader would still settle it, and is worth
+doing: the writers are all located (see below), the reader is not.
 
 ### What the client binary confirms
 

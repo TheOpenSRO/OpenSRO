@@ -5290,6 +5290,16 @@ object_loader.gd already uses bit 0 (LAYER_FLAG_ALPHA behind LAYER_FLAG_MASK)
 with a pixel fallback; only bmt_reader.gd's local name says `unknown`. Second
 instance of "grep docs/protocol before the dump". The open question is
 unchanged: where material+0x60 is TESTED.
+Round 280 (docs): the .bmt flag word's bit 0 holds in the CHARACTER material
+family too -- chinaman_fighter.bmt is body 0x0340 / hair 0x0341, the same
+split bit 0 makes between bark and leaf, in a family nobody had checked when
+the rule was written. Measured, not inferred: the hair texture is DXT1 and
+decodes to 6.52 % non-opaque texels, a real cutout mask. That also DISPROVED
+the hypothesis this tick started from -- that Godot's BC1 path drops the
+1-bit alpha and made the flag moot. It does not. The whole cutout chain for
+hair is correct end to end (flag read, layer matched by name, mask intact,
+scissor shader applied), which NARROWS playtest item 14 rather than fixing
+it: nothing in that chain explains a solid block. No shipped value changed.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
