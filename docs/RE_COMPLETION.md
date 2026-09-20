@@ -6266,6 +6266,44 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 335 (a naming lever closed as a measured negative, and 14 emitters found
+on the way): ROUND 334 ENDED WITH 55 CLIENT HANDLERS BLOCKED BECAUSE THE SERVER
+NAME IS ITSELF A PLACEHOLDER -- GObjPC_HandleGuildMsg_0fb is a subsystem and an
+opcode. Naming those 55 unlocks both sides, 110 functions from one lever, so the
+obvious route was the refusal codes each handler raises: error_codes.md maps a
+code to the client's own message. TESTED AND IT DOES NOT DELIVER. Only 9 of 58
+placeholder-named handlers push a code at all, and NONE of the nine is decisive.
+THE FIRST SWEEP WAS BROKEN AND SAID SO ITSELF. It reported 4 of 58 and three
+different guild handlers all raising the same refusal -- but the probe check
+against Item_HandleUseItem, the one function whose refusals were READ BY HAND in
+round 328, came back None. The cause: between `mov ecx,0xb04c` and the call sits
+`mov esi,edi`, and the matcher reset on any intervening instruction. With a
+lookahead it finds 0x1835, 0x183e, 0x185f and 0x2 -- exactly the hand-read set --
+and 126 sites across 68 functions. THE 4-OF-58 RESULT WAS NOISE, and without a
+hand-read control it would have been published as a thin-lever negative. WHY THE
+LEVER FAILS, MEASURED RATHER THAN ASSERTED: **56 message names cover 157 distinct
+codes.** UIIT_MSG_FORT_STRUCTURE_ACTION_ERROR_06 alone covers SIXTEEN. The name is
+the TEXT THE PLAYER SEES, not a label for the refusal, so for a quarter of the
+table it cannot distinguish what went wrong -- which is exactly why
+error_attributed_functions.md's standing rule ("an attribution, not a name") is
+right, and it is now measured instead of repeated. THE PAYOFF CAME FROM THE SAME
+SWEEP ANYWAY: error_codes.md has long listed FIFTEEN refusal codes with no client
+case, without saying who raises them. **Fourteen now have a named emitter** --
+0x3c32 is FleaMarket_HandleOpenStall, 0x480f is JobGuild_HandleWithdraw, 0x1403
+the special-command handler, and so on; 0x1811 is pushed somewhere this shape
+does not reach and stays unattributed rather than guessed. AN INDEPENDENT
+REPRODUCTION FELL OUT: the sweep finds exactly 21 codes >= 0x100 that no client
+case names, and that page says the fifteen are fifteen "and not twenty-one"
+because six lookalikes are handled after all. Two methods, different days, same
+membership. TWO DISAGREEMENTS RECORDED RATHER THAN SMOOTHED: this sweep also
+pushes 0x0801, which is on neither list, unresolved; and 0x4828 is attributed to
+JobGuild_HandleWithdraw where jobs.md records it as the job-JOIN refusal -- same
+subsystem, opposite side of the action, not settled.
+
+**What moved:** no shipped value. A naming lever closed with a number instead of
+an opinion, 14 of 15 orphan refusal codes attributed, and a caveat measured on a
+table this project reasons from.
+
 Round 334 (12 client handler names, and THREE of my own counts withdrawn):
 PAYING THE DEBT ROUND 331 FLAGGED -- "a naive count says 101 unnamed client
 handlers sit opposite a named server handler, but the 2026-09-17 entry measured

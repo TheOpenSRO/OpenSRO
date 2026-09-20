@@ -885,6 +885,76 @@ number is fifteen and not twenty-one.
 redoing it: `0x1806` drops out, and `0x1403`, `0x480f` and `0x4828` appear. So
 the old list was not merely ill-derived, it was wrong.
 
+### Who raises the fifteen (round 335)
+
+The section above says which codes the client has no message for. It did not say
+which server function pushes them, and that is the half that gives them meaning:
+a code with no text is still identified by the action it refuses.
+
+Swept by matching the refusal shape in the server disassembly -- `push <code>`,
+then `mov ecx,<reply opcode>`, then the call -- and attributing each site to its
+enclosing function by the dump's own boundaries. **126 sites across 68
+functions.**
+
+| code | pushed by |
+|---|---|
+| `0x1403` | `GObjPC_MsgHandler_SpecialCommand::FUN_0051de90` |
+| `0x1807` | `FUN_00526090` |
+| `0x1811` | **not found by this sweep** |
+| `0x181d` | `CGObjPC::vslot_358` |
+| `0x1c0d` | `FUN_005107c0` |
+| `0x1c0e` | `FUN_00511910` |
+| `0x3c0f` | `FleaMarket_HandleBuyItem`, `GObjPC_HandleStallMsg_0b5` |
+| `0x3c2a` | `FUN_005161b0`, `GObjPC_HandleStallMsg_0b2` |
+| `0x3c32` | `FleaMarket_HandleOpenStall` |
+| `0x3c33` | `FUN_00516270` |
+| `0x480f` | `JobGuild_HandleWithdraw` |
+| `0x4828` | `JobGuild_HandleWithdraw`, `GObjPC::CGObjPC___AsyncQuerySucceeded` |
+| `0x4c33` | `AQ_GuildQuery::FUN_005c7f40` |
+| `0x6006` | `CGObjPC::vslot_358` |
+| `0x6008` | `GObjPC::FUN_0052b040` |
+
+**Fourteen of fifteen.** `0x1811` is pushed somewhere this shape does not reach --
+through a callee, or with the code in a register -- so it stays unattributed
+rather than guessed at.
+
+**The sweep reproduces this page's own arithmetic independently.** It finds
+exactly **21** codes at or above `0x100` that no client case names, and this page
+says the fifteen are fifteen "and not twenty-one" because six lookalikes
+(`0x6415`/`0x6416`, `0x8006`-`0x800a`) are handled after all. The two counts were
+reached by different methods on different days and agree on the membership, with
+one exception below.
+
+**One disagreement, recorded rather than smoothed over:** this sweep also pushes
+`0x0801` (from `GObjPC::FUN_0050eff0`), which is not on the fifteen and not among
+the six. Either the window here is wider and caught a real refusal the earlier
+pass missed, or it is a false positive from a `push` that is not an error code.
+Unresolved.
+
+**And `0x4828` half-corroborates, half-conflicts.** `jobs.md` records it as the
+job-JOIN refusal for a kind outside {1,2,3}, read in round 273. This sweep
+attributes it to `JobGuild_HandleWithdraw`. Both are job-guild code, so the
+subsystem agrees; which side of join/withdraw is right is not settled here, and
+the handler's own name may simply be approximate.
+
+## A message name does not identify a code
+
+Measured round 335, because this page is used to give a code its meaning and for
+a quarter of the table it cannot.
+
+**56 message names cover 157 distinct codes.** The worst are
+`UIIT_MSG_FORT_STRUCTURE_ACTION_ERROR_06` (**16** codes),
+`..._ACTION_ERROR_01` (11), `UIIT_MSG_FORT_NOT_USE_ITEM` (7) and
+`UIIT_MSG_GUILDERR_PERMISSION_DENIED` (6). The client genuinely shows one string
+for all of them, so the name is the *text the player sees*, not a label for the
+refusal.
+
+The join in this page is therefore sound in one direction only: a code gives you
+its message, but a message does not give you back the code, and for those 157 the
+message does not distinguish what actually went wrong. Anything reasoning
+backwards from a name -- including any attempt to NAME a function from the codes
+it raises -- has to check the code's own uniqueness first.
+
 **One of the fifteen is corroborated from an unrelated reading.** `0x4828` is
 what `docs/protocol/jobs.md` records the job-join handler returning for a kind
 outside {1,2,3}, read in round 273 from a different function on a different day.
