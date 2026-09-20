@@ -5683,6 +5683,27 @@ never registered. _ChestInfo corroborates twice: the warehouse work already
 cited its binder at 0x8586e0 and this sweep found DB_Bind__ChestInfo there
 independently. So 54 is NOT the runtime table count; the binders say at least 59.
 
+Round 308 (409 offsets + 4 tests): THE OTHER HALF OF EVERY BINDING. Each binder
+writes, per column, the name then a struct OFFSET then a second code. All 409
+columns now have offsets (docs/protocol/db_bind_offsets.tsv,
+persistence.ColumnOffsets/OffsetOf/ColumnAt), giving the reverse lookup this
+project keeps needing: ColumnAt("_CHAR", 0x86) = RemainHwanCount. THE FIRST
+PARSE PASSED BOTH CONTROLS AND WAS STILL WRONG -- taking the first assignment
+after each name gave Strength 0x74 and RemainHwanCount 0x86, both exact against
+independently recorded values, but put PosX/PosY/PosZ at 0x5 because those three
+emit the assignments in the opposite order; their "type codes" 152/156/160 were
+0x98/0x9c/0xa0, the offsets themselves. What caught it was a STRUCTURAL check --
+no two columns of a table may share an offset -- not a control. Controls confirm
+the cases you thought of; a structure constrains the ones you did not. The fix
+picks the offset variable per function as the one whose values are DISTINCT
+across bindings. Re-run: 409 offsets, zero collisions. Round 307's Name*N guess
+is now PROVEN with its stride: _ITEMS MagParam is 12 rows at 0x60..0xb8, an
+8-byte stride, right after the MagParamNum count at 0x58, and a test asserts the
+two independent extractions agree on multiplicity. The second per-column code is
+recorded and NOT interpreted: it is not a width (code 2 gives width 4 in 71 of
+121 cases, code 0 in 56 of 66, and codes 84/100/1000 exist) and no use-site has
+been read.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

@@ -7075,6 +7075,57 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-eighth round: the offsets, and a parse that passed its controls while being wrong
+
+Round 307 named every runtime column and left the other half of each binding
+unread. It is right there:
+
+	FUN_00401fc0("Strength", 8);   // the column name
+	<offvar>  = 0x74;              // the struct offset
+	<typevar> = 2;                 // a second code
+	FUN_00862e40();                // commit
+
+**All 409 columns now have an offset**, in `db_bind_offsets.tsv` and
+`persistence.ColumnOffsets`, with `OffsetOf` and `ColumnAt`. The reverse lookup
+is the direction this project keeps needing: an offset turns up in a decompiled
+function and the question is which column it is.
+`ColumnAt("_CHAR", 0x86)` answers `RemainHwanCount`.
+
+### The first parse passed both controls and was still wrong
+
+Taking the first assignment after each name gave `Strength` = `0x74` and
+`RemainHwanCount` = `0x86` — **both controls, exact, from unrelated earlier
+rounds**. It was wrong anyway. `PosX`, `PosY` and `PosZ` all came out at
+**`0x5`**, because those three emit the two assignments in the opposite order,
+and their "type codes" were 152, 156 and 160 — which is `0x98`, `0x9c`, `0xa0`,
+a consecutive 4-byte float triple, the offsets themselves.
+
+What caught it was not a control but a **structural** check: *no two columns of
+one table may share an offset*. Two pairs collided out of 409, and both were
+this. Controls confirm the cases you thought of; a structure constrains the ones
+you did not.
+
+The fix identifies the offset variable per function as **the one whose values
+are distinct across bindings** — an offset cannot repeat, a type code must.
+Re-run: 409 offsets, **zero collisions**, and PosX/PosY/PosZ land on
+`0x98`/`0x9c`/`0xa0`.
+
+### Round 307's `Name*N` guess is now proven, with its stride
+
+`_ITEMS` `MagParam` is **twelve** rows at `0x60, 0x68 … 0xb8` — an exact 8-byte
+stride — sitting immediately after `MagParamNum` at `0x58`. A count field in
+front of the array it counts. Two extractions made on different days by
+different scripts agree on the multiplicity, and a test now asserts that
+agreement for every `Name*N` column.
+
+### The second code is recorded and NOT interpreted
+
+It is tempting to call it a type or a width. It is not a width: sorting each
+table by offset and taking deltas gives code 2 a width of 4 in only **71 of 121**
+cases and code 0 in **56 of 66**, and codes 84, 100 and 1000 exist. No use-site
+has been read, so the TSV carries the number and says plainly that it means
+nothing yet.
+
 ## Three-hundred-and-seventh round: 409 columns, and 54 was never the table count
 
 Round 306 ended by noticing the `DB_Bind__<TABLE>` family in passing. It is the

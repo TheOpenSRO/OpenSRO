@@ -245,9 +245,13 @@ rather than "every table it touches".
   (round 307)**: every one of the 56 `DB_Bind__<TABLE>` binders declares its
   table and then each column **by name**, so `docs/protocol/db_bind_columns.tsv`
   now carries **409 columns across 59 tables** (`persistence.BoundColumns`).
-  What remains is the column ORDER-to-struct-offset map, which the binder also
-  carries and this pass did not extract, and the three tables whose names are
-  built at runtime (`Ally*8` and friends — see the TSV header).
+  **The offsets followed in round 308**: `docs/protocol/db_bind_offsets.tsv` has
+  all **409 columns with their struct offsets** (`persistence.ColumnOffsets`,
+  `OffsetOf`, `ColumnAt`), controlled against `Strength` 0x74 and
+  `RemainHwanCount` 0x86 — both recorded independently by earlier rounds — and
+  structurally checked: no `(table, offset)` pair repeats. What remains is the
+  second per-column code the binder writes, which is **recorded but not
+  interpreted**: it is not a width, and no use-site has been read.
 - **The parameters of most procedures**, beyond how many there are. The call
   literal is `(%d, %d, %d)`; what each `%d` is means reading the caller's
   argument set-up. **Two are now partly traced** -- see below -- out of 72.

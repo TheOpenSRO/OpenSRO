@@ -1,6 +1,7 @@
 package persistence
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -205,5 +206,97 @@ func TestBoundColumnsTablesAreAccountedFor(t *testing.T) {
 		if _, ok := BoundColumns[table]; !ok {
 			t.Errorf("%q is recorded as a literal-named table but has no binder entry", table)
 		}
+	}
+}
+
+// The offsets are trustworthy only because of these two checks; both are the
+// reason the FIRST extraction was thrown away.
+func TestColumnOffsetsMatchIndependentlyRecordedOnes(t *testing.T) {
+	for _, tc := range []struct {
+		column string
+		want   int
+	}{
+		{"Strength", 0x74},        // recorded from GObjPC_InitStats' graph
+		{"RemainHwanCount", 0x86}, // recorded from the berserk economy
+		{"PosX", 0x98},            // the float triple, consecutive by 4
+		{"PosY", 0x9c},
+		{"PosZ", 0xa0},
+	} {
+		got, ok := OffsetOf("_CHAR", tc.column)
+		if !ok {
+			t.Errorf("_CHAR.%s has no offset", tc.column)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("_CHAR.%s is at 0x%x, want 0x%x", tc.column, got, tc.want)
+		}
+	}
+}
+
+// No two columns of one table may share an offset. This is what caught the
+// first extraction, which read the first assignment after each column name and
+// so put PosX, PosY and PosZ all at 0x5 -- those three emit the offset and the
+// type code in the opposite order to every other column.
+func TestNoTwoColumnsShareAnOffset(t *testing.T) {
+	seen := map[string]string{}
+	for _, c := range ColumnOffsets {
+		key := c.Table + "\x00" + string(rune(c.Offset))
+		if prev, dup := seen[key]; dup {
+			t.Errorf("%s: %s and %s both claim offset 0x%x", c.Table, prev, c.Column, c.Offset)
+		}
+		seen[key] = c.Column
+	}
+}
+
+// The two extractions must agree, including on MULTIPLICITY.
+//
+// BoundColumns (round 307) writes a runtime-suffixed column as `Name*N`, from
+// counting how many times the binder emits the base name. ColumnOffsets (round
+// 308) has N separate rows for it, one per offset. The two were read on
+// different days by different scripts, so their agreeing on N is a real check --
+// and it is how the `Name*N` guess stopped being a guess: _ITEMS MagParam is 12
+// rows at 0x60..0xb8, an exact 8-byte stride, immediately after MagParamNum at
+// 0x58. The count field sits in front of the array it counts.
+func TestOffsetsAgreeWithBoundColumns(t *testing.T) {
+	for table, cols := range BoundColumns {
+		want := map[string]int{}
+		for _, name := range cols {
+			base, n := name, 1
+			if i := strings.Index(name, "*"); i >= 0 {
+				base = name[:i]
+				v, err := strconv.Atoi(name[i+1:])
+				if err != nil {
+					t.Errorf("%s: cannot read the repeat count in %q", table, name)
+					continue
+				}
+				n = v
+			}
+			want[base] += n
+		}
+		got := map[string]int{}
+		for _, c := range ColumnOffsets {
+			if c.Table == table {
+				got[c.Column]++
+			}
+		}
+		for base, n := range want {
+			if got[base] != n {
+				t.Errorf("%s.%s: BoundColumns says %d, ColumnOffsets has %d",
+					table, base, n, got[base])
+			}
+		}
+		for base := range got {
+			if _, ok := want[base]; !ok {
+				t.Errorf("%s.%s has an offset but is not in BoundColumns", table, base)
+			}
+		}
+	}
+}
+
+// The reverse lookup is the one this project keeps needing: an offset appears in
+// a decompiled function and the question is which column it is.
+func TestColumnAtResolvesARecordedOffset(t *testing.T) {
+	if got, ok := ColumnAt("_CHAR", 0x86); !ok || got != "RemainHwanCount" {
+		t.Errorf("ColumnAt(_CHAR, 0x86) = %q/%v, want RemainHwanCount", got, ok)
 	}
 }

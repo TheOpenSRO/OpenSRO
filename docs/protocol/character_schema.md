@@ -104,3 +104,19 @@ A persistence design. srrevamp does not use this schema and nothing here says it
 should. The value is that every field on `Character` is now either matched to
 the engine's own name or recorded as a deliberate divergence, and a test makes
 the next field added answer the same question.
+
+
+## Where each column lives in the record (round 308)
+
+`CharData_BindDBColumns` binds every column to a struct offset, and
+`docs/protocol/db_bind_offsets.tsv` now carries all of them. The ones this
+project had already recovered from unrelated work land exactly:
+
+| column | offset | recovered earlier by |
+|---|---|---|
+| `Strength` | `+0x74` | `GObjPC_InitStats`' stat graph |
+| `RemainHwanCount` | `+0x86` | the berserk economy |
+| `PosX` / `PosY` / `PosZ` | `+0x98` / `+0x9c` / `+0xa0` | — (a 4-byte float triple) |
+
+That makes the reverse lookup cheap, which is the direction this project keeps
+needing: `persistence.ColumnAt("_CHAR", 0x86)` answers `RemainHwanCount`.

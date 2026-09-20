@@ -17,6 +17,10 @@ independently.
 **And the binders give the full column list the pool cannot.** See
 `docs/protocol/db_bind_columns.tsv` — 56 binders, 409 columns, with the `_CHAR`
 control landing exactly on `character_schema.md`'s 42 plus the key `CharID`.
+**Round 308 added the struct offsets** (`db_bind_offsets.tsv`), which also
+settled the `Name*N` question: `_ITEMS` `MagParam` is twelve rows at
+`0x60`–`0xb8`, an exact 8-byte stride, directly after the `MagParamNum` count
+field at `0x58`.
 
 Extracted into `server/internal/persistence` (`ColumnPool`, `TableColumns`,
 `SchemaTableOrder`), with tests that would catch a regenerated pool losing a
