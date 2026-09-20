@@ -814,31 +814,48 @@ legitimate — a code the client has no message for cannot be named here, and
 `0x38xx` is now a proven example of exactly that.
 
 
-## Thirteen codes the server refuses with have no message at all (round 323)
+## RETRACTED: "thirteen codes the server refuses with" (round 323, withdrawn round 325)
 
-The table above is the CLIENT's side. Asking the other one -- which codes does
-the server actually hand out? -- finds a set the client cannot render.
+Round 323 claimed thirteen codes -- `0x1806`, `0x1807`, `0x1811`, `0x181d`,
+`0x1c0d`, `0x1c0e`, `0x3c0f`, `0x3c2a`, `0x3c32`, `0x3c33`, `0x4c33`, `0x6006`,
+`0x6008` -- are refusals the server sends and the client cannot render. **The
+method was unsound and the claim is withdrawn.**
 
-`FUN_004e7250` is the refusal sender, with **256 call sites**. Of the codes
-passed to it as literals, thirteen appear as a `case` **nowhere** in the
-decompiled client:
+It rested on grepping the decompiled C for `FUN_004e7250(0x...)` and reading the
+argument as an error code. `FUN_004e7250` is not a refusal sender. It is a
+generic two-field reply helper:
 
-	0x1806  0x1807  0x1811  0x181d
-	0x1c0d  0x1c0e
-	0x3c0f  0x3c2a  0x3c32  0x3c33
-	0x4c33  0x6006  0x6008
+	FUN_004e7250(opcode):            ; opcode arrives in ECX
+	    msg = this->slot_0x278(opcode)
+	    append two words from the frame
+	    this->slot_0x27c(msg)
 
-**These are holes inside mapped families, not unmapped families.** In the
-storage range the client names `0x1810 STRGERR_HIGHER_LEVEL_REQUIRED`,
-`0x1812 STRGERR_LOCKED_BY_OTHER_ONE` and `0x181e STRGERR_BUSY`, while `0x1806`,
-`0x1807`, `0x1811` and `0x181d` sit between them with nothing. So a player who
-triggers one of those refusals is shown whatever the dispatcher's default does,
-not a message about what went wrong.
+and the error code is one of the appended words, arriving in a **different**
+register. At the very call site that produced `0x1806`, the disassembly reads:
 
-`0x8006`-`0x800a` looked like the same thing and are not: they have cases in a
-different client file, so only the thirteen above are genuinely unrenderable.
+	4f0d1a  mov ecx,0xb034     <- the REPLY OPCODE, the actual argument
+	4f0d19  push eax           <- the payload
+	4f0d25  call 0x4e7250
 
-### And this table is exactly reproducible (checked, round 323)
+Ghidra rendered that call as `FUN_004e7250(0x1806)`, naming a payload value as
+the argument. Across call sites it resolves sometimes to the opcode and
+sometimes to the payload, so the grep collected a **mixture** -- which the three
+impossible values in round 323's own output (`0x3`, `0x5`, `0xb`) should have
+flagged at the time and did not.
+
+**What survives.** These values are not valid reply opcodes (replies are
+`0xbXXX`), and they sit inside families whose neighbours are named errors, so
+they are *plausibly* error codes. That is where the evidence stops. Whether the
+server emits them, and whether the client can render them, is **not
+established**.
+
+**The sound method**, for whoever picks this up: read the registers per call
+site rather than the decompiled argument. A first pass over 38 resolvable sites
+finds 19 distinct ECX values of which **16 are `0xbXXX`**, confirming ECX is the
+reply opcode; the three that are not (`0x3156`, `0x34a8`, `0x34aa`) are worth a
+look on their own.
+
+### This table is exactly reproducible (checked, round 323)
 
 `recover_error_codes.py` was re-run against `sro_client.exe` and produced **605
 unambiguous codes and 9 category-dependent ones**, matching this page row for

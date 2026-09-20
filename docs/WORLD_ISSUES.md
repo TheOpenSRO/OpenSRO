@@ -7075,6 +7075,62 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-twenty-fifth round: round 323 was wrong, and the function it rested on is now named
+
+Round 324's next probe was "take one named handler and recover its payload", so
+this round opened `Item_HandleUseItem` (real opcode `0x04c`). The payload is not
+what it found.
+
+Four instructions into the handler:
+
+	5109de  mov ecx,0xb04c        <- the REPLY OPCODE
+	5109e5  call 0x4e7250
+
+**`0xb04c` is a reply opcode, not an error code** -- and round 323 had just
+built a finding on the premise that `FUN_004e7250` is "the refusal sender" whose
+argument is a refusal code. Reading it settles the matter:
+
+	FUN_004e7250(opcode):            ; opcode in ECX
+	    msg = this->slot_0x278(opcode)
+	    append two words from the caller's frame
+	    this->slot_0x27c(msg)
+
+It is a **generic two-field reply helper**. The error code is one of the two
+appended words and arrives in a *different* register. At `0x51170f` the
+composite-item handler sets `ebp = 0x18c6` (PREMIUM_USE_OVER) and
+`ecx = 0xb15f` (the reply opcode) before calling it -- both, in different
+registers.
+
+### Why round 323's list is withdrawn
+
+Its thirteen codes came from grepping the decompiled C for
+`FUN_004e7250(0x...)`. At the very call site that produced `0x1806` the
+disassembly reads `mov ecx,0xb034` -- Ghidra had named a **payload** value as
+the argument. Across sites it resolves sometimes to the opcode and sometimes to
+the payload, so the grep collected a mixture.
+
+**The evidence was in round 323's own output and I explained it away.** The list
+included `0x3`, `0x5` and `0xb`, which I dismissed as "not error codes, my grep
+caught other arguments" -- when the right reading was that the extraction could
+not tell arguments apart at all, and therefore could not be trusted for the rest
+either.
+
+What survives is weaker and honest: those values are not valid reply opcodes
+(replies are `0xbXXX`) and they sit among named errors, so they are *plausibly*
+error codes. Whether the server emits them is **not established**.
+
+### What the round leaves behind
+
+`FUN_004e7250` filed as `Msg_SendTwoFieldReply`, with a warning at the row that
+Ghidra's argument for it is unreliable -- so the next person does not repeat the
+sweep. And the sound method, partly run: reading registers per call site over 38
+resolvable sites gives 19 distinct ECX values of which **16 are `0xbXXX`**,
+confirming ECX is the opcode. The three that are not -- `0x3156`, `0x34a8`,
+`0x34aa` -- are a loose end worth its own look.
+
+The use-item payload itself is still unread. Chasing a wrong premise cost the
+probe, which is the honest accounting of this tick.
+
 ## Three-hundred-and-twenty-fourth round: how far the protocol actually is from real
 
 `SYSTEMS.md` has carried **"opcode coverage vs the real space is unmeasured"**
