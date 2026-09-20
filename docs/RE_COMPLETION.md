@@ -6266,6 +6266,40 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 342 (the vocabulary lever generalised, with the guard it needs): ROUND 341
+RECOVERED ONE VOCABULARY BY HAND; THE SHAPE GENERALISES. A call target with many
+sites whose last pushed immediate varies IS a vocabulary, so it was swept across
+the whole disassembly -- 23,424 call targets -- WITH ItemEventLog_Record AS THE
+CONTROL. It came back at 43 codes / 49 sites, matching round 341's independent
+count exactly, which is what licensed the rest. THE BEST NEW HIT: 0x00466f90,
+84 sites, **56 distinct kinds**, 75 callers, and it CALLS GameEventLog_FormatRecord
+-- which is what places it in that family rather than the item one. Named
+GameEventLog_Record, the character/world sibling of ItemEventLog_Record, and its
+kinds are named by their already-recovered callers: 0x09 CGame__EnterWorld, 0x16
+GObjPC_SetLevel, 0x17 GObjPC_GainExpAndLevel, 0x18/0x19 the Str/Int handlers,
+0x1a Mastery_LevelUp, 0x3d-0x55 the guild-job state machine, 0x67-0x70 the
+academy, 0xd5/0xd6 the pet classes, 0xef the battle arena. A SECOND ENTRY POINT
+SHARES THE KIND SPACE -- 0x00467050, 29 sites, 20 kinds, the same 0x3d/0x3e/0x44/
+0x68/0x69/0x6a from the same callers -- AND IS LEFT UNNAMED, because both take
+their object in ESI and 0x467050 shows no stack parameters at all, so what
+distinguishes them is unsettled and a name would claim it. THE GUARD THE LEVER
+NEEDS, FOUND BY ITS OWN TOP HIT BEING WRONG: CGameServer::FUN_00964760 has 128
+distinct immediates across 135 sites, nearly ONE PER SITE, running 43 .. 4730.
+Those are __LINE__ values -- the function takes IsDebuggerPresent, __vsnprintf_s
+and __CxxThrowException_8, so it is an assert reporter whose callers pass their
+source line. NOT a vocabulary, and not named either, since it carries no string
+of its own. So the lever needs two cheap guards: **one code per site is a
+warning, not a win** (a real vocabulary REUSES codes across callers -- 0x9f from
+three socket functions, 0x50 from two gold paths), and **check the value range**
+(line numbers spread over thousands, event kinds cluster in a byte). Four more
+candidates are listed unexamined in event_log.md: AQ_Siege 0x00456ec0 (29 codes),
+0x005c80a0 (23), 0x004b3570 (20), 0x0063d4a0 (15).
+
+**What moved:** no shipped value. A one-off technique turned into a swept lever
+with a control and two stated guards, a 56-kind character/world event vocabulary
+recovered with per-kind evidence, and one name filed; two functions deliberately
+left unnamed for want of evidence.
+
 Round 341 (the fifty-site lead, taken properly): ROUND 340 REFUSED TO LABEL
 0x00468a80's call sites because Ghidra's argument order contradicted them, and
 wrote down the next step -- read the sites in srgs.asm and settle which operand

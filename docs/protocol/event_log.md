@@ -136,3 +136,57 @@ from disassembly.
 
 So the next step for this lead is to read the call sites in `srgs.asm` and settle
 which operand is the kind, before any of the fifty is labelled.
+
+## The character/world vocabulary, and the sweep that found it (round 342)
+
+Round 341 recovered the item-event kinds by hand. The *shape* generalises: a call
+target with many sites whose last pushed immediate varies is a vocabulary. Swept
+across the whole disassembly, with `ItemEventLog_Record` as the control — it came
+back at **43 codes / 49 sites**, matching round 341's independent count exactly.
+
+`0x00466f90` is now **`GameEventLog_Record`**: 84 sites, **56 distinct kinds**, 75
+callers, and it calls `GameEventLog_FormatRecord`, which is what places it in this
+family rather than the item one. Kinds are named by their callers, all
+already-recovered names:
+
+| kind | raised by | |
+|---|---|---|
+| `0x09` | `CMainProcess::CGame__EnterWorld` | entering the world |
+| `0x16` | `GObjPC::GObjPC_SetLevel` | level set |
+| `0x17` | `GObjPC::GObjPC_GainExpAndLevel` | exp gain / level up |
+| `0x18`, `0x19` | `GObjPC_HandleIncreaseStr`, `GObjPC_HandleIncreaseInt` | stat spend |
+| `0x1a` | `Mastery_LevelUp` | mastery raise |
+| `0x3d`–`0x55` | `trs_sm_guildjob::*`, `trs_wait_response::*` | the guild-job state machine |
+| `0x5d`, `0x5f` | `GObjPC::CGObjPC___AsyncQuerySucceeded` | async DB results |
+| `0x67`–`0x70` | `TrainingCamp_RequestOpenJob`, `TrainingCamp_SendOpenResult`, `trs_sm_trainingcampjob::*` | academy |
+| `0xd5`, `0xd6` | `CGObjCOS_SilkPet::vslot_368`, `CGObjCOS_GoldPet::OffsetExpPoint` | pets |
+| `0xd9`, `0xdb` | `CGItemExpendable::SetEngagedCOSforOpenMarket`, `::vslot_328` | open-market COS |
+| `0xea` | `FLAG_WORLD_EVENT_HANDLERS::OnDea…`, `CMainProcess::*` | world event flags |
+| `0xef` | `CBattleArenaInfoFlag::*`, `CMainProcess::*` | battle arena |
+| `0xf4` | `GObjPC_HandleCallUserMsg_51a` | call-user |
+
+**A second entry point shares the kind space.** `0x00467050` (29 sites, 20 kinds)
+also calls `GameEventLog_FormatRecord`, and its kinds — `0x3d`, `0x3e`, `0x44`,
+`0x68`, `0x69`, `0x6a` — appear in `GameEventLog_Record`'s list too, from the same
+guild-job and training-camp callers. **It is left unnamed**: both functions take
+their object in ESI and `0x467050` shows no stack parameters at all, so what
+distinguishes the two is not settled, and a name would have to claim it.
+
+## The guard this lever needs
+
+The sweep's top hit by raw count was **not** a vocabulary. `CGameServer::FUN_00964760`
+has 128 distinct immediates across 135 sites — nearly one per site — and they run
+**43 … 4730**. Those are `__LINE__` values: the function takes `IsDebuggerPresent`,
+`__vsnprintf_s` and `__CxxThrowException_8`, so it is an assert/fatal reporter
+whose callers pass their source line. It carries no string of its own, so it is
+**not named here** either.
+
+So the lever needs two guards, both cheap:
+
+- **one code per site is a warning, not a win** — a real vocabulary reuses codes
+  across callers (`0x9f` from three socket functions, `0x50` from two gold paths);
+- **check the value range** — line numbers spread over thousands, event kinds
+  cluster in a byte.
+
+Other candidates the sweep surfaced, unexamined: `0x00456ec0` (`AQ_Siege`, 29
+codes), `0x005c80a0` (23), `0x004b3570` (20), `0x0063d4a0` (15).
