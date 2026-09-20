@@ -3609,6 +3609,25 @@ func _load_npc_tables() -> void:
 ## offset: NPC models vary a great deal in size (the same reason the monster
 ## labels measure their skeleton), and one number puts a label through a
 ## tall NPC's face and far above a short one.
+## Puts (or replaces) the local player's name plate, the same one every other
+## entity carries.
+##
+## The guild line the original draws ABOVE the name is not here: the client is
+## not told its own guild yet, and a plate is not the place to invent one. It
+## goes in as soon as the server sends it -- see docs/PLAYTEST_2026_09_20.md
+## item 18.
+func _refresh_player_name_plate() -> void:
+	if player == null or not is_instance_valid(player):
+		return
+	var existing := player.get_node_or_null("Name")
+	if existing != null:
+		existing.queue_free()
+	var who := NetClient.current_character_name
+	if who == "":
+		return
+	var top := _skeleton_top(_player_skeleton) if _player_skeleton != null else 1.8 * PLAYER_SCALE_RATIO
+	player.add_child(_name_plate(who, top))
+
 func _name_plate(text: String, above: float) -> Label3D:
 	var label := Label3D.new()
 	label.name = "Name"
@@ -4678,6 +4697,10 @@ func _try_apply_real_player_character() -> void:
 	player.add_child(skeleton)
 	player_mesh.visible = false
 	_player_skeleton = skeleton
+	# Every other character in view carries a name plate and the local player
+	# did not, so the one character you always look at was the one with no
+	# name over it (playtest 2026-09-20, item 18).
+	_refresh_player_name_plate()
 	_player_gender = gender
 	_player_weapon_group = _weapon_group_for(equipped)
 	print("World3D: player animation group %s (stand %s, run %s)" % [
