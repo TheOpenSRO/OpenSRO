@@ -5798,6 +5798,26 @@ asserts that. TestEveryCharacterFieldIsMapped failed the moment the field
 existed and demanded the mapping -- the project's own guard working. Still
 transient: the active berserk window.
 
+Round 313 (a lever REJECTED + a gap that was not one): THE OBVIOUS USE OF 409
+OFFSETS DOES NOT WORK. Naming unnamed functions by the _CHAR offsets they touch
+scores 18% precision at best, measured against the 5,621 already-named server
+functions (425 of which name themselves character code), and precision does NOT
+rise with the threshold -- 18/14/12/18/17% at >=4/6/8/10/12 shared offsets --
+which is the signature of noise rather than signal. The naive version put
+RTNavMeshDungeon and RTNavMeshTerrain in its top ten; weighting by rarity does
+not help because 38 of the 43 offsets are already used by under 1% of functions,
+and __get_lc_time, a CRT locale routine, touches 17 of them. Struct offsets are
+not a vocabulary: any sizeable function touches dozens incidentally, so overlap
+measures SIZE more than subject. Recorded in naming_ceiling.md against the
+page's own bar (two-part Class::Method 35/35, one-part Name:: 0/131 rejected).
+The offsets remain valuable for the reverse lookup they were built for. SECOND:
+round 312's "next step" for Berserk was wrong and is corrected. _CHAR's 43
+columns carry HwanLevel and RemainHwanCount and NO duration or expiry column --
+the only time-like one is LastLogout -- so the engine cannot persist a running
+berserk either, and srrevamp dropping it on logout is FAITHFUL, not a gap. The
+absence of a column is the proof, the same shape as the quest-objective finding:
+proving the data does not exist is itself a recovery.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

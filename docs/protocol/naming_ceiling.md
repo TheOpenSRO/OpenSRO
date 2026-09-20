@@ -197,3 +197,39 @@ apart by however many rounds have passed since the last apply. Run the apply
 before quoting a coverage number, or the number counts work already done as
 work outstanding -- which is precisely what sent round 301 to re-derive
 `GObjPC::CheckCanPickUp` and cost round 302 its tick.
+
+
+## A lever that looked obvious and scored 18 % (round 313)
+
+Rounds 307-308 recovered 409 runtime-table columns with their struct offsets.
+The obvious next move is to name unnamed functions by the offsets they touch: a
+function reading several `_CHAR` offsets ought to be character code.
+
+**Measured against known answers, the way this page requires, it fails.**
+Control: the 5,621 already-named server functions, of which 425 name themselves
+character code (`CInstancePC`, `GObjPC`, `CharData`, `CGObjChar`, `Char_`).
+Scoring every function by how many of `_CHAR`'s 43 offsets it touches:
+
+| threshold | selected | actually character code | precision | recall |
+|---:|---:|---:|---:|---:|
+| >= 4 | 117 | 21 | **18 %** | 5 % |
+| >= 6 | 43 | 6 | 14 % | 1 % |
+| >= 8 | 26 | 3 | 12 % | 1 % |
+| >= 10 | 17 | 3 | 18 % | 1 % |
+| >= 12 | 6 | 1 | 17 % | 0 % |
+
+**Precision does not rise with the threshold**, which is the signature of noise:
+a real signal concentrates at the top. Against this page's own bar -- the
+two-part `Class::Method` form scored 35/35, the one-part `Name::` scored 0/131
+and was rejected -- 18 % is not close.
+
+Weighting by rarity does not save it. 38 of the 43 offsets are used by under 1 %
+of functions individually, so the filter removes almost nothing, and the
+counterexample is decisive: **`__get_lc_time`, a CRT locale routine, touches 17
+of them.**
+
+**Why it cannot work.** Struct offsets are not a vocabulary. Any sizeable
+function touches dozens of small offsets incidentally, so the overlap measures a
+function's SIZE far more than its subject. The offsets remain valuable for the
+reverse lookup they were built for -- given `charData+0x86`, name the column --
+and that is a different question from naming the function that touches it.

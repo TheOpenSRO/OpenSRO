@@ -7075,6 +7075,65 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-thirteenth round: a lever measured and rejected, and a "next step" that was never a gap
+
+### The obvious use of 409 offsets does not work
+
+Rounds 307-308 recovered every runtime column with its struct offset. The
+obvious next move: name unnamed functions by the offsets they touch -- a
+function reading several `_CHAR` offsets ought to be character code. It is the
+first thing anyone holding that table would try.
+
+**Measured, it scores 18 %.** Control: the 5,621 already-named server
+functions, 425 of which name themselves character code (`CInstancePC`,
+`GObjPC`, `CharData`, `CGObjChar`, `Char_`).
+
+| threshold | selected | actually character code | precision | recall |
+|---:|---:|---:|---:|---:|
+| >= 4 shared offsets | 117 | 21 | **18 %** | 5 % |
+| >= 6 | 43 | 6 | 14 % | 1 % |
+| >= 8 | 26 | 3 | 12 % | 1 % |
+| >= 10 | 17 | 3 | 18 % | 1 % |
+| >= 12 | 6 | 1 | 17 % | 0 % |
+
+**Precision does not rise with the threshold.** That is the signature of noise:
+a real signal concentrates at the top, and this does not move. The project's own
+bar is the two-part `Class::Method` form at 35/35 against the one-part `Name::`
+at 0/131, which was rejected.
+
+Two attempts, and the first failure was visible before the numbers. The naive
+version put `RTNavMeshDungeon` and `RTNavMeshTerrain` in its top ten -- navmesh
+code has no character record. Weighting by rarity did not help, because **38 of
+the 43 offsets are already used by under 1 % of functions**, so the filter
+removes nothing; and the counterexample is decisive: **`__get_lc_time`, a CRT
+locale routine, touches 17 of `_CHAR`'s offsets.**
+
+**Why it cannot work:** struct offsets are not a vocabulary. Any sizeable
+function touches dozens of small offsets incidentally, so the overlap measures a
+function's SIZE far more than its subject. The offsets stay valuable for the
+reverse lookup they were built for -- given `charData+0x86`, name the column --
+which is a different question from naming the function that touches it.
+
+Recorded in `naming_ceiling.md` so the next session does not spend a tick
+rediscovering it.
+
+### The berserk window was never an open gap
+
+Round 312 closed the orb count and left "the ACTIVE window is still transient --
+a character logging out mid-berserk loses the remaining duration" as the row's
+next step. **That was my framing, and it was wrong.**
+
+`_CHAR`'s 43 columns are now fully listed, and they carry `HwanLevel` and
+`RemainHwanCount` and **no duration or expiry column at all** -- the only
+time-like column is `LastLogout`. The engine cannot persist a running berserk
+either. srrevamp dropping it on logout is **faithful, not a gap**, and the
+absence of a column is the proof.
+
+This is the same shape as the quest-objective finding that this project treats
+as a model: *proving the data does not exist is itself a recovery*. The row's
+next step is corrected to the two things actually open -- param 184's tag and
+writers, and the party share, which needs party-support monsters to exist.
+
 ## Three-hundred-and-twelfth round: the key parked on evidence, and the orbs finally persisted
 
 Two halves: one probe closed as far as honesty allows, and one shipped change
