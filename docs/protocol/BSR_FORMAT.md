@@ -456,3 +456,28 @@ is **not name-based, not a skilldata column, and not in the BSR table**. It is
 in the client's code or in a table not yet identified. Three independent routes
 are now exhausted, which is why the client's weapon-swing fallback stays and is
 labelled disclosed rather than treated as a temporary patch.
+
+
+## How the group is chosen, from the client's own code (round 318)
+
+`CObjCharacter::RefreshAnimationGroup` (`0x00a5bd10`) is the function that
+decides which animation group a body uses:
+
+	weapon = GetEquipVisual(6)                  ; slot 6 IS the weapon
+	race   = charData[0x9c]
+	group  = FUN_00a5a7d0(weapon.TypeID4, race) ; the recorded TypeID4 switch
+	assert(group, "pStrAniNew")                 ; CObjCharacter.cpp:0x847
+	char[0x18c] = group                         ; cached; a change restarts the body
+
+**Slot 6 is the weapon on arithmetic, not on assumption**: `EQUIP_SLOTS.md`
+puts the visual array at base `0x38` with stride `0xc` and WEAPON at `0x80`, and
+`(0x80 - 0x38) / 0xc = 6`.
+
+So the group is a function of **the held weapon's TypeID4 and the race byte**,
+and of nothing per-skill. That is exactly what srrevamp's client already does
+(`_weapon_group_for`), which is now confirmed rather than assumed — and it means
+the skill -> **action type** link, still unfound after four routes
+(`skill_fields.md`), cannot be hiding in the group selection either.
+
+`char+0x18c` holds the current group string, which is the field to watch when
+tracing further.

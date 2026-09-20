@@ -7075,6 +7075,45 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-eighteenth round: into the client's code, and the group selection is confirmed rather than found
+
+Round 317 said the remaining place to look was a hardcoded table in the client's
+code. This is that read, and it produced one name, one confirmation, and a
+fourth dead route.
+
+**A fourth naming rule, tested and rejected first.** Of the 279 clip names with
+no file, stripping a trailing `_<letter>` recovers **18**; `_<letter><digit>`
+recovers 4; dropping two trailing parts recovers 0. Eighteen of 279 is not a
+rule, and "does `bow_call_b` animate like `bow_call`?" is a semantic guess, so
+nothing was promoted.
+
+**The dump read.** `CObjCharacter` has 55 functions, 41 of them unnamed, and
+**12 carry a string literal** -- the assert lever reaches them. One asserts
+`pStrAniNew`, and that is the animation-group selector:
+
+	weapon = GetEquipVisual(6)
+	race   = charData[0x9c]
+	group  = FUN_00a5a7d0(weapon.TypeID4, race)
+	assert(group, "pStrAniNew")            ; CObjCharacter.cpp:0x847
+	char[0x18c] = group
+
+Filed as `CObjCharacter::RefreshAnimationGroup` (`0x00a5bd10`).
+
+**Slot 6 is the weapon by arithmetic, not by assumption.** `EQUIP_SLOTS.md`
+already records the visual array at base `0x38`, stride `0xc`, WEAPON at `0x80`
+-- and `(0x80 - 0x38) / 0xc = 6`. `FUN_00a5a7d0` was likewise already recorded
+as the TypeID4 -> group-name switch, in two different pages.
+
+So the *group* half of animation selection is now **confirmed rather than
+discovered**: it is a function of the held weapon and the race byte, and of
+nothing per-skill -- which is exactly what srrevamp's `_weapon_group_for`
+already does. Saying that plainly matters, because it also rules the group
+selection out as a hiding place for the skill -> action type link.
+
+**The link is still unfound after five routes**: derived filename (59/338), the
+BSR table (57, two fewer), any skilldata column (3 %, chance), variant-stripping
+(18/279), and now the group selector. `char+0x18c` is the field to watch next.
+
 ## Three-hundred-and-seventeenth round: the join ran, and three routes are now exhausted
 
 Round 316 named a specific next probe -- a join rather than a range test -- and

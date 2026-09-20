@@ -5888,8 +5888,26 @@ the BSR table. Round 315 called this "82% ship no animation" (wrong, the clips
 exist) and round 316 "the client uses the wrong mechanism" (also wrong, the
 mechanism and path are right); only now is the honest statement available. The
 weapon-swing fallback is therefore the answer rather than a placeholder. What
-remains is a hardcoded table in the client's code -- a dump read, not another
-data probe.
+remains is a hardcoded table in the client's code -- a dump read, not another data probe.
+
+Round 318 (1 name + a confirmation): THE GROUP SELECTION IS CONFIRMED, NOT
+FOUND. A fourth naming rule was tested and rejected first -- of 279 clip names
+with no file, stripping a trailing _<letter> recovers 18, _<letter><digit> 4,
+two trailing parts 0. CObjCharacter has 55 functions, 41 unnamed, and 12 carry a
+string literal, so the assert lever reaches them; one asserts "pStrAniNew" and is
+the animation-group selector, filed as CObjCharacter::RefreshAnimationGroup
+(0x00a5bd10): weapon = GetEquipVisual(6), race = charData[0x9c], group =
+FUN_00a5a7d0(TypeID4, race), assert at CObjCharacter.cpp:0x847, cached at
+char+0x18c and restarting the body on a change. Slot 6 is the weapon BY
+ARITHMETIC -- EQUIP_SLOTS.md has the visual array at base 0x38 stride 0xc with
+WEAPON at 0x80, and (0x80-0x38)/0xc = 6 -- and FUN_00a5a7d0 was already recorded
+in two pages as the TypeID4 -> group switch. So the group half is a function of
+the held weapon and the race byte and of nothing per-skill, which is what
+srrevamp's _weapon_group_for already does: confirmed rather than discovered, and
+it rules the group selector out as a hiding place. The skill -> action type link
+is unfound after FIVE routes: derived filename (59/338), BSR table (57), any
+skilldata column (3%), variant-stripping (18/279), group selection. char+0x18c
+is the field to watch.
 
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
