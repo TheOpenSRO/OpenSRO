@@ -5727,6 +5727,31 @@ passing is to ask what it cannot distinguish. Also corrected: FUN_00862e40 is a
 std::map lower_bound (the binder builds map<string,{offset,code}>), not the
 "commit" round 308 called it.
 
+Round 310 (verification + 2 falsifications): THE OFFSETS RE-DERIVED FROM A
+SECOND DIRECTION. After three parses of the same data, two of them wrong, "the
+controls pass" is not evidence. The offsets were extracted again from raw
+DISASSEMBLY, which shares no failure mode with the decompiler read (no STL
+reconstruction, no variable names, no source-order assumption): per binding the
+compiler emits `mov DWORD PTR [esp+A], <offset>` then `mov DWORD PTR [esp+B],
+<code>` then `call 0x862e40`, and slot A is fixed for a whole function, so the
+offset slot identifies itself by varying. ALL 50 TABLES THE ASSEMBLY PATH COVERS
+ARE IDENTICAL to the published offsets -- 403 of them -- including
+_SiegeFortress, the table that broke round 309, which disassembles to 0x18,
+0x1c, 0x20, 0x28, 0x30, 0x34, 0x38, 0x54, 0x64, 0x65. The remaining 6 are the
+single-column binders, too few bindings to identify a slot, still settled by
+sibling agreement. THE SECOND INTEGER: two hypotheses killed with numbers. Not a
+width -- differs from the next-offset delta in 332 of 353 cases. Not a property
+of the column -- of 55 names appearing in more than one table, 32 carry
+DIFFERENT codes per table (CharID 0 and 2, PosX 3 and 5, HP 2/3/6). Its shape
+will not settle: _CHAR repeats heavily (density 0.39) while _SiegeFortress is a
+near-consecutive run (0.91), small everywhere, 0..10. Recorded and
+uninterpreted; the next probe is specific -- the binder inserts into
+std::map<string, V>, so read V and find where its second field is loaded.
+Also: FUN_00972b40 was ALREADY named Database::BindTableSchema with an
+annotation recording that it writes the ODBC column index into the 0x54 record
+at +0x30 and a skip flag at +0x34 -- the runtime half of the structure rounds
+305/306 read, available by opening the file first.
+
 **What moved:** no value. A new evidence class opened (the binary's own SQL, 67
 statements), a real divergence found and cited in `internal/storage`, and it is
 on the open list as a migration to do deliberately.

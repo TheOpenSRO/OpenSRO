@@ -7075,6 +7075,56 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Three-hundred-and-tenth round: the offsets verified from a second direction, and what the other integer is not
+
+Rounds 308 and 309 produced three parses of the same data, two of them wrong.
+After that, "the controls pass" is not enough. So the offsets were extracted a
+**second time, from raw disassembly**, which shares no failure mode with the
+decompiler read -- no STL reconstruction, no variable names, no assumption about
+source order. Per binding the compiler emits
+
+	mov DWORD PTR [esp+0xdc], 0x65     ; the offset  (_CHAR CurLevel)
+	mov DWORD PTR [esp+0x20], 0x2      ; the other integer
+	call 0x862e40                      ; std::map operator[]
+
+and **slot A is fixed for a whole function**, so the offset slot identifies
+itself by varying while the other does not.
+
+**All 50 tables the assembly path covers are IDENTICAL to the published
+offsets -- 403 of them.** `_SiegeFortress`, the table that broke round 309,
+comes out of the disassembly as `0x18, 0x1c, 0x20, 0x28, 0x30, 0x34, 0x38,
+0x54, 0x64, 0x65`, matching the corrected TSV exactly. The remaining six are the
+single-column binders, which have too few bindings to identify a slot at all and
+stay settled by sibling agreement.
+
+### What the second integer is NOT
+
+It is real per-column data -- its slot is fixed per function and its value
+changes from column to column -- but two hypotheses are now dead:
+
+- **Not a width.** It differs from the next-offset delta in **332 of 353** cases.
+- **Not a property of the column.** Of 55 column names that appear in more than
+  one table, **32 carry different codes in different tables**: `CharID` is 0 in
+  one and 2 in another, `PosX` 3 and 5, `HP` 2, 3 and 6.
+
+Its shape refuses to settle into one story: in `_CHAR` it repeats heavily
+(0, 1, 1, 1, 7, 2, 2 …, density 0.39), while in `_SiegeFortress` it is a clean
+near-consecutive run (0, 2, 3 … 10, density 0.91). Small everywhere -- 0 to 10.
+
+**So it stays recorded and uninterpreted**, and the next probe is specific
+rather than vague: the binder inserts into a `std::map<string, V>`; read `V` and
+find where its second field is loaded. Guessing from the distribution is exactly
+what characterdata column 79 punished twice.
+
+### Recorded before it was re-derived
+
+`FUN_00972b40` is already named `Database::BindTableSchema` and already carries
+an annotation saying it fetches column metadata over ODBC, compares each `0x54`
+record's declared name with `CompareStringA`, and on a match writes **the ODBC
+column index into `+0x30` and a skip flag into `+0x34`**. That is the runtime
+half of the structure rounds 305 and 306 read, and opening it first would have
+supplied it.
+
 ## Three-hundred-and-ninth round: the structural check was too weak, and 18 offsets were wrong
 
 Round 308 published 409 column offsets and justified them with a structural

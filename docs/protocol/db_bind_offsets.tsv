@@ -19,6 +19,13 @@
 # _SiegeFortress FortressID 0x18 / Introduction 0x38 -- the last two added because
 # the _CHAR controls alone passed while the parse was wrong.
 # STRUCTURAL: no (table, offset) pair repeats in the 409.
+# INDEPENDENTLY RE-DERIVED (round 310): the same offsets were extracted a second time
+# from raw DISASSEMBLY -- per binding the compiler emits `mov DWORD PTR [esp+A], <offset>`
+# then `mov DWORD PTR [esp+B], <code>` then `call 0x862e40`, and slot A is fixed for a
+# whole function. That path shares no failure mode with the decompiler read (no STL
+# reconstruction, no variable naming, no source-order assumption). All 50 tables it
+# covers are IDENTICAL, 403 offsets. The other 6 are the single-column binders, which
+# have too few bindings to identify a slot and are settled by sibling agreement instead.
 #
 # The six `Slot` rows come from single-column binders, where there is no
 # distribution to test. They are resolved instead by agreement: all six sibling
