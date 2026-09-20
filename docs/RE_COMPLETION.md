@@ -6266,6 +6266,54 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 334 (12 client handler names, and THREE of my own counts withdrawn):
+PAYING THE DEBT ROUND 331 FLAGGED -- "a naive count says 101 unnamed client
+handlers sit opposite a named server handler, but the 2026-09-17 entry measured
+4; these need reconciling before either is used to name anything." THEY WERE
+NEVER IN CONTRADICTION: they are different joins. Join A pairs the server's
+REQUEST handler at index i with the client's REPLY handler for 0xb|i -- the two
+halves of one transaction. Join B pairs an opcode's single server SENDER with
+the client function that consumes it. BOTH OF MY RECOUNTS WERE WRONG, for
+different reasons, and each was caught by its own shape. The first gave a
+perfect 57 of 57, which is not a result but a tell: `server_senders` holds
+ADDRESSES, not names, and my classifier scored a bare hex string as "named".
+Resolved properly, Join B is 23 today against 4 on 2026-09-17 -- it grew because
+the SERVER side got named in the rounds between, so the old figure was stale
+rather than wrong. THE THIRD ERROR WAS THE INTERESTING ONE: Join A's 101/91 was
+inflated by a STALE COLUMN. message_handlers.tsv's client_handler symbols are
+built from the dump, and round 331's refresh only updated a symbol when the old
+and new shared a trailing hex (LAB_x -> FUN_x). It therefore never replaced
+FUN_00899630 with TrainingCamp_OnOpenResult -- a name this project had carried
+and APPLIED for days. 29 rows were stale that way, so every "unnamed client
+handler" count taken off that column, including all of mine, counted named
+functions as unnamed. Re-resolved against the client dump and the TSV.
+WHAT LICENSED THE NAMING: the join assumes the client's handler for 0xb|i is the
+counterpart of the server's handler for 0x7i, and that was VERIFIED rather than
+assumed. Sweeping `mov ecx,0xbXXX` through the server disassembly and
+attributing each site to its enclosing function by the dump's own boundaries:
+**97 of 98 handlers that emit a reply emit their own index** (92 exactly, 5
+among others). THE ONE CONTRADICTION IS EXCLUDED -- index 0x0c4 emits only
+0xb045, so its 0xb0c4 client handler is somebody else's counterpart, and it is
+precisely the case that would have produced a confident wrong name. The
+disassembly is the MODDED build (srgs.asm), which is fine for opcodes and was
+checked anyway against the two pairs read by hand in round 328: 0x04c -> 0xb04c
+and 0x51d -> 0xb51d, both exact. AN INDEPENDENT CORROBORATION FELL OUT: the
+sweep reproduces the 2026-09-17 finding that the client binds 0xb470-0xb47e to
+CONTIGUOUS addresses (FUN_00899630, ...730, ...7a0, ...800), the training-camp
+family, reached here from the server side without reference to it. 12 NAMES
+FILED AND APPLIED (13 applied, failed 0), in the <Subsystem>_On<Action>Result
+form their already-named siblings use rather than a new prefix of my own.
+**The honest remaining picture: 319 client message handlers, 31 named (10%).**
+10 more are transferable once their pairing is verified. **55 are blocked
+because the SERVER name is itself a placeholder** -- GObjPC_HandleGuildMsg_0fb
+is a subsystem and an opcode, and transferring it would restate the opcode
+rather than name anything, which is the error this project corrected once
+already when 50 attribution prefixes were counted as names.
+
+**What moved:** no shipped value. 12 client functions named and applied, 29
+stale symbols in `message_handlers.tsv` corrected, and three of my own counts
+(101, 91, 57) withdrawn in favour of measured ones.
+
 Round 333 (a standing guard against the failure of the last two rounds):
 BOTH TIMES A MECHANIC WAS RECOVERED, IMPLEMENTED AND LEFT UNCALLED, IT WAS
 FOUND BY ACCIDENT. mana.RegenPerTick had no caller until a player reported that
