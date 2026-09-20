@@ -117,7 +117,11 @@ wrapper in the same family.
 
 ## Not recovered
 
-- Which of the three kinds is which job.
+- ~~Which of the three kinds is which job.~~ **Recovered in round 273** and
+  used again in round 295: **1 Trader, 2 Robber, 3 Hunter**, from two
+  independent labellers (`JobTypeName` on `GetJobType()`, and
+  `GObjPC::JobRecordKindName` on the job record's `+0x1c`). This bullet was
+  stale; see "Three job kinds" above.
 - Every numeric limit except the level and the market's eight slots: the
   distance, the wear limits and the trade-route reward rates are all behind
   helpers.
@@ -142,3 +146,25 @@ that reads it is the one maintaining the job record's running total at `+0x20`.
 
 srrevamp models job kinds but not job levels, so this is recorded rather than
 wired.
+
+## The reward statement is issued for two kinds only (round 297)
+
+`ExecAddTrijobReward` builds `EXEC _AddTrijobReward %d, %d`, and its first
+argument is **not** the job kind. It is a remap of the job record's kind byte
+at `+0x1c`:
+
+	kind 1 (Trader) -> 3
+	kind 2 (Robber) -> 2
+	anything else   -> Assert_BreakIfDebugger(); return 0
+
+That last branch is the same one a formatting failure lands on, so a kind
+outside {1, 2} reaching this function is treated as a programming error. **The
+statement is therefore only ever issued for Trader and Robber, never for
+Hunter (3).** Why Trader maps to 3 rather than 1 is not read -- the procedure's
+first parameter is evidently its own code space, not the kind enum.
+
+The second argument is the async-query object's `+0`.
+
+`ExecDeleteOldTrijobData` issues `EXEC _DeleteOldTrijobData %d` with its one
+argument taken from the object's `+0x18`, **not a literal** -- so whatever age
+threshold it deletes by is data, and there is no constant here to recover.

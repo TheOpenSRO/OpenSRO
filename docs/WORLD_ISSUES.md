@@ -7075,6 +7075,36 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Two-hundred-and-ninety-seventh round: a stale "not recovered", and a procedure argument that is not the enum beside it
+
+`jobs.md` listed **"Which of the three kinds is which job"** under *Not recovered*. Round 273
+recovered exactly that -- 1 Trader, 2 Robber, 3 Hunter, from two independent labellers -- and
+round 295 used it to read the job experience columns. The bullet had simply never been struck.
+That is the same rot `internal/systems` exists to catch, and it is worth noting that the rot
+here was in a `docs/protocol` page, which no checker watches.
+
+**The substantive half.** `AQ_Trijob`'s two named statement-issuers were recorded with their
+statements but not their arguments -- which is `persistence.md`'s standing open item. Both are
+now partly traced, and one is a trap:
+
+	ExecAddTrijobReward:  EXEC _AddTrijobReward %d, %d
+	    argument 1 is NOT the job kind. It is a remap of the kind byte at +0x1c:
+	        kind 1 (Trader) -> 3
+	        kind 2 (Robber) -> 2
+	        anything else   -> Assert_BreakIfDebugger(); return 0
+
+That last branch is the one a formatting failure also lands on, so a kind outside {1, 2}
+reaching this function is a programming error. **The statement is only ever issued for Trader
+and Robber, never for Hunter.** Why Trader maps to 3 and not 1 is not read; the procedure's
+first parameter is evidently its own code space.
+
+The shape is the lesson: a procedure argument that sits beside a known enum, is the same width,
+and is fed from that enum's own field -- and is still not that enum. Passing the kind byte
+through would have been wrong for two of the three values, and silently.
+
+`ExecDeleteOldTrijobData`'s single argument comes from the object's `+0x18` rather than a
+literal, so the age threshold it deletes by is data and there is no constant to recover.
+
 ## Two-hundred-and-ninety-sixth round: columns 3 and 4 have no reader, and the sweep lied twice first
 
 Round 295 left columns 3 and 4 predicted by the packing at `row+0x14`/`+0x18`, with no reader

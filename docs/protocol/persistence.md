@@ -308,6 +308,20 @@ Eight arguments, of which four are placed:
 Arguments 1, 2, 3 and 7 are read from fields and locals this pass did not
 follow, and are **not** guessed at here.
 
+### `_AddTrijobReward (%d, %d)` and `_DeleteOldTrijobData (%d)` (round 297)
+
+Two more, from `AQ_Trijob`:
+
+| procedure | argument | source |
+|---|---:|---|
+| `_AddTrijobReward` | 1 | a **remap of the job kind**: the job record's `+0x1c` gives 1 -> 3, 2 -> 2, and anything else hits `Assert_BreakIfDebugger` -- so the statement is only ever issued for Trader and Robber, never Hunter |
+| | 2 | the async-query object's `+0` |
+| `_DeleteOldTrijobData` | 1 | the object's `+0x18` -- **data, not a literal**, so no constant to recover here |
+
+The first is the more useful shape: a procedure whose first parameter *looks*
+like the enum next to it and is not. Reading the kind byte straight into the
+column would have been wrong by two of three values.
+
 Two slots side by side, both through `GetItem`, is what makes 5 and 6 a
 source/destination pair rather than two unrelated numbers.
 

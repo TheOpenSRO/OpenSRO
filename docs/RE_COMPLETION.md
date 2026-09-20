@@ -5468,6 +5468,17 @@ properly: Formulae::SumMasteryUpCost (0x410f10), which walks rows downward
 accumulating +0x10 = column 2 (a second use site beside the mastery handler),
 and GetSingleton_00d6aa14 (0x404ca0), the named accessor for the singleton
 manager_singletons.md lists as unidentified.
+Round 297 (docs): a STALE "not recovered" struck -- jobs.md still listed
+"which of the three kinds is which job" although round 273 recovered it (1
+Trader, 2 Robber, 3 Hunter) and round 295 used it; the rot was in a
+docs/protocol page, which no checker watches. And two more procedure arguments
+traced, continuing persistence.md's open item: _AddTrijobReward's first
+argument is NOT the job kind but a remap of it (1 -> 3, 2 -> 2, anything else
+hits Assert_BreakIfDebugger), so the statement is only ever issued for Trader
+and Robber, never Hunter; _DeleteOldTrijobData's single argument comes from
+the object's +0x18, so its age threshold is data, not a constant. The first is
+the useful shape: an argument that sits beside a known enum, is fed from that
+enum's own field, and is still not that enum.
 
 Two smaller facts came free from the same queries: `_ITEMS.ID64` is the item
 INSTANCE id that every container references (bindings and rentals hang off it
