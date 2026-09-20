@@ -8247,8 +8247,27 @@ func _on_pick_up_result(result: GroundItemsNet.PickUpResult) -> void:
 		_:
 			_pending_pickup_id = -1
 			print("World3D: cannot pick up ground item %d (server code 0x%x)" % [result.ground_id, result.code])
+			# ...and SAY so. A refusal used to go to the log file only, so a
+			# player saw the item stay on the ground with no reason given and
+			# reported it as "loot does not go into my inventory" (playtest
+			# 2026-09-20, item 9). The server has the reason; show it.
+			_log_system(_pick_up_refusal_line(result.code))
 			if OS.get_environment("SRREVAMP_QA_PICKUP") != "":
 				print("QA PICKUP: result 0x%x" % result.code)
+
+## The server's pick-up refusal in words. The codes are the engine's own
+## (internal/grounditem): 0x1812 someone else's drop inside its owner window,
+## 0x1813 another pick already running on it, 0x1839 "cannot pick", which is
+## also what a bag with no room answers.
+func _pick_up_refusal_line(code: int) -> String:
+	match code:
+		GroundItemsNet.ERR_NOT_OWNER:
+			return "That drop still belongs to someone else."
+		GroundItemsNet.ERR_BUSY:
+			return "Someone else is picking that up."
+		GroundItemsNet.ERR_CANNOT_PICK:
+			return "Could not pick that up -- your inventory may be full."
+	return "Could not pick that up (code 0x%x)." % code
 
 ## A left click on a ground item picks it up, the way clicking one does in
 ## the original. Ray-tests the ground-item layer only; on a hit, asks the

@@ -1572,6 +1572,12 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 const BAG_DRAG_THRESHOLD := 4.0
 
 var _bag_drag_slot := -1
+## >= 0 while the armed drag started on a WORN item (the paper doll) rather
+## than a bag cell; the value is the EquipmentNet.SLOT_* it came off.
+## Dragging INTO a doll slot already worked, but dragging back out did not
+## exist at all, so worn gear could not be taken off in the window at all
+## (playtest 2026-09-20, item 7).
+var _bag_drag_worn_slot := -1
 var _bag_drag_item_id := 0
 var _bag_drag_icon: TextureRect = null
 var _bag_drag_origin := Vector2.ZERO
@@ -1613,6 +1619,7 @@ func _cancel_bag_drag() -> void:
 		_bag_drag_icon.modulate = Color.WHITE
 	_bag_drag_icon = null
 	_bag_drag_slot = -1
+	_bag_drag_worn_slot = -1
 	_bag_drag_item_id = 0
 
 ## Which bag cell (its slot index) is under a screen point, or -1. Cells are
@@ -1733,7 +1740,9 @@ func _skill_drag_input(event: InputEvent) -> bool:
 func _input(event: InputEvent) -> void:
 	if _skill_drag_input(event):
 		return
-	if _bag_drag_slot < 0:
+	# A worn drag arms with a bag slot of -1 (it has none), so the guard has
+	# to admit it too or the drag is never driven.
+	if _bag_drag_slot < 0 and _bag_drag_worn_slot < 0:
 		return
 	if event is InputEventMouseMotion:
 		var motion := event as InputEventMouseMotion
@@ -1751,12 +1760,34 @@ func _input(event: InputEvent) -> void:
 			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
 		var dragging := _bag_drag_preview != null
 		var from := _bag_drag_slot
+		var worn_from := _bag_drag_worn_slot
 		var at := (event as InputEventMouseButton).global_position
 		_cancel_bag_drag()
 		if not dragging:
 			return  # a click, not a drag: nothing to do
 		get_viewport().set_input_as_handled()
-		_drop_bag_item(from, at)
+		if worn_from >= 0:
+			_drop_worn_item(worn_from, at)
+		else:
+			_drop_bag_item(from, at)
+
+## A worn item dragged off the paper doll and released. Anywhere over the bag
+## takes it off; a release back on the doll, or outside the window, does
+## nothing rather than erroring.
+##
+## Which bag slot it lands in is the server's to choose, so the drop point
+## inside the grid is not passed on: unequip means "take this off", and the
+## bag redraws from the answer.
+func _drop_worn_item(worn_slot: int, at: Vector2) -> void:
+	var who := NetClient.current_character_name
+	if who == "" or not NetClient.is_connected_to_server():
+		return
+	if _equipment_slot_at(at) >= 0:
+		return
+	if _bag_slot_at(at) < 0:
+		return
+	NetClient.unequip(who, worn_slot)
+	NetClient.list_inventory(who)
 
 ## Resolves where a bag drag ended and asks the server for it.
 func _drop_bag_item(from: int, at: Vector2) -> void:
@@ -2723,6 +2754,23 @@ func _fill_equipment_slots(items: Array) -> void:
 				icon.tooltip_text = _item_tooltip(int(item_id))
 				icon.modulate = Color.WHITE
 			icon.mouse_filter = Control.MOUSE_FILTER_STOP
+			# Press to arm a drag OFF the doll -- the same hand-rolled drag
+			# the bag uses, with the worn slot as its source. Without this
+			# the worn icons took clicks and did nothing, so nothing could
+			# be removed in the window (playtest 2026-09-20, item 7).
+			var worn_slot := int(slot_index)
+			if not icon.has_meta("worn_drag_wired"):
+				icon.set_meta("worn_drag_wired", true)
+				icon.gui_input.connect(func(ev: InputEvent) -> void:
+					if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \
+							and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+						_arm_worn_drag(worn_slot, icon, (ev as InputEventMouseButton).global_position))
+
+## Arms a drag that starts on a worn item. The bag's drag machinery does the
+## rest; _bag_drag_worn_slot is what tells the release which way it went.
+func _arm_worn_drag(worn_slot: int, icon: TextureRect, at: Vector2) -> void:
+	_arm_bag_drag(-1, 0, icon, at)
+	_bag_drag_worn_slot = worn_slot
 
 func connect_net() -> void:
 	if _net_connected:
