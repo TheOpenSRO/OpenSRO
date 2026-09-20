@@ -7167,6 +7167,40 @@ So the failure was not "counting fields is unreliable". It is that **a check
 which cannot fail is not a check**, and it was the only one of the five without
 a signature that could tell a neighbour apart.
 
+### Re-running round 298's bullet sweep, and two probes that were worthless
+
+Round 298 swept every *Not recovered* bullet (13 pages, 46 bullets, 3 stale)
+and said to repeat it "after any run of rounds that closes items". Rounds
+299-304 closed several, and round 304's own stale bullet is one that sweep had
+missed -- so the re-run was owed. **13 pages, 37 live bullets.**
+
+Round 298 asked *does the page already hold the ANSWER?* Round 304's defect
+needed a different question -- *does the page already name a CHEAPER ROUTE?* --
+because `durability.md` did not contain the column; it contained the fact that
+`+0xa4` belongs to a 3,071-byte function rather than the 7,052-byte one the
+bullet sent readers to.
+
+**Two probes were built and both were worthless, which is the part worth
+recording:**
+
+1. Matching bullets against sections headed `round N` returned **zero hits**.
+   It was tested against round 304's own bullet and scored **0** -- the section
+   that held the answer is headed *"Which half of the record, settled
+   2026-09-17"*, which names no round. A probe that cannot see the one defect
+   you know about cannot certify the absence of others.
+2. Widening the heading test to `settled|recovered|READ|<date>` then matched
+   **27 pairs** -- every bullet against *its own* section, because the heading
+   "Not **recovered**" matches the widened pattern. Twenty-seven findings, all
+   of them the probe reading its own reflection.
+
+The third probe excludes not-recovered headings, and was validated before it
+was believed: it fires on round 304's bullet, naming the exact section that
+held the answer. Across all 37 live bullets it returns **zero**.
+
+**So the negative is worth something this time.** After 299-304, no live bullet
+on any protocol page is answered, or cheaply routed, by its own page. Round
+298's three and round 304's one were the whole population.
+
 ## Three-hundred-and-third round: the tracker that cannot rot, rotted
 
 `docs/SYSTEMS.md` is this project's completion tracker, and its header says it
