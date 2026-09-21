@@ -1943,10 +1943,19 @@ columns leave them zero and behave exactly as before — pinned by its own test.
 - **The distribution is still uniform.** `FUN_0040dce0` rolls 13/14 with a
   three-sample minimum centre-biased about a midpoint; srrevamp rolls uniformly.
   That is a known, deliberate difference, not an unrecovered one.
-- **Which roll the live melee path takes.** Both `Formula_RollWeaponDamage`
-  (190/191, via `FUN_0040f990`'s attack-type switch) and `FUN_0040dce0` (13/14)
-  exist; this entry establishes that 13/14 are read for damage bounds, not that
-  190/191 are dead. Tracing `FUN_0040f990`'s callers is the next probe.
+- ~~**Which roll the live melee path takes.**~~ **PROBED (round 375), and 190/191
+  are positively NOT dead.** `FUN_0040f990` has exactly one caller,
+  `Combat_ResolveDamage`, which calls it twice -- and both sites sit at **case 3
+  of a damage-kind switch**, immediately after `Equip_GetWeaponTID()`, storing
+  the result into the result struct's damage field at `+0x20`. `case 2` of the
+  same switch takes a fixed damage from `EventMobList_GetFixedDamage` instead,
+  and `Formula_MitigatePhysicalDamage` -- which is what contains the
+  centre-biased `FUN_0040dce0` -- is reached from a **different branch** of the
+  same function.
+
+  So the two rolls are **alternative branches of a damage-kind switch, not two
+  stages of one path**. STILL OPEN, and narrower: what the switch subject is, and
+  therefore which case an ordinary melee swing takes.
 - Unarmed keeps the innate 30.6/34.2 in the real engine; srrevamp takes 0 there,
   since `unarmedDamage` is own design anyway.
 - Still open from before: itemdata columns 114 and 117; `pc[0x72d]`'s state enum;
@@ -6266,6 +6275,47 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 375 (the docs contradicted me again, and the project's own named probe
+lands): RAN tools/known.sh FIRST on "centre". It returned RE_COMPLETION.md:1906 --
+"**This corrects the earlier entry above**" -- a correction sitting four hundred
+lines BELOW the 2026-09-15 entry round 374 quoted. Round 374 had cited the
+SUPERSEDED half.
+
+WHAT ROUND 374 GOT WRONG. It said 13/14 and 190/191 "are the same two floats" and
+so "differ in DISTRIBUTION ONLY", making the centre "a distribution change on
+numbers srrevamp already has". The correction says the two differ in INPUT AS
+WELL: 190/191 carry the weapon's flat range alone, while 13/14 carry that plus
+the Str term plus every buff and skill modifier -- "true of the floats at publish
+time, false at evaluation time, which is the only time that matters". Withdrawn
+in place. HAD I NOT RUN THE TOOL I WOULD HAVE SHIPPED A COMBAT CHANGE THIS TICK
+ON A SUPERSEDED FACT.
+
+THE OPEN LIST NAMED THE NEXT PROBE AND IT LANDED. That same entry's Open section
+says "Tracing FUN_0040f990's callers is the next probe". FUN_0040f990 has exactly
+ONE caller, Combat_ResolveDamage, which calls it twice -- and both sites are at
+CASE 3 OF A DAMAGE-KIND SWITCH, immediately after Equip_GetWeaponTID(), storing
+into the result struct's damage field at +0x20. Case 2 of the same switch takes a
+fixed damage from EventMobList_GetFixedDamage instead, and
+Formula_MitigatePhysicalDamage -- which is what contains the centre-biased
+FUN_0040dce0 -- is reached from a DIFFERENT BRANCH of the same function.
+
+SO THE TWO ROLLS ARE ALTERNATIVE BRANCHES OF A DAMAGE-KIND SWITCH, NOT TWO STAGES
+OF ONE PATH. That positively establishes what the Open item could only decline to
+assume -- 190/191 are not dead -- and narrows what remains to one question: what
+the switch subject is, and therefore which case an ordinary melee swing takes.
+
+THE PATTERN IS NOW THREE TICKS OLD AND WORTH NAMING. Rounds 373, 374 and 375 each
+opened by finding that something I had written in the previous one to two rounds
+was wrong, and in each case the correction was already in this file. The docs are
+not missing the answers; they are LAYERED, with later corrections far from what
+they correct, and reading only the first hit is how a superseded fact gets
+quoted. tools/known.sh returns every hit, which is why it keeps catching this.
+
+**What moved:** the project's own named next probe answered, a superseded quote
+withdrawn before it reached code, and the remaining unknown reduced from "which
+roll the melee path takes" to "what the damage-kind switch switches on". No
+behaviour changed, so no tag.
+
 Round 374 (my own probe was the fourth false absence, and the binary says why
 this keeps happening): ROUND 373's RETRACTION LISTED "the enumeration" AMONG WHAT
 SURVIVES. It does not. Reading the 2026-09-15 entry that the tool surfaced, its
@@ -6295,11 +6345,13 @@ one is worthless without resolving the computed sites. That is now measured
 rather than suspected.
 
 ALSO LEARNED, AND IT MATTERS FOR THE NEXT ROUND: params 13/14 and 190/191 are THE
-SAME TWO FLOATS (2026-09-15). So Formula_RollWeaponDamage's uniform roll and
-FUN_0040dce0's centre-biased roll read an IDENTICAL RANGE and differ in
-DISTRIBUTION ONLY. With round 371's base rates removing the input blocker, porting
-the centre is a distribution change on numbers srrevamp already has -- a real,
-player-visible change, and the obvious next step.
+SAME TWO FLOATS (2026-09-15). [WITHDRAWN round 375: THAT ENTRY IS SUPERSEDED four
+hundred lines below it, by a correction saying the two differ in INPUT AS WELL AS
+DISTRIBUTION -- "true of the floats at publish time, false at evaluation time,
+which is the only time that matters". 190/191 carry the weapon's flat range
+alone; 13/14 carry that plus the Str term plus every buff and skill modifier. So
+porting the centre is NOT a distribution change on numbers srrevamp already has,
+and this paragraph's "obvious next step" was built on a superseded fact.]
 
 DELIBERATELY NOT WIRED THIS TICK. Shipping a combat change on the back of a tick
 that opened by finding my own evidence overstated is not the moment for it.
