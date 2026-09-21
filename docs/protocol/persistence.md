@@ -389,7 +389,7 @@ sub-save:
 | `0x01` | `this + 0x1d74` | `0x4b7b50` (same handler as `0x40`, different sub-object) |
 | `0x100` | `this + 0x1dfc` — **the timed-job list** | `0x656220` |
 | `0x200` | `this + 0x74` | `0x484300` |
-| `0x400` | `this + 0x1fb4` | `0x60e240` |
+| `0x400` | `this + 0x1fb4` — **the job (Trijob) manager** | `0x60e240` |
 | `0x800` | `this + 0x22d0` | `0x4082b0` |
 
 **Each bit saves a different MEMBER SUB-OBJECT of the character**, which is what
@@ -420,8 +420,27 @@ Disassembled, the constructor is a member map:
 | `+0x1d98` **quest** | `0x56f4f0` | `0x56fdf0` |
 | `+0x1dfc` **timed jobs** | `0x655f10` | `0x656220` |
 | `+0x1ce8` **summoned COS** | `0x4f9dc0` | `0x4fc770` |
-| `+0x1fb4` *(unidentified)* | `0x60d9d0` | `0x60e240` |
+| `+0x1fb4` **the job (Trijob) manager** | `0x60d9d0` | `0x60e240` |
 | `+0x22d0` *(unidentified)* | `0x407be0` | `0x4082b0` |
+
+**The co-location pattern paid off immediately (round 395).** Searching the two
+unknown members' translation units for `__FILE__` assert strings — this project's
+primary module evidence — names one of them outright:
+
+	0x0060e0a0   TrijobMgr.cpp
+
+which sits **between** `+0x1fb4`'s constructor (`0x60d9d0`) and its saver
+(`0x60e240`), so all three are one translation unit. **`+0x1fb4` is the
+character's job manager**, and save bit `0x400` persists the job state. "Trijob"
+is the three-job system and is already established here independently:
+`CInstanceCharTrijob::HandleJoinJobGuild` "reads a job-kind byte and accepts only
+1, 2 or 3", and `JobGuild_HandleWithdraw` answers `0xb0e2`.
+
+**`+0x22d0` is still unnamed, and the reason is recorded rather than worked
+around:** there is **no `__FILE__` assert anywhere below it** — it sits near the
+start of `.text` — and the nearest above is `Formulae.cpp` at `0x40f5f0`, some
+0x7a00 further on and a known separate unit. Its translation unit simply carries
+no assert to name it.
 
 **A member's constructor and its saver are co-located** — 0x310 to 0x2960 apart,
 i.e. the same translation unit — and that is *confirmed on the three members

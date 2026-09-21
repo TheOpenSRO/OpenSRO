@@ -6375,6 +6375,39 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 395 (the co-location pattern pays off: +0x1fb4 is the job manager): ROUND
+394 REPLACED "read 44 scattered sites" WITH "read one translation unit per
+member". The unit is named by the lever this project trusts most -- a __FILE__
+assert -- and it worked on the first of the two unknowns.
+
+0x0060e0a0 ASSERTS TrijobMgr.cpp, AND IT SITS BETWEEN +0x1fb4's CONSTRUCTOR
+(0x60d9d0) AND ITS SAVER (0x60e240). MSVC emits a translation unit contiguously,
+so all three are one unit: **+0x1fb4 is the character's job manager**, and save
+bit 0x400 persists job state.
+
+THE NAME IS CORROBORATED INDEPENDENTLY, not taken from the filename alone.
+"Trijob" is the three-job system and this project already named its classes for
+other reasons: CInstanceCharTrijob::HandleJoinJobGuild "reads a job-kind byte and
+accepts only 1, 2 or 3", and JobGuild_HandleWithdraw answers 0xb0e2. Round 360
+also named AQ_Trijob::Unlock while doing the character lock. The filename and the
+class vocabulary agree.
+
++0x22d0 IS STILL UNNAMED AND THE REASON IS RECORDED RATHER THAN WORKED AROUND:
+there is NO __FILE__ assert anywhere below it -- it sits near the start of .text
+-- and the nearest above is Formulae.cpp at 0x40f5f0, 0x7a00 further on and a
+known separate unit. Its translation unit carries no assert to name it, so the
+lever that worked for the first member simply does not exist for the second.
+
+NOTHING WAS NAMED FROM POSITION. The constructor and saver roles still rest on
+where they are called from, which round 392 showed to be unreliable, so neither
+function was filed under a role name -- only the MEMBER is identified, from the
+assert.
+
+**What moved:** one of the two members round 393 flagged as unreachable is
+identified and corroborated two ways, the save mask's 0x400 bit has a meaning,
+and the second member's resistance is explained rather than left as a shrug. No
+behaviour changed, so no tag.
+
 Round 394 (the non-C probe runs, names nothing, and turns up a better lever):
 ROUND 393 SAID +0x1fb4 AND +0x22d0 NEED A PROBE THE C CANNOT RUN. It does run:
 disassembling the whole .text finds 44 sites forming +0x1fb4 across 33 functions
