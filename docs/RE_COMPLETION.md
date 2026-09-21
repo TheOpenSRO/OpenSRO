@@ -6266,6 +6266,44 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 343 (three vocabularies, an engine bound, and the guard I published was
+wrong): WORKED THE FOUR CANDIDATES ROUND 342 QUEUED, AND THE FIRST ONE BROKE THE
+GUARD THAT ROUND HAD JUST STATED. AQ_Siege's dispatcher has 29 codes across 29
+sites -- one raiser each -- so the "codes must be reused across callers" test
+flagged it SUSPECT. It is a genuine enum: **each query id has exactly one raiser
+because each query is its own function**, and the callers carry THE ENGINE'S OWN
+CONSTANT NAMES -- AQ_Siege__QUERY_SIEGE_TAX_RATIO is 0x0, _TAX_ACCUMULATE 0x1,
+_TAX_COLLECT 0x2, _HIRED_NPC 0x3, _TEMPORAL_OWNER 0x4,
+_MODIFY_GUILD_INTRODUCTION 0x5, _REQUEST_ADD/_REMOVE 0xa/0xb, _ITEM_FORGE_ADD/
+_REMOVE 0xc/0xd. Named AQ_Siege_SubmitQuery. SO THE GUARD IS CORRECTED: reuse is
+a POSITIVE SIGNAL, NOT A REQUIREMENT; the VALUE RANGE is the test that
+discriminates (a one-per-site ratio is only suspicious when the range is also
+wide, as with the 43..4730 assert reporter). Published wrong last round, fixed
+here, and event_log.md now points at the correction. THE MOST VALUABLE FIND IS A
+PARAM VOCABULARY: 0x004b3570 takes (paramId, sourceKind) and ASSERTS
+`0x1ff < paramId`, so **the ParamKeeper id space is 0..511** -- a citable engine
+bound, now in engine_limits.md. ITS CALLERS VALIDATE THE READING EXACTLY,
+because their names encode the ids they pass: AbnormalState_Apply19_p178_179
+passes 0xb2/0xb3 = 178/179, _p11 passes 0xb, _p3_143 passes 0x8f = 143, _p4_144
+passes 0x90 = 144, Param5And6_ApplyOrRemoveContribution passes 0x5 and 0x6. 178
+and 179 are the attacker damage params of the recovered damage pipeline, so this
+is the SAME id space the combat work already ships. Named
+Param_RefreshContributions -- it walks the param's four contribution lists
+filtering on sourceKind and notifies through vtable slots 0x538/0x4e8 on change.
+WHETHER IT APPLIES OR REMOVES IS NOT CLAIMED: that is decided inside 0x004b2e00
+by the sourceKind, and the callers are named ...ApplyOrRemoveContribution
+precisely because they do both. ONE CANDIDATE DEFERRED WITH ITS REASON:
+0x0063d4a0 (15 codes, raised by CanBeEquipedAt, EnterWorld, Item_HandleUseItem
+with 0xc, EnterScriptMode, SetBodyMode) looks like a character state test, but
+its decompiled body computes `param_1 + in_EAX * 0xc`, making param_1 a BASE and
+in_EAX an INDEX -- which cannot both hold for a call site pushing the code. Same
+mismatch ItemEventLog_Record had, and it needs the same disassembly reading
+before either operand is called the state.
+
+**What moved:** no shipped value. Two names, three vocabularies documented in a
+new `code_vocabularies.md`, one engine bound filed where it is consumed, a guard
+of my own corrected, and one candidate left unnamed for want of settled operands.
+
 Round 342 (the vocabulary lever generalised, with the guard it needs): ROUND 341
 RECOVERED ONE VOCABULARY BY HAND; THE SHAPE GENERALISES. A call target with many
 sites whose last pushed immediate varies IS a vocabulary, so it was swept across

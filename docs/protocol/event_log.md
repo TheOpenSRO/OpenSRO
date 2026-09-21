@@ -174,6 +174,11 @@ distinguishes the two is not settled, and a name would have to claim it.
 
 ## The guard this lever needs
 
+**Superseded by `code_vocabularies.md` (round 343): the second guard below is
+WRONG as a requirement.** `AQ_Siege_SubmitQuery` has one raiser per code and is a
+genuine enum. Reuse is a positive signal; the value-range test is the one that
+discriminates.
+
 The sweep's top hit by raw count was **not** a vocabulary. `CGameServer::FUN_00964760`
 has 128 distinct immediates across 135 sites — nearly one per site — and they run
 **43 … 4730**. Those are `__LINE__` values: the function takes `IsDebuggerPresent`,

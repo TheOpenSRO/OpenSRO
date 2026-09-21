@@ -83,3 +83,16 @@ common-record link `refobj_binary_format.md` recovered), `m_btItemClass`,
 `ReferenceData.cpp` alone carries 22 of the 49, which is consistent with it
 being the most defensively written file in the server — and is why the reference
 tables have been the most tractable part of this project.
+
+## ParamKeeper parameter ids: 0..511 (round 343)
+
+`Param_RefreshContributions` (`0x004b3570`) opens with
+
+	if (0x1ff < paramId) { CGameServer::Assert_BreakIfDebugger(); }
+
+so the engine's parameter-id space is **0 through 511**. Read off the assert
+itself, which is the operator-decides rule this page already applies elsewhere:
+the comparison is `<`, so `0x1ff` is the last valid id, not the first invalid
+one. The same function's callers encode the ids they pass in their own names
+(`AbnormalState_Apply19_p178_179` passes `0xb2`/`0xb3`), which is what confirms
+the argument is a parameter id at all — see `code_vocabularies.md`.
