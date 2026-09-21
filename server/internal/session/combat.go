@@ -214,7 +214,7 @@ const unarmedDamage = 5
 //     item rows finds no percentage-reduction column populated anywhere.
 //   - The skill-effect applier (00594ac0) reaches it only through the skill
 //     param code 'ar' (SkillGlobal::RefSkill_ParseParams, 00587630, writing
-//     skill+0x268 as a 3-word run). 'ar' appears on ZERO of the 29,342 real
+//     skill+0x268 as a 3-word run). 'ar' appears on ZERO of the 33,632 real
 //     skill rows; the single numeric match is a skill's own id column.
 //   - GObjMob_PublishStats is mobs only.
 //

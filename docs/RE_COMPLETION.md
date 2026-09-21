@@ -1342,7 +1342,7 @@ exactly **three**, and none of them can make it non-zero for a player.
 |---|---|
 | `GObjMob_PublishStats` (`004c3730`) | no — mobs only (characterdata col 73 = the monster's level) |
 | `Char_PublishCombatStats` (`00497830`) | from the `_RefObjItem` defence block — and **no percentage-reduction column is populated on any of the 21,560 item rows** |
-| the skill-effect applier (`00594ac0`) | only through the skill param code **`'ar'`** — which appears on **zero of 29,342 skill rows** |
+| the skill-effect applier (`00594ac0`) | only through the skill param code **`'ar'`** — which appears on **zero skill rows as a param code**. RE-VERIFIED round 381 on all 33,632 rows with a working positive control: `'att'` fires 30,064 times, 29,312 of them in **column 69** (the param-code column), while `'ar'` has exactly one occurrence and it is in column 1, a skill's own id |
 
 `'ar'` is `SkillGlobal::RefSkill_ParseParams` (`00587630`) writing `skill+0x268`
 as a 3-word run, which the applier publishes into params **7 and 8 at slot 0**.
@@ -1948,7 +1948,8 @@ columns leave them zero and behave exactly as before — pinned by its own test.
   is the minimum of three uniform samples, and the rates are
   `CharacterRate(level, equipment) = 10 + level + equipment` (the weapon's attack
   rate, itemdata col 113) and `MonsterRate(level) = 2*level + 25`
-  (characterdata cols 75/77, the same on every monster row).
+  (characterdata cols 75/77 — verified on all 11 roster species, and NOT a law
+  of the table: see round 380).
 
   **Both directions are ported (round 379).** The monster's counterattack takes
   the same roll with the sides swapped -- its `2*level + 25` against the
@@ -6301,6 +6302,45 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 0x51c is 0x0d, 0x51d is 1. Resolving category -> message-name prefix would label
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
+
+Round 381 (a load-bearing negative re-verified, and my first control was not a
+control): ROUND 380 FOUND A CLASS OF ERROR rather than a single mistake -- two
+recorded claims that were true of srrevamp's roster and false of the table. This
+round swept the docs for other universal claims about the game data and re-tested
+the one that carries the most weight.
+
+FIRST, A MISS FROM ROUND 380 ITSELF. Correcting the "2*level+25 for every
+monster" claim at line 36 and in MonsterRate's comment left a THIRD copy of it
+untouched, in round 378's own ledger entry at line 1951. The sweep found it.
+Correcting a claim means correcting every place it was stated, and a grep for the
+claim's own words is what finds them.
+
+THE CLAIM WORTH RE-TESTING: "the skill param code 'ar' appears on zero of 29,342
+skill rows". It is load-bearing -- it is why srrevamp ships a player percentage
+mitigation of ZERO, and it is a NEGATIVE, which is this project's documented weak
+spot (four confident false absences on record). Round 372 had also just shown
+that these tags live as PACKED MULTI-CHAR INTEGERS, so a string census would be
+structurally blind to them.
+
+THE NEGATIVE STANDS, and the original method was sound: the census was numeric,
+not a string grep. Across all 33,632 skill rows, 'ar' (packed 0x6172 = 24946) has
+EXACTLY ONE occurrence and it is in column 1 -- a skill whose own id is 24946 --
+with nothing in the param columns. That is what the entry already said.
+
+MY FIRST CONTROL WAS NOT A CONTROL. I paired the negative with 'hra', which came
+back 0 -- and a positive control returning zero means the probe proves nothing.
+'hra' is an ITEM magic-option tag; it was never expected in skilldata, so it
+could not have fired. Replacing it with 'att', a real skill param code, makes the
+probe fail loudly as intended: 30,064 occurrences, 29,312 of them in COLUMN 69,
+which is the param-code column. Against a control firing 29,312 times, 'ar' at
+zero is a measurement rather than an absence of evidence.
+
+A SMALL THING THAT FALLS OUT AND IS WORTH KEEPING: the skill param-code column is
+**69**, identified by where the control's hits concentrate.
+
+**What moved:** a third uncorrected copy of a withdrawn claim found and fixed, a
+negative that shipped code depends on re-verified against a working control, and
+the control methodology corrected mid-probe. No behaviour changed, so no tag.
 
 Round 380 (two recorded facts about monsters were true of the roster and false
 of the table): TOOK "blocking's monster side" off the open list and found the
