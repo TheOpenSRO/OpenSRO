@@ -463,7 +463,7 @@ narrowing that section of `param_tags.md` had to make.
 | code | writes ParamKeeper params |
 |---|---|
 | `apau` | 13, 14, 15, 16 |
-| `apru` | 13, 14, 15, 16, 57 |
+| `apru` | 13, 14, 15, 16, ~~57~~ **(57 UNCONFIRMED, round 389)** |
 | `bldr` | 198, 199, 200 |
 | `dcmp` | 141 |
 | `defr` | 5, 6, 7 |
@@ -483,7 +483,7 @@ narrowing that section of `param_tags.md` had to make.
 | `pmdp` | 5, 6, 170 |
 | `reat` | 145, 146, 147, 148, 149, 150 |
 | `ru` | 33 |
-| `skc` | 194 |
+| `skc` | ~~194~~ **UNCONFIRMED (round 389)** |
 | `stri` | 1 |
 | `tant` | 187 |
 | `terd` | 9 |
@@ -1474,3 +1474,39 @@ that skips mitigation. Two independent routes, one answer.
 **The other 27 rows are not audited.** Six of them were verified against
 independent evidence when the join was made and all six reproduced; the rest rest
 on the window alone, and this is one demonstrated miss.
+
+
+## Auditing the whole join (round 389)
+
+Round 388 found one wrong row and said the other 27 rested on the 14-line window
+alone. This audits them all, with a rule taken from how that miss was found: **a
+pairing is suspect if another field read sits between the code's own field read
+and the `SetParam` attributed to it.**
+
+| | |
+|---|---:|
+| join rows with a usable field offset | 25 |
+| all claimed params confirmed in-block | **23** |
+| at least one param unconfirmed | **3** |
+
+The three: `dtt` → 188 (already retracted in round 388), **`skc` → 194** and
+**`apru` → 57**. Reading both of the new ones: `apru`'s block reads `0x2d4`
+repeatedly and sets 13, 14, 15 and 16 in sequence — those four are solid — but
+**57 is not in it**; and `skc`'s block at `0x490` immediately nests `if`s on other
+fields with no `SetParam(194)` anywhere near it, the same shape as `dtt`.
+
+**Unconfirmed is not disproved.** Only `dtt` was read closely enough to call
+wrong. The other two are marked unverified rather than deleted.
+
+### The first version of this audit was worthless, and the control is what showed it
+
+The detector was first built from the field offsets of the **25 join codes**, and
+it reported 24 of 25 clean — a reassuring number. Feeding the *known* wrong row
+back through it as a control, it reported `dtt` → 188 **IN-BLOCK**: it could not
+see the miss it was written to find, because the fields that actually intervene
+there (`0x424`, `0x4c4`) belong to codes outside the join and so were invisible
+to the detector.
+
+Rebuilt from **all 141 known field offsets** — 157 read-lines instead of 83 — the
+control fires and the true count is 23, not 24. An audit that cannot reproduce
+the defect that motivated it measures nothing.

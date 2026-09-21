@@ -6375,6 +6375,38 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 389 (auditing the whole join, and the first audit could not see the defect
+it was built for): ROUND 388 FOUND ONE WRONG ROW and said plainly that the rest
+rested on the 14-line window alone. This audits all of them, with the rule that
+caught the miss: a pairing is suspect if ANOTHER FIELD READ sits between the
+code's own field read and the SetParam attributed to it.
+
+RESULT: of 25 join rows with a usable field offset, 23 have every claimed param
+confirmed in-block. Three do not -- dtt -> 188 (retracted last round), skc -> 194
+and apru -> 57. Reading the two new ones: apru's block reads 0x2d4 repeatedly and
+sets 13, 14, 15, 16 in sequence, so those four are solid and only 57 is adrift;
+skc's block at 0x490 nests ifs on other fields immediately, with no SetParam(194)
+anywhere near it -- the same shape as dtt. Both are marked UNCONFIRMED rather
+than deleted, because unconfirmed is not disproved and only dtt was read closely
+enough to call wrong.
+
+THE FIRST VERSION OF THIS AUDIT WAS WORTHLESS AND THE CONTROL IS WHAT SHOWED IT.
+I built the detector from the field offsets of the 25 JOIN CODES and it reported
+24 of 25 clean -- a comfortable number I was ready to write up. Feeding the KNOWN
+wrong row back through as a control, it reported dtt -> 188 as IN-BLOCK. It could
+not see the very miss it was written to find, because the fields that intervene
+there (0x424, 0x4c4) belong to codes outside the join and were invisible to the
+detector.
+
+Rebuilt from ALL 141 known field offsets -- 157 read-lines instead of 83 -- the
+control fires and the true figure is 23, not 24. AN AUDIT THAT CANNOT REPRODUCE
+THE DEFECT THAT MOTIVATED IT MEASURES NOTHING, and the only reason this one does
+is that the defect was already in hand to test it with.
+
+**What moved:** a table this project reasons from is now audited row by row with
+a control that demonstrably fires, two more unconfirmed rows flagged in place,
+and the reliable 23 separated from the rest. No behaviour changed, so no tag.
+
 Round 388 (the tension was a join artifact, and the content names param 188
 outright): ROUND 387 CLOSED AN ITEM AND LEFT ONE TENSION STANDING rather than
 explaining it away -- skill_params.md said code `dtt` writes param 188, but `dtt`
