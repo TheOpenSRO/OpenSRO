@@ -6303,6 +6303,51 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 383 (round 382 RETRACTED: the control was the wrong artifact): BOTH OF
+ROUND 382'S CLAIMS WERE WRONG and the reason is the same one that has now bitten
+five ticks running -- the answer was already in this project, in a place the
+probe did not look.
+
+THE FIVE "NEW" CODES ARE ALL IN THE SHIPPED PARSER TABLE. dttp, bgra, lkdh, rhru
+and alcu are every one of them in server/internal/skillparam/paramblock.go. Round
+382 built its "documented vocabulary" by grepping backticked tokens out of
+skill_params.md -- the PROSE ABOUT the vocabulary -- when that same file says in
+plain text that the table lives in Go. PROSE ABOUT A VOCABULARY IS NOT THE
+VOCABULARY, and picking the wrong artifact as a control produces a confident,
+well-evidenced, false result: the codes really are in the data and really are
+compared by the parser, which is exactly why the conclusion looked so solid.
+
+AND THE OPEN QUESTION WAS ALREADY ANSWERED, four sections above the line round
+382 quoted: the parser-tree walk gives 169 TOP-LEVEL CODES AND 40 getv SUB-CODES,
+reproduces all 131 known rows with zero disagreements, and is proven exhaustive
+by the parser's own error path. A naive column scan cannot beat that -- it sees
+only codes shipped content happens to use and cannot tell a code position from a
+data position, which is why its counts disagree with the verified ones (efr
+10,627 against 9,534; getv 4,050 against 2,553).
+
+WHAT SURVIVES IS A COVERAGE CHECK, and it is worth keeping because it asks
+something the parser walk cannot. Read as a check ON the shipped table rather than
+a rival TO it: paramblock.go holds 158 codes, the real skill table uses 138, and
+134 are in both. THE ONLY FOUR MISSING ARE cj, xc, ka AND nc -- the same four
+round 382 had already rejected as numeric coincidences.
+
+THAT REJECTION NOW HAS THREE INDEPENDENT CONFIRMATIONS: the size argument (a
+two-character pack is a small integer that collides with ordinary numeric fields,
+a four-character pack is a specific value near 1.6-1.9 billion), absence from the
+server dump, and absence from a parser-table built with no reference to either.
+So every code real content uses is in the shipped table, verified by a method
+independent of how that table was built.
+
+THE STANDING LESSON, SHARPENED. tools/known.sh greps docs AND Go sources, and it
+would have found paramblock.go -- but round 382 never ran it on the codes, only on
+the question. Run it on the ANSWER as well as the question: "is dttp known?" was
+one command away and would have stopped the round.
+
+**What moved:** a wrong round retracted at its source, its one sound result
+re-framed as a coverage verification of shipped code against real data, and a
+four-way coincidence rejection strengthened to three independent confirmations.
+No behaviour changed, so no tag.
+
 Round 382 (the skill-code vocabulary censused from the table, and five codes
 this project did not have): ROUND 381 LEFT A CAPABILITY rather than a question --
 a working numeric census over the real skill table, with the Params block located

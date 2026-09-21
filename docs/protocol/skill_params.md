@@ -79,7 +79,7 @@ neither table here — plausible-looking 2-to-4 character tags, each with its ow
 distinct field offset. They have not been hand-verified, and this walker has
 already over-reported once (it read the in-handler `cmp edx,0x4` value tests as
 tags until it was constrained to tags ≥ 0x100). So the count above is still the
-extractor's; whether the vocabulary is really ~105 or ~145 is open. **ANSWERED FROM THE DATA (round 382): 138 distinct codes occur in the real Params block, of which 134 are real and 4 are numeric coincidences — see "The vocabulary, censused from the table" at the end of this file.**
+extractor's; whether the vocabulary is really ~105 or ~145 is open. **This line is stale: the parser-tree walk below answers it — 169 top-level codes and 40 `getv` sub-codes — and round 382 wrongly treated it as still open. See the census section at the end of this file.**
 
 **CLOSED 2026-09-18. It is 209**, and the lead was right that there were more.
 A third pass walked the decompiled dispatch tree structurally rather than
@@ -1375,47 +1375,55 @@ walk that finishes. The exporter keeps the scan only as a fallback for input the
 — which no real row now is.
 
 
-## The vocabulary, censused from the table (round 382)
+## The vocabulary, checked against the real table (round 382, corrected in 383)
 
-The size of the code vocabulary was recorded above as open — "~105 or ~145". The
-skill table answers it directly, because round 381 established that these codes
-sit in the Params block as **packed big-endian multi-char integers** and that the
-block starts at **column 69**.
+**Round 382 claimed five new codes and an answer to the "~105 or ~145" question.
+BOTH WERE WRONG, and the reason is worth more than the claim was.**
 
-**The census.** Decoding every integer from column 69 onward in all 33,632 real
-skill rows, and keeping those that unpack to 2–4 lowercase ASCII characters,
-gives **138 distinct codes**.
+The census itself is sound: decoding every integer from column 70 onward in all
+33,632 real skill rows, keeping 2–4 lowercase ASCII unpacks, gives **138 distinct
+codes**. What was wrong is what it was compared against.
 
-**The control is the overlap with this file.** 129 of the 138 are already
-documented here — **93.5 %** — which is what makes the remaining 9 worth looking
-at rather than dismissing.
+**The control was the wrong artifact.** Round 382 built its "documented
+vocabulary" by grepping backticked tokens out of *this markdown file*, found 154,
+and reported the 5 codes missing from it as new. But this file's tables are an
+illustrative 131-row subset; the vocabulary lives in
+`server/internal/skillparam/paramblock.go`, which the text above says outright.
+**All five — `dttp`, `bgra`, `lkdh`, `rhru`, `alcu` — are in that table already.**
+Prose about a vocabulary is not the vocabulary.
 
-### Five codes this file was missing
+**And the question was already answered**, four sections above: the parser-tree
+walk gives **169 top-level codes and 40 `getv` sub-codes**, from a method that
+reproduces all 131 known rows with zero disagreements and is proven exhaustive by
+the parser's own error path. A naive column scan cannot beat that — it sees only
+codes the shipped content happens to use, and cannot tell a code position from a
+data position, which is why its per-code counts disagree with the verified ones
+above (`efr` 10,627 against 9,534, `getv` 4,050 against 2,553).
 
-Each occurs in real skill rows **and** is compared by the parser itself,
-`SkillGlobal::RefSkill_ParseParams`, as `if (uVar1 != <packed>) goto …`:
+### What the census is actually good for: coverage
 
-| code | packed | rows carrying it |
-|---|---|---:|
-| `dttp` | `0x64747470` | 36 |
-| `bgra` | `0x62677261` | 23 |
-| `lkdh` | `0x6c6b6468` | 18 |
-| `rhru` | `0x72687275` | 8 |
-| `alcu` | `0x616c6375` | 8 |
+Read as a check on the shipped table rather than a rival to it, the census gives
+something the parser walk cannot — **whether the table covers what real content
+uses**:
 
-**What each DOES is not read.** They are confirmed to be codes the engine parses,
-which is a different and smaller claim than knowing their effect.
+| | |
+|---|---:|
+| codes in `paramblock.go` | 158 |
+| distinct codes in the real skill table | 138 |
+| present in both | **134** |
+| in the data, missing from the table | **4** |
 
-### Four rejected, and the rule that rejects them
+The four are `cj` (42 rows), `xc` (10), `ka` (3), `nc` (1) — and they are not
+codes. **Three independent lines agree:**
 
-`cj`, `xc`, `ka` and `nc` decode cleanly but are **numeric coincidences**, and the
-discriminator is principled rather than ad hoc: a two-character pack is a small
-integer (25450, 30819, 27489, 28259) that collides with ordinary numeric fields,
-while a four-character pack is a specific value near 1.6–1.9 billion that nothing
-else in a skill row plausibly holds.
+1. **Size.** A two-character pack is a small integer (25450, 30819, 27489, 28259)
+   that collides with ordinary numeric fields; a four-character pack is a
+   specific value near 1.6–1.9 billion that nothing else in a skill row holds.
+2. **The binary.** None of the four appears in the server dump, while all five
+   four-character candidates do. Controls: `att` (`0x617474`) and `dru`
+   (`0x647275`), both known-real, both found.
+3. **The parser table.** `paramblock.go` was built by walking the parser tree,
+   independently of any of this, and contains none of them.
 
-**The binary agrees with the rule exactly.** All five four-character candidates
-appear in the server dump; none of the four two-character ones does. The controls
-for that probe were `att` (`0x617474`, 1 file) and `dru` (`0x647275`, 4 files),
-both known-real codes, so the search was known to fire before the candidates were
-judged by it.
+So **every code real content uses is in the shipped table**, verified by a method
+independent of how that table was built. That is the round's one durable result.
