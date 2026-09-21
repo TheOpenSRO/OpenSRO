@@ -6266,6 +6266,44 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 351 (three recovered rules checked against shipped code, and an evidence
+text corrected): THE NAMING LANE SHIPS NOTHING A PLAYER SEES, SO THIS TICK
+CHECKED RECOVERED RULES AGAINST THE RUNNING CODE INSTEAD. Three were tested and
+**all three already hold**: the 'reqi' cast-requirement override (skill.go
+implements both branches, with its own correction history), the berserk
+killing-blow earn (EarnOnKill calls the recovered GainChance), and the
+level-advantage damage stage (ResolveBlow calls ApplyLevelAdvantage after
+mitigation and the critical, which is the engine's order). Verification that
+finds nothing is still verification, and it is cheaper than the drift it would
+have caught. TWICE I REACHED FOR A SUPERSEDED LIST FROM MEMORY. Round 345's
+grep-based orphan figures (252 / 70 / 68) carry the false positives that round
+346's AST detector removed, and I twice believed a function was unwired --
+berserk.GainChance, then combat.ApplyLevelAdvantage -- when both are plainly
+called. The detector correctly reports neither. Round 345's entry is now marked
+SUPERSEDED at the number, so the next reader does not treat it as a to-do list.
+THE REAL FIND IS AN EVIDENCE TEXT THAT UNDERSTATES ITS OWN FUNCTION.
+GObjPC::IsKilledByPlayer's row in recovered_names.tsv said it "returns 1 only
+when both parties answer vtable slot 7". The body also requires victim+0x1cbc
+AND killer[0x72f] to be non-null before a second slot-7 test -- and this
+project's own ledger establishes [0x72e]/[0x72f] as PARTY and GUILD. So cause 5
+is a GUILD-CONTEXT kill, not any player kill, and the row omitted the two gates
+that carry the whole meaning. That row is what ships into the dump as the
+function's comment, so the incomplete version is what a future reader sees;
+corrected, and the ledger entry that had already read the fuller condition is
+cited. IT CHANGES A PENDING DECISION, AND AGAINST ACTING: duel.go declines to
+charge a death penalty and reasoned that "a PC killer takes the 20x branch". Too
+simple -- two unguilded duellists never reach cause 5 at all, leaving a duel on
+cause 3's 100x/300x pair or on a kind that goes elsewhere entirely, and nothing
+read so far distinguishes them. The comment now says so. Finally,
+leveldata.DeathPenaltyFactorFor moved out of the unreviewed baseline into
+knownOrphans with that reason: unreachable until srrevamp grows open-world PK.
+
+**What moved:** no shipped value, deliberately -- the one decision this touched
+came out as "still a guess, do not charge". Three recovered rules verified
+against the running code, one shipped evidence text corrected where it
+understated its function, one superseded list marked, and one baseline entry
+triaged from unreviewed to explained.
+
 Round 350 (two named, one refused, and a third caveat for the backlog): WORKED
 THE NEXT BATCH OFF THE RANKED QUEUE, AND TWO OF THREE CANDIDATES SURVIVED
 READING. 0x004e2910 is GObjPC::SetBattleState, case 8 of
@@ -6440,7 +6478,12 @@ four paragraphs of derivation that never uses the word "recovered", saying
 "settled by", "exact", "INFERRED" instead. Matching on vocabulary matches MY
 words, not the fact, which is the same weakness naming_ceiling.md already records
 for source-string levers. Rule two, "exported funcs with no non-test reference
-outside their own file": **252 of 548, 46 %** -- useless as an alarm, and inflated
+outside their own file": **252 of 548, 46 %** [SUPERSEDED -- these grep figures
+carry false positives that round 346's AST detector removed, and the authority is
+the baseline in orphans_test.go. In round 351 I reached for this list from memory
+TWICE, believing berserk.GainChance and then combat.ApplyLevelAdvantage were
+unwired; both are called, and the detector correctly reports neither. Do not use
+these numbers as a to-do list.] -- useless as an alarm, and inflated
 two ways: the deliberately parked spec packages round 333 already declared, and
 MY OWN BUG of ignoring same-file callers, which reads leveldata.ExpUnit as an
 orphan although KillExp calls it a hundred lines below. Filtering parked packages

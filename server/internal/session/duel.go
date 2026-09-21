@@ -416,7 +416,18 @@ func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	// player kill -- GObjPC_OnDeath picks its multiplier on the killer's
 	// vtable-0x1c predicate, the same one that gates the exp grant, so a
 	// PC killer takes the 20x branch (leveldata.DeathPenaltyKilledByPlayer)
-	// against a monster's 100x. What is NOT established is whether a duel
+	// against a monster's 100x.
+	//
+	// SHARPENED 2026-09-21. That sentence is too simple, and the correction
+	// makes the case for charging here WEAKER, not stronger.
+	// GObjPC::IsKilledByPlayer (0x004eb390) does not merely test that both
+	// parties are PCs: its body also requires the victim's +0x1cbc AND the
+	// killer's [0x72f] to be non-null before a second slot-7 test, and
+	// [0x72e]/[0x72f] are PARTY and GUILD. So cause 5 -- the 20x branch -- is
+	// a GUILD-CONTEXT kill, and two unguilded duellists would not reach it at
+	// all. Which leaves a duel landing on cause 3 (the 100x/300x monster-grade
+	// pair) or on one of the kinds that go elsewhere, and nothing read so far
+	// distinguishes those two. Charging anything here remains a guess. What is NOT established is whether a duel
 	// death reaches that code at all: GObjPC_OnDeath is dispatched only for
 	// death kinds 3, 4 and 5 (the byte at pc+0x1cb4, written by FUN_004e6ec0),
 	// and kinds 1, 2 and 6 go elsewhere entirely. Until which kind a duel is
