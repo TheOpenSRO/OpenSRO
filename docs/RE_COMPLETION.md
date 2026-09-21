@@ -2443,8 +2443,10 @@ it is now named even though what the two bits select is not.
 `combat.AttackType` records them as the axis choosing the defender's flat
 absorption, param **130 or 131**, alongside this pair's 128/129 — all four being
 `drua`'s quad. What is unrecovered is narrower: **what distinguishes class A from
-class B**, and round 385 measured a strong melee/ranged correlation for it
-without promoting it.
+class B**. Round 385 measured a strong melee/ranged correlation and held it
+back; round 386 settled the correlation on an independent column but found it is
+a CONTENT convention rather than the bits' meaning — the engine uses them only to
+pick the defender's absorption param. See `internal/combat/attacktype.go`.
 
 **Encoding, since this has been got wrong before.** The tables store the tag as
 a multi-char literal, so the bytes come out reversed from a little-endian read:
@@ -6336,6 +6338,42 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 0x51c is 0x0d, 0x51d is 1. Resolving category -> message-name prefix would label
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
+
+Round 386 (the 172 counterexamples were the confirmation, and it still does not
+license a rename): ROUND 385 NAMED THE PROBE -- read the 172 class-B rows whose
+names carry SWORD or SPEAR, the counterexamples blocking a melee/ranged reading.
+They are all SKILL_CH_SWORD_GEOMGI_*, real player skills, mask 6.
+
+THE NAME WAS NOT USED TO JUDGE THEM. Reasoning from what "GEOMGI" means would
+have been the outside-knowledge trap this project has recorded before. Instead an
+INDEPENDENT COLUMN settles it: skilldata col 21 is Range, and it separates the
+two classes of sword/spear player skills with ZERO OVERLAP --
+
+	sword/spear class A   n = 1194   range min 0,   max 0
+	sword/spear class B   n =  172   range min 120, max 160
+
+The groups were formed by the `att` mask, not by range, so this is a measurement
+on a column that had no part in defining them. The 172 counterexamples turn out
+to be the strongest evidence FOR the reading: they are sword skills that strike
+at 120-160.
+
+AND THE CONCLUSION IS NOT THE ONE I EXPECTED TO DRAW. Settling the correlation
+does NOT license renaming AttackClassA/B to Melee/Ranged, because what the ENGINE
+does with the bits is pick the defender's flat-absorption param, 130 or 131 --
+nothing range-related. Melee-versus-ranged is a CONTENT-AUTHORING CONVENTION that
+aligns with the damage class, not the meaning of the bits. A name like
+AttackMelee would record the correlation and hide the mechanism, which is the
+opposite of what a recovered name is for.
+
+So the constants stay positional, the measurement sits beside them in
+attacktype.go, and the distinction between "what the bit selects" and "what
+content happens to put in each class" is written down where the next reader will
+need it.
+
+**What moved:** a held-back correlation settled on an independent column with a
+perfect split, and a rename correctly DECLINED on the grounds that the settled
+fact is about content rather than about the bits. No behaviour changed, so no
+tag.
 
 Round 385 (the attack descriptor's second axis: a strong melee/ranged split,
 deliberately not promoted): WITH THE OPEN LIST NOW TRUSTWORTHY after round 384,

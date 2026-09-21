@@ -73,18 +73,32 @@ const (
 	// not recovered, and inventing a name for it would be the kind of
 	// plausible fiction this project has paid for before.
 	//
-	// MEASURED BUT NOT PROMOTED (round 385). Grouping all 30,064 real skill
-	// rows that carry `att` by this axis shows a strong melee/ranged split:
-	// class A names carry SPEAR 3,763, SWORD 2,671, SHIELD 178 and **no BOW at
-	// all**, while class B carries BOW 3,560 and STAFF 141. The control is the
-	// other axis -- every PHYS/MAG bit matches the row's own PHYSICAL/MAGIC
-	// name word, in all four combinations -- so the extraction is sound.
+	// MEASURED, AND THE NAMES STAY POSITIONAL ANYWAY (rounds 385-386).
 	//
-	// It is still NOT promoted, because class B also holds 130 SWORD and 42
-	// SPEAR rows: 172 counterexamples. A naming correlation with exceptions is
-	// a curve, not a use-site, and this project has twice shipped a wrong
-	// meaning reasoned exactly that way. Reading those 172 rows is the next
-	// probe; until then the names stay positional.
+	// In authored content the axis lines up exactly with melee versus ranged.
+	// Grouping all 30,064 real skill rows that carry `att`: class A names carry
+	// SPEAR 3,763, SWORD 2,671, SHIELD 178 and **no BOW at all**; class B carries
+	// every BOW row. Round 385 held this back as a naming correlation with 172
+	// counterexamples -- class B rows named SWORD or SPEAR.
+	//
+	// Those 172 turned out to be the confirmation. They are all
+	// SKILL_CH_SWORD_GEOMGI_*, real player skills, and the Range column
+	// (skilldata col 21) separates them from the rest with ZERO OVERLAP:
+	//
+	//	sword/spear class A   n=1194   range min 0, max 0
+	//	sword/spear class B   n= 172   range min 120, max 160
+	//
+	// Range was not used to form the groups -- the `att` mask was -- so this is a
+	// clean separation on an independent column, not the naming argument round
+	// 385 declined.
+	//
+	// **And it still does not license renaming these constants.** What the ENGINE
+	// does with the bits is select the defender's flat-absorption param, 130 or
+	// 131; it does not branch on them for anything range-related. Melee-versus-
+	// ranged is a CONTENT-AUTHORING convention that happens to align with the
+	// damage class, not the bits' meaning. Naming them AttackMelee/AttackRanged
+	// would name a correlation and hide the mechanism, so they stay positional
+	// and the measurement is recorded here instead.
 	AttackClassA AttackType = 1
 	AttackClassB AttackType = 2
 )
