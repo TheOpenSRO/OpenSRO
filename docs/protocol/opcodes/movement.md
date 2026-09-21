@@ -79,14 +79,59 @@ That last row also settles the **widths**: the epsilon is a float32 and reads as
 0.0) when taken as float32 and as exact round numbers when taken as doubles. The discrimination is
 "meaningful versus garbage", cross-checked against four independently known values.
 
+## The response — `0xB021` (round 366)
+
+Round 365 deliberately left this out: `0xB021` is the conventional pairing for a `0x7021` request,
+and conventional is not evidence. It is now read from the binary.
+
+`GObjPC::FUN_004b0ea0` begins a message with `0xB021` through `FUN_00430a00`, which writes the
+MsgBuf opcode field at `+0x1050` — the argument is dropped by the decompiler but is the literal at
+the call site. It then appends one leading field and **the same movement destination this page
+specifies**, through the `0x0048bad0` serialiser with the optional extra byte absent.
+
+**Not read:** whether `0xB021` is a per-request acknowledgement, a broadcast to observers, or
+both; and what the one leading field before the destination is.
+
+**`0x3021` is not a server opcode.** It appears in the client and **never in the server**, so
+whatever it is, it is not the movement broadcast.
+
+## The optional extra byte has exactly one emitter (round 366)
+
+Every call to the destination serialiser in the server passes `0` — the monster AI, the
+`0xB021` responder, the flag/battle-arena handlers — **except `CGObjMobile::vslot_292`**
+(vtable slot 292; a COMDAT twin at `0x0048b570` and `0x004a9c60`). That function writes a one-byte
+**action kind** and, only when the kind is `3`, appends the movement with the extra byte present.
+
+So the extra byte marks **a movement embedded in an action message**, not a standalone move. What
+the action kinds are, and what the byte then carries, is still unread.
+
+## A use-site that corroborates the interaction state
+
+`FUN_004b0ea0`'s first gate reads `chardata + 6` — the exclusive-interaction state of
+`docs/protocol/character_state.md` — and proceeds only when it is **0 or 1**.
+
+That is round 361's 1-versus-2 distinction confirmed from a function with nothing to do with
+trade: a character may move while a trade session is merely **opened** (1), and may not once it is
+**established** (2). The movement gate and the trade code agree without sharing any code.
+
+### A misreading this page nearly carried
+
+The same function compares a value against `8`, `0x10` and `0x12`, and a filtered grep makes those
+look like three more `chardata + 6` states. **They are not.** `cVar6` is reassigned between the
+two blocks — the later comparisons are against the return of **vtable slot `0xfc`**, a different
+getter whose identity is unread. Reading the whole body is what caught it; the grep alone would
+have added three invented values to the state vocabulary.
+
 ## Not read
 
 - **What the `+0x14` byte in the heading form is.** Its width is settled at one byte; its meaning
   is not, and no name is proposed for it.
 - **When a sender picks `kind == 0`** (heading) over a destination. The monster AI always supplies
-  a destination.
-- **What the optional `extra` byte at `+1` carries**, and which callers pass non-zero. The monster
-  AI passes zero, so it is absent from every message the AI sends.
+  a destination — `AITactics_MoveAlongDirection`'s name describes how it *derives* the point
+  (position + direction × distance), not the wire form it sends.
+- **What the optional `extra` byte at `+1` carries.** Which caller emits it is now known; what it
+  means is not.
+- **Vtable slot `0xfc`**, whose 8 / 0x10 / 0x12 returns block movement.
 
 ## For srrevamp
 
@@ -113,8 +158,9 @@ on events, so movement with no push would make them jump rather than walk (round
 - [ ] The `+0x14` byte's meaning (its width is settled at one byte)
 - [ ] What the optional `extra` byte at `+1` carries, and which callers pass non-zero
 - [ ] When a sender picks the heading form over a destination
-- [ ] The server's reply opcode, if any. `0xB021` would be the conventional
-      pairing but **nothing was read to confirm it**, so it is not in `opcodes.go`
+- [x] The server's response opcode — **`0xB021`, read from the binary** in round 366 and now in
+      `opcodes.go` as `OpMovementResponse`. Whether it is an ack, a broadcast or both is not read
+- [x] Which caller emits the optional extra byte — `CGObjMobile::vslot_292`, action kind 3
 - [ ] Wiring: nothing calls this yet. It is the target format for `docs/TODO.md`'s
       move packet, and monster movement additionally needs the server to step
       positions on a tick and push them (round 362)

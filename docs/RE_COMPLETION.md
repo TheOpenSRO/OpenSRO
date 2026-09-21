@@ -6266,6 +6266,48 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 366 (the response opcode earns its place, and a grep nearly invented three
+states): ROUND 365 LEFT FOUR NAMED GAPS on 0x7021 and deliberately kept 0xB021
+OUT of opcodes.go on the grounds that "conventional is not evidence". TWO OF THE
+FOUR ARE NOW CLOSED FROM USE-SITES.
+
+0xB021 IS REAL AND IS NOW IN opcodes.go. GObjPC::FUN_004b0ea0 begins a message
+with it through FUN_00430a00, which writes the MsgBuf opcode field at +0x1050 --
+the argument is dropped by the decompiler but is the literal at the call site,
+the standing __fastcall trap. It then appends one leading field and THE SAME
+movement destination this project already encodes, through the 0x0048bad0
+serialiser with the optional extra byte absent. Added as OpMovementResponse.
+WHETHER IT IS AN ACK, A BROADCAST, OR BOTH IS NOT READ, and the leading field is
+not identified. Also: 0x3021 appears in the CLIENT and NEVER in the server, so
+whatever it is, it is not the movement broadcast.
+
+THE OPTIONAL EXTRA BYTE HAS EXACTLY ONE EMITTER. Every call to the destination
+serialiser passes 0 -- the monster AI, the 0xB021 responder, the flag and
+battle-arena handlers -- except CGObjMobile::vslot_292 (vtable slot 292, COMDAT
+twin at 0x0048b570/0x004a9c60), which writes a one-byte ACTION KIND and appends
+the movement with the extra byte only when that kind is 3. So the byte marks a
+movement EMBEDDED IN AN ACTION message rather than a standalone move.
+
+A USE-SITE CORROBORATES ROUND 361 FROM OUTSIDE. FUN_004b0ea0's first gate reads
+chardata+6 and proceeds only when it is 0 or 1: a character may move while a
+trade session is merely OPENED (1) and may not once it is ESTABLISHED (2). The
+movement gate and the trade code agree without sharing any code, which is the
+kind of confirmation the 1-versus-2 split needed.
+
+AND THE ROUND NEARLY INVENTED THREE STATES. The same function compares a value
+against 8, 0x10 and 0x12, and the filtered grep that surfaced them made them look
+like three more chardata+6 values -- a tempting extension of a vocabulary this
+project had just built. THEY ARE NOT: cVar6 is REASSIGNED between the two blocks,
+and the later comparisons are against the return of vtable slot 0xfc, a different
+getter whose identity is unread. Reading the whole body is what caught it. This
+is the same failure mode as characterdata col 79, arriving by a different road.
+
+**What moved:** one real opcode promoted from "conventional guess, withheld" to
+"read, cited and in opcodes.go"; the extra byte's sole emitter identified; an
+independent corroboration of the interaction state's 1-vs-2 split; and a
+three-value misreading caught and recorded rather than shipped. No behaviour
+changed, so no tag.
+
 Round 365 (the first real payload layout gets implemented, and the orphan guard
 earns its keep): ROUND 364 FINISHED 0x7021's SPEC; this implements it.
 opcodes.go's own header said "payload layouts are documented in login.md, not

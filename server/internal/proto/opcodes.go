@@ -163,6 +163,18 @@ const (
 // recorded FUN_009ebd10 sending it in round 336, before this project knew what
 // it carried. The payload layout IS encoded here, in movement.go, unlike the
 // gateway-login group above: see docs/protocol/opcodes/movement.md.
+// OpMovementResponse was left OUT of this file in round 365 -- 0xB021 is the
+// conventional pairing for a 0x7021 request, and conventional is not evidence.
+// Round 366 found it in the binary: GObjPC::FUN_004b0ea0 (0x004b0ea0) begins a
+// message with it through FUN_00430a00, which writes the MsgBuf opcode field at
+// +0x1050, and then appends the SAME movement destination this package encodes
+// (via the 0x0048bad0 serialiser, with no optional extra byte). The client
+// names it once too.
+//
+// Whether it is a per-request acknowledgement, a broadcast to observers, or
+// both, is NOT read -- only that the server composes it and that it carries a
+// movement destination after one leading field this project has not identified.
 const (
-	OpMovementRequest uint16 = 0x7021
+	OpMovementRequest  uint16 = 0x7021
+	OpMovementResponse uint16 = 0xB021
 )
