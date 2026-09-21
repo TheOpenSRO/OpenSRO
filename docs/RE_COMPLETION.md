@@ -6266,6 +6266,33 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 359 (the invitation state machine closes, and there turn out to be TWO
+senders): ROUND 358 LEFT THE TRANSITION BETWEEN 1 AND 4 MISSING. Sweeping every
+writer of chardata+7 in the binary closes it, and the missing edge was an idiom
+rather than a branch: `(state == 4) * 2 + 1`, which is 3 when the byte was 4 and
+1 otherwise. THE MACHINE: GObjPC::SetParty (0x004ea260) writes 2 when a party
+pointer is set and 0 when cleared -- twenty-six bytes that assign pc+0x1cb8 and
+sync the byte together, sitting immediately before GObjPC::PartyID, the getter
+for the same field; an invitation writes 1 on the target; the formation
+invitation writes 3-or-1 on the inviter; trs_wait_response::FUN_005bea90 does
+3 -> 4 and everything-else -> 0 as `((state != 3) - 1) & 4` before replying; and
+handler 0x06f is the exit from 4, clearing +0x1cd0 with it. AND THERE ARE TWO
+INVITATION SENDERS, WHICH THE CODE SAYS RATHER THAN THE SHAPE:
+Party_SendFormationInvitation (0x005be280) asserts NEITHER side has a party and
+passes **0** as the party id, while Party_SendInvitation asserts only the target
+is party-less and passes the inviter's real one. One forms a party, one joins an
+existing one -- the assert and the literal 0 are the evidence. WHAT 3 AND 4 MEAN
+IS NOT CLAIMED, only that they are a pair the repeat path moves through. ONE
+THING STAYS OPEN AND IS NAMED: step 7's gate 0x00514010 refuses with 0x2c06,
+and **0x2c06 has no client name in error_codes.md at all**, so what it forbids
+is unread.
+
+**What moved:** no shipped value. Two names (GObjPC::SetParty and
+Party_SendFormationInvitation), the invitation state machine closed as a
+five-row transition table from every writer in the binary, a second invitation
+sender found that three rounds of reading this flow had missed, and the one
+remaining gate named with the reason it cannot be read further.
+
 Round 358 (the invite ladder, and a state byte that names itself): FINISHED
 READING THE FUNCTION ROUND 357 STOPPED HALFWAY THROUGH. CParty::CheckCanJoin
 (0x00514560) is the INVITE, not merely a predicate -- it ends by asking the

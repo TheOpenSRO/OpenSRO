@@ -219,9 +219,34 @@ and sets **`target->chardata+7 = 1`**.
 
 That byte is what round 356 could only call "an unnamed state byte" when it
 found handler `0x06f` clearing it at value **4**: it is the **pending-invitation
-state**. The invitation writes 1 and the cleanup clears 4, so **at least one
-transition between them is still unread** — that is what remains of this flow,
-along with what `0x00514010` checks.
+state**.
+
+### The state byte, `chardata + 7` (round 359)
+
+Every writer in the binary was swept, and the machine closes:
+
+| transition | written by |
+|---|---|
+| → **2** when a party pointer is set, → **0** when it is cleared | `GObjPC::SetParty` (`0x004ea260`), which assigns `pc+0x1cb8` and syncs the byte in the same breath — the setter sitting beside `GObjPC::PartyID`, its getter |
+| target → **1** on an invitation | `Party_SendInvitation`, and `Party_SendFormationInvitation` |
+| inviter → **3 if it was 4, else 1** | `Party_SendFormationInvitation` (`0x005be280`), as `(state == 4) * 2 + 1` |
+| **3 → 4**, anything else → **0**, then a reply is sent | `trs_wait_response::FUN_005bea90`, as `((state != 3) - 1) & 4` |
+| **4 → 0**, clearing `+0x1cd0` too | handler `0x06f` (round 356) |
+
+**There are TWO invitation senders**, and the difference is in the code rather
+than inferred: `Party_SendFormationInvitation` asserts that *neither* side has a
+party and passes **0** as the party id, while `Party_SendInvitation` asserts only
+the target is party-less and passes the inviter's real one. One forms, one joins.
+
+**What 3 and 4 MEAN is not claimed** — only that they are a pair the repeat path
+moves through, and that `0x06f` is the exit from 4.
+
+### Still open here
+
+`0x00514010`, step 7 of the ladder, refuses with **`0x2c06`** when
+`[0xc] + 4` is 1 and with **3** when a vtable-`0xf8` state getter returns neither
+1 nor 2. **`0x2c06` has no client name in `error_codes.md`**, so what it forbids
+is unread.
 
 The party id the invitation carries is `inviterParty + 8`, a fifth independent
 use-site for `GObjPC::PartyID`.
