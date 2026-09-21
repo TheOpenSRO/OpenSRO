@@ -483,13 +483,63 @@ look plausible. **Code names are not unique across the characterdata files.**
 Select by `RefObjID`. The level/HP control is what caught it -- col 57 came back
 90 against the roster's 1.
 
-**Which speed a WANDER leg steps at is NOT read.** `PickWanderLeg` tests run
-speed `> 1e-6`, but that is the engine's own *immobility* test, not evidence the
-leg runs: the row above records `run speed <= 0` as what marks a monster
-immobile at `Init`. A 46--124 unit leg takes 2.1--5.6 s at Mangyang's run speed
-and 5.75--15.5 s at its walk speed, against WANDER's 5--6 s dwell -- suggestive
-of run, which is exactly why it is not promoted here. Settle it from the mover
-before choosing.
+### "Which speed does a WANDER leg step at" was the wrong question (round 363)
+
+Round 362 left it open and said to settle it from the mover. Reading the AI
+shows there is nothing to settle **in the AI**: no state reads a speed to
+compute a step. Across every AI function, the walk and run fields appear only as
+**immobility gates** -- `<= 0.0` in `AI::CTactics::Init`, `AITactics_CreditAttacker`
+and five `FUN_0054xxxx` guards, `<= 1e-6` in `PickWanderLeg` and
+`AITactics_Handler_110`. WANDER picks a **destination**, never a speed.
+
+**A probe that looked right and was not**, recorded because it nearly became a
+finding. Grepping `+0x16c`/`+0x170` inside the AI address range returns
+`CAIState_PATROL::OnEnter` and `CAIState_MOVING::OnEnter` "reading walk speed" --
+which would have settled the question as *walk*. Both are false hits: PATROL
+copies `0x16c, 0x170, 0x174, 0x178, 0x17c, 0x180` as a **block** into its context
+at `+0x38..+0x4c`, and `FUN_00549970` squares `0x16c` and `0x170` together with a
+third field (`local_30 * local_30 + local_38 * local_38 + local_34 * local_34`)
+-- they are **vector components**, not speeds. The offsets mean walk/run only
+when reached through the owner pointer, `*(int *)(ctx + 4) + 0x16c`. Scoping the
+grep by *address range* does not separate these; only the **base object** does.
+
+## How the AI actually moves a monster (round 363)
+
+`FUN_00540f70`, the destination setter `PickWanderLeg` hands its leg to, ends by
+composing a message with opcode **`0x7021`** and sending it:
+
+	uVar1 = (**(code **)(*unaff_ESI + 0x14))(0x7021);   // new message, opcode 0x7021
+	GObjPC::FUN_0048bad0(0);                            // append the destination
+	(**(code **)(*unaff_ESI + 4))(uVar1);               // send
+
+**`0x7021` is the client's own movement request** -- `docs/protocol/client_senders.tsv`
+records the client sending it from `FUN_009ebd10`. So a monster moves by issuing
+the same message a player's client issues, and player and monster movement share
+one path rather than having two.
+
+**The payload**, read from `GObjPC::FUN_0048bad0` (`0x0048bad0`), where the
+argument decides only whether a second byte is included -- the AI passes `0`, so
+it omits it:
+
+	u8  kind                       ; asserts if 0xff
+	[u8 extra]                     ; only when the caller passes non-zero
+	if kind == 0:                  ; directional: no destination, a heading
+	    u16 <field at +0x14>
+	    u16 angle                  ; ROUND(rad * 0xb45c38 / 0xb45c30 * 0xb45c28)
+	else:                          ; a destination
+	    u16 region
+	    if region & 0x8000:  f32 x, f32 y, f32 z     ; world/dungeon coords
+	    else:                u16 x, u16 y, u16 z     ; region-local
+
+The region-or-float split is the same encoding this project already recovered
+for positions elsewhere (region span 1920, local `[0, 1920)`). **The three angle
+constants were not read** -- they are `.rdata` floats and naming the scale would
+be a guess.
+
+**What this means for srrevamp's move packet** (`docs/TODO.md`): there is a
+retail shape to mirror, and the speed belongs to whatever consumes `0x7021`, not
+to the state machine. The walk/run table above is still the data that consumer
+will need.
 
 ## Target acquisition: the detection radius and the nearest-player rule (round 257)
 

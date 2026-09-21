@@ -6266,6 +6266,47 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 363 (the WANDER speed question was mis-framed, and monster movement is the
+CLIENT'S OWN packet): ROUND 362 LEFT ONE BOUNDED QUESTION -- which speed a WANDER
+leg steps at -- and said to settle it from the mover. There is nothing to settle
+IN THE AI: no state reads a speed to compute a step. Across every AI function the
+walk and run fields appear ONLY as immobility gates (<= 0.0 in AI::CTactics::Init,
+AITactics_CreditAttacker and five FUN_0054xxxx guards; <= 1e-6 in PickWanderLeg
+and AITactics_Handler_110). WANDER picks a DESTINATION, never a speed.
+
+A PROBE THAT LOOKED RIGHT AND WAS NOT, recorded because it nearly became the
+finding. Grepping +0x16c/+0x170 scoped to the AI address range returns
+CAIState_PATROL::OnEnter and CAIState_MOVING::OnEnter apparently "reading walk
+speed", which would have settled the question as WALK -- the answer round 362
+already leaned toward, so it would have confirmed a prior lean. Both are false
+hits: PATROL copies 0x16c,0x170,0x174,0x178,0x17c,0x180 as a BLOCK into its
+context at +0x38..+0x4c, and FUN_00549970 squares 0x16c and 0x170 together with a
+third field as VECTOR COMPONENTS. The offsets mean walk/run only when reached
+through the owner pointer, *(int *)(ctx + 4) + 0x16c. SCOPING A GREP BY ADDRESS
+RANGE DOES NOT SEPARATE THESE; ONLY THE BASE OBJECT DOES.
+
+HOW A MONSTER ACTUALLY MOVES. FUN_00540f70, the destination setter PickWanderLeg
+hands its leg to, ends by composing a message with opcode 0x7021 and sending it.
+0x7021 IS THE CLIENT'S OWN MOVEMENT REQUEST -- client_senders.tsv already records
+the client sending it from FUN_009ebd10 -- so a monster moves by issuing the same
+message a player's client issues, and player and monster movement share one path
+rather than having two. The payload, read from GObjPC::FUN_0048bad0 where the
+argument decides only whether a second byte is included (the AI passes 0): a kind
+byte; then if kind == 0 a heading form (a u16 from +0x14 and a u16 angle), else a
+u16 region followed by three coords -- f32 when region & 0x8000, else
+region-local u16s. That last split is the same position encoding this project
+recovered elsewhere (region span 1920, local [0,1920)).
+
+NOT READ: the three .rdata floats that scale the angle, and the +0x14 field in
+the heading form. Naming the angle scale would be a guess.
+
+**What moved:** no shipped value, no code. A question this project had stated as
+open is RETIRED AS MIS-FRAMED rather than answered, with the false probe that
+would have answered it wrongly recorded beside it; monster movement is shown to
+be the client's own 0x7021 request; and its payload is read, which gives
+srrevamp's outstanding move packet (docs/TODO.md) a retail shape to mirror
+instead of an invented one.
+
 Round 362 (the monster speeds, and why the AI cannot be wired yet): THIS TICK
 WENT AT THE BIGGEST PLAYER-VISIBLE GAP instead of another naming round --
 internal/ai is 30 KB of tested, fully-specified state machine IMPORTED NOWHERE,

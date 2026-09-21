@@ -118,7 +118,13 @@ In order. Each is checked off here when it ships in a release, with its round in
       **The speeds are no longer missing (round 362):** all eleven roster species' walk and run
       speeds are read from the retail characterdata (cols 46/47, world units per second) and
       tabled in `docs/protocol/monster_ai.md`, with an eleven-row level/HP control. Which of the
-      two a WANDER leg steps at is still unread.
+      two a WANDER leg steps at turned out to be the WRONG QUESTION (round 363): no AI state
+      reads a speed to compute a step -- in the AI the walk/run fields appear only as immobility
+      gates. WANDER picks a destination and `FUN_00540f70` sends opcode **`0x7021`**, which is the
+      CLIENT'S OWN movement request (`client_senders.tsv`), so player and monster movement share
+      one path. Its payload is read in `monster_ai.md`: a kind byte, then either a heading or a
+      region word plus three coords (floats when `region & 0x8000`, else region-local u16s).
+      **That is the retail shape for srrevamp's move packet.**
       **The client half is the gate, and it is a push not a poll.** The client asks for monsters
       only on events (`NetClient.list_monsters` at zone entry, on the refresh button and after an
       attack) and draws them as `_monster_bodies` Node3Ds at the snapshot position, so server-side
