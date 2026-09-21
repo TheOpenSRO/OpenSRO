@@ -124,6 +124,9 @@ In order. Each is checked off here when it ships in a release, with its round in
       CLIENT'S OWN movement request (`client_senders.tsv`), so player and monster movement share
       one path. Its payload is read in `monster_ai.md`: a kind byte, then either a heading or a
       region word plus three coords (floats when `region & 0x8000`, else region-local u16s).
+      The BROADCAST class this needs is now enumerated: `docs/protocol/server_senders.tsv`
+      (round 368) lists every opcode the server composes, and its 0x3NNN group -- 159 of the 297
+      sites -- is the server's unprompted push to clients.
       **That is the retail shape for srrevamp's move packet**, and per PROTOCOL_DECISION.md it is
       the DESTINATION format rather than reference: fully specified with its field widths, angle
       formula and controls in `docs/protocol/opcodes/movement.md` (round 364).

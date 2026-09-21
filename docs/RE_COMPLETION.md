@@ -6266,6 +6266,53 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 368 (the third side of the message surface, and the broadcast class nobody
+had counted): ROUNDS 363-367 FOUND 0x7021 AND 0x7005 BY HAND, one function at a
+time. Both were invisible to every table this project holds, and noticing WHY
+turned five rounds of hand-reading into a lever: client_senders.tsv is what the
+CLIENT sends, and round 334's server_senders sweep swept `mov ecx,0xbXXX` and so
+covers REPLIES only. NEITHER CAN SEE THE SERVER ORIGINATING A MESSAGE.
+
+THE LEVER IS THE THREE CONSTRUCTION IDIOMS those five rounds taught: the opcode
+field written directly at msgbuf+0x1050, the new-message vcall (*obj + 0x14), and
+the begin-message helper FUN_00430a00. Sweeping all three gives 297 sites and 132
+distinct opcodes, 231 of the sites (78 %) inside functions already named. Written
+to docs/protocol/server_senders.tsv.
+
+THE DISTRIBUTION IS THE FINDING. 159 of the 297 sites compose 0x3NNN opcodes --
+the largest class by a factor of two, and the one with NO TABLE ANYWHERE in this
+project. 0x3026 is AGENT_CHAT_UPDATE (S->C), so 0x3NNN is the server's BROADCAST
+surface: what it tells clients unprompted. That is precisely the class round 362
+identified as the blocker for monster movement ("the client half is a push, not a
+poll"), and it now has 60-odd enumerated opcodes instead of a description.
+
+THREE CONTROLS, RUN BEFORE THE TABLE WAS BELIEVED. (1) It must contain the two
+rows read by hand, with the right functions -- it does: 0x7021 ->
+AITactics_MoveAlongDirection, 0x7005 -> CMainProcess::FUN_00437e80. (2) 0x3026's
+composing functions come back as CGObjCOS_Summoned::ChattingByProxy,
+ChattingByProxyArg and CGObjPC::SendQuestNpcChat -- all chat, all named by
+earlier rounds that this sweep never consulted, so opcode AND purpose agree
+independently. (3) Against observed_opcodes.md's 13 cross-validated names, 5 of
+11 S->C are found.
+
+THE THIRD CONTROL'S SIX MISSES ARE THE MOST INFORMATIVE PART, and 5-of-11 would
+have been the wrong thing to report. EVERY ONE OF THE SIX is a GATEWAY opcode --
+0x2322, 0xa101, 0xa102, 0xa103, 0xa106, 0xa323 -- composed by GatewayServer.exe,
+a DIFFERENT BINARY from the one swept. Their absence is the correct result. And
+both nominally-C->S entries ARE present (0x7005, 0x6004), which is the real
+finding underneath: the game server composes client-form opcodes when it talks to
+another server, which is why the hand-found pair looked so odd in rounds 363-367.
+
+STATED AS A LIMIT, NOT DISCOVERED LATER: a site that builds its opcode from a
+variable rather than a literal is invisible to all three idioms, so this is not a
+claim to be every message the server sends.
+
+**What moved:** no shipped value. A message surface this project had described
+only in fragments is enumerated with its provenance and three controls, the
+broadcast class that blocks monster movement is counted for the first time, and
+five rounds of one-function-at-a-time reading are generalised into a sweep. No
+behaviour changed, so no tag.
+
 Round 367 (following one loose end lands on the logout opcode, and confirms it a
 third way): ROUND 366 IDENTIFIED THE SOLE EMITTER of the movement payload's
 optional extra byte -- CGObjMobile::vslot_292 -- and left what it means open.

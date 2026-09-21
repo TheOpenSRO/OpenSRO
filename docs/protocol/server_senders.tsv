@@ -1,0 +1,332 @@
+# opcode	idiom	address	composing_function
+# Every opcode SR_GameServer.exe COMPOSES, recovered 2026-09-21 (round 368).
+#
+# This is the third side of the message surface and the one that was missing.
+# client_senders.tsv is what the CLIENT sends; the older server_senders sweep
+# (round 334) swept `mov ecx,0xbXXX` and so covers REPLIES only. Neither can see
+# the server ORIGINATING a message, which is how rounds 363-367 found 0x7021 and
+# 0x7005 by hand -- both invisible to a reply-only sweep.
+#
+# 297 sites, 132 distinct opcodes, 231 of the sites (78%) inside functions this
+# project has already named.
+#
+# THREE CONSTRUCTION IDIOMS, all learned from reading those two opcodes by hand:
+#   I1  *(msgbuf + 0x1050) = <opcode>        the opcode field, written directly
+#   I2  (**(code **)(*obj + 0x14))(<opcode>) the new-message vcall
+#   I3  FUN_00430a00(<opcode>)               the begin-message helper
+#
+# CONTROLS, run before the table was believed:
+#  1. It must contain the two rows read by hand. It does, with the right
+#     functions: 0x7021 -> AITactics_MoveAlongDirection, 0x7005 ->
+#     CMainProcess::FUN_00437e80.
+#  2. 0x3026 is AGENT_CHAT_UPDATE. Its composing functions here are
+#     CGObjCOS_Summoned::ChattingByProxy, ChattingByProxyArg and
+#     CGObjPC::SendQuestNpcChat -- all chat, all named by earlier rounds and not
+#     consulted by this sweep. Independent agreement on both opcode and purpose.
+#  3. Against observed_opcodes.md's 13 cross-validated names: 5 of 11 S->C found,
+#     and EVERY ONE OF THE SIX ABSENCES IS A GATEWAY OPCODE (0x2322, 0xa101,
+#     0xa102, 0xa103, 0xa106, 0xa323), composed by GatewayServer.exe -- a
+#     different binary. Their absence from a SR_GameServer.exe sweep is the
+#     correct result, not a miss. Both C->S entries ARE present (0x7005, 0x6004),
+#     which is the real finding: the game server composes nominally-client
+#     opcodes when it talks to another server.
+#
+# NOT a claim that this is every message the server sends: a site that builds an
+# opcode from a variable rather than a literal is invisible to all three idioms.
+0x1001	I1	00966ac0	FUN_00966ac0
+0x2001	I1	00949160	CMainProcess::FUN_00949160
+0x2001	I1	00949280	CMainProcess::FUN_00949280
+0x2007	I1	0094ce30	FUN_0094ce30
+0x200a	I1	00936640	CGameServer::LogFormatted
+0x200c	I1	00948bf0	ServerFramework::COverlapJob_InitializeLocalData::vslot_006
+0x200c	I1	00949cf0	CMainProcess::FUN_00949cf0
+0x2209	I1	00937800	CGObjPC::FUN_00937800
+0x220a	I1	004054d0	FUN_004054d0
+0x220e	I1	004054d0	FUN_004054d0
+0x220f	I1	004054d0	FUN_004054d0
+0x2311	I1	0094a730	CMainProcess::FUN_0094a730
+0x300c	I1	00414970	CMainProcess::FUN_00414970
+0x300c	I1	00416db0	CMainProcess::MsgHandler_38e9
+0x300c	I1	004187c0	CMainProcess::FUN_004187c0
+0x300c	I1	004188e0	CMainProcess::FUN_004188e0
+0x300c	I1	00419900	CMainProcess::MsgHandler_3cde
+0x300c	I1	0041b220	CMainProcess::MsgHandler_3ce8
+0x300c	I3	0060a7f0	GObjPC::FUN_0060a7f0
+0x300c	I1	0060ec90	CEDA_MessageShower::vslot_003
+0x300c	I1	00677cf0	CGameSJ_ChinsTomb::vslot_005
+0x300c	I1	00678210	CGameSJ_ChinsTomb::vslot_007
+0x300c	I1	00678600	CGmaeSJ_EUBusinessEventUpdate::vslot_005
+0x300c	I1	006787c0	CGmaeSJ_EUBusinessEventUpdate::vslot_007
+0x300c	I1	00679e40	CGameSJ_SpecialGoodsSelling::vslot_005
+0x300c	I1	00679fd0	CGameSJ_SpecialGoodsSelling::vslot_006
+0x300c	I1	0067a0a0	CGameSJ_SpecialGoodsSelling::vslot_007
+0x300c	I1	0067a700	CGameSJ_TempleOfSelkisAndNeithGate::FUN_0067a700
+0x300c	I1	0067a820	CGameSJ_TempleOfSelkisAndNeithGate::FUN_0067a820
+0x300c	I1	0067b6c0	CGameSJ_TempleOfAnubisAndIsisGate::FUN_0067b6c0
+0x300c	I1	0067b7e0	CGameSJ_TempleOfAnubisAndIsisGate::FUN_0067b7e0
+0x300c	I1	0067bf90	CGameSJ_TempleOfAnubisAndIsisGate::FUN_0067bf90
+0x300c	I1	0067c6e0	CGameSJ_TempleOfHaroerisGate::FUN_0067c6e0
+0x300c	I1	0067c800	GObjPC::FUN_0067c800
+0x300c	I1	0067cf10	CGameSJ_TempleOfHaroerisGate::FUN_0067cf10
+0x3015	I3	00533f70	FUN_00533f70
+0x3016	I3	00534050	FUN_00534050
+0x3026	I1	00414e40	CMainProcess::FUN_00414e40
+0x3026	I3	00473bf0	GObjPC::FUN_00473bf0
+0x3026	I3	004c48d0	CGObjCOS_Summoned::ChattingByProxy
+0x3026	I3	004c4940	CGObjCOS_Summoned::ChattingByProxyArg
+0x3026	I3	004ed180	CGObjPC::SendQuestNpcChat
+0x3026	I3	005bef50	CMainProcess::FUN_005bef50
+0x3026	I3	005c34d0	CMainProcess::FUN_005c34d0
+0x3026	I3	005de2d0	CMainProcess::FUN_005de2d0
+0x3027	I3	00530d60	CMainProcess::FUN_00530d60
+0x3028	I3	004a8d20	GObjPC::FUN_004a8d20
+0x3036	I3	004d4f60	GObjPC::FUN_004d4f60
+0x3038	I3	004e9c40	GObjPC::FUN_004e9c40
+0x3039	I3	004e9c40	GObjPC::FUN_004e9c40
+0x3041	I3	0051b7b0	GObjPC_HandleSiegeMsg_516
+0x3041	I3	00524950	FUN_00524950
+0x3041	I3	00524b20	FUN_00524b20
+0x3042	I3	004e0c60	CGObjPC::FUN_004e0c60
+0x304d	I3	004901c0	GObjPC::FUN_004901c0
+0x3054	I3	004d6210	GObjPC::FUN_004d6210
+0x3054	I3	004e4d90	GObjPC::GObjPC_SetLevel
+0x3057	I3	004a8510	GObjPC::FUN_004a8510
+0x305c	I3	004d57b0	GObjPC::COS__UseItem
+0x305c	I3	00510980	Item_HandleUseItem
+0x3068	I3	005bdc80	FUN_005bdc80
+0x3091	I3	004b1630	GObjPC::FUN_004b1630
+0x3091	I2	005596a0	FUN_005596a0
+0x30b7	I3	004735a0	AQ_ItemXChanger::FUN_004735a0
+0x30b7	I3	00473880	AQ_ItemXChanger::FUN_00473880
+0x30b8	I3	004723c0	FUN_004723c0
+0x30b9	I3	00472cf0	FUN_00472cf0
+0x30bb	I3	00472e20	FUN_00472e20
+0x30bf	I3	004a8340	GObjPC::FUN_004a8340
+0x30c9	I3	004efd10	GObjPC::FUN_004efd10
+0x30ca	I3	004d1ea0	GObjPC::FUN_004d1ea0
+0x30ca	I3	004d6db0	CGObjCOS_GoldPet::vslot_402
+0x30cf	I3	004e1ef0	GObjPC::FUN_004e1ef0
+0x30d0	I3	004aa410	GObjPC::FUN_004aa410
+0x30d1	I3	00582750	FUN_00582750
+0x30df	I3	004a9f70	GObjPC::FUN_004a9f70
+0x30ef	I3	005c8800	CGuildManager::vslot_005
+0x30ef	I3	005c88d0	CGuildManager::vslot_006
+0x30ff	I3	004ea2f0	FUN_004ea2f0
+0x3100	I3	005c3d80	CMainProcess::FUN_005c3d80
+0x3100	I3	005c3ea0	CMainProcess::FUN_005c3ea0
+0x3102	I3	005c4550	CMainProcess::FUN_005c4550
+0x3103	I3	005c57c0	CMainProcess::FUN_005c57c0
+0x3103	I3	005c58c0	CMainProcess::FUN_005c58c0
+0x3120	I3	004edf80	GObjPC::FUN_004edf80
+0x3167	I1	006186d0	GObjPC::FUN_006186d0
+0x3200	I3	004aa530	GObjPC::FUN_004aa530
+0x3207	I3	004f0040	FUN_004f0040
+0x3207	I3	004f00f0	FUN_004f00f0
+0x3208	I3	004f0210	FUN_004f0210
+0x3256	I3	005cc070	CMainProcess::FUN_005cc070
+0x3257	I3	005cc330	CMainProcess::FUN_005cc330
+0x3257	I3	005cc4b0	CMainProcess::FUN_005cc4b0
+0x330f	I3	004c1e40	CGObjMob::REH_OnTrapped
+0x34b1	I1	00644fa0	CMainProcess::FUN_00644fa0
+0x34b1	I1	00645450	CMainProcess::FUN_00645450
+0x34b1	I1	00645ea0	CMainProcess::FUN_00645ea0
+0x34b1	I1	00645f10	CMainProcess::FUN_00645f10
+0x34b1	I1	00646ac0	CMainProcess::FUN_00646ac0
+0x34b1	I1	00646be0	CMainProcess::FUN_00646be0
+0x34b1	I1	006484f0	FUN_006484f0
+0x34b1	I1	00648550	CGameSJ_FlagWorld::FUN_00648550
+0x34b1	I1	006485a0	CGameSJ_FlagWorld::FUN_006485a0
+0x34ba	I1	00614900	CMainProcess::FUN_00614900
+0x34bb	I1	005209e0	GObjPC_MsgHandler_SpecialCommand::FUN_005209e0
+0x34d2	I1	006681d0	FUN_006681d0
+0x34d2	I1	006682a0	FUN_006682a0
+0x34d2	I1	00668350	FUN_00668350
+0x34d2	I1	006683f0	FUN_006683f0
+0x34d2	I1	00668490	FUN_00668490
+0x34d2	I1	00668b40	CMainProcess::FUN_00668b40
+0x34d2	I1	00668bf0	CMainProcess::FUN_00668bf0
+0x34f2	I1	00670cc0	CMainProcess::FUN_00670cc0
+0x3510	I1	0047b300	AQ_OpenMarket::COpenMarketMgr__AsyncQuerySucceeded
+0x351e	I3	0052f120	GObjPC::FUN_0052f120
+0x3809	I3	00538020	FUN_00538020
+0x385f	I3	004cf9a0	CGObjSiegeStruct::vslot_410
+0x385f	I3	00600ec0	CGameWorld_Siege::vslot_057
+0x385f	I3	00601860	GObjPC::CGameWorldSiege__SendMsgSiegeStructAllInfoForSiegeUser
+0x385f	I3	0061e620	GObjPC::FUN_0061e620
+0x385f	I3	0061e7e0	GObjPC::FUN_0061e7e0
+0x385f	I3	0061e970	GObjPC::FUN_0061e970
+0x385f	I3	0061ea30	GObjPC::FUN_0061ea30
+0x385f	I3	0061f580	GObjPC::FUN_0061f580
+0x385f	I1	0061fa80	GObjPC::FUN_0061fa80
+0x385f	I1	006232c0	AQ_Siege::FUN_006232c0
+0x385f	I1	00626bd0	AQ_Siege::FUN_00626bd0
+0x385f	I3	0062ee90	CMainProcess::FUN_0062ee90
+0x385f	I1	00630cb0	CWicket::FUN_00630cb0
+0x385f	I1	00630e50	CMainProcess::FUN_00630e50
+0x385f	I3	00679a50	CGameSJ_SiegePeriod::vslot_009
+0x3864	I3	005bb670	CMainProcess::FUN_005bb670
+0x3864	I3	005bc210	FUN_005bc210
+0x3864	I3	005bc390	CMainProcess::FUN_005bc390
+0x3864	I3	005bdbd0	CMainProcess::FUN_005bdbd0
+0x3864	I1	005bdf50	FUN_005bdf50
+0x38f5	I3	005c3b50	CMainProcess::FUN_005c3b50
+0x38f5	I3	005c3c90	CMainProcess::FUN_005c3c90
+0x38f5	I3	005c3d80	CMainProcess::FUN_005c3d80
+0x38f5	I3	005c3ea0	CMainProcess::FUN_005c3ea0
+0x38f5	I3	005c4070	CMainProcess::FUN_005c4070
+0x38f5	I3	005c4110	CMainProcess::AddPoints
+0x38f5	I3	005c4490	CGuild::vslot_009
+0x38f5	I3	005c44f0	CMainProcess::FUN_005c44f0
+0x38f5	I3	005c45b0	CMainProcess::FUN_005c45b0
+0x38f5	I3	005c4650	CMainProcess::FUN_005c4650
+0x38f5	I3	005c46e0	CMainProcess::FUN_005c46e0
+0x38f5	I3	005c4910	CMainProcess::FUN_005c4910
+0x38f5	I3	005c54b0	CMainProcess::FUN_005c54b0
+0x38f5	I3	005c5600	CMainProcess::FUN_005c5600
+0x38f5	I3	005c57c0	CMainProcess::FUN_005c57c0
+0x38f5	I3	005c58c0	CMainProcess::FUN_005c58c0
+0x38f5	I3	005c7d10	CMainProcess::FUN_005c7d10
+0x38f5	I3	005caa20	CMainProcess::FUN_005caa20
+0x38f5	I3	005cac40	CMainProcess::FUN_005cac40
+0x38f5	I3	005cade0	CMainProcess::FUN_005cade0
+0x38f5	I3	005cb1e0	CMainProcess::FUN_005cb1e0
+0x38f5	I3	005cb430	CMainProcess::FUN_005cb430
+0x3908	I3	005c4fa0	CMainProcess::FUN_005c4fa0
+0x3908	I3	005e7a70	CMainProcess::FUN_005e7a70
+0x3c80	I1	005dcbd0	trs_sm_trainingcampjob::FUN_005dcbd0
+0x3c80	I3	005dd4f0	CMainProcess::FUN_005dd4f0
+0x3c80	I3	005dd830	AQ_TrainingCampQuery::FUN_005dd830
+0x3c80	I3	005ddaf0	CMainProcess::FUN_005ddaf0
+0x3c80	I3	005ddbe0	CMainProcess::CTrainingCamp__MemberDeleted
+0x3c80	I3	005ddd50	CMainProcess::CTrainingCamp__MemberGraduated
+0x3c80	I3	005de080	CMainProcess::FUN_005de080
+0x3c80	I3	005de340	CMainProcess::FUN_005de340
+0x3cf1	I1	0066f8c0	CQEV_WINTER_EVENT_2009::FUN_0066f8c0
+0x3cf1	I1	0066f940	CQEV_WINTER_EVENT_2009::FUN_0066f940
+0x3d02	I1	00415eb0	CMainProcess::MsgHandler_7c00
+0x5000	I1	00965c20	CNetEngine::FUN_00965c20
+0x5000	I1	00966fd0	ACTIVE_SESSION___OnMsgReceivedBeforeHandshake
+0x6003	I1	00949280	CMainProcess::FUN_00949280
+0x6004	I1	0095c1d0	CMainProcess::FUN_0095c1d0
+0x6008	I1	0094d6f0	FUN_0094d6f0
+0x6009	I1	0094db80	FUN_0094db80
+0x600d	I1	009562a0	FUN_009562a0
+0x600d	I1	009563d0	FUN_009563d0
+0x65	I2	006524b0	CTJ_PremiumKeeper::vslot_012
+0x65	I2	006529d0	CTJ_PremiumKeeper::vslot_008
+0x66	I2	006529d0	CTJ_PremiumKeeper::vslot_008
+0x67	I2	006529d0	CTJ_PremiumKeeper::vslot_008
+0x68	I2	006529d0	CTJ_PremiumKeeper::vslot_008
+0x6904	I1	004e4d90	GObjPC::GObjPC_SetLevel
+0x6f	I2	006511d0	FUN_006511d0
+0x7005	I1	00437bc0	CMainProcess::FUN_00437bc0
+0x7005	I1	00437e80	CMainProcess::FUN_00437e80
+0x7021	I2	004d2200	GObjPC::FUN_004d2200
+0x7021	I2	00540f70	AITactics_MoveAlongDirection
+0x7021	I2	00647460	FLAG_WORLD_EVENT_HANDLERS::OnSelectObj::FUN_00647460
+0x7021	I2	00647880	FLAG_WORLD_EVENT_HANDLERS::OnSelectObj::FUN_00647880
+0x7021	I2	00664d60	CBattleArenaInfoFlag::FUN_00664d60
+0x7022	I2	00541110	FUN_00541110
+0x7023	I2	00540ee0	FUN_00540ee0
+0x7034	I2	004ae0c0	FUN_004ae0c0
+0x7034	I2	0055ac20	CAIState_PICKITEM::OnUpdate
+0x704f	I2	004b0490	FUN_004b0490
+0x704f	I2	00541200	FUN_00541200
+0x704f	I2	00541820	FUN_00541820
+0x704f	I2	00559ad0	CAIState::OnMsg_0x2a
+0x7070	I2	004ad8e0	CGCharAutoCommandActor::Tick_Attack
+0x7070	I2	004ae590	CGCharAutoCommandActor::Tick_UseSkill
+0x7070	I2	005411a0	FUN_005411a0
+0x7070	I2	005615f0	FUN_005615f0
+0x711b	I1	00518cd0	GObjPC_HandleItemMallMsg_11a
+0x74b0	I1	0051de90	GObjPC_MsgHandler_SpecialCommand::DispatchCommand
+0x74b0	I1	00645c90	FUN_00645c90
+0x74b0	I1	00645e20	FUN_00645e20
+0x74b0	I1	00646a70	FLAG_WORLD_EVENT_HANDLERS::OnUpdate_FlagChecker::FUN_00646a70
+0x74d0	I1	00668bf0	CMainProcess::FUN_00668bf0
+0x74d0	I1	00669480	FUN_00669480
+0x74d0	I1	006697f0	FUN_006697f0
+0x74db	I1	004f1640	CGObjPC::PostTempleReputationSetReq
+0x7808	I1	00418410	Quest::CGameServer::FUN_00418410
+0x7808	I1	0049b9f0	CGItemExpendable::vslot_307
+0x7808	I1	004b1750	GObjPC::FUN_004b1750
+0x7808	I1	004c1c80	CGObjMob::vslot_398
+0x7808	I1	00513f20	FUN_00513f20
+0x7808	I1	0051de90	GObjPC_MsgHandler_SpecialCommand::DispatchCommand
+0x7808	I1	00520350	GObjPC_MsgHandler_SpecialCommand::CGObjPC__OnCommandMoveToNpc
+0x7808	I1	0052aa90	CGObjPC::vslot_415
+0x7808	I1	005f6eb0	GObjPC::FUN_005f6eb0
+0x7808	I1	0064ac80	FUN_0064ac80
+0x7866	I1	0046d4b0	trs_sm_partyjob::vslot_004
+0x78f7	I1	0046e2b0	trs_sm_guildjob::vslot_004
+0x78f7	I1	005c62e0	CGuildManager::RequestAddGuildPoints
+0x78f7	I1	005c7a20	AQ_Siege::FUN_005c7a20
+0x78f7	I1	005c7aa0	FUN_005c7aa0
+0x78fe	I1	005c3540	GObjPC::FUN_005c3540
+0x78fe	I1	005c36c0	GObjPC::FUN_005c36c0
+0x78fe	I1	005c7000	GObjPC::FUN_005c7000
+0x7908	I1	005e7ff0	FUN_005e7ff0
+0x7b06	I1	0046ea30	trs_sm_messengerjob::vslot_004
+0x7b06	I1	005d75c0	CMainProcess::FUN_005d75c0
+0x7c00	I1	0046f530	FUN_0046f530
+0x7c10	I1	005f6df0	CMainProcess::FUN_005f6df0
+0x7c14	I1	0046ee70	trs_sm_gameworldjob::vslot_004
+0x7c14	I1	005ec290	GObjPC::FUN_005ec290
+0x7c14	I1	005f80b0	CMainProcess::FUN_005f80b0
+0x7c16	I1	005f75f0	FUN_005f75f0
+0x7c80	I1	0046da50	trs_sm_trainingcampjob::vslot_004
+0x7c81	I1	005dce80	CTrainingCamp::FUN_005dce80
+0x7c81	I1	005de6c0	GObjPC::FUN_005de6c0
+0x7c81	I1	005de760	GObjPC::FUN_005de760
+0x7c84	I1	00519d40	FUN_00519d40
+0x7cdc	I1	004f1740	CGObjPC::PostTempleReputationCheckReq
+0x7cdc	I1	005b9810	FUN_005b9810
+0x7ce6	I1	00513590	GObjPC::HandleTeleportUse
+0x7ce6	I1	005ba520	CMainProcess::FUN_005ba520
+0x7ce6	I1	0067c800	GObjPC::FUN_0067c800
+0x7d	I2	00654f90	CTJ_CharParamKeeper::vslot_012
+0x7f	I2	00655180	CTJ_CharParamKeeper::vslot_015
+0x9000	I1	00966fd0	ACTIVE_SESSION___OnMsgReceivedBeforeHandshake
+0xa004	I1	00949e80	CMainProcess::FUN_00949e80
+0xa004	I1	0095bbb0	thunk_FUN_0095c010
+0xa004	I1	0095c010	FUN_0095c010
+0xa008	I1	009497b0	CMainProcess::FUN_009497b0
+0xa008	I1	0094cf20	FUN_0094cf20
+0xa008	I1	0094d240	FUN_0094d240
+0xa008	I1	0094d990	FUN_0094d990
+0xa008	I1	0094da60	FUN_0094da60
+0xa009	I1	00937380	ServerFramework::CServerProcessOverlap::vslot_020
+0xa208	I1	00402c90	FUN_00402c90
+0xa300	I1	0094a3c0	CMainProcess::FUN_0094a3c0
+0xa303	I1	0094a420	CMainProcess::FUN_0094a420
+0xb002	I1	00437780	AQ_CharDataLoader::CharDataLoadingCompleted
+0xb003	I1	00402eb0	FUN_00402eb0
+0xb003	I1	00403350	Game__EnterWorld
+0xb021	I3	004b0ea0	GObjPC::FUN_004b0ea0
+0xb023	I3	004a9430	GObjPC::FUN_004a9430
+0xb024	I3	004b1360	GObjPC::FUN_004b1360
+0xb070	I3	0059e8f0	FUN_0059e8f0
+0xb071	I3	005857b0	Skill_BuildUseContext_A
+0xb071	I3	00586700	Skill_BuildUseContext_B
+0xb071	I3	0059ae10	FUN_0059ae10
+0xb072	I3	0059bfe0	Skill_HandleLearn
+0xb072	I3	0059ecd0	SkillBook::FlushEndedBuffs_B072
+0xb072	I3	0059f020	GObjPC::FUN_0059f020
+0xb072	I3	0059f8b0	SkillWithdraw_Execute
+0xb072	I3	005a16c0	GObjPC::FUN_005a16c0
+0xb072	I3	005a1ce0	CSocketOptionOP::FUN_005a1ce0
+0xb0ba	I3	005161b0	FUN_005161b0
+0xb0bc	I3	0059b070	FUN_0059b070
+0xb0bc	I3	0059b220	FUN_0059b220
+0xb0bc	I3	0059b2a0	GObjPC::FUN_0059b2a0
+0xb0bc	I3	0059b300	GObjPC::FUN_0059b300
+0xb0bd	I3	0059af00	Skill_BroadcastBuffAdded_B0BD
+0xb0cb	I3	004ec640	GObjPC::FUN_004ec640
+0xb0cb	I3	004ec750	GObjPC::FUN_004ec750
+0xb402	I3	00518b80	FUN_00518b80
+0xb4b7	I1	00648360	CMainProcess::FUN_00648360
+0xb4d1	I1	00667e60	CMainProcess::FUN_00667e60
+0xb516	I3	004f0e90	AJStateChanger::FUN_004f0e90
+0xb80b	I1	004154d0	CMainProcess::FUN_004154d0
+0xbc00	I1	004168f0	CMainProcess::FUN_004168f0
+0xffff	I1	005deaa0	CTrainingCampManager::vslot_001
