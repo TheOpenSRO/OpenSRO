@@ -6375,6 +6375,43 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 394 (the non-C probe runs, names nothing, and turns up a better lever):
+ROUND 393 SAID +0x1fb4 AND +0x22d0 NEED A PROBE THE C CANNOT RUN. It does run:
+disassembling the whole .text finds 44 sites forming +0x1fb4 across 33 functions
+and 11 forming +0x22d0 across 8, every one invisible to the decompiled C.
+
+IT NAMED NEITHER, AND THE TEMPTING READING IS REJECTED. +0x1fb4's named touchers
+are GObjPC_HandleShopMsg_046, CGItemEquip::vslot_302, ItemEventLog_FormatRecord,
+CGObjPC___AsyncQuerySucceeded and GObjPC_HandleAssocReputationMsg_4df -- a set
+that reads as "the inventory" and is not evidence for it. This project already
+records inventory size near +0x1c2c, and the base register at those 44 sites is
+NOT ESTABLISHED, so a site on another object type is a different field entirely
+-- the same base-object trap that broke round 375's speed probe.
+
+THE BETTER LEVER CAME OUT OF THE TOUCHER LIST: CGObjPC::Create is in it.
+Disassembled, the constructor IS A MEMBER MAP -- a `lea [ebx+off]` and a call for
+each sub-object. And it yields a structural fact worth more than the two names I
+was chasing: A MEMBER'S CONSTRUCTOR AND ITS SAVER ARE CO-LOCATED, 0x310 to 0x2960
+apart, the same translation unit. Quest 0x56f4f0/0x56fdf0, timed jobs
+0x655f10/0x656220, COS 0x4f9dc0/0x4fc770 -- CONFIRMED ON THE THREE MEMBERS ALREADY
+IDENTIFIED BY OTHER MEANS, and then found to hold for both unknowns
+(0x60d9d0/0x60e240 and 0x407be0/0x4082b0).
+
+That turns "read 44 scattered sites whose base object is unknown" into "read one
+translation unit per member", which is the next probe. Both constructors are
+attributed to GObjPC by call-graph inference only, with no RTTI or assert, so the
+type is not named there either.
+
+ALSO FALLS OUT: Create builds members at +0x1de8, +0x1f20, +0x1f40 and +0x22c0
+that the save dispatcher never touches -- so NOT EVERY MEMBER IS PERSISTED, which
+is a fact about the save's scope that the dispatcher alone could not show.
+
+**What moved:** the probe round 393 specified was run and reported honestly as
+not naming its target, a plausible-but-unsupported reading rejected against a
+recorded offset, and a co-location pattern established on three known members
+that re-aims the work at translation units instead of offsets. No behaviour
+changed, so no tag.
+
 Round 393 (the save scopes are member SUB-OBJECTS, and objdump was the only way
 to see it): ROUND 392 RE-AIMED THE PROBE at what each dispatcher target reads.
 The decompiled C cannot answer that -- every target operates on an unbound

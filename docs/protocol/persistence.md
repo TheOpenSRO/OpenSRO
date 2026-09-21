@@ -409,6 +409,46 @@ wrong:
   24-hour penalties and `SYSTEMS.md` records as the manager embedded in `GObjPC`.
 - `+0x1ce8` is the player's **summoned COS**, per `monster_ai.md`.
 
+### The members are constructed in one place, and ctor sits beside saver (round 394)
+
+`CGObjPC::Create` (`0x004e0dc0`) builds every one of these sub-objects, and the
+decompiled C shows none of it — the member address is formed with `lea` again.
+Disassembled, the constructor is a member map:
+
+| member | constructor | its saver |
+|---|---|---|
+| `+0x1d98` **quest** | `0x56f4f0` | `0x56fdf0` |
+| `+0x1dfc` **timed jobs** | `0x655f10` | `0x656220` |
+| `+0x1ce8` **summoned COS** | `0x4f9dc0` | `0x4fc770` |
+| `+0x1fb4` *(unidentified)* | `0x60d9d0` | `0x60e240` |
+| `+0x22d0` *(unidentified)* | `0x407be0` | `0x4082b0` |
+
+**A member's constructor and its saver are co-located** — 0x310 to 0x2960 apart,
+i.e. the same translation unit — and that is *confirmed on the three members
+whose identity is already known by other means*, then found to hold for the two
+that are not. It gives the next probe a sharp target: to name `+0x1fb4`, read the
+`0x60xxxx` unit; for `+0x22d0`, the `0x40xxxx` one.
+
+(`CGObjPC::Create` also constructs members at `+0x1de8`, `+0x1f20`, `+0x1f40` and
+`+0x22c0` that the save dispatcher does not touch — so not every member is
+persisted.)
+
+### The non-C probe, and what it could not settle
+
+Round 393 said `+0x1fb4` and `+0x22d0` need a probe the decompiled C cannot run.
+Disassembling the whole `.text` finds **44 sites forming `+0x1fb4` across 33
+functions** and **11 forming `+0x22d0` across 8** — every one invisible to the C.
+
+**It did not name either.** For `+0x1fb4` the named touchers are a mixed set —
+`GObjPC_HandleShopMsg_046`, `CGItemEquip::vslot_302`, `ItemEventLog_FormatRecord`,
+`GObjPC::CGObjPC___AsyncQuerySucceeded`, `GObjPC_HandleAssocReputationMsg_4df` —
+which reads as "something item-related" and **that reading is rejected**: this
+project already records the inventory near `+0x1c2c`, and more importantly the
+base register at each of those 44 sites is not established, so a site on a
+different object type would be a different field entirely. Both constructors are
+attributed to `GObjPC` by call-graph inference only, with no RTTI or assert to
+name the type.
+
 **The other six are NOT identified.** `+0x1c10` and `+0x1d74` are touched by two
 functions each, both `vslot_214`, which says nothing; `+0x74` is touched by 197
 and is far too generic to read anything from; and **`+0x1fb4` and `+0x22d0`
