@@ -267,3 +267,64 @@ open question was *why the invite path accepts two states where the academy
 accepts one*. The answer: **the party path accepts a dead character and the
 academy does not.** You can be invited to a party while dead; you cannot be
 enrolled in a training camp.
+
+
+## `chardata + 2` is the motion state, and `SetLifeState` carries a timer (round 415)
+
+**A new byte in the chardata map.** `IGObj::GetMotionState` (slot 63) reads
+**`chardata + 2`** — `CGObjCOS_Summoned::GetMotionState` is the proof, its body
+being `return *(*(obj + 0x30) + 2)`. The map so far:
+
+| offset | what | recovered |
+|---|---|---|
+| `+0` | life state | round 411 |
+| `+2` | **motion state** | **round 415** |
+| `+4` | the concurrency lock | round 360 |
+| `+6` | exclusive-interaction state | round 361 |
+| `+7` | pending-invitation byte | party ladder |
+| `+0x11` | `SetCharacterState` kind `0xc` | round 361 |
+
+**`SetCharacterState` does not write it.** The kind→field table above covers
+kinds 2, 3, 6–10, `0xb`–`0xd` and `0xf`, and none of them touches `+2`, so the
+obvious hypothesis — that the motion state is one of the dispatcher's fields —
+is dead. Checked before looking further, and cheap.
+
+**Neither byte is persisted.** `_CHAR`'s bindings in `db_bind_offsets.tsv` start
+at `0x18`; nothing binds offset 0 or 2. Life state and motion state are runtime
+only, which agrees with the berserk finding that `_CHAR` carries no duration or
+expiry column.
+
+### `SetLifeState` singles out state 2 with a timer
+
+Reading the setter in full (`0x484a20`, slot 124) turns up a third fact about
+value 2 that is independent of everything in the section above. Its real
+signature is `(char state, undefined4, float)`:
+
+	if (state == 0)       t = 0.0;                     // reset
+	else if (state == 2)  t = *(float *)(this + 0x3c) + t;   // ACCUMULATE
+	*(float *)(this + 0x3c) = t;
+	chardata[0] = state;
+
+**Only state 2 accumulates**, state 0 resets, and every other state leaves the
+float alone. So the engine attaches a duration to state 2 and to no other — the
+shape of a transient state a character is expected to leave, which is what
+`GObjPC::Revive` does. Most callers pass `0`, so they extend the timer by
+nothing; `FUN_004181d0` passes a real value read from `*(record + 0x18) + 0x84`.
+
+The middle argument is `0xff` at every call site and **this implementation
+ignores it** — and `CGObjChar::Create` initialises `chardata + 2`, the motion
+state, to that same `0xff`. Suggestive of a "leave the motion state alone"
+sentinel, but the only implementation never reads the parameter, so it is
+recorded as an observation and not as a finding.
+
+### Still open: what writes the motion state
+
+Comparisons exist against **2, 3, 4, 15, 16, 17, 18** (round 414), but a census
+of writes to `chardata + 2` finds exactly **one** — `CGObjChar::Create` storing
+`0xff`. That cannot produce the compared values, so **the probe is incomplete**,
+not the binary. Two leads for the next pass: the write may go through a local
+copy of the chardata pointer in a shape the three patterns did not match, and
+slot 63 has **several implementations** (`CGObjCOS_Summoned` plus a handful of
+quest classes), so another class's override may read a different field
+entirely — in which case "motion state is `chardata+2`" is true of `CGObj` and
+not of everything that answers the slot.

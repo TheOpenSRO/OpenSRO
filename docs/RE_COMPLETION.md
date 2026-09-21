@@ -6405,6 +6405,61 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 415 (a new chardata byte, and the setter itself singles out state 2):
+ROUND 414 LEFT `IGObj::GetMotionState`'s VOCABULARY UNREAD, SO THAT WAS THIS
+ROUND RATHER THAN SOMETHING EASIER. It reads **`chardata + 2`** —
+`CGObjCOS_Summoned::GetMotionState` is the whole proof, `return *(*(obj + 0x30)
++ 2)` — which is a byte the chardata map did not have. It now reads: `+0` life
+state, **`+2` motion state**, `+4` the lock, `+6` exclusive interaction, `+7`
+pending invitation, `+0x11` `SetCharacterState` kind `0xc`.
+
+TWO HYPOTHESES KILLED CHEAPLY, BOTH BEFORE SPENDING ANYTHING ON THEM. The
+obvious one is that the motion state is a `SetCharacterState` field: the kind→
+field table covers kinds 2, 3, 6–10, `0xb`–`0xd` and `0xf`, and **none writes
+`+2`**. The second is that it is a DB column: `_CHAR`'s bindings in
+`db_bind_offsets.tsv` start at `0x18` and nothing binds offset 0 or 2, so **life
+state and motion state are runtime-only** — which agrees with the berserk
+finding that `_CHAR` carries no duration or expiry column.
+
+AND READING THE SETTER IN FULL GAVE A THIRD, INDEPENDENT FACT ABOUT VALUE 2.
+`SetLifeState`'s real signature is `(char state, undefined4, float)`:
+
+	if (state == 0)       t = 0.0;                          // reset
+	else if (state == 2)  t = *(float *)(this + 0x3c) + t;  // ACCUMULATE
+	*(float *)(this + 0x3c) = t;
+	chardata[0] = state;
+
+**Only state 2 accumulates a timer**; state 0 resets it; every other state
+leaves it alone. The engine attaches a duration to 2 and to nothing else — the
+shape of a transient state a character is expected to leave, which is exactly
+what `GObjPC::Revive` does. That is a fourth use-site for "2 is the dead state",
+reached from the setter rather than from any of the tick paths rounds 411–414
+used. Most callers pass `0` and so extend the timer by nothing; `FUN_004181d0`
+passes a real duration from `*(record + 0x18) + 0x84`.
+
+The middle argument is `0xff` at every call site and **the only implementation
+ignores it**, while `CGObjChar::Create` initialises the motion state to that
+same `0xff`. Suggestive of a "leave the motion state alone" sentinel, and
+recorded as an observation rather than a finding, because nothing reads the
+parameter.
+
+STILL OPEN AND SCOPED: what writes the motion state. Comparisons exist against
+2, 3, 4, 15, 16, 17, 18, but a census of writes to `chardata + 2` finds exactly
+one — `CGObjChar::Create` storing `0xff` — which cannot produce those values, so
+**the probe is incomplete, not the binary**. Two leads recorded: the write may go
+through a local copy of the chardata pointer in a shape my three patterns missed,
+and slot 63 has several implementations, so another class's override may read a
+different field — in which case "motion state is `chardata+2`" is true of `CGObj`
+and not of everything answering the slot.
+
+One observation not acted on: the setter carries the name
+`CGItemMonsterCapsule::SetLifeState` while its RTTI hierarchy is
+`CGObj : IGObj : CBase` and the assert names `IGObj::SetLifeState`. That is the
+"inherited base method" case `RE_LOOP.md` describes — method name right, class
+prefix an arbitrary derived class — and it wants `vtq.py owner` rather than a
+guess. No names filed; `0x514010` from round 413 is still held. No behaviour
+changed, so no tag.
+
 Round 414 (my own round-413 probe crossed a variable reassignment; the retraction
 strengthens the result it threatened): ROUND 413 CLOSED LIFE-STATE 2 AND, IN THE
 SAME BREATH, REPORTED THAT "VALUES 4 AND 6 EXIST AND ARE UNREAD". **They are not
