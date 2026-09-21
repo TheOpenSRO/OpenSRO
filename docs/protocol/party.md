@@ -102,6 +102,10 @@ nothing shipped depends on it.
 
 ## Not recovered
 
+- ~~**The invite and expulsion flows.**~~ **BOTH SIDES READ (round 358).**
+  The full ladder is in the section below; the short form is that **invite is
+  `0x062`** (`CParty::CheckCanJoin`) and **expulsion is `0x063`**.
+
 - ~~**Bit 2 of the party flags.**~~ **READ (round 357), from a use-site.**
   `CParty::CheckCanJoin` (`0x00514560`) opens its gate with
 
@@ -191,3 +195,33 @@ nothing shipped depends on it.
   `0x005bf570`, 382 bytes, posts no kind and does its own work.
 - **Whether the exp-sharing flag can change after creation.** Nothing read so
   far writes it.
+
+
+## The invite ladder, in the order the engine checks it (round 358)
+
+`CParty::CheckCanJoin` (`0x00514560`) is the INVITE, not merely a predicate: it
+ends by asking the party manager to send the invitation. Reading it through:
+
+| # | condition | on failure |
+|---|---|---|
+| 1 | the caller is in a party (`[0x72e]`) | falls through silently |
+| 2 | caller is the leader (`myId == party+0xc`) **or** party flag **bit 2** is set | falls through silently |
+| 3 | the target is not the caller | falls through silently |
+| 4 | the party is not full — `party+0x1c` against **8** when flag bit 0 is set, **4** when clear | `0x2c13` when sharing, `0x2c14` when not |
+| 5 | the target is within **`0x26` = 38** of the caller (`GObjPC::IsWithinInteractionRange`) | the pending code is sent |
+| 6 | the target is a **PC** — vtable slot 7, `IsPC` | code **3** |
+| 7 | `0x00514010` returns 1 | its own code |
+| 8 | `Party_SendInvitation(target, partyFlags)` returns 1 | its code, 2 on failure |
+
+**`Party_SendInvitation`** (`0x005be2f0`) asserts the target has NO party, then
+notifies through `GObjPC::FUN_004ea0d0(target, inviterId, inviterPartyId, …)`
+and sets **`target->chardata+7 = 1`**.
+
+That byte is what round 356 could only call "an unnamed state byte" when it
+found handler `0x06f` clearing it at value **4**: it is the **pending-invitation
+state**. The invitation writes 1 and the cleanup clears 4, so **at least one
+transition between them is still unread** — that is what remains of this flow,
+along with what `0x00514010` checks.
+
+The party id the invitation carries is `inviterParty + 8`, a fifth independent
+use-site for `GObjPC::PartyID`.

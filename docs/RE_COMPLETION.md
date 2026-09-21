@@ -6266,6 +6266,34 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 358 (the invite ladder, and a state byte that names itself): FINISHED
+READING THE FUNCTION ROUND 357 STOPPED HALFWAY THROUGH. CParty::CheckCanJoin
+(0x00514560) is the INVITE, not merely a predicate -- it ends by asking the
+party manager to send one -- so party.md's "the invite and expulsion flows are
+only enumerated" is CLOSED on both sides: invite 0x062, expulsion 0x063. THE
+LADDER, in the engine's own order: caller in a party; caller is the leader OR
+flag bit 2 (round 357); target is not the caller; party not full (8 when flag
+bit 0 is set, 4 when clear, refusing 0x2c13 / 0x2c14 -- which matches the table
+party.md already had from the other direction); **target within 0x26 = 38** by
+GObjPC::IsWithinInteractionRange; target is a PC by vtable slot 7, else code 3;
+0x00514010 returns 1; then Party_SendInvitation. THE INVITATION NAMES A BYTE
+THIS PROJECT HAD FAILED TO NAME TWICE. Party_SendInvitation (0x005be2f0)
+asserts the TARGET HAS NO PARTY -- target+0x1cb8, the field GObjPC::PartyID
+reads -- notifies through GObjPC::FUN_004ea0d0(target, inviterId,
+inviterPartyId, ...) and on success sets **target->chardata+7 = 1**. Round 356
+found handler 0x06f clearing that same byte at value 4 and could only call it
+"an unnamed state byte"; it is the PENDING-INVITATION STATE. WHAT IS STILL
+UNREAD IS SAID PLAINLY: the invitation writes 1 and the cleanup clears 4, so at
+least one transition between them is missing, and 0x00514010's check is
+unopened. A FIFTH CORROBORATION FELL OUT unasked -- the invitation carries
+inviterParty + 8 as the party id, which is the +8 that GObjPC::PartyID returns,
+named last round on four use-sites.
+
+**What moved:** no shipped value. One name (Party_SendInvitation), a PARTIAL
+system's oldest open bullet closed on both sides with an ordered ladder and its
+refusal codes, a state byte identified that two earlier rounds had left
+anonymous, and the grounded invite range 38.
+
 Round 357 (expulsion found, and a documented-open flag bit closed):
 0x063 IS THE EXPULSION. It reads a u32 target and then requires ALL THREE of:
 the caller is in a party ([0x72e]); the caller's own id equals **party + 0xc**;
