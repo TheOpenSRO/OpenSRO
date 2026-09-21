@@ -6375,6 +6375,38 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 397 (two levers fail, a use-site names it: +0x22d0 is the client config
+data): ROUND 396 LEFT +0x22d0 UNNAMEABLE by the assert lever -- nearest assert
+0x7340 away, none below at all. This round tried a second lever and then a third.
+
+RTTI ALSO FAILS, AND CHECKING COST ONE COMMAND. Its constructor 0x407be0 stores
+NO VFTABLE, so the member is a plain non-polymorphic class and there is no class
+name to walk to. Two systematic levers, both correctly reporting they cannot
+reach it, is what sent the search to a use-site instead of to a guess.
+
+A USE-SITE NAMED IT IN ONE READ, IN THE ENGINE'S OWN WORDS.
+GObjPC::FUN_00518c20 reads a type byte and dispatches on 0, 1 and 2; its
+else-branch logs "Unhandled Client Config Data Msg Type was Detected!!! (%d)".
+And the disassembly shows all three handlers taking the member as `this`:
+lea eax,[edi+0x22d0] -> 0x407ee0, add edi,0x22d0 -> 0x407e00, and
+lea ecx,[edi+0x22d0] -> 0x407d80. Not proximity: the member is the argument.
+
+THE CO-LOCATION PATTERN HELD WITHOUT AN ASSERT TO PROVE IT. Those three handlers,
+the constructor (0x407be0) and the saver (0x4082b0) are all in 0x407-0x408 --
+one translation unit that simply carries no __FILE__ string, which is exactly why
+round 395's lever found nothing and round 394's pattern still predicted
+correctly.
+
+AND IT RETROSPECTIVELY EXPLAINS ROUND 392: 0x4082b0 was read there as a teardown
+walk freeing fields at +4, +0xb, +0x1a, +0x20, +0x26 and +0x2b across a vector.
+That is the shape of a list of small config records with string members, which is
+what client config data is.
+
+**What moved:** the last member round 393 called unreachable is named from the
+engine's own log string with its handlers confirmed by disassembly, save bit
+0x800 has a meaning, and EIGHT OF THE NINE save scopes are now identified. Only
+the `this` scope (bit 0x80) is left. No behaviour changed, so no tag.
+
 Round 396 (the bracketing rule was wrong, and its own control said so): ROUND
 395's ASSERT LEVER NAMED ONE MEMBER; this applies it to the rest. Doing that
 needed a rule for WHICH assert names a translation unit, and the first rule I

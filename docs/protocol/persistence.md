@@ -390,7 +390,7 @@ sub-save:
 | `0x100` | `this + 0x1dfc` — **the timed-job list** | `0x656220` |
 | `0x200` | `this + 0x74` | `0x484300` |
 | `0x400` | `this + 0x1fb4` — **the job (Trijob) manager** | `0x60e240` |
-| `0x800` | `this + 0x22d0` | `0x4082b0` |
+| `0x800` | `this + 0x22d0` — **the client config data** | `0x4082b0` |
 
 **Each bit saves a different MEMBER SUB-OBJECT of the character**, which is what
 the decompiled C could not show: the sub-object is loaded with `lea` into a
@@ -421,7 +421,7 @@ Disassembled, the constructor is a member map:
 | `+0x1dfc` **timed jobs** | `0x655f10` | `0x656220` |
 | `+0x1ce8` **summoned COS** | `0x4f9dc0` | `0x4fc770` |
 | `+0x1fb4` **the job (Trijob) manager** | `0x60d9d0` | `0x60e240` |
-| `+0x22d0` *(unidentified)* | `0x407be0` | `0x4082b0` |
+| `+0x22d0` **the client config data** | `0x407be0` | `0x4082b0` |
 
 **The co-location pattern paid off immediately (round 395).** Searching the two
 unknown members' translation units for `__FILE__` assert strings — this project's
@@ -469,7 +469,41 @@ storage each of the two is has not been established.
 assert is 16 KB and 29 KB away respectively. The lever that worked at 0x1a0 has
 nothing to offer at that range.
 
-**`+0x22d0`'s own reason, recorded rather than worked around:** there is **no `__FILE__` assert anywhere below it** — it sits near the
+### `+0x22d0` is the CLIENT CONFIG DATA, named by the engine (round 397)
+
+Two levers were tried on it and both correctly reported that they could not
+reach it — worth recording, because the negative result is what sent the search
+somewhere better:
+
+- **The `__FILE__` assert**, which named `+0x1fb4`: useless here. The nearest
+  assert is 0x7340 away and there is none below at all (see the distance table
+  above).
+- **RTTI**: also useless. Its constructor `0x407be0` stores **no vftable**, so the
+  member is a plain non-polymorphic class and there is no class name to walk to.
+
+**A use-site named it in one read.** `GObjPC::FUN_00518c20` reads a type byte off
+the message and dispatches on 0, 1 and 2, and its else-branch logs the engine's
+own words:
+
+	"Unhandled Client Config Data Msg Type was Detected!!! (%d)"
+
+and the disassembly shows all three handlers taking the member as `this`:
+
+	518c89  lea eax,[edi+0x22d0] ; call 0x407ee0     type 2
+	518c9e  add edi,0x22d0       ; call 0x407e00     type 1
+	518cb3  lea ecx,[edi+0x22d0] ; call 0x407d80     type 0
+
+Those three handlers, the member's constructor (`0x407be0`) and its saver
+(`0x4082b0`) are all in the `0x407`–`0x408` range: **one translation unit**,
+which is why the co-location pattern held even though the unit carries no assert.
+
+It also explains round 392's reading of `0x4082b0` as a teardown walk over a
+vector, freeing fields at `+4`, `+0xb`, `+0x1a`, `+0x20`, `+0x26` and `+0x2b` —
+the shape of a list of small config records with string members.
+
+**So save bit `0x800` persists the character's client configuration.**
+
+**`+0x22d0`'s earlier reason, kept for the record:** there is **no `__FILE__` assert anywhere below it** — it sits near the
 start of `.text` — and the nearest above is `Formulae.cpp` at `0x40f5f0`, some
 0x7a00 further on and a known separate unit. Its translation unit simply carries
 no assert to name it.
