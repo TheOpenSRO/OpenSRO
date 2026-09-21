@@ -357,3 +357,45 @@ shorthand**, sitting in a recovered annotation in the dump's function header
 (`vtable slot 6. Builds ...`). A regex for call literals will match the prose
 written *about* those literals, because the dumps carry both. Checked before
 the count was recorded; the count above is the checked one.
+
+## The character save is a SCOPE BITMASK, not a field list (round 391)
+
+`SYSTEMS.md` asked for `AQ_CharDataSaver`'s argument set-up. It is not where the
+arguments are: `AQ_CharDataSaver::DoWork` (`0x004412e0`, 220 bytes) is only a
+loop over a queue at `+0x38`, executing already-built queries and counting
+failures into `+0x30` — the `"AQ_CharDataSaver::DB Query Error(%d): %s"` log.
+
+**The enqueue is `AQ_CharDataSaver::FUN_00441260`**, and it stores three things
+before handing off:
+
+	job+0x28 = (chardata+0x11 == 1)      a character-state byte, as a boolean
+	job+0x2c = character id              vtable slot 2
+	job+0x34 = the query queue           built by vtable slot 0x500 on the character
+
+`chardata+0x11` is **kind `0xc` of `CGObjPC::SetCharacterState`** — the field
+dispatcher read in round 361 — so the save records a flag derived from the same
+state vocabulary the party and interaction bytes belong to.
+
+**Slot `0x500` is `CGObjPC::vslot_320` (`0x004e63f0`), and it is a scope
+dispatcher.** Its third argument is a bitmask and each bit enqueues a different
+sub-save:
+
+| mask | sub-saver |
+|---|---|
+| *(always, if `[this+0x34]+0x20 == 0`)* | `FUN_004a7180(queue, mask, 0)` |
+| `0x01` | `FUN_004b7b50` |
+| `0x10` | `FUN_0056fdf0(this + 0x1d98)` |
+| `0x40` | `FUN_004b7b50` — the same sub-saver as bit 0, reachable two ways |
+| *(always)* | `FUN_004fc770(queue, mask, arg4)` |
+| `0x100` | `FUN_00656220` |
+| `0x200` | `FUN_00484300` |
+| `0x400` | `FUN_0060e240` |
+| `0x800` | `FUN_004082b0` |
+
+**`AQ_CharDataSaver` passes `0xffffffff`** — every bit — so its own save is a
+full one. The mask exists so that *partial* saves can be requested by whoever
+else calls slot `0x500`, which is what makes this a scope vocabulary rather than
+a parameter list.
+
+**What each sub-saver persists is NOT read.** Seven distinct functions; naming
+them is the next probe, and it is a bounded one.

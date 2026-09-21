@@ -6375,6 +6375,40 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 391 (the character save is a scope bitmask, and two more stale probes):
+ROUND 390's STALENESS SIGNAL NAMED FIVE never-revisited rows. Took the thinnest
+first -- Shops, whose entire next probe was the 26 characters "repair and item
+durability". known.sh on "repair" answered it in one command: REPAIR IS A
+SPECIFIED SYSTEM OF ITS OWN, three rows below in the same table, BUILT end to end
+and shipped in v0.1.386. Buy, list and sell are all implemented too. The probe
+pointed at finished work; it is rewritten to what is actually left (paging past
+30 goods).
+
+THEN A REAL PROBE FROM THE SAME FIVE. Persistence/AsyncQuery says "Read
+AQ_CharDataSaver's argument set-up first", and the argument set-up is NOT WHERE
+IT LOOKS. AQ_CharDataSaver::DoWork (0x004412e0, 220 bytes) is only a loop over a
+queue at +0x38, executing already-built queries and counting failures. The
+enqueue is FUN_00441260, which stores the character id, a boolean of
+chardata+0x11 -- KIND 0xc OF CGObjPC::SetCharacterState, the dispatcher read in
+round 361 -- and then hands off to vtable slot 0x500 on the character.
+
+SLOT 0x500 IS CGObjPC::vslot_320 (0x004e63f0) AND IT IS A SCOPE DISPATCHER. Its
+third argument is a bitmask; bits 0x01, 0x10, 0x40, 0x100, 0x200, 0x400 and 0x800
+each enqueue a different sub-save, two more always run, and bits 0 and 6 reach
+the SAME sub-saver two ways. AQ_CharDataSaver passes 0xffffffff, so its own save
+is a full one -- the mask exists so other callers can request PARTIAL saves,
+which is what makes this a scope vocabulary rather than a parameter list.
+
+THE ANSWER IS A DIFFERENT SHAPE FROM THE QUESTION, which is worth recording: the
+probe expected a field list and the engine has a scope bitmask. Nothing about
+WHAT each sub-saver persists is claimed -- seven distinct functions, unnamed, and
+naming them is the next probe.
+
+**What moved:** a second stale tracker probe found and rewritten (the first was
+round 390's Party row), a genuinely open probe answered at the level the engine
+actually works at, and the character-save scope vocabulary recorded in
+persistence.md with its bits. No behaviour changed, so no tag.
+
 Round 390 (the OTHER tracker was stale too, and by four rounds): ROUND 384 SWEPT
 THE OPEN LIST in RE_COMPLETION. docs/SYSTEMS.md is the other tracker -- the one a
 tick actually uses to CHOOSE what to work on -- and its Party row still read
