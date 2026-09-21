@@ -6375,6 +6375,43 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 402 (four varargs for eight %d: the compiler reuses a dead call's
+arguments, and round 285 is re-derived): ROUND 401 CALLED THE SHARED CALL SITE A
+DECOMPILER ARTIFACT and said disassembly was needed. The disassembly shows GHIDRA
+WAS EXACTLY RIGHT -- four varargs really are pushed for a format with eight %d --
+and the explanation is a compiler trick, not a defect.
+
+FUN_00425f70 IS A REAL vsnprintf_s WRAPPER: it calls __vsnprintf_s(buf, size,
+count, format, &stack0x00000008), so the varargs are read straight off the stack
+after the format. AND THE PRECEDING CALL'S FOUR ARGUMENTS ARE NEVER CLEANED OFF.
+FUN_004ea580(param_1[3], param_1[4], local_c3c, iVar6) pushes them at
+45b6d3-45b6d6, the call returns, four more values and the format are pushed, and
+the formatter walks straight past the fresh four into the dead ones. Varargs 5-8
+are that dead call's arguments.
+
+SO VARARGS 5 AND 6 ARE param_1[3] AND param_1[4] -- EXACTLY THE TWO VALUES
+RESOLVED THROUGH CGStorage::GetItem at the top of the function. _STRG_MOVE_ITEM
+args 5/6 are storage slots, WHICH IS PRECISELY WHAT ROUND 285 RECORDED, now
+re-derived from the disassembly by an entirely different route. A recorded fact
+confirmed rather than a new one claimed -- and worth more than a new one, given
+how many recorded facts this session has had to withdraw. _STRG_MERGE_ITEM
+reaches the same site through the same goto after the same call with the same
+eight-%d format, so its args 5/6 are the same slots.
+
+AND A GUARD I DID NOT KNOW EXISTED CAUGHT MY OWN WRITE-UP.
+TestProbesDoNotContradictTheirSpec failed the build: my SYSTEMS row called
+_STRG_SWAP_ITEM unread while persistence.md mentioned it under a round heading,
+which the checker treats as settled. The check is coarse -- a round section can
+hold both settled and unsettled statements -- but it was RIGHT that the two pages
+disagreed, and the fix was to make the row precise: it now names the direct call
+at 0x45b806 rather than the procedure. That is the same class of guard this
+session has been hand-building, already in the repo and working.
+
+**What moved:** round 401's "needs disassembly" item closed with the mechanism
+explained, round 285's numbering independently confirmed, MERGE's arguments named
+by the same route, and a row corrected by a guard rather than by a later round.
+No behaviour changed, so no tag.
+
 Round 401 (the argument lever swept: one more named, two negatives measured):
 ROUND 400 PROMOTED ROUND 285's RULE to this system's next probe -- an argument
 that is also passed to a known accessor names itself. Swept, it yields one more

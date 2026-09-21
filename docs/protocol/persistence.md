@@ -665,9 +665,55 @@ read, not inferred.
   arguments**, which take `rec+8`/`rec+9` instead. The lever needs the *same*
   value in both places and here there is none. What it does name is the record:
   `rec+0x10`/`rec+0x14` is a DB item id.
-- **`_STRG_MERGE_ITEM`, `_STRG_MOVE_ITEM` and `_STRG_SWAP_ITEM` cannot be
-  numbered from the decompiled C at all** in this function: all three reach a
-  shared call site (`LAB_0045b6f8`) where Ghidra renders
-  `FUN_00425f70(pcVar9, uVar2, param_4, param_5, uVar10)` — **four varargs for
-  eight `%d`**. The remaining arguments are collapsed. Disassembly would be
-  needed, which is why only the direct call yielded a position here.
+- ~~**`_STRG_MERGE_ITEM`, `_STRG_MOVE_ITEM` and `_STRG_SWAP_ITEM` cannot be
+  numbered from the decompiled C**~~ — **SOLVED in round 402, and Ghidra was
+  right all along.** See below.
+
+
+## Four varargs for eight `%d`: the compiler reuses a dead call's arguments (round 402)
+
+Round 401 read the shared call site as a decompiler artifact — `FUN_00425f70`
+receiving four varargs for a format string with eight `%d` — and said
+disassembly was needed. The disassembly shows **Ghidra was exactly right**, and
+the explanation is a compiler trick rather than a defect.
+
+`FUN_00425f70` is a real `vsnprintf_s` wrapper: it calls
+`__vsnprintf_s(buf, size, count, format, &stack0x00000008)`, so the varargs are
+read straight off the stack after the format. And the four values pushed for the
+**preceding** call are **never cleaned off**:
+
+	45b6d3  push esi        ; \
+	45b6d4  push eax        ;  } FUN_004ea580(param_1[3], param_1[4], local_c3c, iVar6)
+	45b6d5  push ecx        ; /
+	45b6d6  push edx        ;/
+	45b6d9  call 0x4ea580   ; ... and its arguments STAY on the stack
+	45b6e8  push eax        ; its return value
+	45b6f0  push eax
+	45b6f1  push ecx
+	45b6f2  push edx
+	45b6f3  push 0xae4df0   ; the format string
+	45b701  call 0x425f70
+
+So the formatter walks past the four fresh pushes straight into the dead call's
+arguments. Laid out by increasing address, the eight varargs are:
+
+| vararg | value |
+|---:|---|
+| 1–4 | the four fresh pushes |
+| **5** | `param_1[3]` |
+| **6** | `param_1[4]` |
+| 7–8 | `local_c3c`, `iVar6` |
+
+**And `param_1[3]` / `param_1[4]` are exactly the two values resolved through
+`CGStorage::GetItem` at the top of the function.** So:
+
+- **`_STRG_MOVE_ITEM` args 5 and 6 are storage slots** — which is precisely what
+  round 285 recorded, now **re-derived from the disassembly by a different
+  route**. A recorded fact confirmed rather than a new one claimed.
+- **`_STRG_MERGE_ITEM` args 5 and 6 are storage slots too.** Its branch reaches
+  the same call site through the same `goto`, after the same
+  `FUN_004ea580(param_1[3], param_1[4], …)`, and its format carries the same
+  eight `%d`.
+
+`_STRG_SWAP_ITEM` is a **separate, direct call** (`0x45b806`) and is not covered
+by this; its arguments are readable the same way but were not read.
