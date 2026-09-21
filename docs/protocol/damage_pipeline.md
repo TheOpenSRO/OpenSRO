@@ -706,7 +706,16 @@ on top of which two further contributors are already named elsewhere: **equipmen
 
 **A consequence that shapes what to check next, not a result to ship.** A bare level-1 character
 has `hra = 11` against a level-1 monster's `era = 2·1+25 = 27`, giving
-`(0 + 11/27 * 0.5) * 100 ≈ 20 %` — implausibly low for a starting fight. So **equipment hit-rate
-must dominate at low level**, and `itemdata` cols 16/17 (`HitRateMin`/`HitRateMax`, which
-srrevamp's `refdata` already parses) are the obvious source. That is a prediction to verify before
-wiring, not a formula to trust as-is.
+`(0 + 11/27 * 0.5) * 100 ≈ 20 %` — implausibly low for a starting fight.
+
+**The obvious resolution does NOT obviously work (round 372).** The guess was that ordinary
+equipment hit-rate makes up the difference. But `param_tags.md`'s tag→`MATTR_*` map, which is the
+game's own naming, says the two tags reaching these params are **`hra` → `MATTR_AVATAR_HR`** and
+**`era` → `MATTR_AVATAR_ER`** — *avatar* options, the cosmetic family, alongside `inta` →
+`MATTR_AVATAR_INT` and `luca` → `MATTR_AVATAR_LUCK`. The plain **`hr` → `MATTR_HR`** is listed in
+`param_names.md` with **no param id at all** (it is a skill code), and that file opens by warning
+that `'hra'` is *attack* rate rather than hit rate — a distinction which has already corrected
+this project twice.
+
+So whether an ordinary weapon raises param 11 is **unestablished**, and the 20 % figure is still
+unexplained. Settle that before wiring a hit roll; do not assume equipment closes the gap.

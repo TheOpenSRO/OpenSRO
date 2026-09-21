@@ -6266,6 +6266,47 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 372 (a third re-derivation, and a tool so the rule stops depending on my
+memory): SET OUT TO VERIFY ROUND 371'S PREDICTION that equipment hit-rate closes
+the implausible 20 % hit chance. Ended up re-deriving magicoption.txt's packed
+tag vocabulary, which this project recorded on 2026-09-16. THAT IS THE THIRD
+CONSECUTIVE TICK of going to the data before the docs.
+
+THREE PROBE FLAWS IN A ROW, EACH CAUGHT, AND THE NEGATIVE SURVIVED TWO OF THEM.
+Grepping real itemdata for the tag 'hra' returned zero, which reads as "equipment
+cannot modify attack rate". (1) The 'era' hits that DID appear were the word
+"General" -- substring noise. (2) The tags are not strings at all: magicoption
+stores them as PACKED MULTI-CHAR INTEGERS, so a string grep is structurally blind
+to them. (3) After decoding, my printable-ASCII filter silently dropped every
+NUL-padded THREE-character tag -- precisely the class being looked for. Only the
+third fix surfaced 'hra' (6845025) and 'era' (6648417). A negative that survives
+two flawed probes is not a finding.
+
+THE FIX IS MECHANICAL RATHER THAN A PROMISE. tools/known.sh greps every
+recovered-knowledge surface at once -- prose docs, the name and handler tables,
+and the Go sources' own citations, since many findings live only in a comment
+beside the constant they justify. It exits 0 when something is known, so it reads
+the way the rule does. Two controls: a documented term returns hits (and in fact
+surfaces "The stat-tag vocabulary is complete: magicoption.txt names every tag",
+the exact entry this round re-derived), a nonsense term returns nothing and
+exit 1. THE RULE WAS NEVER FORGOTTEN -- obeying it meant remembering which of ~60
+docs to grep, and that friction is what the script removes.
+
+ONE THING IS GENUINELY NEW, AND IT RETRACTS ROUND 371'S PREDICTION. The tags that
+reach params 9 and 11 are hra -> MATTR_AVATAR_HR and era -> MATTR_AVATAR_ER --
+AVATAR options, the cosmetic family, beside inta -> MATTR_AVATAR_INT and luca ->
+MATTR_AVATAR_LUCK. The plain hr -> MATTR_HR carries NO PARAM ID (param_names.md
+lists it as a skill code), and that same file opens by warning that 'hra' is
+ATTACK rate rather than hit rate, a distinction that has already corrected this
+project twice. So whether an ordinary weapon raises param 11 is UNESTABLISHED and
+the 20 % figure is still unexplained. Round 371 called equipment "the obvious
+source"; it is not obviously the source at all.
+
+**What moved:** one prediction retracted before it could be wired, a repeated
+process failure given a tool instead of another resolution, and a catalogue of
+three probe flaws that each made a present thing look absent. Against that: a
+whole tick spent re-deriving a 2026-09-16 entry. No behaviour changed, so no tag.
+
 Round 371 (the player's attack and parry rates, and TWO re-derivations of my own
 documentation): ROUND 370 NAMED THE BLOCKER as "the player side has no hra/era".
 That is true of srrevamp and MISLEADING ABOUT THE ENGINE: the player formula was

@@ -188,6 +188,24 @@ paths. This has been hit twice.
 requiring exactly one space silently dropped 21 of 33 rows. Split on `|` and
 trim; never pattern-match the row shape.
 
+## Before the dump: `tools/known.sh`
+
+**Run `tools/known.sh <term>` before going to the dump, the binary or the game
+tables.** It greps every recovered-knowledge surface at once -- the prose docs,
+the recovered-name and handler tables, and the Go sources' own citations, since
+many findings live only in a doc comment beside the constant they justify.
+
+This exists because the rule it implements kept being broken. Rounds 370, 371 and
+372 each went to the dump first and each re-derived work already written down:
+the player stat graph and GParamKeeper's slot-combination rules (both recorded
+2026-09-15), and `magicoption.txt`'s packed tag vocabulary (recorded 2026-09-16).
+The rule was not forgotten -- obeying it meant remembering which of ~60 docs to
+grep, and that friction is what the script removes.
+
+It exits 0 when something is known, so it reads the way the rule does:
+
+	tools/known.sh 'stat graph' && echo "read that before digging"
+
 ## Applying names
 
 The dump tick runs `-readOnly`, so **it cannot write names**. Applying a name
