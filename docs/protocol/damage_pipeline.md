@@ -616,106 +616,62 @@ the result to zero below and to `.rdata 0x00b45f1c` once it reaches
 here** -- only that this function is deterministic given its inputs. The name is
 `Combat_ComputeWeaponDamage` rather than `...Roll` for that reason.
 
-## The hit chance, and why there is no parry roll (round 370)
+## RETRACTED: "the hit chance" was the damage centre (rounds 370-372, corrected in 373)
 
-`GROUNDING_AUDIT.md` carried **"parry and evade are still not rolled"** as an open assumption.
-Half of that is now answered, and the framing turns out to be wrong: **the engine has no separate
-parry event.** Parry rate is the *denominator of the hit chance*.
+**Rounds 370, 371 and 372 built three rounds of work on a misreading, and this project had
+already recorded the correct reading on 2026-09-15.** The retraction is kept in place of the
+original text because the mistake is more instructive than what it claimed.
 
-### How it was found, and the proven absence
+### What was claimed, and what is actually true
 
-`'era'` (parry rate) is ParamKeeper **param 9** (`stat_tags.md`). Enumerating every
-`IGObj::GetParam(<literal>)` through vtable slot 65 (offset `0x104`) gives **45 distinct params
-across 78 sites**, and param 9 is read by **exactly one function in the whole binary**,
-`FUN_0040fdd0`. So "there is no separate parry mechanic" is a **proven absence measured against an
-enumeration**, not an empty grep.
+Round 370 read `FUN_0040fdd0` and reported a **hit chance**:
 
-### The formula
+	hitPercent = clamp( (levelTerm + hra/era * 0.5) * 100 , 10 , 90 )
 
-	hitPercent = clamp( ( levelTerm + hra / era * 0.5 ) * 100 , 10 , 90 )
-	levelTerm  = clamp( (attackerLevel - defenderLevel) * 0.03 , 0 , 0.30 )
+The formula and every constant in it are **right**. The *meaning* is wrong. `RE_COMPLETION.md`'s
+entry "What 'attack rate' actually does, and the damage dice (2026-09-15)" states it plainly:
+**attack rate is not a hit/miss roll at all.** The same expression is the **centre of the damage
+range**:
 
-with `hra` = param 11 (attack rate) and `era` = param 9 (parry rate).
+	centre% = clamp( ((hra/era) * 0.5 + levelTerm) * 100 , 10 , 90 )
+	p       = min(u1, u2, u3)          ui = rand()/32767 * 100
+	damage% = centre% ± p              fair coin, clamped to [0, 100]
+	damage  = lo + damage%/100 * (hi - lo)
 
-| constant | `.rdata` | value |
-|---|---|---|
-| ratio scale | `0x00b45c50` | 0.5 |
-| percent | `0x00b45af0` | 100.0 |
-| floor | `0x00b45b44` | **10.0** |
-| ceiling | `0x00b45e18` | **90.0** |
-| per level | `0x00b45dc8` | 0.03 |
-| level cap | `0x00b45b8c` | 0.30 |
+So attack-rate-versus-parry decides **where in the weapon's `lo..hi` band a blow lands**, never
+below 10 % nor above 90 % of it. The `_rand()` calls round 370 read as "it IS rolled, the caller
+compares against the percentage" are the **three uniform samples for the excursion `p`** — the
+minimum of three, biased toward zero, which is why blows cluster near the centre.
 
-**It is rolled.** `FUN_0040dce0`, one of the formula's two callers and a neighbour of
-`Formula_MitigatePhysicalDamage` in the same `Formulae.cpp` translation unit, calls `_rand()` and
-compares against the returned percentage.
+### The cascade
 
-**Two controls on the constant reads.** `0x00b45af0` came back 100.0 and `0x00b45ac0` came back
-1.0 — the two values this page already recorded for the mitigation formula. And `levelTerm` is
-`FUN_0040fd60`, which `internal/combat/combat.go` had **already disassembled on a different day**,
-recording the same `0.03` at `0x00b45dc8` and `0.30` at `0x00b45b8c`. An independent re-derivation
-agreeing exactly.
+- **Round 370** renamed it the hit chance and edited `GROUNDING_AUDIT.md` to say "what srrevamp
+  lacks is a HIT ROLL, not a parry roll". Both wrong.
+- **Round 371** computed a bare level-1 character's `hra = 11` against a monster's `era = 27` and
+  called the resulting **20 %** "implausibly low for a starting fight". **There was nothing
+  implausible.** 20 % is a damage *centre*: a weak character lands blows near the bottom of the
+  weapon's range, which is exactly right.
+- **Round 372** then spent an entire tick hunting the equipment term that would "explain" the
+  implausibility. It was chasing an artifact of the misreading.
 
-### A misattribution suspected and disproven
+### What survives, and it is not nothing
 
-`LevelAdvantagePerLevel`/`LevelAdvantageCap` in `internal/combat` are these same two constants,
-applied to **damage**. That looked at first like srrevamp having attached them to the wrong
-quantity. It is not: `FUN_0040fd60` is a **shared helper** with two callers, and srrevamp's comment
-cites the other one (`damage = (FUN_0040fd60() + 1.0) * damage`). The same level term feeds both
-damage and hit chance, and the existing code is right.
+- **The constants.** 0.5, 10.0, 90.0, 0.03, 0.30, read out of the PE image in round 370, match the
+  2026-09-15 reading exactly. That is an independent re-derivation at a different width and by a
+  different method, and it stands.
+- **The enumeration.** Param 9 (`'era'`) is read by exactly one function in the binary, measured
+  against all 45 params read by literal across 78 sites. There is no separate parry roll — which
+  the 2026-09-15 entry also says, for the same reason.
+- **The player's base rates**, recovered in round 371 and genuinely new: a bare character has
+  `hra = era = 10 + Level`, from a base of 10.0 at slot 0 plus a direct `Level →` edge at slot 0,
+  under a slot-0 sum. This matters because the 2026-09-15 entry closed with *"srrevamp has no
+  attack-rate or parry-rate stat, so porting the centre would mean inventing its only input"* —
+  **the input is no longer invented.** With `hr` on weapons and `er` on armour
+  (`magic_options.md`), the damage centre becomes portable.
 
-### What is not settled
+### The process failure, stated once
 
-- **The register order was not disassembled.** That `hra` is the attacker's and `era` the
-  defender's rests on what the two stats ARE, not on which object sat in which register. The
-  assignment is the only sensible one, and it is recorded as resting on the stat names.
-- **Evade** is untouched by this: it remains vocabulary only in `combat/paramtags.go`.
-- The second caller, `FUN_0040dff0`, is unread — presumably the magical twin, by analogy with the
-  mitigation pair, but not checked.
-
-### What wiring it would need
-
-Monsters already have both stats in real data: `characterdata` **col 75 = `era`** and **col 77 =
-`hra`**, and both are **2·level + 25** for every monster row (`RE_COMPLETION.md`'s grounded table).
-So monster-versus-monster sits at `hra/era == 1`, i.e. a 50 % base before the level term.
-
-**The player side is the gap.** srrevamp models no `hra`/`era` for characters at all, so the
-numerator has no source yet. That, not the formula, is what stands between this and a hit roll.
-
-### The player side of the hit chance (round 371)
-
-Round 370 named "the player side has no hra/era" as the blocker. That is true of **srrevamp**,
-but the **engine's** player formula was already recoverable from three facts this project had
-recorded on 2026-09-15 and never composed:
-
-1. `GObjPC_InitStats` sets param 11 (`hra`) and param 9 (`era`) each to a base of **10.0**
-   (`.rdata 0x00b45b44`) at **slot 0** — the same constant that is the hit formula's floor.
-2. Each has a **direct derived edge from param 0 (Level) at slot 0**, with no intermediate node:
-   `BindDerived(0 → 11)` and `BindDerived(0 → 9)`. Param 0 is the level byte at `charData+0x65`.
-3. **Slot 0 sums** (`GParamKeeper`'s combination rules: `slot 0 -> acc = entry + acc`), and
-   `ParamKeeper_EvaluateParam` combines the four slots as
-   `slot0 * (slot1+100)/100 * slot2 * slot3/100`.
-
-Composing them, a **bare** character's rates are:
-
-	hra = era = 10 + Level
-
-on top of which two further contributors are already named elsewhere: **equipment**, through
-`Stat_ApplyTaggedModifier` (`'hra'`→11, `'era'`→9), and **status effects**, through
-`AbnormalState_Apply13_p11`.
-
-**A consequence that shapes what to check next, not a result to ship.** A bare level-1 character
-has `hra = 11` against a level-1 monster's `era = 2·1+25 = 27`, giving
-`(0 + 11/27 * 0.5) * 100 ≈ 20 %` — implausibly low for a starting fight.
-
-**The obvious resolution does NOT obviously work (round 372).** The guess was that ordinary
-equipment hit-rate makes up the difference. But `param_tags.md`'s tag→`MATTR_*` map, which is the
-game's own naming, says the two tags reaching these params are **`hra` → `MATTR_AVATAR_HR`** and
-**`era` → `MATTR_AVATAR_ER`** — *avatar* options, the cosmetic family, alongside `inta` →
-`MATTR_AVATAR_INT` and `luca` → `MATTR_AVATAR_LUCK`. The plain **`hr` → `MATTR_HR`** is listed in
-`param_names.md` with **no param id at all** (it is a skill code), and that file opens by warning
-that `'hra'` is *attack* rate rather than hit rate — a distinction which has already corrected
-this project twice.
-
-So whether an ordinary weapon raises param 11 is **unestablished**, and the 20 % figure is still
+`tools/known.sh` (built in round 372, for exactly this) finds the 2026-09-15 entry from the phrase
+"attack rate" in one command. Round 373 ran it first and the contradiction surfaced immediately.
+Rounds 370-372 did not run it, and went to the dump first every time.
 unexplained. Settle that before wiring a hit roll; do not assume equipment closes the gap.

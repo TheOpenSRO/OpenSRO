@@ -6266,6 +6266,57 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 373 (THREE ROUNDS RETRACTED: "the hit chance" was the damage centre, and
+the tool built last round found it in one command): RAN tools/known.sh FIRST, as
+round 372 built it to be run, on "attack rate". It returned RE_COMPLETION.md:1488
+-- "What 'attack rate' actually does, and the damage dice (2026-09-15)" -- whose
+second sentence is "attack rate turns out NOT TO BE A HIT/MISS ROLL AT ALL". That
+contradicts rounds 370, 371 and 372 outright.
+
+WHAT WAS WRONG. Round 370 read FUN_0040fdd0 and reported a HIT CHANCE:
+clamp((levelTerm + hra/era * 0.5) * 100, 10, 90). The formula and every constant
+are RIGHT; the MEANING is wrong. The same expression is the CENTRE OF THE DAMAGE
+RANGE: damage% = centre% +- p, where p = min of three uniform samples, and damage
+= lo + damage%/100 * (hi - lo). The _rand() calls round 370 cited as proof "it IS
+rolled" are the three samples for the excursion, not a hit test.
+
+THE CASCADE, WHICH IS THE PART WORTH KEEPING. Round 371 computed a bare level-1
+character's hra = 11 against a monster's era = 27 and called the resulting 20 %
+"implausibly low for a starting fight". THERE WAS NOTHING IMPLAUSIBLE: 20 % is a
+damage CENTRE, and a weak character landing blows near the bottom of the weapon's
+range is exactly right. Round 372 then spent an entire tick hunting the equipment
+term that would explain the implausibility -- chasing an artifact of the
+misreading. A wrong meaning does not announce itself; it generates a plausible
+puzzle, and the puzzle consumes the next two rounds.
+
+WHAT SURVIVES, AND IT IS NOT NOTHING. (1) The six constants, read out of the PE
+image in round 370, match the 2026-09-15 reading exactly -- an independent
+re-derivation by a different method, at a width that reading had to get right.
+(2) The enumeration: param 9 is read by exactly one function, measured against
+all 45 params read by literal across 78 sites, so there is no separate parry
+roll. (3) ROUND 371'S PLAYER BASE RATES ARE GENUINELY NEW AND NOW MATTER MORE
+than when they were filed: a bare character has hra = era = 10 + Level. The
+2026-09-15 entry closed with "srrevamp has no attack-rate or parry-rate stat, so
+porting the centre would mean INVENTING ITS ONLY INPUT" -- that blocker is gone.
+With hr on weapons and er on armour (magic_options.md, itemdata col 114, and a
+verified Copper Sword tooltip), the damage centre is portable.
+
+THE TOOL WORKED, ON ITS FIRST USE, AGAINST ITS AUTHOR. tools/known.sh was built
+last round after three ticks of re-deriving recorded work. Run first this tick it
+did not find a re-derivation -- it found a three-round CONTRADICTION, which is
+strictly worse and strictly more valuable to catch. Rounds 370-372 each went to
+the dump first.
+
+CORRECTED IN PLACE: damage_pipeline.md's two sections are replaced by a
+retraction that keeps the mistake visible, and GROUNDING_AUDIT.md's bullet --
+which round 370 had rewritten to say srrevamp "lacks a HIT ROLL" -- is restored
+with the reason recorded.
+
+**What moved:** three rounds of wrong meaning retracted before any of it was
+wired into the server, one real recovery (the player base rates) promoted from
+incidental to load-bearing, and a documented blocker from 2026-09-15 removed. No
+behaviour changed, so no tag.
+
 Round 372 (a third re-derivation, and a tool so the rule stops depending on my
 memory): SET OUT TO VERIFY ROUND 371'S PREDICTION that equipment hit-rate closes
 the implausible 20 % hit chance. Ended up re-deriving magicoption.txt's packed
