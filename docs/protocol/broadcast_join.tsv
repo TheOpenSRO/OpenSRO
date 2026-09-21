@@ -1,0 +1,168 @@
+# opcode	client_handler	server_senders
+# The 0x3NNN BROADCAST class, joined from both sides (round 369).
+# Left column: the client function registered to receive it (message_handlers.tsv).
+# Right column: the server functions that COMPOSE it (server_senders.tsv, round 368).
+# '-' means that side has no entry.
+#
+# THE CLIENT SIDE CANNOT VERIFY THESE. The client dump is ~5% named, and reading
+# 0x3026's handler for chat markers returned NOTHING -- no named callees, no UI
+# strings. That is a fact about the probe, not a refutation. Every purpose below
+# is therefore evidenced by the SERVER sender's own name, one-sided.
+#
+0x300a	FUN_0086d550	-
+0x300c	NetProcessInInner::FUN_00874ea0	CEDA_MessageShower::vslot_003, CGameSJ_ChinsTomb::vslot_005, CGameSJ_ChinsTomb::vslot_007, CGameSJ_SpecialGoodsSelling::vslot_005, CGameSJ_SpecialGoodsSelling::vslot_006, CGameSJ_SpecialGoodsSelling::vslot_007, CGameSJ_TempleOfAnubisAndIsisGate::FUN_0067b6c0, CGameSJ_TempleOfAnubisAndIsisGate::FUN_0067b7e0, CGameSJ_TempleOfAnubisAndIsisGate::FUN_0067bf90, CGameSJ_TempleOfHaroerisGate::FUN_0067c6e0, CGameSJ_TempleOfHaroerisGate::FUN_0067cf10, CGameSJ_TempleOfSelkisAndNeithGate::FUN_0067a700, CGameSJ_TempleOfSelkisAndNeithGate::FUN_0067a820, CGmaeSJ_EUBusinessEventUpdate::vslot_005, CGmaeSJ_EUBusinessEventUpdate::vslot_007, CMainProcess::FUN_00414970, CMainProcess::FUN_004187c0, CMainProcess::FUN_004188e0, CMainProcess::MsgHandler_38e9, CMainProcess::MsgHandler_3cde, CMainProcess::MsgHandler_3ce8, GObjPC::FUN_0060a7f0, GObjPC::FUN_0067c800
+0x3011	FUN_00872710	-
+0x3013	FUN_008a8c00	-
+0x3015	FUN_008a6ca0	FUN_00533f70
+0x3016	FUN_008a6cc0	FUN_00534050
+0x3017	FUN_008ac0e0	-
+0x3018	FUN_008ac3d0	-
+0x3019	FUN_008ac170	-
+0x3020	FUN_008a6dc0	-
+0x3026	FUN_00877810	CGObjCOS_Summoned::ChattingByProxy, CGObjCOS_Summoned::ChattingByProxyArg, CGObjPC::SendQuestNpcChat, CMainProcess::FUN_00414e40, CMainProcess::FUN_005bef50, CMainProcess::FUN_005c34d0, CMainProcess::FUN_005de2d0, GObjPC::FUN_00473bf0
+0x3027	FUN_008a6e80	CMainProcess::FUN_00530d60
+0x3028	NetProcessInNavAndSkill::FUN_008a50e0	GObjPC::FUN_004a8d20
+0x302d	FUN_00872010	-
+0x3036	FUN_008a78b0	GObjPC::FUN_004d4f60
+0x3038	FUN_008a9260	GObjPC::FUN_004e9c40
+0x3039	FUN_008a9560	GObjPC::FUN_004e9c40
+0x303d	FUN_00880f80	-
+0x3040	FUN_0088bf30	-
+0x3041	FUN_008822c0	FUN_00524950, FUN_00524b20, GObjPC_HandleSiegeMsg_516
+0x3042	FUN_008825d0	CGObjPC::FUN_004e0c60
+0x3047	FUN_008a74f0	-
+0x3048	FUN_008a9100	-
+0x3049	FUN_008a8c10	-
+0x304d	FUN_008a75c0	GObjPC::FUN_004901c0
+0x304e	FUN_008a70d0	-
+0x3052	FUN_008adf50	-
+0x3054	FUN_008a7020	GObjPC::FUN_004d6210, GObjPC::GObjPC_SetLevel
+0x3055	FUN_0086dab0	-
+0x3056	Client_ApplyExpAndLevelUp	-
+0x3057	Fortress_OnItemUseInterrupted	GObjPC::FUN_004a8510
+0x3058	FUN_00872740	-
+0x305c	NetProcessInInner::FUN_008735d0	GObjPC::COS__UseItem, Item_HandleUseItem
+0x3065	FUN_00883cc0	-
+0x3068	NetProcessInInner::FUN_00873990	FUN_005bdc80
+0x3076	DAT_008a6640	-
+0x3077	FUN_0088e090	-
+0x3078	FUN_00873140	-
+0x3080	NetProcessInInterface::FUN_0088aa60	-
+0x3085	FUN_008803f0	-
+0x3086	FUN_0087fcb0	-
+0x3087	FUN_0088bb50	-
+0x3088	Storage_OnItemExchangeResult	-
+0x3089	FUN_00880590	-
+0x308c	FUN_008806b0	-
+0x3091	FUN_008a7950	FUN_005596a0, GObjPC::FUN_004b1630
+0x3092	FUN_008a7550	-
+0x30a6	DAT_008a4980	-
+0x30b7	NetProcessInInner::FUN_0087a260	AQ_ItemXChanger::FUN_004735a0, AQ_ItemXChanger::FUN_00473880
+0x30b8	NetProcessInInner::FUN_00873c10	FUN_004723c0
+0x30b9	FUN_008721b0	FUN_00472cf0
+0x30bb	NetProcessInInner::FUN_00873d60	FUN_00472e20
+0x30bf	FUN_008a80a0	GObjPC::FUN_004a8340
+0x30c1	FUN_008a8fc0	-
+0x30c2	FUN_008a9000	-
+0x30c3	FUN_008a7870	-
+0x30c8	FUN_008a6650	-
+0x30c9	FUN_008aa340	GObjPC::FUN_004efd10
+0x30ca	FUN_008a7690	CGObjCOS_GoldPet::vslot_402, GObjPC::FUN_004d1ea0
+0x30cd	FUN_00881090	-
+0x30ce	FUN_00881100	-
+0x30cf	FUN_008726e0	GObjPC::FUN_004e1ef0
+0x30d0	NetProcessInNavAndSkill::FUN_008a5280	GObjPC::FUN_004aa410
+0x30d1	FUN_008a4990	FUN_00582750
+0x30d2	MsgStreamBuffer::FUN_008add60	-
+0x30d3	FUN_00881170	-
+0x30d4	FUN_00889d90	-
+0x30d5	FUN_008812b0	-
+0x30d6	FUN_008811e0	-
+0x30d7	FUN_00881280	-
+0x30da	FUN_0088d570	-
+0x30dc	FUN_008a7ee0	-
+0x30df	FUN_008a7630	GObjPC::FUN_004a9f70
+0x30e0	FUN_00881600	-
+0x30e6	NetProcessInInterface::FUN_00884dd0	-
+0x30e7	FUN_00883b10	-
+0x30e8	FUN_00880970	-
+0x30eb	FUN_00881670	-
+0x30ec	FUN_00884a30	-
+0x30ef	FUN_0088a770	CGuildManager::vslot_005, CGuildManager::vslot_006
+0x30ff	FUN_0088a420	FUN_004ea2f0
+0x3100	FUN_008819b0	CMainProcess::FUN_005c3d80, CMainProcess::FUN_005c3ea0
+0x3101	FUN_00883060	-
+0x3102	FUN_0087fd00	CMainProcess::FUN_005c4550
+0x3103	UI_FORT::FUN_00890210	CMainProcess::FUN_005c57c0, CMainProcess::FUN_005c58c0
+0x3109	FUN_0087fd90	-
+0x3120	FUN_0088f880	GObjPC::FUN_004edf80
+0x3122	UI_VIETNAM::FUN_008999b0	-
+0x3153	FUN_00882de0	-
+0x3154	FUN_00882e50	-
+0x3156	FUN_00872810	-
+0x3159	FUN_008992b0	-
+0x315a	FUN_00899350	-
+0x315b	FUN_008993b0	-
+0x315c	FUN_00899480	-
+0x315d	FUN_008994e0	-
+0x315e	FUN_00899530	-
+0x3161	FUN_00899420	-
+0x3167	-	GObjPC::FUN_006186d0
+0x3200	FUN_008a52f0	GObjPC::FUN_004aa530
+0x3201	FUN_00882280	-
+0x3204	FUN_0087fe00	-
+0x3206	NetProcessInNavAndSkill::FUN_008a5360	-
+0x3207	Char_OnSkinChangeResult	FUN_004f0040, FUN_004f00f0
+0x3208	-	FUN_004f0210
+0x3209	FUN_00898f80	-
+0x320a	FUN_00898ff0	-
+0x320b	FUN_00899060	-
+0x320c	FUN_0088dad0	-
+0x3253	FUN_0088d1d0	-
+0x3254	FUN_0088e690	-
+0x3255	FUN_0088eb10	-
+0x3256	FUN_008905d0	CMainProcess::FUN_005cc070
+0x3257	FUN_00895810	CMainProcess::FUN_005cc330, CMainProcess::FUN_005cc4b0
+0x325c	FUN_00899cf0	-
+0x325d	FUN_00899e60	-
+0x325e	FUN_0089f710	-
+0x325f	FUN_0089a0d0	-
+0x3261	FUN_0089a1a0	-
+0x3305	FUN_0087fdd0	-
+0x330f	FUN_008a4a30	CGObjMob::REH_OnTrapped
+0x3405	FUN_0086e5b0	-
+0x34a5	FUN_008a6580	-
+0x34a6	FUN_008abba0	-
+0x34aa	FUN_00899f40	-
+0x34b1	FUN_00871d50	CGameSJ_FlagWorld::FUN_00648550, CGameSJ_FlagWorld::FUN_006485a0, CMainProcess::FUN_00644fa0, CMainProcess::FUN_00645450, CMainProcess::FUN_00645ea0, CMainProcess::FUN_00645f10, CMainProcess::FUN_00646ac0, CMainProcess::FUN_00646be0, FUN_006484f0
+0x34b3	FUN_0087fcd0	-
+0x34b4	FUN_00887300	-
+0x34b5	FUN_0086e100	-
+0x34ba	UI_EVENT::FUN_008867a0	CMainProcess::FUN_00614900
+0x34bb	-	GObjPC_MsgHandler_SpecialCommand::FUN_005209e0
+0x34be	FUN_0089a250	-
+0x34d2	UI_ARENA::FUN_0089f860	CMainProcess::FUN_00668b40, CMainProcess::FUN_00668bf0, FUN_006681d0, FUN_006682a0, FUN_00668350, FUN_006683f0, FUN_00668490
+0x34d5	UI_SAFETRADE::FUN_00891080	-
+0x34e1	FUN_0089a540	-
+0x34f2	FUN_0089dbf0	CMainProcess::FUN_00670cc0
+0x350d	UI_OPEN::FUN_008a3470	-
+0x3510	-	AQ_OpenMarket::COpenMarketMgr__AsyncQuerySucceeded
+0x3514	FUN_00884ca0	-
+0x351e	FUN_0089a7b0	GObjPC::FUN_0052f120
+0x3530	FUN_0089ae80	-
+0x3531	FUN_0089afa0	-
+0x3532	FUN_0089b000	-
+0x3809	FUN_008a6f50	FUN_00538020
+0x385f	FUN_00895bb0	AQ_Siege::FUN_006232c0, AQ_Siege::FUN_00626bd0, CGObjSiegeStruct::vslot_410, CGameSJ_SiegePeriod::vslot_009, CGameWorld_Siege::vslot_057, CMainProcess::FUN_0062ee90, CMainProcess::FUN_00630e50, CWicket::FUN_00630cb0, GObjPC::CGameWorldSiege__SendMsgSiegeStructAllInfoForSiegeUser, GObjPC::FUN_0061e620, GObjPC::FUN_0061e7e0, GObjPC::FUN_0061e970, GObjPC::FUN_0061ea30, GObjPC::FUN_0061f580, GObjPC::FUN_0061fa80
+0x3864	UI_PARTY::FUN_00886b10	CMainProcess::FUN_005bb670, CMainProcess::FUN_005bc390, CMainProcess::FUN_005bdbd0, FUN_005bc210, FUN_005bdf50
+0x38f5	FUN_00887330	CGuild::vslot_009, CMainProcess::AddPoints, CMainProcess::FUN_005c3b50, CMainProcess::FUN_005c3c90, CMainProcess::FUN_005c3d80, CMainProcess::FUN_005c3ea0, CMainProcess::FUN_005c4070, CMainProcess::FUN_005c44f0, CMainProcess::FUN_005c45b0, CMainProcess::FUN_005c4650, CMainProcess::FUN_005c46e0, CMainProcess::FUN_005c4910, CMainProcess::FUN_005c54b0, CMainProcess::FUN_005c5600, CMainProcess::FUN_005c57c0, CMainProcess::FUN_005c58c0, CMainProcess::FUN_005c7d10, CMainProcess::FUN_005caa20, CMainProcess::FUN_005cac40, CMainProcess::FUN_005cade0, CMainProcess::FUN_005cb1e0, CMainProcess::FUN_005cb430
+0x3908	NetProcessInInterface::FUN_008897c0	CMainProcess::FUN_005c4fa0, CMainProcess::FUN_005e7a70
+0x3b07	NetProcessInInterface::FUN_00886310	-
+0x3c80	UI_TC::FUN_008a2110	AQ_TrainingCampQuery::FUN_005dd830, CMainProcess::CTrainingCamp__MemberDeleted, CMainProcess::CTrainingCamp__MemberGraduated, CMainProcess::FUN_005dd4f0, CMainProcess::FUN_005ddaf0, CMainProcess::FUN_005de080, CMainProcess::FUN_005de340, trs_sm_trainingcampjob::FUN_005dcbd0
+0x3c81	FUN_008986c0	-
+0x3c82	FUN_0089bcc0	-
+0x3c86	FUN_0089bf00	-
+0x3c87	FUN_0089bae0	-
+0x3ca2	FUN_008abcc0	-
+0x3cf1	-	CQEV_WINTER_EVENT_2009::FUN_0066f8c0, CQEV_WINTER_EVENT_2009::FUN_0066f940
+0x3d02	-	CMainProcess::MsgHandler_7c00

@@ -6266,6 +6266,54 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 369 (the broadcast class joined from both sides, and a 3x inflation caught
+by my own rule): ROUND 368 ENUMERATED THE 0x3NNN BROADCASTS; this joins them to
+the client handlers that receive them. message_handlers.tsv turns out to hold 151
+rows for the class with its server_senders column EMPTY on every one, so round
+368's table fills a column that had been sitting blank since 2026-09-17. Written
+to docs/protocol/broadcast_join.tsv: 157 opcodes, 50 joined on both sides.
+
+THE FIRST COUNT WAS WRONG BY 3x AND MY OWN RULE CAUGHT IT. A naive filter --
+"named if it does not start with FUN_" -- reported 28 genuinely named client
+handlers and 28 join candidates. But GObjPC::FUN_004b1630 passes that filter, and
+this project's standing rule is that a MODULE IS NOT A NAME and neither is a
+vslot_. Classifying on the LEAF after Class:: gives 6 named handlers and 9
+candidates. THIS IS EXACTLY THE ROUND-334 FAILURE (the 57-of-57 "tell", where a
+classifier scored a bare hex string as named) arriving again in a new sweep.
+
+A SECOND DISQUALIFIER WAS NEEDED AND IS NEW. Of the 9, several senders are named
+MsgHandler_38e9, GObjPC_HandleSiegeMsg_516 -- names that encode WHICH OPCODE, not
+WHAT THE MESSAGE IS. A name is not evidence of purpose just because it is a name.
+Excluding names ending in a 3-4 hex digit suffix leaves EIGHT rows whose server
+sender actually says something.
+
+THE CLIENT SIDE COULD NOT CORROBORATE ANY OF IT, and that is reported rather than
+hidden. Reading 0x3026's handler for chat markers returned NOTHING: no named
+callees, no UI strings. The client dump is ~5 % named, so the probe is blind
+here. That is a fact about the probe, not a refutation, and every purpose in the
+join is therefore ONE-SIDED, evidenced by the server sender's own name.
+
+THREE NAMES FILED AND APPLIED (applied 3, failed 0), the ones with multi-sender
+or two-sided evidence. Chat_OnChatUpdate (0x3026): three server chat functions
+compose it and the opcode is independently AGENT_CHAT_UPDATE on two agreeing
+sources. Siege_OnStructAllInfo (0x385f): the sender states the content in its own
+name. TrainingCamp_OnMemberUpdate (0x3c80): THE ONE ROW WITH GENUINE TWO-SIDED
+AGREEMENT -- the handler already sat in the client module UI_TC while round 368's
+server sweep, which never consulted that module, attributed the opcode to
+CTrainingCamp__MemberDeleted and MemberGraduated. Named OnMemberUpdate rather
+than OnMemberRemoved because the two senders are a deletion and a graduation and
+whether the message distinguishes them is unread.
+
+NOT NAMED ON PURPOSE: the other five semantic rows (0x3054 SetLevel, 0x305c item
+use, 0x330f REH_OnTrapped, 0x38f5 AddPoints, 0x3510 open market). Each has a
+single sender and no second source, and one-sided single-sender evidence is how a
+confident wrong name gets filed.
+
+**What moved:** a blank column in a table this project reasons from is filled,
+the broadcast class is joined both ways, three client names applied, and a
+classifier that would have overstated the yield threefold is corrected in the
+same round it was written. No behaviour changed, so no tag.
+
 Round 368 (the third side of the message surface, and the broadcast class nobody
 had counted): ROUNDS 363-367 FOUND 0x7021 AND 0x7005 BY HAND, one function at a
 time. Both were invisible to every table this project holds, and noticing WHY
