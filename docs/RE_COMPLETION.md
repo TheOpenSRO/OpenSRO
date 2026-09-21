@@ -33,7 +33,7 @@ which is itself a recovery — quest objectives are the model for that.
 | **Player MaxHP / MaxMP (whole formula)** | `Str×10×1.02^(lvl−1)` / `Int×10×1.02^(lvl−1)` — `GObjPC_InitStats` graph, `.rdata 0x00b462ac`=1000, `0x00b45ea0`=1.02 |
 | ParamKeeper ids 0/1/2/3/4 = Level/Str/Int/MaxHP/MaxMP | `GObjPC_InitStats` pushes `charData+0x65/+0x74/+0x76`; `GObjMob_PublishStats` pushes `refobj+0x19c`/`+0x1a0`; and `Stat_ApplyTaggedModifier` maps `'int'`→2, `'hp'`→3, `'mp'`→4 independently |
 | **Monster EXP per kill** | `leveldata` col 5 at `min(killerLvl, victimLvl)` — `Formula_MonsterExpReward` (004105d0) reads levelRecord `+0x1c`, result to `GObjPC_GiveExp` (vtable 0x694); `FUN_00631050` grants `entry[0x1c]*n` directly. Column settled by elimination; identical in the ORIGINAL client |
-| **Monster `characterdata` cols 75–78** | `'era'`→9, `'bri'`→10, `'hra'`→11, `'cri'`→12 from `Stat_ApplyTaggedModifier`; real data: col 76 = **0** for every monster, cols 75 = 77 = **2·level+25**, col 78 = **2** |
+| **Monster `characterdata` cols 75–78** | `'era'`→9, `'bri'`→10, `'hra'`→11, `'cri'`→12 from `Stat_ApplyTaggedModifier`. **CORRECTED round 380** — the earlier reading "col 76 = 0 for every monster, cols 75 = 77 = 2·level+25, col 78 = 2" is true of **srrevamp's 11-species roster** (11/11, verified) and **false of the table**: a two-selector census finds **939 of 7,495** monster rows with a non-zero `'bri'`, and cols 75/77 match 2·level+25 on only **~37 %** (MOB_EU_KERBEROS is level 110 carrying 73, not 245) |
 | Stat points per level (3) | real character window |
 | Quest identity, chain, descriptions, rewards | `questdata`, `questcontentsdata` cols 3/5-12, `refquestrewarditems` |
 | Quest objectives are NOT data | proven absent: no objective refdata class; `_CHARQUEST` is status+count |
@@ -1979,8 +1979,14 @@ columns leave them zero and behave exactly as before — pinned by its own test.
   this; see the portability assessment below.
 - Unarmed keeps the innate 30.6/34.2 in the real engine; srrevamp takes 0 there,
   since `unarmedDamage` is own design anyway.
-- Still open from before: itemdata columns 114 and 117; `pc[0x72d]`'s state enum;
-  blocking's monster side.
+- ~~blocking's monster side~~ **MEASURED (round 380), and it is a roster absence
+  rather than an engine one.** Monsters DO block: a two-selector census finds
+  **939 of 7,495** monster rows with a non-zero `'bri'` (characterdata col 76).
+  But **all 11 species srrevamp spawns carry 0**, so there is nothing to
+  implement for the current roster — a disclosed absence with a proven reason,
+  not an unrecovered mechanic. It becomes real the moment a blocking species is
+  added, and `combat.MonsterRate`'s comment says how to check one.
+- Still open from before: itemdata columns 114 and 117; `pc[0x72d]`'s state enum.
 
 ## The physical damage pipeline, register by register (2026-09-15)
 
@@ -6295,6 +6301,46 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 0x51c is 0x0d, 0x51d is 1. Resolving category -> message-name prefix would label
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
+
+Round 380 (two recorded facts about monsters were true of the roster and false
+of the table): TOOK "blocking's monster side" off the open list and found the
+claim underneath it wrong. docs/RE_COMPLETION.md line 36 recorded "col 76 = 0 for
+every monster, cols 75 = 77 = 2*level+25, col 78 = 2". A census says otherwise on
+both halves.
+
+THE FIRST PROBE WAS ONE PROBE WEARING TWO HATS. Selecting monsters by CharGender
+and by a MOB_ code-name prefix returned 2,106 and ZERO rows -- the second
+selector was reading the wrong column, so the "agreement" was a single
+classifier. Pinning the indexing first (5 of 5 known ids matching their verified
+level and max HP, and the code name found at col 2 rather than col 3) made the
+second selector real: 2,106 and 7,495 rows, agreeing on 1,864.
+
+WHAT THE CENSUS SAYS. Monsters DO block -- 939 of 7,495 rows carry a non-zero
+'bri' -- so "0 for every monster" is false. And cols 75/77 equal 2*level+25 on
+only ~37 % of monster rows, consistent across both selectors (792/2,106 and
+2,809/7,495). MOB_EU_KERBEROS is level 110 carrying 73 where the formula wants
+245.
+
+THAT SECOND ONE IS WHAT combat.MonsterRate RESTS ON, shipped in v0.1.420 and
+v0.1.421 two rounds ago. So the immediate question was whether I had shipped a
+bug. I HAD NOT: all 11 species in monsterSpecs match 2*level+25 EXACTLY, and all
+11 carry 'bri' = 0. Both recorded facts are true of the roster and false of the
+table, and the docs stated them as facts about the table.
+
+THE FIX IS THE DISTINCTION, NOT THE FORMULA. MonsterRate keeps its arithmetic and
+loses its claim: its comment now says verified on 11 of 11 roster species, ~37 %
+table-wide, and that adding a species means reading cols 75/77 for it rather than
+assuming. A test pins the eleven verified rates so the formula cannot drift
+silently -- a regression guard, explicitly not a licence to extend it.
+
+AND THE OPEN ITEM CLOSES AS AN ABSENCE WITH A REASON: monsters block in the
+engine, none of srrevamp's do, so there is nothing to implement for this roster
+and it becomes real the moment a blocking species is added.
+
+**What moved:** an open item closed by measurement, two false generalisations
+corrected at their source, the shipped code confirmed correct for a narrower
+reason than it claimed, and a guard added against the formula drifting. No
+behaviour changed, so no tag.
 
 Round 379 (the monster's half of the centre, and a consumer for round 377's
 parry pair): ROUND 378 WIRED ONLY THE PLAYER'S ATTACK. The monster's

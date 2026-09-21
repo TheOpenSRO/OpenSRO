@@ -150,3 +150,23 @@ func TestRollCentredMatchesItsClosedForm(t *testing.T) {
 		t.Errorf("middle-fifth share = %.3f, no better than uniform 0.208", frac)
 	}
 }
+
+// The roster's real rates, read from the retail characterdata on 2026-09-21
+// (round 380) and pinned here because MonsterRate's formula is verified on
+// THESE ELEVEN SPECIES and not on the table as a whole -- it holds for only
+// about 37 % of monster rows.
+//
+// This is a regression guard on the formula, not a licence to extend it: a
+// species added to monsterSpecs must have cols 75/77 read for it.
+func TestMonsterRateMatchesTheShippedRoster(t *testing.T) {
+	// level -> the species' characterdata col 75 == col 77, verified per row.
+	roster := map[int]float64{
+		1: 27, 2: 29, 3: 31, 4: 33, 5: 35, 6: 37,
+		7: 39, 8: 41, 9: 43, 10: 45, 27: 79,
+	}
+	for level, want := range roster {
+		if got := MonsterRate(level); got != want {
+			t.Errorf("MonsterRate(%d) = %v, want %v (characterdata cols 75/77)", level, got, want)
+		}
+	}
+}

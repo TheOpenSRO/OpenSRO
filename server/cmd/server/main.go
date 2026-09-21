@@ -65,6 +65,14 @@ type monsterSpec struct {
 	// without one gets the 4 every playable body row carries -- the table's
 	// most common monster value too (5,644 of the rows).
 	BCRadius int
+	// A NEW SPECIES NEEDS ITS ATTACK AND PARRY RATES CHECKED. combat.MonsterRate
+	// computes both as 2*level + 25, which every one of the eleven species below
+	// matches exactly -- but that is a regularity of the low-level China
+	// monsters here, not a law of the table: it holds for only ~37 % of the
+	// retail characterdata's monster rows (round 380). Read cols 75 and 77 for
+	// the new row. Col 76 ('bri', blocking) is 0 for all eleven and non-zero on
+	// 939 rows table-wide, so a blocking species also needs a mechanic srrevamp
+	// does not have yet.
 	// AttackReuseMs / AttackRange are the primary attack skill's ReuseDelay
 	// and Range (characterdata col 83 -> skilldata columns 14 and 21), read
 	// from the retail tables 2026-09-19 (round 254): the monster cannot strike

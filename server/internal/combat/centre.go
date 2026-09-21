@@ -48,12 +48,22 @@ const (
 	InnateRate = 10.0
 )
 
-// MonsterRate is a monster's attack rate and parry rate, which are the same
-// number: characterdata columns 77 (`'hra'`) and 75 (`'era'`) both hold
-// 2*level + 25 for every monster row in the retail table. It is computed here
-// rather than carried per species because that regularity is the data's own --
-// col 76 (`'bri'`, blocking) is 0 for every monster and col 78 (`'cri'`) is 2,
-// while 75 and 77 agree row for row.
+// MonsterRate is a monster's attack rate and parry rate, which for the species
+// srrevamp spawns are the same number: characterdata col 77 (`'hra'`) and col
+// 75 (`'era'`) both hold 2*level + 25.
+//
+// VERIFIED ON THE ROSTER, NOT ON THE TABLE, and the distinction is the point.
+// A census on 2026-09-21 (round 380) checked all 11 species in `cmd/server`'s
+// monsterSpecs against the retail characterdata: 11 of 11 match exactly, cols
+// 75 and 77 agreeing row for row. Across the whole table the rule holds for
+// only about 37 % of monster rows -- MOB_EU_KERBEROS is level 110 with 73 where
+// the formula wants 245 -- so this is a regularity of the low-level China
+// monsters srrevamp ships, NOT a law of the data. An earlier note in
+// docs/RE_COMPLETION.md stated it as the latter; that is corrected there.
+//
+// **Adding a species means checking it.** A monster outside that 37 % gets a
+// wrong attack and parry rate from this function, which moves where its blows
+// land in their range. Read cols 75/77 for the new row rather than assuming.
 func MonsterRate(level int) float64 { return float64(2*level + 25) }
 
 // CharacterRate is a character's attack or parry rate: the innate 10, plus the
