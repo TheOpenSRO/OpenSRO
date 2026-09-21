@@ -6266,6 +6266,32 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 356 (the last three party handlers read, and a 50-handler accessor
+named): TOOK ROUND 355'S OWN NEXT READ -- 0x061, 0x06e, 0x06f. 0x061 requires a
+party at [0x72e], saves the position through the already-named
+CGObjCOS_Summoned::SaveCurPosAsLastTelPosition and calls 0x005144e0(2): a
+party-side TELEPORT, not an invite. 0x06e and 0x06f BOTH branch on the character
+having NO party, which is the finding: they are the ANSWERING side, not an
+invite/expel pair. 0x06e then reads a u32 target from the wire; 0x06f clears the
+character's chardata+7 byte when it is 4, and +0x1cd0 with it -- a pending-state
+cleanup. WHICH IS ACCEPT AND WHICH IS DECLINE IS NOT CLAIMED: chardata+7 == 4 is
+an unnamed state byte and 0x005144e0's argument 2 is an unread selector, so the
+inviting side is still unlocated and party.md says so. THE NAME IS THE BETTER
+YIELD: the predicate all three branch on is 0x004ea280, fifteen bytes --
+null-guard +0x1cb8, return that object's +8 -- and **0x72e * 4 is exactly
+0x1cb8**, the int-indexed PARTY field this project already established. Named
+GObjPC::PartyID on FOUR consistent use-sites rather than the offset alone:
+Party_PostRequest stores its result in the request's party-id slot [0x16], 0x06e
+and 0x06f both gate their no-party paths on it being zero, and it is reached
+from 50 of the 163 message handlers -- the traffic a party-id accessor would
+have. It was the fourth-ranked entry in round 338's core worklist and had sat
+unnamed since. What +8 is CALLED inside the party object is not claimed.
+
+**What moved:** no shipped value. Three handlers read, one 50-handler accessor
+named from a proven offset plus four use-sites, and an open bullet narrowed from
+"the flows are only enumerated" to "the answering side is read, the inviting
+side is not".
+
 Round 355 (the party kinds read, and the search redirected): FOLLOWED ROUND
 354'S OWN NEXT STEP -- the party request object's consumer -- AND THE POSTER
 TURNS OUT TO SWITCH ON THE KIND ITSELF rather than merely carry it. Every

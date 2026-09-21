@@ -151,9 +151,20 @@ nothing shipped depends on it.
   the class's only one) makes `0x06b` a party-**matching** operation, not an
   invite. It sits with `0x069 OnRegisterPartyReq` and `0x06a
   PartyMatch_HandleModify`, which are already named for matching. So the invite
-  and expulsion flow is NOT in `0x06b`/`0x06c`, and the places still unmapped are
-  `0x061` (`0x00514530`), `0x06e` (`0x00514900`, payload `u32,u32,u8` with no
-  client sender found) and `0x06f` (`0x00514af0`). `0x06d` remains the odd one:
+  and expulsion flow is NOT in `0x06b`/`0x06c`. **Round 356 read the three that
+  were left:**
+
+  | opcode | reads as |
+  |---|---|
+  | `0x061` (`0x00514530`) | requires `[0x72e]` (a party), saves the position through the already-named `CGObjCOS_Summoned::SaveCurPosAsLastTelPosition`, then calls `0x005144e0(2)`. A party-side *teleport* action, not an invite. |
+  | `0x06e` (`0x00514900`) | branches on `GObjPC::PartyID` being **zero** -- the "I am in no party" path -- and only then reads a u32 target from the wire. The shape of answering an invitation. |
+  | `0x06f` (`0x00514af0`) | also gated on `PartyID` being zero: when the character's `chardata+7` byte is **4** it clears that byte and `+0x1cd0`. A pending-state cleanup -- a decline or a cancel. |
+
+  So this is not invite-and-expel as two symmetric opcodes: `0x06e` and `0x06f`
+  are both things a character with **no party** does, which is the *answering*
+  side. **Which is accept and which is decline is not claimed** -- `chardata+7
+  == 4` is an unnamed state byte and `0x005144e0`'s argument `2` is an unread
+  selector. The inviting side is still unlocated. `0x06d` remains the odd one:
   `0x005bf570`, 382 bytes, posts no kind and does its own work.
 - **Whether the exp-sharing flag can change after creation.** Nothing read so
   far writes it.
