@@ -6405,6 +6405,72 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 418 (the control round 417 could not build, built — and 123 wrong class
+prefixes corrected): ROUND 417 REFUSED TO SPEND AN UNVALIDATED RULE AND WROTE
+DOWN EXACTLY WHAT WOULD VALIDATE IT: "the full hierarchy read out of the COL's
+ClassHierarchyDescriptor". `tools/rtti_chains.py` does that — vtable[-1] → COL,
+COL+16 → CHD, CHD+8/+12 → the base-class array, each BCD+0 → TypeDescriptor,
++8 → the mangled name. **1189 of 1189 classes resolve.**
+
+AND IT CONFIRMS ROUND 417'S DIAGNOSIS EXACTLY. The plate for
+`CGObjCOS_Mercenary` stops four deep at `CGObjNPC`; the real chain is **nine**
+deep and ends `… : CGObjChar : CGObjMobile : CGObj : IGObj : CBase`. So the
+23.8 % "disagreement" that round refused to act on was the plates being
+truncated, not the rule being wrong — and refusing to rename 291 functions off
+that number was the right call.
+
+THE HEURISTIC WAS STILL WRONG, JUST NOT FOR THAT REASON. With full chains the
+real test is whether the declaring class is an ancestor of **every** sharer.
+The shortest-vtable heuristic passes 437 of 525 and **fails 88** — it answers
+`CGObjMob` for functions shared with `CGObjCOS_Mercenary` and `CGObjNPC`, which
+is a SIBLING, not an ancestor. So it is replaced rather than validated: the
+declaring class is the **most-derived class present in every sharer's chain**,
+which is a definition rather than a heuristic, and it fixes all 88
+(`CGObjCOS_Summoned::SetCharName` → `CGObjNPC`, not `CGObjMob`).
+
+A SECOND CONTROL, FROM A COMPLETELY DIFFERENT SOURCE, PASSES 8 TO 1. Some
+method names carry their own class, recovered from log strings in earlier
+rounds. Of the 123 corrections, **8 have a method name containing the class the
+rule computed** — `CBasicQuest__PayQuest` → `CBasicQuest`,
+`IGOBJ__PostTempleReputationCheckReq` → `IGObj`,
+`CGameWorld__SendMsgToGameWorldUser` → `CGameWorld` — against **1** whose method
+name contains the currently-claimed prefix.
+
+WHAT MOVED: of 444 class-qualified names on functions shared by ten or more
+vtables, the rule decides 422 and **291 prefixes are wrong**. 123 of those carry
+a REAL method name and are the actively misleading ones — a reader who trusts
+`CGObjCOS_Summoned::CountEmptyInventory` looks in the wrong class — and all 123
+are filed and applied. The other 168 are `FUN_` with a prefix and were left
+alone: correcting where an unnamed function lives buys nothing yet.
+**applied 3, reowned 124, failed 0**, which also carries round 413's
+`CParty::CheckTargetAvailable` and round 417's `CGObj::SetLifeState` off the
+batch queue. The worst single case was seven `CBasicQuest` methods, each in
+160–186 vtables, all named after the arbitrary quest class
+`CQNO_RM_MEETROC_6`.
+
+**AND THE REPO'S OWN GUARDS CAUGHT THREE DEFECTS IN MY BULK APPEND, AFTER I HAD
+ALREADY APPLIED IT.** `TestRecoveredNamesFileIsWellFormed` and
+`TestTheTwoNameSourcesDoNotContradict` failed on:
+
+- **Two rows filed a `vslot_` as a name** (`CGObjChar::vslot_291`, `vslot_292`).
+  My emit filter excluded `FUN_` and forgot `vslot_` — the one rule this project
+  states most often, broken by the round that was correcting names. Dropped.
+- **Five addresses were already in the file**, so I appended a second, conflicting
+  row (`PayQuestReward` beside `CBasicQuest::PayQuestReward`). A bulk append is
+  not an upsert. The five existing rows are now *edited* in place and the
+  duplicates removed.
+- **One row contradicted the second name source**: `0x4aa5b0` is
+  `IGObj_GetBodyMode` in `ApplyKnownNames.java` and my rule said
+  `CGObjChar::GetBodyMode`. Dropped rather than adjudicated — the method name
+  agrees and only the class differs, and a file ordering should not decide that.
+
+112 rows survive as new, 5 as edits. The guards are the reason this is a
+footnote rather than a corruption: **the census, both controls and the applier
+all passed while the file itself was malformed**, and only a test that reads the
+file as a file noticed. `PROJSTAMP` cleared after a re-apply that came back
+`applied 0, reowned 0` — idempotent, so the project matches the corrected file.
+No behaviour changed, so no tag.
+
 Round 417 (the doc told me to run a tool that does not exist; 291 wrong class
 prefixes found and none acted on): THE MOTION-STATE LEAD CLOSED AS A REFUTED
 HYPOTHESIS, AND THE DETOUR WAS WORTH MORE THAN THE LEAD. Round 415 suggested

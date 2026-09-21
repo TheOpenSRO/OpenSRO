@@ -152,7 +152,7 @@ Two different things are mixed in that 240, and they need different treatment:
   string) and only the *class prefix* is wrong, naming an arbitrary derived
   class instead of the base that declares it.
 
-`vtq.py owner <addr>` **does not exist** — vtq.py has `vt`, `diff`, `who`, `family` and `bases`, and never had `owner` (found in round 417). `tools/vt_owner.py` implements it, but **its rule is unvalidated and must not be used to rename in bulk**: the attempt to control it against the dump's own RTTI plates was inconclusive, because those chains are truncated before the root. The rule it applies: among the
+`vtq.py owner <addr>` **does not exist** — vtq.py has `vt`, `diff`, `who`, `family` and `bases`, and never had `owner` (round 417). **Use `tools/rtti_chains.py` + the LCA rule instead** (round 418): the declaring class is the MOST-DERIVED class present in the base chain of EVERY class whose vtable holds the address, with chains read from the COL's ClassHierarchyDescriptor. `tools/vt_owner.py` implements the older shortest-vtable heuristic and is **superseded** — it answers a SIBLING rather than an ancestor in 88 of 525 cases. The heuristic it applies: among the
 classes whose vtable holds the address, the declaring class is the most
 base-like — the shortest vtable — **provided the function sits at the same slot
 index in all of them and is at least ten bytes**.
