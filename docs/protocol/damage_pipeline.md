@@ -72,7 +72,7 @@ a divergence later.
 The row above used to read `FUN_0040dce0(ctx, defender, damage)`. That function
 takes **no damage argument**. Its shape is:
 
-	fVar9 = FUN_0040db50(ctx)              ; the weapon/skill damage roll
+	fVar9 = Combat_ComputeWeaponDamage(ctx)              ; the weapon/skill damage term (NOT a roll -- see below)
 	fVar1 = (float)param_2 / 100.0 + 1.0   ; param_2 is a PERCENTAGE BYTE
 	fVar3 = fVar1 * (float)fVar9
 
@@ -601,3 +601,17 @@ Two formula checks worth recording:
   high-defence target, and both paths end at a small value; recorded as a known low-impact
   divergence rather than a silent one, because fixing it means threading the berserk tracker into
   `ResolveBlow`, a refactor out of proportion to the effect.
+
+
+## `Combat_ComputeWeaponDamage` does not roll (round 349)
+
+This page called `0x0040db50` "the weapon/skill damage roll". Reading it to name
+it shows the word is wrong: **the function contains no random draw at all** --
+zero `rand` or `Roll` calls. It fetches a value through vtable slot `0x104` with
+id 13 or 14 (selected by a flag), scales it by `0x0040da20`'s float, and clamps
+the result to zero below and to `.rdata 0x00b45f1c` once it reaches
+`0x00b45f20`.
+
+**Whether randomness enters upstream, inside vtable `0x104`, is not claimed
+here** -- only that this function is deterministic given its inputs. The name is
+`Combat_ComputeWeaponDamage` rather than `...Roll` for that reason.

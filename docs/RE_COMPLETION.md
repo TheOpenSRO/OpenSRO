@@ -6266,6 +6266,37 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 349 (the backlog ranked properly, and a doc word corrected): ROUND 348
+SHOWED CITATION COUNT IS A WEAK PREDICTOR -- two of its top four were ready --
+so the 694-row backlog is now RANKED BY HOW DESCRIPTIVE ITS BEST SINGLE MENTION
+IS: a transcribed signature, a nearby code block, descriptive verbs. TWO WRONG
+VERSIONS WERE BUILT FIRST AND THE CONTROL CAUGHT BOTH. Summing the score across
+all mentions just ranks whatever is mentioned most, and put std::string at the
+top with 932. Taking the best single mention instead pulled siege.md's "big one"
+up to RANK 10 -- because one descriptive-looking mention outweighed another
+mention saying it had never been read. THE FIX IS A GLOBAL DISQUALIFIER: if ANY
+document says a function has not been read, it is not ready whatever else says,
+because a page saying so is authoritative. 62 rows disqualify that way, and the
+two known negatives then land at 642/694 and 682/694. ALSO FIXED A STALENESS BUG
+OF MY OWN: the round-347 file listed four functions that had just been named,
+because it was generated from the dump BEFORE the names were applied.
+Regenerated against the current dump. TWO NAMED FROM THE TOP OF THE QUEUE:
+0x0059f7b0 is SkillWithdraw_CheckPotions -- skill_withdraw.md already said "which
+raises 0x7805 NOT_ENOUGH_POTION and 0x7806" and transcribed its call site, and
+the body agrees, comparing a vtable-0x224 result against the requested count.
+And 0x0040db50, which damage_pipeline.md calls "the weapon/skill damage roll".
+READING IT TO NAME IT CORRECTED THE PAGE: **the function contains no random draw
+at all**, zero rand or Roll calls -- it fetches a value through vtable 0x104 with
+id 13 or 14, scales it, and clamps to zero below and .rdata 0x00b45f1c above.
+Named Combat_ComputeWeaponDamage rather than ...Roll for that reason, and the
+page now says so; whether randomness enters upstream inside vtable 0x104 is NOT
+claimed.
+
+**What moved:** no shipped value. Two more functions named from descriptions
+this project had already written, a backlog that now ranks by readiness with a
+control proving the disqualifier has to be global, and one doc word corrected by
+the act of naming what it described.
+
 Round 348 (working the backlog, and its caveat holding up): ROUND 347 BUILT
 described_but_unnamed.tsv AND WARNED THAT "MENTIONED IS NOT CHARACTERISED". Its
 first working session tested that on the four best-cited rows, and the warning
