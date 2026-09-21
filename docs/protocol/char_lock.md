@@ -11,9 +11,10 @@ Recovered 2026-09-21 (round 360). Every claim below is from the server dump.
 
 `GObjPC + 0x30` is the character record (`chardata`); the dump writes it as
 `pc[0xc]` when the object is typed `int *`. Byte `+4` of that record is the lock.
-Byte `+6` sits beside it and is tested in the same breath by several gates; `+7`
-is the pending-invitation state byte recovered in rounds 356–359
-(`docs/protocol/party.md`).
+Byte `+6` sits beside it and is tested in the same breath by several gates — it
+is the **exclusive-interaction state**, read in round 361
+(`docs/protocol/character_state.md`); `+7` is the pending-invitation state byte
+recovered in rounds 356–359 (`docs/protocol/party.md`).
 
 ## It has exactly one writer
 

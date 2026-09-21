@@ -450,8 +450,11 @@ That last pair is one expression: `sbb eax,eax ; and eax,3 ; add eax,0x680f`.
 transaction is in flight, written only by `GObjPC::SetLocked` — see
 `docs/protocol/char_lock.md`. So `0x6806` is not an academy rule; it is the
 academy declining to act on a character that is mid-transaction, which is why it
-has no client message while its neighbours `0x680f`/`0x6812` do. `+6` is still
-unread.
+has no client message while its neighbours `0x680f`/`0x6812` do. **`+6` is now
+read too** (round 361): it is the exclusive-interaction state, and
+`TrainingCamp_CheckCanEnter` requires it to be 0 — you cannot enter an academy
+while a trade, stall or open market owns the character. See
+`docs/protocol/character_state.md`.
 
 ## Ban and leave, read in full (2026-09-17)
 

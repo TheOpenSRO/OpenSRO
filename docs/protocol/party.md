@@ -241,6 +241,13 @@ the target is party-less and passes the inviter's real one. One forms, one joins
 **What 3 and 4 MEAN is not claimed** — only that they are a pair the repeat path
 moves through, and that `0x06f` is the exit from 4.
 
+**Corroborated from outside the party code (round 361).** `chardata + 7` is
+not a party-private byte: it is field **kind 3** of the character-state
+dispatcher `CGObjPC::SetCharacterState` (vtable slot 171), which was read
+without reference to any of this and writes the same offset. Kind 2 of that same
+dispatcher is `chardata + 6`, the exclusive-interaction state — see
+`docs/protocol/character_state.md`.
+
 ### `0x2c06` is the character lock — CLOSED, round 360
 
 `0x00514010`, step 7 of the ladder, refuses with **`0x2c06`** when `[0xc] + 4` is

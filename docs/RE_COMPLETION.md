@@ -6266,6 +6266,56 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 361 (the byte beside the lock is an INTERACTION STATE, and its setter is a
+FIELD DISPATCHER): ROUND 360 LEFT chardata+6 EXPLICITLY UNREAD, so this took it.
+It is not a flag but an ENUM -- values 0,1,2,4,5,6,7,9 across ~40 readers, gating
+trade, stall, open market, storage, shop, siege, guild summon, party, academy and
+item use. It says which mutually-exclusive activity currently owns the character.
+
+THE SETTER WAS ALREADY NAMED AND NOBODY HAD READ IT. CGObjPC::SetCharacterState
+(0x004f0ad0), vtable slot 171, named in an earlier pass from the base class's own
+assert, is NOT a setter for one field: it switches on a STATE-KIND CODE and the
+kind picks the field. kind 2 -> chardata+6; kind 3 -> chardata+7; kind 6 ->
+chardata+8 as an int; kind 8 -> GObjPC::SetBattleState; kind 9 -> chardata+0xe;
+kind 0xc -> chardata+0x11; kinds 7/10/0xb/0xd -> helpers; kind 0xf falls to a tail
+that refreshes a float through vtable 0x4b0 when the value is 1 or 2; anything
+else asserts. KIND 3 IS INDEPENDENT CORROBORATION OF ROUNDS 356-359 -- this
+dispatcher, read without reference to the party work, writes the same chardata+7
+the invitation state machine turned on.
+
+FOUR VALUES GROUNDED FROM NAMED WRITERS, FOUR LEFT UNNAMED ON PURPOSE. 0 = idle
+(HandleShopMsg refuses to open a shop unless it is 0; TrainingCamp_CheckCanEnter
+likewise); 1 = trade session opened (CTradeMgr::OpenTradeSession writes 1 to BOTH
+parties); 2 = trade established (EstablishTradeSession writes it, CTradeMgr::
+Exchange requires BOTH parties at 2, equip attach/detach refuse); 9 = open market
+(all six COpenMarketMgr::On*Req handlers require it). NOT NAMED: 7 (refused
+alongside 2 by Attach/DetachEquipItem, so a second items-committed state), 5 and
+6 (written by HandleShopMsg from a switch on an NPC TYPE BYTE whose vocabulary is
+NOT grounded in this repo -- the TypeID4 tables in ITEM_FORMAT.md are for items,
+not NPCs, and naming 5/6 off them would be a guess), and 4.
+
+A GAP STATED RATHER THAN PAPERED OVER: every direct assignment in the dump writes
+0,1,2,4,5 or 6 -- NOTHING WRITES 7 OR 9, yet six handlers require 9 and four
+gates test 7. The candidate path is AJStateChanger::vslot_002 (0x00405f70), which
+writes the byte from a JOB FIELD (+0xd) rather than a literal, so those two
+values most likely arrive through that async state-change job. That is a lead,
+not a finding; the queuing sites were not traced.
+
+ALSO SEEN, RECORDED SO THE NEXT ROUND DOES NOT REDISCOVER IT: the slot-171 call
+sites are dominated by a large QNO_* family -- scripted quest objects with
+OnEnterWorld/OnLeaveWorld/OnDead/OnUpdate handlers already carrying the binary's
+own names (QNO_CA_GORIA_7, QNO_EU_IVY_3, QNO_TQ_BAEKRYOUNG_17 and many more).
+They call kinds 0xd and 0xf, not kind 2. That belongs to the quest epic.
+
+**What moved:** no shipped value and no new applied name -- the setter was
+already named, and this round read it. ~40 gates that tested an unexplained byte
+now test a named state; four of its eight values are grounded from named writers
+and the other four are marked read-but-unnamed with what blocks each. Written up
+in docs/protocol/character_state.md, with char_lock.md, academy.md and party.md
+pointed at it. When srrevamp builds trade, this is the state machine to match:
+OpenTradeSession writes 1 to both sides, EstablishTradeSession moves both to 2,
+and equipment changes are refused from 2 onward.
+
 Round 360 (the byte that blocks eleven gates is a LOCK, and the engine names it
 itself): ROUND 359 LEFT ONE ITEM OPEN BY NAME -- party invite step 7 refuses with
 0x2c06 when chardata+4 is 1, and 0x2c06 has no client message, so what it forbids
