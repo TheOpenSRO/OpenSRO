@@ -567,3 +567,42 @@ through a vtable are missing from it entirely" — and each is now countable:
 still calls PARTIAL, and all four are reached **only** through a vtable — which
 is why reading them one function at a time from a name-based call graph never
 found them.
+
+### The size-ranked worklist, recomputed over the virtual-aware core (round 409)
+
+The section above ends with round 338's headline: *"2,522 unnamed non-STL
+game-logic functions remain, 411,570 bytes. That total is the honest size of
+what is left to read."* **That was measured on the pre-virtual core**, so it
+understates the work by more than half.
+
+| | core | unnamed non-STL | bytes |
+|---|---:|---:|---:|
+| round 338 recorded | 2,913 | 2,522 | 411,570 |
+| same method, today | 2,983 | 2,482 | 390,531 |
+| **virtual-aware** | **5,513** | **4,970** | **878,748** |
+
+The middle row is the control and it reproduces round 338 (the small drift is
+names applied since, the same effect round 408 recorded). **The honest size of
+what is left to read is 878,748 bytes, 2.25x the figure on record.**
+
+Sorting that core by size behaves as round 338 said it would — the top is real
+logic, not utilities:
+
+| addr | bytes | symbol |
+|---|---:|---|
+| `0x00872e20` | 10,957 | `CQEV_PANDORA_BOX_100LV::vslot_022` |
+| `0x00608630` | 4,397 | `CDataDrivenGameWorld::vslot_055` |
+| `0x005ef9b0` | 4,193 | `CGameWorld_Chins_Floor6::vslot_047` |
+| `0x006529d0` | 2,874 | `CTJ_PremiumKeeper::vslot_008` → **named `::Tick`, read in round 409** |
+| `0x005a0b80` | 2,871 | `FUN_005a0b80` |
+| `0x00876df0` | 2,679 | `CQEV_WINTER_EVENT_2009::vslot_021` |
+
+**The ranking is dominated by `vslot_` entries**, which is the point: these are
+the functions the pre-virtual core could not see at all, and they are the large
+ones. The fourth entry was independently listed as an open item in
+`timed_jobs.md` ("`CTJ_PremiumKeeper::vslot_008` is 2,874 bytes and unread"),
+which is a cross-check that the ranking surfaces real work rather than noise.
+
+`0x0052aa90` (`CGObjPC::vslot_415`, 1,373 bytes) is also in the top 22 and is
+already documented as the one-second PC tick — another filing gap of the kind
+round 407 found, left for a round that can read it rather than just rename it.

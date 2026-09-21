@@ -167,10 +167,36 @@ That is a design fact worth having before building a third ad-hoc timer.
   `_TIMEDJOBFORPET` introduces **no** names of its own, reusing `_TIMEDJOB`'s
   entirely — which is consistent with the pet record being the character record
   minus one field rather than a different shape.
-- **The other eleven kinds' `Tick` bodies.** Slot 8 is read for
-  `CTJ_PenaltyKeeper` (both styles) and `CTJ_CoolTimeKeeper` (which delegates to
-  its target's slot 28); `CTJ_PremiumKeeper::vslot_008` is 2,874 bytes and
-  unread.
+- **The other kinds' `Tick` bodies.** Slot 8 is read for `CTJ_PenaltyKeeper`
+  (both styles) and `CTJ_CoolTimeKeeper` (which delegates to its target's slot
+  28). **All eight slot-8 overrides are now NAMED `<Class>::Tick`** (round 409,
+  a slot propagation with three controls: the carrier hierarchy
+  `CInstanceTimedJob` has no slot 8 at all, its slots starting at 9, so nothing
+  cross-contaminates; six of seven decompile as `(this, float) -> undefined4`;
+  and `CTJ_CoolTimeKeeper` returns `carrier->slot28() != 0`, the keep contract).
+  Naming them is not reading them — six bodies are still unread.
+
+  **`CTJ_PremiumKeeper::Tick` (`0x6529d0`, 2,874 bytes) IS now read in outline**
+  (round 409). It looks the carrier's **id** up (slot 27, `+0x6c`) through
+  `FUN_004260b0` and writes **two ParamKeeper params from that row**:
+
+  | param | id | value read from |
+  |---|---|---|
+  | `0x102` | 258 | row `+0x320` |
+  | `0x100` | 256 | row `+0x300` |
+
+  Both writes happen twice — once on a branch guarded by carrier slot 32
+  (`+0x80`) being zero, and once on the expiry path that also clears `param_1[8]`
+  and calls slot `0x14` with `0x67`. **This is the WRITER, not the meaning.**
+  `param_registry.md` records 257 as the death-penalty reduction and leaves 256
+  and 258 as bare "premium"; a writer does not settle what a param *does*, and
+  256/258 are reachable only through the computed `EvaluateParam` path that a
+  literal grep cannot see, so their readers need the same hand disassembly that
+  recovered 257. Recorded here so the next pass starts from the writer.
+
+  The tick also leans on carrier slots **30 (`+0x78`, 12 reads)** and **32
+  (`+0x80`, 7 reads)**, two of the fourteen getters at slots 25..38 whose mapping
+  this file calls unread. They are used, not yet named.
 - **What slot 17 counts** at the end of the penalty-points countdown. It gates
   the 48-hour re-arm, so it is "points still owed", but it is not read.
 - **The `_TIMEDJOB` and `_TIMEDJOBFORPET` column layouts**, beyond their arity.

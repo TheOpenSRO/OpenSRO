@@ -6405,6 +6405,55 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 409 (the worklist recomputed on round 408's core, and a slot propagation
+worth eight names): THE HONEST SIZE OF WHAT IS LEFT TO READ IS 878,748 BYTES,
+NOT 411,570. Round 338 ranked the unnamed game-logic core by SIZE — its own
+finding that handler-dependence is the wrong sort order, because a utility is
+what many handlers share — and published "2,522 unnamed non-STL functions,
+411,570 bytes, the honest size of what is left". That was measured before round
+408 admitted virtual dispatch. Recomputed: **4,970 functions, 878,748 bytes,
+2.25x the figure on record**. Round 338's own method reproduces at 2,482 /
+390,531 as the control.
+
+The ranking is now dominated by `vslot_` entries, which is exactly the point —
+those are the large functions the pre-virtual core could not see. And the fourth
+entry cross-checks the method: `CTJ_PremiumKeeper::vslot_008`, 2,874 bytes, was
+independently listed as an open item in `timed_jobs.md` ("2,874 bytes and
+unread"). A size ranking that independently rediscovers a spec's own open item
+is surfacing work rather than noise.
+
+A SLOT PROPAGATION, WITH THE TRAP MEASURED RATHER THAN ASSUMED. Round 274
+grounded vtable slot 8 of the timed-job keepers as `Tick(elapsedSeconds) ->
+keep?`, from `CTimedJobManagerForPC::UpdateAndReapJobs` calling
+`job->slot8(1.0f)` on every job and releasing any that answers 0 — and only
+`CTJ_PenaltyKeeper::Tick` was ever named from it. Seven siblings still read
+`vslot_008`. The obvious danger is that the KEEPERS and the CARRIERS are
+different hierarchies and slot 8 would mean something else in the second; the
+census settles it — `CInstanceTimedJob`'s slots **start at 9**, so it has no
+slot 8 to confuse. Two more controls: six of the seven decompile as
+`__thiscall (this, float) -> undefined4`, and the seventh
+(`CTJ_CoolTimeKeeper`, 19 bytes) returns `carrier->slot28() != 0`, the keep
+contract, matching the doc's note that it delegates to slot 28. The dump's own
+RTTI comment confirms the slot from a third direction: `table 0x00b04fbc slot 8
+(offset 0x20)`, and 0x20 = 8*4, the same slot*4 relation round 408 relied on.
+**applied 7, forced 0, failed 0**; `PROJSTAMP` cleared.
+
+AND THE BIG ONE IS READ IN OUTLINE, WITHOUT OVERCLAIMING.
+`CTJ_PremiumKeeper::Tick` looks the carrier's id up (slot 27, `+0x6c`) through
+`FUN_004260b0` and writes **two ParamKeeper params out of that row** — `0x102`
+(258) from row `+0x320` and `0x100` (256) from row `+0x300` — on two paths, one
+guarded by carrier slot 32 being zero and one the expiry path that clears
+`param_1[8]`. **THIS IS THE WRITER, NOT THE MEANING.** `param_registry.md` names
+257 the death-penalty reduction and leaves 256 and 258 as bare "premium"; a
+writer does not settle what a param does, and this project's own rule is that
+the use-site settles it. Worse, 256/258 are in the 29-id set reachable ONLY
+through the computed `EvaluateParam` path, which no literal grep sees — so their
+readers need the same hand disassembly that recovered 257. Filed as the starting
+point rather than promoted. The tick also reads carrier slots 30 (`+0x78`, 12x)
+and 32 (`+0x80`, 7x), two of the fourteen getters at slots 25..38 the spec calls
+unread: used, not named. Naming eight overrides `Tick` is not reading them —
+six bodies remain unread and the doc says so. No behaviour changed, so no tag.
+
 Round 408 (the vtable blind spot closed: the game-logic core is 85 % larger than
 recorded and 9.8 % named, not 16.8 %): ROUND 336b MEASURED THE CORE AND WROTE
 DOWN THE REASON ITS OWN NUMBER WAS WRONG, AND NOBODY ACTED ON IT. That section
