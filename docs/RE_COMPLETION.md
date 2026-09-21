@@ -6405,6 +6405,58 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 413 (the receiver typed, and life-state 2 closed — it is DEAD): ROUND 412
+NAMED THE WORK THAT WOULD CLOSE THIS AND THIS ROUND DID IT INSTEAD OF PICKING
+SOMETHING EASIER. The blocker was that a virtual call decompiles to
+`(**(code **)(*X + 0xf8))()`, giving the receiver expression and not its type,
+so every census of "which classes test 3" was measuring callers. The tractable
+subset is the one where the receiver IS typed: **a class-qualified method
+calling `GetLifeState` on its own `param_1`**. Of 162 comparisons in the dump,
+**28 are typed**, and three of those are `CGObjPC` on its own `this`:
+
+	CGObjPC::PeriodicUpdateInSiege   == 2   the countdown ending in GObjPC::Revive
+	CGObjPC::PeriodicUpdate          != 2   the PKPenaltyPoint work at charData+0xb4
+	CGObjPC::PeriodicUpdate          != 2   a SetCharacterState(0xf) branch, state-2 only
+
+With `GObjPC::Revive` setting **1** and clearing the death **cause** at `+0x72d`,
+no inference about the receiver is left: a PC in state 2 is revived into 1, has
+its PK-penalty processing suspended, and takes a state-2-only branch of the
+one-second tick. **For a character, 2 is DEAD.**
+
+THE ENUM IS SHARED, SO THE HONEST READING IS "NOT ALIVE BUT PRESENT".
+`CGItem::Update`, `CGObjSiegeStruct::vslot_306/307` and
+`CGObjSiegeObject::vslot_306` all test their own `this` against 2, and an item
+or a fortress building is not "dead" in the character sense. For a character the
+two readings coincide; stated this way so nobody later reads "2 = dead" as a
+fact about items.
+
+AND THE WEAKER CLAIM IS LABELLED AS WEAKER. Of the 162 comparisons, 37 test
+against **3** and **none of them has a typed receiver**, while the writers of 3
+set it on *other* objects — `CGObjPC::DeleteMobForCatchQuest` on the mob it
+deletes, ~30 `QNO_*::OnDead::Handle` on the quest mob. That is consistent with
+removal-from-the-world, and it is explicitly not the same grade of evidence as
+the typed argument above. **Values 4 and 6 also exist** (7 and 2 comparisons,
+two of the 4s typed) and were not read, so the enum is wider than 0..3.
+
+WHAT IT CLOSES. `SYSTEMS.md`'s Party row and `party.md` both carried the open
+question *why the invite path accepts two states where the academy accepts one*.
+The answer is that **the party path accepts a dead character and the academy
+does not**: `CParty::CheckTargetAvailable` (`0x514010`) accepts life state 1 or
+2 and refuses with a bare 3 otherwise, while
+`GObjPC::TrainingCamp_CheckCanEnter` refuses whenever the state is not 1. Both
+docs updated and the SYSTEMS row's clause struck.
+
+ONE NAME FILED, DELIBERATELY NOT APPLIED. `0x514010` was `FUN_` and is now
+`CParty::CheckTargetAvailable`, named from its **callers** per round 410's rule —
+a caller census found exactly two, `CParty::CheckCanJoin` and
+`GObjPC_HandlePartyMsg_060`, both party paths. That census also corrected a
+reading of `party.md`: its neighbouring sentence about the guild's `0x2c09` and
+the academy's `0x6806` refers to analogous codes elsewhere, **not** to shared
+callers of this function, which is how I first read it. Per round 411's batching
+rule the row is filed and the apply is held — one name does not justify a
+9-minute rebuild and the next round that files names will carry it. No behaviour
+changed, so no tag.
+
 Round 412 (two probes in a row measured the caller where the receiver was the
 question, and the open item stays open): I SET OUT TO CLOSE "what is life-state
 2", BUILT A HYPOTHESIS, BUILT A CONTROL THAT REFUTED IT, AND THEN FOUND THE

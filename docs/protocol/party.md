@@ -263,11 +263,19 @@ the character is mid-transaction.
 
 ### Still open here
 
-`0x00514010` also returns **3** when the vtable-`0xf8` state getter returns
-neither 1 nor 2. `0xf8` is a life-state getter — `TrainingCamp_CheckCanEnter`
-returns the same bare `3` when it is not 1 — but **what the value 2 means is
-unread**, and it is the reason the invite path accepts two states where the
-academy accepts one.
+~~`0x00514010` also returns **3** when the vtable-`0xf8` state getter returns
+neither 1 nor 2 … **what the value 2 means is unread**.~~ **CLOSED, round 413.**
+`0x00514010` is now `CParty::CheckTargetAvailable`, and **life state 2 is the
+character's DEAD state** — settled from typed receivers, i.e. class-qualified
+methods calling `GetLifeState` on their own `this`. `CGObjPC::PeriodicUpdate`
+suspends the `PKPenaltyPoint` work while its own state is 2 and takes a
+state-2-only branch; `CGObjPC::PeriodicUpdateInSiege` runs the countdown that
+ends in `GObjPC::Revive`, which sets 1 and clears the death cause at `+0x72d`.
+
+So **the invite path accepts two states because it accepts a DEAD character**,
+and the academy accepts one because it does not. The full argument, including
+why 3 is *not* shown to be a character state and that values 4 and 6 remain
+unread, is in `docs/protocol/character_state.md`.
 
 The party id the invitation carries is `inviterParty + 8`, a fifth independent
 use-site for `GObjPC::PartyID`.

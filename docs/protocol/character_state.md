@@ -189,3 +189,53 @@ So during a fortress war a fallen player is put back on their feet on a timer,
 rather than having to walk back. The countdown's **unit and starting value are
 not read** — `pc[0x735]` is decremented once per one-second tick, so the unit is
 seconds, but nothing here says what it is initialised to.
+
+
+## Life-state 2 is the character's DEAD state, closed with a typed receiver (round 413)
+
+Rounds 411 and 412 could not close this because every census grouped by the
+*calling* function's class, and a virtual call gives the receiver expression,
+not its type. The subset where the receiver IS typed is the one that settles it:
+**a class-qualified method calling `GetLifeState` on its own `param_1`.** There
+are **28** such comparisons in the server dump.
+
+Three of them are `CGObjPC` on its own `this`:
+
+| method | test | what it gates |
+|---|---|---|
+| `CGObjPC::PeriodicUpdateInSiege` | `== 2` | the countdown that ends in `GObjPC::Revive` |
+| `CGObjPC::PeriodicUpdate` | `!= 2` | the PK-penalty work reading `charData+0xb4` (`PKPenaltyPoint`) |
+| `CGObjPC::PeriodicUpdate` | `!= 2` (skip) | a `SetCharacterState(0xf)` branch that runs **only** in state 2 |
+
+Put together with `GObjPC::Revive` — which sets **1** and clears the death
+**cause** byte at `+0x72d` — the argument no longer needs an inference about who
+the receiver is: **a PC in state 2 is one the engine revives into state 1, whose
+PK-penalty processing is suspended, and who takes a state-2-only branch of the
+one-second tick.** For a character, that is dead.
+
+**The enum is shared by every `CGObj`-derived class, so "2" is better read as
+NOT-ALIVE-BUT-PRESENT.** `CGItem::Update`, `CGObjSiegeStruct::vslot_306/307` and
+`CGObjSiegeObject::vslot_306` all test their own `this` against 2 — an item and
+a fortress building are not "dead" in the character sense. For a character the
+two readings coincide.
+
+**3 is not a character state on this evidence.** Of 162 `GetLifeState`
+comparisons, 37 test against 3 and **none of those has a typed receiver**; the
+writers of 3 set it on *other* objects (`CGObjPC::DeleteMobForCatchQuest` sets
+it on the mob it deletes, ~30 `QNO_*::OnDead::Handle` on the quest mob). That is
+consistent with removal-from-the-world and inconsistent with nothing — it is
+weaker evidence than the above and is stated as such.
+
+**Values 4 and 6 exist and are unread**: 7 comparisons against 4 (two typed —
+`CGObjMob::vslot_362` and `GObjPC::FUN_004c3e70`, both `!= 4`) and 2 against 6.
+So the enum is wider than 0..3 and this round did not read all of it.
+
+### What that closes in the party ladder
+
+`CParty::CheckTargetAvailable` (`0x514010`) — step 7 of the invite ladder —
+accepts life state **1 or 2** and refuses with a bare `3` otherwise, while
+`GObjPC::TrainingCamp_CheckCanEnter` refuses whenever the state is not 1. The
+open question was *why the invite path accepts two states where the academy
+accepts one*. The answer: **the party path accepts a dead character and the
+academy does not.** You can be invited to a party while dead; you cannot be
+enrolled in a training camp.
