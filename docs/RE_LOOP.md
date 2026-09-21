@@ -190,6 +190,19 @@ trim; never pattern-match the row shape.
 
 ## Before the dump: `tools/known.sh`
 
+**Run it on the ITEM, not just the topic — and treat an open list as a claim, not
+a fact.** Rounds 373, 375, 376, 382 and 384 each began work on something this
+file called open and found it already answered, four of the five in this same
+file. An entry's "Still open from before" line is carried forward by hand and
+nothing re-checks it, so it records what was open WHEN IT WAS WRITTEN. Round 384
+swept every such line: of the items they carried, **four were already closed**
+and had been repeated across up to four chain links each.
+
+So: `tools/known.sh '<the item itself>'` before starting on it. Round 383's
+failure is the sharper form — it ran the tool on the QUESTION and never on the
+ANSWER, and `known.sh dttp` would have found the code in `paramblock.go` and
+stopped the round.
+
 **Run `tools/known.sh <term>` before going to the dump, the binary or the game
 tables.** It greps every recovered-knowledge surface at once -- the prose docs,
 the recovered-name and handler tables, and the Go sources' own citations, since

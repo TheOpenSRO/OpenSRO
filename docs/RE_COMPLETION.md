@@ -1987,7 +1987,16 @@ columns leave them zero and behave exactly as before — pinned by its own test.
   implement for the current roster — a disclosed absence with a proven reason,
   not an unrecovered mechanic. It becomes real the moment a blocking species is
   added, and `combat.MonsterRate`'s comment says how to check one.
-- Still open from before: itemdata columns 114 and 117; `pc[0x72d]`'s state enum.
+- ~~Still open from before~~ **STALE — swept in round 384.** Every item this line
+  carried forward had already been closed elsewhere in this file or in the code,
+  and the chain kept repeating them:
+  - **itemdata columns 114 and 117** — mapped in `cmd/export-refdata` as the
+    variance ceilings of attack rate and critical, with a test and a
+    zero-inversion check over 448 rows.
+  - **`pc[0x72d]`'s state enum** — CLOSED 2026-09-16: it is the death-KIND code,
+    shipped as `server/internal/leveldata/deathcause.go`.
+  - **blocking's monster side** — closed in round 380 as a roster absence with a
+    census behind it.
 
 ## The physical damage pipeline, register by register (2026-09-15)
 
@@ -2074,8 +2083,16 @@ multiplies only after the division, the subtraction and the clamp.
 - `FUN_0040f990`'s switch (2..N) scales `Formula_RollWeaponDamage`'s uniform
   190/191 roll by `.rdata` constants. Since 190/191 carry no Str term and no
   buffs, this is a *second*, simpler damage path; what selects it is unknown.
-- Still open from before: itemdata columns 114 and 117; `pc[0x72d]`'s state
-  enum; blocking's monster side.
+- ~~Still open from before~~ **STALE — swept in round 384.** Every item this line
+  carried forward had already been closed elsewhere in this file or in the code,
+  and the chain kept repeating them:
+  - **itemdata columns 114 and 117** — mapped in `cmd/export-refdata` as the
+    variance ceilings of attack rate and critical, with a test and a
+    zero-inversion check over 448 rows.
+  - **`pc[0x72d]`'s state enum** — CLOSED 2026-09-16: it is the death-KIND code,
+    shipped as `server/internal/leveldata/deathcause.go`.
+  - **blocking's monster side** — closed in round 380 as a roster absence with a
+    census behind it.
 
 ## The kill-EXP formula, and a correction (2026-09-15)
 
@@ -2279,9 +2296,11 @@ later lands in the right arithmetic.
 - `vf[0x3b4]` on the killer overrides the loss outright in the monster branch.
 - Death kinds 1, 2 and 6, and their handlers `FUN_004e6820` / `FUN_004e6d60`.
 - Params 256 and 258, the other two premium benefits.
-- Still open from before: `GetParam(0x80/0x81)` and `GetParam(0x103)` in the
-  damage pipeline; the mitigation-skipping descriptor flag `0x20`;
-  `Formula_ExpScaleByLevelWindow`'s mode; itemdata columns 114 and 117.
+- ~~Still open from before~~ **PRUNED — round 384.**
+  `Formula_ExpScaleByLevelWindow`'s mode is RECOVERED one section below, and
+  itemdata columns 114 and 117 are mapped and tested in `cmd/export-refdata`.
+  STILL OPEN: `GetParam(0x80/0x81)` and `GetParam(0x103)` in the damage pipeline;
+  the mitigation-skipping descriptor flag `0x20`.
 
 ## [0x72e] and [0x72f] are PARTY and GUILD — and the exp formula closes (2026-09-15)
 
@@ -2375,9 +2394,10 @@ a level-3 on a level-10 stays 92.
 - `vf[0x3b4]` on the killer, which overrides the death loss outright.
 - Death kinds 1, 2 and 6 and their handlers.
 - Premium params 256 and 258, and `killer+0x1cd8`, the exp rate.
-- Still open from before: `GetParam(0x80/0x81)` and `GetParam(0x103)` in the
-  damage pipeline; the mitigation-skipping descriptor flag `0x20`; itemdata
-  columns 114 and 117.
+- ~~Still open from before~~ **PRUNED — round 384.** `itemdata columns 114 and
+  117` are mapped and tested in `cmd/export-refdata`. STILL OPEN:
+  `GetParam(0x80/0x81)` and `GetParam(0x103)` in the damage pipeline; the
+  mitigation-skipping descriptor flag `0x20`.
 
 ## The stat-tag vocabulary, extracted mechanically (2026-09-15)
 
@@ -2600,10 +2620,17 @@ corrected repeatedly. It is recorded here for whoever builds that window.
   place a kill-side skill-exp source could still hide.
 - `M` itself, for the quest path: `*(int *)(iVar2 + 0x10)` from an unidentified
   struct.
-- Still open from before: bit 0 of a party's `+0x10`; `FUN_005e4390`'s guild
-  comparison; `vf[0x3b4]`; premium params 256/258 and `killer+0x1cd8`;
-  `GetParam(0x80/0x81)` and `GetParam(0x103)`; descriptor flag `0x20`; itemdata
-  columns 114 and 117.
+- ~~Still open from before~~ **PRUNED — round 384.** Four of the seven items this
+  line carried were already closed and are dropped: **bit 0 of a party's
+  `+0x10`** is the experience-sharing flag (`docs/protocol/party.md`, with the
+  8-versus-4 join caps and the client's own error names);
+  **`Formula_ExpScaleByLevelWindow`'s mode** is RECOVERED four sections above;
+  **itemdata columns 114 and 117** are mapped and tested in `cmd/export-refdata`;
+  **`pc[0x72d]`** is the death-kind code, shipped as `internal/leveldata/
+  deathcause.go`. STILL GENUINELY OPEN: `FUN_005e4390`'s guild comparison (the
+  accessor is named, the comparison is not); `vf[0x3b4]`; premium params 256/258
+  and `killer+0x1cd8`; `GetParam(0x80/0x81)` and `GetParam(0x103)`; descriptor
+  flag `0x20`.
 
 ## Death dispatch is vtable slot 311 — and a foundational claim weakens (2026-09-15)
 
@@ -6302,6 +6329,44 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 0x51c is 0x0d, 0x51d is 1. Resolving category -> message-name prefix would label
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
+
+Round 384 (the open list was the problem: four items closed long ago, carried
+forward across five entries): APPLIED ROUND 383'S OWN LESSON BEFORE STARTING --
+run known.sh on the ITEM, not the topic. The two items the newest open list
+named, itemdata columns 114/117 and pc[0x72d]'s state enum, came back CLOSED on
+the first query: 114/117 are mapped and tested in cmd/export-refdata, and
+pc[0x72d] was closed on 2026-09-16 as the death-KIND code and ships as
+internal/leveldata/deathcause.go.
+
+SO THE ROUND BECAME THE SWEEP RATHER THAN THE ITEM. This file carries its open
+items forward by hand, in "Still open from before" lines, and nothing re-checks
+them -- each records what was open WHEN IT WAS WRITTEN. Checking every one of
+them: FOUR ITEMS WERE ALREADY CLOSED and had been repeated across up to four
+chain links each. Besides the two above: bit 0 of a party's +0x10 is the
+experience-sharing flag, documented in party.md with the 8-versus-4 join caps and
+the client's own error names; and Formula_ExpScaleByLevelWindow's mode is marked
+RECOVERED one section below the line still calling it open.
+
+WHAT IS GENUINELY STILL OPEN, now that the chain carries only that:
+GetParam(0x80/0x81) and GetParam(0x103) in the damage pipeline; the
+mitigation-skipping descriptor flag 0x20; vf[0x3b4]; premium params 256/258 and
+killer+0x1cd8; FUN_005e4390's guild comparison, whose accessor is named but whose
+comparison is not.
+
+THIS IS THE ROOT CAUSE OF FIVE BAD TICKS, not a tidy-up. Rounds 373, 375, 376 and
+382 each began work on something this file called open and found it already
+answered -- four of the five in this same file. A stale open list does not just
+waste a tick; it actively directs work at solved problems and then makes the
+re-derivation look like a discovery.
+
+EDITED BY LINE RANGE, BOTTOM-UP, because the five lines are near-duplicates of
+each other -- the exact hazard round 378 hit when a phrase search matched a
+sentence 4,000 lines away.
+
+**What moved:** four long-closed items retired from the open list with their
+citations, five carried-forward lines pruned to what is actually open, and the
+"run known.sh on the item" rule written into RE_LOOP.md where the next tick will
+read it. No behaviour changed, so no tag.
 
 Round 383 (round 382 RETRACTED: the control was the wrong artifact): BOTH OF
 ROUND 382'S CLAIMS WERE WRONG and the reason is the same one that has now bitten
