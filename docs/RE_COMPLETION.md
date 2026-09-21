@@ -1523,6 +1523,26 @@ effective crit  = attacker 'cri' (12) / (1 + defender 'evcr' (57)/100)
 effective block = attacker block     / (1 + defender 'evbl' (56)/100)
 ```
 
+**THE BLOCK LINE IS WRONG — corrected round 405.** It contradicts the entry four
+hundred lines above, which says block is the DEFENDER's `'bri'` opposed by the
+ATTACKER's `'evbl'`, and the disassembly settles it for that entry. In
+`Combat_ResolveDamage`, `GetParam(0x38)` is issued on the object at `[esp+0x124]`,
+which the prologue (`sub esp,0x110` plus four pushes = 0x120) makes **argument
+1** — and `param_1` is the ATTACKER, established independently in round 387 as
+the object required to be a PC in the ignore-defence guard. `GetParam(0x39)` is
+issued on `piVar12`, the defender.
+
+**The rule is one rule and the parties swap under it:** *my stat ÷ (1 + my
+opponent's evasion of it)*. Crit is the attacker's stat so the defender evades
+it; block is the DEFENDER's stat so the ATTACKER evades it. Writing both as
+"attacker … / defender …" flattens that asymmetry into a symmetry, which is how
+this line came to be wrong.
+
+**Nothing shipped is affected**: `internal/session/combat.go` already follows the
+correct reading, and its justification is measured rather than assumed — a
+monster never publishes param 56, so a monster attacking a player has no
+block-evasion term.
+
 **Nothing was rewired from the distribution, deliberately.** It is a *second*
 roll, on params 13/14, distinct from `Formula_RollWeaponDamage` (uniform,
 `rand() % (max-min+1) + min`, params 190/191) which `combat.RollDamage` already
@@ -6374,6 +6394,42 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 0x51c is 0x0d, 0x51d is 1. Resolving category -> message-name prefix would label
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
+
+Round 405 (two recorded claims disagreed about block evasion; the disassembly
+settles it and the shipped code was right): GROUNDING_AUDIT's last live combat
+item is evade. Chasing it found something better than a gap: TWO ENTRIES IN THIS
+FILE CONTRADICT EACH OTHER, and srrevamp had already picked a side.
+
+Line 950 records block as the DEFENDER's 'bri' opposed by the ATTACKER's 'evbl'.
+Line 1523 records it as "attacker block / (1 + defender 'evbl')" -- opposite on
+BOTH halves. The shipped comment in internal/session/combat.go follows line 950,
+and its reasoning depends on it: block is left unopposed because a monster never
+publishes param 56, which only matters if the divisor is the ATTACKER's.
+
+NEITHER AUTHOR COULD HAVE READ IT FROM THE C. Ghidra renders the evbl call as
+`(**(code **)(*unaff_retaddr + 0x104))(0x38)` -- unaff_retaddr being its
+placeholder for an operand it cannot resolve at all. The two records are two
+different guesses at the same unresolved object, which is exactly how a file
+comes to contradict itself.
+
+THE DISASSEMBLY SETTLES IT. The call issues on [esp+0x124], and the prologue --
+`sub esp,0x110` plus four pushes, 0x120 of displacement -- makes that ARGUMENT 1.
+param_1 is the ATTACKER, established independently in round 387 as the object
+required to be a PC in the ignore-defence guard. evcr's call issues on piVar12,
+the defender. So line 950 is right about evbl and line 1523 is right about evcr:
+EACH RECORD IS HALF CORRECT.
+
+AND THE ASYMMETRY IS THE WHOLE POINT. One rule covers both: my stat divided by
+(1 + my opponent's evasion of it). Crit is the ATTACKER's stat so the defender
+evades it; block is the DEFENDER's stat so the ATTACKER evades it. Writing both
+as "attacker ... / defender ..." flattens that into a symmetry -- which is how
+the wrong line was written, and it is a failure mode worth naming: prose tidies
+an asymmetry that the code does not have.
+
+**What moved:** a self-contradiction in this file resolved from the instruction
+stream rather than by preferring the newer entry, the wrong half corrected where
+it was written, and the shipped behaviour confirmed correct for a reason that
+was measured rather than lucky. No behaviour changed, so no tag.
 
 Round 404 (the vararg-reuse trick is not a one-off: 41 % of call sites use it):
 ROUNDS 402-403 EXPLAINED ONE CALL SITE. Understanding the shape made the whole
