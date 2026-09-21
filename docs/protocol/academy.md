@@ -445,6 +445,14 @@ the 259,200: cases 7, 8 and 9 reach the shared tail by `jmp`. The first sweep re
 
 That last pair is one expression: `sbb eax,eax ; and eax,3 ; add eax,0x680f`.
 
+**The first of those "two state bytes" is now named** (round 360):
+`[char+0x30]+4` is the **character lock**, held while an async DB query or a
+transaction is in flight, written only by `GObjPC::SetLocked` — see
+`docs/protocol/char_lock.md`. So `0x6806` is not an academy rule; it is the
+academy declining to act on a character that is mid-transaction, which is why it
+has no client message while its neighbours `0x680f`/`0x6812` do. `+6` is still
+unread.
+
 ## Ban and leave, read in full (2026-09-17)
 
 	TrainingCamp_HandleBan (0x005193a0)          TrainingCamp_HandleLeave (0x00519510)

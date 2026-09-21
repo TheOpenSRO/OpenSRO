@@ -6266,6 +6266,65 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 360 (the byte that blocks eleven gates is a LOCK, and the engine names it
+itself): ROUND 359 LEFT ONE ITEM OPEN BY NAME -- party invite step 7 refuses with
+0x2c06 when chardata+4 is 1, and 0x2c06 has no client message, so what it forbids
+was unread. It is not a party rule. chardata+4 is a CONCURRENCY LOCK held while
+an asynchronous DB query or a multi-step transaction is in flight against that
+character, and the same byte gates eleven places: item use, flea-market sell,
+party create/create-for-match/invite, academy create/disband/invite/enter,
+FUN_00514b20, and a per-tick skip in CGObjChar::Update.
+
+THE NAME IS THE ENGINE'S, NOT AN INFERENCE FROM THE CALL SITES. The byte has
+exactly one writer, 0x004a9df0, reached as vtable slot 342 (offset 0x558) on
+every mobile class the RTTI names. Of its 50 call sites, two of the functions
+that pass 0 ALREADY CARRIED NAMES recovered from the binary's own log strings --
+trs_sm_trainingcampjob::Unlock (0x0046dde0) and trs_sm_guildjob::Unlock
+(0x0046e160), origin=engine. 0 is Unlock, so 1 is Lock and the writer is
+GObjPC::SetLocked. Only the Unlock side logs; there is no ::Lock string.
+
+THE 50 SITES ARE ONE FAMILY WITH TWO VTABLE LAYOUTS, which is what made this a
+26-name round instead of a 1-name round: AQ_* (async DB query) slot 9 = Lock,
+slot 10 = Unlock; trs_sm_*job (transaction state machine) slot 6 = Lock, slot 7 =
+Unlock. The AQ pairing is fixed by the two thinnest instances in the dump, 31
+bytes each, whose entire bodies are the lock call -- AQ_ItemQuotation::Lock
+(0x00451180, slot 9) and AQ_Trijob::Unlock (0x00465670, slot 10). Both are
+COMDAT-shared across three AQ vtables, so those two class prefixes are the dump's
+attribution of a shared body, recorded as such rather than claimed.
+
+THE TELL THAT IT IS A LOCK AND NOT A MODE FLAG is that the Unlock side is guarded
+and the Lock side is not: before clearing, it re-reads the object's own id through
+vtable slot 8 and compares it with the id the job stored at +0x2c, so a job that
+finishes after its character has been recycled cannot unlock a different one.
+
+TWO TRAPS THIS ROUND WALKED INTO AND OUT OF. First, the conditions look like they
+have OPPOSITE POLARITY -- CParty::CheckCanCreate tests `!= 1` while the invite
+gate tests `== 1`. Reading the bodies shows both refuse on 1; in CheckCanCreate
+the `!= 1` branch is the SUCCESS path and the function falls through to `return
+0x2c09`. Inferring from the condition would have produced a flag that meant two
+opposite things. Second, "is dead" was the leading hypothesis and is WRONG:
+TrainingCamp_CheckCanEnter checks the lock and the life state separately, in that
+order, and a prior round had already grounded the life check as the vtable-0xf8
+getter.
+
+The error-code lever was tried and is EXHAUSTED BY CONSTRUCTION: 0x2c06, 0x2c09
+and 0x6806 are all absent from the client's 643-case switch while their immediate
+neighbours are named (0x2c0a PARTYERR_TOO_LOW_CREATOR_LEVEL, 0x680f
+TC_ERROR_TRAININGCAMP_ALREADY_ENTRY). That fits a guard the client is never meant
+to provoke, but it is corroboration and not proof -- an unnamed code is also just
+an unnamed code.
+
+NOT CLAIMED: pc+0x188, whose slot 4 is called on the 0->1 edge. The lock setter is
+its only reader in the entire dump, so it cannot be identified from use. And
+chardata+6, tested beside the lock by four of the eleven gates, is still unread.
+
+**What moved:** no shipped value, and there is nothing here to wire -- srrevamp's
+Go server mutates characters synchronously inside a request, so it has no window
+this guards. 26 names applied (applied 26, failed 0), eleven gates that read an
+unexplained byte now read a named one, round 359's open item closed, and the
+academy's 0x6806 explained as the same thing. Written up in
+docs/protocol/char_lock.md, with party.md and academy.md pointed at it.
+
 Round 359 (the invitation state machine closes, and there turn out to be TWO
 senders): ROUND 358 LEFT THE TRANSITION BETWEEN 1 AND 4 MISSING. Sweeping every
 writer of chardata+7 in the binary closes it, and the missing edge was an idiom

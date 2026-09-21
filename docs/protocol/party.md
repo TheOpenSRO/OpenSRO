@@ -241,12 +241,26 @@ the target is party-less and passes the inviter's real one. One forms, one joins
 **What 3 and 4 MEAN is not claimed** — only that they are a pair the repeat path
 moves through, and that `0x06f` is the exit from 4.
 
+### `0x2c06` is the character lock — CLOSED, round 360
+
+`0x00514010`, step 7 of the ladder, refuses with **`0x2c06`** when `[0xc] + 4` is
+1. That byte is now read: it is the **character lock**, held while an async DB
+query or a multi-step transaction is in flight against that character, and its
+sole writer is `GObjPC::SetLocked` (vtable slot 342). See
+`docs/protocol/char_lock.md`. `CParty::CheckCanCreate` refuses the same state
+with `0x2c09`, and the academy with `0x6806`; none of the three has a client
+message, which fits a guard the client is never supposed to provoke.
+
+So step 7 does not forbid anything about parties. It declines to start one while
+the character is mid-transaction.
+
 ### Still open here
 
-`0x00514010`, step 7 of the ladder, refuses with **`0x2c06`** when
-`[0xc] + 4` is 1 and with **3** when a vtable-`0xf8` state getter returns neither
-1 nor 2. **`0x2c06` has no client name in `error_codes.md`**, so what it forbids
-is unread.
+`0x00514010` also returns **3** when the vtable-`0xf8` state getter returns
+neither 1 nor 2. `0xf8` is a life-state getter — `TrainingCamp_CheckCanEnter`
+returns the same bare `3` when it is not 1 — but **what the value 2 means is
+unread**, and it is the reason the invite path accepts two states where the
+academy accepts one.
 
 The party id the invitation carries is `inviterParty + 8`, a fifth independent
 use-site for `GObjPC::PartyID`.
