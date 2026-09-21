@@ -2079,7 +2079,41 @@ multiplies only after the division, the subtraction and the clamp.
   bits 0 and 1 — a percentage bonus against some target class.
 - `GetParam(0x103)` off the attacker, live only when the defender's `vf[0x12c]`
   returns 3.
-- Descriptor flag `0x20` skips mitigation outright; which attacks set it.
+- ~~Descriptor flag `0x20` skips mitigation outright; which attacks set it.~~
+  **CLOSED (round 387), and the question was mis-shaped: NO ATTACK SETS IT.**
+  The descriptor is a byte at `+6` of the attack record, assembled per swing by
+  `Combat_ResolveDamage` — `= 1`/`= 2` for the damage class, `|= 4`/`|= 8` for
+  physical/magical (the same vocabulary as `combat.AttackType`), `|= 0x10`, and
+  `|= 0x20`. It reaches both mitigation formulas in **CL**, their `__fastcall`
+  first argument (`mov cl, BYTE PTR [ebp+0x6]` immediately before each call), and
+  `if ((param_1 & 0x20) == 0)` is what guards the `GetParam(5)`/`GetParam(7)`
+  mitigation.
+
+  **`0x20` is a per-swing proc off an attacker STAT, gated on both sides being
+  the right kind**, disassembled at `0x0058edf9` rather than inferred:
+
+		if defender is not a PC (slot 0x1c) and attacker IS a PC:
+			push 0xbc          ; GetParam(188) on the attacker
+			call 0x9fbb40      ; float conversion
+			or   ecx,0x4d000000 ; the roll's event key
+			lea  edx,[edi+0xa30] ; the attacker's chance accumulator
+			call 0x5a1a20      ; RollChance
+			test eax,eax / je  ; on success:
+			or   BYTE PTR [ebp+0x6],0x20
+
+  So it is an **ignore-defence chance a player can roll against a monster**, and
+  never against another player.
+
+  **Param 188 is a 0–100 percentage that defaults to 0** and has exactly one
+  writer, the skill-effect applier — so nobody has it unless a skill grants one.
+  `skill_params.md` records the code `dtt` writing 188, and `dtt` occurs on 13
+  real rows, all `SKILL_ETC_DETECT_*`. **That association is recorded, not
+  endorsed**: whether a "detect" skill really grants an ignore-defence chance is
+  not read, and the tension between the code's name and the param's use is left
+  standing rather than explained away.
+
+  **For srrevamp:** unreachable rather than unimplemented. The param defaults to
+  0 and no shipped skill grants it, so the flag never sets.
 - `FUN_0040f990`'s switch (2..N) scales `Formula_RollWeaponDamage`'s uniform
   190/191 roll by `.rdata` constants. Since 190/191 carry no Str term and no
   buffs, this is a *second*, simpler damage path; what selects it is unknown.
@@ -6338,6 +6372,44 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 0x51c is 0x0d, 0x51d is 1. Resolving category -> message-name prefix would label
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
+
+Round 387 (the mitigation-skipping flag: no attack sets it, and the question was
+mis-shaped): THE OPEN ITEM ASKED "which attacks set descriptor flag 0x20". The
+answer is that NONE DOES -- it is not a property of an attack at all.
+
+THE DESCRIPTOR IS ASSEMBLED PER SWING, not read off a skill. Combat_ResolveDamage
+builds a byte at +6 of the attack record: = 1 or = 2 for the damage class, |= 4
+or |= 8 for physical/magical -- the same vocabulary combat.AttackType already
+models -- plus |= 0x10 and |= 0x20. It reaches both mitigation formulas in CL,
+their __fastcall first argument, which the decompiled C cannot show. objdump
+does: `mov cl, BYTE PTR [ebp+0x6]` immediately before each call, at two of the
+eight sites.
+
+AN EARLIER GUESS OF MINE WAS WRONG AND IS NOT REPEATED: I had taken +0x230 for a
+flags word. It is the skill's `att` field. The descriptor is a different byte,
+derived from the same vocabulary.
+
+0x20 IS A PER-SWING PROC OFF AN ATTACKER STAT, disassembled at 0x0058edf9 rather
+than inferred from adjacency -- which mattered, because Ghidra drops RollChance's
+arguments and the chain GetParam(188) -> RollChance -> set-the-flag was
+adjacency-only until the disassembly showed the float conversion and the
+accumulator pointer between them. The guard is: defender NOT a PC, attacker IS a
+PC. So it is an ignore-defence chance a player rolls against a monster, never
+against another player.
+
+AND A TENSION LEFT STANDING RATHER THAN EXPLAINED AWAY. Param 188 is a 0-100
+percentage defaulting to 0, with exactly one writer (the skill-effect applier).
+skill_params.md records the code `dtt` writing it, and `dtt` occurs on 13 real
+rows, ALL NAMED SKILL_ETC_DETECT_*. Whether a "detect" skill really grants an
+ignore-defence chance is NOT READ. The association is recorded; the mismatch
+between the code's name and the param's use is left open rather than smoothed
+over with a plausible story.
+
+**What moved:** an open item closed by showing the question was mis-shaped, the
+flag's full setter disassembled rather than inferred, one of my own earlier
+guesses withdrawn, and a name/use mismatch recorded as open. For srrevamp the
+feature is unreachable rather than unimplemented: the param defaults to 0 and no
+shipped skill grants it. No behaviour changed, so no tag.
 
 Round 386 (the 172 counterexamples were the confirmation, and it still does not
 license a rename): ROUND 385 NAMED THE PROBE -- read the 172 class-B rows whose
