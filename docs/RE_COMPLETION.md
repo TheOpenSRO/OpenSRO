@@ -6266,6 +6266,44 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 365 (the first real payload layout gets implemented, and the orphan guard
+earns its keep): ROUND 364 FINISHED 0x7021's SPEC; this implements it.
+opcodes.go's own header said "payload layouts are documented in login.md, not
+encoded here yet" -- that is now out of date, which is the point of the round.
+server/internal/proto/movement.go carries OpMovementRequest,
+EncodeMovementAngle, Movement.Encode and DecodeMovement.
+
+THE TESTS ARE WRITTEN AGAINST THE SPEC, NOT AGAINST THE CODE. The layout cases
+are hand-written byte strings taken from movement.md's table rather than
+captured from Encode's output, and the angle cases were computed independently
+before the implementation existed.
+
+THEY ALL PASSED FIRST TRY, WHICH IS A REASON TO DISTRUST THEM, so both key
+constants were MUTATION-CHECKED. Replacing 65535 with the "obvious" 65536 makes
+a full turn encode to 0 instead of 65535 and fails two cases; substituting
+full-precision 180/pi for the float32-widened constant the binaries hold fails
+the constant test. Both mutations were reverted and the suite re-run green.
+
+AND THE GUARD BUILT IN AN EARLIER ROUND CAUGHT THIS ROUND. internal/systems'
+orphan detector failed the build: "DecodeMovement is exported and nothing calls
+it. This is the shape that hid the HP-regen rule, the real drop tables and the
+skill-reset cost formula." It is right -- the SENDING half is reachable
+(Movement.Encode and EncodeMovementAngle are both called) but nothing decodes a
+0x7021, because srrevamp's gateway still speaks the placeholder opcodes. Rather
+than delete the decoder or wire a fake caller, it is recorded in knownOrphans
+with the reason: a format recovered in ONE DIRECTION ONLY is how a layout gets
+half-checked, so the matching half is kept deliberately, and the entry says to
+delete the line the moment the gateway accepts a real 0x7021.
+
+NOT CLAIMED: the reply opcode. 0xB021 is the conventional pairing for a 0x7021
+request and NOTHING WAS READ TO CONFIRM IT, so it is not in opcodes.go.
+
+**What moved:** the first real payload layout in internal/proto, with
+byte-for-byte tests and two mutation checks; movement.md gains a Status section
+recording what is implemented and what is still unread. NO TAG: no behaviour
+changed and nothing player-visible moved -- the codec has no caller yet by
+design, and the release rule here is to tag after visible fixes.
+
 Round 364 (the movement opcode, finished from both binaries at once): ROUND 363
 LEFT TWO NAMED GAPS in the 0x7021 payload -- the three .rdata floats that scale
 the angle, and the +0x14 field in the heading form. Both are closed, and the

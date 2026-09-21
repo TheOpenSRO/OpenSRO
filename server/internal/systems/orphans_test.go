@@ -52,6 +52,14 @@ var knownOrphans = map[string]string{
 	"WithdrawCostForLevels": "the recovered skill-reset cost formula; srrevamp offers no " +
 		"withdrawal feature (docs/protocol/skill_withdraw.md says so in its first paragraph). " +
 		"This entry is also this test's positive CONTROL -- see TestOrphanDetectorIgnoresComments.",
+	"DecodeMovement": "the receiving half of the real 0x7021 movement payload " +
+		"(docs/protocol/opcodes/movement.md, round 365). The SENDING half is reachable -- " +
+		"Movement.Encode and EncodeMovementAngle are both called -- but nothing in Go decodes " +
+		"a 0x7021 yet, because srrevamp's gateway still speaks the placeholder opcodes " +
+		"PROTOCOL_DECISION.md calls scaffolding, and a real client is what would send this. " +
+		"Kept as the matching half of a codec rather than shipped one-sided: a format recovered " +
+		"in one direction only is how a layout gets half-checked. Delete this line the moment " +
+		"the gateway accepts a real 0x7021.",
 }
 
 // baseline is the set of orphans that existed when this detector was written.

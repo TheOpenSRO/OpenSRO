@@ -98,3 +98,23 @@ packet the client interpolates" is this opcode.
 It does **not** unblock monster movement on its own. That still needs the server to step a
 monster's position on a tick and the client to receive it; today the client asks for monsters only
 on events, so movement with no push would make them jump rather than walk (round 362).
+
+## Status / next steps
+
+- [x] Opcode confirmed from both binaries (server composes it, client sends it)
+- [x] Payload layout confirmed, with field widths from the client's twin serialiser
+- [x] Angle formula confirmed, constants read from both PE images and byte-identical
+- [x] **Implemented** — `server/internal/proto/movement.go`, `OpMovementRequest`.
+      `EncodeMovementAngle`, `Movement.Encode`, `DecodeMovement`. The first real
+      payload layout encoded in that package rather than only documented.
+      Tested byte-for-byte against the layout table above, and both key
+      constants are mutation-checked: replacing 65535 with 65536 makes a full
+      turn wrap to 0 and fails, and substituting full-precision 180/π fails.
+- [ ] The `+0x14` byte's meaning (its width is settled at one byte)
+- [ ] What the optional `extra` byte at `+1` carries, and which callers pass non-zero
+- [ ] When a sender picks the heading form over a destination
+- [ ] The server's reply opcode, if any. `0xB021` would be the conventional
+      pairing but **nothing was read to confirm it**, so it is not in `opcodes.go`
+- [ ] Wiring: nothing calls this yet. It is the target format for `docs/TODO.md`'s
+      move packet, and monster movement additionally needs the server to step
+      positions on a tick and push them (round 362)

@@ -151,3 +151,18 @@ const (
 	OpIncreaseIntRequest uint16 = 0x7051
 	OpIncreaseIntAck     uint16 = 0xB051
 )
+
+// Movement, read from BOTH binaries on 2026-09-21 (round 364).
+//
+// 0x7021 is what the client sends to move a player, and it is also what the
+// original server's own monster AI composes to move a monster: the wander
+// state's destination setter (0x00540f70) builds a 0x7021 message and sends
+// it. Player and monster movement are one path, not two.
+//
+// The client half was already harvested independently -- client_senders.tsv
+// recorded FUN_009ebd10 sending it in round 336, before this project knew what
+// it carried. The payload layout IS encoded here, in movement.go, unlike the
+// gateway-login group above: see docs/protocol/opcodes/movement.md.
+const (
+	OpMovementRequest uint16 = 0x7021
+)
