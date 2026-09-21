@@ -2439,6 +2439,13 @@ against seventeen known answers before being asked a new question.
 attack descriptor. So it is a conditional damage bonus, and the tag that grants
 it is now named even though what the two bits select is not.
 
+**Partly stale (round 385).** srrevamp *does* know what the two bits select:
+`combat.AttackType` records them as the axis choosing the defender's flat
+absorption, param **130 or 131**, alongside this pair's 128/129 — all four being
+`drua`'s quad. What is unrecovered is narrower: **what distinguishes class A from
+class B**, and round 385 measured a strong melee/ranged correlation for it
+without promoting it.
+
 **Encoding, since this has been got wrong before.** The tables store the tag as
 a multi-char literal, so the bytes come out reversed from a little-endian read:
 `0x00617474` unpacks to `tta` and is `att`. A census of the real skilldata Params
@@ -6329,6 +6336,46 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 0x51c is 0x0d, 0x51d is 1. Resolving category -> message-name prefix would label
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
+
+Round 385 (the attack descriptor's second axis: a strong melee/ranged split,
+deliberately not promoted): WITH THE OPEN LIST NOW TRUSTWORTHY after round 384,
+ran known.sh on each of its five remaining items. All five came back genuinely
+open -- the first tick in six where the list told the truth.
+
+TWO OF THEM TURNED OUT TO BE ONE THING. GetParam(0x80/0x81) in the damage
+pipeline and the mitigation-skipping descriptor flag 0x20 are both about the
+ATTACK DESCRIPTOR's bits, which is the skill's `att` value[0] -- the same field
+srrevamp already models as combat.AttackType. (+0x230 is that `att` field, run 6,
+written by RefSkill_ParseParams; an earlier guess that it was a separate flags
+word was wrong and is not repeated here.)
+
+AND THE LEDGER'S PHRASING WAS PARTLY STALE: it says "what the two bits select is
+not [named]", but AttackType records them as selecting the defender's flat
+absorption, param 130 or 131, alongside 128/129 -- all four being drua's quad.
+What is actually unrecovered is narrower: WHAT DISTINGUISHES CLASS A FROM CLASS B.
+
+THE DATA HAS A LOUD ANSWER AND I AM NOT PROMOTING IT. Grouping all 30,064 real
+skill rows carrying `att` by the mask: class A names carry SPEAR 3,763, SWORD
+2,671, SHIELD 178 and NO BOW AT ALL; class B carries BOW 3,560 and STAFF 141.
+That reads as melee versus ranged, and the control is clean -- the other axis's
+PHYS/MAG bits match each row's own PHYSICAL/MAGIC name word in all four
+combinations (5=A|PHYS on SWORD/SPEAR rows, 6=B|PHYS on BOW, 9=A|MAG on
+SWORD/SPEAR, 10=B|MAG on BOW), so the extraction is sound.
+
+IT IS NOT PROMOTED BECAUSE CLASS B ALSO HOLDS 130 SWORD AND 42 SPEAR ROWS. A
+naming correlation with 172 counterexamples is a CURVE, not a use-site, and
+characterdata col 79 was wrong twice on exactly this reasoning. The shipped names
+stay positional, and the measurement is recorded beside them in attacktype.go
+with its exceptions, so the next reader sees both at once.
+
+THE NEXT PROBE IS NAMED AND BOUNDED: read the 172 counterexamples. If they are
+ranged sword skills, or monster skills with no weapon at all, the rule survives
+with a stated scope; if they are ordinary melee swings, it dies.
+
+**What moved:** a slightly stale ledger claim corrected, two open items resolved
+into one narrower question, and a strong data correlation recorded WITHOUT being
+promoted -- with the exact counterexample count that blocks it. No behaviour
+changed, so no tag.
 
 Round 384 (the open list was the problem: four items closed long ago, carried
 forward across five entries): APPLIED ROUND 383'S OWN LESSON BEFORE STARTING --

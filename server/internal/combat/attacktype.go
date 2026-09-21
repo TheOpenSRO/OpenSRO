@@ -72,6 +72,19 @@ const (
 	// position rather than by meaning: what distinguishes the two classes was
 	// not recovered, and inventing a name for it would be the kind of
 	// plausible fiction this project has paid for before.
+	//
+	// MEASURED BUT NOT PROMOTED (round 385). Grouping all 30,064 real skill
+	// rows that carry `att` by this axis shows a strong melee/ranged split:
+	// class A names carry SPEAR 3,763, SWORD 2,671, SHIELD 178 and **no BOW at
+	// all**, while class B carries BOW 3,560 and STAFF 141. The control is the
+	// other axis -- every PHYS/MAG bit matches the row's own PHYSICAL/MAGIC
+	// name word, in all four combinations -- so the extraction is sound.
+	//
+	// It is still NOT promoted, because class B also holds 130 SWORD and 42
+	// SPEAR rows: 172 counterexamples. A naming correlation with exceptions is
+	// a curve, not a use-site, and this project has twice shipped a wrong
+	// meaning reasoned exactly that way. Reading those 172 rows is the next
+	// probe; until then the names stay positional.
 	AttackClassA AttackType = 1
 	AttackClassB AttackType = 2
 )
