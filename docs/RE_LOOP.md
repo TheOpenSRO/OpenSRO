@@ -92,6 +92,37 @@ fourteen of which were already in this file. The probe had searched only inside
 the CEnchant functions. An empty grep is a fact about the grep — and the cheapest
 second probe is usually a file this repository already has.
 
+## A control that FAILS is how you find a bad probe (round 416)
+
+A probe that returns nothing has two explanations and they are not
+distinguishable from the output: the thing is absent, or the probe cannot see
+it. **Run the probe against something you already know the answer to, first.**
+
+Round 416 hunted the writer of `chardata + 2`. The first shape —
+`p = *(char **)(X + 0x30); … p[2] = v` — returned zero. Its control returned
+zero too: it could not find the *known* writer of `chardata[0]`,
+`CGItemMonsterCapsule::SetLifeState`, which uses a double-deref
+(`**(char **)(X + 0x30) = v`) rather than a local. So the zero meant nothing,
+and one line of output said so. A cast-agnostic double-deref shape recovers the
+known writer, and **that** shape finding zero writes to `+2` is a result worth
+recording.
+
+Round 415 had already published the `+2` census without this control and had to
+label its own answer "the probe is incomplete, not the binary".
+
+**The caller is not the receiver.** Three times in this session a census
+grouped virtual-call sites by the *enclosing function's* class when the question
+was about the *receiver's* class — rounds 412, 414 and 416. A virtual call
+decompiles to `(**(code **)(*X + 0xNN))()`, which gives `X`, not `X`'s type.
+`CGObjPC::DeleteMobForCatchQuest` sets the life state of **the mob it deletes**.
+The only reliably typed subset is a class-qualified method calling the slot on
+its own `param_1`; everything else needs the receiver typed before it counts.
+
+**And a slot number is only meaningful inside one hierarchy.** `IGObj`'s slot 63
+is `GetMotionState`; a quest class's slot 63 is a quest event handler. The RTTI
+plates say "slot 63" for both, so matching call sites by the raw offset `+0xfc`
+pools unrelated interfaces.
+
 ## Traps, each of which has cost real time
 
 **COMDAT folding — check the reference count before attaching a name.** The

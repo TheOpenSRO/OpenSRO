@@ -6405,6 +6405,43 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 416 (a failing control found a bad probe; the motion-state writer is a
+controlled absence): I DOUBTED MY OWN ROUND-414 CENSUS AND THE DOUBT WAS WRONG,
+WHICH IS ALSO A RESULT. The worry was that matching `(**(code **)(*X + 0xfc))()`
+by raw offset pools hierarchies, since the quest classes' slot-63
+implementations are quest event handlers — two arguments, void return — and not
+`GetMotionState` at all. Measured: **0 of the comparison sites sit inside a
+quest class**, so round 414's numbers were clean. My "corrected" probe was also
+*worse* than the original, reporting 27 sites against 39 because it dropped
+comparisons in comma expressions on the assignment line. The original count
+stands and the correction was withdrawn before it was published.
+
+What survives is narrower and real: the enclosing function's class is not the
+receiver's class, so that measurement bounds the risk without eliminating it,
+and only the TYPED sites — a class-qualified method calling the slot on its own
+`param_1` — are safe. **That is the third time this session a census grouped by
+caller where the question was the receiver** (412, 414, 416), so it is now
+written into `RE_LOOP.md` rather than rediscovered a fourth time.
+
+AND THE MOTION-STATE WRITER IS NOW A CONTROLLED ABSENCE. Round 415's lead was
+that the write goes through a local copy of the chardata pointer. That shape
+returns zero — **and so does its control**: it cannot find the *known* writer of
+`chardata[0]` either, because `CGItemMonsterCapsule::SetLifeState` uses a
+double-deref rather than a local. A zero from a probe that cannot see the known
+answer means nothing, and round 415's `+2` census had exactly that defect, which
+is why it had to call itself "incomplete". A cast-agnostic double-deref shape
+**does** recover the known writer, and with that control passing it finds **zero
+writes to `chardata + 2` in the entire server binary**.
+
+So the motion state is initialised to `0xff` by `CGObjChar::Create` and never
+directly stored again. **Explicitly not concluding "it is never written"** —
+that is the invalid recovery this project has on record. It means the writer is
+not a plain field store: a bulk copy, a packet `memcpy`, or a shape the
+decompiler renders differently. The DB is ruled out, since `_CHAR` binds nothing
+below `0x18`. The general rule — run a probe against a known answer before
+believing its silence — is now in `RE_LOOP.md`. No names filed; `0x514010` still
+held. No behaviour changed, so no tag.
+
 Round 415 (a new chardata byte, and the setter itself singles out state 2):
 ROUND 414 LEFT `IGObj::GetMotionState`'s VOCABULARY UNREAD, SO THAT WAS THIS
 ROUND RATHER THAN SOMETHING EASIER. It reads **`chardata + 2`** —

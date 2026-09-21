@@ -321,10 +321,31 @@ recorded as an observation and not as a finding.
 
 Comparisons exist against **2, 3, 4, 15, 16, 17, 18** (round 414), but a census
 of writes to `chardata + 2` finds exactly **one** — `CGObjChar::Create` storing
-`0xff`. That cannot produce the compared values, so **the probe is incomplete**,
-not the binary. Two leads for the next pass: the write may go through a local
-copy of the chardata pointer in a shape the three patterns did not match, and
-slot 63 has **several implementations** (`CGObjCOS_Summoned` plus a handful of
-quest classes), so another class's override may read a different field
-entirely — in which case "motion state is `chardata+2`" is true of `CGObj` and
-not of everything that answers the slot.
+`0xff`.
+
+**Round 416 chased both leads and one of them produced a CONTROLLED negative.**
+The local-pointer shape (`p = *(char **)(X + 0x30); … p[2] = v`) finds nothing —
+but its control also fails: that shape does not find the *known* `chardata[0]`
+writer either, so it proves nothing. The shape that does recover
+`CGItemMonsterCapsule::SetLifeState` is a cast-agnostic double-deref,
+`*(T *)(*(T **)(X + 0x30) + 2) = v`. **With a passing control, that shape finds
+ZERO writes to `chardata + 2` in the whole server binary.**
+
+So `chardata + 2` is initialised to `0xff` by `CGObjChar::Create` and never
+directly written again by any code this project can pattern-match. **That is not
+the same as "never written"** — the invalid recovery this repo has recorded is
+exactly "nothing writes it, so it is zero". What it does mean is that the writer
+is not a plain field store: a bulk copy, a packet `memcpy`, or a path the
+decompiler renders differently. The DB is ruled out (`_CHAR` binds nothing below
+`0x18`).
+
+**And only the TYPED comparisons are sound.** The second lead — that slot 63
+spans hierarchies — is real: the quest classes' slot-63 implementations are
+quest event handlers taking two arguments and returning void, not
+`GetMotionState` at all. A census matching `(**(code **)(*X + 0xfc))()` on *any*
+receiver therefore pools unrelated interfaces. Measured: **0 of the comparison
+sites sit inside a quest class**, so round 414's numbers were not in fact
+contaminated — but the enclosing function's class is not the receiver's class,
+so that measurement bounds the risk without eliminating it. The values
+`{2, 3, 4, 15, 16, 18}` from the typed sites, where the receiver is the calling
+method's own `this` on a `CGObj`-derived class, are the part that is safe.
