@@ -6375,6 +6375,40 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 403 (all four procedures numbered, and rounds 401-402 misread which call
+was which): THE NEXT STEP WAS THE SWAP BRANCH'S DIRECT CALL. Reading the literal
+it actually pushes corrected two rounds at once: 0x45b806 pushes 0x00ae4eac,
+which is "{CALL _STRG_SPLIT_ITEM (?, ?, %d, ...)}", NOT SWAP. Rounds 401 and 402
+both called it the swap call. The real swap call is 0x45b8ac, pushing 0x00ae4ee4.
+
+READING THE STRING FROM THE BINARY IS WHAT CAUGHT IT. Both earlier rounds took
+the procedure name from the decompiled C, where the branch structure made the
+attribution look obvious; the .rdata literal at the pushed address settles which
+format belongs to which call and disagreed.
+
+AND THE SLOTS ARE SINGLE BYTES. At the split call they are
+`movzx ecx, BYTE PTR [edi+0x3]` and `movzx eax, BYTE PTR [edi+0x4]`, which Ghidra
+rendered as param_1[3]/param_1[4] -- an int-indexed array in the C, two adjacent
+BYTES in the instruction stream. Round 401's conclusion survives; its picture of
+the operand did not.
+
+ALL FOUR OF THIS FUNCTION'S PROCEDURES ARE NOW NUMBERED: MOVE and MERGE args 5/6
+at the shared site, SPLIT args 6/7 at 0x45b806, SWAP args 5/6 at 0x45b8ac -- and
+SWAP PASSES THE TWO SLOTS IN THE OPPOSITE ORDER, BYTE[edi+4] then BYTE[edi+3],
+which is what an operation that exchanges two slots should do.
+
+THE SWAP CALL ALSO PROVES THE VARARG-REUSE MECHANISM A SECOND TIME, and this
+time the proof is the stack cleanup rather than an inference: `add esp,0x24` pops
+NINE slots -- format plus eight varargs -- while only four values and the format
+are pushed fresh. The other four are FUN_004ea580's uncleaned arguments. Round
+402 deduced that mechanism; here the compiler's own cleanup arithmetic confirms
+it.
+
+**What moved:** four procedures' slot arguments numbered from the instruction
+stream, a two-round misattribution corrected by reading the binary's own string
+table, the slot operand's real width established, and round 402's mechanism
+independently confirmed. No behaviour changed, so no tag.
+
 Round 402 (four varargs for eight %d: the compiler reuses a dead call's
 arguments, and round 285 is re-derived): ROUND 401 CALLED THE SHARED CALL SITE A
 DECOMPILER ARTIFACT and said disassembly was needed. The disassembly shows GHIDRA

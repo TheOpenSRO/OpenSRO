@@ -715,5 +715,31 @@ arguments. Laid out by increasing address, the eight varargs are:
   `FUN_004ea580(param_1[3], param_1[4], …)`, and its format carries the same
   eight `%d`.
 
-`_STRG_SWAP_ITEM` is a **separate, direct call** (`0x45b806`) and is not covered
-by this; its arguments are readable the same way but were not read.
+### All four of this function's procedures, numbered (round 403)
+
+**A correction first.** The direct call at `0x45b806` is not the swap branch —
+reading the literal it pushes (`0x00ae4eac`) shows it is **`_STRG_SPLIT_ITEM`**,
+7 `%d` against exactly 7 varargs pushed. Rounds 401 and 402 both called it SWAP.
+The real swap call is at `0x45b8ac`, pushing `0x00ae4ee4`.
+
+**And the slots are single BYTES**, which the decompile obscured: at the split
+call they are `movzx ecx, BYTE PTR [edi+0x3]` and `movzx eax, BYTE PTR [edi+0x4]`,
+rendered by Ghidra as `param_1[3]`/`param_1[4]`. Storage slots being byte indices
+is consistent with what they are.
+
+| procedure | call site | varargs | the two slots |
+|---|---|---:|---|
+| `_STRG_MOVE_ITEM` | shared `0x45b701` | 8 | **args 5, 6** |
+| `_STRG_MERGE_ITEM` | shared `0x45b701` | 8 | **args 5, 6** |
+| `_STRG_SPLIT_ITEM` | direct `0x45b806` | 7 (+2 bound `?`) | **args 6, 7** |
+| `_STRG_SWAP_ITEM` | direct `0x45b8ac` | 8 | **args 5, 6**, in the *opposite* order |
+
+**The swap call proves the vararg-reuse mechanism a second time**, and its stack
+cleanup is the proof rather than an inference: `add esp,0x24` pops **nine** slots
+— the format plus eight varargs — while only **four** values and the format are
+pushed fresh. The other four are `FUN_004ea580`'s uncleaned arguments, exactly as
+at the shared site.
+
+Laid out, swap's varargs 5 and 6 are `BYTE [edi+0x4]` and `BYTE [edi+0x3]` — the
+same two slot bytes, **in the reverse order** to move and merge. For an operation
+that exchanges two slots, that is the detail worth having.
