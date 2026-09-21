@@ -6266,6 +6266,45 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 371 (the player's attack and parry rates, and TWO re-derivations of my own
+documentation): ROUND 370 NAMED THE BLOCKER as "the player side has no hra/era".
+That is true of srrevamp and MISLEADING ABOUT THE ENGINE: the player formula was
+already recoverable from three facts this project recorded on 2026-09-15 and
+never put together.
+
+THE COMPOSITION, WHICH IS THE ONLY GENUINELY NEW PART: GObjPC_InitStats sets
+param 11 (hra) and param 9 (era) each to a base of 10.0 at slot 0 -- the same
+.rdata 0x00b45b44 that is the hit formula's floor -- and gives each a DIRECT
+derived edge from param 0 (Level) at slot 0 with no intermediate node. Slot 0
+sums. So a bare character has hra = era = 10 + Level, with equipment contributing
+through Stat_ApplyTaggedModifier ('hra'->11, 'era'->9) and status effects through
+AbnormalState_Apply13_p11, both already named.
+
+TWO RE-DERIVATIONS OF ALREADY-WRITTEN WORK, AND THE RULE THAT WOULD HAVE
+PREVENTED BOTH. I read GObjPC_InitStats out of the dump to find the bindings --
+the 2026-09-15 stat-graph entry already stated "a character's innate attack rate
+(param 11) and parry (param 9) are each 10.0, each with a level-derived binding
+(0 -> 11, 0 -> 9)". I then read ParamKeeper_EvaluateParam to learn what a slot-0
+edge does -- the 2026-09-15 combination-rules entry already gave the exact
+formula and "slot 0 -> acc = entry + acc". THE STANDING RULE IS TO GREP THE DOCS
+BEFORE THE DUMP, and this tick went to the dump first, twice. Recorded because
+the cost is not the wasted reads: it is that round 370 presented a documented
+fact as a newly-discovered blocker.
+
+A CONSEQUENCE THAT SHAPES THE NEXT STEP RATHER THAN A RESULT TO SHIP. A bare
+level-1 character has hra = 11 against a level-1 monster's era = 2*1+25 = 27,
+giving about a 20 % hit chance -- implausible for a starting fight. So equipment
+hit-rate must dominate early, and itemdata cols 16/17 (HitRateMin/HitRateMax,
+which srrevamp's refdata ALREADY parses) are the obvious source. That is a
+prediction to verify before wiring, and it is exactly the kind of number that
+would have been promoted on a curve if the implausibility had not been computed.
+
+**What moved:** the engine's player hit-rate formula stated for the first time by
+composing three recorded facts, the contributors named, and a numeric sanity
+check that flags equipment as the missing term. Against that, two avoidable
+re-derivations and a mis-framed blocker in the previous round, both recorded. No
+behaviour changed, so no tag.
+
 Round 370 (the hit chance, and an open assumption that was asking the wrong
 question): WENT TO THE PROJECT'S OWN SCOREBOARD for the loop's stated goal --
 GROUNDING_AUDIT.md's "what is genuinely still assumed" -- rather than another

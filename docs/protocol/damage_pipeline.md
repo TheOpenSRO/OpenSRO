@@ -681,3 +681,32 @@ So monster-versus-monster sits at `hra/era == 1`, i.e. a 50 % base before the le
 
 **The player side is the gap.** srrevamp models no `hra`/`era` for characters at all, so the
 numerator has no source yet. That, not the formula, is what stands between this and a hit roll.
+
+### The player side of the hit chance (round 371)
+
+Round 370 named "the player side has no hra/era" as the blocker. That is true of **srrevamp**,
+but the **engine's** player formula was already recoverable from three facts this project had
+recorded on 2026-09-15 and never composed:
+
+1. `GObjPC_InitStats` sets param 11 (`hra`) and param 9 (`era`) each to a base of **10.0**
+   (`.rdata 0x00b45b44`) at **slot 0** — the same constant that is the hit formula's floor.
+2. Each has a **direct derived edge from param 0 (Level) at slot 0**, with no intermediate node:
+   `BindDerived(0 → 11)` and `BindDerived(0 → 9)`. Param 0 is the level byte at `charData+0x65`.
+3. **Slot 0 sums** (`GParamKeeper`'s combination rules: `slot 0 -> acc = entry + acc`), and
+   `ParamKeeper_EvaluateParam` combines the four slots as
+   `slot0 * (slot1+100)/100 * slot2 * slot3/100`.
+
+Composing them, a **bare** character's rates are:
+
+	hra = era = 10 + Level
+
+on top of which two further contributors are already named elsewhere: **equipment**, through
+`Stat_ApplyTaggedModifier` (`'hra'`→11, `'era'`→9), and **status effects**, through
+`AbnormalState_Apply13_p11`.
+
+**A consequence that shapes what to check next, not a result to ship.** A bare level-1 character
+has `hra = 11` against a level-1 monster's `era = 2·1+25 = 27`, giving
+`(0 + 11/27 * 0.5) * 100 ≈ 20 %` — implausibly low for a starting fight. So **equipment hit-rate
+must dominate at low level**, and `itemdata` cols 16/17 (`HitRateMin`/`HitRateMax`, which
+srrevamp's `refdata` already parses) are the obvious source. That is a prediction to verify before
+wiring, not a formula to trust as-is.
