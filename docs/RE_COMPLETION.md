@@ -6375,6 +6375,39 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 399 (the ninth scope resists every lever, and each failure is measured):
+ROUND 398 PREDICTED +0x74 WOULD BE THE HARD ONE and named two reasons. This tried
+four levers and each one failed for a reason that can be stated as a number
+rather than an impression.
+
+THE ASSERT LEVER IS WEAKEST HERE: GObj.cpp sits 0x880 away, against 0x1a0 for the
+control that named TrijobMgr and 0x340 for GStorage. RTTI has nothing to walk --
+the handler is not a constructor, and the member's constructor stores no vftable.
+THE OFFSET IS CONFIRMED GENERIC, not merely suspected: 1,138 sites in 215
+functions form +0x74 as an address, CInstancePC::CharData_BindDBColumns alone
+accounting for 88, and every one of them is some OTHER object's +0x74. AND THERE
+IS NO SECOND USE-SITE AT ALL: 0x484300 has EXACTLY ONE CALLER in the whole
+binary, the save dispatcher at 0x4e648c, so the trick that named +0x22d0 -- find
+another function that uses the member and read its log string -- has nothing to
+find.
+
+WHAT IS KNOWN IS ITS SHAPE, WHICH IS NOT ITS NAME. The handler is a
+change-tracking writer: for a record reached through member+0x3c it compares live
+against stored field by field -- +0x38 as a short, then +0x3c, +0x40, +0x44 --
+and on a difference writes it back and touches a dirty mask at +0xc. That is
+"update only the columns that changed", and it is worth recording because it says
+what the scope DOES without pretending to say what it IS.
+
+ONE NEW FACT FITS THE PATTERN: the member's constructor is 0x484290, called from
+CGObjPC::Create, 0x70 before the handler -- round 394's ctor/saver co-location
+holding a fifth time, which is what puts both in GObj.cpp's neighbourhood without
+proving they are in its translation unit.
+
+**What moved:** the save-scope arc from round 391 ends at eight of nine, and the
+ninth is closed as a MEASURED negative -- four levers, four numbers -- rather
+than left as an open item someone will re-attempt blind. No behaviour changed, so
+no tag.
+
 Round 398 (the engine names the last scope, and a vtable slot with it): THE ONE
 SCOPE THAT PASSES `this` RATHER THAN A MEMBER is bit 0x80, handler 0x4a7180, and
 like +0x22d0 the previous round it names itself in its own error path: "Trying to

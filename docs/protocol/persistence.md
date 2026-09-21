@@ -603,7 +603,22 @@ own wording rather than by the shape of the test.
 | `0x400` | the job (Trijob) manager (`+0x1fb4`) |
 | `0x800` | the client config data (`+0x22d0`) |
 
-Eight of nine are identified. `+0x74` is the one left, and it is the hardest of
-the set: its nearest `__FILE__` assert is `GObj.cpp` 0x880 away — borderline —
-and the offset itself is touched by 197 functions, far too generic to read
-anything from.
+Eight of nine are identified. **`+0x74` resists every lever that named the other
+eight, and round 399 measured each failure rather than assuming it:**
+
+| lever | result on `+0x74` |
+|---|---|
+| `__FILE__` assert | `GObj.cpp` is **0x880 above** — the control (TrijobMgr) had its assert 0x1a0 away, and `GStorage` 0x340. Weakest of the set. |
+| RTTI | the handler is not a constructor, and its member's constructor stores no vftable to walk |
+| the offset's users | **1,138 sites in 215 functions** form `+0x74` as an address — `CInstancePC::CharData_BindDBColumns` alone has 88 — but they are *other objects'* `+0x74`, not this member's. Confirmed generic. |
+| a second use-site | **there is none.** `0x484300` has exactly ONE caller in the whole binary: the save dispatcher at `0x4e648c`. |
+
+**What is known about it is its shape, not its name.** The handler is a
+change-tracking writer: for a record reached through `member+0x3c`, it compares
+the live value against the stored one field by field — `+0x38` (a short), then
+`+0x3c`, `+0x40`, `+0x44` and on — and on a difference writes it back and touches
+a dirty mask at `+0xc`. That is "update only the columns that changed".
+
+Its constructor is `0x484290`, called from `CGObjPC::Create`, **0x70 before the
+handler** — the co-location pattern of round 394 holding once more, which is what
+places both in `GObj.cpp`'s neighbourhood without proving it.
