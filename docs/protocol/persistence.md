@@ -622,3 +622,52 @@ a dirty mask at `+0xc`. That is "update only the columns that changed".
 Its constructor is `0x484290`, called from `CGObjPC::Create`, **0x70 before the
 handler** — the co-location pattern of round 394 holding once more, which is what
 places both in `GObj.cpp`'s neighbourhood without proving it.
+
+
+## Applying the round-285 argument lever (round 401)
+
+Round 285 named three procedure arguments with one rule: **an argument that is
+also passed to a known accessor names itself** (`_STRG_DEL_ITEM` arg 3 and
+`_STRG_MOVE_ITEM` args 5/6 are storage slots, because the same bytes reach
+`CGStorage::GetItem`). Round 400 promoted that rule to this system's next probe.
+Swept properly, it yields one more argument and one honest miss.
+
+**The candidate set.** Exactly **31 functions** in the server issue a
+`{?=CALL _PROC}` literal. Ranking them by the *named* accessors they also call
+gives the list worth reading — `AQ_StorageUpdater::{DeleteItem, MoveItem,
+MoveItemWithGold, RearrangeItem}`, `AQ_ItemXChanger::DoWork`,
+`AQ_Siege::AQ_Siege_SubmitQuery`, `GObjPC::COS_SubmitAsyncQuery`,
+`CTimedJob::PersistToDB{,ForPet}` among them.
+
+### `_STRG_SPLIT_ITEM` args 6 and 7 are storage slots
+
+`AQ_StorageUpdater::RearrangeItem` (`0x0045b5a0`) opens by resolving two slots
+through the accessor —
+
+	piVar4 = GStorage::CGStorage__GetItem(param_1[3]);
+	piVar5 = GStorage::CGStorage__GetItem(param_1[4]);
+
+— and its split branch passes those same two values to the procedure:
+
+	"{CALL _STRG_SPLIT_ITEM (?, ?, %d, %d,%d, %d,%d, %d,%d)}",
+	    *param_1, param_4, param_5, param_1[3], param_1[4], local_c3c, local_c40
+
+Counting every parenthesised parameter left to right, including the two bound
+`?` placeholders: **arg 6 = `param_1[3]` and arg 7 = `param_1[4]`, both storage
+slots.** The call is exact — seven varargs for seven `%d` — so the positions are
+read, not inferred.
+
+### Two negatives, recorded so they are not re-attempted
+
+- **`_STRG_MOVEITEM_NEW` (in `AQ_ItemXChanger::DoWork`) gains nothing.** The
+  function does call `GStorage::CGStorage__FindItemByDBID`, but with
+  `rec+0x10`/`rec+0x14` — and **those bytes are not among the procedure's nine
+  arguments**, which take `rec+8`/`rec+9` instead. The lever needs the *same*
+  value in both places and here there is none. What it does name is the record:
+  `rec+0x10`/`rec+0x14` is a DB item id.
+- **`_STRG_MERGE_ITEM`, `_STRG_MOVE_ITEM` and `_STRG_SWAP_ITEM` cannot be
+  numbered from the decompiled C at all** in this function: all three reach a
+  shared call site (`LAB_0045b6f8`) where Ghidra renders
+  `FUN_00425f70(pcVar9, uVar2, param_4, param_5, uVar10)` — **four varargs for
+  eight `%d`**. The remaining arguments are collapsed. Disassembly would be
+  needed, which is why only the direct call yielded a position here.

@@ -6375,6 +6375,44 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 401 (the argument lever swept: one more named, two negatives measured):
+ROUND 400 PROMOTED ROUND 285's RULE to this system's next probe -- an argument
+that is also passed to a known accessor names itself. Swept, it yields one more
+argument and two honest misses.
+
+THE CANDIDATE SET IS 31 FUNCTIONS: exactly that many in the server issue a
+{?=CALL _PROC} literal, and ranking them by the NAMED accessors they also call is
+the reusable artifact -- AQ_StorageUpdater's four, AQ_ItemXChanger::DoWork,
+AQ_Siege_SubmitQuery, COS_SubmitAsyncQuery, CTimedJob::PersistToDB and its pet
+twin.
+
+_STRG_SPLIT_ITEM ARGS 6 AND 7 ARE STORAGE SLOTS. AQ_StorageUpdater::RearrangeItem
+resolves two slots through the accessor -- GetItem(param_1[3]) and
+GetItem(param_1[4]) -- and its split branch passes THOSE SAME TWO VALUES to the
+procedure. Counting every parenthesised parameter including the two bound ?
+placeholders, they land at 6 and 7. The call is exact, seven varargs for seven
+%d, so the positions are read rather than inferred.
+
+NEGATIVE ONE, AND IT IS THE LEVER'S OWN LIMIT. _STRG_MOVEITEM_NEW in
+AQ_ItemXChanger::DoWork LOOKS like a match -- the function calls
+GStorage::FindItemByDBID right beside the procedure -- but the accessor gets
+rec+0x10/rec+0x14 while the procedure takes rec+8/rec+9. The lever needs THE SAME
+VALUE in both places, and here there is none. Naming an argument on "the function
+also calls an accessor" would have been the round-391 mistake again. What it does
+name is the record: rec+0x10/+0x14 is a DB item id.
+
+NEGATIVE TWO IS A TOOL LIMIT, NOT A DATA ONE. MERGE, MOVE and SWAP all reach a
+SHARED call site in the same function where Ghidra renders FOUR VARARGS FOR EIGHT
+%d -- the rest collapsed. Their positions cannot be counted from the decompile at
+all, which is also why round 285's MOVE numbering could not be re-verified here.
+Disassembly is the next step for those three, and saying so is more useful than a
+position guessed off a truncated call.
+
+**What moved:** a lever this project already owned was swept rather than quoted,
+one more procedure argument named from a use-site, and two distinct reasons for
+failure separated -- one about the lever, one about the decompiler. No behaviour
+changed, so no tag.
+
 Round 400 (the Persistence probe was wrong on BOTH clauses, and that is the
 fourth stale tracker): WITH THE SAVE-SCOPE ARC CLOSED, the Persistence row's
 remaining probe read "no procedure's PARAMETERS are read and none of the 54
