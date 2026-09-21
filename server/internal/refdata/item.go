@@ -291,7 +291,15 @@ type Item struct {
 	PhysAttackMin, PhysAttackMax       float64
 	MagAttackMin, MagAttackMax         float64
 	HitRateMin, HitRateMax             float64
-	CriticalMin, CriticalMax           float64
+	// ParryRatioMin/Max are BODY ARMOUR's parry pair, itemdata columns 68/69,
+	// which the engine reads as ParamKeeper param 9 ('era'). It is the exact
+	// complement of BlockRatio: across all 21,560 rows no item carries both, and
+	// every non-zero block row is a shield while no non-zero parry row is.
+	// Carried but NOT YET CONSUMED -- it is the defender's half of the engine's
+	// damage centre, which srrevamp still rolls uniformly
+	// (docs/RE_COMPLETION.md, "The distribution is still uniform").
+	ParryRatioMin, ParryRatioMax float64
+	CriticalMin, CriticalMax     float64
 
 	// The per-instance HIGH ends of the eight weapon stats above, itemdata
 	// columns 96/98, 101/103 (attack) and 106/108, 110/112 (reinforce). Each

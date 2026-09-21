@@ -79,6 +79,12 @@ var itemCSVColumns = []string{
 	// an older export reads 0 and 0: no reuse delay, which is also what the
 	// engine does for every row without the descriptor.
 	"CooltimeGroup", "CooltimeMs",
+	// Appended later still (round 377): body armour's parry pair, itemdata
+	// columns 68/69, which the engine reads as ParamKeeper param 9 ('era').
+	// A strict suffix; an older export reads 0 and 0, which is what every
+	// non-armour row carries anyway -- the pair is the exact complement of
+	// BlockRatio, and no retail row has both.
+	"ParryRatioMin", "ParryRatioMax",
 }
 
 // ItemCSVColumnCount is how many columns LoadItemsCSV currently knows. Every
@@ -317,6 +323,10 @@ func parseItemRow(f []string) (Item, error) {
 		if len(f) > 65 {
 			it.CooltimeGroup = parseU32(f[64])
 			it.CooltimeMs = parseInt(f[65])
+		}
+		if len(f) > 67 {
+			it.ParryRatioMin = parseFloat(f[66])
+			it.ParryRatioMax = parseFloat(f[67])
 		}
 	}
 

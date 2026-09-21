@@ -83,6 +83,8 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS reinforce_rate3 BIGINT NOT NULL DEFAU
 -- (round 263).
 ALTER TABLE items ADD COLUMN IF NOT EXISTS cooltime_group BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE items ADD COLUMN IF NOT EXISTS cooltime_ms INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS parry_ratio_min DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS parry_ratio_max DOUBLE PRECISION NOT NULL DEFAULT 0;
 -- The potion restore amounts. REAL and exported since the Param block was
 -- decoded, and parsed by the CSV loader -- but there were no columns here, so
 -- ImportItems dropped them and every potion failed useitem's "cannot be used"
@@ -221,8 +223,9 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 			req_level_type4, req_level4, repair_cost, decay_time_ms,
 			phys_attack_min_hi, phys_attack_max_hi, mag_attack_min_hi, mag_attack_max_hi,
 			reinforce_phys_min_hi, reinforce_phys_max_hi, reinforce_mag_min_hi, reinforce_mag_max_hi,
-			attack_range, reinforce_rate1, reinforce_rate2, reinforce_rate3, cooltime_group, cooltime_ms
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66)
+			attack_range, reinforce_rate1, reinforce_rate2, reinforce_rate3, cooltime_group, cooltime_ms,
+			parry_ratio_min, parry_ratio_max
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68)
 		ON CONFLICT (id) DO UPDATE SET
 			type_id1=excluded.type_id1, type_id2=excluded.type_id2, type_id3=excluded.type_id3, type_id4=excluded.type_id4,
 			country=excluded.country, req_gender=excluded.req_gender,
@@ -256,7 +259,8 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 			reinforce_mag_min_hi=excluded.reinforce_mag_min_hi, reinforce_mag_max_hi=excluded.reinforce_mag_max_hi,
 			attack_range=excluded.attack_range,
 			reinforce_rate1=excluded.reinforce_rate1, reinforce_rate2=excluded.reinforce_rate2, reinforce_rate3=excluded.reinforce_rate3,
-			cooltime_group=excluded.cooltime_group, cooltime_ms=excluded.cooltime_ms
+			cooltime_group=excluded.cooltime_group, cooltime_ms=excluded.cooltime_ms,
+			parry_ratio_min=excluded.parry_ratio_min, parry_ratio_max=excluded.parry_ratio_max
 	`)
 	if err != nil {
 		return fmt.Errorf("refdata: preparing insert: %w", err)
@@ -279,6 +283,7 @@ func (s *SQLStore) ImportItems(ctx context.Context, items []Item) error {
 			it.ReinforcePhysMinHi, it.ReinforcePhysMaxHi, it.ReinforceMagMinHi, it.ReinforceMagMaxHi,
 			it.Range, int64(it.ReinforceRate1), int64(it.ReinforceRate2), int64(it.ReinforceRate3),
 			int64(it.CooltimeGroup), it.CooltimeMs,
+			it.ParryRatioMin, it.ParryRatioMax,
 		); err != nil {
 			return fmt.Errorf("refdata: inserting item %d: %w", it.ID, err)
 		}
@@ -304,7 +309,8 @@ func (s *SQLStore) GetItem(ctx context.Context, id int64) (*Item, error) {
 			req_level_type4, req_level4, repair_cost, decay_time_ms,
 			phys_attack_min_hi, phys_attack_max_hi, mag_attack_min_hi, mag_attack_max_hi,
 			reinforce_phys_min_hi, reinforce_phys_max_hi, reinforce_mag_min_hi, reinforce_mag_max_hi,
-			attack_range, reinforce_rate1, reinforce_rate2, reinforce_rate3, cooltime_group, cooltime_ms
+			attack_range, reinforce_rate1, reinforce_rate2, reinforce_rate3, cooltime_group, cooltime_ms,
+			parry_ratio_min, parry_ratio_max
 		FROM items WHERE id = $1`, id)
 	var rr [3]int64
 	var cg int64
@@ -322,6 +328,7 @@ func (s *SQLStore) GetItem(ctx context.Context, id int64) (*Item, error) {
 		&it.PhysAttackMinHi, &it.PhysAttackMaxHi, &it.MagAttackMinHi, &it.MagAttackMaxHi,
 		&it.ReinforcePhysMinHi, &it.ReinforcePhysMaxHi, &it.ReinforceMagMinHi, &it.ReinforceMagMaxHi,
 		&it.Range, &rr[0], &rr[1], &rr[2], &cg, &it.CooltimeMs,
+		&it.ParryRatioMin, &it.ParryRatioMax,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("refdata: querying item %d: %w", id, ErrItemNotFound)
@@ -354,7 +361,8 @@ func (s *SQLStore) ListAll(ctx context.Context) ([]*Item, error) {
 			req_level_type4, req_level4, repair_cost, decay_time_ms,
 			phys_attack_min_hi, phys_attack_max_hi, mag_attack_min_hi, mag_attack_max_hi,
 			reinforce_phys_min_hi, reinforce_phys_max_hi, reinforce_mag_min_hi, reinforce_mag_max_hi,
-			attack_range, reinforce_rate1, reinforce_rate2, reinforce_rate3, cooltime_group, cooltime_ms
+			attack_range, reinforce_rate1, reinforce_rate2, reinforce_rate3, cooltime_group, cooltime_ms,
+			parry_ratio_min, parry_ratio_max
 		FROM items ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("refdata: listing items: %w", err)
@@ -380,6 +388,7 @@ func (s *SQLStore) ListAll(ctx context.Context) ([]*Item, error) {
 			&it.PhysAttackMinHi, &it.PhysAttackMaxHi, &it.MagAttackMinHi, &it.MagAttackMaxHi,
 			&it.ReinforcePhysMinHi, &it.ReinforcePhysMaxHi, &it.ReinforceMagMinHi, &it.ReinforceMagMaxHi,
 			&it.Range, &rr[0], &rr[1], &rr[2], &cg, &it.CooltimeMs,
+			&it.ParryRatioMin, &it.ParryRatioMax,
 		); err != nil {
 			return nil, fmt.Errorf("refdata: scanning item: %w", err)
 		}

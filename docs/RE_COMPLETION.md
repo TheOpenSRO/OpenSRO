@@ -1953,11 +1953,10 @@ columns leave them zero and behave exactly as before — pinned by its own test.
   | player `hra` base = `10 + Level` | **grounded** (round 371, off the stat graph); not implemented |
   | player `hra` weapon term | **carried end to end** -- `Item.HitRateMin`, itemdata col 113, the verified Copper Sword tooltip value |
   | monster `hra`/`era` = `2*Level + 25` | **grounded** (characterdata cols 75/77); NOT in `monsterSpec` |
-  | player `era` armour term | **MISSING** -- `export-refdata` records "body armour carries the parry pair at 68" but nothing exports it, and `refdata.Item` has no parry field |
+  | player `era` armour term | **CARRIED (round 377)** -- itemdata cols 68/69 -> `Item.ParryRatioMin/Max`, through export -> CSV -> SQL. Not yet consumed |
 
-  So the **player -> monster** direction is portable today; **monster -> player**
-  is not, because the defender's parry has no armour term. Exporting itemdata
-  col 68 is the one blocking piece, and it is the next concrete step.
+  **Round 377 closed the missing piece.** All four inputs now exist; what remains
+  is arithmetic, not recovery. The one judgement left is the warning below.
 
   **A warning against porting it half-done**, because the arithmetic is
   counter-intuitive: with the bare base alone, a level-1 character has
@@ -6293,6 +6292,47 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 0x51c is 0x0d, 0x51d is 1. Resolving category -> message-name prefix would label
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
+
+Round 377 (the armour parry pair, grounded by a complementary census): ROUND 376
+NAMED EXPORTING ITEMDATA COL 68 as the one piece blocking the damage centre. Done,
+and the grounding turned out to be better than the claim it started from.
+
+THE CLAIM HAD EXACTLY ONE SOURCE, AND IT WAS A CODE COMMENT. tools/known.sh on
+"parry pair" returned only my own round-376 writing and a single unsourced line in
+export-refdata: "shields only; body armour carries the parry pair at 68". No
+RE_COMPLETION entry derives it. Worse, the recorded defence order (PD, ER, PAR,
+BR, MD, MAR) with fBlockRatio = 74 can be read to put PHYSICAL DEFENCE at 68
+rather than parry, so the comment was a coin-flip, not evidence.
+
+THE CENSUS SETTLES IT, AND COMPLEMENTARITY IS WHAT MAKES IT STRONG. Across all
+21,560 retail item rows: 9,663 carry a non-zero col 68 and NONE OF THEM IS A
+SHIELD; 500 carry a non-zero col 74 and EVERY ONE IS A SHIELD; and NO ROW CARRIES
+BOTH. Shields block, body armour parries. That is a mutual-exclusion result, not
+a plausible-looking distribution -- the failure mode where two columns merely
+"look right" cannot produce a clean partition of 10,163 rows.
+
+THREE SHIPPED COLUMNS WERE THE CONTROL on the indexing, checked on the same rows
+before the unknown one was believed: 65/66/67 is the PhysDefense (lo, hi, inc)
+triple, 74/75 the block pair, 76/77/78 the MagDefense triple -- all three match
+on both a shield and a body-armour row.
+
+WIRED END TO END: fParryRatio = 68 in the exporter, CSV columns 66/67,
+Item.ParryRatioMin/Max, and the SQL store's schema, insert, conflict clause and
+both scan sites. A WIDTH GUARD CAUGHT THE HALF-DONE VERSION -- the round-trip
+test reads refdata.ItemCSVColumnCount from the importer rather than repeating a
+number, and failed with "record has 68 fields, want the importer's 66" until the
+importer's own column list was extended too. That guard exists because the count
+had been hand-bumped three times before it did.
+
+NOT CONSUMED YET, AND SAID SO IN THE FIELD'S OWN COMMENT. The parry pair is the
+DEFENDER's half of the damage centre, which srrevamp still rolls uniformly. It
+sits the same way HitRateMin/Max already do -- carried, grounded, waiting on the
+distribution. What is left for the centre is arithmetic rather than recovery.
+
+**What moved:** one unsourced code comment replaced by a census over every retail
+item row, the last missing input to the damage centre carried end to end with a
+test, and a four-input assessment reduced to zero blockers. No behaviour changed,
+so no tag.
 
 Round 376 (the fourth consecutive tick that ended in my own file, and the centre
 finally costed): ROUND 375 CLOSED ITS PROBE AND LEFT "what the switch subject is,

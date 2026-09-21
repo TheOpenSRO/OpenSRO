@@ -167,6 +167,13 @@ func TestItemRecordCarriesArmourDefenceAndBlock(t *testing.T) {
 	set(fMagDefenseMin+1, "5.2")
 	set(fBlockRatio, "10")
 	set(fBlockRatio+1, "20")
+	// Body armour's parry pair, the exact complement of the block pair: across
+	// all 21,560 retail rows no item carries both, every non-zero block row is
+	// a shield and no non-zero parry row is (round 377). A row setting both is
+	// therefore not realistic -- this one does it so a single record exercises
+	// each column, which is what the surrounding assertions need.
+	set(fParryRatio, "4")
+	set(fParryRatio+1, "5")
 	set(fTwoHanded, "1")
 	set(fItemClass, "7")
 
@@ -193,6 +200,8 @@ func TestItemRecordCarriesArmourDefenceAndBlock(t *testing.T) {
 		{"MagDefenseMax", it.MagDefenseMax, 5.2},
 		{"BlockRatioMin", it.BlockRatioMin, 10},
 		{"BlockRatioMax", it.BlockRatioMax, 20},
+		{"ParryRatioMin", it.ParryRatioMin, 4},
+		{"ParryRatioMax", it.ParryRatioMax, 5},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("%s = %v, want %v", tc.name, tc.got, tc.want)

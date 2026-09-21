@@ -230,8 +230,20 @@ const (
 	fCanDrop        = 19
 	fTwoHanded      = 93
 	fPhysDefenseMin = 65
-	fBlockRatio     = 74 // shields only; body armour carries the parry pair at 68
-	fMagDefenseMin  = 76
+	fBlockRatio     = 74 // shields only -- see fParryRatio
+	// fParryRatio is BODY ARMOUR's parry pair, and it is the complement of
+	// fBlockRatio rather than a neighbour of it. Grounded 2026-09-21 (round 377)
+	// by a census of all 21,560 item rows: 9,663 carry a non-zero column 68 and
+	// NONE of them is a shield; 500 carry a non-zero column 74 and EVERY one is a
+	// shield; and NO row carries both. Shields block, body armour parries.
+	//
+	// Three shipped columns act as the control on the indexing, all matching on
+	// the same rows: 65/66/67 is the PhysDefense (lo, hi, inc) triple, 74/75 the
+	// block pair, 76/77/78 the MagDefense triple. The defence block's recorded
+	// order is PD, ER, PAR, BR, MD, MAR, which puts ER -- the parry rate the
+	// client names PARAM_ER and the engine reads as ParamKeeper param 9 -- at 68.
+	fParryRatio    = 68
+	fMagDefenseMin = 76
 	// The highest field any mapping reads: a row shorter than this is not a
 	// real item row and is skipped.
 	fMax = 117
@@ -569,6 +581,13 @@ func itemRecord(cols []string) ([]string, bool) {
 		// arms it for that many ms on success (round 263). 148 retail rows
 		// carry one; no HP/MP potion does.
 		cooltimeGroup, cooltimeMs,
+		// 66-67: body armour's parry pair, itemdata columns 68/69. The engine
+		// reads it as ParamKeeper param 9 ('era'), the defender's half of the
+		// damage centre. srrevamp models neither per-instance variance nor plus
+		// level, so the lo end is the value that applies -- the same rule the
+		// attack and reinforce pairs follow.
+		num(fParryRatio),     // 66 ParryRatioMin (body armour only)
+		num(fParryRatio + 1), // 67 ParryRatioMax
 	}, true
 }
 
