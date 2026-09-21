@@ -91,3 +91,71 @@ allowing an item to be used.
 passes the code on the stack. That is the same mismatch `ItemEventLog_Record` had,
 and it took reading the disassembly to resolve. Until that is done here, naming it
 would be guessing which operand is the state.
+
+## Sharpening the lever: rank by whether the callers are readable (round 344)
+
+A vocabulary is only worth recovering if its call sites can be *read*, and what
+made `AQ_Siege_SubmitQuery` readable was that its callers already carried the
+engine's own constant names. So the sweep now ranks candidates by **how many of
+their callers are already named**, with two filters: the corrected range guard
+(codes at or below `0x400`) and dropping the CRT address range, which otherwise
+fills the top with `__lock`, `_strlen`, `__calloc_crt` and `__isctype_l`.
+
+The three vocabularies already recovered rank 1st, 2nd and 4th among non-CRT
+hits, which is the control.
+
+### `COpenMarketMgr__PostAsyncQeury` (`0x0047b230`) — the open-market queries
+
+Same shape as the siege queries, and the function was already named (with the
+engine's own spelling). The callers are its `On*Req` handlers:
+
+| id | raised by |
+|---|---|
+| `0x0` | `COpenMarketMgr__OnPutonGoodsReq`, `COpenMarketMgr__OnPutoutGoodsReq` |
+| `0x1` | `COpenMarketMgr__OnReceiptReq` |
+| `0x4` | `COpenMarketMgr__OnSearchReq` |
+| `0x5` | `COpenMarketMgr__OnPurchaseGoodsReq` |
+| `0x7` | `COpenMarketMgr__OnGoodsDetailDataReq` |
+| `0x8` | `COpenMarketMgr__UpdateOpenMarketGoods` |
+
+### `0x0050cd80` — a guild/siege operation code
+
+9 codes across 41 sites. `0xf` is raised by `CGuildManager::HandleCreateGuild`
+and `GObjPC_HandleGuildMsg_0f1`; `0x17`, `0x18`, `0x19`, `0x1a`, `0x1b`, `0x1f`
+and `0x28` are all raised by `SiegeFortress_DispatchCommand`. The function is
+**not named here** — seven of its nine codes come from one caller, so the callers
+do not distinguish them, and what the code selects has not been read.
+
+## Two candidates closed as negatives
+
+### `0x0063d4a0` is infrastructure, not a character state test
+
+Round 343 deferred this one and guessed it "looks like a character state/mode
+test", because `Item_HandleUseItem` calls it with `0xc` and the other callers are
+`CanBeEquipedAt`, `EnterWorld`, `EnterScriptMode`, `SetBodyMode`. **The guess was
+wrong.**
+
+Read from disassembly: `ret 0x8`, so two stack arguments plus a register one —
+`f(EAX = index, object, code)`. The body indexes a 12-byte-stride table off a
+global at `ds:0xd6a9f0`, compares a generation counter against a "currently held"
+pointer, and falls into a noreturn SEH throw helper (`0x0063d800`) on mismatch.
+That is an ownership/re-entrancy guard, and **its own body never reads the code
+argument at all**. The callers are game logic; the function is not.
+
+### `0x00540d00`'s codes are neither AI messages nor AI states
+
+Its callers are `CAIState_FOLLOW::OnEnter`, `CAIState_HOMING::OnEnter`,
+`CAIState_BATTLE::OnEnter`, `CAIState_FLEE::OnEnter`, `CAIState_PICKITEM::OnEnter`
+— which makes an AI vocabulary look obvious. It was tested against both enums
+this project has already recovered, and fails both:
+
+- **Not `ai.Message`.** Those are `0x21`–`0x2b`; these codes are `0x0`–`0xa`.
+- **Not `ai.State`.** Those are `0`–`15`, so the range fits, and `BATTLE` passes
+  `0x3` while `StateBattle` is 3, and `FLEE` passes `0x4` while `StateFlee` is 4
+  — but `FOLLOW` passes `0x0` (which is `SPAWN`) and `HOMING` passes `0x2` (which
+  is `WANDER`). Two agreements out of five is what coincidence looks like in a
+  small dense range, and `BATTLE::OnEnter` passes three different codes anyway.
+
+So it is left unnamed. Recorded because the caller list makes a wrong reading
+attractive, and because having two independently recovered enums to test against
+is exactly what stopped it.

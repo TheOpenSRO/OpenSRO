@@ -6266,6 +6266,42 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 344 (one vocabulary, two negatives, and a guess of mine disproved): THE
+DEFERRED CANDIDATE RESOLVES AGAINST ME. Round 343 left 0x0063d4a0 unnamed and
+guessed it "looks like a character state/mode test", since Item_HandleUseItem
+calls it with 0xc alongside CanBeEquipedAt, EnterWorld, EnterScriptMode and
+SetBodyMode. Read from disassembly as that round prescribed: `ret 0x8`, so
+f(EAX = index, object, code); the body indexes a 12-byte-stride table off a
+global at ds:0xd6a9f0, compares a generation counter against a "currently held"
+pointer, and falls into a noreturn SEH throw helper on mismatch. **It is an
+ownership/re-entrancy guard, and its own body never reads the code argument at
+all.** The callers are game logic; the function is not. THE LEVER SHARPENED: a
+vocabulary is only worth recovering if its call sites can be READ, and what made
+AQ_Siege readable was that its callers already carried the engine's own constant
+names -- so the sweep now ranks by HOW MANY CALLERS ARE ALREADY NAMED, with the
+corrected range guard and the CRT range dropped (it otherwise fills the top with
+__lock, _strlen, __calloc_crt). The three known vocabularies rank 1st, 2nd and
+4th among non-CRT hits, which is the control. ONE NEW VOCABULARY:
+COpenMarketMgr__PostAsyncQeury (0x0047b230, already named, engine's own
+spelling) -- 0x0 PutonGoods/PutoutGoods, 0x1 Receipt, 0x4 Search, 0x5
+PurchaseGoods, 0x7 GoodsDetailData, 0x8 UpdateOpenMarketGoods, each from its own
+On*Req handler. AND A SECOND NEGATIVE THAT MATTERED MORE: 0x00540d00 is called
+by CAIState_FOLLOW/HOMING/BATTLE/FLEE/PICKITEM::OnEnter, which makes an AI
+vocabulary look obvious. TESTED AGAINST BOTH ENUMS THIS PROJECT HAS ALREADY
+RECOVERED AND IT FAILS BOTH: not ai.Message (those are 0x21-0x2b, these are
+0x0-0xa), and not ai.State either -- the range fits and BATTLE passes 0x3 while
+StateBattle is 3, FLEE passes 0x4 while StateFlee is 4, but FOLLOW passes 0x0
+(SPAWN) and HOMING passes 0x2 (WANDER), and BATTLE::OnEnter passes three
+different codes. Two agreements out of five is what coincidence looks like in a
+small dense range. LEFT UNNAMED -- and the only reason the wrong reading did not
+ship is that there were two independently recovered enums to test it against.
+0x0050cd80 also left unnamed: seven of its nine codes come from one caller
+(SiegeFortress_DispatchCommand), so the callers do not distinguish them.
+
+**What moved:** no shipped value and no names filed, which is the honest
+outcome. One vocabulary documented, the ranking sharpened with a control, and
+two attractive readings disproved -- one of them my own from last round.
+
 Round 343 (three vocabularies, an engine bound, and the guard I published was
 wrong): WORKED THE FOUR CANDIDATES ROUND 342 QUEUED, AND THE FIRST ONE BROKE THE
 GUARD THAT ROUND HAD JUST STATED. AQ_Siege's dispatcher has 29 codes across 29
