@@ -6375,6 +6375,39 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 400 (the Persistence probe was wrong on BOTH clauses, and that is the
+fourth stale tracker): WITH THE SAVE-SCOPE ARC CLOSED, the Persistence row's
+remaining probe read "no procedure's PARAMETERS are read and none of the 54
+runtime tables has a column layout". Both halves are false, and both were
+answered by this project years of rounds ago in its own files.
+
+THE COLUMN LAYOUTS EXIST. db_bind_columns.tsv and db_bind_offsets.tsv carry 56
+TABLES AND 409 COLUMN-TO-OFFSET ROWS, read from the DB_Bind__<TABLE> binders in
+round 307 -- against a row claiming "54 ... none". Round 394 had already cited
+those files in passing while looking for something else, which is how close the
+answer was.
+
+AND THREE PROCEDURE ARGUMENTS ARE READ. Round 285: _STRG_DEL_ITEM arg 3 and
+_STRG_MOVE_ITEM args 5/6 are storage SLOTS, established because THE SAME BYTES
+ARE PASSED TO CGStorage::GetItem -- "an argument that is also passed to a known
+accessor names itself", which is a reusable lever and now the row's next probe.
+Round 286 closed the neighbouring negative too: of 69 distinct procedure names
+only _STRG_MOVE_ITEM is issued with more than one format string, so the other 68
+can be read from any single call site.
+
+THIS IS THE FOURTH STALE TRACKER CLAIM IN THIS SESSION -- round 384 (the open
+list carried four already-closed items), round 390 (the Party row was four rounds
+behind), round 391 (the Shops probe pointed at a SPECIFIED system) and now this.
+In every one the correct answer was already in this project and one known.sh
+away. That rate is the finding: the trackers are not a record of what is open,
+they are a record of what was open WHEN LAST TOUCHED, and RE_LOOP.md now says so
+in those words.
+
+**What moved:** a tracker row wrong on both of its clauses corrected against the
+files that already answered it, the round-285 argument-naming lever promoted to
+the row's next probe, and the staleness rate recorded where the next tick reads
+it. No behaviour changed, so no tag.
+
 Round 399 (the ninth scope resists every lever, and each failure is measured):
 ROUND 398 PREDICTED +0x74 WOULD BE THE HARD ONE and named two reasons. This tried
 four levers and each one failed for a reason that can be stated as a number

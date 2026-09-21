@@ -206,6 +206,13 @@ identified `0x2c06`. All of that reached `party.md` and none of it reached the
 tracker, which is the "file answers where they are consumed" rule failing on the
 one page a tick uses to CHOOSE work.
 
+**Four trackers' claims have now been found stale, in four separate rounds** —
+round 384 (the RE_COMPLETION open list carried four already-closed items), round
+390 (SYSTEMS.md's Party row was four rounds behind), round 391 (its Shops probe
+pointed at a SPECIFIED system) and round 400 (its Persistence probe was wrong on
+*both* of its clauses). In every case the correct answer was already in this
+project and one `known.sh` away. **Assume a tracker claim is a claim.**
+
 A cheap staleness signal, measured in round 390: **17 of the 22 PARTIAL rows cite
 a round number or a date in their next probe; five do not** — Shops and the goods
 chain (a 26-character probe), Quest scripting, Battle arena, Persistence /
