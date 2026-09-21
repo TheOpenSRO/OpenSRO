@@ -135,7 +135,11 @@ project's own dump.
 than four vtables. **This is not hypothetical and the dump already has the
 problem:** 240 class-qualified names in it sit on a function shared by ten or
 more vtables, and 19 functions of four bytes or fewer are shared by ten or
-more. The worst is `0x0066b100`, a one-byte `ret` that 281 vtables point at,
+more. **Round 417 recounted: 444 such names**, of which the shortest-vtable rule
+agrees with 131 prefixes, calls **291 wrong**, and cannot decide 22. The top of
+that list is one systematic mistake — seven `CQuestAType` methods, each in
+160–186 vtables, all named after the arbitrary quest class `CQNO_RM_MEETROC_6`.
+None of the 291 has been renamed, because the rule is unvalidated. The worst is `0x0066b100`, a one-byte `ret` that 281 vtables point at,
 carrying the name `CGObjCOS_Summoned::SaveCurPosAsLastTelPosition`.
 
 Two different things are mixed in that 240, and they need different treatment:
@@ -148,7 +152,7 @@ Two different things are mixed in that 240, and they need different treatment:
   string) and only the *class prefix* is wrong, naming an arbitrary derived
   class instead of the base that declares it.
 
-`vtq.py owner <addr>` decides between the two. The rule it applies: among the
+`vtq.py owner <addr>` **does not exist** — vtq.py has `vt`, `diff`, `who`, `family` and `bases`, and never had `owner` (found in round 417). `tools/vt_owner.py` implements it, but **its rule is unvalidated and must not be used to rename in bulk**: the attempt to control it against the dump's own RTTI plates was inconclusive, because those chains are truncated before the root. The rule it applies: among the
 classes whose vtable holds the address, the declaring class is the most
 base-like — the shortest vtable — **provided the function sits at the same slot
 index in all of them and is at least ten bytes**.

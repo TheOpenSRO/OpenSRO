@@ -6405,6 +6405,47 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 417 (the doc told me to run a tool that does not exist; 291 wrong class
+prefixes found and none acted on): THE MOTION-STATE LEAD CLOSED AS A REFUTED
+HYPOTHESIS, AND THE DETOUR WAS WORTH MORE THAN THE LEAD. Round 415 suggested
+`CGObjPC` might override slot 63 with a getter reading some other field, which
+would explain both the missing writer and the compared values. It does not:
+`vtq.py who` shows `0x4aa590` — the seven-byte `return *(chardata + 2)` — sitting
+at **slot 63 of all seventeen** `CGObj`-derived vtables, `CGObjPC` included. So
+the PC's motion state IS `chardata + 2`, there is no per-class override, and
+round 416's controlled negative stands unexplained rather than dissolved.
+
+THE TOOL `RE_LOOP.md` TELLS YOU TO USE FOR THIS DOES NOT EXIST. That file says
+"`vtq.py owner <addr>` decides between the two" when a name sits on a shared
+function. `vtq.py` has `vt`, `diff`, `who`, `family` and `bases` — and never had
+`owner`. Implemented as `tools/vt_owner.py` and the doc corrected.
+
+AND THE PROBLEM IT WAS MEANT TO SOLVE IS BIGGER THAN RECORDED. `RE_LOOP.md` says
+240 class-qualified names sit on a function shared by ten or more vtables; the
+recount is **444**, of which the shortest-vtable rule agrees with 131 prefixes,
+calls **291 wrong**, and cannot decide 22. The worst is one systematic mistake:
+seven `CQuestAType` methods, each in 160–186 vtables, all carrying the name of
+the arbitrary quest class `CQNO_RM_MEETROC_6`. A wrong name is worse than no
+name — round 331's retraction came from exactly this.
+
+**AND I RENAMED NONE OF THEM, BECAUSE THE RULE IS NOT VALIDATED.** The control I
+ran — does the rule's answer appear in the function's own `RTTI hierarchy:`
+chain — returned 23.8 %. That looks like a refutation and is not one: those
+chains are **truncated**, routinely stopping before the root
+(`CGObjCOS_Mercenary : CGObjCOS_Summoned : CGObjCOS : CGObjNPC` never reaches
+`CGObj`), so the test cannot tell "rule wrong" from "chain incomplete". **A
+control that cannot distinguish the two is evidence for neither**, and acting on
+291 renames off an unvalidated rule would be the largest single mistake
+available this session. A real control needs the full hierarchy read out of the
+COL's ClassHierarchyDescriptor; that is the next step, and it is written down.
+
+ONE ROW FILED, ON A SECOND SOURCE RATHER THAN ON THE RULE. `0x484a20` is
+`CGItemMonsterCapsule::SetLifeState` and should be `CGObj::SetLifeState`: its
+own plate reads `RTTI hierarchy: CGObj : IGObj : CBase` **and** the rule
+independently answers `CGObj`. Filed with `force`, since the applier keeps the
+existing owner otherwise. Held unapplied with `0x514010` per round 411's
+batching rule. No behaviour changed, so no tag.
+
 Round 416 (a failing control found a bad probe; the motion-state writer is a
 controlled absence): I DOUBTED MY OWN ROUND-414 CENSUS AND THE DOUBT WAS WRONG,
 WHICH IS ALSO A RESULT. The worry was that matching `(**(code **)(*X + 0xfc))()`
