@@ -6266,6 +6266,37 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 347 (two names, and the "described but unnamed" gap sized at last): BACK
+TO THE SIZE-RANKED CORE WORKLIST, AND THE TOP ENTRIES NAME THEMSELVES.
+0x00593800 calls RollDurabilityLoss, ApplyHPMPDelta, HwanGainChance and
+AddHwanCount -- the engine's post-blow consequences -- AND THIS PROJECT HAD
+ALREADY DESCRIBED THE EXACT ADDRESS IN PROSE: durability.md calls it "The apply
+pass (FUN_00593800)" and reads its sequence, RollDurabilityLoss(0, action+6)
+once per action for the attacker's weapon then per target (1, +0x15) on armour
+and (2, +0x14) on the shield. Named Combat_ApplyActionEffects, and durability.md
+now uses the name it described. 0x00440120 is a 13-case switch issuing COS
+stored procedures -- {?=CALL _COS_Naming}, {?=CALL _ChangeCOSState},
+{?=CALL _DeleteCharCOS} -- with per-operation "AQ Failed!" logs; named
+COS_SubmitAsyncQuery, the same submitter shape as AQ_Siege_SubmitQuery and
+COpenMarketMgr__PostAsyncQeury. THAT WAS THE FIFTH TIME THIS SESSION A FUNCTION
+SAT DESCRIBED IN A DOCUMENT AND STILL READ FUN_ IN THE DUMP
+(MsgBuf_ReadUInt32FromTail, ItemEventLog_FormatRecord, SkillWithdraw_Execute,
+and now these two), EVERY ONE FOUND BY ACCIDENT -- so the search was made
+mechanical. Every 8-hex address anywhere in docs/ was cross-checked against the
+dump: **8,059 addresses cited, 4,796 are server functions, and 698 of those are
+still unnamed.** Filed as docs/protocol/described_but_unnamed.tsv, sorted by how
+many separate docs cite the address and then by size, with 127 rows cited by
+three or more docs. THE FILE SAYS PLAINLY WHAT IT IS NOT: **mentioned is not
+characterised**. Many rows are an address in a table or a call-graph listing, so
+698 is an UPPER BOUND on the backlog rather than a queue of ready-to-name
+functions -- but the top of that file is where a real description is most
+likely, and it turns five accidental finds into a list.
+
+**What moved:** no shipped value. Two core functions named and applied, one of
+them the post-blow apply pass that durability.md has described unnamed since it
+was written, and the recurring "described but unnamed" gap measured at 698 with
+an honest upper-bound caveat instead of being rediscovered a sixth time.
+
 Round 346 (the guard ships after all, and my own prescription was half wrong):
 ROUND 345 CONCLUDED THE FUNCTION-LEVEL GUARD "NEEDS A REAL CALL GRAPH
 (go/callgraph), NOT A GREP". Half right: it needs PARSING, but **go/ast is the

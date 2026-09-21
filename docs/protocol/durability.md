@@ -341,7 +341,7 @@ target:
   reads): that target's shield byte `+0x14 += 1` (line 459), and its armour byte
   too when `pc[0x34b] != 0` (line 465; that flag is not identified).
 
-The apply pass (`FUN_00593800`) then spends them: **once per action** for the
+The apply pass -- `Combat_ApplyActionEffects` (`0x00593800`), named in round 347 after this page had described it unnamed since it was written -- then spends them: **once per action** for the
 attacker, `RollDurabilityLoss(0, action+6)` -- so a single-target blow gives the
 weapon a 2% roll and a five-target skill a 10% one -- and **per target**
 `RollDurabilityLoss(1, +0x15)` and `RollDurabilityLoss(2, +0x14)` on the
