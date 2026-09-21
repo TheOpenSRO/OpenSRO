@@ -606,3 +606,62 @@ which is a cross-check that the ranking surfaces real work rather than noise.
 `0x0052aa90` (`CGObjPC::vslot_415`, 1,373 bytes) is also in the top 22 and is
 already documented as the one-second PC tick — another filing gap of the kind
 round 407 found, left for a round that can read it rather than just rename it.
+
+## A sibling's NAME is not a slot's CONTRACT (round 410, measured)
+
+Round 409 propagated `Tick` across seven `CTJ_*` classes and it was sound. The
+obvious generalisation — *wherever one override of a slot is named and its
+siblings are `vslot_`, copy the name* — was measured here and **is not sound**,
+which is worth stating because the first measurement of it looked excellent.
+
+**The first run reported 331 propagable overrides across 34 families. The real
+figure is 13, and none of them should be taken.** Two defects in my own probe
+produced the 25x overstatement:
+
+- **The grouping key shattered on namespaces.** Splitting the RTTI hierarchy
+  string on `':'` turns `AI::CMsg : CBase` into four fragments and collapses
+  unrelated roots to a blank key, so the biggest "families" were every class in
+  the binary merged together. Splitting on `' : '` fixes it: blank roots go from
+  the majority to **0**. The tell was visible in the output and nearly missed —
+  the largest families had an empty base-class column.
+- **`thunk_FUN_xxxxxxxx` counted as a name.** It is a thunk to an *unnamed*
+  function and carries no more meaning than `vslot_`. The same class of mistake
+  as counting `vslot_` as named in round 408.
+
+With both fixed: 3 unambiguous families, 13 overrides, and inspection rejects
+all three.
+
+| root | slot | sibling's name | why it does not propagate |
+|---|---:|---|---|
+| `CBase` | 2 | `GetJID` | a getter cannot be 220 bytes (`CRgnObject::vslot_002`); `CBase` is a generic root and its low slots differ by branch |
+| `CBase` | 306 | `CGItemEquip__DoJob` | the named sibling is an **item**; the four unnamed are game **objects** (`CGObjPC`, `CGObjSiegeStruct`, …) — a different branch |
+| `IQuest` | 4 | `SaveCurPosAsLastTelPosition` | that is what **one quest class does**, not what the slot means |
+
+**THE PRINCIPLE, AND WHY ROUND 409 WAS DIFFERENT.** An override's name describes
+*that class's behaviour*; a slot's contract is established by its **caller**.
+Round 409 did not read `Tick` off `CTJ_PenaltyKeeper` — it read it off
+`CTimedJobManagerForPC::UpdateAndReapJobs`, which calls `slot8(1.0f)` on every
+job and releases any that answers 0. The caller defines the contract for every
+implementation at once; a sibling's name defines nothing beyond itself.
+
+So this lever is **closed**, consistent with the earlier finding that
+vtable-slot-to-implementation propagation had "4 functions left".
+
+### The sound residue: virtuals that name themselves
+
+A function whose entire body is `return "<its own class name>";` needs no
+propagation — it is self-evidencing. Measured across the server dump: **3
+functions have a single-string-return body**, all three still unnamed, and
+**2 return exactly their owning class's name**. Both filed as `GetClassName`
+(the binary's own convention — `CInstanceTimedJob::GetClassName` already carries
+it): `CMsgException` (`0x404210`) and `CInternalException` (`0x404250`).
+
+The third, `FUN_0042f710`, calls `Assert_BreakIfDebugger` and returns
+`"Unknown"` — the un-overridden default for the same slot. **Not named**,
+because its hierarchy cannot be confirmed from the dump.
+
+**That probe also had to be controlled.** Its first version returned 0, which is
+a fact about the regex and not about the binary: it anchored `$` without
+`re.M` while matching a whole multi-line body. The control is now explicit — the
+run asserts that the known case, `CMsgException::vslot_001`, is in its own
+output.

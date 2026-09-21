@@ -6405,6 +6405,52 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 410 (the generalisation of round 409 measured at 331 and closed at 0, plus
+two functions that name themselves): I CAUGHT MY OWN PROBE OVERSTATING A LEVER
+BY 25x, AND THE CORRECTED ANSWER IS THAT THE LEVER DOES NOT EXIST. Round 409
+propagated `Tick` across seven `CTJ_*` classes soundly, so the obvious next step
+is the general rule: wherever one override of a slot is named and its siblings
+are `vslot_`, copy the name. The first measurement said **331 overrides across
+34 families**. The real figure is **13, and none of them should be taken.**
+
+TWO DEFECTS IN MY OWN PROBE, both the same species as round 408's. First, the
+grouping key **split the RTTI hierarchy on `':'`**, which shatters a namespace
+like `AI::CMsg : CBase` into fragments and collapses unrelated roots to a blank
+key — so the largest "families" were the whole binary merged. Splitting on
+`' : '` takes blank roots from the majority to **0**. The tell was printed in my
+own output (an empty base-class column on the biggest rows) and I nearly built
+on it. Second, **`thunk_FUN_xxxxxxxx` counted as a name**; it is a thunk to an
+unnamed function and means no more than `vslot_`, exactly the mistake round 408
+made with `vslot_` itself.
+
+AND THE 13 SURVIVORS ALL FAIL INSPECTION. `CBase` slot 2's named sibling is
+`GetJID`, but a getter cannot be the 220 bytes `CRgnObject::vslot_002` occupies.
+`CBase` slot 306's sibling is `CGItemEquip__DoJob` — an **item**, while the four
+unnamed are game **objects**, a different branch of a very generic root.
+`IQuest` slot 4's sibling is `SaveCurPosAsLastTelPosition`, which is what one
+quest class *does*, not what the slot *means*.
+
+THE PRINCIPLE, AND WHY ROUND 409 WAS DIFFERENT: **an override's name describes
+that class's behaviour; a slot's contract is established by its CALLER.** Round
+409 did not read `Tick` off `CTJ_PenaltyKeeper` — it read it off
+`CTimedJobManagerForPC::UpdateAndReapJobs`, which calls `slot8(1.0f)` on every
+job and releases any answering 0. A caller defines the contract for every
+implementation at once; a sibling's name defines nothing beyond itself. Recorded
+in `naming_ceiling.md` so the next round does not re-run this.
+
+THE SOUND RESIDUE, 2 NAMES. A virtual whose entire body is
+`return "<its own class name>";` is self-evidencing and needs no propagation.
+Three such functions exist in the server dump, all unnamed; two return exactly
+their owning class's name and are filed as `GetClassName` — the binary's own
+convention, already carried by `CInstanceTimedJob::GetClassName`:
+`CMsgException` (`0x404210`) and `CInternalException` (`0x404250`). The third,
+`FUN_0042f710`, asserts and returns `"Unknown"` — the un-overridden default —
+and is NOT named, because its hierarchy cannot be confirmed. **applied 2,
+failed 0**; `PROJSTAMP` cleared. That probe needed a control too: its first
+version returned 0, which was a fact about the regex (`$` without `re.M` against
+a multi-line body), not about the binary; it now asserts the known case appears
+in its own output. No behaviour changed, so no tag.
+
 Round 409 (the worklist recomputed on round 408's core, and a slot propagation
 worth eight names): THE HONEST SIZE OF WHAT IS LEFT TO READ IS 878,748 BYTES,
 NOT 411,570. Round 338 ranked the unnamed game-logic core by SIZE — its own
