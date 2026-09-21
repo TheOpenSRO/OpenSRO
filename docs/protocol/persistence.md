@@ -383,10 +383,10 @@ sub-save:
 | mask | sub-object saved | handler |
 |---|---|---|
 | `0x80` | `this` itself | `0x4a7180` |
-| `0x40` | `this + 0x1c10` | `0x4b7b50` |
+| `0x40` | `this + 0x1c10` — **a storage, probably the inventory** | `0x4b7b50` |
 | *(always)* | `this + 0x1ce8` — **the summoned COS** | `0x4fc770` |
 | `0x10` | `this + 0x1d98` — **the quest state** | `0x56fdf0` |
-| `0x01` | `this + 0x1d74` | `0x4b7b50` (same handler as `0x40`, different sub-object) |
+| `0x01` | `this + 0x1d74` — **a second storage** | `0x4b7b50` (same handler as `0x40`, different sub-object) |
 | `0x100` | `this + 0x1dfc` — **the timed-job list** | `0x656220` |
 | `0x200` | `this + 0x74` | `0x484300` |
 | `0x400` | `this + 0x1fb4` — **the job (Trijob) manager** | `0x60e240` |
@@ -436,8 +436,40 @@ is the three-job system and is already established here independently:
 `CInstanceCharTrijob::HandleJoinJobGuild` "reads a job-kind byte and accepts only
 1, 2 or 3", and `JobGuild_HandleWithdraw` answers `0xb0e2`.
 
-**`+0x22d0` is still unnamed, and the reason is recorded rather than worked
-around:** there is **no `__FILE__` assert anywhere below it** — it sits near the
+### The bracketing rule, corrected by its own control (round 396)
+
+Applying the `__FILE__` lever to the remaining members needed a rule for which
+assert names a translation unit. The first rule tried — *the same filename above
+and below* — **fails on the known-good case**: `+0x1fb4` is bracketed by
+`TrijobMgr.cpp` below and `EventDaemon_Action.cpp` above, yet it is TrijobMgr.
+
+What the control actually shows is that **proximity decides, not direction**. Its
+assert sits **0x1a0 below**, with the next one 0x84e60 away. Measured that way:
+
+| member | nearest assert | distance | verdict |
+|---|---|---|---|
+| `+0x1fb4` *(control)* | `TrijobMgr.cpp`, below | `0x1a0` | **safe** |
+| `+0x1c10` / `+0x1d74` | `GStorage.cpp`, above | `0x340` | **likely** |
+| `+0x74` | `GObj.cpp`, above | `0x880` | borderline |
+| `this` | `GItemExpendable.cpp` below / `GObjChar.cpp` above | `0x8300` / `0x4210` | **unsafe** |
+| `+0x22d0` | none below; `Formulae.cpp` above | `0x7340` | **unsafe** |
+
+**`+0x1c10` and `+0x1d74` are storages**, and three things converge on it: the
+`GStorage.cpp` assert 832 bytes away; this project's own record of the inventory
+**near `+0x1c2c`**, adjacent to `+0x1c10`; and round 392's read of their shared
+handler `0x4b7b50`, a string-building loop bounded by a count at `[obj+0x20]` —
+the shape of walking storage slots. Two members sharing one handler is what a
+character having two storages looks like.
+
+**Stated at that strength and no higher:** the assert is *above* rather than
+inside, so this is the better-supported of two readings, not a settled one. Which
+storage each of the two is has not been established.
+
+**`this` and `+0x22d0` are not named**, and the numbers say why: the nearest
+assert is 16 KB and 29 KB away respectively. The lever that worked at 0x1a0 has
+nothing to offer at that range.
+
+**`+0x22d0`'s own reason, recorded rather than worked around:** there is **no `__FILE__` assert anywhere below it** — it sits near the
 start of `.text` — and the nearest above is `Formulae.cpp` at `0x40f5f0`, some
 0x7a00 further on and a known separate unit. Its translation unit simply carries
 no assert to name it.

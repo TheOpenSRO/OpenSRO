@@ -6375,6 +6375,36 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 396 (the bracketing rule was wrong, and its own control said so): ROUND
+395's ASSERT LEVER NAMED ONE MEMBER; this applies it to the rest. Doing that
+needed a rule for WHICH assert names a translation unit, and the first rule I
+wrote -- the same filename above and below -- FAILS ON THE KNOWN-GOOD CASE.
++0x1fb4 is bracketed by TrijobMgr.cpp below and EventDaemon_Action.cpp above, and
+it is TrijobMgr. Had the control not been in the batch, three members would have
+been named by a rule that cannot reproduce the one answer already known.
+
+WHAT THE CONTROL ACTUALLY SHOWS IS THAT PROXIMITY DECIDES, NOT DIRECTION: its
+assert sits 0x1a0 below, with the next 0x84e60 away. Measured that way the
+remaining members separate cleanly into nameable and not.
+
++0x1c10 AND +0x1d74 ARE STORAGES, and three independent things converge:
+GStorage.cpp 832 bytes away; this project's own record of the inventory near
++0x1c2c, ADJACENT to +0x1c10; and round 392's read of their shared handler
+0x4b7b50 as a string-building loop bounded by a count at [obj+0x20], the shape of
+walking storage slots. Two members sharing one handler is what a character with
+two storages looks like. STATED AS LIKELY AND NOT SETTLED -- the assert is above
+rather than inside, and which storage each one is has not been established.
+
+THE OTHER TWO ARE NOT NAMED AND THE NUMBERS SAY WHY. The `this` scope's nearest
+assert is 0x8300 below and 0x4210 above; +0x22d0 has none below at all and
+0x7340 above. A lever that works at 0x1a0 has nothing to offer at 16 KB and
+29 KB, and saying so is the result rather than a failure to report.
+
+**What moved:** two more save scopes identified to a stated confidence, a rule
+corrected by the control that was deliberately included to test it, and the two
+members the lever genuinely cannot reach marked with the distance that makes them
+unreachable. No behaviour changed, so no tag.
+
 Round 395 (the co-location pattern pays off: +0x1fb4 is the job manager): ROUND
 394 REPLACED "read 44 scattered sites" WITH "read one translation unit per
 member". The unit is named by the lever this project trusts most -- a __FILE__
