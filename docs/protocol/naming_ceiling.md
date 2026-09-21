@@ -432,9 +432,36 @@ The second is too noisy to alarm on, for two reasons worth separating:
   orphan. Same-file callers are callers. The 68 and the 252 are both inflated by
   this and neither is a true count.
 
-So no guard ships. What the package-level test catches, it catches; the
-function-level generalisation needs a real call-graph (`go/callgraph`), not a
-grep, and that is the honest next step if it is wanted.
+So no *grep-based* guard ships. **Round 346 shipped the guard anyway**, and this
+paragraph's own prescription was half wrong: it does need parsing, but not
+`go/callgraph` or any dependency — `go/ast` is the standard library, and an AST
+walk has neither failure, because `ast.Ident` nodes are code and comments are
+not part of the expression tree at all. See
+`server/internal/systems/orphans_test.go`.
+
+The detector's control is the case both greps missed: `WithdrawCostForLevels` is
+referenced exactly once outside its declaration, **in its own doc comment**, so a
+comment-blind detector must report it and a comment-counting one cannot. The
+opposite direction is asserted too — `KillExp` and `MitigateDamage` must not be
+reported — and a throwaway exported function was added to `internal/mana` to
+confirm the test fails on a genuinely new orphan before being removed again.
+
+After excluding the wire-decoding surface and the packages `unwired_test.go`
+already declares parked, **46 orphans remain**. They ship as a labelled
+*baseline*: listing one is not a claim that it is fine, only that it is not new.
+Two classes were obvious on the first run:
+
+- `CombatHandler` and `UseSkillHandler` were **superseded by the `...WithDrops`
+  constructors added in round 332** when the real drop tables were wired.
+  `cmd/server` calls the new ones; these survive only in tests.
+- `NewRollingByte`, `NewPacketChecksum` and `DeriveSeed` are the packet-security
+  primitives, unwired because session crypto is not implemented — which
+  `PACKET_FORMAT.md`'s status list already says.
+
+And `CapDamage` is in the baseline rather than flagged as a bug: its own comment
+says the engine's 16,777,215 ceiling "is unreachable with today's content" and
+exists so it is cited rather than discovered as a divergence later. Deliberate,
+and disclosed at the definition.
 
 **`skill.WithdrawCost` stands as the third instance**, and it is *disclosed* —
 `docs/protocol/skill_withdraw.md` opens by saying srrevamp offers no withdrawal

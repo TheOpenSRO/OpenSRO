@@ -6266,6 +6266,40 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 346 (the guard ships after all, and my own prescription was half wrong):
+ROUND 345 CONCLUDED THE FUNCTION-LEVEL GUARD "NEEDS A REAL CALL GRAPH
+(go/callgraph), NOT A GREP". Half right: it needs PARSING, but **go/ast is the
+standard library** -- no dependency, and an AST walk has neither grep failure,
+because ast.Ident nodes are code and comments are not part of the expression
+tree at all. Shipped as server/internal/systems/orphans_test.go. THE CONTROL IS
+THE CASE BOTH GREPS MISSED: WithdrawCostForLevels is referenced exactly once
+outside its declaration, IN ITS OWN DOC COMMENT, so a comment-blind detector must
+report it and a comment-counting one cannot. The opposite direction is asserted
+too (KillExp and MitigateDamage must NOT be reported), and a throwaway exported
+function was added to internal/mana to confirm the test fails on a genuinely new
+orphan before being removed again. ALSO CONFIRMED EN ROUTE THAT ROUND 345'S
+OTHER NUMBER WAS MY BUG: fixing the same-file-caller mistake took the grep from
+252 orphans to 70, and all 70 were Decode* in internal/session -- the wire
+surface the Godot client consumes, legitimately uncalled from Go. AFTER
+EXCLUDING THAT AND THE PACKAGES unwired_test.go ALREADY DECLARES PARKED, 46
+REMAIN, shipped as a LABELLED BASELINE: listing one is not a claim that it is
+fine, only that it is not NEW. TWO CLASSES WERE OBVIOUS ON THE FIRST RUN, and
+one is mine: CombatHandler and UseSkillHandler were SUPERSEDED BY THE ...WithDrops
+CONSTRUCTORS I ADDED IN ROUND 332 when the real drop tables were wired --
+cmd/server calls the new ones and these survive only in tests; and
+NewRollingByte/NewPacketChecksum/DeriveSeed are the packet-security primitives,
+unwired because session crypto is not implemented, which PACKET_FORMAT.md's
+status list already states. CapDamage is in the baseline rather than flagged as
+a fourth bug: its own comment says the 16,777,215 ceiling "is unreachable with
+today's content" and exists so it is cited rather than discovered as a
+divergence later -- deliberate, and disclosed at the definition.
+
+**What moved:** no shipped value. The third-time-lucky guard for a bug class
+that has bitten three times and been caught by accident every time, with a
+control that reproduces the exact failure its two predecessors had, and a
+46-entry baseline that is honestly labelled as unreviewed rather than
+rubber-stamped.
+
 Round 345 (two skill names, and a guard idea killed by measurement): THE
 SIZE-RANKED WORKLIST'S NEXT TWO ENTRIES SIT BESIDE Mastery_LevelUp IN BOTH THE
 ADDRESS SPACE AND THE EVENT-KIND SPACE -- 0x1a is Mastery_LevelUp, 0x1b is
