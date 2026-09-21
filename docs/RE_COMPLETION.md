@@ -6266,6 +6266,39 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 352 (a shipped value, found by checking the OTHER half of a rule):
+ROUND 351 CHECKED THREE RECOVERED RULES AND ALL THREE HELD; THIS ONE FOUND A
+HALF THAT DID NOT. A skill's cast requirement wants the item PRESENT AND
+SERVICEABLE: Skill_CheckCastRequirement (0x0058d480, named in round 348) returns
+0x300f when vtable slot 372, 399 or 400 answers 0, and the client's own name for
+0x300f is UIIT_SKILL_USE_FAIL_BROKEN_WEAPON, so igobj_vtable.md reads those three
+as serviceability predicates. **srrevamp honoured only the other consequence of
+breakage.** A broken item already contributed no stats -- the combat sums skip
+it, matching the engine dropping its ParamKeeper entry -- but THE CAST WENT
+THROUGH ANYWAY, so a broken weapon cost you its damage and nothing else. It now
+refuses. THE HELPER WAS ALREADY WRITTEN AND UNUSED: wornBroken had sat in
+combat_durability.go with zero callers, which is the same
+recovered-implemented-unwired shape as the HP regen, the drop tables and the
+skill-reset cost -- the fourth instance, and the first one found by going
+looking rather than by accident. It is UNEXPORTED, so round 346's orphan
+detector could not see it; that detector only walks exported declarations, which
+is a real limit now written into this entry rather than discovered later. WHAT
+IS NOT MODELLED, SAID AT THE CALL SITE: three engine predicates collapse into
+one test, durability at zero, because only their shared consequence is recovered
+-- an error code gives a meaning, not a symbol. The 'reqi' branch's per-slot
+serviceability is not modelled either, because SkillAllowsEquipment reports
+whether the worn set satisfies the list, not WHICH slot matched, so there is no
+item to test without changing what it returns. A lookup failure permits the
+cast, as every other gate there does. THE TEST CATCHES A REAL REGRESSION: the
+first revert-check did not compile (removing the call made wornBroken unused),
+which proved nothing, so it was redone with a bug that builds -- reading the
+SHIELD slot instead of the weapon -- and the test fails on exactly the broken
+case.
+
+**What moved: A SHIPPED VALUE.** A broken weapon now refuses a skill cast, which
+is the engine's behaviour and was not srrevamp's. Tagged, because this is the
+first player-visible change since v0.1.418.
+
 Round 351 (three recovered rules checked against shipped code, and an evidence
 text corrected): THE NAMING LANE SHIPS NOTHING A PLAYER SEES, SO THIS TICK
 CHECKED RECOVERED RULES AGAINST THE RUNNING CODE INSTEAD. Three were tested and

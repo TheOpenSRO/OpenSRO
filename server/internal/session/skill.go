@@ -675,6 +675,28 @@ func useSkillHandler(
 				if known && !combat.SkillAllowsWeapon(reqWeapon1, reqWeapon2, t3, t4) {
 					return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "wrong weapon for this skill"}).Encode()})
 				}
+				// SERVICEABILITY, the other half of the cast requirement
+				// (2026-09-21). A cast requirement wants the item present AND
+				// NOT BROKEN: Skill_CheckCastRequirement (0x0058d480) returns
+				// 0x300f when vtable slot 372, 399 or 400 answers 0, and the
+				// client names 0x300f UIIT_SKILL_USE_FAIL_BROKEN_WEAPON -- see
+				// docs/protocol/igobj_vtable.md, which reads those three as
+				// serviceability predicates.
+				//
+				// srrevamp already dropped a broken item's STATS (the combat
+				// sums skip it, matching the engine dropping its ParamKeeper
+				// entry) but still let the cast through, so a broken weapon
+				// cost you its damage and nothing else. It now refuses.
+				//
+				// WHAT IS NOT MODELLED, said plainly: the engine has THREE
+				// predicates and this collapses them into one test, durability
+				// at zero, because only their shared consequence is recovered
+				// -- an error code gives a meaning, not a symbol, and those
+				// three method names are still unknown. A lookup failure
+				// permits the cast, the same choice every other gate here makes.
+				if broken, ok := weaponIsBroken(ctx, characterID, eq); ok && broken {
+					return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "your weapon is broken"}).Encode()})
+				}
 			}
 		} else if len(reqCastReqs) > 0 {
 			// The OTHER branch, recovered 2026-09-16. When the skill carries a
@@ -1270,6 +1292,18 @@ func RaiseMasteryHandler(chars character.Store, store skill.Store) gateway.Handl
 // indistinguishable from an empty hand by value alone. Treating that as bare
 // hand would refuse every weapon-requiring skill to a character holding a
 // perfectly good sword, on a deployment whose only fault is an old import.
+// weaponIsBroken reports whether the worn weapon sits at zero durability, and
+// whether the answer is trustworthy. It is the serviceability half of the cast
+// requirement -- see the call site for the recovery and for the three engine
+// predicates this collapses into one.
+func weaponIsBroken(ctx context.Context, characterID int64, eq equipment.Store) (broken, known bool) {
+	equipped, err := eq.Get(ctx, characterID)
+	if err != nil {
+		return false, false
+	}
+	return wornBroken(equipped, equipment.SlotWeapon), true
+}
+
 func equippedWeaponType(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (typeID3, typeID4 int, known bool) {
 	equipped, err := eq.Get(ctx, characterID)
 	if err != nil {

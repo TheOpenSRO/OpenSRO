@@ -397,3 +397,30 @@ them. `outside` is not: it reports and passes, because a new one means *read
 that address* before calling it wrong. The two `client`/`server` mislabels the
 Go test's header remembers are exactly the `wrong-binary` case, and there are
 none left.
+
+## A broken weapon now refuses the cast (2026-09-21)
+
+**RECOVERED, and half of it was already shipped.** A skill's cast requirement
+wants the required item *present and serviceable*:
+`Skill_CheckCastRequirement` (`0x0058d480`) returns **`0x300f`** when vtable slot
+372, 399 or 400 answers 0, and the client's own name for `0x300f` is
+**`UIIT_SKILL_USE_FAIL_BROKEN_WEAPON`** — so those three slots are serviceability
+predicates (`docs/protocol/igobj_vtable.md`).
+
+srrevamp already honoured the *other* consequence of breakage: a broken item
+contributes no stats, which the combat sums implement by skipping it, matching
+the engine dropping its ParamKeeper entry (`durability.md`). But the **cast went
+through anyway**, so a broken weapon cost you its damage and nothing else. It now
+refuses.
+
+**What is NOT modelled, and why.** The engine has *three* predicates; this
+collapses them into one test — durability at zero — because only their shared
+consequence is recovered. An error code gives a meaning, not a symbol, and those
+three method names are still unknown. The `reqi` branch's per-slot
+serviceability is not modelled either: `combat.SkillAllowsEquipment` reports
+whether the worn set satisfies the list, not *which* slot matched, so there is
+no item to test for breakage without changing what that function returns.
+
+A lookup failure permits the cast, the same choice every other gate in that
+function makes for the same reason — reference data is the operator's, and a
+fresh deployment must not be locked out of its skills.
