@@ -92,3 +92,100 @@ func TestDamageCentreFallsBackToUniform(t *testing.T) {
 		}
 	}
 }
+
+// The monster's half of the port (round 379): its counterattack takes the same
+// centre-biased roll with the sides swapped. Deterministic here, because this
+// package's TestMain nils the damage generator -- the uniform fallback returns
+// the maximum and the centre roll returns the centre exactly.
+func TestMonsterBlowTakesTheCentre(t *testing.T) {
+	// A level-1 monster striking for 100..200. Its attack rate is 2*1+25 = 27.
+	m := combat.Monster{Level: 1, AttackMin: 100, AttackMax: 200, Attack: 7}
+
+	// An UNARMOURED-in-data player: no parry, so the uniform fallback, which
+	// under the nil generator is the maximum. This is the guard that keeps
+	// deployments whose item table predates itemdata col 68 exactly as they
+	// were.
+	if got := monsterBlow(m, 1, 0); got != 200 {
+		t.Errorf("no parry data: blow = %d, want the uniform fallback's 200", got)
+	}
+
+	// A well-armoured player: parry 60 gives era = 10 + 1 + 60 = 71, so the
+	// centre is 27/71 * 0.5 = 19.0 %, and the blow is 100 + 0.190*100 = 119.
+	if got := monsterBlow(m, 1, 60); got != 119 {
+		t.Errorf("armoured: blow = %d, want 119 (centre 19.0 %%)", got)
+	}
+
+	// A barely-armoured player: parry 2 gives era = 13, centre = 27/13*0.5 =
+	// 103.8 %, which clamps to the ceiling 90 % -> 190. The clamp is REACHABLE
+	// on the monster's side in a way it never is on the player's, because a
+	// monster out-rates a lightly armoured character badly.
+	if got := monsterBlow(m, 1, 2); got != 190 {
+		t.Errorf("barely armoured: blow = %d, want 190 (centre clamped to 90 %%)", got)
+	}
+
+	// A monster with no damage range at all keeps the flat disclosed Attack,
+	// unchanged by any of this.
+	flat := combat.Monster{Level: 1, Attack: 7}
+	if got := monsterBlow(flat, 1, 60); got != 7 {
+		t.Errorf("no range: blow = %d, want the flat 7", got)
+	}
+}
+
+// defenderParryRate sums the worn BODY ARMOUR's parry, and that division is the
+// data's own: across all 21,560 retail rows no shield carries a parry and no
+// armour carries a block ratio (round 377). A shield with a parry value is not
+// a real row; it is here to pin that the walk excludes the slot rather than
+// relying on retail data to be zero there.
+func TestDefenderParryRate(t *testing.T) {
+	ctx := context.Background()
+	items := refdata.NewMemStore()
+	mk := func(id int64, parry float64) refdata.Item {
+		return refdata.Item{ID: id, MaxStack: 1, DurabilityMin: 10, DurabilityMax: 10,
+			ParryRatioMin: parry,
+			TypeID1:       equipment.TypeItem, TypeID2: equipment.TypeEquipment,
+			Country: equipment.CountryChina}
+	}
+	if err := items.ImportItems(ctx, []refdata.Item{mk(300, 4), mk(301, 6), mk(302, 99)}); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	inv := inventory.NewMemStore(items)
+	inv.SetDurabilityLookup(items)
+	eq := equipment.NewMemStore(inv)
+
+	// No armour at all: zero, which the caller reads as "no data" and falls
+	// back to the uniform roll.
+	if got, err := defenderParryRate(ctx, 1, eq, items); err != nil || got != 0 {
+		t.Fatalf("bare: got %v (err %v), want 0", got, err)
+	}
+
+	for i, id := range []int64{300, 301, 302} {
+		if err := inv.AddItem(ctx, 1, id, 1); err != nil {
+			t.Fatalf("add %d: %v", id, err)
+		}
+		_ = i
+	}
+	if err := eq.Equip(ctx, 1, equipment.SlotHelm, 0); err != nil {
+		t.Fatalf("equip helm: %v", err)
+	}
+	if err := eq.Equip(ctx, 1, equipment.SlotMail, 1); err != nil {
+		t.Fatalf("equip mail: %v", err)
+	}
+	// Two armour pieces sum.
+	if got, err := defenderParryRate(ctx, 1, eq, items); err != nil || got != 10 {
+		t.Errorf("helm+mail: got %v (err %v), want 10", got, err)
+	}
+	// The shield is excluded even carrying 99.
+	if err := eq.Equip(ctx, 1, equipment.SlotShield, 2); err != nil {
+		t.Fatalf("equip shield: %v", err)
+	}
+	if got, err := defenderParryRate(ctx, 1, eq, items); err != nil || got != 10 {
+		t.Errorf("with a shield: got %v (err %v), want 10 -- shields block, they do not parry", got, err)
+	}
+	// A broken piece parries for nothing, the same rule the defence walk uses.
+	if err := eq.SetDurability(ctx, 1, equipment.SlotMail, 0); err != nil {
+		t.Fatalf("break mail: %v", err)
+	}
+	if got, err := defenderParryRate(ctx, 1, eq, items); err != nil || got != 4 {
+		t.Errorf("broken mail: got %v (err %v), want 4 -- only the helm", got, err)
+	}
+}

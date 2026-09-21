@@ -1950,8 +1950,14 @@ columns leave them zero and behave exactly as before — pinned by its own test.
   rate, itemdata col 113) and `MonsterRate(level) = 2*level + 25`
   (characterdata cols 75/77, the same on every monster row).
 
-  **GUARDED TWICE, and both guards fall back to the uniform roll rather than to
-  a floored blow:** a defender with no parry rate, and a weapon whose attack rate
+  **Both directions are ported (round 379).** The monster's counterattack takes
+  the same roll with the sides swapped -- its `2*level + 25` against the
+  player's parry, summed from worn BODY ARMOUR only (`defenderParryRate`;
+  shields block, armour parries, which is the data's own division). A broken
+  piece parries for nothing, the same rule the defence walk uses.
+
+  **GUARDED TWICE ON EACH SIDE, and every guard falls back to the uniform roll
+  rather than to a floored blow:** a defender with no parry rate, and a weapon whose attack rate
   is 0 -- which means an item table imported before col 113 existed, not a weapon
   that cannot hit. Without the second guard every blow on a data-less deployment
   would land near the floor, which is the failure round 376 predicted and which
@@ -6289,6 +6295,38 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 0x51c is 0x0d, 0x51d is 1. Resolving category -> message-name prefix would label
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
+
+Round 379 (the monster's half of the centre, and a consumer for round 377's
+parry pair): ROUND 378 WIRED ONLY THE PLAYER'S ATTACK. The monster's
+counterattack still rolled uniformly, and Item.ParryRatioMin -- carried in round
+377 specifically for this -- had no consumer at all. Both closed.
+
+THE SIDES SWAP AND NOTHING ELSE CHANGES: the monster's attack rate (2*level +
+25) against the player's parry rate (10 + level + worn armour). defenderParryRate
+sums BODY ARMOUR ONLY, and that is the data's own division rather than a choice
+-- round 377's census found 9,663 rows with a parry and none a shield, 500 with a
+block ratio and every one a shield, and no row with both. A broken piece parries
+for nothing, the rule the defence walk beside it already uses.
+
+THE LO END IS TAKEN AND THE REASON IS RECORDED. defenderDefence interpolates its
+pairs through a recovered per-instance variance group; NO SUCH GROUP IS
+RECOVERED FOR PARRY. Reusing that walk would have claimed a group this project
+does not have, so the parry walk is its own and takes lo -- the documented rule
+for the field. That is a smaller, checkable claim rather than a borrowed one.
+
+THE FULL SUITE PASSED IMMEDIATELY, WHICH WAS THE WARNING SIGN. No existing
+fixture carries armour parry, so every test took the fallback and the new path
+was never exercised -- a guard that is always false is indistinguishable from a
+feature that was never wired. The counterattack's roll is therefore extracted
+into monsterBlow and tested directly: no parry -> the uniform maximum; parry 60
+-> a 19 % centre and a blow of 119; parry 2 -> the ceiling. THE CEILING IS
+REACHABLE ON THE MONSTER'S SIDE in a way it never is on the player's, because a
+monster badly out-rates a lightly armoured character -- pinned so nobody reads
+the clamp as dead code.
+
+**What moved:** the port is symmetric, round 377's parry pair has a consumer,
+and the new path is proved live rather than assumed. Player-visible, so this
+tags.
 
 Round 378 (the damage centre ported, and two of my own expectations refuted by
 the tests): ROUND 377 LEFT ZERO BLOCKERS and said what remained was arithmetic.

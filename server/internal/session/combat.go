@@ -1225,7 +1225,20 @@ func performAttack(
 		// flat disclosed Attack remains only for a monster with no range.
 		raw := monster.Attack
 		if monster.AttackMax > 0 {
-			raw = rollDamage(monster.AttackMin, monster.AttackMax)
+			// WHERE in that range the blow lands is the same centre-biased
+			// roll the player's attack takes, with the sides swapped: the
+			// monster's attack rate (2*level + 25) against the player's parry.
+			//
+			// Guarded the same way, and for the same reason: a player with no
+			// armour parry at all means an item table imported before itemdata
+			// col 68 existed, and treating that as a real zero would put every
+			// monster blow at the 90 % ceiling on exactly the deployments that
+			// have imported least.
+			parry, perr := defenderParryRate(ctx, characterID, eq, items)
+			if perr != nil {
+				parry = 0
+			}
+			raw = monsterBlow(monster, playerLevel, parry)
 		}
 		// The player's side of the SAME mitigation the monster gets, through
 		// the same function -- percentage term first, then the flat absorb.
@@ -1518,6 +1531,70 @@ func weaponInstance(e equipment.Equipped) combat.Instance {
 // (Untracked -- no reference data to roll from) still counts at the top of
 // its range, as it always did; a broken piece counts nothing (the publisher
 // zeroes params 5/6 while the item's broken flag, item+0x190, is set).
+// monsterBlow rolls a monster's counterattack: WHERE in its skill's damage
+// range the blow lands, by the same centre-biased roll the player's attack
+// takes with the sides swapped -- the monster's attack rate (2*level + 25)
+// against the player's parry rate.
+//
+// A parry of 0 takes the uniform roll instead. That is a fallback, not a
+// defender who cannot parry: every character has the innate 10, so a zero here
+// means the item table was imported before itemdata col 68 existed, and
+// treating it as real would put every monster blow at the 90 % ceiling on
+// exactly the deployments that have imported least. The player's attack guards
+// its own half the same way (round 378).
+func monsterBlow(m combat.Monster, playerLevel int, parry float64) int {
+	if m.AttackMax <= 0 {
+		return m.Attack // no range at all: the flat disclosed Attack
+	}
+	if parry > 0 {
+		centre := combat.DamageCentrePercent(
+			combat.MonsterRate(m.Level),
+			combat.CharacterRate(playerLevel, parry),
+			m.Level, playerLevel)
+		return rollCentred(m.AttackMin, m.AttackMax, centre)
+	}
+	return rollDamage(m.AttackMin, m.AttackMax)
+}
+
+// defenderParryRate is the character's `era`, the parry rate the engine divides
+// an attacker's attack rate by to place a blow in its range.
+//
+// BODY ARMOUR ONLY, which is the data's own division rather than a choice: a
+// census of all 21,560 retail item rows found 9,663 carrying a non-zero parry
+// (itemdata col 68) and none of them a shield, against 500 carrying a non-zero
+// block ratio and every one of them a shield, with no row carrying both
+// (round 377). Shields block; body armour parries.
+//
+// The LO end is taken, not an instance-interpolated value. defenderDefence
+// interpolates its pairs through a recovered variance group; no such group is
+// recovered for parry, and inventing one would be worse than the documented
+// rule for this field -- srrevamp models neither per-instance variance nor plus
+// level, so lo is what applies.
+//
+// A broken piece parries for nothing, the same rule defenderDefence uses.
+func defenderParryRate(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (float64, error) {
+	equipped, err := eq.Get(ctx, characterID)
+	if err != nil {
+		return 0, fmt.Errorf("reading equipment: %w", err)
+	}
+	isArmorSlot := make(map[equipment.Slot]bool, len(equipment.ArmorSlots))
+	for _, s := range equipment.ArmorSlots {
+		isArmorSlot[s] = true
+	}
+	total := 0.0
+	for _, e := range equipped {
+		if !isArmorSlot[e.Slot] || durability.IsBroken(e.Durability) {
+			continue
+		}
+		it, err := items.GetItem(ctx, e.ItemID)
+		if err != nil || it == nil {
+			continue // no reference row: contributes nothing, as elsewhere here
+		}
+		total += it.ParryRatioMin
+	}
+	return total, nil
+}
+
 func defenderArmor(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (int, error) {
 	return defenderDefence(ctx, characterID, eq, items, func(it *refdata.Item) (float64, float64) {
 		return it.PhysDefenseMin, it.PhysDefenseMax
