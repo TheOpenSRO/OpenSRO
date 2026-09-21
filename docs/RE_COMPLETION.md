@@ -2106,11 +2106,13 @@ multiplies only after the division, the subtraction and the clamp.
 
   **Param 188 is a 0–100 percentage that defaults to 0** and has exactly one
   writer, the skill-effect applier — so nobody has it unless a skill grants one.
-  `skill_params.md` records the code `dtt` writing 188, and `dtt` occurs on 13
-  real rows, all `SKILL_ETC_DETECT_*`. **That association is recorded, not
-  endorsed**: whether a "detect" skill really grants an ignore-defence chance is
-  not read, and the tension between the code's name and the param's use is left
-  standing rather than explained away.
+  **RESOLVED (round 388): the `dtt` → 188 row was a join artifact.** `dtt` writes
+  no param at all — it registers a pointer at `param_1[0x313]`, which is what a
+  DETECT skill should do. Param 188 comes from field `0x4c4`, owned by **`msid`**,
+  and its only real carriers are `SKILL_MALL_NASRUN_MOBDEFENCEIGNORE` and
+  `SKILL_ITEM_ETERNITY_SOCKET_IGNORE_*`. **Param 188 is the chance to ignore a
+  monster's defence**, which the content names outright and which agrees exactly
+  with the engine-side reading above.
 
   **For srrevamp:** unreachable rather than unimplemented. The param defaults to
   0 and no shipped skill grants it, so the flag never sets.
@@ -6372,6 +6374,40 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 0x51c is 0x0d, 0x51d is 1. Resolving category -> message-name prefix would label
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
+
+Round 388 (the tension was a join artifact, and the content names param 188
+outright): ROUND 387 CLOSED AN ITEM AND LEFT ONE TENSION STANDING rather than
+explaining it away -- skill_params.md said code `dtt` writes param 188, but `dtt`
+occurs only on SKILL_ETC_DETECT_* rows, and a detect skill granting an
+ignore-defence chance made no sense. Leaving it open was right: it was wrong.
+
+`dtt` WRITES NO PARAM AT ALL. Reading Skill_ApplyEffectsToParams directly, its
+field 0x420 does `param_1[0x313] = iVar9` -- registering a pointer, which is what
+a DETECT skill should do. The SetParam(188) twelve lines later belongs to field
+0x4c4, with two unrelated blocks in between.
+
+THE HEURISTIC'S FAILURE MODE IS NOW DEMONSTRATED, not hypothesised. That join was
+built by pairing each field read with param ids written WITHIN THE NEXT 14 LINES.
+Twelve lines is inside the window. Six of the 28 rows were verified against
+independent evidence when the join was made and all six reproduced; THE REST REST
+ON THE WINDOW ALONE, and this is one demonstrated miss. Recorded in
+skill_params.md beside the table so the next reader knows which rows are load-
+bearing and which are not.
+
+AND THE CONTENT NAMES THE PARAM OUTRIGHT. Field 0x4c4 belongs to `msid`, and the
+only real skills carrying it are SKILL_MALL_NASRUN_MOBDEFENCEIGNORE (twice) and
+SKILL_ITEM_ETERNITY_SOCKET_IGNORE_*. So PARAM 188 IS THE CHANCE TO IGNORE A
+MONSTER'S DEFENCE -- named by the game's own skill names, and agreeing exactly
+with what round 387 disassembled from the other end: Combat_ResolveDamage rolls
+GetParam(188) on the attacker, only when the attacker is a PC and the defender is
+not, and on success sets the descriptor bit that skips mitigation. Engine side and
+content side, two independent routes, one answer.
+
+**What moved:** a wrong row retracted with its mechanism, the join's unverified
+rows flagged as such, param 188 named from the content, and round 387's
+disassembled reading independently confirmed. The tension round 387 declined to
+explain away turned out to be the thread worth pulling. No behaviour changed, so
+no tag.
 
 Round 387 (the mitigation-skipping flag: no attack sets it, and the question was
 mis-shaped): THE OPEN ITEM ASKED "which attacks set descriptor flag 0x20". The

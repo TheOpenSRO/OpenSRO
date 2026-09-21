@@ -193,7 +193,7 @@ branches).
 | 185 | 0x0b9 | 0 | 9999999 | **0** | 0 |  |
 | 186 | 0x0ba | 0 | 1000 | **0** | 0 |  |
 | 187 | 0x0bb | 0 | 100 | **0** | 0 |  |
-| 188 | 0x0bc | 0 | 100 | **0** | 0 |  |
+| 188 | 0x0bc | 0 | 100 | **0** | 0 | **ignore a monster's defence, as a chance** — granted by skill code `msid` (field `0x4c4`), whose only real carriers are `SKILL_MALL_NASRUN_MOBDEFENCEIGNORE` and `SKILL_ITEM_ETERNITY_SOCKET_IGNORE_*`; rolled in `Combat_ResolveDamage` only when a PC attacks a non-PC (round 388) |
 | 189 | 0x0bd | 0 | 100 | **0** | 0 |  |
 | 190 | 0x0be | 0 | 999999 | **0** | 0 |  |
 | 191 | 0x0bf | 0 | 999999 | **0** | 0 |  |

@@ -468,7 +468,7 @@ narrowing that section of `param_tags.md` had to make.
 | `dcmp` | 141 |
 | `defr` | 5, 6, 7 |
 | `dru` | 128, 129, 130, 131 |
-| `dtt` | 188 |
+| ~~`dtt`~~ | ~~188~~ **RETRACTED (round 388) — a join artifact; see below** |
 | `er` | 9 |
 | `expu` | 186, 202 |
 | `gdr` | 172, 182 |
@@ -1427,3 +1427,50 @@ codes. **Three independent lines agree:**
 
 So **every code real content uses is in the shipped table**, verified by a method
 independent of how that table was built. That is the round's one durable result.
+
+
+## A wrong row in the code → param join, and how the heuristic produced it (round 388)
+
+The join above was built by pairing each skill-field read in
+`Skill_ApplyEffectsToParams` with the param ids written **within the next 14
+lines**. One row is wrong, and the mechanism is worth recording because the same
+heuristic produced all 28.
+
+**`dtt` does not write param 188. It writes no param at all.** Reading the
+applier directly:
+
+	if (*(int *)(iVar2 + 0x420) != 0) {      // dtt's field
+	    param_1[0x313] = iVar9;              // registers a pointer, no SetParam
+	}
+	if ((*(int *)(iVar2 + 0x424) != 0) && …) {
+	    param_1[0x314] = iVar9;
+	}
+	if (*(int **)(iVar2 + 0x4c4) != NULL) {  // a DIFFERENT field
+	    …
+	    /* ParamKeeper param id: EDI 0xbc (188) */
+	    GObjPC::ParamKeeper_SetParam(0, iVar9, fVar6);
+	}
+
+`dtt`'s read and that `SetParam` are **12 lines apart** — inside the 14-line
+window — with two unrelated blocks between them. That is the window's failure
+mode, and it is why `dtt`, a code occurring only on `SKILL_ETC_DETECT_*` rows,
+appeared to grant an ignore-defence chance.
+
+**Param 188's real source is field `0x4c4`, which belongs to `msid`.** The
+skills that carry it name the param outright:
+
+| skill | run |
+|---|---|
+| `SKILL_MALL_NASRUN_MOBDEFENCEIGNORE` | `msid, 1` |
+| `SKILL_MALL_NASRUN_MOBDEFENCEIGNORE` | `msid, 2` |
+| `SKILL_ITEM_ETERNITY_SOCKET_IGNORE_…` | `msid, 1` |
+
+So **param 188 is the chance to ignore a monster's defence** — and that agrees,
+from the content side, with what round 387 disassembled from the engine side:
+`Combat_ResolveDamage` rolls `GetParam(188)` on the attacker, only when the
+attacker is a PC and the defender is not, and on success sets the descriptor bit
+that skips mitigation. Two independent routes, one answer.
+
+**The other 27 rows are not audited.** Six of them were verified against
+independent evidence when the join was made and all six reproduced; the rest rest
+on the window alone, and this is one demonstrated miss.
