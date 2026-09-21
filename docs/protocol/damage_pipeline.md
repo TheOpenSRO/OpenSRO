@@ -659,9 +659,16 @@ minimum of three, biased toward zero, which is why blows cluster near the centre
 - **The constants.** 0.5, 10.0, 90.0, 0.03, 0.30, read out of the PE image in round 370, match the
   2026-09-15 reading exactly. That is an independent re-derivation at a different width and by a
   different method, and it stands.
-- **The enumeration.** Param 9 (`'era'`) is read by exactly one function in the binary, measured
-  against all 45 params read by literal across 78 sites. There is no separate parry roll — which
-  the 2026-09-15 entry also says, for the same reason.
+- ~~**The enumeration.** Param 9 is read by exactly one function in the binary, measured against
+  all 45 params read by literal across 78 sites.~~ **OVERSTATED — withdrawn in round 374.** That
+  census counted only call sites passing a LITERAL param id. Measured properly, `GetParam` has
+  **190 call sites through vtable slot `0x104`, and 110 of them — 58 % — pass a COMPUTED
+  argument** the census never saw. It is an enumeration of a biased subsample, not of the
+  population, so it cannot support "exactly one reader".
+
+  **The conclusion still holds, on other evidence:** there is no separate parry roll because the
+  2026-09-15 reading says what the formula actually does — parry rate is an input to the damage
+  centre. That was always the real basis; the census added nothing and claimed more.
 - **The player's base rates**, recovered in round 371 and genuinely new: a bare character has
   `hra = era = 10 + Level`, from a base of 10.0 at slot 0 plus a direct `Level →` edge at slot 0,
   under a slot-0 sum. This matters because the 2026-09-15 entry closed with *"srrevamp has no

@@ -6266,6 +6266,49 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 374 (my own probe was the fourth false absence, and the binary says why
+this keeps happening): ROUND 373's RETRACTION LISTED "the enumeration" AMONG WHAT
+SURVIVES. It does not. Reading the 2026-09-15 entry that the tool surfaced, its
+closing paragraph warns that a census of literal GetParam arguments "finds no
+reader for params 13-16 and finding none proves nothing", because FUN_0040db50
+reads a COMPUTED id -- and calls that "the third time a too-narrow probe has
+produced a confident false absence in this project".
+
+MINE IS THE FOURTH, AND I MEASURED IT. GetParam has 190 call sites through vtable
+slot 0x104. Round 370's census matched 80 of them. THE OTHER 110 -- 58 % -- PASS
+A COMPUTED ARGUMENT and were invisible to it. So "param 9 is read by exactly one
+function in the whole binary, measured against all 45 params read by literal
+across 78 sites" is an enumeration of a BIASED SUBSAMPLE, and round 370 presented
+it as the opposite: "a proven absence measured against an enumeration, not an
+empty grep". Withdrawn in all three places it appears.
+
+THE CONCLUSION SURVIVES ON OTHER EVIDENCE, which is the distinction worth
+keeping: there is no separate parry roll because the 2026-09-15 reading says what
+the formula DOES -- parry rate is an input to the damage centre. That was always
+the real basis. The census added nothing and claimed more, which is the exact
+shape of the failure it was imitating.
+
+A STRUCTURAL FACT THAT MAKES THIS GENERAL, not a one-off: 58 % of this binary's
+GetParam sites pass a computed id. ANY literal-argument param census in this
+binary is therefore a minority sample by construction, and a negative taken from
+one is worthless without resolving the computed sites. That is now measured
+rather than suspected.
+
+ALSO LEARNED, AND IT MATTERS FOR THE NEXT ROUND: params 13/14 and 190/191 are THE
+SAME TWO FLOATS (2026-09-15). So Formula_RollWeaponDamage's uniform roll and
+FUN_0040dce0's centre-biased roll read an IDENTICAL RANGE and differ in
+DISTRIBUTION ONLY. With round 371's base rates removing the input blocker, porting
+the centre is a distribution change on numbers srrevamp already has -- a real,
+player-visible change, and the obvious next step.
+
+DELIBERATELY NOT WIRED THIS TICK. Shipping a combat change on the back of a tick
+that opened by finding my own evidence overstated is not the moment for it.
+
+**What moved:** a claim I made three rounds ago withdrawn in every place it
+appears, its conclusion re-grounded on the evidence that actually supports it,
+and the reason this keeps recurring measured for the first time. No behaviour
+changed, so no tag.
+
 Round 373 (THREE ROUNDS RETRACTED: "the hit chance" was the damage centre, and
 the tool built last round found it in one command): RAN tools/known.sh FIRST, as
 round 372 built it to be run, on "attack rate". It returned RE_COMPLETION.md:1488
@@ -6293,7 +6336,8 @@ WHAT SURVIVES, AND IT IS NOT NOTHING. (1) The six constants, read out of the PE
 image in round 370, match the 2026-09-15 reading exactly -- an independent
 re-derivation by a different method, at a width that reading had to get right.
 (2) The enumeration: param 9 is read by exactly one function, measured against
-all 45 params read by literal across 78 sites, so there is no separate parry
+all 45 params read by literal across 78 sites [WITHDRAWN round 374: that census
+saw only 80 of 190 GetParam sites -- 110 pass a COMPUTED id], so there is no separate parry
 roll. (3) ROUND 371'S PLAYER BASE RATES ARE GENUINELY NEW AND NOW MATTER MORE
 than when they were filed: a bare character has hra = era = 10 + Level. The
 2026-09-15 entry closed with "srrevamp has no attack-rate or parry-rate stat, so
@@ -6406,7 +6450,8 @@ be missing.
 
 THE PROBE WAS AN ENUMERATION, NOT A GREP. 'era' (parry rate) is ParamKeeper param
 9. Sweeping every IGObj::GetParam(<literal>) through vtable slot 65 gives 45
-distinct params across 78 sites, and param 9 is read by EXACTLY ONE FUNCTION in
+distinct params across 78 sites [WITHDRAWN round 374 -- 58 % of GetParam sites pass
+a COMPUTED id and were invisible to this census], and param 9 is read by EXACTLY ONE FUNCTION in
 the binary, FUN_0040fdd0 -- which sits in the Formulae.cpp translation unit
 beside Formula_MitigatePhysicalDamage. So the absence of a parry mechanic is
 measured against a population rather than asserted from a failed search, which is
