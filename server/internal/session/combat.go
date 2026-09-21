@@ -934,7 +934,8 @@ func performAttack(
 	// every species on the Jangan ladder (938 monsters elsewhere carry 20), so
 	// it is a real zero rather than an unmodelled one.
 	blow := resolveBlow(raw, monster.DefensePercent, monster.Defense,
-		attackerCritical(ctx, characterID, eq, items), monster.Block,
+		combat.EvadedChance(attackerCritical(ctx, characterID, eq, items), monsterEvasion),
+		combat.EvadedChance(monster.Block, playerEvasion),
 		playerLevel, monster.Level, characterID, monster.ID)
 	// A skill's percentage applies HERE, after mitigation and the clamp, not
 	// to the raw roll -- see combat.ApplySkillPercent for the disassembly. A
@@ -952,7 +953,8 @@ func performAttack(
 	// The first strike is the blow already resolved above; this adds the rest.
 	for i := 1; i < hits; i++ {
 		extra := resolveBlow(raw, monster.DefensePercent, monster.Defense,
-			attackerCritical(ctx, characterID, eq, items), monster.Block,
+			combat.EvadedChance(attackerCritical(ctx, characterID, eq, items), monsterEvasion),
+			combat.EvadedChance(monster.Block, playerEvasion),
 			playerLevel, monster.Level, characterID, monster.ID)
 		net += combat.ApplySkillPercent(extra.Damage, damagePercent)
 		playerCrit = playerCrit || extra.Critical
@@ -1270,7 +1272,8 @@ func performAttack(
 		// shield is what blocks. combat.ResolveBlow does not care which side
 		// is a player, which is the point of it being one function.
 		counter := resolveBlow(raw, playerMitigationPercent, armor,
-			monster.Critical, defenderBlock(ctx, characterID, eq, items),
+			combat.EvadedChance(monster.Critical, playerEvasion),
+			combat.EvadedChance(defenderBlock(ctx, characterID, eq, items), monsterEvasion),
 			monster.Level, playerLevel, monster.ID, characterID)
 		incoming := counter.Damage
 		result.MonsterCritical = counter.Critical
@@ -1680,10 +1683,12 @@ func defenderDefence(ctx context.Context, characterID int64, eq equipment.Store,
 // The value this code uses -- the weapon's own Critical column, itemdata 116 --
 // is unchanged and was right throughout; only the citation improves.
 //
-// Unopposed here, and that is not a simplification: the real chance is divided
-// by (1 + the target's 'evcr'/100), and GObjMob_PublishStats publishes params
-// 0, 3-12, 23, 24, 27-33 and 140 -- param 57 ('evcr') is not among them, so a
-// monster's evasion term is zero and the divisor is 1.
+// The divisor this chance faces is NOT this function's business -- the caller
+// applies it, because it depends on who the defender is. Against a monster it
+// is a grounded zero (GObjMob_PublishStats publishes params 0, 3-12, 23, 24,
+// 27-33 and 140, and 57 is not among them); in a duel the defender is a player
+// and the zero is merely disclosed. Round 406 found this comment claiming the
+// grounded reason for both. See combat.EvadedChance.
 //
 // No weapon, or a weapon with no reference data, means no critical rather than
 // a disclosed default: an unarmed attack has no weapon column to read.
@@ -1728,10 +1733,11 @@ func attackerCritical(ctx context.Context, characterID int64, eq equipment.Store
 // also the key the bad-luck accumulator is filed under. So the two have
 // independent streak protection in the real game; srrevamp models neither.
 //
-// Unopposed, and that is measured rather than assumed: the real chance divides
-// by (1 + the attacker's 'evbl'/100), and GObjMob_PublishStats publishes params
-// 0, 3-12, 23, 24, 27-33 and 140 -- param 56 is not among them, so a monster's
-// block-evasion term is zero.
+// As with attackerCritical, the divisor belongs to the caller: this block is
+// opposed by the ATTACKER's 'evbl', which is a grounded zero when a monster is
+// swinging (param 56 is absent from GObjMob_PublishStats' list) and a disclosed
+// zero in a duel. Round 406 found this comment claiming the former for both.
+// See combat.EvadedChance.
 func defenderBlock(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) int {
 	equipped, err := eq.Get(ctx, characterID)
 	if err != nil {
@@ -1764,6 +1770,24 @@ func defenderBlock(ctx context.Context, characterID int64, eq equipment.Store, i
 	}
 	return 0
 }
+
+// The two evasion terms that oppose the critical and block rolls. Both are
+// zero, and combat.EvadedChance explains why they are zero for DIFFERENT
+// reasons -- which is the whole point of naming them apart rather than writing
+// a literal 0 six times.
+const (
+	// monsterEvasion is a monster's 'evcr' or 'evbl'. GROUNDED: the engine's
+	// own GObjMob_PublishStats publishes params 0, 3-12, 23, 24, 27-33 and 140,
+	// and neither 56 nor 57 is among them, so a monster has no evasion term to
+	// publish. This is a measured value, not a simplification.
+	monsterEvasion = 0.0
+
+	// playerEvasion is a player's 'evcr' or 'evbl'. DISCLOSED: both arrive only
+	// as magic options ("blue" stats), and srrevamp aggregates none, so no
+	// player can carry either. combat.TestNoPlayerEvasionSourceExists fails the
+	// day that stops being true, and the fix is to compute the real term here.
+	playerEvasion = 0.0
+)
 
 // resolveBlow is combat.ResolveBlow under the SAME lock as every other roll in
 // this package -- it takes two chance rolls, and rand.Rand is not safe for

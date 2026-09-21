@@ -254,10 +254,17 @@ type Monster struct {
 //
 // What the engine actually rolls in Combat_ResolveDamage is blocking (param 10,
 // 'bri') opposed by 56 ('evbl'), and critical (12, 'cri') opposed by 57
-// ('evcr') -- both of which this project already models, and both of which are
+// ('evcr') -- both of which this project already models. So srrevamp is not
+// missing a hit/miss mechanic; the game resolves a swing as blocked or not,
+// never as a miss.
+//
+// NARROWED IN ROUND 406. This paragraph used to end "both of which are
 // unopposed against monsters because GObjMob_PublishStats publishes neither 56
-// nor 57. So srrevamp is not missing a hit/miss mechanic; the game resolves a
-// swing as blocked or not, never as a miss.
+// nor 57", and that reason is true but covers only TWO of the six divisors
+// srrevamp's three attack directions need -- the evader is a player in the
+// other four, and a monster's publisher says nothing about those. All six are
+// still zero; four of them for a different and weaker reason. The census and
+// both reasons are in EvadedChance, which every call site now goes through.
 //
 // CONFIRMED FROM A SECOND ARTEFACT 2026-09-16. `MagicOption.txt` names these
 // tags itself and says which item kind carries each: MATTR_CRITICAL ('cri') on

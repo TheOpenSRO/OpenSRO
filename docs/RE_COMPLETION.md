@@ -3216,10 +3216,20 @@ every computed read was resolved before the absence was believed.
 (`'evcr'`) and 56 (`'evbl'`). Blocking and critical — and nothing else. **A
 swing is resolved as blocked or not, never as a miss.**
 
-Both are already modelled here, and both are correctly unopposed against
-monsters: `GObjMob_PublishStats` publishes params 0, 3–12, 23, 24, 27–33 and
-140, so neither 56 nor 57 exists on a monster. That was already recorded for
-`'evcr'` when criticals were shipped; it holds for `'evbl'` for the same reason.
+Both are already modelled here, and both are unopposed against monsters:
+`GObjMob_PublishStats` publishes params 0, 3–12, 23, 24, 27–33 and 140, so
+neither 56 nor 57 exists on a monster. That was already recorded for `'evcr'`
+when criticals were shipped; it holds for `'evbl'` for the same reason.
+
+**Narrowed in round 406.** This paragraph used to say "correctly unopposed",
+and the word did more work than the measurement supports. srrevamp's three
+attack directions need **six** divisors, and the evader is a *monster* in only
+two of them — the player's critical against a monster, and the player's block
+against a monster's swing. In the other four the evader is a **player**, and a
+monster's publisher says nothing about those. All six are still zero, but four
+are zero because srrevamp aggregates no magic options, so no player can carry
+`'evcr'` or `'evbl'` at all. That is a disclosure, not a grounding, and it is
+now carried by `combat.EvadedChance` with a tripwire test rather than by prose.
 
 ### What moved
 
@@ -6394,6 +6404,46 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 0x51c is 0x0d, 0x51d is 1. Resolving category -> message-name prefix would label
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
+
+Round 406 (the evasion divisors censused: a measurement that covered two of six
+sites was cited for all six): ROUND 405 SETTLED WHICH PARTY EVADES; THIS ROUND
+ASKED WHAT THAT COSTS SRREVAMP, AND THE ANSWER WAS A JUSTIFICATION DOING MORE
+WORK THAN IT COULD CARRY. Three shipped comments and two tracker paragraphs all
+said the critical and block rolls are "unopposed, and that is measured rather
+than assumed", citing `GObjMob_PublishStats`: it publishes params 0, 3-12, 23,
+24, 27-33 and 140, so a monster has neither 56 (`'evbl'`) nor 57 (`'evcr'`).
+True, and it covers exactly TWO of the six divisors srrevamp needs. Because the
+divisor is the OPPONENT's evasion -- round 405's rule, `my stat / (1 + my
+opponent's evasion of it)` -- the evader alternates with the roll, and the
+census is: player->monster crit faces the MONSTER's `'evcr'` (grounded), but
+player->monster block faces the PLAYER's `'evbl'`; monster->player block faces
+the MONSTER's `'evbl'` (grounded), but monster->player crit faces the PLAYER's
+`'evcr'`; and BOTH duel divisors face a player, so `duel.go` was never covered
+at all. Four of six cited a measurement about the wrong party. This matters
+because monsters really do roll these: characterdata col 78 reads 2 on 7,493 of
+7,495 monster rows and col 76 reads 20 on 938 of them.
+
+ALL SIX ARE STILL ZERO, so nothing shipped changes -- but the four uncovered
+ones are zero for a weaker reason: srrevamp aggregates no magic options, so no
+player can carry `'evcr'` or `'evbl'`. FOUR PROBES WITH DIFFERENT FAILURE MODES,
+because an absence is a claim about the probe first: the `TagEvadeCri`/
+`TagEvadeBlk` constants have no consumer outside the vocabulary table; the raw
+strings `"evcr"`/`"evbl"` appear only in a `PackTag` unit test; no function
+anywhere turns an item's magic options into combat stats; and the client never
+mentions either. That is a DISCLOSURE, not a grounding, and the difference is
+the whole finding.
+
+WHAT MOVED: `combat.EvadedChance(chance, evadePercent)` now implements the
+recovered divisor, and all six call sites pass through it with the evader named
+-- `monsterEvasion` (grounded zero) or `playerEvasion` (disclosed zero), two
+constants that differ only in their citation. The day blues are added, four
+sites become an argument to change rather than a division to remember.
+`TestNoPlayerEvasionSourceExists` is the tripwire on the precondition: it walks
+the tree for consumers of either tag, refuses to pass if it read fewer than 50
+files (an empty probe must not read as a negative result), and was controlled
+BOTH WAYS -- a planted `"evcr"` in `internal/equipment` failed it, removing it
+passed. The three comments and the tracker paragraph now state which sites each
+reason covers. No behaviour changed, so no tag.
 
 Round 405 (two recorded claims disagreed about block evasion; the disassembly
 settles it and the shipped code was right): GROUNDING_AUDIT's last live combat
