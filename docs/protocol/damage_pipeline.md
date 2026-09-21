@@ -615,3 +615,69 @@ the result to zero below and to `.rdata 0x00b45f1c` once it reaches
 **Whether randomness enters upstream, inside vtable `0x104`, is not claimed
 here** -- only that this function is deterministic given its inputs. The name is
 `Combat_ComputeWeaponDamage` rather than `...Roll` for that reason.
+
+## The hit chance, and why there is no parry roll (round 370)
+
+`GROUNDING_AUDIT.md` carried **"parry and evade are still not rolled"** as an open assumption.
+Half of that is now answered, and the framing turns out to be wrong: **the engine has no separate
+parry event.** Parry rate is the *denominator of the hit chance*.
+
+### How it was found, and the proven absence
+
+`'era'` (parry rate) is ParamKeeper **param 9** (`stat_tags.md`). Enumerating every
+`IGObj::GetParam(<literal>)` through vtable slot 65 (offset `0x104`) gives **45 distinct params
+across 78 sites**, and param 9 is read by **exactly one function in the whole binary**,
+`FUN_0040fdd0`. So "there is no separate parry mechanic" is a **proven absence measured against an
+enumeration**, not an empty grep.
+
+### The formula
+
+	hitPercent = clamp( ( levelTerm + hra / era * 0.5 ) * 100 , 10 , 90 )
+	levelTerm  = clamp( (attackerLevel - defenderLevel) * 0.03 , 0 , 0.30 )
+
+with `hra` = param 11 (attack rate) and `era` = param 9 (parry rate).
+
+| constant | `.rdata` | value |
+|---|---|---|
+| ratio scale | `0x00b45c50` | 0.5 |
+| percent | `0x00b45af0` | 100.0 |
+| floor | `0x00b45b44` | **10.0** |
+| ceiling | `0x00b45e18` | **90.0** |
+| per level | `0x00b45dc8` | 0.03 |
+| level cap | `0x00b45b8c` | 0.30 |
+
+**It is rolled.** `FUN_0040dce0`, one of the formula's two callers and a neighbour of
+`Formula_MitigatePhysicalDamage` in the same `Formulae.cpp` translation unit, calls `_rand()` and
+compares against the returned percentage.
+
+**Two controls on the constant reads.** `0x00b45af0` came back 100.0 and `0x00b45ac0` came back
+1.0 — the two values this page already recorded for the mitigation formula. And `levelTerm` is
+`FUN_0040fd60`, which `internal/combat/combat.go` had **already disassembled on a different day**,
+recording the same `0.03` at `0x00b45dc8` and `0.30` at `0x00b45b8c`. An independent re-derivation
+agreeing exactly.
+
+### A misattribution suspected and disproven
+
+`LevelAdvantagePerLevel`/`LevelAdvantageCap` in `internal/combat` are these same two constants,
+applied to **damage**. That looked at first like srrevamp having attached them to the wrong
+quantity. It is not: `FUN_0040fd60` is a **shared helper** with two callers, and srrevamp's comment
+cites the other one (`damage = (FUN_0040fd60() + 1.0) * damage`). The same level term feeds both
+damage and hit chance, and the existing code is right.
+
+### What is not settled
+
+- **The register order was not disassembled.** That `hra` is the attacker's and `era` the
+  defender's rests on what the two stats ARE, not on which object sat in which register. The
+  assignment is the only sensible one, and it is recorded as resting on the stat names.
+- **Evade** is untouched by this: it remains vocabulary only in `combat/paramtags.go`.
+- The second caller, `FUN_0040dff0`, is unread — presumably the magical twin, by analogy with the
+  mitigation pair, but not checked.
+
+### What wiring it would need
+
+Monsters already have both stats in real data: `characterdata` **col 75 = `era`** and **col 77 =
+`hra`**, and both are **2·level + 25** for every monster row (`RE_COMPLETION.md`'s grounded table).
+So monster-versus-monster sits at `hra/era == 1`, i.e. a 50 % base before the level term.
+
+**The player side is the gap.** srrevamp models no `hra`/`era` for characters at all, so the
+numerator has no source yet. That, not the formula, is what stands between this and a hit roll.

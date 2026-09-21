@@ -301,9 +301,17 @@ disclosed placeholder, to confirm against the client when the relevant system is
   - **The monster does NOT always counterattack.** It strikes no more often than its attack
     skill's ReuseDelay — `combat.Hub.CounterattackReady`, round 254, with Mangyang 3000 ms,
     Gyo 2000, Yeoha 2500.
-  - What survives: **parry and evade are still not rolled.** Parry is recovered as ParamKeeper
-    param 9 (the status-effect work) but nothing wires it, and the evade tags in
-    `combat/paramtags.go` are vocabulary only.
+  - What survives: **parry and evade are still not rolled** -- but the PARRY half of that
+    sentence was MIS-FRAMED, corrected 2026-09-21 (round 370). **The engine has no separate
+    parry roll to be missing.** Param 9 (`'era'`, parry rate) is read by exactly one function
+    in the whole binary, and it is the DENOMINATOR OF THE HIT CHANCE:
+    `clamp((levelTerm + hra/era * 0.5) * 100, 10, 90)`, rolled against `_rand()`
+    (`docs/protocol/damage_pipeline.md`). That is a proven absence measured against an
+    enumeration of all 45 params read by literal, not an empty grep. So what srrevamp lacks is
+    a HIT ROLL, not a parry roll, and the blocker is the player side: monsters carry both stats
+    in real data (`characterdata` cols 75/77, both 2*level+25) while srrevamp models neither
+    for characters. **Evade is untouched** and remains vocabulary only in
+    `combat/paramtags.go`.
 - ~~The rest of the own-design economy/combat layer (damage, flat HP, monster stats, prices,
   quests, loot values, gold) — placeholder by intent.~~ **STALE, corrected 2026-09-20.** Most
   of that list is grounded now, and the headline table above already says so:

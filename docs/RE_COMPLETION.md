@@ -6266,6 +6266,50 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 370 (the hit chance, and an open assumption that was asking the wrong
+question): WENT TO THE PROJECT'S OWN SCOREBOARD for the loop's stated goal --
+GROUNDING_AUDIT.md's "what is genuinely still assumed" -- rather than another
+protocol thread. Its largest live item was "parry and evade are still not
+rolled". THE PARRY HALF WAS MIS-FRAMED: the engine has no separate parry roll to
+be missing.
+
+THE PROBE WAS AN ENUMERATION, NOT A GREP. 'era' (parry rate) is ParamKeeper param
+9. Sweeping every IGObj::GetParam(<literal>) through vtable slot 65 gives 45
+distinct params across 78 sites, and param 9 is read by EXACTLY ONE FUNCTION in
+the binary, FUN_0040fdd0 -- which sits in the Formulae.cpp translation unit
+beside Formula_MitigatePhysicalDamage. So the absence of a parry mechanic is
+measured against a population rather than asserted from a failed search, which is
+the standing rule for negatives here.
+
+THE FORMULA: hitPercent = clamp((levelTerm + hra/era * 0.5) * 100, 10, 90), with
+levelTerm = clamp((atkLevel - defLevel) * 0.03, 0, 0.30), hra = param 11 (attack
+rate) and era = param 9. It IS rolled: caller FUN_0040dce0 calls _rand() and
+compares. All six constants read out of the PE image.
+
+TWO CONTROLS ON THE CONSTANT READS. 0x00b45af0 came back 100.0 and 0x00b45ac0
+came back 1.0, the two values this project had already recorded for the
+mitigation formula. And levelTerm is FUN_0040fd60, which internal/combat had
+ALREADY DISASSEMBLED ON A DIFFERENT DAY, recording the same 0.03 and 0.30 at the
+same two addresses -- an independent re-derivation agreeing exactly.
+
+A MISATTRIBUTION SUSPECTED AND DISPROVEN, which is the part worth keeping.
+LevelAdvantagePerLevel/Cap in internal/combat are these same constants applied to
+DAMAGE, and finding them here driving HIT CHANCE looked like srrevamp having
+attached them to the wrong quantity. It had not: FUN_0040fd60 is a shared helper
+with two callers and srrevamp's comment cites the other one. The shipped code is
+right and the suspicion was mine.
+
+NOT SETTLED AND SAID SO: the register order was not disassembled, so "hra is the
+attacker's, era the defender's" rests on what the two stats ARE rather than on
+which object sat in which register; the second caller FUN_0040dff0 is unread; and
+EVADE is untouched, still vocabulary only.
+
+**What moved:** an open assumption on this project's grounding scoreboard is
+retired as MIS-FRAMED rather than answered, replaced by a fully grounded hit
+formula with six constants and two controls, and the real blocker is named: the
+player side has no hra/era at all, while monsters carry both in real data
+(characterdata cols 75/77, 2*level+25). No behaviour changed, so no tag.
+
 Round 369 (the broadcast class joined from both sides, and a 3x inflation caught
 by my own rule): ROUND 368 ENUMERATED THE 0x3NNN BROADCASTS; this joins them to
 the client handlers that receive them. message_handlers.tsv turns out to hold 151
