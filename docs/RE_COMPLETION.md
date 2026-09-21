@@ -6375,6 +6375,42 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 393 (the save scopes are member SUB-OBJECTS, and objdump was the only way
+to see it): ROUND 392 RE-AIMED THE PROBE at what each dispatcher target reads.
+The decompiled C cannot answer that -- every target operates on an unbound
+register, which is why round 391 read them by position and got it wrong. objdump
+on CGObjPC::vslot_320 answers it in one command: EACH BIT PASSES A DIFFERENT
+MEMBER SUB-OBJECT of the character, loaded with `lea` from `this`.
+
+	0x80   this            0x40   this+0x1c10     always this+0x1ce8
+	0x10   this+0x1d98     0x01   this+0x1d74     0x100  this+0x1dfc
+	0x200  this+0x74       0x400  this+0x1fb4     0x800  this+0x22d0
+
+THREE ARE IDENTIFIED, EACH FROM EVIDENCE THIS PROJECT RECORDED FOR ANOTHER
+PURPOSE -- which is the opposite of how round 391 proceeded. +0x1d98 is the QUEST
+state: twelve functions touch it and six named ones are quest accessors
+(GetQuestStatus, GetQuestEndDate, GetQuestAchievementCount and three more).
++0x1dfc is the TIMED-JOB list, which academy.md already walks for the 24-hour
+penalties. +0x1ce8 is the summoned COS, per monster_ai.md.
+
+SIX ARE NOT IDENTIFIED AND THE REASONS DIFFER, which matters for what to try
+next. +0x1c10 and +0x1d74 are touched by two functions each, both vslot_214, so
+there is nothing to read. +0x74 is touched by 197 functions and is far too
+generic to conclude anything from -- a tempting offset to over-read. AND +0x1fb4
+AND +0x22d0 APPEAR IN NO DECOMPILED FUNCTION AT ALL: they exist only as this
+dispatcher's `lea`, so the C literally cannot reach them and a non-C probe is
+required.
+
+A CORRECTION TO ROUND 391's TABLE: the 0x4a7180 call is gated on BIT 0x80
+(`test bl,bl ; jns`), not always-run as recorded, and the `[this+0x34]+0x20` test
+I attached to it actually guards a different call (0x964b60). Only 0x4fc770 runs
+unconditionally.
+
+**What moved:** a probe that two rounds could not answer in the decompiled C
+answered with objdump, three of nine save scopes named from independent evidence,
+six left explicitly unnamed with the reason each resists, and one more error in
+round 391's table corrected. No behaviour changed, so no tag.
+
 Round 392 ("seven sub-savers" was a structural label, and reading two of them
 withdrew it): ROUND 391 ENDED BY NAMING ITS OWN NEXT PROBE -- name the seven
 sub-savers of CGObjPC::vslot_320. Reading them instead withdrew the label.

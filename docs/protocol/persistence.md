@@ -380,17 +380,45 @@ state vocabulary the party and interaction bytes belong to.
 dispatcher.** Its third argument is a bitmask and each bit enqueues a different
 sub-save:
 
-| mask | sub-saver |
-|---|---|
-| *(always, if `[this+0x34]+0x20 == 0`)* | `FUN_004a7180(queue, mask, 0)` |
-| `0x01` | `FUN_004b7b50` |
-| `0x10` | `FUN_0056fdf0(this + 0x1d98)` |
-| `0x40` | `FUN_004b7b50` — the same sub-saver as bit 0, reachable two ways |
-| *(always)* | `FUN_004fc770(queue, mask, arg4)` |
-| `0x100` | `FUN_00656220` |
-| `0x200` | `FUN_00484300` |
-| `0x400` | `FUN_0060e240` |
-| `0x800` | `FUN_004082b0` |
+| mask | sub-object saved | handler |
+|---|---|---|
+| `0x80` | `this` itself | `0x4a7180` |
+| `0x40` | `this + 0x1c10` | `0x4b7b50` |
+| *(always)* | `this + 0x1ce8` — **the summoned COS** | `0x4fc770` |
+| `0x10` | `this + 0x1d98` — **the quest state** | `0x56fdf0` |
+| `0x01` | `this + 0x1d74` | `0x4b7b50` (same handler as `0x40`, different sub-object) |
+| `0x100` | `this + 0x1dfc` — **the timed-job list** | `0x656220` |
+| `0x200` | `this + 0x74` | `0x484300` |
+| `0x400` | `this + 0x1fb4` | `0x60e240` |
+| `0x800` | `this + 0x22d0` | `0x4082b0` |
+
+**Each bit saves a different MEMBER SUB-OBJECT of the character**, which is what
+the decompiled C could not show: the sub-object is loaded with `lea` into a
+register and Ghidra drops it. `objdump -d --start-address=0x4e63f0` shows every
+one.
+
+**Three are identified, each from evidence recorded elsewhere for another
+purpose** — not from position in the dispatcher, which is how round 391 went
+wrong:
+
+- `+0x1d98` is the **quest state**: twelve functions touch it and six of the
+  named ones are quest accessors — `GetQuestStatus`, `GetQuestStatusByName`,
+  `GetQuestEndDate`, `GetQuestAchievementCount`, `GetQuestAchievementCountByName`,
+  `AddQuestAchievementCount`.
+- `+0x1dfc` is the **timed-job list**, which `academy.md` already walks for the
+  24-hour penalties and `SYSTEMS.md` records as the manager embedded in `GObjPC`.
+- `+0x1ce8` is the player's **summoned COS**, per `monster_ai.md`.
+
+**The other six are NOT identified.** `+0x1c10` and `+0x1d74` are touched by two
+functions each, both `vslot_214`, which says nothing; `+0x74` is touched by 197
+and is far too generic to read anything from; and **`+0x1fb4` and `+0x22d0`
+appear in NO decompiled function at all** — they exist only as the dispatcher's
+`lea`, so the C cannot reach them and a different probe is needed.
+
+**A correction to the first version of this table (round 391):** the `0x4a7180`
+call is gated on **bit `0x80`** (`test bl,bl ; jns`), not always-run; the
+`[this+0x34]+0x20` test guards a different call entirely (`0x964b60`). Only
+`0x4fc770` runs unconditionally.
 
 **`AQ_CharDataSaver` passes `0xffffffff`** — every bit — so its own save is a
 full one. The mask exists so that *partial* saves can be requested by whoever
