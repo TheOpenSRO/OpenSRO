@@ -6405,6 +6405,64 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 407 (four names filed off a re-derived lever, and the tool now prints the
+index it should have shown): I REBUILT AN ARTIFACT THIS REPO ALREADY HAD, AND
+THE LESSON THAT WOULD HAVE STOPPED ME WAS WRITTEN DOWN IN ROUND 331. Chasing the
+`origin` tally in `recovered_names.tsv` (2,300 `reading`, 137 `descriptive`, 71
+`engine`) suggested the engine's own strings were an under-spent lever, so I
+swept the server dump for `.cpp` source-path strings: 46 distinct modules, 144
+(module, function) anchor pairs across 43 of them. The measurement was real and
+worth having — **17 multi-anchor modules, span measured per module, and ZERO
+OVERLAPS between any two**, so MSVC translation-unit contiguity holds exactly
+and the anchors partition the text section (`GStorage.cpp`'s 39 anchors span
+5,392 bytes; `GStorageOP.cpp` starts 3,424 bytes after it ends; median span
+10,448). 442 functions fall inside module spans, 39 still `FUN_`.
+
+AND `docs/protocol/source_files.tsv` HAS HELD 574 ROWS OF IT FOR WEEKS, carrying
+the original `D:\WORK2005\Source\SilkroadOnline\Server\SR_GameServer\` paths my
+rebuild could not recover, with the module already applied as a Ghidra
+namespace. `client_translation_units.tsv` is the client's half. My probe was
+`known.sh 'log string naming'` — a phrase, and phrases cannot match a file
+called `source_files.tsv`. Round 331's own fix was "LIST docs/protocol FIRST;
+the file names are the index", and it sat in this ledger, unreachable to anyone
+who had not read that round. **THE FIX IS IN THE TOOL, NOT IN PROSE**: `known.sh`
+now prints the whole `docs/protocol` listing on a miss, because a miss is
+exactly when the index is most useful and the last cheap moment to notice.
+Controlled both ways — the failing probe now prints the index and still exits 1,
+a known term prints no index and exits 0. The rule is also now in `RE_LOOP.md`,
+where it is read.
+
+A SECOND LEVER MEASURED AND REFUSED. `described_but_unnamed.tsv` already tracks
+**717** functions that docs cite and the dump still calls `FUN_`, so the obvious
+move is to extract the name the docs state and file it mechanically. It does not
+work: 429 of the 717 have a name-shaped token on a line with their address, but
+the repeated token is almost always the `FUN_` symbol itself or a `UIIT_` error
+constant, and where a REAL name repeats it is ambiguous across a family —
+`0040ebe0`, `0040eef0`, `0040f1b0` and `0040f3d0` are four distinct addresses
+sharing two names between them (`Formula_MitigatePhysicalDamage` /
+`..._MitigateMagicalDamage`). A name repeated NEAR an address is not a name
+ASSIGNED to it; promoting these would be characterdata col 79 again. Recorded as
+a negative so the next round does not try it.
+
+WHAT MOVED: four names filed and APPLIED (`applied 4, forced 0, reowned 4,
+failed 0`), each one a function whose meaning this project already had and whose
+name had never been written back. `Formulae::Formula_LevelAdvantage`
+(`0040fd60`) and `Formulae::Formula_DamageCentrePercent` (`0040fdd0`) I read
+this round from their own bodies: the first takes vtable slot `0x124`
+(`IGObj::GetLevel`) on both parties, multiplies the difference by `.rdata`
+`0x00b45dc8` (0.03) and clamps to `[0, 0x00b45b8c = 0.30]`; the second divides
+`GetParam(0xb)` (`'hra'`) by `GetParam(9)` (`'era'`) through slot `0x104`,
+scales by `0x00b45c50` (0.5), adds the first, multiplies by `0x00b45af0` (100.0)
+and clamps to `[0x00b45b44 = 10.0, 0x00b45e18 = 90.0]`. **All six constants were
+already independently recorded here with exactly those meanings**, which is what
+makes this a reading rather than a curve fit — and `centre.go` has cited
+`0040fd60` by address in shipped code since round 378 while the dump still
+called it `FUN_`. `GObjPC::TrainingCamp_CheckCanInvite` (`004e4950`) and
+`GObjPC::TrainingCamp_CheckCanEnter` (`004e4aa0`) were already stated as
+name-and-address pairs in `academy.md`'s error table and simply never filed.
+`PROJSTAMP` cleared, so the next tick rebuilds with them. No behaviour changed,
+so no tag.
+
 Round 406 (the evasion divisors censused: a measurement that covered two of six
 sites was cited for all six): ROUND 405 SETTLED WHICH PARTY EVADES; THIS ROUND
 ASKED WHAT THAT COSTS SRREVAMP, AND THE ANSWER WAS A JUSTIFICATION DOING MORE

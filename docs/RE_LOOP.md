@@ -241,6 +241,20 @@ It exits 0 when something is known, so it reads the way the rule does:
 
 	tools/known.sh 'stat graph' && echo "read that before digging"
 
+**And when it finds nothing, LIST `docs/protocol` before believing it.** Round
+331 wrote that rule down — "the file names are the index" — and it stayed in the
+ledger where nobody hunting a fresh question would read it. Round 407 then
+probed `known.sh 'log string naming'`, got nothing, went to the dump, and spent
+most of a tick rebuilding a module map that `docs/protocol/source_files.tsv`
+already held, with the original `D:\WORK2005\Source\SilkroadOnline\Server\`
+paths the rebuild could not recover. `client_translation_units.tsv` is the
+client's half of the same thing.
+
+No phrase search saves that: nothing a person would type for "module map"
+matches "source_files.tsv". Only reading the file names does. `known.sh` now
+prints the whole index on a miss, so the rule is enforced by the tool instead of
+by remembering a round number.
+
 ## Applying names
 
 The dump tick runs `-readOnly`, so **it cannot write names**. Applying a name
