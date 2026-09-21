@@ -33,7 +33,7 @@ func TestBrokenWeaponDealsUnarmed(t *testing.T) {
 	}
 
 	// Whole: at least the weapon's floor (40 + reinforce), well above unarmed.
-	dmg, err := attackerDamageOf(ctx, 1, 20, 0, eq, items, combat.AttackPhysical)
+	dmg, err := attackerDamageOf(ctx, 1, 20, 0, eq, items, combat.AttackPhysical, 0, 0, 0)
 	if err != nil {
 		t.Fatalf("attackerDamageOf: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestBrokenWeaponDealsUnarmed(t *testing.T) {
 	if err := eq.SetDurability(ctx, 1, equipment.SlotWeapon, 0); err != nil {
 		t.Fatalf("break: %v", err)
 	}
-	dmg, err = attackerDamageOf(ctx, 1, 20, 0, eq, items, combat.AttackPhysical)
+	dmg, err = attackerDamageOf(ctx, 1, 20, 0, eq, items, combat.AttackPhysical, 0, 0, 0)
 	if err != nil {
 		t.Fatalf("attackerDamageOf broken: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestBrokenWeaponDealsUnarmed(t *testing.T) {
 	if err := eq.SetDurability(ctx, 1, equipment.SlotWeapon, 76); err != nil {
 		t.Fatalf("repair: %v", err)
 	}
-	dmg, _ = attackerDamageOf(ctx, 1, 20, 0, eq, items, combat.AttackPhysical)
+	dmg, _ = attackerDamageOf(ctx, 1, 20, 0, eq, items, combat.AttackPhysical, 0, 0, 0)
 	if dmg <= unarmedDamage {
 		t.Errorf("a repaired weapon should beat unarmed again, got %d", dmg)
 	}

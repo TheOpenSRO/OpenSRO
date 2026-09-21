@@ -60,6 +60,16 @@ func rollDamage(min, max int) int {
 	return combat.RollDamage(min, max, damageRollNG)
 }
 
+// rollCentred is combat.RollCentred under the same lock: the engine's
+// centre-biased roll, which is what the ORDINARY attack takes (Combat_
+// ResolveDamage's damage-kind case 0, params 13/14). RollDamage's uniform roll
+// is a different damage kind.
+func rollCentred(min, max int, centrePercent float64) int {
+	damageRollMu.Lock()
+	defer damageRollMu.Unlock()
+	return combat.RollCentred(min, max, centrePercent, damageRollNG)
+}
+
 // rollGold is combat.RollGold under the SAME lock -- one generator, one mutex.
 // An earlier version of this guarded it with a second mutex, which protects
 // nothing: two locks around one rand.Rand is a data race, not synchronisation.
@@ -889,7 +899,10 @@ func performAttack(
 		playerHPNow = c.HP
 	}
 
-	base, err := attackerDamageOf(ctx, characterID, playerStr, playerInt, eq, items, attackType)
+	// The defender's parry rate: a monster's 'era' is characterdata col 75,
+	// which holds 2*level + 25 on every monster row (combat.MonsterRate).
+	base, err := attackerDamageOf(ctx, characterID, playerStr, playerInt, eq, items, attackType,
+		playerLevel, monster.Level, combat.MonsterRate(monster.Level))
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "damage calculation failed", MonsterID: targetMonsterID}).Encode()})
 	}
@@ -1391,7 +1404,8 @@ func performAttack(
 // of the range (see below); passing 0 is safe and simply omits it.
 func attackerDamage(ctx context.Context, characterID int64, str int, eq equipment.Store, items combat.ItemLookup) (int, error) {
 	// A caller with no skill in hand is swinging a weapon, which is physical.
-	return attackerDamageOf(ctx, characterID, str, 0, eq, items, combat.AttackPhysical)
+	// No defender, so no centre: the uniform roll, as before round 378.
+	return attackerDamageOf(ctx, characterID, str, 0, eq, items, combat.AttackPhysical, 0, 0, 0)
 }
 
 // swingReady is the plain attack's cadence gate: the equipped weapon type's
@@ -1419,7 +1433,7 @@ func swingReady(ctx context.Context, characterID int64, eq equipment.Store, item
 
 // attackerDamageOf is attackerDamage for a blow whose damage-type mask is
 // known -- `att` value[0] off the skill being used. See combat.AttackType.
-func attackerDamageOf(ctx context.Context, characterID int64, str, intel int, eq equipment.Store, items combat.ItemLookup, atk combat.AttackType) (int, error) {
+func attackerDamageOf(ctx context.Context, characterID int64, str, intel int, eq equipment.Store, items combat.ItemLookup, atk combat.AttackType, attackerLevel, defenderLevel int, defenderParry float64) (int, error) {
 	equipped, err := eq.Get(ctx, characterID)
 	if err != nil {
 		return 0, fmt.Errorf("reading equipment: %w", err)
@@ -1450,6 +1464,27 @@ func attackerDamageOf(ctx context.Context, characterID int64, str, intel int, eq
 		// recovered there from the engine's own parameter graph, together with
 		// what is deliberately not done and why.
 		min, max := combat.WeaponRange(item, weaponInstance(e), str, intel, atk)
+		// WHERE in that range the blow lands is the engine's centre-biased
+		// roll: the attacker's attack rate against the defender's parry rate,
+		// plus the level term, clamped to [10 %, 90 %] and then given a
+		// min-of-three excursion (combat.RollCentred).
+		//
+		// A caller that cannot supply the defender's parry passes 0 and gets
+		// the uniform roll instead -- the behaviour this had before round 378.
+		// That is a real fallback rather than a default: with no defender there
+		// is no ratio, and inventing one would put every blow at the ceiling.
+		//
+		// AND the weapon must carry a real attack rate. itemdata col 113 is a
+		// recent addition to this project's export, so an item table imported
+		// before it reads 0 -- and 0 is missing data, not a weapon that cannot
+		// hit. Treating it as real would put every blow near the floor on
+		// exactly the deployments that have imported least, which is the same
+		// reasoning the unarmed fallback above already uses.
+		if defenderParry > 0 && item.HitRateMin > 0 {
+			hra := combat.CharacterRate(attackerLevel, item.HitRateMin)
+			centre := combat.DamageCentrePercent(hra, defenderParry, attackerLevel, defenderLevel)
+			return rollCentred(min, max, centre), nil
+		}
 		return rollDamage(min, max), nil
 	}
 	return unarmedDamage, nil
