@@ -10979,7 +10979,7 @@ revert timeout was never found". It is the server's, not the client's, and it is
 ### Read (`docs/protocol/character_state.md`)
 
 - `CGObjPC::SetCharacterState` (`0x4f0ad0`, slot 171) switches on the state type; case 8
-  -- the wire's BattleState -- is `GObjPC::FUN_004e2910`, which arms `pc+0x203c = 20`
+  -- the wire's BattleState -- is `GObjPC::SetBattleState` (`0x004e2910`, named round 350 from this sentence), which arms `pc+0x203c = 20`
   when the value is 1, stores the byte at `chardata+0xd`, and announces it (`0x30bf`,
   through `GObjPC::FUN_004a8340`: opcode, object id, type, value). Case 7 is PvP state.
 - `CGObjPC::vslot_415` (`0x52aa90`), the PC's periodic update, decrements that counter

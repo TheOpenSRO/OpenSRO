@@ -6266,6 +6266,34 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 350 (two named, one refused, and a third caveat for the backlog): WORKED
+THE NEXT BATCH OFF THE RANKED QUEUE, AND TWO OF THREE CANDIDATES SURVIVED
+READING. 0x004e2910 is GObjPC::SetBattleState, case 8 of
+CGObjPC::SetCharacterState -- WORLD_ISSUES.md had already read it ("arms
+pc+0x203c = 20 when the value is 1, stores the byte at chardata+0xd, and
+announces it") and the body confirms every clause, including that it only writes
+and announces when the value actually CHANGES; the 20 is the battle stance's
+duration in seconds that character_state.md carries. 0x0059e220 is
+GObjPC::RegisterSkillInBook -- recovered_names.tsv described it while naming its
+caller, "FUN_0059e220(book, record) registers it in the skill book", and the body
+is that insert: container at +0x26c, 0x005a58a0 for the node, stored back at
+container[4] and linked, doing nothing when the record's +0x14 or +0x18 is zero.
+THE THIRD WAS REFUSED, AND IT EXPOSES A CAVEAT THE SCORE CANNOT SEE.
+teleport_network.md writes `CGObjPC::FUN_004e0a40(...) ; set the teleport state;
+the trip proceeds`, which scores 9 -- but the function is THIRTY BYTES that
+assert and forward to 0x00407760. **The sentence is true of the call site, not of
+the callee.** A document can describe what a LINE ACHIEVES rather than what a
+FUNCTION DOES, and nothing in a proximity score distinguishes them. Left
+unnamed, and the backlog header now says a high score means GO AND READ IT,
+never GO AND NAME IT. Also skipped deliberately: 0x004e6820 and 0x004e6d60 are
+read as death-kind 1 and 6 handlers, but the kinds themselves have no recovered
+meaning, so naming them would restate a case number -- the same reason the 55
+placeholder handlers stayed unnamed in round 336.
+
+**What moved:** no shipped value. Two more functions named from readings this
+project had already done, one refused on inspection, and the backlog's third
+caveat recorded from the refusal rather than from theory.
+
 Round 349 (the backlog ranked properly, and a doc word corrected): ROUND 348
 SHOWED CITATION COUNT IS A WEAK PREDICTOR -- two of its top four were ready --
 so the 694-row backlog is now RANKED BY HOW DESCRIPTIVE ITS BEST SINGLE MENTION

@@ -19,6 +19,13 @@
 #
 # Named from this queue so far: Skill_CheckCastRequirement, CheckCurrencyRequirement (348),
 # SkillWithdraw_CheckPotions, Combat_ComputeWeaponDamage (349).
+#
+# A THIRD CAVEAT, found in round 350: a document can describe what a CALL SITE
+# ACHIEVES rather than what the FUNCTION DOES, and the score cannot tell them apart.
+# teleport_network.md writes `CGObjPC::FUN_004e0a40(...) ; set the teleport state; the
+# trip proceeds`, which scores 9 -- but the function is 30 bytes that assert and forward
+# to 0x00407760. The sentence is true of the line, not of the callee. Left unnamed.
+# So a high score means GO AND READ IT, never GO AND NAME IT.
 10	004e6d60	GObjPC::FUN_004e6d60	350	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/source_files.tsv
 10	004e6820	GObjPC::FUN_004e6820	264	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
 9	0040dce0	FUN_0040dce0	776	docs/RE_COMPLETION.md,docs/WORLD_ISSUES.md,docs/protocol/damage_pipeline.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv
@@ -26,9 +33,7 @@
 9	0066c360	CSetMagicOptionOP::FUN_0066c360	104	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
 9	004e0a40	CGObjPC::FUN_004e0a40	30	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv,docs/protocol/teleport_network.md
 8	00425f70	FUN_00425f70	85	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/magic_options.md
-8	0059e220	GObjPC::FUN_0059e220	79	docs/WORLD_ISSUES.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv
 8	004496e0	GObjPC::FUN_004496e0	60	docs/WORLD_ISSUES.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/pets.md
-8	004e2910	GObjPC::FUN_004e2910	40	docs/RE_COMPLETION.md,docs/WORLD_ISSUES.md,docs/protocol/character_state.md,docs/protocol/described_but_unnamed.tsv
 8	0047eda0	FUN_0047eda0	30	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
 8	009fbb40	FUN_009fbb40	28	docs/WORLD_ISSUES.md,docs/protocol/alchemy.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv,docs/protocol/status_effects.md
 7	007158f0	FUN_007158f0	1984	docs/RE_COMPLETION.md,docs/WORLD_ISSUES.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
