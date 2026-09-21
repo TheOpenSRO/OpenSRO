@@ -198,6 +198,21 @@ nothing re-checks it, so it records what was open WHEN IT WAS WRITTEN. Round 384
 swept every such line: of the items they carried, **four were already closed**
 and had been repeated across up to four chain links each.
 
+**The systems tracker goes stale the same way.** Round 390 found `docs/SYSTEMS.md`'s
+Party row still saying "the invite and expulsion flows are only enumerated, and
+party flag bit 2 has no probe known to name it" — four rounds after 354-360 read
+both flows, named bit 2 from a use-site, closed the invitation state machine and
+identified `0x2c06`. All of that reached `party.md` and none of it reached the
+tracker, which is the "file answers where they are consumed" rule failing on the
+one page a tick uses to CHOOSE work.
+
+A cheap staleness signal, measured in round 390: **17 of the 22 PARTIAL rows cite
+a round number or a date in their next probe; five do not** — Shops and the goods
+chain (a 26-character probe), Quest scripting, Battle arena, Persistence /
+AsyncQuery, Siege and fortress war. Uncited is not the same as wrong — Quest
+scripting is explicitly BLOCKED and parked — but it does mark the rows nobody has
+revisited, and it is the cheapest prioritisation signal the tracker offers.
+
 So: `tools/known.sh '<the item itself>'` before starting on it. Round 383's
 failure is the sharper form — it ran the tool on the QUESTION and never on the
 ANSWER, and `known.sh dttp` would have found the code in `paramblock.go` and

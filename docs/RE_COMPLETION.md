@@ -6375,6 +6375,43 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 390 (the OTHER tracker was stale too, and by four rounds): ROUND 384 SWEPT
+THE OPEN LIST in RE_COMPLETION. docs/SYSTEMS.md is the other tracker -- the one a
+tick actually uses to CHOOSE what to work on -- and its Party row still read
+"size and the creator level are grounded; the invite and expulsion flows are only
+enumerated, and party flag bit 2 has no probe known to name it".
+
+EVERY CLAUSE OF THAT WAS FOUR ROUNDS OUT OF DATE. Rounds 354-360 read the invite
+ladder and expulsion in full (invite is 0x062, expulsion 0x063), named flag bit 2
+FROM A USE-SITE (it lifts the leader-only restriction, appearing in an OR beside
+an explicit leader test), closed the invitation state machine as a five-row
+transition table over chardata+7 built from every writer in the binary, found TWO
+invitation senders where three rounds of reading had seen one, and identified
+0x2c06 as the character lock rather than a party rule. ALL OF IT REACHED
+party.md. NONE OF IT REACHED THE TRACKER.
+
+That is this project's own "file answers where they are consumed" rule failing on
+the single page that decides what gets worked on next. The row is rewritten with
+the findings and their round numbers, and what genuinely remains: what the state
+byte's 3 and 4 mean, and what value 2 of the vtable-0xf8 life-state getter is.
+
+A CHEAP STALENESS SIGNAL, MEASURED RATHER THAN ASSERTED: 17 of the 22 PARTIAL
+rows cite a round number or a date in their next probe; FIVE DO NOT -- Shops and
+the goods chain (whose entire probe is 26 characters), Quest scripting, Battle
+arena, Persistence/AsyncQuery, Siege and fortress war. Party was a sixth until
+this round. UNCITED IS NOT WRONG -- Quest scripting is explicitly BLOCKED and
+parked -- but it marks the rows nobody has revisited, and it is the cheapest
+prioritisation signal the tracker offers. Recorded in RE_LOOP.md beside the
+open-list rule from round 384.
+
+(The first measurement of that was off by one column and named Classes values
+instead of systems; the printed output made it obvious and it was redone.)
+
+**What moved:** the tracker row a tick would pick Party from is now accurate to
+round 360, the same staleness class as round 384 is shown to affect both
+trackers, and five never-revisited rows are named. No behaviour changed, so no
+tag.
+
 Round 389 (auditing the whole join, and the first audit could not see the defect
 it was built for): ROUND 388 FOUND ONE WRONG ROW and said plainly that the rest
 rested on the 14-line window alone. This audits all of them, with the rule that
