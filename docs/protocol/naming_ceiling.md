@@ -491,3 +491,79 @@ caller in this tree; neither can apply to an unexported one, which is either
 called from its own package or dead. The test says so in as many words, and a
 throwaway unexported function was added to `internal/mana` to confirm it fails
 before being removed again.
+
+## The vtable blind spot, closed with a number (round 408, 2026-09-21)
+
+Round 336b measured the game-logic core and recorded its own blind spot in the
+section above: **"`SLOTTED` is 0 in the reachable set ... a name-based call graph
+cannot see virtual dispatch, and this engine dispatches through vtables
+constantly. So 3,232 is a lower bound."** That was never acted on. It is now.
+
+**Method.** `tools/core_reach.py` (runs on the RE box) rebuilds the walk and adds
+one edge kind: a call through `*(code **)(*x + 0xNN)` links to every function the
+dump names `vslot_<NN/4>`. The offset-to-slot relation is exact — slot 73 is
+`+0x124` (`IGObj::GetLevel`), slot 65 is `+0x104` (GetParam), slot 342 is
+`+0x558` (`GObjPC::SetLocked`) — checked against three independently recovered
+slots before use. 11,928 virtual call sites resolve this way, against 2,556
+`vslot_` implementations spread over 173 distinct slots.
+
+**The control comes first.** Rebuilding round 336b's own method reproduces it:
+
+| | reached | below CRT | SLOTTED |
+|---|---:|---:|---:|
+| round 336b recorded | 3,232 | 2,930 | 0 |
+| this round, same method | 3,267 | 2,983 | 0 |
+
+The 35-function difference is names applied since 2026-09-20 — **a name-based
+call graph's reach grows as naming progresses**, so this figure is not a constant
+and re-measuring it after a naming round is expected to move it.
+
+**The result.**
+
+| variant | reached | named | below CRT | named | SLOTTED reached |
+|---|---:|---:|---:|---:|---:|
+| full-name edges only | 3,267 | 21.3 % | 2,983 | 16.8 % | **0** |
+| **+ virtual-dispatch edges** | 5,929 | 12.9 % | **5,513** | **9.8 %** | **1,370** |
+
+**The core is 85 % larger than recorded, and its real naming coverage is 9.8 %,
+not 16.8 %.** Both numbers move the wrong way on purpose: the functions virtual
+dispatch reaches are overwhelmingly unnamed, so admitting them lowers the score.
+Of the **2,530 newly reached** below-CRT functions, **42 are genuinely named** —
+1,370 are `vslot_` (slot-only) and 1,118 are plain `FUN_`.
+
+**`vslot_NNN` is not a name.** Counting it as one reports the virtual variant at
+23.4 % instead of 12.9 %; the first version of this measurement did exactly that
+before the project's own rule caught it.
+
+**The core is bracketed, not pinned.** The slot model ignores the receiver's
+static type, so it links a call site to *every* class's override: 5,513 is an
+upper bound and 2,983 a lower one. A third variant resolving unqualified callees
+by unique bare name reaches 3,834 / 9,530, but it also matches Ghidra pseudo-ops
+and CRT helpers, so it is an unsound widening and is reported only as a
+sensitivity bound.
+
+### The worklist this produces
+
+These are the subsystems round 336b's walk could not see at all. Each was
+predicted by that section's own sentence — "whole subsystems reached only
+through a vtable are missing from it entirely" — and each is now countable:
+
+| namespace | newly reached | unnamed |
+|---|---:|---:|
+| `<global>` | 810 | 797 |
+| `GObjPC` | 179 | 168 |
+| `CGObjPC` | 54 | 52 |
+| `CNetEngine` | 48 | 48 |
+| `Quest` | 42 | 42 |
+| `AI` | 35 | 31 |
+| `CMainProcess` | 29 | 28 |
+| `ServerFramework` | 29 | 29 |
+| `CRegionManagerBody` + `RegionManagerBody` | 54 | 54 |
+| `CGameWorld_Siege` + `CGObjSiegeStruct` | 30 | 30 |
+| `CInstanceTimedJob` + `CInstanceTimedJobForPet` | 30 | 30 |
+| `CRTNavMeshDungeon` | 14 | 14 |
+
+`Quest`, `AI`, the siege pair and the timed-job pair are all systems `SYSTEMS.md`
+still calls PARTIAL, and all four are reached **only** through a vtable — which
+is why reading them one function at a time from a name-based call graph never
+found them.

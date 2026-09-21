@@ -6405,6 +6405,53 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 408 (the vtable blind spot closed: the game-logic core is 85 % larger than
+recorded and 9.8 % named, not 16.8 %): ROUND 336b MEASURED THE CORE AND WROTE
+DOWN THE REASON ITS OWN NUMBER WAS WRONG, AND NOBODY ACTED ON IT. That section
+of `naming_ceiling.md` ends: "`SLOTTED` is 0 in the reachable set ... a
+name-based call graph cannot see virtual dispatch, and this engine dispatches
+through vtables constantly. So 3,232 is a lower bound." Round 407's own lesson
+sent me to `ls docs/protocol` first, which is the only reason I found it rather
+than re-deriving a call graph from scratch.
+
+`tools/core_reach.py` adds one edge kind: a call through
+`*(code **)(*x + 0xNN)` links to every function the dump names `vslot_<NN/4>`.
+The offset-to-slot relation is exact and was checked against three independently
+recovered slots before use — 73 is `+0x124` (`IGObj::GetLevel`), 65 is `+0x104`
+(GetParam), 342 is `+0x558` (`GObjPC::SetLocked`). 11,928 virtual call sites
+resolve against 2,556 `vslot_` implementations over 173 distinct slots.
+
+THE CONTROL RAN FIRST AND PASSED: rebuilding round 336b's own method gives
+3,267 reached / 2,983 below CRT / **SLOTTED 0**, against its recorded 3,232 /
+2,930 / 0. The 35-function gap is names applied since 2026-09-20, which is
+itself worth recording — **a name-based call graph's reach grows as naming
+progresses**, so that figure is not a constant and will move after every naming
+round.
+
+Adding virtual edges takes the core from 2,983 to **5,513** below CRT (+85 %)
+and reaches **1,370 SLOTTED functions the recorded method reached zero of**.
+Real naming coverage of the game-logic core is therefore **9.8 %, not 16.8 %** —
+both numbers move the wrong way on purpose, because what virtual dispatch
+reaches is overwhelmingly unnamed. Of 2,530 newly reached below-CRT functions,
+**42 are genuinely named**; 1,370 are `vslot_` and 1,118 are plain `FUN_`.
+
+MY OWN PROBE WAS WRONG FIRST, AND THE PROJECT'S RULE CAUGHT IT. The first run
+counted `vslot_NNN` as a name and reported the virtual variant at 23.4 %; the
+standing rule is that a slot is not a name, and excluding it gives 12.9 %.
+Virtual edges reach precisely the slot-only functions, so that one mistake
+inflated exactly the number the round exists to produce. A second control
+mattered too: an earlier variant resolved unqualified callees by unique bare
+name and reported 4,142 instead of 3,267 — it matches Ghidra pseudo-ops and CRT
+helpers, so it is an unsound widening, kept only as a sensitivity bound.
+
+THE CORE IS BRACKETED, NOT PINNED: the slot model ignores the receiver's static
+type and links each call site to every class's override, so 5,513 is an upper
+bound and 2,983 a lower one. WHAT IT BUYS is a worklist — `Quest` (42), `AI`
+(35), the siege pair (30), the timed-job pair (30), `CRegionManagerBody` (54)
+and `CRTNavMeshDungeon` (14) are all reached ONLY through a vtable, all still
+PARTIAL in `SYSTEMS.md`, and all invisible to every previous core measurement.
+Tables in `docs/protocol/naming_ceiling.md`. No behaviour changed, so no tag.
+
 Round 407 (four names filed off a re-derived lever, and the tool now prints the
 index it should have shown): I REBUILT AN ARTIFACT THIS REPO ALREADY HAD, AND
 THE LESSON THAT WOULD HAVE STOPPED ME WAS WRITTEN DOWN IN ROUND 331. Chasing the
