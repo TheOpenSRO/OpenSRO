@@ -1940,31 +1940,28 @@ columns leave them zero and behave exactly as before — pinned by its own test.
 
 ### Open
 
-- **The distribution is still uniform.** `FUN_0040dce0` rolls 13/14 with a
-  three-sample minimum centre-biased about a midpoint; srrevamp rolls uniformly.
-  That is a known, deliberate difference, not an unrecovered one.
+- ~~**The distribution is still uniform.**~~ **PORTED (round 378).**
+  `combat.DamageCentrePercent` and `combat.RollCentred` implement the recovered
+  roll, and `attackerDamageOf` takes it on the player's attack.
 
-  **Costed in round 376.** The centre is
-  `clamp((hra/era * 0.5 + levelTerm) * 100, 10, 90)`, and its four inputs stand as
-  follows -- three available, one missing:
+  The centre is `clamp((hra/era * 0.5 + levelTerm) * 100, 10, 90)`, the excursion
+  is the minimum of three uniform samples, and the rates are
+  `CharacterRate(level, equipment) = 10 + level + equipment` (the weapon's attack
+  rate, itemdata col 113) and `MonsterRate(level) = 2*level + 25`
+  (characterdata cols 75/77, the same on every monster row).
 
-  | input | state |
-  |---|---|
-  | player `hra` base = `10 + Level` | **grounded** (round 371, off the stat graph); not implemented |
-  | player `hra` weapon term | **carried end to end** -- `Item.HitRateMin`, itemdata col 113, the verified Copper Sword tooltip value |
-  | monster `hra`/`era` = `2*Level + 25` | **grounded** (characterdata cols 75/77); NOT in `monsterSpec` |
-  | player `era` armour term | **CARRIED (round 377)** -- itemdata cols 68/69 -> `Item.ParryRatioMin/Max`, through export -> CSV -> SQL. Not yet consumed |
+  **GUARDED TWICE, and both guards fall back to the uniform roll rather than to
+  a floored blow:** a defender with no parry rate, and a weapon whose attack rate
+  is 0 -- which means an item table imported before col 113 existed, not a weapon
+  that cannot hit. Without the second guard every blow on a data-less deployment
+  would land near the floor, which is the failure round 376 predicted and which
+  TestCombatFullFlow duly produced before the guard went in.
 
-  **Round 377 closed the missing piece.** All four inputs now exist; what remains
-  is arithmetic, not recovery. The one judgement left is the warning below.
-
-  **A warning against porting it half-done**, because the arithmetic is
-  counter-intuitive: with the bare base alone, a level-1 character has
-  `hra = 11` against a monster's `era = 27`, giving a centre of 20 % -- blows
-  landing near the BOTTOM of the weapon's range where srrevamp's uniform roll
-  averages 50 %. Shipping the distribution without the weapon and armour terms
-  would roughly halve early player damage and look like a balance change rather
-  than the fidelity fix it is.
+  **The bias is modest, and that is measured rather than asserted.** The
+  excursion's CDF is `1 - (1-x)^3`, so 27.1 % of blows land within 10 % of the
+  centre against a uniform roll's 20.8 %. The first version of the test claimed
+  ">30 %, and comfortably"; the measurement refuted it at 28.2 %, and the test now
+  pins the closed form. This changes the SHAPE of damage, not its scale.
 - ~~**Which roll the live melee path takes.**~~ **CLOSED.** Round 375 probed this
   and found the two rolls are alternative branches of a damage-kind switch rather
   than two stages of one path -- `FUN_0040f990` sits at case 3 after
@@ -6292,6 +6289,49 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 0x51c is 0x0d, 0x51d is 1. Resolving category -> message-name prefix would label
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
+
+Round 378 (the damage centre ported, and two of my own expectations refuted by
+the tests): ROUND 377 LEFT ZERO BLOCKERS and said what remained was arithmetic.
+It was, and it is now shipped: combat.DamageCentrePercent, combat.RollCentred,
+CharacterRate and MonsterRate, wired into attackerDamageOf. A blow's position in
+the weapon's range is now the engine's, not uniform.
+
+TWO EXPECTATIONS OF MINE WERE WRONG AND THE TESTS CAUGHT BOTH, which is the part
+worth recording. (1) I asserted the centre-bias put ">30 % of blows in the middle
+fifth, and comfortably". The measurement said 28.2 %. Worked out properly: the
+excursion is min of three uniforms, CDF 1-(1-x)^3, so the true figure is 27.1 %
+against a uniform roll's 20.8 %. THE BIAS IS MODEST -- this changes the SHAPE of
+damage, not its scale -- and the test now pins the closed form instead of my
+impression. (2) A fallback test expected a uniform mean near 150 and got exactly
+200, because this package's TestMain NILS the damage generator and RollDamage's
+documented nil convention is "rolls the maximum". The whole test is now exact
+rather than statistical, which is strictly better.
+
+AND THE EXISTING SUITE CAUGHT THE REAL RISK. TestCombatFullFlow failed with
+damage 1 where it wanted 20: its fixture weapons carry no attack rate, so hra
+fell back to the bare 10+level against a monster's 27 and every blow landed near
+the floor. THAT IS EXACTLY WHAT ROUND 376 PREDICTED would happen if the centre
+shipped without the equipment term. The fix is a second guard: a weapon with
+HitRateMin == 0 is an item table imported before col 113 existed, not a weapon
+that cannot hit, so it takes the uniform roll -- the same reasoning the unarmed
+fallback beside it already uses.
+
+WHAT THIS MEANS IN PLAY, from the scenario table now pinned in the tests: a
+level-1 character with a Copper Sword (attack rate 24) against a level-1 monster
+sits at a 65 % centre, better than the uniform 50 %; the same character bare
+would sit at 20 %. So on real data the port is a modest BUFF for an armed player,
+and the nerf case is exactly the case the guard excludes.
+
+A PROCESS NOTE ON THIS WRITE-UP ITSELF: the first attempt to record it edited by
+string search, and the phrase it searched for also appears in round 376's ledger
+entry 4,000 lines below -- the replacement would have deleted everything between.
+An assert caught it before anything was written. Line ranges, not phrase
+searches, when a file repeats its own sentences.
+
+**What moved:** a ten-day-old "known, deliberate difference" closed, with the
+roll, both rates and both guards tested, and two wrong expectations of my own
+replaced by a closed form and an exact assertion. First player-visible change in
+eight rounds, so this one tags.
 
 Round 377 (the armour parry pair, grounded by a complementary census): ROUND 376
 NAMED EXPORTING ITEMDATA COL 68 as the one piece blocking the damage centre. Done,
