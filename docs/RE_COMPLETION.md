@@ -6303,6 +6303,38 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 382 (the skill-code vocabulary censused from the table, and five codes
+this project did not have): ROUND 381 LEFT A CAPABILITY rather than a question --
+a working numeric census over the real skill table, with the Params block located
+at column 69. skill_params.md carries an explicitly open item that census can
+answer: "whether the vocabulary is really ~105 or ~145 is open".
+
+THE ANSWER IS 138 DECODABLE CODES, of which 134 are real. Decoding every integer
+from column 69 onward in all 33,632 skill rows and keeping 2-4 lowercase ASCII
+unpacks gives 138 distinct codes, and 129 OF THEM ARE ALREADY DOCUMENTED IN THIS
+PROJECT -- 93.5 %. That overlap is the control: a method that reproduces 129 known
+codes is worth trusting about the other 9.
+
+FIVE CODES THE FILE WAS MISSING, each confirmed twice. dttp, bgra, lkdh, rhru and
+alcu occur in real skill rows (36, 23, 18, 8 and 8 of them) AND are compared by
+the parser itself -- SkillGlobal::RefSkill_ParseParams tests each as
+`if (uVar1 != <packed>) goto ...`. WHAT THEY DO IS NOT READ, which is a smaller
+claim than knowing their effect and is recorded as such.
+
+FOUR REJECTED, AND THE RULE IS PRINCIPLED RATHER THAN CONVENIENT. cj, xc, ka and
+nc decode cleanly but are numeric coincidences: a TWO-character pack is a small
+integer (25450, 30819, 27489, 28259) that collides with ordinary numeric fields,
+while a FOUR-character pack is a specific value near 1.6-1.9 billion that nothing
+else in a skill row plausibly holds. THE BINARY AGREES WITH THE RULE EXACTLY --
+all five four-character candidates appear in the dump, none of the four
+two-character ones does. The probe's controls were att and dru, both known-real,
+so the search was known to fire before the candidates were judged by it.
+
+**What moved:** an explicitly open question in skill_params.md answered with a
+number and a control, five parser-confirmed codes added to a vocabulary that had
+154 documented tokens, and four look-alikes rejected by a rule the binary
+independently confirms. No behaviour changed, so no tag.
+
 Round 381 (a load-bearing negative re-verified, and my first control was not a
 control): ROUND 380 FOUND A CLASS OF ERROR rather than a single mistake -- two
 recorded claims that were true of srrevamp's roster and false of the table. This

@@ -79,7 +79,7 @@ neither table here — plausible-looking 2-to-4 character tags, each with its ow
 distinct field offset. They have not been hand-verified, and this walker has
 already over-reported once (it read the in-handler `cmp edx,0x4` value tests as
 tags until it was constrained to tags ≥ 0x100). So the count above is still the
-extractor's; whether the vocabulary is really ~105 or ~145 is open.
+extractor's; whether the vocabulary is really ~105 or ~145 is open. **ANSWERED FROM THE DATA (round 382): 138 distinct codes occur in the real Params block, of which 134 are real and 4 are numeric coincidences — see "The vocabulary, censused from the table" at the end of this file.**
 
 **CLOSED 2026-09-18. It is 209**, and the lead was right that there were more.
 A third pass walked the decompiled dispatch tree structurally rather than
@@ -1373,3 +1373,49 @@ of a row, so 33,632 clean traversals confirm every length they touch.
 Both are the scan's documented failure mode (a code's integer occurring as data), now avoided by a
 walk that finishes. The exporter keeps the scan only as a fallback for input the walk cannot finish
 — which no real row now is.
+
+
+## The vocabulary, censused from the table (round 382)
+
+The size of the code vocabulary was recorded above as open — "~105 or ~145". The
+skill table answers it directly, because round 381 established that these codes
+sit in the Params block as **packed big-endian multi-char integers** and that the
+block starts at **column 69**.
+
+**The census.** Decoding every integer from column 69 onward in all 33,632 real
+skill rows, and keeping those that unpack to 2–4 lowercase ASCII characters,
+gives **138 distinct codes**.
+
+**The control is the overlap with this file.** 129 of the 138 are already
+documented here — **93.5 %** — which is what makes the remaining 9 worth looking
+at rather than dismissing.
+
+### Five codes this file was missing
+
+Each occurs in real skill rows **and** is compared by the parser itself,
+`SkillGlobal::RefSkill_ParseParams`, as `if (uVar1 != <packed>) goto …`:
+
+| code | packed | rows carrying it |
+|---|---|---:|
+| `dttp` | `0x64747470` | 36 |
+| `bgra` | `0x62677261` | 23 |
+| `lkdh` | `0x6c6b6468` | 18 |
+| `rhru` | `0x72687275` | 8 |
+| `alcu` | `0x616c6375` | 8 |
+
+**What each DOES is not read.** They are confirmed to be codes the engine parses,
+which is a different and smaller claim than knowing their effect.
+
+### Four rejected, and the rule that rejects them
+
+`cj`, `xc`, `ka` and `nc` decode cleanly but are **numeric coincidences**, and the
+discriminator is principled rather than ad hoc: a two-character pack is a small
+integer (25450, 30819, 27489, 28259) that collides with ordinary numeric fields,
+while a four-character pack is a specific value near 1.6–1.9 billion that nothing
+else in a skill row plausibly holds.
+
+**The binary agrees with the rule exactly.** All five four-character candidates
+appear in the server dump; none of the four two-character ones does. The controls
+for that probe were `att` (`0x617474`, 1 file) and `dru` (`0x647275`, 4 files),
+both known-real codes, so the search was known to fire before the candidates were
+judged by it.
