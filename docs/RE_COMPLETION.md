@@ -6266,6 +6266,33 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 355 (the party kinds read, and the search redirected): FOLLOWED ROUND
+354'S OWN NEXT STEP -- the party request object's consumer -- AND THE POSTER
+TURNS OUT TO SWITCH ON THE KIND ITSELF rather than merely carry it. Every
+request holds a SUBJECT at slot 9 and the party id at [0x16]; what differs is
+where the subject comes from. Kind 0xc READS A u32 FROM THE WIRE into slot 9
+(through the +0x1048 front/tail pair), 0xd reads a u8, 0xb COPIES the subject
+from the object's own [0x15], and 0xa takes none from the client and handles a
+no-party case specially through vtable 0xf0. Kinds 0xa and 0xb both validate
+with a predicate whose failure sets **0x2c23 = UIIT_MSG_PARTY_USER_MISSMATCH**
+(the engine's own spelling), which is what names Party_UserMatches (0x005bf240)
+-- a pairwise compatibility table over two small enum values, AL against the
+argument. WHAT THOSE VALUES ARE IS NOT CLAIMED; the refusal is a use-site, the
+enum is not read. **AND THE SEARCH WAS LOOKING IN THE WRONG PLACE, WHICH IS THE
+MORE USEFUL HALF.** Round 354 framed 0x06b/0x06c as the invite/expulsion
+candidates. They are not: 0x06b's REPLY is handled by UI_PARTYMATCH::FUN_008801e0,
+and that class handles EXACTLY ONE reply opcode -- so by the round-344 rule (a
+class names an opcode only when it is the class's only one, validated there at
+11 of 11) 0x06b is a party-MATCHING operation. It sits with 0x069
+OnRegisterPartyReq and 0x06a PartyMatch_HandleModify, both already named for
+matching. So party.md's open bullet now points at where the flow ISN'T, and
+names the three places still unmapped: 0x061, 0x06e (payload u32,u32,u8 with no
+client sender found, which is the shape an invite would have) and 0x06f.
+
+**What moved:** no shipped value. The four party request kinds read with their
+argument sources, one predicate named from the refusal it produces, and a wrong
+lead of my own from last round corrected before anything was built on it.
+
 Round 354 (five fidelity checks, one name, and the sampling method closed out):
 ROUND 352'S METHOD -- TAKE A RECOVERED RULE, CHECK BOTH HALVES AGAINST THE
 SHIPPED CODE -- WAS RUN UNTIL IT STOPPED PAYING. Checked this tick: broken-item

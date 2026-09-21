@@ -128,9 +128,32 @@ nothing shipped depends on it.
   | `0xc` | `0x005bf530` | `GObjPC_HandlePartyMsg_06b` (client `UI_PARTY` sends `0x706b`) |
   | `0xd` | `0x005bf560` | `GObjPC_HandlePartyMsg_06c` |
 
-  **What each kind MEANS is still unread**, which is why this bullet stays open:
-  the request object's consumer has not been followed, so nothing here says
-  which kind is an invite and which an expulsion. `0x06d` is the odd one --
+  **The kinds are now read (round 355)**, and the poster turns out to switch on
+  the kind itself rather than merely carrying it. Every request holds a SUBJECT
+  at slot 9 and the party id at `[0x16]`; what differs is where the subject
+  comes from:
+
+  | kind | subject | validation |
+  |---|---|---|
+  | `0xa` | none from the client; handles the no-party case specially (vtable `0xf0`) | `Party_UserMatches`, refusing `0x2c23` |
+  | `0xb` | copied from the object's own `[0x15]` | `Party_UserMatches`, refusing `0x2c23` |
+  | `0xc` | read from the wire as a **u32** | none here |
+  | `0xd` | read from the wire as a **u8** | none here |
+
+  `0x2c23` is `UIIT_MSG_PARTY_USER_MISSMATCH` (the engine's spelling), which is
+  what names **`Party_UserMatches`** (`0x005bf240`) -- a pairwise compatibility
+  table over two small enum values whose failure is that refusal. What those
+  values are is not claimed.
+
+  **AND THE SEARCH WAS LOOKING IN THE WRONG PLACE.** `0x06b`'s reply is handled
+  by `UI_PARTYMATCH::FUN_008801e0`, and that class handles **exactly one** reply
+  opcode -- which by the round-344 rule (a class names an opcode only when it is
+  the class's only one) makes `0x06b` a party-**matching** operation, not an
+  invite. It sits with `0x069 OnRegisterPartyReq` and `0x06a
+  PartyMatch_HandleModify`, which are already named for matching. So the invite
+  and expulsion flow is NOT in `0x06b`/`0x06c`, and the places still unmapped are
+  `0x061` (`0x00514530`), `0x06e` (`0x00514900`, payload `u32,u32,u8` with no
+  client sender found) and `0x06f` (`0x00514af0`). `0x06d` remains the odd one:
   `0x005bf570`, 382 bytes, posts no kind and does its own work.
 - **Whether the exp-sharing flag can change after creation.** Nothing read so
   far writes it.
