@@ -102,8 +102,20 @@ nothing shipped depends on it.
 
 ## Not recovered
 
-- **Bit 2 of the party flags.** The attempt is recorded in
-  `server/internal/party` so it is not repeated.
+- ~~**Bit 2 of the party flags.**~~ **READ (round 357), from a use-site.**
+  `CParty::CheckCanJoin` (`0x00514560`) opens its gate with
+
+	if (((myId == *(party + 0xc)) || ((*(byte *)(party + 0x10) & 4) != 0))
+	    && target != myId)
+
+  so **bit 2 lifts the leader-only restriction**: the caller may be the leader
+  *or* any member of a party whose bit 2 is set. It is the "anyone may invite"
+  option, and it is a use-site rather than a curve -- the bit appears in an OR
+  with an explicit leader test and nowhere else in that function.
+
+  `party + 0xc` is therefore **the leader's id**, which the expulsion handler
+  confirms independently: `Party_HandleExpelMember_063` makes the same
+  comparison before removing anyone.
 - ~~**What the other party flag bits mean**, beyond bit 0.~~ **Bit 1 is read**
   -- item sharing, recorded in this page's own flags section. Bit 2 remains
   unnamed and has its own bullet above.
@@ -163,8 +175,19 @@ nothing shipped depends on it.
   So this is not invite-and-expel as two symmetric opcodes: `0x06e` and `0x06f`
   are both things a character with **no party** does, which is the *answering*
   side. **Which is accept and which is decline is not claimed** -- `chardata+7
-  == 4` is an unnamed state byte and `0x005144e0`'s argument `2` is an unread
-  selector. The inviting side is still unlocated. `0x06d` remains the odd one:
+  == 4` is an unnamed state byte.
+
+  **EXPULSION IS `0x063` (round 357).** It reads a u32 target, then requires all
+  three of: the caller is in a party; the caller's id equals `party + 0xc`, the
+  LEADER id; and the target is not the caller. Only then does it call
+  **`Party_RemoveMember`** (`0x005be1a0`), which resolves the member through the
+  already-named `GetMemberByJID` and branches on a REASON byte -- 4 here.
+
+  The same function is reached with reason **2** from the party-teleport path
+  (`0x061` -> `0x005144e0`), which settles what that argument `2` was: not an
+  unread selector but a removal reason. **Reason 1, and the reason enum's own
+  names, are still unrecovered**, and the expulsion reading rests on the three
+  gates rather than on the constant 4. `0x06d` remains the odd one:
   `0x005bf570`, 382 bytes, posts no kind and does its own work.
 - **Whether the exp-sharing flag can change after creation.** Nothing read so
   far writes it.

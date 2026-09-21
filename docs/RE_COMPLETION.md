@@ -6266,6 +6266,35 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 357 (expulsion found, and a documented-open flag bit closed):
+0x063 IS THE EXPULSION. It reads a u32 target and then requires ALL THREE of:
+the caller is in a party ([0x72e]); the caller's own id equals **party + 0xc**;
+and the target is not the caller. Only then does it call what is now
+Party_RemoveMember (0x005be1a0), which resolves the member through the
+already-named GetMemberByJID and branches on a REASON byte -- 4 here. THE
+READING RESTS ON THE GATES, NOT ON THE CONSTANT: reason 4's own name is
+unrecovered, but leader-only plus target-not-self plus remove-a-member is an
+expulsion whatever the engine calls it. AND THE SAME FUNCTION EXPLAINS AN
+EARLIER LOOSE END: round 356 called 0x005144e0's argument `2` "an unread
+selector". It is a REMOVAL REASON -- the party-teleport path 0x061 removes the
+member with reason 2 after saving the position. **PARTY FLAG BIT 2 IS NOW READ**,
+which party.md listed under "Not recovered" with a note that the attempt had
+already failed once. CParty::CheckCanJoin opens
+`((myId == *(party+0xc)) || ((*(byte*)(party+0x10) & 4) != 0)) && target != myId`
+-- so bit 2 **lifts the leader-only restriction**, the "anyone may invite"
+option. A USE-SITE, NOT A CURVE: the bit appears in an OR with an explicit
+leader test and nowhere else in that function. The same comparison names
+**party + 0xc as the LEADER ID**, and the expulsion handler makes it
+independently, which is the corroboration rather than the finding. Both were
+sitting in a function this project had already cited for something else --
+party.md quotes 0x00514560's size caps at +0x1c and its flag bit 0 at +0x10, and
+read past the gate above it.
+
+**What moved:** no shipped value. Two names (Party_RemoveMember, and the
+placeholder GObjPC_HandlePartyMsg_063 promoted to Party_HandleExpelMember_063),
+one documented-open flag bit closed from a use-site, one structure field named,
+and one of my own loose ends from last round resolved.
+
 Round 356 (the last three party handlers read, and a 50-handler accessor
 named): TOOK ROUND 355'S OWN NEXT READ -- 0x061, 0x06e, 0x06f. 0x061 requires a
 party at [0x72e], saves the position through the already-named
