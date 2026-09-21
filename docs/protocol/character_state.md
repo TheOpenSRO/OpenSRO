@@ -226,9 +226,37 @@ it on the mob it deletes, ~30 `QNO_*::OnDead::Handle` on the quest mob). That is
 consistent with removal-from-the-world and inconsistent with nothing — it is
 weaker evidence than the above and is stated as such.
 
-**Values 4 and 6 exist and are unread**: 7 comparisons against 4 (two typed —
-`CGObjMob::vslot_362` and `GObjPC::FUN_004c3e70`, both `!= 4`) and 2 against 6.
-So the enum is wider than 0..3 and this round did not read all of it.
+~~**Values 4 and 6 exist and are unread**: 7 comparisons against 4 … so the enum
+is wider than 0..3.~~ **WRONG, retracted in round 414 — they are not life
+states at all.** The probe that produced them scanned forward from the
+`GetLifeState` call for a comparison of the assigned variable and **crossed a
+reassignment**. In `CGObjMob::vslot_362` the decompiled C reads:
+
+	cVar1 = (**(code **)(*param_1 + 0xf8))();      // GetLifeState
+	if (cVar1 == '\x01') {                         // alive -- a REAL test
+	  cVar1 = (**(code **)(*param_1 + 0xfc))();    // REASSIGNED: GetMotionState
+	  if ((cVar1 != '\0') && (… cVar1 != '\x04')) // the "4" belongs to slot 63
+
+Re-run with a guard that stops at any reassignment of the variable, the life
+state is compared against **{1, 2, 3} and nothing else**, across 204 sites.
+
+**The corrected figures strengthen the finding above rather than weakening it:**
+
+| | comparisons | typed (receiver is the method's own `this`) |
+|---|---:|---:|
+| value 1 | 104 | 11 |
+| value 2 | 62 | **20** |
+| value 3 | 38 | **0** |
+
+Twenty typed tests against 2 and **none at all** against 3. The three
+load-bearing `CGObjPC` sites were each read out of their function bodies in
+rounds 411 and 413 rather than taken from the probe, which is why the conclusion
+survived its own tooling being wrong.
+
+**The lesson is general**: decompiled C reuses one variable for many virtual-call
+results, so a forward scan for a comparison MUST stop at reassignment. Without
+that guard, every neighbouring getter's vocabulary leaks into the one being
+measured.
 
 ### What that closes in the party ladder
 

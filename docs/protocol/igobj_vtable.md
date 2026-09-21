@@ -32,7 +32,7 @@ is a heuristic, so it is tested rather than assumed:
 | `0x1c` | 7 | `IGObj::IsPC` | tested for "is not a PC" in the damage path |
 | `0x28` | 10 | `IGObj::IsMonster` | called by both raw-damage builders |
 | `0xf8` | 62 | `IGObj::GetLifeState` | the guard opening **both** mitigation formulas — so the guard means *both parties must be alive* |
-| `0xfc` | 63 | `IGObj::GetMotionState` | tested `== 8` |
+| `0xfc` | 63 | `IGObj::GetMotionState` | ~~tested `== 8`~~ **not reproducible (round 414)** — see below |
 | `0x100` | 64 | `IGObj::GetBodyMode` | tested `== 1`; the berserk handler's own `if (GetBodyMode() == 1)` |
 | `0x104` | 65 | **`IGObj::GetParam`** | the param getter cited all through the damage pipeline |
 
@@ -391,3 +391,36 @@ Identified by its users rather than by its shape:
 damage formula does not tell you which participant is the attacker. See
 `docs/protocol/damage_pipeline.md`, where that inference was tried and
 discarded.
+
+
+## `IGObj::GetMotionState` (slot 63): the observed vocabulary, and a note that would not reproduce (round 414)
+
+Recovered as a by-product of correcting a life-state probe: the two getters sit
+at adjacent slots (`0xf8` and `0xfc`) and the decompiler reuses one variable for
+both, which is how slot 63's values were briefly mistaken for life states.
+
+A census guarded against variable reassignment finds **39 comparisons, 13 of
+them typed** (the receiver is the calling method's own `this`):
+
+| value | comparisons | typed sites |
+|---:|---:|---|
+| 2 | 1 | `GObjPC::FUN_004a9430 == 2` |
+| 3 | 2 | `GObjPC::FUN_004a9430 == 3` |
+| 4 | 16 | `CGObjMob::vslot_362`, `CGObjPC::vslot_362`, `GObjPC::FUN_004c3e70` — all `!= 4` |
+| 15 | 10 | `CGObjPC::StorageOperation == 15` |
+| 16 | 2 | `CGObjChar::Update != 16`, `GObjPC::FUN_004b0ea0 == 16` |
+| 17 | 4 | — |
+| 18 | 4 | `GObjPC::FUN_004b0ea0 == 18` |
+
+**This row's earlier note, "tested `== 8`", does not reproduce.** Four probes
+with different failure modes all return zero: the assigned form
+(`v = (**(code **)(*x + 0xfc))(); … v == 8`), the inline form
+(`(**(code **)(*x + 0xfc))() == 8`, which turns out never to occur for *any*
+value — Ghidra always assigns first), a `switch` on the result, and the same
+search in the client dump. A twelve-line window around every slot-63 call also
+finds no literal 8.
+
+The note is struck rather than deleted, because a probe finding nothing is a
+fact about the probe until it has been controlled — and here the control is that
+the same four probes DO return the seven values in the table. What the values
+*mean* is unread.

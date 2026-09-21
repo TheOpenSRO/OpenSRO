@@ -6405,6 +6405,52 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 414 (my own round-413 probe crossed a variable reassignment; the retraction
+strengthens the result it threatened): ROUND 413 CLOSED LIFE-STATE 2 AND, IN THE
+SAME BREATH, REPORTED THAT "VALUES 4 AND 6 EXIST AND ARE UNREAD". **They are not
+life states.** Chasing them was the natural continuation, and the first thing it
+found was that no `SetLifeState` site writes 4 or 6 — the one computed writer,
+`GObjPC::FUN_0048fc70`, resolves to 3 or 0. "Nothing writes it" is the invalid
+recovery this project has recorded before, so the probe was the first suspect,
+and the probe was wrong.
+
+`CGObjMob::vslot_362` reads:
+
+	cVar1 = (**(code **)(*param_1 + 0xf8))();      GetLifeState
+	if (cVar1 == '\x01') {                         alive -- a real test
+	  cVar1 = (**(code **)(*param_1 + 0xfc))();    REASSIGNED: GetMotionState
+	  if ((cVar1 != '\0') && (... cVar1 != '\x04'))
+
+My forward scan looked ten lines ahead for a comparison of the assigned variable
+and **crossed the reassignment**, so slot 63's vocabulary leaked into slot 62's.
+**Decompiled C reuses one variable for many virtual-call results; a forward scan
+must stop at reassignment.** The two getters being at adjacent slots is what
+made it invisible.
+
+RE-RUN WITH THE GUARD, THE RETRACTION STRENGTHENS ROUND 413 RATHER THAN
+UNDERMINING IT. The life state is compared against **{1, 2, 3} and nothing
+else** across 204 sites: value 1 gets 104 comparisons (11 typed), value 2 gets
+62 (**20 typed**), value 3 gets 38 (**0 typed**). Twenty typed tests against 2
+and none at all against 3 — both of round 413's claims, on more evidence. It
+held because the three load-bearing `CGObjPC` sites were read out of their
+function bodies in rounds 411 and 413, not taken from the probe.
+
+SLOT 63 IS `IGObj::GetMotionState`, ALREADY NAMED, AND ITS VOCABULARY IS NOW
+CENSUSED: 39 comparisons, 13 typed, values **{2, 3, 4, 15, 16, 17, 18}** —
+`CGObjPC::StorageOperation == 15`, `CGObjChar::Update != 16`,
+`GObjPC::FUN_004b0ea0 == 16` and `== 18`, three classes testing `!= 4`. What
+they mean is unread; the table is in `igobj_vtable.md`.
+
+AND THAT FILE'S OWN NOTE FOR THE ROW, "tested `== 8`", DOES NOT REPRODUCE. Four
+probes with different failure modes return zero: the assigned form, the inline
+form (`(**(code **)(*x + 0xfc))() == 8` — which turns out never to occur for any
+value, since Ghidra always assigns first), a `switch` on the result, and the
+same search in the client dump; a twelve-line window finds no literal 8 either.
+Struck rather than deleted, because a probe finding nothing is a fact about the
+probe until controlled — and the control here is that those same four probes DO
+return the seven values above. No names filed this round; `0x514010` from round
+413 is still held for a batch. No behaviour changed, so no tag.
+
 Round 413 (the receiver typed, and life-state 2 closed — it is DEAD): ROUND 412
 NAMED THE WORK THAT WOULD CLOSE THIS AND THIS ROUND DID IT INSTEAD OF PICKING
 SOMETHING EASIER. The blocker was that a virtual call decompiles to
