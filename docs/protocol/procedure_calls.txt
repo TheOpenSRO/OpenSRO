@@ -1,0 +1,102 @@
+# addr	function	procedure	conversions	varargs_from_cleanup	fresh_pushes	notes
+# Every stored-procedure call site in SR_GameServer.exe, recovered 2026-09-21 (round 404).
+#
+# All 78 go through FUN_00425f70, a __vsnprintf_s wrapper, so the arguments are
+# varargs read off the stack after the format string. Three numbers per site:
+#   conversions  -- %d/%s/%I64d/... in the format literal, read from .rdata
+#   varargs      -- from the call's own `add esp,N` cleanup: N/4 - 1
+#   fresh pushes -- values pushed between the previous call and the format push
+#
+# THE POINT OF THE THIRD COLUMN: where fresh < varargs, the call REUSES THE
+# UNCLEANED ARGUMENTS OF THE PRECEDING CALL as its trailing varargs (round 402).
+# That happens at 32 of the 78 sites -- 41% -- so READING A PROCEDURE'S ARGUMENTS
+# OFF THE DECOMPILED C IS WRONG AT TWO SITES IN FIVE, because Ghidra renders only
+# the fresh pushes. Round 401 hit exactly this and called it a decompiler defect.
+#
+# CONTROLS: the three sites read by hand in rounds 402-403 reproduce exactly --
+# _STRG_MOVE_ITEM at 0x45b701 (8 conversions, 8 varargs, 4 fresh),
+# _STRG_SPLIT_ITEM at 0x45b806 (7, 7, 7 -- no reuse),
+# _STRG_SWAP_ITEM at 0x45b8ac (8, 8, 4).
+#
+# CAVEAT, stated rather than hidden: the `fresh` column is approximate (it stops
+# at the previous call, which can overcount), and 34 rows show conversions !=
+# varargs. Those are NOT promoted as findings -- they are where the cleanup
+# heuristic or the fresh-push walk is imprecise, and each needs its own read.
+0043a3af _LogChar::vslot_000                {CALL _ADDLOGCHAR                 6    6    8
+0043a4c1 _LogSiegeFortress::vslot_000       {CALL _ADDLOGSIEGEFORTRESS        6    6    8
+0043a610 _LogItem::vslot_000                {CALL _ADDLOGITEM                11   13   14 <- 11 MISMATCH
+0043a715 _LogServerEvent::vslot_000         {CALL _AddLogServerEvent          3    3    5
+0043a8b0 _LogSchedule::vslot_000            {CALL _AddLogSchedule            11   11    6  STALE-REUSE(6 fresh)
+0043d373 AQ_CharDataLoader::SelectUsedSlots {?=CALL _DelExpiredRentItemInS    3    3    3
+0043e149 AQ_CharDataLoader::DoWork          {CALL _GET_USER_GOLD              1    1    1
+0043e21e AQ_CharDataLoader::DoWork          {CALL _GET_GUILD_GOLD             1    1    1
+0043fc4b AQ_ItemXChanger::DoWork            {?=CALL _STRG_MOVEITEM_NEW        9    9    9
+00440545 GObjPC::COS_SubmitAsyncQuery       {?=CALL _AddNewCOS               16   16   11  STALE-REUSE(11 fresh)
+004405b6 GObjPC::COS_SubmitAsyncQuery       {?=CALL _DeleteCharCOS            3    3    3
+004405fe GObjPC::COS_SubmitAsyncQuery       {?=CALL _ChangeCOSState           2    2    2
+00440634 GObjPC::COS_SubmitAsyncQuery       {?=CALL _ChangeCOSState           2    2    2
+00440748 GObjPC::COS_SubmitAsyncQuery       {?=CALL _ChangeCOSState           2    2    2
+00440d60 AsyncQuery::AQ_COSManipulator__Loa {?=CALL _DelExpiredRentItemInS    3    3    3
+004419b8 AQ_GuildQuery::FUN_00441940        {?=CALL _Guild_Master_Election    2    2    2
+00441bed AQ_GameWorld::FUN_00441b40         {?=CALL _CharInstanceWorldData    4    4    1  STALE-REUSE(1 fresh)
+00441cfb AQ_GameWorld::FUN_00441b40         {?=CALL _CharInstanceWorldData   12   12    1  STALE-REUSE(1 fresh)
+0044b71a AQ_BindOptionWithItem::FUN_0044b60 {?=CALL _Bind_Option_Manager      9   10   10 <- 9 MISMATCH
+0044e1e5 GObjPC::FUN_0044e0f0               {?=CALL %s                        3    3    3
+004536f3 AQ_OpenMarket::FUN_004535a0        {?=CALL _OpenMarket_Insert       26   31   19 <- 26 MISMATCH  STALE-REUSE(19 fresh)
+004538d8 AQ_OpenMarket::FUN_00453820        {?=CALL _OpenMarket_Receipt       3    3    3
+00453ae8 AQ_OpenMarket::FUN_00453a20        {?=CALL _OpenMarket_Cancle        6    7    7 <- 6 MISMATCH
+00453d2d AQ_OpenMarket::FUN_00453c20        {?=CALL _OpenMarket_Purchase     13   14   14 <- 13 MISMATCH
+0045435b AQ_OpenMarket::FUN_00454270        {?=CALL _OpenMarket_Update       10   10   10
+0045721f AQ_Siege::AQ_Siege_SubmitQuery     {?=CALL _AddSiegeFortressObjec   10   14    6 <- 10 MISMATCH  STALE-REUSE(6 fresh)
+004572d1 AQ_Siege::AQ_Siege_SubmitQuery     {?=CALL _SiegeFortressStructIn    7    7    7
+0045a4b0 AQ_StorageUpdater::AddLinkedStorag {CALL _STRG_ADD_LINKED_STORAGE    2    2    1  STALE-REUSE(1 fresh)
+0045a72c AQ_StorageUpdater::BuyCashItem     {CALL _STRG_BUY_CASHITEM_EQUIP    7    8    1 <- 7 MISMATCH  STALE-REUSE(1 fresh)
+0045a7af AQ_StorageUpdater::BuyCashItem     {CALL _STRG_BUY_CASHITEM_EXP      5    5    1  STALE-REUSE(1 fresh)
+0045a921 AQ_StorageUpdater::DeleteItem      {?=CALL _STRG_DEL_ITEM            4    6    7 <- 4 MISMATCH
+0045ab5e AQ_StorageUpdater::AddItem         {CALL _STRG_ADD_EQUIP_NORMAL      7    8    4 <- 7 MISMATCH  STALE-REUSE(4 fresh)
+0045ac3c AQ_StorageUpdater::AddItem         {CALL _STRG_ADD_SPECIALTY         6    6    4  STALE-REUSE(4 fresh)
+0045acbf AQ_StorageUpdater::AddItem         {CALL _STRG_ADD_EXPENDABLE        5    5    4  STALE-REUSE(4 fresh)
+0045ae75 AQ_StorageUpdater::AddMagicItem    {CALL _STRG_ADD_ITEM_MAGIC        8    9    4 <- 8 MISMATCH  STALE-REUSE(4 fresh)
+0045aea9 AQ_StorageUpdater::AddMagicItem    {CALL _STRG_ADD_ITEM_MAGIC        8    1    4 <- 8 MISMATCH
+0045aec8 AQ_StorageUpdater::AddMagicItem    {CALL _STRG_ADD_ITEM_MAGIC        8    3    4 <- 8 MISMATCH
+0045b05f AQ_StorageUpdater::MoveItemWithGol {?=CALL _UPDATE_GUILD_N_CHAR_G    4    6    1 <- 4 MISMATCH  STALE-REUSE(1 fresh)
+0045b0a8 AQ_StorageUpdater::MoveItemWithGol {?=CALL _UPDATE_USER_N_CHAR_GO    4    6    6 <- 4 MISMATCH
+0045b33a AQ_StorageUpdater::MoveItemWithGol {?=CALL _STRG_MOVE_ITEM           7    7    4  STALE-REUSE(4 fresh)
+0045b3d6 AQ_StorageUpdater::MoveItemWithGol {?=CALL _STRG_MOVE_ITEM           7    7    4  STALE-REUSE(4 fresh)
+0045b466 AQ_StorageUpdater::MoveItemWithGol {?=CALL _UPDATE_USER_N_CHAR_GO    4    6    6 <- 4 MISMATCH
+0045b4c0 AQ_StorageUpdater::MoveItemWithGol {?=CALL _UPDATE_CHAR_GOLD_FOR_    2    3    3 <- 2 MISMATCH
+0045b701 AQ_StorageUpdater::RearrangeItem   {?=CALL _STRG_MOVE_ITEM           8    8    4  STALE-REUSE(4 fresh)
+0045b806 AQ_StorageUpdater::RearrangeItem   {CALL _STRG_SPLIT_ITEM            7    7    7
+0045b8ac AQ_StorageUpdater::RearrangeItem   {?=CALL _STRG_SWAP_ITEM           8    8    4  STALE-REUSE(4 fresh)
+0045ba4d AQ_StorageUpdater::RestoreSoldMagi {CALL _STRG_RESTORE_SOLDITEM_I    9   11    6 <- 9 MISMATCH  STALE-REUSE(6 fresh)
+0045ba85 AQ_StorageUpdater::RestoreSoldMagi {CALL _STRG_RESTORE_SOLDITEM_I    9    1    6 <- 9 MISMATCH
+0045baa4 AQ_StorageUpdater::RestoreSoldMagi {CALL _STRG_RESTORE_SOLDITEM_I    9    3    6 <- 9 MISMATCH
+0045bd48 AQ_StorageUpdater::RestoreSoldItem {CALL _STRG_RESTORE_SOLDITEM_E    9   12    6 <- 9 MISMATCH  STALE-REUSE(6 fresh)
+0045be44 AQ_StorageUpdater::RestoreSoldItem {CALL _STRG_RESTORE_SOLDITEM_S    7    8    4 <- 7 MISMATCH  STALE-REUSE(4 fresh)
+0045bee8 AQ_StorageUpdater::RestoreSoldItem {CALL _STRG_RESTORE_SOLDITEM_E    6    7    4 <- 6 MISMATCH  STALE-REUSE(4 fresh)
+0045c0f8 AQ_StorageUpdater::FUN_0045bfd0    {?=CALL _Bind_Option_Manager      9   10   10 <- 9 MISMATCH
+0045c6e4 AsyncQuery_Storage::FUN_0045c580   {?=CALL _Rent_Info_Manager       25   26   21 <- 25 MISMATCH  STALE-REUSE(21 fresh)
+0045cac6 AQ_StorageUpdater::MoveItem        {?=CALL _STRG_MOVE_ITEM           8    9   11 <- 8 MISMATCH
+0045e271 AQ_StorageUpdaterForPacakageItem:: {CALL _STRG_ADD_PACKAGEITEM_WI   12   13    4 <- 12 MISMATCH  STALE-REUSE(4 fresh)
+0045e2ce AQ_StorageUpdaterForPacakageItem:: {CALL _STRG_ADD_PACKAGEITEM      11   12    4 <- 11 MISMATCH  STALE-REUSE(4 fresh)
+0045eb68 AQ_StorageUpdaterForPacakageItem:: {?=CALL _Rent_Info_Manager       25   26   21 <- 25 MISMATCH  STALE-REUSE(21 fresh)
+0046505f FUN_00465000                       {CALL _QueryOldTrijobInfo         2    2    2
+00465115 FUN_004650b0                       {?=CALL _CanAssignThisNickName    1    1    1
+004651cb FUN_00465160                       {?=CALL _AssignNickName           2    2    2
+004653d0 FUN_00465390                       {CALL _GetOldTrijobData           1    1    1
+00465eae AQ_Trijob::FUN_00465e50            {?=CALL _InsertCharTrijobSafeT    3    3    3
+00465f76 AQ_Trijob::FUN_00465f20            {?=CALL _DeleteCharTrijobSafeT    1    1    1
+005204f7 GObjPC_MsgHandler_SpecialCommand:: {CALL _GetNPCPosByCodename        1    1    1
+005d0809 SelectGuildGPHistoryTop100         {?=CALL _DeleteGPHistory          1    1    1
+005d7118 AQ_CharDataLoader::FUN_005d70a0    {CALL _Memo_Delete                1    2    2 <- 1 MISMATCH
+0061e210 GObjPC::FUN_0061e1d0               {?=CALL _SiegeFortressFinished    1    1    1
+0061e2c0 GObjPC::FUN_0061e280               {?=CALL _SiegeFortressTempFini    1    1    1
+0061e396 GObjPC::UpdateSiegeFortressRow     {?=CALL _UpdateSiegeFortressTa    2    2    1  STALE-REUSE(1 fresh)
+0061e3d8 GObjPC::UpdateSiegeFortressRow     {?=CALL _SiegeFortressTaxColle    3    4    1 <- 3 MISMATCH  STALE-REUSE(1 fresh)
+0061e43d GObjPC::UpdateSiegeFortressRow     {?=CALL _SiegeFortressHireNPC     5    5    1  STALE-REUSE(1 fresh)
+0061e498 GObjPC::UpdateSiegeFortressRow     {?=CALL _SiegeFortressHireNPC     5    3    1 <- 5 MISMATCH  STALE-REUSE(1 fresh)
+0061e531 GObjPC::UpdateSiegeFortressRow     {?=CALL _SiegeFortressEntryDun    2    1    1 <- 2 MISMATCH
+00627d85 AQ_Siege::FUN_00627cd0             {?=CALL _SiegeFortressRequestS    4    4    4
+00628351 AQ_Siege::FUN_006282f0             {CALL _SiegeFortressCollectFor    4    4    4
+00650a9d CTimedJob::PersistToDB             {?=CALL _ADDTIMEDJOB             14   15    1 <- 14 MISMATCH  STALE-REUSE(1 fresh)
+0065fd6d CTimedJob::PersistToDBForPet       {?=CALL _ADDTIMEDJOBFORPET       13   14    1 <- 13 MISMATCH  STALE-REUSE(1 fresh)

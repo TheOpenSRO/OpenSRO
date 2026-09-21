@@ -743,3 +743,31 @@ at the shared site.
 Laid out, swap's varargs 5 and 6 are `BYTE [edi+0x4]` and `BYTE [edi+0x3]` — the
 same two slot bytes, **in the reverse order** to move and merge. For an operation
 that exchanges two slots, that is the detail worth having.
+
+
+## Every procedure call site, censused (round 404)
+
+`docs/protocol/procedure_calls.txt` lists **all 78 stored-procedure call sites**
+in the server with three numbers each: the format literal's conversion count, the
+true vararg count taken from the call's own `add esp,N` cleanup, and how many
+values were pushed fresh.
+
+**The third column is the point.** Where fresh < varargs, the call reuses the
+**uncleaned arguments of the preceding call** as its trailing varargs — the
+mechanism round 402 found at one site. It happens at **32 of the 78 sites, 41 %**.
+
+So **reading a procedure's arguments off the decompiled C is wrong at two sites
+in five**, because Ghidra renders only the fresh pushes. Round 401 walked into
+exactly this and recorded it as a decompiler defect; it is a compiler idiom, and
+it is common.
+
+**Controls.** The three sites read by hand in rounds 402–403 reproduce exactly:
+`_STRG_MOVE_ITEM` at `0x45b701` (8 conversions, 8 varargs, 4 fresh),
+`_STRG_SPLIT_ITEM` at `0x45b806` (7, 7, 7 — no reuse), `_STRG_SWAP_ITEM` at
+`0x45b8ac` (8, 8, 4).
+
+**Caveat, stated rather than left to be discovered.** The fresh-push column is
+approximate — the walk stops at the previous call and can overcount — and 34 rows
+show conversions ≠ varargs. Those are **not** promoted: they mark where the
+cleanup heuristic or the push walk is imprecise, and each needs its own read. The
+41 % figure uses the cleanup count, which the controls validate.

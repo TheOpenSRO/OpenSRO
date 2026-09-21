@@ -6375,6 +6375,41 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 404 (the vararg-reuse trick is not a one-off: 41 % of call sites use it):
+ROUNDS 402-403 EXPLAINED ONE CALL SITE. Understanding the shape made the whole
+population cheap: every procedure call goes through FUN_00425f70, the format is
+the last push, and THE CALL'S OWN `add esp,N` GIVES THE TRUE VARARG COUNT as
+N/4 - 1. Censused, that is 78 sites, written to docs/protocol/procedure_calls.txt
+with conversions, true varargs and fresh pushes for each.
+
+THE HEADLINE IS THE THIRD COLUMN. Where fresh pushes < varargs, the call reuses
+the preceding call's UNCLEANED arguments -- and that happens at 32 OF 78 SITES,
+41 %. So reading a procedure's arguments off the decompiled C is wrong at TWO
+SITES IN FIVE, because Ghidra renders only the fresh pushes. Round 401 hit this
+and filed it as a decompiler defect; it is a compiler idiom and it is everywhere.
+
+THE FIRST VERSION OF THE CENSUS WAS WRONG AND THE MISMATCH RATE GAVE IT AWAY. I
+counted only "%d" in each format, which made most rows look mismatched -- and one
+row, `{?=CALL %s`, reported one conversion for a format whose conversions are
+mostly %s and %I64d. A suspiciously high anomaly rate is a fact about the probe
+first. Counting all conversion specifiers fixed it.
+
+THE CONTROLS ARE THE THREE SITES READ BY HAND, and they reproduce exactly:
+_STRG_MOVE_ITEM at 0x45b701 (8 conversions, 8 varargs, 4 fresh), _STRG_SPLIT_ITEM
+at 0x45b806 (7, 7, 7 and no reuse), _STRG_SWAP_ITEM at 0x45b8ac (8, 8, 4). A
+census that reproduces every case already known by hand is worth trusting about
+the rest.
+
+NOT PROMOTED: 34 rows still show conversions != varargs, and the fresh-push
+column is approximate because the walk stops at the previous call and can
+overcount. Those rows mark where the heuristics are imprecise, not findings, and
+the caveat sits in the file's own header rather than in a later correction.
+
+**What moved:** a one-site observation generalised into a measured property of
+the binary with its controls, an 78-row artifact filed where the next reader will
+need it, and a standing warning that the decompiled C mis-renders procedure
+arguments at 41 % of sites. No behaviour changed, so no tag.
+
 Round 403 (all four procedures numbered, and rounds 401-402 misread which call
 was which): THE NEXT STEP WAS THE SWAP BRANCH'S DIRECT CALL. Reading the literal
 it actually pushes corrected two rounds at once: 0x45b806 pushes 0x00ae4eac,
