@@ -397,5 +397,22 @@ full one. The mask exists so that *partial* saves can be requested by whoever
 else calls slot `0x500`, which is what makes this a scope vocabulary rather than
 a parameter list.
 
-**What each sub-saver persists is NOT read.** Seven distinct functions; naming
-them is the next probe, and it is a bounded one.
+**"Sub-saver" was a structural label and round 392 found it does not hold
+uniformly.** The dispatch is real — the mask, the bits and the eight call targets
+are all read off the code. What those targets ARE was inferred from position in
+the dispatcher, not from reading them, and two reads show they are not one kind
+of thing:
+
+- `FUN_004b7b50` (bits `0x01`/`0x40`) is a **string-building loop** — the MSVC
+  small-buffer pattern (`capacity = 0xf`, `_free` once it grows past it),
+  appending in a loop bounded by `[obj+0x20]`. Consistent with assembling query
+  text, though the procedure it names is not in the function.
+- `FUN_004082b0` (bit `0x800`) is **not a builder at all**: it walks a vector at
+  `+0xc..+0x10` calling `FUN_00408330` on `+4`, `+0xb`, `+0x1a`, `+0x20`, `+0x26`
+  and `+0x2b`, which is a free/teardown shape, and it takes no visible argument.
+
+So the bits select *something* per scope, and at least one of them is a
+container teardown rather than a save. **None of the eight is named**, and none
+should be until it is read: the naming lever hoped for — a procedure name or a
+table string inside each — **does not exist**, as all eight are literal-free.
+

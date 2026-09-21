@@ -6375,6 +6375,39 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 392 ("seven sub-savers" was a structural label, and reading two of them
+withdrew it): ROUND 391 ENDED BY NAMING ITS OWN NEXT PROBE -- name the seven
+sub-savers of CGObjPC::vslot_320. Reading them instead withdrew the label.
+
+WHAT STILL STANDS is what was actually read off the code: vslot_320 dispatches on
+a bitmask, the bits are 0x01/0x10/0x40/0x100/0x200/0x400/0x800 with two always-run
+calls, and AQ_CharDataSaver passes 0xffffffff. WHAT DOES NOT STAND is calling the
+eight targets sub-savers. That came from their POSITION in the dispatcher, not
+from reading them, and two reads show they are not one kind of thing:
+FUN_004b7b50 (bits 0x01/0x40) is a string-building loop -- the MSVC small-buffer
+pattern, capacity 0xf, _free once it grows past it, bounded by [obj+0x20] --
+which is consistent with assembling query text; but FUN_004082b0 (bit 0x800) is a
+teardown walk, freeing fields at +4, +0xb, +0x1a, +0x20, +0x26 and +0x2b across a
+vector, and taking no visible argument.
+
+THE NAMING LEVER I EXPECTED DOES NOT EXIST. persistence.md names 71 procedures
+from log strings, so I expected each target to carry a procedure name or table
+literal. ALL EIGHT ARE LITERAL-FREE: no strings, no distinctive named callees.
+Whatever names the procedure is assembled elsewhere, which is why none of the
+eight is named here and none should be until it is read.
+
+THIS IS THE THIRD TIME THIS SESSION a structural pattern read as a finding and
+needed a use-site to survive: a bit-to-call dispatch here, a code-to-param
+proximity join in rounds 388-389, and a name-to-behaviour correlation in rounds
+385-386. Two of the three did not survive intact. The pattern is the hypothesis,
+never the result.
+
+**What moved:** a label this project put in two documents one round ago is
+withdrawn where it was written, the part of round 391 that was actually read is
+separated from the part that was inferred, and the next probe is re-aimed at
+character offsets -- what each target READS -- rather than at names that are not
+there. No behaviour changed, so no tag.
+
 Round 391 (the character save is a scope bitmask, and two more stale probes):
 ROUND 390's STALENESS SIGNAL NAMED FIVE never-revisited rows. Took the thinnest
 first -- Shops, whose entire next probe was the 26 characters "repair and item
