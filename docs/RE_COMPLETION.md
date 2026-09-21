@@ -6266,6 +6266,29 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 353 (the guard extended to where last round's bug was hiding): ROUND 352
+FOUND wornBroken BY HAND, AND THE DETECTOR COULD NOT HAVE. It is an UNEXPORTED
+helper encoding a recovered rule, written and never called -- the same bug class
+the round-346 guard exists to catch, one visibility level below where it looks,
+because it only walked exported declarations. MEASURED BEFORE EXTENDING IT: 296
+unexported functions in the server tree and **exactly one** with no caller --
+session.rollChance, a lock-wrapper around combat.RollChance left behind when
+resolveBlow began taking the lock itself. combat.RollChance is still wired
+(ChanceMemory.roll falls back to it), so this was DEAD CODE, not a missing
+mechanic, and the recovered chance roll is fine. DELETED RATHER THAN LISTED,
+which is what lets the new rule be absolute: unexported functions get NO BASELINE
+AND NO EXEMPTIONS. The wire-decoding surface and the parked-spec packages are
+reasons a PUBLIC function can have no caller here; neither can apply to an
+unexported one, which is either called from its own package or dead. The test
+says that in as many words, and the control was checked both ways -- a throwaway
+unexported function added to internal/mana makes it fail, and removing it makes
+it pass. THE COUNT IS THE REASSURING PART: one orphan in 296 says the codebase
+has essentially no hidden unwired unexported logic, so round 352's find was the
+exception rather than the tip of something.
+
+**What moved:** no shipped value -- dead code removed and a guard widened to the
+exact blind spot that let the previous round's bug survive four weeks.
+
 Round 352 (a shipped value, found by checking the OTHER half of a rule):
 ROUND 351 CHECKED THREE RECOVERED RULES AND ALL THREE HELD; THIS ONE FOUND A
 HALF THAT DID NOT. A skill's cast requirement wants the item PRESENT AND

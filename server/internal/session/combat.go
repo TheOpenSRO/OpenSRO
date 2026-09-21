@@ -60,17 +60,6 @@ func rollDamage(min, max int) int {
 	return combat.RollDamage(min, max, damageRollNG)
 }
 
-// rollChance is combat.RollChance under the SAME lock as every other roll
-// here. It takes the roll rather than handing the generator out: returning
-// damageRollNG and letting the caller use it after the defer has unlocked
-// would be a data race dressed as synchronisation, which is the exact mistake
-// the gold roll below already made once.
-func rollChance(chance int) bool {
-	damageRollMu.Lock()
-	defer damageRollMu.Unlock()
-	return combat.RollChance(chance, damageRollNG)
-}
-
 // rollGold is combat.RollGold under the SAME lock -- one generator, one mutex.
 // An earlier version of this guarded it with a second mutex, which protects
 // nothing: two locks around one rand.Rand is a data race, not synchronisation.

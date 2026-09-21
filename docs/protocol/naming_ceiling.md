@@ -467,3 +467,27 @@ and disclosed at the definition.
 `docs/protocol/skill_withdraw.md` opens by saying srrevamp offers no withdrawal
 feature. That is the difference from the HP-regen and drop-table cases, which
 claimed nothing and simply did not run.
+
+
+## The orphan guard now covers unexported functions too (round 353)
+
+Round 352 found `wornBroken` -- an unexported helper in
+`session/combat_durability.go` encoding the recovered "a broken item is not
+serviceable" rule, written and never called. **The detector could not see it**,
+because it only walked exported declarations. That is the same bug class the
+detector exists to catch, hiding one visibility level down, and it was found by
+hand rather than by the guard.
+
+Measured before extending it: **296 unexported functions in the server tree, and
+exactly ONE with no caller** -- `session.rollChance`, a lock-wrapper around
+`combat.RollChance` left behind when `resolveBlow` began taking the lock itself.
+`combat.RollChance` is still wired (`ChanceMemory.roll` falls back to it), so
+this was dead code and not a missing mechanic. **Deleted rather than listed**,
+which is what makes the new rule absolute.
+
+So unexported functions get **no baseline and no exemptions**. The wire-decoding
+surface and the parked-spec packages are reasons a *public* function can have no
+caller in this tree; neither can apply to an unexported one, which is either
+called from its own package or dead. The test says so in as many words, and a
+throwaway unexported function was added to `internal/mana` to confirm it fails
+before being removed again.

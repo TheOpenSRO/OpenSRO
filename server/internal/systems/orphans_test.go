@@ -164,7 +164,17 @@ func exportedOrphans(t *testing.T) ([]decl, int) {
 		pkg := filepath.Dir(rel)
 		for _, d := range f.Decls {
 			fd, ok := d.(*ast.FuncDecl)
-			if !ok || fd.Name == nil || !fd.Name.IsExported() {
+			if !ok || fd.Name == nil {
+				continue
+			}
+			// UNEXPORTED FUNCTIONS COUNT TOO, added round 353. Round 352 found
+			// `wornBroken` -- an unexported helper encoding a recovered rule,
+			// written and never called -- and this detector could not see it,
+			// because it only walked exported declarations. That is the same
+			// bug class it exists to catch, hiding one visibility level down.
+			//
+			// init and main are entry points the runtime calls, not orphans.
+			if fd.Name.Name == "init" || fd.Name.Name == "main" {
 				continue
 			}
 			decls[fd.Name.Name] = append(decls[fd.Name.Name],
@@ -258,6 +268,18 @@ func TestOrphanDetectorIgnoresComments(t *testing.T) {
 func TestEveryOrphanIsExplained(t *testing.T) {
 	orphans, _ := exportedOrphans(t)
 	for _, d := range orphans {
+		if !ast.IsExported(d.name) {
+			// An unexported function cannot be a package's public surface, so
+			// none of the exemptions below can apply to it: it is either called
+			// from its own package or it is dead. There were 296 of them and
+			// exactly ONE orphan when this was added, and that one was deleted
+			// rather than listed, so the invariant here is ZERO.
+			t.Errorf("%s (%s) is unexported and nothing calls it.\n"+
+				"Either it is dead code, or it is a recovered rule nobody wired -- which is how\n"+
+				"wornBroken sat unused until round 352. Delete it or call it; there is no third\n"+
+				"option for an unexported function, and no baseline for these.", d.name, d.file)
+			continue
+		}
 		if isDecodeSurface(d) || isParkedPackage(d) {
 			continue
 		}
