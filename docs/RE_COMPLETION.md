@@ -6266,6 +6266,44 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 345 (two skill names, and a guard idea killed by measurement): THE
+SIZE-RANKED WORKLIST'S NEXT TWO ENTRIES SIT BESIDE Mastery_LevelUp IN BOTH THE
+ADDRESS SPACE AND THE EVENT-KIND SPACE -- 0x1a is Mastery_LevelUp, 0x1b is
+0x0059bfe0 and 0x1c is 0x0059f8b0 in GameEventLog_Record's vocabulary. 0x0059bfe0
+is the SKILL-LEARN handler, identified by the server's own anti-abuse log line
+"Skill Learn Abuser!! (CharName : %s, SkillID : %d)" plus two SkillBook::FindLearned
+calls; named Skill_HandleLearn. 0x0059f8b0 is the SKILL-WITHDRAW executor,
+completing a family whose validator (SkillWithdraw_Validate, 0x0059f410) was
+already named; named SkillWithdraw_Execute. THE SECOND WAS CHARACTERISED IN PROSE
+SINCE 2026-09-17 AND NEVER FILED AS A NAME -- skill_withdraw.md already recorded
+that this address hands its 80% refund to AddSkillPoints. That is the fourth time
+this session a function sat identified in a document and still read FUN_ in the
+dump. A THIRD RECOVERED-BUT-UNCALLED MECHANIC TURNED UP ON THE WAY:
+skill.WithdrawCost, the exact recovered withdrawal cost formula, has ZERO callers
+outside its tests. It shows the shape of round 333's guard -- internal/skill IS
+imported, so only the FUNCTION is orphaned. THE OBVIOUS FIX WAS MEASURED AND DOES
+NOT WORK. Rule one, "exported funcs whose doc-comment claims recovery and nothing
+calls": **0 found, and it missed the known positive** -- WithdrawCost's comment is
+four paragraphs of derivation that never uses the word "recovered", saying
+"settled by", "exact", "INFERRED" instead. Matching on vocabulary matches MY
+words, not the fact, which is the same weakness naming_ceiling.md already records
+for source-string levers. Rule two, "exported funcs with no non-test reference
+outside their own file": **252 of 548, 46 %** -- useless as an alarm, and inflated
+two ways: the deliberately parked spec packages round 333 already declared, and
+MY OWN BUG of ignoring same-file callers, which reads leveldata.ExpUnit as an
+orphan although KillExp calls it a hundred lines below. Filtering parked packages
+and protocol surface leaves 68, still inflated by the same bug, so neither number
+is a true count. **NO GUARD SHIPS**; the generalisation needs a real call graph
+(go/callgraph), not a grep, and that is written down as the honest next step.
+WithdrawCost stands as the third instance and is DISCLOSED -- skill_withdraw.md
+opens by saying srrevamp offers no withdrawal feature -- which is what separates
+it from the HP-regen and drop-table cases, that claimed nothing and simply did
+not run.
+
+**What moved:** no shipped value. Two skill functions named and applied, a third
+recovered-but-uncalled mechanic identified, and a tempting guard killed with
+numbers instead of shipped half-working.
+
 Round 344 (one vocabulary, two negatives, and a guess of mine disproved): THE
 DEFERRED CANDIDATE RESOLVES AGAINST ME. Round 343 left 0x0063d4a0 unnamed and
 guessed it "looks like a character state/mode test", since Item_HandleUseItem

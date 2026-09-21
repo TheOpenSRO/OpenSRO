@@ -400,3 +400,43 @@ The same entry also says *"there is no static opcode→handler table to recover 
 the mapping is built at runtime"*. **Round 328 superseded that**: the table is
 static, installed by `GObjPC::InstallClientMessageHandlers`, and is
 `server_handlers.tsv`. Noted so the older paragraph is not acted on.
+
+## The function-level unwired guard does not work (measured, round 345)
+
+Round 333 shipped a test that flags an internal *package* nothing imports, after
+two mechanics were found recovered-implemented-and-uncalled by accident. A third
+turned up this round — `skill.WithdrawCost`, the exact recovered withdrawal cost
+formula, with **zero callers outside its tests** — and it shows the guard's
+shape: `internal/skill` *is* imported, so only the function is orphaned.
+
+The obvious fix is a function-level version. **It was measured and it does not
+work.** Two attempts:
+
+| rule | result |
+|---|---|
+| exported funcs whose doc-comment claims recovery, with no caller | **0 found** — and the known positive was missed |
+| exported funcs with no non-test reference outside their own file | **252 of 548 (46 %)** |
+
+The first failed the way text levers always fail here: `WithdrawCost`'s comment
+is four paragraphs of derivation that never uses the word "recovered" — it says
+"settled by", "exact", "INFERRED". Matching on vocabulary matches my words, not
+the fact. The same weakness this page already records for source-string levers.
+
+The second is too noisy to alarm on, for two reasons worth separating:
+
+- **Deliberate parking.** `ai`, `statuseffect`, `academy`, `cos` and the rest are
+  recovered rule sets with nothing to attach to — round 333 already declared them.
+  Excluding those and the protocol surface (`Encode`/`Decode`/`New*`) leaves 68.
+- **My own bug.** The rule only counted references in a *different file*, so
+  `leveldata.ExpUnit` — called by `KillExp` a hundred lines below it — reads as an
+  orphan. Same-file callers are callers. The 68 and the 252 are both inflated by
+  this and neither is a true count.
+
+So no guard ships. What the package-level test catches, it catches; the
+function-level generalisation needs a real call-graph (`go/callgraph`), not a
+grep, and that is the honest next step if it is wanted.
+
+**`skill.WithdrawCost` stands as the third instance**, and it is *disclosed* —
+`docs/protocol/skill_withdraw.md` opens by saying srrevamp offers no withdrawal
+feature. That is the difference from the HP-regen and drop-table cases, which
+claimed nothing and simply did not run.
