@@ -115,6 +115,15 @@ In order. Each is checked off here when it ships in a release, with its round in
       then swing on ReuseDelay, give-up/HOMING by the read rules. The per-species detection distance is
       in no archive we hold (the tactics table is shard-DB only; the package's GameServer minidumps have
       no heap) -- disclose it per species when built.
+      **The speeds are no longer missing (round 362):** all eleven roster species' walk and run
+      speeds are read from the retail characterdata (cols 46/47, world units per second) and
+      tabled in `docs/protocol/monster_ai.md`, with an eleven-row level/HP control. Which of the
+      two a WANDER leg steps at is still unread.
+      **The client half is the gate, and it is a push not a poll.** The client asks for monsters
+      only on events (`NetClient.list_monsters` at zone entry, on the refresh button and after an
+      attack) and draws them as `_monster_bodies` Node3Ds at the snapshot position, so server-side
+      movement with no move packet would make monsters JUMP on the next refresh rather than walk.
+      Build the move packet before the WANDER loop, not after.
 - [ ] **Exact fixed-function lighting**: a spatial shader whose `light()` scales the sun by the
       material's diffuse and the ambient by its ambient (round 136's stated approximation).
 - [x] ~~Real spawn points for every roster species~~ -- **done, v0.1.403 (round 253)**: `export-refdata

@@ -6266,6 +6266,52 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 362 (the monster speeds, and why the AI cannot be wired yet): THIS TICK
+WENT AT THE BIGGEST PLAYER-VISIBLE GAP instead of another naming round --
+internal/ai is 30 KB of tested, fully-specified state machine IMPORTED NOWHERE,
+the fifth instance of the recovered-implemented-unwired class. It is still
+unwired, and this round establishes why, plus the one piece of real data it was
+missing.
+
+THE DATA: all eleven roster species' WALK AND RUN SPEEDS, read from the retail
+characterdata_5000.txt -- Speed1 (col 46) and Speed2 (col 47), published as
+ParamKeeper params 23/24 from the common record's +0xe4/+0xe6, so world units per
+second. Mangyang 8/22, Yeoha 9/20, Earth Ghost 11/75, the rest 12-15 walk and 55
+run. Tabled in docs/protocol/monster_ai.md.
+
+THE CONTROL WAS RUN BEFORE THE NUMBERS WERE TAKEN, and it caught a real error.
+Col 57 (level) and col 59 (max HP) are values this project already holds per
+species in monsterSpecs; all eleven rows match on both, and col 50 matches
+BCRadius. Selecting the row by CODE NAME instead finds the wrong one:
+characterdata_10000.txt holds a SECOND MOB_CH_MANGNYANG at level 90 with 676,983
+HP whose speeds (8/22) look perfectly plausible. CODE NAMES ARE NOT UNIQUE ACROSS
+THE CHARACTERDATA FILES; select by RefObjID. Without the control that row would
+have shipped.
+
+NOT PROMOTED: which speed a WANDER leg steps at. PickWanderLeg tests run speed
+> 1e-6, but the same doc already records run speed <= 0 as the engine's own
+IMMOBILITY test, so that is a mobility gate and not evidence the leg runs. A
+46-124 unit leg takes 2.1-5.6 s at run and 5.75-15.5 s at walk against WANDER's
+5-6 s dwell -- suggestive of run, which is exactly why it stays unclaimed.
+
+THE REAL BLOCKER IS THE CLIENT HALF, AND IT IS A PUSH NOT A POLL. The client asks
+for monsters only on events -- zone entry, the refresh button, after an attack --
+and draws them as _monster_bodies Node3Ds at the snapshot position. So a server
+WANDER loop today would make monsters JUMP to a new spot on the next refresh
+rather than walk: a visible REGRESSION, not a feature. The move packet has to
+come first. TODO.md already said "a move packet the client interpolates", which
+the docs-before-dump rule surfaced before this round could claim it as new.
+
+NO DEAD DATA WAS SHIPPED. The speeds were deliberately NOT added to monsterSpec,
+combat.Monster or the wire snapshot: nothing would read them, and that is the
+same unwired-data smell this round set out to fix. They are filed where the move
+packet will consume them.
+
+**What moved:** no shipped value, no code. Eleven species' real speeds recovered
+and controlled, the WANDER speed question stated precisely enough to settle in
+one read, the characterdata code-name collision recorded as a trap, and the AI
+item in TODO.md corrected to build the move packet BEFORE the WANDER loop.
+
 Round 361 (the byte beside the lock is an INTERACTION STATE, and its setter is a
 FIELD DISPATCHER): ROUND 360 LEFT chardata+6 EXPLICITLY UNREAD, so this took it.
 It is not a flag but an ENUM -- values 0,1,2,4,5,6,7,9 across ~40 readers, gating

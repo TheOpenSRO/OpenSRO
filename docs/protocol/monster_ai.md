@@ -445,6 +445,52 @@ WANDER stores 1000 ms instead when no leg could be picked. So an idle monster st
 `0x26`) whenever `IsWithinRoamRadius` says it has strayed. `server/internal/ai` carries the
 table (`DwellRange`) and the leg constants; srrevamp's server does not move monsters yet.
 
+## The roster's real walk and run speeds (round 362)
+
+WANDER needs a speed and srrevamp carries none. These are the game's own, read
+from the retail `characterdata_5000.txt` on 2026-09-21.
+
+**The columns** are `Speed1` (col 46, walk) and `Speed2` (col 47, run) --
+published as ParamKeeper params 23 and 24 from the common record's words at
+`+0xe4`/`+0xe6` (`docs/protocol/param_registry.md`), where the mover's step
+multiplies by seconds. So these are **world units per second**.
+
+| species | `RefObjID` | walk (46) | run (47) |
+|---|---:|---:|---:|
+| Mangyang | 1933 | 8 | 22 |
+| Small-eyed Ghost | 1934 | 14 | 55 |
+| Big-eyed Ghost | 1935 | 14 | 55 |
+| Old Weasel | 1936 | 12 | 55 |
+| Weasel | 1937 | 12 | 55 |
+| Water Ghost slave | 1938 | 15 | 55 |
+| Water Ghost | 1939 | 15 | 55 |
+| Tomb Stone Ghost | 1950 | 15 | 55 |
+| Stone Ghost | 1941 | 14 | 55 |
+| Yeoha | 1943 | 9 | 20 |
+| Earth Ghost | 1963 | 11 | 75 |
+
+**The control, run before the numbers were taken.** Two columns of each row are
+values this project already holds independently: col 57 is the level and col 59
+the max HP, both carried per species in `cmd/server`'s `monsterSpecs`. **All
+eleven rows match on both.** Col 50 (BCRadius) matches its third. The column
+indexing is therefore checked against three known fields before reading the two
+unknown ones.
+
+**A trap this walked into, recorded because it nearly shipped.** Selecting the
+row by `CodeName` finds the WRONG row: `characterdata_10000.txt` has a second
+`MOB_CH_MANGNYANG` at level 90 with 676,983 HP, and its speeds (8/22) happen to
+look plausible. **Code names are not unique across the characterdata files.**
+Select by `RefObjID`. The level/HP control is what caught it -- col 57 came back
+90 against the roster's 1.
+
+**Which speed a WANDER leg steps at is NOT read.** `PickWanderLeg` tests run
+speed `> 1e-6`, but that is the engine's own *immobility* test, not evidence the
+leg runs: the row above records `run speed <= 0` as what marks a monster
+immobile at `Init`. A 46--124 unit leg takes 2.1--5.6 s at Mangyang's run speed
+and 5.75--15.5 s at its walk speed, against WANDER's 5--6 s dwell -- suggestive
+of run, which is exactly why it is not promoted here. Settle it from the mover
+before choosing.
+
 ## Target acquisition: the detection radius and the nearest-player rule (round 257)
 
 **The radius.** `AI::CTactics::BindSkillsAndRanges` (`0x53f780`, the pass that
