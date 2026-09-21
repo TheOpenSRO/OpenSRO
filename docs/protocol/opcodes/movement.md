@@ -102,8 +102,23 @@ Every call to the destination serialiser in the server passes `0` — the monste
 (vtable slot 292; a COMDAT twin at `0x0048b570` and `0x004a9c60`). That function writes a one-byte
 **action kind** and, only when the kind is `3`, appends the movement with the extra byte present.
 
-So the extra byte marks **a movement embedded in an action message**, not a standalone move. What
-the action kinds are, and what the byte then carries, is still unread.
+**Round 367 followed that one call site up and it terminates.** Slot 292 has exactly one caller,
+`CMainProcess::FUN_00437e80`, and that function composes **`0x7005`** — `AGENT_GAME_LOGOUT_REQ`
+(`observed_opcodes.md`). So the chain is closed and short:
+
+	CharDataSavingCompleted -> FUN_00437e80 -> builds 0x7005
+	    appends an id, then a state byte from an object's +0x50
+	    (4 is forced when there is no object, or the flag argument is 0)
+	    any other value -> CGObjMobile::vslot_292
+	        re-emits the byte, and WHEN IT IS 3 appends the movement
+	        destination with the extra byte present
+
+**The optional extra byte is therefore emitted in exactly one message in the entire server: the
+logout request.** A character logging out while in motion reports where they were headed.
+
+What the state byte's values mean is **not claimed**. The only fact is that `3` is the value that
+carries a movement destination; reading that as "moving" is the natural inference and is left as
+one.
 
 ## A use-site that corroborates the interaction state
 

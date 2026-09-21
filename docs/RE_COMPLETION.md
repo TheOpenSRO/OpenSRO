@@ -6266,6 +6266,51 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 367 (following one loose end lands on the logout opcode, and confirms it a
+third way): ROUND 366 IDENTIFIED THE SOLE EMITTER of the movement payload's
+optional extra byte -- CGObjMobile::vslot_292 -- and left what it means open.
+Following its ONE call site terminates the thread completely.
+
+THE CHAIN IS SHORT AND CLOSED. vtable slot 292 has exactly one caller,
+CMainProcess::FUN_00437e80, and that function composes a message whose opcode
+field at +0x1050 is the literal 0x7005. It appends an id and a state byte taken
+from an object's +0x50 (4 is forced when there is no object or the flag argument
+is 0); any other value goes to vslot_292, which re-emits the byte and, WHEN IT IS
+3, appends the movement destination with the extra byte. So THE OPTIONAL EXTRA
+BYTE IS EMITTED IN EXACTLY ONE MESSAGE IN THE ENTIRE SERVER.
+
+AND THAT MESSAGE IS THE LOGOUT REQUEST. 0x7005 is already in observed_opcodes.md
+as AGENT_GAME_LOGOUT_REQ, resting on two agreeing sources -- this project's own
+binary opcode harvest and public community documentation. THIS ROUND ADDS A
+THIRD, from the server's own code path, and it arrived while following an
+unrelated thread rather than by re-reading either earlier source: one of
+FUN_00437e80's two callers is CMainProcess::CharDataSavingCompleted, and a
+character's data finishing saving is a logout step. A character logging out while
+in motion reports where they were headed -- which is exactly why the movement
+payload has an optional byte at all.
+
+WIRED: OpLogoutRequest (0x7005) and OpLogoutResponse (0xB005) added to
+opcodes.go. The reply comes from this project's OWN handler table
+(server_handlers.tsv row 0x005: handler GObjPC::FUN_0050eff0, client handler
+FUN_0086db40), not from the public list.
+
+NOT CLAIMED: what the state byte's values mean. The only fact is that 3 is the
+value that carries a movement destination; reading that as "moving" is the
+natural inference and is recorded as an inference rather than promoted. The
+byte's source object, and the id that precedes it, are also unidentified.
+
+A FALSE START WORTH RECORDING: this round opened by treating vslot_292's byte as
+an ACTION-KIND VOCABULARY -- the systematic param-code lever -- and went looking
+for call sites with literal kinds. There are none: slot 292 has a single caller
+and the value arrives as a variable. The vocabulary lever does not apply to a
+slot with one call site, and the cheap check (count the call sites before
+harvesting) would have said so first.
+
+**What moved:** two real opcodes into opcodes.go with a three-way citation, a
+loose end from round 366 closed rather than left open, and a cross-validation
+table strengthened from two independent sources to three. No behaviour changed,
+so no tag.
+
 Round 366 (the response opcode earns its place, and a grep nearly invented three
 states): ROUND 365 LEFT FOUR NAMED GAPS on 0x7021 and deliberately kept 0xB021
 OUT of opcodes.go on the grounds that "conventional is not evidence". TWO OF THE

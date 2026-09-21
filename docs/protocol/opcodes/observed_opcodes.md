@@ -17,7 +17,7 @@ documentation, not one source trusted blindly):
 | `0x3026` | `AGENT_CHAT_UPDATE` | S→C |
 | `0x5000` | `GLOBAL_HANDSHAKE_CHALLENGE` | (already confirmed, `handshake.md`) |
 | `0x6004` | `DOWNLOAD_FILE_REQ` | C→S |
-| `0x7005` | `AGENT_GAME_LOGOUT_REQ` | C→S |
+| `0x7005` | `AGENT_GAME_LOGOUT_REQ` | C→S | *(a third, independent confirmation — see below)* |
 | `0xa004` | `DOWNLOAD_FILE_COMPLETE` | S→C |
 | `0xa101` | `GATEWAY_SHARD_LIST_ACK` | S→C |
 | `0xa102` | `GATEWAY_LOGIN_ACK` | S→C |
@@ -137,3 +137,22 @@ relative offset than `+0x1050` once that's nailed down), or against `SR_ShardMan
 (same package, not yet imported) for whatever real cross-shard traffic that binary carries. None
 of these opcodes' payload layouts are pulled yet -- that's real, separate, per-opcode work, same as
 `0x5000`/`0x9000` still need before `handshake.md`'s own status section is fully checked off.
+
+
+## `0x7005` gained a third, independent confirmation (round 367)
+
+The table above rests on two agreeing sources: this project's binary opcode harvest, and public
+community documentation. `0x7005` now has a third, from the **server's own code path** — found
+while following an unrelated thread (which caller of the movement serialiser emits its optional
+byte), so it is not a re-reading of either earlier source.
+
+`CMainProcess::FUN_00437e80` (`0x00437e80`) composes a message whose opcode field at `+0x1050` is
+the literal `0x7005`, and one of its two callers is `CMainProcess::CharDataSavingCompleted` — a
+character's data finishing saving is a logout step. Its reply is `0xB005` per this project's own
+`server_handlers.tsv` (row `0x005`, handler `GObjPC::FUN_0050eff0`, client handler
+`FUN_0086db40`).
+
+Both are now in `server/internal/proto/opcodes.go`. The payload is **not fully read**: an id, then
+a state byte from an object's `+0x50` with `4` forced when there is no object, and for any other
+value an embedded movement destination when that byte is `3`
+(`docs/protocol/opcodes/movement.md`).

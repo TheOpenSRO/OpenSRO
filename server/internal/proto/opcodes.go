@@ -178,3 +178,28 @@ const (
 	OpMovementRequest  uint16 = 0x7021
 	OpMovementResponse uint16 = 0xB021
 )
+
+// Logout, confirmed THREE independent ways.
+//
+// observed_opcodes.md already had 0x7005 as AGENT_GAME_LOGOUT_REQ from two:
+// this project's own binary opcode harvest, and public community documentation
+// agreeing with it. Round 367 adds the third, from the server's own code path:
+// CMainProcess::FUN_00437e80 (0x00437e80) composes a message whose opcode field
+// at +0x1050 is the literal 0x7005, and one of its two callers is
+// CMainProcess::CharDataSavingCompleted -- a character's data finishing saving
+// is a logout step.
+//
+// The reply is this project's own handler table (server_handlers.tsv row
+// 0x005): the server's handler is GObjPC::FUN_0050eff0 and it answers 0xB005,
+// which the client handles at FUN_0086db40.
+//
+// Payload: NOT fully read. It carries an id and a state byte taken from an
+// object's +0x50, where 4 is forced when there is no object; any other value
+// goes through CGObjMobile::vslot_292, which re-emits the byte and, WHEN IT IS
+// 3, appends a movement destination WITH the optional extra byte -- the only
+// place in the whole server that byte is emitted. See
+// docs/protocol/opcodes/movement.md.
+const (
+	OpLogoutRequest  uint16 = 0x7005
+	OpLogoutResponse uint16 = 0xB005
+)
