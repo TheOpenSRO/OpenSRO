@@ -124,7 +124,9 @@ In order. Each is checked off here when it ships in a release, with its round in
       CLIENT'S OWN movement request (`client_senders.tsv`), so player and monster movement share
       one path. Its payload is read in `monster_ai.md`: a kind byte, then either a heading or a
       region word plus three coords (floats when `region & 0x8000`, else region-local u16s).
-      **That is the retail shape for srrevamp's move packet.**
+      **That is the retail shape for srrevamp's move packet**, and per PROTOCOL_DECISION.md it is
+      the DESTINATION format rather than reference: fully specified with its field widths, angle
+      formula and controls in `docs/protocol/opcodes/movement.md` (round 364).
       **The client half is the gate, and it is a push not a poll.** The client asks for monsters
       only on events (`NetClient.list_monsters` at zone entry, on the refresh button and after an
       attack) and draws them as `_monster_bodies` Node3Ds at the snapshot position, so server-side

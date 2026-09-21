@@ -6266,6 +6266,56 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 364 (the movement opcode, finished from both binaries at once): ROUND 363
+LEFT TWO NAMED GAPS in the 0x7021 payload -- the three .rdata floats that scale
+the angle, and the +0x14 field in the heading form. Both are closed, and the
+opcode now has its own page in docs/protocol/opcodes/, the third after handshake
+and login.
+
+THE WIDTHS CAME FROM THE OTHER BINARY. The server's destination serialiser
+(0x0048bad0) appends through a helper whose argument type Ghidra drops, so the
+field widths are unreadable there. The CLIENT has the same routine (0x009ebbf0)
+and its append helper takes an EXPLICIT BYTE COUNT. Reading the twin gives the
+whole layout: u8 kind; an optional u8 the caller may ask for (the monster AI does
+not); then either a u8 at +0x14 and a u16 angle, or a u16 region followed by
+three f32 when region & 0x8000 and three u16 otherwise. THE +0x14 FIELD IS ONE
+BYTE -- its width settled, its meaning still unread and not named.
+
+THE ANGLE CONSTANTS WERE READ OUT OF THE PE IMAGES, NOT INFERRED. Rather than
+dirty the Ghidra project for three floats, the section headers were parsed and
+the .rdata bytes read directly: 57.295780181884766, 360.0 and 65535.0, as IEEE
+DOUBLES. So angle = round(rad * 57.29578 / 360 * 65535), and A FULL TURN MAPS TO
+65535, NOT 65536 -- that is the constant the binaries hold.
+
+THE CONTROL WAS FOUR ALREADY-KNOWN VALUES, read through the same address->value
+mapping before the three unknowns were believed: 0xb46160 = 85.0 (the wander
+leg's base), 0xb45e58 = 30.0 (the probe distance), 0xb45e68 = -1.0 (the reverse
+multiplier) and 0xb45c84 = 1e-6 (the speed epsilon). All four match what the AI
+reading had already recorded. That last one also settles WIDTH: the epsilon is an
+f32 and reads as garbage as a double, while the angle constants read as garbage
+as f32 and as exact round numbers as doubles.
+
+AND THEN A SECOND, STRONGER CONTROL: the client holds its own copies at unrelated
+addresses (0xdde8f0/0xdde7a8/0xdde7b0), and they are BYTE-IDENTICAL to the
+server's. Two independently compiled executables agreeing to the last bit.
+
+A PRECISION DETAIL THAT WILL BITE A REIMPLEMENTATION: 57.295780181884766 is NOT
+180/pi (57.295779513082320). It is the FLOAT32 of 180/pi widened to double, so
+the engine's degree conversion carries float32 precision and a reimplementation
+using full-precision 180/pi disagrees in the low bits of the encoded angle.
+
+FRAMING CORRECTED BY READING THE PROJECT'S OWN DECISION DOC: PROTOCOL_DECISION.md
+(2026-08-22) sets the goal as a real WIRE-LEVEL reimplementation and names the
+own-designed opcodes in internal/session as placeholder scaffolding. So 0x7021 is
+not reference material for an own-design packet -- it IS the destination format,
+and TODO.md's outstanding move packet is this opcode.
+
+**What moved:** no shipped value, no code. Two named gaps closed, a fully
+specified opcode page written with its controls, and the standing move-packet
+item upgraded from "mirror this shape" to a finished spec. It still does not
+unblock monster movement on its own -- that needs the server stepping positions
+and a push to the client (round 362).
+
 Round 363 (the WANDER speed question was mis-framed, and monster movement is the
 CLIENT'S OWN packet): ROUND 362 LEFT ONE BOUNDED QUESTION -- which speed a WANDER
 leg steps at -- and said to settle it from the mover. There is nothing to settle

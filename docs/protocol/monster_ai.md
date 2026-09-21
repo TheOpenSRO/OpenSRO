@@ -524,17 +524,22 @@ it omits it:
 	u8  kind                       ; asserts if 0xff
 	[u8 extra]                     ; only when the caller passes non-zero
 	if kind == 0:                  ; directional: no destination, a heading
-	    u16 <field at +0x14>
-	    u16 angle                  ; ROUND(rad * 0xb45c38 / 0xb45c30 * 0xb45c28)
+	    u8  <field at +0x14>
+	    u16 angle                  ; round(rad * 57.295780181884766 / 360 * 65535)
 	else:                          ; a destination
 	    u16 region
 	    if region & 0x8000:  f32 x, f32 y, f32 z     ; world/dungeon coords
 	    else:                u16 x, u16 y, u16 z     ; region-local
 
 The region-or-float split is the same encoding this project already recovered
-for positions elsewhere (region span 1920, local `[0, 1920)`). **The three angle
-constants were not read** -- they are `.rdata` floats and naming the scale would
-be a guess.
+for positions elsewhere (region span 1920, local `[0, 1920)`).
+
+**Completed in round 364** -- the field widths come from the CLIENT's twin of
+this routine (`0x009ebbf0`), whose append helper takes an explicit byte count
+where the server's does not, and the three angle constants were read out of both
+PE images as doubles and are **byte-identical across the two binaries**. A full
+turn maps to **65535**. The full spec, with its controls, is now
+`docs/protocol/opcodes/movement.md`.
 
 **What this means for srrevamp's move packet** (`docs/TODO.md`): there is a
 retail shape to mirror, and the speed belongs to whatever consumes `0x7021`, not
