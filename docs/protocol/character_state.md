@@ -117,7 +117,16 @@ without guessing:
 | 0 | 1 | `CGObjChar::Create` — the initial value |
 | 1 | 2 | `GObjPC::Revive` (`0x4df290`) and `GObjPC::FUN_00482420` |
 | 2 | 7 | `CGObjCOS_Pet::Create`, two `CGObjCOS_Mercenary` slots, three `GObjPC` paths |
-| 3 | 42 | `CGObjMob::Update`, `REH_OnTrapped`, `CGSkillObject::Update`, `CGObjSiegeObject::Update` … |
+| 3 | 42 | `CGObjMob::Update`, `REH_OnTrapped`, `CGSkillObject::Update`, `CGObjSiegeObject::Update`, ~30 `QNO_*::OnDead::Handle` quest handlers, `CGObjPC::DeleteMobForCatchQuest`, `CGObjCOS_*::vslot_401` |
+
+**THE CLASS IN THE LEFT-HAND COLUMN IS THE CALLER, NOT THE RECEIVER, AND ROUND
+412 NEARLY DREW A CONCLUSION FROM IT.** `CGObjPC::DeleteMobForCatchQuest` sets
+state 3 on **the mob it deletes**, not on the PC; the `QNO_*::OnDead::Handle`
+cluster sets it on the quest mob. A virtual call decompiles as
+`(**(code **)(*X + 0x1f0))(3, …)` and gives `X`, not `X`'s class, so a census of
+*which functions* write a value says nothing about *whose* life state is
+written. Any argument of the form "only mobs write 3, so 3 is a mob state" is
+unsound on this evidence, in both directions.
 
 **1 is ALIVE**, and that is the engine's own word rather than an inference: the
 "must be alive" guards answer `GUILDERR_IM_DEAD` and `0x6807` on
@@ -129,8 +138,33 @@ revived — but `CGObjCOS_Pet::Create` also leaves a newly created pet in state 
 and a pet is not born dead. Meanwhile **3** is the value 42 sites write from
 `Update` and `OnTrapped` paths, which is where a death would be set. So the
 open question in `SYSTEMS.md`'s Party row — *what value 2 of the `0xf8`
-life-state getter is* — is **narrowed, not closed**: whatever 2 means, it covers
-both a freshly created COS and a PC awaiting a siege revive.
+life-state getter is* — is **narrowed, not closed**.
+
+**Round 412 narrowed it again and still could not close it.** What that round
+did settle is structural:
+
+- `SetLifeState` takes **three** arguments, not one: every PC/COS site passes
+  `(state, 0xff, 0)`, and `FUN_004181d0` passes a third value read from
+  `*(record + 0x18) + 0x84`, so the third parameter carries something real.
+- **Slot 219** (`+0x36c`, `0x490210`) is a base one-liner whose entire body is
+  `SetLifeState(2, 0xff, 0)`, serving `CGObj`, `CGObjMobile`, `CGSkillObject`
+  and `CGItem`. Four callers: `CGObjCOS_GoldPet::Update`,
+  `CGObjCOS_SilkPet::vslot_368` and two `GObjPC::` functions.
+- **Slots 306 and 307** are implemented per class — `CGObjPC` (`0x529b10`),
+  `CGObjCOS_Pet`/`GoldPet`/`SilkPet` (`0x529f70`, `0x52d120`) and
+  `CGObjCOS_Mercenary` (`0x529ed0`, `0x52d080`) — and the pet and mercenary
+  versions set state 2.
+- The pet contradiction from round 411 **dissolves**: `CGObjCOS_Pet::Create`
+  sets 2 only when the bit at `record+0x38` is **clear**, so a pet is not born
+  in state 2 — it is restored into it when its persisted record says it is not
+  alive.
+
+The best positive argument for 2 remains indirect: `GObjPC::Revive` sets 1 and
+clears the death **cause**, and the one observed precondition for reaching it is
+life state 2. That is consistent with 2 being "dead but revivable" and 3 being
+"removed from the world" — the `Delete*` and quest-cleanup names fit — but
+**consistency is not a use-site**, and typing the receiver of each `SetLifeState`
+call is the work that would settle it.
 
 ### The siege revive
 
