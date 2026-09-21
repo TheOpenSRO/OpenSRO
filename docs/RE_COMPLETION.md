@@ -5035,7 +5035,7 @@ BattleState is `SetCharacterState` case 8 -> `GObjPC::FUN_004e2910`: entering ar
 it and reverts to peace at zero. `COMBAT_STANCE_SECONDS` is 20 now (was a disclosed
 5.0); the tick's period is inferred as one second on the same grounds as berserk's
 60 (the same update advances timed effects with dt = 1.0). Spec:
-`docs/protocol/character_state.md`. Open: the scheduler that fires `vslot_415`.
+`docs/protocol/character_state.md`. ~~Open: the scheduler that fires `vslot_415`.~~ **CLOSED — it was already read in round 223 and this line went stale** (round 411): `CGObjChar::Create` (`0x4a6f40`) registers the character's periodic jobs on a timer vector at `this+0x18c`, slot 364 with interval **1.0**; `GObjPC::FUN_004ab690(dt)` fires a node when its accumulator reaches the interval, driven from `CGObjChar::Update` (slot 211) by the main loop's fixed step `CMainProcess::FUN_00413b30`. The last hop is `CWorldContextController::UpdatePC` (`0x605010`), slot 11, whose whole body is `pc->PeriodicUpdate()`.
 Round 219 narrowed it: the main loop's delta is in seconds (`0xb45c68` = 1000, from
 two use-sites), the fixed step at `CMainProcess+0x44` drives slots `0x618`/`0x34c`
 not 415, and no `CGameWorldLayer` function dispatches it -- one hop left.
@@ -6404,6 +6404,59 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 0x51c is 0x0d, 0x51d is 1. Resolving category -> message-name prefix would label
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
+
+Round 411 (a stale "open" closed by its own earlier round, the siege revive read,
+and four names): THE FOURTH STALE TRACKER ITEM THIS SESSION. Line 5038 read
+"Open: the scheduler that fires `vslot_415`". **Round 223 had already read that
+scheduler end to end** on 2026-09-19: `CGObjChar::Create` (`0x4a6f40`) registers
+the character's periodic jobs on a timer vector at `this+0x18c`, slot 364 with
+interval **1.0**, fired by `GObjPC::FUN_004ab690(dt)` from `CGObjChar::Update`
+under the main loop's fixed step. My own probe found the missing hop
+independently — `CWorldContextController::UpdatePC` (`0x605010`), slot 11, whose
+entire body is `pc->PeriodicUpdate()` — which corroborates round 223 rather than
+competing with it. The line is struck and the chain written into it.
+
+AND THE SIEGE WORLD OVERRIDES THAT SLOT. One implementation serves slot 11 of
+five vtables (default, flag, instance, battle-arena, data-driven), so it is the
+inherited base; `CSiegeWorldContextController` (`0x6055f0`) overrides it to call
+`CGObjPC::PeriodicUpdateInSiege` (`0x52d9b0`) instead, and is its only caller.
+That override is what establishes slot 11's contract as *tick this PC* — read
+from the caller, exactly the rule round 410 arrived at. The siege variant runs
+the ordinary tick, then under `SiegeFortressMgr::IsWarPeriodActive()` decrements
+`pc[0x735]` for a PC whose life state reads 2 and, at zero, calls
+**`GObjPC::Revive`** (`0x4df290`) and logs `GameEventLog 0x15` kind 2. So a
+fallen player in a fortress war is put back on their feet on a timer.
+
+THE LIFE STATE, GROUNDED WHERE IT CAN BE AND EXPLICITLY NOT WHERE IT CANNOT.
+`IGObj::GetLifeState` (slot 62) reads **`chardata[0]`** —
+`CGObjCOS_Summoned::GetLifeState` is the whole proof, its body being
+`return **(obj + 0x30)`. The setter is slot 124 and is the byte's ONLY writer,
+so its 53 literal call sites give the enum's shape: **0** once
+(`CGObjChar::Create`), **1** twice, **2** seven times, **3** forty-two times from
+`Update`/`REH_OnTrapped` paths. **1 is ALIVE** in the engine's own words — the
+guards answer `GUILDERR_IM_DEAD` and `0x6807` on `GetLifeState() != 1` — and
+`GObjPC::Revive` is one of only two sites that set it.
+
+**I NEARLY PROMOTED "2 = DEAD" AND THE DATA REFUSED IT.** The siege countdown
+makes it tempting: a PC in state 2 is revived. But `CGObjCOS_Pet::Create` also
+leaves a newly created pet in state 2, and a pet is not born dead — while **3**,
+not 2, is what forty-two death-and-removal paths write. So `SYSTEMS.md`'s Party
+row question, *what value 2 of the `0xf8` life-state getter is*, is **narrowed,
+not closed**: whatever 2 means, it spans a fresh COS and a PC awaiting a siege
+revive. The countdown's starting value is likewise unread; only its unit
+(seconds, one decrement per one-second tick) follows.
+
+**applied 4, forced 0, reowned 2, failed 0**: `CGObjPC::PeriodicUpdate`
+(described in nineteen places since 2026-09-19 and never filed),
+`CWorldContextController::UpdatePC`, `CGObjPC::PeriodicUpdateInSiege`,
+`GObjPC::Revive`. Spec in `docs/protocol/character_state.md`.
+
+A PROCESS FIX, MEASURED: rounds 407, 409 and 410 each applied a few names and
+each was followed by a **blocked tick**, 3 for 3 — the apply dirties the Ghidra
+project, `re_tick.sh` rebuilds both dumps, and the flight check correctly
+refuses to compete. Clearing `PROJSTAMP` is not the cost; the apply itself is,
+so the only lever is how OFTEN one applies. `RE_LOOP.md` now says to batch: four
+names in one apply costs the same tick as one. No behaviour changed, so no tag.
 
 Round 410 (the generalisation of round 409 measured at 331 and closed at 0, plus
 two functions that name themselves): I CAUGHT MY OWN PROBE OVERSTATING A LEVER

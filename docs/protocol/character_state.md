@@ -99,3 +99,59 @@ of this round is that ~40 gates which read an unexplained byte now read a named
 one, and that when trade is built, this is the state machine it has to match:
 `OpenTradeSession` writes 1 to both sides, `EstablishTradeSession` moves both to
 2, and equipment changes are refused from 2 onward.
+
+
+## The life state, and the siege revive countdown (round 411)
+
+`IGObj::GetLifeState` is **vtable slot 62** (`+0xf8`) and reads **`chardata[0]`**
+— `CGObjCOS_Summoned::GetLifeState` is the whole proof: its body is
+`return **(obj + 0x30)`, and `+0x30` is the chardata pointer. The setter is slot
+**124** (`+0x1f0`), `SetLifeState`, and it is the **only** writer of that byte in
+the binary.
+
+**53 call sites pass a literal through the setter**, which gives the enum's shape
+without guessing:
+
+| value | sites | who writes it |
+|---:|---:|---|
+| 0 | 1 | `CGObjChar::Create` — the initial value |
+| 1 | 2 | `GObjPC::Revive` (`0x4df290`) and `GObjPC::FUN_00482420` |
+| 2 | 7 | `CGObjCOS_Pet::Create`, two `CGObjCOS_Mercenary` slots, three `GObjPC` paths |
+| 3 | 42 | `CGObjMob::Update`, `REH_OnTrapped`, `CGSkillObject::Update`, `CGObjSiegeObject::Update` … |
+
+**1 is ALIVE**, and that is the engine's own word rather than an inference: the
+"must be alive" guards answer `GUILDERR_IM_DEAD` and `0x6807` on
+`GetLifeState() != 1`.
+
+**2 IS NOT SIMPLY "DEAD", AND THIS ROUND DID NOT SETTLE IT.** The siege path
+below made that reading tempting — a PC in state 2 counts down and is then
+revived — but `CGObjCOS_Pet::Create` also leaves a newly created pet in state 2,
+and a pet is not born dead. Meanwhile **3** is the value 42 sites write from
+`Update` and `OnTrapped` paths, which is where a death would be set. So the
+open question in `SYSTEMS.md`'s Party row — *what value 2 of the `0xf8`
+life-state getter is* — is **narrowed, not closed**: whatever 2 means, it covers
+both a freshly created COS and a PC awaiting a siege revive.
+
+### The siege revive
+
+`CWorldContextController::UpdatePC` (`0x605010`) is slot 11 of the
+world-context-controller hierarchy and its entire body is
+`pc->PeriodicUpdate()`. One implementation serves slot 11 of five vtables —
+default, flag, instance, battle-arena and data-driven worlds — so it is the base
+that all inherit. **`CSiegeWorldContextController` overrides the same slot**
+(`0x6055f0`) to call `CGObjPC::PeriodicUpdateInSiege` (`0x52d9b0`) instead,
+which is the only caller of that function. That override is what establishes
+slot 11's contract as *tick this PC*: it is read from the caller, not from any
+one implementation's name.
+
+`PeriodicUpdateInSiege` runs the ordinary `PeriodicUpdate` first, then — guarded
+by `SiegeFortressMgr::IsWarPeriodActive()` — decrements a counter at `pc[0x735]`
+for a PC whose life state reads 2. At zero it calls **`GObjPC::Revive`**
+(`0x4df290`), which passes 1 through the `SetLifeState` slot and clears the death
+**cause** byte at `+0x72d` together with `+0x28a` and `+0x738`, and records
+`GameEventLog` `0x15` kind 2.
+
+So during a fortress war a fallen player is put back on their feet on a timer,
+rather than having to walk back. The countdown's **unit and starting value are
+not read** — `pc[0x735]` is decremented once per one-second tick, so the unit is
+seconds, but nothing here says what it is initialised to.

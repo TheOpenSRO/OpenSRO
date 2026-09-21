@@ -282,6 +282,19 @@ holds 191 hardcoded names, 152 of them found nowhere else, applied by
 Expect a final `applied N, forced N, … failed 0` line. `other binary N` counts
 the client rows it correctly skipped.
 
+**BATCH YOUR APPLIES.** An apply dirties the Ghidra project, so `re_tick.sh`
+rebuilds both dumps (~9 min) on the next tick and the flight check correctly
+refuses to start competing work — **that tick is spent waiting**. Measured in
+this session: rounds 407, 409 and 410 each applied a handful of names and each
+was followed by a blocked tick, 3 for 3, about half the throughput.
+
+Clearing `PROJSTAMP` is not what costs the tick — the apply itself makes the
+project newer than the stamp, so the rebuild comes either way. The only lever is
+**how often you apply**. File rows into `recovered_names.tsv` every round, and
+apply when a round has a batch worth the rebuild or has no follow-on dump work
+queued. A filed-but-unapplied name is invisible, so do not let the backlog run
+long — but four names in one apply costs the same tick as one name.
+
 **Then invalidate the dump cache yourself:**
 
 	ssh root@192.168.5.78 'rm -f /var/tmp/decomp_*/PROJSTAMP'
