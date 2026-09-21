@@ -382,7 +382,7 @@ sub-save:
 
 | mask | sub-object saved | handler |
 |---|---|---|
-| `0x80` | `this` itself | `0x4a7180` |
+| `0x80` | `this` itself — **the object's own DB backup row** | `GObjPC::DBBackup` (`0x4a7180`) |
 | `0x40` | `this + 0x1c10` — **a storage, probably the inventory** | `0x4b7b50` |
 | *(always)* | `this + 0x1ce8` — **the summoned COS** | `0x4fc770` |
 | `0x10` | `this + 0x1d98` — **the quest state** | `0x56fdf0` |
@@ -569,3 +569,41 @@ container teardown rather than a save. **None of the eight is named**, and none
 should be until it is read: the naming lever hoped for — a procedure name or a
 table string inside each — **does not exist**, as all eight are literal-free.
 
+
+
+## The last scope: bit `0x80` is the object's own DB backup (round 398)
+
+Eight of the nine scopes save a member sub-object. This one passes `this`, and
+the engine names it in its own error path:
+
+	"Trying to DB Backup that is neither PC nor COS. [RefID: %d, Name: %s]"
+
+So `0x4a7180` — now `GObjPC::DBBackup` — writes the object's own row, and refuses
+anything that is neither a player character nor a COS. Its signature is
+`(this, queue, mask, idFilter)`, and the filter is optional:
+`param_4 == 0 || this[2] == param_4`, so a caller can back up **one** object id
+rather than all of them.
+
+**A vtable slot falls out of the same string.** The guard tests slots `0x2c` and
+`0x1c` and the log names exactly two acceptable categories. Slot `0x1c` is the
+already-established `IsPC`, so **slot `0x2c` is `IsCOS`** — named by the engine's
+own wording rather than by the shape of the test.
+
+### All nine save scopes
+
+| mask | what it persists |
+|---|---|
+| `0x80` | the object's own DB backup row (PC or COS) |
+| `0x40` | a storage, probably the inventory (`+0x1c10`) |
+| `0x01` | a second storage (`+0x1d74`) |
+| *(always)* | the summoned COS (`+0x1ce8`) |
+| `0x10` | the quest state (`+0x1d98`) |
+| `0x100` | the timed-job list (`+0x1dfc`) |
+| `0x200` | `+0x74` — **not identified** |
+| `0x400` | the job (Trijob) manager (`+0x1fb4`) |
+| `0x800` | the client config data (`+0x22d0`) |
+
+Eight of nine are identified. `+0x74` is the one left, and it is the hardest of
+the set: its nearest `__FILE__` assert is `GObj.cpp` 0x880 away — borderline —
+and the offset itself is touched by 197 functions, far too generic to read
+anything from.

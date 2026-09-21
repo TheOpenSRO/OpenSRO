@@ -6375,6 +6375,37 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 398 (the engine names the last scope, and a vtable slot with it): THE ONE
+SCOPE THAT PASSES `this` RATHER THAN A MEMBER is bit 0x80, handler 0x4a7180, and
+like +0x22d0 the previous round it names itself in its own error path: "Trying to
+DB Backup that is neither PC nor COS. [RefID: %d, Name: %s]".
+
+So 0x4a7180 is GObjPC::DBBackup -- filed and APPLIED (applied 1, failed 0) -- and
+it writes the object's own row, refusing anything that is neither a player
+character nor a COS. Its signature is (this, queue, mask, idFilter) and the
+filter is optional: `param_4 == 0 || this[2] == param_4`, so a caller can back up
+ONE object id rather than all of them, which is a capability the dispatcher alone
+never showed.
+
+A VTABLE SLOT FALLS OUT OF THE SAME STRING. The guard tests slots 0x2c and 0x1c,
+and the log names exactly two acceptable categories. Slot 0x1c is the
+already-established IsPC, so SLOT 0x2c IS IsCOS -- named by the engine's own
+wording rather than by the shape of the test, which is the difference between a
+name and a guess.
+
+THE ARC THAT STARTED IN ROUND 391 IS EIGHT-NINTHS DONE. The nine scopes: the
+object's own DB backup row, two storages, the summoned COS, the quest state, the
+timed-job list, the Trijob manager, the client config data -- and +0x74, which is
+the last and the hardest. Its nearest assert (GObj.cpp) is 0x880 away, which
+round 396 already marked borderline, and the offset is touched by 197 functions,
+far too generic to read anything from. Both levers that worked on the others are
+weak here, which is stated now rather than discovered later.
+
+**What moved:** the last scope that passes `this` is named from the engine's own
+log, one function filed and applied, a vtable slot identified as a by-product,
+and the full nine-scope table written down with the single remaining unknown and
+why it resists. No behaviour changed, so no tag.
+
 Round 397 (two levers fail, a use-site names it: +0x22d0 is the client config
 data): ROUND 396 LEFT +0x22d0 UNNAMEABLE by the assert lever -- nearest assert
 0x7340 away, none below at all. This round tried a second lever and then a third.
