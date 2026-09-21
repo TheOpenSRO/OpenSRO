@@ -107,6 +107,30 @@ nothing shipped depends on it.
 - ~~**What the other party flag bits mean**, beyond bit 0.~~ **Bit 1 is read**
   -- item sharing, recorded in this page's own flags section. Bit 2 remains
   unnamed and has its own bullet above.
-- **The invite and expulsion flows.** Only the refusals are enumerated.
+- **The invite and expulsion flows.** Only the refusals are enumerated -- but
+  the HANDLER SIDE is now mapped (round 354), which narrows what is left.
+
+  The party opcodes `0x060`-`0x06f` are thin: `0x060` calls
+  `CParty::CheckCanCreate`; `0x063` acts on the caller's own party through
+  `[0x72e]` (PARTY, per `RE_COMPLETION.md`); and `0x06b`, `0x06c`, `0x06d`
+  each delegate to one function in an adjacent family at `0x005bf4d0`-`0x005bf570`.
+
+  Three of that family are one-line wrappers around **`Party_PostRequest`**
+  (`0x005bf2a0`), which takes a byte KIND and allocates a 0x1114-byte request
+  object per call -- a size consistent with an object embedding the message
+  buffer at `+0x1034`, so a party operation is a request *sent on*, not handled
+  in place. Four call sites, four kinds:
+
+  | kind | wrapper | reached from |
+  |---|---|---|
+  | `0xa` | `0x005bf4d0` | caller not found by that pass |
+  | `0xb` | `0x005bf500` | caller not found by that pass |
+  | `0xc` | `0x005bf530` | `GObjPC_HandlePartyMsg_06b` (client `UI_PARTY` sends `0x706b`) |
+  | `0xd` | `0x005bf560` | `GObjPC_HandlePartyMsg_06c` |
+
+  **What each kind MEANS is still unread**, which is why this bullet stays open:
+  the request object's consumer has not been followed, so nothing here says
+  which kind is an invite and which an expulsion. `0x06d` is the odd one --
+  `0x005bf570`, 382 bytes, posts no kind and does its own work.
 - **Whether the exp-sharing flag can change after creation.** Nothing read so
   far writes it.

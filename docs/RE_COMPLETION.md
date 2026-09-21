@@ -6266,6 +6266,39 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 354 (five fidelity checks, one name, and the sampling method closed out):
+ROUND 352'S METHOD -- TAKE A RECOVERED RULE, CHECK BOTH HALVES AGAINST THE
+SHIPPED CODE -- WAS RUN UNTIL IT STOPPED PAYING. Checked this tick: broken-item
+consequences (weapon attack, armour defence AND shield block all skip a broken
+piece -- three for three), the durability apply RATES (wearWeapon rolls ONCE at
+rate = hits, wearArmour rolls the slots in order at rate 1 first-success-takes-
+the-point, both exactly as durability.md reads the engine), and the teleport fee
+with its level-21 waiver and fortress-tax surcharge -- UNREACHABLE, because
+srrevamp has no teleport network at all, so those are parked rather than missing.
+**Five rules sampled across rounds 351-354, one real gap** (round 352's
+broken-weapon cast). That is the hit rate, and it says the shipped code is more
+faithful than the unwired-mechanic hypothesis assumed; the method is recorded as
+spent rather than repeated a sixth time. THEN THE PROJECT'S OWN QUEUE, PROPERLY:
+RE_COMPLETION's open list says in its first line that it is SUPERSEDED by
+SYSTEMS.md, which is the live tracker the test suite checks -- 22 PARTIAL systems
+against 12 SPECIFIED. Party is one srrevamp SHIPS, and its gap is written down:
+"the invite and expulsion flows are only enumerated". THE HANDLER SIDE IS NOW
+MAPPED. Opcodes 0x060-0x06f are thin -- 0x060 calls CParty::CheckCanCreate, 0x063
+acts on the caller's [0x72e] PARTY pointer, and 0x06b/0x06c/0x06d each delegate
+to one function of an adjacent family. Three of that family are one-line wrappers
+around what is now **Party_PostRequest** (0x005bf2a0): a byte KIND, and a
+0x1114-byte request object allocated per call -- a size consistent with embedding
+the message buffer at +0x1034, so a party operation is a request SENT ON, not
+handled in place. Four call sites, four kinds: 0xa, 0xb, 0xc from
+HandlePartyMsg_06b, 0xd from _06c. WHAT EACH KIND MEANS IS NOT CLAIMED -- the
+request object's consumer has not been followed, so nothing says which kind is an
+invite and which an expulsion, and the bullet stays open with that stated. 0x06d
+is the odd one: 382 bytes, posts no kind, does its own work.
+
+**What moved:** no shipped value. Five fidelity checks with their hit rate
+recorded, one dispatcher named, and a PARTIAL system's handler side mapped far
+enough that the remaining question is one concrete read rather than a whole flow.
+
 Round 353 (the guard extended to where last round's bug was hiding): ROUND 352
 FOUND wornBroken BY HAND, AND THE DETECTOR COULD NOT HAVE. It is an UNEXPORTED
 helper encoding a recovered rule, written and never called -- the same bug class
