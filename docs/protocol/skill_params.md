@@ -858,7 +858,8 @@ is not "no requirement".
 
 ### The check
 
-`FUN_0058d480(actor, skill)`:
+`Skill_CheckCastRequirement(actor, skill)` (`0x0058d480`, named in round 348 after this page had
+read it unnamed):
 
 ```c
 if (skill[0x3a0] == 0) {                                  // no override list
@@ -1077,7 +1078,7 @@ lowers the clean count when added on its own.
 
 `reqi` fills a five-slot list at `CRefSkill+0x3a0` and `reqn` sets a flag at
 `+0x3b4`. Together they are the skill's **cast requirement**, and they are what
-`FUN_0058d480` uses instead of `ReqCastWeapon` whenever the list is non-empty.
+`Skill_CheckCastRequirement` uses instead of `ReqCastWeapon` whenever the list is non-empty.
 
 ### The record
 

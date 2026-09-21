@@ -6266,6 +6266,34 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 348 (working the backlog, and its caveat holding up): ROUND 347 BUILT
+described_but_unnamed.tsv AND WARNED THAT "MENTIONED IS NOT CHARACTERISED". Its
+first working session tested that on the four best-cited rows, and the warning
+was right: **two were ready to name and two were citations.** READY:
+0x0058d480, which skill_params.md had already TRANSCRIBED as
+FUN_0058d480(actor, skill) with the branch explained -- if the skill's five-slot
+`reqi` override list at CRefSkill+0x3a0 is empty it falls back to
+skill[199]/[200], and when the list is non-empty the engine uses this INSTEAD of
+ReqCastWeapon; the dump confirms the two-parameter uint signature that page
+gives. Named Skill_CheckCastRequirement. And 0x00617360, which battle_arena.md
+describes as "checks currency requirements by bit", quoting the arena's own
+`if ((flags & 0x400) != 0)`; the body confirms it rather than taking the page's
+word -- FIVE distinct bit tests, 0x20, 0x40, 0x100, 0x200, 0x400. Named
+GObjPC::CheckCurrencyRequirement, and WHICH currency each bit selects is NOT
+claimed, only the arena's 0x400, which is the bit that page attests. NOT READY,
+and both say so themselves: 0x006232c0 is what siege.md calls "the big one,
+11,816 bytes ... which no pass has read through" -- cited by five documents,
+read by none; and 0x004ae0c0 is where timed_jobs.md states in as many words "It
+is characterised, not read, and stays on the list." Those two are exactly what
+the caveat was written for, and they stay in the file. BOTH NAMES WERE WRITTEN
+BACK INTO THE PAGES THAT DESCRIBED THEM, so the next reader of skill_params.md
+and battle_arena.md gets the name rather than an address -- which is the whole
+point of the gap this file measures.
+
+**What moved:** no shipped value. Two functions named from descriptions this
+project had already written and never applied, the backlog down to 696, and its
+own caveat tested on its first use instead of being taken on trust.
+
 Round 347 (two names, and the "described but unnamed" gap sized at last): BACK
 TO THE SIZE-RANKED CORE WORKLIST, AND THE TOP ENTRIES NAME THEMSELVES.
 0x00593800 calls RollDurabilityLoss, ApplyHPMPDelta, HwanGainChance and

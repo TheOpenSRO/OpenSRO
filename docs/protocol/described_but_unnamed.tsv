@@ -9,12 +9,20 @@
 # accident: MsgBuf_ReadUInt32FromTail, ItemEventLog_FormatRecord, SkillWithdraw_Execute,
 # Combat_ApplyActionEffects and COS_SubmitAsyncQuery. This file is that search made
 # mechanical.
-0058d480	FUN_0058d480	760	docs/RE_COMPLETION.md,docs/protocol/error_attributed_functions.md,docs/protocol/error_codes.md,docs/protocol/error_emitters.tsv,docs/protocol/igobj_vtable.md,docs/protocol/skill_params.md
+#
+# FIRST WORKING SESSION (round 348), on the four best-cited rows:
+#   0058d480 -> Skill_CheckCastRequirement   skill_params.md had transcribed its body
+#   00617360 -> CheckCurrencyRequirement     battle_arena.md said what it checks, by bit
+#   006232c0 -> NOT nameable. siege.md calls it 'the big one, 11,816 bytes ... which no
+#                pass has read through'. Cited five times, read zero times.
+#   004ae0c0 -> NOT nameable. timed_jobs.md says in as many words: 'It is characterised,
+#                not read, and stays on the list.'
+# So two of four were ready and two were citations, which is the header's caveat
+# holding up under its own first test rather than being a hedge.
 00514f10	FUN_00514f10	341	docs/RE_COMPLETION.md,docs/protocol/error_emitters.tsv,docs/protocol/guild.md,docs/protocol/handler_payloads.tsv,docs/protocol/message_handlers.tsv,docs/protocol/server_handlers.tsv
 00511a60	FUN_00511a60	329	docs/protocol/error_attributed_functions.md,docs/protocol/error_emitters.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/message_handlers.tsv,docs/protocol/pets.md,docs/protocol/server_handlers.tsv
 00401fc0	FUN_00401fc0	193	docs/RE_COMPLETION.md,docs/WORLD_ISSUES.md,docs/protocol/db_bind_columns.tsv,docs/protocol/naming_ceiling.md,docs/protocol/recovered_names.tsv,docs/protocol/refdata_tables.md
 006232c0	AQ_Siege::FUN_006232c0	11816	docs/RE_COMPLETION.md,docs/SYSTEMS.md,docs/protocol/error_emitters.tsv,docs/protocol/message_handlers.tsv,docs/protocol/siege.md
-00617360	GObjPC::FUN_00617360	1515	docs/RE_COMPLETION.md,docs/WORLD_ISSUES.md,docs/protocol/battle_arena.md,docs/protocol/error_codes.md,docs/protocol/error_emitters.tsv
 00617f70	GObjPC::FUN_00617f70	806	docs/RE_COMPLETION.md,docs/WORLD_ISSUES.md,docs/protocol/error_codes.md,docs/protocol/error_emitters.tsv,docs/protocol/jobs.md
 004ae0c0	FUN_004ae0c0	755	docs/RE_COMPLETION.md,docs/WORLD_ISSUES.md,docs/protocol/message_handlers.tsv,docs/protocol/missing_functions.tsv,docs/protocol/timed_jobs.md
 0051c050	FUN_0051c050	700	docs/RE_COMPLETION.md,docs/protocol/PACKET_FORMAT.md,docs/protocol/handler_payloads.tsv,docs/protocol/message_handlers.tsv,docs/protocol/server_handlers.tsv

@@ -62,7 +62,8 @@ world**, the same way a fortress siege does — `CGameWorld_Siege` has 62 slots 
 
 ## Arena coins are inventory items
 
-`GObjPC::FUN_00617360` (1,515 bytes) checks currency requirements by bit, and
+`GObjPC::CheckCurrencyRequirement` (`0x00617360`, 1,515 bytes; named in round 348 from this very
+sentence) checks currency requirements by bit, and
 the arena's branch is:
 
 	if ((flags & 0x400) != 0) {
