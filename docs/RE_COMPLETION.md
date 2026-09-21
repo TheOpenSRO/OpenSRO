@@ -1943,19 +1943,38 @@ columns leave them zero and behave exactly as before — pinned by its own test.
 - **The distribution is still uniform.** `FUN_0040dce0` rolls 13/14 with a
   three-sample minimum centre-biased about a midpoint; srrevamp rolls uniformly.
   That is a known, deliberate difference, not an unrecovered one.
-- ~~**Which roll the live melee path takes.**~~ **PROBED (round 375), and 190/191
-  are positively NOT dead.** `FUN_0040f990` has exactly one caller,
-  `Combat_ResolveDamage`, which calls it twice -- and both sites sit at **case 3
-  of a damage-kind switch**, immediately after `Equip_GetWeaponTID()`, storing
-  the result into the result struct's damage field at `+0x20`. `case 2` of the
-  same switch takes a fixed damage from `EventMobList_GetFixedDamage` instead,
-  and `Formula_MitigatePhysicalDamage` -- which is what contains the
-  centre-biased `FUN_0040dce0` -- is reached from a **different branch** of the
-  same function.
 
-  So the two rolls are **alternative branches of a damage-kind switch, not two
-  stages of one path**. STILL OPEN, and narrower: what the switch subject is, and
-  therefore which case an ordinary melee swing takes.
+  **Costed in round 376.** The centre is
+  `clamp((hra/era * 0.5 + levelTerm) * 100, 10, 90)`, and its four inputs stand as
+  follows -- three available, one missing:
+
+  | input | state |
+  |---|---|
+  | player `hra` base = `10 + Level` | **grounded** (round 371, off the stat graph); not implemented |
+  | player `hra` weapon term | **carried end to end** -- `Item.HitRateMin`, itemdata col 113, the verified Copper Sword tooltip value |
+  | monster `hra`/`era` = `2*Level + 25` | **grounded** (characterdata cols 75/77); NOT in `monsterSpec` |
+  | player `era` armour term | **MISSING** -- `export-refdata` records "body armour carries the parry pair at 68" but nothing exports it, and `refdata.Item` has no parry field |
+
+  So the **player -> monster** direction is portable today; **monster -> player**
+  is not, because the defender's parry has no armour term. Exporting itemdata
+  col 68 is the one blocking piece, and it is the next concrete step.
+
+  **A warning against porting it half-done**, because the arithmetic is
+  counter-intuitive: with the bare base alone, a level-1 character has
+  `hra = 11` against a monster's `era = 27`, giving a centre of 20 % -- blows
+  landing near the BOTTOM of the weapon's range where srrevamp's uniform roll
+  averages 50 %. Shipping the distribution without the weapon and armour terms
+  would roughly halve early player damage and look like a balance change rather
+  than the fidelity fix it is.
+- ~~**Which roll the live melee path takes.**~~ **CLOSED.** Round 375 probed this
+  and found the two rolls are alternative branches of a damage-kind switch rather
+  than two stages of one path -- `FUN_0040f990` sits at case 3 after
+  `Equip_GetWeaponTID()`. It then recorded "what the switch subject is" as still
+  open. **It was not open:** this same file already records
+  `switch (*(byte *)(iStack_e0 + 5))` with its four cases, and that **case 0 is
+  the ordinary attack**. The centre-biased 13/14 roll IS the live melee path, and
+  `FUN_0040f990`'s 190/191 roll is a special damage kind. Round 376 corrected
+  this; see the portability assessment below.
 - Unarmed keeps the innate 30.6/34.2 in the real engine; srrevamp takes 0 there,
   since `unarmedDamage` is own design anyway.
 - Still open from before: itemdata columns 114 and 117; `pc[0x72d]`'s state enum;
@@ -6274,6 +6293,51 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 0x51c is 0x0d, 0x51d is 1. Resolving category -> message-name prefix would label
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
+
+Round 376 (the fourth consecutive tick that ended in my own file, and the centre
+finally costed): ROUND 375 CLOSED ITS PROBE AND LEFT "what the switch subject is,
+and therefore which case an ordinary melee swing takes" as still open. IT WAS NOT
+OPEN. tools/known.sh on "Combat_ResolveDamage" returned an entry titled "Which
+damage path is the ordinary attack", which already records
+switch (*(byte *)(iStack_e0 + 5)), all four cases, and that CASE 0 IS THE
+ORDINARY ATTACK. So the centre-biased 13/14 roll is the live melee path and
+FUN_0040f990's 190/191 roll is a special damage kind -- the opposite emphasis
+from where rounds 374-375 were heading.
+
+THAT IS FOUR TICKS RUNNING (373, 374, 375, 376) whose first real finding was that
+something I wrote in the previous one to two rounds was already answered or
+already corrected in this same file. The tool catches it every time, which is the
+point, but the underlying cost is that four ticks produced corrections rather
+than advances.
+
+THE ROUND'S ACTUAL ADVANCE IS TO COST THE PORT instead of attempting it. The
+centre's four inputs: player hra base 10 + Level is GROUNDED (round 371); the
+player's weapon term is ALREADY CARRIED END TO END as Item.HitRateMin, itemdata
+col 113, the verified Copper Sword tooltip value; monster hra/era = 2*Level + 25
+is GROUNDED but absent from monsterSpec; and the player's ARMOUR PARRY TERM IS
+MISSING ENTIRELY -- export-refdata's own comment records "body armour carries the
+parry pair at 68" and nothing exports it. So player -> monster is portable today
+and monster -> player is not.
+
+AND A REASON NOT TO PORT IT HALF-DONE, which is the part that would have bitten.
+With the bare base alone a level-1 character has hra = 11 against a monster's
+era = 27, a centre of 20 % -- blows landing near the BOTTOM of the weapon's range
+where srrevamp's uniform roll averages 50 %. Shipping the distribution without
+the weapon and armour terms would roughly HALVE early player damage and read as a
+balance change rather than the fidelity fix it is. This is the same 20 % that
+round 371 mistook for an implausible hit chance; understood correctly it is an
+argument about completeness, not a puzzle.
+
+NOT DONE DELIBERATELY: no code. Implementing the roll without both terms would
+either ship the halving above or leave an uncalled function that this project's
+own orphan guard exists to reject. The next step is bounded and named --
+export itemdata col 68 -- rather than attempted at the end of a tick that opened
+with a correction.
+
+**What moved:** a false "still open" closed against the file that already
+answered it, and a ten-day-old "known, deliberate difference" turned into an
+itemised four-input assessment with exactly one blocker named. No behaviour
+changed, so no tag.
 
 Round 375 (the docs contradicted me again, and the project's own named probe
 lands): RAN tools/known.sh FIRST on "centre". It returned RE_COMPLETION.md:1906 --
