@@ -59,42 +59,71 @@ func recoveredNames(t *testing.T, root string) map[string]string {
 	return out
 }
 
-// A handler row may not still read FUN_<addr> when recovered_names.tsv has a
-// name for that same address.
-func TestHandlerTableNamesAreNotStale(t *testing.T) {
+// derivedTable is a docs/protocol table carrying a server address alongside the
+// name that address had when the table was generated.
+type derivedTable struct {
+	file    string
+	addrCol int
+	nameCol int
+	minRows int
+	// remedy says what a stale row means for this file. described_but_unnamed
+	// is a WORKLIST of functions the dump still calls FUN_, so a named one does
+	// not belong in it at all; the others just carry a display name.
+	remedy string
+}
+
+var derivedTables = []derivedTable{
+	{"server_handlers.tsv", 1, 2, 100, "refresh the table's name column"},
+	{"handler_payloads.tsv", 1, 2, 100, "refresh the table's name column"},
+	{"described_but_unnamed.tsv", 1, 2, 300, "DROP the row -- this file lists functions the dump still calls FUN_, so a named one is finished work still on a worklist"},
+}
+
+// No derived table may still read FUN_<addr> when recovered_names.tsv has a name
+// for that same address.
+func TestDerivedTableNamesAreNotStale(t *testing.T) {
 	root := repoRoot(t)
 	names := recoveredNames(t, root)
 
-	f, err := os.Open(filepath.Join(root, "docs", "protocol", "server_handlers.tsv"))
-	if err != nil {
-		t.Fatalf("opening server_handlers.tsv: %v", err)
-	}
-	defer f.Close()
+	for _, tbl := range derivedTables {
+		t.Run(tbl.file, func(t *testing.T) {
+			f, err := os.Open(filepath.Join(root, "docs", "protocol", tbl.file))
+			if err != nil {
+				t.Fatalf("opening %s: %v", tbl.file, err)
+			}
+			defer f.Close()
 
-	var checked int
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		cols := strings.Split(sc.Text(), "\t")
-		if len(cols) < 3 || cols[0] == "index" {
-			continue
-		}
-		addr, listed := strings.ToLower(cols[1]), cols[2]
-		if len(addr) != 8 {
-			continue
-		}
-		checked++
-		if !placeholderName.MatchString(listed) {
-			continue
-		}
-		if real, ok := names[addr]; ok && !placeholderName.MatchString(real) {
-			t.Errorf("server_handlers.tsv index %s lists %s for %s, but recovered_names.tsv names it %s -- refresh the table's name column",
-				cols[0], listed, addr, real)
-		}
-	}
-	if err := sc.Err(); err != nil {
-		t.Fatalf("reading server_handlers.tsv: %v", err)
-	}
-	if checked < 100 {
-		t.Fatalf("only %d handler rows parsed -- the probe is broken, not the data", checked)
+			var checked int
+			sc := bufio.NewScanner(f)
+			sc.Buffer(make([]byte, 0, 1<<20), 1<<22)
+			for sc.Scan() {
+				line := sc.Text()
+				if strings.HasPrefix(line, "#") || strings.HasPrefix(line, "index") {
+					continue
+				}
+				cols := strings.Split(line, "\t")
+				if len(cols) <= tbl.nameCol || len(cols) <= tbl.addrCol {
+					continue
+				}
+				addr := strings.ToLower(strings.TrimSpace(cols[tbl.addrCol]))
+				listed := strings.TrimSpace(cols[tbl.nameCol])
+				if len(addr) != 8 {
+					continue
+				}
+				checked++
+				if !placeholderName.MatchString(listed) {
+					continue
+				}
+				if real, ok := names[addr]; ok && !placeholderName.MatchString(real) {
+					t.Errorf("%s lists %s for %s, but recovered_names.tsv names it %s -- %s",
+						tbl.file, listed, addr, real, tbl.remedy)
+				}
+			}
+			if err := sc.Err(); err != nil {
+				t.Fatalf("reading %s: %v", tbl.file, err)
+			}
+			if checked < tbl.minRows {
+				t.Fatalf("only %d rows parsed from %s -- the probe is broken, not the data", checked, tbl.file)
+			}
+		})
 	}
 }

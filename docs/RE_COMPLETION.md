@@ -25208,3 +25208,38 @@ work queue, GROUNDING_AUDIT, and `message_handlers.tsv`'s sender column (round
 well-formed, never whether it agrees with the file it was derived from.**
 
 Nothing wired beyond the test, no tag. `go test -count=1 -p 1 ./...` green.
+
+## The rot was systemic, not one table (round 473)
+
+Round 472 found `server_handlers.tsv` carrying `FUN_<addr>` for eleven
+already-named handlers and guarded it with a test. The obvious question is
+whether that table was special. **It was not.**
+
+	described_but_unnamed.tsv    26 stale rows of 690
+	handler_payloads.tsv         10 stale rows of 163
+
+**`described_but_unnamed.tsv` is the one that mattered.** Its own header says it
+lists "server functions that `docs/` cites and the dump **still calls FUN_**",
+so it is a *worklist* — and 26 of its entries were finished work still sitting
+on it, which is precisely the failure that killed the RE_COMPLETION work queue.
+Those rows were **removed**, not renamed: a named function does not belong in a
+list of unnamed ones. `handler_payloads.tsv`'s name column is descriptive, so it
+was refreshed in place.
+
+**The guard now covers all three**, with a per-file remedy so the failure
+message says what to do rather than only what is wrong — drop the row for the
+worklist, refresh the cell for the others.
+
+**Each new subtest was verified by breaking its own file.** Injecting one stale
+row into `handler_payloads.tsv` and one into `described_but_unnamed.tsv` makes
+each subtest fail with its own remedy, and restoring makes them pass. Round 472
+only ever demonstrated a failure against `server_handlers.tsv`; a green subtest
+on a file it has never failed on is not evidence about that file.
+
+Three derived tables are now guarded against disagreeing with
+`recovered_names.tsv`. The one still known unreliable is
+`message_handlers.tsv`'s `server_senders` column (round 465), which names
+functions that open no message at all — a different defect, needing a different
+check, and not fixed here.
+
+Nothing wired beyond the test, no tag. `go test -count=1 -p 1 ./...` green.

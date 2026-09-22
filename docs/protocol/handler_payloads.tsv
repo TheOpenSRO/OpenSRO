@@ -3,7 +3,7 @@ index	handler	server_name	server_fields	client_fields	agreement	note
 0x006	0050f130	FUN_0050f130				
 0x00d	00516960	FUN_00516960				
 0x00f	009bf500	FUN_009bf500				
-0x010	0051de90	GObjPC_MsgHandler_SpecialCommand::FUN_0051de90	u16,u32,u8,u8,u16,u16,u32,u8,u8,u8	u16  (+9 variants)	client-prefix	
+0x010	0051de90	GObjPC_MsgHandler_SpecialCommand::DispatchCommand	u16,u32,u8,u8,u16,u16,u32,u8,u8,u8	u16  (+9 variants)	client-prefix	
 0x02a	0051cb20	FUN_0051cb20				
 0x02f	004ee090	FUN_004ee090	u32,u32		server-only	
 0x031	004ee1d0	GObjPC::GObjPC_HandleGuildSummonReqMsg_031		u32,u32,u8	client-only	server side delegates to a callee; expansion NOT confirmed -- dropped
@@ -13,11 +13,11 @@ index	handler	server_name	server_fields	client_fields	agreement	note
 0x03f	00513250	FUN_00513250	u32	u32,u8	server-prefix	
 0x045	0050fe50	FUN_0050fe50	u32	u32	exact	
 0x046	00510250	GObjPC_HandleShopMsg_046	u32,u8	u32,u8	exact	
-0x04b	00510660	FUN_00510660		u32	client-only	
+0x04b	00510660	GObjPC_HandleEndInteractionMsg_04b		u32	client-only	
 0x04c	00510980	Item_HandleUseItem	u8,u16	u8,u16  (+2 variants)	exact	
 0x050	005112f0	GObjPC_HandleIncreaseStr				
 0x051	005113b0	GObjPC_HandleIncreaseInt				
-0x053	0050fee0	FUN_0050fee0	u8		server-only	
+0x053	0050fee0	GObjPC_HandleResurrectMsg_053	u8		server-only	
 0x059	00513410	FUN_00513410	u32		server-only	
 0x05a	00513590	GObjPC::HandleTeleportUse	u32,u8,u8	u32,u8	client-prefix	
 0x05b	00513ea0	GObjPC::FUN_00513ea0				
@@ -41,7 +41,7 @@ index	handler	server_name	server_fields	client_fields	agreement	note
 0x084	005159c0	GObjPC_HandleTradeMsg_084				
 0x0a1	00515a60	GObjPC_HandleSkillMsg_0a1	u32	u32	exact	
 0x0a2	00515ab0	Skill_HandleMasteryLevelUp	u32,u8	u32,u8	exact	
-0x0a7	00515b30	FUN_00515b30	u8	u8	exact	
+0x0a7	00515b30	GObjPC_HandleBerserkMsg_0a7	u8	u8	exact	
 0x0b1	00515f10	FleaMarket_HandleOpenStall		u16	client-only	
 0x0b2	00516130	GObjPC_HandleStallMsg_0b2				
 0x0b3	00516270	FUN_00516270	u32	u32	exact	
@@ -53,9 +53,9 @@ index	handler	server_name	server_fields	client_fields	agreement	note
 0x0c4	0050faf0	FUN_0050faf0	u32		server-only	
 0x0c5	00511de0	FUN_00511de0	u32	u32,u8,u32  (+4 variants)	server-prefix	
 0x0c6	00511e00	FUN_00511e00	u32	u32	exact	
-0x0c7	00511f40	FUN_00511f40	u32,u8	u32,u8	exact	
+0x0c7	00511f40	GObjPC_HandleCOSSellMsg_0c7	u32,u8	u32,u8	exact	
 0x0cb	005119b0	FUN_005119b0	u8,u32	u8,u32	exact	
-0x0d4	00516670	FUN_00516670	u8		server-only	
+0x0d4	00516670	GObjPC_HandleTalkMenuSelectMsg_0d4	u8		server-only	
 0x0d8	00516780	FUN_00516780	u32	u32	exact	
 0x0d9	005167d0	FUN_005167d0	u32	u32	exact	
 0x0db	00516820	FUN_00516820	u32	u32	exact	
@@ -70,7 +70,7 @@ index	handler	server_name	server_fields	client_fields	agreement	note
 0x0f0	00514ce0	CGuildManager::HandleCreateGuild	u32	u32	exact	
 0x0f1	00515340	GObjPC_HandleGuildMsg_0f1	u32	u32	exact	
 0x0f2	00515070	GObjPC_HandleGuildMsg_0f2	u32	u32	exact	
-0x0f3	00514f10	FUN_00514f10	u32	u32	exact	
+0x0f3	00514f10	GObjPC_HandleGuildMemberAddMsg_0f3	u32	u32	exact	
 0x0f4	005151d0	FUN_005151d0				server side delegates to a callee; expansion NOT confirmed -- dropped
 0x0f9	00516ea0	Guild_HandleNoticeUpdate				server side delegates to a callee; expansion NOT confirmed -- dropped
 0x0fa	00516da0	Guild_HandleLevelUpRequest	u32	u32	exact	
@@ -87,7 +87,7 @@ index	handler	server_name	server_fields	client_fields	agreement	note
 0x112	00518930	GObjPC_HandleGuildMsg_112	u32	u32	exact	
 0x113	00518a80	GObjPC_HandleGuildMsg_113	u32	u32	exact	
 0x114	005189a0	GObjPC_HandleGuildMsg_114	u32	u32	exact	
-0x116	00511a60	FUN_00511a60	u32	u32	exact	
+0x116	00511a60	GObjPC_HandleCOSDeactivateMsg_116	u32	u32	exact	
 0x117	00511bb0	GObjPC::HandleNameCOS	u32	u32	exact	
 0x118	00511570	FUN_00511570	u32	u32,u32,u8	server-prefix	
 0x119	005115e0	FUN_005115e0	u32		server-only	
@@ -106,7 +106,7 @@ index	handler	server_name	server_fields	client_fields	agreement	note
 0x203	00516bb0	GObjPC_HandleSkillMsg_203	u32,u32,u8	u32,u32,u8	exact	
 0x250	005178b0	Guild_HandleWarehouseUse	u32	u32	exact	
 0x251	00517980	GObjPC_HandleGuildMsg_251	u32	u32	exact	
-0x252	00517a50	FUN_00517a50	u32	u32	exact	
+0x252	00517a50	GObjPC_HandleGuildWarehouseMsg_252	u32	u32	exact	
 0x256	00517b70	GObjPC_HandleGuildMsg_256	u32	u32,u16	server-prefix	
 0x258	00517cc0	GObjPC_HandleGuildMsg_258	u32	u32	exact	
 0x259	00517d60	GObjPC_HandleGuildMsg_259	u32,u8		server-only	
@@ -158,7 +158,7 @@ index	handler	server_name	server_fields	client_fields	agreement	note
 0x515	0051b370	FUN_0051b370	u32,u8,u32	u32,u8,u32,u8,u32	server-prefix	
 0x516	0051b7b0	GObjPC_HandleSiegeMsg_516	u8	u8	exact	
 0x518	0051ba80	FUN_0051ba80	u32		server-only	
-0x519	0051bb70	FUN_0051bb70	u32	u32	exact	
+0x519	0051bb70	GObjPC_HandlePartyRecallMsg_519	u32	u32	exact	
 0x51a	0051bd60	GObjPC_HandleCallUserMsg_51a	u32	u32	exact	
 0x51c	0051bf10	GObjPC_HandleSummonPartyUserMsg_51c	u32,u32	u32,u32,u8	server-prefix	
 0x51d	0051c050	FUN_0051c050	u32	u32	exact	

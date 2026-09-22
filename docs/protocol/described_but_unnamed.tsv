@@ -63,7 +63,6 @@
 5	0096ee60	CNetEngine::FUN_0096ee60	205	docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv
 5	004fc880	GObjPC::FUN_004fc880	200	docs/protocol/character_state.md,docs/protocol/described_but_unnamed.tsv
 5	0040dc10	FUN_0040dc10	198	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/skill_params.md
-5	004a8340	GObjPC::FUN_004a8340	166	docs/WORLD_ISSUES.md,docs/protocol/character_state.md,docs/protocol/described_but_unnamed.tsv
 5	004b2d60	GObjPC::FUN_004b2d60	145	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
 5	0059e7c0	FUN_0059e7c0	117	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
 5	0046c1f0	FUN_0046c1f0	84	docs/protocol/described_but_unnamed.tsv,docs/protocol/skill_use_gate.md
@@ -117,7 +116,6 @@
 3	0050c160	FUN_0050c160	579	docs/protocol/described_but_unnamed.tsv,docs/protocol/durability.md,docs/protocol/error_emitters.tsv,docs/protocol/message_handlers.tsv
 3	0049eb10	GObjPC::FUN_0049eb10	523	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/error_emitters.tsv,docs/protocol/siege.md
 3	0059e450	FUN_0059e450	499	docs/protocol/described_but_unnamed.tsv,docs/protocol/param_writers.md
-3	00515b30	FUN_00515b30	472	docs/protocol/described_but_unnamed.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/missing_functions.tsv,docs/protocol/server_handlers.tsv
 3	0049aa70	GObjPC::FUN_0049aa70	469	docs/protocol/described_but_unnamed.tsv,docs/protocol/param_writers.md
 3	0085f9b0	FUN_0085f9b0	451	docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv
 3	004e1120	GObjPC::FUN_004e1120	439	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
@@ -166,10 +164,8 @@
 3	0051cb20	FUN_0051cb20	8	docs/protocol/described_but_unnamed.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/missing_functions.tsv,docs/protocol/server_handlers.tsv
 3	0051cb30	FUN_0051cb30	8	docs/protocol/described_but_unnamed.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/missing_functions.tsv,docs/protocol/server_handlers.tsv
 2	006f8950	FUN_006f8950	7846	docs/RE_COMPLETION.md,docs/WORLD_ISSUES.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
-2	00567190	FUN_00567190	2187	docs/protocol/described_but_unnamed.tsv,docs/protocol/param_readers.md,docs/protocol/param_writers.md
 2	005f6eb0	GObjPC::FUN_005f6eb0	1141	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/monster_ai.md,docs/protocol/recovered_names.tsv
 2	00631050	GObjPC::FUN_00631050	906	docs/GROUNDING_AUDIT.md,docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
-2	0050fee0	FUN_0050fee0	877	docs/protocol/described_but_unnamed.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/param_writers.md,docs/protocol/server_handlers.tsv
 2	0066f9d0	CMainProcess::FUN_0066f9d0	773	docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
 2	004054d0	FUN_004054d0	713	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
 2	004e1f60	GObjPC::FUN_004e1f60	669	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
@@ -186,7 +182,6 @@
 2	0049ff20	FUN_0049ff20	410	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/error_emitters.tsv
 2	0059f610	FUN_0059f610	400	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/skill_withdraw.md
 2	00513410	FUN_00513410	372	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/message_handlers.tsv,docs/protocol/server_handlers.tsv
-2	00514010	FUN_00514010	339	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/party.md
 2	004fcda0	GObjPC::FUN_004fcda0	317	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
 2	0055eec0	AI::CNest::FUN_0055eec0	279	docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv
 2	005c6480	FUN_005c6480	207	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/error_emitters.tsv,docs/protocol/guild.md,docs/protocol/recovered_names.tsv
@@ -233,9 +228,7 @@
 1	0074b4b0	FUN_0074b4b0	467	docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv
 1	00513250	FUN_00513250	437	docs/protocol/described_but_unnamed.tsv,docs/protocol/event_log.md,docs/protocol/handler_payloads.tsv,docs/protocol/recovered_names.tsv,docs/protocol/server_handlers.tsv
 1	0074bc70	FUN_0074bc70	432	docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv
-1	00511f40	FUN_00511f40	424	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_emitters.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/message_handlers.tsv,docs/protocol/pets.md,docs/protocol/server_handlers.tsv
 1	0059dc80	FUN_0059dc80	354	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/error_emitters.tsv
-1	00511a60	FUN_00511a60	329	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/error_emitters.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/message_handlers.tsv,docs/protocol/pets.md,docs/protocol/server_handlers.tsv
 1	0050eff0	GObjPC::FUN_0050eff0	311	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_codes.md,docs/protocol/handler_payloads.tsv,docs/protocol/message_handlers.tsv,docs/protocol/server_handlers.tsv
 1	005e0790	CMainProcess::FUN_005e0790	304	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
 1	009db500	FUN_009db500	265	docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv
@@ -246,7 +239,6 @@
 1	0049efc0	GObjPC::FUN_0049efc0	202	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
 1	00899800	CQNO_WC_PRIEST3_1::FUN_00899800	202	docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv,docs/protocol/server_handlers.tsv
 1	004eb6b0	GObjPC::FUN_004eb6b0	186	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
-1	004e4950	FUN_004e4950	181	docs/protocol/academy.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/error_emitters.tsv
 1	004aaf80	GObjPC::FUN_004aaf80	174	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/param_writers.md
 1	004ab060	GObjPC::FUN_004ab060	145	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
 1	007bc150	FUN_007bc150	142	docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv
@@ -336,7 +328,6 @@
 0	00505150	CEnchant_SocketStoneInserter::FUN_00505150	662	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
 0	00507cf0	FUN_00507cf0	661	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
 0	00509d00	CMakeStuff_Compound::FUN_00509d00	659	docs/protocol/described_but_unnamed.tsv,docs/protocol/event_log.md
-0	00633c40	FUN_00633c40	636	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
 0	00524160	FUN_00524160	623	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
 0	004b2450	FUN_004b2450	622	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
 0	00546a30	FUN_00546a30	616	docs/protocol/described_but_unnamed.tsv,docs/protocol/missing_functions.tsv
@@ -362,7 +353,6 @@
 0	00629a40	FUN_00629a40	538	docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
 0	005d1c40	CGuildManager::FUN_005d1c40	536	docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
 0	008371d0	FUN_008371d0	536	docs/protocol/client_translation_units.tsv,docs/protocol/described_but_unnamed.tsv,docs/protocol/refdata_tables.md,docs/protocol/source_files.tsv
-0	005bf2a0	FUN_005bf2a0	530	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
 0	0051b370	FUN_0051b370	525	docs/protocol/described_but_unnamed.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/server_handlers.tsv
 0	006a9630	ReferenceData::FUN_006a9630	524	docs/protocol/described_but_unnamed.tsv,docs/protocol/source_files.tsv
 0	0067bf90	CGameSJ_TempleOfAnubisAndIsisGate::FUN_0067bf90	521	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
@@ -376,7 +366,6 @@
 0	009aa330	MapLoader::FUN_009aa330	487	docs/protocol/described_but_unnamed.tsv,docs/protocol/source_files.tsv
 0	004f0c90	AJStateChanger::FUN_004f0c90	483	docs/protocol/described_but_unnamed.tsv,docs/protocol/message_handlers.tsv
 0	00630ac0	FUN_00630ac0	483	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
-0	0051bb70	FUN_0051bb70	481	docs/protocol/described_but_unnamed.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/message_handlers.tsv,docs/protocol/server_handlers.tsv
 0	005d6650	CMainProcess::FUN_005d6650	475	docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
 0	0054daf0	RefClassFactory::FUN_0054daf0	469	docs/protocol/described_but_unnamed.tsv,docs/protocol/source_files.tsv
 0	009c1eb0	FUN_009c1eb0	467	docs/protocol/boilerplate_names.tsv,docs/protocol/described_but_unnamed.tsv
@@ -387,7 +376,6 @@
 0	00528f40	GObjPC::FUN_00528f40	454	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
 0	005291d0	GObjPC::FUN_005291d0	454	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
 0	00524950	FUN_00524950	452	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/error_emitters.tsv
-0	005107c0	FUN_005107c0	447	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_codes.md,docs/protocol/message_handlers.tsv
 0	00548a30	FUN_00548a30	432	docs/protocol/client_senders.tsv,docs/protocol/described_but_unnamed.tsv
 0	00524b20	FUN_00524b20	430	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
 0	004719c0	FUN_004719c0	427	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_emitters.tsv
@@ -395,7 +383,6 @@
 0	005ca5a0	CMainProcess::FUN_005ca5a0	415	docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
 0	00547ad0	FUN_00547ad0	411	docs/protocol/described_but_unnamed.tsv,docs/protocol/monster_ai.md
 0	00631630	GObjPC::FUN_00631630	411	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
-0	00632100	FUN_00632100	411	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_emitters.tsv
 0	004e08a0	CGObjPC::FUN_004e08a0	408	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
 0	0060f710	EventDaemon_Action::FUN_0060f710	397	docs/protocol/described_but_unnamed.tsv,docs/protocol/source_files.tsv
 0	00525ac0	FUN_00525ac0	395	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
@@ -406,7 +393,6 @@
 0	0098e820	IMemory::FUN_0098e820	380	docs/protocol/described_but_unnamed.tsv,docs/protocol/source_files.tsv
 0	0098e9a0	IMemory::FUN_0098e9a0	380	docs/protocol/described_but_unnamed.tsv,docs/protocol/source_files.tsv
 0	004d1a50	GObjCOS::FUN_004d1a50	378	docs/protocol/described_but_unnamed.tsv,docs/protocol/source_files.tsv
-0	0062f7c0	FUN_0062f7c0	376	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
 0	006a9840	ReferenceData::FUN_006a9840	368	docs/protocol/described_but_unnamed.tsv,docs/protocol/source_files.tsv
 0	00525950	FUN_00525950	366	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/error_emitters.tsv
 0	00526f20	FUN_00526f20	361	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_emitters.tsv
@@ -430,7 +416,6 @@
 0	00526ce0	FUN_00526ce0	306	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
 0	0060e0a0	TrijobMgr::FUN_0060e0a0	306	docs/protocol/described_but_unnamed.tsv,docs/protocol/source_files.tsv
 0	00546330	FUN_00546330	302	docs/protocol/described_but_unnamed.tsv,docs/protocol/missing_functions.tsv
-0	00580ad0	CGameServer::FUN_00580ad0	298	docs/protocol/client_asserts.md,docs/protocol/described_but_unnamed.tsv
 0	004d6c80	GObjCOS_Pet::FUN_004d6c80	297	docs/protocol/described_but_unnamed.tsv,docs/protocol/source_files.tsv
 0	006a7980	ReferenceData::FUN_006a7980	296	docs/protocol/described_but_unnamed.tsv,docs/protocol/source_files.tsv
 0	005bc210	FUN_005bc210	295	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
@@ -443,12 +428,10 @@
 0	0067b6c0	CGameSJ_TempleOfAnubisAndIsisGate::FUN_0067b6c0	282	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
 0	0067c6e0	CGameSJ_TempleOfHaroerisGate::FUN_0067c6e0	282	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
 0	004187c0	CMainProcess::FUN_004187c0	278	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
-0	00517a50	FUN_00517a50	278	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/handler_payloads.tsv,docs/protocol/message_handlers.tsv,docs/protocol/server_handlers.tsv
 0	00514b20	FUN_00514b20	275	docs/protocol/academy.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/error_emitters.tsv
 0	005c7900	FUN_005c7900	274	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/error_emitters.tsv
 0	00484500	CWicket::FUN_00484500	272	docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
 0	005c7bb0	FUN_005c7bb0	270	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_emitters.tsv,docs/protocol/siege.md
-0	00516670	FUN_00516670	269	docs/protocol/described_but_unnamed.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/server_handlers.tsv
 0	005e3d90	CTrainingCampCommon::FUN_005e3d90	269	docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
 0	009799f0	CNetEngine::FUN_009799f0	269	docs/protocol/client_asserts.md,docs/protocol/described_but_unnamed.tsv
 0	00484610	FUN_00484610	252	docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
@@ -523,7 +506,6 @@
 0	0056eb00	GObjPC::FUN_0056eb00	139	docs/protocol/client_translation_units.tsv,docs/protocol/described_but_unnamed.tsv,docs/protocol/source_files.tsv
 0	005c74d0	FUN_005c74d0	139	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/guild.md
 0	004def00	FUN_004def00	138	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
-0	004e4aa0	FUN_004e4aa0	138	docs/protocol/academy.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
 0	00547860	FUN_00547860	138	docs/protocol/described_but_unnamed.tsv,docs/protocol/monster_ai.md
 0	00418410	Quest::CGameServer::FUN_00418410	134	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
 0	005c6710	FUN_005c6710	133	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
@@ -572,7 +554,6 @@
 0	008a9220	FUN_008a9220	103	docs/protocol/client_asserts.md,docs/protocol/described_but_unnamed.tsv
 0	00407760	FUN_00407760	102	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
 0	00426fe0	FUN_00426fe0	102	docs/protocol/client_asserts.md,docs/protocol/client_translation_units.tsv,docs/protocol/described_but_unnamed.tsv,docs/protocol/source_files.tsv
-0	00510660	FUN_00510660	102	docs/protocol/described_but_unnamed.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/server_handlers.tsv
 0	005118a0	FUN_005118a0	100	docs/protocol/described_but_unnamed.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/message_handlers.tsv,docs/protocol/server_handlers.tsv
 0	00511570	FUN_00511570	98	docs/protocol/described_but_unnamed.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/message_handlers.tsv,docs/protocol/server_handlers.tsv
 0	005bea20	trs_wait_response::FUN_005bea20	98	docs/protocol/described_but_unnamed.tsv,docs/protocol/message_handlers.tsv
@@ -657,7 +638,6 @@
 -1	006232c0	AQ_Siege::FUN_006232c0	11816	docs/RE_COMPLETION.md,docs/SYSTEMS.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/error_emitters.tsv,docs/protocol/message_handlers.tsv,docs/protocol/siege.md
 -1	0091e7f0	FUN_0091e7f0	2641	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv
 -1	009287c0	FUN_009287c0	1724	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/quest_scripting.md,docs/protocol/refdata_tables.md
--1	00634350	FUN_00634350	1277	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_emitters.tsv,docs/protocol/siege.md
 -1	00549ac0	FUN_00549ac0	1213	docs/protocol/described_but_unnamed.tsv,docs/protocol/monster_ai.md
 -1	00548be0	FUN_00548be0	1113	docs/protocol/described_but_unnamed.tsv,docs/protocol/monster_ai.md
 -1	004ae0c0	FUN_004ae0c0	755	docs/RE_COMPLETION.md,docs/WORLD_ISSUES.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/message_handlers.tsv,docs/protocol/missing_functions.tsv,docs/protocol/timed_jobs.md
@@ -671,12 +651,9 @@
 -1	00540120	AI::CTactics::FUN_00540120	537	docs/protocol/described_but_unnamed.tsv,docs/protocol/monster_ai.md
 -1	005485b0	FUN_005485b0	503	docs/protocol/client_senders.tsv,docs/protocol/described_but_unnamed.tsv,docs/protocol/monster_ai.md
 -1	004fc160	GObjPC::FUN_004fc160	425	docs/WORLD_ISSUES.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/monster_ai.md,docs/protocol/recovered_names.tsv
--1	006341b0	FUN_006341b0	412	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/error_emitters.tsv,docs/protocol/siege.md
--1	00634c90	FUN_00634c90	407	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/error_emitters.tsv,docs/protocol/siege.md
 -1	00634020	FUN_00634020	391	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/error_emitters.tsv,docs/protocol/siege.md
 -1	004d6210	GObjPC::FUN_004d6210	352	docs/RE_COMPLETION.md,docs/WORLD_ISSUES.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md,docs/protocol/pets.md
 -1	00633ec0	FUN_00633ec0	347	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/error_emitters.tsv,docs/protocol/siege.md
--1	00514f10	FUN_00514f10	341	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/error_emitters.tsv,docs/protocol/guild.md,docs/protocol/handler_payloads.tsv,docs/protocol/message_handlers.tsv,docs/protocol/server_handlers.tsv
 -1	00549970	FUN_00549970	326	docs/protocol/described_but_unnamed.tsv,docs/protocol/monster_ai.md
 -1	0054a440	FUN_0054a440	300	docs/protocol/described_but_unnamed.tsv,docs/protocol/monster_ai.md
 -1	00414140	CMainProcess::FUN_00414140	266	docs/WORLD_ISSUES.md,docs/protocol/described_but_unnamed.tsv
@@ -690,12 +667,10 @@
 -1	005bf150	CMainProcess::FUN_005bf150	160	docs/protocol/described_but_unnamed.tsv,docs/protocol/party.md
 -1	0049a2f0	GObjPC::FUN_0049a2f0	154	docs/WORLD_ISSUES.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv,docs/protocol/timed_jobs.md
 -1	005c6870	FUN_005c6870	133	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/error_emitters.tsv,docs/protocol/guild.md
--1	0055a8b0	CAIState_EMOTION::FUN_0055a8b0	128	docs/protocol/described_but_unnamed.tsv,docs/protocol/monster_ai.md
 -1	00540500	AI::CTactics::FUN_00540500	127	docs/protocol/described_but_unnamed.tsv,docs/protocol/monster_ai.md
 -1	00498610	FUN_00498610	120	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/skill_params.md
 -1	009fbb76	FUN_009fbb76	117	docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv
 -1	00862e40	FUN_00862e40	106	docs/RE_COMPLETION.md,docs/WORLD_ISSUES.md,docs/protocol/described_but_unnamed.tsv
--1	0040fd60	FUN_0040fd60	104	docs/RE_COMPLETION.md,docs/protocol/damage_pipeline.md,docs/protocol/described_but_unnamed.tsv
 -1	004ab760	GObjPC::FUN_004ab760	103	docs/protocol/described_but_unnamed.tsv,docs/protocol/monster_ai.md,docs/protocol/recovered_names.tsv
 -1	005a0330	FUN_005a0330	99	docs/WORLD_ISSUES.md,docs/protocol/described_but_unnamed.tsv
 -1	0061d280	GObjPC::FUN_0061d280	91	docs/WORLD_ISSUES.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv,docs/protocol/teleport_network.md
@@ -713,6 +688,5 @@
 -1	00485d90	FUN_00485d90	35	docs/RE_COMPLETION.md,docs/protocol/damage_pipeline.md,docs/protocol/described_but_unnamed.tsv
 -1	005347c0	FUN_005347c0	20	docs/WORLD_ISSUES.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/monster_ai.md,docs/protocol/recovered_names.tsv
 -1	00653f70	CTJ_CompositeItemKeeper::FUN_00653f70	20	docs/RE_COMPLETION.md,docs/WORLD_ISSUES.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv,docs/protocol/timed_jobs.md
--1	00605010	FUN_00605010	17	docs/RE_COMPLETION.md,docs/WORLD_ISSUES.md,docs/protocol/described_but_unnamed.tsv
 -1	005d0e90	FUN_005d0e90	12	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
 -1	005e4390	FUN_005e4390	12	docs/RE_COMPLETION.md,docs/WORLD_ISSUES.md,docs/protocol/academy.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv,docs/protocol/teleport_network.md
