@@ -1015,3 +1015,44 @@ effectively closed:
 defeat; **1,086 appends across 274 functions have no open before them in their
 own function** — opened inside a helper — and are omitted rather than guessed;
 and the table gives widths, never meanings.
+
+## Field 1 of a reply is a result byte (round 467)
+
+The sweep gives widths. This is the first **meaning** recovered from it, and it
+holds protocol-wide rather than for one opcode.
+
+**From the client, the reader.** Of the **195** client handlers whose first
+field is a single byte, **153** compare that byte against a literal immediately
+after reading it, and the comparison values are:
+
+	value 1   x128      value 3   x1
+	value 0   x14       value 4   x1
+	value 2   x8        value 7   x1
+
+**128 handlers branching on `== 1`** is the vocabulary, not a coincidence.
+
+**From the server, the writer — a different binary and a different mechanism.**
+Censusing every 1-byte append whose source slot takes a literal, the two
+commonest are **2 (x32)** and **1 (x22)**, then 0 (x12).
+
+**And the failure half was already grounded independently**:
+`Msg_SendTwoFieldReply` writes `{u8 = 2, u16 code}` across 160 call sites
+(round 443). So:
+
+	byte 1  =  success
+	byte 2  =  failure, followed by a u16 error code
+
+Three sources, no two sharing a method.
+
+**The limits.** The server census resolved only **109 of 1,164** one-byte
+appends — the rest compute their value rather than storing a literal — so that
+side is a sample, not a census. Fourteen client handlers compare against `0` and
+eight against `2`, so the 1/2 convention is dominant but not universal. And a
+handler comparing its first byte to 1 could occasionally mean something else;
+the claim rests on the three sources agreeing, not on any one.
+
+**Nothing is wired from this.** srrevamp's `RepairResult` leads with a `u32`
+code rather than a `u8` result, which diverges — but `PROTOCOL_DECISION.md`
+records the current opcodes and layouts as "**placeholder scaffolding, not the
+destination**", so changing the wire format now would be a design change, not a
+grounding fix. This is a spec fact for when the real protocol is adopted.

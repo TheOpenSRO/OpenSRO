@@ -25003,3 +25003,36 @@ because their message was opened inside a helper; and widths only, never
 meanings.
 
 No name filed; three still held. Nothing wired, no tag. Tests green.
+
+## The first field MEANING, on three independent sources (round 467)
+
+Rounds 461-466 recovered the protocol's field *widths*. This is the first
+*meaning*, and it holds across the protocol rather than for one opcode.
+
+**Field 1 of a reply is a result byte: 1 = success, 2 = failure followed by a
+u16 error code.**
+
+Three sources, no two sharing a method:
+
+- **The client, reading.** Of 195 handlers whose first field is one byte, 153
+  compare it to a literal immediately, and **128 of those compare against 1**.
+- **The server, writing** — a different binary and mechanism. Of the 1-byte
+  appends whose source slot takes a literal, the commonest are **2 (x32)** and
+  **1 (x22)**.
+- **Already grounded**: `Msg_SendTwoFieldReply` writes `{u8 = 2, u16 code}`
+  across 160 call sites (round 443), which is the failure half on its own.
+
+**The limits, stated with it.** The server census resolved only **109 of 1,164**
+one-byte appends — the rest compute their value instead of storing a literal —
+so that side is a sample. Fourteen client handlers compare against `0` and eight
+against `2`, so the convention is dominant, not universal. A single handler
+comparing to 1 proves nothing; the claim rests on the three agreeing.
+
+**Deliberately not wired.** srrevamp's `RepairResult` leads with a `u32` code
+rather than a `u8` result, so it diverges. But `PROTOCOL_DECISION.md` records
+the current opcodes and layouts as "placeholder scaffolding, not the
+destination", so changing the wire format now would be a design change rather
+than a grounding fix, and would break a working client/server pair to no
+present end. Recorded as a spec fact for when the real protocol is adopted.
+
+No name filed; three still held. Nothing wired, no tag. Tests green.
