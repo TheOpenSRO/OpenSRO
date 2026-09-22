@@ -25278,3 +25278,37 @@ merely green tells you nothing. Helper rows now live in a separate dict, emitted
 only where no direct-open row exists for the same `(opcode, function)`.
 
 Nothing wired, no tag. `go test -count=1 -p 1 ./...` green.
+
+## The open helpers, and two opcodes named (round 475)
+
+Round 474's next probe was the 1,086 appends whose message is opened inside some
+other function. **48 functions are shaped like that opener** — small, more than
+one caller, and they open a message. That is the route to those appends, and it
+doubles as a worklist: two of the 48 were entries on round 447's unnamed-helper
+list and now have an opcode against them.
+
+**`0x34d2` is the battle arena.** 23 senders, and every one carrying a name is a
+battle-arena class of the engine's own — `CBattleArenaInfoFlag`,
+`CBattleArenaInfoPoint`, `CBattleArenaInfoOccupy`,
+`BATTLE_ARENA_EVENT_HANDLERS::OnUpdate_Arena`.
+
+**`0xb483` is the training camp.** `TrainingCamp_SendReply_b483` (`0x4e4580`)
+fetches the singleton at `DAT_00d6a99c` — which the engine's own
+`CMainProcess::GetSingleton_CTrainingCampManager` reads — and `0xb483` replies
+to index `0x483`, whose handler calls `TrainingCamp_FindMemberByKey`. Two
+signals; the client handler's `UI_TC` module agrees and proves nothing alone.
+
+**A general lever, and its measured shortfall.**
+`docs/protocol/opcode_subsystems.tsv` attributes an opcode to a subsystem when
+every named sender's class prefix agrees, excluding generic module attributions.
+It gives **55 opcodes — but only 11 on two or more agreeing senders**; the other
+44 rest on a single sender, which is a lead.
+
+**And it misses its own best case.** `0x34d2` is *absent* from that file,
+because `CBattleArenaInfoFlag` and `CBattleArenaInfoPoint` are different
+prefixes even though they are one subsystem. Exact-prefix equality rejects the
+strongest evidence in the set, so the file under-reports and the opcode is
+recorded by hand. A stem-based grouping would reach it; saying so beats shipping
+a number that looks like a ceiling when it is an artifact of the test.
+
+One name filed. Nothing wired, no tag. `go test -count=1 -p 1 ./...` green.

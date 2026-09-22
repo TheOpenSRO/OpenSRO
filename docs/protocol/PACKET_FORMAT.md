@@ -1190,3 +1190,42 @@ Both are standing controls from round 462, and both broke, which is the whole
 reason for keeping controls that are known-correct rather than merely green.
 Helper rows now live in a separate dict and are emitted only where no
 direct-open row exists for the same `(opcode, function)`.
+
+## Open helpers, and what the senders say about an opcode (round 475)
+
+Round 474 left 1,086 appends unattributed because their message is opened inside
+some other function. **48 functions are shaped like that opener** — small, more
+than one caller, and they open a message: `Skill_SendActionResult` (0xb070, 20
+callers), `GObjPC::SendActionResult_B074` (0xb074, 13), `FUN_005bdf50` (0x3864,
+6, round 465's example), and so on. That is the route to the unattributed
+appends, and it is also a worklist: two of these were entries on round 447's
+unnamed-helper list and now have an opcode against them.
+
+**`0x34d2` is the battle arena**, and this is the clearest case in the data. It
+has **23 senders**, and every one that carries a name is a battle-arena class of
+the engine's own: `CBattleArenaInfoFlag`, `CBattleArenaInfoPoint`,
+`CBattleArenaInfoOccupy`, `BATTLE_ARENA_EVENT_HANDLERS::OnUpdate_Arena`. Its
+client handler is `UI_ARENA::FUN_0089f860`, which agrees — and, being a module
+attribution, adds nothing on its own.
+
+**`0xb483` is the training camp.** `TrainingCamp_SendReply_b483` (`0x4e4580`)
+fetches the singleton at `DAT_00d6a99c`, which the engine's own
+`CMainProcess::GetSingleton_CTrainingCampManager` reads, and `0xb483` replies to
+dispatch index `0x483`, whose handler calls `TrainingCamp_FindMemberByKey`.
+
+### The general lever, and where it falls short
+
+`docs/protocol/opcode_subsystems.tsv` attributes an opcode to a subsystem when
+**every named sender's class prefix agrees**, with generic module attributions
+(`GObjPC`, `CMainProcess`, …) excluded because they say where a function lives,
+not which subsystem owns the opcode. It yields **55 opcodes — 11 on two or more
+agreeing senders, 44 on a single one**, and a single sender is a lead rather
+than a finding.
+
+**The test misses its own best case, which is worth stating rather than
+hiding.** `0x34d2` is absent from that file: its 23 senders are all battle-arena
+classes, but `CBattleArenaInfoFlag` and `CBattleArenaInfoPoint` are *different*
+prefixes, so exact-prefix equality rejects the strongest evidence in the set.
+The real yield is therefore higher than 11, and a stem-based grouping would
+reach it. Until that exists, the file under-reports and `0x34d2` is recorded by
+hand above.
