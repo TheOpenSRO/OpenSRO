@@ -953,3 +953,52 @@ So **flag bit 8 is the siege filter**: a species carrying it scans for
 players *plus guild guards and fortress-war monsters*. That also sharpens
 round 422's open question — bit 8 changes the target kinds and does **not**
 suppress the give-up check, while bits 2 and 7, which add only `IsCOS`, do.
+
+## Bits 2 and 7 are one flag, and the engine asserts it (round 424)
+
+Rounds 421–423 left the question of why bits 2 and 7 suppress the give-up check
+while bit 8 does not. A sweep of every read of `refTactics->+0x90` — 14 sites —
+answers it: **bits 2 and 7 are not two independent flags but a pair.**
+
+	AI::CTactics::FUN_00540d20   (flags & 0x84) == 0
+	FUN_00547c70                 (flags & 0x84) != 0
+
+Both test them as the single mask `0x84`. And `AITactics_TargetOutOfReach`
+(`0x548120`), the first test `CAIState_BATTLE::OnUpdate` runs, opens with **two
+asserts**:
+
+	if ((flags & 4)    != 0) CGameServer::Assert_BreakIfDebugger();
+	if ((flags & 0x80) != 0) CGameServer::Assert_BreakIfDebugger();
+
+They decompile as two tests because they are two `assert()` calls in the source,
+not because the bits differ. **So the engine itself states the invariant: a
+species carrying either bit must never reach the chase / out-of-reach test.**
+The give-up suppression round 421 found is that same invariant enforced from the
+other side — such a species does not use the chase machinery at all. Bit 8 does
+not participate because it only swaps the target-kind filter; it leaves the
+chase model alone.
+
+**A number trap.** Column 38 sits at *offset* `+0x84` (the roam radius) and this
+bit pair is *mask* `0x84`. Same number, unrelated meanings — do not join them.
+
+## Flag bit 9 (`0x200`) was missing from column 42 (round 424)
+
+The column-42 note lists bits 2, 7 and 8. **Bit 9 is also live**, at two sites:
+`GObjPC::FUN_005299e0` and `FUN_00540de0`. The second is a target-validation
+filter and shows what the bit buys:
+
+	candidate must be non-null, slot 0x18 non-zero, and GetLifeState() == 1   ; alive
+	if not IsCOS and not slot 0x30:
+	    m = GetBodyMode()                      ; slot 64
+	    if 1 < m < 5                      -> reject
+	    if (m == 6 || m == 7) and !(flags & 0x200) -> reject
+
+So **bit 9 admits targets whose body mode is 6 or 7**, which are otherwise
+refused; body modes 2–4 are refused regardless. What body modes 6 and 7 *are* is
+not read here. The alive test is round 413's life-state value 1, reached
+independently.
+
+**Why the bit was missed:** the note was built from the acquire path, where only
+2, 7 and 8 appear. Bit 9 is only tested in the validation filter and in a
+`GObjPC` function that reaches the tactics row through `param_1[0x62]` rather
+than the AI context, so a sweep anchored on the AI module does not see it.

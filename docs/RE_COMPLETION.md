@@ -6405,6 +6405,46 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 424 (rounds 421-423's question answered by the engine's own assert, and a
+flag bit nobody had recorded): THE QUESTION WAS WHY FLAG BITS 2 AND 7 SUPPRESS
+THE GIVE-UP CHECK WHILE BIT 8 DOES NOT. A sweep of all 14 reads of
+`refTactics->+0x90` answers it: **bits 2 and 7 are one flag, not two.**
+`AI::CTactics::FUN_00540d20` and `FUN_00547c70` both test them as the single
+mask **`0x84`**, and `AITactics_TargetOutOfReach` — the first test
+`CAIState_BATTLE::OnUpdate` runs — opens with two `Assert_BreakIfDebugger` calls,
+one per bit. They decompile as two tests because they are two `assert()`s, not
+because the bits differ.
+
+**So the engine states the invariant itself: a species carrying either bit must
+never reach the chase / out-of-reach test.** The give-up suppression round 421
+found is that same invariant from the other side — such a species does not use
+the chase machinery at all — and bit 8 is uninvolved because it swaps the
+target-kind filter without touching the chase model. Answered from an
+assertion rather than from a plausible story, which is what the last two rounds
+declined to write.
+
+AND THE SWEEP FOUND A BIT THE COLUMN-42 NOTE DOES NOT LIST. **Bit 9 (`0x200`)**
+is live at two sites. `FUN_00540de0` is a target-validation filter: the candidate
+must be alive (`GetLifeState() == 1`, round 413's value), `GetBodyMode()` in 2..4
+is refused outright, and **6 or 7 is refused unless bit 9 is set**. So bit 9
+admits targets in body modes 6 and 7. What those modes are is not read. The note
+missed it because it was built from the acquire path, where only 2, 7 and 8
+appear — bit 9 shows up in the validation filter and in a `GObjPC` function that
+reaches the tactics row via `param_1[0x62]` rather than the AI context.
+
+A NUMBER TRAP RECORDED: column 38 sits at *offset* `+0x84` (the roam radius) and
+this bit pair is *mask* `0x84`. Same number, unrelated.
+
+AND MY PROBE RETURNED 0 FOR THE THIRD TIME THIS SESSION. The Python sweep for the
+flag-word load matched nothing; a plain `grep` for `"+ 0x2c) + 0x90)"` found all
+14. It was caught in one step because round 416's rule applies — I had read that
+exact load in round 421, so a zero was impossible. **Three rounds running, the
+hand-written regex has been the defective part and `grep` has been the fix**;
+`RE_LOOP.md` already says to write probes to a file and `scp` them, and the
+lesson to add is simpler: reach for `grep` before a regex with escapes in it. No
+names filed, so nothing to apply and no rebuild — the batching note from last
+tick respected. No behaviour changed, so no tag.
+
 Round 423 (the kind vocabulary's last blank filled, one doc corrected, and a
 family I re-derived because I never listed toward the right file): ROUND 422
 LEFT `0x10` — slots 242/243/245 — AS THE ONE UNNAMED ENTRY IN THE AI ACQUIRE
