@@ -6405,6 +6405,44 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 432 (the quest event vocabulary from RTTI, and last round's census
+retracted as my own filter's fault): ROUND 431 CLOSED WITH "a census found NO
+quest class overriding the demux slots, so those `::Handle` names are nested
+handler objects rather than slot overrides". **That is wrong and the defect was
+mine.** The census required the overriding function to carry a *three-part* name
+(`Class::OnEvent::Handle`) and therefore could not see an override named
+`CQNO_X::FUN_…`. Re-run over 199 quest classes without that filter:
+
+	case 0x35  slot 25 (+0x64)  base 0x9212a0                 10 impls, 10 classes override
+	case 0x36  slot 40 (+0xa0)  base 0x921e20                  2 impls,  7 override
+	case 0x3b  slot 48 (+0xc0)  base 0x921fd0                  1 impl,   0 override
+	default    slot 51 (+0xcc)  base GObjPC::FUN_0092f270      3 impls,  2 override
+	case 0x3c  slot 53 (+0xd4)  base 0x922000                  1 impl,   0 override
+	case 0x3d  slot 54 (+0xd8)  base OnEVENT_TALISMANITEM_PICK 1 impl,   0 override
+
+The demux targets **are** ordinary vtable slots and quest classes **do** override
+them — heavily at slot 25. Three of the six are never overridden at all. Second
+round running that an over-narrow filter produced a confident negative; the
+first was round 414's reassignment-crossing scan.
+
+AND THE EVENT VOCABULARY IS IN THE BINARY'S OWN RTTI. Each quest class carries
+nested handler classes named for the event they serve, so the mangled names give
+the list directly: **`OnSetupQuest` (27 classes), `OnUpdate` (23),
+`OnLeaveWorld` (22), `OnEnterWorld` (21), `OnInstanceInvitaionAnswered` (20, the
+game's own spelling), `OnEventZoneEntered` (18), `OnAfterActivated` (10),
+`OnPartyStatusChanged` (9), `OnDead` (8), `OnAbortQuest` (6), `OnPreUseItem`
+(5), `OnTimer` (4)** — plus per-quest variants such as `OnDeadForGeneral1..4`,
+`OnUpdate_Arena`, `OnResurrectMyChar`, `OnScriptStarted`. **That list is what the
+154 compiled classes exist to provide**, and nobody had it.
+
+ONE DEMUX CASE IS NAMED AND THE REST ARE MEASURED AS UNNAMEABLE BY THAT LEVER.
+`0x3d` → slot 54 → `OnEVENT_TALISMANITEM_PICK`, which announces itself in its own
+log string. **The other five bases carry no string literal at all**, so the
+self-naming lever names exactly one of six — a measured negative rather than an
+abandoned search. Mapping the remaining five to the event names needs a
+different source. No names filed; three still held. No behaviour changed, so no
+tag.
+
 Round 431 (the quest entry points found, and the dispatch is an observer
 broadcast): ROUND 430 POINTED AT THE PER-PC MANAGER'S 59 UNNAMED FUNCTIONS.
 Reading 59 functions is what this loop is supposed to avoid, so the probe was

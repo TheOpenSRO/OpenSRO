@@ -456,10 +456,50 @@ slots, and the other 542 are served by the base behaviour plus their
 
 - **What `CBasicQuest`'s per-event defaults do with the questdata row.** The
   architecture is read; the data interpretation is not.
-- **How the `QNO_*::OnEvent::Handle` classes relate to these slots.** A census of
-  every quest class's slots at `+0x64`, `+0xa0`, `+0xc0`, `+0xcc`, `+0xd4` and
-  `+0xd8` found **no** class overriding them with a three-part name, so those
-  `::Handle` names are **nested handler objects with their own vtables**, not
-  slot overrides. That is a distinct mechanism and it is unread.
+- ~~**How the `QNO_*::OnEvent::Handle` classes relate to these slots.** A census
+  found **no** class overriding them…~~ **RETRACTED IN ROUND 432 — the census
+  was wrong.** It required the overriding function to carry a *three-part* name
+  (`Class::OnEvent::Handle`) and so could not see an override named
+  `CQNO_X::FUN_…`. Re-run without that filter, across 199 quest classes:
+
+  | demux case | slot | base | distinct impls | classes overriding |
+  |---|---:|---|---:|---:|
+  | `0x35` | 25 (`+0x64`) | `0x9212a0` | 10 | **10** |
+  | `0x36` | 40 (`+0xa0`) | `0x921e20` | 2 | **7** |
+  | `0x3b` | 48 (`+0xc0`) | `0x921fd0` | 1 | 0 |
+  | default | 51 (`+0xcc`) | `GObjPC::FUN_0092f270` | 3 | 2 |
+  | `0x3c` | 53 (`+0xd4`) | `0x922000` | 1 | 0 |
+  | `0x3d` | 54 (`+0xd8`) | **`OnEVENT_TALISMANITEM_PICK`** | 1 | 0 |
+
+  So the demux targets **are** ordinary vtable slots and quest classes **do**
+  override them — heavily at slot 25. Three of the six are never overridden.
 - **What `BroadcastEvent`'s two arguments carry**, and the event-code vocabulary
   beyond the six cases above.
+
+## The quest event vocabulary, from the binary's own RTTI (round 432)
+
+Every quest class carries nested handler classes named after the event they
+serve, and the mangled RTTI names give the vocabulary directly. Across the
+server binary, the generic events and how many quest classes define one:
+
+| event | classes | event | classes |
+|---|---:|---|---:|
+| `OnSetupQuest` | 27 | `OnAfterActivated` | 10 |
+| `OnUpdate` | 23 | `OnPartyStatusChanged` | 9 |
+| `OnLeaveWorld` | 22 | `OnDead` | 8 |
+| `OnEnterWorld` | 21 | `OnAbortQuest` | 6 |
+| `OnInstanceInvitaionAnswered` | 20 | `OnPreUseItem` | 5 |
+| `OnEventZoneEntered` | 18 | `OnTimer` | 4 |
+
+(`OnInstanceInvitaionAnswered` is the game's own spelling.) Beyond these,
+quests define bespoke variants — `OnDeadForGhost`, `OnDeadForGeneral1`..`4`,
+`OnDeadForSoldier_*`, `OnUpdate_InitialSpawn`, `OnUpdate_Arena`,
+`OnTimer_Second`, `OnResurrectMyChar`, `OnSelectObj`, `OnScriptStarted`,
+`OnBodyModeChanged` — which is the per-quest logic the 154 compiled classes
+exist for.
+
+**One demux case is named**: `0x3d` → slot 54 → **`OnEVENT_TALISMANITEM_PICK`**,
+which announces itself in its own log string `"OnEVENT_TALISMANITEM_PICK : %d,
+%s"`. **The other five bases carry no string literal at all**, so that
+self-naming lever names exactly one of the six — measured, not assumed. Mapping
+the remaining five codes to the event names above needs a different source.
