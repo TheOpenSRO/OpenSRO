@@ -24895,3 +24895,42 @@ client handler for `0xb04b` in passing; nothing depended on it.)
 
 One name filed (`MsgStreamBuffer::Read`), three now held. Nothing wired, no tag.
 Tests green.
+
+## The cross-validation, corrected and settled (round 464)
+
+Round 463 reported six field-1 disagreements. **The unit was wrong.** Counting
+*pairs* makes an opcode with several senders look like several disagreements —
+`0xb0c5` has **six** senders and one of them matches the client exactly. Counted
+per **opcode**, over 128 of them:
+
+	some sender agrees on field 1   121 / 128  (95 %)
+	some sender is a prefix-match    99 / 128  (77 %)
+	some sender matches exactly      38 / 128  (30 %)
+
+close to round 463's per-pair figures, so those numbers were not far wrong — but
+the *disagreement list* was contaminated, and the corrected one is **seven**
+opcodes, two of which the per-pair view had hidden.
+
+**A hypothesis tested and mostly refuted.** If the server writes one `u16` where
+the client reads two `u8`s, the bytes agree and only the split differs. Byte
+totals move the exact-match rate from 30 % to only **32 %**, so the effect is
+real but small: three opcodes (`0x3809`, `0xb0b4`, `0xb16a`). They settle a
+protocol fact anyway — **the same byte sequence can be written as one wide field
+or several narrow ones**, so field-by-field width identity was never the right
+requirement. Prefix relations remain the dominant reason for non-identity.
+
+**`0x30eb` is settled, and the client is the odd side.**
+`CGObjPC::RefreshEventGuideData` (slot 155, named from `IGObj`'s own assert)
+appends eight bytes; the client's entire handler is a single four-byte read that
+is discarded. One sender only, so this is not an attribution artifact.
+
+**The caveat that governs all of it, now on record.** The client and server
+dumps are **two different binaries with no guarantee of matching protocol
+versions** — this project already documents two *server* builds that differ. A
+residual mismatch may therefore be version skew rather than a misreading, and
+nothing measured here can separate the two. What the comparison does establish
+is that they are close: 95 % of 128 opcodes agreeing on the first field, across
+two binaries and two different mechanisms, is not what unrelated versions look
+like.
+
+No name filed; three still held. Nothing wired, no tag. Tests green.

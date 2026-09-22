@@ -855,6 +855,22 @@ several senders for one opcode writing variants, and client handlers that branch
 Prefix containment is the metric the data supports, and it holds for four pairs
 in five.
 
+**CORRECTED IN ROUND 464 — the unit was wrong.** The table above counts
+*pairs*, so an opcode with several senders contributes several rows and all but
+one "disagree". `0xb0c5` has **six** senders and one of them
+(`GObjPC::FUN_00528f40`, `1,1,2,4`) matches the client exactly. Counted per
+**opcode** — does *some* sender agree — the picture over **128 opcodes** is:
+
+| measure | result |
+|---|---|
+| some sender agrees on field 1 | **121 / 128 (95 %)** |
+| some sender is a prefix-match | **99 / 128 (77 %)** |
+| some sender matches exactly | **38 / 128 (30 %)** |
+
+which is close to the per-pair figures, so round 463's numbers were not far
+wrong — but the *disagreement list* was contaminated, and the corrected one is
+seven opcodes, two of which the per-pair view had hidden (`0x3531`, `0xb4d4`).
+
 **Six pairs disagree on the very first field** and are a worklist rather than
 noise:
 
@@ -877,3 +893,40 @@ handler; column 2 is the registrar. Worth stating because round 449 quoted the
 registrar as the client handler for `0xb04b` in passing (nothing depended on
 it), and because a **zero-overlap join is the loud failure** that made the
 mistake obvious — a join that had matched 20 of 151 would have been believed.
+
+
+## Field boundaries are an authoring choice, not wire structure (round 464)
+
+A hypothesis worth testing: if the server writes one `u16` where the client
+reads two `u8`s, the *bytes* agree and only the field split differs. Comparing
+byte totals instead of field lists moves the exact-match rate from **30 % to
+32 %** — so the effect is real but small, and it does **not** explain the
+mismatches. Three opcodes show it:
+
+	0x3809   srv 2          cli 1,1
+	0xb0b4   srv 1,1,1,1    cli 1,1,2       FleaMarket_OnBuyItemResult
+	0xb16a   srv 1,1,1,1,2  cli 1,1,2,1,1
+
+Those three settle a protocol fact worth stating: **the same byte sequence can
+be written as one wide field or several narrow ones**, so a field-by-field width
+match is not required for the two sides to agree. The dominant reason for
+non-identity remains prefix relations, not field splits.
+
+## `0x30eb`: the client under-reads, and that is the finding
+
+	server  CGObjPC::RefreshEventGuideData (0x4ef030), vtable slot 155,
+	        named from IGObj's own assert -- opens 0x30eb, appends 8 bytes
+	client  FUN_00881670 -- the WHOLE function is one 4-byte read, discarded
+
+The server writes eight bytes and the client reads four, and `0x30eb` has only
+one sender, so this is not an attribution artifact. The client handler is a stub
+that consumes a prefix and does nothing with it.
+
+**Which raises the caveat that governs all of the above.** The client and server
+dumps are **two different binaries with no guarantee of being the same protocol
+version** — this project already records two *server* builds that differ. A
+residual mismatch can therefore be version skew rather than a misreading, and
+nothing here can distinguish the two. What the comparison does establish is that
+they are close: **95 % of 128 opcodes agree on the first field across two
+binaries and two entirely different mechanisms**, which is not what unrelated
+versions would look like.
