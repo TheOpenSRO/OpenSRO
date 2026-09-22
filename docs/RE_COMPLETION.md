@@ -6405,6 +6405,47 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 445 (the kind vocabulary read per call site, three of it confirming a
+table from round 361, and the berserk spec written): ROUND 444 LEFT ONE PIECE —
+"which kind value means body mode", arriving in `EBX` where Ghidra leaves it
+unresolved. Seven callers, disassembled at their `call 0x4a8340`:
+
+	CGObjChar::SetLifeState   xor ebx,ebx -> 0    life state   (new)
+	GObjPC::FUN_004b1480                     1
+	GObjPC::FUN_004d2bf0                     1
+	CGObjChar::SetBodyMode                   4    body mode    (new)
+	GObjPC::FUN_004e2940                     7    SetCharacterState kind 7
+	GObjPC::SetBattleState                   8    SetCharacterState case 8
+	FUN_004e0b50                           0xb    SetCharacterState kind 0xb
+
+**THREE OF THEM CONFIRM A TABLE RECOVERED FOUR YEARS OF ROUNDS AGO.** Round 361
+read the `SetCharacterState` dispatcher and recorded kind 7 as
+`GObjPC::FUN_004e2940`, case 8 as `SetBattleState` and kind `0xb` as
+`FUN_004e0b50`. All three agree exactly with registers read today from a
+completely different function. **So the broadcast's kind byte IS the dispatcher's
+kind vocabulary**, and kinds 0 and 4 are new entries in it.
+
+**AND KIND 4 EXPLAINS THE BROADCASTER'S ONE SPECIAL BRANCH.** Round 444 found it
+appends an extra byte from `chardata+5` when `kind == 4 && value == 1`. Kind 4
+is body mode and value 1 is `BODYMODE_HWAN` — **the special case is berserk**,
+which is a satisfying close rather than a coincidence.
+
+THE ARC IS COMPLETE AND WRITTEN UP. `docs/protocol/opcodes/berserk.md` now holds
+the whole exchange — request `0x70a7` (one byte), refusal `0xb0a7`
+(`{u8=2, u16=code}` with a guard per code), success as the `0x30bf` broadcast
+`{objectId, kind=4, value=1, chardata[5]}` — with the four signals that identify
+it as berserk and the two places a reader must take registers over Ghidra's
+arguments. **`chardata+5` is recorded as a CANDIDATE, not promoted**: `_CHAR`
+carries a `HwanLevel` column and that is the obvious fit, but the low chardata
+bytes are the runtime-state block rather than the DB block, so it is left
+unclaimed.
+
+**Still deliberately not wired.** `session.OpBerserk` (`0x0068`) stays live,
+because swapping it needs the Godot client changed in the same step — a
+coordinated change, not a server edit, and `PROTOCOL_DECISION.md` says the
+placeholders "stay functional (and tested) while the real opcode-by-opcode RE
+work happens in parallel". No behaviour changed, so no tag.
+
 Round 444 (berserk has no success reply because success is BROADCAST, and one
 opcode carries every state change): ROUND 443 LEFT "WHAT THE CLIENT LEARNS ON
 SUCCESS" OPEN, HAVING FOUND THE SUCCESS PATH NEVER CALLS THE REFUSAL HELPER.

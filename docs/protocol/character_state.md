@@ -494,7 +494,7 @@ message**, and the kind byte in it is the same state-kind vocabulary the
 
 	guard    obj+0x188 != 0        -- no broadcast otherwise
 	field 1  obj+8                 -- the object id
-	field 2  u8  kind              -- arrives in EBX, so unresolved per-caller
+	field 2  u8  kind              -- in EBX; the vocabulary is below
 	field 3  u8  value
 	         ... when kind == 4 and value == 1, a further byte from chardata+5
 
@@ -519,3 +519,31 @@ The berserk exchange is therefore:
 **Still not enough to wire.** Which kind value means body mode is not pinned —
 it arrives in `EBX` and Ghidra leaves it unresolved, so it needs the registers
 read per caller, the same discipline round 441 applied to the reply opcode.
+
+## The `0x30bf` kind vocabulary, read per call site (round 445)
+
+Round 444 left "which kind value means body mode" open — it arrives in `EBX`,
+which Ghidra leaves unresolved. Disassembling each of the seven callers at its
+`call 0x4a8340`:
+
+| caller | EBX | kind |
+|---|---:|---|
+| `CGObjChar::SetLifeState` | `xor ebx,ebx` → 0 | **life state** |
+| `GObjPC::FUN_004b1480` | 1 | — |
+| `GObjPC::FUN_004d2bf0` | 1 | — |
+| `CGObjChar::SetBodyMode` | **4** | **body mode** |
+| `GObjPC::FUN_004e2940` | 7 | `SetCharacterState` kind 7 |
+| `GObjPC::SetBattleState` | 8 | `SetCharacterState` case 8 |
+| `FUN_004e0b50` | `0xb` | `SetCharacterState` kind `0xb` |
+
+**Three of them confirm the mapping independently.** The `SetCharacterState`
+kind→field table at the top of this file was recovered in round 361 from the
+dispatcher itself, and it records kind 7 as `GObjPC::FUN_004e2940`, case 8 as
+`GObjPC::SetBattleState` and kind `0xb` as `FUN_004e0b50`. Those three agree
+exactly with the registers read here. **So the broadcast's kind byte is the same
+state-kind vocabulary the dispatcher switches on**, and kinds **0** (life state)
+and **4** (body mode) are new entries in it.
+
+**And kind 4 explains the broadcaster's one special branch.** It appends the
+extra `chardata+5` byte when `kind == 4 && value == 1` — body mode set to
+`BODYMODE_HWAN`. The special case *is* berserk.
