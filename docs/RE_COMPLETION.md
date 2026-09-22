@@ -25108,3 +25108,36 @@ module attribution — its plate says "Module INTERPOLATED, not asserted" — so
 class is a neighbour inference and only the leaf name is established here.
 
 One name filed, four now held. Nothing wired, no tag. Tests green.
+
+## Two levers measured empty, one name landed, one heuristic confirmed (round 470)
+
+Aimed at the 69 still-unnamed dispatch handlers. **Two candidate levers, both
+measured rather than assumed, and both close to empty:**
+
+- **Transfer the client's name.** For an unnamed server handler whose *client*
+  counterpart is named, the client name should say what the operation is. Of 69
+  unnamed handlers, **6** have a client counterpart that is not a bare `FUN_`
+  — and five of those six are `NetProcessIn*::FUN_…`, a **module attribution,
+  not a name**. Real yield: **zero**.
+- **Name from the refusals raised**, as round 438 did for the COS-sell handler.
+  Only **11 of 67** unnamed handlers push an error code at all, and none has a
+  clean single-subsystem set — round 438's case worked because all three of its
+  codes were `COSERR_*`; these mix guild with fortress, teleport with party.
+
+**One name did come out of it.** `FUN_0051bb70` (index `0x519`, payload `u32`,
+replies `0xb519`) is the **party-recall handler**, on three agreeing signals and
+not on where it sits: it requires interaction id `0x27`; round 455 tied `0x27`
+to `NPC_FWORLD_RECALL_PARTY`; and it refuses
+`UIIT_MGS_ERR_GOD_TELEPORT_HOLE_NOT_PARTY`.
+
+**And a better result than the name.** That id check is **inlined** — no call to
+`CGObjChar::HasAvailableInteraction` appears — so round 450's census of 41
+*direct callers* missed it. Sweeping for the inlined form finds exactly two, and
+**one of them confirms round 455's heuristic**: the reader requiring id `0x1f`
+sits in the function whose own log string is *"Siege Fortress Pulley CodeName is
+not registered!!"*, and round 455 had attributed `0x1f` to
+`STRUCTURE_GATE_PULLEY_*` by an entirely separate route — the codename strings
+between two registrations. A heuristic attribution and an instruction-level
+reader agreeing on one id is the check that heuristic was missing.
+
+One name filed, five now held. Nothing wired, no tag. Tests green.

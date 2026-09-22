@@ -1061,3 +1061,29 @@ So the engine has an immediate state change and a **delayed** one sharing one
 kind enum. Kind 0 landing on `SetLifeState`, named in round 411 by a completely
 separate route, is the check that this is the same vocabulary and not a
 coincidence.
+
+## Two interaction-set readers the census missed, and one confirmation (round 470)
+
+Round 450 censused the readers of the interaction set by counting **direct
+calls** to `CGObjChar::HasAvailableInteraction` — 41 of them. That round flagged
+the risk that an *inlined* check would be missed, and two are:
+
+	004c95d3   id 0x1f   GObjPC::FUN_004c95c0
+	0051bc09   id 0x27   GObjPC_HandlePartyRecallMsg_519
+
+Both inline the whole check — `mov BYTE PTR [esp+N],<id>`, `lea esi,[reg+0x1c78]`
+for the container, `lea edi,[esp+N]` for the key, then the find helper — so no
+call to the named function appears at all.
+
+**One of them independently confirms round 455.** That round attributed ids to
+NPCs by a *heuristic*: the codename strings compared between one registration
+and the next. Id `0x1f` came out as `STRUCTURE_GATE_PULLEY_*`. The inlined
+reader for `0x1f` sits in `GObjPC::FUN_004c95c0` — the function whose own log
+string is **"Siege Fortress Pulley CodeName is not registered!!"** (round 451).
+A registration-side heuristic and a reader-side instruction agreeing on the same
+id is the check that heuristic needed.
+
+**The other gives id `0x27` a reader**, where round 455 had only a registration:
+the party-recall handler at dispatch index `0x519`, refusing
+`UIIT_MGS_ERR_GOD_TELEPORT_HOLE_NOT_PARTY`, against an NPC registered as
+`NPC_FWORLD_RECALL_PARTY`.
