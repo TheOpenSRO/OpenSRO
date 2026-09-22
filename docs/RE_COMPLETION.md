@@ -24436,3 +24436,52 @@ consistent and the rebuild was paid once.
 
 **Nothing to wire** — srrevamp has no siege — so no value moved and no tag.
 Tests green (`go test -count=1 -p 1 ./...`).
+
+## The three job guilds are three interaction ids (round 453)
+
+`jobs.md` has long recorded that the job-guild join handler maps a kind byte
+`1/2/3` to `0x14/0x15/0x16`, and noted that kind 1's `0x14` equalling the level
+floor of 20 is a coincidence. **What the mapped value IS was never read.** It is
+an NPC interaction id, in the same vocabulary rounds 450–452 recovered, and it
+goes straight into the gate:
+
+	if (kind == 1) id = 0x14; ... else -> 0x4828
+	if (CGObjChar::HasAvailableInteraction(npc, id) == 0) -> 0x480f
+
+| interaction id | job guild |
+|---:|---|
+| 0x14 (20) | Trader |
+| 0x15 (21) | Thief — the engine's word is "Robber" |
+| 0x16 (22) | Hunter |
+
+**Three independent readers agree**: `CInstanceCharTrijob::HandleJoinJobGuild`
+and `JobGuild_HandleWithdraw` both map the client's kind byte, and
+`GObjPC_HandleAliasMsg_0e3` maps **the player's own job type** (read with
+`GObjPC::FUN_0060e040`) at three separate sites that jump to one shared gate.
+The third is the strongest — it trusts no client byte at all. The kind names
+themselves were already recovered from the engine's own two spellings, so the
+chain from id to job name is grounded end to end.
+
+**`0x480f` gains a meaning.** `error_codes.md` had it only as "pushed by
+`JobGuild_HandleWithdraw`". It is **"this NPC is not your job's guild"**.
+
+**The id space turns out to be organised.** These three sit directly below the
+siege block, so **0x14–0x1b is one contiguous run of NPC roles**: three job
+guilds, then the five fortress roles. That is a structural fact worth having —
+it says the ids are allocated by role in blocks, not scattered.
+
+**Id 1 is the item-sale gate**, narrowed but deliberately not promoted to "the
+shop NPC". Its three readers are not dispatch handlers but entries in the
+storage operation table `FUN_0050ce80` fills, beside the already-named
+`CGStorage::TradeOfferItem`. `FUN_005267f0` is a validator returning the
+client's own code names — `SPECIFY_POSITIVE_NUMBER_ONLY` for a count below 1,
+`CANT_SELL_EQUIPED_ITEM` for a slot below the equipment boundary — and refusing
+code 3 when the target does not offer interaction 1. **The sale guard is what
+identifies it**; concluding from that alone that id 1 names the shop role in
+general would be the step this project keeps getting wrong, and the function
+serves two operation codes with only one carrying the sell check.
+
+**No name filed this round, on purpose.** The one candidate (`FUN_005267f0`)
+serves two operations and only one is identified, which is not enough. Nothing
+to wire — `server/internal/jobs` has no NPC interaction model — and no tag.
+Tests green (`go test -count=1 -p 1 ./...`).

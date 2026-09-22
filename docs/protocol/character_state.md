@@ -657,7 +657,7 @@ names the ids by itself:
 
 | id | required by | sites |
 |---:|---|---:|
-| **0x01** | `FUN_00511860`, `FUN_005266a0`, `FUN_005267f0` — all three still unnamed | 3 |
+| **0x01** | `FUN_00511860`, `FUN_005266a0`, `FUN_005267f0` — the item-sale check, see below | 3 |
 | **0x02** | inlined in `CGObjNPCNPC::UseItem` (`mov BYTE PTR [esp+0x13],0x2` then the find) | 1 |
 | **0x0f** (15) | `CGuildManager::HandleCreateGuild` **and** `GObjPC_HandleGuildMsg_0f1` | 2 |
 | **0x17** (23) | `SiegeFortress_DispatchCommand` | 13 |
@@ -668,6 +668,25 @@ names the ids by itself:
 | **0x1f** (31) | `SiegeFortress_DispatchCommand` | 1 |
 | **0x28** (40) | `SiegeFortress_DispatchCommand` | 1 |
 | variable | `GObjPC_HandleShopMsg_046`, `JobGuild_HandleWithdraw`, `CInstanceCharTrijob::HandleJoinJobGuild`, `GObjPC_HandleAliasMsg_0e3`, `FUN_00512e70` | 5 |
+
+**Three of the five "variable" readers were resolved in round 453**, and the
+variable turned out to be a small fixed mapping rather than an open value:
+`0x14`, `0x15` and `0x16` are **the Trader, Thief and Hunter job guilds**. The
+job handlers map a job kind to one of those three and gate on it; the full
+argument, with three independent readers, is in `docs/protocol/jobs.md`. That
+makes ids **0x14–0x1b one contiguous run of NPC roles** — three job guilds, then
+the five fortress roles.
+
+**Id 1 is the item-sale gate.** Its readers are not dispatch handlers but
+entries in the storage operation table that `FUN_0050ce80` fills (alongside the
+already-named `CGStorage::TradeOfferItem`). `FUN_005267f0` is a validator, and
+the codes it returns are the client's own names: count below 1 →
+`UIIT_MSG_STRGERR_SPECIFY_POSITIVE_NUMBER_ONLY`, a slot below the equipment
+boundary → `UIIT_MSG_STRGERR_CANT_SELL_EQUIPED_ITEM`, an out-of-range slot →
+`0x1806`, and a target that does not offer interaction 1 → code 3. **The sale
+guard is what identifies it**; that it therefore names the shop role in general
+is an inference and is not claimed here — the function serves two operation
+codes (9 and 0x14) and only code 9 carries the sell check.
 
 Read from instructions (`push <imm>; push <obj>; call 0x50cd80`), with the
 argument order confirmed against the callee's own frame: `[ebp+8]` is the object

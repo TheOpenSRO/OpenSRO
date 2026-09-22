@@ -908,7 +908,7 @@ functions.**
 | `0x3c2a` | `FUN_005161b0`, `GObjPC_HandleStallMsg_0b2` |
 | `0x3c32` | `FleaMarket_HandleOpenStall` |
 | `0x3c33` | `FUN_00516270` |
-| `0x480f` | `JobGuild_HandleWithdraw` |
+| `0x480f` | `JobGuild_HandleWithdraw` — **"this NPC is not your job's guild"** (round 453) |
 | `0x4828` | `JobGuild_HandleWithdraw`, `GObjPC::CGObjPC___AsyncQuerySucceeded` |
 | `0x4c33` | `AQ_GuildQuery::FUN_005c7f40` |
 | `0x6006` | `CGObjPC::vslot_358` |
@@ -995,3 +995,20 @@ So the pair is "already busy" / "not busy", and **neither has a `case` in the
 decompiled client** -- both are in the fifteen listed above that the server
 sends and the client cannot render. That remains true; what changed is that the
 two are no longer unexplained.
+
+
+## `0x480f` means "wrong job guild NPC" (round 453)
+
+Listed above only as a code `JobGuild_HandleWithdraw` pushes, with no sense
+attached. It is the refusal raised when `CGObjChar::HasAvailableInteraction`
+says the target NPC does not offer **your job's** guild interaction, and three
+handlers raise it from that same failed check:
+
+	CInstanceCharTrijob::HandleJoinJobGuild   kind byte  -> 0x14 / 0x15 / 0x16
+	JobGuild_HandleWithdraw                   the same mapping
+	GObjPC_HandleAliasMsg_0e3                 the player's OWN job type
+
+with `0x14`/`0x15`/`0x16` being the Trader, Thief and Hunter guild interaction
+ids (`docs/protocol/jobs.md`). It remains one of the codes with no `case` in the
+decompiled client, so the client cannot render it — what changed is that its
+meaning is now read rather than unknown.

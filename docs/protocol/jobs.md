@@ -168,3 +168,50 @@ The second argument is the async-query object's `+0`.
 `ExecDeleteOldTrijobData` issues `EXEC _DeleteOldTrijobData %d` with its one
 argument taken from the object's `+0x18`, **not a literal** -- so whatever age
 threshold it deletes by is data, and there is no constant here to recover.
+
+## The three job guilds have three interaction ids (round 453)
+
+The kind→value mapping recorded above (`1→0x14`, `2→0x15`, `3→0x16`) was filed
+as a bare mapping with the note that kind 1's `0x14` equalling the level floor
+of 20 is a coincidence. **What the mapped value IS is now read: it is an NPC
+interaction id**, the same vocabulary `docs/protocol/character_state.md`
+records. In `CInstanceCharTrijob::HandleJoinJobGuild` the mapped byte goes
+straight into the gate:
+
+	if (kind == 1) id = 0x14; else if (kind == 2) id = 0x15;
+	else if (kind == 3) id = 0x16; else -> 0x4828
+	if (CGObjChar::HasAvailableInteraction(npc, id) == 0) -> 0x480f
+
+so joining a job guild requires standing at an NPC that offers **that job's**
+interaction. With the kinds already named from the engine's own two spellings:
+
+| interaction id | job guild |
+|---:|---|
+| **0x14** (20) | Trader |
+| **0x15** (21) | Thief (the engine's word is "Robber") |
+| **0x16** (22) | Hunter |
+
+**Three independent readers agree**, which is why this is stated rather than
+suggested:
+
+1. `CInstanceCharTrijob::HandleJoinJobGuild` — the kind byte the client sends.
+2. `JobGuild_HandleWithdraw` — the same `1/2/3 → 0x14/0x15/0x16` mapping, the
+   same `0x4828` for anything else, the same gate.
+3. `GObjPC_HandleAliasMsg_0e3` — **the player's OWN job type**, read with
+   `GObjPC::FUN_0060e040`, mapped to the same three ids at three separate sites
+   that all jump to one shared gate.
+
+The third is the strongest: it does not trust a client byte at all, it reads the
+job the character already holds and demands the matching guild NPC.
+
+**`0x480f` now has a meaning.** `error_codes.md` listed it only as "pushed by
+`JobGuild_HandleWithdraw`", with no sense attached — it is the refusal for
+**"this NPC is not your job's guild"**, and all three handlers raise it from the
+same failed `HasAvailableInteraction`.
+
+**The id space is organised.** These three sit directly below the siege block
+(`0x17`–`0x1b`, `docs/protocol/siege.md`), so ids 0x14 through 0x1b are one
+contiguous run of NPC roles: three job guilds, then five fortress roles.
+
+**Nothing to wire.** `server/internal/jobs` has no NPC interaction model — the
+ids matter when job guild NPCs are built, not before.
