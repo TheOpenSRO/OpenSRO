@@ -475,3 +475,47 @@ deliberately unnamed in the debug table. **What they are is still unread** — b
 three separate refusals agreeing that 6 and 7 are a special state is worth more
 than any one of them, and it rules out the reading that they are stale or
 unreachable values.
+
+## One opcode carries every state change: `0x30bf` (round 444)
+
+`GObjPC::BroadcastStateChange` (`0x4a8340`, 166 bytes) sends opcode **`0x30bf`**,
+and **seven callers reach it, every one a state setter**:
+
+	CGObjChar::SetLifeState        GObjPC::SetBattleState   (SetCharacterState case 8)
+	CGObjChar::SetBodyMode         FUN_004e0b50             (SetCharacterState kind 0xb)
+	GObjPC::FUN_004b1480           GObjPC::FUN_004e2940     (SetCharacterState kind 7)
+	GObjPC::FUN_004d2bf0
+
+So **life state, body mode and battle state all reach observers through one
+message**, and the kind byte in it is the same state-kind vocabulary the
+`SetCharacterState` dispatcher switches on.
+
+**The payload**, read from the sender:
+
+	guard    obj+0x188 != 0        -- no broadcast otherwise
+	field 1  obj+8                 -- the object id
+	field 2  u8  kind              -- arrives in EBX, so unresolved per-caller
+	field 3  u8  value
+	         ... when kind == 4 and value == 1, a further byte from chardata+5
+
+`obj+0x188` was on this project's unnamed list; it is the broadcast guard.
+**`chardata+5` is new to the map above** and is written into this message only
+on that one branch.
+
+### Why berserk has no success reply
+
+Round 443 found that `GObjPC_HandleBerserkMsg_0a7`'s success path never calls the
+refusal helper, and left "what the client learns on success" open. It learns it
+here: the success path falls through to `SetBodyMode`, which broadcasts `0x30bf`.
+**Success is observed, not replied** — which is why looking for a point-to-point
+success reply found nothing.
+
+The berserk exchange is therefore:
+
+	request   0x70a7   u8, 1 = activate
+	refusal   0xb0a7   u8 = 2, u16 = code in {1, 3, 4, 5}
+	success   0x30bf   broadcast {objectId, kind, value}
+
+**Still not enough to wire.** Which kind value means body mode is not pinned —
+it arrives in `EBX` and Ghidra leaves it unresolved, so it needs the registers
+read per caller, the same discipline round 441 applied to the reply opcode.

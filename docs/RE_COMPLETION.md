@@ -6405,6 +6405,42 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 444 (berserk has no success reply because success is BROADCAST, and one
+opcode carries every state change): ROUND 443 LEFT "WHAT THE CLIENT LEARNS ON
+SUCCESS" OPEN, HAVING FOUND THE SUCCESS PATH NEVER CALLS THE REFUSAL HELPER.
+It learns it from a broadcast. `CGObjChar::SetBodyMode` (`0x4a9fc0`) contains no
+opcode at all; it delegates, and one of its callees — `0x4a8340`, now
+**`GObjPC::BroadcastStateChange`** — sends opcode **`0x30bf`**.
+
+**AND THAT FUNCTION IS NOT ABOUT BERSERK. Seven callers reach it and every one
+is a state setter**: `CGObjChar::SetLifeState`, `CGObjChar::SetBodyMode`,
+`GObjPC::SetBattleState` (case 8 of `SetCharacterState`), `FUN_004e0b50` and
+`GObjPC::FUN_004e2940` (`SetCharacterState` kinds `0xb` and 7), plus
+`FUN_004b1480` and `FUN_004d2bf0`. **Life state, body mode and battle state all
+reach observers through one message**, and its kind byte is the same
+state-kind vocabulary `SetCharacterState` switches on. Seven independent callers
+agreeing on one contract is exactly the rule round 410 arrived at — and it is
+the second round running that the blocker turned out to be a *shared* mechanism
+worth more than the opcode that led to it.
+
+THE PAYLOAD, with two by-products: guarded on `obj+0x188` — **a field that was on
+this project's unnamed list, and is the broadcast guard** — it appends the object
+id at `obj+8`, a kind byte, and a value byte; when kind is 4 and value 1 it
+appends a byte from **`chardata+5`** instead, **an offset the chardata map did
+not have**.
+
+	request   0x70a7   u8, 1 = activate                      (round 441)
+	refusal   0xb0a7   u8 = 2, u16 = code in {1,3,4,5}       (rounds 442-443)
+	success   0x30bf   broadcast {objectId, kind, value}     (round 444)
+
+**STILL NOT ENOUGH TO WIRE, AND THE MISSING PIECE IS NAMED.** Which kind value
+means body mode is not pinned: it arrives in `EBX` and Ghidra leaves it
+unresolved, so it needs the registers read per caller — the same discipline
+round 441 used on the reply opcode and round 443 on the helper's stack. Four
+rounds in, `session.OpBerserk` (`0x0068`) is still the live placeholder, and
+that is the correct outcome rather than a stalled one: each round has closed a
+named piece and named the next. No behaviour changed, so no tag.
+
 Round 443 (the blocker was a shared helper, so solving it once unblocks 38+
 opcodes): THREE ROUNDS HAD BEEN SPENT ON ONE OPCODE, AND THE THING BLOCKING IT
 WAS NOT THE OPCODE. `Msg_SendTwoFieldReply` (`0x4e7250`) is used by **38+ call
