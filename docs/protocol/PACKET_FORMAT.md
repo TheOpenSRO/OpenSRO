@@ -971,3 +971,47 @@ disagreement list needed this round.
 **Next:** re-run the sweep with position-aware attribution and both idioms. The
 result should be a larger table with fewer mixed rows, and the seven-opcode
 disagreement list should shrink again.
+
+## The sweep, rebuilt — and the disagreement list closes (round 466)
+
+Round 465's two defects are fixed and the result is measured against the client
+before and after, on the same 133 opcodes.
+
+**The fixes.** Appends now attach to the **nearest preceding open** rather than
+to the enclosing function, and **both** open idioms are detected — the slot
+`0x278` call and the direct `**(buf + 0x1050) = opcode` store.
+
+**Before and after:**
+
+| | v1 (round 462) | v2 (round 466) |
+|---|---:|---:|
+| distinct opcodes found | 203 | **233** |
+| opcodes comparable with the client | 128 | **133** |
+| agree on field 1 | 121 (95 %) | **131 (98 %)** |
+| prefix-match | 99 (77 %) | **116 (87 %)** |
+| exact match | 38 (30 %) | **44 (33 %)** |
+| field-1 failures | 7 | **2** |
+
+**Five failures fixed, none introduced.** `0x3531`, `0xb069`, `0xb06a`,
+`0xb47b` and `0xb4d4` all now agree.
+
+**Two controls, in both directions.** The three rows that motivated the fix —
+`0xb069`, `0xb06a`, `0xb47b` — change from `4,1` to `1`, which is exactly what
+reading `trs_sm_partyjob::FUN_005bf7d0` predicted, since the 4-byte append
+belonged to a message its error path opened through a helper. And all four
+round-462 controls (`0xb045`, `0xb04b`, `0x3405`, `0xb046`) are unchanged. A fix
+that corrects the known-wrong rows while preserving the known-right ones is the
+pair of checks worth having.
+
+**The two remaining disagreements were already explained**, so the list is
+effectively closed:
+
+- `0x30eb` — the server appends 8 bytes and the client's entire handler is one
+  discarded 4-byte read (round 464).
+- `0x3809` — the same two bytes, written as one `u16` and read as two `u8`s
+  (round 464).
+
+**What v2 still is not.** Attribution is by address order, which a branch can
+defeat; **1,086 appends across 274 functions have no open before them in their
+own function** — opened inside a helper — and are omitted rather than guessed;
+and the table gives widths, never meanings.

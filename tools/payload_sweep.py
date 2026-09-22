@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
-"""Sweep the whole server for opcode -> payload layout.
+"""Opcode -> payload sweep, v2 (round 466).
 
-A message is opened with   mov reg,[this+0x278] ; push <opcode> ; call reg
-and each field appended with MsgBuf_AppendBytes, whose LENGTH IS IN AX -- a
-register Ghidra drops, which is why payloads cannot be read from the C.
+Fixes two defects measured in round 465:
+  * appends are attributed to the NEAREST PRECEDING OPEN, not to the enclosing
+    function, because one function can write to two different messages;
+  * BOTH open idioms are detected --
+        A:  mov reg,[this+0x278] ; push <opcode> ; call reg
+        B:  mov reg,[buf+0x1050] ; mov WORD PTR [reg],<opcode>
+An append with no open before it in the same function is reported as
+UNATTRIBUTED rather than guessed -- that is the FUN_005bf7d0 case, where the
+message was opened inside a helper.
 
-Emits: opcode, sender function, and the append lengths in address order.
-Flags a function that opens more than one opcode (attribution ambiguous) and
-marks VAR where an intervening call clobbers eax.
+Attribution is by ADDRESS ORDER, which is a heuristic: an append on a branch can
+textually follow an open it does not belong to. Strictly better than the v1
+function-level rule, not exact.
 """
 import re, sys, collections
 
-ASM = "/var/tmp/srv.asm"
-IDX = "/var/tmp/decomp_server/index.txt"
-APPEND = "0x404090"
-
+ASM = "/var/tmp/srv.asm"; IDX = "/var/tmp/decomp_server/index.txt"; APPEND = "0x404090"
 funcs = []
 for line in open(IDX, encoding="utf-8", errors="replace"):
     p = line.rstrip("\n").split("\t")
@@ -22,13 +25,12 @@ for line in open(IDX, encoding="utf-8", errors="replace"):
     try: funcs.append((int(p[0],16), int(p[2]), p[1]))
     except ValueError: continue
 funcs.sort()
+starts = [f[0] for f in funcs]
+import bisect
 def owner(a):
-    lo, hi, best = 0, len(funcs)-1, None
-    while lo <= hi:
-        m = (lo+hi)//2
-        if funcs[m][0] <= a: best = funcs[m]; lo = m+1
-        else: hi = m-1
-    return best[2] if best and best[0] <= a < best[0]+best[1] else None
+    i = bisect.bisect_right(starts, a) - 1
+    if i >= 0 and funcs[i][0] <= a < funcs[i][0] + funcs[i][1]: return funcs[i]
+    return None
 
 addr_re = re.compile(r"^\s*([0-9a-f]+):\s+(?:[0-9a-f]{2} )+\s*(.*?)\s*$")
 rows = []
@@ -36,43 +38,50 @@ for l in open(ASM, encoding="utf-8", errors="replace"):
     m = addr_re.match(l)
     if m: rows.append((int(m.group(1),16), m.group(2)))
 
-open_re  = re.compile(r"^mov\s+e[a-z]+,DWORD PTR \[e[a-z]+\+0x278\]")
-push_re  = re.compile(r"^push\s+(0x[0-9a-f]+)$")
-axw_re   = re.compile(r"^mov\s+(?:ax|eax),(0x[0-9a-f]+|\d+)$")
-clob_re  = re.compile(r"^(call|xor\s+eax|movzx\s+eax|mov\s+eax,DWORD|mov\s+ax,WORD|pop\s+eax|lea\s+eax|add\s+eax|sub\s+eax|and\s+eax|or\s+eax)")
+openA = re.compile(r"^mov\s+e[a-z]+,DWORD PTR \[e[a-z]+\+0x278\]")
+openB = re.compile(r"^mov\s+(e[a-z]+),DWORD PTR \[e[a-z]+\+0x1050\]")
+wstore = re.compile(r"^mov\s+WORD PTR \[(e[a-z]+)\],(0x[0-9a-f]+)$")
+push = re.compile(r"^push\s+(0x[0-9a-f]+)$")
+axw = re.compile(r"^mov\s+(?:ax|eax),(0x[0-9a-f]+|\d+)$")
+clob = re.compile(r"^(call|xor\s+eax|movzx\s+eax|mov\s+eax,DWORD|mov\s+ax,WORD|pop\s+eax|lea\s+eax|add\s+eax|sub\s+eax|and\s+eax|or\s+eax)")
 
-opens  = collections.defaultdict(list)
-appends = collections.defaultdict(list)
-for i,(a,t) in enumerate(rows):
-    fn = None
-    if open_re.match(t):
+pay = collections.defaultdict(list)     # (opcode, fn) -> [sizes]
+unattr = collections.Counter()
+cur_fn = None; cur_op = None
+for i, (a, t) in enumerate(rows):
+    f = owner(a)
+    fn = f[2] if f else None
+    if fn != cur_fn:
+        cur_fn, cur_op = fn, None
+    if openA.match(t):
         for j in range(i+1, min(i+6, len(rows))):
-            pm = push_re.match(rows[j][1])
-            if pm:
-                fn = owner(a)
-                if fn: opens[fn].append(int(pm.group(1),16))
-                break
+            pm = push.match(rows[j][1])
+            if pm: cur_op = int(pm.group(1),16); break
             if rows[j][1].startswith("call"): break
-    elif t.startswith("call") and APPEND in t:
+        continue
+    mb = openB.match(t)
+    if mb:
+        reg = mb.group(1)
+        for j in range(i+1, min(i+5, len(rows))):
+            wm = wstore.match(rows[j][1])
+            if wm and wm.group(1) == reg: cur_op = int(wm.group(2),16); break
+        continue
+    if t.startswith("call") and APPEND in t:
         size = None
         for j in range(i-1, max(i-24,0), -1):
             tt = rows[j][1]
-            m = axw_re.match(tt)
+            m = axw.match(tt)
             if m: size = int(m.group(1),0); break
-            if clob_re.match(tt): break
-        fn = owner(a)
-        if fn: appends[fn].append(size)
+            if clob.match(tt): break
+        if cur_op is None:
+            unattr[fn or "?"] += 1
+        else:
+            pay[(cur_op, fn)].append(size)
 
 print("opcode\tsender\tfields\tlayout")
-n_ok = n_amb = 0
-for fn in sorted(set(opens) | set(appends)):
-    ops = sorted(set(opens.get(fn, [])))
-    ap  = appends.get(fn, [])
-    layout = ",".join("VAR" if s is None else str(s) for s in ap) or "-"
-    if len(ops) == 1:
-        n_ok += 1
-        print("0x%04x\t%s\t%d\t%s" % (ops[0], fn, len(ap), layout))
-    elif len(ops) > 1:
-        n_amb += 1
-        print("%s\t%s\t%d\t%s" % ("+".join("0x%04x"%o for o in ops), fn, len(ap), layout))
-print("\n# single-opcode senders: %d   multi-opcode (ambiguous): %d" % (n_ok, n_amb), file=sys.stderr)
+for (op, fn), sizes in sorted(pay.items(), key=lambda kv: (kv[0][0], kv[0][1] or "")):
+    lay = ",".join("VAR" if s is None else str(s) for s in sizes)
+    print("0x%04x\t%s\t%d\t%s" % (op, fn, len(sizes), lay))
+ops = {op for op, _ in pay}
+print("# distinct opcodes: %d   sender rows: %d   unattributed appends: %d in %d functions"
+      % (len(ops), len(pay), sum(unattr.values()), len(unattr)), file=sys.stderr)

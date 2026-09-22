@@ -24966,3 +24966,40 @@ leaned on it — part of why the disagreement list needed this round.
 
 Next: re-run the sweep position-aware and with both idioms. No name filed; three
 still held. Nothing wired, no tag. Tests green.
+
+## The sweep rebuilt, and the disagreement list closes (round 466)
+
+Round 465's two defects are fixed, and the fix is measured against the client
+before and after on the same opcodes rather than asserted.
+
+**The fixes**: appends attach to the **nearest preceding open** instead of the
+enclosing function, and **both** open idioms are detected — the slot `0x278`
+call and the direct `**(buf + 0x1050) = opcode` store.
+
+	                              v1 (462)      v2 (466)
+	distinct opcodes found        203           233
+	comparable with the client    128           133
+	agree on field 1              121 (95 %)    131 (98 %)
+	prefix-match                   99 (77 %)    116 (87 %)
+	field-1 failures                7             2
+
+**Five failures fixed, none introduced.**
+
+**Two controls, in opposite directions**, which is what makes this a fix rather
+than a reshuffle. The three rows that motivated it — `0xb069`, `0xb06a`,
+`0xb47b` — change from `4,1` to `1`, exactly as reading
+`trs_sm_partyjob::FUN_005bf7d0` predicted, because the 4-byte append belonged to
+a message its error path opened through a helper. And all four round-462
+controls are **unchanged**. Correcting the known-wrong rows while preserving the
+known-right ones is the pair of checks worth having.
+
+**The two survivors were already explained**, so the list is effectively closed:
+`0x30eb` (the client's entire handler is one discarded 4-byte read against the
+server's 8) and `0x3809` (the same two bytes as one `u16` versus two `u8`s).
+
+**What it still is not**, recorded in the table's own header: address-order
+attribution that a branch can defeat; **1,086 appends in 274 functions omitted**
+because their message was opened inside a helper; and widths only, never
+meanings.
+
+No name filed; three still held. Nothing wired, no tag. Tests green.
