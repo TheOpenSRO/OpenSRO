@@ -6405,6 +6405,37 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 439 (two more levers on the message handlers, both bounded, two names):
+ROUND 438 LEFT 58 OF THE 69 UNNAMED HANDLERS WITH NO NAMED ERROR CODE. Two more
+levers were tried and both are now measured rather than assumed:
+
+	error codes raised        11 of 69   (round 438)
+	client SENDER for opcode   0 usable
+	named class-qualified callees  9 of 69, 7 single-class
+
+**THE SENDER LEVER IS CLOSED BY THIS PROJECT'S OWN JUDGEMENT.** The senders
+resolve overwhelmingly to *module* names — `UI_SILKMALL`, `UI_ALCHEMYBOX`,
+`GInterfaceSend` — and round 331 established `UI_ALCHEMYBOX` as a **registrar**
+binding ~50 opcodes across every subsystem. The only two real class names are
+both `CIF_NPCTalk`, and round 331 met that exact case: "the client's only SENDER
+of 0x751d is CIF_NPCTalk … neither of which names the action, so it gets no
+name." Precedent applied unchanged rather than re-litigated.
+
+**AND THE CALLEE LEVER IS HALF POISONED BY COMDAT FOLDS.** Of its 9 hits, two
+rest on names this repository already flags as junk —
+`CGObjCOS_Summoned::SaveCurPosAsLastTelPosition`, the one-byte `ret` shared by
+**281 vtables**, and `CAIState_HOMING::GetStateID`. A lever that reads callee
+*names* inherits every mis-attribution in them, which is worth stating because
+the lever otherwise looks clean.
+
+TWO SURVIVE AND BOTH ARE WELL EVIDENCED. **`GObjPC_HandleResurrectMsg_053`**
+(`0x50fee0`) calls `GObjPC::Revive` — round 411's function, which sets life
+state 1 and clears the death cause at `+0x72d` — plus `GObjPC::ApplyHPMPDelta`,
+gated on `IsWarPeriodActive`. **`GObjPC_HandleGuildMemberAddMsg_0f3`**
+(`0x514f10`) has two independent sources agreeing: `CGuild::IsFull` from the
+call graph and `UIIT_MSG_GUILDERR_MEMBER_FULL` from the error table, reached
+separately. Names held unapplied. No behaviour changed, so no tag.
+
 Round 438 (42 % of the game's entry points are unnamed, and the error-code lever
 reaches 16 % of them): THE 163 CLIENT-MESSAGE HANDLERS ARE THIS BINARY'S
 GAME-LOGIC ENTRY POINTS (round 336b), AND **69 OF THEM ARE STILL `FUN_`** — 42 %.

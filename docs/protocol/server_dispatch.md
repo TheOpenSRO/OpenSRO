@@ -110,3 +110,46 @@ client's registration table had before `CreateMissingFunctions.java` created 102
 handlers there. Another **103 are still `FUN_`-style**. Creating and naming them is
 the largest single naming lever left in the server, and every one of them has an
 index, so each can be tied to the client's side of the same conversation.
+
+
+## Naming the message handlers: three levers measured, two names (round 439)
+
+**69 of the 163 client-message handlers are unnamed** (round 438). Three levers
+were tried against them and all three are now bounded:
+
+| lever | reach |
+|---|---|
+| error codes they raise (`error_codes.md`, 608 names) | **11 of 69** — round 438 |
+| the client **sender** for the opcode (`client_senders.tsv`) | **0 usable** |
+| named class-qualified **callees** | **9 of 69**, 7 single-class |
+
+**The sender lever is closed by this project's own judgement, not by absence.**
+The senders resolve overwhelmingly to *module* names — `UI_SILKMALL`,
+`UI_ALCHEMYBOX`, `GInterfaceSend`, `NetProcessInInner` — and round 331
+established that `UI_ALCHEMYBOX` is a **registrar** binding ~50 opcodes across
+every subsystem, so its attribution describes none of them. The only two real
+class names are both `CIF_NPCTalk`, and round 331 met exactly that case — "the
+client's only SENDER of 0x751d is CIF_NPCTalk … neither of which names the
+action, so it gets no name." The precedent applies unchanged.
+
+**And the callee lever is half poisoned by COMDAT folds.** Of its 9 hits, two
+rest on names this repository already flags as junk:
+`CGObjCOS_Summoned::SaveCurPosAsLastTelPosition` — the one-byte `ret` shared by
+**281 vtables** — and `CAIState_HOMING::GetStateID`, another shared stub. A
+lever that reads callee *names* inherits every mis-attribution in them.
+
+### The two that survive
+
+**`GObjPC_HandleResurrectMsg_053`** (`0x50fee0`) calls **`GObjPC::Revive`** —
+named in round 411, where it passes 1 through the `SetLifeState` slot and clears
+the death cause at `+0x72d` — together with `GObjPC::ApplyHPMPDelta`, gated on
+`SiegeFortressMgr::IsWarPeriodActive`. A handler that revives a character and
+restores its pools is a resurrect request.
+
+**`GObjPC_HandleGuildMemberAddMsg_0f3`** (`0x514f10`) has **two independent
+sources agreeing**: its callees include `CGuild::IsFull` and
+`CGuild::HasPermission`, and separately its refusals include
+`UIIT_MSG_GUILDERR_MEMBER_FULL` and `..._PERMISSION_DENIED`. `IsFull` and
+`MEMBER_FULL` were reached from the call graph and the error table
+independently. `GObjPC::IsWithinInteractionRange` fits an invite to a nearby
+player.
