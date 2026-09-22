@@ -76,15 +76,40 @@ static func services_for(code: String, shop_npcs: Dictionary) -> Array:
 	# A shop (buy) -- grounded by refshopgroup membership.
 	if shop_npcs.has(up):
 		out.append(Service.new("shop", "Buy"))
-	# The rest are named by the NPC's own codename (self-describing game codes).
+	# The rest match the NPC's codename the way the SERVER does -- see
+	# GUILD_PATTERNS below for where these patterns come from.
 	if up.contains("WAREHOUSE"):
+		# The server's own pattern for this one is the bare word too.
 		out.append(Service.new("storage", "Storage"))
-	if up.contains("GUILD"):
-		out.append(Service.new("guild", "Guild"))
+	for pattern in GUILD_PATTERNS:
+		if up.contains(pattern):
+			out.append(Service.new("guild", "Guild"))
+			break
 	if up.contains("SMITH"):
 		# A smith both sells (shop, above) and repairs.
 		out.append(Service.new("repair", "Repair"))
 	return out
+
+## The guild NPCs, as the SERVER identifies them. `CGObjNPCNPC::Create`
+## (0x4c6350) registers interaction id 0x0f -- the guild service, confirmed by
+## its reader `CGuildManager::HandleCreateGuild` -- on exactly these seven
+## codename patterns, tested with `strstr`. Recovered round 455, verified round
+## 458; see docs/protocol/character_state.md.
+##
+## A bare "GUILD" token, which this used to use, is wrong in BOTH directions:
+##   * it misses NPC_CH_GENARAL_SP, the Chinese guild NPC, whose codename has no
+##     "GUILD" in it at all -- it heads the server's own list;
+##   * it wrongly matches NPC_SD_GUILD_AGENT/2/3, which the server gives the
+##     specialty-goods interaction (0x0c) instead, not the guild one.
+const GUILD_PATTERNS := [
+	"NPC_CH_GENARAL_SP",
+	"NPC_WC_GUILD",
+	"NPC_KT_GUILD",
+	"NPC_EU_GUILD",
+	"NPC_CA_GUILD",
+	"NPC_SD_M_AREA_GUILD",
+	"NPC_SD_T_AREA_GUILD2",
+]
 
 static func _lines(data: PackedByteArray) -> PackedStringArray:
 	if data.is_empty():

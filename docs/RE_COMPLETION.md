@@ -24659,3 +24659,50 @@ enum and not a coincidence, and it corroborates round 361's kind table from a
 second function.
 
 No name filed; two still held. Nothing to wire, no tag. Tests green.
+
+## The guild NPC list, wired into the client (round 458)
+
+The first round in this arc where a recovered value **changed shipped
+behaviour**. `client/scripts/npc/npc_service_reader.gd` decided which services
+an NPC's talk window offers, and for the guild it tested `codename.contains("GUILD")`.
+Round 455 recovered what the server actually does, and the two disagree in both
+directions.
+
+**A premise I had to throw away first.** The plan was "the engine uses exact
+codename comparison, the client uses substrings, so the client is wrong". Then
+`FUN_009dddc0` — the comparison helper in `CGObjNPCNPC::Create` — turned out to
+be **`strstr`**, confirmed by reading it (it walks four bytes at a time and
+returns a pointer into the haystack). The tell was already visible in the call
+sites: they branch on `result != 0` as a *match*, which is backwards for
+`strcmp`. So the engine matches substrings too and the client's *kind* of rule
+was right all along.
+
+**The real defect is which substring.** The server tests **seven specific
+patterns** for interaction `0x0f`; the client tested one short generic token:
+
+	NPC_CH_GENARAL_SP   NPC_WC_GUILD   NPC_KT_GUILD   NPC_EU_GUILD
+	NPC_CA_GUILD        NPC_SD_M_AREA_GUILD           NPC_SD_T_AREA_GUILD2
+
+- **It missed a guild NPC.** `NPC_CH_GENARAL_SP` heads the server's own list and
+  has no `GUILD` in its name, so the Chinese guild NPC showed no Guild option.
+- **It invented three.** `NPC_SD_GUILD_AGENT`, `_AGENT2` and `_AGENT3` contain
+  `GUILD` but the server gives them interaction `0x0c` — specialty goods — not
+  the guild service. They offered a Guild button that does not belong to them.
+
+Id `0x0f` is safe to act on because it has a **reader**:
+`CGuildManager::HandleCreateGuild` gates on it, so it is the guild service and
+not merely a number registered on guild-looking NPCs.
+
+**Wired, with tests.** `GUILD_PATTERNS` now carries the server's seven with the
+citation, and `npc_service_reader_test.gd` asserts all seven offer the service
+and that the three agents do not — four assertions that each fail against the
+old code. Green on the render box (17 ok, ALL PASS); `go test -count=1 -p 1
+./...` green.
+
+**Two things deliberately not changed.** The bare `WAREHOUSE` token stays,
+because the server's own pattern for storage is the bare word too — checked, not
+assumed. And `SMITH` → Repair stays as-is although the server groups
+`NPC_*_SMITH` **and** `NPC_*_ARMOR` under interaction `4`: id 4 has **no reader
+anywhere**, so nothing ties it to repair, and adding armour merchants to the
+repair list on that basis would be the unproven leap this project keeps having
+to retract.

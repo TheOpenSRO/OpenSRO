@@ -42,6 +42,21 @@ func _init() -> void:
 	var plain := NpcServiceReader.services_for("NPC_CH_FISHERMAN", shops)
 	_check(plain.is_empty(), "an NPC with no shop/keyword offers no listed service")
 
+	# Guild: the server's own seven patterns, not a bare "GUILD" token
+	# (CGObjNPCNPC::Create registers interaction 0x0f on exactly these).
+	for guild_npc in ["NPC_CH_GENARAL_SP", "NPC_WC_GUILD", "NPC_KT_GUILD",
+			"NPC_EU_GUILD", "NPC_CA_GUILD", "NPC_SD_M_AREA_GUILD",
+			"NPC_SD_T_AREA_GUILD2"]:
+		var g = NpcServiceReader.services_for(guild_npc, shops)
+		_check(g.map(func(s): return s.key).has("guild"), guild_npc + " offers guild")
+
+	# The two defects a bare "GUILD" token had. NPC_CH_GENARAL_SP is covered
+	# above -- it has no "GUILD" in its name and used to be MISSED.
+	for agent in ["NPC_SD_GUILD_AGENT", "NPC_SD_GUILD_AGENT2", "NPC_SD_GUILD_AGENT3"]:
+		var a = NpcServiceReader.services_for(agent, shops)
+		_check(not a.map(func(s): return s.key).has("guild"),
+			agent + " is specialty goods (0x0c), not a guild NPC")
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
