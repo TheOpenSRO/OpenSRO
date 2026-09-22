@@ -220,3 +220,32 @@ project has had to walk back before, so it stays an inference here.
 One correction to the transcription above: the decompiled `FUN_00486390(fee, 0)`
 signature is the decompiler's guess. The callee takes the object in EAX and the
 actor in EBX and takes no stack arguments.
+
+## Two columns of `teleportdata.txt` are interaction registrations (round 454)
+
+`_RefTeleport`'s parser (`CGameServer::RefTeleport_ExtractData`, `0x6a7be0`) is
+recorded in `refdata_tables.md` with 13 columns and the read sequence
+`dd S d wwwww bb w b`. **The `bb` pair — columns 9 and 10 — are not data the
+gate uses at runtime. They are registrations.** After parsing, the loader looks
+up the ref object the row is associated with (failing with
+`"can't find associated ref obj with this teleport[tel id: %s]"`) and, for each
+flag that is set, inserts an **NPC interaction id** into that object's set at
+`record + 0x90`:
+
+	if (col 9  != 0)  insert id 7 into assocRefObj + 0x90
+	if (col 10 != 0)  insert id 9 into assocRefObj + 0x90
+
+with `+0x30` holding the associated object and the insert going through the same
+`set<byte>` helper the rest of the interaction machinery uses
+(`docs/protocol/character_state.md`).
+
+**So these two columns say "this object offers teleport service 7" and
+"…service 9".** Which service each of 7 and 9 *is* was not read and is not
+guessed here: neither id has an explicit gate anywhere in the server, so both
+fall to the `default` arm of the `0x046` switch, and no reader distinguishes
+them. What is settled is that the columns are booleans controlling two distinct
+offered services on the gate object.
+
+This is the first grounded example of **where interaction ids come from**: a
+refdata loader registers them on a ref object from boolean columns at table-load
+time.

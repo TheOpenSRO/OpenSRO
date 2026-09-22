@@ -781,3 +781,55 @@ and the server checks it back against the same set with
 It also sets `requester + 0x728` — **the exact flag `GObjPC::EndInteraction`
 clears** (round 449), which is why ending an interaction that was only selected,
 never opened, still succeeds instead of refusing `0x1c0d`.
+
+## An NPC interaction, end to end (round 454)
+
+Rounds 449–453 recovered the pieces one at a time. This is the whole path, with
+the address that does each step. Every arrow was read; none is assumed.
+
+	refdata boolean column
+	  -> CGameServer::RefTeleport_ExtractData (0x6a7be0) and friends insert an id
+	     into the ASSOCIATED REF OBJECT's set at  record + 0x90       (load time)
+	  -> CGObjNPCNPC::Create (0x4c6350) walks record+0x90, reads each node's
+	     byte at +0xc, and copies it into the OBJECT's own set at  obj + 0x130
+	  -> CGObjChar::PublishAvailableInteractions (0x4a95a0, vtable slot 227)
+	     clears  char + 0x1c78 , refills it from obj+0x130, and APPENDS the count
+	     and every id to the outgoing message
+	  -> that message is the 0xb045 select-entity reply (its two callers,
+	     FUN_0050faf0 at dispatch index 0x0c4 and GObjPC::FUN_0052b040, both
+	     reply 0xb045).  THE CLIENT NOW KNOWS WHICH IDS THIS NPC OFFERS.
+	  -> the client sends 0x7046 with {u32 entity, u8 interaction id}
+	  -> GObjPC_HandleShopMsg_046 (0x510250) refuses 0x1c0b if INTERACTMODE is
+	     already non-zero, then calls CGObjChar::HasAvailableInteraction
+	     (0x50cd80) to check the id back against  char + 0x1c78 , refusing 5
+	  -> its jump table sets INTERACTMODE: id 2 -> 5 and ShowFirstTalkMenu,
+	     id 10 -> 5, id 12 -> 6, id 35 -> nothing, everything else -> 6
+	  -> the service's own handler re-checks the id (41 such gates)
+	  -> 0x704b -> GObjPC_HandleEndInteractionMsg_04b -> GObjPC::EndInteraction
+	     resets INTERACTMODE to 0 and replies 0xb04b{1}, or refuses 0x1c0d
+
+**The ids are data, not code.** That is the round's finding. `teleportdata.txt`
+columns 9 and 10 are booleans that register ids 7 and 9 on the gate object
+(`docs/protocol/teleport_network.md`), and a second loader registers id 8 the
+same way from a byte at its row's `+0x34`. So which services an NPC offers is a
+table, and srrevamp can in principle read the same columns rather than hardcode
+a list.
+
+**The gap, stated plainly.** Only **three** registration sites are found, and
+they account for ids **7, 8 and 9** only. Ids 1, 2, 0x0f and 0x14–0x1b — every
+id whose *meaning* rounds 450–453 recovered — have **no located registration**.
+The probe was a census of direct calls to the `set<byte>` insert helper
+`0x486fe0`, and that probe would miss an inlined insert, which this binary
+demonstrably does elsewhere (`CGObjNPCNPC::UseItem` inlines the matching *find*).
+So the negative is weak and should not be read as "those ids are registered
+nowhere". **Next probe:** find the insert by its shape rather than by the
+helper's name — the tree-insert tail, or writes to `+0x94` in the same function
+as a `lea reg,[... + 0x90]`.
+
+**One discrepancy left open rather than papered over.** The id-8 registrar
+(`0x6a7f70`) reads its record at `+0x30`, `+0x34` and `+0x38`, but its caller
+`CGameServer::FUN_006b5200` is listed in `refdata_tables.md` as the inserter for
+a table whose record is **0x1c bytes** — which those offsets overrun. The caller
+allocates 0x1c and then passes the result of `FUN_0071fff0` on it, so either the
+recorded size belongs to a handle rather than the record, or the table
+attribution is wrong. **Id 8 is therefore not attributed to a table here.**

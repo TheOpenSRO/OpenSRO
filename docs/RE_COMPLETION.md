@@ -24485,3 +24485,53 @@ serves two operation codes with only one carrying the sell check.
 serves two operations and only one is identified, which is not enough. Nothing
 to wire — `server/internal/jobs` has no NPC interaction model — and no tag.
 Tests green (`go test -count=1 -p 1 ./...`).
+
+## An NPC interaction, end to end — and the ids turn out to be data (round 454)
+
+Rounds 449–453 recovered the interaction machinery in pieces. This round closed
+the last link and the whole path now reads without a gap:
+
+	refdata boolean column
+	  -> the table's loader inserts an id into the associated REF OBJECT's set
+	     at record+0x90                                              (load time)
+	  -> CGObjNPCNPC::Create copies it to the object's own set, obj+0x130
+	  -> CGObjChar::PublishAvailableInteractions (slot 227) refills char+0x1c78
+	     and APPENDS the ids to the 0xb045 select-entity reply
+	  -> client sends 0x7046 {entity, id}
+	  -> GObjPC_HandleShopMsg_046 checks it with HasAvailableInteraction and
+	     sets INTERACTMODE from its jump table
+	  -> the service handler re-checks the id (41 such gates)
+	  -> 0x704b -> GObjPC::EndInteraction resets INTERACTMODE and replies 0xb04b
+
+**The finding is that the ids are DATA.** `teleportdata.txt` (`_RefTeleport`,
+13 columns, `dd S d wwwww bb w b`) has its `bb` pair — **columns 9 and 10** — as
+booleans that register **interaction ids 7 and 9** on the gate object, after a
+lookup that fails with `"can't find associated ref obj with this teleport"`. A
+second loader registers **id 8** the same way from a byte at its row's `+0x34`.
+So which services an NPC offers is a table, and srrevamp can read the same
+columns instead of hardcoding a list.
+
+**What ids 7, 8 and 9 mean is NOT claimed.** None of the three has an explicit
+gate anywhere in the server — they all fall to the `default` arm of the `0x046`
+switch and no reader distinguishes them. The columns are settled; the services
+are not.
+
+**The gap is stated rather than hidden.** Only three registration sites exist,
+covering 7, 8 and 9 — and ids 1, 2, 0x0f and 0x14–0x1b, every id whose *meaning*
+rounds 450–453 recovered, have **no located registration**. The probe was a
+census of direct calls to the `set<byte>` insert helper, and it would miss an
+inlined insert, which this binary demonstrably does elsewhere
+(`CGObjNPCNPC::UseItem` inlines the matching *find*). So that negative is weak.
+Next probe: find the insert by shape — the tree-insert tail, or a `+0x94` write
+in the same function as a `lea reg,[... + 0x90]`.
+
+**One discrepancy left open.** The id-8 registrar reads its record at `+0x30`,
+`+0x34`, `+0x38`, but `refdata_tables.md` lists its caller as the inserter for a
+**0x1c-byte** record, which those offsets overrun. Either the recorded size
+belongs to a handle or the attribution is wrong, so **id 8 is not attributed to
+a table**.
+
+One name filed (`CGameServer::RefRow_AddInteraction8`), **held unapplied** — it
+needed the disassembly, because Ghidra renders the record reads against an
+`in_EAX` it cannot tie to the call before them. Nothing to wire; srrevamp has no
+NPC interaction model to carry the columns yet. No tag. Tests green.
