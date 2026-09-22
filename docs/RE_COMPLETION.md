@@ -25348,3 +25348,34 @@ precisely the misuse this project keeps having to correct; they remain
 derivable from `payload_layouts.tsv`.
 
 Nothing wired, no tag. `go test -count=1 -p 1 ./...` green.
+
+## The open-helper route works, and reaches 3 % (round 477)
+
+Round 475 found 48 open-helper-shaped functions and called them the route to the
+1,086 appends round 474 could not attribute. Implemented and measured, the route
+is real and **narrow**.
+
+	unattributed appends   1,086  ->  1,055     (31 recovered, ~3 %)
+	sender rows              458  ->    475     (19 via a helper)
+	distinct opcodes         262  ->    262     (unchanged)
+
+**A filter the first pass missed, caught by its own output.** "Small,
+multi-caller, opens a message" is not enough: a helper that **sends** its
+message has closed it, so a caller's later appends cannot belong to it. **26 of
+the 46 candidates send**, and including them produced a `0x3405` row attributed
+through `CGObjPC::FUN_004f0a00` — which round 448 read as opening, appending
+*and sending*. The contradiction with an earlier reading is what exposed it.
+Requiring no send through slot `0x27c` drops those 26 and removes 12 wrong rows;
+`0x3864` then appears correctly, which is round 465's hand-verified example.
+
+**Cross-validation is unchanged** — 162 opcodes, 99 % field 1, 89 % prefix,
+51 % exact — because the added rows are for opcodes the client comparison does
+not reach. An increment that moves no validation metric is worth saying plainly
+rather than dressing up.
+
+**So the 1,055 that remain do not arrive this way.** Round 475's prediction that
+this route would reach them was wrong by an order of magnitude; the mechanism
+exists but explains 3 % of the gap, and whatever carries the rest is still
+unfound.
+
+Nothing wired, no tag. `go test -count=1 -p 1 ./...` green.

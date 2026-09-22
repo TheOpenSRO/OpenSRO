@@ -45,7 +45,47 @@ push = re.compile(r"^push\s+(0x[0-9a-f]+)$")
 axw = re.compile(r"^mov\s+(?:ax|eax),(0x[0-9a-f]+|\d+)$")
 clob = re.compile(r"^(call|xor\s+eax|movzx\s+eax|mov\s+eax,DWORD|mov\s+ax,WORD|pop\s+eax|lea\s+eax|add\s+eax|sub\s+eax|and\s+eax|or\s+eax)")
 
+# PASS 1: which function opens which opcode. A SMALL function with >=2 callers
+# that opens a message is an OPEN HELPER -- its callers append to a message they
+# never opened, which is why 1,086 appends had no opcode (round 474).
+helper_opcode = {}
+_opens = collections.defaultdict(set)
+for _i, (_a, _t) in enumerate(rows):
+    _f = owner(_a)
+    if not _f: continue
+    if openA.match(_t):
+        for _j in range(_i+1, min(_i+6, len(rows))):
+            _pm = push.match(rows[_j][1])
+            if _pm: _opens[_f].add(int(_pm.group(1), 16)); break
+            if rows[_j][1].startswith("call"): break
+    _mb = openB.match(_t)
+    if _mb:
+        _reg = _mb.group(1)
+        for _j in range(_i+1, min(_i+5, len(rows))):
+            _wm = wstore.match(rows[_j][1])
+            if _wm and _wm.group(1) == _reg: _opens[_f].add(int(_wm.group(2), 16)); break
+_calls = collections.Counter()
+_cre = re.compile(r"^call\s+0x([0-9a-f]+)$")
+for _a, _t in rows:
+    _m = _cre.match(_t)
+    if _m: _calls[int(_m.group(1), 16)] += 1
+# A helper only hands its message on if it does NOT send it itself. FUN_004f0a00
+# opens 0x3405, appends and SENDS (round 448) -- a caller's later appends cannot
+# belong to that message. FUN_005bdf50 (round 465) opens and RETURNS the buffer,
+# which is the shape that matters. The test is a send through slot 0x27c.
+_sends = set()
+for _i, (_a, _t) in enumerate(rows):
+    if re.match(r"^mov\s+e[a-z]+,DWORD PTR \[e[a-z]+\+0x27c\]", _t):
+        _f = owner(_a)
+        if _f: _sends.add(_f[0])
+for _f, _ops in _opens.items():
+    # one opcode only: a helper opening two is ambiguous for its callers
+    if (len(_ops) == 1 and _f[1] < 260 and _calls.get(_f[0], 0) >= 2
+            and _f[2] != "CGameServer::LogFormatted" and _f[0] not in _sends):
+        helper_opcode[_f[0]] = next(iter(_ops))
+
 pay = collections.defaultdict(list)     # (opcode, fn) -> [sizes]
+via_helper = set()                      # (opcode, fn) pairs attributed through a helper call
 unattr = collections.Counter()
 helper = {}   # (opcode, fn) -> [1,2] for messages sent through Msg_SendTwoFieldReply
 cur_fn = None; cur_op = None
@@ -66,6 +106,11 @@ for i, (a, t) in enumerate(rows):
         for j in range(i+1, min(i+5, len(rows))):
             wm = wstore.match(rows[j][1])
             if wm and wm.group(1) == reg: cur_op = int(wm.group(2),16); break
+        continue
+    m_call = re.match(r"^call\s+0x([0-9a-f]+)$", t)
+    if m_call and int(m_call.group(1), 16) in helper_opcode:
+        cur_op = helper_opcode[int(m_call.group(1), 16)]
+        via_helper.add((cur_op, fn))
         continue
     if t.startswith("call") and "0x4e7250" in t:
         # THIRD IDIOM: Msg_SendTwoFieldReply opens the message ITSELF, with the
@@ -97,13 +142,14 @@ for i, (a, t) in enumerate(rows):
         else:
             pay[(cur_op, fn)].append(size)
 
-print("opcode\tsender\tfields\tlayout")
+print("opcode\tsender\tfields\tlayout\tsource")
 for (op, fn), sizes in sorted(pay.items(), key=lambda kv: (kv[0][0], kv[0][1] or "")):
     lay = ",".join("VAR" if s is None else str(s) for s in sizes)
-    print("0x%04x\t%s\t%d\t%s" % (op, fn, len(sizes), lay))
+    print("0x%04x\t%s\t%d\t%s\t%s" % (op, fn, len(sizes), lay, "helper" if (op, fn) in via_helper else "direct"))
 for k, v in sorted(helper.items(), key=lambda kv: (kv[0][0], kv[0][1] or "")):
     if k in pay: continue
-    print("0x%04x\t%s\t%d\t%s" % (k[0][0] if isinstance(k[0], tuple) else k[0], k[1], len(v), ",".join(map(str, v))))
+    print("0x%04x\t%s\t%d\t%s\treply-helper" % (k[0][0] if isinstance(k[0], tuple) else k[0], k[1], len(v), ",".join(map(str, v))))
 ops = {op for op, _ in pay} | {op for op, _ in helper}
+print("# open helpers found: %d" % len(helper_opcode), file=sys.stderr)
 print("# distinct opcodes: %d   sender rows: %d   unattributed appends: %d in %d functions"
       % (len(ops), len(pay), sum(unattr.values()), len(unattr)), file=sys.stderr)
