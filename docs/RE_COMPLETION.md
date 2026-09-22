@@ -25172,3 +25172,39 @@ guessing cost that round its names, because **the applier fails silently** on a
 wrong project name.
 
 `PROJSTAMP` cleared so the dumps rebuild with the names in them.
+
+## A derived table had rotted, and round 470 measured against it (round 472)
+
+The six names of round 471 are live in the rebuilt dumps, and coverage reads
+**16.2 % server / 5.2 % client** — unchanged from round 435, which is what ~31
+names against 34,207 functions should look like.
+
+**Then a call-graph lever turned up something better than a name.** Censusing
+the named callees of the "unnamed" dispatch handlers, several listed *their own
+recovered name* — because the probe was matching the dump's comment plate rather
+than calls. That artifact pointed at a real defect:
+**`docs/protocol/server_handlers.tsv` still read `FUN_<addr>` for eleven
+handlers that `recovered_names.tsv` had named rounds earlier**, including
+`GObjPC_HandleEndInteractionMsg_04b` (round 449), `GObjPC_HandleCOSSellMsg_0c7`
+(round 438) and `GObjPC_HandlePartyRecallMsg_519` (round 470).
+
+**So the unnamed-handler count was 58, not 69** — and round 470 measured two
+levers against the inflated list, reporting "11 of 67 raise an error code" when
+two of those eleven were already named. Its conclusions survive (both levers
+were close to empty either way) but its denominator was wrong.
+
+**Fixed, and then prevented.** The name column is refreshed from the dump index,
+and `internal/systems.TestHandlerTableNamesAreNotStale` now fails if a handler
+row reads `FUN_<addr>` while `recovered_names.tsv` names that address. It is a
+pure doc-vs-doc check, so it needs no dump and runs in CI.
+
+**The test was verified by breaking the file**: reverting one row makes it fail
+with the offending index and both names, and restoring makes it pass. A rot
+detector that has never been seen to fail is not a detector.
+
+This is the fourth derived artifact in this project found rotted — after the
+work queue, GROUNDING_AUDIT, and `message_handlers.tsv`'s sender column (round
+465). The common shape is that **every existing check asks whether a file is
+well-formed, never whether it agrees with the file it was derived from.**
+
+Nothing wired beyond the test, no tag. `go test -count=1 -p 1 ./...` green.
