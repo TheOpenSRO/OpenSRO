@@ -6405,6 +6405,45 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 440 (a fourth lever refuted by its own output, and the real berserk opcode
+grounded): THE FIELD-OFFSET LEVER IS THE ONE `naming_ceiling.md` NAMES AS THE
+STRUCTURAL DIRECTION — "data-flow into known fields" — AND MY FIRST CUT OF IT
+WAS NONSENSE. Joining the 69 unnamed handlers against `db_bind_offsets.tsv`'s
+409 column→offset rows reported 21 hits. **They are noise**: those offsets are
+**per-table struct offsets, not chardata offsets**, so `+0x18` alone matches
+`_ALLIEDCLANS.ID`, `_AssociationReputation.AssociationCodeName`,
+`_BindingOptionWithItem.nItemDBID` and more. **The control was decisive**:
+`0x0f3`, which round 439 named `GuildMemberAdd` from two agreeing sources, came
+back as `_CHARQUEST.QuestID` + `_CHARSKILLMASTERY.MasteryID` +
+`_CHARSKILL.SkillID` — three tables' columns at one offset. A lever that
+contradicts a two-source name is measuring nothing. **An offset is only
+meaningful inside one struct**, the same shape as round 433's "a slot number is
+only meaningful inside one hierarchy" — fourth scope error of this family this
+session.
+
+**REDONE WITH ONLY THE TEN OFFSETS THIS PROJECT HAS PROVEN TO BE CHARDATA, IT
+REACHES 1 OF 69** — and the control is honest: the four handlers already named
+return *nothing* under it, so the lever is thin rather than unlucky.
+
+**BUT THE ONE HIT WAS WORTH THE ROUND.** `0x515b30` reads chardata `+0x86`,
+`_CHAR.RemainHwanCount`. Reading it gives **four independent signals that agree**:
+it reads the orb count; it calls `GObjPC::AddHwanCount`; it refuses when
+`GetBodyMode` reads **3 or 4** — `BODYMODE_INVISIBLE` and `BODYMODE_BERSERKER`
+from round 425's name table; and it ends with
+`SetBodyMode(1, 0, duration, 0)` — body mode **1 is `BODYMODE_HWAN`**, and Hwan
+is this game's berserk — with the duration built from three `ParamKeeper` reads,
+the shape already recorded for berserk's 60 s duration. **`GObjPC_HandleBerserkMsg_0a7`.**
+
+**AND THAT GROUNDS A VALUE SRREVAMP SHIPS.** `internal/session` uses
+`OpBerserk = 0x0068`, an own-designed placeholder with no citation.
+`PROTOCOL_DECISION.md` says such placeholders are "not the destination" and are
+replaced "once that opcode's real wire number **and payload layout** are
+confirmed". The real wire numbers are **`0x70a7`** request and **`0xb0a7`**
+reply, now in `proto/opcodes.go` with the four signals written beside them —
+**and deliberately not wired**, because only the number is confirmed and the
+payloads are unread. That is exactly where round 365 left `OpMovementRequest`.
+No behaviour changed, so no tag.
+
 Round 439 (two more levers on the message handlers, both bounded, two names):
 ROUND 438 LEFT 58 OF THE 69 UNNAMED HANDLERS WITH NO NAMED ERROR CODE. Two more
 levers were tried and both are now measured rather than assumed:

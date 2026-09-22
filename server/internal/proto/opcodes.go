@@ -203,3 +203,32 @@ const (
 	OpLogoutRequest  uint16 = 0x7005
 	OpLogoutResponse uint16 = 0xB005
 )
+
+// Berserk activation, recovered in round 440 from the server's handler at
+// 0x00515b30 -- index 0x0a7 in docs/protocol/server_handlers.tsv, so the wire
+// numbers are 0x70a7 request / 0xb0a7 reply.
+//
+// FOUR SIGNALS AGREE that this is berserk, which is what makes it a reading
+// rather than a guess about a plausible opcode:
+//
+//   - it reads chardata +0x86, `_CHAR.RemainHwanCount` -- the orb count
+//     `internal/berserk` persists;
+//   - it calls `GObjPC::AddHwanCount`;
+//   - it refuses when `IGObj::GetBodyMode` (vtable slot 64) reads 3 or 4,
+//     which the engine's own name table calls BODYMODE_INVISIBLE and
+//     BODYMODE_BERSERKER (docs/protocol/character_state.md, round 425);
+//   - it ends by calling the SetBodyMode slot (0x318) as
+//     `SetBodyMode(1, 0, duration, 0)` -- body mode 1 is BODYMODE_HWAN, and
+//     Hwan is this game's berserk -- with the duration built by combining
+//     three ParamKeeper reads, the same shape already recorded for berserk's
+//     60 s duration (`EvaluateParam(60) + EvaluateParam(195)`).
+//
+// NOT WIRED, AND DELIBERATELY SO. `docs/protocol/PROTOCOL_DECISION.md` says a
+// placeholder is replaced "once that opcode's real wire number AND PAYLOAD
+// LAYOUT are confirmed". Only the wire number is confirmed here; the request
+// and reply payloads are unread, so `session.OpBerserk` (0x0068) stays live and
+// these sit beside it, exactly as round 365 left `OpMovementRequest`.
+const (
+	OpBerserkRequest  uint16 = 0x70A7
+	OpBerserkResponse uint16 = 0xB0A7
+)
