@@ -24824,3 +24824,37 @@ called. The `ret` is what rules them out; nothing in the decompiled C would.
 This turns the row's next step from a dig into a sweep: the same tool runs over
 the other 92 named handlers. No name filed; two still held. Nothing wired, no
 tag. Tests green.
+
+## The payload sweep: 312 senders mapped (round 462)
+
+Round 461 removed the blocker (the append length lives in AX, which Ghidra
+drops) and named the next step as a sweep. `tools/payload_sweep.py` does it.
+
+**Finding the senders needed no reading.** A message is opened through vtable
+slot `0x278` with the opcode as a plain push — `mov eax,[edx+0x278]; push
+0xb045; call eax` — so opcode and sender fall out of the disassembly, and the
+append lengths attach to whichever function they sit in.
+
+**312 senders, 296 with at least one field, 264 fully fixed**, written to
+`docs/protocol/payload_layouts.tsv`. The protocol is mostly small: 52 senders
+carry a single byte, 25 carry `1,1,2`, 25 `1,1`, 17 `1,2`, 14 `1,4`.
+
+**Four controls, each hand-read in an earlier round, reproduced exactly** —
+`0xb045` `1,4,1,VAR,2` (461), `0xb04b` `1` (449), `0x3405` `1,4` (448), `0xb046`
+`1,1,1` (449). And `1,1,2` turns out not to be 25 coincidences: all seventeen
+`SiegeFortressMgr::Handle*` functions end in the same `{u8, u8 = 2, u16 code}`
+refusal on `0xb05e`, which round 452 read by hand in the dispatcher.
+
+**Four limits are recorded with the table rather than left for a reader to
+discover.** `VAR` marks where a call may have clobbered eax and the tool
+declined (32 senders); 23 senders open two opcodes and cannot have their appends
+attributed; the appends are the function's own, so a payload continued in a
+callee is missing — `0xb045`'s interaction block is exactly that case; and a
+`mov eax,N` could in principle be setting a value rather than a length, which
+the controls rather than the pattern are the reason to discount.
+
+So it is a **map, not a spec**: field counts and widths, which is what was
+missing, and no claim about meaning. The next step is the client side, whose
+readers give the field *types* the server's `memcpy` cannot.
+
+No name filed; two still held. Nothing wired, no tag. Tests green.

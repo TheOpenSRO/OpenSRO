@@ -761,3 +761,62 @@ is the mistake the address ordering invites, and the `ret` is what rules it out.
 
 The three conditional trailers are ordered here by address, not by source order;
 which branch reaches which was not traced.
+
+## The sweep: 312 senders' payload layouts (round 462)
+
+Round 461 turned the payload problem from a dig into a sweep. `tools/payload_sweep.py`
+runs it over the whole server and writes `docs/protocol/payload_layouts.tsv`.
+
+**How a sender is found.** A message is opened through vtable slot `0x278`, and
+the opcode is a plain push:
+
+	mov eax,DWORD PTR [edx+0x278]
+	push 0xb045
+	mov ecx,<this>
+	call eax
+
+so the opcode is recoverable without reading the function. Each field is then a
+`MsgBuf_AppendBytes` whose **length is in AX** (round 461).
+
+**Coverage: 312 senders, 296 with at least one field, 264 fully fixed** (no
+field whose length a call clobbered). By shape, the protocol is mostly small:
+
+| layout | senders |
+|---|---:|
+| `1` | 52 |
+| `1,1,2` | 25 |
+| `1,1` | 25 |
+| `1,2` | 17 |
+| (no appends) | 16 |
+| `1,4` | 14 |
+
+**Four controls, each a packet read by hand in an earlier round, all reproduced
+exactly:**
+
+	0xb045  FUN_0050faf0             1,4,1,VAR,2   round 461
+	0xb04b  GObjPC::EndInteraction   1             round 449
+	0x3405  CGObjPC::FUN_004f0a00    1,4           round 448
+	0xb046  GObjPC_HandleShopMsg_046 1,1,1         round 449
+
+**`1,1,2` is the shared refusal tail**, not 25 coincidences: every one of the
+seventeen `SiegeFortressMgr::Handle*` functions ends in the same
+`{u8, u8 = 2, u16 code}` reply on `0xb05e`, which is what round 452 read by hand
+in the dispatcher.
+
+### What this table is not
+
+- **`VAR` means the tool declined**, because a call between the `mov eax,N` and
+  the append may have clobbered eax. 32 senders have at least one.
+- **23 senders open more than one opcode** and are listed with both, because the
+  appends cannot be attributed between them without reading the branches.
+- **The appends are the function's own.** A payload continued in a callee is
+  missing — `0xb045` is exactly this case, its interaction block appended by
+  slot `0x38c` and so absent from its row.
+- **A `mov eax,N` could in principle set a value rather than a length.** In
+  `0xb045` the status byte's value and its length are both 1 and share the one
+  instruction. The four controls are the reason to trust the reading, not the
+  pattern alone.
+
+So the table is a **starting map, not a spec**: it says how many fields a packet
+has and how wide each is, which is what was missing, and it does not say what
+any field means.
