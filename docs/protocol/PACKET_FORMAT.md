@@ -712,3 +712,52 @@ read in the server is shaped
 	else                              MsgBuf_Read<T>Into(&out);
 
 so the same handler code serves two buffer layouts.
+
+## Reading a payload at all: the length is in AX (round 461)
+
+`SYSTEMS.md`'s Packet-protocol row asks for one named handler's payload, on the
+grounds that "a real opcode number without the real layout is worse than a
+placeholder". The reason payloads had not been read in bulk is mechanical:
+
+	MsgBuf_AppendBytes(0x404090):  length in AX, source in the second argument
+
+**AX is a register Ghidra drops**, so every append in the decompiled C looks
+size-less — `MsgBuf_AppendBytes(&uStack_19)` says nothing about whether that is
+one byte or four. The sizes are all there in the disassembly as a `mov eax,N`
+immediately before the call.
+
+`tools/payload_layout.py` does this: give it an address range and it lists every
+append with the length set before it, marking `VAR` when a call intervenes and
+eax cannot be trusted. **It declines rather than guesses**, which is what makes
+its output usable.
+
+**Two controls, both reproducing a packet documented from a different route:**
+
+	Msg_SendTwoFieldReply (0x4e7250)   ->  len 1, len 2    = {u8, u16}   (round 443)
+	CGObjPC::FUN_004f0a00              ->  len 1, len 4    = {u8, u32}   (round 448)
+
+## `0xb045`, the select-entity reply
+
+The packet the client gets when it selects an NPC or a monster — and the one
+that carries the interaction ids (`docs/protocol/character_state.md`). Built by
+`FUN_0050faf0` (dispatch index `0x0c4`); `FUN_0050fe50` (index `0x045`) resolves
+the entity and delegates to a per-type builder through slot `0x34`.
+
+	u8    status          0x50fc3c
+	u32   entity id       0x50fc4d
+	u8                    0x50fc82   -- only on the branch where the target
+	                                    carries no extended data
+	  ... otherwise slot 0x38c (CGObjChar::PublishAvailableInteractions,
+	      called at 0x50fca4) appends, in its place:
+	u8    count           0x4a975f   -- the size of the interaction set
+	u8  x count           0x4a97ae   -- one interaction id each, from the loop
+	u16                   0x4a97ed   -- conditional
+	u8                    0x4a982e   -- conditional
+
+**The two appends after the slot call are NOT part of this payload.** They sit
+past a `ret 0x4` on a separate branch and write `{u8 = 2, u16}` — the standard
+two-field refusal, inlined rather than called. Reading them as trailing fields
+is the mistake the address ordering invites, and the `ret` is what rules it out.
+
+The three conditional trailers are ordered here by address, not by source order;
+which branch reaches which was not traced.

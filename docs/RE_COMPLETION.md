@@ -24786,3 +24786,41 @@ equipment.
 
 No name filed; two still held. Nothing wired (measured redundant), no tag.
 Tests green.
+
+## The payload blocker was a register (round 461)
+
+`SYSTEMS.md`'s Packet-protocol row has asked for one named handler's payload for
+many rounds, on the grounds that "a real opcode number without the real layout
+is worse than a placeholder". 93 of the 162 real request handlers are already
+named, so the work was never *finding* the code. **The blocker was mechanical
+and is now removed.**
+
+	MsgBuf_AppendBytes (0x404090):  length in AX, source in arg 2
+
+**AX is a register Ghidra drops.** Every append in the decompiled C reads
+`MsgBuf_AppendBytes(&uStack_19)` and says nothing about whether that is one byte
+or four, which is exactly why payloads resisted bulk reading. The sizes are
+plain `mov eax,N` in the disassembly.
+
+`tools/payload_layout.py` takes an address range and lists every append with the
+length set before it, marking `VAR` when an intervening call clobbers eax. **It
+declines rather than guesses**, which is what makes the output usable.
+
+**Two controls, each a packet documented by a different route, both reproduced
+exactly:** `Msg_SendTwoFieldReply` → `{u8, u16}` (round 443) and
+`CGObjPC::FUN_004f0a00` → `{u8, u32}` (round 448).
+
+**`0xb045`, the select-entity reply, is recovered** — the packet a client gets
+on selecting an NPC or monster, and the carrier of the interaction ids rounds
+449–455 recovered: `u8 status`, `u32 entity id`, then either a single byte or
+the interaction block that slot `0x38c` appends in its place (`u8 count` +
+count × `u8 id` + two conditional trailers).
+
+**A trap the address ordering invites.** Two appends sit *after* the slot call
+and look like trailing fields. They are past a `ret 0x4`, on a separate branch,
+writing `{u8 = 2, u16}` — the standard two-field refusal inlined rather than
+called. The `ret` is what rules them out; nothing in the decompiled C would.
+
+This turns the row's next step from a dig into a sweep: the same tool runs over
+the other 92 named handlers. No name filed; two still held. Nothing wired, no
+tag. Tests green.
