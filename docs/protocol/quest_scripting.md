@@ -408,3 +408,58 @@ templating round 429 measured on the data side, now visible on the code side.
 The per-PC manager at `pc+0x1d98`. Its 59 unnamed functions are where a quest is
 attached to a character, and one of them must decide between "instantiate the
 class for this code" and whatever serves a code with no class.
+
+## The quest entry points and the dispatch architecture (round 431)
+
+Round 430's next probe was the per-PC manager at `pc+0x1d98`. Rather than read
+its 59 unnamed functions, the way in was to ask **which functions call into the
+manager's address range from outside it** — 47 do, and of their 49 external
+callers **four are client-message handlers**:
+
+| opcode | handler | calls |
+|---|---|---|
+| `0x0d8` | `FUN_00516780` | `0x571a80` |
+| `0x0d9` | `FUN_005167d0` | `0x571b80` (910 bytes) |
+| `0x0db` | `FUN_00516820` | `0x571970` |
+| `0x0ea` | `GObjPC_HandleEventGuideMsg_0ea` | `0x56ff50` |
+
+**Nothing in `server_handlers.tsv` had been identified as quest-related before
+this.** Three of the four converge on the same pair: `GObjPC::FUN_0056ff50` —
+the per-PC manager entry, and the function with the most external callers of any
+in the range — and `FUN_005804b0`.
+
+### The dispatch is an observer broadcast over vtable slot 2
+
+**`Quest::CQuestManager::BroadcastEvent` (`0x5804b0`)** walks a container to the
+bound at `DAT_00ce25f4` and calls **vtable slot 2** on every element with the
+same two arguments.
+
+**`CBasicQuest::OnEvent` (`0x91f840`)** is that slot 2, and it is a
+**demultiplexer**: a switch on an event code forwarding each case to a different
+vtable slot of the same object —
+
+	case 0x35 -> +0x64      case 0x3b -> +0xc0      case 0x3d -> +0xd8
+	case 0x36 -> +0xa0      case 0x3c -> +0xd4      default   -> +0xcc
+
+and **`CQuestBase`'s slot 2 is the shared no-op stub `0x9dd3ad`**.
+
+### Why that answers "how does a quest with no class attach"
+
+It does not have to. Every quest object receives every event through slot 2; a
+class that cares overrides the specific event slot it needs, and one that does
+not is inert. This is the mechanism behind round 429's measurement that **a
+compiled class is the exception** — the 154 classes exist to override event
+slots, and the other 542 are served by the base behaviour plus their
+`questdata`/`questcontentsdata` rows.
+
+### What is still not read
+
+- **What `CBasicQuest`'s per-event defaults do with the questdata row.** The
+  architecture is read; the data interpretation is not.
+- **How the `QNO_*::OnEvent::Handle` classes relate to these slots.** A census of
+  every quest class's slots at `+0x64`, `+0xa0`, `+0xc0`, `+0xcc`, `+0xd4` and
+  `+0xd8` found **no** class overriding them with a three-part name, so those
+  `::Handle` names are **nested handler objects with their own vtables**, not
+  slot overrides. That is a distinct mechanism and it is unread.
+- **What `BroadcastEvent`'s two arguments carry**, and the event-code vocabulary
+  beyond the six cases above.

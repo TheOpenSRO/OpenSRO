@@ -6405,6 +6405,42 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 431 (the quest entry points found, and the dispatch is an observer
+broadcast): ROUND 430 POINTED AT THE PER-PC MANAGER'S 59 UNNAMED FUNCTIONS.
+Reading 59 functions is what this loop is supposed to avoid, so the probe was
+instead **which functions call into that address range from outside it** — 47
+do, and of their 49 external callers **four are client-message handlers**:
+opcodes **`0x0d8`, `0x0d9`, `0x0db`** and `0x0ea`
+(`GObjPC_HandleEventGuideMsg_0ea`). **Nothing in `server_handlers.tsv` had been
+identified as quest-related before this.**
+
+Three of the four converge on the same pair — `GObjPC::FUN_0056ff50`, the per-PC
+manager entry and the most-called function in the range, and `FUN_005804b0`.
+
+**THE DISPATCH IS AN OBSERVER BROADCAST OVER VTABLE SLOT 2.**
+`Quest::CQuestManager::BroadcastEvent` (`0x5804b0`) walks a container to the
+bound at `DAT_00ce25f4` and calls **slot 2** on every element.
+`CBasicQuest::OnEvent` (`0x91f840`) is that slot 2, and it demultiplexes an
+event code into a different vtable slot of the same object (`0x35`→`+0x64`,
+`0x36`→`+0xa0`, `0x3b`→`+0xc0`, `0x3c`→`+0xd4`, `0x3d`→`+0xd8`, default
+`+0xcc`). **`CQuestBase`'s slot 2 is the shared no-op stub `0x9dd3ad`.**
+
+**AND THAT ANSWERS "HOW DOES A QUEST WITH NO CLASS ATTACH": IT DOES NOT HAVE
+TO.** Every quest object receives every event through slot 2; a class that cares
+overrides the event slot it needs, and one that does not is inert. That is the
+mechanism behind round 429's measurement that a compiled class is the
+**exception** — the 154 exist to override event slots, and the 542 are served by
+the base behaviour plus their `questdata`/`questcontentsdata` rows.
+
+WHAT IS STILL NOT READ, AND ONE PROBE THAT FAILED USEFULLY: what
+`CBasicQuest`'s per-event defaults do with the row; what `BroadcastEvent`'s two
+arguments carry. And a census of every quest class's slots at the six demux
+targets found **none** overriding them with a three-part name — so the
+`QNO_*::OnDead::Handle` names I had been treating as per-event overrides are
+**nested handler objects with their own vtables**, a distinct and unread
+mechanism. An empty result that corrected my reading rather than just returning
+nothing. Two names filed, held unapplied. No behaviour changed, so no tag.
+
 Round 430 (hunting the generic quest handler: four eliminations, a static pool,
 and no find): ROUND 429 LEFT ONE GAP — the handler that interprets `questdata`
 rows for the 542 classless quests. **I did not find it.** What this round did is
