@@ -665,3 +665,32 @@ a fact about the regex and not about the binary: it anchored `$` without
 `re.M` while matching a whole multi-line body. The control is now explicit — the
 run asserts that the known case, `CMsgException::vslot_001`, is in its own
 output.
+
+
+## The headline coverage figure was inflated by round 408 (corrected, round 435)
+
+Round 408 reported naming coverage as **24.1 % server / 15.5 % client** and that
+figure reached this project's memory. **It is wrong**, by this project's own
+rule, and the error is the one round 408 itself identified — counting `vslot_`
+as a name — applied to the headline after being fixed for the core.
+
+Measured on the current dump, both ways:
+
+| | server | client |
+|---|---:|---:|
+| excluding `FUN_` only *(what round 408 reported)* | 24.2 % | 15.5 % |
+| **excluding `FUN_`, `vslot_` and `thunk_`** | **16.1 %** | **5.2 %** |
+
+	server   5,500 real   2,536 vslot_   232 thunk_   25,939 FUN_
+	client   2,273 real   4,349 vslot_   135 thunk_   36,805 FUN_
+
+**The client figure is the striking one**: it has nearly twice as many `vslot_`
+names as real ones, so counting them triples its apparent coverage.
+
+**And the figures round 408 replaced were right.** The memory it overwrote said
+15.7 % / 5.1 % (2026-09-20); the true values today are 16.1 % / 5.2 %. So roughly
+twenty-seven rounds of naming moved the server **+0.4 points** and the client
+**+0.1** — which is not a failure of those rounds but a measure of what is left:
+25,939 unnamed server functions, of which this page's own ceiling analysis says
+20,756 contain no string at all. The remaining work is structural, as that
+section concluded, and the headline number will move slowly whatever happens.

@@ -6405,6 +6405,40 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 435 (a lever measured 86 % spent, and the coverage figure I published in
+round 408 is inflated): THE `CEVENTHandler` SLOT-1 LEVER IS NEARLY EXHAUSTED.
+That interface has exactly two vtable slots and all **234** subclasses share the
+shape, so slot 1 is a uniform contract and naming it is sound. **202 of the 234
+are already named.** Of the 32 unnamed, 18 are COMDAT folds and 2 are under ten
+bytes; the 12 survivors collapse to **four distinct addresses**, three of them
+folded across three to five quests — and two *different* addresses both
+implement `OnPartyStatusChanged`, so neither can take that name uniquely. One
+clean name filed: `ROCTOP_WORLD_EVENT_HANDLERS::OnTimer_Second` (`0x5fd0b0`),
+which appears in exactly one vtable.
+
+**AND RE-MEASURING COVERAGE CAUGHT AN ERROR I INTRODUCED.** Round 408 reported
+**24.1 % server / 15.5 % client** and I wrote that into this project's memory.
+It is wrong:
+
+	excluding FUN_ only  (round 408's figure)   server 24.2 %   client 15.5 %
+	excluding FUN_/vslot_/thunk_  (the rule)    server 16.1 %   client  5.2 %
+
+	server   5,500 real   2,536 vslot_   232 thunk_
+	client   2,273 real   4,349 vslot_   135 thunk_
+
+Round 408's coverage script counted `vslot_` as a name — **the exact error that
+round identified and corrected for the game-logic core, and then left standing in
+the headline it published.** The client is the worst case: nearly twice as many
+`vslot_` names as real ones, tripling its apparent coverage.
+
+**AND THE FIGURES ROUND 408 REPLACED WERE RIGHT.** The memory it overwrote said
+15.7 % / 5.1 %; the true values today are 16.1 % / 5.2 %. I corrected a correct
+record with an inflated one. Twenty-seven rounds of naming since have moved the
+server **+0.4 points** and the client **+0.1** — not a failure of those rounds
+but a measure of what remains: 25,939 unnamed server functions, 20,756 of which
+`naming_ceiling.md` shows contain no string at all. Memory and docs corrected;
+name held unapplied. No behaviour changed, so no tag.
+
 Round 434 (CLOSED: the classless quests are Lua functions named by convention —
 and round 429's refutation was narrower than it read): `CEVENTHandler` HAS
 EXACTLY TWO SLOTS, a destructor and slot 1, and the seven generic handlers' slot
