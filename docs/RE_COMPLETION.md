@@ -6405,6 +6405,43 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 447 (the message helpers censused, and the biggest unnamed one named from
+three sources): ROUNDS 443 AND 444 EACH FOUND THAT A *SHARED* HELPER EXPLAINED
+FAR MORE THAN THE OPCODE THAT LED TO IT, SO THIS ROUND MADE THAT SYSTEMATIC.
+Censusing every function that both opens a message (slot `0x278`) and sends it
+(`0x27c`): **327 of them**, and by caller count the distribution is extremely
+top-heavy —
+
+	Msg_SendTwoFieldReply                160 callers,  74 bytes
+	CTradeMgr::SendItemExchangeResult     15 callers, 511 bytes
+	CGObjPC::FUN_004f0a00                 12 callers
+	FUN_0059ad90                          11 callers
+
+**`Msg_SendTwoFieldReply`'s 160 confirms round 443's leverage claim**; its own
+note said "over 38 resolvable sites", which was a subset. One 74-byte function
+shapes the refusal reply for a sixth of the server's message traffic.
+
+THE BIGGEST UNNAMED ONE IS NAMED FROM THREE INDEPENDENT SOURCES.
+`FUN_004806d0` → **`CTradeMgr::SendItemExchangeResult`**: (1) its fifteen
+callers are overwhelmingly trade — `CTradeMgr::EstablishTradeSession`,
+`::Exchange`, `GObjPC_HandleTradeMsg_082`/`_084`, `Trade_HandleExchange`,
+`CGStorage::TradeOfferItem`, two `AQ_ItemXChanger` methods, two
+`trs_wait_response` methods; (2) its own callees are three `TradeMgr::`
+functions; and (3) it sends `0x3087`/`0x3088`, and **the CLIENT's handler for
+`0x3088` is already named `Storage_OnItemExchangeResult`** — the other binary
+naming the same message independently. The owner is `CTradeMgr` rather than
+`TradeMgr` because round 436 established which is the class and which the source
+module.
+
+**AND I REINTRODUCED A DEFECT ROUND 408 RECORDED.** The first census matched
+callers by *bare* name and reported four different functions with **exactly 180
+callers each** — the tell that `vslot_002` is a bare name shared by dozens of
+classes, so a call to any matched all. Round 408 recorded precisely this about
+its own bare-name fallback. Caught by the identical counts, redone with
+full-name matching. It also carries refusal codes `0x1811`, `0x181b`, `0x1825`
+and `0x182a`, **none of which `error_codes.md` names** — recorded as a gap. One
+name filed, held unapplied. No behaviour changed, so no tag.
+
 Round 446 (`AJStateChanger`'s record layout, a refuted hypothesis, and kind 1
 still unnamed): ROUND 445 LEFT ONE GAP IN THE `0x30bf` KIND TABLE — **kind 1**,
 passed by two unrelated functions. Chasing it did not close it, and the round's

@@ -626,3 +626,29 @@ SUCCESS reply is still unread** — the success path does not call this helper a
 all, it falls through to `SetBodyMode`, so whatever the client learns on success
 arrives by another route. Until that is read, `session.OpBerserk` (`0x0068`)
 stays the live placeholder, per `PROTOCOL_DECISION.md`.
+
+## The message helpers, censused by caller count (round 447)
+
+Rounds 443 and 444 each found that a *shared* helper explained far more than the
+opcode that led to it. The systematic form is to census every function that both
+**opens** a message (vtable slot `0x278`) and **sends** it (`0x27c`). There are
+**327** of them. Ranked by callers, with full-name matching:
+
+| helper | callers | bytes |
+|---|---:|---:|
+| `Msg_SendTwoFieldReply` | **160** | 74 |
+| `CTradeMgr::SendItemExchangeResult` (`0x4806d0`) | **15** | 511 |
+| `CGObjPC::FUN_004f0a00` | 12 | 197 |
+| `FUN_0059ad90` | 11 | 123 |
+| `FUN_005107c0` | 7 | 447 |
+
+**`Msg_SendTwoFieldReply`'s 160 callers confirm round 443's leverage claim** —
+its own note said "over 38 resolvable sites", which was a subset. One 74-byte
+function shapes the refusal reply for a sixth of the server's message traffic.
+
+**A probe defect worth recording.** The first run matched callers by *bare* name
+and reported four different functions with exactly 180 callers each — the tell
+that `vslot_002` is a bare name shared by dozens of classes, so every call to any
+of them matched all of them. That is the spurious-edge error round 408 recorded
+about its own bare-name fallback, reintroduced here and caught by the
+suspiciously identical counts. **Full-name matching only.**
