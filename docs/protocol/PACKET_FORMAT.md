@@ -1229,3 +1229,39 @@ prefixes, so exact-prefix equality rejects the strongest evidence in the set.
 The real yield is therefore higher than 11, and a stem-based grouping would
 reach it. Until that exists, the file under-reports and `0x34d2` is recorded by
 hand above.
+
+## The stem fix, and what it was actually worth (round 476)
+
+Round 475 predicted its own opcode→subsystem file under-reported, because
+exact-prefix grouping rejected `0x34d2` — 23 senders, all battle arena, but
+`CBattleArenaInfoFlag` and `CBattleArenaInfoPoint` are different prefixes.
+`tools/opcode_subsystems.py` now groups by a normalised **stem** (uppercase,
+drop the MSVC leading `C`, drop underscores, take the longest common prefix), so
+`CBattleArenaInfoFlag` and `BATTLE_ARENA_EVENT_HANDLERS` both reduce to
+`BATTLEARENA`.
+
+**The prediction was right, and the lift was one opcode.**
+
+	round 475, exact prefix   11 attributions (plus 44 single-sender leads)
+	round 476, stem           12 attributions
+	  gained  0x34d2  BATTLEARENA  strength 12   <- the predicted miss
+	          0xb155  MAKESTUFF    strength 2
+	  lost    0x3058  CGObjChar                  <- correctly
+
+`0x34d2` arrives as **by far the strongest row in the file** — twelve named
+senders sharing a stem, against strength 2 for everything else — so the one
+thing the old test missed was the best evidence it had. That is the honest
+size of the fix: not a broad improvement, but the recovery of the single case
+that mattered.
+
+**`0x3058` was dropped on purpose.** Its senders are `CGObjChar` classes, and
+`CGObjChar` is a base class every character shares, not a subsystem. It is now
+in the generic exclusion list beside `GObjPC` and `CMainProcess` for the same
+reason: it says what a thing *is*, not which system owns the message.
+
+**The 44 single-sender rows are gone, not merely re-labelled.** Round 475
+shipped them in the same file as real attributions with a `strength` column to
+tell them apart. One named sender is a lead, and putting leads and findings in
+one table invites exactly the misuse this project keeps having to correct. The
+file now requires two agreeing senders; the leads can be regenerated from
+`payload_layouts.tsv` by anyone who wants them.

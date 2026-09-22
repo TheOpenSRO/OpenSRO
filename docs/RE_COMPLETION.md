@@ -25312,3 +25312,39 @@ recorded by hand. A stem-based grouping would reach it; saying so beats shipping
 a number that looks like a ceiling when it is an artifact of the test.
 
 One name filed. Nothing wired, no tag. `go test -count=1 -p 1 ./...` green.
+
+## The stem fix, and what it was actually worth (round 476)
+
+Round 475 predicted its opcode→subsystem file under-reported, because exact
+class-prefix grouping rejected `0x34d2` — 23 senders, all battle arena, but
+`CBattleArenaInfoFlag` and `CBattleArenaInfoPoint` are different *prefixes*.
+Grouping by a normalised **stem** instead (uppercase, drop the MSVC leading `C`,
+drop underscores, longest common prefix) reduces both that and
+`BATTLE_ARENA_EVENT_HANDLERS` to `BATTLEARENA`.
+
+**The prediction held, and the lift was one opcode.**
+
+	round 475, exact prefix   11 attributions (+ 44 single-sender leads)
+	round 476, stem           12 attributions
+	  gained  0x34d2 BATTLEARENA strength 12   <- the predicted miss
+	          0xb155 MAKESTUFF   strength 2
+	  lost    0x3058 CGObjChar                 <- correctly
+
+`0x34d2` arrives as **the strongest row in the file by a wide margin** — twelve
+agreeing senders against two for everything else. So the one case the old test
+missed was the best evidence it had, which is the honest size of this: not a
+broad gain, but the recovery of the case that mattered. A fix that had *not*
+moved `0x34d2` would have meant the diagnosis was wrong.
+
+**`0x3058` was dropped deliberately**: its senders are `CGObjChar` classes, and
+that is a base class every character shares, not a subsystem. It now sits in the
+generic exclusion list beside `GObjPC` and `CMainProcess`, for the same reason —
+it says what a thing *is*, not which system owns the message.
+
+**The 44 single-sender rows were removed, not re-labelled.** Round 475 shipped
+them alongside real attributions with a `strength` column to distinguish them.
+One named sender is a lead, and putting leads and findings in one table is
+precisely the misuse this project keeps having to correct; they remain
+derivable from `payload_layouts.tsv`.
+
+Nothing wired, no tag. `go test -count=1 -p 1 ./...` green.
