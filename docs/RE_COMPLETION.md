@@ -6405,6 +6405,51 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 434 (CLOSED: the classless quests are Lua functions named by convention —
+and round 429's refutation was narrower than it read): `CEVENTHandler` HAS
+EXACTLY TWO SLOTS, a destructor and slot 1, and the seven generic handlers' slot
+1 was already named in the dump — `QuestHandler_SetupQuest`,
+`QuestHandler_OnUpdate`, `QuestHandler_OnDead`. Reading them settles seven
+rounds of work in one step.
+
+**Each formats a Lua CALL EXPRESSION and runs it:**
+
+	"HandlerSetupQuest_%s(%d)"     "HandlerOnUpdate_%s()"
+	"HandlerOnEnterWorld_%s(%d)"   "HandlerOnDead_%s()"
+
+and all pass it to `0x976b70` — **the very function round 428 traced out of
+`CNormalEvent::InsertScriptData`**. It walks its argument to the NUL, runs it
+through the setjmp-guarded protected-call shape, and returns a flag its callers
+assert on. Filed as `Lua::DoString`. The chain end to end:
+
+	Quest::CQuestManager::BroadcastEvent  -> slot 2 on every quest object
+	  CBasicQuest::OnEvent                -> the 15-class demux path
+	  CEVENTHandler::Handle               -> slot 1 on the registered handler
+	    QuestHandler_<Event>              -> the seven generic ones
+	      Lua::DoString("Handler<Event>_<NAME>(...)")
+
+**SO A QUEST WITH NO COMPILED CLASS ATTACHES BY HAVING LUA FUNCTIONS NAMED
+`Handler<Event>_<QUESTNAME>`.** `SYSTEMS.md`'s Quest row goes from BLOCKED
+(round 427) to CLOSED.
+
+ROUND 427 WAS RIGHT, AND ROUND 429'S REFUTATION WAS NARROWER THAN IT READ — BY
+ITS OWN WORDING. Round 427 hypothesised Lua and **declined to promote it** for
+want of a call path. Round 429 measured that Media.pk2 ships only **ten** quest
+scripts and called the hypothesis "refuted where it can be tested", while
+recording that the server's `./Script/VIETNAM/` directory "is in none of the
+archives this project holds, so nothing can be said about it either way." **That
+caveat is what made this recoverable.** The ten client scripts really are
+cutscene content and really are not the mechanism; the server-side ones are, and
+the binary names their functions even though the files are unreachable. A
+refutation that names the part it could not test is worth more than one that
+rounds itself off.
+
+**applied 4, reowned 4, failed 0** — `Quest::CQuestManager::BroadcastEvent`,
+`CBasicQuest::OnEvent`, `CBasicQuest::CBasicQuest` and `Lua::DoString`, the batch
+held since round 430. What srrevamp would need is recorded too: the convention
+plus `questdata.txt` column 2 for the `<QUESTNAME>`; nothing is wired, because
+srrevamp has neither Lua nor quests. No behaviour changed, so no tag.
+
 Round 433 (`CEVENTHandler`: seven generic handlers, 227 bespoke, and the demux
 is the minority path): ROUND 432 LEFT THE FIVE UNNAMED DEMUX CODES NEEDING "A
 DIFFERENT SOURCE". The source answered a bigger question and demoted the demux.

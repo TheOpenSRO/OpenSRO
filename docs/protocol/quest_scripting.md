@@ -548,3 +548,55 @@ meaningful inside one hierarchy** — `RE_LOOP.md` says so, from round 416 — a
 those are the game-object hierarchy, where slot 25 is some other method
 entirely. Restricting to the `CQuestBase` hierarchy is what produced the 15.
 Round 432's census had that restriction; this round's first cut did not.
+
+## CLOSED: the classless quests are Lua functions named by convention (round 434)
+
+`CEVENTHandler` has exactly **two** vtable slots — a destructor and slot 1, the
+`Handle` method. The seven generic handlers' slot 1 is already named in the dump:
+`QuestHandler_SetupQuest` (`0x8699a0`), `QuestHandler_OnUpdate` (`0x869740`),
+`QuestHandler_OnDead` (`0x869640`). Reading them settles the whole thread.
+
+**Each one formats a Lua CALL EXPRESSION and runs it:**
+
+	"HandlerSetupQuest_%s(%d)"      <- quest name, quest id
+	"HandlerOnEnterWorld_%s(%d)"
+	"HandlerOnUpdate_%s()"
+	"HandlerOnDead_%s()"
+
+and all three pass the formatted string to the same function, **`0x976b70`** —
+which is exactly the Lua entry round 428 traced out of
+`CNormalEvent::InsertScriptData`. It walks its argument to the NUL (an inlined
+`strlen`), runs it through the setjmp-guarded protected-call shape, and returns
+a success flag its callers assert on. Filed as **`Lua::DoString`**.
+
+**So a quest with no compiled class attaches by having Lua functions named
+`Handler<Event>_<QUESTNAME>` in the server's script directory.** That is the
+mechanism, end to end:
+
+	Quest::CQuestManager::BroadcastEvent   slot 2 on every quest object
+	  -> CBasicQuest::OnEvent              (15 classes take the slot-demux path)
+	  -> CEVENTHandler::Handle             slot 1 on the registered handler
+	     -> QuestHandler_<Event>           the seven generic ones
+	        -> Lua::DoString("Handler<Event>_<NAME>(...)")
+
+### Round 427 was right and round 429's refutation was narrower than it read
+
+Round 427 hypothesised that the classless quests are Lua and **declined to
+promote it** for want of a call path. Round 429 then measured that Media.pk2
+ships only **ten** quest scripts and concluded the hypothesis was "refuted where
+it can be tested" — while explicitly recording that the server's own
+`./Script/VIETNAM/` directory "ships with the server and is in none of the
+archives this project holds, so nothing can be said about it either way."
+
+That caveat was the load-bearing part. The ten client scripts are cutscene
+content and genuinely are not the mechanism; the **server-side** scripts are, and
+the binary names their functions for us even though the files are unreachable.
+**A refutation that names the part it could not test is what made this
+recoverable.**
+
+### What a srrevamp implementation would need
+
+The convention is now known: for each of the 542, a Lua function per event named
+`Handler<Event>_<QUESTNAME>`. srrevamp has no Lua and no quest system, so nothing
+is wired — but if quests are ever built, this is the shape the retail data
+expects, and `questdata.txt` column 2 supplies the `<QUESTNAME>`.
