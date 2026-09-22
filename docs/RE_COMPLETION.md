@@ -6405,6 +6405,47 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 446 (`AJStateChanger`'s record layout, a refuted hypothesis, and kind 1
+still unnamed): ROUND 445 LEFT ONE GAP IN THE `0x30bf` KIND TABLE — **kind 1**,
+passed by two unrelated functions. Chasing it did not close it, and the round's
+value is elsewhere.
+
+**Both kind-1 broadcasters call vtable slot 343** (`0x4a9d00`, shared by
+`CGObjPC`, `CGObjChar`, `CGObjMob`, `CGObjCOS`), which sits in a **run of state
+setters** — `SetLifeState` at `0x4a9c80`, this at `0x4a9d00`, `SetLocked` at
+`0x4a9df0`, `SetBodyMode` at `0x4a9fc0`. It writes ParamKeeper **param 2** and,
+given a kind other than `0xff` and a positive duration, schedules a timed change
+through `AJStateChanger`:
+
+	assert(kind <= 0x14);
+	rec = AJStateChanger::FUN_00405f10(this);
+	rec+0x10 = duration (float);  rec+0x0c = 1;  rec+0x0d = kind;
+	rec+0x14 = 0;                 rec+0x18 = 0;
+
+**`AJStateChanger` was already on record as the module handed a duration**, with
+this file noting "the tick's delta unit was never actually read". **The record
+layout is new**: active flag at `+0xc`, kind at `+0xd` with the engine itself
+asserting it is at most `0x14`, float duration at `+0x10`. That is the same
+signature `SetBodyMode(1, 0, duration, 0)` uses, so **it is how a timed body mode
+— berserk's 60 s among them — is held**, and it is why `internal/berserk`
+dropping the active window on logout is faithful: the duration lives in an
+`AJStateChanger` record, not in `_CHAR`.
+
+**KIND 1 IS STILL UNIDENTIFIED, AND THE REASON IS RECORDED**: slot 343 is shared
+and its callers pass different value ranges — 2 or 3 from the COS path, `0xc` and
+`0x12` from `FUN_004b1480`'s switch — so the kind covers more than one thing.
+
+**AND ONE HYPOTHESIS IS REFUTED.** `FUN_004aa3c0`, on the kind-1 path, looked
+like a candidate writer for `chardata+2`, the motion state whose writer round 416
+could not find under a *passing* control. It does not write it. **Round 416's
+controlled negative stands** — worth saying, because a lever that keeps almost
+finding something is how a wrong answer gets promoted.
+
+**applied 4, failed 0** — the batch held since round 439:
+`GObjPC_HandleResurrectMsg_053`, `GObjPC_HandleGuildMemberAddMsg_0f3`,
+`GObjPC_HandleBerserkMsg_0a7` and `BroadcastStateChange`. No behaviour changed,
+so no tag.
+
 Round 445 (the kind vocabulary read per call site, three of it confirming a
 table from round 361, and the berserk spec written): ROUND 444 LEFT ONE PIECE —
 "which kind value means body mode", arriving in `EBX` where Ghidra leaves it

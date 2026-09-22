@@ -547,3 +547,52 @@ and **4** (body mode) are new entries in it.
 **And kind 4 explains the broadcaster's one special branch.** It appends the
 extra `chardata+5` byte when `kind == 4 && value == 1` — body mode set to
 `BODYMODE_HWAN`. The special case *is* berserk.
+
+## `AJStateChanger`'s record, and what kind 1 is not (round 446)
+
+Chasing the one unidentified `0x30bf` kind — **1**, passed by `FUN_004b1480` and
+`FUN_004d2bf0` — leads to a shared setter and a timed-state record.
+
+**Both kind-1 broadcasters call vtable slot 343** (`0x4a9d00`, 228 bytes, shared
+by `CGObjPC`, `CGObjChar`, `CGObjMob` and `CGObjCOS`), which sits in a **run of
+state setters**:
+
+	0x4a9c80  CGObjChar::SetLifeState     slot 124
+	0x4a9d00  FUN_004a9d00                slot 343   <- this one
+	0x4a9df0  CGObjChar::SetLocked        slot 342
+	0x4a9fc0  CGObjChar::SetBodyMode      slot 198
+
+It writes **ParamKeeper param 2** and, when handed a kind other than `0xff` and
+a positive duration, schedules a timed change:
+
+	if (kind != 0xff && duration > 0.0) {
+	    assert(kind <= 0x14);
+	    rec = AJStateChanger::FUN_00405f10(this);
+	    *(float *)(rec + 0x10) = duration;
+	    *(u8    *)(rec + 0x0c) = 1;
+	    *(u8    *)(rec + 0x0d) = kind;
+	    *(u32   *)(rec + 0x14) = 0;
+	    *(u32   *)(rec + 0x18) = 0;
+	    FUN_004066a0(rec);
+	}
+
+**`AJStateChanger` was already on record as the module handed a duration** —
+`RE_COMPLETION.md` notes its per-tick behaviour and that "the tick's delta unit
+was never actually read". **The record layout above is new**: an active flag at
+`+0xc`, the kind at `+0xd` with the engine asserting it is at most `0x14`, and
+the float duration at `+0x10`.
+
+**That is the same signature `SetBodyMode(1, 0, duration, 0)` uses**, so this is
+how a timed body mode — berserk's 60 s among them — is held in memory. It is
+also why `internal/berserk` dropping the active window on logout is faithful:
+the duration lives in an `AJStateChanger` record, not in `_CHAR`.
+
+**Kind 1 itself is still unidentified.** Slot 343 is shared and its callers pass
+different value ranges (2 or 3 from the COS path, `0xc` and `0x12` from
+`FUN_004b1480`'s switch), so the kind covers more than one thing and this round
+did not settle it.
+
+**And one hypothesis is refuted.** `FUN_004aa3c0`, on the kind-1 path, looked
+like a candidate writer for `chardata+2` — the motion state, whose writer round
+416 could not find under a *passing* control. It does not write it. **Round
+416's controlled negative stands.**
