@@ -652,3 +652,33 @@ that `vslot_002` is a bare name shared by dozens of classes, so every call to an
 of them matched all of them. That is the spurious-edge error round 408 recorded
 about its own bare-name fallback, reintroduced here and caught by the
 suspiciously identical counts. **Full-name matching only.**
+
+## The 32-bit timestamp the protocol carries (round 448)
+
+`CGObjPC::PackSystemTime` (`0x4f8860`, 71 bytes) packs a Win32 `SYSTEMTIME` into
+one dword:
+
+	bit  0.. 5   (wYear - 0x10) & 0x3f      -- equals wYear - 2000 near the epoch
+	bit  6.. 9   wMonth  & 0x0f
+	bit 10..14   wDay    & 0x1f
+	bit 15..19   wHour   & 0x1f
+	bit 20..25   wMinute & 0x3f
+	bit 26..31   wSecond
+
+**Two things prove it is a `SYSTEMTIME` rather than a guess at a date layout.**
+The widths total **exactly 32** (6+4+5+5+6+6). And it reads `ushort` indices
+0, 1, 3, 4, 5, 6 — **skipping index 2**, which in a `SYSTEMTIME` is
+`wDayOfWeek`, the one redundant field a packer drops. `(wYear - 16) & 0x3f`
+equals `wYear - 2000` because `2000 - 16` is a multiple of 64.
+
+Reached from `CGObjPC::FUN_004f0a00`, which sends opcode **`0x3405`** as
+`{mode byte, packed timestamp}` behind a capability gate. That helper has
+**twelve callers spanning unrelated subsystems** — trade, flea market, guild
+notice, messenger, training-camp notice — which is what a generic
+timestamp-bearing notice looks like.
+
+**A hypothesis refuted on the way.** Those cross-subsystem callers all put a
+player into an *interaction* state, so `0x3405` looked like the broadcast of
+`chardata+6`'s INTERACTMODE (round 426). Reading the payload killed it: the
+second field is a packed date, not a mode. The better finding was underneath the
+wrong one.

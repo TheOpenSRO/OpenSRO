@@ -6405,6 +6405,36 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 448 (two more helpers off round 447's worklist, and the protocol's
+timestamp format decoded): ROUND 447'S CENSUS IS A WORKLIST, AND THE NEXT TWO
+UNNAMED HELPERS BOTH FELL.
+
+**`0x59ad90` → `Skill_SendActionResult`.** It sends `0xb070`, and **all eleven
+callers are the skill/action path**: `HandleCharacterActionRequest_7074`,
+`PrepareAction`, `Tick_Attack`, `Tick_UseSkill`, `SkillAction_Buff`, both
+`Skill_BuildUseContext` variants, `ReapplyBuffWithRemaining`. The client's
+handler for `0xb070` sits in `NetProcessInNavAndSkill` — **module attribution,
+which round 331 established names nothing on its own**, recorded as agreeing
+rather than as proof.
+
+**`0x4f0a00` sends `0x3405` as `{mode byte, packed timestamp}`, and the
+timestamp is the find.** `CGObjPC::PackSystemTime` (`0x4f8860`) packs a Win32
+`SYSTEMTIME` into one dword — year-2000 in 6 bits, month 4, day 5, hour 5,
+minute 6, second 6. **Two things prove it**: the widths total exactly 32, and it
+reads `ushort` indices 0, 1, 3, 4, 5, 6, **skipping index 2 — `wDayOfWeek`**,
+the one redundant field a packer drops. `(wYear - 16) & 0x3f` is `wYear - 2000`
+because `2000 - 16` is a multiple of 64. That is the timestamp format the
+protocol carries, now in `PACKET_FORMAT.md`.
+
+**AND A HYPOTHESIS DIED ON THE WAY, WHICH IS WHY THE ROUND FOUND ANYTHING.**
+`0x4f0a00`'s twelve callers span trade, flea market, guild notice, messenger and
+training-camp notice — every one of which puts a player into an *interaction*
+state, so it looked like the broadcast of `chardata+6`'s INTERACTMODE from round
+426. Reading the payload killed it: the second field is a packed date, not a
+mode. **The better finding was underneath the wrong one**, and testing the guess
+rather than filing it is what surfaced it. Two names filed, held unapplied. No
+behaviour changed, so no tag.
+
 Round 447 (the message helpers censused, and the biggest unnamed one named from
 three sources): ROUNDS 443 AND 444 EACH FOUND THAT A *SHARED* HELPER EXPLAINED
 FAR MORE THAN THE OPCODE THAT LED TO IT, SO THIS ROUND MADE THAT SYSTEMATIC.
