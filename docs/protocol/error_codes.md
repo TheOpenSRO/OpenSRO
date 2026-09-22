@@ -902,7 +902,7 @@ functions.**
 | `0x1807` | `FUN_00526090` |
 | `0x1811` | **not found by this sweep** |
 | `0x181d` | `CGObjPC::vslot_358` |
-| `0x1c0d` | `FUN_005107c0` |
+| `0x1c0d` | `GObjPC::EndInteraction` (was `FUN_005107c0`) |
 | `0x1c0e` | `FUN_00511910` |
 | `0x3c0f` | `FleaMarket_HandleBuyItem`, `GObjPC_HandleStallMsg_0b5` |
 | `0x3c2a` | `FUN_005161b0`, `GObjPC_HandleStallMsg_0b2` |
@@ -974,3 +974,24 @@ a different switch arm, seven are the category-dependent codes this page already
 excludes by name, and the rest are labels like `case 0x6415: goto LAB_007b9116;`
 which share a block and carry no string of their own -- so the tool correctly
 declines to give them a unique name.
+
+
+## The interaction pair: `0x1c0b` and `0x1c0d` (round 449)
+
+These two are complements, and reading them together is what gives each a
+meaning neither has alone.
+
+| code | raised by | when |
+|---|---|---|
+| `0x1c0b` | `GObjPC_HandleShopMsg_046` (`0x510250`) | an interaction was requested while `chardata+6` (INTERACTMODE) is **already non-zero** |
+| `0x1c0d` | `GObjPC::EndInteraction` (`0x5107c0`) | an interaction was ended while **nothing is open** |
+
+`0x1c0b` is raised twice in the open handler, at its two earliest guards, before
+any message field is read -- the handler rewinds the cursor
+(`msg+0x103c := msg+0x103e`) on both paths precisely because it is abandoning a
+read it never made. `0x1c0d` is the close handler's only refusal.
+
+So the pair is "already busy" / "not busy", and **neither has a `case` in the
+decompiled client** -- both are in the fifteen listed above that the server
+sends and the client cannot render. That remains true; what changed is that the
+two are no longer unexplained.

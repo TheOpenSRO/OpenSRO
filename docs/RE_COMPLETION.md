@@ -24225,3 +24225,61 @@ multiplier. Wired as `combat.MonsterHPPercent`/`ScaleHPForMonster` with the
 flag carried but unset for every species srrevamp spawns; no live value moved.
 Which spawns are party monsters comes from the nest/tactics tables, still
 unread.
+
+## The NPC interaction session, and a premise that was wrong (round 449)
+
+Round 447's helper census is a worklist; its next entry, `FUN_005107c0` (7
+callers, 447 bytes), turned out to sit at the centre of the NPC interaction
+session, and pulling on it corrected a filed doc.
+
+**Four names, all server, all applied.** `GObjPC::EndInteraction` (`0x5107c0`)
+ends a session and replies `0xb04b{1}`; `GObjPC_HandleEndInteractionMsg_04b`
+(`0x510660`) is the `0x04b` handler that calls it; `GObjPC_HandleTalkMenuSelectMsg_0d4`
+(`0x516670`) walks the same `pc+0x2198` menu list `CGObjPC::ShowFirstTalkMenu`
+builds; and `CGObjChar::HasAvailableInteraction` (`0x50cd80`) tests the
+per-object interaction set.
+
+**The correction.** `character_state.md` recorded INTERACTMODE 5 and 6 as coming
+from "a switch on an NPC type byte", and concluded that naming them would be a
+guess because no NPC type vocabulary is grounded here. Ghidra had rendered the
+switch over a stack slot it never tied to the message read, so the client's byte
+and the switch value looked like different things. They are the same slot —
+`lea ecx,[esp+0x14]` feeds the `u8` read at `0x510320`, and `movzx eax,BYTE PTR
+[esp+0x14]` is the switch at `0x510565`. **The discriminator is an id the client
+chooses**, validated against the NPC's own set first.
+
+That set is the lever, because **the engine names it**:
+`CGObjChar::SetAvailableInteractionPerGObj` inserts into `obj+0x1c78..0x1c7c`
+and `IGObj`'s base stub logs `## Illegal ##  IGObj::SetAvailableInteractionPerGObj
+Entered!`. `HasAvailableInteraction` is its membership test, and the decompile
+loses the comparison — `setne cl` on `find() != end` had to be read from
+instructions.
+
+**The jump table, read out whole**, gives ids **2..35** with only four bespoke
+arms: id 2 → mode 5 and vtable offset `0x28c`, id 10 → mode 5, id 12 → mode 6,
+id 35 → no mode at all, and every other id → the default, mode 6. So **mode 6 is
+just the default**, which is why it never looked like a coherent service.
+
+**Interaction id 2 is the talk menu, on a use-site.** Offset `0x28c` is vtable
+slot 163, and slot 163 is `CGObjPC::ShowFirstTalkMenu` — named independently
+from `IGObj`'s own assert, with the dump's RTTI plate stating `0x28c` itself.
+The two handlers that require mode 5 are that menu's follow-ups.
+
+**Also recovered:** `0x1c0b` / `0x1c0d` are a complementary pair ("already
+busy" / "not busy"), and the `msg+0x103c := msg+0x103e` idiom, ~300 sites and
+never reversed, is a cursor rewind — which shows the server **discards** the
+`u32` the client sends with `0x04b`.
+
+**Nothing to wire.** srrevamp has no NPC interaction session — no
+`InteractMode` exists in `server/`— so no value moved and no tag was cut. Tests
+green (`go test -count=1 -p 1 ./...`, 58 packages).
+
+**Still open, with the probe named.** What ids 3..34 denote: they share the
+default arm, which reveals nothing, so the answer is on the *writer* side —
+whoever populates an NPC's available set knows the ids by name. A controlled
+negative blocks the obvious route: **no call of slot 156 (`+0x270`) on an IGObj
+exists in the decompiled server at all.** The only two `+ 0x270))` hits are
+`ApplySkillParamsToChar` using it as a data offset and `CQSP_ALL_POTION_1::vslot_002`,
+a different hierarchy where that slot number means something else (round 433's
+rule). The probe control passed, so the negative is real and the set is filled
+by an inlined or differently-shaped path.

@@ -55,13 +55,13 @@ Values **4, 5, 6 and 7 are read but NOT named.** What is known about each:
   `DetachEquipItem` (`== 2 || == 7`), and `CGItemEquip::vslot_301`/`vslot_302`
   gate on it. So it is a second state in which the character's items are
   committed elsewhere, like an open trade. Which one is unread.
-- **5 and 6** — both written by `GObjPC_HandleShopMsg_046` from a switch on an
-  NPC type byte: cases 2 and 10 give 5, case 12 and the default give 6, and case
-  0x23 sets nothing. **That NPC type vocabulary is not grounded in this repo** —
-  the `TypeID4` tables in `ITEM_FORMAT.md` are for items, not NPCs — so naming 5
-  and 6 from it would be a guess. Readers requiring 5: `FUN_00510660`,
-  `FUN_005107c0`, `FUN_0051b370`. Requiring 6: `FUN_00511f40`, `FUN_005243d0`,
-  `FUN_00526ce0`.
+- **5 and 6** — both written by `GObjPC_HandleShopMsg_046` from a switch on the
+  **interaction id the client sends**, not on an NPC type byte (corrected round
+  449; see "The interaction id is the client's, and its range is 2..35" below).
+  Readers requiring 5: `GObjPC_HandleEndInteractionMsg_04b`, `FUN_0051b370`.
+  Requiring 6: `GObjPC_HandleCOSSellMsg_0c7`, `FUN_005243d0`, `FUN_00526ce0`.
+  **`GObjPC::EndInteraction` (0x5107c0) was on the "requiring 5" list and does
+  not belong there** — it accepts `5 || 6`, so it discriminates neither.
 - **4** — written by `FUN_00515e90` beside 2 and 0; `CGObjPC::vslot_293` refuses
   when it is not 4.
 
@@ -596,3 +596,59 @@ did not settle it.
 like a candidate writer for `chardata+2` — the motion state, whose writer round
 416 could not find under a *passing* control. It does not write it. **Round
 416's controlled negative stands.**
+## The interaction id is the client's, and its range is 2..35 (round 449)
+
+The earlier note above said INTERACTMODE 5 and 6 come from "a switch on an NPC
+type byte", and concluded that naming them "would be a guess" because no NPC
+type vocabulary is grounded here. **The premise was wrong, and it was wrong in
+the decompiler's favour.** Ghidra rendered `GObjPC_HandleShopMsg_046`'s switch
+over a stack slot it had not tied to the message read, so the two appeared to be
+different values. They are one slot:
+
+	510320:  lea  ecx,[esp+0x14]     ; \ the u8 the client sent, read into esp+0x14
+	510325:  call 0x521750           ; /  (MsgBuf_ReadUInt8)
+	...
+	510565:  movzx eax,BYTE PTR [esp+0x14]   ; the switch reads that same slot
+	51056a:  add  eax,0xfffffffe             ; ids are biased by 2
+	51056d:  cmp  eax,0x21
+	510570:  ja   0x510612                   ; -> default
+
+So the discriminator is **an id the client chooses**, and the valid range is
+**2 through 35** inclusive. The handler validates it against the NPC first:
+`CGObjChar::HasAvailableInteraction(npc, id)` (`0x50cd80`) is a set-membership
+test on `obj+0x1c78..0x1c7c`, and 0x046 refuses with code 5 when it says no.
+**That set is named by the engine itself** — `CGObjChar::SetAvailableInteractionPerGObj`
+(`0x4a9550`) inserts into the same pair, and `IGObj`'s base stub logs
+`## Illegal ##  IGObj::SetAvailableInteractionPerGObj Entered!`.
+
+### The whole jump table, read out
+
+`0x510624` holds five targets and `0x510638` a 34-entry index byte per id:
+
+| interaction id | target | what it does |
+|---|---|---|
+| **2** | `0x510584` | INTERACTMODE := **5**, then `this->[0x28c]()` |
+| **10** | `0x5105f1` | INTERACTMODE := **5**, then `npc->[0x144](0x12, 0, this)` |
+| **12** | `0x5105ca` | bails if `npc+0x1cf0` is 0, else `GObjNPCNPC::FUN_004c8a60`, INTERACTMODE := **6** |
+| **35** (`0x23`) | `0x510428` | returns, **setting no mode at all** |
+| every other id 3..34 | `0x510612` | INTERACTMODE := **6** |
+
+Each target was read from instructions, not from the decompile. So **mode 6 is
+the default** — the generic case for any id without bespoke handling — and mode
+5 is reached by exactly two ids.
+
+**Interaction id 2 is the talk menu.** Offset `0x28c` is vtable slot 163, and
+slot 163 is `CGObjPC::ShowFirstTalkMenu` — named independently from `IGObj`'s
+own assert, and the dump's RTTI plate for that function states the offset
+`0x28c` itself. That is a use-site, not a curve: id 2 opens the menu, sets mode
+5, and the two handlers that require mode 5 are the menu's own follow-ups.
+
+**What is still NOT named.** Which service each of ids 3..34 denotes, since they
+all share the default arm and the arm reveals nothing about them. The next probe
+is the *writer* side: whoever calls slot 156 to populate an NPC's available set
+knows the ids by name. A controlled negative stands in the way — **no call of
+slot 156 (`+0x270`) on an IGObj exists anywhere in the decompiled server**; the
+only two `+ 0x270))` hits are `ApplySkillParamsToChar` using it as a data offset
+and `CQSP_ALL_POTION_1::vslot_002`, a different hierarchy where the slot number
+means something else (round 433's rule). So the set is filled by an inlined or
+otherwise-shaped path, and finding it is the open work.

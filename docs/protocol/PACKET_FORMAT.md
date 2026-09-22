@@ -682,3 +682,33 @@ player into an *interaction* state, so `0x3405` looked like the broadcast of
 `chardata+6`'s INTERACTMODE (round 426). Reading the payload killed it: the
 second field is a packed date, not a mode. The better finding was underneath the
 wrong one.
+## The read cursor, and the rewind idiom (round 449)
+
+Two `ushort` fields sit at the end of the server's inbound message object:
+
+	msg + 0x103c    the current read cursor
+	msg + 0x103e    the payload base
+
+and the whole dump contains exactly one idiom over them:
+
+	*(undefined2 *)(msg + 0x103c) = *(undefined2 *)(msg + 0x103e);
+
+**About 300 sites, and the assignment never appears in the other direction.**
+`+0x103e` is written only by one other form, `*(ushort *)(msg + 0x103e) -= 6`
+(7 sites), which backs the base up over a six-byte header. So the idiom is a
+**rewind**: put the cursor back to the start of the payload.
+
+Handlers use it when they are abandoning a read — `GObjPC_HandleShopMsg_046`
+rewinds on both of its early refusals, before it has read anything, and
+`GObjPC_HandleEndInteractionMsg_04b` rewinds at entry and then reads nothing at
+all. That last one is worth noting against `handler_payloads.tsv`, which records
+opcode `0x04b` as carrying a `u32`: the client does send it, and **the server
+discards it**.
+
+A third field, `msg + 0x1048`, selects which reader family runs — every field
+read in the server is shaped
+
+	if (*(int *)(msg + 0x1048) == 0)  MsgBuf_Read<T>FromTail(&out);
+	else                              MsgBuf_Read<T>Into(&out);
+
+so the same handler code serves two buffer layouts.
