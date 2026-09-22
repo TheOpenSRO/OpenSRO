@@ -330,6 +330,21 @@ apply when a round has a batch worth the rebuild or has no follow-on dump work
 queued. A filed-but-unapplied name is invisible, so do not let the backlog run
 long — but four names in one apply costs the same tick as one name.
 
+**The CLIENT project is `sro_client_re` in `/home/ghidra/re_client`**, and its
+applier argument is `client`. Round 438 lost a round's names by guessing
+`SR_Client_re`, which fails silently — the applier prints nothing and the names
+stay filed but unapplied. `re_tick.sh` line 94 is the authority:
+
+	redump client re_client sro_client_re "$CLIENT_BIN" /var/tmp/decomp_client
+
+	ssh root@192.168.5.78 'cd /var/tmp && su ghidra -s /bin/bash -c \
+	  "/opt/ghidra_12.1.3_PUBLIC/support/analyzeHeadless /home/ghidra/re_client \
+	   sro_client_re -noanalysis -process sro_client.exe -scriptPath /var/tmp \
+	   -postScript ApplyRecoveredNames.java /var/tmp/recovered_names.tsv client"'
+
+**Both binaries need their own apply.** One TSV feeds both; each run reports the
+other binary's rows as `other binary N` and skips them.
+
 **Then invalidate the dump cache yourself:**
 
 	ssh root@192.168.5.78 'rm -f /var/tmp/decomp_*/PROJSTAMP'

@@ -6405,6 +6405,40 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 438 (42 % of the game's entry points are unnamed, and the error-code lever
+reaches 16 % of them): THE 163 CLIENT-MESSAGE HANDLERS ARE THIS BINARY'S
+GAME-LOGIC ENTRY POINTS (round 336b), AND **69 OF THEM ARE STILL `FUN_`** — 42 %.
+Their client counterparts are unnamed too, so that side gives nothing.
+
+`RE_LOOP.md` names the lever for exactly this case: a refusal path that returns
+`0x5408` "is not 'the third check'; it is `ONLY_EQUIPITEM_CAN_BE_REINFORCED`".
+Joined against the 608 named codes in `error_codes.md`: **11 of the 69 emit at
+least one named code**, so the lever reaches **16 %** of them and the other 58
+raise nothing the table knows. That is the measurement, and it bounds what this
+approach can do.
+
+THREE NAMED, EACH FROM ITS OWN REFUSALS RATHER THAN FROM WHERE IT SITS.
+`0x511f40` (opcode `0x0c7`) emits `0x4409`/`0x440a`/`0x440b` —
+`COSERR_CANT_SELL_REQUESTED_COS`, `..._COS_HAVE_ITEMS`, `..._RIDING_COS`, all
+three about selling a COS and none from another subsystem — and writes the reply
+opcode `0xb0c7`, confirming it is the handler and not a callee:
+**`GObjPC_HandleCOSSellMsg_0c7`**. `0x517a50` (opcode `0x252`) calls
+`CGuild::GetLevel` **and** emits `GUILD_WAREHOUSE_LIMIT` — two independent
+sources — giving **`GObjPC_HandleGuildWarehouseMsg_252`**. `0x511a60` (opcode
+`0x116`) emits `COSPETERR_CANT_DEACTIVATE_IN_DEADSTAT` and
+`COSPETERR_CANT_PETRE_BATTLE`, giving **`GObjPC_HandleCOSDeactivateMsg_116`** —
+**with the caveat recorded rather than smoothed** that it also raises
+`ERR_FRPVP_DURING_CHANGE`, which belongs to free-PvP and does not fit; the name
+rests on the two codes that agree with each other.
+
+AND I LOST ROUND 437'S CLIENT NAMES TO A GUESSED PROJECT NAME. The client
+Ghidra project is **`sro_client_re`** in `/home/ghidra/re_client`; I guessed
+`SR_Client_re`, and **the applier fails silently** — no output, no error, the
+names simply stay filed and unapplied. `re_tick.sh` line 94 was the authority
+all along. Both binaries need their own apply run, and the recipe is now in
+`RE_LOOP.md`. Re-run correctly: **client applied 4, forced 4, reowned 4**;
+server **applied 3**. No behaviour changed, so no tag.
+
 Round 437 (the server's two structural levers measured on the client, and both
 are near-empty): ROUNDS 418 AND 436 EACH PAID 100+ PREFIX CORRECTIONS ON THE
 SERVER, AND THE CLIENT IS WHERE THE HEADROOM IS — 43,562 functions at **5.2 %**
