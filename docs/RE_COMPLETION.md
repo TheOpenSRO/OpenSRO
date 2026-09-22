@@ -6405,6 +6405,54 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 426 (the engine names eight state enums, and every use-site conclusion
+rounds 411-416 fought for is confirmed): ROUND 425 FOUND THE BODY-MODE NAMES IN A
+STRING-POINTER TABLE AND NOTED THE ARRAY HELD OTHER VOCABULARIES BACK TO BACK.
+Reading the whole region is the systematic version, and it pays out of all
+proportion to its cost. `FUN_00567190` is a **character-state diagnostic dump**:
+it formats each state by indexing that state's own table with that state's value,
+so one function yields **eight enums** — and, because each index expression names
+the field it reads, the chardata offsets with them.
+
+	0xc63f80  LIFESTATE       EMBRYO, ALIVE, DEAD, GONE
+	0xc63f90  MOTIONSTATE     19 values, STAND .. CHANGEMOTION
+	0xc63fe4  INTERACTMODE    NONE, HANDSHAKING, P2P, MARKET_OWNER, P2N_TALK, P2N_DEAL, OPNMKT_DEAL
+	0xc6400c  GROUPMODE       SOLO, PARTY_SETUP, PARTY, SOLOPARTY_SETUP, SOLOPARTY
+	0xc64020  BODYMODE        round 425's five
+	0xc64040  MSG_PROCSTATE   NORMAL, BLOCKED, OVERLAPPED     <- chardata+4
+	0xc6404c  PvPSTATE        NEUTRAL, ASSAULTER, MURDERER    <- chardata+0xc
+	0xc64058  BATTLESTATE     IN_PEACE, IN_BATTLE             <- chardata+0xd
+
+**LIFESTATE VINDICATES ROUNDS 411-413 COMPLETELY, INCLUDING THE CLAIM THEY
+REFUSED TO MAKE.** Those rounds proved from typed receivers that 1 is alive and 2
+is dead, and round 413 explicitly graded the reading of 3 as weaker — "consistent
+with removal-from-the-world, and it is stated as such". The engine's word for 3
+is **`GONE`**. Value 0, which `CGObjChar::Create` writes, is **`EMBRYO`**. Four
+rounds of use-site work produced exactly the answers the name table gives, and
+the one claim held back was the one that needed holding back.
+
+**MOTIONSTATE ANSWERS ROUNDS 414-416'S CENSUS.** The values 2, 3, 4, 15, 16, 17
+and 18 those rounds counted without meaning are `WALK`, `RUN`, `SIT`,
+`SKILL_ACTIONOFF`, `SKILL_KNOCKBACK`, `SKILL_PROTECTIONWALL` and `CHANGEMOTION`.
+Round 416's controlled negative stands untouched — the values are named, the
+writer of `chardata + 2` is still not found.
+
+**INTERACTMODE NAMES WHAT WAS RECOVERED BY BEHAVIOUR** — 0 idle is `NONE`, 1
+"trade session opened" is `HANDSHAKING`, 2 "trade established" is `P2P`. **One
+tension is recorded rather than smoothed:** this project has value **9** as the
+open-market state from six `COpenMarketMgr::On*Req` handlers requiring it, and
+index 9 of the table is **NULL** while the open-market name sits at index 6. Both
+can hold if the debug table simply has no name at 9; nothing here overturns the
+handlers, and nothing explains the gap. **GROUPMODE refines round 361**: it
+called `chardata + 7` "the pending-invitation byte", and it is the party
+membership mode, of which `PARTY_SETUP` is one value of five.
+
+THE LEVER IS THE FINDING AS MUCH AS THE NAMES: a diagnostic printer that
+stringifies an enum is a **value vocabulary with its field offset attached**, and
+this binary keeps its tables in one contiguous `.rdata` region. `FUN_00567190` is
+filed as `CGObjPC::DumpCharacterState` and **held unapplied** per round 411's
+batching rule. No behaviour changed, so no tag.
+
 Round 425 (the body-mode enum read off the engine's own name table): ROUND 424
 LEFT "what body modes 6 and 7 ARE is not read", SO THAT WAS THIS ROUND. The
 values were known only as bare numbers — this file already said "body mode 1 is

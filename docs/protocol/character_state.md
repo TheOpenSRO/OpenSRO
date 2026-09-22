@@ -319,6 +319,11 @@ recorded as an observation and not as a finding.
 
 ### Still open: what writes the motion state
 
+**The values are named as of round 426** — `WALK`, `RUN`, `SIT`,
+`SKILL_ACTIONOFF`, `SKILL_KNOCKBACK`, `SKILL_PROTECTIONWALL`,
+`CHANGEMOTION`; see the vocabulary section at the end of this file. What
+follows is about the WRITER, which is still not found.
+
 Comparisons exist against **2, 3, 4, 15, 16, 17, 18** (round 414), but a census
 of writes to `chardata + 2` finds exactly **one** — `CGObjChar::Create` storing
 `0xff`.
@@ -392,3 +397,63 @@ engine's own strings rather than from the shape of the comparison.
 in this game the berserk mechanic is Hwan (`RemainHwanCount`, `HwanLevel`,
 `GObjPC::HwanGainChance`). `BODYMODE_BERSERKER` is a *separate* mode at value 4
 and is not what srrevamp's berserk uses. Nobody should "fix" the 1 to a 4.
+
+## The engine names all of these itself (round 426)
+
+`FUN_00567190` is a **character-state diagnostic dump**, and it formats each
+state by indexing a string-pointer table with that state's value. Reading those
+tables out of the PE gives the engine's own vocabulary for eight enums at once —
+and, because each index expression names the field it reads, the chardata offsets
+with them.
+
+### The vocabularies
+
+| base | enum | values |
+|---|---|---|
+| `0xc63f80` | **LIFESTATE** | 0 `EMBRYO`, 1 `ALIVE`, 2 `DEAD`, 3 `GONE` |
+| `0xc63f90` | **MOTIONSTATE** | 0 `STAND`, 1 `SKILL`, 2 `WALK`, 3 `RUN`, 4 `SIT`, 5 `JUMP`, 6 `SWIM`, 7 `RIDE`, 8 `KNOCKDOWN`, 9 `STUN`, 10 `FROZEN`, 11 `HIT`, 12 `REQ_HELP`, 13 `PAO`, 14 `COUNTERATTACK`, 15 `SKILL_ACTIONOFF`, 16 `SKILL_KNOCKBACK`, 17 `SKILL_PROTECTIONWALL`, 18 `CHANGEMOTION` |
+| `0xc63fe4` | **INTERACTMODE** | 0 `NONE`, 1 `HANDSHAKING`, 2 `P2P`, 3 `MARKET_OWNER`, 4 `P2N_TALK`, 5 `P2N_DEAL`, 6 `OBJ_INTERACTMODE_OPNMKT_DEAL` |
+| `0xc6400c` | **GROUPMODE** | 0 `SOLO`, 1 `PARTY_SETUP`, 2 `PARTY`, 3 `SOLOPARTY_SETUP`, 4 `SOLOPARTY` |
+| `0xc64020` | **BODYMODE** | round 425's five |
+| `0xc64040` | **MSG_PROCSTATE** | 0 `NORMAL`, 1 `BLOCKED`, 2 `OVERLAPPED` |
+| `0xc6404c` | **PvPSTATE** | 0 `NEUTRAL`, 1 `ASSAULTER`, 2 `MURDERER` |
+| `0xc64058` | **BATTLESTATE** | 0 `IN_PEACE`, 1 `IN_BATTLE` |
+
+### The chardata offsets, from the index expressions
+
+	chardata + 4    MSG_PROCSTATE
+	chardata + 6    INTERACTMODE
+	chardata + 7    GROUPMODE
+	chardata + 0xc  PvPSTATE
+	chardata + 0xd  BATTLESTATE
+
+`+0` and `+2` are read through `GetLifeState` / `GetMotionState` rather than
+directly here.
+
+### What it confirms, and what it corrects
+
+**LIFESTATE is a clean confirmation of rounds 411–413.** Those rounds proved from
+typed use-sites that 1 is alive and 2 is dead, and explicitly labelled the claim
+about 3 as weaker evidence — "consistent with removal-from-the-world, and it is
+stated as such". The engine's word for 3 is **`GONE`**. Value 0, which
+`CGObjChar::Create` writes, is `EMBRYO`: an object not yet born. The use-site
+method got every answer right, including the one it declined to assert.
+
+**MOTIONSTATE answers rounds 414–416.** Those rounds censused comparisons against
+2, 3, 4, 15, 16, 17 and 18 and could not say what they meant. They are `WALK`,
+`RUN`, `SIT`, `SKILL_ACTIONOFF`, `SKILL_KNOCKBACK`, `SKILL_PROTECTIONWALL` and
+`CHANGEMOTION`. Round 416's controlled negative — that nothing writes
+`chardata + 2` as a plain field store — is untouched by this; the values are
+named, the writer is still not found.
+
+**INTERACTMODE names the values this file already recovered by behaviour**: 0
+idle is `NONE`, 1 "trade session opened" is `HANDSHAKING`, 2 "trade established"
+is `P2P`. **One tension, recorded rather than smoothed:** this file also records
+value **9** as the open-market state, from six `COpenMarketMgr::On*Req` handlers
+requiring it, and index 9 of the table is **NULL** — the open-market name sits at
+index 6. Both can be true if the debug table simply has no name at 9; nothing
+here overturns the use-site evidence for 9, and nothing explains the gap.
+
+**GROUPMODE refines round 361's reading of `chardata + 7`.** That round called it
+"the pending-invitation byte". It is the party-membership mode, of which
+`PARTY_SETUP` — an invitation outstanding — is one value of five.
