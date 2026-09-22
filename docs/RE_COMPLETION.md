@@ -25379,3 +25379,39 @@ exists but explains 3 % of the gap, and whatever carries the rest is still
 unfound.
 
 Nothing wired, no tag. `go test -count=1 -p 1 ./...` green.
+
+## The 1,055 are sub-builders, and two things block attributing them (round 478)
+
+Round 477 left the question of what carries the appends that never see an open.
+**They are sub-builders: functions handed an already-open message by a caller.**
+Round 454 proved one — `FUN_0050faf0` opens `0xb045` and passes the message to
+vtable slot `0x38c`, which appends to it — and
+`CGObjChar::PublishAvailableInteractions` duly appears in the unattributed set,
+which is the prediction coming true rather than a new guess.
+
+**Attributing them one hop up reaches a quarter:**
+
+	sub-builder candidates                   261
+	  callers send exactly ONE opcode         33   attributable
+	  callers send SEVERAL opcodes            31   ambiguous by construction
+	  no direct caller that sends anything    197
+
+**The 197 split into two different problems**, which is why one fix will not do:
+
+	no direct call site at all (virtual-only)   77
+	direct callers that do not themselves send ~120
+
+The first are reached only through a vtable, so a direct-call graph cannot see
+them by construction — the same class of miss as round 450's reader census and
+round 470's inlined check. The second have a caller, but the *opener* is two or
+more levels above, so a one-hop walk stops short.
+
+**The 33 are deliberately NOT merged into `payload_layouts.tsv`.** Being called
+by a function that sends opcode X is not the same as receiving *that* message:
+the only function where the pass is actually read is the round-454 case. Adding
+33 rows on "presumably the message it was handed" would put an inference beside
+three mechanically-verified classes in one file, which is the mixing this
+project has had to correct twice already (round 476's leads, round 465's sender
+column).
+
+Nothing wired, no tag. `go test -count=1 -p 1 ./...` green.
