@@ -6405,6 +6405,39 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 430 (hunting the generic quest handler: four eliminations, a static pool,
+and no find): ROUND 429 LEFT ONE GAP — the handler that interprets `questdata`
+rows for the 542 classless quests. **I did not find it.** What this round did is
+narrow the search and rule out four candidates, which is worth a round only
+because each was the obvious next guess and each is now closed.
+
+**`CRefDefaultQuest` is not it** — `refdata_tables.md` already maps it to
+`_REFCHARDEFAULT_QUEST`, the quests a character *starts with*. **There is no
+code→class registrar**: a sweep for functions carrying many `"QNO_"` literals
+returns only individual quest handlers citing other quests, the most being 13.
+**`CQEV_ALL_BASIC_*` is not it**: there are **13** of them, and thirteen generic
+slots cannot serve 542 quests. **Neither quest manager is named** —
+`Quest::CQuestManager` (a singleton) and `CGObjPC_QuestManager` each have only a
+destructor named, so the work sits in ~59 `FUN_` functions around
+`0x56e000`–`0x571000`.
+
+WHAT WAS FOUND IS STRUCTURAL. `CBasicQuest::CBasicQuest` is `0x91e200`,
+identified by installing the 103-slot vtable at `0x00b3ec04`; its callers pass
+**static globals at a fixed `0x580` stride** (`DAT_00d25780`, `d25d00`,
+`d26280`, …), which fixes a `CBasicQuest` instance at **0x580 bytes** and shows
+the thirteen `CQEV_ALL_BASIC_*` objects are a **statically allocated pool**
+rather than heap-constructed per quest. And **192 of the 205 quest classes carry
+a numbered suffix** — the same templating round 429 measured in the data, now
+visible in the code.
+
+ONE NAME FILED AND ONE DELIBERATELY NOT. `FUN_0091e4f0` installs the same vtable
+and is called from the derived classes' teardown, so it is almost certainly the
+destructor — **not named**, because a constructor and a destructor are
+indistinguishable on vtable installation alone and no second source separates
+them here. The next probe is written down: the per-PC manager at `pc+0x1d98`,
+whose 59 unnamed functions are where a quest is attached to a character. Name
+held unapplied per the batching rule. No behaviour changed, so no tag.
+
 Round 429 (the 542 measured, and the blocker's framing wrong a second time):
 ROUND 428 SAID THE REMAINING QUESTION WAS A DATA ONE. It is, and the data
 settles the shape of it. `questdata.txt` has **696 rows**, column 2 the quest

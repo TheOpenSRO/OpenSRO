@@ -359,3 +359,52 @@ Round 427's hypothesis that the classless quests are Lua is **refuted for the
 client-side scripts**; the server's own `./Script/VIETNAM/` directory ships with
 the server and is in none of the archives this project has, so nothing can be
 said about it either way.
+
+## Hunting the generic handler: four eliminations and a static pool (round 430)
+
+Round 429 left one gap — **the generic handler that interprets `questdata` rows
+for the 542 quests with no class.** This round did not find it. What it did is
+narrow the search and rule things out, which is worth recording so the next pass
+does not re-walk them.
+
+**The quest infrastructure, 26 classes** (excluding the per-quest ones):
+`Quest::CQuestManager` is a **singleton**; `CGObjPC_QuestManager` is the per-PC
+manager, which is the object at `pc+0x1d98` that round 428 identified as save
+scope bit `0x10`; alongside them `sQuestManagerData`, `sQuestContents`,
+`CRefQuest`, `CRefQuestReward`, `CRefQuestRewardItems`, `AQ_QuestDataManager`
+(the DB side) and `CInstanceQuest`.
+
+### Eliminated
+
+- **`CRefDefaultQuest` is not it.** The name is inviting, but
+  `refdata_tables.md` already maps it to **`_REFCHARDEFAULT_QUEST`** — the
+  quests a character *starts with*, not a generic handler.
+- **There is no registrar mapping quest codes to classes.** A sweep for
+  functions carrying many `"QNO_"` literals returns only individual quest
+  handlers referencing other quests; the most is 13, in
+  `QNO_TQ_BAEKRYOUNG_17::OnEnterWorld::Handle`.
+- **`CQEV_ALL_BASIC_*` is not it either.** There are **13** of them, each
+  `CBasicQuest : CQuestBase : IQuest`. Thirteen generic slots is not a mechanism
+  for 542 quests.
+- **Neither manager's methods are named** — `Quest::CQuestManager` and
+  `CGObjPC_QuestManager` each have only a `ScalarDeletingDestructor` named, so
+  the work is in the `FUN_` functions around `0x56e000`–`0x571000` (59 of them)
+  and near `0x57fd10`.
+
+### Found
+
+`CBasicQuest::CBasicQuest` is **`0x91e200`**, installing the 103-slot vtable at
+`0x00b3ec04`. Its callers are the init functions of the thirteen
+`CQEV_ALL_BASIC_*` objects, and each passes a **static global at a fixed `0x580`
+stride** — `DAT_00d25780`, `d25d00`, `d26280`, `d26800`, … So a `CBasicQuest`
+instance is **0x580 bytes**, and those thirteen are a **statically allocated
+pool**, not heap-constructed per quest.
+
+And **192 of the 205 quest classes carry a numbered suffix**, which is the same
+templating round 429 measured on the data side, now visible on the code side.
+
+### Next probe
+
+The per-PC manager at `pc+0x1d98`. Its 59 unnamed functions are where a quest is
+attached to a character, and one of them must decide between "instantiate the
+class for this code" and whatever serves a code with no class.
