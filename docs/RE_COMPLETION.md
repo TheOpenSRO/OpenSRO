@@ -24386,3 +24386,53 @@ log strings in the four unnamed manager blocks.
 One name filed (`CGObjChar::PublishAvailableInteractions`), **held unapplied** —
 one row is not worth the ~9-minute rebuild per the round-411 batching rule.
 Nothing to wire, no tag. Tests green (`go test -count=1 -p 1 ./...`).
+
+## The siege interaction ids, named by the engine's own queries (round 452)
+
+Round 451's next probe was "the log strings in the four unnamed manager blocks".
+The blocks turned out to carry something better than logs: each one **calls an
+`AQ_Siege::QUERY_SIEGE_*` function** to issue its database work, and those
+symbols are the binary's own names. Verified they are functions rather than
+constants mentioned in passing — at `0x62f7c0`,
+`AQ_Siege::QUERY_SIEGE_TAX_COLLECT(a,b,c,d)` sits on the success path with a
+refusal code on the failure path.
+
+| id | role | the engine's words |
+|---:|---|---|
+| 0x17 | fortress administration | `TAX_ACCUMULATE`, `TAX_COLLECT`, `HIRED_NPC` + tax ratio, dungeon create/enter |
+| 0x18 | siege registration | `REQUEST_REMOVE` + `HandleSiegeRequest` |
+| 0x19 | fortress structures | `STRUCT_ADD`, `STRUCT_UPGRADE` + `HandleStructureRepair` |
+| 0x1a | item forge, instance 0 | `ITEM_FORGE_ADD` / `_REMOVE` / `_COLLECT` |
+| 0x1b | item forge, instance 1 | the same three |
+| 0x1f | structure update | `STRUCT_UPDATE` |
+| 0x28 | **still unnamed** | no query at all |
+
+**0x1a and 0x1b are the same forge twice, read rather than assumed.** The two
+blocks are pairs of functions with matching sizes and matching query calls —
+the COMDAT-twin shape this project has on file — so all three pairs were
+diffed line by line. Each differs in **exactly two semantic places**:
+`FUN_0061dac0(0)` vs `(1)`, and a flag test on bit `8` vs bit `0x10`. And
+`FUN_0061dac0` opens `if (2 < *(uint *)(in_EAX + 0x38)) Assert`, **bounding the
+collection at two**. So the ids index two instances of one forge; what tells
+instance 0 from instance 1 is not claimed.
+
+**Id 0x28 resisted and is recorded as such.** Its handler issues no query: it
+reads a `u32`, requires `GetLifeState() == 1` (alive, round 411), and ends in a
+slot `0x378` call — live state, not database work, so this lever cannot reach
+it.
+
+**One block was deliberately left unnamed.** `FUN_0062f4e0` issues
+`QUERY_SIEGE_TAX_ACCUMULATE` while its own logs say
+`"Before COLLECT_TAX DB work 2"` and `"Failed Update Accumulated Tax[COLLECT_TAX] 2"`.
+The query name and the log name disagree, and a conflicting signal is exactly
+when not to name.
+
+**Thirteen names applied** (`applied 13, failed 0`) — the twelve siege handlers
+plus `CGObjChar::PublishAvailableInteractions` held from round 451. One row came
+back `KEEPOWNER`, keeping a `GObjPC` module attribution on
+`HandleItemForgeRemove_0` while its identical twin took `SiegeFortressMgr`; it
+was re-filed with `force` and re-applied in the same window, so the pair is
+consistent and the rebuild was paid once.
+
+**Nothing to wire** — srrevamp has no siege — so no value moved and no tag.
+Tests green (`go test -count=1 -p 1 ./...`).

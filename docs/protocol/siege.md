@@ -284,13 +284,54 @@ they are also the two the function special-cases before the switch, bypassing
 the `FUN_004e72a0` target check (`if (local_16 != 0x16 && local_16 != 0x17)`).
 Consistent: they are not NPC interactions at all.
 
-**What this does and does not name.** Id `0x17` covers tax ratio *and* both
-dungeon commands, `0x18` covers the siege request, `0x19` covers structure
-repair. Those are the only three ids with a named callee, and one named callee
-is not enough to name a role — `0x1a`, `0x1b`, `0x1f` and `0x28` have none at
-all. **So the ids are grouped but not named**, and the next probe is the four
-unnamed manager blocks (`0x632xxx`, `0x633xxx`, `0x634xxx`), whose log strings
-would say what each block does.
+### What each id is, from the engine's own query names (round 452)
+
+The probe named above worked, and better than expected: the unnamed manager
+blocks do not merely *log* their purpose, they **call an `AQ_Siege::QUERY_SIEGE_*`
+function** to issue their database work. Those symbols carry the binary's own
+names, and they are functions with arguments — verified at `0x62f7c0`, where
+`AQ_Siege::QUERY_SIEGE_TAX_COLLECT(a,b,c,d)` sits on the success path with a
+refusal code on the failure path — not constants mentioned in passing.
+
+| id | what the block does | the engine's words |
+|---:|---|---|
+| **0x17** | fortress administration | `QUERY_SIEGE_TAX_ACCUMULATE`, `QUERY_SIEGE_TAX_COLLECT`, `QUERY_SIEGE_HIRED_NPC`, plus `HandleSetTaxRatio`, `HandleCreateDungeon`, `HandleEnterDungeon` |
+| **0x18** | siege registration | `QUERY_SIEGE_REQUEST_REMOVE`, plus `HandleSiegeRequest` |
+| **0x19** | fortress structures | `QUERY_SIEGE_STRUCT_ADD`, `QUERY_SIEGE_STRUCT_UPGRADE`, plus `HandleStructureRepair` |
+| **0x1a** | item forge, instance **0** | `QUERY_SIEGE_ITEM_FORGE_ADD` / `_REMOVE` / `_COLLECT` |
+| **0x1b** | item forge, instance **1** | the same three |
+| **0x1f** | structure update | `QUERY_SIEGE_STRUCT_UPDATE` |
+| **0x28** | **still unnamed** | no query at all |
+
+**0x1a and 0x1b are the same forge twice, and that was read rather than
+assumed.** The two blocks are four pairs of functions with matching sizes and
+matching query calls, which is the COMDAT-twin shape — so a line-by-line diff
+was taken of all three pairs that have one. Each differs in **exactly two
+semantic places**:
+
+	FUN_0061dac0(0)   vs   FUN_0061dac0(1)
+	flag test on bit 8     flag test on bit 0x10
+
+everything else being label renaming. `FUN_0061dac0` opens with
+`if (2 < *(uint *)(in_EAX + 0x38)) Assert`, **bounding the collection it selects
+from at two**. So the ids index two instances of one forge. What distinguishes
+instance 0 from instance 1 is *not* claimed here — only that there are two and
+these ids pick between them.
+
+**Id 0x28 resisted.** Its handler (`0x630ac0`) issues no query: it reads a
+`u32`, requires `GetLifeState() == 1` (alive, round 411), and ends in a slot
+`0x378` call. Live state, not database work, so the query lever cannot reach it.
+
+Twelve names filed and applied from this (`HandleTaxCollect`, `HandleHiredNpc`,
+`HandleSiegeRequestRemove`, `HandleStructAdd`, `HandleStructUpgrade`,
+`HandleStructUpdate`, and the six forge functions).
+
+**One block was deliberately left unnamed.** `FUN_0062f4e0` issues
+`QUERY_SIEGE_TAX_ACCUMULATE` but its own log strings say
+`"Before COLLECT_TAX DB work 2 :: CurrentTax = %I64d"` and
+`"Failed Update Accumulated Tax[COLLECT_TAX] 2"` — the query name and the log
+name disagree about whether this is accumulate or collect, and a conflicting
+signal is exactly when not to name.
 
 Refusals: a failed interaction check answers `0xb05e` with code **3**, and an
 unknown sub-command with code **5**.

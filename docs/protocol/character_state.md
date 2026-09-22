@@ -675,11 +675,25 @@ and `[ebp+0xc]` the byte, so the **last** push is the object and the immediate
 is the id.
 
 **Id 15 is the guild NPC on two independent named readers.** That is the only id
-here with two sources, and it is the one to trust most. Ids 23–40 are all the
-siege fortress, but they come from a *single* function, so what separates them
-is not settled — `SiegeFortress_DispatchCommand` switches on a command and each
-arm requires a different id, so reading that switch is what would name them
-individually. **Id 2 is the talk menu** independently of all this (round 449).
+here with two sources, and it is the one to trust most. **Id 2 is the talk menu**
+independently of all this (round 449).
+
+**Ids 23–40 were named in round 452** by reading the switch, as planned. They
+are all siege-fortress roles, and each one is settled by the
+`AQ_Siege::QUERY_SIEGE_*` function its block issues — the binary's own names:
+
+| id | role |
+|---:|---|
+| 0x17 (23) | fortress administration — tax accumulate/collect, hired NPC, tax ratio, dungeon create/enter |
+| 0x18 (24) | siege registration — request and request-remove |
+| 0x19 (25) | fortress structures — add, upgrade, repair |
+| 0x1a (26) | siege item forge, instance 0 |
+| 0x1b (27) | siege item forge, instance 1 |
+| 0x1f (31) | structure update |
+| 0x28 (40) | **still unnamed** — its handler issues no query |
+
+The full sub-command table and the twin-diff that split 0x1a from 0x1b are in
+`docs/protocol/siege.md`.
 
 **A coincidence to name before it causes a bug**: id `0x0f` is required by
 `GObjPC_HandleGuildMsg_0f1`, whose opcode index is `0x0f1`. They are an id and
