@@ -797,3 +797,42 @@ So the nine save scopes rounds 391–398 recovered are the body of the PC's
 `DBBackup` override, and `CGObjCOS::DBBackup` (`0x4d2010`, 53 bytes) is the COS's
 much smaller equivalent — a natural next read for what a summoned creature
 persists.
+
+## The scope mask is shared between PC and COS, with different bits (round 420)
+
+`CGObjCOS::DBBackup` (`0x4d2010`, 53 bytes) is the whole COS side, and it takes
+**the same `uint` scope mask** as the PC's override — so the bitmask is
+`DBBackup`'s signature, not something the PC invented:
+
+	if ((mask & 8) != 0)  GObjPC::DBBackup(this, mask, ...);   // the base: own row
+	if ((mask & 4) != 0)  GObjPC::FUN_004b7b50(this);          // the string-building save
+
+**The two bit sets are disjoint.** The PC tests `0x80, 0x40, 0x10, 0x01, 0x100,
+0x200, 0x400, 0x800`; the COS tests `0x08` and `0x04` and nothing else. The same
+*scope* therefore has a different *bit* depending on the object:
+
+| scope | PC bit | COS bit |
+|---|---|---|
+| the object's own DB row (the base `DBBackup`) | `0x80` | **`0x08`** |
+| a storage, saved by the `FUN_004b7b50` string loop | `0x01` **and** `0x40` (two storages) | **`0x04`** (one) |
+
+So a COS persists two things where a PC persists nine, and a summoned creature
+has a single storage where a character has two. `CGObjNPC` inherits the base
+unchanged and has no scopes of its own.
+
+**Bits `0x02` and `0x20` are tested by neither** — a measured gap in the
+vocabulary, not an assumption that they are unused.
+
+### A grep that misses a bit: `& 0x80` on a byte
+
+The first pass over `CGObjPC::DBBackup` found only **seven** bit tests against
+the table's nine, because the `0x80` test does not contain `& 0x80`. MSVC emits
+`test al,al; js` for a sign-bit check and Ghidra renders that as:
+
+	if ((char)param_3 < '\0') {
+	  GObjPC::DBBackup(param_2, param_3, 0);
+	}
+
+A census of scope bits by grepping for `& 0x` silently drops the top bit of
+every byte-wide mask. The recorded nine-scope table is **correct and complete**;
+it was this round's probe that was short, and the table is what caught it.

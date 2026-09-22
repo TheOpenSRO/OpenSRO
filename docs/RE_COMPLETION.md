@@ -6405,6 +6405,38 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 420 (the COS half of the save, and a grep that drops the top bit of every
+byte mask): ROUND 419 NAMED `CGObjCOS::DBBackup` AND POINTED AT IT AS THE NEXT
+READ, SO THAT WAS THIS ROUND. It is 53 bytes and takes **the same `uint` scope
+mask** the PC's override takes, which settles that the bitmask is `DBBackup`'s
+signature rather than a PC invention: `& 8` delegates to the base (the object's
+own row) and `& 4` calls the string-building save.
+
+**THE TWO BIT SETS ARE DISJOINT.** The PC tests `0x80, 0x40, 0x10, 0x01, 0x100,
+0x200, 0x400, 0x800`; the COS tests `0x08` and `0x04` and nothing else. So the
+same *scope* carries a different *bit* depending on the object kind — the own-row
+save is `0x80` for a PC and `0x08` for a COS, and the storage save is `0x01`
+**and** `0x40` for a PC (two storages) against a single `0x04` for a COS. A
+summoned creature persists two things where a character persists nine.
+`CGObjNPC` inherits the base unchanged and has no scopes of its own. Bits `0x02`
+and `0x20` are tested by neither, recorded as a measured gap.
+
+AND `known.sh` STOPPED A WRONG CLAIM MID-ROUND. Reading `& 4 -> FUN_004b7b50` I
+was heading for "bit 4 is the COS's own record". `FUN_004b7b50` is already on
+record in `persistence.md` as a **shared string-building loop** called at the
+PC's bits `0x01`/`0x40` — it is not a per-scope handler at all, and the claim
+would have been wrong in exactly the way this project keeps catching.
+
+A GREP THAT MISSES A BIT, WORTH WRITING DOWN. My first census of
+`CGObjPC::DBBackup` found **seven** bit tests against the table's nine, which
+briefly looked like the recorded table was wrong. It is not: MSVC emits
+`test al,al; js` for a sign-bit check, so the `0x80` test decompiles as
+`if ((char)param_3 < '\0')` and contains no `& 0x80` for a grep to find.
+**Censusing byte-wide masks by grepping `& 0x` silently drops the top bit of
+every one.** The table caught my probe rather than the other way round, which is
+the first time this session the existing record has been the control. No names
+filed, so nothing to apply and no rebuild. No behaviour changed, so no tag.
+
 Round 419 (a lever round 410 could not justify, unlocked by round 418's chains —
 and 95 % of its raw output was junk): ROUND 410 REJECTED PROPAGATING A SIBLING'S
 NAME TO A SLOT, CORRECTLY. The base-to-derived version is a different claim and
