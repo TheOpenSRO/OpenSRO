@@ -6405,6 +6405,46 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 419 (a lever round 410 could not justify, unlocked by round 418's chains —
+and 95 % of its raw output was junk): ROUND 410 REJECTED PROPAGATING A SIBLING'S
+NAME TO A SLOT, CORRECTLY. The base-to-derived version is a different claim and
+a sound one: a BASE declares the method every override implements, and round
+418's full `ClassHierarchyDescriptor` chains make "nearest ancestor that names
+this slot" computable for the first time.
+
+THE RAW LEVER IS ALMOST ENTIRELY JUNK, AND ITS OWN OUTPUT SAID SO. The first run
+returned 104 candidates and the list was visibly wrong: `SaveCurPosAsLastTelPosition`
+appeared at slots 22, 1, 2, 334 and 364 across unrelated hierarchies, and would
+have christened a **10,957-byte** function a position-saver. `RE_LOOP.md` names
+that exact string as the worst case in the binary — a one-byte `ret` that **281
+vtables** share. The lever was propagating COMDAT-folded junk names.
+
+With the fold filter the doc prescribes — ancestor and candidate each in fewer
+than ten vtables and of real size, destructors and the CRT range excluded —
+**355 of 374 raw candidates are rejected** and 14 survive. A 95 % rejection rate
+is the honest measure of this lever: it is worth running only behind the filter.
+
+WHAT SURVIVED IS GOOD: six `AI::CAISkill_Unique_Summon_{A,B,C}` overrides of
+`PickSkill`, `RegisterSkill` and `CheckTriggers` from `AI::CAISkill_Basic`; three
+`CEnchant_*` overrides of `CheckPreconditions` and `ReleaseLoadedItems`;
+`CAIState_IDLE::OnUpdate` and `CAIState_SPAWN::OnEnter` from `CAIState`;
+`CGObjNPC::CanBeEquipedAt`; and two that matter more than the rest.
+
+**THE SAVE-SCOPE DISPATCHER IS NAMED.** `CGObjPC::vslot_320` (`0x4e63f0`) —
+rounds 391–393's nine-bit save bitmask, read with objdump because the C drops the
+`lea`s — is **`CGObjPC::DBBackup`**. Slot 320 of `CGObjChar` is `0x4a7180`,
+already named `DBBackup` in round 398 **from its own log string, "Trying to DB
+Backup that is neither PC nor COS"** — and the vtables show that exactly
+`CGObjPC` and `CGObjCOS` override that slot while `CGObjNPC` inherits it. **The
+error message enumerates the two overriding classes by name**, which is about as
+independent as two sources get: a runtime string and the RTTI layout.
+`CGObjCOS::DBBackup` (`0x4d2010`, 53 bytes) is the COS's equivalent and is a
+natural next read. `persistence.md` updated.
+
+**applied 14, reowned 5, failed 0** — and this time the repo's guards were run
+BEFORE the apply, which is round 418's lesson taken. `PROJSTAMP` cleared. No
+behaviour changed, so no tag.
+
 Round 418 (the control round 417 could not build, built — and 123 wrong class
 prefixes corrected): ROUND 417 REFUSED TO SPEND AN UNVALIDATED RULE AND WROTE
 DOWN EXACTLY WHAT WOULD VALIDATE IT: "the full hierarchy read out of the COL's

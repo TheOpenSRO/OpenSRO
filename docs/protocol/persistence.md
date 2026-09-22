@@ -771,3 +771,29 @@ approximate — the walk stops at the previous call and can overcount — and 34
 show conversions ≠ varargs. Those are **not** promoted: they mark where the
 cleanup heuristic or the push walk is imprecise, and each needs its own read. The
 41 % figure uses the cleanup count, which the controls validate.
+
+
+## The save-scope dispatcher has a name: `CGObjPC::DBBackup` (round 419)
+
+Rounds 391–393 read `CGObjPC::vslot_320` (`0x4e63f0`) as the character save — a
+nine-bit scope bitmask dispatching to member sub-objects — without being able to
+name it. It is **`CGObjPC::DBBackup`**, and the vtable settles it structurally:
+
+| class | slot 320 | |
+|---|---|---|
+| `CGObjChar` | `0x4a7180` | `DBBackup`, the base |
+| `CGObjNPC` | `0x4a7180` | inherits it unchanged |
+| `CGObjPC` | **`0x4e63f0`** | **overrides it** — the scope bitmask |
+| `CGObjCOS` | **`0x4d2010`** | **overrides it** |
+
+**Two independent sources agree, and they could hardly be more different.** The
+base was named in round 398 from its own runtime log string — *"Trying to DB
+Backup that is neither PC nor COS"* — and the hierarchy, read here out of the
+`ClassHierarchyDescriptor`, shows that **exactly `CGObjPC` and `CGObjCOS`
+override that slot** while `CGObjNPC` does not. The error message enumerates the
+two overriding classes by name.
+
+So the nine save scopes rounds 391–398 recovered are the body of the PC's
+`DBBackup` override, and `CGObjCOS::DBBackup` (`0x4d2010`, 53 bytes) is the COS's
+much smaller equivalent — a natural next read for what a summoned creature
+persists.
