@@ -303,3 +303,59 @@ which is consistent with it being the generic script host, and equally
 consistent with it being something narrower. **A quest-id → script mapping would
 settle it, and none has been found.** That is the next probe, and it is a data
 question now rather than a vtable one.
+
+## The 542 measured, and the question re-framed again (round 429)
+
+Round 428 said the remaining question was a data one. It is, and the data answers
+the shape of it even where it does not answer the mechanism.
+
+**The split is measured exactly.** `questdata.txt` has **696 rows**, column 2 the
+quest code name, all distinct. Joined against the 205 RTTI classes whose chain
+contains `CQuestBase`/`IQuest`:
+
+| | count |
+|---|---:|
+| quests **with** a compiled class | **154** |
+| quests **without** | **542** |
+
+`SYSTEMS.md` said 153 and 543; the measurement lands within one, which is the
+agreement a count of this kind should have.
+
+**And the classless set is not 542 bespoke quests.** Two families dominate it and
+have no compiled classes at all:
+
+| prefix | without a class | with |
+|---|---:|---:|
+| `SD` | **237** | 0 |
+| `FW` | **98** | 0 |
+| `KT` | 51 | 6 |
+| `TQ` | 36 | 23 |
+
+`QNO_SD_GU_030`, `_031`, `_032` … are a **numbered series at a fixed level**
+(105 for 55 of them); `QNO_FW_RB1_012`, `_013`, `_014` … likewise. That is
+templated, repeatable content — 335 of the 542, **62 %**, in two runs of
+generated quests. `FW` is fortress war (round 423's `MOB_FW_*`).
+
+**So the framing "543 quests each need an attachment mechanism" is wrong.** A
+compiled class is the **exception**, not the rule: 154 quests have bespoke logic,
+and the rest are described by `questdata.txt` plus the objective table
+`questcontentsdata.txt`. What has *not* been found is the generic handler that
+interprets those rows, and that is the honest remaining gap — but it is a
+different and much smaller question than the one the row was blocked on.
+
+### Three tiers, which had been conflated
+
+| tier | count | what |
+|---|---:|---|
+| data rows | 696 | every quest, `questdata.txt` + `questcontentsdata.txt` |
+| compiled classes | 154 | quests needing bespoke logic |
+| Lua scripts | **10** | `script\q_script\qno_*.txt` in Media.pk2 |
+
+**The ten scripts are not the classless mechanism.** They pair with quests that
+*do* have classes — `qno_tq_baekryoung_13.txt` against
+`QNO_TQ_BAEKRYEOUNG_13`, the class carrying the `OnScriptStarted` RTTI found in
+round 427. They are cutscene/dialogue content for a handful of story quests.
+Round 427's hypothesis that the classless quests are Lua is **refuted for the
+client-side scripts**; the server's own `./Script/VIETNAM/` directory ships with
+the server and is in none of the archives this project has, so nothing can be
+said about it either way.

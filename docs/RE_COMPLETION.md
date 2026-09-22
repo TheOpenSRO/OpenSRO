@@ -6405,6 +6405,40 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 429 (the 542 measured, and the blocker's framing wrong a second time):
+ROUND 428 SAID THE REMAINING QUESTION WAS A DATA ONE. It is, and the data
+settles the shape of it. `questdata.txt` has **696 rows**, column 2 the quest
+code, all distinct; joined against the 205 RTTI classes whose chain contains
+`CQuestBase`/`IQuest`: **154 quests have a compiled class, 542 do not.** The row
+said 153/543, so the measurement lands within one.
+
+**AND THE 542 ARE NOT 542 BESPOKE QUESTS.** Two families dominate and have no
+classes at all — `SD` with **237** and `FW` with **98**, against `KT` 51, `TQ`
+36. `QNO_SD_GU_030`, `_031`, `_032` … are a numbered series at a fixed level
+(105 for 55 of them); `QNO_FW_RB1_012`, `_013`, `_014` … likewise. **335 of the
+542 — 62 % — are two runs of templated, repeatable content.** So "543 classless
+quests each needing an attachment mechanism" was the wrong picture: a compiled
+class is the **exception**, used for the 154 quests with bespoke logic, and the
+rest are described by `questdata.txt` plus `questcontentsdata.txt`. The gap that
+remains is the generic handler that interprets those rows — a real gap, but a far
+smaller one than the row was blocked on. Second round running that this item's
+framing has been found wrong rather than hard; round 428 killed the "slot 55"
+premise, this one kills the "543 bespoke" premise.
+
+**AND ROUND 427'S OWN HYPOTHESIS IS REFUTED WHERE IT CAN BE TESTED.** That round
+guessed the classless quests might be Lua. Media.pk2 ships **ten** quest scripts
+in `script\q_script\`, not 542 — and they pair with quests that *do* have
+classes: `qno_tq_baekryoung_13.txt` against `QNO_TQ_BAEKRYEOUNG_13`, the class
+carrying the `OnScriptStarted` RTTI that started the whole thread. They are
+cutscene content for a handful of story quests. **The server's own
+`./Script/VIETNAM/` directory ships with the server and is in none of the
+archives this project holds**, so nothing can be said about it in either
+direction — recorded as unreachable rather than as absent.
+
+Three tiers that had been conflated, now separated: **696** data rows, **154**
+compiled classes, **10** Lua scripts. No names filed, so nothing to apply and no
+rebuild. No behaviour changed, so no tag.
+
 Round 428 (the call path round 427 refused to assume, traced — and the quest
 blocker's premise is wrong): ROUND 427 FOUND AN EMBEDDED LUA AND A QUEST SCRIPT
 SUBSYSTEM AND DECLINED TO JOIN THEM, NAMING THE EXACT PROBE THAT WOULD. That
