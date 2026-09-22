@@ -996,13 +996,68 @@ is `ret 0x8` and its written value comes from `[esp+0x14]`, which is **arg2** �
 so the *kind* is the last push, not the first, and the two sites are really
 `(kind 0x0f, value 2)`. Reading the callee's own frame is what fixed it.
 
-**What remains for 7** are the register-sourced writers, of which there are
-three in the character range:
+**What remains for 7** are the register-sourced writers. Round 457 read all
+three and **two are false positives** — the census matched any struct with a
+byte at offset 6, not only chardata:
 
-	AJStateChanger::vslot_002  +0xbc     round 361's candidate, from a JOB field
-	CGObjPC::FUN_004de300      +0xd9
-	FUN_0050fda0               +0x18
+	AJStateChanger::vslot_002  +0xbc   GENUINE -- round 361's candidate
+	CGObjPC::FUN_004de300      +0xd9   CGObjPC's own constructor, a different field
+	FUN_0050fda0               +0x18   a copy constructor, copying byte 6 of another struct
 
-Round 361 already named the first as the likely path (`*(chardata+6) = *(job+0xd)`).
-It is still untraced, and the other two were not examined. **7 stays open**, but
-its negative is now a measurement rather than a grep.
+So exactly one genuine indirect writer exists, and round 457 traced it.
+
+## Value 7: read everywhere, written nowhere (round 457)
+
+Round 456 left value 7 as the last unnamed INTERACTMODE. It is now audited from
+both ends, and the result is a shape worth recording rather than a name.
+
+### The reads are real, checked at instruction level
+
+Round 361 said `AttachEquipItem` and `DetachEquipItem` refuse on `== 2 || == 7`.
+That reading survives the strongest check available:
+
+	524d0c:  mov eax,DWORD PTR [esi+0x30]   ; the chardata pointer
+	524d0f:  mov al,BYTE PTR [eax+0x6]      ; INTERACTMODE
+	524d12:  cmp al,0x2
+	524d1a:  cmp al,0x7
+
+Ten `cmp al,0x7` sites across the two functions, every one reading
+`chardata + 6`. Two of them lead to `Assert_BreakIfDebugger` — a debug tripwire
+— and the rest jump to the real refusal. **7 is a genuinely tested state.**
+
+### No literal path writes it
+
+Four routes exist into `chardata + 6`, and **7 uses none of them**:
+
+| route | result for 7 |
+|---|---|
+| a direct byte store `mov BYTE PTR [reg+0x6], imm` | **0 sites** (round 456's census) |
+| `CGObjPC::SetCharacterState` kind 2 | **kind 2 is never passed as a literal** at any of slot 171's 98 sites |
+| an `AJStateChanger` job with kind 2 | **no `mov BYTE PTR [reg+0xd],0x7` exists anywhere in the binary** |
+| the remaining register-sourced writers | two of the three were false positives (see above) |
+
+**What this does NOT license.** It does not say value 7 is dead. A computed or
+copied value can still reach the byte, and this project has a standing rule
+against exactly that inference — "nothing writes param N, so it is zero" is an
+invalid recovery. What is established is narrower and still useful: **no code
+path in this binary sets INTERACTMODE to 7 from a constant**, so if 7 occurs it
+is carried in from data or copied from another character's state.
+
+### A bonus: `AJStateChanger` is the deferred `SetCharacterState`
+
+Reading the job body settled something else. `AJStateChanger::vslot_002` counts
+down a float at `+0x10` and, on expiry, switches on `+0xc` and applies `+0xd` —
+and **its kind vocabulary is `SetCharacterState`'s**, which independently
+corroborates round 361's kind table from a second function:
+
+| kind | `SetCharacterState` writes | `AJStateChanger` writes |
+|---:|---|---|
+| 0 | — | vtable `0x1f0` = `SetLifeState` (round 411) |
+| 2 | `chardata + 6` | `chardata + 6` |
+| 3 | `chardata + 7` | `chardata + 7` |
+| 6 | `chardata + 8` | clears bits in `chardata + 8` |
+
+So the engine has an immediate state change and a **delayed** one sharing one
+kind enum. Kind 0 landing on `SetLifeState`, named in round 411 by a completely
+separate route, is the check that this is the same vocabulary and not a
+coincidence.

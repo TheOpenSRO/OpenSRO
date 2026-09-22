@@ -24625,3 +24625,37 @@ a census is only as good as the column it thinks it is reading.
 One name filed (`OpenMarket_BeginSession`), held with round 454's — two rows is
 not worth the ~9-minute rebuild. Nothing to wire; srrevamp has no open market.
 No tag. Tests green.
+
+## INTERACTMODE 7: read everywhere, written nowhere (round 457)
+
+Round 456 left 7 as the last unnamed INTERACTMODE and named three
+register-sourced writers as what remained. **Two of the three were false
+positives** — that census matched any struct with a byte at offset 6, not only
+chardata. `CGObjPC::FUN_004de300` is `CGObjPC`'s own constructor and
+`FUN_0050fda0` is a copy constructor copying byte 6 of an unrelated record. Only
+`AJStateChanger::vslot_002` was genuine, and this round traced it.
+
+**The reads are real.** `AttachEquipItem` / `DetachEquipItem` do test 7, checked
+at instruction level — `mov eax,[esi+0x30]; mov al,[eax+0x6]; cmp al,0x7`, ten
+sites, two of them debug asserts and the rest real refusals.
+
+**No literal path writes it.** All four routes into `chardata+6` were measured:
+no direct byte store (0 sites); `SetCharacterState` kind 2 is **never passed as
+a literal** at any of slot 171's 98 call sites; **no `mov BYTE PTR [reg+0xd],0x7`
+exists anywhere in the binary**, so no `AJStateChanger` job carries it; and the
+remaining indirect writers are the two false positives above.
+
+**What this does not license.** It does not say 7 is dead. A computed or copied
+value can still reach the byte, and this project has a standing rule against
+exactly that inference. The established claim is narrower: **no code path in
+this binary sets INTERACTMODE to 7 from a constant.**
+
+**A bonus finding: `AJStateChanger` is the deferred `SetCharacterState`.** The
+job counts down a float and on expiry switches on `+0xc` and applies `+0xd`,
+using **the same kind vocabulary** — kind 2 → `chardata+6`, kind 3 →
+`chardata+7`, kind 6 → `chardata+8`, kind 0 → vtable `0x1f0`, which round 411
+independently named `SetLifeState`. That last agreement is what shows it is one
+enum and not a coincidence, and it corroborates round 361's kind table from a
+second function.
+
+No name filed; two still held. Nothing to wire, no tag. Tests green.
