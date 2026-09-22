@@ -6405,6 +6405,42 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 422 (the acquire side read, and the motive I was about to publish is
+wrong): ROUND 421 RECORDED THE GIVE-UP SUPPRESSION AS MECHANISM WITHOUT MOTIVE
+AND SAID IT HAD NOT READ THE ACQUIRE SIDE. Reading it resolves the mechanism and
+kills the natural explanation.
+
+FIRST, A JOIN THE REPO ALREADY HELD. `monster_ai.md` describes the acquire scan's
+kind mask as "1 = slot 7 IsPC, 2 = slot 10 IsMonster, **4 = slot 11, 8 = slot
+18**, 0x10 = slots 242/243/245" — naming two slots and leaving two as bare
+numbers. `igobj_vtable.md` names them: slot 11 is **`IGObj::IsCOS`** and slot 18
+is **`IGObj::IsItem`**. Both docs were right; the consuming one had a blank where
+the other had the answer, which is the filing failure this project keeps
+recording. Joined.
+
+WITH THAT, THE FILTERS READ:
+
+	bit 2 (0x4)    kinds 5    = IsPC | IsCOS              selector 3
+	bit 7 (0x80)   kinds 5    = IsPC | IsCOS              selector 4
+	bit 8 (0x100)  kinds 0x11 = IsPC | slots 242/243/245  selector 5
+	(none)         kinds 1    = IsPC                      selector 2, nearest
+
+So bits 2 and 7 add **summoned creatures** — pets, mercenaries, carts — to what
+the species scans for, differing only in which selector picks the winner.
+
+**AND THAT REFUTES THE MOTIVE I WAS ABOUT TO PUBLISH.** The natural story for
+suppressing the give-up check is "this species hunts objects rather than players,
+and an object does not run away". The filters say otherwise: **all three still
+include `IsPC`**, so every one of them still hunts players. Worse for the story,
+**bit 8 changes the target kinds just as much and does NOT suppress give-up** —
+so the suppression is specific to bits 2 and 7 and is not explained by "has a
+non-default filter" at all. Why those two and not bit 8 is unread, and is now
+written down as unread rather than filled with a plausible sentence.
+
+The remaining blank in the kind vocabulary is `0x10`: slots 242, 243 and 245,
+still `CGObjCOS_Summoned::FUN_004828d0`, `FUN_00482920`, `FUN_004829c0`. No names
+filed, so nothing to apply and no rebuild. No behaviour changed, so no tag.
+
 Round 421 (the blind spot audited across the whole dump: no wrong entry, one
 missing use-site): ROUND 420 FOUND THAT `& 0x80` ON A BYTE DECOMPILES AS
 `(char)x < '\0'` AND IS INVISIBLE TO A `& 0x` GREP. Several of this project's

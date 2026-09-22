@@ -584,8 +584,10 @@ each object that is not the owner to the selector at `ctx+0x128 + selector*4`
 (`0x53ea60`): `[0] 0x546330 [1] 0x546460 [2] 0x5464e0 [3] 0x546790 [4]
 0x546a30 [5] 0x547070 [6] 0x546ca0 [7] 0x546e60`. Selector 2
 (`AITactics_Select_Nearest`) keeps a candidate that passes the kind mask
-(`GObj_MatchesKindMask`, `0x540b90`: 1 = slot 7 IsPC, 2 = slot 10 IsMonster,
-4 = slot 11, 8 = slot 18, 0x10 = slots 242/243/245), whose region-aware
+(`GObj_MatchesKindMask`, `0x540b90`: 1 = slot 7 `IsPC`, 2 = slot 10 `IsMonster`,
+4 = slot 11 **`IsCOS`**, 8 = slot 18 **`IsItem`** — both named in
+`docs/protocol/igobj_vtable.md` and left as bare slot numbers here until
+round 422 — and 0x10 = slots 242/243/245, which are still unnamed), whose region-aware
 distance (`GObj_DistanceBetween`) is **at most the radius**, and that is
 **nearer than the best so far** -- the nearest player wins. A player candidate
 first detours through `GObjPC::FUN_004fc160(pc+0x1ce8)`, the player's summoned
@@ -910,3 +912,36 @@ tests `& 0x80` explicitly, navmesh code and CRT routines.
 **No recorded table was found to be WRONG by that sweep** — column 42 already
 lists bit 7 correctly. The blind spot cost a missing use-site, not a wrong
 entry.
+
+## What the acquire filter actually selects, and a motive refuted (round 422)
+
+Round 421 found that flag bits 2 and 7 suppress the give-up check and recorded it
+as mechanism without motive. Reading the acquire side resolves the mechanism and
+**refutes the obvious motive.**
+
+With the kind mask resolved to names, the three non-default filters read:
+
+| flag bit | kinds | = | selector |
+|---|---|---|---|
+| 2 (`0x4`) | 5 | `IsPC` \| `IsCOS` | 3 (`0x546790`) |
+| 7 (`0x80`) | 5 | `IsPC` \| `IsCOS` | 4 (`0x546a30`) |
+| 8 (`0x100`) | `0x11` | `IsPC` \| slots 242/243/245 | 5 (`0x547070`) |
+| *(none)* | 1 | `IsPC` | 2, `AITactics_Select_Nearest` |
+
+So bits 2 and 7 add **summoned creatures** — pets, mercenaries, carts — to what
+the monster scans for, differing only in which of the eight selectors picks the
+winner. Selectors 3 and 4 end in the same shape as selector 2: a distance
+compared against the best so far, then `*param_4 = ROUND(dist)` and the
+candidate registered.
+
+**THE MOTIVE I EXPECTED IS WRONG.** The natural story for suppressing give-up is
+"this species hunts objects rather than players, and an object does not run
+away". That is not what the filters say: **all three still include `IsPC`**
+(bit 1 of the kind mask). And bit 8 changes the target kinds just as much yet
+does **not** suppress the give-up check — so the suppression is specific to bits
+2 and 7 and is not explained by "has a non-default filter". Why those two bits
+and not bit 8 remains unread.
+
+The remaining blank in the kind vocabulary is `0x10` — slots 242, 243 and 245,
+which the dump still calls `CGObjCOS_Summoned::FUN_004828d0`, `FUN_00482920` and
+`FUN_004829c0`.
