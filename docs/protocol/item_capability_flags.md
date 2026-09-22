@@ -5,9 +5,13 @@ dropped, used and so on from **one flags word on the item's reference row**, at
 offset `+0x8c` — reached by the `item[0xd] + 0x18` chain used throughout the
 server for an object's ref row.
 
-srrevamp models **none** of this yet, and cannot until the columns are found
-(see the last section). It is written down because the bit map is settled and
-the column hunt is not, and those are different states.
+**STALE HEADER, CORRECTED ROUND 460.** This used to read "srrevamp models none
+of this yet, and cannot until the columns are found". Both halves were wrong by
+then: `server/internal/refdata/item.go` already carries `CanTrade`, `CanSell`
+and `CanDrop` with their itemdata columns (**16, 17, 20**), and `shop.Sell`
+already refuses on `CanSell`. The answer had reached the code and never reached
+this file — and round 459 believed the header, concluded "the column hunt stays
+open", and went looking for something already found.
 
 ## How it was found
 
@@ -508,7 +512,56 @@ word is built:
 which is a real rule, not a parse artifact: an untradeable item is also
 undroppable even when its own column says otherwise.
 
-### Why no file column numbers are given here
+### The columns, anchored against real data (round 460)
+
+Round 459 could not give column numbers because counting the parser's field
+reads disagreed with the grounded anchors by nine. That was the right caution
+and the wrong method: **read index is not file column index**. Anchoring against
+a real table instead settles the whole run.
+
+**The alignment is fixed by the two PACKED columns, not by counting.** The parse
+needs one field tested `& 0x80`/`& 0x40` (bits 12, 13) and one tested
+`& 1`/`& 2` (bit 4 `CanDrop`, and bit 14), adjacent and in that order. A real
+itemdata has exactly one such adjacent pair in the region — column **19** reads
+`0/128/223/255` and column **20** reads `0/1/3`, where every neighbour is a
+plain `0/1`. That pins the run:
+
+| flags bit | predicate | itemdata / characterdata column |
+|---:|---|---:|
+| 0 | `CanTrade` | **16** |
+| 1 | `CanSell` | **17** |
+| — | read, but feeds no bit of this word | 18 |
+| 12 and 13 | *unnamed* — one packed column, `& 0x80` and `& 0x40` | **19** |
+| 4 and 14 | `CanDrop` (bit 0) and bit 14 (bit 1) | **20** |
+| 5 | `CanPick` | **21** |
+| 6 | `CanRepair` | **22** |
+| 7 | `CanRevive` | **23** |
+| 8 | `CanUse` | **24** |
+| 9 | `CanThrow` | **25** |
+
+**Two of them are confirmed by MEANING, not position** — the check that would
+fail if the run were shifted:
+
+- **column 22 (`CanRepair`)**: `1` on **676 of 676** armour rows and `0` on
+  **1,339 of 1,339** potions/etc. A potion cannot be repaired; armour can.
+- **column 24 (`CanUse`)**: the exact inverse — `0` on all 676 armour rows,
+  non-zero only among consumables. Armour is equipped, not used.
+
+A shifted mapping cannot produce both splits at once.
+
+### `CanRepair` is measured redundant for srrevamp, and deliberately not wired
+
+The obvious wiring is to refuse repair when bit 6 is clear. **Measured across
+three itemdata parts — 3,879 rows — column 22's set is *exactly* the non-zero
+set of the repair-cost columns 27/28, with no exception in any file.**
+srrevamp's `RepairHandler` already skips items with `DurabilityMax <= 0`, so the
+flag would change no behaviour. Recorded rather than implemented.
+
+**`CanRevive` is not the same flag**, despite tracking `CanRepair` closely:
+column 23 matches column 22 exactly in two of the three parts and diverges in
+the third, so they are distinct and only coincide for ordinary equipment.
+
+### Why round 459 gave no file column numbers
 
 The obvious next step is to turn those fields into `itemdata`/`characterdata`
 column numbers. **A control says the arithmetic for that does not hold, so no

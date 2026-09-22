@@ -24749,3 +24749,40 @@ counting reads. So the fields are identified here by *what they feed* and by
 nothing else, and the column hunt stays open with the reason now known.
 
 No name filed; two still held. Nothing to wire, no tag. Tests green.
+
+## The capability columns, anchored — and round 459's conclusion retracted (round 460)
+
+**Round 459 concluded "the column hunt stays open". It was already closed.**
+`server/internal/refdata/item.go` carries `CanTrade`, `CanSell` and `CanDrop`
+with their itemdata columns (16, 17, 20), and `shop.Sell` already refuses on
+`CanSell`. The answer had reached the **code** and never reached
+`item_capability_flags.md`, whose header still said srrevamp "models none of
+this yet, and cannot until the columns are found" — and round 459 believed the
+header. My own notes say to grep the repo's own code before a dump dig; not
+doing that cost a round. Header corrected.
+
+**The remaining columns are now anchored anyway**, by a method that does not
+depend on counting reads. The parse needs one field tested `& 0x80`/`& 0x40`
+(bits 12, 13) and one tested `& 1`/`& 2` (`CanDrop` and bit 14), adjacent and in
+that order. A real itemdata has exactly one such adjacent pair in the region —
+column **19** reads `0/128/223/255`, column **20** reads `0/1/3`, every
+neighbour a plain `0/1`. That pins the run: 21 `CanPick`, 22 `CanRepair`,
+23 `CanRevive`, 24 `CanUse`, 25 `CanThrow`.
+
+**Two are confirmed by MEANING, which a shifted mapping could not fake:**
+column 22 is `1` on **676/676** armour rows and `0` on **1,339/1,339**
+potions/etc; column 24 is the **exact inverse**, zero on every armour row.
+Armour is repaired but not used; a potion is used but not repaired.
+
+**`CanRepair` is measured redundant and deliberately not wired.** Across three
+itemdata parts — 3,879 rows — column 22's set is *exactly* the non-zero set of
+the repair-cost columns, with no exception in any file, and `RepairHandler`
+already skips items with no durability. Adding the flag would change no
+behaviour, so it is recorded instead of implemented.
+
+**`CanRevive` is a genuinely different flag**: column 23 matches 22 exactly in
+two parts and diverges in the third, so they coincide only for ordinary
+equipment.
+
+No name filed; two still held. Nothing wired (measured redundant), no tag.
+Tests green.
