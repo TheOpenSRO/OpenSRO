@@ -47,6 +47,7 @@ clob = re.compile(r"^(call|xor\s+eax|movzx\s+eax|mov\s+eax,DWORD|mov\s+ax,WORD|p
 
 pay = collections.defaultdict(list)     # (opcode, fn) -> [sizes]
 unattr = collections.Counter()
+helper = {}   # (opcode, fn) -> [1,2] for messages sent through Msg_SendTwoFieldReply
 cur_fn = None; cur_op = None
 for i, (a, t) in enumerate(rows):
     f = owner(a)
@@ -66,6 +67,24 @@ for i, (a, t) in enumerate(rows):
             wm = wstore.match(rows[j][1])
             if wm and wm.group(1) == reg: cur_op = int(wm.group(2),16); break
         continue
+    if t.startswith("call") and "0x4e7250" in t:
+        # THIRD IDIOM: Msg_SendTwoFieldReply opens the message ITSELF, with the
+        # opcode in ECX, so its caller sends without ever opening one -- which is
+        # why a sweep keyed on opens alone misses it. Payload is the grounded
+        # {u8, u16} of round 443.
+        #
+        # Kept in a SEPARATE dict on purpose. Writing into `pay` clobbered rich
+        # rows and, because `pay` is a defaultdict(list), let later appends push
+        # onto the [1,2] -- 0xb045 went from 1,4,1,VAR,2 to 1,2 and 0xb04b from
+        # 1 to 1,2,1 before the controls caught it.
+        for j in range(i-1, max(i-10, 0), -1):
+            m2 = re.match(r"^mov\s+ecx,(0x[0-9a-f]{3,4})$", rows[j][1])
+            if m2:
+                helper[(int(m2.group(1), 16), fn)] = [1, 2]
+                break
+            if rows[j][1].startswith("call"):
+                break
+        continue
     if t.startswith("call") and APPEND in t:
         size = None
         for j in range(i-1, max(i-24,0), -1):
@@ -82,6 +101,9 @@ print("opcode\tsender\tfields\tlayout")
 for (op, fn), sizes in sorted(pay.items(), key=lambda kv: (kv[0][0], kv[0][1] or "")):
     lay = ",".join("VAR" if s is None else str(s) for s in sizes)
     print("0x%04x\t%s\t%d\t%s" % (op, fn, len(sizes), lay))
-ops = {op for op, _ in pay}
+for k, v in sorted(helper.items(), key=lambda kv: (kv[0][0], kv[0][1] or "")):
+    if k in pay: continue
+    print("0x%04x\t%s\t%d\t%s" % (k[0][0] if isinstance(k[0], tuple) else k[0], k[1], len(v), ",".join(map(str, v))))
+ops = {op for op, _ in pay} | {op for op, _ in helper}
 print("# distinct opcodes: %d   sender rows: %d   unattributed appends: %d in %d functions"
       % (len(ops), len(pay), sum(unattr.values()), len(unattr)), file=sys.stderr)

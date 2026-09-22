@@ -1144,3 +1144,49 @@ all things that happen *to a particular object*, so the field they look up is an
 module attribution — its own plate says "Module INTERPOLATED, not asserted" —
 so the class is a neighbour inference, not a proven owner. The leaf name is what
 this round establishes.
+
+## A third send mechanism, found by taking the old census seriously (round 474)
+
+Round 473 dismissed `message_handlers.tsv`'s `server_senders` column as
+unreliable, on round 465's reading of one function that "opens no message at
+all". **That characterisation was wrong, and checking it found a gap in my own
+sweep.**
+
+The column lists senders for **25 opcodes the sweep had none for**. Of the 40
+functions behind them, **39 open no message directly — and all 39 call
+`Msg_SendTwoFieldReply`**, which opens the message *itself* with the opcode in
+**ECX**. A caller of that helper sends without ever opening one, so a sweep
+keyed on opens misses it by construction. The helper has 160 call sites.
+
+**Third idiom added**, and the artifact grows:
+
+	opcodes found      233  ->  262
+
+**Cross-validated against the client, every measure improves:**
+
+| | v2 (round 466) | v3 (round 474) |
+|---|---:|---:|
+| comparable opcodes | 133 | **162** |
+| agree on field 1 | 131 (98 %) | **160 (99 %)** |
+| prefix-match | 116 (87 %) | **144 (89 %)** |
+| **exact match** | 44 (33 %) | **83 (51 %)** |
+
+**The exact-match jump is a confirmation, not just a gain.** A helper-sent
+message carries `{u8, u16}`, and the client reads exactly `1,2` for those
+opcodes — which is the failure envelope rounds 467-468 recovered independently
+(`u8 result; == 2 -> u16 error code`). Three findings from three different
+directions landing on the same shape.
+
+### The controls caught a bug mid-flight
+
+The first patch wrote helper rows into the same `defaultdict(list)` the direct
+appends use. That **clobbered** richer rows and, because the value is a list,
+let later appends push onto the `[1,2]`:
+
+	0xb045   1,4,1,VAR,2   ->   1,2        (clobbered)
+	0xb04b   1             ->   1,2,1      (appended onto)
+
+Both are standing controls from round 462, and both broke, which is the whole
+reason for keeping controls that are known-correct rather than merely green.
+Helper rows now live in a separate dict and are emitted only where no
+direct-open row exists for the same `(opcode, function)`.

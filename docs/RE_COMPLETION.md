@@ -25243,3 +25243,38 @@ functions that open no message at all — a different defect, needing a differen
 check, and not fixed here.
 
 Nothing wired beyond the test, no tag. `go test -count=1 -p 1 ./...` green.
+
+## A third send mechanism, and round 473's dismissal retracted (round 474)
+
+Round 473 called `message_handlers.tsv`'s `server_senders` column unreliable,
+generalising from round 465's reading of one function that "opens no message at
+all". **Checking that generalisation found a gap in my own sweep instead.**
+
+That column lists senders for **25 opcodes my sweep had none for**. Of the 40
+functions behind them, 39 open no message directly — **and all 39 call
+`Msg_SendTwoFieldReply`**, which opens the message itself with the opcode in
+**ECX**. A caller of that helper sends without ever opening one, so a sweep
+keyed on opens misses it by construction, and the helper has 160 call sites. The
+old census was right; the dismissal was wrong.
+
+**Third idiom added: 233 -> 262 opcodes**, and every cross-validation measure
+improves against the client:
+
+	comparable opcodes   133 -> 162
+	agree on field 1      98 % -> 99 %
+	prefix-match          87 % -> 89 %
+	exact match           33 % -> 51 %
+
+**The exact-match jump is a confirmation, not just a gain.** Helper-sent
+messages carry `{u8, u16}` and the client reads exactly `1,2` for them — the
+failure envelope rounds 467-468 recovered from a completely different direction.
+
+**The controls caught a bug mid-flight.** The first patch wrote helper rows into
+the same `defaultdict(list)` the appends use, which clobbered richer rows and
+let later appends push onto the `[1,2]`: `0xb045` went `1,4,1,VAR,2 -> 1,2` and
+`0xb04b` went `1 -> 1,2,1`. Both are standing round-462 controls with
+known-correct values, which is exactly why they caught it — a control that is
+merely green tells you nothing. Helper rows now live in a separate dict, emitted
+only where no direct-open row exists for the same `(opcode, function)`.
+
+Nothing wired, no tag. `go test -count=1 -p 1 ./...` green.
