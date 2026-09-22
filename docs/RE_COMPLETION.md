@@ -6405,6 +6405,41 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 442 (every reply path traced: the result-code vocabulary, and a third
+sighting of body modes 6 and 7): ROUND 441 NAMED THE BLOCKER — "assigning
+meanings to the two pushed words needs every refusal path traced" — AND THE
+HANDLER IS 472 BYTES, SO THAT IS BOUNDED WORK. Disassembled in full, every path
+converges on the single `call 0x4e7250` at `0x515bdd`, and **each pushes exactly
+one word** before reaching it:
+
+	pushed  guard
+	  1     the [ebp+0x34] comparison at 0x515c07 not taken
+	  3     three paths, all `je 0x515bd4`
+	  4     GetBodyMode() == 2 -- BODYMODE_INVINCIBLE
+	  5     skill param [eax+0x4a4] in 1..4, or GetBodyMode() 6 or 7
+
+So **the reply's first field is a result code** with that vocabulary and a guard
+for each value. The success path does not reply here at all — it falls through
+into `GObjPC::FUN_005a16c0(this+0x28c, 4, 0)` and the `SetBodyMode` call.
+
+**AND IT STILL DOES NOT MEET THE BAR TO WIRE.** `Msg_SendTwoFieldReply` appends
+**two** words from adjacent stack slots while every path pushes only **one**, so
+the second field's source is unread; and that helper's own note warns Ghidra
+misreports its argument — the error that invalidated round 323. Three rounds on
+this opcode have produced the wire number (twice, independently), the request
+layout, and the reply's first field, and `session.OpBerserk` (`0x0068`) is still
+correctly the live placeholder. That is what `PROTOCOL_DECISION.md` asks for and
+it is worth saying plainly rather than shipping on two thirds of a layout.
+
+**A THIRD INDEPENDENT SIGHTING OF BODY MODES 6 AND 7.** Round 425 found indices
+5, 6 and 7 of the engine's `BODYMODE_*` table are **NULL** — modes that exist in
+code and that the engine does not name. Round 424 found the AI target filter
+admits them only when tactics flag bit 9 is set. This round finds berserk
+refusing them with result code 5. Three unrelated refusals agreeing that 6 and 7
+are a real special state is worth more than any one of them, and it **rules out
+the reading that they are stale or unreachable values**. What they are is still
+unread. No behaviour changed, so no tag.
+
 Round 441 (the berserk opcode confirmed from the instruction stream, and the
 payload deliberately left unconfirmed): ROUND 440 GROUNDED THE WIRE NUMBER BUT
 NOT THE PAYLOAD, AND `PROTOCOL_DECISION.md` REQUIRES BOTH BEFORE A PLACEHOLDER

@@ -457,3 +457,21 @@ here overturns the use-site evidence for 9, and nothing explains the gap.
 **GROUPMODE refines round 361's reading of `chardata + 7`.** That round called it
 "the pending-invitation byte". It is the party-membership mode, of which
 `PARTY_SETUP` — an invitation outstanding — is one value of five.
+
+## Body modes 6 and 7: a third independent appearance (round 442)
+
+Round 425 read the engine's own body-mode name table and found indices 5, 6 and
+7 **NULL** — modes that exist in code and that the engine does not name. They
+have now surfaced three times, in three unrelated places:
+
+| round | where | what it does |
+|---|---|---|
+| 424 | `FUN_00540de0`, AI target validation | refuses a candidate in body mode 6 or 7 **unless** tactics flag bit 9 is set |
+| 425 | the `BODYMODE_*` string table at `0xc64020` | indices 5, 6, 7 are NULL — no name |
+| 442 | `GObjPC_HandleBerserkMsg_0a7` (`0x515b30`) | refuses berserk with result code **5** when `GetBodyMode()` reads 6 or 7 |
+
+So they are a real pair, checked by both the AI and the berserk path, and
+deliberately unnamed in the debug table. **What they are is still unread** — but
+three separate refusals agreeing that 6 and 7 are a special state is worth more
+than any one of them, and it rules out the reading that they are stale or
+unreachable values.

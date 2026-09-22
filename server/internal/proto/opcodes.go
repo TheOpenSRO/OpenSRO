@@ -237,15 +237,27 @@ const (
 // MsgBuf_ReadUInt8FromTail when the session field at +0x1048 is zero), and the
 // value 1 takes the activation path.
 //
-// NOT WIRED, AND DELIBERATELY SO. `docs/protocol/PROTOCOL_DECISION.md` says a
-// placeholder is replaced "once that opcode's real wire number AND PAYLOAD
-// LAYOUT are confirmed". The REPLY layout is not: it rides the generic
-// two-field helper, and that helper's own note warns that Ghidra names its
-// argument sometimes the opcode and sometimes the payload -- the error that
-// invalidated round 323's sweep and was withdrawn in round 325. Assigning
-// meanings to the two pushed words needs every refusal path traced, which this
-// round did not do. So `session.OpBerserk` (0x0068) stays live and these sit
-// beside it, exactly as round 365 left `OpMovementRequest`.
+// THE REPLY'S FIRST FIELD IS A RESULT CODE, and round 442 traced every path to
+// the single `call 0x4e7250` at 0x515bdd. Each pushes exactly ONE word before
+// reaching it, so the vocabulary and its guards are readable:
+//
+//	pushed  guard
+//	  1     the [ebp+0x34] comparison at 0x515c07 not taken
+//	  3     three paths, all `je 0x515bd4`
+//	  4     GetBodyMode() == 2, i.e. BODYMODE_INVINCIBLE
+//	  5     skill param [eax+0x4a4] in 1..4, or GetBodyMode() 6 or 7
+//
+// The success path does not reply here at all: it falls through 0x515c38 into
+// GObjPC::FUN_005a16c0(this+0x28c, 4, 0) and the SetBodyMode call.
+//
+// STILL NOT WIRED, AND DELIBERATELY SO. `docs/protocol/PROTOCOL_DECISION.md`
+// says a placeholder is replaced "once that opcode's real wire number AND
+// PAYLOAD LAYOUT are confirmed". The reply's SECOND field is still unread --
+// only one word is pushed per path, while `Msg_SendTwoFieldReply` appends two,
+// reading two adjacent stack slots -- and that helper's own note warns Ghidra
+// names its argument sometimes the opcode and sometimes the payload, the error
+// that invalidated round 323's sweep. So `session.OpBerserk` (0x0068) stays
+// live and these sit beside it, exactly as round 365 left `OpMovementRequest`.
 const (
 	OpBerserkRequest  uint16 = 0x70A7
 	OpBerserkResponse uint16 = 0xB0A7
