@@ -503,3 +503,48 @@ which announces itself in its own log string `"OnEVENT_TALISMANITEM_PICK : %d,
 %s"`. **The other five bases carry no string literal at all**, so that
 self-naming lever names exactly one of the six — measured, not assumed. Mapping
 the remaining five codes to the event names above needs a different source.
+
+## `CEVENTHandler`: seven generic handlers and 227 bespoke ones (round 433)
+
+Round 432 left the five unnamed demux codes needing "a different source". The
+source turned out to answer a bigger question instead, and to show the demux is
+**not** the main path.
+
+**`CEVENTHandler` is the root of a 234-class hierarchy**, and it splits cleanly:
+
+| kind | count | what |
+|---|---:|---|
+| **generic** | **7** | `COnSetupQuest`, `COnUpdate`, `COnEnterWorld`, `COnLeaveWorld`, `COnDead`, `COnEventZoneEntered`, `COnInstanceInvitaionAnswered` |
+| **nested** | **227** | `QNO_TQ_GENERALORDER_4::OnDead`, `FLAG_WORLD_EVENT_HANDLERS::OnUpdate_Arena`, … — bespoke, one per (quest, event) |
+
+The heaviest users are `QNO_TQ_GENERALORDER_4`, `QNO_TQ_ORNAMENT_4` and
+`QNO_TQ_STONEBOARD_4` with **12 nested handlers each**.
+
+**And the two mechanisms are disjoint.** Of the 205 classes in the `CQuestBase`
+hierarchy, **15 override a demux slot** and **35 declare nested `On*` handlers**,
+and **no class does both**. So `CBasicQuest::OnEvent`'s slot demux (round 431) is
+a minority path used by 15 classes; the event system proper is `CEVENTHandler`.
+
+### So how does a quest with no class attach?
+
+**Through the seven generic handlers.** They are the default behaviour for the
+seven core lifecycle events, and a quest needs no class of its own to receive
+them — which is the mechanism behind round 429's measurement that a compiled
+class is the exception. The 154 classes exist to supply **nested** handlers where
+the generic behaviour is not enough.
+
+Note which events have a generic implementation and which do not: `OnSetupQuest`,
+`OnUpdate`, `OnLeaveWorld`, `OnEnterWorld`, `OnInstanceInvitaionAnswered`,
+`OnEventZoneEntered` and `OnDead` do. **`OnAfterActivated`, `OnPartyStatusChanged`,
+`OnAbortQuest`, `OnPreUseItem` and `OnTimer` do not** — they exist only as
+bespoke per-quest handlers, so a quest that wants them must have a class.
+
+### A probe error worth recording
+
+The first attempt at this join compared every class in the binary against
+`CBasicQuest`'s slots and reported `CMainProcess`, `IGObj`, `CGItem` and
+`CGObjChar` as "classes overriding a quest demux slot". **A slot number is only
+meaningful inside one hierarchy** — `RE_LOOP.md` says so, from round 416 — and
+those are the game-object hierarchy, where slot 25 is some other method
+entirely. Restricting to the `CQuestBase` hierarchy is what produced the 15.
+Round 432's census had that restriction; this round's first cut did not.

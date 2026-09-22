@@ -6405,6 +6405,40 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 433 (`CEVENTHandler`: seven generic handlers, 227 bespoke, and the demux
+is the minority path): ROUND 432 LEFT THE FIVE UNNAMED DEMUX CODES NEEDING "A
+DIFFERENT SOURCE". The source answered a bigger question and demoted the demux.
+
+**`CEVENTHandler` is the root of a 234-class hierarchy** that splits cleanly:
+**seven generic handlers** — `COnSetupQuest`, `COnUpdate`, `COnEnterWorld`,
+`COnLeaveWorld`, `COnDead`, `COnEventZoneEntered`,
+`COnInstanceInvitaionAnswered` — and **227 nested** ones inside individual quest
+classes (`QNO_TQ_GENERALORDER_4::OnDead` and so on; that class,
+`QNO_TQ_ORNAMENT_4` and `QNO_TQ_STONEBOARD_4` carry twelve each).
+
+**AND THE TWO MECHANISMS ARE DISJOINT.** Of the 205 classes in the `CQuestBase`
+hierarchy, **15 override a demux slot**, **35 declare nested handlers**, and
+**none does both**. So round 431's slot demux is a minority path; the event
+system proper is `CEVENTHandler`.
+
+**WHICH ANSWERS THE ATTACHMENT QUESTION PROPERLY**: a quest with no class
+attaches through the **seven generic handlers**, the default behaviour for the
+core lifecycle events. That is the mechanism behind round 429's measurement that
+a compiled class is the exception — the 154 exist to supply **nested** handlers
+where generic behaviour is not enough. And the split is informative in both
+directions: `OnAfterActivated`, `OnPartyStatusChanged`, `OnAbortQuest`,
+`OnPreUseItem` and `OnTimer` have **no generic implementation**, so a quest
+wanting those must have a class.
+
+A PROBE ERROR WORTH RECORDING, AND IT IS THE THIRD IN THREE ROUNDS. My first cut
+compared every class in the binary against `CBasicQuest`'s slots and reported
+`CMainProcess`, `IGObj`, `CGItem` and `CGObjChar` as quest-demux overriders. **A
+slot number is only meaningful inside one hierarchy** — `RE_LOOP.md` says exactly
+that, from round 416 — and those belong to the game-object hierarchy. The control
+that caught it was printing both sets instead of their intersection. Round 432's
+census had the restriction; this round's first cut dropped it. No names filed;
+three still held. No behaviour changed, so no tag.
+
 Round 432 (the quest event vocabulary from RTTI, and last round's census
 retracted as my own filter's fault): ROUND 431 CLOSED WITH "a census found NO
 quest class overriding the demux slots, so those `::Handle` names are nested
