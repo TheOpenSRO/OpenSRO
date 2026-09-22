@@ -24337,3 +24337,52 @@ sitting beside a minimum level of 20.
 
 **Nothing to wire**, no name filed (the two functions this round leaned on were
 already named), no tag. Tests green (`go test -count=1 -p 1 ./...`, 58 packages).
+
+## How the client learns an NPC's interactions — and round 450 retracted (round 451)
+
+Round 450 named `CGObj::AddAvailableInteraction` as the live writer of the
+interaction set and had `CGObjNPCNPC::Create` and `CGObjStruct::Create` filling
+it. **That is wrong and is retracted.** The evidence was the shared insert
+helper `0x486fe0` being inlined into those constructors — but that helper is a
+`set<byte>::insert` instantiation used by *several different sets*, and
+attributing its sites to one of them is the COMDAT/shared-helper trap this
+project already has on file. Reading the container pointer actually pushed at
+each of its 11 sites splits them cleanly: three into `obj+0x130`, three into
+`obj+0x90`, three into a stack local, and **only two into `obj+0x1c78`**.
+
+**The correct model is two sets, and it explains the whole loop.**
+
+`obj+0x130` is the object's **own offer list**, filled at construction from the
+NPC's ref record (a list at `record+0x94`, one byte at `node+0xc` per entry) —
+so the offer list is table-driven, which is the part round 450 got right.
+
+`char+0x1c78` is the **per-character** set the 41 readers test, and the engine's
+name for it says exactly that: `SetAvailableInteractionPerGObj`. Only two
+functions write it and one is dead code, so the live writer is
+**`CGObjChar::PublishAvailableInteractions` (`0x4a95a0`), vtable slot 227** —
+declaring class by the round-418 LCA rule, with 13 vtables holding the address
+and `CGObjChar` a base of every other. It clears `+0x1c78`, walks `+0x130`,
+inserts each id, **and appends the count and every id to the outgoing message**.
+
+**Its two callers both reply `0xb045`**, the select-entity reply. So the loop
+closes: the server publishes the id list when you select an NPC, the client
+picks one and sends it with `0x7046`, and the server checks it back against the
+same set. It also sets `requester+0x728` — the flag `GObjPC::EndInteraction`
+clears — which is why ending an interaction that was selected but never opened
+succeeds rather than refusing `0x1c0d`.
+
+**The siege split, which round 450 named as its next probe.** The dispatcher's
+switch maps every fortress sub-command to its required id, and the per-id counts
+come out **13/3/5/4/4/1/1 — reproducing round 450's raw-instruction census
+exactly**, two readings with different failure modes agreeing. `0x16` and `0x17`
+are the only arms with no interaction check, and they are also the two the
+function special-cases before the switch. Recorded in `docs/protocol/siege.md`.
+
+**The ids are grouped but still not named.** Only three of the seven have a
+named callee (`0x17` tax ratio + both dungeons, `0x18` siege request, `0x19`
+structure repair) and one callee is not enough to name a role. Next probe: the
+log strings in the four unnamed manager blocks.
+
+One name filed (`CGObjChar::PublishAvailableInteractions`), **held unapplied** —
+one row is not worth the ~9-minute rebuild per the round-411 batching rule.
+Nothing to wire, no tag. Tests green (`go test -count=1 -p 1 ./...`).

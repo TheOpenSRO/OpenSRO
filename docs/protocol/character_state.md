@@ -703,18 +703,48 @@ all. It is not: **0 direct calls to `CGObjChar::SetAvailableInteractionPerGObj`
 directly, it is **dead code in this build** — which is why looking for the
 vocabulary through it could never have worked.
 
-The live writer is **`CGObj::AddAvailableInteraction` (`0x484e40`)**, a
-differently-named function on the base class. It too has 0 direct callers, but
-the raw set-insert helper it wraps (`0x486fe0`, 11 sites) is inlined into the
-two constructors that matter:
+**RETRACTED (round 451): the paragraph that stood here named
+`CGObj::AddAvailableInteraction` as the live writer of this set, on the strength
+of the shared insert helper `0x486fe0` being inlined into `CGObjNPCNPC::Create`
+and `CGObjStruct::Create`.** That helper is a `set<byte>::insert` instantiation
+shared by *several different sets*, and attributing its call sites to this one
+was the COMDAT/shared-helper trap. Reading the container pointer pushed at each
+of its 11 sites settles it:
 
-	CGObjNPCNPC::Create   +0x10c
-	CGObjStruct::Create   +0x9a
+| container | sites |
+|---|---|
+| `obj + 0x130` | `CGObj::AddAvailableInteraction`, `CGObjNPCNPC::Create`, `CGObjStruct::Create` |
+| `obj + 0x90` | `CGameServer::RefTeleport_ExtractData` ×2, `CGameServer::FUN_006a7f70` |
+| a stack local | `RefObjItem::ExtractData` ×3 |
+| **`obj + 0x1c78`** | `CGObjChar::SetAvailableInteractionPerGObj`, `CGObjChar::PublishAvailableInteractions` |
 
-so **an NPC or a structure registers its available interactions when it is
-built**. At the NPC site the ids are not literals — the loop reads a **byte at
-`record + 0xc`** out of a container and inserts each one, which is the shape of
-a table-driven list rather than hardcoded services. Where that container is
-filled is the next probe, and `RefObjItem::ExtractData` and
-`CGameServer::RefTeleport_ExtractData` also appear among the 11 insert sites,
-which is the first hint the list is refdata-backed.
+Single inheritance throughout (`CGObjPC : CGObjChar : CGObjMobile : CGObj :
+IGObj : CBase`) puts every base at offset 0, so `+0x130` and `+0x1c78` are
+genuinely different fields and not one field seen through two base pointers.
+
+### Two sets, and the one that reaches the client
+
+**`obj + 0x130` is the object's OWN offer list** — what this NPC or structure
+provides — and `CGObj::AddAvailableInteraction` is the engine's name for adding
+to it. `CGObjNPCNPC::Create` fills it from the NPC's ref record: a list at
+`record + 0x94`, one **byte at `node + 0xc`** per entry, each gated by a virtual
+test at slot `0x390`. So the offer list **is** table-driven, which is the one
+thing round 450 got right.
+
+**`char + 0x1c78` is the per-character set the readers test**, and its name says
+so — `SetAvailableInteractionPerGObj`, *per GObj*. Only two functions write it,
+and one of those is dead code, so the live writer is
+**`CGObjChar::PublishAvailableInteractions` (`0x4a95a0`), vtable slot 227**. In
+one pass it clears `+0x1c78`, walks `+0x130`, inserts each id, **and appends the
+count and every id to the outgoing message**.
+
+Its two callers are `FUN_0050faf0` (dispatch index `0x0c4`) and
+`GObjPC::FUN_0052b040`, and both reply **`0xb045`** — the select-entity reply.
+**That is how the client learns which interaction ids an NPC offers**, and it
+closes the loop: the client picks an id from this list, sends it with `0x7046`,
+and the server checks it back against the same set with
+`HasAvailableInteraction`.
+
+It also sets `requester + 0x728` — **the exact flag `GObjPC::EndInteraction`
+clears** (round 449), which is why ending an interaction that was only selected,
+never opened, still succeeds instead of refusing `0x1c0d`.

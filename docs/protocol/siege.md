@@ -254,3 +254,43 @@ The three non-siege ones are `OPENMARKET_UPDATE`, `UPDATE_EXP_BUFF` and
 **The query-builder functions were already named after their own query** — an
 earlier round spent that lever — **but under the wrong class**, which round 436
 corrected (see below).
+## The fortress sub-commands, and which interaction each needs (round 451)
+
+`SiegeFortress_DispatchCommand` (`0x519e60`, dispatch index `0x05e`) reads a
+`u32` then a sub-command byte and switches on it. Every arm but two first calls
+`CGObjChar::HasAvailableInteraction` with a **literal interaction id**, so the
+switch is also a map from fortress command to the NPC role that offers it:
+
+| sub-cmd | id | callee |
+|---:|---:|---|
+| `0x00`–`0x05` | **0x17** | `FUN_0062f4e0`, `SiegeFortressMgr::HandleSetTaxRatio`, `FUN_0062f7c0`, `FUN_00632020`, `FUN_00632100`, `FUN_006322a0` |
+| `0x06`–`0x08` | **0x18** | `FUN_00633610`, `SiegeFortressMgr::HandleSiegeRequest`, `FUN_00633c40` |
+| `0x09`–`0x0c` | **0x19** | (singleton only), `FUN_006341b0`, `FUN_00634350`, `SiegeFortressMgr::HandleStructureRepair` |
+| `0x0d`–`0x10` | **0x1a** | `FUN_006324a0`, `FUN_00632660`, `GObjPC::FUN_00632e50`, `FUN_00633170` |
+| `0x11`–`0x14` | **0x1b** | `FUN_00632580`, `FUN_00632a50`, `FUN_00632fe0`, `FUN_006333c0` |
+| `0x15` | **0x1f** | `FUN_00634c90` |
+| `0x16`, `0x17` | **none** | `FUN_00633ec0`, `FUN_00634020` |
+| `0x18` | **0x19** | `FUN_00634850` |
+| `0x19`–`0x1f` | **0x17** | `FUN_0062f940`, `FUN_0062fa80`, `FUN_0062fd50`, `FUN_0062fe70`, `FUN_006301a0`, `SiegeFortressMgr::HandleCreateDungeon`, `SiegeFortressMgr::HandleEnterDungeon` |
+| `0x20` | **0x28** | `FUN_00630ac0` |
+
+**The per-id counts are 13/3/5/4/4/1/1, which reproduce round 450's census of
+the same function exactly.** That census was taken from raw instructions
+(`push <imm>; push <obj>; call 0x50cd80`) and this one from the decompiled
+switch, so two readings with different failure modes agree.
+
+**`0x16` and `0x17` are the two arms that skip the interaction check** — and
+they are also the two the function special-cases before the switch, bypassing
+the `FUN_004e72a0` target check (`if (local_16 != 0x16 && local_16 != 0x17)`).
+Consistent: they are not NPC interactions at all.
+
+**What this does and does not name.** Id `0x17` covers tax ratio *and* both
+dungeon commands, `0x18` covers the siege request, `0x19` covers structure
+repair. Those are the only three ids with a named callee, and one named callee
+is not enough to name a role — `0x1a`, `0x1b`, `0x1f` and `0x28` have none at
+all. **So the ids are grouped but not named**, and the next probe is the four
+unnamed manager blocks (`0x632xxx`, `0x633xxx`, `0x634xxx`), whose log strings
+would say what each block does.
+
+Refusals: a failed interaction check answers `0xb05e` with code **3**, and an
+unknown sub-command with code **5**.
