@@ -694,3 +694,44 @@ twenty-seven rounds of naming moved the server **+0.4 points** and the client
 25,939 unnamed server functions, of which this page's own ceiling analysis says
 20,756 contain no string at all. The remaining work is structural, as that
 section concluded, and the headline number will move slowly whatever happens.
+
+## The server's two structural levers do not transfer to the client (round 437)
+
+Rounds 418 and 436 each paid well on the server — 123 and 118 prefix corrections.
+Both were run on the client and both come back near-empty, which is worth
+recording so nobody runs them a third time expecting yield.
+
+| lever | server | client |
+|---|---:|---:|
+| **name-form** `Class__Method` with a different owner | **118** | **6** (4 usable) |
+| **LCA owner** on functions in ≥10 vtables | 291 differ, **123 with a real method name** | 175 differ, **0 with a real method name** |
+
+**The reason is the same for both**: the client's names came from a different
+source. The server's came from SQL literals, log strings and asserts that embed
+`Class__Method`, and from vtable propagation onto functions that already had
+method names. The client's came from the assert lever (closed for naming in
+round 319), which does not produce that form — and its shared functions are
+overwhelmingly `FUN_`/`vslot_`, so correcting *where an unnamed function lives*
+buys nothing, which is the judgement round 418 already made.
+
+The four usable client corrections are all **module-name owners**:
+`UI_ALCHEMYBOX::CPSMission__OnCreate` → `CPSMission::OnCreate`,
+`UI_ALCHEMYBOX::CPSCharacterSelect__OnCreate` → `CPSCharacterSelect::OnCreate`,
+`GlobalDataManager::CGlobalDataManager__GetTIDFromObjectID` →
+`CGlobalDataManager::GetTIDFromObjectID` (whose own log string agrees letter for
+letter), and `GlobalDataManager::CICPlayer__OnRelease` → `CICPlayer::OnRelease`.
+Two of them carry `UI_ALCHEMYBOX`, the registrar module round 331 established
+describes none of the ~50 opcodes it binds.
+
+**Two rejected as unsafe**: `Game::CObjChild__m_pGfxEttManager` appears at two
+addresses, and `m_p…` is a *member variable* name, not a method — renaming both
+would give two functions one name.
+
+### A trap the client chains exposed
+
+`tools/rtti_chains.py` now takes the binary, its vtable index and an output path,
+and resolves **977 of 977** client classes. **Do not join the two binaries' class
+names by string**: the client's `CGObj` is `CGObj : CObjChild : CObj` while the
+server's is `CGObj : IGObj : CBase`. Same name, unrelated hierarchies — and the
+control that surfaced it was the server-class list correctly returning `<none>`
+against the client binary.

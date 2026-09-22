@@ -6405,6 +6405,41 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 437 (the server's two structural levers measured on the client, and both
+are near-empty): ROUNDS 418 AND 436 EACH PAID 100+ PREFIX CORRECTIONS ON THE
+SERVER, AND THE CLIENT IS WHERE THE HEADROOM IS — 43,562 functions at **5.2 %**
+named. Both levers were run there and both come back near-empty:
+
+	lever                                        server              client
+	name-form Class__Method, different owner     118                 6 (4 usable)
+	LCA owner, functions in >=10 vtables         123 with real names 175 differ, 0 with real names
+
+**The reason is the same for both**: the client's names came from a different
+source. The server's came from SQL literals, log strings and asserts embedding
+`Class__Method`, and from vtable propagation onto functions that already had
+method names. The client's came from the assert lever, closed for naming in
+round 319, which does not produce that form — and its shared functions are
+overwhelmingly `FUN_`/`vslot_`, so correcting where an *unnamed* function lives
+buys nothing, exactly the judgement round 418 made about its own 168.
+
+FOUR USABLE CORRECTIONS, ALL MODULE-NAME OWNERS, and two of them carry
+`UI_ALCHEMYBOX` — the registrar module round 331 established describes none of
+the ~50 opcodes it binds. `CGlobalDataManager::GetTIDFromObjectID` has a second
+source agreeing letter for letter: its own log string. **Two were rejected as
+unsafe** — `Game::CObjChild__m_pGfxEttManager` appears at two addresses and
+`m_p…` is a *member variable*, not a method, so renaming both would give two
+functions one name.
+
+DURABLE TOOLING AND A TRAP. `tools/rtti_chains.py` now takes the binary, its
+vtable index and an output path, and resolves **977 of 977** client classes.
+**The two binaries' class names must not be joined by string**: the client's
+`CGObj` is `CGObj : CObjChild : CObj`, the server's is `CGObj : IGObj : CBase` —
+same name, unrelated hierarchies. The control that surfaced it was the
+server-class list correctly returning `<none>` when run against the client
+binary, which is the kind of negative that confirms a probe rather than
+worrying it. Four names filed, **held unapplied**. No behaviour changed, so no
+tag.
+
 Round 436 (the siege AsyncQuery read, and 118 names were carrying their own
 class in the wrong half): TWO RANKINGS AGREED ON THE TARGET. Re-ranking the
 game-logic core by size with the now-closed quest hierarchy excluded puts

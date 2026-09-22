@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
-# rtti_chains.py -- the FULL base-class chain of every RTTI class in
-# SR_GameServer.exe, read out of the COL's ClassHierarchyDescriptor.
+# rtti_chains.py -- the FULL base-class chain of every RTTI class in a binary,
+# read out of the COL's ClassHierarchyDescriptor. Works on BOTH binaries:
+#
+#     python3 rtti_chains.py                     # server (the defaults)
+#     python3 rtti_chains.py /opt/sro-files/client/sro_client.exe \
+#             /var/tmp/vt_client.json /var/tmp/chd_chains_client.json
+#
+# The client resolves 977 of 977 classes. **Do not join the two binaries' class
+# names by string**: the client's CGObj is `CGObj : CObjChild : CObj` and the
+# server's is `CGObj : IGObj : CBase` -- same name, unrelated hierarchies.
 # RUNS ON THE RE BOX (192.168.5.78). Writes /var/tmp/chd_chains.json.
 #
 #     scp tools/rtti_chains.py root@192.168.5.78:/var/tmp/
@@ -28,7 +36,10 @@
 
 import struct, json, collections, re, sys
 
-EXE = "/var/tmp/SR_GameServer.exe"
+import sys
+EXE = sys.argv[1] if len(sys.argv)>1 else "/var/tmp/SR_GameServer.exe"
+VT  = sys.argv[2] if len(sys.argv)>2 else "/var/tmp/vt_server.json"
+OUT = sys.argv[3] if len(sys.argv)>3 else "/var/tmp/chd_chains.json"
 data = open(EXE, "rb").read()
 
 # --- PE section table -> VA<->file offset ---
@@ -84,7 +95,7 @@ def hierarchy(vt):
         if nm: out.append(nm)
     return out
 
-IDX = json.load(open("/var/tmp/vt_server.json")); CLS = IDX["classes"]
+IDX = json.load(open(VT)); CLS = IDX["classes"]
 chain = {}
 for cls, vts in CLS.items():
     for vt in vts:
@@ -97,5 +108,5 @@ print()
 print("=== CONTROL: chains this project already knows ===")
 for c in ("CGObj", "CTJ_PremiumKeeper", "CGObjPC", "CMsgException", "CGObjCOS_Mercenary"):
     print("  %-22s %s" % (c, " : ".join(chain.get(c, ["<none>"]))[:110]))
-json.dump(chain, open("/var/tmp/chd_chains.json", "w"))
-print("\nwrote /var/tmp/chd_chains.json")
+json.dump(chain, open(OUT, "w"))
+print("\nwrote", OUT)
