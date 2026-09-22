@@ -6405,6 +6405,36 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 421 (the blind spot audited across the whole dump: no wrong entry, one
+missing use-site): ROUND 420 FOUND THAT `& 0x80` ON A BYTE DECOMPILES AS
+`(char)x < '\0'` AND IS INVISIBLE TO A `& 0x` GREP. Several of this project's
+flag vocabularies were built by grepping bit tests, so the obvious worry is that
+one of them is missing its top bit. Swept: **19 sites** in the server dump.
+
+**NO RECORDED TABLE IS WRONG.** The four AI-tactics sites all read the same
+`_RefTactics` column 42 (`+0x90`) flag word, and `monster_ai.md` already lists
+"bit 7 (`0x80`)" correctly; `GObjPC::CheckCurrencyRequirement` tests `& 0x80`
+explicitly elsewhere in its own body; the rest are the round-420 scope mask,
+navmesh code and CRT routines. A clean audit, and worth the round for closing
+the worry rather than leaving it.
+
+**BUT IT COST A MISSING USE-SITE.** `AITactics_BattleGiveUpCheck` (`0x5483c0`)
+opens `if ((uVar3 & 4) || ((char)uVar3 < '\0') || +0x79 == 0 || +0x79 == 2)
+return 0;` on that same flag word — so **a monster whose tactics flags carry bit
+2 or bit 7 never runs the give-up test**, and the `+0x7c` distance comparison is
+unreachable for it. The `+0x79` half of that guard was already recorded on
+column 35; the flag-bit half was not, and `monster_ai.md` attributes bits 2 and
+7 only to the acquire behaviour's target-kind filter. Recorded as mechanism, not
+motive — nothing here says *why* those bits suppress giving up.
+
+AND MY OWN PROBE RETURNED ZERO WHEN THE ANSWER WAS 19. The Python sweep was
+over-escaped (`'\\\\0'` where the text has `'\0'`) and reported the idiom
+does not exist. It was caught immediately because round 416's rule — run a probe
+against an answer you have already seen — applies directly: I had *read* that
+line in round 420, so a zero was impossible. A plain `grep -oE` found all 19.
+The rule earned its place. No names filed, so nothing to apply and no rebuild.
+No behaviour changed, so no tag.
+
 Round 420 (the COS half of the save, and a grep that drops the top bit of every
 byte mask): ROUND 419 NAMED `CGObjCOS::DBBackup` AND POINTED AT IT AS THE NEXT
 READ, SO THAT WAS THIS ROUND. It is 53 bytes and takes **the same `uint` scope

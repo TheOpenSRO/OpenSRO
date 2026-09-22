@@ -875,3 +875,38 @@ above gives the rules that are now implementable without a tactics table at
 all: the roam radius (200 units when nothing sets it, x1.5 under rule 1) with
 its HOMING exit, and the give-up distance with its IDLE exit. Both wait on
 srrevamp's server moving monsters at all (`docs/TODO.md`).
+
+
+## Flag bits 2 and 7 also switch the give-up check OFF (round 421)
+
+The table above attributes `_RefTactics` column 42 (`+0x90`) bits 2 (`0x4`) and
+7 (`0x80`) to the **acquire** behaviour, where they pick the target-kind filter
+pair. They have a second use-site, and it is a behavioural one:
+`AITactics_BattleGiveUpCheck` (`0x5483c0`) opens with
+
+	uVar3 = *(uint *)(*(int *)(param_1 + 0x2c) + 0x90);      // the flag word
+	if (((uVar3 & 4) != 0) || ((char)uVar3 < '\0')          // bit 2 or bit 7
+	    || (cVar2 = refTactics->+0x79, cVar2 == '\0') || (cVar2 == '\x02'))
+	  return 0;
+
+so **a monster whose tactics flags carry bit 2 or bit 7 never runs the give-up
+test at all** — the `+0x7c` distance comparison below it is unreachable for that
+species. The `+0x79` half of the same guard is already recorded on column 35;
+the flag-bit half was not. `AITactics_BattleGiveUpCheck_TID8000` (`0x5484b0`),
+the TID-bit-15 variant, has the same opening.
+
+Stated as mechanism, not motive: the bits that choose a non-default target-kind
+filter are the same bits that suppress giving up, but nothing here says *why*,
+and this round did not read the acquire side to find out.
+
+**Why it was missed.** The bit-7 test does not contain `& 0x80`. MSVC compiles a
+sign-bit check to `test al,al; js`, which Ghidra renders `(char)uVar3 < '\0'` —
+so a census of flag bits built by grepping `& 0x` sees bits 2, 8 and 15 in these
+functions and silently drops bit 7. A sweep of that idiom across the server dump
+finds **19 sites**; the four in AI tactics are all this same `+0x90` word, and
+the rest are the DB-backup scope mask (round 420), one currency check that also
+tests `& 0x80` explicitly, navmesh code and CRT routines.
+
+**No recorded table was found to be WRONG by that sweep** — column 42 already
+lists bit 7 correctly. The blind spot cost a missing use-site, not a wrong
+entry.
