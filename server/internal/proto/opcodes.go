@@ -223,11 +223,29 @@ const (
 //     three ParamKeeper reads, the same shape already recorded for berserk's
 //     60 s duration (`EvaluateParam(60) + EvaluateParam(195)`).
 //
+// THE REPLY OPCODE IS CONFIRMED A SECOND WAY (round 441). The number above came
+// from the handler's index in server_handlers.tsv; the instruction stream gives
+// it independently, read per call site as docs/protocol/error_codes.md requires
+// for this helper:
+//
+//	515bcc:  push 0x5
+//	515bd4:  push 0x3
+//	515bd6:  mov  ecx,0xb0a7          <- the reply opcode, in the register
+//	515bdd:  call 0x4e7250            <- Msg_SendTwoFieldReply
+//
+// THE REQUEST PAYLOAD IS ONE BYTE: the handler opens with MsgBuf_ReadUInt8 (or
+// MsgBuf_ReadUInt8FromTail when the session field at +0x1048 is zero), and the
+// value 1 takes the activation path.
+//
 // NOT WIRED, AND DELIBERATELY SO. `docs/protocol/PROTOCOL_DECISION.md` says a
 // placeholder is replaced "once that opcode's real wire number AND PAYLOAD
-// LAYOUT are confirmed". Only the wire number is confirmed here; the request
-// and reply payloads are unread, so `session.OpBerserk` (0x0068) stays live and
-// these sit beside it, exactly as round 365 left `OpMovementRequest`.
+// LAYOUT are confirmed". The REPLY layout is not: it rides the generic
+// two-field helper, and that helper's own note warns that Ghidra names its
+// argument sometimes the opcode and sometimes the payload -- the error that
+// invalidated round 323's sweep and was withdrawn in round 325. Assigning
+// meanings to the two pushed words needs every refusal path traced, which this
+// round did not do. So `session.OpBerserk` (0x0068) stays live and these sit
+// beside it, exactly as round 365 left `OpMovementRequest`.
 const (
 	OpBerserkRequest  uint16 = 0x70A7
 	OpBerserkResponse uint16 = 0xB0A7

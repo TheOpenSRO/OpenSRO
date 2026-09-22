@@ -6405,6 +6405,40 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 441 (the berserk opcode confirmed from the instruction stream, and the
+payload deliberately left unconfirmed): ROUND 440 GROUNDED THE WIRE NUMBER BUT
+NOT THE PAYLOAD, AND `PROTOCOL_DECISION.md` REQUIRES BOTH BEFORE A PLACEHOLDER
+IS REPLACED. This round closed half of that and refused to fake the other half.
+
+**The request payload is one byte.** The handler opens with `MsgBuf_ReadUInt8`
+— or `MsgBuf_ReadUInt8FromTail` when the session field at `+0x1048` is zero —
+and the value **1** takes the activation path.
+
+**And the reply opcode is now confirmed twice, from independent sources.** Round
+440 read `0xb0a7` off the handler's index in `server_handlers.tsv`; the
+instruction stream gives it directly:
+
+	515bcc:  push 0x5
+	515bd4:  push 0x3
+	515bd6:  mov  ecx,0xb0a7
+	515bdd:  call 0x4e7250      ; Msg_SendTwoFieldReply
+
+**That register read is not incidental — it is what the helper's own
+documentation demands.** `Msg_SendTwoFieldReply`'s note says Ghidra "names
+sometimes the opcode and sometimes the payload" for its argument, an error that
+**invalidated round 323's code sweep and was withdrawn in round 325**, and
+prescribes reading the registers per call site. Taking `Msg_SendTwoFieldReply(3)`
+from the decompiled C at face value would have repeated that exact mistake.
+
+**THE REPLY LAYOUT IS STILL NOT CONFIRMED AND THE PLACEHOLDER STAYS.** The reply
+carries two pushed words; on the path above they are `5` and `3`. But
+`LAB_00515bd6` *is* the `mov ecx`, so the refusal paths that `goto` it push
+their fields elsewhere, and assigning meanings to the two words needs every path
+traced. `session.OpBerserk` (`0x0068`) therefore stays live, and
+`proto/opcodes.go` records the request layout, the second source for the reply
+opcode, and exactly why the reply payload is not claimed. No behaviour changed,
+so no tag.
+
 Round 440 (a fourth lever refuted by its own output, and the real berserk opcode
 grounded): THE FIELD-OFFSET LEVER IS THE ONE `naming_ceiling.md` NAMES AS THE
 STRUCTURAL DIRECTION — "data-flow into known fields" — AND MY FIRST CUT OF IT
