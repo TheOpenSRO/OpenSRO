@@ -24283,3 +24283,57 @@ exists in the decompiled server at all.** The only two `+ 0x270))` hits are
 a different hierarchy where that slot number means something else (round 433's
 rule). The probe control passed, so the negative is real and the set is filled
 by an inlined or differently-shaped path.
+
+## The interaction vocabulary, and a probe aimed at the wrong side (round 450)
+
+Round 449 closed with a named open probe — what interaction ids 3..34 denote —
+and said the answer had to come from the *writer* side, blocked by a controlled
+negative. **Both halves of that were wrong, and finding out why is this round.**
+
+**The negative was checked with the wrong instrument.** Round 449 grepped the
+decompiled C for `+ 0x270))` and found two hits, neither a virtual call. An
+instruction-level sweep of the whole binary finds **8** loads of `+0x270` — and
+still not one virtual call, because every one of the 8 is an
+`or DWORD PTR [reg],imm` bitmask write on an unrelated object. Control: the same
+pattern finds **64** loads of `+0x144`, a slot known to be called. So the
+conclusion survived, but it had been resting on a four-times-undercount, and the
+decompiled-C form could not have distinguished a missing call from a call the
+decompiler reshaped.
+
+**The writer side was a dead end for a reason round 449 never tested.**
+`CGObjChar::SetAvailableInteractionPerGObj` (`0x4a9550`) has **0 direct
+callers** as well as 0 virtual ones — control, **41** direct calls to
+`HasAvailableInteraction` in the same sweep — so it is **dead code in this
+build**. The live writer is `CGObj::AddAvailableInteraction` (`0x484e40`), and
+the raw set-insert it wraps is inlined into `CGObjNPCNPC::Create` and
+`CGObjStruct::Create`: **an NPC or structure registers its interactions when it
+is built**, from a **byte at `record + 0xc`** in a container it walks, not from
+literals.
+
+**The vocabulary came from the readers instead, and was cheap.** The 41 direct
+callers of `HasAvailableInteraction` each push a literal id, and most enclosing
+functions already carry recovered names:
+
+| id | required by |
+|---:|---|
+| **0x0f** (15) | `CGuildManager::HandleCreateGuild` **and** `GObjPC_HandleGuildMsg_0f1` |
+| **0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1f, 0x28** | `SiegeFortress_DispatchCommand` (13/3/5/4/4/1/1 sites) |
+| **0x02** | inlined in `CGObjNPCNPC::UseItem` — the talk menu, agreeing with round 449 |
+| **0x01** | three functions, all still unnamed |
+
+**Id 15 is the guild NPC on two independent named readers** and is the one to
+trust. The siege ids all come from a single dispatcher, so what separates them
+is *not* settled — reading that dispatcher's command switch is the next probe.
+
+**A correction to round 449's own text.** It wrote "the valid range is 2 through
+35", conflating the jump table's extent with the id space. Ids outside the table
+take the `default` arm like any other unlisted id, and **id 40 is observed at a
+real call site**, which proves it. Fixed in `character_state.md`.
+
+**A coincidence named before it bites**: id `0x0f` is required by
+`GObjPC_HandleGuildMsg_0f1`, whose opcode index is `0x0f1`. An id and an opcode,
+unrelated, digits aligned by accident — the trap `jobs.md` records for job kind 1
+sitting beside a minimum level of 20.
+
+**Nothing to wire**, no name filed (the two functions this round leaned on were
+already named), no tag. Tests green (`go test -count=1 -p 1 ./...`, 58 packages).

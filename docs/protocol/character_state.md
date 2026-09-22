@@ -57,7 +57,7 @@ Values **4, 5, 6 and 7 are read but NOT named.** What is known about each:
   committed elsewhere, like an open trade. Which one is unread.
 - **5 and 6** — both written by `GObjPC_HandleShopMsg_046` from a switch on the
   **interaction id the client sends**, not on an NPC type byte (corrected round
-  449; see "The interaction id is the client's, and its range is 2..35" below).
+  449; see "The interaction id is the client's" below).
   Readers requiring 5: `GObjPC_HandleEndInteractionMsg_04b`, `FUN_0051b370`.
   Requiring 6: `GObjPC_HandleCOSSellMsg_0c7`, `FUN_005243d0`, `FUN_00526ce0`.
   **`GObjPC::EndInteraction` (0x5107c0) was on the "requiring 5" list and does
@@ -596,7 +596,7 @@ did not settle it.
 like a candidate writer for `chardata+2` — the motion state, whose writer round
 416 could not find under a *passing* control. It does not write it. **Round
 416's controlled negative stands.**
-## The interaction id is the client's, and its range is 2..35 (round 449)
+## The interaction id is the client's, not an NPC type (round 449)
 
 The earlier note above said INTERACTMODE 5 and 6 come from "a switch on an NPC
 type byte", and concluded that naming them "would be a guess" because no NPC
@@ -613,8 +613,12 @@ different values. They are one slot:
 	51056d:  cmp  eax,0x21
 	510570:  ja   0x510612                   ; -> default
 
-So the discriminator is **an id the client chooses**, and the valid range is
-**2 through 35** inclusive. The handler validates it against the NPC first:
+So the discriminator is **an id the client chooses**. The jump table covers
+**2 through 35**; ids outside that window are not rejected, they take the
+`default` arm like any other unlisted id (round 450 — the first write of this
+said "the valid range is 2 through 35", which confused the table's extent with
+the id space, and id **40** is observed at a real call site). The handler
+validates the id against the NPC first:
 `CGObjChar::HasAvailableInteraction(npc, id)` (`0x50cd80`) is a set-membership
 test on `obj+0x1c78..0x1c7c`, and 0x046 refuses with code 5 when it says no.
 **That set is named by the engine itself** — `CGObjChar::SetAvailableInteractionPerGObj`
@@ -631,7 +635,7 @@ test on `obj+0x1c78..0x1c7c`, and 0x046 refuses with code 5 when it says no.
 | **10** | `0x5105f1` | INTERACTMODE := **5**, then `npc->[0x144](0x12, 0, this)` |
 | **12** | `0x5105ca` | bails if `npc+0x1cf0` is 0, else `GObjNPCNPC::FUN_004c8a60`, INTERACTMODE := **6** |
 | **35** (`0x23`) | `0x510428` | returns, **setting no mode at all** |
-| every other id 3..34 | `0x510612` | INTERACTMODE := **6** |
+| every other id (in the table or not) | `0x510612` | INTERACTMODE := **6** |
 
 Each target was read from instructions, not from the decompile. So **mode 6 is
 the default** — the generic case for any id without bespoke handling — and mode
@@ -643,12 +647,74 @@ own assert, and the dump's RTTI plate for that function states the offset
 `0x28c` itself. That is a use-site, not a curve: id 2 opens the menu, sets mode
 5, and the two handlers that require mode 5 are the menu's own follow-ups.
 
-**What is still NOT named.** Which service each of ids 3..34 denotes, since they
-all share the default arm and the arm reveals nothing about them. The next probe
-is the *writer* side: whoever calls slot 156 to populate an NPC's available set
-knows the ids by name. A controlled negative stands in the way — **no call of
-slot 156 (`+0x270`) on an IGObj exists anywhere in the decompiled server**; the
-only two `+ 0x270))` hits are `ApplySkillParamsToChar` using it as a data offset
-and `CQSP_ALL_POTION_1::vslot_002`, a different hierarchy where the slot number
-means something else (round 433's rule). So the set is filled by an inlined or
-otherwise-shaped path, and finding it is the open work.
+### The vocabulary, from the readers (round 450)
+
+Round 449 said the ids could only be named from the *writer* side, and looked
+for it through vtable slot 156. That was the wrong side. **The 41 direct callers
+of `CGObjChar::HasAvailableInteraction` each push a literal id**, and most of
+their enclosing functions already carry recovered names, so the reader side
+names the ids by itself:
+
+| id | required by | sites |
+|---:|---|---:|
+| **0x01** | `FUN_00511860`, `FUN_005266a0`, `FUN_005267f0` — all three still unnamed | 3 |
+| **0x02** | inlined in `CGObjNPCNPC::UseItem` (`mov BYTE PTR [esp+0x13],0x2` then the find) | 1 |
+| **0x0f** (15) | `CGuildManager::HandleCreateGuild` **and** `GObjPC_HandleGuildMsg_0f1` | 2 |
+| **0x17** (23) | `SiegeFortress_DispatchCommand` | 13 |
+| **0x18** (24) | `SiegeFortress_DispatchCommand` | 3 |
+| **0x19** (25) | `SiegeFortress_DispatchCommand` | 5 |
+| **0x1a** (26) | `SiegeFortress_DispatchCommand` | 4 |
+| **0x1b** (27) | `SiegeFortress_DispatchCommand` | 4 |
+| **0x1f** (31) | `SiegeFortress_DispatchCommand` | 1 |
+| **0x28** (40) | `SiegeFortress_DispatchCommand` | 1 |
+| variable | `GObjPC_HandleShopMsg_046`, `JobGuild_HandleWithdraw`, `CInstanceCharTrijob::HandleJoinJobGuild`, `GObjPC_HandleAliasMsg_0e3`, `FUN_00512e70` | 5 |
+
+Read from instructions (`push <imm>; push <obj>; call 0x50cd80`), with the
+argument order confirmed against the callee's own frame: `[ebp+8]` is the object
+and `[ebp+0xc]` the byte, so the **last** push is the object and the immediate
+is the id.
+
+**Id 15 is the guild NPC on two independent named readers.** That is the only id
+here with two sources, and it is the one to trust most. Ids 23–40 are all the
+siege fortress, but they come from a *single* function, so what separates them
+is not settled — `SiegeFortress_DispatchCommand` switches on a command and each
+arm requires a different id, so reading that switch is what would name them
+individually. **Id 2 is the talk menu** independently of all this (round 449).
+
+**A coincidence to name before it causes a bug**: id `0x0f` is required by
+`GObjPC_HandleGuildMsg_0f1`, whose opcode index is `0x0f1`. They are an id and
+an opcode, they are not related, and the digits line up by accident — the same
+trap `jobs.md` records for job kind 1 mapping to `0x14` beside a minimum level
+of 20.
+
+### The set's real writer, and a function that is dead code
+
+Round 449 reported "no call of slot 156 on an IGObj anywhere". **That negative
+holds, and an instruction-level probe makes it much stronger than the
+decompiled-C grep did**: the whole server contains **8** loads of `+0x270`, and
+every one is an `or DWORD PTR [reg],imm` bitmask write on an unrelated object —
+not one virtual call. Control: the same pattern finds **64** loads of `+0x144`,
+a slot that is demonstrably called.
+
+What round 449 did not check is whether slot 156's implementation is called at
+all. It is not: **0 direct calls to `CGObjChar::SetAvailableInteractionPerGObj`
+(`0x4a9550`)**, against a control of **41** direct calls to
+`HasAvailableInteraction` in the same sweep. Reached neither virtually nor
+directly, it is **dead code in this build** — which is why looking for the
+vocabulary through it could never have worked.
+
+The live writer is **`CGObj::AddAvailableInteraction` (`0x484e40`)**, a
+differently-named function on the base class. It too has 0 direct callers, but
+the raw set-insert helper it wraps (`0x486fe0`, 11 sites) is inlined into the
+two constructors that matter:
+
+	CGObjNPCNPC::Create   +0x10c
+	CGObjStruct::Create   +0x9a
+
+so **an NPC or a structure registers its available interactions when it is
+built**. At the NPC site the ids are not literals — the loop reads a **byte at
+`record + 0xc`** out of a container and inserts each one, which is the shape of
+a table-driven list rather than hardcoded services. Where that container is
+filled is the next probe, and `RefObjItem::ExtractData` and
+`CGameServer::RefTeleport_ExtractData` also appear among the 11 insert sites,
+which is the first hint the list is refdata-backed.
