@@ -6405,6 +6405,55 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 428 (the call path round 427 refused to assume, traced — and the quest
+blocker's premise is wrong): ROUND 427 FOUND AN EMBEDDED LUA AND A QUEST SCRIPT
+SUBSYSTEM AND DECLINED TO JOIN THEM, NAMING THE EXACT PROBE THAT WOULD. That
+probe ran, and the join holds:
+
+	CNormalEvent::InsertScriptData  (0x92dfd0)
+	  -> Lua::luaL_checkstring      (0x9769d0)   tests the type tag != 4
+	     -> Lua::luaL_typerror      (0x9c1600)   "%s expected, got %s"
+
+`luaL_typerror` is Lua 5.1's `typeerror()` matched against the upstream source
+rather than by shape — it indexes `luaT_typenames` at `0xadd168` by the value's
+tag and falls back to `"no value"`. **The control is the number 4**, reached from
+two directions: `luaL_checkstring` tests the tag against 4 and names the expected
+type `"string"`, and index 4 of that table independently *is* `"string"` at
+`0xadd178`. `LUA_TSTRING == 4`. So the quest script subsystem runs on the
+embedded Lua, and `CNormalEvent` — the class that hosts it — is itself a
+`CQuestBase` subclass, which puts script-driven quests **inside** the quest
+hierarchy rather than beside it.
+
+THE HIERARCHY, READ FROM THE CHD CHAINS: `IQuest -> CQuestBase (20 slots) ->
+{CBasicQuest (103 slots, 185 direct subclasses), CNormalEvent (8),
+CSummonScrollEvent (2), 9 further}` — **205 compiled quest classes**, all rooted
+at `IQuest`. And **slot 13 of `CQuestAType` is `0x00927a60`**, one of the four
+functions that builds `./Script/VIETNAM/` — a vtable link from the quest classes
+to the script directory.
+
+**AND THE BLOCKED ITEM'S PREMISE IS WRONG.** `SYSTEMS.md` had this system blocked
+on "how the 543 classless quests attach. CQuestBase's slot-55 default is not
+reachable via the dump's slot tags; **needs the vtable read directly in
+Ghidra**." `CQuestBase`'s vtable has **20 slots** — there is no slot 55; the
+103-slot vtables are `CBasicQuest` and its descendants. Round 418's vtable index
+is precisely the read that note asked for, and it shows the question was
+mis-posed rather than hard. The row is rewritten from BLOCKED to PARTIALLY
+UNBLOCKED with what is now known and what is not.
+
+WHAT IS STILL OPEN, STATED NARROWLY: whether the 543 non-compiled quests attach
+through `CNormalEvent`. It has only **8 subclasses**, so it is plainly not one
+class per quest — consistent with a generic script host and equally consistent
+with something narrower. **A quest-id → script mapping would settle it and none
+has been found.** That is a data question now, not a vtable one.
+
+**applied 5, forced 1, reowned 3, failed 0** — the batch held since round 426:
+`CGObjPC::DumpCharacterState`, `CGameServer::ResetQuestScriptData`,
+`Lua::luaL_typerror`, `Lua::luaL_checkstring`, and a prefix correction of
+`GObjPC::InsertScriptData` to `CNormalEvent::InsertScriptData`, which is
+self-evidencing: the function passes the literal string
+`"CNormalEvent::InsertScriptData"` to its own error log. No behaviour changed,
+so no tag.
+
 Round 427 (the enum-table lever swept and bounded — and it turned up an embedded
 Lua nobody had recorded): ROUND 426'S LEVER GENERALISES TO "ANY RUN OF `.rdata`
 POINTERS TO PREFIX-SHARING STRINGS IS AN ENUM VOCABULARY", SO I SWEPT THE WHOLE

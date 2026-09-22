@@ -244,3 +244,62 @@ in the same binary are two facts, not one.
 the BLOCKED item has its answer. If they do not, the script subsystem is
 something else and the Lua is used elsewhere — which would itself be worth
 knowing.
+
+## The script subsystem IS Lua, and the quest hierarchy read (round 428)
+
+Round 427 refused to join "there is a script subsystem" to "there is a Lua
+runtime" without a call path. **The path is now traced, and it has a numeric
+control that could not be a coincidence.**
+
+	CNormalEvent::InsertScriptData  (0x92dfd0)
+	  -> Lua::luaL_checkstring      (0x9769d0)   tests the type tag != 4
+	     -> Lua::luaL_typerror      (0x9c1600)   "%s expected, got %s"
+
+`luaL_typerror` is Lua 5.1's `typeerror()` matched against the upstream source,
+not by shape: it formats `"%s expected, got %s"` with the expected type name and
+`(&PTR_DAT_00add168)[tag]` — `luaT_typenames` indexed by the value's tag, with
+`"no value"` as the fallback — then calls `luaL_argerror`. **The control is the
+number 4**: `luaL_checkstring` tests the tag against 4 and names the expected
+type `"string"`, and independently index 4 of the table at `0xadd168` *is* the
+string `"string"` at `0xadd178`. `LUA_TSTRING == 4` in Lua 5.1. Two facts
+arriving at the same constant from different directions.
+
+So the quest script subsystem runs on the embedded Lua. `CNormalEvent` is itself
+a **`CQuestBase` subclass**, which means script-driven quests are a branch of the
+quest hierarchy rather than a mechanism beside it.
+
+### The quest hierarchy, from the ClassHierarchyDescriptor chains
+
+	IQuest
+	 └─ CQuestBase                 20 slots
+	     ├─ CBasicQuest           103 slots   185 direct subclasses
+	     │    └─ CQuestAType
+	     ├─ CNormalEvent                        8 subclasses   <- the Lua runner
+	     ├─ CSummonScrollEvent                  2 subclasses
+	     └─ (9 further direct subclasses)
+
+**205 classes derive from a quest base**, every one rooted at `IQuest`. And
+**slot 13 of `CQuestAType` is `0x00927a60`**, one of the four functions that
+builds the `./Script/VIETNAM/` path — a vtable link from the quest classes
+straight to the script directory.
+
+### The BLOCKED item's premise is wrong
+
+`SYSTEMS.md` records this system as blocked on: *"how the 543 classless quests
+attach. CQuestBase's slot-55 default is not reachable via the dump's slot tags;
+needs the vtable read directly in Ghidra."*
+
+**`CQuestBase`'s vtable has 20 slots. There is no slot 55.** The 103-slot
+vtables belong to `CBasicQuest` and its descendants, so whatever slot 55 was
+observed on, it was not `CQuestBase`. Round 418's vtable index is exactly the
+"vtable read" that note asked for, and what it shows is that the question was
+mis-posed rather than hard.
+
+### What is still open
+
+Whether the 543 non-compiled quests attach **through `CNormalEvent`**.
+`CNormalEvent` has only 8 subclasses, so it is plainly not one class per quest —
+which is consistent with it being the generic script host, and equally
+consistent with it being something narrower. **A quest-id → script mapping would
+settle it, and none has been found.** That is the next probe, and it is a data
+question now rather than a vtable one.
