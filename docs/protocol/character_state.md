@@ -349,3 +349,46 @@ contaminated — but the enclosing function's class is not the receiver's class,
 so that measurement bounds the risk without eliminating it. The values
 `{2, 3, 4, 15, 16, 18}` from the typed sites, where the receiver is the calling
 method's own `this` on a `CGObj`-derived class, are the part that is safe.
+
+## The body-mode enum, read off the engine's own name table (round 425)
+
+`IGObj::GetBodyMode` is vtable slot 64 (`+0x100`) and `IGObj::SetBodyMode` slot
+198. The values were known only as bare numbers — "body mode 1 is Hwan; modes 0,
+2 and 4 also appear at those call sites". **The engine names them itself.**
+
+`FUN_00567190` formats one with `(&PTR_s_BODYMODE_NORMAL_00c64020)[mode & 0xff]`,
+a string-pointer table. Read out of the PE:
+
+| value | name |
+|---:|---|
+| 0 | `BODYMODE_NORMAL` |
+| 1 | `BODYMODE_HWAN` |
+| 2 | `BODYMODE_INVINCIBLE` |
+| 3 | `BODYMODE_INVISIBLE` |
+| 4 | `BODYMODE_BERSERKER` |
+
+**The control is that index 1 is `BODYMODE_HWAN`**, which this project had already
+established from a different direction, so the index really is the body-mode
+value and not some other ordering.
+
+**Modes 5, 6 and 7 are NULL in that table** — a genuine three-slot gap, after
+which the array continues with a different enum entirely (`MSG_PROCSTATE_*`,
+`PvPSTATE_NEUTRAL` / `_ASSAULTER` / `_MURDERER`, `BATTLESTATE_IN_PEACE` /
+`_IN_BATTLE`). So the array is a shared debug-name region holding several
+vocabularies back to back, and body modes 6 and 7 — which `FUN_00540de0` tests —
+**exist in code and are unnamed by the engine**.
+
+### What it settles in the AI target filter
+
+Round 424 read `FUN_00540de0` as refusing a candidate whose `GetBodyMode()` is in
+2..4, and 6 or 7 unless tactics flag bit 9 is set. In plain language that is:
+**a monster will not target anything that is invincible, invisible or berserk**,
+and flag bit 9 lets it target the two unnamed modes. That reading is now from the
+engine's own strings rather than from the shape of the comparison.
+
+### A naming trap: srrevamp's "berserk" is HWAN, not BERSERKER
+
+`server/internal/berserk` keys on `GetBodyMode() == 1`, and that is **correct** —
+in this game the berserk mechanic is Hwan (`RemainHwanCount`, `HwanLevel`,
+`GObjPC::HwanGainChance`). `BODYMODE_BERSERKER` is a *separate* mode at value 4
+and is not what srrevamp's berserk uses. Nobody should "fix" the 1 to a 4.

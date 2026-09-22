@@ -6405,6 +6405,43 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 425 (the body-mode enum read off the engine's own name table): ROUND 424
+LEFT "what body modes 6 and 7 ARE is not read", SO THAT WAS THIS ROUND. The
+values were known only as bare numbers — this file already said "body mode 1 is
+Hwan; modes 0, 2 and 4 also appear at those call sites" — and **the engine names
+them itself**. `FUN_00567190` formats one with
+`(&PTR_s_BODYMODE_NORMAL_00c64020)[mode & 0xff]`; reading that string-pointer
+table out of the PE gives:
+
+	0  BODYMODE_NORMAL      3  BODYMODE_INVISIBLE
+	1  BODYMODE_HWAN        4  BODYMODE_BERSERKER
+	2  BODYMODE_INVINCIBLE
+
+**The control is index 1 = `BODYMODE_HWAN`**, which this project had established
+from a different direction, so the index really is the body-mode value. Three
+modes that were bare numbers — 0, 2 and 4 — now have the engine's own names, and
+3 is new.
+
+IT SETTLES ROUND 424'S FILTER IN PLAIN LANGUAGE. `FUN_00540de0` refuses a
+candidate whose body mode is 2..4, which is to say **a monster will not target
+anything invincible, invisible or berserk** — read off the engine's strings
+rather than inferred from the shape of a comparison.
+
+AND MODES 6 AND 7 ARE UNNAMED BY THE ENGINE. Indices 5, 6 and 7 of that table are
+**NULL**, a genuine three-slot gap, after which the array continues with a
+different vocabulary entirely (`MSG_PROCSTATE_*`, `PvPSTATE_NEUTRAL`/
+`_ASSAULTER`/`_MURDERER`, `BATTLESTATE_IN_PEACE`/`_IN_BATTLE`). So it is a shared
+debug-name region holding several enums back to back, and the two modes tactics
+flag bit 9 admits are ones the engine itself does not name. That is a measured
+absence, not a failed search.
+
+A NAMING TRAP WORTH THE LINE IT TAKES: `server/internal/berserk` keys on
+`GetBodyMode() == 1`, and that is **correct** — in this game the berserk mechanic
+is Hwan (`RemainHwanCount`, `HwanLevel`, `GObjPC::HwanGainChance`).
+`BODYMODE_BERSERKER` is a *separate* mode at value 4. Recorded so nobody "fixes"
+the 1 to a 4 on the strength of the name alone. No names filed, so nothing to
+apply and no rebuild. No behaviour changed, so no tag.
+
 Round 424 (rounds 421-423's question answered by the engine's own assert, and a
 flag bit nobody had recorded): THE QUESTION WAS WHY FLAG BITS 2 AND 7 SUPPRESS
 THE GIVE-UP CHECK WHILE BIT 8 DOES NOT. A sweep of all 14 reads of

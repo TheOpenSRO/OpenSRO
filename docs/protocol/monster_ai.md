@@ -994,8 +994,12 @@ filter and shows what the bit buys:
 	    if (m == 6 || m == 7) and !(flags & 0x200) -> reject
 
 So **bit 9 admits targets whose body mode is 6 or 7**, which are otherwise
-refused; body modes 2–4 are refused regardless. What body modes 6 and 7 *are* is
-not read here. The alive test is round 413's life-state value 1, reached
+refused; body modes 2–4 are refused regardless. **Round 425 named them** from
+the engine's own string table: 2 is `BODYMODE_INVINCIBLE`, 3 is
+`BODYMODE_INVISIBLE`, 4 is `BODYMODE_BERSERKER` — so a monster will not
+target anything invincible, invisible or berserk. Modes 6 and 7 are **null
+in that table**, i.e. they exist in code and the engine does not name them;
+see `docs/protocol/character_state.md`. The alive test is round 413's life-state value 1, reached
 independently.
 
 **Why the bit was missed:** the note was built from the acquire path, where only
