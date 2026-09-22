@@ -25141,3 +25141,34 @@ between two registrations. A heuristic attribution and an instruction-level
 reader agreeing on one id is the check that heuristic was missing.
 
 One name filed, five now held. Nothing wired, no tag. Tests green.
+
+## The held-name backlog applied (round 471)
+
+Six names had accumulated filed-but-unapplied across rounds 451-470, which is
+past the batching threshold and, more to the point, **invisible**: a row in
+`recovered_names.tsv` changes nothing in the dump until the applier runs, and
+this project has lost work that way before (250 of 2,079 rows were still `FUN_`
+on 2026-09-20).
+
+Applied, guards run first per round 418, **`failed 0` on both binaries**:
+
+	server   CGObjChar::PublishAvailableInteractions   0x4a95a0
+	         OpenMarket_BeginSession                   0x51b580
+	         CGameServer::RefRow_AddInteraction8       0x6a7f70
+	         GObjPC_HandlePartyRecallMsg_519           0x51bb70
+	client   MsgStreamBuffer::Read                     0x4f7220
+	         IGIDObject::FindObjectByID                0x9c3220
+
+**One needed a second pass.** `0x4a95a0` came back `KEEPOWNER` — the applier
+kept the dump's `GObjPC` prefix over the offered `CGObjChar`. That prefix is a
+module attribution, not a class, and round 451 computed the owner by the
+round-418 LCA rule (13 vtables hold the address and `CGObjChar` is a base of
+every one), so the row was re-filed with `force` and re-applied **inside the
+same window**, when the rebuild was already going to be paid once.
+
+Both invocations were needed, and the client one uses `/home/ghidra/re_client` +
+`sro_client_re` + argument `client` — the spelling round 438 established after
+guessing cost that round its names, because **the applier fails silently** on a
+wrong project name.
+
+`PROJSTAMP` cleared so the dumps rebuild with the names in them.
