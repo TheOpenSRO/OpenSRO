@@ -942,6 +942,14 @@ does **not** suppress the give-up check — so the suppression is specific to bi
 2 and 7 and is not explained by "has a non-default filter". Why those two bits
 and not bit 8 remains unread.
 
-The remaining blank in the kind vocabulary is `0x10` — slots 242, 243 and 245,
-which the dump still calls `CGObjCOS_Summoned::FUN_004828d0`, `FUN_00482920` and
-`FUN_004829c0`.
+**The `0x10` blank is filled (round 423).** Slots 242, 243 and 245 are
+`CGObj::IsCOSGuardKind1`, `CGObj::IsCOSGuardKind4` and
+`CGObj::IsFortressWarMonster` — TypeID predicates over the `(1,2,4,*)`
+family whose rows are, per prefix and 100 %% pure, `COS_GUARD_*` (TypeID4 1
+and 4) and `MOB_FW_*` (TypeID4 3). They sit in a contiguous run with slot
+**244**, which is already `CGObj::IsFortressFlag`.
+
+So **flag bit 8 is the siege filter**: a species carrying it scans for
+players *plus guild guards and fortress-war monsters*. That also sharpens
+round 422's open question — bit 8 changes the target kinds and does **not**
+suppress the give-up check, while bits 2 and 7, which add only `IsCOS`, do.

@@ -78,7 +78,15 @@ to pick a weapon's animation group).
 Read as the summoner ITEM's, the COS rows of `itemdata` carry TypeID4 1, 2, 4,
 6, 7, 9 and 12 -- not a range a five-case switch could cover, so that reading
 is out. Read as the summoned CHARACTER's, `characterdata`'s `TypeID3 == 3`
-family runs exactly 1 to 5 and stops:
+family runs 1 to 5 for all but a handful of rows — **not "and stops", which
+round 423 measured as inexact**: the family also has TypeID4 **6, 7 and 8**,
+a tail of quest-scripted objects (`MOB_QT_*_COS`,
+`NPC_CH_QT_MOONSHADOW_COS`, `NPC_CH_QT_FLAMEMASTER_COS`) whose names all end
+`_COS`. They are far too few to matter to the argument — the five-case switch
+still covers every summonable row, and the tail is spawned by quest script
+rather than from an item — but the table below is the first five of eight
+values, not the whole range. The five rows' own counts were re-measured
+against every `characterdata` shard in `Media.pk2` and are correct:
 
 | TypeID4 | rows | the rows' own code names | the case's refusal |
 |---:|---:|---|---|

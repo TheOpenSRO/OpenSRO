@@ -6405,6 +6405,50 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 423 (the kind vocabulary's last blank filled, one doc corrected, and a
+family I re-derived because I never listed toward the right file): ROUND 422
+LEFT `0x10` — slots 242/243/245 — AS THE ONE UNNAMED ENTRY IN THE AI ACQUIRE
+FILTER'S KIND MASK. All three are TypeID predicates on the packed TID, and their
+bodies decode against the layout `damage_pipeline.md` already records (bit 1 =
+col 8, bits 2-4 TypeID1, 5-6 TypeID2, 7-10 TypeID3, 11-15 TypeID4): all three
+are `(1, 2, 4, *)`, differing only in TypeID4 — **1, 4 and 3**.
+
+A CENSUS OF EVERY `characterdata` SHARD SETTLES WHAT THEY ARE, and the prefixes
+are 100 % pure: TypeID4 1 and 4 are entirely `COS_GUARD_*` (differing only by a
+`_01_`/`_02_` infix, which is **not** read, so the names carry the measured
+TypeID4 rather than an invented tier) and TypeID4 3 is entirely `MOB_FW_*`.
+Filed and applied as `CGObj::IsCOSGuardKind1`, `CGObj::IsCOSGuardKind4` and
+`CGObj::IsFortressWarMonster` (**applied 3, failed 0**). They sit in a
+contiguous run with slot **244**, already `CGObj::IsFortressFlag`.
+
+**SO FLAG BIT 8 IS THE SIEGE FILTER**: a species carrying it scans for players
+*plus guild guards and fortress-war monsters*. That sharpens round 422's open
+question rather than closing it — bit 8 changes the target kinds and does not
+suppress the give-up check, while bits 2 and 7, which add only `IsCOS`, do.
+
+**AND I RE-DERIVED THE TID FAMILY, WHICH `siege.md` HAS HELD ALL ALONG**: "(4,1)
+and (4,4) are `COS_GUARD_*` and (4,3) is `MOB_FW_*`, which is why slot 244 tests
+TypeID4 and slot 248 does not." Round 407's rule is to list `docs/protocol`
+first; I probed `0x780` and `GetTID`, read `damage_pipeline.md`, `pets.md`,
+`igobj_vtable.md` and `monster_ai.md`, and never opened the file whose whole
+subject is fortress war. What is new is the three names and the join to the AI
+filter, not the family.
+
+TWO PROBE DEFECTS, ONE CAUGHT BY THE EXISTING RECORD. My first census read 7 of
+the 64 `characterdata` shards, giving 13,294 rows and a flag family of **3**;
+`siege.md` says **five rows**, naming them, so the disagreement said my read was
+short rather than the doc wrong. Over all 64 shards the flag family is exactly
+those five — a passing control. Row counts are still **not published here**,
+because the full read shows duplicates (`NPC_CH_QT_MOONSHADOW_COS` twice), and
+purity is robust to that while totals are not.
+
+AND ONE CORRECTION TO A DOC. `pets.md` says the COS family's TypeID4 "runs
+exactly 1 to 5 and stops". It does not: there are also **6, 7 and 8**, a tail of
+quest-scripted `*_COS` rows. Its five row counts re-measure correctly, and the
+tail is too small and too quest-bound to weaken its argument that the five-case
+switch reads the character's TypeID4 — but "and stops" was wrong and now says so.
+No behaviour changed, so no tag.
+
 Round 422 (the acquire side read, and the motive I was about to publish is
 wrong): ROUND 421 RECORDED THE GIVE-UP SUPPRESSION AS MECHANISM WITHOUT MOTIVE
 AND SAID IT HAD NOT READ THE ACQUIRE SIDE. Reading it resolves the mechanism and
