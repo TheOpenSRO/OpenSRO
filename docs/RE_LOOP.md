@@ -468,3 +468,30 @@ and require `Assert_BreakIfDebugger` in the body, so a real function that merely
 mentions the string is not swept in. One was: `0x004eb390` is a 63-byte
 predicate this project named `GObjPC::IsKilledByPlayer`, and its own evidence
 column already explained that the `IsPC` string belongs to a stub it calls.
+
+## Naming a function erases its RTTI plate (round 479)
+
+**Applying a name replaces the function's dump plate with the evidence text.**
+Before the apply, a virtual function's plate carries machine-read structure:
+
+	table 0x00aec0a4  slot 227  (offset 0x38c)
+	RTTI: reached as CGObjChar slot 227, CGObjMob slot 227, ...
+
+After it, the plate is `/* Identified by srrevamp RE ... */` and whatever the
+evidence column said. The slot and offset lines are gone.
+
+**So any tool that reads plates for structure is biased against named
+functions** — which are the best-understood ones, and usually the controls.
+Round 479's vtable walk read offsets off the plate, found none for its own
+control (`CGObjChar::PublishAvailableInteractions`, named in round 451), and
+silently skipped 25 of 261 candidates. It looked like a result until the control
+came back empty.
+
+**Read structure from the source it came from instead:**
+
+- slot offsets and owning classes: `/var/tmp/vt_server.json` (`classes` maps
+  each of 1,189 classes to `{vt, slots[]}`; offset = index × 4)
+- `vt_client.json` is the client equivalent
+
+and treat the plate as prose. A plate is regenerated on every rebuild, so what it
+says depends on what has been named — not on the binary.

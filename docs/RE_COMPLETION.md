@@ -25415,3 +25415,46 @@ project has had to correct twice already (round 476's leads, round 465's sender
 column).
 
 Nothing wired, no tag. `go test -count=1 -p 1 ./...` green.
+
+## Vtable edges for the virtual-only sub-builders (round 479)
+
+Round 478 named two blockers for the sub-builders; this took the **77 that are
+virtual-only**, reached through a vtable and invisible to a direct-call graph.
+Method: each sub-builder's slot offset(s), then which *senders* call through
+that offset, and attribute when they all send one opcode.
+
+**The first run failed its own control, and the cause is a tooling hazard worth
+more than the result.** `CGObjChar::PublishAvailableInteractions` — reached via
+slot `0x38c` from `FUN_0050faf0`, which sends `0xb045` (round 454) — came back
+with *no offset at all*. The offsets were being read from each function's dump
+plate, and **applying a name replaces that plate with the evidence text**, so
+the `slot N (offset …)` line disappears for exactly the named functions. 25 of
+the 261 sub-builders had lost it, including the control. Recorded in
+`RE_LOOP.md`: plates are regenerated per rebuild and describe what has been
+named, not what the binary holds.
+
+**Fixed by reading offsets from the vtables themselves** (`vt_server.json`,
+round 418). The control then passes — `0x38c` → **`0xb045`** — and:
+
+	virtual-only sub-builders              77
+	  found in a class vtable              67   (10 in none: likely callback arrays)
+	  offset called by one opcode's senders 10   attributable
+	  ... by several opcodes' senders       46   ambiguous
+	  ... by no sender                      11
+
+**The ten attributions are internally consistent in a way a broken method would
+not be**: overrides of the *same slot on different classes* land on the *same
+opcode*. Slot 310 feeds `0x3057` on `CGObjNPCNPC`, `CGObjPC` and
+`CGObjCOS_GoldPet`; slot 292 feeds `0x7005` on `CGObjMobile` and `CGObjPC`; slot
+227 feeds `0xb045` for both the control and `CGObjPC`'s override of it.
+
+**The 46 ambiguous are round 433's rule in action.** Pooling every sender that
+calls "offset `0x38c`" regardless of the receiver's type over-collects across
+class hierarchies, where one offset names unrelated methods. Separating them
+needs the receiver's static type at each call site, which the disassembly does
+not carry.
+
+**Not merged into `payload_layouts.tsv`**, on round 478's reasoning: these are
+edge inferences, and only the control's message-pass has actually been read.
+
+Nothing wired, no tag. `go test -count=1 -p 1 ./...` green.
