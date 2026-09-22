@@ -1104,3 +1104,43 @@ functions. Excluding generic `param_N` names drops that count from 103 handlers
 to **19**, and the "dominant consumer" disappears. This is the bare-name
 matching defect round 447 recorded, in a third form: **a name that is common
 rather than unique makes an artifact look like a finding.**
+
+## Fields 3 onward have no shared meaning — measured, not assumed (round 469)
+
+Fields 1 and 2 fell to protocol-wide levers (rounds 467-468). The obvious next
+question is whether a third lever exists: does some callee dominate the
+consumption of later fields the way a shared envelope dominated the first two?
+
+**It does not, and that is now measured on both widths.** Censusing which
+function most often receives a freshly-read field, with generic `param_N` names
+excluded (the defect round 468 caught):
+
+| field width | top consumer | handlers | out of |
+|---|---|---:|---:|
+| 2 bytes | `FUN_00778190` | 19 | 185 read sites |
+| 4 bytes | `IGIDObject::FindObjectByID` | 13 | 345 read sites |
+
+No consumer reaches even 8 % of sites. **So the SYSTEMS row's framing is right:
+fields 3 onward are per-operation, and there is no shortcut** — they need the
+client's destination variables one subsystem at a time.
+
+### The one cluster that is worth naming
+
+`IGIDObject::FindObjectByID` (`0x9c3220`) is a map lookup: it hands the
+argument's address and a container to a find helper, compares against the
+container's own sentinel globals, returns 0 at end and otherwise the node's
+value at `+0x10`.
+
+**What the u32 passed to it MEANS is settled by use sites, not by that
+structure.** Of the 13 handlers that pass a freshly-read 4-byte field to it,
+five carry independently recovered names and **every one is a per-entity
+event** — `Char_OnSkinChangeResult`, `Chat_OnChatUpdate`,
+`Fortress_OnItemUseInterrupted`, and two `NetProcessInNavAndSkill` handlers.
+A skin change, a chat line, an interrupted item use and a movement update are
+all things that happen *to a particular object*, so the field they look up is an
+**entity id**.
+
+**One caveat carried with the name**: `IGIDObject` is the dump's *interpolated*
+module attribution — its own plate says "Module INTERPOLATED, not asserted" —
+so the class is a neighbour inference, not a proven owner. The leaf name is what
+this round establishes.

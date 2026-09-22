@@ -25071,3 +25071,40 @@ dominance vanishes. This is round 447's bare-name defect in a third form: **a
 name that is common rather than unique turns an artifact into a finding.**
 
 No name filed; three still held. Nothing wired, no tag. Tests green.
+
+## No third lever, and one cluster worth naming (round 469)
+
+Fields 1 and 2 fell to protocol-wide levers. This round asked whether a third
+exists — does some callee dominate the consumption of later fields the way a
+shared envelope dominated the first two?
+
+**Measured on both widths, and it does not.** Censusing which function most
+often receives a freshly-read field, with generic `param_N` names excluded (the
+defect round 468 caught):
+
+	field width   top consumer                     handlers   sites
+	2 bytes       FUN_00778190                          19      185
+	4 bytes       IGIDObject::FindObjectByID            13      345
+
+No consumer reaches 8 % of sites. **So fields 3 onward genuinely are
+per-operation** and need the client's destination variables one subsystem at a
+time — the SYSTEMS row's framing is confirmed rather than assumed.
+
+**The one cluster worth having.** `IGIDObject::FindObjectByID` (`0x9c3220`) is a
+map lookup — the argument's address and a container to a find helper, compared
+against the container's own sentinel globals, 0 at end and otherwise the node's
+value at `+0x10`.
+
+**What its u32 argument MEANS comes from use sites, not that structure.** Of the
+13 handlers passing it a freshly-read 4-byte field, five carry independently
+recovered names and **every one is a per-entity event**:
+`Char_OnSkinChangeResult`, `Chat_OnChatUpdate`, `Fortress_OnItemUseInterrupted`
+and two `NetProcessInNavAndSkill` handlers. A skin change, a chat line, an
+interrupted item use and a movement update all happen *to a particular object*,
+so the field is an **entity id**.
+
+**A caveat carried with the name**: `IGIDObject` is the dump's *interpolated*
+module attribution — its plate says "Module INTERPOLATED, not asserted" — so the
+class is a neighbour inference and only the leaf name is established here.
+
+One name filed, four now held. Nothing wired, no tag. Tests green.
