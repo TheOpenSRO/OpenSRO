@@ -25036,3 +25036,38 @@ than a grounding fix, and would break a working client/server pair to no
 present end. Recorded as a spec fact for when the real protocol is adopted.
 
 No name filed; three still held. Nothing wired, no tag. Tests green.
+
+## Field 2, and a hypothesis refuted (round 468)
+
+Round 467 settled field 1 as a result byte. Field 2 follows, and its meaning is
+**conditional on field 1**:
+
+	u8  result
+	    == 1  ->  the operation's own payload follows
+	    == 2  ->  u16 error code, and nothing else
+
+**Read by hand, then measured.** `UI_ALCHEMYBOX::FUN_0086dbd0` and
+`FleaMarket_OnOpenStallResult` are literally that shape and nothing else. Across
+the client: of **206** handlers whose first field is one byte, **147** read a
+two-byte field later, and **106 of those (72 %)** have a `== 2` / `!= 1` test
+**guarding** it. So the u16 is not a field every reply carries — it is read when
+the result says failure, which is the reader-side counterpart of
+`Msg_SendTwoFieldReply`'s `{u8 = 2, u16 code}` (round 443).
+
+**A connecting hypothesis, tested and refuted.** It was tempting to say this
+explains the prefix mismatches of rounds 463-466 — server writes both, client
+reads the second only sometimes. **It does not.** Of the 10 opcodes where the
+client reads a strict prefix of the server's writes, only **2** are short by
+exactly one `u16`; the others are short by tails like `4,4,4,4`. The envelope
+finding stands on its own; it does not account for the residual, and saying so
+is cheaper than a later retraction.
+
+**A probe defect caught before publication.** The first field-2 probe asked
+which callee most often receives a freshly-read 2-byte field and answered
+`FUN_00778190` in **103 handlers** — a 29-byte function that is not an error
+renderer. It had matched on `param_1`, a name Ghidra reuses across unrelated
+functions. Excluding generic `param_N` names drops it to **19** handlers and the
+dominance vanishes. This is round 447's bare-name defect in a third form: **a
+name that is common rather than unique turns an artifact into a finding.**
+
+No name filed; three still held. Nothing wired, no tag. Tests green.

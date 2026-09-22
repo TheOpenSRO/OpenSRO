@@ -1056,3 +1056,51 @@ code rather than a `u8` result, which diverges — but `PROTOCOL_DECISION.md`
 records the current opcodes and layouts as "**placeholder scaffolding, not the
 destination**", so changing the wire format now would be a design change, not a
 grounding fix. This is a spec fact for when the real protocol is adopted.
+
+## Field 2 is the error code, and it exists only on failure (round 468)
+
+Round 467 settled field 1 as a result byte. Field 2 follows, and its meaning is
+**conditional on field 1** rather than fixed.
+
+**The shape, read by hand in two handlers and then measured:**
+
+	Read(&result, 1);
+	if (result == 1) { ...the operation's own success payload...; return; }
+	if (result == 2) { Read(&code, 2); ...render the error... }
+
+`UI_ALCHEMYBOX::FUN_0086dbd0` and `FleaMarket_OnOpenStallResult` are both
+literally that, with no other structure.
+
+**Measured across the client:** of **206** handlers whose first field is one
+byte, **147** also read a two-byte field later, and **106 of those 147 (72 %)**
+have a `== 2` or `!= 1` test **guarding** the two-byte read. So the u16 is not
+part of every reply — it is read when the result byte says failure.
+
+That completes the envelope the whole protocol shares, and matches
+`Msg_SendTwoFieldReply`'s `{u8 = 2, u16 code}` from the writer side (round 443):
+
+	u8   result
+	     == 1  ->  the operation's own payload follows
+	     == 2  ->  u16 error code, and nothing else
+
+### A connecting hypothesis, tested and refuted
+
+It was tempting to conclude that this explains the prefix mismatches of rounds
+463-466 — the server writes both fields, the client reads the second only
+sometimes, so a client layout of `1` against a server `1,2` would be the success
+path rather than a disagreement. **It does not.** Of the **10** opcodes where
+the client reads a strict prefix of what the server writes, only **2** are short
+by exactly one `u16`; the rest are short by tails like `4,4,4,4` and
+`1,1,1,1,1,1,1,1,1`. The envelope finding stands on its own evidence; it does
+not account for the residual.
+
+### A probe defect caught before it was published
+
+The first attempt asked which callee most often receives a freshly-read 2-byte
+field, and answered `FUN_00778190` in **103 handlers** — overwhelming dominance,
+and a 29-byte function that is not an error renderer at all. The probe had
+matched on `param_1`, a name Ghidra gives to unrelated things in different
+functions. Excluding generic `param_N` names drops that count from 103 handlers
+to **19**, and the "dominant consumer" disappears. This is the bare-name
+matching defect round 447 recorded, in a third form: **a name that is common
+rather than unique makes an artifact look like a finding.**
