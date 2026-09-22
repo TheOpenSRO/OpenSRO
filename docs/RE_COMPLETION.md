@@ -24535,3 +24535,53 @@ One name filed (`CGameServer::RefRow_AddInteraction8`), **held unapplied** — i
 needed the disassembly, because Ghidra renders the record reads against an
 `in_EAX` it cannot tie to the call before them. Nothing to wire; srrevamp has no
 NPC interaction model to carry the columns yet. No tag. Tests green.
+
+## The interaction-id vocabulary, from the NPCs themselves (round 455)
+
+Round 454's next probe was "find the insert by shape, not by the helper's name".
+Run first, it **confirmed** the earlier census rather than overturning it: a
+census of the containers passed to the `set<byte>` *find* helper at all 39 of
+its sites — which catches an inlined find-then-insert — returns 27 on
+`char+0x1c78`, 3 on `obj+0x130`, 3 on `record+0x90`, matching exactly. No hidden
+inserts.
+
+**The registrations were virtual calls all along.**
+`CGObj::AddAvailableInteraction` is **vtable slot 89** (offset `0x164`),
+computed from table `0xaec0a4` and checked against that table's slot 227 holding
+a known address. `CGObjNPCNPC::Create` calls it **32 times with literal ids**,
+each behind a comparison against the NPC's own **CodeName** — so the whole
+vocabulary is named by the engine's own NPC names. 25 distinct ids, full table
+in `docs/protocol/character_state.md`.
+
+**Ten independent agreements make it trustworthy.** The attribution is a
+heuristic (strings between one registration and the next), but ten of these ids
+were already named from the *reader* side by unrelated evidence and every one
+agrees — 0x0f `NPC_*_GUILD`, 0x14 `MERCHANT`, 0x15 `THIEF`, 0x16 `HUNTER`,
+0x17 `FORTRESS_MANAGER`, 0x18 `FORTRESS_OFFICIAL`, 0x19 `FORTRESS_BATTLEAIDE`,
+0x1a `FORTRESS_SMITH`, 0x1f `STRUCTURE_GATE_PULLEY_*`, 0x0c `THIEF_BUY`/`SPECIAL`.
+Ids 0x15 and 0x16 are the strongest: the codenames literally read THIEF and
+HUNTER, matching names round 453 derived by a completely different route.
+
+**Three earlier items closed or corrected:**
+
+- **Id 0x28 is named** — `NPC_SIEGE_DUNGEON_TELEPORT`. Round 452 could not reach
+  it because its handler issues no database query; the codename fits a handler
+  that reads a `u32`, requires the player alive, and ends in a slot call.
+- **Round 452's "forge instance 0 and 1" is corrected.** The two are different
+  NPCs, not two forges: **0x1a is the fortress SMITH, 0x1b the fortress TRAINER.**
+- **Round 450's declined data point is vindicated.** It saw the client send id 3
+  from an `IFStorageRoom` context and refused to use it. Id 3 is `WAREHOUSE`.
+
+**Id 1 is a capability, not a role**, which retroactively justifies round 453's
+caution. It is registered on **five unrelated families** — warehouse, stable,
+guild hall and two fortress NPCs — so "id 1 is the shop NPC" would have been
+wrong in exactly the way that round declined to be.
+
+**A lead on a long-standing gap.** Round 361 recorded that nothing directly
+writes INTERACTMODE **9** (open market) although six handlers require it. Id
+`0x23` is `NPC_OPEN_MARKET_JUEL`, and `case 0x23` is the one arm of the `0x046`
+switch that returns **without setting any mode**. The open-market NPC takes its
+own path to mode 9 — a lead, not a finding; the path was not traced.
+
+No name filed (both functions this leaned on were already named); one name still
+held from round 454. Nothing to wire, no tag. Tests green.

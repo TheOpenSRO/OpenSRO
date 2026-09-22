@@ -833,3 +833,107 @@ a table whose record is **0x1c bytes** — which those offsets overrun. The call
 allocates 0x1c and then passes the result of `FUN_0071fff0` on it, so either the
 recorded size belongs to a handle rather than the record, or the table
 attribution is wrong. **Id 8 is therefore not attributed to a table here.**
+
+## The interaction-id vocabulary, from the NPCs themselves (round 455)
+
+Round 454 left a weak negative: only three registration sites were found (ids 7,
+8, 9 from refdata), and every id whose *meaning* rounds 450–453 recovered had no
+located registration. **Both halves are now resolved.**
+
+The shape-based probe round 454 called for was run first — a census of the
+containers passed to the `set<byte>` **find** helper at all 39 of its sites,
+which catches an inlined find-then-insert that a helper-name census would miss.
+It returns 27 sites on `char+0x1c78`, 3 on `obj+0x130` and 3 on `record+0x90`,
+**matching the helper-name census exactly**. So there are no hidden inserts, and
+round 454's negative was right for a better reason.
+
+The registrations are **virtual calls**. `CGObj::AddAvailableInteraction`
+(`0x484e40`) is **vtable slot 89** (offset `0x164`) — computed from table
+`0xaec0a4`, where the address sits at `0xaec208`, and checked against the same
+table's slot 227 at `0xaec430` holding `0x4a95a0`, which is known independently.
+Its body is two lines: ask slot `0x390`, and insert into `this+0x130` if that
+answers 0.
+
+**`CGObjNPCNPC::Create` calls slot 89 thirty-two times with literal ids, each
+behind a comparison against the NPC's own CodeName.** That is the vocabulary:
+
+| id | registered on |
+|---:|---|
+| **1** | `WAREHOUSE`, `NPC_*_HORSE`, `NPC_*_GUILD`, `NPC_*_FORTRESS_OFFICIAL`, `NPC_*_FORTRESS_BATTLEAIDE` — **five families** |
+| **3** | `WAREHOUSE`, `NPC_SD_*_AREA_WAREHOUSE` |
+| **4** | `NPC_*_SMITH`, `NPC_*_ARMOR`; also `NPC_*_FORTRESS_SMITH` |
+| **0xb** | the `NPC_*_HORSE` block, beside id 1 |
+| **0xc** | `NPC_TD_THIEF_BUY`, `NPC_*_SPECIAL*`, `NPC_SD_GUILD_AGENT*` |
+| **0xd** | the `NPC_TD_THIEF_BUY` block, beside 0xc |
+| **0xe** | `NPC_CH_GENARAL_SW`, `NPC_WC_GENARAL_SW`, `NPC_KT_MINISTER` |
+| **0xf** | `NPC_*_GUILD`, `NPC_CH_GENARAL_SP` |
+| **0x11** | the `NPC_SIEGE_DUNGEON_TELEPORT` block, beside 0x28 |
+| **0x12** | `NPC_CH_GACHA_OPERATOR` |
+| **0x14** | `NPC_*_MERCHANT`, `NPC_*_DOCTOR`, `NPC_KT_DESIGNER` |
+| **0x15** | `NPC_TD_THIEF_SELL`, `NPC_SD_T_AREA_THIEF` |
+| **0x16** | `NPC_*_HUNTER`, `NPC_*_GENARAL_SW`, `NPC_KT_MINISTER` |
+| **0x17** | `NPC_*_FORTRESS_MANAGER*` |
+| **0x18** | `NPC_*_FORTRESS_OFFICIAL` |
+| **0x19** | `NPC_*_FORTRESS_BATTLEAIDE*` |
+| **0x1a** | `NPC_*_FORTRESS_SMITH*` |
+| **0x1b** | `NPC_*_FORTRESS_TRAINER*` |
+| **0x1e** | `NPC_CH_SOLDIER_EM1`, `NPC_EU_ADVICE3` |
+| **0x1f** | `STRUCTURE_GATE_PULLEY_{JA,BJ,HT}_0n` |
+| **0x20** | `NPC_*_SMITH` |
+| **0x23** | `NPC_OPEN_MARKET_JUEL` |
+| **0x27** | `NPC_FWORLD_RECALL_PARTY` |
+| **0x28** | `NPC_SIEGE_DUNGEON_TELEPORT` |
+| **0x29** | `NPC_INS_EXIT_TELEPORT` |
+| computed | `NPC_BATTLE_ARENA_MANAGER`, `NPC_BATTLE_ARENA_EXCHANGER` |
+
+### Why this is trusted: ten independent agreements
+
+The attribution method is a heuristic — the codename strings compared between
+one registration and the next. What makes it safe is that **ten of these ids
+were already named from the reader side, by unrelated evidence, and every one
+agrees**:
+
+| id | named earlier as | codename here |
+|---:|---|---|
+| 0x0f | guild (`CGuildManager::HandleCreateGuild`) | `NPC_*_GUILD` |
+| 0x14 | Trader job guild | `NPC_*_MERCHANT` |
+| 0x15 | Thief job guild | `NPC_*_THIEF*` |
+| 0x16 | Hunter job guild | `NPC_*_HUNTER` |
+| 0x17 | fortress administration, tax | `FORTRESS_MANAGER` |
+| 0x18 | siege registration | `FORTRESS_OFFICIAL` |
+| 0x19 | fortress structures | `FORTRESS_BATTLEAIDE` |
+| 0x1a | siege item forge | `FORTRESS_SMITH` |
+| 0x1f | `QUERY_SIEGE_STRUCT_UPDATE` | `STRUCTURE_GATE_PULLEY_*` |
+| 0x0c | the "Trader Registered, TradeRisk" path (round 449) | `THIEF_BUY`, `*_SPECIAL*` |
+
+Ids 0x15 and 0x16 are the strongest: the codenames literally read `THIEF` and
+`HUNTER`, matching names derived in round 453 from a completely different route.
+
+### Three earlier items closed or corrected
+
+- **Id 0x28 is named.** Round 452 could not reach it — its handler issues no
+  database query. It is `NPC_SIEGE_DUNGEON_TELEPORT`, which fits a handler that
+  reads a `u32`, requires the player alive, and ends in a slot call.
+- **Round 452's "forge instance 1" is corrected.** 0x1a and 0x1b run the same
+  forge code with selector 0 and 1, and round 452 declined to say what the two
+  instances were. They are different NPCs: **0x1a is the fortress SMITH, 0x1b the
+  fortress TRAINER.**
+- **Round 450's declined data point is vindicated.** That round saw the client's
+  `0x7046` sender pass id **3** from an `IFStorageRoom` context and refused to
+  use it as evidence. Id 3 is `WAREHOUSE`.
+
+### What id 1 actually is
+
+Round 453 read id 1 as the item-sale gate and deliberately stopped short of
+calling it "the shop NPC". That caution was right: id 1 is registered on
+**five unrelated families** — warehouse, stable, guild hall and two fortress
+NPCs. It is not a role but a **shared capability**, which is exactly why its
+readers are storage-table entries rather than a dispatch handler.
+
+### A lead on the INTERACTMODE 9 gap
+
+Round 361 recorded that **nothing directly writes INTERACTMODE 9** (open market)
+although six handlers require it. Id **0x23** is `NPC_OPEN_MARKET_JUEL`, and
+`case 0x23` of the `0x046` switch is the one arm that **returns without setting
+any mode**. The open-market NPC therefore takes its own path to mode 9. That is
+a lead, not a finding — the path was not traced.
