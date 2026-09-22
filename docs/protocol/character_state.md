@@ -67,6 +67,13 @@ Values **4, 5, 6 and 7 are read but NOT named.** What is known about each:
 
 ## The writers of 7 and 9 are not in the direct-write set
 
+> **PARTLY SUPERSEDED (round 456).** Value **9 IS directly written** — once, by
+> `OpenMarket_BeginSession` — and the census below missed it because it grepped
+> decompiled C for a one-step `chardata + 6` store while that site writes in two
+> steps (`iVar2 = in_EAX[0xc]; *(iVar2 + 6) = 9`). Value **7** survives the
+> re-check and its negative is now much stronger. See "Value 9's writer, and a
+> census redone with the right instrument" at the end of this file.
+
 Stated because it is a gap and not an oversight. Every direct assignment to
 `chardata + 6` in the dump writes 0, 1, 2, 4, 5 or 6 — **nothing writes 7 or 9**,
 yet six open-market handlers require 9 and four gates test 7.
@@ -937,3 +944,65 @@ although six handlers require it. Id **0x23** is `NPC_OPEN_MARKET_JUEL`, and
 `case 0x23` of the `0x046` switch is the one arm that **returns without setting
 any mode**. The open-market NPC therefore takes its own path to mode 9. That is
 a lead, not a finding — the path was not traced.
+
+## Value 9's writer, and a census redone with the right instrument (round 456)
+
+Round 361 recorded that "every direct assignment to `chardata + 6` in the dump
+writes 0, 1, 2, 4, 5 or 6 — **nothing writes 7 or 9**", and carried that as a
+gap for ninety-five rounds. **Half of it was a probe defect.**
+
+Redone at instruction level — every direct byte store to `[reg+0x6]`, which no
+decompiler shape can hide:
+
+| value | sites |
+|---:|---:|
+| 0 | 13 |
+| 1 | 9 |
+| 2 | 4 |
+| 4 | 1 |
+| 5 | 2 |
+| 6 | 2 |
+| **9** | **1** |
+| 7 | **0** |
+
+**Value 9 is written**, at `0x51b5bd`. The old census missed it because that
+site stores in two steps — `iVar2 = in_EAX[0xc];` then `*(iVar2 + 6) = 9` —
+while the grep looked for a one-step `chardata + 6` form.
+
+**`OpenMarket_BeginSession` (`0x51b580`) is that writer**, and three independent
+things identify it:
+
+- it is reached **only** from `GObjPC_HandleShopMsg_046`'s `case 0x23`, which is
+  the one arm of that switch that returns **without setting a mode itself**;
+- interaction id `0x23` is registered on **`NPC_OPEN_MARKET_JUEL`** (round 455);
+- mode 9 is required by all six `COpenMarketMgr::On*Req` handlers (round 361).
+
+So the lead round 455 left — "the open-market NPC takes its own path to mode 9"
+— is now the finding, with the path named.
+
+### Value 7 survives, and the obvious escape route is closed too
+
+7 is written by **no** direct store, now confirmed at instruction level. The
+natural next hypothesis is the dispatcher: `CGObjPC::SetCharacterState`'s
+**kind 2** arm writes `chardata+6` from its value argument (`0x4f0b16`), so any
+value could arrive that way. **It does not.** A census of all 98 call sites of
+slot 171 by *(kind, value)* finds only kinds `0x0d` and `0x0f` passed as
+literals — **kind 2 is never used** — plus four sites passing both from
+registers.
+
+**A probe defect caught before it was published.** The first run of that census
+reported "kind 2, ×2" and would have closed the question wrongly. `SetCharacterState`
+is `ret 0x8` and its written value comes from `[esp+0x14]`, which is **arg2** —
+so the *kind* is the last push, not the first, and the two sites are really
+`(kind 0x0f, value 2)`. Reading the callee's own frame is what fixed it.
+
+**What remains for 7** are the register-sourced writers, of which there are
+three in the character range:
+
+	AJStateChanger::vslot_002  +0xbc     round 361's candidate, from a JOB field
+	CGObjPC::FUN_004de300      +0xd9
+	FUN_0050fda0               +0x18
+
+Round 361 already named the first as the likely path (`*(chardata+6) = *(job+0xd)`).
+It is still untraced, and the other two were not examined. **7 stays open**, but
+its negative is now a measurement rather than a grep.

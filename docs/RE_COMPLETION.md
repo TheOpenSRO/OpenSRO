@@ -24585,3 +24585,43 @@ own path to mode 9 — a lead, not a finding; the path was not traced.
 
 No name filed (both functions this leaned on were already named); one name still
 held from round 454. Nothing to wire, no tag. Tests green.
+
+## INTERACTMODE 9's writer, and a ninety-five-round gap half closed (round 456)
+
+Round 361 recorded that "nothing writes 7 or 9" to `chardata+6` and carried it
+as an open gap ever since. Round 455 left a lead. **Half the gap was a probe
+defect.**
+
+Redone at instruction level — every direct byte store to `[reg+0x6]` — the
+census reads 0×13, 1×9, 2×4, 4×1, 5×2, 6×2, **9×1**, 7×0. **Value 9 is
+written**, at `0x51b5bd`; the old grep missed it because that site stores in two
+steps (`iVar2 = in_EAX[0xc]; *(iVar2 + 6) = 9`) while the grep wanted a one-step
+`chardata + 6`.
+
+**`OpenMarket_BeginSession` (`0x51b580`) is the writer**, on three independent
+signals: it is reached only from `GObjPC_HandleShopMsg_046`'s `case 0x23` — the
+one arm that returns *without* setting a mode itself; id `0x23` is registered on
+`NPC_OPEN_MARKET_JUEL` (round 455); and mode 9 is what all six
+`COpenMarketMgr::On*Req` handlers require (round 361). Round 455's lead is now
+the finding.
+
+**Value 7 survives, and the obvious escape route is closed too.** The natural
+hypothesis was the dispatcher — `CGObjPC::SetCharacterState`'s **kind 2** arm
+writes `chardata+6` from its argument, so any value could arrive there. A census
+of all 98 call sites of slot 171 by *(kind, value)* finds only kinds `0x0d` and
+`0x0f` as literals; **kind 2 is never used**. What remains are three
+register-sourced writers, headed by round 361's own candidate
+`AJStateChanger::vslot_002` (which writes the byte from a *job* field). **7 stays
+open** — but its negative is now a measurement, not a grep.
+
+**A probe defect caught before publication.** The first run of that census
+reported "kind 2, ×2" and would have closed the question wrongly.
+`SetCharacterState` is `ret 0x8` and its written value comes from `[esp+0x14]`,
+which is **arg2** — so the kind is the *last* push, not the first, and those two
+sites are really `(kind 0x0f, value 2)`. Reading the callee's own frame fixed
+it. This is the same class of error as round 447's bare-name caller matching:
+a census is only as good as the column it thinks it is reading.
+
+One name filed (`OpenMarket_BeginSession`), held with round 454's — two rows is
+not worth the ~9-minute rebuild. Nothing to wire; srrevamp has no open market.
+No tag. Tests green.
