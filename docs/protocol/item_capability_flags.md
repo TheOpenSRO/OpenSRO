@@ -54,6 +54,16 @@ family and each override is two lines.
 | 8 | `CanUse` | `0x00483ee0` |
 | 9 | `CanThrow` | `0x00483f10` |
 | 10 | *unnamed* | `GObjPC::FUN_00483f40` — a tenth predicate, same shape, no stub to name it |
+| 11 | *unnamed* | `GObjPC::FUN_00483f70` (round 459) |
+| 12 | *unnamed* | `GObjPC::FUN_00483fa0` (round 459) |
+| 13 | *unnamed* | `GObjPC::FUN_00483fd0` (round 459) |
+| 14 | *unnamed* | `GObjPC::FUN_00483e10` (round 459) |
+
+**Bits 11–14 have readers too**, found by censusing every function whose body
+reads `refobj + 0x8c` as `>> N & 1`. The table above stopped at 10 because the
+nine `## Illegal ##` stubs stop at 9 and bit 10 was reached another way; these
+four are the same one-line shape and, like bit 10, **have no stub, so the engine
+offers no name for them and none is invented here**.
 
 **Zero means refuse.** `CanTrade` returning 0 produces `CANNOT_BE_TRADED`, so a
 set bit is permission, not prohibition.
@@ -466,3 +476,55 @@ So they do not own a separate common record -- they **are** one, by
 inheritance, which is why `6a3da5 cmp BYTE PTR [ebx+0x88],0x2` reads Country
 (column 14) straight off `this` after the call.
 
+
+
+## How the flags word is assembled, field by field (round 459)
+
+The writers were enumerated in 2026-09-16 as five instructions. This is what
+they actually compute, read out of `RefObjCommon_ExtractData`:
+
+	flags  =  (sell  != 0) << 1  |  (trade != 0)
+	if (packed & 0x80)  flags |= 1 << 12
+	if (packed & 0x40)  flags |= 1 << 13
+	flags |= ((dropf & 2) << 9 | dropf & 1) << 4     // bit 4 and bit 14
+	       |  (throw  != 0) << 9
+	       |  (use    != 0) << 8
+	       |  (revive != 0) << 7
+	       |  (repair != 0) << 6
+	       |  (pick   != 0) << 5
+
+So each named predicate has **its own source field** — except three that share:
+
+- **bits 12 and 13 come from ONE field**, tested as `& 0x80` and `& 0x40`. That
+  field is a bit-packed value, not a boolean.
+- **bit 14 shares a field with `CanDrop`** — bit 0 of it is `CanDrop`, bit 1 is
+  bit 14.
+
+**And `CanDrop` is forced off when `CanTrade` is off.** Immediately before the
+word is built:
+
+	if (trade == 0 && dropf == 1) dropf = 0;
+
+which is a real rule, not a parse artifact: an untradeable item is also
+undroppable even when its own column says otherwise.
+
+### Why no file column numbers are given here
+
+The obvious next step is to turn those fields into `itemdata`/`characterdata`
+column numbers. **A control says the arithmetic for that does not hold, so no
+column numbers are claimed.**
+
+Walking `RefObjCommon_ExtractData` while tracking the parser's own column
+counter (`cursor + 0x28`, incremented once per field) yields **47 columns with 5
+strings — exactly the signature `refdata_tables.md` records independently**, so
+the walk itself is sound. But feeding that 47 into the same walk of
+`RefObjChar_ExtractData` puts the `+0x198` field at **column 48**, and `+0x198`
+is Level, **grounded as characterdata column 57**. Off by nine.
+
+The explanation is already in `refdata_tables.md`'s own caveat — *"the client's
+textdata files carry more columns than the server reads"*. **The parser's read
+index is not the file's column index**, the offset is not a constant, and the
+bits-10/11 recovery above got its column numbers by anchoring against a real
+characterdata table rather than by counting reads. Until that anchoring is
+redone for the common prefix, the fields above are identified by *what they
+feed*, not by where they sit in a file.

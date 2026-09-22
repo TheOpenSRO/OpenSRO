@@ -24706,3 +24706,46 @@ assumed. And `SMITH` → Repair stays as-is although the server groups
 anywhere**, so nothing ties it to repair, and adding armour merchants to the
 repair list on that basis would be the unproven leap this project keeps having
 to retract.
+
+## The capability flags word, assembled — and a control that refused (round 459)
+
+Started from round 458's open item: interaction id 4 groups `NPC_*_SMITH` and
+`NPC_*_ARMOR`, but has no reader, so nothing ties it to repair. `CGObj::CanRepair`
+looked like the link. **It is not** — it reads bit 6 of a flags word on the
+*item's* ref row, so it answers "can this item be repaired", not "does this NPC
+repair". Id 4 stays unnamed and the armour merchants stay out of the repair list.
+
+What the detour found instead is worth more:
+
+**Four capability readers the table had been missing.** A census of every
+function reading `refobj + 0x8c` as `>> N & 1` finds accessors for bits **11,
+12, 13 and 14** as well as the documented 0–10. Like bit 10 they have no
+`## Illegal ##` stub, so the engine offers no name and none is invented.
+
+**The flags word's construction, read out.** Each predicate has its own source
+field, except three that share:
+
+- **bits 12 and 13 come from ONE field**, tested `& 0x80` and `& 0x40` — a
+  bit-packed value, not a boolean;
+- **bit 14 shares a field with `CanDrop`** (bit 0 is `CanDrop`, bit 1 is 14);
+- and **`CanDrop` is forced off when `CanTrade` is off** —
+  `if (trade == 0 && dropf == 1) dropf = 0;` — an untradeable item is also
+  undroppable regardless of its own column.
+
+**A control refused, so no column numbers were published.** The natural payoff
+was to turn those fields into `itemdata`/`characterdata` columns, since this
+file's own header says srrevamp "cannot [model any of this] until the columns
+are found". Walking the parser while tracking its own column counter yields
+**47 columns with 5 strings — exactly the signature `refdata_tables.md` records
+independently**, so the walk is sound. But feeding that 47 into the same walk of
+`RefObjChar_ExtractData` puts the `+0x198` field at column **48**, and `+0x198`
+is Level, grounded as characterdata column **57**. Off by nine.
+
+`refdata_tables.md`'s own caveat explains it — *"the client's textdata files
+carry more columns than the server reads"*. **The parser's read index is not the
+file's column index**, and the offset is not constant. The bits-10/11 recovery
+on file got its columns by anchoring against a real characterdata table, not by
+counting reads. So the fields are identified here by *what they feed* and by
+nothing else, and the column hunt stays open with the reason now known.
+
+No name filed; two still held. Nothing to wire, no tag. Tests green.
