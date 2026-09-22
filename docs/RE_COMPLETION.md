@@ -6405,6 +6405,46 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 443 (the blocker was a shared helper, so solving it once unblocks 38+
+opcodes): THREE ROUNDS HAD BEEN SPENT ON ONE OPCODE, AND THE THING BLOCKING IT
+WAS NOT THE OPCODE. `Msg_SendTwoFieldReply` (`0x4e7250`) is used by **38+ call
+sites**, so reading the helper itself settles the refusal shape for every one of
+them. It is 74 bytes and its own instructions give the layout:
+
+	4e7261:  lea  eax,[esp+0x7]
+	4e726d:  mov  BYTE PTR [esp+0xb],0x2  ; the helper WRITES the 2 itself
+	4e7272:  call append(len = 1)         ; field 1: u8, constant 0x02
+	4e7277:  lea  ecx,[esp+0xc]           ; the caller's single pushed dword
+	4e727c:  mov  eax,2
+	4e7283:  call append(len = 2)         ; field 2: u16, the refusal code
+	4e7297:  ret  0x4                     ; exactly ONE stack argument
+
+**Its name understates it: it does not send two arbitrary fields, it sends a
+REFUSAL** — `{u8 = 2, u16 = code}`. **`ret 0x4` is the control**: one stack
+argument, which is exactly why round 442 found every path pushing exactly one
+word. A reading that gave the caller two fields would contradict the callee's
+own stack cleanup.
+
+**And the `0x02` is a literal the helper stores, not data any caller chose** —
+so **every refusal in the game carries a leading `0x02`**, the conventional
+"result = failure" byte, with success replies built elsewhere. That is a
+protocol-wide fact recovered from one 74-byte function, and it is now in
+`PACKET_FORMAT.md`.
+
+It also shows *why* this helper's argument is unreliable in the decompilation,
+which the function already warned about: **the opcode arrives in `ECX` and the
+payload on the stack**, and Ghidra's single `param_1` collapses the two. The
+warning was right; the disassembly explains the mechanism.
+
+WHAT IT COMPLETES, AND WHAT IT STILL DOES NOT. Berserk now has request
+(`0x70a7`, one byte, 1 = activate) and refusal (`0xb0a7`, `{2, code}` with the
+guards for codes 1/3/4/5). **The SUCCESS reply is still unread** — that path
+does not touch this helper at all, falling through to `SetBodyMode`, so what the
+client learns on success arrives by another route. `PROTOCOL_DECISION.md` asks
+for the payload layout, not most of it, so `session.OpBerserk` (`0x0068`)
+remains the live placeholder for a fourth round. No behaviour changed, so no
+tag.
+
 Round 442 (every reply path traced: the result-code vocabulary, and a third
 sighting of body modes 6 and 7): ROUND 441 NAMED THE BLOCKER — "assigning
 meanings to the two pushed words needs every refusal path traced" — AND THE

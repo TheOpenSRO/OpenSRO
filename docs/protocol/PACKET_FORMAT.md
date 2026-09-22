@@ -575,3 +575,54 @@ client variants behind it), `server-only`, `client-only`.
   hands the rest to a subsystem genuinely reads a prefix.
 - **41 handlers have neither side.** They are not attempted here, and no row
   pretends otherwise.
+
+
+## The failure-reply shape, read out of its helper (round 443)
+
+`Msg_SendTwoFieldReply` (`0x4e7250`, 74 bytes) is used by **38+ call sites**
+across the server, and its name understates it: it does not send two arbitrary
+fields, it sends a **refusal**. Its own instructions give the layout:
+
+	4e725a:  push ecx                     ; ECX = the reply opcode
+	4e725d:  call [esi+0x278]             ; open the message
+	4e7261:  lea  eax,[esp+0x7]
+	4e726d:  mov  BYTE PTR [esp+0xb],0x2  ; the helper WRITES the 2 itself
+	4e7272:  call append(len = 1)         ; field 1: u8, constant 0x02
+	4e7277:  lea  ecx,[esp+0xc]           ; the caller's single pushed dword
+	4e727c:  mov  eax,2
+	4e7283:  call append(len = 2)         ; field 2: u16, the refusal code
+	4e7293:  call [edx+0x27c]             ; send
+	4e7297:  ret  0x4                     ; exactly ONE stack argument
+
+So every reply it sends is:
+
+	u8   0x02      -- constant, written by the helper, never by the caller
+	u16  code      -- the caller's one pushed word
+
+**`ret 0x4` is the control**: the helper takes exactly one stack argument, which
+is why round 442 found every path in the berserk handler pushing exactly one
+word. A reading that assigned the caller two fields would contradict the
+callee's own stack cleanup.
+
+**And the `0x02` is the answer to a question this file did not know it had.** It
+is not data the caller chose; it is a literal the helper stores, so **every
+refusal in the game carries a leading `0x02`** — the conventional
+"result = failure" byte, with success replies built elsewhere.
+
+**Read the opcode from ECX, never from the decompiled argument.** That is
+already recorded on the function (Ghidra "names sometimes the opcode and
+sometimes the payload", the error that invalidated round 323's sweep and was
+withdrawn in round 325); the disassembly above shows why — the opcode arrives in
+`ECX` and the payload on the stack, and Ghidra's single `param_1` collapses
+them.
+
+### What it completes for `0xb0a7` (berserk)
+
+	request  0x70a7   u8   1 = activate                       (round 441)
+	refusal  0xb0a7   u8 = 2, u16 = code in {1, 3, 4, 5}      (rounds 442, 443)
+
+with the guards for each code in `server/internal/proto/opcodes.go`. **The
+SUCCESS reply is still unread** — the success path does not call this helper at
+all, it falls through to `SetBodyMode`, so whatever the client learns on success
+arrives by another route. Until that is read, `session.OpBerserk` (`0x0068`)
+stays the live placeholder, per `PROTOCOL_DECISION.md`.

@@ -250,14 +250,23 @@ const (
 // The success path does not reply here at all: it falls through 0x515c38 into
 // GObjPC::FUN_005a16c0(this+0x28c, 4, 0) and the SetBodyMode call.
 //
-// STILL NOT WIRED, AND DELIBERATELY SO. `docs/protocol/PROTOCOL_DECISION.md`
-// says a placeholder is replaced "once that opcode's real wire number AND
-// PAYLOAD LAYOUT are confirmed". The reply's SECOND field is still unread --
-// only one word is pushed per path, while `Msg_SendTwoFieldReply` appends two,
-// reading two adjacent stack slots -- and that helper's own note warns Ghidra
-// names its argument sometimes the opcode and sometimes the payload, the error
-// that invalidated round 323's sweep. So `session.OpBerserk` (0x0068) stays
-// live and these sit beside it, exactly as round 365 left `OpMovementRequest`.
+// THE REFUSAL REPLY'S LAYOUT IS SETTLED (round 443), read out of
+// `Msg_SendTwoFieldReply`'s own instructions rather than its arguments:
+//
+//	u8   0x02      -- a literal the HELPER writes (mov BYTE PTR [esp+0xb],0x2)
+//	u16  code      -- the caller's single pushed word
+//
+// Its `ret 0x4` is the control: exactly one stack argument, which is why every
+// path in this handler pushes exactly one word. That shape is shared by 38+
+// call sites, so every refusal in the game carries a leading 0x02 --
+// see docs/protocol/PACKET_FORMAT.md.
+//
+// STILL NOT WIRED, AND DELIBERATELY SO. The SUCCESS reply is unread: the
+// success path does not use that helper at all, it falls through to
+// SetBodyMode, so what the client learns on success arrives by another route.
+// `docs/protocol/PROTOCOL_DECISION.md` requires the payload layout, not most of
+// it, so `session.OpBerserk` (0x0068) stays live and these sit beside it,
+// exactly as round 365 left `OpMovementRequest`.
 const (
 	OpBerserkRequest  uint16 = 0x70A7
 	OpBerserkResponse uint16 = 0xB0A7
