@@ -6405,6 +6405,48 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 436 (the siege AsyncQuery read, and 118 names were carrying their own
+class in the wrong half): TWO RANKINGS AGREED ON THE TARGET. Re-ranking the
+game-logic core by size with the now-closed quest hierarchy excluded puts
+`AQ_Siege::FUN_006232c0` (**11,816 bytes**) at the top, and `SYSTEMS.md`'s Siege
+row independently names that exact function as its next probe.
+
+**It is the siege AsyncQuery's `DoWork` dispatcher** — a switch on `param_2[10]`
+with at least eighteen cases. **Case 0 is tax collection**, logging
+`"Before Tax:[%d], After Tax:[%d]"` and
+`"After QUERY_SIEGE_TAX_COLLECT :: CurrentTax = %I64d"` before sending opcode
+`0x385f`; two further cases refuse a bad spawn with `"invalid Add Siege
+Struct/Object gen position is designated!"`.
+
+**AND THE ENGINE NAMES EVERY OPERATION**: twenty-nine `QUERY_*` literals, **26
+of them siege** — tax ratio/accumulate/collect, struct add/remove/update/upgrade,
+object add/remove/update, item-forge add/remove/update/collect, request
+add/remove, battle-record add/update (`RECOED`, the game's own typo), stone-state
+add/update, finished, temp-finished, temporal-owner, hired-NPC,
+modify-guild-introduction, bless-buff-succeeded. That is the complete list of
+what the siege system persists, and `siege.md` now carries it.
+
+**THE LEVER THAT PAID, THOUGH, WAS A NAME-FORM DEFECT.** The query builders were
+already named after their own queries by an earlier round — but as
+`GObjPC::AQ_Siege__QUERY_SIEGE_TAX_COLLECT`: **the class in the method half, a
+different class in the owner half.** Censusing that form across the whole dump
+found **118 names** whose embedded class is a *real RTTI class* and differs from
+the owner — `AsyncQuery::AQ_COSManipulator__LoadStorage`,
+`FleaMarket::CFleaMarket__SellFMarketItem`,
+`TradeMgr::CTradeMgr__OpenTradeSession`, twenty-two `AQ_Siege__*`, eleven
+`COpenMarketMgr__*`, and so on.
+
+**The control is what makes it safe**: the embedded name must appear in the
+1,189-class RTTI list from `tools/rtti_chains.py`. That test rejected **3,223**
+candidates whose double underscore is part of the method rather than a class
+boundary — `CEnchant_EnchantMagicStone___BlessItem`,
+`AQ_OpenMarket___DoWork_Update_Gold`, every `CChunkAllocatorST__AllocItemBlock`.
+Without it my first cut produced exactly those mangles. Self-evidencing in the
+same way round 418 measured at 8-to-1: **the name names its own class.**
+
+**applied 119, forced 118, reowned 118, failed 0.** `PROJSTAMP` cleared. No
+behaviour changed, so no tag.
+
 Round 435 (a lever measured 86 % spent, and the coverage figure I published in
 round 408 is inflated): THE `CEVENTHandler` SLOT-1 LEVER IS NEARLY EXHAUSTED.
 That interface has exactly two vtable slots and all **234** subclasses share the

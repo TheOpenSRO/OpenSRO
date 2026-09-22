@@ -215,3 +215,42 @@ page that will need it. Full evidence in `damage_pipeline.md`, "ONE of five dama
   reading the attacker's weapon TID. **Unread** — it is the next probe for structure damage.
 - **A fortress weapon (weapon-slot TypeID4 == 16) deals exactly 1 to anything that is not a
   structure or flag** — damage kind 4. Implemented as `combat.KindFortressWeapon`.
+
+
+## The siege AsyncQuery: 26 named operations, and the DoWork dispatcher (round 436)
+
+This file's own next probe was *"Read `AQ_Siege::FUN_006232c0` (11,816 bytes),
+where most of the fortress logic lives"* — and it is independently the **largest
+unnamed non-quest function in the game-logic core**, so two rankings agreed on
+it.
+
+**It is the siege AsyncQuery's `DoWork` dispatcher**: a switch on `param_2[10]`
+with at least eighteen cases (`0`–`0xb`, `0xe`, `0x12`, `0x17`, `0x19`, `0x1a`,
+`0x1c`). **Case 0 is tax collection** — it logs
+`"Before Tax:[%d], After Tax:[%d]"` and
+`"After QUERY_SIEGE_TAX_COLLECT :: CurrentTax = %I64d"`, then sends opcode
+`0x385f`. Two other cases refuse a bad spawn position with
+`"invalid Add Siege Struct gen position is designated! [%d, %f, %f, %f]"` and
+the matching `Add Siege Object` form.
+
+**And the engine names every operation.** Twenty-nine `QUERY_*` literals exist,
+**twenty-six of them siege** — the complete list of what the siege system
+persists:
+
+| group | operations |
+|---|---|
+| tax | `TAX_RATIO`, `TAX_ACCUMULATE`, `TAX_COLLECT` |
+| structures | `STRUCT_ADD`, `STRUCT_REMOVE`, `STRUCT_UPDATE`, `STRUCT_UPGRADE` |
+| objects | `OBJECT_ADD`, `OBJECT_REMOVE`, `OBJECT_UPDATE` |
+| item forge | `ITEM_FORGE_ADD`, `ITEM_FORGE_REMOVE`, `ITEM_FORGE_UPDATE`, `ITEM_FORGE_COLLECT` |
+| registration | `REQUEST_ADD`, `REQUEST_REMOVE` |
+| battle record | `BATTLE_RECORD_ADD`, `BATTLE_RECOED_UPDATE` *(the game's own typo)* |
+| stone | `STONE_STATE_ADD`, `STONE_STATE_UPDATE` |
+| other | `FINISHED`, `TEMP_FINISHED`, `TEMPORAL_OWNER`, `HIRED_NPC`, `MODIFY_GUILD_INTRODUCTION`, `ENGAGE_BLESS_BUFF_SUCCEEDED` |
+
+The three non-siege ones are `OPENMARKET_UPDATE`, `UPDATE_EXP_BUFF` and
+`UPDATE_EXP_SAVEUP`.
+
+**The query-builder functions were already named after their own query** — an
+earlier round spent that lever — **but under the wrong class**, which round 436
+corrected (see below).
