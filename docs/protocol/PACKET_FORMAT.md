@@ -820,3 +820,60 @@ in the dispatcher.
 So the table is a **starting map, not a spec**: it says how many fields a packet
 has and how wide each is, which is what was missing, and it does not say what
 any field means.
+
+## The client side, and what it validates (round 463)
+
+Round 462's table gives each packet's field widths from the server. The client
+gives them again, independently, and the two can be compared.
+
+**`MsgStreamBuffer::Read` (`0x4f7220`, client)** is the counterpart to
+`MsgBuf_AppendBytes`: `Read(this, void *dest, size_t size)`, memcpy'ing `size`
+bytes out of the stream's node chain. Its bounds assert names the binary's own
+header, `d:\vss-od\silkroad\client\client\MsgStreamBuffer.h`. 1,833 call sites.
+
+**The asymmetry is the useful part.** The server's writer takes its length in
+**AX**, a register the decompiler drops; the client's reader takes it as an
+**explicit argument**. So the client side is readable straight from the
+decompiled C — `tools/client_read_sweep.py`, output in
+`docs/protocol/client_read_layouts.tsv`, 391 functions.
+
+### Cross-validation: two binaries, two mechanisms
+
+Joining the two tables through `message_handlers.tsv` gives **151 pairs where
+both sides are fully fixed**:
+
+| measure | result |
+|---|---|
+| agree on the **first field's width** | **145 / 151 (96 %)** |
+| one layout is a **prefix** of the other | **118 / 151 (78 %)** |
+| disagree on field 1 | **6** |
+
+**Exact equality is the wrong test, and the shape of the disagreements says so**
+— the client repeatedly reads a prefix of what the server writes, or vice versa,
+which is what the known limits predict: a server payload continued in a callee,
+several senders for one opcode writing variants, and client handlers that branch.
+Prefix containment is the metric the data supports, and it holds for four pairs
+in five.
+
+**Six pairs disagree on the very first field** and are a worklist rather than
+noise:
+
+	0x30eb  RefreshEventGuideData   srv 8        cli 4
+	0x3809  CGObjPC::vslot_235      srv 2        cli 1,1
+	0xb069  trs_sm_partyjob         srv 4,1      cli 1,2
+	0xb06a  trs_sm_partyjob         srv 4,1      cli 1,2
+	0xb0c5  GObjPC::FUN_004d4f60    srv 4,1,1,1  cli 1,1,2,4
+	0xb47b  trs_sm_trainingcampjob  srv 4,1      cli 1,4,4,1
+
+Each is either a wrong sender attribution or a real variant, and each is cheap
+to settle by reading the one pair.
+
+### A column I read wrong
+
+`message_handlers.tsv`'s header is `opcode, client_handler, client_registrar,
+server_senders`. The first join here used column **2** as the handler and
+matched **nothing** — 391 client functions against 3 names. Column 1 is the
+handler; column 2 is the registrar. Worth stating because round 449 quoted the
+registrar as the client handler for `0xb04b` in passing (nothing depended on
+it), and because a **zero-overlap join is the loud failure** that made the
+mistake obvious — a join that had matched 20 of 151 would have been believed.

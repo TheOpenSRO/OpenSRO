@@ -24858,3 +24858,40 @@ missing, and no claim about meaning. The next step is the client side, whose
 readers give the field *types* the server's `memcpy` cannot.
 
 No name filed; two still held. Nothing wired, no tag. Tests green.
+
+## The client sweep, and a cross-validation across two binaries (round 463)
+
+Round 462 mapped every server sender's field widths and named the client as the
+next source. It is, and the asymmetry between them is the point.
+
+**`MsgStreamBuffer::Read` (`0x4f7220`, client)** takes its size as an **explicit
+argument** where the server's writer takes it in **AX**. So the client side
+reads straight from the decompiled C — `tools/client_read_sweep.py`, 391
+functions, `docs/protocol/client_read_layouts.tsv`. Its bounds assert names the
+binary's own `MsgStreamBuffer.h`, which is where the class name comes from.
+
+**Joined through `message_handlers.tsv`: 151 pairs with both sides fully fixed.**
+
+	agree on the first field's width   145 / 151  (96 %)
+	one is a PREFIX of the other       118 / 151  (78 %)
+	disagree on field 1                  6
+
+Two binaries, two mechanisms, and they agree. **Exact equality is the wrong
+test** — only 38 of 151 match exactly, but the disagreements are overwhelmingly
+prefix relations, which is what the limits recorded in round 462 predict: a
+server payload continued in a callee, several senders writing variants of one
+opcode, client handlers that branch. Prefix containment is the metric the data
+supports.
+
+**Six pairs disagree on the very first field**, listed in PACKET_FORMAT.md. Each
+is a wrong sender attribution or a real variant, and each is cheap to settle.
+
+**A column I read wrong, caught by a loud failure.** The first join used
+`message_handlers.tsv` column 2 as the client handler and matched **nothing** —
+391 client functions against 3 names. Column 1 is the handler, column 2 the
+registrar. The zero is what made it obvious; a join that had matched 20 of 151
+would have been believed and published. (Round 449 quoted the registrar as the
+client handler for `0xb04b` in passing; nothing depended on it.)
+
+One name filed (`MsgStreamBuffer::Read`), three now held. Nothing wired, no tag.
+Tests green.
