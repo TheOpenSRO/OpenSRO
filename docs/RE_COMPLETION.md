@@ -6405,6 +6405,46 @@ THE ERROR CATEGORY, so it identifies the handler's SUBSYSTEM: 0x51a is 0x23,
 client handlers by subsystem systematically. Not attempted here, because the
 lesson of this round is that half-doing it is how the last one went wrong.
 
+Round 427 (the enum-table lever swept and bounded — and it turned up an embedded
+Lua nobody had recorded): ROUND 426'S LEVER GENERALISES TO "ANY RUN OF `.rdata`
+POINTERS TO PREFIX-SHARING STRINGS IS AN ENUM VOCABULARY", SO I SWEPT THE WHOLE
+BINARY. **The lever is nearly exhausted**: 12 vocabularies in total, of which
+round 426 already had 8. The control passes on 6 of the 7 known tables, and the
+miss is explainable — `BATTLESTATE` has only two entries, below the sweep's
+minimum of three. Bounding a lever is worth a round; it says the enum names live
+in essentially one `.rdata` region and that region is read.
+
+THE FOUR NEW ONES ARE MOSTLY NOT GAME LOGIC — an `NPC_*_POTION` shop table, a
+quest-mob name run, MSVC's calling-convention names — plus
+`INVALID_SEQUENCE`/`INVALID_CHECKSUM`/`INVALID_MSGSIZE`, a packet-validation
+vocabulary this project had not recorded. **But one of the "not game logic" runs
+is `_index`, `_newindex`, `_gc`, `_mode`, `_eq`, `_add`, `_sub` — Lua's
+metamethod name table.**
+
+**THE SERVER STATICALLY LINKS LUA 5.1, AND `grep -rl Lua docs/` RETURNED NOTHING
+BEFORE THIS ROUND.** `Lua 5.1`, `$URL: www.lua.org $`, `LUA_PATH`, `LUA_CPATH`,
+the package search path, `lua_debug> `, `attempt to yield across metamethod/C-call
+boundary` — about 173 strings, their referencing functions all in `0x9cxxxx`.
+
+**AND THERE IS A QUEST SCRIPT SUBSYSTEM AMONG THE QUEST CLASSES**:
+`Quest Script Data Reset Start`/`End` (`CGameServer::ResetQuestScriptData`,
+filed), `GObjPC::CNormalEvent__InsertScriptData` (`0x92dfd0`, logging
+`%s - Failed Run Script. Error:%s`), the directory `./Script/VIETNAM/` built in
+four functions, the vtable stub `IGObj::EnterScriptMode`, and an RTTI class
+**`OnScriptStarted` inside the quest class `QNO_TQ_BAEKRYEOUNG_13`**. Every
+address is in the `0x86`–`0x93` region where the quest classes live.
+
+**THE OBVIOUS CONCLUSION IS THE ONE I AM NOT DRAWING.** `SYSTEMS.md` has this
+system **BLOCKED** on "how the 543 classless quests attach", and "they are Lua
+scripts" would answer it. The gap is precise and was measured, not waved at:
+`InsertScriptData`'s callees are `0x9769d0` and `0x976b70`, while the Lua
+runtime's string-referencing functions are at `0x9cxxxx` — **no call path from
+the script runner to the Lua runtime has been traced.** A script subsystem and a
+Lua runtime in one binary are two facts, not one. Next probe named in
+`quest_scripting.md`: read `0x9769d0` and `0x976b70` and see whether they reach
+`0x9cxxxx`. One name filed, **held unapplied** with round 426's per the batching
+rule. No behaviour changed, so no tag.
+
 Round 426 (the engine names eight state enums, and every use-site conclusion
 rounds 411-416 fought for is confirmed): ROUND 425 FOUND THE BODY-MODE NAMES IN A
 STRING-POINTER TABLE AND NOTED THE ARRAY HELD OTHER VOCABULARIES BACK TO BACK.

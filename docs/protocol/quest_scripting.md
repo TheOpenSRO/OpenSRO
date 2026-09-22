@@ -195,3 +195,52 @@ previous note.
 any individual quest does; that is 29 compiled classes' worth of reading, and
 nothing in srrevamp needs it until it ships those quests. The lifecycle is the
 part that generalises.
+
+
+## The server embeds Lua 5.1, and there is a quest SCRIPT subsystem (round 427)
+
+Neither fact appears anywhere else in this repository; `grep -rl Lua docs/`
+returned nothing before this round.
+
+**Lua 5.1 is statically linked into `SR_GameServer.exe`.** The evidence is the
+runtime's own strings — `Lua 5.1`, `$URL: www.lua.org $`, `LUA_PATH`,
+`LUA_CPATH`, the package search path
+`.\?.lua;!\lua\?.lua;!\lua\?\init.lua;!\?.lua;!\?\init.lua`, `lua_debug> `,
+`attempt to yield across metamethod/C-call boundary`, and the metamethod name
+table (`_index`, `_newindex`, `_gc`, `_mode`, `_eq`, `_add`, `_sub`, …) at
+`0x00add198`. About 173 strings in all. The C API symbol names are stripped, as
+expected of a static link; the functions that reference those strings all sit in
+the **`0x9cxxxx`** region.
+
+**And there is a script subsystem sitting among the quest classes:**
+
+| what | where |
+|---|---|
+| `Quest Script Data Reset Start` / `... End` | `CGameServer::FUN_00580ad0` |
+| `GObjPC::CNormalEvent__InsertScriptData`, logging `%s - Failed Run Script. Error:%s` | `0x92dfd0`, 883 bytes |
+| the script directory `./Script/VIETNAM/` | built in four functions: `0x869b60`, `0x927a60`, `0x930820`, and `0x92dfd0`'s caller |
+| `IGObj::EnterScriptMode` | an `## Illegal ##` vtable stub, so it is a real interface method |
+| RTTI class `OnScriptStarted` **inside a quest class** | `.?AVOnScriptStarted@QNO_TQ_BAEKRYEOUNG_13@@` |
+
+Every one of those addresses is in the **`0x86`–`0x93` quest-class region**,
+where `CQNO_*`, `CQTUTORIAL2_*` and `CQEV_*` live.
+
+### The hypothesis, and why it is NOT promoted
+
+`SYSTEMS.md` records this system as **BLOCKED** on "how the 543 classless quests
+attach". An embedded Lua plus a script subsystem co-located with the quest
+classes is an obvious candidate answer: the 543 would be **script-driven rather
+than compiled into C++ classes**.
+
+**It is not proven, and this round could not close it.** The gap is precise:
+`CNormalEvent__InsertScriptData`'s callees are at `0x9769d0` and `0x976b70`,
+while the functions that reference the Lua runtime's strings are at `0x9cxxxx`.
+**No call path from the script runner to the Lua runtime has been traced**, so
+"quests are Lua" remains circumstantial — a script subsystem and a Lua runtime
+in the same binary are two facts, not one.
+
+**Next probe:** read `0x9769d0` and `0x976b70` and see whether they reach
+`0x9cxxxx`. If they do, the chain is quest class → `InsertScriptData` → Lua, and
+the BLOCKED item has its answer. If they do not, the script subsystem is
+something else and the Lua is used elsewhere — which would itself be worth
+knowing.
