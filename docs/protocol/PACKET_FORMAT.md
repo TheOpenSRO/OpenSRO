@@ -930,3 +930,44 @@ nothing here can distinguish the two. What the comparison does establish is that
 they are close: **95 % of 128 opcodes agree on the first field across two
 binaries and two entirely different mechanisms**, which is not what unrelated
 versions would look like.
+
+## The sweep is incomplete, and by how much (round 465)
+
+Settling round 464's disagreement list found two defects in the round-462 sweep.
+Both are measured, and the table now carries them in its own header.
+
+**Three of the seven disagreements dissolve.** `0xb069`, `0xb06a` and `0xb47b`
+all read `srv 4,1` against a client starting `1`. Reading
+`trs_sm_partyjob::FUN_005bf7d0` shows why: its **error path** calls a helper,
+`FUN_005bdf50`, which opens a message of its own and returns it, and the 4-byte
+append belongs to *that* message. The `0xb069` payload is the single byte
+appended after the `0x278` open — **which agrees with the client**, whose
+handler `PartyMatch_OnRecordResult` opens with `Read(&local_3d, 1)` and branches
+on `== 1`.
+
+**So the attribution unit is wrong.** Appends were attached to the *enclosing
+function*; they must attach to the **nearest preceding open**, because a
+function can write to two messages.
+
+**And a second open idiom was missed entirely.** `FUN_005bdf50` does not use
+vtable slot `0x278` at all:
+
+	iVar1 = (**(code **)(*DAT_00c8258c + 0x48))(DAT_00c8258c, 0);
+	**(undefined2 **)(iVar1 + 0x1050) = 0x3864;     // the opcode, written directly
+	MsgBuf_AppendBytes(...);
+
+Counted across the binary: **258 sites** load `+0x1050`, carrying **65 distinct
+opcodes**, of which **57 appear nowhere in the round-462 table**. Against 474
+slot-`0x278` opens and 203 opcodes found, the sweep therefore covered roughly
+four opcodes in five, not all of them.
+
+**A third thing worth flagging.** `message_handlers.tsv`'s `server_senders`
+column lists `005bf9e0` for `0xb069`, and that function **opens no message at
+all** — no `0x278`, no `+0x1050`, no append. That column is from a 2026-09-17
+census by a different method and should not be trusted against the mechanical
+attribution; the join in round 463 used it, which is part of why the
+disagreement list needed this round.
+
+**Next:** re-run the sweep with position-aware attribution and both idioms. The
+result should be a larger table with fewer mixed rows, and the seven-opcode
+disagreement list should shrink again.

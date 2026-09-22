@@ -1,3 +1,13 @@
+# INCOMPLETE AND PARTLY MIS-ATTRIBUTED -- see round 465 in PACKET_FORMAT.md.
+# Two known defects, both measured:
+#  1. Appends are attributed to the ENCLOSING FUNCTION, but a function can write
+#     to two different messages (one it opens via slot 0x278, one a helper opens).
+#     Such a row mixes both payloads. This is what made 0xb069/0xb06a/0xb47b look
+#     like disagreements against the client; they agree once split.
+#  2. A SECOND message-open idiom is not detected at all: allocate through slot
+#     0x48 on a global, then write the opcode to **(buf + 0x1050). 258 sites,
+#     65 distinct opcodes, 57 of them absent from this table entirely.
+# So: 203 opcodes here, at least 260 exist. Treat a row as a lead, not a layout.
 opcode	sender	fields	layout
 0x3b07	AQ_CharDataLoader::FUN_005d6c50	2	1,1
 0x3b07	AQ_CharDataLoader::FUN_005d6cc0	3	1,4,4

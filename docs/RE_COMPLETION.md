@@ -24934,3 +24934,35 @@ two binaries and two different mechanisms, is not what unrelated versions look
 like.
 
 No name filed; three still held. Nothing wired, no tag. Tests green.
+
+## The sweep is incomplete, and by how much (round 465)
+
+Settling round 464's disagreement list turned into an audit of my own round-462
+artifact. Two defects, both measured, both now in the table's own header.
+
+**Three of the seven disagreements dissolve.** `0xb069`, `0xb06a` and `0xb47b`
+read `srv 4,1` against a client starting `1`. `trs_sm_partyjob::FUN_005bf7d0`
+shows why: on its **error path** it calls `FUN_005bdf50`, which opens a message
+of its own, and the 4-byte append belongs to *that* message. The real `0xb069`
+payload is the single byte after the `0x278` open — and the client's handler
+`PartyMatch_OnRecordResult` opens with `Read(&flag, 1)` and branches on `== 1`.
+**They agree.**
+
+**So the attribution unit was wrong**: appends were attached to the enclosing
+function, when they must attach to the **nearest preceding open**, because one
+function can write to two messages.
+
+**And a second open idiom was missed entirely.** `FUN_005bdf50` never touches
+slot `0x278` — it allocates through slot `0x48` on a global and writes the
+opcode straight into the buffer at `**(buf + 0x1050)`. Measured: **258 sites,
+65 distinct opcodes, 57 of them absent from the round-462 table**, which holds
+203. So that sweep covered about four opcodes in five, and said it covered them
+all.
+
+**A third thing worth flagging**: `message_handlers.tsv`'s `server_senders`
+column names `005bf9e0` for `0xb069`, and that function opens **no message at
+all**. It is a 2026-09-17 census by a different method, and round 463's join
+leaned on it — part of why the disagreement list needed this round.
+
+Next: re-run the sweep position-aware and with both idioms. No name filed; three
+still held. Nothing wired, no tag. Tests green.
