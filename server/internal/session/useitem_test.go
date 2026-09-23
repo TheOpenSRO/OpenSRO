@@ -3,7 +3,11 @@ package session
 import (
 	"bufio"
 	"context"
+	"errors"
+	"fmt"
 	"net"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1071,6 +1075,38 @@ type potionFixture struct {
 	conn    net.Conn
 	r       *bufio.Reader
 	clock   time.Time
+	// bag and store are what UseItemHandler is given: inv and chars, with a
+	// RemoveItem and a Heal a test can make fail (round 511).
+	bag   *flakyBag
+	store *flakyHeal
+}
+
+// flakyBag is a bag whose RemoveItem fails while failRemove is set: the
+// store error a production SQL bag can return after the handler has read the
+// slot.
+type flakyBag struct {
+	*inventory.MemStore
+	failRemove atomic.Bool
+}
+
+func (b *flakyBag) RemoveItem(ctx context.Context, characterID int64, slot, quantity int) error {
+	if b.failRemove.Load() {
+		return errors.New("flakyBag: RemoveItem failed")
+	}
+	return b.MemStore.RemoveItem(ctx, characterID, slot, quantity)
+}
+
+// flakyHeal is a character store whose Heal fails while failHeal is set.
+type flakyHeal struct {
+	*character.MemStore
+	failHeal atomic.Bool
+}
+
+func (s *flakyHeal) Heal(ctx context.Context, characterID int64, amount, maxHP int) (int, error) {
+	if s.failHeal.Load() {
+		return 0, errors.New("flakyHeal: Heal failed")
+	}
+	return s.MemStore.Heal(ctx, characterID, amount, maxHP)
 }
 
 // The potions, real rows' kinds and Param blocks (allitems.txt on the RE box)
@@ -1118,9 +1154,11 @@ func newPotionFixture(t *testing.T) *potionFixture {
 	f.mp = mana.NewTracker()
 	f.hub = world.NewHub()
 	f.potions = NewPotionQueue()
+	f.bag = &flakyBag{MemStore: f.inv}
+	f.store = &flakyHeal{MemStore: f.chars}
 
 	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(f.chars, nil, f.hub),
-		UseItemHandler(f.chars, f.inv, items, f.mp, nil, f.potions))
+		UseItemHandler(f.store, f.bag, items, f.mp, nil, f.potions))
 	addr, cleanup := startTestServer(t, handle)
 	t.Cleanup(cleanup)
 	f.conn = dialTestServer(t, addr)
@@ -1366,4 +1404,389 @@ func TestPotionNotQueuedPastTheMaximum(t *testing.T) {
 	}
 	f.setHP(50)
 	f.ticksLand("after the potion past the maximum", 75, 100, 125, 150)
+}
+
+// slowHeal is a character store whose first Heal for slowID closes entered
+// and then waits for release: a database round trip that has not come back.
+type slowHeal struct {
+	*character.MemStore
+	slowID  int64
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *slowHeal) Heal(ctx context.Context, characterID int64, amount, maxHP int) (int, error) {
+	if characterID == s.slowID {
+		s.once.Do(func() {
+			close(s.entered)
+			<-s.release
+		})
+	}
+	return s.MemStore.Heal(ctx, characterID, amount, maxHP)
+}
+
+// LOCKING (round 511): the queue-wide mu is not held across a store call, so
+// one character's store call holds up no other character's drink, no step
+// taken on its own, and no listing. Aria's drink is held inside Heal -- a SQL
+// round trip in production -- while Bea drinks, Bea's queue steps, and the
+// tick's listing runs; all three must finish while Aria's Heal is still held.
+// Aria's own step must still wait for her drink -- her turn IS held across
+// her store calls, as the engine runs both on the PC's thread -- and land
+// after it. The steps here are called directly; a tick pass's own wait is
+// TestPotionQueueTickStuckInAStoreCallHoldsUpNoOtherDrink.
+//
+// NEGATIVE: round 509 held the queue's one lock across the whole drink, so
+// Bea's drink and the listing waited for Aria's Heal.
+func TestPotionQueueHoldsNoQueueWideLockAcrossAStoreCall(t *testing.T) {
+	ctx := context.Background()
+	mem := character.NewMemStore()
+	aria, err := mem.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("create Aria: %v", err)
+	}
+	bea, err := mem.Create(ctx, 2, "Bea")
+	if err != nil {
+		t.Fatalf("create Bea: %v", err)
+	}
+	for _, id := range []int64{aria.ID, bea.ID} {
+		if _, _, err := mem.ApplyDamage(ctx, id, 150); err != nil {
+			t.Fatalf("damage: %v", err)
+		}
+	}
+	chars := &slowHeal{MemStore: mem, slowID: aria.ID, entered: make(chan struct{}), release: make(chan struct{})}
+	var once sync.Once
+	letGo := func() { once.Do(func() { close(chars.release) }) }
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	defer letGo()
+	const wait = 2 * time.Second
+
+	q := NewPotionQueue()
+	ariaDrink := make(chan error, 1)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, _, _, _, err := q.drink(ctx, chars, nil, aria.ID, true, 125, 0, 200, 200)
+		ariaDrink <- err
+	}()
+	select {
+	case <-chars.entered:
+	case <-time.After(wait):
+		t.Fatal("Aria's drink never reached Heal")
+	}
+
+	// Aria's step waits for her drink.
+	ariaStep := make(chan string, 1)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		c, changed, err := q.step(ctx, chars, nil, aria.ID)
+		if err != nil || !changed || c == nil {
+			ariaStep <- fmt.Sprintf("Aria's step: %+v, changed %v, err %v", c, changed, err)
+			return
+		}
+		ariaStep <- fmt.Sprintf("HP %d", c.HP)
+	}()
+
+	// Bea drinks and steps while Aria's Heal is held.
+	bea1 := make(chan string, 1)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		newHP, _, gotHP, _, err := q.drink(ctx, chars, nil, bea.ID, true, 125, 0, 200, 200)
+		if err != nil || newHP != 75 || gotHP != 25 {
+			bea1 <- fmt.Sprintf("Bea's drink at 50/200: HP %d, %d at once, err %v; want 75, 25", newHP, gotHP, err)
+			return
+		}
+		c, changed, err := q.step(ctx, chars, nil, bea.ID)
+		if err != nil || !changed || c == nil || c.HP != 100 {
+			bea1 <- fmt.Sprintf("Bea's step: %+v, changed %v, err %v; want HP 100", c, changed, err)
+			return
+		}
+		bea1 <- ""
+	}()
+	select {
+	case msg := <-bea1:
+		if msg != "" {
+			t.Error(msg)
+		}
+	case <-time.After(wait):
+		t.Errorf("Bea's drink and step did not finish in %v while Aria's Heal was held: a lock is held across the store call", wait)
+	}
+
+	listed := make(chan []int64, 1)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		listed <- q.characters()
+	}()
+	select {
+	case <-listed:
+	case <-time.After(wait):
+		t.Errorf("the tick's listing did not finish in %v while Aria's Heal was held", wait)
+	}
+
+	select {
+	case msg := <-ariaStep:
+		t.Errorf("Aria's step ran while her drink was held in Heal (%s); the two must not interleave", msg)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	letGo()
+	select {
+	case err := <-ariaDrink:
+		if err != nil {
+			t.Errorf("Aria's drink: %v", err)
+		}
+	case <-time.After(wait):
+		t.Fatal("Aria's drink did not finish after Heal was released")
+	}
+	select {
+	case msg := <-ariaStep:
+		// 50 + 25 at once, then one step of 25.
+		if msg != "HP 100" {
+			t.Errorf("Aria's step after her drink: %s, want HP 100", msg)
+		}
+	case <-time.After(wait):
+		t.Fatal("Aria's step did not finish after her drink")
+	}
+}
+
+// The tick pass (round 511, potionQueueTick's note): a pass stuck in one
+// character's store call holds up no other character's drink and no listing,
+// but the pass itself -- sequential, and run synchronously by RunPotionQueue
+// -- waits, and so does that character's own drink. Aria has 4 x 25 queued at
+// full HP, so her step lands nothing that moves a pool and the pass sends no
+// stats push (a test session cannot send); her step's Heal is held. Bea, at
+// 50/200 with nothing queued when the pass listed, drinks meanwhile.
+//
+// NEGATIVE: round 509 held the queue's one lock across the step's Heal, so
+// Bea's drink and the listing waited for the pass.
+func TestPotionQueueTickStuckInAStoreCallHoldsUpNoOtherDrink(t *testing.T) {
+	ctx := context.Background()
+	mem := character.NewMemStore()
+	aria, err := mem.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("create Aria: %v", err)
+	}
+	bea, err := mem.Create(ctx, 2, "Bea")
+	if err != nil {
+		t.Fatalf("create Bea: %v", err)
+	}
+	if _, _, err := mem.ApplyDamage(ctx, bea.ID, 150); err != nil {
+		t.Fatalf("damage: %v", err)
+	}
+	hub := world.NewHub()
+	hub.Enter(gateway.NewTestSession(1), aria.ID, "Aria", "z", world.Position{})
+	hub.Enter(gateway.NewTestSession(2), bea.ID, "Bea", "z", world.Position{})
+	chars := &slowHeal{MemStore: mem, slowID: aria.ID, entered: make(chan struct{}), release: make(chan struct{})}
+	var once sync.Once
+	letGo := func() { once.Do(func() { close(chars.release) }) }
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	defer letGo()
+	const wait = 2 * time.Second
+
+	q := NewPotionQueue()
+	q.pushLocked(aria.ID, potionPoolHP, potionEntry{step: 25, count: 4})
+	tickDone := make(chan struct{})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		potionQueueTick(ctx, hub, chars, q, RegenDeps{}, nil)
+		close(tickDone)
+	}()
+	select {
+	case <-chars.entered:
+	case <-time.After(wait):
+		t.Fatal("the pass never reached Aria's Heal")
+	}
+
+	// Aria's own drink waits for her step's turn.
+	ariaDrink := make(chan error, 1)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, _, _, _, err := q.drink(ctx, chars, nil, aria.ID, true, 125, 0, 200, 200)
+		ariaDrink <- err
+	}()
+
+	bea1 := make(chan string, 1)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		newHP, _, gotHP, _, err := q.drink(ctx, chars, nil, bea.ID, true, 125, 0, 200, 200)
+		if err != nil || newHP != 75 || gotHP != 25 {
+			bea1 <- fmt.Sprintf("Bea's drink at 50/200: HP %d, %d at once, err %v; want 75, 25", newHP, gotHP, err)
+			return
+		}
+		bea1 <- ""
+	}()
+	select {
+	case msg := <-bea1:
+		if msg != "" {
+			t.Error(msg)
+		}
+	case <-time.After(wait):
+		t.Errorf("Bea's drink did not finish in %v while the pass was held in Aria's Heal", wait)
+	}
+
+	listed := make(chan []int64, 1)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		listed <- q.characters()
+	}()
+	select {
+	case ids := <-listed:
+		if len(ids) != 2 {
+			t.Errorf("the listing while the pass was held: %v, want Aria and Bea", ids)
+		}
+	case <-time.After(wait):
+		t.Errorf("a listing did not finish in %v while the pass was held in Aria's Heal", wait)
+	}
+
+	// The disclosed wait: the pass and Aria's drink are both still held.
+	select {
+	case <-tickDone:
+		t.Error("the pass finished while Aria's Heal was held; potionQueueTick's note says it waits -- update the note")
+	case err := <-ariaDrink:
+		t.Errorf("Aria's drink finished (err %v) while her step held her turn in Heal; the two must not interleave", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	letGo()
+	select {
+	case <-tickDone:
+	case <-time.After(wait):
+		t.Fatal("the pass did not finish after Heal was released")
+	}
+	select {
+	case err := <-ariaDrink:
+		if err != nil {
+			t.Errorf("Aria's drink: %v", err)
+		}
+	case <-time.After(wait):
+		t.Fatal("Aria's drink did not finish after her step")
+	}
+	if after, _ := mem.GetByID(ctx, aria.ID); after.HP != 200 {
+		t.Errorf("Aria at full HP: %d after the pass and her drink, want 200", after.HP)
+	}
+	if after, _ := mem.GetByID(ctx, bea.ID); after.HP != 75 {
+		t.Errorf("Bea: %d after her drink, want 75 (the held pass listed only Aria)", after.HP)
+	}
+}
+
+// SPEND FIRST (round 511): a potion the server fails to remove heals nothing,
+// now or later. The reply is "using failed", the potion is kept, nothing is
+// queued, the ticks land nothing, and the kind is not locked: once the bag
+// works again the same potion is drunk at the same instant, as if the failed
+// use had never happened.
+//
+// NEGATIVE: round 509 drank before RemoveItem, so the failed use landed 25 at
+// once and queued four more steps of 25.
+func TestPotionNotRemovedHealsNothing(t *testing.T) {
+	f := newPotionFixture(t)
+	f.setHP(50)
+	f.bag.failRemove.Store(true)
+	res := f.use(fixtureHPPotion)
+	if res.Error != "using failed" {
+		t.Fatalf("a failed removal: got %+v, want %q", res, "using failed")
+	}
+	if got := f.hp(); got != 50 {
+		t.Errorf("a potion the server failed to remove healed at once: HP %d, want 50", got)
+	}
+	if _, qty := f.stack(fixtureHPPotion); qty != 10 {
+		t.Errorf("a potion the server failed to remove: %d left, want 10", qty)
+	}
+	if ids := f.potions.characters(); len(ids) != 0 {
+		t.Fatalf("a potion the server failed to remove queued steps for %v", ids)
+	}
+	f.ticksLand("after the failed removal")
+	if got := f.hp(); got != 50 {
+		t.Errorf("a potion the server failed to remove healed later: HP %d, want 50", got)
+	}
+
+	f.bag.failRemove.Store(false)
+	res = f.use(fixtureHPPotion)
+	if res.Error != "" || res.RestoredHP != 25 || res.HP != 75 || res.Remaining != 9 {
+		t.Fatalf("the same potion at the same instant, bag working: got %+v; want 25 at once, HP 75, 9 left (the failed use locks nothing)", res)
+	}
+	f.ticksLand("the potion drunk after the failed removal", 100, 125, 150, 175)
+}
+
+// A drink whose heal fails leaves the queue as it was (round 511): the entry
+// an absolute drink pushed is dropped, and the entries a percentage drink
+// trimmed come back. Through the handler the potion is handed back, nothing
+// lands then or on the ticks after, and the kind is not locked.
+//
+// NEGATIVE: round 509 left the pushed entry queued and the trim made, so a
+// potion reported as "healing failed" and kept went on to heal four times.
+func TestPotionDrinkThatFailsLeavesTheQueueAsItWas(t *testing.T) {
+	ctx := context.Background()
+	mem := character.NewMemStore()
+	c, err := mem.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, _, err := mem.ApplyDamage(ctx, c.ID, 150); err != nil {
+		t.Fatalf("damage: %v", err)
+	}
+	chars := &flakyHeal{MemStore: mem}
+	chars.failHeal.Store(true)
+	q := NewPotionQueue()
+
+	// Nothing queued before: 50 + 0 <= 200 queues {25, 4}, and the failed
+	// heal takes it back out.
+	if _, _, _, _, err := q.drink(ctx, chars, nil, c.ID, true, 125, 0, 200, 200); err == nil {
+		t.Fatal("an absolute drink succeeded with a failing Heal")
+	}
+	if ids := q.characters(); len(ids) != 0 {
+		t.Errorf("a failed absolute drink left a queue for %v", ids)
+	}
+
+	// One entry of 4 x 30 queued before: it is kept, the failed drink's is not.
+	q.pushLocked(c.ID, potionPoolHP, potionEntry{step: 30, count: 4})
+	if _, _, _, _, err := q.drink(ctx, chars, nil, c.ID, true, 125, 0, 200, 200); err == nil {
+		t.Fatal("an absolute drink succeeded with a failing Heal")
+	}
+	if got := queuedFor(q, c.ID, potionPoolHP); got != 120 {
+		t.Errorf("after a failed absolute drink: HP queued %d, want the earlier 120 alone", got)
+	}
+	// A percentage 200 at 50/200 overflows alone (50 + 200 - 200 > 0) and
+	// would empty the list; failed, the list comes back whole.
+	if _, _, _, _, err := q.drink(ctx, chars, nil, c.ID, false, 200, 0, 200, 200); err == nil {
+		t.Fatal("a percentage drink succeeded with a failing Heal")
+	}
+	if got := queuedFor(q, c.ID, potionPoolHP); got != 120 {
+		t.Errorf("after a failed percentage drink: HP queued %d, want the earlier 120 back", got)
+	}
+	if after, _ := mem.GetByID(ctx, c.ID); after.HP != 50 {
+		t.Errorf("the failed drinks healed: HP %d, want 50", after.HP)
+	}
+
+	// Through the handler.
+	f := newPotionFixture(t)
+	f.setHP(50)
+	f.store.failHeal.Store(true)
+	res := f.use(fixtureHPPotion)
+	if res.Error != "healing failed" {
+		t.Fatalf("a failed heal: got %+v, want %q", res, "healing failed")
+	}
+	if _, qty := f.stack(fixtureHPPotion); qty != 10 {
+		t.Errorf("the potion whose heal failed was not handed back: %d left, want 10", qty)
+	}
+	if ids := f.potions.characters(); len(ids) != 0 {
+		t.Fatalf("the potion whose heal failed left steps queued for %v", ids)
+	}
+	f.store.failHeal.Store(false)
+	f.ticksLand("after the failed heal")
+	if got := f.hp(); got != 50 {
+		t.Errorf("the potion whose heal failed healed later: HP %d, want 50", got)
+	}
+	res = f.use(fixtureHPPotion)
+	if res.Error != "" || res.RestoredHP != 25 || res.HP != 75 || res.Remaining != 9 {
+		t.Fatalf("the same potion at the same instant, heal working: got %+v; want 25 at once, HP 75, 9 left", res)
+	}
 }

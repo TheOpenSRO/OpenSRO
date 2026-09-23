@@ -12888,6 +12888,9 @@ against that list found one the data already supported.
 
 ### 16 skills were free to cast
 
+(Round 507 recounted this: **8 rows**, not 16 -- `Consume_HP` is non-zero only on
+`SKILL_EU_BARD_RECOVERA_ABNORMALTIME_A_01..06/B_01..02`, ids 11382-11389, 495 up to 4,756.)
+
 `refdata.Skill.ConsumeHP` has been exported, stored in SQL and **never read**.
 Sixteen real skills carry a health cost — all
 `SKILL_EU_BARD_RECOVERA_ABNORMALTIME_*`, 495 to 2,543 across their levels — and
@@ -28204,8 +28207,10 @@ runtime and not committed:
   `SKILL_EU_WARRIOR_DUALA_STUN_A_01..05` (ids 9245-9249). They are type 1 with no chain, but
   `ZeroDamage` is 1 (CSV slot 35) and `NoCombatParam` is 0. The cast handler returns before the
   hand-off for them (see the fourth departure below). Of the 1,034, 463 are some chain's final
-  link and 571 stand alone. (Round 507: so the rows a player casts that now hand off are the 571;
-  the 463 final links are played as the last step of a head's chain in the engine.) 177 of the 1,034, all standalone, have a non-zero PreparingTime; none
+  link and 571 stand alone. (Round 507: so the rows a player is known to cast that now hand off
+  are the 571; the 463 final links are played as the last step of a head's chain in the engine.
+  Whether a player can cast a final link by its own id was not read; a cast that names one hands
+  off here.) 177 of the 1,034, all standalone, have a non-zero PreparingTime; none
   of the five stun rows does. All 322 type-2 rows are player rows. The plan's "2,050 rows with
   type 1" was measured again as 2,051.
 - The rebuilt exporter run over the seven shards writes 33,632 rows with the same 28,702 / 4,608 /
@@ -28431,7 +28436,8 @@ byte of `Action_Overlap`, `skill_fields.md`), but the exporter wrote `Overlap` a
   - Below 300 000 ms it writes the entry in the per-id map and, when the `+0x8f` byte is non-zero,
     files the same entry in the group map (`FUN_0064d1b0`).
   - At 300 000 ms or more it takes the persisted `CTJ_CoolTimeKeeper` branch instead. (Round 507:
-    that branch files the group entry too, `0x64cae4`-`0x64cafb`.)
+    that branch files the group entry too, `0x64cae4`-`0x64cafb`, when it finds a keeper slot
+    free; round 511: with none free, `0x64cb82`-`0x64cbd5`, it returns without filing.)
 - **The column.** `CRefSkill::CopyFixedColumns` (`0x6ab5a0`) copies `Action_Overlap`, a u32, to
   `+0x8c` as the 19th field, which is skilldata column 18 (`skill_fields.md`, the fixed-columns
   table; `WORLD_ISSUES.md` round 256). `+0x8f` is its top byte, `(u32)v >> 24`.
@@ -28494,7 +28500,8 @@ there and not committed):
   when `ReuseDelay != 0` (`0x586c03`), and 3 kind-4 rows, whose handler never calls the arm.
 - A row at 300 000 ms or more keeps only its per-id timer. The persisted `CTJ_CoolTimeKeeper`
   branch is not built. (Round 507: that branch still files the group entry,
-  `0x64cae4`-`0x64cafb`, so in the engine these rows share their group -- Water Harmony A-D in
+  `0x64cae4`-`0x64cafb`, on its free-slot path -- round 511 -- so in the engine these rows share
+  their group -- Water Harmony A-D in
   group 73, the Rogue's mask A/B in group 29 -- and here they do not.)
 - The global window (`+0x50`/`+0x54`, armed from `CoolTime`) and the action window
   (`+0x58`/`+0x5c`) that `IsReady` checks first are not modelled either.
@@ -28742,7 +28749,9 @@ heals the caster only when the target vector is empty. The engine half is right
 caster). But on the path a player's cast takes, the two agree: Tick_UseSkill phase 0
 (`0x4ae6f0`-`0x4ae717`, `cmp byte [edi+0x94],0 ; jne`) sets the context's `+0xc` to 0 and calls
 `SkillContext_ClearTargets` (`0x48dc30`) on the context's `+0x3c` vector for every
-`Target_Required` 0 row, before phase 2 posts the 0x7070 command. `SelfHealAmounts` passes only
+`Target_Required` 0 row, before phase 2 posts the 0x7070 command. (Round 511: that block sits behind
+`cmp byte [edi+0x65],2 ; jne` at `0x4ae6e6`, so only rows of `Basic_Activity` 2 reach it; all 57
+self-heal rows are Activity 2.) `SelfHealAmounts` passes only
 `Target_Required` 0 rows. **Not read:** whether the 0x7070 consumer can put a target back for such
 a row. `skill.go` and `heal.md` state this. They also disclose that `SelfHealMP` reaches
 `mana.Tracker` but not the client at once: `AttackResult` has no MP field, so the MP bar moves on
@@ -28761,7 +28770,9 @@ HP).
   table at `.data 0xc63c7c`, read as bytes: kind 0 `0x586700` (`Skill_BuildUseContext_B`), 1
   `0x5857b0` (`Skill_BuildUseContext_A`), 2 none, 3 `0x5830b0` (`SkillAction_Buff`), 4
   `0x587260`. Kind 0 arms only when `ReuseDelay != 0` (`0x586c03` `cmp [edi+0x7c],0 ; je
-  0x586c27`), and `0x587260` (EngageSkill, or `SkillAction_Stance_Register`) holds no call site.
+  0x586c27`), and `0x587260` holds no call site. (Round 511: `0x587260` is `SkillAction_Stance`,
+  named in round 268 and not defined by the dump. It CALLS `EngageSkill` `0x593540` in its phase 3
+  and `SkillAction_Stance_Register` `0x587210` in its phase 6; it is neither of them.)
   The 195 grouped rows with no `ReuseDelay` are 192 kind-0 chain links (all active with a
   duration, none with `cbuf`) and 3 kind-4 rows (`SKILL_CH_SWORD/SPEAR/BOW_BALANCE_A_01`). So the
   engine arms none of them, and srrevamp's not arming them is not a departure.
@@ -28775,7 +28786,8 @@ HP).
   modelled; the session test's row 989 carries a note.
 - **Rows at 300 000 ms or more DO share their group in the engine.** The persisted
   `CTJ_CoolTimeKeeper` branch writes the entry (delay at `0x64ca04`) and files it in the group
-  map too (`0x64cae4`-`0x64cafb`). srrevamp keeps only their per-id timer, so Water Harmony A-D
+  map too (`0x64cae4`-`0x64cafb`). (Round 511: that is the path that finds a keeper slot free;
+  with none free, `0x64cb82`-`0x64cbd5`, it returns without filing.) srrevamp keeps only their per-id timer, so Water Harmony A-D
   (group 73, 300 000 ms each) and the Rogue's mask A/B (group 29, 600 000 ms) can each be cast
   inside another's timer here. That is the real disclosed departure, now stated in
   `skillCooldownGroup`'s comment, `auto_command.md`, `SYSTEMS.md` and round 504. Groups 73 and 29
@@ -28860,12 +28872,15 @@ read-only):
   one-second job (round 411), and `CGObjChar::Update` drives it (`0x4a8a09`). `FUN_004066a0` resets
   `[mgr+4]` only when the list is empty. So retail frees the bit on a 0.3 s tick, within about
   0.3 s either side of the delay. **Disclosed, not modelled.**
-- **Per kind.** `FUN_004eb410` reads the item's TID. For TypeID3 1 it jumps through the table at
+- **Per kind.** `FUN_004eb410` reads the item's TID. (Round 511: before that it requires the
+  item's vtable `+0x4c` to answer non-zero, `0x4eb41e`/`0x4eb422`. In `CGItemExpendable`'s vtable
+  `0xaeb2b4` that is `CGObj::IsExpendables` `0x482db0`, 1 for TID bit 1 clear with TypeID1 and
+  TypeID2 both 3 -- so always 1 for a 3/3 item, bit 1 being 0 on every item row.) For TypeID3 1 it jumps through the table at
   `0x4eb574`, indexed by TypeID4 - 1:
   - 1, 2 and 3 set bits 1, 2 and 4 (`0x4eb4d1`, `0x4eb4ec`, `0x4eb507`);
   - 4, 5 and 7 set 8, 0x10 and 0x20, but those are slot-327 kinds;
   - 6, and anything past the table (`0x4eb4c5 cmp eax,0x6; ja`), go to `0x4eb493`, which answers
-    0.
+    0. (Round 511: kind 6 is a slot-327 kind as well, so it never reaches the gate.)
   The gate returns whether that bit is clear in the BYTE at `[pc+0x30]+8` (`0x4eb42b movzx`). Slot
   308 keeps the bit (`[esp+0x1c]`) and hands it to the arm as EBX (`0x49b97e`). `FUN_004e0ab0`
   ORs in only that bit (`0x4e0ac0`), and the release clears only it. So each kind locks only
@@ -28888,7 +28903,10 @@ read-only):
   returns a result other than 1 before it decrements the count (`LAB_0049af45`), so the refused
   potion is kept.
 - **Also found, not modelled.** `GObjPC::FUN_004e67b0` zeroes the whole word, drops the type-6
-  records (`0x4e67c8`, `FUN_004066c0(6)`) and empties the potion queue. `CGObjPC` slots 306 and 307
+  records (`0x4e67c8`, `FUN_004066c0(6)`) and empties the potion queue. (Round 511: it drops ONE
+  type-6 record, not all of them. `FUN_004066c0(6, 6)` with EBX 0 erases the first record that
+  `AJStateChanger::vslot_004` (`0x4063e0`) matches -- type 6 at `+0xc`, any bit -- and returns at
+  `0x406733`.) `CGObjPC` slots 306 and 307
   (`0x529b10`, `0x52cdb0`) call it, only when the life state is 1. Their pet and mercenary
   versions set life state 2 (`character_state.md`).
 
@@ -29033,7 +29051,10 @@ period chain.
 
   The reply's `RestoredHP`/`RestoredMP` are what landed at once. The old "no need for that right
   now" refusal is gone. The queue's lock covers a whole drink or a whole step for one character
-  (read, decide, write), as the engine runs both on the PC's own thread.
+  (read, decide, write), as the engine runs both on the PC's own thread. (Round 511: that lock was
+  the queue's one mutex, held across the store calls for every character. It is now a per-character
+  turn, still held across that character's store calls, and the queue-wide mutex is released before
+  any; the tick pass still waits on a slow step. The potion is removed before anything lands.)
 - **`RunPotionQueue`** (started in `cmd/server` beside `RunRegen`) steps every queue once a
   second through `potionQueueTick`.
   - When a pool moved, it pushes an `OpCharacterStatsResult`, the stats reply regen already
@@ -29111,3 +29132,182 @@ period chain.
   The percentage test passes under the mutation, as it should, since that landing did not change.
 - **Restored:** every test passes, and also under `-race`.
 - **Suite:** `cd server && go build ./... && go test -count=1 -p 1 ./...` is green.
+
+## Potion queue: no server-wide lock across DB calls, queue only a spent potion; batch-7 review notes (rounds 507-509) (round 511)
+
+This round lands the review notes on rounds 507-509. Three are code: round 509's
+potion queue held one server-wide lock across its store calls, healed a potion the server failed
+to remove, and kept a failed drink's steps queued. The rest are wording. The engine semantics round
+509 grounded (`FUN_004ef450` -> `FUN_0049a5b0` on `pc+0x1d58`, `FUN_0049a510` once a second) are
+unchanged. Every doc claim below was re-read before it was written, read-only on the RE box:
+`srv.asm`, the dump, the exe's `.rdata`/`.text`, and the combined skill rows
+(`/var/tmp/allskills.txt`) read through a pipe and not committed.
+
+**1. No server-wide lock across a store call** (`session/useitem.go`, `PotionQueue`).
+`PotionQueue.drink` and `PotionQueue.step` held the queue's one `mu` across `chars.GetByID`,
+`chars.Heal` (a SQL round trip in production) and the mana tracker. So every potion use and every
+step on the server waited behind each database call. Now:
+
+- Each character has a **turn**, a mutex in a table keyed by character id and reference-counted, so
+  an entry leaves the table with its last holder or waiter. `drink` and `step` hold the character's
+  turn for their whole read-decide-write, **store calls included**. That keeps what round 509 locked
+  for: for one character, a step never lands between the pool read and the pool-plus-queue test, as
+  on the engine's per-PC thread. So one character's drink and step still serialize across `Heal`.
+- The queue-wide `mu` guards only the in-memory lists and the turn table. It is taken for the queue
+  decision (`landLocked`, `takeLocked`) and released before any store call. That is the lock that is
+  never held across a store call.
+- `applyPotionLocked` is renamed `applyPotion`: its callers hold the turn, not `mu`.
+- What this buys: another character's drink, a step called on its own, and a listing no longer wait
+  on a store call of someone else's.
+- **What still waits** (disclosed): `potionQueueTick` steps the characters of a pass one after
+  another, and `RunPotionQueue` calls it synchronously in its ticker loop. So a pass stuck in
+  `step(A)` -- in A's own slow store call, or waiting for A's turn behind A's drink holding it across
+  a slow `Heal` -- delays every later step of that pass and the whole next pass, listing included.
+  A's own drink, arriving meanwhile, waits for that step's `Heal` too. For steps the tick drives, one
+  character's slow write still delays the others; only drinks and listings are free of it.
+- `drop` takes `mu` only, not the turn, so a drink in flight for a character leaving the world can
+  put lists back after the drop (pushed after it, or a failed drink's restore). The next pass drops
+  them again, unless the character is back in the world by then. Noted in `drop`'s comment.
+
+**2. Remove first, then land** (`UseItemHandler`). Round 509 called `potions.drink` before
+`inv.RemoveItem`. If the removal failed, the reply was "using failed" and the potion was kept and
+not locked, but its first step had landed and four more were queued. The engine heals and then
+spends: slot 308 lands the amounts and answers 1 (`0x49b996`), and then `DoJob` decrements the
+count (`LAB_0049af45`). Both are in-memory writes on the PC's thread and cannot fail. Here the
+removal can fail. Undoing a landed step would need a damage write, which can fail in turn. So:
+
+- the handler removes the potion first and drinks it second;
+- a drink that fails hands the potion back with `AddItemInstance`, as `useExpansion` does
+  (`"healing failed"`, or `"healing failed, and the item could not be returned"` when the refund
+  fails too);
+- the reuse lock is armed only after both succeed, as before.
+
+Two costs of this order, stated in the handler's comment:
+
+- A removal that commits, then a drink that fails, then a refund that fails too loses the potion
+  ("healing failed, and the item could not be returned"). Round 509's order never cost a potion on
+  a failed heal. `useExpansion` makes the same trade. The handler's ctx is the server's, which
+  `gateway.Server.serveConn` passes as is and never cancels per connection, so the window is two
+  store errors in a row.
+- The refund goes where `AddItemInstance` puts it, not back to `req.InventorySlot`. Both stores'
+  `addItem` top up the first under-full stack of that item and then take the lowest free slot. A
+  potion taken from a stack of 1, or from a stack behind another of the same item with room, comes
+  back in another slot.
+
+On success both writes are done before the one reply. That reply carries the healed pools and the
+spent stack together, which is what the engine's order shows the client. The handler's comment
+records the choice and the reason.
+
+**3. A failed drink leaves the queue as it was.** `drink` copies the character's two lists before
+the queue decision (`saveLocked`, a deep copy, since `takeLocked` decrements the head's count in
+place). If `applyPotion` fails, `restoreLocked` puts the copy back: the entries the drink pushed are
+dropped, and the ones a percentage drink trimmed come back. `applyPotion` fails only on the HP write,
+which comes before the MP one, so on an error nothing has landed. Round 509 left the pushed entry
+queued, so a potion reported as "healing failed" and kept went on to heal four times.
+
+**4. The theoretical reuse-lock race** is noted at the gate. `potionLocks.Ready` and `Arm` are
+separate calls with the removal and the drink between them, so two uses of one kind for one
+character handled at once (two connections driving that character) could both pass `Ready`. The
+engine runs the gate and the arm on the PC's thread. Not closed.
+
+**5. Round 508's notes** (`useitem.go`'s comments; round 508 above carries pointers):
+
+- **`FUN_004e67b0` drops ONE type-6 record, not all of them.** It zeroes the word (`0x4e67d0`), then
+  calls `FUN_004066c0(6, 6)` at `0x4e67c8` with EBX 0 (`0x4e67c6`). `FUN_004066c0` walks the
+  manager's list and stops at the first record whose `+4` is zero, whose `vslot_005` type byte
+  (`+0xc`) is 6, and which `AJStateChanger::vslot_004` (`0x4063e0`) accepts: type 6 at `+0xc`, and a
+  bit argument of 0 matches any `+0xd`. It erases that record and returns 1 at `0x406733`. So the
+  call drops one record. With two kinds locked,
+  the other kind's record stays queued and clears its bit when it runs out. (Review follow-up: the
+  bit is zero by then only if the kind was not armed again meanwhile. `FUN_004e0ab0` arms whenever
+  the bit is clear -- `0x4e0abb` `test [eax+0x8],ebx ; jne` skips only a set bit -- and appends a
+  fresh record, `0x4e0b0b` -> `FUN_004066a0` -> `FUN_004067c0`, a plain list insert, without
+  looking for a stale one. So a character revived and drinking that kind inside the stale record's
+  remaining delay, up to 4.1 s in China and 15.1 s in Europe, has the new lock cleared early.)
+  `GROUNDING_AUDIT.md`'s "clears every bit" is about the word and stays. `SYSTEMS.md`'s
+  "wholesale clear" is reworded.
+- **`FUN_004eb410` has a first test.** It calls the item's vtable `+0x4c` (`0x4eb41e`) and answers 0
+  on a zero (`0x4eb422 je 0x4eb493`). In `CGItemExpendable`'s vtable (`0xaeb2b4`, the table whose
+  slot 308 is `0x49b710`), `+0x4c` is `0x482db0` `CGObj::IsExpendables`, read from the table's
+  bytes. It returns 1 when TID bit 1 is clear, `(t & 0x1c) == 0xc` and `(t & 0x60) == 0x60`
+  (`0x482dc0`-`0x482dd5`): TypeID1 3 and TypeID2 3. Bit 1 is itemdata column 8, 0 on every item row
+  (`ground_items.md`), so the test is always 1 for a 3/3 item and is not modelled.
+- **`potionReuseBit`'s "index 5 ... has no bit".** The jump table's index 5 (`0x4eb574 + 5*4`
+  holds `0x4eb493`) is kind 6. `DoJob` sends kind 6 to slot 327 (`restoresUserPool`, round 491), so
+  it never reaches slot 308. The comment says so, and keeps the "no bit" answer for a kind past the
+  table that does reach slot 308.
+
+**6. Round 507's notes:**
+
+- **The kind-4 handler's name.** `skill.go` and round 507 wrote "`0x587260` (EngageSkill, or
+  `SkillAction_Stance_Register`)". `0x587260` is `SkillAction_Stance`: round 268 named it, and the
+  dump does not define it. It dispatches phases 3-6 through the table at `0x5872b0`. Phase 3 CALLS
+  `EngageSkill` `0x593540` (`0x58727f`), and phase 6 calls `SkillAction_Stance_Register`
+  `0x587210` (`0x58729d`). It is neither of them. `skill.go` and round 507 are reworded.
+- **The phase-0 target clear is Activity-2 only.** `0x4ae6f0`-`0x4ae717` sits behind
+  `cmp byte [edi+0x65],2 ; jne 0x4ae9dc` (`0x4ae6e6`), and `+0x65` is `Basic_Activity`
+  (`skill_fields.md`). Re-measured on column 8 of the 33,632 rows: all 49
+  `SKILL_CH_WATER_SELFHEAL_*` rows and all 8 `SKILL_EU_BARD_RECOVERA_ABNORMALTIME_*` rows are
+  Activity 2. That is all 57 rows `SelfHealAmounts` selects, so round 507's conclusion holds. The
+  gate is now stated in `skill.go`'s WHO IS HEALED block, `heal.md` and round 507.
+- **Round 502's inline round-507 note** said "the rows a player casts that now hand off are the
+  571". It is now hedged as the other docs are: whether a player can cast a final link by its own
+  id was not read.
+- **"16 skills were free to cast"** (the 2026-09 section) now points at round 507's recount:
+  `Consume_HP` is non-zero on 8 rows, ids 11382-11389, re-listed this round.
+- **The >= 300 s group sharing.** In `FUN_0064c700`'s persisted branch, `0x64cae4`-`0x64cafb`
+  files the entry in the group map on the path that finds a keeper slot free. The path with none
+  free (`0x64cb82`-`0x64cbd5`) jumps to the epilogue at `0x64cb63` and never reaches that filing.
+  The clause is added to `skillCooldownGroup`'s comment, `auto_command.md`, `SYSTEMS.md` and the
+  round 504/507 notes.
+- `paramblock_test.go`: "a Target_Required row never heals the CASTER" is now "never takes the
+  caster branch". Its non-empty-vector path heals the targets, and the caster could be one.
+- `keepup_test.go`: "chain head" is now "a row with a non-zero Basic_ChainCode" wherever it meant
+  that. The test rows (`BasicChainCode` 12 and 52) are not modelled as true heads.
+
+**Tests** (`session/useitem_test.go`). The potion fixture now hands `UseItemHandler` two
+wrappers over its stores: a bag whose `RemoveItem` can be made to fail and a character store whose
+`Heal` can be made to fail.
+
+- **`TestPotionQueueHoldsNoQueueWideLockAcrossAStoreCall`**: Aria's drink is held inside `Heal` by
+  a store that blocks until released. Meanwhile, each within 2 s:
+  - Bea's drink lands 25 at once;
+  - Bea's step (called directly) lands the next 25;
+  - the tick's listing returns.
+
+  Aria's own step does NOT run while her drink is held: her turn is held across her `Heal`. It lands
+  after the drink, at HP 100.
+- **`TestPotionQueueTickStuckInAStoreCallHoldsUpNoOtherDrink`**: a real `potionQueueTick` pass is
+  held inside Aria's step's `Heal` (Aria at full HP with 4 x 25 queued, so the pass sends no stats
+  push). Meanwhile Bea's drink lands 25 at once and a listing returns, each within 2 s. The pass
+  itself and Aria's own drink are both still held -- the disclosed wait, pinned, so a change to it
+  has to update the note. Released, both finish.
+- **`TestPotionNotRemovedHealsNothing`**: with `RemoveItem` failing, the use answers "using
+  failed", the HP stays 50, the stack stays 10, nothing is queued and the ticks land nothing. With
+  the bag working again, the same potion at the same instant is drunk normally: 25 at once, then
+  100, 125, 150, 175. The failed use locked nothing.
+- **`TestPotionDrinkThatFailsLeavesTheQueueAsItWas`**, with `Heal` failing:
+  - on the queue: a failed absolute drink leaves no queue. With a 4 x 30 entry queued, a failed
+    absolute drink leaves 120, and a failed percentage drink that would have emptied the list
+    leaves 120 too. The HP stays 50.
+  - through the handler: "healing failed", the potion handed back (10 left), nothing queued,
+    nothing landing on the ticks, and the same potion drunk normally at the same instant once
+    `Heal` works.
+
+**Negative case, run.** Only `useitem.go` was stashed, so the new tests ran against round 509's
+queue and handler. All four FAIL:
+
+- the lock test: "Bea's drink and step did not finish in 2s while Aria's Heal was held" and "the
+  tick's listing did not finish in 2s";
+- the tick test (added with the review follow-up, run the same way): "Bea's drink did not finish in
+  2s while the pass was held in Aria's Heal" and "a listing did not finish in 2s";
+- the removal test: "healed at once: HP 75, want 50" and "queued steps for [1]";
+- the apply-error test: "a failed absolute drink left a queue for [1]". The second drink then
+  succeeded, because round 509's leftover entry had pushed the pool plus the queue past the maximum.
+
+Restored, all four pass.
+
+- **Race:** `cd server && go test -count=1 -p 1 -race ./internal/session/...` passes, both new lock
+  tests included.
+- **Suite:** `cd server && go build ./... && go test -count=1 -p 1 ./...` is green. No client file
+  changed.

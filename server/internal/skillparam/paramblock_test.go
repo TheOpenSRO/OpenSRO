@@ -584,8 +584,8 @@ func TestSelfHealAmounts(t *testing.T) {
 		{"flat MP", ActionKindInstant, false, []int32{heal, 0, 0, 200, 0}, 0, 200},
 		// 0x5941f1: any other action kind skips the heal branch.
 		{"timed buff kind", ActionKindBuff, false, []int32{heal, 300, 0, 0, 0}, 0, 0},
-		// 0x5942b1: a Target_Required row never heals the CASTER. With an
-		// empty target vector it heals nothing (0x5942b8 `jne 0x594664`);
+		// 0x5942b1: a Target_Required row never takes the caster branch. With
+		// an empty target vector it heals nothing (0x5942b8 `jne 0x594664`);
 		// only the non-empty-vector path heals, and it heals the targets
 		// (0x5942fd -> 0x59459f, the loop to 0x59463c).
 		{"target required", ActionKindInstant, true, []int32{heal, 300, 0, 0, 0}, 0, 0},

@@ -270,9 +270,16 @@ func potionRestore(param1, param2, param3, param4, level, str, intel, maxHP, max
 //     to AddHwanCount) is GObjPC::FUN_004eb410 (0x49b8b6); a zero answer is
 //     0x185b WAIT_FOR_REUSE_DELAY (0x49b8c2), and CGItemExpendable::DoJob
 //     (0x0049aca0) returns any result but 1 before it decrements the count
-//     (LAB_0049af45), so the refused potion is kept. FUN_004eb410 maps the
-//     kind to a bit through the jump table at 0x4eb574 and answers whether
-//     that bit is clear in the BYTE at [pc+0x30]+8 (0x4eb42b `movzx`).
+//     (LAB_0049af45), so the refused potion is kept. FUN_004eb410 first asks
+//     the item's vtable +0x4c and answers 0 on a zero (0x4eb41e `call edx`,
+//     0x4eb422 `je 0x4eb493`). In CGItemExpendable's vtable (0xaeb2b4) that
+//     is CGObj::IsExpendables (0x482db0): 1 when TID bit 1 is clear and
+//     TypeID1 and TypeID2 are both 3 (0x482dc0..0x482dd5). Bit 1 is itemdata
+//     column 8, 0 on every item row (docs/protocol/ground_items.md), so this
+//     is always 1 for a 3/3 item and srrevamp does not ask it. FUN_004eb410
+//     then maps the kind to a bit through the jump table at 0x4eb574 and
+//     answers whether that bit is clear in the BYTE at [pc+0x30]+8 (0x4eb42b
+//     `movzx`).
 //   - The arm. After the heal, FUN_004e0ab0 (0x49b98e, EBX = the bit from the
 //     gate, 0x49b97e) ORs the bit in (0x4e0ac0) and queues an AJStateChanger
 //     record of type 6 (0x4e0af6) carrying the bit (+0xd) and a float32 delay
@@ -300,12 +307,24 @@ func potionRestore(param1, param2, param3, param4, level, str, intel, maxHP, max
 //     since the last tick, not since the arm (FUN_004066a0 resets the clock
 //     only when the list is empty). So retail frees the bit on a tick, within
 //     about 0.3 s either side of the delay; srrevamp frees it at the delay.
-//   - GObjPC::FUN_004e67b0 zeroes the whole word and drops the type-6 records
-//     (0x4e67c8 FUN_004066c0(6), 0x4e67d0). CGObjPC slots 306 and 307
-//     (0x529b10, 0x52cdb0) call it; their pet and mercenary versions set life
-//     state 2 (docs/protocol/character_state.md). srrevamp does not clear the
-//     lock there, so a potion drunk just before one of those paths stays
-//     locked for the rest of its delay.
+//   - GObjPC::FUN_004e67b0 zeroes the whole word (0x4e67d0) but drops ONE
+//     type-6 record, not all of them: FUN_004066c0(6, 6) at 0x4e67c8, with
+//     EBX 0 (0x4e67c6), walks the manager's list, erases the first record
+//     whose AJStateChanger::vslot_004 (0x4063e0) matches type 6 at +0xc --
+//     bit 0 matches any bit at +0xd -- and returns at 0x406733. With two
+//     kinds locked, the other kind's record stays queued and clears its bit
+//     when it runs out. That bit is zero by then only if the kind was not
+//     armed again meanwhile: FUN_004e0ab0 arms whenever the bit is clear
+//     (0x4e0abb `test [eax+0x8],ebx; jne` skips only a set bit) and appends a
+//     fresh record (0x4e0b0b -> FUN_004066a0 -> FUN_004067c0, a plain list
+//     insert) without looking for a stale one. So a character revived and
+//     drinking that kind inside the stale record's remaining delay (up to
+//     4.1 s in China, 15.1 s in Europe) has the new lock cleared early, when
+//     the stale record runs out. CGObjPC slots 306 and 307 (0x529b10,
+//     0x52cdb0) call it; their pet and mercenary versions set life state 2
+//     (docs/protocol/character_state.md). srrevamp does not clear the lock
+//     there, so a potion drunk just before one of those paths stays locked
+//     for the rest of its delay.
 //   - The lock lives on the PC object in the engine and in the handler here,
 //     so a relog inside the delay does not clear it in srrevamp.
 const (
@@ -328,9 +347,10 @@ const (
 // table at 0x4eb574 indexed by TypeID4-1 (0x4eb4c2 `add eax,-1`): 1 -> 1
 // (0x4eb4d1), 2 -> 2 (0x4eb4ec), 3 -> 4 (0x4eb507). The table's 4, 5 and 7
 // (8, 0x10, 0x20) are kinds DoJob sends to slot 327, not to slot 308, and
-// restoresUserPool refuses them before this is asked. Any other kind that
-// reaches slot 308 has no bit: index 5 and anything past the table's 7
-// entries (`cmp eax,0x6; ja`, 0x4eb4c5) go to 0x4eb493, which answers 0 --
+// restoresUserPool refuses them before this is asked. Its index 5 -- kind 6
+// -- has no bit (0x4eb493), but kind 6 is a slot-327 kind as well and never
+// reaches slot 308. A kind past the table's 7 entries (`cmp eax,0x6; ja`,
+// 0x4eb4c5) that does reach slot 308 goes to 0x4eb493 too, which answers 0 --
 // always 0x185b. No real recovery row has such a kind.
 func potionReuseBit(typeID4 int) (bit uint32, ok bool) {
 	switch typeID4 {
@@ -453,18 +473,89 @@ func newPotionEntry(amount int) potionEntry {
 // RunPotionQueue steps it once a second. The zero value is not usable; call
 // NewPotionQueue.
 //
-// Its lock is held across a whole drink or a whole step for one character --
-// the read of the pools, the queue decision and the write -- because the
-// engine runs both on the PC's own thread, and a step landing between the
-// read and the decision would skew the pool-plus-queue test.
+// LOCKING (round 511). The engine runs a PC's drink and its tick on the PC's
+// own thread, so for one character the read of the pools, the queue decision
+// and the write never interleave with a step; a step landing between the read
+// and the decision would skew the pool-plus-queue test. srrevamp keeps that
+// PER CHARACTER: drink and step hold the character's turn (turn) for the whole
+// read-decide-write, store calls included, so one character's drink and step
+// serialize with each other and with nothing else. The queue-wide mu guards
+// only the in-memory lists and the turn table and is never held across a
+// store call -- chars.GetByID, chars.Heal (a SQL round trip in production) or
+// the mana tracker. So a drink, a step taken on its own and the tick's
+// listing wait on no other character's store call. Round 509 held mu itself
+// across all of it, which queued every potion use and every step on the
+// server behind each database call.
+//
+// What still waits: potionQueueTick steps the characters of a pass one after
+// another, and RunPotionQueue runs the passes one after another. A step stuck
+// in its own slow store call, or waiting for its character's turn behind a
+// drink that holds it across a slow Heal, delays every later step of that pass
+// and the whole next pass, listing included. And that character's own drink,
+// arriving meanwhile, waits until the step releases the turn.
 type PotionQueue struct {
 	mu    sync.Mutex
 	pools map[int64]*[2][]potionEntry
+	turns map[int64]*potionTurn
+}
+
+// potionTurn is one character's turn lock. refs counts the holder and the
+// waiters, so the entry leaves the table with the last of them.
+type potionTurn struct {
+	mu   sync.Mutex
+	refs int
 }
 
 // NewPotionQueue returns an empty queue.
 func NewPotionQueue() *PotionQueue {
-	return &PotionQueue{pools: map[int64]*[2][]potionEntry{}}
+	return &PotionQueue{pools: map[int64]*[2][]potionEntry{}, turns: map[int64]*potionTurn{}}
+}
+
+// turn waits for characterID's turn and returns its release. mu is held only
+// to find the entry, never while waiting.
+func (q *PotionQueue) turn(characterID int64) (release func()) {
+	q.mu.Lock()
+	t := q.turns[characterID]
+	if t == nil {
+		t = &potionTurn{}
+		q.turns[characterID] = t
+	}
+	t.refs++
+	q.mu.Unlock()
+	t.mu.Lock()
+	return func() {
+		t.mu.Unlock()
+		q.mu.Lock()
+		t.refs--
+		if t.refs == 0 {
+			delete(q.turns, characterID)
+		}
+		q.mu.Unlock()
+	}
+}
+
+// saveLocked copies characterID's two lists, so a drink whose heal fails can
+// put them back (restoreLocked). The copy is deep: takeLocked decrements the
+// head's count in place.
+func (q *PotionQueue) saveLocked(characterID int64) (saved [2][]potionEntry, had bool) {
+	lists := q.pools[characterID]
+	if lists == nil {
+		return saved, false
+	}
+	for pool := range lists {
+		saved[pool] = append([]potionEntry(nil), lists[pool]...)
+	}
+	return saved, true
+}
+
+// restoreLocked puts back what saveLocked copied: the entries a failed drink
+// pushed are gone, and the ones a failed percentage drink trimmed return.
+func (q *PotionQueue) restoreLocked(characterID int64, saved [2][]potionEntry, had bool) {
+	if !had {
+		delete(q.pools, characterID)
+		return
+	}
+	q.pools[characterID] = &saved
 }
 
 // queuedLocked is FUN_0049a110 (0x49a110): the sum of step x count over one
@@ -566,10 +657,12 @@ func (q *PotionQueue) takeLocked(characterID int64) (hp, mp int) {
 	return got[potionPoolHP], got[potionPoolMP]
 }
 
-// applyPotionLocked adds what landed to the pools, each clamped to its
-// maximum as ApplyHPMPDelta's FUN_004a87d0 does through GObjChar::FUN_004a66f0
-// (the GObjChar.h CLAMP), and returns the pools after.
-func applyPotionLocked(ctx context.Context, chars character.Store, mp *mana.Tracker, characterID int64, hp, mpAmount, curHP, curMP, maxHP, maxMP int) (newHP, newMP int, err error) {
+// applyPotion adds what landed to the pools, each clamped to its maximum as
+// ApplyHPMPDelta's FUN_004a87d0 does through GObjChar::FUN_004a66f0 (the
+// GObjChar.h CLAMP), and returns the pools after. Its callers hold the
+// character's turn, not the queue's mu. It fails only on the HP write, which
+// comes first, so an error means nothing landed.
+func applyPotion(ctx context.Context, chars character.Store, mp *mana.Tracker, characterID int64, hp, mpAmount, curHP, curMP, maxHP, maxMP int) (newHP, newMP int, err error) {
 	newHP, newMP = curHP, curMP
 	if hp > 0 {
 		if newHP, err = chars.Heal(ctx, characterID, hp, maxHP); err != nil {
@@ -585,9 +678,15 @@ func applyPotionLocked(ctx context.Context, chars character.Store, mp *mana.Trac
 // drink lands a recovery potion's amounts through the queue and returns the
 // pools after it and what they gained at once. mp nil reports MP full, so an
 // absolute MP amount queues nothing.
+//
+// On an error nothing has changed: the pools were not written (applyPotion),
+// and the lists are put back as they were before the queue decision -- the
+// entries it pushed dropped, the ones it trimmed returned (round 511). The
+// handler refunds the potion then, and a step queued by a potion that was
+// not spent must not land on the next tick. Round 509 left them queued.
 func (q *PotionQueue) drink(ctx context.Context, chars character.Store, mp *mana.Tracker, characterID int64, absolute bool, hp, mpAmount, maxHP, maxMP int) (newHP, newMP, gotHP, gotMP int, err error) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	release := q.turn(characterID)
+	defer release()
 	c, err := chars.GetByID(ctx, characterID)
 	if err != nil {
 		return 0, 0, 0, 0, err
@@ -596,9 +695,15 @@ func (q *PotionQueue) drink(ctx context.Context, chars character.Store, mp *mana
 	if mp != nil {
 		curMP = mp.Current(characterID, maxMP)
 	}
+	q.mu.Lock()
+	saved, had := q.saveLocked(characterID)
 	nowHP, nowMP := q.landLocked(characterID, absolute, hp, mpAmount, c.HP, maxHP, curMP, maxMP)
-	newHP, newMP, err = applyPotionLocked(ctx, chars, mp, characterID, nowHP, nowMP, c.HP, curMP, maxHP, maxMP)
+	q.mu.Unlock()
+	newHP, newMP, err = applyPotion(ctx, chars, mp, characterID, nowHP, nowMP, c.HP, curMP, maxHP, maxMP)
 	if err != nil {
+		q.mu.Lock()
+		q.restoreLocked(characterID, saved, had)
+		q.mu.Unlock()
 		return 0, 0, 0, 0, err
 	}
 	return newHP, newMP, newHP - c.HP, newMP - curMP, nil
@@ -609,9 +714,11 @@ func (q *PotionQueue) drink(ctx context.Context, chars character.Store, mp *mana
 // FUN_004a87d0 flags the HP/MP update for the client only then (0x4a885c
 // for HP, and its MP twin after it).
 func (q *PotionQueue) step(ctx context.Context, chars character.Store, mp *mana.Tracker, characterID int64) (*character.Character, bool, error) {
+	release := q.turn(characterID)
+	defer release()
 	q.mu.Lock()
-	defer q.mu.Unlock()
 	hp, mpStep := q.takeLocked(characterID)
+	q.mu.Unlock()
 	// 0x49a57b..0x49a581: ApplyHPMPDelta only when either step is above 0.
 	if hp <= 0 && mpStep <= 0 {
 		return nil, false, nil
@@ -625,7 +732,7 @@ func (q *PotionQueue) step(ctx context.Context, chars character.Store, mp *mana.
 	if mp != nil {
 		curMP = mp.Current(characterID, maxMP)
 	}
-	newHP, newMP, err := applyPotionLocked(ctx, chars, mp, characterID, hp, mpStep, c.HP, curMP, maxHP, maxMP)
+	newHP, newMP, err := applyPotion(ctx, chars, mp, characterID, hp, mpStep, c.HP, curMP, maxHP, maxMP)
 	if err != nil {
 		return nil, false, err
 	}
@@ -645,7 +752,13 @@ func (q *PotionQueue) characters() []int64 {
 	return ids
 }
 
-// drop discards a character's queue.
+// drop discards a character's queue. It takes mu only, not the character's
+// turn, so a drink of that character's still in flight can put lists back
+// after it: one pushed after the drop, or a failed one's restoreLocked. They
+// belong to a character no longer in the world, and the next pass drops them
+// again (potionQueueTick) -- unless the character is back in the world by
+// then, when they land as if it had never left. Not closed; it needs a drink
+// racing a departure.
 func (q *PotionQueue) drop(characterID int64) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -687,6 +800,16 @@ func RunPotionQueue(ctx context.Context, hub *world.Hub, chars character.Store, 
 //
 // A character no longer in the world has its queue dropped: the engine's
 // lives on the PC object (pc+0x1d58), which leaves with the character.
+//
+// The pass steps the characters one after another, and RunPotionQueue calls
+// it synchronously, so a slow store call in one character's step, or a drink
+// of that character's holding its turn across a slow Heal, delays the later
+// steps of the same pass and the whole next pass, its listing included; that
+// character's own drink, arriving meanwhile, waits for the step. What no
+// longer waits is every other character's drink, and a listing taken while a
+// drink is inside a store call: neither takes a lock held across one (round
+// 511, PotionQueue's LOCKING note;
+// TestPotionQueueTickStuckInAStoreCallHoldsUpNoOtherDrink).
 func potionQueueTick(ctx context.Context, hub *world.Hub, chars character.Store, q *PotionQueue, deps RegenDeps, logger *slog.Logger) {
 	if hub == nil || chars == nil || q == nil {
 		return
@@ -873,6 +996,14 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// FUN_004eb410 is the first thing slot 308 asks, before the amounts
 		// (FUN_0049aa70) are computed, and it answers the same 0x185b. The
 		// item is kept.
+		//
+		// Ready here and Arm below are separate calls with the removal and
+		// the drink between them, and nothing holds the character across
+		// them. So two uses of one kind for one character handled at the
+		// same moment -- which takes two connections driving that character
+		// -- could both pass Ready before either arms. The engine cannot:
+		// the gate and the arm run on the PC's own thread. Theoretical, and
+		// not closed.
 		reuseBit, knownKind := potionReuseBit(it.TypeID4)
 		if !knownKind || !potionLocks.Ready(characterID, reuseBit, now) {
 			return fail("wait for the reuse delay")
@@ -900,6 +1031,40 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// non-zero, 0x49ac37), 0 on the percentage path (0x49ab42).
 		absolute := it.RestoreHP != 0 || it.RestoreMP != 0
 
+		// SPEND FIRST, THEN LAND (round 511). The engine heals and then
+		// spends: slot 308 lands the amounts through FUN_004ef450 and answers
+		// 1 (0x49b996), and only then does DoJob decrement the count
+		// (LAB_0049af45) -- two in-memory writes on the PC's thread, neither
+		// of which can fail. Here the removal is a store call that can, and a
+		// potion the server failed to remove must not heal: round 509 drank
+		// first, so a failed RemoveItem answered "using failed" and kept the
+		// potion unlocked while its first step had landed and four more were
+		// queued. Undoing a landed step would take a damage write that can
+		// fail in turn, so srrevamp removes the potion first and lands it
+		// second; a drink that fails leaves the pools and the queue as they
+		// were (PotionQueue.drink), and the potion is handed back the way
+		// useExpansion hands back its item (AddItemInstance). On success
+		// both writes are done before the one reply, which carries the healed
+		// pools and the spent stack together -- what the engine's order
+		// shows the client.
+		//
+		// The cost of this order: a removal that commits, then a drink that
+		// fails, then a refund that fails too loses the potion ("healing
+		// failed, and the item could not be returned"), where round 509's
+		// order never cost a potion on a failed heal. useExpansion makes the
+		// same trade, and the handler's ctx is the server's, which
+		// gateway.Server.serveConn passes as is and never cancels per
+		// connection, so the window is two store errors in a row. And the
+		// refund is AddItemInstance's placement, not req.InventorySlot: both
+		// stores top up the first under-full stack of that item before they
+		// take the lowest free slot (inventory's MemStore.addItem and
+		// SQLStore.addItem), so a potion taken from a stack of 1, or from a
+		// stack behind another of that item with room, comes back in
+		// another slot.
+		if err := inv.RemoveItem(ctx, characterID, int(req.InventorySlot), 1); err != nil {
+			return fail("using failed")
+		}
+
 		// Landed through the queue (round 509, PotionQueue): an absolute
 		// potion's first step now and the rest by RunPotionQueue, a
 		// percentage one in full now. Nothing landing -- a full pool, or the
@@ -908,11 +1073,10 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// DoJob then spends the potion.
 		newHP, newMP, gotHP, gotMP, err := potions.drink(ctx, chars, mp, characterID, absolute, healHP, healMP, maxHP, maxMP)
 		if err != nil {
+			if backErr := inv.AddItemInstance(ctx, characterID, held.ItemID, 1, held.Instance()); backErr != nil {
+				return fail("healing failed, and the item could not be returned")
+			}
 			return fail("healing failed")
-		}
-
-		if err := inv.RemoveItem(ctx, characterID, int(req.InventorySlot), 1); err != nil {
-			return fail("using failed")
 		}
 		remaining := have - 1
 		// Armed after the use succeeds, as Item_HandleUseItem does (its

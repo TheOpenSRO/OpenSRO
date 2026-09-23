@@ -121,7 +121,11 @@ empty (`0x594293`-`0x5942ab`). With a non-empty vector it heals each living targ
 (`0x59459f`-`0x59463c`), not the caster. On the path a player's cast takes, the two agree:
 `Tick_UseSkill` phase 0 (`0x4ae6f0`-`0x4ae717`) sets the context's `+0xc` to 0 and clears its
 target vector (`SkillContext_ClearTargets` `0x48dc30`) for every row with `Target_Required` 0,
-before phase 2 posts the 0x7070 command. `SelfHealAmounts` passes only `Target_Required` 0 rows.
+before phase 2 posts the 0x7070 command. That clear sits behind `cmp byte [edi+0x65],2 ; jne`
+(`0x4ae6e6`), so it runs only for rows whose `Basic_Activity` (`+0x65`, `skill_fields.md`) is 2.
+`SelfHealAmounts` passes only `Target_Required` 0 rows, and all 57 it selects are Activity 2: the
+49 `SKILL_CH_WATER_SELFHEAL` rows and the 8 `SKILL_EU_BARD_RECOVERA_ABNORMALTIME` rows, re-measured
+in round 511 (column 8 of the combined skill rows).
 **Not read:** whether the 0x7070 consumer can put a target back into the vector for such a row. If
 it can, a targeted self-heal is a divergence. (A `Target_Required` 1 row with an empty vector heals
 nothing: `0x5942b8` `jne 0x594664`.)

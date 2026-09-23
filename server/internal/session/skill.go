@@ -948,10 +948,14 @@ func useSkillHandler(
 		// (0x59459f-0x59463c), not the caster. On the path a player's cast
 		// takes, those agree: Tick_UseSkill phase 0 (0x4ae6f0-0x4ae717) clears
 		// the action context's target vector for every Target_Required 0 row
-		// before phase 2 posts the 0x7070 command, and SelfHealAmounts passes
-		// only Target_Required 0 rows. Not read: whether the 0x7070 consumer can
-		// put a target back into the vector for such a row. If it can, a
-		// targeted self-heal is a divergence.
+		// of Basic_Activity 2 -- the clear sits behind `cmp byte [edi+0x65],2
+		// ; jne` (0x4ae6e6) -- before phase 2 posts the 0x7070 command.
+		// SelfHealAmounts passes only Target_Required 0 rows, and all 57 it
+		// selects (the 49 SKILL_CH_WATER_SELFHEAL and 8
+		// SKILL_EU_BARD_RECOVERA_ABNORMALTIME rows) are Activity 2 (round 511,
+		// re-measured). Not read: whether the 0x7070 consumer can put a target
+		// back into the vector for such a row. If it can, a targeted self-heal
+		// is a divergence.
 		//
 		// The MP half reaches the pool (mana.Tracker) but not the client at
 		// once: AttackResult has no MP field, so the HUD's MP bar moves on the
@@ -1045,8 +1049,11 @@ func useSkillHandler(
 //     0x5830b0, kind 4 0x587260); FUN_0064c700 has four call sites, in the
 //     kind 0, 1 and 3 handlers and a siege path (0x623981). Kind 0 arms
 //     only when ReuseDelay != 0 (0x586c03 `cmp [edi+0x7c],0 ; je`), and the
-//     kind-4 handler (EngageSkill or SkillAction_Stance_Register) holds no
-//     call site. The 195 real grouped rows with no ReuseDelay
+//     kind-4 handler holds no call site. That handler is SkillAction_Stance
+//     (0x587260, named in round 268; the dump does not define it), which
+//     CALLS EngageSkill 0x593540 (phase 3, 0x58727f) and
+//     SkillAction_Stance_Register 0x587210 (phase 6, 0x58729d) -- it is
+//     neither of them. The 195 real grouped rows with no ReuseDelay
 //     are 192 kind-0 chain links and 3 kind-4 rows
 //     (SKILL_CH_SWORD/SPEAR/BOW_BALANCE_A_01), so none is armed. Kinds 1 and
 //     3 call the arm unguarded: there a row active with a duration would
@@ -1059,8 +1066,10 @@ func useSkillHandler(
 //     the persisted CTJ_CoolTimeKeeper branch (0x64c8bb `cmp [esp+0x1c],
 //     0x493e0`, i.e. 300 000), which srrevamp does not model, so these rows
 //     keep only their per-id timer -- a DISCLOSED departure. That branch
-//     still files the entry in the group map (0x64cae4-0x64cafb), so in the
-//     engine these rows DO share their group, and here they do not: casting
+//     still files the entry in the group map (0x64cae4-0x64cafb) when it
+//     finds a keeper slot free; with none free (0x64cb82-0x64cbd5) it
+//     returns without filing. So in the engine these rows DO share their
+//     group, and here they do not: casting
 //     Water Harmony A leaves B, C and D (all group 73, 300 000 ms) castable,
 //     and the Rogue's transform mask A leaves B (group 29, 600 000 ms). On
 //     the class skills that is 34 rows.

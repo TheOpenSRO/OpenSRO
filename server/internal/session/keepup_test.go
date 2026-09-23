@@ -118,8 +118,8 @@ func TestKeepUpReachIsTheApproachBand(t *testing.T) {
 	}
 }
 
-// The hand-off is AutoAttackType exactly 1 on a row that is not a chain head,
-// after PreparingTime + CastingTime + ActionDuration: Tick_UseSkill (0x4ae590)
+// The hand-off is AutoAttackType exactly 1 on a row whose Basic_ChainCode is
+// 0, after PreparingTime + CastingTime + ActionDuration: Tick_UseSkill (0x4ae590)
 // phase 3 waits +0x78 + +0x74, and PostLoadSkillTable (0x5893e0) has already
 // folded +0x70 (PreparingTime) into +0x74 -- refdata keeps both raw.
 func TestSkillHandOffRule(t *testing.T) {
@@ -139,11 +139,12 @@ func TestSkillHandOffRule(t *testing.T) {
 		t.Errorf("handOffDelay with PreparingTime 300 = %v; want 1700 ms (the engine's +0x74 includes +0x70)", got)
 	}
 
-	// A chain head does not hand off: the engine would play its links first
-	// and test the LAST link's byte, which srrevamp does not model.
+	// A row with a non-zero Basic_ChainCode does not hand off: the engine
+	// would play its links first and test the LAST link's byte, which
+	// srrevamp does not model.
 	chainHead := &refdata.Skill{ID: 2, AutoAttackType: 1, BasicChainCode: 12, CastingTimeMs: 411, ActionDurationMs: 834}
 	if skillHandsOff(chainHead) {
-		t.Error("a chain head (BasicChainCode 12) handed off; the engine plays the chain link by link first")
+		t.Error("a row with BasicChainCode 12 handed off; the engine plays the chain link by link first")
 	}
 
 	// AutoAttackType 2 is not 1: the engine's test is `== '\x01'`.
@@ -380,8 +381,8 @@ func TestFirstSwingIsGatedByReach(t *testing.T) {
 // Tick_UseSkill (0x4ae590) phase 3 takes from +0x74 + +0x78, with +0x70
 // folded into +0x74 at load (SkillGlobal::PostLoadSkillTable 0x5893e0).
 //
-// And the two refusals that sit in front of it: a chain head (a non-zero
-// Basic_ChainCode -- srrevamp does not play the links, keepup.go's package
+// And the two refusals that sit in front of it: a row with a non-zero
+// Basic_ChainCode (srrevamp does not play the links, keepup.go's package
 // comment) and a ZeroDamage row (useSkillHandler's no-blow early return comes
 // before the hand-off) must leave nothing running.
 func TestSkillCastHandsOffToPlainSwings(t *testing.T) {
@@ -499,11 +500,12 @@ func TestSkillCastHandsOffToPlainSwings(t *testing.T) {
 		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
 	}
 
-	// REFUSAL 1: a chain head resolves its own blow and does not hand off.
+	// REFUSAL 1: a row with a non-zero Basic_ChainCode resolves its own blow
+	// and does not hand off.
 	if ar := cast(51, headTarget.ID); ar.MonsterDamage != 20 || ar.MonsterRemainingHP != 980 {
-		t.Fatalf("chain head cast: %+v; want 20 damage leaving 980", ar)
+		t.Fatalf("BasicChainCode 52 cast: %+v; want 20 damage leaving 980", ar)
 	}
-	noHandOff("a chain head (BasicChainCode 52)", chainHead, headTarget.ID, 980)
+	noHandOff("a row with BasicChainCode 52", chainHead, headTarget.ID, 980)
 
 	// REFUSAL 2: a ZeroDamage row resolves no blow and does not hand off.
 	if ar := cast(53, zeroTarget.ID); ar.MonsterDamage != 0 {
