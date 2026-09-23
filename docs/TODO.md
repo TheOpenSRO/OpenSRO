@@ -58,12 +58,16 @@ In order. Each is checked off here when it ships in a release, with its round in
         imports them via `import-refdata` (regenerate/re-import to pick up price + stack columns).
         Repair **done** (round 212, v0.1.386): per-item durability exists now and the authored
         Repair / Repair All buttons charge itemdata's own repair price. Still open: paging past 30 goods (no current NPC needs it).
-        Also open (round 512, `docs/RE_COMPLETION.md`): **which stores show the repair buttons.**
-        The client's NPC-select reply handler (`FUN_0088b200`, `0x88b8c5`) hides Repair / Repair
-        All and shows them again only for an NPC with interaction 4 (`NPC_*_SMITH`, `NPC_*_ARMOR`,
-        `NPC_*_FORTRESS_SMITH`). srrevamp shows both buttons on every store. Next step: get id 4 to
-        the client (the server's interaction list, or the codename as `services_for` does for the
-        guild), and name the class test at `0x88b78b` that gates the block.
+        **Which stores show the repair buttons: done (round 514, `docs/RE_COMPLETION.md`).** The
+        client's NPC-select reply handler (`FUN_0088b200`, `0x88b8c5`) hides Repair / Repair All at
+        every selected NPC (the class test at `0x88b78b` is IsKindOf `CICNPC`). It shows them again
+        only for an NPC with interaction 4, and vtable `+0x5c` is show/hide. The server gives id 4 to
+        22 codename literals: the town `SMITH`/`ARMOR` NPCs and the fortress smiths
+        (`CGObjNPCNPC::Create`, `0x4c677f` / `0x4c736f`). srrevamp derives it from the codename
+        (`NpcServiceReader.offers_repair`) and hides both buttons at every other store. A headless
+        test drives `_show_repair_buttons` on a synthetic store window (check (j) of
+        `npc_service_reader_test.gd`). Not yet seen in a running client: a `SRREVAMP_QA_SHOP` run
+        reading the `STORE` log line.
 - [x] **Item tooltips** with the real stats -- round 140 (weapon attack, pinned against the Copper
       Sword +5 the user sent) and round 170 (armour/shield defence at columns 65-77, grounded from
       the DB column order + the cloth=magic / heavy=physical relationship). See ITEM_FORMAT.md.

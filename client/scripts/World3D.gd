@@ -5918,7 +5918,7 @@ func _qa_step() -> void:
 		_talk_npc_name = scode
 		_talk_npc_code = scode
 		if _shop_reader != null:
-			_hud_panels.open_shop(scode, _shop_reader.tabs_for(scode))
+			_hud_panels.open_shop(scode, _shop_reader.tabs_for(scode), scode)
 
 	# SRREVAMP_QA_SHOP_BUY exercises the buy flow for a render: show the confirm
 	# popup (proving the price + purse loaded), then actually buy (proving the
@@ -8048,7 +8048,9 @@ func _on_npc_service_selected(key: String) -> void:
 	match key:
 		"shop":
 			if _shop_reader != null and _talk_npc_code != "":
-				_hud_panels.open_shop(_talk_npc_name, _shop_reader.tabs_for(_talk_npc_code))
+				# The codename also decides the store's repair buttons
+				# (HudPanels._show_repair_buttons, round 514).
+				_hud_panels.open_shop(_talk_npc_name, _shop_reader.tabs_for(_talk_npc_code), _talk_npc_code)
 		"storage":
 			_hud_panels.open_storage(_talk_npc_name)
 		_:

@@ -135,10 +135,11 @@ func _init() -> void:
 	# the talk window calls (talk_menu_lines), against a synthetic text table
 	# (19-column rows, text at [9]). The resolver passed in has the same rules
 	# as HudPanels._resolve_ui: an empty token, or no text for it, gives the
-	# fallback. The HUD itself cannot be loaded here: it needs the NetClient
-	# autoload. The composer is reached through the script object, so a reader
-	# without it FAILS this check rather than failing to parse, which would
-	# hang the suite.
+	# fallback. The HUD itself cannot be loaded here in _init: hud_panels.gd
+	# compiles only once the NetClient autoload is registered, which is why
+	# check (j) runs in _initialize. The composer is reached through the
+	# script object, so a reader without it FAILS this check rather than
+	# failing to parse, which would hang the suite.
 	var ui_tokens := {
 		"UIIT_STT_NPC_CHATTING_WND_STOREHOUSE": "STORE-TEXT",
 		"UIIT_STT_NPC_CHATTING_WND_TALKEND": "END-TEXT",
@@ -205,6 +206,100 @@ func _init() -> void:
 		var a = NpcServiceReader.services_for(agent, shops)
 		_check(not a.map(func(s): return s.key).has("guild"),
 			agent + " is specialty goods (0x0c), not a guild NPC")
+
+	# (i) Round 514: the store window shows Repair / Repair All only at an NPC
+	# with interaction id 4. The client's 0xb045 reply handler FUN_0088b200
+	# hides both buttons and shows them again for id 4 (0x88b8c5-0x88b8d9,
+	# then FUN_006d2840(0) and FUN_006d2840(has4)). The server registers id 4
+	# by strstr on exactly these codename literals (CGObjNPCNPC::Create:
+	# 0x4c677f, town smiths and armour merchants; 0x4c736f, fortress smiths).
+	# This check pins the helper HudPanels._show_repair_buttons calls, and
+	# check (j) below drives _show_repair_buttons itself on a store window.
+	# The helper is reached through the script object, so that a reader
+	# without it FAILS rather than failing to parse.
+	var want_repair := [
+		"NPC_CH_SMITH", "NPC_CH_ARMOR", "NPC_WC_SMITH", "NPC_WC_ARMOR",
+		"NPC_KT_SMITH", "NPC_KT_ARMOR", "NPC_EU_SMITH", "NPC_EU_ARMOR",
+		"NPC_CA_SMITH", "NPC_CA_ARMOR", "NPC_SD_M_AREA_SMITH", "NPC_SD_M_AREA_ARMOR",
+		"NPC_SD_T_AREA_SMITH", "NPC_SD_T_AREA_ARMOR",
+		"NPC_CH_FORTRESS_SMITH1", "NPC_CH_FORTRESS_SMITH2", "NPC_WC_FORTRESS_SMITH1",
+		"NPC_WC_FORTRESS_SMITH2", "NPC_KT_FORTRESS_SMITH", "NPC_EU_FORTRESS_SMITH",
+		"NPC_CA_FORTRESS_SMITH1", "NPC_CA_FORTRESS_SMITH2",
+	]
+	_check(consts.get("REPAIR_PATTERNS", []) == want_repair,
+		"REPAIR_PATTERNS is exactly the server's 22 id-4 literals, in order (got %s)"
+			% [consts.get("REPAIR_PATTERNS")])
+	var has_offers_repair := false
+	for m in reader_script.get_script_method_list():
+		if str(m.get("name", "")) == "offers_repair":
+			has_offers_repair = true
+	_check(has_offers_repair, "NpcServiceReader has offers_repair")
+	for code in want_repair:
+		var yes: bool = has_offers_repair and bool(reader_script.call("offers_repair", code))
+		_check(yes, "%s shows the store's repair buttons (interaction 4)" % code)
+	# NEGATIVE: every other store hides them. Before this round srrevamp showed
+	# both buttons at every store. Each of these runs a store or a service and
+	# carries no id 4: a warehouse keeper (ids 1 and 3), a potion seller, an
+	# accessory merchant, a guild NPC (0x0f, 1) and a guild agent (0x0c). An
+	# empty codename hides them too. Lower case does not match, because the
+	# server's strstr is case-sensitive.
+	for code in ["NPC_CH_WAREHOUSE_M", "NPC_CH_POTION", "NPC_CH_ACCESSORY",
+			"NPC_CH_GENARAL_SP", "NPC_SD_GUILD_AGENT", "", "npc_ch_smith"]:
+		var no: bool = has_offers_repair and not bool(reader_script.call("offers_repair", code))
+		_check(no, "\"%s\" hides the store's repair buttons (no interaction 4)" % code)
+
+	# (j) is in _initialize, below, which also reports the result.
+
+## (j) Added after review: the rule reaches the store window's buttons.
+##
+## This runs here and not in _init. A --script suite's _init runs before the
+## NetClient autoload's global is registered, so hud_panels.gd cannot compile
+## there. Measured on the render box: loading it from _init printed
+## "Compile Error: Identifier not found: NetClient" (hud_panels.gd:389, in
+## open_shop), and can_instantiate() was false. By _initialize the autoload
+## is in the tree (root.has_node("NetClient") was true), and the same load
+## compiles and instantiates. hud_window_test.gd reads HudPanels' constants
+## from _init and never instantiates it. The script is loaded by path, not by
+## its class_name, so that nothing compiles it before the autoload exists.
+##
+## _show_repair_buttons uses only offers_repair, HudWindow.node() and
+## `visible`. So a HudWindow whose panel_root holds the two authored buttons,
+## both visible, is driven the way open_shop drives it. A freshly built
+## ifstore leaves them visible, and so did every store before round 514.
+## First comes a potion seller's store, then a smith's in the same reused
+## window. The helper is reached through has_method/call, so a HudPanels
+## without it FAILS here rather than failing to parse.
+func _initialize() -> void:
+	var panels_script := load("res://scripts/ui/hud/hud_panels.gd") as GDScript
+	var compiled := panels_script != null and panels_script.can_instantiate()
+	_check(compiled, "HudPanels compiles in _initialize, once the NetClient autoload is registered")
+	if compiled:
+		var panels: Node = panels_script.new()
+		var store := HudWindow.new()
+		store.panel_root = Control.new()
+		store.add_child(store.panel_root)
+		var repair_btns: Array[Button] = []
+		for control_name in ["GDR_STORE_BTN_REPAIR", "GDR_STORE_BTN_REPAIRALL"]:
+			var btn := Button.new()
+			btn.name = control_name
+			btn.visible = true
+			store.panel_root.add_child(btn)
+			repair_btns.append(btn)
+		var has_show := panels.has_method("_show_repair_buttons")
+		_check(has_show, "HudPanels has _show_repair_buttons")
+		# NEGATIVE: a potion seller has no interaction 4, so its store hides
+		# both. Before round 514 nothing hid them.
+		if has_show:
+			panels.call("_show_repair_buttons", store, "NPC_CH_POTION")
+		for btn in repair_btns:
+			_check(not btn.visible, "the store opened at NPC_CH_POTION hides %s" % btn.name)
+		# The smith has interaction 4, so the same window shows both again.
+		if has_show:
+			panels.call("_show_repair_buttons", store, "NPC_CH_SMITH")
+		for btn in repair_btns:
+			_check(btn.visible, "the store opened at NPC_CH_SMITH shows %s" % btn.name)
+		store.free()
+		panels.free()
 
 	if _failures == 0:
 		print("ALL PASS")

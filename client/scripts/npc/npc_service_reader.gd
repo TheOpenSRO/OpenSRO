@@ -144,18 +144,9 @@ static func services_for(code: String, shop_npcs: Dictionary) -> Array:
 	# label, and the set-membership test UI_SILKMALL::FUN_00676390 is never
 	# asked about id 4 at any of its 15 direct call sites.
 	#
-	# The client does read id 4, but not for a talk line. The 0xb045 NPC-select
-	# reply handler NetProcessInInterface::FUN_0088b200 looks id 4 up in the
-	# set the menu builder reads (talk object +0x7c0), right after building
-	# the menu: 0x88b8c5 `mov byte [esp+0x1c],4`, 0x88b8ca `call 0x534ef0`,
-	# 0x88b8d9 `cmp [eax+0x4],edi` -> has4. It then calls FUN_006d2840(0),
-	# which hides two store-window controls, and FUN_006d2840(has4), which
-	# shows them again only if the NPC has id 4. Those controls are children
-	# 0xb and 0xc of resinfo\ifstore.txt, fetched by
-	# CIFStoreForPackage::vslot_010 at 0x6d2ce3-0x6d2d03. Its lookup
-	# FUN_008b51f0(id, 1) adds the same window base that FUN_008b5580 adds to
-	# each authored ID (0x8b5634). ifstore.txt authors ids 11 and 12 as
-	# GDR_STORE_BTN_REPAIR and GDR_STORE_BTN_REPAIRALL. So repair is the store
+	# The client does read id 4, but not for a talk line: it decides whether
+	# the store window shows its Repair and Repair All buttons. The chain is
+	# cited on offers_repair below (verified round 514). So repair is the store
 	# window's two buttons (hud_panels.gd, _wire_repair_buttons), reached
 	# through "Buy", and id 4 is what shows them.
 	#
@@ -171,19 +162,63 @@ static func services_for(code: String, shop_npcs: Dictionary) -> Array:
 	# that the real client lacks it.
 	#
 	# NPC_*_ARMOR gets no repair talk line either: no NPC does. Round 458's
-	# "id 4 has no reader" holds for the SERVER only. The client reader at
-	# 0x88b8c5 above means the real armour merchant (id 4, character_state.md)
-	# probably shows the store's repair buttons. srrevamp shows them on every
-	# store; that is an open item in docs/TODO.md, not something this reader
-	# decides.
+	# "id 4 has no reader" holds for the SERVER only. The armour merchants
+	# carry id 4 like the smiths (REPAIR_PATTERNS below), so their store window
+	# shows the repair buttons too (offers_repair, round 514).
 	return out
+
+## Whether the store window shows Repair and Repair All for the NPC with this
+## codename (round 514). True exactly when the server registers interaction
+## id 4 on it, which is REPAIR_PATTERNS. HudPanels.open_shop calls this and
+## hides both buttons when it is false.
+##
+## The client's side, read from sro_client.exe (dump + sro_client.asm):
+##   * The 0xb045 NPC-select reply handler NetProcessInInterface::FUN_0088b200
+##     looks id 4 up in the NPC's interaction set (talk object +0x7c0):
+##     0x88b8c5 `mov byte [esp+0x1c],4`, 0x88b8ca `call 0x534ef0`, then
+##     0x88b8d9 `cmp [eax+0x4],edi ; je ; mov esi,1`, so esi = has id 4.
+##   * It then calls FUN_006d2840(0) and FUN_006d2840(esi) on child 0xf of the
+##     interface ([0x110f80c], FUN_007994b0 = FUN_008b51f0(0xf, 1)).
+##     FUN_006d2840 calls vtable +0x5c on the controls at +0x25e4 and +0x25e8:
+##     with 0 when its argument is 0, with 1 when bit 0 is set. So both are
+##     hidden, then shown again only for an NPC with id 4. FUN_006d2840 has no
+##     other caller (0x88b8f2 and 0x88b905 are the only two).
+##   * +0x25e4 and +0x25e8 are written only by CIFStoreForPackage::vslot_010,
+##     from its children 0xb and 0xc (0x6d2ce3-0x6d2d03). FUN_008b51f0(id, 1)
+##     adds the window's base id, the same base FUN_008b5580 adds to each
+##     authored ID (0x8b5634). The player's Media.pk2 authors
+##     resinfo\ifstore.txt ID 11 as GDR_STORE_BTN_REPAIR and ID 12 as
+##     GDR_STORE_BTN_REPAIRALL, both CIFButton (client/tools/dump_layout.gd
+##     --file=ifstore on the render box).
+##   * Vtable +0x5c is slot 23, SHOW/HIDE, not enable. CIFButton's vtable
+##     (0xd9e9ac, set by its constructor at 0x6564c6) holds 0x656040 there,
+##     which jumps to CIFWnd's 0x652b70. That calls 0xb8f500, which writes
+##     the byte at +0x61. +0x61 gates drawing: CGWndBase::vslot_013 (0xb8f213)
+##     and 0xb9d853 draw only when it is set. The input path
+##     CGWndBase::vslot_017 (0xb91446) needs +0x61 and also +0x62, and +0x62
+##     is the separate enable byte (its setter is 0xb8f540).
+##   * The block runs behind the class test at 0x88b78b,
+##     FUN_00b94b90(0xef1ac4) on the selected object (the FindObjectByID
+##     result, [esp+0x24] from 0x88b29c). FUN_00b94b90 is IsKindOf: it walks
+##     the runtime class's +0xc base chain (0xb94b40). 0xef1ac4 is the runtime
+##     class registered at 0xd764f0 with the name "CICNPC" (.rdata 0xde2a18),
+##     based on CICNonuser. So the rule holds for every NPC selection and every
+##     store an NPC opens, not only some store kinds.
+## Matched with `contains` and case-sensitive, because the server's matcher is
+## the C runtime's strstr (FUN_009dddc0).
+static func offers_repair(code: String) -> bool:
+	for pattern in REPAIR_PATTERNS:
+		if code.contains(pattern):
+			return true
+	return false
 
 ## The numbered, clickable lines of the talk menu, built from services_for's
 ## list: one line per service, then the end line. `resolve` is the talk
 ## window's (token, fallback) -> text resolver (HudPanels._resolve_ui, which
 ## reads the player's own textuisystem.txt). It is passed in so that this
-## composition can be tested without the HUD, which needs the NetClient
-## autoload.
+## composition can be tested without the HUD. hud_panels.gd compiles only once
+## the NetClient autoload is registered, which in a --script suite is its
+## _initialize, not its _init (measured, round 514).
 ##
 ## Numbering and text follow the client's own menu (round 513). FUN_006fcd60
 ## writes "%d. " and then the text of a UIIT token. FUN_00701540 ends the menu
@@ -231,6 +266,45 @@ const GUILD_PATTERNS := [
 	"NPC_CA_GUILD",
 	"NPC_SD_M_AREA_GUILD",
 	"NPC_SD_T_AREA_GUILD2",
+]
+
+## The NPCs the SERVER gives interaction id 4, which offers_repair reads
+## (round 514). `CGObjNPCNPC::Create` (0x4c6350) registers id 4 through
+## vtable +0x164 (AddAvailableInteraction) at exactly two sites. Each is behind
+## `strstr(codename, pattern)` (FUN_009dddc0) on these literals:
+##   * 0x4c677f, id 4 alone: the fourteen town smiths and armour merchants,
+##     pushed in this order from .rdata 0xaeeae0 to 0xaeebbc;
+##   * 0x4c736f, id 4 right after id 0x1a (0x4c7361): the eight fortress
+##     smiths, .rdata 0xaef11c to 0xaef1c4.
+## Every slot-0x164 call in the server that pushes a literal 4 was listed, and
+## there are only these two. The two other `push 4` calls in the function
+## (0x4c6df7, 0x4c775c) go through slot 0x318 instead. The refdata-driven
+## inserts register only ids 7, 8 and 9 (character_state.md, rounds 454-455).
+## The fortress smiths are kept although srrevamp has no fortress, because
+## this list is the id-4 set and not a list of the NPCs srrevamp spawns.
+const REPAIR_PATTERNS := [
+	"NPC_CH_SMITH",
+	"NPC_CH_ARMOR",
+	"NPC_WC_SMITH",
+	"NPC_WC_ARMOR",
+	"NPC_KT_SMITH",
+	"NPC_KT_ARMOR",
+	"NPC_EU_SMITH",
+	"NPC_EU_ARMOR",
+	"NPC_CA_SMITH",
+	"NPC_CA_ARMOR",
+	"NPC_SD_M_AREA_SMITH",
+	"NPC_SD_M_AREA_ARMOR",
+	"NPC_SD_T_AREA_SMITH",
+	"NPC_SD_T_AREA_ARMOR",
+	"NPC_CH_FORTRESS_SMITH1",
+	"NPC_CH_FORTRESS_SMITH2",
+	"NPC_WC_FORTRESS_SMITH1",
+	"NPC_WC_FORTRESS_SMITH2",
+	"NPC_KT_FORTRESS_SMITH",
+	"NPC_EU_FORTRESS_SMITH",
+	"NPC_CA_FORTRESS_SMITH1",
+	"NPC_CA_FORTRESS_SMITH2",
 ]
 
 static func _lines(data: PackedByteArray) -> PackedStringArray:

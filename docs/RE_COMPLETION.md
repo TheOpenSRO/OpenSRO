@@ -24837,6 +24837,12 @@ The armour merchants carry id 4, though, so in the real client their store
 window probably shows the repair buttons. The sentence above ("nothing ties it
 to repair") is wrong for the client. See round 512.
 
+*Update (round 514):* no longer "probably". The server registers id 4 on
+fourteen town `SMITH`/`ARMOR` literals and eight fortress smiths, read directly
+from `CGObjNPCNPC::Create` (`0x4c677f`, `0x4c736f`). The client hides the two
+buttons at every NPC select and shows them again only for id 4, and vtable
+`+0x5c` is show/hide. srrevamp now does the same. See round 514.
+
 ## The capability flags word, assembled — and a control that refused (round 459)
 
 Started from round 458's open item: interaction id 4 groups `NPC_*_SMITH` and
@@ -29425,6 +29431,11 @@ offers, or the client has to derive id 4 from the codename the way `services_for
 guild. Also, the class test at `0x88b78b` has to be named, because it decides when the whole block
 runs. Filed in `docs/TODO.md`.
 
+*Closed (round 514):* the class test is IsKindOf `CICNPC`, so the block runs for every selected
+NPC. Vtable `+0x5c` is show/hide. The id-4 set is 22 codename literals read directly from
+`CGObjNPCNPC::Create`. The client now derives id 4 from the codename (`offers_repair`) and hides
+both buttons at every other store. See round 514.
+
 **Change.**
 - `client/scripts/npc/npc_service_reader.gd`: the `SMITH` → `Service("repair", "Repair")` block is
   deleted, and a comment carrying the citations above takes its place.
@@ -29569,6 +29580,11 @@ fails the checks instead of failing to parse.
   autoload. The test reaches the composer through the script object. A reader without it
   therefore fails the check (measured: HEAD's reader gave "1 FAILURES", `got []`) rather than
   failing to parse, which leaves Godot running and hangs the suite.
+  *Correction (round 514 review):* "cannot load" holds only in a suite's `_init`. There the
+  `NetClient` autoload's global is not registered yet, so loading `hud_panels.gd` prints
+  `Compile Error: Identifier not found: NetClient` and `can_instantiate()` is false. In
+  `_initialize` the autoload is in the tree, and the same load compiles and instantiates. Both
+  were measured on the render box. Round 514's check (j) drives `HudPanels` from `_initialize`.
 
 **Negative case, run.** The two production files were stashed and the working copy shipped. The
 suite then reported **3 FAILURES**: (a) "got <null>", (e) "got strid <null>" and (f) "got <null>".
@@ -29586,3 +29602,162 @@ the suite reports ALL PASS.
 - **Server suite:** `cd server && go build ./... && go test -count=1 -p 1 ./...` is green. No
   server file changed. `SYSTEMS.md` has no row that describes the talk labels, so it needed no
   edit.
+
+## The store window shows Repair / Repair All only at an NPC with interaction id 4 (NPC-select reply handler FUN_0088b200) (round 514)
+
+Round 512 found a client reader of interaction id 4 and left two things open. The first was
+which NPCs carry id 4. The second was what the class test at `0x88b78b` gates. It also hedged on
+whether vtable `+0x5c` hides the buttons or only disables them. This round settles all three,
+then wires the rule. The store window now shows **Repair** and **Repair All** only at an NPC the
+server gives interaction 4, and hides them at every other store. Before this round srrevamp
+showed them at every store.
+
+**Grounding** (read-only on the RE box: the client dump `/var/tmp/decomp_client`,
+`sro_client.asm`, `.rdata` of `/opt/sro-files/client/sro_client.exe`; the server dump
+`/var/tmp/decomp_server`, `srv.asm`, `.rdata` of `/var/tmp/SR_GameServer.exe`; and the
+player's `Media.pk2` through `client/tools/dump_layout.gd`):
+
+- **(a) Children 0xb and 0xc are the two repair buttons, from the player's own archive.**
+  `CIFStoreForPackage::vslot_010` loads `resinfo\ifstore.txt` (`.rdata 0xda8b80`, pushed at
+  `0x6d2ca9`). It then fetches child `0xb` into `+0x25e4` (`0x6d2ce3`), child `0xc` into
+  `+0x25e8` (`0x6d2cee`) and child `0xe` into `+0x25ec` (`0x6d2cff`), each through
+  `FUN_008b51f0(id, 1)`. That lookup adds the window's base id `[this+0x2c]`, which
+  `FUN_008b5580` also adds to each authored `ID` (`0x8b55fe`, `0x8b5634`). `dump_layout.gd` now
+  prints each control's authored `ID`. Run with `--file=ifstore` against the render box's
+  `Media.pk2`, it gives `GDR_STORE_BTN_REPAIR` `CIFButton` `id=11`, `GDR_STORE_BTN_REPAIRALL`
+  `CIFButton` `id=12` and `GDR_STORE_SPIN_PAGE` `id=14`. No other control in the file has an id
+  from 9 to 15. The extracted copy `/var/tmp/resinfo/ifstore.txt` agrees.
+- **(b) Vtable `+0x5c` is show/hide, not enable.** `+0x5c` is slot 23. `CIFButton`'s
+  constructor (`0x656490`) stores the vtable `0xd9e9ac` (`0x6564c6`), whose slot 23 is `0x656040`.
+  That function copies `+0x138` to `+0x15c` and jumps to `CIFWnd`'s slot 23, `0x652b70`.
+  `0x652b70` compares the argument with the byte at `+0x61` (read by `0xb8f530`) and, when they
+  differ, calls `0xb8f500`, which writes the argument to `+0x61` (`0xb8f50a`). `+0x61` gates
+  drawing. `CGWndBase::vslot_013` (`0xb8f213`) and `CGWnd`'s slot 13 (`0xb9d853`) call the draw
+  slots `+0x34`, `+0x38` and `+0x3c` only when it is set. The input path,
+  `CGWndBase::vslot_017`, returns early unless both `+0x61` and `+0x62` are set (`0xb91446`,
+  `0xb91450`). `+0x62` is a separate byte with its own setter (`0xb8f540`). So a button whose
+  `+0x61` is 0 is neither drawn nor clickable, which is hidden. srrevamp therefore sets
+  `visible`, not `disabled`.
+- **(c) The class test is "the selected object is a CICNPC".** `0x88b78b`
+  `push 0xef1ac4 ; call 0xb94b90`. Its `this` is `[esp+0x24]`, the object `0x9c3220` found for
+  the reply's entity id (stored at `0x88b29c`). `FUN_00b94b90` is IsKindOf: it asks the object
+  for its runtime class (vtable slot 0) and walks the class's `+0xc` base chain (`0xb94b40`).
+  `FUN_00b94b70` is the exact-match twin (`0xb94b30`). `0xef1ac4` is initialised at `0xd764f0`
+  with the name `.rdata 0xde2a18` "CICNPC" and the base `0xef1aa4`, which is "CICNonuser"
+  (`0xde2920`, `0xd764c0`). The other classes this handler tests are `0xef1a84` "CICMonster",
+  `0xeef6f0` "CICCos", `0xef1a5c` "CICharactor", `0xef1bc0` "CICUser" and `0xef1dac`
+  "CITeleportGate". So the id-4 block runs for every NPC the player selects. It is not limited to
+  some kinds of store.
+  *Checked after review:* `[esp+0x24]` at `0x88b787` is the same slot `0x88b29c` wrote. The one
+  stack adjustment between them that is not a push before a call is the by-value call at
+  `0x88b75b`-`0x88b772`, and it is balanced. It does `sub esp,0xe8`. The copy constructor
+  `0x764b40` then pops its pushed pointer (`ret 4`, `0x764d4c`), and `CIF_NPCTalk::FUN_00703d70`
+  pops the copy (`ret 0xe8`, `0x703dc0`). The linear-sweep `sro_client.asm` misaligns
+  `0x703d70` because a jump table precedes it, so it was read from its bytes. Nothing in the range
+  writes the slot: every `[esp+...]` store and `lea` resolves to another one. `ebp` holds the same
+  entity for the exact-match `CICNPC` test at `0x88b6af`-`0x88b6be`. It is reused at `0x88b70f`,
+  which is why `0x88b787` reloads the entity from the spill. The callees' own stack cleanup was not
+  checked one by one.
+- **The block sets the buttons at NPC select and nothing else touches them.** `FUN_006d2840` has
+  two callers, `0x88b8f2` and `0x88b905`, both in this block. `+0x25e4` and `+0x25e8` are written
+  only at `0x6d2cf2` and `0x6d2d03` and read only in `FUN_006d2840`. The store window's own slot
+  23 override (`CIFStoreForPackage::vslot_023`, `0x6d30f0`) touches the page spinner at
+  `+0x25ec` but not the buttons. `FUN_007994b0` is `ret` with no stack arguments (`0x7994b0`), so
+  the `push 0` and `push esi` before each call are `FUN_006d2840`'s argument.
+- **This is the `CIFStoreForPackage` build of the store (added after review).** The player's
+  `ginterface.txt` authors `GDR_STORE` (ID 15) as `CIFStoreForPackage` only under
+  `#ifdef RENEWAL_SHOP_SYSTEM`. Otherwise it is `CIFStore`. `CIFStore::vslot_010` (`0x6cf5a0`)
+  loads the same `resinfo\ifstore.txt` (`0xda8b80`, pushed at `0x6cf5d9`). It fetches children
+  `0xb`, `0xc` and `0xe` into `+0x7d4` (`0x6cf622`), `+0x7d8` (`0x6cf633`) and `+0x7dc`. Its
+  show/hide setter `0x6ceac0` has the same shape as `FUN_006d2840`, on `+0x7d4`/`+0x7d8`. No call,
+  jump or absolute pointer in the binary reaches it. The 0xb045 block calls only `FUN_006d2840`,
+  which reads `CIFStoreForPackage`'s offsets from window 0xf (`FUN_007994b0` fetches child `0xf`,
+  `0x7994b2`). So the handler is written for the `RENEWAL_SHOP_SYSTEM` build. That is inferred
+  from the offsets, not read from a define in the binary. In a `CIFStore` build nothing would
+  hide the buttons. srrevamp builds ifstore with no defines (`PANEL_DEFINES` in
+  `hud_panels.gd`), which is the `CIFStore` branch. The two repair buttons sit outside ifstore's
+  `#ifdef` blocks (lines 1434 and 1453 of the extracted `/var/tmp/resinfo/ifstore.txt`, after the
+  `RENEWAL_SHOP_SYSTEM` block ends at line 1268). So they are the same controls in both builds,
+  and srrevamp's behaviour does not change.
+- **(d) Which NPCs carry id 4, read directly rather than by round 455's heuristic.**
+  `CGObjNPCNPC::Create` (`0x4c6350`) registers id 4 through vtable `+0x164`
+  (`AddAvailableInteraction`) at two sites. Each is reached when `FUN_009dddc0` (the C runtime's
+  `strstr`) finds one of a list of literals in the codename:
+  - `0x4c677f`, id 4 alone, fourteen literals at `.rdata 0xaeeae0`-`0xaeebbc`:
+    `NPC_CH_SMITH`, `NPC_CH_ARMOR`, `NPC_WC_SMITH`, `NPC_WC_ARMOR`, `NPC_KT_SMITH`,
+    `NPC_KT_ARMOR`, `NPC_EU_SMITH`, `NPC_EU_ARMOR`, `NPC_CA_SMITH`, `NPC_CA_ARMOR`,
+    `NPC_SD_M_AREA_SMITH`, `NPC_SD_M_AREA_ARMOR`, `NPC_SD_T_AREA_SMITH`, `NPC_SD_T_AREA_ARMOR`;
+  - `0x4c736f`, id 4 right after id `0x1a` (`0x4c7361`), eight literals at
+    `.rdata 0xaef11c`-`0xaef1c4`: `NPC_CH_FORTRESS_SMITH1`, `NPC_CH_FORTRESS_SMITH2`,
+    `NPC_WC_FORTRESS_SMITH1`, `NPC_WC_FORTRESS_SMITH2`, `NPC_KT_FORTRESS_SMITH`,
+    `NPC_EU_FORTRESS_SMITH`, `NPC_CA_FORTRESS_SMITH1`, `NPC_CA_FORTRESS_SMITH2`.
+
+  A census of `srv.asm` lists 68 calls through a vtable's `+0x164`, and only these two push a
+  literal 4 just before the call. The function's other two `push 4` calls (`0x4c6df7`, `0x4c775c`) go
+  through slot `0x318`. The refdata-driven inserts register only ids 7, 8 and 9 (rounds 454-455).
+  One limit: a slot-`0x164` call that passes its id in a register would escape the census.
+
+**Change.**
+- `client/scripts/npc/npc_service_reader.gd`: `REPAIR_PATTERNS`, the 22 literals above, sits
+  next to `GUILD_PATTERNS`. `offers_repair(code)` returns whether any of them is contained in the
+  codename, case-sensitively as `strstr` is. The chain above is cited on both. Round 512's hedges
+  in `services_for`'s comment are replaced with a pointer to `offers_repair`.
+- `client/scripts/ui/hud/hud_panels.gd`: `open_shop` takes the NPC's codename (optional, default
+  empty). The new `_show_repair_buttons` sets `visible` on `GDR_STORE_BTN_REPAIR` and
+  `GDR_STORE_BTN_REPAIRALL` to `offers_repair(code)` on every open of the reused window, and
+  prints `STORE <code> repair buttons shown|hidden`. An empty codename hides them. The wiring
+  of the buttons (`_wire_repair_buttons`) is unchanged, so repair still works at the smiths.
+- `client/scripts/World3D.gd`: both `open_shop` callers pass the codename (`_talk_npc_code` from
+  talk -> Buy, and the `SRREVAMP_QA_SHOP` code).
+- `client/tools/dump_layout.gd` prints each control's authored `id=`.
+- Docs: `docs/protocol/character_state.md` ("Interaction id 4 and the store's repair buttons"),
+  `docs/TODO.md` (the open item is closed), `docs/SYSTEMS.md`'s Durability and repair row, and
+  correction lines on rounds 458 and 512 here.
+
+The real client decides at NPC select, and srrevamp decides when the store opens. srrevamp's
+store opens only from the NPC being talked to, so that NPC's codename stands in for the
+selected one.
+
+What changes for a player: the Jangan blacksmith's and armour merchant's stores show Repair and
+Repair All, as before. The potion, accessory and warehouse-keeper stores no longer show them.
+
+**Tests** (`client/scripts/npc/npc_service_reader_test.gd`, checks (i) and (j)). Check (i) pins
+the helper. It is reached through the script object, so that a reader without it fails instead
+of failing to parse:
+- `REPAIR_PATTERNS` equals the 22 literals, in the server's order;
+- `offers_repair` is true for each of the 22;
+- NEGATIVE: it is false for `NPC_CH_WAREHOUSE_M`, `NPC_CH_POTION`, `NPC_CH_ACCESSORY`,
+  `NPC_CH_GENARAL_SP`, `NPC_SD_GUILD_AGENT`, the empty code and lower-case `npc_ch_smith`.
+
+Check (j) was added after review and drives the store window's buttons. This round first said
+`HudPanels` cannot load in a bare `--script` test because it needs the `NetClient` autoload, and
+round 513 said the same. That holds only in a suite's `_init`. Loading `hud_panels.gd` there
+printed `Compile Error: Identifier not found: NetClient` (at `hud_panels.gd:389`, in
+`open_shop`), and `can_instantiate()` was false. In `_initialize` the autoload is in the tree
+(`root.has_node("NetClient")` was true), and the same load compiles and instantiates. Both were
+measured on the render box with a temporary probe in this suite. `hud_window_test.gd` reads
+`HudPanels`' constants from `_init` and never instantiates it. So check (j) runs in
+`_initialize` and loads the script by path, not by its `class_name`, so that nothing compiles it
+before the autoload exists:
+- it builds a `HudWindow` whose `panel_root` holds two `Button`s named `GDR_STORE_BTN_REPAIR` and
+  `GDR_STORE_BTN_REPAIRALL`, both visible. A freshly built ifstore leaves them that way, and so
+  did every store before this round;
+- NEGATIVE: `_show_repair_buttons(window, "NPC_CH_POTION")` hides both;
+- `_show_repair_buttons(window, "NPC_CH_SMITH")` then shows both again in the same window.
+
+Both calls print their `STORE` lines, so a test now executes `_show_repair_buttons`.
+
+**Negative case, run.** First only `hud_panels.gd` was put back to its pre-round version, and the
+working copy was shipped. The suite reported **3 FAILURES**: `_show_repair_buttons` is missing,
+and both buttons stay visible at the potion seller. The smith checks pass, because nothing hid
+the buttons. Then all four production files were put back. The suite reported **34 FAILURES**:
+the constant ("got <null>"), the missing helper, all 22 id-4 codes, all 7 negatives and the same
+three from (j). With the files restored it reports ALL PASS (70 checks).
+
+- **Client suite:** `client/tools/remote_godot.sh tests` (render box) ran 78 suites, 0 failing.
+  `client/tools/remote_godot.sh check` checked 242 scripts and 5 scenes: ALL LOAD.
+- **Not run:** a `qa_shot.sh` run with `SRREVAMP_QA_SHOP=NPC_CH_POTION` and `=NPC_CH_SMITH` to read
+  the `STORE` log lines from a running client. Check (j) runs `_show_repair_buttons` on a
+  synthetic window, not on the store built from the player's ifstore.
+- **Server suite:** `cd server && go build ./... && go test -count=1 -p 1 ./...` is green. No
+  server file changed.

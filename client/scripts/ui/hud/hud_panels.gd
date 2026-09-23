@@ -355,8 +355,10 @@ var _shop_prices: Dictionary = {}
 
 ## Opens the store window for an NPC, filled with the tabs of real goods the
 ## caller resolved (World3D, via ShopReader). Retitles and refills a single
-## reused window, like the talk box.
-func open_shop(npc_name: String, tabs: Array) -> void:
+## reused window, like the talk box. `npc_code` is the NPC's codename. It
+## decides whether the repair buttons show (_show_repair_buttons); an empty
+## code hides them.
+func open_shop(npc_name: String, tabs: Array, npc_code: String = "") -> void:
 	var window := open("store")
 	if window == null:
 		return
@@ -366,6 +368,7 @@ func open_shop(npc_name: String, tabs: Array) -> void:
 	_build_shop_tab_strip(window)
 	_build_shop_purse(window)
 	_wire_repair_buttons(window)
+	_show_repair_buttons(window, npc_code)
 	_select_shop_tab(0)
 	window.show()
 	window.move_to_front()
@@ -469,11 +472,7 @@ func _select_shop_tab(index: int) -> void:
 ## On the result, the equipment list is re-read so the paper doll and the
 ## tooltips show the restored durability.
 ##
-## Not yet matched to the real client: its NPC-select reply handler
-## (FUN_0088b200, 0x88b8c5) hides these two buttons and shows them again
-## only for an NPC with interaction 4 (smiths, armour merchants). Here they
-## show on every store.
-## See docs/RE_COMPLETION.md round 512 and docs/TODO.md.
+## Which stores show the two buttons is _show_repair_buttons, below.
 func _wire_repair_buttons(window: HudWindow) -> void:
 	if not NetClient.repair_result.is_connected(_on_repair_result):
 		NetClient.repair_result.connect(_on_repair_result)
@@ -483,6 +482,24 @@ func _wire_repair_buttons(window: HudWindow) -> void:
 	var one_btn := window.node("GDR_STORE_BTN_REPAIR") as BaseButton
 	if one_btn != null and not one_btn.pressed.is_connected(_on_repair_one_pressed):
 		one_btn.pressed.connect(_on_repair_one_pressed)
+
+## Shows Repair and Repair All only at an NPC the server gives interaction 4
+## (NpcServiceReader.offers_repair: the town smiths and armour merchants) and
+## hides them at every other store, as the real client does (round 514). The
+## client's 0xb045 NPC-select reply handler (FUN_0088b200) hides both buttons
+## and then shows them again only for an NPC with id 4. That is FUN_006d2840(0)
+## followed by FUN_006d2840(has4), through vtable slot 23, which is show/hide
+## and not enable (the full chain is cited on offers_repair). The store is
+## reached only through the NPC being talked to, so its codename stands in for
+## the selected NPC. A STORE log line records which way each open went.
+func _show_repair_buttons(window: HudWindow, npc_code: String) -> void:
+	var shown := NpcServiceReader.offers_repair(npc_code)
+	for control_name in ["GDR_STORE_BTN_REPAIR", "GDR_STORE_BTN_REPAIRALL"]:
+		var btn := window.node(control_name) as Control
+		if btn != null:
+			btn.visible = shown
+	print("STORE %s repair buttons %s (interaction 4: %s)" % [
+		npc_code, "shown" if shown else "hidden", shown])
 
 func _on_repair_all_pressed() -> void:
 	var who := NetClient.current_character_name

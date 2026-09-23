@@ -47,8 +47,10 @@ func _init() -> void:
 			print("--- section %s rect=%s controls=%d" % [key, str(sec.rect), sec.controls.size()])
 			var i := 0
 			for c in sec.controls:
-				print("  [%2d] %-30s %-18s rect=%-26s h=%d v=%d f=%d ddj=%s uv=%s..%s text=%s" % [
-					i, c.name, c.type, str(c.rect), c.halign, c.valign, c.font_index, c.ddj,
+				# id= is the authored ID, which the client binary uses to find a
+				# child: FUN_008b51f0(id, 1) adds the window's base id (round 514).
+				print("  [%2d] %-30s %-18s id=%-4d rect=%-26s h=%d v=%d f=%d ddj=%s uv=%s..%s text=%s" % [
+					i, c.name, c.type, c.id, str(c.rect), c.halign, c.valign, c.font_index, c.ddj,
 					str(c.uv_lt), str(c.uv_rb), c.text])
 				i += 1
 	quit(0)

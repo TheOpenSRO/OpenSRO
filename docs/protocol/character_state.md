@@ -955,7 +955,7 @@ behind a comparison against the NPC's own CodeName.** That is the vocabulary:
 |---:|---|
 | **1** | `WAREHOUSE`, `NPC_*_HORSE`, `NPC_*_GUILD`, `NPC_*_FORTRESS_OFFICIAL`, `NPC_*_FORTRESS_BATTLEAIDE` — **five families** |
 | **3** | `WAREHOUSE`, `NPC_SD_*_AREA_WAREHOUSE` |
-| **4** | `NPC_*_SMITH`, `NPC_*_ARMOR`; also `NPC_*_FORTRESS_SMITH` |
+| **4** | `NPC_*_SMITH`, `NPC_*_ARMOR`; also `NPC_*_FORTRESS_SMITH` (the 22 exact literals: round 514, at the end of this file) |
 | **0xb** | the `NPC_*_HORSE` block, beside id 1 |
 | **0xc** | `NPC_TD_THIEF_BUY`, `NPC_*_SPECIAL*`, `NPC_SD_GUILD_AGENT*` |
 | **0xd** | the `NPC_TD_THIEF_BUY` block, beside 0xc |
@@ -1325,3 +1325,89 @@ when shown) between the storage line and the end line. With no store line, its
 storage line is 1 (srrevamp: 2). With one or more store lines, its end line is 4
 or higher (srrevamp: 3). This comes from the table's order. It was not
 measured on a running real client.
+
+## Interaction id 4 and the store's repair buttons (round 514)
+
+Round 455 read id 4's NPCs with a heuristic, and round 512 found the client's
+reader of id 4. This section reads both ends directly.
+
+### The server: 22 literals, two sites
+
+`CGObjNPCNPC::Create` (`0x4c6350`) calls `AddAvailableInteraction` (vtable
+`+0x164`) with 4 at two sites. Each is reached when `FUN_009dddc0`, the C
+runtime's `strstr`, finds one of a list of literals in the NPC's codename:
+
+| site | ids | literals (`.rdata`) |
+|---|---|---|
+| `0x4c677f` | 4 | `NPC_CH_SMITH`, `NPC_CH_ARMOR`, `NPC_WC_SMITH`, `NPC_WC_ARMOR`, `NPC_KT_SMITH`, `NPC_KT_ARMOR`, `NPC_EU_SMITH`, `NPC_EU_ARMOR`, `NPC_CA_SMITH`, `NPC_CA_ARMOR`, `NPC_SD_M_AREA_SMITH`, `NPC_SD_M_AREA_ARMOR`, `NPC_SD_T_AREA_SMITH`, `NPC_SD_T_AREA_ARMOR` (`0xaeeae0`-`0xaeebbc`) |
+| `0x4c736f` | 0x1a (`0x4c7361`), then 4 | `NPC_CH_FORTRESS_SMITH1`, `NPC_CH_FORTRESS_SMITH2`, `NPC_WC_FORTRESS_SMITH1`, `NPC_WC_FORTRESS_SMITH2`, `NPC_KT_FORTRESS_SMITH`, `NPC_EU_FORTRESS_SMITH`, `NPC_CA_FORTRESS_SMITH1`, `NPC_CA_FORTRESS_SMITH2` (`0xaef11c`-`0xaef1c4`) |
+
+`srv.asm` has 68 calls through a vtable's `+0x164`. Only these two push a
+literal 4 just before the call. The function's other two `push 4` calls
+(`0x4c6df7`, `0x4c775c`) go through slot `0x318`. A call that passed the id in a
+register would escape this census.
+
+### The client: hide at every NPC select, show for id 4
+
+In the 0xb045 NPC-select reply handler `NetProcessInInterface::FUN_0088b200`:
+
+	0x88b78b  IsKindOf(selected object, CICNPC)       -- else the block is skipped
+	0x88b8c5  find id 4 in the talk object's set (+0x7c0)
+	0x88b8d9  cmp [eax+0x4],end ; je ; mov esi,1       -- esi = has id 4
+	0x88b8f2  FUN_006d2840(0)      on the store window  -- hide both
+	0x88b905  FUN_006d2840(esi)                         -- show both again if id 4
+
+- **The class test.** `FUN_00b94b90` is IsKindOf: it takes the object's runtime
+  class (vtable slot 0) and walks the `+0xc` base chain (`0xb94b40`).
+  `FUN_00b94b70` is the exact-match twin (`0xb94b30`). `0xef1ac4` is initialised at
+  `0xd764f0` with the name "CICNPC" (`.rdata 0xde2a18`) and the base `0xef1aa4`
+  "CICNonuser". Its object is `[esp+0x24]`, the entity found for the reply's id
+  (`0x88b29c`). So the block runs for every NPC selection, whatever store the NPC
+  runs. Checked after review: the only stack adjustment between `0x88b29c` and
+  `0x88b787` that is not a push before a call is the by-value call at
+  `0x88b75b`-`0x88b772`, which is balanced (`sub esp,0xe8`, then `ret 4` at
+  `0x764d4c` and `ret 0xe8` at `0x703dc0`). Nothing in the range writes that slot.
+- **The two controls.** `FUN_006d2840` works on `+0x25e4` and `+0x25e8`, which
+  only `CIFStoreForPackage::vslot_010` writes: children `0xb` and `0xc` of
+  `resinfo\ifstore.txt` (`0x6d2ce3`-`0x6d2d03`, through `FUN_008b51f0(id, 1)`,
+  which adds the window's base id). The player's `Media.pk2` authors ID 11 as
+  `GDR_STORE_BTN_REPAIR` and ID 12 as `GDR_STORE_BTN_REPAIRALL`, both `CIFButton`
+  (`client/tools/dump_layout.gd --file=ifstore`, which now prints `id=`).
+  `FUN_006d2840` has no other callers, and the store's own show/hide override
+  (`0x6d30f0`) does not touch the buttons.
+- **Only the `CIFStoreForPackage` build hides them.** `ginterface.txt` authors
+  `GDR_STORE` (ID 15) as `CIFStoreForPackage` only under
+  `#ifdef RENEWAL_SHOP_SYSTEM`, and otherwise as `CIFStore`. `CIFStore::vslot_010`
+  (`0x6cf5a0`) fetches the same children `0xb`/`0xc` into `+0x7d4`/`+0x7d8`
+  (`0x6cf611`-`0x6cf633`). Its setter `0x6ceac0` has the same shape as
+  `FUN_006d2840`, but no call, jump or absolute pointer reaches it. The 0xb045
+  block reads `CIFStoreForPackage`'s offsets from window 0xf (`FUN_007994b0`,
+  `0x7994b2`), so it is written for the `RENEWAL_SHOP_SYSTEM` build. That is
+  inferred from the offsets, not from a define. srrevamp builds ifstore with no
+  defines, which is the `CIFStore` branch (`PANEL_DEFINES` in `hud_panels.gd`).
+  Both repair buttons sit outside ifstore's `#ifdef` blocks, so they are the same
+  controls either way.
+- **Show/hide, not enable.** `FUN_006d2840` calls vtable `+0x5c`, slot 23.
+  `CIFButton` (vtable `0xd9e9ac`) has `0x656040` there, which jumps to `CIFWnd`'s
+  `0x652b70`. That calls `0xb8f500`, which writes the byte at `+0x61`. Drawing is
+  gated on `+0x61` (`0xb8f213`, `0xb9d853`). Input is gated on `+0x61` and on a
+  separate enable byte `+0x62` (`0xb91446`/`0xb91450`; setter `0xb8f540`). A
+  button with `+0x61` clear is neither drawn nor clickable.
+
+### What srrevamp does with it
+
+`NpcServiceReader.REPAIR_PATTERNS` is the 22 literals, and
+`NpcServiceReader.offers_repair(code)` tests them with a case-sensitive
+`contains`, as `strstr` does. `HudPanels.open_shop` takes the codename, and
+`_show_repair_buttons` sets both buttons' `visible` to `offers_repair(code)` each
+time the store opens. It prints `STORE <code> repair buttons shown|hidden`. The
+real client decides at NPC select. srrevamp decides at store open, from the
+codename of the NPC being talked to, which is the NPC whose store it is. The
+store is reached only that way.
+
+**Tested headless, not yet in a running client.** `npc_service_reader_test.gd`
+check (j) drives `_show_repair_buttons` on a synthetic store window from the
+suite's `_initialize`. `hud_panels.gd` does not compile in a suite's `_init`,
+because the `NetClient` autoload's global is registered only after it. A potion
+seller's store hides both buttons, and a smith's then shows them again. No running
+client has printed the `STORE` line yet. That needs a `SRREVAMP_QA_SHOP` run.
