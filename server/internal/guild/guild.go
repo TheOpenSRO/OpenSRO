@@ -1,10 +1,14 @@
 // Package guild implements this project's own guild system: unlike party
 // (in-memory, session-scoped, meant to dissolve on restart), guild
 // membership is persistent -- guilds are a long-lived social structure, not
-// a live grouping formed for one dungeon run. Entirely own design; no real
-// guild data to RE (the original's guild system involves large amounts of
+// a live grouping formed for one dungeon run. The STRUCTURE is this
+// project's own (the original's guild system involves large amounts of
 // unrelated infrastructure -- guild wars, storage, skills -- none of which
-// is in scope here).
+// is in scope here), but its rules are increasingly the engine's, each cited
+// where it is enforced: the member cap by guild level (MaxMembersByLevel),
+// the 2-12 byte name (ValidName, round 481) and the founder's level, gold and
+// fee (CheckCreator / CreateGoldRequired, round 487). This comment called it
+// "entirely own design; no real guild data to RE" until round 490.
 package guild
 
 import (

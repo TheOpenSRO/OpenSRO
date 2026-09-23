@@ -1463,11 +1463,13 @@ func equippedTypes(ctx context.Context, characterID int64, eq equipment.Store, i
 		// to vslot 36 (+0x90, "has no durability", docs/protocol/durability.md),
 		// 277 (+0x454, an avatar-item predicate, RE_COMPLETION.md's
 		// CanBeEquipedAt note) or 284 (+0x470, unnamed) (495982-4959bd).
-		// IsBroken does not test those. It need not here: srrevamp has no
-		// avatar slots (equipment.SlotFor gives TypeID3 13/14 none), and
-		// inventory.FreshInstance makes an item with no durability range
-		// Untracked (-1), never 0. weaponIsBroken and the stat removal carry
-		// the same gap. So a broken
+		// IsBroken does not test those. Two of them cannot arise here:
+		// srrevamp has no avatar slots (equipment.SlotFor gives TypeID3 13/14
+		// none), and inventory.FreshInstance makes an item with no durability
+		// range Untracked (-1), never 0. The third, vslot 284, is unread, so
+		// an item answering it at durability 0 would be read as broken here
+		// and not by the engine -- a disclosed gap, the same one
+		// weaponIsBroken and the stat removal carry. So a broken
 		// item's TID matches no entry with a TypeID4, and the walk ends in
 		// 0x300d (58d695, UIIT_SKILL_USE_FAIL_WRONGWEAPON) exactly as for an
 		// empty slot. Skipping it before the lookup is that: an empty slot

@@ -170,7 +170,8 @@ In order. Each is checked off here when it ships in a release, with its round in
       packet's `GInterfaceSend` caller) walked back to the distance test that precedes it.
       **Round 247: THE RULE IS READ, and it is the SERVER's, not the client's** -- round 232's "the
       client walks into range before it sends" was wrong; the client sends at once and the server
-      walks the attacker. `GObjPC::ActionTick_UseSkill` (`0x4ad8e0`): reach = casterBCRadius +
+      walks the attacker. `CGCharAutoCommandActor::Tick_Attack` (`0x4ad8e0`; round 247 called it
+      `GObjPC::ActionTick_UseSkill`, corrected in round 256): reach = casterBCRadius +
       targetBCRadius + range, stop = the same base + f(range) (f = r for r <= 4, r - 2 for 4 < r < 10,
       0.7 r for r > 10; at exactly 10 neither stop nor reach gets the range -- round 488), range =
       the skill's Range or the weapon's Range column (itemdata 94 = param 33: sword 6, spear 18,

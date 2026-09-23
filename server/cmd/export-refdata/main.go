@@ -229,11 +229,13 @@ const (
 	fCanSell  = 17
 	fCanDrop  = 19
 	// fCanUse is flags bit 8, the one Item_HandleUseItem (0x00510980) asks
-	// about before anything else it checks on the item: `(**(code **)(*item +
+	// about after the item's rental expiry (0x183d) and the user's life state
+	// (0x1889) and before the TID match: `(**(code **)(*item +
 	// 0xe0))()` -- vtable slot 56, IGObj::CanUse (docs/protocol/igobj_vtable.md)
 	// -- and a zero refuses the use with 0x183e UIIT_MSG_STRGERR_CANNOT_BE_USED
 	// (docs/protocol/error_codes.md). Every CGItem* vtable holds CGObj::CanUse
-	// (0x00483ee0) there, which reads `refobj+0x8c >> 8 & 1`, and
+	// (0x00483ee0) there, which -- after vslot 0x48 IGObj::IsItem, always
+	// true for a bag item -- reads `refobj+0x8c >> 8 & 1`, and
 	// RefObjCommon_ExtractData (0x006a3090) sets that bit as `-(cVar1 != 0) &
 	// 0x100`: any non-zero byte is permission.
 	//

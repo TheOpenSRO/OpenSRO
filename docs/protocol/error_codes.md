@@ -53,7 +53,7 @@ Three of its neighbours come with it, and they reach further than the gate:
 | `0x3003` | `UIIT_SKILL_USE_FAIL_NOTLEARN` | — |
 | `0x3006` | `UIIT_SKILL_USE_FAIL_WRONGTARGET` | — |
 | `0x300d` | `UIIT_SKILL_USE_FAIL_WRONGWEAPON` | `ReqCastWeapon` mismatch |
-| `0x300f` | `UIIT_SKILL_USE_FAIL_BROKEN_WEAPON` | when vtable slot `0x5d0`, `0x63c` or `0x640` returns 0 |
+| `0x300f` | `UIIT_SKILL_USE_FAIL_BROKEN_WEAPON` | when vtable slot `0x5d0` (`58d527`), `0x63c` (`58d556`) or the Value-0 armour scan's `0x640` (`58d5de`) returns 0; the Valued-armour `0x640` call at `58d599` sets no code (round 490) |
 
 That last row **names what three unnamed vtable slots do.**
 `docs/protocol/igobj_vtable.md` lists 353, 372, 399 and 400 as unreachable by the

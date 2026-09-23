@@ -10244,7 +10244,9 @@ skill-reset cost -- the fourth instance, and the first one found by going
 looking rather than by accident. It is UNEXPORTED, so round 346's orphan
 detector could not see it; that detector only walks exported declarations, which
 is a real limit now written into this entry rather than discovered later. WHAT
-IS NOT MODELLED, SAID AT THE CALL SITE: three engine predicates collapse into
+IS NOT MODELLED, SAID AT THE CALL SITE (CORRECTED in round 486: one flag at
+item+0x190 on three storage slots, not three predicates, and the 'reqi' branch
+IS modelled -- a broken item reads as an empty slot): three engine predicates collapse into
 one test, durability at zero, because only their shared consequence is recovered
 -- an error code gives a meaning, not a symbol. The 'reqi' branch's per-slot
 serviceability is not modelled either, because SkillAllowsEquipment reports
@@ -26123,7 +26125,14 @@ design. The stack cleanup does separate two of them. `0x004ec600` pops one
 argument (`ret 0x4`), and so does `0x004c9310`, but the two siege bodies pop none
 (`ret`). A virtual has one signature, so the siege classes' slot 400 is not the
 virtual CGObjPC's slot 400 is. For `0x004c9310` the cleanup settles nothing.
-The three rows are left as they are until someone reads them.
+The three rows are left as they are until someone reads them. **Round 490:** the
+cleanup does settle the propagation that named all three. It linked these
+classes' tables and inferred "a differing slot is two overrides of one virtual";
+slot 400 has overrides of two arities among them, so for slot 400 that premise is
+false, and every name it carried there -- including `0x004c9310`'s -- is
+unsupported rather than merely unconfirmed. The three rows are marked SUSPECT in
+recovered_names.tsv pending an audit of slot propagation past the shared base's
+table.
 
 **Engine details NOT modelled.** They are disclosed in
 `combat.CastRequirement.Satisfied` and are not checked against any record:
@@ -26424,3 +26433,61 @@ header also claimed the code read 20. Bit 0 of the two columns disagrees on
 7,997 of 21,552 rows. Nothing in the server reads `CanDrop`, so no behaviour
 depends on it yet. `item_capability_flags.md`'s header now records the
 disagreement instead of the wrong claim.
+
+## Batch-2 review follow-ups: slot 400 is not one virtual, and six stale claims (round 490)
+
+Rounds 486-489 each passed review; this round lands the reviewers' non-blocking notes, each
+re-checked against the dump or `srv.asm` before it was written down.
+
+**Slot 400's propagated names are unsupported.** Round 486 renamed CGObjPC's slot 400
+(`0x004ec600`) from a propagated `UseItem` to `IsEquipPartServiceable`, and flagged the three
+other classes the same propagation had named. The decisive fact is arity: `CGObjCOS::UseItem`
+`0x004d57b0`, CGObjNPCNPC's `0x004c9310` and CGObjPC's `0x004ec600` all end in `ret 0x4`
+(`4d5ac2`, `4c9380`, `4ec60b`), while CGObjSiegeObject `0x004ccca0` and CGObjSiegeStruct
+`0x004ced10` end in plain `ret`. One virtual has one signature, so slot 400 is not one virtual
+across the tables the propagation linked, and its premise -- "vtables sharing eight or more
+identical slots share an inherited table, so a differing slot is two overrides of one virtual" --
+is false at slot 400. The likely mechanism: classes that share a base's table each APPEND their own
+virtuals past its end, and an index past the shared prefix names different functions in each. The
+three rows are marked SUSPECT in recovered_names.tsv (not renamed: nothing yet names what they do),
+and the obvious next step is an audit of every propagated name whose slot lies past the linked
+classes' shared prefix.
+
+**`0x300f` is reachable from three calls, not every serviceability call.** error_codes.md and
+GROUNDING_AUDIT.md said the reqi walk returns `0x300f` when slot `0x5d0`, `0x63c` or `0x640`
+answers 0. The Valued-armour `+0x640` call at `58d599` does not: `58d5a6 je 0x58d638` goes to the
+loop tail with no store. Only `58d527` (`je 58d607`), `58d556` (`je 58d607`) and the Value-0 scan's
+`58d5de` (`je 58d605`, falling into `58d607`) reach the `0x300f` store. Both docs now say so.
+
+**`CanUse` is not the first check.** Round 489's comments called it "the engine's first question
+about the item". `Item_HandleUseItem` checks, in order: the slot range, an empty slot (`0x1809`),
+the rental expiry (`FUN_00492680` -> `0x183d`), the user's life state (`0x1889`: a state other
+than 1 passes only when it is 2 and the item answers `FUN_004929c0` with a TID class `& 0xf800 ==
+0x3000`; what state 2 is was not read), then `CanUse` (`0x183e`), then the TID match. Three comments reworded; `CGObj::CanUse`'s leading `IsItem` call is noted.
+
+**Round 488's exactly-10 reach change alters no player's reach.** A census on the RE box: skilldata
+column 21 is exactly 10 on 2,080 rows, every one `MSKILL_` (monster) or `PSKILL_` (pet); itemdata
+column 94 is never 10 (it takes 0/6/18/100/150/180). `ApproachBand` is called only for the player's
+swing and skill (`session/keepup.go`), so the change is latent. SYSTEMS.md's damage-pipeline row
+said the reach rule was "data wired, behaviour not yet"; the reach half is live and only the
+server-side walk to the stop distance is unbuilt, which it now says.
+
+**Guild founding is paid on the success reply only**, now with the evidence in guild.md:
+`FUN_005c8990` (the dispatcher whose case 0 deducts) has one caller, `trs_sm_guildjob::vslot_002`;
+`vslot_003` and `OnTimeout` go to `trs_wait_response::FUN_005cc8d0`, whose case 0 is
+`FUN_005ccb50`, which logs event `0x3e` and reads no gold.
+
+**Smaller.** The guild package comment no longer calls the system "entirely own design; no real
+guild data to RE". `equippedTypes`' comment on SetBrokenFlag's three exemptions no longer says all
+three "need not" matter while naming one as a gap: two cannot arise, vslot 284 is an unread,
+disclosed gap. item_capability_flags.md's header no longer lists `CanDrop` at column 20 as settled.
+SYSTEMS.md's capability row anchors `CanUse`. TODO.md no longer calls `0x4ad8e0`
+`ActionTick_UseSkill` (round 256 named it `Tick_Attack`). Round 352's entry and round 486's flagged
+paragraph carry pointers to their corrections.
+
+**Found by round 489's review, queued as its own item:** the exporter emits itemdata column 118
+(Param1) as `RestoreHP` for every item, so a `CanUse` item that is not a potion -- a return scroll,
+a cure item, a mall storage expansion, a cash avatar -- still "heals" and is consumed. That is the
+first item of the next batch.
+
+Docs and comments only; no behaviour changes. `go test -count=1 -p 1 ./...` is green.

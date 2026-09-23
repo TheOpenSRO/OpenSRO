@@ -444,10 +444,18 @@ modelled. Both were readings of the error code, not of the bodies. Read:
   `session.equippedTypes` now leaves broken items out, which is that.
   `0x300f` for a shipped skill comes only from the weapon-byte branch
   (`58d719`–`58d72a`), which `weaponIsBroken` already models.
+- Not every serviceability call in the `reqi` walk can produce `0x300f` at all
+  (round 490): the `+0x640` call for an armour entry WITH a Value (`58d599`)
+  jumps to the loop tail on 0 (`58d5a6 je 0x58d638`) and sets no code. Only
+  `+0x5d0` at `58d527` (`je 58d607` at `58d533`), `+0x63c` at `58d556` (`je
+  58d607` at `58d562`) and the Value-0 scan's `+0x640` at `58d5de` (`je 58d605`
+  at `58d5eb`, falling into `58d607`) reach the `0x300f` store.
 
-Still not modelled, disclosed in `combat.CastRequirement.Satisfied`, none of it
-checked against records: a weapon/shield entry with Value 0 matches an *empty*
-slot in the engine (none shipped); an armour entry with Value 0 scans parts in
+Still not modelled, disclosed in `combat.CastRequirement.Satisfied`: a
+weapon/shield entry with Value 0 matches an *empty* slot in the engine (none
+shipped -- the one claim here that IS checked against records, by
+`CastRequirement`'s 1,552-record measurement); the rest are not checked against
+records: an armour entry with Value 0 scans parts in
 order and stops at the first part not of the Kind; an armour entry with a Value
 compares TypeID4 only; an ALL-of list with all five entries matching returns
 `0x300d`. And the weapon-byte branch's order: a broken weapon of the wrong kind

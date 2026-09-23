@@ -8,7 +8,8 @@ server for an object's ref row.
 **STALE HEADER, CORRECTED ROUND 460.** This used to read "srrevamp models none
 of this yet, and cannot until the columns are found". Both halves were wrong by
 then: `server/internal/refdata/item.go` already carries `CanTrade`, `CanSell`
-and `CanDrop` with their itemdata columns (**16, 17, 20**), and `shop.Sell`
+and `CanDrop` with their itemdata columns (**16, 17**, and 19 or 20 for
+`CanDrop` -- unsettled, see "`CanDrop`'s column is not settled" below), and `shop.Sell`
 already refuses on `CanSell`. The answer had reached the code and never reached
 this file — and round 459 believed the header, concluded "the column hunt stays
 open", and went looking for something already found.

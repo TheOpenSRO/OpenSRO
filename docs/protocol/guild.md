@@ -97,8 +97,13 @@ is its only caller (`srv.asm`, `5c8c39 call 0x4e4140`):
 
 So founding **costs** 500,000. The gold is taken on the reply to the same job
 that settles the name's uniqueness (see above), so only a guild that was
-actually created is paid for. `OffsetGold`'s other three arguments (`4, 1, 0`)
-are not interpreted here.
+actually created is paid for. The evidence that it is the SUCCESS reply only
+(round 490): `trs_sm_guildjob::FUN_005c8990` has exactly one caller,
+`trs_sm_guildjob::vslot_002` (`0x0046e090`); the job's other two exits,
+`vslot_003` (`0x0046e800`) and `OnTimeout` (`0x0046e7e0`), both go to
+`trs_wait_response::FUN_005cc8d0`, whose case 0 (the create job) is
+`FUN_005ccb50` -- that logs game event `0x3e` and reads no gold.
+`OffsetGold`'s other three arguments (`4, 1, 0`) are not interpreted here.
 
 The other 500,000 in the guild module is `FUN_005d0e00`'s. It belongs to
 `FUN_005c7900`, which refuses a guild below level 4 (`0x4c52`) before calling it.
