@@ -205,9 +205,11 @@ type Item struct {
 	// one; MP_POTION_01 the mirror image. The large potions carry 370.
 	// They are the Param1..4 columns of EVERY row, and restore amounts only
 	// on the recovery kinds (TypeID 3/3/1 with TypeID4 outside 4..10, round
-	// 491): on any other row they mean something else -- a storage
+	// 491): on most other rows they mean something else -- a storage
 	// expansion's Param1 is its slot increment (round 270), a return
-	// scroll's reads 30000.
+	// scroll's reads 30000. The pet potions (3/3/1/4, /5, /7) are the
+	// exception: their Param1..4 ARE HP/MP amounts, read by the same
+	// FUN_0049aa70, but slot 327 applies them to the pet, not the user.
 	RestoreHP                      int
 	RestoreHPPct                   int
 	RestoreMP                      int

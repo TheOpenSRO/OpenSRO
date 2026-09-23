@@ -278,7 +278,9 @@ func (h *Hub) InZone(zone string) []Item {
 // UIIT_MSG_STRGERR_CANNOT_BE_PICKED_AT_QUEST_ACHIEVE_CONDITION; srrevamp
 // has no quest-achieve condition to ask. Between the range and the busy
 // flag, a life state other than 2 answers 3; every item in the hub is on the
-// ground, which is life state 2.
+// ground, which this project INFERS is life state 2 -- slot 62 in the item
+// vtables is CGObj::GetLifeState (0x485ee0), a raw byte read, and nothing
+// read so far ties a ground item to state 2 (round 495).
 //
 // Two of the engine's ownership outcomes are not modelled, both known
 // divergences (docs/protocol/ground_items.md, "Picking up", step 3):

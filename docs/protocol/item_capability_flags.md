@@ -15,7 +15,7 @@ the code and never reached this file — and round 459 believed the header,
 concluded "the column hunt stays open", and went looking for something already
 found.
 
-**What srrevamp carries and enforces (round 489).**
+**What srrevamp carries and enforces (rounds 482-494).**
 
 | flag | itemdata column | carried as | enforced by |
 |---|---:|---|---|
@@ -335,9 +335,12 @@ Between read 1 and read 2 there are four `FUN_006b2ef0` calls and one
 | READ4..READ7 -> columns 9..12 | TypeID1..4, already known; a sword reads 3/1/6/2 and a garment mail 3/1/1/3 |
 | READ9 -> column 14 | Country, already known; a sword reads 0 (China), a MALL item 3 (either) |
 
-That arithmetic is a tool for the whole `_RefObjCommon` prefix — **but only as
-far as column 51.** See "The rule's end", below: a five-iteration string loop
-sits at columns 52..56, and past it `READn -> n+5` lands five columns short.
+That arithmetic is a tool for the `_RefObjCommon` prefix — **but only from read 2
+to read 12.** From read 13 on it is one column short, because column 18 is
+consumed without a read (`0x6a33f0`/`0x6a33f6`, see "The read → slot → bit chain
+above stands" -- round 494's note; this paragraph said "as far as column 51" until
+round 495), so `READn -> n+6` from read 13; and see "The rule's end", below: a
+five-iteration string loop sits at columns 52..56, past which it slips again.
 
 ## Counting columns properly: the counter, not the reads
 

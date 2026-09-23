@@ -318,3 +318,22 @@ func TestNoTradeLookupReleasesEverything(t *testing.T) {
 		t.Fatalf("stranger at 30 s without a lookup: code %#x, want 0", code)
 	}
 }
+
+// An item the reference data does not know is never bound, even when the
+// lookup's canTrade answer is false: `known` is the gate, not the default
+// canTrade value. Round 492's tests only ever returned (true, false) for an
+// unknown item, so dropping the `known &&` from Drop passed them all (found by
+// round 492's review, pinned in round 495).
+func TestUnknownItemIsNeverBound(t *testing.T) {
+	start := time.Unix(1000, 0)
+	h, now := newTestHub(start)
+	h.SetTradeLookup(func(itemID int64) (bool, bool) { return false, false })
+	it := h.Drop("jangan", 999, 1, false, 0, 0, 0, 7)
+	if it.Bound {
+		t.Fatalf("an item the lookup does not know was bound")
+	}
+	*now = start.Add(31 * time.Second)
+	if got := h.ReleaseOwnerships(); len(got) != 1 || got[0].ID != it.ID {
+		t.Fatalf("ReleaseOwnerships at 31 s = %+v, want the unknown item released", got)
+	}
+}

@@ -5817,7 +5817,7 @@ stale probe was in the PROSE BENEATH the table, which no test covers. The
 same derivation (counting RefObjCommon_ExtractData's field reads) produced four
 other exporter constants, all AUDITED against real data and all correct:
 fCanTrade 16 / fCanSell 17 (0/1 flags), fCanDrop 19 (the 255/223/192/128
-bitmask its comment predicts), fMaxStack 57 (stack sizes), fSetID 62 (45 set
+bitmask its comment predicts -- WRONG, corrected in round 494: CanDrop is column 20), fMaxStack 57 (stack sizes), fSetID 62 (45 set
 ids, joined 360/360 to refsetitemgroup). The off-by-one was ISOLATED to the
 basis, and the audit says why: every surviving constant had a discriminating
 data signature, while fRepairCost's only check was an identity true of any
@@ -26483,7 +26483,8 @@ loop tail with no store. Only `58d527` (`je 58d607`), `58d556` (`je 58d607`) and
 about the item". `Item_HandleUseItem` checks, in order: the slot range, an empty slot (`0x1809`),
 the rental expiry (`FUN_00492680` -> `0x183d`), the user's life state (`0x1889`: a state other
 than 1 passes only when it is 2 and the item answers `FUN_004929c0` with a TID class `& 0xf800 ==
-0x3000`; what state 2 is was not read), then `CanUse` (`0x183e`), then the TID match. Three comments reworded; `CGObj::CanUse`'s leading `IsItem` call is noted.
+0x3000`; state 2 is DEAD -- round 413 had already closed that, and round 491 confirmed it
+independently from the resurrection scroll's `0x1887`), then `CanUse` (`0x183e`), then the TID match. Three comments reworded; `CGObj::CanUse`'s leading `IsItem` call is noted.
 
 **Round 488's exactly-10 reach change alters no player's reach.** A census on the RE box: skilldata
 column 21 is exactly 10 on 2,080 rows, every one `MSKILL_` (monster) or `PSKILL_` (pet); itemdata
@@ -26563,8 +26564,8 @@ potion (2143, 360).
   potion-queue tick `FUN_0049a5b0`/`FUN_0049a510` (the deferred branch of the same potion), and
   `FUN_0049ff20`. `FUN_0049ff20` is `UseByKind` case 6: the resurrection scroll 3/3/13/6. It
   refuses a user whose life state is not 2 with `0x1887 ONLY_THE_DEAD_CAN_USE_RESURRECT_SCROLL`,
-  then calls `GObjPC::Revive` and fills HP/MP. As a side result this settles round 490's open
-  question: life state 2 is DEAD, which is why `Item_HandleUseItem` lets state 2 through only for
+  then calls `GObjPC::Revive` and fills HP/MP. As a side result this independently confirms
+  round 413's "life-state 2 closed -- it is DEAD" (round 490 wrongly called it unread): which is why `Item_HandleUseItem` lets state 2 through only for
   TypeID4 6 (`& 0xf800 == 0x3000`).
 
 So, among the DIRECT pool writes an item use makes, a use restores the user's own HP/MP only for
@@ -26577,7 +26578,8 @@ apply it with `FUN_0059b8d0`. Whether such a skill (a buff, a heal) writes the u
 followed, so the census above covers direct item writes only. The gate is unaffected: on those
 rows Param1 is a skill id, not a restore amount, and srrevamp models none of those uses.
 
-**The census.** Over the combined itemdata (`allitems.txt` on the RE box, 21,552 rows, 15,333 ids
+**The census.** Over the combined itemdata (`allitems.txt` on the RE box, 21,552 rows, 15,333 ids -- 15,334 by a recount in round 495, and the
+file glues 10 row pairs, see round 495
 with the last occurrence kept, as `export-refdata` keeps it), **588** `CanUse` rows carry a positive
 value in columns 118..124. All of them healed before this round.
 
@@ -26623,8 +26625,10 @@ here.
   computes:
   - HP = `Param1 * 1.02^(Level-1) * (1 + GetParam(1)/416)`
   - MP = `Param3 * 1.02^(Level-1) * (1 + GetParam(2)/416)`
-- **Where the terms come from.** `Char_GetLevel` is `GetParam(0)`. `CGObjChar::GetParam` passes
-  its argument in EAX. Params 1 and 2 are Str and Int (the `_CHAR` root binds recorded earlier in
+- **Where the terms come from.** `Char_GetLevel` is `GetParam(0)`. At the call site (`0x49abb9`) the
+  parameter id is pushed (`push 0x1`) and the call goes through vtable `+0x104` to
+  `CGObjChar::GetParam` (`0x4aa5c0`), a 20-byte thunk to `ParamKeeper_GetParamChecked` (round 495
+  corrected "passes its argument in EAX"). Params 1 and 2 are Str and Int (the `_CHAR` root binds recorded earlier in
   this file: `SetParam(1, charData+0x74)` Strength, `SetParam(2, charData+0x76)` Intellect). 1.02 is the
   double at `.rdata 0xb45ea0`, 416.0 is at `0xb45e98`, and 1.0 is at `0xb45ac0`.
 - **The percentages.** The percentage pair is read only when Param1 and Param3 are both zero.
@@ -26830,14 +26834,15 @@ gone drop with a different code.
   This is round 460's data-anchored table. The older read-count table put `CanPick` at 20 because it
   missed the column-18 skip; `item_capability_flags.md` now says so beside that table.
 - The data. Over `/var/tmp/tables/itemdata_all.utf8.txt` on the RE box, column 21 is 0/1 only and 0
-  on **309 of 21,552 rows** (210 of 15,333 ids, last occurrence kept). The zeros:
+  on **309 of 21,552 rows** (210 of 15,334 ids, last occurrence kept; "15,333" until round 495's
+  recount). The zeros:
   - all 54 starter `_DEF` ids (84 rows);
   - 34 `ITEM_FORT_*` ids;
   - `_RARE_ACTIVE_STARTER` and `_SUPER` gear;
   - guard COS items;
   - a scatter of mall and event items.
   Gold (ids 1..3) and the HP/MP potions (4..6, 11..13) read 1, so the own-design fallback loot is
-  unaffected. The neighbours have other shapes: column 20 is 0/1/3 and column 22 is 0/1 with 7,590
+  unaffected. The neighbours have other shapes: column 20 is 0/1/3 and column 22 is 0/1 with 7,591 (7,590 until round 495's recount)
   zeros.
 
 **Change.**
@@ -26971,7 +26976,12 @@ The only large difference is the cash-shop rows. "Cash-shop items are droppable"
 and was never measured, so it cannot decide the column. The binary's column counter decides it.
 
 **Census.** These are rows of the combined itemdata that `itemRecord` accepts: 21,552 rows, with 9
-short rows skipped.
+short rows skipped. **Round 495:** the combined file (`/var/tmp/tables/itemdata_all.utf8.txt`)
+glues 10 row pairs into single lines where a source file ended without a newline (e.g. line 837 is
+`ITEM_CH_M_CLOTHES_10_AA_B` + `ITEM_CH_M_CLOTHES_10_AA_C`; confirmed: 10 lines of 319+ fields), so
+every census on it silently loses 10 rows. The round-494 reviewer re-ran this one on the individual
+files: 21,562 rows, **8,003** flip 1 -> 0, none 0 -> 1, 18,931 droppable before and 10,928 after.
+The figures below are the concatenated-file ones.
 
 - `CanDrop` goes from 1 to 0 on **7,998** rows and from 0 to 1 on none. Before the change 18,923
   rows were droppable; after it, 10,925.
@@ -27017,3 +27027,44 @@ the test passes, and `go test -count=1 -p 1 ./...` is green.
 
 **Deploy note.** Nothing changes on srrevamp-01 until `export-refdata` and `import-refdata` are run
 again against the player's own itemdata. Batch that with the other exporter items.
+
+## Batch-3 review follow-ups: the glued census file, and stale CanDrop / life-state claims (round 495)
+
+Rounds 491-494 each passed review; this round lands the reviewers' non-blocking notes, every
+figure re-checked on the RE box before it was written.
+
+**The combined itemdata file glues ten row pairs.** `/var/tmp/tables/itemdata_all.utf8.txt` has 10
+lines of 319+ fields where a source file ended without a newline (line 837 is
+`ITEM_CH_M_CLOTHES_10_AA_B` + `ITEM_CH_M_CLOTHES_10_AA_C`; the first three glued lines lead with
+`ITEM_CH_M_CLOTHES_10_AA_B`, `ITEM_CH_NECKLACE_11_A`, `ITEM_EU_TSWORD_11_A`). Every census run on it
+silently loses 10 rows. Round 494's census is annotated with the per-file figures its reviewer
+measured (21,562 rows; 8,003 CanDrop flips; 18,931 -> 10,928 droppable). Two smaller counts are
+corrected from a recount on the same file: 15,334 distinct ids (rounds 491/493 said 15,333) and
+7,591 zeros in column 22 (round 493 said 7,590). **Method note:** a census over that file should
+split lines of 319+ fields, or read the per-file sources.
+
+**Two records still called `fCanDrop 19` correct** -- WORLD_ISSUES.md's exporter audit table and
+the RE_COMPLETION entry that summarised it. Both now point at round 494. The lesson in the table
+is worth keeping: its verdict rested on a data signature (the column held exactly the 255/223/192/128
+the comment predicted), and a signature is not a use-site -- the parser reads column 19 only for
+bits 12/13.
+
+**item_capability_flags.md** no longer dates its enforcement table "(round 489)" (it spans rounds
+482-494), and its "READn -> n+5 holds as far as column 51" now says the rule holds from read 2 to
+read 12 and is `n+6` from read 13, because column 18 is consumed without a read.
+
+**Smaller.** Round 490's "what state 2 is was not read" and round 491's "settles round 490's open
+question" both now cite round 413, which had already closed life state 2 as DEAD; round 491's
+resurrection-scroll evidence is independent confirmation. `grounditem.PickCheck`'s comment now calls
+"a ground item is in life state 2" an inference (slot 62 is a raw byte read and nothing ties ground
+items to state 2). `refdata.Item.RestoreHP`'s comment names the pet potions (3/3/1/4, /5, /7) as rows
+whose Param1..4 ARE HP/MP amounts, applied to the pet. Round 491's "GetParam passes its argument in
+EAX" now describes the `push 0x1` call site.
+
+**Tests.** `TestUnknownItemIsNeverBound` pins round 492's `known` gate: a lookup answering
+(false, false) must not bind. Mutation run: with Drop's `known && !ct` replaced by `!ct` (and `known`
+kept alive so it builds), the test fails; round 492's own tests passed that mutation. Round 494's
+case (f) now holds 255 in column 19, so it also fails the old column-19 reading. `go test -count=1
+-p 1 ./...` is green.
+
+Docs, comments and tests only; no behaviour changes.

@@ -579,7 +579,9 @@ func TestCanDropReadsColumn20WithTheTradeCoupling(t *testing.T) {
 		{"c: column 20 is 1, column 19 is 128", "1", "128", "1", "1", true},
 		{"d: untradeable and exactly 1 is cleared", "0", "255", "1", "0", false},
 		{"e: untradeable and 3 keeps bit 0", "0", "0", "3", "1", true},
-		{"f: bit 1 alone is not CanDrop", "1", "0", "2", "0", false},
+		// Column 19 at 255 so this case also fails the old column-19 reading
+		// (round 495; it held 0, which passed either way).
+		{"f: bit 1 alone is not CanDrop", "1", "255", "2", "0", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cols := make([]string, 200)

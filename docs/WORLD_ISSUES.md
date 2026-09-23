@@ -8394,7 +8394,7 @@ real data before this round closed:
 | constant | column | what the data holds | verdict |
 |---|---|---|---|
 | `fCanTrade` 16 / `fCanSell` 17 | 16, 17 | 0/1 flags (19,017/2,535 and 21,059/493) | correct |
-| `fCanDrop` 19 | 19 | the **bitmask**: 255, 223, 192, 128, 1, 0 | correct |
+| `fCanDrop` 19 | 19 | the **bitmask**: 255, 223, 192, 128, 1, 0 | correct -- **WRONG, corrected in round 494** (RE_COMPLETION.md): the data signature matched column 19, but the parser stores 19 only for bits 12/13 and folds CanDrop from column 20; a matching signature is not a use-site |
 | `fMaxStack` 57 | 57 | stack sizes 5000/2500/1000/10/5/3 | correct |
 | `fSetID` 62 | 62 | 45 small set ids | correct |
 
