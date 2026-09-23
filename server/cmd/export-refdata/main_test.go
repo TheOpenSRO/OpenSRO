@@ -555,3 +555,58 @@ func TestCanPickReadsColumn21(t *testing.T) {
 		})
 	}
 }
+
+// CanDrop is itemdata column 20 (round 494), not 19. RefObjCommon_ExtractData
+// (0x006a3090) consumes column 18 without a load (0x6a33f0/0x6a33f6), stores
+// column 19 at esp+0x12 and tests it only `& 0x80`/`& 0x40` (flags bits 12
+// and 13), and stores column 20 at esp+0x13 (0x6a3441), whose `& 1` becomes
+// flags bit 4, CanDrop (0x6a3540..0x6a3552). Before building the word it
+// clears a CanDrop byte of exactly 1 when CanTrade is 0 (0x6a34e6..0x6a34f7).
+//
+// Each case gives column 19 a value whose bit 0 answers the OTHER way from
+// the expected CanDrop wherever it can, so reading 19 fails. Cases d and e pin
+// the coupling: it fires only on equality with 1, so 3 keeps bit 0. Case f
+// pins that bit 1 (the unnamed bit 14) is not CanDrop.
+func TestCanDropReadsColumn20WithTheTradeCoupling(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		c16, c19, c20 string
+		rc            string
+		want          bool
+	}{
+		{"a: column 19 set, column 20 clear", "1", "255", "0", "0", false},
+		{"b: column 20 is 3, column 19 clear", "1", "0", "3", "1", true},
+		{"c: column 20 is 1, column 19 is 128", "1", "128", "1", "1", true},
+		{"d: untradeable and exactly 1 is cleared", "0", "255", "1", "0", false},
+		{"e: untradeable and 3 keeps bit 0", "0", "0", "3", "1", true},
+		{"f: bit 1 alone is not CanDrop", "1", "0", "2", "0", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cols := make([]string, 200)
+			for i := range cols {
+				cols[i] = "0"
+			}
+			cols[0], cols[1], cols[2] = "1", "7003", "ITEM_CANDROP_PROBE"
+			cols[16], cols[19], cols[20] = tc.c16, tc.c19, tc.c20
+
+			rec, ok := itemRecord(cols)
+			if !ok {
+				t.Fatal("itemRecord rejected a valid row")
+			}
+			if got := rec[43]; got != tc.rc {
+				t.Errorf("record[43] = %q, want %q (columns 16/19/20 hold %s/%s/%s)",
+					got, tc.rc, tc.c16, tc.c19, tc.c20)
+			}
+			items, err := refdata.LoadItemsCSV(strings.NewReader(strings.Join(rec, ",") + "\n"))
+			if err != nil {
+				t.Fatalf("the importer rejected export's own output: %v", err)
+			}
+			if items[0].CanDrop != tc.want {
+				t.Errorf("CanDrop = %v, want %v", items[0].CanDrop, tc.want)
+			}
+			if wantTrade := tc.c16 != "0"; items[0].CanTrade != wantTrade {
+				t.Errorf("CanTrade = %v, want %v (column 16 is %s)", items[0].CanTrade, wantTrade, tc.c16)
+			}
+		})
+	}
+}

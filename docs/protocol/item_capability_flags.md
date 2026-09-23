@@ -8,11 +8,12 @@ server for an object's ref row.
 **STALE HEADER, CORRECTED ROUND 460.** This used to read "srrevamp models none
 of this yet, and cannot until the columns are found". Both halves were wrong by
 then: `server/internal/refdata/item.go` already carries `CanTrade`, `CanSell`
-and `CanDrop` with their itemdata columns (**16, 17**, and 19 or 20 for
-`CanDrop` -- unsettled, see "`CanDrop`'s column is not settled" below), and `shop.Sell`
-already refuses on `CanSell`. The answer had reached the code and never reached
-this file — and round 459 believed the header, concluded "the column hunt stays
-open", and went looking for something already found.
+and `CanDrop` with their itemdata columns (**16, 17** and **20**; the exporter
+read `CanDrop` from column 19 until round 494, see "`CanDrop` is column 20"
+below), and `shop.Sell` already refuses on `CanSell`. The answer had reached
+the code and never reached this file — and round 459 believed the header,
+concluded "the column hunt stays open", and went looking for something already
+found.
 
 **What srrevamp carries and enforces (round 489).**
 
@@ -20,7 +21,7 @@ open", and went looking for something already found.
 |---|---:|---|---|
 | `CanTrade` | 16 | `refdata.Item.CanTrade` | trade offer and trade commit (`0x183a`, round 482); a drop on the ground is never released from its owner when clear (`grounditem.Item.Bound`, `GObjPC::FUN_004901c0`, round 492, `ground_items.md`) |
 | `CanSell` | 17 | `refdata.Item.CanSell` | `shop.Sell` |
-| `CanDrop` | 19 *(see below)* | `refdata.Item.CanDrop` | nothing: srrevamp has no drop-from-bag path |
+| `CanDrop` | 20, cleared when `CanTrade` is 0 and the byte is exactly 1 (round 494) | `refdata.Item.CanDrop` | nothing: srrevamp has no drop-from-bag path |
 | `CanUse` | 24 | `refdata.Item.CanUse` | `session.UseItemHandler` (`0x183e`, round 489) |
 | `CanPick` | 21 | `refdata.Item.CanPick` | `grounditem.Hub.PickCheck` (`0x1839`, round 493): the first test on a found item in `GObjPC::CheckCanPickUp`, before the range, the busy flag and the owner (`ground_items.md`, "Picking up", step 1) |
 
@@ -70,12 +71,19 @@ avatars -- and `session.UseItemHandler` now refuses those without consuming them
 instead of healing from their Param1. That refusal is srrevamp's disclosed gap
 (it models none of their effects), not an engine refusal.
 
-**`CanDrop`'s column is not settled, and this header said 20 when the code reads
-19.** `export-refdata`'s `fCanDrop` is 19 and takes bit 0 of it. Round 460's table
-below puts `CanDrop` at 20, the `0/1/3` column, and puts the `& 0x80`/`& 0x40`
-field at 19. The two readings disagree on 7,997 of 21,552 rows of the combined
-itemdata. Nothing in the server reads `CanDrop` yet, so the disagreement changes
-no behaviour today. It needs settling before anything does.
+**`CanDrop` is column 20 (round 494).** Until round 494 `export-refdata` read
+column 19 and took bit 0 of it. The binary settles it. `RefObjCommon_ExtractData`
+(`0x006a3090`) consumes column 18 without a load (`0x6a33f0 add [edi+0x1c],ebx`,
+`0x6a33f6 add [edi+0x28],ebx`). It stores column 19 at `esp+0x12` (`0x6a341e`)
+and tests it only `& 0x80`/`& 0x40` (`0x6a3516`, `0x6a352f`), for the unnamed bits
+12 and 13. It stores column 20 at `esp+0x13` (`0x6a3441`) and folds it as
+`((b & 2) << 9 | b & 1) << 4` (`0x6a3540..0x6a3552`), so `b & 1` is bit 4,
+`CanDrop`. Before that it runs the coupling (`0x6a34e6..0x6a34f7`): `CanTrade` 0
+and a `CanDrop` byte of **exactly** 1 becomes 0, so a byte of 3 keeps bit 0.
+`fCanDrop` is now 20, and `canDrop` applies the coupling. Over the combined
+itemdata (21,552 rows) the change turns `CanDrop` from 1 to 0 on 7,998 rows and
+from 0 to 1 on none (`RE_COMPLETION.md`, round 494). Nothing in the server reads
+`CanDrop` yet, so no behaviour changes until a re-export and a first consumer.
 
 ## How it was found
 
@@ -366,7 +374,20 @@ previous pass suspected. Four are CRT (`_free`, `_atol`, `__stricmp`,
 `__security_check_cookie`) and the other six touch neither the cursor at `+0x1c`
 nor the counter at `+0x28`. None consumes a column.
 
-## The columns, confirmed against real data
+## The columns, confirmed against real data -- SUPERSEDED
+
+**SUPERSEDED (round 494), this whole section.** Its table, "Column 19 is the
+tell" and "Verified by class" put `CanDrop` at column 19 and every later flag
+one column left. Round 460's table ("The columns, anchored against real data",
+below) is the right one, and the code follows it: `CanPick` 21 (round 493),
+`CanUse` 24 (round 489), `CanDrop` 20 (round 494). Column 19 is the packed
+`& 0x80`/`& 0x40` byte. The masking argument below is true of column 20, the
+`0/1/3` column, which is the one the parser takes `& 1` and `& 2` from. The class
+table measured `CanTrade` correctly, but its "drop mask" column was column 19.
+Over the combined itemdata the named classes read nearly the same under
+columns 19 and 20 (`_A_DEF` droppable on 0 of 81 either way, `ITEM_QNO_` 37 or 0
+of 851, non-rare `ITEM_CH_SWORD_` 83 or 82 of 89). So the class check never
+chose between the two columns. Kept as the record of how it was argued.
 
 Applying the arithmetic to the nine capability reads gives:
 

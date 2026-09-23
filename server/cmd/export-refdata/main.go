@@ -225,14 +225,32 @@ const (
 	// item's code name match its set's code name on 360 of 360 rows that spell
 	// both, where the other columns holding only legal set ids score ~25%.
 	fSetID = 62
-	// The capability flags. Columns 16, 17 and 19 of _RefObjCommon, recovered by
-	// counting RefObjCommon_ExtractData's field reads in the disassembly -- see
-	// docs/protocol/item_capability_flags.md. fCanDrop is a BITMASK column
-	// (255/128/223/192 in real data); the engine takes its bit 0, so the
-	// exporter emits that bit rather than the raw byte.
+	// The capability flags. Columns 16, 17 and 20 of _RefObjCommon, read off
+	// RefObjCommon_ExtractData (0x006a3090) by its own column counter,
+	// [stream+0x28] -- see docs/protocol/item_capability_flags.md, round 460's
+	// table ("The columns, anchored against real data"). CanTrade's byte goes
+	// to esp+0x11 (column 16, flags bit 0) and CanSell's to esp+0x26 (17, bit
+	// 1). Then:
+	//
+	//   - column 18 is CONSUMED BUT NOT STORED: 0x6a33f0 `add [edi+0x1c],ebx`
+	//     advances the cursor with no load and 0x6a33f6 `add [edi+0x28],ebx`
+	//     bumps the counter;
+	//   - column 19 is a packed byte, stored at 0x6a341e `mov [esp+0x12],dl`
+	//     and tested `& 0x80` (0x6a3516) and `& 0x40` (0x6a352f) for flags
+	//     bits 12 and 13. The engine names neither bit and this exporter does
+	//     not export them. Over the combined itemdata it holds
+	//     255/128/223/192/159/1/0, and until round 494 fCanDrop read it by
+	//     mistake;
+	//   - column 20 is CanDrop's byte, stored at 0x6a3441 `mov [esp+0x13],dl`
+	//     and folded at 0x6a3540..0x6a3552 as `((b & 2) << 9 | b & 1) << 4`:
+	//     `& 1` is flags bit 4, the bit CGObj::CanDrop (0x00483de0) reads, and
+	//     `& 2` is the unnamed bit 14. The column holds 0/1/3.
+	//
+	// canDrop (below) applies the parser's one coupling between the two:
+	// CanTrade clear and a CanDrop byte of exactly 1 becomes 0.
 	fCanTrade = 16
 	fCanSell  = 17
-	fCanDrop  = 19
+	fCanDrop  = 20
 	// fCanUse is flags bit 8, the one Item_HandleUseItem (0x00510980) asks
 	// about after the item's rental expiry (0x183d) and the user's life state
 	// (0x1889) and before the TID match: `(**(code **)(*item +
@@ -500,21 +518,8 @@ func itemRecord(cols []string) ([]string, bool) {
 		}
 		return s
 	}
-	// dropBit takes bit 0 of a mask column and emits it as 0/1. The engine reads
-	// CanDrop as `mask & 1`, and the column really is a mask -- 255, 128, 223
-	// and 192 all occur -- so emitting the raw byte would make every consumer
-	// repeat the masking or, worse, treat 255 as a boolean.
-	dropBit := func(s string) string {
-		n, err := strconv.Atoi(strings.TrimSpace(s))
-		if err != nil {
-			return "0"
-		}
-		if n&1 != 0 {
-			return "1"
-		}
-		return "0"
-	}
 	cooltimeGroup, cooltimeMs := cooltimeOf(cols)
+	dropFlag := canDrop(get(fCanTrade), get(fCanDrop))
 	return []string{
 		get(fID),                 // 0  ID
 		get(fMaxStack),           // 1  MaxStack (col 57: 1 for equipment, real cap for stackables)
@@ -585,7 +590,7 @@ func itemRecord(cols []string) ([]string, bool) {
 		get(fSetID),            // 40 SetID
 		get(fCanTrade),         // 41 CanTrade
 		get(fCanSell),          // 42 CanSell
-		dropBit(get(fCanDrop)), // 43 CanDrop -- bit 0 of a mask column
+		dropFlag,               // 43 CanDrop -- col 20 bit 0, cleared by the CanTrade coupling
 		get(fReqLevelType2),    // 44 ReqLevelType2 -- requirement slots 2..4
 		get(fReqLevel2),        // 45 ReqLevel2
 		get(fReqLevelType3),    // 46 ReqLevelType3
@@ -657,6 +662,36 @@ func nonZero(s string) string {
 		return "0"
 	}
 	return "1"
+}
+
+// canDrop emits CanDrop, flags bit 4, as "0"/"1" from the CanTrade byte
+// (column 16) and the CanDrop byte (column 20), the way
+// RefObjCommon_ExtractData (0x006a3090) builds the bit.
+//
+// First the coupling, just before the flags word is assembled: 0x6a34e6 `cmp
+// [esp+0x11],0` (CanTrade), 0x6a34f0 `cmp [esp+0x13],1` and 0x6a34f7 `mov
+// [esp+0x13],0`. An untradeable item whose CanDrop byte is exactly 1 is made
+// undroppable. The test is equality, so a byte of 3 keeps bit 0.
+//
+// Then the bit, at 0x6a3540..0x6a3552: `b & 1` is CanDrop, and `b & 2` is the
+// unnamed bit 14, which is not exported. A value that is not a number counts
+// as 0, as nonZero treats it.
+func canDrop(trade, drop string) string {
+	t, err := strconv.Atoi(strings.TrimSpace(trade))
+	if err != nil {
+		t = 0
+	}
+	d, err := strconv.Atoi(strings.TrimSpace(drop))
+	if err != nil {
+		d = 0
+	}
+	if t == 0 && d == 1 {
+		d = 0
+	}
+	if d&1 != 0 {
+		return "1"
+	}
+	return "0"
 }
 
 // cooltimeOf finds the (Param, Desc128) pair whose descriptor reads

@@ -146,8 +146,8 @@ type Item struct {
 	// it has no magic-option system to grant into.
 	SetID int
 	// CanTrade, CanSell and CanDrop are three of the engine's item capability
-	// flags -- itemdata columns 16, 17 and 19. REAL, and grounded in both
-	// directions.
+	// flags -- itemdata columns 16, 17 and 20. REAL, and grounded in both
+	// directions. (CanDrop was read from column 19 until round 494.)
 	//
 	// The engine keeps these as bits of one word on the item's reference row
 	// (`+0x8c`), and the base class names each bit with an `## Illegal ##`
@@ -157,22 +157,31 @@ type Item struct {
 	// handler returns `0x183a UIIT_MSG_STRGERR_CANNOT_BE_TRADED` when CanTrade
 	// answers zero.
 	//
-	// The columns come from counting `RefObjCommon_ExtractData`'s field reads in
-	// the disassembly, where each is a `mov` through `[cursor + base*1]`, plus
-	// the two helpers that consume a column without one (`FUN_006b2ef0` reads a
-	// length-prefixed string, `FUN_006b1a80` increments the field counter).
-	// See docs/protocol/item_capability_flags.md for the arithmetic and its
-	// three anchors.
+	// The columns come from `RefObjCommon_ExtractData`'s (0x006a3090) own
+	// column counter, `[stream+0x28]`, bumped once per column -- see
+	// docs/protocol/item_capability_flags.md, round 460's table ("The columns,
+	// anchored against real data"). Column 18 is consumed without a load
+	// (0x6a33f0/0x6a33f6), so the byte after CanSell's is column 19.
 	//
-	// CanDrop's column is a BITMASK, not a boolean: the engine takes bit 0 of it
-	// (and bit 1 for a separate flag), and the column reads 255/128/223/192 in
-	// real data where the others read 0/1. That is the detail that proves the
-	// mapping rather than merely fitting it.
+	// Column 19 is NOT CanDrop. It is a packed byte, tested `& 0x80` and
+	// `& 0x40` for flags bits 12 and 13, which the engine does not name. It is
+	// the column that reads 255/128/223/192 in real data. CanDrop is column 20
+	// (0/1/3): the parser takes its `& 1` as bit 4, CanDrop, and its `& 2` as
+	// the unnamed bit 14. It also clears a CanDrop byte of exactly 1 when
+	// CanTrade is 0 (0x6a34e6..0x6a34f7). export-refdata applies both rules
+	// and ships CanDrop as 0/1.
 	//
-	// Confirmed by class over a real itemdata: ordinary swords and cash-shop
-	// items are tradeable and droppable; starter items (`_A_DEF`, all 52) and
-	// quest items (`ITEM_QNO_`, all 558) are neither. Starter gear being bound
-	// is the real game's behaviour, predicted rather than fitted.
+	// The class check this comment used to call decisive -- starter items
+	// (`_A_DEF`) and quest items (`ITEM_QNO_`) bound, ordinary swords free --
+	// confirms CanTrade. It never chose between columns 19 and 20 for CanDrop.
+	// Over the combined itemdata (21,552 rows) the classes it named read
+	// nearly the same under both: `_A_DEF` rows are droppable on 0 of 81
+	// either way, `ITEM_QNO_` on 37 or 0 of 851, and non-rare `ITEM_CH_SWORD_`
+	// on 83 or 82 of 89 (column 19 first). Cash-shop rows do differ, 727 of
+	// 750 against 10, but "cash-shop items are droppable" was an expectation,
+	// not a measurement. The binary's column counter decides it.
+	//
+	// Nothing in srrevamp reads CanDrop yet: it has no drop-from-bag path.
 	CanTrade bool
 	CanSell  bool
 	CanDrop  bool

@@ -26917,3 +26917,103 @@ gone drop with a different code.
 **Deploy note.** srrevamp-01's `items.can_pick` takes `DEFAULT TRUE` until export-refdata and
 import-refdata are re-run, so nothing is refused there until then. Batch the re-run with the other
 exporter items. The client change must ship in the same release as the server.
+
+## Fix the exporter's CanDrop column: 20 (with the CanTrade coupling), not 19 (round 494)
+
+Round 489 recorded, and did not fix, that `export-refdata` read `CanDrop` from itemdata column 19
+while round 460's table in `item_capability_flags.md` puts it at 20. This round checks the binary
+and moves it.
+
+**Grounding.** `RefObjCommon_ExtractData` (`0x006a3090`), read in both the Ghidra dump and
+`srv.asm`. The parser keeps its own column counter at `[stream+0x28]` and bumps it once per column:
+
+- Column 16 goes to `esp+0x11` (`CanTrade`, bit 0) and column 17 to `esp+0x26` (`CanSell`, bit 1).
+- Column 18 is consumed without a load: `0x6a33f0 add [edi+0x1c],ebx` advances the cursor and
+  `0x6a33f6 add [edi+0x28],ebx` bumps the counter. The dump shows the same bare pair between
+  `local_9e` and `local_b2`.
+- Column 19 goes to `esp+0x12` (`0x6a341e`, `local_b2`). It is tested only `& 0x80` (`0x6a3516`)
+  and `& 0x40` (`0x6a352f`), for flags bits 12 and 13. The engine names neither bit and they are not
+  exported.
+- Column 20 goes to `esp+0x13` (`0x6a3441`, `local_b1`). It is folded at `0x6a3540..0x6a3552` as
+  `((b & 2) << 9 | b & 1) << 4`: `b & 1` is bit 4, the bit `CGObj::CanDrop` (`0x00483de0`) reads,
+  and `b & 2` is the unnamed bit 14.
+- The coupling runs just before the word is built: `0x6a34e6 cmp [esp+0x11],0`, `0x6a34f0 cmp
+  [esp+0x13],1`, `0x6a34f7 mov [esp+0x13],0`. In the dump: `if (local_b3 == 0 && local_b1 == 1)
+  local_b1 = 0`. The test is equality with 1, so a byte of 3 keeps bit 0.
+
+The same count already placed `CanPick` at 21 (round 493) and `CanUse` at 24 (round 489). The data
+agrees with the shapes. Over `/var/tmp/tables/itemdata_all.utf8.txt` on the RE box, column 19 holds
+255/128/223/192/159/1/0, a packed byte, and column 20 holds only 0/1/3.
+
+**Change.**
+
+- `export-refdata`: `fCanDrop = 20`, with the column walk (16, 17, 18 consumed, 19 packed, 20) and
+  its addresses in the comment.
+- The `dropBit` closure is replaced by `canDrop(trade, drop string) string`. A value that is not a
+  number counts as 0. When `CanTrade` is 0 and the byte is exactly 1, it becomes 0. The result is
+  `d & 1`.
+- Record index 43 is `canDrop(get(fCanTrade), get(fCanDrop))`. The CSV width does not change.
+- `refdata.Item`'s comment now says columns 16, 17 and 20, and says that column 19 is the
+  255/128/223/192 byte.
+
+**The class argument never chose between 19 and 20.** The comment and the doc called the class
+check decisive: bound starter (`_A_DEF`) and quest (`ITEM_QNO_`) rows, free ordinary swords. It
+confirms `CanTrade`. For `CanDrop`, over the same combined itemdata:
+
+| class | rows | droppable by column 19 | droppable by column 20 |
+|---|---:|---:|---:|
+| `_A_DEF` | 81 | 0 | 0 |
+| `ITEM_QNO_` | 851 | 37 | 0 |
+| non-rare `ITEM_CH_SWORD_` | 89 | 83 | 82 |
+| `ITEM_MALL_` | 750 | 727 | 10 |
+
+The only large difference is the cash-shop rows. "Cash-shop items are droppable" was an expectation
+and was never measured, so it cannot decide the column. The binary's column counter decides it.
+
+**Census.** These are rows of the combined itemdata that `itemRecord` accepts: 21,552 rows, with 9
+short rows skipped.
+
+- `CanDrop` goes from 1 to 0 on **7,998** rows and from 0 to 1 on none. Before the change 18,923
+  rows were droppable; after it, 10,925.
+- **Rare equipment:** 6,791 of the 7,527 rows (code name containing `_RARE`, TypeID 3/1) are not
+  droppable by column 20. 5,861 of them flip from 1 to 0, because column 19 holds 255 on them.
+  The other 930 were already 0: 792 hold 128 and 138 hold 0.
+- **The coupling fires on 7 rows.** These are the rows with `CanTrade` 0 and column 20 exactly 1:
+  `ITEM_ETC_ARENA_COIN` (two rows), `ITEM_SANTA_BOX`, `ITEM_MALL_GACHA_CARD`,
+  `ITEM_PREMIUM_GACHA_CARD`, `ITEM_TALISMAN_WRECK_A_MERMAID_TEARS` and
+  `ITEM_TALISMAN_WRECK_A_DIAMOND_WATCHES`.
+- No row has `CanTrade` 0 and column 20 equal to 3. So the equality case exists in the parser, but
+  no shipped row takes it.
+
+**Still no consumer.** Nothing in srrevamp reads `CanDrop`, because it has no drop-from-bag path.
+The change is invisible today. It stops a wrong permission reaching the first player-drop or
+pet-pickup rule that does read it.
+
+**Docs.** `item_capability_flags.md`:
+
+- The header and the enforcement table say column 20 with the coupling, and that the code used 19
+  until this round.
+- The "not settled" paragraph is replaced with the settlement and its addresses.
+- The section "The columns, confirmed against real data" is marked SUPERSEDED. That section holds
+  the column-19 table, "Column 19 is the tell" and "Verified by class".
+
+`SYSTEMS.md` is unchanged. Its capability-flags row does not describe `CanDrop` as wired, and
+`CanDrop` still has no consumer to anchor.
+
+**Tests.** `export-refdata.TestCanDropReadsColumn20WithTheTradeCoupling`. Each row goes through
+`itemRecord` and then `LoadItemsCSV`. The test asserts `rec[43]`, `CanDrop`, and `CanTrade ==
+(column 16 != 0)`. The cases are given as columns 16/19/20:
+
+- (a) 1/255/0 is not droppable;
+- (b) 1/0/3 is droppable;
+- (c) 1/128/1 is droppable;
+- (d) 0/255/1 is not droppable, because of the coupling;
+- (e) 0/0/3 is droppable, because the coupling needs exactly 1;
+- (f) 1/0/2 is not droppable, because bit 1 alone is bit 14.
+
+**Negative case, run.** With `main.go` stashed, the test fails on (a) through (e): `record[43]` and
+`CanDrop` answer the other way. (f) passes under both readings, as planned. With `main.go` restored,
+the test passes, and `go test -count=1 -p 1 ./...` is green.
+
+**Deploy note.** Nothing changes on srrevamp-01 until `export-refdata` and `import-refdata` are run
+again against the player's own itemdata. Batch that with the other exporter items.
