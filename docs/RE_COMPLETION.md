@@ -27363,3 +27363,160 @@ letters. This needs a re-exported reference table (see the deploy note).
 
 **Deploy note.** `items.code_name` defaults to `''` on srrevamp-01, so every item there keeps the party
 rule until `export-refdata` and `import-refdata` are re-run. The consolidation needs nothing.
+
+## Warehouse expansion item raises the account chest size; the bag item is refused (UseByKind TID4 0x11 / ExpandInventory) (round 498)
+
+**Grounding, re-read this round on the RE box (dump and `srv.asm`, read-only).**
+
+- **Which items.** In the combined itemdata (`allitems.txt`, 21,561 rows, not committed), exactly
+  two rows are TypeID 3/3/13/17: `ITEM_MALL_INVENTORY_ADDITION` (24365) and
+  `ITEM_MALL_WAREHOUSE_ADDITION` (24366). Both have CanUse (column 24) 1 and MaxStack (column 57)
+  1. Param1 (column 118) is 32 / 30 and Param2 (column 120) is 0 / 1. Both rows' Param3..20 read
+  -1 / `xxx`, so neither has a COOLTIME descriptor. The exporter ships columns 118 and 120 as
+  `RestoreHP` and `RestoreHPPct` (export fields 30 and 31).
+- **How the use gets there.**
+  - 3/3 is the `CGItemExpendable` class (the factory `FUN_00489de0`, round 491).
+  - `CGItemExpendable::DoJob` (`0x0049aca0`) case 0xd calls vtable `+0x520` for TypeID4 12
+    (`(TID & 0xf800) == 0x6000`). Every other TypeID4 goes to `+0x4d4`, slot 309, and the
+    expendable vtable's entry there (`0xaeb788`) holds `0x0049c2b0`, `UseByKind`.
+  - `UseByKind` switches on `TID >> 0xb`, which is TypeID4. Its case 0x11 takes Param1 as a BYTE
+    (`*(undefined1 *)(ref + 0x2a0)`) and maps Param2 (`ref + 0x2c0`) 0 to container kind 0 and 1 to
+    kind 3. Any other Param2 answers 3 (`LAB_0049c9b2`). It then calls the owner's vtable `+0x2b4`,
+    slot 173, `CGObjPC::ExpandInventory` (`0x004e1910`).
+- **The warehouse (kind 3).** `ExpandInventory` reads the size byte at `[pc+0x21d8]+0x1c`
+  (`0x4e192c`/`0x4e1932`). A zero byte answers 2 (`0x4e1935 test al,al`). Past that it refuses with
+  `0x18fe` unless size + amount <= `0xd2` (`0x4e194d cmp ecx,0xd2 ; jle`). Otherwise
+  `AQ_StorageExpander::FUN_0045de20` applies the amount through `in_EAX[0x876]` (`pc+0x21d8`)
+  vtable `+0x24`.
+  - The record at `pc+0x21d8` is the character's `_ChestInfo` row. Its size sits at `0x1c`, the
+    offset `DB_Bind__ChestInfo` gives `ChestSize` (`db_bind_offsets.tsv`).
+  - `GObjPC::FUN_004e1a30` asserts that a loaded chest's entry count (a pointer vector's length)
+    is at most that same byte, and loads it as storage kind 3 (`FUN_004b7680(pc+0x1d74, 3, ...)`).
+- **The bag (kind 0).** `count <= cap - size` (`0x4e197e`) and `size + count <= 0x63` (`0x4e1986`),
+  where size is `pc+0x1c2c`. cap is `0x4d` = 77, or 99 when `GObjPC::HasInventoryExpansionQuest`
+  (`0x4e13b0`) answers non-zero.
+- **The refusal.** `0x18fe` is `UIIT_STT_STORAGE_EXPANSION_USE_ERORR` (`error_codes.md`).
+  `DoJob` returns any result but 1 before `LAB_0049af45` decrements the count, so a refused item is
+  kept.
+
+**What was wrong before.** Before round 491 every row's Param1 landed in `RestoreHP`, so both mall
+items healed the user by 32 or 30 HP and were consumed. Round 491's `restoresUserPool` gate closed
+that for every non-recovery kind, including the "other CanUse=1 non-potion rows with Param1 > 0"
+this item's plan still listed as latent. Since round 491 both items were refused with "that cannot be
+used". This round gives them their real effect.
+
+**Change.**
+
+- `refdata`:
+  - `Item.ContainerExpansion() (container, slots, ok)` answers ok only for 3/3/13/17 with Param2
+    0 or 1 and a non-zero Param1 byte. `slots` is `uint8(RestoreHP)` and `container` is
+    `RestoreHPPct`.
+  - The new constants `ExpansionContainerBag` (0) and `ExpansionContainerWarehouse` (1).
+- `account`:
+  - `ChestSizeStore{ChestSize, ExpandChest(acc, base, amount, ceiling)}`, `ErrChestFull`, and an
+    `Account.ChestSize` field.
+  - `MemStore` grows the size under its lock.
+  - `SQLStore` adds `accounts.chest_size INTEGER NOT NULL DEFAULT 0` and grows it in one statement:
+    `SET chest_size = GREATEST(chest_size,$2)+$3 WHERE id=$1 AND GREATEST(chest_size,$2)+$3 <= $4
+    RETURNING chest_size`. When no row comes back, a re-select tells `ErrChestFull` from
+    `ErrNoSuchAccount`.
+- `inventory`:
+  - `CapacityFunc` and `SetCapacityFunc` on both stores. Every per-owner bound now uses the owner's
+    answer, falling back to `Capacity()`:
+    - `MemStore`: `addItem`, `RemoveItem`, `MoveItem` and `SetDurability`. It asks before taking
+      its lock.
+    - `SQLStore`: `SetDurability`, `RemoveItem`, `MoveItem` and `addItem`'s `loadOccupancy`. It asks
+      before the transaction begins.
+  - The bag sets no `CapacityFunc`.
+- `storage`:
+  - `Service.ChestSizes` holds the size store.
+  - `CapacityOf(chests)` answers the stored size. It falls back to `DefaultCapacity` for a nil
+    store, a 0, or a failed read; a smaller bound only refuses, never loses.
+  - `Capacity(ctx, characterID)` now resolves the account.
+  - `Expand(ctx, characterID, amount)` calls `ExpandChest(acc, DefaultCapacity, amount,
+    MaxCapacity)` and maps `ErrChestFull` to `ErrExpansionRefused` (`0x18fe`).
+- `session`:
+  - `UseItemHandler` takes the storage service as a fifth argument. After the CanUse gate and before
+    the recovery-kind gate, a `ContainerExpansion` item goes to `useExpansion`.
+  - The warehouse path checks the size first (cur + slots > 210 refuses and keeps the item). It then
+    takes the item, grows the size, and on failure gives the item back through `AddItemInstance`.
+    On success it replies `Remaining` with no HP/MP fields; `MaxHP` 0 leaves the client's bars
+    alone.
+  - The bag path runs `bagExpansionAllowed`, the kind-0 test with size 50 + 13 = 63 and cap 77.
+    It refuses 32 with `0x18fe`.
+  - `OpStorageList` reports the account's own size ("list failed" if it cannot be read).
+- `cmd/server`: both warehouse stores get `SetCapacityFunc(storage.CapacityOf(accounts))`,
+  `storageSvc.ChestSizes` is the matching account store, and `UseItemHandler` gets `storageSvc`.
+
+**Behaviour.** An expansion item obtained through GM `give` now works:
+
+- The warehouse item raises the account's warehouse from 50 to 80, 110, 140, 170 and 200, for
+  every character on the account. The client pages it from the storage list's capacity.
+- At 200, the next item is refused and kept (230 > 210).
+- The bag expansion item is refused and kept.
+- Neither item heals.
+
+**Disclosed gaps.**
+
+- **The bag cannot grow.** `inventory.SlotsPerCharacter` is fixed, so even an amount the kind-0
+  test passes (up to 14) is refused ("the bag cannot be expanded"). The 99-slot quest flag is not
+  modelled either, because srrevamp keeps no quest status 8.
+- **Zero size.** The engine fails kind 3 on a size byte of 0. srrevamp's 0 is "no row" and grows
+  from 50.
+- **Logout refusal.** `UseByKind`'s opening refusal is not modelled: `0x186b`
+  `CANT_OPERATE_REQUESTED_JOB_DURING_LOGOUT`, given when the byte at `[owner+0x30]+0x11` is not 1.
+- **Synchronous write.** The engine applies the growth through an `AQ_StorageExpander` database job;
+  srrevamp writes it synchronously.
+- **Refund slot.** A refund after a racing refusal may land in a different bag slot.
+- **No chat line.** The success reply prints nothing in the client's chat, and no client change was
+  made.
+
+**Tests.**
+
+- **`refdata.TestContainerExpansion`** checks these cases:
+  - 30/1 gives (1, 30, true), 32/0 gives (0, 32, true), and 286/1 gives (1, 30, true), because
+    Param1 is read as a byte.
+  - 30/2, a zero amount, a potion 3/3/1/1, 3/3/13/6 and 3/3/1/17 all give false.
+- **`account.TestMemStoreChestSize`** and **`TestSQLStoreChestSizeRoundTrip`**: 0, then 80 (which
+  survives a reopen in SQL), then 110..200, then `ErrChestFull` with the size unchanged, and
+  `ErrNoSuchAccount` for a missing account.
+- **`inventory.TestCapacityFuncBoundsEachOwner`** (mem and SQL): an owner answered 3 holds 3 items
+  and uses slot 2 through AddItem, SetDurability, MoveItem and RemoveItem. An owner answered 0 falls
+  back to 2 and gets `ErrNoRoom` / `ErrInvalidSlot`.
+- **`storage.TestExpandIsPerAccountAndCapped`**:
+  - Two characters on one account both see 50. The 51st deposit returns `ErrNoRoom`.
+  - After Aria's Expand, both see 80. Bram's deposit lands in slot 50, and Aria withdraws it.
+  - 110..200 succeed, and the next Expand returns `ErrExpansionRefused` with 200 kept.
+  - Seeded at 180, +30 gives 210. Seeded at 181, +30 is refused.
+- **`storage.TestExpandWithoutChestSizesIsRefused`**.
+- **`session.TestUseWarehouseExpansionItem`**, with the real rows' kinds and Param blocks:
+  - A damaged character uses 24366: no error, 0 restored, HP unchanged, 0 left in the slot, and
+    `OpStorageList` reports 80.
+  - Four more uses give 110..200. The sixth is refused with `0x18fe` and kept, and 200 stays.
+  - 24365 is refused with `0x18fe`, kept, and heals nothing.
+- **`session.TestBagExpansionAllowedFollowsExpandInventory`**: 32 and 15 are refused; 14 and 1 pass.
+- **`TestUseItemRestoresOnlyForRecoveryKinds`**: its bag-expansion case now expects the `0x18fe`
+  refusal.
+
+**Negative case, run.**
+
+- **Production files stashed:** the new tests fail to build (`Expand`, `CapacityOf`,
+  `SetCapacityFunc`, `ChestSizes`, the 5-argument `UseItemHandler`).
+- **The expansion route removed from `UseItemHandler` alone:** `TestUseWarehouseExpansionItem`
+  fails with "that cannot be used" where it wants success. `TestUseItemRestoresOnlyForRecoveryKinds`
+  fails on the bag item's reason.
+- **`MemStore.capacityFor` made to ignore the `CapacityFunc`:** `TestExpandIsPerAccountAndCapped`
+  fails on Bram's deposit ("no room"). `TestCapacityFuncBoundsEachOwner` fails on owner 1's third
+  item.
+- Each was restored, and `go test -count=1 -p 1 ./...` is green.
+
+**Docs.**
+
+- `SYSTEMS.md`'s Storage row records the wiring. Its Next is now the linked storage and a growable
+  bag.
+- `server_sql.md` records that `accounts.chest_size` models `_ChestInfo.ChestSize`.
+- `TODO.md`'s warehouse entry no longer gives the 112 ceiling or calls the increment open.
+
+**Deploy note.** `accounts.chest_size` is added by `ALTER TABLE ... IF NOT EXISTS` at boot, and
+every existing account starts at 0, which means 50. No reimport is needed, because columns 118 and
+120 already ship.

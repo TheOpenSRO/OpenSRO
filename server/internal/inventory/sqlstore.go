@@ -56,8 +56,9 @@ type SQLStore struct {
 	db           *sql.DB
 	maxStacks    MaxStackLookup
 	table        string
-	owner        string // the owner column: character_id (bag) or account_id (warehouse)
-	capacity     int    // this container's slot count (SlotsPerCharacter unless SetCapacity said otherwise)
+	owner        string       // the owner column: character_id (bag) or account_id (warehouse)
+	capacity     int          // this container's slot count (SlotsPerCharacter unless SetCapacity said otherwise)
+	capacityOf   CapacityFunc // per-owner slot counts, when set (SetCapacityFunc)
 	durabilities DurabilityLookup
 	// Rand is the source the instance rolls draw from; tests set it.
 	Rand durability.Rand
@@ -126,6 +127,22 @@ func (s *SQLStore) SetCapacity(n int) {
 
 // Capacity implements Store.
 func (s *SQLStore) Capacity() int { return s.capacity }
+
+// SetCapacityFunc makes the slot count per owner: every operation on an owner
+// is bounded by f's answer for it, falling back to Capacity() when f answers
+// zero or less. Set once, before the store is used.
+func (s *SQLStore) SetCapacityFunc(f CapacityFunc) { s.capacityOf = f }
+
+// capacityFor is owner's slot count. It is asked outside any transaction of
+// this store's: f may reach another table.
+func (s *SQLStore) capacityFor(ctx context.Context, owner int64) int {
+	if s.capacityOf != nil {
+		if n := s.capacityOf(ctx, owner); n > 0 {
+			return n
+		}
+	}
+	return s.capacity
+}
 
 // DB exposes the connection for a one-off migration (storage.MigrateToAccounts)
 // that has to read this container's rows alongside other tables.
@@ -217,7 +234,7 @@ func (s *SQLStore) AddItemInstance(ctx context.Context, characterID, itemID int6
 
 // SetDurability implements Store.
 func (s *SQLStore) SetDurability(ctx context.Context, characterID int64, slot int, durabilityLeft int) error {
-	if slot < 0 || slot >= s.capacity {
+	if slot < 0 || slot >= s.capacityFor(ctx, characterID) {
 		return ErrInvalidSlot
 	}
 	res, err := s.db.ExecContext(ctx,
@@ -240,6 +257,7 @@ func (s *SQLStore) addItem(ctx context.Context, characterID, itemID int64, quant
 	if maxStack <= 0 {
 		maxStack = 1 // an item with no configured stack limit doesn't stack
 	}
+	capacity := s.capacityFor(ctx, characterID)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -247,7 +265,7 @@ func (s *SQLStore) addItem(ctx context.Context, characterID, itemID int64, quant
 	}
 	defer tx.Rollback()
 
-	existing, occupied, err := s.loadOccupancy(ctx, tx, characterID)
+	existing, occupied, err := s.loadOccupancy(ctx, tx, characterID, capacity)
 	if err != nil {
 		return err
 	}
@@ -295,7 +313,7 @@ func (s *SQLStore) addItem(ctx context.Context, characterID, itemID int64, quant
 
 // RemoveItem implements Store.
 func (s *SQLStore) RemoveItem(ctx context.Context, characterID int64, slot int, quantity int) error {
-	if slot < 0 || slot >= s.capacity {
+	if slot < 0 || slot >= s.capacityFor(ctx, characterID) {
 		return ErrInvalidSlot
 	}
 	// See MemStore.RemoveItem: a negative quantity passes the upper-bound check
@@ -342,7 +360,8 @@ func (s *SQLStore) RemoveItem(ctx context.Context, characterID int64, slot int, 
 // MoveItem implements Store. See the interface for the three outcomes. One
 // transaction, so a swap can never be observed half-done.
 func (s *SQLStore) MoveItem(ctx context.Context, characterID int64, from, to int) error {
-	if from < 0 || from >= s.capacity || to < 0 || to >= s.capacity {
+	capacity := s.capacityFor(ctx, characterID)
+	if from < 0 || from >= capacity || to < 0 || to >= capacity {
 		return ErrInvalidSlot
 	}
 	if from == to {
@@ -447,9 +466,10 @@ func (s *SQLStore) mergeSpace(ctx context.Context, itemID int64, have int) int {
 }
 
 // loadOccupancy returns the current slots plus a capacity-sized occupancy
-// map, for AddItem's stacking/placement logic.
-func (s *SQLStore) loadOccupancy(ctx context.Context, tx *sql.Tx, characterID int64) ([]Slot, []bool, error) {
-	occupied := make([]bool, s.capacity)
+// map, for AddItem's stacking/placement logic. capacity is the owner's own
+// (capacityFor), read before the transaction began.
+func (s *SQLStore) loadOccupancy(ctx context.Context, tx *sql.Tx, characterID int64, capacity int) ([]Slot, []bool, error) {
+	occupied := make([]bool, capacity)
 	rows, err := tx.QueryContext(ctx,
 		s.q(`SELECT slot, item_id, quantity FROM %s WHERE character_id = $1 ORDER BY slot`),
 		characterID)
@@ -464,7 +484,7 @@ func (s *SQLStore) loadOccupancy(ctx context.Context, tx *sql.Tx, characterID in
 		if err := rows.Scan(&sl.Index, &sl.ItemID, &sl.Quantity); err != nil {
 			return nil, occupied, fmt.Errorf("inventory: scanning row: %w", err)
 		}
-		if sl.Index >= 0 && sl.Index < s.capacity {
+		if sl.Index >= 0 && sl.Index < capacity {
 			occupied[sl.Index] = true
 		}
 		out = append(out, sl)

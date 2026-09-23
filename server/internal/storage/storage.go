@@ -58,15 +58,23 @@ import (
 // SlotsPerCharacter), kept so no tester's reach shrinks. The client pages the
 // warehouse by 30 (CIFStorageRoom::Create builds 0x1e slot controls and
 // addresses a slot as cell + page*0x1e, client 0x6cd350), so 50 shows as a
-// full page and a page of 20. When an operator has the shard database,
-// ChestSize per account replaces this constant; the expansion path caps it at
-// MaxCapacity.
+// full page and a page of 20. It is the size of every account whose
+// `accounts.chest_size` is still 0 -- srrevamp's stand-in for the missing
+// `_ChestInfo` row. The warehouse expansion item (round 498, Expand) stores a
+// size from here upwards, capped at MaxCapacity.
 const DefaultCapacity = 50
 
 // MaxCapacity is the largest warehouse the game's expander allows: the kind-3
 // path refuses when current + amount would exceed 0xd2, so 210 -- and with the
 // item's 30-slot steps from 50 the reachable sizes are 80, 110, 140, 170, 200.
 const MaxCapacity = inventory.MaxStorageExpansionSlots
+
+// ErrExpansionRefused is the warehouse expansion's refusal: the engine's
+// 0x18fe, UIIT_STT_STORAGE_EXPANSION_USE_ERORR (docs/protocol/error_codes.md),
+// which CGObjPC::ExpandInventory (0x004e1910) returns for kind 3 when the
+// chest's size byte plus the amount is not below 0xd3 (0x4e194d
+// `cmp ecx,0xd2 ; jle`).
+var ErrExpansionRefused = errors.New("storage: the warehouse cannot be expanded that far")
 
 // ErrSlotEmpty is returned when the slot to move from holds nothing.
 var ErrSlotEmpty = errors.New("storage: nothing in that slot")
@@ -83,6 +91,11 @@ type Service struct {
 	Warehouse inventory.Store          // owned by the ACCOUNT (inventory.WarehouseOwnerColumn)
 	Gold      character.Store          // the purse
 	Accounts  account.StorageGoldStore // the warehouse gold
+	// ChestSizes is the warehouse's per-account size (`_ChestInfo.ChestSize`).
+	// Nil keeps every warehouse at the container's own Capacity() and refuses
+	// expansion. The Warehouse store must be bounded by the same sizes
+	// (SetCapacityFunc(CapacityOf(ChestSizes))).
+	ChestSizes account.ChestSizeStore
 }
 
 // Balances is a character's carried gold and the account's warehouse gold.
@@ -91,10 +104,74 @@ type Balances struct {
 	Stored  int64
 }
 
-// Capacity is the warehouse's slot count, as the container enforces it. The
-// client pages its authored 30-slot lattice from this.
-func (s *Service) Capacity() int {
-	return s.Warehouse.Capacity()
+// CapacityOf answers each account's warehouse size from chests: the stored
+// `_ChestInfo.ChestSize`, or DefaultCapacity when the store is nil, has no
+// size stored (0) or fails. The fallback is never destructive -- a smaller
+// bound only refuses slots past it -- which is why a failed read degrades to
+// it rather than failing the operation. The warehouse store takes it through
+// SetCapacityFunc; the game reads the same field for its bound
+// (CGObjPC::ExpandInventory reads the size byte at chest+0x1c, the binder's
+// ChestSize offset -- docs/protocol/db_bind_offsets.tsv).
+func CapacityOf(chests account.ChestSizeStore) inventory.CapacityFunc {
+	return func(ctx context.Context, accountID int64) int {
+		if chests == nil {
+			return DefaultCapacity
+		}
+		n, err := chests.ChestSize(ctx, accountID)
+		if err != nil || n <= 0 {
+			return DefaultCapacity
+		}
+		return n
+	}
+}
+
+// Capacity is the warehouse's slot count for this character's account, as
+// the container enforces it. The client pages its authored 30-slot lattice
+// from this.
+func (s *Service) Capacity(ctx context.Context, characterID int64) (int, error) {
+	if s.ChestSizes == nil {
+		return s.Warehouse.Capacity(), nil
+	}
+	c, err := s.accountOf(ctx, characterID)
+	if err != nil {
+		return 0, err
+	}
+	return CapacityOf(s.ChestSizes)(ctx, c.AccountID), nil
+}
+
+// Expand grows this character's ACCOUNT warehouse by amount slots and returns
+// the new size -- the warehouse expansion item's effect (round 498).
+//
+// CGItemExpendable::UseByKind (0x0049c2b0) case 0x11 passes the row's Param1
+// byte and, for Param2 1, container kind 3 to CGObjPC::ExpandInventory
+// (0x004e1910, vtable +0x2b4). Kind 3 reads the size byte at [pc+0x21d8]+0x1c
+// -- the _ChestInfo record, whose binder puts ChestSize at 0x1c
+// (db_bind_offsets.tsv) -- and refuses with 0x18fe unless size + amount < 0xd3
+// (0x4e194d `cmp ecx,0xd2 ; jle`), so the largest warehouse is MaxCapacity,
+// 210; otherwise AQ_StorageExpander::FUN_0045de20 applies the amount through
+// that record's vtable +0x24. The growth starts from DefaultCapacity for an
+// account with no stored size.
+//
+// One divergence, disclosed: kind 3 answers 2 (a plain failure) when the size
+// byte is 0 (0x4e1935 `test al,al`), because a real user always has a
+// `_ChestInfo` row; srrevamp's 0 means "no row, the default size" and grows
+// from DefaultCapacity instead.
+func (s *Service) Expand(ctx context.Context, characterID int64, amount int) (int, error) {
+	if s.ChestSizes == nil {
+		return 0, errors.New("storage: the warehouse size is not stored here")
+	}
+	c, err := s.accountOf(ctx, characterID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := s.ChestSizes.ExpandChest(ctx, c.AccountID, DefaultCapacity, amount, MaxCapacity)
+	if errors.Is(err, account.ErrChestFull) {
+		return 0, ErrExpansionRefused
+	}
+	if err != nil {
+		return 0, fmt.Errorf("storage: expanding the warehouse: %w", err)
+	}
+	return n, nil
 }
 
 // accountOf resolves the acting character to its account.

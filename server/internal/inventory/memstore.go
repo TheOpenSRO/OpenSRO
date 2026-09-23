@@ -20,6 +20,9 @@ type MemStore struct {
 	// capacity is this container's slot count (SlotsPerCharacter unless
 	// SetCapacity said otherwise -- the warehouse has its own).
 	capacity int
+	// capacityOf, when set, answers each owner's own slot count (the
+	// warehouse's per-account size); see SetCapacityFunc.
+	capacityOf CapacityFunc
 	// durabilities rolls a fresh item's instance and initialises legacy
 	// rows; nil leaves every instance Untracked (see SetDurabilityLookup).
 	durabilities DurabilityLookup
@@ -44,6 +47,22 @@ func (m *MemStore) SetCapacity(n int) {
 
 // Capacity implements Store.
 func (m *MemStore) Capacity() int { return m.capacity }
+
+// SetCapacityFunc makes the slot count per owner: every operation on an owner
+// is bounded by f's answer for it, falling back to Capacity() when f answers
+// zero or less. Set once, before the store is used.
+func (m *MemStore) SetCapacityFunc(f CapacityFunc) { m.capacityOf = f }
+
+// capacityFor is owner's slot count. It is called BEFORE m.mu is taken: f may
+// reach another store.
+func (m *MemStore) capacityFor(ctx context.Context, owner int64) int {
+	if m.capacityOf != nil {
+		if n := m.capacityOf(ctx, owner); n > 0 {
+			return n
+		}
+	}
+	return m.capacity
+}
 
 // SetDurabilityLookup gives the store the reference data it needs to roll a
 // fresh item's variance and durability. Set once, before the store is used.
@@ -88,8 +107,8 @@ func (m *MemStore) AddItemInstance(ctx context.Context, characterID, itemID int6
 }
 
 // SetDurability implements Store.
-func (m *MemStore) SetDurability(_ context.Context, characterID int64, slot int, durabilityLeft int) error {
-	if slot < 0 || slot >= m.capacity {
+func (m *MemStore) SetDurability(ctx context.Context, characterID int64, slot int, durabilityLeft int) error {
+	if slot < 0 || slot >= m.capacityFor(ctx, characterID) {
 		return ErrInvalidSlot
 	}
 	m.mu.Lock()
@@ -113,6 +132,7 @@ func (m *MemStore) addItem(ctx context.Context, characterID, itemID int64, quant
 			maxStack = n
 		}
 	}
+	capacity := m.capacityFor(ctx, characterID)
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -128,7 +148,7 @@ func (m *MemStore) addItem(ctx context.Context, characterID, itemID int64, quant
 	// half-filled.
 	remaining := quantity
 	topUps := map[int]int{}
-	for index := 0; index < m.capacity && remaining > 0; index++ {
+	for index := 0; index < capacity && remaining > 0; index++ {
 		sl := held[index]
 		if sl == nil || sl.ItemID != itemID || sl.Quantity+topUps[index] >= maxStack {
 			continue
@@ -138,7 +158,7 @@ func (m *MemStore) addItem(ctx context.Context, characterID, itemID int64, quant
 		remaining -= add
 	}
 	var fresh []Slot
-	for index := 0; index < m.capacity && remaining > 0; index++ {
+	for index := 0; index < capacity && remaining > 0; index++ {
 		if held[index] != nil {
 			continue
 		}
@@ -161,8 +181,8 @@ func (m *MemStore) addItem(ctx context.Context, characterID, itemID int64, quant
 }
 
 // RemoveItem implements Store.
-func (m *MemStore) RemoveItem(_ context.Context, characterID int64, slot int, quantity int) error {
-	if slot < 0 || slot >= m.capacity {
+func (m *MemStore) RemoveItem(ctx context.Context, characterID int64, slot int, quantity int) error {
+	if slot < 0 || slot >= m.capacityFor(ctx, characterID) {
 		return ErrInvalidSlot
 	}
 	// Checked BEFORE the upper bound, because `quantity > slot.Quantity` passes
@@ -208,7 +228,8 @@ func (m *MemStore) maxStackFor(ctx context.Context, itemID int64) (int, error) {
 
 // MoveItem implements Store. See the interface for the three outcomes.
 func (m *MemStore) MoveItem(ctx context.Context, characterID int64, from, to int) error {
-	if from < 0 || from >= m.capacity || to < 0 || to >= m.capacity {
+	capacity := m.capacityFor(ctx, characterID)
+	if from < 0 || from >= capacity || to < 0 || to >= capacity {
 		return ErrInvalidSlot
 	}
 	if from == to {

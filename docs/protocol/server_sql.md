@@ -184,6 +184,23 @@ is in no archive this project holds: `storage.DefaultCapacity` (50) is therefore
 DISCLOSED, the server sends it as the trailing field of the storage list, and the
 client pages from it.
 
+**`accounts.chest_size` models `_ChestInfo.ChestSize` (round 498).** It is an
+`INTEGER NOT NULL DEFAULT 0` column on srrevamp's own `accounts` table, so a size
+per ACCOUNT, as the game keys `_ChestInfo` by UserJID. 0 stands for the missing
+row and means `storage.DefaultCapacity`; the only writer is the warehouse
+expansion item. `CGItemExpendable::UseByKind` (`0x0049c2b0`) case 0x11 passes the
+row's Param1 byte and, for Param2 1, container kind 3 to
+`CGObjPC::ExpandInventory` (`0x004e1910`). Kind 3 reads the size BYTE at
+`[pc+0x21d8]+0x1c`, the record whose binder puts `ChestSize` at `0x1c`
+(`db_bind_offsets.tsv`). It refuses with `0x18fe` unless size + amount < `0xd3`
+(`0x4e194d cmp ecx,0xd2 ; jle`); otherwise `AQ_StorageExpander::FUN_0045de20`
+applies the amount through that record's vtable `+0x24`. srrevamp grows the
+column in one statement, `SET chest_size = GREATEST(chest_size, 50) + 30 ...
+WHERE GREATEST(chest_size, 50) + 30 <= 210`, and bounds the warehouse table's
+slots per account by it (`storage.CapacityOf`). One divergence: kind 3 fails
+(answer 2) on a size byte of 0, which a real user never has; srrevamp's 0 grows
+from the default.
+
 Two smaller facts fall out of the same queries and cost nothing:
 
 - **`_ITEMS.ID64` is the item instance id**, and every container stores a

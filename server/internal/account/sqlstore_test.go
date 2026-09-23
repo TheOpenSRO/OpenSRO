@@ -144,3 +144,52 @@ var (
 	_ Store      = (*SQLStore)(nil)
 	_ Registerer = (*SQLStore)(nil)
 )
+
+// The warehouse size persists (round 498): 0 for a new account, 80 after one
+// expansion from the default 50 -- still 80 through a reopen -- and
+// ErrChestFull, unchanged, once 200 + 30 would pass the 210 ceiling.
+func TestSQLStoreChestSizeRoundTrip(t *testing.T) {
+	store := openTestSQLStore(t)
+	ctx := context.Background()
+	acc, err := store.Register(ctx, "alice", "hunter2")
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if n, err := store.ChestSize(ctx, acc.ID); err != nil || n != 0 {
+		t.Fatalf("ChestSize of a new account = %d, %v; want 0, nil", n, err)
+	}
+	if n, err := store.ExpandChest(ctx, acc.ID, 50, 30, 210); err != nil || n != 80 {
+		t.Fatalf("ExpandChest = %d, %v; want 80", n, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	s2, err := OpenSQLStore(testDSN())
+	if err != nil {
+		t.Fatalf("OpenSQLStore (second open): %v", err)
+	}
+	defer s2.Close()
+	if n, err := s2.ChestSize(ctx, acc.ID); err != nil || n != 80 {
+		t.Fatalf("ChestSize after reopen = %d, %v; want 80", n, err)
+	}
+	for _, want := range []int{110, 140, 170, 200} {
+		if n, err := s2.ExpandChest(ctx, acc.ID, 50, 30, 210); err != nil || n != want {
+			t.Fatalf("ExpandChest = %d, %v; want %d", n, err, want)
+		}
+	}
+	if _, err := s2.ExpandChest(ctx, acc.ID, 50, 30, 210); !errors.Is(err, ErrChestFull) {
+		t.Fatalf("ExpandChest from 200 = %v, want ErrChestFull", err)
+	}
+	if n, _ := s2.ChestSize(ctx, acc.ID); n != 200 {
+		t.Fatalf("a refused expansion changed the size to %d, want 200", n)
+	}
+	if _, err := s2.ExpandChest(ctx, acc.ID+1000, 50, 30, 210); !errors.Is(err, ErrNoSuchAccount) {
+		t.Fatalf("ExpandChest on a missing account = %v, want ErrNoSuchAccount", err)
+	}
+}
+
+// Both stores keep the warehouse size.
+var (
+	_ ChestSizeStore = (*SQLStore)(nil)
+	_ ChestSizeStore = (*MemStore)(nil)
+)

@@ -40,11 +40,13 @@ In order. Each is checked off here when it ships in a release, with its round in
         settled (round 215, v0.1.390)**: the warehouse and its gold are the ACCOUNT's, as the game's
         `_CHEST WHERE UserJID` / `_UPDATE_USER_N_CHAR_GOLD` say; every character on an account shares
         them, and the old per-character rows were moved over losslessly at boot. The capacity MODEL is
-        read too (round 216, v0.1.391: per-user `_ChestInfo.ChestSize`, no in-binary default, ceiling
-        112, paged by 30 in the client -- the authored page spinner now works); its DEFAULT is
+        read too (round 216, v0.1.391: per-user `_ChestInfo.ChestSize`, no in-binary default, paged
+        by 30 in the client -- the authored page spinner now works; the ceiling is 210, round 270 --
+        the 112 once recorded here is the quest-reward INVENTORY path); its DEFAULT is
         DISCLOSED as 50 (`storage.DefaultCapacity`) because the game writes it from the database's
-        user-creation procedure, which no archive here holds. Still open: the expansion item's
-        increment and the expander path.
+        user-creation procedure, which no archive here holds. The warehouse expansion item is wired
+        (round 498): +30 a use to `accounts.chest_size`, up to 200, then refused with 0x18fe. Still
+        open: the linked storage and a growable bag (the bag expansion item is refused).
       - [x] **Merchant shop -- buy AND sell.** Talk -> Buy opens the authored store window
         (`ifstore`) with the NPC's real goods, tabs, real prices, quantity buying, and selling
         from the bag -- rounds 165-167 / releases v0.1.134-138. Per-NPC goods come from the real

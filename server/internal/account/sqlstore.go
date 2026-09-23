@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 	block_reason  TEXT NOT NULL DEFAULT ''
 );
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS storage_gold BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS chest_size INTEGER NOT NULL DEFAULT 0;
 `
 
 // SQLStore is a Store and Registerer backed by PostgreSQL (via the pgx
@@ -163,4 +164,45 @@ func (s *SQLStore) DeductStorageGold(ctx context.Context, accountID int64, amoun
 		return ErrInsufficientStorageGold
 	}
 	return nil
+}
+
+// ChestSize implements ChestSizeStore. The column is the game's
+// `_ChestInfo.ChestSize`; 0 means no size was ever stored.
+func (s *SQLStore) ChestSize(ctx context.Context, accountID int64) (int, error) {
+	var size int
+	err := s.db.QueryRowContext(ctx, `SELECT chest_size FROM accounts WHERE id = $1`, accountID).Scan(&size)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNoSuchAccount
+	}
+	if err != nil {
+		return 0, fmt.Errorf("account: reading chest size: %w", err)
+	}
+	return size, nil
+}
+
+// ExpandChest implements ChestSizeStore. The ceiling check is in the statement
+// itself, so two expansions cannot both pass it.
+func (s *SQLStore) ExpandChest(ctx context.Context, accountID int64, base, amount, ceiling int) (int, error) {
+	if amount <= 0 {
+		return 0, errors.New("account: chest expansion must be positive")
+	}
+	var size int
+	err := s.db.QueryRowContext(ctx,
+		`UPDATE accounts SET chest_size = GREATEST(chest_size, $2) + $3
+		 WHERE id = $1 AND GREATEST(chest_size, $2) + $3 <= $4
+		 RETURNING chest_size`, accountID, base, amount, ceiling).Scan(&size)
+	if errors.Is(err, sql.ErrNoRows) {
+		var exists bool
+		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM accounts WHERE id = $1)`, accountID).Scan(&exists); err != nil {
+			return 0, fmt.Errorf("account: checking account after a refused expansion: %w", err)
+		}
+		if !exists {
+			return 0, ErrNoSuchAccount
+		}
+		return 0, ErrChestFull
+	}
+	if err != nil {
+		return 0, fmt.Errorf("account: expanding chest: %w", err)
+	}
+	return size, nil
 }

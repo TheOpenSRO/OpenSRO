@@ -241,3 +241,112 @@ func TestMoveEmptyAndNonPositive(t *testing.T) {
 		t.Fatalf("deposit of 0: got %v, want ErrNothingToMove", err)
 	}
 }
+
+// expandable wires the fixture the way cmd/server does since round 498: the
+// warehouse store bounded by each account's own size, the service growing it.
+func expandable(f *fixture) *fixture {
+	wh := inventory.NewMemStore(generousStacks{})
+	wh.SetCapacity(DefaultCapacity)
+	wh.SetCapacityFunc(CapacityOf(f.accounts))
+	f.svc.Warehouse = wh
+	f.svc.ChestSizes = f.accounts
+	return f
+}
+
+// The warehouse size is the ACCOUNT's (`_ChestInfo.ChestSize`, loaded by
+// UserJID) and the expansion item grows it (round 498): Aria's expansion gives
+// Bram the same 80 slots and the container really admits slot 50. The kind-3
+// ExpandInventory bound (0x4e194d `cmp ecx,0xd2 ; jle`) lets it reach 200 in
+// 30-slot steps from the default 50 and refuses the next with 0x18fe.
+func TestExpandIsPerAccountAndCapped(t *testing.T) {
+	ctx := context.Background()
+	f := expandable(newFixture(t))
+	aid := f.account.ID
+
+	capacityOf := func(c *character.Character) int {
+		t.Helper()
+		n, err := f.svc.Capacity(ctx, c.ID)
+		if err != nil {
+			t.Fatalf("Capacity(%s): %v", c.Name, err)
+		}
+		return n
+	}
+	if a, b := capacityOf(f.aria), capacityOf(f.bram); a != DefaultCapacity || b != DefaultCapacity {
+		t.Fatalf("fresh account: Aria sees %d, Bram %d, want %d both", a, b, DefaultCapacity)
+	}
+
+	// Fill all 50 slots with distinct items; the 51st deposit has nowhere to go.
+	for i := 0; i < DefaultCapacity; i++ {
+		if err := f.svc.Warehouse.AddItem(ctx, aid, int64(1000+i), 1); err != nil {
+			t.Fatalf("filling slot %d: %v", i, err)
+		}
+	}
+	const extra = int64(100)
+	if err := f.svc.Bag.AddItem(ctx, f.bram.ID, extra, 1); err != nil {
+		t.Fatalf("seeding Bram's bag: %v", err)
+	}
+	if err := f.svc.Deposit(ctx, f.bram.ID, slotOf(t, f.svc.Bag, f.bram.ID, extra).Index, 1); !errors.Is(err, inventory.ErrNoRoom) {
+		t.Fatalf("the 51st deposit into a 50-slot warehouse: got %v, want ErrNoRoom", err)
+	}
+
+	// Aria uses an expansion; the account's warehouse is 80 for both.
+	n, err := f.svc.Expand(ctx, f.aria.ID, inventory.WarehouseAdditionSlots)
+	if err != nil || n != 80 {
+		t.Fatalf("Expand = %d, %v; want 80", n, err)
+	}
+	if a, b := capacityOf(f.aria), capacityOf(f.bram); a != 80 || b != 80 {
+		t.Fatalf("after one expansion Aria sees %d, Bram %d, want 80 both", a, b)
+	}
+	if err := f.svc.Deposit(ctx, f.bram.ID, slotOf(t, f.svc.Bag, f.bram.ID, extra).Index, 1); err != nil {
+		t.Fatalf("Bram's deposit after the expansion: %v", err)
+	}
+	if got := slotOf(t, f.svc.Warehouse, aid, extra).Index; got != 50 {
+		t.Fatalf("Bram's deposit landed in slot %d, want 50 (the first new slot)", got)
+	}
+	if err := f.svc.Withdraw(ctx, f.aria.ID, 50, 1); err != nil {
+		t.Fatalf("withdrawing from slot 50: %v", err)
+	}
+
+	for _, want := range []int{110, 140, 170, 200} {
+		if n, err := f.svc.Expand(ctx, f.aria.ID, inventory.WarehouseAdditionSlots); err != nil || n != want {
+			t.Fatalf("Expand = %d, %v; want %d", n, err, want)
+		}
+	}
+	if _, err := f.svc.Expand(ctx, f.bram.ID, inventory.WarehouseAdditionSlots); !errors.Is(err, ErrExpansionRefused) {
+		t.Fatalf("Expand from 200: got %v, want ErrExpansionRefused (230 > 210)", err)
+	}
+	if got := capacityOf(f.bram); got != 200 {
+		t.Fatalf("a refused expansion left %d, want 200", got)
+	}
+
+	// The bound is `size + amount < 0xd3`: 180 + 30 = 210 passes, 181 + 30 fails.
+	for _, tc := range []struct {
+		seeded int
+		want   error
+	}{{180, nil}, {181, ErrExpansionRefused}} {
+		g := expandable(newFixture(t))
+		if n, err := g.accounts.ExpandChest(ctx, g.account.ID, tc.seeded-30, 30, MaxCapacity); err != nil || n != tc.seeded {
+			t.Fatalf("seeding %d: %d, %v", tc.seeded, n, err)
+		}
+		n, err := g.svc.Expand(ctx, g.aria.ID, inventory.WarehouseAdditionSlots)
+		if !errors.Is(err, tc.want) {
+			t.Fatalf("Expand from %d: got %d, %v; want %v", tc.seeded, n, err, tc.want)
+		}
+		if tc.want == nil && n != MaxCapacity {
+			t.Fatalf("Expand from %d = %d, want %d", tc.seeded, n, MaxCapacity)
+		}
+	}
+}
+
+// Without a size store the warehouse keeps the container's own size and
+// cannot grow.
+func TestExpandWithoutChestSizesIsRefused(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	if n, err := f.svc.Capacity(ctx, f.aria.ID); err != nil || n != f.svc.Warehouse.Capacity() {
+		t.Fatalf("Capacity = %d, %v; want the container's %d", n, err, f.svc.Warehouse.Capacity())
+	}
+	if _, err := f.svc.Expand(ctx, f.aria.ID, inventory.WarehouseAdditionSlots); err == nil {
+		t.Fatal("Expand without a size store succeeded")
+	}
+}

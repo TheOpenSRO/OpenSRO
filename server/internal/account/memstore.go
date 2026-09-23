@@ -132,3 +132,34 @@ func (m *MemStore) DeductStorageGold(_ context.Context, accountID int64, amount 
 	acc.StorageGold -= amount
 	return nil
 }
+
+// ChestSize implements ChestSizeStore.
+func (m *MemStore) ChestSize(_ context.Context, accountID int64) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	acc := m.byID(accountID)
+	if acc == nil {
+		return 0, ErrNoSuchAccount
+	}
+	return acc.ChestSize, nil
+}
+
+// ExpandChest implements ChestSizeStore, under the store's lock so two
+// expansions cannot both pass the ceiling.
+func (m *MemStore) ExpandChest(_ context.Context, accountID int64, base, amount, ceiling int) (int, error) {
+	if amount <= 0 {
+		return 0, errors.New("account: chest expansion must be positive")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	acc := m.byID(accountID)
+	if acc == nil {
+		return 0, ErrNoSuchAccount
+	}
+	next := max(acc.ChestSize, base) + amount
+	if next > ceiling {
+		return 0, ErrChestFull
+	}
+	acc.ChestSize = next
+	return next, nil
+}

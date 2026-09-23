@@ -214,11 +214,17 @@ func handleStorageList(ctx context.Context, sess *gateway.Session, p *proto.Pack
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpStorageListResult, Data: (&InventoryListResult{Error: "list failed"}).Encode()})
 	}
+	// The account's own size (round 498): an expansion item grows it past
+	// storage.DefaultCapacity.
+	capacity, err := svc.Capacity(ctx, characterID)
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpStorageListResult, Data: (&InventoryListResult{Error: "list failed"}).Encode()})
+	}
 	snaps := make([]InventorySlotSnapshot, len(slots))
 	for i, sl := range slots {
 		snaps[i] = InventorySlotSnapshot{Slot: sl.Index, ItemID: sl.ItemID, Quantity: sl.Quantity}
 	}
-	result := &StorageListResult{InventoryListResult: InventoryListResult{Slots: snaps}, Capacity: svc.Capacity()}
+	result := &StorageListResult{InventoryListResult: InventoryListResult{Slots: snaps}, Capacity: capacity}
 	return sess.Send(&proto.Packet{Opcode: OpStorageListResult, Data: result.Encode()})
 }
 

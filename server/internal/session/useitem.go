@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/srrevamp/server/internal/storage"
 )
 
 // Using a consumable. Until now potions dropped, stacked in the bag and did
@@ -323,12 +325,15 @@ func potionRestore(param1, param2, param3, param4, level, str, intel, maxHP, max
 // bag is full of equipment and quest items that have no use yet, and quietly
 // destroying one would be the worst possible answer. That includes every
 // CanUse item that is not a recovery kind (round 491): a return scroll, a cure
-// pill, a pet potion, a berserk potion, a resurrection scroll, a storage
-// expansion. The engine USES those -- each has its own DoJob branch -- and
-// srrevamp models none of their effects, so it refuses them with the
-// restores-nothing reason and keeps the item. That refusal is srrevamp's
-// DISCLOSED GAP, not an engine refusal.
-func UseItemHandler(chars character.Store, inv inventory.Store, items combat.ItemLookup, mp *mana.Tracker) gateway.Handler {
+// pill, a pet potion, a berserk potion, a resurrection scroll. The engine USES
+// those -- each has its own DoJob branch -- and srrevamp models none of their
+// effects, so it refuses them with the restores-nothing reason and keeps the
+// item. That refusal is srrevamp's DISCLOSED GAP, not an engine refusal.
+//
+// The one non-recovery kind srrevamp does model is the container expansion
+// (round 498, useExpansion): the warehouse item grows the account's
+// warehouse through warehouse (nil refuses it), and the bag item is refused.
+func UseItemHandler(chars character.Store, inv inventory.Store, items combat.ItemLookup, mp *mana.Tracker, warehouse *storage.Service) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpUseItem {
 			return nil
@@ -354,9 +359,10 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		}
 		var itemID int64 = -1
 		var have int
+		var held inventory.Slot
 		for _, sl := range slots {
 			if sl.Index == int(req.InventorySlot) {
-				itemID, have = sl.ItemID, sl.Quantity
+				itemID, have, held = sl.ItemID, sl.Quantity, sl
 				break
 			}
 		}
@@ -377,6 +383,11 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// cooldown are consulted.
 		if !it.CanUse {
 			return fail("that item cannot be used")
+		}
+		// A container expansion (round 498): its Param block is a slot count
+		// and a container, never a restore amount.
+		if container, n, ok := it.ContainerExpansion(); ok {
+			return useExpansion(ctx, sess, fail, inv, warehouse, characterID, held, have, container, n)
 		}
 		// Only a recovery kind's Param block is a restore amount (round 491,
 		// restoresUserPool); any other kind's effect is not modelled.
@@ -472,4 +483,84 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 			Remaining: int32(remaining),
 		}).Encode()})
 	}
+}
+
+// errStorageExpansionRefused is the expansion item's refusal: the engine's
+// 0x18fe UIIT_STT_STORAGE_EXPANSION_USE_ERORR (docs/protocol/error_codes.md),
+// which CGObjPC::ExpandInventory (0x004e1910) returns for either container
+// when the amount does not fit (0x4e1957 `mov ax,0x18fe`) and
+// CGItemExpendable::UseByKind (0x0049c2b0) case 0x11 hands back as the use's
+// result. The item is kept: CGItemExpendable::DoJob (0x0049aca0) returns any
+// result but 1 before it decrements the count (LAB_0049af45).
+const errStorageExpansionRefused = "the storage cannot be expanded that far"
+
+// bagExpansionAllowed is ExpandInventory's kind-0 test (0x4e195f..0x4e1989):
+// `count <= cap - size` (0x4e197e `sub eax,ecx ; cmp eax,esi ; jl` refused)
+// and `size + count <= 0x63` (0x4e1986 `cmp ecx,0x63 ; jg` refused). The
+// engine's size counts the 13 equipment slots as well as the backpack
+// (inventory.go, "HOW TO READ THE BOUNDS BELOW"), so srrevamp's is
+// SlotsPerCharacter + MaxEquipSlots = 63. cap is MaxSlotsDefault, 77: the
+// quest flag that raises it to 99 (GObjPC::HasInventoryExpansionQuest,
+// inventory.ExpansionQuestCodes) is not modelled -- srrevamp keeps no quest
+// status 8. With srrevamp's fixed bag the 32-slot item never fits (32 > 14).
+func bagExpansionAllowed(slots int) bool {
+	size := inventory.SlotsPerCharacter + equipment.MaxEquipSlots
+	return slots <= inventory.MaxSlotsDefault-size && size+slots < inventory.SlotsHardLimit
+}
+
+// useExpansion applies a container expansion item -- CGItemExpendable::UseByKind
+// (0x0049c2b0) case 0x11 (round 498): ExpandInventory with the row's Param1
+// byte, container kind 0 (the bag) for Param2 0 and 3 (the warehouse) for 1.
+//
+//   - The warehouse (ITEM_MALL_WAREHOUSE_ADDITION, +30) grows the ACCOUNT's
+//     warehouse through storage.Service.Expand, refused with 0x18fe once the
+//     size would pass 210. The size is checked first so a refusal keeps the
+//     item untouched; the item is then taken and the size grown atomically,
+//     and a refusal there (a second use racing this one) gives it back.
+//   - The bag (ITEM_MALL_INVENTORY_ADDITION, +32) runs the engine's kind-0
+//     test, which srrevamp's fixed 63-slot array always fails; the item is
+//     refused and kept. A smaller amount that passed would still be refused:
+//     srrevamp's bag cannot grow (inventory.SlotsPerCharacter) -- a DISCLOSED
+//     GAP.
+//
+// Not modelled: UseByKind's opening refusal 0x186b
+// UIIT_MSG_STRGERR_CANT_OPERATE_REQUESTED_JOB_DURING_LOGOUT (the byte at
+// [owner+0x30]+0x11 not 1), since srrevamp has no logout state here. The two
+// rows carry no COOLTIME descriptor (their Param3..20 read -1 / "xxx"), so
+// there is no reuse delay to consult.
+//
+// The reply carries no HP/MP: MaxHP 0 tells the client to leave its bars
+// alone (World3D._on_use_item_result), and Remaining is the stack after the
+// use.
+func useExpansion(ctx context.Context, sess *gateway.Session, fail func(string) error, inv inventory.Store,
+	warehouse *storage.Service, characterID int64, held inventory.Slot, have, container, slots int) error {
+	if container == refdata.ExpansionContainerBag {
+		if !bagExpansionAllowed(slots) {
+			return fail(errStorageExpansionRefused)
+		}
+		return fail("the bag cannot be expanded")
+	}
+	if warehouse == nil {
+		return fail("the storage cannot be expanded here")
+	}
+	cur, err := warehouse.Capacity(ctx, characterID)
+	if err != nil {
+		return fail("lookup failed")
+	}
+	if cur+slots > storage.MaxCapacity {
+		return fail(errStorageExpansionRefused)
+	}
+	if err := inv.RemoveItem(ctx, characterID, held.Index, 1); err != nil {
+		return fail("using failed")
+	}
+	if _, err := warehouse.Expand(ctx, characterID, slots); err != nil {
+		if backErr := inv.AddItemInstance(ctx, characterID, held.ItemID, 1, held.Instance()); backErr != nil {
+			return fail("using failed, and the item could not be returned")
+		}
+		if errors.Is(err, storage.ErrExpansionRefused) {
+			return fail(errStorageExpansionRefused)
+		}
+		return fail("using failed")
+	}
+	return sess.Send(&proto.Packet{Opcode: OpUseItemResult, Data: (&UseItemResult{Remaining: int32(have - 1)}).Encode()})
 }

@@ -34,6 +34,10 @@ var ErrInsufficientStorageGold = errors.New("account: insufficient warehouse gol
 // ErrNoSuchAccount is returned for an account id that does not exist.
 var ErrNoSuchAccount = errors.New("account: no such account")
 
+// ErrChestFull is returned by ExpandChest when the warehouse would grow past
+// the ceiling it was given. The size is left as it was.
+var ErrChestFull = errors.New("account: the warehouse cannot grow that far")
+
 // Account is one registered player account.
 type Account struct {
 	ID           int64
@@ -47,6 +51,12 @@ type Account struct {
 	// (AQ_StorageUpdater::MoveItemWithGold, 0x45af70), the user's balance
 	// moving opposite the character's. See docs/protocol/server_sql.md.
 	StorageGold int64
+	// ChestSize is the warehouse's slot count, the game's per-user
+	// `_ChestInfo.ChestSize` (binder DB_Bind__ChestInfo 0x8586e0, the column
+	// at record offset 0x1c -- docs/protocol/db_bind_offsets.tsv). Zero means
+	// no size was ever stored and the warehouse is its default size
+	// (storage.DefaultCapacity); only an expansion item writes it (round 498).
+	ChestSize int
 }
 
 // HashPassword hashes a plaintext password for storage. Never store
@@ -84,6 +94,21 @@ type StorageGoldStore interface {
 	// DeductStorageGold debits amount (must be positive) from accountID's
 	// warehouse gold. Returns ErrInsufficientStorageGold if it holds less.
 	DeductStorageGold(ctx context.Context, accountID int64, amount int64) error
+}
+
+// ChestSizeStore is the warehouse's size, kept per ACCOUNT because the game
+// keeps it on the user (`_ChestInfo.ChestSize`, loaded by UserJID; see
+// docs/protocol/server_sql.md). Every character on the account opens the same
+// warehouse at the same size.
+type ChestSizeStore interface {
+	// ChestSize returns accountID's stored warehouse size, 0 when none was
+	// ever stored.
+	ChestSize(ctx context.Context, accountID int64) (int, error)
+	// ExpandChest grows accountID's warehouse by amount (must be positive)
+	// from max(stored size, base) and returns the new size, as one atomic
+	// step. It returns ErrChestFull, and changes nothing, when the new size
+	// would exceed ceiling.
+	ExpandChest(ctx context.Context, accountID int64, base, amount, ceiling int) (int, error)
 }
 
 // Registerer is anything that can create new accounts. Kept separate from

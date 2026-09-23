@@ -206,7 +206,8 @@ type Item struct {
 	// They are the Param1..4 columns of EVERY row, and restore amounts only
 	// on the recovery kinds (TypeID 3/3/1 with TypeID4 outside 4..10, round
 	// 491): on most other rows they mean something else -- a storage
-	// expansion's Param1 is its slot increment (round 270), a return
+	// expansion's Param1 is its slot increment and Param2 its container
+	// (round 270; read as such by ContainerExpansion, round 498), a return
 	// scroll's reads 30000. The pet potions (3/3/1/4, /5, /7) are the
 	// exception: their Param1..4 ARE HP/MP amounts, read by the same
 	// FUN_0049aa70, but slot 327 applies them to the pet, not the user.
@@ -416,4 +417,64 @@ type Item struct {
 // alchemy.Inputs.Tiers takes.
 func (it *Item) ReinforceRates() [3]uint32 {
 	return [3]uint32{it.ReinforceRate1, it.ReinforceRate2, it.ReinforceRate3}
+}
+
+// The container an expansion item grows, as its Param2 (itemdata column 120,
+// RestoreHPPct in this struct) names it. CGItemExpendable::UseByKind
+// (0x0049c2b0) case 0x11 reads the int at ref+0x2c0: 0 passes kind 0 (the
+// bag) to CGObjPC::ExpandInventory (0x004e1910, vtable +0x2b4, slot 173), 1
+// passes kind 3 (the warehouse), and any other value answers 3 without
+// calling it (the `goto LAB_0049c9b2`). The rows' own Desc128 beside the
+// column reads "0 = ..., 1 = ..." (round 270).
+const (
+	ExpansionContainerBag       = 0
+	ExpansionContainerWarehouse = 1
+)
+
+// The kind UseByKind's container-expansion case serves (round 498):
+//
+//   - TypeID1 3 / TypeID2 3 is the CGItemExpendable class (the object factory
+//     FUN_00489de0; round 491);
+//   - TypeID3 13: CGItemExpendable::DoJob (0x0049aca0) case 0xd sends every
+//     TypeID4 but 12 (`(TID & 0xf800) == 0x6000` -> vtable +0x520) through
+//     vtable +0x4d4, slot 309, whose entry in the expendable vtable (0xaeb788)
+//     is 0x0049c2b0, UseByKind;
+//   - TypeID4 17: UseByKind switches on `TID >> 0xb` -- TypeID4 -- and its
+//     case 0x11 is the expansion.
+//
+// Two rows of the combined itemdata (21,561) carry this kind:
+// ITEM_MALL_INVENTORY_ADDITION (24365, Param1 32, Param2 0) and
+// ITEM_MALL_WAREHOUSE_ADDITION (24366, Param1 30, Param2 1), read on the RE
+// box and not committed.
+const (
+	expansionTypeID3 = 13
+	expansionTypeID4 = 0x11
+)
+
+// ContainerExpansion reports whether using this item grows a container, and
+// which one by how many slots -- CGItemExpendable::UseByKind (0x0049c2b0) case
+// 0x11 (round 498). The amount is the row's Param1 taken as a BYTE (`*(undefined1
+// *)(ref + 0x2a0)`, which ExpandInventory reads with `movzx esi,BYTE PTR
+// [esp+0x10]` at 0x4e1943/0x4e1979): itemdata column 118, which the exporter
+// ships as RestoreHP. The container is Param2 at ref+0x2c0, column 120,
+// shipped as RestoreHPPct (ReinforceRate1 carries the same column but is
+// absent from 52-field exports).
+//
+// ok is false for any other kind, for a Param2 that is neither container
+// (UseByKind's refusal 3), and for a zero amount -- which the engine would
+// pass through as a use that grows nothing; srrevamp refuses it rather than
+// eat the item (no real row has one).
+func (it *Item) ContainerExpansion() (container, slots int, ok bool) {
+	if it.TypeID1 != 3 || it.TypeID2 != 3 || it.TypeID3 != expansionTypeID3 || it.TypeID4 != expansionTypeID4 {
+		return 0, 0, false
+	}
+	container = it.RestoreHPPct
+	if container != ExpansionContainerBag && container != ExpansionContainerWarehouse {
+		return 0, 0, false
+	}
+	slots = int(uint8(it.RestoreHP))
+	if slots <= 0 {
+		return 0, 0, false
+	}
+	return container, slots, true
 }

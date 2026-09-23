@@ -482,6 +482,7 @@ func main() {
 		// The warehouse gold, kept per account as the game keeps it
 		// (accounts.storage_gold; see internal/storage).
 		storageGold account.StorageGoldStore
+		chestSizes  account.ChestSizeStore
 		eq          equipment.Store
 		skills      skill.Store
 		guilds      guild.Store
@@ -542,6 +543,7 @@ func main() {
 		memAccounts := account.NewMemStore()
 		accounts, registerer = memAccounts, memAccounts
 		storageGold = memAccounts
+		chestSizes = memAccounts
 		chars = character.NewMemStore()
 		refItems = memRef
 		dropSrc = memRef
@@ -549,6 +551,8 @@ func main() {
 		memWarehouse := inventory.NewMemStore(memRef) // a second, independent container, keyed by account id
 		memWarehouse.SetDurabilityLookup(memRef)
 		memWarehouse.SetCapacity(storage.DefaultCapacity)
+		// Each account's own size, grown by the expansion item (round 498).
+		memWarehouse.SetCapacityFunc(storage.CapacityOf(memAccounts))
 		warehouse = memWarehouse
 		eq = equipment.NewMemStore(memInv)
 		skills = skill.NewMemStore()
@@ -620,7 +624,10 @@ func main() {
 		defer sqlWarehouse.Close()
 		sqlWarehouse.SetDurabilityLookup(sqlRef)
 		sqlWarehouse.SetCapacity(storage.DefaultCapacity)
+		// Each account's own size, grown by the expansion item (round 498).
+		sqlWarehouse.SetCapacityFunc(storage.CapacityOf(sqlAccounts))
 		storageGold = sqlAccounts
+		chestSizes = sqlAccounts
 		if moved, err := storage.MigrateToAccounts(ctx, sqlWarehouse.DB(), logger); err != nil {
 			logger.Error("moving the warehouse to accounts", "error", err)
 			os.Exit(1)
@@ -680,7 +687,7 @@ func main() {
 	}
 
 	shopSvc := &shop.Service{Gold: chars, Inv: inv, Items: refItems}
-	storageSvc := &storage.Service{Bag: inv, Warehouse: warehouse, Gold: chars, Accounts: storageGold}
+	storageSvc := &storage.Service{Bag: inv, Warehouse: warehouse, Gold: chars, Accounts: storageGold, ChestSizes: chestSizes}
 	zerkTracker := berserk.NewTracker()
 	manaTracker := mana.NewTracker()
 
@@ -849,7 +856,7 @@ func main() {
 		session.ShopHandler(chars, shopSvc),
 		session.RepairHandler(chars, eq, refItems),
 		session.StorageHandler(chars, storageSvc),
-		session.UseItemHandler(chars, inv, refItems, manaTracker),
+		session.UseItemHandler(chars, inv, refItems, manaTracker, storageSvc),
 		session.CombatHandlerWithDrops(chars, eq, refItems, hub, monsters, quests, inv, skills, zerkTracker, manaTracker, parties, ground, dropSrc),
 		session.GroundItemHandler(chars, hub, ground, inv, parties),
 		session.LearnSkillHandler(chars, skills, refItems),

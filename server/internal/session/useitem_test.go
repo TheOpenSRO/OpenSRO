@@ -13,6 +13,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/srrevamp/server/internal/storage"
 )
 
 // The wire format must survive a round trip, and an older/empty tail must not
@@ -95,7 +96,7 @@ func TestUseItemRefusesAnItemWhoseCanUseIsClear(t *testing.T) {
 		return -1, 0
 	}
 
-	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, nil))
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, nil, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -167,7 +168,8 @@ func TestUseItemRefusesAnItemWhoseCanUseIsClear(t *testing.T) {
 // DoJob sends TypeID4 4 to the pet, slot 327) and ITEM_EVENT_HWAN_POTION
 // (24993, 3/3/1/8, 5 -- slot 308 sends TypeID4 8 to AddHwanCount). Each is
 // refused, keeps its stack and restores nothing. HP_POTION_01 (4, 3/3/1/1) and
-// MP_POTION_01 (11, 3/3/1/2) still work.
+// MP_POTION_01 (11, 3/3/1/2) still work. Since round 498 the bag expansion is
+// refused by its own path, with the engine's 0x18fe (useExpansion).
 func TestUseItemRestoresOnlyForRecoveryKinds(t *testing.T) {
 	ctx := context.Background()
 	accounts := account.NewMemStore()
@@ -250,7 +252,7 @@ func TestUseItemRestoresOnlyForRecoveryKinds(t *testing.T) {
 		return -1, 0
 	}
 
-	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mp))
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mp, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -287,17 +289,18 @@ func TestUseItemRestoresOnlyForRecoveryKinds(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		id   int64
+		want string
 	}{
-		{"return scroll 3/3/3/1", returnScroll},
-		{"bag expansion 3/3/13/17", bagExpansion},
-		{"pet HP potion 3/3/1/4", petHPPotion},
-		{"berserk potion 3/3/1/8", berserkPotion},
+		{"return scroll 3/3/3/1", returnScroll, "that cannot be used"},
+		{"bag expansion 3/3/13/17", bagExpansion, errStorageExpansionRefused},
+		{"pet HP potion 3/3/1/4", petHPPotion, "that cannot be used"},
+		{"berserk potion 3/3/1/8", berserkPotion, "that cannot be used"},
 	} {
 		reopenRoom()
 		before, _ := chars.GetByID(ctx, c.ID)
 		mpBefore := mp.Current(c.ID, maxMP)
-		if res := use(tc.id); res.Error != "that cannot be used" {
-			t.Errorf("%s: got %+v, want the refusal %q", tc.name, res, "that cannot be used")
+		if res := use(tc.id); res.Error != tc.want {
+			t.Errorf("%s: got %+v, want the refusal %q", tc.name, res, tc.want)
 		}
 		if _, qty := slotOf(tc.id); qty != stock[tc.id] {
 			t.Errorf("%s: the refused item was consumed: %d left, want %d", tc.name, qty, stock[tc.id])
@@ -449,7 +452,7 @@ func TestUseItemScalesPotionByLevelAndStr(t *testing.T) {
 		t.Fatalf("list: %v %+v", err, slots)
 	}
 
-	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mana.NewTracker()))
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mana.NewTracker(), nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -482,5 +485,193 @@ func TestUseItemScalesPotionByLevelAndStr(t *testing.T) {
 	}
 	if after, _ := chars.GetByID(ctx, c.ID); after.HP != 353 {
 		t.Errorf("stored HP = %d, want 353", after.HP)
+	}
+}
+
+// The container expansion items (round 498), CGItemExpendable::UseByKind
+// (0x0049c2b0) case 0x11. The kinds and Param blocks are the two real rows'
+// (allitems.txt on the RE box): ITEM_MALL_WAREHOUSE_ADDITION (24366, 3/3/13/17,
+// Param1 30, Param2 1 -- the warehouse) and ITEM_MALL_INVENTORY_ADDITION
+// (24365, 3/3/13/17, 32 / 0 -- the bag), both MaxStack 1 and CanUse 1.
+//
+//   - The warehouse item grows the account's warehouse from 50 by 30 a use,
+//     heals nothing and is consumed; OpStorageList then reports the new size.
+//   - At 200 the next use is refused with 0x18fe (200 + 30 is not below
+//     0xd3, ExpandInventory 0x4e194d) and the item is kept.
+//   - The bag item fails ExpandInventory's kind-0 test against srrevamp's
+//     fixed 63-slot array (32 > 77 - 63) and is refused with 0x18fe, kept.
+//
+// Before this round both were refused as "that cannot be used" (round 491),
+// and before round 491 both healed the user by their Param1.
+func TestUseWarehouseExpansionItem(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	acc, err := accounts.Add("alice", "hunter2")
+	if err != nil {
+		t.Fatalf("add account: %v", err)
+	}
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, acc.ID, "Aria")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Room to heal, so a use that healed would show.
+	hurt, _, err := chars.ApplyDamage(ctx, c.ID, 50)
+	if err != nil {
+		t.Fatalf("damage: %v", err)
+	}
+
+	const (
+		warehouseAddition = 24366
+		bagAddition       = 24365
+	)
+	items := refdata.NewMemStore()
+	if err := items.ImportItems(ctx, []refdata.Item{
+		{ID: warehouseAddition, MaxStack: 1, TypeID1: 3, TypeID2: 3, TypeID3: 13, TypeID4: 17, RestoreHP: 30, RestoreHPPct: 1, CanUse: true},
+		{ID: bagAddition, MaxStack: 1, TypeID1: 3, TypeID2: 3, TypeID3: 13, TypeID4: 17, RestoreHP: 32, RestoreHPPct: 0, CanUse: true},
+	}); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	inv := inventory.NewMemStore(items)
+	// Six warehouse items: five to reach 200, one to be refused there.
+	if err := inv.AddItem(ctx, c.ID, warehouseAddition, 6); err != nil {
+		t.Fatalf("add warehouse items: %v", err)
+	}
+	if err := inv.AddItem(ctx, c.ID, bagAddition, 1); err != nil {
+		t.Fatalf("add bag item: %v", err)
+	}
+	warehouse := inventory.NewMemStore(items)
+	warehouse.SetCapacity(storage.DefaultCapacity)
+	warehouse.SetCapacityFunc(storage.CapacityOf(accounts))
+	svc := &storage.Service{Bag: inv, Warehouse: warehouse, Gold: chars, Accounts: accounts, ChestSizes: accounts}
+
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mana.NewTracker(), svc), StorageHandler(chars, svc))
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+	send := func(op uint16, data []byte) *proto.Packet {
+		t.Helper()
+		if err := proto.Write(conn, &proto.Packet{Opcode: op, Data: data}, nil, nil); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		return resp
+	}
+	if lr, err := DecodeLoginResult(send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
+		t.Fatalf("login: %v %+v", err, lr)
+	}
+	count := func(id int64) (slot, n int) {
+		t.Helper()
+		slots, err := inv.List(ctx, c.ID)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		slot = -1
+		for _, sl := range slots {
+			if sl.ItemID == id {
+				if slot < 0 {
+					slot = sl.Index
+				}
+				n += sl.Quantity
+			}
+		}
+		return slot, n
+	}
+	use := func(id int64) *UseItemResult {
+		t.Helper()
+		slot, _ := count(id)
+		if slot < 0 {
+			t.Fatalf("item %d is not in the bag", id)
+		}
+		res, err := DecodeUseItemResult(send(OpUseItem, (&UseItemRequest{CharacterName: "Aria", InventorySlot: int32(slot)}).Encode()).Data)
+		if err != nil {
+			t.Fatalf("decode use result: %v", err)
+		}
+		return res
+	}
+	capacity := func() int {
+		t.Helper()
+		res, err := DecodeStorageListResult(send(OpStorageList, (&CharacterNameRequest{Name: "Aria"}).Encode()).Data)
+		if err != nil || res.Error != "" {
+			t.Fatalf("storage list: %v %+v", err, res)
+		}
+		return res.Capacity
+	}
+	hpNow := func() int {
+		t.Helper()
+		cur, err := chars.GetByID(ctx, c.ID)
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		return cur.HP
+	}
+
+	if got := capacity(); got != storage.DefaultCapacity {
+		t.Fatalf("a fresh account's warehouse is %d, want %d", got, storage.DefaultCapacity)
+	}
+
+	res := use(warehouseAddition)
+	if res.Error != "" || res.RestoredHP != 0 || res.RestoredMP != 0 || res.Remaining != 0 {
+		t.Fatalf("the warehouse item: got %+v, want success, nothing restored, 0 left in its slot", res)
+	}
+	if got := hpNow(); got != hurt {
+		t.Errorf("the warehouse item healed: HP %d -> %d", hurt, got)
+	}
+	if _, n := count(warehouseAddition); n != 5 {
+		t.Errorf("%d warehouse items left, want 5 (one consumed)", n)
+	}
+	if got := capacity(); got != 80 {
+		t.Fatalf("after one warehouse item the warehouse is %d, want 80", got)
+	}
+
+	for _, want := range []int{110, 140, 170, 200} {
+		if res := use(warehouseAddition); res.Error != "" {
+			t.Fatalf("expanding to %d: refused %q", want, res.Error)
+		}
+		if got := capacity(); got != want {
+			t.Fatalf("warehouse is %d, want %d", got, want)
+		}
+	}
+
+	// At 200, +30 would be 230: refused with 0x18fe, the item kept.
+	if res := use(warehouseAddition); res.Error != errStorageExpansionRefused {
+		t.Errorf("the warehouse item at 200: got %+v, want the 0x18fe refusal %q", res, errStorageExpansionRefused)
+	}
+	if _, n := count(warehouseAddition); n != 1 {
+		t.Errorf("the refused warehouse item was consumed: %d left, want 1", n)
+	}
+	if got := capacity(); got != 200 {
+		t.Errorf("after the refusal the warehouse is %d, want 200", got)
+	}
+
+	// The bag item: refused with 0x18fe, kept, heals nothing.
+	if res := use(bagAddition); res.Error != errStorageExpansionRefused {
+		t.Errorf("the bag item: got %+v, want the 0x18fe refusal %q", res, errStorageExpansionRefused)
+	}
+	if _, n := count(bagAddition); n != 1 {
+		t.Errorf("the refused bag item was consumed: %d left, want 1", n)
+	}
+	if got := hpNow(); got != hurt {
+		t.Errorf("an expansion item healed: HP %d -> %d", hurt, got)
+	}
+}
+
+// ExpandInventory's kind-0 test (0x4e195f..0x4e1989) against srrevamp's
+// 63-slot array (50 backpack + 13 equipment) and the default cap 77: at most
+// 14 slots fit, so the real item's 32 never does.
+func TestBagExpansionAllowedFollowsExpandInventory(t *testing.T) {
+	for _, tc := range []struct {
+		slots int
+		want  bool
+	}{{inventory.InventoryAdditionSlots, false}, {14, true}, {15, false}, {1, true}} {
+		if got := bagExpansionAllowed(tc.slots); got != tc.want {
+			t.Errorf("bagExpansionAllowed(%d) = %v, want %v", tc.slots, got, tc.want)
+		}
 	}
 }

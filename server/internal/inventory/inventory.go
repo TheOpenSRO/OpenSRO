@@ -294,6 +294,13 @@ type Store interface {
 	Capacity() int
 }
 
+// CapacityFunc answers one owner's slot count, for a container whose size is
+// per owner: the warehouse's is the account's `_ChestInfo.ChestSize`, which
+// an expansion item grows (storage.CapacityOf, round 498). An answer of zero
+// or less means "the container's own Capacity()". A store given one bounds
+// every per-owner operation by it; the bag has none.
+type CapacityFunc func(ctx context.Context, owner int64) int
+
 // ExpansionQuestCodes is what raises the inventory cap from MaxSlotsDefault to
 // MaxSlotsExpanded. Read 2026-09-17 from GObjPC::FUN_004e13b0, the 1,359-byte
 // function `CGObjPC::ExpandInventory` consults, which this package had recorded
