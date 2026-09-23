@@ -37,9 +37,9 @@ In order. Each is checked off here when it ships in a release, with its round in
       window of kind 0x14 there). Typing in the name prompt no longer walks the character.
       Still open: the other guild lines -- the master's items 0x17, 0x14, 0x18 and 0x1b (a master
       keeps the "Guild" placeholder), and 0x19/0x1a, 0x1d and 0x43, which member and master both
-      get -- and honour rank, each its own backend. Also open: the real client shows a guildless
-      player no store line at a guild NPC (the same `FUN_009870e0` test gates item 1), and srrevamp
-      still shows "Buy" there. See `docs/protocol/character_state.md`, "The guild NPC's lines
+      get -- and honour rank, each its own backend. A guildless player gets no "Buy" at a guild
+      NPC, as in the real client, where the same `FUN_009870e0` test gates item 1 (round 524); a
+      member keeps it. See `docs/protocol/character_state.md`, "The guild NPC's lines
       (round 521)". Also open: the guild state behind the menu can go stale, because the server
       sends no guild broadcasts (`session/guild.go` answers only the requester). When the master
       leaves, `guild.Store.Leave` hands leadership to the longest-standing member, whose client

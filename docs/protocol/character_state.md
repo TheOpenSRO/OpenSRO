@@ -1604,18 +1604,33 @@ and the master's items 0x17, 0x14, 0x18 and 0x1b. srrevamp has no server for
 any of them, so the member's menu is one guild line where the real client's
 has four. None of this was measured on a running real client.
 
-**One known mismatch, left for its own round: "Buy" at a guild NPC.** The
-server registers id 1 beside 0xf on all seven guild patterns (`CGObjNPCNPC::Create`:
-the `NPC_CH_GENARAL_SP` ... `NPC_SD_T_AREA_GUILD2` chain meets at `0x4c6a4f`,
-which calls `+0x164` with 0xf and then with 1). With 0xf present, row 5 emits item 1 only when
-the same `FUN_009870e0` answers non-zero (`0x7009fc` `call 0x9870e0`,
-`0x700a03` `je 0x700b10` skips item 1). So a guildless player at a guild NPC
-gets no store lines in the real client. srrevamp still shows "Buy" there,
-because the player's `refshopgroup.txt` names every guild NPC as running a
+**"Buy" at a guild NPC needs a guild (round 524).** The server registers id 1
+beside 0xf on all seven guild patterns (`CGObjNPCNPC::Create`: the
+`NPC_CH_GENARAL_SP` ... `NPC_SD_T_AREA_GUILD2` chain meets at `0x4c6a4f`, which
+calls `+0x164` with 0xf and then with 1). With id 1 present, row 5 looks 0xf up
+(`0x7009c4`), and with 0xf present it asks the same `FUN_009870e0`
+(`0x7009f7` `mov ecx,0xeeebd8`, `0x7009fc` `call 0x9870e0`, `0x700a01`
+`test al,al`). On 0, `0x700a03` `je 0x700b10` skips item 1; otherwise
+`0x700a09` `jmp 0x700afe` emits it. `0x700b10` is where row 6 begins (the id 4
+lookup, `0x700b12`), so the jump skips item 1 and nothing else, and `n` is not
+advanced (`ebx` is only updated after the `0x6fcd60` call at `0x700b05`). The
+0xf-absent path (`0x7009f5` `je 0x700a0e`) never reaches `FUN_009870e0`, so
+no other store is affected. So a guildless player at a guild NPC gets no store
+lines in the real client, and the create line is numbered 1. The meaning of
+`FUN_009870e0` is the same inference as above (no writer read).
+
+The player's `refshopgroup.txt` names every guild NPC as running a
 `GROUP_STORE_*_GUILD` store (`/var/tmp/tables/refshopgroup.txt`, 7 rows, for
-example `GROUP_STORE_CH_GUILD` / `NPC_CH_GENARAL_SP`). At `NPC_CH_GENARAL_SP` a
-guildless player therefore sees "1. Buy", "2. Create a new guild", "3. End
-conversation." where the real client would start at the create line.
+example `GROUP_STORE_CH_GUILD` / `NPC_CH_GENARAL_SP`), so until round 524
+srrevamp showed "1. Buy", "2. Create a new guild", "3. End conversation." there.
+`NpcServiceReader.services_for` now leaves the shop service out at a
+`GUILD_PATTERNS` NPC when `guild_id` is 0, so the menu is "1. Create a new
+guild", "2. End conversation.". A member (and a master) keeps "Buy", ahead of
+the guild line, since item 1 comes before row 15. While the guild state is not
+known yet (`-1`, no guild reply) "Buy" stays, as before. None of the guild
+NPC's lines srrevamp offers besides these depends on the gate: the seven
+codenames hold no `WAREHOUSE`, so there is no storage line, and the store
+window's repair buttons are id 4's, which no guild NPC has.
 
 ## Interaction id 4 and the store's repair buttons (round 514)
 

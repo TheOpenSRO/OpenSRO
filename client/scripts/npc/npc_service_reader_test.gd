@@ -307,6 +307,68 @@ func _init() -> void:
 	else:
 		_check(false, "the guildless talk menu could not be composed (services_for stateful=%s, composer=%s)" % [stateful, has_composer])
 
+	# (o) Round 524: a guild NPC's store line only for a player in a guild.
+	# The server registers id 1 beside 0x0f on all seven GUILD_PATTERNS
+	# (CGObjNPCNPC::Create 0x4c6a4f), and with 0x0f present the client's
+	# FUN_00700440 emits item 1 (the store lines) only when FUN_009870e0
+	# answers nonzero (0x7009fc `call 0x9870e0`, 0x700a03 `je 0x700b10`). The
+	# shop set here is shaped like the player's refshopgroup.txt, which names
+	# all seven as running a GROUP_STORE_*_GUILD store (col 4 is the owner;
+	# the id column is not read, so it is 0), plus a potion seller. The shop
+	# set in (k) leaves the guild NPCs out, which is why (k) never showed "Buy"
+	# at them.
+	var guild_shop_rows := PackedStringArray(["//Service\tCountry\tID\tCodeName\tOwnerNPC"])
+	for pair in [["CH", "NPC_CH_GENARAL_SP"], ["WC", "NPC_WC_GUILD"], ["KT", "NPC_KT_GUILD"],
+			["EU", "NPC_EU_GUILD"], ["CA", "NPC_CA_GUILD"], ["SD_M", "NPC_SD_M_AREA_GUILD"],
+			["SD_T", "NPC_SD_T_AREA_GUILD2"]]:
+		guild_shop_rows.append("1\t15\t0\tGROUP_STORE_%s_GUILD\t%s" % pair)
+	guild_shop_rows.append("1\t15\t0\tGROUP_STORE_CH_POTION\tNPC_CH_POTION")
+	var guild_shops := NpcServiceReader.parse_shop_npcs(("\n".join(guild_shop_rows) + "\n").to_utf16_buffer())
+	_check(guild_shops.size() == 8, "the guild shop fixture lists 8 NPCs (got %d)" % guild_shops.size())
+	var sf := func(code: String, gid: int, master: bool) -> Array:
+		if not stateful:
+			return []
+		return reader_script.call("services_for", code, guild_shops, gid, master)
+	# NEGATIVE (fails before round 524): a guildless player at each guild NPC
+	# gets no shop line, only the create line.
+	for guild_npc in ["NPC_CH_GENARAL_SP", "NPC_WC_GUILD", "NPC_KT_GUILD", "NPC_EU_GUILD",
+			"NPC_CA_GUILD", "NPC_SD_M_AREA_GUILD", "NPC_SD_T_AREA_GUILD2"]:
+		var g0: Array = sf.call(guild_npc, 0, false)
+		_check(stateful and _keys(g0) == ["guild_create"],
+			"a guildless player at %s gets exactly [\"guild_create\"], no shop (got %s)" % [guild_npc, _keys(g0)])
+	# The talk menu that player sees: the create line is 1, as in the real
+	# client, where the skipped item 1 takes no number.
+	if stateful and has_composer:
+		var ui_o := {"UIIT_CTL_GUILD_CREATE": "Create a new guild", "UIIT_STT_NPC_CHATTING_WND_TALKEND": "End conversation."}
+		var resolve_o := func(token: String, fallback: String) -> String:
+			return str(ui_o.get(token, fallback)) if token != "" else fallback
+		var omenu: PackedStringArray = reader_script.call("talk_menu_lines", "NPC_CH_GENARAL_SP",
+			sf.call("NPC_CH_GENARAL_SP", 0, false), resolve_o)
+		_check(omenu == PackedStringArray(["[url=guild_create]1. Create a new guild[/url]", "[url=end]2. End conversation.[/url]"]),
+			"a guildless player's NPC_CH_GENARAL_SP menu starts at 1. Create a new guild (got %s)" % [omenu])
+	else:
+		_check(false, "the guildless shop-NPC talk menu could not be composed (stateful=%s, composer=%s)" % [stateful, has_composer])
+	# A member keeps the shop line, ahead of the guild line (item 1 comes
+	# before the 0x0f block in FUN_00700440). So does a master.
+	var g7: Array = sf.call("NPC_CH_GENARAL_SP", 7, false)
+	_check(stateful and _keys(g7) == ["shop", "guild_leave"],
+		"a member at NPC_CH_GENARAL_SP gets [\"shop\", \"guild_leave\"] (got %s)" % [_keys(g7)])
+	var g7m: Array = sf.call("NPC_WC_GUILD", 7, true)
+	_check(stateful and _keys(g7m) == ["shop", "guild"],
+		"a master at NPC_WC_GUILD gets [\"shop\", \"guild\"] (got %s)" % [_keys(g7m)])
+	# Guild state not known yet (-1, and the two-argument call): unchanged.
+	var gu: Array = sf.call("NPC_CH_GENARAL_SP", -1, false)
+	_check(stateful and _keys(gu) == ["shop", "guild"],
+		"guild_id -1 at NPC_CH_GENARAL_SP keeps [\"shop\", \"guild\"] (got %s)" % [_keys(gu)])
+	var g2 := NpcServiceReader.services_for("NPC_CH_GENARAL_SP", guild_shops)
+	_check(_keys(g2) == ["shop", "guild"],
+		"the two-argument call at NPC_CH_GENARAL_SP keeps [\"shop\", \"guild\"] (got %s)" % [_keys(g2)])
+	# Any other store is untouched: its item 1 does not pass through the
+	# 0x0f branch (0x7009f5 `je 0x700a0e` when 0x0f is absent).
+	var potion0: Array = sf.call("NPC_CH_POTION", 0, false)
+	_check(stateful and _keys(potion0) == ["shop"],
+		"a guildless player at NPC_CH_POTION still gets [\"shop\"] (got %s)" % [_keys(potion0)])
+
 	# (i) Round 514: the store window shows Repair / Repair All only at an NPC
 	# with interaction id 4. The client's 0xb045 reply handler FUN_0088b200
 	# hides both buttons and shows them again for id 4 (0x88b8c5-0x88b8d9,

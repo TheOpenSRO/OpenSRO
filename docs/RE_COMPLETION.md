@@ -30668,6 +30668,7 @@ srrevamp still shows "Buy" there, because the player's `refshopgroup.txt` names 
 running a `GROUP_STORE_*_GUILD` store (7 rows in `/var/tmp/tables/refshopgroup.txt`). This round
 does not change the shop line, because the plan scoped it to the guild lines.
 `character_state.md` records the mismatch under "The guild NPC's lines (round 521)".
+(Fixed in round 524: a guildless player no longer gets "Buy" at a guild NPC.)
 
 **Tests** (`client/scripts/npc/npc_service_reader_test.gd`, render box). The new calls go through
 the script object after checking the method list and its argument count, so an older reader
@@ -30920,3 +30921,88 @@ item. Behaviour is unchanged.
   `client/tools/remote_godot.sh check` checked 246 scripts and 5 scenes: ALL LOAD. Only comments
   changed in the four `.gd` files.
 - `cd server && go build ./... && go test -count=1 -p 1 ./...`: green.
+
+## A guild NPC's store line only for a player in a guild (FUN_00700440: item 1 with 0x0f needs FUN_009870e0) (round 524)
+
+Round 521 found, and left open, that a guildless player at a guild NPC got "Buy" in srrevamp
+where the real client shows no store line. This round closes it. It is a client change: at a
+guild NPC, `NpcServiceReader.services_for` leaves the shop service out when the player is known
+to have no guild.
+
+**Grounding, re-read for this round** (all read-only on the render box).
+
+- **Server.** `/var/tmp/srv.asm`: in `CGObjNPCNPC::Create`, the seven `strstr` tests on the
+  guild literals (`.rdata 0xaeec34` `NPC_CH_GENARAL_SP` through `0xaeec9c`
+  `NPC_SD_T_AREA_GUILD2`, read with `objdump -s` on `SR_GameServer.exe`) each branch to
+  `0x4c6a4f`. There, `0x4c6a57` `push 0xf` and `0x4c6a65` `push 0x1` each go through
+  `[edx+0x164]` (`AddAvailableInteraction`). So every guild NPC holds ids 0xf and 1.
+- **Client, `FUN_00700440`** (`/var/tmp/sro_client.asm`). Id 1 is looked up at `0x700982`, and
+  `0x7009af` `je 0x700b10` skips item 1 when it is absent. With id 1 present, 0xf is looked up
+  (`0x7009c4`). If 0xf is absent, `0x7009f5` `je 0x700a0e` goes to the keeper branch (id 3 and
+  `FUN_00989d20`), which never calls `FUN_009870e0`. If 0xf is present, `0x7009f7`
+  `mov ecx,0xeeebd8`, `0x7009fc` `call 0x9870e0`, `0x700a01` `test al,al`: on 0, `0x700a03`
+  `je 0x700b10`; otherwise `0x700a09` `jmp 0x700afe`, which is item 1 (`push 0; push 1; push
+  ebx; call 0x6fcd60`, then `0x700b0a` `mov ebx,eax`).
+- **What the skip covers.** `0x700b10` is where the next row begins: `test esi,esi`, then the id 4
+  lookup byte at `0x700b12`. So the jump skips item 1 and nothing else. `ebx` (the running line
+  number) is written only after the item-1 call, so a skipped item 1 takes no number, and the
+  guild NPC's first line (the create line, row 15) is 1.
+- **Item 1 is the store lines.** `FUN_006fcd60`: `0x6fce4d` `movzx ecx,[ebp+0x6fd394]`,
+  `0x6fce54` `jmp [ecx*4+0x6fd2d8]`. Index byte `0x6fd394`+1 is `0x01` and entry `0x6fd2d8`[1] is
+  `0x6fceb0` (`objdump -s` on `/opt/sro-files/client/sro_client.exe`), which calls `0x6fb630`
+  (`0x6fcebc`).
+- **`FUN_009870e0`** is `call 0x9870d0; mov al,[eax+4]; ret`, and `FUN_009870d0` is
+  `lea eax,[ecx+0x148]; ret`: the byte at `+0x14c` of the object at `0xeeebd8`. That it means "in
+  a guild" stays the inference round 521 recorded: its zero branch in the 0xf block offers only
+  the create line. No writer was read. One more caller agrees without proving it:
+  `FUN_005bec70` calls both on `0xeeebd8` (`0x5bec82`, `0x5bec91`) and reads the block's `+5`
+  byte (`0x5beca3`, `0x5becb4`) only when `FUN_009870e0` is nonzero (`0x5bec8e` `je 0x5becca`).
+  `sro_client.asm` has ten `call 0x9870e0` sites in all.
+- **The fixture's shape.** `/var/tmp/tables/refshopgroup.txt` has seven `GROUP_STORE_*_GUILD`
+  rows, one per guild pattern (`GROUP_STORE_CH_GUILD` / `NPC_CH_GENARAL_SP` through
+  `GROUP_STORE_SD_T_GUILD` / `NPC_SD_T_AREA_GUILD2`), which is why srrevamp showed "Buy" there.
+
+**Nothing else srrevamp shows at those seven NPCs depends on the gate.** None of their codenames
+holds `WAREHOUSE`, so there is no storage line. The store window's repair buttons follow id 4,
+which no guild NPC has (`REPAIR_PATTERNS`, round 514). The guild lines were already gated by the
+same byte in round 521.
+
+**Change** (`client/scripts/npc/npc_service_reader.gd`). `services_for` decides first whether the
+codename matches a `GUILD_PATTERNS` entry. It adds "Buy" from the shop set unless the NPC is a
+guild NPC and `guild_id` is 0. The guild lines use the same flag. Behaviour by guild state:
+
+- `0` (no guild): no "Buy". At `NPC_CH_GENARAL_SP` the menu is "1. Create a new guild",
+  "2. End conversation." (it was "1. Buy", "2. Create a new guild", "3. End conversation.").
+- `> 0` (a member, or the master): "Buy" stays, ahead of the guild line, since item 1 comes
+  before row 15 in `FUN_00700440`.
+- `-1` (no guild reply yet), and the two-argument call: unchanged, "Buy" and the "Guild"
+  placeholder.
+
+`World3D` already passes `_guild_id` and rebuilds an open talk menu after each guild reply
+(round 521), so creating a guild brings "Buy" back, and leaving drops it. No other store changes.
+The comments in `services_for` and `guild_services` now describe the gate, not an open mismatch.
+
+**Docs.** `character_state.md`: the round-521 section's "One known mismatch" paragraph is now
+"'Buy' at a guild NPC needs a guild (round 524)", with the addresses above. `TODO.md`'s NPC-talk
+item and `FRONTEND_CHECKLIST.md`'s talk item say it is done. Round 521's entry above has an
+inline note. `SYSTEMS.md` has no row for the talk menu, so it is unchanged.
+
+**Tests** (`client/scripts/npc/npc_service_reader_test.gd`, new check (o)). The shop set is
+shaped like the player's `refshopgroup.txt`: the seven guild rows plus `NPC_CH_POTION`, with
+the unread id column set to 0.
+
+- **Negative:** with guild 0, each of the seven guild NPCs gives exactly `["guild_create"]`, and
+  `talk_menu_lines` at `NPC_CH_GENARAL_SP` reads `1. Create a new guild`, `2. End conversation.`.
+- A member at `NPC_CH_GENARAL_SP` (7, false) gives `["shop", "guild_leave"]`. The master at
+  `NPC_WC_GUILD` (7, true) gives `["shop", "guild"]`.
+- Guild -1, and the two-argument call, give `["shop", "guild"]`.
+- `NPC_CH_POTION` with guild 0 still gives `["shop"]`.
+- **Negative case proven.** With `npc_service_reader.gd` stashed (BASE), the suite failed 8
+  checks: the seven guildless guild NPCs each gave `["shop", "guild_create"]`, and the menu
+  started "1. Buy". With the file restored it prints ALL PASS.
+- Render box: `client/tools/remote_godot.sh tests` ran 80 suites, 0 failing.
+  `client/tools/remote_godot.sh check` checked 246 scripts and 5 scenes: ALL LOAD.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...`: green.
+
+Not measured on a running real client, and no running srrevamp client has printed the new
+`NPCTALK` lines yet.

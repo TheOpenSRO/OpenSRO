@@ -105,8 +105,9 @@ static func parse_greetings(data: PackedByteArray) -> Dictionary:
 	return out
 
 ## The services an NPC offers, from its codename + the shop set. Which services
-## an NPC has is GROUNDED (shop = refshopgroup membership; the rest are named by
-## the NPC's own self-describing codename).
+## an NPC has is GROUNDED (shop = refshopgroup membership, gated at a guild NPC
+## by the player's guild; the rest are named by the NPC's own self-describing
+## codename).
 ##
 ## Labels (round 513): storage carries the client's own string id,
 ## STOREHOUSE_STRID, which the talk window resolves through the player's
@@ -127,7 +128,9 @@ static func parse_greetings(data: PackedByteArray) -> Dictionary:
 ##     FUN_00989d20 answers nonzero (call at 0x700a71). That call is in the
 ##     branch for id 0xf absent and id 3 present (0x7009f5 `je 0x700a0e`
 ##     skips to it when 0xf is absent); with 0xf present, FUN_009870e0
-##     decides instead (0x7009fc).
+##     decides instead (0x7009fc). That is the guild NPCs' case, and
+##     services_for follows it (round 524): a guild NPC gets no "Buy" for a
+##     player known to have no guild. See the gate in the body.
 ##   * "Guild" -- the placeholder a guild NPC gets while the player's guild
 ##     state is unknown (guild_id < 0), and for a guild master. The guild's
 ##     real lines (FUN_00700440 id 0x0f -> items 0x12, 0x14, 0x17-0x1d, 0x43)
@@ -142,16 +145,36 @@ static func parse_greetings(data: PackedByteArray) -> Dictionary:
 ## The optional arguments (round 521): `guild_id` is the player's guild as the
 ## server last reported it -- -1 unknown (no guild reply yet), 0 no guild, else
 ## the guild's id -- and `guild_master` whether the player leads it. They pick
-## the guild NPC's lines through guild_services. Called with two arguments, a
-## guild NPC keeps the "Guild" placeholder, as before. `_player_job_kind` is
-## reserved for the job-guild talk entries (a later item) so that the argument
-## order is settled; nothing reads it yet.
+## the guild NPC's lines through guild_services, and at a guild NPC
+## guild_id 0 also drops "Buy" (round 524). Called with two arguments, a
+## guild NPC keeps "Buy" and the "Guild" placeholder, as before.
+## `_player_job_kind` is reserved for the job-guild talk entries (a later
+## item) so that the argument order is settled; nothing reads it yet.
 static func services_for(code: String, shop_npcs: Dictionary, guild_id: int = -1,
 		guild_master: bool = false, _player_job_kind: int = 0) -> Array:
 	var out: Array = []
 	var up := code.to_upper()
-	# A shop (buy) -- grounded by refshopgroup membership.
-	if shop_npcs.has(up):
+	var guild_npc := false
+	for pattern in GUILD_PATTERNS:
+		if up.contains(pattern):
+			guild_npc = true
+			break
+	# A shop (buy) -- grounded by refshopgroup membership, except at a guild
+	# NPC for a player known to have no guild (round 524). The server
+	# registers id 1 beside 0x0f on all seven GUILD_PATTERNS
+	# (CGObjNPCNPC::Create 0x4c6a4f: `push 0xf`, then `push 0x1`, each
+	# through vtable +0x164). In the client's FUN_00700440, id 1 present and
+	# 0x0f present sends item 1 (the store lines, FUN_006fcd60 case 1 ->
+	# FUN_006fb630) through FUN_009870e0: 0x7009f7 `mov ecx,0xeeebd8`,
+	# 0x7009fc `call 0x9870e0`, 0x700a01 `test al,al`, 0x700a03
+	# `je 0x700b10` skips it on 0, and 0x700a09 `jmp 0x700afe` emits it
+	# otherwise. 0x700b10 is the next row's start (the id 4 lookup), so only
+	# item 1 is skipped, and it takes no number. FUN_009870e0 == 0 is read
+	# as "not in a guild" (guild_services: an inference from what it gates).
+	# The player's refshopgroup.txt names all seven as running a
+	# GROUP_STORE_*_GUILD store, so without this they would show "Buy".
+	# guild_id -1 (not known yet) keeps "Buy", as before.
+	if shop_npcs.has(up) and not (guild_npc and guild_id == 0):
 		out.append(Service.new("shop", "Buy"))
 	# The rest match the NPC's codename the way the SERVER does -- see
 	# GUILD_PATTERNS below for where these patterns come from.
@@ -159,12 +182,10 @@ static func services_for(code: String, shop_npcs: Dictionary, guild_id: int = -1
 		# The server's own pattern for this one is the bare word too. Its
 		# talk line is the client's item 3 (STOREHOUSE_STRID above).
 		out.append(Service.new("storage", "Storage", STOREHOUSE_STRID))
-	for pattern in GUILD_PATTERNS:
-		if up.contains(pattern):
-			# The server registers id 0x0f here, and the client's lines for
-			# 0x0f depend on the player's guild (guild_services).
-			out.append_array(guild_services(guild_id, guild_master))
-			break
+	if guild_npc:
+		# The server registers id 0x0f here, and the client's lines for
+		# 0x0f depend on the player's guild (guild_services).
+		out.append_array(guild_services(guild_id, guild_master))
 	# Town smiths get NO Repair talk line (round 512). The server
 	# registers interactions 4 and 0x20 on NPC_*_SMITH (CGObjNPCNPC::Create;
 	# docs/protocol/character_state.md, the interaction-id table), and the
@@ -233,13 +254,12 @@ static func services_for(code: String, shop_npcs: Dictionary, guild_id: int = -1
 ## server either and are not offered -- this project's choice, not a claim
 ## that the real client lacks them.
 ##
-## Not handled here, and left for its own round: the same FUN_009870e0 test
-## gates item 1 (the store lines) at a guild NPC, which the server also gives
-## id 1 (0x4c6a4f). A guildless player there gets no store line in the real
-## client (0x7009fc `call 0x9870e0`, 0x700a03 `je 0x700b10`), while
-## services_for still adds "Buy" from refshopgroup.txt, which names every
-## guild NPC as running a GROUP_STORE_*_GUILD store (character_state.md,
-## "The guild NPC's lines (round 521)").
+## The same FUN_009870e0 test gates item 1 (the store lines) at a guild NPC,
+## which the server also gives id 1 (0x4c6a4f): 0x7009fc `call 0x9870e0`,
+## 0x700a03 `je 0x700b10`. services_for applies it (round 524): at a guild
+## NPC a guildless player (guild_id 0) gets no "Buy", so the create line is
+## numbered 1, as in the real client (character_state.md, "The guild NPC's
+## lines (round 521)").
 ##
 ## The fallback labels are the player's own textuisystem.txt text for the two
 ## tokens, the same in both of its layouts (the 16-column row's [8] and the
