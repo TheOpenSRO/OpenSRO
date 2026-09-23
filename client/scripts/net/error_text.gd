@@ -1,9 +1,10 @@
 extends RefCounted
 
 ## A server refusal code in words: the game's own message where the client
-## has one, our own wording where it does not. Covers the two refusals this
-## client shows today: a ground-item pick-up (World3D) and an NPC repair
-## (hud_panels' store status line). The shop and warehouse results carry a
+## has one, our own wording where it does not. Covers the three refusals this
+## client shows today: a ground-item pick-up (World3D), an NPC repair
+## (hud_panels' store status line) and a guild level-up (World3D's Guild
+## tab, round 528). The shop and warehouse results carry a
 ## reason string, not a code (server/internal/session/tradebusy.go,
 ## tradeBusyReason), so they do not come through here.
 ##
@@ -27,6 +28,20 @@ extends RefCounted
 ##               (entry 4 of the table; round 518)
 ##     0x1c11 -> 0x7ba0e1  push 0xdc2320  UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REPAIRED
 ##     0x1c12 -> 0x7ba0f9  push 0xdc22c8  UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REVIVED
+##   category 0x10, the guild switch (category table 0x7bb378 entry 0x10 is
+##   0x7ba32b; code - 0x4c06, index bytes at 0x7bbc80, targets at 0x7bbb78;
+##   round 528):
+##     0x4c07 -> 0x7ba359  push 0xdc1710  UIIT_MSG_GUILDERR_IM_DEAD
+##     0x4c1e -> 0x7ba3db  push 0xdc5388  UIIT_MSG_GUILDERR_PERMISSION_DENIED
+##     0x4c21 -> 0x7ba3e5  push 0xdc1378  UIIT_MSG_ERROR_GUILD_LEVEL_UP_FULL
+##     0x4c31 -> 0x7ba449  push 0xdc1018  UIIT_MSG_ERROR_GUILD_LEVEL_UP_GOLD_DEFICIT
+##     0x4c32 -> 0x7ba453  push 0xdc0fc0  UIIT_MSG_ERROR_GUILD_LEVEL_UP_GP_DEFICIT
+## For these five the reply's category is READ, not assumed: the client's
+## handler for the level-up reply 0xb0fa, Guild_OnLevelUpResult (0x881bd0),
+## reads the u16 code on result 2 and calls FUN_00778190 with 0x10 as its
+## first argument (0x881c53 push 0x10), and FUN_00778190 tail-jumps to the
+## dispatcher (0x7781a5), which reads that argument as its category
+## (0x7b8b90 movzx eax,BYTE PTR [esp+0x468]).
 ## Showing 0x1812 and 0x1839 assumes the pick-up reply is dispatched under
 ## category 1. The real reply's category was not read. Showing 0x1c07, 0x1c0b,
 ## 0x1c11 and 0x1c12 likewise assumes the repair reply is dispatched under
@@ -56,6 +71,10 @@ extends RefCounted
 ##           category 1 it would be UIIT_MSG_STRGERR_INVALID_TARGET (0x7b8c9c
 ##           push 0xdc7ee0). Keeping our own wording for it is the
 ##           conservative side of the same category-1 assumption.
+##   0x4c0d  a level-up by a guildless character (CGuild::HandleLevelUp,
+##           server/internal/guild). The guild table's index byte for it
+##           (0x7bbc87) is 0x41, the entry that sends it to the same default,
+##           0x7b913a; error_codes.md has no row for it.
 ## Those codes keep our own wording, below.
 const UIIT_BY_CODE := {
 	0x1812: "UIIT_MSG_STRGERR_LOCKED_BY_OTHER_ONE",
@@ -64,6 +83,11 @@ const UIIT_BY_CODE := {
 	0x1c0b: "UIIT_MSG_INTERACTION_FAIL_IM_BUSY",
 	0x1c11: "UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REPAIRED",
 	0x1c12: "UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REVIVED",
+	0x4c07: "UIIT_MSG_GUILDERR_IM_DEAD",
+	0x4c1e: "UIIT_MSG_GUILDERR_PERMISSION_DENIED",
+	0x4c21: "UIIT_MSG_ERROR_GUILD_LEVEL_UP_FULL",
+	0x4c31: "UIIT_MSG_ERROR_GUILD_LEVEL_UP_GOLD_DEFICIT",
+	0x4c32: "UIIT_MSG_ERROR_GUILD_LEVEL_UP_GP_DEFICIT",
 }
 
 ## The client's message name for a refusal code, or "" when the client has no
@@ -140,3 +164,13 @@ static func repair_line(code: int, table: UiTextTable) -> String:
 		0x1c12:
 			return resolve(code, table, "That item cannot be revived.")
 	return resolve(code, table, "Repair refused (code 0x%x)." % code)
+
+## A guild level-up refusal in words (round 528). The codes are
+## CGuild::HandleLevelUp's (0x5c63d0; server/internal/guild, CheckLevelUp):
+## 0x4c07 dead, 0x4c0d no guild, 0x4c1e not the master, 0x4c21 already level
+## 5, 0x4c31 not enough gold, 0x4c32 not enough guild points. fallback is the
+## server's own wording, which the reply carries beside the code: it stands in
+## for 0x4c0d (the real client shows nothing for it), for a key the archive
+## lacks, and for the server's own failures, which carry code 0.
+static func guild_level_up_line(code: int, table: UiTextTable, fallback: String) -> String:
+	return resolve(code, table, fallback)

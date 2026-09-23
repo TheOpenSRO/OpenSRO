@@ -258,3 +258,28 @@ func TestSQLAddPointsRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// TestSQLLevelUp is checkLevelUp against Postgres, plus the schema upgrade:
+// opening the store again re-runs `ADD COLUMN IF NOT EXISTS lvl`, which must
+// neither fail nor reset the level.
+func TestSQLLevelUp(t *testing.T) {
+	store := openTestSQLStore(t)
+	checkLevelUp(t, store)
+
+	again, err := OpenSQLStore(testDSN())
+	if err != nil {
+		t.Fatalf("OpenSQLStore a second time (the ALTERs must be idempotent): %v", err)
+	}
+	defer again.Close()
+	g, err := again.GetByCharacter(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("GetByCharacter after reopening: %v", err)
+	}
+	if g.Level != MaxLevel {
+		t.Fatalf("level after reopening = %d, want %d", g.Level, MaxLevel)
+	}
+}
+
+func TestSQLLevelRaisesMemberCap(t *testing.T) {
+	checkLevelRaisesMemberCap(t, openTestSQLStore(t))
+}

@@ -9,8 +9,7 @@ import (
 
 // TestGuildMemberCapMatchesTheEngine pins the recovered table. The engine keys
 // the cap on guild level and asserts the level is 1..5, so the table has exactly
-// five entries; srrevamp's guilds have no level, so MaxMembers is the level-1
-// entry.
+// five entries; MaxMembers is a new guild's cap, the entry for FoundingLevel.
 func TestGuildMemberCapMatchesTheEngine(t *testing.T) {
 	want := [5]int{15, 20, 25, 35, 50}
 	if MaxMembersByLevel != want {
@@ -226,5 +225,57 @@ func TestCheckCreator(t *testing.T) {
 		if got := CheckCreator(tc.alive, tc.level, tc.gold); !errors.Is(got, tc.want) {
 			t.Errorf("CheckCreator(%v, %d, %d) = %v, want %v", tc.alive, tc.level, tc.gold, got, tc.want)
 		}
+	}
+}
+
+// TestCheckLevelUpLadder pins CGuild::HandleLevelUp's refusal order (0x005c63d0,
+// srv.asm 0x5c63e3-0x5c644c) and CheckLevelUpCost's two deficits (0x005c6240):
+// dead, no guild, not the master, level 5, gold, guild points. Each row makes
+// every LATER rung fail too, so a ladder checked in any other order returns
+// the wrong refusal.
+func TestCheckLevelUpLadder(t *testing.T) {
+	const rich = int64(1) << 40
+	for _, tc := range []struct {
+		name                   string
+		alive, inGuild, master bool
+		level                  int
+		gold, gatheredSP       int64
+		want                   error
+		code                   int
+	}{
+		{"dead, and everything else wrong", false, false, false, MaxLevel, 0, 0, ErrLevelUpDead, 0x4c07},
+		{"no guild, and everything after wrong", true, false, false, MaxLevel, 0, 0, ErrNotInGuild, 0x4c0d},
+		{"not the master, at the cap, broke", true, true, false, MaxLevel, 0, 0, ErrNotGuildMaster, 0x4c1e},
+		{"at the cap, broke", true, true, true, MaxLevel, 0, 0, ErrLevelUpFull, 0x4c21},
+		{"one gold short and no points", true, true, true, 1, 2_999_999, 0, ErrLevelUpGoldDeficit, 0x4c31},
+		{"gold enough, 5,399 points", true, true, true, 1, 3_000_000, 5_399, ErrLevelUpGPDeficit, 0x4c32},
+		{"level 4, one point short", true, true, true, 4, rich, 377_999, ErrLevelUpGPDeficit, 0x4c32},
+	} {
+		_, _, err := CheckLevelUp(tc.alive, tc.inGuild, tc.master, tc.level, tc.gold, tc.gatheredSP)
+		if !errors.Is(err, tc.want) {
+			t.Errorf("%s: got %v, want %v", tc.name, err, tc.want)
+		}
+		if got := LevelUpCode(err); got != tc.code {
+			t.Errorf("%s: LevelUpCode = 0x%x, want 0x%x", tc.name, got, tc.code)
+		}
+	}
+
+	// Passing: the cost is the CURRENT level's (5c6445 pushes GetLevel()'s
+	// byte), exactly what the check compared.
+	for from := 1; from < MaxLevel; from++ {
+		wantGold, wantGP, _ := LevelUpCost(from)
+		gold, gp, err := CheckLevelUp(true, true, true, from, wantGold, int64(wantGP))
+		if err != nil || gold != wantGold || gp != int64(wantGP) {
+			t.Errorf("level %d with exactly the cost: got %d / %d, %v; want %d / %d",
+				from, gold, gp, err, wantGold, wantGP)
+		}
+	}
+
+	// A level below 1 is a damaged row: refused, and not an engine code.
+	if _, _, err := CheckLevelUp(true, true, true, 0, rich, rich); err == nil || LevelUpCode(err) != 0 {
+		t.Errorf("level 0: got %v (code 0x%x), want a non-engine error", err, LevelUpCode(err))
+	}
+	if LevelUpCode(nil) != 0 || LevelUpCode(errors.New("db down")) != 0 {
+		t.Error("LevelUpCode gave an engine code to something that is not a level-up refusal")
 	}
 }

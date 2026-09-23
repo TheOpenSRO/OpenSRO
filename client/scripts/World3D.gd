@@ -787,6 +787,7 @@ const ARMOR_SLOT_LABELS := {
 @onready var guild_join_button: Button = $UI/Control/ActionTabs/Guild/GuildJoinRow/JoinButton
 @onready var guild_leave_button: Button = $UI/Control/ActionTabs/Guild/GuildJoinRow/LeaveButton
 @onready var guild_status_label: Label = $UI/Control/ActionTabs/Guild/GuildStatusLabel
+@onready var guild_level_up_button: Button = $UI/Control/ActionTabs/Guild/LevelUpButton
 
 @onready var duel_target_input: LineEdit = $UI/Control/ActionTabs/Duel/ChallengeRow/TargetInput
 @onready var duel_challenge_button: Button = $UI/Control/ActionTabs/Duel/ChallengeRow/ChallengeButton
@@ -1102,6 +1103,7 @@ func _ready() -> void:
 	NetClient.guild_leave_result.connect(_on_guild_leave_result)
 	NetClient.guild_info_result.connect(_on_guild_result)
 	NetClient.guild_points_result.connect(_on_guild_points_result)
+	NetClient.guild_level_result.connect(_on_guild_level_result)
 
 	NetClient.duel_challenge_result.connect(_on_duel_challenge_result)
 	NetClient.duel_invite.connect(_on_duel_invite)
@@ -1159,6 +1161,7 @@ func _ready() -> void:
 	guild_create_button.pressed.connect(_on_guild_create_pressed)
 	guild_join_button.pressed.connect(_on_guild_join_pressed)
 	guild_leave_button.pressed.connect(func(): NetClient.leave_guild(NetClient.current_character_name))
+	guild_level_up_button.pressed.connect(func(): NetClient.guild_level(NetClient.current_character_name, true))
 
 	duel_challenge_button.pressed.connect(_on_duel_challenge_pressed)
 	duel_accept_button.pressed.connect(func(): _on_duel_respond_pressed(true))
@@ -3610,6 +3613,16 @@ var _guild_master := false
 var _guild_gathered_sp := -1
 var _guild_donations := {}
 var _guild_roster: GuildNet.Result = null
+## The guild's level as the server last reported it (round 528), from an
+## OpGuildLevel reply for _guild_id: 0 until one arrives. _guild_max_members
+## is the cap at that level, and _guild_next_gold / _guild_next_gp what the
+## next level costs (both 0 at the top level). _on_guild_result asks for them
+## with the points, and the master's "Level Up Guild" button on the Guild tab
+## (our own dev control, not the real client's guild window) shows the cost.
+var _guild_level := 0
+var _guild_max_members := 0
+var _guild_next_gold := 0
+var _guild_next_gp := 0
 ## Regions whose NPCs have already been placed, so streaming back into a
 ## region doesn't stack a second copy of everyone in it.
 var _npc_regions_done: Dictionary = {}
@@ -9491,19 +9504,46 @@ func _refresh_guild_list(result: GuildNet.Result) -> void:
 		else:
 			guild_list.add_item("%s [%s]" % [m.member_name, role_name])
 
-## The Guild tab's status line for a guild: name, id and size, and the
-## guild's GatheredSP once a points reply has arrived (round 525).
+## The Guild tab's status line for a guild: name, id and size, the guild's
+## level and member cap once a level reply has arrived (round 528), and its
+## GatheredSP once a points reply has (round 525).
 func _guild_status_text(result: GuildNet.Result) -> String:
-	var text: String = "%s (#%d, %d member(s))." % [result.guild_name, result.guild_id, result.members.size()]
+	var text: String
+	if _guild_level > 0:
+		text = "%s (#%d, level %d, %d/%d members)." % [result.guild_name, result.guild_id,
+			_guild_level, result.members.size(), _guild_max_members]
+	else:
+		text = "%s (#%d, %d member(s))." % [result.guild_name, result.guild_id, result.members.size()]
 	if _guild_gathered_sp >= 0:
 		text += " %d GP" % _guild_gathered_sp
 	return text
 
-## Forgets the guild points shown, when the guild they belong to is gone or
-## replaced (round 525).
+## Forgets the guild points and level shown, when the guild they belong to is
+## gone or replaced (rounds 525, 528).
 func _clear_guild_points() -> void:
 	_guild_gathered_sp = -1
 	_guild_donations = {}
+	_guild_level = 0
+	_guild_max_members = 0
+	_guild_next_gold = 0
+	_guild_next_gp = 0
+	_refresh_guild_level_button()
+
+## The master's "Level Up Guild" button (round 528): shown only to the master
+## once the guild's level is known, with the next level's gold and guild-point
+## cost as the server quoted it (guild.LevelUpCost of the current level), and
+## disabled at the top level. The server holds every gate (CGuild::HandleLevelUp's
+## ladder); the button only hides what the master cannot use.
+func _refresh_guild_level_button() -> void:
+	if guild_level_up_button == null:
+		return
+	guild_level_up_button.visible = _guild_master and _guild_level > 0
+	if _guild_next_gold > 0:
+		guild_level_up_button.disabled = false
+		guild_level_up_button.text = "Level Up Guild (%d gold, %d GP)" % [_guild_next_gold, _guild_next_gp]
+	else:
+		guild_level_up_button.disabled = true
+		guild_level_up_button.text = "Guild at the top level"
 
 ## A guild reply (info, join or create). A success also records the player's
 ## guild state for the guild NPC's talk lines (round 521): the id (0 = none),
@@ -9532,8 +9572,11 @@ func _on_guild_result(result: GuildNet.Result) -> void:
 		_guild_roster = result
 		guild_status_label.text = _guild_status_text(result)
 		_refresh_guild_list(result)
-		# The points ride on their own reply (round 525): OpGuildPoints.
+		# The points ride on their own reply (round 525): OpGuildPoints, and
+		# the level on another (round 528): OpGuildLevel, a report only.
 		NetClient.guild_points(NetClient.current_character_name)
+		NetClient.guild_level(NetClient.current_character_name, false)
+	_refresh_guild_level_button()
 	_refresh_open_talk_menu()
 
 ## A guild points reply (round 525): the guild's GatheredSP and each member's
@@ -9552,6 +9595,37 @@ func _on_guild_points_result(result: GuildNet.PointsResult) -> void:
 		_guild_donations[m.member_name] = m.gp_donation
 	guild_status_label.text = _guild_status_text(_guild_roster)
 	_refresh_guild_list(_guild_roster)
+
+## A guild level reply (round 528): a report of the level and the next
+## level's cost, or a level-up's outcome. A refusal carrying an engine code is
+## a level-up the server refused in CGuild::HandleLevelUp's order (dead,
+## guildless, not the master, level 5, gold, guild points); it is shown on the
+## tab and in chat in the game's own words where ErrorText has them, else the
+## server's. Any other refusal only goes on the tab. A reply for a guild this
+## client no longer shows changes nothing. A level-up spends gold and guild
+## points and the server pushes neither, so a success re-reads the purse and
+## the points.
+func _on_guild_level_result(result: GuildNet.LevelResult) -> void:
+	if result == null:
+		return
+	if result.error != "":
+		var line: String = ErrorText.guild_level_up_line(result.code, _ui_text_table, result.error)
+		guild_status_label.text = "Guild level: %s" % line
+		if result.code != 0:
+			_log_system("Could not level up the guild: %s" % line)
+		return
+	if _guild_roster == null or result.guild_id != _guild_id:
+		return
+	_guild_level = result.level
+	_guild_max_members = result.max_members
+	_guild_next_gold = result.next_gold
+	_guild_next_gp = result.next_gp
+	guild_status_label.text = _guild_status_text(_guild_roster)
+	_refresh_guild_level_button()
+	if result.levelled_up:
+		_log_system("The guild reached level %d; it can now hold %d members." % [result.level, result.max_members])
+		_request_world_stats()
+		NetClient.guild_points(NetClient.current_character_name)
 
 ## Founding a guild costs 500,000 gold on the server (round 487: the create
 ## job's reply, trs_sm_guildjob::FUN_005c8bf0 -> GObjPC::FUN_004e4140), which

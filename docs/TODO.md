@@ -126,7 +126,7 @@ In order. Each is checked off here when it ships in a release, with its round in
       2026-09-15. What is left is DATA, not code: the per-monster tables are DB-only and in no
       archive we have (`smc.bak` is the manager DB), so an operator with the shard DB supplies them
       via `import-refdata -drops-csv/-drop-groups-csv`.
-- [ ] **Guild points and levels.** Read in round 272: a guild's points are the skill points its
+- [x] **Guild points and levels.** Read in round 272: a guild's points are the skill points its
       members earn (1:1, batched at 10 per member, credited to the guild total and the member's
       GP_Donation); the level-up costs are already in `guild.LevelUpCost`. **Points: done (round
       525)** -- `Guild.GatheredSP` and `Member.GPDonation` are stored, `session.NewGuildPointSkills`
@@ -138,8 +138,15 @@ In order. Each is checked off here when it ships in a release, with its round in
       srrevamp flushes it on disconnect (`session.GuildPointsDisconnectHandler`) and at a clean stop
       (`FlushAllPending`, its own handling). That stop flush does not wait for the gateway's
       connection goroutines or the keep-up swings, so points booked after it passes a character are
-      lost at exit (round 527, disclosed in `guildpoints.go` and `guild.md`). **Left:** a guild level, and letting the master spend
-      GatheredSP (and gold) on a level-up.
+      lost at exit (round 527, disclosed in `guildpoints.go` and `guild.md`). **Levels: done (round
+      528)** -- `Guild.Level` is stored (`lvl`, DEFAULT 1), the master levels the guild up with
+      `guild.Store.LevelUp` through the placeholder `OpGuildLevel` (the Guild tab's "Level Up Guild"
+      button), refused in `CGuild::HandleLevelUp`'s order with its codes, the gold taken at the
+      checked amount (as `FUN_005c8fd0`, the job's reply, takes it) and Join's cap following the
+      level. **Still open:** the guild-point spend is a disclosed stand-in (the checked cost): the
+      ShardManager decides it and is not in `SR_GameServer.exe` (`guild.md`, "What a level-up
+      spends (round 528)"); the master's guild NPC line 0x17 (`UIIT_MSG_GUILD_LEVEL_UP`) still
+      shows the placeholder; and other members learn the new level only on their next guild reply.
 - [ ] **Monsters do not move, chase or notice anyone.** They strike only when struck (round 254's
       cadence cap). The machine is read: sixteen states, WANDER's leg and dwell (round 251), BATTLE's
       attack step through the same action machine as a player's cast (254), the approach walk

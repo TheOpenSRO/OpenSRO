@@ -1249,3 +1249,36 @@ codes. srrevamp's own wording stands in for these four codes and for a
 key the archive lacks. The resolver checks the key with `has()`, so a missing key
 never shows the raw token.
 
+
+### The guild level-up's rows (round 528)
+
+`error_text.gd` also resolves five guild codes, for a refused guild level-up
+(`ErrorText.guild_level_up_line`). They were read the same way, through the
+guild category's jump tables in `sro_client.exe`. The category table at
+`0x7bb378` sends index `0x10` to `0x7ba32b`, which does `add eax,0xffffb3fa`
+(code - `0x4c06`), `cmp eax,0x74`, then reads an index byte at `0x7bbc80` and a
+target at `0x7bbb78`:
+
+| code | index byte | case | pushes |
+|---|---|---|---|
+| `0x4c07` | `0x01` | `0x7ba359` | `0xdc1710` `UIIT_MSG_GUILDERR_IM_DEAD` |
+| `0x4c1e` | `0x0e` | `0x7ba3db` | `0xdc5388` `UIIT_MSG_GUILDERR_PERMISSION_DENIED` |
+| `0x4c21` | `0x10` | `0x7ba3e5` | `0xdc1378` `UIIT_MSG_ERROR_GUILD_LEVEL_UP_FULL` |
+| `0x4c31` | `0x1b` | `0x7ba449` | `0xdc1018` `UIIT_MSG_ERROR_GUILD_LEVEL_UP_GOLD_DEFICIT` |
+| `0x4c32` | `0x1c` | `0x7ba453` | `0xdc0fc0` `UIIT_MSG_ERROR_GUILD_LEVEL_UP_GP_DEFICIT` |
+
+Each name was decoded from the UTF-16 string at the pushed address, and each
+agrees with this table's row for the code.
+
+**Here the category is read, not assumed.** The client's handler for the
+level-up reply `0xb0fa`, `Guild_OnLevelUpResult` (`0x881bd0`), reads a result
+byte and, when it is 2, a `u16` code. It then pushes `1, 0, 0xffdbc99b, code,
+0x10` and calls `FUN_00778190` (`0x881c43`-`0x881c55`). That function tail-jumps
+to the dispatcher (`0x7781a5 jmp 0x7b8b40`) with the arguments in place, and the
+dispatcher reads its category from the first one (`0x7b8b90 movzx eax,BYTE PTR
+[esp+0x468]`).
+
+**`0x4c0d` is left out.** Its index byte (`0x7bbc87`) is `0x41`, the entry
+(`0x7bbc7c`) that sends it to the default, `0x7b913a`, which shows no message.
+It has no row in the table above either. srrevamp shows the server's own wording
+for it, as for a key the archive lacks.

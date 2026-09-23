@@ -64,7 +64,7 @@ func (m *MemStore) Create(_ context.Context, name string, leaderID int64, leader
 	m.nextID++
 	m.seq++
 	g := &Guild{
-		ID: m.nextID, Name: name, LeaderID: leaderID,
+		ID: m.nextID, Name: name, LeaderID: leaderID, Level: FoundingLevel,
 		Members: []Member{{CharacterID: leaderID, Name: leaderName, Role: RoleLeader}},
 	}
 	m.byID[g.ID] = g
@@ -86,7 +86,8 @@ func (m *MemStore) Join(_ context.Context, guildID, characterID int64, character
 	if _, in := m.ofChar[characterID]; in {
 		return nil, ErrAlreadyInGuild
 	}
-	if len(g.Members) >= MaxMembers {
+	// The cap by the guild's own level (CGuild::IsFull, 0x005d0fb0).
+	if len(g.Members) >= MaxMembersFor(g.Level) {
 		return nil, ErrGuildFull
 	}
 	m.seq++
@@ -198,4 +199,37 @@ func (m *MemStore) AddPoints(_ context.Context, guildID, characterID int64, poin
 		}
 	}
 	return ErrNotInGuild
+}
+
+// LevelUp implements Store: CheckLevelUp against the guild under the store's
+// lock, then pay, then the guild-point cost off GatheredSP and Level + 1.
+// Nothing changes unless all three succeed.
+func (m *MemStore) LevelUp(_ context.Context, characterID int64, alive bool, gold int64, pay func(gold int64) error) (*Guild, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var g *Guild
+	if guildID, in := m.ofChar[characterID]; in {
+		g = m.byID[guildID]
+	}
+	var (
+		master     bool
+		level      int
+		gatheredSP int64
+	)
+	if g != nil {
+		master, level, gatheredSP = g.LeaderID == characterID, g.Level, g.GatheredSP
+	}
+	goldCost, gpCost, err := CheckLevelUp(alive, g != nil, master, level, gold, gatheredSP)
+	if err != nil {
+		return nil, err
+	}
+	if pay != nil {
+		if err := pay(goldCost); err != nil {
+			return nil, err
+		}
+	}
+	g.GatheredSP -= gpCost
+	g.Level++
+	return m.copy(g), nil
 }

@@ -31471,3 +31471,210 @@ sees changes, and no server behaviour changes.
 
 `SYSTEMS.md` is unchanged. Its Guild row already describes the logout flush, and no row lists
 any of these as unwired.
+
+## Guild master levels the guild up: gold + GP cost from the current level, the engine's refusal order, and the member cap by level (FUN_005c63d0 / CheckLevelUpCost 0x5c6240) (round 528)
+
+**What was open.** `guild.MaxLevel`, `guild.LevelUpCost` and `guild.MaxMembersFor` held the
+recovered level rules, and nothing called the last two (both were in the orphan baseline).
+srrevamp's guilds had no level, so every guild had the level-1 cap of 15 and the guild points
+credited since round 525 had nothing to buy. `SYSTEMS.md`'s Guild row and `TODO.md`'s "Guild
+points and levels" item both listed this as the next step.
+
+**Grounding, re-read this round** (`/var/tmp/decomp_server`, `/var/tmp/srv.asm`, `objdump` on
+`SR_GameServer.exe`; `/var/tmp/sro_client.asm` and `/opt/sro-files/client/sro_client.exe` for the
+client).
+
+- **`CGuild::HandleLevelUp` (`0x005c63d0`), in asm.** `5c63e3`-`5c63ed` vtable `+0xf8`, `cmp
+  al,0x1`, else `0x4c07`. `5c63fa` `[esi+0x1cbc]`, else `0x4c0d`. `5c641b call 0x5d0f50`
+  (`CGuild::IsGuildMaster`), else `0x4c1e`. `5c642f call 0x5d0e80` (`GetLevel`), `5c6434 cmp
+  al,0x5; jb`, else `0x4c21`. `5c6445`-`5c644c` pushes the saved level byte to `0x5c6240`. If
+  that returns 1, `5c645d`-`5c6466` call `0x5c80a0` with `(pc, 9, 0)`.
+- **`CGuild::CheckLevelUpCost` (`0x005c6240`).** A switch on levels 1 to 4 (anything else
+  asserts and returns 1). It compares the 64-bit gold at `+0x78/+0x7c` with `&DAT_00ade910 +
+  level*8`, else `0x4c31`. It compares `guild+0x3c` (a signed dword) with `&DAT_00ade8ec +
+  level*4`, else `0x4c32`.
+- **The tables, by `objdump -s`.** `.rdata 0xade8dc`: 15, 20, 25, 35, 50. `0xade8f0`: 5400,
+  50400, 135000, 378000. `0xade918`: 3,000,000, 9,000,000, 15,000,000, 21,000,000 as 64-bit
+  values with a zero high dword. `0xade910`/`0xade914` hold 3 and 6, the index-0 slot the switch
+  never reads.
+- **The job's reply, `trs_sm_guildjob::FUN_005c8fd0`** (case 9 of `FUN_005c8990`). It reads
+  `CGuild::GetLevel()`, asserts it is 2 to 5, and calls vtable `+0x16c` (`OffsetGold`) with the
+  negated 64-bit entry at `0xade918 + (level - 2)*8`, which is the gold for `level - 1`. Then
+  `BackupData(0x80, 0)` and `0xb0fa`. So the gold is spent at the checked amount, after the level
+  has already changed.
+- **The guild points, and why the amount is not readable here.**
+  `CGuildMamager__SendOlappedGuildJobReqToSM`'s case 9 stores only the character's id and
+  `FUN_004ea580()`, with no amount. `FUN_005c8fd0` writes no guild field. The guild record is
+  written by the ShardManager's update: `CMainProcess::FUN_005c9bd0` cases 9/10 go to
+  `FUN_005ca4b0`, then `FUN_005c3c90` (a mask byte), then `FUN_005cfc20`. That copies the fields
+  the mask names: 1 id `+0x18`, 4 `Lvl` `+0x38`, 8 `GatheredSP` `+0x3c`, `0x20` `+0x94`, `0x40`
+  `+0x98` (2 and `0x10` read strings). The mask comes from the ShardManager, which is not in
+  the binary.
+- **The sibling that tips the decision.** `FUN_005c7900` (mercenary attribute `guild+0x98`,
+  refusing `0x4c32` on `guild+0x3c`) sends job `0x2b`. Dispatcher case `0x2b` is `FUN_005cc590`
+  (reads guild id, byte, dword), then `FUN_005c5600`, which writes `+0x98` (dirty `0x100`) and
+  `+0x3c` (dirty 8).
+
+**The GP decision: spend the checked cost, disclosed.** The plan audit's claim holds: the
+guild-point deduction is not in `SR_GameServer.exe`. The evidence leans to a spend, for two
+reasons. The ShardManager does send a new `GatheredSP` after the other points-gated guild
+purchase. And the gold, checked beside it against the same level's entry, is spent at exactly
+the checked amount. So `guild.CheckLevelUp` returns the table's guild points as `gpCost`, and the
+stores take it off `GatheredSP`. This is disclosed in `guild.go`, in `guild.md` ("What a level-up
+spends (round 528)", and a new "What is not recovered" bullet) and in `SYSTEMS.md` / `TODO.md`.
+
+**The founding level.** The founding write is the ShardManager's.
+`trs_sm_guildjob::FUN_005c8bf0` looks the guild up and sets no level. So `guild.FoundingLevel` =
+1 is stated as the floor the engine's tables agree on: `CGuild::IsFull` treats 0 as 1 after an
+assert, `CheckLevelUpCost` has cases 1 to 4, and `FUN_005c8fd0` asserts a levelled guild is at
+least 2. It is not claimed as a read value.
+
+**The client's category, read rather than assumed.** `Guild_OnLevelUpResult` (`0x881bd0`,
+registered for `0xb0fa`) reads the code on result 2 and pushes `0x10` (`0x881c53`) into
+`FUN_00778190`, which tail-jumps to the dispatcher (`0x7781a5`). The dispatcher reads the
+category at `0x7b8b90`. Category `0x10` (`0x7bb378` entry `0x10` = `0x7ba32b`, code -
+`0x4c06`, index bytes `0x7bbc80`, targets `0x7bbb78`) gives `0x4c07` `0x7ba359` `push
+0xdc1710`, `0x4c1e` `0x7ba3db` `push 0xdc5388`, `0x4c21` `0x7ba3e5` `push 0xdc1378`, `0x4c31`
+`0x7ba449` `push 0xdc1018` and `0x4c32` `0x7ba453` `push 0xdc0fc0`. Each pushed UTF-16 string
+was decoded, and each matches `error_codes.md`'s row. `0x4c0d`'s index byte is `0x41`, the
+default (`0x7b913a`): no message.
+
+**Change.**
+
+- **`guild`**
+  - `Guild.Level` (`_GUILD.Lvl`, `+0x38`) and `FoundingLevel`.
+  - `CheckLevelUp(alive, inGuild, master, level, gold, gatheredSP)` is the ladder in the
+    engine's order, and returns the gold and guild-point cost of the CURRENT level. New sentinel
+    errors are `ErrLevelUpDead`, `ErrNotGuildMaster`, `ErrLevelUpFull`, `ErrLevelUpGoldDeficit`
+    and `ErrLevelUpGPDeficit`; `ErrNotInGuild` serves for `0x4c0d`. `LevelUpCode(err)` maps each
+    to its engine code, and anything else to 0.
+  - New `Store.LevelUp(ctx, characterID, alive, gold, pay)`: the ladder, then `pay(goldCost)`,
+    then `GatheredSP -= gpCost` and `Level++`, atomically. `MemStore` does this under its lock.
+    `SQLStore` does it in one transaction with `FOR UPDATE OF g` on the guild row. It reads the
+    result back inside the transaction (`getGuild` now takes a `querier`, the `*sql.DB` or the
+    `*sql.Tx`), so a failure after the commit cannot be reported as a failed level-up. Members'
+    `GPDonation` is untouched.
+  - The `lvl INTEGER NOT NULL DEFAULT 1` column is added with `ADD COLUMN IF NOT EXISTS`.
+    `Create` writes `FoundingLevel` and `Get` reads `lvl`.
+  - Both stores' `Join` refuse at `MaxMembersFor(Level)`, no longer `MaxMembers`. `MaxMembers`
+    stays as a new guild's cap.
+- **`session`**
+  - New placeholder pair `OpGuildLevel` (`0x009A`) and `OpGuildLevelResult` (`0x009B`). Every
+    `Op* uint16` in `server/internal` and every `OP_*`/`0x9a`/`0x9b` in `client/scripts` was
+    grepped first. `0x0099` is the last guild opcode and `0x00A0` the next taken one. No existing
+    layout changed.
+  - The request is a name and a 0/1 byte (1 = level up, 0 = report only).
+  - The result is the error string and a `u16` engine code, then on success the guild id,
+    `Level` u8, `LevelledUp` u8, `MaxMembers` u16, and `NextGold` and `NextGuildPoints` s64
+    (0 at level 5).
+  - `handleGuildLevel`: a report is `GetByCharacter`. A level-up is `LevelUp` with alive = HP > 0
+    (the founder check's stand-in) and a `pay` that calls `DeductGold`.
+    `ErrInsufficientGold` from `DeductGold` becomes `ErrLevelUpGoldDeficit`, code `0x4c31`. **Our
+    own handling:** if `LevelUp` fails after the gold was taken, the handler refunds it with
+    `AddGold` and logs a refund that fails. That is the counterpart of round 487's founding
+    rollback.
+  - `guildErrorMessage` gains our wording for the five refusals, and for `ErrGuildFull` ("the
+    guild is full"), which used to read "operation failed".
+- **Comments only.** `guildpoints.go`: the request's level test cannot fail because levels stop
+  at 5 (it used to say "guilds have no level"). `guild.go`'s notes on `MaxMembersByLevel`,
+  `MaxMembers`, `MaxMembersFor`, `ErrGuildFull`, the permissions scope, and the package comment.
+- **Client**
+  - `GuildNet.OP_LEVEL`/`OP_LEVEL_RESULT`, `encode_level`, `LevelResult` and
+    `decode_level_result`. `NetClient.guild_level(name, level_up)` and the `guild_level_result`
+    signal.
+  - `ErrorText` gains the five category-`0x10` rows and `guild_level_up_line(code, table,
+    fallback)`. The fallback is the server's words, which stand for `0x4c0d`, code 0 and a missing
+    key.
+  - `World3D` asks for the level with the points after each successful guild reply. It shows
+    "level N, M/cap members" on the Guild tab status line.
+  - The master sees a new "Level Up Guild (gold, GP)" button, our own dev control, disabled at
+    level 5 (`World3D.tscn` gains the hidden `LevelUpButton` node).
+  - A refusal carrying a code goes to the tab and to chat through `ErrorText`. A level-up re-reads
+    the purse (`_request_world_stats`) and the points.
+- **Orphan baseline.** `LevelUpCost` and `MaxMembersFor` now have callers
+  (`CheckLevelUp`/`guildLevelResult`, and `Join`/`guildLevelResult`), so both lines leave
+  `internal/systems/orphans_test.go`.
+
+**Not modelled, and said so where the code is.** The master's guild NPC line (item `0x17`,
+`UIIT_MSG_GUILD_LEVEL_UP`) still shows the "Guild" placeholder. There is no `0x38F5` push of the
+new level, so the other members see it on their next guild reply. The guild-point spend is the
+stand-in above.
+
+**Docs.**
+
+- `guild.md`: "Levelling up" gains "What a level-up spends (round 528)" and "What srrevamp does
+  (round 528)". Round 525's "Not modelled" and "Still open" bullets are updated. "What is not
+  recovered" gains the guild-point spend.
+- `error_codes.md`: new subsection "The guild level-up's rows (round 528)" with the jump-table
+  reading.
+- `SYSTEMS.md`'s Guild row stays PARTIAL. It gains the anchors `CheckLevelUp`, `LevelUp` and
+  `MaxMembersFor`, the level-up in its description, and a new Next: the ShardManager's update,
+  the NPC line, and a live push.
+- `TODO.md`'s "Guild points and levels" item is checked, with what remains.
+
+**Tests.**
+
+- **`guild`**
+  - `TestCheckLevelUpLadder`: each row makes every later rung fail too, so a different order
+    returns a different refusal. Covers dead `0x4c07`, guildless `0x4c0d`, not master `0x4c1e`,
+    level 5 `0x4c21`, 2,999,999 gold `0x4c31`, 5,399 GP `0x4c32`, and level 4 at 377,999 GP.
+    Each level 1 to 4 passes at exactly its cost. Level 0 is refused with code 0.
+  - `checkLevelUp`, run by `TestMemStoreLevelUp` and `TestSQLLevelUp`. The refusals come in the
+    engine's order, **negative**, each changing nothing and paying nothing. A failing `pay` also
+    changes nothing. Level 1 → 2 pays exactly 3,000,000 and leaves `GatheredSP` 0 with the
+    donations untouched. 2 → 5 pays each level's cost. **Negative:** the level-5 guild is refused
+    `0x4c21`.
+  - `TestSQLLevelUp` also reopens the store (the `ALTER` re-runs) and reads level 5 back.
+  - `checkLevelRaisesMemberCap`, run by the Mem and SQL tests. **Negative:** the 16th member of a
+    level-1 guild is refused. After a level-up, members 16 to 20 join and the 21st is refused.
+- **`session`**
+  - `TestGuildLevelWireRoundTrip`: both layouts, the client's own request bytes, and a 32-byte
+    success. **Negative:** no flag, flag 2, trailing bytes, and a truncated result are all
+    refused.
+  - `TestGuildLevelFlow`, over the real handler stack with two logins:
+    - guildless report / level-up, the latter with `0x4c0d`;
+    - a member's report (level 1, cap 15, 3,000,000 / 5,400);
+    - then, **negative**: not master `0x4c1e`, 1,000 gold `0x4c31`, 5,399 GP `0x4c32`, and dead
+      `0x4c07` with 5,400 GP and 3,000,000 gold, which are left untouched;
+    - then the level-up: level 2, cap 20, next 9,000,000 / 50,400, gold 0, `GatheredSP` 0.
+  - `TestGuildLevelUpGoldIsNotLost`:
+    - a refused deduction (`spentGoldStore`) gives `0x4c31` and the level stays 1;
+    - a store failing after payment (`failAfterPayGuilds`) gives code 0 and "failed to level up
+      the guild", and the gold is refunded to 3,000,000.
+- **Client**
+  - `guild_test.gd`: the request bytes, the opcodes, `decode_level_result` on a hand-built
+    success, a refusal with its code, a truncated body and a refusal missing its code.
+  - `guild_test.gd`, in `_initialize`: a bare `World3D` shows "Silk Legion (#7, level 2, 1/20
+    members)." and the master's "Level Up Guild (9000000 gold, 50400 GP)". At level 5 the button
+    is disabled. **Negative:** a reply for another guild is ignored, and a non-master gets no
+    button.
+  - `error_text_test.gd`: the five rows resolve through a synthetic table. `0x4c0d`, code 0 and a
+    missing row keep the server's words. `World3D._on_guild_level_result` shows a `0x4c32`
+    refusal in the table's words.
+- **Negative cases proven.**
+  - With the Go production files stashed (`guild.go`, `memstore.go`, `sqlstore.go`,
+    `session/guild.go`, `guildpoints.go`), the new tests fail to build: `undefined:
+    ErrLevelUpDead`, `CheckLevelUp`, `LevelUpCode`, and so on.
+  - Eight behavioural mutations of the Go code, each restored from a saved copy:
+    - `GuildHandler` without the `OpGuildLevel` case: `TestGuildLevelFlow` failed, the reply
+      timing out ("i/o timeout"), as it did before this round.
+    - `MemStore.Join` / `SQLStore.Join` back on `MaxMembers`: the two cap tests failed.
+    - No guild-point spend, in `MemStore` and in `SQLStore`: `after levelling from 1: level 2,
+      points 5400`.
+    - The gold and GP rungs swapped: the ladder test got `0x4c32` for "one gold short and no
+      points", and `checkLevelUp` failed at "2,999,999 gold".
+    - Priced from `level + 1`: the ladder test failed (`0x4c31` for "5,399 points", and a
+      no-cost error at level 4).
+    - The refund disabled: `Aria has 0 gold, want 3000000 kept`.
+  - With the client production scripts and scene stashed and shipped, both suites failed to
+    parse (`Static function "encode_level()" not found`, `"guild_level_up_line()" not found`).
+  - With `ErrorText`'s `0x4c32` row removed and shipped, `error_text_test.gd` reported 2
+    FAILURES.
+  - Everything restored and shipped: ALL PASS.
+- **Run results**
+  - `cd server && go build ./... && go test -count=1 -p 1 ./...`: green.
+  - Render box: `client/tools/remote_godot.sh tests` ran 80 suites, 0 failing.
+    `client/tools/remote_godot.sh check` checked 246 scripts and 5 scenes: ALL LOAD.
+
+Not measured on a running client: the Guild tab's level line and the Level Up button have not
+been seen on screen.

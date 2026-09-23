@@ -71,8 +71,8 @@ import (
 //     runs, with no SetLifeState (+0x1f0) call among them, so a PC dead at
 //     logout meets the request's 0x4c07;
 //   - its guild-level test (`cmp al,0x5; ja` at 0x5c6335) cannot fail for
-//     srrevamp, whose guilds have no level and count as level 1
-//     (guild.MaxMembers), so it is not repeated.
+//     srrevamp: a guild's Level stops at guild.MaxLevel, 5, because
+//     guild.Store.LevelUp refuses past it (round 528), so it is not repeated.
 func NewGuildPointSkills(inner skill.Store, guilds guild.Store, chars character.Store) *GuildPointSkills {
 	return &GuildPointSkills{Store: inner, guilds: guilds, chars: chars, acc: make(map[int64]*guild.PointAccumulator)}
 }

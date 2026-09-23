@@ -559,3 +559,238 @@ func TestGuildPointsFlow(t *testing.T) {
 		t.Fatalf("donations = %v, want Aria 0 and Bram 12", don)
 	}
 }
+
+// TestGuildLevelWireRoundTrip pins the OpGuildLevel pair's layouts (round
+// 528): the request is a name and one 0/1 byte; the result is Error, a u16
+// Code, then on success the guild id, Level (u8), LevelledUp (u8), MaxMembers
+// (u16) and the next level's gold and guild points (s64 each).
+func TestGuildLevelWireRoundTrip(t *testing.T) {
+	for _, up := range []bool{false, true} {
+		want := &GuildLevelRequest{CharacterName: "Aria", LevelUp: up}
+		got, err := DecodeGuildLevelRequest(want.Encode())
+		if err != nil || *got != *want {
+			t.Fatalf("request %+v: got %+v, %v", want, got, err)
+		}
+	}
+	// The client's own bytes: a name-only request plus the flag.
+	if got, err := DecodeGuildLevelRequest(append(clientNameRequest("Aria"), 1)); err != nil || !got.LevelUp || got.CharacterName != "Aria" {
+		t.Fatalf("the client's level-up bytes: got %+v, %v", got, err)
+	}
+	// NEGATIVE: no flag, a flag that is neither 0 nor 1, and trailing bytes.
+	for _, bad := range [][]byte{
+		clientNameRequest("Aria"),
+		append(clientNameRequest("Aria"), 2),
+		append(clientNameRequest("Aria"), 1, 0),
+	} {
+		if _, err := DecodeGuildLevelRequest(bad); err == nil {
+			t.Fatalf("% x decoded as a level request", bad)
+		}
+	}
+
+	want := &GuildLevelResult{GuildID: 7, Level: 2, LevelledUp: true, MaxMembers: 20, NextGold: 9_000_000, NextGuildPoints: 50_400}
+	full := want.Encode()
+	if len(full) != 2+2+8+1+1+2+8+8 {
+		t.Fatalf("a success is %d bytes, want %d", len(full), 2+2+8+1+1+2+8+8)
+	}
+	got, err := DecodeGuildLevelResult(full)
+	if err != nil || *got != *want {
+		t.Fatalf("result: got %+v, %v; want %+v", got, err, want)
+	}
+	refusal := &GuildLevelResult{Error: "not enough guild points to level up the guild", Code: 0x4c32}
+	got, err = DecodeGuildLevelResult(refusal.Encode())
+	if err != nil || *got != *refusal {
+		t.Fatalf("refusal: got %+v, %v; want %+v", got, err, refusal)
+	}
+	// NEGATIVE: a body cut short is an error, not a zero.
+	if _, err := DecodeGuildLevelResult(full[:len(full)-1]); err == nil {
+		t.Fatal("a truncated OpGuildLevelResult decoded without error")
+	}
+}
+
+// TestGuildLevelFlow drives OpGuildLevel through the handler stack (round
+// 528). Before the round no handler answered it, so the first request timed
+// out. The refusals come in CGuild::HandleLevelUp's order with its codes; a
+// report shows the level and the next level's cost; the level-up takes
+// exactly 3,000,000 gold and 5,400 guild points and raises the cap to 20.
+func TestGuildLevelFlow(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	accounts.Add("bob", "hunter3")
+	chars := character.NewMemStore()
+	aria, _ := chars.Create(ctx, 1, "Aria")
+	bram, _ := chars.Create(ctx, 2, "Bram")
+	guilds := guild.NewMemStore()
+
+	handle := gateway.Chain(LoginHandler(accounts), GuildHandler(chars, guilds))
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+	login := func(user, pass string) (net.Conn, *bufio.Reader) {
+		t.Helper()
+		conn := dialTestServer(t, addr)
+		t.Cleanup(func() { conn.Close() })
+		r := bufio.NewReader(conn)
+		if lr, err := DecodeLoginResult(doSend(t, conn, r, OpLogin, (&LoginRequest{Username: user, Password: pass}).Encode()).Data); err != nil || !lr.OK {
+			t.Fatalf("login %s failed: err=%v result=%+v", user, err, lr)
+		}
+		return conn, r
+	}
+	connA, rA := login("alice", "hunter2")
+	connB, rB := login("bob", "hunter3")
+
+	level := func(conn net.Conn, r *bufio.Reader, name string, up bool) *GuildLevelResult {
+		t.Helper()
+		resp := doSend(t, conn, r, OpGuildLevel, (&GuildLevelRequest{CharacterName: name, LevelUp: up}).Encode())
+		if resp.Opcode != OpGuildLevelResult {
+			t.Fatalf("reply opcode 0x%04x, want OpGuildLevelResult", resp.Opcode)
+		}
+		lr, err := DecodeGuildLevelResult(resp.Data)
+		if err != nil {
+			t.Fatalf("DecodeGuildLevelResult: %v", err)
+		}
+		return lr
+	}
+	gold := func() int64 {
+		t.Helper()
+		c, err := chars.GetByID(ctx, aria.ID)
+		if err != nil {
+			t.Fatalf("GetByID: %v", err)
+		}
+		return c.Gold
+	}
+	refused := func(what string, lr *GuildLevelResult, code uint16, msg string) {
+		t.Helper()
+		if lr.Code != code || lr.Error != msg || lr.LevelledUp {
+			t.Fatalf("%s: got %+v, want code 0x%x and %q", what, lr, code, msg)
+		}
+	}
+
+	// NEGATIVE: guildless, both as a report and as a level-up (0x4c0d).
+	refused("guildless report", level(connA, rA, "Aria", false), 0, "not in a guild")
+	refused("guildless level-up", level(connA, rA, "Aria", true), 0x4c0d, "not in a guild")
+
+	g, err := guilds.Create(ctx, "Silk Legion", aria.ID, "Aria")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := guilds.Join(ctx, g.ID, bram.ID, "Bram"); err != nil {
+		t.Fatalf("Join: %v", err)
+	}
+
+	// The report: level 1, 15 members, 3,000,000 gold and 5,400 points next.
+	if lr := level(connB, rB, "Bram", false); lr.Error != "" || lr.GuildID != g.ID || lr.Level != 1 ||
+		lr.LevelledUp || lr.MaxMembers != 15 || lr.NextGold != 3_000_000 || lr.NextGuildPoints != 5_400 {
+		t.Fatalf("report at level 1: got %+v", lr)
+	}
+
+	// NEGATIVE, in the engine's order.
+	refused("not the master", level(connB, rB, "Bram", true), 0x4c1e, "only the guild master can level up the guild")
+	refused("1,000 gold", level(connA, rA, "Aria", true), 0x4c31, "not enough gold to level up the guild")
+	if err := chars.AddGold(ctx, aria.ID, 3_000_000-character.StartingGold); err != nil {
+		t.Fatalf("AddGold: %v", err)
+	}
+	if err := guilds.AddPoints(ctx, g.ID, bram.ID, 5_399); err != nil {
+		t.Fatalf("AddPoints: %v", err)
+	}
+	refused("5,399 points", level(connA, rA, "Aria", true), 0x4c32, "not enough guild points to level up the guild")
+	if err := guilds.AddPoints(ctx, g.ID, aria.ID, 1); err != nil {
+		t.Fatalf("AddPoints: %v", err)
+	}
+	if _, died, err := chars.ApplyDamage(ctx, aria.ID, 1<<30); err != nil || !died {
+		t.Fatalf("ApplyDamage: died=%v err=%v", died, err)
+	}
+	refused("dead", level(connA, rA, "Aria", true), 0x4c07, "cannot level up the guild while dead")
+	if gold() != 3_000_000 {
+		t.Fatalf("the refusals spent gold: %d left, want 3000000", gold())
+	}
+	if err := chars.ResetHP(ctx, aria.ID); err != nil {
+		t.Fatalf("ResetHP: %v", err)
+	}
+
+	lr := level(connA, rA, "Aria", true)
+	if lr.Error != "" || lr.Code != 0 || !lr.LevelledUp || lr.Level != 2 || lr.MaxMembers != 20 ||
+		lr.NextGold != 9_000_000 || lr.NextGuildPoints != 50_400 {
+		t.Fatalf("the level-up: got %+v", lr)
+	}
+	if gold() != 0 {
+		t.Fatalf("Aria has %d gold after the level-up, want 0 (exactly 3000000 taken)", gold())
+	}
+	if now, err := guilds.Get(ctx, g.ID); err != nil || now.Level != 2 || now.GatheredSP != 0 {
+		t.Fatalf("the guild after the level-up: %+v, %v; want level 2 with 0 points", now, err)
+	}
+}
+
+// failAfterPayGuilds is a guild store whose LevelUp takes the payment and then
+// fails, as SQLStore.LevelUp would if its UPDATE or commit failed. Test-only.
+type failAfterPayGuilds struct{ guild.Store }
+
+func (failAfterPayGuilds) LevelUp(_ context.Context, _ int64, _ bool, _ int64, pay func(int64) error) (*guild.Guild, error) {
+	if err := pay(3_000_000); err != nil {
+		return nil, err
+	}
+	return nil, errors.New("commit failed")
+}
+
+// TestGuildLevelUpGoldIsNotLost covers srrevamp's own handling around the
+// payment (round 528). A deduction that fails (the gold spent since the
+// check) is the gold refusal, 0x4c31, and the guild keeps its level; a store
+// that fails after taking the gold gives it back, and the reply is our own
+// failure, with no engine code.
+func TestGuildLevelUpGoldIsNotLost(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		chars  func(*character.MemStore) character.Store
+		guilds func(guild.Store) guild.Store
+		code   uint16
+		msg    string
+	}{
+		{"deduction refused", func(c *character.MemStore) character.Store { return spentGoldStore{c} },
+			func(g guild.Store) guild.Store { return g }, 0x4c31, "not enough gold to level up the guild"},
+		{"store fails after payment", func(c *character.MemStore) character.Store { return c },
+			func(g guild.Store) guild.Store { return failAfterPayGuilds{g} }, 0, "failed to level up the guild"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			accounts := account.NewMemStore()
+			accounts.Add("alice", "hunter2")
+			chars := character.NewMemStore()
+			aria, _ := chars.Create(ctx, 1, "Aria")
+			if err := chars.AddGold(ctx, aria.ID, 3_000_000-character.StartingGold); err != nil {
+				t.Fatalf("AddGold: %v", err)
+			}
+			mem := guild.NewMemStore()
+			g, err := mem.Create(ctx, "Silk Legion", aria.ID, "Aria")
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			if err := mem.AddPoints(ctx, g.ID, aria.ID, 5_400); err != nil {
+				t.Fatalf("AddPoints: %v", err)
+			}
+
+			handle := gateway.Chain(LoginHandler(accounts), GuildHandler(tc.chars(chars), tc.guilds(mem)))
+			addr, cleanup := startTestServer(t, handle)
+			defer cleanup()
+			conn := dialTestServer(t, addr)
+			defer conn.Close()
+			r := bufio.NewReader(conn)
+			if lr, err := DecodeLoginResult(doSend(t, conn, r, OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
+				t.Fatalf("login failed: err=%v result=%+v", err, lr)
+			}
+
+			resp := doSend(t, conn, r, OpGuildLevel, (&GuildLevelRequest{CharacterName: "Aria", LevelUp: true}).Encode())
+			lr, err := DecodeGuildLevelResult(resp.Data)
+			if err != nil {
+				t.Fatalf("DecodeGuildLevelResult: %v", err)
+			}
+			if lr.Code != tc.code || lr.Error != tc.msg {
+				t.Fatalf("got %+v, want code 0x%x and %q", lr, tc.code, tc.msg)
+			}
+			if now, _ := chars.GetByID(ctx, aria.ID); now.Gold != 3_000_000 {
+				t.Fatalf("Aria has %d gold, want 3000000 kept", now.Gold)
+			}
+			if now, _ := mem.Get(ctx, g.ID); now.Level != 1 || now.GatheredSP != 5_400 {
+				t.Fatalf("the guild moved: level %d, points %d; want 1 and 5400", now.Level, now.GatheredSP)
+			}
+		})
+	}
+}

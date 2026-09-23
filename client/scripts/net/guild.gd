@@ -21,6 +21,12 @@ const OP_INFO_RESULT := 0x0097     # server -> client
 ## OpGuildPointsResult.
 const OP_POINTS := 0x0098          # client -> server
 const OP_POINTS_RESULT := 0x0099   # server -> client
+## The guild's level (round 528): a report of the level and the next level's
+## cost, or, with the level-up byte set, the master's level-up
+## (CGuild::HandleLevelUp, 0x5c63d0). srrevamp placeholder opcodes, mirroring
+## session.OpGuildLevel / OpGuildLevelResult.
+const OP_LEVEL := 0x009A           # client -> server
+const OP_LEVEL_RESULT := 0x009B    # server -> client
 
 const ROLE_MEMBER := 0
 const ROLE_LEADER := 1
@@ -53,6 +59,22 @@ class PointsResult:
 	var gathered_sp: int
 	var members: Array[PointsMember] = []
 
+## Result of decode_level_result(). On failure (error != "") only error and
+## code are meaningful: code is the engine's refusal code for a level-up the
+## engine refuses (0x4c07, 0x4c0d, 0x4c1e, 0x4c21, 0x4c31, 0x4c32; ErrorText
+## gives most of them the game's own words) and 0 for the server's own
+## failures. next_gold / next_gp are what the next level costs, both 0 at
+## the top level.
+class LevelResult:
+	var error: String
+	var code: int
+	var guild_id: int
+	var level: int
+	var levelled_up: bool
+	var max_members: int
+	var next_gold: int
+	var next_gp: int
+
 ## Result of decode_leave_result().
 class LeaveResult:
 	var ok: bool
@@ -73,6 +95,13 @@ static func encode_name_request(character_name: String) -> PackedByteArray:
 ## Encodes an OpGuildPoints request: just a character name.
 static func encode_points(character_name: String) -> PackedByteArray:
 	return _encode_name(character_name)
+
+## Encodes an OpGuildLevel request: a character name, then one byte -- 1 to
+## level the guild up, 0 only to report its level.
+static func encode_level(character_name: String, level_up: bool) -> PackedByteArray:
+	var out := _encode_name(character_name)
+	out.append(1 if level_up else 0)
+	return out
 
 ## Encodes an OpGuildJoin request.
 static func encode_join(character_name: String, guild_id: int) -> PackedByteArray:
@@ -239,4 +268,39 @@ static func decode_points_result(data: PackedByteArray) -> PointsResult:
 		offset += 8
 		result.members.append(m)
 
+	return result
+
+## Decodes an OpGuildLevelResult payload (session.GuildLevelResult): an error
+## string and a u16 code, then (on success) the guild id (s64), level (u8),
+## whether this reply raised it (u8), the member cap (u16) and the next
+## level's gold and guild points (s64 each).
+static func decode_level_result(data: PackedByteArray) -> LevelResult:
+	var result := LevelResult.new()
+	if data.size() < 2:
+		result.error = "truncated"
+		return result
+
+	var error_len: int = data.decode_u16(0)
+	var offset: int = 2 + error_len
+	if offset + 2 > data.size():
+		result.error = "truncated error field"
+		return result
+	result.error = data.slice(2, offset).get_string_from_utf8()
+	result.code = data.decode_u16(offset)
+	offset += 2
+	if result.error != "":
+		return result
+
+	if offset + 8 + 4 + 16 > data.size():
+		result.error = "truncated guild level"
+		return result
+	result.guild_id = data.decode_s64(offset)
+	offset += 8
+	result.level = data[offset]
+	result.levelled_up = data[offset + 1] != 0
+	result.max_members = data.decode_u16(offset + 2)
+	offset += 4
+	result.next_gold = data.decode_s64(offset)
+	offset += 8
+	result.next_gp = data.decode_s64(offset)
 	return result

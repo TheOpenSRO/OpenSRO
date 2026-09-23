@@ -183,6 +183,117 @@ guild-experience curve and a level-up cost table are literally the same numbers
 in the same place. Only the use-site separates them, and the earlier pass did not
 have it.
 
+### What a level-up spends (round 528)
+
+When the ladder passes, `CGuild::HandleLevelUp` sends a ShardManager job and
+returns: `5c645d push 0x0; push 0x9; push esi; ... call 0x5c80a0`, that is
+`CGuildMamager__SendOlappedGuildJobReqToSM(pc, 9, 0)`. Nothing is spent yet.
+
+**The gold is spent on the job's reply, at the checked amount.** Case 9 of
+`trs_sm_guildjob::FUN_005c8990` is `trs_sm_guildjob::FUN_005c8fd0`. It reads
+`CGuild::GetLevel()`, which is **already the new level** (it asserts the value
+is 2 to 5), and calls vtable `+0x16c`, `IGObj::OffsetGold`, with the negated
+64-bit entry at `.rdata 0x00ade918 + (new level - 2) * 8`. That is the gold
+table's entry for `new level - 1`, the level the check priced. Then
+`IGObj::BackupData(0x80, 0)` and the `0xb0fa` reply. As with founding, the
+reply is the success path only.
+
+**The guild points are not spent by the game server, and the amount is not in
+this binary.**
+
+- The job carries no amount. `SendOlappedGuildJobReqToSM`'s case 9 stores the
+  character's id and one more id (`FUN_004ea580`) and nothing else.
+- `FUN_005c8fd0` writes no guild field.
+- The guild record changes when the ShardManager's update arrives.
+  `CMainProcess::FUN_005c9bd0`, the inter-server guild dispatcher, sends its
+  cases 9 and 10 to `FUN_005ca4b0`, which finds the guild and calls
+  `FUN_005c3c90`. That reads a one-byte field mask, and `FUN_005cfc20` copies
+  each field the mask names: bit 1 the id (`+0x18`), bit 4 `Lvl` (`+0x38`),
+  bit 8 `GatheredSP` (`+0x3c`), bit `0x20` `CurCrestRev` (`+0x94`), bit `0x40`
+  `MercenaryAttr` (`+0x98`) (offsets as `docs/protocol/db_bind_offsets.tsv`
+  binds them); bits 2 and `0x10` read strings (`FUN_00404b60`). It then broadcasts `0x38F5` type 5 with the same mask.
+- Which bits the ShardManager sets after a level-up, and what `GatheredSP` it
+  sends, is decided in the ShardManager, which is not in `SR_GameServer.exe`.
+  That dispatcher case 9 answers job 9 is a match of numbers and fields, not a
+  traced path.
+
+**srrevamp spends the checked guild points, as a disclosed stand-in.** Two
+readings point that way, and neither proves it:
+
+1. The other guild purchase gated on `GatheredSP`, `FUN_005c7900` (the
+   mercenary attribute at `guild + 0x98`, job `0x2b`; it refuses `0x4c32`
+   when `guild + 0x3c` is short), is answered through the dispatcher's case
+   `0x2b`: `FUN_005cc590` reads a guild id, a byte and a dword, and
+   `FUN_005c5600` writes the byte to `MercenaryAttr` and the dword to
+   `GatheredSP`. So the ShardManager does send a new points total after a
+   points-gated guild purchase.
+2. The gold, checked in the same function against the same level's entry, is
+   spent at exactly the checked amount.
+
+Not spending them would make the guild-point cost a threshold only. If the
+ShardManager is ever read, `guild.CheckLevelUp`'s `gpCost` is the value to
+correct.
+
+**What the client does with a refusal.** `Guild_OnLevelUpResult` (`0x881bd0`,
+the client's handler for `0xb0fa`) reads a result byte and, on 2, a `u16` code,
+and hands it to the error dispatcher with category `0x10` (`0x881c53 push
+0x10`, through `FUN_00778190`). Category `0x10` is the guild switch
+(`docs/protocol/error_codes.md`, "The rows the client shows for a pick-up or
+repair refusal"): `0x4c07`, `0x4c1e`, `0x4c21`, `0x4c31` and `0x4c32` each have a
+message, and `0x4c0d` goes to the default, which shows nothing.
+
+### What srrevamp does (round 528)
+
+- **The level.** `guild.Guild.Level` is `_GUILD.Lvl`, stored in both stores
+  (`lvl INTEGER NOT NULL DEFAULT 1` in Postgres, added with `ADD COLUMN IF NOT
+  EXISTS`). A new guild is at `guild.FoundingLevel`, 1. The binary does not
+  hold the founding write (the ShardManager creates the row; the create reply
+  `trs_sm_guildjob::FUN_005c8bf0` looks the guild up and sets no level), so 1
+  is the floor the engine's tables agree on: `CGuild::IsFull` treats 0 as 1
+  after an assert, `CGuild::CheckLevelUpCost` has cases 1 to 4, and
+  `FUN_005c8fd0` asserts a levelled guild is at least 2.
+- **The level-up.** `guild.Store.LevelUp(character, alive, gold, pay)` runs
+  `guild.CheckLevelUp`, the ladder above in its order, against the guild as
+  stored. It then calls `pay` with the gold cost, takes the guild-point cost off
+  `GatheredSP` and adds one to `Level`. Nothing changes unless all of it
+  succeeds: `MemStore` holds its lock throughout, and `SQLStore` runs one
+  transaction that locks the guild's row (`FOR UPDATE OF g`). Members'
+  `GP_Donation` is not touched.
+- **The gold.** `session.handleGuildLevel` passes a `pay` that calls
+  `DeductGold`. **Our own handling, not the engine's:** the engine's
+  `OffsetGold` cannot refuse and runs after the level has changed.
+  `DeductGold` can refuse, if the gold was spent since the check, so it runs
+  before the new level is kept, and that refusal is reported as `0x4c31`. If
+  the store fails after taking the gold (its `UPDATE`, read-back or commit),
+  the handler gives the gold back with `AddGold` and logs a refund that fails.
+  This is the counterpart of founding's rollback (round 487).
+- **Alive** is HP above 0, the stand-in the founder check uses for the same
+  `GetLifeState` test.
+- **The member cap follows the level.** Both stores' `Join` refuse at
+  `guild.MaxMembersFor(Level)`: 15, 20, 25, 35, 50. It was the level-1 cap for
+  every guild until this round.
+- **Wire.** A placeholder pair in `session/guild.go`: `OpGuildLevel`
+  (`0x009A`) carries a name and one byte (1 to level up, 0 only to report), and
+  `OpGuildLevelResult` (`0x009B`) carries the error string, a `u16` engine code
+  (0 for srrevamp's own failures), then on success the guild id, the level, a
+  levelled-up byte, the member cap and the next level's gold and guild points
+  (both 0 at level 5). `0x009A`/`0x009B` were unused in `server/internal` and
+  `client/scripts` when claimed.
+- **Client.** The Guild tab asks for the level with the points after each
+  successful guild reply and shows `level N, M/cap members`. The master gets a
+  "Level Up Guild (gold, GP)" button, our own dev control and not the real
+  client's guild window. It is disabled at level 5. A refusal is shown in the
+  game's own words through `ErrorText.guild_level_up_line` where the client has
+  a message (`client/scripts/net/error_text.gd`, category `0x10`), and in the
+  server's words otherwise. A level-up re-reads the purse and the points, since
+  the server pushes neither.
+- **Not modelled.** The real client offers the level-up at the guild NPC, the
+  master's item `0x17` (`UIIT_MSG_GUILD_LEVEL_UP`,
+  `docs/protocol/character_state.md`); srrevamp's master still gets the
+  "Guild" placeholder there. The engine broadcasts the new level to the
+  guild's members (`0x38F5` type 5); srrevamp's other members see it on their
+  next guild reply.
+
 ## Gold is 64-bit
 
 The cost check is a 64-bit comparison spelled out in two halves:
@@ -318,8 +429,8 @@ result.
   `character.Store.ApplyDamage` reports as died. A dead earner's batch, or a
   dead character's logout flush, is dropped and the count zeroed, as in the
   engine.
-- **Not modelled.** The level test cannot fail, since srrevamp's guilds have no
-  level. There is no `0x38F5` push: the client asks with srrevamp's placeholder
+- **Not modelled.** The level test cannot fail: srrevamp's guilds have had a
+  level since round 528, and it stops at 5. There is no `0x38F5` push: the client asks with srrevamp's placeholder
   `OpGuildPoints` (`0x0098`), and `OpGuildPointsResult` (`0x0099`) answers with
   the guild's id, its `GatheredSP` and every member's name and `GPDonation`. The
   client asks after each successful guild reply (world entry, create or join,
@@ -330,8 +441,9 @@ result.
   worth is not recovered; srrevamp takes it 1:1 from the kill's experience
   (the comment above `AddSkillExp` in `session/combat.go`), so guild points
   from kills grow at that disclosed rate.
-- **Still open.** A guild level, and spending `GatheredSP` on a level-up
-  (`guild.LevelUpCost`).
+- **Still open** until round 528: a guild level, and spending `GatheredSP` on a
+  level-up. Both are built now (see "Levelling up" above, "What srrevamp does
+  (round 528)").
 
 ## Permissions
 
@@ -509,3 +621,6 @@ will have to be undone.
   known; the limit's value is not.
 - ~~**Guild points: where they come from.**~~ READ in round 272 -- see "Where guild
   points come from" above; credited in srrevamp since round 525.
+- **What a level-up spends in guild points.** The ShardManager decides it, and
+  it is not in `SR_GameServer.exe`; srrevamp spends the checked cost as a
+  disclosed stand-in ("What a level-up spends (round 528)" above).

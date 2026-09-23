@@ -7,15 +7,17 @@
 // is in scope here), but its rules are increasingly the engine's, each cited
 // where it is enforced: the member cap by guild level (MaxMembersByLevel),
 // the 2-12 byte name (ValidName, round 481) and the founder's level, gold and
-// fee (CheckCreator / CreateGoldRequired, round 487), and the guild points a
-// member's skill points earn (PointAccumulator / Store.AddPoints, round 525).
-// This comment called it "entirely own design; no real guild data to RE"
-// until round 490.
+// fee (CheckCreator / CreateGoldRequired, round 487), the guild points a
+// member's skill points earn (PointAccumulator / Store.AddPoints, round 525),
+// and the master's level-up with its gold and guild-point cost (CheckLevelUp /
+// Store.LevelUp, round 528). This comment called it "entirely own design; no
+// real guild data to RE" until round 490.
 package guild
 
 import (
 	"context"
 	"errors"
+	"fmt"
 )
 
 // MaxMembersByLevel is how many characters a guild may hold, by guild level.
@@ -34,20 +36,19 @@ import (
 // ties the predicate to the cap rather than to some other fullness.
 //
 // The table is five dwords at .rdata 0x00ade8dc, and five is exactly the range
-// the assert above allows. The three dwords that follow it (5400, 50400,
-// 135000) look like a guild-experience curve and are NOT claimed here -- nothing
-// read so far uses them.
+// the assert above allows. The four dwords that follow it are the guild-point
+// level-up costs (LevelUpGuildPoints); this comment declined to claim them as
+// a guild-experience curve until their use-site was read.
 var MaxMembersByLevel = [5]int{15, 20, 25, 35, 50}
 
-// MaxMembers is the cap that applies to srrevamp today: **15**, the level-1
-// entry. srrevamp's guilds have no level -- Guild has no Lvl field (_GUILD.Lvl,
-// +0x38, is not modelled) -- so every guild is a level-1 guild, and taking a
-// larger entry would be granting a capacity the game makes you earn.
+// MaxMembers is a new guild's cap: **15**, the entry for FoundingLevel. Until
+// round 528 srrevamp's guilds had no level and this was every guild's cap;
+// Store.Join now takes the cap from the guild's own Level (MaxMembersFor).
 const MaxMembers = 15
 
 // MaxMembersFor returns the cap for a guild level, clamped to the range the
-// engine's own assert allows. It exists so that adding guild levels later has
-// the rule already written; nothing calls it with a level above 1 yet.
+// engine's own assert allows. Store.Join calls it with the guild's Level
+// (round 528), so a level-up raises how many members the guild can hold.
 func MaxMembersFor(level int) int {
 	if level < 1 {
 		level = 1
@@ -59,7 +60,7 @@ func MaxMembersFor(level int) int {
 }
 
 // ErrGuildFull is returned by Store.Join when the guild already holds
-// MaxMembers characters. The engine's own refusal is
+// MaxMembersFor(its Level) characters. The engine's own refusal is
 // UIIT_MSG_GUILDERR_MEMBER_FULL.
 var ErrGuildFull = errors.New("guild: guild is full")
 
@@ -110,8 +111,9 @@ func (p Permission) Has(required Permission) bool {
 
 // NOTHING ENFORCES PERMISSIONS YET, and that is a statement about scope rather
 // than an oversight: this package has no operation that needs one. Its Store is
-// Create/Join/Leave/Get plus AddPoints -- there is no kick, no disband, and no
-// invite.
+// Create/Join/Leave/Get plus AddPoints and LevelUp -- there is no kick, no
+// disband, and no invite. LevelUp's gate is being the master
+// (CGuild::IsGuildMaster, 0x5d0f50), not a permission bit.
 //
 // The divergence worth recording is Join. In the engine a character is brought
 // in by a member holding PermInvite; here Join is self-service, so anyone may
@@ -281,12 +283,148 @@ var LevelUpGuildPoints = [MaxLevel]int{0, 5_400, 50_400, 135_000, 378_000}
 
 // LevelUpCost returns what advancing from the given level costs. ok is false
 // for a level the engine's switch would reject -- anything outside 1..4, which
-// includes level 5, the cap.
+// includes level 5, the cap. CheckLevelUp prices a level-up with it, and the
+// level-up reply quotes it for the next level.
 func LevelUpCost(fromLevel int) (gold int64, guildPoints int, ok bool) {
 	if fromLevel < 1 || fromLevel >= MaxLevel {
 		return 0, 0, false
 	}
 	return LevelUpGold[fromLevel], LevelUpGuildPoints[fromLevel], true
+}
+
+// FoundingLevel is the level a new guild starts at, and the SQL column's
+// DEFAULT, so a guild stored before round 528 reads as level 1 too.
+//
+// It is the FLOOR the engine's own tables agree on, not the founding write,
+// which this binary does not hold (the ShardManager creates the guild's row;
+// the game server's create reply, trs_sm_guildjob::FUN_005c8bf0, sets no
+// level). Three readings put the floor at 1: CGuild::IsFull (0x005d0fb0)
+// asserts on a level of 0 and treats it as 1 before indexing
+// MaxMembersByLevel[level-1]; CGuild::CheckLevelUpCost (0x005c6240) has cases
+// for levels 1 to 4 and asserts on anything else; and the level-up reply
+// (trs_sm_guildjob::FUN_005c8fd0) asserts that a guild it has just levelled
+// is at least 2. A guild below 2 must exist for the alliance's two level
+// refusals (MinLevelForAlliance) to mean anything.
+const FoundingLevel = 1
+
+// Levelling a guild up (round 528): CGuild::HandleLevelUp (0x005c63d0), read
+// in srv.asm (0x5c63d0-0x5c6476). In its order:
+//
+//	vtable +0xf8 (IGObj::GetLifeState) != 1  -> 0x4c07  (5c63e3, 5c63ed cmp al,0x1)
+//	pc[0x72f] == 0 (no guild, [esi+0x1cbc])  -> 0x4c0d  (5c63fa)
+//	!CGuild::IsGuildMaster (0x5d0f50)        -> 0x4c1e  (5c641b)
+//	CGuild::GetLevel() >= 5                  -> 0x4c21  (5c6434 cmp al,0x5; jb)
+//	CheckLevelUpCost(the CURRENT level)                 (5c6445-5c644c)
+//	  64-bit gold at +0x78/+0x7c < LevelUpGold[level]         -> 0x4c31
+//	  guild+0x3c (GatheredSP, a signed dword)
+//	            < LevelUpGuildPoints[level]                    -> 0x4c32
+//	SendOlappedGuildJobReqToSM(pc, 9, 0)                (5c645d-5c6466)
+//
+// The codes' names are the client's (docs/protocol/error_codes.md, "The
+// table"); 0x4c0d has no row there.
+//
+// WHAT A LEVEL-UP SPENDS: THE GOLD IS READ. The job's reply is case 9 of
+// trs_sm_guildjob::FUN_005c8990, trs_sm_guildjob::FUN_005c8fd0. It reads the
+// guild's level -- already the new one: it asserts 2..5 -- and calls
+// IGObj::OffsetGold (vtable +0x16c) with the negated 64-bit entry at .rdata
+// 0x00ade918 + (new level - 2)*8. That is LevelUpGold[new level - 1], the
+// amount the check compared, taken once the ShardManager has answered. Then
+// IGObj::BackupData(0x80, 0) and the 0xb0fa reply.
+//
+// THE GUILD POINTS ARE NOT IN THIS BINARY. The game server never subtracts
+// them: the job (CGuildMamager__SendOlappedGuildJobReqToSM, 0x5c80a0, case 9)
+// carries the character's id and one more id (FUN_004ea580), and no amount;
+// FUN_005c8fd0 writes no guild field. The guild record changes when the
+// ShardManager's update arrives. CMainProcess::FUN_005c9bd0, the inter-server
+// guild dispatcher, sends its cases 9 and 10 to FUN_005ca4b0 ->
+// FUN_005c3c90, which reads a field mask, and FUN_005cfc20 copies each field
+// the mask names, among them bit 4 the level (+0x38, _GUILD.Lvl) and bit 8
+// GatheredSP (+0x3c). Which bits the ShardManager sets after a level-up, and what total
+// it sends, is decided in the ShardManager, which is not in
+// SR_GameServer.exe. (That case 9 answers job 9 is a match of numbers and of
+// fields, not a traced path.)
+//
+// SRREVAMP SPENDS THE CHECKED GUILD POINTS, AS A DISCLOSED STAND-IN. The
+// evidence leans that way, for two reasons. The other guild purchase gated
+// on GatheredSP, FUN_005c7900 (the mercenary attribute, guild+0x98, job
+// 0x2b), is answered through the dispatcher's case 0x2b (FUN_005cc590 ->
+// FUN_005c5600), which sets MercenaryAttr AND a new GatheredSP from the
+// ShardManager's numbers. So the ShardManager does spend guild points on a
+// guild purchase. And the gold, checked in the same function against the
+// same level's entry, is spent at exactly the checked amount. If the
+// ShardManager is ever read, CheckLevelUp's gpCost is the value to correct.
+
+// The level-up refusals CheckLevelUp returns, besides ErrNotInGuild (0x4c0d).
+// LevelUpCode gives each one's engine code.
+var (
+	// ErrLevelUpDead is 0x4c07 UIIT_MSG_GUILDERR_IM_DEAD.
+	ErrLevelUpDead = errors.New("guild: a dead character cannot level up a guild")
+	// ErrNotGuildMaster is 0x4c1e UIIT_MSG_GUILDERR_PERMISSION_DENIED.
+	ErrNotGuildMaster = errors.New("guild: only the guild master can level up the guild")
+	// ErrLevelUpFull is 0x4c21 UIIT_MSG_ERROR_GUILD_LEVEL_UP_FULL.
+	ErrLevelUpFull = errors.New("guild: the guild is already at the maximum level")
+	// ErrLevelUpGoldDeficit is 0x4c31 UIIT_MSG_ERROR_GUILD_LEVEL_UP_GOLD_DEFICIT.
+	ErrLevelUpGoldDeficit = errors.New("guild: not enough gold to level up the guild")
+	// ErrLevelUpGPDeficit is 0x4c32 UIIT_MSG_ERROR_GUILD_LEVEL_UP_GP_DEFICIT.
+	ErrLevelUpGPDeficit = errors.New("guild: not enough guild points to level up the guild")
+)
+
+// CheckLevelUp is CGuild::HandleLevelUp's ladder (0x005c63d0, with
+// CGuild::CheckLevelUpCost 0x005c6240), in its order: alive, in a guild, the
+// master, below MaxLevel, enough gold, enough guild points. alive is the
+// caller's reading of IGObj::GetLifeState == 1 and gold the character's; the
+// rest describe the character's guild, and master, level and gatheredSP are
+// not looked at when inGuild is false. When it passes, it returns the gold and
+// guild points the level-up costs: LevelUpCost of the CURRENT level (the
+// guild-point half is the stand-in above).
+func CheckLevelUp(alive, inGuild, master bool, level int, gold, gatheredSP int64) (goldCost, gpCost int64, err error) {
+	if !alive {
+		return 0, 0, ErrLevelUpDead
+	}
+	if !inGuild {
+		return 0, 0, ErrNotInGuild
+	}
+	if !master {
+		return 0, 0, ErrNotGuildMaster
+	}
+	if level >= MaxLevel {
+		return 0, 0, ErrLevelUpFull
+	}
+	g, gp, ok := LevelUpCost(level)
+	if !ok {
+		// A level below 1. The engine's switch would assert and let it
+		// through (CheckLevelUpCost's default case returns 1). srrevamp's
+		// levels start at FoundingLevel and only rise, so this is a damaged
+		// row, refused rather than priced.
+		return 0, 0, fmt.Errorf("guild: level %d has no level-up cost", level)
+	}
+	if gold < g {
+		return 0, 0, ErrLevelUpGoldDeficit
+	}
+	if gatheredSP < int64(gp) {
+		return 0, 0, ErrLevelUpGPDeficit
+	}
+	return g, int64(gp), nil
+}
+
+// LevelUpCode is the engine's code for a level-up refusal, or 0 for an error
+// that is srrevamp's own (a database failure, a damaged level).
+func LevelUpCode(err error) int {
+	switch {
+	case errors.Is(err, ErrLevelUpDead):
+		return 0x4c07
+	case errors.Is(err, ErrNotInGuild):
+		return 0x4c0d
+	case errors.Is(err, ErrNotGuildMaster):
+		return 0x4c1e
+	case errors.Is(err, ErrLevelUpFull):
+		return 0x4c21
+	case errors.Is(err, ErrLevelUpGoldDeficit):
+		return 0x4c31
+	case errors.Is(err, ErrLevelUpGPDeficit):
+		return 0x4c32
+	}
+	return 0
 }
 
 // ErrNameTaken is returned by Store.Create when the guild name is already
@@ -298,8 +436,9 @@ var ErrNameTaken = errors.New("guild: name already taken")
 var ErrAlreadyInGuild = errors.New("guild: already in a guild")
 
 // ErrNotInGuild is returned by Store.Leave when the character isn't in any
-// guild, and by Store.AddPoints when the character is not a member of the
-// guild named.
+// guild, by Store.AddPoints when the character is not a member of the guild
+// named, and by Store.LevelUp (CheckLevelUp) for a guildless character, the
+// engine's 0x4c0d there.
 var ErrNotInGuild = errors.New("guild: not in a guild")
 
 // ErrGuildNotFound is returned by Store.Join/Get/AddPoints when guildID
@@ -340,7 +479,15 @@ type Guild struct {
 	// 0x3c`), raised by CGuild::AddPoints (0x5c4110) and read as the
 	// guild-point half of the level-up cost by CGuild::CheckLevelUpCost
 	// (0x005c6240; see LevelUpGuildPoints). A dword in the engine, int64 here.
+	// Store.LevelUp spends the checked cost from it (a disclosed stand-in; see
+	// CheckLevelUp).
 	GatheredSP int64
+	// Level is the guild's level, FoundingLevel to MaxLevel: _GUILD.Lvl, the
+	// guild record's +0x38 (docs/protocol/db_bind_offsets.tsv, `_GUILD Lvl
+	// 0x38`), the byte CGuild::GetLevel (0x5d0e80) returns and CGuild::IsFull
+	// (0x5d0fb0) indexes MaxMembersByLevel with. Store.LevelUp raises it by one
+	// (round 528).
+	Level int
 }
 
 // Store persists guilds and their membership.
@@ -393,6 +540,22 @@ type Store interface {
 	// (CGuildManager::RequestAddGuildPoints, 0x5c62e0) goes out only for a
 	// count above zero (`cmp [esp+0x14],0; ja` at 0x5c62e3).
 	AddPoints(ctx context.Context, guildID, characterID int64, points int) error
+
+	// LevelUp raises characterID's guild by one level: CGuild::HandleLevelUp
+	// (0x005c63d0) and its reply, as one atomic step. CheckLevelUp's ladder
+	// runs against the guild as stored, with alive and gold the caller's
+	// readings of the character; then pay is called with the gold cost; then
+	// GatheredSP loses the guild-point cost and Level rises by one. A refusal,
+	// or an error from pay, changes nothing and is returned as it is. pay runs
+	// while the guild is locked, so it must not call back into the Store.
+	// Returns the guild after the level-up.
+	//
+	// The engine's order differs in one respect: its gold is taken on the
+	// ShardManager job's reply (trs_sm_guildjob::FUN_005c8fd0), after the
+	// guild has its new level, by an OffsetGold that cannot refuse. Here pay
+	// can refuse (the gold may have been spent since the check), so it runs
+	// before the new level is kept.
+	LevelUp(ctx context.Context, characterID int64, alive bool, gold int64, pay func(gold int64) error) (*Guild, error)
 }
 
 // Where guild points come from -- read 2026-09-19 (round 272,

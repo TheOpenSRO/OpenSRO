@@ -36,6 +36,12 @@ CREATE INDEX IF NOT EXISTS guild_members_guild_id ON guild_members(guild_id);
 -- made before them upgrades in place.
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS gathered_sp BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE guild_members ADD COLUMN IF NOT EXISTS gp_donation BIGINT NOT NULL DEFAULT 0;
+
+-- The guild's level (round 528): _GUILD.Lvl (+0x38,
+-- docs/protocol/db_bind_offsets.tsv), 1 to 5. The DEFAULT is
+-- guild.FoundingLevel, so a guild stored before the column existed reads as
+-- level 1, the cap it has always had here.
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS lvl INTEGER NOT NULL DEFAULT 1;
 `
 
 // SQLStore is a Store backed by PostgreSQL (via the pgx driver).
@@ -96,8 +102,10 @@ func (s *SQLStore) Create(ctx context.Context, name string, leaderID int64, lead
 	}
 
 	var id int64
+	var level int
 	err = tx.QueryRowContext(ctx,
-		`INSERT INTO guilds (name, leader_id) VALUES ($1, $2) RETURNING id`, name, leaderID).Scan(&id)
+		`INSERT INTO guilds (name, leader_id, lvl) VALUES ($1, $2, $3) RETURNING id, lvl`,
+		name, leaderID, FoundingLevel).Scan(&id, &level)
 	if err != nil {
 		if isUniqueConstraintErr(err) {
 			return nil, ErrNameTaken
@@ -119,6 +127,7 @@ func (s *SQLStore) Create(ctx context.Context, name string, leaderID int64, lead
 		ID:       id,
 		Name:     name,
 		LeaderID: leaderID,
+		Level:    level,
 		Members:  []Member{{CharacterID: leaderID, Name: leaderName, Role: RoleLeader}},
 	}, nil
 }
@@ -140,23 +149,24 @@ func (s *SQLStore) Join(ctx context.Context, guildID, characterID int64, charact
 		return nil, ErrAlreadyInGuild
 	}
 
-	var exists bool
-	if err := tx.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM guilds WHERE id = $1)`, guildID).Scan(&exists); err != nil {
-		return nil, fmt.Errorf("guild: checking guild existence: %w", err)
-	}
-	if !exists {
+	var level int
+	err = tx.QueryRowContext(ctx, `SELECT lvl FROM guilds WHERE id = $1`, guildID).Scan(&level)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrGuildNotFound
 	}
+	if err != nil {
+		return nil, fmt.Errorf("guild: checking guild existence: %w", err)
+	}
 
-	// The engine's member cap (see guild.MaxMembers). Counted inside the same
-	// transaction as the insert, so two simultaneous joins cannot both see room.
+	// The engine's member cap, by the guild's level (see guild.MaxMembersFor).
+	// Counted inside the same transaction as the insert, so two simultaneous
+	// joins cannot both see room.
 	var members int
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM guild_members WHERE guild_id = $1`, guildID).Scan(&members); err != nil {
 		return nil, fmt.Errorf("guild: counting members: %w", err)
 	}
-	if members >= MaxMembers {
+	if members >= MaxMembersFor(level) {
 		return nil, ErrGuildFull
 	}
 
@@ -269,9 +279,20 @@ func (s *SQLStore) GuildIDOf(ctx context.Context, characterID int64) (int64, err
 
 // Get implements Store.
 func (s *SQLStore) Get(ctx context.Context, guildID int64) (*Guild, error) {
+	return getGuild(ctx, s.db, guildID)
+}
+
+// querier is what getGuild reads through: the store's *sql.DB, or the
+// *sql.Tx LevelUp holds, so the guild it returns is read before it commits.
+type querier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+func getGuild(ctx context.Context, q querier, guildID int64) (*Guild, error) {
 	g := &Guild{ID: guildID}
-	err := s.db.QueryRowContext(ctx,
-		`SELECT name, leader_id, gathered_sp FROM guilds WHERE id = $1`, guildID).Scan(&g.Name, &g.LeaderID, &g.GatheredSP)
+	err := q.QueryRowContext(ctx,
+		`SELECT name, leader_id, gathered_sp, lvl FROM guilds WHERE id = $1`, guildID).Scan(&g.Name, &g.LeaderID, &g.GatheredSP, &g.Level)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrGuildNotFound
 	}
@@ -279,7 +300,7 @@ func (s *SQLStore) Get(ctx context.Context, guildID int64) (*Guild, error) {
 		return nil, fmt.Errorf("guild: reading guild: %w", err)
 	}
 
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := q.QueryContext(ctx,
 		`SELECT character_id, character_name, role, gp_donation FROM guild_members WHERE guild_id = $1 ORDER BY joined_at ASC`,
 		guildID)
 	if err != nil {
@@ -362,6 +383,67 @@ func (s *SQLStore) AddPoints(ctx context.Context, guildID, characterID int64, po
 		return fmt.Errorf("guild: committing: %w", err)
 	}
 	return nil
+}
+
+// LevelUp implements Store, in one transaction that locks the guild's row
+// (FOR UPDATE OF g): CheckLevelUp against the row, then pay, then the
+// guild-point cost off gathered_sp and lvl + 1, and the guild read back, all
+// before the commit. A refusal, or pay's error, rolls the transaction back.
+//
+// Its lock does not add a deadlock with AddPoints or Leave: it takes the guild
+// row and no member row, so it waits on neither's member-row lock while
+// holding what they want.
+//
+// One window is left, after pay: if the UPDATE, the read-back or the commit
+// fails, the gold has been taken and the level has not. The error is returned,
+// and the caller that took the gold gives it back (session.handleGuildLevel).
+func (s *SQLStore) LevelUp(ctx context.Context, characterID int64, alive bool, gold int64, pay func(gold int64) error) (*Guild, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("guild: beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var (
+		guildID, leaderID int64
+		level             int
+		gatheredSP        int64
+	)
+	inGuild := true
+	err = tx.QueryRowContext(ctx,
+		`SELECT g.id, g.leader_id, g.lvl, g.gathered_sp
+		 FROM guild_members gm JOIN guilds g ON g.id = gm.guild_id
+		 WHERE gm.character_id = $1
+		 FOR UPDATE OF g`, characterID).Scan(&guildID, &leaderID, &level, &gatheredSP)
+	if errors.Is(err, sql.ErrNoRows) {
+		inGuild = false
+	} else if err != nil {
+		return nil, fmt.Errorf("guild: looking up the guild to level up: %w", err)
+	}
+
+	goldCost, gpCost, err := CheckLevelUp(alive, inGuild, leaderID == characterID, level, gold, gatheredSP)
+	if err != nil {
+		return nil, err
+	}
+	if pay != nil {
+		if err := pay(goldCost); err != nil {
+			return nil, err
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE guilds SET lvl = lvl + 1, gathered_sp = gathered_sp - $1 WHERE id = $2`,
+		gpCost, guildID); err != nil {
+		return nil, fmt.Errorf("guild: raising the guild's level: %w", err)
+	}
+	g, err := getGuild(ctx, tx, guildID)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("guild: committing: %w", err)
+	}
+	return g, nil
 }
 
 func isUniqueConstraintErr(err error) bool {

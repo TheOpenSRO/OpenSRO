@@ -35,6 +35,14 @@ const (
 	// which srrevamp does not model, so the client asks instead.
 	OpGuildPoints       uint16 = 0x0098 // client -> server
 	OpGuildPointsResult uint16 = 0x0099 // server -> client
+	// OpGuildLevel reports the requester's guild's level and what the next
+	// one costs, and with LevelUp set asks to raise it (round 528): the
+	// engine's level-up request is handled by CGuild::HandleLevelUp
+	// (0x005c63d0) and answered with 0xb0fa. Placeholder scaffolding like the
+	// rest of this block (docs/protocol/PROTOCOL_DECISION.md). 0x009a/0x009b
+	// were unused in server/internal and client/scripts when claimed.
+	OpGuildLevel       uint16 = 0x009A // client -> server
+	OpGuildLevelResult uint16 = 0x009B // server -> client
 )
 
 // GuildMemberSnapshot is one guild member, as sent over the wire.
@@ -268,9 +276,113 @@ func DecodeGuildPointsResult(data []byte) (*GuildPointsResult, error) {
 	return r, nil
 }
 
+// GuildLevelRequest is the OpGuildLevel payload: a character name, then one
+// byte, 1 to level the guild up and 0 only to report its level.
+type GuildLevelRequest struct {
+	CharacterName string
+	LevelUp       bool
+}
+
+func (r *GuildLevelRequest) Encode() []byte {
+	flag := byte(0)
+	if r.LevelUp {
+		flag = 1
+	}
+	return append(encodeStrings(r.CharacterName), flag)
+}
+
+func DecodeGuildLevelRequest(data []byte) (*GuildLevelRequest, error) {
+	fields, rest, err := decodeStringsPrefix(data, 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding GuildLevelRequest: %w", err)
+	}
+	if len(rest) != 1 || rest[0] > 1 {
+		return nil, errors.New("session: decoding GuildLevelRequest: want one 0/1 byte after the name")
+	}
+	return &GuildLevelRequest{CharacterName: fields[0], LevelUp: rest[0] == 1}, nil
+}
+
+// GuildLevelResult is the OpGuildLevelResult payload. Error, then Code, are
+// always sent; on failure (Error != "") nothing follows. Code is the engine's
+// refusal code for a level-up the engine would refuse (guild.LevelUpCode:
+// 0x4c07, 0x4c0d, 0x4c1e, 0x4c21, 0x4c31, 0x4c32), which the client can show
+// in the game's own words, and 0 for srrevamp's own failures. On success:
+// the guild's id, its Level (u8), whether this reply raised it (u8), the
+// member cap at that level (u16, guild.MaxMembersFor) and what the next level
+// costs in gold and guild points (s64 each, guild.LevelUpCost; both 0 at
+// guild.MaxLevel).
+type GuildLevelResult struct {
+	Error           string
+	Code            uint16
+	GuildID         int64
+	Level           int
+	LevelledUp      bool
+	MaxMembers      int
+	NextGold        int64
+	NextGuildPoints int64
+}
+
+func (r *GuildLevelResult) Encode() []byte {
+	out := encodeStrings(r.Error)
+	out = binary.LittleEndian.AppendUint16(out, r.Code)
+	if r.Error != "" {
+		return out
+	}
+	out = append(out, encodeInt64(r.GuildID)...)
+	levelled := byte(0)
+	if r.LevelledUp {
+		levelled = 1
+	}
+	out = append(out, byte(r.Level), levelled)
+	out = binary.LittleEndian.AppendUint16(out, uint16(r.MaxMembers))
+	out = append(out, encodeInt64(r.NextGold)...)
+	return append(out, encodeInt64(r.NextGuildPoints)...)
+}
+
+func DecodeGuildLevelResult(data []byte) (*GuildLevelResult, error) {
+	fields, rest, err := decodeStringsPrefix(data, 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding GuildLevelResult: %w", err)
+	}
+	if len(rest) < 2 {
+		return nil, errors.New("session: decoding GuildLevelResult: truncated code")
+	}
+	r := &GuildLevelResult{Error: fields[0], Code: binary.LittleEndian.Uint16(rest)}
+	rest = rest[2:]
+	if r.Error != "" {
+		return r, nil
+	}
+	if r.GuildID, rest, err = decodeInt64(rest); err != nil {
+		return nil, fmt.Errorf("session: decoding GuildLevelResult: guild id: %w", err)
+	}
+	if len(rest) < 4 {
+		return nil, errors.New("session: decoding GuildLevelResult: truncated level")
+	}
+	r.Level = int(rest[0])
+	r.LevelledUp = rest[1] != 0
+	r.MaxMembers = int(binary.LittleEndian.Uint16(rest[2:]))
+	rest = rest[4:]
+	if r.NextGold, rest, err = decodeInt64(rest); err != nil {
+		return nil, fmt.Errorf("session: decoding GuildLevelResult: next gold: %w", err)
+	}
+	if r.NextGuildPoints, _, err = decodeInt64(rest); err != nil {
+		return nil, fmt.Errorf("session: decoding GuildLevelResult: next guild points: %w", err)
+	}
+	return r, nil
+}
+
+// guildLevelResult describes g as OpGuildLevelResult does.
+func guildLevelResult(g *guild.Guild, levelledUp bool) *GuildLevelResult {
+	gold, gp, _ := guild.LevelUpCost(g.Level)
+	return &GuildLevelResult{
+		GuildID: g.ID, Level: g.Level, LevelledUp: levelledUp,
+		MaxMembers: guild.MaxMembersFor(g.Level), NextGold: gold, NextGuildPoints: int64(gp),
+	}
+}
+
 // GuildHandler returns a gateway.Handler implementing
-// OpGuildCreate/OpGuildJoin/OpGuildLeave/OpGuildInfo/OpGuildPoints against
-// guilds.
+// OpGuildCreate/OpGuildJoin/OpGuildLeave/OpGuildInfo/OpGuildPoints/
+// OpGuildLevel against guilds.
 func GuildHandler(chars character.Store, guilds guild.Store) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
@@ -284,6 +396,8 @@ func GuildHandler(chars character.Store, guilds guild.Store) gateway.Handler {
 			return handleGuildInfo(ctx, sess, p, chars, guilds)
 		case OpGuildPoints:
 			return handleGuildPoints(ctx, sess, p, chars, guilds)
+		case OpGuildLevel:
+			return handleGuildLevel(ctx, sess, p, chars, guilds)
 		default:
 			return nil
 		}
@@ -342,6 +456,82 @@ func handleGuildPoints(ctx context.Context, sess *gateway.Session, p *proto.Pack
 		result.Members = append(result.Members, GuildPointsMember{Name: m.Name, GPDonation: m.GPDonation})
 	}
 	return sess.Send(&proto.Packet{Opcode: OpGuildPointsResult, Data: result.Encode()})
+}
+
+// handleGuildLevel answers OpGuildLevel (round 528). A report (LevelUp
+// false) sends the requester's guild's level and the next level's cost. A
+// level-up is CGuild::HandleLevelUp's (0x005c63d0) path through
+// guild.Store.LevelUp, whose ladder (guild.CheckLevelUp) is the engine's
+// order: dead 0x4c07, no guild 0x4c0d, not the master 0x4c1e, level 5
+// 0x4c21, gold 0x4c31, guild points 0x4c32. Alive is HP > 0, the stand-in the
+// founder check uses for the same IGObj::GetLifeState test.
+//
+// The gold goes through chars.DeductGold inside the store's LevelUp (its
+// pay step), so a guild never keeps a level it did not pay for. The engine
+// takes it with an OffsetGold that cannot refuse, on the ShardManager job's
+// reply (trs_sm_guildjob::FUN_005c8fd0); DeductGold can, when the gold was
+// spent since the check, and that is reported as the gold refusal, 0x4c31.
+// SRREVAMP'S OWN HANDLING, the round-487 rollback's counterpart: if the
+// store fails after the gold was taken (its UPDATE, read-back or commit),
+// the gold is given back with AddGold, and a failed refund is logged.
+//
+// The server pushes no gold update (as after founding): the client re-reads
+// the character's stats, and the guild's points, after a level-up.
+func handleGuildLevel(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, guilds guild.Store) error {
+	reply := func(r *GuildLevelResult) error {
+		return sess.Send(&proto.Packet{Opcode: OpGuildLevelResult, Data: r.Encode()})
+	}
+	req, err := DecodeGuildLevelRequest(p.Data)
+	if err != nil {
+		return reply(&GuildLevelResult{Error: "malformed request"})
+	}
+	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
+	if errStr != "" {
+		return reply(&GuildLevelResult{Error: errStr})
+	}
+
+	if !req.LevelUp {
+		g, err := guilds.GetByCharacter(ctx, characterID)
+		if err != nil {
+			msg := guildErrorMessage(err)
+			if !errors.Is(err, guild.ErrNotInGuild) {
+				msg = "failed to load guild level"
+			}
+			return reply(&GuildLevelResult{Error: msg})
+		}
+		return reply(guildLevelResult(g, false))
+	}
+
+	pc, err := chars.GetByID(ctx, characterID)
+	if err != nil {
+		return reply(&GuildLevelResult{Error: "lookup failed"})
+	}
+	var paid int64
+	pay := func(gold int64) error {
+		if err := chars.DeductGold(ctx, characterID, gold); err != nil {
+			if errors.Is(err, character.ErrInsufficientGold) {
+				return guild.ErrLevelUpGoldDeficit
+			}
+			return err
+		}
+		paid = gold
+		return nil
+	}
+	g, err := guilds.LevelUp(ctx, characterID, pc.HP > 0, pc.Gold, pay)
+	if err != nil {
+		if paid > 0 {
+			if rerr := chars.AddGold(ctx, characterID, paid); rerr != nil {
+				slog.Warn("guild level-up failed after its gold was taken, and the refund failed",
+					"character_id", characterID, "gold", paid, "levelup_err", err, "refund_err", rerr)
+			}
+		}
+		msg := guildErrorMessage(err)
+		if guild.LevelUpCode(err) == 0 {
+			msg = "failed to level up the guild"
+		}
+		return reply(&GuildLevelResult{Error: msg, Code: uint16(guild.LevelUpCode(err))})
+	}
+	return reply(guildLevelResult(g, true))
 }
 
 func guildMemberSnapshots(members []guild.Member) []GuildMemberSnapshot {
@@ -459,6 +649,24 @@ func guildErrorMessage(err error) string {
 	case errors.Is(err, guild.ErrNotEnoughGold):
 		// 0x4c0c GUILDERR_NOT_ENOUGH_GOLD.
 		return fmt.Sprintf("founding a guild requires %d gold", guild.CreateGoldRequired)
+	case errors.Is(err, guild.ErrLevelUpDead):
+		// 0x4c07 GUILDERR_IM_DEAD. Our wording.
+		return "cannot level up the guild while dead"
+	case errors.Is(err, guild.ErrNotGuildMaster):
+		// 0x4c1e GUILDERR_PERMISSION_DENIED.
+		return "only the guild master can level up the guild"
+	case errors.Is(err, guild.ErrLevelUpFull):
+		// 0x4c21 ERROR_GUILD_LEVEL_UP_FULL.
+		return fmt.Sprintf("the guild is already at the maximum level, %d", guild.MaxLevel)
+	case errors.Is(err, guild.ErrLevelUpGoldDeficit):
+		// 0x4c31 ERROR_GUILD_LEVEL_UP_GOLD_DEFICIT.
+		return "not enough gold to level up the guild"
+	case errors.Is(err, guild.ErrLevelUpGPDeficit):
+		// 0x4c32 ERROR_GUILD_LEVEL_UP_GP_DEFICIT.
+		return "not enough guild points to level up the guild"
+	case errors.Is(err, guild.ErrGuildFull):
+		// 0x4c13 GUILDERR_MEMBER_FULL; the cap is guild.MaxMembersFor(level).
+		return "the guild is full"
 	case errors.Is(err, guild.ErrGuildNotFound):
 		return "no such guild"
 	case errors.Is(err, guild.ErrAlreadyInGuild):

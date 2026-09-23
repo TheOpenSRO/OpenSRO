@@ -469,6 +469,11 @@ text = "Join by ID"
 layout_mode = 2
 text = "Leave Guild"
 
+[node name="LevelUpButton" type="Button" parent="UI/Control/ActionTabs/Guild"]
+visible = false
+layout_mode = 2
+text = "Level Up Guild"
+
 [node name="GuildStatusLabel" type="Label" parent="UI/Control/ActionTabs/Guild"]
 layout_mode = 2
 text = ""

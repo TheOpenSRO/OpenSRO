@@ -91,6 +91,9 @@ signal guild_leave_result(ok: bool, reason: String)
 signal guild_info_result(result: GuildNet.Result)
 ## The guild's points (round 525): GatheredSP and each member's GP_Donation.
 signal guild_points_result(result: GuildNet.PointsResult)
+## The guild's level and the next level's cost, or a level-up's outcome
+## (round 528).
+signal guild_level_result(result: GuildNet.LevelResult)
 
 signal chat_message(message: ChatNet.Message)
 signal chat_whisper_result(ok: bool, reason: String)
@@ -443,6 +446,11 @@ func guild_info(char_name: String) -> void:
 func guild_points(char_name: String) -> void:
 	_send(GuildNet.OP_POINTS, GuildNet.encode_points(char_name))
 
+## Asks for the guild's level (level_up false), or asks to raise it -- the
+## master only; the server refuses anyone else (round 528).
+func guild_level(char_name: String, level_up: bool = false) -> void:
+	_send(GuildNet.OP_LEVEL, GuildNet.encode_level(char_name, level_up))
+
 func say(message_text: String) -> void:
 	_send(ChatNet.OP_SAY, ChatNet.encode_say(message_text))
 
@@ -661,6 +669,8 @@ func _dispatch(p: Packet) -> void:
 			guild_info_result.emit(GuildNet.decode_result(p.data))
 		GuildNet.OP_POINTS_RESULT:
 			guild_points_result.emit(GuildNet.decode_points_result(p.data))
+		GuildNet.OP_LEVEL_RESULT:
+			guild_level_result.emit(GuildNet.decode_level_result(p.data))
 		ChatNet.OP_MESSAGE:
 			chat_message.emit(ChatNet.decode_message(p.data))
 		ChatNet.OP_WHISPER_RESULT:

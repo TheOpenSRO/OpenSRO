@@ -119,6 +119,34 @@ func _init() -> void:
 	var unknown_pick := ErrorText.pick_up_line(0x1234, fixture)
 	_check(unknown_pick == "Could not pick that up (code 0x1234).", "an unknown pick-up code names itself (got %s)" % unknown_pick)
 
+	# Round 528: the guild switch's rows (category 0x10, the category the
+	# level-up reply's own handler passes: Guild_OnLevelUpResult 0x881c53).
+	# NEGATIVE (fails before round 528, when these codes had no row): the
+	# table's text, not the server's words.
+	var guild_table := _table(PackedStringArray([
+		_row("UIIT_MSG_GUILDERR_IM_DEAD", "Fixture guild dead"),
+		_row("UIIT_MSG_GUILDERR_PERMISSION_DENIED", "Fixture not the master"),
+		_row("UIIT_MSG_ERROR_GUILD_LEVEL_UP_FULL", "Fixture top level"),
+		_row("UIIT_MSG_ERROR_GUILD_LEVEL_UP_GOLD_DEFICIT", "Fixture guild gold short"),
+		_row("UIIT_MSG_ERROR_GUILD_LEVEL_UP_GP_DEFICIT", "Fixture guild points short"),
+	]))
+	for pair in [[0x4c07, "Fixture guild dead"], [0x4c1e, "Fixture not the master"],
+			[0x4c21, "Fixture top level"], [0x4c31, "Fixture guild gold short"],
+			[0x4c32, "Fixture guild points short"]]:
+		var code: int = pair[0]
+		var want: String = pair[1]
+		var got: String = ErrorText.guild_level_up_line(code, guild_table, "server words")
+		_check(got == want, "0x%x level-up refusal shows the table's text (got %s)" % [code, got])
+	# 0x4c0d goes to the guild switch's default (index byte 0x41 at 0x7bbc87):
+	# the server's own words stand.
+	_check(ErrorText.uiit_key(0x4c0d) == "", "0x4c0d has no client message name (the guild switch's default)")
+	var guildless := ErrorText.guild_level_up_line(0x4c0d, guild_table, "not in a guild")
+	_check(guildless == "not in a guild", "0x4c0d keeps the server's words (got %s)" % guildless)
+	var own := ErrorText.guild_level_up_line(0, guild_table, "failed to level up the guild")
+	_check(own == "failed to level up the guild", "code 0 keeps the server's words (got %s)" % own)
+	var no_row := ErrorText.guild_level_up_line(0x4c32, sparse, "not enough guild points to level up the guild")
+	_check(no_row == "not enough guild points to level up the guild", "a table without the GP row gives the server's words (got %s)" % no_row)
+
 	# The wiring (World3D, HudPanels) is checked in _initialize, below, which
 	# also reports the result.
 
@@ -144,7 +172,25 @@ func _initialize() -> void:
 		world.set("_ui_text_table", fixture)
 		var line: String = world.call("_pick_up_refusal_line", 0x1812)
 		_check(line == "Fixture not yours", "World3D's 0x1812 refusal line is the table's text (got %s)" % line)
+
+		# A level-up refused 0x4c32 (round 528) goes on the Guild tab, in the
+		# table's words.
+		world.set("_ui_text_table", _table(PackedStringArray([
+			_row("UIIT_MSG_ERROR_GUILD_LEVEL_UP_GP_DEFICIT", "Fixture guild points short"),
+		])))
+		var status := Label.new()
+		var chat := RichTextLabel.new()
+		world.set("guild_status_label", status)
+		world.set("chat_log", chat)
+		var refused := GuildNet.LevelResult.new()
+		refused.error = "not enough guild points to level up the guild"
+		refused.code = 0x4c32
+		world.call("_on_guild_level_result", refused)
+		_check(status.text == "Guild level: Fixture guild points short",
+			"World3D shows a 0x4c32 level-up refusal in the table's words (got '%s')" % status.text)
 		world.free()
+		status.free()
+		chat.free()
 
 	# HudPanels._on_repair_result writes the store's status line. The store is
 	# a bare HudWindow holding the ShopStatus label _build_shop_purse makes;
