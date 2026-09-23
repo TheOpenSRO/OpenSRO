@@ -43,20 +43,27 @@ package session
 // gives 0x1811 (docs/RE_COMPLETION.md, round 499, "Not modelled").
 
 // interactionBusyCode is 0x1c0b, UIIT_MSG_INTERACTION_FAIL_IM_BUSY
-// (docs/protocol/error_codes.md :338), the code GObjPC_HandleShopMsg_046
-// (`0x00510250`) refuses an NPC interaction with while INTERACTMODE is
-// non-zero. OpRepairResult carries the engine's own refusal codes, so a repair
-// refused as busy answers with it -- an ADAPTATION, like the rest of this
-// file: the engine sends 0x1c0b in reply to the interaction OPEN, 0xb046
-// (`mov ecx,0xb046` at `0x51041c`, then Msg_SendTwoFieldReply `0x4e7250`), not
-// in reply to a repair. srrevamp has no interaction-open message to refuse, so
-// it puts the code on the repair's own result instead.
+// (docs/protocol/error_codes.md, "The table", row 0x1c0b), the code
+// GObjPC_HandleShopMsg_046 (`0x00510250`) refuses an NPC interaction with
+// while INTERACTMODE is non-zero. OpRepairResult carries the engine's own
+// refusal codes, so a repair refused as busy answers with it -- an
+// ADAPTATION, like the rest of this file: the engine sends 0x1c0b in reply to
+// the interaction OPEN, 0xb046 (`mov ecx,0xb046` at `0x51041c`, then
+// Msg_SendTwoFieldReply `0x4e7250`), not in reply to a repair. srrevamp has no
+// interaction-open message to refuse, so it puts the code on the repair's own
+// result instead.
 const interactionBusyCode int32 = 0x1c0b
 
 // tradeBusyReason is the text-reply form of the same refusal, for the shop and
 // warehouse results, which carry a reason string rather than a code. The
-// wording is srrevamp's own: the client has no message for 0x1c0b
-// (error_codes.md lists it among the codes with no client case).
+// wording is srrevamp's own because those results have no code field to carry
+// (their layouts are placeholders, docs/protocol/PROTOCOL_DECISION.md). The
+// client DOES have a message for 0x1c0b: in the real client's error dispatcher
+// the interaction switch (category 0xd, targets at 0x7bbaac) sends it to
+// 0x7ba09d, which pushes 0xdc24d0 UIIT_MSG_INTERACTION_FAIL_IM_BUSY
+// (docs/protocol/error_codes.md, "The interaction pair", corrected in round
+// 515). The repair's result carries the code, and srrevamp's client shows that
+// message for it (client/scripts/net/error_text.gd, round 518).
 const tradeBusyReason = "you are busy with a trade"
 
 // tradeEquipLockedReason refuses an equip or unequip during an ACCEPTED trade.

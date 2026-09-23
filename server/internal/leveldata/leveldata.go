@@ -620,8 +620,9 @@ func (t *Table) KillExp(killerLevel, victimLevel int, expSharingParty bool) (int
 // table's entry+0x10 for each, then refuses the raise when the character's
 // skill points (charData+0x80) are below the total. The level entry holds the
 // int64 EXP requirement at +8, so +0x10 is the field after it -- leveldata's
-// column 2. The values escalate 1, 1, 2, 2, 4, 5, 6, 7, 9, 12 ... 53 at level
-// 20, 172 at level 32.
+// column 2. The values escalate 1, 1, 1, 2, 2, 4, 5, 6, 7, 9, 12 ... 53 at
+// level 20, 172 at level 32 (levels 1-11, 20 and 32 re-read from the player's
+// leveldata.txt in round 518).
 func (t *Table) MasteryUpCost(level int) (int, bool) {
 	if t == nil {
 		return 0, false

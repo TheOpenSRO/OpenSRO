@@ -488,8 +488,9 @@ func _wire_repair_buttons(window: HudWindow) -> void:
 		one_btn.pressed.connect(_on_repair_one_pressed)
 
 ## Shows Repair and Repair All only at an NPC the server gives interaction 4
-## (NpcServiceReader.offers_repair: the town smiths and armour merchants) and
-## hides them at every other store, as the real client does (round 514). The
+## (NpcServiceReader.offers_repair: the town smiths and armour merchants, and
+## the eight fortress smiths, site 0x4c736f) and hides them at every other
+## store, as the real client does (round 514). The
 ## client's 0xb045 NPC-select reply handler (FUN_0088b200) hides both buttons
 ## and then shows them again only for an NPC with id 4. That is FUN_006d2840(0)
 ## followed by FUN_006d2840(has4), through vtable slot 23, which is show/hide
@@ -519,9 +520,10 @@ func _on_repair_one_pressed() -> void:
 	NetClient.repair(who, _repair_selected_slot if _repair_selected_slot >= 0 else EquipmentNet.REPAIR_ALL)
 
 ## A repair's outcome in the store's status line. A refusal shows the game's
-## own message where the client has one (0x1c07 not enough gold, 0x1c11
-## cannot be repaired, 0x1c12 cannot be revived) and our own wording
-## otherwise; the table and its grounding are in scripts/net/error_text.gd.
+## own message where the client has one (0x1c07 not enough gold, 0x1c0b busy
+## with a trade, 0x1c11 cannot be repaired, 0x1c12 cannot be revived) and our
+## own wording otherwise; the table and its grounding are in
+## scripts/net/error_text.gd.
 ## Until round 515 a refusal went to the log file only and the store showed
 ## nothing.
 func _on_repair_result(code: int, gold_spent: int, _durabilities: Array) -> void:

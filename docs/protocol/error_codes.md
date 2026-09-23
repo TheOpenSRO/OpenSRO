@@ -78,6 +78,28 @@ without knowing the caller's category. They are the low generic ones —
 `ERR_COMMON_INVALID_TARGET` — which is exactly the set most likely to be
 grepped up by accident.
 
+**An exception the method cannot see: `0x0004` (round 518).** The tool walks
+jump tables only. Category `0xd` (the interaction category, `0x7ba026`) tests
+three codes in a compare chain before its jump table, and the walker never reads
+them:
+
+	7ba02e  cmp eax,0x1c06 ; jg 0x7ba070 ; je 0x7ba066
+	7ba037  cmp eax,ebx    ; je 0x7ba04e     (ebx is 0, set at 0x7b8b7b)
+	7ba03b  cmp eax,0x4    ; jne 0x7b913a    (the default)
+	7ba044  push 0xdc2628  UIIT_MSG_INTERACTION_FAIL_TOO_FAR
+	7ba04e  push 0xdc25e0  UIIT_STT_ERR_COMMON_INVALID_TARGET
+	7ba066  push 0xdc2570  UIIT_MSG_INTERACTION_FAIL_I_DONT_HAVE_ANYTHING_FOR_YOU
+
+So `0x0004`, which the table below lists as `UIIT_STT_ERR_COMMON_TOO_FAR` (four
+jump tables give it that name: `0x7bb7cc`, `0x7bbec8`, `0x7bbf48`, `0x7bc070`),
+is `UIIT_MSG_INTERACTION_FAIL_TOO_FAR` under category `0xd`. Its row is flagged,
+and it must be treated as category-dependent like the nine. Code 0 and `0x1c06`
+are not in the table at all, for the same reason. Rerun read-only in round 518,
+the tool still reports 614 codes, 605 of them unambiguous and 9
+category-dependent: the count is right for its method, and this row is an
+exception to it. Other compare-chain cases were not searched for, though the
+storage category's chain (`3` and `0x1807`) was read in passing ("Coverage").
+
 ## Coverage
 
 **614 of the dispatcher's 643 cases.** The progression is worth recording because
@@ -92,6 +114,15 @@ each jump was a bug in the reader, not new data:
 The remaining ~29 either `break` without emitting a message, or `goto` into the
 middle of another case's block *after* its push, where no string can be
 attributed to them.
+
+Codes a category tests in a **compare chain** before its jump table are outside
+both numbers (round 518's review). 643 counts the decompiled switch's `case`
+labels, and a chain decompiles as `if` tests (`param_2 != 0x1807`,
+`param_2 != 0x1c06` in `/var/tmp/decomp_client`), which the walker does not read
+either. Found so far: `0`, `4` and `0x1c06` in category `0xd` ("A code does not
+always mean one thing"), and `3` and `0x1807` in category 1, the storage entry
+(`0x7b8c8a`-`0x7b8c9c`; `3` pushes `UIIT_MSG_STRGERR_INVALID_TARGET`, `0x1807`
+`UIIT_MSG_STRGERR_INVENTORY_FULL`). Other categories' chains were not searched.
 
 ## The other half: which server function raises each code (round 301)
 
@@ -137,7 +168,7 @@ three-round question in a single command.
 | code | message name |
 |---|---|
 | `0x0002` | `UIIT_MSG_PARTYERR_UNKNOWN_ERROR` |
-| `0x0004` | `UIIT_STT_ERR_COMMON_TOO_FAR` |
+| `0x0004` | `UIIT_STT_ERR_COMMON_TOO_FAR` — **category-dependent after all** (round 518): category `0xd` gives it `UIIT_MSG_INTERACTION_FAIL_TOO_FAR`; see "A code does not always mean one thing" |
 | `0x0006` | `UIIT_MSG_AVATAR_MAGICOPTION_ADD_ERORR` |
 | `0x0007` | `UIIT_STT_AVATAR_MAGICOPTION_ADD_FAIL` |
 | `0x0008` | `UIIT_STT_AVATAR_MAGICOPTION_ONLY_AVATAR` |
@@ -881,6 +912,16 @@ Six others that look the same are handled after all -- `0x6415`/`0x6416` in the
 main switch, `0x8006`-`0x800a` in a different client file -- which is why the
 number is fifteen and not twenty-one.
 
+> **Correction (round 518), for `0x1807` only:** the client does have a message
+> for it. It is tested in a compare chain, not a `case`, which is why the grep
+> for `case` missed it. The storage category's entry (category table
+> `0x7bb378`[1] = `0x7b8c82`) does `0x7b8c8a` `cmp eax,0x1807`, then
+> `0x7b8c91` `je 0x7b8ca6`, and `0x7b8ca6` pushes `0xdc7ea0`, the UTF-16 key
+> `UIIT_MSG_STRGERR_INVENTORY_FULL`. So fourteen of the fifteen remain with no
+> message found. Whether a compare chain in another category
+> catches any of the other fourteen was not searched. Nothing in srrevamp sends
+> `0x1807`, so nothing changes for a player.
+
 **The membership changed from the withdrawn list**, which is the point of
 redoing it: `0x1806` drops out, and `0x1403`, `0x480f` and `0x4828` appear. So
 the old list was not merely ill-derived, it was wrong.
@@ -899,7 +940,7 @@ functions.**
 | code | pushed by |
 |---|---|
 | `0x1403` | `GObjPC_MsgHandler_SpecialCommand::FUN_0051de90` |
-| `0x1807` | `FUN_00526090` |
+| `0x1807` | `FUN_00526090` (the client shows `UIIT_MSG_STRGERR_INVENTORY_FULL` for it under the storage category, `0x7b8c8a`; round 518's correction above) |
 | `0x1811` | **not found by this sweep** -- it travels as a value, not a pushed literal; `GObjPC_HandleTradeMsg_081`, `CTradeMgr::EstablishTradeSession` and `CGObjPC::StorageOperation` send it (round 499, below; the StorageOperation site is a LEAD whose meaning is unread, round 501) |
 | `0x181d` | `CGObjPC::vslot_358` |
 | `0x1c0d` | `GObjPC::EndInteraction` (was `FUN_005107c0`) |
@@ -1039,7 +1080,11 @@ list. Two probes agree the client has no message for either. Neither appears in
 the client table above. A grep of all 39,851 decompiled client functions for
 `0x1833` finds no file, and finds no `case 0x181d:`. The same grep does find
 the `case 0x181e:`, `case 0x1826:` and `case 0x182c:` lines, so a grep that
-comes back empty is not simply blind.
+comes back empty is not simply blind. **Hedge (round 518):** both probes look
+for a `case` label (or the literal), and round 518 found `0x1807` tested in a
+compare chain that decompiles as `if (param_2 != 0x1807)` rather than a
+`case`. A compare chain with `0x181d` or `0x1833` in some category would also
+be missed. Whether one exists was not searched.
 
 srrevamp models the codes it has state for (`session.handleTradeRequest`,
 round 500): `3` as its own texts "player not found" and "cannot trade with
@@ -1134,6 +1179,8 @@ two are no longer unexplained.
 > `0x7bbaac`) sends `0x1c0b` to `0x7ba09d`, which pushes `0xdc24d0`
 > `UIIT_MSG_INTERACTION_FAIL_IM_BUSY` -- the row this page's own table carries
 > for it. The claim above was not re-derived this round for `0x1c0d`.
+> Since round 518 srrevamp's client shows that message for a repair refused
+> `0x1c0b` (`client/scripts/net/error_text.gd`).
 
 
 ## `0x480f` means "wrong job guild NPC" (round 453)
@@ -1155,24 +1202,33 @@ meaning is now read rather than unknown.
 
 ## The rows the client shows for a pick-up or repair refusal (round 515)
 
-`client/scripts/net/error_text.gd` resolves five of this table's rows through the
+`client/scripts/net/error_text.gd` resolves six of this table's rows through the
 player's own `textuisystem.txt`: a pick-up refused `0x1812` or `0x1839`, and a
-repair refused `0x1c07`, `0x1c11` or `0x1c12`. Each was read again through the
-dispatcher's jump tables in `sro_client.exe`, from the case to the pushed name:
+repair refused `0x1c07`, `0x1c0b` (round 518), `0x1c11` or `0x1c12`. Each was
+read again through the dispatcher's jump tables in `sro_client.exe`, from the
+case to the pushed name:
 
 | category | switch | code | case | pushes |
 |---|---|---|---|---|
 | 1 (storage) | `code - 0x180b`, index bytes `0x7bb6d4`, targets `0x7bb438` | `0x1812` | `0x7b8fca` | `0xdc72c0` `UIIT_MSG_STRGERR_LOCKED_BY_OTHER_ONE` |
 | 1 (storage) | the same | `0x1839` | `0x7b8e96` | `0xdc77f8` `UIIT_MSG_STRGERR_CANNOT_BE_PICKED` |
 | `0xd` (interaction) | `code - 0x1c07`, targets `0x7bbaac` | `0x1c07` | `0x7ba085` | `0xdc2518` `UIIT_MSG_INTERACTION_FAIL_NOT_ENOUGH_MONEY` |
+| `0xd` (interaction) | the same (entry 4, `0x7bbabc`; round 518) | `0x1c0b` | `0x7ba09d` | `0xdc24d0` `UIIT_MSG_INTERACTION_FAIL_IM_BUSY` |
 | `0xd` (interaction) | the same | `0x1c11` | `0x7ba0e1` | `0xdc2320` `UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REPAIRED` |
 | `0xd` (interaction) | the same | `0x1c12` | `0x7ba0f9` | `0xdc22c8` `UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REVIVED` |
 
 The category is picked by the jump table at `0x7bb378`. Index 1 goes to
 `0x7b8c82` and index `0xd` to `0x7ba026`.
 
-Three codes the server sends for these two actions are left out, because the
-client has no case for them:
+**One assumption, stated once.** Showing `0x1812` and `0x1839` assumes the
+pick-up reply is dispatched under category 1 (storage); the real reply's
+category was not read. Under category 1, code `3` would be
+`UIIT_MSG_STRGERR_INVALID_TARGET` (`0x7b8c9c` `push 0xdc7ee0`), so keeping
+srrevamp's own wording for `3` is the conservative side of the same assumption.
+
+Four codes the server sends for these two actions are left out. Two have no
+case in the category they would be dispatched under, and two depend on a
+category that was not read:
 
 - **`0x1813`** (a pick already running, `GObjPC::CheckCanPickUp`). The storage
   table sends it to the switch's default, `0x7b913a`. The default calls `0x46e380`
@@ -1180,14 +1236,16 @@ client has no case for them:
   is `0x181e` (`0x7b8d8b`).
 - **`0x1c09`** (a repair with nothing missing, `GItemEquip::FUN_00496e60`). The
   interaction table sends it to the same default.
-- **`4`** (too far). The table above lists `0x0004` as `UIIT_STT_ERR_COMMON_TOO_FAR`.
-  But the storage category's entry (`0x7b8c82`) handles only `3`
-  (`UIIT_MSG_STRGERR_INVALID_TARGET`) and `0x1807` below `0x180b`, and sends
-  every other code to the default. The category the real pick-up reply uses was
-  not read. So which message `4` gets there is open.
+- **`4`** (too far). It has cases in other categories: four jump tables give it
+  `UIIT_STT_ERR_COMMON_TOO_FAR`, and category `0xd` gives it
+  `UIIT_MSG_INTERACTION_FAIL_TOO_FAR` (`0x7ba03b`, round 518; see "A code does
+  not always mean one thing"). But the storage category's entry (`0x7b8c82`)
+  handles only `3` (`UIIT_MSG_STRGERR_INVALID_TARGET`) and `0x1807` below
+  `0x180b`, and sends every other code to the default. The category the real
+  pick-up reply uses was not read. So which message `4` gets there is open.
 
-`3`, the drop that is gone, is one of the nine category-dependent codes, so it is
-left out as well. srrevamp's own wording stands in for these four codes and for a
+The fourth, `3` (the drop that is gone), is one of the nine category-dependent
+codes. srrevamp's own wording stands in for these four codes and for a
 key the archive lacks. The resolver checks the key with `has()`, so a missing key
 never shows the raw token.
 

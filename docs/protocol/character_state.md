@@ -153,9 +153,16 @@ places:
   answers `0x181e` (`0x47f6e0`).
 
 Neither route gives `0x1811` (`RE_COMPLETION.md`, round 499). srrevamp has no
-open-interaction state that could hold that. The two refusal texts are
-srrevamp's own wording, because the client has no message for either `0x1c0b`
-or `0x1811`.
+open-interaction state that could hold that. The two refusal texts (the shop
+and warehouse `tradeBusyReason`, the equip `tradeEquipLockedReason`) are
+srrevamp's own wording because those results carry a string and no code. This
+used to say the client has no message for either code. That holds for `0x1811`
+in the storage category: its index byte (`0x7bb6d4` + 6) is `0xa6`, whose target
+(`0x7bb6d0`) is the default `0x7b913a`. It does not hold for `0x1c0b`: the
+interaction category sends it to `0x7ba09d`, `push 0xdc24d0`
+`UIIT_MSG_INTERACTION_FAIL_IM_BUSY` (`error_codes.md`, round 515's correction).
+The repair's result carries `0x1c0b`, and since round 518 the client shows that
+message for it (`client/scripts/net/error_text.gd`).
 
 ### The trade request reads the same byte (round 500)
 
@@ -1203,8 +1210,9 @@ addresses read out of `.rdata` in `/opt/sro-files/client/sro_client.exe`.
   read: the `UIIT_*` tokens are in `textuisystem.txt` (below), and the `SN_*`
   tokens may live in another table (round 517). Cases 5-8 use
   raw Korean literals (round 512). Case 1 runs `FUN_006fb630`, which writes its
-  own `"%d. "` line per store. `sub` picks the job-guild variant in cases
-  0x1e-0x24.
+  own `"%d. "` line per store. Case 1 draws no line of its own but still
+  returns `n + 1` (read in round 518's review, below). `sub` picks the
+  job-guild variant in cases 0x1e-0x24.
 - **Item 0 is the end line.** Case 0 looks id `0x1f` up in the talk object's set
   (`0x6fce7e`). If the NPC has it, the text is `UIIT_STT_NPC_CHATTING_WND_TALKEND2`
   (`.rdata 0xdadd70`, `0x6fce9c`). Otherwise it is
@@ -1231,8 +1239,8 @@ numbers other text cites (added in round 517).
 
 | order | id looked up | if present | text |
 |---:|---|---|---|
-| 0a | none: the talk object's `+0x7c8` (`0x7005e6` `cmp [edi+0x7c8],ebx`) and `FUN_00938000(...)`'s result (call at `0x7004d3`, kept in `esi`; `0x7005ee`) | both zero: return 1 (`0x7005f2`-`0x7005f7`, to the epilogue at `0x701517`) before any numbered line, so no row below runs | — |
-| 0b | none: `FUN_004722d0(...)` (`0x700615`), the dword at `+0x18c` of `FUN_0093f710(...)`'s result (`0x700622`) and the talk object's `+0x800` (`0x70062e`) | all three non-zero: a line with **no number**, added to the list at `+0x7b0` (`0x7006ea`, the call `FUN_006fcd60` adds its lines with at `0x6fd25a`), then a line holding `" "` (`.rdata 0xe19330`, `0x70071d`); both before `FUN_00700200` (`0x70074f`) | `SN_FORTRESS_SHOP_TAX` (`.rdata 0xdae6e0`, resolved by `FUN_008c9c30` at `0x700689`) |
+| 0a | none: the talk object's `+0x7c8` (`0x7005e6` `cmp [edi+0x7c8],ebx`) and `FUN_00938000(...)`'s result (call at `0x7004d3`, kept in `esi`; `0x7005ee`) | both zero: return 1 (`0x7005f2`-`0x7005f7`, to the epilogue at `0x701517`) before any numbered line, so no row below runs. "Numbered" is deliberate: `FUN_006fb530` has already run on both paths before the test, at `0x700556` with the text of `FUN_00938000`'s result, or at `0x7005bb` with the empty string (`.rdata 0xe17460`) when that result is null or its `+0x34` is 0 (`0x7004da`-`0x7004e5`). The early exit needs the result null, so it follows the second path (round 518) | — |
+| 0b | none: `FUN_004722d0(...)` (`0x700615`), the dword at `+0x18c` of `FUN_0093f710(...)`'s result (`0x700622`) and the talk object's `+0x800` (`0x70062e`) | all three non-zero: a line with **no number**, added to the list at `+0x7b0` (`0x7006ea`, the call `FUN_006fcd60` adds its lines with at `0x6fd25a`), then a line holding `" "` (`.rdata 0xe19330`, `0x70071d`); both before `FUN_00700200` (`0x70074f`). The first line is **formatted**: `0x7006b3` calls `0xb434fc` (`_swprintf_s`, the call `FUN_006fb630` writes `"%d. "` with at `0x6fb7b5`) into a `0xff`-wide buffer, with the resolved token's text as the format string, `FUN_009274c0`'s string (called at `0x700647` with the talk object's `+0x800`) and the short at the talk object's `+0x804` (`0x70069c` `movsx`) as its arguments (round 518) | `SN_FORTRESS_SHOP_TAX` (`.rdata 0xdae6e0`, resolved by `FUN_008c9c30` at `0x700689`) |
 | 1 | 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1f, 0x28 | `FUN_00700200` (`0x70074f`): `IF_NPCTalk::FUN_006fe030` items 0x33, 0x34, 0x32, 0x36, 0x37, 0x35, 0x42 | a second item switch, not read here |
 | 2 | 0xc (`0x700770`) | a line with no number, behind two tests | `UIIT_MSG_SAFETRADE_PROGRESS_NUMBER` |
 | 3 | 0x13 (`0x7008cb`) | the text passed to `FUN_006fb530`, with no number | `UIIT_MSG_XMAS_EVENT_SO-OK` |
@@ -1263,9 +1271,15 @@ numbers other text cites (added in round 517).
 The functions named `FUN_*` in the conditions are unnamed tests. The order
 column matters, because the numbers are assigned in this order. A warehouse
 keeper (server ids 1 and 3, and no 0xf: the id table above) takes row 5's
-0xf-absent branch, so it gets item 1 only if `FUN_00989d20` answers nonzero and
-`FUN_006fb630` finds a store. It then gets the storage line, `TC_OPEN` behind
+0xf-absent branch, so it gets item 1 whenever `FUN_00989d20` answers nonzero
+(`0x700a71`; after `0x700a8e` `cmp byte [esp+0x14],0`, `0x700a93`
+`je 0x700b10` skips item 1 on 0, and `0x700a95` `jmp 0x700afe` emits it
+otherwise). `FUN_006fb630`, which item 1 calls, decides
+only whether any per-store lines are drawn: item 1 takes a number either way
+(the numbering cases below). It then gets the storage line, `TC_OPEN` behind
 its gate, `TC_HONOR_RANKING`, and the end line when the `+0x7f1` gate is set.
+(Corrected in round 518's review: this used to say item 1 also needed
+`FUN_006fb630` to find a store.)
 
 ### The text: two layouts of `textuisystem.txt`
 
@@ -1327,17 +1341,63 @@ the `NPCTALK` lines yet.
 - the `+0x7f1` gate on the end line, which srrevamp always shows;
 - `TALKEND2`, which only a siege pulley gets.
 
-So srrevamp's numbers do not match the real client's at a keeper srrevamp gives
-a "Buy" line. By the table above, every item but 0x2a advances `n`, including
-0x2e. With no store line, the real client's storage line is 1 (srrevamp: 2),
-**whether or not the `+0x7f1` gate is set**: that gate decides only the end
-line, which comes after the storage line. With one or more store lines, the
-real client puts `TC_HONOR_RANKING` (and `TC_OPEN` when shown) between the
-storage line and the end line, so when it shows its end line (the `+0x7f1`
-gate) that line is 4 or higher (srrevamp: 3). (Restated in round 517; the
-round 513 text made the whole mismatch depend on the `+0x7f1` gate.) This comes
-from the table's order, with row 0a's early exit not taken. It was not
-measured on a running real client.
+So at a keeper srrevamp gives a "Buy" line, srrevamp's numbers match the real
+client's only in part, and how far depends on how many store lines the real
+client writes. By the table above, every item but 0x2a advances `n`, including
+0x2e. The `+0x7f1` gate decides only whether an end line follows the others, so
+none of the cases below depends on it:
+
+- **No item 1** (`FUN_00989d20` answers 0). The real client's storage line is
+  1 (srrevamp: 2).
+- **Item 1 with no store line** (`FUN_00989d20` answers nonzero and
+  `FUN_006fb630` writes no line). The storage line is 2, the same number as
+  srrevamp's, though the real client shows no line 1 where srrevamp shows
+  "1. Buy". Item 1 takes a number without drawing a line. Its case (index byte
+  `0x6fd394`+1 is `0x01`, and jump-table entry `0x6fd2d8`[1] is `0x6fceb0`)
+  calls `FUN_006fb630(&n)` (`0x6fceb0`-`0x6fcebc`). It then assigns its own text
+  the empty string (`0x6fcec1` `push 0xe17460`, `FUN_0046e3d0`, which assigns
+  through `FUN_0046ee40`), so the draw behind `0x6fd231` `cmp [esp+0x40],3`
+  (the text's length) is skipped. It leaves through `0x6fd25f`
+  `cmp ebp,0x2a; jne 0x6fd287` and `0x6fd292` `add esi,1`, so it returns
+  `n + 1` whatever `FUN_006fb630` drew. The caller keeps that as `n`
+  (`0x700b05` `call 0x6fcd60`, `0x700b0a` `mov ebx,eax`). `n` starts at 1
+  (`0x70048a`), `ebx` holds it from `0x70096b` (or `0x700963`, after item 4)
+  to item 1, and the storage line pushes `ebx` (`0x700b73`-`0x700b7a`).
+  `FUN_006fb630` writes `n` (its argument, kept at `[esp+0x24]`,
+  `0x6fb66b`-`0x6fb678`) only at `0x6fb79d`,
+  just before it formats a `"%d. "` line (`0x6fb7b5`), and only when the
+  per-pass counter zeroed at `0x6fb700` is non-zero. With no line, `n` is
+  unchanged. (Round 518 first put this case with the one above, giving a
+  storage line of 1. Review caught it.)
+- **Exactly one store line.** Lines 1 (the store) and 2 (storage) match. Line 3
+  differs: srrevamp's end line against the real client's `TC_OPEN` (when its
+  gate passes) or `TC_HONOR_RANKING`. The real end line, when the `+0x7f1` gate
+  shows it, is 4 or 5.
+- **Two or more store lines with consecutive numbers.** The real storage line
+  is 3 or higher (srrevamp: 2).
+
+The last case needs consecutive numbers, and `FUN_006fb630` does not always
+give them (read in round 518). It bumps `n` only between lines of one pass of
+its outer loop. `[esp+0x20]` is zeroed at `0x6fb700` at the top of each outer
+pass, `0x6fb793`-`0x6fb79d` add 1 to `n` only when it is non-zero, and
+`0x6fbb4d` adds 1 to it after each line. The inner back-edge
+(`0x6fbb5e` `jmp 0x6fb724`) returns below the reset; the outer one
+(`0x6fbb70` `jmp 0x6fb6c6`) returns above it. So the first line of a later
+outer pass repeats the previous line's number. What the two loops walk (the
+lists from `0x983cb0` and `0x982760`, whose arguments pass in registers) was
+not read. `NPC_WC_WAREHOUSE_W` is the candidate for this case: `refshopgroup.txt`
+names it in two rows, `GROUP_STORE_WC_HONOR` and `GROUP_STORE_WC_HONOR2`, and
+`refmappingshopgroup.txt` maps each group to one store, `STORE_WC_HONOR` and
+`STORE_WC_HONOR2` (both tables read in `/var/tmp/tables` on the render box).
+Whether those two lines get two numbers depends on the loops, so it is not
+cited as a measured case.
+
+(Restated in round 517, which removed the round 513 text's dependence on the
+`+0x7f1` gate, and again in round 518, which added the one-store and
+many-store cases and split the no-store case by whether item 1 runs: the
+earlier text said the numbers do not match at any keeper with a "Buy" line.)
+All of this comes from the table's order, with row 0a's early exit not taken.
+It was not measured on a running real client.
 
 ## Interaction id 4 and the store's repair buttons (round 514)
 
@@ -1355,8 +1415,14 @@ runtime's `strstr`, finds one of a list of literals in the NPC's codename:
 | `0x4c677f` | 4 | `NPC_CH_SMITH`, `NPC_CH_ARMOR`, `NPC_WC_SMITH`, `NPC_WC_ARMOR`, `NPC_KT_SMITH`, `NPC_KT_ARMOR`, `NPC_EU_SMITH`, `NPC_EU_ARMOR`, `NPC_CA_SMITH`, `NPC_CA_ARMOR`, `NPC_SD_M_AREA_SMITH`, `NPC_SD_M_AREA_ARMOR`, `NPC_SD_T_AREA_SMITH`, `NPC_SD_T_AREA_ARMOR` (`0xaeeae0`-`0xaeebbc`) |
 | `0x4c736f` | 0x1a (`0x4c7361`), then 4 | `NPC_CH_FORTRESS_SMITH1`, `NPC_CH_FORTRESS_SMITH2`, `NPC_WC_FORTRESS_SMITH1`, `NPC_WC_FORTRESS_SMITH2`, `NPC_KT_FORTRESS_SMITH`, `NPC_EU_FORTRESS_SMITH`, `NPC_CA_FORTRESS_SMITH1`, `NPC_CA_FORTRESS_SMITH2` (`0xaef11c`-`0xaef1c4`) |
 
-`srv.asm` has 68 calls through a vtable's `+0x164`. Only these two push a
-literal 4 just before the call. The function's other two `push 4` calls
+The census, recounted in round 518 with its method stated (round 514 wrote "68
+calls" with none). `srv.asm` has 85 loads of the form
+`mov reg,DWORD PTR [reg+0x164]` whose base is not `esp`. 67 of them are followed
+by `call reg` within the next 4 instructions, and 69 within 8 (the two extra
+calls are at `0x4c1055` and `0x4de9e3`). There is no
+`call DWORD PTR [reg+0x164]`. Of those 69 calls, only `0x4c6783` and `0x4c7373`
+have a `push 0x4` in the 8 instructions before them: the pushes at `0x4c677f`
+and `0x4c736f`, the two sites above. The function's other two `push 4` calls
 (`0x4c6df7`, `0x4c775c`) go through slot `0x318`. A call that passed the id in a
 register would escape this census.
 

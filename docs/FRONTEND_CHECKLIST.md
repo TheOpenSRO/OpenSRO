@@ -97,8 +97,9 @@ Ordered roughly quick-fix → needs-a-server-system.
   guild line still only says it is not available yet. There is no Repair line: the client's
   menu builder adds no item for a smith's interaction 4 (round 512). Repair is the store
   window's own Repair / Repair All buttons, which work, and which the store shows only at an NPC
-  with id 4 -- the town smiths and armour merchants -- as the client does (`0x88b8c5`; round
-  514). The storage and end lines use the client's own UIIT_STT_NPC_CHATTING_WND_STOREHOUSE /
+  with id 4 -- the town smiths and armour merchants, and the eight fortress smiths
+  (`CGObjNPCNPC::Create` sites `0x4c677f` and `0x4c736f`) -- as the client does (`0x88b8c5`;
+  round 514). The storage and end lines use the client's own UIIT_STT_NPC_CHATTING_WND_STOREHOUSE /
   _TALKEND text from the player's archive, so the storage line reads "Deposit into storage."
   (round 513). See docs/RE_COMPLETION.md rounds 512-514.
 - [x] **EXP curve recovered + server leveling** — `leveldata.txt` col 1 is exp-to-next-level (139

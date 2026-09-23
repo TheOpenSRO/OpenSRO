@@ -31,6 +31,7 @@ func _init() -> void:
 		_row("UIIT_MSG_STRGERR_LOCKED_BY_OTHER_ONE", "Fixture not yours"),
 		_row("UIIT_MSG_INTERACTION_FAIL_NOT_ENOUGH_MONEY", "Fixture no gold"),
 		_row("UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REPAIRED", "Fixture unrepairable"),
+		_row("UIIT_MSG_INTERACTION_FAIL_IM_BUSY", "Fixture on other business"),
 		# Present so the guards below prove they are NOT borrowed by analogy.
 		_row("UIIT_MSG_STRGERR_BUSY", "Fixture busy"),
 		_row("UIIT_MSG_STRGERR_INVALID_TARGET", "Fixture invalid target"),
@@ -44,13 +45,44 @@ func _init() -> void:
 	# the game's own text, read from the table, for the four codes the
 	# client has a case for.
 	var picked := ErrorText.pick_up_line(0x1839, fixture)
-	_check(picked == "Fixture cannot pick", "0x1839 pick-up shows the table's CANNOT_BE_PICKED text, stripped (got %s)" % picked)
+	_check(picked == "Fixture cannot pick", "0x1839 pick-up shows the table's CANNOT_BE_PICKED text; UiTextTable.parse strips the trailing space (got %s)" % picked)
 	var locked := ErrorText.pick_up_line(0x1812, fixture)
 	_check(locked == "Fixture not yours", "0x1812 pick-up shows the table's LOCKED_BY_OTHER_ONE text (got %s)" % locked)
 	var no_gold := ErrorText.repair_line(0x1c07, fixture)
 	_check(no_gold == "Fixture no gold", "0x1c07 repair shows the table's NOT_ENOUGH_MONEY text (got %s)" % no_gold)
 	var unrepairable := ErrorText.repair_line(0x1c11, fixture)
 	_check(unrepairable == "Fixture unrepairable", "0x1c11 repair shows the table's CANNOT_BE_REPAIRED text (got %s)" % unrepairable)
+
+	# NEGATIVE (fails before round 518, when 0x1c0b had no row and showed
+	# "Repair refused (code 0x1c0b)."): the busy refusal a trade causes is the
+	# interaction table's entry 4, 0x7ba09d push 0xdc24d0.
+	# The key is echoed only on a miss: it contains "FAIL", which
+	# remote_godot.sh's result grep would read as a failing suite.
+	var busy_key := ErrorText.uiit_key(0x1c0b)
+	var busy_key_ok := busy_key == "UIIT_MSG_INTERACTION_FAIL_IM_BUSY"
+	_check(busy_key_ok, "0x1c0b's message name is the interaction switch's IM_BUSY key"
+		+ ("" if busy_key_ok else " (got '%s')" % busy_key))
+	var busy_repair := ErrorText.repair_line(0x1c0b, fixture)
+	_check(busy_repair == "Fixture on other business", "0x1c0b repair shows the table's IM_BUSY text (got %s)" % busy_repair)
+	var busy_fallback := ErrorText.repair_line(0x1c0b, _table(PackedStringArray([_row("UIIT_MSG_INTERACTION_FAIL_NOT_ENOUGH_MONEY", "Fixture no gold")])))
+	_check(busy_fallback == "You are busy with something else.", "0x1c0b without an IM_BUSY row gives its own fallback, not the code (got %s)" % busy_fallback)
+
+	# 0x1c12 read from a row that HAS text. The fixture's REVIVED row below is
+	# deliberately empty, and a fallback there would also pass with a key typo;
+	# this one cannot.
+	var revivable := _table(PackedStringArray([_row("UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REVIVED", "Fixture unrevivable")]))
+	var unrevivable := ErrorText.repair_line(0x1c12, revivable)
+	_check(unrevivable == "Fixture unrevivable", "0x1c12 repair shows the table's CANNOT_BE_REVIVED text (got %s)" % unrevivable)
+
+	# resolve()'s own strip. UiTextTable.parse already strips every field, so
+	# the table is filled directly here, with padding parse would have removed.
+	var padded := UiTextTable.new()
+	padded._strings["UIIT_MSG_INTERACTION_FAIL_NOT_ENOUGH_MONEY"] = "  Fixture padded gold \t"
+	padded._strings["UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REPAIRED"] = "   "
+	var stripped := ErrorText.resolve(0x1c07, padded, "fallback")
+	_check(stripped == "Fixture padded gold", "resolve strips the stored text itself (got '%s')" % stripped)
+	var blank := ErrorText.resolve(0x1c11, padded, "fallback")
+	_check(blank == "fallback", "a stored text that strips to nothing gives the fallback (got '%s')" % blank)
 
 	# Guards: the codes the client has no case for keep our own wording.
 	_check(ErrorText.uiit_key(0x1813) == "", "0x1813 has no client message name (the storage switch's default)")
@@ -71,7 +103,8 @@ func _init() -> void:
 	var missing := ErrorText.pick_up_line(0x1839, sparse)
 	_check(missing == "That item cannot be picked up.", "a table without CANNOT_BE_PICKED gives the fallback (got %s)" % missing)
 	_check(missing.find("UIIT_") < 0, "the raw token is never shown for a missing key")
-	# ...and for a row whose stored value is the token itself.
+	# ...and for a row whose stored value is the token itself (the fixture's
+	# empty REVIVED row; the same code with text is checked above).
 	var revived := ErrorText.repair_line(0x1c12, fixture)
 	_check(revived == "That item cannot be revived.", "a row with no usable text gives the fallback (got %s)" % revived)
 
@@ -99,6 +132,7 @@ func _initialize() -> void:
 	var fixture := _table(PackedStringArray([
 		_row("UIIT_MSG_STRGERR_LOCKED_BY_OTHER_ONE", "Fixture not yours"),
 		_row("UIIT_MSG_INTERACTION_FAIL_NOT_ENOUGH_MONEY", "Fixture no gold"),
+		_row("UIIT_MSG_INTERACTION_FAIL_IM_BUSY", "Fixture on other business"),
 	]))
 
 	# World3D._pick_up_refusal_line reads the world's UI text table.
@@ -130,6 +164,9 @@ func _initialize() -> void:
 		_check(status.text == "Fixture no gold", "a 0x1c07 repair refusal shows the table's text in the store (got '%s')" % status.text)
 		panels.call("_on_repair_result", 0x1c09, 0, [])
 		_check(status.text == "Nothing needs repairing.", "a 0x1c09 repair refusal shows its fallback (got '%s')" % status.text)
+		# NEGATIVE (round 518): a repair refused while trading.
+		panels.call("_on_repair_result", 0x1c0b, 0, [])
+		_check(status.text == "Fixture on other business", "a 0x1c0b repair refusal shows the table's IM_BUSY text in the store (got '%s')" % status.text)
 		panels.call("_on_repair_result", 0, 1234, [])
 		_check(status.text == "Repaired for 1,234 gold.", "a repair shows its cost (got '%s')" % status.text)
 		store.free()

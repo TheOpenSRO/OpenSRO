@@ -177,8 +177,9 @@ const MasteryCostLevelCeiling = 120
 // the level table's entry+0x10 for each, and refuses the raise when the
 // character's skill points (charData+0x80) fall short. A level entry holds the
 // int64 EXP requirement at +8, so +0x10 is the field straight after it, which
-// is leveldata's column 2 -- 1, 1, 2, 2, 4, 5, 6, 7, 9, 12 ... 53 at level 20
-// and 172 at level 32. leveldata.Table.MasteryUpCost serves it.
+// is leveldata's column 2 -- 1, 1, 1, 2, 2, 4, 5, 6, 7, 9, 12 ... 53 at level
+// 20 and 172 at level 32 (levels 1-11, 20 and 32 re-read from the player's
+// leveldata.txt in round 518). leveldata.Table.MasteryUpCost serves it.
 //
 // Two levels cost nothing, whatever the table says, because the engine never
 // reads the table for them:

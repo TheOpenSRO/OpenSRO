@@ -3,7 +3,9 @@ extends RefCounted
 ## A server refusal code in words: the game's own message where the client
 ## has one, our own wording where it does not. Covers the two refusals this
 ## client shows today: a ground-item pick-up (World3D) and an NPC repair
-## (hud_panels' store status line).
+## (hud_panels' store status line). The shop and warehouse results carry a
+## reason string, not a code (server/internal/session/tradebusy.go,
+## tradeBusyReason), so they do not come through here.
 ##
 ## The real client turns a refusal code into a UIIT_* message name in
 ## UI_SILKMALL::FUN_007b8b40, which switches on a category and then on the
@@ -12,17 +14,24 @@ extends RefCounted
 ## archive through UiTextTable. Nothing from the archive is copied here.
 ##
 ## Every row is docs/protocol/error_codes.md's table (the rows for 0x1812,
-## 0x1839, 0x1c07, 0x1c11 and 0x1c12), which was reproduced 605 of 605 in
-## round 323. For round 515 each row was also read through the dispatcher's
-## own jump tables in sro_client.exe:
+## 0x1839, 0x1c07, 0x1c0b, 0x1c11 and 0x1c12), which was reproduced 605 of 605
+## in round 323. For rounds 515 and 518 each row was also read through the
+## dispatcher's own jump tables in sro_client.exe:
 ##   category 1, the storage switch (code - 0x180b, index bytes at 0x7bb6d4,
 ##   targets at 0x7bb438):
 ##     0x1812 -> 0x7b8fca  push 0xdc72c0  UIIT_MSG_STRGERR_LOCKED_BY_OTHER_ONE
 ##     0x1839 -> 0x7b8e96  push 0xdc77f8  UIIT_MSG_STRGERR_CANNOT_BE_PICKED
 ##   category 0xd, the interaction switch (code - 0x1c07, targets at 0x7bbaac):
 ##     0x1c07 -> 0x7ba085  push 0xdc2518  UIIT_MSG_INTERACTION_FAIL_NOT_ENOUGH_MONEY
+##     0x1c0b -> 0x7ba09d  push 0xdc24d0  UIIT_MSG_INTERACTION_FAIL_IM_BUSY
+##               (entry 4 of the table; round 518)
 ##     0x1c11 -> 0x7ba0e1  push 0xdc2320  UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REPAIRED
 ##     0x1c12 -> 0x7ba0f9  push 0xdc22c8  UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REVIVED
+## Showing 0x1812 and 0x1839 assumes the pick-up reply is dispatched under
+## category 1. The real reply's category was not read. Showing 0x1c07, 0x1c0b,
+## 0x1c11 and 0x1c12 likewise assumes the repair reply is dispatched under
+## category 0xd, the only category whose table holds them; which category the
+## real repair reply uses was not read either.
 ##
 ## Codes deliberately NOT in the table:
 ##   0x1813  another pick already running on the drop (GObjPC::CheckCanPickUp,
@@ -33,20 +42,26 @@ extends RefCounted
 ##   0x1c09  a repair with nothing to restore (GItemEquip::FUN_00496e60,
 ##           server/internal/repair). The interaction table sends it to the
 ##           same default, 0x7b913a.
-##   4       too far. error_codes.md lists 0x0004 as UIIT_STT_ERR_COMMON_TOO_FAR,
-##           but the storage category that holds 0x1812 and 0x1839 has no case
-##           for it: its entry at 0x7b8c82 handles only 3 and 0x1807 below
-##           0x180b and sends the rest to the default. Which message 4 gets
-##           depends on the category the reply is dispatched under, and the
-##           real pick-up reply's category was not read.
+##   4       too far. It depends on the category (round 518). error_codes.md
+##           lists 0x0004 as UIIT_STT_ERR_COMMON_TOO_FAR, which is what four
+##           of the dispatcher's jump tables give it. Category 0xd tests it in
+##           a compare chain instead (0x7ba03b cmp eax,4, then 0x7ba044 push
+##           0xdc2628 UIIT_MSG_INTERACTION_FAIL_TOO_FAR). The storage
+##           category that holds 0x1812 and 0x1839 has no case for it: its
+##           entry at 0x7b8c82 handles only 3 and 0x1807 below 0x180b and
+##           sends the rest to the default. The real pick-up reply's category
+##           was not read.
 ##   3       the drop is gone. One of error_codes.md's nine category-dependent
-##           codes (PARTYERR_, STRGERR_ or ERR_COMMON_INVALID_TARGET), so the
-##           same unread category decides it.
+##           codes (PARTYERR_, STRGERR_ or ERR_COMMON_INVALID_TARGET). Under
+##           category 1 it would be UIIT_MSG_STRGERR_INVALID_TARGET (0x7b8c9c
+##           push 0xdc7ee0). Keeping our own wording for it is the
+##           conservative side of the same category-1 assumption.
 ## Those codes keep our own wording, below.
 const UIIT_BY_CODE := {
 	0x1812: "UIIT_MSG_STRGERR_LOCKED_BY_OTHER_ONE",
 	0x1839: "UIIT_MSG_STRGERR_CANNOT_BE_PICKED",
 	0x1c07: "UIIT_MSG_INTERACTION_FAIL_NOT_ENOUGH_MONEY",
+	0x1c0b: "UIIT_MSG_INTERACTION_FAIL_IM_BUSY",
 	0x1c11: "UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REPAIRED",
 	0x1c12: "UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REVIVED",
 }
@@ -60,6 +75,8 @@ static func uiit_key(code: int) -> String:
 ## checked with has(), because get_text() answers the raw token for one, and
 ## a row whose text the parser could not find also stores the token itself.
 ## Neither is ever shown. The text is stripped: some real rows end in a space.
+## UiTextTable.parse already strips each field, so this strip matters only
+## for a table filled some other way (error_text_test.gd builds one).
 static func resolve(code: int, table: UiTextTable, fallback: String) -> String:
 	var key := uiit_key(code)
 	if key == "" or table == null or not table.has(key):
@@ -98,11 +115,24 @@ static func pick_up_line(code: int, table: UiTextTable) -> String:
 ## The repair refusal in words. The codes are server/internal/repair's
 ## (docs/protocol/durability.md): 0x1c07 not enough gold, 0x1c09 nothing
 ## missing, 0x1c11 an item that cannot be repaired, 0x1c12 one that cannot be
-## revived. The fallbacks are our own wording.
+## revived. 0x1c0b is the busy refusal: server/internal/session/repair.go
+## answers it while a trade holds the character (tradebusy.go,
+## interactionBusyCode, round 499).
+##
+## The server also answers 0x1c11 for its own failures, which the engine has
+## no code for: an undecodable request, an unknown character, no item table
+## (items == nil), an error from eq.Get or chars.GetByID, and an error from
+## eq.SetDurability. A DeductGold failure records 0x1c07, which goes out only
+## when no slot was repaired and it was the last refusal. So the archive's
+## "cannot be repaired" and "not enough gold" texts also cover those, as
+## pick_up_line's 0x1839 does for the pick-up. The fallbacks are our own
+## wording.
 static func repair_line(code: int, table: UiTextTable) -> String:
 	match code:
 		0x1c07:
 			return resolve(code, table, "Not enough gold.")
+		0x1c0b:
+			return resolve(code, table, "You are busy with something else.")
 		0x1c09:
 			return resolve(code, table, "Nothing needs repairing.")
 		0x1c11:

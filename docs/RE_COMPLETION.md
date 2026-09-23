@@ -17908,8 +17908,9 @@ path could ground* — and two entries resolved.
 design; find its use-site"*. Both halves are wrong. The use-site was found —
 `FUN_0059c4e0`, the mastery level-up handler, which walks the levels being raised
 and accumulates the level table's `entry+0x10` — and the value is real, served
-from leveldata's column 2 (1, 1, 2, 2, 4, 5, 6, 7, 9, 12 … 53 at level 20, 172 at
-32). Only the **no-table fallback** is own design.
+from leveldata's column 2 (1, 1, 1, 2, 2, 4, 5, 6, 7, 9, 12 … 53 at level 20, 172
+at 32; corrected in round 518, which re-read the table: this line had two leading
+1s). Only the **no-table fallback** is own design.
 
 The row now says so, and points at what actually remains own design there:
 `DisclosedSkillDamagePerLevel`.
@@ -26243,7 +26244,9 @@ rules, re-read from `/var/tmp/decomp_server` this round:
 	if ((iVar1 < 1) && ((iVar1 < 0 || (*(uint *)(in_EAX[0xd] + 0x78) < 500000)))) return 0x4c0c;
 
 Vtable `+0xf8` is `IGObj::GetLifeState` and `+0x124` is `IGObj::GetLevel`
-(`igobj_vtable.md`). The client names the codes (`error_codes.md:569-571`):
+(`igobj_vtable.md`). The client names the codes (`error_codes.md`, "The table", rows `0x4c07`,
+`0x4c0a` and `0x4c0c`; this cited lines 569-571, which round 518's additions above the table
+shifted):
 `GUILDERR_IM_DEAD`, `GUILDERR_TOO_LOW_CREATOR_LEVEL` and
 `GUILDERR_NOT_ENOUGH_GOLD`. The gold is the 64-bit pair at `+0x78/+0x7c` of the
 `+0x34` object, the same place `CGuild::CheckLevelUpCost` (`0x005c6240`) reads
@@ -28923,8 +28926,10 @@ read-only):
   diverting TypeID4 8, is the gate (`0x49b8b6`), before `FUN_0049aa70` (`0x49b8e6`). `DoJob`
   returns a result other than 1 before it decrements the count (`LAB_0049af45`), so the refused
   potion is kept.
-- **Also found, not modelled.** `GObjPC::FUN_004e67b0` zeroes the whole word, drops the type-6
-  records (`0x4e67c8`, `FUN_004066c0(6)`) and empties the potion queue. (Round 511: it drops ONE
+- **Also found, not modelled.** `GObjPC::FUN_004e67b0` empties the potion queue (`0x4e67b7`,
+  `call 0x49a4c0` on `esi+0x1d58`), drops the type-6 records (`0x4e67c8`, `FUN_004066c0(6)`) and
+  then zeroes the whole word (`0x4e67d0`, `mov [eax+0x8],ebx`), in that order (reordered in round
+  518 from `srv.asm`; this line had listed them backwards). (Round 511: it drops ONE
   type-6 record, not all of them. `FUN_004066c0(6, 6)` with EBX 0 erases the first record that
   `AJStateChanger::vslot_004` (`0x4063e0`) matches -- type 6 at `+0xc`, any bit -- and returns at
   `0x406733`.) `CGObjPC` slots 306 and 307
@@ -29557,13 +29562,18 @@ storage." and "2. End conversation.", and blamed the missing `TC_HONOR_RANKING`.
 plan's expectation, never measured, and review caught it. Check (a) had hidden it, because its
 synthetic shop set left the warehouse out.
 
-srrevamp's numbers do not match the real client's at a keeper srrevamp gives a "Buy" line. With
-no store line, the real client's storage line is 1 (srrevamp: 2), whether or not the `+0x7f1`
-gate is set, since that gate decides only the end line. With one or more store lines, the real
-client puts `TC_HONOR_RANKING` (and `TC_OPEN` when shown) between the storage line and the end
-line, so its end line, when the gate shows it, is 4 or higher (srrevamp: 3). (Restated in round
-517: this paragraph made the whole mismatch depend on the gate.) This comes from
-`FUN_00700440`'s order and was not measured on a running client.
+At a keeper srrevamp gives a "Buy" line, srrevamp's numbers match the real client's only in part.
+When item 1 does not run (`FUN_00989d20` answers 0), the real client's storage line is 1
+(srrevamp: 2), whether or not the `+0x7f1` gate is set, since that gate decides only the end
+line. When item 1 runs but `FUN_006fb630` writes no store line, item 1 still takes a number, so
+the storage line is 2, as in srrevamp. With exactly one store line, lines 1 and 2
+match, and line 3 is srrevamp's end line against the real client's `TC_OPEN` or
+`TC_HONOR_RANKING`, whatever the gate. With two or more store lines numbered in sequence, the real
+storage line is 3 or higher (srrevamp: 2). (Restated in round 517: this paragraph made the whole
+mismatch depend on the gate. Restated again in round 518: it said the numbers never match at such
+a keeper. Round 518's review split the no-store case: its first draft gave a storage line of 1
+there too. `character_state.md` has the detail, including why two store lines do not always get
+two numbers.) This comes from `FUN_00700440`'s order and was not measured on a running client.
 
 **Tests** (`client/scripts/npc/npc_service_reader_test.gd`, render box). The constants are read
 through the script's constant map and `strid` through `get()`. A reader that lacks them therefore
@@ -29701,7 +29711,10 @@ player's `Media.pk2` through `client/tools/dump_layout.gd`):
     `NPC_EU_FORTRESS_SMITH`, `NPC_CA_FORTRESS_SMITH1`, `NPC_CA_FORTRESS_SMITH2`.
 
   A census of `srv.asm` lists 68 calls through a vtable's `+0x164`, and only these two push a
-  literal 4 just before the call. The function's other two `push 4` calls (`0x4c6df7`, `0x4c775c`) go
+  literal 4 just before the call. (Round 518 recounted with a stated method: of 85
+  `mov reg,DWORD PTR [reg+0x164]` loads with a base other than `esp`, 67 are followed by
+  `call reg` within 4 instructions and 69 within 8. Only these two sites push 4 before the
+  call. "68" had no method and matches neither.) The function's other two `push 4` calls (`0x4c6df7`, `0x4c775c`) go
   through slot `0x318`. The refdata-driven inserts register only ids 7, 8 and 9 (rounds 454-455).
   One limit: a slot-`0x164` call that passes its id in a register would escape the census.
 
@@ -29784,8 +29797,9 @@ same line.
 **Grounding** (read-only on the RE box: the client dump `/var/tmp/decomp_client`,
 `/var/tmp/sro_client.asm`, and the `.rdata` of `/opt/sro-files/client/sro_client.exe`):
 
-- **The five rows.** `docs/protocol/error_codes.md`'s table maps `0x1812` (:160), `0x1839`
-  (:188), `0x1c07` (:337), `0x1c11` (:340) and `0x1c12` (:341). That table was reproduced 605 of
+- **The five rows.** `docs/protocol/error_codes.md`'s table ("The table") maps `0x1812`,
+  `0x1839`, `0x1c07`, `0x1c11` and `0x1c12` (cited by row since round 518, which moved the
+  line numbers this entry first gave). That table was reproduced 605 of
   605 in round 323. This round read each row again, from the dispatcher
   `UI_SILKMALL::FUN_007b8b40` to the pushed UTF-16 name. The category table at `0x7bb378` sends
   index 1 to `0x7b8c82` and index `0xd` to `0x7ba026`. In category 1 (storage), `code - 0x180b`
@@ -29838,7 +29852,7 @@ same line.
 `server/internal/session/tradebusy.go`, which both say the client has no message for it.
 `error_codes.md` now carries a correction line under that section. The repair handler answers
 `0x1c0b` during a trade, so that refusal shows "Repair refused (code 0x1c0b)." for now. Adding
-it to `UIIT_BY_CODE` is a follow-up.
+it to `UIIT_BY_CODE` is a follow-up. (Done in round 518.)
 
 **Tests** (`client/scripts/net/error_text_test.gd`). The fixture is a synthetic
 textuisystem-shaped table, and every string in it is made up:
@@ -30043,7 +30057,9 @@ only at an NPC with id 4 (round 514).
 - **The numbering mismatch at full strength** (here in round 513 too): with no store line the
   real client's storage line is 1 and srrevamp's is 2, whether or not the `+0x7f1` gate is set,
   because the gate decides only the end line. The end-line mismatch (4 or higher against 3) is
-  the part that needs the gate.
+  the part that needs the gate. (Round 518's review: the storage line is 1 only when item 1 does
+  not run at all. When item 1 runs and `FUN_006fb630` writes no line, item 1 still takes number
+  1, and the storage line is 2.)
 - **The `TC_OPEN` gate range** is `0x700b7f`-`0x700b9d` in both places. `character_state.md`
   had `0x700b86`; `0x700b7f` loads `FUN_00987130`'s `this` (`mov ecx,0xeeebd8`) before the call
   at `0x700b86`.
@@ -30059,3 +30075,189 @@ run.
 - **Client:** `client/tools/remote_godot.sh check` (render box) checked 246 scripts and 5
   scenes: ALL LOAD. `npc_service_reader_test.gd`, whose script's comment changed, reports ALL
   PASS.
+
+## Batch-9 review follow-ups (rounds 514-517): the IM_BUSY repair text, fortress smiths, category-dependent code 4, the col-2 sequence (round 518)
+
+This round lands the reviewers' non-blocking notes on rounds 514-517. One thing changes
+behaviour: a repair refused while trading now shows the game's own "busy" text instead of
+"Repair refused (code 0x1c0b).". The rest corrects the record. Every claim below was re-read
+before it was written, read-only on the RE box: `srv.asm` for the server, `sro_client.asm` and
+the `.rdata` of `/opt/sro-files/client/sro_client.exe` for the client, `/var/tmp/decomp_client`,
+and the extracted tables in `/var/tmp/tables`.
+
+**`0x1c0b` is shown with the client's own message (code change).**
+
+- **Grounding.** The category table at `0x7bb378` sends index `0xd` to `0x7ba026`. There,
+  `0x7ba070` `sub eax,0x1c07`, `cmp eax,0x32` and `0x7ba07e` `jmp [eax*4+0x7bbaac]`. Entry 4
+  (`0x7bbabc`) is `0x7ba09d`, which does `push 0xdc24d0`. The UTF-16 string there is
+  `UIIT_MSG_INTERACTION_FAIL_IM_BUSY`. The case then jumps to `0x7b9dcf`, the same
+  `call 0x46e3d0` / `0x8c9bb0` lookup tail that `0x1c07`'s case (`0x7ba085`) reaches. The render
+  box's `textuisystem.txt` has a plain-sentence row for the key. Its text is not copied here.
+- **Change.** `client/scripts/net/error_text.gd` has a new `UIIT_BY_CODE` row,
+  `0x1c0b: "UIIT_MSG_INTERACTION_FAIL_IM_BUSY"`, with the jump-table citation. `repair_line` has a
+  `0x1c0b` branch whose fallback is our own wording, "You are busy with something else.".
+  `HudPanels._on_repair_result` needs no change, because it already routes every refusal
+  through `repair_line`.
+- **The other busy refusals.** Round 499's shop and warehouse refusals carry
+  `tradeBusyReason`, a string, in `ShopBuyResult`/`ShopSellResult`/`InventoryListResult`/
+  `StorageMoveResult`/`StorageGoldResult`. The client shows those strings
+  (`_on_shop_buy_result`, `_on_shop_sell_result` and the storage handlers). No raw code
+  reaches the player there, so nothing else needed routing. `error_text.gd`'s header says so.
+- **`server/internal/session/tradebusy.go`.** The `tradeBusyReason` comment said "the client has
+  no message for 0x1c0b". It now says the client does have one (`0x7ba09d` / `0xdc24d0`), that
+  the repair's code reaches it, and that the text replies stay srrevamp's own wording because
+  their placeholder layouts carry no code. `character_state.md`'s matching sentence is
+  corrected the same way. `0x1811` really has no case in the storage category: its index byte
+  (`0x7bb6d4` + 6) is `0xa6`, whose target (`0x7bb6d0`) is the default `0x7b913a`.
+- **Line-number citations (review of this round).** This round adds 31 lines above "The
+  table" in `error_codes.md`, which moved seven citations by line number. `interactionBusyCode`'s
+  comment in `tradebusy.go` cited `error_codes.md :338` (now another row); an older entry here
+  cited `error_codes.md:569-571` for the three `GUILDERR` rows; and round 515's grounding bullet
+  cited `0x1812` (:160), `0x1839` (:188), `0x1c07` (:337), `0x1c11` (:340) and `0x1c12` (:341).
+  The first draft of this round fixed only the first two; the review found the other five
+  pointing at a prose line and at the `0x180e`, `0x18db`, `0x18e2` and `0x18e3` rows. All seven
+  now cite "The table" by row. A grep for `(:NNN)` citations finds no others.
+
+**`error_text.gd` documentation and tests.**
+
+- `repair_line`'s doc now discloses that `session/repair.go` answers `0x1c11` for its own
+  failures: an undecodable request, an unknown character, `items == nil`, an `eq.Get` or
+  `chars.GetByID` error, and an `eq.SetDurability` error. It answers `0x1c07` when `DeductGold`
+  fails. So the archive's "cannot be repaired" and "not enough gold" texts cover those too,
+  as `pick_up_line`'s doc already says for `0x1839`.
+- `resolve`'s doc says that `UiTextTable.parse` already strips each field, so its own strip
+  matters only for a table filled another way.
+- The header states once that showing `0x1812`/`0x1839` assumes the pick-up reply is
+  dispatched under category 1. Under that category `3` would be
+  `UIIT_MSG_STRGERR_INVALID_TARGET` (`0x7b8c9c` `push 0xdc7ee0`), so keeping our own wording
+  for `3` is the conservative side of the same assumption. The note on `4` now records category
+  `0xd`'s case for it (below).
+
+**`error_codes.md`: `0x0004` is category-dependent.** Category `0xd` tests three codes in a
+compare chain before its jump table: `0x7ba02e` `cmp eax,0x1c06`, `0x7ba037` `cmp eax,ebx`
+(`ebx` is 0, from `0x7b8b7b` `xor ebx,ebx`) and `0x7ba03b` `cmp eax,0x4`. `4` pushes `0xdc2628`
+`UIIT_MSG_INTERACTION_FAIL_TOO_FAR` (`0x7ba044`), `0` pushes `0xdc25e0`
+`UIIT_STT_ERR_COMMON_INVALID_TARGET` (`0x7ba04e`), and `0x1c06` pushes `0xdc2570`
+`UIIT_MSG_INTERACTION_FAIL_I_DONT_HAVE_ANYTHING_FOR_YOU` (`0x7ba066`).
+`recover_error_codes.py` walks jump tables only, so it never sees these three cases. It gives `4`
+the name `UIIT_STT_ERR_COMMON_TOO_FAR` from four jump tables (`0x7bb7cc`, `0x7bbec8`, `0x7bbf48`,
+`0x7bc070`, found by re-running it with a print of each hit). Re-run read-only on the RE box,
+the tool still reports 614 codes, 605 of them unambiguous and 9 category-dependent. So the count
+stands for its method, and the page now calls `0x0004` an exception to it. The row is flagged, and
+"A code does not always mean one thing" carries the chain. Other compare-chain cases were not
+searched for. The round-515 section's lead sentence said that all the codes it leaves out have
+no case in the client. It now says that `0x1813` and `0x1c09` have no case in the category they
+would go through, and that `4` and `3` depend on a category that was not read. Its `4` bullet
+names the other categories' cases. The section also states the category-1 assumption once, and
+its table has the `0x1c0b` row.
+
+**Fortress smiths, and the `+0x164` census.**
+
+- `SYSTEMS.md`'s Durability and repair row, `FRONTEND_CHECKLIST.md` and `_show_repair_buttons`'s
+  doc comment in `hud_panels.gd` said the id-4 set was "the town smiths and armour merchants".
+  `REPAIR_PATTERNS` also holds the eight fortress-smith literals from site `0x4c736f`, and all
+  three now say so.
+- **The census, recounted with a stated method.** A script read `srv.asm` on the RE box. There
+  are 85 loads of the form `mov reg,DWORD PTR [reg+0x164]` whose base is not `esp` (91 counting
+  `esp`), and no `call DWORD PTR [reg+0x164]`. 67 of the 85 are followed by `call reg` within
+  the next 4 instructions, and 69 within 8 (the two extra calls are at `0x4c1055` and
+  `0x4de9e3`). Among the 69, only `0x4c6783` and `0x4c7373` have a `push 0x4` in the 8
+  instructions before the call, and those are the pushes at `0x4c677f` and `0x4c736f`.
+  Round 514 had written "68 calls through a vtable's `+0x164`" with no method, which matches
+  neither count. A reviewer counted 72 loads, 67 of them with a call within 4 lines.
+  `character_state.md` now gives the numbers with the method. Round 514's entry here keeps its
+  words, with the recount added in parentheses.
+
+**Leveldata column 2 starts 1, 1, 1.** The render box's `/var/tmp/tables/leveldata.txt`
+(UTF-16) reads 1, 1, 1, 2, 2, 4, 5, 6, 7, 9, 12, 15, ... 53 at level 20, and 172 at level 32.
+`session/skill.go`, `leveldata.MasteryUpCost`'s comment, `GROUNDING_AUDIT.md`'s mastery row
+and one older line in this file (the "`masteryUpCost` was already recovered" note) had it as
+1, 1, 2, 2, 4, ... All four now read 1, 1, 1, 2, 2, 4, .... No value in code changes, because
+the table is read at runtime.
+
+**Round 508's "Also found" line.** It listed `FUN_004e67b0`'s acts as "zeroes the whole word,
+drops the type-6 records and empties the potion queue". `srv.asm` has them in the reverse order:
+`0x4e67b7` `call 0x49a4c0` on `esi+0x1d58` (the queue), `0x4e67c8` `call 0x4066c0` (the
+record), then `0x4e67d0` `mov [eax+0x8],ebx` (the word). The line is corrected in place.
+
+**`character_state.md`, the first talk menu (round 513).**
+
+- **The numbering paragraph** said "srrevamp's numbers do not match the real client's at a keeper
+  srrevamp gives a Buy line". That is too broad. With exactly one store line, lines 1 (the
+  store) and 2 (storage) match, and only line 3 differs: srrevamp's end line against the real
+  client's `TC_OPEN` or `TC_HONOR_RANKING`. The `+0x7f1` gate does not change that, because it
+  only decides whether an end line follows. With two or more store lines numbered in sequence,
+  the real storage line is 3 or higher against srrevamp's 2, whatever the gate. The paragraph
+  also records that `FUN_006fb630` does not always number its lines in sequence. `[esp+0x20]` is
+  zeroed at `0x6fb700` at the top of each outer pass, and `n` is bumped (`0x6fb79d`
+  `add [eax],1`) only when that counter is non-zero. The outer back-edge (`0x6fbb70`
+  `jmp 0x6fb6c6`) returns above the reset. So the first line of a later outer pass repeats the
+  previous number. `NPC_WC_WAREHOUSE_W` is named by two rows (`refshopgroup.txt`:
+  `GROUP_STORE_WC_HONOR`, `GROUP_STORE_WC_HONOR2`), and `refmappingshopgroup.txt` maps each to
+  one store (`STORE_WC_HONOR`, `STORE_WC_HONOR2`). Whether those give two numbers depends on what
+  the two loops walk, which was not read, so it is named as a candidate and not as a measured
+  case. Round 513's entry here says the same in brief.
+- **Review of this round: item 1 always takes a number.** The first draft's "no store line" case
+  read "`FUN_00989d20` answers 0, or `FUN_006fb630` finds no store: the storage line is 1". The
+  second half was wrong. Item 1's case (index byte `0x6fd394`+1 is `0x01`, jump-table entry
+  `0x6fd2d8`[1] is `0x6fceb0`) calls `FUN_006fb630(&n)`, assigns its own text the empty string
+  (`0x6fcec1` `push 0xe17460`, so the draw behind `0x6fd231`'s length test is skipped), and
+  leaves through `0x6fd25f` `cmp ebp,0x2a; jne 0x6fd287` and `0x6fd292` `add esi,1`. So it
+  returns `n + 1` whatever `FUN_006fb630` wrote. The caller keeps that in `ebx` (`0x700b0a`),
+  `n` starts at 1 (`0x70048a`), and the storage line pushes `ebx` (`0x700b73`-`0x700b7a`). The
+  storage line is therefore 2 when item 1 runs with no store line, the same number as
+  srrevamp's, though the real client draws no line 1. `FUN_006fb630` writes `n` only at
+  `0x6fb79d`, just before a `"%d. "` line. `character_state.md` now lists four cases, and its
+  older keeper paragraph, which said item 1 needs `FUN_006fb630` to find a store, is corrected
+  the same way: item 1 is emitted on `FUN_00989d20` alone (`0x700a93` `je 0x700b10` on 0,
+  `0x700a95` `jmp 0x700afe` otherwise). The same misreading is corrected in round 513's and round 517's
+  entries here.
+- **Row 0a** now says why it says "before any numbered line". `FUN_006fb530` runs on both paths
+  before the early-exit test: at `0x700556` with the text of `FUN_00938000`'s result, or at
+  `0x7005bb` with the empty string (`.rdata 0xe17460`) when that result is null or its `+0x34`
+  is 0 (`0x7004da`-`0x7004e5`). The exit needs the result null, so it follows the second path.
+- **Row 0b** now says the `SN_FORTRESS_SHOP_TAX` line is formatted. `0x7006b3` calls `0xb434fc`
+  (`_swprintf_s`, the same call `FUN_006fb630` writes `"%d. "` with at `0x6fb7b5`) into a
+  `0xff`-wide buffer. The format string is the resolved token's text, and the arguments are
+  `FUN_009274c0`'s string (called at `0x700647` with the talk object's `+0x800`) and the short at
+  the talk object's `+0x804` (`0x70069c` `movsx`).
+
+**Found, not acted on: `0x1807` has a message (review of this round).** The storage
+category's chain (category table `0x7bb378`[1] = `0x7b8c82`) does `0x7b8c8a` `cmp eax,0x1807`,
+`0x7b8c91` `je 0x7b8ca6`, and `0x7b8ca6` pushes `0xdc7ea0`, the UTF-16 key
+`UIIT_MSG_STRGERR_INVENTORY_FULL`. `error_codes.md`'s round-326 list of fifteen codes with no
+client case, and its round-335 table, counted `0x1807` among them, because the chain decompiles
+as an `if` and not a `case`. Both now carry the correction, and the page's Coverage section says
+that compare-chain codes (`0`, `4`, `0x1c06` in category `0xd`; `3`, `0x1807` in category 1)
+are outside its counts. Nothing in srrevamp sends `0x1807`, so no code changes. Other
+categories' chains were not searched.
+
+**Found, not acted on.** `session/trade.go`'s `tradeTooFarReason`, `trade.RequestRange`'s comment
+and `error_codes.md`'s trade-request tables name the engine's `4` as
+`UIIT_STT_ERR_COMMON_TOO_FAR`. With `0x0004` now category-dependent, that name depends on the
+category the trade reply is dispatched under, which was not read. srrevamp's trade result
+carries a string, so nothing a player sees depends on it.
+
+**Tests** (`client/scripts/net/error_text_test.gd`, render box; the fixture strings are made up):
+- NEGATIVE: `uiit_key(0x1c0b)` is `UIIT_MSG_INTERACTION_FAIL_IM_BUSY`, and `repair_line(0x1c0b)`
+  gives the fixture's IM_BUSY text. Without an IM_BUSY row it gives "You are busy with
+  something else.". In `_initialize`, `HudPanels._on_repair_result(0x1c0b, 0, [])` puts the
+  fixture's text in the store's status line. **Proved:** with `error_text.gd` and
+  `hud_panels.gd` stashed, the suite reports 4 FAILURES: exactly these four checks, the store
+  showing "Repair refused (code 0x1c0b).". Restored, it reports ALL PASS. This round changed
+  only comments in `hud_panels.gd`, so all four failures come from `error_text.gd`: the
+  HudPanels check fails because `_on_repair_result` routes through `repair_line`.
+- `0x1c12` is resolved from a table whose REVIVED row has text ("Fixture unrevivable"). A key
+  typo could hide behind the fixture's deliberately empty REVIVED row, and this check would
+  catch it. The empty-row check is kept, and its comment says it is separate.
+- `resolve()`'s own `strip_edges()` is exercised with a `UiTextTable` filled directly (padded
+  text `"  Fixture padded gold \t"`, and a text of spaces only that must fall back), bypassing
+  `UiTextTable.parse`, which already strips. The `0x1839` check's message now credits parse
+  with that strip.
+- The key check prints the key only on a miss. The key contains `FAIL`, and
+  `remote_godot.sh tests` greps a suite's output for `FAIL`. The first full run failed on a
+  passing line for exactly that reason.
+- **Client:** `client/tools/remote_godot.sh tests` (render box) ran 80 suites, 0 failing.
+  `client/tools/remote_godot.sh check` checked 246 scripts and 5 scenes: ALL LOAD.
+- **Server suite:** `cd server && go build ./... && go test -count=1 -p 1 ./...` is green. The
+  doc probes read the edited `SYSTEMS.md`, `GROUNDING_AUDIT.md` and protocol docs at runtime.
