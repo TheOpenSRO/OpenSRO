@@ -54,3 +54,60 @@ func TestInteractionTableAgentsRegisterNoID(t *testing.T) {
 		t.Error("no table row records that NPC_SD_GUILD_AGENT* reach SetBodyMode, not an id")
 	}
 }
+
+// Round 455's table put id 0x11 "in the NPC_SIEGE_DUNGEON_TELEPORT block,
+// beside 0x28", and called the arena NPCs' id "computed". Both are misreadings
+// of CGObjNPCNPC::Create (0x4c6350) in /var/tmp/srv.asm. The siege block ends
+// at 0x28's call (0x4c76d4); 0x11 is pushed at 0x4c77c2 behind no codename
+// test, only the +0x42404 byte (0x4c76d6) and the map lookup FUN_004ccb70
+// (0x4c77ac). The arena call at 0x4c75f9 has no push of its own: 0x21 is
+// pushed at 0x4c75d1 (NPC_BATTLE_ARENA_MANAGER) and 0x22 at 0x4c75f5
+// (NPC_BATTLE_ARENA_EXCHANGER), two literals into one shared call. Round 523
+// corrected the rows; this keeps them corrected.
+//
+// It reads the doc at RUNTIME, so run it with -count=1 (see unwired_test.go).
+func TestInteractionTable0x11AndArenaRows(t *testing.T) {
+	root := repoRoot(t)
+	raw, err := os.ReadFile(filepath.Join(root, "docs", "protocol", "character_state.md"))
+	if err != nil {
+		t.Fatalf("reading character_state.md: %v", err)
+	}
+	rows := map[string]string{}
+	computedRow := ""
+	for _, line := range strings.Split(string(raw), "\n") {
+		for _, id := range []string{"0x11", "0x21", "0x22"} {
+			if strings.HasPrefix(line, "| **"+id+"** |") {
+				if rows[id] != "" {
+					t.Fatalf("two %s rows in the interaction-id table:\n%s\n%s", id, rows[id], line)
+				}
+				rows[id] = line
+			}
+		}
+		if strings.HasPrefix(line, "| computed |") {
+			computedRow = line
+		}
+	}
+	row11 := rows["0x11"]
+	switch {
+	case row11 == "":
+		t.Error("no '| **0x11** |' row in character_state.md's interaction-id table")
+	case strings.Contains(row11, "disputed") || strings.HasPrefix(row11, "| **0x11** | the `NPC_SIEGE_DUNGEON_TELEPORT` block"):
+		t.Errorf("the 0x11 row still places the id in the siege-dungeon block, which ends at "+
+			"0x28's call (0x4c76d4); 0x11 is pushed at 0x4c77c2 behind no codename test: %s", row11)
+	default:
+		for _, want := range []string{"0x4c77c2", "FUN_004ccb70", "+0x42404"} {
+			if !strings.Contains(row11, want) {
+				t.Errorf("the 0x11 row lost %s, part of the registration's grounding: %s", want, row11)
+			}
+		}
+	}
+	for id, want := range map[string]string{"0x21": "NPC_BATTLE_ARENA_MANAGER", "0x22": "NPC_BATTLE_ARENA_EXCHANGER"} {
+		if !strings.Contains(rows[id], want) || !strings.Contains(rows[id], "0x4c75f9") {
+			t.Errorf("the %s row must name %s and the shared call 0x4c75f9: %q", id, want, rows[id])
+		}
+	}
+	if computedRow != "" {
+		t.Errorf("a 'computed' row is back; the arena ids are the literals 0x21 (0x4c75d1) and "+
+			"0x22 (0x4c75f5): %s", computedRow)
+	}
+}

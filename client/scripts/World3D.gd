@@ -3589,6 +3589,13 @@ var _talk_npc_code := ""
 ## talk lines (NpcServiceReader.guild_services, round 521): -1 until a guild
 ## reply arrives (the NPC then keeps the "Guild" placeholder), 0 for no
 ## guild, else the guild's id. _guild_master is whether the player leads it.
+## It can go stale: the server sends no guild broadcasts (session/guild.go
+## answers only the requester), so only this player's own replies move it.
+## When the leader leaves, guild.Store.Leave hands leadership to the
+## longest-standing member, who is not told -- that client keeps
+## _guild_master false and still offers "Leave guild." until its next
+## guild_info reply (world entry, or opening the guild window). Only a refused
+## leave asks the server again (_on_guild_leave_result).
 var _guild_id := -1
 var _guild_master := false
 ## Regions whose NPCs have already been placed, so streaming back into a
@@ -5157,8 +5164,12 @@ func _attack_band(monster_id: int, skill_id: int) -> Dictionary:
 	var species: String = snap.code_name
 	if species == "" or not _bc_radius_by_code.has(species):
 		return {"why": "no characterdata BCRadius row for species '%s'" % species}
-	# The player's own body row. Every playable row reads 4, the server's
-	# combat.PlayerBCRadius, which is also the fallback when the row is absent.
+	# The player's own body row (GENDER_BODY_CODE). The client reads the row;
+	# the server reads none -- keepUpInReach/skillInReach (session/keepup.go)
+	# pass the constant combat.PlayerBCRadius for every attacker. The two agree
+	# because all 52 CHAR_* rows read 4 (re-counted round 523 over the box's
+	# six characterdata data files); a table whose body rows differed would
+	# split them. The constant is also the fallback when the row is absent.
 	var body_code: String = GENDER_BODY_CODE.get(_player_gender, GENDER_BODY_CODE[DEFAULT_GENDER])
 	var caster_bc := int(_bc_radius_by_code.get(body_code, CombatNet.PLAYER_BC_RADIUS))
 	var weapon_range := _equipped_weapon_range()

@@ -150,8 +150,10 @@ class LootDropped:
 ## docs/protocol/auto_command.md, "The attack tick".
 
 ## The BCRadius (characterdata col 50) of every playable body row -- all 52
-## CHAR_* rows read 4. combat.PlayerBCRadius, which the server uses for the
-## attacker whatever body it has.
+## CHAR_* rows read 4 (re-counted round 523 over the box's six characterdata
+## data files). combat.PlayerBCRadius, which the server uses for the attacker
+## whatever body it has; the client reads the body row itself
+## (World3D._attack_band) and falls back to this.
 const PLAYER_BC_RADIUS := 4
 ## The +2 world units Action_IsTargetWithinReach (0x004ad4a0) allows:
 ## `return iVar3 <= param_2 + 2`. combat.ReachSlack.
@@ -212,11 +214,16 @@ static func in_reach(distance: float, reach: float) -> bool:
 ##   0x4ae753  `cmp al,1 ; jne ; cmp [edi+0x96],al ; je 0x4aecfd`:
 ##             Target_Required 1 with TargetType_Land (+0x96, col 24) 1.
 ## Every other row computes the band and walks (phase 1). Rows whose
-## Basic_Activity (+0x65) is not 2 leave phase 0 even earlier (0x4ae6ea); on
-## the box's skilldata all 256 such China board rows carry Target_Required 0,
-## so the first case covers them. srrevamp's server accepts the non-damaging
-## ones at any distance (session/skill.go's NoCombatParam/ZeroDamage return
-## comes before skillInReach) -- see docs/TODO.md, "Attack distance", for the
+## Basic_Activity (+0x65, skilldata col 8) is not 2 never reach either test:
+## `0x4ae6e6 cmp [edi+0x65],2 ; 0x4ae6ea jne 0x4ae9dc`, and 0x4ae9dc is
+## `mov eax,1 ; ... ; ret 8` -- the tick returns 1 and STAYS in phase 0 (the
+## decompile: `if (+0x65 != 2) return 1;`). What then casts such a row was not
+## followed (docs/TODO.md, "Attack distance"). On the box's skilldata all 256
+## such China board rows (174 with Activity 1, 82 with 0; re-counted round 523)
+## carry Target_Required 0, so this function gives them no walk either way.
+## srrevamp's server accepts the non-damaging ones at any distance
+## (session/skill.go's NoCombatParam/ZeroDamage return comes before
+## skillInReach) -- see docs/TODO.md, "Attack distance", for the
 ## damaging Target_Required 0 rows it still reach-gates.
 static func skill_tick_approaches(target_required: int, target_land: int) -> bool:
 	if target_required == 0:

@@ -40,7 +40,12 @@ In order. Each is checked off here when it ships in a release, with its round in
       get -- and honour rank, each its own backend. Also open: the real client shows a guildless
       player no store line at a guild NPC (the same `FUN_009870e0` test gates item 1), and srrevamp
       still shows "Buy" there. See `docs/protocol/character_state.md`, "The guild NPC's lines
-      (round 521)".
+      (round 521)". Also open: the guild state behind the menu can go stale, because the server
+      sends no guild broadcasts (`session/guild.go` answers only the requester). When the master
+      leaves, `guild.Store.Leave` hands leadership to the longest-standing member, whose client
+      keeps `_guild_master` false and still offers "Leave guild." until its next `guild_info`
+      reply (world entry, or opening the guild window); only a refused leave asks again
+      (disclosed in round 523).
       - [x] **Storage (warehouse) -- items AND gold.** The talk menu's storage line (its text is
         the archive's own "Deposit into storage.", `UIIT_STT_NPC_CHATTING_WND_STOREHOUSE`, since
         round 513) opens the authored warehouse window (`ifstorageroom`) with the bag beside it:
@@ -290,8 +295,8 @@ In order. Each is checked off here when it ships in a release, with its round in
         that deal damage (the exporter's `ZeroDamage` 0, run over the box's skilldata tables):
         147 China board rows, every level of the
         15 `SKILL_CH_COLD/FIRE/LIGHTNING_GIGONGTA_A..E` skills, all `Basic_Activity` 1. The engine's
-        skill tick computes no band for them (an Activity other than 2 leaves phase 0 at
-        `0x4ae6ea`, and `Target_Required` 0 skips the band at `0x4ae743`), but `session/skill.go`
+        skill tick computes no band for them (an Activity other than 2 returns at `0x4ae6ea`
+        without leaving phase 0, and `Target_Required` 0 skips the band at `0x4ae743`), but `session/skill.go`
         resolves them as a blow on the selected monster behind `skillInReach`, so a cast with a
         distant monster selected is refused "too far away" -- as it was before round 519. The
         client sends them at once. Next: read what the engine does with an Activity-1 row
@@ -300,7 +305,10 @@ In order. Each is checked off here when it ships in a release, with its round in
         stand still server-side. Once they wander or chase ("Monsters do not move" above), a stale
         snapshot will earn "too far away" and nothing walks again;
       - a walk that geometry blocks never reaches the band and nothing times it out, the same as a
-        plain click-to-move: the attack waits until WASD, typing or another click.
+        plain click-to-move: the attack waits until WASD, typing or another click;
+      - the debug panel's Skills-tab "Use" button (`World3D._on_skill_use_pressed`, a developer
+        panel, not the HUD) still sends `use_skill` at once with no approach walk, so out of reach
+        it earns "too far away". The hotbar's casts go through `_cast_skill` -> `_attack_monster`.
 - [ ] **Four HUD surfaces let clicks through to the world.** Measured by round 522's review: a
       click on the player-info block, the minimap's map (every node IGNORE, `hud_minimap.gd`), the
       target window (every node IGNORE, `hud_target.gd`) or the hotbar's body away from its slots

@@ -955,8 +955,25 @@ table's slot 227 at `0xaec430` holding `0x4a95a0`, which is known independently.
 Its body is two lines: ask slot `0x390`, and insert into `this+0x130` if that
 answers 0.
 
-**`CGObjNPCNPC::Create` calls slot 89 thirty-two times with literal ids, each
-behind a comparison against the NPC's own CodeName.** That is the vocabulary:
+**`CGObjNPCNPC::Create` calls slot 89 from thirty-two sites, and all but one
+sit behind a comparison against the NPC's own CodeName.** Qualified in round
+523, from every `mov eax,[edx+0x164]` in `0x4c6350`-`0x4c7906` of
+`/var/tmp/srv.asm`:
+
+- **31 sites follow a codename test**: `strstr` (`FUN_009dddc0`) for all but
+  0x28, whose test is `CompareStringA` (import `0xad90b8`, called at
+  `0x4c76bd`) against `NPC_SIEGE_DUNGEON_TELEPORT`. The 32nd, id 0x11 at
+  `0x4c77c2`, follows none. It runs when the `CMainProcess` `+0x42404` byte is
+  0 and the map lookup `FUN_004ccb70` finds an entry ("Two misattributions,
+  corrected", below).
+- **31 sites push their id as a literal beside the call.** The call at
+  `0x4c75f9` pushes none of its own. Its id is pushed on the branch that
+  matched: 0x21 at `0x4c75d1` for `NPC_BATTLE_ARENA_MANAGER`, 0x22 at
+  `0x4c75f5` for `NPC_BATTLE_ARENA_EXCHANGER`. Both are literals. The
+  decompile shows this as one call taking a variable (`uVar6`), which is why
+  the table used to call the id "computed".
+
+That is the vocabulary:
 
 | id | registered on |
 |---:|---|
@@ -968,7 +985,7 @@ behind a comparison against the NPC's own CodeName.** That is the vocabulary:
 | **0xd** | the `NPC_TD_THIEF_BUY` block, beside 0xc |
 | **0xe** | `NPC_CH_GENARAL_SW`, `NPC_WC_GENARAL_SW`, `NPC_KT_MINISTER` |
 | **0xf** | `NPC_*_GUILD`, `NPC_CH_GENARAL_SP` |
-| **0x11** | the `NPC_SIEGE_DUNGEON_TELEPORT` block, beside 0x28 — **disputed**, see "One misattribution, corrected" (round 520) |
+| **0x11** | **no codename**: any NPC whose `GetRefObjID` finds an entry with a non-zero first byte in the map `FUN_004ccb70` reads (`DAT_00d6aa14 + 0x110`, table not identified), when the `+0x42404` byte is 0 (`0x4c77c2`). **Not** the `NPC_SIEGE_DUNGEON_TELEPORT` block, which ends at 0x28's call (`0x4c76d4`) — see "Two misattributions, corrected" (rounds 520 and 523) |
 | **0x12** | `NPC_CH_GACHA_OPERATOR` (only when the `+0x42404` byte is 0, round 520) |
 | **0x14** | `NPC_*_MERCHANT`, `NPC_*_DOCTOR`, `NPC_KT_DESIGNER` |
 | **0x15** | `NPC_TD_THIEF_SELL`, `NPC_SD_T_AREA_THIEF` |
@@ -981,11 +998,12 @@ behind a comparison against the NPC's own CodeName.** That is the vocabulary:
 | **0x1e** | `NPC_CH_SOLDIER_EM1`, `NPC_EU_ADVICE3` |
 | **0x1f** | `STRUCTURE_GATE_PULLEY_{JA,BJ,HT}_0n` |
 | **0x20** | `NPC_*_SMITH` |
+| **0x21** | `NPC_BATTLE_ARENA_MANAGER` (`push 0x21` at `0x4c75d1`, then the shared call at `0x4c75f9`; round 523, formerly "computed") |
+| **0x22** | `NPC_BATTLE_ARENA_EXCHANGER` (`push 0x22` at `0x4c75f5`, then the same shared call at `0x4c75f9`; round 523, formerly "computed") |
 | **0x23** | `NPC_OPEN_MARKET_JUEL` |
 | **0x27** | `NPC_FWORLD_RECALL_PARTY` |
 | **0x28** | `NPC_SIEGE_DUNGEON_TELEPORT` |
 | **0x29** | `NPC_INS_EXIT_TELEPORT` |
-| computed | `NPC_BATTLE_ARENA_MANAGER`, `NPC_BATTLE_ARENA_EXCHANGER` |
 | **none** (by codename) | `NPC_SD_THIEF_AGENT_CHANGER`, `NPC_SD_GUILD_AGENT`, `_AGENT2`, `_AGENT3`: their chain ends in `IGObj::SetBodyMode(4, 0xff, 0, 0)` (slot 198, `0x4c6ddd`), run when the `CMainProcess` byte `+0x42404` is 1, and registers no id (round 520) |
 
 ### Why this is trusted: ten independent agreements
@@ -1011,9 +1029,11 @@ agrees**:
 Ids 0x15 and 0x16 are the strongest: the codenames literally read `THIEF` and
 `HUNTER`, matching names derived in round 453 from a completely different route.
 
-### One misattribution, corrected (round 520)
+### Two misattributions, corrected (rounds 520 and 523)
 
-The heuristic failed once. This table gave id 0xc to `NPC_SD_GUILD_AGENT*`, and
+The heuristic failed twice: once for the guild agents (0xc, below) and once for
+id 0x11 ("Id 0x11 is not in the siege-dungeon block", further down). This table
+gave id 0xc to `NPC_SD_GUILD_AGENT*`, and
 round 458 built on it ("specialty goods"). Re-read at instruction level in
 `/var/tmp/srv.asm`, the agents sit in a chain of their own, and it registers
 nothing:
@@ -1029,8 +1049,12 @@ nothing:
   `manager_singletons.md`) `+0x42404`, loaded at `0x4c6494` and not written
   again before `0x4c6ddd`. What the byte means is not read.
 - The 0xc registration is the **next** chain: nine literals from `0xaeee30`
-  (`NPC_CH_SPECIAL2`) to `0xaeeec0` (`NPC_SD_M_AREA_SPECIAL3`), each jumping to
-  `0x4c6f31`, `mov eax,[edx+0x164] ; push 0xc`.
+  (`NPC_CH_SPECIAL2`) to `0xaeeec0` (`NPC_SD_M_AREA_SPECIAL3`). A hit on any of
+  the first eight jumps to `0x4c6f31` (`mov edx,[ebx]`). The ninth falls
+  through to it on a hit and jumps past on a miss (`0x4c6f2f je 0x4c6f3f`).
+  The slot load is at `0x4c6f33` (`mov eax,[edx+0x164]`) and the push at
+  `0x4c6f39` (`push 0xc`). Round 520 put both at `0x4c6f31`; corrected in
+  round 523.
 
 Two censuses over the whole function (`0x4c6350`-`0x4c7906`) back this. There
 are two `push 0xc`: `0x4c6ae1` (`NPC_TD_THIEF_BUY`, followed by 0xd) and
@@ -1065,8 +1089,9 @@ The client never gave the agents a 0xc service, so nothing a player sees changes
 The record now stops the next talk-menu or specialty-goods change from giving
 them one.
 
-**Two more rows that the same read disputes, not changed here.** Id 0x11 is not
-part of the `NPC_SIEGE_DUNGEON_TELEPORT` block. That block ends with its
+**Id 0x11 is not in the siege-dungeon block** (the second misattribution; the
+row was marked disputed in round 520 and corrected in round 523). Round 455's
+table put 0x11 in the `NPC_SIEGE_DUNGEON_TELEPORT` block, beside 0x28. That block ends with its
 `push 0x28` (`0x4c76d0`) and call (`0x4c76d4`), and `0x4c76d6 cmp [esp+0x14],0 ;
 je 0x4c7788` tests the same `+0x42404` byte. When it is 0, `0x4c77c2` registers
 0x11 on any NPC for which `FUN_004ccb70` (a map lookup on `DAT_00d6aa14 +
@@ -1080,7 +1105,8 @@ four dwords from record `+0x18`..`+0x24` (`FUN_006ac220`). The same probe finds
 `1 9251 1 2`. That is a candidate, not a finding. It is why the gacha machine,
 which also reaches `SetBodyMode` when the byte is not 0, is **not** in the "none"
 row (the gacha operator is not either: it has 0x12). Neither id is used by
-srrevamp; both need their own round.
+srrevamp. The rows now say where each is registered; what the map's table is,
+and what 0x11 and 0x12 do, still need their own round.
 
 ### Three earlier items closed or corrected
 
@@ -1532,7 +1558,22 @@ guild NPC:
 `ROLE_LEADER`. That name test mirrors `FUN_00989ce0`'s. A leave sets the state
 back to 0. A refused leave asks for the guild again (`NetClient.guild_info`),
 so a stale state, such as the server's "not in a guild", is set right by the
-reply. After each reply `World3D` rebuilds the talk menu in place if it is
+reply.
+
+**The state can go stale, and only a refused leave asks again** (disclosed in
+round 523; no behaviour change). srrevamp's server sends no guild broadcasts:
+`session/guild.go` answers only the character that asked. The state therefore
+moves only on this player's own replies: world entry and opening the guild
+window ask for the guild (`guild_info`), and create, join and leave answer for
+themselves. The case that shows: when the master leaves, `guild.Store.Leave`
+(`MemStore` and `SQLStore` alike) hands leadership to the longest-standing
+member, and that member's client is not told. It keeps `_guild_master` false,
+so its guild NPC still offers "Leave guild." where the master's branch would
+give the placeholder, until its next `guild_info` reply. The server does not
+refuse that leave either (a leader may leave), so nothing corrects it on the
+way.
+
+After each reply `World3D` rebuilds the talk menu in place if it is
 open (`HudPanels.refresh_npc_talk`). That neither raises the talk box above a
 window opened from it nor drops a prompt being typed into. A new
 conversation, such as a click on another NPC, drops the prompt

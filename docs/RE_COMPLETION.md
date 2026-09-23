@@ -9929,6 +9929,9 @@ characterdata_10000.txt holds a SECOND MOB_CH_MANGNYANG at level 90 with 676,983
 HP whose speeds (8/22) look perfectly plausible. CODE NAMES ARE NOT UNIQUE ACROSS
 THE CHARACTERDATA FILES; select by RefObjID. Without the control that row would
 have shipped.
+*Corrected in round 523:* that row is MOB_CH_STRONG_MANGNYANG (RefObjID 9383), a
+different code, and code names ARE unique across the six data files (13,291 rows,
+13,291 names); see docs/protocol/monster_ai.md.
 
 NOT PROMOTED: which speed a WANDER leg steps at. PickWanderLeg tests run speed
 > 1e-6, but the same doc already records run speed <= 0 as the engine's own
@@ -30315,15 +30318,19 @@ engine's skill tick does.
   China board rows over 258 skills): column 22 is 0 on 831 rows and 1 on 1,354, and never varies
   within a skill; 115 of the 264 level-1 rows are 0 (`SKILL_CH_SWORD_SHIELD_D_01`,
   `SKILL_CH_COLD_SHIELD_A_01`, `SKILL_CH_WATER_SELFHEAL_E_01`, ...); column 24 is 1 only on the 19
-  `SKILL_CH_LIGHTNING_GYEONGGONG_B/D` rows. Rows whose `Basic_Activity` (`+0x65`) is not 2 leave
-  phase 0 earlier still (`0x4ae6e6 cmp [edi+0x65],2 ; jne 0x4ae9dc`); all 256 such board rows
-  carry `Target_Required` 0, so the one test covers them. The server agrees for the
+  `SKILL_CH_LIGHTNING_GYEONGGONG_B/D` rows. Rows whose `Basic_Activity` (`+0x65`) is not 2 never
+  reach that test (`0x4ae6e6 cmp [edi+0x65],2 ; jne 0x4ae9dc`); all 256 such board rows
+  carry `Target_Required` 0, so the one test covers them. **Corrected in round 523:** this said
+  such rows "leave phase 0 earlier still". `0x4ae9dc` is `mov eax,1 ; pop ; ... ; ret 8`, and the
+  decompile reads `if (+0x65 != 2) return 1;`: the tick returns and STAYS in phase 0. The server agrees for the
   non-damaging rows: `session/skill.go`'s `noCombat || zeroDmg` return comes before
   `skillInReach`, so a self heal or a shield was accepted at any distance before this round and
   still is. The damaging `Target_Required` 0 rows are a server departure, filed below.
-- **Range per level.** Column 21 is constant within a skill except for four:
+- **Range per level.** Column 21 is constant within a China skill except for four:
   `SKILL_CH_BOW_SPECIAL_A..D` (bases 467-470) rise 2 a level, 204->214, 218->228, 228->238 and
-  240->244. The server measures a cast with that level's row (`session/skill.go`, `ref.Range`),
+  240->244. **Corrected in round 523:** this said "within a skill"; one Europe skill varies too,
+  `SKILL_EU_WARRIOR_FRENZYA_TOUNT_SPRINT_A` (group 540, ids 8479-8499), 80->240 by level.
+  `SkillDataReader` keeps only `SKILL_CH_` rows. The server measures a cast with that level's row (`session/skill.go`, `ref.Range`),
   so the client keys the range by the level's own id.
 - **Nothing moves between the walk and the request.** `handleMove` (`session/world.go`) calls
   `keepUp.Cancel` on every OpMove. So `_flush_position` sends the final position before the
@@ -30333,7 +30340,7 @@ engine's skill tick does.
   `MOB_CH_GYO` 10 and `MOB_CH_YEOHA` 11, matching the roster in `cmd/server`. 13,291 rows carry
   a numeric column 50 under 13,291 distinct code names. That is why a code-name key is safe.
   The "second MOB_CH_MANGNYANG" in `docs/protocol/monster_ai.md` is `MOB_CH_STRONG_MANGNYANG`
-  (id 9383), a different code (found, not changed). The weapon Range is itemdata column 94:
+  (id 9383), a different code (found, not changed; that doc was corrected in round 523). The weapon Range is itemdata column 94:
   `ITEM_CH_SWORD_01_A_DEF` 6, `SPEAR` 18, `BOW` 180, the exporter's `fRange`. A skill's Range is
   skilldata column 21 (`SkillDataReader.S_RANGE`, the exporter's `skRange`).
 
@@ -30470,7 +30477,8 @@ no later talk-menu or specialty-goods change gives 0xc to them.
   - Not read: what the byte means, and why an agent is put in that body mode.
 - **Where 0xc really is.** The next chain tests nine literals, `0xaeee30` `NPC_CH_SPECIAL2`
   through `0xaeeec0` `NPC_SD_M_AREA_SPECIAL3`. A hit jumps to `0x4c6f31`,
-  `mov eax,[edx+0x164] ; push 0xc`.
+  `mov eax,[edx+0x164] ; push 0xc`. **Corrected in round 523:** `0x4c6f31` is `mov edx,[ebx]`;
+  the slot load is at `0x4c6f33` and the `push 0xc` at `0x4c6f39`.
 - **Three censuses over the whole function** (`0x4c6350` to the `ret` at `0x4c7906`):
   - two `push 0xc`: the SPECIAL chain's, and `0x4c6ae1`, `NPC_TD_THIEF_BUY`, followed by 0xd;
   - two loads of slot `0x318`: `0x4c6de6` (the agents) and `0x4c774b`. At `0x4c774b`,
@@ -30812,3 +30820,103 @@ its releases.
 Found, not caused here: `hud_window_test.gd` prints `SCRIPT ERROR: Compile Error: Identifier not
 found: NetClient` and still reports ALL PASS, and the suite loop does not flag it. It prints the
 same at `dbbedc4` (round 517), so it predates this round.
+
+## Batch-10 review follow-ups (rounds 519-521): skill range wording, the phase-0 return, the interaction-id record, the guild-state limits (round 523)
+
+The reviewers' non-blocking notes on rounds 519-521, each re-checked against the dumps, the asm
+and the box's extracted tables (all read-only) before it was written. Comments and docs only, plus
+one doc probe. Nothing a player sees changes.
+
+**Round 519: skill range, the phase-0 return, BCRadius, the Mangyang row.**
+
+- **Range per level is constant for China skills only.** Every skilldata row with a non-zero
+  mastery (col 34) was grouped by GroupID (col 2). Range (col 21) varies in five groups. Four are
+  `SKILL_CH_BOW_SPECIAL_A..D` (467-470), as round 519 said. The fifth is
+  `SKILL_EU_WARRIOR_FRENZYA_TOUNT_SPRINT_A` (group 540, ids 8479-8499, mastery 513), which rises
+  80 -> 240 over 21 levels. Without the mastery filter, groups 1064-1066 and 1073 vary as well.
+  That is only because four `SKILL_VSROEDITORCOM_VISUAL_*` rows (46351-46353, 46360; mastery 0,
+  Range 0) share their GroupIDs. `SkillDataReader.parse_skills` keeps only `SKILL_CH_` rows, so
+  it never sees the Europe skill. `skill_data_reader.gd`'s comments now say "China", name the EU
+  row, and point at that filter. Round 519's bullet has an inline correction.
+- **A `Basic_Activity` other than 2 stays in phase 0.** `/var/tmp/srv.asm`: `0x4ae6e6 cmp
+  byte [edi+0x65],2 ; 0x4ae6ea jne 0x4ae9dc`. `0x4ae9dc` is `mov eax,1 ; pop edi ; pop esi ; pop
+  ebx ; mov esp,ebp ; pop ebp ; ret 8`. The `call 0x4ac9e0` at `0x4ae9d7`, which sets the next
+  phase, sits before the jump target. `Tick_UseSkill` in `/var/tmp/decomp_server` reads
+  `if (*(char *)(iVar6 + 0x65) != '\x02') { return 1; }`. So the tick returns and stays in phase
+  0. It does not "leave phase 0 earlier". This was fixed in `combat.gd`, in round 519's bullet
+  (inline) and in `TODO.md`'s filed-departure line. `TODO.md` already said as much further down.
+  The count still holds when re-counted: 2,185 China board rows over 258 skills, and 256 with
+  Activity != 2 (174 with 1, 82 with 0). Every one has `Target_Required` 0.
+- **The player's BCRadius: the client reads a row, the server a constant.** All 52 `CHAR_*` rows
+  read 4, re-counted over the six characterdata data files. `World3D._attack_band` reads the
+  gender body row, and its comment now says that `keepUpInReach`/`skillInReach`
+  (`session/keepup.go`) pass the constant `combat.PlayerBCRadius` instead. The two agree only
+  because the rows do. `combat.gd`'s `PLAYER_BC_RADIUS` comment says the same.
+- **`monster_ai.md`'s "second `MOB_CH_MANGNYANG`"** is `MOB_CH_STRONG_MANGNYANG` (RefObjID 9383,
+  `characterdata_10000.txt`, level 90, 676,983 HP, speeds 8/22, BCRadius 6). The doc's "code
+  names are not unique" was wrong too: 13,291 rows carry 13,291 distinct names. A suffix match on
+  `MANGNYANG` also finds `MOB_EVE_STRONG_TQ_MANGNYANG` (26927, `characterdata_30000.txt`). The
+  paragraph is corrected, keeping the control's lesson, and the round-362 entry above has an
+  inline note. The client reads seven characterdata files; the seventh, `characterdata.txt`, only
+  lists file names.
+- **The debug panel's Skills-tab "Use"** (`World3D._on_skill_use_pressed`) still calls
+  `NetClient.use_skill` at once, with no approach walk. This is now in `TODO.md`'s "Attack
+  distance" list. It is a developer panel. The hotbar goes through `_cast_skill` ->
+  `_attack_monster`.
+
+**Round 520: the interaction-id record** (`character_state.md`, "The interaction-id vocabulary,
+from the NPCs themselves"). A census of every `mov eax,[edx+0x164]` in `CGObjNPCNPC::Create`
+(`0x4c6350`-`0x4c7906`, `/var/tmp/srv.asm`) was paired with its push and the call before it:
+
+- **32 call sites.** 31 follow a codename test: `strstr` (`FUN_009dddc0`) for all but 0x28, whose
+  test is `CompareStringA` (import `0xad90b8`, `0x4c76bd`, flags `0x10001`) against `.rdata
+  0xaef3f8` `NPC_SIEGE_DUNGEON_TELEPORT`. The 32nd, 0x11 at `0x4c77c2`, follows none. It is
+  reached when `[esp+0x14]` (the `+0x42404` byte, stored at `0x4c64a9`) is 0 (`0x4c76d6`), and
+  when `FUN_004ccb70` (`0x4c77ac`) returns an entry whose first byte is not 0.
+- **31 sites push a literal beside the call.** The one at `0x4c75f9` has no push of its own.
+  `0x4c75d1 push 0x21` follows a hit on `.rdata 0xaebf6c` `NPC_BATTLE_ARENA_MANAGER` and jumps to
+  `0x4c75f7`. `0x4c75f5 push 0x22` follows a hit on `0xaef394` `NPC_BATTLE_ARENA_EXCHANGER` and
+  falls into it. The decompile shows the same thing as `uVar6 = 0x21` / `0x22`, then
+  `goto LAB_004c75f7`. **This departs from the plan**, which called the id "computed". It is two
+  literals sharing one call, so the table's "computed" row became rows 0x21 and 0x22. What the
+  two ids do was not read.
+- **The paragraph before the table** said "thirty-two times with literal ids, each behind a
+  comparison against the NPC's own CodeName". It is now qualified with the two points above.
+- **The 0x11 row** now says what the subsection says: no codename, the map lookup, the byte, and
+  not the siege-dungeon block (that block ends at 0x28's call, `0x4c76d4`). The 0x12 row keeps
+  its byte-0 condition. The subsection is now "Two misattributions, corrected (rounds 520 and
+  523)". It opens by naming both, and the 0x11 paragraph is headed as the second rather than as
+  "not changed here".
+- **`0x4c6f31`** is `mov edx,[ebx]`. The slot load is at `0x4c6f33` and `push 0xc` at `0x4c6f39`.
+  Eight `jne 0x4c6f31` reach it, and the ninth test falls through to it on a hit
+  (`0x4c6f2f je 0x4c6f3f` on a miss). Fixed in the subsection, with an inline note in round 520's
+  entry.
+- **`npc_service_reader.gd`'s `GUILD_PATTERNS` comment** now names both 0xc registrations: the
+  SPECIAL chain (`0x4c6f39`) and `NPC_TD_THIEF_BUY` (`0x4c6ae1`, followed by 0xd). It also points
+  at the renamed subsection.
+
+**Round 521: the guild state can go stale.** srrevamp's server sends no guild broadcasts. Every
+`sess.Send` in `session/guild.go` answers the requester, and no other guild opcode exists. When
+the master leaves, `guild.Store.Leave` (`MemStore` by join order, `SQLStore` by `joined_at`)
+promotes the longest-standing member, and that member's client is not told. That client keeps
+`_guild_master` false and its guild NPC still offers "Leave guild.", until the next `guild_info`
+reply (world entry, or opening the guild window). The server does not refuse a leader's leave,
+so only a refused leave asks again. This is disclosed in `World3D`'s `_guild_id`/`_guild_master`
+comment, in `character_state.md`'s "The guild NPC's lines (round 521)" and in `TODO.md`'s NPC-talk
+item. Behaviour is unchanged.
+
+**Tests.**
+
+- New doc probe `TestInteractionTable0x11AndArenaRows` in
+  `server/internal/systems/interaction_table_test.go`, which reads `character_state.md` at run
+  time. There must be exactly one `| **0x11** |` row. It must not say "disputed" or start with
+  the siege-dungeon block, and it must carry `0x4c77c2`, `FUN_004ccb70` and `+0x42404`. Rows
+  0x21 and 0x22 must name their arena NPC and `0x4c75f9`, and no `| computed |` row may be left.
+- **Negative case proven.** With `character_state.md` stashed (BASE), the probe failed four
+  ways: the 0x11 row still in the siege block, both arena rows missing, and the "computed" row
+  back. With the file restored, it passes. `TestInteractionTableAgentsRegisterNoID` (round 520)
+  passes both before and after.
+- Render box: `client/tools/remote_godot.sh tests` ran 80 suites, 0 failing.
+  `client/tools/remote_godot.sh check` checked 246 scripts and 5 scenes: ALL LOAD. Only comments
+  changed in the four `.gd` files.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...`: green.

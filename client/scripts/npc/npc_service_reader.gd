@@ -350,10 +350,12 @@ static func talk_menu_lines(npc_name: String, services: Array, resolve: Callable
 ##     IGObj::SetBodyMode; docs/protocol/igobj_vtable.md, the table), called
 ##     with (4, 0xff, 0, 0) only when the byte at CMainProcess (DAT_00d6a8dc)
 ##     +0x42404 is 1 (`cmp esi,1`; esi loaded at 0x4c6494). It never reaches
-##     slot 89 (+0x164, AddAvailableInteraction). The 0x0c registration is the
-##     NEXT chain, the NPC_*_SPECIAL literals (0x4c6f39). The data-driven paths
-##     are covered in docs/protocol/character_state.md, "One misattribution,
-##     corrected (round 520)".
+##     slot 89 (+0x164, AddAvailableInteraction). Id 0x0c has two
+##     registrations in Create, neither on the agents: the NEXT chain, the
+##     NPC_*_SPECIAL literals (push 0xc at 0x4c6f39), and NPC_TD_THIEF_BUY
+##     (push 0xc at 0x4c6ae1, followed by 0xd). The data-driven paths are
+##     covered in docs/protocol/character_state.md, "Two misattributions,
+##     corrected (rounds 520 and 523)".
 const GUILD_PATTERNS := [
 	"NPC_CH_GENARAL_SP",
 	"NPC_WC_GUILD",

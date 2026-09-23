@@ -49,10 +49,14 @@ const S_BASIC_CODE := 3          # SKILL_CH_..._NN -- names the cast .ban clip
 const S_LEVEL := 7
 # Cast timing / cost / range, verified against SMASH_A (see the skilldata-columns
 # note): all in ms except Range. CastTime/ReuseDelay are constant per skill;
-# ReqSP and ConsumeMP rise per level. Range is constant for all but four
-# player skills: measured on the box's skilldata tables (round 519 review),
+# ReqSP and ConsumeMP rise per level. Range is constant within a skill for
+# all but four CHINA skills: measured on the box's skilldata tables (round 519
+# review, re-counted round 523 over every row with a non-zero mastery),
 # SKILL_CH_BOW_SPECIAL_A..D (bases 467-470) rise 2 a level, 204->214,
 # 218->228, 228->238 and 240->244 -- so it is kept per level (level_range).
+# One Europe skill varies too, SKILL_EU_WARRIOR_FRENZYA_TOUNT_SPRINT_A (group
+# 540, ids 8479-8499), 80 -> 240 by level; this reader keeps only SKILL_CH_
+# rows (parse_skills), so it never sees it.
 const S_CAST_TIME := 12
 const S_REUSE_DELAY := 14         # the cooldown
 const S_RANGE := 21               # 0 = melee
@@ -130,8 +134,9 @@ class BaseSkill:
 	## empty when the level needs nothing but its mastery level and SP.
 	var level_prereqs: Array = []
 	## Each level's Range (S_RANGE, world units, 0 = the weapon's), aligned with
-	## level_ids -- what that level's cast is measured with. It differs from
-	## range_val only on the four SKILL_CH_BOW_SPECIAL skills (see S_RANGE).
+	## level_ids -- what that level's cast is measured with. Among the China
+	## skills this reader keeps, it differs from range_val only on the four
+	## SKILL_CH_BOW_SPECIAL skills (see S_RANGE).
 	var level_range: PackedInt32Array = PackedInt32Array()
 	## Each level's Target_Required (S_TARGET_REQUIRED) and TargetType_Land
 	## (S_TARGET_LAND), aligned with level_ids: whether the skill tick walks
@@ -140,8 +145,8 @@ class BaseSkill:
 	var level_target_land: PackedInt32Array = PackedInt32Array()
 	## Cast timing / range as the level-1 row gives them: cast time and
 	## cooldown in ms (constant across levels, verified for SMASH_A), range in
-	## game units (0 = melee; constant but for four skills -- level_range has
-	## every level's), and the tooltip description code resolved through the UI
+	## game units (0 = melee; constant but for four China skills -- level_range
+	## has every level's), and the tooltip description code resolved through the UI
 	## text table.
 	var cast_time_ms: int
 	var cooldown_ms: int

@@ -476,12 +476,25 @@ eleven rows match on both.** Col 50 (BCRadius) matches its third. The column
 indexing is therefore checked against three known fields before reading the two
 unknown ones.
 
-**A trap this walked into, recorded because it nearly shipped.** Selecting the
-row by `CodeName` finds the WRONG row: `characterdata_10000.txt` has a second
-`MOB_CH_MANGNYANG` at level 90 with 676,983 HP, and its speeds (8/22) happen to
-look plausible. **Code names are not unique across the characterdata files.**
-Select by `RefObjID`. The level/HP control is what caught it -- col 57 came back
-90 against the roster's 1.
+**A trap this walked into, recorded because it nearly shipped.** A search for
+the Mangyang row by name found the WRONG row: `characterdata_10000.txt` has
+`MOB_CH_STRONG_MANGNYANG` (RefObjID 9383) at level 90 with 676,983 HP, and its
+speeds (8/22) happen to look plausible. The level/HP control is what caught it
+-- col 57 came back 90 against the roster's 1. Select by `RefObjID`, or by the
+exact code name.
+
+*Corrected in round 523.* This paragraph first called that row "a second
+`MOB_CH_MANGNYANG`" and said code names are not unique across the characterdata
+files. Both were wrong. The row's code is `MOB_CH_STRONG_MANGNYANG`, a different
+code. An exact code-name match cannot return it, so the search must have
+matched loosely; how it matched was not recorded. A substring or suffix match on
+`MANGNYANG` finds it, and one more row too, `MOB_EVE_STRONG_TQ_MANGNYANG`
+(26927, `characterdata_30000.txt`). Over the six data files extracted on the
+box (`characterdata_5000` .. `_30000`; the seventh file the client reads,
+`characterdata.txt`, only lists file names), 13,291 rows carry 13,291 distinct
+code names (round 519 counted this first, re-counted in round 523). An exact
+code-name key is therefore safe, and the client's BCRadius map
+(`NpcTableReader.parse_bc_radius_by_code`) relies on it.
 
 ### "Which speed does a WANDER leg step at" was the wrong question (round 363)
 
