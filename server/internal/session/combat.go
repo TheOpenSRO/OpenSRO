@@ -173,26 +173,28 @@ func DecodeLevelUp(data []byte) (*LevelUp, error) {
 	}, nil
 }
 
-// unarmedDamage is the base damage dealt with no weapon equipped. Own design,
-// and now with a PROVEN REASON rather than a bare label: the real game defines
-// no unarmed damage at all.
+// unarmedDamage is the base damage roll with no weapon equipped. Own design,
+// disclosed: the number is invented, and it is the ROLL, not the blow.
 //
-// A character's damage reaches the engine as ParamKeeper params 190/191, which
-// Char_PublishCombatStats publishes from the equipment aggregate; the damage
-// numbers themselves live in a skill's `'att'` parameter, which is how a
-// monster's attack was recovered (characterdata col 83 -> that skill's 'att').
-// So an unarmed player would need a base attack skill with no weapon type --
-// and the skill table has none. All twelve `_BASE_01` attack skills in the
-// game are weapon-typed:
+// CORRECTED in round 505. This comment said an unarmed player would need a
+// base attack skill with no weapon type and that the skill table has none.
+// The empty hand's base attack exists: SKILL_PUNCH_01, id 1, which
+// SkillGlobal::PostLoadSkillTable (0x5893e0) files for TypeID4 1 (and
+// SkillBook::DefaultAttackSkillIDForWeaponTID 0x59e650 reads a TypeID4 of 0
+// as 1). It requires weapon code 1, the bare hand (combat.WeaponBareHand),
+// and its `att` is 5/150/0/0 -- physical, 150% of the roll, no flat damage.
+// It is not one of the twelve `_BASE_01` rows, which ARE all weapon-typed:
 //
 //	CH  SWORD(2)  SPEAR(40)  BOW(70)
 //	EU  SWORD(8419) TSWORD(8420) AXE(8421) CROSSBOW(9354) DAGGER(9355)
 //	    STAFF(9944) WAND_WARLOCK(10625) HARP(11162) WAND_CLERIC(11526)
 //
-// The state exists visually -- the client's recovered animation-group table has
-// index 0 `default` for an empty hand -- but nothing in the data gives it a
-// damage value. So this is a number this project must invent to have a fight at
-// all, not one it failed to find.
+// What is still missing is the ROLL that 150% scales. A character's damage
+// reaches the engine as ParamKeeper params 190/191, which
+// Char_PublishCombatStats publishes from the equipment aggregate, and what an
+// empty hand puts there is not read. So 5 stands in for that roll, and since
+// round 505 the punch's 150% multiplies it after mitigation, as it does any
+// weapon's roll (session.plainSwingOf).
 //
 // Guard against a plausible misreading while here: characterdata cols 84-86 on
 // a PLAYER row are base-attack SKILL IDS, not a damage range. A Chinese row
@@ -728,7 +730,12 @@ func combatHandler(
 			if !swingReady(ctx, characterID, eq, items, skills, time.Now()) {
 				return nil
 			}
-			if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, dropSrc, characterID, req.TargetMonsterID, 0, 0, 0, 1, combat.AttackPhysical); err != nil {
+			// The swing IS the weapon's base attack skill (PrepareAction
+			// 0x4ad030 writes DefaultAttackSkillID into the action context),
+			// so its damage is that row's `att` share, hit count and mask --
+			// see plainSwingOf. masteryPercent stays 0: see performAttack.
+			sw := plainSwingOf(ctx, characterID, eq, items)
+			if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, dropSrc, characterID, req.TargetMonsterID, sw.flat, sw.percent, 0, sw.hits, sw.atk); err != nil {
 				return err
 			}
 			// One click is the whole fight: the server repeats the swing on
@@ -771,8 +778,9 @@ func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.H
 }
 
 // performAttack computes damage (the attacker's base weapon/unarmed damage
-// plus damageBonus -- 0 for a plain OpAttack, a skill's flat damage for
-// OpUseSkill), applies it to the target monster, resolves the monster's
+// plus damageBonus -- a skill's flat damage, which for a plain OpAttack is the
+// weapon's base attack skill's and 0 on every real base row -- see
+// plainSwingOf), applies it to the target monster, resolves the monster's
 // counterattack, sends OpAttackResult to sess, grants gold on a kill, and
 // broadcasts to everyone else in the zone. Shared by CombatHandler and
 // skill.UseHandler so both attack paths behave identically.
@@ -890,14 +898,26 @@ func performAttack(
 	damageBonus int,
 	damagePercent int,
 	// masteryPercent is stage 1 of the engine's damage pipeline: the weapon
-	// roll is scaled by `1 + masteryPercent/100` BEFORE mitigation. A plain
-	// attack has no skill record and passes 0, which the engine also does --
-	// FUN_0059e770 returns 0 when there is no skill -- so a plain swing is
-	// unchanged. See combat.MasteryDamageScale.
+	// roll is scaled by `1 + masteryPercent/100` BEFORE mitigation. See
+	// combat.MasteryDamageScale.
+	//
+	// A plain swing passes 0, and that is srrevamp's limit, NOT the engine's
+	// answer for every weapon. The swing is the weapon's base attack skill
+	// (PrepareAction 0x4ad030, see plainSwingOf), and
+	// Skill_GetRequiredMasteryLevel (0x59e770) returns a mastery level for
+	// any row whose CRefSkill+0x574 is non-zero -- 0 only when there is no
+	// row or +0x574 is 0. The one writer of +0x574 is the row's own
+	// `getv MAAT` parameter (SkillGlobal::RefSkill_ParseParams 0x587630).
+	// On the retail rows the CH sword/spear/bow base attacks and the EU
+	// staff and both wand base attacks carry it; SKILL_PUNCH_01 and the
+	// other EU base attacks do not. refdata does not export MAAT, so the two
+	// cannot be told apart here and every plain swing takes 0 (disclosed;
+	// docs/TODO.md).
 	masteryPercent int,
 	hits int,
 	// attackType is the skill's `att` value[0]: which half of the blow
-	// exists. A plain OpAttack passes combat.AttackPhysical. See
+	// exists. A plain OpAttack passes its base attack skill's mask, or
+	// combat.AttackPhysical with no base row (plainSwingOf). See
 	// combat.AttackType.
 	attackType combat.AttackType,
 ) error {
@@ -969,7 +989,9 @@ func performAttack(
 		playerLevel, monster.Level, characterID, monster.ID)
 	// A skill's percentage applies HERE, after mitigation and the clamp, not
 	// to the raw roll -- see combat.ApplySkillPercent for the disassembly. A
-	// plain attack passes 0 and is unchanged.
+	// plain attack passes its base attack skill's share (60 for a CH sword's
+	// SKILL_CH_SWORD_BASE_01, 150 bare-handed), or 0 -- unchanged -- with no
+	// base row (plainSwingOf).
 	net := combat.ApplySkillPercent(blow.Damage, damagePercent)
 	playerCrit := blow.Critical
 

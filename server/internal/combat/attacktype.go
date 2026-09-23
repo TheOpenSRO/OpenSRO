@@ -225,9 +225,16 @@ func WeaponRange(item *refdata.Item, inst Instance, str, intel int, atk AttackTy
 	// This is a STAND-IN, not the engine's rule. The engine has no maskless
 	// blow: a plain swing runs the weapon's own basic-attack skill, and that
 	// skill carries the matching mask (SKILL_CH_SWORD_BASE_01 is physical,
-	// SKILL_EU_STAFF_BASE_01 magical). srrevamp's plain OpAttack passes
-	// AttackPhysical for every weapon, so this stands in for picking the right
-	// basic skill. It disappears once OpAttack resolves one.
+	// SKILL_EU_STAFF_BASE_01 magical).
+	//
+	// Since round 505 srrevamp's plain swing does run that skill
+	// (session.plainSwingOf) and passes its mask, so with a real base row a
+	// staff's swing arrives magical and takes the case above. This case is
+	// KEPT for the swings that still have no mask to pass: no base row (a
+	// store that cannot look skills up, or a weapon type the default-attack
+	// table does not list) or a skill export predating the AttackType
+	// column. plainSwingOf falls back to AttackPhysical for those, and a
+	// magical-only weapon would otherwise land every such swing on the floor.
 	case max <= 0 && item.MagAttackMax > 0:
 		min = int(math.Round(magMin)) + ReinforceDamage(intel, rMagMin)
 		max = int(math.Round(magMax)) + ReinforceDamage(intel, rMagMax)

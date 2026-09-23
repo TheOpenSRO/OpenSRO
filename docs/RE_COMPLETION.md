@@ -18784,6 +18784,12 @@ noticed rather than discovered.
 and applied to the roll before mitigation. A plain attack passes 0 and is
 unchanged, which is what the engine does too.
 
+*Corrected in round 505: the engine does NOT pass 0 for every plain attack.
+The swing is the weapon's base attack skill (`PrepareAction` 0x4ad030), and
+`Skill_GetRequiredMasteryLevel` (0x59e770) returns the caster's mastery level
+for any row whose `+0x574` is set by `getv MAAT` -- the CH base attacks and the
+EU staff and wand ones. srrevamp still passes 0 because it does not export MAAT.*
+
 srrevamp carries only `Mastery1` (`refdata.Skill` notes the real table has a
 second), so the second slot is reported unoccupied and contributes the engine's
 default of 1. That is a faithful reading of a table this project has half of,
@@ -28520,3 +28526,123 @@ there and not committed):
 **Deploy.** This needs a **re-export of the skill CSV** (`export-refdata -mode skills`, now 46
 columns) and a re-import. The SQL column migrates on start. Until then every row loads group 0 and
 the behaviour is unchanged. Batch it with rounds 502 and 503, which need the same re-export.
+
+## A plain swing runs the weapon's base attack skill: its att percent, hit count and attack mask (round 505)
+
+**Why now.** Every plain swing reached `performAttack` as a skill-less blow: flat 0, percent 0,
+one hit, `AttackPhysical`. That was true of the click's swing (`combatHandler`) and of every
+keep-up repeat, including the repeats after an `AutoAttackType`-1 hand-off (round 502). But the
+engine resolves a plain swing as a cast of the weapon's default attack row. Round 255 already took
+that row's `ReuseDelay` for the cadence. Its damage was never taken.
+
+**Grounding.** Re-read from the dump this round.
+
+- **`GObjPC::PrepareAction` (`0x4ad030`)**, case 1 (the attack kind):
+  `uVar3 = SkillBook::DefaultAttackSkillID(); *(ctx + 8) = uVar3;`. It runs on every pass of
+  phase 1, so the context's skill is the weapon-in-hand's default attack each time.
+- **`GObjPC::FUN_005aa630`**, the 0x7070 serializer: `MsgBuf_AppendBytes(ctx + 8)` first, then
+  the flags at `+0xc`, the target list and the position list. The blow is resolved from that id
+  like any other cast.
+- **`damage_pipeline.md`**: stage 0 gates the blow on the row's `att` descriptor
+  (`[esi+0x230] != 0` and its type bit), and stage 6 scales the mitigated blow by
+  `descriptor[+4] / 100`. `Combat_ResolveDamage` runs the hits in `do { ... } while (i < rec[5])`
+  from `mc` (`refdata.Skill.HitCount`).
+- **`Skill_GetRequiredMasteryLevel` (`0x59e770`)**: `if (rec != 0 && *(rec + 0x574) != 0)`,
+  else 0. The only writer of `CRefSkill+0x574` is `SkillGlobal::RefSkill_ParseParams`
+  (`0x587630`) on `getv` with value `0x4d414154` (`MAAT`):
+  `*(uint **)(ESI + 0x574) = DAT_00c826bc + 1`. Grepping the whole dump for stores to
+  `+ 0x574` (and to `[0x15d]`, the same offset as an int index) finds this one on a `CRefSkill`.
+  The others (`funcs_013.c`) are a counter on a quest-talk object.
+
+**Measured** on the retail skilldata rows (`/var/tmp/allskills.txt` on the RE box, read there and
+not committed). `/opt/sro-files/client/skills.csv` (the exporter's output) agrees on every `att`
+and `mc` value below.
+
+| row | `att` type/percent/min/max | `mc` hits | MAAT |
+|---|---|---|---|
+| `SKILL_PUNCH_01` (1) | 5/150/0/0 | 1 | no |
+| `SKILL_CH_SWORD_BASE_01` (2) | 5/60/0/0 | 2 | yes |
+| `SKILL_CH_SPEAR_BASE_01` (40) | 5/117/0/0 | 1 | yes |
+| `SKILL_CH_BOW_BASE_01` (70) | 6/84/0/0 | 1 | yes |
+| `SKILL_EU_SWORD_BASE_01` (8419) | 5/123/0/0 | 1 | no |
+| `SKILL_EU_TSWORD_BASE_01` (8420) | 5/217/0/0 | 1 | no |
+| `SKILL_EU_AXE_BASE_01` (8421) | 5/73/0/0 | 2 | no |
+| `SKILL_EU_CROSSBOW_BASE_01` (9354) | 6/116/0/0 | 1 | no |
+| `SKILL_EU_DAGGER_BASE_01` (9355) | 5/54/0/0 | 2 | no |
+| `SKILL_EU_STAFF_BASE_01` (9944) | 10/180/0/0 | 1 | yes |
+| `SKILL_EU_WAND_WARLOCK_BASE_01` (10625) | 10/153/0/0 | 1 | yes |
+| `SKILL_EU_HARP_BASE_01` (11162) | 10/200/0/0 | 1 | no |
+| `SKILL_EU_WAND_CLERIC_BASE_01` (11526) | 10/153/0/0 | 1 | yes |
+| `SKILL_CH_/EU_FORTRESSWEAPON` (21228/21229) | 5/0/0/0 | 1 | no |
+
+Across all rows carrying `att`, MAAT is on 2,027 of 2,028 `SKILL_CH_` rows and on 24 of 1,502
+`SKILL_EU_` rows.
+
+**What changed.**
+
+- `session/keepup.go`: `plainSwing{flat, percent, hits, atk}` and `plainSwingOf(ctx,
+  characterID, eq, items)`, next to `baseAttackOf`.
+  - With no base row, it gives `{0, 0, 1, AttackPhysical}`, the old call.
+  - `hits` is `ref.HitsFor()`. `atk` is the row's `AttackType` when `Known()`, else physical.
+  - `FloorBlow` gives `SkillPercentZero`. `AttackPercent > 0` without `NoCombatParam` or
+    `ZeroDamage` gives `skillDamageBonus(ref)`. Anything else gives 0/0.
+  - `skillDamageBonus` is never reached for a row with no `att`, because it returns the
+    disclosed per-level bonus for one.
+- `session/combat.go`: the click's swing passes `plainSwingOf`'s terms to `performAttack`.
+- `session/keepup.go`, the `Arm` closure: it re-reads `plainSwingOf` on every repeat, as
+  `PrepareAction` does. This also covers the hand-off's repeats.
+- `masteryPercent` stays 0 for plain swings. `performAttack`'s comment used to say the engine
+  passes 0 too. It is rewritten: the engine scales the MAAT rows, and refdata does not export
+  MAAT. `combat.MasteryDamagePercent`'s comment now states the `+0x574` condition.
+- `combat.WeaponRange`: the magical-only stand-in stays, for swings with no mask to pass (no base
+  row, or an export predating the AttackType column). Its comment says so.
+- `session.unarmedDamage`: the comment said the skill table has no weaponless base skill. It has
+  one: `SKILL_PUNCH_01`, id 1, weapon code 1, 150%. 5 stays the disclosed ROLL that 150% scales.
+  `GROUNDING_AUDIT.md`'s "Unarmed damage = 5" row is corrected the same way.
+
+**Behaviour.** Most plain swings get stronger. A CH sword hits twice at 60% (120% in all). Bare
+hands and a broken weapon hit 150%. An EU staff hits 180% of the MAGICAL columns. The CH bow's 84%
+is the one ordinary weapon that gets weaker. A 2-hit swing also wears the weapon at rate 2
+(`wearWeapon` rolls at the hit count). There is no mastery term, and a magical swing meets the
+monster's one `Defense`, since no separate magical defence is modelled. No new column is needed:
+`AttackPercent`, `DamageMin/Max`, `HitCount` and `AttackType` are already exported (the RE box's
+2026-09-19 `skills.csv` carries them as columns 25-29), so a server update is enough.
+
+**Disclosed, not modelled.**
+
+- Mastery on plain swings (and the cast path's mastery on EU rows without MAAT). This is a
+  `docs/TODO.md` follow-up: export a MAAT flag and gate both paths.
+- The empty hand's roll (`unarmedDamage` 5).
+
+**Tests** (`session/plainswing_test.go`, new; `TestMain` pins every roll to its maximum):
+
+- **`TestPlainSwingIsTheBaseSkillsAtt`**:
+  - a sword gives `{0, 60, 2, 5}`;
+  - the staff row 9944 gives magical, 180%, 1 hit;
+  - a broken sword and an empty hand give `SKILL_PUNCH_01`'s 150%;
+  - `stubCombatItems` (no skill lookup) gives the fallback `{0, 0, 1, AttackPhysical}`;
+  - **negative**: a row with no `att` (`{ID: 2, ReuseDelayMs: 60, BasicLevel: 3}`) gives 0/0,
+    not `3 * DisclosedSkillDamagePerLevel`;
+  - a `FloorBlow` row gives `SkillPercentZero`, and a flat 7..7 rides along.
+- **`TestPlainOpAttackDealsTheBaseSkillsShare`** (end to end over TCP): a sword with `PhysMax`
+  30, row 2 `{60%, 2 hits}`, monster defence 10.
+  - The click's swing deals **24** (2 x 60% of 20).
+  - At a 60 ms re-use, the keep-up's repeat also deals 24 and kills a 48 HP monster.
+  - Control: a row with no `att` still deals 20.
+- **`TestPlainStaffSwingReadsTheMagicalColumns`**: a staff with `PhysMax` 30 and `MagMax` 50 and
+  row 9944 `{180%, type 10}` deals **72** (180% of 50 - 10). The physical columns would give 20
+  or 36.
+- **Negative, run.**
+  - With the call sites given the pre-505 terms (`plainSwing{hits: 1, atk: AttackPhysical}`),
+    the sword swing, its repeat and the staff swing each deal **20** and all three assertions
+    fail.
+  - With only the keep-up's call reverted, the repeat assertion alone fails (20 leaving 4).
+  - With the three production files stashed, the new tests do not build (`plainSwingOf`
+    undefined).
+  - Restored, all pass.
+- `TestOneClickKeepsAttackingUntilTheMonsterDies` and `TestFirstSwingIsGatedByReach` (base rows
+  with no `att`, still 20 a hit), `swing_test` and `skilldamage_test` are unchanged and green.
+  `go build ./... && go test -count=1 -p 1 ./...` is green.
+- The only client change is the bundled copy of `docs/HELP_PLAYING.md` (`client/docs/`, which
+  `TestBundledClientDocsMatchSource` checks). `client/tools/remote_godot.sh tests` on the render
+  box: 77 suites, 0 failing.

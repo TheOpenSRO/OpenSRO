@@ -292,8 +292,9 @@ func MitigateDamage(raw, reductionPercent, flat int) int {
 }
 
 // SkillPercentZero says the skill's percentage is a REAL zero, as opposed to the
-// 0 that means "this blow carries no skill percentage" (a plain attack, or an
-// own-design catalog skill).
+// 0 that means "this blow carries no skill percentage" (a plain attack with no
+// base attack row to read -- see session.plainSwingOf -- or an own-design
+// catalog skill).
 //
 // The two are different in the engine and were conflated here until 2026-09-18.
 // When the attack descriptor exists the multiply is unconditional -- the
@@ -1050,8 +1051,12 @@ const MasteryDamageCap = 90
 // So it is the CHARACTER's level in that mastery, not the skill's requirement.
 //
 // The defaults matter: a skill with a mastery slot the character has no level
-// in still contributes 1, not 0. Only an attack with no skill record at all
-// returns 0.
+// in still contributes 1, not 0. The engine returns 0 for an attack with no
+// skill record AND for a record whose CRefSkill+0x574 is 0 -- the full test at
+// Skill_GetRequiredMasteryLevel (0x59e770) is `rec != 0 && rec[+0x574] != 0`,
+// and +0x574 is written only by the row's `getv MAAT` parameter
+// (SkillGlobal::RefSkill_ParseParams 0x587630). refdata does not export that
+// flag yet, so hasSkill cannot carry it (round 505, docs/TODO.md).
 func MasteryDamagePercent(hasSkill, slot1, slot2 bool, level1, level2 int) int {
 	if !hasSkill {
 		return 0

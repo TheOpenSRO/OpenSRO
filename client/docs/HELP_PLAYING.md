@@ -41,6 +41,14 @@ reach (the original walks you back in; this client does not yet, so step
 closer and click again). A melee skill hands back to plain attacks when its
 animation ends; the staff, wand and harp bolts do not.
 
+**Balance note (server round 505).** A plain attack is now the weapon's own
+basic attack skill, as in the original, so most plain hits got stronger: a
+Chinese sword hits twice at 60% each (120% in all), bare hands hit for 150%,
+and a staff hits for 180% of its magic damage. A Chinese bow hits for 84%, a
+little weaker than before. Mastery does not raise plain attacks yet. A
+monster's defence against a staff, wand or harp swing is the same single
+Defense value as against a sword.
+
 ## Skills and the hotbar
 
 Open **Skills** (K). A skill you can learn shows a **+** under its icon; learning

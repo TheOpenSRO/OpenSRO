@@ -172,6 +172,57 @@ does `CastingTime += PreparingTime`, parses each row's params, links chain
 skills (`+0x5a4`/`+0x5a8`) and level neighbours within a group
 (`+0x59c`/`+0x5a0`), and keeps the `MOB_AUTOMOB` row at `0xc82628`.
 
+## The damage of a plain swing
+
+A plain swing is not a skill-less blow. It is a cast of the default attack row
+above (round 505):
+
+- `GObjPC::PrepareAction` (`0x4ad030`) case 1 writes
+  `*(ctx+8) = SkillBook::DefaultAttackSkillID()` on every pass of phase 1. A
+  weapon swapped between swings therefore changes the next swing's row.
+- The 0x7070 serializer (`GObjPC::FUN_005aa630`) appends `ctx+8` first, then
+  the flags, the targets and the positions. The consumer resolves the blow from
+  that row like any other cast.
+- The row's `att` descriptor (`CRefSkill+0x230`) gates the blow
+  (`damage_pipeline.md` stage 0) and scales it after mitigation by
+  `descriptor[+4] / 100` (stage 6). Its `mc` is the hit count. `att` value[0]
+  is the damage-type mask, so a staff's swing is magical.
+
+Measured on the retail skilldata rows (`/var/tmp/allskills.txt` on the RE box,
+read there and not committed; `/opt/sro-files/client/skills.csv` agrees on
+every `att`/`mc` value):
+
+| TypeID4 | row | `att` type/percent/min/max | hits (`mc`) | `getv MAAT` |
+|---|---|---|---|---|
+| 1 | `SKILL_PUNCH_01` (1) | 5 / 150 / 0 / 0 | 1 | no |
+| 2, 3 | `SKILL_CH_SWORD_BASE_01` (2) | 5 / 60 / 0 / 0 | 2 | yes |
+| 4, 5 | `SKILL_CH_SPEAR_BASE_01` (40) | 5 / 117 / 0 / 0 | 1 | yes |
+| 6 | `SKILL_CH_BOW_BASE_01` (70) | 6 / 84 / 0 / 0 | 1 | yes |
+| 7 | `SKILL_EU_SWORD_BASE_01` (8419) | 5 / 123 / 0 / 0 | 1 | no |
+| 8 | `SKILL_EU_TSWORD_BASE_01` (8420) | 5 / 217 / 0 / 0 | 1 | no |
+| 9 | `SKILL_EU_AXE_BASE_01` (8421) | 5 / 73 / 0 / 0 | 2 | no |
+| 10 | `SKILL_EU_WAND_WARLOCK_BASE_01` (10625) | 10 / 153 / 0 / 0 | 1 | yes |
+| 11 | `SKILL_EU_STAFF_BASE_01` (9944) | 10 / 180 / 0 / 0 | 1 | yes |
+| 12 | `SKILL_EU_CROSSBOW_BASE_01` (9354) | 6 / 116 / 0 / 0 | 1 | no |
+| 13 | `SKILL_EU_DAGGER_BASE_01` (9355) | 5 / 54 / 0 / 0 | 2 | no |
+| 14 | `SKILL_EU_HARP_BASE_01` (11162) | 10 / 200 / 0 / 0 | 1 | no |
+| 15 | `SKILL_EU_WAND_CLERIC_BASE_01` (11526) | 10 / 153 / 0 / 0 | 1 | yes |
+| 16 | `SKILL_CH_/EU_FORTRESSWEAPON` (21228/21229) | 5 / 0 / 0 / 0 | 1 | no |
+
+No base row carries flat damage. A CH sword swing is two hits of 60% (120% in
+all), bare hands 150%, and a staff 180% of the magical roll. Of the ordinary
+weapons only the CH bow (84%) swings weaker than a skill-less blow. The
+fortress rows' percent of 0 is a floor blow (`refdata.Skill.FloorBlow`).
+
+**The mastery term.** `Skill_GetRequiredMasteryLevel` (`0x59e770`) returns 0
+unless the row's `+0x574` is non-zero. The only writer is the row's own
+`getv MAAT` parameter (`SkillGlobal::RefSkill_ParseParams` `0x587630`, `+0x574
+= DAT_00c826bc + 1`). So in the engine the CH swings and the EU staff and wand
+swings are scaled at stage 1 by the caster's level in the row's mastery
+(`ReqCommon_Mastery1`, e.g. 257 for the CH sword, 514 for the staff), and the
+punch and the other EU swings are not. srrevamp does not export MAAT, so every plain swing takes
+mastery 0 (see "What srrevamp does with it").
+
 ## The cooldown test the keep-up waits on
 
 `SkillCooldowns::IsReady` (`0x64c1a0`; the block is `pc+0x1f40`): a row with a
@@ -252,3 +303,28 @@ kinds of row take no part in a group:
 The global and action windows (`+0x50`..`+0x5c`) are still not modelled. The
 keep-up's own wait (`handOffDelay`) is unchanged: the base attacks are all
 ungrouped. It takes effect after a re-export of the skill CSV.
+
+**Round 505: a plain swing is its base attack skill.** Until then every plain
+swing, the click's and the keep-up's alike, went to `performAttack` as a
+skill-less blow: no percentage, one hit, physical. `session.plainSwingOf` now
+reads the weapon-in-hand's base row (see "The damage of a plain swing") and
+passes its `att` percentage and flat range, its `mc` hit count and its mask. The
+click's swing reads it once. The keep-up reads it again on every repeat, as
+`PrepareAction` re-resolves the row on every pass. The repeats after an
+`AutoAttackType`-1 hand-off are the same swing. Three things are still
+not the engine's:
+
+- Mastery. Every plain swing passes mastery 0. The engine applies the caster's
+  mastery to the rows that carry `getv MAAT` (the CH swings and the EU staff and
+  wand swings), and srrevamp does not export that flag. See `docs/TODO.md`.
+- The empty hand's roll. The punch's 150% scales `session.unarmedDamage`, a
+  disclosed 5. What the engine rolls with no weapon (params 190/191 from the
+  equipment aggregate) is not read.
+- Defence. A magical swing (staff, wands, harp) is mitigated by the monster's
+  one `Defense` value, as a magical skill already is. srrevamp models no
+  separate magical defence for monsters.
+
+A skill-less blow remains the fallback when there is no base row to read: a
+store that cannot look skills up, or a weapon type the table does not list. A
+base row with no percentage (an export predating the damage columns) adds
+nothing, and a row whose mask names no damage half stays physical.

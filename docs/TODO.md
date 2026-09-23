@@ -172,6 +172,22 @@ In order. Each is checked off here when it ships in a release, with its round in
       player chain heads (e.g. `SKILL_CH_SWORD_SMASH_D_01` -> 7140 `..._D2_01`) resolve one row's
       blow and do not hand off (round 502's disclosed departure). Next: resolve each link's blow on
       its own timing, then apply the last link's hand-off rule.
+- [ ] **Mastery on the real rows: export `getv MAAT`.** Stage 1 of the damage pipeline scales
+      the roll by the caster's mastery level, but `Skill_GetRequiredMasteryLevel` (`0x59e770`)
+      returns 0 unless the row's `CRefSkill+0x574` is non-zero, and the only writer of `+0x574`
+      is the row's own `getv MAAT` parameter (`SkillGlobal::RefSkill_ParseParams` `0x587630`).
+      Measured on the retail rows (`/var/tmp/allskills.txt`): of the rows carrying `att`, 2,027
+      of 2,028 `SKILL_CH_` rows carry MAAT but only 24 of 1,502 `SKILL_EU_` rows do (the EU staff
+      and both wand base attacks among them). refdata exports no MAAT flag, so srrevamp gets it
+      wrong both ways:
+      - plain swings pass mastery 0 (round 505), where the engine scales the CH, staff and wand
+        swings;
+      - the cast path (`useSkillHandler`, `session/skill.go`, the `ref.Mastery1 != 0` block)
+        scales every skill with a mastery slot, so it also scales EU attack rows the engine
+        leaves alone (1,478 of the 1,502 EU rows carrying `att` lack MAAT).
+      Next: export a MAAT flag in the skill CSV (a new trailing column, the round-504 pattern),
+      then gate both paths on it (`combat.MasteryDamagePercent`'s `hasSkill` becomes "has a row
+      with MAAT"), and give the plain swing the caster's level in the base row's mastery.
 - [ ] **Attack distance.** Neither the client nor the server gates an attack by distance today: a
       monster can be hit from anywhere (an absent rule, by omission). Read in round 232: the SERVER
       never refuses on distance -- `0x3007 UIIT_SKILL_USE_FAIL_WRONGDISTANCE` occurs nowhere in its

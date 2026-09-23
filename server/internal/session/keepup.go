@@ -204,6 +204,65 @@ func baseAttackOf(ctx context.Context, characterID int64, eq equipment.Store, it
 	return ref, true
 }
 
+// plainSwing is what one plain attack hands performAttack: the flat and
+// percentage halves of its damage, how many times it strikes, and which half
+// of the blow (physical or magical) it deals.
+type plainSwing struct {
+	flat, percent, hits int
+	atk                 combat.AttackType
+}
+
+// plainSwingOf is the plain attack's damage terms, read off the weapon-in-hand's
+// base attack skill (baseAttackOf).
+//
+// A PLAIN SWING IS THAT SKILL, not a skill-less blow. GObjPC::PrepareAction
+// (0x4ad030) case 1 writes `*(ctx+8) = SkillBook::DefaultAttackSkillID()` on
+// every pass of the attack tick, and the 0x7070 command's serializer
+// (GObjPC::FUN_005aa630) appends ctx+8 first -- so the blow is resolved like
+// any cast of that row. Its `att` descriptor (CRefSkill+0x230) gates the blow
+// (docs/protocol/damage_pipeline.md stage 0) and scales it by descriptor[+4]
+// / 100 after mitigation (stage 6). Its `mc` is the hit count, and `att`
+// value[0] the damage-type mask.
+//
+// Measured on the retail skilldata rows: SKILL_CH_SWORD_BASE_01 is att
+// 5/60/0/0 with mc 2 (two hits of 60%), SKILL_PUNCH_01 is 5/150/0/0 with one
+// hit, and SKILL_EU_STAFF_BASE_01 is 10/180/0/0 with one hit (magical). See
+// docs/protocol/auto_command.md, "The damage of a plain swing".
+//
+// The percentage follows the cast path's rules (skillDamageBonus), with one
+// guard: skillDamageBonus returns the DISCLOSED per-level bonus for a row with
+// no `att`, and a plain swing must not pick that up. A base row that carries
+// no percentage (an export predating the damage columns, or a test row) adds
+// nothing, which is exactly the swing srrevamp dealt before.
+//
+// With no base row -- a store that cannot look skills up, or a weapon type the
+// default-attack table has no entry for -- the swing is {0, 0, 1, physical},
+// the plain blow srrevamp dealt before round 505. A row whose mask names no
+// damage half (an export predating the AttackType column) stays physical for
+// the same reason; see combat.AttackType.IsPhysical.
+func plainSwingOf(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) plainSwing {
+	sw := plainSwing{hits: 1, atk: combat.AttackPhysical}
+	ref, ok := baseAttackOf(ctx, characterID, eq, items)
+	if !ok {
+		return sw
+	}
+	sw.hits = ref.HitsFor()
+	if t := combat.AttackType(ref.AttackType); t.Known() {
+		sw.atk = t
+	}
+	switch {
+	case ref.FloorBlow:
+		// A computed blow that is identically zero, floored at 1 by the
+		// engine. On the real tables this is the two fortress-weapon base
+		// rows (att 5/0/0/0), whose swing combat.FixedDamagePerHit already
+		// sets to 1 against anything that is not a structure.
+		sw.percent = combat.SkillPercentZero
+	case ref.AttackPercent > 0 && !ref.NoCombatParam && !ref.ZeroDamage:
+		sw.flat, sw.percent = skillDamageBonus(ref)
+	}
+	return sw
+}
+
 // equippedWeaponRange is the Range column (itemdata 94, param 33) of the
 // weapon in hand. A broken weapon publishes 0 (read, round 247). A bare hand
 // has no weapon record to publish from, so the param is left at its zero
@@ -299,7 +358,14 @@ func armKeepUp(
 			}
 			_ = deps.skills.RecordUse(ctx, characterID, base.ID, now)
 		}
-		if err := performAttack(ctx, sess, deps.chars, deps.eq, deps.items, deps.hub, deps.monsters, deps.quests, deps.inv, deps.skills, deps.zerk, deps.mp, deps.parties, deps.ground, deps.dropSrc, characterID, target, 0, 0, 0, 1, combat.AttackPhysical); err != nil {
+		// The swing's damage terms are re-read on EVERY repeat, as
+		// PrepareAction (0x4ad030) re-resolves the context's skill on every
+		// pass: a weapon swapped between swings deals its own base skill's
+		// share on the next one. The same run carries the hand-off from an
+		// AutoAttackType-1 cast, so those swings are the base skill's too.
+		// masteryPercent stays 0 -- see performAttack.
+		sw := plainSwingOf(ctx, characterID, deps.eq, deps.items)
+		if err := performAttack(ctx, sess, deps.chars, deps.eq, deps.items, deps.hub, deps.monsters, deps.quests, deps.inv, deps.skills, deps.zerk, deps.mp, deps.parties, deps.ground, deps.dropSrc, characterID, target, sw.flat, sw.percent, 0, sw.hits, sw.atk); err != nil {
 			return 0, false
 		}
 		if m, ok := deps.monsters.Get(target); !ok || m.HP <= 0 {
