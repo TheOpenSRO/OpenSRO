@@ -85,9 +85,49 @@ static func services_for(code: String, shop_npcs: Dictionary) -> Array:
 		if up.contains(pattern):
 			out.append(Service.new("guild", "Guild"))
 			break
-	if up.contains("SMITH"):
-		# A smith both sells (shop, above) and repairs.
-		out.append(Service.new("repair", "Repair"))
+	# Town smiths get NO Repair talk line (round 512). The server
+	# registers interactions 4 and 0x20 on NPC_*_SMITH (CGObjNPCNPC::Create;
+	# docs/protocol/character_state.md, the interaction-id table), and the
+	# client's talk-menu builder adds nothing for id 4: FUN_00700440 looks id 4
+	# up at LAB_00700b10 (0x700b12-0x700b37: `mov byte [esp+0x14],4; call
+	# 0x534ef0`, then only the iterator checks) with no membership branch and
+	# no item -- unlike id 3 right after it (0x700b60-0x700b71 `cmp [eax+4]`,
+	# then item 3). The item switch FUN_006fcd60 (cases 0..0x43) has no repair
+	# label, and the set-membership test UI_SILKMALL::FUN_00676390 is never
+	# asked about id 4 at any of its 15 direct call sites.
+	#
+	# The client does read id 4, but not for a talk line. The 0xb045 NPC-select
+	# reply handler NetProcessInInterface::FUN_0088b200 looks id 4 up in the
+	# set the menu builder reads (talk object +0x7c0), right after building
+	# the menu: 0x88b8c5 `mov byte [esp+0x1c],4`, 0x88b8ca `call 0x534ef0`,
+	# 0x88b8d9 `cmp [eax+0x4],edi` -> has4. It then calls FUN_006d2840(0),
+	# which hides two store-window controls, and FUN_006d2840(has4), which
+	# shows them again only if the NPC has id 4. Those controls are children
+	# 0xb and 0xc of resinfo\ifstore.txt, fetched by
+	# CIFStoreForPackage::vslot_010 at 0x6d2ce3-0x6d2d03. Its lookup
+	# FUN_008b51f0(id, 1) adds the same window base that FUN_008b5580 adds to
+	# each authored ID (0x8b5634). ifstore.txt authors ids 11 and 12 as
+	# GDR_STORE_BTN_REPAIR and GDR_STORE_BTN_REPAIRALL. So repair is the store
+	# window's two buttons (hud_panels.gd, _wire_repair_buttons), reached
+	# through "Buy", and id 4 is what shows them.
+	#
+	# Id 0x20 does add a line in the real client -- FUN_00700440 -> item 0x2f,
+	# UIIT_STT_AVATAR_MAGICOPTION_ENCHANT_MAGIC_PARAM -- which this talk window
+	# likewise does not offer.
+	#
+	# The FORTRESS smith (NPC_*_FORTRESS_SMITH*) does have a real repair line:
+	# interaction 0x1a -> FUN_00700200 -> IF_NPCTalk::FUN_006fe030 case 0x36
+	# adds SN_FORTRESS_SMITH_REPAIR (beside SN_FORTRESS_SMITH_PRODUCT), behind
+	# a gate that is not named. srrevamp has no fortress system, so it is
+	# deliberately not offered here -- a choice of this project, not a claim
+	# that the real client lacks it.
+	#
+	# NPC_*_ARMOR gets no repair talk line either: no NPC does. Round 458's
+	# "id 4 has no reader" holds for the SERVER only. The client reader at
+	# 0x88b8c5 above means the real armour merchant (id 4, character_state.md)
+	# probably shows the store's repair buttons. srrevamp shows them on every
+	# store; that is an open item in docs/TODO.md, not something this reader
+	# decides.
 	return out
 
 ## The guild NPCs, as the SERVER identifies them. `CGObjNPCNPC::Create`

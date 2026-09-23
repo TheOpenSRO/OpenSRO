@@ -89,7 +89,7 @@ signal skill_drop_requested(at: Vector2, skill_id: int, basic_code: String, icon
 ## not be used from it (playtest 2026-09-20).
 signal item_drop_requested(at: Vector2, item_id: int, inventory_slot: int, icon: Texture2D)
 ## A talk-box service line other than "End conversation" was chosen; `key` is
-## the service's stable key (NpcServiceReader.Service.key -- "shop", "repair",
+## the service's stable key (NpcServiceReader.Service.key -- "shop", "storage",
 ## ...). World3D acts on it (opens the shop, ...).
 signal npc_service_selected(key: String)
 
@@ -473,6 +473,12 @@ func _select_shop_tab(index: int) -> void:
 ## repair uses the last equipment slot the player clicked, or all if none.
 ## On the result, the equipment list is re-read so the paper doll and the
 ## tooltips show the restored durability.
+##
+## Not yet matched to the real client: its NPC-select reply handler
+## (FUN_0088b200, 0x88b8c5) hides these two buttons and shows them again
+## only for an NPC with interaction 4 (smiths, armour merchants). Here they
+## show on every store.
+## See docs/RE_COMPLETION.md round 512 and docs/TODO.md.
 func _wire_repair_buttons(window: HudWindow) -> void:
 	if not NetClient.repair_result.is_connected(_on_repair_result):
 		NetClient.repair_result.connect(_on_repair_result)

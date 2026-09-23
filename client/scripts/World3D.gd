@@ -8039,9 +8039,11 @@ func _npc_services(code: String) -> Array:
 		return []
 	return NpcServiceReader.services_for(code, _npc_shop_set)
 
-## Acts on a service chosen in the talk box. Buy opens the NPC's real shop; the
-## others (repair, storage, guild) are their own systems, still to come, so
-## they say so rather than doing nothing silently.
+## Acts on a service chosen in the talk box. Buy opens the NPC's real shop and
+## Storage the warehouse; the others (guild) are their own systems, still to
+## come, so they say so rather than doing nothing silently. A smith lists no
+## Repair line (round 512, NpcServiceReader.services_for): repair is the store
+## window's own buttons.
 func _on_npc_service_selected(key: String) -> void:
 	match key:
 		"shop":

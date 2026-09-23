@@ -24824,6 +24824,19 @@ anywhere**, so nothing ties it to repair, and adding armour merchants to the
 repair list on that basis would be the unproven leap this project keeps having
 to retract.
 
+*Correction (round 512):* the `SMITH` → Repair talk line was itself unproven,
+and it is gone now. "No reader anywhere" holds for the **server** only. On the
+client, the talk-menu builder `FUN_00700440` looks id 4 up at `LAB_00700b10`
+and then adds nothing for it: there is no membership branch and no item. But
+the client does have an id-4 reader. The NPC-select reply handler
+`FUN_0088b200` tests id 4 at `0x88b8c5` and uses the result to show or hide
+the store window's `GDR_STORE_BTN_REPAIR` / `GDR_STORE_BTN_REPAIRALL`. So
+srrevamp's town smith now lists Buy and the end line only, and repair stays in
+the store window's buttons. No NPC gets a repair talk line, `ARMOR` included.
+The armour merchants carry id 4, though, so in the real client their store
+window probably shows the repair buttons. The sentence above ("nothing ties it
+to repair") is wrong for the client. See round 512.
+
 ## The capability flags word, assembled — and a control that refused (round 459)
 
 Started from round 458's open item: interaction id 4 groups `NPC_*_SMITH` and
@@ -29311,3 +29324,135 @@ Restored, all four pass.
   tests included.
 - **Suite:** `cd server && go build ./... && go test -count=1 -p 1 ./...` is green. No client file
   changed.
+
+## Town smiths list no Repair talk line (menu builder adds nothing for id 4) (round 512)
+
+`NpcServiceReader.services_for` gave every NPC whose codename contains `SMITH` a "Repair" talk
+line. Nothing grounded it. Round 458 kept it only because the server's interaction id 4, which
+groups `NPC_*_SMITH` and `NPC_*_ARMOR`, has no reader on the server. Chosen from the talk box, the
+line only printed "Repair is not available yet." This round reads the **client's** talk-menu
+builder. It adds nothing for id 4, so the line is removed. A client reader of id 4, found in
+review, shows the store window's repair buttons instead (below).
+
+**Grounding** (read-only on the RE box: the client dump `/var/tmp/decomp_client`, `sro_client.asm`,
+and `.rdata` from `/opt/sro-files/client/sro_client.exe`):
+
+- **Id 4 is looked up and then ignored.** `FUN_00700440` builds the talk menu from the NPC's
+  interaction set (`this+0x7c0`). At `LAB_00700b10` it loads the key 4 (`0x700b12`
+  `mov byte [esp+0x14],4`) and calls the map `find` (`0x700b2a` `call 0x534ef0`). The only tests
+  after that are the debug-iterator checks: `0x700b31` `test eax,eax ; je`, then `0x700b35`
+  `cmp eax,esi ; jne`, both to the assert at `0x700b19`. There is no `cmp [eax+4],end`, and no call
+  to the item builder. Id 3 comes straight after it, and there `0x700b60`-`0x700b71`
+  (`cmp [eax+0x4],edx ; sete ; ... je`) is the membership branch, which leads to
+  `FUN_006fcd60(…, 3, 0)` (`UIIT_STT_NPC_CHATTING_WND_STOREHOUSE`). Id 4 has neither the branch nor
+  an item.
+- **The item switch has no repair label.** `FUN_006fcd60` switches on item ids 0..0x43, and none of
+  its `UIIT_*`/`SN_*` tokens is a repair one. Cases 5-8 append raw UTF-16 literals instead, read
+  from `.rdata`:
+  - `0xdadc6c` 튜토리얼 (tutorial), case 8
+  - `0xdadc78` 고용 (hire), case 7
+  - `0xdadc80` 도박 (gamble), case 6
+  - `0xdadc88` 퀘스트 (quest), case 5
+
+  None is 수리 (repair). The shop item (case 1, `FUN_006fb630`) formats only `"%d. "` lines.
+- **`FUN_00676390` is never asked about id 4.** `UI_SILKMALL::FUN_00676390` is a set-membership
+  test on `this+0x4fc`, using the same map `find` (`FUN_00534ef0`). This round first called it
+  "HasInteraction". That is an interpretation, not a recovered name: the ids it is asked about fit
+  interaction ids, but nothing names it. It has 15 direct call sites in `sro_client.asm`. In
+  address order they push 0xd, 0xc, 0xc, 0xb, 0xc, 0xc, 0xb, 0xc, 0xb, 0xd, 0xc, 1, 0xc, 0xc,
+  0xc. The 1 is the call at `0x79dc6b`, whose argument is pushed at `0x79dc3e`. None pushes 4.
+  **This probe covers only those 15 calls.** An inlined `find` elsewhere escapes it, and the next
+  bullet is one.
+- **The client's id-4 reader shows the store's repair buttons.** *(Correction from review: an
+  earlier draft of this round said "nothing else asks about id 4". That was a false negative from
+  the probe above.)* The 0xb045 NPC-select reply handler, `NetProcessInInterface::FUN_0088b200`
+  (`docs/protocol/message_handlers.tsv`), asks about id 4 inline:
+  - The block runs behind a class test, `FUN_00b94b90` with the unnamed descriptor `0xef1ac4`
+    (`0x88b78b`). The handler first looks id `0xc` up in the talk object's interaction set
+    (`0x88b7c7` `mov ebx,[esp+0x48]`, the `talk object + 0x7c0` stored at `0x88b650`). It then
+    builds the talk menu (`0x88b864` `call 0x700440`, and again at `0x88b890`).
+  - It looks id 4 up in the same set: `0x88b8b4` `mov edi,[ebx+0x4]` (the end node),
+    `0x88b8c5` `mov byte [esp+0x1c],4`, `0x88b8ca` `call 0x534ef0`. At `0x88b8d9` it does a real
+    membership compare, `cmp [eax+0x4],edi ; je ; mov esi,1`, so `esi` = has id 4.
+  - `0x88b8e3`-`0x88b905`: it fetches child `0xf` of the window held in `DAT_0110f80c`
+    (`FUN_007994b0` = `FUN_008b51f0(0xf,1)`). On that child it calls `FUN_006d2840(0)` and then
+    `FUN_006d2840(esi)`. `FUN_006d2840` calls vtable `+0x5c` on the controls at `+0x25e4` and
+    `+0x25e8`: with 0 when its argument is 0, with 1 when bit 0 is set. By its shape that slot is
+    show/hide, but it is not named. So both controls are hidden, then shown again only for an NPC
+    with id 4.
+  - Only `CIFStoreForPackage::vslot_010` writes `+0x25e4` / `+0x25e8`, and only `FUN_006d2840`
+    reads them (a grep of `sro_client.asm` for `0x25e4]` / `0x25e8]` finds 2 writes and 4 reads).
+    `vslot_010` loads `resinfo\ifstore.txt` (`.rdata 0xda8b80`, `0x6d2ca9`-`0x6d2cb0`) and then
+    fetches its children: `0x6d2ce3` child `0xb` → `+0x25e4`, `0x6d2cee` child `0xc` → `+0x25e8`,
+    and `0x6d2cff` child `0xe` → `+0x25ec`.
+  - `FUN_008b51f0(id, 1)` adds the window's base id `[this+0x2c]`. `FUN_008b5580` sets that base
+    (`0x8b55fe`) and adds the same base to each child record's `+0x1c` (`0x8b5634`), which is read
+    here as the authored `ID`. So the relative ids are the authored ones. `resinfo\ifstore.txt`
+    (the extracted copy on the RE box) authors `GDR_STORE_BTN_REPAIR` `ID=11` (text
+    `UIIT_CTL_REPAIR`), `GDR_STORE_BTN_REPAIRALL` `ID=12` (`UIIT_CTL_REPAIR_ALL`) and
+    `GDR_STORE_SPIN_PAGE` `ID=14`. All three lookups line up.
+
+  So the client does read id 4: it decides whether the store window shows **Repair** and **Repair
+  All**. It adds no talk line. This supports the round's change, since repair is the store
+  window's buttons and not a talk line. It contradicts round 458's "no reader anywhere", which
+  holds for the server only.
+- **Where repair is.** The store window's authored `GDR_STORE_BTN_REPAIR` /
+  `GDR_STORE_BTN_REPAIRALL`, already wired (`hud_panels.gd`, `_wire_repair_buttons`; the Durability
+  and repair row in `SYSTEMS.md`). The client's only `UIIT_CTL_REPAIR_ALL` /
+  `UIIT_MSG_MSGBOX_REPAIR_ITEM` use is in one UI function (`UI_SILKMALL::FUN_00644c90`), not in the
+  talk menu.
+
+**Not claimed.** The real client does have a smith repair talk line, on the **fortress** smith:
+- interaction `0x1a` (`NPC_*_FORTRESS_SMITH*`) → `FUN_00700200` → `IF_NPCTalk::FUN_006fe030` case
+  `0x36`;
+- that case adds `SN_FORTRESS_SMITH_PRODUCT` and `SN_FORTRESS_SMITH_REPAIR`, behind a gate that is
+  not named (`FUN_005710e0` / `FUN_004e9530`).
+
+srrevamp has no fortress system, so that line is deliberately not offered either. This is a
+project choice, not a finding that the client lacks it. The town smith's second id, `0x20`, does
+add a line in the client (`FUN_00700440` → item `0x2f`,
+`UIIT_STT_AVATAR_MAGICOPTION_ENCHANT_MAGIC_PARAM`). The talk window does not offer that line either.
+`NPC_*_ARMOR` gets no repair talk line, and neither does any other NPC.
+
+**Open, not done here: which stores show the repair buttons.** Id 4 is on `NPC_*_SMITH`,
+`NPC_*_ARMOR` and `NPC_*_FORTRESS_SMITH` (`docs/protocol/character_state.md`, the interaction
+table). On the path that runs `0x88b8c5`, the real client hides Repair / Repair All and shows
+them again only for an NPC with id 4, so the armour merchants' stores probably show them too.
+srrevamp wires and shows both buttons on every store (`hud_panels.gd`, `_wire_repair_buttons`), so
+a potion merchant's store probably shows buttons the real client hides. Two things have to happen
+before anyone acts on this. The server has to tell the client which interaction ids an NPC
+offers, or the client has to derive id 4 from the codename the way `services_for` derives the
+guild. Also, the class test at `0x88b78b` has to be named, because it decides when the whole block
+runs. Filed in `docs/TODO.md`.
+
+**Change.**
+- `client/scripts/npc/npc_service_reader.gd`: the `SMITH` → `Service("repair", "Repair")` block is
+  deleted, and a comment carrying the citations above takes its place.
+- `World3D._on_npc_service_selected`'s comment now says only "others (guild)" are still to come.
+- `hud_panels.gd`'s `npc_service_selected` doc example now reads `"shop", "storage"`.
+- The stale FRONTEND_CHECKLIST entry is updated, and round 458 carries a correction line.
+- `docs/TODO.md` records the open repair-button item.
+
+What changes for a player: talking to the Jangan blacksmith lists "1. Buy" and the end line.
+Repair and Repair All still work from the store window that Buy opens.
+
+**Tests** (`client/scripts/npc/npc_service_reader_test.gd`):
+- `NPC_CH_SMITH`'s service keys equal exactly `["shop"]`;
+- `NPC_WC_SMITH`, `NPC_KT_SMITH`, `NPC_EU_SMITH`, `NPC_CA_SMITH` and `NPC_SD_M_AREA_SMITH` offer no
+  `"repair"`;
+- `NPC_KT_FORTRESS_SMITH` offers no `"repair"`, and the message cites interaction 0x1a;
+- the ARMOR guard is kept: `NPC_CH_ARMOR` offers no `"repair"` talk line. With the smith line gone
+  this guard can no longer fail, because no NPC gets a repair key. It stays as a guard.
+
+**Negative case, run.** The three production files were stashed and the working copy shipped to
+the render box. The suite then ran against the old reader and reported **7 FAILURES**: the exact
+`["shop"]` check ("got ["shop", "repair"]"), the five town smiths and the fortress smith. The ARMOR
+guard passed, as it did before. With the files restored, all 23 checks pass (ALL PASS). The
+review fix re-ran this: `HEAD~1`'s reader swapped into the working copy gave the same 7 FAILURES,
+and the restored reader gave ALL PASS.
+
+- **Client suite:** `client/tools/remote_godot.sh tests` (render box) ran 78 suites, 0 failing.
+  `client/tools/remote_godot.sh check` checked 242 scripts and 5 scenes: ALL LOAD.
+- **Server suite:** `cd server && go build ./... && go test -count=1 -p 1 ./...` is green. No
+  server file changed, and `SYSTEMS.md` needed no edit: its Durability and repair row already
+  places repair on the store's authored buttons.
