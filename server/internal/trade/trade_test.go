@@ -191,3 +191,117 @@ func TestCancelPendingForTarget(t *testing.T) {
 		t.Fatalf("expected pending request gone, got %v", err)
 	}
 }
+
+// TestHubBusyCoversEveryTradePhase pins trade.Hub.Busy / Established to the
+// engine's INTERACTMODE: CTradeMgr::OpenTradeSession (0x0047f620) writes 1 to
+// BOTH parties when the request is made, EstablishTradeSession (0x0047f970)
+// moves both to 2 on acceptance, and ending the trade frees both.
+func TestHubBusyCoversEveryTradePhase(t *testing.T) {
+	alice, bob, carol := member(1, "Aria"), member(2, "Bram"), member(3, "Carol")
+
+	h := NewHub()
+	for _, m := range []Member{alice, bob} {
+		if h.Busy(m.CharacterID) || h.Established(m.CharacterID) {
+			t.Fatalf("fresh hub: %s busy=%v established=%v", m.Name, h.Busy(m.CharacterID), h.Established(m.CharacterID))
+		}
+	}
+
+	// Pending: both parties are held (mode 1), neither is established.
+	if err := h.Request(alice, bob); err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+	for _, m := range []Member{alice, bob} {
+		if !h.Busy(m.CharacterID) {
+			t.Errorf("pending: %s should be busy (OpenTradeSession writes 1 to both)", m.Name)
+		}
+		if h.Established(m.CharacterID) {
+			t.Errorf("pending: %s should not be established", m.Name)
+		}
+	}
+	if h.Busy(carol.CharacterID) {
+		t.Error("pending: a bystander is not busy")
+	}
+
+	// Accepted: both established (mode 2).
+	if _, err := h.Respond(bob, true); err != nil {
+		t.Fatalf("Respond: %v", err)
+	}
+	for _, m := range []Member{alice, bob} {
+		if !h.Busy(m.CharacterID) || !h.Established(m.CharacterID) {
+			t.Errorf("accepted: %s busy=%v established=%v, want both", m.Name, h.Busy(m.CharacterID), h.Established(m.CharacterID))
+		}
+	}
+
+	// Ended: both free.
+	h.End(alice.CharacterID)
+	for _, m := range []Member{alice, bob} {
+		if h.Busy(m.CharacterID) || h.Established(m.CharacterID) {
+			t.Errorf("ended: %s still held", m.Name)
+		}
+	}
+
+	// Declined: both free.
+	h.Request(alice, bob)
+	if _, err := h.Respond(bob, false); err != nil {
+		t.Fatalf("Respond(decline): %v", err)
+	}
+	for _, m := range []Member{alice, bob} {
+		if h.Busy(m.CharacterID) {
+			t.Errorf("declined: %s still busy", m.Name)
+		}
+	}
+
+	// Withdrawn: the requester takes the request back, and the target has
+	// nothing left to answer.
+	h.Request(alice, bob)
+	got := h.WithdrawRequest(alice.CharacterID)
+	if len(got) != 1 || got[0] != bob.CharacterID {
+		t.Fatalf("WithdrawRequest(alice) = %v, want [%d]", got, bob.CharacterID)
+	}
+	if _, err := h.Respond(bob, true); !errors.Is(err, ErrNoPendingRequest) {
+		t.Fatalf("Respond after withdraw: got %v, want ErrNoPendingRequest", err)
+	}
+	if h.Busy(alice.CharacterID) || h.Busy(bob.CharacterID) {
+		t.Error("withdrawn: both should be free")
+	}
+
+	// NEGATIVE: a requester with TWO outgoing requests. CancelPendingFor must
+	// drop both -- until round 499 its `break` left one standing, and with it a
+	// target held busy by a requester who had gone.
+	h.Request(alice, bob)
+	h.Request(alice, carol)
+	h.CancelPendingFor(alice.CharacterID)
+	if _, err := h.Respond(bob, true); !errors.Is(err, ErrNoPendingRequest) {
+		t.Errorf("Bram's request survived CancelPendingFor(alice): %v", err)
+	}
+	if _, err := h.Respond(carol, true); !errors.Is(err, ErrNoPendingRequest) {
+		t.Errorf("Carol's request survived CancelPendingFor(alice): %v", err)
+	}
+	if h.Busy(bob.CharacterID) || h.Busy(carol.CharacterID) {
+		t.Error("CancelPendingFor(alice) left a target busy")
+	}
+
+	// A nil hub holds nobody.
+	var nilHub *Hub
+	if nilHub.Busy(alice.CharacterID) || nilHub.Established(alice.CharacterID) {
+		t.Error("a nil hub should hold nobody")
+	}
+}
+
+// TestCancelPendingForTargetAlsoDropsTheirOwnRequests: a character who is both
+// the target of one request and the sender of another loses both. The early
+// return removed in round 499 kept the outgoing one.
+func TestCancelPendingForTargetAlsoDropsTheirOwnRequests(t *testing.T) {
+	h := NewHub()
+	alice, bob, carol := member(1, "Aria"), member(2, "Bram"), member(3, "Carol")
+	h.Request(alice, bob) // Bram is a target...
+	h.Request(bob, carol) // ...and a requester.
+
+	requester, notifiable := h.CancelPendingFor(bob.CharacterID)
+	if !notifiable || requester.CharacterID != alice.CharacterID {
+		t.Fatalf("CancelPendingFor(bob) = %+v, %v; want alice, true", requester, notifiable)
+	}
+	if _, err := h.Respond(carol, true); !errors.Is(err, ErrNoPendingRequest) {
+		t.Fatalf("Bram's own request to Carol survived: %v", err)
+	}
+}

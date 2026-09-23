@@ -169,7 +169,7 @@ func TestEquipRefusesWhatTheItemTableForbids(t *testing.T) {
 		}
 	}
 
-	handle := gateway.Chain(LoginHandler(accounts), EquipmentHandlerWithRules(chars, eq, inv, items))
+	handle := gateway.Chain(LoginHandler(accounts), EquipmentHandlerWithRules(chars, eq, inv, items, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)

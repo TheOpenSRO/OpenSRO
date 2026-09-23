@@ -200,24 +200,98 @@ func (h *Hub) End(characterID int64) (sess *Session, ok bool) {
 	return sess, true
 }
 
-// CancelPendingFor removes any pending request involving characterID.
-// Mirrors duel.Hub.CancelPendingFor, including the same accepted
-// simplification: if characterID was the requester, the target (who was
-// never recorded with a full Member on this side of the map) isn't
-// notifiable.
+// CancelPendingFor removes every pending request involving characterID: the
+// one addressed to them, and EVERY one they sent. Mirrors
+// duel.Hub.CancelPendingFor, including the same accepted simplification: if
+// characterID was the requester, the targets (never recorded with a full
+// Member on this side of the map) aren't notifiable. requester and notifiable
+// describe the request addressed to characterID, if there was one.
+//
+// Until round 499 this stopped at the first request found -- an early return
+// when characterID was a target, and a `break` in the requester scan -- so a
+// character who had asked two people left one request behind, and (now that a
+// pending request makes both parties Busy) left that target unable to use an
+// NPC service.
 func (h *Hub) CancelPendingFor(characterID int64) (requester Member, notifiable bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if requester, in := h.pending[characterID]; in {
+	if r, in := h.pending[characterID]; in {
 		delete(h.pending, characterID)
-		return requester, true
+		requester, notifiable = r, true
 	}
-	for targetID, requester := range h.pending {
-		if requester.CharacterID == characterID {
+	for targetID, r := range h.pending {
+		if r.CharacterID == characterID {
 			delete(h.pending, targetID)
-			break
 		}
 	}
-	return Member{}, false
+	return requester, notifiable
+}
+
+// WithdrawRequest removes every pending request requesterID sent and returns
+// the targets' character IDs (in no particular order), so the caller can tell
+// each of them the request is gone. A request addressed TO requesterID is
+// left alone: that one is answered with Respond.
+func (h *Hub) WithdrawRequest(requesterID int64) []int64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	var targets []int64
+	for targetID, r := range h.pending {
+		if r.CharacterID == requesterID {
+			delete(h.pending, targetID)
+			targets = append(targets, targetID)
+		}
+	}
+	return targets
+}
+
+// Busy reports whether characterID is held by a trade in ANY phase: an open
+// session, a pending request addressed to them, or a pending request they
+// sent. It is the engine's INTERACTMODE (chardata+6, docs/protocol/
+// character_state.md) at 1 or 2: CTradeMgr::OpenTradeSession (`0x0047f620`),
+// called only from the trade-request handler GObjPC_HandleTradeMsg_081
+// (`0x005154e0`), writes 1 to BOTH parties when the request is made, and
+// CTradeMgr::EstablishTradeSession (`0x0047f970`, from
+// trs_wait_response::vslot_002 `0x0046cb30`) moves both to 2 on acceptance.
+// So a request already holds its target, not only its sender.
+//
+// Safe on a nil Hub (nothing is busy), so a handler built without trading
+// needs no special case.
+func (h *Hub) Busy(characterID int64) bool {
+	if h == nil {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if _, ok := h.active[characterID]; ok {
+		return true
+	}
+	if _, ok := h.pending[characterID]; ok {
+		return true
+	}
+	for _, r := range h.pending {
+		if r.CharacterID == characterID {
+			return true
+		}
+	}
+	return false
+}
+
+// Established reports whether characterID is in an accepted trade -- the
+// engine's INTERACTMODE 2, which CTradeMgr::EstablishTradeSession
+// (`0x0047f970`) writes when the target accepts and which
+// CGObjPC::AttachEquipItem / DetachEquipItem refuse (see
+// session.tradeEquipLockedReason). A pending request is Busy but not
+// Established. Safe on a nil Hub.
+func (h *Hub) Established(characterID int64) bool {
+	if h == nil {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	_, ok := h.active[characterID]
+	return ok
 }

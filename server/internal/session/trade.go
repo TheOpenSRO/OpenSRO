@@ -354,7 +354,7 @@ func TradeHandler(chars character.Store, inv inventory.Store, items ItemLookup, 
 		case OpTradeConfirm:
 			return handleTradeConfirm(ctx, sess, p, chars, inv, items, trades)
 		case OpTradeCancel:
-			return handleTradeCancel(ctx, sess, p, chars, trades)
+			return handleTradeCancel(ctx, sess, p, chars, hub, trades)
 		default:
 			return nil
 		}
@@ -503,7 +503,7 @@ func handleTradeConfirm(ctx context.Context, sess *gateway.Session, p *proto.Pac
 	return tradeSess.B.Session.Send(&proto.Packet{Opcode: OpTradeCompleted, Data: completedForB.Encode()})
 }
 
-func handleTradeCancel(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, trades *trade.Hub) error {
+func handleTradeCancel(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, hub *world.Hub, trades *trade.Hub) error {
 	req, err := DecodeTradeCancelRequest(p.Data)
 	if err != nil {
 		return nil
@@ -513,11 +513,28 @@ func handleTradeCancel(ctx context.Context, sess *gateway.Session, p *proto.Pack
 		return nil
 	}
 
+	cancelled := &TradeCancelled{CancelledByName: req.CharacterName}
 	tradeSess, ok := trades.End(characterID)
 	if !ok {
-		return nil
+		// NO OPEN TRADE: WITHDRAW WHAT THIS CHARACTER ASKED FOR (round 499).
+		// A pending request holds both parties (INTERACTMODE 1 from
+		// CTradeMgr::OpenTradeSession 0x0047f620 -- see trade.Hub.Busy), so a
+		// cancel that left it standing would leave both unable to use an NPC
+		// service until the target answered. Each target is told through the
+		// world hub (the pending map keeps no target Member), and the
+		// canceller gets the same OpTradeCancelled an open trade's cancel
+		// sends both sides.
+		targets := trades.WithdrawRequest(characterID)
+		if len(targets) == 0 {
+			return nil
+		}
+		for _, targetID := range targets {
+			if target, online := hub.EntityByCharacterID(targetID); online && target.Session != nil {
+				target.Session.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: cancelled.Encode()})
+			}
+		}
+		return sess.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: cancelled.Encode()})
 	}
-	cancelled := &TradeCancelled{CancelledByName: req.CharacterName}
 	tradeSess.A.Session.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: cancelled.Encode()})
 	return tradeSess.B.Session.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: cancelled.Encode()})
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/storage"
+	"github.com/OpenSRO/srrevamp/server/internal/trade"
 )
 
 // Storage (warehouse) opcodes, our own protocol. Requires a prior OpLogin.
@@ -146,17 +147,19 @@ func DecodeStorageMoveResult(data []byte) (*StorageMoveResult, error) {
 
 // StorageHandler returns a gateway.Handler for the warehouse ops, resolving
 // the character against whichever account authenticated on the connection.
-func StorageHandler(chars character.Store, svc *storage.Service) gateway.Handler {
+// Every op by a character a trade holds is refused as busy (tradebusy.go):
+// the engine refuses opening the warehouse NPC at all. trades may be nil.
+func StorageHandler(chars character.Store, svc *storage.Service, trades *trade.Hub) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
 		case OpStorageList:
-			return handleStorageList(ctx, sess, p, chars, svc)
+			return handleStorageList(ctx, sess, p, chars, svc, trades)
 		case OpStorageDeposit:
-			return handleStorageMove(ctx, sess, p, chars, svc, true)
+			return handleStorageMove(ctx, sess, p, chars, svc, trades, true)
 		case OpStorageWithdraw:
-			return handleStorageMove(ctx, sess, p, chars, svc, false)
+			return handleStorageMove(ctx, sess, p, chars, svc, trades, false)
 		case OpStorageGold:
-			return handleStorageGold(ctx, sess, p, chars, svc)
+			return handleStorageGold(ctx, sess, p, chars, svc, trades)
 		default:
 			return nil
 		}
@@ -201,7 +204,7 @@ func DecodeStorageListResult(data []byte) (*StorageListResult, error) {
 	return res, nil
 }
 
-func handleStorageList(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, svc *storage.Service) error {
+func handleStorageList(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, svc *storage.Service, trades *trade.Hub) error {
 	req, err := DecodeCharacterNameRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpStorageListResult, Data: (&InventoryListResult{Error: "malformed request"}).Encode()})
@@ -209,6 +212,10 @@ func handleStorageList(ctx context.Context, sess *gateway.Session, p *proto.Pack
 	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.Name)
 	if errStr != "" {
 		return sess.Send(&proto.Packet{Opcode: OpStorageListResult, Data: (&InventoryListResult{Error: errStr}).Encode()})
+	}
+	// 0x1c0b IM_BUSY while a trade holds the character (tradebusy.go).
+	if trades.Busy(characterID) {
+		return sess.Send(&proto.Packet{Opcode: OpStorageListResult, Data: (&InventoryListResult{Error: tradeBusyReason}).Encode()})
 	}
 	slots, err := svc.List(ctx, characterID)
 	if err != nil {
@@ -228,7 +235,7 @@ func handleStorageList(ctx context.Context, sess *gateway.Session, p *proto.Pack
 	return sess.Send(&proto.Packet{Opcode: OpStorageListResult, Data: result.Encode()})
 }
 
-func handleStorageMove(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, svc *storage.Service, deposit bool) error {
+func handleStorageMove(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, svc *storage.Service, trades *trade.Hub, deposit bool) error {
 	resultOp := OpStorageWithdrawResult
 	if deposit {
 		resultOp = OpStorageDepositResult
@@ -240,6 +247,10 @@ func handleStorageMove(ctx context.Context, sess *gateway.Session, p *proto.Pack
 	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
 	if errStr != "" {
 		return sess.Send(&proto.Packet{Opcode: resultOp, Data: (&StorageMoveResult{Reason: errStr}).Encode()})
+	}
+	// 0x1c0b IM_BUSY while a trade holds the character (tradebusy.go).
+	if trades.Busy(characterID) {
+		return sess.Send(&proto.Packet{Opcode: resultOp, Data: (&StorageMoveResult{Reason: tradeBusyReason}).Encode()})
 	}
 
 	if deposit {
@@ -262,7 +273,7 @@ func handleStorageMove(ctx context.Context, sess *gateway.Session, p *proto.Pack
 	return sess.Send(&proto.Packet{Opcode: resultOp, Data: (&StorageMoveResult{OK: true}).Encode()})
 }
 
-func handleStorageGold(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, svc *storage.Service) error {
+func handleStorageGold(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, svc *storage.Service, trades *trade.Hub) error {
 	req, err := DecodeStorageGoldRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpStorageGoldResult, Data: (&StorageGoldResult{Reason: "malformed request"}).Encode()})
@@ -270,6 +281,16 @@ func handleStorageGold(ctx context.Context, sess *gateway.Session, p *proto.Pack
 	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
 	if errStr != "" {
 		return sess.Send(&proto.Packet{Opcode: OpStorageGoldResult, Data: (&StorageGoldResult{Reason: errStr}).Encode()})
+	}
+	// 0x1c0b IM_BUSY while a trade holds the character (tradebusy.go). The
+	// balances ride along, as on every other refusal, because the client
+	// redraws its gold lines from them whatever the outcome.
+	if trades.Busy(characterID) {
+		result := &StorageGoldResult{Reason: tradeBusyReason}
+		if cur, e := svc.GoldBalances(ctx, characterID); e == nil {
+			result.Carried, result.Stored = cur.Carried, cur.Stored
+		}
+		return sess.Send(&proto.Packet{Opcode: OpStorageGoldResult, Data: result.Encode()})
 	}
 
 	var bal storage.Balances

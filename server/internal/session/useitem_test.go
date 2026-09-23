@@ -545,7 +545,7 @@ func TestUseWarehouseExpansionItem(t *testing.T) {
 	warehouse.SetCapacityFunc(storage.CapacityOf(accounts))
 	svc := &storage.Service{Bag: inv, Warehouse: warehouse, Gold: chars, Accounts: accounts, ChestSizes: accounts}
 
-	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mana.NewTracker(), svc), StorageHandler(chars, svc))
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mana.NewTracker(), svc), StorageHandler(chars, svc, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)

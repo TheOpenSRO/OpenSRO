@@ -96,6 +96,23 @@ func setupTradeTest(t *testing.T) *tradeTestFixture {
 // has imported no tables).
 func setupTradeTestWithItems(t *testing.T, items ItemLookup) *tradeTestFixture {
 	t.Helper()
+	return setupTradeTestWith(t, items, nil)
+}
+
+// tradeFixtureDeps is what setupTradeTestWith hands an extra-handler builder:
+// the fixture's own stores and trade hub, so the handlers it builds (an NPC
+// shop, a warehouse, ...) see the same characters and the same trades.
+type tradeFixtureDeps struct {
+	accounts *account.MemStore
+	chars    *character.MemStore
+	inv      *inventory.SQLStore
+	trades   *trade.Hub
+}
+
+// setupTradeTestWith is setupTradeTestWithItems plus whatever handlers extra
+// builds, chained after the trade handler (nil adds none).
+func setupTradeTestWith(t *testing.T, items ItemLookup, extra func(d tradeFixtureDeps) []gateway.Handler) *tradeTestFixture {
+	t.Helper()
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")
@@ -128,7 +145,11 @@ func setupTradeTestWithItems(t *testing.T, items ItemLookup) *tradeTestFixture {
 
 	hub := world.NewHub()
 	trades := trade.NewHub()
-	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, nil, hub), TradeHandler(chars, inv, items, hub, trades))
+	handlers := []gateway.Handler{LoginHandler(accounts), WorldHandler(chars, nil, hub), TradeHandler(chars, inv, items, hub, trades)}
+	if extra != nil {
+		handlers = append(handlers, extra(tradeFixtureDeps{accounts: accounts, chars: chars, inv: inv, trades: trades})...)
+	}
+	handle := gateway.Chain(handlers...)
 
 	addr, cleanup := startTestServer(t, handle)
 	t.Cleanup(cleanup)
@@ -181,16 +202,29 @@ func setupTradeTestWithItems(t *testing.T, items ItemLookup) *tradeTestFixture {
 // A and Bram side B, and neither has offered anything.
 func startTrade(t *testing.T, f *tradeTestFixture) {
 	t.Helper()
+	requestTrade(t, f)
+	acceptTrade(t, f)
+}
+
+// requestTrade has Aria ask Bram to trade and drains Bram's OpTradeInvite: the
+// request is pending, nothing is open yet.
+func requestTrade(t *testing.T, f *tradeTestFixture) {
+	t.Helper()
 	resp := doSend(t, f.connA, f.rA, OpTradeRequest, (&TradeRequestRequest{CharacterName: "Aria", TargetName: "Bram"}).Encode())
 	if rr, err := DecodeTradeRequestResult(resp.Data); err != nil || !rr.OK {
 		t.Fatalf("trade request failed: err=%v result=%+v", err, rr)
 	}
 	f.connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(f.rB, nil, nil); err != nil {
-		t.Fatalf("reading OpTradeInvite: %v", err)
+	if invite, err := proto.Read(f.rB, nil, nil); err != nil || invite.Opcode != OpTradeInvite {
+		t.Fatalf("reading OpTradeInvite: packet=%v err=%v", invite, err)
 	}
+}
 
-	resp = doSend(t, f.connB, f.rB, OpTradeRespond, (&TradeRespondRequest{CharacterName: "Bram", RequesterName: "Aria", Accept: true}).Encode())
+// acceptTrade has Bram accept Aria's pending request and drains both
+// OpTradeStarted packets.
+func acceptTrade(t *testing.T, f *tradeTestFixture) {
+	t.Helper()
+	resp := doSend(t, f.connB, f.rB, OpTradeRespond, (&TradeRespondRequest{CharacterName: "Bram", RequesterName: "Aria", Accept: true}).Encode())
 	if rr, err := DecodeTradeRespondResult(resp.Data); err != nil || !rr.OK {
 		t.Fatalf("trade respond failed: err=%v result=%+v", err, rr)
 	}

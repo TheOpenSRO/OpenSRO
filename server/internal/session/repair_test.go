@@ -105,7 +105,7 @@ func TestRepairHandlerRestoresAndCharges(t *testing.T) {
 	before, _ := chars.GetByID(ctx, c.ID)
 	goldBefore := before.Gold
 
-	handle := gateway.Chain(LoginHandler(accounts), RepairHandler(chars, eq, items))
+	handle := gateway.Chain(LoginHandler(accounts), RepairHandler(chars, eq, items, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)

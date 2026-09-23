@@ -9288,6 +9288,12 @@ func _on_trade_cancelled(cancelled: TradeNet.Cancelled) -> void:
 	var by_whom := cancelled.cancelled_by_name if cancelled.cancelled_by_name != "" else "the system"
 	trade_status_label.text = "Trade cancelled by %s." % by_whom
 	trade_their_offer_label.text = "Their offer: (none yet)"
+	# A requester who cancels before we answer has withdrawn the request: the
+	# server's handleTradeCancel drops it (round 499) and tells us with this
+	# packet. Forget the invite, or Accept would answer "no pending request".
+	if cancelled.cancelled_by_name != "" and cancelled.cancelled_by_name == _pending_trade_requester:
+		_pending_trade_requester = ""
+		trade_invite_label.text = "(no pending request)"
 
 # --- Friends tab -----------------------------------------------------------
 

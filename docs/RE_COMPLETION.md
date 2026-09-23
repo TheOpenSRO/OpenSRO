@@ -27520,3 +27520,240 @@ used". This round gives them their real effect.
 **Deploy note.** `accounts.chest_size` is added by `ALTER TABLE ... IF NOT EXISTS` at boot, and
 every existing account starts at 0, which means 50. No reimport is needed, because columns 118 and
 120 already ship.
+
+## Busy while a trade is pending or open: refuse shop, storage and repair; refuse equip changes during an accepted trade (round 499)
+
+**Grounding. Re-read this round on the RE box, from the dump only.**
+
+- **Mode 1 is set at the request, on both parties.** `CTradeMgr::OpenTradeSession` (`0x0047f620`)
+  ends its success path with `*(local_64[0xc] + 6) = 1` and `*(local_5c[0xc] + 6) = 1`. `[0xc]`
+  is `obj+0x30`, the chardata pointer, so both writes land on INTERACTMODE, one for each party. A
+  grep of the dump finds exactly one call, in `GObjPC_HandleTradeMsg_081` (`0x005154e0`), the
+  request handler. That handler checks the distance and then opens the session.
+- **Mode 2 is set on acceptance.** `CTradeMgr::EstablishTradeSession` (`0x0047f970`) writes
+  `*(piVar2[0xc] + 6) = 2` for each party, after checking that the byte is 1. Its one caller is
+  `trs_wait_response::vslot_002` (`0x0046cb30`).
+- **The NPC gate.** `GObjPC_HandleShopMsg_046` (`0x00510250`) contains
+  `if (*(char *)(param_1[0xc] + 6) != '\0') { rewind; uVar9 = 0x1c0b; ... }`, and it runs before
+  any field of the request is read. `0x1c0b` is `UIIT_MSG_INTERACTION_FAIL_IM_BUSY`
+  (`error_codes.md`, rounds 449 and 454). That handler opens every NPC interaction, and the
+  warehouse (id 3) and smith (ids 4 and 0x20) are interaction ids of it (round 455).
+- **The equip lock.** `CGObjPC::AttachEquipItem` (`0x00524cd0`) and `DetachEquipItem`
+  (`0x005255e0`) both open with `(chardata+6 == 2 || == 7)`. The first test is a debug
+  `Assert_BreakIfDebugger`, and the second returns `0x1811` (round 457). Mode 1 passes both tests.
+- **The equip lock's only route, and the guard in front of it** (read on review).
+  - `AttachEquipItem` and `DetachEquipItem` each have one call, both inside `FUN_00523860`
+    (`0x52390c` and `0x52394e`). The function picks between them by the move's source and
+    destination slots.
+  - `FUN_00523860` is referenced only as an entry of the op table that `FUN_0050ce80` fills. It is
+    the entry for op 0 (`0xcd3b58`) and op 0x10 (`0xcd3bd8`), and op 0x10 takes the other branch.
+  - That table is read only by `CGObjPC::StorageOperation` (`0x0050f5c0`, at `0x50f87a`).
+  - A byte search of the exe confirms the chain from the other side. `0x523860` occurs only as the
+    installer's two immediates, and neither Attach nor Detach has a stored pointer anywhere.
+  - **StorageOperation's own guard runs before that dispatch** (`0x50f7b8`–`0x50f7e3`). It answers
+    `0x1834` `UIIT_MSG_STRGERR_STORAGE_OPERATION_BLOCKED` at INTERACTMODE 4, and at INTERACTMODE 2
+    or 7 for every op except 4, 5 and 0xd. Op 4 is `CGStorage::TradeOfferItem`, the table's
+    `0xcd3b78` entry.
+
+  So during an accepted trade the engine refuses an equip or an unequip with `0x1834`, and
+  Attach/Detach's own `0x1811` test is never reached at mode 2 or 7. srrevamp's equip refusal is a
+  text, not a code, so no code changes. The citation does: `tradebusy.go` now names both gates.
+
+**What was wrong before.** trade and the NPC services did not know about each other. A character
+could make a request and then spend the gold or sell the item they were about to offer. They could
+also bank either one, or swap their weapon, while the trade window was open. Cancelling with only a
+request pending did nothing: `handleTradeCancel` only ended an *open* trade. `CancelPendingFor`,
+used on disconnect, also stopped at the first request it found. It returned early when the
+character was a target, and a `break` ended its requester scan, so a character who had asked two
+people left one request behind.
+
+**Change.**
+
+- `trade.Hub` gained three methods and one fix:
+  - **`Busy(id)`** is true while the character is in an open session, is the target of a pending
+    request, or has sent one. That is modes 1 and 2.
+  - **`Established(id)`** reads `h.active` alone, which is mode 2. It deliberately does not call
+    `SessionOf`: that function is in the orphan probe's baseline, and a new caller would make the
+    baseline stale.
+  - Both are nil-safe: a nil hub holds nobody.
+  - **`WithdrawRequest(requesterID)`** removes every request the character sent and returns the
+    targets.
+  - **`CancelPendingFor`** now drops the request addressed to the character AND every request
+    they sent.
+- `session/tradebusy.go` holds three constants and the disclosure comment:
+  - `interactionBusyCode` = `0x1c0b`;
+  - `tradeBusyReason` and `tradeEquipLockedReason`, in srrevamp's own wording. The client has no
+    message for `0x1c0b` or `0x1811`.
+- The four handler constructors take a `trades *trade.Hub`, and `cmd/server/main.go` passes the one
+  hub:
+  - **`ShopHandler`** refuses a buy or sell while `Busy`, after resolving the character. The list
+    is untouched.
+  - **`StorageHandler`** refuses list, deposit, withdraw and gold while `Busy`. The gold refusal
+    still carries both balances, as its other refusals do, because the client redraws its gold
+    lines from them.
+  - **`RepairHandler`** answers `0x1c0b` while `Busy`.
+  - **`EquipmentHandlerWithRules`** refuses an equip or unequip while `Established`.
+    `EquipmentHandler` passes nil.
+- **`handleTradeCancel`** now takes the world hub. When there is no open trade to end, it
+  withdraws the canceller's pending requests. It sends `OpTradeCancelled{CancelledByName}` to each
+  target, found through `world.Hub.EntityByCharacterID`, and to the canceller. A cancel with
+  nothing to withdraw still answers nothing.
+
+**The adaptation, disclosed** (also in `tradebusy.go` and `character_state.md`, "For srrevamp").
+The engine refuses once, when the NPC interaction is opened. srrevamp has no interaction-open
+message, so it refuses each operation instead.
+
+**Not modelled.**
+
+- **A trade request while an NPC window is open.** The engine refuses this in two places, and
+  both run before `OpenTradeSession` could fall through to its own `0x1811`.
+  - **The requester.** `GObjPC_HandleTradeMsg_081` (`0x005154e0`) first runs
+    `GObjPC::FUN_004ea050` on the requester itself. At `0x5155de` `esi = ebp = this`, and the
+    helper reads its object from `esi`. When that check fails, the handler answers on its own path
+    and never calls `OpenTradeSession`:
+    - `0x1833` at INTERACTMODE 2 or 7 (`0x515750`);
+    - the cancel-and-reopen branch at mode 1, described below;
+    - `0x181d` otherwise (`0x51573b` and `0x515765`).
+
+    An open NPC service window is INTERACTMODE 5 or 6, as the jump table of
+    `GObjPC_HandleShopMsg_046` sets it (`character_state.md`, round 449). So the requester gets
+    **`0x181d`**.
+  - **The target.** It gets **`0x181e`**, from `OpenTradeSession`'s check on the target
+    (`0x47f6e0` -> `0x47f6e9`).
+
+  Through this caller, `OpenTradeSession`'s `0x1811` is reached in two ways:
+  - `TradeMgr::FUN_00481730` returns non-zero (`0x47f72c` `jne 0x47f6ac`), after a lookup of the
+    newly numbered session. What that test means was not read.
+  - After its cancel, the mode-1 branch goes on to `OpenTradeSession` without re-running the
+    check. A requester whom that cancel did not return to mode 0 then fails `OpenTradeSession`'s
+    own check on the requester (`0x47f675`), which falls through to `0x1811`.
+
+  srrevamp holds no open-interaction state to check.
+- **A cancel by the target of a pending request.** The engine's cancel handler
+  `GObjPC_HandleTradeMsg_084` (`0x005159c0`) cancels the session numbered in `param_1[0x730]`
+  (`obj+0x1cc0`), with `SendItemExchangeResult(..., 0x182c)`. `OpenTradeSession` writes that
+  number to **both** parties (`FUN_004ea0a0` at `0x47f8b1` and `0x47f8c5`), so either party can
+  cancel a pending session. In srrevamp, a target's `OpTradeCancel` with only an incoming request
+  answers nothing, and the target has to decline instead.
+- **A second request while one is pending.** When the requester is already at mode 1,
+  `HandleTradeMsg_081` takes the mode-1 branch (`0x515639`–`0x5156a7`):
+  - it does nothing when the existing session already names the target (`FUN_0047f5b0` compares
+    the session's party ids at `+8` and `+0x48` with the target id in `ebx`);
+  - otherwise it cancels the old session through `HandleTradeMsg_084` and opens the new one.
+
+  srrevamp still allows several outgoing requests, and allows a request from a character who is
+  the target of one.
+- **A timeout on a pending request.** None exists in srrevamp. A pending request now keeps its
+  target out of the shop, warehouse and repair until they decline or the requester cancels, so
+  repeated requests could hold a player. Whether the engine's `trs_wait_response` times out was not
+  read.
+- **Mode 7.** The equip lock's second value has no known writer (round 457).
+- **Notices on disconnect.** `TradeDisconnectHandler` still does not notify the targets of the
+  requests a disconnecting character had sent. They are dropped now, which frees those targets,
+  but the targets are not told.
+- **A cancel racing an accept.** Suppose an `OpTradeCancel` arrives while the target's accept is
+  in flight, and `End` runs before `Respond`. `End` finds no open trade, `Respond` then opens it,
+  and `WithdrawRequest` finds nothing. The trade opens and the canceller gets no reply. The hub
+  locks per call, so this window exists; it is minor.
+
+**What the equip lock does and does not close.** An offer names a bag slot, not an item. During an
+accepted trade, two routes that used to change that slot are now closed:
+
+- equipping from the slot, and unequipping into it, which the equip lock refuses;
+- selling from the slot, and depositing it in the warehouse, which the busy refusal covers.
+
+**Moving an item in the bag, using it, and dropping it on the ground can still change an offered
+slot.** `InventoryMoveHandler`, `UseItemHandler` and `GroundItemHandler` take no trade hub. So
+`executeTrade`'s commit-time re-validation ("offer no longer valid", and the `CanTrade` re-check)
+is still needed, and nothing here makes a swap impossible.
+
+The engine's gate on the first of these was read on review. `StorageOperation`'s guard refuses
+every op except 4, 5 and 0xd at INTERACTMODE 2 or 7. That includes op 0, the item move that also
+reaches Attach/Detach, so the engine refuses an ordinary bag move during an accepted trade as well.
+srrevamp does not, and that is the next thing to wire. Which op numbers are the ground drop and the
+other moves was not mapped. Nor was whether use-item is gated: `0x1835`
+`UIIT_MSG_STRGERR_CANT_USEITEM_WHILE_INTERACT` suggests it is, but that comes from the name alone.
+
+**Tests.**
+
+- **`trade.TestHubBusyCoversEveryTradePhase`**:
+  - a fresh hub holds nobody;
+  - after `Request`, both parties are `Busy`, neither is `Established`, and a bystander is not
+    busy;
+  - after `Respond(true)`, both are established;
+  - after `End`, both are clear, and after a decline, both are clear;
+  - `WithdrawRequest(1)` returns `[2]`, and `Respond` then gives `ErrNoPendingRequest`;
+  - **negative**: after `Request(a,b)`, `Request(a,c)` and `CancelPendingFor(a)`, **both**
+    `Respond` calls give `ErrNoPendingRequest`;
+  - a nil hub is safe.
+- **`trade.TestCancelPendingForTargetAlsoDropsTheirOwnRequests`**: a character who is both a target
+  and a requester loses both requests.
+- **`session.TestNPCServicesRefusedWhileTrading`** runs over the trade fixture. The fixture is now
+  `setupTradeTestWith(t, items, extra)`, which builds its extra handlers on the fixture's own stores
+  and trade hub. `startTrade` is split into `requestTrade` and `acceptTrade`.
+  - **Pending.** **Negative**: Aria's buy is refused with `tradeBusyReason`, and her gold stays at
+    1000. Bram's sell and his warehouse deposit are refused, and his bag stays at 5. Bram's
+    warehouse list is refused. Aria's warehouse gold deposit is refused, and it still carries her
+    balances (1000 carried, 0 stored) while her gold stays at 1000. Aria's repair answers
+    `0x1c0b`. The shop list still returns one entry. Aria's equip is allowed.
+  - **Accepted.** Aria's unequip is refused with `tradeEquipLockedReason`, and the weapon stays
+    on. Bram's equip is refused, and his bag stays at 5. Aria's buy is still refused.
+  - **Cancelled.** Both sides get `OpTradeCancelled`. The buy costs 100. The unequip and Bram's
+    equip both work, and so do Bram's warehouse list and Aria's gold query (900 carried).
+  - **Withdraw.** **Negative**: after a new request, Aria's `OpTradeCancel` answers her with
+    `OpTradeCancelled` (by "Aria"), and Bram gets one too. Neither is busy, Aria's buy works, and
+    Bram's accept is refused.
+- The existing call sites pass nil: `shop_test.go`, `repair_test.go`, `equipment_test.go`,
+  `useitem_test.go` and `EquipmentHandler`.
+
+**Negative case, run.**
+
+- **All production files stashed.** Both packages' new tests fail to build (`h.Busy undefined`,
+  and so on).
+- **The old `CancelPendingFor` restored alone.** `TestHubBusyCoversEveryTradePhase` fails with
+  "Carol's request survived CancelPendingFor(alice)". `TestCancelPendingForTargetAlsoDropsTheirOwnRequests`
+  fails with "Bram's own request to Carol survived".
+- **`Busy` forced false.** The session test fails at the pending buy: `OK:true`.
+- **`Established` forced false.** It fails at the accepted unequip, which succeeds.
+- **`WithdrawRequest` removed from `handleTradeCancel`.** It fails at the withdraw step, where the
+  canceller's read times out because no answer comes.
+- **Added on review; each fails on its own:**
+  - With the warehouse list refusal removed, the test fails at the pending list, which is served
+    with capacity 50.
+  - With the balances dropped from the gold refusal, it fails with `Carried:0 Stored:0`.
+  - With the gold refusal removed, it fails with `OK:true Carried:950 Stored:50`.
+- Each was restored, and `go test -count=1 -p 1 ./...` is green.
+
+**Docs.**
+
+- `character_state.md`, "For srrevamp": it said "nothing to wire yet, srrevamp has no
+  player-to-player trade". It now records what is wired, and the adaptation.
+- `error_codes.md`: the `0x1811` row. The code is a value, not a pushed literal:
+  - `AttachEquipItem` and `DetachEquipItem` return it at INTERACTMODE 2 or 7. Their only route is
+    `StorageOperation` op 0, whose own guard answers `0x1834` first at those modes;
+  - `GObjPC_HandleTradeMsg_081` sends `OpenTradeSession`'s return through `Msg_SendTwoFieldReply`.
+    The routes to it are `FUN_00481730` and the mode-1 branch, not a requester who fails the
+    pre-check;
+  - `EstablishTradeSession` sends it through `SendItemExchangeResult`;
+  - `CGObjPC::StorageOperation` (`0x0050f5c0`) sends it too, from a register (`mov edi,0x1811` at
+    `0x50f6c8`, then `Msg_SendTwoFieldReply` with `0xb034`). It does so for op types 0x0e, 0x0f,
+    0x15, 0x16 and 0x22, and for 0x17 when the message's `+0x1060` field is set.
+- `character_state.md` and `tradebusy.go`: the reverse direction now gives `0x181d`, or `0x1833`
+  at mode 2 or 7, for the requester and `0x181e` for the target. It no longer says `0x1811`.
+  The equip lock cites StorageOperation's `0x1834` guard beside Attach/Detach.
+- `SYSTEMS.md`'s Shops row records the refusal.
+
+**Behaviour change.** A player with a pending trade request or an open trade cannot buy, sell, use
+the warehouse or repair until the trade ends. The target of a request is held the same way until
+they answer, or until the requester cancels. Equipping or unequipping is refused while the trade
+window is open. Cancelling a pending request now withdraws it and tells the target.
+
+**One client change.** `World3D.gd`'s `_on_trade_cancelled` now forgets the pending invite when
+the canceller is the one who sent it. Before, a withdrawn request stayed on the target's trade tab,
+and Accept then answered "Respond failed: no pending request". `remote_godot.sh check` (239
+scripts, all load) and `remote_godot.sh tests` (77 suites, 0 failing) ran on the render box.
+
+Nothing else in the client changed. In `hud_panels.gd`, the store window's status line shows the
+shop reason ("Could not buy: you are busy with a trade"). The warehouse handlers only
+`push_warning` their reason, and the repair handler prints the code, so a refused warehouse or
+repair request shows nothing in the window.

@@ -100,12 +100,62 @@ rediscover it.
 
 ## For srrevamp
 
-**Nothing to wire yet.** srrevamp has no player-to-player trade, no stall and no
-open market, so it has no second activity that could own a character. The value
-of this round is that ~40 gates which read an unexplained byte now read a named
-one, and that when trade is built, this is the state machine it has to match:
-`OpenTradeSession` writes 1 to both sides, `EstablishTradeSession` moves both to
-2, and equipment changes are refused from 2 onward.
+> **SUPERSEDED (round 499).** This section used to say "nothing to wire yet"
+> because srrevamp had no player-to-player trade. It has one now
+> (`internal/trade`, `internal/session/trade.go`), and the trade half of this
+> state machine is wired. Stall and open market are still not built.
+
+The trade's two modes are modelled on `trade.Hub`, not stored as a byte:
+
+- **Mode 1 is `trade.Hub.Busy` without `Established`.** `CTradeMgr::OpenTradeSession`
+  (`0x0047f620`) writes 1 to **both** parties, and its only caller is the
+  trade-request handler `GObjPC_HandleTradeMsg_081` (`0x005154e0`). So a
+  pending request holds its target as well as its sender, and `Busy` is true for
+  both.
+- **Mode 2 is `trade.Hub.Established`.** `CTradeMgr::EstablishTradeSession`
+  (`0x0047f970`, called from `trs_wait_response::vslot_002` `0x0046cb30`) moves
+  both parties to 2 when the target accepts.
+
+Two gates read those modes:
+
+- **The NPC-service gate.** `GObjPC_HandleShopMsg_046` (`0x00510250`) refuses
+  with `0x1c0b` `UIIT_MSG_INTERACTION_FAIL_IM_BUSY` while the byte is non-zero.
+  That handler opens every NPC service. srrevamp refuses these while `Busy`:
+  - the shop buy and the shop sell;
+  - the warehouse list, deposit, withdraw and gold requests;
+  - a repair. Its result carries the code, `0x1c0b` (`session.interactionBusyCode`).
+
+  The shop *list* is not refused, because it only prices goods.
+- **The equip lock.** `CGObjPC::AttachEquipItem` (`0x00524cd0`) and
+  `DetachEquipItem` (`0x005255e0`) return `0x1811` when the byte is 2 or 7.
+  Their only route is op 0 of `CGObjPC::StorageOperation` (`0x0050f5c0`), and
+  that function's own guard (`0x50f7cd`–`0x50f7e3`) runs first. At 2 or 7 it
+  answers `0x1834` `UIIT_MSG_STRGERR_STORAGE_OPERATION_BLOCKED` for every op
+  except 4, 5 and 0xd, so the engine's equip refusal is sent as `0x1834`
+  (round 499, read on review). srrevamp refuses an equip or unequip while
+  `Established`. A pending request (mode 1) passes both tests, so it does not
+  lock equipment. The same guard also refuses an ordinary bag move during an
+  accepted trade. srrevamp does not model that yet.
+
+**The adaptation, disclosed.** The engine refuses once, when an NPC
+interaction is *opened*. srrevamp has no interaction-open message, because its
+shop, storage and repair opcodes are stateless placeholders
+(`PROTOCOL_DECISION.md`). So it applies the same test to each operation
+instead. The reverse direction is not modelled. In the engine, an open NPC
+interaction (mode 5 or 6) also refuses a trade request, through
+`GObjPC::FUN_004ea050`, which requires the byte to be 0. It refuses in two
+places:
+
+- **The requester.** `GObjPC_HandleTradeMsg_081` (`0x005154e0`) runs the check
+  on the requester first and answers on its own path: `0x181d`, or `0x1833` at
+  mode 2 or 7.
+- **The target.** `CTradeMgr::OpenTradeSession` runs the check on the target and
+  answers `0x181e` (`0x47f6e0`).
+
+Neither route gives `0x1811` (`RE_COMPLETION.md`, round 499). srrevamp has no
+open-interaction state that could hold that. The two refusal texts are
+srrevamp's own wording, because the client has no message for either `0x1c0b`
+or `0x1811`.
 
 
 ## The life state, and the siege revive countdown (round 411)

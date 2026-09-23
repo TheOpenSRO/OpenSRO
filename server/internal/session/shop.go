@@ -10,6 +10,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/shop"
+	"github.com/OpenSRO/srrevamp/server/internal/trade"
 )
 
 // Shop opcodes, our own protocol. Requires a prior OpLogin.
@@ -271,23 +272,24 @@ func DecodeShopListResult(data []byte) (*ShopListResult, error) {
 
 // ShopHandler returns a gateway.Handler implementing OpShopBuy/OpShopList
 // against svc, resolving the character name against whichever account
-// authenticated on the connection.
-func ShopHandler(chars character.Store, svc *shop.Service) gateway.Handler {
+// authenticated on the connection. A buy or sell by a character trades holds
+// is refused as busy (tradebusy.go); trades may be nil.
+func ShopHandler(chars character.Store, svc *shop.Service, trades *trade.Hub) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
 		case OpShopBuy:
-			return handleShopBuy(ctx, sess, p, chars, svc)
+			return handleShopBuy(ctx, sess, p, chars, svc, trades)
 		case OpShopList:
 			return handleShopList(ctx, sess, p, svc)
 		case OpShopSell:
-			return handleShopSell(ctx, sess, p, chars, svc)
+			return handleShopSell(ctx, sess, p, chars, svc, trades)
 		default:
 			return nil
 		}
 	}
 }
 
-func handleShopBuy(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, svc *shop.Service) error {
+func handleShopBuy(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, svc *shop.Service, trades *trade.Hub) error {
 	req, err := DecodeShopBuyRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{
@@ -299,6 +301,10 @@ func handleShopBuy(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
 	if errStr != "" {
 		return sess.Send(&proto.Packet{Opcode: OpShopBuyResult, Data: (&ShopBuyResult{Reason: errStr}).Encode()})
+	}
+	// 0x1c0b IM_BUSY while a trade holds the character (tradebusy.go).
+	if trades.Busy(characterID) {
+		return sess.Send(&proto.Packet{Opcode: OpShopBuyResult, Data: (&ShopBuyResult{Reason: tradeBusyReason}).Encode()})
 	}
 
 	if req.Quantity <= 0 {
@@ -323,7 +329,7 @@ func handleShopBuy(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 	return sess.Send(&proto.Packet{Opcode: OpShopBuyResult, Data: result.Encode()})
 }
 
-func handleShopSell(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, svc *shop.Service) error {
+func handleShopSell(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, svc *shop.Service, trades *trade.Hub) error {
 	req, err := DecodeShopSellRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpShopSellResult, Data: (&ShopSellResult{Reason: "malformed request"}).Encode()})
@@ -331,6 +337,10 @@ func handleShopSell(ctx context.Context, sess *gateway.Session, p *proto.Packet,
 	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
 	if errStr != "" {
 		return sess.Send(&proto.Packet{Opcode: OpShopSellResult, Data: (&ShopSellResult{Reason: errStr}).Encode()})
+	}
+	// 0x1c0b IM_BUSY while a trade holds the character (tradebusy.go).
+	if trades.Busy(characterID) {
+		return sess.Send(&proto.Packet{Opcode: OpShopSellResult, Data: (&ShopSellResult{Reason: tradeBusyReason}).Encode()})
 	}
 
 	gold, err := svc.Sell(ctx, characterID, int(req.Slot), int(req.Quantity))

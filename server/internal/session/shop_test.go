@@ -113,7 +113,7 @@ func TestShopFullFlow(t *testing.T) {
 	}
 
 	svc := &shop.Service{Gold: chars, Inv: inv, Items: items}
-	handle := gateway.Chain(LoginHandler(accounts), ShopHandler(chars, svc))
+	handle := gateway.Chain(LoginHandler(accounts), ShopHandler(chars, svc, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 

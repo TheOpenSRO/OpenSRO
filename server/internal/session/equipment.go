@@ -12,6 +12,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/srrevamp/server/internal/trade"
 )
 
 // Equipment opcodes, our own protocol. All take a character name (like
@@ -151,9 +152,10 @@ func DecodeUnequipRequest(data []byte) (*UnequipRequest, error) {
 // OpEquipmentList/OpEquip/OpUnequip against store, resolving character
 // names against whichever account authenticated on the connection. With
 // no inventory or item reference data it applies no wearing rules -- what
-// the tests that only care about the slot mechanics want.
+// the tests that only care about the slot mechanics want. No trade hub
+// either, so nothing is locked by a trade.
 func EquipmentHandler(chars character.Store, store equipment.Store) gateway.Handler {
-	return EquipmentHandlerWithRules(chars, store, nil, nil)
+	return EquipmentHandlerWithRules(chars, store, nil, nil, nil)
 }
 
 // EquipmentHandlerWithRules is EquipmentHandler plus the item table's own
@@ -162,15 +164,19 @@ func EquipmentHandler(chars character.Store, store equipment.Store) gateway.Hand
 // items, and refused if it is not something that goes in that slot, or is
 // for another race, the other gender, or a level the character has not
 // reached. inv and items may both be nil, which disables the rules.
-func EquipmentHandlerWithRules(chars character.Store, store equipment.Store, inv inventory.Store, items ItemLookup) gateway.Handler {
+//
+// An equip or unequip during an ACCEPTED trade is refused
+// (tradeEquipLockedReason, tradebusy.go); a pending request does not lock
+// equipment. trades may be nil, which locks nothing.
+func EquipmentHandlerWithRules(chars character.Store, store equipment.Store, inv inventory.Store, items ItemLookup, trades *trade.Hub) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
 		case OpEquipmentList:
 			return handleEquipmentList(ctx, sess, p, chars, store, items)
 		case OpEquip:
-			return handleEquip(ctx, sess, p, chars, store, inv, items)
+			return handleEquip(ctx, sess, p, chars, store, inv, items, trades)
 		case OpUnequip:
-			return handleUnequip(ctx, sess, p, chars, store, items)
+			return handleUnequip(ctx, sess, p, chars, store, items, trades)
 		default:
 			return nil
 		}
@@ -316,7 +322,7 @@ func sendWornList(ctx context.Context, sess *gateway.Session, store equipment.St
 	return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Items: snaps, Durabilities: equipmentDurabilities(ctx, worn, lookup)}).Encode()})
 }
 
-func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store, inv inventory.Store, items ItemLookup) error {
+func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store, inv inventory.Store, items ItemLookup, trades *trade.Hub) error {
 	req, err := DecodeEquipRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: "malformed request"}).Encode()})
@@ -324,6 +330,10 @@ func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, ch
 	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
 	if errStr != "" {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: errStr}).Encode()})
+	}
+	// CGObjPC::AttachEquipItem (0x00524cd0): 0x1811 at INTERACTMODE 2.
+	if trades.Established(characterID) {
+		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: tradeEquipLockedReason}).Encode()})
 	}
 
 	if refusal := equipRefusal(ctx, chars, store, inv, items, characterID, req.Slot, req.InventorySlot); refusal != "" {
@@ -335,7 +345,7 @@ func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, ch
 	return sendWornList(ctx, sess, store, items, characterID)
 }
 
-func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store, items ItemLookup) error {
+func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store, items ItemLookup, trades *trade.Hub) error {
 	req, err := DecodeUnequipRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: "malformed request"}).Encode()})
@@ -343,6 +353,10 @@ func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
 	if errStr != "" {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: errStr}).Encode()})
+	}
+	// CGObjPC::DetachEquipItem (0x005255e0): 0x1811 at INTERACTMODE 2.
+	if trades.Established(characterID) {
+		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: tradeEquipLockedReason}).Encode()})
 	}
 
 	if err := store.Unequip(ctx, characterID, req.Slot); err != nil {

@@ -900,7 +900,7 @@ functions.**
 |---|---|
 | `0x1403` | `GObjPC_MsgHandler_SpecialCommand::FUN_0051de90` |
 | `0x1807` | `FUN_00526090` |
-| `0x1811` | **not found by this sweep** |
+| `0x1811` | **not found by this sweep** -- it travels as a value, not a pushed literal; `GObjPC_HandleTradeMsg_081`, `CTradeMgr::EstablishTradeSession` and `CGObjPC::StorageOperation` send it (round 499, below) |
 | `0x181d` | `CGObjPC::vslot_358` |
 | `0x1c0d` | `GObjPC::EndInteraction` (was `FUN_005107c0`) |
 | `0x1c0e` | `FUN_00511910` |
@@ -917,6 +917,61 @@ functions.**
 **Fourteen of fifteen.** `0x1811` is pushed somewhere this shape does not reach --
 through a callee, or with the code in a register -- so it stays unattributed
 rather than guessed at.
+
+> **Round 499 found where it comes from.** `0x1811` travels as a **value** --
+> a function's return, or a variable or register handed to a sender -- so a
+> `push <code>; mov ecx,<opcode>` sweep could not see it. Round 499 read these
+> sites in the dump, and its review read the last two and corrected the second:
+>
+> - `CGObjPC::AttachEquipItem` (`0x00524cd0`) and `DetachEquipItem`
+>   (`0x005255e0`) both **return** it when `chardata+6` (INTERACTMODE,
+>   `character_state.md`) is 2 or 7: `if (... + 6) == '\x02' || (... + 6) == '\a') ...
+>   sVar5 = 0x1811; goto <return>`. **At those modes the return never reaches
+>   the wire.** Their only caller is `FUN_00523860` (`0x52390c`, `0x52394e`).
+>   That function is only op 0's entry in the table that `CGObjPC::StorageOperation`
+>   dispatches through (`0xcd3b58`, read only at `0x50f87a`). StorageOperation's
+>   own guard (`0x50f7cd`-`0x50f7e3`) answers `0x1834` at INTERACTMODE 2 or 7,
+>   for every op except 4, 5 and 0xd, before it dispatches.
+> - `CTradeMgr::OpenTradeSession` (`0x0047f620`) **returns** it on its
+>   fall-through refusal. Its caller `GObjPC_HandleTradeMsg_081` (`0x005154e0`)
+>   passes any result but 1 to `Msg_SendTwoFieldReply(sVar2)`, so
+>   **`GObjPC_HandleTradeMsg_081` is a sender**. Through that caller the code
+>   is reached in two ways:
+>   - `TradeMgr::FUN_00481730` returns non-zero (`0x47f72c` `jne 0x47f6ac`),
+>     after a lookup of the newly numbered session. What that test means was not
+>     read.
+>   - The mode-1 branch cancels the requester's old session and goes on to
+>     `OpenTradeSession` without re-running the check. A requester left
+>     failing it then falls through at `0x47f675`.
+>
+>   **It is not reached by a requester who fails `GObjPC::FUN_004ea050`.**
+>   Round 499 first said it was. 081 runs that check on the requester itself
+>   first (`0x5155f7`, with `esi = ebp = this`), and answers a failure on its
+>   own path: `0x1833` at INTERACTMODE 2 or 7, `0x181d` otherwise, and the
+>   mode-1 branch at 1. A target that fails the check gets `0x181e`
+>   (`0x47f6e0` -> `0x47f6e9`). `FUN_004ea050` returns 1 only when all of these
+>   hold:
+>   - vcall slot `0x244` with argument `0x100` returns 0;
+>   - the life state is 1 (ALIVE, round 411);
+>   - INTERACTMODE (`chardata+6`) is 0;
+>   - GROUPMODE (`chardata+7`, `character_state.md`) is not 1 (`PARTY_SETUP`).
+> - `CTradeMgr::EstablishTradeSession` (`0x0047f970`) puts it in a variable
+>   when a party's INTERACTMODE is not 1, and passes that to
+>   `SendItemExchangeResult`, so **`EstablishTradeSession` is a sender**.
+> - `CGObjPC::StorageOperation` (`0x0050f5c0`) sends it **from a register**:
+>   `mov edi,0x1811` at `0x50f6c8`, then `push edi; mov ecx,0xb034` and
+>   `Msg_SendTwoFieldReply`. It does so for op types 0x0e, 0x0f, 0x15, 0x16
+>   and 0x22, and for 0x17 when the message's `+0x1060` field is non-zero.
+>   Every `0x1811` it sends is followed by the log line "PC::StorageOperation
+>   posting AsyncQuery failed. will be disconnected!!!" and `FUN_004df050(4)`.
+>   What that call does was not read. **`StorageOperation` is a sender.**
+>
+> These do not share one meaning. The Attach/Detach and EstablishTradeSession
+> sites refuse on INTERACTMODE; the StorageOperation op-type site and the
+> `FUN_00481730` route do not test it. srrevamp's equip refusal is a text
+> (`session.tradeEquipLockedReason`) in its own wording. The engine code it
+> stands for is `0x1834` from StorageOperation's guard, not Attach/Detach's
+> `0x1811`, and the client has no message for `0x1811` in any case.
 
 **The sweep reproduces this page's own arithmetic independently.** It finds
 exactly **21** codes at or above `0x100` that no client case names, and this page

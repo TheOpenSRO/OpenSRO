@@ -11,6 +11,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/repair"
+	"github.com/OpenSRO/srrevamp/server/internal/trade"
 )
 
 // Repair opcodes, our own protocol. An NPC's repair buttons; the cost model
@@ -78,8 +79,10 @@ func DecodeRepairResult(data []byte) (*RepairResult, error) {
 // RepairHandler returns a gateway.Handler for OpRepair: it restores a worn
 // item (or all worn items) to full durability, charging the gold the cost
 // model asks (repair.Estimate: unit price = itemdata col 28 / max, floor 1,
-// times the missing points). Refuses with the engine's own codes.
-func RepairHandler(chars character.Store, eq equipment.Store, items ItemLookup) gateway.Handler {
+// times the missing points). Refuses with the engine's own codes, including
+// 0x1c0b IM_BUSY for a character a trade holds (tradebusy.go); trades may be
+// nil.
+func RepairHandler(chars character.Store, eq equipment.Store, items ItemLookup, trades *trade.Hub) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpRepair {
 			return nil
@@ -94,6 +97,9 @@ func RepairHandler(chars character.Store, eq equipment.Store, items ItemLookup) 
 		characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
 		if errStr != "" {
 			return fail(int32(repair.ErrCannotBeRepaired))
+		}
+		if trades.Busy(characterID) {
+			return fail(interactionBusyCode)
 		}
 		if items == nil {
 			return fail(int32(repair.ErrCannotBeRepaired))
