@@ -117,7 +117,10 @@ func TestKeepUpReachIsTheApproachBand(t *testing.T) {
 	}
 }
 
-// The hand-off is AutoAttackType 1, after CastingTime + ActionDuration.
+// The hand-off is AutoAttackType exactly 1 on a row that is not a chain head,
+// after PreparingTime + CastingTime + ActionDuration: Tick_UseSkill (0x4ae590)
+// phase 3 waits +0x78 + +0x74, and PostLoadSkillTable (0x5893e0) has already
+// folded +0x70 (PreparingTime) into +0x74 -- refdata keeps both raw.
 func TestSkillHandOffRule(t *testing.T) {
 	smash := &refdata.Skill{ID: 3, AutoAttackType: 1, CastingTimeMs: 411, ActionDurationMs: 1022}
 	bolt := &refdata.Skill{ID: 9944, AutoAttackType: 0, CastingTimeMs: 500, ActionDurationMs: 732}
@@ -126,6 +129,26 @@ func TestSkillHandOffRule(t *testing.T) {
 	}
 	if got := handOffDelay(smash); got != 1433*time.Millisecond {
 		t.Fatalf("handOffDelay = %v; want 1433 ms", got)
+	}
+
+	// PreparingTime counts: a synthetic row with 300 ms of it waits 1700 ms,
+	// not the 1400 ms CastingTime + ActionDuration alone would give.
+	prepared := &refdata.Skill{ID: 1, AutoAttackType: 1, PreparingTimeMs: 300, CastingTimeMs: 400, ActionDurationMs: 1000}
+	if got := handOffDelay(prepared); got != 1700*time.Millisecond {
+		t.Errorf("handOffDelay with PreparingTime 300 = %v; want 1700 ms (the engine's +0x74 includes +0x70)", got)
+	}
+
+	// A chain head does not hand off: the engine would play its links first
+	// and test the LAST link's byte, which srrevamp does not model.
+	chainHead := &refdata.Skill{ID: 2, AutoAttackType: 1, BasicChainCode: 12, CastingTimeMs: 411, ActionDurationMs: 834}
+	if skillHandsOff(chainHead) {
+		t.Error("a chain head (BasicChainCode 12) handed off; the engine plays the chain link by link first")
+	}
+
+	// AutoAttackType 2 is not 1: the engine's test is `== '\x01'`.
+	typeTwo := &refdata.Skill{ID: 4, AutoAttackType: 2, CastingTimeMs: 411, ActionDurationMs: 1022}
+	if skillHandsOff(typeTwo) {
+		t.Error("AutoAttackType 2 handed off; only 1 does")
 	}
 }
 

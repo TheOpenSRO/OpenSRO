@@ -110,8 +110,15 @@ or when that is 0 the weapon's range **plus the skill's `+0x250` param**, the
 **Phase 2**: prepare, gate `0x91`, the row (or the current chain link) is
 resolved, the 0x7070 command is posted -> **phase 3**. Chain bookkeeping: a row
 with a `ChainCode` (`+0x68`) becomes the current link (`+0x20`) with its
-`ActionDuration` as the remaining time (`+0x24`), carrying any overshoot
-(`+0x28`) forward.
+`ActionDuration` as the remaining time (`+0x24`), less what is left of
+`+0x28`. The action's release (`FUN_004ac920`, and
+`sAutoCommand::ReleaseAndClear` `0x4ac980`) seeds `+0x28 = 500` and zeroes
+`+0x2c`. A link no longer than what is left has its wait zeroed and `+0x28`
+drawn down by its duration. On the link where `+0x28` runs out, the remainder
+is cut from that link's wait and added to `+0x2c`, and `+0x28` becomes 0.
+Phase 3 adds `+0x2c` to the final link's wait when that link's `+0x90` is
+non-zero and it is the only queued action. So a chain's final link waits up to
+500 ms longer.
 
 **Phase 3**: wait until `now - phaseStart > CastingTime + ActionDuration`
 (`+0x74 + +0x78`; the server's `CastingTime` already includes
@@ -179,10 +186,45 @@ its own id (`+0x1c`).
 
 `server/internal/session/keepup.go`: after an accepted plain swing the server
 repeats it every `ReuseDelay` of the base attack; a cast with
-`AutoAttackType` 1 arms the same run after `CastingTime + ActionDuration`; any
-new cast, a zone change, a disconnect, the player's death, the target's death
-and a **move** end it. Two departures are stated in the code: the server cannot
-walk the player back into reach, so a repeat that is out of reach ends the run
-(the reach test is the engine's); and the retail client's explicit cancel on a
-move click is stood in for by the position update, which srrevamp's client only
-sends for a real move.
+`AutoAttackType` 1 arms the same run after `PreparingTime + CastingTime +
+ActionDuration`; any new cast, a zone change, a disconnect, the player's death,
+the target's death and a **move** end it. Four departures are stated in the
+code:
+
+- The server cannot walk the player back into reach, so a repeat that is out
+  of reach ends the run. The reach test itself is the engine's.
+- The retail client's explicit cancel on a move click is stood in for by the
+  position update, which srrevamp's client only sends for a real move.
+- A chain head (`ChainCode` non-zero) does not hand off at all. srrevamp does
+  not play the links, and the engine tests the LAST link's byte after the last
+  link's duration.
+- A zero-damage row does not hand off. Phase 3 tests only `+0x90 == 1`, the
+  target and the queue depth, and never looks at damage. But srrevamp's cast
+  handler (`useSkillHandler`, `session/skill.go`) returns early for a row with
+  `NoCombatParam` or `ZeroDamage`, and that return comes before the hand-off.
+  On the real rows this affects five player rows:
+  `SKILL_EU_WARRIOR_DUALA_STUN_A_01..05` (ids 9245-9249), which are type 1
+  with no chain and `ZeroDamage` 1. Retail hands off after them. srrevamp does
+  not.
+
+**Round 502: the hand-off did not fire until then.** `cmd/export-refdata`
+wrote a literal `"0"` into both `AutoAttackType` and `Basic_ChainCode`, so every
+real export carried 0 and `skillHandsOff` never saw a 1. The exporter now reads
+column 19 and column 9 (the `CopyFixedColumns` offsets above). The wait is also
+corrected: phase 3 waits `+0x74 + +0x78`, and `+0x74` has `PreparingTime`
+(`+0x70`) added at load, but srrevamp's refdata keeps both columns raw, so the
+server sums all three. The `+0x2c` term is the chain carry described under
+phase 2. The release zeroes it, phase 0 zeroes it again, and only a chain
+link's bookkeeping adds to it. A standalone row never reaches that bookkeeping,
+so the term is 0 for every row srrevamp hands off.
+
+Measured on the 33,632 real rows: column 19 is 1 on 28,702, 0 on 4,608 and 2
+on 322. Of the 6,981 player rows (`Basic_Code` `SKILL_*`), 2,051 carry 1.
+1,012 of those are chain heads and 1,039 are not. Of the 1,039, **1,034 now
+hand off when cast**. The other five are the zero-damage stun rows
+`SKILL_EU_WARRIOR_DUALA_STUN_A_01..05` (ids 9245-9249, `ZeroDamage` 1), which
+the fourth departure above stops. Of the 1,034, 463 are some chain's final
+link (named by another row's column 9) and the other 571 stand alone. 177 of
+the 1,034, all standalone, have a non-zero `PreparingTime`, so their wait
+grows. The 322 type-2 rows (all `SKILL_*`) do not hand off, because the test
+is `== 1`. It takes effect after a re-export of the skill CSV.

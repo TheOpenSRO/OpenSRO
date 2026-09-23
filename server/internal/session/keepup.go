@@ -39,13 +39,15 @@ import (
 //   - the target still exists and is alive (IGObj slot 6).
 //
 // The skill tick (0x4ae590) joins the same loop from the other side: when a
-// skill's CastingTime + ActionDuration has played and its Basic_Code row has
-// AutoAttackType == 1 (skilldata col 19), phase 3 pushes a NEW kind-1 attack
-// action carrying the same target, and the plain swings continue from there.
-// The staff, wand and harp base attacks carry 0 and never hand off. Read
+// skill's PreparingTime + CastingTime + ActionDuration has played and its row
+// has AutoAttackType == 1 (skilldata col 19), phase 3 pushes a NEW kind-1
+// attack action carrying the same target, and the plain swings continue from
+// there. The staff, wand and harp base attacks carry 0 and never hand off. Read
 // 2026-09-19, round 256; the whole machine is in docs/protocol/auto_command.md.
+// Round 256 built the hand-off, but the exporter wrote a literal 0 into
+// AutoAttackType until round 502, so on a real export it never fired.
 //
-// Two things srrevamp cannot do the engine's way, and does not pretend to:
+// Four things srrevamp cannot do the engine's way, and does not pretend to:
 //
 //   - The engine WALKS the attacker back into reach (phase 1's
 //     MoveTowardObject). srrevamp's server does not move players, so a
@@ -56,6 +58,22 @@ import (
 //     move (0x7074 with the cancel byte). srrevamp's client has no such
 //     packet, so a position update (OpMove, only ever sent for a real move)
 //     cancels the run. That mapping is this project's, not read.
+//   - The engine runs a chain skill (Basic_ChainCode, +0x68, non-zero) link
+//     by link: phase 3 re-enters phase 2 with the next link's row, and only
+//     the LAST link's AutoAttackType decides the hand-off. srrevamp casts
+//     the head row alone and does not walk the chain, so a chain head does
+//     not hand off at all rather than hand off on the head's own timing. See
+//     skillHandsOff.
+//   - The engine's phase-3 test does not look at damage. It reads only
+//     AutoAttackType (`*(char*)(ref+0x90) == '\x01'`), the target
+//     (FUN_0048db90, then IGObj slots 62, 6 and 63) and the queue depth
+//     (`+0xc == 1`). srrevamp's useSkillHandler (skill.go) returns early for
+//     a row that resolves no blow or a zero-damage blow (NoCombatParam /
+//     ZeroDamage), and that return comes before the hand-off. So a
+//     zero-damage row does not hand off even when its AutoAttackType is 1.
+//     On the 33,632 real rows this affects five player rows: type 1, no
+//     chain, ZeroDamage 1, SKILL_EU_WARRIOR_DUALA_STUN_A_01..05 (ids
+//     9245-9249). The engine hands off after them.
 type autoAttack struct {
 	mu   sync.Mutex
 	runs map[int64]*autoRun
@@ -292,20 +310,45 @@ func armKeepUp(
 }
 
 // handOffDelay is how long the skill tick waits before pushing the plain
-// attack: the skill's CastingTime + ActionDuration (the CastingTime the
-// server holds already has PreparingTime folded in, SkillGlobal's post-load
-// pass adds it), measured from the cast.
+// attack, measured from the cast: Tick_UseSkill (0x4ae590) phase 3 waits
+// `+0x78 + +0x74` (ActionDuration + CastingTime), and the engine's CastingTime
+// is not the raw column -- SkillGlobal::PostLoadSkillTable (0x5893e0) does
+// `+0x74 += +0x70` (CastingTime += PreparingTime) once at load. refdata keeps
+// both columns raw (skilldata cols 11 and 12), so the sum is taken here.
+//
+// The phase also adds `+0x2c` when `+0x90` is non-zero and this is the only
+// queued action. That term is a chain carry. The action's release
+// (FUN_004ac920, and sAutoCommand::ReleaseAndClear 0x4ac980) seeds
+// `+0x28 = 500` and zeroes `+0x2c`, and phase 0 zeroes `+0x2c` again. Only
+// phase 2's chain bookkeeping touches either field: it shortens each chain
+// link's wait by what is left of `+0x28`, and on the link where `+0x28` runs
+// out it adds the remainder to `+0x2c`. So a chain's final link waits up to
+// 500 ms longer. A standalone row (`+0x68` == 0) never reaches that
+// bookkeeping, so the term is 0 for every row srrevamp hands off
+// (skillHandsOff refuses chain heads).
 func handOffDelay(ref *refdata.Skill) time.Duration {
 	if ref == nil {
 		return 0
 	}
-	return time.Duration(ref.CastingTimeMs+ref.ActionDurationMs) * time.Millisecond
+	return time.Duration(ref.PreparingTimeMs+ref.CastingTimeMs+ref.ActionDurationMs) * time.Millisecond
 }
 
-// skillHandsOff is the skill tick's phase-3 test: AutoAttackType == 1 on the
-// row that was cast.
+// skillHandsOff is the skill tick's phase-3 test: `*(char*)(ref+0x90) == 1`
+// (AutoAttackType, skilldata col 19) on the row that was cast. Exactly 1: the
+// 322 real rows carrying 2 do not hand off, as the engine's `== '\x01'` says.
+//
+// A chain head (BasicChainCode != 0) does not hand off either. That is a
+// DEPARTURE, disclosed in the package comment: the engine plays the chain link
+// by link and tests the last link's byte after the last link's duration;
+// srrevamp does not walk the chain, so handing off after the head's own
+// timing would start the swings early, mid-chain.
+//
+// This test is not the only gate. useSkillHandler (skill.go) returns early
+// for a row whose blow is absent or zero (NoCombatParam / ZeroDamage), before
+// it calls this function. The engine's test never looks at damage, so that
+// early return is a further departure, also disclosed in the package comment.
 func skillHandsOff(ref *refdata.Skill) bool {
-	return ref != nil && ref.AutoAttackType == 1
+	return ref != nil && ref.AutoAttackType == 1 && ref.BasicChainCode == 0
 }
 
 // firstSwingInReach is the reach gate on a manual OpAttack click.

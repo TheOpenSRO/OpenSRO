@@ -151,6 +151,27 @@ In order. Each is checked off here when it ships in a release, with its round in
       `CGCharAutoCommandActor` (`docs/protocol/auto_command.md`). Left: the server does not walk
       the player, so a repeat out of reach ends the run (the original walks back in) -- this is
       the "attack distance" item below; and chain skills re-enter link by link in the original.
+      **Correction (round 502): the skill hand-off never fired before round 502.** The exporter
+      wrote `AutoAttackType` (skilldata col 19) as a literal 0. It now exports col 19 and
+      `Basic_ChainCode` (col 9). The wait is PreparingTime + CastingTime + ActionDuration, since
+      the engine folds PreparingTime into CastingTime at load. A chain head does not hand off.
+      A zero-damage row does not hand off either: the cast handler returns before the hand-off,
+      although the engine's test ignores damage. That is a disclosed departure and affects the
+      five `SKILL_EU_WARRIOR_DUALA_STUN_A_01..05` rows (ids 9245-9249). Of the 1,039 type-1
+      player rows with no chain, 1,034 hand off. Needs a re-export of the skill CSV to take
+      effect.
+- [ ] **Chain skills, link by link.** The skill tick (`0x4ae590`) plays a row with a non-zero
+      `Basic_ChainCode` (col 9, `+0x68`, exported since round 502) as a sequence. Phase 2 makes it
+      the current link with its ActionDuration as the remaining time, less what is left of
+      `+0x28`. The action's release (`FUN_004ac920`, `sAutoCommand::ReleaseAndClear` `0x4ac980`)
+      seeds `+0x28 = 500` and zeroes `+0x2c`. On the link where `+0x28` runs out, the remainder
+      moves into `+0x2c`, and phase 3 adds `+0x2c` to the final link's wait, so the final link
+      waits up to 500 ms longer (`docs/protocol/auto_command.md`, phase 2). Phase 3 re-enters
+      phase 2 with the next link's row, and only the LAST link's `AutoAttackType` decides the
+      hand-off. srrevamp casts the head row alone, so the 1,012
+      player chain heads (e.g. `SKILL_CH_SWORD_SMASH_D_01` -> 7140 `..._D2_01`) resolve one row's
+      blow and do not hand off (round 502's disclosed departure). Next: resolve each link's blow on
+      its own timing, then apply the last link's hand-off rule.
 - [ ] **Attack distance.** Neither the client nor the server gates an attack by distance today: a
       monster can be hit from anywhere (an absent rule, by omission). Read in round 232: the SERVER
       never refuses on distance -- `0x3007 UIIT_SKILL_USE_FAIL_WRONGDISTANCE` occurs nowhere in its

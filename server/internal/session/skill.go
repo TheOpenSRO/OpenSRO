@@ -902,6 +902,13 @@ func useSkillHandler(
 		//
 		// The gauge rides along unchanged so the HUD orbs do not blink to zero
 		// on a cast that simply is not an attack.
+		//
+		// This return also skips the keep-up hand-off at the end of the
+		// handler. The engine's hand-off test does not look at damage, so
+		// skipping it here is a DISCLOSED DEPARTURE (keepup.go's package
+		// comment). On the real rows it affects the five type-1, no-chain,
+		// ZeroDamage rows SKILL_EU_WARRIOR_DUALA_STUN_A_01..05 (ids
+		// 9245-9249): retail hands off after them, and srrevamp does not.
 		if noCombat || zeroDmg {
 			res := &AttackResult{MonsterID: req.TargetMonsterID}
 			if zerk != nil {
@@ -931,8 +938,10 @@ func useSkillHandler(
 			return err
 		}
 		// The skill tick's hand-off (round 256, keepup.go): a row with
-		// AutoAttackType 1 leaves a plain attack running against the same
-		// target once its CastingTime + ActionDuration has played.
+		// AutoAttackType 1 that is not a chain head leaves a plain attack
+		// running against the same target once its PreparingTime +
+		// CastingTime + ActionDuration has played (round 502). A zero-damage
+		// row never gets here (the early return above).
 		if skillHandsOff(castRow) {
 			if m, ok := monsters.Get(req.TargetMonsterID); ok && m.HP > 0 {
 				deps := combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc}

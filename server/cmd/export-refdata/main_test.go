@@ -654,3 +654,61 @@ func TestCanDropReadsColumn20WithTheTradeCoupling(t *testing.T) {
 		})
 	}
 }
+
+// Basic_ChainCode is skilldata column 9 (CRefSkill+0x68) and AutoAttackType is
+// column 19 (CRefSkill+0x90), both by CRefSkill::CopyFixedColumns (0x6ab5a0);
+// see docs/protocol/skill_fields.md. Until round 502 the exporter wrote a
+// literal "0" into both record slots, so the keep-up hand-off (keepup.go's
+// skillHandsOff, AutoAttackType == 1) never fired on a real export. The
+// columns are written as literals here on purpose: the test pins the raw
+// column, not whatever the constant says. The neighbours carry sentinels so a
+// read one column off shows up as a wrong value rather than a lucky zero.
+func TestSkillRecordCarriesAutoAttackTypeAndChainCode(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		col19, col9   string
+		wantAAT       int
+		wantChainCode int64
+	}{
+		// (a) Smash-shaped: a plain melee skill that hands off.
+		{"type 1, no chain", "1", "0", 1, 0},
+		// (b) a bolt or buff: no hand-off.
+		{"type 0", "0", "0", 0, 0},
+		// (c) the 322 real type-2 rows: carried through as 2, not folded to 1.
+		{"type 2", "2", "0", 2, 0},
+		// (d) a chain head: SKILL_CH_SWORD_SMASH_D_01's next link is 7140.
+		{"chain head", "1", "7140", 1, 7140},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cols := skillRow()
+			cols[1], cols[2], cols[3] = "3", "174", "SKILL_CH_SWORD_SMASH_A_01"
+			cols[8], cols[10] = "2", "11"  // Basic_Activity, Basic_RecycleCost
+			cols[18], cols[20] = "13", "1" // Overlap, InTown
+			cols[19], cols[9] = tc.col19, tc.col9
+
+			rec, ok := skillRecord(cols)
+			if !ok {
+				t.Fatal("skillRecord rejected a valid row")
+			}
+			if rec[15] != tc.col19 {
+				t.Errorf("record[15] AutoAttackType = %q, want %q (raw column 19)", rec[15], tc.col19)
+			}
+			if rec[5] != tc.col9 {
+				t.Errorf("record[5] Basic_ChainCode = %q, want %q (raw column 9)", rec[5], tc.col9)
+			}
+			skills, err := refdata.LoadSkillsCSV(strings.NewReader(strings.Join(rec, ",") + "\n"))
+			if err != nil {
+				t.Fatalf("the importer rejected export's own output: %v", err)
+			}
+			if len(skills) != 1 {
+				t.Fatalf("parsed %d skills, want 1", len(skills))
+			}
+			if got := skills[0].AutoAttackType; got != tc.wantAAT {
+				t.Errorf("AutoAttackType = %d, want %d", got, tc.wantAAT)
+			}
+			if got := skills[0].BasicChainCode; got != tc.wantChainCode {
+				t.Errorf("BasicChainCode = %d, want %d", got, tc.wantChainCode)
+			}
+		})
+	}
+}

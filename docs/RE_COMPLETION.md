@@ -889,6 +889,13 @@ exporter — `FlyingSpeed`, `Interruptable`, `Overlap`, `AutoAttackType`,
 the server, so a wrong value there reaches nothing. They stay, now for a
 measured reason.
 
+*Stale since round 256, corrected in round 502.* Round 256 gave
+`AutoAttackType` a reader, the keep-up hand-off (`session.skillHandsOff`), but
+the placeholder stayed. Every real export carried 0, so the hand-off never
+fired. Round 502 exports `AutoAttackType` (column 19) and `Basic_ChainCode`
+(column 9). `FlyingSpeed`, `Interruptable`, `Overlap`, `Basic_Name` and
+`Basic_RecycleCost` are still placeholders.
+
 ## `TwoHanded` is itemdata column 93 (2026-09-15)
 
 The field existed in `refdata.Item`, was exported as a literal `"0"`, and
@@ -28129,3 +28136,122 @@ repair.
   refused with `tradeBusyReason`. The gold deposit is refused and still carries 1000 carried and 0
   stored. Round 499 records a failing mutation for each. No duplicate was added.
 - `go test -count=1 -p 1 ./...` is green. No client file changed.
+
+## Export AutoAttackType (col 19) and ChainCode (col 9) so the post-cast plain-attack hand-off actually fires (round 502)
+
+**Why now.** Round 256 read the skill tick's hand-off and built it: after a skill whose row has
+`AutoAttackType` 1, the server keeps swinging plain attacks at the same target
+(`session.skillHandsOff`, `session.handOffDelay`). But `cmd/export-refdata` wrote a literal `"0"`
+into record slot 15 (`AutoAttackType`) and slot 5 (`Basic_ChainCode`). Every real export carried 0,
+so `skillHandsOff` never saw a 1 and **the hand-off never fired**. Only the unit test, with its
+hand-built row, ever exercised it. The 2026-09-15 "zero readers" note about these placeholders went
+stale when round 256 added the reader. It now carries a pointer here.
+
+**Grounding. Re-read this round from the server dump.**
+
+- **The column offsets.** `CRefSkill::CopyFixedColumns` (`0x006ab5a0`) copies the fixed columns
+  field by field in column order: `+0x0` Service, `+4` ID, `+8` GroupID, three strings at `+0xc`,
+  `+0x28` and `+0x44`, `+0x60`, `+0x64`, `+0x65`, **`+0x68`** (u32), `+0x6c`, `+0x70`, `+0x74`,
+  `+0x78`, `+0x7c`, `+0x80`, `+0x84`, `+0x88` (u8), `+0x8c`, **`+0x90`** (u8), `+0x91`,
+  `+0x92` (u16). `+0x68` is the tenth field, column 9 (`Basic_ChainCode`). `+0x90` is the
+  twentieth, column 19 (`AutoAttackType`). The anchors already exported agree: PreparingTime
+  `+0x70` is column 11, CoolTime `+0x80` is column 15, Range `+0x92` is column 21
+  (`skill_fields.md`, the CopyFixedColumns table).
+- **The test.** `CGCharAutoCommandActor::Tick_UseSkill` (`0x004ae590`), phase 3, with no current
+  chain link: the wait is `*(ref+0x78) + *(ref+0x74)`, plus `+0x2c` when `+0x90` is non-zero and
+  the queue depth is 1. Then `if (*(char*)(ref+0x90) == '\x01' && FUN_0048db90())` it checks the
+  target, and at queue depth 1 it pushes `FUN_004ac910()`, a new kind-1 attack action carrying the
+  context. **The test is `== 1`, so type 2 does not hand off.**
+- **The wait includes PreparingTime.** `SkillGlobal::PostLoadSkillTable` (`0x005893e0`) does
+  `*(ref+0x74) += *(ref+0x70)` once per row at load, so the engine's `+0x74` is CastingTime plus
+  PreparingTime. srrevamp's refdata keeps both columns raw (skilldata 11 and 12;
+  `refdata.Skill.PreparingTimeMs` has no other reader), so `handOffDelay` must add all three.
+  Round 256 summed only CastingTime and ActionDuration. Its comment said the held CastingTime
+  "already has PreparingTime folded in", which is true of the engine but not of srrevamp.
+- **The `+0x2c` term** is a chain carry, not an overshoot. The action's release (`FUN_004ac920`,
+  and `sAutoCommand::ReleaseAndClear` `0x004ac980`) seeds `+0x28 = 500` and zeroes `+0x2c`, and
+  phase 0 zeroes `+0x2c` again. Phase 2 shortens each chain link's wait by what is left of
+  `+0x28`. On the link where `+0x28` runs out, it adds the remainder to `+0x2c`, which phase 3
+  adds to the final link's wait. So a chain's final link waits up to 500 ms longer. A standalone
+  row never reaches that bookkeeping, so the term is 0 on every row that reaches the hand-off here.
+- **Chains.** In phase 2, a row with a non-zero `+0x68` becomes the current link (`+0x20`), with
+  its `+0x78` as the remaining time (`+0x24`). Phase 3 then waits `+0x24` instead, loads the row
+  named by the link's `+0x68` (`FUN_0046c1f0`) and re-enters phase 2. Only the final link, whose
+  `+0x68` is 0, reaches the `+0x90` test.
+
+**Measured** on all 33,632 rows of the seven skilldata shards in a real `Media.pk2`, read at
+runtime and not committed:
+
+- Column 19 is **1 on 28,702, 0 on 4,608 and 2 on 322**, with no other value. The 13 base attacks
+  agree with round 256's reading: punch, CH sword/spear/bow and EU sword/two-hander/axe/crossbow/
+  dagger carry 1. The EU staff, both wands and the harp carry 0.
+- Column 9 is non-zero on 2,822 rows, and 2,820 of those name a real skill id.
+  `SKILL_CH_SWORD_SMASH_D_01` names 7140, which is `SKILL_CH_SWORD_SMASH_D2_01`, and that row's
+  column 9 is 0.
+- **Player rows** (`Basic_Code` `SKILL_*`, 6,981): 2,051 carry type 1. 1,012 of those are chain
+  heads and 1,039 are not. **1,034 of the 1,039 hand off.** The other five are
+  `SKILL_EU_WARRIOR_DUALA_STUN_A_01..05` (ids 9245-9249). They are type 1 with no chain, but
+  `ZeroDamage` is 1 (CSV slot 35) and `NoCombatParam` is 0. The cast handler returns before the
+  hand-off for them (see the fourth departure below). Of the 1,034, 463 are some chain's final
+  link and 571 stand alone. 177 of the 1,034, all standalone, have a non-zero PreparingTime; none
+  of the five stun rows does. All 322 type-2 rows are player rows. The plan's "2,050 rows with
+  type 1" was measured again as 2,051.
+- The rebuilt exporter run over the seven shards writes 33,632 rows with the same 28,702 / 4,608 /
+  322 split in slot 15 and 2,822 non-zero slot-5 values. Smash (id 3) comes out as type 1, chain
+  0, prep 0, cast 411, duration 1022. The staff base attack (9944) comes out as type 0.
+
+**Change.**
+
+- `cmd/export-refdata`: `skChainCode = 9` and `skAutoAttackType = 19`, each with its
+  CopyFixedColumns citation. `skillRecord` writes `get(skChainCode)` to slot 5 and
+  `get(skAutoAttackType)` to slot 15. The CSV width is unchanged at 43 columns; the importer
+  already parsed both slots. Only FlyingSpeed, Interruptable and Overlap stay unmapped among the
+  flags.
+- `session/keepup.go`:
+  - `handOffDelay` returns PreparingTime + CastingTime + ActionDuration.
+  - `skillHandsOff` is `AutoAttackType == 1 && BasicChainCode == 0`. The chain-head exclusion is a
+    **disclosed departure**, now the package comment's third one. The engine plays the links and
+    tests the last link's byte after the last link's duration. srrevamp casts the head row alone,
+    so a hand-off after the head's own timing would start swinging mid-chain. Link-by-link play
+    is a new TODO item.
+  - **A fourth disclosed departure, found in review: zero-damage rows do not hand off.**
+    `useSkillHandler` (`session/skill.go`) returns early for a row with `NoCombatParam` or
+    `ZeroDamage`, and that return comes before the `skillHandsOff` call. The engine's phase-3 test
+    does not look at damage. It checks only `*(char*)(ref+0x90) == '\x01'`, the target
+    (`FUN_0048db90`, then IGObj slots 62, 6 and 63) and the queue depth (`+0xc == 1`). So retail
+    hands off after the five type-1 zero-damage stun rows, and srrevamp does not. Moving the
+    hand-off above the early return would also need that path's reach check, which it skips
+    today, so this round discloses the departure and does not move the call. The disclosure is in
+    keepup.go's package comment, the early return's comment, `auto_command.md` and `TODO.md`.
+- `session/skill.go`: the call-site comment names the new rule, and the zero-damage early return
+  says that it skips the hand-off.
+
+**Effect.** After a re-export of the skill CSV, an ordinary melee or bow skill such as Smash leaves
+the character swinging plain attacks at the same target once the cast ends, as in retail. That is
+1,034 player rows. Bolts, buffs, type-2 rows and chain heads stop as before. So do the five
+zero-damage stun rows `SKILL_EU_WARRIOR_DUALA_STUN_A_01..05` (ids 9245-9249), which is a
+departure: retail hands off after them.
+
+**Tests.**
+
+- **`export-refdata.TestSkillRecordCarriesAutoAttackTypeAndChainCode`** (new) builds a `skillRow`
+  with literal columns 19 and 9 and sentinels in columns 8, 10, 18 and 20. It runs the record
+  through `refdata.LoadSkillsCSV` with four cases:
+  - type 1 gives slot 15 `"1"` and AutoAttackType 1;
+  - type 0 gives `"0"`;
+  - type 2 gives `"2"`;
+  - a chain head with column 9 = 7140 gives slot 5 `"7140"` and BasicChainCode 7140.
+- **`session.TestSkillHandOffRule`** (extended):
+  - Smash still waits 1433 ms. The bolt and nil cases are unchanged.
+  - A synthetic row with prep 300, cast 400 and duration 1000 waits **1700 ms**.
+  - A chain head (type 1, ChainCode 12) does not hand off.
+  - A type-2 row does not hand off.
+- **Negative, run.** With `main.go`, `keepup.go` and `skill.go` stashed, the exporter test fails
+  three of its four cases: `record[15] AutoAttackType = "0", want "1"`, and for the chain head
+  `record[5] Basic_ChainCode = "0", want "7140"`. The hand-off test fails with
+  `handOffDelay with PreparingTime 300 = 1.4s; want 1700 ms` and `a chain head (BasicChainCode 12)
+  handed off`. With the files restored, both pass.
+- `go test -count=1 -p 1 ./...` is green. No client file changed.
+
+**Deploy.** The public server's skill table needs a re-export (`export-refdata -mode skills`) and
+a re-import before the hand-off is live. Batch it with the other exporter items.

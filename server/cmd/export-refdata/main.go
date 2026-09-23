@@ -329,13 +329,25 @@ const (
 // learn-gating columns AND the cast timing / range / resource cost are named
 // and mapped -- all verified against a real SMASH_A row (the column order is
 // the schema's group order, anchored by 6 known indices; see the
-// skilldata-columns note and docs/protocol/refdata_schema.md). Only a few flag
-// columns (FlyingSpeed, Interruptable, Overlap, AutoAttackType) stay unmapped.
+// skilldata-columns note and docs/protocol/refdata_schema.md). Only three flag
+// columns (FlyingSpeed, Interruptable, Overlap) stay unmapped.
 const (
 	skID         = 1 // unique per-level skill id
 	skGroupID    = 2 // shared by every level of the skill
 	skBasicCode  = 3 // SKILL_CH_..._NN
 	skBasicLevel = 7
+	// skChainCode is Basic_ChainCode, the id of the next link of a chain skill
+	// (0 = no next link). CRefSkill::CopyFixedColumns (0x6ab5a0) copies the
+	// fixed columns field by field in column order, and the tenth field --
+	// column 9, after Service/ID/GroupID/Code/Name/Group/Original/Level/
+	// Activity -- is the u32 at CRefSkill+0x68 (docs/protocol/skill_fields.md,
+	// the CopyFixedColumns table). The skill tick 0x4ae590 phase 2 reads +0x68
+	// to start the chain bookkeeping. Anchored by its neighbours: PreparingTime
+	// (+0x70) is column 11 (skPreparingTime below, verified against a real
+	// SMASH_A row). Measured on the 33,632 real rows: 2,822 carry a non-zero
+	// value and 2,820 of those name a real skill id (SKILL_CH_SWORD_SMASH_D_01
+	// -> 7140, SKILL_CH_SWORD_SMASH_D2_01).
+	skChainCode = 9
 	// Cast timing / range / cost, all in ms except Range. Verified against a
 	// real SMASH_A row (see the skilldata-columns note): the column order is the
 	// schema's group order, anchored by 6 known indices. All clean int values.
@@ -344,6 +356,15 @@ const (
 	skActionDuration = 13
 	skReuseDelay     = 14 // the cooldown
 	skCoolTime       = 15
+	// skAutoAttackType is Action_AutoAttackType, the u8 at CRefSkill+0x90:
+	// the twentieth field CopyFixedColumns (0x6ab5a0) copies, between CoolTime
+	// (+0x80, column 15) and Range (+0x92, column 21) with FlyingSpeed +0x84,
+	// Interruptable +0x88, Overlap +0x8c at 16-18 and InTown +0x91 at 20.
+	// CGCharAutoCommandActor::Tick_UseSkill (0x4ae590) phase 3 tests it
+	// `== '\x01'` to push the plain-attack hand-off (auto_command.md, "The
+	// skill tick"). Measured on the 33,632 real rows: 1 on 28,702, 0 on 4,608,
+	// 2 on 322 -- no other value.
+	skAutoAttackType = 19
 	skRange          = 21 // 0 = melee
 	skConsumeHP      = 52
 	skConsumeMP      = 53
@@ -753,12 +774,15 @@ func cooltimeOf(cols []string) (group, ms string) {
 	return group, ms
 }
 
-// skillRecord maps one tab-split skilldata row to the 24-column skill CSV
+// skillRecord maps one tab-split skilldata row to the 43-column skill CSV
 // (refdata.skillCSVColumns order) import-refdata expects, or (nil, false) if
 // the row is not a real skill. The learn-gating fields and the cast timing /
 // range / resource cost are mapped from verified real columns (see the
-// skilldata-columns note); only a few flags (FlyingSpeed, Interruptable,
-// Overlap, AutoAttackType) and unused name/chain fields stay "0" placeholders.
+// skilldata-columns note); so are Basic_ChainCode and AutoAttackType, the two
+// fields the keep-up hand-off tests (round 502 -- until then both shipped as
+// "0", so the hand-off round 256 built never fired). Only three flags
+// (FlyingSpeed, Interruptable, Overlap) and the unused Basic_Name /
+// Basic_RecycleCost stay "0" placeholders.
 func skillRecord(cols []string) ([]string, bool) {
 	if len(cols) <= skMax {
 		return nil, false
@@ -784,7 +808,7 @@ func skillRecord(cols []string) ([]string, bool) {
 		get(skBasicCode),      // 2  Basic_Code
 		"0",                   // 3  Basic_Name (not verified)
 		get(skBasicLevel),     // 4  Basic_Level
-		"0",                   // 5  Basic_ChainCode (not verified)
+		get(skChainCode),      // 5  Basic_ChainCode (raw col 9, CRefSkill+0x68)
 		"0",                   // 6  Basic_RecycleCost (not verified)
 		get(skPreparingTime),  // 7  PreparingTime  (verified raw col 11)
 		get(skCastingTime),    // 8  CastingTime    (verified raw col 12)
@@ -794,7 +818,7 @@ func skillRecord(cols []string) ([]string, bool) {
 		"0",                   // 12 FlyingSpeed (flag, not mapped)
 		"0",                   // 13 Interruptable (flag, not mapped)
 		"0",                   // 14 Overlap (bitfield, not mapped)
-		"0",                   // 15 AutoAttackType (not mapped)
+		get(skAutoAttackType), // 15 AutoAttackType (raw col 19, CRefSkill+0x90)
 		get(skRange),          // 16 Range          (verified raw col 21)
 		get(skConsumeHP),      // 17 Consume_HP     (verified raw col 52)
 		get(skConsumeMP),      // 18 Consume_MP     (verified raw col 53)
