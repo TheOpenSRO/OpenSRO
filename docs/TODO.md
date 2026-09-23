@@ -332,15 +332,27 @@ In order. Each is checked off here when it ships in a release, with its round in
         cast out of reach earns "too far away". A non-damaging one is accepted at any distance:
         `session/skill.go`'s `noCombat || zeroDmg` return (NoCombatParam / ZeroDamage) comes before
         `skillInReach` (round 527). The hotbar's casts go through `_cast_skill` -> `_attack_monster`.
-- [ ] **Four HUD surfaces let clicks through to the world.** Measured by round 522's review: a
-      click on the player-info block, the minimap's map (every node IGNORE, `hud_minimap.gd`), the
-      target window (every node IGNORE, `hud_target.gd`) or the hotbar's body away from its slots
-      and buttons reaches `World3D._unhandled_input`, so it counts as a click on the world (it walks
-      the character, and takes the keyboard back from a focused text line). The windows, the chat
-      and the hotbar slots are `MOUSE_FILTER_STOP` (HudWindow; round 522 for the chat and the
-      slots). Fix the same way -- and weigh the side effect STOP brings: a right-drag orbit that
-      passes over a STOP control stops orbiting there (round 522), which reading orbit motion in
-      `World3D._input` while `_camera_orbiting` would fix for all of them.
+- [x] **Four HUD surfaces let clicks through to the world -- done (round 529).** Round 522's
+      review measured a click on the player-info block, the minimap's map, the target window or the
+      hotbar's body away from its slots reaching `World3D._unhandled_input`, where it counts as a
+      click on the world. Each of the four roots is now `MOUSE_FILTER_STOP`, as HudWindow and the
+      chat are. Each root's rect is exactly its drawn body (the frame, or the hotbar's 800x52
+      `BarBackground` rect), and Godot 4.2.2 returns a control for a click only inside its own
+      rect, so the empty space above the hotbar still reaches the world. The hotbar's body fires the
+      middle-button quickslot itself, as its slots do. The camera orbit's motion is now read in
+      `World3D._input` (`orbit_motion_applies`), so a right drag keeps turning over any STOP
+      control and is applied once over the world. `npc_service_reader_test.gd` check (o) drives
+      real events through the live viewport. **Not driven:** a real click in a running client, and
+      the surfaces built from Media.pk2. **Behaviour that changed with it:** a right press on any of
+      the four starts no orbit, as over a window. A middle press on the minimap, the player-info
+      block or the target window fires no quickslot; the hotbar's body still fires it.
+- [ ] **`HudMinimap` and `HudUnderbar` are built twice (read from the code in round 529, not
+      measured).** `World3D._try_initialize_pk2_ui` adds each to the tree, and each one's `_ready`
+      runs `setup()` because it has no children yet. Then World3D calls `setup()` again, and the
+      second call builds a second frame and layout on top of the first. For the hotbar,
+      `_slot_nodes` then indexes only the second set of slots, so a page flip hides and shows only
+      those. Fix: call `setup()` before `add_child`, or guard the second call. Then check it with
+      the built tree (`tools/dump_window_tree.gd`-style) before and after.
 - [ ] **Linear fog between the real planes.** Read in round 229: the client's fog is D3D linear fog
       from `channel 10 x view distance` to `channel 11 x view distance` (2500 by default) -- zero
       until the near plane (Jangan: 1250), complete at the far one (2250). `FOG_DENSITY` is an

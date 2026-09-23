@@ -83,7 +83,16 @@ func _init(builder: UiBuilder = null) -> void:
 ## no target window (no Media.pk2), in which case the node is empty and stays
 ## hidden -- there is no stand-in.
 func setup() -> bool:
-	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# The window consumes the clicks on it (round 529). Its rect is the
+	# showing piece's (_select sizes it to that piece; each piece's Frame
+	# fills its own rect). It was IGNORE, like every node under it, so a click
+	# on it reached World3D._unhandled_input (measured by round 522's
+	# re-review), which treats it as a click on the world: it walks the
+	# character and takes the keyboard back from a focused text line. STOP, as
+	# HudWindow uses (its comment has the reasoning): Godot 4.2 hit-tests the
+	# deepest control first, so the close button still gets its click. Hidden,
+	# the window catches nothing (Godot skips an invisible control).
+	mouse_filter = Control.MOUSE_FILTER_STOP
 	visible = false
 	if _builder == null:
 		return false

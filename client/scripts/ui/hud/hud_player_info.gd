@@ -71,8 +71,19 @@ func setup() -> void:
 			panel_size = Vector2(reg.rect.size)
 	custom_minimum_size = panel_size
 	size = panel_size
-	# Transparent container over the world: must not swallow clicks.
-	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# The block consumes the clicks on it (round 529). Its rect is the frame's
+	# own (the Frame below is placed at 0,0 with this size), so STOP here
+	# blocks exactly the drawn block. It was IGNORE, as are its frame and the
+	# layout root, and GDR_PMI_PICTURE -- a CIFStaticWithPictureClip with no
+	# art (ifplayerminiinfo.txt as dumped in round 529, docs/RE_COMPLETION.md)
+	# -- is built PASS, which bubbles up through IGNORE ancestors. So a click
+	# on the block reached World3D._unhandled_input (measured by round 522's
+	# re-review), which treats it as a click on the world: it walks the
+	# character and takes the keyboard back from a focused text line. STOP, as
+	# HudWindow uses (its comment has the reasoning): Godot 4.2 hit-tests the
+	# deepest control first, so a child that wants a click still gets it, and
+	# a PASS child's click stops here instead of reaching the world.
+	mouse_filter = Control.MOUSE_FILTER_STOP
 
 	if _builder == null:
 		return

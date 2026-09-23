@@ -72,13 +72,16 @@ func _ready() -> void:
 func setup(layout_data: Variant = null) -> void:
 	custom_minimum_size = Vector2(136, 175)
 	size = Vector2(136, 175)
-	# The root is a transparent container, so it must not swallow mouse
-	# input: Godot's default MOUSE_FILTER_STOP made this panel eat every
-	# click over its whole rectangle, and World3D drives click-to-move from
-	# _unhandled_input, which a consumed event never reaches. IGNORE applies
-	# to this node only -- the buttons and slots inside keep their own
-	# filters and still receive clicks.
-	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# The minimap consumes the clicks on it (round 529). Its rect is the
+	# frame's (MinimapFrame below is placed at 0,0 with this size). It was
+	# IGNORE, like every node under it, so a click on the map reached
+	# World3D._unhandled_input (measured by round 522's re-review), which
+	# treats it as a click on the world: it walks the character and takes the
+	# keyboard back from a focused text line. Nothing on the map takes a click
+	# today, so nothing here has to pass one to the world. STOP, as HudWindow
+	# uses (its comment has the reasoning): Godot 4.2 hit-tests the deepest
+	# control first, so the zoom and map buttons still get their clicks.
+	mouse_filter = Control.MOUSE_FILTER_STOP
 
 	# 1. Circular map clipping viewport (authored rect is 14, 57, 105, 105)
 	_map_clip = Control.new()

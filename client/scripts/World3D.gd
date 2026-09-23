@@ -8074,10 +8074,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	# stops movement; without this, a line left focused -- the chat's line,
 	# the debug panel's teleport field after Enter -- kept WASD and
 	# click-to-move dead until the line lost focus some other way.
-	# The windows, the chat and the hotbar slots are STOP, so their clicks do
-	# not get here. The player-info block, the minimap's map, the target window
-	# and the hotbar's body away from its slots still pass clicks through (a
-	# pre-existing gap, docs/TODO.md), so a click on them counts as a world click.
+	# The windows, the chat, the hotbar slots and (round 529) the player-info
+	# block, the minimap, the target window and the hotbar's body are STOP, so
+	# their clicks do not get here.
 	# The click itself carries on to the handlers below.
 	take_focus_back(get_viewport(), event)
 	# A direct keycode rather than an input action: this is a developer
@@ -8170,12 +8169,33 @@ func _unhandled_input(event: InputEvent) -> void:
 			and (event as InputEventMouseMotion).position.distance_to(_left_press_position) > LEFT_DRAG_THRESHOLD_PIXELS:
 		_left_dragging = true
 		_left_steering = true
-	elif event is InputEventMouseMotion and _camera_orbiting and _camera_view != CAMERA_VIEW_THIRD_PERSON:
-		camera_arm.rotation_degrees.y -= event.relative.x * CAMERA_ORBIT_SENSITIVITY
-		if _camera_view == CAMERA_VIEW_FREE:
-			camera_arm.rotation_degrees.x = clampf(
-				camera_arm.rotation_degrees.x - event.relative.y * CAMERA_ORBIT_SENSITIVITY,
-				CAMERA_PITCH_MIN_DEGREES, CAMERA_PITCH_MAX_DEGREES)
+	# The orbit's motion is not read here: _input turns the camera, so a drag
+	# keeps orbiting over a STOP control (see orbit_motion_applies).
+
+## Whether a mouse motion turns the camera. Asked in _input, not in
+## _unhandled_input, because a right drag that began on the world loses its
+## motion to any STOP control the cursor crosses. Godot 4.2.2's
+## Viewport::_gui_input_event sends motion to gui.mouse_focus, which a press on
+## no control leaves empty, or else to the control under the cursor; a STOP
+## control there consumes it, so it never reaches _unhandled_input (measured
+## by round 522's re-review over the chat, and by npc_service_reader_test's
+## check (o)). Viewport::push_input runs _input before the GUI for every
+## event, so the orbit reads its motion there wherever the cursor is, and
+## _unhandled_input no longer reads it (once, never twice).
+##
+## The right button must be in the motion's own button mask. _camera_orbiting
+## follows the right button's press and release as _unhandled_input sees
+## them, and a release can miss it: Godot sends a release to the control that
+## holds the mouse focus (a left press on a window made while the right button
+## was held), not to _unhandled_input. The flag then stays set with no button
+## down, and without this check plain motion would turn the camera everywhere.
+## Static so the suite can drive it without a running world.
+static func orbit_motion_applies(event: InputEvent, orbiting: bool, camera_view: String) -> bool:
+	if not orbiting or not (event is InputEventMouseMotion):
+		return false
+	if camera_view == CAMERA_VIEW_THIRD_PERSON:
+		return false
+	return ((event as InputEventMouseMotion).button_mask & MOUSE_BUTTON_MASK_RIGHT) != 0
 
 ## Real Silkroad-style click-to-move: raycasts from the camera through the
 ## real clicked screen position into the 3D world (real terrain/object
@@ -8224,6 +8244,16 @@ var _hover_reached_world := false
 var _hover_settle_queued := false
 
 func _input(event: InputEvent) -> void:
+	# The orbit turns the camera here, before the GUI can consume the motion
+	# (orbit_motion_applies has why). The event is not marked handled: the
+	# control under the cursor still sees it, as before.
+	if orbit_motion_applies(event, _camera_orbiting, _camera_view):
+		var motion := event as InputEventMouseMotion
+		camera_arm.rotation_degrees.y -= motion.relative.x * CAMERA_ORBIT_SENSITIVITY
+		if _camera_view == CAMERA_VIEW_FREE:
+			camera_arm.rotation_degrees.x = clampf(
+				camera_arm.rotation_degrees.x - motion.relative.y * CAMERA_ORBIT_SENSITIVITY,
+				CAMERA_PITCH_MIN_DEGREES, CAMERA_PITCH_MAX_DEGREES)
 	if event is InputEventMouseMotion and not _camera_orbiting and not _left_button_held:
 		_hover_pos = (event as InputEventMouseMotion).position
 		_hover_reached_world = false

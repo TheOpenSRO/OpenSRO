@@ -31678,3 +31678,118 @@ stand-in above.
 
 Not measured on a running client: the Guild tab's level line and the Level Up button have not
 been seen on screen.
+
+## The player-info block, minimap, target window and hotbar body stop clicks reaching the world; a camera orbit keeps orbiting over HUD (round 529)
+
+**What was open.** Round 522's re-review measured four HUD surfaces passing clicks to the world:
+the player-info block, the minimap's map, the target window, and the hotbar's body away from its
+slots and buttons. The press and the release both reached `World3D._unhandled_input`, where a left
+click counts as a click on the world: it walks the character, and `take_focus_back` takes the
+keyboard from a focused text line. The same re-review measured a side effect of STOP: a right-drag
+orbit that began on the world stopped turning while the cursor was over a STOP control (the chat).
+`TODO.md` recorded both, suggesting the orbit be read in `World3D._input`.
+
+**Grounding, re-read this round.**
+- **Round 522's measurements** (its RE_COMPLETION entry, "Which clicks reach `_unhandled_input`").
+  `World3D.tscn`'s `UI/Control`, the HUD's parent, is `mouse_filter = 2` (IGNORE), so no ancestor
+  stops a click.
+- **Godot 4.2.2-stable's `scene/main/viewport.cpp`**, read at the tag.
+  - `Viewport::push_input` runs `_input`, then `_gui_input_event`, then `_unhandled_input`, and
+    stops at the first that marks the event handled.
+  - In `_gui_input_event`, a press with no button already held on a control sets
+    `gui.mouse_focus = gui_find_control(mpos)`, and returns at once when that is null. The press is marked handled only when `_gui_call_input` reports it
+    stopped. That happens at a STOP control on the chain; a PASS control's event bubbles on
+    through IGNORE ancestors.
+  - A motion goes to `gui.mouse_focus`, or, when that is empty, to `gui_find_control(mpos)` while
+    `gui.mouse_in_viewport`. So a right press on no control leaves the drag's motion to whatever
+    control the cursor crosses.
+  - A release goes to `gui.mouse_focus` when there is one, and otherwise returns unhandled.
+  - `_gui_find_control_at_pos` tests the children first, last to first. It returns the node itself
+    only when its filter is not IGNORE and the point is inside its own rect. A child outside its
+    parent's rect is still tested on its own filter.
+- **The real layouts**, dumped on the render box with `tools/dump_layout.gd` from
+  `/opt/sro-files/client/Media.pk2` (read, nothing committed).
+  - `ifplayerminiinfo.txt`'s `GDR_PMI_PICTURE` is a `CIFStaticWithPictureClip` with no art.
+    `UiBuilder` builds it generic, which is PASS.
+  - `ifunderbar.txt`'s one generic control is `GDR_QS_INIDCTION` (`CIFWnd`, 285,8 40x40), inside
+    the 800x52 body. Everything outside the body is a `CIFStatic` with art (`GDR_DECORATE_1..3`,
+    built IGNORE) or a `CIFButton` (menu, community, option; STOP by default).
+  - `ifminimap.txt` and the target window's three layouts have no PASS control. Each has only
+    buttons, statics and gauges.
+
+**Change.**
+- `HudPlayerInfo`, `HudMinimap`, `HudTarget` and `HudUnderbar` set their ROOT to
+  `MOUSE_FILTER_STOP`, as `HudWindow` and `HudChat` are. HudWindow's comment has the reasoning:
+  children are tested first, so buttons and slots keep their clicks. Each root's rect is exactly
+  its drawn body:
+  - the player block's `Frame` and the minimap's `MinimapFrame` are placed at 0,0 with the root's
+    size;
+  - `HudTarget._select` sizes the root to the showing piece;
+  - the hotbar's root is the 800x52 rect `BarBackground` is drawn in.
+  A PASS child (the portrait, `GDR_QS_INIDCTION`) bubbles to the root and stops there.
+- **Where this departs from the plan.** The plan put STOP on the hotbar's `BarBackground` rather
+  than the root, to keep the transparent space above the bar clear. The root's rect is that same
+  body, and Godot returns a control only inside its own rect, so the root leaves the space above
+  the bar just as clear. The root also catches `GDR_QS_INIDCTION`'s bubbled click, which a
+  `BarBackground` sibling would not. And `BarBackground` exists only with an archive.
+- The hotbar's body fires the middle-button quickslot itself (`HudUnderbar._on_body_gui_input`).
+  That binding worked over the body before, through `World3D._unhandled_input`, and the slots
+  already fire it themselves (round 522). It is connected once, because World3D runs the bar's
+  `setup()` twice (below).
+- **The orbit.** `World3D._input` turns the camera when the new static
+  `World3D.orbit_motion_applies(event, _camera_orbiting, _camera_view)` says so. The orbit branch
+  is gone from `_unhandled_input`, so over the world the motion is applied once, not twice. The
+  event is not marked handled, so the control under the cursor still sees it.
+  `orbit_motion_applies` also requires the right button in the motion's own `button_mask`. A
+  right release can miss `_unhandled_input`: when a left press on a STOP control holds the mouse
+  focus, the release goes to that control (measured below). `_camera_orbiting` then stays set with
+  no button down, and without the mask check plain motion would turn the camera everywhere.
+- The left drag is unchanged. It still sets `_left_dragging` / `_left_steering` in
+  `_unhandled_input`. One edge moved: with both buttons held, the one motion that crosses the
+  left-drag threshold now also turns the camera. Before, the old `elif` chain skipped the orbit
+  for that event.
+
+**Tests.** `npc_service_reader_test.gd` check (o), in the live tree after check (n). It sends real
+events through `root.push_input`, with a recorder node whose `_input` and `_unhandled_input`
+stand in for World3D's. So "reaches the world" is measured, not read off a filter value. Headless,
+the viewport's mouse-enter is sent by hand (`NOTIFICATION_VP_MOUSE_ENTER`). Without it no motion
+finds a control, and the pane checks below would fail.
+- The probe: a click on no control reaches `_unhandled_input`.
+- Each surface, built without an archive, is STOP. A click on it does not reach the world: the
+  player block, the minimap's aperture, and the shown target window. A hidden target window
+  catches nothing.
+- The hotbar, from a synthetic `ifunderbar`-shaped layout (never real data). The body is STOP, and
+  a click on it, or on a PASS `CIFWnd` inside it, does not reach the world. A slot and the menu
+  button above the bar still take their clicks. The empty space above the bar and the decoration
+  beside it still pass a click to the world. A middle press on the body, or on a slot, fires the
+  first quickslot once.
+- The routing the orbit rests on, over a plain STOP control:
+  - over the world, a right drag's motion reaches both handlers;
+  - over the STOP control, `_input` sees it and `_unhandled_input` does not;
+  - the right release still reaches `_unhandled_input`;
+  - with a left press holding the control's focus, it does not.
+- `World3D.orbit_motion_applies` is true while orbiting over a control, and false:
+  - when not orbiting;
+  - with no right button in the mask;
+  - in the third-person view;
+  - for a button event.
+- `World3D._input`, called directly with a stand-in `SpringArm3D`, turns the yaw by `relative.x *
+  CAMERA_ORBIT_SENSITIVITY`. `_unhandled_input` then leaves it alone. A left drag still sets
+  `_left_steering` and turns nothing.
+- **NEGATIVE, measured.** With the five production scripts stashed and shipped, the suite reported
+  18 FAILURES, exactly the round's checks: each STOP filter, each click-through, the body's middle
+  press, `orbit_motion_applies` and its cases, and the two handler checks. The routing
+  measurements passed either way. Restored and shipped: ALL PASS.
+- Render box: `client/tools/remote_godot.sh tests` ran 80 suites, 0 failing.
+  `client/tools/remote_godot.sh check` checked 246 scripts and 5 scenes: ALL LOAD.
+  `cd server && go build ./... && go test -count=1 -p 1 ./...`: green.
+
+**Not driven:** a real click or drag in a running client, and the four surfaces built from
+Media.pk2. The claim that each root's rect equals its artwork's rect is read from the code, not
+measured on a built HUD. A drawn surface's transparent corners inside that rect now take the
+click, as a window's do.
+
+**Found, not fixed (read from the code, not measured).** `World3D._try_initialize_pk2_ui` adds
+`HudMinimap` and `HudUnderbar` to the tree, and each one's `_ready` runs `setup()` because it has
+no children yet. Then World3D calls `setup()` again, which builds a second copy on top of the first.
+Filed in `TODO.md`.

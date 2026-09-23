@@ -64,13 +64,31 @@ func setup(layout_data: Variant = null) -> void:
 
 	custom_minimum_size = body_size
 	size = body_size
-	# The root is a transparent container, so it must not swallow mouse
-	# input: Godot's default MOUSE_FILTER_STOP made this panel eat every
-	# click over its whole rectangle, and World3D drives click-to-move from
-	# _unhandled_input, which a consumed event never reaches. IGNORE applies
-	# to this node only -- the buttons and slots inside keep their own
-	# filters and still receive clicks.
-	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# The bar's body consumes the clicks on it (round 529). This control's
+	# rect IS the body -- 800x52, the rect BarBackground is drawn in -- so
+	# STOP here covers the body and nothing else. Godot 4.2 returns a control
+	# for a click only inside its own rect (Viewport::_gui_find_control_at_pos),
+	# so the transparent space above the bar still reaches the world. What
+	# sits outside the body is hit-tested on its own filter: the decorations
+	# (GDR_DECORATE_1..3, CIFStatic art) are IGNORE, the menu, community and
+	# option buttons STOP, as before (ifunderbar.txt as dumped in round 529,
+	# docs/RE_COMPLETION.md). It was IGNORE, and GDR_QS_INIDCTION (a CIFWnd,
+	# built PASS, inside the body) bubbled up through it, so a click
+	# on the body away from the slots and buttons reached
+	# World3D._unhandled_input (measured by round 522's re-review), which
+	# treats it as a click on the world: it walks the character and takes the
+	# keyboard back from a focused text line. STOP, as HudWindow uses (its
+	# comment has the reasoning): the slots and buttons are hit-tested first
+	# and keep their clicks.
+	mouse_filter = Control.MOUSE_FILTER_STOP
+	# The middle button fires the page's first quickslot wherever the cursor
+	# is (World3D._unhandled_input, playtest 2026-09-20). STOP now keeps a
+	# middle press on the body from reaching World3D, so the body fires it
+	# here, as each slot does for a press on the slot (a slot is STOP too, so
+	# its press does not also bubble here). Connected once: World3D adds the
+	# bar to the tree (whose _ready runs setup) and then calls setup again.
+	if not gui_input.is_connected(_on_body_gui_input):
+		gui_input.connect(_on_body_gui_input)
 
 	# The bar background, behind every child.
 	if registry_def != null and registry_def.ddj != "" and _ui_builder != null:
@@ -149,6 +167,13 @@ func setup(layout_data: Variant = null) -> void:
 			_btn_page_down.pressed.connect(_prev_page)
 
 	_update_page_visibility()
+
+## A press on the bar's body itself (or on a PASS child that bubbles to it):
+## the middle button fires the page's first quickslot, as it does over a slot
+## and over the world. Nothing else on the body does anything.
+func _on_body_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_MIDDLE:
+		activate_key(0)
 
 ## The under-bar's skill-point readout.
 ##

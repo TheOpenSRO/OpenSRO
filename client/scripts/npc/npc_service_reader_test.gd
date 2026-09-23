@@ -24,6 +24,33 @@ func _find(services: Array, key: String) -> Variant:
 			return s
 	return null
 
+## One mouse button event at a viewport point, through the live viewport the
+## way the OS delivers it (Viewport.push_input: _input, the GUI, then
+## _unhandled_input). Check (o).
+func _push_button(at: Vector2, button: MouseButton, pressed: bool) -> void:
+	var ev := InputEventMouseButton.new()
+	ev.button_index = button
+	ev.pressed = pressed
+	ev.position = at
+	ev.global_position = at
+	root.push_input(ev, true)
+
+## Whether the recorder's _unhandled_input saw a button event since its list
+## was last cleared: a press when `pressed`, else a release.
+func _recorded_button(recorder: Node, pressed: bool) -> bool:
+	for e in recorder.get("unhandled"):
+		if e is InputEventMouseButton and (e as InputEventMouseButton).pressed == pressed:
+			return true
+	return false
+
+## A press and its release at a point; true when the press reached
+## _unhandled_input, which is where World3D reads a click on the world.
+func _click_reaches_world(recorder: Node, at: Vector2, button: MouseButton = MOUSE_BUTTON_LEFT) -> bool:
+	(recorder.get("unhandled") as Array).clear()
+	_push_button(at, button, true)
+	_push_button(at, button, false)
+	return _recorded_button(recorder, true)
+
 func _init() -> void:
 	# refshopgroup: col 4 is the NPC codename that runs the shop group.
 	var shop_rows := PackedStringArray([
@@ -746,6 +773,249 @@ func _initialize() -> void:
 		field.free()
 		if world != null:
 			world.free()
+		# (o) clicks through the live viewport; the panels' windows must not
+		# sit under its points.
+		live.free()
+
+	# (o) Round 529: the four HUD surfaces round 522's re-review measured
+	# passing clicks to the world -- the player-info block, the minimap, the
+	# target window and the hotbar's body -- consume them now, and a camera
+	# orbit keeps turning over a STOP control. Real events go through the live
+	# viewport, and a recorder node stands in for World3D's two handlers, so
+	# "reaches the world" is measured here, not read off a filter value. Each
+	# surface is built without an archive; the hotbar from a synthetic layout
+	# shaped like ifunderbar.txt's controls (never real game data). Not driven:
+	# a real click in a running client, and the surfaces built from Media.pk2.
+	var recorder_script := GDScript.new()
+	recorder_script.source_code = "\n".join([
+		"extends Node",
+		"var inputs: Array = []",
+		"var unhandled: Array = []",
+		"func _input(event: InputEvent) -> void:",
+		"\tinputs.append(event)",
+		"func _unhandled_input(event: InputEvent) -> void:",
+		"\tunhandled.append(event)",
+		""])
+	_check(recorder_script.reload() == OK, "the recorder script compiles")
+	var recorder := Node.new()
+	recorder.set_script(recorder_script)
+	root.add_child(recorder)
+	# A motion finds the control under the cursor only while the mouse is in
+	# the viewport (Godot 4.2.2 Viewport::_gui_input_event, gui.mouse_in_viewport),
+	# which only the OS's enter event sets; headless, it is sent here.
+	root.notification(Node.NOTIFICATION_VP_MOUSE_ENTER)
+	var hud := Control.new()
+	hud.name = "Round529Hud"
+	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE  # as World3D.tscn's UI/Control
+	root.add_child(hud)
+	var empty := Vector2(600, 300)
+	# The probe first: a click on no control does reach _unhandled_input.
+	_check(_click_reaches_world(recorder, empty), "the probe: a click on no control reaches _unhandled_input")
+
+	# The player-info block. NEGATIVE (fails before round 529: IGNORE).
+	var pmi := HudPlayerInfo.new(null)
+	pmi.setup()
+	hud.add_child(pmi)
+	pmi.position = Vector2(4, 7)
+	_check(pmi.mouse_filter == Control.MOUSE_FILTER_STOP,
+		"the player-info block is STOP (filter %d)" % pmi.mouse_filter)
+	_check(not _click_reaches_world(recorder, pmi.position + pmi.size / 2.0),
+		"a click on the player-info block does not reach the world")
+
+	# The minimap. NEGATIVE (fails before round 529: IGNORE on every node).
+	var minimap := HudMinimap.new()
+	minimap.setup()
+	hud.add_child(minimap)
+	minimap.position = Vector2(900, 10)
+	_check(minimap.mouse_filter == Control.MOUSE_FILTER_STOP,
+		"the minimap is STOP (filter %d)" % minimap.mouse_filter)
+	var aperture_centre: Vector2 = minimap.position + HudMinimap.APERTURE_RECT.get_center()
+	_check(not _click_reaches_world(recorder, aperture_centre),
+		"a click on the minimap's map does not reach the world")
+
+	# The target window: STOP, and catches nothing while hidden. Without an
+	# archive there is no piece to show, so it is given a rect and shown, as
+	# _select and show_target do with one. NEGATIVE (fails before round 529).
+	var target := HudTarget.new(null)
+	_check(target.setup() == false, "the target window builds no piece without an archive")
+	hud.add_child(target)
+	_check(target.mouse_filter == Control.MOUSE_FILTER_STOP,
+		"the target window is STOP (filter %d)" % target.mouse_filter)
+	target.position = Vector2(400, 10)
+	target.size = Vector2(100, 40)
+	var target_centre := target.position + target.size / 2.0
+	_check(_click_reaches_world(recorder, target_centre), "a hidden target window catches nothing")
+	target.visible = true
+	_check(not _click_reaches_world(recorder, target_centre),
+		"a click on the shown target window does not reach the world")
+
+	# The hotbar. Its rect is the 800x52 body; a slot, a CIFWnd (built PASS,
+	# as GDR_QS_INIDCTION is) inside the body, a button above the body and a
+	# decoration beside it, at their ifunderbar.txt places.
+	var bar_layout := """
+Interface Text
+
+Section = Create,"0,0,0,0","0"
+{
+	GDR_TMPQS_0:CIFSlotWithHelp
+	{
+		Rect=RECT,"238,11,32,32"
+	}
+	GDR_QS_INIDCTION:CIFWnd
+	{
+		Rect=RECT,"285,8,40,40"
+	}
+	GDR_BTN_MENU:CIFButton
+	{
+		Rect=RECT,"688,-17,60,56"
+	}
+	GDR_DECORATE_1:CIFStatic
+	{
+		Rect=RECT,"-64,0,64,52"
+		DDJ=STRING,"interface\\underbar\\ub_deco_left.ddj"
+	}
+}
+"""
+	var bar := HudUnderbar.new(UiBuilder.new(null, null), null, null)
+	bar.setup(bar_layout)
+	hud.add_child(bar)
+	var bar_at := Vector2(100, 400)
+	bar.position = bar_at
+	var fired: Array = []
+	bar.quickslot_activated.connect(func(idx: int) -> void: fired.append(idx))
+	var menus: Array = []
+	bar.menu_action.connect(func(action: String) -> void: menus.append(action))
+	_check(bar.size == Vector2(HudUnderbar.BODY_WIDTH, HudUnderbar.BODY_HEIGHT),
+		"the probe: the hotbar's rect is its body (%s)" % [bar.size])
+	# NEGATIVE (fails before round 529: IGNORE).
+	_check(bar.mouse_filter == Control.MOUSE_FILTER_STOP, "the hotbar's body is STOP (filter %d)" % bar.mouse_filter)
+	_check(not _click_reaches_world(recorder, bar_at + Vector2(100, 26)),
+		"a click on the hotbar's body away from its slots does not reach the world")
+	_check(not _click_reaches_world(recorder, bar_at + Vector2(300, 26)),
+		"a click on a PASS control inside the body stops at the body")
+	_check(fired.is_empty(), "a left click on the body fires no quickslot (got %s)" % [fired])
+	# The children keep their clicks.
+	_check(not _click_reaches_world(recorder, bar_at + Vector2(254, 27)) and fired == [0],
+		"a click on a slot fires it and does not reach the world (fired %s)" % [fired])
+	_check(not _click_reaches_world(recorder, bar_at + Vector2(718, -5)) and menus == ["menu"],
+		"the menu button above the bar still takes its click (got %s)" % [menus])
+	# Nothing is swallowed outside the body: the space above it and the
+	# decoration beside it still pass a click to the world.
+	_check(_click_reaches_world(recorder, bar_at + Vector2(100, -20)),
+		"a click in the empty space above the bar reaches the world")
+	_check(_click_reaches_world(recorder, bar_at + Vector2(-30, 26)),
+		"a click on the decoration beside the bar reaches the world")
+	# The middle button still fires the page's first quickslot over the body
+	# (it reached World3D before) and over a slot, once each.
+	fired.clear()
+	_check(not _click_reaches_world(recorder, bar_at + Vector2(100, 26), MOUSE_BUTTON_MIDDLE) and fired == [0],
+		"a middle press on the body fires the first quickslot (fired %s)" % [fired])
+	fired.clear()
+	_check(not _click_reaches_world(recorder, bar_at + Vector2(254, 27), MOUSE_BUTTON_MIDDLE) and fired == [0],
+		"a middle press on a slot fires it once (fired %s)" % [fired])
+
+	# The orbit. First the routing it rests on, measured with a plain STOP
+	# control (every HudWindow is one): a right press on no control leaves no
+	# mouse focus, so Godot sends the drag's motion to the control under the
+	# cursor, which consumes it; _input still sees it.
+	var pane := Control.new()
+	pane.mouse_filter = Control.MOUSE_FILTER_STOP
+	pane.position = Vector2(600, 100)
+	pane.size = Vector2(120, 120)
+	hud.add_child(pane)
+	var over_pane := pane.position + pane.size / 2.0
+	(recorder.get("unhandled") as Array).clear()
+	_push_button(empty, MOUSE_BUTTON_RIGHT, true)
+	_check(_recorded_button(recorder, true), "the probe: a right press on no control reaches _unhandled_input")
+	var drag := InputEventMouseMotion.new()
+	drag.relative = Vector2(10, 4)
+	drag.button_mask = MOUSE_BUTTON_MASK_RIGHT
+	var drag_world := drag.duplicate() as InputEventMouseMotion
+	drag_world.position = empty + Vector2(10, 4)
+	drag_world.global_position = drag_world.position
+	var drag_pane := drag.duplicate() as InputEventMouseMotion
+	drag_pane.position = over_pane
+	drag_pane.global_position = over_pane
+	(recorder.get("inputs") as Array).clear()
+	(recorder.get("unhandled") as Array).clear()
+	root.push_input(drag_world, true)
+	_check((recorder.get("inputs") as Array).size() == 1 and (recorder.get("unhandled") as Array).size() == 1,
+		"over the world a drag's motion reaches both _input and _unhandled_input, so only one may turn the camera")
+	(recorder.get("inputs") as Array).clear()
+	(recorder.get("unhandled") as Array).clear()
+	root.push_input(drag_pane, true)
+	_check((recorder.get("inputs") as Array).size() == 1, "_input sees the drag's motion over a STOP control")
+	_check((recorder.get("unhandled") as Array).is_empty(),
+		"the STOP control consumes it: _unhandled_input never sees it (why the orbit reads _input)")
+	(recorder.get("unhandled") as Array).clear()
+	_push_button(over_pane, MOUSE_BUTTON_RIGHT, false)
+	_check(_recorded_button(recorder, false), "the right release still reaches _unhandled_input (no mouse focus)")
+	# The case orbit_motion_applies' mask check covers: a left press on the
+	# STOP control while the right button is held takes the mouse focus, and
+	# the right release then goes there, never to _unhandled_input.
+	_push_button(empty, MOUSE_BUTTON_RIGHT, true)
+	_push_button(over_pane, MOUSE_BUTTON_LEFT, true)
+	(recorder.get("unhandled") as Array).clear()
+	_push_button(empty, MOUSE_BUTTON_RIGHT, false)
+	_check(not _recorded_button(recorder, false),
+		"a right release while a left press holds a control's focus misses _unhandled_input")
+	_push_button(over_pane, MOUSE_BUTTON_LEFT, false)
+
+	# World3D's own handlers, called directly (it cannot run without a world).
+	var w3d_script := load("res://scripts/World3D.gd") as GDScript
+	var w3d: Node = w3d_script.new() if w3d_script != null and w3d_script.can_instantiate() else null
+	var has_orbit := w3d != null and w3d.has_method("orbit_motion_applies")
+	# NEGATIVE (fails before round 529: the orbit was read in _unhandled_input).
+	_check(has_orbit, "World3D has orbit_motion_applies")
+	var consts: Dictionary = w3d_script.get_script_constant_map() if w3d_script != null else {}
+	var view_free: String = consts.get("CAMERA_VIEW_FREE", "")
+	var view_third: String = consts.get("CAMERA_VIEW_THIRD_PERSON", "")
+	var orbits := func(ev: InputEvent, orbiting: bool, view: String) -> bool:
+		return has_orbit and bool(w3d.call("orbit_motion_applies", ev, orbiting, view))
+	_check(orbits.call(drag_pane, true, view_free), "an orbit's motion over a control turns the camera")
+	_check(has_orbit and not orbits.call(drag_pane, false, view_free), "the same motion turns nothing when not orbiting")
+	var no_right := drag_pane.duplicate() as InputEventMouseMotion
+	no_right.button_mask = 0
+	_check(has_orbit and not orbits.call(no_right, true, view_free),
+		"an orbiting flag left set with no right button down turns nothing")
+	_check(has_orbit and not orbits.call(drag_pane, true, view_third),
+		"the third-person view does not orbit (the camera follows the player)")
+	_check(has_orbit and not orbits.call(InputEventMouseButton.new(), true, view_free), "a button event is not orbit motion")
+	if w3d != null:
+		var arm := SpringArm3D.new()
+		w3d.set("camera_arm", arm)
+		w3d.set("_camera_orbiting", true)
+		w3d.set("_right_button_held", true)
+		var sensitivity: float = consts.get("CAMERA_ORBIT_SENSITIVITY", 0.0)
+		var yaw_before := arm.rotation_degrees.y
+		w3d.call("_input", drag_pane)
+		var yaw_after_input := arm.rotation_degrees.y
+		# NEGATIVE (fails before round 529: _input did not orbit).
+		_check(sensitivity > 0.0 and is_equal_approx(yaw_after_input, yaw_before - drag_pane.relative.x * sensitivity),
+			"World3D._input turns the camera by the drag (yaw %.2f -> %.2f)" % [yaw_before, yaw_after_input])
+		w3d.call("_unhandled_input", drag_world)
+		# NEGATIVE (fails before round 529: _unhandled_input turned it).
+		_check(is_equal_approx(arm.rotation_degrees.y, yaw_after_input),
+			"World3D._unhandled_input no longer turns it, so motion over the world turns it once (yaw %.2f)" % arm.rotation_degrees.y)
+		# The left drag is unchanged: it steers the character and turns nothing.
+		w3d.set("_camera_orbiting", false)
+		w3d.set("_right_button_held", false)
+		w3d.set("_left_button_held", true)
+		w3d.set("_left_dragging", false)
+		w3d.set("_left_press_position", Vector2.ZERO)
+		var steer := InputEventMouseMotion.new()
+		steer.position = Vector2(20, 0)
+		steer.relative = Vector2(20, 0)
+		steer.button_mask = MOUSE_BUTTON_MASK_LEFT
+		var rotation_before := arm.rotation_degrees
+		w3d.call("_input", steer)
+		w3d.call("_unhandled_input", steer)
+		_check(bool(w3d.get("_left_steering")) and arm.rotation_degrees.is_equal_approx(rotation_before),
+			"a left drag still steers the character and turns no camera")
+		arm.free()
+		w3d.free()
+	hud.free()
+	recorder.free()
 
 	if _failures == 0:
 		print("ALL PASS")
