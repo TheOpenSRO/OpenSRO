@@ -40,7 +40,13 @@ In order. Each is checked off here when it ships in a release, with its round in
       get -- and honour rank, each its own backend. A guildless player gets no "Buy" at a guild
       NPC, as in the real client, where the same `FUN_009870e0` test gates item 1 (round 524); a
       member keeps it. See `docs/protocol/character_state.md`, "The guild NPC's lines
-      (round 521)". Also open: the guild state behind the menu can go stale, because the server
+      (round 521)". Still open for the guild store itself (round 530, record): the real server
+      does not refuse the store to anyone. It refuses the goods, all of which have a guild-point
+      price (PaymentDevice 8). A buyer with no guild, or who is not the master, gets `0x18c4`, and
+      a guild short of points gets `0x18c5`, after the gold test. srrevamp charges only the gold,
+      so a guildless player who sends the buy is served. Needed: import the goods' device-8
+      amounts, add the two refusals, and spend the points (`character_state.md`, "What the server
+      checks at a guild store (round 530)"). Also open: the guild state behind the menu can go stale, because the server
       sends no guild broadcasts (`session/guild.go` answers only the requester). When the master
       leaves, `guild.Store.Leave` hands leadership to the longest-standing member, whose client
       keeps `_guild_master` false and still offers "Leave guild." until its next `guild_info`

@@ -234,6 +234,16 @@ Not spending them would make the guild-point cost a threshold only. If the
 ShardManager is ever read, `guild.CheckLevelUp`'s `gpCost` is the value to
 correct.
 
+**A third purchase gated on `GatheredSP`: the guild store's goods (round 530).**
+Every good the `STORE_*_GUILD` stores sell has a PaymentDevice 8 price row in
+`refpricepolicyofitem`. For these goods `GObjPC::CheckCurrencyRequirement`
+(`0x617360`) tests bit 8 (`0x61787d`), after the gold test. It refuses `0x18c4`
+`UIIT_MSG_GUILD_STORE_BUY_LIMIT` when `pc+0x1cbc` is 0 or `CGuild::IsGuildMaster`
+answers 0. It refuses `0x18c5` `UIIT_MSG_GUILD_LACK_GP` when `guild + 0x3c` is
+below the price. srrevamp models none of this yet. See
+`docs/protocol/character_state.md`, "What the server checks at a guild store
+(round 530)".
+
 **What the client does with a refusal.** `Guild_OnLevelUpResult` (`0x881bd0`,
 the client's handler for `0xb0fa`) reads a result byte and, on 2, a `u16` code,
 and hands it to the error dispatcher with category `0x10` (`0x881c53 push

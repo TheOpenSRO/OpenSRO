@@ -31793,3 +31793,88 @@ click, as a window's do.
 `HudMinimap` and `HudUnderbar` to the tree, and each one's `_ready` runs `setup()` because it has
 no children yet. Then World3D calls `setup()` again, which builds a second copy on top of the first.
 Filed in `TODO.md`.
+
+## Record: guild-store goods are refused by their guild-point price, not by the store (CheckCurrencyRequirement bit 8: 0x18c4, 0x18c5) (round 530)
+
+**The question.** Round 524 hid a guild NPC's "Buy" line from a guildless player, which is the
+client's own rule (`FUN_00700440`). Its implementer noted that srrevamp's server shop handler does
+not check the guild, so a client that skips the menu could still buy. Does the real server refuse
+that buyer, and with what code? This is a record round. **No code changed**, for the reasons
+below. The full reading, with every address, is in `docs/protocol/character_state.md`, "What the
+server checks at a guild store (round 530)".
+
+**What the engine does** (read-only on the render box: `/var/tmp/srv.asm`, `/var/tmp/decomp_server`,
+`objdump -s` on `SR_GameServer.exe`).
+
+- **Opening the store has no guild test.** `GObjPC_HandleShopMsg_046`'s id-1 arm looks the store
+  up (code 3 when there is none) and sends it. Its only codename tests are
+  `NPC_SD_MERCHANT_CHANGER` and `NPC_SD_THIEF_AGENT_CHANGER`, which refuse `0x1c26` on a
+  byte read through `pc+0x1fb4`. No guild NPC is tested.
+- **The buy is `CGObjPC::StorageOperation` op 8** (`FUN_005266a0`, which `FUN_0050ce80` stores at
+  `0xcd3b98`). Its own refusals are `0x185f`, 2, `0x1829`, the range/interaction refusals of
+  `0x4e72a0`, 3 (the NPC does not offer id 1) and 5 (the store index). None of them reads the
+  guild. It then walks the store's access permissions (`0x617a30`) and buys (`0x618fe0`).
+- **Access permissions can test the guild, but no data row does.** The list at `+0xb8` of the
+  store's reference record holds `_RefAccessPermissionOfShop` rows (`RefShop_InsertFamilyRow`
+  case 2, `0x6b4895`/`0x6b48a3`). Each row goes by its `+4` key to one of three handlers. RTTI
+  names them, through each vtable's `[-1]` locator:
+  - key 0: `SCNothing`, vtable `0xb02a50`;
+  - `0x55534c56`, `USLV`: `SCUserLevelLimit`, vtable `0xb02a5c`;
+  - `0x47444c56`, `GDLV`: `SCGuildLevelLimit`, vtable `0xb02a68`.
+
+  The keys are registered at `0x61bbaa`-`0x61bbbb`. `SCGuildLevelLimit`'s check (`0x61bb00`)
+  answers 2 when `pc+0x1cbc` (the guild) is 0, and otherwise tests `CGuild::GetLevel` against the
+  row's range. But `refaccesspermissionofshop.txt` has no rows in any copy here:
+  - the server pack's export (`SMC_Independent/SR_GameRefData`) is 2 bytes, `ff fe`, the byte-order
+    mark alone;
+  - its zlib patch copy inflates to the same two bytes;
+  - the client's `Media.pk2` copy prints no row with `dump_text_table.gd`.
+
+  The shard database's `_RefAccessPermissionOfShop` itself was not read.
+- **The refusal that applies is the goods' guild-point price.** The buy reaches
+  `GObjPC::CheckCurrencyRequirement` (`0x619026` -> `0x617a50`, `0x617e82` -> `0x617950`,
+  `0x617997`). After the gold test (bit 1, `0x180f`), the coins, honour points and silk, it tests
+  bit 8 (`0x61787d`):
+  - no guild (`0x617886` `[esi+0x1cbc]`): `0x18c4` `UIIT_MSG_GUILD_STORE_BUY_LIMIT`;
+  - not the master (`0x61789e` `call 0x5d0f50`, `CGuild::IsGuildMaster`): `0x18c4`;
+  - the guild's GatheredSP (`[[pc+0x1cbc]+0x4]+0x3c`, `0x6178a7`-`0x6178b0`) below the price's
+    `+0x20`: `0x18c5` `UIIT_MSG_GUILD_LACK_GP`.
+- **Every guild-store good carries bit 8.** The five `STORE_*_GUILD` stores sell 25 goods, five
+  each: the guild and union crest items on tab 1 and `PACKAGE_ITEM_ETC_GUILD_RECALL` on tab 3. The
+  two SD guild groups map to `STORE_KT_GUILD`. In `refpricepolicyofitem.txt` each of the five
+  packages has a PaymentDevice 1 row and a PaymentDevice 8 row. The client's copy and the server
+  pack's export agree.
+
+So a guildless player may open a guild store, and every buy there is refused with `0x18c4` once the
+gold test passes. So is a member who is not the master. The master is refused `0x18c5` while the
+guild is short of points.
+
+**Why no code.** The plan's code branch keyed the refusal on the store group (`GROUP_STORE_*_GUILD`)
+or on the NPC (`GUILD_PATTERNS`). Its test expected a guildless buyer refused and a member served.
+The engine keys the refusal on the goods' price policy, and it refuses a plain member too, so that
+test would have pinned a rule the engine does not have. srrevamp imports no price policy
+(`refdata.Item` has no payment device). `OpShopBuy` names only the item, so a store-keyed test
+would also need a new layout, and that is out of scope. srrevamp today charges `shop.Price`, which
+is itemdata column 26: 1,000,000 gold for `ITEM_ETC_GUILD_CREST_USER`, the device-1 amount. It
+checks no guild and spends no points. The follow-up is filed in `TODO.md`, `guild.md` and `SYSTEMS.md`'s Shops
+row: import each good's device-8 amount; after the gold test, refuse `0x18c4` and `0x18c5` in the
+engine's order; spend the points. Where the engine spends them was not followed. `0x618930`'s
+bit-8 arm copies the amount into the purchase record at `+0xa8`.
+
+**Names filed.** `recovered_names.tsv` gains the five condition-handler methods, from the RTTI
+above: `SCNothing::Check` (`0x61ba30`), `SCUserLevelLimit::IsValid`/`Check` (`0x61ba40`,
+`0x61ba70`) and `SCGuildLevelLimit::IsValid`/`Check` (`0x61bad0`, `0x61bb00`).
+
+**Probes and their failure modes.** A range grep of `srv.asm` for `0x1cbc` finds no guild read in
+the open handler, `StorageOperation`, the op-8 entry, the purchase, or `0x617a50`/`0x617950`. The
+same grep finds the three known reads (`0x617886`, `0x6178a7`, `0x61bb28`), so the probe can see
+one. It cannot see a callee that reads the guild itself, so the callees on the path were read by
+hand. The empty-table reading cannot tell a failed export from an empty table. The client copy
+agrees, but it is another export of the same data.
+
+**Tests.** No code and no new test, so there is no negative case to prove. After the doc edits,
+`cd server && go build ./... && go test -count=1 -p 1 ./...` is green. The doc-driven
+`internal/systems` probes read the edited `SYSTEMS.md`, `recovered_names.tsv` and
+`character_state.md` at run time. No client file changed, so the client suites were not run. The
+render box was used read-only, except for one `remote_godot.sh sync` of the unchanged tree and
+three `dump_text_table.gd` runs (the table, a known table, and a misspelt name).

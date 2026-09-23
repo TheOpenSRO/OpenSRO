@@ -1632,6 +1632,153 @@ NPC's lines srrevamp offers besides these depends on the gate: the seven
 codenames hold no `WAREHOUSE`, so there is no storage line, and the store
 window's repair buttons are id 4's, which no guild NPC has.
 
+### What the server checks at a guild store (round 530)
+
+Round 524 hid "Buy" from a guildless player on the client. Its implementer
+noted that srrevamp's server does not check the guild when that player buys
+anyway, and this round asked whether the real server does. **It does not check
+at the store. It checks at the goods.** Every guild-store good has a
+guild-point price, and only a guild's master can pay one. No code changed:
+srrevamp does not model that price yet. Everything below was read on the render
+box (`/var/tmp/srv.asm`, `/var/tmp/decomp_server`, and `objdump -s` on
+`SR_GameServer.exe`), read-only.
+
+**Opening the store has no guild test.** `GObjPC_HandleShopMsg_046`'s id-1 arm
+(`0x51039d` `cmp al,0x1`) does three things. It looks the NPC's store up
+(`0x5103ba` `call 0x619c10`, code 3 when there is none) and calls
+`0x6199a0`, a `0xb121` sender (`0x5103ce`). It then compares the NPC's codename with two
+literals: `NPC_SD_MERCHANT_CHANGER` (`.rdata 0xaf6c04`, loaded at `0x5103df`)
+and `NPC_SD_THIEF_AGENT_CHANGER` (`0xaeedd8`, `0x51045b`). Those two NPCs refuse
+`0x1c26` on a byte read through `pc+0x1fb4` (`0x510431` and `0x510475`
+`call 0x60e040`). No guild NPC is tested there.
+
+**The buy** is `CGObjPC::StorageOperation` op 8. `FUN_0050ce80` stores
+`FUN_005266a0` at `0xcd3b98` (`0xcd3b58 + 8*8`), and again for ops 0x13 and
+0x2b. It refuses, in this order:
+
+- `0x185f` when the PC's slot `+0x244` answers nonzero for 4 (`0x5266ab`);
+- 2 unless the dword at `[0xc8279c]+0x10` is 5 (`0x5266d0`);
+- `0x1829` for a count below 1 (`0x5266ea`);
+- `0x4e72a0`'s range and interaction refusals, `0x1c0d` among them (`0x52670a`);
+- 3 unless the NPC offers id 1 (`0x526723`);
+- 5 for a store index (the request's `+0x14` byte) outside the NPC's list
+  (`0x5267ab` `call 0x5236f0`).
+
+It then walks the store's access permissions (`0x5267bc` `call 0x617a30`) and
+buys (`0x5267d3` `call 0x618fe0`).
+
+**Access permissions: a guild-level condition exists, but no row uses it.**
+`0x617a30` walks the list at `+0xb8` of the store's reference record
+(`0x617a36` `mov eax,[ecx+0x8]`, `0x617a3e` `lea ebx,[eax+0xb8]`), and
+`RefShop_InsertFamilyRow` fills that list from `_RefAccessPermissionOfShop`
+rows (case 2: `0x6b4895` `lea eax,[esi+0xb8]`, `0x6b48a3` `call 0x7215e0`).
+`0x61be20` hands each row, by its `+4` key, to a handler that the manager at
+`0xd15618` registers when it is built (`0x61bb60`, pointer at `0xd6a9e8`).
+There are three keys: 0, `0x55534c56` and `0x47444c56` (`0x61bbaa`, `0x61bbb1`,
+`0x61bbbb`). `0x61bd40` gives them the vtables `0xb02a50`, `0xb02a5c` and
+`0xb02a68` (`0x61bdb5`, `0x61bd81`, `0x61bd9b`). The MSVC type descriptors
+behind each vtable's `[-1]` locator (`0xb5c96c`, `0xb5c920`, `0xb5c8d4`) name
+the classes `SCNothing`, `SCUserLevelLimit` and `SCGuildLevelLimit`. As an MSVC
+multi-character literal, the two keys spell `USLV` and `GDLV`.
+
+`SCGuildLevelLimit`'s check (`0x61bb00`) answers 2 when `pc+0x1cbc`, the
+guild (`guild.md`), is 0 (`0x61bb28`-`0x61bb32`). Otherwise it answers 1 only
+when `CGuild::GetLevel` (`0x61bb3b`) lies between the row's `+0x8` and `+0x28`.
+Any answer but 1 makes the walk return 2 (`0x61a8c1`). So a store *could*
+refuse a guildless player, with 2. **The data has no such row:**
+
+- The server pack's own export,
+  `/opt/sro-files/server/y0gi_Easy_vPLUS/SMC_Independent/SMC_Independent/SR_GameRefData/refaccesspermissionofshop.txt`,
+  is 2 bytes, `ff fe`: a UTF-16 byte-order mark and nothing else.
+- Its patch copy (`Patch_Internal_Comp/patch_upload_temp/media/server_dep/silkroad/textdata/`)
+  is a length word of 2 and a zlib stream that inflates to the same two bytes.
+- The client's `Media.pk2` copy prints no row with `dump_text_table.gd`. The
+  same tool, given a misspelt name, reports the file missing.
+
+The shard database's `_RefAccessPermissionOfShop` itself was not read, because
+the backup is not on the box.
+
+**The goods' price is the refusal that applies.** `0x618fe0` calls `0x617a50`
+(`0x619026`), which calls `0x617950` (`0x617e82`), which calls
+`GObjPC::CheckCurrencyRequirement` (`0x617997`). That function tests the goods'
+payment bits in a fixed order. It tests gold first (bit 1, `0x6173aa`, which
+refuses `0x180f` `UIIT_MSG_STRGERR_NOT_ENOUGH_GOLD`), then coins, the arena
+coin, honour points and silk. Bit 8 comes last (`0x61787d` `test bl,0x8`):
+
+	617886  mov edi,[esi+0x1cbc] ; test edi,edi ; je 0x6178d2       -> 0x18c4, no guild
+	617892  call [edx+0x380]
+	61789e  call 0x5d0f50 (CGuild::IsGuildMaster) ; je 0x6178d2     -> 0x18c4, not the master
+	6178a7  mov ecx,[esi+0x1cbc] ; mov edx,[ecx+0x4] ; mov eax,[edx+0x3c]
+	6178b3  compared with the price's [ebp+0x24]:[ebp+0x20]         -> 0x18c5 when below
+
+`[edx+0x3c]` is the guild's GatheredSP, the total round 525 credits. `0x18c4`
+is `UIIT_MSG_GUILD_STORE_BUY_LIMIT`, "You are not qualified to purchase the
+item.", and `0x18c5` is `UIIT_MSG_GUILD_LACK_GP`, "Item cannot be purchased due
+to lack of guild points." The names come from `error_codes.md` and the texts
+from the player's `textuisystem.txt`. After the checks, `0x618930`'s bit-8 arm
+copies the guild-point amount into the purchase record: bit 8 into `+0x88`, the
+amount into `+0xa8`. Where the guild's total is then reduced was not followed.
+
+**Every guild-store good has a guild-point price.** `refshopgoods.txt` lists 25
+goods for the five `STORE_*_GUILD` stores, five in each
+(`GROUP_STORE_SD_M_GUILD` and `GROUP_STORE_SD_T_GUILD` map to `STORE_KT_GUILD`
+in `refmappingshopgroup.txt`). Tab 1 sells `PACKAGE_ITEM_ETC_GUILD_CREST_USER`,
+`..._GUILD_CREST_DELETE`, `..._UNION_CREST_USER` and `..._UNION_CREST_DELETE`.
+Tab 3 sells `PACKAGE_ITEM_ETC_GUILD_RECALL`. In `refpricepolicyofitem.txt`,
+each of those five packages has two rows: PaymentDevice 1 and PaymentDevice 8.
+The client's copy (`/var/tmp/tables`) and the server pack's export agree,
+though the amount sits in a different column in each. The guild crest's two
+rows carry 1,000,000 and 20,000. So in the real engine:
+
+| buyer | at a guild store |
+|---|---|
+| no guild | opens the store; a buy that passes the gold test is refused `0x18c4` |
+| a member who is not the master | the same, `0x18c4` |
+| the master, with the guild short of points | `0x18c5` |
+| the master, with enough points | bought |
+
+Round 524's "a member keeps Buy" still describes the client's menu correctly.
+A member who then buys is refused `0x18c4`.
+
+**srrevamp.** `handleShopBuy` (`internal/session/shop.go`) charges
+`shop.Price` in gold, which is itemdata column 26. For the guild crest
+(`ITEM_ETC_GUILD_CREST_USER`, id 9268) that is 1,000,000, the same amount as
+the device-1 row. It checks neither the guild nor the master, and it spends no
+guild points. So a guildless player who sends the buy gets the crest for its
+gold. No code changed, for three reasons:
+
+- The engine keys the refusal on the goods' price policy. It does not key it on
+  a `GROUP_STORE_*_GUILD` store or on a `GUILD_PATTERNS` NPC, the two keys the
+  round was planned around. Keying it on the store would also refuse the guild
+  master, who the engine lets buy.
+- srrevamp imports no price policy. `refdata.Item` has no payment device.
+- `OpShopBuy` names only the item, not the NPC or the store. A store-keyed test
+  would need a new packet layout. A price-keyed one would not.
+
+The follow-up has three parts:
+
+- Import each good's device-8 amount (`refpricepolicyofitem` joined through
+  `refscrapofpackageitem`).
+- After the gold test, as the engine orders them, refuse `0x18c4` without a
+  guild or to a non-master, and `0x18c5` when `Guild.GatheredSP` is short.
+- Spend the points.
+
+**The probes and how they could fail.**
+
+- **A range grep of `srv.asm`** for `0x1cbc` found no guild read in any of
+  these: `GObjPC_HandleShopMsg_046`, `CGObjPC::StorageOperation`, `0x5266a0`,
+  `0x618fe0`, `0x617a50`, `0x617950`, `0x619c10`, `0x6199a0`, `0x4e72a0`. Run
+  over `CheckCurrencyRequirement` and `0x61bb00`, the same grep finds the three
+  reads above (`0x617886`, `0x6178a7`, `0x61bb28`), so it can see one. It only
+  sees a direct `[reg+0x1cbc]` read, not a callee that reads the guild itself.
+  The callees on the buy path that matter were therefore read by hand:
+  `0x617a50`, `0x617950`, `CheckCurrencyRequirement`, the permission walk and
+  its three handlers.
+- **"No access-permission row"** rests on the exports being the table. A 2-byte
+  file could be an export that failed rather than an empty table, and nothing
+  here tells those two apart. The client's empty copy agrees, but it is another
+  export of the same data, not an independent reading.
+
 ### The job guilds' lines (round 526)
 
 Row 18 of the table, read from `sro_client.asm` for this round. `FUN_00700440`
