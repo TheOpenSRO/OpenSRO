@@ -10256,6 +10256,17 @@ which proved nothing, so it was redone with a bug that builds -- reading the
 SHIELD slot instead of the weapon -- and the test fails on exactly the broken
 case.
 
+**CORRECTED in round 486 (2026-09-23): one flag, and the `reqi` branch is
+modelled.** Slots 372/399/400 are read (`0x004ec5a0` / `0x004ec5d0` /
+`0x004ec600`), and each is one storage slot's `item+0x190` broken flag, so
+"durability at zero" is the whole test, not a collapse of three. The `reqi`
+branch's getters write TID 0 for a broken item (`4ead63` / `4eada3` /
+`4eadf5`), so a broken item matches nothing and the refusal there is `0x300d`,
+not `0x300f`. Nor does every slot-400 call lead to `0x300f`: the one at `58d599`
+sets no code (`58d5a6 je 0x58d638`, the loop tail). `session.equippedTypes` now
+leaves broken items out. See "A broken weapon or shield satisfies no reqi entry"
+(round 486).
+
 **What moved: A SHIPPED VALUE.** A broken weapon now refuses a skill cast, which
 is the engine's behaviour and was not srrevamp's. Tagged, because this is the
 first player-visible change since v0.1.418.
@@ -26022,3 +26033,128 @@ is green.
 
 Behaviour change: a player alone in a party they created no longer earns the level-gap EXP bonus;
 parties of two or more are unchanged from round 480.
+
+## A broken weapon or shield satisfies no reqi entry: the engine's TID getters read it as an empty slot (0x300d) (round 486)
+
+A skill with a `reqi` list (1,094 real skills) was cast with a broken item in the
+required slot. `session.equippedTypes` fed every worn item into
+`combat.SkillAllowsEquipment`, whatever its durability, so a broken staff still
+satisfied a staff skill. The engine refuses it. This round reads why, and with
+which code.
+
+**The reading.** `Skill_CheckCastRequirement` (`0x0058d480`) reads the worn types
+up front when the list is non-empty:
+
+	58d4c9  call 0x4ead80        <- the shield's TID into [esp+0x14]
+	58d4d4  call 0x4ead40        <- the weapon's TID into [esp+0x38] (Equip_GetWeaponTID)
+	58d57e  call 0x4eadc0        <- an armour part's TID, index = the entry's value
+	58d5c8  call 0x4eadc0        <- the same, in the value-0 part scan
+
+All three getters test the item's `+0x190` before they read its TID, and write 0
+if it is set:
+
+	4ead63  cmp DWORD PTR [eax+0x190],0x0 ; jne 0x4ead58 -> mov WORD PTR [edi],0x0
+	4eada3  cmp DWORD PTR [eax+0x190],0x0 ; jne 0x4ead98 -> mov WORD PTR [edi],0x0
+	4eadf5  cmp DWORD PTR [esi+0x190],0x0 ; jne 0x4eae0b -> mov WORD PTR [edi],0x0
+
+`+0x190` is the flag `GItemEquip::SetBrokenFlag` (`0x00495980`) stores.
+`GItemEquip::AddDurability` passes it `new < 1` (the call at `496e1b`) and
+`CGItemEquip::Create` passes `durability == 0`. So a broken item's TID is 0, the
+same as an empty slot's. A weapon or shield entry compares `TID >> 11` against
+its value (`58d513`, `58d542`), and every shipped value is non-zero, so nothing
+matches. The walk ends at `58d689`: `[esp+0x1c]` is still 0, and `58d695`
+returns **`0x300d`**, `UIIT_SKILL_USE_FAIL_WRONGWEAPON`.
+
+**The earlier `0x300f` reading was wrong for this branch.** The first plan for
+this item applied `0x300f` (`UIIT_SKILL_USE_FAIL_BROKEN_WEAPON`) here, and its
+implementer aborted it. A vtable call follows each match: `+0x5d0` at `58d527`
+(weapon), `+0x63c` at `58d556` (shield), and `+0x640` twice, at `58d599` for an
+armour entry with a Value and at `58d5de` in the value-0 part scan. Only three of
+the four can set `0x300f`:
+
+	58d533  je 0x58d607                  <- +0x5d0 answered 0
+	58d562  je 0x58d607                  <- +0x63c answered 0
+	58d5eb  je 0x58d605                  <- the scan's +0x640 answered 0;
+	58d605  xor edi,edi                     58d605 clears the match flag and
+	58d607  mov [esp+0x1c],0x300f           falls into 58d607
+
+A failed `+0x640` at `58d599` sets no code: `58d5a4 test eax,eax ; 58d5a6 je
+0x58d638` jumps straight to the loop tail, the same as no match. And none of the
+four can answer 0 after a match on a shipped record. They are CGObjPC's slots
+372/399/400 (`0x004ec5a0` / `0x004ec5d0` / `0x004ec600`, table `0x00af59fc`),
+and each answers `item == 0 || item+0x190 == 0` on the same storage slot the
+getter just read (`4ec5bb` / `4ec5eb` / `4ec631`). For a shipped skill,
+`0x300f` comes only from the weapon-byte branch (`58d719`: `+0x5d0`, then
+`58d72a mov [esp+0x20],0x300f`), and `weaponIsBroken` already models that.
+
+**What moved.**
+- `session.equippedTypes` skips a worn item when `durability.IsBroken` is true.
+  The skip comes before the reference lookup, because an empty slot has no row to
+  read either. Untracked (-1) is not broken and stays in. The refusal is the
+  existing "wrong equipment for this skill".
+- `combat.SkillAllowsEquipment` / `Satisfied` are unchanged. Their stale "NOT
+  MODELLED: srrevamp has no per-instance durability" comment is replaced with the
+  reading above.
+- `skill.go`'s weapon-byte comment said "three predicates collapsed into one". It
+  now says one flag on three storage slots.
+- Names filed in `docs/protocol/recovered_names.tsv`:
+  `Equip_GetShieldTID` (`0x004ead80`), `Equip_GetArmourPartTID` (`0x004eadc0`,
+  indexing `DAT_00c63f44` = `0x80000000,0,2,1,4,3,5`, the helm/shoulder/mail/
+  pants/gauntlet/boots storage slots for TypeID4 1-6),
+  `CGObjPC::IsWeaponServiceable` (`0x004ec5a0`) and
+  `CGObjPC::IsShieldServiceable` (`0x004ec5d0`). `0x004ec600` is renamed from
+  `UseItem` to `CGObjPC::IsEquipPartServiceable`. `UseItem` was a slot-400
+  propagation from `CGObjCOS_Pet`, and the body is a per-part broken-flag test.
+  These are descriptive names; the game's own are not recovered. They are filed
+  only: ApplyRecoveredNames was not run on the RE box.
+- `GROUNDING_AUDIT.md`'s broken-weapon section and `igobj_vtable.md`'s "What
+  this does NOT recover" are corrected to match.
+
+**Flagged, not corrected.** The same propagation put `UseItem` on
+`CGObjNPCNPC` `0x004c9310`, `CGObjSiegeObject` `0x004ccca0` and
+`CGObjSiegeStruct` `0x004ced10`. Two of those are one accessor: `0x004ccca0` is
+`mov eax,[ecx+0x34] ; test ; jne ; ret ; mov eax,[eax+0x20] ; ret`, and
+`0x004ced10` is the same without the null guard, `mov eax,[ecx+0x34] ; mov
+eax,[eax+0x20] ; ret`. So those two plausibly are one virtual. `0x004c9310`
+looks key 2 up in the `+0x1c78` interaction set through the find helper
+`0x431790` and may then call `0x488650`. Different bodies alone would not
+separate these from `0x004ec600`, because overrides of one virtual differ by
+design. The stack cleanup does separate two of them. `0x004ec600` pops one
+argument (`ret 0x4`), and so does `0x004c9310`, but the two siege bodies pop none
+(`ret`). A virtual has one signature, so the siege classes' slot 400 is not the
+virtual CGObjPC's slot 400 is. For `0x004c9310` the cleanup settles nothing.
+The three rows are left as they are until someone reads them.
+
+**Engine details NOT modelled.** They are disclosed in
+`combat.CastRequirement.Satisfied` and are not checked against any record:
+1. An armour entry with Value 0 scans parts 1..6 in order (`58d5c0`) and stops
+   at the first part not of the Kind. The answer depends on the first part, not
+   on any part.
+2. An ALL-of list with all five entries filled and matching falls out of the loop
+   with the match flag cleared (`58d649`) and returns `0x300d` (`58d681` ->
+   `58d695`).
+3. A weapon or shield entry with Value 0 matches an EMPTY slot in the engine
+   (`TID >> 11 == 0`). No shipped record has one.
+4. An armour entry with a Value compares TypeID4 only, never the Kind. No shipped
+   record has one.
+
+Separately, in the weapon-byte branch the engine calls `+0x5d0` whatever the type
+match said. A broken weapon of the wrong kind is therefore `0x300f` in the engine
+and "wrong weapon" here. Both refuse.
+
+**Tests.** `session.TestReqiBrokenWeaponSatisfiesNothing` drives
+`equippedTypes` + `combat.SkillAllowsEquipment` over the memory stores:
+- a staff (6/15) at `durability.Broken` on a `[{6,15}]` any-of skill is refused;
+- the same staff at durability 1 and at Untracked (-1) is allowed;
+- a broken buckler on `[{4,1}]` is refused, and the same buckler at 5 is allowed;
+- `[{6,15},{4,1}]` with a whole staff and a broken buckler is allowed any-of and
+  refused all-of.
+
+Negative case: with `skill.go` and `attacktype.go` stashed, the new test failed
+three ways: the broken staff was allowed, the broken buckler was allowed, and
+the all-of list was allowed. It passes with them restored.
+`go test -count=1 -p 1 ./...` is green.
+
+Behaviour change: a skill that requires a specific weapon or shield kind through
+`reqi` is refused with "wrong equipment for this skill" when the only matching
+item is broken. Before this round the cast went through.

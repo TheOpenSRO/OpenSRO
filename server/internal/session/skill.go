@@ -12,6 +12,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/berserk"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
+	"github.com/OpenSRO/srrevamp/server/internal/durability"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/grounditem"
@@ -763,12 +764,29 @@ func useSkillHandler(
 				// entry) but still let the cast through, so a broken weapon
 				// cost you its damage and nothing else. It now refuses.
 				//
-				// WHAT IS NOT MODELLED, said plainly: the engine has THREE
-				// predicates and this collapses them into one test, durability
-				// at zero, because only their shared consequence is recovered
-				// -- an error code gives a meaning, not a symbol, and those
-				// three method names are still unknown. A lookup failure
-				// permits the cast, the same choice every other gate here makes.
+				// CORRECTED round 486: it is ONE flag, not three predicates.
+				// CGObjPC's slots 372 (0x004ec5a0), 399 (0x004ec5d0) and 400
+				// (0x004ec600) each fetch one storage slot -- the weapon (6),
+				// the shield (7), an armour part through DAT_00c63f44 -- and
+				// answer `item == 0 || item+0x190 == 0` (4ec5bb / 4ec5eb /
+				// 4ec631 `cmp [eax+0x190],ecx ; sete`). +0x190 is the flag
+				// GItemEquip::SetBrokenFlag (0x00495980) sets at durability < 1,
+				// so durability.IsBroken is the whole test, not a collapse.
+				// Only this branch can FAIL at slot 372 for a shipped skill. The
+				// reqi branch below reaches it too (58d527, after a weapon
+				// match), but its TID getters already read a broken item as an
+				// empty slot, so its calls (0x5d0, 0x63c, 0x640) can only fail
+				// on a weapon or shield entry whose TypeID4 is 0 -- which no
+				// shipped record has (combat.CastRequirement's measurement:
+				// weapon values 2-15, shield 1-2).
+				//
+				// ORDER, disclosed: the engine runs slot 372 after the type
+				// match whatever its result (58d6fe sets 0x300d, 58d719 then
+				// calls +0x5d0 and returns 0x300f), and a broken weapon's TID
+				// reads 0 -- bare hand. So a broken weapon of the WRONG kind is
+				// 0x300f there and "wrong weapon" here. Both refuse the cast.
+				// A lookup failure permits the cast, the same choice every
+				// other gate here makes.
 				if broken, ok := weaponIsBroken(ctx, characterID, eq); ok && broken {
 					return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "your weapon is broken"}).Encode()})
 				}
@@ -781,6 +799,10 @@ func useSkillHandler(
 			//
 			// The previous tick made this case cast-anything, which was the
 			// faithful half of an unfinished answer; this is the rest of it.
+			//
+			// A broken item satisfies nothing here and the refusal is 0x300d,
+			// not 0x300f: the engine's getters read it as an empty slot (see
+			// equippedTypes), so it never reaches the serviceability calls.
 			worn, known := equippedTypes(ctx, characterID, eq, items)
 			if known && !combat.SkillAllowsEquipment(reqCastReqs, reqCastAll, worn) {
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "wrong equipment for this skill"}).Encode()})
@@ -1374,8 +1396,8 @@ func RaiseMasteryHandler(chars character.Store, store skill.Store) gateway.Handl
 // perfectly good sword, on a deployment whose only fault is an old import.
 // weaponIsBroken reports whether the worn weapon sits at zero durability, and
 // whether the answer is trustworthy. It is the serviceability half of the cast
-// requirement -- see the call site for the recovery and for the three engine
-// predicates this collapses into one.
+// requirement -- see the call site for the recovery. It is CGObjPC slot 372
+// (0x004ec5a0): the weapon slot's item+0x190 broken flag, nothing more.
 func weaponIsBroken(ctx context.Context, characterID int64, eq equipment.Store) (broken, known bool) {
 	equipped, err := eq.Get(ctx, characterID)
 	if err != nil {
@@ -1422,6 +1444,38 @@ func equippedTypes(ctx context.Context, characterID int64, eq equipment.Store, i
 	}
 	out := make([]combat.EquippedType, 0, len(equipped))
 	for _, e := range equipped {
+		// A BROKEN ITEM IS AN EMPTY SLOT to the reqi check (round 486). The
+		// engine's list walk in Skill_CheckCastRequirement (0x0058d480) reads
+		// each slot's type through a getter -- Equip_GetShieldTID 0x004ead80
+		// (called at 58d4c9), Equip_GetWeaponTID 0x004ead40 (58d4d4),
+		// Equip_GetArmourPartTID 0x004eadc0 (58d57e / 58d5c8) -- and
+		// all three write TID 0 when the item's +0x190 is set:
+		//
+		//	4ead63  cmp DWORD PTR [eax+0x190],0x0 ; jne -> mov WORD [edi],0x0
+		//	4eada3  cmp DWORD PTR [eax+0x190],0x0 ; jne -> mov WORD [edi],0x0
+		//	4eadf5  cmp DWORD PTR [esi+0x190],0x0 ; jne -> mov WORD [edi],0x0
+		//
+		// +0x190 is the flag GItemEquip::SetBrokenFlag (0x00495980) stores;
+		// GItemEquip::AddDurability (0x00496d90, call at 496e1b) passes
+		// `new < 1` and CGItemEquip::Create (0x00495c00) `durability == 0`,
+		// which on a value clamped at 0 is durability.IsBroken -- except that
+		// SetBrokenFlag stores 0 instead whenever the item answers non-zero
+		// to vslot 36 (+0x90, "has no durability", docs/protocol/durability.md),
+		// 277 (+0x454, an avatar-item predicate, RE_COMPLETION.md's
+		// CanBeEquipedAt note) or 284 (+0x470, unnamed) (495982-4959bd).
+		// IsBroken does not test those. It need not here: srrevamp has no
+		// avatar slots (equipment.SlotFor gives TypeID3 13/14 none), and
+		// inventory.FreshInstance makes an item with no durability range
+		// Untracked (-1), never 0. weaponIsBroken and the stat removal carry
+		// the same gap. So a broken
+		// item's TID matches no entry with a TypeID4, and the walk ends in
+		// 0x300d (58d695, UIIT_SKILL_USE_FAIL_WRONGWEAPON) exactly as for an
+		// empty slot. Skipping it before the lookup is that: an empty slot
+		// has no row to read either. Untracked (-1) is not broken and stays
+		// in.
+		if durability.IsBroken(e.Durability) {
+			continue
+		}
 		item, err := items.GetItem(ctx, e.ItemID)
 		if err != nil || item == nil {
 			return nil, false

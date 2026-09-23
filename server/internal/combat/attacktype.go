@@ -374,18 +374,28 @@ type EquippedType struct{ TypeID3, TypeID4 int }
 // and event skills (SKILL_MALL_NASRUN, SKILL_EVENT_NASRUN). Modelling it would
 // need the flag, which is not recovered -- so it passes rather than refusing a
 // cast on a condition this project cannot evaluate.
-// NOT MODELLED, and disclosed rather than silently skipped: the engine also
-// requires the matched item to be SERVICEABLE. FUN_0058d480 follows each
-// equipment match with a vtable call (slot 0x5d0 for the weapon, 0x63c and
-// 0x640 for the other slots) and returns error 0x300f when it fails -- which
-// the client names UIIT_SKILL_USE_FAIL_BROKEN_WEAPON
-// (docs/protocol/error_codes.md). So a broken item satisfies nothing.
 //
-// srrevamp has no per-instance durability: refdata.Item carries
-// DurabilityMin/Max as reference data, but an equipped item has no wear state,
-// so nothing can be broken. The check has nothing to apply to rather than being
-// omitted, and this note is here so that adding durability later comes with the
-// requirement already written down.
+// A BROKEN ITEM SATISFIES NOTHING, and the caller models it by leaving the item
+// out of worn (session.equippedTypes, round 486). Skill_CheckCastRequirement
+// (0x0058d480) reads each slot's type through a getter -- Equip_GetWeaponTID
+// 0x004ead40, Equip_GetShieldTID 0x004ead80, Equip_GetArmourPartTID
+// 0x004eadc0 -- and each writes TID 0 when the item's +0x190 broken flag is set
+// (4ead63 / 4eada3 / 4eadf5 `cmp [..+0x190],0 ; jne`), so a broken item is an
+// empty slot to this check and the refusal is 0x300d, not 0x300f. The vtable
+// calls after each match (0x5d0, 0x63c, 0x640) read the same flag and are
+// redundant for every entry with a TypeID4.
+//
+// NOT MODELLED, disclosed, and not checked against any real skill: (1) a
+// weapon or shield entry with Value 0 compares `TID >> 11 == 0`, which in the
+// engine matches an EMPTY slot, not any item -- no shipped record has one;
+// (2) an armour entry with Value 0 scans parts 1..6 in order (58d5c0) and
+// stops at the first part not of the Kind, so it answers for the first part
+// rather than for any part; (3) an ALL-of list with all five entries filled
+// and matching falls out of the loop with the match flag cleared and returns
+// 0x300d (58d681 -> 58d695); (4) an armour entry WITH a Value reads the part
+// at index Value (58d571 passes it in eax to 0x004eadc0) and compares only
+// `TID >> 11`, never the Kind -- no shipped record has one either (the armour
+// kinds above carry Value 0 only).
 func (r CastRequirement) Satisfied(worn []EquippedType) bool {
 	if r.Kind == CastReqFlagKind {
 		return true

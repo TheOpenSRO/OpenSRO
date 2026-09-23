@@ -423,13 +423,35 @@ the engine dropping its ParamKeeper entry (`durability.md`). But the **cast went
 through anyway**, so a broken weapon cost you its damage and nothing else. It now
 refuses.
 
-**What is NOT modelled, and why.** The engine has *three* predicates; this
-collapses them into one test — durability at zero — because only their shared
-consequence is recovered. An error code gives a meaning, not a symbol, and those
-three method names are still unknown. The `reqi` branch's per-slot
-serviceability is not modelled either: `combat.SkillAllowsEquipment` reports
-whether the worn set satisfies the list, not *which* slot matched, so there is
-no item to test for breakage without changing what that function returns.
+**CORRECTED round 486: one flag, not three predicates, and the `reqi` branch is
+modelled.** The paragraph that stood here said the engine had three predicates
+collapsed into one test, and that the `reqi` branch's serviceability was not
+modelled. Both were readings of the error code, not of the bodies. Read:
+
+- CGObjPC's slots 372 (`0x004ec5a0`), 399 (`0x004ec5d0`) and 400 (`0x004ec600`)
+  fetch the weapon (storage 6), the shield (7) and an armour part (through
+  `DAT_00c63f44`) and answer `item == 0 || item+0x190 == 0` (`4ec5bb` / `4ec5eb`
+  / `4ec631` `cmp [eax+0x190],ecx ; sete cl`). `+0x190` is the flag
+  `GItemEquip::SetBrokenFlag` (`0x00495980`) stores, and its callers pass
+  `durability < 1`. So durability at zero is the whole test.
+- In the `reqi` branch the engine reads each slot's type through a getter —
+  `Equip_GetShieldTID` (`0x004ead80`, called at `58d4c9`), `Equip_GetWeaponTID`
+  (`0x004ead40`, `58d4d4`), `Equip_GetArmourPartTID` (`0x004eadc0`, `58d57e` /
+  `58d5c8`) — and each writes TID 0 when `+0x190` is set (`4ead63` / `4eada3` /
+  `4eadf5` `cmp [..+0x190],0 ; jne`). A broken item is an **empty slot** to the
+  list walk: it matches no entry with a TypeID4, and the refusal is **`0x300d`**
+  (`58d695`, `UIIT_SKILL_USE_FAIL_WRONGWEAPON`), not `0x300f`.
+  `session.equippedTypes` now leaves broken items out, which is that.
+  `0x300f` for a shipped skill comes only from the weapon-byte branch
+  (`58d719`–`58d72a`), which `weaponIsBroken` already models.
+
+Still not modelled, disclosed in `combat.CastRequirement.Satisfied`, none of it
+checked against records: a weapon/shield entry with Value 0 matches an *empty*
+slot in the engine (none shipped); an armour entry with Value 0 scans parts in
+order and stops at the first part not of the Kind; an armour entry with a Value
+compares TypeID4 only; an ALL-of list with all five entries matching returns
+`0x300d`. And the weapon-byte branch's order: a broken weapon of the wrong kind
+is `0x300f` in the engine and "wrong weapon" here — both refuse.
 
 A lookup failure permits the cast, the same choice every other gate in that
 function makes for the same reason — reference data is the operator's, and a

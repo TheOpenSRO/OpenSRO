@@ -59,6 +59,39 @@ present *and* not broken, and these are the second half. Their method NAMES are
 still unrecovered — an error code gives meaning, not a symbol — and slot 353
 remains unknown on both counts.
 
+**Round 486: the three bodies are read, and they are one test.** In `CGObjPC`'s
+table (`0x00af59fc`, reached from slot 400's entry at `0x00af603c`):
+
+| slot | offset | address | body |
+|---|---|---|---|
+| 372 | `0x5d0` | `0x004ec5a0` | `GetItem(6)` — the weapon |
+| 399 | `0x63c` | `0x004ec5d0` | `GetItem(7)` — the shield |
+| 400 | `0x640` | `0x004ec600` | `idx > 6 ? 0 : GetItem(DAT_00c63f44[idx])` — an armour part |
+
+Each then answers `item == 0 || item+0x190 == 0` (`4ec5bb` / `4ec5eb` / `4ec631`
+`cmp [eax+0x190],ecx ; sete cl`). `+0x190` is the flag
+`GItemEquip::SetBrokenFlag` (`0x00495980`) stores at durability < 1, so all
+three read **the same broken flag** on three storage slots. Filed in
+`recovered_names.tsv` as `CGObjPC::IsWeaponServiceable`,
+`CGObjPC::IsShieldServiceable` and `CGObjPC::IsEquipPartServiceable` — these are
+this project's descriptive names, not the game's; the slots have no base stub
+and no string. Slot 400's earlier name `UseItem` was a propagation mis-name and
+is corrected there.
+
+In the cast-requirement check's `reqi` branch these calls are **redundant** for
+any entry with a TypeID4: the type getters `Equip_GetWeaponTID` (`0x004ead40`),
+`Equip_GetShieldTID` (`0x004ead80`) and `Equip_GetArmourPartTID` (`0x004eadc0`)
+already write TID 0 for a broken item (`4ead63` / `4eada3` / `4eadf5`), so a
+broken item never matches and the refusal is `0x300d`. `0x300f` is reached for a
+shipped skill only in the weapon-byte branch (`58d719`–`58d72a`).
+
+The 2026-09-16 paragraph above is also too broad for slot 400. `FUN_0058d480`
+calls `+0x640` twice. The call in the value-0 part scan (`58d5de`) sets `0x300f`
+when it answers 0 (`58d5eb je 0x58d605`, which falls into `58d607`). The call
+for an armour entry with a Value (`58d599`) sets no code: `58d5a6 je 0x58d638`
+goes straight to the loop tail, the same as no match. Slots 372 and 399 set
+`0x300f` at `58d533` / `58d562` (`je 0x58d607`).
+
 ### Seven names sit at two slots, and that is not ambiguity
 
 **Corrected 2026-09-16.** An earlier version of this file called these ambiguous
