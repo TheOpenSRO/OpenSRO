@@ -2,6 +2,8 @@ package guild
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 )
 
@@ -89,5 +91,30 @@ func TestMemStoreLeaveSuccession(t *testing.T) {
 	}
 	if _, err := store.Create(ctx, "Ironclad", 4, "New"); err != nil {
 		t.Fatalf("re-using a disbanded guild's name: %v", err)
+	}
+}
+
+// Round 481: Create enforces the engine's 2-12 byte name (0x00514ce0's
+// `len - 2u < 0xb`), after the membership check and before uniqueness.
+func TestMemStoreCreateEnforcesNameLength(t *testing.T) {
+	store := NewMemStore()
+	ctx := context.Background()
+
+	for _, name := range []string{"", "A", strings.Repeat("a", 13), strings.Repeat("a", 40)} {
+		if _, err := store.Create(ctx, name, 1, "Leader"); !errors.Is(err, ErrInvalidNameLength) {
+			t.Fatalf("Create(%q) (%d bytes): got %v, want ErrInvalidNameLength", name, len(name), err)
+		}
+	}
+	// The refusals wrote nothing: leader 1 is still guildless and can found one.
+	if _, err := store.Create(ctx, "Ab", 1, "Leader"); err != nil {
+		t.Fatalf("Create(\"Ab\"), the 2-byte minimum, after the refusals: %v", err)
+	}
+	if _, err := store.Create(ctx, strings.Repeat("a", 12), 2, "Other"); err != nil {
+		t.Fatalf("Create of a 12-byte name, the maximum: %v", err)
+	}
+	// Membership is checked first: a guilded character with a bad name is
+	// refused for being in a guild, as FUN_00514b20 runs before the length test.
+	if _, err := store.Create(ctx, "A", 1, "Leader"); !errors.Is(err, ErrAlreadyInGuild) {
+		t.Fatalf("Create(\"A\") by a guilded character: got %v, want ErrAlreadyInGuild", err)
 	}
 }

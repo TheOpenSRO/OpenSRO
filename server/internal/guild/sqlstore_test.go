@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -197,5 +198,37 @@ func TestGetByCharacter(t *testing.T) {
 
 	if _, err := store.GetByCharacter(ctx, 999); !errors.Is(err, ErrNotInGuild) {
 		t.Fatalf("GetByCharacter for non-member: got %v, want ErrNotInGuild", err)
+	}
+}
+
+// Round 481: the SQL store enforces the same 2-12 byte name as the memory
+// store, in the same order -- membership, then length, then the unique index.
+func TestCreateEnforcesNameLength(t *testing.T) {
+	store := openTestSQLStore(t)
+	ctx := context.Background()
+
+	for _, name := range []string{"", "A", strings.Repeat("a", 13), strings.Repeat("a", 40)} {
+		if _, err := store.Create(ctx, name, 1, "Alice"); !errors.Is(err, ErrInvalidNameLength) {
+			t.Fatalf("Create(%q) (%d bytes): got %v, want ErrInvalidNameLength", name, len(name), err)
+		}
+	}
+	// The refusals wrote nothing: Alice is still guildless and can found one.
+	g, err := store.Create(ctx, "Ab", 1, "Alice")
+	if err != nil {
+		t.Fatalf("Create(\"Ab\"), the 2-byte minimum, after the refusals: %v", err)
+	}
+	if _, err := store.Create(ctx, strings.Repeat("a", 12), 2, "Bob"); err != nil {
+		t.Fatalf("Create of a 12-byte name, the maximum: %v", err)
+	}
+	if _, err := store.Create(ctx, "A", 1, "Alice"); !errors.Is(err, ErrAlreadyInGuild) {
+		t.Fatalf("Create(\"A\") by a guilded character: got %v, want ErrAlreadyInGuild", err)
+	}
+
+	got, err := store.Get(ctx, g.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.Members) != 1 || got.Members[0].CharacterID != 1 {
+		t.Fatalf("roster = %+v, want exactly the one leader", got.Members)
 	}
 }

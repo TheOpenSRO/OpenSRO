@@ -5,6 +5,7 @@ import (
 	"context"
 	"net"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -218,5 +219,60 @@ func TestGuildInfoFlow(t *testing.T) {
 	gr, err = DecodeGuildResult(resp.Data)
 	if err != nil || gr.Error != "" || gr.GuildID == 0 || gr.Name != "Silk Legion" || len(gr.Members) != 1 {
 		t.Fatalf("expected the real guild after creating one, got err=%v result=%+v", err, gr)
+	}
+}
+
+// TestGuildCreateRejectsBadNameLength drives OpGuildCreate through the real
+// handler stack: a name outside 2-12 bytes (0x00514ce0's `len - 2u < 0xb`,
+// else 0x4c18 GUILDERR_INVALID_GUILDNAME_LEN) comes back as an error and no
+// guild, and a 12-byte name still founds one.
+func TestGuildCreateRejectsBadNameLength(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	chars.Create(ctx, 1, "Aria")
+
+	handle := gateway.Chain(LoginHandler(accounts), GuildHandler(chars, guild.NewMemStore()))
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+
+	send := func(opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+
+	resp := send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+
+	const want = "guild name must be 2 to 12 characters"
+	for _, name := range []string{"A", strings.Repeat("a", 13)} {
+		resp = send(OpGuildCreate, (&GuildCreateRequest{CharacterName: "Aria", GuildName: name}).Encode())
+		gr, err := DecodeGuildResult(resp.Data)
+		if err != nil {
+			t.Fatalf("DecodeGuildResult: %v", err)
+		}
+		if gr.Error != want || gr.GuildID != 0 {
+			t.Fatalf("create %q (%d bytes): got %+v, want error %q and no guild", name, len(name), gr, want)
+		}
+	}
+
+	resp = send(OpGuildCreate, (&GuildCreateRequest{CharacterName: "Aria", GuildName: strings.Repeat("a", 12)}).Encode())
+	gr, err := DecodeGuildResult(resp.Data)
+	if err != nil || gr.Error != "" || gr.GuildID == 0 {
+		t.Fatalf("create with a 12-byte name failed: err=%v result=%+v", err, gr)
 	}
 }

@@ -25525,3 +25525,53 @@ Negative case run: with the production files reverted to the old formula (only
 the signatures adapted), the partied `KillExp(10, 20)` returns 327 against 432
 and `ExpDiffScale(10, 15, party)` 1.24 against 1.39. `go test -count=1 -p 1
 ./...` green.
+
+## Enforce the 2-12 byte guild name in both guild stores' Create (round 481)
+
+The guild name length was recovered on 2026-09-17 (`docs/protocol/guild.md`,
+"Size and level"): `CGuildManager::HandleCreateGuild` (`0x00514ce0`) tests the
+name's `std::string` size with `if (local_34 - 2U < 0xb)` and otherwise sends
+`Msg_SendTwoFieldReply(0x4c18)`, `UIIT_MSG_GUILDERR_INVALID_GUILDNAME_LEN`
+(`error_codes.md`; `recovered_names.tsv` row `00514ce0`). `guild.MinNameLength`,
+`MaxNameLength`, `ValidName` and `ErrInvalidNameLength` were written then, and
+nothing called them from `Create`: a one-character guild name was still legal.
+
+**The order, re-read from the dump this round.** The handler first calls
+`FUN_00514b20`, whose last test is
+`return (-(uint)(in_EAX[0x72f] != 0) & 0x4c16) + 1;` -- `0x4c17`
+`GUILDERR_MEMBER_OF_ANOTHER_GUILD` for a character already in a guild, 1
+otherwise -- and only on 1 does it reach the length test. `0x4c1a`
+`GUILDERR_SAME_GUILDNAME_EXIST` is raised by no function in
+`/var/tmp/decomp_server` (grepped as `4c1a` and `19482`), so uniqueness is
+settled after both, by the job `FUN_005c5f90` sends on
+(`CGuildMamager__SendOlappedGuildJobReqToSM`). `FUN_005c5f90` also returns
+`0x4c18` for an empty name (`*(int *)(EBX + 0x14) == 0`), a second guard the
+length test already covers.
+
+**What moved.** `SQLStore.Create` checks `ValidName` after its membership query
+and before the `INSERT` whose unique index is the uniqueness check.
+`MemStore.Create` is reordered to membership, then length, then the name-taken
+map (it used to test the name first). The `Store.Create` comment states the
+order and its grounding; the name-length comment in `guild.go` is marked
+ENFORCED and records the one divergence: the engine counts bytes of a narrow
+`std::string` (capacity `0xf` at initialisation) in the client's codepage, Go's
+`len()` counts UTF-8 bytes, so ASCII names agree and a non-ASCII name can be
+refused here that the engine would accept. `session.guildErrorMessage` maps
+`ErrInvalidNameLength` to `guild name must be 2 to 12 characters`; the client
+already shows `"Error: " + error`, so no client change.
+
+The visible change: creating a guild named `""`, `"A"` or anything over 12
+bytes shows `Error: guild name must be 2 to 12 characters`. Names of 2 to 12
+bytes work as before (`Silk Legion`, 11 bytes, in the existing tests).
+
+**Tests.** `guild.TestMemStoreCreateEnforcesNameLength` and
+`guild.TestCreateEnforcesNameLength` (Postgres): `""`, `"A"`, 13 and 40 bytes
+give `ErrInvalidNameLength`; `"Ab"` by the same leader then succeeds, proving the
+refusals wrote nothing; 12 bytes by a second leader succeeds; `"A"` by the now
+guilded leader gives `ErrAlreadyInGuild`, not the length error; the SQL test
+also reads back exactly one member. `session.TestGuildCreateRejectsBadNameLength`
+drives `OpGuildCreate` through `LoginHandler` + `GuildHandler` over a
+`MemStore`: `"A"` and 13 bytes answer with the error and `GuildID` 0, 12 bytes
+founds a guild. Negative case run: with the four production files reverted, all
+three fail -- `Create("")` returns nil error in both stores and `"A"` founds
+guild 1 over the wire. `go test -count=1 -p 1 ./...` green.

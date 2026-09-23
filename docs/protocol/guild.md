@@ -29,8 +29,26 @@ a different function entirely. Two independent readings landing on the same
 number is what makes either one safe to rely on.
 
 The name length corrects a value srrevamp had as own design (`32`). The
-**minimum** matters more than the maximum: srrevamp enforced none, so a
+**minimum** matters more than the maximum: srrevamp used to enforce none, so a
 one-character guild name was legal here and is not in the engine.
+
+**Enforced since round 481.** Both stores' `Create` (`MemStore`, `SQLStore`)
+refuse a name outside 2–12 with `guild.ErrInvalidNameLength`, which the session
+layer reports as `guild name must be 2 to 12 characters`. The order is the
+engine's: the handler's pre-check `FUN_00514b20` refuses a character already in
+a guild first (`pc[0x72f] != 0` → `0x4c17`
+`GUILDERR_MEMBER_OF_ANOTHER_GUILD`), then the handler tests the length; `0x4c1a`
+`GUILDERR_SAME_GUILDNAME_EXIST` is raised by no function in the game-server
+dump, so uniqueness is settled after both, by the job the handler sends on
+(`FUN_005c5f90` → `SendOlappedGuildJobReqToSM`). `FUN_005c5f90` also refuses an
+empty name with `0x4c18` on its own, a second guard the length test already
+covers.
+
+One divergence remains, in the unit: the engine's name is a narrow
+`std::string` (initialised with capacity `0xf`, the MSVC small-string buffer of
+a `char` string), so it counts bytes in the client's codepage; Go's `len()`
+counts UTF-8 bytes, which is what srrevamp's client sends. ASCII names agree;
+a non-ASCII name can be refused here that the engine would accept.
 
 ## Levelling up — `FUN_005c63d0`, cost in `FUN_005c6240`
 

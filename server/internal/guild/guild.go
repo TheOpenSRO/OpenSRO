@@ -126,6 +126,21 @@ func (p Permission) Has(required Permission) bool {
 //
 // srrevamp had NO minimum at all, which is the more consequential half: a
 // one-character guild name was legal here and is not in the engine.
+//
+// **ENFORCED since round 481**: both stores' Create refuse a name outside the
+// range with ErrInvalidNameLength, in the engine's order (see Store.Create).
+// Before that the constants and ValidName existed and nothing called them.
+//
+// ONE KNOWN DIVERGENCE, in what is counted. The engine's name is a narrow
+// std::string -- the handler initialises it with capacity 0xf, the MSVC
+// small-string buffer of a char string -- so its size field counts bytes in the
+// client's codepage. Go's len() counts UTF-8 bytes. The two agree for ASCII
+// names; for non-ASCII they do not (a CJK character is 3 UTF-8 bytes, typically
+// 2 in a double-byte codepage), so such a name can be refused here that the
+// engine would accept. srrevamp's client sends the name as UTF-8
+// (client/scripts/net/guild.gd, to_utf8_buffer), and which codepage the
+// engine's client used is not established here, so there is no faithful byte
+// count to take instead.
 const (
 	MinNameLength = 2
 	MaxNameLength = 12
@@ -226,7 +241,15 @@ type Guild struct {
 // Store persists guilds and their membership.
 type Store interface {
 	// Create starts a new guild named name with leader as its sole member
-	// and leader. Returns ErrNameTaken or ErrAlreadyInGuild as appropriate.
+	// and leader. Returns ErrAlreadyInGuild, ErrInvalidNameLength or
+	// ErrNameTaken as appropriate, checked in that order -- the engine's:
+	// CGuildManager::HandleCreateGuild (0x00514ce0) first calls its
+	// pre-check FUN_00514b20, whose last test refuses a character already in
+	// a guild (pc[0x72f] != 0 -> 0x4c17 GUILDERR_MEMBER_OF_ANOTHER_GUILD),
+	// then tests `len - 2u < 0xb` itself (else 0x4c18
+	// GUILDERR_INVALID_GUILDNAME_LEN). 0x4c1a GUILDERR_SAME_GUILDNAME_EXIST
+	// is raised by no function in the game-server dump, so uniqueness is
+	// settled after both, by the job the handler sends on.
 	Create(ctx context.Context, name string, leaderID int64, leaderName string) (*Guild, error)
 
 	// Join adds (characterID, characterName) to guildID. Returns

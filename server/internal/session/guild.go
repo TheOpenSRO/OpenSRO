@@ -301,6 +301,9 @@ func guildErrorMessage(err error) string {
 	switch {
 	case errors.Is(err, guild.ErrNameTaken):
 		return "guild name already taken"
+	case errors.Is(err, guild.ErrInvalidNameLength):
+		// 0x4c18 GUILDERR_INVALID_GUILDNAME_LEN; the range is guild.ValidName's.
+		return "guild name must be 2 to 12 characters"
 	case errors.Is(err, guild.ErrGuildNotFound):
 		return "no such guild"
 	case errors.Is(err, guild.ErrAlreadyInGuild):

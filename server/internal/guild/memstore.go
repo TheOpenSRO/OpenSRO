@@ -48,12 +48,17 @@ func (m *MemStore) Create(_ context.Context, name string, leaderID int64, leader
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// The engine's order (see Store.Create): membership, then name length,
+	// then uniqueness.
+	if _, in := m.ofChar[leaderID]; in {
+		return nil, ErrAlreadyInGuild
+	}
+	if !ValidName(name) {
+		return nil, ErrInvalidNameLength
+	}
 	key := strings.ToLower(name)
 	if _, taken := m.names[key]; taken {
 		return nil, ErrNameTaken
-	}
-	if _, in := m.ofChar[leaderID]; in {
-		return nil, ErrAlreadyInGuild
 	}
 
 	m.nextID++

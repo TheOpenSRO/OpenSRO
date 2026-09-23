@@ -81,6 +81,11 @@ func (s *SQLStore) Create(ctx context.Context, name string, leaderID int64, lead
 	if alreadyIn {
 		return nil, ErrAlreadyInGuild
 	}
+	// Name length after membership and before the INSERT, whose unique index
+	// is the uniqueness check -- the engine's order (see Store.Create).
+	if !ValidName(name) {
+		return nil, ErrInvalidNameLength
+	}
 
 	var id int64
 	err = tx.QueryRowContext(ctx,
