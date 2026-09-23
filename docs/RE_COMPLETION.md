@@ -30723,3 +30723,92 @@ fails the checks instead of raising a call error that would stop `_init` and han
   client.
 - `cd server && go build ./... && go test -count=1 -p 1 ./...` is green. No server file changed.
   `SYSTEMS.md`'s Guild row does not describe the talk menu, so it needed no edit.
+
+## Two review notes on rounds 519 and 521: a cast ends the attack walk, and a click on the world takes the keyboard back (round 522)
+
+Two non-blocking review notes described bugs a player would meet, so they were fixed before
+the release rather than batched with the record corrections. This round's own review then found
+that the click half leaned on a false premise, and that is fixed here too.
+
+**A cast pressed on the way to a monster ends the walk (round 519's review).** Clicking a
+monster out of reach stores `_pending_attack` and walks toward it (`World3D._attack_monster`).
+A second attack replaced the pending one with a bare `_pending_attack = {}`. On the two paths
+that send at once -- a skill the skill tick casts with no walk (Target_Required 0 or a land
+target, `CombatNet.skill_tick_approaches`) and an attack whose band cannot be computed -- the old
+walk kept going: the character walked to the old stop point and stood by the monster doing
+nothing. `_attack_monster` now calls `_drop_pending_attack()` first, which ends the walk only when
+an attack was pending, so a ground walk with no attack is left alone and a walk the new attack
+needs is re-aimed by `_step_pending_attack`. Both send-at-once paths now also call
+`_flush_position()` before the request, as `_release_pending_attack` does: after a dropped walk
+the player has usually moved past `MIN_SEND_DISTANCE` since the last send, and the physics send
+gate would otherwise emit one more OpMove within `MIN_SEND_INTERVAL` (0.05 s, about three physics
+frames), which cancels the keep-up the attack just started (`world.go` handleMove). **Not tested by the suite**: `_attack_monster` needs a
+running world. Round 522's review read every caller (`_cast_skill`, `_try_attack_monster`,
+`_on_attack_pressed`, `_qa_attack_nearest` including `QA_ATTACK_GOTO`): whenever
+`_pending_attack` is set, the walk in progress is that attack's own.
+
+**A line left focused no longer keeps movement dead (round 521's review).** Round 521 widened
+the movement gate from the chat line to any focused `LineEdit` or `TextEdit`
+(`HudPanels.is_typing`), so typing a guild name no longer walked the character. The review found
+the other side of that. In Godot 4.2 a click on a `SpinBox`'s arrows grabs its inner `LineEdit`'s
+focus, and a click on empty world does not release focus. So after touching the options panel's
+chat-font spinner, WASD, click-to-move and the attack walk stayed dead while the panel was open,
+because the gate clears `_has_move_target` and `_pending_attack` every frame.
+- `World3D._unhandled_input` now starts with `take_focus_back`, which releases the viewport's
+  focus owner on a LEFT button press that reaches it. Not on the right button (a drag orbits the
+  camera), the wheel (zoom) or the middle button (a quickslot): none of those should end a
+  message being typed. The click carries on to the handlers below.
+- The options panel's chat-font spinner hands the focus back once its value is set
+  (`debug_panel.gd` `_on_chat_font_changed`), so a step with its arrows leaves nothing focused.
+- A `SpinBox`'s line still counts as typing while it has the focus. The first draft of this
+  round excluded it; the review measured that keys pressed then go into the spinner and not to
+  quickslots or berserk, so letting W also walk would split one key press two ways. A line not
+  visible in the tree does not count (Godot already releases a hidden control's focus; the check
+  is only a guard).
+
+**Which clicks reach `_unhandled_input` (this round's review).** The first draft said a click
+there "landed on the world, not on a control". False: in Godot 4.2 a press is marked handled only
+when a STOP control is on its chain, and several HUD surfaces are PASS or IGNORE all the way up.
+**Measured** on the render box by the review, with the real HUD built from Media.pk2: a left or
+right click on the chat's scrollback or frame reached `_unhandled_input`, and so did a click on a
+hotbar slot (which also fired its quickslot); with the chat line focused, the draft's
+`take_focus_back` then took that focus away mid-message. **Read from the code, not measured**:
+the release of such a click runs `_dispatch_left_click` -> `_try_set_move_target`, which walks
+the character to the ground behind the chat (that walk predates this round) and, for a slot,
+clears `_pending_attack` -- replacing round 519's approach walk for a skill just clicked on a
+distant target.
+- `HudChat` is now `MOUSE_FILTER_STOP`, as `HudWindow` has been since the 2026-09-20 playtest
+  (its comment has the reasoning: Godot hit-tests the deepest control first, so the input line
+  and the mode button still get their clicks).
+- The hotbar slots (`HudUnderbar`, `GDR_TMPQS_*`) are now STOP. A middle press on a slot is
+  handled there (`activate_key(0)`, the middle-button quickslot binding), since STOP now keeps it
+  from `World3D._unhandled_input`.
+- Still passing clicks to the world, measured by the re-review (press and release both reach
+  `_unhandled_input`, and `take_focus_back` ends a message being typed): the player-info block,
+  the minimap's map (every node IGNORE, `hud_minimap.gd`), the target window (every node IGNORE,
+  `hud_target.gd`) and the hotbar's body away from its slots and buttons. Recorded in
+  `docs/TODO.md`, not fixed here.
+- A side effect of STOP, as every `HudWindow` and the F3 panel already have it: a right-drag that
+  starts on the world stops orbiting while the cursor is over the chat (Godot 4.2 sends a drag
+  that began on no control to the control under the cursor, and STOP consumes it). Measured by
+  the re-review; not fixed here.
+
+`npc_service_reader_test.gd` check (n), in the running tree beside check (m):
+- the spinner's inner line really holds the focus (the probe), and counts as typing;
+- a focused visible `LineEdit` is typing;
+- a key press, the wheel, the right and middle buttons, and a left release do not take the focus
+  back; a left press does (NEGATIVE: there was no `take_focus_back`), and the gate then reads no
+  typing;
+- `HudChat.new().setup()` leaves the chat `MOUSE_FILTER_STOP` (NEGATIVE: with `hud_chat.gd`
+  reverted it FAILS, "filter 1", measured).
+The hotbar's STOP and the spinner's release are not driven by the suite (they need the built
+underbar and a world). Render box: `remote_godot.sh tests` 80 suites, 0 failing; `check` ALL
+LOAD. No real click or key has been sent through a running client.
+
+Also landed from round 521's review: `FRONTEND_CHECKLIST.md`'s talk-dialogue item no longer says
+the guild line only reports that it is unavailable, and `TODO.md`'s attack-distance item carries
+its releases.
+
+Found, not caused here: `hud_window_test.gd` prints `SCRIPT ERROR: Compile Error: Identifier not
+found: NetClient` and still reports ALL PASS, and the suite loop does not flag it. It prints the
+same at `dbbedc4` (round 517), so it predates this round.

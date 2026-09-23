@@ -61,9 +61,15 @@ func setup() -> void:
 	size = panel_size
 	# The window blocks the world behind it -- clicking on chat should not
 	# also walk the character -- while its own children keep their filters,
-	# so the input line and the buttons still work. PASS rather than STOP
-	# for the same reason a panel window uses it.
-	mouse_filter = Control.MOUSE_FILTER_PASS
+	# so the input line and the buttons still work. STOP, as HudWindow uses
+	# (its comment has the reasoning): Godot hit-tests the deepest control
+	# first, so the input line and the mode button still get their clicks,
+	# and STOP only catches what they did not want. This was PASS, which
+	# delivers the click here AND keeps propagating it, so a click on the
+	# scrollback or the frame reached World3D._unhandled_input: it walked the
+	# character, and since round 522 it also took the chat line's focus away
+	# mid-message (take_focus_back; measured by round 522's review).
+	mouse_filter = Control.MOUSE_FILTER_STOP
 
 	if _builder == null:
 		return

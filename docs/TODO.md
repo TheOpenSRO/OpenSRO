@@ -236,7 +236,7 @@ In order. Each is checked off here when it ships in a release, with its round in
       Next: export a MAAT flag in the skill CSV (a new trailing column, the round-504 pattern),
       then gate both paths on it (`combat.MasteryDamagePercent`'s `hasSkill` becomes "has a row
       with MAAT"), and give the plain swing the caster's level in the base row's mastery.
-- [x] **Attack distance.** BUILT for the player (round 519): the server refuses a first swing or
+- [x] **Attack distance -- v0.1.431 (round 519); v0.1.432 (round 522: a cast ends the walk, a hotbar click no longer replaces it).** BUILT for the player: the server refuses a first swing or
       cast out of reach ("too far away", `session.firstSwingInReach`/`skillInReach`), and the client
       walks into reach before it sends (`World3D._attack_monster`, below). The monster's own approach
       in BATTLE is the "Monsters do not move" item above. The history: read in round 232: the SERVER
@@ -301,6 +301,15 @@ In order. Each is checked off here when it ships in a release, with its round in
         snapshot will earn "too far away" and nothing walks again;
       - a walk that geometry blocks never reaches the band and nothing times it out, the same as a
         plain click-to-move: the attack waits until WASD, typing or another click.
+- [ ] **Four HUD surfaces let clicks through to the world.** Measured by round 522's review: a
+      click on the player-info block, the minimap's map (every node IGNORE, `hud_minimap.gd`), the
+      target window (every node IGNORE, `hud_target.gd`) or the hotbar's body away from its slots
+      and buttons reaches `World3D._unhandled_input`, so it counts as a click on the world (it walks
+      the character, and takes the keyboard back from a focused text line). The windows, the chat
+      and the hotbar slots are `MOUSE_FILTER_STOP` (HudWindow; round 522 for the chat and the
+      slots). Fix the same way -- and weigh the side effect STOP brings: a right-drag orbit that
+      passes over a STOP control stops orbiting there (round 522), which reading orbit motion in
+      `World3D._input` while `_camera_orbiting` would fix for all of them.
 - [ ] **Linear fog between the real planes.** Read in round 229: the client's fog is D3D linear fog
       from `channel 10 x view distance` to `channel 11 x view distance` (2500 by default) -- zero
       until the near plane (Jangan: 1250), complete at the far one (2250). `FOG_DENSITY` is an

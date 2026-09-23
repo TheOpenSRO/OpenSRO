@@ -93,8 +93,11 @@ Ordered roughly quick-fix → needs-a-server-system.
 - [~] **NPC talk dialogue with options** (pic 1, v0.1.131): the talk box shows the NPC's real
   greeting (npcchat.txt -> textquest_speechname.txt) and lists its real services as numbered
   options -- shop grounded by refshopgroup.txt membership, plus storage/guild from the
-  NPC's own codename. Buy opens the NPC's store window and the storage line the warehouse; the
-  guild line still only says it is not available yet. There is no Repair line: the client's
+  NPC's own codename. Buy opens the NPC's store window and the storage line the warehouse. At a
+  guild NPC the line follows membership (round 521): a player with no guild gets the archive's
+  "Create a new guild", which asks for a name and founds one; a member gets "Leave guild.",
+  which asks before it sends; a master still gets the placeholder, since the master's items
+  have no server. There is no Repair line: the client's
   menu builder adds no item for a smith's interaction 4 (round 512). Repair is the store
   window's own Repair / Repair All buttons, which work, and which the store shows only at an NPC
   with id 4 -- the town smiths and armour merchants, and the eight fortress smiths

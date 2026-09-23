@@ -531,6 +531,68 @@ func _initialize() -> void:
 		if confirm_btn != null:
 			confirm_btn.pressed.emit()
 		_check(leaves.size() == 1, "Leave sends the leave request once (got %d)" % leaves.size())
+
+		# (n) Review of round 521, the other way: a line left focused must not
+		# keep movement dead once the player clicks away. A click on a
+		# SpinBox's arrows grabs its inner LineEdit's focus, and the options
+		# panel's chat-font spinner then stopped WASD, click-to-move and the
+		# attack walk while it stayed open. Round 522 takes the focus back on
+		# a LEFT click on the world (World3D.take_focus_back) -- not on a
+		# right drag, the wheel or a key -- and the spinner hands it back once
+		# its value is set (debug_panel.gd; not driven here, it needs a world).
+		var spin := SpinBox.new()
+		live.add_child(spin)
+		spin.get_line_edit().grab_focus()
+		_check(root.gui_get_focus_owner() == spin.get_line_edit(),
+			"the probe: the spinner's inner line holds the focus (owner %s)" % [root.gui_get_focus_owner()])
+		# The keys typed there go into the spinner, so it counts as typing:
+		# letting W also walk would split one key press two ways.
+		_check(has_gate and typing.call(), "a focused SpinBox line counts as typing")
+		var field := LineEdit.new()
+		live.add_child(field)
+		field.grab_focus()
+		_check(has_gate and typing.call(), "a focused, visible LineEdit is typing")
+		var key := InputEventKey.new()
+		key.pressed = true
+		key.keycode = KEY_W
+		var took_key := world_ok and bool(world_script.call("take_focus_back", root, key))
+		_check(world_ok and not took_key and root.gui_get_focus_owner() == field,
+			"a key press does not take the focus back")
+		for button in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE]:
+			var other := InputEventMouseButton.new()
+			other.pressed = true
+			other.button_index = button
+			var took_other := world_ok and bool(world_script.call("take_focus_back", root, other))
+			_check(world_ok and not took_other and root.gui_get_focus_owner() == field,
+				"mouse button %d (zoom, orbit, quickslot) does not take the focus back" % button)
+		var lift := InputEventMouseButton.new()
+		lift.pressed = false
+		lift.button_index = MOUSE_BUTTON_LEFT
+		var took_lift := world_ok and bool(world_script.call("take_focus_back", root, lift))
+		_check(world_ok and not took_lift and root.gui_get_focus_owner() == field,
+			"a left release does not take the focus back")
+		var click := InputEventMouseButton.new()
+		click.pressed = true
+		click.button_index = MOUSE_BUTTON_LEFT
+		var took := world_ok and bool(world_script.call("take_focus_back", root, click))
+		# NEGATIVE (fails before round 522: there was no take_focus_back).
+		_check(took and root.gui_get_focus_owner() == null,
+			"a left click on the world takes the focus back (owner %s)" % [root.gui_get_focus_owner()])
+		_check(has_gate and not typing.call(), "after the click the player is not typing")
+		# The chat window consumes its own clicks. It was PASS, so a click on
+		# its scrollback reached World3D._unhandled_input: it walked the
+		# character and, with take_focus_back, ended the message being typed.
+		# NEGATIVE (fails before the review fix: PASS).
+		var chat_script := load("res://scripts/ui/hud/hud_chat.gd") as GDScript
+		var chat: Control = chat_script.new() if chat_script != null and chat_script.can_instantiate() else null
+		if chat != null:
+			chat.call("setup")
+		_check(chat != null and chat.mouse_filter == Control.MOUSE_FILTER_STOP,
+			"the chat window stops its clicks reaching the world (filter %s)" % [chat.mouse_filter if chat != null else -1])
+		if chat != null:
+			chat.free()
+		spin.free()
+		field.free()
 		if world != null:
 			world.free()
 

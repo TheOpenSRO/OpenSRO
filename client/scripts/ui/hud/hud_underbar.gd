@@ -112,10 +112,24 @@ func setup(layout_data: Variant = null) -> void:
 			var node := layout_root.get_node_or_null(slot_name) as Control
 			if node != null:
 				_slot_nodes[i] = node
+				# The slot consumes its clicks. UiBuilder builds it PASS, and the
+				# handler below never accepted the event, so a click on a slot
+				# fired the quickslot AND reached World3D._unhandled_input,
+				# whose release then walked the character to the ground behind
+				# the hotbar -- replacing the approach walk (round 519) of a
+				# skill just clicked on a distant target. Measured by round
+				# 522's review. STOP, as HudWindow and HudChat use it.
+				node.mouse_filter = Control.MOUSE_FILTER_STOP
 				var idx := i
 				node.gui_input.connect(func(event: InputEvent) -> void:
 					if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 						quickslot_activated.emit(idx)
+					# The middle button fires the page's first quickslot wherever
+					# the cursor is (World3D._unhandled_input, playtest
+					# 2026-09-20). STOP keeps a press over a slot from reaching
+					# World3D, so the slot fires it here instead.
+					elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_MIDDLE:
+						activate_key(0)
 				)
 
 		# Menu buttons

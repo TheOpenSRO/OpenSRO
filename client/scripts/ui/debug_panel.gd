@@ -417,6 +417,11 @@ func _on_scale_changed(value: float) -> void:
 	ClientSettings.set_value(ClientSettings.SECTION_UI, ClientSettings.KEY_UI_SCALE, value)
 
 func _on_chat_font_changed(value: float) -> void:
+	# A click on the spinner's arrows grabs its inner line's focus (Godot 4.2
+	# spin_box.cpp), and a focused line counts as typing (World3D._is_typing),
+	# which stops movement. Hand the keyboard back once the value is set, so
+	# a step with the arrows does not leave WASD dead (round 522).
+	_chat_font.get_line_edit().release_focus()
 	var size := int(value)
 	var chat: RichTextLabel = _world.chat_log
 	if size > 0:

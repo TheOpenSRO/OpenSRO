@@ -360,11 +360,24 @@ func _on_npc_talk_choice(meta: Variant) -> void:
 ## movement from the raw key state (Input.get_axis), which a focused line
 ## does not consume, so without this every "w" typed into the guild name
 ## prompt walked the character, as it once did in chat (World3D._is_typing).
+##
+## A line left focused -- the debug panel's teleport field after Enter, the
+## options panel's chat-font spinner after a click on its arrows (its inner
+## LineEdit takes the focus) -- stopped WASD, click-to-move and the attack walk
+## until it lost the focus some other way (round 521's review). World3D now
+## takes the focus back on a left click on the world (take_focus_back), and
+## the spinner hands it back once its value is set (debug_panel.gd). A
+## SpinBox's line still counts while it has the focus: the keys typed there go
+## into it, not to quickslots or berserk, so letting W also walk would split
+## one key press two ways. A line not visible in the tree does not count
+## (Godot already releases a hidden control's focus; this is only a guard).
 func is_typing() -> bool:
 	if not is_inside_tree():
 		return false
 	var focus := get_viewport().gui_get_focus_owner()
-	return focus is LineEdit or focus is TextEdit
+	if not (focus is LineEdit or focus is TextEdit):
+		return false
+	return focus.is_visible_in_tree()
 
 ## The size the server accepts for a guild name, in bytes: guild.MaxNameLength
 ## (server/internal/guild/guild.go, 12). The engine's test is

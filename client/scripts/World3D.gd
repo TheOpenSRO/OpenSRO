@@ -5099,16 +5099,30 @@ func _cast_skill(skill_id: int, basic_code: String) -> void:
 ## the catalog does not know, no archive at all -- the request goes out at once
 ## and the server judges the distance, as before; the log says which.
 func _attack_monster(monster_id: int, skill_id: int = 0, basic_code: String = "") -> void:
-	_pending_attack = {}
+	# A new attack replaces one still walking into reach, and the walk that was
+	# for it ends too: a self-cast pressed on the way (the no_walk path below)
+	# would otherwise go out while the character kept walking to the old stop
+	# point and then stood by the monster doing nothing (round 519's review).
+	# A walk this attack needs is re-aimed by _step_pending_attack below; a
+	# ground walk with no attack pending is left alone.
+	_drop_pending_attack()
 	var planned := _attack_band(monster_id, skill_id)
+	# Both send-at-once paths tell the server where the player stands first,
+	# as _release_pending_attack does. A walk just dropped above has usually
+	# moved the player past MIN_SEND_DISTANCE since the last send, and without
+	# this the physics send gate emitted one more OpMove within MIN_SEND_INTERVAL
+	# (0.05 s) of the attack, which cancels the keep-up it had just started (world.go
+	# handleMove; round 522's review). A no-op when nothing moved.
 	if planned.has("no_walk"):
 		print("World3D: skill %d: %s -- the skill tick casts it with no walk; sending at once" % [
 			skill_id, str(planned["no_walk"])])
+		_flush_position()
 		_send_attack(monster_id, skill_id, basic_code)
 		return
 	if not planned.has("band"):
 		print("World3D: no approach for monster %d (%s) -- sending at once; the server judges the distance" % [
 			monster_id, str(planned.get("why", "?"))])
+		_flush_position()
 		_send_attack(monster_id, skill_id, basic_code)
 		return
 	var band: Vector2 = planned["band"]
@@ -7999,7 +8013,37 @@ func _toggle_ui_visibility() -> void:
 func _toggle_action_panels() -> void:
 	action_tabs.visible = not action_tabs.visible
 
+## Releases the viewport's focus owner for a LEFT button press, and says
+## whether it did. Only the left button: a right drag orbits the camera and the
+## wheel zooms it, and neither should end a message being typed; the middle
+## button fires a quickslot. Static so the suite can drive it without a
+## running world (npc_service_reader_test.gd, check (n)).
+static func take_focus_back(viewport: Viewport, event: InputEvent) -> bool:
+	if viewport == null or not (event is InputEventMouseButton and (event as InputEventMouseButton).pressed):
+		return false
+	if (event as InputEventMouseButton).button_index != MOUSE_BUTTON_LEFT:
+		return false
+	var focus_owner := viewport.gui_get_focus_owner()
+	if focus_owner == null:
+		return false
+	focus_owner.release_focus()
+	return true
+
 func _unhandled_input(event: InputEvent) -> void:
+	# A left click that reaches here was consumed by no control -- no STOP
+	# control on its chain (Godot 4.2 viewport.cpp) -- so it is treated as a
+	# click on the world and takes the keyboard back from whatever text line
+	# still holds it. Godot does not release focus on a click on empty space,
+	# and since round 521 any focused line counts as typing (_is_typing), which
+	# stops movement; without this, a line left focused -- the chat's line,
+	# the debug panel's teleport field after Enter -- kept WASD and
+	# click-to-move dead until the line lost focus some other way.
+	# The windows, the chat and the hotbar slots are STOP, so their clicks do
+	# not get here. The player-info block, the minimap's map, the target window
+	# and the hotbar's body away from its slots still pass clicks through (a
+	# pre-existing gap, docs/TODO.md), so a click on them counts as a world click.
+	# The click itself carries on to the handlers below.
+	take_focus_back(get_viewport(), event)
 	# A direct keycode rather than an input action: this is a developer
 	# toggle, not a control anyone plays with, and adding it to
 	# project.godot would put it in the exported key list.
