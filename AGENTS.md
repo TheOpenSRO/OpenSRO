@@ -116,6 +116,11 @@ Do not re-derive or contradict these without new evidence; each is recorded with
   regions.
 - **Object placements resolve against Map.pk2's own `object.ifo`**, not Data.pk2's
   `navmesh\object.ifo`. The map's table has more entries and the extras are really referenced.
+- **An object's yaw turns the other way in Godot: `rotation.y = -yaw`** (`NavGraph.godot_yaw`,
+  used by both the rendered object and its navigation mesh). Read from the client's own navmesh
+  loader (`MapLoader::FUN_0042b8b0` -> `FUN_0043cda0`, a row-vector Y rotation) and measured
+  against the navmesh's linked edges (round 506). The positive yaw had every shop in Jangan facing
+  away from its street, and a picture of a straight wall "confirmed" it.
 - **`.o2` list 2** is a region's own objects; the other lists cross-reference objects belonging
   elsewhere, and drawing them duplicates region-straddling structures.
 - **Jangan**: town is region 97/168 (square and dragon at local ~1002, 917), palace is 98/168
