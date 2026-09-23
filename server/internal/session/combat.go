@@ -1219,6 +1219,11 @@ func performAttack(
 			// is worth its own experience in skill experience -- which is a
 			// DISCLOSED choice and the single knob to turn if a kill-side
 			// source is ever found.
+			//
+			// Guild points inherit that M = 1 (round 525): cmd/server hands
+			// this path NewGuildPointSkills' wrapper, which credits a member's
+			// guild 1:1 with the points this call converts, so the disclosed
+			// M also sets how fast GatheredSP grows from kills.
 			if skills != nil && gainedExp > 0 {
 				if _, _, err := skills.AddSkillExp(ctx, characterID, gainedExp); err != nil {
 					return fmt.Errorf("combat: granting skill experience: %w", err)

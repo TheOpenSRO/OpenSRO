@@ -89,6 +89,8 @@ signal guild_create_result(result: GuildNet.Result)
 signal guild_join_result(result: GuildNet.Result)
 signal guild_leave_result(ok: bool, reason: String)
 signal guild_info_result(result: GuildNet.Result)
+## The guild's points (round 525): GatheredSP and each member's GP_Donation.
+signal guild_points_result(result: GuildNet.PointsResult)
 
 signal chat_message(message: ChatNet.Message)
 signal chat_whisper_result(ok: bool, reason: String)
@@ -438,6 +440,9 @@ func leave_guild(char_name: String) -> void:
 func guild_info(char_name: String) -> void:
 	_send(GuildNet.OP_INFO, GuildNet.encode_name_request(char_name))
 
+func guild_points(char_name: String) -> void:
+	_send(GuildNet.OP_POINTS, GuildNet.encode_points(char_name))
+
 func say(message_text: String) -> void:
 	_send(ChatNet.OP_SAY, ChatNet.encode_say(message_text))
 
@@ -654,6 +659,8 @@ func _dispatch(p: Packet) -> void:
 			guild_leave_result.emit(r.ok, r.reason if r.error == "" else r.error)
 		GuildNet.OP_INFO_RESULT:
 			guild_info_result.emit(GuildNet.decode_result(p.data))
+		GuildNet.OP_POINTS_RESULT:
+			guild_points_result.emit(GuildNet.decode_points_result(p.data))
 		ChatNet.OP_MESSAGE:
 			chat_message.emit(ChatNet.decode_message(p.data))
 		ChatNet.OP_WHISPER_RESULT:

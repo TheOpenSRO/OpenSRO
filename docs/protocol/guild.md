@@ -206,19 +206,116 @@ and granting them through slot 93, does
 	    if (pc[0x861] > 9) { CGuildManager::RequestAddGuildPoints(pc[0x861]); pc[0x861] = 0; }
 	}
 
-`RequestAddGuildPoints` (`0x5c62e0`) requires a PC (`0x4c07` otherwise), a guild
-(`0x4c0d`) and a guild level below 6, and sends **`0x78F7 {byte, guild id,
-member id, points}`** to the global server; the game server later receives the
-echo and `CGuild::AddPoints` (`0x5c4110`, from the `0x5c9bd0` inter-server
-dispatcher through `0x5ca500`) adds the count to **the guild's total at
-`guild+0x3c`** (dirty bit 8) and to **the member's own contribution at
+`RequestAddGuildPoints` (`0x5c62e0`) requires a count above zero
+(`5c62e3 cmp [esp+0x14],0; ja`), a living character (`5c62fe` vtable `+0xf8`,
+`IGObj::GetLifeState`, compared with 1 at `5c6308`; `0x4c07`
+`GUILDERR_IM_DEAD` otherwise), a guild (`pc+0x1cbc`, `0x4c0d`) and a guild
+level of 5 or below (`5c6335 cmp al,0x5; ja`), and sends **`0x78F7 {byte,
+guild id, member id, points}`** to the global server; the game server later
+receives the echo and `CGuild::AddPoints` (`0x5c4110`, from the `0x5c9bd0`
+inter-server dispatcher through `0x5ca500`) adds the count to **the guild's
+total at `guild+0x3c`** (dirty bit 8) and to **the member's `GP_Donation` at
 `member+0x40`** (dirty bit 4), broadcasting `0x38F5` type 5 (the guild total)
-and type 6 (the member's contribution) to the online members.
+and type 6 (the member's donation) through `CGuild::BroadcastToLocalMember`.
+`AddPoints` does both only when `FUN_005d0c90` finds the member, and neither
+otherwise.
 
-So a guild's points grow by exactly the skill points its members gain, delivered
-in batches of at least ten per member. `guild.PointAccumulator` carries the
-rule; srrevamp's guild has neither a level nor a points total yet, so wiring it
-is the build item (`docs/TODO.md`).
+*Two corrections (round 525).* This section used to say the request "requires
+a PC"; the `0x4c07` test is `GetLifeState` (`docs/protocol/igobj_vtable.md`,
+slot 62), so it requires a living one. It also called `member+0x40` the member's
+"contribution". The column bound at `+0x40` is `GP_Donation`;
+`_GUILDMEMBER.Contribution` is a separate column at `+0x58`
+(`docs/protocol/db_bind_offsets.tsv`, the `_GUILDMEMBER` rows). The guild's
+`+0x3c` is `_GUILD.GatheredSP` (same file, the `_GUILD` rows).
+
+**The logout flush (round 525).** `srv.asm` addresses `+0x2184` at three sites
+only (a grep for `0x2184]` over every base register), and `GainExpAndLevel`'s
+(`0x4e5625`-`0x4e5647`) is just one of them.
+`CGObjPC::vslot_000` zeroes it for every new PC object (`4dea77 mov
+[esi+0x2184],ebx`, with `4de9cb xor ebx,ebx` and no write to `ebx` between).
+`FUN_004def90` flushes it:
+
+	4def96 cmp [esi+0x2184],ebp ; jle   -- something pending (ebp = 0)
+	4def9f cmp [esi+0x1cbc],ebp ; je    -- in a guild (pc[0x72f])
+	4defbd call 0x5c62e0                -- RequestAddGuildPoints(pending)
+	4defc2 mov [esi+0x2184],ebp         -- zeroed
+
+that is `if (0 < pc[0x861] && pc[0x72f] != 0) { RequestAddGuildPoints(pc[0x861]);
+pc[0x861] = 0; }`, **with no threshold**: one to nine pending points go too.
+`FUN_004def90`'s one caller is `FUN_004df050` (`4df214`), the path that takes a
+PC out of the world, which has 61 call sites. `transaction::transaction__OnTimeout`
+(`0x46c780`) calls it right after logging "DISCONNECT FROM
+transaction::OnTimeout()"; `CGObjPC::StorageOperation` (`0x50f5c0`) reaches it
+after logging "posting AsyncQuery failed. will be disconnected!!!";
+`CMainProcess::FUN_00417a80` calls it for every PC, and is itself called when
+the ShardManager link drops (`CMainProcess::FUN_00416f80`: "all user
+connections will be lost (but, data saved)"); and right after the flush
+`FUN_004df050` calls vtable `+0x1f0` (`IGObj::SetLifeState`,
+`igobj_vtable.md` slot 124) with 3, `GONE` (`character_state.md`, LIFESTATE).
+The flush goes through the same request, so the same gates apply: a PC dead
+at logout gets `0x4c07` and its count is dropped (`FUN_004df050`'s branch for
+state 2 only computes the return point and writes the saved position,
+`CGObjPC::FUN_004e08a0` and `FUN_004f9950`/`9920`/`9850`, with no
+`SetLifeState` among them). There is nothing to persist: the count lives
+exactly as long as the PC is in the world.
+
+So a guild's points grow by exactly the skill points its members gain,
+delivered in batches of at least ten per member while they play, and whatever
+is left, one to nine, when they leave the world. Both callers zero the
+accumulator once the count is handed over, without testing the request's
+result.
+
+### What srrevamp does (round 525)
+
+- **Storage.** `guild.Guild.GatheredSP` and `guild.Member.GPDonation`, in both
+  stores (`gathered_sp` / `gp_donation` in Postgres). `Store.AddPoints(guild,
+  member, points)` raises both or neither: `ErrGuildNotFound` for a missing
+  guild, `ErrNotInGuild` for a character outside it, and a count of zero or
+  less does nothing. The engine's fields are dwords; srrevamp stores 64-bit.
+- **Crediting.** `session.NewGuildPointSkills` wraps the skill store that
+  `cmd/server` hands the combat and skill-use handlers, the only callers of
+  `AddSkillExp`. After a conversion that yields points, a guild member's points
+  (membership alone, `Store.GuildIDOf`: no roster load) go through a
+  per-character `guild.PointAccumulator`, and each batch of ten or more goes to
+  `AddPoints`. Points granted directly (`AddSkillPoints`: GM `/sp`, learn
+  refunds, the no-level-table kill fallback) credit nothing, as none of them is
+  `GainExpAndLevel`'s conversion. A failed credit is logged and dropped, and the
+  accumulator is zeroed either way, as in `0x4e5250`.
+- **The logout flush.** `session.GuildPointsDisconnectHandler`, in
+  `cmd/server`'s `OnDisconnect` chain ahead of the world hub's, runs
+  `FlushPending`: whatever the character has pending, any count above zero, goes
+  to its guild, and the character's accumulator is removed from the map. A
+  character no longer in a guild has its count dropped, as the engine's PC
+  object does. The gateway does not run `OnDisconnect` for sessions still open
+  when the process stops, so `cmd/server` calls `FlushAllPending` once the
+  listener returns. That shutdown flush is srrevamp's own handling: the engine's
+  clean-shutdown path has not been read, and its all-users-out path that has
+  (the ShardManager drop, above) flushes every PC. A session that enters the
+  world as a second character without disconnecting keeps the first one's count
+  until that character's next flush. Pending points are otherwise lost only
+  when the process dies without stopping cleanly, or when the credit itself
+  fails (logged, as on the batch path).
+- **The request's life test** (`GetLifeState == 1`, else `0x4c07`) uses the
+  stand-in the founder check uses for the same engine test (step 2 of the
+  founder-check table above, enforced in `session.handleGuildCreate`): alive is
+  HP above 0. srrevamp stores no life state, and 0 HP is what
+  `character.Store.ApplyDamage` reports as died. A dead earner's batch, or a
+  dead character's logout flush, is dropped and the count zeroed, as in the
+  engine.
+- **Not modelled.** The level test cannot fail, since srrevamp's guilds have no
+  level. There is no `0x38F5` push: the client asks with srrevamp's placeholder
+  `OpGuildPoints` (`0x0098`), and `OpGuildPointsResult` (`0x0099`) answers with
+  the guild's id, its `GatheredSP` and every member's name and `GPDonation`. The
+  client asks after each successful guild reply (world entry, create or join,
+  and opening the guild HUD panel) and shows the numbers in the Guild tab, so
+  **the numbers shown do not update live** while members earn: they are as of
+  the last guild reply.
+- **The rate inherits a disclosed choice.** How much skill experience a kill is
+  worth is not recovered; srrevamp takes it 1:1 from the kill's experience
+  (the comment above `AddSkillExp` in `session/combat.go`), so guild points
+  from kills grow at that disclosed rate.
+- **Still open.** A guild level, and spending `GatheredSP` on a level-up
+  (`guild.LevelUpCost`).
 
 ## Permissions
 
@@ -395,4 +492,4 @@ will have to be undone.
 - **The warehouse.** Only the permission bit and `GUILD_WAREHOUSE_LIMIT` are
   known; the limit's value is not.
 - ~~**Guild points: where they come from.**~~ READ in round 272 -- see "Where guild
-  points come from" below.
+  points come from" above; credited in srrevamp since round 525.

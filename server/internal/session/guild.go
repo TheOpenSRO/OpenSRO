@@ -27,6 +27,14 @@ const (
 	OpGuildLeaveResult  uint16 = 0x0095 // server -> client
 	OpGuildInfo         uint16 = 0x0096 // client -> server
 	OpGuildInfoResult   uint16 = 0x0097 // server -> client
+	// OpGuildPoints asks for the guild's points (round 525): GatheredSP and
+	// each member's GP_Donation, the two totals CGuild::AddPoints (0x5c4110)
+	// raises. Placeholder scaffolding like the rest of this block
+	// (docs/protocol/PROTOCOL_DECISION.md): the engine pushes the same two
+	// numbers as 0x38F5 types 5 and 6 through CGuild::BroadcastToLocalMember,
+	// which srrevamp does not model, so the client asks instead.
+	OpGuildPoints       uint16 = 0x0098 // client -> server
+	OpGuildPointsResult uint16 = 0x0099 // server -> client
 )
 
 // GuildMemberSnapshot is one guild member, as sent over the wire.
@@ -192,8 +200,77 @@ func DecodeGuildLeaveResult(data []byte) (*GuildLeaveResult, error) {
 	return &GuildLeaveResult{OK: ok, Reason: reason}, nil
 }
 
+// GuildPointsMember is one member's share of the guild's points on the wire:
+// the name and _GUILDMEMBER.GP_Donation (guild.Member.GPDonation).
+type GuildPointsMember struct {
+	Name       string
+	GPDonation int64
+}
+
+// GuildPointsResult is the OpGuildPointsResult payload: on failure only Error
+// is meaningful; on success the guild's id, its GatheredSP and every member's
+// GPDonation, in roster order.
+type GuildPointsResult struct {
+	Error      string
+	GuildID    int64
+	GatheredSP int64
+	Members    []GuildPointsMember
+}
+
+func (r *GuildPointsResult) Encode() []byte {
+	out := encodeStrings(r.Error)
+	if r.Error != "" {
+		return out
+	}
+	out = append(out, encodeInt64(r.GuildID)...)
+	out = append(out, encodeInt64(r.GatheredSP)...)
+	countBuf := make([]byte, 2)
+	binary.LittleEndian.PutUint16(countBuf, uint16(len(r.Members)))
+	out = append(out, countBuf...)
+	for _, m := range r.Members {
+		out = append(out, encodeStrings(m.Name)...)
+		out = append(out, encodeInt64(m.GPDonation)...)
+	}
+	return out
+}
+
+func DecodeGuildPointsResult(data []byte) (*GuildPointsResult, error) {
+	fields, rest, err := decodeStringsPrefix(data, 1)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding GuildPointsResult: %w", err)
+	}
+	r := &GuildPointsResult{Error: fields[0]}
+	if r.Error != "" {
+		return r, nil
+	}
+	if r.GuildID, rest, err = decodeInt64(rest); err != nil {
+		return nil, fmt.Errorf("session: decoding GuildPointsResult: guild id: %w", err)
+	}
+	if r.GatheredSP, rest, err = decodeInt64(rest); err != nil {
+		return nil, fmt.Errorf("session: decoding GuildPointsResult: gathered sp: %w", err)
+	}
+	if len(rest) < 2 {
+		return nil, errors.New("session: decoding GuildPointsResult: truncated member count")
+	}
+	count := int(binary.LittleEndian.Uint16(rest))
+	rest = rest[2:]
+	for i := 0; i < count; i++ {
+		var names []string
+		if names, rest, err = decodeStringsPrefix(rest, 1); err != nil {
+			return nil, fmt.Errorf("session: decoding GuildPointsResult: member %d name: %w", i, err)
+		}
+		var donation int64
+		if donation, rest, err = decodeInt64(rest); err != nil {
+			return nil, fmt.Errorf("session: decoding GuildPointsResult: member %d donation: %w", i, err)
+		}
+		r.Members = append(r.Members, GuildPointsMember{Name: names[0], GPDonation: donation})
+	}
+	return r, nil
+}
+
 // GuildHandler returns a gateway.Handler implementing
-// OpGuildCreate/OpGuildJoin/OpGuildLeave against guilds.
+// OpGuildCreate/OpGuildJoin/OpGuildLeave/OpGuildInfo/OpGuildPoints against
+// guilds.
 func GuildHandler(chars character.Store, guilds guild.Store) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
@@ -205,6 +282,8 @@ func GuildHandler(chars character.Store, guilds guild.Store) gateway.Handler {
 			return handleGuildLeave(ctx, sess, p, chars, guilds)
 		case OpGuildInfo:
 			return handleGuildInfo(ctx, sess, p, chars, guilds)
+		case OpGuildPoints:
+			return handleGuildPoints(ctx, sess, p, chars, guilds)
 		default:
 			return nil
 		}
@@ -236,6 +315,33 @@ func handleGuildInfo(ctx context.Context, sess *gateway.Session, p *proto.Packet
 	}
 	result := &GuildResult{GuildID: g.ID, Name: g.Name, LeaderID: g.LeaderID, Members: guildMemberSnapshots(g.Members)}
 	return sess.Send(&proto.Packet{Opcode: OpGuildInfoResult, Data: result.Encode()})
+}
+
+// handleGuildPoints answers OpGuildPoints with the requester's guild's
+// GatheredSP and each member's GPDonation (round 525). A character in no guild
+// gets an Error, "not in a guild".
+func handleGuildPoints(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, guilds guild.Store) error {
+	req, err := DecodeCharacterNameRequest(p.Data)
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpGuildPointsResult, Data: (&GuildPointsResult{Error: "malformed request"}).Encode()})
+	}
+	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.Name)
+	if errStr != "" {
+		return sess.Send(&proto.Packet{Opcode: OpGuildPointsResult, Data: (&GuildPointsResult{Error: errStr}).Encode()})
+	}
+	g, err := guilds.GetByCharacter(ctx, characterID)
+	if err != nil {
+		msg := guildErrorMessage(err)
+		if !errors.Is(err, guild.ErrNotInGuild) {
+			msg = "failed to load guild points"
+		}
+		return sess.Send(&proto.Packet{Opcode: OpGuildPointsResult, Data: (&GuildPointsResult{Error: msg}).Encode()})
+	}
+	result := &GuildPointsResult{GuildID: g.ID, GatheredSP: g.GatheredSP}
+	for _, m := range g.Members {
+		result.Members = append(result.Members, GuildPointsMember{Name: m.Name, GPDonation: m.GPDonation})
+	}
+	return sess.Send(&proto.Packet{Opcode: OpGuildPointsResult, Data: result.Encode()})
 }
 
 func guildMemberSnapshots(members []guild.Member) []GuildMemberSnapshot {

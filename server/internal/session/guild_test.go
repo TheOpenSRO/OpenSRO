@@ -468,3 +468,94 @@ func TestGuildCreateRollsBackWhenGoldCannotBeTaken(t *testing.T) {
 		t.Fatalf("the rolled-back guild's name is still taken: %v", err)
 	}
 }
+
+// TestGuildPointsResultRoundTrip pins OpGuildPointsResult's layout (round 525):
+// Error, then GuildID, GatheredSP, a u16 count and each member's name and
+// GPDonation.
+func TestGuildPointsResultRoundTrip(t *testing.T) {
+	want := &GuildPointsResult{
+		GuildID: 7, GatheredSP: 5412,
+		Members: []GuildPointsMember{{Name: "Aria", GPDonation: 5400}, {Name: "Bram", GPDonation: 12}},
+	}
+	got, err := DecodeGuildPointsResult(want.Encode())
+	if err != nil {
+		t.Fatalf("DecodeGuildPointsResult: %v", err)
+	}
+	if got.Error != "" || got.GuildID != 7 || got.GatheredSP != 5412 || len(got.Members) != 2 ||
+		got.Members[0] != want.Members[0] || got.Members[1] != want.Members[1] {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+
+	errOnly, err := DecodeGuildPointsResult((&GuildPointsResult{Error: "not in a guild"}).Encode())
+	if err != nil || errOnly.Error != "not in a guild" || errOnly.GuildID != 0 || len(errOnly.Members) != 0 {
+		t.Fatalf("error round trip: got %+v, %v", errOnly, err)
+	}
+
+	// A body cut short is an error, not a zero.
+	full := want.Encode()
+	if _, err := DecodeGuildPointsResult(full[:len(full)-1]); err == nil {
+		t.Fatal("a truncated OpGuildPointsResult decoded without error")
+	}
+}
+
+// TestGuildPointsFlow drives OpGuildPoints through the handler stack: a
+// guildless character is refused with "not in a guild" (NEGATIVE), and a
+// member reads back the guild's GatheredSP and each member's GPDonation as
+// Store.AddPoints left them.
+func TestGuildPointsFlow(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	aria, _ := chars.Create(ctx, 1, "Aria")
+	guilds := guild.NewMemStore()
+
+	handle := gateway.Chain(LoginHandler(accounts), GuildHandler(chars, guilds))
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+
+	if lr, err := DecodeLoginResult(doSend(t, conn, r, OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+	points := func() *GuildPointsResult {
+		t.Helper()
+		resp := doSend(t, conn, r, OpGuildPoints, clientNameRequest("Aria"))
+		if resp.Opcode != OpGuildPointsResult {
+			t.Fatalf("reply opcode 0x%04x, want OpGuildPointsResult", resp.Opcode)
+		}
+		pr, err := DecodeGuildPointsResult(resp.Data)
+		if err != nil {
+			t.Fatalf("DecodeGuildPointsResult: %v", err)
+		}
+		return pr
+	}
+
+	if pr := points(); pr.Error != "not in a guild" || pr.GuildID != 0 {
+		t.Fatalf("guildless: got %+v, want error %q", pr, "not in a guild")
+	}
+
+	g, err := guilds.Create(ctx, "Silk Legion", aria.ID, "Aria")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := guilds.Join(ctx, g.ID, 99, "Bram"); err != nil {
+		t.Fatalf("Join: %v", err)
+	}
+	if err := guilds.AddPoints(ctx, g.ID, 99, 12); err != nil {
+		t.Fatalf("AddPoints: %v", err)
+	}
+	pr := points()
+	if pr.Error != "" || pr.GuildID != g.ID || pr.GatheredSP != 12 || len(pr.Members) != 2 {
+		t.Fatalf("member: got %+v, want guild %d with GatheredSP 12 and two members", pr, g.ID)
+	}
+	don := map[string]int64{}
+	for _, m := range pr.Members {
+		don[m.Name] = m.GPDonation
+	}
+	if don["Aria"] != 0 || don["Bram"] != 12 {
+		t.Fatalf("donations = %v, want Aria 0 and Bram 12", don)
+	}
+}

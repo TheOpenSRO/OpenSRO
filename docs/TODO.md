@@ -124,9 +124,16 @@ In order. Each is checked off here when it ships in a release, with its round in
       via `import-refdata -drops-csv/-drop-groups-csv`.
 - [ ] **Guild points and levels.** Read in round 272: a guild's points are the skill points its
       members earn (1:1, batched at 10 per member, credited to the guild total and the member's
-      contribution); the level-up costs are already in `guild.LevelUpCost`. srrevamp's guild has no
-      level, no points and no contributions -- add them to the store, credit from the kill path
-      through `guild.PointAccumulator`, and let the master spend them on a level-up.
+      GP_Donation); the level-up costs are already in `guild.LevelUpCost`. **Points: done (round
+      525)** -- `Guild.GatheredSP` and `Member.GPDonation` are stored, `session.NewGuildPointSkills`
+      credits them from the kill paths' skill-exp conversions through `guild.PointAccumulator`, and
+      the Guild tab shows them (placeholder `OpGuildPoints`, refreshed on each guild reply, not
+      live). The pending accumulator is in memory, as the engine's is: pc+0x2184 starts at zero on
+      every new PC (CGObjPC::vslot_000, 0x4dea77) and FUN_004def90 (0x4def90, its call to
+      RequestAddGuildPoints at 0x4defbd) flushes any count above zero when the PC leaves the world;
+      srrevamp flushes it on disconnect (`session.GuildPointsDisconnectHandler`) and at a clean stop
+      (`FlushAllPending`, its own handling). **Left:** a guild level, and letting the master spend
+      GatheredSP (and gold) on a level-up.
 - [ ] **Monsters do not move, chase or notice anyone.** They strike only when struck (round 254's
       cadence cap). The machine is read: sixteen states, WANDER's leg and dwell (round 251), BATTLE's
       attack step through the same action machine as a player's cast (254), the approach walk

@@ -232,3 +232,29 @@ func TestCreateEnforcesNameLength(t *testing.T) {
 		t.Fatalf("roster = %+v, want exactly the one leader", got.Members)
 	}
 }
+
+// TestSQLAddPointsRoundTrip is checkAddPoints against Postgres, plus the schema
+// upgrade: opening the store a second time re-runs the ADD COLUMN IF NOT EXISTS
+// statements, which must neither fail nor reset the stored points.
+func TestSQLAddPointsRoundTrip(t *testing.T) {
+	store := openTestSQLStore(t)
+	checkAddPoints(t, store)
+
+	again, err := OpenSQLStore(testDSN())
+	if err != nil {
+		t.Fatalf("OpenSQLStore a second time (the ALTERs must be idempotent): %v", err)
+	}
+	defer again.Close()
+	g, err := again.GetByCharacter(context.Background(), 2)
+	if err != nil {
+		t.Fatalf("GetByCharacter after reopening: %v", err)
+	}
+	if g.GatheredSP != 22 {
+		t.Fatalf("GatheredSP after reopening = %d, want 22", g.GatheredSP)
+	}
+	for _, m := range g.Members {
+		if want := map[string]int64{"A": 10, "B": 12}[m.Name]; m.GPDonation != want {
+			t.Fatalf("%s's GPDonation after reopening = %d, want %d", m.Name, m.GPDonation, want)
+		}
+	}
+}

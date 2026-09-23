@@ -1101,6 +1101,7 @@ func _ready() -> void:
 	NetClient.guild_join_result.connect(_on_guild_result)
 	NetClient.guild_leave_result.connect(_on_guild_leave_result)
 	NetClient.guild_info_result.connect(_on_guild_result)
+	NetClient.guild_points_result.connect(_on_guild_points_result)
 
 	NetClient.duel_challenge_result.connect(_on_duel_challenge_result)
 	NetClient.duel_invite.connect(_on_duel_invite)
@@ -3598,6 +3599,17 @@ var _talk_npc_code := ""
 ## leave asks the server again (_on_guild_leave_result).
 var _guild_id := -1
 var _guild_master := false
+## The guild's points as the server last reported them (round 525), for the
+## Guild tab: _guild_gathered_sp is the guild's GatheredSP (-1 until an
+## OpGuildPoints reply for _guild_id arrives) and _guild_donations maps each
+## member's name to its GP_Donation. _on_guild_result asks for them after
+## every successful reply for a guild, and _guild_roster is that reply, kept
+## so the points reply can redraw the tab. Like _guild_id, they move only on
+## this player's own replies: the server pushes nothing when points are
+## credited.
+var _guild_gathered_sp := -1
+var _guild_donations := {}
+var _guild_roster: GuildNet.Result = null
 ## Regions whose NPCs have already been placed, so streaming back into a
 ## region doesn't stack a second copy of everyone in it.
 var _npc_regions_done: Dictionary = {}
@@ -9473,7 +9485,25 @@ func _refresh_guild_list(result: GuildNet.Result) -> void:
 	guild_list.clear()
 	for m in result.members:
 		var role_name := "Leader" if m.role == GuildNet.ROLE_LEADER else "Member"
-		guild_list.add_item("%s [%s]" % [m.member_name, role_name])
+		if _guild_donations.has(m.member_name):
+			var donation: int = _guild_donations[m.member_name]
+			guild_list.add_item("%s [%s] %d GP" % [m.member_name, role_name, donation])
+		else:
+			guild_list.add_item("%s [%s]" % [m.member_name, role_name])
+
+## The Guild tab's status line for a guild: name, id and size, and the
+## guild's GatheredSP once a points reply has arrived (round 525).
+func _guild_status_text(result: GuildNet.Result) -> String:
+	var text: String = "%s (#%d, %d member(s))." % [result.guild_name, result.guild_id, result.members.size()]
+	if _guild_gathered_sp >= 0:
+		text += " %d GP" % _guild_gathered_sp
+	return text
+
+## Forgets the guild points shown, when the guild they belong to is gone or
+## replaced (round 525).
+func _clear_guild_points() -> void:
+	_guild_gathered_sp = -1
+	_guild_donations = {}
 
 ## A guild reply (info, join or create). A success also records the player's
 ## guild state for the guild NPC's talk lines (round 521): the id (0 = none),
@@ -9487,18 +9517,41 @@ func _on_guild_result(result: GuildNet.Result) -> void:
 	if result.error != "":
 		guild_status_label.text = "Error: %s" % result.error
 		return
+	if result.guild_id != _guild_id:
+		_clear_guild_points()
 	_guild_id = result.guild_id
 	_guild_master = false
 	for m in result.members:
 		if m.member_name == NetClient.current_character_name and m.role == GuildNet.ROLE_LEADER:
 			_guild_master = true
 	if result.guild_id == 0:
+		_guild_roster = null
 		guild_status_label.text = "Not in a guild."
 		guild_list.clear()
 	else:
-		guild_status_label.text = "%s (#%d, %d member(s))." % [result.guild_name, result.guild_id, result.members.size()]
+		_guild_roster = result
+		guild_status_label.text = _guild_status_text(result)
 		_refresh_guild_list(result)
+		# The points ride on their own reply (round 525): OpGuildPoints.
+		NetClient.guild_points(NetClient.current_character_name)
 	_refresh_open_talk_menu()
+
+## A guild points reply (round 525): the guild's GatheredSP and each member's
+## GP_Donation, which the server credits from members' skill points
+## (GObjPC_GainExpAndLevel 0x4e5250 -> CGuild::AddPoints 0x5c4110). A reply
+## for a guild this client no longer shows, or a refusal, changes nothing:
+## the guild reply is what sets the guild state.
+func _on_guild_points_result(result: GuildNet.PointsResult) -> void:
+	if result == null or result.error != "":
+		return
+	if _guild_roster == null or result.guild_id != _guild_id:
+		return
+	_guild_gathered_sp = result.gathered_sp
+	_guild_donations = {}
+	for m in result.members:
+		_guild_donations[m.member_name] = m.gp_donation
+	guild_status_label.text = _guild_status_text(_guild_roster)
+	_refresh_guild_list(_guild_roster)
 
 ## Founding a guild costs 500,000 gold on the server (round 487: the create
 ## job's reply, trs_sm_guildjob::FUN_005c8bf0 -> GObjPC::FUN_004e4140), which
@@ -9540,6 +9593,8 @@ func _on_guild_leave_result(ok: bool, reason: String) -> void:
 	if ok:
 		_guild_id = 0
 		_guild_master = false
+		_guild_roster = null
+		_clear_guild_points()
 		guild_status_label.text = "Left the guild."
 		guild_list.clear()
 		_log_system("Left the guild.")

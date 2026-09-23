@@ -109,7 +109,6 @@ var baseline = map[string]string{
 	"NewRollingByte":      "internal/proto/security.go",
 	"NewTestSession":      "internal/gateway/gateway.go",
 	"PackTag":             "internal/combat/paramtags.go",
-	"Pending":             "internal/guild/guild.go",
 	"ReinforceRates":      "internal/refdata/item.go",
 	"ReplyOpcode":         "internal/proto/opcodes.go",
 	"ScaleHPForMonster":   "internal/combat/rarity.go",

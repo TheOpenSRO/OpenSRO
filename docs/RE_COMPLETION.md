@@ -31006,3 +31006,233 @@ the unread id column set to 0.
 
 Not measured on a running real client, and no running srrevamp client has printed the new
 `NPCTALK` lines yet.
+
+## Credit guild points (GatheredSP and per-member GP_Donation) from converted skill points, batched at 10 (round 525)
+
+**What was open.** Round 272 found where guild points come from, and `guild.PointAccumulator`
+held the batching rule. Nothing called it. srrevamp's guild had no points total and no
+per-member share, so kills gave the guild nothing. `SYSTEMS.md`'s Guild row and `TODO.md`'s
+"Guild points and levels" item both listed this as the next step.
+
+**Grounding, re-read this round** (`/var/tmp/decomp_server`, `/var/tmp/srv.asm`):
+
+- **`GObjPC::GObjPC_GainExpAndLevel` (`0x004e5250`).** After the 400:1 conversion and the grant
+  through vtable `+0x174`, it runs `if (0 < iVar9 && param_1[0x72f] != 0 && (param_1[0x861] +=
+  iVar9, 9 < param_1[0x861])) { RequestAddGuildPoints(param_1[0x861]); param_1[0x861] = 0; }`.
+  So points are counted only for a guild member, go out as one batch once the count passes 9,
+  and the counter is zeroed without checking the request's result.
+- **`CGuildManager::RequestAddGuildPoints` (`0x005c62e0`), in asm.** `5c62e3 cmp [esp+0x14],0;
+  ja` needs a count above zero. `5c62fe` calls vtable `+0xf8` and `5c6308 cmp al,0x1`, else
+  `0x4c07`. `5c6318` reads `[edi+0x1cbc]` (the guild, `pc[0x72f]`), else `0x4c0d`. `5c6335 cmp
+  al,0x5; ja` needs guild level 5 or below. Then it sends `0x78f7`.
+- **`CGuild::AddPoints` (`0x005c4110`, "CMainProcess::AddPoints" in the dump).** It calls
+  `FUN_005d0c90(member)`, and only when that is nonzero does it do `rec+0x3c += d` (dirty bit 8)
+  and `member rec+0x40 += d` (dirty bit 4), then broadcast `0x38f5` types 5 and 6 through
+  `CGuild::BroadcastToLocalMember`.
+- **`docs/protocol/db_bind_offsets.tsv`.** `_GUILD GatheredSP 0x3c`, `_GUILDMEMBER GP_Donation
+  0x40`, `_GUILDMEMBER Contribution 0x58`. The same file's `_GUILD Lvl 0x38` and
+  `_GUILDMEMBER Permission 0x54` match offsets this project already reads off the same record
+  pointers (the full-guild predicate `0x005d0fb0` and the permission test `FUN_005d0f80`), so
+  the bind offsets and the in-memory offsets are the same record.
+
+**Two record corrections.**
+
+- `guild.md` and `guild.go` said `RequestAddGuildPoints` "requires a PC (`0x4c07`
+  otherwise)". Vtable `+0xf8` is `IGObj::GetLifeState` (`docs/protocol/igobj_vtable.md`, slot
+  62), so the test is for a **living** character. The dump's own annotation of `0x5c62e0` still
+  says "unless a PC". The RE box is read-only here, so it is left as it is.
+- Both files called `member+0x40` the member's "contribution". The column is `GP_Donation`, and
+  `Contribution` is a separate column at `+0x58`.
+
+**Change.**
+
+- **`guild`**
+  - `Guild.GatheredSP` and `Member.GPDonation` are new fields.
+  - New `Store.AddPoints(guildID, characterID, points)` credits both totals or neither:
+    `ErrGuildNotFound`, then `ErrNotInGuild`. A count of zero or less is a no-op.
+  - `MemStore` implements it under its lock. `SQLStore` adds `gathered_sp` / `gp_donation`
+    (`BIGINT NOT NULL DEFAULT 0`, `ADD COLUMN IF NOT EXISTS`), reads both in `Get`, and runs
+    `AddPoints` in one transaction. That transaction updates the member row first, then the
+    guild row. When no member row matches, it checks whether the guild exists, to tell the two
+    errors apart. That order does not rule out a deadlock with a leader's `Leave`, which locks
+    the leaver's row, then the guild row, then the new leader's row: an `AddPoints` for the new
+    leader at the same moment closes a cycle, and Postgres aborts one side (the batch is logged
+    and lost, or the leave fails). Taking the guild row first would cycle on the leaver's row
+    instead. The comment on `SQLStore.AddPoints` says so.
+  - New `Store.GuildIDOf(characterID)`: membership alone (`pc[0x72f] != 0`), one query in
+    `SQLStore`, without the roster `GetByCharacter` loads. `SQLStore.GetByCharacter` now uses
+    it.
+  - The engine's fields are dwords. srrevamp stores 64-bit, which is its own width, not a claim
+    about the engine.
+- **`session.NewGuildPointSkills`** (new `guildpoints.go`)
+  - A `skill.Store` decorator (`*GuildPointSkills`) that overrides only `AddSkillExp`. After
+    the inner store converts points (`gained > 0`) and `GuildIDOf` finds a guild, it books them
+    on that character's `PointAccumulator` under a mutex. A batch goes to `AddPoints`.
+  - A failed credit is logged and never returned. The inner store's values are returned
+    unchanged.
+  - The request's life test (`GetLifeState == 1`, else `0x4c07`) uses the founder check's
+    stand-in, HP above 0 (the decorator takes the character store for it). A dead earner's
+    batch is dropped and the count zeroed, as in the engine.
+  - `FlushPending(characterID)` is the logout flush (below): any count above zero goes to the
+    guild through the same gates, and the character's accumulator is removed from the map, so
+    the map holds only characters who have earned since they last left the world.
+    `FlushAllPending` runs it for every character. `GuildPointsDisconnectHandler(hub, gp)` runs
+    `FlushPending` for a disconnecting session's character.
+  - `AddSkillPoints` passes straight through, so GM `/sp`, learn refunds and the
+    no-level-table kill fallback credit nothing. None of them is the conversion.
+- **`cmd/server`.** `gpSkills := session.NewGuildPointSkills(skills, guilds, chars)` goes to
+  `CombatHandlerWithDrops` and `UseSkillHandlerWithDrops`. Those handlers, and the keep-up swing
+  `combatDeps` built inside them, are the only callers of `AddSkillExp` (`combat.go`, the kill
+  block). `GuildPointsDisconnectHandler` joins the `OnDisconnect` chain after the duel and trade
+  handlers and before `worldDisconnect`, since it finds the character in the world hub. The
+  gateway does not run `OnDisconnect` for sessions still open when it stops, so `main` calls
+  `FlushAllPending` once `ListenAndServe` returns, with a 30 s bound of srrevamp's own.
+- **Wire: a deviation from the plan, which had appended a trailer to `GuildResult`.** That
+  would change an existing packet layout. Instead there is a new placeholder pair in
+  `session/guild.go`:
+  - `OpGuildPoints` (`0x0098`) is a name-only request.
+  - `OpGuildPointsResult` (`0x0099`) carries the error string, then guild id `s64`,
+    `GatheredSP` `s64`, a `u16` count, and per member a name plus `GPDonation` `s64`.
+  - Before claiming the pair, every `Op* uint16` in `server/internal` and every `OP_*` in
+    `client/scripts` was listed. `0x0098`/`0x0099` were unused, and `0x00a0` is the next taken
+    value. A character in no guild gets the error "not in a guild".
+- **Client**
+  - `GuildNet.encode_points` / `decode_points_result`, with explicit `int` types.
+  - `NetClient.guild_points` and the `guild_points_result` signal.
+  - `World3D` asks for points after every successful guild reply for a guild, alongside round
+    521's `_guild_id` / `_guild_master` rather than duplicating them. It keeps the roster in
+    `_guild_roster` and shows `"… N GP"` on the status line and `"Name [Role] N GP"` in the
+    list. A points reply for another guild, or a refusal, changes nothing. Leaving, or changing
+    guild, clears the numbers shown.
+- **Comment only in `combat.go`.** A note says guild points inherit the disclosed M = 1 for
+  kill skill experience.
+
+**Not modelled, and said so where the code is.**
+
+- The level test cannot fail, since srrevamp's guilds have no level.
+- There is no `0x38F5` push. The client asks for the points after each successful guild reply
+  (world entry, create or join, opening the guild HUD panel), so the numbers shown are as of
+  the last reply, **not live** while members earn.
+- The shutdown flush is srrevamp's own handling (the engine's clean-shutdown path is unread).
+  Pending points are lost only if the process dies without stopping cleanly, or the credit
+  fails (logged).
+
+**Review follow-up: the logout flush** (folded into this round's commit). The first version
+treated `GainExpAndLevel` as the only user of `pc+0x2184` and recorded "whether the engine
+persists `pc+0x2184` is unknown". The dump settles it, re-read for this fix:
+
+- `srv.asm` addresses `+0x2184` at three sites only (a grep for `0x2184]`, every base
+  register): `4dea77` in `CGObjPC::vslot_000`, which zeroes it with `ebx` (cleared by `4de9cb
+  xor ebx,ebx`, with no write to `ebx` between; the one call there, `4de9e3 call edx`, must
+  preserve it under the MSVC convention); `4def96`-`4defc2` in
+  `FUN_004def90`; and `4e5625`-`4e5647` in `GainExpAndLevel`.
+- `FUN_004def90`: `4def96 cmp [esi+0x2184],ebp; jle` (ebp = 0 from `4def94 xor ebp,ebp`),
+  `4def9f cmp [esi+0x1cbc],ebp; je`, `4defb4 push [esi+0x2184]`, `4defbd call 0x5c62e0`,
+  `4defc2 mov [esi+0x2184],ebp`. So `if (0 < pc[0x861] && pc[0x72f] != 0) {
+  RequestAddGuildPoints(pc[0x861]); pc[0x861] = 0; }`, with no threshold.
+- Its one caller is `4df214` in `FUN_004df050`, which has 61 call sites, among them
+  `transaction::transaction__OnTimeout` (`0x46c780`, right after "DISCONNECT FROM
+  transaction::OnTimeout()"), `CGObjPC::StorageOperation` (`0x50f5c0`, after "posting
+  AsyncQuery failed. will be disconnected!!!") and `CMainProcess::FUN_00417a80`, which runs it
+  for every PC and is called by `CMainProcess::FUN_00416f80` when the ShardManager link drops
+  ("all user connections will be lost (but, data saved)"). Right after the flush,
+  `FUN_004df050` calls vtable `+0x1f0` (`IGObj::SetLifeState`) with 3, `GONE`.
+- The flush goes through `RequestAddGuildPoints`, so its life test applies. `FUN_004df050`'s
+  branch for a PC in state 2 (DEAD) computes the return point and writes the saved position
+  (`CGObjPC::FUN_004e08a0`, `FUN_004f9950`/`9920`/`9850`) with no `SetLifeState` among them, so a
+  PC dead at logout gets `0x4c07` and loses its count.
+
+So nothing is persisted: the count lives as long as the PC is in the world, and one to nine
+pending points reach the guild when it leaves. `guildpoints.go`, `guild.go`, `guild.md`,
+`TODO.md` and this entry said otherwise and are corrected, and the flush is built. Three
+cheaper review points went in with it: `GuildIDOf` replaces the roster load on every
+point-yielding conversion; the life test is applied with the founder check's stand-in rather
+than skipped; and the `SQLStore.AddPoints` comment no longer claims its lock order cannot
+deadlock with `Leave`.
+
+**Docs.**
+
+- `guild.md`'s "Where guild points come from (round 272)" carries the corrected request gates,
+  the `GP_Donation` naming, a note on both corrections, and a new "What srrevamp does (round
+  525)" subsection. Its "What is not recovered" bullet now points "above".
+- `guild.go`'s comments are corrected the same way.
+- `SYSTEMS.md`'s Guild row stays PARTIAL. It gains the anchors `AddPoints`,
+  `NewGuildPointSkills` and `GuildPointsDisconnectHandler`, and its Next is now "guild level +
+  spend GatheredSP on level-up (LevelUpCost)".
+- `TODO.md`'s guild item marks the points half done, with the flush evidence.
+- `PointAccumulator.Pending` now has a caller (`FlushPending`), so its line leaves the orphan
+  baseline in `internal/systems/orphans_test.go`.
+
+**Tests.**
+
+- **`guild`:** `TestMemStoreAddPointsCreditsGuildAndMember` and `TestSQLAddPointsRoundTrip`
+  share `checkAddPoints`.
+  - `AddPoints(g, B, 12)` gives total 12, B 12, A 0.
+  - **Negative:** a guildless character, and a member of another guild, get `ErrNotInGuild`.
+    Neither guild's totals move.
+  - A missing guild gives `ErrGuildNotFound`. A count of 0 is a no-op. A second credit adds up
+    to 22.
+  - The SQL test also opens the store a second time. The `ALTER`s re-run, and 22 / A 10 / B 12
+    survive.
+- **`session`, `TestGuildPointsBatchFromSkillExp`:**
+  - Three `AddSkillExp(1, 1600)` calls gain 4 each, and the total reads 0, 0, 12. The return
+    values match a plain `skill.MemStore` fed the same calls.
+  - **Negative:** an unguilded character earning 12 changes nothing and books nothing. After it
+    joins, 4 more points stay pending, and its donation is 0.
+  - **Negative:** `AddSkillPoints(1, 50)` credits nothing.
+  - 6 then 6 reaches 24.
+- **`session`, other tests:**
+  - `TestGuildPointsCreditFailureIsNotReturned`: a failing `AddPoints` still returns `(10, 10,
+    nil)`.
+  - `TestGuildPointsResultRoundTrip` covers the layout, the error-only form and truncation.
+  - `TestGuildPointsFlow` sends a guildless request (negative: "not in a guild"), then a member
+    request that reads back 12 and each donation.
+  - `TestKillCreditsGuildPoints` runs one kill through `CombatHandler`, with memory stores and a
+    one-level table worth 5000 exp. `OpGuildPoints` reports `GatheredSP` equal to the skill
+    points the kill converted, which is ≥ 10 and equal to the leader's donation.
+- **`session`, the logout flush (review follow-up):**
+  - `TestGuildPointsDisconnectFlush`: a member logs in, enters the world, earns 4 points (below
+    the batch, so the guild still reads 0) and disconnects. The gateway's `OnDisconnect` runs
+    `GuildPointsDisconnectHandler` then `WorldDisconnectHandler`, as `cmd/server` does, and the
+    guild gains +4, as does the member's donation.
+  - `TestGuildPointsFlushPending`: 4 pending, flushed: +4 and the map entry is gone; a second
+    flush sends nothing. **Negative:** a member who earned 6 and then left the guild credits
+    nothing at the flush. **Negative:** a character dead at the flush (0 HP) credits nothing,
+    and the entry is gone.
+  - `TestGuildPointsDeadEarnerBatchIsDropped` (**negative**): a dead earner's 12 are not
+    credited, and after respawning 4 more are 4 pending, not 16.
+  - `TestGuildPointsFlushAllPending`: 4 and 6 pending on two members give +10 (4 and 6), and the
+    map is empty after.
+  - `checkAddPoints` (both stores) also checks `GuildIDOf`: each member's guild, and
+    `ErrNotInGuild` for a guildless character.
+- **Client (`guild_test.gd`):** the request shape, the opcodes, and `decode_points_result` on a
+  hand-built payload, a refusal and a truncated body.
+- **Negative cases proven.**
+  - With the production Go files stashed (`guild.go`, `memstore.go`, `sqlstore.go`,
+    `session/guild.go`, `combat.go`, `main.go`, and `guildpoints.go` moved aside), both packages'
+    tests fail to build: `undefined: GuildPointsResult`, `OpGuildPoints`, and so on.
+  - Two behavioural mutations, each restored afterwards:
+    - With the decorator's crediting skipped, `TestGuildPointsBatchFromSkillExp` failed
+      (`call 3: GatheredSP = 0, want 12`) and `TestKillCreditsGuildPoints` failed
+      (`GatheredSP:0`).
+    - With `MemStore.AddPoints` crediting non-members and the decorator ignoring membership,
+      the store test failed (`total 112 … want 12`) and the batch test failed
+      (`GatheredSP 24, want 12`).
+  - With the three client production scripts stashed and synced, `guild_test.gd` failed to
+    parse: `Static function "encode_points()" not found`.
+  - The flush follow-up, three more mutations of `guildpoints.go`, each restored afterwards:
+    - With `FlushPending`'s credit removed (the state before the fix), the disconnect test
+      failed (`after disconnecting: GatheredSP 0, Aria's donation 0, want 4 and 4`), as did
+      `TestGuildPointsFlushPending` and `TestGuildPointsFlushAllPending`.
+    - With the life stand-in disabled, `TestGuildPointsFlushPending` failed (`a dead
+      character's flush was credited: GatheredSP 9, want 4`) and
+      `TestGuildPointsDeadEarnerBatchIsDropped` failed (`GatheredSP 12, donation 12`).
+    - With the flushed entry kept in the map, `TestGuildPointsFlushPending` (`still in the map`)
+      and `TestGuildPointsFlushAllPending` (`2 accumulators left`) failed.
+  - With everything restored, every test passes.
+- **Run results**
+  - `cd server && go build ./... && go test -count=1 -p 1 ./...`: green.
+  - Render box: `client/tools/remote_godot.sh tests` ran 80 suites, 0 failing.
+    `client/tools/remote_godot.sh check` checked 246 scripts and 5 scenes: ALL LOAD.
+
+Not measured on a running client: the Guild tab's "GP" text has not been seen on screen.

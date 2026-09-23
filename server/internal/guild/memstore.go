@@ -152,6 +152,18 @@ func (m *MemStore) GetByCharacter(_ context.Context, characterID int64) (*Guild,
 	return m.copy(m.byID[guildID]), nil
 }
 
+// GuildIDOf implements Store.
+func (m *MemStore) GuildIDOf(_ context.Context, characterID int64) (int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	guildID, in := m.ofChar[characterID]
+	if !in {
+		return 0, ErrNotInGuild
+	}
+	return guildID, nil
+}
+
 // Get implements Store.
 func (m *MemStore) Get(_ context.Context, guildID int64) (*Guild, error) {
 	m.mu.RLock()
@@ -162,4 +174,28 @@ func (m *MemStore) Get(_ context.Context, guildID int64) (*Guild, error) {
 		return nil, ErrGuildNotFound
 	}
 	return m.copy(g), nil
+}
+
+// AddPoints implements Store: the guild's GatheredSP and the member's
+// GPDonation together, or neither (CGuild::AddPoints, 0x5c4110, touches both
+// only once FUN_005d0c90 has found the member).
+func (m *MemStore) AddPoints(_ context.Context, guildID, characterID int64, points int) error {
+	if points <= 0 {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	g := m.byID[guildID]
+	if g == nil {
+		return ErrGuildNotFound
+	}
+	for i := range g.Members {
+		if g.Members[i].CharacterID == characterID {
+			g.Members[i].GPDonation += int64(points)
+			g.GatheredSP += int64(points)
+			return nil
+		}
+	}
+	return ErrNotInGuild
 }

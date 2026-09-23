@@ -824,6 +824,17 @@ func main() {
 		Species: gmSpecies(), Zones: worldmap.ZoneNames(), Logger: logger,
 	}
 
+	// Guild points (round 525): the skill points a guild member converts out
+	// of skill experience also go to the guild, batched at 10
+	// (GObjPC_GainExpAndLevel 0x4e5250 -> CGuild::AddPoints 0x5c4110; see
+	// session.NewGuildPointSkills). Only the kill paths get the wrapper: they
+	// are the only callers of AddSkillExp, and everything else keeps the
+	// plain store. Points still pending when a character leaves the world go
+	// to the guild then, whatever their count (FUN_004def90's flush,
+	// 0x4def96-0x4defc2): guildPointsDisconnect below, and FlushAllPending
+	// once the listener stops.
+	gpSkills := session.NewGuildPointSkills(skills, guilds, chars)
+
 	handle := gateway.Chain(
 		session.LoginHandler(accounts),
 		session.RegisterHandler(registerer),
@@ -865,10 +876,10 @@ func main() {
 		session.RepairHandler(chars, eq, refItems, trades),
 		session.StorageHandler(chars, storageSvc, trades),
 		session.UseItemHandler(chars, inv, refItems, manaTracker, storageSvc, potions),
-		session.CombatHandlerWithDrops(chars, eq, refItems, hub, monsters, quests, inv, skills, zerkTracker, manaTracker, parties, ground, dropSrc),
+		session.CombatHandlerWithDrops(chars, eq, refItems, hub, monsters, quests, inv, gpSkills, zerkTracker, manaTracker, parties, ground, dropSrc),
 		session.GroundItemHandler(chars, hub, ground, inv, parties),
 		session.LearnSkillHandler(chars, skills, refItems),
-		session.UseSkillHandlerWithDrops(chars, eq, refItems, skills, hub, monsters, quests, inv, refItems, zerkTracker, manaTracker, parties, ground, dropSrc),
+		session.UseSkillHandlerWithDrops(chars, eq, refItems, gpSkills, hub, monsters, quests, inv, refItems, zerkTracker, manaTracker, parties, ground, dropSrc),
 		session.SkillListHandler(chars, skills),
 		session.SkillStateHandler(chars, skills),
 		session.RaiseMasteryHandler(chars, skills),
@@ -885,6 +896,7 @@ func main() {
 	partyDisconnect := session.PartyDisconnectHandler(parties)
 	duelDisconnect := session.DuelDisconnectHandler(hub, duels)
 	tradeDisconnect := session.TradeDisconnectHandler(hub, trades)
+	guildPointsDisconnect := session.GuildPointsDisconnectHandler(hub, gpSkills)
 
 	var tlsConfig *tls.Config
 	if *tlsCert != "" || *tlsKey != "" {
@@ -909,11 +921,13 @@ func main() {
 			return handle(ctx, sess, p)
 		},
 		OnDisconnect: func(sess *gateway.Session) {
-			// duelDisconnect/tradeDisconnect must run before
-			// worldDisconnect: both look the disconnecting session up in
-			// world.Hub, which worldDisconnect removes them from.
+			// duelDisconnect/tradeDisconnect/guildPointsDisconnect must run
+			// before worldDisconnect: all three look the disconnecting
+			// session up in world.Hub, which worldDisconnect removes them
+			// from.
 			duelDisconnect(sess)
 			tradeDisconnect(sess)
+			guildPointsDisconnect(sess)
 			worldDisconnect(sess)
 			partyDisconnect(sess)
 		},
@@ -923,4 +937,14 @@ func main() {
 		logger.Error("gateway server exited", "error", err)
 		os.Exit(1)
 	}
+
+	// The gateway does not run OnDisconnect for sessions still open when it
+	// stops, so the guild points they have pending are flushed here, before
+	// the deferred store Closes (see GuildPointSkills.FlushAllPending: this
+	// is srrevamp's own handling). ctx is already cancelled at this point;
+	// the 30 s bound is srrevamp's own too, so a stalled database cannot hold
+	// the stop open.
+	flushCtx, cancelFlush := context.WithTimeout(context.Background(), 30*time.Second)
+	gpSkills.FlushAllPending(flushCtx)
+	cancelFlush()
 }

@@ -28,6 +28,14 @@ CREATE TABLE IF NOT EXISTS guild_members (
 	joined_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS guild_members_guild_id ON guild_members(guild_id);
+
+-- Guild points (round 525): the guild's total, _GUILD.GatheredSP (+0x3c), and
+-- each member's share of it, _GUILDMEMBER.GP_Donation (+0x40) -- the two
+-- fields CGuild::AddPoints (0x5c4110) raises together
+-- (docs/protocol/db_bind_offsets.tsv). ADD COLUMN IF NOT EXISTS so a database
+-- made before them upgrades in place.
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS gathered_sp BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE guild_members ADD COLUMN IF NOT EXISTS gp_donation BIGINT NOT NULL DEFAULT 0;
 `
 
 // SQLStore is a Store backed by PostgreSQL (via the pgx driver).
@@ -238,23 +246,32 @@ func (s *SQLStore) Leave(ctx context.Context, characterID int64) (int64, *Guild,
 
 // GetByCharacter implements Store.
 func (s *SQLStore) GetByCharacter(ctx context.Context, characterID int64) (*Guild, error) {
+	guildID, err := s.GuildIDOf(ctx, characterID)
+	if err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, guildID)
+}
+
+// GuildIDOf implements Store: one query, no roster.
+func (s *SQLStore) GuildIDOf(ctx context.Context, characterID int64) (int64, error) {
 	var guildID int64
 	err := s.db.QueryRowContext(ctx,
 		`SELECT guild_id FROM guild_members WHERE character_id = $1`, characterID).Scan(&guildID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotInGuild
+		return 0, ErrNotInGuild
 	}
 	if err != nil {
-		return nil, fmt.Errorf("guild: looking up membership: %w", err)
+		return 0, fmt.Errorf("guild: looking up membership: %w", err)
 	}
-	return s.Get(ctx, guildID)
+	return guildID, nil
 }
 
 // Get implements Store.
 func (s *SQLStore) Get(ctx context.Context, guildID int64) (*Guild, error) {
 	g := &Guild{ID: guildID}
 	err := s.db.QueryRowContext(ctx,
-		`SELECT name, leader_id FROM guilds WHERE id = $1`, guildID).Scan(&g.Name, &g.LeaderID)
+		`SELECT name, leader_id, gathered_sp FROM guilds WHERE id = $1`, guildID).Scan(&g.Name, &g.LeaderID, &g.GatheredSP)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrGuildNotFound
 	}
@@ -263,7 +280,7 @@ func (s *SQLStore) Get(ctx context.Context, guildID int64) (*Guild, error) {
 	}
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT character_id, character_name, role FROM guild_members WHERE guild_id = $1 ORDER BY joined_at ASC`,
+		`SELECT character_id, character_name, role, gp_donation FROM guild_members WHERE guild_id = $1 ORDER BY joined_at ASC`,
 		guildID)
 	if err != nil {
 		return nil, fmt.Errorf("guild: listing members: %w", err)
@@ -272,12 +289,79 @@ func (s *SQLStore) Get(ctx context.Context, guildID int64) (*Guild, error) {
 
 	for rows.Next() {
 		var m Member
-		if err := rows.Scan(&m.CharacterID, &m.Name, &m.Role); err != nil {
+		if err := rows.Scan(&m.CharacterID, &m.Name, &m.Role, &m.GPDonation); err != nil {
 			return nil, fmt.Errorf("guild: scanning member: %w", err)
 		}
 		g.Members = append(g.Members, m)
 	}
 	return g, rows.Err()
+}
+
+// AddPoints implements Store. One transaction, so the guild's GatheredSP and
+// the member's GPDonation move together or not at all (CGuild::AddPoints,
+// 0x5c4110, touches both only once FUN_005d0c90 has found the member). The
+// member row is updated first, then the guild row.
+//
+// That order does NOT rule out a deadlock with Leave. A leader's Leave locks
+// the leaver's member row (DELETE), then the guild row (UPDATE leader_id),
+// then the new leader's member row (UPDATE role). An AddPoints for that new
+// leader running at the same moment holds the new leader's row and waits for
+// the guild row, while Leave holds the guild row and waits for the new
+// leader's: a cycle. Postgres detects it and aborts one side. If it aborts
+// AddPoints, the caller logs the error and the batch is lost (the decorator
+// never retries -- the engine does not test the request's result either). If
+// it aborts Leave, the leave fails and the member can try again. No lock
+// order serves both: taking the guild row first would instead cycle with
+// Leave on the LEAVER's row.
+func (s *SQLStore) AddPoints(ctx context.Context, guildID, characterID int64, points int) error {
+	if points <= 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("guild: beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx,
+		`UPDATE guild_members SET gp_donation = gp_donation + $1 WHERE guild_id = $2 AND character_id = $3`,
+		points, guildID, characterID)
+	if err != nil {
+		return fmt.Errorf("guild: crediting member points: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("guild: crediting member points: %w", err)
+	}
+	if n == 0 {
+		// No such member of this guild -- or no such guild at all, which is
+		// the more specific answer when it is the case.
+		var exists bool
+		if err := tx.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM guilds WHERE id = $1)`, guildID).Scan(&exists); err != nil {
+			return fmt.Errorf("guild: checking guild existence: %w", err)
+		}
+		if !exists {
+			return ErrGuildNotFound
+		}
+		return ErrNotInGuild
+	}
+
+	res, err = tx.ExecContext(ctx,
+		`UPDATE guilds SET gathered_sp = gathered_sp + $1 WHERE id = $2`, points, guildID)
+	if err != nil {
+		return fmt.Errorf("guild: crediting guild points: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("guild: crediting guild points: %w", err)
+	} else if n == 0 {
+		return ErrGuildNotFound
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("guild: committing: %w", err)
+	}
+	return nil
 }
 
 func isUniqueConstraintErr(err error) bool {

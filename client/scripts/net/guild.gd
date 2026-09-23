@@ -15,6 +15,12 @@ const OP_LEAVE := 0x0094           # client -> server
 const OP_LEAVE_RESULT := 0x0095    # server -> client
 const OP_INFO := 0x0096            # client -> server
 const OP_INFO_RESULT := 0x0097     # server -> client
+## The guild's points (round 525): GatheredSP and each member's GP_Donation,
+## the two totals CGuild::AddPoints (0x5c4110) raises from members' skill
+## points. srrevamp placeholder opcodes, mirroring session.OpGuildPoints /
+## OpGuildPointsResult.
+const OP_POINTS := 0x0098          # client -> server
+const OP_POINTS_RESULT := 0x0099   # server -> client
 
 const ROLE_MEMBER := 0
 const ROLE_LEADER := 1
@@ -34,6 +40,19 @@ class Result:
 	var leader_id: int
 	var members: Array[Member] = []
 
+## One member's share of the guild's points: _GUILDMEMBER.GP_Donation.
+class PointsMember:
+	var member_name: String
+	var gp_donation: int
+
+## Result of decode_points_result(). On failure only error is meaningful;
+## gathered_sp is the guild's _GUILD.GatheredSP.
+class PointsResult:
+	var error: String
+	var guild_id: int
+	var gathered_sp: int
+	var members: Array[PointsMember] = []
+
 ## Result of decode_leave_result().
 class LeaveResult:
 	var ok: bool
@@ -49,6 +68,10 @@ static func encode_create(character_name: String, guild_name: String) -> PackedB
 
 ## Encodes an OpGuildLeave request: just a character name.
 static func encode_name_request(character_name: String) -> PackedByteArray:
+	return _encode_name(character_name)
+
+## Encodes an OpGuildPoints request: just a character name.
+static func encode_points(character_name: String) -> PackedByteArray:
 	return _encode_name(character_name)
 
 ## Encodes an OpGuildJoin request.
@@ -166,4 +189,54 @@ static func decode_leave_result(data: PackedByteArray) -> LeaveResult:
 
 	result.ok = ok
 	result.reason = data.slice(3, 3 + reason_len).get_string_from_utf8()
+	return result
+
+## Decodes an OpGuildPointsResult payload: an error string, then (on success)
+## the guild id (s64), GatheredSP (s64), a u16 member count and, per member,
+## a u16-prefixed UTF-8 name and its GP_Donation (s64).
+static func decode_points_result(data: PackedByteArray) -> PointsResult:
+	var result := PointsResult.new()
+	if data.size() < 2:
+		result.error = "truncated"
+		return result
+
+	var error_len: int = data.decode_u16(0)
+	var offset: int = 2 + error_len
+	if offset > data.size():
+		result.error = "truncated error field"
+		return result
+	result.error = data.slice(2, offset).get_string_from_utf8()
+	if result.error != "":
+		return result
+
+	if offset + 16 > data.size():
+		result.error = "truncated guild points"
+		return result
+	result.guild_id = data.decode_s64(offset)
+	offset += 8
+	result.gathered_sp = data.decode_s64(offset)
+	offset += 8
+
+	if offset + 2 > data.size():
+		result.error = "truncated member count"
+		return result
+	var count: int = data.decode_u16(offset)
+	offset += 2
+
+	for i in range(count):
+		if offset + 2 > data.size():
+			result.error = "truncated member %d" % i
+			return result
+		var name_len: int = data.decode_u16(offset)
+		offset += 2
+		if offset + name_len + 8 > data.size():
+			result.error = "truncated member %d" % i
+			return result
+		var m := PointsMember.new()
+		m.member_name = data.slice(offset, offset + name_len).get_string_from_utf8()
+		offset += name_len
+		m.gp_donation = data.decode_s64(offset)
+		offset += 8
+		result.members.append(m)
+
 	return result

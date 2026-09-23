@@ -7,8 +7,10 @@
 // is in scope here), but its rules are increasingly the engine's, each cited
 // where it is enforced: the member cap by guild level (MaxMembersByLevel),
 // the 2-12 byte name (ValidName, round 481) and the founder's level, gold and
-// fee (CheckCreator / CreateGoldRequired, round 487). This comment called it
-// "entirely own design; no real guild data to RE" until round 490.
+// fee (CheckCreator / CreateGoldRequired, round 487), and the guild points a
+// member's skill points earn (PointAccumulator / Store.AddPoints, round 525).
+// This comment called it "entirely own design; no real guild data to RE"
+// until round 490.
 package guild
 
 import (
@@ -38,9 +40,9 @@ import (
 var MaxMembersByLevel = [5]int{15, 20, 25, 35, 50}
 
 // MaxMembers is the cap that applies to srrevamp today: **15**, the level-1
-// entry. srrevamp's guilds have no level -- Guild is {ID, Name, LeaderID,
-// Members} -- so every guild is a level-1 guild, and taking a larger entry would
-// be granting a capacity the game makes you earn.
+// entry. srrevamp's guilds have no level -- Guild has no Lvl field (_GUILD.Lvl,
+// +0x38, is not modelled) -- so every guild is a level-1 guild, and taking a
+// larger entry would be granting a capacity the game makes you earn.
 const MaxMembers = 15
 
 // MaxMembersFor returns the cap for a guild level, clamped to the range the
@@ -108,7 +110,8 @@ func (p Permission) Has(required Permission) bool {
 
 // NOTHING ENFORCES PERMISSIONS YET, and that is a statement about scope rather
 // than an oversight: this package has no operation that needs one. Its Store is
-// Create/Join/Leave/Get -- there is no kick, no disband, and no invite.
+// Create/Join/Leave/Get plus AddPoints -- there is no kick, no disband, and no
+// invite.
 //
 // The divergence worth recording is Join. In the engine a character is brought
 // in by a member holding PermInvite; here Join is self-service, so anyone may
@@ -295,11 +298,12 @@ var ErrNameTaken = errors.New("guild: name already taken")
 var ErrAlreadyInGuild = errors.New("guild: already in a guild")
 
 // ErrNotInGuild is returned by Store.Leave when the character isn't in any
-// guild.
+// guild, and by Store.AddPoints when the character is not a member of the
+// guild named.
 var ErrNotInGuild = errors.New("guild: not in a guild")
 
-// ErrGuildNotFound is returned by Store.Join/Get when guildID doesn't
-// exist.
+// ErrGuildNotFound is returned by Store.Join/Get/AddPoints when guildID
+// doesn't exist.
 var ErrGuildNotFound = errors.New("guild: no such guild")
 
 // Role distinguishes a guild's leader from its rank-and-file members.
@@ -315,6 +319,14 @@ type Member struct {
 	CharacterID int64
 	Name        string
 	Role        Role
+	// GPDonation is the guild points this member has earned the guild:
+	// _GUILDMEMBER.GP_Donation, the member record's +0x40
+	// (docs/protocol/db_bind_offsets.tsv, `_GUILDMEMBER GP_Donation 0x40`),
+	// which CGuild::AddPoints (0x5c4110) raises by each batch alongside the
+	// guild's GatheredSP. It is NOT _GUILDMEMBER.Contribution, a separate
+	// column at +0x58. The engine's field is a dword (`*(int *)(rec + 0x40)`);
+	// int64 is this store's width, not a claim about the engine's.
+	GPDonation int64
 }
 
 // Guild is a persistent group of characters, one of whom is the leader.
@@ -323,6 +335,12 @@ type Guild struct {
 	Name     string
 	LeaderID int64
 	Members  []Member
+	// GatheredSP is the guild's points total: _GUILD.GatheredSP, the guild
+	// record's +0x3c (docs/protocol/db_bind_offsets.tsv, `_GUILD GatheredSP
+	// 0x3c`), raised by CGuild::AddPoints (0x5c4110) and read as the
+	// guild-point half of the level-up cost by CGuild::CheckLevelUpCost
+	// (0x005c6240; see LevelUpGuildPoints). A dword in the engine, int64 here.
+	GatheredSP int64
 }
 
 // Store persists guilds and their membership.
@@ -355,9 +373,26 @@ type Store interface {
 	// if any.
 	GetByCharacter(ctx context.Context, characterID int64) (*Guild, error)
 
+	// GuildIDOf returns the id of the guild characterID belongs to, or
+	// ErrNotInGuild -- membership alone, without the roster GetByCharacter
+	// loads. It is the engine's `pc[0x72f] != 0` test (pc+0x1cbc), which both
+	// guild-point paths make before they touch the pending count
+	// (GObjPC_GainExpAndLevel 0x4e5250, and FUN_004def90 at 0x4def9f).
+	GuildIDOf(ctx context.Context, characterID int64) (int64, error)
+
 	// Get returns a guild by ID. Returns ErrGuildNotFound if it doesn't
 	// exist.
 	Get(ctx context.Context, guildID int64) (*Guild, error)
+
+	// AddPoints credits points guild points to guildID's GatheredSP AND to
+	// characterID's GPDonation -- both or neither, as CGuild::AddPoints
+	// (0x5c4110) does: it looks the member up first (FUN_005d0c90) and
+	// touches neither total when that fails. Returns ErrGuildNotFound when
+	// the guild does not exist and ErrNotInGuild when characterID is not one
+	// of its members. points <= 0 is a no-op: the engine's request
+	// (CGuildManager::RequestAddGuildPoints, 0x5c62e0) goes out only for a
+	// count above zero (`cmp [esp+0x14],0; ja` at 0x5c62e3).
+	AddPoints(ctx context.Context, guildID, characterID int64, points int) error
 }
 
 // Where guild points come from -- read 2026-09-19 (round 272,
@@ -366,12 +401,27 @@ type Store interface {
 // converts skill experience into whole points at 400:1 and grants them
 // (slot 93), adds the same count to the character's accumulator (pc+0x2184)
 // when the character is in a guild, and once the accumulator exceeds 9 hands
-// it to CGuildManager::RequestAddGuildPoints (0x5c62e0): a PC in a guild below
-// level 6 sends 0x78F7 {guild, member, points} to the global server, which
-// answers 0x38F5 and CGuild::AddPoints (0x5c4110) adds the count to the
-// guild's total (guild+0x3c) AND to the member's own contribution
-// (member+0x40). So a member's guild points are exactly the skill points they
-// gain, delivered in batches of at least ten.
+// it to CGuildManager::RequestAddGuildPoints (0x5c62e0) and zeroes it: a
+// living PC (IGObj::GetLifeState, vtable +0xf8, == 1, else 0x4c07) in a guild
+// (else 0x4c0d) of level 5 or below (`cmp al,0x5; ja` at 0x5c6335) sends
+// 0x78F7 {guild, member, points} to the global server, and on the echo
+// CGuild::AddPoints (0x5c4110) adds the count to the guild's total
+// (guild+0x3c, _GUILD.GatheredSP) AND to the member's GP_Donation
+// (member+0x40, _GUILDMEMBER.GP_Donation -- not Contribution, which is +0x58;
+// docs/protocol/db_bind_offsets.tsv). The accumulator has one other reader:
+// FUN_004def90, on the path that takes a PC out of the world (FUN_004df050's
+// call at 0x4df214: a disconnect, a transaction timeout, a storage failure),
+// hands whatever is pending -- ANY count above zero, no threshold -- to the
+// same request when the PC is in a guild (0x4def96 `cmp [esi+0x2184],ebp;
+// jle`, 0x4def9f `cmp [esi+0x1cbc],ebp; je`, the call at 0x4defbd) and
+// zeroes it (0x4defc2). A new PC object starts at zero (CGObjPC::vslot_000,
+// 0x4dea77, with ebx cleared at 0x4de9cb). So a member's guild points are
+// exactly the skill points they gain, in batches of at least ten while they
+// play and whatever is left, one to nine, when they leave the world.
+//
+// WIRED in round 525: session.NewGuildPointSkills books every AddSkillExp
+// conversion through a PointAccumulator and credits each batch with
+// Store.AddPoints; session.GuildPointsDisconnectHandler is the logout flush.
 const (
 	// GuildPointsPerSkillPoint is the 1:1 the accumulator carries over.
 	GuildPointsPerSkillPoint = 1
@@ -400,5 +450,6 @@ func (a *PointAccumulator) Add(sp int) int {
 	return out
 }
 
-// Pending is what has accumulated below the threshold.
+// Pending is what has accumulated below the threshold: what FUN_004def90
+// (0x4def90) hands over, whatever its size, when the PC leaves the world.
 func (a *PointAccumulator) Pending() int { return a.pending }

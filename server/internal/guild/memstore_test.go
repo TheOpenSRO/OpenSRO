@@ -128,3 +128,101 @@ func TestMemStoreCreateEnforcesNameLength(t *testing.T) {
 		t.Fatalf("Create(\"Ab\") by a guildless character: got %v, want ErrNameTaken", err)
 	}
 }
+
+// checkAddPoints runs the Store.AddPoints contract against either store:
+// CGuild::AddPoints (0x5c4110) credits the guild's GatheredSP (+0x3c) and the
+// member's GP_Donation (+0x40) together, and neither once FUN_005d0c90 fails
+// to find the member.
+func checkAddPoints(t *testing.T, store Store) {
+	t.Helper()
+	ctx := context.Background()
+
+	g, err := store.Create(ctx, "Ironclad", 1, "A")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := store.Join(ctx, g.ID, 2, "B"); err != nil {
+		t.Fatalf("Join: %v", err)
+	}
+	other, err := store.Create(ctx, "Elsewhere", 4, "D")
+	if err != nil {
+		t.Fatalf("Create(other): %v", err)
+	}
+
+	// state reads the guild's total and each member's donation back.
+	state := func() (int64, map[string]int64) {
+		t.Helper()
+		got, err := store.Get(ctx, g.ID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		don := map[string]int64{}
+		for _, m := range got.Members {
+			don[m.Name] = m.GPDonation
+		}
+		return got.GatheredSP, don
+	}
+
+	if total, don := state(); total != 0 || don["A"] != 0 || don["B"] != 0 {
+		t.Fatalf("a new guild: total %d, donations %v, want all zero", total, don)
+	}
+
+	if err := store.AddPoints(ctx, g.ID, 2, 12); err != nil {
+		t.Fatalf("AddPoints(B, 12): %v", err)
+	}
+	if total, don := state(); total != 12 || don["B"] != 12 || don["A"] != 0 {
+		t.Fatalf("after B earns 12: total %d, donations %v, want total 12, B 12, A 0", total, don)
+	}
+
+	// NEGATIVE: a character outside the guild -- guildless (3), or in another
+	// guild (4) -- is refused, and neither total moves.
+	for _, who := range []int64{3, 4} {
+		if err := store.AddPoints(ctx, g.ID, who, 50); !errors.Is(err, ErrNotInGuild) {
+			t.Fatalf("AddPoints for non-member %d: got %v, want ErrNotInGuild", who, err)
+		}
+	}
+	if total, don := state(); total != 12 || don["B"] != 12 || don["A"] != 0 {
+		t.Fatalf("after refused credits: total %d, donations %v, want 12 / B 12 / A 0 untouched", total, don)
+	}
+	if o, err := store.Get(ctx, other.ID); err != nil || o.GatheredSP != 0 || o.Members[0].GPDonation != 0 {
+		t.Fatalf("the other guild moved on a refused credit: %+v, %v", o, err)
+	}
+
+	// A guild that does not exist.
+	if err := store.AddPoints(ctx, 9999, 2, 10); !errors.Is(err, ErrGuildNotFound) {
+		t.Fatalf("AddPoints to a missing guild: got %v, want ErrGuildNotFound", err)
+	}
+
+	// Nothing to credit is a no-op, not an error.
+	if err := store.AddPoints(ctx, g.ID, 1, 0); err != nil {
+		t.Fatalf("AddPoints(0): %v", err)
+	}
+	if err := store.AddPoints(ctx, g.ID, 1, 10); err != nil {
+		t.Fatalf("AddPoints(A, 10): %v", err)
+	}
+	if total, don := state(); total != 22 || don["A"] != 10 || don["B"] != 12 {
+		t.Fatalf("after A earns 10: total %d, donations %v, want 22 / A 10 / B 12", total, don)
+	}
+
+	// The donation is the member's: GetByCharacter reads the same numbers.
+	byChar, err := store.GetByCharacter(ctx, 2)
+	if err != nil || byChar.GatheredSP != 22 {
+		t.Fatalf("GetByCharacter(2) = %+v, %v; want GatheredSP 22", byChar, err)
+	}
+
+	// GuildIDOf, the membership test the crediting paths make first
+	// (pc[0x72f] != 0): each member's own guild, and ErrNotInGuild for a
+	// guildless character.
+	for who, want := range map[int64]int64{1: g.ID, 2: g.ID, 4: other.ID} {
+		if got, err := store.GuildIDOf(ctx, who); err != nil || got != want {
+			t.Fatalf("GuildIDOf(%d) = %d, %v; want %d", who, got, err, want)
+		}
+	}
+	if got, err := store.GuildIDOf(ctx, 3); !errors.Is(err, ErrNotInGuild) {
+		t.Fatalf("GuildIDOf(guildless) = %d, %v; want ErrNotInGuild", got, err)
+	}
+}
+
+func TestMemStoreAddPointsCreditsGuildAndMember(t *testing.T) {
+	checkAddPoints(t, NewMemStore())
+}
