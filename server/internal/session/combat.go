@@ -790,10 +790,30 @@ func inParty(parties *party.Hub, characterID int64) bool {
 // and rate multipliers, and whether the level table knows it. Being in a party
 // is Formula_ExpScaleByLevelDiff's gate for its gap bonus (0x410018-0x410027:
 // `pc[0x72e]` non-null and bit 0 -- exp-sharing -- of the party's flags), and
-// every srrevamp party shares experience (party.MaxSize), so inParty is the
-// whole gate. See leveldata.ExpDiffScale.
+// every srrevamp party shares experience (party.MaxSize). See
+// leveldata.ExpDiffScale.
+//
+// The gate here asks for a SECOND member, which the engine's does not: it
+// tests the party pointer. But the engine never creates a party of one. A
+// party is born when an invite is accepted, with two member records at once
+// (trs_wait_response::FUN_005be4f0, docs/protocol/party.md round 271), while
+// srrevamp's own create path makes a party of just the leader -- so a pointer
+// test here would pay the bonus to a lone player for clicking "create party",
+// a state the engine has no way into (round 485). What the engine does when a
+// party of two drops to one is UNREAD (the party lives in another server
+// process), so that case follows the same two-member reading, disclosed.
 func killExpFor(tbl *leveldata.Table, parties *party.Hub, characterID int64, killerLevel, victimLevel int) (int64, bool) {
-	return tbl.KillExp(killerLevel, victimLevel, inParty(parties, characterID))
+	return tbl.KillExp(killerLevel, victimLevel, inPartyWithOthers(parties, characterID))
+}
+
+// inPartyWithOthers reports whether characterID is in a party that has at
+// least one other member -- the only kind the engine creates. See killExpFor.
+func inPartyWithOthers(parties *party.Hub, characterID int64) bool {
+	if parties == nil {
+		return false
+	}
+	pt, in := parties.Get(characterID)
+	return in && pt != nil && len(pt.Members) >= 2
 }
 
 // applyMasteryExpScale scales a kill's experience by the gap between the

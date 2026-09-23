@@ -110,14 +110,16 @@ func TestKillExpPartyGapBonus(t *testing.T) {
 		t.Errorf("character in no party: got %d, want 327", got)
 	}
 
-	// A party of one already passes the engine's gate: it tests the party
-	// pointer, not the member count.
+	// A party of one does NOT earn it (round 485). The engine's gate tests the
+	// party pointer, but the engine only ever creates a party with two members
+	// (an accepted invite); srrevamp's create-alone path is its own, and must
+	// not turn "create party" into a solo exp bonus.
 	pt, err := hub.Create(member(1, 42, "Leader"))
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if got, _ := killExpFor(tbl, hub, 42, 10, 20); got != 432 {
-		t.Errorf("party of one: got %d, want 432", got)
+	if got, _ := killExpFor(tbl, hub, 42, 10, 20); got != 327 {
+		t.Errorf("party of one: got %d, want 327 (no gap bonus alone)", got)
 	}
 
 	// Both members of a party of two earn it.
@@ -133,6 +135,15 @@ func TestKillExpPartyGapBonus(t *testing.T) {
 	// Someone outside the party still gets the solo scale.
 	if got, _ := killExpFor(tbl, hub, 44, 10, 20); got != 327 {
 		t.Errorf("outsider beside a live party: got %d, want 327", got)
+	}
+
+	// When the second member leaves, the leader is alone again and loses it.
+	// What the engine does here is unread; this follows the two-member reading.
+	if _, _, err := hub.Leave(43); err != nil {
+		t.Fatalf("Leave: %v", err)
+	}
+	if got, _ := killExpFor(tbl, hub, 42, 10, 20); got != 327 {
+		t.Errorf("party dropped to one: got %d, want 327", got)
 	}
 }
 

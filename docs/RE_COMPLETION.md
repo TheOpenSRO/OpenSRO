@@ -2351,9 +2351,9 @@ later lands in the right arithmetic.
 
 ### Open
 
-- `[0x72f]` and `[0x72e]` — adjacent pointer fields on a PC, gating death kind 5
-  and the exp-reward tier bonus respectively. Naming either would name both a
-  death kind and a shipped-adjacent bonus.
+- ~~`[0x72f]` and `[0x72e]` — adjacent pointer fields on a PC, gating death kind 5
+  and the exp-reward tier bonus respectively.~~ **CLOSED:** named PARTY and GUILD
+  in the next entry (2026-09-15); the tier bonus they gate SHIPPED in round 480.
 - `vf[0x3b4]` on the killer overrides the loss outright in the monster branch.
 - Death kinds 1, 2 and 6, and their handlers `FUN_004e6820` / `FUN_004e6d60`.
 - Params 256 and 258, the other two premium benefits.
@@ -2381,7 +2381,8 @@ retires two open items at once:
   non-null with bit 0 of the party's `+0x10` set. Still not shipped — what bit 0
   selects is unread, and srrevamp's parties are own design with no such flag —
   but the reason is now "a party-conditional bonus whose party flag is unread"
-  rather than "an unidentified state".
+  rather than "an unidentified state". **SUPERSEDED:** bit 0 is exp-sharing
+  (`CParty::CheckCanJoin`, round 357/358) and the bonus SHIPPED in round 480.
 - **Death kind 5 needs BOTH parties in guilds.** `FUN_004eb390` requires the
   killer to pass the PC predicate, the victim's `+0x1cbc` to be non-null, and
   the killer's `[0x72f]` likewise, before a further guild-to-guild comparison.
@@ -10882,7 +10883,8 @@ attributing each site to its enclosing function by the dump's own boundaries:
 among others). THE ONE CONTRADICTION IS EXCLUDED -- index 0x0c4 emits only
 0xb045, so its 0xb0c4 client handler is somebody else's counterpart, and it is
 precisely the case that would have produced a confident wrong name. The
-disassembly is the MODDED build (srgs.asm), which is fine for opcodes and was
+disassembly is srgs.asm (then believed a MODDED build; round 485 retracted
+that -- it is the same binary as the dump), which is fine for opcodes and was
 checked anyway against the two pairs read by hand in round 328: 0x04c -> 0xb04c
 and 0x51d -> 0xb51d, both exact. AN INDEPENDENT CORROBORATION FELL OUT: the
 sweep reproduces the 2026-09-17 finding that the client binds 0xb470-0xb47e to
@@ -24055,6 +24057,15 @@ re-verified against the binary.** Docs only; 0 names.
 
 ## Two server builds: the dump is authoritative, srgs.asm is a mod (2026-09-18)
 
+> **RETRACTED in round 485 (2026-09-23). There is ONE build.** The on-disk exe, `srgs.asm` and
+> `srv.asm` (byte-identical disassemblies of it) carry all FOUR death-penalty branches the dump has:
+> `0x4e6a77 imul esi,esi,0x64` (×100), `0x4e6aa2 lea esi,[esi+esi*4]; add esi,esi; add esi,esi`
+> (**×20**), `0x4e6ad2 imul esi,esi,0x12c` (×300), `0x4e6aff imul esi,esi,0x64` (×100). The search
+> below found three `imul` sites and no `0x14`; the compiler had strength-reduced ×20 to lea+add+add,
+> which that search could not see, so "byte-searched all encodings" was not true. Every conclusion
+> that rests on "the builds differ" falls with it; every finding that was cross-checked in both
+> stands, since the two reads were of one binary. Found by a round-480 reviewer, re-checked by hand.
+
 Auditing the death penalty turned up that the RE box has **two different SR_GameServer builds**, and
 it matters for every asm/constant read:
 
@@ -24082,6 +24093,9 @@ moddable sites can diverge, and the death penalty is one that does. Docs only; 0
 (both audited items are correct in the authoritative build).
 
 ## The combat .rdata constants are shared across both builds (2026-09-18)
+
+> **Superseded in round 485:** there were never two builds (see the retraction on the entry above).
+> The ten constants below are still read correctly; "shared" is trivially true of one binary.
 
 Closing the risk the two-builds finding opened: all ten combat constants srrevamp cites were read
 from the AUTHORITATIVE dump build with `ReadConst.java`, and every one matches the on-disk exe:
@@ -25553,6 +25567,10 @@ passes `europe = false`, because every srrevamp character is China
 `session.killExpFor`, whose gate is `inParty`: every srrevamp party shares
 experience (`party.MaxSize` is the shared cap), and the engine tests the party
 pointer rather than the member count, so a party of one earns it too.
+**Changed in round 485:** a party of one no longer earns it. The engine only
+ever creates a party with two members (an accepted invite), so the pointer
+test never meets a party of one through creation; srrevamp's create-alone path
+is its own, and paid a solo bonus for clicking "create party".
 
 The visible change: a partied level-10 killing a level-15 goes from 1.24x to
 1.39x, and against a level-19 from 1.36x to 1.81x; the China peak is 1.84 and
@@ -25674,7 +25692,7 @@ here only by the engine's own strings (`error_codes.md`) or not at all:
   and `+0x24` of the item's `piVar2[0xd]` record are zero. That field is not
   identified;
 - `0x18b6` `UIIT_MSG_COSPETERR_CANT_TRADE`, when vtable slot `0x54` returns 1
-  and the object vtable slot `0x4bc` returns has bit `2` set in the byte at
+  and the object vtable slot `0x4bc` returns has mask `2` (bit 1) set in the byte at
   `+0x38` of its `+4` record;
 - `0x18fa` `UIIT_CTL_NASRUN_NOT_TRADE`, when vtable slot `0x470` returns 1 and
   `FUN_00498610()` returns non-zero.
@@ -25952,3 +25970,55 @@ pass against the new code. `go test -count=1 -p 1 ./...` is green.
 On the render box, `client/tools/remote_godot.sh tests` ran 77 suites with 0
 failing, and `check` compiled 239 scripts and 5 scenes (`ALL LOAD`). The client
 grey-out change was not rendered, so it is read from the code only.
+
+## Batch-1 review follow-ups: a party of one, the receiver's +0x1cd8, and ONE server build (round 485)
+
+The five rounds above each passed an adversarial review. The reviewers' non-blocking notes held
+three real corrections and a handful of stale sentences; this round lands them.
+
+**1. There is one server build, not two.** The 2026-09-18 entry "Two server builds: the dump is
+authoritative, srgs.asm is a mod" is RETRACTED in place. Its evidence was a search for `imul`
+immediates in the death-penalty block that found three and no `0x14`; the on-disk exe computes the
+player branch's ×20 as `0x4e6aa2 lea esi,[esi+esi*4]; add esi,esi; add esi,esi`. All four branches
+(×100 at `0x4e6a77`, ×20, ×300 at `0x4e6ad2`, ×100 at `0x4e6aff`) are there, in `srv.asm` and
+`srgs.asm` alike (both are disassemblies of md5 `864ffd0d2b76…`, which is also the Blitzkrieq copy).
+Consequence for method: `srv.asm` is valid for values, not only structure; a constant that looks
+absent from asm must be searched for in its strength-reduced forms (lea/shl/add) before absence is
+claimed. The follow-up ".rdata shared across both builds" entry and the round-328 aside calling
+`srgs.asm` "the MODDED build" carry superseded notes.
+
+**2. The gap bonus needs a second party member.** Round 480 paid it to a party of one because the
+engine's gate (`0x410018`) tests the party pointer, not a count. That is a correct reading of the
+gate and a wrong model of the world: the engine only creates a party when an invite is accepted,
+with two member records at once (`trs_wait_response::FUN_005be4f0`, party.md round 271), so the
+pointer never meets a party of one through creation. srrevamp's `handlePartyCreate` makes a party
+of just the leader, which turned "create party" into a solo EXP bonus. `session.killExpFor` now
+gates on `inPartyWithOthers` (two or more members). What the engine does when a party of two drops
+to one is **unread** — the party lives in another server process — and that case follows the same
+reading, disclosed in the code. The party EXP-share multiplier (`applyPartyExpBonus`) is unaffected:
+its `(members-1)` term is already zero for one.
+
+**3. The `+0x1cd8` factor in the kill reward is the receiver's mastery-lag scale.**
+`Formula_MonsterExpReward` loads `fld [edi+0x1cd8]` at `0x410660` and then `mov esi,edi` hands
+the same object to `Formula_ExpScaleByLevelDiff` as its receiver, so EDI is the PC being paid.
+`GObjPC_RecalcLevelDiffExpScale` is the float's only writer (`leveldata.MasteryExpScale`), and the
+session already applies it (`applyMasteryExpScale`). The `KillExp` doc comment still called it an
+unmodelled "premium/event rate written only by CTJ_PremiumKeeper's neighbours", the kill-EXP row of
+GROUNDING_AUDIT.md said `victim[0x1cd8]`, and the Ghidra plate for `0x004105d0` in
+ApplyKnownNames.java said `target[0x1cd8]`; all three are corrected. No value changes.
+
+**Smaller fixes.** Two dated Open bullets about `[0x72e]`/the tier bonus are marked closed/superseded
+(round 480 shipped it). Round 482's `0x18b6` condition said "bit `2`" for a `& 2` test; it now says
+mask `2` (bit 1). A leveldata comment that read "0x78 being exactly the 0x78 in Mastery_LevelUp"
+now names the coincidence it meant (the recompute's `ref > 0x78` cut-off). `MemStore.Create`'s
+membership-before-uniqueness order (round 481) had no test that could tell the orders apart; a
+guilded founder re-creating their own taken name now must get `ErrAlreadyInGuild`, and a guildless
+character asking for it `ErrNameTaken`.
+
+**Tests.** `session.TestKillExpPartyGapBonus` now expects 327 (no bonus) for a party of one and for
+a party dropped back to one, 432 for both members of a party of two. Negative case run: with
+`killExpFor` put back on `inParty`, both one-member cases fail with 432. `go test -count=1 -p 1 ./...`
+is green.
+
+Behaviour change: a player alone in a party they created no longer earns the level-gap EXP bonus;
+parties of two or more are unchanged from round 480.

@@ -84,7 +84,9 @@ hit pulls neighbouring monsters in only in an exp-sharing party;
 `Formula_ExpScaleByLevelDiff` (`0x40ffe0`) reads the byte directly through
 `pc+0x1cb8` rather than the getter (`0x410018 mov eax,[esi+0x1cb8]`, `0x410024
 test byte [eax+0x10],cl` with `cl = 1`) and adds 0.15/0.30/0.45 for a target 5/7/9
-or more levels up only when it is set (round 480, `leveldata.ExpDiffScale`);
+or more levels up only when it is set (round 480, `leveldata.ExpDiffScale`;
+srrevamp pays it only to a party of two or more, round 485, because the engine
+never creates a party of one);
 **bit 1** is item sharing --
 `ground_items.md`: a party member may pick a reserved drop when the party
 shares items (`GetPartyFlags() & 2`); `FUN_005bbae0` (from `0x5bc210` and

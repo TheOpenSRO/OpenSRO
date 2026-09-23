@@ -117,4 +117,14 @@ func TestMemStoreCreateEnforcesNameLength(t *testing.T) {
 	if _, err := store.Create(ctx, "A", 1, "Leader"); !errors.Is(err, ErrAlreadyInGuild) {
 		t.Fatalf("Create(\"A\") by a guilded character: got %v, want ErrAlreadyInGuild", err)
 	}
+	// ...and before uniqueness. "A" above cannot tell the orders apart, because
+	// it was never taken; a VALID, TAKEN name can. Before round 481 MemStore
+	// checked the name first and answered ErrNameTaken here.
+	if _, err := store.Create(ctx, "Ab", 1, "Leader"); !errors.Is(err, ErrAlreadyInGuild) {
+		t.Fatalf("Create(\"Ab\") again by its guilded founder: got %v, want ErrAlreadyInGuild", err)
+	}
+	// A guildless character asking for the taken name still gets ErrNameTaken.
+	if _, err := store.Create(ctx, "Ab", 3, "Third"); !errors.Is(err, ErrNameTaken) {
+		t.Fatalf("Create(\"Ab\") by a guildless character: got %v, want ErrNameTaken", err)
+	}
 }

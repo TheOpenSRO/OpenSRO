@@ -323,9 +323,10 @@ const (
 //
 // HOW THE REFERENCE WAS SETTLED, because the previous tick recorded it as an
 // explicitly refused guess. Two coincidences pointed at "highest mastery level"
-// -- recomputation on mastery level-up, and 0x78 being exactly the 0x78 in
-// Mastery_LevelUp (then read as a single-mastery cap; round 484 found it bounds
-// only the cost loop) -- and that is the shape of reasoning that got
+// -- recomputation on mastery level-up, and its `ref > 0x78` cut-off being the
+// same 0x78 that Mastery_LevelUp compares against (then read as a
+// single-mastery cap; round 484 found it bounds only the cost loop) -- and that
+// is the shape of reasoning that got
 // characterdata column 79 wrong twice, so it was not promoted. What settled it
 // is a USE-SITE: FUN_0059e7c0 walks the identical list under pc+0xa30 with the
 // identical skip rule and value path but SUMS instead of taking the maximum,
@@ -490,9 +491,12 @@ func PartyExpBonus(members int) float64 {
 // the same byte the equip check compares for `0x182f STRGERR_COUNTRY_MISMATCH`.
 //
 // srrevamp's parties are all exp-sharing -- party.MaxSize is the exp-shared cap
-// and no non-sharing party exists -- so the gate reduces to being in a party at
-// all. That includes a party of ONE: the engine tests the pointer, not the
-// member count, unlike PartyExpBonus, whose (members-1) term is zero for one.
+// and no non-sharing party exists -- so the gate reduces to being in a party.
+// The engine tests the pointer, not the member count, but it never CREATES a
+// party of one (a party is born on an accepted invite with two members,
+// docs/protocol/party.md round 271), so the session's caller asks for a second
+// member rather than reward srrevamp's own create-alone path (round 485; see
+// session.killExpFor).
 //
 // The cap is still unreachable: with the bonus the scale peaks at 1.84 for
 // China (1.39 + 0.45) and 2.29 for Europe (1.39 + 0.9), against 4.0.
@@ -581,10 +585,13 @@ func ExpDiffScale(killerLevel, victimLevel int, expSharingParty, europe bool) fl
 // and equipment.Refusal refuses a Europe item on exactly that ground), so the
 // Europe arm of the bonus is recovered but never selected.
 //
-// What remains unmodelled is the killer's own exp-rate multiplier, a float at
-// killer+0x1cd8 written only by CTJ_PremiumKeeper's neighbours; it is a
-// premium/event rate and a character without one evaluates it at its default,
-// so what ships is the game's formula at the base rate.
+// The reward's remaining factor, the float at pc+0x1cd8 that
+// Formula_MonsterExpReward loads at 0x410660 (`fld [edi+0x1cd8]`, EDI being the
+// PC paid), is the RECEIVER's mastery-lag scale -- see MasteryExpScale -- and
+// the session applies it after this (applyMasteryExpScale). This paragraph
+// called it a premium/event rate "written only by CTJ_PremiumKeeper's
+// neighbours" until round 485; GObjPC_RecalcLevelDiffExpScale is its only
+// writer.
 func (t *Table) KillExp(killerLevel, victimLevel int, expSharingParty bool) (int64, bool) {
 	lvl := killerLevel
 	if victimLevel < lvl {
