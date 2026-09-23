@@ -57,20 +57,52 @@ const GUILD_CREATE_STRID := "UIIT_CTL_GUILD_CREATE"
 ## (0x6fd334) is 0x6fd0bc `push 0xdad2ec`, and .rdata 0xdad2ec is this string.
 const GUILD_SECESSION_STRID := "UIIT_CTL_GUILD_SECESSION"
 
+## The job guilds' join lines (round 526), by job kind: 1 Trader, 2 Thief
+## ("Robber"), 3 Hunter (docs/protocol/jobs.md, "Three job kinds"). The real
+## client writes the line as item 0x1e of FUN_006fcd60, whose third argument
+## (`sub`, the byte at [esp+0x264], 0x6fce2c) picks the token: item 0x1e takes
+## index byte 0x19 (0x6fd394 + 0x1e), whose jump-table entry (0x6fd33c) is
+## 0x6fcf42, `cmp al,1` -> `push 0xdadad8`, `cmp al,2` -> `push 0xdada88`,
+## `cmp al,3` -> `push 0xdada38`. objdump -s on the render box's
+## /opt/sro-files/client/sro_client.exe reads those three .rdata strings as
+## these tokens.
+const JOB_JOIN_STRIDS := {
+	1: "UIIT_STT_NPC_CHATTING_TRADERMENU_JOIN",
+	2: "UIIT_STT_NPC_CHATTING_THIEFMENU_JOIN",
+	3: "UIIT_STT_NPC_CHATTING_HUNTERMENU_JOIN",
+}
+## The fallback labels are the player's own textuisystem.txt text for the
+## three tokens, from the later 19-column rows ([9]), which UiTextTable keeps
+## (/var/tmp/tables/textuisystem.txt on the render box). The earlier 16-column
+## rows say "Join the Trader Job!" and so on; the talk window shows whichever
+## the archive resolves, and these only when it has no text.
+const JOB_FALLBACK_LABELS := {
+	1: "Join merchant guild",
+	2: "Join thief guild",
+	3: "Join hunter guild",
+}
+## The order FUN_00700440 asks for the three ids, and the kind it passes each:
+## id 0x14 (lookup 0x70120e) -> 0x701237 `push 1`, `call 0x6fdeb0`; id 0x16
+## (0x701252) -> 0x70127b `push 3`; id 0x15 (0x701296) -> 0x7012bf `push 2`.
+const JOB_KIND_ORDER := [1, 3, 2]
+
 ## One service a talk window offers: a stable key (for wiring later), the
 ## label to fall back on, and -- when the client's own talk menu has a line
 ## for it -- that line's UIIT string id, resolved through the player's
 ## textuisystem.txt by the talk window. An empty strid means there is no
-## grounded token and the label is shown as it is.
+## grounded token and the label is shown as it is. `job_kind` is the job
+## guild a "job_guild" line joins (1 Trader, 2 Thief, 3 Hunter), 0 otherwise.
 class Service:
 	var key: String
 	var label: String
 	var strid: String
+	var job_kind: int = 0
 
-	func _init(k: String, l: String, s: String = "") -> void:
+	func _init(k: String, l: String, s: String = "", jk: int = 0) -> void:
 		key = k
 		label = l
 		strid = s
+		job_kind = jk
 
 ## Parses refshopgroup.txt into a set of NPC codenames (upper-cased) that run a
 ## shop.
@@ -113,7 +145,8 @@ static func parse_greetings(data: PackedByteArray) -> Dictionary:
 ## STOREHOUSE_STRID, which the talk window resolves through the player's
 ## textuisystem.txt. The talk window adds the end line from TALKEND_STRID. So
 ## do the guild NPC's create and leave lines, GUILD_CREATE_STRID and
-## GUILD_SECESSION_STRID (guild_services, round 521). The other labels are
+## GUILD_SECESSION_STRID (guild_services, round 521), and the job guilds'
+## join lines, JOB_JOIN_STRIDS (round 526). The other labels are
 ## this project's plain-English text with no strid:
 ##   * "Buy" -- the real client has no single shop line. Item 1 runs
 ##     FUN_006fb630, which formats its own "%d. " line per store, and those
@@ -148,10 +181,14 @@ static func parse_greetings(data: PackedByteArray) -> Dictionary:
 ## the guild NPC's lines through guild_services, and at a guild NPC
 ## guild_id 0 also drops "Buy" (round 524). Called with two arguments, a
 ## guild NPC keeps "Buy" and the "Guild" placeholder, as before.
-## `_player_job_kind` is reserved for the job-guild talk entries (a later
-## item) so that the argument order is settled; nothing reads it yet.
+## `player_job_kind` is the player's job (round 526): 0 none, 1 Trader,
+## 2 Thief, 3 Hunter -- the byte the real client keeps at +0x7be of the
+## player object. At a job-guild NPC only a player with no job gets the join
+## line (see the job block in the body). World3D does not pass it: the client
+## has no record of the player's job yet, so every player is treated as
+## jobless, which is the case the join line is shown for.
 static func services_for(code: String, shop_npcs: Dictionary, guild_id: int = -1,
-		guild_master: bool = false, _player_job_kind: int = 0) -> Array:
+		guild_master: bool = false, player_job_kind: int = 0) -> Array:
 	var out: Array = []
 	var up := code.to_upper()
 	var guild_npc := false
@@ -186,6 +223,29 @@ static func services_for(code: String, shop_npcs: Dictionary, guild_id: int = -1
 		# The server registers id 0x0f here, and the client's lines for
 		# 0x0f depend on the player's guild (guild_services).
 		out.append_array(guild_services(guild_id, guild_master))
+	# The job guilds' join lines (round 526). The server registers id 0x14
+	# (Trader), 0x16 (Hunter) and 0x15 (Thief) on the codenames in
+	# JOB_TRADER_PATTERNS, JOB_HUNTER_PATTERNS and JOB_THIEF_PATTERNS below.
+	# The client's FUN_00700440 asks for them after the 0x0f block and hands
+	# each present id to IF_NPCTalk::FUN_006fdeb0 with its kind, in the order
+	# JOB_KIND_ORDER. FUN_006fdeb0 reads the player's job, FUN_009db0d0 on
+	# [0xeef5ec] (`mov al,[ecx+0x7be]`), and emits the join line, item 0x1e,
+	# only when it is 0: 0x6fdebf `call 0x9db0d0`, 0x6fdec4 `test al,al`,
+	# 0x6fdec6 `jne 0x6fdee0`, then 0x6fdec8 `mov ebx,[esp+0x38]` (the
+	# kind) and 0x6fded0-0x6fded6 `push ebx; push 0x1e; push eax (n);
+	# call 0x6fcd60`. The same function's other lines
+	# (0x1f-0x24, 0x26 and, at three desert NPCs, 0x3c) have no server in
+	# srrevamp and are not offered -- this project's choice, not a claim that
+	# the real client lacks them (character_state.md, "The job guilds' lines
+	# (round 526)").
+	if player_job_kind == 0:
+		for kind_v in JOB_KIND_ORDER:
+			var kind: int = kind_v
+			for pattern in _job_patterns(kind):
+				if up.contains(pattern):
+					out.append(Service.new("job_guild", str(JOB_FALLBACK_LABELS[kind]),
+						str(JOB_JOIN_STRIDS[kind]), kind))
+					break
 	# Town smiths get NO Repair talk line (round 512). The server
 	# registers interactions 4 and 0x20 on NPC_*_SMITH (CGObjNPCNPC::Create;
 	# docs/protocol/character_state.md, the interaction-id table), and the
@@ -385,6 +445,55 @@ const GUILD_PATTERNS := [
 	"NPC_SD_M_AREA_GUILD",
 	"NPC_SD_T_AREA_GUILD2",
 ]
+
+## The job-guild NPCs, as the SERVER identifies them (round 526; ids named in
+## docs/protocol/jobs.md, "The three job guilds have three interaction ids
+## (round 453)"). In `CGObjNPCNPC::Create` (0x4c6350) each id is pushed once
+## through vtable +0x164 (AddAvailableInteraction), behind a `strstr`
+## (FUN_009dddc0) chain on these literals, read with objdump -s on
+## SR_GameServer.exe:
+##   * id 0x14 (Trader), `push 0x14` at 0x4c6c33: .rdata 0xaeed10 to 0xaeed60,
+##     the six below;
+const JOB_TRADER_PATTERNS := [
+	"NPC_CH_DOCTOR",
+	"NPC_WC_DOCTOR",
+	"NPC_KT_DESIGNER",
+	"NPC_EU_MERCHANT",
+	"NPC_CA_MERCHANT",
+	"NPC_SD_M_AREA_MERCHANT",
+]
+##   * id 0x16 (Hunter), `push 0x16` at 0x4c6d09: .rdata 0xaeecd8, 0xaeecec,
+##     0xaeed00 (the three the id-0xe chain tests too), 0xaeed78, 0xaeed88,
+##     0xaeed98;
+const JOB_HUNTER_PATTERNS := [
+	"NPC_CH_GENARAL_SW",
+	"NPC_WC_GENARAL_SW",
+	"NPC_KT_MINISTER",
+	"NPC_EU_HUNTER",
+	"NPC_CA_HUNTER",
+	"NPC_SD_M_AREA_HUNTER",
+]
+##   * id 0x15 (Thief), `push 0x15` at 0x4c6d57: .rdata 0xaeedb0, 0xaeedc4.
+## The other thief and merchant codenames in the player's characterdata_*.txt
+## (/var/tmp/tables on the render box) -- NPC_TD_THIEF_BUY, NPC_TD_THIEF_A to
+## _D, NPC_SD_THIEF_AGENT_CHANGER, NPC_SD_MERCHANT_CHANGER -- contain none of
+## these, so they get no join line.
+const JOB_THIEF_PATTERNS := [
+	"NPC_TD_THIEF_SELL",
+	"NPC_SD_T_AREA_THIEF",
+]
+
+## The server's codename literals for one job kind (1 Trader, 2 Thief,
+## 3 Hunter); empty for any other kind.
+static func _job_patterns(kind: int) -> Array:
+	match kind:
+		1:
+			return JOB_TRADER_PATTERNS
+		2:
+			return JOB_THIEF_PATTERNS
+		3:
+			return JOB_HUNTER_PATTERNS
+	return []
 
 ## The NPCs the SERVER gives interaction id 4, which offers_repair reads
 ## (round 514). `CGObjNPCNPC::Create` (0x4c6350) registers id 4 through

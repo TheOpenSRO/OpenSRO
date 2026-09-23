@@ -213,5 +213,42 @@ same failed `HasAvailableInteraction`.
 (`0x17`–`0x1b`, `docs/protocol/siege.md`), so ids 0x14 through 0x1b are one
 contiguous run of NPC roles: three job guilds, then five fortress roles.
 
-**Nothing to wire.** `server/internal/jobs` has no NPC interaction model — the
-ids matter when job guild NPCs are built, not before.
+**Nothing to wire on the server.** `server/internal/jobs` has no NPC interaction
+model — the ids matter when job guild NPCs are built, not before.
+
+## The client's join line at the job-guild NPCs (round 526)
+
+The same three ids decide the job-guild NPCs' talk lines in `sro_client.exe`
+(`docs/protocol/character_state.md`, "The job guilds' lines (round 526)"):
+
+	FUN_00700440 (the talk menu)
+	  id 0x14 present -> IF_NPCTalk::FUN_006fdeb0(n, 1)   ; 0x701237 push 1
+	  id 0x16 present -> FUN_006fdeb0(n, 3)               ; 0x70127b push 3
+	  id 0x15 present -> FUN_006fdeb0(n, 2)               ; 0x7012bf push 2
+	FUN_006fdeb0(n, kind)
+	  if (FUN_009db0d0(player) == 0)                      ; mov al,[ecx+0x7be]
+	      FUN_006fcd60(n, 0x1e, kind)                     ; the join line
+	  ...
+	FUN_006fcd60 case 0x1e: kind 1 UIIT_STT_NPC_CHATTING_TRADERMENU_JOIN,
+	                        2 ..._THIEFMENU_JOIN, 3 ..._HUNTERMENU_JOIN
+
+The byte at `+0x7be` of the player object (`[0xeef5ec]`) is the player's job
+kind. `JobGuild_OnJoinResult` (`0x8890b0`, the 0xb0e1 handler) writes it
+through `FUN_009db0b0` at `0x88910a` with the byte its reply carries, and
+`FUN_006fdeb0` compares it with the kind (`0x6fdeef` `cmp al,bl`). So a player
+with no job sees the join line at each job's NPCs, and a player with a job
+sees none.
+
+The server's registrations are the literals, not wildcards: 0x14 on
+`NPC_CH_DOCTOR`, `NPC_WC_DOCTOR`, `NPC_KT_DESIGNER`, `NPC_EU_MERCHANT`,
+`NPC_CA_MERCHANT`, `NPC_SD_M_AREA_MERCHANT` (`CGObjNPCNPC::Create`, `push 0x14`
+at `0x4c6c33`); 0x16 on `NPC_CH_GENARAL_SW`, `NPC_WC_GENARAL_SW`,
+`NPC_KT_MINISTER`, `NPC_EU_HUNTER`, `NPC_CA_HUNTER`, `NPC_SD_M_AREA_HUNTER`
+(`0x4c6d09`); 0x15 on `NPC_TD_THIEF_SELL` and `NPC_SD_T_AREA_THIEF`
+(`0x4c6d57`).
+
+**Wired on the client (round 526).** `NpcServiceReader.services_for` offers a
+`"job_guild"` line carrying the kind's join token at those 14 codenames when
+`player_job_kind` is 0. The client does not track the player's job yet, so
+`World3D` passes nothing and every player is treated as jobless. Choosing the
+line reports that it is not available yet: nothing sends the join request.

@@ -45,7 +45,11 @@ In order. Each is checked off here when it ships in a release, with its round in
       leaves, `guild.Store.Leave` hands leadership to the longest-standing member, whose client
       keeps `_guild_master` false and still offers "Leave guild." until its next `guild_info`
       reply (world entry, or opening the guild window); only a refused leave asks again
-      (disclosed in round 523).
+      (disclosed in round 523). The job-guild NPCs (the 14 codenames the server gives ids
+      0x14/0x16/0x15, e.g. `NPC_CH_DOCTOR`) show the archive's join line, such as "Join merchant
+      guild", to a jobless player (round 526). Still open there: choosing it only says it is not
+      available yet, and the client does not track the player's job, so a player with a job
+      would see it too.
       - [x] **Storage (warehouse) -- items AND gold.** The talk menu's storage line (its text is
         the archive's own "Deposit into storage.", `UIIT_STT_NPC_CHATTING_WND_STOREHOUSE`, since
         round 513) opens the authored warehouse window (`ifstorageroom`) with the bag beside it:

@@ -987,9 +987,9 @@ That is the vocabulary:
 | **0xf** | `NPC_*_GUILD`, `NPC_CH_GENARAL_SP` |
 | **0x11** | **no codename**: any NPC whose `GetRefObjID` finds an entry with a non-zero first byte in the map `FUN_004ccb70` reads (`DAT_00d6aa14 + 0x110`, table not identified), when the `+0x42404` byte is 0 (`0x4c77c2`). **Not** the `NPC_SIEGE_DUNGEON_TELEPORT` block, which ends at 0x28's call (`0x4c76d4`) — see "Two misattributions, corrected" (rounds 520 and 523) |
 | **0x12** | `NPC_CH_GACHA_OPERATOR` (only when the `+0x42404` byte is 0, round 520) |
-| **0x14** | `NPC_*_MERCHANT`, `NPC_*_DOCTOR`, `NPC_KT_DESIGNER` |
-| **0x15** | `NPC_TD_THIEF_SELL`, `NPC_SD_T_AREA_THIEF` |
-| **0x16** | `NPC_*_HUNTER`, `NPC_*_GENARAL_SW`, `NPC_KT_MINISTER` |
+| **0x14** | `NPC_CH_DOCTOR`, `NPC_WC_DOCTOR`, `NPC_KT_DESIGNER`, `NPC_EU_MERCHANT`, `NPC_CA_MERCHANT`, `NPC_SD_M_AREA_MERCHANT` (`push 0x14` at `0x4c6c33`, `.rdata 0xaeed10`-`0xaeed60`; round 526: the literals, not a wildcard, which would take in `NPC_SD_MERCHANT_CHANGER`) |
+| **0x15** | `NPC_TD_THIEF_SELL`, `NPC_SD_T_AREA_THIEF` (`push 0x15` at `0x4c6d57`, `.rdata 0xaeedb0`, `0xaeedc4`); not `NPC_TD_THIEF_BUY` (0xc and 0xd), `NPC_TD_THIEF_A`-`_D` or `NPC_SD_THIEF_AGENT_CHANGER` (round 526) |
+| **0x16** | `NPC_CH_GENARAL_SW`, `NPC_WC_GENARAL_SW`, `NPC_KT_MINISTER`, `NPC_EU_HUNTER`, `NPC_CA_HUNTER`, `NPC_SD_M_AREA_HUNTER` (`push 0x16` at `0x4c6d09`; `.rdata 0xaeecd8`, `0xaeecec`, `0xaeed00`, which id 0xe's chain also tests, then `0xaeed78`-`0xaeed98`; round 526) |
 | **0x17** | `NPC_*_FORTRESS_MANAGER*` |
 | **0x18** | `NPC_*_FORTRESS_OFFICIAL` |
 | **0x19** | `NPC_*_FORTRESS_BATTLEAIDE*` |
@@ -1016,9 +1016,9 @@ agrees**:
 | id | named earlier as | codename here |
 |---:|---|---|
 | 0x0f | guild (`CGuildManager::HandleCreateGuild`) | `NPC_*_GUILD` |
-| 0x14 | Trader job guild | `NPC_*_MERCHANT` |
-| 0x15 | Thief job guild | `NPC_*_THIEF*` |
-| 0x16 | Hunter job guild | `NPC_*_HUNTER` |
+| 0x14 | Trader job guild | `NPC_EU_MERCHANT`, `NPC_CA_MERCHANT`, `NPC_SD_M_AREA_MERCHANT` (and three more, table above) |
+| 0x15 | Thief job guild | `NPC_TD_THIEF_SELL`, `NPC_SD_T_AREA_THIEF` |
+| 0x16 | Hunter job guild | `NPC_EU_HUNTER`, `NPC_CA_HUNTER`, `NPC_SD_M_AREA_HUNTER` (and three more, table above) |
 | 0x17 | fortress administration, tax | `FORTRESS_MANAGER` |
 | 0x18 | siege registration | `FORTRESS_OFFICIAL` |
 | 0x19 | fortress structures | `FORTRESS_BATTLEAIDE` |
@@ -1356,7 +1356,7 @@ numbers other text cites (added in round 517).
 | 15 | 0xf (`0x70105e`) | `FUN_009870e0()` 0: item 0x12. Otherwise, by `FUN_00989ce0(...)`: items 0x17, 0x14, 0x18, 0x1b, or item 0x1c alone; then 0x19 or 0x1a (by `FUN_0099da70`), 0x1d, 0x43 | `UIIT_CTL_GUILD_CREATE`; `UIIT_MSG_GUILD_LEVEL_UP`, `UIIT_CTL_GUILD_BREAK`, `UIIT_CTL_MASTERLEAVE`, `UIIT_CTL_GUILD_COMPENSATION` / `UIIT_CTL_GUILD_SECESSION`; `UIIT_CTL_MASTERRELEASE` / `UIIT_CTL_MRELEASE_VOTE`, `UIIT_CTL_GUILD_WAREHOUSE`, `UIIT_STT_GUILD_GP_HISTORY` |
 | 16 | 0x13 (`0x701182`) | item 0x15 | `UIIT_MSG_XMAS_EVENT_CHANGE` |
 | 17 | 0xa (`0x7011c8`) | item 0x16 | `UIIT_MSG_CIRCULATION_WITHDRAW_SKILL` |
-| 18 | 0x14, 0x16, 0x15 | `IF_NPCTalk::FUN_006fdeb0(n, 1 / 3 / 2)` | not read here |
+| 18 | 0x14 (`0x70120e`), 0x16 (`0x701252`), 0x15 (`0x701296`) | `IF_NPCTalk::FUN_006fdeb0(n, 1 / 3 / 2)` (`0x701237`, `0x70127b`, `0x7012bf` push the kind). With the player's job byte 0: item 0x1e, then 0x23, 0x22, 0x26 (round 526, "The job guilds' lines" below) | `UIIT_STT_NPC_CHATTING_TRADERMENU_JOIN` / `_THIEFMENU_JOIN` / `_HUNTERMENU_JOIN`, then the rank and job-info lines |
 | 19 | 0x11 (`0x7012da`) | item 0x27 | `SN_TALK_CH_GACHA_MACHINE_2` |
 | 20 | 0x12 (`0x701320`) | item 0x28 | `SN_TALK_CH_GACHA_OPERATOR_2` |
 | 21 | 0x23 (`0x701366`) | item 0x3f | `SN_NPC_OPEN_MARKET_START` |
@@ -1631,6 +1631,88 @@ known yet (`-1`, no guild reply) "Buy" stays, as before. None of the guild
 NPC's lines srrevamp offers besides these depends on the gate: the seven
 codenames hold no `WAREHOUSE`, so there is no storage line, and the store
 window's repair buttons are id 4's, which no guild NPC has.
+
+### The job guilds' lines (round 526)
+
+Row 18 of the table, read from `sro_client.asm` for this round. `FUN_00700440`
+looks id 0x14 up at `0x70120e`, 0x16 at `0x701252` and 0x15 at `0x701296`,
+each with the same `cmp [eax+0x4],end` membership test as the other rows. For
+a present id it calls `IF_NPCTalk::FUN_006fdeb0(n, kind)`: `0x701237`
+`push 1` (0x14), `0x70127b` `push 3` (0x16) and `0x7012bf` `push 2` (0x15),
+each followed by `call 0x6fdeb0` and `mov ebx,eax`. So the order is Trader,
+Hunter, Thief, and the kinds are the ones `docs/protocol/jobs.md` names
+("Three job kinds"). The server registers each id on the literals in the
+vocabulary table above.
+
+**The player's job byte.** `FUN_006fdeb0` asks `FUN_009db0d0` on the object at
+`[0xeef5ec]`, which is `mov al,[ecx+0x7be]; ret`. Its setter `FUN_009db0b0`
+(`mov [ecx+0x7be],al; ret 4`) is called on the same object by
+`JobGuild_OnJoinResult` (`0x8890b0`, the 0xb0e1 handler) at `0x88910a`, with
+the byte the reply carries after its result byte. `FUN_006fdeb0` compares that
+byte with the kind (`0x6fdeef` `cmp al,bl`), so it is in the same 1/2/3 space.
+The setter has two more callers, `0x88923c` (in `JobGuild_OnWithdrawResult`)
+and `0x9dde30`, which were not read.
+
+| the job byte | lines, in order |
+|---|---|
+| 0 (`0x6fdebf` `call 0x9db0d0`, `0x6fdec4` `test al,al`, `0x6fdec6` `jne 0x6fdee0` not taken) | item 0x1e with `sub` = the kind (`0x6fdec8` `mov ebx,[esp+0x38]`, `0x6fded0`-`0x6fded6` `push ebx; push 0x1e; push eax; call 0x6fcd60`), then, from `0x6fdf69`, 0x23, 0x22 and 0x26 |
+| the kind (`0x6fdeef` `cmp al,bl`) | 0x1f; 0x20 or 0x21 (0x20 when the dword at `+0x14` of `FUN_009d65c0`'s result is 0, `0x6fdf14` `cmp [eax+0x14],0`, `0x6fdf1c` `sete`); 0x24 for kind 2 or 3 (`0x6fdf4e`-`0x6fdf56`); then 0x23, 0x22, 0x26 |
+| another job (`0x6fdef1` `jne 0x6fdf65`) | 0x23, 0x22, 0x26 |
+
+After 0x26, item 0x3c follows when a string, whose source was not read
+(`0x6fdf94`-`0x6fdfc1`), equals `NPC_SD_M_AREA_MERCHANT`,
+`NPC_SD_M_AREA_HUNTER` or `NPC_SD_T_AREA_THIEF` (`.rdata 0xdadf60`,
+`0xdadf34`, `0xdadf0c`; the compares at `0x6fdfd5`, `0x6fdfed` and
+`0x6fe005`, then `0x6fe00e`-`0x6fe014`).
+
+**The tokens, from `FUN_006fcd60`'s tables.** `sub` is its third argument,
+the byte at `[esp+0x264]` loaded into `al` at `0x6fce2c`. `objdump -s` on
+`/opt/sro-files/client/sro_client.exe` reads the index bytes, the jump-table
+entries and the strings:
+
+| item | index byte, entry | sub 1 | sub 2 | sub 3 |
+|---:|---|---|---|---|
+| 0x1e | `0x19`, `0x6fd33c` -> `0x6fcf42` | `UIIT_STT_NPC_CHATTING_TRADERMENU_JOIN` (`0xdadad8`) | `..._THIEFMENU_JOIN` (`0xdada88`) | `..._HUNTERMENU_JOIN` (`0xdada38`) |
+| 0x1f | `0x1a` -> `0x6fcf70` | `..._TRADERMENU_WITHD` | `..._THIEFMENU_WITHD` | `..._HUNTERMENU_WITHD` |
+| 0x20 | `0x1b` -> `0x6fcf9e` | `..._TRADERMENU_ALIASCREATE` | `..._THIEFMENU_ALIASCREATE` | `..._HUNTERMENU_ALIASCREATE` |
+| 0x21 | `0x1c` -> `0x6fcfcc` | `..._TRADERMENU_ALIASMODIFY` | `..._THIEFMENU_ALIASMODIFY` | `..._HUNTERMENU_ALIASMODIFY` |
+| 0x22 | `0x1d` -> `0x6fcffa` | `..._TRADERMENU_JOBRANK` | `..._THIEFMENU_JOBRANK` | `..._HUNTERMENU_JOBRANK` |
+| 0x23 | `0x1e` -> `0x6fd028` | `..._TRADERMENU_DONATIONRANK` | `..._HUNTERMENU_CONTRIBUTERANK` | `..._HUNTERMENU_CONTRIBUTERANK` |
+| 0x24 | `0x1f` -> `0x6fd04c` | none | `..._HUNTERMENU_OUTCOME` | `..._HUNTERMENU_OUTCOME` |
+| 0x26 | `0x21` -> `0x6fd062` | `UIIT_STT_NPC_CHATTING_JOBINFO_OLD` (every sub) | | |
+| 0x3c | `0x29` -> `0x6fd06c` | `UIIT_PAG_EGYPT_SHRINE_REPUTATION` (every sub) | | |
+
+The player's `textuisystem.txt` (`/var/tmp/tables/textuisystem.txt`) has two
+rows for each join token. The earlier 16-column rows say "Join the Trader
+Job!", "Join the Thief Job!" and "Join the Hunter Job!". The later 19-column
+rows, which `UiTextTable` keeps, say "Join merchant guild", "Join thief guild"
+and "Join hunter guild".
+
+**What srrevamp does with it.** `NpcServiceReader.services_for` adds one
+`"job_guild"` service after the guild lines when the codename contains one of
+`JOB_TRADER_PATTERNS`, `JOB_HUNTER_PATTERNS` or `JOB_THIEF_PATTERNS` (the
+server's literals, checked in the order 1, 3, 2) and `player_job_kind` is 0.
+Its strid is the kind's join token (`JOB_JOIN_STRIDS`), which the talk window
+resolves through the player's text table, and its `job_kind` is the kind.
+Choosing it reports that it is not available yet (`World3D`'s default arm):
+srrevamp has no job-guild join on the client yet.
+
+The client has no record of the player's job. `World3D` passes no
+`player_job_kind`, so every player is treated as jobless, which is the case
+`FUN_006fdeb0` shows the join line for. A player who holds a job would see a
+join line srrevamp should not offer.
+
+All 14 of these NPCs are store NPCs in the player's `refshopgroup.txt`
+(`GROUP_STORE_*_TRADER`, `_HUNTER`, `_THIEF`; `/var/tmp/tables`), so srrevamp
+shows "Buy" first, as it does at every store NPC. At `NPC_CH_DOCTOR` the menu is
+"1. Buy", "2. Join merchant guild", "3. End conversation.". Whether the real
+client gives these NPCs store lines was not read: `CGObjNPCNPC::Create`
+registers id 1 at five sites (`0x4c6589`, `0x4c694f`, `0x4c6a65`, `0x4c6ff9`,
+`0x4c7243`), none of them in the three job chains. So the numbering is not
+claimed to match the real client's.
+
+**Not modelled:** items 0x1f-0x24, 0x26 and 0x3c. srrevamp has no server for
+any of them. None of this was measured on a running real client.
 
 ## Interaction id 4 and the store's repair buttons (round 514)
 

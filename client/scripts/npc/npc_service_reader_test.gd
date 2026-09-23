@@ -369,6 +369,83 @@ func _init() -> void:
 	_check(stateful and _keys(potion0) == ["shop"],
 		"a guildless player at NPC_CH_POTION still gets [\"shop\"] (got %s)" % [_keys(potion0)])
 
+	# (p) Round 526: the job guilds' join lines. The server registers id 0x14
+	# (Trader) on six codename literals, 0x16 (Hunter) on six and 0x15
+	# (Thief) on two (CGObjNPCNPC::Create: push 0x14 at 0x4c6c33, 0x16 at
+	# 0x4c6d09, 0x15 at 0x4c6d57). The client's FUN_00700440 hands each to
+	# FUN_006fdeb0(n, 1 / 3 / 2), which emits item 0x1e only when the
+	# player's job byte (+0x7be) is 0. FUN_006fcd60 case 0x1e picks the
+	# token by that kind. Read through get() and the constant map, so a
+	# reader without job_kind or the tokens FAILS here rather than failing
+	# to parse. The English is not pinned: the talk window resolves the
+	# tokens through the archive's own text.
+	var want_jobs := [
+		["NPC_CH_DOCTOR", 1], ["NPC_WC_DOCTOR", 1], ["NPC_KT_DESIGNER", 1],
+		["NPC_EU_MERCHANT", 1], ["NPC_CA_MERCHANT", 1], ["NPC_SD_M_AREA_MERCHANT", 1],
+		["NPC_CH_GENARAL_SW", 3], ["NPC_WC_GENARAL_SW", 3], ["NPC_KT_MINISTER", 3],
+		["NPC_EU_HUNTER", 3], ["NPC_CA_HUNTER", 3], ["NPC_SD_M_AREA_HUNTER", 3],
+		["NPC_TD_THIEF_SELL", 2], ["NPC_SD_T_AREA_THIEF", 2],
+	]
+	var want_strid := {
+		1: "UIIT_STT_NPC_CHATTING_TRADERMENU_JOIN",
+		2: "UIIT_STT_NPC_CHATTING_THIEFMENU_JOIN",
+		3: "UIIT_STT_NPC_CHATTING_HUNTERMENU_JOIN",
+	}
+	_check(consts.get("JOB_JOIN_STRIDS", {}) == want_strid,
+		"JOB_JOIN_STRIDS is exactly FUN_006fcd60 case 0x1e's three tokens (got %s)" % [consts.get("JOB_JOIN_STRIDS")])
+	var job_lines := func(services: Array) -> Array:
+		return services.filter(func(s): return s.key == "job_guild")
+	# NEGATIVE (fails before round 526): each of the 14 has exactly one join
+	# line, of its own kind and token, for a jobless player.
+	for pair in want_jobs:
+		var jcode: String = pair[0]
+		var jkind: int = pair[1]
+		var js: Array = []
+		if stateful:
+			js = reader_script.call("services_for", jcode, shops, -1, false, 0)
+		var jl: Array = job_lines.call(js)
+		var ok: bool = jl.size() == 1 and jl[0].get("job_kind") == jkind \
+			and str(jl[0].get("strid")) == want_strid[jkind]
+		_check(stateful and ok, "%s offers exactly one job_guild, kind %d, strid %s (got %s)"
+			% [jcode, jkind, want_strid[jkind],
+				jl.map(func(s): return [s.get("job_kind"), s.get("strid")])])
+	# NEGATIVE: the codenames a wildcard would have caught carry none of the
+	# three ids, and neither does an ordinary store.
+	for jcode in ["NPC_SD_MERCHANT_CHANGER", "NPC_TD_THIEF_BUY", "NPC_TD_THIEF_A",
+			"NPC_SD_THIEF_AGENT_CHANGER", "NPC_CH_POTION"]:
+		var jn: Array = []
+		if stateful:
+			jn = reader_script.call("services_for", jcode, shops, -1, false, 0)
+		_check(stateful and (job_lines.call(jn) as Array).is_empty(),
+			"%s offers no job_guild (got %s)" % [jcode, _keys(jn)])
+	# The Chinese guild NPC is not the hunter NPC: NPC_CH_GENARAL_SP has id
+	# 0x0f, NPC_CH_GENARAL_SW id 0x16.
+	var gsp: Array = []
+	if stateful:
+		gsp = reader_script.call("services_for", "NPC_CH_GENARAL_SP", shops, -1, false, 0)
+	_check(stateful and _keys(gsp).has("guild") and (job_lines.call(gsp) as Array).is_empty(),
+		"NPC_CH_GENARAL_SP offers guild and no job_guild (got %s)" % [_keys(gsp)])
+	# NEGATIVE: a player who has a job gets no join line, whether it is this
+	# guild's job (FUN_006fdeb0's 0x1f branch) or another (its bare tail).
+	for held in [1, 3]:
+		var jh: Array = []
+		if stateful:
+			jh = reader_script.call("services_for", "NPC_CH_DOCTOR", shops, -1, false, held)
+		_check(stateful and (job_lines.call(jh) as Array).is_empty(),
+			"a player with job kind %d at NPC_CH_DOCTOR gets no job_guild (got %s)" % [held, _keys(jh)])
+	# The composed menu at the Jangan trader: the join line's token resolved
+	# through the text table, then the end line.
+	if stateful and has_composer:
+		var ui_p := {"UIIT_STT_NPC_CHATTING_TRADERMENU_JOIN": "JOIN-TEXT", "UIIT_STT_NPC_CHATTING_WND_TALKEND": "END-TEXT"}
+		var resolve_p := func(token: String, fallback: String) -> String:
+			return str(ui_p.get(token, fallback)) if token != "" else fallback
+		var pmenu: PackedStringArray = reader_script.call("talk_menu_lines", "NPC_CH_DOCTOR",
+			reader_script.call("services_for", "NPC_CH_DOCTOR", shops, -1, false, 0), resolve_p)
+		_check(pmenu == PackedStringArray(["[url=job_guild]1. JOIN-TEXT[/url]", "[url=end]2. END-TEXT[/url]"]),
+			"a jobless player's NPC_CH_DOCTOR menu is 1. join text / 2. end text (got %s)" % [pmenu])
+	else:
+		_check(false, "the job-guild talk menu could not be composed (stateful=%s, composer=%s)" % [stateful, has_composer])
+
 	# (i) Round 514: the store window shows Repair / Repair All only at an NPC
 	# with interaction id 4. The client's 0xb045 reply handler FUN_0088b200
 	# hides both buttons and shows them again for id 4 (0x88b8c5-0x88b8d9,

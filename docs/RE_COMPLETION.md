@@ -31236,3 +31236,97 @@ deadlock with `Leave`.
     `client/tools/remote_godot.sh check` checked 246 scripts and 5 scenes: ALL LOAD.
 
 Not measured on a running client: the Guild tab's "GP" text has not been seen on screen.
+
+## Job-guild join lines at the 14 trader/hunter/thief NPCs (ids 0x14/0x16/0x15) (round 526)
+
+A client change: the talk menu at a job-guild NPC now offers the archive's own join line to a
+player with no job, as the real client's `FUN_006fdeb0` does. At `NPC_CH_DOCTOR` (Jangan, region
+97/168 in `npcpos.txt`) the menu reads "1. Buy", "2. Join merchant guild", "3. End conversation."
+on the render box's archive. Choosing the line reports that it is not available yet.
+
+**Grounding, re-read for this round** (all read-only on the render box).
+
+- **Server, `CGObjNPCNPC::Create`** (`/var/tmp/srv.asm`). Three `strstr` (`FUN_009dddc0`) chains
+  each end in one call through `[edx+0x164]` (`AddAvailableInteraction`): `push 0x14` at
+  `0x4c6c33` after `.rdata 0xaeed10`-`0xaeed60`, `push 0x16` at `0x4c6d09` after `0xaeecd8`,
+  `0xaeecec`, `0xaeed00`, `0xaeed78`, `0xaeed88`, `0xaeed98`, and `push 0x15` at `0x4c6d57` after
+  `0xaeedb0` and `0xaeedc4`. `objdump -s` on `SR_GameServer.exe` reads the literals: 0x14
+  `NPC_CH_DOCTOR`, `NPC_WC_DOCTOR`, `NPC_KT_DESIGNER`, `NPC_EU_MERCHANT`, `NPC_CA_MERCHANT`,
+  `NPC_SD_M_AREA_MERCHANT`; 0x16 `NPC_CH_GENARAL_SW`, `NPC_WC_GENARAL_SW`, `NPC_KT_MINISTER`,
+  `NPC_EU_HUNTER`, `NPC_CA_HUNTER`, `NPC_SD_M_AREA_HUNTER`; 0x15 `NPC_TD_THIEF_SELL`,
+  `NPC_SD_T_AREA_THIEF`. The readers that make these the Trader, Hunter and Thief guilds are in
+  `docs/protocol/jobs.md`, "The three job guilds have three interaction ids (round 453)" (the
+  `0x480f` gate). All 14 codenames exist in the player's `characterdata_*.txt`
+  (`/var/tmp/tables`), and so do the others a wildcard would catch: `NPC_SD_MERCHANT_CHANGER`,
+  `NPC_TD_THIEF_BUY`, `NPC_TD_THIEF_A`-`_D` and `NPC_SD_THIEF_AGENT_CHANGER`, none of which is in
+  these chains.
+- **Client, `FUN_00700440`** (`/var/tmp/sro_client.asm`). Id 0x14 is looked up at `0x70120e`,
+  0x16 at `0x701252`, 0x15 at `0x701296`; a present id calls `FUN_006fdeb0(n, kind)` with
+  `0x701237` `push 1`, `0x70127b` `push 3`, `0x7012bf` `push 2`. The block comes after the 0xf
+  (guild) block, so the join line follows the guild lines.
+- **Client, `FUN_006fdeb0`.** `0x6fdeb8` `mov ecx,[0xeef5ec]`, `0x6fdebf` `call 0x9db0d0`
+  (`mov al,[ecx+0x7be]; ret`), `0x6fdec4` `test al,al`, `0x6fdec6` `jne 0x6fdee0`; on 0,
+  `0x6fded0`-`0x6fded6` `push ebx (kind); push 0x1e; push eax (n); call 0x6fcd60`. The other
+  branches (the player's own job, another job) never push 0x1e.
+- **The job byte.** `JobGuild_OnJoinResult` (`0x8890b0`, the 0xb0e1 handler) calls the setter
+  `FUN_009db0b0` (`mov [ecx+0x7be],al`) on `[0xeef5ec]` at `0x88910a`, with the byte its reply
+  carries after the result byte.
+- **The tokens, `FUN_006fcd60` case 0x1e.** Index byte `0x6fd394`+0x1e is `0x19`; entry
+  `0x6fd2d8`[0x19] (`0x6fd33c`) is `0x6fcf42`, which pushes `.rdata 0xdadad8` for sub 1,
+  `0xdada88` for 2 and `0xdada38` for 3 (`sub` is the byte at `[esp+0x264]`, `0x6fce2c`).
+  `objdump -s` on `/opt/sro-files/client/sro_client.exe` reads them as
+  `UIIT_STT_NPC_CHATTING_TRADERMENU_JOIN`, `..._THIEFMENU_JOIN` and `..._HUNTERMENU_JOIN`.
+- **The text.** `/var/tmp/tables/textuisystem.txt` has each token twice. The later 19-column rows
+  (`[9]`), which `UiTextTable` keeps, read "Join merchant guild", "Join thief guild", "Join
+  hunter guild". Those are the fallback labels.
+- **The player's job in srrevamp.** Nothing in `client/scripts` tracks it (no job, trijob or job
+  guild state outside `npc_service_reader.gd`). `World3D._npc_services` passes no fifth argument,
+  so `player_job_kind` is 0 and every player is treated as jobless.
+
+**Change** (`client/scripts/npc/npc_service_reader.gd`). `Service` gains `job_kind` (constructor
+`(k, l, s := "", jk := 0)`). New constants: `JOB_TRADER_PATTERNS`, `JOB_HUNTER_PATTERNS`,
+`JOB_THIEF_PATTERNS` (the server's literals), `JOB_JOIN_STRIDS`, `JOB_FALLBACK_LABELS` and
+`JOB_KIND_ORDER` (`[1, 3, 2]`), and a helper `_job_patterns(kind)`. `services_for`'s fifth
+parameter loses its underscore (`player_job_kind`; the order is unchanged) and, after the guild
+block, adds one `"job_guild"` service per kind whose patterns the codename contains, only when
+`player_job_kind` is 0. `World3D` is unchanged: the talk window resolves the strid through
+`_resolve_ui` (round 513), and `"job_guild"` reaches `_on_npc_service_selected`'s default arm,
+which logs "Job Guild is not available yet.".
+
+**Not modelled, and disclosed.** `FUN_006fdeb0`'s other lines: 0x23, 0x22 and 0x26 (rank and
+job-info lines) that every visitor gets, the member's 0x1f/0x20 or 0x21/0x24, and 0x3c at the
+three desert NPCs. srrevamp has no server for any of them. All 14 NPCs are store NPCs in the
+player's `refshopgroup.txt`, so srrevamp keeps "Buy" first; `Create`'s five id-1 sites are none
+of the job chains, and how the real client offers these stores was not read, so the numbering
+is not claimed to match. A player who holds a job still sees the join line, because the client
+does not know the job.
+
+**Docs.** `character_state.md`: the vocabulary table's 0x14/0x15/0x16 rows and the agreement
+table's rows now give the literals instead of `NPC_*_MERCHANT`, `NPC_*_THIEF*` and
+`NPC_*_HUNTER`, which wrongly took in `NPC_SD_MERCHANT_CHANGER`, `NPC_TD_THIEF_BUY`,
+`NPC_TD_THIEF_A`-`_D` and `NPC_SD_THIEF_AGENT_CHANGER`; the talk-menu table's row 18 is filled
+in; a new subsection, "The job guilds' lines (round 526)", has the branches and the token table
+for items 0x1e-0x26 and 0x3c. `jobs.md`: a new section, "The client's join line at the job-guild
+NPCs (round 526)", gives the chain. `SYSTEMS.md`'s Jobs row, `TODO.md`'s NPC-talk item and
+`FRONTEND_CHECKLIST.md`'s talk item say what is wired and what is open.
+
+**Tests** (`client/scripts/npc/npc_service_reader_test.gd`, new check (p)).
+
+- **Negative:** each of the 14 codenames, with `player_job_kind` 0, has exactly one `job_guild`
+  whose `job_kind` and `strid` are its kind's (read through `get()`), and `JOB_JOIN_STRIDS` is
+  exactly the three tokens.
+- **Negative:** `NPC_SD_MERCHANT_CHANGER`, `NPC_TD_THIEF_BUY`, `NPC_TD_THIEF_A`,
+  `NPC_SD_THIEF_AGENT_CHANGER` and `NPC_CH_POTION` have none; `NPC_CH_GENARAL_SP` has `guild` and
+  no `job_guild`.
+- **Negative:** `NPC_CH_DOCTOR` with job kind 1 and with 3 has no `job_guild`.
+- The composed menu at `NPC_CH_DOCTOR` (empty shop set) is `1. <join text>`, `2. <end text>`.
+- The English is not pinned.
+- **Negative case proven.** With `npc_service_reader.gd` stashed (BASE), the suite failed 16
+  checks: the constant check, the 14 codenames (each "got []") and the composed menu. With the
+  file restored it prints ALL PASS.
+- Render box: `client/tools/remote_godot.sh tests` ran 80 suites, 0 failing.
+  `client/tools/remote_godot.sh check` checked 246 scripts and 5 scenes: ALL LOAD.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...`: green.
+
+Not measured on a running real client, and no running srrevamp client has printed the new
+`NPCTALK` lines yet.

@@ -99,6 +99,8 @@ Ordered roughly quick-fix → needs-a-server-system.
   which asks before it sends; a master still gets the placeholder, since the master's items
   have no server. A guild NPC shows "Buy" only to a player in a guild: the client emits the
   store lines there only when `FUN_009870e0` answers nonzero (`0x7009fc`, `0x700a03`; round 524).
+  The job-guild NPCs (ids 0x14/0x16/0x15) show the archive's join line to a jobless player, as
+  `FUN_006fdeb0` does; choosing it says it is not available yet (round 526).
   There is no Repair line: the client's
   menu builder adds no item for a smith's interaction 4 (round 512). Repair is the store
   window's own Repair / Repair All buttons, which work, and which the store shows only at an NPC
