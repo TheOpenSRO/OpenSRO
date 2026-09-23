@@ -270,10 +270,9 @@ func open(panel_id: String) -> HudWindow:
 
 ## Opens the NPC dialogue for an NPC of the given name: the authored paper
 ## window (if_npctalk) titled with the name, greeting and the choices the
-## NPC offers. Only "End conversation" acts (it closes) -- the services
-## behind the other lines (storage, shop, honour) are their own systems,
-## still to come -- so the window greets and lets you leave, which is the
-## skeleton the rest hangs on.
+## NPC offers. The end line closes the window. Any other line emits
+## npc_service_selected, and World3D opens that service's window if it has
+## one.
 func open_npc_talk(npc_name: String, greeting: String = "", services: Array = []) -> void:
 	var window := open("npctalk")
 	if window == null:
@@ -305,19 +304,15 @@ func open_npc_talk(npc_name: String, greeting: String = "", services: Array = []
 		body.meta_clicked.connect(_on_npc_talk_choice)
 		window.add_child(body)
 	# The real greeting (from npcchat.txt), then the NPC's real services as
-	# numbered options, then End conversation. The service lines are grounded
-	# detection (which NPC offers what); only End acts for now -- the services
-	# behind them (shop, storage, ...) are their own systems, still to come.
+	# numbered options, then the end line. The numbered lines are built by
+	# NpcServiceReader.talk_menu_lines (round 513), which resolves each line's
+	# UIIT token through _resolve_ui (the player's own textuisystem.txt) and
+	# prints one NPCTALK log line per menu line. World3D acts on the services
+	# with a system behind them (Buy opens the shop, storage the warehouse).
 	var lines := PackedStringArray()
 	lines.append(greeting if greeting != "" else "...")
 	lines.append("")
-	var n := 1
-	for svc in services:
-		# Each service is a clickable link keyed by its stable key; World3D
-		# acts on the ones that have a system behind them (Buy opens the shop).
-		lines.append("[url=%s]%d. %s[/url]" % [str(svc.key), n, str(svc.label)])
-		n += 1
-	lines.append("[url=end]%d. End conversation.[/url]" % n)
+	lines.append_array(NpcServiceReader.talk_menu_lines(npc_name, services, _resolve_ui))
 	body.text = "\n".join(lines)
 
 func _on_npc_talk_choice(meta: Variant) -> void:

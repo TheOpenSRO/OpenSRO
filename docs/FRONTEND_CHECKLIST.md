@@ -97,7 +97,8 @@ Ordered roughly quick-fix → needs-a-server-system.
   their own features still to come. *(Round 512: Buy and Storage act now. A smith lists no
   Repair line -- the client's menu builder adds no item for its interaction 4 -- and repair is
   the store window's own buttons, which the client shows by that same id 4 (0x88b8c5); see
-  docs/RE_COMPLETION.md round 512.)*
+  docs/RE_COMPLETION.md round 512. Round 513: the storage and end lines use the client's own
+  UIIT_STT_NPC_CHATTING_WND_STOREHOUSE / _TALKEND text from the player's archive.)*
 - [x] **EXP curve recovered + server leveling** — `leveldata.txt` col 1 is exp-to-next-level (139
   levels; level 9 = 17978, matches the screenshot), stat points **3/level** (Stat Point 24 at level
   9). Curve imported at runtime (`cmd/export-leveldata` → CSV → `internal/leveldata`); the kill path

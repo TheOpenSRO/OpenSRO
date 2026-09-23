@@ -22,15 +22,41 @@ const CHAT_CODE_COL := 1
 const CHAT_MSG1_COL := 2
 const CHAT_MSG2_COL := 3
 
-## One service a talk window offers: a stable key (for wiring later) and the
-## UI label to show.
+## The client's own talk-menu string ids (round 513). The real client builds
+## each numbered talk line in FUN_006fcd60: `_swprintf_s(L"%d. ")` (the format
+## at .rdata 0xdace24, pushed at 0x6fcdd5), then the text of one UIIT token
+## chosen by a switch on the item id.
+##
+## Item 3 -- case 3 pushes .rdata 0xdadcd8, this string. FUN_00700440 emits
+## item 3 for an NPC whose interaction set holds id 3: it looks id 3 up at
+## 0x700b48 (`mov byte [esp+0x1c],3`), tests membership at 0x700b60-0x700b71,
+## then calls 0x700b73-0x700b7a `push 0; push 3; push ebx; call 0x6fcd60`. The
+## server registers id 3 on WAREHOUSE codenames (docs/protocol/
+## character_state.md, the interaction-id vocabulary, round 455).
+const STOREHOUSE_STRID := "UIIT_STT_NPC_CHATTING_WND_STOREHOUSE"
+## Item 0, the end line -- case 0 pushes .rdata 0xdadd28, this string, unless
+## the NPC's set holds id 0x1f (0x6fce7e), which only the siege structure
+## STRUCTURE_GATE_PULLEY_* is registered with (character_state.md, round 455).
+## That pulley-only case picks ..._TALKEND2 instead, so it is not carried
+## here. FUN_00701540 builds the menu as FUN_00700440 and then
+## FUN_007001a0(n), which emits item 0 as the last numbered line when the
+## talk object's +0x7f1 flag is set (0x7001a3-0x7001b5).
+const TALKEND_STRID := "UIIT_STT_NPC_CHATTING_WND_TALKEND"
+
+## One service a talk window offers: a stable key (for wiring later), the
+## label to fall back on, and -- when the client's own talk menu has a line
+## for it -- that line's UIIT string id, resolved through the player's
+## textuisystem.txt by the talk window. An empty strid means there is no
+## grounded token and the label is shown as it is.
 class Service:
 	var key: String
 	var label: String
+	var strid: String
 
-	func _init(k: String, l: String) -> void:
+	func _init(k: String, l: String, s: String = "") -> void:
 		key = k
 		label = l
+		strid = s
 
 ## Parses refshopgroup.txt into a set of NPC codenames (upper-cased) that run a
 ## shop.
@@ -66,10 +92,31 @@ static func parse_greetings(data: PackedByteArray) -> Dictionary:
 
 ## The services an NPC offers, from its codename + the shop set. Which services
 ## an NPC has is GROUNDED (shop = refshopgroup membership; the rest are named by
-## the NPC's own self-describing codename). The labels here are this project's
-## own plain-English UI text, NOT recovered UIIT tokens -- the greeting text is
-## the grounded string (see the caller). "End conversation" is added by the talk
-## window.
+## the NPC's own self-describing codename).
+##
+## Labels (round 513): storage carries the client's own string id,
+## STOREHOUSE_STRID, which the talk window resolves through the player's
+## textuisystem.txt. The talk window adds the end line from TALKEND_STRID. The
+## other labels are this project's plain-English text with no strid:
+##   * "Buy" -- the real client has no single shop line. Item 1 runs
+##     FUN_006fb630, which formats its own "%d. " line per store, and those
+##     lines are not built here. A town warehouse keeper usually gets "Buy"
+##     too: the player's refshopgroup.txt lists 8 of the 9 keepers npcpos
+##     spawns as running a GROUP_STORE_*_HONOR store (measured round 513,
+##     dump_text_table.gd on Media.pk2), so their menu is "1. Buy",
+##     "2. <storage>", "3. <end>". NPC_WC_WAREHOUSE_M is the exception: WC's
+##     second HONOR row names NPC_WC_WAREHOUSE_W again, so the _M keeper runs
+##     no store and its menu is "1. <storage>", "2. <end>". The
+##     real client shows item 1 for a keeper (ids 1 and 3) only if
+##     FUN_00989d20 answers nonzero (call at 0x700a71).
+##   * "Guild" -- the guild's real lines (FUN_00700440 id 0x0f -> items 0x12,
+##     0x14, 0x17-0x1d, 0x43) depend on the player's guild membership, which
+##     this reader does not know.
+## The real client also adds two more lines after the storage line for id 3,
+## and neither is listed here: item 0x2d UIIT_STT_TC_OPEN, behind two tests
+## (0x700b7f-0x700b9d), and item 0x2e UIIT_STT_TC_HONOR_RANKING (pushes from
+## 0x700bad, call at 0x700bb4).
+## See docs/protocol/character_state.md, "The client's first talk menu".
 static func services_for(code: String, shop_npcs: Dictionary) -> Array:
 	var out: Array = []
 	var up := code.to_upper()
@@ -79,8 +126,9 @@ static func services_for(code: String, shop_npcs: Dictionary) -> Array:
 	# The rest match the NPC's codename the way the SERVER does -- see
 	# GUILD_PATTERNS below for where these patterns come from.
 	if up.contains("WAREHOUSE"):
-		# The server's own pattern for this one is the bare word too.
-		out.append(Service.new("storage", "Storage"))
+		# The server's own pattern for this one is the bare word too. Its
+		# talk line is the client's item 3 (STOREHOUSE_STRID above).
+		out.append(Service.new("storage", "Storage", STOREHOUSE_STRID))
 	for pattern in GUILD_PATTERNS:
 		if up.contains(pattern):
 			out.append(Service.new("guild", "Guild"))
@@ -129,6 +177,40 @@ static func services_for(code: String, shop_npcs: Dictionary) -> Array:
 	# store; that is an open item in docs/TODO.md, not something this reader
 	# decides.
 	return out
+
+## The numbered, clickable lines of the talk menu, built from services_for's
+## list: one line per service, then the end line. `resolve` is the talk
+## window's (token, fallback) -> text resolver (HudPanels._resolve_ui, which
+## reads the player's own textuisystem.txt). It is passed in so that this
+## composition can be tested without the HUD, which needs the NetClient
+## autoload.
+##
+## Numbering and text follow the client's own menu (round 513). FUN_006fcd60
+## writes "%d. " and then the text of a UIIT token. FUN_00701540 ends the menu
+## with item 0 through FUN_007001a0. A service's strid is that token where one
+## is grounded (storage = STOREHOUSE_STRID). Otherwise its label is shown. The
+## end line is TALKEND_STRID. The English fallbacks are used only when the
+## archive has no text for the token.
+##
+## Each line is also printed as `NPCTALK <npc> line <n>: <n>. <text>`. A
+## QA_TALK run reads those lines as the measurement. At most town warehouse
+## keepers there are three: "1. Buy", "2. <storage text>" and "3. <end text>",
+## because the player's refshopgroup.txt lists 8 of the 9 spawned keepers as
+## running a GROUP_STORE_*_HONOR store; NPC_WC_WAREHOUSE_M is not listed and
+## gets two (see "Buy" above; npc_service_reader_test.gd check (h)).
+static func talk_menu_lines(npc_name: String, services: Array, resolve: Callable) -> PackedStringArray:
+	var lines := PackedStringArray()
+	var n := 1
+	for svc in services:
+		# Each service is a clickable link keyed by its stable key.
+		var text := str(resolve.call(str(svc.strid), str(svc.label)))
+		print("NPCTALK %s line %d: %d. %s" % [npc_name, n, n, text])
+		lines.append("[url=%s]%d. %s[/url]" % [str(svc.key), n, text])
+		n += 1
+	var end_text := str(resolve.call(TALKEND_STRID, "End conversation."))
+	print("NPCTALK %s line %d: %d. %s" % [npc_name, n, n, end_text])
+	lines.append("[url=end]%d. %s[/url]" % [n, end_text])
+	return lines
 
 ## The guild NPCs, as the SERVER identifies them. `CGObjNPCNPC::Create`
 ## (0x4c6350) registers interaction id 0x0f -- the guild service, confirmed by

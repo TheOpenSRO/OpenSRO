@@ -29456,3 +29456,133 @@ and the restored reader gave ALL PASS.
 - **Server suite:** `cd server && go build ./... && go test -count=1 -p 1 ./...` is green. No
   server file changed, and `SYSTEMS.md` needed no edit: its Durability and repair row already
   places repair on the store's authored buttons.
+
+## Talk menu uses the client's own UIIT strings for the Storage and End lines (strid plumbing) (round 513)
+
+The talk box labelled a warehouse keeper's line "Storage" and its last line "End conversation.".
+Both were this project's own English. The real client builds these lines from two `UIIT_*`
+tokens, so the talk box now resolves the same tokens through the player's own
+`textuisystem.txt`. The client's first-menu builder, which no doc covered before this round, is
+written up in `docs/protocol/character_state.md`, "The client's first talk menu (round 513)".
+
+**Grounding** (read-only on the RE box: the client dump `/var/tmp/decomp_client`,
+`sro_client.asm`, and `.rdata` read with `objdump -s` from `/opt/sro-files/client/sro_client.exe`):
+
+- **`FUN_00701540` builds the menu** as `FUN_006fb530(this+0x7d4)`, then
+  `n = FUN_00700440()` (`0x701551`), then `FUN_007001a0(n)` (`0x701559`).
+- **`FUN_006fcd60(n, item, sub)` writes one line.** It formats `"%d. "` (`.rdata 0xdace24`, pushed
+  at `0x6fcdd5`), then appends the text of the token its `item` switch picks, and returns `n + 1`.
+  - Case 3 is `UIIT_STT_NPC_CHATTING_WND_STOREHOUSE` (`.rdata 0xdadcd8`, pushed at `0x6fced4`).
+  - Case 0 is `UIIT_STT_NPC_CHATTING_WND_TALKEND` (`.rdata 0xdadd28`, `0x6fcea6`). The exception is
+    an NPC whose set holds id `0x1f` (the lookup is at `0x6fce7e`), which gets `..._TALKEND2`
+    (`.rdata 0xdadd70`). Id `0x1f` is registered only on `STRUCTURE_GATE_PULLEY_*` (round 455), so
+    TALKEND2 is not carried.
+- **Id 3 emits item 3.** `FUN_00700440` looks id 3 up at `0x700b48` (`mov byte [esp+0x1c],3`,
+  `call 0x534ef0`). Its membership test is at `0x700b60`-`0x700b71`, and then
+  `0x700b73`-`0x700b7a` does `push 0; push 3; push ebx; call 0x6fcd60`. The server registers id 3
+  on `WAREHOUSE` codenames (`character_state.md`, round 455), and `services_for` already gave
+  those NPCs the storage service.
+- **The end line is item 0**, from `FUN_007001a0` (`0x7001a3` `cmp byte [esi+0x7f1],0`, then
+  `0x7001b0`-`0x7001b5` `push 0; push 0; push n; call 0x6fcd60`).
+- **The archive's text.** `client/tools/dump_text_table.gd` was run on the render box against
+  `/opt/sro-files/client/Media.pk2`. Each token has two rows there:
+  - an earlier 16-column row. STOREHOUSE `[8]` = "Deposit items/gold into storage.";
+  - a later 19-column row. STOREHOUSE has `[8]` = `0` and `[9]` = "Deposit into storage.".
+
+  TALKEND is "End conversation." in both rows. `UiTextTable` keeps the later row, so the storage
+  line reads **"Deposit into storage."**. Which layout the real client reads was not established.
+
+**Change.**
+- `client/scripts/npc/npc_service_reader.gd`:
+  - `Service` gains `strid`, with the constructor `_init(k, l, s := "")`. `label` stays as the
+    fallback.
+  - New constants `STOREHOUSE_STRID` and `TALKEND_STRID`, each commented with the addresses above.
+  - Storage is now `Service.new("storage", "Storage", STOREHOUSE_STRID)`.
+  - Shop stays `"Buy"` with an empty strid. The real client's item 1 is `FUN_006fb630`'s
+    per-store lines, which are not built here.
+  - Guild keeps its label. Its real lines depend on the player's guild membership, which the
+    `guild-npc-create-entry-wired` item owns.
+  - The header comment now names what is not listed: the storage NPC's items `0x2d`
+    `UIIT_STT_TC_OPEN` (behind two unnamed tests) and `0x2e` `UIIT_STT_TC_HONOR_RANKING`.
+- `client/scripts/ui/hud/hud_panels.gd`, `open_npc_talk`, builds its numbered lines with the
+  new `NpcServiceReader.talk_menu_lines(npc_name, services, _resolve_ui)`:
+  - each service line is `_resolve_ui(svc.strid, svc.label)`;
+  - the end line is `_resolve_ui(NpcServiceReader.TALKEND_STRID, "End conversation.")`;
+  - one `NPCTALK <npc> line <n>: <text>` log line is printed per menu line;
+  - the stale "only End acts" comments are corrected (Buy and Storage act since round 512).
+- `World3D.gd` is untouched.
+
+**Not modelled, and disclosed** (`character_state.md` lists them):
+- the lines with no number;
+- item 1's per-store lines;
+- `TC_OPEN` / `TC_HONOR_RANKING`;
+- the `+0x7f1` gate on the end line;
+- TALKEND2.
+
+**Most warehouse keepers get three lines, not two.** The player's `refshopgroup.txt` lists 8 of
+the 9 warehouse keepers `npcpos.txt` spawns as running a store; `NPC_WC_WAREHOUSE_M` is the
+exception -- it spawns beside `NPC_WC_WAREHOUSE_W`, but WC's second HONOR row (1400,
+`GROUP_STORE_WC_HONOR2`) names `_W` again, so `_M` runs no store and its menu is
+`1. <storage>` / `2. <end>` (re-review of round 513; the generalisation below is corrected here). This was measured with
+`client/tools/remote_godot.sh script res://tools/dump_text_table.gd --
+--pk2=/opt/sro-files/client/Media.pk2 --file=server_dep/silkroad/textdata/refshopgroup.txt
+--grep=WAREHOUSE`. There are 9 rows, and each has col 3 `GROUP_STORE_*_HONOR` and col 4 a
+keeper: CH `_M` and `_W`, WC (twice), KT, EU, CA and both SD keepers.
+`/var/tmp/tables/refshopgroup.txt` agrees. So `parse_shop_npcs` puts each keeper in the shop
+set, and `services_for` returns `[shop, storage]`. The shop line is still this project's "Buy".
+It stands where the real client puts `FUN_006fb630`'s per-store lines, which a keeper (ids 1
+and 3) gets only if `FUN_00989d20` answers nonzero (call at `0x700a71`).
+
+What changes for a player: at `NPC_CH_WAREHOUSE_M` the talk box reads "1. Buy",
+"2. Deposit into storage." and "3. End conversation.". The storage and end texts come from the
+player's own archive, and "Buy" is unchanged. This commit's first draft said "1. Deposit into
+storage." and "2. End conversation.", and blamed the missing `TC_HONOR_RANKING`. That was the
+plan's expectation, never measured, and review caught it. Check (a) had hidden it, because its
+synthetic shop set left the warehouse out.
+
+srrevamp's numbers do not match the real client's for a keeper whenever the real client shows
+its end line (the `+0x7f1` gate). The real client puts `TC_HONOR_RANKING` (and `TC_OPEN` when shown) between the
+storage line and the end line. With no store line, its storage line is 1 (srrevamp: 2). With
+one or more, its end line is 4 or higher (srrevamp: 3). This comes from `FUN_00700440`'s order
+and was not measured on a running client.
+
+**Tests** (`client/scripts/npc/npc_service_reader_test.gd`, render box). The constants are read
+through the script's constant map and `strid` through `get()`. A reader that lacks them therefore
+fails the checks instead of failing to parse.
+- (a) `NPC_CH_WAREHOUSE_M`'s storage service has strid
+  `UIIT_STT_NPC_CHATTING_WND_STOREHOUSE`, and so does `STOREHOUSE_STRID`. Its label is still
+  "Storage".
+- (e) The smith's shop service has an empty strid and the label "Buy".
+- (f) `TALKEND_STRID` is exactly `UIIT_STT_NPC_CHATTING_WND_TALKEND`, and there is no TALKEND2
+  constant.
+- (g) A synthetic `UiTextTable` has two STOREHOUSE rows: a 16-column row with `[8]` =
+  "LAYOUT-A", then a 19-column row with `[8]` = `0` and `[9]` = "LAYOUT-B". `get_text` returns
+  "LAYOUT-B".
+- (h) Added after review. A shop set shaped like the real one, with a
+  `GROUP_STORE_CH_HONOR`/`NPC_CH_WAREHOUSE_M` row, makes `services_for("NPC_CH_WAREHOUSE_M")`
+  return `[shop, storage]` in that order. `NpcServiceReader.talk_menu_lines` then turns it into
+  exactly `[url=shop]1. Buy[/url]`, `[url=storage]2. STORE-TEXT[/url]` and
+  `[url=end]3. END-TEXT[/url]`, using synthetic STOREHOUSE and TALKEND texts and a resolver with
+  `_resolve_ui`'s rules. To make this testable, the menu lines and their `NPCTALK` prints moved
+  out of `open_npc_talk` into that static function, and `open_npc_talk` passes it `_resolve_ui`.
+  `HudPanels` itself cannot load in a bare `--script` test, because it needs the `NetClient`
+  autoload. The test reaches the composer through the script object. A reader without it
+  therefore fails the check (measured: HEAD's reader gave "1 FAILURES", `got []`) rather than
+  failing to parse, which leaves Godot running and hangs the suite.
+
+**Negative case, run.** The two production files were stashed and the working copy shipped. The
+suite then reported **3 FAILURES**: (a) "got <null>", (e) "got strid <null>" and (f) "got <null>".
+Check (g) passed, as it should, because `UiTextTable` did not change. With the files restored,
+the suite reports ALL PASS.
+
+- **Client suite:** `client/tools/remote_godot.sh tests` (render box) ran 78 suites, 0 failing.
+  `client/tools/remote_godot.sh check` checked 242 scripts and 5 scenes: ALL LOAD.
+- **Not run: the `qa_shot.sh` measurement** (`SRREVAMP_QA_TALK=NPC_CH_WAREHOUSE_M`, reading the
+  `NPCTALK` lines). This round had read-only access to the RE box, and a render writes frames
+  there. The plan batches this run with the other talk items' `QA_TALK` viewpoints. The expected
+  lines are `NPCTALK NPC_CH_WAREHOUSE_M line 1: 1. Buy`, `line 2: 2. Deposit into storage.` and
+  `line 3: 3. End conversation.`. The refshopgroup and textuisystem dumps above and checks (g)
+  and (h) ground that expectation, but no running client has printed it yet.
+- **Server suite:** `cd server && go build ./... && go test -count=1 -p 1 ./...` is green. No
+  server file changed. `SYSTEMS.md` has no row that describes the talk labels, so it needed no
+  edit.

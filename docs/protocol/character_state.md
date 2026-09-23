@@ -1174,3 +1174,154 @@ id is the check that heuristic needed.
 the party-recall handler at dispatch index `0x519`, refusing
 `UIIT_MGS_ERR_GOD_TELEPORT_HOLE_NOT_PARTY`, against an NPC registered as
 `NPC_FWORLD_RECALL_PARTY`.
+
+## The client's first talk menu (round 513)
+
+The rounds above read the interaction set from the **server** side: which ids an
+NPC is registered with, and which handlers read them. This section reads the
+**client** side: how `sro_client.exe` turns the NPC's interaction set (talk object
+`+0x7c0`, the set the 0xb045 reply handler also reads, round 512) into the numbered lines of
+the first talk menu. Read from the client dump (`/var/tmp/decomp_client`),
+checked instruction by instruction in `sro_client.asm`, and with the string
+addresses read out of `.rdata` in `/opt/sro-files/client/sro_client.exe`.
+
+### The chain
+
+	FUN_00701540 (0x701540)
+	  FUN_006fb530(this+0x7d4)
+	  n = FUN_00700440()          -- every numbered line but the last
+	  FUN_007001a0(n)             -- the end line
+
+- **`FUN_006fcd60(n, item, sub)` writes one line.** It formats `"%d. "`
+  (`.rdata 0xdace24`, pushed at `0x6fcdd5`) with the running number `n`. It then
+  appends the text of one string id, chosen by a two-level switch on `item`: a
+  byte index table at `0x6fd394` (`0x6fce4d` `movzx ecx,byte [ebp+0x6fd394]`),
+  then the dword jump table at `0x6fd2d8` (`0x6fce54` `jmp [ecx*4+0x6fd2d8]`).
+  It returns `n + 1`. Most cases name a
+  `UIIT_*` or `SN_*` token, resolved through `textuisystem.txt`. Cases 5-8 use
+  raw Korean literals (round 512). Case 1 runs `FUN_006fb630`, which writes its
+  own `"%d. "` line per store. `sub` picks the job-guild variant in cases
+  0x1e-0x24.
+- **Item 0 is the end line.** Case 0 looks id `0x1f` up in the talk object's set
+  (`0x6fce7e`). If the NPC has it, the text is `UIIT_STT_NPC_CHATTING_WND_TALKEND2`
+  (`.rdata 0xdadd70`, `0x6fce9c`). Otherwise it is
+  `UIIT_STT_NPC_CHATTING_WND_TALKEND` (`.rdata 0xdadd28`, `0x6fcea6`). Id `0x1f`
+  is registered only on `STRUCTURE_GATE_PULLEY_*` (the vocabulary table above), so
+  every ordinary NPC gets TALKEND.
+- **`FUN_007001a0` emits item 0 only when the talk object's `+0x7f1` byte is
+  set** (`0x7001a3` `cmp byte [esi+0x7f1],0`, then `0x7001b0`-`0x7001b5`
+  `push 0; push 0; push n; call 0x6fcd60`), and clears it after. In
+  `FUN_00700440` the one write of 1 is at `0x70150e`, and it happens when id 2 is
+  **absent** from a second set, at `[0x110f80c]+0x4fc` (`0x7014c7`-`0x70150c`).
+  The owner of that set is not named.
+- **Item 3 is the storage line.** Case 3 names
+  `UIIT_STT_NPC_CHATTING_WND_STOREHOUSE` (`.rdata 0xdadcd8`, `0x6fced4`).
+
+### Interaction id to menu item, in `FUN_00700440`'s order
+
+Every lookup is the set's `find` (`0x534ef0`) with the id stored as a byte just
+before the call. The address in each row is that byte store (row 1 gives the
+call instead). A present id is the
+`cmp [eax+0x4],end` membership test that follows.
+
+| order | id looked up | if present | text |
+|---:|---|---|---|
+| 1 | 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1f, 0x28 | `FUN_00700200` (`0x70074f`): `IF_NPCTalk::FUN_006fe030` items 0x33, 0x34, 0x32, 0x36, 0x37, 0x35, 0x42 | a second item switch, not read here |
+| 2 | 0xc (`0x700770`) | a line with no number, behind two tests | `UIIT_MSG_SAFETRADE_PROGRESS_NUMBER` |
+| 3 | 0x13 (`0x7008cb`) | the text passed to `FUN_006fb530`, with no number | `UIIT_MSG_XMAS_EVENT_SO-OK` |
+| 4 | 2 (`0x700920`) | item 4 | `UIIT_STT_NPC_CHATTING_WND_TALKSTART` |
+| 5 | 1 (`0x700982`) | item 1 (`0x700afe`). With 0xf also present, only if `FUN_009870e0()` answers nonzero (`0x7009fc`). With 3 also present, only if `FUN_00989d20(...)` does (`0x700a71`) | `FUN_006fb630`'s per-store lines |
+| 6 | 4 (`0x700b12`) | nothing: no membership branch (round 512) | — |
+| 7 | 3 (`0x700b48`) | item 3 (`0x700b7a`); item 0x2d if `FUN_00987130()+0x20` is 0 and the byte at `[0xeef5ec]+0x868` is at least 0x3c (`0x700b86`-`0x700b9d`); then item 0x2e always (`0x700bb4`) | `..._WND_STOREHOUSE`; `UIIT_STT_TC_OPEN`; `UIIT_STT_TC_HONOR_RANKING` |
+| 8 | 0x20 (`0x700bd2`) | item 0x2f | `UIIT_STT_AVATAR_MAGICOPTION_ENCHANT_MAGIC_PARAM` |
+| 9 | 5 (`0x700c15`) | nothing: no membership branch | — |
+| 10 | 7 (`0x700c57`) | item 9 | `UIIT_CTL_RECALL_POSITION` |
+| 11 | 9 (`0x700ca7`) | item 0x10 | `UIIT_CTL_TELEPORT_TO_RESURRECT_POS` |
+| 12 | 8 (`0x700cfb`) | lines with no number for the desert-gate company shares (`UIIT_PAG_COMPANY_*`), then item 0xa | `UIIT_CTL_TELEPORT_TARGET` |
+| 13 | 6 (`0x700fa2`) | item 0xb | no token of its own (case 0xb shares case 1's tail) |
+| 14 | 0x1e (`0x700ff6`) | `UI_ITEM::FUN_006f98d0`, behind the class test `FUN_00b94b90(0xef1ac4)` | not read here |
+| 15 | 0xf (`0x70105e`) | `FUN_009870e0()` 0: item 0x12. Otherwise, by `FUN_00989ce0(...)`: items 0x17, 0x14, 0x18, 0x1b, or item 0x1c alone; then 0x19 or 0x1a (by `FUN_0099da70`), 0x1d, 0x43 | `UIIT_CTL_GUILD_CREATE`; `UIIT_MSG_GUILD_LEVEL_UP`, `UIIT_CTL_GUILD_BREAK`, `UIIT_CTL_MASTERLEAVE`, `UIIT_CTL_GUILD_COMPENSATION` / `UIIT_CTL_GUILD_SECESSION`; `UIIT_CTL_MASTERRELEASE` / `UIIT_CTL_MRELEASE_VOTE`, `UIIT_CTL_GUILD_WAREHOUSE`, `UIIT_STT_GUILD_GP_HISTORY` |
+| 16 | 0x13 (`0x701182`) | item 0x15 | `UIIT_MSG_XMAS_EVENT_CHANGE` |
+| 17 | 0xa (`0x7011c8`) | item 0x16 | `UIIT_MSG_CIRCULATION_WITHDRAW_SKILL` |
+| 18 | 0x14, 0x16, 0x15 | `IF_NPCTalk::FUN_006fdeb0(n, 1 / 3 / 2)` | not read here |
+| 19 | 0x11 (`0x7012da`) | item 0x27 | `SN_TALK_CH_GACHA_MACHINE_2` |
+| 20 | 0x12 (`0x701320`) | item 0x28 | `SN_TALK_CH_GACHA_OPERATOR_2` |
+| 21 | 0x23 (`0x701366`) | item 0x3f | `SN_NPC_OPEN_MARKET_START` |
+| 22 | 0xc (`0x7013ac`) | item 0x39 | `UIIT_PAG_SPECIAL_PRICE_CONDITION_INFO` |
+| 23 | 0x1c (`0x7013f2`) | item 0x2a, behind `FUN_00b94b90(0xef1dac)` | none (0x2a is outside the switch and does not advance `n`) |
+| 24 | 0x27 (`0x70144a`) | item 0x3d | `UIIT_PAG_PARTY_SUMMON` |
+| 25 | 0x29 (`0x701490`) | item 0x3e | `UIIT_STT_DUNGEON_EXIT` |
+| 26 | 2, in `[0x110f80c]+0x4fc` (`0x7014e5`) | absent: set `+0x7f1`, so the end line follows | — |
+
+The functions named `FUN_*` in the conditions are unnamed tests. The order
+column matters, because the numbers are assigned in this order. A warehouse
+keeper (server ids 1 and 3) therefore gets item 1 only if `FUN_00989d20`
+answers nonzero and `FUN_006fb630` finds a store. It then gets the storage line,
+`TC_OPEN` behind its gate, `TC_HONOR_RANKING`, and the end line.
+
+### The text: two layouts of `textuisystem.txt`
+
+The player's archive on the render box holds each of these tokens **twice**. It
+has an earlier 16-column row with the English at `[8]`, and a later 19-column
+row with `0` at `[8]` and the English at `[9]` (read with
+`client/tools/dump_text_table.gd`):
+
+| token | 16-column row, `[8]` | 19-column row, `[9]` |
+|---|---|---|
+| `UIIT_STT_NPC_CHATTING_WND_STOREHOUSE` | Deposit items/gold into storage. | Deposit into storage. |
+| `UIIT_STT_NPC_CHATTING_WND_TALKEND` | End conversation. | End conversation. |
+| `UIIT_STT_NPC_CHATTING_WND_TALKEND2` | End. | End. |
+
+`UiTextTable` keeps the later row (`client/scripts/ui/ui_text_table.gd`, which
+picks `[9]` when `[8]` is `0`). So the storage line reads "Deposit into
+storage.". Which layout the real client reads was not established.
+
+### What srrevamp does with it
+
+`NpcServiceReader` carries the storage line's token (`STOREHOUSE_STRID`) and
+the end line's (`TALKEND_STRID`). `NpcServiceReader.talk_menu_lines`, which
+`HudPanels.open_npc_talk` calls with its `_resolve_ui`, resolves both through
+the player's text table. It falls back to the English label when the archive
+has no text, and numbers the lines `"%d. "` as `FUN_006fcd60` does. It prints
+one `NPCTALK` log line per menu line.
+
+**Most town warehouse keepers get three lines in srrevamp, not two.** The player's
+`refshopgroup.txt` lists 8 of the 9 warehouse keepers `npcpos.txt` spawns as running a
+store. `NPC_WC_WAREHOUSE_M` is the exception: it spawns beside `NPC_WC_WAREHOUSE_W`,
+but WC's second HONOR row names `_W` again, so `_M` runs no store and gets two lines
+(storage, end). Measured
+with `client/tools/dump_text_table.gd` on the render box's `Media.pk2`
+(`--file=server_dep/silkroad/textdata/refshopgroup.txt --grep=WAREHOUSE`), there
+are 9 rows. Col 3 is `GROUP_STORE_*_HONOR` and col 4 the keeper:
+`NPC_CH_WAREHOUSE_M`, `NPC_CH_WAREHOUSE_W`, `NPC_WC_WAREHOUSE_W` (twice),
+`NPC_KT_WAREHOUSE`, `NPC_EU_WAREHOUSE`, `NPC_CA_WAREHOUSE`,
+`NPC_SD_M_AREA_WAREHOUSE` and `NPC_SD_T_AREA_WAREHOUSE2`. The extracted copy
+`/var/tmp/tables/refshopgroup.txt` agrees. `NpcServiceReader.parse_shop_npcs`
+therefore puts each keeper in the shop set, and `services_for` returns
+`[shop, storage]` in that order. At `NPC_CH_WAREHOUSE_M` the menu is:
+
+	1. Buy                     (srrevamp's own label, no strid)
+	2. Deposit into storage.   (STOREHOUSE, the later 19-column row)
+	3. End conversation.       (TALKEND)
+
+`npc_service_reader_test.gd` check (h) asserts that composition and those three
+numbered lines, using a synthetic text table. No running client has printed
+the `NPCTALK` lines yet.
+
+**Not modelled:**
+- the lines with no number (rows 2, 3 and 12);
+- item 1's per-store lines. srrevamp's "Buy" is its own label. It stands where
+  the real client puts `FUN_006fb630`'s lines, and at a keeper (ids 1 and 3) the
+  real client shows those only if `FUN_00989d20` answers nonzero (call at
+  `0x700a71`);
+- `TC_OPEN` and `TC_HONOR_RANKING` after the storage line;
+- the `+0x7f1` gate on the end line, which srrevamp always shows;
+- `TALKEND2`, which only a siege pulley gets.
+
+So srrevamp's numbers do not match the real client's for a keeper whenever the
+real client shows its end line (the `+0x7f1` gate). By the table above, every item but 0x2a advances
+`n`, including 0x2e, and the real client puts `TC_HONOR_RANKING` (and `TC_OPEN`
+when shown) between the storage line and the end line. With no store line, its
+storage line is 1 (srrevamp: 2). With one or more store lines, its end line is 4
+or higher (srrevamp: 3). This comes from the table's order. It was not
+measured on a running real client.
