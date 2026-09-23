@@ -7075,6 +7075,44 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-tenth round: NPCs face open space -- a disclosed stand-in
+
+Reported right after round 506: the buildings turned correctly, but "the NPCs are still facing the
+wrong cardinal direction". They are placed by a different path (`_try_spawn_region_npcs`), which
+set a position and no rotation at all, so every NPC faced the way its model was authored -- the same
+way for all of them.
+
+**The game's facing is data this project does not have.** The server spawns every NPC facing the
+direction stored in its nest row: `Nest_Hatch` (`0x005607b0`) reads the row's u16 at `+0x1c` --
+`Tab_RefNest.wInitialDir` -- and converts it to radians as `wInitialDir / 65535.0 * 360.0 * pi/180`
+(`fdiv [0xb45c28]` 65535.0, `fmul [0xb45c30]` 360.0, `fmul [0xb45e00]` pi/180, at `0x5609ce` and
+`0x560a2a`); monsters instead roll a random facing (`rand / 32767 * 2pi`), except rarity 3.
+`TAB_REFNEST` / `CRefNest` are the server binary's own names for the table. None of it ships in a
+file: `npcpos.txt` has exactly five columns (id, region, x, y, z) on all 12,367 rows; Media, Data and
+Map.pk2 hold no nest, hive, tactics or spawn table (searched by name); the server package on the RE
+box carries binaries, the cert module, SMC, tools and web scripts but no database backup.
+
+**The stand-in, chosen with the user and disclosed as own design:** `NpcFacing.open_direction` faces
+an NPC toward the most open space around it, measured on the region's own navigation graph with the
+walk a character makes (`NavGraph.step_tracked`), so walls, doorways and the object it stands on count
+as they do for a player. 24 headings are walked outward (20-unit steps; a step that makes less than
+half a step of progress has met a wall), at 80, then 160, then 320 units until the headings disagree;
+each heading is scored over its +-30-degree sector and the NPC faces the MIDDLE of the longest run of
+best-scoring headings (the first maximum would be the edge of the open side). An NPC open on every
+side at 320 units keeps its old facing rather than getting an arbitrary one. The holder rotation puts
+the body's front -- its own local -Z, the playtest-settled convention the player body uses -- along the
+chosen direction: `atan2(-dir.x, -dir.z)`.
+
+**Measured on the render box:** in Jangan all 18 placed NPCs (and 23 in the four neighbouring regions)
+got a facing; none was open all round. The cost at region load is 404 ms for Jangan's 18 (708 ms at
+10-unit steps). `npc_facing_test` pins a wall east (faces west, the middle of the open arc, not its
+edge), a wall north, a corner (faces the open diagonal), all-open (no facing), a wall found only at a
+longer range, and that the holder rotation points the body's front along the choice.
+
+**Not the game's value, and said so in the code:** an NPC the game turns toward a wall, or along a
+street, will not match. The real fix is importing `Tab_RefNest.wInitialDir` (docs/TODO.md) and
+applying it with the formula above.
+
 ## Five-hundred-and-sixth round: every turned object faced the wrong way
 
 Reported from a playtest: "almost every asset is in the wrong cardinal direction". It was true of

@@ -137,6 +137,15 @@ In order. Each is checked off here when it ships in a release, with its round in
       attack) and draws them as `_monster_bodies` Node3Ds at the snapshot position, so server-side
       movement with no move packet would make monsters JUMP on the next refresh rather than walk.
       Build the move packet before the WANDER loop, not after.
+- [ ] **NPC facing is a stand-in until `Tab_RefNest` is imported.** Round 510: the game faces each
+      NPC by its nest row's `wInitialDir` (u16 at +0x1c, read by `Nest_Hatch` `0x5607b0`; radians =
+      `wInitialDir / 65535 * 360 * pi/180`), which lives only in the server database -- no shipped
+      file carries it (`npcpos.txt` is id/region/x/y/z). `NpcFacing` faces NPCs toward open space on
+      the navigation graph instead, disclosed as own design. Next step: get a `Tab_RefNest` export
+      (NestID, RegionDBID, LocalPosX/Y/Z, InitialDir) from a VSRO shard database, match rows to
+      `npcpos` by region and position, and turn each NPC by the real angle -- through the same
+      engine-to-Godot conversion as map objects (`NavGraph.godot_yaw`), after confirming the
+      character-facing convention (the spawn packet's angle -> the body's front) in the client.
 - [ ] **Exact fixed-function lighting**: a spatial shader whose `light()` scales the sun by the
       material's diffuse and the ambient by its ambient (round 136's stated approximation).
 - [x] ~~Real spawn points for every roster species~~ -- **done, v0.1.403 (round 253)**: `export-refdata

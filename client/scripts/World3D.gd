@@ -4022,6 +4022,8 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 	var skipped := 0
 	var named := 0
 	var monsters_skipped := 0
+	var faced := 0
+	var facing_usec := 0
 	for spawn in spawns:
 		# npcpos is not a table of NPCs: it holds every placed character,
 		# monsters included, and placing those here made Mangyangs stand in
@@ -4059,8 +4061,10 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 		holder.name = "Npc_%d_%d" % [spawn.npc_id, placed]
 		var local: Vector3 = spawn.local_position
 		var height: float = local.y
+		var npc_graph: NavGraph = null
 		for pair in _region_nav_graphs:
 			if pair[1] == group:
+				npc_graph = pair[0] as NavGraph
 				# The authored Y is passed as the mover's height, not
 				# discarded: height_at resolves several stacked walkable
 				# surfaces by picking the one nearest the mover, and asking
@@ -4070,6 +4074,19 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 				height = (pair[0] as NavGraph).landing_height_at(local.x, local.z)
 				break
 		holder.position = Vector3(local.x, height, local.z)
+		# Which way it faces is a DISCLOSED STAND-IN: the game's value is
+		# Tab_RefNest.wInitialDir, server-database data no shipped file
+		# carries (see NpcFacing). Facing the most open space on the region's
+		# own navigation graph beats every NPC facing the same authored way;
+		# an NPC with open space all round keeps the old facing.
+		if npc_graph != null:
+			var facing_started := Time.get_ticks_usec()
+			var standing_on := npc_graph.surface_at(local.x, local.z, height).object_index
+			var facing := NpcFacing.open_direction(npc_graph, holder.position, standing_on)
+			if facing != Vector2.ZERO:
+				holder.rotation.y = NpcFacing.holder_yaw(facing)
+				faced += 1
+			facing_usec += Time.get_ticks_usec() - facing_started
 		holder.add_child(skeleton)
 		var bounds := _skeleton_bounds(skeleton)
 		holder.add_child(_npc_collider(bounds))
@@ -4085,8 +4102,8 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 		group.add_child(holder)
 		_animate_skeleton(skeleton, idle_anim)
 		placed += 1
-	print("World3D: %d/%d NPC(s) placed in %d/%d (%d had no model, %d named, %d monster rows left to the server)" % [
-		placed, spawns.size(), region_x, region_y, skipped, named, monsters_skipped])
+	print("World3D: %d/%d NPC(s) placed in %d/%d (%d had no model, %d named, %d monster rows left to the server; %d faced toward open space in %.1f ms)" % [
+		placed, spawns.size(), region_x, region_y, skipped, named, monsters_skipped, faced, facing_usec / 1000.0])
 
 ## Loads real terrain from a real Map.pk2 region .m file via MapmReader +
 ## MapmTerrainBuilder, replacing both the placeholder ground's visual mesh
