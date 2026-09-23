@@ -201,11 +201,16 @@ func _init() -> void:
 		_check(g.map(func(s): return s.key).has("guild"), guild_npc + " offers guild")
 
 	# The two defects a bare "GUILD" token had. NPC_CH_GENARAL_SP is covered
-	# above -- it has no "GUILD" in its name and used to be MISSED.
+	# above -- it has no "GUILD" in its name and used to be MISSED. The three
+	# agents were wrongly MATCHED. No codename test in CGObjNPCNPC::Create
+	# registers an interaction id on them: their strstr chain ends in
+	# IGObj::SetBodyMode (slot 198, 0x4c6ddd), not AddAvailableInteraction
+	# (slot 89). Round 520 corrected round 458's "specialty goods (0x0c)"; see
+	# GUILD_PATTERNS.
 	for agent in ["NPC_SD_GUILD_AGENT", "NPC_SD_GUILD_AGENT2", "NPC_SD_GUILD_AGENT3"]:
 		var a = NpcServiceReader.services_for(agent, shops)
 		_check(not a.map(func(s): return s.key).has("guild"),
-			agent + " is specialty goods (0x0c), not a guild NPC")
+			agent + " gets no interaction id by codename, so offers no Guild")
 
 	# (i) Round 514: the store window shows Repair / Repair All only at an NPC
 	# with interaction id 4. The client's 0xb045 reply handler FUN_0088b200
@@ -238,9 +243,9 @@ func _init() -> void:
 		var yes: bool = has_offers_repair and bool(reader_script.call("offers_repair", code))
 		_check(yes, "%s shows the store's repair buttons (interaction 4)" % code)
 	# NEGATIVE: every other store hides them. Before this round srrevamp showed
-	# both buttons at every store. Each of these runs a store or a service and
-	# carries no id 4: a warehouse keeper (ids 1 and 3), a potion seller, an
-	# accessory merchant, a guild NPC (0x0f, 1) and a guild agent (0x0c). An
+	# both buttons at every store. None of these carries id 4: a warehouse
+	# keeper (ids 1 and 3), a potion seller, an accessory merchant, a guild NPC
+	# (0x0f, 1) and a guild agent (no id by codename, round 520). An
 	# empty codename hides them too. Lower case does not match, because the
 	# server's strstr is case-sensitive.
 	for code in ["NPC_CH_WAREHOUSE_M", "NPC_CH_POTION", "NPC_CH_ACCESSORY",

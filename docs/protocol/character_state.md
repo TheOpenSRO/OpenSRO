@@ -964,12 +964,12 @@ behind a comparison against the NPC's own CodeName.** That is the vocabulary:
 | **3** | `WAREHOUSE`, `NPC_SD_*_AREA_WAREHOUSE` |
 | **4** | `NPC_*_SMITH`, `NPC_*_ARMOR`; also `NPC_*_FORTRESS_SMITH` (the 22 exact literals: round 514, at the end of this file) |
 | **0xb** | the `NPC_*_HORSE` block, beside id 1 |
-| **0xc** | `NPC_TD_THIEF_BUY`, `NPC_*_SPECIAL*`, `NPC_SD_GUILD_AGENT*` |
+| **0xc** | `NPC_TD_THIEF_BUY` (`0x4c6ae1`, beside 0xd); `NPC_CH_SPECIAL2`, `NPC_WC_SPECIAL2`, `NPC_TK_SPECIAL`, `NPC_RM_SPECIAL`, `NPC_EU_SPECIAL`, `NPC_CA_SPECIAL`, `NPC_SD_M_AREA_SPECIAL`, `_SPECIAL2`, `_SPECIAL3` (`0x4c6f39`) — **not** the guild agents (round 520, below) |
 | **0xd** | the `NPC_TD_THIEF_BUY` block, beside 0xc |
 | **0xe** | `NPC_CH_GENARAL_SW`, `NPC_WC_GENARAL_SW`, `NPC_KT_MINISTER` |
 | **0xf** | `NPC_*_GUILD`, `NPC_CH_GENARAL_SP` |
-| **0x11** | the `NPC_SIEGE_DUNGEON_TELEPORT` block, beside 0x28 |
-| **0x12** | `NPC_CH_GACHA_OPERATOR` |
+| **0x11** | the `NPC_SIEGE_DUNGEON_TELEPORT` block, beside 0x28 — **disputed**, see "One misattribution, corrected" (round 520) |
+| **0x12** | `NPC_CH_GACHA_OPERATOR` (only when the `+0x42404` byte is 0, round 520) |
 | **0x14** | `NPC_*_MERCHANT`, `NPC_*_DOCTOR`, `NPC_KT_DESIGNER` |
 | **0x15** | `NPC_TD_THIEF_SELL`, `NPC_SD_T_AREA_THIEF` |
 | **0x16** | `NPC_*_HUNTER`, `NPC_*_GENARAL_SW`, `NPC_KT_MINISTER` |
@@ -986,6 +986,7 @@ behind a comparison against the NPC's own CodeName.** That is the vocabulary:
 | **0x28** | `NPC_SIEGE_DUNGEON_TELEPORT` |
 | **0x29** | `NPC_INS_EXIT_TELEPORT` |
 | computed | `NPC_BATTLE_ARENA_MANAGER`, `NPC_BATTLE_ARENA_EXCHANGER` |
+| **none** (by codename) | `NPC_SD_THIEF_AGENT_CHANGER`, `NPC_SD_GUILD_AGENT`, `_AGENT2`, `_AGENT3`: their chain ends in `IGObj::SetBodyMode(4, 0xff, 0, 0)` (slot 198, `0x4c6ddd`), run when the `CMainProcess` byte `+0x42404` is 1, and registers no id (round 520) |
 
 ### Why this is trusted: ten independent agreements
 
@@ -1009,6 +1010,77 @@ agrees**:
 
 Ids 0x15 and 0x16 are the strongest: the codenames literally read `THIEF` and
 `HUNTER`, matching names derived in round 453 from a completely different route.
+
+### One misattribution, corrected (round 520)
+
+The heuristic failed once. This table gave id 0xc to `NPC_SD_GUILD_AGENT*`, and
+round 458 built on it ("specialty goods"). Re-read at instruction level in
+`/var/tmp/srv.asm`, the agents sit in a chain of their own, and it registers
+nothing:
+
+- `0x4c6d6b`-`0x4c6ddb`: four `strstr` tests (`FUN_009dddc0`) against `.rdata`
+  `0xaeedd8` `NPC_SD_THIEF_AGENT_CHANGER`, `0xaeedf4` `NPC_SD_GUILD_AGENT`,
+  `0xaeee08` `NPC_SD_GUILD_AGENT2` and `0xaeee1c` `NPC_SD_GUILD_AGENT3`. A hit
+  jumps to `0x4c6ddd`; the last miss jumps past it, to `0x4c6dfd`.
+- `0x4c6ddd`: `cmp esi,1 ; jne 0x4c6dfd`, then `call [edx+0x318]` with
+  `(4, 0xff, 0.0f, 0)`. Offset `0x318` is slot 198, `IGObj::SetBodyMode`
+  (`igobj_vtable.md`, the table), and 4 is `BODYMODE_BERSERKER` ("The body-mode
+  enum", above). `esi` is the byte at `CMainProcess` (`DAT_00d6a8dc`,
+  `manager_singletons.md`) `+0x42404`, loaded at `0x4c6494` and not written
+  again before `0x4c6ddd`. What the byte means is not read.
+- The 0xc registration is the **next** chain: nine literals from `0xaeee30`
+  (`NPC_CH_SPECIAL2`) to `0xaeeec0` (`NPC_SD_M_AREA_SPECIAL3`), each jumping to
+  `0x4c6f31`, `mov eax,[edx+0x164] ; push 0xc`.
+
+Two censuses over the whole function (`0x4c6350`-`0x4c7906`) back this. There
+are two `push 0xc`: `0x4c6ae1` (`NPC_TD_THIEF_BUY`, followed by 0xd) and
+`0x4c6f39` (the SPECIAL chain). There are two loads of slot `0x318`: `0x4c6de6`
+(the agents) and `0x4c774b`, where `NPC_CH_GACHA_MACHINE` or
+`NPC_CH_GACHA_OPERATOR` (`_stricmp`, `0x9ddf4e`) gets the same call on the branch
+where that byte is not 0. A third probe, by a different route: every string the
+function pushes (116 distinct `.rdata` addresses in the asm, read out of the exe)
+was tested as a substring of each agent's codename, and the only matches are the
+agents' own literals.
+
+**How far "no id" goes.** No codename test registers an id on the four agents.
+`Create` has two registration paths that do not test the codename. Both are
+driven by data about the NPC's reference object:
+
+- the refdata ids copied from the reference record's `+0x90` set (round 454).
+  Ids 7 and 9 come from the teleport tables, whose rows name the object by id;
+  the id-8 loader's table is still unattributed.
+- id 0x11, below: a map lookup keyed by `IGObj::GetRefObjID` (slot 1, `+4`;
+  `igobj_vtable.md`, the table), in a table that is not identified.
+
+So the agents' object ids (characterdata: 26826, 26827, 26829, 26830) were looked
+for in every table extracted on the box (`/var/tmp/tables`, 82 files, not the
+whole textdata set). They occur only in their own characterdata rows, in
+`npcpos.txt` (where they spawn), and in `skilldata_30000.txt`, as numbers in
+skill rows. They are in none of the teleport tables. As controls, the same probe finds
+gate 2094 in `teleportdata` and `teleportbuilding`. Within those tables no data
+path gives the agents an id; a table that is not extracted there is not
+excluded.
+
+The client never gave the agents a 0xc service, so nothing a player sees changes.
+The record now stops the next talk-menu or specialty-goods change from giving
+them one.
+
+**Two more rows that the same read disputes, not changed here.** Id 0x11 is not
+part of the `NPC_SIEGE_DUNGEON_TELEPORT` block. That block ends with its
+`push 0x28` (`0x4c76d0`) and call (`0x4c76d4`), and `0x4c76d6 cmp [esp+0x14],0 ;
+je 0x4c7788` tests the same `+0x42404` byte. When it is 0, `0x4c77c2` registers
+0x11 on any NPC for which `FUN_004ccb70` (a map lookup on `DAT_00d6aa14 +
+0x110`, keyed by `GetRefObjID`) finds an entry whose first byte is
+not 0. Then `0x4c77f9` registers 0x12 on `NPC_CH_GACHA_OPERATOR`. So 0x11 follows
+no codename, and 0x12 is registered only when the byte is 0. The map's table was
+not identified. `CGameServer::LoadReferenceData` case 6 hands its table's `+0x110`
+to a row walker (`FUN_006e0e80`) that calls `FUN_006e4030` per row, which copies
+four dwords from record `+0x18`..`+0x24` (`FUN_006ac220`). The same probe finds
+`NPC_CH_GACHA_MACHINE`'s id, 9251, in `gachanpcmap.txt`, whose one row is
+`1 9251 1 2`. That is a candidate, not a finding. It is why the gacha machine,
+which also reaches `SetBodyMode` when the byte is not 0, is **not** in the "none"
+row (the gacha operator is not either: it has 0x12). Neither id is used by
+srrevamp; both need their own round.
 
 ### Three earlier items closed or corrected
 

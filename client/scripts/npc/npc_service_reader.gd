@@ -259,8 +259,17 @@ static func talk_menu_lines(npc_name: String, services: Array, resolve: Callable
 ## A bare "GUILD" token, which this used to use, is wrong in BOTH directions:
 ##   * it misses NPC_CH_GENARAL_SP, the Chinese guild NPC, whose codename has no
 ##     "GUILD" in it at all -- it heads the server's own list;
-##   * it wrongly matches NPC_SD_GUILD_AGENT/2/3, which the server gives the
-##     specialty-goods interaction (0x0c) instead, not the guild one.
+##   * it wrongly matches NPC_SD_GUILD_AGENT/2/3, on which no codename test in
+##     the server registers any interaction id (round 520; round 458 said 0x0c,
+##     a misreading). Their strstr chain (0x4c6d6b-0x4c6ddb, which also tests
+##     NPC_SD_THIEF_AGENT_CHANGER) ends at 0x4c6ddd in vtable slot 198 (+0x318,
+##     IGObj::SetBodyMode; docs/protocol/igobj_vtable.md, the table), called
+##     with (4, 0xff, 0, 0) only when the byte at CMainProcess (DAT_00d6a8dc)
+##     +0x42404 is 1 (`cmp esi,1`; esi loaded at 0x4c6494). It never reaches
+##     slot 89 (+0x164, AddAvailableInteraction). The 0x0c registration is the
+##     NEXT chain, the NPC_*_SPECIAL literals (0x4c6f39). The data-driven paths
+##     are covered in docs/protocol/character_state.md, "One misattribution,
+##     corrected (round 520)".
 const GUILD_PATTERNS := [
 	"NPC_CH_GENARAL_SP",
 	"NPC_WC_GUILD",

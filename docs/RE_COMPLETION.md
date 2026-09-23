@@ -24806,6 +24806,10 @@ patterns** for interaction `0x0f`; the client tested one short generic token:
 - **It invented three.** `NPC_SD_GUILD_AGENT`, `_AGENT2` and `_AGENT3` contain
   `GUILD` but the server gives them interaction `0x0c` — specialty goods — not
   the guild service. They offered a Guild button that does not belong to them.
+  *Correction (round 520):* no codename test in the server gives them **any**
+  interaction id. Their `strstr` chain ends in `IGObj::SetBodyMode` (slot 198,
+  `0x4c6ddd`), and 0xc is the next chain, the `NPC_*_SPECIAL` literals. Removing
+  their Guild button was still right.
 
 Id `0x0f` is safe to act on because it has a **reader**:
 `CGuildManager::HandleCreateGuild` gates on it, so it is the guild service and
@@ -30441,3 +30445,88 @@ monsters stand still server-side; and a walk that geometry blocks waits, like an
 until the player does something else. The World3D wiring itself (`_attack_monster`, the
 per-frame step, the clears) has no automated test; the live run above covers the swing path
 only, and the cast path's no-walk branch was not run live.
+
+## Record correction: NPC_SD_GUILD_AGENT/2/3 register no interaction id (round 520)
+
+Round 455's interaction-id table gave id 0xc to `NPC_SD_GUILD_AGENT*`, and round 458 repeated it
+("specialty goods"). Both were wrong. No codename test in the server registers any interaction id
+on the three guild agents. Nothing a player sees changes: the client already offered them no
+Guild line (round 458), and nothing in srrevamp acts on 0xc. The fix is to the record, so that
+no later talk-menu or specialty-goods change gives 0xc to them.
+
+**Grounding** (read-only on the RE box: `/var/tmp/decomp_server`, `/var/tmp/srv.asm`, the exe's
+`.rdata` and `/var/tmp/tables`; `CGObjNPCNPC::Create` is at `0x4c6350` and is 5,561 bytes long):
+
+- **The agents' chain.** `0x4c6d6b`-`0x4c6ddb` runs four `strstr` tests (`FUN_009dddc0`). They
+  use `.rdata` `0xaeedd8` `NPC_SD_THIEF_AGENT_CHANGER`, `0xaeedf4` `NPC_SD_GUILD_AGENT`, `0xaeee08`
+  `NPC_SD_GUILD_AGENT2` and `0xaeee1c` `NPC_SD_GUILD_AGENT3`, read with `objdump -s`. A hit jumps
+  to `0x4c6ddd`: `cmp esi,1 ; jne 0x4c6dfd`, then `call [edx+0x318]` with `(4, 0xff, 0.0f, 0)`.
+  - `+0x318` is slot 198, `IGObj::SetBodyMode` (`docs/protocol/igobj_vtable.md`, the table).
+  - 4 is `BODYMODE_BERSERKER` (`character_state.md`, "The body-mode enum").
+  - `esi` is the byte at `CMainProcess` (`DAT_00d6a8dc`) `+0x42404`, loaded at `0x4c6494`. No
+    instruction writes `esi` between there and `0x4c6ddd`.
+  - The decompiler agrees: `bVar2 == 1` guards `(*piVar11 + 0x318)(4,0xff,0,0)`, and the branch
+    has no `+0x164` call.
+  - Not read: what the byte means, and why an agent is put in that body mode.
+- **Where 0xc really is.** The next chain tests nine literals, `0xaeee30` `NPC_CH_SPECIAL2`
+  through `0xaeeec0` `NPC_SD_M_AREA_SPECIAL3`. A hit jumps to `0x4c6f31`,
+  `mov eax,[edx+0x164] ; push 0xc`.
+- **Three censuses over the whole function** (`0x4c6350` to the `ret` at `0x4c7906`):
+  - two `push 0xc`: the SPECIAL chain's, and `0x4c6ae1`, `NPC_TD_THIEF_BUY`, followed by 0xd;
+  - two loads of slot `0x318`: `0x4c6de6` (the agents) and `0x4c774b`. At `0x4c774b`,
+    `NPC_CH_GACHA_MACHINE` or `NPC_CH_GACHA_OPERATOR` (`_stricmp`, `0x9ddf4e`) gets the same
+    call, on the branch where the `+0x42404` byte is not 0;
+  - every string the function pushes, 116 distinct `.rdata` addresses read out of the exe, tested
+    as a substring of each agent's codename. The only matches are the agents' own literals.
+- **The data-driven paths.** Two registrations in `Create` do not test the codename:
+  - the reference record's `+0x90` set (round 454; ids 7 and 9 from the teleport tables, id 8
+    from a loader whose table is unattributed);
+  - 0x11, a lookup keyed by `IGObj::GetRefObjID` (slot 1).
+
+  The agents' object ids are 26826, 26827, 26829 and 26830 (characterdata). They were looked
+  for in all 82 files under `/var/tmp/tables`, which is not the whole textdata set. They occur
+  only in their own characterdata rows, in `npcpos.txt` and as numbers in `skilldata_30000.txt`
+  rows. None is in a teleport table. The control, gate 2094, is found in `teleportdata` and
+  `teleportbuilding`. The claim is therefore exact for the codename paths. For the data paths it
+  holds against the tables extracted on the box.
+
+**Change** (comments and docs only; no logic):
+
+- `client/scripts/npc/npc_service_reader.gd`: the second `GUILD_PATTERNS` bullet now says no
+  codename test gives the agents an id. It gives the chain, the slot and the gate.
+- `client/scripts/npc/npc_service_reader_test.gd`: the agents' check now reads "gets no
+  interaction id by codename, so offers no Guild". The repair check's comment on its negative
+  list no longer calls the agent 0xc.
+- `docs/protocol/character_state.md`, "The interaction-id vocabulary, from the NPCs themselves":
+  - The 0xc row lists `NPC_TD_THIEF_BUY` and the nine SPECIAL literals, and says the guild agents
+    are not on it. The plan named seven of the nine; `NPC_SD_M_AREA_SPECIAL2` and `_SPECIAL3` are
+    in the same chain, so they are listed too.
+  - A new "none (by codename)" row lists the thief agent changer and the three guild agents,
+    with the `SetBodyMode` call and its gate.
+  - A new subsection, "One misattribution, corrected (round 520)", follows "Why this is trusted".
+    It gives the evidence above.
+- `docs/RE_COMPLETION.md`, round 458: an inline correction under "It invented three".
+
+**Departs from the plan.** The plan's no-id row also listed `NPC_CH_GACHA_MACHINE`. It is left
+out, because that could not be confirmed. When the `+0x42404` byte is 0, `0x4c77c2` registers
+0x11 on any NPC for which `FUN_004ccb70` (a map on `DAT_00d6aa14 + 0x110`) finds an entry. That
+map's table was not identified. The player's `gachanpcmap.txt` has a single row, `1 9251 1 2`,
+and 9251 is the gacha machine. That is a candidate, not a finding. The same read disputes the
+0x11 row, which put the id "beside 0x28", and the 0x12 row, which is gated on the same byte
+(`0x4c76d6 cmp [esp+0x14],0 ; je 0x4c7788`). Both rows now point at the new subsection and are
+otherwise unchanged; they need their own round. srrevamp uses neither id.
+
+**Tests.**
+
+- New doc probe: `TestInteractionTableAgentsRegisterNoID` in
+  `server/internal/systems/interaction_table_test.go`, which reads `character_state.md` at run
+  time. The `| **0xc** |` row must not contain `GUILD_AGENT` and must contain
+  `NPC_TD_THIEF_BUY`, `NPC_CH_SPECIAL2` and `NPC_SD_M_AREA_SPECIAL`. Some table row must carry
+  both `NPC_SD_GUILD_AGENT` and `SetBodyMode`.
+- **Negative case proven.** With `character_state.md` and `npc_service_reader.gd` stashed, the
+  probe failed four ways: the row names the agents, it lacks `NPC_CH_SPECIAL2`, it lacks
+  `NPC_SD_M_AREA_SPECIAL`, and no row records `SetBodyMode`. With the files restored, it passes.
+- `npc_service_reader_test.gd` on the render box: 70 ok and ALL PASS, the same 70 as at BASE
+  (only a message changed). `client/tools/remote_godot.sh tests` ran 80 suites, 0 failing.
+  `client/tools/remote_godot.sh check` checked 246 scripts and 5 scenes: ALL LOAD.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...`: green.
