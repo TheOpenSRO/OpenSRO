@@ -700,6 +700,14 @@ func main() {
 	go session.RunRegen(ctx, hub, chars, session.RegenDeps{
 		Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker,
 	}, logger)
+	// The potion queue (round 509): an absolute HP/MP potion lands in five
+	// steps of amount/5, the first at once and the rest one per second
+	// (FUN_0049a5b0 / FUN_0049a510 from CGObjPC::PeriodicUpdate), each step
+	// pushed to the client the way regen's are.
+	potions := session.NewPotionQueue()
+	go session.RunPotionQueue(ctx, hub, chars, potions, session.RegenDeps{
+		Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker,
+	}, logger)
 	monsters := combat.NewHub()
 	// Items on the ground: what a kill leaves near the corpse until it is
 	// picked up (internal/grounditem). The sweep releases ownerships after the
@@ -856,7 +864,7 @@ func main() {
 		session.ShopHandler(chars, shopSvc, trades),
 		session.RepairHandler(chars, eq, refItems, trades),
 		session.StorageHandler(chars, storageSvc, trades),
-		session.UseItemHandler(chars, inv, refItems, manaTracker, storageSvc),
+		session.UseItemHandler(chars, inv, refItems, manaTracker, storageSvc, potions),
 		session.CombatHandlerWithDrops(chars, eq, refItems, hub, monsters, quests, inv, skills, zerkTracker, manaTracker, parties, ground, dropSrc),
 		session.GroundItemHandler(chars, hub, ground, inv, parties),
 		session.LearnSkillHandler(chars, skills, refItems),

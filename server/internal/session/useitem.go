@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
@@ -16,6 +18,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/storage"
+	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
 // Using a consumable. Until now potions dropped, stacked in the bag and did
@@ -63,6 +66,9 @@ func DecodeUseItemRequest(data []byte) (*UseItemRequest, error) {
 
 // UseItemResult reports what the item did. HP/MP are the values *after* the
 // item was used, so the client can redraw both bars without asking again.
+// RestoredHP/RestoredMP are what landed AT ONCE: an absolute potion's first
+// step (round 509, PotionQueue); its other four arrive a second apart through
+// the stats push.
 type UseItemResult struct {
 	Error      string
 	HP         int32
@@ -361,6 +367,353 @@ func potionReuseDelay(country int, absolute bool) time.Duration {
 // through the reuse delays without waiting them out.
 var useItemClock = time.Now
 
+// The potion queue (round 509). Slot 308 does not write a potion's amounts
+// straight into the pools: it hands them to GObjPC::FUN_004ef450 (0x49b946,
+// HP in ECX, MP in EAX, FUN_0049aa70's absolute flag in EDX), which pushes
+// (pc+0x1d58, flag, HP, MP) into FUN_0049a5b0 (0x4ef450..0x4ef45d). pc+0x1d58
+// holds two lists, HP (sentinel +0x4, size +0x8) and MP (+0x10, +0x14), and
+// the PC at +0x18. Each node is {next, prev, step (+0x8), count (+0xc)}
+// (FUN_004a0f30, 0x4a0f75..0x4a0fa2), appended at the tail (0x49a776..0x49a79e
+// and 0x49a7e2..0x49a80d), so each pool is a FIFO.
+//
+//   - Absolute (flag 1, 0x49a733..0x49a836). For HP, when the amount is above
+//     0 and the pool plus what its list still holds (FUN_0049a110: the sum of
+//     step x count) does NOT EXCEED the maximum (0x49a768 `cmp ebx,esi; jg`
+//     skips), FUN_0049a0c0 builds {amount/5, 4} and it is queued. For MP the
+//     test is strict (0x49a7d4 `cmp ebx,esi; jge` skips), so a full MP pool
+//     queues nothing while a full HP pool still queues. What was queued lands
+//     its first step at once (0x49a82a ApplyHPMPDelta with the two steps).
+//   - Percentage (flag 0, 0x49a5cb..0x49a726). Each non-zero amount trims its
+//     pool's list -- emptied outright when the amount alone overflows the
+//     pool (0x49a634 `jle` not taken -> 0x695450, which frees every node),
+//     otherwise cut after the first entry whose step x count carries
+//     cur + amount - max above zero (0x49a662..0x49a6de) -- and the whole
+//     amount lands at once (0x49a71a ApplyHPMPDelta).
+//   - The tick. FUN_0049a510 takes ONE step from the HEAD entry of each
+//     non-empty list (0x49a533 `mov esi,[edx]`), decrements its count and
+//     unlinks it at zero (0x49a554..0x49a56a), then applies both steps
+//     (0x49a58f) -- so a second potion's steps wait behind the first's.
+//     CGObjPC::PeriodicUpdate (0x52aa90, CGObjPC slot 415) calls it on every
+//     pass, unconditionally (0x52acc9 `lea eax,[edi+0x1d58]`, 0x52acd0 call).
+//
+// Slot 308 answers 1 after FUN_004ef450 whatever was queued (0x49b996), so
+// the potion is spent even when nothing lands -- at full HP, or with the pool
+// plus the queue already past the maximum. srrevamp used to refuse such a
+// potion as "no need for that right now" and keep it.
+const (
+	// potionStepDivisor: FUN_0049a0c0's `mov eax,0x66666667; imul DWORD
+	// [esp+0x4]; sar edx,1; shr eax,0x1f; add eax,edx` (0x49a0c0..0x49a0d0),
+	// a signed division by 5 truncated toward zero, as Go's is. So a
+	// 123-point potion steps 24, and lands 5 x 24 = 120.
+	potionStepDivisor = 5
+	// potionStepCount is `mov DWORD PTR [esi+0x4],0x4` (0x49a0d6): the steps
+	// still to come once FUN_0049a5b0 has landed the first.
+	potionStepCount = 4
+	// potionStepMax: a step of 1000000 or more is 1000000 (0x49a0f7
+	// `cmp eax,0xf4240; jl`), and a step below 1 is 1 (0x49a0e6
+	// `cmp eax,0x1; jge`).
+	potionStepMax = 1000000
+	// potionTickInterval is the period of the job that runs PeriodicUpdate.
+	// CGObjChar::Create registers `fld1` -- 1.0 -- with the thunk 0x4ac6b0
+	// (`jmp [eax+0x5b0]`, slot 364) on the timer vector at +0x18c
+	// (0x4a702b..0x4a7042); CGObjPC slot 364 (0x4eb780) calls the world
+	// context's slot 11, CWorldContextController::UpdatePC (0x605010), whose
+	// whole body is `pc->PeriodicUpdate()` (vtable +0x67c). The vector is
+	// ticked in seconds (round 223, mana.RegenInterval's note).
+	potionTickInterval = time.Second
+)
+
+// The two lists at pc+0x1d58, in FUN_0049a110's index (ECX 0 at 0x49a75b, 1
+// at 0x49a7c4) and FUN_0049a510's loop order.
+const (
+	potionPoolHP = 0
+	potionPoolMP = 1
+)
+
+// potionEntry is one queued node's payload: the step and the steps left.
+type potionEntry struct {
+	step  int // node +0x8
+	count int // node +0xc
+}
+
+// newPotionEntry is GObjPC::FUN_0049a0c0 (0x49a0c0): {amount/5, 4}, the step
+// clamped to 1..1000000.
+func newPotionEntry(amount int) potionEntry {
+	step := amount / potionStepDivisor
+	if step < 1 {
+		step = 1
+	} else if step >= potionStepMax {
+		step = potionStepMax
+	}
+	return potionEntry{step: step, count: potionStepCount}
+}
+
+// PotionQueue is every character's pc+0x1d58: an HP and an MP list of
+// queued potion steps. The handler lands a potion through it and
+// RunPotionQueue steps it once a second. The zero value is not usable; call
+// NewPotionQueue.
+//
+// Its lock is held across a whole drink or a whole step for one character --
+// the read of the pools, the queue decision and the write -- because the
+// engine runs both on the PC's own thread, and a step landing between the
+// read and the decision would skew the pool-plus-queue test.
+type PotionQueue struct {
+	mu    sync.Mutex
+	pools map[int64]*[2][]potionEntry
+}
+
+// NewPotionQueue returns an empty queue.
+func NewPotionQueue() *PotionQueue {
+	return &PotionQueue{pools: map[int64]*[2][]potionEntry{}}
+}
+
+// queuedLocked is FUN_0049a110 (0x49a110): the sum of step x count over one
+// pool's list (0x49a12a `mov edi,[ecx+0xc]; imul edi,[ecx+0x8]`).
+func (q *PotionQueue) queuedLocked(characterID int64, pool int) int {
+	lists := q.pools[characterID]
+	if lists == nil {
+		return 0
+	}
+	sum := 0
+	for _, e := range lists[pool] {
+		sum += e.step * e.count
+	}
+	return sum
+}
+
+func (q *PotionQueue) pushLocked(characterID int64, pool int, e potionEntry) {
+	lists := q.pools[characterID]
+	if lists == nil {
+		lists = &[2][]potionEntry{}
+		q.pools[characterID] = lists
+	}
+	lists[pool] = append(lists[pool], e)
+}
+
+// trimLocked is the percentage path's cut for one pool, over = cur + amount -
+// max (0x49a62d..0x49a632). Above zero the list is emptied (0x695450);
+// otherwise each entry's step x count is added in turn from the head, and the
+// list is cut after the first entry that carries over above zero -- that
+// entry is kept whole (0x49a673..0x49a681 starts the erase at its NEXT node).
+func (q *PotionQueue) trimLocked(characterID int64, pool, over int) {
+	lists := q.pools[characterID]
+	if lists == nil {
+		return
+	}
+	if over > 0 {
+		lists[pool] = nil
+		return
+	}
+	for i, e := range lists[pool] {
+		over += e.step * e.count
+		if over > 0 {
+			lists[pool] = lists[pool][:i+1]
+			return
+		}
+	}
+}
+
+// landLocked is FUN_0049a5b0 on the pools' current values: it queues or trims
+// and returns what lands at once.
+func (q *PotionQueue) landLocked(characterID int64, absolute bool, hp, mp, curHP, maxHP, curMP, maxMP int) (nowHP, nowMP int) {
+	if !absolute {
+		if hp != 0 {
+			q.trimLocked(characterID, potionPoolHP, curHP+hp-maxHP)
+		}
+		if mp != 0 {
+			q.trimLocked(characterID, potionPoolMP, curMP+mp-maxMP)
+		}
+		return hp, mp
+	}
+	// 0x49a768 `cmp ebx,esi; jg`: HP is queued while the pool plus the queue
+	// does not exceed the maximum -- a full pool with nothing queued included.
+	if hp > 0 && curHP+q.queuedLocked(characterID, potionPoolHP) <= maxHP {
+		e := newPotionEntry(hp)
+		q.pushLocked(characterID, potionPoolHP, e)
+		nowHP = e.step
+	}
+	// 0x49a7d4 `cmp ebx,esi; jge`: MP only while it stays BELOW the maximum.
+	if mp > 0 && curMP+q.queuedLocked(characterID, potionPoolMP) < maxMP {
+		e := newPotionEntry(mp)
+		q.pushLocked(characterID, potionPoolMP, e)
+		nowMP = e.step
+	}
+	return nowHP, nowMP
+}
+
+// takeLocked is FUN_0049a510 (0x49a510) for one character: one step from the
+// head of each non-empty list, the head dropped once its count reaches zero.
+func (q *PotionQueue) takeLocked(characterID int64) (hp, mp int) {
+	lists := q.pools[characterID]
+	if lists == nil {
+		return 0, 0
+	}
+	var got [2]int
+	for pool := range lists {
+		if len(lists[pool]) == 0 {
+			continue
+		}
+		head := &lists[pool][0]
+		got[pool] = head.step
+		head.count--
+		if head.count <= 0 {
+			lists[pool] = lists[pool][1:]
+		}
+	}
+	if len(lists[potionPoolHP]) == 0 && len(lists[potionPoolMP]) == 0 {
+		delete(q.pools, characterID)
+	}
+	return got[potionPoolHP], got[potionPoolMP]
+}
+
+// applyPotionLocked adds what landed to the pools, each clamped to its
+// maximum as ApplyHPMPDelta's FUN_004a87d0 does through GObjChar::FUN_004a66f0
+// (the GObjChar.h CLAMP), and returns the pools after.
+func applyPotionLocked(ctx context.Context, chars character.Store, mp *mana.Tracker, characterID int64, hp, mpAmount, curHP, curMP, maxHP, maxMP int) (newHP, newMP int, err error) {
+	newHP, newMP = curHP, curMP
+	if hp > 0 {
+		if newHP, err = chars.Heal(ctx, characterID, hp, maxHP); err != nil {
+			return curHP, curMP, err
+		}
+	}
+	if mpAmount > 0 && mp != nil {
+		newMP = mp.Restore(characterID, maxMP, mpAmount)
+	}
+	return newHP, newMP, nil
+}
+
+// drink lands a recovery potion's amounts through the queue and returns the
+// pools after it and what they gained at once. mp nil reports MP full, so an
+// absolute MP amount queues nothing.
+func (q *PotionQueue) drink(ctx context.Context, chars character.Store, mp *mana.Tracker, characterID int64, absolute bool, hp, mpAmount, maxHP, maxMP int) (newHP, newMP, gotHP, gotMP int, err error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	c, err := chars.GetByID(ctx, characterID)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	curMP := maxMP
+	if mp != nil {
+		curMP = mp.Current(characterID, maxMP)
+	}
+	nowHP, nowMP := q.landLocked(characterID, absolute, hp, mpAmount, c.HP, maxHP, curMP, maxMP)
+	newHP, newMP, err = applyPotionLocked(ctx, chars, mp, characterID, nowHP, nowMP, c.HP, curMP, maxHP, maxMP)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	return newHP, newMP, newHP - c.HP, newMP - curMP, nil
+}
+
+// step runs FUN_0049a510 for one character and applies what it took. It
+// reports the character as it stands after, and whether a pool moved --
+// FUN_004a87d0 flags the HP/MP update for the client only then (0x4a885c
+// for HP, and its MP twin after it).
+func (q *PotionQueue) step(ctx context.Context, chars character.Store, mp *mana.Tracker, characterID int64) (*character.Character, bool, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	hp, mpStep := q.takeLocked(characterID)
+	// 0x49a57b..0x49a581: ApplyHPMPDelta only when either step is above 0.
+	if hp <= 0 && mpStep <= 0 {
+		return nil, false, nil
+	}
+	c, err := chars.GetByID(ctx, characterID)
+	if err != nil {
+		return nil, false, err
+	}
+	maxHP, maxMP := c.MaxHP(), c.MaxMP()
+	curMP := maxMP
+	if mp != nil {
+		curMP = mp.Current(characterID, maxMP)
+	}
+	newHP, newMP, err := applyPotionLocked(ctx, chars, mp, characterID, hp, mpStep, c.HP, curMP, maxHP, maxMP)
+	if err != nil {
+		return nil, false, err
+	}
+	changed := newHP != c.HP || newMP != curMP
+	c.HP = newHP
+	return c, changed, nil
+}
+
+// characters lists everyone with something queued.
+func (q *PotionQueue) characters() []int64 {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	ids := make([]int64, 0, len(q.pools))
+	for id := range q.pools {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// drop discards a character's queue.
+func (q *PotionQueue) drop(characterID int64) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	delete(q.pools, characterID)
+}
+
+// RunPotionQueue steps every queued potion once per potionTickInterval, the
+// one-second PeriodicUpdate pass that calls FUN_0049a510 (0x52acd0), until ctx
+// is canceled. deps build the stats push that moves the client's bars, as
+// RunRegen's does.
+//
+// DISCLOSED, not modelled:
+//   - Retail ticks each PC on its own timer, so the phase of the first step
+//     after a drink is per character; here one ticker serves everyone. Either
+//     way the second step lands up to a second after the first.
+//   - Death. GObjPC::FUN_004e67b0, which CGObjPC slots 306 and 307 run while
+//     the life state is 1 (0x529b10, 0x52cdb0; round 508), empties both
+//     lists (0x4e67b7 -> FUN_0049a4c0), and ApplyHPMPDelta lands nothing
+//     unless GetLifeState is 1 (0x4a87e8 `cmp al,0x1`). srrevamp respawns a
+//     dead character at once (combat.go, RespawnHP) and does not clear the
+//     queue there, so steps still queued land on the respawned character.
+//   - Panic and combustion cut every step through ApplyHPMPDelta (params
+//     143/144, UseItemHandler's note); srrevamp has no status effects.
+func RunPotionQueue(ctx context.Context, hub *world.Hub, chars character.Store, q *PotionQueue, deps RegenDeps, logger *slog.Logger) {
+	ticker := time.NewTicker(potionTickInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			potionQueueTick(ctx, hub, chars, q, deps, logger)
+		}
+	}
+}
+
+// potionQueueTick is one pass. Split out so a test can drive the steps
+// without waiting a second for each.
+//
+// A character no longer in the world has its queue dropped: the engine's
+// lives on the PC object (pc+0x1d58), which leaves with the character.
+func potionQueueTick(ctx context.Context, hub *world.Hub, chars character.Store, q *PotionQueue, deps RegenDeps, logger *slog.Logger) {
+	if hub == nil || chars == nil || q == nil {
+		return
+	}
+	for _, id := range q.characters() {
+		e, online := hub.EntityByCharacterID(id)
+		if !online {
+			q.drop(id)
+			continue
+		}
+		c, changed, err := q.step(ctx, chars, deps.Mana, id)
+		if err != nil {
+			if logger != nil {
+				logger.Warn("potion queue: step failed", "character", id, "err", err)
+			}
+			continue
+		}
+		if !changed || e.Session == nil {
+			continue
+		}
+		// The stats reply is what the HUD already listens to (regen.go).
+		if result, err := buildCharacterStats(ctx, c, c.ID, deps.Equipment, deps.Items, deps.Skills, deps.Mana); err == nil {
+			_ = e.Session.Send(&proto.Packet{Opcode: OpCharacterStatsResult, Data: result.Encode()})
+		}
+	}
+}
+
 // UseItemHandler consumes one item from a bag slot and applies what it
 // restores.
 //
@@ -376,23 +729,20 @@ var useItemClock = time.Now
 // absolute amount by the user's level and Str (HP) or Int (MP), and reads the
 // percentage pair only when both absolute amounts are zero (round 496,
 // potionRestore). A level-1, 20-Str character gets 125 from HP_POTION_01's 120.
-// srrevamp applies that amount at once, capped at the missing amount. Three
-// DISCLOSED GAPS sit between it and the pool:
 //
-//   - The engine does not land an absolute amount at once. Slot 308 hands it
-//     to GObjPC::FUN_004ef450 (0x49b946), which queues it on pc+0x1d58
-//     through FUN_0049a5b0: FUN_0049a0c0 cuts it into a step of amount/5
-//     (0x49a0c0 `imul 0x66666667; sar edx,1`, clamped to 1..1000000) with a
-//     count of 4 (0x49a0d6); the first step is applied at once (0x49a82a
-//     ApplyHPMPDelta) and each remaining one by FUN_0049a510, which
-//     CGObjPC::PeriodicUpdate (0x52aa90, the one-second job, round 411)
-//     calls on every tick (0x52acd0) and which takes a step from the head
-//     entry of each pool's queue. So a potion lands in five equal steps a
-//     second apart, 5 x (amount/5) in total, and a new entry is not queued
-//     while the pool plus what is queued already exceeds (HP, 0x49a76a
-//     `jg`) or reaches (MP, 0x49a7d6 `jge`) the maximum. A percentage
-//     amount lands in full at once (FUN_0049a5b0's other path). srrevamp
-//     models no queue.
+// That amount lands the engine's way, through potions (round 509, PotionQueue:
+// FUN_004ef450 -> FUN_0049a5b0 on pc+0x1d58). An absolute amount is queued as
+// five steps of amount/5, the first at once and the rest one a second
+// (RunPotionQueue), so HP_POTION_01's 125 arrives as 25 now and 25 on each of
+// the next four ticks; it is not queued while the pool plus what is already
+// queued exceeds the maximum (HP) or reaches it (MP). A percentage amount
+// lands in full at once and trims the queue. Either way the potion is SPENT --
+// slot 308 answers 1 whatever landed -- so one drunk at full HP is used up.
+// potions nil gives the handler a queue of its own that nothing steps: only
+// what lands at once arrives (tests that do not follow the steps).
+//
+// Two DISCLOSED GAPS sit between it and the pool:
+//
 //   - A zombie (status bit 0x20 at pc+0xd34, the status manager at pc+0xd30;
 //     slot 5 in docs/protocol/status_effects.md) is HURT by the HP amount:
 //     0x49b912 sends it to vtable +0x308 (slot 194, IGObj::ConsumeHpMp) and
@@ -438,11 +788,14 @@ var useItemClock = time.Now
 // The one non-recovery kind srrevamp does model is the container expansion
 // (round 498, useExpansion): the warehouse item grows the account's
 // warehouse through warehouse (nil refuses it), and the bag item is refused.
-func UseItemHandler(chars character.Store, inv inventory.Store, items combat.ItemLookup, mp *mana.Tracker, warehouse *storage.Service) gateway.Handler {
+func UseItemHandler(chars character.Store, inv inventory.Store, items combat.ItemLookup, mp *mana.Tracker, warehouse *storage.Service, potions *PotionQueue) gateway.Handler {
 	// The per-kind potion locks (round 508), keyed by character and
 	// potionReuseBit. The handler is built once per server (cmd/server), so
 	// this is process-wide there, as the item cooldowns are.
 	potionLocks := newItemCooldownTracker()
+	if potions == nil {
+		potions = NewPotionQueue()
+	}
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpUseItem {
 			return nil
@@ -536,44 +889,26 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// percentage pair only when both absolutes are zero.
 		healHP, healMP := potionRestore(it.RestoreHP, it.RestoreHPPct, it.RestoreMP, it.RestoreMPPct,
 			owned.Level, owned.Str, owned.Int, maxHP, maxMP)
+		// Slot 308's own refusal: both amounts below 1 answers 2 and the
+		// potion is kept (0x49b8ef..0x49b8fe, before any pool is touched). It
+		// is the answer the all-zero Param block above gets too, so it shares
+		// that reason.
+		if healHP < 1 && healMP < 1 {
+			return fail("that cannot be used")
+		}
+		// FUN_0049aa70's flag: 1 on the absolute path (Param1 or Param3
+		// non-zero, 0x49ac37), 0 on the percentage path (0x49ab42).
+		absolute := it.RestoreHP != 0 || it.RestoreMP != 0
 
-		// Health first. Healing is capped at the missing amount so the
-		// reported "restored" figure is what the player actually got, not
-		// what the label promises.
-		missingHP := maxHP - owned.HP
-		if missingHP < 0 {
-			missingHP = 0
-		}
-		if healHP > missingHP {
-			healHP = missingHP
-		}
-		newHP := owned.HP
-		if healHP > 0 {
-			newHP, err = chars.Heal(ctx, characterID, healHP, maxHP)
-			if err != nil {
-				return fail("healing failed")
-			}
-		}
-
-		newMP := maxMP
-		if mp != nil {
-			cur := mp.Current(characterID, maxMP)
-			missingMP := maxMP - cur
-			if healMP > missingMP {
-				healMP = missingMP
-			}
-			if healMP < 0 {
-				healMP = 0
-			}
-			mp.Restore(characterID, maxMP, healMP)
-			newMP = cur + healMP
-		} else {
-			healMP = 0
-		}
-
-		// Nothing to gain is not a reason to spend the potion.
-		if healHP <= 0 && healMP <= 0 {
-			return fail("no need for that right now")
+		// Landed through the queue (round 509, PotionQueue): an absolute
+		// potion's first step now and the rest by RunPotionQueue, a
+		// percentage one in full now. Nothing landing -- a full pool, or the
+		// pool plus the queue past the maximum -- is not a refusal: slot 308
+		// answers 1 after FUN_004ef450 whatever was queued (0x49b996), and
+		// DoJob then spends the potion.
+		newHP, newMP, gotHP, gotMP, err := potions.drink(ctx, chars, mp, characterID, absolute, healHP, healMP, maxHP, maxMP)
+		if err != nil {
+			return fail("healing failed")
 		}
 
 		if err := inv.RemoveItem(ctx, characterID, int(req.InventorySlot), 1); err != nil {
@@ -588,17 +923,15 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 			itemCooldowns.Arm(characterID, it.CooltimeGroup, time.Duration(it.CooltimeMs)*time.Millisecond, now)
 		}
 		// The kind's lock (round 508): FUN_004e0ab0 after the heal, for the
-		// delay chosen by the Country and FUN_0049aa70's absolute flag (Param1
-		// or Param3 non-zero, potionReuseDelay). A use srrevamp refuses as "no
-		// need" above arms nothing; the engine spends the potion and arms it
-		// even then (round 496's full-HP divergence).
-		absolute := it.RestoreHP != 0 || it.RestoreMP != 0
+		// delay chosen by the Country and FUN_0049aa70's absolute flag
+		// (potionReuseDelay). A potion drunk at full HP is armed too, as the
+		// engine arms it (round 509; round 496's full-HP divergence, closed).
 		potionLocks.Arm(characterID, reuseBit, potionReuseDelay(characterCountry(owned), absolute), now)
 
 		return sess.Send(&proto.Packet{Opcode: OpUseItemResult, Data: (&UseItemResult{
 			HP: int32(newHP), MaxHP: int32(maxHP),
 			MP: int32(newMP), MaxMP: int32(maxMP),
-			RestoredHP: int32(healHP), RestoredMP: int32(healMP),
+			RestoredHP: int32(gotHP), RestoredMP: int32(gotMP),
 			Remaining: int32(remaining),
 		}).Encode()})
 	}

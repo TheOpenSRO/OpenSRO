@@ -27136,7 +27136,8 @@ argument is a flag (1 absolute, 0 percentage).
 Otherwise, unless the owner is a zombie, `FUN_004ef450(pc)` is called with HP in ECX, MP in EAX and
 the flag in EDX.
 
-**When it lands -- NOT at once, and NOT modelled (disclosed).** `FUN_004ef450` pushes
+**When it lands -- NOT at once, and NOT modelled (disclosed).** [Wired in round 509, which re-read
+all of it and corrected nothing below.] `FUN_004ef450` pushes
 `(pc+0x1d58, flag, HP, MP)` into `FUN_0049a5b0`:
 
 - **Absolute (flag 1).** `FUN_0049a0c0` builds an entry `{step = amount/5, count = 4}`
@@ -27151,7 +27152,8 @@ the flag in EDX.
   total, up to 4 less than the formula -- and a second potion's steps wait behind the first's.
 - **Percentage (flag 0).** Lands in full at once (the final ApplyHPMPDelta with the whole amounts).
   Before that it trims the queue against the overflow (`0x49a62d..0x49a6e4`, `FUN_00695450`); that
-  trim was not read in detail.
+  trim was not read in detail. [Read in round 509: the list is emptied when the amount alone
+  overflows the pool, else cut after the first entry that carries it past the maximum.]
 
 srrevamp applies the formula's amount at once, capped at the missing amount, and says so in
 `useitem.go`.
@@ -27189,7 +27191,7 @@ the COOLTIME descriptor.
 
 **Also found, not changed: a potion at full HP.** The engine does not refuse it: `cur + queued <= max`
 still queues, and the result is 1, so the potion is spent. srrevamp answers "no need for that right
-now" and keeps it -- a pre-existing divergence, left as it was.
+now" and keeps it -- a pre-existing divergence, left as it was. [Closed in round 509.]
 
 **Change.**
 
@@ -28946,4 +28948,166 @@ none, but slot 308 does.
   second HP potion at once heals and is consumed ("the refused potion was consumed: 8 left, want
   9", "healed: HP 20 -> 145"), and so do the second MP potion and the 1.099 s and 4.099 s cases.
 - **Restored:** both tests pass.
+- **Suite:** `cd server && go build ./... && go test -count=1 -p 1 ./...` is green.
+
+## Absolute potions heal in five steps of amount/5, one a second, and are spent even at full HP (FUN_004ef450 / FUN_0049a5b0 / FUN_0049a510) (round 509)
+
+Round 496 found that slot 308 does not write a potion's amounts into the pools. It queues them on
+pc+0x1d58, and a one-second tick lands them. That round recorded the queue as not modelled, and
+recorded that the engine spends a potion drunk at full HP where srrevamp refused it. This round
+re-read the queue before changing anything, then wired it.
+
+**Grounding, re-read before any edit** (dump, `srv.asm`/objdump on the RE box, read-only):
+
+- **The hand-off.** `FUN_004ef450` (`0x4ef450`..`0x4ef462`) pushes EAX, ECX, EDX and `pc+0x1d58` and
+  calls `FUN_0049a5b0`. Slot 308 loads ECX = HP, EAX = MP and EDX = the absolute flag
+  (`0x49b93d`..`0x49b946`), so the call is `FUN_0049a5b0(pc+0x1d58, flag, HP, MP)`.
+- **The layout.** pc+0x1d58 holds two lists. HP has its sentinel at `+0x4` and size at `+0x8`; MP
+  has them at `+0x10` and `+0x14`; the PC is at `+0x18`.
+  - Each node is {next, prev, step `+0x8`, count `+0xc`}. `FUN_004a0f30` copies the entry's two
+    words there (`0x4a0f9b`..`0x4a0fa2`).
+  - Nodes are linked at the tail (`0x49a798`/`0x49a79e`), so each pool is a FIFO.
+  - `FUN_0049a110` is the sum of step x count over one list (`0x49a12a`); ECX 0 is HP (`0x49a75b`)
+    and 1 is MP (`0x49a7c4`).
+- **The entry.** `FUN_0049a0c0` computes `amount * 0x66666667`, `sar edx,1`, and adds the sign
+  bit: a signed division by 5, truncated toward zero. Then:
+  - `mov [esi+4],4` sets the count;
+  - a step below 1 becomes 1 (`0x49a0e6`);
+  - a step of 1000000 or more becomes 1000000 (`0x49a0f7`).
+- **The absolute path** (flag non-zero, `0x49a733`..`0x49a836`):
+  - HP is queued when the amount is above 0 and `cur + queued` does not exceed the maximum. The
+    test is `0x49a768 cmp ebx,esi; jg`, which skips.
+  - MP is queued only while `cur + queued` stays BELOW the maximum (`0x49a7d4 cmp; jge` skips).
+    So a full HP pool with nothing queued still queues, and a full MP pool does not.
+  - Each queued pool's step goes to a local. `ApplyHPMPDelta` lands both at once (`0x49a82a`) when
+    either is above 0.
+- **The percentage path** (flag 0, `0x49a5cb`..`0x49a726`). For each non-zero amount it computes
+  `over = cur + amount - max`.
+  - If `over` is above 0, `0x695450` frees every node of that list.
+  - Otherwise it adds each entry's step x count from the head. At the first entry that takes
+    `over` above 0, it erases from that entry's NEXT node to the end (`0x49a673`..`0x49a6de`); the
+    crossing entry stays whole.
+  - Then `ApplyHPMPDelta` lands the whole amounts (`0x49a71a`).
+- **The tick.** `FUN_0049a510` visits each non-empty list. It takes the HEAD node only
+  (`0x49a533`), keeps its step, decrements its count and unlinks it at zero
+  (`0x49a554`..`0x49a56a`). It then applies both steps when either is above 0 (`0x49a57b`..`0x49a58f`).
+- **The caller of the tick.** `CGObjPC::PeriodicUpdate` (`0x52aa90`, CGObjPC slot 415) reaches
+  `lea eax,[edi+0x1d58]; call 0x49a510` (`0x52acc9`/`0x52acd0`) on every path, unconditionally.
+- **The period is 1.0 s**, a chain read end to end:
+  1. `CGObjChar::Create` registers `fld1` with the thunk `0x4ac6b0` on the timer vector at
+     `+0x18c` (`0x4a702b`..`0x4a7042`). The thunk is `jmp [eax+0x5b0]`, which is slot 364.
+  2. CGObjPC slot 364 (`0x4eb780`) calls slot 11 of the world context controller at `pc+0xd8`.
+  3. That is `CWorldContextController::UpdatePC` (`0x605010`), whose body is
+     `pc->PeriodicUpdate()` (vtable `+0x67c` = slot 415).
+  4. The vector ticks in seconds (round 223).
+- **The apply.** `ApplyHPMPDelta` (`0x4a86a0`) scales each amount by panic/combustion and calls
+  `FUN_004a87d0`.
+  - That function returns unless `GetLifeState` is 1 (`0x4a87e8`).
+  - It clamps each pool to its maximum through `GObjChar::FUN_004a66f0` (the GObjChar.h CLAMP).
+  - It raises the client-update flag only when a pool actually moved (`0x4a885c`).
+- **The result.** Slot 308 answers 1 after `FUN_004ef450` whatever was queued (`0x49b996`).
+  `DoJob` spends the potion on 1, so the potion is spent when nothing lands: at full HP, at full
+  MP, or with the pool plus the queue past the maximum. Before the hand-off, both amounts below 1
+  answers 2 and keeps the potion (`0x49b8ef`..`0x49b8fe`).
+- **The death clear.** `GObjPC::FUN_004e67b0` calls `FUN_0049a4c0` on `pc+0x1d58` (`0x4e67b7`),
+  which empties both lists. CGObjPC slots 306 and 307 run it while the life state is 1 (round 508).
+
+Every point of round 496's account held; this round added the trim, the node layout and the
+period chain.
+
+**Change.**
+
+- **`session.PotionQueue`** holds each character's two FIFOs. Its methods follow the engine's
+  functions:
+  - `newPotionEntry` is `FUN_0049a0c0`;
+  - `queuedLocked` is `FUN_0049a110`;
+  - `landLocked` is `FUN_0049a5b0`: the HP `<=` and MP `<` tests, and the percentage trim
+    (`trimLocked`);
+  - `takeLocked` is `FUN_0049a510`: head only, one step a pass.
+- **The constants** are `potionStepDivisor` 5, `potionStepCount` 4, `potionStepMax` 1000000 and
+  `potionTickInterval` 1 s. Each cites its instruction.
+- **`UseItemHandler`** takes the queue as a new last argument. After `potionRestore` it:
+  - refuses when both amounts are below 1 ("that cannot be used", the item kept; slot 308's 2);
+  - lands the amounts through `PotionQueue.drink`;
+  - spends the potion and arms the round-508 lock whatever landed.
+
+  The reply's `RestoredHP`/`RestoredMP` are what landed at once. The old "no need for that right
+  now" refusal is gone. The queue's lock covers a whole drink or a whole step for one character
+  (read, decide, write), as the engine runs both on the PC's own thread.
+- **`RunPotionQueue`** (started in `cmd/server` beside `RunRegen`) steps every queue once a
+  second through `potionQueueTick`.
+  - When a pool moved, it pushes an `OpCharacterStatsResult`, the stats reply regen already
+    pushes and the HUD already reads. No client change was needed.
+  - A queued character no longer in the world has its queue dropped. The engine's queue lives on
+    the PC object.
+  - srrevamp had no one-second per-character tick. The regen ticker runs every 4 s, so this is a
+    new, minimal ticker.
+- **Potions nil.** Passing nil gives the handler an unticked queue of its own, for tests that
+  follow only what lands at once.
+
+**Divergences, disclosed** in `RunPotionQueue`'s comment:
+
+- One ticker serves every character. Retail ticks each PC on its own timer, so there the phase
+  of the first queued step is per character.
+- The death clear (`FUN_004e67b0`) and `ApplyHPMPDelta`'s life-state check are not modelled.
+  srrevamp respawns a dead character at once, so steps still queued land on the respawned
+  character.
+- Panic/combustion and the zombie branch stay unmodelled, as before.
+
+**Behaviour.**
+
+- An HP or MP potion heals over about four seconds instead of instantly.
+  - HP_POTION_01 at level 1 / Str 20 gives 25 at once, then 25 a second four times.
+  - A formula amount that is not a multiple of 5 loses up to 4 points to the truncation.
+- A percentage potion still lands in full at once.
+- A potion drunk at full HP or MP is spent. Damage taken in the next four seconds is healed by
+  the HP potion's queued steps.
+
+**Docs.**
+
+- SYSTEMS.md's item row now says the queue is wired, not disclosed.
+- GROUNDING_AUDIT.md's potion-amount row moves the queue out of "not modelled".
+- Round 496's entry carries pointers to this round at its three lines this round settled.
+
+**Tests.**
+
+- **`TestPotionEntryFollowsFUN0049a0c0`**: 125 -> 25; 123 -> 24; 4, 0 and -7 -> 1; the 1000000
+  cap. The count is always 4.
+- **`TestPotionQueueFollowsFUN0049a5b0AndFUN0049a510`**:
+  - the HP boundary queues and the MP boundary does not;
+  - a full HP pool queues and a full MP pool does not;
+  - head-only ticking of two entries;
+  - the percentage trim: all three entries kept, the third dropped, the list emptied, nothing
+    dropped; the MP list is untouched.
+- **`TestPotionQueueDropsACharacterNotInTheWorld`**.
+- **Handler level**, logged in and in the world, the tick driven by hand and the reuse clock
+  stepped:
+  - **`TestAbsolutePotionLandsInFiveStepsOneASecond`**: HP_POTION_01 at 50/200 lands 25 at once,
+    then pushes 100, 125, 150, 175, then nothing. An illustrative Param1-118 potion (123 by the
+    formula) lands 24 + 4 x 24 = 120.
+  - **`TestPercentagePotionLandsInFullAtOnce`**: HP_SPOTION_01 lands 50 at once and queues
+    nothing.
+  - **`TestPotionAtFullPoolIsSpent`** (the negative case): an HP potion and an MP potion at full
+    pools are drunk and spent. After damage, the HP entry heals 4 x 25 and MP gets nothing.
+  - **`TestPotionNotQueuedPastTheMaximum`**: at 190/200 the first potion queues. The second, 1.1 s
+    later, meets 200 + 100 > 200, is spent and queues nothing, so only four steps follow.
+- **Updated tests.**
+  - `TestUseItemScalesPotionByLevelAndStr` now expects 30 at once and 120 queued (153/5).
+  - `TestPotionReuseDelayPerKind` empties the queue in its `hurt` helper, so each accepted potion
+    lands its first step.
+
+**Negative case, run.**
+
+- **Production files stashed** (`useitem.go`, `cmd/server/main.go`): the package fails to build.
+  The errors include `too many arguments in call to UseItemHandler`, `undefined: NewPotionQueue`
+  and `undefined: PotionQueue`.
+- **Behavioural check:** the new code was mutated to land the whole amount at once and to refuse
+  "no need for that right now". Four tests FAIL:
+  - the scaling test: "restored 153 HP to 353/359 at once";
+  - the five-step test: "RestoredHP:125";
+  - the full-pool test: "an HP potion at full HP was refused: "no need for that right now"";
+  - the past-the-maximum test.
+
+  The percentage test passes under the mutation, as it should, since that landing did not change.
+- **Restored:** every test passes, and also under `-race`.
 - **Suite:** `cd server && go build ./... && go test -count=1 -p 1 ./...` is green.

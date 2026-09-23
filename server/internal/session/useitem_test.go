@@ -3,6 +3,7 @@ package session
 import (
 	"bufio"
 	"context"
+	"net"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/storage"
+	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
 // The wire format must survive a round trip, and an older/empty tail must not
@@ -97,7 +99,7 @@ func TestUseItemRefusesAnItemWhoseCanUseIsClear(t *testing.T) {
 		return -1, 0
 	}
 
-	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, nil, nil))
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, nil, nil, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -253,7 +255,7 @@ func TestUseItemRestoresOnlyForRecoveryKinds(t *testing.T) {
 		return -1, 0
 	}
 
-	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mp, nil))
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mp, nil, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -415,8 +417,10 @@ func TestPotionRestoreFollowsFUN0049aa70(t *testing.T) {
 // A potion heals what the engine computes, not the row's Param1 (round 496).
 // A level-10 character with Str 30 (MaxHP 30 * 10 * 1.02^9 = 359) at 200 HP
 // drinks HP_POTION_01 (3/3/1/1, Param1 120): 120 * 1.02^9 * (1 + 30/416) =
-// 153.75 -> 153, below the 159 missing, so 153 lands. Before round 496 the
-// handler restored exactly 120.
+// 153.75 -> 153. Before round 496 the handler restored exactly 120.
+//
+// Since round 509 it lands through the queue: a step of 153/5 = 30 at once
+// (HP 230) and 4 x 30 = 120 still queued. Param1 unscaled would step 24.
 func TestUseItemScalesPotionByLevelAndStr(t *testing.T) {
 	ctx := context.Background()
 	accounts := account.NewMemStore()
@@ -453,7 +457,8 @@ func TestUseItemScalesPotionByLevelAndStr(t *testing.T) {
 		t.Fatalf("list: %v %+v", err, slots)
 	}
 
-	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mana.NewTracker(), nil))
+	potions := NewPotionQueue()
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mana.NewTracker(), nil, potions))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -481,11 +486,14 @@ func TestUseItemScalesPotionByLevelAndStr(t *testing.T) {
 	if res.Error != "" {
 		t.Fatalf("the HP potion was refused: %q", res.Error)
 	}
-	if res.RestoredHP != 153 || res.HP != 353 || res.MaxHP != 359 {
-		t.Errorf("restored %d HP to %d/%d, want 153 to 353/359 (120 * 1.02^9 * (1 + 30/416))", res.RestoredHP, res.HP, res.MaxHP)
+	if res.RestoredHP != 30 || res.HP != 230 || res.MaxHP != 359 {
+		t.Errorf("restored %d HP to %d/%d at once, want 30 to 230/359 (153/5; 153 = 120 * 1.02^9 * (1 + 30/416))", res.RestoredHP, res.HP, res.MaxHP)
 	}
-	if after, _ := chars.GetByID(ctx, c.ID); after.HP != 353 {
-		t.Errorf("stored HP = %d, want 353", after.HP)
+	if after, _ := chars.GetByID(ctx, c.ID); after.HP != 230 {
+		t.Errorf("stored HP = %d, want 230", after.HP)
+	}
+	if got := queuedFor(potions, c.ID, potionPoolHP); got != 120 {
+		t.Errorf("queued HP = %d, want the other four steps, 4 x 30 = 120", got)
 	}
 }
 
@@ -546,7 +554,7 @@ func TestUseWarehouseExpansionItem(t *testing.T) {
 	warehouse.SetCapacityFunc(storage.CapacityOf(accounts))
 	svc := &storage.Service{Bag: inv, Warehouse: warehouse, Gold: chars, Accounts: accounts, ChestSizes: accounts}
 
-	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mana.NewTracker(), svc), StorageHandler(chars, svc, nil))
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mana.NewTracker(), svc, nil), StorageHandler(chars, svc, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -747,10 +755,15 @@ func TestPotionReuseDelayPerKind(t *testing.T) {
 		}
 		return -1, 0
 	}
-	// hurt leaves HP at 20 and MP at 20 before every use, so no potion is
-	// ever refused as "no need" and every accepted one restores something.
+	// hurt leaves HP at 20 and MP at 20 and empties the potion queue before
+	// every use, so every accepted potion lands its first step: nothing ticks
+	// the queue here, and the steps earlier potions left in it would
+	// otherwise carry the pool past the maximum, where the engine queues
+	// nothing (round 509).
+	potions := NewPotionQueue()
 	hurt := func() {
 		t.Helper()
+		potions.drop(c.ID)
 		cur, err := chars.GetByID(ctx, c.ID)
 		if err != nil {
 			t.Fatalf("get: %v", err)
@@ -767,7 +780,7 @@ func TestPotionReuseDelayPerKind(t *testing.T) {
 		}
 	}
 
-	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mp, nil))
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mp, nil, potions))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -885,4 +898,472 @@ func TestPotionReuseBitAndDelay(t *testing.T) {
 			t.Errorf("potionReuseDelay(%d, %v) = %v, want %v", tc.country, tc.absolute, got, tc.want)
 		}
 	}
+}
+
+// queuedFor reads FUN_0049a110's sum for one pool under the queue's lock.
+func queuedFor(q *PotionQueue, characterID int64, pool int) int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.queuedLocked(characterID, pool)
+}
+
+// FUN_0049a0c0 (0x49a0c0): {amount/5, 4}, the division signed and truncated
+// toward zero (`imul 0x66666667; sar edx,1; shr eax,0x1f; add eax,edx`), the
+// step clamped to 1 (0x49a0e6) and to 1000000 (0x49a0f7).
+func TestPotionEntryFollowsFUN0049a0c0(t *testing.T) {
+	for _, tc := range []struct{ amount, step int }{
+		{125, 25},          // HP_POTION_01 at level 1, Str 20
+		{123, 24},          // truncated: five steps land 120, not 123
+		{4, 1},             // 4/5 = 0, raised to 1: five steps land 5
+		{0, 1},             // never reached (slot 308 answers 2 first), but the clamp holds
+		{-7, 1},            // -7/5 = -1 toward zero, raised to 1
+		{4999999, 999999},  // below the cap
+		{5000000, 1000000}, // at the cap
+		{9000000, 1000000}, // clamped to the cap
+	} {
+		e := newPotionEntry(tc.amount)
+		if e.step != tc.step || e.count != 4 {
+			t.Errorf("newPotionEntry(%d) = {%d, %d}, want {%d, 4}", tc.amount, e.step, e.count, tc.step)
+		}
+	}
+}
+
+// FUN_0049a5b0's two paths and FUN_0049a510's tick, on the queue alone:
+//
+//   - HP is queued while pool + queued does not EXCEED the maximum (0x49a768
+//     `jg` skips), so the boundary queues; MP only while it stays BELOW
+//     (0x49a7d4 `jge` skips), so the boundary does not.
+//   - The tick takes one step from the HEAD entry only: a second entry
+//     waits its turn, and the character leaves the queue once both lists
+//     are empty.
+//   - A percentage amount empties a pool's list when it alone overflows the
+//     pool, otherwise cuts the list after the first entry whose step x count
+//     carries cur + amount - max above zero, keeping that entry whole; it
+//     lands in full at once.
+func TestPotionQueueFollowsFUN0049a5b0AndFUN0049a510(t *testing.T) {
+	q := NewPotionQueue()
+	const a, b = 1, 2
+
+	// HP: 100 + 0 <= 200 queues; 100 + 100 = 200 still queues (jg);
+	// 100 + 200 > 200 does not.
+	for i, want := range []int{25, 25, 0} {
+		if hp, mp := q.landLocked(a, true, 125, 0, 100, 200, 200, 200); hp != want || mp != 0 {
+			t.Errorf("HP drink %d at 100/200: landed (%d, %d) at once, want (%d, 0)", i+1, hp, mp, want)
+		}
+	}
+	if got := queuedFor(q, a, potionPoolHP); got != 200 {
+		t.Errorf("HP queued = %d, want 200 (two entries of 4 x 25)", got)
+	}
+	// MP: 100 + 0 < 200 queues; 100 + 100 = 200 does not (jge).
+	for i, want := range []int{25, 0} {
+		if hp, mp := q.landLocked(b, true, 0, 125, 200, 200, 100, 200); hp != 0 || mp != want {
+			t.Errorf("MP drink %d at 100/200: landed (%d, %d) at once, want (0, %d)", i+1, hp, mp, want)
+		}
+	}
+	if got := queuedFor(q, b, potionPoolMP); got != 100 {
+		t.Errorf("MP queued = %d, want 100 (one entry of 4 x 25)", got)
+	}
+	// A full HP pool with nothing queued still queues (200 + 0 <= 200); a
+	// full MP pool does not.
+	const c = 3
+	if hp, mp := q.landLocked(c, true, 125, 125, 200, 200, 200, 200); hp != 25 || mp != 0 {
+		t.Errorf("an all potion at full HP and MP landed (%d, %d), want (25, 0): HP queues at the maximum, MP does not", hp, mp)
+	}
+	q.drop(b)
+	q.drop(c)
+
+	// The tick: head only, one step a pass. Replace a's queue with two
+	// distinguishable entries.
+	q.drop(a)
+	q.pushLocked(a, potionPoolHP, potionEntry{step: 25, count: 4})
+	q.pushLocked(a, potionPoolHP, potionEntry{step: 30, count: 4})
+	q.pushLocked(a, potionPoolMP, potionEntry{step: 7, count: 4})
+	for i, want := range []int{25, 25, 25, 25, 30, 30, 30, 30, 0} {
+		hp, mp := q.takeLocked(a)
+		if hp != want {
+			t.Errorf("tick %d: HP step %d, want %d", i+1, hp, want)
+		}
+		wantMP := 0
+		if i < 4 {
+			wantMP = 7
+		}
+		if mp != wantMP {
+			t.Errorf("tick %d: MP step %d, want %d", i+1, mp, wantMP)
+		}
+	}
+	if len(q.characters()) != 0 {
+		t.Errorf("the queue still lists %v after every step was taken", q.characters())
+	}
+
+	// The percentage trim: entries of 100, 120 and 160 queued, pool 500/1000.
+	fill := func() {
+		q.drop(a)
+		q.pushLocked(a, potionPoolHP, potionEntry{step: 25, count: 4})
+		q.pushLocked(a, potionPoolHP, potionEntry{step: 30, count: 4})
+		q.pushLocked(a, potionPoolHP, potionEntry{step: 40, count: 4})
+		q.pushLocked(a, potionPoolMP, potionEntry{step: 7, count: 4})
+	}
+	for _, tc := range []struct {
+		name   string
+		amount int
+		want   int
+	}{
+		// -250 +100 +120 +160 = 130: the third entry crosses, nothing after it.
+		{"crossing at the last entry keeps all three", 250, 380},
+		// -150 +100 +120 = 70: the second crosses, the third is dropped.
+		{"crossing at the second entry drops the third", 350, 220},
+		// -350 +100 +120 +160 = 30: the third crosses, nothing dropped.
+		{"crossing at the last entry, lower", 150, 380},
+		// 500 + 600 - 1000 = 100 > 0: the amount alone overflows.
+		{"an amount that overflows alone empties the list", 600, 0},
+		// -499 +100 +120 +160 = -119 never crosses: nothing dropped.
+		{"never crossing keeps every entry", 1, 380},
+	} {
+		fill()
+		if hp, mp := q.landLocked(a, false, tc.amount, 0, 500, 1000, 500, 1000); hp != tc.amount || mp != 0 {
+			t.Errorf("%s: landed (%d, %d) at once, want the whole (%d, 0)", tc.name, hp, mp, tc.amount)
+		}
+		if got := queuedFor(q, a, potionPoolHP); got != tc.want {
+			t.Errorf("%s: HP queued = %d, want %d", tc.name, got, tc.want)
+		}
+		if got := queuedFor(q, a, potionPoolMP); got != 28 {
+			t.Errorf("%s: the MP list (amount 0) changed: queued %d, want 28", tc.name, got)
+		}
+	}
+}
+
+// A queued character who is no longer in the world has the queue dropped at
+// the next tick and is not healed: the engine's queue lives on the PC object
+// (pc+0x1d58), which leaves with the character.
+func TestPotionQueueDropsACharacterNotInTheWorld(t *testing.T) {
+	ctx := context.Background()
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, _, err := chars.ApplyDamage(ctx, c.ID, 150); err != nil {
+		t.Fatalf("damage: %v", err)
+	}
+	q := NewPotionQueue()
+	q.pushLocked(c.ID, potionPoolHP, potionEntry{step: 25, count: 4})
+	potionQueueTick(ctx, world.NewHub(), chars, q, RegenDeps{}, nil)
+	if after, _ := chars.GetByID(ctx, c.ID); after.HP != 50 {
+		t.Errorf("an offline character was healed: HP %d, want 50", after.HP)
+	}
+	if ids := q.characters(); len(ids) != 0 {
+		t.Errorf("the offline character's queue was kept: %v", ids)
+	}
+}
+
+// potionFixture is Aria -- level 1, Str 20, Int 20: 200 HP and 200 MP --
+// logged in and in the world, drinking through UseItemHandler with a potion
+// queue the test ticks by hand, and a stepped clock for the reuse lock.
+type potionFixture struct {
+	t       *testing.T
+	ctx     context.Context
+	chars   *character.MemStore
+	inv     *inventory.MemStore
+	mp      *mana.Tracker
+	hub     *world.Hub
+	potions *PotionQueue
+	id      int64
+	conn    net.Conn
+	r       *bufio.Reader
+	clock   time.Time
+}
+
+// The potions, real rows' kinds and Param blocks (allitems.txt on the RE box)
+// but for the illustrative one.
+const (
+	fixtureHPPotion  = 4  // ITEM_ETC_HP_POTION_01, 3/3/1/1, Param1 120 -> 125
+	fixtureMPPotion  = 11 // ITEM_ETC_MP_POTION_01, 3/3/1/2, Param3 120 -> 125
+	fixtureHPSpotion = 9  // ITEM_ETC_HP_SPOTION_01, 3/3/1/1, Param2 25 (%)
+	fixtureHP123     = 90 // illustrative: 3/3/1/1, Param1 118 -> 118 * (1 + 20/416) = 123.67 -> 123
+)
+
+func newPotionFixture(t *testing.T) *potionFixture {
+	t.Helper()
+	f := &potionFixture{t: t, ctx: context.Background(), clock: time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)}
+	saved := useItemClock
+	t.Cleanup(func() { useItemClock = saved })
+	useItemClock = func() time.Time { return f.clock }
+
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	f.chars = character.NewMemStore()
+	c, err := f.chars.Create(f.ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if c.MaxHP() != 200 || c.MaxMP() != 200 || c.HP != 200 {
+		t.Fatalf("fixture: HP %d/%d, MaxMP %d; want 200/200 and 200", c.HP, c.MaxHP(), c.MaxMP())
+	}
+	f.id = c.ID
+	items := refdata.NewMemStore()
+	if err := items.ImportItems(f.ctx, []refdata.Item{
+		{ID: fixtureHPPotion, MaxStack: 5000, TypeID1: 3, TypeID2: 3, TypeID3: 1, TypeID4: 1, RestoreHP: 120, CanUse: true},
+		{ID: fixtureMPPotion, MaxStack: 5000, TypeID1: 3, TypeID2: 3, TypeID3: 1, TypeID4: 2, RestoreMP: 120, CanUse: true},
+		{ID: fixtureHPSpotion, MaxStack: 5000, TypeID1: 3, TypeID2: 3, TypeID3: 1, TypeID4: 1, RestoreHPPct: 25, CanUse: true},
+		{ID: fixtureHP123, MaxStack: 5000, TypeID1: 3, TypeID2: 3, TypeID3: 1, TypeID4: 1, RestoreHP: 118, CanUse: true},
+	}); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	f.inv = inventory.NewMemStore(items)
+	for _, id := range []int64{fixtureHPPotion, fixtureMPPotion, fixtureHPSpotion, fixtureHP123} {
+		if err := f.inv.AddItem(f.ctx, c.ID, id, 10); err != nil {
+			t.Fatalf("add %d: %v", id, err)
+		}
+	}
+	f.mp = mana.NewTracker()
+	f.hub = world.NewHub()
+	f.potions = NewPotionQueue()
+
+	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(f.chars, nil, f.hub),
+		UseItemHandler(f.chars, f.inv, items, f.mp, nil, f.potions))
+	addr, cleanup := startTestServer(t, handle)
+	t.Cleanup(cleanup)
+	f.conn = dialTestServer(t, addr)
+	t.Cleanup(func() { f.conn.Close() })
+	f.r = bufio.NewReader(f.conn)
+	if lr, err := DecodeLoginResult(f.send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
+		t.Fatalf("login: %v %+v", err, lr)
+	}
+	if ewr, err := DecodeEnterWorldResult(f.send(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode()).Data); err != nil || !ewr.OK {
+		t.Fatalf("enter world: %v %+v", err, ewr)
+	}
+	return f
+}
+
+func (f *potionFixture) read() *proto.Packet {
+	f.t.Helper()
+	f.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	p, err := proto.Read(f.r, nil, nil)
+	if err != nil {
+		f.t.Fatalf("read: %v", err)
+	}
+	return p
+}
+
+func (f *potionFixture) send(op uint16, data []byte) *proto.Packet {
+	f.t.Helper()
+	if err := proto.Write(f.conn, &proto.Packet{Opcode: op, Data: data}, nil, nil); err != nil {
+		f.t.Fatalf("write: %v", err)
+	}
+	return f.read()
+}
+
+// use drinks one of item id. The reply must be the use-item result: a stats
+// push left unread by an earlier tick would arrive here instead, so a tick
+// that pushed when the test said it would not fails loudly.
+func (f *potionFixture) use(id int64) *UseItemResult {
+	f.t.Helper()
+	slot, _ := f.stack(id)
+	if slot < 0 {
+		f.t.Fatalf("item %d is not in the bag", id)
+	}
+	p := f.send(OpUseItem, (&UseItemRequest{CharacterName: "Aria", InventorySlot: int32(slot)}).Encode())
+	if p.Opcode != OpUseItemResult {
+		f.t.Fatalf("got opcode %#x where the use-item reply belongs (a stray push?)", p.Opcode)
+	}
+	res, err := DecodeUseItemResult(p.Data)
+	if err != nil {
+		f.t.Fatalf("decode use result: %v", err)
+	}
+	return res
+}
+
+func (f *potionFixture) stack(id int64) (slot, qty int) {
+	f.t.Helper()
+	slots, err := f.inv.List(f.ctx, f.id)
+	if err != nil {
+		f.t.Fatalf("list: %v", err)
+	}
+	for _, sl := range slots {
+		if sl.ItemID == id {
+			return sl.Index, sl.Quantity
+		}
+	}
+	return -1, 0
+}
+
+// tick is one PeriodicUpdate pass.
+func (f *potionFixture) tick() {
+	potionQueueTick(f.ctx, f.hub, f.chars, f.potions, RegenDeps{Mana: f.mp}, nil)
+}
+
+// pushed reads the stats push a tick sent.
+func (f *potionFixture) pushed() *CharacterStatsResult {
+	f.t.Helper()
+	p := f.read()
+	if p.Opcode != OpCharacterStatsResult {
+		f.t.Fatalf("got opcode %#x, want the stats push %#x", p.Opcode, OpCharacterStatsResult)
+	}
+	s, err := DecodeCharacterStatsResult(p.Data)
+	if err != nil {
+		f.t.Fatalf("decode stats push: %v", err)
+	}
+	return s
+}
+
+func (f *potionFixture) hp() int {
+	f.t.Helper()
+	c, err := f.chars.GetByID(f.ctx, f.id)
+	if err != nil {
+		f.t.Fatalf("get: %v", err)
+	}
+	return c.HP
+}
+
+func (f *potionFixture) setHP(n int) {
+	f.t.Helper()
+	if cur := f.hp(); cur > n {
+		if _, _, err := f.chars.ApplyDamage(f.ctx, f.id, cur-n); err != nil {
+			f.t.Fatalf("damage: %v", err)
+		}
+	} else if cur < n {
+		if _, err := f.chars.Heal(f.ctx, f.id, n-cur, 200); err != nil {
+			f.t.Fatalf("heal: %v", err)
+		}
+	}
+}
+
+func (f *potionFixture) setMP(n int) {
+	f.t.Helper()
+	if cur := f.mp.Current(f.id, 200); cur > n {
+		if _, ok := f.mp.Spend(f.id, 200, cur-n); !ok {
+			f.t.Fatalf("could not spend %d MP", cur-n)
+		}
+	} else if cur < n {
+		f.mp.Restore(f.id, 200, n-cur)
+	}
+}
+
+// ticksLand ticks once per wanted HP and checks each push and the stored
+// pool, then ticks once more and checks that nothing lands.
+func (f *potionFixture) ticksLand(label string, wantHP ...int) {
+	f.t.Helper()
+	for i, want := range wantHP {
+		f.tick()
+		if got := f.pushed(); int(got.HP) != want || got.MaxHP != 200 {
+			f.t.Errorf("%s, tick %d: pushed HP %d/%d, want %d/200", label, i+1, got.HP, got.MaxHP, want)
+		}
+		if got := f.hp(); got != want {
+			f.t.Errorf("%s, tick %d: stored HP %d, want %d", label, i+1, got, want)
+		}
+	}
+	last := f.hp()
+	f.tick()
+	if got := f.hp(); got != last {
+		f.t.Errorf("%s: a tick past the queue healed %d -> %d", label, last, got)
+	}
+}
+
+// An absolute potion lands in five steps of amount/5, the first at once and
+// then one per PeriodicUpdate pass (FUN_0049a0c0, 0x49a82a, FUN_0049a510 at
+// 0x52acd0), each pushed to the client as a stats reply. HP_POTION_01's 125
+// at 50/200 lands 25 at once and 25 on each of four ticks: 125 in all. A
+// 123-point potion steps 123/5 = 24 and lands 5 x 24 = 120, the engine's
+// truncation. Before round 509 the whole amount landed at once.
+func TestAbsolutePotionLandsInFiveStepsOneASecond(t *testing.T) {
+	f := newPotionFixture(t)
+
+	f.setHP(50)
+	res := f.use(fixtureHPPotion)
+	if res.Error != "" || res.RestoredHP != 25 || res.HP != 75 || res.Remaining != 9 {
+		t.Fatalf("HP_POTION_01 at 50/200: got %+v, want 25 restored at once, HP 75, 9 left", res)
+	}
+	f.ticksLand("HP_POTION_01", 100, 125, 150, 175)
+	if got := f.hp(); got != 175 {
+		t.Errorf("HP_POTION_01 landed %d in all, want 125 (5 x 25)", got-50)
+	}
+
+	f.clock = f.clock.Add(potionReuseAbsoluteChina)
+	f.setHP(50)
+	res = f.use(fixtureHP123)
+	if res.Error != "" || res.RestoredHP != 24 || res.HP != 74 {
+		t.Fatalf("the 123-point potion at 50/200: got %+v, want 24 restored at once, HP 74", res)
+	}
+	f.ticksLand("the 123-point potion", 98, 122, 146, 170)
+	if got := f.hp(); got != 170 {
+		t.Errorf("the 123-point potion landed %d in all, want 120 (5 x 24, not 123)", got-50)
+	}
+}
+
+// A percentage potion lands in full at once (FUN_0049a5b0's flag-0 path,
+// 0x49a71a) and queues nothing: HP_SPOTION_01's 25% of 200 is 50.
+func TestPercentagePotionLandsInFullAtOnce(t *testing.T) {
+	f := newPotionFixture(t)
+	f.setHP(50)
+	res := f.use(fixtureHPSpotion)
+	if res.Error != "" || res.RestoredHP != 50 || res.HP != 100 || res.Remaining != 9 {
+		t.Fatalf("HP_SPOTION_01 at 50/200: got %+v, want 50 restored at once, HP 100, 9 left", res)
+	}
+	if ids := f.potions.characters(); len(ids) != 0 {
+		t.Errorf("a percentage potion queued steps: %v", ids)
+	}
+	f.ticksLand("HP_SPOTION_01")
+}
+
+// A potion drunk at full HP is SPENT, not refused: slot 308 answers 1 after
+// FUN_004ef450 whatever landed (0x49b996), and the HP entry is still queued,
+// because 200 + 0 does not exceed 200 (0x49a768 `jg`). So damage taken in the
+// next four seconds is healed by it. An MP potion at full MP is spent too but
+// queues nothing (0x49a7d4 `jge`).
+//
+// NEGATIVE: before round 509 both were refused with "no need for that right
+// now" and kept.
+func TestPotionAtFullPoolIsSpent(t *testing.T) {
+	f := newPotionFixture(t)
+
+	res := f.use(fixtureHPPotion)
+	if res.Error != "" {
+		t.Fatalf("an HP potion at full HP was refused: %q; the engine spends it", res.Error)
+	}
+	if res.RestoredHP != 0 || res.HP != 200 {
+		t.Errorf("an HP potion at full HP: restored %d to %d, want 0 to 200", res.RestoredHP, res.HP)
+	}
+	if _, qty := f.stack(fixtureHPPotion); qty != 9 || res.Remaining != 9 {
+		t.Errorf("an HP potion at full HP: %d left (reply %d), want 9 -- spent", qty, res.Remaining)
+	}
+	res = f.use(fixtureMPPotion)
+	if res.Error != "" {
+		t.Fatalf("an MP potion at full MP was refused: %q; the engine spends it", res.Error)
+	}
+	if _, qty := f.stack(fixtureMPPotion); qty != 9 || res.RestoredMP != 0 {
+		t.Errorf("an MP potion at full MP: %d left, restored %d; want 9 left, 0 restored", qty, res.RestoredMP)
+	}
+
+	// The HP entry is there; the MP one is not.
+	f.setHP(100)
+	f.setMP(100)
+	f.ticksLand("the potion drunk at full HP, after damage", 125, 150, 175, 200)
+	if got := f.mp.Current(f.id, 200); got != 100 {
+		t.Errorf("the MP potion drunk at full MP restored MP later: %d, want 100", got)
+	}
+}
+
+// With the pool plus what is queued already past the maximum, the engine
+// queues nothing and lands nothing (0x49a768 `jg`), yet still spends the
+// potion (0x49b996). At 190/200 the first HP_POTION_01 queues (190 <= 200) and
+// its first step fills the pool; 1.1 s later the second meets 200 + 100 > 200,
+// is spent and queues nothing. After damage to 50 only the first potion's four
+// steps land.
+func TestPotionNotQueuedPastTheMaximum(t *testing.T) {
+	f := newPotionFixture(t)
+	f.setHP(190)
+	res := f.use(fixtureHPPotion)
+	if res.Error != "" || res.RestoredHP != 10 || res.HP != 200 {
+		t.Fatalf("HP_POTION_01 at 190/200: got %+v, want 10 restored at once (clamped), HP 200", res)
+	}
+	f.clock = f.clock.Add(potionReuseAbsoluteChina)
+	res = f.use(fixtureHPPotion)
+	if res.Error != "" || res.RestoredHP != 0 || res.Remaining != 8 {
+		t.Fatalf("HP_POTION_01 at 200/200 with 100 queued: got %+v, want no error, nothing restored, 8 left", res)
+	}
+	if got := queuedFor(f.potions, f.id, potionPoolHP); got != 100 {
+		t.Errorf("queued HP = %d, want only the first potion's 100", got)
+	}
+	f.setHP(50)
+	f.ticksLand("after the potion past the maximum", 75, 100, 125, 150)
 }
