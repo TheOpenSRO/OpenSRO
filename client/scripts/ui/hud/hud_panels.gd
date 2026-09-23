@@ -2038,8 +2038,8 @@ var _skill_catalog_loaded := false
 ## so a fresh window shows every skill greyed -- as the real one does.
 var _skill_points: int = 0
 var _skill_mastery_levels: Dictionary = {}   ## mastery id -> level
-## The character level the mastery-total cap (3 x level) is shown against; 0
-## until the server reports it (set_skill_state).
+## The character level, which no single mastery may pass (the LEVEL UP button's
+## per-mastery check); 0 until the server reports it (set_skill_state).
 var _skill_char_level: int = 0
 ## The unique skill ids the character has learned (a set), from the server --
 ## a learned skill shows its level badge instead of a "+" learn button.
@@ -2059,10 +2059,14 @@ const SKILL_LOCKED_TINT := Color(0.45, 0.45, 0.45, 0.85)
 func is_skill_known(skill_id: int) -> bool:
 	return _skill_known.has(skill_id)
 
-## The mastery-total cap per character level: the sum of a character's mastery
-## levels can reach 3 x its level. Grounded -- retail 80-cap total = 240 = 3x80;
-## matches the server's MasteryTotalCapPerLevel. The pserver's 440 is a mod.
-const MASTERY_TOTAL_CAP_PER_LEVEL := 3
+## The mastery-total cap: the sum of a China character's mastery levels may reach
+## 330, flat, whatever its level. Recovered from the server's Mastery_LevelUp
+## (0x0059c4e0): for Country 0 (China) it refuses unless `sum + requested < 0x14b`;
+## Europe's rule is min(240, 2 x level), but every srrevamp character is China.
+## Matches the server's session.MasteryTotalCapChina; docs/RE_COMPLETION.md,
+## round 483. (It was "3 x level" before -- an extrapolation from a retail
+## account, not a reading of the binary.)
+const MASTERY_TOTAL_CAP := 330
 
 ## Skill-board geometry inside the CIFSkillBoard area (GDR_SKILL_BOARD). The grid
 ## metrics are the real client's, decompiled from CIFSkillGroup::SetGroup: eight
@@ -2149,7 +2153,7 @@ func set_skill_state(skill_points: int, mastery_levels: Dictionary, char_level: 
 	_refill_skill()
 
 ## The server's OpSkillState arrived -- apply points, mastery levels, learned
-## skills and the character level (for the 3 x level cap).
+## skills and the character level (for the per-mastery level cap).
 func _apply_skill_state(state: SkillNet.SkillState) -> void:
 	set_skill_state(state.skill_points, state.mastery_levels, state.level, state.known_skills)
 
@@ -2242,16 +2246,14 @@ func _fill_skill_masteries(window: HudWindow) -> void:
 	if _skill_active_mastery < masteries.size():
 		_build_mastery_board(board, masteries[_skill_active_mastery] as MasteryReader.Mastery)
 
-	# Skill points and total mastery level (with the 3 x level cap once the
-	# server has reported the character's level), from the server's state.
+	# Skill points and total mastery level against the flat 330 total cap, from
+	# the server's state.
 	_set_label(window, "GDR_SKILL_TEXT_SP_NUM", str(_skill_points))
 	# The real server total (a QA lighting override must not pollute it).
 	var total := 0
 	for lvl in _skill_mastery_levels.values():
 		total += int(lvl)
-	var total_text := str(total)
-	if _skill_char_level > 0:
-		total_text = "%d / %d" % [total, MASTERY_TOTAL_CAP_PER_LEVEL * _skill_char_level]
+	var total_text := "%d / %d" % [total, MASTERY_TOTAL_CAP]
 	_set_label(window, "GDR_SKILL_TEXT_TOTAL_MASTERYLEV_NUM", total_text)
 
 ## A dark backing so the world does not show through the board (the layout names
@@ -2332,17 +2334,20 @@ func _build_mastery_board(board: Control, mastery: MasteryReader.Mastery) -> voi
 	_style_skill_tab(levelup)
 	levelup.pressed.connect(_on_mastery_levelup.bind(mastery.id))
 	# Grey it and say why when the mastery can't be raised: a single mastery
-	# can't pass the character's level, and the total is capped at 3 x level
-	# (both server-enforced -- this just explains it before the click).
+	# can't pass the character's level, and the total is capped at a flat 330
+	# (both server-enforced -- this just explains it before the click). Checked in
+	# the engine's order, so the reason shown is the one the server would refuse
+	# with: Mastery_LevelUp (0x0059c4e0) tests the total (0x3805) before the
+	# character level (0x3804), then the skill points (0x3802).
 	var real_level := int(_skill_mastery_levels.get(mastery.id, 0))
 	var total_now := 0
 	for lvl in _skill_mastery_levels.values():
 		total_now += int(lvl)
 	var reason := ""
-	if _skill_char_level > 0 and real_level >= _skill_char_level:
+	if total_now >= MASTERY_TOTAL_CAP:
+		reason = "Total mastery cap reached (%d / %d)." % [total_now, MASTERY_TOTAL_CAP]
+	elif _skill_char_level > 0 and real_level >= _skill_char_level:
 		reason = "This mastery is at your character-level cap (Lv %d). Level up your character to raise it." % _skill_char_level
-	elif _skill_char_level > 0 and total_now >= MASTERY_TOTAL_CAP_PER_LEVEL * _skill_char_level:
-		reason = "Total mastery cap reached (%d / %d)." % [total_now, MASTERY_TOTAL_CAP_PER_LEVEL * _skill_char_level]
 	elif _skill_points <= 0:
 		reason = "Not enough skill points."
 	if reason != "":
@@ -2351,7 +2356,7 @@ func _build_mastery_board(board: Control, mastery: MasteryReader.Mastery) -> voi
 	if OS.has_environment("SRREVAMP_QA_SKILL_STATE"):
 		print("QA SKILL: %s Lv %d, %d SP, char Lv %d, total %d/%d -> LEVEL UP %s%s" % [
 			mastery.display_name(_text_table()), real_level, _skill_points, _skill_char_level, total_now,
-			MASTERY_TOTAL_CAP_PER_LEVEL * _skill_char_level, "disabled: " if reason != "" else "enabled", reason])
+			MASTERY_TOTAL_CAP, "disabled: " if reason != "" else "enabled", reason])
 	host.add_child(levelup)
 
 	var lvl_lbl := Label.new()

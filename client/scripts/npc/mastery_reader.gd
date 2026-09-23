@@ -28,7 +28,7 @@ class_name MasteryReader
 ## the masteries at level 0 and says so". The server tracks both now --
 ## skill.Store.MasteryLevels and SkillPoints, carried by OpSkillState and
 ## raised through OpRaiseMastery -- and hud_panels.gd already renders the real
-## SP and the mastery total against the 3-per-level cap.
+## SP and the mastery total against the flat 330 cap (round 483).
 
 const TABLE_PATH := "server_dep\\silkroad\\textdata\\skillmasterydata.txt"
 

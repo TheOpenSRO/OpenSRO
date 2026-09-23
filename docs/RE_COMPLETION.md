@@ -3708,6 +3708,23 @@ sourced rule survives the encounter:
   account of **retail**. Adopting a flat 330 on that basis would trade a sourced
   rule for a modded constant.
 
+**REVERSED in round 483 (2026-09-23).** The "sourced rule" was never read out of
+anything: 3 x level was extrapolated from one number, an account of a retail
+total of 240 at the level-80 cap. The binary has no `3 x level` branch at all,
+and the blocker the next two entries left open, the selector byte, is now
+identified as the character's **Country** by a use-site (`CGItemEquip::CanBeEquipedAt`,
+`0x00497070`; see "Mastery total cap is Country-selected", round 483). So a China
+character's total is capped at a flat 330, and `session.MasteryTotalCapChina`
+ships it.
+
+330 is **this server binary's own rule**. The Ghidra dump reads `sum + requested
+< 0x14b` and the on-disk exe reads `cmp eax,0x14a ; jg` at `0x59c5e6`. They
+agree because they are one build: the on-disk exe also has the dump's x20
+death-penalty branch, lea-encoded at `0x4e6aa2`. **Nothing here shows that
+retail used 330.** The worry above, that this is a private-server binary, is
+not answered by this entry. The reversal ships the binary's own rule in place of
+an extrapolation that no binary contains, and claims no more than that.
+
 **A number was also dropped.** The comment said "the pserver's 440 is a mod".
 Whatever 440 was, it is not what this binary enforces — 330 is — and a wrong
 number in a citation is worse than no number, so it is gone.
@@ -3717,7 +3734,9 @@ number in a citation is worse than no number, so it is gone.
 `session.MasteryLevelCap = 120`, wired into the raise handler and tested at the
 boundary (level 120 binds at 120, level 121 and level 140 both bind at 120).
 `MasteryTotalCapPerLevel` is unchanged, with the shape difference recorded
-against it rather than silently reconciled.
+against it rather than silently reconciled. *(Replaced in round 483 by
+`MasteryTotalCapChina = 330` / `MasteryTotalCapEurope = 240`, selected by
+Country.)*
 
 ## Five orbs are five real charges (2026-09-15)
 
@@ -4479,7 +4498,10 @@ branch comparing against the double **240.0** at `0xb46130` alongside a term
 involving twice the character level. Which branch runs depends on a selector
 this pass did not identify, and the `2 x level` term's operand was not pinned
 down, so `session.MasteryTotalCapPerLevel` is left at its sourced 3 rather than
-changed on a half-read branch. Recorded as open.
+changed on a half-read branch. Recorded as open. *(Closed in round 483: the
+selector is the character's Country, read at the same `+0x88` that
+`CGItemEquip::CanBeEquipedAt` compares for `0x182f COUNTRY_MISMATCH`. The
+`2 x level` term is `level + level`, see the next entry.)*
 
 **What moved:** a real mechanic, shipped — and a hypothesis that was correctly
 refused last tick became a citation this tick by finding the use-site rather
@@ -4513,7 +4535,10 @@ The full error vocabulary: `0x3801` bad mastery or selector, `0x3802`
 insufficient skill points, `0x3803`, `0x3804` exceeds character level, `0x3805`
 total cap.
 
-**`MasteryTotalCapPerLevel` stays at its sourced 3.** None of the three branches
+**`MasteryTotalCapPerLevel` stays at its sourced 3.** *(Reversed in round 483:
+once the selector was identified as Country, China's branch is the flat 330 and
+it ships as `MasteryTotalCapChina`. The "sourced" 3 was an extrapolation from a
+retail account, not a reading of any binary.)* None of the three branches
 is `3 * characterLevel`, so the sourced retail rule and this binary's rules are
 still genuinely different shapes — but the note in `skill.go` now records all
 three instead of one, which is materially better information for whoever revisits
@@ -4530,7 +4555,12 @@ being the character's race/country — China/Europe being exactly the kind of sp
 that would carry different mastery rules. That is a shape argument with no
 use-site behind it, which is the reasoning that was wrong twice on characterdata
 column 79 and was correctly refused two ticks ago on this very field's neighbour.
-It stays open.
+It stays open. *(Identified in round 483, and by a use-site this time.
+`CGItemEquip::CanBeEquipedAt` (`0x00497070`) reads `*(*(obj+0x34)+0x18)+0x88`
+on both the item and the character. It refuses with `0x182f
+UIIT_MSG_STRGERR_COUNTRY_MISMATCH` unless the two match or the item's byte is 3.
+`+0x88` is common column 14, Country, and a character's ref object is filled by
+the same `RefObjCommon_ExtractData`. So selector 0 is China and 1 is Europe.)*
 
 **What moved:** no value. One shipped rule gained a citation, one recorded rule
 turned out to be a third of the real rule, and the remaining unknown is now a
@@ -25690,3 +25720,108 @@ for the helper so the package compiled. Both tests failed. Aria's offer came
 back `OK:true`, the stored `OfferA` was `{Gold:50 ItemSlot:0 Quantity:1}`, and
 Bram's next packet was `0x00D9` `OpTradeOfferUpdated`. The existing trade
 tests stay green. `go test -count=1 -p 1 ./...` green.
+
+## Mastery total cap is Country-selected: flat 330 for China (Mastery_LevelUp 0x59c4e0) (round 483)
+
+`session.MasteryTotalCapPerLevel = 3` capped the sum of a character's mastery
+levels at 3 x its character level. That number was never read out of a binary:
+it was extrapolated from one account of a retail total of 240 at the level-80
+cap. `Mastery_LevelUp` (`0x0059c4e0`) was read in full on 2026-09-16 and has no
+`3 x level` branch. It switches on a byte at `(charData+0x18)+0x88` and applies
+one of three rules. The 3 stayed because that byte was not identified. This
+round identifies it.
+
+	59c53c  movzx eax,BYTE PTR [eax+0x88]     <- the character's ref object
+	59c543  sub eax,0x0 ; je 0x59c5d9         <- 0: flat cap
+	59c54c  sub eax,0x1 ; je 0x59c567         <- 1: 240.0 and level + level
+	59c551  sub eax,0x1 ; je 0x59c5ed         <- 2: straight past the cap
+	59c55a  mov [esp+0xc],0x3801              <- anything else
+	59c5e6  cmp eax,0x14a ; jg 0x59c5cc       <- 0: sum + requested > 330 -> 0x3805
+	59c57e  fcomp QWORD PTR ds:0xb46130       <- 1: 240.0 (bytes 00000000 00006e40)
+
+Those addresses are the on-disk exe. The Ghidra dump has the same shape
+(`(sum + param_3) < 0x14b`). They agree because they are one build: the on-disk
+exe also has the dump's x20 death-penalty branch, lea-encoded at `0x4e6aa2`
+(`lea esi,[esi+esi*4] ; add esi,esi ; add esi,esi`). The 2026-09-18 entry "Two
+server builds" says otherwise; it missed this branch, which has no `imul`. So
+330 is **this server binary's own rule**. **Nothing here shows that retail used
+330**, and the 2026-09-15 worry that this is a private-server binary still
+stands. What this round does is ship the binary's own rule in place of an
+extrapolation that no binary contains.
+
+**The selector is Country, identified by a use-site.**
+`CGItemEquip::CanBeEquipedAt` (`0x00497070`) walks the same path,
+`*(*(obj+0x34)+0x18)+0x88`, on both the item and the character. It refuses with
+`0x182f UIIT_MSG_STRGERR_COUNTRY_MISMATCH` unless the two bytes match or the
+item's is 3. `+0x88` is where `RefObjCommon_ExtractData` stores common column 14,
+and `ITEM_FORMAT.md` pins column 14 as Country (0 China, 1 Europe, 3 either).
+`RefObjChar_ExtractData` (`0x006a58f0`) passes its own `this` to the same
+extractor at `0x6a5908`, so a character's `+0x88` is its Country too. China
+characters wear Country-0 gear through that check, so China is selector 0.
+Round 480 read the same byte as Country in `Formula_ExpScaleByLevelDiff`.
+
+So a China character's total is a **flat 330**, with no level term. Europe's is
+`min(240, 2 x level)`. Selector 2 has no cap. `ITEM_FORMAT.md`'s Country
+vocabulary is 0, 1 and 3, so which race 2 is stays unidentified, and the code
+names it for what it does. The
+decision recorded in the 2026-09-15 and 2026-09-16 entries to keep the 3 is
+reversed, and those entries now say so where they stand.
+
+**What moved.**
+- `skill.go`: `MasteryTotalCapPerLevel` is replaced by `MasteryTotalCapChina = 330`
+  and `MasteryTotalCapEurope = 240`.
+- `masteryTotalRefusal(country, total, requested, charLevel)` returns the engine's
+  code for the total-cap branch: `0x3805`, `0x3801`, or 0.
+- `characterCountry` returns `equipment.CountryChina`. Every srrevamp character
+  is China (`character.ValidGender`; `equipment.Refusal` refuses a Europe item on
+  that ground).
+- `RaiseMasteryHandler` keeps the engine's order: the total cap
+  (`"mastery total at cap"`, or `"invalid mastery"` for `0x3801`), then the
+  character-level cap (`0x3804`), then skill points (`0x3802`).
+- Client: `hud_panels.gd` shows `total / 330` and greys LEVEL UP at 330.
+  `MASTERY_TOTAL_CAP_PER_LEVEL` becomes `MASTERY_TOTAL_CAP := 330`. The
+  grey-out reason is now checked in the engine's order: the total first, then
+  the character level, then skill points. When both caps apply, the window
+  gives the reason the server would refuse with.
+- The engine's sum (`FUN_0059e7c0`) skips a mastery whose status byte
+  (`*(entry+0x10)+0xc`) is 3. `FUN_0059d6f0`, the function's first check,
+  treats the same state as "no such mastery" (`0x3801`). srrevamp stores no such
+  state, so it sums every stored mastery. `masteryTotalRefusal`'s doc says so.
+  srrevamp also still skips that first check.
+- Docs: `SYSTEMS.md` anchors the row on `MasteryTotalCapChina`, and `UI_TODO.md`
+  no longer says "3×level".
+
+The visible change: a low-level character can raise more masteries at once. At
+level 5, three masteries at 5 (total 15) used to be refused on a fourth as
+"mastery total at cap"; now the fourth raises. At level 20 the total used to
+stop at 60; now each mastery can reach 20 until the total hits 330. At level 120
+the total now stops at 330 where it used to stop at 360.
+
+**Tests.**
+- `session.TestMasteryTotalRefusal` pins both constants and every selector:
+  - China: 329+1 at level 1 is allowed (no level term), 330+1 at level 120 is
+    `0x3805`, 0+1 is allowed.
+  - Europe: 239+1 and 240+1 at level 120 (allowed, then `0x3805`), and 99+1 and
+    100+1 at level 50 (allowed, then `0x3805`).
+  - Country 2 at 100000 is allowed; countries 3 and 255 are `0x3801`.
+- `session.TestRaiseMasteryTotalCapIsFlatForChina` drives the handler over the
+  wire:
+  - Level 5 with Bicheon 5: raising Bicheon is `mastery at level cap`.
+  - Level 5 with 257/258/259 at 5: raising 273 gives NewLevel 1.
+  - Level 120 at total 329: raising 259 gives 90. At 120/120/90, raising 273 is
+    `mastery total at cap`.
+
+Negative case run: with `skill.go` reverted and only the handler test kept, the
+test failed twice. Level 5 at total 15 raising 273 got `mastery total at cap`.
+Level 120 at total 330 raising 273 was allowed (NewLevel 1).
+`go test -count=1 -p 1 ./...` is green. On the render box,
+`client/tools/remote_godot.sh tests` ran 77 suites with 0 failing, and `check`
+compiled 239 scripts. A QA render with
+`SRREVAMP_QA_SKILL_STATE="sp=9,level=5,258=5,259=5,273=5" --panels skill` printed
+`QA SKILL: Bicheon Lv 0, 9 SP, char Lv 5, total 15/330 -> LEVEL UP enabled`.
+Under 3 x level the same state reads 15/15, disabled. A second QA render, with
+`"sp=9,level=120,257=120,258=120,259=90"`, applies both caps to Bicheon. It
+printed `Bicheon Lv 120, 9 SP, char Lv 120, total 330/330 -> LEVEL UP disabled:
+Total mastery cap reached (330 / 330).` The old order checked the character
+level first, so it would have given the character-level reason instead. That
+is read from the code; the old order was not rendered.

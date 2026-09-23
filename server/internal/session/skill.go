@@ -47,45 +47,101 @@ const (
 	OpRaiseMasteryResult uint16 = 0x0078 // server -> client
 )
 
-// MasteryTotalCapPerLevel caps the SUM of a character's mastery levels at this
-// multiple of its character level -- 3, so a level-80 character totals 240,
-// enough to max three masteries. Recovered from the user's account of the
-// retail 80-cap.
+// The mastery TOTAL cap -- the most the SUM of a character's mastery levels may
+// reach -- is chosen by the character's Country, and for China it is a FLAT 330
+// with no reference to the character's level.
 //
-// THE SHAPE DIFFERS FROM THIS BINARY, recorded 2026-09-15 rather than changed,
-// and the binary's own shape was read in full on 2026-09-16. Mastery_LevelUp
-// does not have ONE total-cap rule, it has THREE, selected by a byte on the
-// character's ref object (charData+0x18, then +0x88):
+// RECOVERED from Mastery_LevelUp (0x0059c4e0). Before anything else it switches
+// on a byte of the character's ref object, `(charData+0x18)+0x88` (on-disk
+// build: `movzx eax,BYTE PTR [eax+0x88]` at 0x59c53c, then `sub eax,0 / je`,
+// `sub eax,1 / je`, `sub eax,1 / je`), and applies one of three rules:
 //
-//	selector 0: refuses when `sum + requested >= 0x14b`  -> total capped at 330,
-//	            flat, with no reference to the character's level at all
-//	selector 1: allows only when `total <= 240.0` AND `total <= 2 * charLevel`
-//	selector 2: no total cap at all
-//	otherwise:  error 0x3801
+//	0:     refused (0x3805) unless `sum + requested < 0x14b` -- a flat 330
+//	       (on-disk build: `cmp eax,0x14a ; jg` at 0x59c5e6)
+//	1:     refused (0x3805) unless `sum + requested <= 240.0` (the .rdata double
+//	       at 0xb46130, compared with FCOMP QWORD) AND `<= level + level`
+//	2:     no total cap at all
+//	other: refused with 0x3801
 //
-// (240.0 is the double at 0xb46130, compared with FCOMP QWORD; the level term is
-// literally `level + level`.) None of the three is `3 * characterLevel`, so the
-// two rules remain genuinely different shapes rather than the same rule written
-// twice -- but note that selector 1 does saturate at 240, which is exactly the
-// level-80 total the retail account reports, reached there by a different route.
+// THE SELECTOR IS COUNTRY, identified by a use-site rather than by its shape.
+// CGItemEquip::CanBeEquipedAt (0x00497070) walks the SAME path on both the item
+// and the character -- `*(*(obj+0x34)+0x18)+0x88` -- compares the two bytes and
+// refuses with 0x182f UIIT_MSG_STRGERR_COUNTRY_MISMATCH unless the item's is 3.
+// RefObjCommon_ExtractData stores common-table column 14 at +0x88, and
+// ITEM_FORMAT.md pins column 14 as Country (0 China, 1 Europe, 3 either; "CH"
+// and "EU" code names agree on every row). A character's ref object is filled
+// by the same ExtractData -- RefObjChar_ExtractData (0x006a58f0) passes its own
+// `this` to it at 0x6a5908 -- so the character's +0x88 is its Country too
+// (docs/protocol/item_capability_flags.md; docs/RE_COMPLETION.md, "And the
+// column numbers are still not the read numbers"). A China character wears
+// Country-0 gear through that very check, so China is 0 and takes the flat 330;
+// Europe (1) takes min(240, 2 x level).
 //
-// The selector is NOT identified. It is read from the same field that a skill's
-// own +0xc4 is compared against and that indexes a race-shaped table at
-// DAT_00c8262c, which fits it being the character's race/country -- but that is
-// a shape argument without a use-site, and this project has twice been wrong
-// exactly there, so it is not asserted.
+// This REVERSES the 2026-09-15/16 decision to keep a "3 x character level" rule.
+// That rule was an extrapolation from an account of the retail 80-cap total of
+// 240, not a reading of any binary; none of the three branches is 3 x level, and
+// the selector that decision said was unidentified is identified above.
 //
-// Left as it is deliberately: this is a modded private-server binary, the
-// per-level rule comes from an account of RETAIL, and adopting a flat 330 on
-// that basis would trade a sourced rule for a modded constant. The earlier note
-// here said "the pserver's 440 is a mod" -- whatever 440 was, it is not what
-// this binary does, and the number is dropped rather than left to mislead.
-// (Community servers are reported to raise the cap to 320 so four trees can be
-// maxed; that is hearsay about other servers and is not used either.)
+// A single mastery is separately capped at the character's own level and at 120
+// -- see MasteryLevelCap.
+const (
+	MasteryTotalCapChina  = 330 // Mastery_LevelUp selector 0: `sum + requested < 0x14b`
+	MasteryTotalCapEurope = 240 // Mastery_LevelUp selector 1: the double 240.0 at 0xb46130
+)
+
+// masteryCountryUncapped is the Country byte for which Mastery_LevelUp applies
+// no total cap at all (selector 2 of 0x0059c4e0). WHICH country that is is not
+// identified -- ITEM_FORMAT.md's Country vocabulary is 0, 1 and 3, and 2 is not
+// among them -- so it is named for what the engine does with it, not a race.
+const masteryCountryUncapped = 2
+
+// Mastery_LevelUp's refusal codes for the total cap (0x0059c4e0; the full list
+// is in docs/RE_COMPLETION.md, "The mastery cap is three rules, not one").
+const (
+	masteryErrInvalid  uint16 = 0x3801 // unknown mastery, or a Country with no rule
+	masteryErrTotalCap uint16 = 0x3805 // the mastery total would pass its cap
+)
+
+// masteryTotalRefusal is Mastery_LevelUp's total-cap branch (0x0059c4e0): the
+// error code the engine answers when a character of the given Country, whose
+// masteries sum to total, asks for requested more levels at charLevel -- or 0
+// when the total cap allows it. The per-mastery checks that follow it in the
+// engine (0x3804 the character's level, 0x3802 the skill points) are the
+// caller's.
 //
-// A single mastery is separately capped at the character's own level, and that
-// rule IS this binary's -- see MasteryLevelCap for the citation.
-const MasteryTotalCapPerLevel = 3
+// The engine's sum (FUN_0059e7c0, called at each total compare) skips a mastery
+// entry whose status byte, `*(entry+0x10)+0xc`, is 3 -- the same state
+// FUN_0059d6f0, Mastery_LevelUp's first check, treats as "no such mastery"
+// (0x3801). srrevamp stores no such state, so the caller's total counts every
+// stored mastery; nothing it holds would be excluded.
+func masteryTotalRefusal(country, total, requested, charLevel int) uint16 {
+	sum := total + requested
+	switch country {
+	case equipment.CountryChina:
+		if sum > MasteryTotalCapChina {
+			return masteryErrTotalCap
+		}
+	case equipment.CountryEurope:
+		if sum > MasteryTotalCapEurope || sum > 2*charLevel {
+			return masteryErrTotalCap
+		}
+	case masteryCountryUncapped:
+		// Selector 2 jumps straight past the cap (0x59c554 -> 0x59c5ed).
+	default:
+		return masteryErrInvalid
+	}
+	return 0
+}
+
+// characterCountry is the Country byte (ref object +0x88, common column 14) of
+// a character: always China. Every srrevamp character is one --
+// character.ValidGender admits only the two China genders, and
+// equipment.Refusal refuses a Europe item on exactly that ground
+// (equipment/rules.go, "Every character is China today"). Should Europe
+// characters ever be created, this is the one place to read their Country.
+func characterCountry(*character.Character) int {
+	return equipment.CountryChina
+}
 
 // MasteryLevelCap is the hard ceiling on a SINGLE mastery: 120, whatever the
 // character's level.
@@ -1213,9 +1269,12 @@ func DecodeRaiseMasteryResult(data []byte) (*RaiseMasteryResult, error) {
 }
 
 // RaiseMasteryHandler raises a mastery one level, spending skill points, when
-// the character's mastery total is below its cap (MasteryTotalCapPerLevel x
-// level) and the mastery is below the character's level (no single mastery can
-// exceed it). Answers OpRaiseMasteryResult.
+// the character's mastery total stays within its Country's cap (a flat
+// MasteryTotalCapChina for every srrevamp character -- see masteryTotalRefusal)
+// and the mastery is below the character's level (no single mastery can exceed
+// it). The checks run in Mastery_LevelUp's own order: total cap (0x3805), then
+// the character's level (0x3804), then skill points (0x3802). Answers
+// OpRaiseMasteryResult.
 func RaiseMasteryHandler(chars character.Store, store skill.Store) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpRaiseMastery {
@@ -1244,8 +1303,11 @@ func RaiseMasteryHandler(chars character.Store, store skill.Store) gateway.Handl
 		for _, lvl := range levels {
 			total += lvl
 		}
-		if total >= MasteryTotalCapPerLevel*owned.Level {
+		switch code := masteryTotalRefusal(characterCountry(owned), total, 1, owned.Level); {
+		case code == masteryErrTotalCap:
 			return fail("mastery total at cap")
+		case code != 0:
+			return fail("invalid mastery")
 		}
 		// The mastery may not pass the character's level, nor the engine's
 		// own ceiling of MasteryLevelCap whichever comes first. The first

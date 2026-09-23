@@ -171,13 +171,14 @@ authored presentation instead:
   a scrolling grid of one row per skill group (`skillgroup.txt`), each holding that group's skills
   as cells (`skilldata_*.txt`, via `SkillDataReader`). Cell metrics are the client's own (8 columns
   pitched 36px from x=37). The window is server-driven (`set_skill_state`): a mastery's LEVEL UP
-  button spends skill points (capped 3×level total); each skill cell renders learned (colored icon
-  + `skl_level_tab` badge with the trained level) / learnable-next (icon + `skl_button_add` "+" →
-  learns the next level) / locked (`skl_mastery_disable`) / empty (`skl_mastery_nothing`), at the
-  grounded `ifskill_slot.txt` rects (icon 0,0,32,32; "+" 0,32,32,20; badge at 19,17). SP is earned
-  per kill (disclosed `SPFor` placeholder). **End-to-end as of v0.1.126:** casting a learned skill
-  plays its real cast animation (the `.ban` clip named after the skill's `Basic_Code`), the server
-  casts real skills on their real `ReuseDelay` cooldown, a learned skill goes on the hotbar
+  button spends skill points (total capped at a flat 330, round 483); each skill cell renders
+  learned (colored icon + `skl_level_tab` badge with the trained level) / learnable-next (icon +
+  `skl_button_add` "+" → learns the next level) / locked (`skl_mastery_disable`) / empty
+  (`skl_mastery_nothing`), at the grounded `ifskill_slot.txt` rects (icon 0,0,32,32; "+"
+  0,32,32,20; badge at 19,17). SP is earned per kill (disclosed `SPFor` placeholder).
+  **End-to-end as of v0.1.126:** casting a learned skill plays its real cast animation (the `.ban`
+  clip named after the skill's `Basic_Code`), the server casts real skills on their real
+  `ReuseDelay` cooldown, a learned skill goes on the hotbar
   (click it → underbar quickslot; the quickslot casts), and each skill lands its own hit effect
   (`skilleffect.txt` → the skill's hit `.efp`, layers recovered generically at runtime). The ONE
   substantive item left is **real skill damage** — a cast deals a plain attack (disclosed) because
