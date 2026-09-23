@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
@@ -255,9 +256,48 @@ func handleGuildCreate(ctx context.Context, sess *gateway.Session, p *proto.Pack
 		return sess.Send(&proto.Packet{Opcode: OpGuildCreateResult, Data: (&GuildResult{Error: errStr}).Encode()})
 	}
 
+	// The founder's pre-check, FUN_00514b20, is the first thing
+	// CGuildManager::HandleCreateGuild (0x00514ce0) does -- before its
+	// name-length test, and before the in-a-guild test that ends the same
+	// function -- so it runs ahead of guilds.Create, which holds both. See
+	// guild.CheckCreator for the ladder.
+	founder, err := chars.GetByID(ctx, characterID)
+	if err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpGuildCreateResult, Data: (&GuildResult{Error: "lookup failed"}).Encode()})
+	}
+	// Alive is HP > 0. The engine asks IGObj::GetLifeState (vtable +0xf8) for
+	// 1; srrevamp stores no life state, and a character at 0 HP is the one
+	// ApplyDamage reports as died.
+	if err := guild.CheckCreator(founder.HP > 0, founder.Level, founder.Gold); err != nil {
+		return sess.Send(&proto.Packet{Opcode: OpGuildCreateResult, Data: (&GuildResult{Error: guildErrorMessage(err)}).Encode()})
+	}
+
 	g, err := guilds.Create(ctx, req.GuildName, characterID, req.CharacterName)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpGuildCreateResult, Data: (&GuildResult{Error: guildErrorMessage(err)}).Encode()})
+	}
+
+	// Founding costs guild.CreateGoldRequired, taken once the guild exists:
+	// the engine spends it on the create job's reply (trs_sm_guildjob::
+	// FUN_005c8bf0 -> GObjPC::FUN_004e4140, OffsetGold(-500000)), after
+	// uniqueness is settled. See guild.CreateGoldRequired.
+	if err := chars.DeductGold(ctx, characterID, guild.CreateGoldRequired); err != nil {
+		// SRREVAMP'S OWN HANDLING, not the engine's. OffsetGold has no
+		// refusal path, but DeductGold can fail here if the gold was spent
+		// between the check above and now. Leaving the guild in place would
+		// found it for free, so it is taken down again: Leave disbands a guild
+		// whose last member goes (both stores). If a second character joined
+		// by id in that window, Leave hands it leadership instead of
+		// disbanding.
+		if _, _, lerr := guilds.Leave(ctx, characterID); lerr != nil {
+			slog.Warn("guild founded but neither paid for nor rolled back",
+				"character_id", characterID, "guild_id", g.ID, "deduct_err", err, "leave_err", lerr)
+		}
+		msg := guildErrorMessage(guild.ErrNotEnoughGold)
+		if !errors.Is(err, character.ErrInsufficientGold) {
+			msg = guildErrorMessage(err)
+		}
+		return sess.Send(&proto.Packet{Opcode: OpGuildCreateResult, Data: (&GuildResult{Error: msg}).Encode()})
 	}
 	result := &GuildResult{GuildID: g.ID, Name: g.Name, LeaderID: g.LeaderID, Members: guildMemberSnapshots(g.Members)}
 	return sess.Send(&proto.Packet{Opcode: OpGuildCreateResult, Data: result.Encode()})
@@ -304,6 +344,15 @@ func guildErrorMessage(err error) string {
 	case errors.Is(err, guild.ErrInvalidNameLength):
 		// 0x4c18 GUILDERR_INVALID_GUILDNAME_LEN; the range is guild.ValidName's.
 		return "guild name must be 2 to 12 characters"
+	case errors.Is(err, guild.ErrCreatorDead):
+		// 0x4c07 GUILDERR_IM_DEAD. Our wording; the client's text is not used.
+		return "cannot found a guild while dead"
+	case errors.Is(err, guild.ErrCreatorLevelTooLow):
+		// 0x4c0a GUILDERR_TOO_LOW_CREATOR_LEVEL.
+		return fmt.Sprintf("a guild founder must be at least level %d", guild.MinCreatorLevel)
+	case errors.Is(err, guild.ErrNotEnoughGold):
+		// 0x4c0c GUILDERR_NOT_ENOUGH_GOLD.
+		return fmt.Sprintf("founding a guild requires %d gold", guild.CreateGoldRequired)
 	case errors.Is(err, guild.ErrGuildNotFound):
 		return "no such guild"
 	case errors.Is(err, guild.ErrAlreadyInGuild):

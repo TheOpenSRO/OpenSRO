@@ -26158,3 +26158,106 @@ the all-of list was allowed. It passes with them restored.
 Behaviour change: a skill that requires a specific weapon or shield kind through
 `reqi` is refused with "wrong equipment for this skill" when the only matching
 item is broken. Before this round the cast went through.
+
+## Guild founder must be alive, level >= 20, and hold >= 500,000 gold; founding deducts 500,000 (FUN_00514b20 + GObjPC::FUN_004e4140) (round 487)
+
+Until this round, any character could found a guild for free. The engine refuses
+a founder who is dead, below level 20 or carrying less than 500,000 gold, and it
+charges the 500,000.
+
+**The check.** `CGuildManager::HandleCreateGuild` (`0x00514ce0`) calls
+`FUN_00514b20` first, before the name-length test that round 481 wired. The
+function is seven tests. `in_EAX` is the founder's `GObjPC`. Steps 2-4 are the new
+rules, re-read from `/var/tmp/decomp_server` this round:
+
+	cVar2 = (**(code **)(*in_EAX + 0xf8))();    if (cVar2 != '\x01') return 0x4c07;
+	bVar3 = (**(code **)(*in_EAX + 0x124))();   if (bVar3 < 0x14)    return 0x4c0a;
+	iVar1 = *(int *)(in_EAX[0xd] + 0x7c);
+	if ((iVar1 < 1) && ((iVar1 < 0 || (*(uint *)(in_EAX[0xd] + 0x78) < 500000)))) return 0x4c0c;
+
+Vtable `+0xf8` is `IGObj::GetLifeState` and `+0x124` is `IGObj::GetLevel`
+(`igobj_vtable.md`). The client names the codes (`error_codes.md:569-571`):
+`GUILDERR_IM_DEAD`, `GUILDERR_TOO_LOW_CREATOR_LEVEL` and
+`GUILDERR_NOT_ENOUGH_GOLD`. The gold is the 64-bit pair at `+0x78/+0x7c` of the
+`+0x34` object, the same place `CGuild::CheckLevelUpCost` (`0x005c6240`) reads
+it. The remaining steps are the character lock (`0x4c09`), `GetJobState != 4`
+(`0x4c57`), a pending `FindTimedJob(2,1)` (`0x4c3c`) and already-in-a-guild
+(`0x4c17`). The last of these was already enforced; the other three have nothing
+in srrevamp to test.
+
+**The deduction.** This item's first plan said founding costs nothing, and
+batch 1's implementer aborted it. The cost is real. It is taken on the create
+job's reply, not in the check. `FUN_005c5f90` sends job 0
+(`SendOlappedGuildJobReqToSM(pc, 0, 0)`). Case 0 of
+`trs_sm_guildjob::FUN_005c8990` is `trs_sm_guildjob::FUN_005c8bf0`, which reads
+the gold, calls `GObjPC::FUN_004e4140`, logs `"Gold: %I64d ==> %I64d"` (event
+`0x3d`) and sends `0xb0f0`, the create response. `srv.asm` shows
+`FUN_004e4140`'s argument pushes: `4e414e push 0xffffffff` / `4e4150 push
+0xfff85ee0` form the int64 -500,000, and `4e4157 call edx` goes through vtable
+`+0x16c`, which is `IGObj::OffsetGold`. `FUN_005c8bf0` is its only caller (`5c8c39
+call 0x4e4140`). `FUN_005d0e00` also holds a 500,000, but it is a different
+number with a different purpose: only `FUN_005c7900` calls it, after refusing a
+guild below level 4 (`0x4c52`).
+
+**What moved.**
+- `guild.go`: `MinCreatorLevel` (20), `CreateGoldRequired` (500,000),
+  `ErrCreatorDead`, `ErrCreatorLevelTooLow`, `ErrNotEnoughGold`, and
+  `CheckCreator(alive, level, gold)` in the engine's order. The comments quote
+  the ladder and the deduction.
+- `session.handleGuildCreate`: after `resolveCharacterID`, `chars.GetByID`, then
+  `guild.CheckCreator(HP > 0, Level, Gold)` before `guilds.Create`. HP > 0 stands
+  in for `GetLifeState == 1`, since srrevamp stores no life state. After `Create`
+  succeeds, `chars.DeductGold(CreateGoldRequired)`. If the deduction fails, the
+  handler calls `guilds.Leave` for the founder, which disbands a one-member
+  guild in both stores, and replies with the not-enough-gold message. This
+  rollback is srrevamp's own handling, because the engine's `OffsetGold` has no
+  refusal path. It is disclosed in the code and in `guild.md`, together with its
+  one window (a character joining by id before the rollback runs gets the
+  leadership instead).
+- `guildErrorMessage` has three new cases, in our own wording: `cannot found a
+  guild while dead`, `a guild founder must be at least level 20` and `founding a
+  guild requires 500000 gold`.
+- Client: `World3D._on_guild_create_result` re-requests the character's stats
+  after a successful create, the same way a shop buy refreshes the purse. The
+  server pushes no gold update for either.
+- `docs/protocol/guild.md` has a new section, "Founding a guild — `FUN_00514b20`
+  (round 487)", with the eight-step table and what srrevamp enforces. The Opcodes
+  note now names `FUN_005c8bf0` as the success-path sender of `0xb0f0`.
+  `SYSTEMS.md`'s Guild row anchors on `CheckCreator` and `CreateGoldRequired`.
+
+**Tests.**
+- `guild.TestCheckCreator` pins 20 and 500,000 and checks eight cases:
+  (true,20,500000) nil, (true,19,500000) level, (true,20,499999) gold,
+  (true,99,1<<40) nil, (false,1,0) dead, (false,99,1<<40) dead, (true,19,0) level
+  and (true,20,-1) gold.
+- `session.TestGuildCreateRequiresLevelAndGold` sends `OpGuildCreate` through
+  `LoginHandler` + `GuildHandler` over memory stores:
+  - A fresh level-1 character with 1,000 gold gets the level message.
+  - At level 20 it gets the gold message.
+  - At 499,999 gold it gets the gold message.
+  - At 500,000 it founds the guild and is left with 0.
+  - A level-19 character with 500,000 gets the level message.
+  - A level-20 character with 500,000 at 0 HP gets the dead message.
+  - A founder with 1,234,567 is left with 734,567.
+  - Every refusal leaves the character guildless and its gold untouched.
+- `session.TestGuildCreateRollsBackWhenGoldCannotBeTaken` wraps the character
+  store in a test-only type whose `DeductGold` fails. The founder ends
+  guildless, with its gold untouched, gets the not-enough-gold reply, and the
+  name is free again.
+- `TestGuildFullFlow`, `TestGuildInfoFlow` and
+  `TestGuildCreateRejectsBadNameLength` now qualify their founder first
+  (`qualifyFounder`: level 20 and +500,000 gold).
+
+Negative cases:
+- With `session/guild.go` stashed, both new session tests fail. The level-1
+  founder gets guild 1, and the rollback test's founder also gets guild 1.
+- With only the `DeductGold` call mutated out, the 500,000 founder keeps 500,000.
+- With `guild.go` also stashed, the tests do not compile.
+
+`go test -count=1 -p 1 ./...` is green. On the render box,
+`client/tools/remote_godot.sh check` loaded 239 scripts and 5 scenes ("ALL
+LOAD"), and `remote_godot.sh tests` ran 77 suites with 0 failing.
+
+Behaviour change: a character below level 20, a dead character, or one carrying
+less than 500,000 gold can no longer found a guild, and the guild tab shows the
+reason. Founding a guild now costs 500,000 gold.

@@ -156,6 +156,89 @@ func ValidName(name string) bool {
 // GUILDERR_INVALID_GUILDNAME_LEN.
 var ErrInvalidNameLength = errors.New("guild: name must be 2 to 12 characters")
 
+// Who may found a guild. **RECOVERED, round 487**, from FUN_00514b20: the
+// pre-check CGuildManager::HandleCreateGuild (0x00514ce0) calls first, before
+// it reads the name. in_EAX is the founder's GObjPC; the whole ladder, in the
+// engine's order:
+//
+//	if (*(char *)(in_EAX[0xc] + 4) == '\x01') return 0x4c09;   // char lock
+//	if ((*in_EAX + 0xf8)() != '\x01')         return 0x4c07;   // GUILDERR_IM_DEAD
+//	if ((*in_EAX + 0x124)() < 0x14)           return 0x4c0a;   // GUILDERR_TOO_LOW_CREATOR_LEVEL
+//	iVar1 = *(int *)(in_EAX[0xd] + 0x7c);
+//	if ((iVar1 < 1) && ((iVar1 < 0 ||
+//	    (*(uint *)(in_EAX[0xd] + 0x78) < 500000)))) return 0x4c0c; // GUILDERR_NOT_ENOUGH_GOLD
+//	if ((*in_EAX + 0x11c)() != '\x04')        return 0x4c57;   // UIIT_CTL_GUILD_CREATE_JOB_ERROR
+//	if (GObjPC::FindTimedJob(2,1) != 0)       return 0x4c3c;   // GUILDWARERR_GUILD_CREATE_PENALTY
+//	return (-(uint)(in_EAX[0x72f] != 0) & 0x4c16) + 1;       // 0x4c17 MEMBER_OF_ANOTHER_GUILD, else 1
+//
+// Vtable +0xf8 is IGObj::GetLifeState, +0x124 IGObj::GetLevel and +0x11c
+// IGObj::GetJobState (docs/protocol/igobj_vtable.md); the codes' names are the
+// client's (docs/protocol/error_codes.md). CheckCreator is steps 2-4. The last
+// step is the stores' ErrAlreadyInGuild. Steps 1, 5 and 6 are not modelled:
+// srrevamp's character mutations are synchronous, so there is no lock to hold
+// (docs/protocol/char_lock.md, "For srrevamp"), and it has no job state and no
+// guild-war penalty timer.
+const (
+	// MinCreatorLevel is the `bVar3 < 0x14` -> 0x4c0a test: a founder must be
+	// level 20 or above.
+	MinCreatorLevel = 20
+
+	// CreateGoldRequired is the 500000 FUN_00514b20 compares the founder's
+	// 64-bit gold against -- in_EAX[0xd]+0x78 low, +0x7c high, the same +0x34
+	// object CGuild::CheckLevelUpCost (0x005c6240) reads a character's gold
+	// from -- refusing with 0x4c0c when it is less.
+	//
+	// It is ALSO WHAT FOUNDING COSTS. The check does not spend it: the create
+	// job (FUN_005c5f90 -> SendOlappedGuildJobReqToSM(pc, 0, 0)) goes out, and
+	// its reply, case 0 of trs_sm_guildjob::FUN_005c8990, is
+	// trs_sm_guildjob::FUN_005c8bf0. That reads the gold at +0x78/+0x7c, calls
+	// GObjPC::FUN_004e4140, logs "Gold: %I64d ==> %I64d" under event 0x3d and
+	// sends 0xb0f0, the guild-create response. FUN_004e4140 is the deduction,
+	// and FUN_005c8bf0 is its only caller:
+	//
+	//	4e4148  push 0x0
+	//	4e414a  push 0x1
+	//	4e414c  push 0x4
+	//	4e414e  push 0xffffffff        ; high dword
+	//	4e4150  push 0xfff85ee0        ; low dword: the int64 is -500000
+	//	4e4157  call [vtable+0x16c]    ; IGObj::OffsetGold
+	//
+	// then IGObj::BackupData(0x80, 0) through +0x274. So the gold is taken
+	// after the guild exists, once uniqueness is settled -- the order
+	// session.handleGuildCreate keeps.
+	//
+	// Not to be confused with FUN_005d0e00's 500000, which FUN_005c7900 reads
+	// only after refusing a guild below level 4 (0x4c52): a guild service, not
+	// creation.
+	CreateGoldRequired int64 = 500_000
+)
+
+// The three refusals CheckCreator can return, named by the client
+// (docs/protocol/error_codes.md).
+var (
+	// ErrCreatorDead is 0x4c07 UIIT_MSG_GUILDERR_IM_DEAD.
+	ErrCreatorDead = errors.New("guild: a dead character cannot found a guild")
+	// ErrCreatorLevelTooLow is 0x4c0a UIIT_MSG_GUILDERR_TOO_LOW_CREATOR_LEVEL.
+	ErrCreatorLevelTooLow = errors.New("guild: founder is below the minimum level")
+	// ErrNotEnoughGold is 0x4c0c UIIT_MSG_GUILDERR_NOT_ENOUGH_GOLD.
+	ErrNotEnoughGold = errors.New("guild: not enough gold to found a guild")
+)
+
+// CheckCreator is FUN_00514b20's steps 2 to 4, in its order: alive, then level,
+// then gold. alive is the caller's reading of IGObj::GetLifeState == 1.
+func CheckCreator(alive bool, level int, gold int64) error {
+	if !alive {
+		return ErrCreatorDead
+	}
+	if level < MinCreatorLevel {
+		return ErrCreatorLevelTooLow
+	}
+	if gold < CreateGoldRequired {
+		return ErrNotEnoughGold
+	}
+	return nil
+}
+
 // MaxLevel is 5, and the check is `cmp al,0x5; jb` in the level-up handler
 // (FUN_005c63d0): a guild at level 5 is refused with
 // ERROR_GUILD_LEVEL_UP_FULL (0x4c21).

@@ -1086,7 +1086,7 @@ func _ready() -> void:
 	NetClient.party_member_left.connect(_on_party_member_left)
 	NetClient.party_info_result.connect(_on_party_result)
 
-	NetClient.guild_create_result.connect(_on_guild_result)
+	NetClient.guild_create_result.connect(_on_guild_create_result)
 	NetClient.guild_join_result.connect(_on_guild_result)
 	NetClient.guild_leave_result.connect(_on_guild_leave_result)
 	NetClient.guild_info_result.connect(_on_guild_result)
@@ -9111,6 +9111,15 @@ func _on_guild_result(result: GuildNet.Result) -> void:
 		return
 	guild_status_label.text = "%s (#%d, %d member(s))." % [result.guild_name, result.guild_id, result.members.size()]
 	_refresh_guild_list(result)
+
+## Founding a guild costs 500,000 gold on the server (round 487: the create
+## job's reply, trs_sm_guildjob::FUN_005c8bf0 -> GObjPC::FUN_004e4140), which
+## pushes no gold update, so a success re-reads the purse the way a shop buy
+## does -- the HUD's gold readout follows character_stats_result.
+func _on_guild_create_result(result: GuildNet.Result) -> void:
+	_on_guild_result(result)
+	if result != null and result.error == "" and result.guild_id != 0:
+		_request_world_stats()
 
 func _on_guild_create_pressed() -> void:
 	var guild_name := guild_name_input.text.strip_edges()

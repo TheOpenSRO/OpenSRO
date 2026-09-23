@@ -197,3 +197,34 @@ func TestGuildPointsAccumulateFromSkillPoints(t *testing.T) {
 		t.Fatalf("nothing earned, nothing booked: %d / %d", got, acc.Pending())
 	}
 }
+
+// TestCheckCreator pins FUN_00514b20's founder ladder: level 20 (`bVar3 < 0x14`
+// -> 0x4c0a), 500,000 gold (64-bit, `< 500000` -> 0x4c0c), and the engine's
+// order -- dead before level, level before gold.
+func TestCheckCreator(t *testing.T) {
+	if MinCreatorLevel != 20 {
+		t.Errorf("MinCreatorLevel = %d, want 20 (FUN_00514b20: bVar3 < 0x14 -> 0x4c0a)", MinCreatorLevel)
+	}
+	if CreateGoldRequired != 500_000 {
+		t.Errorf("CreateGoldRequired = %d, want 500000 (FUN_00514b20 -> 0x4c0c; FUN_004e4140 pushes 0xfff85ee0)", CreateGoldRequired)
+	}
+	for _, tc := range []struct {
+		alive bool
+		level int
+		gold  int64
+		want  error
+	}{
+		{true, 20, 500_000, nil},
+		{true, 19, 500_000, ErrCreatorLevelTooLow},
+		{true, 20, 499_999, ErrNotEnoughGold},
+		{true, 99, 1 << 40, nil},
+		{false, 1, 0, ErrCreatorDead},
+		{false, 99, 1 << 40, ErrCreatorDead},
+		{true, 19, 0, ErrCreatorLevelTooLow},
+		{true, 20, -1, ErrNotEnoughGold},
+	} {
+		if got := CheckCreator(tc.alive, tc.level, tc.gold); !errors.Is(got, tc.want) {
+			t.Errorf("CheckCreator(%v, %d, %d) = %v, want %v", tc.alive, tc.level, tc.gold, got, tc.want)
+		}
+	}
+}

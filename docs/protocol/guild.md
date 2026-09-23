@@ -50,6 +50,83 @@ a `char` string), so it counts bytes in the client's codepage; Go's `len()`
 counts UTF-8 bytes, which is what srrevamp's client sends. ASCII names agree;
 a non-ASCII name can be refused here that the engine would accept.
 
+## Founding a guild — `FUN_00514b20` (round 487)
+
+`CGuildManager::HandleCreateGuild` (`0x00514ce0`) calls `FUN_00514b20` before
+it reads the name, and goes on to the length test only when it answers 1.
+`in_EAX` is the founder's `GObjPC`. The whole function is seven tests, and the
+create job's reply adds an eighth step, the payment:
+
+| step | engine test | refusal | srrevamp |
+|---|---|---|---|
+| 1 | `*(char *)(in_EAX[0xc] + 4) == 1`, the character lock | `0x4c09`, not in the client's message table | not modelled: no lock to hold (`char_lock.md`, "For srrevamp") |
+| 2 | vtable `+0xf8` `IGObj::GetLifeState` `!= 1` | `0x4c07` `GUILDERR_IM_DEAD` | **enforced**, with HP ≤ 0 standing in for dead |
+| 3 | vtable `+0x124` `IGObj::GetLevel` `< 0x14` | `0x4c0a` `GUILDERR_TOO_LOW_CREATOR_LEVEL` | **enforced**: `guild.MinCreatorLevel` = 20 |
+| 4 | 64-bit gold at `in_EAX[0xd] + 0x78/+0x7c` `< 500000` | `0x4c0c` `GUILDERR_NOT_ENOUGH_GOLD` | **enforced**: `guild.CreateGoldRequired` = 500,000 |
+| 5 | vtable `+0x11c` `IGObj::GetJobState` `!= 4` | `0x4c57` `UIIT_CTL_GUILD_CREATE_JOB_ERROR` | not modelled: srrevamp has no job state |
+| 6 | `GObjPC::FindTimedJob(2,1)` finds one | `0x4c3c` `GUILDWARERR_GUILD_CREATE_PENALTY` | not modelled: srrevamp has no penalty timer |
+| 7 | `in_EAX[0x72f] != 0`, already in a guild | `0x4c17` `GUILDERR_MEMBER_OF_ANOTHER_GUILD` | **enforced** already: the stores' `ErrAlreadyInGuild` |
+| 8 | the create job's reply spends 500,000 | none | **enforced**: `DeductGold` after `Create` |
+
+The gold test is a 64-bit compare written in halves:
+
+	iVar1 = *(int *)(in_EAX[0xd] + 0x7c);
+	if ((iVar1 < 1) && ((iVar1 < 0 || (*(uint *)(in_EAX[0xd] + 0x78) < 500000))))
+	    return 0x4c0c;
+
+That is the same `+0x34` object (`in_EAX[0xd]`) and the same `+0x78/+0x7c` pair
+that `CGuild::CheckLevelUpCost` (`0x005c6240`) reads gold from (see "Gold is
+64-bit" below).
+
+**The check does not spend the gold. The create job's reply does.** When the
+handler's length test passes, `FUN_005c5f90` logs `"Name: %s (CurGold: %I64d)"`
+and calls `SendOlappedGuildJobReqToSM(pc, 0, 0)`. Job 0's reply is case 0 of
+`trs_sm_guildjob::FUN_005c8990`, which is `trs_sm_guildjob::FUN_005c8bf0`. That
+function reads the gold at `+0x78/+0x7c`, calls `GObjPC::FUN_004e4140`, logs
+`"Gold: %I64d ==> %I64d"` under event `0x3d`, and sends `0xb0f0`, the
+guild-create response. `FUN_004e4140` is two virtual calls, and `FUN_005c8bf0`
+is its only caller (`srv.asm`, `5c8c39 call 0x4e4140`):
+
+	4e4148  push 0x0
+	4e414a  push 0x1
+	4e414c  push 0x4
+	4e414e  push 0xffffffff        ; high dword
+	4e4150  push 0xfff85ee0        ; low dword: together, int64 -500000
+	4e4157  call [vtable+0x16c]    ; IGObj::OffsetGold
+	...     call [vtable+0x274]    ; IGObj::BackupData(0x80, 0)
+
+So founding **costs** 500,000. The gold is taken on the reply to the same job
+that settles the name's uniqueness (see above), so only a guild that was
+actually created is paid for. `OffsetGold`'s other three arguments (`4, 1, 0`)
+are not interpreted here.
+
+The other 500,000 in the guild module is `FUN_005d0e00`'s. It belongs to
+`FUN_005c7900`, which refuses a guild below level 4 (`0x4c52`) before calling it.
+That is a guild service, not founding.
+
+**What srrevamp does.** `session.handleGuildCreate` reads the founder and calls
+`guild.CheckCreator(HP > 0, Level, Gold)` before `guilds.Create`. That call covers
+steps 2 to 4, in the engine's order. `guilds.Create` then covers step 7 and the
+length test. After `Create` succeeds, the handler takes
+`guild.CreateGoldRequired` with `DeductGold`. The replies use our own wording:
+`cannot found a guild while dead`,
+`a guild founder must be at least level 20` and
+`founding a guild requires 500000 gold`.
+
+**srrevamp's own handling, not the engine's: the rollback.** The engine's
+`OffsetGold` has no refusal path. srrevamp's `DeductGold` does: it fails if the
+gold was spent between the check and the deduction. A guild left standing then
+would have been founded for free. So the handler calls `guilds.Leave` for the
+founder, which disbands a guild once its last member leaves, in both stores. It
+then replies with the not-enough-gold message. There is one window: a second
+character could join the new guild by id before the rollback runs, and then
+`Leave` hands that character the leadership instead of disbanding.
+
+**The client's purse.** The server sends no gold update, just as it sends none
+after a shop buy. The client re-reads the character's stats when a create
+succeeds (`World3D._on_guild_create_result`), the same way the shop window does
+after a purchase.
+
 ## Levelling up — `FUN_005c63d0`, cost in `FUN_005c6240`
 
 	if (!IsAlive())          -> 0x4c07  GUILDERR_IM_DEAD
@@ -165,8 +242,10 @@ an absence of evidence rather than evidence of absence.
 
 ## Opcodes
 
-`0xb0f0` is the guild-create response (`FUN_00514ce0` sends it on both the
-penalty path and the length-refusal path).
+`0xb0f0` is the guild-create response. `FUN_00514ce0` sends it on the penalty
+path and the length-refusal path. `trs_sm_guildjob::FUN_005c8bf0` sends it on
+success, once the create job has answered and the 500,000 has been taken (round
+487, "Founding a guild" above).
 
 ## Alliances (unions) — RECOVERED 2026-09-17
 

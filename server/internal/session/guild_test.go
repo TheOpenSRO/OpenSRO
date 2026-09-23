@@ -3,6 +3,8 @@ package session
 import (
 	"bufio"
 	"context"
+	"errors"
+	"fmt"
 	"net"
 	"os"
 	"strings"
@@ -34,6 +36,20 @@ func openTestGuildStore(t *testing.T) *guild.SQLStore {
 	}
 	t.Cleanup(func() { s.Close() })
 	return s
+}
+
+// qualifyFounder lifts a character to what FUN_00514b20 asks of a guild
+// founder: guild.MinCreatorLevel, and guild.CreateGoldRequired on top of the
+// gold it already carries, so founding leaves it where it started.
+func qualifyFounder(t *testing.T, chars *character.MemStore, c *character.Character) {
+	t.Helper()
+	ctx := context.Background()
+	if err := chars.SetLeveling(ctx, c.ID, guild.MinCreatorLevel, 0, c.StatPoints, c.Str, c.Int); err != nil {
+		t.Fatalf("SetLeveling(%s): %v", c.Name, err)
+	}
+	if err := chars.AddGold(ctx, c.ID, guild.CreateGoldRequired); err != nil {
+		t.Fatalf("AddGold(%s): %v", c.Name, err)
+	}
 }
 
 func TestGuildResultRoundTrip(t *testing.T) {
@@ -99,8 +115,9 @@ func TestGuildFullFlow(t *testing.T) {
 	accounts.Add("alice", "hunter2")
 	accounts.Add("bob", "hunter3")
 	chars := character.NewMemStore()
-	chars.Create(ctx, 1, "Aria")
+	aria, _ := chars.Create(ctx, 1, "Aria")
 	chars.Create(ctx, 2, "Bram")
+	qualifyFounder(t, chars, aria)
 
 	guilds := openTestGuildStore(t)
 	handle := gateway.Chain(LoginHandler(accounts), GuildHandler(chars, guilds))
@@ -174,7 +191,8 @@ func TestGuildInfoFlow(t *testing.T) {
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")
 	chars := character.NewMemStore()
-	chars.Create(ctx, 1, "Aria")
+	aria, _ := chars.Create(ctx, 1, "Aria")
+	qualifyFounder(t, chars, aria)
 
 	guilds := openTestGuildStore(t)
 	handle := gateway.Chain(LoginHandler(accounts), GuildHandler(chars, guilds))
@@ -231,7 +249,9 @@ func TestGuildCreateRejectsBadNameLength(t *testing.T) {
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")
 	chars := character.NewMemStore()
-	chars.Create(ctx, 1, "Aria")
+	aria, _ := chars.Create(ctx, 1, "Aria")
+	// A founder who passes FUN_00514b20, so the length test is what answers.
+	qualifyFounder(t, chars, aria)
 
 	handle := gateway.Chain(LoginHandler(accounts), GuildHandler(chars, guild.NewMemStore()))
 	addr, cleanup := startTestServer(t, handle)
@@ -274,5 +294,177 @@ func TestGuildCreateRejectsBadNameLength(t *testing.T) {
 	gr, err := DecodeGuildResult(resp.Data)
 	if err != nil || gr.Error != "" || gr.GuildID == 0 {
 		t.Fatalf("create with a 12-byte name failed: err=%v result=%+v", err, gr)
+	}
+}
+
+// TestGuildCreateRequiresLevelAndGold drives OpGuildCreate through the real
+// handler stack against FUN_00514b20's founder ladder -- alive (0x4c07), level
+// 20 (0x4c0a), 500,000 gold (0x4c0c), in that order -- and the 500,000 the
+// create job's reply then takes (trs_sm_guildjob::FUN_005c8bf0 ->
+// GObjPC::FUN_004e4140, OffsetGold(-500000)).
+func TestGuildCreateRequiresLevelAndGold(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	aria, _ := chars.Create(ctx, 1, "Aria")
+	bram, _ := chars.Create(ctx, 1, "Bram")
+	cyra, _ := chars.Create(ctx, 1, "Cyra")
+	guilds := guild.NewMemStore()
+
+	handle := gateway.Chain(LoginHandler(accounts), GuildHandler(chars, guilds))
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+
+	resp := doSend(t, conn, r, OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+
+	found := func(who, name string) *GuildResult {
+		t.Helper()
+		resp := doSend(t, conn, r, OpGuildCreate, (&GuildCreateRequest{CharacterName: who, GuildName: name}).Encode())
+		gr, err := DecodeGuildResult(resp.Data)
+		if err != nil {
+			t.Fatalf("DecodeGuildResult: %v", err)
+		}
+		return gr
+	}
+	gold := func(c *character.Character) int64 {
+		t.Helper()
+		now, err := chars.GetByID(ctx, c.ID)
+		if err != nil {
+			t.Fatalf("GetByID(%s): %v", c.Name, err)
+		}
+		return now.Gold
+	}
+	refused := func(step string, c *character.Character, name, want string, wantGold int64) {
+		t.Helper()
+		gr := found(c.Name, name)
+		if gr.Error != want || gr.GuildID != 0 {
+			t.Fatalf("%s: %s founding %q got %+v, want error %q and no guild", step, c.Name, name, gr, want)
+		}
+		if _, err := guilds.GetByCharacter(ctx, c.ID); !errors.Is(err, guild.ErrNotInGuild) {
+			t.Fatalf("%s: %s is in a guild after a refusal (err=%v)", step, c.Name, err)
+		}
+		if g := gold(c); g != wantGold {
+			t.Fatalf("%s: %s has %d gold after a refusal, want %d untouched", step, c.Name, g, wantGold)
+		}
+	}
+	accepted := func(step string, c *character.Character, name string, wantGold int64) {
+		t.Helper()
+		gr := found(c.Name, name)
+		if gr.Error != "" || gr.GuildID == 0 || gr.LeaderID != c.ID {
+			t.Fatalf("%s: %s founding %q got %+v, want a guild led by it", step, c.Name, name, gr)
+		}
+		if g := gold(c); g != wantGold {
+			t.Fatalf("%s: %s has %d gold after founding, want %d", step, c.Name, g, wantGold)
+		}
+	}
+	setLevel := func(c *character.Character, level int) {
+		t.Helper()
+		if err := chars.SetLeveling(ctx, c.ID, level, 0, c.StatPoints, c.Str, c.Int); err != nil {
+			t.Fatalf("SetLeveling(%s, %d): %v", c.Name, level, err)
+		}
+	}
+	addGold := func(c *character.Character, n int64) {
+		t.Helper()
+		if err := chars.AddGold(ctx, c.ID, n); err != nil {
+			t.Fatalf("AddGold(%s, %d): %v", c.Name, n, err)
+		}
+	}
+
+	levelMsg := fmt.Sprintf("a guild founder must be at least level %d", guild.MinCreatorLevel)
+	goldMsg := fmt.Sprintf("founding a guild requires %d gold", guild.CreateGoldRequired)
+	const deadMsg = "cannot found a guild while dead"
+
+	if aria.Level != 1 || aria.Gold != 1000 {
+		t.Fatalf("fixture: a fresh character is level %d with %d gold, want level 1 with 1000", aria.Level, aria.Gold)
+	}
+
+	// 1. Level 1 with 1,000 gold: the level refusal, which comes before gold.
+	refused("level 1", aria, "Silk Legion", levelMsg, 1000)
+	// 2. Level 20, still 1,000 gold.
+	setLevel(aria, 20)
+	refused("level 20, 1000 gold", aria, "Silk Legion", goldMsg, 1000)
+	// 3. One short: 499,999.
+	addGold(aria, 498_999)
+	refused("499999 gold", aria, "Silk Legion", goldMsg, 499_999)
+	// 4. Exactly 500,000 founds it, and founding spends all of it.
+	addGold(aria, 1)
+	accepted("500000 gold", aria, "Silk Legion", 0)
+
+	// 5. Level 19 with 500,000: level, not gold.
+	setLevel(bram, 19)
+	addGold(bram, 499_000)
+	refused("level 19", bram, "Iron Vow", levelMsg, 500_000)
+
+	// 6. Level 20 with 500,000 but dead: dead is asked first.
+	setLevel(cyra, 20)
+	addGold(cyra, 499_000)
+	if _, died, err := chars.ApplyDamage(ctx, cyra.ID, 1<<30); err != nil || !died {
+		t.Fatalf("ApplyDamage(Cyra): died=%v err=%v", died, err)
+	}
+	refused("dead", cyra, "Ash Court", deadMsg, 500_000)
+
+	// 7. A richer founder keeps the change: 1,234,567 - 500,000.
+	setLevel(bram, 20)
+	addGold(bram, 734_567)
+	accepted("1234567 gold", bram, "Iron Vow", 734_567)
+}
+
+// spentGoldStore is a character store whose DeductGold always fails the way
+// it would if the founder's gold had been spent between the handler's check
+// and the deduction. Test-only: nothing in production has this seam.
+type spentGoldStore struct{ *character.MemStore }
+
+func (spentGoldStore) DeductGold(context.Context, int64, int64) error {
+	return character.ErrInsufficientGold
+}
+
+// TestGuildCreateRollsBackWhenGoldCannotBeTaken covers srrevamp's own handling
+// of a deduction that fails after the guild exists (the engine's OffsetGold has
+// no refusal path): the founder is left guildless, the name is free again, the
+// gold is untouched and the reply is the not-enough-gold message.
+func TestGuildCreateRollsBackWhenGoldCannotBeTaken(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	aria, _ := chars.Create(ctx, 1, "Aria")
+	qualifyFounder(t, chars, aria)
+	guilds := guild.NewMemStore()
+
+	handle := gateway.Chain(LoginHandler(accounts), GuildHandler(spentGoldStore{chars}, guilds))
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+
+	resp := doSend(t, conn, r, OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+
+	resp = doSend(t, conn, r, OpGuildCreate, (&GuildCreateRequest{CharacterName: "Aria", GuildName: "Silk Legion"}).Encode())
+	gr, err := DecodeGuildResult(resp.Data)
+	if err != nil {
+		t.Fatalf("DecodeGuildResult: %v", err)
+	}
+	if want := fmt.Sprintf("founding a guild requires %d gold", guild.CreateGoldRequired); gr.Error != want || gr.GuildID != 0 {
+		t.Fatalf("got %+v, want error %q and no guild", gr, want)
+	}
+	if _, err := guilds.GetByCharacter(ctx, aria.ID); !errors.Is(err, guild.ErrNotInGuild) {
+		t.Fatalf("Aria is still in a guild after the rollback (err=%v)", err)
+	}
+	if now, _ := chars.GetByID(ctx, aria.ID); now.Gold != character.StartingGold+guild.CreateGoldRequired {
+		t.Fatalf("Aria has %d gold, want %d untouched", now.Gold, character.StartingGold+guild.CreateGoldRequired)
+	}
+	if _, err := guilds.Create(ctx, "Silk Legion", 99, "Other"); err != nil {
+		t.Fatalf("the rolled-back guild's name is still taken: %v", err)
 	}
 }
