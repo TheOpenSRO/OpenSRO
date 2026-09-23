@@ -85,6 +85,12 @@ var itemCSVColumns = []string{
 	// non-armour row carries anyway -- the pair is the exact complement of
 	// BlockRatio, and no retail row has both.
 	"ParryRatioMin", "ParryRatioMax",
+	// Appended later still (round 489): CanUse, itemdata column 24, the
+	// capability bit Item_HandleUseItem refuses on (0x183e). A strict suffix;
+	// an older export has no value for it and loads every item as USABLE --
+	// the same permission default as CanTrade/CanSell/CanDrop, for the same
+	// reason (see parseItemRow).
+	"CanUse",
 }
 
 // ItemCSVColumnCount is how many columns LoadItemsCSV currently knows. Every
@@ -328,6 +334,14 @@ func parseItemRow(f []string) (Item, error) {
 			it.ParryRatioMin = parseFloat(f[66])
 			it.ParryRatioMax = parseFloat(f[67])
 		}
+	}
+	// CanUse (round 489), a permission like the three flags above and
+	// defaulted the same way: an export older than column 68 must not load
+	// every potion as unusable. Outside the block above, so the default holds
+	// whatever the row's width.
+	it.CanUse = true
+	if len(f) > 68 {
+		it.CanUse = parseBool(f[68])
 	}
 
 	if err != nil {

@@ -13,6 +13,36 @@ already refuses on `CanSell`. The answer had reached the code and never reached
 this file — and round 459 believed the header, concluded "the column hunt stays
 open", and went looking for something already found.
 
+**What srrevamp carries and enforces (round 489).**
+
+| flag | itemdata column | carried as | enforced by |
+|---|---:|---|---|
+| `CanTrade` | 16 | `refdata.Item.CanTrade` | trade offer and trade commit (`0x183a`, round 482) |
+| `CanSell` | 17 | `refdata.Item.CanSell` | `shop.Sell` |
+| `CanDrop` | 19 *(see below)* | `refdata.Item.CanDrop` | nothing: srrevamp has no drop-from-bag path |
+| `CanUse` | 24 | `refdata.Item.CanUse` | `session.UseItemHandler` (`0x183e`, round 489) |
+
+`CanUse` is the bit `Item_HandleUseItem` (`0x00510980`) asks about first:
+vtable slot `0xe0` (slot 56, `IGObj::CanUse`) returning zero sets `0x183e
+UIIT_MSG_STRGERR_CANNOT_BE_USED` before the TID match and the reuse delay are
+read. All seven `CGItem*` vtables (`CGItem`, `CGItemEquip`, `CGItemExpendable`,
+`CGItemStorage`, `CGItemContainer`, `CGItemCOSSummoner`,
+`CGItemMonsterCapsule`) hold `CGObj::CanUse` (`0x00483ee0`, `refobj+0x8c >> 8 &
+1`) in that slot, checked through their RTTI locators. Column 24 is round 460's
+anchoring below, re-measured for round 489: the column is non-zero on 99 of 99
+HP/MP potion rows (TypeID 3/3/1). It is zero on every equipment row except the 28
+cash-shop avatars (3/1/14), and zero on every elixir (3/3/10) and alchemy
+material or stone (3/3/11) row. It holds `0/1/129`, so the exporter emits it as
+`c != 0`. The CSV loader and the SQL store default it to usable for an export that
+predates the column.
+
+**`CanDrop`'s column is not settled, and this header said 20 when the code reads
+19.** `export-refdata`'s `fCanDrop` is 19 and takes bit 0 of it. Round 460's table
+below puts `CanDrop` at 20, the `0/1/3` column, and puts the `& 0x80`/`& 0x40`
+field at 19. The two readings disagree on 7,997 of 21,552 rows of the combined
+itemdata. Nothing in the server reads `CanDrop` yet, so the disagreement changes
+no behaviour today. It needs settling before anything does.
+
 ## How it was found
 
 `CGStorage`'s trade-offer handler (`0x00526910`) refuses with `0x183a
@@ -305,6 +335,12 @@ Applying the arithmetic to the nine capability reads gives:
 | 22 | 7 | `CanRevive` | 0/1 |
 | 23 | 8 | `CanUse` | 0/1 |
 | 24 | 9 | `CanThrow` | 0/1 |
+
+**Superseded from column 18 on by round 460's table** ("The columns, anchored
+against real data", below), which moves each of these one column right. For
+`CanUse` the data decides it. Every HP potion reads 0 in column 23 and 1 in
+column 24. A potion is the item most plainly usable, so column 24 is `CanUse` and
+column 23 is not. srrevamp reads 24 (round 489).
 
 Column 19 is the tell that the mapping is right rather than merely plausible: the
 flags expression extracts **two separate bits** from that slot

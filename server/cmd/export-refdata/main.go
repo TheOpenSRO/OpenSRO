@@ -225,9 +225,27 @@ const (
 	// docs/protocol/item_capability_flags.md. fCanDrop is a BITMASK column
 	// (255/128/223/192 in real data); the engine takes its bit 0, so the
 	// exporter emits that bit rather than the raw byte.
-	fCanTrade       = 16
-	fCanSell        = 17
-	fCanDrop        = 19
+	fCanTrade = 16
+	fCanSell  = 17
+	fCanDrop  = 19
+	// fCanUse is flags bit 8, the one Item_HandleUseItem (0x00510980) asks
+	// about before anything else it checks on the item: `(**(code **)(*item +
+	// 0xe0))()` -- vtable slot 56, IGObj::CanUse (docs/protocol/igobj_vtable.md)
+	// -- and a zero refuses the use with 0x183e UIIT_MSG_STRGERR_CANNOT_BE_USED
+	// (docs/protocol/error_codes.md). Every CGItem* vtable holds CGObj::CanUse
+	// (0x00483ee0) there, which reads `refobj+0x8c >> 8 & 1`, and
+	// RefObjCommon_ExtractData (0x006a3090) sets that bit as `-(cVar1 != 0) &
+	// 0x100`: any non-zero byte is permission.
+	//
+	// Column 24 is round 460's table in docs/protocol/item_capability_flags.md
+	// ("The columns, anchored against real data"), confirmed there by meaning
+	// -- 0 on every armour row, non-zero only among consumables. Re-measured
+	// for round 489 over itemdata_all: the column holds 0/1/129; it is non-zero
+	// on 99 of 99 HP/MP potion rows (TypeID 3/3/1) and zero on every equipment
+	// row but the 28 cash-shop avatars (3/1/14). Column 23, where the same
+	// file's older read-count table put CanUse, reads 0 on the HP potions, so
+	// it cannot be the bit a potion is used through.
+	fCanUse         = 24
 	fTwoHanded      = 93
 	fPhysDefenseMin = 65
 	fBlockRatio     = 74 // shields only -- see fParryRatio
@@ -588,7 +606,25 @@ func itemRecord(cols []string) ([]string, bool) {
 		// attack and reinforce pairs follow.
 		num(fParryRatio),     // 66 ParryRatioMin (body armour only)
 		num(fParryRatio + 1), // 67 ParryRatioMax
+		// 68: CanUse, flags bit 8 (round 489, see fCanUse). The parser keeps
+		// only whether the byte is non-zero, and the column really holds 129
+		// on some rows, so it is emitted as 0/1 like CanDrop's bit.
+		nonZero(get(fCanUse)), // 68 CanUse (col 24)
 	}, true
+}
+
+// nonZero emits a flag column the way RefObjCommon_ExtractData (0x006a3090)
+// folds it into the flags word, `-(c != 0) & bit`: "1" for any non-zero
+// value, "0" for zero or anything that is not a number. It exists because
+// such columns are not always 0/1 -- CanUse (column 24) holds 129 on 213
+// retail rows -- and a consumer reading the raw byte as a boolean would have
+// to repeat the rule.
+func nonZero(s string) string {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n == 0 {
+		return "0"
+	}
+	return "1"
 }
 
 // cooltimeOf finds the (Param, Desc128) pair whose descriptor reads

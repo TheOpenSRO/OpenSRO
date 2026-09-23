@@ -277,6 +277,39 @@ func TestCapabilityFlagsDefaultToUnrestricted(t *testing.T) {
 	}
 }
 
+// TestCanUseDefaultsToUsable is the same guard for CanUse (round 489, column
+// 68): an export made before the column existed must load every item as
+// usable, or every potion on a server that has not re-exported would be
+// refused with "cannot be used". A present column is obeyed either way.
+func TestCanUseDefaultsToUsable(t *testing.T) {
+	// A 68-column row: everything through ParryRatioMax, nothing after it.
+	row := make([]string, 68)
+	for i := range row {
+		row[i] = "0"
+	}
+	row[0] = "4"
+	load := func(r []string) Item {
+		t.Helper()
+		items, err := LoadItemsCSV(strings.NewReader(strings.Join(r, ",") + "\n"))
+		if err != nil {
+			t.Fatalf("LoadItemsCSV (%d columns): %v", len(r), err)
+		}
+		if len(items) != 1 {
+			t.Fatalf("got %d items, want 1", len(items))
+		}
+		return items[0]
+	}
+	if !load(row).CanUse {
+		t.Error("a 68-column export predating CanUse must load as usable")
+	}
+	if load(append(append([]string(nil), row...), "0")).CanUse {
+		t.Error("an explicit 0 in column 68 must forbid use")
+	}
+	if !load(append(append([]string(nil), row...), "1")).CanUse {
+		t.Error("an explicit 1 in column 68 must permit use")
+	}
+}
+
 // The three requirement slots past the first are appended columns 44..49, so
 // a 28-column export made before they existed must still load and simply
 // carry no requirement beyond its first pair.

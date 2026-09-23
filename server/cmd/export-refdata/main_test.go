@@ -462,3 +462,49 @@ func TestRepairCostReadsTheBasisColumn(t *testing.T) {
 			got)
 	}
 }
+
+// CanUse is itemdata column 24 (round 489, docs/protocol/item_capability_flags.md
+// round-460 table), and its neighbours are flag columns of the same 0/1 shape,
+// so a test feeding one value cannot tell a shift from a hit. This gives 23 and
+// 25 the opposite value and names which one must win, then runs each record
+// through the importer so the two tools stay pinned to the same column.
+//
+// Column 24 also holds 129 on 213 retail rows; the parser keeps only
+// `c != 0` (RefObjCommon_ExtractData, `-(cVar1 != 0) & 0x100`), so 129 must
+// arrive as usable, not as a stray number.
+func TestItemRecordReadsCanUseFromColumn24(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		c23, c24, c25, rc string
+		want              bool
+	}{
+		{"clear between set neighbours", "1", "0", "1", "0", false},
+		{"set between clear neighbours", "0", "1", "0", "1", true},
+		{"129 is non-zero", "0", "129", "0", "1", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cols := make([]string, 200)
+			for i := range cols {
+				cols[i] = "0"
+			}
+			cols[0], cols[1], cols[2] = "1", "7001", "ITEM_CANUSE_PROBE"
+			cols[23], cols[24], cols[25] = tc.c23, tc.c24, tc.c25
+
+			rec, ok := itemRecord(cols)
+			if !ok {
+				t.Fatal("itemRecord rejected a valid row")
+			}
+			if got := rec[68]; got != tc.rc {
+				t.Errorf("record[68] = %q, want %q (column 24 normalised to 0/1; columns 23 and 25 hold %q)",
+					got, tc.rc, tc.c23)
+			}
+			items, err := refdata.LoadItemsCSV(strings.NewReader(strings.Join(rec, ",") + "\n"))
+			if err != nil {
+				t.Fatalf("the importer rejected export's own output: %v", err)
+			}
+			if items[0].CanUse != tc.want {
+				t.Errorf("CanUse = %v, want %v", items[0].CanUse, tc.want)
+			}
+		})
+	}
+}

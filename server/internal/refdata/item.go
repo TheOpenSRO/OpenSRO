@@ -352,6 +352,21 @@ type Item struct {
 	// cooldown. Zero when the row has none.
 	CooltimeGroup uint32
 	CooltimeMs    int
+
+	// CanUse is flags bit 8, itemdata column 24 (round 489). Item_HandleUseItem
+	// (0x00510980) asks the item's vtable slot 56 -- IGObj::CanUse, which every
+	// CGItem* class inherits as CGObj::CanUse (0x00483ee0, `refobj+0x8c >> 8 &
+	// 1`) -- before it looks at the item's type or its cooldown, and a zero
+	// refuses the use with 0x183e UIIT_MSG_STRGERR_CANNOT_BE_USED. The column
+	// is set on every HP/MP potion and clear on elixirs, alchemy stones,
+	// materials and all equipment but 28 cash-shop avatars; see
+	// docs/protocol/item_capability_flags.md.
+	//
+	// A permission, so the CSV loader and the SQL store both default it to
+	// TRUE for an export that predates the column. A literal Item{} leaves it
+	// false and so FORBIDS use -- a hand-built item meant to be drunk must say
+	// CanUse: true.
+	CanUse bool
 }
 
 // ReinforceRates is the three packed dwords in tier order, the shape

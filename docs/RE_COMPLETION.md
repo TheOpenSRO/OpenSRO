@@ -26323,3 +26323,104 @@ ReuseDelay (`Hub.CounterattackReady` reads `AttackReuseMs`; 0 imposed no cadence
 A skill or weapon with range exactly 10 no longer gets +10 reach. In the roster,
 Mangyang's and Stone Ghost's attack skills have Range 10, but nothing in the
 server reads `Monster.AttackRange` yet, so their behaviour does not change.
+
+## Carry CanUse (itemdata col 24) and refuse using a non-usable item (Item_HandleUseItem 0x183e) (round 489)
+
+**The engine refuses to use an item whose CanUse bit is clear, and srrevamp did
+not.** `Item_HandleUseItem` (`0x00510980`), re-read this session, fetches the
+item, passes the state check (`0x1889`), then:
+
+	iVar5 = (**(code **)(*piVar6 + 0xe0))();
+	if (iVar5 == 0) {
+	  uStack_e8 = 0x183e;
+	}
+	else {
+	  puVar7 = (ushort *)CGObj::GetTID();
+	  if (*puVar7 == auStack_ec[0]) { ... ItemCooldowns::IsReady ... 0x185b ...
+
+`0xe0` is vtable slot 56, `IGObj::CanUse` (`docs/protocol/igobj_vtable.md`).
+`0x183e` is `UIIT_MSG_STRGERR_CANNOT_BE_USED` (`docs/protocol/error_codes.md`).
+The seven `CGItem*` vtables were found by scanning `SR_GameServer.exe` for the
+dword `0x00483ee0` and naming each hit's vtable through its RTTI locator. All
+seven hold `CGObj::CanUse` (`0x00483ee0`) at slot 56, and `CanTrade`/`CanSell` at
+49/50 confirm the base. `CGObj::CanUse` returns `refobj+0x8c >> 8 & 1`, and
+`RefObjCommon_ExtractData` (`0x006a3090`) sets bit 8 as `-(cVar1 != 0) & 0x100`.
+
+**The column is 24.** This is round 460's anchoring in
+`item_capability_flags.md`, re-measured over the combined itemdata (21,552 item rows):
+
+- Column 24 holds `0` (19,970 rows), `1` (1,369) and `129` (213).
+- It is non-zero on **99 of 99** HP/MP potion rows (TypeID 3/3/1). It is zero on
+  every equipment row except the 28 cash-shop avatars (3/1/14). It is zero on
+  every elixir (3/3/10) and every alchemy material or stone (3/3/11).
+- The mall inventory and warehouse expansions (24365/24366) read 1, so this gate
+  does not block the warehouse item.
+- **Column 23**, where the file's older read-count table put `CanUse`, reads 0
+  on all 25 HP potions. It cannot be the bit a potion is used through. That table
+  now carries a note saying it is superseded from column 18 on.
+
+**Change.**
+- `export-refdata` gains `fCanUse = 24`. It emits record index 68 through a new
+  `nonZero` helper: `"1"` for any non-zero number, the parser's `c != 0`, so 129
+  arrives as usable. `nonZero` is defined once for the later flag columns to
+  reuse.
+- `refdata` item CSV column 68 `CanUse`, a strict suffix.
+  `ItemCSVColumnCount` is now 69. `Item.CanUse` is the last field.
+- Permission default: the loader sets `CanUse = true` unless column 68 is
+  present, and `items.can_use` is `BOOLEAN NOT NULL DEFAULT TRUE`. An export or
+  import older than this column leaves every item usable, the same rule as
+  `CanTrade`/`CanSell`/`CanDrop`. A hand-built `refdata.Item{}` forbids use; say
+  `CanUse: true`.
+- `session.UseItemHandler` refuses `"that item cannot be used"` right after the
+  item lookup, before the restores-nothing check and the reuse delay. This is the
+  engine's order. No item is consumed and nothing is healed.
+
+**Why it mattered.** A non-usable row's Param block can still read as restore
+amounts. 7001 (`ITEM_ETC_ARCHEMY_ATTRSTONE_MD_11`, column 24 = 0) exports
+RestoreHP 11 from column 118. Before this round, right-clicking such an item
+passed the "restores nothing" check, healed the player and ate the item.
+
+**Tests.**
+- `export-refdata.TestItemRecordReadsCanUseFromColumn24` sets columns 23/24/25
+  to 1/0/1, then 0/1/0, then 0/129/0. It checks `record[68]` against "0", "1"
+  and "1", and checks that `LoadItemsCSV` agrees. The column is written as the
+  literal 24, not `fCanUse`. The existing round trip checks the width against
+  `ItemCSVColumnCount`.
+- `refdata.TestCanUseDefaultsToUsable`: a 68-column row loads usable, a
+  trailing "0" forbids use, and a trailing "1" permits it.
+- `refdata.TestCanUseFalseSurvivesSQL`: `Item{ID: 987656, CanUse: false}`
+  reads back false from both `GetItem` and `ListAll`. `fillStruct` sets every
+  bool true and the schema default is true, so the full-field audit alone
+  cannot see a lost false.
+- `session.TestUseItemRefusesAnItemWhoseCanUseIsClear` starts the character
+  50 HP down. An item with CanUse clear and non-zero (illustrative) restore
+  amounts is refused with the exact reason, keeps its 5, and heals nothing. A
+  potion (RestoreHP 120, CanUse set) restores HP and leaves 4.
+
+Negative cases:
+- **All production files stashed:** every new test fails to build, because the
+  field does not exist.
+- **Each file stashed alone, the field kept:**
+  - `useitem.go` stashed: the handler test fails. The item was used ("RestoredHP:
+    19 ... Remaining:4"), was consumed ("4 left, want 5") and healed
+    ("HP 150 -> 169").
+  - `csv.go` stashed: `TestCanUseDefaultsToUsable` fails, and the export test
+    fails on its two usable cases.
+  - `main.go` stashed: the export test panics on `record[68]` ("index out of
+    range [68] with length 68").
+  - `sqlstore.go` stashed: `TestEveryItemFieldSurvivesSQL` fails ("1 of 69
+    Item fields did not survive").
+- Restored: all pass, and `go test -count=1 -p 1 ./...` is green.
+
+**Deploy note.** srrevamp-01's `items` table gains `can_use DEFAULT TRUE` on
+the next server start, so nothing is refused there until `export-refdata` and
+`import-refdata` are re-run against the player's own itemdata. Batch that
+re-export with the other exporter items in this series (CanPick is next, record
+index 69).
+
+**Found and not fixed: the `CanDrop` column.** `fCanDrop` is 19, but round 460's
+table puts `CanDrop` at 20 and the `& 0x80`/`& 0x40` field at 19. Round 460's
+header also claimed the code read 20. Bit 0 of the two columns disagrees on
+7,997 of 21,552 rows. Nothing in the server reads `CanDrop`, so no behaviour
+depends on it yet. `item_capability_flags.md`'s header now records the
+disagreement instead of the wrong claim.

@@ -137,6 +137,50 @@ func TestEveryItemFieldSurvivesSQL(t *testing.T) {
 	}
 }
 
+// TestCanUseFalseSurvivesSQL covers the case the audit above cannot: fillStruct
+// sets every bool TRUE, and can_use defaults TRUE in the schema, so a CanUse
+// dropped from the INSERT or the SELECT would still pass it. A clear CanUse
+// (round 489) is the value that forbids a use, so it is the one that has to
+// arrive -- through GetItem, which useitem reads, and ListAll, which the shop
+// catalog reads.
+func TestCanUseFalseSurvivesSQL(t *testing.T) {
+	ctx := context.Background()
+	s, err := OpenSQLStore(testDSN())
+	if err != nil {
+		t.Fatalf("OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer s.Close()
+
+	const id = 987656
+	if err := s.ImportItems(ctx, []Item{{ID: id, MaxStack: 1, CanUse: false}}); err != nil {
+		t.Fatalf("ImportItems: %v", err)
+	}
+	got, err := s.GetItem(ctx, id)
+	if err != nil || got == nil {
+		t.Fatalf("GetItem: %v", err)
+	}
+	if got.CanUse {
+		t.Error("GetItem read CanUse back as true; a clear bit was lost on the way through SQL")
+	}
+	all, err := s.ListAll(ctx)
+	if err != nil {
+		t.Fatalf("ListAll: %v", err)
+	}
+	found := false
+	for _, it := range all {
+		if it.ID != id {
+			continue
+		}
+		found = true
+		if it.CanUse {
+			t.Error("ListAll read CanUse back as true; a clear bit was lost on the way through SQL")
+		}
+	}
+	if !found {
+		t.Fatalf("ListAll did not return item %d", id)
+	}
+}
+
 // TestEverySkillFieldSurvivesSQL is the same audit for refdata.Skill.
 func TestEverySkillFieldSurvivesSQL(t *testing.T) {
 	ctx := context.Background()

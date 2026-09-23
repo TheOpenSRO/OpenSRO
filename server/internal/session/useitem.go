@@ -124,6 +124,13 @@ func DecodeUseItemResult(data []byte) (*UseItemResult, error) {
 // and not a broken search.) A recovery-effectiveness stat exists in the engine;
 // nothing in this build ever gives a character one.
 //
+// An item whose CanUse bit is clear (refdata.Item.CanUse, itemdata column 24)
+// is refused first, as the engine refuses it with 0x183e CANNOT_BE_USED before
+// it reads the item's type or its reuse delay (round 489). That bit is set on
+// every HP/MP potion and clear on elixirs, alchemy stones, materials and all
+// equipment but 28 cash-shop avatars -- rows whose Param block can still read
+// as an HP/MP amount.
+//
 // An item that restores nothing is refused rather than silently eaten -- the
 // bag is full of equipment and quest items that have no use yet, and quietly
 // destroying one would be the worst possible answer.
@@ -165,6 +172,15 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		it, err := items.GetItem(ctx, itemID)
 		if err != nil || it == nil {
 			return fail("nothing known about that item")
+		}
+		// The item's own CanUse bit, the engine's first question about the
+		// item (round 489): Item_HandleUseItem (0x00510980) calls vtable slot
+		// 0xe0 -- IGObj::CanUse, CGObj::CanUse 0x00483ee0 on every CGItem*
+		// class, flags bit 8 of the ref row -- and a zero answers 0x183e
+		// UIIT_MSG_STRGERR_CANNOT_BE_USED before the TID match and the
+		// cooldown are consulted.
+		if !it.CanUse {
+			return fail("that item cannot be used")
 		}
 		if it.RestoreHP <= 0 && it.RestoreMP <= 0 && it.RestoreHPPct <= 0 && it.RestoreMPPct <= 0 {
 			return fail("that cannot be used")
