@@ -99,8 +99,62 @@ func TestBusyFlag(t *testing.T) {
 	if _, ok := h.Remove(it.ID); !ok {
 		t.Fatal("Remove: missing")
 	}
-	if _, code := h.PickCheck(it.ID, 8, 0, 0, 0, nil); code != ErrCannotPick {
-		t.Fatalf("after removal: code %#x, want ErrCannotPick", code)
+	// Gone: CheckCanPickUp's opening `*param_2 = 3` is what an id that
+	// resolves to no object answers -- not 0x1839, which is CanPick's.
+	if _, code := h.PickCheck(it.ID, 8, 0, 0, 0, nil); code != ErrNotThere {
+		t.Fatalf("after removal: code %#x, want ErrNotThere (3)", code)
+	}
+}
+
+// The engine tests the range BEFORE the busy flag (CheckCanPickUp: result 4
+// at the distance compare, 0x1813 only after the life-state test), so a
+// second picker standing too far from an item already being picked hears
+// "too far", and one in reach hears "busy".
+func TestRangeIsTestedBeforeBusy(t *testing.T) {
+	h, _ := newTestHub(time.Unix(1000, 0))
+	it := h.Drop("jangan", 4, 1, false, 0, 0, 0, 0)
+	if _, code := h.PickCheck(it.ID, 7, 0, 0, 0, nil); code != 0 {
+		t.Fatalf("first pick: code %#x", code)
+	}
+	if _, code := h.PickCheck(it.ID, 8, 0, 0, 50, nil); code != ErrTooFar {
+		t.Fatalf("second picker 50 away while busy: code %#x, want ErrTooFar (4)", code)
+	}
+	if _, code := h.PickCheck(it.ID, 8, 0, 0, 1, nil); code != ErrBusy {
+		t.Fatalf("second picker in reach while busy: code %#x, want ErrBusy", code)
+	}
+}
+
+// An item whose row clears CanPick (itemdata column 21, flags bit 5) is
+// refused 0x1839 by CheckCanPickUp's first test on a found item -- vtable
+// slot 53, CGObj::CanPick 0x00483e50 -- which comes before the range, the
+// busy flag and the owner. So its owner standing on it is refused, a
+// stranger 500 units away hears 0x1839 rather than "too far" or "not
+// yours", and a repeat is still 0x1839 (a refused pick never marks the item
+// busy). A pickable item beside it is unaffected, and a hub with no lookup
+// refuses nothing.
+func TestCanPickClearRefusesBeforeRangeBusyAndOwner(t *testing.T) {
+	h, _ := newTestHub(time.Unix(1000, 0))
+	h.SetPickLookup(func(itemID int64) bool { return itemID != 99 })
+	bad := h.Drop("jangan", 99, 1, false, 0, 0, 0, 7)
+	ok := h.Drop("jangan", 4, 1, false, 0, 0, 0, 7)
+
+	if _, code := h.PickCheck(bad.ID, 7, 0, 0, 0, nil); code != ErrCannotPick {
+		t.Fatalf("owner on a CanPick=0 item: code %#x, want ErrCannotPick (0x1839)", code)
+	}
+	if _, code := h.PickCheck(bad.ID, 8, 0, 0, 500, nil); code != ErrCannotPick {
+		t.Fatalf("stranger 500 away from a CanPick=0 item: code %#x, want ErrCannotPick, not ErrTooFar or ErrNotOwner", code)
+	}
+	if _, code := h.PickCheck(bad.ID, 7, 0, 0, 0, nil); code != ErrCannotPick {
+		t.Fatalf("repeat on a CanPick=0 item: code %#x, want ErrCannotPick, not ErrBusy", code)
+	}
+	if _, code := h.PickCheck(ok.ID, 7, 0, 0, 0, nil); code != 0 {
+		t.Fatalf("owner on a pickable item: code %#x, want 0", code)
+	}
+
+	plain, _ := newTestHub(time.Unix(1000, 0))
+	it := plain.Drop("jangan", 99, 1, false, 0, 0, 0, 7)
+	if _, code := plain.PickCheck(it.ID, 7, 0, 0, 0, nil); code != 0 {
+		t.Fatalf("no pick lookup: code %#x, want 0 (every drop pickable)", code)
 	}
 }
 

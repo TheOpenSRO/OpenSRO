@@ -214,8 +214,15 @@ func TestGroundDropAndPickUpFlow(t *testing.T) {
 	if !inBag {
 		t.Fatalf("potion not in the bag after the pick: %+v", slots)
 	}
-	if _, code := ground.PickCheck(potion.ID, c.ID, potion.X, potion.Y, potion.Z, nil); code != grounditem.ErrCannotPick {
-		t.Fatalf("picked item still on the ground (code %#x)", code)
+	if _, code := ground.PickCheck(potion.ID, c.ID, potion.X, potion.Y, potion.Z, nil); code != grounditem.ErrNotThere {
+		t.Fatalf("picked item still on the ground (code %#x, want ErrNotThere)", code)
+	}
+	// A duplicate request for the stack we just took answers the engine's 3
+	// (CheckCanPickUp found no object), not CanPick's 0x1839.
+	write(OpPickUp, (&PickUpRequest{CharacterName: "Aria", GroundItemID: potion.ID}).Encode())
+	pr, err = DecodePickUpResult(readUntil(OpPickUpResult).Data)
+	if err != nil || pr.Code != grounditem.ErrNotThere || pr.GroundItemID != potion.ID {
+		t.Fatalf("duplicate pick of a taken stack: %+v (err %v), want code 3", pr, err)
 	}
 
 	// The gold pile picks up as gold.

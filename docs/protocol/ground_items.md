@@ -21,13 +21,37 @@ from the constructor `CGItem::vslot_000` (`0x0048f8a0`) and `CGItem::Update`
 `GObjPC::CheckCanPickUp` (`0x004a9050`), reached through `CGObjPC::vslot_387`,
 decides a pick. In order:
 
-1. `IGObj::CanPick` -- vtable **slot 53**, named by the engine's own
-   `"## Illegal ##  IGObj::CanPick Entered! TypeID: %u"` stub (`0x0057df40`).
-   A ground item says yes; anything else is refused `0x1839`.
+1. **The object, then `IGObj::CanPick`.** The function opens with
+   `*param_2 = 3` and returns false with that **3** still standing when the id
+   resolves to no object (`FUN_00485d90`) or `IGObj::IsItem` (slot 18) says no
+   -- a drop that has already been picked up or has decayed. Then
+   `IGObj::CanPick` -- vtable **slot 53**, named by the engine's own
+   `"## Illegal ##  IGObj::CanPick Entered! TypeID: %u"` stub (`0x0057df40`);
+   a zero is refused **`0x1839`** `UIIT_MSG_STRGERR_CANNOT_BE_PICKED`
+   (`error_emitters.tsv`, the `0x004a9050` row). All seven `CGItem*` vtables
+   (`0xae9384` .. `0xaeb824`, the ones holding `CGItem::Update` at slot 211)
+   hold `CGObj::CanPick` (`0x00483e50`) there: `IsItem`, then the ref row's
+   flags word `+0x8c >> 5 & 1`. So it is a **per-row bit, not "is this a
+   ground item"**: bit 5 is **itemdata column 21**, whose byte
+   `RefObjCommon_ExtractData` stores at `0x6a3464` (`mov [esp+0x23],dl`, after
+   the column bump at `0x6a3455`) and folds in at `0x6a3590` (`and eax,0x20`)
+   -- see `item_capability_flags.md`, round 460's table. Over
+   `/var/tmp/tables/itemdata_all.utf8.txt` the column is 0/1 only and **0 on
+   309 of 21,552 rows** (210 of 15,333 ids): all 54 starter `_DEF` ids, 34
+   fortress `ITEM_FORT_*` ids, `_RARE_ACTIVE_STARTER` and `_SUPER` gear, guard
+   COS items and a scatter of mall and event items. Gold (`ITEM_ETC_GOLD_01..03`)
+   and the HP/MP potions read 1.
+   Next, for an item whose slot 46 (`IGObj::IsQuest_n_EventItem`) says yes,
+   the picker's quest state is queried -- `vcall +0x144` with `(0xf, 0, item)`,
+   then the dword at the picker's `+0x13c`; for a pet (slot 14, `IsPet`) the
+   pet's owner at `+0x1cd8` stands in -- and a zero there is refused
+   **`0x1874`** `UIIT_MSG_STRGERR_CANNOT_BE_PICKED_AT_QUEST_ACHIEVE_CONDITION`.
 2. **Range**: the caller passes a limit -- the player path
    `.rdata 0xb45b44 = 10.0` (`CGObjPC::vslot_387`), the pet path
    `0xb462b4 = 2000.0`. The distance is the plain 3-D
-   `sqrt(x²+y²+z²)` of `FUN_00405270`; beyond it, result **4**.
+   `sqrt(x²+y²+z²)` of `FUN_00405270`; beyond it, result **4**. After the
+   range, a life state (vtable `+0xf8`) other than 2 answers **3**, and a busy
+   item (`+0x14c` non-zero, a pick in progress) **`0x1813`**.
 3. **Ownership**: the item's `+0x150` (`-1` there answers result 3). An owner
    of 0, or the picker's own id, may pick. Anyone else goes through, in order
    (player path from `0x4a93bf`; the pet path from `0x4a9249` joins it at the
@@ -68,6 +92,17 @@ decides a pick. In order:
    either: its party rule (`session.samePartyFunc`) decides alone, by party
    membership. Both are **known, unmodelled divergences**. Modelling the first
    needs the item's TID and codename at `Drop`.
+
+**srrevamp's `PickCheck` follows that order (round 493):** a gone id answers
+`ErrNotThere` (3); an item whose row clears `CanPick` answers `ErrCannotPick`
+(`0x1839`) to everyone, its owner included, before the range, the busy flag and
+the owner are looked at; then the range (4), the busy flag (`0x1813`, moved
+after the range to match the engine) and the ownership rule. The `CanPick`
+answer is taken once, at `Drop`, from `Hub.SetPickLookup` (`cmd/server` wires it
+to `refdata.Item.CanPick` through `groundPickLookup`; no lookup, an unknown item
+or a failed lookup means pickable). The quest-condition refusal (`0x1874`) is
+not modelled: srrevamp has no quest-achieve condition to ask. The life-state
+test has nothing to act on, since every item in the hub is on the ground.
 
 ## The ownership window
 
@@ -152,6 +187,10 @@ Server `internal/session/grounditem.go`, client `scripts/net/ground_items.gd`:
 | `OpPickUpResult 0x0079` | s→c | s64 code (0 or an Err*), s64 ground id, s64 item id, u32 qty, u8 gold |
 
 A snapshot is: s64 id, s64 item id, u32 quantity, u8 gold, f32 x/y/z, s64 owner
-(0 = free). The refusal codes are the engine's (`4`, `0x1812`, `0x1813`,
-`0x1839`). The drop CONTENT (`combat.LootTables`) stays placeholder own design;
-the real per-monster drop tables are DB-only and unavailable.
+(0 = free). The refusal codes are the engine's (`3`, `4`, `0x1812`, `0x1813`,
+`0x1839`); the handler also answers `0x1839` for its own failures the engine has
+no code for (an undecodable request, an unknown character, a bag or purse that
+will not take the stack). Until round 493 a gone drop answered `0x1839` too; it
+now answers `3`, and the client's refusal line tells the two apart. The drop
+CONTENT (`combat.LootTables`) stays placeholder own design; the real per-monster
+drop tables are DB-only and unavailable.

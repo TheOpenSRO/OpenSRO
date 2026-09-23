@@ -508,3 +508,50 @@ func TestItemRecordReadsCanUseFromColumn24(t *testing.T) {
 		})
 	}
 }
+
+// CanPick is itemdata column 21 (round 493): RefObjCommon_ExtractData stores
+// that column's byte at 0x6a3464 `mov [esp+0x23],dl` and turns it into flags
+// bit 5 at 0x6a3590, the bit CGObj::CanPick (0x00483e50) reads. Its
+// neighbours differ in shape -- 19 is the 0/128/223/255 packed column, 20
+// the 0/1/3 one, 22 a 0/1 flag -- so each case below gives 19, 20 and 22
+// values that would answer the OTHER way if the exporter read one of them,
+// then runs the record through the importer so the two tools stay pinned to
+// the same column.
+func TestCanPickReadsColumn21(t *testing.T) {
+	for _, tc := range []struct {
+		name                   string
+		c19, c20, c21, c22, rc string
+		want                   bool
+	}{
+		{"set between clear neighbours", "128", "0", "1", "0", "1", true},
+		{"clear between set neighbours", "255", "3", "0", "1", "0", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cols := make([]string, 200)
+			for i := range cols {
+				cols[i] = "0"
+			}
+			cols[0], cols[1], cols[2] = "1", "7002", "ITEM_CANPICK_PROBE"
+			cols[19], cols[20], cols[21], cols[22] = tc.c19, tc.c20, tc.c21, tc.c22
+
+			rec, ok := itemRecord(cols)
+			if !ok {
+				t.Fatal("itemRecord rejected a valid row")
+			}
+			if len(rec) <= 69 {
+				t.Fatalf("record has %d fields, want CanPick at index 69", len(rec))
+			}
+			if got := rec[69]; got != tc.rc {
+				t.Errorf("record[69] = %q, want %q (column 21; columns 19/20/22 hold %s/%s/%s)",
+					got, tc.rc, tc.c19, tc.c20, tc.c22)
+			}
+			items, err := refdata.LoadItemsCSV(strings.NewReader(strings.Join(rec, ",") + "\n"))
+			if err != nil {
+				t.Fatalf("the importer rejected export's own output: %v", err)
+			}
+			if items[0].CanPick != tc.want {
+				t.Errorf("CanPick = %v, want %v", items[0].CanPick, tc.want)
+			}
+		})
+	}
+}

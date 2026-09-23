@@ -310,6 +310,39 @@ func TestCanUseDefaultsToUsable(t *testing.T) {
 	}
 }
 
+// TestCanPickDefaultsToPickable is the same guard for CanPick (round 493,
+// column 69): an export made before the column existed must load every item
+// as pickable, or every drop on a server that has not re-exported would be
+// refused 0x1839 on the ground. A present column is obeyed either way.
+func TestCanPickDefaultsToPickable(t *testing.T) {
+	// A 69-column row: everything through CanUse, nothing after it.
+	row := make([]string, 69)
+	for i := range row {
+		row[i] = "0"
+	}
+	row[0] = "4"
+	load := func(r []string) Item {
+		t.Helper()
+		items, err := LoadItemsCSV(strings.NewReader(strings.Join(r, ",") + "\n"))
+		if err != nil {
+			t.Fatalf("LoadItemsCSV (%d columns): %v", len(r), err)
+		}
+		if len(items) != 1 {
+			t.Fatalf("got %d items, want 1", len(items))
+		}
+		return items[0]
+	}
+	if !load(row).CanPick {
+		t.Error("a 69-column export predating CanPick must load as pickable")
+	}
+	if load(append(append([]string(nil), row...), "0")).CanPick {
+		t.Error("an explicit 0 in column 69 must forbid the pick")
+	}
+	if !load(append(append([]string(nil), row...), "1")).CanPick {
+		t.Error("an explicit 1 in column 69 must permit the pick")
+	}
+}
+
 // The three requirement slots past the first are appended columns 44..49, so
 // a 28-column export made before they existed must still load and simply
 // carry no requirement beyond its first pair.

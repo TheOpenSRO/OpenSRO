@@ -19,6 +19,11 @@ const REMOVED_PICKED := 0
 const REMOVED_EXPIRED := 1
 
 ## The server's refusal codes, the engine's own (GObjPC::CheckCanPickUp).
+## 3 is the function's opening result, left standing when the id resolves to
+## no item: a drop that is already gone (picked, decayed, or a duplicate
+## request for one we just took). 0x1839 is IGObj::CanPick answering 0 -- an
+## item whose row says it cannot be picked up at all.
+const ERR_NOT_THERE := 3
 const ERR_TOO_FAR := 4
 const ERR_NOT_OWNER := 0x1812
 const ERR_BUSY := 0x1813

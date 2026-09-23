@@ -181,6 +181,51 @@ func TestCanUseFalseSurvivesSQL(t *testing.T) {
 	}
 }
 
+// TestCanPickFalseSurvivesSQL is TestCanUseFalseSurvivesSQL's twin for
+// CanPick (round 493): can_pick defaults TRUE, so only a clear bit proves the
+// column is really written and read -- through GetItem, which the ground
+// hub's pick lookup reads, and ListAll.
+func TestCanPickFalseSurvivesSQL(t *testing.T) {
+	ctx := context.Background()
+	s, err := OpenSQLStore(testDSN())
+	if err != nil {
+		t.Fatalf("OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer s.Close()
+
+	const id = 987657
+	if err := s.ImportItems(ctx, []Item{{ID: id, MaxStack: 1, CanUse: true, CanPick: false}}); err != nil {
+		t.Fatalf("ImportItems: %v", err)
+	}
+	got, err := s.GetItem(ctx, id)
+	if err != nil || got == nil {
+		t.Fatalf("GetItem: %v", err)
+	}
+	if got.CanPick {
+		t.Error("GetItem read CanPick back as true; a clear bit was lost on the way through SQL")
+	}
+	if !got.CanUse {
+		t.Error("GetItem read CanUse back as false; the neighbouring column was shifted")
+	}
+	all, err := s.ListAll(ctx)
+	if err != nil {
+		t.Fatalf("ListAll: %v", err)
+	}
+	found := false
+	for _, it := range all {
+		if it.ID != id {
+			continue
+		}
+		found = true
+		if it.CanPick {
+			t.Error("ListAll read CanPick back as true; a clear bit was lost on the way through SQL")
+		}
+	}
+	if !found {
+		t.Fatalf("ListAll did not return item %d", id)
+	}
+}
+
 // TestEverySkillFieldSurvivesSQL is the same audit for refdata.Skill.
 func TestEverySkillFieldSurvivesSQL(t *testing.T) {
 	ctx := context.Background()

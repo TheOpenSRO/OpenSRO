@@ -70,6 +70,12 @@ func _initialize() -> void:
 	var result := GroundItemsNet.decode_pick_up_result(pr)
 	_check(result != null and result.code == GroundItemsNet.ERR_TOO_FAR and result.ground_id == 7 and result.item_id == 4 and result.quantity == 2 and not result.gold, "pick-up result decodes")
 
+	# A pick of a drop that is gone answers the engine's 3 (round 493), a code
+	# of its own -- not CanPick's 0x1839 -- so the refusal line can tell them apart.
+	pr.encode_s64(0, 3)
+	var gone := GroundItemsNet.decode_pick_up_result(pr)
+	_check(gone != null and gone.code == GroundItemsNet.ERR_NOT_THERE and GroundItemsNet.ERR_NOT_THERE != GroundItemsNet.ERR_CANNOT_PICK, "a not-there result decodes as ERR_NOT_THERE (3)")
+
 	var req := GroundItemsNet.encode_pick_up("Aria", 7)
 	_check(req.size() == 2 + 4 + 8 and req.decode_u16(0) == 4 and req.decode_s64(6) == 7, "pick-up request is name then s64 id")
 

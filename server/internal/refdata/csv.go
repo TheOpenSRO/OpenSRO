@@ -91,6 +91,11 @@ var itemCSVColumns = []string{
 	// the same permission default as CanTrade/CanSell/CanDrop, for the same
 	// reason (see parseItemRow).
 	"CanUse",
+	// Appended later still (round 493): CanPick, itemdata column 21, the
+	// capability bit GObjPC::CheckCanPickUp refuses a ground item on
+	// (0x1839). A strict suffix; an older export loads every item as
+	// PICKABLE, the same permission default as CanUse.
+	"CanPick",
 }
 
 // ItemCSVColumnCount is how many columns LoadItemsCSV currently knows. Every
@@ -342,6 +347,12 @@ func parseItemRow(f []string) (Item, error) {
 	it.CanUse = true
 	if len(f) > 68 {
 		it.CanUse = parseBool(f[68])
+	}
+	// CanPick (round 493), the same kind of permission: an export older than
+	// column 69 must not leave every drop lying on the ground unpickable.
+	it.CanPick = true
+	if len(f) > 69 {
+		it.CanPick = parseBool(f[69])
 	}
 
 	if err != nil {

@@ -372,6 +372,20 @@ type Item struct {
 	// false and so FORBIDS use -- a hand-built item meant to be drunk must say
 	// CanUse: true.
 	CanUse bool
+
+	// CanPick is flags bit 5, itemdata column 21 (round 493).
+	// GObjPC::CheckCanPickUp (0x004a9050) asks the item's vtable slot 53 --
+	// IGObj::CanPick, CGObj::CanPick (0x00483e50, `refobj+0x8c >> 5 & 1`) in
+	// every CGItem* vtable -- straight after finding the object, before the
+	// quest check, the range, the busy flag and the owner, and a zero refuses
+	// the pick with 0x1839 UIIT_MSG_STRGERR_CANNOT_BE_PICKED. The column is
+	// 0/1; it is 0 on 309 of the combined itemdata's 21,552 rows (the starter
+	// `_DEF` gear, fortress items) and 1 on gold and potions. See
+	// docs/protocol/item_capability_flags.md and ground_items.md.
+	//
+	// A permission, defaulted to TRUE by the CSV loader and the SQL store for
+	// an export that predates the column. A literal Item{} leaves it false.
+	CanPick bool
 }
 
 // ReinforceRates is the three packed dwords in tier order, the shape

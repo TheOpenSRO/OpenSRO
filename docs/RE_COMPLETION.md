@@ -26795,3 +26795,125 @@ that can be traded.
 since commit `2ff7d69`, so srrevamp-01's table already answers the lookup. The own-design fallback
 loot (`combat.LootTables`) drops gold and potions, which are tradeable; a drop is bound only where
 operator-supplied real drop tables (`session.realDrops`) roll a quest item.
+
+## Carry CanPick (itemdata col 21), refuse picking a CanPick=0 item, and not-found answers 3 (round 493)
+
+**The gap.** `grounditem.PickCheck` refused only on range, busy and owner. It answered `0x1839`
+for an id that was no longer on the ground, and `ground_items.md` step 1 read `IGObj::CanPick` as
+"a ground item says yes". Both were wrong: `CanPick` is a per-row bit, and the engine answers a
+gone drop with a different code.
+
+**The grounding, read this round.**
+
+- `GObjPC::CheckCanPickUp` (dump `0x004a9050`) opens `*param_2 = 3`. It returns false with the 3
+  standing when `FUN_00485d90` finds no object or `IGObj::IsItem` (`+0x48`, slot 18) says no. Next
+  comes `(**(code **)(*item + 0xd4))()`: slot 53, `IGObj::CanPick` (`igobj_vtable.md`). A zero sets
+  `0x1839` and returns. After that come the quest-item check (slot 46,
+  `IGObj::IsQuest_n_EventItem` -> `0x1874`), the range (4), the life state (3), busy `+0x14c`
+  (`0x1813`) and then the owner. `error_emitters.tsv` names the codes of the `0x004a9050` row:
+  `0x1839=UIIT_MSG_STRGERR_CANNOT_BE_PICKED`, `0x1874=..._AT_QUEST_ACHIEVE_CONDITION`.
+- `CGObj::CanPick` (dump `0x00483e50`): `IsItem`, then `*(ref + 0x8c) >> 5 & 1`. It sits at slot 53
+  in all seven `CGItem*` vtables. They are the ones holding `CGItem::Update` at slot 211:
+  `0xae9384`, `0xae9934`, `0xae9e5c`, `0xaea394`, `0xaea9ec`, `0xaeb2b4`, `0xaeb824`. Each was read
+  from `SR_GameServer.exe`, and slot 18 is `0x00482d80` in all seven.
+- The column. `RefObjCommon_ExtractData` (`0x006a3090`) keeps its own column counter at
+  `[stream+0x28]`, bumped once per column. From the disassembly:
+  - CanTrade's byte goes to `esp+0x11` (column 16) and CanSell's to `esp+0x26` (17).
+  - Column 18 is consumed but not stored: `0x6a33f0` advances the cursor with no load, and `0x6a33f6`
+    bumps the counter.
+  - `esp+0x12` is column 19 and `esp+0x13` is 20.
+  - At `0x6a3455` the counter is bumped for column 21, and `0x6a3464 mov [esp+0x23],dl` stores its
+    byte.
+  - `0x6a3588..0x6a3590` (`mov al,[esp+0x23]; neg al; sbb eax,eax; and eax,0x20`) makes it bit 5.
+  - Counting on, `bl` lands on column 24 (bit 8), round 489's grounded `CanUse`, so the two anchor
+    each other.
+  This is round 460's data-anchored table. The older read-count table put `CanPick` at 20 because it
+  missed the column-18 skip; `item_capability_flags.md` now says so beside that table.
+- The data. Over `/var/tmp/tables/itemdata_all.utf8.txt` on the RE box, column 21 is 0/1 only and 0
+  on **309 of 21,552 rows** (210 of 15,333 ids, last occurrence kept). The zeros:
+  - all 54 starter `_DEF` ids (84 rows);
+  - 34 `ITEM_FORT_*` ids;
+  - `_RARE_ACTIVE_STARTER` and `_SUPER` gear;
+  - guard COS items;
+  - a scatter of mall and event items.
+  Gold (ids 1..3) and the HP/MP potions (4..6, 11..13) read 1, so the own-design fallback loot is
+  unaffected. The neighbours have other shapes: column 20 is 0/1/3 and column 22 is 0/1 with 7,590
+  zeros.
+
+**Change.**
+
+- `export-refdata`: `fCanPick = 21`, emitted at record index 69 through `nonZero`, after round
+  489's `CanUse` at 68. `refdata`: CSV column 69 `CanPick`, a strict suffix, so
+  `ItemCSVColumnCount` is 70. `Item.CanPick` defaults to TRUE in the loader and in `items.can_pick`
+  (`BOOLEAN NOT NULL DEFAULT TRUE`). It is carried through ImportItems, GetItem and ListAll.
+- `grounditem`:
+  - New `ErrNotThere = 3`. `ErrCannotPick`'s comment now says what it is: `CanPick` answered 0.
+  - New `Hub.SetPickLookup(func(itemID) bool)`. `Drop` resolves it once into the unexported
+    `Item.noPick`, so no lookup runs under the hub lock at pick time. A nil lookup means everything
+    is pickable.
+  - `PickCheck` now follows the engine's order:
+    1. a missing id answers `ErrNotThere`;
+    2. `noPick` answers `ErrCannotPick` to everyone, the owner included;
+    3. then the range;
+    4. then busy, moved after the range to match the engine;
+    5. then the owner.
+  - The quest-condition refusal (`0x1874`) is not modelled, and neither is the life-state 3. Both
+    are stated in `PickCheck`'s comment.
+- `cmd/server`: `ground.SetPickLookup(groundPickLookup(ctx, refItems))`. An error or a missing row
+  answers true.
+- `session`: the handler's own failures that the engine has no code for still answer `0x1839`. The
+  `PickUpResult` comment says so.
+- Client: `GroundItemsNet.ERR_NOT_THERE := 3`. `World3D._pick_up_refusal_line` maps 3 to "That drop
+  is no longer there." (with the playtest-2026-09-20 note) and `0x1839` to "That item cannot be
+  picked up." This has to ship in the same release as the server change. Without it, a duplicate
+  pick, which now answers 3, would print "code 0x3".
+- Docs: `ground_items.md` step 1 (the object test, the per-row bit, column 21 with its addresses and
+  the measurement, the quest-condition refusal), step 2 (life state and busy after the range),
+  srrevamp's order, and the protocol section's code list. `item_capability_flags.md`: `CanPick` in
+  the enforcement table, and the read-to-column note beside the read-number table. `SYSTEMS.md`:
+  `CanPick` added to the capability-flags row's anchors.
+
+**Tests.**
+
+- `grounditem.TestCanPickClearRefusesBeforeRangeBusyAndOwner`: the lookup refuses item 99.
+  - The owner (7) standing on it gets `0x1839`.
+  - A stranger (8) 500 units away also gets `0x1839`, not `ErrTooFar` or `ErrNotOwner`.
+  - A repeat still gets `0x1839`, not `ErrBusy`.
+  - The pickable item beside it gets 0.
+  - A hub with no lookup gives 0 for item 99.
+- `grounditem.TestRangeIsTestedBeforeBusy`: while character 7's pick is in flight, a second picker 50
+  away gets 4 and one in reach gets `0x1813`.
+- `grounditem.TestBusyFlag` and `session.TestGroundDropAndPickUpFlow` now expect `ErrNotThere` (3)
+  after `Remove`. They got `0x1839` before. The session flow also sends a duplicate `OpPickUp` for
+  the potion it just took, and the answer must be 3 on the wire.
+- `export-refdata.TestCanPickReadsColumn21`: columns 19..22 set to 128/0/1/0 give `rec[69] == "1"`,
+  and 255/3/0/1 give `"0"`. Each record is round-tripped through `LoadItemsCSV`. Reading column 20
+  or 22 fails it.
+- `refdata.TestCanPickDefaultsToPickable`: a 69-column row loads pickable, and "0"/"1" at 69 are
+  obeyed. `refdata.TestCanPickFalseSurvivesSQL` sends a clear bit through ImportItems, GetItem and
+  ListAll, and checks `CanUse` beside it.
+- `cmd/server.TestGroundPickLookupAdapter`: the row's value passes through. A missing row or a
+  failed lookup answers true.
+- Client: `ground_items_test.gd` decodes a code-3 result as `ERR_NOT_THERE`. `remote_godot.sh
+  tests` ran 77 suites with 0 failing, and `remote_godot.sh check` loaded 239 scripts.
+
+**Negative case, run.**
+
+- All seven production files stashed: every touched test package fails to build (`ErrNotThere`,
+  `SetPickLookup`, `CanPick`, `groundPickLookup` undefined).
+- Behavioural mutations, each run and then restored:
+  - the not-found path answering `ErrCannotPick` again fails `TestBusyFlag` and the session flow
+    ("code 0x1839, want ErrNotThere");
+  - dropping the `noPick` gate fails the CanPick test ("owner ... code 0x0");
+  - moving busy back before the range fails `TestRangeIsTestedBeforeBusy`
+    ("code 0x1813, want ErrTooFar");
+  - `fCanPick = 20` or `22` fails the exporter test;
+  - dropping index 69 fails the exporter round-trip test ("69 fields, want 70");
+  - ignoring column 69 in the loader fails the CSV test;
+  - writing `true` in place of `CanPick` fails the SQL test;
+  - inverting the adapter fails its test.
+- `go test -count=1 -p 1 ./...` is green.
+
+**Deploy note.** srrevamp-01's `items.can_pick` takes `DEFAULT TRUE` until export-refdata and
+import-refdata are re-run, so nothing is refused there until then. Batch the re-run with the other
+exporter items. The client change must ship in the same release as the server.

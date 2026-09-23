@@ -394,6 +394,23 @@ func groundTradeLookup(ctx context.Context, items interface {
 	}
 }
 
+// groundPickLookup adapts the reference item store to the ground-item hub's
+// pick lookup: an item's CanPick (itemdata column 21, flags bit 5, the bit
+// GObjPC::CheckCanPickUp refuses 0x1839 on -- docs/protocol/ground_items.md
+// "Picking up", step 1). A lookup error or a missing row answers true, so a
+// drop is refused only when a row really carries CanPick = 0.
+func groundPickLookup(ctx context.Context, items interface {
+	GetItem(ctx context.Context, id int64) (*refdata.Item, error)
+}) func(itemID int64) bool {
+	return func(itemID int64) bool {
+		it, err := items.GetItem(ctx, itemID)
+		if err != nil || it == nil {
+			return true
+		}
+		return it.CanPick
+	}
+}
+
 func main() {
 	addr := flag.String("addr", ":15779", "listen address for the gateway service")
 	postgresDSN := flag.String("postgres-dsn", "postgres://postgres:postgres@localhost:5432/srrevamp?sslmode=disable",
@@ -697,6 +714,10 @@ func main() {
 	// items) is never released to the zone: GObjPC::FUN_004901c0 asks
 	// CGObj::CanTrade before clearing the owner (grounditem.Item.Bound).
 	ground.SetTradeLookup(groundTradeLookup(ctx, refItems))
+	// A drop whose row clears CanPick (itemdata column 21 -- the starter _DEF
+	// gear, fortress items) is refused 0x1839 to everyone: CheckCanPickUp's
+	// first test on a found item (grounditem.PickCheck).
+	ground.SetPickLookup(groundPickLookup(ctx, refItems))
 	go session.RunGroundItemSweep(ctx, ground, hub)
 	// The server's own gain multipliers, under the game's knob names. All
 	// default to 1x, and the engine's floor means a server cannot be

@@ -23,7 +23,11 @@
 //     the row's flags & 1) first and does nothing on 0, so an untradeable drop
 //     (a quest item) stays reserved to its owner until it decays (Item.Bound);
 //   - a pick in progress marks the item busy (+0x14c) and a second picker is
-//     refused with 0x1813.
+//     refused with 0x1813;
+//   - before any of those, an id that is no longer on the ground answers 3,
+//     and an item whose row clears CanPick (flags bit 5, itemdata column 21;
+//     vtable slot 53, CGObj::CanPick 0x00483e50) is refused 0x1839 to
+//     everyone, its owner included (Item.noPick, Hub.SetPickLookup).
 //
 // How long an item lies there before it vanishes IS read now (2026-09-19,
 // round 227): it is the item's own row -- `_RefObjCommon DecayTime`, itemdata
@@ -81,12 +85,19 @@ func LifetimeFor(decayTimeMs int) time.Duration {
 // inferred"). Picking it up adds gold, not an item.
 const GoldItemID int64 = 3
 
-// The refusal codes the real client shows, from GObjPC::CheckCanPickUp.
+// The refusal codes the real client shows, from GObjPC::CheckCanPickUp
+// (0x004a9050).
 const (
+	// ErrNotThere: no such object, or not an item. The function opens with
+	// `*param_2 = 3`, and returns false with it still 3 when the id resolves
+	// to nothing (FUN_00485d90) or IGObj::IsItem (slot 18) says no -- a drop
+	// that has already been picked up or has decayed. The same 3 is written
+	// later for a life state other than 2 and for an owner of -1.
+	ErrNotThere   = 3
 	ErrTooFar     = 4      // the 10-unit range
 	ErrNotOwner   = 0x1812 // someone else's drop, inside the window
 	ErrBusy       = 0x1813 // another pick is in progress
-	ErrCannotPick = 0x1839 // CanPick said no (not a pickable object)
+	ErrCannotPick = 0x1839 // CanPick answered 0 (UIIT_MSG_STRGERR_CANNOT_BE_PICKED)
 )
 
 // Item is one stack lying on the ground.
@@ -127,6 +138,10 @@ type Item struct {
 	// as it would any new item.
 	Instance *inventory.Instance
 	busy     bool
+	// noPick is an item whose reference row answers CanPick = 0 (itemdata
+	// column 21, flags bit 5): CheckCanPickUp refuses it 0x1839 to everyone,
+	// owner included. Set at Drop from the hub's pick lookup.
+	noPick bool
 }
 
 // OwnerAt returns who owns the item at t: its owner inside the window, 0
@@ -157,6 +172,9 @@ type Hub struct {
 	// not in the reference data; nil means none was given and no drop is
 	// Bound.
 	canTrade func(itemID int64) (canTrade, known bool)
+	// canPick answers an item's CanPick flag; nil means none was given and
+	// every drop is pickable.
+	canPick func(itemID int64) bool
 }
 
 func NewHub() *Hub {
@@ -182,9 +200,21 @@ func (h *Hub) SetTradeLookup(canTrade func(itemID int64) (canTrade, known bool))
 	h.canTrade = canTrade
 }
 
+// SetPickLookup gives the hub the reference data that says whether each item
+// can be picked up at all (refdata.Item.CanPick, itemdata column 21). A drop
+// whose row answers no is refused ErrCannotPick by PickCheck. Without a
+// lookup every drop is pickable. The answer is taken once, at Drop, so no
+// lookup runs under the hub's lock at pick time.
+func (h *Hub) SetPickLookup(canPick func(itemID int64) bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.canPick = canPick
+}
+
 // Drop puts a stack on the ground at (x, y, z) in zone, owned by ownerID. It
-// lies there for its own DecayTime (LifetimeFor) from this moment, and is
-// Bound when the trade lookup knows it and says it cannot be traded.
+// lies there for its own DecayTime (LifetimeFor) from this moment, is Bound
+// when the trade lookup knows it and says it cannot be traded, and cannot be
+// picked when the pick lookup says so.
 func (h *Hub) Drop(zone string, itemID int64, quantity int32, gold bool, x, y, z float32, ownerID int64) Item {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -199,8 +229,10 @@ func (h *Hub) Drop(zone string, itemID int64, quantity int32, gold bool, x, y, z
 		ct, known := h.canTrade(itemID)
 		bound = known && !ct
 	}
+	noPick := h.canPick != nil && !h.canPick(itemID)
 	it := &Item{ID: h.nextID, Zone: zone, ItemID: itemID, Quantity: quantity, Gold: gold,
-		X: x, Y: y, Z: z, OwnerID: ownerID, Bound: bound, DroppedAt: now, ExpiresAt: now.Add(LifetimeFor(decay))}
+		X: x, Y: y, Z: z, OwnerID: ownerID, Bound: bound, DroppedAt: now, ExpiresAt: now.Add(LifetimeFor(decay)),
+		noPick: noPick}
 	h.items[it.ID] = it
 	return *it
 }
@@ -231,9 +263,22 @@ func (h *Hub) InZone(zone string) []Item {
 }
 
 // PickCheck is everything CheckCanPickUp decides before an item changes
-// hands: range, ownership (with the party rule the caller supplies) and the
-// busy flag. On success the item is marked busy for this picker until
-// Remove or Release is called; a 0 result code means the pick may proceed.
+// hands, in the engine's order (GObjPC::CheckCanPickUp, 0x004a9050): the
+// item must still be there (ErrNotThere, 3), its CanPick must answer yes
+// (ErrCannotPick, 0x1839, vtable slot 53), it must be in range (ErrTooFar,
+// 4), not already being picked (ErrBusy, 0x1813, the +0x14c test the engine
+// makes after the range), and the picker must own it or be let in by the
+// party rule the caller supplies (ErrNotOwner). On success the item is
+// marked busy for this picker until Remove or Release is called; a 0 result
+// code means the pick may proceed.
+//
+// Two engine tests in that sequence have nothing to act on here. Between
+// CanPick and the range, an item whose slot 46 (IGObj::IsQuest_n_EventItem)
+// answers yes has the picker's quest state asked, refusing 0x1874
+// UIIT_MSG_STRGERR_CANNOT_BE_PICKED_AT_QUEST_ACHIEVE_CONDITION; srrevamp
+// has no quest-achieve condition to ask. Between the range and the busy
+// flag, a life state other than 2 answers 3; every item in the hub is on the
+// ground, which is life state 2.
 //
 // Two of the engine's ownership outcomes are not modelled, both known
 // divergences (docs/protocol/ground_items.md, "Picking up", step 3):
@@ -254,14 +299,17 @@ func (h *Hub) PickCheck(id int64, pickerID int64, px, py, pz float32, sameParty 
 	defer h.mu.Unlock()
 	it, ok := h.items[id]
 	if !ok {
-		return Item{}, ErrCannotPick
+		return Item{}, ErrNotThere
 	}
-	if it.busy {
-		return *it, ErrBusy
+	if it.noPick {
+		return *it, ErrCannotPick
 	}
 	dx, dy, dz := float64(it.X-px), float64(it.Y-py), float64(it.Z-pz)
 	if math.Sqrt(dx*dx+dy*dy+dz*dz) > PickRange {
 		return *it, ErrTooFar
+	}
+	if it.busy {
+		return *it, ErrBusy
 	}
 	if owner := it.OwnerAt(h.now()); owner != 0 && owner != pickerID {
 		if sameParty == nil || !sameParty(owner, pickerID) {

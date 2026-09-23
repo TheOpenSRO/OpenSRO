@@ -202,7 +202,11 @@ func DecodePickUpRequest(data []byte) (*PickUpRequest, error) {
 }
 
 // PickUpResult is the outcome: Code 0 and what landed (an item stack, or
-// gold), or one of the engine's refusal codes (grounditem.Err*).
+// gold), or one of the engine's refusal codes (grounditem.Err*) as
+// grounditem.PickCheck returns them -- 3 for a drop that is no longer there,
+// 0x1839 for one whose CanPick is clear. The handler's own failures that the
+// engine has no code for (an undecodable request, an unknown character, a
+// bag or purse that will not take the stack) also answer 0x1839.
 type PickUpResult struct {
 	Code         int32
 	GroundItemID int64

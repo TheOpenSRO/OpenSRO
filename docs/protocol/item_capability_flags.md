@@ -22,6 +22,7 @@ open", and went looking for something already found.
 | `CanSell` | 17 | `refdata.Item.CanSell` | `shop.Sell` |
 | `CanDrop` | 19 *(see below)* | `refdata.Item.CanDrop` | nothing: srrevamp has no drop-from-bag path |
 | `CanUse` | 24 | `refdata.Item.CanUse` | `session.UseItemHandler` (`0x183e`, round 489) |
+| `CanPick` | 21 | `refdata.Item.CanPick` | `grounditem.Hub.PickCheck` (`0x1839`, round 493): the first test on a found item in `GObjPC::CheckCanPickUp`, before the range, the busy flag and the owner (`ground_items.md`, "Picking up", step 1) |
 
 `CanUse` is the bit `Item_HandleUseItem` (`0x00510980`) asks about after
 every refusal the decompile sets ahead of it (round 490 corrected "first";
@@ -290,6 +291,18 @@ predicate:
 **Nine consecutive reads immediately before the flags word is assembled**, in the
 same order as the nine stubs. `CanBorrow` (bit 3) is not among them and is set
 somewhere else in the parser.
+
+**The read → slot → bit chain above stands; the COLUMNS it was turned into below
+do not, from read 13 on — superseded by round 460's table** ("The columns,
+anchored against real data"). The column those reads land on is off by one from
+read 13 because a column between reads 12 and 13 is **consumed without a read**:
+`0x6a33f0 add [edi+0x1c],ebx` advances the cursor with no load and `0x6a33f6
+add [edi+0x28],ebx` bumps the column counter. That is column 18, so read 13
+(`esp+0x12`) is column 19, read 14 (`esp+0x13`, `CanDrop`) 20, and read 15
+(`esp+0x23`, `CanPick`) **21** — stored at `0x6a3464` after the bump at
+`0x6a3455`, folded into bit 5 at `0x6a3590` (`and eax,0x20`). Counting on, read 18
+(`bl`) lands on column 24, which round 489 confirmed as `CanUse` from the data.
+srrevamp reads `CanPick` from column 21 (round 493).
 
 ## The read-to-column arithmetic, now established
 

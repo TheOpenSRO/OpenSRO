@@ -252,7 +252,29 @@ const (
 	// row but the 28 cash-shop avatars (3/1/14). Column 23, where the same
 	// file's older read-count table put CanUse, reads 0 on the HP potions, so
 	// it cannot be the bit a potion is used through.
-	fCanUse         = 24
+	fCanUse = 24
+	// fCanPick is flags bit 5, the one GObjPC::CheckCanPickUp (0x004a9050)
+	// asks right after it has found the object and IGObj::IsItem said yes:
+	// `(**(code **)(*item + 0xd4))()` -- vtable slot 53, IGObj::CanPick
+	// (docs/protocol/igobj_vtable.md) -- and a zero refuses the pick with
+	// 0x1839 UIIT_MSG_STRGERR_CANNOT_BE_PICKED (docs/protocol/error_emitters.tsv,
+	// the 0x004a9050 row). All seven CGItem* vtables (the ones carrying
+	// CGItem::Update at slot 211, 0xae9384 .. 0xaeb824) hold CGObj::CanPick
+	// (0x00483e50) there: IsItem, then `refobj+0x8c >> 5 & 1`.
+	//
+	// The column, read off RefObjCommon_ExtractData (0x006a3090) by its own
+	// column counter, [stream+0x28], bumped once per column: CanTrade's byte
+	// goes to esp+0x11 (column 16), CanSell's to esp+0x26 (17); column 18 is
+	// CONSUMED BUT NOT STORED -- 0x6a33f0 advances the cursor with no load and
+	// 0x6a33f6 bumps the counter -- then esp+0x12 (19), esp+0x13 (20), and the
+	// bump at 0x6a3455 with its byte stored at 0x6a3464 `mov [esp+0x23],dl`:
+	// column 21. That slot becomes the bit at 0x6a3588..0x6a3590, `neg al; sbb
+	// eax,eax; and eax,0x20`. Counting on from there lands bl on column 24,
+	// fCanUse above, so the two anchor each other. Round 460's data-anchored
+	// table in docs/protocol/item_capability_flags.md says 21 too, and over
+	// the combined itemdata the column is 0/1 only, 0 on 309 of 21,552 rows --
+	// all 84 starter `_DEF` rows among them -- and 1 on gold and potions.
+	fCanPick        = 21
 	fTwoHanded      = 93
 	fPhysDefenseMin = 65
 	fBlockRatio     = 74 // shields only -- see fParryRatio
@@ -617,6 +639,9 @@ func itemRecord(cols []string) ([]string, bool) {
 		// only whether the byte is non-zero, and the column really holds 129
 		// on some rows, so it is emitted as 0/1 like CanDrop's bit.
 		nonZero(get(fCanUse)), // 68 CanUse (col 24)
+		// 69: CanPick, flags bit 5 (round 493, see fCanPick), folded to 0/1 by
+		// the same `c != 0` rule.
+		nonZero(get(fCanPick)), // 69 CanPick (col 21)
 	}, true
 }
 

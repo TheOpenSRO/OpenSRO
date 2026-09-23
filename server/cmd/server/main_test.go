@@ -354,3 +354,27 @@ func TestGroundTradeLookupAdapter(t *testing.T) {
 		}
 	}
 }
+
+// The adapter main wires into grounditem.Hub.SetPickLookup passes a row's
+// CanPick through, and answers pickable for a missing row or a failed lookup,
+// so only a real CanPick = 0 row (itemdata column 21) makes a drop refuse
+// 0x1839 (GObjPC::CheckCanPickUp, round 493).
+func TestGroundPickLookupAdapter(t *testing.T) {
+	lookup := groundPickLookup(context.Background(), fakeItemRows{
+		99: {ID: 99, CanPick: false},
+		4:  {ID: 4, CanPick: true},
+	})
+	for _, c := range []struct {
+		id      int64
+		canPick bool
+	}{
+		{99, false}, // CanPick clear: refused
+		{4, true},   // CanPick set
+		{999, true}, // not in the store
+		{-1, true},  // the store failed
+	} {
+		if got := lookup(c.id); got != c.canPick {
+			t.Errorf("groundPickLookup(%d) = %v, want %v", c.id, got, c.canPick)
+		}
+	}
+}
