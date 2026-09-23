@@ -25575,3 +25575,118 @@ drives `OpGuildCreate` through `LoginHandler` + `GuildHandler` over a
 founds a guild. Negative case run: with the four production files reverted, all
 three fail -- `Create("")` returns nil error in both stores and `"A"` founds
 guild 1 over the wire. `go test -count=1 -p 1 ./...` green.
+
+## Refuse an untradeable item at offer time (CGStorage::TradeOfferItem 0x183a) (round 482)
+
+The trade flag was already enforced, but at the wrong time. Since the capability
+flags were recovered, `executeTrade` has refused an item whose `CanTrade`
+(itemdata column 16, `fCanTrade`) is clear. It did that only after both players
+had confirmed. Until then the offer was stored and sent to the partner as
+`OpTradeOfferUpdated`, and the trade died at the final confirm.
+
+**The grounding, re-read from the dump this round.**
+`CGStorage::TradeOfferItem` (`0x00526910`, `error_emitters.tsv` line 115) is the
+handler for putting an item into the trade window:
+
+	if (*(byte *)(param_2 + 3) < 0xd) return 0x1806;
+	piVar2 = (int *)GetItem(*(byte *)(param_2 + 3));
+	if (piVar2 == (int *)0x0) return 0x1809;
+	iVar3 = (**(code **)(*piVar2 + 0xc4))();
+	if (iVar3 == 0) return 0x183a;
+	...
+	uVar1 = TradeMgr::OfferItemToPartner(DAT_00d6a95c, param_1, ...);
+
+`0xc4` is vtable slot 49. `0x0057de80` is its base stub, which names itself
+`"## Illegal ##  IGObj::CanTrade Entered!"`
+(`docs/protocol/item_capability_flags.md`, "How it was found"). `0x183a` is
+`UIIT_MSG_STRGERR_CANNOT_BE_TRADED` (`error_codes.md`). The refusal comes before
+the item reaches `OfferItemToPartner`, so the partner is never told about it.
+
+**What moved.** `handleTradeSetOffer` now takes `inv` and `items`.
+`TradeHandler` already received both, and `cmd/server/main.go` already passes
+`refItems`. Before `trades.SetOffer`, the handler calls the new
+`offerTradeFlagRefusal`. It resolves the offered slot through `offerItemID`,
+looks the item up, and returns `that item cannot be traded` when `CanTrade` is
+false. A refusal answers `OpTradeOfferResult{OK: false}`. It does not store the
+offer, clear either side's confirmation, or send the partner anything. A store
+error returns `trade: checking offer: ...`.
+
+These cases give no refusal and leave validation to the commit:
+- no reference data or no inventory wired;
+- no item offered;
+- an empty slot, or one that holds too few;
+- an item the tables do not know.
+
+The first and last follow the same "no opinion" rule as `tradeFlagRefusal`. The
+empty or short slot is left alone because `executeTrade` already re-validates
+it ("offer no longer valid").
+
+Only `0x183a` is modelled. `TradeOfferItem` has five other refusals, and none of
+them is modelled. They are read off the same function body, and they are named
+here only by the engine's own strings (`error_codes.md`) or not at all:
+- `0x1806` when the slot byte is below `0xd`;
+- `0x1809` when `GetItem` finds nothing in the slot;
+- a bare `return 3`, after the `CanTrade` check, when both dwords at `+0x20`
+  and `+0x24` of the item's `piVar2[0xd]` record are zero. That field is not
+  identified;
+- `0x18b6` `UIIT_MSG_COSPETERR_CANT_TRADE`, when vtable slot `0x54` returns 1
+  and the object vtable slot `0x4bc` returns has bit `2` set in the byte at
+  `+0x38` of its `+4` record;
+- `0x18fa` `UIIT_CTL_NASRUN_NOT_TRADE`, when vtable slot `0x470` returns 1 and
+  `FUN_00498610()` returns non-zero.
+
+The `0x18fa` gate is **unnamed**. `FUN_00498610` (`getfn.sh 00498610`) reads
+the item's TID word and returns true unless bit 1 is clear and
+`(t & 0x1c) == 0xc`, `(t & 0x60) == 0x20`, `(t & 0x780) == 0x700`. With the
+layout in `damage_pipeline.md` ("The TID layout") that is TypeID1 3, TypeID2 1,
+TypeID3 14. For a matching item it calls `FUN_009754a0` and `FUN_009755c0`
+and returns `FUN_00975560() == 0`. `ITEM_FORMAT.md` puts avatars at TypeID3 13
+and 14 and the job suit at TypeID3 7, so this is not a job-suit test. Neither
+vtable slot `0x470` nor `FUN_00975560` is named, and what the gate refuses is
+not recovered beyond its error string.
+
+`TradeOfferItem` deals only with the item. srrevamp's placeholder
+`OpTradeSetOffer` carries gold and an item in one request, so a refusal also
+leaves that request's gold unstored. The stored offer, gold included, stays
+what it was, and a gold-only request is still accepted.
+
+The check runs before `trades.SetOffer`, which is where srrevamp learns whether
+the character is in a trade at all. So a character who is not trading and names
+an item slot now gets one `inventory.Store.List` before `not trading`. A store
+failure during that read returns a handler error, and the gateway closes the
+session on a handler error ("handler error, closing session", `gateway.go`).
+`executeTrade`'s store errors already end the same way.
+
+The `executeTrade` check stays, and its comment now calls it the commit-time
+re-check. An offer names a bag slot, not an item, so an inventory move between
+offering and confirming can put an untradeable item into the offered slot.
+
+The visible change: a starter (`_A_DEF`) or quest (`ITEM_QNO_`) item put into
+the trade window is refused at once, and the client shows
+`Offer failed: that item cannot be traded` (`World3D.gd`'s existing label). The
+partner never sees the item. No client change.
+
+**Tests.** The `trade_test.go` fixture is now `setupTradeTestWithItems(t, items)`
+(`setupTradeTest` passes nil). It also records the trade hub and both character
+ids, and `startTrade` is factored out of `TestTradeFullFlow`.
+`TestTradeOfferRefusesUntradeableItem` uses a refdata `MemStore` where item 100
+(Aria's) has `CanTrade` false and item 200 (Bram's) has it true. It checks five
+things:
+- Aria's offer of item 100 gets `OK=false` with `cannot be traded`, and
+  `SessionOf(aria).OfferA` stays at slot -1 with no gold.
+- The next packet Bram reads after his own offer is his `OpTradeOfferResult`
+  OK, not an update about Aria's item.
+- Aria then gets Bram's `OpTradeOfferUpdated` (slot 0, qty 5).
+- After Bram confirms, a retried refused offer leaves `ConfirmedB` true.
+- A gold-only offer is accepted and reaches Bram.
+
+`TestOfferTradeFlagRefusal` runs over `inventory.NewMemStore(nil)`. The
+no-refdata, no-inventory, slot -1, unknown-item, empty-slot and short-slot cases
+give "". `CanTrade` false gives the reason, `CanTrade` true gives "", and a
+lookup error that is not `ErrItemNotFound` is returned as an error.
+
+Negative case run: `trade.go` was reverted, with a test-only stub standing in
+for the helper so the package compiled. Both tests failed. Aria's offer came
+back `OK:true`, the stored `OfferA` was `{Gold:50 ItemSlot:0 Quantity:1}`, and
+Bram's next packet was `0x00D9` `OpTradeOfferUpdated`. The existing trade
+tests stay green. `go test -count=1 -p 1 ./...` green.

@@ -80,6 +80,40 @@ when `vslot(200)` — 200 decimal is `0xc8`, slot 50, `CanSell` — returns zero
 (`0x004b2ab0`) is a TID lookup through `FUN_0042e750`, a different mechanism
 despite the matching name.
 
+### `CanTrade` is enforced at offer time (round 482)
+
+The `0x183a` refusal lives in `CGStorage::TradeOfferItem` (`0x00526910`), the
+handler for putting an item into the trade window, and it runs **before**
+`TradeMgr::OfferItemToPartner`:
+
+```c
+if (*(byte *)(param_2 + 3) < 0xd) return 0x1806;
+piVar2 = (int *)GetItem(*(byte *)(param_2 + 3));
+if (piVar2 == (int *)0x0) return 0x1809;
+iVar3 = (**(code **)(*piVar2 + 0xc4))();   // CanTrade
+if (iVar3 == 0) return 0x183a;
+```
+
+So the engine refuses the offer itself, and the partner never sees the item.
+srrevamp now does the same: `session.handleTradeSetOffer` calls
+`offerTradeFlagRefusal` before `trade.Hub.SetOffer`. It answers
+`OpTradeOfferResult` with `that item cannot be traded`, and it does not store the
+offer, clear either side's confirmation, or send the partner an
+`OpTradeOfferUpdated`. Until round 482 the check ran only when the trade
+committed (`tradeFlagRefusal` in `executeTrade`). That check stays as the
+commit-time re-check, because an offer names a bag slot rather than an item,
+and an inventory move can put an untradeable item into the offered slot after
+the offer was accepted. Both checks refuse nothing when there is no reference
+data, or when the tables do not know the item.
+
+`TradeOfferItem` deals only with the item, but srrevamp's placeholder
+`OpTradeSetOffer` carries gold and an item together, so a refusal also leaves
+that request's gold unstored. The function's other refusals are not modelled.
+They are `0x1806`, `0x1809`, a bare `return 3`, `0x18b6`
+`UIIT_MSG_COSPETERR_CANT_TRADE`, and `0x18fa` `UIIT_CTL_NASRUN_NOT_TRADE`, whose
+gate (vtable slot `0x470` plus `FUN_00498610`) is unnamed. Their conditions are
+in `docs/RE_COMPLETION.md`, round 482.
+
 ## Every writer of the flags word, enumerated
 
 Five instructions in the **whole binary** write it, and they are all in the two

@@ -350,7 +350,7 @@ func TradeHandler(chars character.Store, inv inventory.Store, items ItemLookup, 
 		case OpTradeRespond:
 			return handleTradeRespond(ctx, sess, p, chars, trades)
 		case OpTradeSetOffer:
-			return handleTradeSetOffer(ctx, sess, p, chars, trades)
+			return handleTradeSetOffer(ctx, sess, p, chars, inv, items, trades)
 		case OpTradeConfirm:
 			return handleTradeConfirm(ctx, sess, p, chars, inv, items, trades)
 		case OpTradeCancel:
@@ -419,7 +419,7 @@ func handleTradeRespond(ctx context.Context, sess *gateway.Session, p *proto.Pac
 	return requester.Session.Send(&proto.Packet{Opcode: OpTradeStarted, Data: (&TradeStarted{PartnerName: req.CharacterName}).Encode()})
 }
 
-func handleTradeSetOffer(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, trades *trade.Hub) error {
+func handleTradeSetOffer(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, inv inventory.Store, items ItemLookup, trades *trade.Hub) error {
 	req, err := DecodeTradeSetOfferRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpTradeOfferResult, Data: (&TradeOfferResult{Reason: "malformed request"}).Encode()})
@@ -430,6 +430,24 @@ func handleTradeSetOffer(ctx context.Context, sess *gateway.Session, p *proto.Pa
 	}
 
 	offer := trade.Offer{Gold: req.Offer.Gold, ItemSlot: int(req.Offer.ItemSlot), Quantity: int(req.Offer.Quantity)}
+
+	// THE ITEM'S OWN TRADE FLAG, CHECKED WHEN THE ITEM IS OFFERED -- where the
+	// engine checks it. CGStorage::TradeOfferItem (`0x00526910`) reads the
+	// offered slot's item and, before it ever reaches
+	// TradeMgr::OfferItemToPartner, refuses with 0x183a
+	// UIIT_MSG_STRGERR_CANNOT_BE_TRADED when vtable slot 0xc4 (IGObj::CanTrade,
+	// docs/protocol/item_capability_flags.md) returns zero. So a refused offer
+	// is never stored, never voids either side's confirmation, and never
+	// reaches the partner; executeTrade keeps its own check for an item moved
+	// into the offered slot afterwards.
+	reason, err := offerTradeFlagRefusal(ctx, inv, items, characterID, offer)
+	if err != nil {
+		return fmt.Errorf("trade: checking offer: %w", err)
+	}
+	if reason != "" {
+		return sess.Send(&proto.Packet{Opcode: OpTradeOfferResult, Data: (&TradeOfferResult{Reason: reason}).Encode()})
+	}
+
 	sessn, err := trades.SetOffer(characterID, offer)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpTradeOfferResult, Data: (&TradeOfferResult{Reason: tradeErrorMessage(err)}).Encode()})
@@ -562,13 +580,16 @@ func executeTrade(ctx context.Context, chars character.Store, inv inventory.Stor
 		return 0, 0, "", err
 	}
 
-	// THE ITEM'S OWN TRADE FLAG, the engine's first check on an offer. Its
-	// trade handler calls CanTrade (vtable slot 49) and returns
-	// 0x183a UIIT_MSG_STRGERR_CANNOT_BE_TRADED when the flag is clear. In a
-	// real itemdata that is every starter item (all 52 `_A_DEF` rows) and every
-	// quest item (all 558 `ITEM_QNO_` rows) -- so without this check srrevamp
-	// let players trade away bound gear the real game pins to the character.
-	// See refdata.Item.CanTrade.
+	// THE ITEM'S OWN TRADE FLAG, RE-CHECKED AT COMMIT. The engine's trade-offer
+	// handler (CGStorage::TradeOfferItem, `0x00526910`) calls CanTrade (vtable
+	// slot 49) and returns 0x183a UIIT_MSG_STRGERR_CANNOT_BE_TRADED when the
+	// flag is clear; handleTradeSetOffer applies that at offer time (round
+	// 482, offerTradeFlagRefusal). This is the commit-time re-check: an
+	// inventory move between offering and confirming can put an untradeable
+	// item into the offered slot, and the offer names a slot, not an item. In
+	// a real itemdata the flag is clear on every starter item (all 52 `_A_DEF`
+	// rows) and every quest item (all 558 `ITEM_QNO_` rows). See
+	// refdata.Item.CanTrade.
 	if reason, err := tradeFlagRefusal(ctx, items, sess, itemA, itemB); err != nil || reason != "" {
 		return 0, 0, reason, err
 	}
@@ -745,6 +766,45 @@ func tradeSpaceShortfall(ctx context.Context, inv inventory.Store, sess *trade.S
 		if len(occupied) >= inventory.SlotsPerCharacter {
 			return side.name + "'s inventory is full", nil
 		}
+	}
+	return "", nil
+}
+
+// offerTradeFlagRefusal reports the OpTradeOfferResult reason when the item in
+// offer's slot is one the engine forbids trading. Empty reason means the offer
+// may be stored.
+//
+// It is the offer-time half of CGStorage::TradeOfferItem (`0x00526910`):
+//
+//	piVar2 = (int *)GetItem(*(byte *)(param_2 + 3));
+//	if (piVar2 == (int *)0x0) return 0x1809;
+//	iVar3 = (**(code **)(*piVar2 + 0xc4))();   // IGObj::CanTrade, slot 49
+//	if (iVar3 == 0) return 0x183a;             // CANNOT_BE_TRADED
+//
+// Only the 0x183a refusal is modelled here. An empty or short slot is left to
+// executeTrade, which re-validates every offer at commit ("offer no longer
+// valid"), and the same "no opinion" rule as tradeFlagRefusal applies: no
+// reference data wired, or an item the tables do not know, refuses nothing.
+func offerTradeFlagRefusal(ctx context.Context, inv inventory.Store, items ItemLookup, characterID int64, offer trade.Offer) (string, error) {
+	if items == nil || inv == nil || offer.ItemSlot < 0 {
+		return "", nil
+	}
+	itemID, _, err := offerItemID(ctx, inv, characterID, offer)
+	if err != nil {
+		if errors.Is(err, errOfferInvalid) {
+			return "", nil
+		}
+		return "", err
+	}
+	it, err := items.GetItem(ctx, itemID)
+	if err != nil {
+		if errors.Is(err, refdata.ErrItemNotFound) {
+			return "", nil
+		}
+		return "", fmt.Errorf("looking up item %d: %w", itemID, err)
+	}
+	if it != nil && !it.CanTrade {
+		return "that item cannot be traded", nil
 	}
 	return "", nil
 }

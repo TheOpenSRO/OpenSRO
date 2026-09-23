@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,13 +78,23 @@ func TestTradeRespondRequestRoundTrip(t *testing.T) {
 // chain over two real TCP connections, and gets both through login +
 // enter_world. Returns everything a trade test needs.
 type tradeTestFixture struct {
-	chars        *character.MemStore
-	inv          *inventory.SQLStore
-	connA, connB net.Conn
-	rA, rB       *bufio.Reader
+	chars          *character.MemStore
+	inv            *inventory.SQLStore
+	trades         *trade.Hub
+	ariaID, bramID int64
+	connA, connB   net.Conn
+	rA, rB         *bufio.Reader
 }
 
 func setupTradeTest(t *testing.T) *tradeTestFixture {
+	t.Helper()
+	return setupTradeTestWithItems(t, nil)
+}
+
+// setupTradeTestWithItems is setupTradeTest with items wired into the trade
+// handler as its reference-data lookup (nil means none, as on a server that
+// has imported no tables).
+func setupTradeTestWithItems(t *testing.T, items ItemLookup) *tradeTestFixture {
 	t.Helper()
 	ctx := context.Background()
 	accounts := account.NewMemStore()
@@ -99,8 +110,8 @@ func setupTradeTest(t *testing.T) *tradeTestFixture {
 		t.Fatalf("creating Bram: %v", err)
 	}
 
-	items := stubCombatItems{100: {ID: 100, PhysAttackMax: 30}, 200: {ID: 200, PhysAttackMax: 10}}
-	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), items)
+	stacks := stubCombatItems{100: {ID: 100, PhysAttackMax: 30}, 200: {ID: 200, PhysAttackMax: 10}}
+	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), stacks)
 	if err != nil {
 		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
 	}
@@ -117,7 +128,7 @@ func setupTradeTest(t *testing.T) *tradeTestFixture {
 
 	hub := world.NewHub()
 	trades := trade.NewHub()
-	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, nil, hub), TradeHandler(chars, inv, nil, hub, trades))
+	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, nil, hub), TradeHandler(chars, inv, items, hub, trades))
 
 	addr, cleanup := startTestServer(t, handle)
 	t.Cleanup(cleanup)
@@ -162,7 +173,36 @@ func setupTradeTest(t *testing.T) *tradeTestFixture {
 		t.Fatalf("draining EntityEntered: %v", err)
 	}
 
-	return &tradeTestFixture{chars: chars, inv: inv, connA: connA, connB: connB, rA: rA, rB: rB}
+	return &tradeTestFixture{chars: chars, inv: inv, trades: trades, ariaID: aria.ID, bramID: bram.ID, connA: connA, connB: connB, rA: rA, rB: rB}
+}
+
+// startTrade has Aria request a trade with Bram and Bram accept, and drains
+// the invite and both OpTradeStarted packets: the trade is open, Aria is side
+// A and Bram side B, and neither has offered anything.
+func startTrade(t *testing.T, f *tradeTestFixture) {
+	t.Helper()
+	resp := doSend(t, f.connA, f.rA, OpTradeRequest, (&TradeRequestRequest{CharacterName: "Aria", TargetName: "Bram"}).Encode())
+	if rr, err := DecodeTradeRequestResult(resp.Data); err != nil || !rr.OK {
+		t.Fatalf("trade request failed: err=%v result=%+v", err, rr)
+	}
+	f.connB.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := proto.Read(f.rB, nil, nil); err != nil {
+		t.Fatalf("reading OpTradeInvite: %v", err)
+	}
+
+	resp = doSend(t, f.connB, f.rB, OpTradeRespond, (&TradeRespondRequest{CharacterName: "Bram", RequesterName: "Aria", Accept: true}).Encode())
+	if rr, err := DecodeTradeRespondResult(resp.Data); err != nil || !rr.OK {
+		t.Fatalf("trade respond failed: err=%v result=%+v", err, rr)
+	}
+	// Both sides get OpTradeStarted.
+	f.connB.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if startedPkt, err := proto.Read(f.rB, nil, nil); err != nil || startedPkt.Opcode != OpTradeStarted {
+		t.Fatalf("reading Bram's OpTradeStarted: opcode=%v err=%v", startedPkt, err)
+	}
+	f.connA.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if startedPkt, err := proto.Read(f.rA, nil, nil); err != nil || startedPkt.Opcode != OpTradeStarted {
+		t.Fatalf("reading Aria's OpTradeStarted: opcode=%v err=%v", startedPkt, err)
+	}
 }
 
 func doSend(t *testing.T, c net.Conn, r *bufio.Reader, opcode uint16, data []byte) *proto.Packet {
@@ -187,31 +227,10 @@ func TestTradeFullFlow(t *testing.T) {
 	f := setupTradeTest(t)
 	ctx := context.Background()
 
-	resp := doSend(t, f.connA, f.rA, OpTradeRequest, (&TradeRequestRequest{CharacterName: "Aria", TargetName: "Bram"}).Encode())
-	if rr, err := DecodeTradeRequestResult(resp.Data); err != nil || !rr.OK {
-		t.Fatalf("trade request failed: err=%v result=%+v", err, rr)
-	}
-	f.connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(f.rB, nil, nil); err != nil {
-		t.Fatalf("reading OpTradeInvite: %v", err)
-	}
-
-	resp = doSend(t, f.connB, f.rB, OpTradeRespond, (&TradeRespondRequest{CharacterName: "Bram", RequesterName: "Aria", Accept: true}).Encode())
-	if rr, err := DecodeTradeRespondResult(resp.Data); err != nil || !rr.OK {
-		t.Fatalf("trade respond failed: err=%v result=%+v", err, rr)
-	}
-	// Both sides get OpTradeStarted.
-	f.connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if startedPkt, err := proto.Read(f.rB, nil, nil); err != nil || startedPkt.Opcode != OpTradeStarted {
-		t.Fatalf("reading Bram's OpTradeStarted: opcode=%v err=%v", startedPkt, err)
-	}
-	f.connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if startedPkt, err := proto.Read(f.rA, nil, nil); err != nil || startedPkt.Opcode != OpTradeStarted {
-		t.Fatalf("reading Aria's OpTradeStarted: opcode=%v err=%v", startedPkt, err)
-	}
+	startTrade(t, f)
 
 	// Aria offers 50 gold + her weapon (slot 0, qty 1).
-	resp = doSend(t, f.connA, f.rA, OpTradeSetOffer, (&TradeSetOfferRequest{CharacterName: "Aria", Offer: TradeOffer{Gold: 50, ItemSlot: 0, Quantity: 1}}).Encode())
+	resp := doSend(t, f.connA, f.rA, OpTradeSetOffer, (&TradeSetOfferRequest{CharacterName: "Aria", Offer: TradeOffer{Gold: 50, ItemSlot: 0, Quantity: 1}}).Encode())
 	if or, err := DecodeTradeOfferResult(resp.Data); err != nil || !or.OK {
 		t.Fatalf("Aria's offer failed: err=%v result=%+v", err, or)
 	}
@@ -518,5 +537,149 @@ func TestTradeRefusesUntradeableItem(t *testing.T) {
 	items2.ImportItems(ctx, []refdata.Item{{ID: boundItem, CanTrade: true}})
 	if _, _, reason, err := executeTrade(ctx, chars, inv, items2, sess); err != nil || reason != "" {
 		t.Errorf("a tradeable item was refused: reason=%q err=%v", reason, err)
+	}
+}
+
+// TestTradeOfferRefusesUntradeableItem drives the offer-time CanTrade check over
+// the wire. CGStorage::TradeOfferItem (`0x00526910`) returns 0x183a
+// UIIT_MSG_STRGERR_CANNOT_BE_TRADED from the offer itself, before
+// TradeMgr::OfferItemToPartner runs, so the refused item is never recorded and
+// the partner never sees it. Before round 482 srrevamp accepted the offer,
+// showed it to the partner, and only failed the whole trade at the final
+// confirm.
+func TestTradeOfferRefusesUntradeableItem(t *testing.T) {
+	ctx := context.Background()
+	items := refdata.NewMemStore()
+	items.ImportItems(ctx, []refdata.Item{
+		{ID: 100, CanTrade: false}, // Aria's slot 0: bound, like every _A_DEF row
+		{ID: 200, CanTrade: true},  // Bram's slot 0: an ordinary stack of 5
+	})
+	f := setupTradeTestWithItems(t, items)
+	startTrade(t, f)
+
+	offerBound := (&TradeSetOfferRequest{CharacterName: "Aria", Offer: TradeOffer{Gold: 50, ItemSlot: 0, Quantity: 1}}).Encode()
+
+	// Aria offers her bound item: refused at once, nothing stored.
+	resp := doSend(t, f.connA, f.rA, OpTradeSetOffer, offerBound)
+	if resp.Opcode != OpTradeOfferResult {
+		t.Fatalf("Aria's answer: opcode 0x%04X, want OpTradeOfferResult", resp.Opcode)
+	}
+	if or, err := DecodeTradeOfferResult(resp.Data); err != nil || or.OK || !strings.Contains(or.Reason, "cannot be traded") {
+		t.Fatalf("an untradeable item was accepted into the offer: err=%v result=%+v", err, or)
+	}
+	// SessionOf hands back the live *trade.Session and its fields are read
+	// here without the hub's lock. That is safe only because every request
+	// above has been answered and nothing else is sending; a test that reads
+	// them while traffic is in flight needs a locked snapshot instead.
+	ts, ok := f.trades.SessionOf(f.ariaID)
+	if !ok {
+		t.Fatal("the refused offer ended the trade")
+	}
+	if ts.OfferA.ItemSlot != -1 || ts.OfferA.Gold != 0 {
+		t.Fatalf("the refused offer was stored: %+v", ts.OfferA)
+	}
+
+	// Bram hears nothing about it: the next packet he reads after his own
+	// offer is that offer's result, not an OpTradeOfferUpdated for Aria's item.
+	resp = doSend(t, f.connB, f.rB, OpTradeSetOffer, (&TradeSetOfferRequest{CharacterName: "Bram", Offer: TradeOffer{ItemSlot: 0, Quantity: 5}}).Encode())
+	if resp.Opcode != OpTradeOfferResult {
+		t.Fatalf("Bram's next packet: opcode 0x%04X, want his OpTradeOfferResult (Aria's refused item reached him)", resp.Opcode)
+	}
+	if or, err := DecodeTradeOfferResult(resp.Data); err != nil || !or.OK {
+		t.Fatalf("Bram's tradeable offer was refused: err=%v result=%+v", err, or)
+	}
+
+	// A tradeable item still goes through, and reaches the partner.
+	f.connA.SetReadDeadline(time.Now().Add(2 * time.Second))
+	updated, err := proto.Read(f.rA, nil, nil)
+	if err != nil || updated.Opcode != OpTradeOfferUpdated {
+		t.Fatalf("reading Aria's OpTradeOfferUpdated: pkt=%v err=%v", updated, err)
+	}
+	if ou, err := DecodeTradeOfferUpdated(updated.Data); err != nil || ou.Offer.ItemSlot != 0 || ou.Offer.Quantity != 5 {
+		t.Fatalf("unexpected offer update on Aria's side: %+v (err=%v)", ou, err)
+	}
+
+	// A refusal leaves the partner's confirmation standing: SetOffer, which
+	// voids both confirmations, is never reached.
+	resp = doSend(t, f.connB, f.rB, OpTradeConfirm, (&TradeConfirmRequest{CharacterName: "Bram"}).Encode())
+	if cr, err := DecodeTradeConfirmResult(resp.Data); err != nil || !cr.OK {
+		t.Fatalf("Bram's confirm failed: err=%v result=%+v", err, cr)
+	}
+	resp = doSend(t, f.connA, f.rA, OpTradeSetOffer, offerBound)
+	if or, err := DecodeTradeOfferResult(resp.Data); err != nil || or.OK {
+		t.Fatalf("the retried untradeable offer was accepted: err=%v result=%+v", err, or)
+	}
+	if ts, _ := f.trades.SessionOf(f.ariaID); !ts.ConfirmedB || ts.OfferA.ItemSlot != -1 {
+		t.Fatalf("a refused offer changed the trade: confirmedB=%v offerA=%+v", ts.ConfirmedB, ts.OfferA)
+	}
+
+	// A gold-only offer has no item to check and is accepted.
+	resp = doSend(t, f.connA, f.rA, OpTradeSetOffer, (&TradeSetOfferRequest{CharacterName: "Aria", Offer: TradeOffer{Gold: 50, ItemSlot: -1}}).Encode())
+	if or, err := DecodeTradeOfferResult(resp.Data); err != nil || !or.OK {
+		t.Fatalf("a gold-only offer was refused: err=%v result=%+v", err, or)
+	}
+	f.connB.SetReadDeadline(time.Now().Add(2 * time.Second))
+	updated, err = proto.Read(f.rB, nil, nil)
+	if err != nil || updated.Opcode != OpTradeOfferUpdated {
+		t.Fatalf("reading Bram's OpTradeOfferUpdated: pkt=%v err=%v", updated, err)
+	}
+	if ou, err := DecodeTradeOfferUpdated(updated.Data); err != nil || ou.Offer.Gold != 50 || ou.Offer.ItemSlot != -1 {
+		t.Fatalf("unexpected offer update on Bram's side: %+v (err=%v)", ou, err)
+	}
+}
+
+// TestOfferTradeFlagRefusal pins offerTradeFlagRefusal's cases: only an item
+// the reference data says is untradeable is refused (0x183a in
+// CGStorage::TradeOfferItem, `0x00526910`); every "cannot tell" case refuses
+// nothing and leaves validation to executeTrade.
+func TestOfferTradeFlagRefusal(t *testing.T) {
+	ctx := context.Background()
+	const charID = 7
+	inv := inventory.NewMemStore(nil)
+	if err := inv.AddItem(ctx, charID, 3632, 1); err != nil { // slot 0: bound
+		t.Fatalf("seeding slot 0: %v", err)
+	}
+	if err := inv.AddItem(ctx, charID, 4842, 1); err != nil { // slot 1: tradeable
+		t.Fatalf("seeding slot 1: %v", err)
+	}
+	if err := inv.AddItem(ctx, charID, 5555, 1); err != nil { // slot 2: not in the tables
+		t.Fatalf("seeding slot 2: %v", err)
+	}
+	items := refdata.NewMemStore()
+	items.ImportItems(ctx, []refdata.Item{{ID: 3632, CanTrade: false}, {ID: 4842, CanTrade: true}})
+
+	for _, tc := range []struct {
+		name   string
+		inv    inventory.Store
+		items  ItemLookup
+		offer  trade.Offer
+		refuse bool
+	}{
+		{"no reference data", inv, nil, trade.Offer{ItemSlot: 0, Quantity: 1}, false},
+		{"no inventory", nil, items, trade.Offer{ItemSlot: 0, Quantity: 1}, false},
+		{"no item offered", inv, items, trade.Offer{Gold: 10, ItemSlot: -1}, false},
+		{"item the tables do not know", inv, items, trade.Offer{ItemSlot: 2, Quantity: 1}, false},
+		{"empty slot", inv, items, trade.Offer{ItemSlot: 9, Quantity: 1}, false},
+		{"more than the slot holds", inv, items, trade.Offer{ItemSlot: 0, Quantity: 2}, false},
+		{"CanTrade clear", inv, items, trade.Offer{ItemSlot: 0, Quantity: 1}, true},
+		{"CanTrade set", inv, items, trade.Offer{ItemSlot: 1, Quantity: 1}, false},
+	} {
+		reason, err := offerTradeFlagRefusal(ctx, tc.inv, tc.items, charID, tc.offer)
+		if err != nil {
+			t.Errorf("%s: unexpected error %v", tc.name, err)
+			continue
+		}
+		if tc.refuse && !strings.Contains(reason, "cannot be traded") {
+			t.Errorf("%s: reason %q, want a cannot-be-traded refusal", tc.name, reason)
+		}
+		if !tc.refuse && reason != "" {
+			t.Errorf("%s: refused with %q, want no refusal", tc.name, reason)
+		}
+	}
+
+	// A lookup failure that is not "no such item" is a store error, not a
+	// silent pass.
+	if _, err := offerTradeFlagRefusal(ctx, inv, stubCombatItems{}, charID, trade.Offer{ItemSlot: 0, Quantity: 1}); err == nil {
+		t.Error("a failing item lookup was swallowed")
 	}
 }
