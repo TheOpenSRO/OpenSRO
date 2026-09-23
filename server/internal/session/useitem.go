@@ -256,6 +256,111 @@ func potionRestore(param1, param2, param3, param4, level, str, intel, maxHP, max
 	return hp, mp
 }
 
+// The per-kind potion lock (round 508). A recovery potion carries no COOLTIME
+// descriptor, but CGItemExpendable slot 308 (0x0049b710) keeps a reuse lock of
+// its own, one bit per recovery kind, in the word at [pc+0x30]+8:
+//
+//   - The gate. Slot 308's first act for TypeID3 1 (after sending TypeID4 8
+//     to AddHwanCount) is GObjPC::FUN_004eb410 (0x49b8b6); a zero answer is
+//     0x185b WAIT_FOR_REUSE_DELAY (0x49b8c2), and CGItemExpendable::DoJob
+//     (0x0049aca0) returns any result but 1 before it decrements the count
+//     (LAB_0049af45), so the refused potion is kept. FUN_004eb410 maps the
+//     kind to a bit through the jump table at 0x4eb574 and answers whether
+//     that bit is clear in the BYTE at [pc+0x30]+8 (0x4eb42b `movzx`).
+//   - The arm. After the heal, FUN_004e0ab0 (0x49b98e, EBX = the bit from the
+//     gate, 0x49b97e) ORs the bit in (0x4e0ac0) and queues an AJStateChanger
+//     record of type 6 (0x4e0af6) carrying the bit (+0xd) and a float32 delay
+//     (+0x10, 0x4e0aec) on the PC's job manager at pc+0x1d8 (0x4e0af0).
+//   - The unit is SECONDS. The manager's update, FUN_004065d0, takes
+//     GetTickCount minus the last update (0x4065e8..0x4065f0), converts it
+//     with `fdiv QWORD PTR ds:0xb45c68` -- the double 1000.0, bytes 00 00 00
+//     00 00 40 8f 40 (0x406605) -- and hands that to each record's vtable +8,
+//     AJStateChanger::vslot_002, which subtracts it from +0x10 (0x405f79
+//     `fld`, 0x405f7c `fsub`) and keeps the record while the rest is above 0
+//     (0x405f94).
+//   - The release. When it reaches 0, vslot_002's type-6 case clears exactly
+//     that bit (0x4060da `movzx edx,BYTE [edi+0xd]`, 0x4060e2 `not edx`,
+//     0x4060e4 `and edx,ecx`, 0x4060e6 store) and the record is dropped.
+//
+// So each kind locks only itself: an HP potion's bit does not stop an MP
+// potion, and a percentage HP potion shares the absolute one's bit.
+//
+// DISCLOSED, not modelled:
+//   - The manager is ticked every 0.3 s, not continuously: CGObjChar::vslot_000
+//     registers the thunk 0x4a6990 (`lea eax,[ecx+0x1d8]; jmp 0x4065d0`) on
+//     the timer vector at +0x18c with the float 0.3 at 0xb45b8c (0x4a6e29),
+//     the vector whose 1.0 entry is the one-second job (round 411). And a
+//     record armed while others are queued is first decremented by the time
+//     since the last tick, not since the arm (FUN_004066a0 resets the clock
+//     only when the list is empty). So retail frees the bit on a tick, within
+//     about 0.3 s either side of the delay; srrevamp frees it at the delay.
+//   - GObjPC::FUN_004e67b0 zeroes the whole word and drops the type-6 records
+//     (0x4e67c8 FUN_004066c0(6), 0x4e67d0). CGObjPC slots 306 and 307
+//     (0x529b10, 0x52cdb0) call it; their pet and mercenary versions set life
+//     state 2 (docs/protocol/character_state.md). srrevamp does not clear the
+//     lock there, so a potion drunk just before one of those paths stays
+//     locked for the rest of its delay.
+//   - The lock lives on the PC object in the engine and in the handler here,
+//     so a relog inside the delay does not clear it in srrevamp.
+const (
+	// potionReuseAbsoluteChina is the float32 1.1 at .rdata 0xb461b8 (bytes
+	// cd cc 8c 3f; 1.10000002 s, 24 ns over 1100 ms), loaded by
+	// 0x49b96c `fld DWORD` for an absolute potion when the Country byte is 0.
+	potionReuseAbsoluteChina = 1100 * time.Millisecond
+	// potionReuseAbsoluteEurope is the float32 15.1 at 0xb461ac (bytes
+	// 9a 99 71 41; 15.1000004 s), 0x49b978 `fld DWORD`, for an absolute potion
+	// when the Country byte is non-zero. Every srrevamp character is China
+	// (characterCountry), so nothing selects it today.
+	potionReuseAbsoluteEurope = 15100 * time.Millisecond
+	// potionReusePercentage is the float32 4.1 at 0xb461b0 (bytes 33 33 83
+	// 40; 4.09999990 s, 95 ns under 4100 ms), 0x49b964 `fld DWORD`, for a
+	// percentage potion whatever the Country.
+	potionReusePercentage = 4100 * time.Millisecond
+)
+
+// potionReuseBit is FUN_004eb410's kind-to-bit map for TypeID3 1, the jump
+// table at 0x4eb574 indexed by TypeID4-1 (0x4eb4c2 `add eax,-1`): 1 -> 1
+// (0x4eb4d1), 2 -> 2 (0x4eb4ec), 3 -> 4 (0x4eb507). The table's 4, 5 and 7
+// (8, 0x10, 0x20) are kinds DoJob sends to slot 327, not to slot 308, and
+// restoresUserPool refuses them before this is asked. Any other kind that
+// reaches slot 308 has no bit: index 5 and anything past the table's 7
+// entries (`cmp eax,0x6; ja`, 0x4eb4c5) go to 0x4eb493, which answers 0 --
+// always 0x185b. No real recovery row has such a kind.
+func potionReuseBit(typeID4 int) (bit uint32, ok bool) {
+	switch typeID4 {
+	case 1:
+		return 1, true
+	case 2:
+		return 2, true
+	case 3:
+		return 4, true
+	}
+	return 0, false
+}
+
+// potionReuseDelay is the delay slot 308 hands FUN_004e0ab0, chosen at
+// 0x49b957..0x49b978 by the Country byte of the PC's ref row (+0x88; 0 China,
+// 1 Europe, round 480) and FUN_0049aa70's absolute flag, which it sets to 1 at
+// 0x49ac37 on the absolute path (Param1 or Param3 non-zero) and to 0 at
+// 0x49ab42 on the percentage path:
+//
+//	cmp BYTE [edx+0x88],0 ; jne 0x49b974
+//	test esi,esi ; jne -> 1.1 ; else 4.1       (China)
+//	0x49b974: test esi,esi ; je -> 4.1 ; 15.1  (any other Country)
+func potionReuseDelay(country int, absolute bool) time.Duration {
+	if !absolute {
+		return potionReusePercentage
+	}
+	if country == equipment.CountryChina {
+		return potionReuseAbsoluteChina
+	}
+	return potionReuseAbsoluteEurope
+}
+
+// useItemClock is the handler's clock, a variable so a test can step it
+// through the reuse delays without waiting them out.
+var useItemClock = time.Now
+
 // UseItemHandler consumes one item from a bag slot and applies what it
 // restores.
 //
@@ -334,6 +439,10 @@ func potionRestore(param1, param2, param3, param4, level, str, intel, maxHP, max
 // (round 498, useExpansion): the warehouse item grows the account's
 // warehouse through warehouse (nil refuses it), and the bag item is refused.
 func UseItemHandler(chars character.Store, inv inventory.Store, items combat.ItemLookup, mp *mana.Tracker, warehouse *storage.Service) gateway.Handler {
+	// The per-kind potion locks (round 508), keyed by character and
+	// potionReuseBit. The handler is built once per server (cmd/server), so
+	// this is process-wide there, as the item cooldowns are.
+	potionLocks := newItemCooldownTracker()
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpUseItem {
 			return nil
@@ -400,22 +509,19 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// The reuse delay, the engine's way (round 263): only an item whose
 		// row carries a COOLTIME descriptor has one, the timer belongs to the
 		// item's cooltime GROUP, and a use inside it is refused with
-		// WAIT_FOR_REUSE_DELAY (0x185b). A plain HP/MP potion carries no
-		// COOLTIME descriptor -- but slot 308 has a per-kind potion gate of
-		// its own (round 496; NOT modelled, a DISCLOSED GAP): FUN_004eb410
-		// answers 0x185b while the kind's bit (TypeID4 1/2/3 -> 1/2/4) is set
-		// in the byte at [pc+0x30]+8, and after a use FUN_004e0ab0 sets it
-		// with a float32 handed to a state-changer record, chosen at
-		// 0x49b957..0x49b978 by two things: FUN_0049aa70's absolute flag
-		// (esi: 1 absolute, 0 percentage) and the byte at the PC's ref row
-		// +0x88, which is the character's COUNTRY (0 China, 1 Europe; round
-		// 480, leveldata.go's ExpDiffScale comment, the same byte the equip
-		// check compares for 0x182f COUNTRY_MISMATCH). A percentage potion
-		// gets 4.1 (.rdata 0xb461b0) either way (`test esi,esi; je 0x49b964`
-		// on both branches); an absolute one gets 1.1 (0xb461b8) for China and
-		// 15.1 (0xb461ac) for Europe (`cmp BYTE [edx+0x88],0; jne 0x49b974`).
-		// Its unit and what clears the bit were not read.
-		if it.CooltimeMs > 0 && !itemCooldowns.Ready(characterID, it.CooltimeGroup, time.Now()) {
+		// WAIT_FOR_REUSE_DELAY (0x185b). Item_HandleUseItem asks it
+		// (ItemCooldowns::IsReady) before DoJob.
+		now := useItemClock()
+		if it.CooltimeMs > 0 && !itemCooldowns.Ready(characterID, it.CooltimeGroup, now) {
+			return fail("wait for the reuse delay")
+		}
+		// A plain HP/MP potion carries no COOLTIME descriptor, but slot 308
+		// locks each recovery kind on its own (round 508, potionReuseBit):
+		// FUN_004eb410 is the first thing slot 308 asks, before the amounts
+		// (FUN_0049aa70) are computed, and it answers the same 0x185b. The
+		// item is kept.
+		reuseBit, knownKind := potionReuseBit(it.TypeID4)
+		if !knownKind || !potionLocks.Ready(characterID, reuseBit, now) {
 			return fail("wait for the reuse delay")
 		}
 
@@ -479,8 +585,15 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// engine persists a delay of five minutes or more across a relog,
 		// srrevamp does not yet -- disclosed.
 		if it.CooltimeMs > 0 {
-			itemCooldowns.Arm(characterID, it.CooltimeGroup, time.Duration(it.CooltimeMs)*time.Millisecond, time.Now())
+			itemCooldowns.Arm(characterID, it.CooltimeGroup, time.Duration(it.CooltimeMs)*time.Millisecond, now)
 		}
+		// The kind's lock (round 508): FUN_004e0ab0 after the heal, for the
+		// delay chosen by the Country and FUN_0049aa70's absolute flag (Param1
+		// or Param3 non-zero, potionReuseDelay). A use srrevamp refuses as "no
+		// need" above arms nothing; the engine spends the potion and arms it
+		// even then (round 496's full-HP divergence).
+		absolute := it.RestoreHP != 0 || it.RestoreMP != 0
+		potionLocks.Arm(characterID, reuseBit, potionReuseDelay(characterCountry(owned), absolute), now)
 
 		return sess.Send(&proto.Packet{Opcode: OpUseItemResult, Data: (&UseItemResult{
 			HP: int32(newHP), MaxHP: int32(maxHP),

@@ -428,9 +428,12 @@ takes the persisted branch (a `time32` stamp, so a long cooldown survives a
 relog).
 
 **What the retail table says.** 148 rows carry a descriptor; **no HP, MP or
-vigour potion does**, so the server puts no reuse delay on potions at all --
-whatever pacing the retail client applies to potion clicks is the client's,
-not this rule. Examples: the random-cure pills `ITEM_ETC_CURE_RANDOM_0x`
+vigour potion does**, so this descriptor puts no reuse delay on potions.
+(Corrected in rounds 496 and 508: the server still paces potions, through a
+separate per-kind lock in `CGItemExpendable` slot 308 -- `FUN_004eb410`
+refuses with the same `0x185b`, `FUN_004e0ab0` arms it for a float32 number
+of seconds, 1.1 for an absolute potion by a China character and 4.1 for a
+percentage one. See `session.potionReuseBit` and RE_COMPLETION.md round 508.) Examples: the random-cure pills `ITEM_ETC_CURE_RANDOM_0x`
 group `0xC8` **20 000 ms**; group `0xF0` 1 200 000 ms (20 min); group `0x71`
 18 000 000 ms (5 h); group `0x00` from 5 000 ms to 7 200 000 ms; a handful at
 `1` ms. Items in one group share the timer.
@@ -451,6 +454,6 @@ skip 113).
 group's timer with "wait for the reuse delay" and arms it on success
 (`session/itemcooldown.go`, in memory; the 300 s persistence is not built --
 disclosed). Nothing usable today carries a cooltime -- the handler still only
-consumes restore items -- so the rule is live but idle, and the earlier note
-that "srrevamp enforces no item cooldown" is now the engine's own behaviour
-for every potion.
+consumes restore items -- so the rule is live but idle. Potions are paced by
+slot 308's per-kind lock instead (round 508), which the same handler checks
+right after this one.

@@ -8,6 +8,7 @@ import (
 
 	"github.com/OpenSRO/srrevamp/server/internal/account"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
+	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
@@ -672,6 +673,216 @@ func TestBagExpansionAllowedFollowsExpandInventory(t *testing.T) {
 	}{{inventory.InventoryAdditionSlots, false}, {14, true}, {15, false}, {1, true}} {
 		if got := bagExpansionAllowed(tc.slots); got != tc.want {
 			t.Errorf("bagExpansionAllowed(%d) = %v, want %v", tc.slots, got, tc.want)
+		}
+	}
+}
+
+// Round 508: slot 308's per-kind potion lock. FUN_004eb410 answers 0x185b
+// while the kind's bit (TypeID4 1/2/3 -> 1/2/4) is set, and FUN_004e0ab0 sets
+// it after a use for a float32 number of SECONDS (FUN_004065d0 divides the
+// GetTickCount delta by 1000.0 before AJStateChanger::vslot_002 subtracts it):
+// 1.1 for an absolute potion drunk by a China character, 4.1 for a percentage
+// one. The kinds and Param blocks are the real rows' (allitems.txt on the RE
+// box): ITEM_ETC_HP_POTION_01 (4, 3/3/1/1, 120), ITEM_ETC_MP_POTION_01 (11,
+// 3/3/1/2, Param3 120), ITEM_ETC_ALL_POTION_01 (18, 3/3/1/3, 120 / 120) and
+// ITEM_ETC_HP_SPOTION_01 (9, 3/3/1/1, Param2 25).
+//
+//   - An HP potion twice at the same instant: the second is refused with the
+//     reuse-delay reason, kept, and heals nothing. Before this round it healed
+//     and was consumed.
+//   - An MP potion and an all potion at that same instant are allowed: each
+//     kind has its own bit.
+//   - The HP potion is refused 1 ms before 1.1 s and allowed at 1.1 s.
+//   - A percentage HP potion shares the HP bit and locks it for 4.1 s: an
+//     absolute HP potion is refused 1 ms before and allowed at 4.1 s.
+func TestPotionReuseDelayPerKind(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	mp := mana.NewTracker()
+	maxMP := c.MaxMP()
+
+	t0 := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	clock := t0
+	saved := useItemClock
+	t.Cleanup(func() { useItemClock = saved })
+	useItemClock = func() time.Time { return clock }
+
+	const (
+		hpPotion  = 4
+		mpPotion  = 11
+		allPotion = 18
+		hpSpotion = 9
+	)
+	items := refdata.NewMemStore()
+	if err := items.ImportItems(ctx, []refdata.Item{
+		{ID: hpPotion, MaxStack: 5000, TypeID1: 3, TypeID2: 3, TypeID3: 1, TypeID4: 1, RestoreHP: 120, CanUse: true},
+		{ID: mpPotion, MaxStack: 5000, TypeID1: 3, TypeID2: 3, TypeID3: 1, TypeID4: 2, RestoreMP: 120, CanUse: true},
+		{ID: allPotion, MaxStack: 5000, TypeID1: 3, TypeID2: 3, TypeID3: 1, TypeID4: 3, RestoreHP: 120, RestoreMP: 120, CanUse: true},
+		{ID: hpSpotion, MaxStack: 5000, TypeID1: 3, TypeID2: 3, TypeID3: 1, TypeID4: 1, RestoreHPPct: 25, CanUse: true},
+	}); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	inv := inventory.NewMemStore(items)
+	for _, id := range []int64{hpPotion, mpPotion, allPotion, hpSpotion} {
+		if err := inv.AddItem(ctx, c.ID, id, 10); err != nil {
+			t.Fatalf("add %d: %v", id, err)
+		}
+	}
+	qtyOf := func(id int64) (index, qty int) {
+		t.Helper()
+		slots, err := inv.List(ctx, c.ID)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		for _, sl := range slots {
+			if sl.ItemID == id {
+				return sl.Index, sl.Quantity
+			}
+		}
+		return -1, 0
+	}
+	// hurt leaves HP at 20 and MP at 20 before every use, so no potion is
+	// ever refused as "no need" and every accepted one restores something.
+	hurt := func() {
+		t.Helper()
+		cur, err := chars.GetByID(ctx, c.ID)
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if cur.HP > 20 {
+			if _, _, err := chars.ApplyDamage(ctx, c.ID, cur.HP-20); err != nil {
+				t.Fatalf("damage: %v", err)
+			}
+		}
+		if got := mp.Current(c.ID, maxMP); got > 20 {
+			if _, ok := mp.Spend(c.ID, maxMP, got-20); !ok {
+				t.Fatalf("could not spend %d MP", got-20)
+			}
+		}
+	}
+
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mp, nil))
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+	send := func(op uint16, data []byte) *proto.Packet {
+		t.Helper()
+		if err := proto.Write(conn, &proto.Packet{Opcode: op, Data: data}, nil, nil); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		return resp
+	}
+	if lr, err := DecodeLoginResult(send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
+		t.Fatalf("login: %v %+v", err, lr)
+	}
+	use := func(id int64) *UseItemResult {
+		t.Helper()
+		slot, _ := qtyOf(id)
+		if slot < 0 {
+			t.Fatalf("item %d is not in the bag; the answer would be \"nothing there\"", id)
+		}
+		res, err := DecodeUseItemResult(send(OpUseItem, (&UseItemRequest{CharacterName: "Aria", InventorySlot: int32(slot)}).Encode()).Data)
+		if err != nil {
+			t.Fatalf("decode result: %v", err)
+		}
+		return res
+	}
+	allowed := func(label string, id int64) {
+		t.Helper()
+		hurt()
+		_, before := qtyOf(id)
+		res := use(id)
+		if res.Error != "" {
+			t.Fatalf("%s: refused with %q, want it drunk", label, res.Error)
+		}
+		if res.RestoredHP <= 0 && res.RestoredMP <= 0 {
+			t.Errorf("%s: restored nothing: %+v", label, res)
+		}
+		if _, after := qtyOf(id); after != before-1 {
+			t.Errorf("%s: %d left, want %d", label, after, before-1)
+		}
+	}
+	refused := func(label string, id int64) {
+		t.Helper()
+		hurt()
+		_, before := qtyOf(id)
+		hpBefore, _ := chars.GetByID(ctx, c.ID)
+		mpBefore := mp.Current(c.ID, maxMP)
+		if res := use(id); res.Error != "wait for the reuse delay" {
+			t.Errorf("%s: got %+v, want the 0x185b refusal %q", label, res, "wait for the reuse delay")
+		}
+		if _, after := qtyOf(id); after != before {
+			t.Errorf("%s: the refused potion was consumed: %d left, want %d", label, after, before)
+		}
+		if hpAfter, _ := chars.GetByID(ctx, c.ID); hpAfter.HP != hpBefore.HP {
+			t.Errorf("%s: the refused potion healed: HP %d -> %d", label, hpBefore.HP, hpAfter.HP)
+		}
+		if got := mp.Current(c.ID, maxMP); got != mpBefore {
+			t.Errorf("%s: the refused potion restored MP: %d -> %d", label, mpBefore, got)
+		}
+	}
+
+	allowed("HP potion", hpPotion)
+	refused("HP potion again at once", hpPotion)
+	allowed("MP potion right after the HP potion (bit 2)", mpPotion)
+	allowed("all potion right after both (bit 4)", allPotion)
+	refused("MP potion again at once", mpPotion)
+
+	clock = t0.Add(1099 * time.Millisecond)
+	refused("HP potion at 1.099 s", hpPotion)
+	clock = t0.Add(1100 * time.Millisecond)
+	allowed("HP potion at 1.1 s", hpPotion)
+
+	t1 := t0.Add(2200 * time.Millisecond)
+	clock = t1
+	allowed("percentage HP potion", hpSpotion)
+	clock = t1.Add(4099 * time.Millisecond)
+	refused("absolute HP potion 4.099 s after a percentage one", hpPotion)
+	allowed("MP potion while the HP bit holds the percentage delay", mpPotion)
+	clock = t1.Add(4100 * time.Millisecond)
+	allowed("absolute HP potion 4.1 s after a percentage one", hpPotion)
+}
+
+// potionReuseBit is FUN_004eb410's jump table (0x4eb574) for the kinds slot
+// 308 heals the user with, and potionReuseDelay the choice at
+// 0x49b957..0x49b978: 4.1 s for any percentage potion, 1.1 s for an absolute
+// one by a China (0) character, 15.1 s for any other Country.
+func TestPotionReuseBitAndDelay(t *testing.T) {
+	for _, tc := range []struct {
+		kind   int
+		bit    uint32
+		wantOK bool
+	}{{1, 1, true}, {2, 2, true}, {3, 4, true}, {0, 0, false}, {6, 0, false}, {11, 0, false}} {
+		bit, ok := potionReuseBit(tc.kind)
+		if bit != tc.bit || ok != tc.wantOK {
+			t.Errorf("potionReuseBit(%d) = (%#x, %v), want (%#x, %v)", tc.kind, bit, ok, tc.bit, tc.wantOK)
+		}
+	}
+	for _, tc := range []struct {
+		country  int
+		absolute bool
+		want     time.Duration
+	}{
+		{equipment.CountryChina, true, 1100 * time.Millisecond},
+		{equipment.CountryChina, false, 4100 * time.Millisecond},
+		{equipment.CountryEurope, true, 15100 * time.Millisecond},
+		{equipment.CountryEurope, false, 4100 * time.Millisecond},
+	} {
+		if got := potionReuseDelay(tc.country, tc.absolute); got != tc.want {
+			t.Errorf("potionReuseDelay(%d, %v) = %v, want %v", tc.country, tc.absolute, got, tc.want)
 		}
 	}
 }

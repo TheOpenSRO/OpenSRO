@@ -28824,3 +28824,126 @@ HP).
 - The only client change is the bundled `client/docs/HELP_PLAYING.md`
   (`TestBundledClientDocsMatchSource` checks it matches). `client/tools/remote_godot.sh tests` on
   the render box: 77 suites, 0 failing.
+
+## Potions have a per-kind server reuse delay: 1.1 s absolute, 4.1 s percentage (China), refused with 0x185b (FUN_004eb410 / FUN_004e0ab0) (round 508)
+
+Round 496 found that `CGItemExpendable` slot 308 keeps a reuse lock of its own for recovery
+potions, and round 501 corrected which float goes with which case. Neither read the float's unit
+or what clears the bit, so the lock stayed unmodelled. This round read both, checked the rest of
+the plan, and then wired it.
+
+**Grounding, re-read before any edit** (dump, `srv.asm`/objdump and `.rdata` on the RE box,
+read-only):
+
+- **The unit is seconds.** `FUN_004e0ab0` (`0x4e0ab0`) queues its record on the PC's async-job
+  manager at `pc+0x1d8` (`0x4e0af0 add esi,0x1d8`, then `FUN_004066a0`). That manager's update,
+  `FUN_004065d0`, does these steps:
+  - takes `GetTickCount() - [mgr+4]` (`0x4065e8`..`0x4065f0`), adding 2^32 when negative (the
+    float at `0xb45ba4`);
+  - divides it by `fdiv QWORD PTR ds:0xb45c68` (`0x406605`), the double **1000.0** (bytes
+    `00 00 00 00 00 40 8f 40`);
+  - stores the result as a float (`0x40661e`) and passes it to each record's vtable `+8`
+    (`0x406645`).
+  `AJStateChanger::vslot_002` subtracts that from the record's `+0x10` (`0x405f79 fld`,
+  `0x405f7c fsub`, `0x405f88 fst`) and keeps the record while the rest is above zero
+  (`0x405f94`). So the delay is in seconds, and milliseconds are converted before the subtract.
+- **The release.** When the rest reaches zero, vslot_002's type-6 case checks vtable `+0x1c` == 1
+  and clears exactly the record's bit: `0x4060da movzx edx,BYTE [edi+0xd]`, `0x4060e2 not edx`,
+  `0x4060e4 and edx,ecx`, `0x4060e6` store into `[pc+0x30]+8`. It then returns 0 and the manager
+  drops the record (`0x40664b`..`0x406660`). `FUN_004e0ab0` wrote type 6 at `+0xc` (`0x4e0af6`)
+  and the bit at `+0xd` (`0x4e0afa`).
+- **How often.** `CGObjChar::vslot_000` registers the thunk `0x4a6990`
+  (`lea eax,[ecx+0x1d8]; jmp 0x4065d0`) on the timer vector at `+0x18c` with the float **0.3** at
+  `0xb45b8c` (`9a 99 99 3e`, `0x4a6e29`). That is the same vector whose 1.0 entry is the
+  one-second job (round 411), and `CGObjChar::Update` drives it (`0x4a8a09`). `FUN_004066a0` resets
+  `[mgr+4]` only when the list is empty. So retail frees the bit on a 0.3 s tick, within about
+  0.3 s either side of the delay. **Disclosed, not modelled.**
+- **Per kind.** `FUN_004eb410` reads the item's TID. For TypeID3 1 it jumps through the table at
+  `0x4eb574`, indexed by TypeID4 - 1:
+  - 1, 2 and 3 set bits 1, 2 and 4 (`0x4eb4d1`, `0x4eb4ec`, `0x4eb507`);
+  - 4, 5 and 7 set 8, 0x10 and 0x20, but those are slot-327 kinds;
+  - 6, and anything past the table (`0x4eb4c5 cmp eax,0x6; ja`), go to `0x4eb493`, which answers
+    0.
+  The gate returns whether that bit is clear in the BYTE at `[pc+0x30]+8` (`0x4eb42b movzx`). Slot
+  308 keeps the bit (`[esp+0x1c]`) and hands it to the arm as EBX (`0x49b97e`). `FUN_004e0ab0`
+  ORs in only that bit (`0x4e0ac0`), and the release clears only it. So each kind locks only
+  itself, and a percentage HP potion shares the absolute HP potion's bit. No real 3/3/1 row has a
+  kind outside 1-4, 6 and 8-10 (census of `allitems.txt`), so the "no bit" answer is never reached
+  on real data.
+- **The floats**, every one loaded with `fld DWORD` (float32): 1.1 at `0xb461b8` (`cd cc 8c 3f`,
+  `0x49b96c`), 4.1 at `0xb461b0` (`33 33 83 40`, `0x49b964`) and 15.1 at `0xb461ac`
+  (`9a 99 71 41`, `0x49b978`). The flag the selector tests is `FUN_0049aa70`'s first stack
+  argument: 1 on the absolute path (`0x49ac37`, reached when Param1 or Param3 is non-zero,
+  `0x49aa95`..`0x49aaa9`) and 0 on the percentage path (`0x49ab42`).
+- **Order.** `Item_HandleUseItem` (`0x00510980`) runs these checks in turn:
+  - CanUse (`0x183e`);
+  - the TID match;
+  - the COOLTIME-descriptor check (`ItemCooldowns::IsReady`, `0x185b`);
+  - the equip requirements;
+  - `DoJob` (`+0x4c8`).
+  `DoJob` sends TypeID3-1 kinds other than 4-7, 9 and 10 to slot 308. Slot 308's first act, after
+  diverting TypeID4 8, is the gate (`0x49b8b6`), before `FUN_0049aa70` (`0x49b8e6`). `DoJob`
+  returns a result other than 1 before it decrements the count (`LAB_0049af45`), so the refused
+  potion is kept.
+- **Also found, not modelled.** `GObjPC::FUN_004e67b0` zeroes the whole word, drops the type-6
+  records (`0x4e67c8`, `FUN_004066c0(6)`) and empties the potion queue. `CGObjPC` slots 306 and 307
+  (`0x529b10`, `0x52cdb0`) call it, only when the life state is 1. Their pet and mercenary
+  versions set life state 2 (`character_state.md`).
+
+**Change** (`session/useitem.go`):
+
+- `potionReuseBit(typeID4)`: the jump table, 1/2/3 -> 1/2/4, and no bit for any other kind.
+- `potionReuseDelay(country, absolute)`: the `0x49b957`..`0x49b978` selector. The constants are
+  `potionReuseAbsoluteChina` (1100 ms), `potionReusePercentage` (4100 ms) and
+  `potionReuseAbsoluteEurope` (15100 ms). The Europe constant is taken for any non-zero Country;
+  `characterCountry` is always China, so nothing selects it today, like round 480's Europe arm.
+- `UseItemHandler` holds a per-handler `itemCooldownTracker` keyed by character and bit. The
+  server builds one handler, so the tracker is process-wide there, and each test's handler gets
+  its own. The handler:
+  - refuses with "wait for the reuse delay" (0x185b), keeping the item, right after the COOLTIME
+    check, when the kind has no bit or its bit is locked;
+  - arms the bit after a successful use for the delay chosen by `characterCountry` and the
+    absolute flag (`RestoreHP != 0 || RestoreMP != 0`).
+- `useItemClock` (a variable, `time.Now`) is the handler's single clock for both the COOLTIME
+  check and the potion lock, so a test can step it.
+
+**Divergences, disclosed in the comment.**
+
+- srrevamp frees the bit at exactly the delay; retail frees it on the next 0.3 s tick.
+- The death-path clear from slots 306/307 is not modelled.
+- A relog inside the delay does not clear the lock.
+- A potion srrevamp refuses as "no need" (full HP/MP) arms nothing. The engine spends it and arms
+  (round 496's full-HP divergence).
+
+**Behaviour.** Drinking an HP or MP potion back to back is limited as in retail: one absolute
+potion of a kind every 1.1 s, and 4.1 s after a percentage potion of that kind. An HP potion, an
+MP potion and an all potion can still be drunk at the same instant.
+
+**Docs.** SYSTEMS.md's item row records the wiring. GROUNDING_AUDIT.md moves the delay out of the
+potion-amount row's "not modelled" list and gains a row of its own. ITEM_FORMAT.md's "the server
+puts no reuse delay on potions at all" (round 263) is corrected: the COOLTIME descriptor puts
+none, but slot 308 does.
+
+**Tests.**
+
+- **`TestPotionReuseDelayPerKind`** uses the real rows' kinds and Params (HP_POTION_01,
+  MP_POTION_01, ALL_POTION_01, HP_SPOTION_01) and a stepped clock:
+  - a second HP potion at the same instant is refused with the reuse-delay reason, kept, and heals
+    nothing;
+  - an MP potion and an all potion at that instant are allowed;
+  - a second MP potion is refused;
+  - the HP potion is refused at 1.099 s and allowed at 1.1 s;
+  - after a percentage HP potion, an absolute HP potion is refused at 4.099 s (an MP potion is
+    allowed then) and allowed at 4.1 s.
+- **`TestPotionReuseBitAndDelay`**: the bit map (1/2/3 -> 1/2/4; 0, 6 and 11 have no bit) and all
+  four Country x flag delays.
+
+**Negative case, run.**
+
+- **`useitem.go` stashed:** the package fails to build (`undefined: useItemClock`,
+  `potionReuseBit`, `potionReuseDelay`).
+- **Behavioural check:** the old handler, with throwaway stubs so it compiles, FAILS the test. A
+  second HP potion at once heals and is consumed ("the refused potion was consumed: 8 left, want
+  9", "healed: HP 20 -> 145"), and so do the second MP potion and the 1.099 s and 4.099 s cases.
+- **Restored:** both tests pass.
+- **Suite:** `cd server && go build ./... && go test -count=1 -p 1 ./...` is green.
