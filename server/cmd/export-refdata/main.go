@@ -366,10 +366,24 @@ const (
 	// 2 on 322 -- no other value.
 	skAutoAttackType = 19
 	skRange          = 21 // 0 = melee
-	skConsumeHP      = 52
-	skConsumeMP      = 53
-	skMastery1       = 34 // ReqCommon_Mastery1
-	skMasteryLevel1  = 36 // ReqCommon_MasteryLevel1 (required mastery level)
+	// skTargetRequired is Target_Required, the u8 at CRefSkill+0x94: the
+	// field CopyFixedColumns (0x6ab5a0) copies right after Range (+0x92,
+	// column 21), so column 22 (docs/protocol/skill_fields.md, the
+	// fixed-columns table). Skill_ApplyEffectsAndNotify (0x593f50) heals the
+	// caster only when it is 0 (0x5942b1 `cmp byte [edx+0x94],0`). Measured
+	// on the real rows: 0 on all 49 SKILL_CH_WATER_SELFHEAL rows, 1 on the
+	// targeted SKILL_EU_BARD_RECOVERA_ABNORMAL_A heals.
+	skTargetRequired = 22
+	// skActionKind is the skill's ACTION KIND, the first raw Param word at
+	// CRefSkill+0x168 -- the column before the code runs start
+	// (skillparam.ParamBlockColumn, +0x16c; docs/protocol/skill_params.md,
+	// "The buff lifecycle"). The heal branch runs only for kind 0 (0x5941f1
+	// `cmp [ebx+0x168],0`).
+	skActionKind    = skillparam.ParamBlockColumn - 1
+	skConsumeHP     = 52
+	skConsumeMP     = 53
+	skMastery1      = 34 // ReqCommon_Mastery1
+	skMasteryLevel1 = 36 // ReqCommon_MasteryLevel1 (required mastery level)
 	// The two required-weapon bytes. The engine names them itself: the
 	// skilldata row loader SkillGlobal::FUN_005893e0 refuses a row whose
 	// CRefSkill+199/+200 are zero with "ReqWeapon Error [RefSkill ID: %d]",
@@ -802,6 +816,7 @@ func skillRecord(cols []string) ([]string, bool) {
 	}
 	atkType, pct, dmgMin, dmgMax := attackParam(cols)
 	hits := hitCountParam(cols)
+	healHP, healMP := selfHeal(cols)
 	return []string{
 		get(skID),             // 0  ID
 		get(skGroupID),        // 1  GroupID
@@ -847,7 +862,31 @@ func skillRecord(cols []string) ([]string, bool) {
 		get(skReqLearnSkillLevel2), // 40 ReqLearnSkillLevel2
 		get(skReqLearnSkill3),      // 41 ReqLearnSkill3
 		get(skReqLearnSkillLevel3), // 42 ReqLearnSkillLevel3
+		healHP,                     // 43 SelfHealHP -- 'heal' value[0] a flat self-heal restores (round 503)
+		healMP,                     // 44 SelfHealMP -- 'heal' value[2], its MP half
 	}, true
+}
+
+// selfHeal is the (HP, MP) a skill restores to its own caster, as the
+// SelfHealHP/SelfHealMP columns: skillparam.SelfHealAmounts over the row's
+// action kind (skActionKind), Target_Required (skTargetRequired) and Param
+// block. Anything it cannot read answers ("0", "0"), which is also what an
+// export predating the columns loads -- no heal, the behaviour srrevamp had.
+func selfHeal(cols []string) (hp, mp string) {
+	words, ok := paramWords(cols)
+	if !ok {
+		return "0", "0"
+	}
+	kind, err := strconv.ParseInt(strings.TrimSpace(cols[skActionKind]), 10, 32)
+	if err != nil {
+		return "0", "0"
+	}
+	tr, err := strconv.Atoi(strings.TrimSpace(cols[skTargetRequired]))
+	if err != nil {
+		return "0", "0"
+	}
+	h, m := skillparam.SelfHealAmounts(int32(kind), tr != 0, words)
+	return strconv.Itoa(h), strconv.Itoa(m)
 }
 
 // attackCode is the skill parameter tagged 'att', the one that carries a

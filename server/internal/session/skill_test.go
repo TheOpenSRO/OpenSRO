@@ -77,6 +77,15 @@ func (fakeSkillRef) GetSkill(_ context.Context, id int64) (*refdata.Skill, error
 	if id == 994 {
 		return &refdata.Skill{ID: 994, BasicLevel: 5, ReuseDelayMs: 0, FloorBlow: true}, nil
 	}
+	// 993 is a flat SELF-HEAL, SKILL_CH_WATER_SELFHEAL's shape (round 503): no
+	// combat parameter, and a 'heal' the exporter turned into SelfHealHP. 992
+	// is its MP twin, SKILL_EU_BARD_RECOVERA_ABNORMALTIME's shape.
+	if id == 993 {
+		return &refdata.Skill{ID: 993, BasicLevel: 1, ReuseDelayMs: 0, NoCombatParam: true, ZeroDamage: true, SelfHealHP: 50}, nil
+	}
+	if id == 992 {
+		return &refdata.Skill{ID: 992, BasicLevel: 1, ReuseDelayMs: 0, NoCombatParam: true, ZeroDamage: true, SelfHealMP: 50}, nil
+	}
 	return nil, errors.New("no such skill")
 }
 
@@ -936,5 +945,176 @@ func TestWinterSnowmanTakesExactlyOnePerBlow(t *testing.T) {
 	}
 	if ar.MonsterDied || ar.MonsterRemainingHP != 10 {
 		t.Fatalf("after one blow: died=%v hp=%d, want alive at 10 of 11", ar.MonsterDied, ar.MonsterRemainingHP)
+	}
+}
+
+// Round 503: a flat self-heal restores its authored amount to the caster,
+// capped at the maximum, and every non-damaging cast reports the caster's real
+// HP. Before it, PlayerHP was left at its zero value on this path -- the HUD
+// painted an empty bar after any buff -- and the heal did nothing.
+func TestSelfHealSkillRestoresCasterHP(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("creating character: %v", err)
+	}
+	maxHP, maxMP := c.MaxHP(), c.MaxMP()
+	if maxHP != 200 {
+		t.Fatalf("test premise: a new character's max HP is %d, want 200", maxHP)
+	}
+
+	items := stubCombatItems{100: {ID: 100, PhysAttackMin: 30, PhysAttackMax: 30}}
+	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), items)
+	if err != nil {
+		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer inv.Close()
+	inv.TruncateForTest(ctx)
+
+	eq, err := equipment.OpenSQLStore(inventoryTestDSN(), inv)
+	if err != nil {
+		t.Fatalf("equipment.OpenSQLStore: %v", err)
+	}
+	defer eq.Close()
+	eq.TruncateForTest(ctx)
+
+	skills, err := skill.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("skill.OpenSQLStore: %v", err)
+	}
+	defer skills.Close()
+	skills.TruncateForTest(ctx)
+	for _, id := range []int64{993, 992, 996} {
+		if err := skills.Learn(ctx, c.ID, id); err != nil {
+			t.Fatalf("Learn %d: %v", id, err)
+		}
+	}
+
+	hub := world.NewHub()
+	monsters := combat.NewHub()
+	monster := monsters.Spawn("jangan", "Mangyang", 0, 0, 0, 1000, 10, 5, 500)
+	monsterBefore := monster.HP
+
+	quests, err := quest.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("quest.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer quests.Close()
+	quests.TruncateForTest(ctx)
+
+	mp := mana.NewTracker()
+	handle := gateway.Chain(
+		LoginHandler(accounts),
+		WorldHandler(chars, eq, hub),
+		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv, fakeSkillRef{}, nil, mp, nil),
+	)
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+
+	send := func(opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+	resp := send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+	resp = send(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode())
+	if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
+		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
+	}
+
+	cast := func(id int64) *AttackResult {
+		t.Helper()
+		resp := send(OpUseSkill, (&UseSkillRequest{CharacterName: "Aria", SkillID: id, TargetMonsterID: monster.ID}).Encode())
+		ar, err := DecodeAttackResult(resp.Data)
+		if err != nil {
+			t.Fatalf("DecodeAttackResult: %v", err)
+		}
+		if ar.Error != "" {
+			t.Fatalf("cast of %d failed: %s", id, ar.Error)
+		}
+		return ar
+	}
+	storedHP := func() int {
+		t.Helper()
+		got, err := chars.GetByID(ctx, c.ID)
+		if err != nil {
+			t.Fatalf("GetByID: %v", err)
+		}
+		return got.HP
+	}
+	setHP := func(hp int) {
+		t.Helper()
+		if _, _, err := chars.ApplyDamage(ctx, c.ID, storedHP()-hp); err != nil {
+			t.Fatalf("ApplyDamage: %v", err)
+		}
+		if got := storedHP(); got != hp {
+			t.Fatalf("test premise: HP %d, want %d", got, hp)
+		}
+	}
+
+	// 100 of 200, then a 50-point self-heal: 150, reported and stored, and the
+	// selected monster untouched.
+	setHP(100)
+	if ar := cast(993); ar.PlayerHP != 150 {
+		t.Errorf("self-heal from 100: PlayerHP = %d, want 150", ar.PlayerHP)
+	}
+	if got := storedHP(); got != 150 {
+		t.Errorf("self-heal from 100: stored HP = %d, want 150", got)
+	}
+	if monster.HP != monsterBefore {
+		t.Errorf("monster HP %d -> %d; a self-heal must not touch it", monsterBefore, monster.HP)
+	}
+
+	// Ten short of the maximum: capped, as GObjChar::FUN_004a66f0 clamps.
+	setHP(maxHP - 10)
+	if ar := cast(993); ar.PlayerHP != int32(maxHP) {
+		t.Errorf("self-heal from max-10: PlayerHP = %d, want the cap %d", ar.PlayerHP, maxHP)
+	}
+	if got := storedHP(); got != maxHP {
+		t.Errorf("self-heal from max-10: stored HP = %d, want %d", got, maxHP)
+	}
+
+	// A plain buff heals nothing but still reports the real HP, not 0.
+	setHP(170)
+	if ar := cast(996); ar.PlayerHP != 170 {
+		t.Errorf("plain buff: PlayerHP = %d, want the current 170", ar.PlayerHP)
+	}
+	if got := storedHP(); got != 170 {
+		t.Errorf("plain buff changed HP to %d", got)
+	}
+
+	// The MP half lands in the mana pool.
+	if _, ok := mp.Spend(c.ID, maxMP, 60); !ok {
+		t.Fatal("test premise: could not spend 60 MP")
+	}
+	mpBefore := mp.Current(c.ID, maxMP)
+	cast(992)
+	if got := mp.Current(c.ID, maxMP); got < mpBefore+50 {
+		t.Errorf("MP self-heal: %d -> %d, want at least %d", mpBefore, got, mpBefore+50)
+	}
+
+	// A dead caster is not healed (0x5942c0: the caster must be alive).
+	setHP(0)
+	if ar := cast(993); ar.PlayerHP != 0 {
+		t.Errorf("dead caster: PlayerHP = %d, want 0", ar.PlayerHP)
+	}
+	if got := storedHP(); got != 0 {
+		t.Errorf("dead caster: stored HP = %d, want 0", got)
 	}
 }

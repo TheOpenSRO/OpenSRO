@@ -420,6 +420,10 @@ var skillCSVColumns = []string{
 	// by the mastery level and SP alone, as it was before these existed.
 	"ReqLearnSkill1", "ReqLearnSkillLevel1", "ReqLearnSkill2", "ReqLearnSkillLevel2",
 	"ReqLearnSkill3", "ReqLearnSkillLevel3",
+	// Appended later (round 503: the flat HP/MP a self-heal restores to its
+	// caster, skillparam.SelfHealAmounts). A strict suffix: an older export
+	// loads 0, which is no self-heal -- exactly what it meant before.
+	"SelfHealHP", "SelfHealMP",
 }
 
 // skillCSVRequiredColumns is the prefix every skill export must carry; the
@@ -573,6 +577,14 @@ func parseSkillRow(f []string) (Skill, error) {
 		sk.ReqLearnSkillLevel2 = parseInt64(f[40])
 		sk.ReqLearnSkill3 = parseInt64(f[41])
 		sk.ReqLearnSkillLevel3 = parseInt64(f[42])
+	}
+	// The self-heal amounts (round 503), optional in the same way: an export
+	// predating them leaves 0, no heal.
+	if len(f) > 43 {
+		sk.SelfHealHP = parseInt(f[43])
+	}
+	if len(f) > 44 {
+		sk.SelfHealMP = parseInt(f[44])
 	}
 
 	if err != nil {

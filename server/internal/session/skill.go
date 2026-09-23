@@ -895,10 +895,31 @@ func useSkillHandler(
 		// skill.Catalog, which has no real row.
 		//
 		// The cast still SUCCEEDS: costs were paid and the use recorded above,
-		// which is the order the engine checks them in. What the skill does
-		// INSTEAD of a blow is not modelled -- srrevamp has no buff or heal
-		// system yet -- so this is the faithful half of an unfinished answer,
-		// the same shape as the weapon gate before its other branch was read.
+		// which is the order the engine checks them in (EngageSkill 0x593540:
+		// the costs first, the heal later, in Skill_ApplyEffectsAndNotify).
+		// What the skill does INSTEAD of a blow is modelled for one case only:
+		// a flat SELF-HEAL (round 503). A row whose refdata SelfHealHP /
+		// SelfHealMP is non-zero -- the exporter writes them only for the shape
+		// skillparam.SelfHealAmounts proves exact: action kind 0,
+		// Target_Required 0, a flat 'heal' with no 'efr'/'nmh'/'mwhh'/'mwmh'/
+		// 'HLRU' -- restores that much to the caster, as the engine's empty-
+		// target branch does (0x5942ad-0x5942f3 -> Skill_ApplyHealToObject
+		// 0x5a0850 on the caster). The scale 1 + p170/100 is exactly 1 here:
+		// p170/p171 have one writer, the 'rhru' buff, and there is no buff
+		// system. HP lands capped at the maximum, as the engine's setter clamps
+		// it (GObjChar::FUN_004a66f0: `cmp edi,GetMaxHP` via vtbl +0x110; the
+		// MP setter 0x4a6790 the same against +0x114), and only on a LIVING
+		// caster (0x5942c0 vtbl+0xf8 GetLifeState == 1; the pool adjust
+		// 0x4a87d0 tests it again). Two disclosed gaps: ApplyHPMPDelta
+		// (0x4a86a0) first scales the amounts by (1 - p143/100) and
+		// (1 - p144/100), the panic/combustion states srrevamp does not model;
+		// and buffs, status effects and heals on others remain unbuilt.
+		//
+		// PlayerHP carries the caster's real HP on every such cast. It is what
+		// the client paints the health bar from, and it was left at its zero
+		// value here, so every buff or other non-damaging cast emptied the bar
+		// -- the same defect performAttack's seed fixed for swings. A lookup
+		// failure leaves it 0, as performAttack does.
 		//
 		// The gauge rides along unchanged so the HUD orbs do not blink to zero
 		// on a cast that simply is not an attack.
@@ -911,6 +932,19 @@ func useSkillHandler(
 		// 9245-9249): retail hands off after them, and srrevamp does not.
 		if noCombat || zeroDmg {
 			res := &AttackResult{MonsterID: req.TargetMonsterID}
+			if owned, err := chars.GetByID(ctx, characterID); err == nil && owned != nil {
+				res.PlayerHP = int32(owned.HP)
+				if castRow != nil && owned.HP > 0 {
+					if castRow.SelfHealHP > 0 {
+						if hp, err := chars.Heal(ctx, characterID, castRow.SelfHealHP, owned.MaxHP()); err == nil {
+							res.PlayerHP = int32(hp)
+						}
+					}
+					if castRow.SelfHealMP > 0 && mp != nil {
+						mp.Restore(characterID, owned.MaxMP(), castRow.SelfHealMP)
+					}
+				}
+			}
 			if zerk != nil {
 				res.BerserkGauge = int32(zerk.Gauge(characterID))
 				res.BerserkActive = zerk.Active(characterID)

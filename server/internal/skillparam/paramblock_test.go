@@ -558,3 +558,51 @@ func TestBuffEndsAt(t *testing.T) {
 		t.Fatalf("with a 5 s extension: %d; want 36000", got)
 	}
 }
+
+// Round 503: the self-heal shape. Only an instant (kind 0), untargeted row whose
+// completed walk carries a flat 'heal' and none of the terms srrevamp does not
+// compute returns an amount; everything else returns (0, 0).
+func TestSelfHealAmounts(t *testing.T) {
+	heal := WordOf("heal")
+	efr := WordOf("efr")
+	nmh := WordOf("nmh")
+	mwhh := WordOf("mwhh")
+	att := WordOf("att")
+	dura := WordOf("dura")
+	getv := WordOf("getv")
+	hlru := WordOf("HLRU")
+	for _, c := range []struct {
+		name           string
+		kind           int32
+		targetRequired bool
+		words          []int32
+		hp, mp         int
+	}{
+		// SKILL_CH_WATER_SELFHEAL's shape: a flat HP amount.
+		{"flat HP", ActionKindInstant, false, []int32{heal, 300, 0, 0, 0}, 300, 0},
+		// SKILL_EU_BARD_RECOVERA_ABNORMALTIME's shape: a flat MP amount.
+		{"flat MP", ActionKindInstant, false, []int32{heal, 0, 0, 200, 0}, 0, 200},
+		// 0x5941f1: any other action kind skips the heal branch.
+		{"timed buff kind", ActionKindBuff, false, []int32{heal, 300, 0, 0, 0}, 0, 0},
+		// 0x5942b1: Target_Required rows heal their target, not the caster.
+		{"target required", ActionKindInstant, true, []int32{heal, 300, 0, 0, 0}, 0, 0},
+		{"efr collects targets", ActionKindInstant, false, []int32{heal, 300, 0, 0, 0, efr, 1, 1, 300, 8, 0, 5}, 0, 0},
+		{"nmh is percent mode", ActionKindInstant, false, []int32{nmh, heal, 0, 10, 0, 0}, 0, 0},
+		{"mwhh adds a weapon term", ActionKindInstant, false, []int32{heal, 300, 0, 0, 0, mwhh, 50}, 0, 0},
+		{"getv HLRU bonus", ActionKindInstant, false, []int32{heal, 300, 0, 0, 0, getv, hlru}, 0, 0},
+		// v1 is a +% bonus on v0 (the -100.0 at 0xb462d0); not carried.
+		{"v1 bonus", ActionKindInstant, false, []int32{heal, 300, 10, 0, 0}, 0, 0},
+		// The halves are independent: an MP bonus does not void the flat HP.
+		{"v3 bonus leaves HP", ActionKindInstant, false, []int32{heal, 300, 0, 200, 5}, 300, 0},
+		{"with a combat parameter", ActionKindInstant, false, []int32{heal, 300, 0, 0, 0, att, 5, 143, 15, 18, 0}, 0, 0},
+		{"undecided walk", ActionKindInstant, false, []int32{0x7fffffff, heal, 300, 0, 0, 0}, 0, 0},
+		{"no heal at all", ActionKindInstant, false, []int32{dura, 30000}, 0, 0},
+		{"two heal runs", ActionKindInstant, false, []int32{heal, 300, 0, 0, 0, heal, 50, 0, 0, 0}, 0, 0},
+		{"heal run cut off", ActionKindInstant, false, []int32{heal, 300, 0}, 0, 0},
+	} {
+		hp, mp := SelfHealAmounts(c.kind, c.targetRequired, c.words)
+		if hp != c.hp || mp != c.mp {
+			t.Errorf("%s: SelfHealAmounts = (%d, %d), want (%d, %d)", c.name, hp, mp, c.hp, c.mp)
+		}
+	}
+}

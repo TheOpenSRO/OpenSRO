@@ -841,6 +841,97 @@ const (
 // that ally later reads param 170 from them.
 const HealScaleBuffCode Code = "rhru"
 
+// SelfHealAmounts is the HP and MP a skill's 'heal' run restores to its CASTER,
+// for the one shape whose result srrevamp can compute exactly, and (0, 0) for
+// every other skill (round 503).
+//
+// THE ENGINE'S PATH, read from the asm of Skill_ApplyEffectsAndNotify
+// (0x593f50) and Skill_ApplyHealToObject (0x5a0850):
+//
+//	5941f1  cmp [skill+0x168],0 ; jne   only action kind 0 (ActionKindInstant) heals here
+//	594235  cmp [skill+0x324],0 ; je    no 'heal' run, no heal
+//	594242  v0..v3 = heal values[0..3]
+//	59425e  'HLRU' (getv, +0x558) set -> a book lookup's +4 is ADDED to v1 and v3
+//	594293  target vector empty ->
+//	5942b1  cmp byte [skill+0x94],0     Target_Required must be 0
+//	5942c0  caster vtbl+0xf8 == 1       the caster is alive
+//	5942f3  Skill_ApplyHealToObject(ECX=v0, EAX=v1, v2, v3, skill) on the caster
+//
+// and inside it, with p170/p171 the HealHPScaleParam/HealMPScaleParam of the
+// healed object and trunc the _ftol2 at 0x9fbb40 (cvttsd2si, a truncation):
+//
+//	hp = v0;  if v1 != 0: hp = 'nmh' ? trunc(MaxHP * v1/100) : v0 - trunc(v0*v1 / -100.0)
+//	mp = v2;  if v3 != 0: mp = v2 - trunc(v2*v3 / -100.0)          ; -100.0 is .rdata 0xb462d0
+//	dHP = trunc((p170/100 + 1.0) * hp) + mwhh term                  ; 100.0 0xb45af0, 1.0 0xb45ac0
+//	dMP = trunc((p171/100 + 1.0) * mp) + mwmh term
+//
+// So a row returns non-zero here only when every one of these holds, and each
+// is what makes dHP == v0 and dMP == v2 exactly:
+//
+//   - action kind 0 and Target_Required 0 -- the gates above;
+//   - the walk completes, so absence below is proof;
+//   - 'heal' is present, once (the engine keeps one pointer per field; a row
+//     with two is a shape no real row has and is not modelled);
+//   - no 'nmh' (percent-of-MaxHP mode), 'mwhh'/'mwmh' (the weapon-damage
+//     terms) or getv 'HLRU' (the v1/v3 bonus), none of which srrevamp computes;
+//   - no 'efr': it fills the target vector (Skill_CollectTargetsByEffect), so
+//     the heal would go to the collected targets, and srrevamp has no area
+//     targeting;
+//   - CarriesCombatParameter decides false: srrevamp answers such a cast on its
+//     no-blow path, and a skill that both strikes and heals is not modelled;
+//   - v1 == 0 for the HP amount and v3 == 0 for the MP one (their +% bonus is
+//     not carried); the halves are independent.
+//
+// p170/p171 are 0 in srrevamp: their only writer is the 'rhru' buff
+// (ApplySkillParamsToChar 0x594ac0), and there is no buff system, so the
+// scale is exactly 1.
+//
+// MEASURED on the retail skilldata: the 49 SKILL_CH_WATER_SELFHEAL_A..E rows
+// carry (heal, v0, 0, 0, 0) with v0 from 89 (A_01) to 6964 (E_07), and the 8
+// SKILL_EU_BARD_RECOVERA_ABNORMALTIME_A/B rows (heal, 0, 0, v2, 0) with v2
+// from 594 to 6183 MP, all Target_Required 0 and action kind 0.
+func SelfHealAmounts(actionKind int32, targetRequired bool, words []int32) (hp, mp int) {
+	if actionKind != ActionKindInstant || targetRequired {
+		return 0, 0
+	}
+	entries, _, complete := Walk(words)
+	if !complete {
+		return 0, 0
+	}
+	heal := -1
+	for _, e := range entries {
+		switch e.Code {
+		case "heal":
+			if heal >= 0 {
+				return 0, 0
+			}
+			heal = e.Index
+		case "nmh", "mwhh", "mwmh", "efr":
+			return 0, 0
+		case "getv":
+			if e.Index+1 < len(words) && words[e.Index+1] == WordOf("HLRU") {
+				return 0, 0
+			}
+		}
+	}
+	// values[0..3] sit at heal+1..heal+4; a run cut off by the end of the
+	// block is not one the engine would read as written.
+	if heal < 0 || heal+Run["heal"]-1 >= len(words) {
+		return 0, 0
+	}
+	if carries, decided := CarriesCombatParameter(words); carries || !decided {
+		return 0, 0
+	}
+	v0, v1, v2, v3 := words[heal+1], words[heal+2], words[heal+3], words[heal+4]
+	if v1 == 0 {
+		hp = int(v0)
+	}
+	if v3 == 0 {
+		mp = int(v2)
+	}
+	return hp, mp
+}
+
 // 'efr' at the cast: the seven TARGET PATTERNS (round 265). Before a skill
 // with damage executes, Skill_CollectTargetsByEffect (0x0058cb70) reads the
 // run the skill's efr field points at and dispatches on value[1] through a

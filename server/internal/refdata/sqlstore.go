@@ -161,6 +161,10 @@ ALTER TABLE skills ADD COLUMN IF NOT EXISTS req_learn_skill2 BIGINT NOT NULL DEF
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS req_learn_skill_level2 BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS req_learn_skill3 BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS req_learn_skill_level3 BIGINT NOT NULL DEFAULT 0;
+-- The flat HP/MP a self-heal restores to its caster (round 503); zero on an
+-- older import, which means no heal.
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS self_heal_hp INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS self_heal_mp INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS monster_drops (
 	monster_id      BIGINT NOT NULL,
@@ -458,8 +462,9 @@ func (s *SQLStore) ImportSkills(ctx context.Context, skills []Skill) error {
 			attack_percent, damage_min, damage_max, hit_count, attack_type,
 			req_cast_weapon1, req_cast_weapon2, req_cast_list_count,
 			req_cast_list, req_cast_all, no_combat_param, zero_damage, floor_blow,
-			req_learn_skill1, req_learn_skill_level1, req_learn_skill2, req_learn_skill_level2, req_learn_skill3, req_learn_skill_level3
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43)
+			req_learn_skill1, req_learn_skill_level1, req_learn_skill2, req_learn_skill_level2, req_learn_skill3, req_learn_skill_level3,
+			self_heal_hp, self_heal_mp
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45)
 		ON CONFLICT (id) DO UPDATE SET
 			group_id=excluded.group_id, basic_code=excluded.basic_code, basic_name=excluded.basic_name,
 			basic_level=excluded.basic_level, basic_chain_code=excluded.basic_chain_code,
@@ -482,7 +487,8 @@ func (s *SQLStore) ImportSkills(ctx context.Context, skills []Skill) error {
 			floor_blow=excluded.floor_blow,
 			req_learn_skill1=excluded.req_learn_skill1, req_learn_skill_level1=excluded.req_learn_skill_level1,
 			req_learn_skill2=excluded.req_learn_skill2, req_learn_skill_level2=excluded.req_learn_skill_level2,
-			req_learn_skill3=excluded.req_learn_skill3, req_learn_skill_level3=excluded.req_learn_skill_level3
+			req_learn_skill3=excluded.req_learn_skill3, req_learn_skill_level3=excluded.req_learn_skill_level3,
+			self_heal_hp=excluded.self_heal_hp, self_heal_mp=excluded.self_heal_mp
 	`)
 	if err != nil {
 		return fmt.Errorf("refdata: preparing insert: %w", err)
@@ -500,6 +506,7 @@ func (s *SQLStore) ImportSkills(ctx context.Context, skills []Skill) error {
 			sk.ReqCastWeapon1, sk.ReqCastWeapon2, sk.ReqCastListCount,
 			sk.ReqCastList, sk.ReqCastAll, sk.NoCombatParam, sk.ZeroDamage, sk.FloorBlow,
 			sk.ReqLearnSkill1, sk.ReqLearnSkillLevel1, sk.ReqLearnSkill2, sk.ReqLearnSkillLevel2, sk.ReqLearnSkill3, sk.ReqLearnSkillLevel3,
+			sk.SelfHealHP, sk.SelfHealMP,
 		); err != nil {
 			return fmt.Errorf("refdata: inserting skill %d: %w", sk.ID, err)
 		}
@@ -519,7 +526,8 @@ func (s *SQLStore) GetSkill(ctx context.Context, id int64) (*Skill, error) {
 			attack_percent, damage_min, damage_max, hit_count, attack_type,
 			req_cast_weapon1, req_cast_weapon2, req_cast_list_count,
 			req_cast_list, req_cast_all, no_combat_param, zero_damage, floor_blow,
-			req_learn_skill1, req_learn_skill_level1, req_learn_skill2, req_learn_skill_level2, req_learn_skill3, req_learn_skill_level3
+			req_learn_skill1, req_learn_skill_level1, req_learn_skill2, req_learn_skill_level2, req_learn_skill3, req_learn_skill_level3,
+			self_heal_hp, self_heal_mp
 		FROM skills WHERE id = $1`, id)
 	if err := row.Scan(
 		&sk.ID, &sk.GroupID, &sk.BasicCode, &sk.BasicName, &sk.BasicLevel, &sk.BasicChainCode,
@@ -531,6 +539,7 @@ func (s *SQLStore) GetSkill(ctx context.Context, id int64) (*Skill, error) {
 		&sk.ReqCastWeapon1, &sk.ReqCastWeapon2, &sk.ReqCastListCount,
 		&sk.ReqCastList, &sk.ReqCastAll, &sk.NoCombatParam, &sk.ZeroDamage, &sk.FloorBlow,
 		&sk.ReqLearnSkill1, &sk.ReqLearnSkillLevel1, &sk.ReqLearnSkill2, &sk.ReqLearnSkillLevel2, &sk.ReqLearnSkill3, &sk.ReqLearnSkillLevel3,
+		&sk.SelfHealHP, &sk.SelfHealMP,
 	); err != nil {
 		return nil, fmt.Errorf("refdata: querying skill %d: %w", id, err)
 	}
@@ -549,7 +558,8 @@ func (s *SQLStore) ListAllSkills(ctx context.Context) ([]*Skill, error) {
 			attack_percent, damage_min, damage_max, hit_count, attack_type,
 			req_cast_weapon1, req_cast_weapon2, req_cast_list_count,
 			req_cast_list, req_cast_all, no_combat_param, zero_damage, floor_blow,
-			req_learn_skill1, req_learn_skill_level1, req_learn_skill2, req_learn_skill_level2, req_learn_skill3, req_learn_skill_level3
+			req_learn_skill1, req_learn_skill_level1, req_learn_skill2, req_learn_skill_level2, req_learn_skill3, req_learn_skill_level3,
+			self_heal_hp, self_heal_mp
 		FROM skills ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("refdata: listing skills: %w", err)
@@ -569,6 +579,7 @@ func (s *SQLStore) ListAllSkills(ctx context.Context) ([]*Skill, error) {
 			&sk.ReqCastWeapon1, &sk.ReqCastWeapon2, &sk.ReqCastListCount,
 			&sk.ReqCastList, &sk.ReqCastAll, &sk.NoCombatParam, &sk.ZeroDamage, &sk.FloorBlow,
 			&sk.ReqLearnSkill1, &sk.ReqLearnSkillLevel1, &sk.ReqLearnSkill2, &sk.ReqLearnSkillLevel2, &sk.ReqLearnSkill3, &sk.ReqLearnSkillLevel3,
+			&sk.SelfHealHP, &sk.SelfHealMP,
 		); err != nil {
 			return nil, fmt.Errorf("refdata: scanning skill: %w", err)
 		}

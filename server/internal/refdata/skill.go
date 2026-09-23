@@ -222,6 +222,22 @@ type Skill struct {
 	ReqLearnSkill2, ReqLearnSkillLevel2 int64
 	ReqLearnSkill3, ReqLearnSkillLevel3 int64
 
+	// SelfHealHP and SelfHealMP are what one cast restores to the CASTER: the
+	// skill's 'heal' value[0] (HP) and value[2] (MP), exported only for the
+	// shape whose result is exact -- action kind 0, Target_Required 0, a
+	// completed Param walk with no combat parameter and none of 'efr', 'nmh',
+	// 'mwhh', 'mwmh' or getv 'HLRU', and a zero +% bonus (value[1] for HP,
+	// value[3] for MP). See skillparam.SelfHealAmounts for the path through
+	// Skill_ApplyEffectsAndNotify (0x593f50) and Skill_ApplyHealToObject
+	// (0x5a0850) and docs/protocol/heal.md. The 49 SKILL_CH_WATER_SELFHEAL
+	// rows carry an HP amount, the 8 SKILL_EU_BARD_RECOVERA_ABNORMALTIME rows an
+	// MP one.
+	//
+	// Zero means no self-heal, which is also what an export predating the
+	// columns loads -- the behaviour srrevamp had before round 503.
+	SelfHealHP int
+	SelfHealMP int
+
 	// The mastery this skill belongs to and the mastery level required to learn
 	// it (ReqCommon_Mastery1 / ReqCommon_MasteryLevel1). These are what the
 	// skill window gates a skill on -- a skill is learnable once the character's

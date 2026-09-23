@@ -712,3 +712,54 @@ func TestSkillRecordCarriesAutoAttackTypeAndChainCode(t *testing.T) {
 		})
 	}
 }
+
+// Round 503: the self-heal columns. A flat 'heal' on an instant, untargeted row
+// lands in record slots 43/44; Target_Required (raw column 22) or a non-zero
+// action kind (raw column 68, the word before the Param block) zeroes them, as
+// Skill_ApplyEffectsAndNotify's gates at 0x5942b1 and 0x5941f1 do.
+func TestSelfHealColumns(t *testing.T) {
+	heal := skillparam.WordOf("heal")
+	if skActionKind != 68 || skTargetRequired != 22 {
+		t.Fatalf("test premise: action kind at raw column %d, Target_Required at %d; want 68 and 22", skActionKind, skTargetRequired)
+	}
+	base := func() []string {
+		cols := skillRow(heal, 300, 0, 0, 0)
+		cols[1], cols[2], cols[3] = "143", "90", "SKILL_CH_WATER_SELFHEAL_A_01"
+		return cols
+	}
+	for _, tc := range []struct {
+		name   string
+		edit   func([]string)
+		hp, mp string
+	}{
+		{"instant untargeted flat heal", func([]string) {}, "300", "0"},
+		{"Target_Required", func(c []string) { c[22] = "1" }, "0", "0"},
+		{"timed buff action kind", func(c []string) { c[68] = "3" }, "0", "0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cols := base()
+			tc.edit(cols)
+			hp, mp := selfHeal(cols)
+			if hp != tc.hp || mp != tc.mp {
+				t.Errorf("selfHeal = (%s, %s), want (%s, %s)", hp, mp, tc.hp, tc.mp)
+			}
+			rec, ok := skillRecord(cols)
+			if !ok {
+				t.Fatal("skillRecord rejected a valid row")
+			}
+			if len(rec) != 45 {
+				t.Fatalf("record has %d fields, want 45 (SelfHealHP at 43, SelfHealMP at 44)", len(rec))
+			}
+			if rec[43] != tc.hp || rec[44] != tc.mp {
+				t.Errorf("record[43:45] = %v, want [%s %s]", rec[43:45], tc.hp, tc.mp)
+			}
+			skills, err := refdata.LoadSkillsCSV(strings.NewReader(strings.Join(rec, ",") + "\n"))
+			if err != nil || len(skills) != 1 {
+				t.Fatalf("the importer rejected export's own output: %v", err)
+			}
+			if got := strconv.Itoa(skills[0].SelfHealHP); got != tc.hp {
+				t.Errorf("imported SelfHealHP = %s, want %s", got, tc.hp)
+			}
+		})
+	}
+}

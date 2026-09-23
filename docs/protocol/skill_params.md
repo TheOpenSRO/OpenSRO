@@ -1328,7 +1328,8 @@ name test on a weapon change, a lost target) sets the end flag.
 
 `skillparam.ActionKind*` and `skillparam.BuffEndsAt` carry the vocabulary and the first rule with a
 test. **Not wired**: srrevamp has no buff records; a non-damaging cast succeeds and does nothing
-(round 223's "faithful half"). What a build needs is now all read: the params to write
+(round 223's "faithful half") except the flat self-heal wired in round 503 (`heal.md`, "What
+srrevamp does"), which uses `ActionKindInstant` as its first gate. What a build needs is now all read: the params to write
 (`ApplySkillParamsToChar`, 43 fields -> ~60 ParamKeeper ids), the duration, the end path and both
 packets (`0xB0BD` start, `0xB072` end).
 

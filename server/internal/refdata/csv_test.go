@@ -491,3 +491,31 @@ func TestSkillCSVFloorBlowIsAStrictSuffix(t *testing.T) {
 		t.Errorf("FloorBlow=1 did not load as true (err=%v)", err)
 	}
 }
+
+// SelfHealHP/SelfHealMP (round 503) are appended at 43 and 44 and must behave
+// like every other suffix: an export predating them loads 0/0 -- no heal.
+func TestSkillCSVSelfHealIsAStrictSuffix(t *testing.T) {
+	old := make([]string, 43) // through ReqLearnSkillLevel3, no further
+	for i := range old {
+		old[i] = "0"
+	}
+	old[2] = "SKILL_TEST"
+	sk, err := parseSkillRow(old)
+	if err != nil {
+		t.Fatalf("parseSkillRow on a pre-column export: %v", err)
+	}
+	if sk.SelfHealHP != 0 || sk.SelfHealMP != 0 {
+		t.Errorf("an export predating the self-heal columns loaded %d/%d; want 0/0", sk.SelfHealHP, sk.SelfHealMP)
+	}
+	withCols := append(append([]string{}, old...), "300", "200")
+	if len(withCols) != len(skillCSVColumns) {
+		t.Fatalf("test premise: %d fields, the CSV has %d columns", len(withCols), len(skillCSVColumns))
+	}
+	sk, err = parseSkillRow(withCols)
+	if err != nil {
+		t.Fatalf("parseSkillRow with the columns: %v", err)
+	}
+	if sk.SelfHealHP != 300 || sk.SelfHealMP != 200 {
+		t.Errorf("SelfHealHP/MP = %d/%d, want 300/200", sk.SelfHealHP, sk.SelfHealMP)
+	}
+}

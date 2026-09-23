@@ -28255,3 +28255,136 @@ departure: retail hands off after them.
 
 **Deploy.** The public server's skill table needs a re-export (`export-refdata -mode skills`) and
 a re-import before the hand-off is live. Batch it with the other exporter items.
+
+## Self-heal skills restore the caster's HP/MP; non-damaging casts report real HP instead of 0 (round 503)
+
+**Why now.** Two defects on the cast handler's no-blow path (`session/skill.go`, the
+`NoCombatParam || ZeroDamage` early return). First, every buff, heal or other non-damaging cast
+answered with `PlayerHP` left at its zero value, so the HUD painted an empty health bar. This is
+the same defect `performAttack`'s seed fixed for swings. Second, a self-heal did nothing: the
+heal was specified (`heal.md`) but no code read `'heal'`.
+
+**Grounding.** Read from the asm this round (`/var/tmp/srv.asm`), because the decompile drops the
+x87 arithmetic.
+
+- **The caller, `Skill_ApplyEffectsAndNotify` (`0x593f50`):**
+  - `0x5941f1` `cmp [ebx+0x168],0 ; jne 0x5946c1`: only action kind 0 reaches the heal. `+0x168`
+    is the first raw Param word, skilldata column 68 (`skill_params.md`, "The buff lifecycle").
+  - `0x594235` tests `'heal'` (`+0x324`), and `0x594242` loads v0..v3 from its run.
+  - `0x59425e`: getv `'HLRU'` (`+0x558`) adds a lookup's `+4` (`0x5a0330` on caster `+0xa30`) to
+    v1 and to v3.
+  - With an empty target vector (`0x594293`-`0x5942ab`), `0x5942b1` requires `Target_Required`
+    (`+0x94`, column 22) to be 0 and `0x5942c0` requires the caster's `GetLifeState` (vtbl `+0xf8`)
+    to be 1. Then `0x5942f3` calls `Skill_ApplyHealToObject` on the caster with `ECX = v0`,
+    `EAX = v1` and stack `(caster, v2, v3, skill)`.
+  - A no-`'efr'`, no-`'resu'` skill with targets heals each living one the same way
+    (`0x59459f`-`0x59463c`).
+- **`Skill_ApplyHealToObject` (`0x5a0850`):**
+  - `hp = v0`. If v1 != 0: with `'nmh'`, `hp = trunc(MaxHP * v1/100)`; otherwise
+    `hp = v0 - trunc(v0*v1 / -100.0)`, so v1 is a +% bonus.
+  - `mp = v2`. If v3 != 0: `mp = v2 - trunc(v2*v3 / -100.0)`.
+  - `dHP = trunc((p170/100 + 1.0) * hp) + mwhh` and `dMP` the same with p171 and mwmh.
+  - The constants were read as bytes from the exe: `-100.0` at `.rdata 0xb462d0`, `100.0` at
+    `0xb45af0`, `1.0` at `0xb45ac0`.
+  - `trunc` is `_ftol2` at `0x9fbb40` (`cvttsd2si`).
+- **The sink, `GObjPC::ApplyHPMPDelta` (`0x4a86a0`):** it scales by `(1 - p143/100)` and
+  `(1 - p144/100)` (panic/combustion, which srrevamp does not model) and floors a negative at 0.
+  Its pool adjust `0x4a87d0` runs only while `GetLifeState` is 1. The setters `0x4a66f0` (HP) and
+  `0x4a6790` (MP) clamp to `[0, GetMaxHP/MP]` (vtbl `+0x110` / `+0x114`), which is the cap.
+- **p170/p171 are 0 in srrevamp.** Their one writer is the `'rhru'` buff
+  (`ApplySkillParamsToChar` `0x594ac0`), and there is no buff system, so the scale is exactly 1.
+
+So for a row with action kind 0, `Target_Required` 0, one `'heal'`, v1 = v3 = 0 and none of
+`'nmh'`/`'mwhh'`/`'mwmh'`/`'HLRU'`/`'efr'`, the engine restores exactly v0 HP and v2 MP to a living
+caster, capped at the maximum.
+
+**This corrects `heal.md`.** It said `'nmh'` takes its percent from value[0] (it is value[1]),
+wrote `round` (it is a truncation), and did not have the v1/v3 bonus, the `'HLRU'` addition or the
+action-kind gate. The page is rewritten with the caller, the sink and a "What srrevamp does"
+section. `skill_params.md`'s round-267 note ("a non-damaging cast ... does nothing") now names the
+exception.
+
+**Measured** on the retail skilldata (the RE box's combined skill rows, streamed to the rebuilt
+exporter and not committed):
+
+- The exporter writes 33,632 rows, every one 45 columns wide.
+- **57 rows** get a non-zero self-heal:
+  - the 49 `SKILL_CH_WATER_SELFHEAL_A..E` rows, HP 89 (A_01) up to 6964 (E_07), MP 0;
+  - the 8 `SKILL_EU_BARD_RECOVERA_ABNORMALTIME_A_01..06/B_01..02` rows, MP 594 up to 6183, HP 0.
+    They are also the 8 rows in this table with a non-zero `Consume_HP` (495 up to 4756), so
+    their HP-for-MP trade is now whole: the cost was charged before, and the MP now lands.
+- 333 rows carry `'heal'`, and none carries it twice. 127 pass the kind and `Target_Required`
+  gates. The other 70 carry `'efr'` (60, of which 42 also carry `'mwhh'` and `'HLRU'`, and 7
+  `'mwmh'`) or `'nmh'` with a value[1] percent (10, the `SKILL_ITEM_ETC_SOCKET_STONE_HEAL` stones).
+
+**Change.**
+
+- `skillparam.SelfHealAmounts(actionKind, targetRequired, words)` returns (0, 0) unless every one
+  of these holds:
+  - the action kind is `ActionKindInstant` and `Target_Required` is 0;
+  - the walk completes;
+  - `'heal'` is present exactly once, with its full run;
+  - none of `'nmh'`/`'mwhh'`/`'mwmh'`/`'efr'` or getv `'HLRU'` is present;
+  - `CarriesCombatParameter` decides false.
+
+  It then returns hp = v0 when v1 == 0 and mp = v2 when v3 == 0.
+- `cmd/export-refdata`: `skTargetRequired = 22` and `skActionKind = ParamBlockColumn - 1` (68),
+  each with its citation. `selfHeal` feeds `SelfHealAmounts`, and `skillRecord` appends record
+  slots **43 `SelfHealHP`** and **44 `SelfHealMP`**. The skill CSV grows from 43 to 45 columns.
+  The batch plan reserves column 45 for the cooldown group.
+- `refdata`: `Skill.SelfHealHP` / `SelfHealMP` are a strict CSV suffix (`len(f) > 43/44`), so an
+  older export loads 0, meaning no heal. The SQL store adds two `ALTER TABLE ... ADD COLUMN IF NOT
+  EXISTS ... INTEGER NOT NULL DEFAULT 0` columns, `$44/$45` in the upsert, and both SELECT/Scan
+  lists.
+- `session/skill.go`, the no-blow branch:
+  - after the costs are paid (the engine's order: `EngageSkill` takes the costs before
+    `Skill_ApplyEffectsAndNotify`), it reads the caster and sets `PlayerHP` to the real HP;
+  - for a living caster (HP > 0) it heals `SelfHealHP` through `chars.Heal` capped at `MaxHP()`,
+    reports the new HP, and restores `SelfHealMP` through `mana.Restore` capped at `MaxMP()`;
+  - a lookup failure leaves `PlayerHP` 0, as `performAttack` does. The "no heal system" comment
+    is replaced.
+
+**Disclosed, not modelled:**
+
+- heals on others (the targeted and `'efr'` party heals);
+- the `'nmh'` percent, the v1/v3 bonus, the `'mwhh'`/`'mwmh'` weapon terms and `'HLRU'`;
+- p170/p171 above 0, which needs the buff system;
+- `ApplyHPMPDelta`'s panic/combustion scaling;
+- the `'resu'` branch.
+
+**Tests.**
+
+- **`skillparam.TestSelfHealAmounts`** (new):
+  - (heal 300,0,0,0) gives (300, 0), and (heal 0,0,200,0) gives (0, 200);
+  - kind 3 gives 0, and `Target_Required` gives 0;
+  - `'efr'`, `'nmh'`, `'mwhh'` and getv `'HLRU'` each give 0;
+  - v1 = 10 gives HP 0, and a v3 bonus leaves the flat HP;
+  - a row with `'att'` gives 0, and so do an undecided walk, `'dura'` alone, two `'heal'` runs and
+    a cut-off run.
+- **`export-refdata.TestSelfHealColumns`** (new):
+  - the default heal row gives ("300", "0");
+  - column 22 = 1 gives 0, and column 68 = 3 gives 0;
+  - the record is 45 wide with slot 43 = "300", and it round-trips through `LoadSkillsCSV`.
+- **`refdata.TestSkillCSVSelfHealIsAStrictSuffix`** (new): a 43-column row loads 0/0, and 45
+  columns load 300/200. `TestCSVColumnsCoverEveryField` and `TestEverySkillFieldSurvivesSQL` pass
+  with the two new fields.
+- **`session.TestSelfHealSkillRestoresCasterHP`** (new) uses fake skills 993 (`SelfHealHP` 50) and
+  992 (`SelfHealMP` 50), both `NoCombatParam`/`ZeroDamage`:
+  - from 100 of 200, a cast reports and stores 150, and the monster is untouched;
+  - from max-10 it is capped at 200;
+  - the plain buff 996 reports the current 170, where it used to report 0;
+  - the MP self-heal restores at least 50 to the pool;
+  - a dead caster stays at 0.
+- **Negative, run.**
+  - With only `session/skill.go` stashed, the session test fails with `PlayerHP = 0, want 150`,
+    `stored HP = 100, want 150`, `PlayerHP = 0, want the cap 200`, `plain buff: PlayerHP = 0`
+    and `MP self-heal: 140 -> 140`.
+  - With all six production files stashed, the other three new tests fail to build (no
+    `SelfHealAmounts`, `selfHeal` or `SelfHealHP`).
+  - With the files restored, all four pass.
+- `go test -count=1 -p 1 ./...` is green. No client file changed.
+
+**Deploy.** `PlayerHP` on non-damaging casts is fixed as soon as the server is deployed, with no
+re-export. The self-heal itself needs a **re-export of the skill CSV** (`export-refdata -mode
+skills`, now 45 columns) and a re-import. The SQL columns migrate on start. Batch it with the other
+exporter items (round 502's hand-off columns need the same re-export).
