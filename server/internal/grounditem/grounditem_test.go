@@ -168,3 +168,99 @@ func TestExpireUsesEachItemsOwnDecayTime(t *testing.T) {
 		t.Fatalf("at 180 s Expire = %+v, want the 3-minute item and the fallback one", gone)
 	}
 }
+
+// An untradeable drop keeps its owner past the 30 s window, until it decays:
+// GObjPC::FUN_004901c0 (0x004901c0) asks CGObj::CanTrade (slot 49, 0x00483d50)
+// before it clears +0x150 and sends 0x304D, and does neither on 0. A tradeable
+// drop and one the reference data does not know are released as before.
+//
+// Item 500 stands for an untradeable item OUTSIDE TypeID 3/3/9 -- one of the
+// 97 bound ITEM_QNO_ rows with TypeID3 13, 1, 2 or 3, such as
+// ITEM_QNO_CH_EUROPE_1_02 (3/3/13) -- because for that class the engine's
+// party rule really applies and the party-member assertion below is the
+// engine's answer. For a 3/3/9 item (736 of the 833 bound rows) the engine
+// refuses a party member 0x1812 at 0x4a934d, before the party test; srrevamp
+// does not model that (PickCheck, docs/protocol/ground_items.md "Picking up"
+// step 3), so no assertion here covers it.
+func TestBoundDropStaysReservedPastWindow(t *testing.T) {
+	start := time.Unix(1000, 0)
+	h, now := newTestHub(start)
+	h.SetTradeLookup(func(itemID int64) (bool, bool) {
+		switch itemID {
+		case 500: // untradeable, not TypeID 3/3/9: CanTrade clear
+			return false, true
+		case 4: // HP_POTION_01: CanTrade set
+			return true, true
+		}
+		return true, false // not in the reference data
+	})
+	bound := h.Drop("jangan", 500, 1, false, 0, 0, 0, 7)
+	free := h.Drop("jangan", 4, 1, false, 0, 0, 0, 7)
+	unknown := h.Drop("jangan", 999, 1, false, 0, 0, 0, 7)
+	if !bound.Bound || free.Bound || unknown.Bound {
+		t.Fatalf("Bound: untradeable %v, potion %v, unknown %v; want true, false, false",
+			bound.Bound, free.Bound, unknown.Bound)
+	}
+
+	*now = start.Add(31 * time.Second)
+	released := h.ReleaseOwnerships()
+	if len(released) != 2 || released[0].ID != free.ID || released[1].ID != unknown.ID {
+		t.Fatalf("ReleaseOwnerships at 31 s = %+v, want just the potion %d and the unknown %d",
+			released, free.ID, unknown.ID)
+	}
+	if got := bound.OwnerAt(*now); got != 7 {
+		t.Fatalf("bound OwnerAt(31 s) = %d, want 7 (never released)", got)
+	}
+	if cur, _ := h.Get(bound.ID); cur.OwnerID != 7 || cur.OwnerAt(*now) != 7 {
+		t.Fatalf("bound item on the ground after the sweep: owner %d / OwnerAt %d, want 7",
+			cur.OwnerID, cur.OwnerAt(*now))
+	}
+	if _, code := h.PickCheck(bound.ID, 9, 0, 0, 0, nil); code != ErrNotOwner {
+		t.Fatalf("stranger on a bound drop at 31 s: code %#x, want ErrNotOwner", code)
+	}
+	// The party rule (CheckCanPickUp 0x4a9360: same PartyID, flags & 2),
+	// which the engine reaches for this non-3/3/9 item.
+	shares := func(a, b int64) bool { return (a == 7 && b == 8) || (a == 8 && b == 7) }
+	if _, code := h.PickCheck(bound.ID, 8, 0, 0, 0, shares); code != 0 {
+		t.Fatalf("party member on a bound non-3/3/9 drop at 31 s: code %#x, want 0", code)
+	}
+	h.Release(bound.ID)
+	if _, code := h.PickCheck(bound.ID, 7, 0, 0, 0, nil); code != 0 {
+		t.Fatalf("owner on a bound drop at 31 s: code %#x, want 0", code)
+	}
+	h.Release(bound.ID)
+	if _, code := h.PickCheck(free.ID, 9, 0, 0, 0, nil); code != 0 {
+		t.Fatalf("stranger on the released potion at 31 s: code %#x, want 0", code)
+	}
+
+	*now = start.Add(60 * time.Second)
+	if again := h.ReleaseOwnerships(); len(again) != 0 {
+		t.Fatalf("ReleaseOwnerships at 60 s = %+v, want nothing (the bound drop is never released)", again)
+	}
+	if got := bound.OwnerAt(*now); got != 7 {
+		t.Fatalf("bound OwnerAt(60 s) = %d, want 7", got)
+	}
+}
+
+// Without a trade lookup nothing is Bound and every drop is released at 30 s,
+// so a deployment with no reference data does not lock its drops.
+func TestNoTradeLookupReleasesEverything(t *testing.T) {
+	start := time.Unix(1000, 0)
+	h, now := newTestHub(start)
+	a := h.Drop("jangan", 500, 1, false, 0, 0, 0, 7)
+	b := h.Drop("jangan", 4, 1, false, 0, 0, 0, 7)
+	if a.Bound || b.Bound {
+		t.Fatalf("Bound without a lookup: %v, %v; want false, false", a.Bound, b.Bound)
+	}
+	*now = start.Add(30 * time.Second)
+	released := h.ReleaseOwnerships()
+	if len(released) != 2 || released[0].ID != a.ID || released[1].ID != b.ID {
+		t.Fatalf("ReleaseOwnerships at 30 s = %+v, want both drops", released)
+	}
+	if a.OwnerAt(*now) != 0 || b.OwnerAt(*now) != 0 {
+		t.Fatal("OwnerAt(30 s) without a lookup should be 0 for every drop")
+	}
+	if _, code := h.PickCheck(a.ID, 9, 0, 0, 0, nil); code != 0 {
+		t.Fatalf("stranger at 30 s without a lookup: code %#x, want 0", code)
+	}
+}

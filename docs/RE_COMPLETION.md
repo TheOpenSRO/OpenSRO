@@ -26690,3 +26690,108 @@ here.
 
 **Deploy note.** None needed. The gate reads TypeID1..4, which every export has carried since
 `ITEM_FORMAT.md` existed, so srrevamp-01's current `items` table already has what it needs.
+
+## An untradeable drop stays reserved to its owner until it decays (GObjPC::FUN_004901c0) (round 492)
+
+**The gap.** `grounditem` released every owned drop 30 s after it fell: `OwnerAt` answered 0 and
+`ReleaseOwnerships` cleared the owner and told the zone. The engine does that only for an item
+that can be traded.
+
+**The grounding, read this round.**
+
+- `CGItem::Update` (`0x0048f9b0`) accumulates `+0x158` and, once it reaches the 30.0 at
+  `.rdata 0xb45e58` (`00 00 00 00 00 00 3e 40`), calls the release: `48fa0b mov eax,esi;
+  48fa0d call 0x4901c0`.
+- `GObjPC::FUN_004901c0` (`0x004901c0`, 78 bytes) opens with `4901c5 mov edx,[eax+0xc4]`,
+  `4901cd call edx`, `4901cf test eax,eax`, `4901d1 je 0x49020c`. Only when that call answers
+  non-zero and `+0x150` is non-zero does it clear `+0x150` (`4901e2`) and send `0x304D`. On zero it
+  returns with the owner intact, and `Update` asks again on every later tick with the same answer.
+- `+0xc4` is slot 49. All seven vtables that carry `CGItem::Update` at slot 211 (`0xae9384`,
+  `0xae9934`, `0xae9e5c`, `0xaea394`, `0xaea9ec`, `0xaeb2b4`, `0xaeb824`, found by scanning
+  `.rdata` for the pointer) hold `0x00483d50` at slot 49: `CGObj::CanTrade`, which answers 0
+  unless `CGObj::IsItem` (slot 18, `0x00482d80`, the same in all seven) says yes, then the ref
+  row's flags word `+0x8c & 1`, itemdata column 16 (`item_capability_flags.md`, "The bit map").
+- The release has one more caller, `0x4e98b7`, in a job handler that asserts `+0x150 == -1` and
+  picks between it and `FUN_004901b0` on `[ebp+0x118]`. srrevamp has no such reservation, so
+  only the 30 s path is wired. No name is given to `FUN_004901c0`.
+- **Which items this is.** Measured over `/var/tmp/tables/itemdata_all.utf8.txt` on the RE box
+  (851 `ITEM_QNO_` rows, 607 distinct ids, no id with differing values): 598 ids (833 rows) carry
+  `CanTrade = 0`, 9 ids (18 rows: `ITEM_QNO_RM_ARCHEMY_1..8`, `ITEM_QNO_RM_MEETROC_6_01`) carry 1,
+  and all carry DecayTime 180000. The plan for this round said "832 of 851"; the 833rd is the row
+  whose first field carries the file's byte-order mark. Gold (ids 1..3) and HP/MP potions (4..12)
+  carry `CanTrade = 1` and DecayTime 10000, so they are unchanged.
+- **Who else may pick one: not the party, for most of them (corrected in review).** The plan said
+  `PickCheck` needed no change because "a party member is still allowed". The dump says otherwise.
+  In `GObjPC::CheckCanPickUp` (`0x004a9050`) a non-owner reaches `0x4a930d` (player path: after
+  `IGObj::IsPC`, slot 7, at `0x4a93f4` and `jmp 0x4a930d` at `0x4a9405`) before the party test at
+  `0x4a9360`. There the item's TID (`CGObj::GetTID`, `0x00485c90`) goes to `FUN_0042fdc0`, which
+  answers 1 only for bit 1 clear, `& 0x1c == 0xc`, `& 0x60 == 0x60`, `& 0x780 == 0x480`, which is
+  TypeID 3/3/9 (`damage_pipeline.md`, "The TID layout"). For such an item the codename is compared
+  with `CompareStringA(0x400, 0, codename, 0x13, "ITEM_QNO_RM_ARCHEMY", 0x13)` (`.rdata 0xaebf58`,
+  `0x4a9342`). Anything but `CSTR_EQUAL` stores `0x1812` at `0x4a934d`, so the party test never
+  runs. Measured over the same file: 754 of the 851 `ITEM_QNO_` rows are 3/3/9, and 736 of the
+  833 bound rows (539 of the 598 ids). All 18 tradeable rows are 3/3/9 too; the 16 `ARCHEMY` rows
+  pass the name compare, `MEETROC_6_01` does not. So a bound quest item is, in the engine, the
+  OWNER's alone for most rows, not the owner's party's. The same read shows that an owner id that
+  resolves to no object (`FUN_00485dc0 == 0`, `0x4a93d1`) gives result 1 and false.
+
+**Change.**
+
+- `grounditem.Item.Bound`, set at `Drop` when the hub's new trade lookup
+  (`Hub.SetTradeLookup(func(itemID) (canTrade, known bool))`) knows the item and says it cannot be
+  traded. A nil lookup or an unknown item is not bound, so a deployment without reference data
+  does not lock its drops.
+- `Item.OwnerAt` returns the owner of a bound item regardless of time. `ReleaseOwnerships` skips
+  bound items, so `RunGroundItemSweep` never sends `OpGroundItemOwnerReleased` (the real `0x304D`)
+  for one, and `snapshotOf` keeps naming the owner to a player who arrives later. `PickCheck` is
+  unchanged: a stranger is refused `0x1812`, and the owner may pick. It still asks the caller's
+  party rule for every item, so a sharing party member may pick a bound TypeID 3/3/9 item that
+  the engine refuses them. That divergence is **known and unmodelled**. It existed before this
+  round for the 30 s window, and binding makes it last the item's whole DecayTime. Modelling it
+  needs the item's TID and codename in the hub, which is left as a follow-up. The absent-owner
+  outcome is not modelled either. Both are recorded in `ground_items.md`, step 3, and in
+  `PickCheck`'s doc comment.
+- `cmd/server` wires the lookup through `groundTradeLookup(ctx, refItems)` to
+  `refItems.GetItem(...).CanTrade`; an error or a nil row answers unknown. The SQL column already
+  defaults to TRUE and the CSV parser to true for an export without column 16, so an older table
+  binds nothing.
+- Docs: `ground_items.md` "The ownership window" carries the gate with its addresses and the
+  measurement; its stale "not recovered" bullet about the lifetime (read in round 227) now says
+  so. Its "Picking up" step 3, which had left out the same exclusion, now spells out the whole
+  ownership branch (the absent owner, `IsPC`, the 3/3/9 exclusion, the party test) and the
+  divergence. `item_capability_flags.md`'s enforcement table lists this use of `CanTrade`.
+
+**Tests.**
+
+- `grounditem.TestBoundDropStaysReservedPastWindow`, on a fake clock. The lookup says 500 is
+  untradeable, 4 tradeable, and anything else unknown; all three are dropped for character 7.
+  Item 500 stands for a bound item OUTSIDE TypeID 3/3/9 (one of the 97 such `ITEM_QNO_` rows,
+  e.g. `ITEM_QNO_CH_EUROPE_1_02`, 3/3/13), the class for which the engine's party rule really
+  applies. At +31 s `ReleaseOwnerships` returns only the potion and the unknown item; the bound
+  item's `OwnerAt` is 7, both on the returned copy and on the item still on the ground; a
+  stranger (9) is refused `ErrNotOwner`; a sharing party member (8) and the owner get 0; a
+  stranger picks the released potion. At +60 s a second release is empty and the owner is still
+  7. No assertion covers a 3/3/9 item's party member, because srrevamp does not model that
+  refusal.
+- `cmd/server.TestGroundTradeLookupAdapter`: the adapter passes a row's `CanTrade` through as
+  known, and answers (true, false) for a missing row and for a failed lookup. Inverting
+  `return it.CanTrade, true` fails it. It does not cover the `SetTradeLookup` call itself.
+- `grounditem.TestNoTradeLookupReleasesEverything`: with no lookup, both drops are released at
+  30 s and a stranger may pick.
+- `session.TestGroundItemSnapshotKeepsBoundOwner`: `snapshotOf` a bound item at +31 s names 7; its
+  unbound twin names 0.
+
+**Negative case, run.**
+
+- Production files stashed (`grounditem.go`, `main.go`): both test packages fail to build on
+  `Bound` / `SetTradeLookup`.
+- Field and API kept, both gates removed in place (`OwnerAt`'s and `ReleaseOwnerships`'s):
+  `TestBoundDropStaysReservedPastWindow` FAILS with the bound item among the released three, and
+  `TestGroundItemSnapshotKeepsBoundOwner` FAILS with "owner 0, want 7".
+- Only `OwnerAt`'s gate removed: the grounditem test FAILS at "bound OwnerAt(31 s) = 0, want 7".
+- Restored: all pass, and `go test -count=1 -p 1 ./...` is green.
+
+**Deploy note.** None needed: `items.can_trade` (`NOT NULL DEFAULT TRUE`) has been in the schema
+since commit `2ff7d69`, so srrevamp-01's table already answers the lookup. The own-design fallback
+loot (`combat.LootTables`) drops gold and potions, which are tradeable; a drop is bound only where
+operator-supplied real drop tables (`session.realDrops`) roll a quest item.

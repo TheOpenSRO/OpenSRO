@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"math"
 	"testing"
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
+	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
 )
 
@@ -314,4 +317,40 @@ func TestGMSpawnCarriesBCRadius(t *testing.T) {
 		}
 	}
 	t.Error("Mangyang missing from gmSpecies")
+}
+
+// fakeItemRows is a reference item store holding a fixed set of rows; id -1
+// answers a lookup error.
+type fakeItemRows map[int64]*refdata.Item
+
+func (f fakeItemRows) GetItem(_ context.Context, id int64) (*refdata.Item, error) {
+	if id == -1 {
+		return nil, errors.New("lookup failed")
+	}
+	return f[id], nil
+}
+
+// The adapter main wires into grounditem.Hub.SetTradeLookup passes a row's
+// CanTrade through as known, and answers unknown -- never bound -- for a
+// missing row or a failed lookup, so only a real CanTrade = 0 row reserves a
+// drop past the 30 s window (GObjPC::FUN_004901c0, round 492).
+func TestGroundTradeLookupAdapter(t *testing.T) {
+	lookup := groundTradeLookup(context.Background(), fakeItemRows{
+		500: {ID: 500, CanTrade: false},
+		4:   {ID: 4, CanTrade: true},
+	})
+	for _, c := range []struct {
+		id              int64
+		canTrade, known bool
+	}{
+		{500, false, true}, // untradeable row: bound
+		{4, true, true},    // tradeable row
+		{999, true, false}, // not in the store
+		{-1, true, false},  // the store failed
+	} {
+		ct, known := lookup(c.id)
+		if ct != c.canTrade || known != c.known {
+			t.Errorf("groundTradeLookup(%d) = (%v, %v), want (%v, %v)", c.id, ct, known, c.canTrade, c.known)
+		}
+	}
 }

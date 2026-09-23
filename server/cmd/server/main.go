@@ -375,6 +375,25 @@ type refItemStore interface {
 	GetSkill(ctx context.Context, id int64) (*refdata.Skill, error)
 }
 
+// groundTradeLookup adapts the reference item store to the ground-item hub's
+// trade lookup: an item's CanTrade (itemdata column 16) and whether the store
+// knows it. A lookup error or a missing row answers unknown (true, false), not
+// bound, so its drop is released after the 30 s window as before -- only a
+// row that really carries CanTrade = 0 reserves a drop to its owner
+// (GObjPC::FUN_004901c0, docs/protocol/ground_items.md "The ownership
+// window").
+func groundTradeLookup(ctx context.Context, items interface {
+	GetItem(ctx context.Context, id int64) (*refdata.Item, error)
+}) func(itemID int64) (canTrade, known bool) {
+	return func(itemID int64) (bool, bool) {
+		it, err := items.GetItem(ctx, itemID)
+		if err != nil || it == nil {
+			return true, false
+		}
+		return it.CanTrade, true
+	}
+}
+
 func main() {
 	addr := flag.String("addr", ":15779", "listen address for the gateway service")
 	postgresDSN := flag.String("postgres-dsn", "postgres://postgres:postgres@localhost:5432/srrevamp?sslmode=disable",
@@ -674,6 +693,10 @@ func main() {
 		}
 		return it.DecayTimeMs
 	})
+	// An untradeable drop (CanTrade, itemdata column 16, clear -- the quest
+	// items) is never released to the zone: GObjPC::FUN_004901c0 asks
+	// CGObj::CanTrade before clearing the owner (grounditem.Item.Bound).
+	ground.SetTradeLookup(groundTradeLookup(ctx, refItems))
 	go session.RunGroundItemSweep(ctx, ground, hub)
 	// The server's own gain multipliers, under the game's knob names. All
 	// default to 1x, and the engine's floor means a server cannot be

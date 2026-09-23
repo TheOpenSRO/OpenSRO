@@ -387,6 +387,10 @@ func rollDrops(monsterName string) []LootDrop {
 // shares items (its flag bit with value 2, `FUN_004ea200() & 2`). srrevamp's
 // parties share unconditionally, the same choice already made for
 // experience (internal/party), so being in the same party is enough here.
+// The engine never reaches this rule for an owned TypeID 3/3/9 item whose
+// codename does not begin ITEM_QNO_RM_ARCHEMY (CheckCanPickUp refuses it
+// 0x1812 at 0x4a934d first); grounditem.PickCheck asks it for every item, a
+// known divergence (docs/protocol/ground_items.md, "Picking up", step 3).
 func samePartyFunc(parties *party.Hub) func(a, b int64) bool {
 	if parties == nil {
 		return nil

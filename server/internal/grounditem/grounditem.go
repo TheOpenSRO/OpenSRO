@@ -9,10 +9,19 @@
 //     0x004a9050, the limit at .rdata 0xb45b44; the pet override passes 2000);
 //   - ownership: the item carries its owner's id (CGItem+0x150). 0 means
 //     anyone may pick it; the owner may; a party member may when the party
-//     shares items; anyone else is refused with 0x1812;
+//     shares items -- EXCEPT on a TypeID 3/3/9 item whose codename does not
+//     begin ITEM_QNO_RM_ARCHEMY, which the engine refuses every non-owner
+//     before it reaches the party test (CheckCanPickUp 0x4a930d-0x4a9350);
+//     anyone else is refused with 0x1812. srrevamp does not model that
+//     exclusion: PickCheck applies the party rule to every item, a known
+//     divergence (docs/protocol/ground_items.md, "Picking up", step 3);
 //   - the ownership window: 30 s from the drop (CGItem::Update accumulates
 //     the frame time at +0x158 against .rdata 0xb45e58 = 30.0), after which the
-//     owner is cleared and everyone in range is told (0x304D [u32 id]);
+//     owner is cleared and everyone in range is told (0x304D [u32 id]) -- but
+//     only for an item whose CanTrade answers yes. The release,
+//     GObjPC::FUN_004901c0, asks vtable slot 49 (CGObj::CanTrade 0x00483d50,
+//     the row's flags & 1) first and does nothing on 0, so an untradeable drop
+//     (a quest item) stays reserved to its owner until it decays (Item.Bound);
 //   - a pick in progress marks the item busy (+0x14c) and a second picker is
 //     refused with 0x1813.
 //
@@ -43,8 +52,10 @@ import (
 const PickRange = 10.0
 
 // OwnershipWindow is how long a drop stays reserved for its owner (and the
-// owner's item-sharing party). Read: .rdata 0xb45e58 = 30.0 seconds, the
-// threshold CGItem::Update's elapsed-time field is held against.
+// owner's item-sharing party, except on a TypeID 3/3/9 item other than
+// ITEM_QNO_RM_ARCHEMY* -- see PickCheck). Read: .rdata
+// 0xb45e58 = 30.0 seconds, the threshold CGItem::Update's elapsed-time field
+// is held against.
 const OwnershipWindow = 30 * time.Second
 
 // FallbackLifetime is how long an item lies on the ground when its reference
@@ -88,7 +99,24 @@ type Item struct {
 	X, Y, Z  float32
 	// OwnerID is the character the drop belongs to for OwnershipWindow after
 	// DroppedAt; 0 once released (or if it never had one).
-	OwnerID   int64
+	OwnerID int64
+	// Bound is an item whose reference row says it cannot be traded: its
+	// owner is never released, so it stays reserved to its owner until it
+	// decays. Who besides the owner may pick it is CheckCanPickUp's party
+	// rule, which the engine skips for a TypeID 3/3/9 item not named
+	// ITEM_QNO_RM_ARCHEMY* -- most bound quest items -- and srrevamp does not
+	// (PickCheck). Read: GObjPC::FUN_004901c0
+	// (0x004901c0), the release CGItem::Update calls once +0x158 passes 30.0
+	// (0x48fa0b), opens with `call [vtable+0xc4]` (0x4901c5) and returns
+	// without clearing +0x150 when it answers 0 (0x4901d1 je). +0xc4 is slot
+	// 49, and all seven vtables that carry CGItem::Update at slot 211
+	// (0xae9384 .. 0xaeb824) hold CGObj::CanTrade (0x00483d50) there:
+	// CGObj::IsItem (slot 18, 0x00482d80), then the ref row's flags word
+	// +0x8c & 1 -- itemdata column 16 (docs/protocol/item_capability_flags.md,
+	// "The bit map" and "The columns, anchored against real data"). Set at
+	// Drop from the hub's trade lookup; false when there is none or the item
+	// is unknown to it.
+	Bound     bool
 	DroppedAt time.Time
 	// ExpiresAt is when the world removes the stack: DroppedAt plus the
 	// item's own DecayTime (LifetimeFor), fixed when it is dropped.
@@ -103,8 +131,12 @@ type Item struct {
 
 // OwnerAt returns who owns the item at t: its owner inside the window, 0
 // after it -- the same answer the real item gives once CGItem::Update has
-// cleared +0x150.
+// cleared +0x150. A Bound item keeps its owner past the window, because
+// FUN_004901c0 never clears it.
 func (it Item) OwnerAt(t time.Time) int64 {
+	if it.Bound {
+		return it.OwnerID
+	}
 	if it.OwnerID == 0 || !t.Before(it.DroppedAt.Add(OwnershipWindow)) {
 		return 0
 	}
@@ -121,6 +153,10 @@ type Hub struct {
 	// decayTimeMs answers an item's DecayTime in ms (0 = unknown); nil means
 	// no reference data was given and every drop gets FallbackLifetime.
 	decayTimeMs func(itemID int64) int
+	// canTrade answers an item's CanTrade flag, known=false when the item is
+	// not in the reference data; nil means none was given and no drop is
+	// Bound.
+	canTrade func(itemID int64) (canTrade, known bool)
 }
 
 func NewHub() *Hub {
@@ -135,8 +171,20 @@ func (h *Hub) SetDecayLookup(decayTimeMs func(itemID int64) int) {
 	h.decayTimeMs = decayTimeMs
 }
 
+// SetTradeLookup gives the hub the reference data that says whether each
+// item can be traded. A drop whose row answers no is Bound: its owner is
+// never released. Without a lookup, or for an item the lookup does not know,
+// every drop is released after OwnershipWindow, so a deployment with no
+// reference data does not lock its drops.
+func (h *Hub) SetTradeLookup(canTrade func(itemID int64) (canTrade, known bool)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.canTrade = canTrade
+}
+
 // Drop puts a stack on the ground at (x, y, z) in zone, owned by ownerID. It
-// lies there for its own DecayTime (LifetimeFor) from this moment.
+// lies there for its own DecayTime (LifetimeFor) from this moment, and is
+// Bound when the trade lookup knows it and says it cannot be traded.
 func (h *Hub) Drop(zone string, itemID int64, quantity int32, gold bool, x, y, z float32, ownerID int64) Item {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -146,8 +194,13 @@ func (h *Hub) Drop(zone string, itemID int64, quantity int32, gold bool, x, y, z
 	if h.decayTimeMs != nil {
 		decay = h.decayTimeMs(itemID)
 	}
+	bound := false
+	if h.canTrade != nil {
+		ct, known := h.canTrade(itemID)
+		bound = known && !ct
+	}
 	it := &Item{ID: h.nextID, Zone: zone, ItemID: itemID, Quantity: quantity, Gold: gold,
-		X: x, Y: y, Z: z, OwnerID: ownerID, DroppedAt: now, ExpiresAt: now.Add(LifetimeFor(decay))}
+		X: x, Y: y, Z: z, OwnerID: ownerID, Bound: bound, DroppedAt: now, ExpiresAt: now.Add(LifetimeFor(decay))}
 	h.items[it.ID] = it
 	return *it
 }
@@ -181,6 +234,21 @@ func (h *Hub) InZone(zone string) []Item {
 // hands: range, ownership (with the party rule the caller supplies) and the
 // busy flag. On success the item is marked busy for this picker until
 // Remove or Release is called; a 0 result code means the pick may proceed.
+//
+// Two of the engine's ownership outcomes are not modelled, both known
+// divergences (docs/protocol/ground_items.md, "Picking up", step 3):
+//   - the party exclusion. For an item whose TID answers FUN_0042fdc0
+//     (TypeID 3/3/9) the engine compares the codename's first 0x13 chars
+//     with "ITEM_QNO_RM_ARCHEMY" (.rdata 0xaebf58, CompareStringA at
+//     0x4a9342) and, unless they match, refuses every non-owner 0x1812
+//     (0x4a934d) before the party test at 0x4a9360. The hub knows neither
+//     the TID nor the codename, so sameParty is asked for every item: a
+//     sharing party member may pick an owned 3/3/9 item here that the
+//     engine would refuse them.
+//   - the absent owner. When the owner id resolves to no object
+//     (FUN_00485dc0 == 0, 0x4a93d1 / 0x4a92ec) the engine writes result 1
+//     and returns false; here the party rule alone decides, and it asks
+//     party membership, not whether the owner is in the world.
 func (h *Hub) PickCheck(id int64, pickerID int64, px, py, pz float32, sameParty func(a, b int64) bool) (Item, int) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -227,13 +295,17 @@ func (h *Hub) Remove(id int64) (Item, bool) {
 
 // ReleaseOwnerships clears the owner of every item whose window has passed
 // and returns them, so the caller can tell the zone (the real 0x304D). Each
-// item is returned once.
+// item is returned once. A Bound item is skipped: FUN_004901c0 neither
+// clears its owner nor sends 0x304D.
 func (h *Hub) ReleaseOwnerships() []Item {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	now := h.now()
 	var out []Item
 	for _, it := range h.items {
+		if it.Bound {
+			continue
+		}
 		if it.OwnerID != 0 && !now.Before(it.DroppedAt.Add(OwnershipWindow)) {
 			it.OwnerID = 0
 			out = append(out, *it)

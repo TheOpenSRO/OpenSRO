@@ -18,7 +18,7 @@ open", and went looking for something already found.
 
 | flag | itemdata column | carried as | enforced by |
 |---|---:|---|---|
-| `CanTrade` | 16 | `refdata.Item.CanTrade` | trade offer and trade commit (`0x183a`, round 482) |
+| `CanTrade` | 16 | `refdata.Item.CanTrade` | trade offer and trade commit (`0x183a`, round 482); a drop on the ground is never released from its owner when clear (`grounditem.Item.Bound`, `GObjPC::FUN_004901c0`, round 492, `ground_items.md`) |
 | `CanSell` | 17 | `refdata.Item.CanSell` | `shop.Sell` |
 | `CanDrop` | 19 *(see below)* | `refdata.Item.CanDrop` | nothing: srrevamp has no drop-from-bag path |
 | `CanUse` | 24 | `refdata.Item.CanUse` | `session.UseItemHandler` (`0x183e`, round 489) |

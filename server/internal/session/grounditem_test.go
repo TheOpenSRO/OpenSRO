@@ -233,3 +233,21 @@ func TestGroundDropAndPickUpFlow(t *testing.T) {
 		t.Fatalf("ground not empty after both picks: %+v", lst)
 	}
 }
+
+// A Bound drop's snapshot still names its owner after the 30 s window, so a
+// player who enters the zone later is told it is reserved; its unbound twin
+// reads free (0). GObjPC::FUN_004901c0 never clears +0x150 on an item whose
+// CanTrade answers 0 (grounditem.Item.Bound).
+func TestGroundItemSnapshotKeepsBoundOwner(t *testing.T) {
+	t0 := time.Unix(1000, 0)
+	bound := grounditem.Item{ID: 1, ItemID: 500, Quantity: 1, OwnerID: 7, Bound: true, DroppedAt: t0}
+	twin := bound
+	twin.ID, twin.Bound = 2, false
+	at := t0.Add(31 * time.Second)
+	if got := snapshotOf(bound, at).OwnerID; got != 7 {
+		t.Fatalf("bound snapshot at +31 s: owner %d, want 7", got)
+	}
+	if got := snapshotOf(twin, at).OwnerID; got != 0 {
+		t.Fatalf("unbound snapshot at +31 s: owner %d, want 0", got)
+	}
+}
