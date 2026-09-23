@@ -973,6 +973,66 @@ rather than guessed at.
 > stands for is `0x1834` from StorageOperation's guard, not Attach/Detach's
 > `0x1811`, and the client has no message for `0x1811` in any case.
 
+### The trade request's codes (round 500)
+
+Round 500 read `GObjPC_HandleTradeMsg_081` (`0x005154e0`), the trade-request
+handler, in full, with its callees. It also read the functions that close a
+request: `CTradeMgr::OpenTradeSession` (`0x0047f620`), `EstablishTradeSession`
+(`0x0047f970`), `GObjPC_HandleTradeMsg_084` (`0x005159c0`) and
+`trs_wait_response::OnTimeout` (`0x0046ce20`). Every code a trade request can
+end in, in the order the engine tests, is listed below. The names come from the
+client table above, looked up by value. This round did not read which client
+handler shows a code carried by `0xb081` or `0x3088`. For the low values
+especially (`0x0002` is named as a party error), that name is the table's
+reading of the number, not a confirmed trade message.
+
+| code | name (client table above) | raised when |
+|---|---|---|
+| — | (silent drop, no reply) | `CGObjPC::FUN_004f0a00(1) == 1`, the handler's first test; or the requester is already in a pending session with this same target (`FUN_0047f5b0` returns 1, `0x51566a` -> `0x5157be`) |
+| `0x185f` | `UIIT_MSG_STRGERR_REQUESTED_JOB_BLOCKED_BY_QUEST` | vcall slot `0x244` with `0x100` is non-zero (`0x515563`) |
+| `0x0003` | *not in the table* | the target is the requester, is not found (`FUN_00485d90`), or is not a PC (vcall `0x1c`) |
+| `0x1833` | *no client case* | the requester fails `GObjPC::FUN_004ea050` at INTERACTMODE 2 or 7 (`0x51575e`) |
+| `0x181d` | *no client case* | the requester fails `FUN_004ea050` at any other INTERACTMODE except 1, or is not alive, or is at GROUPMODE 1 (`0x515749`, `0x515773`) |
+| `0x182c` | `UIIT_MSG_STRGERR_TRADING_CANCELED_BY_USER` | the requester is at INTERACTMODE 1, a party to another pending session. 081 cancels that session through 084 and carries on. `SendItemExchangeResult` sends the code to **both** parties of the old session as `0x3088` |
+| `0x0004` | `UIIT_STT_ERR_COMMON_TOO_FAR` | the 3-D distance is not below float32 320.0 (.rdata `0xb460dc`, `fcomp` at `0x51571c`) |
+| `0x181e` | `UIIT_MSG_STRGERR_BUSY` | `OpenTradeSession` runs `FUN_004ea050` on the target and it fails (`0x47f6e0` -> `0x47f6e9`) |
+| `0x1811` | *no client case* | `OpenTradeSession`'s fall-through (round 499, above) |
+| `0x0002` | `UIIT_MSG_PARTYERR_UNKNOWN_ERROR` | `GObjPC::FUN_004ea0d0` could not create the target's wait |
+
+The request can then close without being accepted, and each way sends
+`0x3088` to both parties through `CTradeMgr::SendItemExchangeResult`
+(`0x004806d0`):
+
+| code | name | raised when |
+|---|---|---|
+| `0x182c` | `UIIT_MSG_STRGERR_TRADING_CANCELED_BY_USER` | either party cancels: 084 closes whatever session `param_1[0x730]` names |
+| `0x1826` | `UIIT_MSG_STRGERR_TIMEOUT` | the wait passes 30.0 s (.rdata `0xb45b48`). `OnTimeout`'s type-1 case loads it at `0x46ce37` |
+| `0x1828` | `UIIT_MSG_STRGERR_TRADING_DENIED` | the target declines (`trs_wait_response::vslot_002`) |
+| `0x1840` | *not in the table* | the target answers while not alive (`vslot_002`) |
+| `0x0004` | `UIIT_STT_ERR_COMMON_TOO_FAR` | on acceptance, `EstablishTradeSession` measures again against the same 320.0 (`0x47facc`) |
+| `0x1827` | `UIIT_MSG_STRGERR_CANNOT_FIND_TARGET` | on acceptance, either party is gone (`TradeMgr::FUN_0047f0b0`, `FUN_00485d90`) |
+
+**The sweeps above missed `0x1833` and two `0x181d` sites, and why.** 081
+pushes its refusal and then *jumps* to a shared `mov ecx,0xb081; call
+0x4e7250` tail. The round-335 sweep matched `push <code>`, then `mov ecx`,
+then the call, all in a row, so a push followed by a `jmp` was not matched.
+`0x181d` is on the fifteen through `CGObjPC::vslot_358` only. `0x1833` is on no
+list. Two probes agree the client has no message for either. Neither appears in
+the client table above. A grep of all 39,851 decompiled client functions for
+`0x1833` finds no file, and finds no `case 0x181d:`. The same grep does find
+the `case 0x181e:`, `case 0x1826:` and `case 0x182c:` lines, so a grep that
+comes back empty is not simply blind.
+
+srrevamp models the codes it has state for (`session.handleTradeRequest`,
+round 500): `3` as its own texts "player not found" and "cannot trade with
+yourself", `0x1833` as "already trading", the cancel-and-reopen, `4` as "too
+far away" on request and on acceptance, `0x181e` as "target is busy", `0x182c`
+for a cancel from either side, and `0x1826` for the 30 s timeout. Its replies
+carry texts, not codes. The cancel and the timeout arrive as `OpTradeCancelled`,
+and an empty name marks the timeout as a system cancellation. The codes srrevamp
+does not model are the silent drop at `FUN_004f0a00`, `0x185f`, `0x181d`,
+`0x1840` and `0x0002`. None of them has a state srrevamp keeps.
+
 **The sweep reproduces this page's own arithmetic independently.** It finds
 exactly **21** codes at or above `0x100` that no client case names, and this page
 says the fifteen are fifteen "and not twenty-one" because six lookalikes

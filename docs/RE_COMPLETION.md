@@ -27605,6 +27605,10 @@ message, so it refuses each operation instead.
 
 **Not modelled.**
 
+> **Round 500 wired three of the items below:** the target's cancel, the second request
+> (cancel-and-reopen), and the timeout, which is 30 s and closes with `0x1826`. See that round.
+> The NPC-window case, mode 7, the disconnect notices and the cancel/accept race are still open.
+
 - **A trade request while an NPC window is open.** The engine refuses this in two places, and
   both run before `OpenTradeSession` could fall through to its own `0x1811`.
   - **The requester.** `GObjPC_HandleTradeMsg_081` (`0x005154e0`) first runs
@@ -27757,3 +27761,200 @@ Nothing else in the client changed. In `hud_panels.gd`, the store window's statu
 shop reason ("Could not buy: you are busy with a trade"). The warehouse handlers only
 `push_warning` their reason, and the repair handler prints the code, so a refused warehouse or
 repair request shows nothing in the window.
+
+## Trade requests follow the engine's request handler: 320-unit range (code 4), one outgoing request, busy requester/target refusals, and either party may cancel a pending request (GObjPC_HandleTradeMsg_081 0x5154e0) (round 500)
+
+**Why now.** Round 499 made a pending request hold its TARGET out of the shop, the warehouse and
+repair (`trade.Hub.Busy`). `handleTradeRequest` found the target by name, with no distance check,
+and one requester could hold several requests. So anyone, from anywhere on the map, could keep
+any number of players out of NPC services. The engine's request handler does not allow that.
+
+**Grounding. Read this round on the RE box, from the dump and `srv.asm`.**
+
+- **The handler's ladder.** `GObjPC_HandleTradeMsg_081` (`0x005154e0`) tests in this order:
+  1. `CGObjPC::FUN_004f0a00(1) == 1`: silent drop;
+  2. vcall `0x244(0x100)` is non-zero: `0x185f`;
+  3. the target id is the requester's own (`param_1[2]`): 3. The target is not found
+     (`FUN_00485d90`): 3. The target is not a PC (vcall `0x1c`): 3;
+  4. `GObjPC::FUN_004ea050` on the requester fails. It returns 1 only when vcall `0x244(0x100)`
+     is 0, the life state (vcall `0xf8`) is 1, INTERACTMODE (`chardata+6`) is 0, and GROUPMODE
+     (`chardata+7`) is not 1. On failure: if the requester is alive and not at GROUPMODE 1, then
+     mode 2 or 7 answers `0x1833` (`0x51575e`), mode 1 takes the branch below, and any other
+     mode answers `0x181d` (`0x515749`). A dead requester, or one at GROUPMODE 1, gets `0x181d`
+     (`0x515773`);
+  5. the distance: `FUN_00405270` is `sqrt(dx*dx + dy*dy + dz*dz)` (it calls `0x9fc1c0`, the CRT
+     routine with the `fsqrt`). `FUN_00430ba0` builds the delta: it folds in region offsets at
+     1920.0 (.rdata `0xb45ad0`, a double), and a dungeon/field mismatch gives 1e38
+     (.rdata `0xb45c44`). The handler compares with `fcomp DWORD PTR ds:0xb460dc` at
+     `0x51571c`, then `test ah,1; jne` to the open. So only a distance strictly below the constant
+     proceeds, and anything else answers **4** (`0x515737`). The constant at `0xb460dc` is bytes
+     `00 00 a0 43`, **float32 320.0** (objdump of `/var/tmp/SR_GameServer.exe`);
+  6. `CTradeMgr::OpenTradeSession` (`0x0047f620`), whose result goes back unless it is 1. Its own
+     ladder: the target is missing or not a PC: 3; `FUN_004ea050` on the target fails:
+     **`0x181e`** (`0x47f6e0` -> `0x47f6e9`); `TradeMgr::FUN_00481730` returns non-zero: `0x1811`;
+     `GObjPC::FUN_004ea0d0` fails to create the wait: 2. On success it writes INTERACTMODE 1 to
+     both parties.
+- **The mode-1 branch** (`0x515639`-`0x5156a7`). It loads the requester's session number from
+  `obj+0x1cc0` (`param_1[0x730]`). `GetSingleton_CTradeMgr` (`0x442370`, `push ecx`/`pop ecx`,
+  plain `ret`) leaves both pushes on the stack, so `mov ebx,[esp+0x24]` at `0x51565c` reads the
+  **target id**, and the remaining push is `FUN_0047f5b0`'s argument (`ret 4`). `FUN_0047f5b0`
+  (`0x0047f5b0`) finds the session and returns 1 when its party id at `+8` or at `+0x48` equals
+  `ebx`. On 1 the handler jumps to the exit at `0x5157be` and sends **no reply**. Otherwise it
+  calls `GObjPC_HandleTradeMsg_084` on itself with a scratch message and goes on to the distance
+  check.
+- **The cancel handler.** `GObjPC_HandleTradeMsg_084` (`0x005159c0`) calls
+  `SendItemExchangeResult(param_1[2], param_1[0x730], 0x182c)`. `SendItemExchangeResult`
+  (`0x004806d0`) accepts a caller that is either party (`+8` or `+0x48`). For each party it resets
+  INTERACTMODE to 0 and sends `0x3088` with the code. So **either party** can cancel a pending
+  session, and both are told.
+- **Acceptance measures again.** `EstablishTradeSession` (`0x0047f970`) compares the pair against
+  the same `0xb460dc` at `0x47facc`. Out of range, it sets `eax = 4` (`0x47fadc`), and the tail at
+  `0x47fc0a` hands that to `SendItemExchangeResult`, which closes the session and tells both
+  parties. The second `mov eax,4` at `0x47fb79` is a byte count for `MsgBuf_AppendBytes`, not a
+  code. A party that is gone gives `0x1827` (`TradeMgr::FUN_0047f0b0`).
+- **The timeout.** `OpenTradeSession` creates the wait with `mov bl,0x1` (`0x47f751`) and calls
+  `GObjPC::FUN_004ea0d0`, which builds a `trs_wait_response` (`FUN_0046c7e0`). Both that
+  constructor and the `transaction` base constructor `FUN_0046c6c0` store the float at .rdata
+  `0xb45b48` into `+0x1c` (`0x46c817`, `0x46c711`). That float is bytes `00 00 f0 41`,
+  **30.0**. The base constructor also zeroes `+0x20` and, when the `.data` flag at `0xc66910` is
+  set, links the object into the timed list (`FUN_0046fe50` with `eax = obj+4`). The flag is 1 in
+  the image, and the one instruction that reads it is that test at `0x46c6fb`; no instruction
+  writes it by address. The tick, `CMainProcess::FUN_0046f1e0`, adds `GetTickCount` deltas
+  divided by the double at `0xb45c68` (**1000.0**) to `+0x20`, and when the limit at `+0x1c` is
+  below the elapsed time it calls vtable slot 1. For a `trs_wait_response` that is
+  `trs_wait_response::OnTimeout` (`0x0046ce20`). Its jump table sends type 1 to `0x46ce37`,
+  `mov ebx,0x1826`, and `FUN_0046cec0` then calls `SendItemExchangeResult(0, session, ebx)`.
+  **A pending request therefore closes after 30 s with `0x1826` `UIIT_MSG_STRGERR_TIMEOUT`, and
+  both parties are told.** The same function closes by session number. A timer from a session that
+  is already gone finds nothing: it returns `0x181b`, and nobody is sent anything.
+
+**Change.**
+
+- `internal/trade`:
+  - **`RequestRange` = 320.0** and **`RequestTimeout` = 30 s**, each citing its address.
+  - **`Request`** now returns a request ID (numbered like `CTradeMgr`'s sessions, skipping 0). It
+    refuses a requester who is already in a request, as sender or as target (the new
+    `ErrRequestPending`). It refuses a target in any phase (`ErrTargetBusy`), including the
+    *sender* of a pending request. Before, only an incoming request or an open trade counted.
+  - **`Respond(accept)`** refuses with `ErrAlreadyTrading`, and drops the request, when either
+    party is already in an open trade. Before, it overwrote `h.active` for the requester and left
+    the old partner holding a session nobody else shared.
+  - **`PendingOf(id)`** returns the pending request a character is in, from either side.
+    **`Expire(targetID, id)`** removes a request only if it is still the one with that ID.
+  - `Busy`, `Established`, `WithdrawRequest` and `CancelPendingFor` keep round 499's meaning.
+    `CancelPendingFor`'s doc no longer says it "mirrors" `duel.Hub.CancelPendingFor`. The duel copy
+    still has the early return and the `break`. The duel is srrevamp's own design with no engine
+    counterpart, so this round leaves its behaviour alone.
+- `internal/session/trade.go`, `handleTradeRequest`, in the engine's order:
+  1. target not found, or the requester itself: today's texts (engine 3);
+  2. requester `Established`: "already trading" (engine `0x1833`);
+  3. requester in a pending request (`PendingOf`): if the new target is already in it, the request
+     is **dropped with no reply**; otherwise `cancelPendingTrade` closes it, which sends
+     `OpTradeCancelled` to both parties, and the request carries on;
+  4. `tradeInRange`: the 3-D distance must be `< trade.RequestRange`. Different zones are out of
+     range, because srrevamp's zones share no coordinate space. A requester with no world entity
+     is refused "not in the world" (srrevamp's own case: every engine PC has a position). Otherwise
+     "too far away" (engine 4);
+  5. `trades.Request`: a busy target is "target is busy" (engine `0x181e`);
+  6. on success, a `time.AfterFunc(tradeRequestTimeout)` calls `Expire` and, if the request is
+     still waiting, sends `OpTradeCancelled{""}` (a system cancellation) to both parties (engine
+     `0x1826`).
+- `handleTradeRespond` measures again on an accept. Out of range ("too far away", engine 4), or
+  with either party missing ("player not found", engine `0x1827`), it removes the request, answers
+  the responder with the reason, and sends the requester `OpTradeCancelled{""}`. A decline is not
+  measured, because the engine's decline (`0x1828`) never reaches `EstablishTradeSession`.
+- `handleTradeCancel`: with no open trade, `cancelPendingTrade` now ends the pending request **from
+  either side**. Round 499 only let the requester withdraw it. A target's cancel now tells both
+  parties.
+- `tradeRequestTimeout` is a package variable only so a test can shorten it.
+
+**Tests** (`go test -count=1 -p 1 ./...`, green).
+
+- `internal/trade`:
+  - `TestRequestHoldsEachCharacterInOneRequest`: a second request from the sender, or one from
+    the pending target, is `ErrRequestPending`. A request to either party is `ErrTargetBusy`.
+    **Negative**: a request to the pending *sender* went through before.
+  - `TestPendingOfSeesBothSides`.
+  - `TestRespondAcceptDoesNotOverwriteAnOpenTrade` (**negative**): with the requester, then the
+    target, already mid-trade, the accept is refused and the open session keeps its pointer. The
+    state is built by hand, because `Request` can no longer make it.
+  - `TestExpireMatchesTheRequestID`: a stale ID does not expire a newer request between the same
+    pair.
+  - `TestRequestRuleValues`: the float32 bit patterns `0x43a00000` and `0x41f00000`.
+  - The round-499 multi-request `CancelPendingFor` checks now build their state by hand, for the
+    same reason.
+- `internal/session` (`trade_test.go`; a third player joins through the new `addTradePlayer`):
+  - `TestTradeRequestNeedsTheEngineRange`. **Negative**: Bram at 400 is refused "too far away",
+    neither party is busy, and Bram's shop buy succeeds. 320 exactly is refused, and so is
+    (240, 0, 240), which is 339 away. 300 goes through. A player in another zone standing on the
+    same coordinates is refused.
+  - `TestTradeRequestHoldsOneRequestAtATime`. **Negative**: Aria asks Bram, then Cara. The old
+    request is cancelled first (both get `OpTradeCancelled` by Aria), then Aria gets OK and Cara
+    the invite. Bram is not busy, and his accept is refused. Cara, now a pending target, asks Bram:
+    Aria's request to her is cancelled the same way. Requests to the partner already in the pending
+    session, from either side, get no reply (checked by a following confirm whose answer must come
+    first) and leave the request unchanged.
+  - `TestTradeRequestRefusesBusyParties`: mid-trade, Aria's request is "already trading" and
+    Cara's request to Bram is "target is busy". While Aria's request to Bram is pending, Cara's
+    request to Bram is refused. **Negative**: so is Cara's request to Aria, the sender.
+  - `TestTradeAcceptOutOfRangeClosesTheRequest`. **Negative**: Bram moves to 400 and accepts. He
+    gets "too far away", Aria gets `OpTradeCancelled{""}`, and nobody is busy. A decline at 400 is
+    still a decline.
+  - `TestTradeTargetCancelsIncomingRequest`. **Negative**: Bram's cancel of Aria's request answers
+    both with `OpTradeCancelled` by Bram, and frees both.
+  - `TestTradeRequestTimesOut`. **Negative**: with the wait cut to 200 ms, both parties get
+    `OpTradeCancelled{""}`, both are free, and a late accept is refused.
+
+**Negative case, run.**
+
+- **Both production files stashed** (`git stash push -- internal/trade/trade.go
+  internal/session/trade.go`): both packages fail to build against the new tests.
+- **One mutation at a time, each restored.** Every one fails its test:
+  - range check always true: 400 is accepted, in both the request test and the accept test;
+  - `<=` in place of `<`: 320 is accepted;
+  - zone test removed: the request across zones is accepted;
+  - cancel-and-reopen removed: Aria's first packet is `OpTradeRequestResult`, not
+    `OpTradeCancelled`;
+  - a reply instead of the silent drop: Cara's first packet is `0x00D1`, not the confirm's answer;
+  - the target's cancel removed: Bram's read times out;
+  - the timer set to an hour: Aria's read times out;
+  - the accept's range check removed: the accept is OK;
+  - the hub's target check back to incoming-only: `Request(carol, alice)` succeeds, and so does
+    Cara's request over the wire;
+  - `Respond`'s guard removed: the accept succeeds;
+  - `Expire` ignoring the ID: the stale timer closes the newer request;
+  - the requester-pending check removed: a second request succeeds.
+
+**Client** (`World3D.gd`, `_on_trade_cancelled`). An `OpTradeCancelled` now always clears the
+shown invite. Each character is in at most one trade or request, so the packet always ends the
+invite on screen. Before, it was cleared only when the canceller was the invite's sender. An invite
+stayed on the trade tab if the target cancelled it, replaced it with a request of its own, or let
+it time out.
+`remote_godot.sh check` (239 scripts and 5 scenes, all load) and `remote_godot.sh tests` (77
+suites, 0 failing) ran on the render box.
+
+**Docs.**
+
+- `error_codes.md`, "The trade request's codes (round 500)": the whole request ladder and the codes
+  that close a pending request, each with its site. It also notes why the round-335 sweep missed
+  081's `0x1833` and two of its `0x181d` pushes: a `push` followed by a `jmp` to a shared send.
+  Two probes found no client message for `0x1833` or `0x181d`.
+- `character_state.md`, "The trade request reads the same byte (round 500)".
+- `SYSTEMS.md`'s Shops row: the round-499 hold is now bounded.
+- Round 499's "Not modelled" list above is annotated: three of its items are wired here.
+
+**Behaviour change.** A trade request works only within 320 units, and is re-checked on
+acceptance. A player has one request at a time, and a new one replaces the old. A busy player
+cannot be sent a request. The target of a request can cancel it, and an unanswered request lapses
+after 30 s. A request from anywhere on the map can no longer keep someone out of the shop or the
+warehouse.
+
+**Not modelled** (no state in srrevamp for the engine to test):
+
+- `FUN_004f0a00`'s silent drop and vcall `0x244`'s `0x185f`;
+- the rest of `FUN_004ea050`: a dead party, GROUPMODE 1 (`PARTY_SETUP`), and INTERACTMODE 4, 5, 6
+  or 9. These give `0x181d` for the requester and `0x181e` for the target;
+- `0x1840` (the target answers while not alive) and `OpenTradeSession`'s `2` and `0x1811`;
+- the codes themselves. srrevamp's results carry texts in its own wording, and `OpTradeCancelled`
+  has no code field, so a cancel shows the canceller's name and a timeout or a failed accept shows
+  "the system".

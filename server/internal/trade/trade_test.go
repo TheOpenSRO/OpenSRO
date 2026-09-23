@@ -2,7 +2,9 @@ package trade
 
 import (
 	"errors"
+	"math"
 	"testing"
+	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 )
@@ -15,7 +17,7 @@ func TestRequestAndRespondAccept(t *testing.T) {
 	h := NewHub()
 	alice, bob := member(1, "Aria"), member(2, "Bram")
 
-	if err := h.Request(alice, bob); err != nil {
+	if _, err := h.Request(alice, bob); err != nil {
 		t.Fatalf("Request: %v", err)
 	}
 	requester, err := h.Respond(bob, true)
@@ -43,7 +45,7 @@ func TestRequestAndRespondDecline(t *testing.T) {
 	h := NewHub()
 	alice, bob := member(1, "Aria"), member(2, "Bram")
 
-	if err := h.Request(alice, bob); err != nil {
+	if _, err := h.Request(alice, bob); err != nil {
 		t.Fatalf("Request: %v", err)
 	}
 	if _, err := h.Respond(bob, false); err != nil {
@@ -57,7 +59,7 @@ func TestRequestAndRespondDecline(t *testing.T) {
 func TestRequestSelf(t *testing.T) {
 	h := NewHub()
 	alice := member(1, "Aria")
-	if err := h.Request(alice, alice); !errors.Is(err, ErrCannotTradeSelf) {
+	if _, err := h.Request(alice, alice); !errors.Is(err, ErrCannotTradeSelf) {
 		t.Fatalf("got %v, want ErrCannotTradeSelf", err)
 	}
 }
@@ -66,16 +68,16 @@ func TestRequestWhileBusy(t *testing.T) {
 	h := NewHub()
 	alice, bob, carol := member(1, "Aria"), member(2, "Bram"), member(3, "Carol")
 
-	if err := h.Request(alice, bob); err != nil {
+	if _, err := h.Request(alice, bob); err != nil {
 		t.Fatalf("Request: %v", err)
 	}
 	if _, err := h.Respond(bob, true); err != nil {
 		t.Fatalf("Respond: %v", err)
 	}
-	if err := h.Request(alice, carol); !errors.Is(err, ErrAlreadyTrading) {
+	if _, err := h.Request(alice, carol); !errors.Is(err, ErrAlreadyTrading) {
 		t.Fatalf("got %v, want ErrAlreadyTrading", err)
 	}
-	if err := h.Request(carol, bob); !errors.Is(err, ErrTargetBusy) {
+	if _, err := h.Request(carol, bob); !errors.Is(err, ErrTargetBusy) {
 		t.Fatalf("got %v, want ErrTargetBusy", err)
 	}
 }
@@ -207,7 +209,7 @@ func TestHubBusyCoversEveryTradePhase(t *testing.T) {
 	}
 
 	// Pending: both parties are held (mode 1), neither is established.
-	if err := h.Request(alice, bob); err != nil {
+	if _, err := h.Request(alice, bob); err != nil {
 		t.Fatalf("Request: %v", err)
 	}
 	for _, m := range []Member{alice, bob} {
@@ -267,9 +269,11 @@ func TestHubBusyCoversEveryTradePhase(t *testing.T) {
 
 	// NEGATIVE: a requester with TWO outgoing requests. CancelPendingFor must
 	// drop both -- until round 499 its `break` left one standing, and with it a
-	// target held busy by a requester who had gone.
-	h.Request(alice, bob)
-	h.Request(alice, carol)
+	// target held busy by a requester who had gone. Since round 500 Request
+	// refuses a second request, so the state is built by hand to keep that
+	// guard.
+	h.pending[bob.CharacterID] = PendingRequest{Requester: alice, TargetID: bob.CharacterID, ID: 101}
+	h.pending[carol.CharacterID] = PendingRequest{Requester: alice, TargetID: carol.CharacterID, ID: 102}
 	h.CancelPendingFor(alice.CharacterID)
 	if _, err := h.Respond(bob, true); !errors.Is(err, ErrNoPendingRequest) {
 		t.Errorf("Bram's request survived CancelPendingFor(alice): %v", err)
@@ -290,12 +294,13 @@ func TestHubBusyCoversEveryTradePhase(t *testing.T) {
 
 // TestCancelPendingForTargetAlsoDropsTheirOwnRequests: a character who is both
 // the target of one request and the sender of another loses both. The early
-// return removed in round 499 kept the outgoing one.
+// return removed in round 499 kept the outgoing one. Round 500's Request no
+// longer lets a pending target send a request, so the state is built by hand.
 func TestCancelPendingForTargetAlsoDropsTheirOwnRequests(t *testing.T) {
 	h := NewHub()
 	alice, bob, carol := member(1, "Aria"), member(2, "Bram"), member(3, "Carol")
-	h.Request(alice, bob) // Bram is a target...
-	h.Request(bob, carol) // ...and a requester.
+	h.pending[bob.CharacterID] = PendingRequest{Requester: alice, TargetID: bob.CharacterID, ID: 1}   // Bram is a target...
+	h.pending[carol.CharacterID] = PendingRequest{Requester: bob, TargetID: carol.CharacterID, ID: 2} // ...and a requester.
 
 	requester, notifiable := h.CancelPendingFor(bob.CharacterID)
 	if !notifiable || requester.CharacterID != alice.CharacterID {
@@ -303,5 +308,137 @@ func TestCancelPendingForTargetAlsoDropsTheirOwnRequests(t *testing.T) {
 	}
 	if _, err := h.Respond(carol, true); !errors.Is(err, ErrNoPendingRequest) {
 		t.Fatalf("Bram's own request to Carol survived: %v", err)
+	}
+}
+
+// TestRequestHoldsEachCharacterInOneRequest: OpenTradeSession (0x0047f620)
+// needs both parties at INTERACTMODE 0 and writes 1 to both, so a character in
+// a pending request -- on either side -- can neither send another nor be sent
+// one.
+func TestRequestHoldsEachCharacterInOneRequest(t *testing.T) {
+	h := NewHub()
+	alice, bob, carol := member(1, "Aria"), member(2, "Bram"), member(3, "Carol")
+
+	id, err := h.Request(alice, bob)
+	if err != nil || id == 0 {
+		t.Fatalf("Request = %d, %v; want a non-zero id", id, err)
+	}
+	if _, err := h.Request(alice, carol); !errors.Is(err, ErrRequestPending) {
+		t.Errorf("a second request from the sender: got %v, want ErrRequestPending", err)
+	}
+	if _, err := h.Request(bob, carol); !errors.Is(err, ErrRequestPending) {
+		t.Errorf("a request from the pending target: got %v, want ErrRequestPending", err)
+	}
+	if _, err := h.Request(carol, bob); !errors.Is(err, ErrTargetBusy) {
+		t.Errorf("a request to the pending target: got %v, want ErrTargetBusy", err)
+	}
+	// NEGATIVE: before round 500 only a target's INCOMING request made it
+	// busy, so a request to the pending SENDER went through.
+	if _, err := h.Request(carol, alice); !errors.Is(err, ErrTargetBusy) {
+		t.Errorf("a request to the pending sender: got %v, want ErrTargetBusy", err)
+	}
+	if h.Busy(carol.CharacterID) {
+		t.Error("refused requests left Carol busy")
+	}
+}
+
+// TestPendingOfSeesBothSides: PendingOf answers for the sender and the target
+// of a request alike, and for nobody else.
+func TestPendingOfSeesBothSides(t *testing.T) {
+	h := NewHub()
+	alice, bob, carol := member(1, "Aria"), member(2, "Bram"), member(3, "Carol")
+	id, _ := h.Request(alice, bob)
+	for _, m := range []Member{alice, bob} {
+		p, ok := h.PendingOf(m.CharacterID)
+		if !ok || p.Requester.CharacterID != alice.CharacterID || p.TargetID != bob.CharacterID || p.ID != id {
+			t.Errorf("PendingOf(%s) = %+v, %v; want Aria -> Bram #%d", m.Name, p, ok, id)
+		}
+	}
+	if p, ok := h.PendingOf(carol.CharacterID); ok {
+		t.Errorf("PendingOf(Carol) = %+v, want none", p)
+	}
+}
+
+// TestRespondAcceptDoesNotOverwriteAnOpenTrade: accepting a request whose
+// requester (or target) is already in an open trade is refused and drops the
+// request. Before round 500 Respond overwrote h.active for the requester and
+// left the first partner holding a session nobody else shared.
+// EstablishTradeSession (0x0047f970) requires both parties at INTERACTMODE 1,
+// and Request no longer builds this state, so it is built by hand.
+func TestRespondAcceptDoesNotOverwriteAnOpenTrade(t *testing.T) {
+	h := NewHub()
+	alice, bob, carol := member(1, "Aria"), member(2, "Bram"), member(3, "Carol")
+	h.Request(alice, bob)
+	h.Respond(bob, true)
+	open, _ := h.SessionOf(alice.CharacterID)
+
+	// The requester is mid-trade.
+	h.pending[carol.CharacterID] = PendingRequest{Requester: alice, TargetID: carol.CharacterID, ID: 90}
+	if _, err := h.Respond(carol, true); !errors.Is(err, ErrAlreadyTrading) {
+		t.Fatalf("accept with the requester mid-trade: got %v, want ErrAlreadyTrading", err)
+	}
+	if s, _ := h.SessionOf(alice.CharacterID); s != open {
+		t.Fatalf("Aria's open trade was replaced: %+v", s)
+	}
+	if h.Established(carol.CharacterID) || h.Busy(carol.CharacterID) {
+		t.Fatal("Carol was left in a trade or a request")
+	}
+
+	// The target is mid-trade.
+	h.pending[bob.CharacterID] = PendingRequest{Requester: carol, TargetID: bob.CharacterID, ID: 91}
+	if _, err := h.Respond(bob, true); !errors.Is(err, ErrAlreadyTrading) {
+		t.Fatalf("accept with the target mid-trade: got %v, want ErrAlreadyTrading", err)
+	}
+	if s, _ := h.SessionOf(bob.CharacterID); s != open {
+		t.Fatalf("Bram's open trade was replaced: %+v", s)
+	}
+	if h.Established(carol.CharacterID) {
+		t.Fatal("Carol was put in a trade")
+	}
+}
+
+// TestExpireMatchesTheRequestID: the timeout closes only the request it was
+// started for -- as the engine's closes by session number -- so a timer left
+// from a request that was withdrawn and made again does nothing.
+func TestExpireMatchesTheRequestID(t *testing.T) {
+	h := NewHub()
+	alice, bob := member(1, "Aria"), member(2, "Bram")
+
+	old, _ := h.Request(alice, bob)
+	h.WithdrawRequest(alice.CharacterID)
+	cur, err := h.Request(alice, bob)
+	if err != nil || cur == old {
+		t.Fatalf("second Request = %d, %v; want a new id (old %d)", cur, err, old)
+	}
+	if _, ok := h.Expire(bob.CharacterID, old); ok {
+		t.Fatal("a stale timeout closed the newer request")
+	}
+	if !h.Busy(bob.CharacterID) {
+		t.Fatal("the newer request is gone")
+	}
+	requester, ok := h.Expire(bob.CharacterID, cur)
+	if !ok || requester.CharacterID != alice.CharacterID {
+		t.Fatalf("Expire(current) = %+v, %v; want Aria, true", requester, ok)
+	}
+	if h.Busy(alice.CharacterID) || h.Busy(bob.CharacterID) {
+		t.Fatal("an expired request left a party busy")
+	}
+	if _, ok := h.Expire(bob.CharacterID, cur); ok {
+		t.Fatal("a request expired twice")
+	}
+}
+
+// TestRequestRuleValues pins the two engine constants: float32 320.0 at .rdata
+// 0xb460dc (bytes 00 00 a0 43) and float32 30.0 at .rdata 0xb45b48 (00 00 f0 41),
+// in seconds (the tick divides milliseconds by the double 1000.0 at 0xb45c68).
+func TestRequestRuleValues(t *testing.T) {
+	if bits := math.Float32bits(RequestRange); bits != 0x43a00000 {
+		t.Errorf("RequestRange is float32 bits 0x%08x, want 0x43a00000", bits)
+	}
+	if bits := math.Float32bits(float32(RequestTimeout.Seconds())); bits != 0x41f00000 {
+		t.Errorf("RequestTimeout is float32 bits 0x%08x, want 0x41f00000", bits)
+	}
+	if RequestTimeout != 30*time.Second {
+		t.Errorf("RequestTimeout = %v, want 30s", RequestTimeout)
 	}
 }

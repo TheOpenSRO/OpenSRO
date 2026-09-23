@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
+	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
@@ -348,7 +350,7 @@ func TradeHandler(chars character.Store, inv inventory.Store, items ItemLookup, 
 		case OpTradeRequest:
 			return handleTradeRequest(ctx, sess, p, chars, hub, trades)
 		case OpTradeRespond:
-			return handleTradeRespond(ctx, sess, p, chars, trades)
+			return handleTradeRespond(ctx, sess, p, chars, hub, trades)
 		case OpTradeSetOffer:
 			return handleTradeSetOffer(ctx, sess, p, chars, inv, items, trades)
 		case OpTradeConfirm:
@@ -361,6 +363,56 @@ func TradeHandler(chars character.Store, inv inventory.Store, items ItemLookup, 
 	}
 }
 
+// tradeRequestTimeout is trade.RequestTimeout, the engine's 30 s wait for an
+// answer. It is a variable only so a test can shorten it.
+var tradeRequestTimeout = trade.RequestTimeout
+
+// tradeTooFarReason refuses a trade request, or its acceptance, when the two
+// players are trade.RequestRange or more apart. The engine answers 4,
+// UIIT_STT_ERR_COMMON_TOO_FAR (docs/protocol/error_codes.md). Our result
+// carries a text, so the wording is srrevamp's own.
+const tradeTooFarReason = "too far away"
+
+// tradeInRange reports whether a and b stand closer than trade.RequestRange:
+// the 3-D distance GObjPC_HandleTradeMsg_081 (`0x005154e0`) takes with
+// FUN_00405270 and holds against 320.0 at `0x51571c`, strictly below it
+// (see trade.RequestRange). Two players in different zones are out of range.
+// A srrevamp zone is a label with no coordinate transform between zones
+// (handleChangeZone puts everyone at the one spawnPos), so their coordinates
+// cannot be compared. The engine's nearest case is FUN_00430ba0, which gives a
+// 1e38 offset (.rdata 0xb45c44) when one position is in a dungeon and the
+// other is not.
+func tradeInRange(a, b world.Entity) bool {
+	if a.Zone != b.Zone {
+		return false
+	}
+	dx, dy, dz := a.Pos.X-b.Pos.X, a.Pos.Y-b.Pos.Y, a.Pos.Z-b.Pos.Z
+	return math.Sqrt(dx*dx+dy*dy+dz*dz) < trade.RequestRange
+}
+
+// handleTradeRequest follows the engine's request handler,
+// GObjPC_HandleTradeMsg_081 (`0x005154e0`), in its order (round 500):
+//
+//  1. the target is the requester, or is not a player in the world: 3.
+//     The two texts below are srrevamp's own;
+//  2. the requester is in an accepted trade (INTERACTMODE 2): 0x1833;
+//  3. the requester is a party to a pending request (INTERACTMODE 1, which
+//     OpenTradeSession sets on BOTH parties, so this covers the requester and
+//     the target of one). If it is with this same target, the new request is
+//     dropped with no reply: FUN_0047f5b0 finds the target in the pending
+//     session (`+8` or `+0x48`) and the handler returns at `0x51566d`.
+//     Otherwise that request is cancelled through GObjPC_HandleTradeMsg_084
+//     (0x182c to both parties) and the new one goes ahead;
+//  4. the two stand trade.RequestRange or more apart: 4;
+//  5. the target is busy: 0x181e, from CTradeMgr::OpenTradeSession
+//     (`0x0047f620`) running GObjPC::FUN_004ea050 on it (`0x47f6e0`).
+//
+// Not modelled, because srrevamp has no state to test:
+//   - the first two checks (FUN_004f0a00, a silent drop; vcall 0x244, 0x185f);
+//   - the requester's life state and GROUPMODE, which FUN_004ea050 also
+//     requires and whose failure answers 0x181d, as do the INTERACTMODE
+//     values other than 0, 1, 2 and 7;
+//   - the same two tests on the target, which answer 0x181e.
 func handleTradeRequest(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, hub *world.Hub, trades *trade.Hub) error {
 	req, err := DecodeTradeRequestRequest(p.Data)
 	if err != nil {
@@ -370,16 +422,58 @@ func handleTradeRequest(ctx context.Context, sess *gateway.Session, p *proto.Pac
 	if errStr != "" {
 		return sess.Send(&proto.Packet{Opcode: OpTradeRequestResult, Data: (&TradeRequestResult{Reason: errStr}).Encode()})
 	}
+	refuse := func(reason string) error {
+		return sess.Send(&proto.Packet{Opcode: OpTradeRequestResult, Data: (&TradeRequestResult{Reason: reason}).Encode()})
+	}
 	targetEntity, ok := hub.FindByName(req.TargetName)
 	if !ok {
-		return sess.Send(&proto.Packet{Opcode: OpTradeRequestResult, Data: (&TradeRequestResult{Reason: "player not found"}).Encode()})
+		return refuse("player not found") // engine: 3
+	}
+	if targetEntity.CharacterID == characterID {
+		return refuse(tradeErrorMessage(trade.ErrCannotTradeSelf)) // engine: 3
+	}
+	if trades.Established(characterID) {
+		return refuse(tradeErrorMessage(trade.ErrAlreadyTrading)) // engine: 0x1833
+	}
+	if pending, ok := trades.PendingOf(characterID); ok {
+		if pending.Requester.CharacterID == targetEntity.CharacterID || pending.TargetID == targetEntity.CharacterID {
+			return nil // engine: FUN_0047f5b0 == 1, no reply
+		}
+		if err := cancelPendingTrade(hub, trades, characterID, req.CharacterName, sess); err != nil {
+			return err
+		}
+	}
+	self, ok := hub.EntityBySession(sess.ID())
+	if !ok {
+		// A requester with no position cannot be measured. The engine has no
+		// such case -- every player object has a position -- so this refusal
+		// and its wording are srrevamp's own.
+		return refuse("not in the world")
+	}
+	if !tradeInRange(self, targetEntity) {
+		return refuse(tradeTooFarReason) // engine: 4
 	}
 
 	requester := trade.Member{Session: sess, CharacterID: characterID, Name: req.CharacterName}
 	target := trade.Member{Session: targetEntity.Session, CharacterID: targetEntity.CharacterID, Name: targetEntity.Name}
-	if err := trades.Request(requester, target); err != nil {
-		return sess.Send(&proto.Packet{Opcode: OpTradeRequestResult, Data: (&TradeRequestResult{Reason: tradeErrorMessage(err)}).Encode()})
+	id, err := trades.Request(requester, target)
+	if err != nil {
+		return refuse(tradeErrorMessage(err)) // ErrTargetBusy: engine 0x181e
 	}
+
+	// THE ENGINE'S 30 s WAIT (trade.RequestTimeout). When it runs out
+	// unanswered, the request is closed with 0x1826 UIIT_MSG_STRGERR_TIMEOUT
+	// and both parties are told. OpTradeCancelled has no code field, so the
+	// empty name, the same one executeTrade's failures use, marks it as a
+	// system cancellation. Expire matches the request's ID, so a timer left
+	// from a request that was answered or withdrawn does nothing.
+	time.AfterFunc(tradeRequestTimeout, func() {
+		if asker, ok := trades.Expire(target.CharacterID, id); ok {
+			timedOut := (&TradeCancelled{}).Encode()
+			asker.Session.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: timedOut})
+			target.Session.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: timedOut})
+		}
+	})
 
 	if err := sess.Send(&proto.Packet{Opcode: OpTradeRequestResult, Data: (&TradeRequestResult{OK: true}).Encode()}); err != nil {
 		return err
@@ -388,7 +482,39 @@ func handleTradeRequest(ctx context.Context, sess *gateway.Session, p *proto.Pac
 	return target.Session.Send(&proto.Packet{Opcode: OpTradeInvite, Data: invite.Encode()})
 }
 
-func handleTradeRespond(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, trades *trade.Hub) error {
+// cancelPendingTrade ends the pending request characterID is a party to, on
+// either side, and sends OpTradeCancelled{byName} to the other party and to
+// characterID's own session. With no pending request it does nothing and sends
+// nothing.
+//
+// This is GObjPC_HandleTradeMsg_084 (`0x005159c0`), the cancel handler. It
+// closes whatever session param_1[0x730] names, through
+// CTradeMgr::SendItemExchangeResult with 0x182c
+// UIIT_MSG_STRGERR_TRADING_CANCELED_BY_USER. SendItemExchangeResult
+// (`0x004806d0`) resets BOTH parties' INTERACTMODE and sends each of them the
+// code, so either party may cancel: the requester withdraws the request, or
+// the target turns it down. The request handler runs the same function to
+// clear a requester's old session before it opens a new one. A target is
+// found through the world hub, because the pending map keeps no target Member.
+func cancelPendingTrade(hub *world.Hub, trades *trade.Hub, characterID int64, byName string, self *gateway.Session) error {
+	cancelled := (&TradeCancelled{CancelledByName: byName}).Encode()
+	targets := trades.WithdrawRequest(characterID)
+	for _, targetID := range targets {
+		if target, online := hub.EntityByCharacterID(targetID); online && target.Session != nil {
+			target.Session.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: cancelled})
+		}
+	}
+	requester, incoming := trades.CancelPendingFor(characterID)
+	if incoming {
+		requester.Session.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: cancelled})
+	}
+	if len(targets) == 0 && !incoming {
+		return nil
+	}
+	return self.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: cancelled})
+}
+
+func handleTradeRespond(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, hub *world.Hub, trades *trade.Hub) error {
 	req, err := DecodeTradeRespondRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpTradeRespondResult, Data: (&TradeRespondResult{Reason: "malformed request"}).Encode()})
@@ -396,6 +522,33 @@ func handleTradeRespond(ctx context.Context, sess *gateway.Session, p *proto.Pac
 	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
 	if errStr != "" {
 		return sess.Send(&proto.Packet{Opcode: OpTradeRespondResult, Data: (&TradeRespondResult{Reason: errStr}).Encode()})
+	}
+
+	// THE RANGE AGAIN, ON ACCEPTANCE (round 500). CTradeMgr::
+	// EstablishTradeSession (`0x0047f970`) measures the pair again and holds
+	// the distance against the same 320.0 (`0x47facc`). Out of range, it
+	// hands 4 to SendItemExchangeResult, which closes the pending session and
+	// tells both parties. Neither party still being there closes it too, with
+	// 0x1827 UIIT_MSG_STRGERR_CANNOT_FIND_TARGET (TradeMgr::FUN_0047f0b0 and
+	// the FUN_00485d90 lookups). The answering player gets this handler's
+	// refusal. The requester gets the system OpTradeCancelled, because that
+	// message has no code field.
+	if pending, ok := trades.PendingOf(characterID); req.Accept && ok && pending.TargetID == characterID {
+		reason := ""
+		self, selfOK := hub.EntityBySession(sess.ID())
+		other, otherOK := hub.EntityByCharacterID(pending.Requester.CharacterID)
+		switch {
+		case !selfOK || !otherOK:
+			reason = "player not found" // engine: 0x1827
+		case !tradeInRange(self, other):
+			reason = tradeTooFarReason // engine: 4
+		}
+		if reason != "" {
+			if requester, gone := trades.CancelPendingFor(characterID); gone {
+				requester.Session.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: (&TradeCancelled{}).Encode()})
+			}
+			return sess.Send(&proto.Packet{Opcode: OpTradeRespondResult, Data: (&TradeRespondResult{Reason: reason}).Encode()})
+		}
 	}
 
 	responder := trade.Member{Session: sess, CharacterID: characterID, Name: req.CharacterName}
@@ -516,24 +669,15 @@ func handleTradeCancel(ctx context.Context, sess *gateway.Session, p *proto.Pack
 	cancelled := &TradeCancelled{CancelledByName: req.CharacterName}
 	tradeSess, ok := trades.End(characterID)
 	if !ok {
-		// NO OPEN TRADE: WITHDRAW WHAT THIS CHARACTER ASKED FOR (round 499).
-		// A pending request holds both parties (INTERACTMODE 1 from
+		// NO OPEN TRADE: END THE PENDING REQUEST, FROM EITHER SIDE. A pending
+		// request holds both parties (INTERACTMODE 1 from
 		// CTradeMgr::OpenTradeSession 0x0047f620 -- see trade.Hub.Busy), so a
 		// cancel that left it standing would leave both unable to use an NPC
-		// service until the target answered. Each target is told through the
-		// world hub (the pending map keeps no target Member), and the
-		// canceller gets the same OpTradeCancelled an open trade's cancel
-		// sends both sides.
-		targets := trades.WithdrawRequest(characterID)
-		if len(targets) == 0 {
-			return nil
-		}
-		for _, targetID := range targets {
-			if target, online := hub.EntityByCharacterID(targetID); online && target.Session != nil {
-				target.Session.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: cancelled.Encode()})
-			}
-		}
-		return sess.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: cancelled.Encode()})
+		// service until the target answered. Round 499 let the requester
+		// withdraw it. Round 500 lets the target cancel it too, as the
+		// engine's cancel handler does -- see cancelPendingTrade. Both
+		// parties get the same OpTradeCancelled an open trade's cancel sends.
+		return cancelPendingTrade(hub, trades, characterID, req.CharacterName, sess)
 	}
 	tradeSess.A.Session.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: cancelled.Encode()})
 	return tradeSess.B.Session.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: cancelled.Encode()})
@@ -724,6 +868,8 @@ func tradeErrorMessage(err error) string {
 		return "cannot trade with yourself"
 	case errors.Is(err, trade.ErrAlreadyTrading):
 		return "already trading"
+	case errors.Is(err, trade.ErrRequestPending):
+		return "a trade request is already pending"
 	case errors.Is(err, trade.ErrTargetBusy):
 		return "target is busy"
 	case errors.Is(err, trade.ErrNoPendingRequest):

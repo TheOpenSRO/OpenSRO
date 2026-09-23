@@ -14,6 +14,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/srrevamp/server/internal/shop"
 	"github.com/OpenSRO/srrevamp/server/internal/trade"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
@@ -84,6 +85,9 @@ type tradeTestFixture struct {
 	ariaID, bramID int64
 	connA, connB   net.Conn
 	rA, rB         *bufio.Reader
+	// accounts and addr let a test bring a third player in (addTradePlayer).
+	accounts *account.MemStore
+	addr     string
 }
 
 func setupTradeTest(t *testing.T) *tradeTestFixture {
@@ -194,7 +198,7 @@ func setupTradeTestWith(t *testing.T, items ItemLookup, extra func(d tradeFixtur
 		t.Fatalf("draining EntityEntered: %v", err)
 	}
 
-	return &tradeTestFixture{chars: chars, inv: inv, trades: trades, ariaID: aria.ID, bramID: bram.ID, connA: connA, connB: connB, rA: rA, rB: rB}
+	return &tradeTestFixture{chars: chars, inv: inv, trades: trades, ariaID: aria.ID, bramID: bram.ID, connA: connA, connB: connB, rA: rA, rB: rB, accounts: accounts, addr: addr}
 }
 
 // startTrade has Aria request a trade with Bram and Bram accept, and drains
@@ -715,5 +719,351 @@ func TestOfferTradeFlagRefusal(t *testing.T) {
 	// silent pass.
 	if _, err := offerTradeFlagRefusal(ctx, inv, stubCombatItems{}, charID, trade.Offer{ItemSlot: 0, Quantity: 1}); err == nil {
 		t.Error("a failing item lookup was swallowed")
+	}
+}
+
+// ---- Round 500: the engine's request handler, GObjPC_HandleTradeMsg_081 ----
+
+// tradePeer is one connected player in a trade test.
+type tradePeer struct {
+	name string
+	conn net.Conn
+	r    *bufio.Reader
+}
+
+func (f *tradeTestFixture) aria() tradePeer { return tradePeer{"Aria", f.connA, f.rA} }
+func (f *tradeTestFixture) bram() tradePeer { return tradePeer{"Bram", f.connB, f.rB} }
+
+// addTradePlayer brings a third player into a trade fixture: a new account and
+// character, logged in and entered at the spawn beside the others. It drains
+// the OpEntityEntered each of others gets.
+func addTradePlayer(t *testing.T, f *tradeTestFixture, user, name string, others ...tradePeer) (tradePeer, int64) {
+	t.Helper()
+	acc, err := f.accounts.Add(user, "pw-"+user)
+	if err != nil {
+		t.Fatalf("adding account %q: %v", user, err)
+	}
+	c, err := f.chars.Create(context.Background(), acc.ID, name)
+	if err != nil {
+		t.Fatalf("creating %s: %v", name, err)
+	}
+	conn := dialTestServer(t, f.addr)
+	t.Cleanup(func() { conn.Close() })
+	p := tradePeer{name, conn, bufio.NewReader(conn)}
+	resp := doSend(t, p.conn, p.r, OpLogin, (&LoginRequest{Username: user, Password: "pw-" + user}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("%s login failed: err=%v result=%+v", user, err, lr)
+	}
+	resp = doSend(t, p.conn, p.r, OpEnterWorld, (&EnterWorldRequest{CharacterName: name}).Encode())
+	if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
+		t.Fatalf("%s enter world failed: err=%v result=%+v", name, err, ewr)
+	}
+	for _, o := range others {
+		readPacket(t, o, OpEntityEntered)
+	}
+	return p, c.ID
+}
+
+// readPacket reads p's next packet and fails unless its opcode is opcode.
+func readPacket(t *testing.T, p tradePeer, opcode uint16) *proto.Packet {
+	t.Helper()
+	p.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	pkt, err := proto.Read(p.r, nil, nil)
+	if err != nil {
+		t.Fatalf("%s: waiting for opcode 0x%04X: %v", p.name, opcode, err)
+	}
+	if pkt.Opcode != opcode {
+		t.Fatalf("%s: got opcode 0x%04X, want 0x%04X", p.name, pkt.Opcode, opcode)
+	}
+	return pkt
+}
+
+// readCancelledBy reads p's next packet, which must be OpTradeCancelled naming
+// by ("" is a system cancellation).
+func readCancelledBy(t *testing.T, p tradePeer, by string) {
+	t.Helper()
+	c, err := DecodeTradeCancelled(readPacket(t, p, OpTradeCancelled).Data)
+	if err != nil || c.CancelledByName != by {
+		t.Fatalf("%s: OpTradeCancelled = %+v (err %v), want by %q", p.name, c, err, by)
+	}
+}
+
+// movePeer moves p and drains the OpEntityMoved each of others gets. OpMove
+// has no reply, so reading those broadcasts is also what orders the move
+// before whatever the test sends next.
+func movePeer(t *testing.T, p tradePeer, x, y, z float32, others ...tradePeer) {
+	t.Helper()
+	if err := proto.Write(p.conn, &proto.Packet{Opcode: OpMove, Data: (&MoveRequest{X: x, Y: y, Z: z}).Encode()}, nil, nil); err != nil {
+		t.Fatalf("%s: writing OpMove: %v", p.name, err)
+	}
+	for _, o := range others {
+		readPacket(t, o, OpEntityMoved)
+	}
+}
+
+// sendTrade writes one trade packet from p without reading anything.
+func sendTrade(t *testing.T, p tradePeer, opcode uint16, data []byte) {
+	t.Helper()
+	if err := proto.Write(p.conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+		t.Fatalf("%s: writing opcode 0x%04X: %v", p.name, opcode, err)
+	}
+}
+
+// requestResult sends from's request for target and decodes the reply.
+func requestResult(t *testing.T, from tradePeer, target string) *TradeRequestResult {
+	t.Helper()
+	resp := doSend(t, from.conn, from.r, OpTradeRequest, (&TradeRequestRequest{CharacterName: from.name, TargetName: target}).Encode())
+	if resp.Opcode != OpTradeRequestResult {
+		t.Fatalf("%s: got opcode 0x%04X, want OpTradeRequestResult", from.name, resp.Opcode)
+	}
+	rr, err := DecodeTradeRequestResult(resp.Data)
+	if err != nil {
+		t.Fatalf("DecodeTradeRequestResult: %v", err)
+	}
+	return rr
+}
+
+// syncNotTrading sends p's OpTradeConfirm, which answers "not trading" while p
+// has no open trade, and fails unless that answer is p's next packet. A request
+// the engine drops without a reply can only be checked this way: the confirm is
+// handled after it on the same connection, so an answer to the request would
+// arrive first.
+func syncNotTrading(t *testing.T, p tradePeer) {
+	t.Helper()
+	sendTrade(t, p, OpTradeConfirm, (&TradeConfirmRequest{CharacterName: p.name}).Encode())
+	cr, err := DecodeTradeConfirmResult(readPacket(t, p, OpTradeConfirmResult).Data)
+	if err != nil || cr.OK || cr.Reason != "not trading" {
+		t.Fatalf("%s: confirm = %+v (err %v), want refused \"not trading\"", p.name, cr, err)
+	}
+}
+
+// TestTradeRequestNeedsTheEngineRange: the request handler measures the pair
+// and answers 4 (TOO_FAR) unless they are closer than 320.0 (.rdata 0xb460dc,
+// fcomp at 0x51571c).
+func TestTradeRequestNeedsTheEngineRange(t *testing.T) {
+	f := setupTradeTestWith(t, nil, func(d tradeFixtureDeps) []gateway.Handler {
+		shopItems := stubShopItems{100: {ID: 100}, 200: {ID: 200}}
+		return []gateway.Handler{ShopHandler(d.chars, &shop.Service{Gold: d.chars, Inv: d.inv, Items: shopItems}, d.trades)}
+	})
+	aria, bram := f.aria(), f.bram()
+
+	// NEGATIVE: 400 apart. Before round 500 this request went through from any
+	// distance, and the pending request then kept Bram out of every NPC service.
+	movePeer(t, bram, 400, 0, 0, aria)
+	if rr := requestResult(t, aria, "Bram"); rr.OK || rr.Reason != tradeTooFarReason {
+		t.Fatalf("400 apart: request = %+v, want refused %q", rr, tradeTooFarReason)
+	}
+	if f.trades.Busy(f.ariaID) || f.trades.Busy(f.bramID) {
+		t.Fatal("400 apart: a refused request left a party busy")
+	}
+	resp := doSend(t, bram.conn, bram.r, OpShopBuy, (&ShopBuyRequest{CharacterName: "Bram", ItemID: 100, Quantity: 1}).Encode())
+	if res, err := DecodeShopBuyResult(resp.Data); err != nil || !res.OK {
+		t.Fatalf("400 apart: Bram's buy = %+v (err %v), want OK", res, err)
+	}
+
+	// Exactly 320 is refused too: the distance must be strictly below it.
+	movePeer(t, bram, 320, 0, 0, aria)
+	if rr := requestResult(t, aria, "Bram"); rr.OK || rr.Reason != tradeTooFarReason {
+		t.Fatalf("320 apart: request = %+v, want refused %q", rr, tradeTooFarReason)
+	}
+	// It is a 3-D distance: 240 along two axes is 339 apart.
+	movePeer(t, bram, 240, 0, 240, aria)
+	if rr := requestResult(t, aria, "Bram"); rr.OK || rr.Reason != tradeTooFarReason {
+		t.Fatalf("(240,0,240): request = %+v, want refused %q", rr, tradeTooFarReason)
+	}
+
+	// 300 apart is in range.
+	movePeer(t, bram, 300, 0, 0, aria)
+	requestTrade(t, f)
+	if !f.trades.Busy(f.ariaID) || !f.trades.Busy(f.bramID) {
+		t.Fatal("300 apart: the request should hold both parties")
+	}
+	sendTrade(t, aria, OpTradeCancel, (&TradeCancelRequest{CharacterName: "Aria"}).Encode())
+	readCancelledBy(t, bram, "Aria")
+	readCancelledBy(t, aria, "Aria")
+
+	// Another zone is out of range whatever the coordinates say: srrevamp's
+	// zones share no coordinate space. Bram changes zone and lands on the same
+	// spawn point (0,0,0) Aria is standing on.
+	resp = doSend(t, bram.conn, bram.r, OpChangeZone, (&ChangeZoneRequest{Zone: "elsewhere"}).Encode())
+	if cz, err := DecodeChangeZoneResult(resp.Data); err != nil || !cz.OK {
+		t.Fatalf("Bram's zone change = %+v (err %v)", cz, err)
+	}
+	readPacket(t, aria, OpEntityLeft)
+	if rr := requestResult(t, aria, "Bram"); rr.OK || rr.Reason != tradeTooFarReason {
+		t.Fatalf("other zone: request = %+v, want refused %q", rr, tradeTooFarReason)
+	}
+}
+
+// TestTradeRequestHoldsOneRequestAtATime: a pending session sets INTERACTMODE 1
+// on BOTH parties (OpenTradeSession 0x0047f620), and a requester at mode 1 has
+// that session cancelled (GObjPC_HandleTradeMsg_084, 0x182c to both) before the
+// new one opens -- unless the new target is already in it, when the request is
+// dropped with no reply (FUN_0047f5b0, 0x51566d).
+func TestTradeRequestHoldsOneRequestAtATime(t *testing.T) {
+	f := setupTradeTest(t)
+	aria, bram := f.aria(), f.bram()
+	cara, caraID := addTradePlayer(t, f, "carol", "Cara", aria, bram)
+
+	requestTrade(t, f) // Aria -> Bram, pending
+
+	// NEGATIVE: Aria asks Cara as well. Before round 500 both requests stood,
+	// each holding its target busy.
+	sendTrade(t, aria, OpTradeRequest, (&TradeRequestRequest{CharacterName: "Aria", TargetName: "Cara"}).Encode())
+	readCancelledBy(t, aria, "Aria") // the old request goes first...
+	readCancelledBy(t, bram, "Aria")
+	if rr, err := DecodeTradeRequestResult(readPacket(t, aria, OpTradeRequestResult).Data); err != nil || !rr.OK {
+		t.Fatalf("Aria -> Cara: %+v (err %v), want OK", rr, err) // ...then the new one opens
+	}
+	readPacket(t, cara, OpTradeInvite)
+	if f.trades.Busy(f.bramID) {
+		t.Fatal("Bram is still held by the replaced request")
+	}
+	if p, ok := f.trades.PendingOf(f.ariaID); !ok || p.TargetID != caraID {
+		t.Fatalf("Aria's pending request = %+v, %v; want the one to Cara", p, ok)
+	}
+	resp := doSend(t, bram.conn, bram.r, OpTradeRespond, (&TradeRespondRequest{CharacterName: "Bram", RequesterName: "Aria", Accept: true}).Encode())
+	if rr, err := DecodeTradeRespondResult(resp.Data); err != nil || rr.OK {
+		t.Fatalf("Bram accepted a replaced request: %+v (err %v)", rr, err)
+	}
+
+	// The TARGET of a pending request is at mode 1 too, so Cara asking Bram
+	// cancels Aria's request to her first.
+	sendTrade(t, cara, OpTradeRequest, (&TradeRequestRequest{CharacterName: "Cara", TargetName: "Bram"}).Encode())
+	readCancelledBy(t, cara, "Cara")
+	readCancelledBy(t, aria, "Cara")
+	if rr, err := DecodeTradeRequestResult(readPacket(t, cara, OpTradeRequestResult).Data); err != nil || !rr.OK {
+		t.Fatalf("Cara -> Bram: %+v (err %v), want OK", rr, err)
+	}
+	readPacket(t, bram, OpTradeInvite)
+	if f.trades.Busy(f.ariaID) {
+		t.Fatal("Aria is still held by the request Cara replaced")
+	}
+
+	// A request to the partner already in the pending session is dropped with
+	// no reply, from either side, and leaves the session as it was.
+	sendTrade(t, cara, OpTradeRequest, (&TradeRequestRequest{CharacterName: "Cara", TargetName: "Bram"}).Encode())
+	syncNotTrading(t, cara)
+	sendTrade(t, bram, OpTradeRequest, (&TradeRequestRequest{CharacterName: "Bram", TargetName: "Cara"}).Encode())
+	syncNotTrading(t, bram) // no reply, and no second invite either
+	if p, ok := f.trades.PendingOf(f.bramID); !ok || p.Requester.CharacterID != caraID || p.TargetID != f.bramID {
+		t.Fatalf("the dropped requests changed the pending session: %+v, %v", p, ok)
+	}
+}
+
+// TestTradeRequestRefusesBusyParties: an accepted trade answers 0x1833 to its
+// own party's request, and OpenTradeSession answers 0x181e for a target in any
+// trade phase -- including one who is only the SENDER of a pending request.
+func TestTradeRequestRefusesBusyParties(t *testing.T) {
+	f := setupTradeTest(t)
+	aria, bram := f.aria(), f.bram()
+	cara, caraID := addTradePlayer(t, f, "carol", "Cara", aria, bram)
+
+	startTrade(t, f) // Aria and Bram, accepted
+	if rr := requestResult(t, aria, "Cara"); rr.OK || rr.Reason != "already trading" {
+		t.Fatalf("Aria mid-trade -> Cara: %+v, want refused \"already trading\"", rr)
+	}
+	if f.trades.Busy(caraID) {
+		t.Fatal("a refused request held Cara")
+	}
+	if rr := requestResult(t, cara, "Bram"); rr.OK || rr.Reason != "target is busy" {
+		t.Fatalf("Cara -> Bram mid-trade: %+v, want refused \"target is busy\"", rr)
+	}
+	sendTrade(t, aria, OpTradeCancel, (&TradeCancelRequest{CharacterName: "Aria"}).Encode())
+	readCancelledBy(t, aria, "Aria")
+	readCancelledBy(t, bram, "Aria")
+
+	requestTrade(t, f) // Aria -> Bram, pending
+	if rr := requestResult(t, cara, "Bram"); rr.OK || rr.Reason != "target is busy" {
+		t.Fatalf("Cara -> Bram, pending target: %+v, want refused \"target is busy\"", rr)
+	}
+	// NEGATIVE: Aria is only the sender of her request, but OpenTradeSession
+	// set her to mode 1 as well. Before round 500 this went through.
+	if rr := requestResult(t, cara, "Aria"); rr.OK || rr.Reason != "target is busy" {
+		t.Fatalf("Cara -> Aria, pending sender: %+v, want refused \"target is busy\"", rr)
+	}
+	if f.trades.Busy(caraID) {
+		t.Fatal("refused requests held Cara")
+	}
+}
+
+// TestTradeAcceptOutOfRangeClosesTheRequest: CTradeMgr::EstablishTradeSession
+// (0x0047f970) measures again on acceptance, against the same 320.0
+// (0x47facc), and closes the session with 4 when the pair has moved apart.
+func TestTradeAcceptOutOfRangeClosesTheRequest(t *testing.T) {
+	f := setupTradeTest(t)
+	aria, bram := f.aria(), f.bram()
+
+	requestTrade(t, f)
+	movePeer(t, bram, 400, 0, 0, aria)
+
+	// NEGATIVE: before round 500 the accept opened the trade at any distance.
+	resp := doSend(t, bram.conn, bram.r, OpTradeRespond, (&TradeRespondRequest{CharacterName: "Bram", RequesterName: "Aria", Accept: true}).Encode())
+	if resp.Opcode != OpTradeRespondResult {
+		t.Fatalf("Bram: got opcode 0x%04X, want OpTradeRespondResult", resp.Opcode)
+	}
+	if rr, err := DecodeTradeRespondResult(resp.Data); err != nil || rr.OK || rr.Reason != tradeTooFarReason {
+		t.Fatalf("accept 400 apart: %+v (err %v), want refused %q", rr, err, tradeTooFarReason)
+	}
+	readCancelledBy(t, aria, "")
+	if f.trades.Busy(f.ariaID) || f.trades.Busy(f.bramID) || f.trades.Established(f.ariaID) {
+		t.Fatal("the closed request left a party held")
+	}
+
+	// A decline is not measured: vslot_002 answers a refusal with 0x1828
+	// without reaching EstablishTradeSession.
+	movePeer(t, bram, 0, 0, 0, aria)
+	requestTrade(t, f)
+	movePeer(t, bram, 400, 0, 0, aria)
+	resp = doSend(t, bram.conn, bram.r, OpTradeRespond, (&TradeRespondRequest{CharacterName: "Bram", RequesterName: "Aria", Accept: false}).Encode())
+	if rr, err := DecodeTradeRespondResult(resp.Data); err != nil || !rr.OK {
+		t.Fatalf("decline 400 apart: %+v (err %v), want OK", rr, err)
+	}
+	readPacket(t, aria, OpTradeDeclined)
+}
+
+// TestTradeTargetCancelsIncomingRequest: GObjPC_HandleTradeMsg_084 (0x005159c0)
+// closes whatever session the canceller is in, so the TARGET of a pending
+// request can cancel it, and both parties are told (0x182c).
+func TestTradeTargetCancelsIncomingRequest(t *testing.T) {
+	f := setupTradeTest(t)
+	aria, bram := f.aria(), f.bram()
+
+	requestTrade(t, f)
+	// NEGATIVE: before round 500 the target's cancel answered nothing and the
+	// request kept both parties busy.
+	sendTrade(t, bram, OpTradeCancel, (&TradeCancelRequest{CharacterName: "Bram"}).Encode())
+	readCancelledBy(t, bram, "Bram")
+	readCancelledBy(t, aria, "Bram")
+	if f.trades.Busy(f.ariaID) || f.trades.Busy(f.bramID) {
+		t.Fatal("the cancelled request left a party busy")
+	}
+	resp := doSend(t, bram.conn, bram.r, OpTradeRespond, (&TradeRespondRequest{CharacterName: "Bram", RequesterName: "Aria", Accept: true}).Encode())
+	if rr, err := DecodeTradeRespondResult(resp.Data); err != nil || rr.OK {
+		t.Fatalf("Bram accepted a cancelled request: %+v (err %v)", rr, err)
+	}
+}
+
+// TestTradeRequestTimesOut: the engine's pending session is a trs_wait_response
+// whose 30.0 s limit (.rdata 0xb45b48) ends in OnTimeout closing it with
+// 0x1826 TIMEOUT to both parties. The test shortens the wait.
+func TestTradeRequestTimesOut(t *testing.T) {
+	saved := tradeRequestTimeout
+	tradeRequestTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { tradeRequestTimeout = saved })
+
+	f := setupTradeTest(t)
+	aria, bram := f.aria(), f.bram()
+
+	requestTrade(t, f)
+	// NEGATIVE: before round 500 a request waited for ever.
+	readCancelledBy(t, aria, "")
+	readCancelledBy(t, bram, "")
+	if f.trades.Busy(f.ariaID) || f.trades.Busy(f.bramID) {
+		t.Fatal("the timed-out request left a party busy")
+	}
+	resp := doSend(t, bram.conn, bram.r, OpTradeRespond, (&TradeRespondRequest{CharacterName: "Bram", RequesterName: "Aria", Accept: true}).Encode())
+	if rr, err := DecodeTradeRespondResult(resp.Data); err != nil || rr.OK {
+		t.Fatalf("Bram accepted a timed-out request: %+v (err %v)", rr, err)
 	}
 }

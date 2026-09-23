@@ -157,6 +157,43 @@ open-interaction state that could hold that. The two refusal texts are
 srrevamp's own wording, because the client has no message for either `0x1c0b`
 or `0x1811`.
 
+### The trade request reads the same byte (round 500)
+
+The NPC half above is still not modelled. The **trade** half of those two
+checks now is, because the trade modes are the ones srrevamp keeps. Read
+from `GObjPC_HandleTradeMsg_081`, the request handler:
+
+- **Mode 2 or 7 on the requester: `0x1833`.** srrevamp answers "already
+  trading" when the requester is `trade.Hub.Established`.
+- **Mode 1 on the requester: cancel and reopen, not a refusal.** At mode 1,
+  081 does not answer `0x181d`. It looks up the requester's pending session
+  (`param_1[0x730]`):
+  - if the new target is already a party to it (`FUN_0047f5b0` returns 1),
+    it drops the request with no reply;
+  - otherwise it closes the old session through the cancel handler
+    `GObjPC_HandleTradeMsg_084` (`0x005159c0`, `0x182c` to both parties) and
+    goes on to the range check and a new session.
+
+  `OpenTradeSession` writes 1 to **both** parties, so this applies to the
+  target of a pending request as much as to its sender. A character is never
+  in two trade sessions at once. `session.handleTradeRequest` does the same:
+  `trade.Hub.PendingOf`, then `cancelPendingTrade`. `trade.Hub.Request`
+  refuses a requester already in a request (`ErrRequestPending`) as defence
+  in depth.
+- **Any non-zero mode on the target: `0x181e`.** srrevamp answers "target is
+  busy" when the target is `Busy` in any phase. That now includes being the
+  *sender* of a pending request. Before round 500 only an incoming request or
+  an open trade made a target busy.
+- **The remaining conditions of `FUN_004ea050` are not modelled:** a dead
+  character, GROUPMODE 1, and INTERACTMODE 4, 5, 6 or 9. On the requester they
+  give `0x181d`, and on the target `0x181e`. srrevamp keeps none of those states
+  for a trade request to read.
+
+Between the mode checks and `OpenTradeSession`, 081 measures the pair and
+refuses `4` (TOO_FAR) unless they are closer than 320.0 (`trade.RequestRange`).
+The full ladder, and the codes that close a pending request later, are in
+`error_codes.md`, "The trade request's codes (round 500)".
+
 
 ## The life state, and the siege revive countdown (round 411)
 

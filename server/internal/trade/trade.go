@@ -1,26 +1,69 @@
 // Package trade implements this project's own player-to-player trading
 // system: a live, session-scoped request/accept/offer/confirm flow (like
 // duel and party -- not persisted, a trade dissolving on server restart is
-// normal). Entirely own design; no real trade-window data to RE.
+// normal). The window and its messages are srrevamp's own design. The rules
+// for making a request follow the engine's request handler since round 500:
+// RequestRange, RequestTimeout, one request per character, and no request
+// to or from a busy character (docs/RE_COMPLETION.md, round 500).
 package trade
 
 import (
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 )
+
+// RequestRange is how close two players must stand for a trade request to be
+// made or accepted, in world units, and the distance must be STRICTLY less.
+// Read: .rdata 0xb460dc = float32 320.0 (bytes 00 00 a0 43).
+// GObjPC_HandleTradeMsg_081 (`0x005154e0`) compares the 3-D distance between
+// the two players against it at `0x51571c` (`fcomp; test ah,1`) and answers 4,
+// UIIT_STT_ERR_COMMON_TOO_FAR (docs/protocol/error_codes.md), when the distance
+// is not below it. CTradeMgr::EstablishTradeSession (`0x0047f970`) compares
+// the same constant again at `0x47facc` when the target accepts. The distance
+// is FUN_00405270, sqrt(dx*dx + dy*dy + dz*dz) through the CRT's fsqrt, with
+// region offsets folded in by FUN_00430ba0 at 1920 units a region (.rdata
+// 0xb45ad0), the span srrevamp's world coordinates already use.
+const RequestRange = 320.0
+
+// RequestTimeout is how long a request waits for its target's answer before
+// the engine closes it. OpenTradeSession (`0x0047f620`) creates the wait as a
+// trs_wait_response of type 1 (`mov bl,0x1` at `0x47f751`, then
+// GObjPC::FUN_004ea0d0). Its constructors store float32 30.0 (.rdata 0xb45b48,
+// bytes 00 00 f0 41) at +0x1c (`0x46c711`, and again at `0x46c817`), and
+// zero the elapsed field at +0x20 (`0x46c725`). The flag at 0xc66910 is 1 in
+// the image (.data), so the constructor links every transaction into the
+// timed list. CMainProcess::FUN_0046f1e0 adds GetTickCount deltas / 1000.0
+// (.rdata 0xb45c68, a double) to the elapsed field. It calls OnTimeout once the
+// elapsed time exceeds +0x1c. trs_wait_response::OnTimeout (`0x0046ce20`)
+// takes the type-1 case (`mov ebx,0x1826` at `0x46ce37`) and closes the session
+// through CTradeMgr::SendItemExchangeResult with 0x1826, UIIT_MSG_STRGERR_TIMEOUT.
+// That puts both parties back to INTERACTMODE 0 and tells each of them.
+const RequestTimeout = 30 * time.Second
 
 // ErrCannotTradeSelf is returned by Hub.Request when requester and target
 // are the same character.
 var ErrCannotTradeSelf = errors.New("trade: cannot trade with yourself")
 
 // ErrAlreadyTrading is returned by Hub.Request when the requester is
-// already in an active trade.
+// already in an active trade, and by Hub.Respond when accepting would open a
+// second trade for a party already in one.
 var ErrAlreadyTrading = errors.New("trade: already trading")
 
+// ErrRequestPending is returned by Hub.Request when the requester is already
+// a party to a pending request, as its sender or its target. The engine holds
+// each character in at most one trade session: OpenTradeSession
+// (`0x0047f620`) requires INTERACTMODE 0 of both parties and sets both to 1.
+// Its request handler withdraws a requester's pending session before it opens
+// a new one (session.handleTradeRequest does the same), so this is defence in
+// depth rather than a refusal a player sees.
+var ErrRequestPending = errors.New("trade: a request is already pending")
+
 // ErrTargetBusy is returned by Hub.Request when the target is already
-// trading or already has a pending request from someone.
+// trading or is a party to a pending request, as its sender or its target
+// (0x181e UIIT_MSG_STRGERR_BUSY from OpenTradeSession, `0x47f6e0`).
 var ErrTargetBusy = errors.New("trade: target is busy")
 
 // ErrNoPendingRequest is returned by Hub.Respond when the responder has no
@@ -69,64 +112,142 @@ func (s *Session) Other(characterID int64) (Member, Offer, bool) {
 	}
 }
 
+// PendingRequest is one request waiting for its target's answer.
+type PendingRequest struct {
+	Requester Member
+	TargetID  int64
+	// ID numbers the request the way CTradeMgr numbers its sessions:
+	// OpenTradeSession (`0x0047f620`) increments the manager's counter at +4
+	// and skips 0. The engine's timeout closes a session by that number, so
+	// a timeout left over from a closed session finds nothing
+	// (SendItemExchangeResult answers 0x181b and notifies nobody). Hub.Expire
+	// matches on it for the same reason.
+	ID uint64
+}
+
 // Hub tracks all pending trade requests and active trade sessions. Safe
 // for concurrent use.
 type Hub struct {
 	mu      sync.Mutex
-	pending map[int64]Member   // target character ID -> requester
-	active  map[int64]*Session // character ID -> shared session (same pointer for both sides)
+	pending map[int64]PendingRequest // target character ID -> request
+	active  map[int64]*Session       // character ID -> shared session (same pointer for both sides)
+	lastID  uint64                   // the last PendingRequest.ID handed out
 }
 
 // NewHub returns an empty Hub.
 func NewHub() *Hub {
 	return &Hub{
-		pending: make(map[int64]Member),
+		pending: make(map[int64]PendingRequest),
 		active:  make(map[int64]*Session),
 	}
 }
 
-// Request records that requester wants to trade with target. Returns
-// ErrCannotTradeSelf, ErrAlreadyTrading, or ErrTargetBusy as appropriate.
-func (h *Hub) Request(requester, target Member) error {
+// Request records that requester wants to trade with target and returns the
+// request's ID, which Expire needs. Returns ErrCannotTradeSelf,
+// ErrAlreadyTrading, ErrRequestPending or ErrTargetBusy as appropriate.
+//
+// Both parties must be free, as GObjPC::FUN_004ea050's INTERACTMODE-0 test
+// requires. The request handler runs it on the requester and
+// OpenTradeSession (`0x0047f620`) runs it on the target. A pending request
+// counts on either side, because OpenTradeSession writes 1 to both parties.
+func (h *Hub) Request(requester, target Member) (uint64, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	if requester.CharacterID == target.CharacterID {
-		return ErrCannotTradeSelf
+		return 0, ErrCannotTradeSelf
 	}
 	if _, busy := h.active[requester.CharacterID]; busy {
-		return ErrAlreadyTrading
+		return 0, ErrAlreadyTrading
+	}
+	if _, pending := h.pendingOfLocked(requester.CharacterID); pending {
+		return 0, ErrRequestPending
 	}
 	if _, busy := h.active[target.CharacterID]; busy {
-		return ErrTargetBusy
+		return 0, ErrTargetBusy
 	}
-	if _, pending := h.pending[target.CharacterID]; pending {
-		return ErrTargetBusy
+	if _, pending := h.pendingOfLocked(target.CharacterID); pending {
+		return 0, ErrTargetBusy
 	}
 
-	h.pending[target.CharacterID] = requester
-	return nil
+	h.lastID++
+	if h.lastID == 0 {
+		h.lastID = 1
+	}
+	h.pending[target.CharacterID] = PendingRequest{Requester: requester, TargetID: target.CharacterID, ID: h.lastID}
+	return h.lastID, nil
 }
 
 // Respond answers the pending request addressed to target. If accept, a
 // new Session is created for both sides. Returns the requester (for the
 // caller to notify) and ErrNoPendingRequest if there was nothing pending.
+//
+// An accept that would put either party in a second trade is refused with
+// ErrAlreadyTrading, and the request is dropped. Before round 500 it
+// overwrote the requester's open session, leaving the old partner holding a
+// session nobody else shared. The engine cannot reach that state:
+// EstablishTradeSession (`0x0047f970`) requires both parties at INTERACTMODE 1.
+// Request already refuses a busy party, so this check is defence in depth.
 func (h *Hub) Respond(target Member, accept bool) (requester Member, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	requester, ok := h.pending[target.CharacterID]
+	p, ok := h.pending[target.CharacterID]
 	if !ok {
 		return Member{}, ErrNoPendingRequest
 	}
 	delete(h.pending, target.CharacterID)
+	requester = p.Requester
 
 	if accept {
+		if _, busy := h.active[requester.CharacterID]; busy {
+			return Member{}, ErrAlreadyTrading
+		}
+		if _, busy := h.active[target.CharacterID]; busy {
+			return Member{}, ErrAlreadyTrading
+		}
 		sess := &Session{A: requester, B: target, OfferA: Offer{ItemSlot: -1}, OfferB: Offer{ItemSlot: -1}}
 		h.active[requester.CharacterID] = sess
 		h.active[target.CharacterID] = sess
 	}
 	return requester, nil
+}
+
+// PendingOf returns the pending request characterID is a party to, as its
+// requester or its target. Request keeps each character in at most one.
+func (h *Hub) PendingOf(characterID int64) (PendingRequest, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.pendingOfLocked(characterID)
+}
+
+// pendingOfLocked is PendingOf for a caller that holds h.mu.
+func (h *Hub) pendingOfLocked(characterID int64) (PendingRequest, bool) {
+	if p, ok := h.pending[characterID]; ok {
+		return p, true
+	}
+	for _, p := range h.pending {
+		if p.Requester.CharacterID == characterID {
+			return p, true
+		}
+	}
+	return PendingRequest{}, false
+}
+
+// Expire removes the request addressed to targetID if it is still the
+// request numbered id, and returns its requester so the caller can tell both
+// parties. It is the engine's timeout (see RequestTimeout). A request that was
+// answered, withdrawn or replaced in the meantime is left alone.
+func (h *Hub) Expire(targetID int64, id uint64) (requester Member, ok bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	p, in := h.pending[targetID]
+	if !in || p.ID != id {
+		return Member{}, false
+	}
+	delete(h.pending, targetID)
+	return p.Requester, true
 }
 
 // SessionOf returns characterID's active trade session, if any.
@@ -201,27 +322,29 @@ func (h *Hub) End(characterID int64) (sess *Session, ok bool) {
 }
 
 // CancelPendingFor removes every pending request involving characterID: the
-// one addressed to them, and EVERY one they sent. Mirrors
-// duel.Hub.CancelPendingFor, including the same accepted simplification: if
-// characterID was the requester, the targets (never recorded with a full
-// Member on this side of the map) aren't notifiable. requester and notifiable
-// describe the request addressed to characterID, if there was one.
+// one addressed to them, and EVERY one they sent. If characterID was a
+// requester, the targets are not notifiable, because the map records only
+// their character IDs and not a full Member. requester and notifiable describe
+// the request addressed to characterID, if there was one.
 //
-// Until round 499 this stopped at the first request found -- an early return
-// when characterID was a target, and a `break` in the requester scan -- so a
-// character who had asked two people left one request behind, and (now that a
-// pending request makes both parties Busy) left that target unable to use an
-// NPC service.
+// It started as a copy of duel.Hub.CancelPendingFor and no longer matches it.
+// The duel version still returns early when characterID is a target, and
+// still has a `break` in its challenger scan. Until round 499 this one did too,
+// so it stopped at the first request it found. A character who had asked two
+// people left one request behind, and (now that a pending request makes both
+// parties Busy) left that target unable to use an NPC service. Since round 500
+// Request lets a character hold only one request, so the loop finds at most
+// one. It still scans them all.
 func (h *Hub) CancelPendingFor(characterID int64) (requester Member, notifiable bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if r, in := h.pending[characterID]; in {
+	if p, in := h.pending[characterID]; in {
 		delete(h.pending, characterID)
-		requester, notifiable = r, true
+		requester, notifiable = p.Requester, true
 	}
-	for targetID, r := range h.pending {
-		if r.CharacterID == characterID {
+	for targetID, p := range h.pending {
+		if p.Requester.CharacterID == characterID {
 			delete(h.pending, targetID)
 		}
 	}
@@ -237,8 +360,8 @@ func (h *Hub) WithdrawRequest(requesterID int64) []int64 {
 	defer h.mu.Unlock()
 
 	var targets []int64
-	for targetID, r := range h.pending {
-		if r.CharacterID == requesterID {
+	for targetID, p := range h.pending {
+		if p.Requester.CharacterID == requesterID {
 			delete(h.pending, targetID)
 			targets = append(targets, targetID)
 		}
@@ -268,15 +391,8 @@ func (h *Hub) Busy(characterID int64) bool {
 	if _, ok := h.active[characterID]; ok {
 		return true
 	}
-	if _, ok := h.pending[characterID]; ok {
-		return true
-	}
-	for _, r := range h.pending {
-		if r.CharacterID == characterID {
-			return true
-		}
-	}
-	return false
+	_, pending := h.pendingOfLocked(characterID)
+	return pending
 }
 
 // Established reports whether characterID is in an accepted trade -- the

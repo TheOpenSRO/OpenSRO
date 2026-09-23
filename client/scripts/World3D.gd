@@ -9288,12 +9288,16 @@ func _on_trade_cancelled(cancelled: TradeNet.Cancelled) -> void:
 	var by_whom := cancelled.cancelled_by_name if cancelled.cancelled_by_name != "" else "the system"
 	trade_status_label.text = "Trade cancelled by %s." % by_whom
 	trade_their_offer_label.text = "Their offer: (none yet)"
-	# A requester who cancels before we answer has withdrawn the request: the
-	# server's handleTradeCancel drops it (round 499) and tells us with this
-	# packet. Forget the invite, or Accept would answer "no pending request".
-	if cancelled.cancelled_by_name != "" and cancelled.cancelled_by_name == _pending_trade_requester:
-		_pending_trade_requester = ""
-		trade_invite_label.text = "(no pending request)"
+	# Forget the invite, or Accept would answer "no pending request". The
+	# server holds each character in at most one trade or request (round 500,
+	# after the engine's GObjPC_HandleTradeMsg_081), so this packet always ends
+	# the invite we are showing. That covers four cases: the sender withdrew
+	# it (round 499), the sender asked someone else, we cancelled it or sent
+	# a request of our own, or it timed out after 30 s ("the system"). The
+	# old test (the canceller is the invite's sender) caught only the first
+	# two.
+	_pending_trade_requester = ""
+	trade_invite_label.text = "(no pending request)"
 
 # --- Friends tab -----------------------------------------------------------
 
