@@ -17,6 +17,7 @@ class_name HudPanels
 
 const UiBuilder = preload("res://scripts/ui/ui_builder.gd")
 const HudWindow = preload("res://scripts/ui/hud/hud_window.gd")
+const ErrorText = preload("res://scripts/net/error_text.gd")
 
 ## key: the panel id used by the underbar's menu_action and by hotkeys.
 ## Each entry is [layout path, window title, hotkey action name or ""].
@@ -514,16 +515,24 @@ func _on_repair_one_pressed() -> void:
 	# doing nothing -- a repair NPC never leaves a broken item unrepairable.
 	NetClient.repair(who, _repair_selected_slot if _repair_selected_slot >= 0 else EquipmentNet.REPAIR_ALL)
 
+## A repair's outcome in the store's status line. A refusal shows the game's
+## own message where the client has one (0x1c07 not enough gold, 0x1c11
+## cannot be repaired, 0x1c12 cannot be revived) and our own wording
+## otherwise; the table and its grounding are in scripts/net/error_text.gd.
+## Until round 515 a refusal went to the log file only and the store showed
+## nothing.
 func _on_repair_result(code: int, gold_spent: int, _durabilities: Array) -> void:
 	var who := NetClient.current_character_name
 	if code == 0:
 		print("HudPanels: repaired for %d gold" % gold_spent)
+		_set_shop_status("Repaired for %s gold." % _grouped(gold_spent))
 		if who != "":
 			# Refresh the worn list (durability + doll) and the purse.
 			NetClient.list_equipment(who)
 			NetClient.character_stats(who)
 	else:
 		print("HudPanels: repair refused (0x%x)" % code)
+		_set_shop_status(ErrorText.repair_line(code, _text_table()))
 
 ## Fills the store's 6x5 grid (GDR_STORE_LAT) with the icons of the goods, in
 ## the tab's own order. One page for now -- our NPCs' tabs each fit the 30

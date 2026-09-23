@@ -29761,3 +29761,108 @@ three from (j). With the files restored it reports ALL PASS (70 checks).
   synthetic window, not on the store built from the player's ifstore.
 - **Server suite:** `cd server && go build ./... && go test -count=1 -p 1 ./...` is green. No
   server file changed.
+
+## Show the game's own text for pick-up and repair refusals (client error_text.gd) (round 515)
+
+A refused pick-up used to show srrevamp's own sentence in the chat log. A refused repair showed
+nothing: the store's status line stayed blank, and the code went to the log file. Both now show
+the game's own message where the client has one. The text is read from the player's own
+`textuisystem.txt` through `UiTextTable`, and nothing from the archive is in the repo. A refused
+pick-up of another player's drop now reads "Cannot obtain the selected item because it is
+other player's." (the English column of the render box's archive), and a repair with too little
+gold reads "Not enough gold". A repair that goes through now says "Repaired for N gold." in the
+same line.
+
+**Grounding** (read-only on the RE box: the client dump `/var/tmp/decomp_client`,
+`/var/tmp/sro_client.asm`, and the `.rdata` of `/opt/sro-files/client/sro_client.exe`):
+
+- **The five rows.** `docs/protocol/error_codes.md`'s table maps `0x1812` (:160), `0x1839`
+  (:188), `0x1c07` (:337), `0x1c11` (:340) and `0x1c12` (:341). That table was reproduced 605 of
+  605 in round 323. This round read each row again, from the dispatcher
+  `UI_SILKMALL::FUN_007b8b40` to the pushed UTF-16 name. The category table at `0x7bb378` sends
+  index 1 to `0x7b8c82` and index `0xd` to `0x7ba026`. In category 1 (storage), `code - 0x180b`
+  indexes the bytes at `0x7bb6d4` and then the targets at `0x7bb438`. `0x1812` lands at `0x7b8fca`,
+  which does `push 0xdc72c0` `UIIT_MSG_STRGERR_LOCKED_BY_OTHER_ONE`. `0x1839` lands at `0x7b8e96`,
+  which does `push 0xdc77f8` `UIIT_MSG_STRGERR_CANNOT_BE_PICKED`. In category `0xd`
+  (interaction), `code - 0x1c07` indexes the targets at `0x7bbaac`. `0x1c07` lands at `0x7ba085`
+  (`push 0xdc2518` `..._NOT_ENOUGH_MONEY`), `0x1c11` at `0x7ba0e1` (`push 0xdc2320`
+  `..._CANNOT_BE_REPAIRED`) and `0x1c12` at `0x7ba0f9` (`push 0xdc22c8` `..._CANNOT_BE_REVIVED`).
+  Each push is followed by `call 0x46e3d0`. The decompiled `case 0xd:` block holds the same three
+  cases. The server emitters are `docs/protocol/error_emitters.tsv:56` (`004a9050`, `0x1839`) and
+  `:59` (`GObjNPCNPC::HandleRepairRequest`, `0x1c11`/`0x1c12`), and `docs/protocol/durability.md`
+  gives `0x1c07`.
+- **Left out, measured.** `0x1813` goes through the storage table to `0x7b913a`. That is the
+  switch's out-of-range target: `call 0x46e380`, then `jmp 0x7bb34e`, which is the function's
+  epilogue. So the real client shows nothing for `0x1813`. It is not `UIIT_MSG_STRGERR_BUSY`,
+  which is `0x181e` (`0x7b8d8b`). `0x1c09` goes through the interaction table to the same
+  `0x7b913a`. The storage entry at `0x7b8c82` handles only `3` (`push 0xdc7ee0`
+  `UIIT_MSG_STRGERR_INVALID_TARGET`) and `0x1807` below `0x180b`, and sends `4` to the default.
+  The table's `0x0004` `UIIT_STT_ERR_COMMON_TOO_FAR` comes from another category, and the
+  category the real pick-up reply uses was not read. `3` is one of the page's nine
+  category-dependent codes. All four keep srrevamp's own wording.
+- **The texts carry no placeholders.** The five keys in the render box's extracted
+  `/var/tmp/tables/textuisystem.txt` are plain sentences, some with a trailing space. So they are
+  shown as they are, stripped. The fallback lines are srrevamp's own wording.
+
+**What changed:**
+
+- `client/scripts/net/error_text.gd` is new (`extends RefCounted`, no `class_name`, preloaded).
+  It holds `UIIT_BY_CODE` with the five rows and their jump-table citations, and the reasons
+  the other four codes are left out. `uiit_key(code)` gives the name. `resolve(code, table,
+  fallback)` checks the key with `has()`, because `get_text()` answers the raw token for a
+  missing key. It also rejects a value equal to the key, because `UiTextTable.parse` stores the
+  token for a row with no usable text. It strips the text and falls back when it is empty.
+  `pick_up_line` keeps the fallback mapping from `_pick_up_refusal_line`, including the
+  playtest-2026-09-20 note on `3`. `repair_line` covers `0x1c07`, `0x1c09`, `0x1c11`, `0x1c12`
+  and a default, "Repair refused (code 0x%x).".
+- `client/scripts/World3D.gd`: `_pick_up_refusal_line` is now
+  `return ErrorText.pick_up_line(code, _ui_text_table)`.
+- `client/scripts/ui/hud/hud_panels.gd`: `_on_repair_result` sets the store status line. A success
+  shows "Repaired for %s gold." with the gold grouped. A refusal shows
+  `ErrorText.repair_line(code, _text_table())`.
+- Docs: `docs/protocol/error_codes.md` has a new section, "The rows the client shows for a
+  pick-up or repair refusal". `docs/protocol/ground_items.md` describes the refusal line.
+  `docs/SYSTEMS.md`'s Durability and repair row notes the status line.
+
+**Found, not acted on:** `0x1c0b` does have a client case. The interaction table sends it to
+`0x7ba09d`, which does `push 0xdc24d0` `UIIT_MSG_INTERACTION_FAIL_IM_BUSY`. That contradicts
+`error_codes.md`'s round-449 section and the `tradeBusyReason` comment in
+`server/internal/session/tradebusy.go`, which both say the client has no message for it.
+`error_codes.md` now carries a correction line under that section. The repair handler answers
+`0x1c0b` during a trade, so that refusal shows "Repair refused (code 0x1c0b)." for now. Adding
+it to `UIIT_BY_CODE` is a follow-up.
+
+**Tests** (`client/scripts/net/error_text_test.gd`). The fixture is a synthetic
+textuisystem-shaped table, and every string in it is made up:
+- NEGATIVE: `pick_up_line(0x1839)` gives "Fixture cannot pick" (from "Fixture cannot pick ",
+  stripped), and `(0x1812)` gives "Fixture not yours". `repair_line(0x1c07)` gives "Fixture no
+  gold", and `(0x1c11)` gives "Fixture unrepairable".
+- Guards: `uiit_key` is "" for `0x1813`, `0x1c09` and `4`. `pick_up_line(0x1813)` gives its
+  fallback although `STRGERR_BUSY` is in the table. `(4)` gives its fallback although
+  `ERR_COMMON_TOO_FAR` is in the table. `(3)` gives "That drop is no longer there." although
+  `STRGERR_INVALID_TARGET` is in the table. `repair_line(0x1c09)` gives its fallback.
+- The missing-key trap: a table without `CANNOT_BE_PICKED` gives "That item cannot be picked
+  up." and no `UIIT_` token. A row whose stored value is the token itself gives the fallback. A
+  null table gives the fallbacks. Unknown codes give "Repair refused (code 0x1234)." and "Could
+  not pick that up (code 0x1234).".
+- The wiring, in `_initialize`, once the `NetClient` autoload exists (round 514's finding).
+  `World3D.gd`, loaded by path and instantiated, gives "Fixture not yours" for `0x1812` from
+  its `_ui_text_table`. `HudPanels`, given a bare `HudWindow` holding a `ShopStatus` label and a
+  `UiBuilder(null, fixture)`, shows "Fixture no gold" for `0x1c07`, "Nothing needs repairing."
+  for `0x1c09` and "Repaired for 1,234 gold." for a success.
+
+**Negative case, run on the render box.** With `World3D.gd` and `hud_panels.gd` put back to
+BASE (`git stash`) and the working copy shipped, the suite reported **4 FAILURES**: World3D's
+line was "That drop still belongs to someone else.", and the status line stayed '' for all three
+repair results. Then `UIIT_BY_CODE` was also emptied, which is the pre-round behaviour. The
+module stays on the box, because `sync` does not delete files. The suite then reported **8
+FAILURES**, the four above and the four NEGATIVE checks, and every guard passed. With the files
+restored the suite reports ALL PASS.
+
+- **Client suite:** `client/tools/remote_godot.sh tests` (render box) ran 79 suites, 0 failing.
+  `client/tools/remote_godot.sh check` checked 244 scripts and 5 scenes: ALL LOAD.
+- **Not run:** the live check, `qa_shot.sh --server` with `SRREVAMP_QA_PICKUP` on another
+  character's drop, which would show the archive's `0x1812` text in the log. The archive text
+  was read from the extracted table, not from a running client.
+- **Server suite:** `cd server && go build ./... && go test -count=1 -p 1 ./...` is green. No
+  server file changed.

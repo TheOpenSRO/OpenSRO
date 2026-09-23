@@ -1129,6 +1129,12 @@ decompiled client** -- both are in the fifteen listed above that the server
 sends and the client cannot render. That remains true; what changed is that the
 two are no longer unexplained.
 
+> **Correction (round 515), for `0x1c0b` only:** the client does have a case for
+> it. In category `0xd` the interaction jump table (`code - 0x1c07`, targets at
+> `0x7bbaac`) sends `0x1c0b` to `0x7ba09d`, which pushes `0xdc24d0`
+> `UIIT_MSG_INTERACTION_FAIL_IM_BUSY` -- the row this page's own table carries
+> for it. The claim above was not re-derived this round for `0x1c0d`.
+
 
 ## `0x480f` means "wrong job guild NPC" (round 453)
 
@@ -1145,3 +1151,43 @@ with `0x14`/`0x15`/`0x16` being the Trader, Thief and Hunter guild interaction
 ids (`docs/protocol/jobs.md`). It remains one of the codes with no `case` in the
 decompiled client, so the client cannot render it — what changed is that its
 meaning is now read rather than unknown.
+
+
+## The rows the client shows for a pick-up or repair refusal (round 515)
+
+`client/scripts/net/error_text.gd` resolves five of this table's rows through the
+player's own `textuisystem.txt`: a pick-up refused `0x1812` or `0x1839`, and a
+repair refused `0x1c07`, `0x1c11` or `0x1c12`. Each was read again through the
+dispatcher's jump tables in `sro_client.exe`, from the case to the pushed name:
+
+| category | switch | code | case | pushes |
+|---|---|---|---|---|
+| 1 (storage) | `code - 0x180b`, index bytes `0x7bb6d4`, targets `0x7bb438` | `0x1812` | `0x7b8fca` | `0xdc72c0` `UIIT_MSG_STRGERR_LOCKED_BY_OTHER_ONE` |
+| 1 (storage) | the same | `0x1839` | `0x7b8e96` | `0xdc77f8` `UIIT_MSG_STRGERR_CANNOT_BE_PICKED` |
+| `0xd` (interaction) | `code - 0x1c07`, targets `0x7bbaac` | `0x1c07` | `0x7ba085` | `0xdc2518` `UIIT_MSG_INTERACTION_FAIL_NOT_ENOUGH_MONEY` |
+| `0xd` (interaction) | the same | `0x1c11` | `0x7ba0e1` | `0xdc2320` `UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REPAIRED` |
+| `0xd` (interaction) | the same | `0x1c12` | `0x7ba0f9` | `0xdc22c8` `UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REVIVED` |
+
+The category is picked by the jump table at `0x7bb378`. Index 1 goes to
+`0x7b8c82` and index `0xd` to `0x7ba026`.
+
+Three codes the server sends for these two actions are left out, because the
+client has no case for them:
+
+- **`0x1813`** (a pick already running, `GObjPC::CheckCanPickUp`). The storage
+  table sends it to the switch's default, `0x7b913a`. The default calls `0x46e380`
+  and jumps to the exit with no message. It is not `UIIT_MSG_STRGERR_BUSY`, which
+  is `0x181e` (`0x7b8d8b`).
+- **`0x1c09`** (a repair with nothing missing, `GItemEquip::FUN_00496e60`). The
+  interaction table sends it to the same default.
+- **`4`** (too far). The table above lists `0x0004` as `UIIT_STT_ERR_COMMON_TOO_FAR`.
+  But the storage category's entry (`0x7b8c82`) handles only `3`
+  (`UIIT_MSG_STRGERR_INVALID_TARGET`) and `0x1807` below `0x180b`, and sends
+  every other code to the default. The category the real pick-up reply uses was
+  not read. So which message `4` gets there is open.
+
+`3`, the drop that is gone, is one of the nine category-dependent codes, so it is
+left out as well. srrevamp's own wording stands in for these four codes and for a
+key the archive lacks. The resolver checks the key with `has()`, so a missing key
+never shows the raw token.
+

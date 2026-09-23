@@ -247,6 +247,11 @@ A snapshot is: s64 id, s64 item id, u32 quantity, u8 gold, f32 x/y/z, s64 owner
 `0x1839`); the handler also answers `0x1839` for its own failures the engine has
 no code for (an undecodable request, an unknown character, a bag or purse that
 will not take the stack). Until round 493 a gone drop answered `0x1839` too; it
-now answers `3`, and the client's refusal line tells the two apart. The drop
+now answers `3`, and the client's refusal line tells the two apart. Since round
+515 the refusal line for `0x1812` and `0x1839` is the game's own text, read from
+the player's `textuisystem.txt` (`UIIT_MSG_STRGERR_LOCKED_BY_OTHER_ONE`,
+`UIIT_MSG_STRGERR_CANNOT_BE_PICKED`, `client/scripts/net/error_text.gd`). `3`,
+`4` and `0x1813` keep srrevamp's own wording: the client's storage switch has no
+case for `4` or `0x1813`, and `3` is category-dependent. The drop
 CONTENT (`combat.LootTables`) stays placeholder own design; the real per-monster
 drop tables are DB-only and unavailable.

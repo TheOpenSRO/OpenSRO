@@ -8479,31 +8479,15 @@ func _on_pick_up_result(result: GroundItemsNet.PickUpResult) -> void:
 			if OS.get_environment("SRREVAMP_QA_PICKUP") != "":
 				print("QA PICKUP: result 0x%x" % result.code)
 
-## The server's pick-up refusal in words. The codes are the engine's own
-## (internal/grounditem, GObjPC::CheckCanPickUp): 3 the drop is gone, 0x1812
-## someone else's drop inside its owner window, 0x1813 another pick already
-## running on it, 0x1839 CanPick answered 0 (UIIT_MSG_STRGERR_CANNOT_BE_PICKED)
-## -- which the server also answers for its own failures the engine has no
-## code for, a bag with no room among them.
+## A server refusal code in words.
+const ErrorText = preload("res://scripts/net/error_text.gd")
+
+## The server's pick-up refusal in words: the game's own message from the UI
+## text table where the client has one (0x1812, 0x1839), our own wording
+## otherwise. The code-to-message table, its grounding in sro_client.exe and
+## the codes left out are in scripts/net/error_text.gd.
 func _pick_up_refusal_line(code: int) -> String:
-	match code:
-		GroundItemsNet.ERR_NOT_THERE:
-			# A drop that is already gone -- someone took it, it expired, or
-			# this is a duplicate request for one we just picked up ourselves.
-			# It is NOT the bag being full, and saying so was a cause this
-			# client invented and the server never gave (playtest 2026-09-20).
-			# The server answered 0x1839 for this until round 493; it now
-			# answers the engine's own 3.
-			return "That drop is no longer there."
-		GroundItemsNet.ERR_NOT_OWNER:
-			return "That drop still belongs to someone else."
-		GroundItemsNet.ERR_BUSY:
-			return "Someone else is picking that up."
-		GroundItemsNet.ERR_TOO_FAR:
-			return "That drop is out of reach."
-		GroundItemsNet.ERR_CANNOT_PICK:
-			return "That item cannot be picked up."
-	return "Could not pick that up (code 0x%x)." % code
+	return ErrorText.pick_up_line(code, _ui_text_table)
 
 ## A left click on a ground item picks it up, the way clicking one does in
 ## the original. Ray-tests the ground-item layer only; on a hit, asks the
