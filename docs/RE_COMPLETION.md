@@ -26756,7 +26756,9 @@ that can be traded.
   round for the 30 s window, and binding makes it last the item's whole DecayTime. Modelling it
   needs the item's TID and codename in the hub, which is left as a follow-up. The absent-owner
   outcome is not modelled either. Both are recorded in `ground_items.md`, step 3, and in
-  `PickCheck`'s doc comment.
+  `PickCheck`'s doc comment. **(Round 497 closed the first: `grounditem.OwnerOnlyPick` models the
+  exclusion from the item's TypeIDs and the new `refdata.Item.CodeName`. The absent-owner
+  divergence is still open.)**
 - `cmd/server` wires the lookup through `groundTradeLookup(ctx, refItems)` to
   `refItems.GetItem(...).CanTrade`; an error or a nil row answers unknown. The SQL column already
   defaults to TRUE and the CSV parser to true for an export without column 16, so an older table
@@ -26778,7 +26780,7 @@ that can be traded.
   stranger (9) is refused `ErrNotOwner`; a sharing party member (8) and the owner get 0; a
   stranger picks the released potion. At +60 s a second release is empty and the owner is still
   7. No assertion covers a 3/3/9 item's party member, because srrevamp does not model that
-  refusal.
+  refusal. (Round 497 models it; `TestQuestItemIsOwnerOnlyEvenForParty` is that assertion.)
 - `cmd/server.TestGroundTradeLookupAdapter`: the adapter passes a row's `CanTrade` through as
   known, and answers (true, false) for a missing row and for a failed lookup. Inverting
   `return it.CanTrade, true` fails it. It does not cover the `SetTradeLookup` call itself.
@@ -27202,3 +27204,162 @@ percentage.
   handler test fails: `restored 120 HP to 320/359, want 153 to 353/359`. With `useitem.go` restored it
   passes.
 - **Suite:** `go test -count=1 -p 1 ./...` is green.
+
+## Quest items (TypeID 3/3/9) can be picked only by their owner, not the owner's party, except ITEM_QNO_RM_ARCHEMY* (CheckCanPickUp 0x4a930d-0x4a9350) (round 497)
+
+Closes the divergence round 492 found and left open: `grounditem.PickCheck` asked the party rule for
+every item, so a sharing party member could pick an owned quest item that the engine refuses them.
+
+**Grounding, re-read for this round** (`srv.asm` and the dump on the RE box):
+
+- **The non-owner path.** `GObjPC::CheckCanPickUp` (`0x004a9050`) reads the owner at `+0x150`
+  (`0x4a9219`). The player path at `0x4a93bf` lets through an owner of 0 or the picker's own id
+  (`0x4a93c8 test esi,esi; je 0x4a93a9`, `0x4a93cc`). Next it resolves the owner (`FUN_00485dc0`) and
+  asks `IGObj::IsPC` (slot 7, `0x4a93f4`), then jumps to `0x4a930d` (`0x4a9405`). The pet path
+  joins at the same address after `0x4a92ec`. So only an OWNED item reaches the exclusion.
+- **The type test.** At `0x4a930d` the item's TID (`CGObj::GetTID`, `0x00485c90`: `[item+0x34]`,
+  then the ref row's `+0x80` word) goes to `FUN_0042fdc0` (`0x4a931b`). That function answers 1 only
+  when all four hold, which is TypeID 3/3/9 (`damage_pipeline.md`, "The TID layout"):
+  - `& 2 == 0`;
+  - `& 0x1c == 0xc`;
+  - `& 0x60 == 0x60`;
+  - `& 0x780 == 0x480`.
+- **TID bit 1** is itemdata column 8. Over `/var/tmp/tables/itemdata_all.utf8.txt` it is 0 on all
+  21,552 rows that carry a value, so it is not carried.
+- **The name test.** For such an item the codename is vtable `+0xe8`: slot 58, which in the item
+  vtables is `CGObj::GetCodeName` (`0x004824c0`), the std::string at `ref+0x10`. The call at
+  `0x4a9342` (import `0xad90b8`) is
+  `CompareStringA(0x400, 0, codename, 0x13, "ITEM_QNO_RM_ARCHEMY", 0x13)`; the string is at `.rdata
+  0xaebf58` (bytes `49 54 45 4d ... 59 00`, 19 characters). **dwCmpFlags is 0**, so the compare is
+  case-sensitive. That is not unusual in this binary. Of the 157 calls through the import
+  `0xad90b8` in `srv.asm`, 113 pass `0x10001` (`NORM_IGNORECASE|NORM_IGNOREKANATYPE`), 38 pass 0
+  (this one, `0x41a611`, `0x426f48`, `0x477ce8` and others), and 6 pass a value known only at run
+  time (5 in `ebx`, 1 a caller's argument at `0x9f4fbf`). The import name was read from the PE
+  import table.
+- **The refusal.** Unless the call answers `CSTR_EQUAL` (`sub eax,2; je 0x4a9360`), `0x4a934d` stores
+  `0x1812` and returns. So the party test at `0x4a9360` is never reached (both in a party at
+  `+0x1cb8`, `PartyID` `0x4ea280` equal, `GetPartyFlags` `0x4ea200` `& 2`).
+- **Census.** Over the combined itemdata there are 689 distinct 3/3/9 ids, 8 of them
+  `ITEM_QNO_RM_ARCHEMY_1..8` (23980..23987). No codename in the table is lowercase, none is a
+  proper prefix of the 19 characters, and none matches them only when case is ignored. So the case
+  rule changes no retail outcome; it is followed because the flags say so.
+- **Byte compare against a linguistic compare.** `strings.HasPrefix` compares bytes, while the
+  engine's `CompareStringA` is linguistic (`LOCALE_USER_DEFAULT`, flags 0) and can pass over
+  characters with no sort weight, such as NUL or the soft hyphen `0xAD`. They can only differ on
+  characters outside `A-Z`, `0-9` and `_`. All 913 3/3/9 rows have codenames made of those alone,
+  so the two agree on every retail codename.
+- **Scope: not only quest items.** The rule keys on the TypeIDs. By distinct id the 689 3/3/9 ids
+  are 548 `ITEM_QNO_`, 113 `ITEM_ETC_` event items (102 of them `ITEM_ETC_E...`), 17 `ITEM_QCX_`,
+  10 `ITEM_QSP_` and 1 `ITEM_EVENT_`. 96 of them are tradeable: 86 `ITEM_ETC_E...` ids (such as
+  `ITEM_ETC_E100401_GOLDEN_B`), 9 `ITEM_QNO_` ids and `ITEM_ETC_JAPAN_EVENT_GIFTBOX`. A tradeable
+  one is owner-only for its 30 s window, a bound one for its whole DecayTime.
+
+**The plan was wrong about one fact, and the fix is grounded.** The plan said "TypeID1..4 and CodeName
+are on refdata.Item". CodeName was not: no export, CSV column or SQL column carried it. It is now
+carried as itemdata **column 2**:
+
+- `RefObjCommon_ExtractData` (`0x006a3090`) reads column 0 (a non-zero test) and column 1 (the ID,
+  into `ref+0x8` at `0x6a3123`) as dwords.
+- Its first string read is `add eax,0x10; call 0x6b2ef0` (`0x6a3130`/`0x6a3139`), into `ref+0x10`.
+  That is deserializer field 3, which is text column 2 by the field-k/column-(k-1) rule
+  `fRepairCost` records.
+- `CGObj::GetCodeName` returns that std::string's buffer (`ref+0x14`; capacity at `ref+0x28`).
+- Column 2 of the combined itemdata is `ITEM_ETC_GOLD_01` on id 1 and `ITEM_QNO_RM_ARCHEMY_1` on
+  23980.
+
+**Change.**
+
+- `refdata.Item.CodeName`:
+  - `export-refdata` `fCodeName = 2` emits it verbatim as record index 70, through a new `str` getter.
+    An empty cell stays empty, where `get` would write "0".
+  - `LoadItemsCSV` reads column 70 as an optional suffix (71 columns).
+  - SQL: `items.code_name TEXT NOT NULL DEFAULT ''`, carried through `ImportItems`, `GetItem` and
+    `ListAll`.
+- `grounditem.OwnerOnlyPick(typeID1, typeID2, typeID3, codeName)` answers true for 3/3/9 unless
+  `strings.HasPrefix(codeName, "ITEM_QNO_RM_ARCHEMY")`, which is case-sensitive.
+  - **An empty codename answers false.** That is srrevamp's own rule, disclosed. An export older
+    than the column cannot tell the 8 exempt ids from the other 681, so it keeps the party rule for
+    every item, as before this round. It does not refuse the exempt items to a party.
+- `Item.ownerOnly`, unexported, is set at `Drop`. In `PickCheck`'s non-owner branch it is tested
+  before the party rule and answers `ErrNotOwner` (`0x1812`). The branch is entered only while
+  `OwnerAt` is non-zero, which is the engine's "only an owned item" rule. So a tradeable 3/3/9 item
+  (`ITEM_QNO_RM_MEETROC_6_01`) is anyone's once its 30 s window releases it, and a bound one is its
+  owner's until it decays. Every other check's order is as round 493 left it.
+- **The drop lookups are consolidated** (round 493's review):
+  - `Hub.SetDecayLookup`, `SetTradeLookup` and `SetPickLookup` are replaced by
+    `Hub.SetRulesLookup(func(itemID) DropRules)`.
+  - `DropRules{DecayTimeMs, Bound, NoPick, OwnerOnly}` is answered by one lookup. `Drop` calls it once,
+    before it takes the hub's lock. Before this round `Drop` made three `refItems.GetItem` round
+    trips under that lock, and this item would have added a fourth.
+  - The zero `DropRules` is exactly the old "unknown" behaviour: fallback lifetime, not bound,
+    pickable, and not owner-only.
+- `cmd/server`: `groundDropRules(ctx, refItems)` makes one `GetItem`. It replaces `groundTradeLookup`,
+  `groundPickLookup` and the inline decay closure. An error or a missing row answers the zero rules.
+- Comments: the divergence disclosures in `grounditem.go` (package doc, `Item.Bound`, `PickCheck`)
+  and in `session.samePartyFunc` now describe the modelled rule. The absent-owner outcome stays
+  disclosed as unmodelled.
+- Docs:
+  - `ground_items.md`, "Picking up" step 3, states the modelled rule, the case rule and the
+    empty-codename choice.
+  - Its round-493 paragraph and its "The ownership window" paragraph name the new lookup.
+  - Round 492's entry above carries a "closed in round 497" note.
+  - SYSTEMS.md has no row that described this as unmodelled, so it is unchanged.
+
+**Behaviour.** A quest item dropped for a player can be picked up only by that player, not by party
+members. The exception is the `ITEM_QNO_RM_ARCHEMY*` items. The same holds, while the item is still
+owned, for the 141 other TypeID 3/3/9 ids, most of them event items such as the `ITEM_ETC_E...`
+letters. This needs a re-exported reference table (see the deploy note).
+
+**Tests.**
+
+- **`grounditem.TestQuestItemIsOwnerOnlyEvenForParty`**. The rules go through `OwnerOnlyPick`. Owner
+  7, sharing party member 9, stranger 10:
+  - **negative:** the party member gets `0x1812` on 500, a bound 3/3/9 stand-in (it got 0 before
+    this round). The same at +31 s;
+  - the party member gets 0 on 501, `ITEM_QNO_RM_ARCHEMY_1`, while the stranger still gets `0x1812`;
+  - 502, a tradeable 3/3/9 item: `0x1812` for the party member inside the window, and 0 for both
+    the party member and the stranger once released;
+  - 4, a potion: 0 for the party member;
+  - 0 for the owner on all of them;
+  - a hub without a lookup gives the party member 0.
+- **`grounditem.TestOwnerOnlyPickPredicate`**, 15 cases:
+  - the exact 19 characters and a longer name;
+  - an 18-character prefix;
+  - **lowercase and mixed-case spellings, which are NOT exempt**;
+  - a name with the prefix not at the start;
+  - `ITEM_QNO_RM_MEETROC_6_01`;
+  - an empty name;
+  - TypeIDs 3/3/1, 3/3/13, 3/3/5, 3/1/9 and 1/3/9.
+- **`grounditem.TestDropLooksUpRulesOnceOutsideTheLock`**: the lookup re-enters the hub (`InZone`).
+  One call per drop, no deadlock (with a 2 s timeout), and all four rules applied.
+- **`cmd/server.TestGroundDropRulesAdapter`** replaces the two adapter tests. It covers:
+  - the bound quest item, the ARCHEMY item, the tradeable 3/3/9 item, a CanPick=0 row and the
+    potion;
+  - a 3/3/9 row with no codename, which is not owner-only;
+  - a missing row and a failed lookup, both the zero rules.
+- **`export-refdata.TestCodeNameReadsColumn2`**, with ObjName in column 3 as a decoy. The empty
+  case stays empty, and both pass through the importer.
+- **`refdata.TestCodeNameIsAnOptionalSuffix`**: 70 columns give an empty name; 71 give the trimmed
+  name.
+- `TestEveryItemFieldSurvivesSQL` and `TestCSVColumnsCoverEveryField` cover the new field's SQL and
+  CSV plumbing.
+- Migrated to `SetRulesLookup`, with assertions unchanged: the CanPick, decay and bound tests.
+- `TestUnknownItemIsNeverBound` now pins the hub's half of "unknown": zero rules mean not bound,
+  fallback lifetime, party allowed, released. The adapter test pins the other half.
+
+**Negative case, run.**
+
+- **Production files stashed** (`grounditem.go`, `cmd/server/main.go`, `refdata/item.go`, `csv.go`,
+  `sqlstore.go`, `export-refdata/main.go`, `session/grounditem.go`): all four test packages fail to
+  build (`undefined: DropRules`, `SetRulesLookup`, `CodeName`). Restored, they pass.
+- **Mutations in place, each reverted**:
+  - `it.ownerOnly ||` removed: "party member on a bound 3/3/9 quest item: code 0x0, want 0x1812".
+  - `ToUpper` before the prefix test: the mixed-case case fails.
+  - The TypeID3 test dropped: the potion and the 3/3/13 and 3/3/5 cases fail.
+  - The exclusion applied on `OwnerID` rather than while owned: the released-tradeable case fails.
+  - The lookup moved back under the lock: the deadlock test fails at its timeout.
+  - The empty-codename guard dropped: the predicate and adapter tests fail.
+- `go test -count=1 -p 1 ./...` is green.
+
+**Deploy note.** `items.code_name` defaults to `''` on srrevamp-01, so every item there keeps the party
+rule until `export-refdata` and `import-refdata` are re-run. The consolidation needs nothing.

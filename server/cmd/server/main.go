@@ -375,39 +375,36 @@ type refItemStore interface {
 	GetSkill(ctx context.Context, id int64) (*refdata.Skill, error)
 }
 
-// groundTradeLookup adapts the reference item store to the ground-item hub's
-// trade lookup: an item's CanTrade (itemdata column 16) and whether the store
-// knows it. A lookup error or a missing row answers unknown (true, false), not
-// bound, so its drop is released after the 30 s window as before -- only a
-// row that really carries CanTrade = 0 reserves a drop to its owner
-// (GObjPC::FUN_004901c0, docs/protocol/ground_items.md "The ownership
-// window").
-func groundTradeLookup(ctx context.Context, items interface {
+// groundDropRules adapts the reference item store to the ground-item hub's
+// rules lookup: ONE GetItem per drop answers everything the drop needs
+// (docs/protocol/ground_items.md) --
+//   - DecayTimeMs: the row's DecayTime, itemdata column 13 (CGObj::Update
+//     removes the item once its seconds pass it);
+//   - Bound: CanTrade (column 16) clear -- GObjPC::FUN_004901c0 never
+//     releases the owner ("The ownership window");
+//   - NoPick: CanPick (column 21) clear -- GObjPC::CheckCanPickUp refuses
+//     0x1839 ("Picking up", step 1);
+//   - OwnerOnly: grounditem.OwnerOnlyPick on TypeID1..3 and CodeName (column
+//     2) -- CheckCanPickUp refuses every non-owner of a 3/3/9 item not named
+//     ITEM_QNO_RM_ARCHEMY* ("Picking up", step 3).
+//
+// A lookup error or a missing row answers the zero DropRules: the fallback
+// lifetime, released after the 30 s window, pickable, and open to the party
+// rule -- so only a row that really says otherwise changes a drop.
+func groundDropRules(ctx context.Context, items interface {
 	GetItem(ctx context.Context, id int64) (*refdata.Item, error)
-}) func(itemID int64) (canTrade, known bool) {
-	return func(itemID int64) (bool, bool) {
+}) func(itemID int64) grounditem.DropRules {
+	return func(itemID int64) grounditem.DropRules {
 		it, err := items.GetItem(ctx, itemID)
 		if err != nil || it == nil {
-			return true, false
+			return grounditem.DropRules{}
 		}
-		return it.CanTrade, true
-	}
-}
-
-// groundPickLookup adapts the reference item store to the ground-item hub's
-// pick lookup: an item's CanPick (itemdata column 21, flags bit 5, the bit
-// GObjPC::CheckCanPickUp refuses 0x1839 on -- docs/protocol/ground_items.md
-// "Picking up", step 1). A lookup error or a missing row answers true, so a
-// drop is refused only when a row really carries CanPick = 0.
-func groundPickLookup(ctx context.Context, items interface {
-	GetItem(ctx context.Context, id int64) (*refdata.Item, error)
-}) func(itemID int64) bool {
-	return func(itemID int64) bool {
-		it, err := items.GetItem(ctx, itemID)
-		if err != nil || it == nil {
-			return true
+		return grounditem.DropRules{
+			DecayTimeMs: it.DecayTimeMs,
+			Bound:       !it.CanTrade,
+			NoPick:      !it.CanPick,
+			OwnerOnly:   grounditem.OwnerOnlyPick(it.TypeID1, it.TypeID2, it.TypeID3, it.CodeName),
 		}
-		return it.CanPick
 	}
 }
 
@@ -701,23 +698,16 @@ func main() {
 	// picked up (internal/grounditem). The sweep releases ownerships after the
 	// 30 s window and removes stale items, telling each zone.
 	ground := grounditem.NewHub()
-	// Each drop lies there for its own row's DecayTime (itemdata column 13);
-	// an item without one gets grounditem.FallbackLifetime.
-	ground.SetDecayLookup(func(itemID int64) int {
-		it, err := refItems.GetItem(ctx, itemID)
-		if err != nil || it == nil {
-			return 0
-		}
-		return it.DecayTimeMs
-	})
-	// An untradeable drop (CanTrade, itemdata column 16, clear -- the quest
-	// items) is never released to the zone: GObjPC::FUN_004901c0 asks
-	// CGObj::CanTrade before clearing the owner (grounditem.Item.Bound).
-	ground.SetTradeLookup(groundTradeLookup(ctx, refItems))
-	// A drop whose row clears CanPick (itemdata column 21 -- the starter _DEF
-	// gear, fortress items) is refused 0x1839 to everyone: CheckCanPickUp's
-	// first test on a found item (grounditem.PickCheck).
-	ground.SetPickLookup(groundPickLookup(ctx, refItems))
+	// One reference lookup per drop, taken before the hub locks: each drop
+	// lies there for its own row's DecayTime (itemdata column 13; an item
+	// without one gets grounditem.FallbackLifetime); an untradeable drop
+	// (CanTrade, column 16, clear -- the quest items) is never released to
+	// the zone (GObjPC::FUN_004901c0, grounditem.Item.Bound); a drop whose row
+	// clears CanPick (column 21 -- the starter _DEF gear, fortress items) is
+	// refused 0x1839 to everyone; and a TypeID 3/3/9 item not named
+	// ITEM_QNO_RM_ARCHEMY* is its owner's alone, party or not
+	// (GObjPC::CheckCanPickUp, grounditem.OwnerOnlyPick).
+	ground.SetRulesLookup(groundDropRules(ctx, refItems))
 	go session.RunGroundItemSweep(ctx, ground, hub)
 	// The server's own gain multipliers, under the game's knob names. All
 	// default to 1x, and the engine's floor means a server cannot be

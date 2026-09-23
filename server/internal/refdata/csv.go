@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 )
 
 // itemCSVColumns is the expected column order for LoadItemsCSV, matching
@@ -96,6 +97,11 @@ var itemCSVColumns = []string{
 	// (0x1839). A strict suffix; an older export loads every item as
 	// PICKABLE, the same permission default as CanUse.
 	"CanPick",
+	// Appended later still (round 497): CodeName, itemdata column 2, the
+	// string GObjPC::CheckCanPickUp compares with "ITEM_QNO_RM_ARCHEMY" to
+	// decide who besides a quest item's owner may pick it. A strict suffix;
+	// an older export loads every item with an empty code name.
+	"CodeName",
 }
 
 // ItemCSVColumnCount is how many columns LoadItemsCSV currently knows. Every
@@ -353,6 +359,12 @@ func parseItemRow(f []string) (Item, error) {
 	it.CanPick = true
 	if len(f) > 69 {
 		it.CanPick = parseBool(f[69])
+	}
+	// CodeName (round 497), a string: no parse to fail, and an export older
+	// than column 70 leaves it empty (grounditem.OwnerOnlyPick treats an empty
+	// name as "cannot tell", not as "not exempt").
+	if len(f) > 70 {
+		it.CodeName = strings.TrimSpace(f[70])
 	}
 
 	if err != nil {

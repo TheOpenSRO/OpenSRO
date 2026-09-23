@@ -1,6 +1,7 @@
 package grounditem
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -134,7 +135,7 @@ func TestRangeIsTestedBeforeBusy(t *testing.T) {
 // refuses nothing.
 func TestCanPickClearRefusesBeforeRangeBusyAndOwner(t *testing.T) {
 	h, _ := newTestHub(time.Unix(1000, 0))
-	h.SetPickLookup(func(itemID int64) bool { return itemID != 99 })
+	h.SetRulesLookup(func(itemID int64) DropRules { return DropRules{NoPick: itemID == 99} })
 	bad := h.Drop("jangan", 99, 1, false, 0, 0, 0, 7)
 	ok := h.Drop("jangan", 4, 1, false, 0, 0, 0, 7)
 
@@ -185,14 +186,14 @@ func TestExpireAfterFallbackLifetime(t *testing.T) {
 func TestExpireUsesEachItemsOwnDecayTime(t *testing.T) {
 	start := time.Unix(1000, 0)
 	h, now := newTestHub(start)
-	h.SetDecayLookup(func(itemID int64) int {
+	h.SetRulesLookup(func(itemID int64) DropRules {
 		switch itemID {
 		case 3: // gold
-			return 10000
+			return DropRules{DecayTimeMs: 10000}
 		case 500: // a 3-minute item
-			return 180000
+			return DropRules{DecayTimeMs: 180000}
 		}
-		return 0 // unknown / old export
+		return DropRules{} // unknown / old export
 	})
 	gold := h.Drop("jangan", 3, 57, true, 0, 0, 0, 42)
 	long := h.Drop("jangan", 500, 1, false, 0, 0, 0, 42)
@@ -230,23 +231,23 @@ func TestExpireUsesEachItemsOwnDecayTime(t *testing.T) {
 //
 // Item 500 stands for an untradeable item OUTSIDE TypeID 3/3/9 -- one of the
 // 97 bound ITEM_QNO_ rows with TypeID3 13, 1, 2 or 3, such as
-// ITEM_QNO_CH_EUROPE_1_02 (3/3/13) -- because for that class the engine's
-// party rule really applies and the party-member assertion below is the
-// engine's answer. For a 3/3/9 item (736 of the 833 bound rows) the engine
-// refuses a party member 0x1812 at 0x4a934d, before the party test; srrevamp
-// does not model that (PickCheck, docs/protocol/ground_items.md "Picking up"
-// step 3), so no assertion here covers it.
+// ITEM_QNO_CH_EUROPE_1_02 (3/3/13) -- so its rules are Bound and NOT
+// OwnerOnly: for that class the engine's party rule really applies and the
+// party-member assertion below is the engine's answer. A bound 3/3/9 item
+// (736 of the 833 bound rows) is also OwnerOnly, and its party member is
+// refused 0x1812 (0x4a934d, before the party test); that is
+// TestQuestItemIsOwnerOnlyEvenForParty's case (round 497).
 func TestBoundDropStaysReservedPastWindow(t *testing.T) {
 	start := time.Unix(1000, 0)
 	h, now := newTestHub(start)
-	h.SetTradeLookup(func(itemID int64) (bool, bool) {
+	h.SetRulesLookup(func(itemID int64) DropRules {
 		switch itemID {
 		case 500: // untradeable, not TypeID 3/3/9: CanTrade clear
-			return false, true
+			return DropRules{Bound: true}
 		case 4: // HP_POTION_01: CanTrade set
-			return true, true
+			return DropRules{}
 		}
-		return true, false // not in the reference data
+		return DropRules{} // not in the reference data
 	})
 	bound := h.Drop("jangan", 500, 1, false, 0, 0, 0, 7)
 	free := h.Drop("jangan", 4, 1, false, 0, 0, 0, 7)
@@ -319,21 +320,173 @@ func TestNoTradeLookupReleasesEverything(t *testing.T) {
 	}
 }
 
-// An item the reference data does not know is never bound, even when the
-// lookup's canTrade answer is false: `known` is the gate, not the default
-// canTrade value. Round 492's tests only ever returned (true, false) for an
-// unknown item, so dropping the `known &&` from Drop passed them all (found by
-// round 492's review, pinned in round 495).
+// An item the reference data does not know gets the zero DropRules -- what
+// cmd/server's groundDropRules answers for a missing row or a failed lookup
+// (its TestGroundDropRulesAdapter pins that half) -- and the zero rules must
+// change nothing: not bound (released at 30 s), pickable, open to the party
+// rule, on the fallback lifetime. Round 495 pinned the "unknown is never
+// bound" half when it was a `known &&` gate inside Drop; since round 497 the
+// gate is the adapter's zero value, and this is the hub's half of it.
 func TestUnknownItemIsNeverBound(t *testing.T) {
 	start := time.Unix(1000, 0)
 	h, now := newTestHub(start)
-	h.SetTradeLookup(func(itemID int64) (bool, bool) { return false, false })
+	h.SetRulesLookup(func(itemID int64) DropRules { return DropRules{} })
 	it := h.Drop("jangan", 999, 1, false, 0, 0, 0, 7)
 	if it.Bound {
 		t.Fatalf("an item the lookup does not know was bound")
 	}
+	if got := it.ExpiresAt.Sub(it.DroppedAt); got != FallbackLifetime {
+		t.Fatalf("unknown item lifetime %v, want the fallback %v", got, FallbackLifetime)
+	}
+	shares := func(a, b int64) bool { return (a == 7 && b == 8) || (a == 8 && b == 7) }
+	if _, code := h.PickCheck(it.ID, 8, 0, 0, 0, shares); code != 0 {
+		t.Fatalf("party member on an unknown item inside the window: code %#x, want 0", code)
+	}
+	h.Release(it.ID)
 	*now = start.Add(31 * time.Second)
 	if got := h.ReleaseOwnerships(); len(got) != 1 || got[0].ID != it.ID {
 		t.Fatalf("ReleaseOwnerships at 31 s = %+v, want the unknown item released", got)
+	}
+}
+
+// A quest item is its owner's alone. GObjPC::CheckCanPickUp (0x004a9050)
+// sends every non-owner of an owned item through 0x4a930d: a TID answering
+// FUN_0042fdc0 (TypeID 3/3/9) has its codename compared with
+// "ITEM_QNO_RM_ARCHEMY" (.rdata 0xaebf58, CompareStringA at 0x4a9342), and
+// anything but a match stores 0x1812 at 0x4a934d -- before the party test at
+// 0x4a9360. So:
+//   - 500, a bound 3/3/9 quest item: a sharing party member (9) is refused
+//     0x1812, inside the window and after it (it is never released);
+//   - 501, ITEM_QNO_RM_ARCHEMY_1 (3/3/9, tradeable): exempt, the party
+//     member picks it, a stranger (10) still does not;
+//   - 502, a TRADEABLE 3/3/9 item not named ARCHEMY (ITEM_QNO_RM_MEETROC_6_01
+//     is the real one): owner-only while owned, anyone's once released --
+//     the engine's owner test lets an owner of 0 through before 0x4a930d;
+//   - 4, an HP potion (3/3/1): the party rule as before.
+//
+// The owner gets 0 on every one. The codenames are fed through OwnerOnlyPick,
+// so the hub and the predicate are pinned together; 500's and 502's are
+// stand-ins, not rows from the table.
+func TestQuestItemIsOwnerOnlyEvenForParty(t *testing.T) {
+	type row struct {
+		t1, t2, t3 int
+		code       string
+		bound      bool
+	}
+	rows := map[int64]row{
+		500: {3, 3, 9, "ITEM_QNO_TEST_BOUND_QUEST_ITEM", true},
+		501: {3, 3, 9, "ITEM_QNO_RM_ARCHEMY_1", false},
+		502: {3, 3, 9, "ITEM_QNO_TEST_TRADEABLE_QUEST_ITEM", false},
+		4:   {3, 3, 1, "ITEM_ETC_HP_POTION_01", false},
+	}
+	start := time.Unix(1000, 0)
+	h, now := newTestHub(start)
+	h.SetRulesLookup(func(itemID int64) DropRules {
+		r, ok := rows[itemID]
+		if !ok {
+			return DropRules{}
+		}
+		return DropRules{Bound: r.bound, OwnerOnly: OwnerOnlyPick(r.t1, r.t2, r.t3, r.code)}
+	})
+	const owner, member, stranger = 7, 9, 10
+	shares := func(a, b int64) bool { return (a == owner && b == member) || (a == member && b == owner) }
+	quest := h.Drop("jangan", 500, 1, false, 0, 0, 0, owner)
+	archemy := h.Drop("jangan", 501, 1, false, 0, 0, 0, owner)
+	tradeable := h.Drop("jangan", 502, 1, false, 0, 0, 0, owner)
+	potion := h.Drop("jangan", 4, 1, false, 0, 0, 0, owner)
+
+	pick := func(what string, id, picker int64, want int) {
+		t.Helper()
+		if _, code := h.PickCheck(id, picker, 0, 0, 0, shares); code != want {
+			t.Fatalf("%s: code %#x, want %#x", what, code, want)
+		}
+		h.Release(id)
+	}
+	pick("party member on a bound 3/3/9 quest item", quest.ID, member, ErrNotOwner)
+	pick("party member on ITEM_QNO_RM_ARCHEMY_1", archemy.ID, member, 0)
+	pick("stranger on ITEM_QNO_RM_ARCHEMY_1", archemy.ID, stranger, ErrNotOwner)
+	pick("party member on a tradeable 3/3/9 item inside the window", tradeable.ID, member, ErrNotOwner)
+	pick("party member on a potion", potion.ID, member, 0)
+	for _, it := range []Item{quest, archemy, tradeable, potion} {
+		pick("owner", it.ID, owner, 0)
+	}
+
+	*now = start.Add(31 * time.Second)
+	h.ReleaseOwnerships()
+	pick("party member on the bound quest item at 31 s", quest.ID, member, ErrNotOwner)
+	pick("owner on the bound quest item at 31 s", quest.ID, owner, 0)
+	pick("party member on the released tradeable 3/3/9 item", tradeable.ID, member, 0)
+	pick("stranger on the released tradeable 3/3/9 item", tradeable.ID, stranger, 0)
+
+	// Without a lookup nothing is owner-only: the party rule decides, as
+	// before round 497.
+	plain, _ := newTestHub(start)
+	it := plain.Drop("jangan", 500, 1, false, 0, 0, 0, owner)
+	if _, code := plain.PickCheck(it.ID, member, 0, 0, 0, shares); code != 0 {
+		t.Fatalf("no lookup, party member: code %#x, want 0", code)
+	}
+}
+
+// OwnerOnlyPick is FUN_0042fdc0's TypeID 3/3/9 test and the CompareStringA at
+// 0x4a9342: the codename's first 0x13 characters against
+// "ITEM_QNO_RM_ARCHEMY", with dwCmpFlags 0 -- case-sensitive, so a lowercase
+// or mixed-case spelling is NOT exempt -- and a codename shorter than 19
+// characters cannot match. An empty codename (an export without the column)
+// answers false by srrevamp's own rule.
+func TestOwnerOnlyPickPredicate(t *testing.T) {
+	for _, c := range []struct {
+		t1, t2, t3 int
+		code       string
+		want       bool
+	}{
+		{3, 3, 9, "ITEM_QNO_TEST_QUEST_ITEM", true},
+		{3, 3, 9, "ITEM_QNO_RM_ARCHEMY_1", false},
+		{3, 3, 9, "ITEM_QNO_RM_ARCHEMY_8", false},
+		{3, 3, 9, "ITEM_QNO_RM_ARCHEMY", false},     // all 0x13 characters, nothing after
+		{3, 3, 9, "ITEM_QNO_RM_ARCHEM", true},       // 18: shorter than the compare
+		{3, 3, 9, "item_qno_rm_archemy_1", true},    // dwCmpFlags 0: case-sensitive
+		{3, 3, 9, "Item_Qno_Rm_Archemy_1", true},    // mixed case, likewise
+		{3, 3, 9, "X_ITEM_QNO_RM_ARCHEMY_1", true},  // the compare is at the start
+		{3, 3, 9, "ITEM_QNO_RM_MEETROC_6_01", true}, // the real tradeable non-exempt name
+		{3, 3, 9, "", false},                        // no CodeName column: cannot tell
+		{3, 3, 1, "ITEM_ETC_HP_POTION_01", false},   // a potion
+		{3, 3, 13, "ITEM_QNO_TEST_QUEST_ITEM", false},
+		{3, 3, 5, "ITEM_ETC_GOLD_03", false},
+		{3, 1, 9, "ITEM_QNO_TEST_QUEST_ITEM", false},
+		{1, 3, 9, "ITEM_QNO_TEST_QUEST_ITEM", false},
+	} {
+		if got := OwnerOnlyPick(c.t1, c.t2, c.t3, c.code); got != c.want {
+			t.Errorf("OwnerOnlyPick(%d, %d, %d, %q) = %v, want %v", c.t1, c.t2, c.t3, c.code, got, c.want)
+		}
+	}
+}
+
+// Drop resolves an item's rules with ONE lookup call, made before the hub's
+// lock is taken: the production lookup is a reference-data query, and
+// before round 497 Drop made three of them (decay, trade, pick) while
+// holding the lock. The lookup here re-enters the hub (InZone takes the
+// lock), which deadlocks if Drop still calls it under the lock; the timeout
+// turns that into a failure instead of a hung test.
+func TestDropLooksUpRulesOnceOutsideTheLock(t *testing.T) {
+	h, _ := newTestHub(time.Unix(1000, 0))
+	var calls atomic.Int32
+	h.SetRulesLookup(func(itemID int64) DropRules {
+		calls.Add(1)
+		h.InZone("jangan")
+		return DropRules{DecayTimeMs: 10000, Bound: true, NoPick: false, OwnerOnly: true}
+	})
+	done := make(chan Item, 1)
+	go func() { done <- h.Drop("jangan", 500, 1, false, 0, 0, 0, 7) }()
+	select {
+	case it := <-done:
+		if n := calls.Load(); n != 1 {
+			t.Fatalf("Drop called the rules lookup %d times, want 1", n)
+		}
+		if !it.Bound || !it.ownerOnly || it.noPick || it.ExpiresAt.Sub(it.DroppedAt) != 10*time.Second {
+			t.Fatalf("Drop applied the rules as Bound %v, ownerOnly %v, noPick %v, lifetime %v; want true, true, false, 10s",
+				it.Bound, it.ownerOnly, it.noPick, it.ExpiresAt.Sub(it.DroppedAt))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Drop deadlocked: it called the rules lookup while holding the hub's lock")
 	}
 }

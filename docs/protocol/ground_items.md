@@ -84,23 +84,58 @@ decides a pick. In order:
    159 other event and quest-type items (`ITEM_ETC_E...`, `ITEM_QCX_...`). All
    18 tradeable `ITEM_QNO_` rows are 3/3/9: the 16 `ITEM_QNO_RM_ARCHEMY_1..8`
    rows pass the name compare, the 2 `ITEM_QNO_RM_MEETROC_6_01` rows do not.
+   So the exclusion reaches beyond quest items. By distinct id the 689 3/3/9
+   ids are 548 `ITEM_QNO_`, 113 `ITEM_ETC_` event items (102 of them
+   `ITEM_ETC_E...`), 17 `ITEM_QCX_`, 10 `ITEM_QSP_` and 1 `ITEM_EVENT_`. 96 are
+   tradeable: 86 `ITEM_ETC_E...` ids (such as `ITEM_ETC_E100401_GOLDEN_B`), the
+   9 `ITEM_QNO_` ids above and `ITEM_ETC_JAPAN_EVENT_GIFTBOX`. A tradeable one
+   is owner-only for its 30 s window, a bound one for its whole DecayTime.
 
-   **srrevamp's `PickCheck` models the owner and the party test only.** It does
-   not model the quest-item exclusion, because the hub carries neither the TID
-   nor the codename, so a sharing party member may pick an owned 3/3/9 item
-   there that the engine refuses them. It does not model the absent owner
-   either: its party rule (`session.samePartyFunc`) decides alone, by party
-   membership. Both are **known, unmodelled divergences**. Modelling the first
-   needs the item's TID and codename at `Drop`.
+   **srrevamp's `PickCheck` models the owner, the quest-item exclusion and the
+   party test (round 497).** `grounditem.OwnerOnlyPick(TypeID1, TypeID2,
+   TypeID3, CodeName)` is the exclusion: true for TypeID 3/3/9 unless the
+   codename begins `ITEM_QNO_RM_ARCHEMY`, compared case-sensitively (the
+   `CompareStringA` flags are 0, which is common in this binary: of the 157
+   calls through the import `0xad90b8` in `srv.asm`, 113 pass `0x10001`,
+   `NORM_IGNORECASE|NORM_IGNOREKANATYPE`, 38 including this one pass 0, and 6
+   pass a value only known at run time). `strings.HasPrefix` compares bytes;
+   the engine's compare is linguistic (`LOCALE_USER_DEFAULT`), which can pass
+   over characters that carry no sort weight (the review named NUL and the
+   soft hyphen `0xAD`). The two can only differ on characters outside `A-Z`,
+   `0-9` and `_`, and all 913 3/3/9 rows have codenames made of those alone,
+   so they agree on every retail codename. Bit 1 of the TID is itemdata
+   column 8, 0 on every item row, so it is not carried. `Drop` resolves the
+   answer once into the unexported `Item.ownerOnly`, and `PickCheck` refuses a
+   non-owner of an owned `ownerOnly` item `0x1812` before it asks the party
+   rule. Like the engine's, the rule applies only while the item is owned: an
+   owner of 0 is let through (`0x4a93c8`) before `0x4a930d` is reached, so a
+   tradeable 3/3/9 item (`ITEM_QNO_RM_MEETROC_6_01`) is anyone's once its 30 s
+   window has released it. The codename is new reference data:
+   `refdata.Item.CodeName`, itemdata column 2 (`RefObjCommon_ExtractData`'s
+   first string read, `0x6a3130`/`0x6a3139`, into `ref+0x10`, which
+   `CGObj::GetCodeName` (`0x004824c0`, slot 58) returns), exported as CSV
+   column 70 and stored in `items.code_name`. **An empty codename -- an export
+   that predates the column -- answers not owner-only**, srrevamp's own rule:
+   without the name the eight `ITEM_QNO_RM_ARCHEMY_1..8` ids cannot be told
+   from the other 681 3/3/9 ids (689 distinct over the combined itemdata), so
+   such a deployment keeps the party rule for every item until it re-exports.
+
+   It does not model the absent owner: the party rule
+   (`session.samePartyFunc`) asks party membership, not whether the owner is in
+   the world. That is a **known, unmodelled divergence**.
 
 **srrevamp's `PickCheck` follows that order (round 493):** a gone id answers
 `ErrNotThere` (3); an item whose row clears `CanPick` answers `ErrCannotPick`
 (`0x1839`) to everyone, its owner included, before the range, the busy flag and
 the owner are looked at; then the range (4), the busy flag (`0x1813`, moved
 after the range to match the engine) and the ownership rule. The `CanPick`
-answer is taken once, at `Drop`, from `Hub.SetPickLookup` (`cmd/server` wires it
-to `refdata.Item.CanPick` through `groundPickLookup`; no lookup, an unknown item
-or a failed lookup means pickable). The quest-condition refusal (`0x1874`) is
+answer is taken once, at `Drop`, from the hub's rules lookup
+(`Hub.SetRulesLookup`, `DropRules.NoPick`; `cmd/server` wires it to
+`refdata.Item.CanPick` through `groundDropRules`; no lookup, an unknown item or
+a failed lookup means pickable). Since round 497 that one lookup answers
+everything a drop needs -- DecayTime, CanTrade, CanPick and the owner-only
+exclusion -- from a single `GetItem`, called before `Drop` takes the hub's
+lock; before it, `Drop` made three reference-data lookups while holding it. The quest-condition refusal (`0x1874`) is
 not modelled: srrevamp has no quest-achieve condition to ask. The life-state
 test has nothing to act on, since every item in the hub is on the ground.
 
@@ -153,14 +188,14 @@ item's `+0x150` is `-1` and chooses between it and `FUN_004901b0` on
 `[ebp+0x118]`; srrevamp models no such reservation, so only the 30 s path is
 wired.
 
-srrevamp: `grounditem.Item.Bound`, set at `Drop` from `Hub.SetTradeLookup`
-(`cmd/server` wires it to `refdata.Item.CanTrade` through `groundTradeLookup`).
-A bound item's `OwnerAt` keeps its owner and `ReleaseOwnerships` skips it, so
-the zone is never sent `OpGroundItemOwnerReleased` for it. With no lookup, or
-for an item the reference data does not know, nothing is bound. The pick-side
-divergence of step 3 now lasts the item's whole DecayTime instead of 30 s: a
-sharing party member may pick a bound 3/3/9 item in srrevamp until it decays,
-where the engine refuses them.
+srrevamp: `grounditem.Item.Bound`, set at `Drop` from the hub's rules lookup
+(`DropRules.Bound`; `cmd/server` wires it to `refdata.Item.CanTrade` through
+`groundDropRules`). A bound item's `OwnerAt` keeps its owner and
+`ReleaseOwnerships` skips it, so the zone is never sent
+`OpGroundItemOwnerReleased` for it. With no lookup, or for an item the
+reference data does not know, nothing is bound. A bound 3/3/9 item is also
+owner-only ("Picking up", step 3, modelled since round 497), so for its whole
+DecayTime only its owner may pick it, party or not -- as in the engine.
 
 ## Not recovered
 

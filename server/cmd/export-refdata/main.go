@@ -292,7 +292,18 @@ const (
 	// table in docs/protocol/item_capability_flags.md says 21 too, and over
 	// the combined itemdata the column is 0/1 only, 0 on 309 of 21,552 rows --
 	// all 84 starter `_DEF` rows among them -- and 1 on gold and potions.
-	fCanPick        = 21
+	fCanPick = 21
+	// fCodeName is CodeName128 (round 497). RefObjCommon_ExtractData
+	// (0x006a3090) reads two dwords -- column 0, then column 1, the ID, stored
+	// at ref+0x8 (0x6a3123) -- and then its first string, `add eax,0x10;
+	// call 0x6b2ef0` (0x6a3130/0x6a3139), into the std::string at ref+0x10:
+	// deserializer field 3, text column 2 (the field-k/column-(k-1) rule
+	// fRepairCost records). CGObj::GetCodeName (0x004824c0, IGObj slot 58)
+	// returns that string, and GObjPC::CheckCanPickUp compares it with
+	// "ITEM_QNO_RM_ARCHEMY" (0x4a9342). On the combined itemdata column 2 is
+	// ITEM_ETC_GOLD_01 on id 1 and ITEM_QNO_RM_ARCHEMY_1..8 on ids
+	// 23980..23987.
+	fCodeName       = 2
 	fTwoHanded      = 93
 	fPhysDefenseMin = 65
 	fBlockRatio     = 74 // shields only -- see fParryRatio
@@ -507,6 +518,13 @@ func itemRecord(cols []string) ([]string, bool) {
 		}
 		return s
 	}
+	// A string field, trimmed, empty when the row is short.
+	str := func(i int) string {
+		if i >= len(cols) {
+			return ""
+		}
+		return strings.TrimSpace(cols[i])
+	}
 	// A float field: itemdata writes some as "2.4"; keep as-is, default 0.
 	num := func(i int) string {
 		if i >= len(cols) {
@@ -647,6 +665,9 @@ func itemRecord(cols []string) ([]string, bool) {
 		// 69: CanPick, flags bit 5 (round 493, see fCanPick), folded to 0/1 by
 		// the same `c != 0` rule.
 		nonZero(get(fCanPick)), // 69 CanPick (col 21)
+		// 70: CodeName (round 497, see fCodeName), verbatim: an empty cell
+		// stays empty rather than becoming get's "0".
+		str(fCodeName), // 70 CodeName (col 2)
 	}, true
 }
 

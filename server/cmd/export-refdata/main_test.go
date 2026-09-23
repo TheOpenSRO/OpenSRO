@@ -556,6 +556,48 @@ func TestCanPickReadsColumn21(t *testing.T) {
 	}
 }
 
+// CodeName is itemdata column 2 (round 497): RefObjCommon_ExtractData's first
+// string read (0x6a3130/0x6a3139, into ref+0x10), the string
+// CGObj::GetCodeName returns and CheckCanPickUp compares with
+// "ITEM_QNO_RM_ARCHEMY". Columns 3 and 4 (ObjName, OrgObjCodeName) are also
+// strings, so each holds a different value and a read one column off shows.
+// The value goes out verbatim -- an empty cell stays empty, not get's "0" --
+// and comes back through the importer.
+func TestCodeNameReadsColumn2(t *testing.T) {
+	for _, tc := range []struct {
+		name, c2, want string
+	}{
+		{"a quest item", "ITEM_QNO_RM_ARCHEMY_1", "ITEM_QNO_RM_ARCHEMY_1"},
+		{"an empty cell", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cols := make([]string, 200)
+			for i := range cols {
+				cols[i] = "0"
+			}
+			cols[0], cols[1], cols[2], cols[3], cols[4] = "1", "23980", tc.c2, "OBJNAME_PROBE", "xxx"
+
+			rec, ok := itemRecord(cols)
+			if !ok {
+				t.Fatal("itemRecord rejected a valid row")
+			}
+			if len(rec) <= 70 {
+				t.Fatalf("record has %d fields, want CodeName at index 70", len(rec))
+			}
+			if got := rec[70]; got != tc.want {
+				t.Errorf("record[70] = %q, want %q (column 2; column 3 holds OBJNAME_PROBE)", got, tc.want)
+			}
+			items, err := refdata.LoadItemsCSV(strings.NewReader(strings.Join(rec, ",") + "\n"))
+			if err != nil {
+				t.Fatalf("the importer rejected export's own output: %v", err)
+			}
+			if items[0].CodeName != tc.want {
+				t.Errorf("CodeName = %q, want %q", items[0].CodeName, tc.want)
+			}
+		})
+	}
+}
+
 // CanDrop is itemdata column 20 (round 494), not 19. RefObjCommon_ExtractData
 // (0x006a3090) consumes column 18 without a load (0x6a33f0/0x6a33f6), stores
 // column 19 at esp+0x12 and tests it only `& 0x80`/`& 0x40` (flags bits 12

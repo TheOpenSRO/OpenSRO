@@ -8,6 +8,7 @@ import (
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
+	"github.com/OpenSRO/srrevamp/server/internal/grounditem"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
 )
@@ -330,51 +331,49 @@ func (f fakeItemRows) GetItem(_ context.Context, id int64) (*refdata.Item, error
 	return f[id], nil
 }
 
-// The adapter main wires into grounditem.Hub.SetTradeLookup passes a row's
-// CanTrade through as known, and answers unknown -- never bound -- for a
-// missing row or a failed lookup, so only a real CanTrade = 0 row reserves a
-// drop past the 30 s window (GObjPC::FUN_004901c0, round 492).
-func TestGroundTradeLookupAdapter(t *testing.T) {
-	lookup := groundTradeLookup(context.Background(), fakeItemRows{
-		500: {ID: 500, CanTrade: false},
-		4:   {ID: 4, CanTrade: true},
+// The adapter main wires into grounditem.Hub.SetRulesLookup answers every
+// rule a drop needs from ONE row (round 497, replacing round 492's trade and
+// round 493's pick adapters and the inline decay closure):
+//   - DecayTimeMs passes through (itemdata column 13);
+//   - Bound is CanTrade clear (GObjPC::FUN_004901c0, round 492);
+//   - NoPick is CanPick clear (0x1839, round 493);
+//   - OwnerOnly is grounditem.OwnerOnlyPick on the row's TypeIDs and CodeName
+//     (CheckCanPickUp 0x4a930d-0x4a9350): a 3/3/9 row not named
+//     ITEM_QNO_RM_ARCHEMY*.
+//
+// A missing row and a failed lookup answer the zero DropRules -- never bound,
+// pickable, not owner-only, fallback decay -- which is what the old adapters'
+// "unknown" answers amounted to. 500's codename is a stand-in; 501's, 4's and
+// 502's are real.
+func TestGroundDropRulesAdapter(t *testing.T) {
+	lookup := groundDropRules(context.Background(), fakeItemRows{
+		500: {ID: 500, TypeID1: 3, TypeID2: 3, TypeID3: 9, CodeName: "ITEM_QNO_TEST_QUEST_ITEM",
+			DecayTimeMs: 180000, CanTrade: false, CanPick: true},
+		501: {ID: 501, TypeID1: 3, TypeID2: 3, TypeID3: 9, CodeName: "ITEM_QNO_RM_ARCHEMY_1",
+			DecayTimeMs: 180000, CanTrade: true, CanPick: true},
+		502: {ID: 502, TypeID1: 3, TypeID2: 3, TypeID3: 9, CodeName: "ITEM_QNO_RM_MEETROC_6_01",
+			DecayTimeMs: 180000, CanTrade: true, CanPick: true},
+		99: {ID: 99, TypeID1: 3, TypeID2: 1, TypeID3: 6, CanTrade: true, CanPick: false},
+		4: {ID: 4, TypeID1: 3, TypeID2: 3, TypeID3: 1, CodeName: "ITEM_ETC_HP_POTION_01",
+			DecayTimeMs: 10000, CanTrade: true, CanPick: true},
+		// A 3/3/9 row from an export without the CodeName column.
+		503: {ID: 503, TypeID1: 3, TypeID2: 3, TypeID3: 9, DecayTimeMs: 180000, CanTrade: false, CanPick: true},
 	})
 	for _, c := range []struct {
-		id              int64
-		canTrade, known bool
+		id   int64
+		want grounditem.DropRules
 	}{
-		{500, false, true}, // untradeable row: bound
-		{4, true, true},    // tradeable row
-		{999, true, false}, // not in the store
-		{-1, true, false},  // the store failed
+		{500, grounditem.DropRules{DecayTimeMs: 180000, Bound: true, OwnerOnly: true}}, // bound quest item
+		{501, grounditem.DropRules{DecayTimeMs: 180000}},                               // ARCHEMY: exempt, tradeable
+		{502, grounditem.DropRules{DecayTimeMs: 180000, OwnerOnly: true}},              // tradeable, not exempt
+		{99, grounditem.DropRules{NoPick: true}},                                       // CanPick clear
+		{4, grounditem.DropRules{DecayTimeMs: 10000}},                                  // HP potion
+		{503, grounditem.DropRules{DecayTimeMs: 180000, Bound: true}},                  // no codename: cannot tell
+		{999, grounditem.DropRules{}},                                                  // not in the store
+		{-1, grounditem.DropRules{}},                                                   // the store failed
 	} {
-		ct, known := lookup(c.id)
-		if ct != c.canTrade || known != c.known {
-			t.Errorf("groundTradeLookup(%d) = (%v, %v), want (%v, %v)", c.id, ct, known, c.canTrade, c.known)
-		}
-	}
-}
-
-// The adapter main wires into grounditem.Hub.SetPickLookup passes a row's
-// CanPick through, and answers pickable for a missing row or a failed lookup,
-// so only a real CanPick = 0 row (itemdata column 21) makes a drop refuse
-// 0x1839 (GObjPC::CheckCanPickUp, round 493).
-func TestGroundPickLookupAdapter(t *testing.T) {
-	lookup := groundPickLookup(context.Background(), fakeItemRows{
-		99: {ID: 99, CanPick: false},
-		4:  {ID: 4, CanPick: true},
-	})
-	for _, c := range []struct {
-		id      int64
-		canPick bool
-	}{
-		{99, false}, // CanPick clear: refused
-		{4, true},   // CanPick set
-		{999, true}, // not in the store
-		{-1, true},  // the store failed
-	} {
-		if got := lookup(c.id); got != c.canPick {
-			t.Errorf("groundPickLookup(%d) = %v, want %v", c.id, got, c.canPick)
+		if got := lookup(c.id); got != c.want {
+			t.Errorf("groundDropRules(%d) = %+v, want %+v", c.id, got, c.want)
 		}
 	}
 }

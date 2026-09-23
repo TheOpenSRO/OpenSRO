@@ -397,6 +397,19 @@ type Item struct {
 	// A permission, defaulted to TRUE by the CSV loader and the SQL store for
 	// an export that predates the column. A literal Item{} leaves it false.
 	CanPick bool
+
+	// CodeName is the row's code name, itemdata column 2 (CodeName128), e.g.
+	// ITEM_QNO_RM_ARCHEMY_1 (round 497). RefObjCommon_ExtractData (0x006a3090)
+	// reads it as the record's first string -- `add eax,0x10` then the string
+	// reader 0x6b2ef0 at 0x6a3130/0x6a3139, after the two dwords of columns 0
+	// and 1 -- into the std::string at ref+0x10, and CGObj::GetCodeName
+	// (0x004824c0, IGObj vtable slot 58) returns that string's buffer.
+	// GObjPC::CheckCanPickUp (0x004a9050) compares it at 0x4a9342 to decide
+	// the quest-item pick exclusion (grounditem.OwnerOnlyPick,
+	// docs/protocol/ground_items.md "Picking up", step 3).
+	//
+	// Empty for an export that predates the column.
+	CodeName string
 }
 
 // ReinforceRates is the three packed dwords in tier order, the shape

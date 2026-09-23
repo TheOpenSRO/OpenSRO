@@ -343,6 +343,35 @@ func TestCanPickDefaultsToPickable(t *testing.T) {
 	}
 }
 
+// CodeName (round 497) is appended column 70, itemdata column 2. A 70-column
+// export predating it loads with an empty code name -- which
+// grounditem.OwnerOnlyPick reads as "cannot tell", keeping the party rule --
+// and a 71-column row carries the name, trimmed.
+func TestCodeNameIsAnOptionalSuffix(t *testing.T) {
+	row := make([]string, 70)
+	for i := range row {
+		row[i] = "0"
+	}
+	row[0] = "23980"
+	load := func(r []string) Item {
+		t.Helper()
+		items, err := LoadItemsCSV(strings.NewReader(strings.Join(r, ",") + "\n"))
+		if err != nil {
+			t.Fatalf("LoadItemsCSV (%d columns): %v", len(r), err)
+		}
+		if len(items) != 1 {
+			t.Fatalf("got %d items, want 1", len(items))
+		}
+		return items[0]
+	}
+	if got := load(row).CodeName; got != "" {
+		t.Errorf("a 70-column export predating CodeName loaded %q, want empty", got)
+	}
+	if got := load(append(append([]string(nil), row...), " ITEM_QNO_RM_ARCHEMY_1 ")).CodeName; got != "ITEM_QNO_RM_ARCHEMY_1" {
+		t.Errorf("column 70 loaded %q, want ITEM_QNO_RM_ARCHEMY_1", got)
+	}
+}
+
 // The three requirement slots past the first are appended columns 44..49, so
 // a 28-column export made before they existed must still load and simply
 // carry no requirement beyond its first pair.
