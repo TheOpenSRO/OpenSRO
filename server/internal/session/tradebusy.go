@@ -46,7 +46,11 @@ package session
 // (docs/protocol/error_codes.md :338), the code GObjPC_HandleShopMsg_046
 // (`0x00510250`) refuses an NPC interaction with while INTERACTMODE is
 // non-zero. OpRepairResult carries the engine's own refusal codes, so a repair
-// refused as busy answers with it.
+// refused as busy answers with it -- an ADAPTATION, like the rest of this
+// file: the engine sends 0x1c0b in reply to the interaction OPEN, 0xb046
+// (`mov ecx,0xb046` at `0x51041c`, then Msg_SendTwoFieldReply `0x4e7250`), not
+// in reply to a repair. srrevamp has no interaction-open message to refuse, so
+// it puts the code on the repair's own result instead.
 const interactionBusyCode int32 = 0x1c0b
 
 // tradeBusyReason is the text-reply form of the same refusal, for the shop and

@@ -23779,7 +23779,8 @@ real data names it, and neither is taken alone.**
 
 **The TID layout falls out of the two predicates** and is recorded in `damage_pipeline.md`. Bits
 1–15 are each confirmed (bit 1 against all 17,868 rows, TypeID4 independently by the weapon gate);
-bit 0 is only *consistent with* column 7 and is marked unconfirmed.
+bit 0 is only *consistent with* column 7 and is marked unconfirmed. **(Confirmed in round 501:
+`RefObjCommon_ExtractData` packs column 7 into bit 0, and `CGObj::IsCashItem` tests it.)**
 
 **Wired, not just written down.** `combat.SelectDamageKind` reproduces the selector in the engine's
 order, and `session.performAttack` applies kinds 2 and 4. Both end-to-end tests fail without the
@@ -26725,7 +26726,11 @@ that can be traded.
   `CanTrade = 0`, 9 ids (18 rows: `ITEM_QNO_RM_ARCHEMY_1..8`, `ITEM_QNO_RM_MEETROC_6_01`) carry 1,
   and all carry DecayTime 180000. The plan for this round said "832 of 851"; the 833rd is the row
   whose first field carries the file's byte-order mark. Gold (ids 1..3) and HP/MP potions (4..12)
-  carry `CanTrade = 1` and DecayTime 10000, so they are unchanged.
+  carry `CanTrade = 1` and DecayTime 10000, so they are unchanged. **Recount (round 501):** the
+  file glues ten row pairs (round 495), and one glued second half is `ITEM_QNO_SD_NO_053_1`
+  (24748, 3/3/9, `CanTrade = 0`, DecayTime 180000). With the glued lines split the figures here
+  and below are 852 rows and 608 ids, 599 bound ids (834 rows), 755 3/3/9 rows and 737 bound 3/3/9
+  rows (540 ids); the 18 tradeable rows and the 97 non-3/3/9 bound rows are unchanged.
 - **Who else may pick one: not the party, for most of them (corrected in review).** The plan said
   `PickCheck` needed no change because "a party member is still allowed". The dump says otherwise.
   In `GObjPC::CheckCanPickUp` (`0x004a9050`) a non-owner reaches `0x4a930d` (player path: after
@@ -26749,20 +26754,23 @@ that can be traded.
   does not lock its drops.
 - `Item.OwnerAt` returns the owner of a bound item regardless of time. `ReleaseOwnerships` skips
   bound items, so `RunGroundItemSweep` never sends `OpGroundItemOwnerReleased` (the real `0x304D`)
-  for one, and `snapshotOf` keeps naming the owner to a player who arrives later. `PickCheck` is
-  unchanged: a stranger is refused `0x1812`, and the owner may pick. It still asks the caller's
-  party rule for every item, so a sharing party member may pick a bound TypeID 3/3/9 item that
-  the engine refuses them. That divergence is **known and unmodelled**. It existed before this
-  round for the 30 s window, and binding makes it last the item's whole DecayTime. Modelling it
-  needs the item's TID and codename in the hub, which is left as a follow-up. The absent-owner
-  outcome is not modelled either. Both are recorded in `ground_items.md`, step 3, and in
-  `PickCheck`'s doc comment. **(Round 497 closed the first: `grounditem.OwnerOnlyPick` models the
-  exclusion from the item's TypeIDs and the new `refdata.Item.CodeName`. The absent-owner
-  divergence is still open.)**
+  for one, and `snapshotOf` keeps naming the owner to a player who arrives later. `PickCheck` was
+  unchanged by this round: a stranger is refused `0x1812`, and the owner may pick.
+  - **The party divergence -- CLOSED in round 497.** After this round `PickCheck` still asked the
+    caller's party rule for every item, so a sharing party member could pick a bound TypeID 3/3/9
+    item that the engine refuses them. The divergence predated this round for the 30 s window,
+    and binding made it last the item's whole DecayTime. Modelling it needed the item's TID and
+    codename in the hub. Round 497 supplied both: `grounditem.OwnerOnlyPick` models the exclusion
+    from the item's TypeIDs and the new `refdata.Item.CodeName`.
+  - **The absent owner -- still open.** The outcome for an owner id that resolves to no object is
+    not modelled. It is recorded in `ground_items.md`, step 3, and in `PickCheck`'s doc comment.
 - `cmd/server` wires the lookup through `groundTradeLookup(ctx, refItems)` to
   `refItems.GetItem(...).CanTrade`; an error or a nil row answers unknown. The SQL column already
   defaults to TRUE and the CSV parser to true for an export without column 16, so an older table
-  binds nothing.
+  binds nothing. **Renamed in round 497**, when one lookup took over all of a drop's rules:
+  `groundTradeLookup` is now `groundDropRules`, `Hub.SetTradeLookup` is `Hub.SetRulesLookup`
+  (`DropRules.Bound` carries this round's answer), and `TestGroundTradeLookupAdapter` below is
+  `TestGroundDropRulesAdapter`.
 - Docs: `ground_items.md` "The ownership window" carries the gate with its addresses and the
   measurement; its stale "not recovered" bullet about the lifetime (read in round 227) now says
   so. Its "Picking up" step 3, which had left out the same exclusion, now spells out the whole
@@ -27149,11 +27157,20 @@ the COOLTIME descriptor.
 - **The gate.** Slot 308 calls `FUN_004eb410` first, which maps the kind to a bit (TypeID4 1/2/3/4/5/7
   -> 1/2/4/8/0x10/0x20) and answers `0x185b` while that bit is set in the byte at `[pc+0x30]+8`.
 - **Arming it.** After the use, `FUN_004e0ab0` sets the bit and hands a float to an `AJStateChanger`
-  record (type 6):
-  - 1.1 (`.rdata 0xb461b8`, bytes `cd cc 8c 3f`) for an absolute potion;
-  - 15.1 (`0xb461ac`) when the byte at the PC's ref row `+0x88` is non-zero;
-  - 4.1 (`0xb461b0`) for a percentage potion.
-- **Unread.** The float's unit, what clears the bit and what ref `+0x88` is were not read.
+  record (type 6). **Corrected in round 501:** the float is chosen at `0x49b957`-`0x49b978` by two
+  things, the absolute flag `FUN_0049aa70` returned (`esi`: 1 absolute, 0 percentage) and the byte
+  at the PC's ref row `+0x88`, which is the character's **Country** (0 China, 1 Europe; round 480,
+  `leveldata.go`'s ExpDiffScale comment, the byte the equip check compares for `0x182f`
+  `COUNTRY_MISMATCH`). `cmp BYTE [edx+0x88],0; jne 0x49b974`, then `test esi,esi; je 0x49b964` on
+  both branches:
+  - 4.1 (`0xb461b0`) for a percentage potion, whatever the Country;
+  - 1.1 (`.rdata 0xb461b8`, bytes `cd cc 8c 3f`) for an absolute potion used by a China character;
+  - 15.1 (`0xb461ac`) for an absolute potion used by a Europe character.
+
+  The entry first listed 15.1 as "when the byte at `+0x88` is non-zero", which read as if it beat
+  the percentage case; it applies only to an absolute potion.
+- **Unread.** The float's unit and what clears the bit were not read. (What ref `+0x88` is was
+  listed here as unread; round 480 had already read it as Country.)
 - **Recorded, not changed.** The comment at the reuse-delay check and SYSTEMS.md's item row now say
   this; round 263's line carries a pointer here.
 
@@ -27225,7 +27242,8 @@ every item, so a sharing party member could pick an owned quest item that the en
   - `& 0x60 == 0x60`;
   - `& 0x780 == 0x480`.
 - **TID bit 1** is itemdata column 8. Over `/var/tmp/tables/itemdata_all.utf8.txt` it is 0 on all
-  21,552 rows that carry a value, so it is not carried.
+  21,552 rows that carry a value, so it is not carried. (Round 501: 21,562 rows once the ten glued
+  lines are split, all 0.)
 - **The name test.** For such an item the codename is vtable `+0xe8`: slot 58, which in the item
   vtables is `CGObj::GetCodeName` (`0x004824c0`), the std::string at `ref+0x10`. The call at
   `0x4a9342` (import `0xad90b8`) is
@@ -27235,24 +27253,35 @@ every item, so a sharing party member could pick an owned quest item that the en
   `0xad90b8` in `srv.asm`, 113 pass `0x10001` (`NORM_IGNORECASE|NORM_IGNOREKANATYPE`), 38 pass 0
   (this one, `0x41a611`, `0x426f48`, `0x477ce8` and others), and 6 pass a value known only at run
   time (5 in `ebx`, 1 a caller's argument at `0x9f4fbf`). The import name was read from the PE
-  import table.
+  import table. **Corrected in round 501:** the 157 are the DIRECT `call DWORD PTR ds:0xad90b8`
+  sites; 34 more load the import into a register first (14 `ebp`, 8 `ebx`, 7 `edi`, 5 `esi`) and
+  were not counted. And the 5 `ebx` sites are not run-time values: each follows an `xor ebx,ebx`
+  in its function (`0x435724`, `0x4d553e`, `0x51cfa9`, `0x525f06`, `0x6add09`) with no other write
+  on the straight line read, so they pass 0. Two of them (`0x4d557c`, `0x525f50`) are
+  `ITEM_QNO_RM_ARCHEMY` compares of their own -- a lead, in `ground_items.md`.
 - **The refusal.** Unless the call answers `CSTR_EQUAL` (`sub eax,2; je 0x4a9360`), `0x4a934d` stores
   `0x1812` and returns. So the party test at `0x4a9360` is never reached (both in a party at
   `+0x1cb8`, `PartyID` `0x4ea280` equal, `GetPartyFlags` `0x4ea200` `& 2`).
-- **Census.** Over the combined itemdata there are 689 distinct 3/3/9 ids, 8 of them
+- **Census.** Over the combined itemdata there are 689 distinct 3/3/9 ids (690 once the glued
+  lines are split -- round 501), 8 of them
   `ITEM_QNO_RM_ARCHEMY_1..8` (23980..23987). No codename in the table is lowercase, none is a
   proper prefix of the 19 characters, and none matches them only when case is ignored. So the case
   rule changes no retail outcome; it is followed because the flags say so.
 - **Byte compare against a linguistic compare.** `strings.HasPrefix` compares bytes, while the
   engine's `CompareStringA` is linguistic (`LOCALE_USER_DEFAULT`, flags 0) and can pass over
   characters with no sort weight, such as NUL or the soft hyphen `0xAD`. They can only differ on
-  characters outside `A-Z`, `0-9` and `_`. All 913 3/3/9 rows have codenames made of those alone,
-  so the two agree on every retail codename.
+  characters outside `A-Z`, `0-9` and `_`. All 913 3/3/9 rows (914 split) have codenames made of
+  those alone, so the two agree on every retail codename.
 - **Scope: not only quest items.** The rule keys on the TypeIDs. By distinct id the 689 3/3/9 ids
   are 548 `ITEM_QNO_`, 113 `ITEM_ETC_` event items (102 of them `ITEM_ETC_E...`), 17 `ITEM_QCX_`,
   10 `ITEM_QSP_` and 1 `ITEM_EVENT_`. 96 of them are tradeable: 86 `ITEM_ETC_E...` ids (such as
   `ITEM_ETC_E100401_GOLDEN_B`), 9 `ITEM_QNO_` ids and `ITEM_ETC_JAPAN_EVENT_GIFTBOX`. A tradeable
-  one is owner-only for its 30 s window, a bound one for its whole DecayTime.
+  one is owner-only for its 30 s window, a bound one for its whole DecayTime. **Recounted in round
+  501** with the glued lines split: 690 ids, 549 `ITEM_QNO_` (the extra one is
+  `ITEM_QNO_SD_NO_053_1`, bound); the other counts hold. Who is affected: the 682 not named
+  `ITEM_QNO_RM_ARCHEMY*` -- 594 bound ids for their whole DecayTime, and 88 tradeable ids (86
+  `ITEM_ETC_E...`, `ITEM_QNO_RM_MEETROC_6_01`, `ITEM_ETC_JAPAN_EVENT_GIFTBOX`) for their 30 s
+  window.
 
 **The plan was wrong about one fact, and the fix is grounded.** The plan said "TypeID1..4 and CodeName
 are on refdata.Item". CodeName was not: no export, CSV column or SQL column carried it. It is now
@@ -27278,8 +27307,9 @@ carried as itemdata **column 2**:
 - `grounditem.OwnerOnlyPick(typeID1, typeID2, typeID3, codeName)` answers true for 3/3/9 unless
   `strings.HasPrefix(codeName, "ITEM_QNO_RM_ARCHEMY")`, which is case-sensitive.
   - **An empty codename answers false.** That is srrevamp's own rule, disclosed. An export older
-    than the column cannot tell the 8 exempt ids from the other 681, so it keeps the party rule for
-    every item, as before this round. It does not refuse the exempt items to a party.
+    than the column cannot tell the 8 exempt ids from the other 681 (682, round 501), so it keeps
+    the party rule for every item, as before this round. It does not refuse the exempt items to a
+    party.
 - `Item.ownerOnly`, unexported, is set at `Drop`. In `PickCheck`'s non-owner branch it is tested
   before the party rule and answers `ErrNotOwner` (`0x1812`). The branch is entered only while
   `OwnerAt` is non-zero, which is the engine's "only an owned item" rule. So a tradeable 3/3/9 item
@@ -27368,7 +27398,9 @@ rule until `export-refdata` and `import-refdata` are re-run. The consolidation n
 
 **Grounding, re-read this round on the RE box (dump and `srv.asm`, read-only).**
 
-- **Which items.** In the combined itemdata (`allitems.txt`, 21,561 rows, not committed), exactly
+- **Which items.** In the combined itemdata (`allitems.txt`, not committed; 21,562 item rows --
+  corrected in round 501 from "21,561 rows", which was its line count: `wc -l` 21,560 plus an
+  unterminated last line, less 9 one-field lines, plus the 10 glued lines split in two), exactly
   two rows are TypeID 3/3/13/17: `ITEM_MALL_INVENTORY_ADDITION` (24365) and
   `ITEM_MALL_WAREHOUSE_ADDITION` (24366). Both have CanUse (column 24) 1 and MaxStack (column 57)
   1. Param1 (column 118) is 32 / 30 and Param2 (column 120) is 0 / 1. Both rows' Param3..20 read
@@ -27388,8 +27420,10 @@ rule until `export-refdata` and `import-refdata` are re-run. The consolidation n
   `0x18fe` unless size + amount <= `0xd2` (`0x4e194d cmp ecx,0xd2 ; jle`). Otherwise
   `AQ_StorageExpander::FUN_0045de20` applies the amount through `in_EAX[0x876]` (`pc+0x21d8`)
   vtable `+0x24`.
-  - The record at `pc+0x21d8` is the character's `_ChestInfo` row. Its size sits at `0x1c`, the
-    offset `DB_Bind__ChestInfo` gives `ChestSize` (`db_bind_offsets.tsv`).
+  - The record at `pc+0x21d8` is the USER's `_ChestInfo` row, keyed by UserJID and loaded onto
+    the character (`AQ_CharDataLoader::DoWork`, `storage.DefaultCapacity`'s comment); round 501
+    corrected "the character's". Its size sits at `0x1c`, the offset `DB_Bind__ChestInfo` gives
+    `ChestSize` (`db_bind_offsets.tsv`).
   - `GObjPC::FUN_004e1a30` asserts that a loaded chest's entry count (a pointer vector's length)
     is at most that same byte, and loads it as storage kind 3 (`FUN_004b7680(pc+0x1d74, 3, ...)`).
 - **The bag (kind 0).** `count <= cap - size` (`0x4e197e`) and `size + count <= 0x63` (`0x4e1986`),
@@ -27431,7 +27465,9 @@ used". This round gives them their real effect.
 - `storage`:
   - `Service.ChestSizes` holds the size store.
   - `CapacityOf(chests)` answers the stored size. It falls back to `DefaultCapacity` for a nil
-    store, a 0, or a failed read; a smaller bound only refuses, never loses.
+    store, a 0, or a failed read; a smaller bound only refuses, never loses. (Not quite: round
+    501 found one edge case, a withdraw's refund from a slot past 50 when the read fails as well,
+    now disclosed in `CapacityOf`'s comment.)
   - `Capacity(ctx, characterID)` now resolves the account.
   - `Expand(ctx, characterID, amount)` calls `ExpandChest(acc, DefaultCapacity, amount,
     MaxCapacity)` and maps `ErrChestFull` to `ErrExpansionRefused` (`0x18fe`).
@@ -27626,7 +27662,8 @@ message, so it refuses each operation instead.
     (`0x47f6e0` -> `0x47f6e9`).
 
   Through this caller, `OpenTradeSession`'s `0x1811` is reached in two ways:
-  - `TradeMgr::FUN_00481730` returns non-zero (`0x47f72c` `jne 0x47f6ac`), after a lookup of the
+  - `TradeMgr::FUN_00481730` returns non-zero (called at `0x47f72c`; `test al,al` at `0x47f731`,
+    `jne 0x47f6ac` at `0x47f733` -- round 501 corrected "`0x47f72c` `jne`"), after a lookup of the
     newly numbered session. What that test means was not read.
   - After its cancel, the mode-1 branch goes on to `OpenTradeSession` without re-running the
     check. A requester whom that cancel did not return to mode 0 then fails `OpenTradeSession`'s
@@ -27958,3 +27995,137 @@ warehouse.
 - the codes themselves. srrevamp's results carry texts in its own wording, and `OpTradeCancelled`
   has no code field, so a cancel shows the canceller's name and a timeout or a failed accept shows
   "the system".
+
+## Batch-4 review follow-ups (rounds 496-499): wording, stale names, ChestSize load, and two missing tests (round 501)
+
+Rounds 496-499 each passed review. This round lands the reviewers' non-blocking notes. Every claim
+was re-checked on the RE box before it was written (read-only: `srv.asm`, the dump, the exe's
+`.rdata`, and the combined itemdata read through a pipe). One code change came out of it; the rest
+is comments and docs.
+
+**The code change: `SQLStore.Authenticate` loads `chest_size`.** `account.Account.ChestSize` said
+"the warehouse's slot count ... only an expansion item writes it", but `SQLStore` never selected
+the column, so a SQL account read 0 there even after an expansion. `MemStore` keeps the size on
+the `Account` itself, so dropping the field would have meant a second map there; selecting the
+column is the smaller correct change. Nothing reads the field today -- the warehouse reads its size
+through `ChestSizeStore` -- so no behaviour changes. `Account.StorageGold` has the same shape
+(`Authenticate` does not select `storage_gold` either); it was not in this item and is left as it
+was.
+
+**Round 496, the potion delay (`useitem.go`, round 496's "Arming it", SYSTEMS.md's item row).**
+Re-read at `0x49b957`-`0x49b978`: `cmp BYTE [edx+0x88],0; jne 0x49b974`, then `test esi,esi;
+je 0x49b964` on both branches, where `esi` is `FUN_0049aa70`'s absolute flag (its first stack
+argument, set to 1 on the absolute path). So a percentage potion gets 4.1 (`0xb461b0`) either way,
+and an absolute one gets 1.1 (`0xb461b8`) or 15.1 (`0xb461ac`) by the byte at the PC's ref row
+`+0x88`. That byte is **Country** (0 China, 1 Europe), read in round 480 (`leveldata.go`'s
+ExpDiffScale comment; the equip check's `0x182f` `COUNTRY_MISMATCH`), so 15.1 is the Europe
+absolute-potion value. The float bytes were re-read from `.rdata`: `9a 99 71 41` = 15.1,
+`33 33 83 40` = 4.1, `cd cc 8c 3f` = 1.1. The delay is still NOT modelled.
+
+**`refdata.Item.RestoreHP`'s comment** called the four Params "how much health/mana using this item
+gives back". They are `FUN_0049aa70`'s inputs, which `session.potionRestore` scales; it now says
+so.
+
+**Round 492's entry.** The "closed in round 497" note sat mid-paragraph after "left as a follow-up";
+the paragraph is split into a closed party divergence and a still-open absent owner. The wiring
+bullet records the round-497 renames (`groundTradeLookup` -> `groundDropRules`,
+`Hub.SetTradeLookup` -> `Hub.SetRulesLookup`, `TestGroundTradeLookupAdapter` ->
+`TestGroundDropRulesAdapter`).
+
+**Round 497's scope and census, recounted.** The combined itemdata glues ten row pairs (round 495),
+and one glued second half is a 3/3/9 row: `ITEM_QNO_SD_NO_053_1` (24748, `CanTrade = 0`,
+DecayTime 180000). With the lines split:
+
+- **3/3/9:** 914 rows and 690 distinct ids (round 497 said 913 and 689). By id: 549 `ITEM_QNO_`,
+  113 `ITEM_ETC_` (102 `ITEM_ETC_E...`, and 11 Halloween, Japan and Taiwan event items), 17
+  `ITEM_QCX_`, 10 `ITEM_QSP_`, 1 `ITEM_EVENT_`. 96 are tradeable, as before.
+- **Who the exclusion affects:** the 682 not named `ITEM_QNO_RM_ARCHEMY*`. The 594 bound ids (540
+  `ITEM_QNO_`, 17 `ITEM_QCX_`, 16 `ITEM_ETC_E...`, 10 `ITEM_QSP_`, 10 other `ITEM_ETC_`, 1
+  `ITEM_EVENT_`) are owner-only for their whole DecayTime. The 88 tradeable ones (86
+  `ITEM_ETC_E...`, `ITEM_QNO_RM_MEETROC_6_01`, `ITEM_ETC_JAPAN_EVENT_GIFTBOX`) are owner-only for
+  their 30 s window.
+- **Checks that still hold:** every 3/3/9 codename is made of `A-Z`, `0-9` and `_` alone. No
+  codename is lowercase, and none matches the exempt prefix only when case is ignored. Column 8
+  is 0 on all 21,562 rows.
+- **Round 492's `ITEM_QNO_` figures** move the same way: 852 rows and 608 ids, 599 bound ids (834
+  rows), and 737 bound 3/3/9 rows (540 ids).
+
+`grounditem.go`, `ground_items.md` and both entries now say "the TypeID 3/3/9 exclusion" rather
+than "the quest-item exclusion", and carry the recount.
+
+**The `CompareStringA` census, recounted.**
+
+- **Direct calls.** `srv.asm` has 157 DIRECT `call DWORD PTR ds:0xad90b8`. By the second push
+  before each: 113 are `0x10001`, 38 are 0, 5 are `ebx` and 1 is `[ebp+0xc]` (`0x9f4fbf`).
+- **Register calls.** 34 more sites load the import into a register first (14 `ebp`, 8 `ebx`,
+  7 `edi`, 5 `esi`) and call through it. Their flags were not counted.
+- **The five `ebx` sites are not run-time values.** Each follows an `xor ebx,ebx` in its function
+  (`0x435724`, `0x4d553e`, `0x51cfa9`, `0x525f06`, `0x6add09`), with no other write on the
+  straight line read. So by that linear read they pass 0.
+- **Lead.** Two of them, `0x4d557c` (`GObjPC::FUN_004d5510`) and `0x525f50` (`FUN_00525dc0`), are
+  `ITEM_QNO_RM_ARCHEMY` compares of their own behind the same `FUN_0042fdc0` 3/3/9 test. The
+  second is followed by a party test on `+0x1cb8` and flags `& 2`. So the exclusion has at least
+  two more users. Neither function was read.
+
+**The TID's bit 0 is column 7 -- confirmed (`damage_pipeline.md`, "The TID layout").**
+`RefObjCommon_ExtractData` reads six single bytes in a row (`0x6a31f1` ... `0x6a32a0`, each
+advancing the stream by one). `0x6a32a3`-`0x6a330a` packs them into `ref+0x80`: the sixth at bits
+11-15, then `& 0xf` at 7-10, `& 3` at 5-6, `& 7` at 2-4, `& 1` at bit 1 and `& 1` at bit 0. The
+sixth is TypeID4 (the weapon gate), so the first is column 7, CashItem. A use-site agrees:
+`CGObj::IsCashItem` (`0x00483890`, slot 47) answers 1 for a TypeID1-3 item with bit 0 set. The
+older "not confirmed by a use-site" line is struck, and the round that wrote it carries a pointer.
+
+**Round 498's entry.**
+
+- The `pc+0x21d8` record is the USER's `_ChestInfo` row, keyed by UserJID.
+- "21,561 rows" was the line count. `allitems.txt` is 21,560 terminated lines plus an
+  unterminated last one; drop 9 one-field lines and split 10 glued ones to get 21,562 item rows.
+  The two 3/3/13/17 rows and their Params were re-read.
+
+**`storage.CapacityOf` -- the edge case, stated.** Its comment said the fallback "only refuses,
+never loses". The loss needs two failures in one request:
+
+- a withdraw from a warehouse slot at or past 50 of an expanded warehouse;
+- the bag add then fails;
+- the chest-size read fails too.
+
+Then `move`'s refund is bounded by `DefaultCapacity` and fails when slots 0..49 have no room.
+Propagating the error would change `inventory.CapacityFunc`'s signature in both stores, so the
+comment states the case instead. Round 498's "never loses" carries a pointer.
+
+**`useExpansion`** now discloses that its reply carries no capacity. The client takes the capacity
+only from the storage list (`hud_panels.gd`, `_on_storage_list_result`), so an open warehouse
+window keeps its old page count until it is reopened or an accepted deposit/withdraw relists it.
+
+**`error_codes.md`, `0x1811`.**
+
+- **The `FUN_00481730` route.** It is now cited as the call at `0x47f72c`, `test al,al` at
+  `0x47f731` and `jne 0x47f6ac` at `0x47f733` (`0x47f6ac` is `mov ax,0x1811`). Round 499's entry
+  said "`0x47f72c` `jne`"; that is fixed there too.
+- **The requester route.** `0x47f675` is reachable only past 081's pre-check (`0x5155f7`),
+  through the mode-1 branch.
+- **GROUPMODE.** `chardata+7` was already named GROUPMODE there, after `character_state.md`'s
+  enum table ("The engine names all of these itself").
+- **`StorageOperation`.** The sender is re-read: `mov edi,0x1811` at `0x50f6c8`, `mov ecx,0xb034`,
+  `0x4e7250`, and the log string at `.rdata 0xaf6ba0` behind `cmp di,0x1811` at `0x50f6ec`. It is
+  now marked as a LEAD, because why those op types draw it was not read. The table row says so.
+- **Superseded.** The old "Fourteen of fifteen ... stays unattributed" paragraph is struck through
+  and marked superseded.
+
+**`tradebusy.go`.** The repair's `0x1c0b` is now called an adaptation. The engine sends it in reply
+to the interaction open, `0xb046` (`mov ecx,0xb046` at `0x51041c`, then `0x4e7250`), not to a
+repair.
+
+**`ground_items.md`**: the round-493 paragraph's 117-column line is re-wrapped.
+
+**Tests.**
+
+- **`account.TestSQLStoreAuthenticateCarriesChestSize`** (new): `Authenticate` gives 0 for a new
+  account and 80 after one `ExpandChest` from 50.
+  - **Negative, run.** With `sqlstore.go` and `account.go` stashed, it FAILS with
+    "Authenticate after an expansion: ChestSize 0, want 80". Restored, it passes.
+- **The warehouse LIST and GOLD refusals while a trade is pending were already tested.**
+  Round 499's review added them to `session.TestNPCServicesRefusedWhileTrading`. The list is
+  refused with `tradeBusyReason`. The gold deposit is refused and still carries 1000 carried and 0
+  stored. Round 499 records a failing mutation for each. No duplicate was added.
+- `go test -count=1 -p 1 ./...` is green. No client file changed.

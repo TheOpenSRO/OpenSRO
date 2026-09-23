@@ -196,10 +196,14 @@ type Item struct {
 	Price     int64
 	SellPrice int64
 
-	// RestoreHP/RestoreMP are how much health/mana using this item gives
-	// back, and the Pct pair the same as a percentage of the maximum. REAL,
-	// and unusually self-evidencing: the item table's Param block stores each
-	// value beside its own description, so col 118 is followed by the literal
+	// RestoreHP/RestoreMP are the absolute health/mana Params of a recovery
+	// item, and the Pct pair the percentage-of-maximum Params. They are the
+	// INPUTS of the engine's restore formula, GObjPC::FUN_0049aa70, not the
+	// amount that lands: session.potionRestore scales an absolute Param by
+	// 1.02^(level-1) x (1 + Str/416) (or Int for MP) and reads the Pct pair
+	// only when both absolutes are zero (round 496). REAL, and unusually
+	// self-evidencing: the item table's Param block stores each value beside
+	// its own description, so col 118 is followed by the literal
 	// label "HP..." and col 122 by "MP...", with the "(%)" variants at 120 and
 	// 124. HP_POTION_01 carries 120 in the HP column and nothing in the MP
 	// one; MP_POTION_01 the mirror image. The large potions carry 370.

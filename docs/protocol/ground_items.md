@@ -62,7 +62,7 @@ decides a pick. In order:
      `0x4a92fc`). What the caller does with that pair was not read.
    - **the picker must be a PC** (vtable slot 7, `IGObj::IsPC`, `0x4a93f4`),
      else **0x1812**.
-   - **the quest-item exclusion** (`0x4a930d`-`0x4a9350`). The item's TID
+   - **the TypeID 3/3/9 exclusion** (`0x4a930d`-`0x4a9350`). The item's TID
      (`CGObj::GetTID`, `0x00485c90`: the ref row's `+0x80` word) goes to
      `FUN_0042fdc0` (`0x4a931b`), which answers 1 only for bit 1 clear,
      `& 0x1c == 0xc`, `& 0x60 == 0x60` and `& 0x780 == 0x480`: **TypeID
@@ -79,30 +79,49 @@ decides a pick. In order:
 
    So while an item is owned, a non-owner, party member or not, is refused
    every TypeID 3/3/9 item except `ITEM_QNO_RM_ARCHEMY*`. Measured over
-   `/var/tmp/tables/itemdata_all.utf8.txt` on the RE box: 913 rows are 3/3/9
-   (bit 1 clear on all), 754 of them `ITEM_QNO_` rows (548 of the 607 ids) and
-   159 other event and quest-type items (`ITEM_ETC_E...`, `ITEM_QCX_...`). All
-   18 tradeable `ITEM_QNO_` rows are 3/3/9: the 16 `ITEM_QNO_RM_ARCHEMY_1..8`
-   rows pass the name compare, the 2 `ITEM_QNO_RM_MEETROC_6_01` rows do not.
-   So the exclusion reaches beyond quest items. By distinct id the 689 3/3/9
-   ids are 548 `ITEM_QNO_`, 113 `ITEM_ETC_` event items (102 of them
-   `ITEM_ETC_E...`), 17 `ITEM_QCX_`, 10 `ITEM_QSP_` and 1 `ITEM_EVENT_`. 96 are
-   tradeable: 86 `ITEM_ETC_E...` ids (such as `ITEM_ETC_E100401_GOLDEN_B`), the
-   9 `ITEM_QNO_` ids above and `ITEM_ETC_JAPAN_EVENT_GIFTBOX`. A tradeable one
-   is owner-only for its 30 s window, a bound one for its whole DecayTime.
+   `/var/tmp/tables/itemdata_all.utf8.txt` on the RE box, with its ten glued
+   lines split (round 495; recounted in round 501, which found one 3/3/9 row,
+   `ITEM_QNO_SD_NO_053_1`, hidden in a glued line): 914 rows are 3/3/9 (bit 1
+   clear on all), 755 of them `ITEM_QNO_` rows (549 of the 608 ids) and 159
+   other event and quest-type items (`ITEM_ETC_E...`, `ITEM_QCX_...`). All 18
+   tradeable `ITEM_QNO_` rows are 3/3/9: the 16 `ITEM_QNO_RM_ARCHEMY_1..8` rows
+   pass the name compare, the 2 `ITEM_QNO_RM_MEETROC_6_01` rows do not.
 
-   **srrevamp's `PickCheck` models the owner, the quest-item exclusion and the
-   party test (round 497).** `grounditem.OwnerOnlyPick(TypeID1, TypeID2,
+   **So the exclusion is not a quest-item rule; it keys on the TypeIDs.** By
+   distinct id the 690 3/3/9 ids are 549 `ITEM_QNO_`, 113 `ITEM_ETC_` event
+   items (102 of them `ITEM_ETC_E...`, 11 Halloween, Japan and Taiwan event
+   items), 17 `ITEM_QCX_`, 10 `ITEM_QSP_` and 1 `ITEM_EVENT_`. Who it
+   affects -- the 682 not named `ITEM_QNO_RM_ARCHEMY*`:
+   - **594 bound ids** (`CanTrade` 0: 540 `ITEM_QNO_`, 17 `ITEM_QCX_`, 16
+     `ITEM_ETC_E...`, 10 `ITEM_QSP_`, 10 other `ITEM_ETC_`, 1 `ITEM_EVENT_`)
+     are owner-only for their whole DecayTime;
+   - **88 tradeable ids** -- 86 `ITEM_ETC_E...` event items (such as
+     `ITEM_ETC_E100401_GOLDEN_B`), `ITEM_QNO_RM_MEETROC_6_01` and
+     `ITEM_ETC_JAPAN_EVENT_GIFTBOX` -- are owner-only for their 30 s window
+     and anyone's after it.
+
+   **srrevamp's `PickCheck` models the owner, the TypeID 3/3/9 exclusion and
+   the party test (round 497).** `grounditem.OwnerOnlyPick(TypeID1, TypeID2,
    TypeID3, CodeName)` is the exclusion: true for TypeID 3/3/9 unless the
    codename begins `ITEM_QNO_RM_ARCHEMY`, compared case-sensitively (the
-   `CompareStringA` flags are 0, which is common in this binary: of the 157
-   calls through the import `0xad90b8` in `srv.asm`, 113 pass `0x10001`,
-   `NORM_IGNORECASE|NORM_IGNOREKANATYPE`, 38 including this one pass 0, and 6
-   pass a value only known at run time). `strings.HasPrefix` compares bytes;
+   `CompareStringA` flags are 0, which is common in this binary. Recounted in
+   round 501: `srv.asm` has 157 DIRECT `call DWORD PTR ds:0xad90b8`, of which
+   113 push `0x10001` (`NORM_IGNORECASE|NORM_IGNOREKANATYPE`), 38 including
+   this one push 0, 5 push `ebx` and 1 pushes a caller's argument
+   (`[ebp+0xc]`, `0x9f4fbf`). Each `ebx` site follows an `xor ebx,ebx` in its
+   function with no other write on the straight line read, so by that linear
+   read they pass 0 as well. A further 34 sites load the import into a
+   register first (14 `ebp`, 8 `ebx`, 7 `edi`, 5 `esi`) and call through it;
+   their flags were not counted. **Lead:** two of the `ebx` sites are
+   themselves `ITEM_QNO_RM_ARCHEMY` compares behind the same `FUN_0042fdc0`
+   3/3/9 test -- `0x4d557c` in `GObjPC::FUN_004d5510` and `0x525f50` in
+   `FUN_00525dc0`, the second followed by a party test on `+0x1cb8` and flags
+   `& 2` -- so the exclusion has at least two more users; neither function
+   was read.) `strings.HasPrefix` compares bytes;
    the engine's compare is linguistic (`LOCALE_USER_DEFAULT`), which can pass
    over characters that carry no sort weight (the review named NUL and the
    soft hyphen `0xAD`). The two can only differ on characters outside `A-Z`,
-   `0-9` and `_`, and all 913 3/3/9 rows have codenames made of those alone,
+   `0-9` and `_`, and all 914 3/3/9 rows have codenames made of those alone,
    so they agree on every retail codename. Bit 1 of the TID is itemdata
    column 8, 0 on every item row, so it is not carried. `Drop` resolves the
    answer once into the unexported `Item.ownerOnly`, and `PickCheck` refuses a
@@ -117,7 +136,7 @@ decides a pick. In order:
    column 70 and stored in `items.code_name`. **An empty codename -- an export
    that predates the column -- answers not owner-only**, srrevamp's own rule:
    without the name the eight `ITEM_QNO_RM_ARCHEMY_1..8` ids cannot be told
-   from the other 681 3/3/9 ids (689 distinct over the combined itemdata), so
+   from the other 682 3/3/9 ids (690 distinct over the combined itemdata), so
    such a deployment keeps the party rule for every item until it re-exports.
 
    It does not model the absent owner: the party rule
@@ -135,9 +154,10 @@ answer is taken once, at `Drop`, from the hub's rules lookup
 a failed lookup means pickable). Since round 497 that one lookup answers
 everything a drop needs -- DecayTime, CanTrade, CanPick and the owner-only
 exclusion -- from a single `GetItem`, called before `Drop` takes the hub's
-lock; before it, `Drop` made three reference-data lookups while holding it. The quest-condition refusal (`0x1874`) is
-not modelled: srrevamp has no quest-achieve condition to ask. The life-state
-test has nothing to act on, since every item in the hub is on the ground.
+lock; before it, `Drop` made three reference-data lookups while holding it.
+The quest-condition refusal (`0x1874`) is not modelled: srrevamp has no
+quest-achieve condition to ask. The life-state test has nothing to act on,
+since every item in the hub is on the ground.
 
 ## The ownership window
 
@@ -168,16 +188,17 @@ is itemdata column 16 (`item_capability_flags.md`). An item whose `CanTrade` is
 0 is therefore never released: `Update` calls the release on every tick once
 past 30 s, and every call returns at `4901d1`. It stays reserved to its owner
 until `CGObj::Update` removes it at its DecayTime. A same-party member does not
-share that reservation for most of these items: 736 of the 833 untradeable
-`ITEM_QNO_` rows below (539 of the 598 ids) are TypeID 3/3/9, which
+share that reservation for most of these items: 737 of the 834 untradeable
+`ITEM_QNO_` rows below (540 of the 599 ids) are TypeID 3/3/9, which
 `CheckCanPickUp` refuses every non-owner before its party test ("Picking up",
 step 3, `0x4a930d`-`0x4a9350`). Only the other 97 rows (59 ids; TypeID3 13, 1,
 2 or 3) reach the party rule.
 
 Which items that is: in the combined itemdata on the RE box
 (`/var/tmp/tables/itemdata_all.utf8.txt`, which repeats ids across its source
-files), the `ITEM_QNO_` quest items are 851 rows and 607 distinct ids. 598 of
-the ids (833 of the rows) carry `CanTrade = 0`; the other 9 ids (18 rows:
+files; its ten glued lines split, round 501's recount), the `ITEM_QNO_` quest
+items are 852 rows and 608 distinct ids. 599 of the ids (834 of the rows) carry
+`CanTrade = 0`; the other 9 ids (18 rows:
 `ITEM_QNO_RM_ARCHEMY_1..8` and `ITEM_QNO_RM_MEETROC_6_01`) carry 1. Every one
 carries DecayTime 180000 (three minutes). Gold (`ITEM_ETC_GOLD_01..03`) and the
 HP/MP potions carry `CanTrade = 1` and DecayTime 10000, so they are unaffected

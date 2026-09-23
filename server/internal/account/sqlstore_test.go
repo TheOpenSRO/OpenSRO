@@ -188,6 +188,36 @@ func TestSQLStoreChestSizeRoundTrip(t *testing.T) {
 	}
 }
 
+// Authenticate's Account carries the stored warehouse size, as MemStore's
+// does (round 501): 0 for a new account, 80 after one expansion. Before round
+// 501 SQLStore never selected chest_size, so the field read 0 after the
+// expansion, contradicting its comment.
+func TestSQLStoreAuthenticateCarriesChestSize(t *testing.T) {
+	store := openTestSQLStore(t)
+	ctx := context.Background()
+	acc, err := store.Register(ctx, "alice", "hunter2")
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	got, err := store.Authenticate(ctx, "alice", "hunter2")
+	if err != nil {
+		t.Fatalf("Authenticate of a new account: %v", err)
+	}
+	if got.ChestSize != 0 {
+		t.Fatalf("Authenticate of a new account: ChestSize %d, want 0", got.ChestSize)
+	}
+	if _, err := store.ExpandChest(ctx, acc.ID, 50, 30, 210); err != nil {
+		t.Fatalf("ExpandChest: %v", err)
+	}
+	got, err = store.Authenticate(ctx, "alice", "hunter2")
+	if err != nil {
+		t.Fatalf("Authenticate after an expansion: %v", err)
+	}
+	if got.ChestSize != 80 {
+		t.Fatalf("Authenticate after an expansion: ChestSize %d, want 80", got.ChestSize)
+	}
+}
+
 // Both stores keep the warehouse size.
 var (
 	_ ChestSizeStore = (*SQLStore)(nil)

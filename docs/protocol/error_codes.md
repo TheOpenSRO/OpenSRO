@@ -900,7 +900,7 @@ functions.**
 |---|---|
 | `0x1403` | `GObjPC_MsgHandler_SpecialCommand::FUN_0051de90` |
 | `0x1807` | `FUN_00526090` |
-| `0x1811` | **not found by this sweep** -- it travels as a value, not a pushed literal; `GObjPC_HandleTradeMsg_081`, `CTradeMgr::EstablishTradeSession` and `CGObjPC::StorageOperation` send it (round 499, below) |
+| `0x1811` | **not found by this sweep** -- it travels as a value, not a pushed literal; `GObjPC_HandleTradeMsg_081`, `CTradeMgr::EstablishTradeSession` and `CGObjPC::StorageOperation` send it (round 499, below; the StorageOperation site is a LEAD whose meaning is unread, round 501) |
 | `0x181d` | `CGObjPC::vslot_358` |
 | `0x1c0d` | `GObjPC::EndInteraction` (was `FUN_005107c0`) |
 | `0x1c0e` | `FUN_00511910` |
@@ -914,9 +914,11 @@ functions.**
 | `0x6006` | `CGObjPC::vslot_358` |
 | `0x6008` | `GObjPC::FUN_0052b040` |
 
-**Fourteen of fifteen.** `0x1811` is pushed somewhere this shape does not reach --
+~~**Fourteen of fifteen.** `0x1811` is pushed somewhere this shape does not reach --
 through a callee, or with the code in a register -- so it stays unattributed
-rather than guessed at.
+rather than guessed at.~~ **Superseded** (marked in round 501): round 499
+attributed the fifteenth, and the table row above now names its senders. The
+first half held -- it travels as a value, in a return or a register.
 
 > **Round 499 found where it comes from.** `0x1811` travels as a **value** --
 > a function's return, or a variable or register handed to a sender -- so a
@@ -937,15 +939,23 @@ rather than guessed at.
 >   passes any result but 1 to `Msg_SendTwoFieldReply(sVar2)`, so
 >   **`GObjPC_HandleTradeMsg_081` is a sender**. Through that caller the code
 >   is reached in two ways:
->   - `TradeMgr::FUN_00481730` returns non-zero (`0x47f72c` `jne 0x47f6ac`),
->     after a lookup of the newly numbered session. What that test means was not
->     read.
->   - The mode-1 branch cancels the requester's old session and goes on to
->     `OpenTradeSession` without re-running the check. A requester left
->     failing it then falls through at `0x47f675`.
+>   - **`FUN_00481730`.** `TradeMgr::FUN_00481730` is called at `0x47f72c`,
+>     after a lookup of the newly numbered session; `test al,al` (`0x47f731`)
+>     and `jne 0x47f6ac` (`0x47f733`) send a non-zero answer to the `0x1811`
+>     at `0x47f6ac` (`mov ax,0x1811`). What that test means was not read.
+>     (Round 499 cited it as "`0x47f72c` `jne`"; corrected in round 501.)
+>   - **The requester check, only past 081's pre-check.** `OpenTradeSession`
+>     runs `GObjPC::FUN_004ea050` on the requester (`0x47f675`; a zero answer
+>     does not take `jne 0x47f6b5` at `0x47f67c`, logs, and reaches `0x47f6ac`).
+>     081 runs the same check on the requester first (`0x5155f7`) and answers
+>     a failure itself, so this route is open only through the mode-1 branch,
+>     which cancels the requester's old session and goes on to
+>     `OpenTradeSession` without re-running the pre-check. A requester still
+>     failing it then falls through here.
 >
->   **It is not reached by a requester who fails `GObjPC::FUN_004ea050`.**
->   Round 499 first said it was. 081 runs that check on the requester itself
+>   **It is not reached by a requester who fails `GObjPC::FUN_004ea050` on
+>   081's own pre-check** -- only, as above, by one the mode-1 branch lets
+>   past it. Round 499 first said it was. 081 runs that check on the requester itself
 >   first (`0x5155f7`, with `esi = ebp = this`), and answers a failure on its
 >   own path: `0x1833` at INTERACTMODE 2 or 7, `0x181d` otherwise, and the
 >   mode-1 branch at 1. A target that fails the check gets `0x181e`
@@ -961,10 +971,18 @@ rather than guessed at.
 > - `CGObjPC::StorageOperation` (`0x0050f5c0`) sends it **from a register**:
 >   `mov edi,0x1811` at `0x50f6c8`, then `push edi; mov ecx,0xb034` and
 >   `Msg_SendTwoFieldReply`. It does so for op types 0x0e, 0x0f, 0x15, 0x16
->   and 0x22, and for 0x17 when the message's `+0x1060` field is non-zero.
->   Every `0x1811` it sends is followed by the log line "PC::StorageOperation
->   posting AsyncQuery failed. will be disconnected!!!" and `FUN_004df050(4)`.
->   What that call does was not read. **`StorageOperation` is a sender.**
+>   and 0x22, and for 0x17 when the message's `+0x1060` field is non-zero
+>   (`0x50f69f`-`0x50f6c2`, past a test of vtable `+0xf8` at `0x50f688` that
+>   answers 2 first for any op but 0x17 and 0x18 when it returns 2). Every
+>   `0x1811` it sends is followed by the log line "PC::StorageOperation posting AsyncQuery failed. will be disconnected!!!
+>   [op: %d][MsgProcState: %d]" (`.rdata 0xaf6ba0`, `cmp di,0x1811` at
+>   `0x50f6ec`) and `FUN_004df050(4)`. **`StorageOperation` is a sender -- a
+>   LEAD, not a meaning.** That it sends the code is read; why these op types
+>   draw it, what the op numbers are, and what `FUN_004df050(4)` does were
+>   not. The same send block (`0x50f6cd`) also carries other codes (`0x1834`,
+>   2) and any result but 1 of two later calls (`cmp di,0x1; jne 0x50f6cd`
+>   at `0x50f8c9` and `0x50f94a`), so a callee there that returned `0x1811`
+>   would be sent and logged the same way.
 >
 > These do not share one meaning. The Attach/Detach and EstablishTradeSession
 > sites refuse on INTERACTMODE; the StorageOperation op-type site and the

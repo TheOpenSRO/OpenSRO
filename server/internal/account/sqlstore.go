@@ -78,9 +78,11 @@ func (s *SQLStore) Register(ctx context.Context, username, password string) (*Ac
 // Authenticate implements Store.
 func (s *SQLStore) Authenticate(ctx context.Context, username, password string) (*Account, error) {
 	var acc Account
+	// chest_size is selected so Account.ChestSize means the same here as in
+	// MemStore: the stored warehouse size, 0 when none was stored (round 501).
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, username, password_hash, blocked, block_reason FROM accounts WHERE username = $1`, username)
-	if err := row.Scan(&acc.ID, &acc.Username, &acc.PasswordHash, &acc.Blocked, &acc.BlockReason); err != nil {
+		`SELECT id, username, password_hash, blocked, block_reason, chest_size FROM accounts WHERE username = $1`, username)
+	if err := row.Scan(&acc.ID, &acc.Username, &acc.PasswordHash, &acc.Blocked, &acc.BlockReason, &acc.ChestSize); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrInvalidCredentials
 		}

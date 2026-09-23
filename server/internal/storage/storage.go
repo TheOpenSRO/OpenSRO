@@ -106,9 +106,15 @@ type Balances struct {
 
 // CapacityOf answers each account's warehouse size from chests: the stored
 // `_ChestInfo.ChestSize`, or DefaultCapacity when the store is nil, has no
-// size stored (0) or fails. The fallback is never destructive -- a smaller
-// bound only refuses slots past it -- which is why a failed read degrades to
-// it rather than failing the operation. The warehouse store takes it through
+// size stored (0) or fails. A smaller bound almost always only refuses slots
+// past it, which is why a failed read degrades to it rather than failing the
+// operation. ONE EDGE CASE can lose an item, disclosed rather than handled
+// (round 501): a Withdraw from a slot at or past DefaultCapacity of an
+// expanded warehouse whose bag add is then refused, when the chest-size read
+// ALSO fails for move's refund -- the refund is bounded by DefaultCapacity, so
+// it fails if slots 0..49 hold no room for it, and move returns its "character
+// may have lost an item" error. It needs the bag to refuse and the read to
+// fail within one request. The warehouse store takes it through
 // SetCapacityFunc; the game reads the same field for its bound
 // (CGObjPC::ExpandInventory reads the size byte at chest+0x1c, the binder's
 // ChestSize offset -- docs/protocol/db_bind_offsets.tsv).

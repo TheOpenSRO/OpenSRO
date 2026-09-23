@@ -405,10 +405,16 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// its own (round 496; NOT modelled, a DISCLOSED GAP): FUN_004eb410
 		// answers 0x185b while the kind's bit (TypeID4 1/2/3 -> 1/2/4) is set
 		// in the byte at [pc+0x30]+8, and after a use FUN_004e0ab0 sets it
-		// with a float32 of 1.1 (.rdata 0xb461b8), 15.1 (0xb461ac, when the
-		// byte at the PC's ref row +0x88 is non-zero) or 4.1 (0xb461b0, a
-		// percentage potion), handed to a state-changer record. Its unit and
-		// what clears the bit were not read.
+		// with a float32 handed to a state-changer record, chosen at
+		// 0x49b957..0x49b978 by two things: FUN_0049aa70's absolute flag
+		// (esi: 1 absolute, 0 percentage) and the byte at the PC's ref row
+		// +0x88, which is the character's COUNTRY (0 China, 1 Europe; round
+		// 480, leveldata.go's ExpDiffScale comment, the same byte the equip
+		// check compares for 0x182f COUNTRY_MISMATCH). A percentage potion
+		// gets 4.1 (.rdata 0xb461b0) either way (`test esi,esi; je 0x49b964`
+		// on both branches); an absolute one gets 1.1 (0xb461b8) for China and
+		// 15.1 (0xb461ac) for Europe (`cmp BYTE [edx+0x88],0; jne 0x49b974`).
+		// Its unit and what clears the bit were not read.
 		if it.CooltimeMs > 0 && !itemCooldowns.Ready(characterID, it.CooltimeGroup, time.Now()) {
 			return fail("wait for the reuse delay")
 		}
@@ -531,7 +537,10 @@ func bagExpansionAllowed(slots int) bool {
 //
 // The reply carries no HP/MP: MaxHP 0 tells the client to leave its bars
 // alone (World3D._on_use_item_result), and Remaining is the stack after the
-// use.
+// use. It carries no capacity either, and the client redraws only the bag on
+// it, so a warehouse window left open keeps its old page count until it is
+// reopened or an accepted deposit/withdraw relists it (hud_panels.gd takes
+// the capacity only from the storage list) -- a DISCLOSED gap.
 func useExpansion(ctx context.Context, sess *gateway.Session, fail func(string) error, inv inventory.Store,
 	warehouse *storage.Service, characterID int64, held inventory.Slot, have, container, slots int) error {
 	if container == refdata.ExpansionContainerBag {

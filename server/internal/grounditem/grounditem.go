@@ -29,7 +29,7 @@
 //     everyone, its owner included (Item.noPick).
 //
 // What a drop needs from the item's reference row -- DecayTime, CanTrade,
-// CanPick, the quest-item exclusion -- is one DropRules value, resolved once
+// CanPick, the TypeID 3/3/9 exclusion -- is one DropRules value, resolved once
 // per Drop through the hub's rules lookup (Hub.SetRulesLookup) BEFORE the
 // hub's lock is taken, so a reference-data round trip never runs under it.
 //
@@ -221,14 +221,20 @@ func (h *Hub) SetRulesLookup(rules func(itemID int64) DropRules) {
 }
 
 // ownerOnlyExemptName is the codename CheckCanPickUp exempts from the
-// quest-item exclusion: the .rdata string at 0xaebf58, "ITEM_QNO_RM_ARCHEMY",
+// TypeID 3/3/9 exclusion: the .rdata string at 0xaebf58, "ITEM_QNO_RM_ARCHEMY",
 // 19 characters, compared by `CompareStringA(0x400, 0, codename, 0x13,
 // "ITEM_QNO_RM_ARCHEMY", 0x13)` at 0x4a9342 -- the codename's first 0x13
 // characters against all of it, so a prefix test. dwCmpFlags is 0: no
 // NORM_IGNORECASE, so the comparison is case-sensitive. That is not unusual
-// in this binary: of the 157 calls through the CompareStringA import (0xad90b8)
-// in srv.asm, 113 pass 0x10001 (NORM_IGNORECASE|NORM_IGNOREKANATYPE), 38
-// including this one pass 0, and 6 pass a value only known at run time.
+// in this binary (recounted in round 501): srv.asm has 157 DIRECT
+// `call DWORD PTR ds:0xad90b8`, of which 113 push 0x10001
+// (NORM_IGNORECASE|NORM_IGNOREKANATYPE), 38 including this one push 0, 5 push
+// ebx and 1 pushes a caller's argument ([ebp+0xc], 0x9f4fbf). Each of the five
+// ebx sites follows an `xor ebx,ebx` in its function with no other write to
+// ebx on the straight line read (0x435724, 0x4d553e, 0x51cfa9, 0x525f06,
+// 0x6add09), so by that linear read they pass 0 too. A further 34 sites load
+// the import into a register first (14 ebp, 8 ebx, 7 edi, 5 esi) and call
+// through it; their flags were not counted.
 const ownerOnlyExemptName = "ITEM_QNO_RM_ARCHEMY"
 
 // OwnerOnlyPick reports whether an owned drop of this item may be picked by
@@ -242,19 +248,25 @@ const ownerOnlyExemptName = "ITEM_QNO_RM_ARCHEMY"
 // CSTR_EQUAL stores 0x1812 (0x4a934d) and the party test at 0x4a9360 is never
 // reached. So a party member is refused every 3/3/9 item but
 // ITEM_QNO_RM_ARCHEMY*. (docs/protocol/ground_items.md, "Picking up", step 3.)
-// The rule keys on the TypeIDs, not on the ITEM_QNO_ prefix: of the 689
-// distinct 3/3/9 ids in the combined itemdata, 548 are ITEM_QNO_; the other
-// 141 are 113 ITEM_ETC_ event items (102 of them ITEM_ETC_E...), 17
-// ITEM_QCX_, 10 ITEM_QSP_ and 1 ITEM_EVENT_. 86 of the ITEM_ETC_E... ids are
-// tradeable, such as ITEM_ETC_E100401_GOLDEN_B.
+// The rule keys on the TypeIDs, not on the ITEM_QNO_ prefix. Over the combined
+// itemdata with its ten glued lines split (round 495; recounted in round 501)
+// there are 690 distinct 3/3/9 ids: 549 ITEM_QNO_ and 141 others -- 113
+// ITEM_ETC_ event items (102 of them ITEM_ETC_E..., 11 Halloween, Japan and
+// Taiwan event items), 17 ITEM_QCX_, 10 ITEM_QSP_ and 1 ITEM_EVENT_. Who it
+// affects: the 682 not named ITEM_QNO_RM_ARCHEMY*. 594 of them are bound
+// (CanTrade 0: 540 ITEM_QNO_, the rest QCX/QSP/ETC/EVENT) and so owner-only
+// for their whole DecayTime; the other 88 are tradeable (86 ITEM_ETC_E...
+// event items such as ITEM_ETC_E100401_GOLDEN_B, ITEM_QNO_RM_MEETROC_6_01 and
+// ITEM_ETC_JAPAN_EVENT_GIFTBOX) and owner-only for their 30 s window.
 //
 // TID bit 1 is itemdata column 8, which is 0 on every item row of the
-// combined itemdata (21,552 rows), so it is not carried and not tested here.
+// combined itemdata (21,562 rows once the glued lines are split), so it is
+// not carried and not tested here.
 //
 // strings.HasPrefix compares bytes; the engine's compare is linguistic
 // (LOCALE_USER_DEFAULT 0x400, flags 0), which can pass over characters that
 // carry no sort weight (NUL or the soft hyphen 0xAD, for example). The two can
-// only differ on characters outside A-Z, 0-9 and '_', and all 913 3/3/9 rows
+// only differ on characters outside A-Z, 0-9 and '_', and all 914 3/3/9 rows
 // of the combined itemdata have codenames made of those alone, so they agree
 // on every retail codename.
 //
@@ -369,7 +381,7 @@ func (h *Hub) PickCheck(id int64, pickerID int64, px, py, pz float32, sameParty 
 		return *it, ErrBusy
 	}
 	if owner := it.OwnerAt(h.now()); owner != 0 && owner != pickerID {
-		// The quest-item exclusion first (0x4a930d-0x4a9350), then the party
+		// The TypeID 3/3/9 exclusion first (0x4a930d-0x4a9350), then the party
 		// test (0x4a9360); both refuse with 0x1812.
 		if it.ownerOnly || sameParty == nil || !sameParty(owner, pickerID) {
 			return *it, ErrNotOwner

@@ -519,13 +519,32 @@ taken alone.
 **The TID layout, which these predicates spell out** (`& 2`, `& 0x1c`, `& 0x60`, `& 0x780`,
 `& 0xf800`):
 
+	bit 0        col 7    CashItem        confirmed in round 501, below
 	bit 1        characterdata col 8      1 on all 17,868 rows; both predicates require it
 	bits 2-4     col 9    TypeID1
 	bits 5-6     col 10   TypeID2
 	bits 7-10    col 11   TypeID3
 	bits 11-15   col 12   TypeID4         independently proven by the weapon gate
 
-Bit 0 is *consistent with* column 7 by adjacency and is **not** confirmed by a use-site.
+~~Bit 0 is *consistent with* column 7 by adjacency and is **not** confirmed by a use-site.~~
+**Bit 0 is column 7, read from the packing itself (round 501).** `RefObjCommon_ExtractData` reads
+six single bytes in a row, each advancing the stream by one (`0x6a31f1`, `0x6a3214`, `0x6a3237`,
+`0x6a325a`, `0x6a327d`, `0x6a32a0`, into `[esp+0x11]`, `[esp+0x12]`, `[esp+0x19]`, `[esp+0x1a]`,
+`[esp+0x1b]` and `cl`), and `0x6a32a3`-`0x6a330a` packs them into the word it stores at
+`ref+0x80` (`0x6a330a mov WORD PTR [esi+0x80],dx`):
+
+	bits 11-15   6th byte (cl, << 6 then << 5 more)
+	bits 7-10    5th byte & 0xf
+	bits 5-6     4th byte & 3
+	bits 2-4     3rd byte & 7        (0x6a32db and al,7; or dx,cx)
+	bit 1        2nd byte & 1        (0x6a32ee and al,1; or dx,ax)
+	bit 0        1st byte & 1        (0x6a32fe and al,1; or dx,cx)
+
+The sixth byte is TypeID4 (the weapon gate), so the six are columns 7-12 in order and bit 0 is
+column 7. A use-site agrees: `CGObj::IsCashItem` (`0x00483890`, IGObj slot 47) answers 1 for
+bit 1 clear, `& 0x1c == 0xc` (TypeID1 3, an item) and **bit 0 set**. In the combined itemdata
+column 7 is 1 on 728 of the 779 rows whose codename contains `MALL` and on 1,273 of the other
+20,783.
 
 **What this means for srrevamp.** None of the four is reachable with the content it spawns — no
 transform, no structures, no fortress weapons in play, no snowman — so kind 0 was the right thing

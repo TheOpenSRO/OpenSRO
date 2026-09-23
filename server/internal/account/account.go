@@ -56,6 +56,10 @@ type Account struct {
 	// at record offset 0x1c -- docs/protocol/db_bind_offsets.tsv). Zero means
 	// no size was ever stored and the warehouse is its default size
 	// (storage.DefaultCapacity); only an expansion item writes it (round 498).
+	// Both stores answer it on Authenticate: MemStore keeps it on the
+	// account, SQLStore selects accounts.chest_size (round 501; before that
+	// a SQL account read 0 here even after an expansion). The warehouse
+	// itself reads the size through ChestSizeStore, not through this field.
 	ChestSize int
 }
 
