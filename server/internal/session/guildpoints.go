@@ -101,6 +101,13 @@ func (s *GuildPointSkills) AddSkillExp(ctx context.Context, characterID int64, s
 		return gained, total, err
 	}
 	// pc[0x72f] != 0: only a member accumulates.
+	//
+	// A DEPARTURE on a lookup error: the engine reads pc[0x72f] from the PC
+	// object in memory, which cannot fail, so a member always books. Here
+	// membership is a store query; when GuildIDOf fails with anything other
+	// than ErrNotInGuild (a database error), this conversion's points are
+	// logged and not booked, and the guild never gets them. The count already
+	// pending is untouched. FlushPending has the same gap (below).
 	guildID, gerr := s.guilds.GuildIDOf(ctx, characterID)
 	if gerr != nil {
 		if !errors.Is(gerr, guild.ErrNotInGuild) {
@@ -133,7 +140,9 @@ func (s *GuildPointSkills) AddSkillExp(ctx context.Context, characterID int64, s
 // the request (0x4def9f `je`) and the PC object, count and all, goes away;
 // here the count is dropped. A session that entered the world as a second
 // character without disconnecting leaves the first one's count here until
-// that character's next flush.
+// that character's next flush. A GuildIDOf database error drops the count
+// too (logged), where the engine's in-memory pc[0x72f] test cannot fail --
+// the same departure as AddSkillExp's.
 func (s *GuildPointSkills) FlushPending(ctx context.Context, characterID int64) {
 	s.mu.Lock()
 	a := s.acc[characterID]
@@ -160,6 +169,21 @@ func (s *GuildPointSkills) FlushPending(ctx context.Context, characterID int64) 
 // and so the flush, for every PC. srrevamp's gateway does not run OnDisconnect
 // for sessions still open when it stops, so cmd/server calls this once the
 // listener has returned.
+//
+// A WINDOW THIS DOES NOT CLOSE (disclosed in round 527, not fixed). When the
+// listener returns, nothing else has stopped. gateway.Server.ListenAndServe
+// returns without waiting for its serveConn goroutines, and a serveConn
+// blocked in proto.Read only sees the cancelled context after its next
+// packet, which it still hands to the handler. The keep-up swings run on
+// their own timers with context.Background (keepup.go, armKeepUp). So a kill
+// that converts skill experience during or after this flush books on an
+// accumulator this call has already passed (or re-creates one it removed),
+// and main returns without sending it: up to nine points per character, on
+// a clean stop only (on a crash every pending count is lost anyway). A batch
+// of ten or more that such a kill sends is lost too if main returns while
+// its credit is still running. Closing it would need the gateway to track
+// and close its connections and wait for them, and the keep-up loops to be
+// stopped first -- a change to the gateway's lifecycle, not to this file.
 func (s *GuildPointSkills) FlushAllPending(ctx context.Context) {
 	s.mu.Lock()
 	ids := make([]int64, 0, len(s.acc))

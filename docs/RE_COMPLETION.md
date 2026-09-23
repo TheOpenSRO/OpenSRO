@@ -30320,7 +30320,9 @@ engine's skill tick does.
   `SKILL_CH_COLD_SHIELD_A_01`, `SKILL_CH_WATER_SELFHEAL_E_01`, ...); column 24 is 1 only on the 19
   `SKILL_CH_LIGHTNING_GYEONGGONG_B/D` rows. Rows whose `Basic_Activity` (`+0x65`) is not 2 never
   reach that test (`0x4ae6e6 cmp [edi+0x65],2 ; jne 0x4ae9dc`); all 256 such board rows
-  carry `Target_Required` 0, so the one test covers them. **Corrected in round 523:** this said
+  carry `Target_Required` 0, so `skill_tick_approaches` gives them no walk either way (worded as
+  in `combat.gd` in round 527; this said "so the one test covers them", which the jump above
+  contradicts). **Corrected in round 523:** this said
   such rows "leave phase 0 earlier still". `0x4ae9dc` is `mov eax,1 ; pop ; ... ; ret 8`, and the
   decompile reads `if (+0x65 != 2) return 1;`: the tick returns and STAYS in phase 0. The server agrees for the
   non-damaging rows: `session/skill.go`'s `noCombat || zeroDmg` return comes before
@@ -30831,7 +30833,10 @@ one doc probe. Nothing a player sees changes.
 **Round 519: skill range, the phase-0 return, BCRadius, the Mangyang row.**
 
 - **Range per level is constant for China skills only.** Every skilldata row with a non-zero
-  mastery (col 34) was grouped by GroupID (col 2). Range (col 21) varies in five groups. Four are
+  mastery (col 34) was grouped by GroupID (col 2). Range (col 21) varies in five groups. (GroupID
+  0 was left out, as it is no skill: its two rows are the ungrouped event skills
+  `SKILL_EVENT_GHOST_AMULET` 32099, Range 45, and `SKILL_EVENT_GHOST_TRAP` 32100, Range 0, both
+  mastery 1. Round 527 added this note after re-running the grouping.) Four are
   `SKILL_CH_BOW_SPECIAL_A..D` (467-470), as round 519 said. The fifth is
   `SKILL_EU_WARRIOR_FRENZYA_TOUNT_SPRINT_A` (group 540, ids 8479-8499, mastery 513), which rises
   80 -> 240 over 21 levels. Without the mastery filter, groups 1064-1066 and 1073 vary as well.
@@ -30955,8 +30960,10 @@ to have no guild.
   `lea eax,[ecx+0x148]; ret`: the byte at `+0x14c` of the object at `0xeeebd8`. That it means "in
   a guild" stays the inference round 521 recorded: its zero branch in the 0xf block offers only
   the create line. No writer was read. One more caller agrees without proving it:
-  `FUN_005bec70` calls both on `0xeeebd8` (`0x5bec82`, `0x5bec91`) and reads the block's `+5`
-  byte (`0x5beca3`, `0x5becb4`) only when `FUN_009870e0` is nonzero (`0x5bec8e` `je 0x5becca`).
+  `FUN_005bec70` calls both on `0xeeebd8` (`0x5bec87` `call 0x9870e0`, `0x5bec96`
+  `call 0x9870d0`, each after a `mov ecx,0xeeebd8`) and reads the block's `+5` byte (`0x5beca3`,
+  `0x5becb4`) only when `FUN_009870e0` is nonzero (`0x5bec8e` `je 0x5becca`). (Corrected in round
+  527: this cited `0x5bec82` and `0x5bec91`, which are the two `mov ecx,0xeeebd8`.)
   `sro_client.asm` has ten `call 0x9870e0` sites in all.
 - **The fixture's shape.** `/var/tmp/tables/refshopgroup.txt` has seven `GROUP_STORE_*_GUILD`
   rows, one per guild pattern (`GROUP_STORE_CH_GUILD` / `NPC_CH_GENARAL_SP` through
@@ -31115,7 +31122,10 @@ per-member share, so kills gave the guild nothing. `SYSTEMS.md`'s Guild row and 
   the last reply, **not live** while members earn.
 - The shutdown flush is srrevamp's own handling (the engine's clean-shutdown path is unread).
   Pending points are lost only if the process dies without stopping cleanly, or the credit
-  fails (logged).
+  fails (logged). *Corrected in round 527:* not "only". On a clean stop, points booked after
+  `FlushAllPending` has passed a character are lost at exit too (a count below ten per
+  character, or a batch whose credit is still running when `main` returns), and so are the
+  points of a conversion or flush whose `GuildIDOf` fails with a database error.
 
 **Review follow-up: the logout flush** (folded into this round's commit). The first version
 treated `GainExpAndLevel` as the only user of `pc+0x2184` and recorded "whether the engine
@@ -31241,8 +31251,12 @@ Not measured on a running client: the Guild tab's "GP" text has not been seen on
 
 A client change: the talk menu at a job-guild NPC now offers the archive's own join line to a
 player with no job, as the real client's `FUN_006fdeb0` does. At `NPC_CH_DOCTOR` (Jangan, region
-97/168 in `npcpos.txt`) the menu reads "1. Buy", "2. Join merchant guild", "3. End conversation."
-on the render box's archive. Choosing the line reports that it is not available yet.
+97/168 in `npcpos.txt`) the menu should read "1. Buy", "2. Join merchant guild", "3. End
+conversation.". That is derived from the render box's extracted tables, not seen on screen:
+`refshopgroup.txt`'s `GROUP_STORE_CH_TRADER` row (id 986) names the NPC, so "Buy" comes first,
+and `textuisystem.txt`'s later rows give the join and end text (`..._TRADERMENU_JOIN`,
+`..._WND_TALKEND`). (Reworded in round 527: this said the menu "reads" that way "on the render
+box's archive", as if seen on screen.) Choosing the line reports that it is not available yet.
 
 **Grounding, re-read for this round** (all read-only on the render box).
 
@@ -31304,7 +31318,10 @@ does not know the job.
 **Docs.** `character_state.md`: the vocabulary table's 0x14/0x15/0x16 rows and the agreement
 table's rows now give the literals instead of `NPC_*_MERCHANT`, `NPC_*_THIEF*` and
 `NPC_*_HUNTER`, which wrongly took in `NPC_SD_MERCHANT_CHANGER`, `NPC_TD_THIEF_BUY`,
-`NPC_TD_THIEF_A`-`_D` and `NPC_SD_THIEF_AGENT_CHANGER`; the talk-menu table's row 18 is filled
+`NPC_TD_THIEF_A`-`_D` and `NPC_SD_THIEF_AGENT_CHANGER` (qualified in round 527: the thief
+codenames fall under `NPC_*_THIEF*` read either way, but `NPC_SD_MERCHANT_CHANGER` falls under
+`NPC_*_MERCHANT` only when the pattern is read as a substring, the way the server's `strstr`
+tests match; an anchored glob stops at `_CHANGER`); the talk-menu table's row 18 is filled
 in; a new subsection, "The job guilds' lines (round 526)", has the branches and the token table
 for items 0x1e-0x26 and 0x3c. `jobs.md`: a new section, "The client's join line at the job-guild
 NPCs (round 526)", gives the chain. `SYSTEMS.md`'s Jobs row, `TODO.md`'s NPC-talk item and
@@ -31318,8 +31335,12 @@ NPCs (round 526)", gives the chain. `SYSTEMS.md`'s Jobs row, `TODO.md`'s NPC-tal
 - **Negative:** `NPC_SD_MERCHANT_CHANGER`, `NPC_TD_THIEF_BUY`, `NPC_TD_THIEF_A`,
   `NPC_SD_THIEF_AGENT_CHANGER` and `NPC_CH_POTION` have none; `NPC_CH_GENARAL_SP` has `guild` and
   no `job_guild`.
-- **Negative:** `NPC_CH_DOCTOR` with job kind 1 and with 3 has no `job_guild`.
-- The composed menu at `NPC_CH_DOCTOR` (empty shop set) is `1. <join text>`, `2. <end text>`.
+- `NPC_CH_DOCTOR` with job kind 1 and with 3 has no `job_guild`. (Relabelled in round 527: these
+  were marked negative, but they pass before this round too, which had no join line at all. They
+  are regression guards. Round 527 added kind 2 at the two thief NPCs.)
+- The composed menu at `NPC_CH_DOCTOR` is `1. <join text>`, `2. <end text>`, with a shop set
+  that holds `NPC_CH_SMITH` and `NPC_CH_POTION` but not `NPC_CH_DOCTOR`, so no "Buy". (Round 527:
+  this said "empty shop set".)
 - The English is not pinned.
 - **Negative case proven.** With `npc_service_reader.gd` stashed (BASE), the suite failed 16
   checks: the constant check, the 14 codenames (each "got []") and the composed menu. With the
@@ -31330,3 +31351,123 @@ NPCs (round 526)", gives the chain. `SYSTEMS.md`'s Jobs row, `TODO.md`'s NPC-tal
 
 Not measured on a running real client, and no running srrevamp client has printed the new
 `NPCTALK` lines yet.
+
+## Batch-11 review follow-ups (rounds 523-526): wording, citations, the guild-points shutdown window (round 527)
+
+The reviewers' non-blocking notes on rounds 523-526. Each was re-checked against the dumps, the
+asm and the box's extracted tables (all read-only) before it was written. Comments and docs only,
+plus one relabelled client check, one new client check and one new doc probe. Nothing a player
+sees changes, and no server behaviour changes.
+
+**Round 519/523: skill range and the skill tick.**
+
+- **(a) The skill-tick bullet** in round 519's entry said the 256 `Basic_Activity` != 2 board rows
+  "never reach that test", then "so the one test covers them". It now reads as `combat.gd` does:
+  they carry `Target_Required` 0, so `skill_tick_approaches` gives them no walk either way.
+  Re-checked in `/var/tmp/srv.asm`: `0x4ae6e6 cmp BYTE PTR [edi+0x65],0x2`, `0x4ae6ea jne
+  0x4ae9dc`, and `0x4ae9dc` is `mov eax,0x1 ; ... ; ret 0x8`. Re-counted on the box's skilldata
+  (Service 1, `SKILL_CH_`, non-zero mastery): 82 rows with Activity 0 and 174 with 1, all with
+  column 22 = 0.
+- **(b) `NpcTableReader.parse_bc_radius_by_code`'s comment** still said `monster_ai.md` "warns
+  of" a second `MOB_CH_MANGNYANG`. That paragraph, in "The roster's real walk and run speeds
+  (round 362)", was corrected in round 523. The comment now says so and names
+  `MOB_CH_STRONG_MANGNYANG` (id 9383).
+- **(c) `TODO.md`, "Attack distance", the debug-panel bullet:** only a DAMAGING cast out of reach
+  earns "too far away". `session/skill.go` returns on `noCombat || zeroDmg` (NoCombatParam /
+  ZeroDamage) before it calls `skillInReach`, so a non-damaging cast is accepted at any distance.
+- **(d) `SkillDataReader`'s Range comment** read "all but four CHINA skills", then "One Europe
+  skill varies too". It now uses round 523's wording: Range varies by level in five skills, four
+  China bow skills and one Europe skill, and the reader keeps only `SKILL_CH_` rows.
+- **(e) Round 523's "varies in five groups"** now notes that GroupID 0 was left out. The grouping
+  was re-run (every skilldata row with non-zero mastery, by column 2, counting distinct column-21
+  values). Six GroupIDs vary: 467-470, 540 and 0. Group 0 is not a skill. Its two rows are
+  `SKILL_EVENT_GHOST_AMULET` (32099, Range 45) and `SKILL_EVENT_GHOST_TRAP` (32100, Range 0),
+  both mastery 1.
+- **(f) `TODO.md`'s filed departure** said an Activity other than 2 returns at `0x4ae6ea` "and
+  `Target_Required` 0 skips the band at `0x4ae743`". All 147 damaging `Target_Required` 0 rows
+  (the `SKILL_CH_*_GIGONGTA_A..E` rows, re-counted: Activity 1 and column 22 = 0 on all 147) return
+  at `0x4ae6ea` before `0x4ae743` is reached. The line now says that the second test would skip
+  the band too, but is never reached.
+
+**Round 524: the guild store line.**
+
+- **(g) `FRONTEND_CHECKLIST.md`'s talk item** now says that until the first guild reply
+  (`guild_id` -1) a guild NPC still shows "Buy", next to the "Guild" placeholder. This is
+  `services_for`'s `not (guild_npc and guild_id == 0)` test, pinned by check (o).
+- **(h) The `FUN_005bec70` addresses.** `/var/tmp/sro_client.asm`: `0x5bec82` and `0x5bec91` are
+  `mov ecx,0xeeebd8`. The calls are `0x5bec87 call 0x9870e0` and `0x5bec96 call 0x9870d0`. Round
+  524's bullet is corrected inline. `sro_client.asm` still has ten `call 0x9870e0` sites. No
+  other file cited the wrong pair.
+
+**Round 525: guild points.**
+
+- **(i) `recovered_names.tsv`.** Row `005c62e0` said "0x4c07 unless a PC". It now names the life
+  test: vtable `+0xf8` `IGObj::GetLifeState` == 1 (`0x5c62fe`-`0x5c6308`,
+  `docs/protocol/igobj_vtable.md` slot 62). It also adds the guild test's `pc+0x1cbc`, the level
+  test's `0x5c6335`, and the second caller, `FUN_004def90` (`0x4defbd call 0x5c62e0`). Row
+  `005c4110` said "type 6 (member contribution)". It now says the member record's `+0x40` is
+  `_GUILDMEMBER GP_Donation` and `Contribution` is `+0x58` (`docs/protocol/db_bind_offsets.tsv`).
+  It also says the credit runs only when `FUN_005d0c90(member)` finds the member, as the dump's
+  `CMainProcess::AddPoints` body reads. Both rows keep the five-field format.
+- **(j) The shutdown flush's window: DISCLOSED, not closed.** `cmd/server` runs
+  `FlushAllPending` as soon as `ListenAndServe` returns. The gateway was read
+  (`internal/gateway/gateway.go`):
+  - `ListenAndServe` closes the listener on cancel and returns. It keeps no record of its
+    `serveConn` goroutines and does not wait for them.
+  - `serveConn` checks `ctx` only at the top of its loop. One blocked in `proto.Read` hands its
+    next packet to the handler, with the cancelled context, before it notices.
+  - The keep-up swings run on their own timers with `context.Background()`
+    (`session/keepup.go`, `armKeepUp`).
+
+  So a kill during or after the flush books on an accumulator the flush has already passed, and
+  `main` returns without sending it. That is up to nine points per character on a clean stop,
+  plus any batch whose credit is still running at exit. A drain would need the gateway to track,
+  close and wait for its connections, and the keep-up loops to stop first. That changes the
+  gateway's lifecycle, which this item may not do, so the window is disclosed instead:
+  `FlushAllPending`'s comment, `main.go`'s comment at the call, `guild.md`'s "The logout flush"
+  bullet, `TODO.md`'s guild item, and an inline correction to round 525's "lost only if" line.
+- **(k) A membership lookup error.** In `AddSkillExp`, a `GuildIDOf` failure other than
+  `ErrNotInGuild` logs and books nothing. The engine tests `pc[0x72f]` in memory, which cannot
+  fail, so it would book the points. `FlushPending` drops its count the same way. Both are now
+  disclosed in their comments and in `guild.md`. Behaviour is unchanged.
+
+**Round 526: the job-guild lines.**
+
+- **(l) The opening paragraph** said the `NPC_CH_DOCTOR` menu "reads" "1. Buy", "2. Join merchant
+  guild", "3. End conversation." "on the render box's archive". That was derived from the tables,
+  not seen on screen, and the paragraph now says so. `/var/tmp/tables/refshopgroup.txt`: the
+  `GROUP_STORE_CH_TRADER` row, id 986, owner `NPC_CH_DOCTOR`. `textuisystem.txt`: the later
+  (19-column) rows of `UIIT_STT_NPC_CHATTING_TRADERMENU_JOIN` and `..._WND_TALKEND` read "Join
+  merchant guild" and "End conversation.".
+- **(m) The Tests bullet's "empty shop set"** is corrected. The test's set holds `NPC_CH_SMITH`
+  and `NPC_CH_POTION`, but not `NPC_CH_DOCTOR`.
+- **(n) Check (p)'s held-job checks** (kind 1 and 3 at `NPC_CH_DOCTOR`) were labelled NEGATIVE,
+  but they pass on the pre-526 reader, which offered no join line at all. They are relabelled as
+  regression guards, in the test and in round 526's entry. A held kind 2 (Thief, `FUN_00700440`
+  `0x7012bf push 0x2`) at `NPC_TD_THIEF_SELL` and `NPC_SD_T_AREA_THIEF` is added.
+- **(o) The wildcard claim.** `NPC_*_MERCHANT` takes in `NPC_SD_MERCHANT_CHANGER` only when it is
+  read as a substring pattern, the way the server's `strstr` tests match. An anchored glob stops
+  at `_CHANGER`. The thief codenames fall under `NPC_*_THIEF*` either way. This is qualified in
+  round 526's Docs paragraph and in `character_state.md`'s 0x14 row, the only other place that
+  repeats it. `jobs.md` makes no claim about which codenames the wildcards take in.
+
+**Tests.**
+
+- **New doc probe** `TestGuildPointRowsCarryRound525Corrections`
+  (`server/internal/systems/guild_points_record_test.go`). It reads `recovered_names.tsv` at run
+  time. Row `005c62e0` must name `GetLifeState` and must not say "0x4c07 unless a PC,". Row
+  `005c4110` must name `GP_Donation` and must not say "(member contribution)".
+- **Negative case proven.** With `recovered_names.tsv` stashed (BASE), the probe failed all four
+  checks. With the file restored, it passes.
+- **Client check (p)** now runs four held-job cases. They pass on BASE's production scripts, as
+  regression guards should: with `npc_table_reader.gd` and `skill_data_reader.gd` stashed and
+  shipped, ALL PASS. `npc_service_reader.gd` is unchanged. Their teeth were shown by a mutation:
+  with its `if player_job_kind == 0:` gate replaced by `if true:` and shipped, the suite reported
+  all four as FAIL (`got ["job_guild"]`), "4 FAILURES". Restored (the file diffs clean against
+  BASE) and shipped, ALL PASS.
+- Render box: `client/tools/remote_godot.sh tests` ran 80 suites, 0 failing.
+  `client/tools/remote_godot.sh check` checked 246 scripts and 5 scenes: ALL LOAD.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...`: green.
+
+`SYSTEMS.md` is unchanged. Its Guild row already describes the logout flush, and no row lists
+any of these as unwired.

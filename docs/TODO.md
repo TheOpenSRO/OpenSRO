@@ -136,7 +136,9 @@ In order. Each is checked off here when it ships in a release, with its round in
       every new PC (CGObjPC::vslot_000, 0x4dea77) and FUN_004def90 (0x4def90, its call to
       RequestAddGuildPoints at 0x4defbd) flushes any count above zero when the PC leaves the world;
       srrevamp flushes it on disconnect (`session.GuildPointsDisconnectHandler`) and at a clean stop
-      (`FlushAllPending`, its own handling). **Left:** a guild level, and letting the master spend
+      (`FlushAllPending`, its own handling). That stop flush does not wait for the gateway's
+      connection goroutines or the keep-up swings, so points booked after it passes a character are
+      lost at exit (round 527, disclosed in `guildpoints.go` and `guild.md`). **Left:** a guild level, and letting the master spend
       GatheredSP (and gold) on a level-up.
 - [ ] **Monsters do not move, chase or notice anyone.** They strike only when struck (round 254's
       cadence cap). The machine is read: sixteen states, WANDER's leg and dwell (round 251), BATTLE's
@@ -306,8 +308,9 @@ In order. Each is checked off here when it ships in a release, with its round in
         that deal damage (the exporter's `ZeroDamage` 0, run over the box's skilldata tables):
         147 China board rows, every level of the
         15 `SKILL_CH_COLD/FIRE/LIGHTNING_GIGONGTA_A..E` skills, all `Basic_Activity` 1. The engine's
-        skill tick computes no band for them (an Activity other than 2 returns at `0x4ae6ea`
-        without leaving phase 0, and `Target_Required` 0 skips the band at `0x4ae743`), but `session/skill.go`
+        skill tick computes no band for them: an Activity other than 2 returns at `0x4ae6ea`
+        without leaving phase 0, before the `Target_Required` test at `0x4ae743` is reached (that
+        test would skip the band too, since all 147 carry 0; re-worded in round 527). But `session/skill.go`
         resolves them as a blow on the selected monster behind `skillInReach`, so a cast with a
         distant monster selected is refused "too far away" -- as it was before round 519. The
         client sends them at once. Next: read what the engine does with an Activity-1 row
@@ -318,8 +321,10 @@ In order. Each is checked off here when it ships in a release, with its round in
       - a walk that geometry blocks never reaches the band and nothing times it out, the same as a
         plain click-to-move: the attack waits until WASD, typing or another click;
       - the debug panel's Skills-tab "Use" button (`World3D._on_skill_use_pressed`, a developer
-        panel, not the HUD) still sends `use_skill` at once with no approach walk, so out of reach
-        it earns "too far away". The hotbar's casts go through `_cast_skill` -> `_attack_monster`.
+        panel, not the HUD) still sends `use_skill` at once with no approach walk, so a DAMAGING
+        cast out of reach earns "too far away". A non-damaging one is accepted at any distance:
+        `session/skill.go`'s `noCombat || zeroDmg` return (NoCombatParam / ZeroDamage) comes before
+        `skillInReach` (round 527). The hotbar's casts go through `_cast_skill` -> `_attack_monster`.
 - [ ] **Four HUD surfaces let clicks through to the world.** Measured by round 522's review: a
       click on the player-info block, the minimap's map (every node IGNORE, `hud_minimap.gd`), the
       target window (every node IGNORE, `hud_target.gd`) or the hotbar's body away from its slots

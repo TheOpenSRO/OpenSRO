@@ -213,9 +213,12 @@ static func parse_speeds_by_code(data: PackedByteArray, into: Dictionary = {}, p
 ## MODEL_TABLE_PATHS (the seventh, characterdata.txt, lists part-file names
 ## -- CharacterData_1000.txt, ... -- not rows): 13,291 rows with a numeric
 ## column 50 and 13,291 distinct code names, so no row shadows another (a live
-## client read the same 13,291 keys out of Media.pk2). The
-## "second MOB_CH_MANGNYANG" docs/protocol/monster_ai.md warns of is
-## MOB_CH_STRONG_MANGNYANG (id 9383), a different code.
+## client read the same 13,291 keys out of Media.pk2). The row
+## docs/protocol/monster_ai.md ("The roster's real walk and run speeds
+## (round 362)") first called a "second MOB_CH_MANGNYANG" is
+## MOB_CH_STRONG_MANGNYANG (id 9383), a different code; that paragraph was
+## corrected in round 523 and now names it, and says an exact code-name key
+## is safe.
 static func parse_bc_radius_by_code(data: PackedByteArray, into: Dictionary = {}, prefix: String = "") -> Dictionary:
 	for line in _lines(data):
 		var cols := line.split("\t")

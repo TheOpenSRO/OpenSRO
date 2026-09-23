@@ -49,14 +49,17 @@ const S_BASIC_CODE := 3          # SKILL_CH_..._NN -- names the cast .ban clip
 const S_LEVEL := 7
 # Cast timing / cost / range, verified against SMASH_A (see the skilldata-columns
 # note): all in ms except Range. CastTime/ReuseDelay are constant per skill;
-# ReqSP and ConsumeMP rise per level. Range is constant within a skill for
-# all but four CHINA skills: measured on the box's skilldata tables (round 519
-# review, re-counted round 523 over every row with a non-zero mastery),
-# SKILL_CH_BOW_SPECIAL_A..D (bases 467-470) rise 2 a level, 204->214,
-# 218->228, 228->238 and 240->244 -- so it is kept per level (level_range).
-# One Europe skill varies too, SKILL_EU_WARRIOR_FRENZYA_TOUNT_SPRINT_A (group
-# 540, ids 8479-8499), 80 -> 240 by level; this reader keeps only SKILL_CH_
-# rows (parse_skills), so it never sees it.
+# ReqSP and ConsumeMP rise per level. Range varies by level in five skills
+# (the box's skilldata tables, every row with a non-zero mastery grouped by
+# GroupID; round 519 review, re-counted rounds 523 and 527;
+# docs/RE_COMPLETION.md, round 523, "Range per level is constant for China
+# skills only"). Four are China skills, SKILL_CH_BOW_SPECIAL_A..D (bases
+# 467-470), which rise 2 a level: 204->214, 218->228, 228->238 and 240->244.
+# The fifth is a Europe skill, SKILL_EU_WARRIOR_FRENZYA_TOUNT_SPRINT_A (group
+# 540, ids 8479-8499), 80 -> 240. Every other China skill keeps one Range
+# across its levels. This reader keeps only SKILL_CH_ rows (parse_skills), so
+# it never sees the Europe skill, and it keeps Range per level (level_range)
+# for the four bow skills.
 const S_CAST_TIME := 12
 const S_REUSE_DELAY := 14         # the cooldown
 const S_RANGE := 21               # 0 = melee

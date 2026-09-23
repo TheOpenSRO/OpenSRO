@@ -943,7 +943,11 @@ func main() {
 	// the deferred store Closes (see GuildPointSkills.FlushAllPending: this
 	// is srrevamp's own handling). ctx is already cancelled at this point;
 	// the 30 s bound is srrevamp's own too, so a stalled database cannot hold
-	// the stop open.
+	// the stop open. It runs while connection goroutines and keep-up swings
+	// may still be booking points, and main does not wait for them: points
+	// booked after the flush passes a character are lost at exit (up to nine
+	// per character, clean stop only) -- disclosed, not closed, in
+	// FlushAllPending's comment (round 527).
 	flushCtx, cancelFlush := context.WithTimeout(context.Background(), 30*time.Second)
 	gpSkills.FlushAllPending(flushCtx)
 	cancelFlush()

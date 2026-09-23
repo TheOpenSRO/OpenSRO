@@ -292,9 +292,25 @@ result.
   clean-shutdown path has not been read, and its all-users-out path that has
   (the ShardManager drop, above) flushes every PC. A session that enters the
   world as a second character without disconnecting keeps the first one's count
-  until that character's next flush. Pending points are otherwise lost only
-  when the process dies without stopping cleanly, or when the credit itself
-  fails (logged, as on the batch path).
+  until that character's next flush. Pending points are otherwise lost when the
+  process dies without stopping cleanly, or when the credit itself fails
+  (logged, as on the batch path), and in two more cases found in review
+  (round 527; this said "only" the first two):
+  - **The stop flush's window.** `FlushAllPending` runs as soon as the
+    listener returns, but the gateway does not wait for its connection
+    goroutines (one blocked in a read still hands its next packet to the
+    handler), and keep-up swings run on their own timers. A kill during or
+    after the flush books on an accumulator the flush has already passed,
+    and `main` returns without sending it: up to nine points per character,
+    on a clean stop, plus any batch whose credit is still running at exit.
+    Disclosed in `FlushAllPending`'s comment, not closed: closing it needs a
+    gateway that tracks, closes and waits for its connections, and keep-up
+    loops stopped first.
+  - **A membership lookup error.** The engine tests `pc[0x72f]` in memory;
+    srrevamp asks the store (`GuildIDOf`). If that fails with a database error
+    (not `ErrNotInGuild`), the conversion's points are logged and not booked,
+    and a logout flush drops its count. Disclosed in `AddSkillExp`'s and
+    `FlushPending`'s comments.
 - **The request's life test** (`GetLifeState == 1`, else `0x4c07`) uses the
   stand-in the founder check uses for the same engine test (step 2 of the
   founder-check table above, enforced in `session.handleGuildCreate`): alive is

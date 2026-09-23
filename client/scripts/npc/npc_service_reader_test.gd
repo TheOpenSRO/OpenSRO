@@ -425,14 +425,26 @@ func _init() -> void:
 		gsp = reader_script.call("services_for", "NPC_CH_GENARAL_SP", shops, -1, false, 0)
 	_check(stateful and _keys(gsp).has("guild") and (job_lines.call(gsp) as Array).is_empty(),
 		"NPC_CH_GENARAL_SP offers guild and no job_guild (got %s)" % [_keys(gsp)])
-	# NEGATIVE: a player who has a job gets no join line, whether it is this
-	# guild's job (FUN_006fdeb0's 0x1f branch) or another (its bare tail).
-	for held in [1, 3]:
+	# REGRESSION GUARDS, not negatives (round 527): these pass on the reader
+	# before round 526 too, which offered no join line at all. A player who
+	# has a job gets no join line, whether it is this guild's job
+	# (FUN_006fdeb0's 0x1f branch) or another (its bare tail): the join line
+	# needs the job byte to be 0 (0x6fdec4 `test al,al`, 0x6fdec6 `jne
+	# 0x6fdee0`). Kind 1 (the trader's own) and kind 3 (another) at the
+	# Jangan trader, and kind 2 (Thief, FUN_00700440 0x7012bf `push 2`) at
+	# both thief NPCs.
+	var held_cases := [
+		["NPC_CH_DOCTOR", 1], ["NPC_CH_DOCTOR", 3],
+		["NPC_TD_THIEF_SELL", 2], ["NPC_SD_T_AREA_THIEF", 2],
+	]
+	for hc in held_cases:
+		var hcode: String = hc[0]
+		var held: int = hc[1]
 		var jh: Array = []
 		if stateful:
-			jh = reader_script.call("services_for", "NPC_CH_DOCTOR", shops, -1, false, held)
+			jh = reader_script.call("services_for", hcode, shops, -1, false, held)
 		_check(stateful and (job_lines.call(jh) as Array).is_empty(),
-			"a player with job kind %d at NPC_CH_DOCTOR gets no job_guild (got %s)" % [held, _keys(jh)])
+			"a player with job kind %d at %s gets no job_guild (got %s)" % [held, hcode, _keys(jh)])
 	# The composed menu at the Jangan trader: the join line's token resolved
 	# through the text table, then the end line.
 	if stateful and has_composer:
