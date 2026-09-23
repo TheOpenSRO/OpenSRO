@@ -183,26 +183,52 @@ func TestExpUnitAndKillExp(t *testing.T) {
 	// window scaler then takes almost all of it away, which is the game's real
 	// anti-powerlevelling behaviour and far stronger than the min rule alone.
 	// gap -19 -> 1 - 16*0.15 = -1.4, floored at 0.1. 24 * 0.1 = 2.4.
-	if got, ok := tbl.KillExp(20, 1); !ok || got != 2 {
+	if got, ok := tbl.KillExp(20, 1, false); !ok || got != 2 {
 		t.Fatalf("KillExp(20, 1) = %d,%v; want 2 (level-1 unit, window floor 0.1)", got, ok)
 	}
 	// The reverse is not symmetric: the base is still the level-1 unit, but
 	// punching 19 levels up earns the gap bonus (capped at 13 steps, 1.39) and
 	// pays the far-above window penalty (1 - 9*0.02 = 0.82).
 	// 24 * 0.82 * 1.39 = 27.36.
-	if got, ok := tbl.KillExp(1, 20); !ok || got != 27 {
+	if got, ok := tbl.KillExp(1, 20, false); !ok || got != 27 {
 		t.Fatalf("KillExp(1, 20) = %d,%v; want 27 (unit 24 * 0.82 * 1.39)", got, ok)
 	}
 	// A level-3 character killing a level-10 monster sits INSIDE the -3..+10
 	// window, so the window scaler is exactly 1.0 and only the gap bonus
 	// applies: base 71 at level 3, 10 steps -> 1.30. 71 * 1.30 = 92.3.
-	if a, _ := tbl.KillExp(3, 10); a != 92 {
+	if a, _ := tbl.KillExp(3, 10, false); a != 92 {
 		t.Fatalf("KillExp(3, 10) = %d; want 92 (71 * 1.00 * 1.30)", a)
 	}
 	// The other way round the killer out-levels by 7: no gap bonus, and the
 	// window scaler's far-below arm, 1 - 4*0.15 = 0.4. 71 * 0.4 = 28.4.
-	if b, _ := tbl.KillExp(10, 3); b != 28 {
+	if b, _ := tbl.KillExp(10, 3, false); b != 28 {
 		t.Fatalf("KillExp(10, 3) = %d; want 28 (71 * 0.40)", b)
+	}
+
+	// In an exp-sharing party the diff scaler adds the round-480 gap bonus
+	// (China arm) on top. Each is the solo case above with the bonus added.
+	for _, tc := range []struct {
+		killer, victim int
+		want           int64
+		why            string
+	}{
+		// gap 7: 1.30 + 0.30 = 1.60, 71 * 1.60 = 113.6.
+		{3, 10, 114, "71 * 1.00 * (1.30 + 0.30)"},
+		// gap 19: 1.39 + 0.45 = 1.84, 24 * 0.82 * 1.84 = 36.2.
+		{1, 20, 36, "24 * 0.82 * (1.39 + 0.45)"},
+		// gap 10, inside the window: 235 * 1.84 = 432.4.
+		{10, 20, 432, "235 * 1.00 * (1.39 + 0.45)"},
+		// Out-levelling the target earns no bonus, party or not.
+		{10, 3, 28, "71 * 0.40, no gap bonus below the target"},
+	} {
+		if got, ok := tbl.KillExp(tc.killer, tc.victim, true); !ok || got != tc.want {
+			t.Errorf("KillExp(%d, %d, party) = %d,%v; want %d (%s)", tc.killer, tc.victim, got, ok, tc.want, tc.why)
+		}
+	}
+	// And the same kill solo, to pin that the party is what made the difference:
+	// 235 * 1.39 = 326.65.
+	if got, _ := tbl.KillExp(10, 20, false); got != 327 {
+		t.Errorf("KillExp(10, 20, solo) = %d; want 327 (235 * 1.39)", got)
 	}
 
 	// An export predating the exp_unit column still loads, and reports the
@@ -214,7 +240,7 @@ func TestExpUnitAndKillExp(t *testing.T) {
 	if _, ok := old.ExpUnit(1); ok {
 		t.Fatal("a three-column export should report no exp unit")
 	}
-	if _, ok := old.KillExp(1, 1); ok {
+	if _, ok := old.KillExp(1, 1, false); ok {
 		t.Fatal("KillExp should be unknown when the table has no exp units")
 	}
 }
@@ -337,7 +363,7 @@ func TestExpDiffScale(t *testing.T) {
 		{"a level-1 killer against a level-1 target", 1, 1, 1.09},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ExpDiffScale(tc.killerLevel, tc.victimLevel)
+			got := ExpDiffScale(tc.killerLevel, tc.victimLevel, false, false)
 			if math.Abs(got-tc.want) > 1e-9 {
 				t.Errorf("ExpDiffScale(%d, %d) = %v, want %v", tc.killerLevel, tc.victimLevel, got, tc.want)
 			}
@@ -347,8 +373,83 @@ func TestExpDiffScale(t *testing.T) {
 	// It never scales a reward down, whatever the levels.
 	for killer := 1; killer <= 80; killer++ {
 		for victim := 1; victim <= 80; victim++ {
-			if s := ExpDiffScale(killer, victim); s < 1 || s > ExpDiffScaleCap {
+			if s := ExpDiffScale(killer, victim, false, false); s < 1 || s > ExpDiffScaleCap {
 				t.Fatalf("ExpDiffScale(%d, %d) = %v, outside [1, %v]", killer, victim, s, ExpDiffScaleCap)
+			}
+		}
+	}
+}
+
+// TestExpDiffPartyBonus pins the party gap bonus ladder of
+// Formula_ExpScaleByLevelDiff (0040ffe0): `CMP EAX,9/7/5 ; JL` on victim -
+// killer, so every threshold is inclusive, reading 0.15/0.30/0.45 on the China
+// arm and 0.30/0.60/0.90 on the Europe (Country == 1) arm.
+func TestExpDiffPartyBonus(t *testing.T) {
+	const killer = 10
+	for _, tc := range []struct {
+		gap   int
+		china float64
+	}{
+		{-5, 0}, {0, 0}, {4, 0},
+		{5, 0.15}, {6, 0.15},
+		{7, 0.30}, {8, 0.30},
+		{9, 0.45}, {20, 0.45},
+	} {
+		if got := ExpDiffPartyBonus(killer, killer+tc.gap, false); math.Abs(got-tc.china) > 1e-9 {
+			t.Errorf("China, gap %d: ExpDiffPartyBonus = %v, want %v", tc.gap, got, tc.china)
+		}
+		// Europe's ladder is China's doubled, step for step.
+		if got := ExpDiffPartyBonus(killer, killer+tc.gap, true); math.Abs(got-2*tc.china) > 1e-9 {
+			t.Errorf("Europe, gap %d: ExpDiffPartyBonus = %v, want %v", tc.gap, got, 2*tc.china)
+		}
+	}
+}
+
+// TestExpDiffScalePartyBonus pins the bonus inside the whole scale: added to
+// the 1 + 0.03 * steps term only in an exp-sharing party, never below the
+// bare-1.0 cutoff, and never past the 4.0 clamp.
+func TestExpDiffScalePartyBonus(t *testing.T) {
+	const killer = 10
+	for _, tc := range []struct {
+		victim int
+		europe bool
+		want   float64
+	}{
+		{7, false, 1.00},  // out-levelled by 3: the bare 1.0, bonus discarded
+		{10, false, 1.09}, // no gap, no bonus
+		{14, false, 1.21}, // gap 4: one short of the first step
+		{15, false, 1.39}, // gap 5: 1.24 + 0.15
+		{16, false, 1.42}, // 1.27 + 0.15
+		{17, false, 1.60}, // gap 7: 1.30 + 0.30
+		{18, false, 1.63}, // 1.33 + 0.30
+		{19, false, 1.81}, // gap 9: 1.36 + 0.45
+		{20, false, 1.84}, // 13 steps: 1.39 + 0.45, the China peak
+		{30, false, 1.84}, // still capped
+		{15, true, 1.54},  // 1.24 + 0.30
+		{17, true, 1.90},  // 1.30 + 0.60
+		{19, true, 2.26},  // 1.36 + 0.90
+		{30, true, 2.29},  // 1.39 + 0.90, the Europe peak
+	} {
+		if got := ExpDiffScale(killer, tc.victim, true, tc.europe); math.Abs(got-tc.want) > 1e-9 {
+			t.Errorf("ExpDiffScale(%d, %d, party, europe=%v) = %v, want %v", killer, tc.victim, tc.europe, got, tc.want)
+		}
+	}
+
+	// The party is the gate: the same kill solo is today's scale, whatever
+	// the Country.
+	if got := ExpDiffScale(10, 15, false, true); math.Abs(got-1.24) > 1e-9 {
+		t.Errorf("ExpDiffScale(10, 15, solo, europe) = %v, want 1.24 (no party, no bonus)", got)
+	}
+
+	for killer := 1; killer <= 140; killer++ {
+		for victim := 1; victim <= 140; victim++ {
+			for _, party := range []bool{false, true} {
+				for _, europe := range []bool{false, true} {
+					if s := ExpDiffScale(killer, victim, party, europe); s < 1 || s > ExpDiffScaleCap {
+						t.Fatalf("ExpDiffScale(%d, %d, %v, %v) = %v, outside [1, %v]",
+							killer, victim, party, europe, s, ExpDiffScaleCap)
+					}
+				}
 			}
 		}
 	}

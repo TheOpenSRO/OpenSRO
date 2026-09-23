@@ -2,9 +2,11 @@ package session
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
 	"github.com/OpenSRO/srrevamp/server/internal/party"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
 )
@@ -76,6 +78,61 @@ func TestApplyPartyExpBonus(t *testing.T) {
 	// 9 * 1.06 = 9.54 -> 10. Truncation would give 9 and hide the bonus.
 	if got := applyPartyExpBonus(hub, 42, 9); got != 10 {
 		t.Errorf("small award rounding: got %d, want 10 (9 * 1.06 = 9.54)", got)
+	}
+}
+
+// TestKillExpPartyGapBonus covers the wiring between a live party and the diff
+// scaler's gap bonus (round 480). The bonus itself is pinned in
+// leveldata.TestExpDiffScalePartyBonus; what this checks is that a partied
+// kill reaches it and every "no party" shape does not.
+//
+// A level-10 killer against a level-20 target, with the real level-10 exp unit
+// 235: solo 235 * 1.39 = 326.65 -> 327; partied 235 * (1.39 + 0.45) = 432.4 ->
+// 432 (the window scaler is 1.0 inside a +10 gap).
+func TestKillExpPartyGapBonus(t *testing.T) {
+	tbl, err := leveldata.ParseCSV(strings.NewReader(`level,exp,mastery_sp,exp_unit
+10,23500,9,235
+20,72700,53,470
+`))
+	if err != nil {
+		t.Fatalf("ParseCSV: %v", err)
+	}
+
+	// No hub at all -- how the handler is built in most tests.
+	if got, ok := killExpFor(tbl, nil, 42, 10, 20); !ok || got != 327 {
+		t.Errorf("no party hub: got %d,%v; want 327", got, ok)
+	}
+
+	hub := party.NewHub()
+
+	// A character in no party gets the solo scale.
+	if got, _ := killExpFor(tbl, hub, 42, 10, 20); got != 327 {
+		t.Errorf("character in no party: got %d, want 327", got)
+	}
+
+	// A party of one already passes the engine's gate: it tests the party
+	// pointer, not the member count.
+	pt, err := hub.Create(member(1, 42, "Leader"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got, _ := killExpFor(tbl, hub, 42, 10, 20); got != 432 {
+		t.Errorf("party of one: got %d, want 432", got)
+	}
+
+	// Both members of a party of two earn it.
+	if _, err := hub.Join(pt.ID, member(2, 43, "Second")); err != nil {
+		t.Fatalf("Join: %v", err)
+	}
+	for _, id := range []int64{42, 43} {
+		if got, _ := killExpFor(tbl, hub, id, 10, 20); got != 432 {
+			t.Errorf("party of two, member %d: got %d, want 432", id, got)
+		}
+	}
+
+	// Someone outside the party still gets the solo scale.
+	if got, _ := killExpFor(tbl, hub, 44, 10, 20); got != 327 {
+		t.Errorf("outsider beside a live party: got %d, want 327", got)
 	}
 }
 

@@ -786,6 +786,16 @@ func inParty(parties *party.Hub, characterID int64) bool {
 	return in && pt != nil && len(pt.Members) > 0
 }
 
+// killExpFor is what a kill is worth to characterID before the mastery, party
+// and rate multipliers, and whether the level table knows it. Being in a party
+// is Formula_ExpScaleByLevelDiff's gate for its gap bonus (0x410018-0x410027:
+// `pc[0x72e]` non-null and bit 0 -- exp-sharing -- of the party's flags), and
+// every srrevamp party shares experience (party.MaxSize), so inParty is the
+// whole gate. See leveldata.ExpDiffScale.
+func killExpFor(tbl *leveldata.Table, parties *party.Hub, characterID int64, killerLevel, victimLevel int) (int64, bool) {
+	return tbl.KillExp(killerLevel, victimLevel, inParty(parties, characterID))
+}
+
 // applyMasteryExpScale scales a kill's experience by the gap between the
 // character's level and its highest mastery level -- the engine's
 // "keep your mastery up" rule, recovered in
@@ -1127,9 +1137,10 @@ func performAttack(
 			// anti-powerlevelling rule, recovered from
 			// Formula_MonsterExpReward. Falls back to the disclosed
 			// toughness-derived ExpReward only for a table with no exp_unit
-			// column (an export that predates it).
+			// column (an export that predates it). A killer in a party also
+			// earns the diff scaler's gap bonus -- see killExpFor.
 			gainedExp := monster.ExpReward
-			if unit, ok := levelTable.KillExp(char.Level, monster.Level); ok {
+			if unit, ok := killExpFor(levelTable, parties, characterID, char.Level, monster.Level); ok {
 				gainedExp = unit
 			}
 			gainedExp = applyMasteryExpScale(ctx, skills, characterID, char.Level, gainedExp)

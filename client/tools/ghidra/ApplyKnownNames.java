@@ -386,8 +386,13 @@ public class ApplyKnownNames extends GhidraScript {
          "One of the two exp reward scalers. Reads both parties' levels and compares against a "
          + "+10 level window."},
         {"0040ffe0", "Formula_ExpScaleByLevelDiff",
-         "The other exp reward scaler: works from (targetLevel - attackerLevel) and picks its "
-         + "constants from a flag at the source ref object's +0x88."},
+         "The other exp reward scaler, receiver in ESI and victim in EAX: 1.0 flat when the "
+         + "receiver out-levels the victim by 3+, else 1 + 0.03*min(victim-receiver+3, 13) "
+         + "clamped to [1, 4.0]. Plus a PARTY GAP BONUS of 0.15/0.30/0.45 at gaps >= 5/7/9 "
+         + "(0.30/0.60/0.90 when the receiver's ref object +0x88, Country, is 1 = Europe), gated "
+         + "at 0x41000d-0x410027 on IsPC, pc[0x72e] (the party) non-null and bit 0 of party+0x10 "
+         + "-- the exp-sharing flag per CParty::CheckCanJoin 0x514560. Shipped round 480 as "
+         + "leveldata.ExpDiffScale."},
         {"00498690", "Stat_ApplyTaggedModifier",
          "Applies one tagged stat modifier: the tag is a C multi-char literal in EAX, the amount "
          + "in param_2. THIS IS THE id->name TABLE the binary otherwise lacks -- there is no data "

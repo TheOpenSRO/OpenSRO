@@ -2224,12 +2224,17 @@ same constant the level-advantage damage term uses — and `FLD dword` makes
 So: out-level the target by three or more and the bonus is exactly 1.0;
 otherwise `1 + 0.03 * min(victim - killer + 3, 13)`, spanning 1.03 to 1.39.
 
-**Not modelled, deliberately.** The same function can add a further
-0.15/0.3/0.45 (or 0.3/0.6/0.9 under a flag at the killer's ref object `+0x88`)
-for gaps above 4, 6 and 8 — but only behind a state gate, `killer[0x72e]`
-non-null with bit 0 of its `+0x10` set, which is not identified. A bonus whose
-precondition is unknown would be applied always, which is worse than omitting
-it. The cap is therefore unreachable in srrevamp.
+**Shipped in round 480; it read "not modelled, deliberately" until then.** The
+same function adds a further 0.15/0.3/0.45 (0.3/0.6/0.9 when the receiver's
+Country, its ref object's `+0x88`, is 1 = Europe) for gaps of 5, 7 and 9 or more
+— behind a gate that is now identified: the receiver is a player
+(`0x41000d`, vtable slot 7), `pc[0x72e]` — the party — is non-null
+(`0x410018`), and bit 0 of the party's `+0x10` is set (`0x410024`), which is the
+**exp-sharing** flag per `CParty::CheckCanJoin` (`0x514560`, refusals
+`0x2c13`/`0x2c14`). srrevamp's parties all share experience, so a partied kill
+earns it and a solo one does not. The cap stays unreachable: the scale peaks at
+1.84 for China and 2.29 for Europe. See the round-480 entry at the end of this
+file.
 
 `Formula_ExpScaleByLevelWindow` (`0040fed0`) stays at 1.0: it branches on a mode
 from `FUN_0040fe60` and asserts on two of its three paths, and neither the mode
@@ -2445,7 +2450,9 @@ a level-3 on a level-10 stays 92.
 
 ### Open
 
-- Bit 0 of a party's `+0x10`, which arms the exp tier bonus.
+- ~~Bit 0 of a party's `+0x10`, which arms the exp tier bonus.~~ **CLOSED —
+  round 480.** It is the exp-sharing flag (`CParty::CheckCanJoin`), and the tier
+  bonus ships in `leveldata.ExpDiffScale`.
 - `FUN_005e4390` and the guild-to-guild comparison behind death kind 5.
 - `vf[0x3b4]` on the killer, which overrides the death loss outright.
 - Death kinds 1, 2 and 6 and their handlers.
@@ -25458,3 +25465,63 @@ not carry.
 edge inferences, and only the control's message-pass has actually been read.
 
 Nothing wired, no tag. `go test -count=1 -p 1 ./...` green.
+
+## Party gap bonus in the kill-EXP level-difference scale (Formula_ExpScaleByLevelDiff) (round 480)
+
+`Formula_ExpScaleByLevelDiff` (`0x0040ffe0`) had been shipped without its party
+half since 2026-09-15: the bonus it adds for a target well above the receiver
+was recorded as "not modelled, deliberately", because the gate in front of it
+(`pc[0x72e]` non-null with bit 0 of the party's `+0x10` set) was not
+identified and a bonus with an unknown precondition would have applied to every
+kill. The gate has been identifiable since the party size cap was read: bit 0
+is the **exp-sharing** flag, per `CParty::CheckCanJoin` (`0x514560`), which caps
+a party at 8 when it is set and 4 when it is clear and raises
+`0x2c13 UIIT_MSG_PARTYERR_MEMBER_FULL_EXP_SHARED_PARTY` /
+`0x2c14 ..._NONEEXP_SHARED_PARTY` (`docs/protocol/party.md`). This round read the
+function again with objdump and wired it.
+
+	41000d  MOV EDX,[EAX + 0x1c] ; CALL EDX ; JE none   <- IsPC (vtable slot 7)
+	410018  MOV EAX,[ESI + 0x1cb8] ; TEST ; JE none     <- pc[0x72e], the party
+	410022  MOV CL,0x1 ; TEST BYTE [EAX + 0x10],CL      <- exp-sharing bit
+	410029  MOV EDX,[ESI + 0x34] ; MOV EDX,[EDX + 0x18]
+	410033  CMP BYTE [EDX + 0x88],CL ; JNE china        <- Country == 1 (Europe)?
+	41003b  europe: >=9 FLD dword [0xb45ddc]  >=7 [0xb45dd8]  >=5 [0xb45b8c]
+	410062  china:  >=9 FLD dword [0xb45dd4]  >=7 [0xb45b8c]  >=5 [0xb45dd0]
+	41008b  FLD [ESP + 0x8] ; FADD qword [0xb45ac0]     <- bonus + 1.0
+
+Every threshold is `CMP EAX,N ; JL` on `victim - receiver`, so inclusive. The
+five `.rdata` floats read, as `FLD dword` says they must be read: `0xb45dd0`
+0.15, `0xb45b8c` 0.30, `0xb45dd4` 0.45, `0xb45dd8` 0.60, `0xb45ddc` 0.90 (the
+last is the same float `ExpWindowNearBelow` already cites). `.rdata` formula
+constants are shared between the dump build and the on-disk exe.
+
+**ESI is the receiver of the experience.** The call sites load it from the
+register whose `+0x1cd8`/`+0x1cdc` (the mastery-lag scale) they have just read:
+`0x410233 -> 0x41023b`, `0x410660 -> 0x410668`, `0x41076f -> 0x410777`. The byte
+at its ref object's `+0x88` is Country (column 14; 0 China, 1 Europe, 3 either),
+the byte the equip check compares for `0x182f STRGERR_COUNTRY_MISMATCH`.
+
+**What moved.** `leveldata.ExpDiffScale(killer, victim, expSharingParty,
+europe)` adds `ExpDiffPartyBonus` when `expSharingParty`, keeping the bare-1.0
+cutoff and the `[1, 4.0]` clamp; `Table.KillExp` takes `expSharingParty` and
+passes `europe = false`, because every srrevamp character is China
+(`character.ValidGender`, `equipment.Refusal`). The kill path calls the new
+`session.killExpFor`, whose gate is `inParty`: every srrevamp party shares
+experience (`party.MaxSize` is the shared cap), and the engine tests the party
+pointer rather than the member count, so a party of one earns it too.
+
+The visible change: a partied level-10 killing a level-15 goes from 1.24x to
+1.39x, and against a level-19 from 1.36x to 1.81x; the China peak is 1.84 and
+Europe's 2.29, so the 4.0 cap stays unreachable. Solo kills are unchanged.
+
+**Tests.** `leveldata.TestExpDiffPartyBonus` pins the ladder at gaps
+-5/0/4/5/6/7/8/9/20 for both arms; `TestExpDiffScalePartyBonus` pins the whole
+scale for a level-10 party killer (7 -> 1.00 through 30 -> 1.84, Europe 1.54 /
+1.90 / 2.26 / 2.29) and sweeps 1..140 x party x Country inside `[1, 4.0]`;
+`TestExpUnitAndKillExp` keeps its four solo values and adds the partied
+114 / 36 / 432 / 28; `session.TestKillExpPartyGapBonus` checks 327 with no hub
+and no party, 432 for a party of one and for both members of a party of two.
+Negative case run: with the production files reverted to the old formula (only
+the signatures adapted), the partied `KillExp(10, 20)` returns 327 against 432
+and `ExpDiffScale(10, 15, party)` 1.24 against 1.39. `go test -count=1 -p 1
+./...` green.

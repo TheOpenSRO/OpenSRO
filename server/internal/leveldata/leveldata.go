@@ -450,27 +450,97 @@ func PartyExpBonus(members int) float64 {
 // double, 0.03 (the same constant the level-advantage damage term uses), and
 // `FLD dword` makes 0x00b45dc0 a float, 4.0.
 //
-// NOT MODELLED, and deliberately: the function can add a further 0.15/0.3/0.45
-// (or 0.3/0.6/0.9 on a flag at the killer's ref object +0x88) for gaps above
-// 4, 6 and 8 levels. It is a PARTY bonus -- the gate is `killer[0x72e]`
-// non-null with bit 0 of its +0x10 set, and `[0x72e]` is the party pointer,
-// named by the binary's own assert through CGObjPC::GetPartyInfo (vtable slot
-// 76), which reads exactly that field. What bit 0 of the party's +0x10 selects
-// is still unread, so a solo kill provably misses this bonus but a partied one
-// cannot be decided; srrevamp's parties are own design and carry no such flag.
-// Shipping it would apply it to every kill, which is worse than omitting it.
-// The cap is therefore unreachable here: without the bonus the scale spans
-// 1.03 to 1.39.
+// THE PARTY GAP BONUS (round 480; this paragraph said "NOT MODELLED" until
+// then). Before the arithmetic above, the function builds a bonus that the
+// `FADD [ESP + 0x8]` then adds on top of the 1.0, and it builds it only behind
+// three gates, all on ESI:
+//
+//	41000d  MOV EDX,[EAX + 0x1c] ; CALL EDX        <- vtable slot 7 = IGObj::IsPC
+//	410016  JE  none
+//	410018  MOV EAX,[ESI + 0x1cb8] ; TEST ; JE     <- pc[0x72e], the party
+//	410022  MOV CL,0x1
+//	410024  TEST BYTE [EAX + 0x10],CL ; JE none    <- bit 0 of the party's flags
+//	410029  MOV EDX,[ESI + 0x34] ; MOV EDX,[EDX + 0x18]
+//	410033  CMP BYTE [EDX + 0x88],CL ; JNE china   <- the ref object's Country == 1?
+//	410062  china:  CMP EAX,9 ; JL -> CMP EAX,7 ; JL -> CMP EAX,5 ; JL none
+//	41003b  europe: the same three compares, 0x41003b-0x410058
+//	41008b  FLD [ESP + 0x8] ; FADD qword [0x00b45ac0]  <- bonus + 1.0
+//
+// with EAX = victim - killer at the compares. `CMP ; JL` makes each threshold
+// inclusive: a gap of exactly 5, 7 or 9 is the first to earn its step.
+//
+// Bit 0 of the party's +0x10 is the EXP-SHARING flag. CParty::CheckCanJoin
+// (0x514560) caps a party at 8 when it is set and 4 when it is clear, and the
+// client names the two refusals `0x2c13 UIIT_MSG_PARTYERR_MEMBER_FULL_EXP_
+// SHARED_PARTY` and `0x2c14 ..._NONEEXP_SHARED_PARTY` (docs/protocol/party.md,
+// "Size: two caps, selected by a flag"). `[0x72e]` is the party pointer, named
+// by the binary's own assert through CGObjPC::GetPartyInfo (vtable slot 76).
+//
+// ESI is the character RECEIVING the experience: the call sites load ESI from
+// the register whose +0x1cd8/+0x1cdc -- the receiver's own mastery-lag scale,
+// see MasteryExpScale -- they have just read (0x410233 -> 0x41023b, 0x410660 ->
+// 0x410668, 0x41076f -> 0x410777), and the byte at its ref object's
+// +0x88 is Country (the common table's column 14: 0 China, 1 Europe, 3 either),
+// the same byte the equip check compares for `0x182f STRGERR_COUNTRY_MISMATCH`.
+//
+// srrevamp's parties are all exp-sharing -- party.MaxSize is the exp-shared cap
+// and no non-sharing party exists -- so the gate reduces to being in a party at
+// all. That includes a party of ONE: the engine tests the pointer, not the
+// member count, unlike PartyExpBonus, whose (members-1) term is zero for one.
+//
+// The cap is still unreachable: with the bonus the scale peaks at 1.84 for
+// China (1.39 + 0.45) and 2.29 for Europe (1.39 + 0.9), against 4.0.
 const (
 	ExpDiffScalePerStep  = 0.03
 	ExpDiffScaleMaxSteps = 13
 	ExpDiffScaleCap      = 4.0
 )
 
+// The six party gap bonuses, each an `FLD DWORD` of a float32 in .rdata --
+// 32-bit floats, carried here as their decimals like ExpWindowNearBelow. China
+// is the branch taken when the receiver's Country byte is not 1 (0x410062),
+// Europe the branch when it is (0x41003b). 0x00b45b8c serves both as China's
+// seven-level step and Europe's five-level one.
+const (
+	ExpDiffPartyGap5 = 0.15 // FLD DWORD [0x00b45dd0], 0x410081
+	ExpDiffPartyGap7 = 0.30 // FLD DWORD [0x00b45b8c], 0x410074
+	ExpDiffPartyGap9 = 0.45 // FLD DWORD [0x00b45dd4], 0x410067
+
+	ExpDiffPartyEuropeGap5 = 0.30 // FLD DWORD [0x00b45b8c], 0x41005a
+	ExpDiffPartyEuropeGap7 = 0.60 // FLD DWORD [0x00b45dd8], 0x41004d
+	ExpDiffPartyEuropeGap9 = 0.90 // FLD DWORD [0x00b45ddc], 0x410040
+)
+
+// ExpDiffPartyBonus is the extra a receiver in an exp-sharing party earns for
+// a target five or more levels above it: the `CMP EAX,9/7/5 ; JL` ladder at
+// 0x41003b-0x410081. europe selects the ref object's Country == 1 branch. It
+// does not apply the party gate itself -- ExpDiffScale does.
+func ExpDiffPartyBonus(killerLevel, victimLevel int, europe bool) float64 {
+	gap := victimLevel - killerLevel
+	gap5, gap7, gap9 := ExpDiffPartyGap5, ExpDiffPartyGap7, ExpDiffPartyGap9
+	if europe {
+		gap5, gap7, gap9 = ExpDiffPartyEuropeGap5, ExpDiffPartyEuropeGap7, ExpDiffPartyEuropeGap9
+	}
+	switch {
+	case gap >= 9:
+		return gap9
+	case gap >= 7:
+		return gap7
+	case gap >= 5:
+		return gap5
+	}
+	return 0
+}
+
 // ExpDiffScale returns the level-gap multiplier on a kill's experience.
-func ExpDiffScale(killerLevel, victimLevel int) float64 {
+// expSharingParty is the engine's gate -- the receiver is a player in a party
+// whose flag bit 0 is set -- and europe its Country selector; see the constants
+// above for both.
+func ExpDiffScale(killerLevel, victimLevel int, expSharingParty, europe bool) float64 {
 	// Out-levelling the target by three or more is worth no bonus at all --
 	// the engine returns a bare 1.0 without reaching the arithmetic below.
+	// (It builds the party bonus first and discards it here, but that bonus
+	// needs a gap of +5, so nothing is lost.)
 	if victimLevel+3 <= killerLevel {
 		return 1
 	}
@@ -479,6 +549,9 @@ func ExpDiffScale(killerLevel, victimLevel int) float64 {
 		steps = ExpDiffScaleMaxSteps
 	}
 	scale := 1 + float64(steps)*ExpDiffScalePerStep
+	if expSharingParty {
+		scale += ExpDiffPartyBonus(killerLevel, victimLevel, europe)
+	}
 	if scale < 1 {
 		scale = 1
 	}
@@ -495,12 +568,18 @@ func ExpDiffScale(killerLevel, victimLevel int) float64 {
 // which argument is which.
 //
 // BOTH level-gap scalers the real formula applies are now recovered and applied
-// here -- see ExpDiffScale and ExpWindowScale. What remains unmodelled is the
-// killer's own exp-rate multiplier, a float at killer+0x1cd8 written only by
-// CTJ_PremiumKeeper's neighbours; it is a premium/event rate and a character
-// without one evaluates it at its default, so what ships is the game's formula
-// at the base rate.
-func (t *Table) KillExp(killerLevel, victimLevel int) (int64, bool) {
+// here -- see ExpDiffScale and ExpWindowScale. expSharingParty is ExpDiffScale's
+// party gate (the killer is in an exp-sharing party, which every srrevamp party
+// is). Its Country selector is passed as China, always: every srrevamp
+// character is one (character.ValidGender admits only the two China genders,
+// and equipment.Refusal refuses a Europe item on exactly that ground), so the
+// Europe arm of the bonus is recovered but never selected.
+//
+// What remains unmodelled is the killer's own exp-rate multiplier, a float at
+// killer+0x1cd8 written only by CTJ_PremiumKeeper's neighbours; it is a
+// premium/event rate and a character without one evaluates it at its default,
+// so what ships is the game's formula at the base rate.
+func (t *Table) KillExp(killerLevel, victimLevel int, expSharingParty bool) (int64, bool) {
 	lvl := killerLevel
 	if victimLevel < lvl {
 		lvl = victimLevel
@@ -511,7 +590,8 @@ func (t *Table) KillExp(killerLevel, victimLevel int) (int64, bool) {
 	}
 	v = int64(math.Round(float64(v) *
 		ExpWindowScale(killerLevel, victimLevel) *
-		ExpDiffScale(killerLevel, victimLevel)))
+		// europe = false: every srrevamp character is China (see above).
+		ExpDiffScale(killerLevel, victimLevel, expSharingParty, false)))
 	if v < 1 {
 		// The real formula floors its result at 1.
 		v = 1
