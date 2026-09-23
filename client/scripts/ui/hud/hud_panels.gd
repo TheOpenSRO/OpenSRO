@@ -93,6 +93,12 @@ signal item_drop_requested(at: Vector2, item_id: int, inventory_slot: int, icon:
 ## the service's stable key (NpcServiceReader.Service.key -- "shop", "storage",
 ## ...). World3D acts on it (opens the shop, ...).
 signal npc_service_selected(key: String)
+## The guild name prompt (open_guild_name_prompt, round 521) was submitted
+## with this name. World3D sends it to the server (NetClient.create_guild).
+signal guild_create_requested(guild_name: String)
+## The guild leave prompt (open_guild_leave_prompt, round 521) was confirmed.
+## World3D sends the leave request (NetClient.leave_guild).
+signal guild_leave_requested
 ## A line for the chat's system channel -- today a server refusal of a mastery
 ## raise, which used to be dropped silently. World3D logs it (_log_system).
 signal system_notice(text: String)
@@ -277,10 +283,30 @@ func open(panel_id: String) -> HudWindow:
 ## NPC offers. The end line closes the window. Any other line emits
 ## npc_service_selected, and World3D opens that service's window if it has
 ## one.
+##
+## Each call is a new conversation, so a guild prompt left from the last one
+## goes (round 521): clicking another NPC -- a potion merchant, say -- while
+## the name prompt is up must not leave a create line that still founds a
+## guild over that NPC's talk box. A guild reply rebuilds the lines with
+## refresh_npc_talk instead, which keeps the prompt.
 func open_npc_talk(npc_name: String, greeting: String = "", services: Array = []) -> void:
 	var window := open("npctalk")
 	if window == null:
 		return
+	_drop_talk_prompts(window)
+	_fill_npc_talk(window, npc_name, greeting, services)
+
+## Rebuilds the lines of a talk box that is already open, for World3D after a
+## guild reply changed the player's guild state (round 521). Unlike
+## open_npc_talk it does not go through open(), so it neither raises the talk
+## box above a window opened from it (the store after Buy) nor drops a guild
+## prompt the player may be typing into. A closed talk box stays closed.
+func refresh_npc_talk(npc_name: String, greeting: String, services: Array) -> void:
+	if not is_open("npctalk"):
+		return
+	_fill_npc_talk(_windows["npctalk"], npc_name, greeting, services)
+
+func _fill_npc_talk(window: HudWindow, npc_name: String, greeting: String, services: Array) -> void:
 	window.set_title(npc_name)
 	# The layout carries two backgrounds one over the other: a quest
 	# parchment (GDR_NPCTALK_QUESTBG, `gd_paper_02`) in front of a plain
@@ -327,6 +353,161 @@ func _on_npc_talk_choice(meta: Variant) -> void:
 	# A real service was chosen. The talk box stays open behind the service
 	# window (the client keeps it up), so World3D decides what to raise.
 	npc_service_selected.emit(key)
+
+## Whether a text line has the keyboard: the focus owner of this viewport is
+## a LineEdit or TextEdit -- the guild name prompt (round 521), the warehouse
+## gold dialog's amount, the chat's own line, or any other. World3D reads
+## movement from the raw key state (Input.get_axis), which a focused line
+## does not consume, so without this every "w" typed into the guild name
+## prompt walked the character, as it once did in chat (World3D._is_typing).
+func is_typing() -> bool:
+	if not is_inside_tree():
+		return false
+	var focus := get_viewport().gui_get_focus_owner()
+	return focus is LineEdit or focus is TextEdit
+
+## The size the server accepts for a guild name, in bytes: guild.MaxNameLength
+## (server/internal/guild/guild.go, 12). The engine's test is
+## `if (len - 2u < 0xb)` in the create handler FUN_00514ce0
+## (docs/protocol/guild.md, the table's "name length" row). It is the
+## server's limit, not a claimed limit of the real client's own prompt, and
+## LineEdit counts characters, so a name with non-ASCII text can still be
+## refused by the server (its "2 to 12" message says why).
+const GUILD_NAME_MAX := 12
+
+## The talk box's own prompts (round 521), by node name. At most one is up at
+## a time. Each sits on the talk window, so it hides with it, and a new
+## conversation drops it (open_npc_talk).
+const TALK_PROMPTS := ["GuildNamePrompt", "GuildLeavePrompt"]
+
+func _drop_talk_prompts(window: HudWindow) -> void:
+	for prompt_name in TALK_PROMPTS:
+		var old := window.get_node_or_null(prompt_name)
+		if old != null:
+			old.free()
+
+## A prompt panel for the talk window (round 521), replacing any prompt
+## already up: the dark, gold-edged box of the warehouse gold dialog
+## (_open_gold_dialog), headed with the talk line's own text. The panel's
+## first child is the VBoxContainer "VB" to fill; _show_talk_prompt adds it.
+func _talk_prompt(window: HudWindow, prompt_name: String, heading: String) -> PanelContainer:
+	_drop_talk_prompts(window)
+	var panel := PanelContainer.new()
+	panel.name = prompt_name
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.07, 0.07, 0.08, 0.98)
+	style.border_color = Color(0.55, 0.45, 0.22)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(4)
+	style.set_content_margin_all(12)
+	panel.add_theme_stylebox_override("panel", style)
+	var box := VBoxContainer.new()
+	box.name = "VB"
+	box.add_theme_constant_override("separation", 8)
+	panel.add_child(box)
+	box.add_child(_shop_label(heading, Color(0.95, 0.9, 0.72)))
+	return panel
+
+## A centred row of buttons for a talk prompt, one per [node name, text,
+## Callable]; the prompt's own design (round 521).
+func _talk_prompt_buttons(panel: PanelContainer, buttons: Array) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	panel.get_node("VB").add_child(row)
+	for spec in buttons:
+		var btn := Button.new()
+		btn.name = str(spec[0])
+		btn.text = str(spec[1])
+		btn.pressed.connect(spec[2] as Callable)
+		row.add_child(btn)
+
+## Puts a talk prompt on the window, gives `focus` the keyboard (null: none)
+## and centres the prompt once it has its size.
+func _show_talk_prompt(window: HudWindow, panel: PanelContainer, focus: Control) -> void:
+	window.add_child(panel)
+	panel.reset_size()
+	# Outside the scene tree (npc_service_reader_test.gd drives this on a
+	# bare window) there is no frame to wait for and nothing to focus.
+	if not panel.is_inside_tree():
+		return
+	if focus != null:
+		focus.grab_focus()
+	await panel.get_tree().process_frame
+	if is_instance_valid(panel):
+		panel.position = ((window.size - panel.size) * 0.5).round()
+
+## The name prompt behind the guild NPC's create line (round 521): a line for
+## the name, then Create and Cancel. Create (or Enter) emits
+## guild_create_requested with the trimmed name and closes the prompt; the
+## server's reply goes to chat (World3D._on_guild_create_result). The prompt
+## is this project's own design, laid out like the warehouse gold dialog
+## (_open_gold_dialog), not the real client's guild-creation window, which
+## was not read. The name line takes the keyboard, so World3D's movement
+## gate (is_typing) keeps the typed letters from walking the character.
+func open_guild_name_prompt(npc_name: String) -> void:
+	var window: HudWindow = _windows.get("npctalk")
+	if window == null:
+		return
+	print("GUILDPROMPT %s: name prompt opened" % npc_name)
+	# The heading is the create line's own text (the archive's
+	# UIIT_CTL_GUILD_CREATE), with the English fallback the talk line uses.
+	var panel := _talk_prompt(window, "GuildNamePrompt",
+		_resolve_ui(NpcServiceReader.GUILD_CREATE_STRID, "Create a new guild"))
+	var name_edit := LineEdit.new()
+	name_edit.name = "GuildName"
+	name_edit.placeholder_text = "guild name"
+	name_edit.max_length = GUILD_NAME_MAX
+	name_edit.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_edit.custom_minimum_size = Vector2(150, 0)
+	if _builder != null:
+		var font := _builder.font_at(0)
+		if font != null:
+			name_edit.add_theme_font_override("font", font)
+		name_edit.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+	panel.get_node("VB").add_child(name_edit)
+	var submit := func() -> void:
+		var guild_name := name_edit.text.strip_edges()
+		if guild_name.is_empty():
+			return
+		guild_create_requested.emit(guild_name)
+		panel.queue_free()
+	name_edit.text_submitted.connect(func(_text: String) -> void: submit.call())
+	_talk_prompt_buttons(panel, [
+		["Create", "Create", submit],
+		["Cancel", "Cancel", func() -> void: panel.queue_free()],
+	])
+	_show_talk_prompt(window, panel, name_edit)
+
+## The confirmation behind the guild NPC's leave line (round 521): the line's
+## own text, then Leave and Cancel. Leave emits guild_leave_requested and
+## closes the prompt, so one misclick on the talk line leaves no guild. The
+## real client does not leave on the click either. Its item 0x1c case in
+## CIF_NPCTalk::FUN_007020c0 (0x702ba9: index byte 0x12 at 0x703d48, entry
+## 0x703cb4 of the jump table at 0x703c6c) tests FUN_009870e0 again and then
+## opens a window of kind 0x14 (0x702bf9 push 0x14; 0x702c0e call 0x6ec5d0,
+## which builds a centred 0x134 x 0x94 gwnd, 0x6ec689-0x6ec6e2), and the
+## block holds no call to Net_SendRequestPacket. Item 0x1d's case sends its
+## request at once (0x702c31 push 0x7046; call 0x841780,
+## Net_SendRequestPacket). What that window shows and how it goes on to the
+## leave were not read, so this prompt, its layout and its button text are
+## this project's own design.
+func open_guild_leave_prompt(npc_name: String) -> void:
+	var window: HudWindow = _windows.get("npctalk")
+	if window == null:
+		return
+	print("GUILDPROMPT %s: leave prompt opened" % npc_name)
+	# The heading is the leave line's own text (UIIT_CTL_GUILD_SECESSION).
+	var panel := _talk_prompt(window, "GuildLeavePrompt",
+		_resolve_ui(NpcServiceReader.GUILD_SECESSION_STRID, "Leave guild."))
+	var confirm := func() -> void:
+		guild_leave_requested.emit()
+		panel.queue_free()
+	_talk_prompt_buttons(panel, [
+		["Leave", "Leave", confirm],
+		["Cancel", "Cancel", func() -> void: panel.queue_free()],
+	])
+	_show_talk_prompt(window, panel, null)
 
 # --- The NPC shop -----------------------------------------------------------
 #
@@ -1365,6 +1546,12 @@ func close(panel_id: String) -> void:
 	var window: HudWindow = _windows.get(panel_id)
 	if window != null:
 		window.hide()
+
+## Whether this panel's window is on screen. World3D asks it before rebuilding
+## the talk menu after a guild reply (round 521).
+func is_open(panel_id: String) -> bool:
+	var window: HudWindow = _windows.get(panel_id)
+	return window != null and window.visible
 
 func toggle(panel_id: String) -> void:
 	# Equipment is docked in the inventory window (see open()).

@@ -1411,6 +1411,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.skill_drop_requested.connect(_on_skill_drop_requested)
 	_hud_panels.item_drop_requested.connect(_on_item_drop_requested)
 	_hud_panels.npc_service_selected.connect(_on_npc_service_selected)
+	_hud_panels.guild_create_requested.connect(_on_guild_create_requested)
+	_hud_panels.guild_leave_requested.connect(_on_guild_leave_requested)
 	# A server refusal the panels hear about (a mastery raise) goes to chat.
 	_hud_panels.system_notice.connect(_log_system)
 
@@ -3583,6 +3585,12 @@ var _npc_tables_loaded := false
 ## is for.
 var _talk_npc_name := ""
 var _talk_npc_code := ""
+## The player's guild as the server last reported it, for the guild NPC's
+## talk lines (NpcServiceReader.guild_services, round 521): -1 until a guild
+## reply arrives (the NPC then keeps the "Guild" placeholder), 0 for no
+## guild, else the guild's id. _guild_master is whether the player leads it.
+var _guild_id := -1
+var _guild_master := false
 ## Regions whose NPCs have already been placed, so streaming back into a
 ## region doesn't stack a second copy of everyone in it.
 var _npc_regions_done: Dictionary = {}
@@ -7168,6 +7176,15 @@ func _try_step_up(delta: float) -> void:
 		return # still blocked a step up -- a real wall, not a step
 	player.global_position += step
 
+## Whether the keys are going into a text line rather than to movement: the
+## chat's input, or any other focused LineEdit or TextEdit in the viewport
+## (HudPanels.is_typing) -- the guild name prompt of round 521, the warehouse
+## gold dialog's amount. _physics_process skips the move keys while it holds.
+func _is_typing() -> bool:
+	if _hud_chat != null and _hud_chat.is_typing():
+		return true
+	return _hud_panels != null and _hud_panels.is_typing()
+
 func _physics_process(delta: float) -> void:
 	if _sky_dome != null:
 		_sky_dome.global_position = player.global_position + Vector3(0.0, SKY_DOME_HEIGHT_ABOVE_PLAYER, 0.0)
@@ -7189,8 +7206,11 @@ func _physics_process(delta: float) -> void:
 	# raw key state, which a focused LineEdit does not affect, so every "w"
 	# in a chat message also walked the character. Only the input is
 	# suppressed -- gravity, region streaming and the position updates below
-	# all still run, which an early return here would have skipped.
-	var typing := _hud_chat != null and _hud_chat.is_typing()
+	# all still run, which an early return here would have skipped. Typing
+	# is any focused text line, not only the chat's (_is_typing): the guild
+	# name prompt (round 521) walked the character on S, W and D until it
+	# was counted too.
+	var typing := _is_typing()
 	if typing:
 		_has_move_target = false
 		_pending_attack = {}
@@ -8267,17 +8287,30 @@ func _npc_greeting_text(code: String) -> String:
 	return ""
 
 ## The services the NPC offers (grounded detection; see NpcServiceReader), as
-## Service objects (key + label) for the talk window's clickable options.
+## Service objects (key + label) for the talk window's clickable options. The
+## player's guild state picks a guild NPC's lines (round 521).
 func _npc_services(code: String) -> Array:
 	if code == "":
 		return []
-	return NpcServiceReader.services_for(code, _npc_shop_set)
+	return NpcServiceReader.services_for(code, _npc_shop_set, _guild_id, _guild_master)
+
+## Rebuilds the talk menu if it is still open, after the player's guild state
+## changed (round 521): a guild NPC's lines depend on it. It rebuilds in place
+## (HudPanels.refresh_npc_talk), so the talk box is not raised above a window
+## opened from it and a guild prompt being typed into stays.
+func _refresh_open_talk_menu() -> void:
+	if _hud_panels == null or _talk_npc_code == "":
+		return
+	_hud_panels.refresh_npc_talk(_talk_npc_name, _npc_greeting_text(_talk_npc_code), _npc_services(_talk_npc_code))
 
 ## Acts on a service chosen in the talk box. Buy opens the NPC's real shop and
-## Storage the warehouse; the others (guild) are their own systems, still to
-## come, so they say so rather than doing nothing silently. A smith lists no
-## Repair line (round 512, NpcServiceReader.services_for): repair is the store
-## window's own buttons.
+## Storage the warehouse. At a guild NPC (round 521), "guild_create" asks for
+## a name and founds the guild, and "guild_leave" asks for a confirmation and
+## then leaves it. The others (a
+## guild master's "guild") are their own systems, still to come, so they say
+## so rather than doing nothing silently. A smith lists no Repair line (round
+## 512, NpcServiceReader.services_for): repair is the store window's own
+## buttons.
 func _on_npc_service_selected(key: String) -> void:
 	match key:
 		"shop":
@@ -8287,8 +8320,37 @@ func _on_npc_service_selected(key: String) -> void:
 				_hud_panels.open_shop(_talk_npc_name, _shop_reader.tabs_for(_talk_npc_code), _talk_npc_code)
 		"storage":
 			_hud_panels.open_storage(_talk_npc_name)
+		"guild_create":
+			# The name prompt emits guild_create_requested, which
+			# _on_guild_create_requested sends. The server holds the gates
+			# (level 20, 500,000 gold, a 2-12 byte name; rounds 481/487).
+			if NetClient.is_connected_to_server():
+				_hud_panels.open_guild_name_prompt(_talk_npc_name)
+			else:
+				_log_system("Founding a guild needs the server.")
+		"guild_leave":
+			# Not sent on the click: the prompt's Leave emits
+			# guild_leave_requested, which _on_guild_leave_requested sends
+			# (the real client opens a window here too; see
+			# HudPanels.open_guild_leave_prompt).
+			if NetClient.is_connected_to_server():
+				_hud_panels.open_guild_leave_prompt(_talk_npc_name)
+			else:
+				_log_system("Leaving a guild needs the server.")
 		_:
 			_log_system("%s is not available yet." % key.capitalize())
+
+## The talk box's guild name prompt was submitted (round 521).
+func _on_guild_create_requested(guild_name: String) -> void:
+	if not NetClient.is_connected_to_server():
+		return
+	NetClient.create_guild(NetClient.current_character_name, guild_name)
+
+## The talk box's guild leave prompt was confirmed (round 521).
+func _on_guild_leave_requested() -> void:
+	if not NetClient.is_connected_to_server():
+		return
+	NetClient.leave_guild(NetClient.current_character_name)
 
 func _try_set_move_target(screen_pos: Vector2) -> void:
 	var from := camera_3d.project_ray_origin(screen_pos)
@@ -9358,27 +9420,47 @@ func _refresh_guild_list(result: GuildNet.Result) -> void:
 		var role_name := "Leader" if m.role == GuildNet.ROLE_LEADER else "Member"
 		guild_list.add_item("%s [%s]" % [m.member_name, role_name])
 
+## A guild reply (info, join or create). A success also records the player's
+## guild state for the guild NPC's talk lines (round 521): the id (0 = none),
+## and whether the player is the master -- the member with the player's name
+## holding ROLE_LEADER. The name test mirrors the real client's, which
+## compares the player's name with the guild's (FUN_00989ce0; see
+## NpcServiceReader.guild_services). An error leaves the state as it was.
 func _on_guild_result(result: GuildNet.Result) -> void:
 	if result == null:
 		return
 	if result.error != "":
 		guild_status_label.text = "Error: %s" % result.error
 		return
+	_guild_id = result.guild_id
+	_guild_master = false
+	for m in result.members:
+		if m.member_name == NetClient.current_character_name and m.role == GuildNet.ROLE_LEADER:
+			_guild_master = true
 	if result.guild_id == 0:
 		guild_status_label.text = "Not in a guild."
 		guild_list.clear()
-		return
-	guild_status_label.text = "%s (#%d, %d member(s))." % [result.guild_name, result.guild_id, result.members.size()]
-	_refresh_guild_list(result)
+	else:
+		guild_status_label.text = "%s (#%d, %d member(s))." % [result.guild_name, result.guild_id, result.members.size()]
+		_refresh_guild_list(result)
+	_refresh_open_talk_menu()
 
 ## Founding a guild costs 500,000 gold on the server (round 487: the create
 ## job's reply, trs_sm_guildjob::FUN_005c8bf0 -> GObjPC::FUN_004e4140), which
 ## pushes no gold update, so a success re-reads the purse the way a shop buy
-## does -- the HUD's gold readout follows character_stats_result.
+## does -- the HUD's gold readout follows character_stats_result. The result
+## goes to chat too (round 521): the talk box's create line has no other
+## place to show it, and the server's refusals (the name, level and gold
+## gates of rounds 481/487) are the useful part.
 func _on_guild_create_result(result: GuildNet.Result) -> void:
 	_on_guild_result(result)
-	if result != null and result.error == "" and result.guild_id != 0:
+	if result == null:
+		return
+	if result.error == "" and result.guild_id != 0:
+		_log_system("Guild %s founded." % result.guild_name)
 		_request_world_stats()
+	elif result.error != "":
+		_log_system("Could not found the guild: %s" % result.error)
 
 func _on_guild_create_pressed() -> void:
 	var guild_name := guild_name_input.text.strip_edges()
@@ -9394,12 +9476,24 @@ func _on_guild_join_pressed() -> void:
 		return
 	NetClient.join_guild(NetClient.current_character_name, id_text.to_int())
 
+## A leave reply. Success leaves the player guildless (round 521), so a guild
+## NPC's open talk menu turns to the create line. A refusal means the state
+## this client held may be stale -- the server's "not in a guild" is exactly
+## that -- so it asks for the guild again, and the info reply
+## (_on_guild_result) sets the state and the menu right.
 func _on_guild_leave_result(ok: bool, reason: String) -> void:
 	if ok:
+		_guild_id = 0
+		_guild_master = false
 		guild_status_label.text = "Left the guild."
 		guild_list.clear()
+		_log_system("Left the guild.")
 	else:
 		guild_status_label.text = "Leave failed: %s" % reason
+		_log_system("Leave failed: %s" % reason)
+		if NetClient.is_connected_to_server():
+			NetClient.guild_info(NetClient.current_character_name)
+	_refresh_open_talk_menu()
 
 # --- Duel tab --------------------------------------------------------------
 

@@ -1471,6 +1471,111 @@ earlier text said the numbers do not match at any keeper with a "Buy" line.)
 All of this comes from the table's order, with row 0a's early exit not taken.
 It was not measured on a running real client.
 
+### The guild NPC's lines (round 521)
+
+Row 15 of the table, id 0xf, read again from `sro_client.asm` for this round.
+The lookup is `0x70105e` `mov byte [esp+0x1c],0xf` and the membership test
+`0x70107e`-`0x70108b`. Then there are three branches:
+
+| test | lines | tokens |
+|---|---|---|
+| `FUN_009870e0()` is 0 (`0x701096` `call 0x9870e0`, `0x70109d` `je 0x701165`) | item 0x12 alone (`0x701165`-`0x70116c`) | `UIIT_CTL_GUILD_CREATE` |
+| otherwise, `FUN_00989ce0(name)` is 0 (`0x7010c4`, `0x7010f6` `cmp byte [esp+0x14],0`, `0x7010ff` `je 0x70112a`) | item 0x1c (`0x70112a` `push 0x1c`), then 0x19 or 0x1a, 0x1d, 0x43 | `UIIT_CTL_GUILD_SECESSION`, then as below |
+| otherwise | items 0x17, 0x14, 0x18, 0x1b (`0x701101`-`0x70112d`), then 0x19 or 0x1a (by `FUN_0099da70`, `0x701139`-`0x70114d`), 0x1d, 0x43 (`0x701152`-`0x70116c`) | `UIIT_MSG_GUILD_LEVEL_UP`, `UIIT_CTL_GUILD_BREAK`, `UIIT_CTL_MASTERLEAVE`, `UIIT_CTL_GUILD_COMPENSATION`; `UIIT_CTL_MASTERRELEASE` / `UIIT_CTL_MRELEASE_VOTE`, `UIIT_CTL_GUILD_WAREHOUSE`, `UIIT_STT_GUILD_GP_HISTORY` |
+
+**The two tokens srrevamp uses, from `FUN_006fcd60`'s tables.** Item 0x12
+takes index byte `0x0e` (`0x6fd394`+0x12). Jump-table entry `0x6fd310` is
+`0x6fd076`, `push 0xdad440`. Item 0x1c takes index byte `0x17`, entry
+`0x6fd334`, which is `0x6fd0bc`, `push 0xdad2ec`. `objdump -s` on the render
+box's `sro_client.exe` reads `.rdata 0xdad440` as `UIIT_CTL_GUILD_CREATE` and
+`0xdad2ec` as `UIIT_CTL_GUILD_SECESSION`. The player's `textuisystem.txt`
+(`/var/tmp/tables/textuisystem.txt`) has both layouts for each: "Create a new
+guild" and "Leave guild.".
+
+**What the two tests mean is inferred.** Neither value's writer was read.
+- `FUN_009870e0` returns the byte at `+4` of `FUN_009870d0`'s block (`lea
+  eax,[ecx+0x148]`) of the object at `0xeeebd8` (`0x9870e0` `call 0x9870d0;
+  mov al,[eax+4]`). It is taken to be "in a guild" because its zero branch
+  offers only creation and its non-zero branch only lines for a member.
+- `FUN_00989ce0` compares its argument with the string at `+0x34` of the same
+  block (`0x989cec` `add eax,0x34`, `0x989d05` `mov ecx,eax; call 0x47ec20`,
+  `0x989d0e` `sete al`), so it answers true on equal. The argument is
+  `FUN_009d6580`'s copy of the string at `+0x84c` of the object at
+  `[0xeef5ec]` (`0x7010a3`-`0x7010ae`). It is taken to be "the player is the
+  master" for three reasons. `UI_GUILD::FUN_005b5150` looks the player's
+  member record up with the same string (`FUN_009960a0` walks a list comparing
+  names). On the same test it shows `UIIT_CTL_GUILD_UNION_CHAT_GRANT` instead
+  of `..._CONFIRM`. And the true branch is the one with `GUILD_BREAK` and
+  `MASTERLEAVE`.
+
+**What srrevamp does with it.** `NpcServiceReader.guild_services(guild_id,
+is_master)`, reached through `services_for`'s new optional arguments, gives a
+guild NPC:
+- guild state unknown (`-1`, no guild reply yet): the `"guild"` placeholder,
+  as before;
+- no guild (`0`): `guild_create`, strid `UIIT_CTL_GUILD_CREATE`. The talk box
+  opens a name prompt (`HudPanels.open_guild_name_prompt`, this project's own
+  design, capped at the server's 12-byte `guild.MaxNameLength`), and the name
+  goes to the server's create handler, which holds the name, level and gold
+  gates (rounds 481 and 487);
+- a member who is not the master: `guild_leave`, strid
+  `UIIT_CTL_GUILD_SECESSION`. It opens a Leave / Cancel prompt
+  (`HudPanels.open_guild_leave_prompt`, this project's own design), and only
+  Leave sends the leave request. The real client does not leave on the click
+  either (see "The leave line's click" below);
+- the master: the `"guild"` placeholder. A master is never offered secession,
+  since the `0x1c` push is only in the not-master branch. The master's own
+  items have no server in srrevamp.
+
+`World3D` keeps the state from each guild reply: `_guild_id`, and
+`_guild_master`, true when the member with the player's name holds
+`ROLE_LEADER`. That name test mirrors `FUN_00989ce0`'s. A leave sets the state
+back to 0. A refused leave asks for the guild again (`NetClient.guild_info`),
+so a stale state, such as the server's "not in a guild", is set right by the
+reply. After each reply `World3D` rebuilds the talk menu in place if it is
+open (`HudPanels.refresh_npc_talk`). That neither raises the talk box above a
+window opened from it nor drops a prompt being typed into. A new
+conversation, such as a click on another NPC, drops the prompt
+(`open_npc_talk`), so a create line cannot be sent from another NPC's talk box.
+
+The name prompt's line takes the keyboard. `World3D` reads the move keys from
+the raw key state (`Input.get_axis`), which a focused `LineEdit` does not
+consume. So its movement gate, `World3D._is_typing`, counts any focused text
+line as typing (`HudPanels.is_typing`), not only the chat's. Before that, typing
+a name such as "Swords" walked the character on S, W and D.
+
+**The leave line's click.** `CIF_NPCTalk::FUN_007020c0` dispatches a chosen
+item through the index bytes at `0x703d2c` and the jump table at `0x703c6c`
+(`0x702143`-`0x70214a`). Item 0x1c takes index byte `0x12` (`0x703d48`), whose
+entry `0x703cb4` is `0x702ba9`. That case tests `FUN_009870e0` again
+(`0x702bae`, `0x702bb5` `je 0x703c40`). It then opens a window of kind 0x14
+(`0x702bf9` `push 0x14`, `0x702c0e` `call 0x6ec5d0`), rebuilds the menu
+(`0x702c15` `call 0x701540`, which calls `FUN_00700440`) and jumps out. The
+block holds no call to `Net_SendRequestPacket`. `FUN_006ec5d0` builds a
+centred `0x134` x `0x94` gwnd (`0x6ec689`-`0x6ec6e2`); not all of its callees
+were read. Item 0x1d's case, the next entry (`0x702c1f`), sends its request at
+once (`0x702c31` `push 0x7046`, `call 0x841780`, `Net_SendRequestPacket`). What
+the kind 0x14 window shows, and how it goes on to the leave, were not read.
+The srrevamp prompt stands in for it and is not a copy of it.
+
+**Not modelled:** items 0x19/0x1a, 0x1d and 0x43, which a member also gets,
+and the master's items 0x17, 0x14, 0x18 and 0x1b. srrevamp has no server for
+any of them, so the member's menu is one guild line where the real client's
+has four. None of this was measured on a running real client.
+
+**One known mismatch, left for its own round: "Buy" at a guild NPC.** The
+server registers id 1 beside 0xf on all seven guild patterns (`CGObjNPCNPC::Create`:
+the `NPC_CH_GENARAL_SP` ... `NPC_SD_T_AREA_GUILD2` chain meets at `0x4c6a4f`,
+which calls `+0x164` with 0xf and then with 1). With 0xf present, row 5 emits item 1 only when
+the same `FUN_009870e0` answers non-zero (`0x7009fc` `call 0x9870e0`,
+`0x700a03` `je 0x700b10` skips item 1). So a guildless player at a guild NPC
+gets no store lines in the real client. srrevamp still shows "Buy" there,
+because the player's `refshopgroup.txt` names every guild NPC as running a
+`GROUP_STORE_*_GUILD` store (`/var/tmp/tables/refshopgroup.txt`, 7 rows, for
+example `GROUP_STORE_CH_GUILD` / `NPC_CH_GENARAL_SP`). At `NPC_CH_GENARAL_SP` a
+guildless player therefore sees "1. Buy", "2. Create a new guild", "3. End
+conversation." where the real client would start at the create line.
+
 ## Interaction id 4 and the store's repair buttons (round 514)
 
 Round 455 read id 4's NPCs with a heuristic, and round 512 found the client's

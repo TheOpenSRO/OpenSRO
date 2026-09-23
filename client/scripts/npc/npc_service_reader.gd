@@ -42,6 +42,20 @@ const STOREHOUSE_STRID := "UIIT_STT_NPC_CHATTING_WND_STOREHOUSE"
 ## FUN_007001a0(n), which emits item 0 as the last numbered line when the
 ## talk object's +0x7f1 flag is set (0x7001a3-0x7001b5).
 const TALKEND_STRID := "UIIT_STT_NPC_CHATTING_WND_TALKEND"
+## The guild NPC's two lines srrevamp offers (round 521). FUN_00700440's id
+## 0x0f block (lookup `mov byte [esp+0x1c],0xf` at 0x70105e) emits item 0x12
+## when FUN_009870e0 answers 0 (0x701096 `call 0x9870e0`, 0x70109d
+## `je 0x701165`, then 0x701165-0x70116c `push 0; push 0x12; push ebx;
+## call 0x6fcd60`), and item 0x1c when FUN_00989ce0 answers 0 (0x7010c4
+## `call 0x989ce0`, 0x7010f6 `cmp byte [esp+0x14],0`, 0x7010ff `je 0x70112a`,
+## 0x70112a `push 0x1c`). In FUN_006fcd60, item 0x12 takes index byte 0x0e
+## (0x6fd394 + 0x12), whose jump-table entry (0x6fd310) is 0x6fd076
+## `push 0xdad440`, and .rdata 0xdad440 is this string. Read with objdump -s
+## from the render box's sro_client.exe.
+const GUILD_CREATE_STRID := "UIIT_CTL_GUILD_CREATE"
+## Item 0x1c takes index byte 0x17 (0x6fd394 + 0x1c), whose jump-table entry
+## (0x6fd334) is 0x6fd0bc `push 0xdad2ec`, and .rdata 0xdad2ec is this string.
+const GUILD_SECESSION_STRID := "UIIT_CTL_GUILD_SECESSION"
 
 ## One service a talk window offers: a stable key (for wiring later), the
 ## label to fall back on, and -- when the client's own talk menu has a line
@@ -96,8 +110,10 @@ static func parse_greetings(data: PackedByteArray) -> Dictionary:
 ##
 ## Labels (round 513): storage carries the client's own string id,
 ## STOREHOUSE_STRID, which the talk window resolves through the player's
-## textuisystem.txt. The talk window adds the end line from TALKEND_STRID. The
-## other labels are this project's plain-English text with no strid:
+## textuisystem.txt. The talk window adds the end line from TALKEND_STRID. So
+## do the guild NPC's create and leave lines, GUILD_CREATE_STRID and
+## GUILD_SECESSION_STRID (guild_services, round 521). The other labels are
+## this project's plain-English text with no strid:
 ##   * "Buy" -- the real client has no single shop line. Item 1 runs
 ##     FUN_006fb630, which formats its own "%d. " line per store, and those
 ##     lines are not built here. A town warehouse keeper usually gets "Buy"
@@ -112,15 +128,26 @@ static func parse_greetings(data: PackedByteArray) -> Dictionary:
 ##     branch for id 0xf absent and id 3 present (0x7009f5 `je 0x700a0e`
 ##     skips to it when 0xf is absent); with 0xf present, FUN_009870e0
 ##     decides instead (0x7009fc).
-##   * "Guild" -- the guild's real lines (FUN_00700440 id 0x0f -> items 0x12,
-##     0x14, 0x17-0x1d, 0x43) depend on the player's guild membership, which
-##     this reader does not know.
+##   * "Guild" -- the placeholder a guild NPC gets while the player's guild
+##     state is unknown (guild_id < 0), and for a guild master. The guild's
+##     real lines (FUN_00700440 id 0x0f -> items 0x12, 0x14, 0x17-0x1d, 0x43)
+##     depend on the player's guild membership, so a caller that knows it
+##     passes it and gets guild_services' lines instead (round 521).
 ## The real client also adds two more lines after the storage line for id 3,
 ## and neither is listed here: item 0x2d UIIT_STT_TC_OPEN, behind two tests
 ## (0x700b7f-0x700b9d), and item 0x2e UIIT_STT_TC_HONOR_RANKING (pushes from
 ## 0x700bad, call at 0x700bb4).
 ## See docs/protocol/character_state.md, "The client's first talk menu".
-static func services_for(code: String, shop_npcs: Dictionary) -> Array:
+##
+## The optional arguments (round 521): `guild_id` is the player's guild as the
+## server last reported it -- -1 unknown (no guild reply yet), 0 no guild, else
+## the guild's id -- and `guild_master` whether the player leads it. They pick
+## the guild NPC's lines through guild_services. Called with two arguments, a
+## guild NPC keeps the "Guild" placeholder, as before. `_player_job_kind` is
+## reserved for the job-guild talk entries (a later item) so that the argument
+## order is settled; nothing reads it yet.
+static func services_for(code: String, shop_npcs: Dictionary, guild_id: int = -1,
+		guild_master: bool = false, _player_job_kind: int = 0) -> Array:
 	var out: Array = []
 	var up := code.to_upper()
 	# A shop (buy) -- grounded by refshopgroup membership.
@@ -134,7 +161,9 @@ static func services_for(code: String, shop_npcs: Dictionary) -> Array:
 		out.append(Service.new("storage", "Storage", STOREHOUSE_STRID))
 	for pattern in GUILD_PATTERNS:
 		if up.contains(pattern):
-			out.append(Service.new("guild", "Guild"))
+			# The server registers id 0x0f here, and the client's lines for
+			# 0x0f depend on the player's guild (guild_services).
+			out.append_array(guild_services(guild_id, guild_master))
 			break
 	# Town smiths get NO Repair talk line (round 512). The server
 	# registers interactions 4 and 0x20 on NPC_*_SMITH (CGObjNPCNPC::Create;
@@ -169,6 +198,61 @@ static func services_for(code: String, shop_npcs: Dictionary) -> Array:
 	# carry id 4 like the smiths (REPAIR_PATTERNS below), so their store window
 	# shows the repair buttons too (offers_repair, round 514).
 	return out
+
+## The guild NPC's lines for the player's guild state (round 521): `guild_id`
+## -1 unknown, 0 no guild, else the guild's id; `is_master` whether the player
+## leads it.
+##
+## The real client's id 0x0f block in FUN_00700440 (0x70105e-0x70116c; docs/
+## protocol/character_state.md, the talk-menu table's order-15 row):
+##   * FUN_009870e0() == 0 -> item 0x12 alone, GUILD_CREATE_STRID.
+##     FUN_009870e0 returns the byte at +4 of FUN_009870d0's +0x148 block of
+##     the object at 0xeeebd8 (0x9870e0 `call 0x9870d0; mov al,[eax+4]`).
+##     That this byte means "in a guild" is inferred from what it gates, not
+##     read from a writer: its zero branch offers only the create line, and
+##     its non-zero branch only lines for a member.
+##   * otherwise FUN_00989ce0(name) == 0 -> item 0x1c, GUILD_SECESSION_STRID;
+##     non-zero -> items 0x17, 0x14, 0x18, 0x1b (GUILD_LEVEL_UP, GUILD_BREAK,
+##     MASTERLEAVE, GUILD_COMPENSATION). Then both get 0x19 or 0x1a (by
+##     FUN_0099da70), 0x1d and 0x43. FUN_00989ce0 compares its argument with
+##     the string at +0x34 of the same +0x148 block (0x989cec `add eax,0x34`,
+##     then 0x989d05 `mov ecx,eax; call 0x47ec20` and 0x989d0e `sete al`, so
+##     true when the compare gives 0, i.e. equal). Its argument is
+##     FUN_009d6580's copy of the string at +0x84c of
+##     the object at [0xeef5ec] (0x7010a3-0x7010ae). That this is "the player
+##     is the guild master" is also inferred: UI_GUILD::FUN_005b5150 looks the
+##     player's member record up by the same string (FUN_009960a0 walks a
+##     list comparing names) and, on the same test, shows
+##     UIIT_CTL_GUILD_UNION_CHAT_GRANT instead of ..._CONFIRM; and its
+##     non-zero branch is the one with GUILD_BREAK and MASTERLEAVE.
+## So guildless -> "guild_create", a member -> "guild_leave". A master is
+## never offered secession (the 0x1c push is only in the zero branch), and
+## the master's own items have no server in srrevamp, so a master keeps the
+## "Guild" placeholder. Items 0x19/0x1a (MASTERRELEASE / MRELEASE_VOTE), 0x1d
+## (GUILD_WAREHOUSE) and 0x43 (GP_HISTORY), which a member also gets, have no
+## server either and are not offered -- this project's choice, not a claim
+## that the real client lacks them.
+##
+## Not handled here, and left for its own round: the same FUN_009870e0 test
+## gates item 1 (the store lines) at a guild NPC, which the server also gives
+## id 1 (0x4c6a4f). A guildless player there gets no store line in the real
+## client (0x7009fc `call 0x9870e0`, 0x700a03 `je 0x700b10`), while
+## services_for still adds "Buy" from refshopgroup.txt, which names every
+## guild NPC as running a GROUP_STORE_*_GUILD store (character_state.md,
+## "The guild NPC's lines (round 521)").
+##
+## The fallback labels are the player's own textuisystem.txt text for the two
+## tokens, the same in both of its layouts (the 16-column row's [8] and the
+## 19-column row's [9]; /var/tmp/tables/textuisystem.txt on the render box):
+## "Create a new guild" and "Leave guild.".
+static func guild_services(guild_id: int, is_master: bool) -> Array:
+	if guild_id < 0:
+		return [Service.new("guild", "Guild")]
+	if guild_id == 0:
+		return [Service.new("guild_create", "Create a new guild", GUILD_CREATE_STRID)]
+	if not is_master:
+		return [Service.new("guild_leave", "Leave guild.", GUILD_SECESSION_STRID)]
+	return [Service.new("guild", "Guild")]
 
 ## Whether the store window shows Repair and Repair All for the NPC with this
 ## codename (round 514). True exactly when the server registers interaction

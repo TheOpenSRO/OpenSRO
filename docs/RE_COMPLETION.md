@@ -30530,3 +30530,196 @@ otherwise unchanged; they need their own round. srrevamp uses neither id.
   (only a message changed). `client/tools/remote_godot.sh tests` ran 80 suites, 0 failing.
   `client/tools/remote_godot.sh check` checked 246 scripts and 5 scenes: ALL LOAD.
 - `cd server && go build ./... && go test -count=1 -p 1 ./...`: green.
+
+## Guild NPC menu by membership: Create (no guild) opens a name prompt, Leave (member); master keeps the placeholder (round 521)
+
+A guild NPC's talk box offered one "Guild" line to everyone, and choosing it said "Guild is not
+available yet.". The real client picks the guild lines by two tests that are taken to be the
+player's guild state: "in a guild" and "is the master". What each test means is inferred, not
+read from its writer (see the grounding below). srrevamp now does the same for the two lines it
+has a server for. At `NPC_CH_GENARAL_SP`, a player with no guild sees the archive's "Create a new
+guild". That line asks for a name and founds the guild, subject to the server's level 20,
+500,000 gold and 2-12 byte name gates (rounds 481 and 487). A member sees "Leave guild.", which
+asks Leave / Cancel before it sends. A master keeps the placeholder. This also covers the guild
+half of the talk-menu-labels item.
+
+**Grounding** (read-only on the RE box: `/var/tmp/decomp_client`, `/var/tmp/sro_client.asm`, and
+`.rdata` with `objdump -s` on `/opt/sro-files/client/sro_client.exe`). The full write-up is in
+`docs/protocol/character_state.md`, "The guild NPC's lines (round 521)".
+
+- **`FUN_00700440`'s id 0xf block** (row 15 of the talk-menu table). The lookup is at `0x70105e`
+  and the membership test at `0x70107e`-`0x70108b`.
+  - `FUN_009870e0()` is 0 (`0x701096`, `0x70109d` `je 0x701165`): item 0x12 alone
+    (`0x701165`-`0x70116c`).
+  - Otherwise `FUN_00989ce0(name)` is 0 (`0x7010c4`, `0x7010f6`, `0x7010ff` `je 0x70112a`): item
+    0x1c (`0x70112a`).
+  - Otherwise items 0x17, 0x14, 0x18 and 0x1b.
+  - Both member branches then get 0x19 or 0x1a, 0x1d and 0x43. So a master is never offered 0x1c.
+- **The tokens.** In `FUN_006fcd60`, item 0x12 takes index byte `0x0e` (`0x6fd394`+0x12). Its
+  jump-table entry, at `0x6fd310`, is `0x6fd076` `push 0xdad440`. Item 0x1c takes index byte
+  `0x17`. Its entry, at `0x6fd334`, is `0x6fd0bc` `push 0xdad2ec`. `.rdata 0xdad440` is
+  `UIIT_CTL_GUILD_CREATE` and `0xdad2ec` is `UIIT_CTL_GUILD_SECESSION`. The decompiled switch
+  agrees: case 0x12 and case 0x1c name the same two strings. The player's
+  `textuisystem.txt` (`/var/tmp/tables/textuisystem.txt`) reads "Create a new guild" and
+  "Leave guild." in both of its layouts. Those are the fallback labels.
+- **The two tests are inferred, not read from their writers.**
+  - `FUN_009870e0` is the byte at `+4` of the `+0x148` block (`FUN_009870d0`) of the object at
+    `0xeeebd8`. Its zero branch offers only creation, so it is taken as "in a guild".
+  - `FUN_00989ce0` compares the block's `+0x34` string with its argument and answers true on
+    equal (`0x989cec` `add eax,0x34`; `0x989d05` `call 0x47ec20`; `0x989d0e` `sete al`). The
+    argument is `FUN_009d6580`'s copy of `[0xeef5ec]+0x84c` (`0x7010a3`-`0x7010ae`). It is taken
+    as "the player is the master" for three reasons:
+    - `UI_GUILD::FUN_005b5150` finds the player's member record with the same string
+      (`FUN_009960a0` walks a list comparing names);
+    - on the same test, that function shows `..._UNION_CHAT_GRANT` rather than `..._CONFIRM`;
+    - the true branch is the one with `GUILD_BREAK` and `MASTERLEAVE`.
+
+  (The plan said the string was at `+0x148+0x44`. The decompiler hides the `add eax,0x34`, and
+  the instruction listing shows `+0x34`.)
+- **The leave line's click** (found in review). `CIF_NPCTalk::FUN_007020c0` dispatches a chosen
+  item through the index bytes at `0x703d2c` and the jump table at `0x703c6c`
+  (`0x702143`-`0x70214a`). Item 0x1c takes index byte `0x12` (`0x703d48`), and entry `0x703cb4`
+  is `0x702ba9`. That case tests `FUN_009870e0` again and opens a window of kind 0x14
+  (`0x702bf9` `push 0x14`; `0x702c0e` `call 0x6ec5d0`, a centred `0x134` x `0x94` gwnd built at
+  `0x6ec689`-`0x6ec6e2`), and the block holds no call to `Net_SendRequestPacket`. Item 0x1d's
+  case (`0x702c1f`) sends its request at once (`0x702c31` `push 0x7046`; `call 0x841780`,
+  `Net_SendRequestPacket`). What the kind 0x14 window shows was not read, so srrevamp's Leave /
+  Cancel prompt is its own design.
+- **The server** registers id 0xf on the seven `GUILD_PATTERNS` (`CGObjNPCNPC::Create`, rounds 455
+  and 458). The create gates are in `guild.CheckCreator` and the stores' `Create` (rounds 481 and
+  487). The name cap is `guild.MaxNameLength`, 12, from the engine's `len - 2u < 0xb`
+  (`docs/protocol/guild.md`, the "name length" row).
+
+**Change.**
+- `client/scripts/npc/npc_service_reader.gd`:
+  - New constants `GUILD_CREATE_STRID` and `GUILD_SECESSION_STRID`, each cited as above.
+  - `services_for(code, shop_npcs, guild_id := -1, guild_master := false, _player_job_kind := 0)`.
+    The last argument is reserved for the job-guild talk entries and is not read yet. A
+    two-argument call still gives a guild NPC the placeholder.
+  - `guild_services(guild_id, is_master)`:
+    - -1 gives `guild`;
+    - 0 gives `guild_create` ("Create a new guild", `GUILD_CREATE_STRID`);
+    - a member gives `guild_leave` ("Leave guild.", `GUILD_SECESSION_STRID`);
+    - a master gives `guild`.
+- `client/scripts/World3D.gd`:
+  - New `_guild_id` (-1 until a guild reply arrives) and `_guild_master`.
+  - `_on_guild_result` (info, join and create) records the id on success. The player is the
+    master when the member with `current_character_name` holds `ROLE_LEADER`, which mirrors
+    `FUN_00989ce0`'s name test.
+  - `_on_guild_leave_result` sets 0/false on success and logs "Left the guild.". On a refusal
+    it logs the reason and asks for the guild again (`NetClient.guild_info`), so the info reply
+    corrects a stale state (the server's "not in a guild").
+  - `_on_guild_create_result` logs "Guild %s founded." or the server's refusal.
+  - `_npc_services` passes the state.
+  - `_on_npc_service_selected`: `guild_create` opens the name prompt and `guild_leave` opens the
+    leave prompt. Both need a server connection.
+  - After each guild reply, `_refresh_open_talk_menu` rebuilds the talk menu in place if it is
+    open (`HudPanels.refresh_npc_talk`).
+  - `guild_create_requested` is connected to `_on_guild_create_requested`, which calls
+    `NetClient.create_guild`. `guild_leave_requested` is connected to `_on_guild_leave_requested`,
+    which calls `NetClient.leave_guild`.
+  - The movement gate is now `_is_typing()`: the chat's line, or any focused `LineEdit` or
+    `TextEdit` (`HudPanels.is_typing`). `_physics_process` reads the move keys from the raw key
+    state (`Input.get_axis`), which a focused line does not consume. Before this, a name such as
+    "Swords" typed into the prompt walked the character on S, W and D, and the arrow keys moved it
+    too. The old gate asked only the chat line.
+- `client/scripts/ui/hud/hud_panels.gd`:
+  - New signal `guild_create_requested(guild_name)` and `open_guild_name_prompt(npc_name)`, a
+    panel on the talk window laid out like `_open_gold_dialog`.
+    - Its heading is `_resolve_ui(GUILD_CREATE_STRID, ...)`.
+    - Its `LineEdit` has `max_length` = `GUILD_NAME_MAX` = 12, the server's limit (not a claimed
+      client limit).
+    - Create or Enter emits the trimmed name and an empty name sends nothing.
+    - It prints `GUILDPROMPT <npc>: name prompt opened`.
+    - The prompt is this project's own design. The real client's guild-creation window was not
+      read.
+  - New signal `guild_leave_requested` and `open_guild_leave_prompt(npc_name)`: the leave
+    line's text (`GUILD_SECESSION_STRID`), then Leave and Cancel. Only Leave emits the signal.
+    It prints `GUILDPROMPT <npc>: leave prompt opened`. It is this project's own design (see the
+    leave line's click above). The two prompts share `_talk_prompt`, `_talk_prompt_buttons` and
+    `_show_talk_prompt`, and only one is up at a time (`TALK_PROMPTS`).
+  - New `is_open(panel_id)` and `is_typing()` (the viewport's focus owner is a `LineEdit` or
+    `TextEdit`).
+  - `open_npc_talk` is a new conversation, so it always drops a prompt. A click on another NPC
+    while the name prompt is up no longer leaves a create line over that NPC's talk box. The new
+    `refresh_npc_talk` rebuilds an open talk box's lines without `open()`. It keeps the prompt and
+    does not raise the talk box above a window opened from it, such as the store after Buy. The
+    lines are drawn by `_fill_npc_talk`, split out of `open_npc_talk`.
+
+**Not modelled, and disclosed** (`character_state.md` and `TODO.md`): the master's items 0x17,
+0x14, 0x18 and 0x1b, and items 0x19/0x1a, 0x1d and 0x43, which member and master both get.
+srrevamp has no server for them, so a member sees one guild line where the real client shows
+four.
+
+**One known mismatch, left for its own round: "Buy" at a guild NPC.** The server registers id 1
+beside 0xf on all seven guild patterns (`CGObjNPCNPC::Create`, `0x4c6a4f`: `push 0xf`, then
+`push 0x1`, each through `+0x164`). With 0xf present, the client emits item 1 (the store lines)
+only when the same `FUN_009870e0` answers non-zero (`0x7009fc` `call 0x9870e0`, `0x700a03`
+`je 0x700b10`). So a guildless player at a guild NPC gets no store lines in the real client.
+srrevamp still shows "Buy" there, because the player's `refshopgroup.txt` names all seven as
+running a `GROUP_STORE_*_GUILD` store (7 rows in `/var/tmp/tables/refshopgroup.txt`). This round
+does not change the shop line, because the plan scoped it to the guild lines.
+`character_state.md` records the mismatch under "The guild NPC's lines (round 521)".
+
+**Tests** (`client/scripts/npc/npc_service_reader_test.gd`, render box). The new calls go through
+the script object after checking the method list and its argument count, so an older reader
+fails the checks instead of raising a call error that would stop `_init` and hang the suite.
+- (k) `services_for` takes 5 arguments, and `guild_services` exists.
+  - Unknown state (-1) keeps `["guild"]`. The existing two-argument loop still gives `guild` for
+    all seven patterns.
+  - **Negative:** `NPC_CH_GENARAL_SP` with guild 0 has `guild_create`, strid
+    `UIIT_CTL_GUILD_CREATE`, and no `guild`.
+  - `NPC_WC_GUILD` with (7, false) is exactly `["guild_leave"]`, strid
+    `UIIT_CTL_GUILD_SECESSION`.
+  - **Negative:** a master (7, true) has neither `guild_leave` nor `guild_create`, and keeps
+    `["guild"]`.
+  - The three `NPC_SD_GUILD_AGENT*` have no `guild*` key in any known state.
+  - `guild_services(0, false)[0].label` is "Create a new guild", and `(7, false)` gives
+    "Leave guild.".
+  - `talk_menu_lines` gives a guildless player `[url=guild_create]1. CREATE-TEXT[/url]` and
+    `[url=end]2. END-TEXT[/url]`.
+- (l) In `_initialize`: `open_guild_name_prompt` on a bare talk window. The name line has
+  `max_length` 12. An all-blank name sends nothing. `"  Lions  "` plus Enter emits `"Lions"`
+  once.
+- (m) The prompts in the running tree, added in review. A `--script` suite's root enters the tree
+  only after `_initialize` returns. Measured: `root.is_inside_tree()` was false there, and
+  `grab_focus()` failed with `!is_inside_tree()`. So (m) waits one frame, and a 60-second
+  watchdog fails the suite, rather than hanging it, if (m) never reports. Its checks:
+  - The focus probe first: the open name prompt's `LineEdit` is the viewport's focus owner.
+  - **Negative:** `World3D._is_typing()`, on a `World3D` holding the live panels, is true.
+  - With the prompt up, `refresh_npc_talk` keeps it and leaves a store window in front of the
+    talk box. The order probe works the other way too: `open_npc_talk` does raise the talk box.
+  - **Negative:** `open_npc_talk` for another NPC drops the prompt, and `_is_typing()` is false
+    again.
+  - `open_guild_leave_prompt` replaces the name prompt. **Negative:** opening it, and then
+    Cancel, send nothing. Leave sends `guild_leave_requested` once.
+
+**Negative case, run.** Each run shipped the working copy with the final test file.
+- **The three production files at BASE** (`npc_service_reader.gd`, `World3D.gd` and
+  `hud_panels.gd` from before this round): **40 FAILURES**, 76 ok. That is every (k), (l) and (m)
+  check that needs the change. (Before the review's (m) existed, the same stash gave 24 FAILURES.)
+- **`World3D.gd` and `hud_panels.gd` as first committed this round**, before the review fixes:
+  **16 FAILURES**, all in (m). Among them are "a new conversation drops the name prompt", since
+  that version kept a prompt whenever the talk box was already open, and the movement gate.
+- **Only the gate reverted in place** (`_is_typing` returning the chat's `is_typing()` alone, the
+  old gate): **1 FAILURE**, "World3D's movement gate counts the focused guild name line as
+  typing".
+- **Restored:** ALL PASS, with 119 ok.
+
+- `client/tools/remote_godot.sh tests` ran 80 suites, 0 failing.
+  `client/tools/remote_godot.sh check` checked 246 scripts and 5 scenes: ALL LOAD.
+- **Not run: the live `qa_shot.sh` measurement** (`SRREVAMP_QA_TALK=NPC_CH_GENARAL_SP` against
+  the test server, for a guildless character). This round had read-only use of the RE box
+  beyond `remote_godot.sh`, and a render writes frames there. The expected log lines, once the
+  guild reply has arrived, are `NPCTALK NPC_CH_GENARAL_SP line 1: 1. Buy`, `line 2: 2. Create a
+  new guild` and `line 3: 3. End conversation.`. "Buy" is there because the player's
+  `refshopgroup.txt` names `NPC_CH_GENARAL_SP` as running `GROUP_STORE_CH_GUILD`
+  (`/var/tmp/tables/refshopgroup.txt`). Because `_on_guild_result` rebuilds an open talk menu,
+  the reply may arrive before or after `QA_TALK` opens it. No running client has printed those
+  lines yet.
+- **Not measured either: a real key press into the prompt.** (m) measures the two things the
+  walking bug turned on: the viewport's focus owner and the value of `World3D._is_typing()`. No
+  key event was sent through `Input.get_axis`, and nobody has typed into the prompt in a running
+  client.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...` is green. No server file changed.
+  `SYSTEMS.md`'s Guild row does not describe the talk menu, so it needed no edit.

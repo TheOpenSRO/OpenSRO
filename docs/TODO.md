@@ -30,8 +30,17 @@ In order. Each is checked off here when it ships in a release, with its round in
       chat font / name range as its Setting tab) in place of the F3 panel.
 - [x] **NPC talk.** A click on an NPC opens `if_npctalk` titled with its name -- round 139. The
       greeting's service lines are now clickable; Buy opens the shop and the storage line the
-      warehouse (both below). Still open: the remaining services (guild, honour rank), each its own
-      backend.
+      warehouse (both below). The guild NPC's lines follow the player's guild (round 521): a
+      guildless player gets the archive's "Create a new guild" (`UIIT_CTL_GUILD_CREATE`), which asks
+      for a name and founds the guild, and a member gets "Leave guild." (`UIIT_CTL_GUILD_SECESSION`),
+      which asks Leave / Cancel before it sends (our own prompt; the real client opens an unread
+      window of kind 0x14 there). Typing in the name prompt no longer walks the character.
+      Still open: the other guild lines -- the master's items 0x17, 0x14, 0x18 and 0x1b (a master
+      keeps the "Guild" placeholder), and 0x19/0x1a, 0x1d and 0x43, which member and master both
+      get -- and honour rank, each its own backend. Also open: the real client shows a guildless
+      player no store line at a guild NPC (the same `FUN_009870e0` test gates item 1), and srrevamp
+      still shows "Buy" there. See `docs/protocol/character_state.md`, "The guild NPC's lines
+      (round 521)".
       - [x] **Storage (warehouse) -- items AND gold.** The talk menu's storage line (its text is
         the archive's own "Deposit into storage.", `UIIT_STT_NPC_CHATTING_WND_STOREHOUSE`, since
         round 513) opens the authored warehouse window (`ifstorageroom`) with the bag beside it:
