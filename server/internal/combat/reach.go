@@ -23,7 +23,7 @@ import "math"
 //	                                                   ; (pc+0xa30), whose +4 is added
 //	range *= 1 - param183/100                          ; the Myopia (short-sight) state's
 //	                                                   ; percent (status_effects.md); 0 here
-//	reach  = base + range                              ; action+0x18
+//	reach  = base + g(range)                           ; action+0x18
 //	stop   = base + f(range)                           ; action+0x14, where the
 //	                                                   ; approach walks to
 //	f(r)   = r          for r <= 4
@@ -31,6 +31,12 @@ import "math"
 //	       = 0.7 * r    for r > 10
 //	       = 0          at exactly 10 (the engine's own hole: the r >= 10 branch
 //	                                   only acts on r > 10)
+//	g(r)   = r          everywhere except exactly 10, where it is 0 too: the
+//	                    one `if (10 < r)` guards BOTH adds (phase 0:
+//	                    `if (_DAT_00b45b44 < fVar2) { +0x14 += 0.7r; +0x18 += r }`;
+//	                    phase 3: `if (fVar2 <= _DAT_00b45b44) goto LAB_004ae04f`,
+//	                    skipping both stores), so at 10 the action carries the
+//	                    bare BC sum in +0x14 and +0x18 alike (round 488)
 //
 // Phase 1 then tests Action_IsTargetWithinReach (0x004ad4a0):
 // int(distance) <= int(reach) + 2, the distance being the region-aware
@@ -75,8 +81,14 @@ func ApproachBand(casterBC, targetBC int, rangeUnits float64) (stop, reach float
 		stop = base + rangeUnits - ReachMidBackoff
 	case rangeUnits <= ReachShortBand:
 		stop = base + rangeUnits
-	default: // exactly ReachLongBand: the engine adds nothing
+	default:
+		// Exactly ReachLongBand: Tick_Attack's `if (10 < r)` (0x004ad8e0,
+		// phases 0 and 3; 10.0 at 0xb45b44) guards the +0x18 add as well as
+		// the +0x14 one, so neither gets the range -- reach is the bare BC
+		// sum, like stop (round 488; it was base + 10 before). The skill
+		// tick, Tick_UseSkill 0x004ae590, has the same single guard.
 		stop = base
+		reach = base
 	}
 	return stop, reach
 }

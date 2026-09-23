@@ -281,13 +281,7 @@ func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Log
 		maxHP = 1
 	}
 	spawn := func() int64 {
-		bc := spec.BCRadius
-		if bc == 0 {
-			bc = combat.PlayerBCRadius
-		}
-		m := monsters.SpawnSpecies(spec.Zone, combat.Species{Name: spec.Name, CodeName: spec.CodeName, RefObjID: spec.RefObjID, Level: spec.Level, Rarity: spec.Rarity, BCRadius: bc, AttackReuseMs: spec.AttackReuseMs, AttackRange: spec.AttackRange,
-			AttackMin: spec.AttackMin, AttackMax: spec.AttackMax,
-			GoldMin: spec.GoldMin, GoldMax: spec.GoldMax, Critical: spec.Critical}, spec.X, 0, spec.Z, maxHP, defense, attack, gold)
+		m := monsters.SpawnSpecies(spec.Zone, combatSpeciesOf(spec), spec.X, 0, spec.Z, maxHP, defense, attack, gold)
 		logger.Info("monster spawned", "id", m.ID, "name", m.Name, "zone", m.Zone, "level", m.Level)
 		return m.ID
 	}
@@ -344,15 +338,30 @@ func gmSpecies() []gm.Species {
 			}
 		}
 		out = append(out, gm.Species{
-			Species: combat.Species{
-				Name: spec.Name, CodeName: spec.CodeName, RefObjID: spec.RefObjID, Level: spec.Level, Rarity: spec.Rarity,
-				AttackMin: spec.AttackMin, AttackMax: spec.AttackMax,
-				GoldMin: spec.GoldMin, GoldMax: spec.GoldMax, Critical: spec.Critical,
-			},
-			Zone: spec.Zone, MaxHP: maxHP, Defense: defense, Attack: attack, Gold: gold, X: x, Z: z,
+			Species: combatSpeciesOf(spec),
+			Zone:    spec.Zone, MaxHP: maxHP, Defense: defense, Attack: attack, Gold: gold, X: x, Z: z,
 		})
 	}
 	return out
+}
+
+// combatSpeciesOf is the one place a roster spec becomes the combat.Species
+// a spawn carries, so maintainMonster's roster spawns and the GM console's
+// /spawn cannot drift apart again (until round 488 gmSpecies left out
+// BCRadius, AttackReuseMs and AttackRange, so a GM-spawned Mangyang had a
+// BCRadius of 0 and was reachable from 6 units less than a roster one).
+// BCRadius is characterdata col 50 (round 247, see monsterSpec.BCRadius); a
+// spec without one gets combat.PlayerBCRadius, the 4 every playable body row
+// carries. AttackReuseMs/AttackRange are the primary attack skill's
+// skilldata columns 14 and 21 (round 254).
+func combatSpeciesOf(spec monsterSpec) combat.Species {
+	bc := spec.BCRadius
+	if bc == 0 {
+		bc = combat.PlayerBCRadius
+	}
+	return combat.Species{Name: spec.Name, CodeName: spec.CodeName, RefObjID: spec.RefObjID, Level: spec.Level, Rarity: spec.Rarity, BCRadius: bc, AttackReuseMs: spec.AttackReuseMs, AttackRange: spec.AttackRange,
+		AttackMin: spec.AttackMin, AttackMax: spec.AttackMax,
+		GoldMin: spec.GoldMin, GoldMax: spec.GoldMax, Critical: spec.Critical}
 }
 
 // refItemStore is the slice of reference data the running server needs:

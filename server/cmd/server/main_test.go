@@ -279,3 +279,39 @@ func TestRosterCarriesRealObjectIDs(t *testing.T) {
 		seen[spec.RefObjID] = spec.CodeName
 	}
 }
+
+// TestGMSpawnCarriesBCRadius: a monster the GM console's /spawn puts in the
+// world carries the same BCRadius (characterdata col 50, round 247) and the
+// same primary-attack ReuseDelay/Range (round 254) as the roster spawn of
+// that species. Until round 488 gmSpecies left all three out, so a
+// GM-spawned Mangyang had a BCRadius of 0 and combat.ApproachBand's base
+// was 6 units short of a roster one's.
+func TestGMSpawnCarriesBCRadius(t *testing.T) {
+	species := gmSpecies()
+	if len(species) != len(monsterSpecs) {
+		t.Fatalf("gmSpecies has %d entries, the roster %d", len(species), len(monsterSpecs))
+	}
+	for i, spec := range monsterSpecs {
+		got := species[i].Species
+		want := spec.BCRadius
+		if want == 0 {
+			want = combat.PlayerBCRadius
+		}
+		if got.BCRadius != want {
+			t.Errorf("%s: GM spawn BCRadius = %d, want %d", spec.CodeName, got.BCRadius, want)
+		}
+		if got.AttackReuseMs != spec.AttackReuseMs || got.AttackRange != spec.AttackRange {
+			t.Errorf("%s: GM spawn attack reuse/range = %d/%d, want %d/%d", spec.CodeName,
+				got.AttackReuseMs, got.AttackRange, spec.AttackReuseMs, spec.AttackRange)
+		}
+	}
+	for _, sp := range species {
+		if sp.CodeName == "MOB_CH_MANGNYANG" {
+			if sp.BCRadius != 6 {
+				t.Errorf("Mangyang BCRadius = %d, want 6 (characterdata col 50)", sp.BCRadius)
+			}
+			return
+		}
+	}
+	t.Error("Mangyang missing from gmSpecies")
+}

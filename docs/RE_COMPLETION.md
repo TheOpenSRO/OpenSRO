@@ -26261,3 +26261,65 @@ LOAD"), and `remote_godot.sh tests` ran 77 suites with 0 failing.
 Behaviour change: a character below level 20, a dead character, or one carrying
 less than 500,000 gold can no longer found a guild, and the guild tab shows the
 reason. Founding a guild now costs 500,000 gold.
+
+## GM-spawned monsters carry their BC radius and attack fields; ApproachBand at exactly 10 adds no reach (round 488)
+
+Two defects in the attack-distance rule's inputs, split out of the
+attack-approach-band plan's step 0.
+
+**GM `/spawn` monsters had no BCRadius.** `cmd/server.gmSpecies` built the
+`combat.Species` the GM console's `/spawn` hands `Hub.SpawnSpecies` without
+`BCRadius`, `AttackReuseMs` or `AttackRange`. `maintainMonster`'s roster spawn
+set all three. A GM-spawned Mangyang therefore had BCRadius 0 instead of 6
+(characterdata col 50, round 247). `combat.ApproachBand`'s base was 4 + 0 instead
+of 4 + 6, so its reach was 6 units shorter than a roster Mangyang's. Its attack
+cadence and range were also unknown (0) instead of skilldata cols 14/21
+(round 254: 3000 ms, 10).
+
+Both paths now call one helper, `combatSpeciesOf(spec)`, so they cannot drift
+again. It defaults a zero BCRadius to `combat.PlayerBCRadius` (4), as the
+roster spawn always did. `gm.Species` keeps Zone/MaxHP/Defense/Attack/Gold/X/Z as
+before.
+
+**At exactly 10 the reach gets no range either.** Re-read this session from the
+dump, `CGCharAutoCommandActor::Tick_Attack` (`0x004ad8e0`), phase 0:
+
+	if (fVar2 < _DAT_00b45dc0 == (fVar2 == _DAT_00b45dc0)) {        // r > 4
+	  if ((fVar2 <= _DAT_00b46010) || (_DAT_00b45b44 <= fVar2)) {   // r >= 10
+	    if (_DAT_00b45b44 < fVar2) {                                  // r > 10
+	      +0x14 = 0.7 * r + +0x14;
+	      +0x18 = r + +0x18;
+	    }
+	  } else { +0x14 = (r - 2) + +0x14; +0x18 = r + +0x18; }
+	} else { +0x14 = r + +0x14; +0x18 = r + +0x18; }
+
+Phase 3 has the same shape: `if (fVar2 <= _DAT_00b45b44) goto LAB_004ae04f`
+skips both stores. The skill tick, `Tick_UseSkill` (`0x004ae590`), has the same
+single `if (_DAT_00b45b44 < fVar1)` around both adds. `0xb45b44` is `00002041`
+= 10.0f. So at r == 10 the action carries the bare BC sum in both `+0x14` (stop)
+and `+0x18` (reach). `ApproachBand`'s `default:` case set only `stop = base` and
+left `reach = base + 10`. It now sets `reach = base` too, and the rule comment in
+`reach.go` states g(r) for the reach.
+
+**Tests.**
+- `cmd/server.TestGMSpawnCarriesBCRadius` checks every `gmSpecies()[i]`:
+  - `BCRadius` equals `monsterSpecs[i].BCRadius`, or `PlayerBCRadius` when that
+    is 0.
+  - `AttackReuseMs` and `AttackRange` equal the spec's.
+  - Mangyang's BCRadius is 6.
+- `combat.TestApproachBand`'s "exactly ten" row now wants reach 4 + 6 (was
+  4 + 6 + 10).
+
+Negative cases: with `cmd/server/main.go` and `internal/combat/reach.go`
+stashed, `TestGMSpawnCarriesBCRadius` failed for all eleven species
+("GM spawn BCRadius = 0, want 6", "attack reuse/range = 0/0, want 3000/10") and
+`TestApproachBand` failed with "exactly ten: got stop 10 reach 20, want 10 / 10".
+With them restored both pass. `go test -count=1 -p 1 ./...` is green.
+
+Behaviour change: a monster spawned with GM `/spawn` can be hit from as far away
+as a roster spawn of the same species. For a Mangyang that is 6 units further than
+before. A GM-spawned monster also counterattacks no faster than its attack skill's
+ReuseDelay (`Hub.CounterattackReady` reads `AttackReuseMs`; 0 imposed no cadence).
+A skill or weapon with range exactly 10 no longer gets +10 reach. In the roster,
+Mangyang's and Stone Ghost's attack skills have Range 10, but nothing in the
+server reads `Monster.AttackRange` yet, so their behaviour does not change.

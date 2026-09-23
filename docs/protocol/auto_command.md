@@ -59,8 +59,9 @@ or 4 refuses (busy).
 The one round 247 named `GObjPC::ActionTick_UseSkill`. It is the **plain
 attack**; the correction is in `recovered_names.tsv`.
 
-**Phase 0** computes the approach band (`combat.ApproachBand`, unchanged from
-round 247) and goes to 1.
+**Phase 0** computes the approach band (`combat.ApproachBand`, round 247; round
+488 corrected its reach at exactly 10, where the one `if (10 < r)` skips both
+the stop and the reach add) and goes to 1.
 
 **Phase 1** -- `PrepareAction` (`0x4ad030`): for kind 1 the context's skill id
 is **overwritten with the weapon's default attack**

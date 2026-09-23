@@ -17,7 +17,7 @@ func TestApproachBand(t *testing.T) {
 		{"exactly four", 4, 6, 4, 4 + 6 + 4, 4 + 6 + 4},           // the boundary belongs to the short band
 		{"spear vs gyo", 4, 10, 18, 4 + 10 + 0.7*18, 4 + 10 + 18}, // r > 10: 70 %
 		{"bow vs yeoha", 4, 11, 180, 4 + 11 + 0.7*180, 4 + 11 + 180},
-		{"exactly ten", 4, 6, 10, 4 + 6, 4 + 6 + 10}, // the engine's hole
+		{"exactly ten", 4, 6, 10, 4 + 6, 4 + 6}, // the engine's hole: `if (10 < r)` guards both adds (round 488)
 		{"unarmed", 4, 6, 0, 10, 10},
 	}
 	for _, c := range cases {

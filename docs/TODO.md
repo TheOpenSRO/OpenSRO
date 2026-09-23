@@ -172,8 +172,9 @@ In order. Each is checked off here when it ships in a release, with its round in
       client walks into range before it sends" was wrong; the client sends at once and the server
       walks the attacker. `GObjPC::ActionTick_UseSkill` (`0x4ad8e0`): reach = casterBCRadius +
       targetBCRadius + range, stop = the same base + f(range) (f = r for r <= 4, r - 2 for 4 < r < 10,
-      0.7 r for r > 10), range = the skill's Range or the weapon's Range column (itemdata 94 = param
-      33: sword 6, spear 18, bow 180, dagger 3), in reach when `int(dist) <= reach + 2`, else
+      0.7 r for r > 10; at exactly 10 neither stop nor reach gets the range -- round 488), range =
+      the skill's Range or the weapon's Range column (itemdata 94 = param 33: sword 6, spear 18,
+      bow 180, dagger 3), in reach when `int(dist) <= reach + 2`, else
       `MoveTowardObject(target, stop)`. Table units ARE world units (1 = 0.1 m) -- the comparison
       has no conversion. `combat.ApproachBand`/`InReach`/`EffectiveRange` carry it, `refdata.Item.Range`
       and `combat.Species.BCRadius` the data (v0.1.400). STILL TO BUILD: the behaviour -- the server
