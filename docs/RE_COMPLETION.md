@@ -3890,7 +3890,7 @@ grants one, which means the raw restore amount is what lands — exactly what
 >   combustion is on; with one on, it cuts the HP (MP) heal by the effect's percentage.
 >   srrevamp does not model that.
 >
-> See round 491 at the end of this file.
+> See round 491 at the end of this file. The scaling is wired in round 496.
 
 That is a confirmation of a shipped value rather than a change, and it is the
 third time this session that enumerating a param's writers has turned "srrevamp
@@ -5365,7 +5365,9 @@ end to end -- ExtractData keys it off a Param/Desc128 pair whose descriptor is
 "COOLTIME:<group>" (group -> ref+0x520, ms -> ref+0x524), Item_HandleUseItem
 refuses 0x185b inside the group's timer and arms it after the success reply
 (>= 300 s persisted). 148 retail rows carry one; NO potion does, so potions have
-no server cooldown -- the 2026-09-18 "gap" note is superseded. Wired:
+no server cooldown -- the 2026-09-18 "gap" note is superseded. [CORRECTED in
+round 496: no COOLTIME descriptor, but slot 308 keeps a per-kind potion delay of
+its own -- FUN_004eb410 answers 0x185b, FUN_004e0ab0 arms it -- see round 496.] Wired:
 refdata.Item.CooltimeGroup/CooltimeMs, session/itemcooldown.go, the gate in
 UseItemHandler (live but idle: nothing usable today carries one). Two names.
 Round 264 (docs): Consume_WHAN (col 56, CRefSkill+0xd2) is copied into the cast
@@ -27068,3 +27070,135 @@ case (f) now holds 255 in column 19, so it also fails the old column-19 reading.
 -p 1 ./...` is green.
 
 Docs, comments and tests only; no behaviour changes.
+
+## Potions restore Param x 1.02^(level-1) x (1 + Str/416) (HP) and the Int twin (MP), and the percentage pair only when both absolutes are zero (GObjPC::FUN_0049aa70) (round 496)
+
+Round 491 found the potion amount is scaled before it lands and parked the wiring as its own item.
+This round re-read the function from `srv.asm` before changing anything -- the dump's C for
+`GObjPC::FUN_0049aa70` drops every x87 instruction, so the formula is not visible there at all --
+and followed the amount to where it lands.
+
+**The formula (`0x49aa70..0x49ac42`).** EBX is the item, `[item+0x14c]` its owner, `[item+0x34]+0x18`
+the ref row; HP is written through EDI, MP through the second stack argument, and the first stack
+argument is a flag (1 absolute, 0 percentage).
+
+- **Absolute path**, taken when Param1 (`+0x2a0`) or Param3 (`+0x2e0`) is non-zero:
+  - `0x49ab63` calls vtable `+0x124` (`IGObj::GetLevel`); `movzx eax,al` then `lea esi,[eax-0x1]`: a
+    byte, less one.
+  - `0x49ab73 fld QWORD 0xb45ea0` (1.02, bytes `52 b8 1e 85 eb 51 f0 3f`), then an inlined
+    square-and-multiply on `|n|` (`0x49ab87..0x49ab99`), `1/x` when `n < 0` (`fdivrp`), stored as a
+    double (`0x49abad fstp QWORD`).
+  - `push 0x1; call [vtable+0x104]` -- `CGObjChar::GetParam` -> `ParamKeeper_GetParamChecked` ->
+    `Param_GetValue`, whose `0x4b33ae fld DWORD [ebx+0x1c]` returns the stat as a float.
+  - `0x49abbd fdiv QWORD 0xb45e98` (416.0, bytes `00 00 00 00 00 00 7a 40`), `fld1`, `fadd`, `fmul QWORD`
+    the power, `0x49abcd fimul DWORD [edi]` (Param1), `call 0x9fbb40`.
+  - MP repeats it with `push 0x2`, `0x49ac1e fadd QWORD 0xb45ac0` (1.0, bytes `00 00 00 00 00 00 f0 3f`)
+    for the `+1`, and `fimul` Param3.
+  - So **HP = trunc(((1 + Str/416) x 1.02^(Level-1)) x Param1)** and the MP twin with Int and Param3.
+    A zero Param in this path gives zero; the percentage pair is never read.
+- **Percentage path**, only when Param1 and Param3 are both zero: `fild` GetMaxHP (vtable `+0x110`),
+  `fild` Param2, `0x49aae9 fdiv QWORD 0xb45af0` (100.0), **`0x49aaef fstp DWORD`** -- the fraction is
+  rounded to a float -- then `fmul DWORD` and `call 0x9fbb40`. MP the same with Param4 and GetMaxMP
+  (`+0x114`). So 70% of 100 is 69. The real rows' percentages (20, 25, 40, 100) round up or exactly
+  as floats, so for them this equals integer arithmetic.
+- **Conversion.** `0x9fbb40` is MSVC's `_ftol2_sse`: `cvttsd2si` when SSE2 is flagged, else the x87
+  `fistp` path with its truncation fix-up. Toward zero either way.
+- **Precision.** The function does not set the x87 control word; Go's float64 in the same order
+  matches the x87 at Windows' default 53-bit precision. Over every real absolute Param
+  (120/220/370/570/820), levels 1-110 and stats 20-599, the truncated result is the same whether the
+  power is taken by square-and-multiply or `math.Pow`, and in either multiplication order -- so the
+  order is followed for fidelity, not because a real value depends on it.
+
+**The caller (`CGItemExpendable::vslot_308`, `0x49b8d0..0x49b946`).** Both amounts `< 1` answers 2.
+Otherwise, unless the owner is a zombie, `FUN_004ef450(pc)` is called with HP in ECX, MP in EAX and
+the flag in EDX.
+
+**When it lands -- NOT at once, and NOT modelled (disclosed).** `FUN_004ef450` pushes
+`(pc+0x1d58, flag, HP, MP)` into `FUN_0049a5b0`:
+
+- **Absolute (flag 1).** `FUN_0049a0c0` builds an entry `{step = amount/5, count = 4}`
+  (`imul 0x66666667; sar edx,1`, clamped to 1..1000000). It is queued on the pool's list (`+0x4` HP,
+  `+0x10` MP) only if the pool plus what is already queued does not exceed the maximum (`0x49a76a jg`
+  for HP; `0x49a7d6 jge` for MP, so a full MP pool queues nothing). The first step is applied at once
+  (`0x49a82a` ApplyHPMPDelta).
+- **The consumer.** `FUN_0049a510` takes one step from the HEAD entry of each list, decrements its
+  count and removes it at zero. `CGObjPC::PeriodicUpdate` (`0x52aa90`, the one-second job, round
+  411) calls it on every tick (`0x52acd0`, `param_1 + 0x756` = `pc+0x1d58`).
+- **So** an absolute potion lands in five steps of `amount/5` a second apart -- `5 x (amount/5)` in
+  total, up to 4 less than the formula -- and a second potion's steps wait behind the first's.
+- **Percentage (flag 0).** Lands in full at once (the final ApplyHPMPDelta with the whole amounts).
+  Before that it trims the queue against the overflow (`0x49a62d..0x49a6e4`, `FUN_00695450`); that
+  trim was not read in detail.
+
+srrevamp applies the formula's amount at once, capped at the missing amount, and says so in
+`useitem.go`.
+
+**Other branches, disclosed.**
+
+- **Zombie.** Status bit `0x20` at `pc+0xd34` (the manager at `pc+0xd30`; slot 5 is zombie in
+  `status_effects.md`): `0x49b912` sends the HP amount to vtable `+0x308` (slot 194,
+  `IGObj::ConsumeHpMp`) -- the potion HURTS -- and applies MP through ApplyHPMPDelta. srrevamp has
+  no status effects.
+- **Panic / combustion (params 143/144)** cut the amount in `FUN_004a86a0`, as round 491 records.
+
+**Found, not modelled: potions DO have a server delay.** Round 263 said none do; that holds only for
+the COOLTIME descriptor.
+
+- **The gate.** Slot 308 calls `FUN_004eb410` first, which maps the kind to a bit (TypeID4 1/2/3/4/5/7
+  -> 1/2/4/8/0x10/0x20) and answers `0x185b` while that bit is set in the byte at `[pc+0x30]+8`.
+- **Arming it.** After the use, `FUN_004e0ab0` sets the bit and hands a float to an `AJStateChanger`
+  record (type 6):
+  - 1.1 (`.rdata 0xb461b8`, bytes `cd cc 8c 3f`) for an absolute potion;
+  - 15.1 (`0xb461ac`) when the byte at the PC's ref row `+0x88` is non-zero;
+  - 4.1 (`0xb461b0`) for a percentage potion.
+- **Unread.** The float's unit, what clears the bit and what ref `+0x88` is were not read.
+- **Recorded, not changed.** The comment at the reuse-delay check and SYSTEMS.md's item row now say
+  this; round 263's line carries a pointer here.
+
+**Also found, not changed: a potion at full HP.** The engine does not refuse it: `cur + queued <= max`
+still queues, and the result is 1, so the potion is spent. srrevamp answers "no need for that right
+now" and keeps it -- a pre-existing divergence, left as it was.
+
+**Change.**
+
+- `session.potionRestore(param1, param2, param3, param4, level, str, intel, maxHP, maxMP)` is
+  FUN_0049aa70:
+  - the absolute path in the engine's order, with the byte level, the float stat and
+    square-and-multiply;
+  - the percentage path with the float-rounded fraction;
+  - truncation toward zero.
+- Constants `potionStatDivisor` (416.0, `0xb45e98`) and `potionPercentDivisor` (100.0, `0xb45af0`)
+  cite their bytes and use sites; 1.02 reuses `character.StatGrowth` (`0xb45ea0`, same address).
+- `UseItemHandler` computes both amounts through it from the character's `Level`, `Str` and `Int`,
+  replacing `RestoreHP + maxHP*RestoreHPPct/100` and the MP twin. The caps at the missing amount are
+  unchanged.
+- srrevamp models no Str/Int bonuses, so GetParam(1)/(2) are the character's own Str/Int -- the values
+  MaxHP/MaxMP already use.
+- The handler comment's "DISCLOSED GAP" paragraph for the scaling is replaced by the grounded formula,
+  followed by the three gaps that remain (queue, zombie, panic/combustion).
+- `GROUNDING_AUDIT.md` gains a potion-amount row; SYSTEMS.md's item row records the wiring and the
+  delay.
+
+**Behaviour.** A level-1, 20-Str character gets 125 from HP_POTION_01 (was 120). A level-10, 30-Str
+one gets 153. The large potions scale the same way. Percentage-only rows are unchanged for every real
+percentage.
+
+**Tests.**
+
+- **`TestPotionRestoreFollowsFUN0049aa70`**, nine cases, each worked by hand in its comment:
+  - HP_POTION_01 at L1/Str 20 -> 125; HP_POTION_03 at L50/Str 100 -> 1211;
+  - MP_POTION_02 at L30/Int 55 -> 442, reading Int and not Str;
+  - ALL_POTION_01 at L10/Str 30/Int 40 -> 153/157;
+  - HP_SPOTION_01 (25% of 359) -> 89; ALL_SPOTION_01 (20%/20%) -> 71/100;
+  - 70% of 100 -> 69, illustrative, pinning the float fraction;
+  - Param1 beside Param2 -> Param2 ignored; Param3 beside Param2 -> HP 0, Param2 ignored.
+- **`TestUseItemScalesPotionByLevelAndStr`**: a level-10, 30-Str character (MaxHP 359) at 200 HP
+  uses HP_POTION_01 and gets 153, to 353.
+
+**Negative case, run.**
+
+- **`useitem.go` stashed:** the package fails to build (`undefined: potionRestore`).
+- **Behavioural check:** with the old handler and a throwaway stub `potionRestore` so it compiles, the
+  handler test fails: `restored 120 HP to 320/359, want 153 to 353/359`. With `useitem.go` restored it
+  passes.
+- **Suite:** `go test -count=1 -p 1 ./...` is green.

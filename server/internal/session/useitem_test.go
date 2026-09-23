@@ -356,3 +356,131 @@ func TestRestoresUserPoolFollowsDoJobDispatch(t *testing.T) {
 		}
 	}
 }
+
+// potionRestore is GObjPC::FUN_0049aa70 (round 496, read from srv.asm
+// 0x49aa70..0x49ac42): an absolute amount is Param * 1.02^(Level-1) *
+// (1 + stat/416), truncated toward zero by _ftol2_sse (0x9fbb40), and the
+// percentage pair is read only when Param1 and Param3 are both zero. Each
+// expected value is worked by hand in its comment. The Param blocks are the
+// real rows' (allitems.txt on the RE box) except the two marked illustrative.
+func TestPotionRestoreFollowsFUN0049aa70(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		p1, p2, p3, p4    int
+		level, str, intel int
+		maxHP, maxMP      int
+		wantHP, wantMP    int
+	}{
+		// HP_POTION_01 at level 1, Str 20: 120 * 1.02^0 * (1 + 20/416)
+		// = 120 * 1.048077 = 125.77 -> 125.
+		{"HP_POTION_01, level 1, Str 20", 120, 0, 0, 0, 1, 20, 20, 200, 200, 125, 0},
+		// HP_POTION_03 at level 50, Str 100: 370 * 1.02^49 (2.638812) *
+		// (1 + 100/416) (1.240385) = 370 * 3.273142 = 1211.06 -> 1211.
+		{"HP_POTION_03, level 50, Str 100", 370, 0, 0, 0, 50, 100, 20, 5000, 5000, 1211, 0},
+		// The MP twin reads Int, not Str: MP_POTION_02 at level 30, Int 55:
+		// 220 * 1.02^29 (1.775845) * (1 + 55/416) (1.132212) = 442.34 -> 442.
+		{"MP_POTION_02, level 30, Int 55", 0, 0, 220, 0, 30, 999, 55, 5000, 5000, 0, 442},
+		// ALL_POTION_01 at level 10, Str 30, Int 40: 1.02^9 = 1.195093;
+		// HP 120 * 1.195093 * 1.072115 = 153.75 -> 153,
+		// MP 120 * 1.195093 * 1.096154 = 157.20 -> 157.
+		{"ALL_POTION_01, level 10, Str 30, Int 40", 120, 0, 120, 0, 10, 30, 40, 1000, 1000, 153, 157},
+		// HP_SPOTION_01 (Param2 25, the rest zero): 25% of the maximum, not
+		// scaled by level or stat: 359 * float32(0.25) = 89.75 -> 89.
+		{"HP_SPOTION_01, percentage only", 0, 25, 0, 0, 10, 30, 40, 359, 500, 89, 0},
+		// ALL_SPOTION_01 (20 / 20): HP 359 * float32(0.2) = 71.8 -> 71,
+		// MP 500 * float32(0.2) = 100.0000015 -> 100.
+		{"ALL_SPOTION_01, both percentages", 0, 20, 0, 20, 10, 30, 40, 359, 500, 71, 100},
+		// Illustrative: the fraction is rounded to a float before the multiply
+		// (0x49aaef fstp DWORD), and float32(0.7) = 0.69999999, so 70% of 100
+		// is 69 -- integer arithmetic would say 70.
+		{"70% of 100 is 69 (float32 fraction)", 0, 70, 0, 0, 1, 20, 20, 100, 100, 69, 0},
+		// Illustrative: an absolute amount beside a percentage -- the
+		// percentage is never read. 125 as in the first case, not 625.
+		{"Param1 set: Param2 ignored", 120, 50, 0, 0, 1, 20, 20, 1000, 1000, 125, 0},
+		// Param3 alone also takes the absolute path: Param2 is ignored and
+		// the HP amount is Param1 * ... = 0.
+		{"Param3 set: Param2 ignored, HP 0", 0, 50, 120, 0, 1, 20, 20, 1000, 1000, 0, 125},
+	} {
+		hp, mp := potionRestore(tc.p1, tc.p2, tc.p3, tc.p4, tc.level, tc.str, tc.intel, tc.maxHP, tc.maxMP)
+		if hp != tc.wantHP || mp != tc.wantMP {
+			t.Errorf("%s: potionRestore = (%d, %d), want (%d, %d)", tc.name, hp, mp, tc.wantHP, tc.wantMP)
+		}
+	}
+}
+
+// A potion heals what the engine computes, not the row's Param1 (round 496).
+// A level-10 character with Str 30 (MaxHP 30 * 10 * 1.02^9 = 359) at 200 HP
+// drinks HP_POTION_01 (3/3/1/1, Param1 120): 120 * 1.02^9 * (1 + 30/416) =
+// 153.75 -> 153, below the 159 missing, so 153 lands. Before round 496 the
+// handler restored exactly 120.
+func TestUseItemScalesPotionByLevelAndStr(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := chars.SetLeveling(ctx, c.ID, 10, 0, 0, 30, 30); err != nil {
+		t.Fatalf("set leveling: %v", err)
+	}
+	c, _ = chars.GetByID(ctx, c.ID)
+	if c.MaxHP() != 359 {
+		t.Fatalf("MaxHP at level 10 / Str 30 = %d, want 359", c.MaxHP())
+	}
+	if c.HP != 200 {
+		t.Fatalf("HP = %d, want the fresh character's 200", c.HP)
+	}
+
+	const hpPotion = 4
+	items := refdata.NewMemStore()
+	if err := items.ImportItems(ctx, []refdata.Item{
+		{ID: hpPotion, MaxStack: 5000, TypeID1: 3, TypeID2: 3, TypeID3: 1, TypeID4: 1, RestoreHP: 120, CanUse: true},
+	}); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	inv := inventory.NewMemStore(items)
+	if err := inv.AddItem(ctx, c.ID, hpPotion, 5); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	slots, err := inv.List(ctx, c.ID)
+	if err != nil || len(slots) != 1 {
+		t.Fatalf("list: %v %+v", err, slots)
+	}
+
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mana.NewTracker()))
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+	send := func(op uint16, data []byte) *proto.Packet {
+		t.Helper()
+		if err := proto.Write(conn, &proto.Packet{Opcode: op, Data: data}, nil, nil); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		return resp
+	}
+	if lr, err := DecodeLoginResult(send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
+		t.Fatalf("login: %v %+v", err, lr)
+	}
+	res, err := DecodeUseItemResult(send(OpUseItem, (&UseItemRequest{CharacterName: "Aria", InventorySlot: int32(slots[0].Index)}).Encode()).Data)
+	if err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if res.Error != "" {
+		t.Fatalf("the HP potion was refused: %q", res.Error)
+	}
+	if res.RestoredHP != 153 || res.HP != 353 || res.MaxHP != 359 {
+		t.Errorf("restored %d HP to %d/%d, want 153 to 353/359 (120 * 1.02^9 * (1 + 30/416))", res.RestoredHP, res.HP, res.MaxHP)
+	}
+	if after, _ := chars.GetByID(ctx, c.ID); after.HP != 353 {
+		t.Errorf("stored HP = %d, want 353", after.HP)
+	}
+}

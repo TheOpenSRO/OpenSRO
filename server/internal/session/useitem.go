@@ -163,6 +163,97 @@ func restoresUserPool(it *refdata.Item) bool {
 	return true
 }
 
+// The amount a recovery potion restores, as GObjPC::FUN_0049aa70 computes it
+// (round 496). The dump's C drops every x87 instruction of that function, so
+// this is read from srv.asm (0x49aa70..0x49ac42).
+const (
+	// potionStatDivisor is the double 416.0 at .rdata 0xb45e98 (bytes
+	// 00 00 00 00 00 00 7a 40), the operand of `fdiv QWORD PTR ds:0xb45e98`
+	// at 0x49abbd (HP) and 0x49ac18 (MP).
+	potionStatDivisor = 416.0
+	// potionPercentDivisor is the double 100.0 at .rdata 0xb45af0 (bytes
+	// 00 00 00 00 00 00 59 40), the operand of `fdiv QWORD PTR ds:0xb45af0`
+	// at 0x49aae9 (HP %) and 0x49ab28 (MP %).
+	potionPercentDivisor = 100.0
+)
+
+// potionRestore returns the HP and MP a recovery potion restores, from its
+// Param1..4 (refdata.Item.RestoreHP, RestoreHPPct, RestoreMP, RestoreMPPct) and
+// the user's Level, Str, Int and maximum pools. It is GObjPC::FUN_0049aa70,
+// which slot 308 (0x0049b710) calls for every recovery kind, read from the
+// disassembly in the engine's own order of operations:
+//
+//   - The absolute path, taken when Param1 (+0x2a0) or Param3 (+0x2e0) is
+//     non-zero (0x49aa95 / 0x49aaa3):
+//     HP = trunc(((1 + GetParam(1)/416) * 1.02^(Level-1)) * Param1) and
+//     MP = trunc(((1 + GetParam(2)/416) * 1.02^(Level-1)) * Param3).
+//     Level is vtable +0x124 IGObj::GetLevel, taken as a byte (0x49ab79
+//     `movzx eax,al`) less one (`lea esi,[eax-0x1]`). 1.02 is the double at
+//     .rdata 0xb45ea0 (character.StatGrowth; `fld QWORD` at 0x49ab73 and
+//     0x49abd4), raised to that power by the inlined binary exponentiation at
+//     0x49ab87..0x49aba7 (square-and-multiply on |n|, then 1/x if n < 0) and
+//     stored as a double (0x49abad `fstp QWORD`). GetParam is vtable +0x104,
+//     CGObjChar::GetParam 0x4aa5c0 -> ParamKeeper_GetParamChecked ->
+//     Param_GetValue (0x4b33ae `fld DWORD`), so the stat arrives as a float;
+//     params 1 and 2 are Str and Int (character.go's GParamKeeper notes).
+//     The HP term adds `fld1` (0x49abc3); the MP term adds the double 1.0 at
+//     .rdata 0xb45ac0 (0x49ac1e `fadd QWORD`; bytes 00 00 00 00 00 00 f0 3f).
+//     Each product is `fimul` by the Param (0x49abcd / 0x49ac28). A zero
+//     Param in this path yields zero; the percentage pair is not read.
+//   - The percentage path, taken only when Param1 and Param3 are BOTH zero:
+//     HP = trunc(GetMaxHP * float32(Param2/100)) when Param2 (+0x2c0) is
+//     non-zero, and MP the same with Param4 (+0x300) and GetMaxMP (vtable
+//     +0x110 / +0x114). The fraction is rounded to a float by 0x49aaef
+//     `fstp DWORD` before 0x49aaf3 `fmul DWORD`, so 70% of 100 is 69; the
+//     real rows' 20/25/40/100 % round up or exactly and land as integer
+//     arithmetic would.
+//   - Every float-to-int is 0x9fbb40, MSVC's _ftol2_sse: `cvttsd2si`, or the
+//     x87 fallback with its truncation fix-up -- toward zero either way, as
+//     Go's conversion is. The Go arithmetic is float64 in the same order,
+//     which matches the x87 at the Windows default 53-bit precision control;
+//     this function does not set the control word itself.
+//
+// srrevamp models no Str/Int bonuses, so the character's own Str and Int are
+// passed for GetParam(1)/(2) -- the same values MaxHP and MaxMP are built
+// from.
+func potionRestore(param1, param2, param3, param4, level, str, intel, maxHP, maxMP int) (hp, mp int) {
+	if param1 == 0 && param3 == 0 {
+		percent := func(pct, pool int) int {
+			frac := float32(float64(pct) / potionPercentDivisor)
+			return int(float64(pool) * float64(frac))
+		}
+		if param2 != 0 {
+			hp = percent(param2, maxHP)
+		}
+		if param4 != 0 {
+			mp = percent(param4, maxMP)
+		}
+		return hp, mp
+	}
+	n := int(uint8(level)) - 1
+	m := n
+	if m < 0 {
+		m = -m
+	}
+	growth, base := 1.0, character.StatGrowth
+	for {
+		if m&1 != 0 {
+			growth *= base
+		}
+		m >>= 1
+		if m == 0 {
+			break
+		}
+		base *= base
+	}
+	if n < 0 {
+		growth = 1 / growth
+	}
+	hp = int((1 + float64(float32(str))/potionStatDivisor) * growth * float64(param1))
+	mp = int((1 + float64(float32(intel))/potionStatDivisor) * growth * float64(param3))
+	return hp, mp
+}
+
 // UseItemHandler consumes one item from a bag slot and applies what it
 // restores.
 //
@@ -172,20 +263,37 @@ func restoresUserPool(it *refdata.Item) bool {
 // large one 370. They are restore amounts ONLY on the recovery kinds above:
 // the exporter emits columns 118..124 for every row, and on a return scroll
 // (30000), a cure pill or a storage expansion (its slot increment, round 270)
-// the same columns hold something else. The percentage variants are honoured
-// too, against the maximum.
+// the same columns hold something else.
 //
-// Round 491 found the amount is NOT applied as the engine applies it, and
-// this is a DISCLOSED GAP, not a grounding: GObjPC::FUN_0049aa70
-// (0x49ab63..0x49ac37) scales an absolute amount before it lands --
-// HP = Param1 * 1.02^(Level-1) * (1 + GetParam(1)/416), MP the same with
-// Param3 and GetParam(2) (params 0/1/2 are Level/Str/Int; 1.02 at .rdata
-// 0xb45ea0, 416.0 at 0xb45e98) -- and reads the percentage pair only when
-// both absolute amounts are zero. srrevamp applies the raw amounts and adds
-// both pairs; no real recovery row carries both, so only the scaling differs.
+// The Param block is not the amount that lands: GObjPC::FUN_0049aa70 scales an
+// absolute amount by the user's level and Str (HP) or Int (MP), and reads the
+// percentage pair only when both absolute amounts are zero (round 496,
+// potionRestore). A level-1, 20-Str character gets 125 from HP_POTION_01's 120.
+// srrevamp applies that amount at once, capped at the missing amount. Three
+// DISCLOSED GAPS sit between it and the pool:
 //
-// The later step is a no-op ONLY while neither panic nor combustion is on the
-// character, and srrevamp does not model it -- a second DISCLOSED GAP.
+//   - The engine does not land an absolute amount at once. Slot 308 hands it
+//     to GObjPC::FUN_004ef450 (0x49b946), which queues it on pc+0x1d58
+//     through FUN_0049a5b0: FUN_0049a0c0 cuts it into a step of amount/5
+//     (0x49a0c0 `imul 0x66666667; sar edx,1`, clamped to 1..1000000) with a
+//     count of 4 (0x49a0d6); the first step is applied at once (0x49a82a
+//     ApplyHPMPDelta) and each remaining one by FUN_0049a510, which
+//     CGObjPC::PeriodicUpdate (0x52aa90, the one-second job, round 411)
+//     calls on every tick (0x52acd0) and which takes a step from the head
+//     entry of each pool's queue. So a potion lands in five equal steps a
+//     second apart, 5 x (amount/5) in total, and a new entry is not queued
+//     while the pool plus what is queued already exceeds (HP, 0x49a76a
+//     `jg`) or reaches (MP, 0x49a7d6 `jge`) the maximum. A percentage
+//     amount lands in full at once (FUN_0049a5b0's other path). srrevamp
+//     models no queue.
+//   - A zombie (status bit 0x20 at pc+0xd34, the status manager at pc+0xd30;
+//     slot 5 in docs/protocol/status_effects.md) is HURT by the HP amount:
+//     0x49b912 sends it to vtable +0x308 (slot 194, IGObj::ConsumeHpMp) and
+//     applies the MP amount directly. srrevamp has no status effects.
+//   - Panic and combustion, the next paragraph.
+//
+// ApplyHPMPDelta's own step is a no-op ONLY while neither panic nor combustion
+// is on the character, and srrevamp does not model it.
 // GObjPC::FUN_004a86a0 (ApplyHPMPDelta) multiplies the HP amount by
 // (1 - param143/100) and the MP amount by (1 - param144/100) before the adjust
 // that writes the pool (`MOV EAX,0x8f` / `MOV EAX,0x90` into
@@ -281,7 +389,15 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// The reuse delay, the engine's way (round 263): only an item whose
 		// row carries a COOLTIME descriptor has one, the timer belongs to the
 		// item's cooltime GROUP, and a use inside it is refused with
-		// WAIT_FOR_REUSE_DELAY (0x185b). A plain HP/MP potion carries none.
+		// WAIT_FOR_REUSE_DELAY (0x185b). A plain HP/MP potion carries no
+		// COOLTIME descriptor -- but slot 308 has a per-kind potion gate of
+		// its own (round 496; NOT modelled, a DISCLOSED GAP): FUN_004eb410
+		// answers 0x185b while the kind's bit (TypeID4 1/2/3 -> 1/2/4) is set
+		// in the byte at [pc+0x30]+8, and after a use FUN_004e0ab0 sets it
+		// with a float32 of 1.1 (.rdata 0xb461b8), 15.1 (0xb461ac, when the
+		// byte at the PC's ref row +0x88 is non-zero) or 4.1 (0xb461b0, a
+		// percentage potion), handed to a state-changer record. Its unit and
+		// what clears the bit were not read.
 		if it.CooltimeMs > 0 && !itemCooldowns.Ready(characterID, it.CooltimeGroup, time.Now()) {
 			return fail("wait for the reuse delay")
 		}
@@ -293,10 +409,14 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		maxHP := owned.MaxHP()
 		maxMP := owned.MaxMP()
 
+		// The engine's amounts (round 496): scaled by level and Str/Int, the
+		// percentage pair only when both absolutes are zero.
+		healHP, healMP := potionRestore(it.RestoreHP, it.RestoreHPPct, it.RestoreMP, it.RestoreMPPct,
+			owned.Level, owned.Str, owned.Int, maxHP, maxMP)
+
 		// Health first. Healing is capped at the missing amount so the
 		// reported "restored" figure is what the player actually got, not
 		// what the label promises.
-		healHP := it.RestoreHP + maxHP*it.RestoreHPPct/100
 		missingHP := maxHP - owned.HP
 		if missingHP < 0 {
 			missingHP = 0
@@ -312,7 +432,6 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 			}
 		}
 
-		healMP := it.RestoreMP + maxMP*it.RestoreMPPct/100
 		newMP := maxMP
 		if mp != nil {
 			cur := mp.Current(characterID, maxMP)
