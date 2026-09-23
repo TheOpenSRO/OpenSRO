@@ -142,6 +142,41 @@ func _init() -> void:
 	_check(all_speeds.get("MOB_CH_MANGNYANG", []) == [8.0, 22.0],
 		"an empty prefix reads the Mangyang's 8 / 22 too (got %s)" % str(all_speeds.get("MOB_CH_MANGNYANG", [])))
 
+	# BCRadius (column 50, world units), the base of the reach band. Rows
+	# shaped like the retail ones: a player body 4, a Mangyang 6, a Yeoha 11.
+	# A row cut short before column 50 and a row whose column 50 is not a
+	# number must be skipped, not read as a radius of 0.
+	var yeoha := PackedStringArray()
+	yeoha.resize(104)
+	yeoha.fill("0")
+	yeoha[1] = "1943"
+	yeoha[2] = "MOB_CH_YEOHA"
+	yeoha[50] = "11"
+	body[50] = "4"
+	mob[50] = "6"
+	var short_row := PackedStringArray()
+	short_row.resize(50)
+	short_row.fill("0")
+	short_row[1] = "1950"
+	short_row[2] = "MOB_CH_TOMBSTONE_CLON"
+	var junk_row := PackedStringArray()
+	junk_row.resize(104)
+	junk_row.fill("0")
+	junk_row[1] = "1941"
+	junk_row[2] = "MOB_CH_STONEGHOST"
+	junk_row[50] = "xxx"
+	var radius_rows := ("\t".join(body) + "\n" + "\t".join(mob) + "\n" + "\t".join(yeoha) + "\n"
+		+ "\t".join(short_row) + "\n" + "\t".join(junk_row) + "\n").to_utf16_buffer()
+	var radii := NpcTableReader.parse_bc_radius_by_code(radius_rows)
+	_check(radii.get("CHAR_CH_MAN_FIGHTER", -1) == 4 and radii.get("MOB_CH_MANGNYANG", -1) == 6
+		and radii.get("MOB_CH_YEOHA", -1) == 11,
+		"column 50 reads the body's 4, the Mangyang's 6 and the Yeoha's 11 (got %s)" % str(radii))
+	_check(not radii.has("MOB_CH_TOMBSTONE_CLON"), "a row too short for column 50 is skipped (got %s)" % str(radii))
+	_check(not radii.has("MOB_CH_STONEGHOST"), "a non-numeric column 50 is skipped, not read as 0 (got %s)" % str(radii))
+	var body_radii := NpcTableReader.parse_bc_radius_by_code(radius_rows, {}, "CHAR_")
+	_check(body_radii.size() == 1 and body_radii.get("CHAR_CH_MAN_FIGHTER", -1) == 4,
+		"a CHAR_ prefix keeps only the body row (got %s)" % str(body_radii))
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

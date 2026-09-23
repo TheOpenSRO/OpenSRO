@@ -82,6 +82,13 @@ const COL_REQ_GENDER := 58
 ## these columns, with no fudge. See ITEM_FORMAT.md and WORLD_ISSUES.md.
 ## Durability is common to every equippable item; the rest are weapons.
 const COL_DURABILITY := 63
+## Range: a weapon's reach in world units (tenths of a metre) -- the item
+## ref's u16 at +0x224, which Char_PublishCombatStats publishes as param 33
+## and the attack tick adds to the two BCRadius values
+## (CGCharAutoCommandActor::Tick_Attack 0x004ad8e0; round 247). Retail rows
+## read sword/blade 6, spear/glaive 18, bow/crossbow 180, dagger 3. The same
+## column the server's exporter reads (export-refdata fRange = 94).
+const COL_RANGE := 94
 const COL_PHYS_ATK_MIN := 95
 const COL_PHYS_ATK_MAX := 97
 const COL_MAG_ATK_MIN := 100
@@ -162,6 +169,9 @@ class Item:
 	var mag_reinforce := Vector2i.ZERO
 	var attack_rate: int = 0
 	var critical: int = 0
+	## The weapon's reach (COL_RANGE), world units; 0 for a non-weapon or a
+	## row too short to carry the column.
+	var attack_range: int = 0
 	## Armour defence, base (+0), min~max (floats). Zero for a non-defensive
 	## item. block is a shield's block ratio.
 	var phys_def := Vector2.ZERO
@@ -228,10 +238,9 @@ class Item:
 
 	## The lines a hover tooltip shows, top to bottom -- the item's own real
 	## figures, none invented. A weapon shows its attack block; every
-	## equippable shows durability, requirement, race and gender. Kept to
-	## what is measured: attack distance and the armour defence block are
-	## not among these columns yet, so they are simply absent rather than
-	## guessed at.
+	## equippable shows durability, requirement, race and gender. The attack
+	## distance is parsed (attack_range, which the approach walk uses) but no
+	## line here prints it yet.
 	func tooltip_lines(names: UiTextTable = null) -> Array:
 		var lines: Array = [display_name(names)]
 		var type_id4: int = type_ids[3] if type_ids.size() > 3 else 0
@@ -320,6 +329,7 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		item.mag_reinforce = Vector2i(_int_at(cols, COL_MAG_REINFORCE_MIN), _int_at(cols, COL_MAG_REINFORCE_MAX))
 		item.attack_rate = _int_at(cols, COL_ATTACK_RATE)
 		item.critical = _int_at(cols, COL_CRITICAL)
+		item.attack_range = _int_at(cols, COL_RANGE)
 		item.phys_def = Vector2(_float_at(cols, COL_PHYS_DEF_MIN), _float_at(cols, COL_PHYS_DEF_MAX))
 		item.mag_def = Vector2(_float_at(cols, COL_MAG_DEF_MIN), _float_at(cols, COL_MAG_DEF_MAX))
 		item.block = Vector2(_float_at(cols, COL_BLOCK_MIN), _float_at(cols, COL_BLOCK_MAX))

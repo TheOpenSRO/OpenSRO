@@ -899,6 +899,17 @@ var _quickslot_items := {}
 ## attack result so that skill's own hit effect plays on the target (a plain
 ## attack does not). Set on cast, cleared when the blow lands.
 var _pending_skill_hit_code := ""
+## characterdata code name -> BCRadius (NpcTableReader.COL_BC_RADIUS, world
+## units), for every row: the player's body (GENDER_BODY_CODE) and each
+## monster's species (MonsterSnapshot.code_name) are the two halves of the
+## reach band's base (CombatNet.approach_band). Filled in
+## _load_character_assets; empty without Media.pk2.
+var _bc_radius_by_code: Dictionary = {}
+## An attack waiting for the walk into reach: {"monster": id, "skill": skill
+## id (0 = a plain swing), "code": Basic_Code, "stop", "reach"} -- the band
+## CombatNet.approach_band gave when it was asked for. Empty when none. See
+## _attack_monster.
+var _pending_attack: Dictionary = {}
 ## The animation-clock time of the player's last combat action (attack or cast).
 ## While within COMBAT_STANCE_SECONDS of it, a standing player holds the battle
 ## stance (STAND_BATTLE) instead of the town idle -- the real fighters carry a
@@ -3363,6 +3374,10 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	zone_label.text = "Zone: %s" % result.zone
 	player.position = Vector3(result.x, result.y, result.z)
 	_last_sent_pos = player.position
+	# The monsters of the old zone are left behind, and so is any attack
+	# still walking toward one of them -- with the walk, whose target is a
+	# spot in the old zone's coordinates.
+	_drop_pending_attack()
 
 	# Whoever was rendered as an "other" belonged to the *old* zone -- the
 	# server only broadcasts OpEntityLeft to people left behind, never back
@@ -4561,6 +4576,12 @@ func _load_character_assets() -> void:
 			var bytes := _media_pk2.read_file(entry)
 			bodies = NpcTableReader.parse_models_by_code(bytes, bodies)
 			speeds = NpcTableReader.parse_speeds_by_code(bytes, speeds)
+			_bc_radius_by_code = NpcTableReader.parse_bc_radius_by_code(bytes, _bc_radius_by_code)
+	# Every row's BCRadius (column 50), for the attack approach: the player's
+	# body and the monsters' species both feed the reach band.
+	print("World3D: %d BCRadius row(s) from characterdata column 50 (%s: %s)" % [
+		_bc_radius_by_code.size(), GENDER_BODY_CODE[DEFAULT_GENDER],
+		str(_bc_radius_by_code.get(GENDER_BODY_CODE[DEFAULT_GENDER], "none"))])
 	# The player's run speed is the body row's own (column 47), the number the
 	# server moves the character by; see NpcTableReader.COL_SPEED_RUN.
 	var player_speeds: Array = speeds.get(GENDER_BODY_CODE[DEFAULT_GENDER], [])
@@ -5020,27 +5041,209 @@ func _hotbar_page_hotkey(event: InputEvent) -> bool:
 		return true
 	return false
 
-## Casts a skill: plays its real cast animation (from basic_code) and sends the
-## use-skill request against the current target. The animation plays regardless
-## (the swing is visible even with no target); the server applies the skill's
-## real cooldown and, for now, plain-attack damage.
+## Casts a skill at the current target: for a skill that needs a target, walks
+## into its reach first when the target is out of it (_attack_monster; a
+## Target_Required 0 or land-targeted skill is cast where the player stands,
+## CombatNet.skill_tick_approaches), then plays its real cast animation (from
+## basic_code) and sends the use-skill request -- the animation goes with the
+## request, in _send_attack, so it does not play at the start of a walk. The
+## server applies the skill's real cooldown and damage.
 func _cast_skill(skill_id: int, basic_code: String) -> void:
+	if _last_attack_target == -1:
+		# Nothing selected: the original refuses too ("no target"), and a
+		# swing at nothing only looked like a cast that did nothing.
+		_log_system("Select a target first (click a monster), then use the skill.")
+		return
+	_show_target(_last_attack_target)
+	_attack_monster(_last_attack_target, skill_id, basic_code)
+
+## Attacks a monster -- a plain swing, or a cast when skill_id is not 0 --
+## after walking into reach if it is out of it.
+##
+## The engine's attack tick (CGCharAutoCommandActor::Tick_Attack 0x004ad8e0,
+## and the skill tick 0x004ae590 with the skill's Range for a skill that needs
+## a target) computes a band in phase 0 -- how far away the blow lands (reach)
+## and where a walk toward the target aims (stop) -- and in phase 1, on EVERY
+## tick, tests
+## Action_IsTargetWithinReach (0x004ad4a0, `int(dist) <= reach + 2`): out of
+## reach, GObjPC::MoveTowardObject(target, round(stop)) (0x004b0350) walks the
+## attacker; in reach, FUN_004ad780 -> FUN_004b03f0 faces the target and drops
+## that walk's target (FUN_004b0450 zeroes the +8 MoveTowardObject stored), and
+## the blow is sent (phase 2). docs/protocol/auto_command.md, "The attack tick".
+##
+## In retail that walk is the SERVER's. srrevamp's server does not move
+## players -- it refuses a blow out of reach with "too far away"
+## (session/keepup.go firstSwingInReach / skillInReach) -- so the walk is done
+## here and the request goes out only once the player stands in reach: an
+## OpMove after the request would cancel the keep-up it starts
+## (session/world.go, the move handler's keepUp.Cancel), so nothing moves
+## between the two. The band and the test are the server's own
+## (CombatNet.approach_band / in_reach mirror combat/reach.go), so the client
+## sends exactly when the server will accept.
+##
+## A skill the skill tick casts without a band -- Target_Required 0, or a
+## land target (Tick_UseSkill phase 0 jumps to phase 2 at 0x4ae743/0x4ae753;
+## CombatNet.skill_tick_approaches) -- is sent at once from where the player
+## stands, with no walk: the engine does not walk for it, and the server
+## accepts the non-damaging ones at any distance.
+##
+## When the band cannot be computed -- a species with no BCRadius row, a skill
+## the catalog does not know, no archive at all -- the request goes out at once
+## and the server judges the distance, as before; the log says which.
+func _attack_monster(monster_id: int, skill_id: int = 0, basic_code: String = "") -> void:
+	_pending_attack = {}
+	var planned := _attack_band(monster_id, skill_id)
+	if planned.has("no_walk"):
+		print("World3D: skill %d: %s -- the skill tick casts it with no walk; sending at once" % [
+			skill_id, str(planned["no_walk"])])
+		_send_attack(monster_id, skill_id, basic_code)
+		return
+	if not planned.has("band"):
+		print("World3D: no approach for monster %d (%s) -- sending at once; the server judges the distance" % [
+			monster_id, str(planned.get("why", "?"))])
+		_send_attack(monster_id, skill_id, basic_code)
+		return
+	var band: Vector2 = planned["band"]
+	_pending_attack = {"monster": monster_id, "skill": skill_id, "code": basic_code,
+		"stop": band.x, "reach": band.y}
+	if not _step_pending_attack() and not _pending_attack.is_empty():
+		var snap = _monster_snapshots.get(monster_id)
+		var gap := Vector2(player.position.x, player.position.z).distance_to(Vector2(snap.x, snap.z))
+		print("World3D: monster %d is %.1f away, out of reach %.1f (+%d) -- walking to %.1f short of it before %s" % [
+			monster_id, gap, band.y, CombatNet.REACH_SLACK, band.x,
+			"casting skill %d" % skill_id if skill_id != 0 else "swinging"])
+
+## The reach band for an attack on monster_id as the server will measure it
+## (session/keepup.go keepUpInReach / skillInReach): the player's BCRadius and
+## the species' (characterdata col 50), and the skill level's own Range
+## (skilldata col 21) or, when it has none, the weapon's (itemdata col 94).
+## {"band": Vector2(stop, reach)}; {"no_walk": reason} for a skill the skill
+## tick casts without a band (CombatNet.skill_tick_approaches); or
+## {"why": reason} when a piece is unknown.
+func _attack_band(monster_id: int, skill_id: int) -> Dictionary:
+	var skill_range := 0
+	if skill_id != 0:
+		var skill: Dictionary = _hud_panels.skill_reach(skill_id) if _hud_panels != null else {}
+		if skill.is_empty():
+			return {"why": "skill %d is not in the skill catalog, so its Range is unknown" % skill_id}
+		if not bool(skill["approach"]):
+			return {"no_walk": "Target_Required 0 or a land target (skilldata cols 22/24)"}
+		skill_range = int(skill["range"])
+	var snap = _monster_snapshots.get(monster_id)
+	if snap == null:
+		return {"why": "not in the monster list"}
+	var species: String = snap.code_name
+	if species == "" or not _bc_radius_by_code.has(species):
+		return {"why": "no characterdata BCRadius row for species '%s'" % species}
+	# The player's own body row. Every playable row reads 4, the server's
+	# combat.PlayerBCRadius, which is also the fallback when the row is absent.
+	var body_code: String = GENDER_BODY_CODE.get(_player_gender, GENDER_BODY_CODE[DEFAULT_GENDER])
+	var caster_bc := int(_bc_radius_by_code.get(body_code, CombatNet.PLAYER_BC_RADIUS))
+	var weapon_range := _equipped_weapon_range()
+	return {"band": CombatNet.approach_band(caster_bc, int(_bc_radius_by_code[species]),
+		CombatNet.effective_range(skill_range, weapon_range))}
+
+## The weapon in hand's Range (itemdata col 94, ItemTableReader.Item.attack_range),
+## as session/keepup.go's equippedWeaponRange reads it: 0 with no weapon, and 0
+## while the weapon is broken -- durability.IsBroken, current == 0, the value
+## at which its stats stop applying (an untracked item, -1 or absent from the
+## block, counts as whole). A weapon the item table does not know gives 0 too,
+## which only makes the walk stop closer than it had to.
+func _equipped_weapon_range() -> int:
+	var weapon_id := int(_player_equipped_last.get(EquipmentNet.SLOT_WEAPON, 0))
+	if weapon_id == 0:
+		return 0
+	for d in NetClient.last_equipment_durabilities:
+		if int(d.slot) == EquipmentNet.SLOT_WEAPON and int(d.current) == 0:
+			return 0
+	var row = _item_rows.get(weapon_id)
+	return int(row.attack_range) if row != null else 0
+
+## One tick of Tick_Attack phase 1 for the pending attack. In reach: release
+## it (stop, tell the server where the player stands, send) and return true.
+## Out of reach: aim the walk at the stop distance on the line to the target
+## -- MoveTowardObject's destination, re-aimed every tick so it follows the
+## target -- and return false. A target that died or left the list drops the
+## attack and the walk that was for it.
+func _step_pending_attack() -> bool:
+	var monster_id := int(_pending_attack["monster"])
+	var snap = _monster_snapshots.get(monster_id)
+	if snap == null or not _monster_bodies.has(monster_id) or _dying_until.has(monster_id):
+		print("World3D: monster %d died or left before the walk reached it -- attack dropped" % monster_id)
+		_pending_attack = {}
+		_has_move_target = false
+		return false
+	var here := Vector2(player.position.x, player.position.z)
+	var there := Vector2(snap.x, snap.z)
+	if CombatNet.in_reach(here.distance_to(there), float(_pending_attack["reach"])):
+		_release_pending_attack()
+		return true
+	var point := CombatNet.approach_point(here, there, float(_pending_attack["stop"]))
+	_move_target = Vector3(point.x, player.position.y, point.y)
+	_has_move_target = true
+	return false
+
+## Drops an attack still walking into reach, and ends the walk that was for
+## it -- for a click that does something else from where the player stands
+## (talking to an NPC, picking up a drop within reach), a zone change, or the
+## target's death. A click that starts a walk of its own replaces the move
+## target instead and only clears _pending_attack.
+func _drop_pending_attack() -> void:
+	if _pending_attack.is_empty():
+		return
+	_pending_attack = {}
+	_has_move_target = false
+	player.velocity.x = 0.0
+	player.velocity.z = 0.0
+
+## Sends the pending attack from where the player stands: the walk ends, the
+## position goes out first (_flush_position), then the request.
+func _release_pending_attack() -> void:
+	var attack := _pending_attack
+	_pending_attack = {}
+	_has_move_target = false
+	player.velocity.x = 0.0
+	player.velocity.z = 0.0
+	var monster_id := int(attack["monster"])
+	var snap = _monster_snapshots.get(monster_id)
+	if snap != null:
+		print("World3D: monster %d in reach at %.1f (reach %.1f +%d) -- sending" % [
+			monster_id, Vector2(player.position.x, player.position.z).distance_to(Vector2(snap.x, snap.z)),
+			float(attack["reach"]), CombatNet.REACH_SLACK])
+	_flush_position()
+	_send_attack(monster_id, int(attack["skill"]), String(attack["code"]))
+
+## Tells the server where the player stands now, if that is not what it was
+## last told, so the request that follows is measured from here. The physics
+## tick sends the same update only every MIN_SEND_INTERVAL and
+## MIN_SEND_DISTANCE, and an attack sent in between would be measured from a
+## stale spot. It goes BEFORE the attack: the server cancels a running keep-up
+## on every OpMove (session/world.go), so a move sent after the attack would
+## end the swings it had just started.
+func _flush_position() -> void:
+	if not NetClient.is_connected_to_server() or player.position == _last_sent_pos:
+		return
+	NetClient.move_to(player.position.x, player.position.y, player.position.z)
+	_last_sent_pos = player.position
+	_time_since_send = 0.0
+
+## Sends an attack request: a plain swing when skill_id is 0, else the cast --
+## whose animation, battle stance and hit effect are armed here, when the
+## request actually goes out, not when it was asked for.
+func _send_attack(monster_id: int, skill_id: int, basic_code: String) -> void:
+	if skill_id == 0:
+		NetClient.attack(NetClient.current_character_name, monster_id)
+		return
 	# basic_code carries the level suffix; derive the clip name the same way the
 	# reader's BaseSkill.cast_anim_name does (lowercase, drop trailing _NN).
 	var anim_base := basic_code.to_lower()
 	var us := anim_base.rfind("_")
 	if us > 0 and anim_base.substr(us + 1).is_valid_int():
 		anim_base = anim_base.substr(0, us)
-	if _last_attack_target == -1:
-		# Nothing selected: the original refuses too ("no target"), and a
-		# swing at nothing only looked like a cast that did nothing.
-		_log_system("Select a target first (click a monster), then use the skill.")
-		return
 	_last_combat_time = _player_anim_time
 	_play_skill_cast_anim(anim_base)
-	_show_target(_last_attack_target)
 	_pending_skill_hit_code = basic_code
-	NetClient.use_skill(NetClient.current_character_name, skill_id, _last_attack_target)
+	NetClient.use_skill(NetClient.current_character_name, skill_id, monster_id)
 
 ## The group entry behind _body_animation_for, for its events.
 func _body_animation_entry(gender: String, action_type: int, group: String) -> BsrReader.AnimationEntry:
@@ -5633,7 +5836,9 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_NOUI=1     hide the HUD (for comparison shots)
 ##   SRREVAMP_QA_WORLDMAP=1 open the world map window over the world
 ##   SRREVAMP_QA_ATTACK_NAME=s  only monsters whose plate contains s (e.g. Mangyang)
-##   SRREVAMP_QA_ATTACK_GOTO=1  stand next to the target first (QA teleport)
+##   SRREVAMP_QA_ATTACK_GOTO=1  stand next to the target first (QA teleport);
+##                          without it the player walks into reach the way a
+##                          click does (_attack_monster)
 ##   SRREVAMP_QA_ATTACK_ALTERNATE=1  with QA_ATTACK: swing at the nearest and the
 ##                          second-nearest monster in turn (a retarget every swing)
 ##   SRREVAMP_QA_ATTACK=1   attack the nearest monster every second, so a
@@ -6214,12 +6419,16 @@ func _qa_attack_nearest() -> void:
 		player.global_position = spot
 		player.velocity = Vector3.ZERO
 		NetClient.move_to(player.position.x, player.position.y, player.position.z)
+		# Recorded as sent, so _attack_monster's _flush_position does not send
+		# the same OpMove a second time.
+		_last_sent_pos = player.position
+		_time_since_send = 0.0
 		nearest = target.global_position.distance_to(player.global_position)
 		print("QA ATTACK: moved next to monster %d at %.1f,%.1f,%.1f" % [nearest_id, spot.x, spot.y, spot.z])
 	print("QA ATTACK: monster %d at %.0f" % [nearest_id, nearest])
 	_last_attack_target = nearest_id
 	_show_target(nearest_id)
-	NetClient.attack(NetClient.current_character_name, nearest_id)
+	_attack_monster(nearest_id)
 
 ## SRREVAMP_QA_CLICK="monster,npc,ground": each kind becomes a real left
 ## click through _dispatch_left_click -- after the player is put 40 units in
@@ -6984,6 +7193,7 @@ func _physics_process(delta: float) -> void:
 	var typing := _hud_chat != null and _hud_chat.is_typing()
 	if typing:
 		_has_move_target = false
+		_pending_attack = {}
 	else:
 		input_dir.x = Input.get_axis("move_left", "move_right")
 		input_dir.z = Input.get_axis("move_forward", "move_back")
@@ -6996,6 +7206,7 @@ func _physics_process(delta: float) -> void:
 		input_dir = input_dir.normalized()
 		_has_move_target = false # manual movement always cancels a pending click-to-move
 		_pending_pickup_id = -1
+		_pending_attack = {} # ...and an attack still walking into reach
 		# Relative to the camera, as in the original: W walks away from the
 		# camera whichever way it has been orbited, not along a world axis.
 		var yaw := deg_to_rad(camera_arm.rotation_degrees.y)
@@ -7006,9 +7217,20 @@ func _physics_process(delta: float) -> void:
 		player.velocity.z = dir.z * _move_speed
 		player.rotation.y = atan2(dir.x, dir.z)
 	elif _has_move_target:
+		# An attack walking into reach: Tick_Attack's phase 1 tests the reach
+		# on every tick of the walk, so this does too, and the blow goes out
+		# on the first frame in reach -- stopped, the position flushed, the
+		# request sent -- before the send gate below could follow it with an
+		# OpMove, which would cancel the keep-up it starts (_attack_monster).
+		if not _pending_attack.is_empty():
+			_step_pending_attack()
 		var to_target := _move_target - player.position
 		to_target.y = 0.0
-		if to_target.length() <= MOVE_TARGET_STOP_DISTANCE:
+		if not _has_move_target:
+			# The pending attack went out this frame, or its target went away.
+			player.velocity.x = 0.0
+			player.velocity.z = 0.0
+		elif to_target.length() <= MOVE_TARGET_STOP_DISTANCE:
 			_has_move_target = false
 			player.velocity.x = 0.0
 			player.velocity.z = 0.0
@@ -7017,6 +7239,12 @@ func _physics_process(delta: float) -> void:
 			if _pending_pickup_id != -1 and not _pickup_inflight and NetClient.is_connected_to_server():
 				_pickup_inflight = true
 				NetClient.pick_up(NetClient.current_character_name, _pending_pickup_id)
+			# Arrived at the stop distance with the attack still pending. The
+			# stop is never beyond the reach, so the test above fires first;
+			# this only keeps an attack from being stranded, and the server
+			# still judges it.
+			if not _pending_attack.is_empty():
+				_release_pending_attack()
 		else:
 			var dir := to_target.normalized()
 			player.velocity.x = dir.x * _move_speed
@@ -7068,6 +7296,7 @@ func _physics_process(delta: float) -> void:
 		player.position = _last_grounded_position
 		player.velocity = Vector3.ZERO
 		_has_move_target = false
+		_pending_attack = {}
 
 	_recover_if_below_terrain()
 
@@ -8017,6 +8246,9 @@ func _try_talk_to_npc(screen_pos: Vector2) -> bool:
 	var code := str(node.get_meta("npc_code")) if node.has_meta("npc_code") else ""
 	_talk_npc_name = npc_name
 	_talk_npc_code = code
+	# Talking supersedes an attack still walking into reach: the attack would
+	# otherwise go out behind the talk window.
+	_drop_pending_attack()
 	_hud_panels.open_npc_talk(npc_name, _npc_greeting_text(code), _npc_services(code))
 	return true
 
@@ -8075,6 +8307,8 @@ func _try_set_move_target(screen_pos: Vector2) -> void:
 		return
 	_move_target = hit["position"]
 	_has_move_target = true
+	# A walk somewhere else supersedes an attack that was walking into reach.
+	_pending_attack = {}
 
 func _on_send_pressed() -> void:
 	var text := chat_input.text.strip_edges()
@@ -8321,7 +8555,7 @@ func _try_attack_monster(screen_pos: Vector2) -> bool:
 		return false
 	_last_attack_target = int(node.get_meta("monster_id"))
 	_show_target(_last_attack_target)
-	NetClient.attack(NetClient.current_character_name, _last_attack_target)
+	_attack_monster(_last_attack_target)
 	return true
 
 ## Side-effect-free version of both click rays, for the QA hook: what the
@@ -8526,6 +8760,11 @@ func _try_pick_up_item(screen_pos: Vector2) -> bool:
 	if target != Vector3.INF and player.global_position.distance_to(target) > GroundItemsNet.PICK_RANGE:
 		_move_target = target
 		_has_move_target = true
+		_pending_attack = {}
+	else:
+		# Picked up from where the player stands: an attack still walking into
+		# reach ends here, with its walk.
+		_drop_pending_attack()
 	_pickup_inflight = true
 	NetClient.pick_up(NetClient.current_character_name, ground_id)
 	return true
@@ -8577,7 +8816,7 @@ func _on_attack_pressed() -> void:
 	var target: CombatNet.MonsterSnapshot = _monsters[selected[0]]
 	_last_attack_target = target.monster_id
 	_show_target(target.monster_id)
-	NetClient.attack(NetClient.current_character_name, target.monster_id)
+	_attack_monster(target.monster_id)
 
 func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	if result == null:
@@ -8743,6 +8982,10 @@ func _on_monster_died(monster_id: int) -> void:
 	if monster_id == _last_attack_target:
 		_clear_target()
 		_last_attack_target = -1
+	# Someone else's kill of the monster this player was walking to: no attack
+	# to send, and no reason to keep walking.
+	if not _pending_attack.is_empty() and int(_pending_attack["monster"]) == monster_id:
+		_drop_pending_attack()
 	var seconds := _play_monster_action(monster_id, BsrReader.AnimationEntry.TYPE_DIE, true)
 	if seconds > 0.0:
 		_dying_until[monster_id] = _idle_anim_time + seconds

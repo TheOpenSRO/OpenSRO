@@ -227,8 +227,10 @@ In order. Each is checked off here when it ships in a release, with its round in
       Next: export a MAAT flag in the skill CSV (a new trailing column, the round-504 pattern),
       then gate both paths on it (`combat.MasteryDamagePercent`'s `hasSkill` becomes "has a row
       with MAAT"), and give the plain swing the caster's level in the base row's mastery.
-- [ ] **Attack distance.** Neither the client nor the server gates an attack by distance today: a
-      monster can be hit from anywhere (an absent rule, by omission). Read in round 232: the SERVER
+- [x] **Attack distance.** BUILT for the player (round 519): the server refuses a first swing or
+      cast out of reach ("too far away", `session.firstSwingInReach`/`skillInReach`), and the client
+      walks into reach before it sends (`World3D._attack_monster`, below). The monster's own approach
+      in BATTLE is the "Monsters do not move" item above. The history: read in round 232: the SERVER
       never refuses on distance -- `0x3007 UIIT_SKILL_USE_FAIL_WRONGDISTANCE` occurs nowhere in its
       dump while its neighbours 0x3003-0x3009 all do (`Skill_CheckUseConditions`, `CanBeAttackedBy`);
       the original's CLIENT walks into range before it sends. Basic attacks (`SKILL_*_BASE_01`,
@@ -256,12 +258,40 @@ In order. Each is checked off here when it ships in a release, with its round in
       bow 180, dagger 3), in reach when `int(dist) <= reach + 2`, else
       `MoveTowardObject(target, stop)`. Table units ARE world units (1 = 0.1 m) -- the comparison
       has no conversion. `combat.ApproachBand`/`InReach`/`EffectiveRange` carry it, `refdata.Item.Range`
-      and `combat.Species.BCRadius` the data (v0.1.400). STILL TO BUILD: the behaviour -- the server
-      moving the attacker (srrevamp's server does not drive player movement) or the client walking
-      to `stop` before it sends, and the monster's own approach in BATTLE. Round 256: the tick is
+      and `combat.Species.BCRadius` the data (v0.1.400). Round 256: the tick is
       the plain-ATTACK tick of `CGCharAutoCommandActor` (the skill tick 0x4ae590 computes the same
-      band); the keep-up's REPEATS are now gated by the reach test (`session.keepUpInReach`) --
-      a repeat out of reach ends the run -- while the first click is still ungated.
+      band, but only for a skill that needs a target -- see round 519 below); the keep-up's REPEATS are gated by the reach test (`session.keepUpInReach`) -- a
+      repeat out of reach ends the run -- and since the 2026-09-20 playtest the first click and a
+      cast are too. **Round 519 built the walk on the client** (srrevamp's server does not drive
+      player movement): `CombatNet.approach_band`/`in_reach`/`approach_point` mirror `combat/reach.go`,
+      the BCRadius comes from characterdata col 50 by code name, the weapon's Range from itemdata
+      col 94 (0 while broken), a skill's from its level's own skilldata col 21; an out-of-reach
+      click walks toward the stop distance, re-tests reach every frame (phase 1 re-tests every tick;
+      its in-reach branch drops the MoveTowardObject target via `FUN_004b0450`) and sends on the
+      first frame in reach, after flushing the position -- a later OpMove would cancel the keep-up.
+      A cast of a skill with `Target_Required` 0 (skilldata col 22) or a land target (col 22 = 1
+      and `TargetType_Land` col 24 = 1) goes out at once with no walk: `Tick_UseSkill` phase 0
+      jumps straight to phase 2 for both (`0x4ae743`, `0x4ae753`; `CombatNet.skill_tick_approaches`)
+      -- 115 of the 264 level-1 China board rows, the self heals and shields among them. Measured
+      live: a Yeoha clicked from 40 units is approached and struck ("in reach at 23.3 (reach 21.0
+      +2)"), where the same run before the change logged "attack refused: too far away". Still
+      open:
+      - a keep-up repeat that finds the target out of reach ends the run (the engine walks again);
+      - **a filed server departure**: srrevamp's server reach-gates the `Target_Required` 0 rows
+        that deal damage (the exporter's `ZeroDamage` 0, run over the box's skilldata tables):
+        147 China board rows, every level of the
+        15 `SKILL_CH_COLD/FIRE/LIGHTNING_GIGONGTA_A..E` skills, all `Basic_Activity` 1. The engine's
+        skill tick computes no band for them (an Activity other than 2 leaves phase 0 at
+        `0x4ae6ea`, and `Target_Required` 0 skips the band at `0x4ae743`), but `session/skill.go`
+        resolves them as a blow on the selected monster behind `skillInReach`, so a cast with a
+        distant monster selected is refused "too far away" -- as it was before round 519. The
+        client sends them at once. Next: read what the engine does with an Activity-1 row
+        (`0x4ae9dc` returns 1 without a phase change; not followed) before touching the server;
+      - the in-reach send trusts the latest monster snapshot, which is exact only while monsters
+        stand still server-side. Once they wander or chase ("Monsters do not move" above), a stale
+        snapshot will earn "too far away" and nothing walks again;
+      - a walk that geometry blocks never reaches the band and nothing times it out, the same as a
+        plain click-to-move: the attack waits until WASD, typing or another click.
 - [ ] **Linear fog between the real planes.** Read in round 229: the client's fog is D3D linear fog
       from `channel 10 x view distance` to `channel 11 x view distance` (2500 by default) -- zero
       until the near plane (Jangan: 1250), complete at the far one (2250). `FOG_DENSITY` is an

@@ -132,6 +132,7 @@ func _init() -> void:
 	w[ItemTableReader.COL_MAG_REINFORCE_MAX] = "591"
 	w[ItemTableReader.COL_ATTACK_RATE] = "24"
 	w[ItemTableReader.COL_CRITICAL] = "3"
+	w[94] = "6" # Range: a sword reaches 6 (retail ITEM_CH_SWORD_01_A_DEF)
 	var sword: ItemTableReader.Item = ItemTableReader.parse(("\t".join(w) + "\n").to_utf16_buffer()).get(3632)
 	_check(sword != null and sword.is_weapon(), "the sword parses and is a weapon")
 	if sword != null:
@@ -139,11 +140,28 @@ func _init() -> void:
 		_check(sword.mag_atk == Vector2i(25, 28), "magical attack 25~28 (got %s)" % str(sword.mag_atk))
 		_check(sword.durability == 62 and sword.attack_rate == 24 and sword.critical == 3, "durability, rate, critical")
 		_check(sword.phys_reinforce == Vector2i(306, 342), "phys reinforce tenths (got %s)" % str(sword.phys_reinforce))
+		_check(sword.attack_range == 6, "column 94 is the sword's range 6 (got %d)" % sword.attack_range)
 		var lines := sword.tooltip_lines()
 		var joined := "\n".join(PackedStringArray(lines))
 		_check(joined.contains("Phy. atk. pwr. 15 ~ 16"), "tooltip shows physical attack (got: %s)" % joined)
 		_check(joined.contains("Mag. reinforce 51.9 % ~ 59.1 %"), "tooltip shows mag reinforce as a percent (got: %s)" % joined)
 		_check(joined.contains("Sort of item: Sword") and joined.contains("Required level 1"), "tooltip shows sort and required level")
+
+	# A bow's range is 180 (retail ITEM_CH_BOW_01_A_DEF, column 94); a row cut
+	# short before column 94 has no range at all, 0, not a neighbour's value.
+	var bow_cols := w.duplicate()
+	bow_cols[ItemTableReader.COL_ID] = "3636"
+	bow_cols[ItemTableReader.COL_CODE_NAME] = "ITEM_CH_BOW_01_A_DEF"
+	bow_cols[ItemTableReader.COL_NAME] = "Hunting Bow"
+	bow_cols[ItemTableReader.COL_TYPE_ID4] = "6"
+	bow_cols[94] = "180"
+	var short_cols := w.slice(0, 90)
+	short_cols[ItemTableReader.COL_ID] = "3999"
+	var ranged := ItemTableReader.parse(("\t".join(bow_cols) + "\n" + "\t".join(short_cols) + "\n").to_utf16_buffer())
+	var bow: ItemTableReader.Item = ranged.get(3636)
+	var cut: ItemTableReader.Item = ranged.get(3999)
+	_check(bow != null and bow.attack_range == 180, "column 94 is the bow's range 180 (got %s)" % (str(bow.attack_range) if bow != null else "-"))
+	_check(cut != null and cut.attack_range == 0, "a row too short for column 94 has range 0 (got %s)" % (str(cut.attack_range) if cut != null else "-"))
 
 	# display_name: the client's own English name or nothing -- never the
 	# archive's mangled column 3, never an id. Shapes taken from the real

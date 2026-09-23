@@ -48,11 +48,28 @@ const S_BASE_ID := 2
 const S_BASIC_CODE := 3          # SKILL_CH_..._NN -- names the cast .ban clip
 const S_LEVEL := 7
 # Cast timing / cost / range, verified against SMASH_A (see the skilldata-columns
-# note): all in ms except Range. CastTime/ReuseDelay/Range are constant per skill;
-# ReqSP and ConsumeMP rise per level.
+# note): all in ms except Range. CastTime/ReuseDelay are constant per skill;
+# ReqSP and ConsumeMP rise per level. Range is constant for all but four
+# player skills: measured on the box's skilldata tables (round 519 review),
+# SKILL_CH_BOW_SPECIAL_A..D (bases 467-470) rise 2 a level, 204->214,
+# 218->228, 228->238 and 240->244 -- so it is kept per level (level_range).
 const S_CAST_TIME := 12
 const S_REUSE_DELAY := 14         # the cooldown
 const S_RANGE := 21               # 0 = melee
+# The two targeting bytes the skill tick reads before it computes a reach band
+# (Tick_UseSkill 0x004ae590 phase 0, asm 0x4ae73b-0x4ae753;
+# docs/protocol/auto_command.md, "The skill tick"): Target_Required
+# (CRefSkill+0x94) and TargetType_Land (+0x96). Their columns follow the
+# copy order of CRefSkill::CopyFixedColumns 0x6ab5a0
+# (docs/protocol/skill_fields.md, "The fixed columns"): Range +0x92 is
+# column 21, Target_Required +0x94 column 22 (the exporter's
+# skTargetRequired), TargetType_Animal +0x95 column 23, TargetType_Land +0x96
+# column 24. Measured on the box's tables: Target_Required is 0 on every
+# SKILL_CH_WATER_SELFHEAL row and 1 on every SKILL_CH_WATER_HEAL row, and
+# TargetType_Land is 1 only on the 19 SKILL_CH_LIGHTNING_GYEONGGONG_B/D rows
+# among the 2,185 China board rows.
+const S_TARGET_REQUIRED := 22
+const S_TARGET_LAND := 24
 const S_MASTERY := 34
 const S_REQ_MASTERY_LEVEL := 36
 # The learn prerequisites: up to three (skill GROUP id, level) pairs a level
@@ -112,9 +129,20 @@ class BaseSkill:
 	## [group_id, level] pairs (skilldata ReqLearn_Skill1..3 / SkillLevel1..3),
 	## empty when the level needs nothing but its mastery level and SP.
 	var level_prereqs: Array = []
-	## Cast timing / range, constant across a skill's levels (verified for SMASH_A):
-	## cast time and cooldown in ms, range in game units (0 = melee), and the
-	## tooltip description code resolved through the UI text table.
+	## Each level's Range (S_RANGE, world units, 0 = the weapon's), aligned with
+	## level_ids -- what that level's cast is measured with. It differs from
+	## range_val only on the four SKILL_CH_BOW_SPECIAL skills (see S_RANGE).
+	var level_range: PackedInt32Array = PackedInt32Array()
+	## Each level's Target_Required (S_TARGET_REQUIRED) and TargetType_Land
+	## (S_TARGET_LAND), aligned with level_ids: whether the skill tick walks
+	## into reach before the cast (CombatNet.skill_tick_approaches).
+	var level_target_required: PackedInt32Array = PackedInt32Array()
+	var level_target_land: PackedInt32Array = PackedInt32Array()
+	## Cast timing / range as the level-1 row gives them: cast time and
+	## cooldown in ms (constant across levels, verified for SMASH_A), range in
+	## game units (0 = melee; constant but for four skills -- level_range has
+	## every level's), and the tooltip description code resolved through the UI
+	## text table.
 	var cast_time_ms: int
 	var cooldown_ms: int
 	var range_val: int
@@ -122,7 +150,8 @@ class BaseSkill:
 	## The skill's Basic_Code (SKILL_CH_..._NN). The cast animation clip is named
 	## after it (see cast_anim_name / the skill-animations note).
 	var basic_code: String
-	## Accumulator during parse: level -> [unique_id, req_mastery_level, sp, mp].
+	## Accumulator during parse: level -> [unique_id, req_mastery_level, sp, mp,
+	## prereqs, range, target_required, target_land].
 	## Folded into the level_* arrays once every row is seen; not used after that.
 	var _levels: Dictionary = {}
 
@@ -225,6 +254,8 @@ static func parse_skills(datas: Array, mastery_ids: PackedInt32Array) -> Diction
 				var g := _int_at(cols, pair[0])
 				if g > 0:
 					prereqs.append([g, _int_at(cols, pair[1])])
+			var level_info: Array = [unique_id, req, sp, mp, prereqs, _int_at(cols, S_RANGE),
+				_int_at(cols, S_TARGET_REQUIRED), _int_at(cols, S_TARGET_LAND)]
 			if by_base.has(base_id):
 				var existing: BaseSkill = by_base[base_id]
 				existing.max_level = maxi(existing.max_level, level)
@@ -234,7 +265,7 @@ static func parse_skills(datas: Array, mastery_ids: PackedInt32Array) -> Diction
 				if level == 1:
 					existing.first_level_id = unique_id
 				if level >= 1:
-					existing._levels[level] = [unique_id, req, sp, mp, prereqs]
+					existing._levels[level] = level_info
 			else:
 				var s := BaseSkill.new()
 				s.base_id = base_id
@@ -247,7 +278,7 @@ static func parse_skills(datas: Array, mastery_ids: PackedInt32Array) -> Diction
 				if level == 1:
 					s.first_level_id = unique_id
 				if level >= 1:
-					s._levels[level] = [unique_id, req, sp, mp, prereqs]
+					s._levels[level] = level_info
 				by_base[base_id] = s
 			var bs: BaseSkill = by_base[base_id]
 			if bs.cast_time_ms == 0 and bs.cooldown_ms == 0 and bs.range_val == 0 and bs.desc_code == "":
@@ -290,6 +321,9 @@ static func _finalize_levels(s: BaseSkill) -> void:
 	s.level_sp.resize(top)
 	s.level_mp.resize(top)
 	s.level_prereqs.resize(top)
+	s.level_range.resize(top)
+	s.level_target_required.resize(top)
+	s.level_target_land.resize(top)
 	for i in range(top):
 		s.level_prereqs[i] = []
 	for lv in s._levels:
@@ -300,6 +334,10 @@ static func _finalize_levels(s: BaseSkill) -> void:
 		s.level_mp[int(lv) - 1] = int(info[3])
 		if info.size() > 4:
 			s.level_prereqs[int(lv) - 1] = info[4]
+		if info.size() > 7:
+			s.level_range[int(lv) - 1] = int(info[5])
+			s.level_target_required[int(lv) - 1] = int(info[6])
+			s.level_target_land[int(lv) - 1] = int(info[7])
 
 static func _int_at(cols: PackedStringArray, col: int) -> int:
 	if col >= cols.size():

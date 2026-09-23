@@ -57,6 +57,14 @@ const COL_CODE_NAME := 2
 ## row in the table reads 16 / 50.
 const COL_SPEED_WALK := 46
 const COL_SPEED_RUN := 47
+## A character's collision radius, BCRadius, in world units: the common
+## record's word at +0xee, which the server's IGObj slot 344 returns and its
+## attack tick adds to the attacker's to make the base of the reach band
+## (CGCharAutoCommandActor::Tick_Attack 0x004ad8e0 phase 0; round 247 in
+## docs/WORLD_ISSUES.md re-read the parser to put +0xee at column 50).
+## Retail rows read: every playable body 4, Mangyang 6, Gyo 10, Yeoha 11 --
+## the values server/cmd/server's roster carries (monsterSpec.BCRadius).
+const COL_BC_RADIUS := 50
 
 class Spawn:
 	var npc_id: int
@@ -192,6 +200,34 @@ static func parse_speeds_by_code(data: PackedByteArray, into: Dictionary = {}, p
 		if not walk.is_valid_float() or not run.is_valid_float():
 			continue
 		into[code] = [float(walk), float(run)]
+	return into
+
+## Parses one characterdata part into {code name -> BCRadius} (world units,
+## COL_BC_RADIUS) for rows whose code starts with `prefix`, merging into
+## `into`. "" takes every row -- the player bodies (CHAR_) and the monsters
+## (MOB_) both feed the reach band. A row too short to have the column, or
+## whose column is not a number, is skipped rather than read as 0.
+##
+## Keyed by code name, which is what MonsterSnapshot carries. Measured in round
+## 519 on the render box's extracted copies of the six data files among
+## MODEL_TABLE_PATHS (the seventh, characterdata.txt, lists part-file names
+## -- CharacterData_1000.txt, ... -- not rows): 13,291 rows with a numeric
+## column 50 and 13,291 distinct code names, so no row shadows another (a live
+## client read the same 13,291 keys out of Media.pk2). The
+## "second MOB_CH_MANGNYANG" docs/protocol/monster_ai.md warns of is
+## MOB_CH_STRONG_MANGNYANG (id 9383), a different code.
+static func parse_bc_radius_by_code(data: PackedByteArray, into: Dictionary = {}, prefix: String = "") -> Dictionary:
+	for line in _lines(data):
+		var cols := line.split("\t")
+		if cols.size() <= COL_BC_RADIUS:
+			continue
+		var code := cols[COL_CODE_NAME].strip_edges()
+		if code == "" or not code.begins_with(prefix):
+			continue
+		var radius := cols[COL_BC_RADIUS].strip_edges()
+		if not radius.is_valid_int():
+			continue
+		into[code] = int(radius)
 	return into
 
 ## Parses one characterdata part into {id -> display name}, merging into

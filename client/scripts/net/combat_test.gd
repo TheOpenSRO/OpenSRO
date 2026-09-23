@@ -221,6 +221,72 @@ func _test_decode_monster_list_result_error() -> void:
 	_check(result.error == "not in the world", "error round-trips")
 	_check(result.monsters.size() == 0, "no monsters alongside an error")
 
+## The attack-distance rule, mirrored from server/internal/combat/reach.go
+## (Tick_Attack 0x004ad8e0 phase 0, Action_IsTargetWithinReach 0x004ad4a0).
+## The expected pairs are reach.go's own band cases: a sword (6) against a
+## Mangyang (BCRadius 6), a dagger-like 3, the short-band edge 4, a spear
+## (18) against a Gyo (10), a bow (180) against a Yeoha (11), bare hands,
+## and the exactly-10 hole round 488 fixed.
+func _test_approach_band() -> void:
+	var cases := [
+		[4, 6, 6.0, Vector2(14.0, 16.0)],
+		[4, 6, 3.0, Vector2(13.0, 13.0)],
+		[4, 6, 4.0, Vector2(14.0, 14.0)],
+		[4, 10, 18.0, Vector2(26.6, 32.0)],
+		[4, 11, 180.0, Vector2(141.0, 195.0)],
+		[4, 6, 0.0, Vector2(10.0, 10.0)],
+		[4, 6, 10.0, Vector2(10.0, 10.0)],
+	]
+	for c in cases:
+		var got := CombatNet.approach_band(int(c[0]), int(c[1]), float(c[2]))
+		var want: Vector2 = c[3]
+		_check(got.is_equal_approx(want), "approach_band(%d, %d, %s) is %s (got %s)" % [
+			int(c[0]), int(c[1]), str(c[2]), str(want), str(got)])
+	_check(CombatNet.effective_range(0, 6) == 6.0, "a skill with no Range uses the weapon's")
+	_check(CombatNet.effective_range(150, 6) == 150.0, "a skill with its own Range uses that")
+	_check(CombatNet.effective_range(0, 0) == 0.0, "no skill range and no weapon: 0")
+
+func _test_in_reach() -> void:
+	_check(CombatNet.in_reach(16.0, 16.0), "in reach at exactly the reach")
+	_check(CombatNet.in_reach(18.9, 16.0), "in reach at 18.9 against 16: int(18.9) = 18 <= 16 + 2")
+	_check(CombatNet.in_reach(0.0, 16.0), "in reach standing on the target")
+	_check(not CombatNet.in_reach(19.0, 16.0), "out of reach at 19 against 16")
+	# A bow at 150 from a Yeoha: reach 195, so the click fires where it stands.
+	var bow := CombatNet.approach_band(CombatNet.PLAYER_BC_RADIUS, 11, CombatNet.effective_range(0, 180))
+	_check(CombatNet.in_reach(150.0, bow.y), "a bow user 150 away from a Yeoha is in reach (reach %s): no walk" % str(bow.y))
+
+## NEGATIVE -- the decision the client got wrong before it could walk: a sword
+## user who clicks a Mangyang 40 units away used to send at once and get "too
+## far away". 40 is out of the 16 reach, and the walk ends 14 short of the
+## target, on the line from the target back to the player.
+func _test_approach_from_forty() -> void:
+	var band := CombatNet.approach_band(CombatNet.PLAYER_BC_RADIUS, 6, CombatNet.effective_range(0, 6))
+	_check(not CombatNet.in_reach(40.0, band.y), "40 units from a Mangyang with a sword is out of reach %s" % str(band.y))
+	var point := CombatNet.approach_point(Vector2(40.0, 0.0), Vector2(0.0, 0.0), band.x)
+	_check(point.is_equal_approx(Vector2(14.0, 0.0)), "the walk from (40, 0) stops at (14, 0) (got %s)" % str(point))
+	var diagonal := CombatNet.approach_point(Vector2(30.0, 40.0), Vector2(0.0, 0.0), 14.0)
+	_check(diagonal.is_equal_approx(Vector2(8.4, 11.2)), "a diagonal walk stops 14 short along the line (got %s)" % str(diagonal))
+	_check(CombatNet.approach_point(Vector2(5.0, 0.0), Vector2(0.0, 0.0), 14.0) == Vector2(5.0, 0.0),
+		"a walker already inside the stop distance stays put")
+	_check(CombatNet.approach_point(Vector2(0.0, 0.0), Vector2(0.0, 0.0), 14.0) == Vector2(0.0, 0.0),
+		"a walker on the target stays put (no division by zero)")
+
+## NEGATIVE -- the decision round 519's first cut got wrong: it walked for
+## every cast. Tick_UseSkill (0x004ae590) phase 0 casts a Target_Required 0 row
+## (0x4ae743) and a land-targeted one (0x4ae753, Target_Required 1 with
+## TargetType_Land 1) with no band and no walk; only the other rows walk.
+func _test_skill_tick_approaches() -> void:
+	_check(not CombatNet.skill_tick_approaches(0, 0),
+		"Target_Required 0 (a self heal, a shield): cast where the player stands, no walk")
+	_check(not CombatNet.skill_tick_approaches(0, 1),
+		"Target_Required 0 with a land byte: still no walk (the 0x4ae743 jump comes first)")
+	_check(not CombatNet.skill_tick_approaches(1, 1),
+		"Target_Required 1 on a land target: no walk (0x4ae753)")
+	_check(CombatNet.skill_tick_approaches(1, 0),
+		"Target_Required 1 on a unit (Smash, a heal on another): walks into reach")
+	_check(CombatNet.skill_tick_approaches(2, 1),
+		"Target_Required other than 0/1 (no China board row has one; the asm's own branch): the land test is skipped (0x4ae74b jne), so it walks")
+
 func _init() -> void:
 	_test_encode_attack()
 	_test_decode_attack_result()
@@ -232,6 +298,10 @@ func _init() -> void:
 	_test_decode_loot_dropped_empty()
 	_test_decode_monster_list_result()
 	_test_decode_monster_list_result_error()
+	_test_approach_band()
+	_test_in_reach()
+	_test_skill_tick_approaches()
+	_test_approach_from_forty()
 
 	if _failures == 0:
 		print("ALL PASS")

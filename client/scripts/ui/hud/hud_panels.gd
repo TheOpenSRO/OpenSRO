@@ -2085,6 +2085,13 @@ var _skill_active_mastery := 0
 var _skill_groups: Dictionary = {}   ## mastery id -> Array[SkillDataReader.SkillGroup]
 var _skill_grid: Dictionary = {}     ## "<mastery>:<row>" -> Array[SkillDataReader.BaseSkill]
 var _skill_catalog_loaded := false
+## Every level's unique skill id -> {"range", "approach"} for THAT level: its
+## Range (skilldata col 21, CRefSkill +0x92; 0 = use the weapon's) and whether
+## the skill tick walks into reach before casting it
+## (CombatNet.skill_tick_approaches, from Target_Required col 22 and
+## TargetType_Land col 24). Built from _skill_grid. The id is the one a cast
+## sends, so World3D can decide the approach before it sends (skill_reach).
+var _skill_reach_by_id: Dictionary = {}
 
 ## The player's skill state as the server reports it: skill points, and each
 ## mastery's trained level. Empty until the server sends it (set_skill_state),
@@ -2215,6 +2222,20 @@ func _load_skill_catalog() -> void:
 		if e != null:
 			datas.append(archive.read_file(e))
 	_skill_grid = SkillDataReader.parse_skills(datas, ids)
+	for key in _skill_grid:
+		for entry in _skill_grid[key]:
+			var bs: SkillDataReader.BaseSkill = entry
+			# Per level, not the level-1 range_val: the server measures a cast
+			# with that level's own row (session/skill.go, ref.Range), and the
+			# four SKILL_CH_BOW_SPECIAL skills' Range rises 2 a level.
+			for i in bs.level_ids.size():
+				var level_id := int(bs.level_ids[i])
+				if level_id > 0:
+					_skill_reach_by_id[level_id] = {
+						"range": int(bs.level_range[i]),
+						"approach": CombatNet.skill_tick_approaches(
+							int(bs.level_target_required[i]), int(bs.level_target_land[i])),
+					}
 	print("HudPanels: skill catalog -- %d masteries with groups, %d group-rows of skills"
 		% [_skill_groups.size(), _skill_grid.size()])
 	if OS.has_environment("SRREVAMP_QA_PANELS"):
@@ -2224,6 +2245,16 @@ func _load_skill_catalog() -> void:
 			if _skill_grid.has(k):
 				dbg += " row%d=%d" % [r, (_skill_grid[k] as Array).size()]
 		print("HudPanels: Bicheon(257) rows:%s" % dbg)
+
+## How a cast meets its target, by the unique per-level id the cast sends:
+## {"range": that level's Range (skilldata col 21, world units; 0 = the
+## weapon's), "approach": whether the skill tick walks into reach first
+## (CombatNet.skill_tick_approaches)}, or {} when the archive's catalog does
+## not carry that id. Loads the catalog on first use, so a cast works without
+## the window ever being opened.
+func skill_reach(skill_id: int) -> Dictionary:
+	_load_skill_catalog()
+	return _skill_reach_by_id.get(skill_id, {})
 
 ## The server's skill state -- skill points and per-mastery levels. Refills the
 ## open window so learnable skills light up (their real icon instead of the grey

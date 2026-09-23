@@ -43,6 +43,8 @@ func _skill(base_id: String, level: String, mastery: String, req_ml: String,
 	cols[SkillDataReader.S_CAST_TIME] = "400"
 	cols[SkillDataReader.S_REUSE_DELAY] = "3000"
 	cols[SkillDataReader.S_RANGE] = "0"
+	cols[SkillDataReader.S_TARGET_REQUIRED] = "1"
+	cols[SkillDataReader.S_TARGET_LAND] = "0"
 	cols[SkillDataReader.S_REQ_SP] = str(int(level) * 10)
 	cols[SkillDataReader.S_CONSUME_MP] = str(int(level) * 5)
 	cols[SkillDataReader.S_TOOLTIP_DESC] = name + "_TT"
@@ -56,6 +58,7 @@ func _skill(base_id: String, level: String, mastery: String, req_ml: String,
 func _init() -> void:
 	_test_groups()
 	_test_skills()
+	_test_level_range_and_targeting()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
@@ -138,3 +141,37 @@ func _test_skills() -> void:
 				"level_prereqs holds each level's (group, level) prerequisites (got %s)" % str(r0[0].level_prereqs))
 			_check(r0[0].cast_anim_name() == "skill_ch_sword_smash_a",
 				"cast_anim_name lowercases Basic_Code and drops the level suffix (got %s)" % r0[0].cast_anim_name())
+
+## Range kept per level, and the two targeting bytes the skill tick reads.
+## The shapes are the real ones, synthetic values: a SKILL_CH_BOW_SPECIAL-like
+## skill whose Range rises 2 a level (204, 206), a self-cast skill with
+## Target_Required 0 (the SKILL_CH_WATER_SELFHEAL shape), and a land-targeted
+## one (the SKILL_CH_LIGHTNING_GYEONGGONG_B/D shape).
+func _test_level_range_and_targeting() -> void:
+	var bow1 := _skill("467", "1", "258", "1", "0", "skill\\china\\bow_special_a.ddj", "SN_SKILL_CH_BOW_SPECIAL_A").split("\t")
+	var bow2 := _skill("467", "2", "258", "3", "0", "skill\\china\\bow_special_a.ddj", "SN_SKILL_CH_BOW_SPECIAL_A").split("\t")
+	bow1[SkillDataReader.S_RANGE] = "204"
+	bow2[SkillDataReader.S_RANGE] = "206"
+	var heal := _skill("600", "1", "276", "1", "1", "skill\\china\\water_selfheal.ddj", "SN_SKILL_CH_WATER_SELFHEAL_A").split("\t")
+	heal[SkillDataReader.S_TARGET_REQUIRED] = "0"
+	var land := _skill("700", "1", "274", "1", "2", "skill\\china\\lightning_gyeonggong.ddj", "SN_SKILL_CH_LIGHTNING_GYEONGGONG_B").split("\t")
+	land[SkillDataReader.S_TARGET_LAND] = "1"
+	var rows := PackedStringArray(["\t".join(bow1), "\t".join(bow2), "\t".join(heal), "\t".join(land)])
+	var grid := SkillDataReader.parse_skills(
+		[("\n".join(rows) + "\n").to_utf16_buffer()], PackedInt32Array([258, 274, 276]))
+	if not (grid.has("258:0") and grid.has("276:1") and grid.has("274:2")):
+		_check(false, "the three synthetic skills parse (got %s)" % str(grid.keys()))
+		return
+	var bow: SkillDataReader.BaseSkill = grid["258:0"][0]
+	_check(bow.level_range.size() == 2 and bow.level_range[0] == 204 and bow.level_range[1] == 206,
+		"level_range keeps each level's Range (got %s)" % str(bow.level_range))
+	_check(bow.range_val == 204, "range_val stays the level-1 Range (got %d)" % bow.range_val)
+	_check(bow.level_target_required[0] == 1 and bow.level_target_required[1] == 1
+		and bow.level_target_land[0] == 0,
+		"a targeted skill reads Target_Required 1, TargetType_Land 0")
+	var self_heal: SkillDataReader.BaseSkill = grid["276:1"][0]
+	_check(self_heal.level_target_required.size() == 1 and self_heal.level_target_required[0] == 0,
+		"a self heal reads Target_Required 0 (col 22)")
+	var ghost: SkillDataReader.BaseSkill = grid["274:2"][0]
+	_check(ghost.level_target_required[0] == 1 and ghost.level_target_land[0] == 1,
+		"a land-targeted skill reads TargetType_Land 1 (col 24)")

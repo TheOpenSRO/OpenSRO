@@ -30261,3 +30261,183 @@ carries a string, so nothing a player sees depends on it.
   `client/tools/remote_godot.sh check` checked 246 scripts and 5 scenes: ALL LOAD.
 - **Server suite:** `cd server && go build ./... && go test -count=1 -p 1 ./...` is green. The
   doc probes read the edited `SYSTEMS.md`, `GROUNDING_AUDIT.md` and protocol docs at runtime.
+
+## Client walks to the retail stop distance before swinging or casting (Tick_Attack phase 1) (round 519)
+
+A click on a monster out of reach sent the attack at once, and the server answered "too far
+away" (`session.firstSwingInReach`, and `skillInReach` for a cast). In retail the server walks
+the attacker into reach. srrevamp's server does not move players, so the client now does the
+walk and sends the attack when it arrives in reach. The walk aims at the stop distance, but the
+attack goes out on the first frame in reach, usually before the walk gets to `stop` (below). A
+cast of a skill that needs no target, or targets the ground, is sent at once with no walk, as the
+engine's skill tick does.
+
+**Grounding** (read-only, `/var/tmp/decomp_server`):
+
+- **The band and the test are the server's, re-read.** `CGCharAutoCommandActor::Tick_Attack`
+  (`0x004ad8e0`) phase 0 puts `stop` at action `+0x14` and `reach` at `+0x18`. The branches are
+  the same as `combat.ApproachBand`. `r <= 4` adds `r` to both. `4 < r < 10` adds `r - 2` to
+  stop and `r` to reach. For `r > 10`, stop gets `0.7 r` and reach gets `r`. At exactly 10 one
+  `if (10 < r)` guards both adds (round 488). Phase 1 calls
+  `Action_IsTargetWithinReach(actor, ftol(reach))` (`0x004ad4a0`). That function returns
+  `iVar3 <= param_2 + 2`, where `iVar3` is the truncated distance. On failure it calls
+  `GObjPC::MoveTowardObject(target, ROUND(+0x14))` (`0x004b0350`), which stores the target at
+  `+8` and the stop at `+0xc`. The client mirrors `server/internal/combat/reach.go` and
+  `session/keepup.go` as they are now (`int(d) <= int(reach) + 2`, reach at 10 fixed).
+- **When the blow goes out.** Phase 1 returns 1 without changing phase, so it runs again on the
+  next tick and re-tests the reach while the walk goes on. The `pc+0x1bfc` check stops the walk
+  from being restarted. On the first tick in reach, `FUN_004ad780` calls `FUN_004b03f0`. That
+  sets the heading through the mover's slot `0x4b0` and calls `FUN_004b0450`, which zeroes the
+  `+8` target that MoveTowardObject stored. Then gate `0x81` runs and phase 2 posts the blow. So
+  the engine fires on the first tick in reach, before the walk reaches `stop`. **This departs
+  from the plan.** The plan said to walk all the way to `stop` and then send ("a bow user stops
+  at about 70% of the 180 range"). The client does what the tick does: it aims the walk at
+  `stop` and sends on the first frame in reach. The plan's arrival send is kept as a backstop.
+  It cannot fire in practice. The per-frame test fires once the distance drops below reach + 3
+  (reach is a whole number). The arrival branch needs the player within
+  `MOVE_TARGET_STOP_DISTANCE` (about 2.4) of the point, which is at most stop + 2.4, and stop is
+  never beyond reach. Not
+  read: whether the retail body keeps moving after `FUN_004b0450` drops the follow target.
+  srrevamp's client stops, because of the next point.
+- **The skill tick walks only for a skill that needs a target** (fixed in review, before
+  push; the first cut walked for every cast). `Tick_UseSkill` (`0x004ae590`) phase 0, read in
+  `/var/tmp/srv.asm`: `0x4ae73b` loads `Target_Required` (`+0x94`), `0x4ae743 je 0x4aecfd` when it
+  is 0, and `0x4ae749`-`0x4ae753` (`cmp al,1 ; jne ; cmp [edi+0x96],al ; je 0x4aecfd`) when it is
+  1 and `TargetType_Land` (`+0x96`) is 1. `0x4aecfd` is `mov eax,2 ; call 0x4ac9e0`, phase 2,
+  past the band and the reach test. `docs/protocol/auto_command.md`, "The skill tick", phase 0,
+  says the same. The columns follow `CRefSkill::CopyFixedColumns`' order
+  (`docs/protocol/skill_fields.md`): Range `+0x92` is column 21, `+0x94` column 22 (the exporter's
+  `skTargetRequired`), `+0x96` column 24. Measured on the box's skilldata tables (read-only, 2,185
+  China board rows over 258 skills): column 22 is 0 on 831 rows and 1 on 1,354, and never varies
+  within a skill; 115 of the 264 level-1 rows are 0 (`SKILL_CH_SWORD_SHIELD_D_01`,
+  `SKILL_CH_COLD_SHIELD_A_01`, `SKILL_CH_WATER_SELFHEAL_E_01`, ...); column 24 is 1 only on the 19
+  `SKILL_CH_LIGHTNING_GYEONGGONG_B/D` rows. Rows whose `Basic_Activity` (`+0x65`) is not 2 leave
+  phase 0 earlier still (`0x4ae6e6 cmp [edi+0x65],2 ; jne 0x4ae9dc`); all 256 such board rows
+  carry `Target_Required` 0, so the one test covers them. The server agrees for the
+  non-damaging rows: `session/skill.go`'s `noCombat || zeroDmg` return comes before
+  `skillInReach`, so a self heal or a shield was accepted at any distance before this round and
+  still is. The damaging `Target_Required` 0 rows are a server departure, filed below.
+- **Range per level.** Column 21 is constant within a skill except for four:
+  `SKILL_CH_BOW_SPECIAL_A..D` (bases 467-470) rise 2 a level, 204->214, 218->228, 228->238 and
+  240->244. The server measures a cast with that level's row (`session/skill.go`, `ref.Range`),
+  so the client keys the range by the level's own id.
+- **Nothing moves between the walk and the request.** `handleMove` (`session/world.go`) calls
+  `keepUp.Cancel` on every OpMove. So `_flush_position` sends the final position before the
+  attack, and `_last_sent_pos` then matches, so the physics tick's send gate stays quiet.
+- **The data.** BCRadius is characterdata column 50, re-checked on the box's extracted tables
+  (read-only). `CHAR_CH_MAN_FIGHTER`/`WOMAN_FIGHTER` read 4, `MOB_CH_MANGNYANG` 6,
+  `MOB_CH_GYO` 10 and `MOB_CH_YEOHA` 11, matching the roster in `cmd/server`. 13,291 rows carry
+  a numeric column 50 under 13,291 distinct code names. That is why a code-name key is safe.
+  The "second MOB_CH_MANGNYANG" in `docs/protocol/monster_ai.md` is `MOB_CH_STRONG_MANGNYANG`
+  (id 9383), a different code (found, not changed). The weapon Range is itemdata column 94:
+  `ITEM_CH_SWORD_01_A_DEF` 6, `SPEAR` 18, `BOW` 180, the exporter's `fRange`. A skill's Range is
+  skilldata column 21 (`SkillDataReader.S_RANGE`, the exporter's `skRange`).
+
+**Change.**
+
+- `client/scripts/net/combat.gd` adds the rule as statics with their citations:
+  `PLAYER_BC_RADIUS` 4, `REACH_SLACK` 2 and the band constants. It adds `approach_band` (a
+  `Vector2(stop, reach)`), `effective_range`, `in_reach` and `approach_point` (the point `stop`
+  short of the target on the line back to the walker; a walker already that close stays put).
+- `client/scripts/npc/npc_table_reader.gd` adds `COL_BC_RADIUS` 50 and
+  `parse_bc_radius_by_code`, modelled on `parse_speeds_by_code`. It skips short and non-numeric
+  rows rather than reading them as 0.
+- `client/scripts/npc/item_table_reader.gd` adds `COL_RANGE` 94 and `Item.attack_range`. The
+  tooltip comment that called attack distance "not among these columns" is corrected.
+- `client/scripts/npc/skill_data_reader.gd` adds `S_TARGET_REQUIRED` 22 and `S_TARGET_LAND` 24
+  and keeps three per-level arrays on `BaseSkill`: `level_range`, `level_target_required` and
+  `level_target_land`.
+- `client/scripts/net/combat.gd` adds `skill_tick_approaches(target_required, target_land)`,
+  the phase-0 test above.
+- `client/scripts/ui/hud/hud_panels.gd` maps every level's unique skill id to that level's
+  Range and to whether the skill tick walks for it, when the catalog loads. `skill_reach(id)`
+  loads the catalog on first use and gives `{}` for an unknown id.
+- `client/scripts/World3D.gd`:
+  - `_load_character_assets` fills `_bc_radius_by_code` for every row.
+  - `_attack_monster(monster_id, skill_id := 0, basic_code := "")` is now called by
+    `_try_attack_monster`, `_on_attack_pressed`, `_qa_attack_nearest` and `_cast_skill`.
+  - `_attack_band` builds the band from the gender body row's radius (falling back to 4), the
+    species' radius from `MonsterSnapshot.code_name`, and the skill's or weapon's range.
+  - `_equipped_weapon_range` mirrors keepup's `equippedWeaponRange`: 0 unarmed, and 0 when the
+    weapon slot's durability is 0 (`durability.IsBroken`).
+  - A skill the skill tick casts without a band (`skill_tick_approaches` false) is sent at once
+    from where the player stands, and the log says so.
+  - With the band unknown (no species row, a skill not in the catalog, no archive), the request
+    goes out at once and the log says why.
+  - In reach, `_release_pending_attack` stops the player, flushes the position and sends.
+    Otherwise `_pending_attack` is stored and `_move_target` is aimed at `approach_point`.
+  - The `_has_move_target` branch of `_physics_process` runs `_step_pending_attack` every frame,
+    before the send gate. It re-aims at the target's latest snapshot and releases on the first
+    frame in reach.
+  - The cast animation, the battle stance and `_pending_skill_hit_code` moved into
+    `_send_attack`, so they play when the request goes out.
+  - `_pending_attack` is cleared by typing, WASD, void recovery, a new ground walk or pick-up
+    walk, another monster, a zone change, and the target dying or leaving the list.
+    `_drop_pending_attack` also ends the walk, for a click that acts from where the player
+    stands: an NPC's talk window, or a pick-up within `PICK_RANGE`. A zone change and the
+    target's death use it too.
+- `SRREVAMP_QA_ATTACK_GOTO` still teleports. It now records the teleport's OpMove as sent, so the
+  attack finds itself in reach and sends with no second, identical OpMove.
+
+**Tests** (render box):
+
+- `combat_test.gd`:
+  - `approach_band` gives (4,6,6) (14,16), (4,6,3) (13,13), (4,6,4) (14,14), (4,10,18)
+    (26.6,32), (4,11,180) (141,195), (4,6,0) (10,10) and (4,6,10) (10,10).
+  - `in_reach` is true for (16,16), (18.9,16) and (0,16), and false for (19,16).
+  - A bow at 150 from a Yeoha is in reach (195).
+  - NEGATIVE: at 40 units a sword against a Mangyang is out of reach 16, and
+    `approach_point((40,0),(0,0),14)` is (14,0). A diagonal walk and the degenerate cases are
+    also checked.
+  - NEGATIVE for the review fix: `skill_tick_approaches` is false for (0,0), (0,1) and (1,1),
+    true for (1,0) and for the asm-only (2,1). With the function forced to the first cut's
+    decision (walk for every cast) and shipped, combat_test reported the three no-walk cases as
+    FAIL, "3 FAILURES"; with the pre-fix `skill_data_reader.gd`, skill_data_reader_test failed to
+    parse (`Cannot find member "S_TARGET_REQUIRED"`). Restored, both pass.
+- `skill_data_reader_test.gd`: a synthetic skill whose Range rises 204 -> 206 keeps both in
+  `level_range` (and 204 in `range_val`); column 22 reads 0 for a self-heal-shaped row and 1
+  otherwise; column 24 reads 1 for a land-targeted row.
+- `npc_table_reader_test.gd`: synthetic column-50 rows give 4, 6 and 11. A row cut short
+  before column 50 and a non-numeric one are skipped. A `CHAR_` prefix keeps only the body.
+- `item_table_reader_test.gd`: column 94 gives 6 for the sword and 180 for a bow. A row cut
+  short before 94 gives 0.
+- **Negative case proven.** With the five production files stashed and the copy shipped
+  (`remote_godot.sh sync`), all three suites fail. combat and npc fail with parse errors
+  (`Static function "approach_band()" not found in base "CombatNet"`, and the same for
+  `parse_bc_radius_by_code()`). item fails with `Invalid get index 'attack_range'`. That suite
+  then hangs, because `quit()` is never reached, and was ended by PID. Restored and shipped,
+  each reports ALL PASS.
+- **Live, run.** A server built from this tree ran in-memory on the dev host with an items CSV
+  exported from the box's itemdata tables. The box's own `items.csv` predates the Range column
+  (52 fields), and its server binary (2026-09-19) predates the first-swing reach gate. The
+  client ran on the box: `SRREVAMP_QA_CLICK=monster qa_shot.sh --server 192.168.5.103:15919
+  --region '97\168.m' --at 1002,1020 --frames 480 --radius 1`, with no `QA_ATTACK_GOTO`. After
+  the change:
+  ```
+  World3D: 13291 BCRadius row(s) from characterdata column 50 (CHAR_CH_MAN_FIGHTER: 4)
+  QA CLICK monster: 'Yeoha' at world (70, -22, -220) -> screen (320, 168)
+  World3D: monster 22 is 40.0 away, out of reach 21.0 (+2) -- walking to 19.0 short of it before swinging
+  QA CLICK monster: dispatched -> attack
+  World3D: monster 22 in reach at 23.3 (reach 21.0 +2) -- sending
+  World3D: attack hit for 2 CRIT (247 left), took 94 (HP 106)
+  World3D: attack hit for 2 (245 left), took 0 (HP 110)
+  ```
+  Six more keep-up swings followed, so no OpMove cancelled the run. The same run on the BASE
+  client, against a fresh server, logged `World3D: attack refused: too far away`. The frames
+  were deleted from the box afterwards.
+- **Client suite:** `client/tools/remote_godot.sh tests` ran 80 suites, 0 failing.
+  `client/tools/remote_godot.sh check` checked 246 scripts and 5 scenes: ALL LOAD.
+- **Server suite:** `cd server && go build ./... && go test -count=1 -p 1 ./...` is green. No
+  server file changed. `SYSTEMS.md`'s damage-pipeline row and `TODO.md`'s Attack distance item
+  now say the walk is built on the client.
+
+**Not done.** A keep-up repeat that finds the target out of reach still ends the run. The engine
+would walk again, but nothing tells the client that the run ended. The debug panel's Skills-tab
+"Use" button (`_on_skill_use_pressed`) still sends at once. Filed in `docs/TODO.md` ("Attack
+distance"): the server still reach-gates the damaging `Target_Required` 0 rows (147 board rows,
+every level of the 15 `SKILL_CH_*_GIGONGTA_A..E` skills, all `Basic_Activity` 1), which the
+engine's skill tick does not; the in-reach send trusts a monster snapshot that is exact only while
+monsters stand still server-side; and a walk that geometry blocks waits, like any click-to-move,
+until the player does something else. The World3D wiring itself (`_attack_monster`, the
+per-frame step, the clears) has no automated test; the live run above covers the swing path
+only, and the cast path's no-walk branch was not run live.

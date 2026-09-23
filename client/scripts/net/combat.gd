@@ -126,6 +126,115 @@ class LootDropped:
 	var monster_id: int
 	var drops: Array[LootDrop] = []
 
+## ---------------------------------------------------------------------------
+## The attack-distance rule, so the client can walk into reach BEFORE it asks.
+##
+## A mirror of server/internal/combat/reach.go (ApproachBand, EffectiveRange,
+## InReach), which is the server's reading of the plain-attack tick
+## CGCharAutoCommandActor::Tick_Attack (0x004ad8e0). The skill tick 0x004ae590
+## computes a band of the same shape, with the skill's Range, ONLY for a skill
+## that needs a target: a row with Target_Required 0, or a land-targeted one,
+## goes straight to the cast with no band, no reach test and no walk
+## (skill_tick_approaches). Its modifiers for the rest -- reqc bit 1, the
+## weapon-range +0x250 param, CBRA/WIRU, the Myopia cut
+## (docs/protocol/auto_command.md, "The skill tick") -- are not applied by
+## srrevamp's skillInReach either, and the client mirrors the server. The
+## server decides: firstSwingInReach and skillInReach (session/keepup.go)
+## refuse a blow out of reach with "too far away". What the engine does next
+## is WALK: phase 1 tests
+## Action_IsTargetWithinReach (0x004ad4a0: `int(dist) <= reach + 2`) on every
+## tick and, while it fails, GObjPC::MoveTowardObject(target, round(stop))
+## (0x004b0350) aims the walk at the stop distance. The retail engine walks the
+## attacker on the SERVER; srrevamp's server does not drive player movement,
+## so World3D does the walk and only then sends (see World3D._attack_monster).
+## docs/protocol/auto_command.md, "The attack tick".
+
+## The BCRadius (characterdata col 50) of every playable body row -- all 52
+## CHAR_* rows read 4. combat.PlayerBCRadius, which the server uses for the
+## attacker whatever body it has.
+const PLAYER_BC_RADIUS := 4
+## The +2 world units Action_IsTargetWithinReach (0x004ad4a0) allows:
+## `return iVar3 <= param_2 + 2`. combat.ReachSlack.
+const REACH_SLACK := 2
+## The band edges and factors of Tick_Attack phase 0 (0x004ad8e0), with the
+## constants' own addresses as reach.go records them: 4.0 at 0xb45dc0 (at or
+## below it the walk stops exactly at reach), 10.0 at 0xb45b44 (above it the
+## walk stops at 0.7 of the range, 0.7 at 0xb45ef8), and the 2.0 at 0xb45f30
+## the middle band backs off by.
+const REACH_SHORT_BAND := 4.0
+const REACH_LONG_BAND := 10.0
+const REACH_MID_BACKOFF := 2.0
+const REACH_LONG_FACTOR := 0.7
+
+## Vector2(stop, reach): the pair the action carries at +0x14/+0x18 --
+## where the walk aims, and how far away the blow still lands. caster_bc and
+## target_bc are the two BCRadius values; range_units the effective range
+## (effective_range), in world units (tenths of a metre, round 247).
+##
+## At exactly 10 the one `if (10 < r)` guards both adds, so stop and reach
+## are the bare BC sum (round 488) -- the server's ApproachBand after that fix.
+static func approach_band(caster_bc: int, target_bc: int, range_units: float) -> Vector2:
+	var base := float(caster_bc + target_bc)
+	var reach := base + range_units
+	var stop: float
+	if range_units > REACH_LONG_BAND:
+		stop = base + REACH_LONG_FACTOR * range_units
+	elif range_units > REACH_SHORT_BAND and range_units < REACH_LONG_BAND:
+		stop = base + range_units - REACH_MID_BACKOFF
+	elif range_units <= REACH_SHORT_BAND:
+		stop = base + range_units
+	else:
+		stop = base
+		reach = base
+	return Vector2(stop, reach)
+
+## The range a blow uses: the skill's own Range (skilldata col 21, CRefSkill
+## +0x92) when it has one, else the weapon's (itemdata col 94, param 33; 0
+## unarmed or broken). combat.EffectiveRange.
+static func effective_range(skill_range: int, weapon_range: int) -> float:
+	return float(skill_range) if skill_range != 0 else float(weapon_range)
+
+## Action_IsTargetWithinReach (0x004ad4a0): the truncated distance against the
+## truncated reach plus the slack. combat.InReach.
+static func in_reach(distance: float, reach: float) -> bool:
+	return int(distance) <= int(reach) + REACH_SLACK
+
+## Whether the skill tick walks into reach before it casts a row with these
+## targeting bytes. Tick_UseSkill (0x004ae590) phase 0 reads Target_Required
+## (CRefSkill+0x94, skilldata col 22) and jumps straight to 0x4aecfd --
+## `mov eax,2 ; call 0x4ac9e0`, phase 2, which posts the cast -- past the band
+## and the reach test, in two cases (docs/protocol/auto_command.md, "The skill
+## tick", phase 0):
+##   0x4ae743  `test al,al ; je 0x4aecfd`: Target_Required 0 -- 115 of the
+##             264 level-1 China board rows on the box's skilldata, e.g.
+##             SKILL_CH_WATER_SELFHEAL, SKILL_CH_COLD_SHIELD,
+##             SKILL_CH_WATER_CUREAREA;
+##   0x4ae753  `cmp al,1 ; jne ; cmp [edi+0x96],al ; je 0x4aecfd`:
+##             Target_Required 1 with TargetType_Land (+0x96, col 24) 1.
+## Every other row computes the band and walks (phase 1). Rows whose
+## Basic_Activity (+0x65) is not 2 leave phase 0 even earlier (0x4ae6ea); on
+## the box's skilldata all 256 such China board rows carry Target_Required 0,
+## so the first case covers them. srrevamp's server accepts the non-damaging
+## ones at any distance (session/skill.go's NoCombatParam/ZeroDamage return
+## comes before skillInReach) -- see docs/TODO.md, "Attack distance", for the
+## damaging Target_Required 0 rows it still reach-gates.
+static func skill_tick_approaches(target_required: int, target_land: int) -> bool:
+	if target_required == 0:
+		return false
+	if target_required == 1 and target_land == 1:
+		return false
+	return true
+
+## Where a walk toward `target` (ground-plane x/z) that stops `stop` units
+## short of it ends, starting from `from`: MoveTowardObject's destination.
+## A walker already that close stays where it is.
+static func approach_point(from: Vector2, target: Vector2, stop: float) -> Vector2:
+	var away := from - target
+	var gap := away.length()
+	if gap <= stop or gap == 0.0:
+		return from
+	return target + away / gap * stop
+
 ## Encodes an OpAttack request.
 static func encode_attack(character_name: String, target_monster_id: int) -> PackedByteArray:
 	var name_bytes := character_name.to_utf8_buffer()
