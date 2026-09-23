@@ -238,6 +238,22 @@ type Skill struct {
 	SelfHealHP int
 	SelfHealMP int
 
+	// CooldownGroup is the high byte of Action_Overlap (CRefSkill+0x8f; the
+	// u32 at +0x8c is skilldata column 18, docs/protocol/skill_fields.md).
+	// Skills sharing a non-zero group share ONE re-use timer:
+	// SkillCooldowns::IsReady (0x64c1a0), for a row with a ReuseDelay, reads
+	// this byte and, when it is non-zero, answers from the group map at
+	// block+0x2c alone (the per-id map at +0x1c is consulted only for an
+	// ungrouped row); the arm FUN_0064c700 (called from
+	// Skill_BuildUseContext_A/B 0x5857b0/0x586700 and SkillAction_Buff
+	// 0x5830b0) files the new timer under the same byte. On the real class
+	// skills (SKILL_CH_/SKILL_EU_) the groups run 1..106 and 2,436 of 6,123
+	// rows carry one -- Smash A and Smash D are both group 2.
+	//
+	// Zero means no group, which is also what an export predating the column
+	// loads -- the per-skill timer srrevamp had before round 504.
+	CooldownGroup int
+
 	// The mastery this skill belongs to and the mastery level required to learn
 	// it (ReqCommon_Mastery1 / ReqCommon_MasteryLevel1). These are what the
 	// skill window gates a skill on -- a skill is learnable once the character's

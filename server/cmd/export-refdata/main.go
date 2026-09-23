@@ -329,8 +329,9 @@ const (
 // learn-gating columns AND the cast timing / range / resource cost are named
 // and mapped -- all verified against a real SMASH_A row (the column order is
 // the schema's group order, anchored by 6 known indices; see the
-// skilldata-columns note and docs/protocol/refdata_schema.md). Only three flag
-// columns (FlyingSpeed, Interruptable, Overlap) stay unmapped.
+// skilldata-columns note and docs/protocol/refdata_schema.md). Two flag
+// columns (FlyingSpeed, Interruptable) stay unmapped; Overlap is read only for
+// its high byte, the cooldown group (skOverlap, round 504).
 const (
 	skID         = 1 // unique per-level skill id
 	skGroupID    = 2 // shared by every level of the skill
@@ -365,7 +366,20 @@ const (
 	// skill tick"). Measured on the 33,632 real rows: 1 on 28,702, 0 on 4,608,
 	// 2 on 322 -- no other value.
 	skAutoAttackType = 19
-	skRange          = 21 // 0 = melee
+	// skOverlap is Action_Overlap, the u32 at CRefSkill+0x8c: the nineteenth
+	// field CopyFixedColumns (0x6ab5a0) copies, after Interruptable (+0x88,
+	// column 17) and before AutoAttackType (+0x90, column 19 above)
+	// (docs/protocol/skill_fields.md, the CopyFixedColumns table). Only its
+	// HIGH byte is exported: SkillCooldowns::IsReady (0x64c1a0) reads
+	// `*(char *)(ref + 0x8f)` as the skill's COOLDOWN GROUP and, when it is
+	// non-zero, checks the shared group map at block+0x2c instead of the
+	// per-id map at +0x1c; the arm FUN_0064c700 files the timer under the same
+	// byte (see cooldownGroup). Measured on the 33,632 real rows: 2,566 carry
+	// a non-zero group, every one a SKILL_ row; on the 6,123 SKILL_CH_/
+	// SKILL_EU_ class rows 2,436 are grouped, groups 1..106 --
+	// SKILL_CH_SWORD_SMASH_A_01 and _D_01 are both group 2 (33554432).
+	skOverlap = 18
+	skRange   = 21 // 0 = melee
 	// skTargetRequired is Target_Required, the u8 at CRefSkill+0x94: the
 	// field CopyFixedColumns (0x6ab5a0) copies right after Range (+0x92,
 	// column 21), so column 22 (docs/protocol/skill_fields.md, the
@@ -788,15 +802,16 @@ func cooltimeOf(cols []string) (group, ms string) {
 	return group, ms
 }
 
-// skillRecord maps one tab-split skilldata row to the 43-column skill CSV
+// skillRecord maps one tab-split skilldata row to the 46-column skill CSV
 // (refdata.skillCSVColumns order) import-refdata expects, or (nil, false) if
 // the row is not a real skill. The learn-gating fields and the cast timing /
 // range / resource cost are mapped from verified real columns (see the
 // skilldata-columns note); so are Basic_ChainCode and AutoAttackType, the two
 // fields the keep-up hand-off tests (round 502 -- until then both shipped as
-// "0", so the hand-off round 256 built never fired). Only three flags
-// (FlyingSpeed, Interruptable, Overlap) and the unused Basic_Name /
-// Basic_RecycleCost stay "0" placeholders.
+// "0", so the hand-off round 256 built never fired). Two flags (FlyingSpeed,
+// Interruptable), the Overlap slot itself and the unused Basic_Name /
+// Basic_RecycleCost stay "0" placeholders; Overlap's high byte, the cooldown
+// group, goes out as its own column 45 (round 504, cooldownGroup).
 func skillRecord(cols []string) ([]string, bool) {
 	if len(cols) <= skMax {
 		return nil, false
@@ -832,7 +847,7 @@ func skillRecord(cols []string) ([]string, bool) {
 		get(skCoolTime),       // 11 CoolTime       (verified raw col 15)
 		"0",                   // 12 FlyingSpeed (flag, not mapped)
 		"0",                   // 13 Interruptable (flag, not mapped)
-		"0",                   // 14 Overlap (bitfield, not mapped)
+		"0",                   // 14 Overlap (bitfield; only its high byte is read -- column 45)
 		get(skAutoAttackType), // 15 AutoAttackType (raw col 19, CRefSkill+0x90)
 		get(skRange),          // 16 Range          (verified raw col 21)
 		get(skConsumeHP),      // 17 Consume_HP     (verified raw col 52)
@@ -864,7 +879,26 @@ func skillRecord(cols []string) ([]string, bool) {
 		get(skReqLearnSkillLevel3), // 42 ReqLearnSkillLevel3
 		healHP,                     // 43 SelfHealHP -- 'heal' value[0] a flat self-heal restores (round 503)
 		healMP,                     // 44 SelfHealMP -- 'heal' value[2], its MP half
+		cooldownGroup(cols),        // 45 CooldownGroup -- Overlap's high byte, CRefSkill+0x8f (round 504)
 	}, true
+}
+
+// cooldownGroup is the skill's cooldown group as the CooldownGroup column:
+// the high byte of Action_Overlap (skOverlap, the u32 at CRefSkill+0x8c), the
+// byte SkillCooldowns::IsReady (0x64c1a0) reads at +0x8f and the arm
+// FUN_0064c700 files the re-use timer under. The column is read as an integer
+// and shifted right 24 bits -- the little-endian u32's top byte. An empty or
+// unreadable column answers "0", no group, which is also what an export
+// predating the column loads.
+func cooldownGroup(cols []string) string {
+	if skOverlap >= len(cols) {
+		return "0"
+	}
+	v, err := strconv.ParseInt(strings.TrimSpace(cols[skOverlap]), 10, 64)
+	if err != nil {
+		return "0"
+	}
+	return strconv.FormatUint(uint64(uint32(v)>>24), 10)
 }
 
 // selfHeal is the (HP, MP) a skill restores to its own caster, as the

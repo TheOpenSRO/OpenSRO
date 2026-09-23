@@ -424,6 +424,10 @@ var skillCSVColumns = []string{
 	// caster, skillparam.SelfHealAmounts). A strict suffix: an older export
 	// loads 0, which is no self-heal -- exactly what it meant before.
 	"SelfHealHP", "SelfHealMP",
+	// Appended later (round 504: the cooldown group, Action_Overlap's high
+	// byte CRefSkill+0x8f). A strict suffix: an older export loads 0, which is
+	// no group -- each skill keeps its own timer, as before.
+	"CooldownGroup",
 }
 
 // skillCSVRequiredColumns is the prefix every skill export must carry; the
@@ -585,6 +589,11 @@ func parseSkillRow(f []string) (Skill, error) {
 	}
 	if len(f) > 44 {
 		sk.SelfHealMP = parseInt(f[44])
+	}
+	// The cooldown group (round 504), optional in the same way: an export
+	// predating it leaves 0, no shared timer.
+	if len(f) > 45 {
+		sk.CooldownGroup = parseInt(f[45])
 	}
 
 	if err != nil {

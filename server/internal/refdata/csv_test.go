@@ -508,8 +508,8 @@ func TestSkillCSVSelfHealIsAStrictSuffix(t *testing.T) {
 		t.Errorf("an export predating the self-heal columns loaded %d/%d; want 0/0", sk.SelfHealHP, sk.SelfHealMP)
 	}
 	withCols := append(append([]string{}, old...), "300", "200")
-	if len(withCols) != len(skillCSVColumns) {
-		t.Fatalf("test premise: %d fields, the CSV has %d columns", len(withCols), len(skillCSVColumns))
+	if skillCSVColumns[43] != "SelfHealHP" || skillCSVColumns[44] != "SelfHealMP" {
+		t.Fatalf("test premise: CSV columns 43/44 are %q/%q", skillCSVColumns[43], skillCSVColumns[44])
 	}
 	sk, err = parseSkillRow(withCols)
 	if err != nil {
@@ -517,5 +517,35 @@ func TestSkillCSVSelfHealIsAStrictSuffix(t *testing.T) {
 	}
 	if sk.SelfHealHP != 300 || sk.SelfHealMP != 200 {
 		t.Errorf("SelfHealHP/MP = %d/%d, want 300/200", sk.SelfHealHP, sk.SelfHealMP)
+	}
+}
+
+// CooldownGroup (round 504, Action_Overlap's high byte) is appended at 45 and
+// is a strict suffix like the rest: a 45-column export -- through SelfHealMP --
+// loads group 0, the per-skill timer srrevamp had before; the 46th column
+// loads as the group.
+func TestSkillCSVCooldownGroupIsAStrictSuffix(t *testing.T) {
+	old := make([]string, 45) // through SelfHealMP, no further
+	for i := range old {
+		old[i] = "0"
+	}
+	old[2] = "SKILL_TEST"
+	sk, err := parseSkillRow(old)
+	if err != nil {
+		t.Fatalf("parseSkillRow on a pre-column export: %v", err)
+	}
+	if sk.CooldownGroup != 0 {
+		t.Errorf("an export predating CooldownGroup loaded %d; want 0", sk.CooldownGroup)
+	}
+	withCol := append(append([]string{}, old...), "2")
+	if len(withCol) != len(skillCSVColumns) || skillCSVColumns[45] != "CooldownGroup" {
+		t.Fatalf("test premise: %d fields against %d columns, column 45 %q", len(withCol), len(skillCSVColumns), skillCSVColumns[len(skillCSVColumns)-1])
+	}
+	sk, err = parseSkillRow(withCol)
+	if err != nil {
+		t.Fatalf("parseSkillRow with the column: %v", err)
+	}
+	if sk.CooldownGroup != 2 {
+		t.Errorf("CooldownGroup = %d, want 2", sk.CooldownGroup)
 	}
 }

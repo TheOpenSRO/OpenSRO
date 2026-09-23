@@ -1118,3 +1118,138 @@ func TestSelfHealSkillRestoresCasterHP(t *testing.T) {
 		t.Errorf("dead caster: stored HP = %d, want 0", got)
 	}
 }
+
+// Round 504: skills in one cooldown group share one re-use timer, as
+// SkillCooldowns::IsReady (0x64c1a0) answers from the group map for a
+// non-zero Overlap high byte. The rows are no-blow casts so the test is about
+// the timer and nothing else: 993 and 992 are group 2 (Smash A and Smash D's
+// shape), 991 is group 3, 990 ungrouped, and 989 is group 2 with no ReuseDelay
+// -- IsReady's +0x7c guard answers ready for it without consulting the group.
+func TestSkillCooldownGroupIsShared(t *testing.T) {
+	// The group map is process-wide; start this test from an empty one, and
+	// keep the two names pointing at the one tracker, as in production.
+	itemCooldowns = newItemCooldownTracker()
+	skillGroupCooldowns = itemCooldowns
+
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("creating character: %v", err)
+	}
+
+	items := stubCombatItems{100: {ID: 100, PhysAttackMin: 30, PhysAttackMax: 30}}
+	inv, err := inventory.OpenSQLStore(inventoryTestDSN(), items)
+	if err != nil {
+		t.Fatalf("inventory.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer inv.Close()
+	inv.TruncateForTest(ctx)
+
+	eq, err := equipment.OpenSQLStore(inventoryTestDSN(), inv)
+	if err != nil {
+		t.Fatalf("equipment.OpenSQLStore: %v", err)
+	}
+	defer eq.Close()
+	eq.TruncateForTest(ctx)
+
+	skills, err := skill.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("skill.OpenSQLStore: %v", err)
+	}
+	defer skills.Close()
+	skills.TruncateForTest(ctx)
+
+	const reuse = 400 // ms
+	row := func(id int64, group, reuseMs int) *refdata.Skill {
+		return &refdata.Skill{ID: id, BasicLevel: 1, ReuseDelayMs: reuseMs, CooldownGroup: group, NoCombatParam: true, ZeroDamage: true}
+	}
+	ref := mapSkillRef{
+		993: row(993, 2, reuse),
+		992: row(992, 2, reuse),
+		991: row(991, 3, reuse),
+		990: row(990, 0, reuse),
+		989: row(989, 2, 0),
+	}
+	for id := range ref {
+		if err := skills.Learn(ctx, c.ID, id); err != nil {
+			t.Fatalf("Learn %d: %v", id, err)
+		}
+	}
+
+	hub := world.NewHub()
+	monsters := combat.NewHub()
+	monster := monsters.Spawn("jangan", "Mangyang", 0, 0, 0, 1000, 10, 5, 500)
+
+	quests, err := quest.OpenSQLStore(inventoryTestDSN())
+	if err != nil {
+		t.Fatalf("quest.OpenSQLStore: %v (is postgres running?)", err)
+	}
+	defer quests.Close()
+	quests.TruncateForTest(ctx)
+
+	handle := gateway.Chain(
+		LoginHandler(accounts),
+		WorldHandler(chars, eq, hub),
+		UseSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv, ref, nil, mana.NewTracker(), nil),
+	)
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+
+	send := func(opcode uint16, data []byte) *proto.Packet {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+	resp := send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+	resp = send(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode())
+	if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
+		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
+	}
+
+	cast := func(id int64) string {
+		t.Helper()
+		resp := send(OpUseSkill, (&UseSkillRequest{CharacterName: "Aria", SkillID: id, TargetMonsterID: monster.ID}).Encode())
+		ar, err := DecodeAttackResult(resp.Data)
+		if err != nil {
+			t.Fatalf("DecodeAttackResult: %v", err)
+		}
+		return ar.Error
+	}
+	expect := func(id int64, want, why string) {
+		t.Helper()
+		if got := cast(id); got != want {
+			t.Errorf("cast %d (%s): error %q, want %q", id, why, got, want)
+		}
+	}
+
+	expect(993, "", "group 2, nothing armed yet")
+	// The negative case: 992 has never been cast, so its own timer is clear;
+	// only the shared group can refuse it.
+	expect(992, "skill on cooldown", "group 2 armed by 993")
+	expect(991, "", "group 3 has its own timer")
+	expect(990, "", "an ungrouped row keeps only its own timer")
+	expect(989, "", "no ReuseDelay: IsReady never consults the group")
+	expect(992, "skill on cooldown", "group 2 still armed; 989 did not clear or re-arm it")
+
+	time.Sleep((reuse + 50) * time.Millisecond)
+	expect(992, "", "group 2 has run out")
+	// And the other way round: 993's own timer ran out with the group, but
+	// 992's cast re-armed the group.
+	expect(993, "skill on cooldown", "group 2 re-armed by 992")
+}

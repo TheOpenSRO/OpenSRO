@@ -820,6 +820,17 @@ func useSkillHandler(
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "skill on cooldown"}).Encode()})
 			}
 		}
+		// THE SHARED TIMER (round 504). A row with a cooldown group waits on
+		// the group, not only on itself: SkillCooldowns::IsReady (0x64c1a0)
+		// answers from the group map for a non-zero CRefSkill+0x8f, so casting
+		// Smash A (group 2) puts Smash D (group 2) on cooldown too. The per-id
+		// check above is kept; for a grouped row it never refuses where this
+		// one would not, since every cast in the group re-arms the group. It
+		// runs before the HP/MP costs, as the per-id check does, so a refused
+		// cast costs nothing. See skillCooldownGroup for the rows it covers.
+		if g := skillCooldownGroup(castRow); g != 0 && !skillGroupCooldowns.Ready(characterID, g, now) {
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "skill on cooldown"}).Encode()})
+		}
 
 		// NOT MODELLED, disclosed: AMMUNITION. A skill carrying the `cnsm`
 		// parameter spends ammunition, and the engine refuses the cast with
@@ -868,6 +879,19 @@ func useSkillHandler(
 
 		if err := skills.RecordUse(ctx, characterID, req.SkillID, now); err != nil {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "recording use failed"}).Encode()})
+		}
+		// Arm the group with this row's ReuseDelay, as FUN_0064c700 files the
+		// new timer under the +0x8f byte. The engine's delay is ReuseDelay
+		// (+0x7c) for a row that is not active with a duration; for one that
+		// is (+0x65 == 2, +0x78 != 0) it is p140/100 * t + max(0, ReuseDelay -
+		// t), t = +0x74 + +0x78 -- PreparingTime + CastingTime (added at
+		// load) + ActionDuration. p140 defaults to 100
+		// (docs/protocol/param_registry.md) and the divisor is the double
+		// 100.0 at .rdata 0xb45af0, so the delay is max(ReuseDelay, t), and on
+		// the real rows that is ReuseDelay for all 2,371 grouped rows with a
+		// ReuseDelay.
+		if g := skillCooldownGroup(castRow); g != 0 {
+			skillGroupCooldowns.Arm(characterID, g, time.Duration(castRow.ReuseDelayMs)*time.Millisecond, now)
 		}
 		// A cast is a new action: whatever the character was auto-attacking
 		// stops here (the actor's queue rule -- a second action ends the
@@ -984,6 +1008,35 @@ func useSkillHandler(
 		}
 		return nil
 	}
+}
+
+// skillCooldownGroup is the cooldown group whose shared timer a cast of ref
+// waits on and arms, or 0 for none: refdata.Skill.CooldownGroup, the high
+// byte of Action_Overlap (CRefSkill+0x8f) that SkillCooldowns::IsReady
+// (0x64c1a0) keys the group map at block+0x2c on. It is 0 when:
+//
+//   - ref is nil (an own-design catalog skill has no real row) or ungrouped;
+//   - ReuseDelay is not positive. IsReady tests `+0x7c != 0` first and
+//     answers ready without looking at any map, so such a row never waits.
+//     The engine's arm still files a timer for it when the row is active with
+//     a duration (FUN_0064c700 then arms CastingTime + ActionDuration); not
+//     arming it is a DISCLOSED departure. On the real rows 195 grouped rows
+//     have no ReuseDelay, and 192 of them are chain links (named by another
+//     row's Basic_ChainCode), which srrevamp does not play;
+//   - ReuseDelay is 300 000 ms or more. FUN_0064c700 sends such a delay down
+//     the persisted CTJ_CoolTimeKeeper branch (0x64c8bb `cmp [esp+0x1c],
+//     0x493e0`, i.e. 300 000), which srrevamp does not model, so these rows
+//     keep only their per-id timer -- also DISCLOSED. On the class skills
+//     that is 34 rows, Water Harmony (group 73) and the Rogue's transform
+//     mask (group 29).
+func skillCooldownGroup(ref *refdata.Skill) uint32 {
+	if ref == nil || ref.CooldownGroup == 0 {
+		return 0
+	}
+	if ref.ReuseDelayMs <= 0 || ref.ReuseDelayMs >= 300000 {
+		return 0
+	}
+	return uint32(ref.CooldownGroup)
 }
 
 // SkillListRequest is the OpSkillList payload.

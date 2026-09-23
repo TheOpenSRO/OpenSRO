@@ -28388,3 +28388,135 @@ exporter and not committed):
 re-export. The self-heal itself needs a **re-export of the skill CSV** (`export-refdata -mode
 skills`, now 45 columns) and a re-import. The SQL columns migrate on start. Batch it with the other
 exporter items (round 502's hand-off columns need the same re-export).
+
+## Shared skill cooldown groups from Overlap's high byte (SkillCooldowns::IsReady +0x8f) (round 504)
+
+**Why now.** Every skill kept its own re-use timer. In the engine, skills that share a cooldown
+group share ONE timer, so casting Smash A (`SKILL_CH_SWORD_SMASH_A_01`) also puts Smash D
+(`SKILL_CH_SWORD_SMASH_D_01`, the same group 2) on cooldown. srrevamp let a player alternate
+between them inside either one's re-use delay. The group was already located in round 256 (the high
+byte of `Action_Overlap`, `skill_fields.md`), but the exporter wrote `Overlap` as a literal `"0"`.
+
+**Grounding.** Re-read from the dump and the asm this round.
+
+- **`SkillCooldowns::IsReady` (`0x64c1a0`), the gate:**
+  - It returns ready at once unless `ReuseDelay` (`+0x7c`) is non-zero.
+  - It then checks the global window (`+0x50`/`+0x54`) and the action window.
+  - It reads `*(char *)(ref + 0x8f)` (`0x64c216` `mov al,[ebx+0x8f]`). When that byte is non-zero
+    it looks it up in the map at **block+0x2c** (`0x64c245` `lea eax,[ebp+0x2c]`) and answers
+    `delay <= GetTickCount() - start` from that entry alone.
+  - Only an ungrouped row reaches the per-id map at `+0x1c` (`0x64c2b0`).
+- **`FUN_0064c700`, the arm.** It is called with `ecx = pc+0x1f40` from `Skill_BuildUseContext_A`
+  (`0x585bdd`), `Skill_BuildUseContext_B` (`0x586c22`), `SkillAction_Buff` (`0x583555`) and
+  `0x623981`.
+  - It computes the delay: `ReuseDelay` for a row that is not active with a duration. Otherwise it
+    is `p140/100 * t + max(0, ReuseDelay - t)`, with `t = +0x74 + +0x78`. p140 is read through
+    the owner's param getter (`+0x104`, `0x8c`). The divisor is the double `100.0` at
+    `.rdata 0xb45af0`, read as bytes (`00 00 00 00 00 00 59 40`).
+  - Below 300 000 ms it writes the entry in the per-id map and, when the `+0x8f` byte is non-zero,
+    files the same entry in the group map (`FUN_0064d1b0`).
+  - At 300 000 ms or more it takes the persisted `CTJ_CoolTimeKeeper` branch instead.
+- **The column.** `CRefSkill::CopyFixedColumns` (`0x6ab5a0`) copies `Action_Overlap`, a u32, to
+  `+0x8c` as the 19th field, which is skilldata column 18 (`skill_fields.md`, the fixed-columns
+  table; `WORLD_ISSUES.md` round 256). `+0x8f` is its top byte, `(u32)v >> 24`.
+- **p140 defaults to 100** (`param_registry.md`, row 140), so the arm's delay is
+  `max(ReuseDelay, t)`.
+
+**The group map is shared with items.** `ItemCooldowns::IsReady` (`0x64c040`) is handed the same
+block (`Item_HandleUseItem` `0x510d95` `add esi,0x1f40`, with esi the PC) and looks each non-zero
+byte of an item's cooltime group up in the same map (`0x64c080` `lea eax,[ebp+0x2c]`). So a skill
+group and an item cooltime group with the same byte share a timer. `ITEM_FORMAT.md` said "item
+groups in their own map". That is corrected there. srrevamp models this by making
+`skillGroupCooldowns` the same tracker as `itemCooldowns`. On the real tables the two never meet:
+
+- the skill groups are 1..114 without 72, 74, 84-87, 91, 94-96, 98, 99 and 113;
+- the item groups are `0x71` (113), `0xA7`, `0xC8`-`0xCB`, `0xF0`-`0xF2` and `0xF6`.
+
+**Measured** on the combined skill rows on the RE box (`/var/tmp/allskills.txt`, 33,632 rows, read
+there and not committed):
+
+- Column 18 is plain decimal on every row and never negative.
+- 2,566 rows carry a non-zero group, every one of them a `SKILL_` row.
+- On the 6,123 class rows (`SKILL_CH_`/`SKILL_EU_`), 2,436 are grouped, with groups 1..106. Smash A
+  and Smash D are both `33554432` (group 2); Smash B is group 3 and Smash C group 4.
+- Of the grouped rows, 195 have no `ReuseDelay`; 192 of those are chain links (named by another
+  row's column 9). 2,371 have one. 89 of those are at 300 000 ms or more; on the class rows that is
+  34, the Water Harmony rows (group 73) and the Rogue's transform mask (group 29).
+- **Of the 2,371, none has an engine arm delay different from its `ReuseDelay`.** 2,072 are active
+  with a duration, and every one has `ReuseDelay >= PreparingTime + CastingTime + ActionDuration`.
+- The 13 base attacks are all ungrouped, so the plain swing's cadence gate (`swingReady`) is
+  unaffected.
+
+**Change.**
+
+- `cmd/export-refdata`: `skOverlap = 18` with its citation. `cooldownGroup(cols)` parses the
+  column and answers `uint32(v) >> 24`; an empty or unparsable value answers `"0"`. `skillRecord`
+  appends record slot **45 `CooldownGroup`**, so the skill CSV grows from 45 to 46 columns. Slot 14
+  (`Overlap`) stays the `"0"` placeholder. The constant-block and `skillRecord` comments now say
+  that only FlyingSpeed and Interruptable are unmapped.
+- `refdata`: `Skill.CooldownGroup` is a strict CSV suffix (`len(f) > 45`), so an older export
+  loads 0, meaning no group. The SQL store adds `cooldown_group INTEGER NOT NULL DEFAULT 0`
+  (`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`), `$46` in the upsert, and both SELECT/Scan lists.
+- `session/itemcooldown.go`: `skillGroupCooldowns` is `itemCooldowns`, the block's one group map.
+  The tracker's comment now says it holds both kinds of group.
+- `session/skill.go`:
+  - `skillCooldownGroup(ref)` gives the row's group, or 0 when the row is nil, ungrouped, has
+    `ReuseDelay <= 0`, or has `ReuseDelay >= 300000`.
+  - The cast handler refuses with "skill on cooldown" while the group's timer runs. The check comes
+    after the per-id check and before the HP/MP costs, so a refused cast costs nothing.
+  - Right after a successful `RecordUse`, the handler arms the group with the row's `ReuseDelay`.
+    This is before the no-blow early return, so buffs arm too.
+  - The per-id check is kept. For a grouped row it never refuses where the group would not,
+    because every cast in the group re-arms the group.
+
+**Disclosed, not modelled:**
+
+- A grouped row with no `ReuseDelay` does not arm the group. The engine's arm would file
+  `CastingTime + ActionDuration` for one that is active with a duration. 192 of the 195 such rows
+  are chain links, which srrevamp does not play.
+- A row at 300 000 ms or more keeps only its per-id timer. The persisted `CTJ_CoolTimeKeeper`
+  branch is not built.
+- The global window (`+0x50`/`+0x54`, armed from `CoolTime`) and the action window
+  (`+0x58`/`+0x5c`) that `IsReady` checks first are not modelled either.
+- The timers are in memory only, as the item timers are.
+
+**Tests.**
+
+- **`export-refdata.TestSkillRecordCarriesCooldownGroup`** (new):
+  - column 18 = `33554432` gives slot 45 = "2", and `335544402` (20 << 24 | 82) gives "20";
+  - "0", "" and a low-bits-only "13" give "0";
+  - slot 14 stays "0", and the record round-trips through `LoadSkillsCSV`.
+- `TestSelfHealColumns` now expects a 46-wide record.
+- **`refdata.TestSkillCSVCooldownGroupIsAStrictSuffix`** (new): a 45-column row loads 0, and 46
+  columns load 2. `TestSkillCSVSelfHealIsAStrictSuffix` now checks the names of columns 43/44
+  instead of the CSV width. `TestCSVColumnsCoverEveryField` and `TestEverySkillFieldSurvivesSQL`
+  pass with the new field.
+- **`session.TestSkillCooldownGroupGate`** (new):
+  - `skillCooldownGroup` gives 2 for {group 2, 3000 ms} and 73 for {73, 299 999};
+  - it gives 0 for group 0, for {2, 0}, for {73, 300 000} and for nil;
+  - the tracker is not ready at 1 s of a 3 s arm and ready at 3 s, and another group or another
+    character is ready.
+- **`session.TestSkillAndItemGroupsShareOneMap`** (new): `skillGroupCooldowns == itemCooldowns`,
+  and an item armed in group `0x71` holds skill group `0x71`.
+- **`session.TestSkillCooldownGroupIsShared`** (new, end to end over TCP). It resets the global
+  tracker and uses no-blow rows 993 {group 2, 400 ms}, 992 {2, 400}, 991 {3, 400}, 990 {0, 400}
+  and 989 {2, 0}:
+  - 993 casts;
+  - **992 is refused** "skill on cooldown", although it has never been cast;
+  - 991, 990 and 989 all cast;
+  - 992 is still refused;
+  - after 450 ms 992 casts, and then 993 is refused.
+- **Negative, run.**
+  - With only the group gate in `session/skill.go` disabled, the end-to-end test fails with
+    `cast 992 (group 2 armed by 993): error "", want "skill on cooldown"` and the same for the
+    final 993.
+  - With the exporter's slot 45 forced to "0", the export test fails
+    (`record[45] CooldownGroup = "0", want "2"`).
+  - With all six production files stashed, the new tests do not build (no `CooldownGroup`,
+    `skillCooldownGroup` or `skillGroupCooldowns`).
+  - With the files restored, all of them pass.
+- `go test -count=1 -p 1 ./...` is green. No client file changed.
+
+**Deploy.** This needs a **re-export of the skill CSV** (`export-refdata -mode skills`, now 46
+columns) and a re-import. The SQL column migrates on start. Until then every row loads group 0 and
+the behaviour is unchanged. Batch it with rounds 502 and 503, which need the same re-export.

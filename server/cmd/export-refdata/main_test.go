@@ -747,8 +747,8 @@ func TestSelfHealColumns(t *testing.T) {
 			if !ok {
 				t.Fatal("skillRecord rejected a valid row")
 			}
-			if len(rec) != 45 {
-				t.Fatalf("record has %d fields, want 45 (SelfHealHP at 43, SelfHealMP at 44)", len(rec))
+			if len(rec) != 46 {
+				t.Fatalf("record has %d fields, want 46 (SelfHealHP at 43, SelfHealMP at 44, CooldownGroup at 45)", len(rec))
 			}
 			if rec[43] != tc.hp || rec[44] != tc.mp {
 				t.Errorf("record[43:45] = %v, want [%s %s]", rec[43:45], tc.hp, tc.mp)
@@ -759,6 +759,55 @@ func TestSelfHealColumns(t *testing.T) {
 			}
 			if got := strconv.Itoa(skills[0].SelfHealHP); got != tc.hp {
 				t.Errorf("imported SelfHealHP = %s, want %s", got, tc.hp)
+			}
+		})
+	}
+}
+
+// Round 504: the cooldown group is the HIGH byte of Action_Overlap, raw column
+// 18 (the u32 at CRefSkill+0x8c; SkillCooldowns::IsReady 0x64c1a0 reads the
+// byte at +0x8f), and lands in record slot 45. SKILL_CH_SWORD_SMASH_A_01's
+// real column 18 is 33554432 = 2 << 24. The low bits carry other flags and
+// must not leak into the group, so 335544402 (20 << 24 | 82) is group 20. The
+// neighbours carry sentinels so a read one column off shows up.
+func TestSkillRecordCarriesCooldownGroup(t *testing.T) {
+	if skOverlap != 18 {
+		t.Fatalf("test premise: Overlap at raw column %d, want 18", skOverlap)
+	}
+	for _, tc := range []struct {
+		name, col18, want string
+	}{
+		{"Smash A, group 2", "33554432", "2"},
+		{"group 20 with low bits set", "335544402", "20"},
+		{"ungrouped", "0", "0"},
+		{"empty column", "", "0"},
+		{"low bits only", "13", "0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cols := skillRow()
+			cols[1], cols[2], cols[3] = "3", "174", "SKILL_CH_SWORD_SMASH_A_01"
+			cols[17], cols[19] = "1", "1" // Interruptable, AutoAttackType
+			cols[18] = tc.col18
+
+			rec, ok := skillRecord(cols)
+			if !ok {
+				t.Fatal("skillRecord rejected a valid row")
+			}
+			if len(rec) <= 45 {
+				t.Fatalf("record has %d fields, want CooldownGroup at index 45", len(rec))
+			}
+			if rec[45] != tc.want {
+				t.Errorf("record[45] CooldownGroup = %q, want %q (raw column 18 >> 24)", rec[45], tc.want)
+			}
+			if rec[14] != "0" {
+				t.Errorf("record[14] Overlap = %q, want the \"0\" placeholder", rec[14])
+			}
+			skills, err := refdata.LoadSkillsCSV(strings.NewReader(strings.Join(rec, ",") + "\n"))
+			if err != nil || len(skills) != 1 {
+				t.Fatalf("the importer rejected export's own output: %v", err)
+			}
+			if got := strconv.Itoa(skills[0].CooldownGroup); got != tc.want {
+				t.Errorf("imported CooldownGroup = %s, want %s", got, tc.want)
 			}
 		})
 	}

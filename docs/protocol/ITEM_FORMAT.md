@@ -420,7 +420,7 @@ the use-result packet carries -- the earlier reading of `+0x2a0`).
 
 The use-site is `Item_HandleUseItem` (`0x510980`): when `ref+0x524` is
 non-zero, `ItemCooldowns::IsReady(pc+0x1f40, ...)` (`0x64c040`, the same
-cooldown block the skill gate uses, item groups in their own map) must pass or
+cooldown block the skill gate uses) must pass or
 the use is refused with **`0x185b` `UIIT_MSG_STRGERR_WAIT_FOR_REUSE_DELAY`**;
 after the success reply, `ItemCooldowns::Arm(block, group, ms, ...)`
 (`0x64c320`) starts the group's timer, and a delay of **300 000 ms or more**
@@ -434,6 +434,17 @@ not this rule. Examples: the random-cure pills `ITEM_ETC_CURE_RANDOM_0x`
 group `0xC8` **20 000 ms**; group `0xF0` 1 200 000 ms (20 min); group `0x71`
 18 000 000 ms (5 h); group `0x00` from 5 000 ms to 7 200 000 ms; a handful at
 `1` ms. Items in one group share the timer.
+
+**The group map is shared with skills** (corrected in round 504; this page
+said "item groups in their own map"). Each non-zero byte of the item's group is
+looked up in the map at block `+0x2c` (`0x64c080` `lea eax,[ebp+0x2c]`). That
+is the same map `SkillCooldowns::IsReady` (`0x64c1a0`, `0x64c245`) reads for a
+skill's cooldown group, the high byte of its `Overlap` (`+0x8f`). Only the
+per-id maps are separate: `+0x10` for items and `+0x1c` for skills. So an item
+and a skill with the same group byte share a timer. On the real tables they
+never do: the item groups are `0x71`, `0xA7`, `0xC8`-`0xCB`, `0xF0`-`0xF2` and
+`0xF6`, and no skill uses any of those bytes (the skill groups stop at 114 and
+skip 113).
 
 **srrevamp** exports the pair as item columns 64-65 (`CooltimeGroup`,
 `CooltimeMs`; `refdata.Item`), and `UseItemHandler` refuses a use inside the

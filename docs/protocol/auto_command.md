@@ -180,7 +180,10 @@ action-duration window (`+0x58`/`+0x5c`) when the caller asked for it (gate
 mask `0x80` -- phases 1 and 2 do, the keep-up wait does not) and the row is
 active with a duration and no chain, then by its **cooldown group** -- the high
 byte of `Overlap` (`+0x8f`), a shared map at `+0x2c` -- or, with no group, by
-its own id (`+0x1c`).
+its own id (`+0x1c`). The arm, `FUN_0064c700`, files the new timer in the
+per-id map and, for a non-zero `+0x8f`, in the group map too. The `+0x2c` map is
+also the one `ItemCooldowns::IsReady` (`0x64c040`) reads for item cooltime
+groups: skills and items share it (round 504).
 
 ## What srrevamp does with it (v0.1.406)
 
@@ -228,3 +231,24 @@ link (named by another row's column 9) and the other 571 stand alone. 177 of
 the 1,034, all standalone, have a non-zero `PreparingTime`, so their wait
 grows. The 322 type-2 rows (all `SKILL_*`) do not hand off, because the test
 is `== 1`. It takes effect after a re-export of the skill CSV.
+
+**Round 504: the cooldown group is enforced.** The exporter writes `Overlap`'s
+high byte (skilldata column 18 `>> 24`) as the skill CSV's column 45,
+`CooldownGroup`. `useSkillHandler` now also refuses a cast with "skill on
+cooldown" while the row's group timer runs, and arms the group with the row's
+`ReuseDelay` when a cast is accepted. So Smash A and Smash D (both group 2)
+share one timer. The group tracker is the item cooltime tracker itself
+(`session/itemcooldown.go`), because the engine has one map at `+0x2c`. Two
+kinds of row take no part in a group:
+
+- a row with no `ReuseDelay`, which `IsReady` never holds. The engine's arm
+  still files `CastingTime + ActionDuration` for one that is active with a
+  duration, and srrevamp does not (disclosed). 192 of the 195 such grouped rows
+  are chain links, which srrevamp does not play;
+- a row at 300 000 ms or more, which the engine persists through
+  `CTJ_CoolTimeKeeper`. It keeps only its own timer (disclosed). On the class
+  rows these are Water Harmony (group 73) and the Rogue's mask (group 29).
+
+The global and action windows (`+0x50`..`+0x5c`) are still not modelled. The
+keep-up's own wait (`handOffDelay`) is unchanged: the base attacks are all
+ungrouped. It takes effect after a re-export of the skill CSV.
