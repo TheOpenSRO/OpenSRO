@@ -29866,3 +29866,103 @@ restored the suite reports ALL PASS.
   was read from the extracted table, not from a running client.
 - **Server suite:** `cd server && go build ./... && go test -count=1 -p 1 ./...` is green. No
   server file changed.
+
+## Grey out LEVEL UP when SP < the leveldata col-2 cost, and show server mastery refusals (round 516)
+
+The skill window's mastery LEVEL UP button refused a raise only at 0 skill points. A character
+with 5 SP could click it on Bicheon 20, and the server refused with its skill-point error. The
+client dropped that refusal (`_on_raise_mastery_result` returned on any error), so the click did
+nothing and said nothing. The button now reads the raise's real cost from the player's own
+archive. It greys itself when the cost is above the points, and says so: "Needs 53 skill points
+to raise this mastery (you have 5)." A refusal the server does send now reaches chat.
+
+**Grounding** (read-only on the RE box, `/var/tmp/decomp_server` and `/var/tmp/srv.asm`):
+
+- **The cost is leveldata column 2 at the mastery's current level.** `docs/LEVELING.md`, "The
+  level record's layout, from four independent use sites (round 295)", pins the record's `+0x10`
+  as column 2. Re-read in `Mastery_LevelUp` (`0x0059c4e0`): `59c63c movzx esi,cl` is the current
+  level, `59c667 mov eax,esi ; call 0x411130` fetches the record, and `59c66e mov ecx,[eax+0x10]`
+  reads the cost. `0x411130` (`RefLevel_GetEntry`) is `sub esi,1 ... mov eax,[edx+esi*4]`, so it
+  returns `rows[level-1]`, the row whose column 0 is the level. The server's
+  `leveldata.Table.MasteryUpCost` serves the same column.
+- **Equal is allowed.** `59c694 cmp eax,[ecx+0x80] ; 59c69a jbe 0x59c6a9`. Only a cost ABOVE
+  the points reaches `mov [esp+0xc],0x3802`. So the gate is strict `<`.
+- **Two raises cost nothing** (round 484, re-read). A level-0 mastery takes `59c628 test cl,cl ;
+  jne` into `call 0x5a8bf0 ; jmp 0x59c6d8`. That skips both the loop and the check. The loop's
+  `59c64e cmp esi,0x78 ; jg 0x59c687` stops summing above 120. `LevelDataReader.mastery_up_cost`
+  answers 0 for both and never falls back to the server's disclosed `L + 1`.
+- **The table's shape.** It is `server_dep\silkroad\textdata\leveldata.txt` in Media.pk2, UTF-16LE,
+  tab separated, 10 columns. It has no header row and ends in a `//Copyright` line. This was
+  measured on the render box's archive with `client/tools/dump_text_table.gd`: row 20's column 2
+  is 53, matching the value the 2026-09-14 entry recorded. The archive's values stay in the
+  archive. The tests use synthetic rows.
+
+**Change.**
+
+- `client/scripts/npc/level_data_reader.gd` is new (`class_name LevelDataReader`):
+  - `TABLE_PATH`, `COL_LEVEL` 0, `COL_MASTERY_SP` 2, and `MASTERY_COST_LAST_LEVEL` `0x78`, each
+    with its citation.
+  - `parse_mastery_costs` decodes the same way as `MasteryReader._lines`. It skips `//` lines
+    and any row whose level or column 2 is not an integer.
+  - `mastery_up_cost` gives 0 below level 1, above 120, for a missing row, and for a value <= 0.
+- `client/scripts/ui/hud/hud_panels.gd`:
+  - `_load_level_data()`, modelled on `_load_masteries`, runs from `_fill_skill_masteries`.
+  - The gate is the static `mastery_levelup_block_reason(real_level, char_level, total_now,
+    total_cap, skill_points, cost)`. It keeps the old branches, text and order: total (0x3805),
+    character level (0x3804), then the no-points branch (0x3802). It adds a last branch: `cost >
+    0 and skill_points < cost` gives "Needs %d skill points to raise this mastery (you have
+    %d).". `total_cap` is the flat `MASTERY_TOTAL_CAP` (round 483).
+  - `MASTERY_COST_LEVEL_CEILING` is now `LevelDataReader.MASTERY_COST_LAST_LEVEL`, one value.
+  - The button is named `SkillMasteryLevelUp`. A live button's tooltip gives the cost ("Raising
+    this mastery to Lv 21 costs 53 skill points (you have 53).") or says a free raise is free.
+    The `QA SKILL` line prints `cost %d`.
+  - `_on_raise_mastery_result` prints a refusal and emits the new `system_notice` signal with
+    "The mastery was not raised: <server reason>.". It then re-reads the skill state on success
+    and refusal alike.
+- `client/scripts/World3D.gd` connects `_hud_panels.system_notice` to `_log_system`, beside the
+  panel's other signals.
+- Docs: `docs/SYSTEMS.md`'s Skills and masteries row and `docs/UI_TODO.md`'s Skill entry note
+  the client gate.
+
+**One planned test was changed.** The plan expected `(0, 30, 0, 330, 0, 0)` to give "Not enough
+skill points.". That predates round 484, which exempted a level-0 mastery from the no-points
+branch because the engine skips the 0x3802 check for it (`0x59c628`). The plan's own reader step
+cites the same path. So the test asserts `""` for that case. It pins the no-points branch with
+`(1, 30, 1, 330, 0, 0)` instead.
+
+**Tests** (`client/scripts/npc/level_data_reader_test.gd`, synthetic rows only):
+
+- Reader: cost(20) is 53 and cost(1) is 7 (a made-up value). cost(0) is 0. cost(21) is 0 because
+  its column 2 is not an integer. cost(5) is 0 because there is no row: no `L + 1`. cost(121) is
+  0 although row 121 holds 99. An empty table gives 0. Only the integer rows are keys: the
+  header, blank and comment lines give none.
+- Gate, in `_initialize` (hud_panels.gd needs the NetClient autoload; round 514), reached through
+  `has_method`/`call`:
+  - NEGATIVE: `(20, 30, 20, 330, 5, 53)` is refused and names 53.
+  - `(20, 30, 20, 330, 53, 53)` is `""`.
+  - `(20, 20, 20, 330, 100, 53)` gives the character-level reason.
+  - `(20, 20, 330, 330, 0, 53)` gives the total reason first.
+  - `(0, 30, 0, 330, 0, 0)` and `(0, 30, 0, 330, 1, 0)` are `""`.
+  - `(1, 30, 1, 330, 0, 0)` is "Not enough skill points.".
+- Wiring: `_build_mastery_board` is given a `{20: 53}` table and Bicheon 20 at character level
+  30. With 5 SP the button is disabled and its tooltip names 53 and "(you have 5)". With 53 SP
+  it is live and its tooltip says "costs 53 skill points". A refused `RaiseMasteryResult` emits
+  one `system_notice` carrying the server's reason. A successful one emits none.
+
+**Negative case, run on the render box.** First `hud_panels.gd` and `World3D.gd` were stashed
+back to BASE and the copy shipped. The suite reported **13 FAILURES**: no gate, no named button,
+no signal, and no notice. The reader checks passed, because `sync` leaves the new reader on the
+box. Then the full change was restored minus only the new `cost > 0 and skill_points < cost`
+branch. The suite reported **2 FAILURES**: the NEGATIVE gate check (got `''`) and the 5-SP
+board check (button live, tooltip "costs 53 skill points (you have 5)"). With the branch back,
+it reports ALL PASS.
+
+- **Client suite:** `client/tools/remote_godot.sh tests` (render box) ran 80 suites, 0 failing.
+  `client/tools/remote_godot.sh check` checked 246 scripts and 5 scenes: ALL LOAD.
+- **Not run:** the live check, `SRREVAMP_QA_SKILL_STATE="sp=5,level=30,257=20" qa_shot.sh
+  --panels skill`. It would print `QA SKILL: ... cost 53 -> LEVEL UP disabled: Needs 53 ...`
+  with the 53 read from the archive at runtime. This round's access to the box covered
+  `remote_godot.sh` only. The archive's row-20 value was read with `dump_text_table.gd`, not
+  through a running client.
+- **Server suite:** `cd server && go build ./... && go test -count=1 -p 1 ./...` is green. No
+  server file changed.

@@ -171,7 +171,8 @@ authored presentation instead:
   a scrolling grid of one row per skill group (`skillgroup.txt`), each holding that group's skills
   as cells (`skilldata_*.txt`, via `SkillDataReader`). Cell metrics are the client's own (8 columns
   pitched 36px from x=37). The window is server-driven (`set_skill_state`): a mastery's LEVEL UP
-  button spends skill points (total capped at a flat 330, round 483); each skill cell renders
+  button spends skill points (total capped at a flat 330, round 483; greyed with the real cost,
+  leveldata column 2, when the points fall short, round 516); each skill cell renders
   learned (colored icon + `skl_level_tab` badge with the trained level) / learnable-next (icon +
   `skl_button_add` "+" → learns the next level) / locked (`skl_mastery_disable`) / empty
   (`skl_mastery_nothing`), at the grounded `ifskill_slot.txt` rects (icon 0,0,32,32; "+"

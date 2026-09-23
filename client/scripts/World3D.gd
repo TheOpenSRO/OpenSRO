@@ -1400,6 +1400,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.skill_drop_requested.connect(_on_skill_drop_requested)
 	_hud_panels.item_drop_requested.connect(_on_item_drop_requested)
 	_hud_panels.npc_service_selected.connect(_on_npc_service_selected)
+	# A server refusal the panels hear about (a mastery raise) goes to chat.
+	_hud_panels.system_notice.connect(_log_system)
 
 	# The chat window, bottom-left where its registry entry puts it. This
 	# retires the developer chat box: the authored window is the same two

@@ -93,6 +93,9 @@ signal item_drop_requested(at: Vector2, item_id: int, inventory_slot: int, icon:
 ## the service's stable key (NpcServiceReader.Service.key -- "shop", "storage",
 ## ...). World3D acts on it (opens the shop, ...).
 signal npc_service_selected(key: String)
+## A line for the chat's system channel -- today a server refusal of a mastery
+## raise, which used to be dropped silently. World3D logs it (_log_system).
+signal system_notice(text: String)
 
 ## Sections beyond "Create" that a panel's window builds.
 ##
@@ -2048,6 +2051,27 @@ func _load_masteries() -> void:
 		_masteries = MasteryReader.parse_china(archive.read_file(entry))
 	print("HudPanels: %d China mastery(ies) read" % _masteries.size())
 
+## leveldata.txt's column 2 -- the skill points raising a mastery costs, by the
+## mastery's current level -- read once from the player's own Media.pk2 (see
+## LevelDataReader for the grounding). Empty when the archive lacks the table;
+## the LEVEL UP button then shows no cost rather than a made-up one.
+var _level_mastery_costs: Dictionary = {}
+var _level_data_loaded := false
+
+func _load_level_data() -> void:
+	if _level_data_loaded:
+		return
+	_level_data_loaded = true
+	if _builder == null:
+		return
+	var archive := _builder.media_archive()
+	if archive == null:
+		return
+	var entry := ObjectLoader.find_file(archive, LevelDataReader.TABLE_PATH)
+	if entry != null:
+		_level_mastery_costs = LevelDataReader.parse_mastery_costs(archive.read_file(entry))
+	print("HudPanels: %d mastery cost(s) read from leveldata" % _level_mastery_costs.size())
+
 ## Which tab of the skill board is showing (0 = Weapon, 1 = Force for China) and
 ## which mastery within it -- the real window's two rows of tabs.
 var _skill_active_tab := 0
@@ -2101,7 +2125,30 @@ const MASTERY_TOTAL_CAP := 330
 ## so a raise from above 120 is free; and a level-0 mastery skips the loop and the
 ## check entirely (0x59c628), so a mastery's first point is free too. Matches the
 ## server's session.MasteryCostLevelCeiling; docs/RE_COMPLETION.md, round 484.
-const MASTERY_COST_LEVEL_CEILING := 120
+## One value with LevelDataReader's, which applies the same bound to the cost.
+const MASTERY_COST_LEVEL_CEILING := LevelDataReader.MASTERY_COST_LAST_LEVEL
+
+## Why the mastery LEVEL UP button is greyed, or "" when the server would take
+## the raise. Checked in Mastery_LevelUp's (0x0059c4e0) own order, so the reason
+## is the one the server would refuse with: the total (0x3805), then the
+## character level (0x3804), then the skill points (0x3802). total_cap is the
+## flat MASTERY_TOTAL_CAP (round 483). cost is LevelDataReader.mastery_up_cost
+## for the mastery's current level -- 0 when the engine charges nothing (a
+## mastery's first point, or a level past MASTERY_COST_LEVEL_CEILING) or the
+## archive has no leveldata.
+static func mastery_levelup_block_reason(real_level: int, char_level: int, total_now: int,
+		total_cap: int, skill_points: int, cost: int) -> String:
+	if total_now >= total_cap:
+		return "Total mastery cap reached (%d / %d)." % [total_now, total_cap]
+	if char_level > 0 and real_level >= char_level:
+		return "This mastery is at your character-level cap (Lv %d). Level up your character to raise it." % char_level
+	if skill_points <= 0 and real_level > 0 and real_level <= MASTERY_COST_LEVEL_CEILING:
+		return "Not enough skill points."
+	# 0x3802 is refused only when the cost is ABOVE the points: `cmp eax,[ecx+0x80]
+	# ; jbe 0x59c6a9` at 0x59c694 lets cost == points through, hence strict <.
+	if cost > 0 and skill_points < cost:
+		return "Needs %d skill points to raise this mastery (you have %d)." % [cost, skill_points]
+	return ""
 
 ## Skill-board geometry inside the CIFSkillBoard area (GDR_SKILL_BOARD). The grid
 ## metrics are the real client's, decompiled from CIFSkillGroup::SetGroup: eight
@@ -2192,11 +2239,14 @@ func set_skill_state(skill_points: int, mastery_levels: Dictionary, char_level: 
 func _apply_skill_state(state: SkillNet.SkillState) -> void:
 	set_skill_state(state.skill_points, state.mastery_levels, state.level, state.known_skills)
 
-## After a mastery is raised, re-read the state so the totals and the lit/greyed
-## skills refresh.
+## After a mastery raise, re-read the state so the totals and the lit/greyed
+## skills refresh. A refusal is said in chat (it was dropped silently before)
+## and still refreshes: the window may be showing state the server has moved
+## past, which is the likeliest reason it offered a raise that was refused.
 func _on_raise_mastery_result(result: SkillNet.RaiseMasteryResult) -> void:
 	if result.error != "":
-		return
+		print("HudPanels: mastery raise refused: %s" % result.error)
+		system_notice.emit("The mastery was not raised: %s." % result.error)
 	var who := NetClient.current_character_name
 	if who != "":
 		NetClient.skill_state(who)
@@ -2221,6 +2271,7 @@ func _mastery_level(mastery_id: int) -> int:
 ## exactly as a fresh character's window does.
 func _fill_skill_masteries(window: HudWindow) -> void:
 	_load_masteries()
+	_load_level_data()
 	_load_skill_catalog()
 	# QA: SRREVAMP_QA_SKILL_STATE="sp=9,level=3,257=3" sets the points, the
 	# character level and any mastery levels (id=level) the board explains
@@ -2362,38 +2413,38 @@ func _build_mastery_board(board: Control, mastery: MasteryReader.Mastery) -> voi
 	# The mastery LEVEL UP button (skl_mastery_levelup in ifskillboard): spends
 	# skill points to raise this mastery a level, which unlocks more skills.
 	var levelup := Button.new()
+	levelup.name = "SkillMasteryLevelUp"
 	levelup.text = _resolve_ui("UIIT_CTL_SKILL_MASTERY_LEVELUP", "LEVEL UP")
 	levelup.position = Vector2(150, 3)
 	levelup.custom_minimum_size = Vector2(80, 22)
 	levelup.focus_mode = Control.FOCUS_NONE
 	_style_skill_tab(levelup)
 	levelup.pressed.connect(_on_mastery_levelup.bind(mastery.id))
-	# Grey it and say why when the mastery can't be raised: a single mastery
-	# can't pass the character's level, and the total is capped at a flat 330
-	# (both server-enforced -- this just explains it before the click). Checked in
-	# the engine's order, so the reason shown is the one the server would refuse
-	# with: Mastery_LevelUp (0x0059c4e0) tests the total (0x3805) before the
-	# character level (0x3804), then the skill points (0x3802) -- which only a
-	# raise that costs points can fail: not a mastery's first point, and not one
-	# past MASTERY_COST_LEVEL_CEILING.
+	# Grey it and say why when the mastery can't be raised: the flat 330 total,
+	# the character's level, and the skill points against the raise's real cost
+	# (leveldata column 2 at the current level) -- all server-enforced; this just
+	# explains it before the click. See mastery_levelup_block_reason for the
+	# order and the grounding.
 	var real_level := int(_skill_mastery_levels.get(mastery.id, 0))
 	var total_now := 0
 	for lvl in _skill_mastery_levels.values():
 		total_now += int(lvl)
-	var reason := ""
-	if total_now >= MASTERY_TOTAL_CAP:
-		reason = "Total mastery cap reached (%d / %d)." % [total_now, MASTERY_TOTAL_CAP]
-	elif _skill_char_level > 0 and real_level >= _skill_char_level:
-		reason = "This mastery is at your character-level cap (Lv %d). Level up your character to raise it." % _skill_char_level
-	elif _skill_points <= 0 and real_level > 0 and real_level <= MASTERY_COST_LEVEL_CEILING:
-		reason = "Not enough skill points."
+	var cost := LevelDataReader.mastery_up_cost(_level_mastery_costs, real_level)
+	var reason := mastery_levelup_block_reason(real_level, _skill_char_level, total_now,
+		MASTERY_TOTAL_CAP, _skill_points, cost)
 	if reason != "":
 		levelup.disabled = true
 		levelup.tooltip_text = reason
+	elif cost > 0:
+		levelup.tooltip_text = "Raising this mastery to Lv %d costs %d skill points (you have %d)." % [
+			real_level + 1, cost, _skill_points]
+	elif real_level == 0 or real_level > MASTERY_COST_LEVEL_CEILING:
+		# The two raises the engine never charges (LevelDataReader.mastery_up_cost).
+		levelup.tooltip_text = "Raising this mastery to Lv %d costs no skill points." % (real_level + 1)
 	if OS.has_environment("SRREVAMP_QA_SKILL_STATE"):
-		print("QA SKILL: %s Lv %d, %d SP, char Lv %d, total %d/%d -> LEVEL UP %s%s" % [
+		print("QA SKILL: %s Lv %d, %d SP, char Lv %d, total %d/%d, cost %d -> LEVEL UP %s%s" % [
 			mastery.display_name(_text_table()), real_level, _skill_points, _skill_char_level, total_now,
-			MASTERY_TOTAL_CAP, "disabled: " if reason != "" else "enabled", reason])
+			MASTERY_TOTAL_CAP, cost, "disabled: " if reason != "" else "enabled", reason])
 	host.add_child(levelup)
 
 	var lvl_lbl := Label.new()
