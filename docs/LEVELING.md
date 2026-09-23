@@ -43,7 +43,7 @@ separate readers pin four points of it -- no packing argument required:
 | offset | column | the use site that pins it |
 |---|---:|---|
 | `+0x08`/`+0x0c` (64-bit) | **1** -- exp to next | `GObjPC_GainExpAndLevel` adds to it and `__alldiv`s by it (round 294) |
-| `+0x10` | **2** -- mastery SP cost | `FUN_0059c4e0`, the mastery level-up handler, accumulates it over the levels raised |
+| `+0x10` | **2** -- mastery SP cost | `FUN_0059c4e0`, the mastery level-up handler, accumulates it over the levels raised (levels 1-120 only: level 0 never reaches the loop, and it stops at `0x78`; round 484) |
 | `+0x1c` | **5** -- exp unit | `Formula_MonsterExpReward`, and a getter at `0x004e68xx` returning `row+0x1c` |
 | `+0x20`, `+0x24`, `+0x28` | **6, 7, 8** -- one per job | see below |
 | `+0x14`, `+0x18` | 3, 4 -- *predicted by the packing; **swept for, and no reader exists** (round 296)* | |

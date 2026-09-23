@@ -162,7 +162,9 @@ type Table struct {
 //
 // What the reference byte IS has NOT been settled and is deliberately not
 // guessed here. Recomputation on mastery level-up, and 120 being exactly the
-// recovered mastery cap (see session.MasteryLevelCap), both fit the reference
+// 0x78 in Mastery_LevelUp (then read as a single-mastery cap; round 484 found
+// it bounds only the cost loop -- see session.MasteryCostLevelCeiling), both
+// fit the reference
 // being the character's highest mastery level -- which would make this the
 // familiar "mastery lagging your level costs you experience" rule. That is a
 // hypothesis with two coincidences behind it and no use-site, which is the
@@ -321,8 +323,9 @@ const (
 //
 // HOW THE REFERENCE WAS SETTLED, because the previous tick recorded it as an
 // explicitly refused guess. Two coincidences pointed at "highest mastery level"
-// -- recomputation on mastery level-up, and 0x78 being exactly the recovered
-// single-mastery cap -- and that is the shape of reasoning that got
+// -- recomputation on mastery level-up, and 0x78 being exactly the 0x78 in
+// Mastery_LevelUp (then read as a single-mastery cap; round 484 found it bounds
+// only the cost loop) -- and that is the shape of reasoning that got
 // characterdata column 79 wrong twice, so it was not promoted. What settled it
 // is a USE-SITE: FUN_0059e7c0 walks the identical list under pc+0xa30 with the
 // identical skip rule and value path but SUMS instead of taking the maximum,
@@ -332,8 +335,10 @@ const (
 // therefore the highest mastery level.
 //
 // SCOPE: a character with NO mastery is not special-cased by the engine. The
-// only escape is ref > 120, which no real character reaches, so a level-10
-// character who has never raised a mastery really does fall to the 0.1 floor.
+// only escape is ref > 120, which only a character above level 120 can reach (a
+// mastery is capped at the character's level, 0x3804 in Mastery_LevelUp, and
+// at nothing lower -- round 484), so a level-10 character who has never raised
+// a mastery really does fall to the 0.1 floor.
 // That is the mechanic, not an oversight -- but it means the penalty is severe
 // for a character that ignores masteries entirely.
 const (
@@ -342,7 +347,8 @@ const (
 	MasteryExpScaleMax        = 1.9
 
 	// MasteryExpRefCap is the reference value above which the engine gives up
-	// and returns a flat 1.0 -- 0x78, the same 120 that caps a single mastery.
+	// and returns a flat 1.0 -- 0x78, the same 120 that bounds Mastery_LevelUp's
+	// cost loop (session.MasteryCostLevelCeiling). It does not cap a mastery.
 	MasteryExpRefCap = 120
 )
 

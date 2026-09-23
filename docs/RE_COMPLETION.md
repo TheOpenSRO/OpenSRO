@@ -3690,6 +3690,15 @@ srrevamp had no such ceiling. leveldata runs to **140**, so a character can
 outgrow 120 and the cap binds rather than being theoretical. Shipped as
 `MasteryLevelCap`, applied as the lower of it and the character's level.
 
+**CORRECTED in round 484 (2026-09-23): 120 is not a cap.** The `break` leaves
+the COST loop, not the function. In the instructions, `cmp esi,0x78 ; jg
+0x59c687` at `0x59c64e` jumps to the skill-point check, and the raise at
+`0x59c6b3`-`0x59c6cb` follows it. So a raise from above 120 sums nothing, costs
+0, and still happens. No refusal code goes with `0x78`. The only per-mastery cap
+is the character's level (`0x3804`). `MasteryLevelCap` is gone, and
+`session.MasteryCostLevelCeiling` names what the 120 does. See "No 120 cap on a
+single mastery, and its first point is free" (round 484).
+
 **The total cap is a FLAT 330, not a per-level rule.** On the branch where the
 ref object's `+0x88` is zero, it refuses when `current + requested >= 0x14b`,
 with no reference to the character's level at all.
@@ -3733,6 +3742,8 @@ number in a citation is worse than no number, so it is gone.
 
 `session.MasteryLevelCap = 120`, wired into the raise handler and tested at the
 boundary (level 120 binds at 120, level 121 and level 140 both bind at 120).
+*(Removed in round 484: the engine does not refuse at 120. See the correction
+above.)*
 `MasteryTotalCapPerLevel` is unchanged, with the shape difference recorded
 against it rather than silently reconciled. *(Replaced in round 483 by
 `MasteryTotalCapChina = 330` / `MasteryTotalCapEurope = 240`, selected by
@@ -4429,7 +4440,8 @@ K is `fmul QWORD ds:0xb45ec0` = **0.1, a double**; the clamp bounds are 0.1 and
 
 **What the reference byte denotes is NOT recovered, and is deliberately not
 guessed.** Recomputation on mastery level-up, and `0x78` being exactly 120 — the
-mastery cap this project already recovered — both fit the reference being the
+mastery cap this project already recovered *(round 484: it is the cost loop's
+bound, not a cap)* — both fit the reference being the
 character's highest mastery level, which would make this the familiar "mastery
 lagging your level costs you experience" rule. That is two coincidences and no
 use-site, which is precisely the shape of reasoning that produced the wrong
@@ -4446,7 +4458,8 @@ Last tick characterised the float at `pc+0x1cd8` that `Formula_MonsterExpReward`
 multiplies every kill by, and **explicitly refused to name its reference byte**:
 two coincidences pointed at "highest mastery level" — recomputation on
 `Mastery_LevelUp`, and `0x78` being exactly the recovered single-mastery cap of
-120 — but that is the shape of reasoning that got characterdata column 79 wrong
+120 *(round 484: it is the cost loop's bound, not a cap)* — but that is the shape
+of reasoning that got characterdata column 79 wrong
 twice, so it was written down as a hypothesis. This tick settled it properly.
 
 **The use-site that settled it.** `FUN_0059e870` walks a list under `pc+0xa30`
@@ -4485,7 +4498,8 @@ kill-reward path ahead of the party bonus.
 
 **SCOPE, and it is a sharp one.** The engine does **not** special-case a
 character with no mastery — the only escape is a reference above 120, which no
-real character reaches. So a level-10 character who has never raised a mastery
+real character reaches *(round 484: only a character above level 120 can, since
+nothing but the character's level caps a mastery)*. So a level-10 character who has never raised a mastery
 really does fall to the 0.1 floor, and that is the mechanic rather than an
 oversight. srrevamp now reproduces it. The one place this implementation
 deliberately departs from the engine is a lookup FAILURE: the engine always has
@@ -25825,3 +25839,116 @@ printed `Bicheon Lv 120, 9 SP, char Lv 120, total 330/330 -> LEVEL UP disabled:
 Total mastery cap reached (330 / 330).` The old order checked the character
 level first, so it would have given the character-level reason instead. That
 is read from the code; the old order was not rendered.
+
+## No 120 cap on a single mastery, and its first point is free (Mastery_LevelUp 0x59c4e0) (round 484)
+
+`session.MasteryLevelCap = 120` refused to raise any mastery past 120. The
+2026-09-15 entry read that cap off `Mastery_LevelUp` (`0x0059c4e0`) as "the cost
+loop refuses to go past it". `masteryUpCost(0)` also charged the first point in
+a mastery: 1 SP from the no-table fallback. This round checked both against
+the instructions first. Both readings were wrong, so the server now follows the
+function.
+
+	59c611  cmp ecx,eax ; jle 0x59c622    <- current + requested <= GetLevel(), else 0x3804
+	59c625  mov cl,[eax+0x20]             <- the mastery's current level
+	59c628  test cl,cl ; jne 0x59c638     <- level 0? ...
+	59c62c  mov cl,0x1
+	59c62e  call 0x5a8bf0                 <- ... set the level to 1 ...
+	59c633  jmp 0x59c6d8                  <- ... and skip the loop AND the SP check
+	59c64e  cmp esi,0x78 ; jg 0x59c687    <- the cost loop's bound: out to the SP check
+	59c669  call 0x411130                 <- RefLevel_GetEntry(esi) = rows[esi-1]
+	59c66e  mov ecx,[eax+0x10]            <- leveldata column 2
+	59c67c  add [esp+0x14],ecx            <- cost += it
+	59c687  ...                           <- the SP check starts here
+	59c694  cmp eax,[ecx+0x80] ; jbe      <- cost <= skill points, else 0x3802
+	59c6b3  add cl,0x1 ... 59c6cb  mov [eax+0x20],cl   <- the raise
+	59c793  test esi,esi ; jle            <- spend only a positive cost
+
+Those addresses are the on-disk exe. The Ghidra dump has the same structure:
+`if (bVar2 == 0) { FUN_005a8bf0(); } else { ... do { if (0x78 < (int)uVar4)
+break; ...`. Round 483 showed the two are one build.
+
+**(a) `0x78` bounds the loop. It is not a refusal.** `jg 0x59c687` lands on the
+skill-point check. The raise at `0x59c6b3`-`0x59c6cb` comes after that check.
+No error code goes with `0x78`. All five codes are set elsewhere: `0x3801` at
+`0x59c55a`, `0x3805` at `0x59c5cc`, `0x3804` at `0x59c615`, `0x3802` at
+`0x59c69c`, and `0x3803` at `0x59c727`, when `GObjPC::FUN_004e7350` fails after
+the raise. So a raise from
+level 120 still sums row 120's column 2. `0x78 < 120` is false. A raise from
+121 or higher sums nothing, costs 0, and still happens.
+
+**(b) The first point is free.** `FUN_005a8bf0` is the mastery record's level
+setter: `cmp cl,[eax+0x20] ; je` and then `mov [eax+0x20],cl` under the same
+dirty-flag guard as the inline raise at `0x59c6b3`. The call passes cl = 1. The
+path jumps to `0x59c6d8`, past the cost loop and past the `0x3802` check. The
+cost at `[esp+0x14]` keeps the 0 written at `0x59c51d`, and the spend at
+`0x59c793` is skipped. It also fits the table. `RefLevel_GetEntry` indexes
+`rows[level-1]`, so level 0 has no row to read.
+
+**(c) What caps a single mastery.** Only `0x3804`. Its comparand is vtable
+`+0x124`, `IGObj::GetLevel` (slot 73, recovered in earlier rounds). The raise
+is refused when `current + requested > characterLevel`. Nothing else caps one
+mastery.
+
+**What moved.**
+- `skill.go`: `MasteryLevelCap` is removed. `MasteryCostLevelCeiling = 120`
+  names what the `0x78` really does.
+- `masteryUpCost` returns 0 for level 0 and for any level above 120, whatever
+  the level table holds. Levels 1-120 are unchanged: the table's column 2, or
+  the disclosed `level+1` without a table.
+- `RaiseMasteryHandler` passes the character's level as the store's cap. Its
+  checks keep the engine's order: total (`0x3805`), then character level
+  (`0x3804`), then points (`0x3802`). A cost of 0 passes the points check, as
+  the engine's level-0 path does by skipping it.
+- `leveldata.go`: the comments that called 120 "the single-mastery cap" now say
+  what it is. A mastery above 120, which escapes the mastery-lag EXP penalty, is
+  now reachable by a character above level 120.
+- Client: `hud_panels.gd` no longer greys LEVEL UP with "Not enough skill
+  points" for a raise that costs none: a mastery at 0, or one above
+  `MASTERY_COST_LEVEL_CEILING := 120`.
+- Docs: the 2026-09-15 and 2026-09-16 entries are annotated where they call 120
+  a cap. `SYSTEMS.md` anchors the row on `MasteryCostLevelCeiling`.
+  `GROUNDING_AUDIT.md` and `LEVELING.md` note the two free cases.
+
+**Still not modelled.** The engine's first check, `FUN_0059d6f0`, looks the
+mastery up in the character's own list and refuses a missing one with
+`0x3801`. srrevamp does not check mastery ids. A client could therefore take a
+free first point in an id that is no real mastery. Before this round that cost
+1 SP. Each such point still counts against the 330 total.
+
+The visible change: a new character with 0 SP can take its first point in a
+mastery. A character above level 120 can raise a mastery past 120, and each
+raise from 121 up is free.
+
+**Tests.**
+- `session.TestMasteryUpCostFirstPointIsFree`: `masteryUpCost(0)` is 0 with no
+  table, and 0 with a table that has a level-0 row of 7. Level 1 still costs
+  its table value or the fallback.
+- `session.TestMasteryCostLoopStopsSummingAt120` pins
+  `MasteryCostLevelCeiling = 120`. With a table carrying 119/120/121/140 at
+  5000/6000/7000/9000, costs are 5000, 6000, 0 and 0. With no table, costs are
+  120, 121, 0 and 0.
+- `session.TestRaiseMasteryFirstPointFreeAndNoCapAt120` drives the handler over
+  the wire:
+  - A level-1 character with 0 SP raises Bicheon 0 -> 1 and has 0 SP left. The
+    next raise is `mastery at level cap`.
+  - A level-122 character at Bicheon 120 with 6000 SP raises to 121 and has 0
+    left. It raises to 122 with 0 SP. Then it is refused `mastery at level cap`.
+- The old `TestMasteryLevelCap` pinned the wrong reading and is replaced. The
+  seed helpers in `masterycap_test.go` and `learngate_test.go` now pass
+  `seedMasteryCap = 255`, the byte's maximum.
+
+Negative case: with only `skill.go` reverted, plus a test-only shim that
+defines the new constant, all three new tests failed:
+- `masteryUpCost(0) = 1`, and `= 7` with the level-0 row.
+- `masteryUpCost(121) = 122`, and `= 7000` with the table.
+- The handler answered `not enough skill points` for the free first raise.
+
+A second run skipped the first-raise half. There, 120 -> 121 was refused
+`mastery at level cap`. The existing tests run beside them in the negative case,
+`TestRaiseMasteryTotalCapIsFlatForChina` and
+`TestMasteryUpCostUsesTheLevelTable`, passed against the old code. They also
+pass against the new code. `go test -count=1 -p 1 ./...` is green.
+On the render box, `client/tools/remote_godot.sh tests` ran 77 suites with 0
+failing, and `check` compiled 239 scripts and 5 scenes (`ALL LOAD`). The client
+grey-out change was not rendered, so it is read from the code only.

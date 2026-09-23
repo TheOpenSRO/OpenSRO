@@ -80,34 +80,66 @@ func TestMasteryUpCostUsesTheLevelTable(t *testing.T) {
 	}
 }
 
-// TestMasteryLevelCap pins the recovered ceiling on a single mastery.
-//
-// Mastery_LevelUp's cost loop breaks once the level being raised passes 0x78,
-// so 120 is the engine's hard limit whatever the character's level. leveldata
-// runs to 140, so a character can outgrow it and the cap becomes the binding
-// constraint rather than a theoretical one.
-func TestMasteryLevelCap(t *testing.T) {
-	if MasteryLevelCap != 120 {
-		t.Fatalf("MasteryLevelCap = %d, want 120 (0x78, where Mastery_LevelUp's loop breaks)", MasteryLevelCap)
+// TestMasteryUpCostFirstPointIsFree pins Mastery_LevelUp's level-0 path
+// (0x0059c4e0): `test cl,cl ; jne` at 0x59c628 sends a level-0 mastery to the
+// level setter FUN_005a8bf0 with cl = 1 and jumps past both the cost loop and
+// the 0x3802 check, so the first point costs nothing -- with or without a level
+// table, and even if a table carried a row for level 0 (RefLevel_GetEntry
+// indexes rows[level-1], so the engine has none to read).
+func TestMasteryUpCostFirstPointIsFree(t *testing.T) {
+	SetLevelTable(nil)
+	defer SetLevelTable(nil)
+	if got := masteryUpCost(0); got != 0 {
+		t.Errorf("no level table: masteryUpCost(0) = %d, want 0 (the level-0 path skips the cost loop)", got)
+	}
+	if got := masteryUpCost(1); got != 2 {
+		t.Errorf("no level table: masteryUpCost(1) = %d, want the disclosed fallback 2 -- only level 0 is free", got)
 	}
 
-	// The cap passed to the store is the lower of the character's level and
-	// the engine ceiling -- the same expression the handler builds.
-	capFor := func(charLevel int) int {
-		if charLevel > MasteryLevelCap {
-			return MasteryLevelCap
-		}
-		return charLevel
+	tbl, err := leveldata.ParseCSV(strings.NewReader("level,exp,mastery_sp\n0,0,7\n1,67,1\n2,470,1\n"))
+	if err != nil {
+		t.Fatalf("ParseCSV: %v", err)
 	}
+	SetLevelTable(tbl)
+	if got := masteryUpCost(0); got != 0 {
+		t.Errorf("a table with a level-0 row: masteryUpCost(0) = %d, want 0 (the engine never reads it)", got)
+	}
+	if got := masteryUpCost(1); got != 1 {
+		t.Errorf("masteryUpCost(1) = %d, want the table's 1", got)
+	}
+}
+
+// TestMasteryCostLoopStopsSummingAt120 pins the bound of Mastery_LevelUp's cost
+// loop: `cmp esi,0x78 ; jg 0x59c687` at 0x59c64e jumps to the skill-point check,
+// so a raise FROM level 120 still sums row 120's column 2 and a raise from 121
+// or above sums nothing -- whatever the table carries past 120.
+func TestMasteryCostLoopStopsSummingAt120(t *testing.T) {
+	if MasteryCostLevelCeiling != 120 {
+		t.Fatalf("MasteryCostLevelCeiling = %d, want 120 (0x78 at 0x59c64e)", MasteryCostLevelCeiling)
+	}
+	SetLevelTable(nil)
+	defer SetLevelTable(nil)
+	// No table: the disclosed fallback up to 120, nothing past it.
+	for _, tc := range []struct{ level, want int }{{119, 120}, {120, 121}, {121, 0}, {140, 0}} {
+		if got := masteryUpCost(tc.level); got != tc.want {
+			t.Errorf("no level table: masteryUpCost(%d) = %d, want %d", tc.level, got, tc.want)
+		}
+	}
+
+	tbl, err := leveldata.ParseCSV(strings.NewReader(
+		"level,exp,mastery_sp\n119,1,5000\n120,1,6000\n121,1,7000\n140,1,9000\n"))
+	if err != nil {
+		t.Fatalf("ParseCSV: %v", err)
+	}
+	SetLevelTable(tbl)
 	for _, tc := range []struct{ level, want int }{
-		{1, 1},
-		{80, 80},
-		{120, 120},
-		{121, 120}, // the first level where the ceiling binds
-		{140, 120}, // leveldata's own maximum
+		{119, 5000},
+		{120, 6000}, // `0x78 < 120` is false: the last level the loop sums
+		{121, 0},    // the loop breaks before RefLevel_GetEntry(121)
+		{140, 0},
 	} {
-		if got := capFor(tc.level); got != tc.want {
-			t.Errorf("a level-%d character's mastery cap = %d, want %d", tc.level, got, tc.want)
+		if got := masteryUpCost(tc.level); got != tc.want {
+			t.Errorf("masteryUpCost(%d) = %d, want %d", tc.level, got, tc.want)
 		}
 	}
 }

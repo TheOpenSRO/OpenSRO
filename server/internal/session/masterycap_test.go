@@ -3,6 +3,7 @@ package session
 import (
 	"bufio"
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,9 +11,15 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
 )
+
+// seedMasteryCap is the level cap the tests hand the store when seeding a
+// mastery directly, past the handler's checks: 255, the most the mastery
+// record's level byte (+0x20, `movzx esi,cl` at 0x59c63c) can hold.
+const seedMasteryCap = 255
 
 // TestMasteryTotalRefusal pins Mastery_LevelUp's (0x0059c4e0) total-cap branch
 // for every selector: China (0) refuses once `sum + requested` passes 330 with no
@@ -87,7 +94,7 @@ func TestRaiseMasteryTotalCapIsFlatForChina(t *testing.T) {
 			if lv[mastery] >= to {
 				return
 			}
-			if _, err := skills.RaiseMastery(ctx, id, mastery, 0, MasteryLevelCap); err != nil {
+			if _, err := skills.RaiseMastery(ctx, id, mastery, 0, seedMasteryCap); err != nil {
 				t.Fatalf("RaiseMastery: %v", err)
 			}
 		}
@@ -154,5 +161,116 @@ func TestRaiseMasteryTotalCapIsFlatForChina(t *testing.T) {
 	// 3 x 120 = 360 would have allowed it.
 	if rr := raise("Bria", 273); rr.Error != "mastery total at cap" {
 		t.Fatalf("level 120, total 330, raise 273: got %+v, want 'mastery total at cap'", rr)
+	}
+}
+
+// TestRaiseMasteryFirstPointFreeAndNoCapAt120 drives RaiseMasteryHandler through
+// the two paths of Mastery_LevelUp (0x0059c4e0) that charge nothing:
+//
+//   - a mastery's FIRST point: level 0 goes to the level setter FUN_005a8bf0
+//     (0x59c628-0x59c633), past the cost loop and the 0x3802 check, so it raises
+//     with 0 skill points and spends none;
+//   - a raise from above 120: the cost loop's `cmp esi,0x78 ; jg` (0x59c64e)
+//     jumps to the SP check, not to a refusal, so 121 -> 122 is free and 120 is
+//     no ceiling -- the character's level (0x3804) is the only per-mastery cap.
+func TestRaiseMasteryFirstPointFreeAndNoCapAt120(t *testing.T) {
+	ctx := context.Background()
+	prevTable := levelTable
+	tbl, err := leveldata.ParseCSV(strings.NewReader(
+		"level,exp,mastery_sp\n1,67,1\n120,1,6000\n121,1,7000\n122,1,8000\n"))
+	if err != nil {
+		t.Fatalf("ParseCSV: %v", err)
+	}
+	SetLevelTable(tbl)
+	t.Cleanup(func() { SetLevelTable(prevTable) })
+	accounts := account.NewMemStore()
+	acct, err := accounts.Add("alice", "hunter2")
+	if err != nil {
+		t.Fatalf("accounts.Add: %v", err)
+	}
+	chars := character.NewMemStore()
+	skills := skill.NewMemStore()
+	newChar := func(name string, level int) int64 {
+		t.Helper()
+		c, err := chars.Create(ctx, acct.ID, name)
+		if err != nil {
+			t.Fatalf("chars.Create(%s): %v", name, err)
+		}
+		if err := chars.SetLeveling(ctx, c.ID, level, 0, 0, character.StartingStr, character.StartingInt); err != nil {
+			t.Fatalf("SetLeveling: %v", err)
+		}
+		return c.ID
+	}
+	fresh := newChar("Aria", 1) // no skill points at all
+	veteran := newChar("Bria", 122)
+
+	handle := gateway.Chain(LoginHandler(accounts), RaiseMasteryHandler(chars, skills))
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+	send := func(opcode uint16, data []byte) *proto.Packet {
+		t.Helper()
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+	raise := func(name string, mastery int64) *RaiseMasteryResult {
+		t.Helper()
+		resp := send(OpRaiseMastery, (&RaiseMasteryRequest{CharacterName: name, MasteryID: mastery}).Encode())
+		rr, err := DecodeRaiseMasteryResult(resp.Data)
+		if err != nil {
+			t.Fatalf("DecodeRaiseMasteryResult: %v", err)
+		}
+		return rr
+	}
+	resp := send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+
+	// A level-1 character with 0 SP takes Bicheon's first point for free ...
+	if rr := raise("Aria", 257); rr.Error != "" || rr.NewLevel != 1 || rr.SkillPoints != 0 {
+		t.Fatalf("level 1, 0 SP, Bicheon 0 -> 1: got %+v, want NewLevel 1 with 0 SP left", rr)
+	}
+	if pts, _ := skills.SkillPoints(ctx, fresh); pts != 0 {
+		t.Fatalf("points after the free first raise = %d, want 0", pts)
+	}
+	// ... and the second point is the character-level cap (0x3804), not free.
+	if rr := raise("Aria", 257); rr.Error != "mastery at level cap" {
+		t.Fatalf("level 1, Bicheon 1 -> 2: got %+v, want 'mastery at level cap'", rr)
+	}
+
+	// A level-122 character at Bicheon 120: 120 -> 121 costs row 120's 6000 ...
+	for {
+		lv, _ := skills.MasteryLevels(ctx, veteran)
+		if lv[257] >= 120 {
+			break
+		}
+		if _, err := skills.RaiseMastery(ctx, veteran, 257, 0, seedMasteryCap); err != nil {
+			t.Fatalf("RaiseMastery: %v", err)
+		}
+	}
+	if _, err := skills.AddSkillPoints(ctx, veteran, 6000); err != nil {
+		t.Fatalf("AddSkillPoints: %v", err)
+	}
+	if rr := raise("Bria", 257); rr.Error != "" || rr.NewLevel != 121 || rr.SkillPoints != 0 {
+		t.Fatalf("level 122, Bicheon 120 -> 121 with 6000 SP: got %+v, want NewLevel 121 with 0 SP left", rr)
+	}
+	// ... 121 -> 122 sums nothing, so it raises with 0 SP although the table's
+	// row 121 says 7000 ...
+	if rr := raise("Bria", 257); rr.Error != "" || rr.NewLevel != 122 || rr.SkillPoints != 0 {
+		t.Fatalf("level 122, Bicheon 121 -> 122 with 0 SP: got %+v, want NewLevel 122 (free past 120)", rr)
+	}
+	// ... and the character's own level is what finally binds.
+	if rr := raise("Bria", 257); rr.Error != "mastery at level cap" {
+		t.Fatalf("level 122, Bicheon 122 -> 123: got %+v, want 'mastery at level cap'", rr)
 	}
 }

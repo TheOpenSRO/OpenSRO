@@ -2068,6 +2068,14 @@ func is_skill_known(skill_id: int) -> bool:
 ## account, not a reading of the binary.)
 const MASTERY_TOTAL_CAP := 330
 
+## The highest mastery level whose raise costs skill points: 120. Not a cap on the
+## mastery. Mastery_LevelUp (0x0059c4e0) sums leveldata column 2 in a loop whose
+## `cmp esi,0x78 ; jg` (0x59c64e) jumps to the skill-point check, not a refusal,
+## so a raise from above 120 is free; and a level-0 mastery skips the loop and the
+## check entirely (0x59c628), so a mastery's first point is free too. Matches the
+## server's session.MasteryCostLevelCeiling; docs/RE_COMPLETION.md, round 484.
+const MASTERY_COST_LEVEL_CEILING := 120
+
 ## Skill-board geometry inside the CIFSkillBoard area (GDR_SKILL_BOARD). The grid
 ## metrics are the real client's, decompiled from CIFSkillGroup::SetGroup: eight
 ## columns pitched 36px from x=37, 32px cells in a 56px-tall row bar. The tab and
@@ -2338,7 +2346,9 @@ func _build_mastery_board(board: Control, mastery: MasteryReader.Mastery) -> voi
 	# (both server-enforced -- this just explains it before the click). Checked in
 	# the engine's order, so the reason shown is the one the server would refuse
 	# with: Mastery_LevelUp (0x0059c4e0) tests the total (0x3805) before the
-	# character level (0x3804), then the skill points (0x3802).
+	# character level (0x3804), then the skill points (0x3802) -- which only a
+	# raise that costs points can fail: not a mastery's first point, and not one
+	# past MASTERY_COST_LEVEL_CEILING.
 	var real_level := int(_skill_mastery_levels.get(mastery.id, 0))
 	var total_now := 0
 	for lvl in _skill_mastery_levels.values():
@@ -2348,7 +2358,7 @@ func _build_mastery_board(board: Control, mastery: MasteryReader.Mastery) -> voi
 		reason = "Total mastery cap reached (%d / %d)." % [total_now, MASTERY_TOTAL_CAP]
 	elif _skill_char_level > 0 and real_level >= _skill_char_level:
 		reason = "This mastery is at your character-level cap (Lv %d). Level up your character to raise it." % _skill_char_level
-	elif _skill_points <= 0:
+	elif _skill_points <= 0 and real_level > 0 and real_level <= MASTERY_COST_LEVEL_CEILING:
 		reason = "Not enough skill points."
 	if reason != "":
 		levelup.disabled = true

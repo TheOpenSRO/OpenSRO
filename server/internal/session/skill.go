@@ -82,8 +82,9 @@ const (
 // 240, not a reading of any binary; none of the three branches is 3 x level, and
 // the selector that decision said was unidentified is identified above.
 //
-// A single mastery is separately capped at the character's own level and at 120
-// -- see MasteryLevelCap.
+// A single mastery is separately capped at the character's own level (0x3804),
+// and at nothing else: the 0x78 = 120 in the same function bounds the COST loop,
+// not the level -- see MasteryCostLevelCeiling.
 const (
 	MasteryTotalCapChina  = 330 // Mastery_LevelUp selector 0: `sum + requested < 0x14b`
 	MasteryTotalCapEurope = 240 // Mastery_LevelUp selector 1: the double 240.0 at 0xb46130
@@ -143,26 +144,29 @@ func characterCountry(*character.Character) int {
 	return equipment.CountryChina
 }
 
-// MasteryLevelCap is the hard ceiling on a SINGLE mastery: 120, whatever the
-// character's level.
+// MasteryCostLevelCeiling is the highest mastery level whose raise costs skill
+// points: 120. It is NOT a cap on the mastery's level.
 //
-// RECOVERED from Mastery_LevelUp (0059c4e0), which accumulates the cost of the
-// levels being raised in a loop that refuses to go past it:
+// RECOVERED from Mastery_LevelUp (0x0059c4e0). The cost loop's bound jumps to
+// the skill-point check, not to a refusal (on-disk build; the Ghidra dump reads
+// `if (0x78 < (int)uVar4) break;` inside the same loop):
 //
-//	do {
-//	    if (0x78 < uVar4) break;          // 0x78 = 120
-//	    entry = RefLevel_GetEntry();
-//	    cost += entry[0x10];              // leveldata column 2
-//	    uVar4++;
-//	} while (uVar4 < current + requested);
+//	59c63c  movzx esi,cl                ; esi = the mastery's current level
+//	59c64e  cmp esi,0x78 ; jg 0x59c687  ; past 120: stop summing ...
+//	59c669  call 0x411130               ; RefLevel_GetEntry(esi) = rows[esi-1]
+//	59c66e  mov ecx,[eax+0x10]          ; leveldata column 2
+//	59c67c  add [esp+0x14],ecx          ; cost += it
+//	59c687  ...                         ; ... and fall into the SP check
+//	59c694  cmp eax,[ecx+0x80] ; jbe    ; cost <= skill points, else 0x3802
+//	59c6b3  add cl,0x1                  ; the raise: level + 1, written at 0x59c6cb
 //
-// The same function carries the per-mastery rule this project already
-// implements -- it compares Char_GetLevel() against the mastery's level plus
-// the levels requested and answers error 0x3804 when the character is lower --
-// so "no single mastery above your own level" is grounded now rather than
-// assumed, and 120 is the ceiling that applies once a character's level passes
-// it. leveldata runs to 140, so this is reachable rather than theoretical.
-const MasteryLevelCap = 120
+// So a raise from a level above 120 sums nothing, costs 0, and still happens.
+// The only per-mastery refusal is 0x3804 at 0x59c611, `current + requested >
+// GetLevel()` (vtable +0x124, IGObj::GetLevel): a mastery may reach the
+// character's level and nothing lower binds. This replaces a MasteryLevelCap =
+// 120 that refused the raise at 120 -- a reading of the loop bound as a refusal
+// that the instructions do not bear out (round 484).
+const MasteryCostLevelCeiling = 120
 
 // masteryUpCost is the skill-point cost to raise a mastery from currentLevel to
 // currentLevel+1.
@@ -175,11 +179,26 @@ const MasteryLevelCap = 120
 // is leveldata's column 2 -- 1, 1, 2, 2, 4, 5, 6, 7, 9, 12 ... 53 at level 20
 // and 172 at level 32. leveldata.Table.MasteryUpCost serves it.
 //
+// Two levels cost nothing, whatever the table says, because the engine never
+// reads the table for them:
+//
+//   - Level 0, the FIRST point in a mastery. Mastery_LevelUp tests the level
+//     before the loop -- `test cl,cl ; jne 0x59c638` at 0x59c628 -- and on zero
+//     calls the level setter FUN_005a8bf0 with cl = 1 (0x59c62c-0x59c62e: it
+//     writes cl to the record's +0x20) and jumps to 0x59c6d8, past both the cost
+//     loop and the 0x3802 check. The cost at [esp+0x14] stays at the 0 stored at
+//     0x59c51d, and the spend at 0x59c793 (`test esi,esi ; jle`) is skipped.
+//     RefLevel_GetEntry indexes rows[level-1], so level 0 has no row to read.
+//   - Above MasteryCostLevelCeiling (120): the loop breaks before summing.
+//
 // Falls back to a DISCLOSED own-design currentLevel+1 when no level table is
 // loaded (or it predates the column), which is the same shape as the rest of
 // the leveling code: real when the operator brings the data, honestly labelled
 // when they do not.
 func masteryUpCost(currentLevel int) int {
+	if currentLevel == 0 || currentLevel > MasteryCostLevelCeiling {
+		return 0
+	}
 	if cost, ok := levelTable.MasteryUpCost(currentLevel); ok && cost > 0 {
 		return cost
 	}
@@ -1268,12 +1287,14 @@ func DecodeRaiseMasteryResult(data []byte) (*RaiseMasteryResult, error) {
 	}, nil
 }
 
-// RaiseMasteryHandler raises a mastery one level, spending skill points, when
-// the character's mastery total stays within its Country's cap (a flat
+// RaiseMasteryHandler raises a mastery one level, spending masteryUpCost's skill
+// points (none for a mastery's first point or past MasteryCostLevelCeiling),
+// when the character's mastery total stays within its Country's cap (a flat
 // MasteryTotalCapChina for every srrevamp character -- see masteryTotalRefusal)
 // and the mastery is below the character's level (no single mastery can exceed
 // it). The checks run in Mastery_LevelUp's own order: total cap (0x3805), then
-// the character's level (0x3804), then skill points (0x3802). Answers
+// the character's level (0x3804), then skill points (0x3802) -- a check the
+// engine skips for level 0 and that a cost of 0 passes here. Answers
 // OpRaiseMasteryResult.
 func RaiseMasteryHandler(chars character.Store, store skill.Store) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
@@ -1309,16 +1330,13 @@ func RaiseMasteryHandler(chars character.Store, store skill.Store) gateway.Handl
 		case code != 0:
 			return fail("invalid mastery")
 		}
-		// The mastery may not pass the character's level, nor the engine's
-		// own ceiling of MasteryLevelCap whichever comes first. The first
-		// half is now CITED rather than assumed: Mastery_LevelUp refuses
-		// with error 0x3804 when
-		// `characterLevel < currentMasteryLevel + levelsRequested`, which is
-		// exactly this bound for a single-level raise.
+		// The mastery may not pass the character's level, and nothing else
+		// caps it: Mastery_LevelUp refuses with error 0x3804 when
+		// `characterLevel < currentMasteryLevel + levelsRequested`
+		// (0x59c611), which is exactly this bound for a single-level raise.
+		// Its 0x78 is the cost loop's bound, not a refusal -- see
+		// MasteryCostLevelCeiling -- so a mastery past 120 still raises.
 		levelCap := owned.Level
-		if levelCap > MasteryLevelCap {
-			levelCap = MasteryLevelCap
-		}
 		newLevel, err := store.RaiseMastery(ctx, characterID, req.MasteryID, masteryUpCost(levels[req.MasteryID]), levelCap)
 		if err != nil {
 			switch {

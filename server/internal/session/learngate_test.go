@@ -94,7 +94,7 @@ func TestLearnGateOnTheRealFirstBicheonSkill(t *testing.T) {
 			if lv[smashA1Mastery] >= to {
 				return
 			}
-			if _, err := skills.RaiseMastery(ctx, c.ID, smashA1Mastery, 0, MasteryLevelCap); err != nil {
+			if _, err := skills.RaiseMastery(ctx, c.ID, smashA1Mastery, 0, seedMasteryCap); err != nil {
 				t.Fatalf("RaiseMastery: %v", err)
 			}
 		}

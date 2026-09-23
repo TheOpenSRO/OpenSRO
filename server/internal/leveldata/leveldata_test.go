@@ -650,7 +650,7 @@ func TestMasteryExpScale(t *testing.T) {
 	if MasteryExpPenaltyPerLevel != 0.1 {
 		t.Errorf("MasteryExpPenaltyPerLevel = %v, want the recovered 0.1", MasteryExpPenaltyPerLevel)
 	}
-	// 0x78 -- the same ceiling as a single mastery.
+	// 0x78 -- the same 120 that bounds Mastery_LevelUp's cost loop.
 	if MasteryExpRefCap != 120 {
 		t.Errorf("MasteryExpRefCap = %d, want 120 (0x78)", MasteryExpRefCap)
 	}
