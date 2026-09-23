@@ -115,6 +115,22 @@ The cast handler (`session/skill.go`, the no-blow branch) heals a **living** cas
 `SelfHealHP`, capped at max HP, and restores `SelfHealMP` to the mana pool, capped at max MP. Every
 cast on that branch now reports the caster's real HP in `PlayerHP`, where it used to report 0.
 
+**Who is healed (round 507).** The handler heals the caster whatever the request's
+`TargetMonsterID` names. The engine heals the caster only when the use context's target vector is
+empty (`0x594293`-`0x5942ab`). With a non-empty vector it heals each living target instead
+(`0x59459f`-`0x59463c`), not the caster. On the path a player's cast takes, the two agree:
+`Tick_UseSkill` phase 0 (`0x4ae6f0`-`0x4ae717`) sets the context's `+0xc` to 0 and clears its
+target vector (`SkillContext_ClearTargets` `0x48dc30`) for every row with `Target_Required` 0,
+before phase 2 posts the 0x7070 command. `SelfHealAmounts` passes only `Target_Required` 0 rows.
+**Not read:** whether the 0x7070 consumer can put a target back into the vector for such a row. If
+it can, a targeted self-heal is a divergence. (A `Target_Required` 1 row with an empty vector heals
+nothing: `0x5942b8` `jne 0x594664`.)
+
+**The MP half is not shown at once.** `SelfHealMP` reaches the pool (`mana.Tracker`), but the
+cast's reply (`AttackResult`) has no MP field. The HUD's MP bar moves on the next
+`OpCharacterStatsResult`: a stats request, or the push `session/regen.go` sends when a regen
+tick restores HP.
+
 **Not modelled, disclosed:**
 
 - heals on other characters, and the percent, bonus, weapon-term and `'HLRU'` shapes;

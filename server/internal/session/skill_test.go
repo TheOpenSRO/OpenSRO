@@ -1127,7 +1127,11 @@ func TestSelfHealSkillRestoresCasterHP(t *testing.T) {
 // -- IsReady's +0x7c guard answers ready for it without consulting the group.
 func TestSkillCooldownGroupIsShared(t *testing.T) {
 	// The group map is process-wide; start this test from an empty one, and
-	// keep the two names pointing at the one tracker, as in production.
+	// keep the two names pointing at the one tracker, as in production. Put
+	// the process's tracker back afterwards, so no later test inherits the
+	// timers this one arms.
+	savedItems, savedGroups := itemCooldowns, skillGroupCooldowns
+	t.Cleanup(func() { itemCooldowns, skillGroupCooldowns = savedItems, savedGroups })
 	itemCooldowns = newItemCooldownTracker()
 	skillGroupCooldowns = itemCooldowns
 
@@ -1245,6 +1249,12 @@ func TestSkillCooldownGroupIsShared(t *testing.T) {
 	expect(991, "", "group 3 has its own timer")
 	expect(990, "", "an ungrouped row keeps only its own timer")
 	expect(989, "", "no ReuseDelay: IsReady never consults the group")
+	// The engine agrees for an action-kind-0 row: its handler,
+	// Skill_BuildUseContext_B, arms only when ReuseDelay != 0 (0x586c03). A
+	// kind-1 or kind-3 row whose arm delay comes to 0 (no ReuseDelay, not
+	// active with a duration) and that carries no 'cbuf' WOULD release the
+	// group (FUN_0064c700 files a delay-0 entry over the group's pointer,
+	// 0x64cc15-0x64cc25), but no real grouped row is one (round 507).
 	expect(992, "skill on cooldown", "group 2 still armed; 989 did not clear or re-arm it")
 
 	time.Sleep((reuse + 50) * time.Millisecond)

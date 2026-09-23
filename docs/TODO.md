@@ -154,12 +154,13 @@ In order. Each is checked off here when it ships in a release, with its round in
       **Correction (round 502): the skill hand-off never fired before round 502.** The exporter
       wrote `AutoAttackType` (skilldata col 19) as a literal 0. It now exports col 19 and
       `Basic_ChainCode` (col 9). The wait is PreparingTime + CastingTime + ActionDuration, since
-      the engine folds PreparingTime into CastingTime at load. A chain head does not hand off.
-      A zero-damage row does not hand off either: the cast handler returns before the hand-off,
-      although the engine's test ignores damage. That is a disclosed departure and affects the
+      the engine folds PreparingTime into CastingTime at load. A row with a non-zero
+      `Basic_ChainCode` does not hand off. A zero-damage row does not hand off either: the cast
+      handler returns before the hand-off, although the engine's test ignores damage. That is a disclosed departure and affects the
       five `SKILL_EU_WARRIOR_DUALA_STUN_A_01..05` rows (ids 9245-9249). Of the 1,039 type-1
-      player rows with no chain, 1,034 hand off. Needs a re-export of the skill CSV to take
-      effect.
+      player rows with no chain, 1,034 pass: 571 standalone castable rows and 463 final links
+      of a chain, which the engine plays as the last step of their heads' chains (round 507).
+      Needs a re-export of the skill CSV to take effect.
 - [ ] **Chain skills, link by link.** The skill tick (`0x4ae590`) plays a row with a non-zero
       `Basic_ChainCode` (col 9, `+0x68`, exported since round 502) as a sequence. Phase 2 makes it
       the current link with its ActionDuration as the remaining time, less what is left of
@@ -168,10 +169,27 @@ In order. Each is checked off here when it ships in a release, with its round in
       moves into `+0x2c`, and phase 3 adds `+0x2c` to the final link's wait, so the final link
       waits up to 500 ms longer (`docs/protocol/auto_command.md`, phase 2). Phase 3 re-enters
       phase 2 with the next link's row, and only the LAST link's `AutoAttackType` decides the
-      hand-off. srrevamp casts the head row alone, so the 1,012
-      player chain heads (e.g. `SKILL_CH_SWORD_SMASH_D_01` -> 7140 `..._D2_01`) resolve one row's
-      blow and do not hand off (round 502's disclosed departure). Next: resolve each link's blow on
-      its own timing, then apply the last link's hand-off rule.
+      hand-off. srrevamp resolves only the row the player cast, so a row with a non-zero
+      `Basic_ChainCode` resolves one row's blow and does not hand off (round 502's disclosed
+      departure). Counted in round 507 on the player rows: 1,246 carry one, 582 true heads that no
+      other row names (e.g. `SKILL_CH_SWORD_SMASH_D_01` -> 7140 `..._D2_01`) and 664 intermediate
+      links. A head's `AutoAttackType` always equals its final link's (463 type 1, 49 type 2, 70
+      type 0), so the departure costs the hand-off on the 463 type-1 true heads. (Round 502's "1,012 chain heads"
+      was the type-1 rows with a non-zero column 9: 463 heads and 549 intermediate links.) Next:
+      resolve each link's blow on its own timing, then apply the last link's hand-off rule.
+- [ ] **Duel swings are not the base attack skill.** Round 505 made a plain PvE swing a cast of
+      the weapon's base attack row (`session.plainSwingOf`: its `att` percent, `mc` hit count and
+      mask). `session/duel.go`'s `handleDuelAttack` still deals one skill-less physical blow. Next:
+      give it the same `plainSwingOf` terms, with a duel test that pins them.
+- [ ] **A blocked hit with a skill percentage deals 1, not 0 (latent).** `combat.ResolveBlow`
+      returns Damage 0 for a block, and `performAttack` passes it through
+      `combat.ApplySkillPercent`, which floors the result at 1 for any positive percentage other
+      than 100. The engine's blocked hit (state 2, `0x58f0ef`) jumps to the next hit (`0x58f0fe`)
+      past the damage switch and its floor of 1, when the defender's `+0xd2c` (not identified) is
+      0. Casts have had this since their percentages arrived, and round 505 gave plain swings a
+      percentage too. No spawned monster blocks today (`combatSpeciesOf` never sets `Species.Block`), so
+      nothing reaches it. Next: skip `ApplySkillPercent` for a blocked blow, with a test, before
+      monster block is wired.
 - [ ] **Mastery on the real rows: export `getv MAAT`.** Stage 1 of the damage pipeline scales
       the roll by the caster's mastery level, but `Skill_GetRequiredMasteryLevel` (`0x59e770`)
       returns 0 unless the row's `CRefSkill+0x574` is non-zero, and the only writer of `+0x574`

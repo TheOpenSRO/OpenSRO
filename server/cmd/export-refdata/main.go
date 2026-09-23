@@ -385,8 +385,10 @@ const (
 	// column 21), so column 22 (docs/protocol/skill_fields.md, the
 	// fixed-columns table). Skill_ApplyEffectsAndNotify (0x593f50) heals the
 	// caster only when it is 0 (0x5942b1 `cmp byte [edx+0x94],0`). Measured
-	// on the real rows: 0 on all 49 SKILL_CH_WATER_SELFHEAL rows, 1 on the
-	// targeted SKILL_EU_BARD_RECOVERA_ABNORMAL_A heals.
+	// on the real rows (round 507): 0 on all 49 SKILL_CH_WATER_SELFHEAL rows,
+	// 1 on all 45 SKILL_CH_WATER_HEAL_A..E rows, the targeted heals (27 plain
+	// 'heal', 18 'heal' with 'efr'). The 9 SKILL_EU_BARD_RECOVERA_ABNORMAL_A
+	// rows are 1 too, but they are cures ('curt'/'curl', no 'heal'), not heals.
 	skTargetRequired = 22
 	// skActionKind is the skill's ACTION KIND, the first raw Param word at
 	// CRefSkill+0x168 -- the column before the code runs start

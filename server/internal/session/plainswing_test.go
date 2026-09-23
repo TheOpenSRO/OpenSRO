@@ -113,7 +113,9 @@ func plainSwingResults(t *testing.T, ref itemsAndSkills, eq fixedEquipment, mons
 	skills := skill.NewMemStore()
 	hub := world.NewHub()
 	monsters := combat.NewHub()
-	// No counterattack (attack 0), so the player's HP stays out of it.
+	// Attack 0 still counterattacks: every swing the monster survives costs
+	// the player 1 (PlayerDamageTaken 1, MitigateDamage's floor), and a
+	// killing swing draws none. No assertion here reads the player's HP.
 	monster := monsters.Spawn("jangan", "Mangyang", 0, 0, 0, monsterHP, defence, 0, 0)
 
 	handle := gateway.Chain(

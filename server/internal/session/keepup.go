@@ -60,10 +60,15 @@ import (
 //     cancels the run. That mapping is this project's, not read.
 //   - The engine runs a chain skill (Basic_ChainCode, +0x68, non-zero) link
 //     by link: phase 3 re-enters phase 2 with the next link's row, and only
-//     the LAST link's AutoAttackType decides the hand-off. srrevamp casts
-//     the head row alone and does not walk the chain, so a chain head does
-//     not hand off at all rather than hand off on the head's own timing. See
-//     skillHandsOff.
+//     the LAST link's AutoAttackType decides the hand-off. srrevamp resolves
+//     only the row the player cast and does not walk the chain, so a row with
+//     a non-zero Basic_ChainCode does not hand off at all rather than hand off
+//     on its own timing. See skillHandsOff. Re-measured in round 507 on the
+//     6,981 player rows (Basic_Code SKILL_*): 1,246 carry a non-zero
+//     Basic_ChainCode, 582 of them true heads (no other row names them) and
+//     664 intermediate links. A head's AutoAttackType always equals its final
+//     link's (463 type 1, 49 type 2, 70 type 0), so the departure costs the
+//     hand-off on exactly the 463 type-1 true heads.
 //   - The engine's phase-3 test does not look at damage. It reads only
 //     AutoAttackType (`*(char*)(ref+0x90) == '\x01'`), the target
 //     (FUN_0048db90, then IGObj slots 62, 6 and 63) and the queue depth
@@ -240,6 +245,18 @@ type plainSwing struct {
 // the plain blow srrevamp dealt before round 505. A row whose mask names no
 // damage half (an export predating the AttackType column) stays physical for
 // the same reason; see combat.AttackType.IsPhysical.
+//
+// A LATENT DEPARTURE this carries into plain swings (round 507). A BLOCKED hit
+// resolves to Damage 0 (combat.ResolveBlow), and performAttack then passes it
+// through combat.ApplySkillPercent, which floors the result at 1 for any
+// positive percentage other than 100. So with a base row's 60 or 150 a
+// blocked plain hit now deals 1, where the engine deals 0: Combat_ResolveDamage
+// marks the hit blocked (state 2, 0x58f0ef) and jumps to the next hit
+// (0x58f0fe `je 0x5905fb`) past the damage switch and its floor of 1 -- the
+// jump is taken when the defender's +0xd2c is 0, a field not read. The cast
+// path has had the same floor since its percentages arrived. It is latent: no
+// spawned monster blocks (cmd/server's combatSpeciesOf never sets
+// Species.Block). See docs/TODO.md.
 func plainSwingOf(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) plainSwing {
 	sw := plainSwing{hits: 1, atk: combat.AttackPhysical}
 	ref, ok := baseAttackOf(ctx, characterID, eq, items)
@@ -253,9 +270,15 @@ func plainSwingOf(ctx context.Context, characterID int64, eq equipment.Store, it
 	switch {
 	case ref.FloorBlow:
 		// A computed blow that is identically zero, floored at 1 by the
-		// engine. On the real tables this is the two fortress-weapon base
-		// rows (att 5/0/0/0), whose swing combat.FixedDamagePerHit already
-		// sets to 1 against anything that is not a structure.
+		// engine. On the real tables the only base rows like this are the
+		// two fortress-weapon rows (att 5/0/0/0, ids 21228/21229), and this
+		// branch is UNREACHABLE for them today: combat.BaseAttackSkillFor has
+		// no TypeID4 16 case (the engine picks between the two rows by a race
+		// byte, which is not modelled), so a fortress weapon gets no base row
+		// and swings the skill-less fallback -- which combat.FixedDamagePerHit
+		// then sets to 1 a hit against anything that is not a structure. The
+		// branch serves a FloorBlow base row if that table ever returns one
+		// (round 507).
 		sw.percent = combat.SkillPercentZero
 	case ref.AttackPercent > 0 && !ref.NoCombatParam && !ref.ZeroDamage:
 		sw.flat, sw.percent = skillDamageBonus(ref)
@@ -391,7 +414,11 @@ func armKeepUp(
 // out it adds the remainder to `+0x2c`. So a chain's final link waits up to
 // 500 ms longer. A standalone row (`+0x68` == 0) never reaches that
 // bookkeeping, so the term is 0 for every row srrevamp hands off
-// (skillHandsOff refuses chain heads).
+// (skillHandsOff refuses every row with a non-zero `+0x68`). Re-read in round
+// 507 against the review's reading: both release paths write `+0x28 = 500`
+// and `+0x2c = 0`, phase 0 writes `+0x2c = 0` before its gate, and phase 2
+// adds to `+0x2c` only on the link that exhausts `+0x28` -- the budget that
+// links consume whole is not carried.
 func handOffDelay(ref *refdata.Skill) time.Duration {
 	if ref == nil {
 		return 0
@@ -403,11 +430,19 @@ func handOffDelay(ref *refdata.Skill) time.Duration {
 // (AutoAttackType, skilldata col 19) on the row that was cast. Exactly 1: the
 // 322 real rows carrying 2 do not hand off, as the engine's `== '\x01'` says.
 //
-// A chain head (BasicChainCode != 0) does not hand off either. That is a
+// A row with a non-zero BasicChainCode does not hand off either. That is a
 // DEPARTURE, disclosed in the package comment: the engine plays the chain link
 // by link and tests the last link's byte after the last link's duration;
-// srrevamp does not walk the chain, so handing off after the head's own
-// timing would start the swings early, mid-chain.
+// srrevamp does not walk the chain, so handing off after the cast row's own
+// timing would start the swings early, mid-chain. "Chain head" in this
+// project's older text meant any such row; 582 of the 1,246 player rows that
+// carry one are true heads and 664 are intermediate links (round 507).
+//
+// Of the 1,034 player rows that pass this test and the damage gate in the
+// next paragraph, 571 stand alone and 463 are some chain's FINAL link, which
+// the engine plays as the last step of its head's chain (phase 3 loads it by
+// the previous link's +0x68). Whether a player can cast a final link by its
+// own id was not read; a cast that names one hands off here.
 //
 // This test is not the only gate. useSkillHandler (skill.go) returns early
 // for a row whose blow is absent or zero (NoCombatParam / ZeroDamage), before

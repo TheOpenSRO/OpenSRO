@@ -619,9 +619,11 @@ func useSkillHandler(
 		var damagePercent int
 		var hits = 1
 		var mpCost int
-		// The skill's real health cost (skilldata Consume_HP). Only 16 skills in
-		// the whole table carry one, all SKILL_EU_BARD_RECOVERA_ABNORMALTIME_*,
-		// which trade health for their effect instead of mana.
+		// The skill's real health cost (skilldata Consume_HP, column 52). Only 8
+		// rows in the whole table carry one (recounted on the 33,632 real rows,
+		// round 507; round 503 measured the same 8), all
+		// SKILL_EU_BARD_RECOVERA_ABNORMALTIME_A_01..06 / B_01..02 (495 up to
+		// 4756), which trade health for their effect instead of mana.
 		var hpCost int
 		// masteryPercent is stage 1 of the engine's damage pipeline: the weapon
 		// roll is scaled by `1 + masteryPercent/100` before mitigation. It is
@@ -849,7 +851,7 @@ func useSkillHandler(
 		// 0058e2b1 returns ..._NOTENOUGHMP, in that order -- and doing the same
 		// here means a cast short on health never spends mana on the way to
 		// being refused. refdata.Skill.ConsumeHP was exported and stored but
-		// never read until 2026-09-16; these 16 skills were free to cast.
+		// never read until 2026-09-16; these 8 skills were free to cast.
 		if hpCost > 0 {
 			hp, _, err := chars.ApplyDamage(ctx, characterID, 0)
 			if err != nil {
@@ -939,6 +941,23 @@ func useSkillHandler(
 		// (1 - p144/100), the panic/combustion states srrevamp does not model;
 		// and buffs, status effects and heals on others remain unbuilt.
 		//
+		// WHO IS HEALED, stated exactly (round 507). This heals the caster
+		// whatever req.TargetMonsterID names. The engine heals the caster only
+		// when the use context's target vector is EMPTY (0x594293-0x5942ab);
+		// with a non-empty one it heals each living target instead
+		// (0x59459f-0x59463c), not the caster. On the path a player's cast
+		// takes, those agree: Tick_UseSkill phase 0 (0x4ae6f0-0x4ae717) clears
+		// the action context's target vector for every Target_Required 0 row
+		// before phase 2 posts the 0x7070 command, and SelfHealAmounts passes
+		// only Target_Required 0 rows. Not read: whether the 0x7070 consumer can
+		// put a target back into the vector for such a row. If it can, a
+		// targeted self-heal is a divergence.
+		//
+		// The MP half reaches the pool (mana.Tracker) but not the client at
+		// once: AttackResult has no MP field, so the HUD's MP bar moves on the
+		// next OpCharacterStatsResult (a stats request, or the push regen.go
+		// sends when a regen tick restores HP).
+		//
 		// PlayerHP carries the caster's real HP on every such cast. It is what
 		// the client paints the health bar from, and it was left at its zero
 		// value here, so every buff or other non-damaging cast emptied the bar
@@ -996,10 +1015,11 @@ func useSkillHandler(
 			return err
 		}
 		// The skill tick's hand-off (round 256, keepup.go): a row with
-		// AutoAttackType 1 that is not a chain head leaves a plain attack
+		// AutoAttackType 1 and no Basic_ChainCode leaves a plain attack
 		// running against the same target once its PreparingTime +
 		// CastingTime + ActionDuration has played (round 502). A zero-damage
 		// row never gets here (the early return above).
+		// TestSkillCastHandsOffToPlainSwings drives it through this handler.
 		if skillHandsOff(castRow) {
 			if m, ok := monsters.Get(req.TargetMonsterID); ok && m.HP > 0 {
 				deps := combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc}
@@ -1018,17 +1038,32 @@ func useSkillHandler(
 //   - ref is nil (an own-design catalog skill has no real row) or ungrouped;
 //   - ReuseDelay is not positive. IsReady tests `+0x7c != 0` first and
 //     answers ready without looking at any map, so such a row never waits.
-//     The engine's arm still files a timer for it when the row is active with
-//     a duration (FUN_0064c700 then arms CastingTime + ActionDuration); not
-//     arming it is a DISCLOSED departure. On the real rows 195 grouped rows
-//     have no ReuseDelay, and 192 of them are chain links (named by another
-//     row's Basic_ChainCode), which srrevamp does not play;
+//     Not arming the group for it matches the engine on every real row
+//     (round 507). The arm's callers are the per-action-kind handlers in the
+//     table at .data 0xc63c7c (kind 0 Skill_BuildUseContext_B 0x586700,
+//     kind 1 Skill_BuildUseContext_A 0x5857b0, kind 3 SkillAction_Buff
+//     0x5830b0, kind 4 0x587260); FUN_0064c700 has four call sites, in the
+//     kind 0, 1 and 3 handlers and a siege path (0x623981). Kind 0 arms
+//     only when ReuseDelay != 0 (0x586c03 `cmp [edi+0x7c],0 ; je`), and the
+//     kind-4 handler (EngageSkill or SkillAction_Stance_Register) holds no
+//     call site. The 195 real grouped rows with no ReuseDelay
+//     are 192 kind-0 chain links and 3 kind-4 rows
+//     (SKILL_CH_SWORD/SPEAR/BOW_BALANCE_A_01), so none is armed. Kinds 1 and
+//     3 call the arm unguarded: there a row active with a duration would
+//     file PreparingTime + CastingTime + ActionDuration (+0x74 holds the
+//     first two), and one whose delay comes to 0 with no 'cbuf' (0x64c84e-
+//     0x64c85c) files a delay-0 entry OVER the group's pointer (0x64cc15-
+//     0x64cc25), which releases the whole group. No real grouped row takes
+//     either path; neither is modelled;
 //   - ReuseDelay is 300 000 ms or more. FUN_0064c700 sends such a delay down
 //     the persisted CTJ_CoolTimeKeeper branch (0x64c8bb `cmp [esp+0x1c],
 //     0x493e0`, i.e. 300 000), which srrevamp does not model, so these rows
-//     keep only their per-id timer -- also DISCLOSED. On the class skills
-//     that is 34 rows, Water Harmony (group 73) and the Rogue's transform
-//     mask (group 29).
+//     keep only their per-id timer -- a DISCLOSED departure. That branch
+//     still files the entry in the group map (0x64cae4-0x64cafb), so in the
+//     engine these rows DO share their group, and here they do not: casting
+//     Water Harmony A leaves B, C and D (all group 73, 300 000 ms) castable,
+//     and the Rogue's transform mask A leaves B (group 29, 600 000 ms). On
+//     the class skills that is 34 rows.
 func skillCooldownGroup(ref *refdata.Skill) uint32 {
 	if ref == nil || ref.CooldownGroup == 0 {
 		return 0

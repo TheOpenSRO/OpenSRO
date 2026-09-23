@@ -249,9 +249,14 @@ code:
   of reach ends the run. The reach test itself is the engine's.
 - The retail client's explicit cancel on a move click is stood in for by the
   position update, which srrevamp's client only sends for a real move.
-- A chain head (`ChainCode` non-zero) does not hand off at all. srrevamp does
+- A row with a non-zero `ChainCode` does not hand off at all. srrevamp does
   not play the links, and the engine tests the LAST link's byte after the last
-  link's duration.
+  link's duration. (Older text here called every such row a "chain head"; round
+  507 counted them: of the 1,246 player rows with a non-zero `ChainCode`, 582
+  are true heads that no other row names and 664 are intermediate links. A
+  head's `AutoAttackType` always equals its final link's -- 463 type 1, 49
+  type 2, 70 type 0 -- so this departure costs the hand-off on the 463 type-1
+  true heads.)
 - A zero-damage row does not hand off. Phase 3 tests only `+0x90 == 1`, the
   target and the queue depth, and never looks at damage. But srrevamp's cast
   handler (`useSkillHandler`, `session/skill.go`) returns early for a row with
@@ -274,14 +279,18 @@ so the term is 0 for every row srrevamp hands off.
 
 Measured on the 33,632 real rows: column 19 is 1 on 28,702, 0 on 4,608 and 2
 on 322. Of the 6,981 player rows (`Basic_Code` `SKILL_*`), 2,051 carry 1.
-1,012 of those are chain heads and 1,039 are not. Of the 1,039, **1,034 now
-hand off when cast**. The other five are the zero-damage stun rows
+1,012 of those carry a non-zero column 9 (463 true heads and 549 intermediate
+links; round 507) and 1,039 do not. Of the 1,039, 1,034 pass the hand-off test
+and the damage gate: **571 standalone castable rows**, which now hand off when
+cast, and **463 final links** (named by another row's column 9), which the
+engine plays as the last step of a head's chain. Whether a player can cast a
+final link by its own id was not read; srrevamp hands off after one if a cast
+names it. The other five are the zero-damage stun rows
 `SKILL_EU_WARRIOR_DUALA_STUN_A_01..05` (ids 9245-9249, `ZeroDamage` 1), which
-the fourth departure above stops. Of the 1,034, 463 are some chain's final
-link (named by another row's column 9) and the other 571 stand alone. 177 of
-the 1,034, all standalone, have a non-zero `PreparingTime`, so their wait
-grows. The 322 type-2 rows (all `SKILL_*`) do not hand off, because the test
-is `== 1`. It takes effect after a re-export of the skill CSV.
+the fourth departure above stops. 177 of the 1,034, all standalone, have a
+non-zero `PreparingTime`, so their wait grows. The 322 type-2 rows (all
+`SKILL_*`) do not hand off, because the test is `== 1`. It takes effect after a
+re-export of the skill CSV.
 
 **Round 504: the cooldown group is enforced.** The exporter writes `Overlap`'s
 high byte (skilldata column 18 `>> 24`) as the skill CSV's column 45,
@@ -292,13 +301,27 @@ share one timer. The group tracker is the item cooltime tracker itself
 (`session/itemcooldown.go`), because the engine has one map at `+0x2c`. Two
 kinds of row take no part in a group:
 
-- a row with no `ReuseDelay`, which `IsReady` never holds. The engine's arm
-  still files `CastingTime + ActionDuration` for one that is active with a
-  duration, and srrevamp does not (disclosed). 192 of the 195 such grouped rows
-  are chain links, which srrevamp does not play;
+- a row with no `ReuseDelay`, which `IsReady` never holds. srrevamp does not
+  arm the group for it, and on the real rows neither does the engine (round
+  507, corrected): the arm `FUN_0064c700` is called by the action-kind
+  handlers in the table at `.data 0xc63c7c`, and the kind-0 handler
+  (`Skill_BuildUseContext_B` `0x586700`) calls it only when `ReuseDelay != 0`
+  (`0x586c03`). The 195 grouped rows with no `ReuseDelay` are 192 kind-0 chain
+  links and 3 kind-4 rows (`SKILL_CH_SWORD/SPEAR/BOW_BALANCE_A_01`), whose
+  handler (`0x587260`) is not one of the arm's four call sites. The kind-1
+  (`Skill_BuildUseContext_A` `0x5857b0`) and kind-3 (`SkillAction_Buff`
+  `0x5830b0`) handlers call it unguarded, and there a grouped row would arm
+  `PreparingTime + CastingTime + ActionDuration` when it is active with a
+  duration (`+0x74` already holds `PreparingTime`), or, when its delay comes to
+  0 and it carries no `cbuf` (`0x64c84e`-`0x64c85c`), file a delay-0 entry over
+  the group's pointer (`0x64cc15`-`0x64cc25`), which releases the whole group.
+  No real grouped row takes either path, and neither is modelled;
 - a row at 300 000 ms or more, which the engine persists through
-  `CTJ_CoolTimeKeeper`. It keeps only its own timer (disclosed). On the class
-  rows these are Water Harmony (group 73) and the Rogue's mask (group 29).
+  `CTJ_CoolTimeKeeper`. It keeps only its own timer here (disclosed). The
+  engine's persisted branch still files the entry in the group map
+  (`0x64cae4`-`0x64cafb`), so there these rows DO share their group, and here
+  they do not: Water Harmony A-D (group 73, 300 000 ms each) and the Rogue's
+  mask A/B (group 29, 600 000 ms) can each be cast inside another's timer.
 
 The global and action windows (`+0x50`..`+0x5c`) are still not modelled. The
 keep-up's own wait (`handOffDelay`) is unchanged: the base attacks are all

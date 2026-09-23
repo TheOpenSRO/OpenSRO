@@ -28194,12 +28194,16 @@ runtime and not committed:
 - Column 9 is non-zero on 2,822 rows, and 2,820 of those name a real skill id.
   `SKILL_CH_SWORD_SMASH_D_01` names 7140, which is `SKILL_CH_SWORD_SMASH_D2_01`, and that row's
   column 9 is 0.
-- **Player rows** (`Basic_Code` `SKILL_*`, 6,981): 2,051 carry type 1. 1,012 of those are chain
-  heads and 1,039 are not. **1,034 of the 1,039 hand off.** The other five are
+- **Player rows** (`Basic_Code` `SKILL_*`, 6,981): 2,051 carry type 1. 1,012 of those carry a
+  non-zero column 9 and 1,039 do not. (Round 507: the 1,012 are 463 true heads and 549
+  intermediate links, not 1,012 "chain heads"; all 1,246 player rows with a non-zero column 9 are
+  582 true heads and 664 intermediate links.) **1,034 of the 1,039 pass the hand-off test.** The
+  other five are
   `SKILL_EU_WARRIOR_DUALA_STUN_A_01..05` (ids 9245-9249). They are type 1 with no chain, but
   `ZeroDamage` is 1 (CSV slot 35) and `NoCombatParam` is 0. The cast handler returns before the
   hand-off for them (see the fourth departure below). Of the 1,034, 463 are some chain's final
-  link and 571 stand alone. 177 of the 1,034, all standalone, have a non-zero PreparingTime; none
+  link and 571 stand alone. (Round 507: so the rows a player casts that now hand off are the 571;
+  the 463 final links are played as the last step of a head's chain in the engine.) 177 of the 1,034, all standalone, have a non-zero PreparingTime; none
   of the five stun rows does. All 322 type-2 rows are player rows. The plan's "2,050 rows with
   type 1" was measured again as 2,051.
 - The rebuilt exporter run over the seven shards writes 33,632 rows with the same 28,702 / 4,608 /
@@ -28234,7 +28238,9 @@ runtime and not committed:
 
 **Effect.** After a re-export of the skill CSV, an ordinary melee or bow skill such as Smash leaves
 the character swinging plain attacks at the same target once the cast ends, as in retail. That is
-1,034 player rows. Bolts, buffs, type-2 rows and chain heads stop as before. So do the five
+571 standalone castable player rows, plus the 463 final links should a cast name one (round 507
+corrected "1,034 player rows"). Bolts, buffs, type-2 rows and rows with a non-zero
+`Basic_ChainCode` stop as before; the last costs the hand-off on the 463 type-1 true heads. So do the five
 zero-damage stun rows `SKILL_EU_WARRIOR_DUALA_STUN_A_01..05` (ids 9245-9249), which is a
 departure: retail hands off after them.
 
@@ -28416,12 +28422,14 @@ byte of `Action_Overlap`, `skill_fields.md`), but the exporter wrote `Overlap` a
   (`0x585bdd`), `Skill_BuildUseContext_B` (`0x586c22`), `SkillAction_Buff` (`0x583555`) and
   `0x623981`.
   - It computes the delay: `ReuseDelay` for a row that is not active with a duration. Otherwise it
-    is `p140/100 * t + max(0, ReuseDelay - t)`, with `t = +0x74 + +0x78`. p140 is read through
-    the owner's param getter (`+0x104`, `0x8c`). The divisor is the double `100.0` at
-    `.rdata 0xb45af0`, read as bytes (`00 00 00 00 00 00 59 40`).
+    is `p140/100 * t + max(0, ReuseDelay - t)`, with `t = +0x74 + +0x78` (PreparingTime +
+    CastingTime + ActionDuration: `+0x74` has PreparingTime added at load; round 507). p140 is
+    read through the owner's param getter (`+0x104`, `0x8c`). The divisor is the double `100.0`
+    at `.rdata 0xb45af0`, read as bytes (`00 00 00 00 00 00 59 40`).
   - Below 300 000 ms it writes the entry in the per-id map and, when the `+0x8f` byte is non-zero,
     files the same entry in the group map (`FUN_0064d1b0`).
-  - At 300 000 ms or more it takes the persisted `CTJ_CoolTimeKeeper` branch instead.
+  - At 300 000 ms or more it takes the persisted `CTJ_CoolTimeKeeper` branch instead. (Round 507:
+    that branch files the group entry too, `0x64cae4`-`0x64cafb`.)
 - **The column.** `CRefSkill::CopyFixedColumns` (`0x6ab5a0`) copies `Action_Overlap`, a u32, to
   `+0x8c` as the 19th field, which is skilldata column 18 (`skill_fields.md`, the fixed-columns
   table; `WORLD_ISSUES.md` round 256). `+0x8f` is its top byte, `(u32)v >> 24`.
@@ -28477,11 +28485,15 @@ there and not committed):
 
 **Disclosed, not modelled:**
 
-- A grouped row with no `ReuseDelay` does not arm the group. The engine's arm would file
-  `CastingTime + ActionDuration` for one that is active with a duration. 192 of the 195 such rows
-  are chain links, which srrevamp does not play.
+- A grouped row with no `ReuseDelay` does not arm the group. **Corrected in round 507: this is not
+  a departure on any real row.** The engine's arm files `PreparingTime + CastingTime +
+  ActionDuration` (`+0x74` already holds `PreparingTime`) for such a row only on the unguarded
+  kind-1 and kind-3 handlers. The 195 real rows are 192 kind-0 chain links, whose handler arms only
+  when `ReuseDelay != 0` (`0x586c03`), and 3 kind-4 rows, whose handler never calls the arm.
 - A row at 300 000 ms or more keeps only its per-id timer. The persisted `CTJ_CoolTimeKeeper`
-  branch is not built.
+  branch is not built. (Round 507: that branch still files the group entry,
+  `0x64cae4`-`0x64cafb`, so in the engine these rows share their group -- Water Harmony A-D in
+  group 73, the Rogue's mask A/B in group 29 -- and here they do not.)
 - The global window (`+0x50`/`+0x54`, armed from `CoolTime`) and the action window
   (`+0x58`/`+0x5c`) that `IsReady` checks first are not modelled either.
 - The timers are in memory only, as the item timers are.
@@ -28613,6 +28625,10 @@ monster's one `Defense`, since no separate magical defence is modelled. No new c
 - Mastery on plain swings (and the cast path's mastery on EU rows without MAAT). This is a
   `docs/TODO.md` follow-up: export a MAAT flag and gate both paths.
 - The empty hand's roll (`unarmedDamage` 5).
+- (Added in round 507.) Duels: `session/duel.go`'s `handleDuelAttack` still deals a skill-less
+  blow, so the change above is PvE only. A blocked hit now floors to 1 through
+  `ApplySkillPercent`, where the engine deals 0; latent, since no spawned monster blocks. Both are
+  `docs/TODO.md` items.
 
 **Tests** (`session/plainswing_test.go`, new; `TestMain` pins every roll to its maximum):
 
@@ -28646,3 +28662,165 @@ monster's one `Defense`, since no separate magical defence is modelled. No new c
 - The only client change is the bundled copy of `docs/HELP_PLAYING.md` (`client/docs/`, which
   `TestBundledClientDocsMatchSource` checks). `client/tools/remote_godot.sh tests` on the render
   box: 77 suites, 0 failing.
+
+## Batch-6 review follow-ups (rounds 502-505): a handler-level hand-off test, chain-head counts, the cooldown non-departure, and scope notes (round 507)
+
+Rounds 502-505 each passed review. This round lands the reviewers' non-blocking notes. (Round 506
+was the world lane's object-yaw fix, logged in `WORLD_ISSUES.md`.) Every claim was re-checked
+before it was written, read-only on the RE box: `srv.asm`, the dump, the exe's `.data`, and the
+combined skill rows (`/var/tmp/allskills.txt`, 33,632 rows) read through a pipe and not
+committed. Two of the review's claims turned out to be already fixed in the tree, and one was
+narrower than stated; each is said below. No production code changed behaviour: the Go changes
+are comments, plus one new test and a test-hygiene fix.
+
+**1. The hand-off is now tested through the cast handler.** Round 502 made the post-cast
+hand-off live, but only `TestSkillHandOffRule` covered it, by calling `skillHandsOff` and
+`handOffDelay` directly. **`session.TestSkillCastHandsOffToPlainSwings`** (new, `keepup_test.go`)
+drives `UseSkillHandler` over TCP with in-memory stores, a sword (base row 2, re-use 60 ms) and
+three monsters:
+
+- a chain head (`AutoAttackType` 1, `BasicChainCode` 52) deals its 20 and leaves the monster at
+  980 after its hand-off delay plus five base periods, with no keep-up registered;
+- a `ZeroDamage` row (`AutoAttackType` 1) deals nothing and hands off nothing;
+- a type-1, non-chain row with `att` 100% and PreparingTime/CastingTime/ActionDuration 100/100/100
+  deals 20 (40 left). Two plain swings then follow with no further request, 20 each, and the second
+  kills. The first comes no sooner than **300 ms** after the request (a literal, so a wait of
+  CastingTime + ActionDuration alone would fail). The run ends with the kill.
+
+**2. "Chain head" meant any row with a non-zero `Basic_ChainCode`.** Re-measured on the 6,981
+player rows (`Basic_Code` `SKILL_*`):
+
+- **1,246** carry a non-zero column 9: **582 true heads** that no other row names and **664
+  intermediate links**.
+- Walking each true head to its final link, the head's `AutoAttackType` always equals the final
+  link's: (1, 1) 463, (2, 2) 49, (0, 0) 70, no mismatch and no broken chain. So the departure
+  costs the hand-off on exactly the **463 type-1 true heads**.
+- Round 502's "1,012 chain heads" were the type-1 rows with a non-zero column 9: 463 true heads
+  and 549 intermediate links.
+- Round 502's headline "1,034 player rows hand off" is **571 standalone castable rows + 463 final
+  links**. Of the 1,039 type-1 rows with no column 9, 463 are named by another row (final links)
+  and 576 are not; the five `SKILL_EU_WARRIOR_DUALA_STUN_A_01..05` rows (9245-9249) are among the
+  576. The engine plays a final link as the last step of its head's chain. Whether a player can
+  cast one by its own id was not read.
+
+Corrected in `keepup.go` (package comment, `skillHandsOff`), `skill.go` (the hand-off call site),
+`auto_command.md`, `TODO.md` (the auto-attack and chain items), `SYSTEMS.md` (the damage row's
+keep-up part) and round 502 above, which carries the pointers.
+
+**3. The `+0x2c` term: the tree was already right.** The review said `keepup.go` and
+`auto_command.md` called `+0x2c` "the chain overshoot, zeroed in phase 0". Neither does any more:
+round 502's own review fixes rewrote both as a chain carry. Re-read this round:
+
+- `FUN_004ac920` and `sAutoCommand::ReleaseAndClear` (`0x4ac980`) both write `+0x28 = 500` and
+  `+0x2c = 0`.
+- Tick_UseSkill phase 0 writes `+0x2c = 0` before its gate.
+- Phase 2, for a row with a non-zero `+0x68`: the link's wait starts at `d = +0x78`. With a
+  non-zero budget `b = +0x28`, `b < d` adds `b` to `+0x2c`, cuts the wait to `d - b` and sets
+  `+0x28 = 0`; otherwise the wait is 0 and `+0x28 = b - d`. The budget that links consume whole
+  is not carried.
+- Phase 3 adds `+0x2c` only when the row's `+0x90` is non-zero and the queue depth is 1.
+
+`handOffDelay`'s comment now records the re-read. Nothing else changed.
+
+**4. `cmd/export-refdata` comments.** `skillRecord`'s doc already said "46-column", and
+`skChainCode`'s already said `skPreparingTime` is "below"; both were fixed in rounds 503/504.
+`skTargetRequired`'s example was wrong: the 9 `SKILL_EU_BARD_RECOVERA_ABNORMAL_A` rows carry
+`Target_Required` 1 but are cures (`'curt'`/`'curl'`, no `'heal'`). The comment now names all 45
+`SKILL_CH_WATER_HEAL_A..E` rows (`Target_Required` 1, 27 plain `'heal'`, 18 `'heal'` with `'efr'`)
+as the targeted heals. Counted by code-word presence in the row.
+
+**5. `paramblock_test`'s "target required" comment.** A `Target_Required` row never heals the
+caster. With an empty target vector it heals nothing (`0x5942b8` `jne 0x594664`); only the
+non-empty path heals, and it heals the targets (`0x5942fd` -> `0x59459f`, the loop to `0x59463c`).
+
+**6. Who a self-heal heals: narrower than the review said.** The review asked for a divergence to
+be disclosed: `useSkillHandler` heals the caster whatever `req.TargetMonsterID` says, and the engine
+heals the caster only when the target vector is empty. The engine half is right
+(`0x594293`-`0x5942ab`; with targets, `0x59459f`-`0x59463c` heals each living target and not the
+caster). But on the path a player's cast takes, the two agree: Tick_UseSkill phase 0
+(`0x4ae6f0`-`0x4ae717`, `cmp byte [edi+0x94],0 ; jne`) sets the context's `+0xc` to 0 and calls
+`SkillContext_ClearTargets` (`0x48dc30`) on the context's `+0x3c` vector for every
+`Target_Required` 0 row, before phase 2 posts the 0x7070 command. `SelfHealAmounts` passes only
+`Target_Required` 0 rows. **Not read:** whether the 0x7070 consumer can put a target back for such
+a row. `skill.go` and `heal.md` state this. They also disclose that `SelfHealMP` reaches
+`mana.Tracker` but not the client at once: `AttackResult` has no MP field, so the MP bar moves on
+the next `OpCharacterStatsResult` (a stats request, or `regen.go`'s push when a regen tick restores
+HP).
+
+**7. `Consume_HP`: 8 rows, not 16.** Column 52 is non-zero on 8 of the 33,632 rows, all
+`SKILL_EU_BARD_RECOVERA_ABNORMALTIME_A_01..06/B_01..02` (495 up to 4756), as round 503 said.
+`skill.go`'s two "16" comments now say 8.
+
+**8. Round 504's cooldown disclosures.**
+
+- **"The engine arms CastingTime + ActionDuration for grouped zero-ReuseDelay rows" does not
+  arise for any real row.** The arm `FUN_0064c700` has four call sites (`0x583555`,
+  `0x585bdd`, `0x586c22`, `0x623981`). The consumer dispatches by action kind (`+0x168`) through the
+  table at `.data 0xc63c7c`, read as bytes: kind 0 `0x586700` (`Skill_BuildUseContext_B`), 1
+  `0x5857b0` (`Skill_BuildUseContext_A`), 2 none, 3 `0x5830b0` (`SkillAction_Buff`), 4
+  `0x587260`. Kind 0 arms only when `ReuseDelay != 0` (`0x586c03` `cmp [edi+0x7c],0 ; je
+  0x586c27`), and `0x587260` (EngageSkill, or `SkillAction_Stance_Register`) holds no call site.
+  The 195 grouped rows with no `ReuseDelay` are 192 kind-0 chain links (all active with a
+  duration, none with `cbuf`) and 3 kind-4 rows (`SKILL_CH_SWORD/SPEAR/BOW_BALANCE_A_01`). So the
+  engine arms none of them, and srrevamp's not arming them is not a departure.
+- **The unguarded paths, as the review read them.** Kinds 1 and 3 call the arm with no
+  `ReuseDelay` test. For a row active with a duration the delay is `t` = PreparingTime +
+  CastingTime + ActionDuration (`+0x74` holds the first two). For a row whose delay comes to 0,
+  `0x64c84e`-`0x64c85c` skips the arm only when the row carries `cbuf` (`+0x358`). Without it,
+  the sub-300 s branch files a delay-0 entry and, for a grouped row, writes it over the group
+  map's pointer (`0x64cc15`-`0x64cc25`). `IsReady` answers ready for an entry whose delay is 0, so
+  that releases the whole group. No real grouped row is kind 1 or 3 with no `ReuseDelay`. Not
+  modelled; the session test's row 989 carries a note.
+- **Rows at 300 000 ms or more DO share their group in the engine.** The persisted
+  `CTJ_CoolTimeKeeper` branch writes the entry (delay at `0x64ca04`) and files it in the group
+  map too (`0x64cae4`-`0x64cafb`). srrevamp keeps only their per-id timer, so Water Harmony A-D
+  (group 73, 300 000 ms each) and the Rogue's mask A/B (group 29, 600 000 ms) can each be cast
+  inside another's timer here. That is the real disclosed departure, now stated in
+  `skillCooldownGroup`'s comment, `auto_command.md`, `SYSTEMS.md` and round 504. Groups 73 and 29
+  also hold rows of the other race (`SKILL_EU_BARD_BATTLAA_ROOT_A/B`, `SKILL_CH_SPEAR_ROUNDAREA_C`),
+  which one character never holds together.
+- The arm delay's `t` is PreparingTime + CastingTime + ActionDuration. Round 504's grounding and
+  `auto_command.md` now say so.
+- `TestSkillCooldownGroupIsShared` replaced `itemCooldowns` and `skillGroupCooldowns` without
+  restoring them. It now saves both and restores them in `t.Cleanup`.
+
+**9. Round 505's scope.**
+
+- `HELP_PLAYING.md` (and its bundled copy `client/docs/HELP_PLAYING.md`): the balance note is
+  now about a plain attack **on a monster**, and says duels have not changed.
+  `session/duel.go`'s `handleDuelAttack` still resolves one skill-less physical blow. New
+  `TODO.md` item.
+- `plainSwingOf`'s `FloorBlow` branch is **unreachable on real data today**:
+  `combat.BaseAttackSkillFor` has no TypeID4 16 case, because the engine picks 21228 or 21229 by
+  a race byte that is not modelled. A fortress weapon gets no base row and swings the fallback,
+  which `combat.FixedDamagePerHit` then sets to 1 a hit. The case was not added.
+- **A blocked hit now floors to 1 per hit (latent).** `ResolveBlow` returns Damage 0 for a block,
+  and `ApplySkillPercent` floors the result at 1 for any positive percentage other than 100, so
+  a blocked plain swing with a base row's 60 or 150 deals 1. The engine's blocked hit (state 2, `0x58f0ef`)
+  jumps to the next hit (`0x58f0fe` `je 0x5905fb`) past the damage switch and its floor of 1,
+  when the defender's `+0xd2c` is 0 (a field `durability.md` also leaves unidentified). Casts had
+  the same floor already. No spawned monster blocks (`combatSpeciesOf` never sets
+  `Species.Block`). Disclosed in `plainSwingOf`'s comment, with a `TODO.md` item.
+- `plainswing_test.go`'s "No counterattack (attack 0), so the player's HP stays out of it" was
+  wrong: a probe run showed `PlayerDamageTaken` 1 on the swing the monster survives
+  (`MitigateDamage`'s floor) and 0 on the killing one. The comment says so now, and so does the
+  same comment in `TestOneClickKeepsAttackingUntilTheMonsterDies`.
+
+**Tests.**
+
+- `session.TestSkillCastHandsOffToPlainSwings` (new, above).
+- **Negative, run.** The production changes are comments, so stashing them proves nothing; the
+  rule under test was mutated instead, one mutation at a time, each restored with `git checkout`:
+  - `skillHandsOff` returning `false`: the test FAILS, `waiting for a plain swing after the type-1
+    cast (no hand-off?): ... i/o timeout`.
+  - `skillHandsOff` as the pre-502 rule (`AutoAttackType == 1` alone): it FAILS, `a chain head
+    (BasicChainCode 52): the monster went from 980 to 860 HP ... want no swings` and `a keep-up is
+    running against 1`.
+  - `handOffDelay` without PreparingTime: it FAILS, `the first plain swing came 200.48ms after the
+    cast; want at least ... 300ms`.
+  - Restored, it passes (three runs).
+- `TestSkillCooldownGroupIsShared` passes with its cleanup.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...` is green.
+- The only client change is the bundled `client/docs/HELP_PLAYING.md`
+  (`TestBundledClientDocsMatchSource` checks it matches). `client/tools/remote_godot.sh tests` on
+  the render box: 77 suites, 0 failing.

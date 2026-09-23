@@ -3,6 +3,7 @@ package session
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -178,8 +179,9 @@ func TestOneClickKeepsAttackingUntilTheMonsterDies(t *testing.T) {
 	skills := skill.NewMemStore()
 	hub := world.NewHub()
 	monsters := combat.NewHub()
-	// 30 - 10 = 20 a hit; 60 HP is three hits. No counterattack (attack 0)
-	// so the player's HP stays out of the picture.
+	// 30 - 10 = 20 a hit; 60 HP is three hits. Attack 0 still counterattacks
+	// for 1 (MitigateDamage's floor) after each swing the monster survives;
+	// nothing here asserts on the player's HP.
 	monster := monsters.Spawn("jangan", "Mangyang", 0, 0, 0, 60, 10, 0, 0)
 	spare := monsters.Spawn("jangan", "Mangyang", 3, 0, 0, 60, 10, 0, 0)
 
@@ -367,5 +369,175 @@ func TestFirstSwingIsGatedByReach(t *testing.T) {
 			t.Fatalf("swing in reach: %+v (err %v), want a hit", ar, err)
 		}
 		break
+	}
+}
+
+// The post-cast hand-off through the real cast handler (round 502 made it
+// live; until now only TestSkillHandOffRule's direct calls covered it). One
+// OpUseSkill of a type-1, non-chain, damaging row leaves plain swings running
+// at the same target with no further request, the first of them no sooner
+// than PreparingTime + CastingTime + ActionDuration after the cast: the wait
+// Tick_UseSkill (0x4ae590) phase 3 takes from +0x74 + +0x78, with +0x70
+// folded into +0x74 at load (SkillGlobal::PostLoadSkillTable 0x5893e0).
+//
+// And the two refusals that sit in front of it: a chain head (a non-zero
+// Basic_ChainCode -- srrevamp does not play the links, keepup.go's package
+// comment) and a ZeroDamage row (useSkillHandler's no-blow early return comes
+// before the hand-off) must leave nothing running.
+func TestSkillCastHandsOffToPlainSwings(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("creating character: %v", err)
+	}
+	defer keepUp.Cancel(c.ID)
+
+	// The cast rows are the test's, the rule is the engine's. Each damaging
+	// row carries att 100% (AttackType 5), so a cast hit is the same 30 - 10
+	// = 20 a plain swing of the no-`att` base row deals.
+	handsOff := &refdata.Skill{ID: 50, BasicLevel: 1, AutoAttackType: 1, ReuseDelayMs: 60000,
+		PreparingTimeMs: 100, CastingTimeMs: 100, ActionDurationMs: 100, AttackPercent: 100, AttackType: 5}
+	chainHead := &refdata.Skill{ID: 51, BasicLevel: 1, AutoAttackType: 1, BasicChainCode: 52, ReuseDelayMs: 60000,
+		CastingTimeMs: 50, ActionDurationMs: 50, AttackPercent: 100, AttackType: 5}
+	zeroDamage := &refdata.Skill{ID: 53, BasicLevel: 1, AutoAttackType: 1, ReuseDelayMs: 60000,
+		CastingTimeMs: 50, ActionDurationMs: 50, ZeroDamage: true}
+	ref := itemsAndSkills{
+		items: map[int64]*refdata.Item{100: {ID: 100, TypeID4: 2, PhysAttackMax: 30, Range: 6}},
+		// SKILL_CH_SWORD_BASE_01 is id 2; the delay is shortened for the test.
+		skills: map[int64]*refdata.Skill{2: {ID: 2, ReuseDelayMs: 60}, 50: handsOff, 51: chainHead, 53: zeroDamage},
+	}
+	eq := fixedEquipment{worn: []equipment.Equipped{{Slot: equipment.SlotWeapon, ItemID: 100, Durability: 50}}}
+	inv := inventory.NewMemStore(ref)
+	quests := quest.NewMemStore()
+	skills := skill.NewMemStore()
+	for _, id := range []int64{50, 51, 53} {
+		if err := skills.Learn(ctx, c.ID, id); err != nil {
+			t.Fatalf("Learn %d: %v", id, err)
+		}
+	}
+	hub := world.NewHub()
+	monsters := combat.NewHub()
+	// One monster per case, so a stray swing shows on the monster it hit.
+	headTarget := monsters.Spawn("jangan", "Mangyang", 0, 0, 0, 1000, 10, 0, 0)
+	zeroTarget := monsters.Spawn("jangan", "Mangyang", 1, 0, 0, 1000, 10, 0, 0)
+	target := monsters.Spawn("jangan", "Mangyang", 2, 0, 0, 60, 10, 0, 0)
+
+	handle := gateway.Chain(
+		LoginHandler(accounts),
+		WorldHandler(chars, eq, hub),
+		UseSkillHandler(chars, eq, ref, skills, hub, monsters, quests, inv, ref, nil, nil, nil),
+	)
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+
+	write := func(opcode uint16, data []byte) {
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+	}
+	read := func(what string) *proto.Packet {
+		t.Helper()
+		conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+		p, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("waiting for %s: %v", what, err)
+		}
+		return p
+	}
+	// resultFor returns the next attack result about monster id, skipping
+	// anything else on the wire.
+	resultFor := func(id int64, what string) *AttackResult {
+		t.Helper()
+		for {
+			p := read(what)
+			if p.Opcode != OpAttackResult {
+				continue
+			}
+			ar, err := DecodeAttackResult(p.Data)
+			if err != nil {
+				t.Fatalf("DecodeAttackResult: %v", err)
+			}
+			if ar.MonsterID == id {
+				return ar
+			}
+		}
+	}
+	cast := func(skillID, monsterID int64) *AttackResult {
+		t.Helper()
+		write(OpUseSkill, (&UseSkillRequest{CharacterName: "Aria", SkillID: skillID, TargetMonsterID: monsterID}).Encode())
+		ar := resultFor(monsterID, fmt.Sprintf("the result of casting %d", skillID))
+		if ar.Error != "" {
+			t.Fatalf("cast %d: %+v", skillID, ar)
+		}
+		return ar
+	}
+	// noHandOff waits out the row's hand-off delay plus five base-attack
+	// periods and checks nothing swung at the monster after the cast.
+	noHandOff := func(why string, row *refdata.Skill, monsterID int64, hpAfterCast int) {
+		t.Helper()
+		time.Sleep(handOffDelay(row) + 5*60*time.Millisecond)
+		if m, ok := monsters.Get(monsterID); !ok || m.HP != hpAfterCast {
+			t.Errorf("%s: the monster went from %d to %d HP (ok=%v) after the cast; want no swings", why, hpAfterCast, m.HP, ok)
+		}
+		if tgt, ok := keepUp.Target(c.ID); ok {
+			t.Errorf("%s: a keep-up is running against %d; want none", why, tgt)
+		}
+	}
+
+	write(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	if lr, err := DecodeLoginResult(read("the login result").Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+	write(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode())
+	if ewr, err := DecodeEnterWorldResult(read("the enter-world result").Data); err != nil || !ewr.OK {
+		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
+	}
+
+	// REFUSAL 1: a chain head resolves its own blow and does not hand off.
+	if ar := cast(51, headTarget.ID); ar.MonsterDamage != 20 || ar.MonsterRemainingHP != 980 {
+		t.Fatalf("chain head cast: %+v; want 20 damage leaving 980", ar)
+	}
+	noHandOff("a chain head (BasicChainCode 52)", chainHead, headTarget.ID, 980)
+
+	// REFUSAL 2: a ZeroDamage row resolves no blow and does not hand off.
+	if ar := cast(53, zeroTarget.ID); ar.MonsterDamage != 0 {
+		t.Fatalf("zero-damage cast: %+v; want no damage", ar)
+	}
+	noHandOff("a ZeroDamage row", zeroDamage, zeroTarget.ID, 1000)
+
+	// THE HAND-OFF: the cast hits once, then plain swings follow on their own.
+	sent := time.Now()
+	if ar := cast(50, target.ID); ar.MonsterDamage != 20 || ar.MonsterRemainingHP != 40 {
+		t.Fatalf("hand-off cast: %+v; want 20 damage leaving 40", ar)
+	}
+	first := resultFor(target.ID, "a plain swing after the type-1 cast (no hand-off?)")
+	// 100 + 100 + 100: PreparingTime counts, so a wait of CastingTime +
+	// ActionDuration alone (200 ms, round 256's sum) would fail here.
+	if waited, want := time.Since(sent), 300*time.Millisecond; waited < want {
+		t.Errorf("the first plain swing came %v after the cast; want at least PreparingTime + CastingTime + ActionDuration = %v", waited, want)
+	}
+	if first.Error != "" || first.MonsterDamage != 20 || first.MonsterRemainingHP != 20 {
+		t.Fatalf("first handed-off swing: %+v; want 20 damage leaving 20", first)
+	}
+	second := resultFor(target.ID, "the second handed-off swing")
+	if second.Error != "" || second.MonsterDamage != 20 || !second.MonsterDied {
+		t.Fatalf("second handed-off swing: %+v; want 20 damage, killing", second)
+	}
+	// The run ended with the kill, as the plain keep-up's does.
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, ok := keepUp.Target(c.ID); !ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the handed-off keep-up outlived its target")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
