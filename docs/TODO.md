@@ -29,12 +29,14 @@ In order. Each is checked off here when it ships in a release, with its round in
       **authored Option window** (`ifoption` + `ifoption_video`, its View radios and our UI scale /
       chat font / name range as its Setting tab) in place of the F3 panel.
 - [x] **NPC talk.** A click on an NPC opens `if_npctalk` titled with its name -- round 139. The
-      greeting's service lines are now clickable; Buy opens the shop and Storage the warehouse
-      (both below). Still open: the remaining services (guild, honour rank), each its own backend.
-      - [x] **Storage (warehouse) -- items AND gold.** Talk -> Storage opens the authored
-        warehouse window (`ifstorageroom`) with the bag beside it: click to deposit/withdraw items
-        (each a quantity dialog), and the money button opens a gold deposit/withdraw dialog --
-        rounds 168-169 / releases v0.1.139-140. The warehouse is a second inventory container
+      greeting's service lines are now clickable; Buy opens the shop and the storage line the
+      warehouse (both below). Still open: the remaining services (guild, honour rank), each its own
+      backend.
+      - [x] **Storage (warehouse) -- items AND gold.** The talk menu's storage line (its text is
+        the archive's own "Deposit into storage.", `UIIT_STT_NPC_CHATTING_WND_STOREHOUSE`, since
+        round 513) opens the authored warehouse window (`ifstorageroom`) with the bag beside it:
+        click to deposit/withdraw items (each a quantity dialog), and the money button opens a
+        gold deposit/withdraw dialog -- rounds 168-169 / releases v0.1.139-140. The warehouse is a second inventory container
         (`storage_slots` table, `storage.Service`) plus a per-character `storage_gold` balance,
         reachable in real play from the grounded warehouse NPCs (`NPC_CH_WAREHOUSE_M`/`_W`). **Scope
         settled (round 215, v0.1.390)**: the warehouse and its gold are the ACCOUNT's, as the game's

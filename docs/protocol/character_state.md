@@ -1198,7 +1198,10 @@ addresses read out of `.rdata` in `/opt/sro-files/client/sro_client.exe`.
   byte index table at `0x6fd394` (`0x6fce4d` `movzx ecx,byte [ebp+0x6fd394]`),
   then the dword jump table at `0x6fd2d8` (`0x6fce54` `jmp [ecx*4+0x6fd2d8]`).
   It returns `n + 1`. Most cases name a
-  `UIIT_*` or `SN_*` token, resolved through `textuisystem.txt`. Cases 5-8 use
+  `UIIT_*` or `SN_*` token, resolved by `FUN_008c9c30` (`ecx` `0xeede90`, the
+  shared call at `0x6fd215`). Which archive tables feed that lookup was not
+  read: the `UIIT_*` tokens are in `textuisystem.txt` (below), and the `SN_*`
+  tokens may live in another table (round 517). Cases 5-8 use
   raw Korean literals (round 512). Case 1 runs `FUN_006fb630`, which writes its
   own `"%d. "` line per store. `sub` picks the job-guild variant in cases
   0x1e-0x24.
@@ -1222,17 +1225,21 @@ addresses read out of `.rdata` in `/opt/sro-files/client/sro_client.exe`.
 Every lookup is the set's `find` (`0x534ef0`) with the id stored as a byte just
 before the call. The address in each row is that byte store (row 1 gives the
 call instead). A present id is the
-`cmp [eax+0x4],end` membership test that follows.
+`cmp [eax+0x4],end` membership test that follows. Rows 0a and 0b look up no id:
+they run before the first lookup, and are lettered so the rows below keep the
+numbers other text cites (added in round 517).
 
 | order | id looked up | if present | text |
 |---:|---|---|---|
+| 0a | none: the talk object's `+0x7c8` (`0x7005e6` `cmp [edi+0x7c8],ebx`) and `FUN_00938000(...)`'s result (call at `0x7004d3`, kept in `esi`; `0x7005ee`) | both zero: return 1 (`0x7005f2`-`0x7005f7`, to the epilogue at `0x701517`) before any numbered line, so no row below runs | — |
+| 0b | none: `FUN_004722d0(...)` (`0x700615`), the dword at `+0x18c` of `FUN_0093f710(...)`'s result (`0x700622`) and the talk object's `+0x800` (`0x70062e`) | all three non-zero: a line with **no number**, added to the list at `+0x7b0` (`0x7006ea`, the call `FUN_006fcd60` adds its lines with at `0x6fd25a`), then a line holding `" "` (`.rdata 0xe19330`, `0x70071d`); both before `FUN_00700200` (`0x70074f`) | `SN_FORTRESS_SHOP_TAX` (`.rdata 0xdae6e0`, resolved by `FUN_008c9c30` at `0x700689`) |
 | 1 | 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1f, 0x28 | `FUN_00700200` (`0x70074f`): `IF_NPCTalk::FUN_006fe030` items 0x33, 0x34, 0x32, 0x36, 0x37, 0x35, 0x42 | a second item switch, not read here |
 | 2 | 0xc (`0x700770`) | a line with no number, behind two tests | `UIIT_MSG_SAFETRADE_PROGRESS_NUMBER` |
 | 3 | 0x13 (`0x7008cb`) | the text passed to `FUN_006fb530`, with no number | `UIIT_MSG_XMAS_EVENT_SO-OK` |
 | 4 | 2 (`0x700920`) | item 4 | `UIIT_STT_NPC_CHATTING_WND_TALKSTART` |
-| 5 | 1 (`0x700982`) | item 1 (`0x700afe`). With 0xf also present, only if `FUN_009870e0()` answers nonzero (`0x7009fc`). With 3 also present, only if `FUN_00989d20(...)` does (`0x700a71`) | `FUN_006fb630`'s per-store lines |
+| 5 | 1 (`0x700982`) | item 1 (`0x700afe`). With 0xf also present, only if `FUN_009870e0()` answers nonzero (`0x7009fc`). With 0xf absent and 3 present, only if `FUN_00989d20(...)` does (`0x700a71`; that call sits in the 0xf-absent branch, `0x7009f5` `je 0x700a0e`) | `FUN_006fb630`'s per-store lines |
 | 6 | 4 (`0x700b12`) | nothing: no membership branch (round 512) | — |
-| 7 | 3 (`0x700b48`) | item 3 (`0x700b7a`); item 0x2d if `FUN_00987130()+0x20` is 0 and the byte at `[0xeef5ec]+0x868` is at least 0x3c (`0x700b86`-`0x700b9d`); then item 0x2e always (`0x700bb4`) | `..._WND_STOREHOUSE`; `UIIT_STT_TC_OPEN`; `UIIT_STT_TC_HONOR_RANKING` |
+| 7 | 3 (`0x700b48`) | item 3 (`0x700b7a`); item 0x2d if `FUN_00987130()+0x20` is 0 and the byte at `[0xeef5ec]+0x868` is at least 0x3c (`0x700b7f`-`0x700b9d`); then item 0x2e always (`0x700bb4`) | `..._WND_STOREHOUSE`; `UIIT_STT_TC_OPEN`; `UIIT_STT_TC_HONOR_RANKING` |
 | 8 | 0x20 (`0x700bd2`) | item 0x2f | `UIIT_STT_AVATAR_MAGICOPTION_ENCHANT_MAGIC_PARAM` |
 | 9 | 5 (`0x700c15`) | nothing: no membership branch | — |
 | 10 | 7 (`0x700c57`) | item 9 | `UIIT_CTL_RECALL_POSITION` |
@@ -1255,9 +1262,10 @@ call instead). A present id is the
 
 The functions named `FUN_*` in the conditions are unnamed tests. The order
 column matters, because the numbers are assigned in this order. A warehouse
-keeper (server ids 1 and 3) therefore gets item 1 only if `FUN_00989d20`
-answers nonzero and `FUN_006fb630` finds a store. It then gets the storage line,
-`TC_OPEN` behind its gate, `TC_HONOR_RANKING`, and the end line.
+keeper (server ids 1 and 3, and no 0xf: the id table above) takes row 5's
+0xf-absent branch, so it gets item 1 only if `FUN_00989d20` answers nonzero and
+`FUN_006fb630` finds a store. It then gets the storage line, `TC_OPEN` behind
+its gate, `TC_HONOR_RANKING`, and the end line when the `+0x7f1` gate is set.
 
 ### The text: two layouts of `textuisystem.txt`
 
@@ -1309,21 +1317,26 @@ numbered lines, using a synthetic text table. No running client has printed
 the `NPCTALK` lines yet.
 
 **Not modelled:**
-- the lines with no number (rows 2, 3 and 12);
+- row 0a's early exit, which srrevamp never takes;
+- the lines with no number (rows 0b, 2, 3 and 12);
 - item 1's per-store lines. srrevamp's "Buy" is its own label. It stands where
-  the real client puts `FUN_006fb630`'s lines, and at a keeper (ids 1 and 3) the
-  real client shows those only if `FUN_00989d20` answers nonzero (call at
-  `0x700a71`);
+  the real client puts `FUN_006fb630`'s lines, and at a keeper (ids 1 and 3, no
+  0xf) the real client shows those only if `FUN_00989d20` answers nonzero (call
+  at `0x700a71`, in row 5's 0xf-absent branch);
 - `TC_OPEN` and `TC_HONOR_RANKING` after the storage line;
 - the `+0x7f1` gate on the end line, which srrevamp always shows;
 - `TALKEND2`, which only a siege pulley gets.
 
-So srrevamp's numbers do not match the real client's for a keeper whenever the
-real client shows its end line (the `+0x7f1` gate). By the table above, every item but 0x2a advances
-`n`, including 0x2e, and the real client puts `TC_HONOR_RANKING` (and `TC_OPEN`
-when shown) between the storage line and the end line. With no store line, its
-storage line is 1 (srrevamp: 2). With one or more store lines, its end line is 4
-or higher (srrevamp: 3). This comes from the table's order. It was not
+So srrevamp's numbers do not match the real client's at a keeper srrevamp gives
+a "Buy" line. By the table above, every item but 0x2a advances `n`, including
+0x2e. With no store line, the real client's storage line is 1 (srrevamp: 2),
+**whether or not the `+0x7f1` gate is set**: that gate decides only the end
+line, which comes after the storage line. With one or more store lines, the
+real client puts `TC_HONOR_RANKING` (and `TC_OPEN` when shown) between the
+storage line and the end line, so when it shows its end line (the `+0x7f1`
+gate) that line is 4 or higher (srrevamp: 3). (Restated in round 517; the
+round 513 text made the whole mismatch depend on the `+0x7f1` gate.) This comes
+from the table's order, with row 0a's early exit not taken. It was not
 measured on a running real client.
 
 ## Interaction id 4 and the store's repair buttons (round 514)

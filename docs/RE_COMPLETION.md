@@ -28520,7 +28520,8 @@ there and not committed):
 - A row at 300 000 ms or more keeps only its per-id timer. The persisted `CTJ_CoolTimeKeeper`
   branch is not built. (Round 507: that branch still files the group entry,
   `0x64cae4`-`0x64cafb`, on its free-slot path -- round 511 -- so in the engine these rows share
-  their group -- Water Harmony A-D in
+  their group when a keeper slot is free (round 517; with none free, `0x64cb82`-`0x64cbd5`, the
+  entry is not filed) -- Water Harmony A-D in
   group 73, the Rogue's mask A/B in group 29 -- and here they do not.)
 - The global window (`+0x50`/`+0x54`, armed from `CoolTime`) and the action window
   (`+0x58`/`+0x5c`) that `IsReady` checks first are not modelled either.
@@ -28803,7 +28804,8 @@ HP).
   map's pointer (`0x64cc15`-`0x64cc25`). `IsReady` answers ready for an entry whose delay is 0, so
   that releases the whole group. No real grouped row is kind 1 or 3 with no `ReuseDelay`. Not
   modelled; the session test's row 989 carries a note.
-- **Rows at 300 000 ms or more DO share their group in the engine.** The persisted
+- **Rows at 300 000 ms or more share their group in the engine when a keeper slot is free**
+  (round 517: the heading said so without the condition). The persisted
   `CTJ_CoolTimeKeeper` branch writes the entry (delay at `0x64ca04`) and files it in the group
   map too (`0x64cae4`-`0x64cafb`). (Round 511: that is the path that finds a keeper slot free;
   with none free, `0x64cb82`-`0x64cbd5`, it returns without filing.) srrevamp keeps only their per-id timer, so Water Harmony A-D
@@ -29207,7 +29209,9 @@ Two costs of this order, stated in the handler's comment:
   ("healing failed, and the item could not be returned"). Round 509's order never cost a potion on
   a failed heal. `useExpansion` makes the same trade. The handler's ctx is the server's, which
   `gateway.Server.serveConn` passes as is and never cancels per connection, so the window is two
-  store errors in a row.
+  store errors in a row. (Round 517: one cause is server shutdown. `cmd/server`'s
+  `signal.NotifyContext` cancels that same ctx, so a use in flight can have its removal commit
+  and then both the drink and the refund fail on the cancelled ctx.)
 - The refund goes where `AddItemInstance` puts it, not back to `req.InventorySlot`. Both stores'
   `addItem` top up the first under-full stack of that item and then take the lowest free slot. A
   potion taken from a stack of 1, or from a stack behind another of the same item with room, comes
@@ -29231,8 +29235,9 @@ engine runs the gate and the arm on the PC's thread. Not closed.
 
 **5. Round 508's notes** (`useitem.go`'s comments; round 508 above carries pointers):
 
-- **`FUN_004e67b0` drops ONE type-6 record, not all of them.** It zeroes the word (`0x4e67d0`), then
-  calls `FUN_004066c0(6, 6)` at `0x4e67c8` with EBX 0 (`0x4e67c6`). `FUN_004066c0` walks the
+- **`FUN_004e67b0` drops ONE type-6 record, not all of them.** It calls `FUN_004066c0(6, 6)` at
+  `0x4e67c8` with EBX 0 (`0x4e67c6`), then zeroes the word (`0x4e67d0`, round 517: the call comes
+  first; this line had the order reversed). `FUN_004066c0` walks the
   manager's list and stops at the first record whose `+4` is zero, whose `vslot_005` type byte
   (`+0xc`) is 6, and which `AJStateChanger::vslot_004` (`0x4063e0`) accepts: type 6 at `+0xc`, and a
   bit argument of 0 matches any `+0xd`. It erases that record and returns 1 at `0x406733`. So the
@@ -29542,7 +29547,8 @@ keeper: CH `_M` and `_W`, WC (twice), KT, EU, CA and both SD keepers.
 `/var/tmp/tables/refshopgroup.txt` agrees. So `parse_shop_npcs` puts each keeper in the shop
 set, and `services_for` returns `[shop, storage]`. The shop line is still this project's "Buy".
 It stands where the real client puts `FUN_006fb630`'s per-store lines, which a keeper (ids 1
-and 3) gets only if `FUN_00989d20` answers nonzero (call at `0x700a71`).
+and 3, no 0xf) gets only if `FUN_00989d20` answers nonzero (call at `0x700a71`, in the 0xf-absent
+branch; round 517).
 
 What changes for a player: at `NPC_CH_WAREHOUSE_M` the talk box reads "1. Buy",
 "2. Deposit into storage." and "3. End conversation.". The storage and end texts come from the
@@ -29551,11 +29557,13 @@ storage." and "2. End conversation.", and blamed the missing `TC_HONOR_RANKING`.
 plan's expectation, never measured, and review caught it. Check (a) had hidden it, because its
 synthetic shop set left the warehouse out.
 
-srrevamp's numbers do not match the real client's for a keeper whenever the real client shows
-its end line (the `+0x7f1` gate). The real client puts `TC_HONOR_RANKING` (and `TC_OPEN` when shown) between the
-storage line and the end line. With no store line, its storage line is 1 (srrevamp: 2). With
-one or more, its end line is 4 or higher (srrevamp: 3). This comes from `FUN_00700440`'s order
-and was not measured on a running client.
+srrevamp's numbers do not match the real client's at a keeper srrevamp gives a "Buy" line. With
+no store line, the real client's storage line is 1 (srrevamp: 2), whether or not the `+0x7f1`
+gate is set, since that gate decides only the end line. With one or more store lines, the real
+client puts `TC_HONOR_RANKING` (and `TC_OPEN` when shown) between the storage line and the end
+line, so its end line, when the gate shows it, is 4 or higher (srrevamp: 3). (Restated in round
+517: this paragraph made the whole mismatch depend on the gate.) This comes from
+`FUN_00700440`'s order and was not measured on a running client.
 
 **Tests** (`client/scripts/npc/npc_service_reader_test.gd`, render box). The constants are read
 through the script's constant map and `strid` through `get()`. A reader that lacks them therefore
@@ -29966,3 +29974,88 @@ it reports ALL PASS.
   through a running client.
 - **Server suite:** `cd server && go build ./... && go test -count=1 -p 1 ./...` is green. No
   server file changed.
+
+## Batch-8 review follow-ups (rounds 511-513): wording, hedges and stale lines (round 517)
+
+This round lands the reviewers' non-blocking notes on rounds 511-513. Nothing changes behaviour:
+it is comments, docs and one test-variable rename. Every claim below was re-read before it was
+written, read-only on the RE box: `srv.asm` for the server, `sro_client.asm` and `.rdata` of
+`/opt/sro-files/client/sro_client.exe` for the client.
+
+**Round 511.**
+
+- **`FUN_004e67b0`'s order.** Round 511's item 5 said it "zeroes the word (`0x4e67d0`), then
+  calls `FUN_004066c0(6, 6)` at `0x4e67c8`". `srv.asm` has the call first: `0x4e67c6`
+  `xor ebx,ebx`, `0x4e67c8` `call 0x4066c0`, `0x4e67cd` `mov eax,[esi+0x30]`, `0x4e67d0`
+  `mov [eax+0x8],ebx`. (Before both, `0x4e67b7` calls `0x49a4c0` on `esi+0x1d58`, the potion
+  queue.) The line is corrected in place. `useitem.go` names both addresses without an order, so
+  it stands.
+- **The >= 300 s group sharing, at full condition.** The clause added in round 511 (filed on the
+  free-slot path, `0x64cae4`-`0x64cafb`; not filed with none free, `0x64cb82`-`0x64cbd5`, which
+  ends `jmp 0x64cb63`, the epilogue) was followed by "So in the engine these rows DO share their
+  group". Re-read: the loop's end test `0x64c906` `je 0x64cb82` is the no-free-slot exit, and the
+  free-slot path reaches `0x64cad6` and the filing. The sentence now says they share it **when a
+  keeper slot is free**, in `skillCooldownGroup`'s comment (`skill.go`), `auto_command.md`,
+  `SYSTEMS.md`'s skills row, round 504's disclosed list and round 507's heading.
+- **`useitem.go`'s SPEND FIRST comment** now names one cause of "two store errors in a row":
+  server shutdown. `cmd/server/main.go` builds the server's ctx with `signal.NotifyContext`
+  (SIGINT/SIGTERM), `gateway.Server.ListenAndServe` hands that ctx to every `serveConn`, and the
+  SQL stores run their queries with it (`character.SQLStore.Heal`'s `QueryRowContext`). So a use
+  in flight at shutdown can have its removal commit and both the drink and the refund fail.
+  Round 511's item 2 carries the same note.
+- **`keepup_test.go`**: `chainHead` is now `chained` and `headTarget` is `chainedTarget`, matching
+  round 511's "a row with a non-zero Basic_ChainCode" (the rows are not modelled as true heads).
+
+**Round 512.** Not applied here: the store-repair-buttons item (round 514) landed first and
+rewrote the id-4 show/hide passages in `npc_service_reader.gd`, `hud_panels.gd` and `TODO.md` on
+its own grounding (vtable `+0x5c` is slot 23, show/hide; the class test at `0x88b78b` is
+IsKindOf `CICNPC`). They are left as round 514 wrote them.
+
+**`FRONTEND_CHECKLIST.md`'s NPC talk item** is rewritten instead of annotated. It said "Only 'End
+conversation' acts; the systems behind Buy/Repair/Storage are their own features still to come".
+It now says what holds: Buy opens the store window and the storage line the warehouse
+(`World3D._on_npc_service_selected`); the guild line still only says it is not available yet;
+there is no Repair talk line (round 512), and repair is the store window's own buttons, shown
+only at an NPC with id 4 (round 514).
+
+**Round 513** (`docs/protocol/character_state.md`, "The client's first talk menu"):
+
+- **"The chain"**: the tokens are "resolved by `FUN_008c9c30`", not "through
+  `textuisystem.txt`". `FUN_006fcd60`'s cases push a token and join at `0x6fd210`
+  `mov ecx,0xeede90` / `0x6fd215` `call 0x8c9c30`. The `UIIT_*` tokens are measured in
+  `textuisystem.txt`; the `SN_*` ones may live in another table, which was not read.
+- **Two rows before row 1**, lettered 0a and 0b so the cited row numbers stay:
+  - 0a, the early exit: `0x7005e6` `cmp [edi+0x7c8],ebx ; jne`, `0x7005ee` `cmp esi,ebx ; jne`
+    (`esi` is `FUN_00938000`'s result, `0x7004d3`/`0x7004d8`), then `0x7005f2` `mov eax,1` and
+    `0x7005f7` `jmp 0x701517`, the epilogue. So with both zero the builder returns 1 before any
+    numbered line.
+  - 0b, the unnumbered `SN_FORTRESS_SHOP_TAX` line (wide string at `.rdata 0xdae6e0`, resolved by
+    `FUN_008c9c30` at `0x700689`). It is added to the list at `+0x7b0` (`0x7006ea`, the same call
+    `FUN_006fcd60` uses at `0x6fd25a`), then a `" "` line (`.rdata 0xe19330`, `0x70071d`). Both
+    come before `FUN_00700200` (`0x70074f`), and only when three values are non-zero:
+    `FUN_004722d0(...)` (`0x700615`), the dword at `+0x18c` of `FUN_0093f710(...)`'s result
+    (`0x700622`), and the talk object's `+0x800` (`0x70062e`).
+- **Row 5 and `npc_service_reader.gd`'s "Buy" comment**: the `FUN_00989d20` gate (`0x700a71`)
+  is inside the **0xf-absent** branch (`0x7009f5` `je 0x700a0e`, then id 3 looked up at
+  `0x700a1d`). The row now reads "with 0xf absent and 3 present". A keeper has ids 1 and 3 and
+  no 0xf (the server's id table: 0xf is `NPC_*_GUILD` and `NPC_CH_GENARAL_SP`), so it takes that
+  branch. The keeper paragraph and the not-modelled list say so.
+- **The numbering mismatch at full strength** (here in round 513 too): with no store line the
+  real client's storage line is 1 and srrevamp's is 2, whether or not the `+0x7f1` gate is set,
+  because the gate decides only the end line. The end-line mismatch (4 or higher against 3) is
+  the part that needs the gate.
+- **The `TC_OPEN` gate range** is `0x700b7f`-`0x700b9d` in both places. `character_state.md`
+  had `0x700b86`; `0x700b7f` loads `FUN_00987130`'s `this` (`mov ecx,0xeeebd8`) before the call
+  at `0x700b86`.
+- **`TODO.md`'s storage item**: the talk line is no longer "Storage". Its text is the archive's
+  "Deposit into storage." (`UIIT_STT_NPC_CHATTING_WND_STOREHOUSE`, round 513).
+
+**Tests.** None added: the plan scopes this round to comments and docs, and no behaviour
+changed. The one code change is a test-variable rename. There was therefore no negative case to
+run.
+
+- **Server suite:** `cd server && go build ./... && go test -count=1 -p 1 ./...` is green. The
+  `internal/systems` doc probes read the edited `SYSTEMS.md` and docs at runtime.
+- **Client:** `client/tools/remote_godot.sh check` (render box) checked 246 scripts and 5
+  scenes: ALL LOAD. `npc_service_reader_test.gd`, whose script's comment changed, reports ALL
+  PASS.

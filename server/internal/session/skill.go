@@ -1068,8 +1068,8 @@ func useSkillHandler(
 //     keep only their per-id timer -- a DISCLOSED departure. That branch
 //     still files the entry in the group map (0x64cae4-0x64cafb) when it
 //     finds a keeper slot free; with none free (0x64cb82-0x64cbd5) it
-//     returns without filing. So in the engine these rows DO share their
-//     group, and here they do not: casting
+//     returns without filing. So in the engine these rows share their
+//     group when a keeper slot is free, and here they do not: casting
 //     Water Harmony A leaves B, C and D (all group 73, 300 000 ms) castable,
 //     and the Rogue's transform mask A leaves B (group 29, 600 000 ms). On
 //     the class skills that is 34 rows.

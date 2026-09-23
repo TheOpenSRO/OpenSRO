@@ -1054,7 +1054,12 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// order never cost a potion on a failed heal. useExpansion makes the
 		// same trade, and the handler's ctx is the server's, which
 		// gateway.Server.serveConn passes as is and never cancels per
-		// connection, so the window is two store errors in a row. And the
+		// connection, so the window is two store errors in a row. One cause
+		// of that is server shutdown: cmd/server's signal.NotifyContext
+		// cancels this same ctx on SIGINT/SIGTERM, so a use in flight then
+		// can have its removal commit and both the drink and the refund fail
+		// on the cancelled ctx (the SQL stores run their queries with it,
+		// e.g. character.SQLStore.Heal's QueryRowContext). And the
 		// refund is AddItemInstance's placement, not req.InventorySlot: both
 		// stores top up the first under-full stack of that item before they
 		// take the lowest free slot (inventory's MemStore.addItem and

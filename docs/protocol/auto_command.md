@@ -321,7 +321,7 @@ kinds of row take no part in a group:
   engine's persisted branch still files the entry in the group map
   (`0x64cae4`-`0x64cafb`) when it finds a keeper slot free; with none free
   (`0x64cb82`-`0x64cbd5`) it returns without filing (round 511). So there
-  these rows DO share their group, and here
+  these rows share their group when a keeper slot is free, and here
   they do not: Water Harmony A-D (group 73, 300 000 ms each) and the Rogue's
   mask A/B (group 29, 600 000 ms) can each be cast inside another's timer.
 

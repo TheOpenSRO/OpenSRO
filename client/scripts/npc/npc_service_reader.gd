@@ -107,8 +107,11 @@ static func parse_greetings(data: PackedByteArray) -> Dictionary:
 ##     "2. <storage>", "3. <end>". NPC_WC_WAREHOUSE_M is the exception: WC's
 ##     second HONOR row names NPC_WC_WAREHOUSE_W again, so the _M keeper runs
 ##     no store and its menu is "1. <storage>", "2. <end>". The
-##     real client shows item 1 for a keeper (ids 1 and 3) only if
-##     FUN_00989d20 answers nonzero (call at 0x700a71).
+##     real client shows item 1 for a keeper (ids 1 and 3, no 0xf) only if
+##     FUN_00989d20 answers nonzero (call at 0x700a71). That call is in the
+##     branch for id 0xf absent and id 3 present (0x7009f5 `je 0x700a0e`
+##     skips to it when 0xf is absent); with 0xf present, FUN_009870e0
+##     decides instead (0x7009fc).
 ##   * "Guild" -- the guild's real lines (FUN_00700440 id 0x0f -> items 0x12,
 ##     0x14, 0x17-0x1d, 0x43) depend on the player's guild membership, which
 ##     this reader does not know.

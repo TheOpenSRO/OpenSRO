@@ -142,8 +142,8 @@ func TestSkillHandOffRule(t *testing.T) {
 	// A row with a non-zero Basic_ChainCode does not hand off: the engine
 	// would play its links first and test the LAST link's byte, which
 	// srrevamp does not model.
-	chainHead := &refdata.Skill{ID: 2, AutoAttackType: 1, BasicChainCode: 12, CastingTimeMs: 411, ActionDurationMs: 834}
-	if skillHandsOff(chainHead) {
+	chained := &refdata.Skill{ID: 2, AutoAttackType: 1, BasicChainCode: 12, CastingTimeMs: 411, ActionDurationMs: 834}
+	if skillHandsOff(chained) {
 		t.Error("a row with BasicChainCode 12 handed off; the engine plays the chain link by link first")
 	}
 
@@ -401,14 +401,14 @@ func TestSkillCastHandsOffToPlainSwings(t *testing.T) {
 	// = 20 a plain swing of the no-`att` base row deals.
 	handsOff := &refdata.Skill{ID: 50, BasicLevel: 1, AutoAttackType: 1, ReuseDelayMs: 60000,
 		PreparingTimeMs: 100, CastingTimeMs: 100, ActionDurationMs: 100, AttackPercent: 100, AttackType: 5}
-	chainHead := &refdata.Skill{ID: 51, BasicLevel: 1, AutoAttackType: 1, BasicChainCode: 52, ReuseDelayMs: 60000,
+	chained := &refdata.Skill{ID: 51, BasicLevel: 1, AutoAttackType: 1, BasicChainCode: 52, ReuseDelayMs: 60000,
 		CastingTimeMs: 50, ActionDurationMs: 50, AttackPercent: 100, AttackType: 5}
 	zeroDamage := &refdata.Skill{ID: 53, BasicLevel: 1, AutoAttackType: 1, ReuseDelayMs: 60000,
 		CastingTimeMs: 50, ActionDurationMs: 50, ZeroDamage: true}
 	ref := itemsAndSkills{
 		items: map[int64]*refdata.Item{100: {ID: 100, TypeID4: 2, PhysAttackMax: 30, Range: 6}},
 		// SKILL_CH_SWORD_BASE_01 is id 2; the delay is shortened for the test.
-		skills: map[int64]*refdata.Skill{2: {ID: 2, ReuseDelayMs: 60}, 50: handsOff, 51: chainHead, 53: zeroDamage},
+		skills: map[int64]*refdata.Skill{2: {ID: 2, ReuseDelayMs: 60}, 50: handsOff, 51: chained, 53: zeroDamage},
 	}
 	eq := fixedEquipment{worn: []equipment.Equipped{{Slot: equipment.SlotWeapon, ItemID: 100, Durability: 50}}}
 	inv := inventory.NewMemStore(ref)
@@ -422,7 +422,7 @@ func TestSkillCastHandsOffToPlainSwings(t *testing.T) {
 	hub := world.NewHub()
 	monsters := combat.NewHub()
 	// One monster per case, so a stray swing shows on the monster it hit.
-	headTarget := monsters.Spawn("jangan", "Mangyang", 0, 0, 0, 1000, 10, 0, 0)
+	chainedTarget := monsters.Spawn("jangan", "Mangyang", 0, 0, 0, 1000, 10, 0, 0)
 	zeroTarget := monsters.Spawn("jangan", "Mangyang", 1, 0, 0, 1000, 10, 0, 0)
 	target := monsters.Spawn("jangan", "Mangyang", 2, 0, 0, 60, 10, 0, 0)
 
@@ -502,10 +502,10 @@ func TestSkillCastHandsOffToPlainSwings(t *testing.T) {
 
 	// REFUSAL 1: a row with a non-zero Basic_ChainCode resolves its own blow
 	// and does not hand off.
-	if ar := cast(51, headTarget.ID); ar.MonsterDamage != 20 || ar.MonsterRemainingHP != 980 {
+	if ar := cast(51, chainedTarget.ID); ar.MonsterDamage != 20 || ar.MonsterRemainingHP != 980 {
 		t.Fatalf("BasicChainCode 52 cast: %+v; want 20 damage leaving 980", ar)
 	}
-	noHandOff("a row with BasicChainCode 52", chainHead, headTarget.ID, 980)
+	noHandOff("a row with BasicChainCode 52", chained, chainedTarget.ID, 980)
 
 	// REFUSAL 2: a ZeroDamage row resolves no blow and does not hand off.
 	if ar := cast(53, zeroTarget.ID); ar.MonsterDamage != 0 {
