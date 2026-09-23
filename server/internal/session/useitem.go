@@ -8,10 +8,12 @@ import (
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
+	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 )
 
 // Using a consumable. Until now potions dropped, stacked in the bag and did
@@ -101,28 +103,104 @@ func DecodeUseItemResult(data []byte) (*UseItemResult, error) {
 	return r, nil
 }
 
+// The item kinds whose use restores the USER's own HP/MP (round 491). The
+// engine picks an item's use by its TID, never by whether its Param block
+// happens to hold numbers:
+//
+//   - FUN_00489de0, the object factory, builds a CGItemExpendable for
+//     TypeID1 3 / TypeID2 3 (`param_1 >> 2 & 7` == 3, `param_1 >> 5 & 3` == 3);
+//     equipment and pet summoners are other classes with other DoJobs.
+//   - CGItemExpendable::DoJob (0x0049aca0, vtable 0x00aeb2b4 slot 306, the
+//     `+0x4c8` call Item_HandleUseItem makes) switches on TypeID3
+//     (`TID >> 7 & 0xf`). Case 1 sends TypeID4 4/5/6/7/9 to slot 327
+//     (0x0049d240) and 10 to slot 330 (0x0049cc80); every other TypeID4 goes
+//     to slot 308 (0x0049b710).
+//   - Slot 308 under TypeID3 1: TypeID4 8 is GObjPC::AddHwanCount (the berserk
+//     potion); any other reads the amounts through GObjPC::FUN_0049aa70 --
+//     Param1 (+0x2a0) HP, Param2 (+0x2c0) HP %, Param3 (+0x2e0) MP, Param4
+//     (+0x300) MP %, the exporter's columns 118/120/122/124 -- and applies them
+//     to the owner PC (0x49b90c..0x49b946).
+//   - Slot 327 applies 4/5/7's amounts to a PET the packet names (its owner
+//     must be the user), revives a pet (6) or feeds one (9); slot 330 repairs a
+//     siege structure (10). None of them touches the user's pool.
+//
+// So the user's HP/MP comes back only from 3/3/1/x with x outside
+// {4,5,6,7,8,9,10}; in real itemdata that is the 58 rows of TypeID4 1 (HP), 2
+// (MP) and 3 (both). Among the DIRECT pool writes an item use makes (the item
+// paths among GObjPC::ApplyHPMPDelta's call sites), the one other is the
+// resurrection kind 3/3/13/6 (UseByKind 0x0049c2b0 case 6 -> FUN_0049ff20),
+// which refuses a user whose life state is not 2 with 0x1887
+// UIIT_MSG_STRGERR_ONLY_THE_DEAD_CAN_USE_RESURRECT_SCROLL and fills HP/MP only
+// as part of reviving a dead one (GObjPC::Revive) -- a use srrevamp does not
+// model. That census is scoped to direct writes: UseByKind's cases 1..3 cast
+// the skill whose id is the row's Param1 (+0x2a0, looked up by FUN_0046c1f0,
+// applied by FUN_0059b8d0), and a pool write such a skill makes was not
+// traced. The gate is unaffected -- on those rows Param1 is a skill id, not a
+// restore amount.
+const (
+	// recoveryFamily is TypeID3 1 under TypeItem/TypeExpendable: DoJob's case
+	// 1 (0x0049aca0).
+	recoveryFamily = 1
+	// berserkPotionKind is TypeID4 8 under recoveryFamily: slot 308's
+	// `bVar3 != 8` test (0x0049b89a `cmp al,0x8`) sends it to AddHwanCount.
+	berserkPotionKind = 8
+)
+
+// restoresUserPool reports whether the engine's use dispatch sends an item of
+// this kind to the user's own HP/MP recovery (see recoveryFamily).
+func restoresUserPool(it *refdata.Item) bool {
+	if it.TypeID1 != equipment.TypeItem || it.TypeID2 != equipment.TypeExpendable || it.TypeID3 != recoveryFamily {
+		return false
+	}
+	switch it.TypeID4 {
+	case 4, 5, 6, 7, 9: // DoJob case 1 -> slot 327 (0x0049d240): a pet's HP/MP, revival, feed
+		return false
+	case 10: // DoJob case 1 -> slot 330 (0x0049cc80): siege structure repair
+		return false
+	case berserkPotionKind: // slot 308 -> GObjPC::AddHwanCount
+		return false
+	}
+	return true
+}
+
 // UseItemHandler consumes one item from a bag slot and applies what it
 // restores.
 //
 // The amounts are REAL: refdata.Item.RestoreHP/RestoreMP come from the item
 // table's own Param block, where each value sits beside its own label ("HP..."
-// at col 118, "MP..." at 122), so an HP_POTION_01 gives back 120 health and
-// the large one 370. The percentage variants are honoured too, against the
-// maximum, and an item carrying both gets both.
+// at col 118, "MP..." at 122), so an HP_POTION_01 carries 120 health and the
+// large one 370. They are restore amounts ONLY on the recovery kinds above:
+// the exporter emits columns 118..124 for every row, and on a return scroll
+// (30000), a cure pill or a storage expansion (its slot increment, round 270)
+// the same columns hold something else. The percentage variants are honoured
+// too, against the maximum.
 //
-// APPLIED UNMODIFIED, and that is confirmed rather than assumed (2026-09-15).
-// The engine does not hand a recovery straight to the pool: GObjPC::FUN_004a86a0
-// scales the HP amount by ParamKeeper param 143 and the MP amount by 144 --
-// `MOV EAX,0x8f` and `MOV EAX,0x90` into EvaluateParam, both read off the
-// character's own keeper at +0x1ec -- before passing them to the adjust that
-// writes the pool.
+// Round 491 found the amount is NOT applied as the engine applies it, and
+// this is a DISCLOSED GAP, not a grounding: GObjPC::FUN_0049aa70
+// (0x49ab63..0x49ac37) scales an absolute amount before it lands --
+// HP = Param1 * 1.02^(Level-1) * (1 + GetParam(1)/416), MP the same with
+// Param3 and GetParam(2) (params 0/1/2 are Level/Str/Int; 1.02 at .rdata
+// 0xb45ea0, 416.0 at 0xb45e98) -- and reads the percentage pair only when
+// both absolute amounts are zero. srrevamp applies the raw amounts and adds
+// both pairs; no real recovery row carries both, so only the scaling differs.
 //
-// Both are structurally ZERO. Neither has a SetParam site anywhere in the
-// binary and neither is the target of a derived bind, so the scaling is a no-op
-// for every character and the raw restore amount is what lands. (The probe was
-// checked against param 0x22, which it does find, so the absence is a result
-// and not a broken search.) A recovery-effectiveness stat exists in the engine;
-// nothing in this build ever gives a character one.
+// The later step is a no-op ONLY while neither panic nor combustion is on the
+// character, and srrevamp does not model it -- a second DISCLOSED GAP.
+// GObjPC::FUN_004a86a0 (ApplyHPMPDelta) multiplies the HP amount by
+// (1 - param143/100) and the MP amount by (1 - param144/100) before the adjust
+// that writes the pool (`MOV EAX,0x8f` / `MOV EAX,0x90` into
+// ParamKeeper_GetParamChecked 0x4b3740 on the keeper at +0x1ec, then 0x4a86c9
+// `fdiv` by the 100.0 at .rdata 0xb45af0, `fld1`, `fsubrp` (DE E1: 1 - p/100),
+// `fimul` the amount). The 2026-09-15 finding that "neither has a SetParam
+// site anywhere in the binary" was wrong: AbnormalState_Panic_Apply21
+// (0x4a5320) writes param 143 (0x4a5418 `mov edi,0x8f`; 0x4a541d
+// `call 0x4b3510` ParamKeeper_SetParam) and AbnormalState_Combustion_Apply22
+// (0x4a54a0) writes 144 (0x4a5598 `mov edi,0x90`; 0x4a559d), each from the
+// effect's +0x34 value, while the state is on -- recorded since round 248 in
+// docs/protocol/status_effects.md (bits 21/22) and
+// docs/protocol/param_writers.md. So a panic (combustion) effect cuts a
+// potion's HP (MP) by its percentage, and srrevamp heals the full amount
+// regardless.
 //
 // An item whose CanUse bit is clear (refdata.Item.CanUse, itemdata column 24)
 // is refused before its type or reuse delay is read, as the engine refuses it
@@ -135,7 +213,13 @@ func DecodeUseItemResult(data []byte) (*UseItemResult, error) {
 //
 // An item that restores nothing is refused rather than silently eaten -- the
 // bag is full of equipment and quest items that have no use yet, and quietly
-// destroying one would be the worst possible answer.
+// destroying one would be the worst possible answer. That includes every
+// CanUse item that is not a recovery kind (round 491): a return scroll, a cure
+// pill, a pet potion, a berserk potion, a resurrection scroll, a storage
+// expansion. The engine USES those -- each has its own DoJob branch -- and
+// srrevamp models none of their effects, so it refuses them with the
+// restores-nothing reason and keeps the item. That refusal is srrevamp's
+// DISCLOSED GAP, not an engine refusal.
 func UseItemHandler(chars character.Store, inv inventory.Store, items combat.ItemLookup, mp *mana.Tracker) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpUseItem {
@@ -185,6 +269,11 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// cooldown are consulted.
 		if !it.CanUse {
 			return fail("that item cannot be used")
+		}
+		// Only a recovery kind's Param block is a restore amount (round 491,
+		// restoresUserPool); any other kind's effect is not modelled.
+		if !restoresUserPool(it) {
+			return fail("that cannot be used")
 		}
 		if it.RestoreHP <= 0 && it.RestoreMP <= 0 && it.RestoreHPPct <= 0 && it.RestoreMPPct <= 0 {
 			return fail("that cannot be used")

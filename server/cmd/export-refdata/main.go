@@ -108,7 +108,12 @@ const (
 	// asset paths plus two "xxx". See docs/protocol/refobj_binary_format.md.
 	fRepairCost = 27
 	// The Param block stores a value beside its own label: 118 "HP...",
-	// 120 "HP...(%)", 122 "MP...", 124 "MP...(%)". Potion restore amounts.
+	// 120 "HP...(%)", 122 "MP...", 124 "MP...(%)". Potion restore amounts --
+	// on the recovery rows (TypeID 3/3/1, TypeID4 not 4..10) only, which is
+	// where GObjPC::FUN_0049aa70 reads them as HP / HP% / MP / MP% from
+	// Param1..4 (+0x2a0/+0x2c0/+0x2e0/+0x300). They are emitted for every row
+	// because the CSV is per-column; session.UseItemHandler gates on the kind
+	// (round 491), since a scroll's or a storage expansion's Param1 is not HP.
 	fRestoreHP    = 118
 	fRestoreHPPct = 120
 	fRestoreMP    = 122

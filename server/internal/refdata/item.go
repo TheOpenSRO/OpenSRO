@@ -194,6 +194,11 @@ type Item struct {
 	// label "HP..." and col 122 by "MP...", with the "(%)" variants at 120 and
 	// 124. HP_POTION_01 carries 120 in the HP column and nothing in the MP
 	// one; MP_POTION_01 the mirror image. The large potions carry 370.
+	// They are the Param1..4 columns of EVERY row, and restore amounts only
+	// on the recovery kinds (TypeID 3/3/1 with TypeID4 outside 4..10, round
+	// 491): on any other row they mean something else -- a storage
+	// expansion's Param1 is its slot increment (round 270), a return
+	// scroll's reads 30000.
 	RestoreHP                      int
 	RestoreHPPct                   int
 	RestoreMP                      int

@@ -3872,6 +3872,26 @@ recovery-effectiveness stat exists in the engine and nothing in this build ever
 grants one, which means the raw restore amount is what lands — exactly what
 `session/useitem.go` already does.
 
+> **CORRECTED IN ROUND 491 — the raw amount does NOT land, and 143/144 are NOT
+> structurally zero.** Two separate errors:
+>
+> - The amount reaching this step is not the row's Param1: `GObjPC::FUN_0049aa70`,
+>   which the potion branch calls first, scales an absolute amount by
+>   `1.02^(Level-1) * (1 + Str/416)` (MP: `Int/416`). This section checked the last
+>   step and not the one before it.
+> - Params 143 and 144 DO have `SetParam` sites, recorded since round 248
+>   (`docs/protocol/status_effects.md`, bits 21/22; `param_writers.md`):
+>   `AbnormalState_Panic_Apply21` (`0x4a5320`) writes 143 (`0x4a5418 mov edi,0x8f`;
+>   `0x4a541d call 0x4b3510`, `ParamKeeper_SetParam`) and
+>   `AbnormalState_Combustion_Apply22` (`0x4a54a0`) writes 144 (`0x4a5598 mov edi,0x90`),
+>   each from the effect's `+0x34` value while the state is on. `FUN_004a86a0` multiplies
+>   the amount by `1 - param/100` (`0x4a86c9 fdiv` by the 100.0 at `.rdata 0xb45af0`,
+>   `fld1`, `fsubrp` DE E1, `fimul`). So the step is a no-op only while neither panic nor
+>   combustion is on; with one on, it cuts the HP (MP) heal by the effect's percentage.
+>   srrevamp does not model that.
+>
+> See round 491 at the end of this file.
+
 That is a confirmation of a shipped value rather than a change, and it is the
 third time this session that enumerating a param's writers has turned "srrevamp
 omits a term" into "the term is provably zero" (after the damage-pipeline
@@ -26491,3 +26511,182 @@ a cure item, a mall storage expansion, a cash avatar -- still "heals" and is con
 first item of the next batch.
 
 Docs and comments only; no behaviour changes. `go test -count=1 -p 1 ./...` is green.
+
+## Only recovery items restore HP/MP: a CanUse item of another kind no longer heals from its Param1 (round 491)
+
+**The bug (round 489's review).** `export-refdata` emits itemdata columns 118/120/122/124
+(Param1..4) as `RestoreHP`/`RestoreHPPct`/`RestoreMP`/`RestoreMPPct` for every row, and
+`UseItemHandler` healed whenever any of them was positive. So any `CanUse` item healed from its
+Param1 and was eaten: a return scroll (61, Param1 30000), the bag expansion (24365, 32), a pet HP
+potion (2143, 360).
+
+**The engine's dispatch, read before anything was changed.**
+
+- **Which class.** The object factory `FUN_00489de0` builds a `CGItemExpendable` for TypeID1 3 /
+  TypeID2 3 (`param_1 >> 2 & 7 == 3`, `param_1 >> 5 & 3 == 3`), through `GObjPC::FUN_0049a840`
+  (`0x489ec9`). That function is only the pooled-allocator wrapper: it takes a block from
+  `FUN_004a0da0` (refilled by `CChunkAllocatorST__AllocItemBlock`) and calls its first slot. The
+  expendable vtable `0x00aeb2b4` is stored by the neighbouring `FUN_0049a8e0` (`0x49a918`, after
+  a call to `0x48f750`: the constructor shape) and `FUN_0049a940` (`0x49a965`, before a call to
+  `0x48f800`: the destructor shape).
+  Equipment (TypeID2 1) and pet summoners / capsules / storage (TypeID2 2) are other classes.
+- **Which use.** `Item_HandleUseItem` (`0x00510980`) performs the use through `(*item + 0x4c8)`,
+  slot 306, which in the expendable vtable (entry `0xaeb77c`) is `CGItemExpendable::DoJob`
+  (`0x0049aca0`). DoJob switches on TypeID3 (`TID >> 7 & 0xf`):
+  - **1**: TypeID4 4/5/6/7/9 go to slot 327 (`0x0049d240`), 10 to slot 330 (`0x0049cc80`), and
+    every other TypeID4 to slot 308 (`0x0049b710`).
+  - **2**: TypeID4 7 goes to slot 327, and every other TypeID4 to slot 308.
+  - **3**: slot 307 (`0x0049b9f0`), the scrolls.
+  - **6**: TypeID4 2 goes to slot 329. Any other TypeID4 is refused with `0x186b` unless the
+    byte at `owner+0x30`, `+0x11` is 1; when it is, the item is consumed with no effect here.
+  - **9 and 0xf**: consumed, with no effect here.
+  - **0xc**: three helpers.
+  - **0xd**: TypeID4 12 goes to slot 328, and every other TypeID4 to slot 309 (`UseByKind`,
+    `0x0049c2b0`).
+- **Where HP/MP is restored.** Slot 308 under TypeID3 1 sends TypeID4 8 to
+  `GObjPC::AddHwanCount` (`0x49b89a cmp al,0x8`). Any other TypeID4 calls `GObjPC::FUN_0049aa70`,
+  then applies the amounts to the owner PC (`0x49b90c..0x49b946`). Under TypeID3 2, slot 308 hands
+  Param1..3 to the status manager at `pc+0xd30` (`FUN_004a56c0`): a cure, with no pool write.
+  Slot 327 handles the other TypeID4s:
+  - 4, 5 and 7 read a target id from the packet and apply their amounts to that PET, whose owner
+    must be the user (`piVar7[0x736] == owner`).
+  - 6 revives a pet (`COS_SubmitAsyncQuery(5, ...)`).
+  - 9 feeds a pet.
+
+  Slot 330 is the siege-structure repair (war period only).
+- **Which Param fields.** `FUN_0049aa70` reads Param1 `+0x2a0` as HP, Param2 `+0x2c0` as HP%
+  (of `GetMaxHP`, slot `0x110`), Param3 `+0x2e0` as MP and Param4 `+0x300` as MP% (of
+  `GetMaxMP`, `0x114`). The exporter's 118/120/122/124 mapping is therefore RIGHT for the
+  recovery kinds, and the exporter is unchanged apart from a comment.
+- **Direct pool writes checked.** The 27 call sites of `ApplyHPMPDelta` (`0x4a86a0`) were each
+  mapped to their function. The item paths among them are `vslot_308`, slot 327 (the pet), the
+  potion-queue tick `FUN_0049a5b0`/`FUN_0049a510` (the deferred branch of the same potion), and
+  `FUN_0049ff20`. `FUN_0049ff20` is `UseByKind` case 6: the resurrection scroll 3/3/13/6. It
+  refuses a user whose life state is not 2 with `0x1887 ONLY_THE_DEAD_CAN_USE_RESURRECT_SCROLL`,
+  then calls `GObjPC::Revive` and fills HP/MP. As a side result this settles round 490's open
+  question: life state 2 is DEAD, which is why `Item_HandleUseItem` lets state 2 through only for
+  TypeID4 6 (`& 0xf800 == 0x3000`).
+
+So, among the DIRECT pool writes an item use makes, a use restores the user's own HP/MP only for
+**3/3/1/x with x outside {4,5,6,7,8,9,10}**. The resurrection kind also writes the pool, but only
+as part of a revival srrevamp does not model.
+
+**Not traced: pool writes made by a skill an item casts.** `UseByKind`'s cases 1..3 (TypeID4 1..3
+under 3/3/13) read the row's Param1 (`+0x2a0`) as a skill id, look it up through `FUN_0046c1f0` and
+apply it with `FUN_0059b8d0`. Whether such a skill (a buff, a heal) writes the user's pool was not
+followed, so the census above covers direct item writes only. The gate is unaffected: on those
+rows Param1 is a skill id, not a restore amount, and srrevamp models none of those uses.
+
+**The census.** Over the combined itemdata (`allitems.txt` on the RE box, 21,552 rows, 15,333 ids
+with the last occurrence kept, as `export-refdata` keeps it), **588** `CanUse` rows carry a positive
+value in columns 118..124. All of them healed before this round.
+
+- **58 still restore.** These are 3/3/1/1 (19 HP potions), 3/3/1/2 (19 MP potions) and 3/3/1/3
+  (20 that restore both).
+- **530 stop**, by TypeID1/2/3:
+
+| TypeID | Rows | What they are |
+|---|---:|---|
+| 3/3/13 | 300 | mall tickets, resurrection scrolls, expansions, stat recall, and more |
+| 3/3/3 | 88 | return, reverse-return and fortress scrolls |
+| 3/3/12 | 46 | guild items, teleport holes |
+| 3/1/14 | 26 | cash avatars (equipment) |
+| 3/2/1 | 21 | pet summoner scrolls (not an expendable) |
+| 3/3/9 | 20 | quest items |
+| 3/3/1 | 14 | pet HP potions (4), berserk potions (8), pet feed (9), fortress repair kits (10) |
+| 3/3/2 | 14 | cure pills |
+| 3/3/6 | 1 | the shock bomb |
+
+**Change.**
+
+- `session.restoresUserPool(it)` is DoJob's dispatch as a predicate. It requires
+  `equipment.TypeItem`/`TypeExpendable`, `recoveryFamily` (TypeID3 1), and a TypeID4 other than
+  4/5/6/7/9/10 and `berserkPotionKind` (8). The constants cite their addresses.
+- `UseItemHandler` refuses any other kind with the existing `"that cannot be used"`. The check
+  sits beside the restores-nothing check, after `CanUse`, so every existing check keeps its order.
+  Nothing is consumed and nothing is healed.
+- The handler's doc comment says this is srrevamp's DISCLOSED GAP, not an engine refusal. The
+  engine uses those items, and srrevamp models none of their effects.
+- Comments: `refdata.Item.RestoreHP` and the exporter's `fRestoreHP` now say the columns are
+  restore amounts only on the recovery kinds.
+- `item_capability_flags.md`'s `CanUse` paragraph now says that `CanUse` alone does not make an
+  item a potion, and lists, in order, every refusal `Item_HandleUseItem` sets before the `CanUse`
+  check (`pc[0x311]` -> `0x183e`, quest block `0x185f`, interaction `0x1835`, the `+4` state byte
+  -> 2, slot range `0x1806`, empty slot `0x1809`, rental `0x183d`, life state `0x1889`). The first
+  draft named only the last four, which read as a complete list.
+
+**Found, not fixed: the amount is scaled before it lands.** This is now written into
+`useitem.go` as a disclosed gap, and the 2026-09-15 "unmodified heal" section carries a pointer
+here.
+
+- **The scaling.** `FUN_0049aa70`'s absolute path (`0x49ab63..0x49ac37`, read from `srv.asm`)
+  computes:
+  - HP = `Param1 * 1.02^(Level-1) * (1 + GetParam(1)/416)`
+  - MP = `Param3 * 1.02^(Level-1) * (1 + GetParam(2)/416)`
+- **Where the terms come from.** `Char_GetLevel` is `GetParam(0)`. `CGObjChar::GetParam` passes
+  its argument in EAX. Params 1 and 2 are Str and Int (the `_CHAR` root binds recorded earlier in
+  this file: `SetParam(1, charData+0x74)` Strength, `SetParam(2, charData+0x76)` Intellect). 1.02 is the
+  double at `.rdata 0xb45ea0`, 416.0 is at `0xb45e98`, and 1.0 is at `0xb45ac0`.
+- **The percentages.** The percentage pair is read only when Param1 and Param3 are both zero.
+  srrevamp adds both pairs, but none of the 58 recovery rows carries both, so the only live
+  difference is the scaling.
+- **The 143/144 step is NOT unconditionally a no-op.** The 2026-09-15 section called params 143
+  and 144 structurally zero ("neither has a `SetParam` site anywhere"), and a first draft of this
+  round repeated it. Round 248 had already recorded writers for both
+  (`docs/protocol/status_effects.md` bits 21/22, `recovered_names.tsv` rows `004a5320`/`004a54a0`,
+  `param_writers.md`):
+  - `AbnormalState_Panic_Apply21` (`0x4a5320`) writes 143: `0x4a5418 mov edi,0x8f`,
+    `0x4a541d call 0x4b3510` (`ParamKeeper_SetParam`), from the effect's `+0x34` value.
+  - `AbnormalState_Combustion_Apply22` (`0x4a54a0`) writes 144: `0x4a5598 mov edi,0x90`,
+    `0x4a559d call 0x4b3510`.
+  - `FUN_004a86a0` multiplies the HP amount by `1 - param143/100` and the MP amount by
+    `1 - param144/100`: `ParamKeeper_GetParamChecked` (`0x4b3740`), `0x4a86c9 fdiv` by the 100.0
+    at `.rdata 0xb45af0`, `fld1`, `fsubrp` (DE E1, `1 - p/100`), `fimul` the amount.
+
+  So the step is a no-op only while the character has neither panic nor combustion on. With one
+  on, the engine cuts the potion's HP (MP) by the effect's percentage. srrevamp heals the full
+  amount regardless, and `useitem.go` now discloses this as a second gap. The earlier section
+  checked the last step and not the one before it, and its writer probe missed the two appliers.
+- **Not wired this round.** Wiring the scaling changes every potion's heal amount, so it is its
+  own item.
+
+**Tests.**
+
+- **`session.TestUseItemRestoresOnlyForRecoveryKinds`.** The character takes 50 damage and spends
+  half its MP first, so a refusal cannot be the "no need" answer. Before each case the test undoes
+  whatever an earlier case restored (`reopenRoom`), so each case's stack and HP checks pin its own
+  item rather than only the error string. The test then uses four real rows' kinds, ids and
+  Param blocks:
+  - the return scroll (61, 3/3/3/1, 30000/1)
+  - the bag expansion (24365, 3/3/13/17, 32)
+  - the pet HP potion (2143, 3/3/1/4, 360)
+  - the berserk potion (24993, 3/3/1/8, 5)
+
+  Each is refused with `"that cannot be used"`, keeps its whole stack, and changes neither HP nor
+  MP. HP_POTION_01 (4, 3/3/1/1, 120) then heals and leaves 4. MP_POTION_01 (11, 3/3/1/2, 120)
+  restores MP and leaves 4.
+- **`session.TestRestoresUserPoolFollowsDoJobDispatch`.** It walks TypeID4 0..31 under 3/3/1,
+  where only 4..10 are excluded. It also checks the cure pill 3/3/2/6, the resurrection scroll
+  3/3/13/6, a cash avatar 3/1/14/1, a pet summoner 3/2/1/2, and a kind-less item; none of them
+  restores.
+- **`TestUseItemRefusesAnItemWhoseCanUseIsClear`.** Its potion now carries TypeID 3/3/1/1.
+
+**Negative case, run.**
+
+- **Production files stashed** (`useitem.go`, `main.go`, `item.go`): the package fails to build on
+  `restoresUserPool`.
+- **Dispatch test also cut out, so the behaviour test builds:**
+  `TestUseItemRestoresOnlyForRecoveryKinds` FAILS.
+  - The return scroll was used, consumed and healed ("RestoredHP:50 Remaining:4", "HP 150 ->
+    200").
+  - The next three got "no need for that right now" instead of the refusal, because the scroll had
+    already healed the character to full. The review pointed out that those three then failed on
+    the error string alone, which is why `reopenRoom` was added.
+- **Re-run with `reopenRoom`, the gate disabled in place** (`if false && !restoresUserPool(it)`):
+  each of the four fails on its own stack and HP checks. The return scroll heals 150 -> 200 and
+  leaves 4. The bag expansion heals 150 -> 182 and leaves 0. The pet HP potion heals 150 -> 200
+  and leaves 4. The berserk potion heals 150 -> 155 and leaves 4.
+- **Restored:** all pass, and `go test -count=1 -p 1 ./...` is green.
+
+**Deploy note.** None needed. The gate reads TypeID1..4, which every export has carried since
+`ITEM_FORMAT.md` existed, so srrevamp-01's current `items` table already has what it needs.

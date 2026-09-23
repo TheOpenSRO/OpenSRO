@@ -23,12 +23,28 @@ open", and went looking for something already found.
 | `CanDrop` | 19 *(see below)* | `refdata.Item.CanDrop` | nothing: srrevamp has no drop-from-bag path |
 | `CanUse` | 24 | `refdata.Item.CanUse` | `session.UseItemHandler` (`0x183e`, round 489) |
 
-`CanUse` is the bit `Item_HandleUseItem` (`0x00510980`) asks about first:
-vtable slot `0xe0` (slot 56, `IGObj::CanUse`) returning zero sets `0x183e
-UIIT_MSG_STRGERR_CANNOT_BE_USED` before the TID match and the reuse delay are
-read. All seven `CGItem*` vtables (`CGItem`, `CGItemEquip`, `CGItemExpendable`,
-`CGItemStorage`, `CGItemContainer`, `CGItemCOSSummoner`,
-`CGItemMonsterCapsule`) hold `CGObj::CanUse` (`0x00483ee0`, `refobj+0x8c >> 8 &
+`CanUse` is the bit `Item_HandleUseItem` (`0x00510980`) asks about after
+every refusal the decompile sets ahead of it (round 490 corrected "first";
+round 491's review completed this list). In order:
+
+1. a non-zero dword at `pc[0x311]` (byte offset `0xc44`, unnamed) -> `0x183e`;
+2. the quest block, vcall `+0x244` with 8 -> `0x185f`
+   `STRGERR_REQUESTED_JOB_BLOCKED_BY_QUEST`;
+3. the interaction byte `pc[0xc]+6` other than 0 or 1 -> `0x1835`
+   `STRGERR_CANT_USEITEM_WHILE_INTERACT`;
+4. the state byte `pc[0xc]+4` equal to 1 -> `2`;
+5. a slot outside `13..111` (`slot - 0xd < 99`) -> `0x1806`;
+6. an empty slot -> `0x1809`;
+7. rental expiry (`FUN_00492680() != 1`) -> `0x183d`;
+8. a life state (vcall `+0xf8`) other than 1 -> `0x1889`, except state 2 for a
+   TypeID4 6 item that `FUN_004929c0` accepts.
+
+(Between 7 and 8, `FUN_0063d190(0, 0xc, ..)` returning 3 can also end the
+request, with the code still 1.) Then vtable slot `0xe0` (slot 56,
+`IGObj::CanUse`) returning zero sets `0x183e UIIT_MSG_STRGERR_CANNOT_BE_USED`
+before the TID match and the reuse delay are read. All seven `CGItem*`
+vtables (`CGItem`, `CGItemEquip`, `CGItemExpendable`, `CGItemStorage`,
+`CGItemContainer`, `CGItemCOSSummoner`, `CGItemMonsterCapsule`) hold `CGObj::CanUse` (`0x00483ee0`, `refobj+0x8c >> 8 &
 1`) in that slot, checked through their RTTI locators. Column 24 is round 460's
 anchoring below, re-measured for round 489: the column is non-zero on 99 of 99
 HP/MP potion rows (TypeID 3/3/1). It is zero on every equipment row except the 28
@@ -36,6 +52,22 @@ cash-shop avatars (3/1/14), and zero on every elixir (3/3/10) and alchemy
 material or stone (3/3/11) row. It holds `0/1/129`, so the exporter emits it as
 `c != 0`. The CSV loader and the SQL store default it to usable for an export that
 predates the column.
+
+**`CanUse` alone does not make an item a potion (round 491).** The bit only
+admits an item to its own use; what the use DOES is picked by the TID.
+`CGItemExpendable::DoJob` (`0x0049aca0`, the `+0x4c8` call) switches on TypeID3,
+and only TypeID3 1 with a TypeID4 outside `{4,5,6,7,8,9,10}` reaches the
+user's HP/MP recovery (slot 308 `0x0049b710` -> `GObjPC::FUN_0049aa70`, reading
+Param1..4 as HP / HP% / MP / MP%). TypeID 3/3/1 is therefore NOT all potions for
+the user: 4 is the pet HP potion (slot 327 heals the pet), 6 the pet revival, 8
+the berserk potion (`AddHwanCount`), 9 the pet feed, 10 the fortress repair kit
+(slot 330). Over the combined itemdata (15,333 ids, last occurrence kept), 588
+`CanUse` rows carry a positive value in columns 118..124; 58 of them are
+recovery kinds (3/3/1/1, /2, /3) and 530 are not -- return and reverse-return
+scrolls, cure pills, pet and berserk potions, mall tickets and expansions, cash
+avatars -- and `session.UseItemHandler` now refuses those without consuming them
+instead of healing from their Param1. That refusal is srrevamp's disclosed gap
+(it models none of their effects), not an engine refusal.
 
 **`CanDrop`'s column is not settled, and this header said 20 when the code reads
 19.** `export-refdata`'s `fCanDrop` is 19 and takes bit 0 of it. Round 460's table
