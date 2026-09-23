@@ -71,6 +71,9 @@ type Entry2 struct {
 	// true for the one small sample checked at the time (most real
 	// objects do have rotation 0, i.e. face the default direction), not a
 	// real contradiction, just an incomplete sample corrected here.
+	//
+	// HOW IT TURNS (round 506): as Object.Rotation in mapo.go -- the game's
+	// matrix is the NEGATED yaw in a right-handed renderer.
 	Rotation float32
 	Index    uint16
 	Raw      [entryLen]byte

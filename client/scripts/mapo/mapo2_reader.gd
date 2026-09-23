@@ -50,6 +50,8 @@ class Entry:
 	## true for the one small sample checked at the time (most real
 	## objects do have rotation 0, i.e. face the default direction), not a
 	## real contradiction, just an incomplete sample corrected here.
+	## HOW IT TURNS (round 506): as MapoReader.ObjectPlacement.rotation --
+	## the game's matrix is the NEGATED yaw in Godot; use NavGraph.godot_yaw.
 	var rotation: float
 	## Real, confirmed 1-based sequential index (relative offset 22-23 in
 	## the raw record) -- scope (per-list? per-sector? per-file?) not yet

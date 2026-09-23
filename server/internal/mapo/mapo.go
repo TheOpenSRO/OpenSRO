@@ -75,6 +75,15 @@ type Object struct {
 	// Fixed12[6:12]'s meaning is still unconfirmed (byte 6 looks like a
 	// small per-object counter, byte 7 like a block/sub-region locator --
 	// see docs/protocol/MAPO_FORMAT.md).
+	//
+	// HOW IT TURNS (round 506): the game applies this angle as a row-vector
+	// Y rotation sending local +X to (cos, 0, sin) -- read from its navmesh
+	// loader, MapLoader::FUN_0042b8b0 -> FUN_0043cda0 in sro_client.exe. In a
+	// right-handed renderer fed the raw coordinates (the Godot client) that
+	// is the NEGATED yaw (client NavGraph.godot_yaw). Evidence (1) above was
+	// misattributed: FUN_009f2c20 is SWorld::vslot_026, which builds a
+	// positioned source with two radii, not an object placement -- it
+	// confirmed the field, never the direction of turn.
 	Rotation float32
 	Fixed12  []byte
 	Extra    []byte

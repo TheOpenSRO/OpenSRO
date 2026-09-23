@@ -40,6 +40,13 @@ decompresses to, and how many texels are opaque, transparent or partial. Written
 spelling of the region minimap filename was real (`<y>x<x>.ddj`), and useful whenever a texture
 renders wrong and the question is whether its alpha survived decoding.
 
+`check_object_yaw.gd` — measures which yaw convention places map objects where a region's own
+`.nvm` says they are: every navmesh object's navigation mesh is placed under eight candidate
+conventions and scored against the cells that list it and the object-to-object linked edges, with
+`--scan` to sample regions across the map and `--list` to name the objects whose yaw can tell the
+conventions apart. Written for round 506, where it confirmed (with the client binary's own matrix)
+that the game's turn is the negated yaw.
+
 `render_asset.gd` — loads a real mesh + real texture from a real pk2 archive through this
 project's own readers (`Pk2Reader`, `BmsReader`, `DdjReader`) and renders a screenshot to disk.
 

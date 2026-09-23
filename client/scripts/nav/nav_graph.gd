@@ -222,15 +222,48 @@ var _object_tiles: Dictionary = {}
 ## carries, in region space.
 var terrain_blocking: PackedVector2Array = PackedVector2Array()
 
+## The Godot Y rotation that turns an object the way the game turns it for a
+## stored placement yaw (`.o`, `.o2` or `.nvm`), in the region's own un-mirrored
+## coordinates -- the space World3D's terrain group and this class work in.
+## It is the NEGATED yaw. Read from the client binary, not inferred:
+##
+##   * `MapLoader::FUN_0042b8b0` (JMX_Library\navmesh\MapLoader.cpp, "Load
+##     Fail(NavMesh Obj)") builds every navmesh object from its placement
+##     record: position from the record's words 1..3, and the float at record
+##     +0x12 -- the yaw -- handed to `FUN_0043cda0`.
+##   * `FUN_0043cda0` zeroes a 4x4 float matrix and writes m[0] = m[10] =
+##     cos(yaw), m[2] = sin(yaw), m[8] = -sin(yaw), m[5] = m[15] = 1
+##     (`0x43cded`..`0x43cdfb`; its two trig calls are the CRT's cos
+##     `0xb44a10` and sin `0xb44b40`, told apart by their x87 fallbacks'
+##     own `fcos` at `0xb44a7d` and `fsin` at `0xb44bad`).
+##   * That matrix is a Direct3D row-vector matrix: the render-side callers
+##     write the position into m[12..14] (`CImitationObj::vslot_027` at
+##     `0x9c3d90`, `FUN_009cf600` at +0x30/+0x34/+0x38), so a vertex is placed
+##     as `v * M + position`, and local +X goes to (cos, 0, sin), local +Z to
+##     (-sin, 0, cos).
+##
+## Godot's `Basis(UP, a)` sends +X to (cos a, 0, -sin a) and +Z to
+## (sin a, 0, cos a), so matching the game needs `a = -yaw`. The positive yaw
+## this project used until round 506 turned every object that is not at 0 or
+## 180 degrees the wrong way -- a 90-degree building faced 270. Measured
+## against the navmesh's own data as well (`client/tools/check_object_yaw.gd`):
+## the only object-to-object edge links in Jangan (bridge spans) close to a
+## 1.48-unit mean gap under the negated yaw against 58.4 under the positive
+## one, and footprint agreement with the cells that list each object is
+## highest under it (99.3% against 97.2% over 57 regions).
+static func godot_yaw(engine_yaw: float) -> float:
+	return -engine_yaw
+
 ## Places one real object's navigation mesh into region space. `position` and
 ## `yaw` are the real values a region's `.nvm` (or equivalently its `.o`, see
-## this class's own doc comment) gives for that placement.
+## this class's own doc comment) gives for that placement; the yaw is turned
+## the game's way by `godot_yaw`.
 static func place(
 	collision: BmsReader.CollisionMesh, object_index: int, position: Vector3, yaw: float
 ) -> PlacedObject:
 	var placed := PlacedObject.new()
 	placed.object_index = object_index
-	var xform := Transform3D(Basis(Vector3.UP, yaw), position)
+	var xform := Transform3D(Basis(Vector3.UP, godot_yaw(yaw)), position)
 	placed.vertices.resize(collision.vertices.size())
 	for i in range(collision.vertices.size()):
 		var p: Vector3 = xform * collision.vertices[i].position

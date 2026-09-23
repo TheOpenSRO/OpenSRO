@@ -5286,10 +5286,13 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 		# own doc comment above (container placement) for how this is now
 		# known correct rather than an artificial recentering.
 		node.position = placement["position"]
-		# Real yaw rotation -- see MapoReader.ObjectPlacement.rotation's doc
-		# comment for how this was confirmed (decompiled cos/sin construction
-		# plus a 100%-real-range empirical check against a live region).
-		node.rotation.y = placement["rotation"]
+		# The game's yaw, turned the game's way: NEGATED in Godot. See
+		# NavGraph.godot_yaw for the binary's own matrix (MapLoader ->
+		# FUN_0043cda0, a row-vector Y rotation). Until round 506 this was the
+		# raw positive yaw, which faced every object not at 0 or 180 degrees
+		# the wrong way. The navigation mesh uses the same helper, so what a
+		# player collides with still matches what they see.
+		node.rotation.y = NavGraph.godot_yaw(placement["rotation"])
 		# Named after the real model it came from, so that a node in the
 		# scene tree says *which* real object it is. Without this every
 		# placed object was an anonymous Node3D and the only way to work

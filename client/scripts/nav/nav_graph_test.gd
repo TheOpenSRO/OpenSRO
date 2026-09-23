@@ -229,16 +229,40 @@ func _initialize() -> void:
 	_check(g_one.blocked(Vector2(110.0, 230.0), Vector2(130.0, 210.0), 0),
 		"and stops one crossing back from its cell_to side")
 
+	# The yaw convention is the game's own, read from its matrix builder
+	# (FUN_0043cda0 via MapLoader::FUN_0042b8b0; see NavGraph.godot_yaw): a
+	# row-vector Y rotation that sends local +X to (cos, 0, sin) and local +Z
+	# to (-sin, 0, cos). Pinned directly, at 90 degrees and at an angle with
+	# no symmetry to hide behind.
+	var b90 := Basis(Vector3.UP, NavGraph.godot_yaw(PI / 2.0))
+	_check((b90 * Vector3(1.0, 0.0, 0.0)).is_equal_approx(Vector3(0.0, 0.0, 1.0)),
+		"a 90-degree yaw sends local +X to world +Z, as the game's matrix does (got %s)" % (b90 * Vector3(1.0, 0.0, 0.0)))
+	_check((b90 * Vector3(0.0, 0.0, 1.0)).is_equal_approx(Vector3(-1.0, 0.0, 0.0)),
+		"and local +Z to world -X (got %s)" % (b90 * Vector3(0.0, 0.0, 1.0)))
+	var t30 := deg_to_rad(30.0)
+	var b30 := Basis(Vector3.UP, NavGraph.godot_yaw(t30))
+	_check((b30 * Vector3(1.0, 0.0, 0.0)).is_equal_approx(Vector3(cos(t30), 0.0, sin(t30))),
+		"a 30-degree yaw sends local +X to (cos, 0, sin) (got %s)" % (b30 * Vector3(1.0, 0.0, 0.0)))
+	_check((b30 * Vector3(0.0, 0.0, 1.0)).is_equal_approx(Vector3(-sin(t30), 0.0, cos(t30))),
+		"and local +Z to (-sin, 0, cos) (got %s)" % (b30 * Vector3(0.0, 0.0, 1.0)))
+
 	# Yaw must actually rotate the placement, or every object would be axis
 	# aligned and only the unrotated ones would work.
 	var turned := NavGraph.place(_ramp(20.0, 40.0, 30.0), 0, Vector3(100.0, 0.0, 200.0), PI / 2.0)
 	var g5 := NavGraph.build(region, _placed_list(turned))
-	# A +90 degree yaw turns the ramp's own local +z run onto world +x, so its
-	# head lands at world x = 100 + 40 and its width spans world z 170..200.
-	_check(absf(g5.height_at(140.0, 185.0, 20.0) - 20.0) < 0.01,
-		"a yawed object's real ramp runs along the rotated axis (got %s)" % g5.height_at(140.0, 185.0, 20.0))
-	_check(absf(g5.height_at(100.0, 185.0, 5.0)) < 0.01,
-		"and its foot is at the rotated origin (got %s)" % g5.height_at(100.0, 185.0, 5.0))
+	# A 90-degree yaw turns the ramp's own local +z run onto world -x and its
+	# local +x width onto world +z (the game's matrix, above), so its head
+	# lands at world x = 100 - 40 and its width spans world z 200..230. Until
+	# round 506 this test expected the opposite turn -- x = 140, z 170..200 --
+	# because it pinned the project's convention rather than the game's.
+	_check(absf(g5.height_at(60.0, 215.0, 20.0) - 20.0) < 0.01,
+		"a yawed object's real ramp runs along the rotated axis (got %s)" % g5.height_at(60.0, 215.0, 20.0))
+	_check(absf(g5.height_at(80.0, 215.0, 10.0) - 10.0) < 0.01,
+		"and is halfway up halfway along it (got %s)" % g5.height_at(80.0, 215.0, 10.0))
+	_check(absf(g5.height_at(100.0, 215.0, 5.0)) < 0.01,
+		"and its foot is at the rotated origin (got %s)" % g5.height_at(100.0, 215.0, 5.0))
+	_check(absf(g5.height_at(140.0, 185.0, 20.0)) < 0.01,
+		"and it is not where the old, opposite turn put it")
 	_check(absf(g5.height_at(110.0, 240.0, 20.0)) < 0.01,
 		"and no longer along the original one")
 

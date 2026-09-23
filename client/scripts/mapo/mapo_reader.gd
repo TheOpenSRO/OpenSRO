@@ -37,6 +37,13 @@ class ObjectPlacement:
 	## (observed only 0x0000/0xffff); fixed12[6:12]'s meaning is still
 	## unconfirmed (byte 6 looks like a small per-object counter, byte 7
 	## like a block/sub-region locator -- see docs/protocol/MAPO_FORMAT.md).
+	## HOW IT TURNS (round 506): the game applies this angle as a row-vector
+	## Y rotation that sends local +X to (cos, 0, sin) -- read from its own
+	## navmesh loader, MapLoader::FUN_0042b8b0 -> FUN_0043cda0 -- which in
+	## Godot is the NEGATED yaw; use NavGraph.godot_yaw, never the raw value.
+	## Evidence (1) below was misattributed: FUN_009f2c20 is SWorld::vslot_026,
+	## which builds a positioned source with two radii, not an object
+	## placement, so it confirmed the field but never the direction of turn.
 	var rotation: float
 	## The 12 raw bytes every record has right after the position -- see
 	## rotation's own doc comment above for what's now confirmed within

@@ -72,6 +72,22 @@ length.
     real object placement (`node.rotation.y`) — live-rendered against real Jangan data and
     confirmed visually: a real city-wall run that previously showed a small floating/disjointed
     panel now reads as one continuous, correctly-aligned wall.
+    **CORRECTED round 506 — the field was right, the direction of turn was not.** The code applied
+    the raw yaw as Godot's `rotation.y`, which turns objects the opposite way from the game: every
+    object not at 0 or 180 degrees faced the wrong way (a 90-degree building faced 270). Evidence
+    (1) above never covered the direction: `FUN_009f2c20` is `SWorld::vslot_026`, which builds a
+    positioned source with two radii, not an object placement. The placement itself is read from
+    the client's navmesh loader: `MapLoader::FUN_0042b8b0` (`JMX_Library\navmesh\MapLoader.cpp`,
+    "Load Fail(NavMesh Obj)") hands the record's float at `+0x12` to `FUN_0043cda0`, which writes a
+    4x4 matrix with `m[0]=m[10]=cos`, `m[2]=sin`, `m[8]=-sin` (`0x43cded..0x43cdfb`; cos is
+    `0xb44a10`, sin `0xb44b40`, told apart by their x87 fallbacks' own `fcos`/`fsin`). The
+    render-side callers put the position in `m[12..14]` (`CImitationObj::vslot_027`,
+    `FUN_009cf600`), so it is a Direct3D row-vector matrix: local +X goes to `(cos, 0, sin)`. In the
+    raw coordinates the Godot client places objects in, that is `Basis(UP, -yaw)` —
+    `NavGraph.godot_yaw`, used by both the rendered object and its navigation mesh. The one-picture
+    "confirmation" could not see it: a straight wall run looks continuous under either turn.
+    Measured against the navmesh's own data too (`client/tools/check_object_yaw.gd`,
+    docs/WORLD_ISSUES.md's five-hundred-and-sixth round).
   - Bytes `[6:12]` — still unconfirmed. Byte 6 looks like a small per-object counter (values like
     `1, 2, 3...` within a same-type-ID group in the real sample checked); byte 7 climbs in a
     stepped pattern whose values divided by 4 land in `0-35` — the same range as this format's

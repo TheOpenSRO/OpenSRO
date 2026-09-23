@@ -7075,6 +7075,69 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-sixth round: every turned object faced the wrong way
+
+Reported from a playtest: "almost every asset is in the wrong cardinal direction". It was true of
+every placed object whose yaw is not 0 or 180 degrees -- in Jangan that is every shop (the stable,
+armour, weapon and general stores and `cj_luxury` all sit at 90 or 270), every `c_sta_01` statue,
+the portal and most trees -- and it had been true since placements were first rotated.
+
+**The cause.** `World3D` set `node.rotation.y = yaw` and `NavGraph.place` built
+`Basis(UP, yaw)`, feeding the game's raw angle straight to Godot. The field was right; the
+direction of turn was not. The game turns objects the other way.
+
+**Read from the binary, not inferred.** The client's own navmesh loader,
+`MapLoader::FUN_0042b8b0` (`JMX_Library\navmesh\MapLoader.cpp`, "Load Fail(NavMesh Obj)"),
+builds every navmesh object from its placement record: position from the record's words 1..3, and
+the float at record `+0x12` -- the yaw, the same offset the `.o2`/`.nvm` readers use -- handed to
+`FUN_0043cda0`. That function zeroes a 4x4 float matrix and writes
+
+	m[0] = m[10] = cos(yaw)    m[2] = sin(yaw)    m[8] = -sin(yaw)    m[5] = m[15] = 1
+
+(`0x43cded..0x43cdfb`). Which call is which was settled from the code, not the names: `0xb44a10`'s
+x87 fallback executes `fcos` (`0xb44a7d`), `0xb44b40`'s executes `fsin` (`0xb44bad`). The matrix is
+a Direct3D row-vector one -- the render-side callers write the object's position into `m[12..14]`
+(`CImitationObj::vslot_027` at `0x9c3d90`, `FUN_009cf600` at `+0x30/+0x34/+0x38`), so a vertex is
+placed as `v * M + position`, sending local +X to `(cos, 0, sin)` and local +Z to `(-sin, 0, cos)`.
+Godot's `Basis(UP, a)` sends +X to `(cos a, 0, -sin a)`, so the game's turn is `a = -yaw`, in the
+raw coordinates both the rendered objects and the navigation graph are placed in (the terrain
+group's global `z -> -z` mirror applies after, to everything alike).
+
+**Measured against the game's own data as well**, with a new headless probe,
+`client/tools/check_object_yaw.gd`, which places every navmesh object's own navigation mesh under
+eight candidate conventions (plus/minus yaw, each with 0/90/180/270 offsets) and scores each against
+the region's `.nvm`:
+
+- **Linked edges** (the only object-to-object edge links; Jangan's bridge spans, 6 links): mean
+  midpoint gap **1.48** under the negated yaw, **58.4** under the positive one, 186-322 under the
+  others.
+- **Footprint precision** (a placed triangle's centroid lands in a cell that lists the object),
+  over objects not at 0/180 in 57 regions across the map: **99.3%** negated, 97.2% positive,
+  94-96% for the 90-degree offsets.
+- **Where the doors face.** Jangan's west-side shops open east onto the square under the negated
+  yaw: the weapon shop (at x 142) has its doorway edges (flag 0) at x 312, the armour shop (x 191)
+  at x 318, the stable (x 247) at x 309 and 363. Under the positive yaw each would open west into
+  the town wall.
+
+**What was wrong with the earlier confirmation.** `MAPO_FORMAT.md` recorded the yaw as confirmed by
+a decompiled `(cos, 0, sin)` construction in `FUN_009f2c20`. That function is `SWorld::vslot_026`,
+which builds a positioned source with two radii -- not an object placement -- so it confirmed the
+field and never the direction. The other half was a picture: a straight city-wall run "reads as one
+continuous wall", which it does under either turn. The one check that would have caught it, the
+navmesh's own linked edges, sat in the parsed data unused.
+
+**The fix.** `NavGraph.godot_yaw(engine_yaw) = -engine_yaw` holds the conversion, with the binary
+citations, and both call sites use it -- the rendered object (`World3D`) and its navigation mesh
+(`NavGraph.place`, which `walk_probe` also uses) -- so what a player collides with still matches what
+they see. The reader and format docs (`mapo_reader.gd`, `mapo2_reader.gd`, server `mapo.go` /
+`mapo2.go`, `MAPO_FORMAT.md`) carry the correction. `nav_graph_test` pins the game's matrix directly
+(90 and 30 degrees) and its rotated-ramp case now expects the game's turn: the old case expected the
+opposite one, because it pinned the project's convention rather than the game's.
+
+**Checked unaffected:** the spawn at local (1002, 1020) still stands on `cj_jang_gate` and walks
+north with no wall contact, identically under both conventions (the plaza is at 0/180). The server
+only reports the angle (`cmd/whatishere`) and transforms nothing.
+
 ## Three-hundred-and-twenty-seventh round: the message buffer, and a hunch that was right in the wrong place
 
 Chasing the use-item payload a third time. `Item_HandleUseItem` never touches
