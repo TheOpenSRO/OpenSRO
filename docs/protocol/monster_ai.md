@@ -1019,3 +1019,107 @@ independently.
 2, 7 and 8 appear. Bit 9 is only tested in the validation filter and in a
 `GObjPC` function that reaches the tactics row through `param_1[0x62]` rather
 than the AI context, so a sweep anchored on the AI module does not see it.
+
+## srrevamp's own monster protocol (placeholders)
+
+Round 533 added two messages so the client can draw a monster the server moves. Both are
+srrevamp's own, additive placeholders (`docs/protocol/PROTOCOL_DECISION.md`); no existing layout
+changed. Client: `scripts/net/combat.gd` (`CombatNet.decode_monster_moved`,
+`decode_monster_motion_list`), drawn by `scripts/world/monster_motion.gd` (`MonsterMotion`) and
+`World3D._on_monster_moved` / `_on_monster_motion_list` / `_step_monster_bodies`. **No server sends
+either yet**; the monster AI that will is a later change behind a default-off flag. On 2026-09-23,
+0x007C..0x007F appeared in no non-test file under `server/internal/session`,
+`server/internal/proto` or `client/scripts/net`.
+
+| op | dir | payload |
+|---|---|---|
+| `OpMonsterMoved 0x007c` | s→zone | s64 monster id, f32 x, f32 z (the server's position when it issued the move), f32 dest_x, f32 dest_z, f32 speed (world units per second), u8 mode (0 walk clip, 1 run clip) -- 29 bytes |
+| `OpMonsterMotionList 0x007f` | s→requester | u16 n, then n entries of {s64 id, f32 dest_x, f32 dest_z, f32 speed, u8 mode} (21 bytes each); sent right after an `OpMonsterListResult`, ONE packet per list |
+
+Fixtures, pinned by `client/scripts/net/combat_test.gd`:
+
+- `OpMonsterMoved`, monster 7 from (100, -200) to (140, -200) at 8, mode 0:
+  `07 00 00 00 00 00 00 00 00 00 c8 42 00 00 48 c3 00 00 0c 43 00 00 48 c3 00 00 00 41 00`.
+- `OpMonsterMotionList`, the same leg as its one entry:
+  `01 00 07 00 00 00 00 00 00 00 00 00 0c 43 00 00 48 c3 00 00 00 41 00`.
+
+**The stop.** `dest == (x, z)` means stop at (x, z). The server sends it with the leg's own speed,
+or the species' walk speed (characterdata col 46) when the monster was not moving, and the mode
+unchanged. The client glides from where it draws the body to (x, z) at that speed -- or places it
+there at once when that is more than `RESYNC_DISTANCE` away, or when the speed is 0 -- without
+turning the body, and ends in the stand clip.
+
+**How the client draws a leg** (`MonsterMotion`):
+
+- The step is the engine's mover. `CGObjMoverByDest::FUN_0048bff0` (SR_GameServer.exe) returns the
+  owner's unit direction (+0x24/+0x2c) times min(|speed(+0x174) x dt|, cap), with the cap the
+  .rdata float at `0xb45ea8` = `0x43200000` = 160.0f. Its caller `CGObjMoverByDest::vslot_003`
+  (`0x48c4e0`) computes dest - position with `FUN_00430ad0` (called at `0x48c5a9`; the body is
+  `(dest + region offset) - pos` with y = 0), compares the two lengths (`fcompp` at `0x48c622`)
+  and replaces the step with dest - position when the step is longer (`0x48c62b..0x48c63c`). So a
+  body never overshoots. Both re-read on the RE box on 2026-09-24. The mover's zeroing of a
+  component under 0.01f (`0xb45df8`) is not modelled.
+- A leg starts from where the body is DRAWN, not from (x, z), unless the two are more than
+  `RESYNC_DISTANCE` apart. A list refresh keeps a walking body where it is drawn on the same
+  terms (`MonsterMotion.reconcile`); before round 533 every refresh put the body at the list's
+  position, which teleports a walking body back by its lag.
+- The clip is the model's own: type 1 walk (mode 0) or 7 run (mode 1) from its `default` group,
+  and its idle once it arrives (`docs/protocol/BSR_FORMAT.md`). A model with no such clip keeps
+  the loop it has.
+- The body turns to face its destination by its MEASURED front (below). The height comes from the
+  terrain-only ray every `HEIGHT_RESOLVE_STEP` units, at most `MAX_HEIGHT_RESOLVES_PER_FRAME`
+  bodies a frame.
+- An `OpMonsterMoved` for a monster the client has no body for asks for the list, at most once
+  every `UNKNOWN_MOVE_PULL_SECONDS`. A motion-list entry re-aims a body only when its destination
+  differs from the one it is walking to by more than `REAIM_EPSILON`; a body the list leaves out
+  finishes its leg.
+
+**Stand-ins, each disclosed at its constant:**
+
+- **The f32 speed is srrevamp's own.** Retail `0x7021`/`0xB021` carry no speed
+  (`docs/protocol/opcodes/movement.md`); the engine's mover reads it off the object (+0x174).
+- **Mode 0/1 -> walk/run clip is an inference.** Grounded: `AITactics_Handler_110` (`0x5489b0`)
+  picks 0 or 1, and the `0x704f` byte is `(mode == 1) + 2` (`0x54184d..0x541859`). Untraced: the
+  mover's use of owner+0x155/+0x174. Unread: `GInterfaceSend::FUN_009d4a00` sends 2 when +0x25d is
+  set, and what +0x25d means.
+- **srrevamp's own numbers:** `RESYNC_DISTANCE` 32 (it must exceed Earth Ghost's 75 u/s run over a
+  0.3 s round trip, 22.5), `HEIGHT_RESOLVE_STEP` 2, `MAX_HEIGHT_RESOLVES_PER_FRAME` 32,
+  `UNKNOWN_MOVE_PULL_SECONDS` 5, `REAIM_EPSILON` 0.5.
+- **The height along a leg** is the terrain-only ray, not the navmesh.
+- **The resync position** follows a lead, not a reading: the `0xB021` reader
+  `NetProcessInNavAndSkill::FUN_008a5750` / `FUN_008a5640` (`message_handlers.tsv`,
+  `client_read_layouts.tsv`).
+
+### Which way each roster model faces (round 533, measured)
+
+`client/tools/probe_monster_front.gd`, run on the render box against its own archives, assembles
+each roster species the way World3D does (by code, then by the display name the server sends) and
+reads, in the space its skeleton is placed in, the mean toe-minus-foot bone vector and the
+head-minus-pelvis offset, at the bind pose and at the walk clip's first frame. A reading names an
+axis when its larger component is at least twice the smaller and at least 0.5 long; weaker
+readings abstain. **The control** is the player's body, `CHAR_CH_MAN_FIGHTER`, whose front World3D
+already turns by PI because it is local -Z: it reads -Z (feet at bind (0.00, -1.23)), so the probe
+counts.
+
+| model (the species drawn with it) | feet, bind | head, bind | feet, walk t=0 | head, walk t=0 | front |
+|---|---|---|---|---|---|
+| `mob\china\mangnyang.bsr` (Mangyang) | (0.00, -1.75) | (0.00, -2.93) | (0.42, -0.38) abstains | (-0.13, -2.14) | **-Z** |
+| `mob\china\bigeyeghost.bsr` (Big-eyed Ghost) | (0.00, -1.51) | (0.00, -4.24) | (0.11, -0.50) | (0.04, -6.04) | **-Z** |
+| `mob\china\gyo.bsr` (Weasel) | (0.00, -0.96) | (0.00, -8.15) | (0.11, -1.03) | (-0.71, -11.84) | **-Z** |
+| `mob\china\waterghost.bsr` (Water Ghost) | (0.00, -0.46) abstains | (0.00, -3.33) | (0.10, 0.37) abstains | (0.12, -4.00) | **-Z** |
+| `mob\china\stoneghost.bsr` (Stone Ghost) | (-0.04, -1.91) | (0.00, -10.00) | (-0.14, -1.65) | (0.50, -10.02) | **-Z** |
+| `mob\china\yeoha.bsr` (Yeoha) | (0.00, -2.49) | (0.00, -8.81) | (0.23, -2.35) | (0.23, -9.03) | **-Z** |
+| `mob\wchina\earthghost.bsr` (Earth Ghost) | (0.00, -1.28) | (0.00, -0.37) abstains | (0.07, -0.41) abstains | (0.21, -1.97) | **-Z** |
+
+So a moving body is turned by `rotation.y = atan2(dir.x, dir.z) - PI` for a world-space path
+`dir` -- the player's convention, whose skeleton carries the PI turn instead
+(`MonsterMotion.facing_yaw`). The table is keyed by MODEL in `MonsterMotion.FRONT_BY_MODEL`; a
+model not in it is left unturned and logged "facing unmeasured".
+
+**The four `_CLON` species have no model.** `MOB_CH_BIGEYEGHOST_CLON` (Small-eyed Ghost),
+`MOB_CH_GYO_CLON` (Old Weasel), `MOB_CH_WATERGHOST_CLON` (Water Ghost slave) and
+`MOB_CH_TOMBSTONE_CLON` (Tomb Stone Ghost) carry `xxx` in every model column of their
+characterdata rows (read on the box's `characterdata_5000.txt`: cols 52-56, counted from 0 as
+col 50 BCRadius is), and their display
+names resolve to no row that has one. World3D draws them as the labelled capsule, which has no
+front. How the retail client draws a `_CLON` row is not established.

@@ -15,6 +15,33 @@ const OP_MONSTER_LIST_RESULT := 0x0066 # server -> client
 const OP_LEVEL_UP := 0x0067         # server -> client, direct to the character that levelled
 const OP_BERSERK := 0x0068          # client -> server, request to go berserk
 const OP_BERSERK_RESULT := 0x0069   # server -> client, the gauge/active after the request
+## srrevamp's own monster-movement messages (placeholders, additive; layouts in
+## docs/protocol/monster_ai.md, "srrevamp's own monster protocol
+## (placeholders)"). No server sends either yet; World3D draws them.
+const OP_MONSTER_MOVED := 0x007c        # server -> every session in the zone, one monster's new leg
+const OP_MONSTER_MOTION_LIST := 0x007f  # server -> the requester, right after an OpMonsterListResult
+
+## Result of decode_monster_moved(): one monster's new leg. (x, z) is where the
+## server had the monster when it issued the move; the body walks from there to
+## (dest_x, dest_z) at `speed` world units per second. dest == (x, z) is a
+## stop at (x, z). `mode` picks the clip, 0 walk and 1 run.
+class MonsterMoved:
+	var monster_id: int
+	var x: float
+	var z: float
+	var dest_x: float
+	var dest_z: float
+	var speed: float
+	var mode: int
+
+## One entry of decode_monster_motion_list(): a listed monster's current leg,
+## without a position -- the list result just before it carries that.
+class MotionEntry:
+	var monster_id: int
+	var dest_x: float
+	var dest_z: float
+	var speed: float
+	var mode: int
 
 ## Result of decode_berserk_result(). activated is true only when this request
 ## actually started a berserk (the gauge was full); gauge/active are the state.
@@ -242,6 +269,51 @@ static func approach_point(from: Vector2, target: Vector2, stop: float) -> Vecto
 		return from
 	return target + away / gap * stop
 
+## The refusal session/combat.go and session/skill.go send for a blow out of
+## reach (firstSwingInReach / skillInReach). srrevamp's own wording; the result
+## carries no code, so the text is what marks it.
+const REFUSED_TOO_FAR := "too far away"
+## How many times an attack the server refused as too far away walks again
+## before the client gives up. srrevamp's own number: the engine's phase 1
+## re-tests reach every tick and walks for as long as it fails
+## (docs/protocol/auto_command.md, "The attack tick"), with no count.
+const APPROACH_RETRY_CAP := 3
+
+## Whether the approach walk releases the attack at `distance` from the target.
+## The engine's rule is in_reach -- the truncated distance within the reach plus
+## the +2 slack (0x004ad4a0) -- and that is the rule while the target stands.
+## Released on the first frame that holds, the walk sends from the band's OUTER
+## edge (about 0-0.7 units of margin at a closing speed of 42 u/s, a 50 u/s run
+## against an 8 u/s walk, at 60 frames a second), and a target walking away
+## gains v x the round trip before the server measures it
+## (docs/TODO.md, "Attack distance"). So while the target is known to be moving,
+## or after a refusal, the release waits for `stop` -- the distance the walk
+## aims at (phase 0's band), never beyond the reach -- which leaves at least 3
+## units (`int(d) <= reach + 2` holds for every d below reach + 3) plus the
+## reach's excess over the stop. srrevamp's own rule, for srrevamp's
+## client-side walk: the engine walks on the server and has no round trip to
+## cover.
+static func approach_releases(distance: float, stop: float, reach: float, tight: bool) -> bool:
+	if tight:
+		return distance <= stop
+	return in_reach(distance, reach)
+
+## How far short of the target the walk aims. The stop distance normally; in a
+## tight approach (approach_releases) `arrive` shorter, so a walk that arrives --
+## World3D stops a walk `arrive` from its point (MOVE_TARGET_STOP_DISTANCE) and
+## releases the attack there -- has already come within the stop distance.
+static func approach_aim(stop: float, tight: bool, arrive: float) -> float:
+	if tight:
+		return maxf(stop - arrive, 0.0)
+	return stop
+
+## Whether an attack released from the approach walk and refused walks again:
+## the refusal is the reach one, the target is still alive and not dying, and
+## it has walked again fewer than APPROACH_RETRY_CAP times. Any other refusal
+## (a cooldown, a dead target) ends it, as before.
+static func should_rewalk(error: String, target_alive: bool, retries: int) -> bool:
+	return error == REFUSED_TOO_FAR and target_alive and retries < APPROACH_RETRY_CAP
+
 ## Encodes an OpAttack request.
 static func encode_attack(character_name: String, target_monster_id: int) -> PackedByteArray:
 	var name_bytes := character_name.to_utf8_buffer()
@@ -411,3 +483,45 @@ static func decode_monster_list_result(data: PackedByteArray) -> MonsterListResu
 		offset = decoded[1]
 
 	return result
+
+## The size of an OpMonsterMoved payload: s64 id, five f32 (x, z, dest_x,
+## dest_z, speed) and the u8 mode.
+const MONSTER_MOVED_SIZE := 29
+## The size of one OpMonsterMotionList entry: s64 id, three f32 (dest_x,
+## dest_z, speed) and the u8 mode.
+const MOTION_ENTRY_SIZE := 21
+
+## Decodes an OpMonsterMoved payload, or null when it is shorter than 29 bytes.
+static func decode_monster_moved(data: PackedByteArray) -> MonsterMoved:
+	if data.size() < MONSTER_MOVED_SIZE:
+		return null
+	var m := MonsterMoved.new()
+	m.monster_id = data.decode_s64(0)
+	m.x = data.decode_float(8)
+	m.z = data.decode_float(12)
+	m.dest_x = data.decode_float(16)
+	m.dest_z = data.decode_float(20)
+	m.speed = data.decode_float(24)
+	m.mode = data[28]
+	return m
+
+## Decodes an OpMonsterMotionList payload: u16 n, then n entries of 21 bytes.
+## A truncated tail is dropped and every whole entry before it is kept.
+static func decode_monster_motion_list(data: PackedByteArray) -> Array[MotionEntry]:
+	var out: Array[MotionEntry] = []
+	if data.size() < 2:
+		return out
+	var count := data.decode_u16(0)
+	var offset := 2
+	for i in range(count):
+		if offset + MOTION_ENTRY_SIZE > data.size():
+			break
+		var e := MotionEntry.new()
+		e.monster_id = data.decode_s64(offset)
+		e.dest_x = data.decode_float(offset + 8)
+		e.dest_z = data.decode_float(offset + 12)
+		e.speed = data.decode_float(offset + 16)
+		e.mode = data[offset + 20]
+		out.append(e)
+		offset += MOTION_ENTRY_SIZE
+	return out

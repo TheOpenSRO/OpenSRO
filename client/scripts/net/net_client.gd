@@ -62,6 +62,11 @@ signal monster_damaged(damaged: CombatNet.MonsterDamaged)
 signal monster_died(monster_id: int)
 signal loot_dropped(dropped: CombatNet.LootDropped)
 signal monster_list_result(monsters: Array, error: String)
+## srrevamp's own monster movement (CombatNet.OP_MONSTER_MOVED /
+## OP_MONSTER_MOTION_LIST): one monster's new leg, and the legs of the listed
+## monsters sent right after a monster list. No server sends either yet.
+signal monster_moved(moved: CombatNet.MonsterMoved)
+signal monster_motion_list(entries: Array)
 ## Items on the ground (GroundItemsNet): the zone's list, one appearing, one
 ## leaving (picked or expired), one whose owner window passed, and the
 ## outcome of our own pick-up.
@@ -234,6 +239,7 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	_peer = null
 	_reader = PacketReader.new()
 	_attack_targets_in_flight.clear()
+	_unhandled_warned.clear()
 	_use_tls = use_tls
 	_tls_host = host
 	server_host = host
@@ -515,6 +521,21 @@ func friend_pending_list(char_name: String) -> void:
 ## chasing a desync or a crash from the log.
 var wire_logging := false
 
+## Opcodes this session has already warned about as unhandled. A client older
+## than a server's messages -- 0x007C/0x007F arrive many times a second in a
+## zone once the server's monster AI runs -- warned once per PACKET and filled
+## the log; now it warns once per opcode per connection (cleared in
+## connect_to_server).
+var _unhandled_warned := {}
+
+## Whether to warn about an unhandled `opcode`: the first time this session
+## sees it, and never again until the next connect.
+func _should_warn_unhandled(opcode: int) -> bool:
+	if _unhandled_warned.has(opcode):
+		return false
+	_unhandled_warned[opcode] = true
+	return true
+
 func _dispatch(p: Packet) -> void:
 	if wire_logging:
 		print("WIRE recv opcode=0x%04x size=%d" % [p.opcode, p.data.size()])
@@ -613,6 +634,12 @@ func _dispatch(p: Packet) -> void:
 		CombatNet.OP_MONSTER_LIST_RESULT:
 			var r := CombatNet.decode_monster_list_result(p.data)
 			monster_list_result.emit(r.monsters, r.error)
+		CombatNet.OP_MONSTER_MOVED:
+			var moved := CombatNet.decode_monster_moved(p.data)
+			if moved != null:
+				monster_moved.emit(moved)
+		CombatNet.OP_MONSTER_MOTION_LIST:
+			monster_motion_list.emit(CombatNet.decode_monster_motion_list(p.data))
 		GroundItemsNet.OP_LIST_RESULT:
 			var gl := GroundItemsNet.decode_list_result(p.data)
 			ground_item_list_result.emit(gl.items, gl.error)
@@ -755,4 +782,5 @@ func _dispatch(p: Packet) -> void:
 			if r != null:
 				gm_command_result.emit(r)
 		_:
-			push_warning("NetClient: unhandled opcode 0x%04x" % p.opcode)
+			if _should_warn_unhandled(p.opcode):
+				push_warning("NetClient: unhandled opcode 0x%04x (warned once per connection)" % p.opcode)

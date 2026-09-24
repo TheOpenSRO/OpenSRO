@@ -7075,6 +7075,114 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-thirty-third round: a monster the server moves walks, faces its path and is not teleported back by the next list
+
+No server moves monsters yet. This round built the client half so that one can: srrevamp's own
+`OpMonsterMoved 0x007C` and `OpMonsterMotionList 0x007F` are decoded (`CombatNet`) and drawn
+(`MonsterMotion`, `World3D._on_monster_moved` / `_on_monster_motion_list` /
+`_step_monster_bodies`). The table, fixtures and stand-ins are in `docs/protocol/monster_ai.md`,
+"srrevamp's own monster protocol (placeholders)". Nothing changes in normal play.
+
+**The mover is the engine's, re-read on the box (2026-09-24).** `CGObjMoverByDest::FUN_0048bff0`
+(SR_GameServer.exe) returns the owner's unit direction times min(|speed(+0x174) x dt|, cap). The cap
+is the .rdata float at `0xb45ea8`, bytes `00 00 20 43` = 160.0f, read out of the PE. Its caller
+`vslot_003` (`0x48c4e0`) takes dest - position from `FUN_00430ad0` (`call` at `0x48c5a9`). It
+compares the two lengths (`fcompp` at `0x48c622`, `test ah,0x41 ; jne`), and when the step is longer
+it copies dest - position over it (`0x48c62b..0x48c63c`). So a body lands exactly on its
+destination and never overshoots. The mover also zeroes a component under 0.01f (`0xb45df8`, bytes
+`0a d7 23 3c`); that is not modelled.
+
+**The list no longer teleports a walking body.** `_spawn_or_update_monster` set
+`existing.position = pos` on every refresh. That line moved into `MonsterMotion.reconcile`, still
+returning the list's position, and the new NEGATIVE (`reconcile(Vector2(100,0), Vector2(97,0),
+true)` must return (100,0)) ran red: `FAIL ... (got (97, 0))`. Now a walking body keeps where it is
+drawn unless it has drifted more than 32 units (`RESYNC_DISTANCE`, srrevamp's own) from the list.
+
+**Which way the bodies face: measured, not assumed.** `client/tools/probe_monster_front.gd`
+assembles each roster species as World3D does and reads, in skeleton space, the mean toe-minus-foot
+vector and the head-minus-pelvis offset, at the bind pose and at the walk clip's first frame. The
+control is the player's body, whose front World3D already turns by PI.
+
+- **The first run did not count.** The rule then was that every reading had to name the same axis.
+  The control failed it: an upright body's head sits over its pelvis (bind (-0.00, 0.15)), and its
+  walk-pose foot reading is short ((0.08, -0.37)). Neither names an axis, and under that rule
+  they vetoed the clear bind-pose foot reading (0.00, -1.23). Mangyang, Water Ghost and Earth
+  Ghost failed the same way.
+- **The rule was changed** so that a reading naming no axis abstains. That is what a head-over-hips
+  reading means for a biped. Conflicting axes still unsettle a model. The control then reads -Z,
+  and the probe counts.
+- **All seven roster models read -Z**, and no reading named a conflicting axis. The per-model
+  numbers are in the monster_ai.md table. The strongest are Stone Ghost's head (0.00, -10.00) and
+  Weasel's head (0.00, -8.15). The weakest settled model is Earth Ghost, whose only readings are
+  its bind feet (0.00, -1.28) and its walk-pose head (0.21, -1.97).
+
+So `MonsterMotion.FRONT_BY_MODEL` lists the seven as -Z, and `facing_yaw` turns a body by
+`atan2(dir.x, dir.z) - PI`. That is the player's convention with the PI moved from the skeleton to
+the yaw. `NavGraph.godot_yaw` (map objects' negated yaw) is not involved: a leg's direction is a
+world-space vector, not an engine yaw.
+
+**Found on the way: four roster species have no model.** `MOB_CH_BIGEYEGHOST_CLON`,
+`MOB_CH_GYO_CLON`, `MOB_CH_WATERGHOST_CLON` and `MOB_CH_TOMBSTONE_CLON` carry `xxx` in cols 52-56
+of the box's `characterdata_5000.txt`. Their display names ("Small-eyed Ghost", "Old Weasel",
+"Water Ghost slave", "Tomb Stone Ghost") resolve to no row that has a model. They are drawn as the
+capsule, which has no front, and the probe says so. docs/TODO.md has the item.
+
+**Live, on the render box.** `SRREVAMP_QA_MOB_MOVE=40,0,8,0 SRREVAMP_QA_MOB_LOG=1 qa_shot.sh
+--server --frames 600 --size 640x360`, hardware GL, with the box's default `SERVER_BIN` (a
+2026-09-19 build; this check only needs its monster list):
+
+	QA MOB MOVE: monster 18 at 231 from the player, leg (40.0,0.0) at 8.0/s mode 0
+	World3D: monster 18 walk from (70.0,-220.0) to (110.0,-220.0) at 8.0/s yaw -1.57
+	World3D: monster 18 at (74.0,-220.0) 36.0 to go
+	...                                       (every 30 frames: 32, 28, 24, 20)
+	QA MOB MOVE: asking for the monster list at half the leg
+	World3D: server reports 23 monster(s)     (Yeoha at 70, 0, -220 -- 20 behind the drawn body)
+	World3D: monster 18 at (94.0,-220.0) 16.0 to go
+	...                                       (12, 8, 4, 0.0)
+	World3D: monster 18 arrived at (110.0,-220.0)
+
+- Monster 18 is a Yeoha, on the measured `yeoha.bsr`. Its yaw -1.57 puts the -Z front along +X,
+  which is the leg's direction.
+- The to-go values fall by 4.0 every 30 frames (8 u/s at the movie writer's 1/60 s), straight
+  through the mid-leg refresh that reported it 20 units back. Without reconcile, the body would
+  have jumped back there.
+- The arrival came on the 301st frame of the leg, as in the headless test. The 0.0 on the 300th
+  frame is float residue.
+- The run printed no SCRIPT ERROR. The frames were deleted; they were for a human, and the log
+  lines above are the measurement.
+
+**The review's blocking point: the approach walk against a moving target.** Round 519 released an
+attack on the first frame in reach, `int(d) <= int(reach) + 2`. That is the outer edge of the slack,
+about 0-0.7 units inside it at a 42 u/s closing speed. A target walking away gains v x RTT before
+the server measures it, and before this round a refusal was final. The simulation in
+`monster_motion_test.gd` mirrors World3D's frame order, with the server measuring 150 ms after the
+release:
+
+- With no change, the release at the slack edge is refused. In both fixture bands (10/10 unarmed,
+  14/16 with range 6), the first release in the "unknown" runs was refused, as predicted.
+- With round 533, a target known to be walking is released inside the stop distance and struck on
+  the first release. One whose motion was not yet known is refused, walks again (tight) and is
+  struck on the second.
+- With a 600 ms delay, the tight margin (3 units) is also exceeded, and the walk gives up after
+  1 + `APPROACH_RETRY_CAP` = 4 releases instead of walking for ever.
+
+`_on_attack_result`'s own re-arm is tested on a bare World3D (the NEGATIVE: before this round the
+handler returned without re-arming). Not measured: a live moving monster at a real round trip.
+Localhost has an RTT near 0, and nothing moves monsters yet.
+
+**Other review fixes applied.**
+
+- The stop push glides without turning and ends in the stand clip, and a stop with speed 0 is placed
+  at once. Both are tested.
+- y is resolved where reconcile places the body, not at the list's x/z.
+- A kill drops the body's leg as the result arrives, next to `hold_for_kill`, and stands it.
+- Gait 0 plays the assembler's own idle, which covers files with no groups. A missing clip keeps
+  the loop. A death hold is never given a loop.
+- `swap_loop` replaces a one-shot's resume slot rather than appending a second loop. The trap test
+  asserts exactly one entry.
+- `NetClient` warns about an unhandled opcode once per opcode per connection, not once per packet.
+  Older clients will see 0x007C/0x007F many times a second once the AI runs.
+
 ## Five-hundred-and-thirty-second round: the killer sees the death -- a hold set when the result arrives, the clip played as the blow lands
 
 On the screen of the player who landed the killing blow, the monster did not die: it vanished. Every

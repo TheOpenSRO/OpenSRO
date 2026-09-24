@@ -32145,3 +32145,165 @@ cleared the target on an own kill. Client only. The server is unchanged.
 **Docs.** WORLD_ISSUES round 532 was added. Round 208's "the die animation comes from the list
 sync" now carries a dated correction. `docs/SYSTEMS.md` has no row for the client's death
 animation, so it is unchanged.
+
+## Client: decode and draw server-driven monster moves (0x007C push and 0x007F motion list) with the engine's mover and both of its clamps, the walk/run clip, a measured facing and throttled height (round 533)
+
+The client can now draw a monster the server moves. Nothing is visible in normal play: no server
+sends either message until the monster AI (a later change, behind a default-off flag) is switched
+on. With `SRREVAMP_QA_MOB_MOVE`, a monster walks at its speed in its walk clip, faces its path, and
+is no longer teleported back by list refreshes. An attack that the approach walk released and the
+server refused as too far away now walks again, up to a cap. Client only; the server is unchanged,
+and no existing opcode or layout changed.
+
+**Grounding, re-read for this round.**
+
+- The mover is `CGObjMoverByDest::FUN_0048bff0` (SR_GameServer.exe, re-read with `getfn.sh` on the
+  RE box). It returns the owner's unit direction (+0x24/+0x2c) times
+  min(|speed(+0x174) x dt|, cap). The cap is .rdata `0xb45ea8`, whose bytes `00 00 20 43` were
+  read out of the PE: 160.0f.
+- Its caller `CGObjMoverByDest::vslot_003` (`0x48c4e0`) computes dest - position with
+  `FUN_00430ad0` (`call` at `0x48c5a9`; the body is `(dest + region offset) - pos`, y = 0). It
+  compares the two lengths (`fcompp` at `0x48c622`, `test ah,0x41 ; jne 0x48c63f`), and when the
+  step is longer it copies dest - position over it (`0x48c62b..0x48c63c`). That is the
+  no-overshoot clamp. The 0.01f component zeroing (`0xb45df8`) is not modelled.
+- The clips are type 1 walk and 7 run in a model's `default` group (`bsr_reader.gd`;
+  `docs/protocol/BSR_FORMAT.md`, mangnyang's group). Mode 0/1 -> walk/run is an inference:
+  `AITactics_Handler_110` (`0x5489b0`) picks 0 or 1 (read), and the `0x704f` byte is
+  `(mode == 1) + 2` (`0x54184d..0x541859`, read).
+- The facing was measured: `client/tools/probe_monster_front.gd` on the box's archives. The control
+  `CHAR_CH_MAN_FIGHTER` reads -Z, and all seven roster models read -Z (the table is in
+  `docs/protocol/monster_ai.md`).
+- 0x007C..0x007F were used by no non-test file under `server/internal/session`,
+  `server/internal/proto` or `client/scripts/net` (grep).
+
+**Wired.**
+
+- `docs/protocol/monster_ai.md`, "srrevamp's own monster protocol (placeholders)":
+  - `OpMonsterMoved 0x007c` (s→zone, 29 bytes: s64 id, f32 x/z, f32 dest_x/dest_z, f32 speed, u8
+    mode) and `OpMonsterMotionList 0x007f` (s→requester after a list: u16 n + 21-byte entries);
+  - the fixtures;
+  - the stop push (the leg's speed, or the species' walk speed; mode unchanged; no re-facing;
+    stand clip).
+- `CombatNet`:
+  - `OP_MONSTER_MOVED` and `OP_MONSTER_MOTION_LIST`, `MonsterMoved`, `MotionEntry`;
+  - `decode_monster_moved` (null under 29 bytes) and `decode_monster_motion_list` (keeps whole
+    entries before a truncated tail);
+  - the approach helpers `approach_releases`, `approach_aim` and `should_rewalk`, with
+    `REFUSED_TOO_FAR` and `APPROACH_RETRY_CAP` 3 (srrevamp's own).
+- `NetClient` has the signals `monster_moved` and `monster_motion_list`, with their `_dispatch`
+  cases. The unhandled-opcode warning now fires once per opcode per connection
+  (`_should_warn_unhandled`, cleared in `connect_to_server`).
+- New `client/scripts/world/monster_motion.gd` (`MonsterMotion`, pure):
+  - `step`, the engine's two clamps;
+  - `begin`, which starts from the drawn position and resyncs past `RESYNC_DISTANCE` 32; a speed of
+    0 places the body at once;
+  - `reconcile`, `gait_type` / `state_gait`, `turns_to_face`, `front_of` / `FRONT_BY_MODEL`,
+    `facing_yaw`, `gait_clip` (stand = the assembler's idle), `swap_loop` (a one-shot's resume
+    slot, never a second loop; a death hold untouched) and `needs_height`
+    (`HEIGHT_RESOLVE_STEP` 2).
+  - srrevamp's own constants: `MAX_HEIGHT_RESOLVES_PER_FRAME` 32, `UNKNOWN_MOVE_PULL_SECONDS` 5,
+    `REAIM_EPSILON` 0.5.
+- `World3D`:
+  - `_monster_motion`;
+  - `_on_monster_moved`: an unknown id pulls the list at most once in 5 s, and a dying body
+    ignores the move;
+  - `_on_monster_motion_list`: re-aims past `REAIM_EPSILON`; unlisted bodies finish their leg;
+  - `_apply_monster_leg`, `_set_monster_gait`, `_stop_monster_motion`;
+  - `_step_monster_bodies`, called first in `_physics_process`. It steps each body, writes its x/z
+    into `_monster_snapshots`, throttles the height rays and stands the body on arrival.
+  - `_spawn_or_update_monster` places an existing body through `reconcile`, resolves y at the placed
+    x/z and writes both back.
+  - A leg is dropped in `_begin_monster_death`, in the free path of `_sync_monster_bodies`, in
+    `_on_change_zone_result`, and at a kill result, next to `hold_for_kill`.
+  - Bodies carry their model path as `meta("model")`.
+- The approach walk:
+  - It releases only inside the stop while the target walks, or after a refusal. It then aims
+    `MOVE_TARGET_STOP_DISTANCE` short of the stop, so an arrival is inside it.
+  - `_release_pending_attack` keeps the attack in `_released_attack`, and anything the player does
+    next clears it.
+  - `_rewalk_after_refusal` re-arms a "too far away" refusal of a live, non-dying target, up to
+    the cap.
+- The QA hooks `SRREVAMP_QA_MOB_MOVE="dx,dz,speed,mode"` and `SRREVAMP_QA_MOB_LOG`, documented in
+  World3D's QA header.
+- The probe tool `client/tools/probe_monster_front.gd`, with a `client/tools/README.md` entry.
+
+**Stand-ins, disclosed at their constants and in monster_ai.md:**
+
+- the f32 speed field (retail `0x7021`/`0xB021` carry none);
+- the mode -> clip inference;
+- `RESYNC_DISTANCE`, `HEIGHT_RESOLVE_STEP`, `MAX_HEIGHT_RESOLVES_PER_FRAME`,
+  `UNKNOWN_MOVE_PULL_SECONDS`, `REAIM_EPSILON` and `APPROACH_RETRY_CAP`;
+- the terrain-only height along a leg;
+- the resync position, which is a lead (`FUN_008a5750`/`FUN_008a5640`), not a reading.
+
+A model the probe did not settle would stay unturned and be logged "facing unmeasured"; all seven
+roster models settled.
+
+**Found and filed:** the four `_CLON` roster species (Small-eyed Ghost, Old Weasel, Water Ghost
+slave, Tomb Stone Ghost) carry `xxx` in their characterdata model columns and resolve to no model,
+so they are drawn as capsules (docs/TODO.md).
+
+**Tests.**
+
+- `combat_test.gd`:
+  - the 29-byte fixture decodes every field, and 28 bytes give null;
+  - the 23-byte motion list gives one entry (7 to 140,-200 at 8, mode 0);
+  - n=2 with a truncated second entry gives 1;
+  - the release, aim and rewalk rules;
+  - NetClient routes 0x007C/0x007F to their signals, drops a short 0x007C, warns once per opcode,
+    and `_dispatch` records the warning.
+- `monster_motion_test.gd`, pure:
+  - a 40-unit leg at 8 u/s arrives in 300 +-1 frames (301) and never overshoots;
+  - a 22 u/s x 0.2 s step lands exactly on a destination 3 away;
+  - 300 u/s x 1 s moves 160;
+  - gait types 1/7/0;
+  - `needs_height` false at 1.9 and true at 2.0;
+  - begin and resync;
+  - a stop push at 8 u/s and at 0 u/s ends at (x,z), standing, within 1 s, unturned;
+  - `facing_yaw` carries a -Z front onto four directions;
+  - `swap_loop` during a one-shot leaves one entry and resumes into the walk (the trap test);
+  - a null clip keeps the loop, and a death hold is untouched;
+  - `gait_clip`'s stand is the idle with no groups.
+- The simulation, a target receding at 8 u/s with the server measuring 150 ms after the release, in
+  both fixture bands:
+  - known to be moving, it is struck on the first release;
+  - not yet known, it is refused, walks again and is struck on the second;
+  - at a 600 ms delay the walk gives up after 4 releases.
+- On a bare World3D:
+  - a push starts from the drawn position and turns the body to +X;
+  - a stop push leaves the facing alone;
+  - an unknown id starts nothing;
+  - `_on_attack_result` re-arms a too-far refusal (tight, retry 1) and not at the cap, on another
+    refusal or on a dying target;
+  - a release keeps the attack, and `_drop_pending_attack` forgets it.
+- NEGATIVE:
+  - `reconcile(Vector2(100,0), Vector2(97,0), true)` must return (100,0). At the refactor step,
+    with `reconcile` still returning the list's position (the old snap), the suite ran red:
+    `FAIL ... (got (97, 0))`.
+  - With every production file reverted (stashed, and synced into a fresh box directory so the
+    new files were really absent), `monster_motion_test.gd` and `combat_test.gd` both failed:
+    `Parse Error: Identifier "MonsterMotion" not declared`,
+    `Static function "decode_monster_moved()" not found`. Restored: ALL PASS.
+- `client/tools/remote_godot.sh tests`: 83 suites, 0 failing. `remote_godot.sh check`: 252 scripts
+  and 5 scenes, ALL LOAD. `cd server && go build ./... && go test -count=1 -p 1 ./...`: green, re-run after the doc edits.
+- Live, render box: `SRREVAMP_QA_MOB_MOVE=40,0,8,0 SRREVAMP_QA_MOB_LOG=1 qa_shot.sh --server
+  --frames 600`, hardware GL, the box's 2026-09-19 `SERVER_BIN`, which is only needed for its list.
+  - The run printed one `monster 18 walk from (70.0,-220.0) to (110.0,-220.0) at 8.0/s yaw -1.57`
+    line, for a Yeoha on the measured `yeoha.bsr`.
+  - The to-go values fell by 4.0 every 30 frames (36 ... 20, then 16 ... 0.0), straight through
+    the mid-leg list refresh that reported the monster 20 units back.
+  - `arrived at (110.0,-220.0)` came on the leg's 301st frame.
+  - No SCRIPT ERROR. The frames were deleted.
+- Not measured: the approach walk against a live moving monster at a real round trip. Nothing
+  moves monsters yet, and localhost's round trip is near 0. docs/TODO.md records it as a check to
+  run before the server's monster AI is switched on publicly.
+
+**Docs.**
+
+- `docs/protocol/monster_ai.md` has the protocol section and the facing table.
+- `docs/TODO.md`: the monster-movement item says the client half is built. The in-reach-send
+  sub-bullet is corrected: the error is v x RTT plus tick quantization, against about 0-0.7 at the
+  slack edge, not 2. There is a new item for the `_CLON` capsules.
+- WORLD_ISSUES round 533, with the probe's numbers and the live lines.
+- The `docs/SYSTEMS.md` Monster AI row: the client half is built, and the server half is next.
+- `client/tools/README.md` has the probe's entry.

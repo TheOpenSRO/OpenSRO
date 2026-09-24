@@ -1,0 +1,200 @@
+extends RefCounted
+class_name MonsterMotion
+
+## How a server-driven monster move is drawn: the leg an OpMonsterMoved push
+## or an OpMonsterMotionList entry starts (docs/protocol/monster_ai.md,
+## "srrevamp's own monster protocol (placeholders)"), stepped every physics
+## frame by the engine's own mover, with the walk or run clip and the body
+## turned along its path. Pure and static so a headless test can hold every
+## rule to account; World3D._on_monster_moved, _on_monster_motion_list and
+## _step_monster_bodies are the glue.
+##
+## A leg's state is a Dictionary:
+##   pos    Vector2  where the body is drawn (world x, z)
+##   dest   Vector2  where the leg ends
+##   speed  float    world units per second
+##   mode   int      0 walk clip, 1 run clip
+##   moving bool     the leg has not arrived
+##   stop   bool     the message was a stop (dest == the server position):
+##                  the body glides to it in the stand clip and is not turned
+
+## THE ENGINE'S STEP CAP: one frame never moves a body more than 160 units.
+## CGObjMoverByDest::FUN_0048bff0 (SR_GameServer.exe) returns the owner's unit
+## direction (+0x24/+0x2c) times min(|speed(+0x174) x dt|, cap), and the cap is
+## the .rdata float at 0xb45ea8 = 0x43200000 = 160.0f (re-read 2026-09-24).
+## Its zeroing of a component under 0.01f (0xb45df8) is not modelled.
+const MOVER_STEP_CAP := 160.0
+
+## How far the drawn body may drift from the server's position before it is
+## put back there. srrevamp's own number: it must exceed the lag a moving body
+## legitimately carries, and the fastest roster run -- Earth Ghost's 75 u/s
+## (characterdata col 47, docs/protocol/monster_ai.md "The roster's real walk
+## and run speeds") -- over a 0.3 s round trip is 22.5.
+const RESYNC_DISTANCE := 32.0
+## How far a walking body moves between two terrain-height rays. srrevamp's own
+## number; the height comes from the terrain-only ray (World3D._terrain_height_at),
+## not the navmesh.
+const HEIGHT_RESOLVE_STEP := 2.0
+## At most this many height rays a frame across every walking body; the rest
+## keep their height until a later frame. srrevamp's own number.
+const MAX_HEIGHT_RESOLVES_PER_FRAME := 32
+## A move for a monster the client has not been told about asks for the list,
+## but no more than once in this many seconds. srrevamp's own number.
+const UNKNOWN_MOVE_PULL_SECONDS := 5.0
+## A motion-list entry re-aims a body only when its destination differs from
+## the one being walked to by more than this. srrevamp's own number.
+const REAIM_EPSILON := 0.5
+
+const MODE_WALK := 0
+const MODE_RUN := 1
+
+## Which way each model's body faces in its own skeleton space, MEASURED by
+## client/tools/probe_monster_front.gd on the render box (round 533): the mean
+## toe-minus-foot bone vector and the head-minus-pelvis offset, at the bind
+## pose and at the walk clip's first frame, with the player's body
+## (CHAR_CH_MAN_FIGHTER, whose front World3D turns by PI) as the control -- it
+## read -Z, so the probe counts. Keyed by the model World3D draws (the .bsr
+## path, lowercase), not the code: the four `_CLON` roster rows carry `xxx`
+## for a model and resolve to none, so they are drawn as the capsule and have
+## nothing to face. A model not listed here is FACING UNMEASURED and is left
+## unturned (front_of returns "").
+const FRONT_BY_MODEL := {
+	"mob\\china\\mangnyang.bsr": "-Z",
+	"mob\\china\\bigeyeghost.bsr": "-Z",
+	"mob\\china\\gyo.bsr": "-Z",
+	"mob\\china\\waterghost.bsr": "-Z",
+	"mob\\china\\stoneghost.bsr": "-Z",
+	"mob\\china\\yeoha.bsr": "-Z",
+	"mob\\wchina\\earthghost.bsr": "-Z",
+}
+
+## One frame of the engine's mover: the step is min(|speed x delta|, 160)
+## along the line to dest (FUN_0048bff0), and a step longer than what is left
+## lands exactly on dest -- CGObjMoverByDest::vslot_003 (0x48c4e0) computes
+## dest - position (FUN_00430ad0, called at 0x48c5a9), compares the two
+## lengths (fcompp at 0x48c622) and replaces the step with dest - position
+## when the step is longer (0x48c62b..0x48c63c). So a body never overshoots.
+static func step(pos: Vector2, dest: Vector2, speed: float, delta: float) -> Vector2:
+	var s := minf(absf(speed * delta), MOVER_STEP_CAP)
+	var left := pos.distance_to(dest)
+	if s >= left:
+		return dest
+	return pos + (dest - pos) / left * s
+
+## The state a new leg starts in. It starts from where the body is DRAWN, so a
+## push never teleports it, unless that is more than RESYNC_DISTANCE from where
+## the server had it -- then from (msg.x, msg.z). A stop (dest == (x, z)) is
+## marked so the body is not turned toward a sub-unit correction; a leg with no
+## speed has nothing to glide at and is placed at its end at once (the server
+## sends a stop with the leg's speed, or the species' walk speed when it was
+## not moving -- the protocol table -- so this is for a malformed message).
+static func begin(displayed: Vector2, msg: CombatNet.MonsterMoved) -> Dictionary:
+	var server := Vector2(msg.x, msg.z)
+	var dest := Vector2(msg.dest_x, msg.dest_z)
+	var pos := displayed
+	if displayed.distance_to(server) > RESYNC_DISTANCE:
+		pos = server
+	var speed := absf(msg.speed)
+	if speed <= 0.0:
+		pos = dest
+	return {"pos": pos, "dest": dest, "speed": speed, "mode": msg.mode,
+		"moving": pos != dest, "stop": dest.is_equal_approx(server)}
+
+## Where a listed monster's body is placed on a list refresh. A standing body
+## goes where the list says (the server's word). A walking one keeps its drawn
+## position -- the list is a snapshot of where the server had it, which a body
+## drawn one latency behind never matches, and snapping to it teleported the
+## body back on every refresh -- unless it has drifted more than
+## RESYNC_DISTANCE from the list.
+static func reconcile(displayed: Vector2, snapshot: Vector2, moving: bool) -> Vector2:
+	if moving and displayed.distance_to(snapshot) <= RESYNC_DISTANCE:
+		return displayed
+	return snapshot
+
+## The clip a leg plays, as a BsrReader action type: 1 walk (TYPE_WALK) for
+## mode 0, 7 run (TYPE_RUN) for mode 1, 0 stand once it is not moving. The
+## types are the `.bsr` animation group's (mangnyang: 0 stand01, 1 walk,
+## 7 run -- docs/protocol/BSR_FORMAT.md). Mode 0/1 -> walk/run is an inference:
+## AITactics_Handler_110 (0x5489b0) picks 0 or 1 and the 0x704f byte is
+## (mode == 1) + 2 (0x54184d..0x541859); how the mover uses owner+0x155/+0x174
+## is untraced.
+static func gait_type(mode: int, moving: bool) -> int:
+	if not moving:
+		return BsrReader.AnimationEntry.TYPE_STAND
+	return BsrReader.AnimationEntry.TYPE_RUN if mode == MODE_RUN else BsrReader.AnimationEntry.TYPE_WALK
+
+## The clip a leg's state plays now: a stop glides in the stand clip.
+static func state_gait(state: Dictionary) -> int:
+	return gait_type(int(state["mode"]), bool(state["moving"]) and not bool(state["stop"]))
+
+## Whether a leg turns the body toward its destination: a moving leg that is
+## not a stop.
+static func turns_to_face(state: Dictionary) -> bool:
+	return bool(state["moving"]) and not bool(state["stop"])
+
+## The measured front of a model (FRONT_BY_MODEL), or "" -- facing unmeasured.
+static func front_of(model_path: String) -> String:
+	return String(FRONT_BY_MODEL.get(model_path.to_lower(), ""))
+
+## The body's rotation.y that puts its front along `dir`, a WORLD-space ground
+## vector (x, z) -- bodies are children of OtherEntities in world space
+## (World3D._spawn_or_update_monster). The player's convention: a node's local
+## +Z points along atan2(dir.x, dir.z) (World3D._physics_process), and the
+## player's -Z-front skeleton is turned PI (_try_apply_real_player_character).
+## A monster's skeleton is not turned, so its measured front's own yaw is
+## taken off instead.
+static func facing_yaw(dir: Vector2, front: String) -> float:
+	var front_yaw := 0.0
+	match front:
+		"-Z":
+			front_yaw = PI
+		"+X":
+			front_yaw = PI / 2.0
+		"-X":
+			front_yaw = -PI / 2.0
+	return wrapf(atan2(dir.x, dir.y) - front_yaw, -PI, PI)
+
+## The clip for a gait: stand is the model's own idle (the assembler's
+## `idle_animation`, which falls back to the name hints when the file has no
+## groups -- animation_for(TYPE_STAND) returns nothing for those), walk and run
+## come from its `default` group. null when the model has no such clip; the
+## caller then keeps whatever loop it has.
+static func gait_clip(archive: Pk2Reader, assembled: SkinnedBsrAssembler.AssembledCharacter, gait: int) -> BanReader.ParsedAnimation:
+	if assembled == null:
+		return null
+	if gait == BsrReader.AnimationEntry.TYPE_STAND:
+		return assembled.idle_animation
+	if archive == null:
+		return null
+	return SkinnedBsrAssembler.animation_for(archive, assembled, gait)
+
+## Replaces `skeleton`'s looping clip in World3D's `_animated` list (entries
+## [skeleton, anim, frames, phase, loops, started, resume]) with `anim`, in
+## place, keeping its phase. While a one-shot plays (a hit), the loop it will
+## resume -- its entry[6] -- is the one replaced, so the hit hands back to the
+## new gait. A one-shot with nothing to resume is a hold (a death) and keeps
+## its last frame: nothing is swapped. A skeleton with no entry gets one. Never
+## a second loop: World3D's other-player gait swap appends when it finds no
+## loop entry, which beside a one-shot would leave two entries fighting over
+## one skeleton. Returns whether anything changed; a null clip changes nothing.
+static func swap_loop(animated: Array, skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, frames: int, now: float) -> bool:
+	if skeleton == null or anim == null or frames <= 1:
+		return false
+	for entry in animated:
+		if entry[0] != skeleton:
+			continue
+		var loop = entry if entry[4] else entry[6]
+		if loop == null:
+			return false
+		loop[1] = anim
+		loop[2] = frames
+		return true
+	# The staggered phase World3D._animate_skeleton and _set_other_gait give a
+	# new loop, so a crowd does not step in time.
+	animated.append([skeleton, anim, frames, float(animated.size()) * 0.37, true, now, null])
+	return true
+
+## Whether a walking body has moved far enough since its last height ray to
+## need another (HEIGHT_RESOLVE_STEP).
+static func needs_height(last_xz: Vector2, pos: Vector2) -> bool:
+	return last_xz.distance_to(pos) >= HEIGHT_RESOLVE_STEP

@@ -47,6 +47,16 @@ conventions and scored against the cells that list it and the object-to-object l
 conventions apart. Written for round 506, where it confirmed (with the client binary's own matrix)
 that the game's turn is the negated yaw.
 
+`probe_monster_front.gd` — measures which way each roster monster's body faces in the space its
+skeleton is placed in: the mean toe-minus-foot bone vector and the head-minus-pelvis offset, at the
+bind pose and at the walk clip's first frame, with the player's body (`CHAR_CH_MAN_FIGHTER`, local
+-Z) as the control -- the run counts only if its last line says the control reads -Z. It resolves
+each species the way World3D does (by code, then by display name) and prints one `MODEL <bsr>
+<front>` line per model; those are `MonsterMotion.FRONT_BY_MODEL`. Headless, renders nothing; ship
+the working copy first (`script` does not sync):
+`client/tools/remote_godot.sh sync && client/tools/remote_godot.sh script res://tools/probe_monster_front.gd -- --pk2=/opt/sro-files/client/Data.pk2 --media=/opt/sro-files/client/Media.pk2`.
+Written for round 533, where all seven roster models read -Z.
+
 `render_asset.gd` — loads a real mesh + real texture from a real pk2 archive through this
 project's own readers (`Pk2Reader`, `BmsReader`, `DdjReader`) and renders a screenshot to disk.
 

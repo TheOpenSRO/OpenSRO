@@ -208,6 +208,22 @@ In order. Each is checked off here when it ships in a release, with its round in
       attack) and draws them as `_monster_bodies` Node3Ds at the snapshot position, so server-side
       movement with no move packet would make monsters JUMP on the next refresh rather than walk.
       Build the move packet before the WANDER loop, not after.
+      **The client half is built (round 533).** srrevamp's own `OpMonsterMoved 0x007C` (one leg,
+      pushed to the zone) and `OpMonsterMotionList 0x007F` (the listed monsters' legs, one packet
+      after each list) are decoded and drawn: the engine's mover (the 160-unit step cap at
+      `0xb45ea8`, the no-overshoot clamp of `CGObjMoverByDest::vslot_003`), the walk/run clip, the
+      body turned by its measured front (all seven roster models read -Z) and a list refresh that no
+      longer teleports a walking body (`MonsterMotion.reconcile`). Table and stand-ins:
+      `docs/protocol/monster_ai.md`, "srrevamp's own monster protocol (placeholders)". Still to
+      build: the server half -- nothing sends either message yet.
+- [ ] **Four roster species are drawn as capsules: their characterdata rows name no model (round
+      533).** `MOB_CH_BIGEYEGHOST_CLON` (Small-eyed Ghost), `MOB_CH_GYO_CLON` (Old Weasel),
+      `MOB_CH_WATERGHOST_CLON` (Water Ghost slave) and `MOB_CH_TOMBSTONE_CLON` (Tomb Stone Ghost)
+      carry `xxx` in cols 52-56 of `characterdata_5000.txt`, and their display names resolve to no
+      row that has a model (`probe_monster_front.gd`, round 533). Their base species
+      (`MOB_CH_BIGEYEGHOST` ...) have models, but reusing one would be a guess until the retail
+      client's handling of a `_CLON` row is read: find where the client resolves a character's
+      `.bsr` and what it does with `xxx`.
 - [ ] **NPC facing is a stand-in until `Tab_RefNest` is imported.** Round 510: the game faces each
       NPC by its nest row's `wInitialDir` (u16 at +0x1c, read by `Nest_Hatch` `0x5607b0`; radians =
       `wInitialDir / 65535 * 360 * pi/180`), which lives only in the server database -- no shipped
@@ -347,9 +363,26 @@ In order. Each is checked off here when it ships in a release, with its round in
         distant monster selected is refused "too far away" -- as it was before round 519. The
         client sends them at once. Next: read what the engine does with an Activity-1 row
         (`0x4ae9dc` returns 1 without a phase change; not followed) before touching the server;
-      - the in-reach send trusts the latest monster snapshot, which is exact only while monsters
-        stand still server-side. Once they wander or chase ("Monsters do not move" above), a stale
-        snapshot will earn "too far away" and nothing walks again;
+      - the in-reach send trusts the displayed monster, which is exact only while monsters stand
+        still server-side. **Round 533** made the aim follow the drawn body (`_step_monster_bodies`
+        writes its x/z into the snapshot), but the drawing lags the server by one-way latency x
+        speed, and the server measures a round trip after the client did. The error at the server is
+        therefore v x RTT, plus up to one AI tick of v (the server's position moves in tick-sized
+        steps). The margin it meets is NOT the +2 slack: released on the first frame in reach, the
+        walk sends from the slack's outer edge, about 0-0.7 units inside it at a 42 u/s closing
+        speed (a 50 u/s run against an 8 u/s walk, at 60 frames a second). So a monster walking away
+        at 8 u/s was refused at any round trip above about 90 ms (1.2 units at 150 ms). Two changes
+        answer it (round 533): while `_monster_motion` says the target is walking, or after a
+        refusal, the walk releases only inside the stop distance (`CombatNet.approach_releases`), a
+        margin of at least 3 units (`int(d) <= reach + 2` holds for every d below reach + 3, plus
+        whatever the reach exceeds the stop by); and a "too far away" refusal of an attack the walk
+        released walks again, up to `CombatNet.APPROACH_RETRY_CAP` (3, srrevamp's own) times. That
+        holds while v x RTT stays under the margin: 8 u/s up to about 375 ms. A run (Earth Ghost's
+        75 u/s, 11 units of error at 150 ms) outruns the 50 u/s player and is never reached.
+        Measured in a headless simulation (`monster_motion_test.gd`, 150 ms), not against a live
+        moving monster: no server moves monsters yet, and a render-box check on localhost has a
+        round trip near 0, so before the server's monster AI is switched on publicly, check the
+        approach at the band edge against a moving monster with real latency;
       - a walk that geometry blocks never reaches the band and nothing times it out, the same as a
         plain click-to-move: the attack waits until WASD, typing or another click;
       - the debug panel's Skills-tab "Use" button (`World3D._on_skill_use_pressed`, a developer

@@ -867,7 +867,23 @@ var _other_equipped := {}
 ## of the interpolation reads as standing.
 const OTHER_GAIT_THRESHOLD := 1.4
 var _monster_bodies := {} # monster_id -> Node3D
-var _monster_snapshots := {} # monster_id -> CombatNet.MonsterSnapshot, as last listed
+## monster_id -> CombatNet.MonsterSnapshot, as last listed -- except x/z, which
+## follow the drawn body while it walks (_step_monster_bodies), so the reach
+## test of an approach walk aims at the body the player sees.
+var _monster_snapshots := {}
+## monster_id -> the leg its body is walking (MonsterMotion's state
+## Dictionary, plus "h_xz": where its height was last resolved, and
+## "log_frames"), from a server-driven move (_on_monster_moved,
+## _on_monster_motion_list). A body with no entry stands where the list put it.
+var _monster_motion := {}
+## When a move for an unknown monster last asked for the list
+## (MonsterMotion.UNKNOWN_MOVE_PULL_SECONDS), in Time.get_ticks_msec().
+var _unknown_move_pull_msec := -1000000
+## Height rays over the current 10-second window, and the most in one frame,
+## for the gated 'monster height resolves' log line.
+var _mob_height_resolves := 0
+var _mob_height_max := 0
+var _mob_height_window := 0.0
 var _last_sent_pos := Vector3.ZERO
 var _time_since_send := 0.0
 
@@ -908,9 +924,16 @@ var _pending_skill_hit_code := ""
 var _bc_radius_by_code: Dictionary = {}
 ## An attack waiting for the walk into reach: {"monster": id, "skill": skill
 ## id (0 = a plain swing), "code": Basic_Code, "stop", "reach"} -- the band
-## CombatNet.approach_band gave when it was asked for. Empty when none. See
-## _attack_monster.
+## CombatNet.approach_band gave when it was asked for -- plus "tight" (release
+## only inside the stop, CombatNet.approach_releases) and "retries" (how many
+## times a refusal as too far away has sent it walking again). Empty when none.
+## See _attack_monster.
 var _pending_attack: Dictionary = {}
+## The attack the approach walk last released, kept until its result: a
+## refusal as too far away sends it walking again (_rewalk_after_refusal).
+## Emptied by anything the player does next -- another attack, a walk, WASD,
+## typing, a zone change -- and by the result itself.
+var _released_attack: Dictionary = {}
 ## The animation-clock time of the player's last combat action (attack or cast).
 ## While within COMBAT_STANCE_SECONDS of it, a standing player holds the battle
 ## stance (STAND_BATTLE) instead of the town idle -- the real fighters carry a
@@ -1071,6 +1094,8 @@ func _ready() -> void:
 	hide_ui_button.pressed.connect(_toggle_ui_visibility)
 
 	NetClient.monster_list_result.connect(_on_monster_list_result)
+	NetClient.monster_moved.connect(_on_monster_moved)
+	NetClient.monster_motion_list.connect(_on_monster_motion_list)
 	NetClient.attack_result.connect(_on_attack_result)
 	NetClient.monster_damaged.connect(_on_monster_damaged)
 	NetClient.monster_died.connect(_on_monster_died)
@@ -3432,6 +3457,7 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	for monster_id in _monster_bodies.keys():
 		_monster_bodies[monster_id].queue_free()
 	_monster_bodies.clear()
+	_monster_motion.clear()
 	NetClient.list_monsters()
 	NetClient.list_ground_items()
 
@@ -5187,7 +5213,7 @@ func _attack_monster(monster_id: int, skill_id: int = 0, basic_code: String = ""
 		return
 	var band: Vector2 = planned["band"]
 	_pending_attack = {"monster": monster_id, "skill": skill_id, "code": basic_code,
-		"stop": band.x, "reach": band.y}
+		"stop": band.x, "reach": band.y, "tight": false, "retries": 0}
 	if not _step_pending_attack() and not _pending_attack.is_empty():
 		var snap = _monster_snapshots.get(monster_id)
 		var gap := Vector2(player.position.x, player.position.z).distance_to(Vector2(snap.x, snap.z))
@@ -5261,10 +5287,17 @@ func _step_pending_attack() -> bool:
 		return false
 	var here := Vector2(player.position.x, player.position.z)
 	var there := Vector2(snap.x, snap.z)
-	if CombatNet.in_reach(here.distance_to(there), float(_pending_attack["reach"])):
+	# A target walking a server-driven leg, or one the server already refused
+	# as too far away, is released only inside the stop distance: from the
+	# band's outer edge a receding target is out of reach by the time the
+	# server measures it (CombatNet.approach_releases).
+	var tight := bool(_pending_attack.get("tight", false)) or _monster_is_moving(monster_id)
+	var stop := float(_pending_attack["stop"])
+	if CombatNet.approach_releases(here.distance_to(there), stop, float(_pending_attack["reach"]), tight):
 		_release_pending_attack()
 		return true
-	var point := CombatNet.approach_point(here, there, float(_pending_attack["stop"]))
+	var point := CombatNet.approach_point(here, there,
+		CombatNet.approach_aim(stop, tight, MOVE_TARGET_STOP_DISTANCE))
 	_move_target = Vector3(point.x, player.position.y, point.y)
 	_has_move_target = true
 	return false
@@ -5275,6 +5308,7 @@ func _step_pending_attack() -> bool:
 ## target's death. A click that starts a walk of its own replaces the move
 ## target instead and only clears _pending_attack.
 func _drop_pending_attack() -> void:
+	_released_attack = {}
 	if _pending_attack.is_empty():
 		return
 	_pending_attack = {}
@@ -5293,11 +5327,47 @@ func _release_pending_attack() -> void:
 	var monster_id := int(attack["monster"])
 	var snap = _monster_snapshots.get(monster_id)
 	if snap != null:
-		print("World3D: monster %d in reach at %.1f (reach %.1f +%d) -- sending" % [
+		print("World3D: monster %d in reach at %.1f (reach %.1f +%d%s) -- sending" % [
 			monster_id, Vector2(player.position.x, player.position.z).distance_to(Vector2(snap.x, snap.z)),
-			float(attack["reach"]), CombatNet.REACH_SLACK])
+			float(attack["reach"]), CombatNet.REACH_SLACK,
+			", inside the stop %.1f" % float(attack["stop"]) if bool(attack.get("tight", false)) or _monster_is_moving(monster_id) else ""])
 	_flush_position()
 	_send_attack(monster_id, int(attack["skill"]), String(attack["code"]))
+	# Kept until its result, which may send it walking again
+	# (_rewalk_after_refusal). Set after the send: _send_attack does not clear it.
+	_released_attack = attack
+
+## The approach walk's answer to a refused release. The server measures the
+## distance a round trip after the client did, and a target walking away has
+## gained v x that in between; the engine's phase 1 simply keeps walking while
+## the target is out of reach (docs/protocol/auto_command.md, "The attack
+## tick"). So a refusal as too far away for the attack the walk released --
+## its target alive and not dying -- walks again, now releasing only inside
+## the stop distance, up to CombatNet.APPROACH_RETRY_CAP times. True when it
+## walks again.
+func _rewalk_after_refusal(result: CombatNet.AttackResult) -> bool:
+	var released := _released_attack
+	_released_attack = {}
+	if released.is_empty() or not _pending_attack.is_empty():
+		return false
+	var monster_id := int(released["monster"])
+	if result.monster_id != 0 and result.monster_id != monster_id:
+		return false
+	var alive := _monster_snapshots.has(monster_id) and _monster_bodies.has(monster_id) \
+		and not _dying_until.has(monster_id)
+	var retries := int(released.get("retries", 0))
+	if not CombatNet.should_rewalk(result.error, alive, retries):
+		if result.error == CombatNet.REFUSED_TOO_FAR and alive:
+			print("World3D: monster %d still too far away after %d walk(s) -- giving up" % [monster_id, retries])
+		return false
+	var again := released.duplicate()
+	again["tight"] = true
+	again["retries"] = retries + 1
+	_pending_attack = again
+	print("World3D: monster %d was too far away when the server measured it -- walking again (%d/%d), releasing inside the stop %.1f" % [
+		monster_id, retries + 1, CombatNet.APPROACH_RETRY_CAP, float(again["stop"])])
+	_step_pending_attack()
+	return true
 
 ## Tells the server where the player stands now, if that is not what it was
 ## last told, so the request that follows is measured from here. The physics
@@ -5929,6 +5999,12 @@ func _update_blob_shadow() -> void:
 ##                          second-nearest monster in turn (a retarget every swing)
 ##   SRREVAMP_QA_ATTACK=1   attack the nearest monster every second, so a
 ##                          hit reaction and a death can be rendered
+##   SRREVAMP_QA_MOB_MOVE="dx,dz,speed,mode"  send the nearest monster on a
+##                          server-style leg (OpMonsterMoved, built and decoded
+##                          here) from where it stands; with --server the list
+##                          is asked for at half the leg (_qa_mob_move)
+##   SRREVAMP_QA_MOB_LOG=1  print each monster leg, its progress every 30
+##                          frames, its arrival and the height-ray rate
 ##   SRREVAMP_QA_COMMANDS="/a;/b"  feed these lines through the chat console
 ##                          (docs/DEBUG_TOOLS.md) 2 s after boot; each prints
 ##                          "QA COMMAND: <line>" and a GM reply "GM REPLY: ..."
@@ -6301,6 +6377,8 @@ func _qa_step() -> void:
 	var _qa_attack_interval := 10 if OS.get_environment("SRREVAMP_QA_ATTACK_FAST") != "" else 60
 	if _qa_attacking and _qa_tick % _qa_attack_interval == 0:
 		_qa_attack_nearest()
+	if not _qa_mob_move_done and OS.get_environment("SRREVAMP_QA_MOB_MOVE") != "":
+		_qa_mob_move()
 	if not _qa_click_queue.is_empty():
 		_qa_advance_click()
 
@@ -6515,6 +6593,52 @@ func _qa_attack_nearest() -> void:
 	_last_attack_target = nearest_id
 	_show_target(nearest_id)
 	_attack_monster(nearest_id)
+
+## SRREVAMP_QA_MOB_MOVE="dx,dz,speed,mode": once monster bodies exist, the
+## nearest living one is sent on a leg from where it is drawn to (x+dx, z+dz)
+## at `speed` units a second, mode 0 walk / 1 run -- a 29-byte OpMonsterMoved
+## payload built here and decoded by CombatNet.decode_monster_moved, the same
+## path a server's push takes. With --server the list is requested once at half
+## the leg, so the refresh's reconcile runs mid-walk. Pair with
+## SRREVAMP_QA_MOB_LOG=1 for the move, progress and arrival lines.
+var _qa_mob_move_done := false
+
+func _qa_mob_move() -> void:
+	var nearest_id := -1
+	var nearest := INF
+	for monster_id in _monster_bodies:
+		var body = _monster_bodies[monster_id]
+		if _dying_until.has(monster_id) or not is_instance_valid(body):
+			continue
+		var d := (body as Node3D).global_position.distance_to(player.global_position)
+		if d < nearest:
+			nearest = d
+			nearest_id = monster_id
+	if nearest_id == -1:
+		return
+	_qa_mob_move_done = true
+	var parts := OS.get_environment("SRREVAMP_QA_MOB_MOVE").split(",")
+	var dx := float(parts[0]) if parts.size() > 0 else 0.0
+	var dz := float(parts[1]) if parts.size() > 1 else 0.0
+	var speed := float(parts[2]) if parts.size() > 2 else 0.0
+	var mode := int(parts[3]) if parts.size() > 3 else 0
+	var at: Vector3 = (_monster_bodies[nearest_id] as Node3D).position
+	var payload := PackedByteArray()
+	payload.resize(CombatNet.MONSTER_MOVED_SIZE)
+	payload.encode_s64(0, nearest_id)
+	payload.encode_float(8, at.x)
+	payload.encode_float(12, at.z)
+	payload.encode_float(16, at.x + dx)
+	payload.encode_float(20, at.z + dz)
+	payload.encode_float(24, speed)
+	payload[28] = mode
+	print("QA MOB MOVE: monster %d at %.0f from the player, leg (%.1f,%.1f) at %.1f/s mode %d" % [
+		nearest_id, nearest, dx, dz, speed, mode])
+	_on_monster_moved(CombatNet.decode_monster_moved(payload))
+	if NetClient.is_connected_to_server() and speed > 0.0:
+		_after(Vector2(dx, dz).length() / speed / 2.0, func() -> void:
+			print("QA MOB MOVE: asking for the monster list at half the leg")
+			NetClient.list_monsters())
 
 ## SRREVAMP_QA_CLICK="monster,npc,ground": each kind becomes a real left
 ## click through _dispatch_left_click -- after the player is put 40 units in
@@ -7271,6 +7395,10 @@ func _physics_process(delta: float) -> void:
 	if _sun_glow != null:
 		_sun_glow.global_position = player.global_position + _sun_glow_offset
 
+	# Monsters walking a server-driven leg step first, so an approach walk's
+	# reach test below measures to where they are drawn this frame.
+	_step_monster_bodies(delta)
+
 	var input_dir := Vector3.ZERO
 	# Real, dedicated move_* actions (WASD + arrow keys both bound, see
 	# project.godot) -- previously used Godot's built-in ui_left/ui_right/
@@ -7292,6 +7420,7 @@ func _physics_process(delta: float) -> void:
 	if typing:
 		_has_move_target = false
 		_pending_attack = {}
+		_released_attack = {}
 	else:
 		input_dir.x = Input.get_axis("move_left", "move_right")
 		input_dir.z = Input.get_axis("move_forward", "move_back")
@@ -7305,6 +7434,7 @@ func _physics_process(delta: float) -> void:
 		_has_move_target = false # manual movement always cancels a pending click-to-move
 		_pending_pickup_id = -1
 		_pending_attack = {} # ...and an attack still walking into reach
+		_released_attack = {} # ...or one that would walk again on a refusal
 		# Relative to the camera, as in the original: W walks away from the
 		# camera whichever way it has been orbited, not along a world axis.
 		var yaw := deg_to_rad(camera_arm.rotation_degrees.y)
@@ -8522,6 +8652,7 @@ func _try_set_move_target(screen_pos: Vector2) -> void:
 	_has_move_target = true
 	# A walk somewhere else supersedes an attack that was walking into reach.
 	_pending_attack = {}
+	_released_attack = {}
 
 func _on_send_pressed() -> void:
 	var text := chat_input.text.strip_edges()
@@ -8642,17 +8773,33 @@ func _monster_model_path(code_name: String, species_name: String) -> String:
 
 func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 	_monster_snapshots[monster.monster_id] = monster
-	var pos := Vector3(monster.x, monster.y, monster.z)
-	pos.y = _terrain_height_at(pos)
 
 	if _monster_bodies.has(monster.monster_id):
+		# A body walking a server-driven leg keeps where it is drawn unless it
+		# has drifted past MonsterMotion.RESYNC_DISTANCE; a standing one goes
+		# where the list says. Before round 533 every refresh set the list's
+		# position, which would teleport a walking body back by its lag.
 		var existing: Node3D = _monster_bodies[monster.monster_id]
-		existing.position = pos
+		var state = _monster_motion.get(monster.monster_id)
+		var moving: bool = state != null and bool(state["moving"])
+		var placed := MonsterMotion.reconcile(Vector2(existing.position.x, existing.position.z),
+			Vector2(monster.x, monster.z), moving)
+		# The height is resolved where the body is placed, not at the list's
+		# x/z, which can be up to RESYNC_DISTANCE away.
+		existing.position = Vector3(placed.x,
+			_terrain_height_at(Vector3(placed.x, monster.y, placed.y)), placed.y)
+		monster.x = placed.x
+		monster.z = placed.y
+		if state != null:
+			state["pos"] = placed
+			state["h_xz"] = placed
 		var existing_label: Label3D = existing.get_node("Label")
 		existing_label.text = monster.monster_name
 		_set_hp_bar(existing, monster.hp, monster.max_hp)
 		return
 
+	var pos := Vector3(monster.x, monster.y, monster.z)
+	pos.y = _terrain_height_at(pos)
 	var body := Node3D.new()
 	body.position = pos
 
@@ -8722,6 +8869,9 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 	# A clickable collider so a left click on the monster attacks it (see
 	# _try_attack_monster), tagged with the id the attack is sent for.
 	body.set_meta("monster_id", monster.monster_id)
+	# The model drawn, which is what its measured front is keyed by
+	# (MonsterMotion.front_of); "" for the capsule.
+	body.set_meta("model", monster_model if monster_skeleton != null else "")
 	body.add_child(_monster_collider(label_height))
 
 	other_entities.add_child(body)
@@ -8974,6 +9124,7 @@ func _try_pick_up_item(screen_pos: Vector2) -> bool:
 		_move_target = target
 		_has_move_target = true
 		_pending_attack = {}
+		_released_attack = {}
 	else:
 		# Picked up from where the player stands: an attack still walking into
 		# reach ends here, with its walk.
@@ -9004,6 +9155,7 @@ func _sync_monster_bodies(live: Array) -> void:
 		_monster_bodies.erase(monster_id)
 		_monster_assembled.erase(monster_id)
 		_dying_until.erase(monster_id)
+		_monster_motion.erase(monster_id)
 		print("World3D: monster %d body removed t=%.2f" % [monster_id, _idle_anim_time])
 
 func _on_monster_list_result(monsters: Array, error: String) -> void:
@@ -9021,6 +9173,183 @@ func _on_monster_list_result(monsters: Array, error: String) -> void:
 		monster_list.add_item("%s (HP %d/%d)" % [m.monster_name, m.hp, m.max_hp])
 	_sync_monster_bodies(_monsters)
 
+# --- Server-driven monster movement (round 533) ---------------------------
+#
+# srrevamp's own OpMonsterMoved (0x007C) and OpMonsterMotionList (0x007F),
+# docs/protocol/monster_ai.md "srrevamp's own monster protocol
+# (placeholders)". No server sends either yet (the monster AI is a later
+# change behind a default-off flag); SRREVAMP_QA_MOB_MOVE drives the path.
+# The rules are MonsterMotion's; what follows is the glue.
+
+## Whether the move lines are printed: SRREVAMP_QA_MOB_LOG, or the /wire
+## console switch (NetClient.wire_logging).
+func _mob_logging() -> bool:
+	return OS.get_environment("SRREVAMP_QA_MOB_LOG") != "" or NetClient.wire_logging
+
+## Whether `monster_id`'s body is walking a leg (a stop's glide does not count):
+## the approach walk then releases only inside the stop distance
+## (CombatNet.approach_releases).
+func _monster_is_moving(monster_id: int) -> bool:
+	var state = _monster_motion.get(monster_id)
+	return state != null and MonsterMotion.turns_to_face(state)
+
+## One monster's new leg (OpMonsterMoved). A move for a monster this client
+## has no body for asks for the list, at most once every
+## UNKNOWN_MOVE_PULL_SECONDS; a dying body ignores it.
+func _on_monster_moved(moved: CombatNet.MonsterMoved) -> void:
+	if moved == null:
+		return
+	if not _monster_bodies.has(moved.monster_id):
+		var now := Time.get_ticks_msec()
+		if now - _unknown_move_pull_msec >= int(MonsterMotion.UNKNOWN_MOVE_PULL_SECONDS * 1000.0) \
+				and NetClient.is_connected_to_server():
+			_unknown_move_pull_msec = now
+			NetClient.list_monsters()
+		return
+	if _dying_until.has(moved.monster_id):
+		return
+	_apply_monster_leg(moved)
+
+## The legs of the monsters just listed (OpMonsterMotionList, sent right after
+## the list result). A listed body starts or re-aims its leg when the
+## destination differs from where it is heading by more than REAIM_EPSILON;
+## a body the list leaves out finishes the leg it is on.
+func _on_monster_motion_list(entries: Array) -> void:
+	for e in entries:
+		var entry: CombatNet.MotionEntry = e
+		var body = _monster_bodies.get(entry.monster_id)
+		if body == null or not is_instance_valid(body) or _dying_until.has(entry.monster_id):
+			continue
+		var here := Vector2((body as Node3D).position.x, (body as Node3D).position.z)
+		var heading := here
+		var state = _monster_motion.get(entry.monster_id)
+		if state != null and bool(state["moving"]):
+			heading = state["dest"]
+		var dest := Vector2(entry.dest_x, entry.dest_z)
+		if heading.distance_to(dest) <= MonsterMotion.REAIM_EPSILON:
+			continue
+		# The list result just placed the body (reconcile), so where it is drawn
+		# is the position this leg starts from.
+		var moved := CombatNet.MonsterMoved.new()
+		moved.monster_id = entry.monster_id
+		moved.x = here.x
+		moved.z = here.y
+		moved.dest_x = entry.dest_x
+		moved.dest_z = entry.dest_z
+		moved.speed = entry.speed
+		moved.mode = entry.mode
+		_apply_monster_leg(moved)
+
+## Starts a known, living body on a leg: from where it is drawn
+## (MonsterMotion.begin), in the leg's clip, turned toward its destination
+## unless the leg is a stop.
+func _apply_monster_leg(moved: CombatNet.MonsterMoved) -> void:
+	var body: Node3D = _monster_bodies[moved.monster_id]
+	var displayed := Vector2(body.position.x, body.position.z)
+	var state := MonsterMotion.begin(displayed, moved)
+	var previous = _monster_motion.get(moved.monster_id)
+	state["h_xz"] = previous["h_xz"] if previous != null else displayed
+	state["log_frames"] = 0
+	_monster_motion[moved.monster_id] = state
+	var pos: Vector2 = state["pos"]
+	if pos != displayed:
+		# Too far from the server's position, or a leg with no speed: placed
+		# at once; the height follows in _step_monster_bodies.
+		body.position.x = pos.x
+		body.position.z = pos.y
+		var snap = _monster_snapshots.get(moved.monster_id)
+		if snap != null:
+			snap.x = pos.x
+			snap.z = pos.y
+	_set_monster_gait(moved.monster_id, MonsterMotion.state_gait(state))
+	var front := MonsterMotion.front_of(String(body.get_meta("model", "")))
+	if MonsterMotion.turns_to_face(state) and front != "":
+		body.rotation.y = MonsterMotion.facing_yaw(state["dest"] - pos, front)
+	if _mob_logging():
+		var kind := "stop"
+		if MonsterMotion.turns_to_face(state):
+			kind = "run" if int(state["mode"]) == MonsterMotion.MODE_RUN else "walk"
+		print("World3D: monster %d %s from (%.1f,%.1f) to (%.1f,%.1f) at %.1f/s yaw %.2f%s" % [
+			moved.monster_id, kind, pos.x, pos.y, moved.dest_x, moved.dest_z, float(state["speed"]),
+			body.rotation.y, "" if front != "" else " (facing unmeasured)"])
+
+## Plays a gait on a monster's body: its own idle for 0 (stand), its walk or
+## run clip otherwise. A model with no such clip keeps the loop it has.
+func _set_monster_gait(monster_id: int, gait: int) -> void:
+	if OS.get_environment("SRREVAMP_NO_IDLE_ANIM") != "":
+		return
+	var assembled: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled.get(monster_id)
+	if assembled == null:
+		return
+	var clip := MonsterMotion.gait_clip(_data_pk2, assembled, gait)
+	if clip == null:
+		return
+	MonsterMotion.swap_loop(_animated, assembled.skeleton, clip, _frame_count(clip), _idle_anim_time)
+
+## Ends a monster's leg where its body is drawn, in its stand clip.
+func _stop_monster_motion(monster_id: int) -> void:
+	var state = _monster_motion.get(monster_id)
+	if state == null:
+		return
+	_monster_motion.erase(monster_id)
+	if bool(state["moving"]):
+		_set_monster_gait(monster_id, BsrReader.AnimationEntry.TYPE_STAND)
+
+## One physics frame of every walking body: the engine's mover
+## (MonsterMotion.step), the drawn x/z written into the monster's snapshot so
+## the approach walk aims at the body the player sees, and the height from the
+## terrain ray only every HEIGHT_RESOLVE_STEP units and for at most
+## MAX_HEIGHT_RESOLVES_PER_FRAME bodies a frame -- the rest keep their height
+## until a later frame. An arrival switches to the stand clip and keeps the
+## facing.
+func _step_monster_bodies(delta: float) -> void:
+	if _monster_motion.is_empty():
+		return
+	var logging := _mob_logging()
+	var resolved := 0
+	for monster_id in _monster_motion.keys():
+		var body = _monster_bodies.get(monster_id)
+		if body == null or not is_instance_valid(body):
+			_monster_motion.erase(monster_id)
+			continue
+		var state: Dictionary = _monster_motion[monster_id]
+		var pos: Vector2 = state["pos"]
+		if bool(state["moving"]):
+			pos = MonsterMotion.step(pos, state["dest"], float(state["speed"]), delta)
+			state["pos"] = pos
+			(body as Node3D).position.x = pos.x
+			(body as Node3D).position.z = pos.y
+			var snap = _monster_snapshots.get(monster_id)
+			if snap != null:
+				snap.x = pos.x
+				snap.z = pos.y
+			if pos == state["dest"]:
+				state["moving"] = false
+				_set_monster_gait(monster_id, BsrReader.AnimationEntry.TYPE_STAND)
+				if logging:
+					print("World3D: monster %d arrived at (%.1f,%.1f)" % [monster_id, pos.x, pos.y])
+			elif logging:
+				state["log_frames"] = int(state["log_frames"]) + 1
+				if int(state["log_frames"]) % 30 == 0:
+					print("World3D: monster %d at (%.1f,%.1f) %.1f to go" % [
+						monster_id, pos.x, pos.y, pos.distance_to(state["dest"])])
+		var last: Vector2 = state["h_xz"]
+		var wants := MonsterMotion.needs_height(last, pos) or (not bool(state["moving"]) and last != pos)
+		if wants and resolved < MonsterMotion.MAX_HEIGHT_RESOLVES_PER_FRAME:
+			(body as Node3D).position.y = _terrain_height_at((body as Node3D).position)
+			state["h_xz"] = pos
+			resolved += 1
+	_mob_height_resolves += resolved
+	_mob_height_max = maxi(_mob_height_max, resolved)
+	_mob_height_window += delta
+	if _mob_height_window >= 10.0:
+		if logging:
+			print("World3D: monster height resolves %d/s, max %d in a frame" % [
+				int(round(float(_mob_height_resolves) / _mob_height_window)), _mob_height_max])
+		_mob_height_resolves = 0
+		_mob_height_max = 0
+		_mob_height_window = 0.0
+
 func _on_attack_pressed() -> void:
 	var selected := monster_list.get_selected_items()
 	if selected.is_empty():
@@ -9037,7 +9366,9 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	if result.error != "":
 		monster_status_label.text = "Attack failed: %s" % result.error
 		print("World3D: attack refused: %s" % result.error)
+		_rewalk_after_refusal(result)
 		return
+	_released_attack = {}
 	# One line per exchange, so a render's log says what the fight did
 	# without reading it off a label. t is the animation clock the death
 	# hold and the "body removed" line read, so a kill can be timed against
@@ -9100,6 +9431,9 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 			# leaves are disclosed at MonsterBodies.hold_for_kill.
 			MonsterBodies.hold_for_kill(_dying_until, monster, _idle_anim_time, lands_after,
 				_monster_action_seconds(monster, BsrReader.AnimationEntry.TYPE_DIE))
+			# Killed mid-walk: it stops here, in its stand clip, rather than
+			# walking on until the blow lands and the die clip starts.
+			_stop_monster_motion(monster)
 			print("World3D: monster %d killed by own blow t=%.2f, clip starts in %.2fs" % [
 				monster, _idle_anim_time, lands_after])
 		_after(lands_after, func() -> void:
@@ -9228,6 +9562,8 @@ func _begin_monster_death(monster_id: int) -> void:
 	# and no reason to keep walking.
 	if not _pending_attack.is_empty() and int(_pending_attack["monster"]) == monster_id:
 		_drop_pending_attack()
+	# A dead monster walks no further; its die clip replaces the gait below.
+	_monster_motion.erase(monster_id)
 	var seconds := _play_monster_action(monster_id, BsrReader.AnimationEntry.TYPE_DIE, true)
 	if seconds > 0.0:
 		# The hold restarts from the clip's real start, replacing the killer's

@@ -287,7 +287,84 @@ func _test_skill_tick_approaches() -> void:
 	_check(CombatNet.skill_tick_approaches(2, 1),
 		"Target_Required other than 0/1 (no China board row has one; the asm's own branch): the land test is skipped (0x4ae74b jne), so it walks")
 
+## The protocol table's fixture (docs/protocol/monster_ai.md, "srrevamp's own
+## monster protocol (placeholders)"): monster 7 from (100,-200) to
+## (140,-200) at 8 u/s, walking.
+const MOVED_FIXTURE := [0x07, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x00, 0xc8, 0x42, 0x00, 0x00, 0x48, 0xc3,
+	0x00, 0x00, 0x0c, 0x43, 0x00, 0x00, 0x48, 0xc3, 0x00, 0x00, 0x00, 0x41, 0x00]
+const MOTION_LIST_FIXTURE := [0x01, 0x00, 0x07, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x00, 0x0c, 0x43,
+	0x00, 0x00, 0x48, 0xc3, 0x00, 0x00, 0x00, 0x41, 0x00]
+
+func _test_decode_monster_moved() -> void:
+	var data := PackedByteArray(MOVED_FIXTURE)
+	_check(data.size() == 29, "the OpMonsterMoved fixture is 29 bytes")
+	var m := CombatNet.decode_monster_moved(data)
+	_check(m != null and m.monster_id == 7, "OpMonsterMoved: the monster id")
+	_check(m != null and m.x == 100.0 and m.z == -200.0, "OpMonsterMoved: the server position (100,-200)")
+	_check(m != null and m.dest_x == 140.0 and m.dest_z == -200.0, "OpMonsterMoved: the destination (140,-200)")
+	_check(m != null and m.speed == 8.0 and m.mode == 0, "OpMonsterMoved: 8 u/s, mode 0 (walk)")
+	_check(CombatNet.decode_monster_moved(data.slice(0, 28)) == null, "28 bytes decode to null")
+
+func _test_decode_monster_motion_list() -> void:
+	var data := PackedByteArray(MOTION_LIST_FIXTURE)
+	_check(data.size() == 23, "the OpMonsterMotionList fixture is 23 bytes")
+	var entries := CombatNet.decode_monster_motion_list(data)
+	_check(entries.size() == 1, "one entry")
+	if entries.size() == 1:
+		var e: CombatNet.MotionEntry = entries[0]
+		_check(e.monster_id == 7 and e.dest_x == 140.0 and e.dest_z == -200.0 and e.speed == 8.0 and e.mode == 0,
+			"the entry is monster 7 to (140,-200) at 8, mode 0")
+	# n = 2, with the second entry cut short: the whole first one is kept.
+	var two := data.duplicate()
+	two.encode_u16(0, 2)
+	two.append_array(data.slice(2, 12))
+	_check(CombatNet.decode_monster_motion_list(two).size() == 1, "n=2 with a truncated second entry gives 1 entry")
+	_check(CombatNet.decode_monster_motion_list(PackedByteArray([1])).is_empty(), "a payload without its count gives none")
+
+## The approach walk's release, aim and refusal rules (round 533).
+func _test_approach_release_rules() -> void:
+	# Mangyang, unarmed: stop = reach = 10 (approach_band(4, 6, 0)).
+	_check(CombatNet.approach_releases(12.9, 10.0, 10.0, false), "a standing target releases at the slack edge (int 12 <= 10 + 2)")
+	_check(not CombatNet.approach_releases(12.9, 10.0, 10.0, true), "a moving target does not release at the slack edge")
+	_check(CombatNet.approach_releases(10.0, 10.0, 10.0, true) and not CombatNet.approach_releases(10.1, 10.0, 10.0, true),
+		"a moving target releases at the stop distance")
+	_check(is_equal_approx(CombatNet.approach_aim(10.0, true, 2.39), 7.61) and CombatNet.approach_aim(10.0, false, 2.39) == 10.0,
+		"a tight walk aims its arrival tolerance short of the stop")
+	_check(CombatNet.approach_aim(1.0, true, 2.39) == 0.0, "never past the target")
+	_check(CombatNet.should_rewalk("too far away", true, 0), "a too-far refusal on a live target walks again")
+	_check(CombatNet.should_rewalk("too far away", true, CombatNet.APPROACH_RETRY_CAP - 1), "up to the cap")
+	_check(not CombatNet.should_rewalk("too far away", true, CombatNet.APPROACH_RETRY_CAP), "not past it")
+	_check(not CombatNet.should_rewalk("too far away", false, 0), "not on a dead or dying target")
+	_check(not CombatNet.should_rewalk("skill on cooldown", true, 0), "not on another refusal")
+
+## NetClient routes the two new opcodes to their signals, and warns about an
+## unhandled opcode once per connection rather than once per packet (an older
+## client in a zone whose server runs the monster AI gets 0x007C many times a
+## second).
+func _test_net_client_dispatch() -> void:
+	var nc: Node = (load("res://scripts/net/net_client.gd") as GDScript).new()
+	var moved: Array = []
+	var lists: Array = []
+	nc.connect("monster_moved", func(m): moved.append(m))
+	nc.connect("monster_motion_list", func(e): lists.append(e))
+	nc.call("_dispatch", Packet.new(CombatNet.OP_MONSTER_MOVED, PackedByteArray(MOVED_FIXTURE)))
+	_check(moved.size() == 1 and moved[0].dest_x == 140.0, "0x007C reaches monster_moved")
+	nc.call("_dispatch", Packet.new(CombatNet.OP_MONSTER_MOVED, PackedByteArray(MOVED_FIXTURE).slice(0, 20)))
+	_check(moved.size() == 1, "a short 0x007C is dropped, not emitted as null")
+	nc.call("_dispatch", Packet.new(CombatNet.OP_MONSTER_MOTION_LIST, PackedByteArray(MOTION_LIST_FIXTURE)))
+	_check(lists.size() == 1 and (lists[0] as Array).size() == 1, "0x007F reaches monster_motion_list")
+	_check(bool(nc.call("_should_warn_unhandled", 0x7ffd)), "the first unhandled 0x7ffd warns")
+	_check(not bool(nc.call("_should_warn_unhandled", 0x7ffd)), "the second does not")
+	_check(bool(nc.call("_should_warn_unhandled", 0x7ffc)), "another opcode still warns once")
+	nc.call("_dispatch", Packet.new(0x7ffe, PackedByteArray()))
+	_check((nc.get("_unhandled_warned") as Dictionary).has(0x7ffe), "_dispatch records an unhandled opcode it warned about")
+	nc.free()
+
 func _init() -> void:
+	_test_decode_monster_moved()
+	_test_decode_monster_motion_list()
+	_test_approach_release_rules()
+	_test_net_client_dispatch()
 	_test_encode_attack()
 	_test_decode_attack_result()
 	_test_decode_attack_result_appended_tail()
