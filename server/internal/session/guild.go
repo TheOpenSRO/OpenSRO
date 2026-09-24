@@ -475,6 +475,21 @@ func handleGuildPoints(ctx context.Context, sess *gateway.Session, p *proto.Pack
 // store fails after the gold was taken (its UPDATE, read-back or commit),
 // the gold is given back with AddGold, and a failed refund is logged.
 //
+// The refund runs on context.WithoutCancel(ctx) (round 531). ctx is the
+// gateway's, which a server stop cancels; a stop that lands between the
+// deduction and the guild's UPDATE fails the UPDATE with context.Canceled,
+// and a refund on the same ctx would fail the same way and lose the gold.
+// WithoutCancel keeps ctx's values and drops its cancellation and deadline.
+// It does not close the whole window: main does not wait for connection
+// goroutines (round 527, FlushAllPending's comment), so a process that
+// exits before the refund's UPDATE returns still loses it. A refund that
+// fails (a store already closed, among others) is logged.
+//
+// A commit error is not proof the level was not kept: a connection that drops
+// after the server committed reports an error too (SQLStore.LevelUp). The
+// refund then pays back a level the guild kept. srrevamp takes that side of
+// the ambiguity, since the other side loses the player's gold.
+//
 // The server pushes no gold update (as after founding): the client re-reads
 // the character's stats, and the guild's points, after a level-up.
 func handleGuildLevel(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, guilds guild.Store) error {
@@ -520,7 +535,9 @@ func handleGuildLevel(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	g, err := guilds.LevelUp(ctx, characterID, pc.HP > 0, pc.Gold, pay)
 	if err != nil {
 		if paid > 0 {
-			if rerr := chars.AddGold(ctx, characterID, paid); rerr != nil {
+			// Not ctx: a stop that cancelled the level-up must not cancel
+			// its refund too (see the doc comment).
+			if rerr := chars.AddGold(context.WithoutCancel(ctx), characterID, paid); rerr != nil {
 				slog.Warn("guild level-up failed after its gold was taken, and the refund failed",
 					"character_id", characterID, "gold", paid, "levelup_err", err, "refund_err", rerr)
 			}
@@ -585,7 +602,15 @@ func handleGuildCreate(ctx context.Context, sess *gateway.Session, p *proto.Pack
 		// whose last member goes (both stores). If a second character joined
 		// by id in that window, Leave hands it leadership instead of
 		// disbanding.
-		if _, _, lerr := guilds.Leave(ctx, characterID); lerr != nil {
+		//
+		// The rollback runs on context.WithoutCancel(ctx) (round 531), as
+		// handleGuildLevel's refund does: a server stop that cancels ctx
+		// fails DeductGold with context.Canceled, and a Leave on the same
+		// ctx would fail too and leave the guild founded for free. A process
+		// that exits before Leave returns still leaves it (main does not wait
+		// for connection goroutines; round 527); a Leave that fails is logged
+		// below.
+		if _, _, lerr := guilds.Leave(context.WithoutCancel(ctx), characterID); lerr != nil {
 			slog.Warn("guild founded but neither paid for nor rolled back",
 				"character_id", characterID, "guild_id", g.ID, "deduct_err", err, "leave_err", lerr)
 		}

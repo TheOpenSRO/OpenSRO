@@ -87,8 +87,8 @@ func setup(layout_data: Variant = null) -> void:
 	# here, as each slot does for a press on the slot (a slot is STOP too, so
 	# its press does not also bubble here). Connected once: World3D adds the
 	# bar to the tree (whose _ready runs setup) and then calls setup again.
-	if not gui_input.is_connected(_on_body_gui_input):
-		gui_input.connect(_on_body_gui_input)
+	# The same relay serves World3D's other STOP surfaces (round 531).
+	relay_middle_button(self)
 
 	# The bar background, behind every child.
 	if registry_def != null and registry_def.ddj != "" and _ui_builder != null:
@@ -168,9 +168,22 @@ func setup(layout_data: Variant = null) -> void:
 
 	_update_page_visibility()
 
-## A press on the bar's body itself (or on a PASS child that bubbles to it):
-## the middle button fires the page's first quickslot, as it does over a slot
-## and over the world. Nothing else on the body does anything.
+## Makes a middle press on `surface` fire the page's first quickslot, as it
+## does over the world (World3D._unhandled_input) and over a slot. A STOP
+## surface consumes the press, so World3D never sees it (round 529). This is
+## the one path the bar's own body and World3D's other STOP surfaces -- the
+## minimap, the player-info block and the target window -- share (round 531,
+## World3D._relay_middle_button_to_hotbar). Connected once, however often it
+## is asked, so a surface fires once per press.
+func relay_middle_button(surface: Control) -> void:
+	if surface == null or surface.gui_input.is_connected(_on_body_gui_input):
+		return
+	surface.gui_input.connect(_on_body_gui_input)
+
+## A press on a relayed surface (the bar's body, or a PASS child that bubbles
+## to it, or one of World3D's other STOP surfaces): the middle button fires
+## the page's first quickslot, as it does over a slot and over the world.
+## Nothing else does anything.
 func _on_body_gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_MIDDLE:
 		activate_key(0)

@@ -81,6 +81,9 @@ func setup(layout_data: Variant = null) -> void:
 	# today, so nothing here has to pass one to the world. STOP, as HudWindow
 	# uses (its comment has the reasoning): Godot 4.2 hit-tests the deepest
 	# control first, so the zoom and map buttons still get their clicks.
+	# STOP also keeps a middle press from reaching World3D, which fires the
+	# first quickslot on it; World3D hands this root to the hotbar's relay
+	# (HudUnderbar.relay_middle_button, round 531) so it fires here too.
 	mouse_filter = Control.MOUSE_FILTER_STOP
 
 	# 1. Circular map clipping viewport (authored rect is 14, 57, 105, 105)

@@ -794,3 +794,174 @@ func TestGuildLevelUpGoldIsNotLost(t *testing.T) {
 		})
 	}
 }
+
+// ctxGoldChars is a character store whose gold writes honour ctx as
+// SQLStore's do: its ExecContext fails once ctx is done, with the context's
+// error. MemStore ignores ctx, so without this a test could not tell a
+// refund on a cancelled ctx from one on a live ctx. Test-only.
+type ctxGoldChars struct{ *character.MemStore }
+
+func (c ctxGoldChars) AddGold(ctx context.Context, characterID, amount int64) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("character: adding gold: %w", err)
+	}
+	return c.MemStore.AddGold(ctx, characterID, amount)
+}
+
+func (c ctxGoldChars) DeductGold(ctx context.Context, characterID, amount int64) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("character: deducting gold: %w", err)
+	}
+	return c.MemStore.DeductGold(ctx, characterID, amount)
+}
+
+// stopAfterPayGuilds takes the level-up's payment, then the server stops
+// (stop cancels the gateway's ctx, which is the handler's), and the guild's
+// UPDATE fails with the context's error, as SQLStore.LevelUp's ExecContext
+// would. Test-only.
+type stopAfterPayGuilds struct {
+	guild.Store
+	stop context.CancelFunc
+	// paid and stopped are the probe: the deduction went through on the
+	// live ctx, and the stop really cancelled the handler's ctx.
+	paid, stopped bool
+}
+
+func (s *stopAfterPayGuilds) LevelUp(ctx context.Context, _ int64, _ bool, _ int64, pay func(int64) error) (*guild.Guild, error) {
+	if err := pay(3_000_000); err != nil {
+		return nil, err
+	}
+	s.paid = true
+	s.stop()
+	s.stopped = errors.Is(ctx.Err(), context.Canceled)
+	return nil, fmt.Errorf("guild: raising the guild's level: %w", ctx.Err())
+}
+
+// TestGuildLevelUpRefundSurvivesAStop covers round 531: a server stop that
+// lands between the level-up's deduction and the guild's UPDATE cancels the
+// handler's ctx, and the refund must not run on that ctx, or it fails too and
+// the gold is lost. NEGATIVE: with the refund on ctx (round 528), Aria ends
+// with 0 gold.
+func TestGuildLevelUpRefundSurvivesAStop(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	mem := character.NewMemStore()
+	aria, _ := mem.Create(ctx, 1, "Aria")
+	if err := mem.AddGold(ctx, aria.ID, 3_000_000-character.StartingGold); err != nil {
+		t.Fatalf("AddGold: %v", err)
+	}
+	guilds := guild.NewMemStore()
+	g, err := guilds.Create(ctx, "Silk Legion", aria.ID, "Aria")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := guilds.AddPoints(ctx, g.ID, aria.ID, 5_400); err != nil {
+		t.Fatalf("AddPoints: %v", err)
+	}
+
+	stopping := &stopAfterPayGuilds{Store: guilds}
+	handle := gateway.Chain(LoginHandler(accounts), GuildHandler(ctxGoldChars{mem}, stopping))
+	addr, stop := startTestServer(t, handle)
+	defer stop()
+	stopping.stop = stop
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+	if lr, err := DecodeLoginResult(doSend(t, conn, r, OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+
+	resp := doSend(t, conn, r, OpGuildLevel, (&GuildLevelRequest{CharacterName: "Aria", LevelUp: true}).Encode())
+	lr, err := DecodeGuildLevelResult(resp.Data)
+	if err != nil {
+		t.Fatalf("DecodeGuildLevelResult: %v", err)
+	}
+	if lr.Code != 0 || lr.Error != "failed to level up the guild" {
+		t.Fatalf("got %+v, want srrevamp's own failure with no engine code", lr)
+	}
+	// The probe: the deduction really happened on the live ctx, and the
+	// stop really cancelled it, so the refund is what put the gold back.
+	if !stopping.paid || !stopping.stopped {
+		t.Fatalf("the probe did not run: paid %v, ctx cancelled %v", stopping.paid, stopping.stopped)
+	}
+	if now, _ := mem.GetByID(ctx, aria.ID); now.Gold != 3_000_000 {
+		t.Fatalf("Aria has %d gold after a level-up the stop interrupted, want 3000000 refunded", now.Gold)
+	}
+	if now, _ := guilds.Get(ctx, g.ID); now.Level != 1 || now.GatheredSP != 5_400 {
+		t.Fatalf("the guild moved: level %d, points %d; want 1 and 5400", now.Level, now.GatheredSP)
+	}
+}
+
+// stopAfterCreateGuilds founds the guild, then the server stops, so the
+// founder's DeductGold fails with the context's error. Its Leave honours ctx
+// as SQLStore.Leave's BeginTx does. Test-only.
+type stopAfterCreateGuilds struct {
+	guild.Store
+	stop context.CancelFunc
+	// created and stopped are the probe: the guild existed, and the stop
+	// really cancelled the handler's ctx before the deduction.
+	created, stopped bool
+}
+
+func (s *stopAfterCreateGuilds) Create(ctx context.Context, name string, leaderID int64, leaderName string) (*guild.Guild, error) {
+	g, err := s.Store.Create(ctx, name, leaderID, leaderName)
+	if err == nil {
+		s.created = true
+		s.stop()
+		s.stopped = errors.Is(ctx.Err(), context.Canceled)
+	}
+	return g, err
+}
+
+func (s *stopAfterCreateGuilds) Leave(ctx context.Context, characterID int64) (int64, *guild.Guild, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, nil, fmt.Errorf("guild: beginning transaction: %w", err)
+	}
+	return s.Store.Leave(ctx, characterID)
+}
+
+// TestGuildCreateRollbackSurvivesAStop covers the founding rollback (round
+// 487) with the same shape as the level-up refund (round 531): a stop after
+// the guild exists fails the founder's DeductGold, and the rollback's Leave
+// must not run on the cancelled ctx, or the guild stays founded for free.
+// NEGATIVE: with the Leave on ctx, Aria is still in the guild.
+func TestGuildCreateRollbackSurvivesAStop(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	mem := character.NewMemStore()
+	aria, _ := mem.Create(ctx, 1, "Aria")
+	qualifyFounder(t, mem, aria)
+	guilds := guild.NewMemStore()
+
+	stopping := &stopAfterCreateGuilds{Store: guilds}
+	handle := gateway.Chain(LoginHandler(accounts), GuildHandler(ctxGoldChars{mem}, stopping))
+	addr, stop := startTestServer(t, handle)
+	defer stop()
+	stopping.stop = stop
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+	if lr, err := DecodeLoginResult(doSend(t, conn, r, OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+
+	resp := doSend(t, conn, r, OpGuildCreate, (&GuildCreateRequest{CharacterName: "Aria", GuildName: "Silk Legion"}).Encode())
+	gr, err := DecodeGuildResult(resp.Data)
+	if err != nil {
+		t.Fatalf("DecodeGuildResult: %v", err)
+	}
+	if gr.Error == "" || gr.GuildID != 0 {
+		t.Fatalf("got %+v, want a refusal and no guild", gr)
+	}
+	if !stopping.created || !stopping.stopped {
+		t.Fatalf("the probe did not run: created %v, ctx cancelled %v", stopping.created, stopping.stopped)
+	}
+	if _, err := guilds.GetByCharacter(ctx, aria.ID); !errors.Is(err, guild.ErrNotInGuild) {
+		t.Fatalf("Aria is still in a guild after a stop interrupted its founding (err=%v)", err)
+	}
+	if now, _ := mem.GetByID(ctx, aria.ID); now.Gold != character.StartingGold+guild.CreateGoldRequired {
+		t.Fatalf("Aria has %d gold, want %d untouched", now.Gold, character.StartingGold+guild.CreateGoldRequired)
+	}
+}

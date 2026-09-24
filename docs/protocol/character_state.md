@@ -1701,9 +1701,15 @@ the backup is not on the box.
 **The goods' price is the refusal that applies.** `0x618fe0` calls `0x617a50`
 (`0x619026`), which calls `0x617950` (`0x617e82`), which calls
 `GObjPC::CheckCurrencyRequirement` (`0x617997`). That function tests the goods'
-payment bits in a fixed order. It tests gold first (bit 1, `0x6173aa`, which
-refuses `0x180f` `UIIT_MSG_STRGERR_NOT_ENOUGH_GOLD`), then coins, the arena
-coin, honour points and silk. Bit 8 comes last (`0x61787d` `test bl,0x8`):
+payment flags in a fixed order. Among the payment flags it tests gold first
+(flag 1, `0x6173aa`, which refuses `0x180f` `UIIT_MSG_STRGERR_NOT_ENOUGH_GOLD`),
+then coins, the arena coin, honour points and silk. Flag 8 comes last
+(`0x61787d` `test bl,0x8`). "First" holds only among the payment flags
+(qualified in round 531): before any of them, `CheckCurrencyRequirement` calls
+`0x617000` (`0x617383`), which can refuse 2 or `0x1893` and then returns at
+once (`0x61738f`-`0x61739f`), and `0x617a50` has refusals of its own before it
+reaches `0x617950` (`0x1806`, `0x1809`, `0x18ab`, `0x1807`, `0x18cf`, 2 and
+`0x1893` among them, read from the dump).
 
 	617886  mov edi,[esi+0x1cbc] ; test edi,edi ; je 0x6178d2       -> 0x18c4, no guild
 	617892  call [edx+0x380]
@@ -1715,9 +1721,10 @@ coin, honour points and silk. Bit 8 comes last (`0x61787d` `test bl,0x8`):
 is `UIIT_MSG_GUILD_STORE_BUY_LIMIT`, "You are not qualified to purchase the
 item.", and `0x18c5` is `UIIT_MSG_GUILD_LACK_GP`, "Item cannot be purchased due
 to lack of guild points." The names come from `error_codes.md` and the texts
-from the player's `textuisystem.txt`. After the checks, `0x618930`'s bit-8 arm
-copies the guild-point amount into the purchase record: bit 8 into `+0x88`, the
-amount into `+0xa8`. Where the guild's total is then reduced was not followed.
+from the player's `textuisystem.txt`. After the checks, `0x618930`'s flag-8 arm
+copies the guild-point amount into the purchase record: flag 8 into `+0x88`,
+the amount into `+0xa8`. Where the guild's total is then reduced was not
+followed.
 
 **Every guild-store good has a guild-point price.** `refshopgoods.txt` lists 25
 goods for the five `STORE_*_GUILD` stores, five in each
@@ -1728,7 +1735,21 @@ Tab 3 sells `PACKAGE_ITEM_ETC_GUILD_RECALL`. In `refpricepolicyofitem.txt`,
 each of those five packages has two rows: PaymentDevice 1 and PaymentDevice 8.
 The client's copy (`/var/tmp/tables`) and the server pack's export agree,
 though the amount sits in a different column in each. The guild crest's two
-rows carry 1,000,000 and 20,000. So in the real engine:
+rows carry 1,000,000 and 20,000.
+
+**PaymentDevice 8 is flag 8** (read in round 531). PaymentDevice is a mask, not
+an index. `RefPricePolicyOfItem_ExtractData` (`0x6a8b80`) reads a row's
+PaymentDevice into `+0x8` and its Cost into `+0x14` (after skipping
+PreviousCost). `ReferenceData::FUN_006a99c0` then finds the lowest set bit `i`
+of `+0x8` (`0x6a9a26`-`0x6a9a50`, `shl`/`test`) and calls `0x4b2bd0` with the
+item's price record (`0x6a9a67`). That sets `1 << i` in the record's flags
+(`0x4b2c2d` `or [ebx],eax`) and stores the Cost as a 64-bit amount at
+`+0x8 + i*8` (`0x4b2c38`, `0x4b2c3c`). PaymentDevice 1 is therefore flag 1
+with its amount at `+0x8`, which the gold arm reads (`0x6173b2`, `0x6173bc`),
+and PaymentDevice 8 is flag 8 (`i` = 3) with its amount at `+0x20`, the
+`[ebp+0x24]:[ebp+0x20]` the flag-8 arm compares.
+
+So in the real engine:
 
 | buyer | at a guild store |
 |---|---|
@@ -1749,8 +1770,10 @@ gold. No code changed, for three reasons:
 
 - The engine keys the refusal on the goods' price policy. It does not key it on
   a `GROUP_STORE_*_GUILD` store or on a `GUILD_PATTERNS` NPC, the two keys the
-  round was planned around. Keying it on the store would also refuse the guild
-  master, who the engine lets buy.
+  round was planned around. A store-keyed rule, refusing only a guildless
+  buyer, would SERVE a plain member, whom the engine refuses `0x18c4`, and
+  would spend no guild points (corrected in round 531: this bullet had it
+  backwards, saying such a rule would refuse the master).
 - srrevamp imports no price policy. `refdata.Item` has no payment device.
 - `OpShopBuy` names only the item, not the NPC or the store. A store-keyed test
   would need a new packet layout. A price-keyed one would not.

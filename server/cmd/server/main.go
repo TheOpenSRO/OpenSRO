@@ -946,8 +946,10 @@ func main() {
 	// the stop open. It runs while connection goroutines and keep-up swings
 	// may still be booking points, and main does not wait for them: points
 	// booked after the flush passes a character are lost at exit (up to nine
-	// per character, clean stop only) -- disclosed, not closed, in
-	// FlushAllPending's comment (round 527).
+	// pending per character on a clean stop, plus any batch of ten or more
+	// whose credit is still running when main returns) -- disclosed, not
+	// closed, in FlushAllPending's comment (round 527; the batch named here
+	// in round 531).
 	flushCtx, cancelFlush := context.WithTimeout(context.Background(), 30*time.Second)
 	gpSkills.FlushAllPending(flushCtx)
 	cancelFlush()

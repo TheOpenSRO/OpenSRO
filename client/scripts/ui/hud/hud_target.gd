@@ -91,7 +91,9 @@ func setup() -> bool:
 	# character and takes the keyboard back from a focused text line. STOP, as
 	# HudWindow uses (its comment has the reasoning): Godot 4.2 hit-tests the
 	# deepest control first, so the close button still gets its click. Hidden,
-	# the window catches nothing (Godot skips an invisible control).
+	# the window catches nothing (Godot skips an invisible control). A middle
+	# press on it fires the first quickslot through the hotbar's relay
+	# (HudUnderbar.relay_middle_button, which World3D connects; round 531).
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	visible = false
 	if _builder == null:

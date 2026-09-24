@@ -338,9 +338,10 @@ const FoundingLevel = 1
 // ShardManager's update arrives. CMainProcess::FUN_005c9bd0, the inter-server
 // guild dispatcher, sends its cases 9 and 10 to FUN_005ca4b0 ->
 // FUN_005c3c90, which reads a field mask, and FUN_005cfc20 copies each field
-// the mask names, among them bit 4 the level (+0x38, _GUILD.Lvl) and bit 8
-// GatheredSP (+0x3c). Which bits the ShardManager sets after a level-up, and what total
-// it sends, is decided in the ShardManager, which is not in
+// the mask names, among them mask value 4 the level (+0x38, _GUILD.Lvl) and
+// mask value 8 GatheredSP (+0x3c) -- values its tests `& 4` and `& 8` read,
+// not bit indices. Which flags the ShardManager sets after a level-up, and
+// what total it sends, is decided in the ShardManager, which is not in
 // SR_GameServer.exe. (That case 9 answers job 9 is a match of numbers and of
 // fields, not a traced path.)
 //

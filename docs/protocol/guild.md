@@ -125,7 +125,10 @@ would have been founded for free. So the handler calls `guilds.Leave` for the
 founder, which disbands a guild once its last member leaves, in both stores. It
 then replies with the not-enough-gold message. There is one window: a second
 character could join the new guild by id before the rollback runs, and then
-`Leave` hands that character the leadership instead of disbanding.
+`Leave` hands that character the leadership instead of disbanding. The
+`Leave` runs on `context.WithoutCancel(ctx)` (round 531): a server stop that
+cancels the handler's `ctx` fails `DeductGold`, and a `Leave` on the same
+`ctx` would fail too and leave the guild founded for free.
 
 **The client's purse.** The server sends no gold update, just as it sends none
 after a shop buy. The client re-reads the character's stats when a create
@@ -208,11 +211,13 @@ this binary.**
   `CMainProcess::FUN_005c9bd0`, the inter-server guild dispatcher, sends its
   cases 9 and 10 to `FUN_005ca4b0`, which finds the guild and calls
   `FUN_005c3c90`. That reads a one-byte field mask, and `FUN_005cfc20` copies
-  each field the mask names: bit 1 the id (`+0x18`), bit 4 `Lvl` (`+0x38`),
-  bit 8 `GatheredSP` (`+0x3c`), bit `0x20` `CurCrestRev` (`+0x94`), bit `0x40`
-  `MercenaryAttr` (`+0x98`) (offsets as `docs/protocol/db_bind_offsets.tsv`
-  binds them); bits 2 and `0x10` read strings (`FUN_00404b60`). It then broadcasts `0x38F5` type 5 with the same mask.
-- Which bits the ShardManager sets after a level-up, and what `GatheredSP` it
+  each field the mask names. The numbers are mask VALUES, the operands of its
+  tests (`& 1`, `& 4`, `& 8`, ...), not bit indices (corrected in round 531):
+  1 the id (`+0x18`), 4 `Lvl` (`+0x38`), 8 `GatheredSP` (`+0x3c`), `0x20`
+  `CurCrestRev` (`+0x94`), `0x40` `MercenaryAttr` (`+0x98`) (offsets as
+  `docs/protocol/db_bind_offsets.tsv` binds them); 2 and `0x10` read strings
+  (`FUN_00404b60`). It then broadcasts `0x38F5` type 5 with the same mask.
+- Which flags the ShardManager sets after a level-up, and what `GatheredSP` it
   sends, is decided in the ShardManager, which is not in `SR_GameServer.exe`.
   That dispatcher case 9 answers job 9 is a match of numbers and fields, not a
   traced path.
@@ -233,16 +238,6 @@ readings point that way, and neither proves it:
 Not spending them would make the guild-point cost a threshold only. If the
 ShardManager is ever read, `guild.CheckLevelUp`'s `gpCost` is the value to
 correct.
-
-**A third purchase gated on `GatheredSP`: the guild store's goods (round 530).**
-Every good the `STORE_*_GUILD` stores sell has a PaymentDevice 8 price row in
-`refpricepolicyofitem`. For these goods `GObjPC::CheckCurrencyRequirement`
-(`0x617360`) tests bit 8 (`0x61787d`), after the gold test. It refuses `0x18c4`
-`UIIT_MSG_GUILD_STORE_BUY_LIMIT` when `pc+0x1cbc` is 0 or `CGuild::IsGuildMaster`
-answers 0. It refuses `0x18c5` `UIIT_MSG_GUILD_LACK_GP` when `guild + 0x3c` is
-below the price. srrevamp models none of this yet. See
-`docs/protocol/character_state.md`, "What the server checks at a guild store
-(round 530)".
 
 **What the client does with a refusal.** `Guild_OnLevelUpResult` (`0x881bd0`,
 the client's handler for `0xb0fa`) reads a result byte and, on 2, a `u16` code,
@@ -276,7 +271,14 @@ message, and `0x4c0d` goes to the default, which shows nothing.
   before the new level is kept, and that refusal is reported as `0x4c31`. If
   the store fails after taking the gold (its `UPDATE`, read-back or commit),
   the handler gives the gold back with `AddGold` and logs a refund that fails.
-  This is the counterpart of founding's rollback (round 487).
+  This is the counterpart of founding's rollback (round 487). Since round 531
+  both the refund and that rollback run on `context.WithoutCancel(ctx)`: a
+  server stop cancels the handler's `ctx`, and a stop between the deduction
+  and the guild's `UPDATE` used to fail the refund too and lose the gold. A
+  process that exits before the refund returns still loses it (the stop does
+  not wait for connections; round 527). A commit error is ambiguous: a
+  connection that drops after Postgres committed reports one too, and then the
+  refund pays back a level the guild kept (`SQLStore.LevelUp`'s comment).
 - **Alive** is HP above 0, the stand-in the founder check uses for the same
   `GetLifeState` test.
 - **The member cap follows the level.** Both stores' `Join` refuse at
@@ -303,6 +305,24 @@ message, and `0x4c0d` goes to the default, which shows nothing.
   "Guild" placeholder there. The engine broadcasts the new level to the
   guild's members (`0x38F5` type 5); srrevamp's other members see it on their
   next guild reply.
+
+### A third purchase gated on `GatheredSP`: the guild store's goods (round 530)
+
+Not part of a level-up; it sits here beside the other two purchases the
+guild's points pay for. Every good the `STORE_*_GUILD` stores sell has a
+PaymentDevice 8 price row in `refpricepolicyofitem`. PaymentDevice is a mask
+too: `ReferenceData::FUN_006a99c0` takes the lowest set bit `i` of the row's
+PaymentDevice (`+0x8`, as `RefPricePolicyOfItem_ExtractData` reads the row)
+and calls `0x4b2bd0`, which sets `1 << i` in the item's price record (`0x4b2c2d`
+`or [ebx],eax`) and stores the row's Cost (`+0x14`) as a 64-bit amount at
+`+0x8 + i*8` (`0x4b2c38`, `0x4b2c3c`). So PaymentDevice 8 is flag 8 (`i` = 3),
+amount at `+0x20` (round 531). For these goods `GObjPC::CheckCurrencyRequirement`
+(`0x617360`) tests that flag (`0x61787d` `test bl,0x8`), after the gold flag.
+It refuses `0x18c4` `UIIT_MSG_GUILD_STORE_BUY_LIMIT` when `pc+0x1cbc` is 0 or
+`CGuild::IsGuildMaster` answers 0. It refuses `0x18c5` `UIIT_MSG_GUILD_LACK_GP`
+when `guild + 0x3c` is below the amount at `+0x20`. srrevamp models none of
+this yet. See `docs/protocol/character_state.md`, "What the server checks at a
+guild store (round 530)".
 
 ## Gold is 64-bit
 
@@ -335,9 +355,10 @@ level of 5 or below (`5c6335 cmp al,0x5; ja`), and sends **`0x78F7 {byte,
 guild id, member id, points}`** to the global server; the game server later
 receives the echo and `CGuild::AddPoints` (`0x5c4110`, from the `0x5c9bd0`
 inter-server dispatcher through `0x5ca500`) adds the count to **the guild's
-total at `guild+0x3c`** (dirty bit 8) and to **the member's `GP_Donation` at
-`member+0x40`** (dirty bit 4), broadcasting `0x38F5` type 5 (the guild total)
-and type 6 (the member's donation) through `CGuild::BroadcastToLocalMember`.
+total at `guild+0x3c`** (dirty flag 8, a mask value) and to **the member's
+`GP_Donation` at `member+0x40`** (dirty flag 4), broadcasting `0x38F5` type 5
+(the guild total) and type 6 (the member's donation) through
+`CGuild::BroadcastToLocalMember`.
 `AddPoints` does both only when `FUN_005d0c90` finds the member, and neither
 otherwise.
 

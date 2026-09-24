@@ -96,17 +96,6 @@ environment = SubResource("Environment_world3d")
 
 [node name="UI" type="CanvasLayer" parent="."]
 
-[node name="HideUIButton" type="Button" parent="UI"]
-anchors_preset = 1
-anchor_left = 1.0
-anchor_right = 1.0
-offset_left = -84.0
-offset_top = 8.0
-offset_right = -8.0
-offset_bottom = 40.0
-grow_horizontal = 0
-text = "Hide UI"
-
 [node name="Control" type="Control" parent="UI"]
 layout_mode = 3
 anchors_preset = 15
@@ -654,6 +643,17 @@ text = "Refresh"
 layout_mode = 2
 text = ""
 autowrap_mode = 2
+
+[node name="HideUIButton" type="Button" parent="UI"]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -234.0
+offset_top = 8.0
+offset_right = -158.0
+offset_bottom = 40.0
+grow_horizontal = 0
+text = "Hide UI"
 
 [connection signal="pressed" from="UI/Control/DisconnectButton" to="." method="_on_disconnect_pressed"]
 [connection signal="pressed" from="UI/Control/ChangeZoneButton" to="." method="_on_change_zone_pressed"]

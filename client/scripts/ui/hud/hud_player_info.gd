@@ -82,7 +82,9 @@ func setup() -> void:
 	# character and takes the keyboard back from a focused text line. STOP, as
 	# HudWindow uses (its comment has the reasoning): Godot 4.2 hit-tests the
 	# deepest control first, so a child that wants a click still gets it, and
-	# a PASS child's click stops here instead of reaching the world.
+	# a PASS child's click stops here instead of reaching the world. A middle
+	# press on it fires the first quickslot through the hotbar's relay
+	# (HudUnderbar.relay_middle_button, which World3D connects; round 531).
 	mouse_filter = Control.MOUSE_FILTER_STOP
 
 	if _builder == null:

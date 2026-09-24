@@ -31271,9 +31271,11 @@ box's archive", as if seen on screen.) Choosing the line reports that it is not 
   `NPC_SD_T_AREA_THIEF`. The readers that make these the Trader, Hunter and Thief guilds are in
   `docs/protocol/jobs.md`, "The three job guilds have three interaction ids (round 453)" (the
   `0x480f` gate). All 14 codenames exist in the player's `characterdata_*.txt`
-  (`/var/tmp/tables`), and so do the others a wildcard would catch: `NPC_SD_MERCHANT_CHANGER`,
-  `NPC_TD_THIEF_BUY`, `NPC_TD_THIEF_A`-`_D` and `NPC_SD_THIEF_AGENT_CHANGER`, none of which is in
-  these chains.
+  (`/var/tmp/tables`), and so do the others a wildcard would catch when read as a substring
+  pattern, the way the server's `strstr` tests match (an anchored `NPC_*_MERCHANT` stops at
+  `_CHANGER`; qualified in round 531, as round 527 qualified `character_state.md`):
+  `NPC_SD_MERCHANT_CHANGER`, `NPC_TD_THIEF_BUY`, `NPC_TD_THIEF_A`-`_D` and
+  `NPC_SD_THIEF_AGENT_CHANGER`, none of which is in these chains.
 - **Client, `FUN_00700440`** (`/var/tmp/sro_client.asm`). Id 0x14 is looked up at `0x70120e`,
   0x16 at `0x701252`, 0x15 at `0x701296`; a present id calls `FUN_006fdeb0(n, kind)` with
   `0x701237` `push 1`, `0x70127b` `push 3`, `0x7012bf` `push 2`. The block comes after the 0xf
@@ -31861,9 +31863,11 @@ row: import each good's device-8 amount; after the gold test, refuse `0x18c4` an
 engine's order; spend the points. Where the engine spends them was not followed. `0x618930`'s
 bit-8 arm copies the amount into the purchase record at `+0xa8`.
 
-**Names filed.** `recovered_names.tsv` gains the five condition-handler methods, from the RTTI
-above: `SCNothing::Check` (`0x61ba30`), `SCUserLevelLimit::IsValid`/`Check` (`0x61ba40`,
-`0x61ba70`) and `SCGuildLevelLimit::IsValid`/`Check` (`0x61bad0`, `0x61bb00`).
+**Names filed.** `recovered_names.tsv` gains the five condition-handler methods:
+`SCNothing::Check` (`0x61ba30`), `SCUserLevelLimit::IsValid`/`Check` (`0x61ba40`,
+`0x61ba70`) and `SCGuildLevelLimit::IsValid`/`Check` (`0x61bad0`, `0x61bb00`). The RTTI above
+grounds only the class half of each name. `Check` and `IsValid` are readings of what each vtable
+slot's body does, filed with origin `reading`, not names the binary gives (corrected in round 531).
 
 **Probes and their failure modes.** A range grep of `srv.asm` for `0x1cbc` finds no guild read in
 the open handler, `StorageOperation`, the op-8 entry, the purchase, or `0x617a50`/`0x617950`. The
@@ -31878,3 +31882,167 @@ agrees, but it is another export of the same data.
 `character_state.md` at run time. No client file changed, so the client suites were not run. The
 render box was used read-only, except for one `remote_godot.sh sync` of the unchanged tree and
 three `dump_text_table.gd` runs (the table, a known table, and a misspelt name).
+
+## Batch-12 review follow-ups (rounds 527-530): the Hide UI button, middle-click over HUD, the level-up refund on shutdown, record wording (round 531)
+
+The reviewers' notes on rounds 527-530. Each claim was re-checked before it was written: the client
+against Godot 4.2.2's viewport behaviour, measured on the render box, and the archive's
+`ifminimap.txt`; the server against `/var/tmp/srv.asm` and `/var/tmp/decomp_server`, read-only.
+Three changes a player can notice, one server fix that acts only when a stop interrupts a guild
+write, and wording.
+
+**Round 529: two routes the STOP surfaces broke.**
+
+- **(a) The developer Hide UI button could not be clicked.** `World3D.tscn` had `UI/HideUIButton`
+  (offsets -84..-8 x 8..40 from the top right) as an EARLIER sibling of `UI/Control`, and the
+  minimap (-150..-14 x 10..185, `World3D._try_initialize_pk2_ui`) is a child of `UI/Control`.
+  Godot 4.2 hit-tests a later sibling first. Once round 529 made the minimap STOP, the minimap
+  took every click on the part of the button it covered: all but a 6-pixel strip down its right
+  side and a 2-pixel strip along its top. Measured: at BASE, a click at the button's centre
+  pressed nothing (`hud_click_routing_test.gd`, below).
+  **Change.** The button is now `UI/Control`'s LATER sibling, the last child of `UI`, so nothing
+  in `UI/Control` can cover it. It also moved left of the minimap, to -234..-158 x 8..40. Moving
+  it after `UI/Control` alone would have drawn it over the minimap's area name
+  (`GDR_MINIMAP_TEXT_AREANAME` at 12,9 104x12, dumped this round from the render box's
+  `Media.pk2` with `tools/dump_layout.gd --file=ifminimap`; nothing committed). The position is our
+  own, since the button has no authored equivalent. The minimap's STOP body is unchanged. Its
+  placement moved, unchanged, into the static `World3D.place_minimap`, so the suite places a
+  minimap exactly where the world does. The button shows only with the developer tools
+  (`_set_dev_ui_visible(false)` runs when the archive HUD is built; Ctrl+F1).
+- **(b) A middle press over the minimap, the player-info block or the target window fired no
+  quickslot.** Their STOP roots consumed it before `World3D._unhandled_input`, which fires the
+  page's first quickslot. Round 529 gave only the hotbar's body its own handler. **Change.** One
+  path: `HudUnderbar.relay_middle_button(surface)` connects a surface's `gui_input` to the handler
+  the hotbar's body already used (`_on_body_gui_input`, whose `setup()` connection now goes
+  through the relay too). It connects each surface once, however often it is called.
+  `World3D._relay_middle_button_to_hotbar` hands it the three surfaces once they all exist, right
+  after `_hide_debug_ui_replaced_by_hud` (which builds the target window). A press on a STOP child
+  of a surface (the minimap's zoom and map buttons, the target's close button) is consumed by that
+  child and fires nothing, as before round 529.
+
+**Round 528: the level-up.**
+
+- **(c) The refund on a stop.** `session.handleGuildLevel` refunded with `chars.AddGold(ctx, ...)`
+  on the handler's `ctx`. That is the gateway's context (`gateway.Server.serveConn` hands its own
+  `ctx` to the handler), and a server stop cancels it. A stop between the deduction and the guild's
+  `UPDATE` fails the `UPDATE` with `context.Canceled`, and a refund on the same `ctx` failed too,
+  so the gold was lost. The refund now runs on `context.WithoutCancel(ctx)` (Go 1.21+; `go.mod`
+  says 1.25). Round 487's founding rollback had the same shape: a `DeductGold` failed by the stop,
+  then `guilds.Leave(ctx, ...)` on the same `ctx`. It left the guild founded for free, and it gets
+  the same fix. Not closed: `main` does not wait for connection goroutines (round 527), so a
+  process that exits before the refund returns still loses it. A refund that fails is logged, as
+  before. On the server this acts only when a stop lands inside one of those two writes.
+- **(d) A commit error is ambiguous.** `SQLStore.LevelUp`'s comment said a failed commit means the
+  level was not kept. A connection that drops after Postgres committed reports an error too, and
+  then the level WAS kept, so the refund pays back a level the guild kept. The comment, the
+  handler's comment and `guild.md` now say so. A `ctx` cancelled before the commit is not
+  ambiguous: `database/sql`'s `Tx.Commit` returns the context's error or `ErrTxDone`, and its
+  `awaitDone` has rolled the transaction back (read in the Go 1.25 source).
+- **(e) Mask values, not bits.** `FUN_005cfc20` tests `& 1`, `& 2`, `& 4`, `& 8`, `& 0x10`,
+  `& 0x20`, `& 0x40` (`getfn.sh 005cfc20`). "bit 4 Lvl, bit 8 GatheredSP" named mask values as bit
+  indices. Now fixed in `guild.go`'s level-up comment and in `guild.md`'s ShardManager bullet. The
+  same misnomer ("dirty bit 8", "dirty bit 4") in `CGuild::AddPoints`'s row and `guild.md`
+  (`or [eax+0x8],0x8` at `0x5c4148`, `,0x4` at `0x5c4175`) now reads "flag". Round 528's entry
+  already wrote the values bare. Its commit message cannot be changed.
+- **(f) `TODO.md`, "Guild points and levels"** was checked before a release. It now says
+  v0.1.434, the next tag, which carries rounds 527-531. The points shipped in v0.1.433.
+- **(g) The Guild tab after a refusal.** `World3D._on_guild_level_result` replaced the status line
+  with the refusal, which hid the guild's summary until the next reply. The refusal now goes after
+  the summary (`"<summary> Guild level: <refusal>"`). It stays alone when there is no roster, so
+  `error_text_test.gd`'s check is unchanged. The next reply rewrites the line.
+
+**Round 527's reviewer.**
+
+- **(h) The wildcard claim, qualified where it was still bare.** Round 526's Grounding bullet and
+  `npc_service_reader_test.gd`'s comment now say the wildcard catches those codenames only when
+  read as a substring pattern, the way the server's `strstr` tests match. An anchored
+  `NPC_*_MERCHANT` stops at `_CHANGER`.
+- **(i) `CGuild::AddPoints` or `CMainProcess::AddPoints`.** The dump names `0x5c4110`
+  `CMainProcess::AddPoints` (`getfn.sh 005c4110`). The row keeps `CGuild::AddPoints` and now says
+  why:
+  - `ApplyRecoveredNames.java` set the row's leaf and kept the owner it found. It keeps any
+    existing owner unless a row says `force`.
+  - That owner reads as a module attribution. The one caller, `0x5ca585`, is in
+    `CMainProcess::HandleGuildPointsChanged`, which is exactly the unanimous-caller case
+    `PropagateModules.java` attributes. The applier's comment replaced the plate, so the dump no
+    longer shows which pass set it.
+  - `CGuild` is the row's reading. EDI is passed as `this` to `FUN_005d0c90` (`0x5c4121` `mov
+    ecx,edi`) and to `CGuild::BroadcastToLocalMember` (`0x5c41d7` `mov ecx,edi`, `0x5c41d9` `call
+    0x5c4260`). The record it raises is `[EDI+4]`.
+  - No `force` was added. The owner is a reading, so the dump stays as it is.
+- **(j) `main.go`'s stop-flush comment** said "up to nine per character". It now adds any batch of
+  ten or more whose credit is still running when `main` returns, as `FlushAllPending`'s comment
+  and `guild.md` already did.
+
+**Round 530's reviewer.**
+
+- **(k) The store-keyed bullet had the logic backwards.** `character_state.md` said keying the
+  refusal on the store "would also refuse the guild master". A rule that refuses only a guildless
+  buyer at a `STORE_*_GUILD` store would instead SERVE a plain member, whom the engine refuses
+  `0x18c4`, and would spend no points. Corrected.
+- **(l) PaymentDevice 8 is flag 8, cited.** `RefPricePolicyOfItem_ExtractData` (`0x6a8b80`) reads
+  a row's PaymentDevice into `+0x8` and, after skipping PreviousCost (`FUN_006b1a80`), its Cost
+  into `+0x14`. That is the column order `refdata_schema.md` records. `ReferenceData::FUN_006a99c0`
+  finds the lowest set bit `i` of `+0x8` (`0x6a9a26`-`0x6a9a50`) and calls `0x4b2bd0` with the
+  item's price record (`0x6a9a67`). That sets `1 << i` (`0x4b2c2d` `or [ebx],eax`) and stores the
+  Cost at `+0x8 + i*8` (`0x4b2c38`/`0x4b2c3c`). So PaymentDevice 8 is flag 8 (`i` = 3) with its
+  amount at `+0x20`, which is the `[ebp+0x24]:[ebp+0x20]` the flag-8 arm compares (`0x6178b3`,
+  `0x6178bd`). The gold arm reads `+0x8` (`0x6173b2`, `0x6173bc`), so flag 1 is PaymentDevice 1.
+  Cited in `character_state.md` and in `guild.md`'s moved paragraph.
+- **(m) "It tests gold first"** holds only among the payment flags. `CheckCurrencyRequirement`
+  first calls `0x617000` (`0x617383`), which can answer 2 or `0x1893` and then returns at once
+  (`0x61738f`). `0x617a50` refuses `0x1806`, `0x1809`, `0x18ab`, `0x1807`, `0x18cf`, 2 and
+  `0x1893` before it reaches `0x617950` (read from the dump). Qualified.
+- **(n) The RTTI names.** Round 530's "Names filed ... from the RTTI" now says the RTTI grounds only
+  the class half. `Check` and `IsValid` are readings of each slot's body, filed as `reading`.
+- **(o) `guild.md`.** The round-530 paragraph sat inside "What a level-up spends", just before
+  "What the client does with a refusal", which is about the level-up. It moved under its own
+  subheading after "What srrevamp does (round 528)": "A third purchase gated on `GatheredSP`: the
+  guild store's goods (round 530)".
+- **(p) `TODO.md`'s long line** in the NPC-talk item is rewrapped.
+- **(q) The follow-up has its own open item** in `TODO.md`, "The guild stores' guild-point
+  price". It lists importing the device-8 amounts (`refpricepolicyofitem` through
+  `refscrapofpackageitem`), refusing `0x18c4`/`0x18c5` in `shop.Service.Buy` in the engine's
+  order, and spending the points. Where the engine spends them was not followed. Before, the
+  follow-up was only prose inside a checked item.
+
+**Tests.**
+
+- Server, `internal/session/guild_test.go`:
+  - `TestGuildLevelUpRefundSurvivesAStop`: a guild store takes the payment, cancels the gateway's
+    context (the stop) and fails its `UPDATE` with the context's error. The character store's gold
+    writes honour `ctx`, as `ExecContext` does.
+  - `TestGuildCreateRollbackSurvivesAStop`: the same stop right after `Create`, with a `Leave` that
+    honours `ctx`.
+  - Each carries a probe that the deduction ran on the live context and that the stop really
+    cancelled it.
+  - NEGATIVE: with `session/guild.go` stashed, both FAIL ("Aria has 0 gold after a level-up the
+    stop interrupted"; "Aria is still in a guild after a stop interrupted its founding").
+    Restored, both pass.
+- Client, the new `client/scripts/ui/hud/hud_click_routing_test.gd`:
+  - It instantiates `World3D.tscn` without letting World3D enter the tree, moves its `UI` into the
+    live viewport and pushes real events through `Viewport.push_input`. A recorder stands in for
+    World3D's `_unhandled_input`.
+  - The suite waits one frame and sets the root to 1152x648. A headless root is 64x64, measured.
+  - (a) The button comes after `UI/Control`. It is clear of a minimap placed by `place_minimap`,
+    it takes a click at its centre, and it still wins that centre over a full-screen STOP control
+    added last to `UI/Control`. A hidden button takes nothing.
+  - (b) A middle press on each of the three surfaces fires the quickslot signal exactly once, and
+    it does not also reach the world. A left click fires nothing. Relaying twice still fires once.
+    The hotbar's body still fires once. A hidden target window lets the press through to the
+    world.
+  - `guild_test.gd` gains the refusal-beside-summary check and the check that the next reply
+    clears it.
+  - NEGATIVE: with the six production client files stashed (`World3D.gd`, `World3D.tscn`,
+    `hud_underbar.gd` and the three surfaces' comment-only edits), the new suite reports 10
+    FAILURES and `guild_test.gd` 1. Restored, both report ALL PASS.
+- `remote_godot.sh tests`: 81 suites, 0 failing. `remote_godot.sh check`: 247 scripts and 5
+  scenes, ALL LOAD. `cd server && go build ./... && go test -count=1 -p 1 ./...`: green, with the
+  doc probes re-run after the doc edits.
+- Not driven: a real click in a running client.
+- The render box was used for syncs, the suites, the `ifminimap` dump, and one throwaway script
+  that measured the headless root's size. That script was deleted there.
+
+**Found, not changed.** World3D's log line still says "Developer tools (zone travel, log out): F1",
+and `DEV_UI_NODES`'s comment says "Shown with F1". The binding moved to Ctrl+F1
+(`_unhandled_input`), which is outside this item.

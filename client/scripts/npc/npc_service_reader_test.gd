@@ -436,8 +436,10 @@ func _init() -> void:
 		_check(stateful and ok, "%s offers exactly one job_guild, kind %d, strid %s (got %s)"
 			% [jcode, jkind, want_strid[jkind],
 				jl.map(func(s): return [s.get("job_kind"), s.get("strid")])])
-	# NEGATIVE: the codenames a wildcard would have caught carry none of the
-	# three ids, and neither does an ordinary store.
+	# NEGATIVE: the codenames a wildcard would have caught, read as a
+	# substring pattern the way the server's strstr tests match (an anchored
+	# NPC_*_MERCHANT stops at _CHANGER), carry none of the three ids, and
+	# neither does an ordinary store.
 	for jcode in ["NPC_SD_MERCHANT_CHANGER", "NPC_TD_THIEF_BUY", "NPC_TD_THIEF_A",
 			"NPC_SD_THIEF_AGENT_CHANGER", "NPC_CH_POTION"]:
 		var jn: Array = []

@@ -395,8 +395,15 @@ func (s *SQLStore) AddPoints(ctx context.Context, guildID, characterID int64, po
 // holding what they want.
 //
 // One window is left, after pay: if the UPDATE, the read-back or the commit
-// fails, the gold has been taken and the level has not. The error is returned,
-// and the caller that took the gold gives it back (session.handleGuildLevel).
+// fails, the gold has been taken. The error is returned, and the caller that
+// took the gold gives it back (session.handleGuildLevel). For the UPDATE and
+// the read-back the level was not kept: the transaction rolls back. A commit
+// error is AMBIGUOUS (round 531): a connection that drops after Postgres
+// committed but before its reply arrives reports an error too, and then the
+// level WAS kept. Nothing here can tell the two apart, so the caller's refund
+// can pay back a level the guild kept. (A ctx cancelled before the commit is
+// not ambiguous: database/sql rolls the transaction back and Commit returns
+// the context's error or ErrTxDone.)
 func (s *SQLStore) LevelUp(ctx context.Context, characterID int64, alive bool, gold int64, pay func(gold int64) error) (*Guild, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

@@ -273,6 +273,19 @@ func _test_world_guild_level() -> void:
 	_check(status.text == "Silk Legion (#7, level 5, 1/50 members).",
 		"a level reply for another guild is ignored (got '%s')" % status.text)
 
+	# Round 531: a refusal goes beside the summary, which stays. Without an
+	# archive text table ErrorText falls back to the server's words.
+	# NEGATIVE (fails before round 531: the refusal replaced the summary).
+	world.call("_on_guild_level_result", GuildNet.decode_level_result(
+		_build_level_result("the guild is already at the top level", 0x4c21, 0, 0, false, 0, 0, 0)))
+	_check(status.text == "Silk Legion (#7, level 5, 1/50 members). Guild level: the guild is already at the top level",
+		"a level-up refusal keeps the guild's summary (got '%s')" % status.text)
+	# The next reply rewrites the line without the refusal.
+	world.call("_on_guild_level_result", GuildNet.decode_level_result(
+		_build_level_result("", 0, 7, 5, false, 50, 0, 0)))
+	_check(status.text == "Silk Legion (#7, level 5, 1/50 members).",
+		"the next level reply clears the refusal (got '%s')" % status.text)
+
 	# NEGATIVE: a member who is not the master gets no button.
 	world.set("_guild_master", false)
 	world.call("_refresh_guild_level_button")

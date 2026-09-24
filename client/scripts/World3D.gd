@@ -1209,6 +1209,24 @@ func _ready() -> void:
 	_try_load_cursors()
 	await _drain_initial_load(_t_region)
 
+## Where the minimap sits: the top-right corner, 136x175 (the frame's size,
+## HudMinimap.setup), 14 in from the right edge and 10 down. Our own
+## placement, unchanged from before it was a function; the scene's Hide UI
+## button is placed clear of it (see _toggle_ui_visibility). Static so the
+## suite can place a minimap exactly where the world does (round 531).
+static func place_minimap(minimap: Control) -> void:
+	minimap.anchors_preset = Control.PRESET_TOP_RIGHT
+	minimap.anchor_left = 1.0
+	minimap.anchor_right = 1.0
+	minimap.anchor_top = 0.0
+	minimap.anchor_bottom = 0.0
+	minimap.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	minimap.grow_vertical = Control.GROW_DIRECTION_END
+	minimap.offset_left = -150.0
+	minimap.offset_right = -14.0
+	minimap.offset_top = 10.0
+	minimap.offset_bottom = 185.0
+
 ## Initializes authentic Silkroad UI components (minimap, underbar) from Media.pk2 if available.
 func _try_initialize_pk2_ui() -> void:
 	_media_pk2 = _open_media_pk2_if_set()
@@ -1228,17 +1246,7 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_minimap = HudMinimap.new(_ui_builder, _media_pk2, _ui_text_table)
 	_hud_minimap.name = "HudMinimap"
 	ui_control.add_child(_hud_minimap)
-	_hud_minimap.anchors_preset = Control.PRESET_TOP_RIGHT
-	_hud_minimap.anchor_left = 1.0
-	_hud_minimap.anchor_right = 1.0
-	_hud_minimap.anchor_top = 0.0
-	_hud_minimap.anchor_bottom = 0.0
-	_hud_minimap.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	_hud_minimap.grow_vertical = Control.GROW_DIRECTION_END
-	_hud_minimap.offset_left = -150.0
-	_hud_minimap.offset_right = -14.0
-	_hud_minimap.offset_top = 10.0
-	_hud_minimap.offset_bottom = 185.0
+	place_minimap(_hud_minimap)
 	_hud_minimap.setup()
 
 	# The world map, opened from the minimap's own map button. It is built
@@ -1456,9 +1464,29 @@ func _try_initialize_pk2_ui() -> void:
 	# show, and the corner labels duplicate the minimap's own readout. The
 	# chat box and zone box stay -- chat has no authored window built yet,
 	# and the zone box is still the only way to travel. See docs/UI_TODO.md.
+	# (It also builds the target window.)
 	_hide_debug_ui_replaced_by_hud()
+	# Every STOP surface now exists: the middle button fires the first
+	# quickslot over them too.
+	_relay_middle_button_to_hotbar()
 
 	print("World3D: authentic Silkroad UI initialized from Media.pk2 (minimap, underbar, player info, %d panels)" % HudPanels.PANELS.size())
+
+## The middle button over the minimap, the player-info block and the target
+## window (round 531). It fires the current page's first quickslot wherever
+## the cursor is (_unhandled_input, playtest 2026-09-20), but round 529 made
+## these three STOP, so a middle press on them is consumed by the GUI and
+## never reaches _unhandled_input. Each is handed to the hotbar's one relay
+## (HudUnderbar.relay_middle_button), the same handler the hotbar's own body
+## uses, so all four surfaces share one path. A press on a STOP child of a
+## surface (the minimap's zoom and map buttons, the target's close button) is
+## consumed by that child and fires nothing, as before round 529.
+func _relay_middle_button_to_hotbar() -> void:
+	if _hud_underbar == null:
+		return
+	for surface in [_hud_minimap, _hud_player_info, _hud_target]:
+		if is_instance_valid(surface) and surface is Control:
+			_hud_underbar.relay_middle_button(surface as Control)
 
 ## Routes the underbar's buttons to the panels. "menu" opens the popup list
 ## above the bar, where the reference puts it.
@@ -8009,6 +8037,17 @@ func _place_player_at_world(x: float, z: float) -> void:
 ## itself lives outside ui_control (a sibling under the UI CanvasLayer, not
 ## a child of Control) specifically so it stays clickable to toggle the UI
 ## back on even while everything else is hidden.
+##
+## It is Control's LATER sibling, and sits left of the minimap (round 531).
+## Godot 4.2 hit-tests a later sibling first. It used to be the earlier one,
+## under the minimap's top-right corner, and once round 529 made the minimap
+## STOP the minimap took every click on the part it covered: the button could
+## no longer hide the UI. Later in the tree, nothing in UI/Control can cover
+## it. Left of the minimap (place_minimap), it no longer covers the minimap's
+## area name either (GDR_MINIMAP_TEXT_AREANAME, 12,9 104x12 in the archive's
+## ifminimap.txt, dumped in round 531). The position is our own; this button
+## has no authored equivalent. hud_click_routing_test.gd measures it.
+##
 ## The developer chrome that has no authored equivalent yet: the zone travel
 ## box, Log Out, and the Hide UI button. Shown with F1.
 const DEV_UI_NODES := ["ZoneInput", "ChangeZoneButton", "DisconnectButton"]
@@ -8106,7 +8145,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	# is how the original reaches it: "the first slot thats on the hotbar you
 	# press it with 1, thats not right it should be middle mouse button"
 	# (playtest 2026-09-20). The 1 key still works -- it addresses the same
-	# slot -- so this adds a binding rather than taking one away.
+	# slot -- so this adds a binding rather than taking one away. This is the
+	# press over the world; a press over a STOP HUD surface never gets here,
+	# and the hotbar fires it for them (_relay_middle_button_to_hotbar).
 	#
 	# NOT YET REBINDABLE. The same report asks for that, and it needs a
 	# key-bindings section in the options window that does not exist yet; a
@@ -9631,7 +9672,8 @@ func _on_guild_points_result(result: GuildNet.PointsResult) -> void:
 ## a level-up the server refused in CGuild::HandleLevelUp's order (dead,
 ## guildless, not the master, level 5, gold, guild points); it is shown on the
 ## tab and in chat in the game's own words where ErrorText has them, else the
-## server's. Any other refusal only goes on the tab. A reply for a guild this
+## server's. Any other refusal only goes on the tab. On the tab a refusal goes
+## after the guild's summary, which stays (round 531). A reply for a guild this
 ## client no longer shows changes nothing. A level-up spends gold and guild
 ## points and the server pushes neither, so a success re-reads the purse and
 ## the points.
@@ -9640,7 +9682,13 @@ func _on_guild_level_result(result: GuildNet.LevelResult) -> void:
 		return
 	if result.error != "":
 		var line: String = ErrorText.guild_level_up_line(result.code, _ui_text_table, result.error)
-		guild_status_label.text = "Guild level: %s" % line
+		# Beside the guild's summary, not in place of it (round 531): the
+		# summary used to vanish until the next guild reply. The next reply
+		# rewrites the line without the refusal.
+		var refusal := "Guild level: %s" % line
+		if _guild_roster != null:
+			refusal = "%s %s" % [_guild_status_text(_guild_roster), refusal]
+		guild_status_label.text = refusal
 		if result.code != 0:
 			_log_system("Could not level up the guild: %s" % line)
 		return

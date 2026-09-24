@@ -43,10 +43,11 @@ In order. Each is checked off here when it ships in a release, with its round in
       (round 521)". Still open for the guild store itself (round 530, record): the real server
       does not refuse the store to anyone. It refuses the goods, all of which have a guild-point
       price (PaymentDevice 8). A buyer with no guild, or who is not the master, gets `0x18c4`, and
-      a guild short of points gets `0x18c5`, after the gold test. srrevamp charges only the gold,
+      a guild short of points gets `0x18c5`, after the gold flag. srrevamp charges only the gold,
       so a guildless player who sends the buy is served. Needed: import the goods' device-8
-      amounts, add the two refusals, and spend the points (`character_state.md`, "What the server
-      checks at a guild store (round 530)"). Also open: the guild state behind the menu can go stale, because the server
+      amounts, add the two refusals, and spend the points (its own item below, "The guild stores'
+      guild-point price"; `character_state.md`, "What the server checks at a guild store (round
+      530)"). Also open: the guild state behind the menu can go stale, because the server
       sends no guild broadcasts (`session/guild.go` answers only the requester). When the master
       leaves, `guild.Store.Leave` hands leadership to the longest-standing member, whose client
       keeps `_guild_master` false and still offers "Leave guild." until its next `guild_info`
@@ -132,15 +133,17 @@ In order. Each is checked off here when it ships in a release, with its round in
       2026-09-15. What is left is DATA, not code: the per-monster tables are DB-only and in no
       archive we have (`smc.bak` is the manager DB), so an operator with the shard DB supplies them
       via `import-refdata -drops-csv/-drop-groups-csv`.
-- [x] **Guild points and levels.** Read in round 272: a guild's points are the skill points its
-      members earn (1:1, batched at 10 per member, credited to the guild total and the member's
-      GP_Donation); the level-up costs are already in `guild.LevelUpCost`. **Points: done (round
-      525)** -- `Guild.GatheredSP` and `Member.GPDonation` are stored, `session.NewGuildPointSkills`
-      credits them from the kill paths' skill-exp conversions through `guild.PointAccumulator`, and
-      the Guild tab shows them (placeholder `OpGuildPoints`, refreshed on each guild reply, not
-      live). The pending accumulator is in memory, as the engine's is: pc+0x2184 starts at zero on
-      every new PC (CGObjPC::vslot_000, 0x4dea77) and FUN_004def90 (0x4def90, its call to
-      RequestAddGuildPoints at 0x4defbd) flushes any count above zero when the PC leaves the world;
+- [x] **Guild points and levels -- v0.1.434.** Points shipped in v0.1.433 (round 525); levels ship
+      in the next tag, v0.1.434, with rounds 527-531. Read in round 272: a guild's points are the
+      skill points its members earn (1:1, batched at 10 per member, credited to the guild total and
+      the member's GP_Donation); the level-up costs are already in `guild.LevelUpCost`. **Points:
+      done (round 525)** -- `Guild.GatheredSP` and `Member.GPDonation` are stored,
+      `session.NewGuildPointSkills` credits them from the kill paths' skill-exp conversions through
+      `guild.PointAccumulator`, and the Guild tab shows them (placeholder `OpGuildPoints`, refreshed
+      on each guild reply, not live). The pending accumulator is in memory, as the engine's is:
+      pc+0x2184 starts at zero on every new PC (CGObjPC::vslot_000, 0x4dea77) and FUN_004def90
+      (0x4def90, its call to RequestAddGuildPoints at 0x4defbd) flushes any count above zero when
+      the PC leaves the world;
       srrevamp flushes it on disconnect (`session.GuildPointsDisconnectHandler`) and at a clean stop
       (`FlushAllPending`, its own handling). That stop flush does not wait for the gateway's
       connection goroutines or the keep-up swings, so points booked after it passes a character are
@@ -149,10 +152,26 @@ In order. Each is checked off here when it ships in a release, with its round in
       `guild.Store.LevelUp` through the placeholder `OpGuildLevel` (the Guild tab's "Level Up Guild"
       button), refused in `CGuild::HandleLevelUp`'s order with its codes, the gold taken at the
       checked amount (as `FUN_005c8fd0`, the job's reply, takes it) and Join's cap following the
-      level. **Still open:** the guild-point spend is a disclosed stand-in (the checked cost): the
-      ShardManager decides it and is not in `SR_GameServer.exe` (`guild.md`, "What a level-up
-      spends (round 528)"); the master's guild NPC line 0x17 (`UIIT_MSG_GUILD_LEVEL_UP`) still
-      shows the placeholder; and other members learn the new level only on their next guild reply.
+      level. A level-up that a server stop interrupts after the gold is taken refunds it on a
+      context the stop does not cancel (round 531). **Still open:** the guild-point spend is a
+      disclosed stand-in (the checked cost): the ShardManager decides it and is not in
+      `SR_GameServer.exe` (`guild.md`, "What a level-up spends (round 528)"); the master's guild NPC
+      line 0x17 (`UIIT_MSG_GUILD_LEVEL_UP`) still shows the placeholder; and other members learn
+      the new level only on their next guild reply.
+- [ ] **The guild stores' guild-point price (filed by round 530, a record round).** The engine
+      refuses guild-store goods at payment, not at the store: every good the five
+      `STORE_*_GUILD` stores sell has a PaymentDevice 8 row in `refpricepolicyofitem`, which the
+      server loads as payment flag 8 with its amount at `+0x20` (`ReferenceData::FUN_006a99c0` ->
+      `0x4b2bd0`, round 531). srrevamp charges only the itemdata gold, so a guildless player who
+      sends the buy gets the crest. To build: (1) import each good's device-8 amount
+      (`refpricepolicyofitem` joined through `refscrapofpackageitem`); (2) in `shop.Service.Buy`,
+      after the gold test, as `GObjPC::CheckCurrencyRequirement` (`0x617360`) orders them, refuse
+      `0x18c4` `UIIT_MSG_GUILD_STORE_BUY_LIMIT` to a buyer with no guild or who is not the master
+      and `0x18c5` `UIIT_MSG_GUILD_LACK_GP` when `Guild.GatheredSP` is below the amount; (3) spend
+      the points. Where the engine spends them is NOT followed yet: `0x618930`'s flag-8 arm copies
+      the amount into the purchase record (`+0xa8`), and the reduction of the guild's total after
+      that was not traced. `OpShopBuy` names only the item, which is all a price-keyed check needs.
+      See `character_state.md`, "What the server checks at a guild store (round 530)".
 - [ ] **Monsters do not move, chase or notice anyone.** They strike only when struck (round 254's
       cadence cap). The machine is read: sixteen states, WANDER's leg and dwell (round 251), BATTLE's
       attack step through the same action machine as a player's cast (254), the approach walk
@@ -351,7 +370,10 @@ In order. Each is checked off here when it ships in a release, with its round in
       real events through the live viewport. **Not driven:** a real click in a running client, and
       the surfaces built from Media.pk2. **Behaviour that changed with it:** a right press on any of
       the four starts no orbit, as over a window. A middle press on the minimap, the player-info
-      block or the target window fires no quickslot; the hotbar's body still fires it.
+      block or the target window fired no quickslot, and the developer Hide UI button, then under
+      the minimap's corner, could no longer be clicked; both fixed in round 531 (the three share
+      the hotbar body's relay, `HudUnderbar.relay_middle_button`, and the button is `UI/Control`'s
+      later sibling, left of the minimap; `hud_click_routing_test.gd`).
 - [ ] **`HudMinimap` and `HudUnderbar` are built twice (read from the code in round 529, not
       measured).** `World3D._try_initialize_pk2_ui` adds each to the tree, and each one's `_ready`
       runs `setup()` because it has no children yet. Then World3D calls `setup()` again, and the
