@@ -15,10 +15,14 @@ const OP_MONSTER_LIST_RESULT := 0x0066 # server -> client
 const OP_LEVEL_UP := 0x0067         # server -> client, direct to the character that levelled
 const OP_BERSERK := 0x0068          # client -> server, request to go berserk
 const OP_BERSERK_RESULT := 0x0069   # server -> client, the gauge/active after the request
-## srrevamp's own monster-movement messages (placeholders, additive; layouts in
+## srrevamp's own monster messages (placeholders, additive; layouts in
 ## docs/protocol/monster_ai.md, "srrevamp's own monster protocol
-## (placeholders)"). No server sends either yet; World3D draws them.
+## (placeholders)"). The server sends 0x007C/0x007F only with its -monster-ai
+## flag on (off by default); no server sends 0x007D or 0x007E yet (round 540
+## built the client half first). World3D draws all four.
 const OP_MONSTER_MOVED := 0x007c        # server -> every session in the zone, one monster's new leg
+const OP_MONSTER_ATTACKED := 0x007d     # server -> every session in the zone, the attacker too: one monster's blow
+const OP_MONSTER_SPAWNED := 0x007e      # server -> every session in the zone: a monster that has just appeared
 const OP_MONSTER_MOTION_LIST := 0x007f  # server -> the requester, right after an OpMonsterListResult
 
 ## Result of decode_monster_moved(): one monster's new leg. (x, z) is where the
@@ -42,6 +46,27 @@ class MotionEntry:
 	var dest_z: float
 	var speed: float
 	var mode: int
+
+## Result of decode_monster_attacked(): one monster's blow on a player. The
+## numbers are the counterattack's own, resolved in session/combat.go
+## performAttack's counter branch (rounds 254, 505) -- the PlayerDamageTaken,
+## MonsterCritical, PlayerBlocked, PlayerDied, PlayerHP and DeathExpLost the
+## attacker's OpAttackResult carries, which a server with the push sends to
+## the whole zone right behind that result.
+class MonsterAttacked:
+	var monster_id: int
+	var target_character_id: int
+	## 0 for a blocked blow: a block skips the whole damage pipeline
+	## (combat.ResolveBlow returns Blow{Blocked: true}).
+	var damage: int
+	var critical: bool
+	var blocked: bool
+	var target_died: bool
+	## The target's HP after the blow -- after a death, the HP it was put
+	## back on its feet with (character.RespawnFraction), as PlayerHP is.
+	var target_hp: int
+	## The death penalty's experience loss, 0 when the target did not die.
+	var death_exp_lost: int
 
 ## Result of decode_berserk_result(). activated is true only when this request
 ## actually started a berserk (the gauge was full); gauge/active are the state.
@@ -142,6 +167,17 @@ class MonsterSnapshot:
 class MonsterListResult:
 	var error: String
 	var monsters: Array[MonsterSnapshot] = []
+
+## Result of decode_monster_spawned(): a monster that has just appeared (a
+## respawn, a GM /spawn), in the monster list's own record, and the heading it
+## faces.
+class MonsterSpawned:
+	var monster: MonsterSnapshot
+	## Radians in srrevamp's world frame, measured from +x toward +z: the
+	## direction is (cos h, sin h) on the (x, z) ground plane, the unit
+	## heading SetHeading writes (server/internal/ai/wander.go;
+	## MonsterMotion.heading_dir).
+	var heading: float
 
 ## One item dropped from a kill.
 class LootDrop:
@@ -517,6 +553,46 @@ static func decode_monster_moved(data: PackedByteArray) -> MonsterMoved:
 	m.speed = data.decode_float(24)
 	m.mode = data[28]
 	return m
+
+## The size of an OpMonsterAttacked payload: s64 monster id, s64 target
+## character id, s32 damage, u8 flags, s32 target HP, s64 death exp lost.
+const MONSTER_ATTACKED_SIZE := 33
+## OpMonsterAttacked's flag bits.
+const STRIKE_CRITICAL := 0x01
+const STRIKE_BLOCKED := 0x02
+const STRIKE_TARGET_DIED := 0x04
+
+## Decodes an OpMonsterAttacked payload, or null when it is shorter than 33
+## bytes. Bytes past the 33rd are ignored.
+static func decode_monster_attacked(data: PackedByteArray) -> MonsterAttacked:
+	if data.size() < MONSTER_ATTACKED_SIZE:
+		return null
+	var m := MonsterAttacked.new()
+	m.monster_id = data.decode_s64(0)
+	m.target_character_id = data.decode_s64(8)
+	m.damage = data.decode_s32(16)
+	var flags: int = data[20]
+	m.critical = (flags & STRIKE_CRITICAL) != 0
+	m.blocked = (flags & STRIKE_BLOCKED) != 0
+	m.target_died = (flags & STRIKE_TARGET_DIED) != 0
+	m.target_hp = data.decode_s32(21)
+	m.death_exp_lost = data.decode_s64(25)
+	return m
+
+## Decodes an OpMonsterSpawned payload: one record in OpMonsterListResult's
+## own encoding (_decode_monster_snapshot), then an f32 heading. null when
+## either is cut short.
+static func decode_monster_spawned(data: PackedByteArray) -> MonsterSpawned:
+	var decoded := _decode_monster_snapshot(data, 0)
+	if decoded[0] == null:
+		return null
+	var offset: int = decoded[1]
+	if offset + 4 > data.size():
+		return null
+	var s := MonsterSpawned.new()
+	s.monster = decoded[0]
+	s.heading = data.decode_float(offset)
+	return s
 
 ## Decodes an OpMonsterMotionList payload: u16 n, then n entries of 21 bytes.
 ## A truncated tail is dropped and every whole entry before it is kept.

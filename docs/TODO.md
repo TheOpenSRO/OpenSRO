@@ -189,10 +189,18 @@ In order. Each is checked off here when it ships in a release, with its round in
         per `deploy/README.md`, "Monster AI (off by default)". The two render-box live checks in
         that section have passed: Run 1 in round 538, and Run 2 in round 539 with the
         fresh-snapshot QA GOTO.
+      - **The strike and spawn pushes' server half**: round 540 built the client half
+        (`OpMonsterAttacked 0x007D`, `OpMonsterSpawned 0x007E`, `docs/protocol/monster_ai.md`,
+        "The strike and spawn pushes"). The server sends neither yet; each goes behind its own
+        default-off flag, flipped only once a client with round 540 is released.
       - **mob-battle-chase**: the chase to the round-247 band at the run speed and the monster's
         own swing on its timer (after mob-battle-rules reads that timer), with the engine's `0x27`
         and `0x23` exits. It replaces the interim hold and its keep-up release, and retires the
-        synchronous counter (mob-counter-retire).
+        synchronous counter (mob-counter-retire). **Found in round 540:** the client does not know
+        its own character id (`OpEnterWorldResult` carries none), so it recognises a blow on
+        itself only by pairing the push with its own counter result (`MonsterStrikes`). A monster
+        that swings on its own timer sends no result to pair with, so this item has to give the
+        client its id first.
       - **mob-acquire**: target acquisition (round 257: radius = BCRadius + `_RefTactics.+0x14`,
         the nearest player, no level term). The per-species distance is in no archive this project
         holds (the tactics table is shard-DB only), so it is disclosed per species when built.

@@ -153,12 +153,23 @@ func _test_facing() -> void:
 	_check(MonsterMotion.front_of("MOB\\CHINA\\YEOHA.BSR") == "-Z", "the model lookup ignores case")
 	_check(MonsterMotion.front_of("mob\\china\\tombstone.bsr") == "", "an unprobed model is facing unmeasured")
 
+## A server heading (OpMonsterSpawned's): radians from +x toward +z, the unit
+## heading SetHeading (0x00482440) writes as (cos a, 0, sin a).
+func _test_heading_dir() -> void:
+	_check(MonsterMotion.heading_dir(0.0).is_equal_approx(Vector2(1, 0)), "heading 0 points along +x")
+	_check(MonsterMotion.heading_dir(PI / 2.0).is_equal_approx(Vector2(0, 1)), "heading pi/2 points along +z")
+	_check(MonsterMotion.heading_dir(PI).is_equal_approx(Vector2(-1, 0)), "heading pi points along -x")
+	var yaw := MonsterMotion.facing_yaw(MonsterMotion.heading_dir(PI / 2.0), "-Z")
+	var front := Basis(Vector3.UP, yaw) * Vector3(0, 0, -1)
+	_check(front.is_equal_approx(Vector3(0, 0, 1)), "a -Z-front body at heading pi/2 faces +z (front %s)" % str(front))
+
 func _anim() -> BanReader.ParsedAnimation:
 	return BanReader.ParsedAnimation.new()
 
-## The trap: _set_other_gait appends a loop when it finds no loop entry, and
-## during a one-shot the skeleton's only entry is that one-shot. swap_loop
-## must replace the one-shot's stashed resume (entry[6]) and leave one entry.
+## The trap: a swap that appends a loop whenever it finds no loop entry (as
+## World3D._set_other_gait did before round 540) meets, during a one-shot, a
+## skeleton whose only entry is that one-shot. swap_loop must replace the
+## one-shot's stashed resume (entry[6]) and leave one entry.
 func _test_swap_loop() -> void:
 	var sk := Skeleton3D.new()
 	var idle := _anim()
@@ -290,6 +301,7 @@ func _init() -> void:
 	_test_begin()
 	_test_stop_push()
 	_test_facing()
+	_test_heading_dir()
 	_test_swap_loop()
 	_test_gait_clip()
 

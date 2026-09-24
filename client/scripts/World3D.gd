@@ -908,6 +908,11 @@ var _last_attack_target := -1
 ## decide "mine or someone else's" by comparing against the CURRENT target --
 ## which double-flinched the real victim after a retarget.
 var _own_hit_until: Dictionary = {}
+## The counterattacks this client's own results reported, each waiting for the
+## player's blow to land to be drawn -- from the zone's OpMonsterAttacked push
+## when it has come by then, from the result when it has not (MonsterStrikes,
+## round 540). monster_id -> the waits, oldest first.
+var _strike_waits: Dictionary = {}
 ## Underbar quickslot index -> {"id": skill id, "code": Basic_Code} for skills
 ## the player has put on the hotbar from the skill window. Activating a slot
 ## casts its skill.
@@ -1099,6 +1104,8 @@ func _ready() -> void:
 	NetClient.monster_list_result.connect(_on_monster_list_result)
 	NetClient.monster_moved.connect(_on_monster_moved)
 	NetClient.monster_motion_list.connect(_on_monster_motion_list)
+	NetClient.monster_attacked.connect(_on_monster_attacked)
+	NetClient.monster_spawned.connect(_on_monster_spawned)
 	NetClient.attack_result.connect(_on_attack_result)
 	NetClient.monster_damaged.connect(_on_monster_damaged)
 	NetClient.monster_died.connect(_on_monster_died)
@@ -3461,6 +3468,7 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 		_monster_bodies[monster_id].queue_free()
 	_monster_bodies.clear()
 	_monster_motion.clear()
+	_strike_waits.clear()
 	NetClient.list_monsters()
 	NetClient.list_ground_items()
 
@@ -3936,7 +3944,9 @@ const DAMAGE_TAKEN_COLOUR := Color(1.0, 0.45, 0.35)
 ## a warm red for damage the player takes. Fixed-size and billboarded like
 ## the name plates so it reads at any distance; it frees itself when done.
 func _floating_damage(anchor: Node3D, height: float, amount: int, colour: Color) -> void:
-	if anchor == null or not is_instance_valid(anchor):
+	# Not in the scene (a body being freed, or a headless test's bare node):
+	# nothing would show, and the tween below needs this node in the tree.
+	if anchor == null or not is_instance_valid(anchor) or not anchor.is_inside_tree():
 		return
 	var label := Label3D.new()
 	label.text = str(amount)
@@ -4936,13 +4946,10 @@ func _set_other_gait(character_id: int, moving: bool) -> void:
 	var frames := _frame_count(anim)
 	if frames <= 1:
 		return
-	var skeleton: Skeleton3D = gait["skeleton"]
-	for entry in _animated:
-		if entry[0] == skeleton and entry[4]:
-			entry[1] = anim
-			entry[2] = frames
-			return
-	_animated.append([skeleton, anim, frames, float(_animated.size()) * 0.37, true, _idle_anim_time, null])
+	# Through swap_loop, which knows a one-shot's resume slot: a monster's blow
+	# plays a hit on this body (_play_other_hit, round 540), and a swap that
+	# appended a loop beside it would leave two entries driving one skeleton.
+	MonsterMotion.swap_loop(_animated, gait["skeleton"], anim, frames, _idle_anim_time)
 
 ## Plays anim once on the player's body, over stand or run, and returns
 ## how long it runs.
@@ -6029,6 +6036,10 @@ func _update_blob_shadow() -> void:
 ##                          is asked for at half the leg (_qa_mob_move)
 ##   SRREVAMP_QA_MOB_LOG=1  print each monster leg, its progress every 30
 ##                          frames, its arrival and the height-ray rate
+##   SRREVAMP_QA_MOB_STRIKE=1  stand in for a server with the strike push:
+##                          behind each result that reports a counter, the
+##                          OpMonsterAttacked it would send goes through
+##                          NetClient's own dispatch (_qa_mob_strike)
 ##   SRREVAMP_QA_COMMANDS="/a;/b"  feed these lines through the chat console
 ##                          (docs/DEBUG_TOOLS.md) 2 s after boot; each prints
 ##                          "QA COMMAND: <line>" and a GM reply "GM REPLY: ..."
@@ -6746,6 +6757,34 @@ func _qa_mob_move() -> void:
 		_after(Vector2(dx, dz).length() / speed / 2.0, func() -> void:
 			print("QA MOB MOVE: asking for the monster list at half the leg")
 			NetClient.list_monsters())
+
+## SRREVAMP_QA_MOB_STRIKE=1: stands in for a server with the strike push
+## (OpMonsterAttacked 0x007D), which no server sends yet. Right behind each
+## result that reports a counter, the push such a server sends -- the result's
+## own numbers in a 33-byte payload built here, with -1 for the target, because
+## the client does not know its own character id (MonsterStrikes) -- goes
+## through NetClient's own _dispatch, deferred to the end of the frame, as a
+## push arriving right behind its result would. Never fires in real play.
+func _qa_mob_strike(monster: int, result: CombatNet.AttackResult) -> void:
+	if monster == -1 or not MonsterStrikes.result_countered(result):
+		return
+	var flags := 0
+	if result.monster_critical:
+		flags |= CombatNet.STRIKE_CRITICAL
+	if result.player_blocked:
+		flags |= CombatNet.STRIKE_BLOCKED
+	if result.player_died:
+		flags |= CombatNet.STRIKE_TARGET_DIED
+	var payload := PackedByteArray()
+	payload.resize(CombatNet.MONSTER_ATTACKED_SIZE)
+	payload.encode_s64(0, monster)
+	payload.encode_s64(8, -1)
+	payload.encode_s32(16, result.player_damage_taken)
+	payload[20] = flags
+	payload.encode_s32(21, result.player_hp)
+	payload.encode_s64(25, result.death_exp_lost)
+	print("QA MOB STRIKE: monster %d's counter pushed behind its result" % monster)
+	NetClient.call_deferred("_dispatch", Packet.new(CombatNet.OP_MONSTER_ATTACKED, payload))
 
 ## SRREVAMP_QA_CLICK="monster,npc,ground": each kind becomes a real left
 ## click through _dispatch_left_click -- after the player is put 40 units in
@@ -9263,6 +9302,7 @@ func _sync_monster_bodies(live: Array) -> void:
 		_monster_assembled.erase(monster_id)
 		_dying_until.erase(monster_id)
 		_monster_motion.erase(monster_id)
+		_strike_waits.erase(monster_id)
 		print("World3D: monster %d body removed t=%.2f" % [monster_id, _idle_anim_time])
 
 func _on_monster_list_result(monsters: Array, error: String) -> void:
@@ -9288,8 +9328,8 @@ func _on_monster_list_result(monsters: Array, error: String) -> void:
 #
 # srrevamp's own OpMonsterMoved (0x007C) and OpMonsterMotionList (0x007F),
 # docs/protocol/monster_ai.md "srrevamp's own monster protocol
-# (placeholders)". No server sends either yet (the monster AI is a later
-# change behind a default-off flag); SRREVAMP_QA_MOB_MOVE drives the path.
+# (placeholders)". The server sends both only with its -monster-ai flag on
+# (round 537, off by default); SRREVAMP_QA_MOB_MOVE drives the path without it.
 # The rules are MonsterMotion's; what follows is the glue.
 
 ## Whether the move lines are printed: SRREVAMP_QA_MOB_LOG, or the /wire
@@ -9574,32 +9614,13 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 				_floating_damage(hit_body, _monster_text_height(monster), dealt, DAMAGE_DEALT_COLOUR)
 				if skill_hit_code != "":
 					_play_skill_hit_effect_on(hit_body, _monster_text_height(monster), skill_hit_code))
-	if result.player_damage_taken > 0 and _player_skeleton != null:
-		# The monster strikes back: its own attack, and the player's hit
-		# reaction (type 3) when that swing's hit event falls. Only the monster
-		# that took the blow counterattacks -- the server resolves the counter
-		# from the same target -- so it is pinned to `monster` too.
-		var strike_after := 0.0
-		if monster != -1:
-			var assembled: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled.get(monster)
-			if assembled != null and assembled.parsed != null:
-				var strike := assembled.parsed.animation_entry_for(BsrReader.AnimationEntry.TYPE_ATTACK)
-				if strike != null:
-					var ms := strike.first_event_time(BsrReader.AnimationEntry.EVENT_HIT)
-					strike_after = float(ms) / 1000.0 if ms > 0 else 0.0
-			_after(lands_after, func() -> void:
-				if OS.get_environment("SRREVAMP_QA_ATTACK") != "" and monster != _last_attack_target:
-					print("World3D: counter-swing by monster %d (now targeting %d) -- animating %d" % [
-						monster, _last_attack_target, monster])
-				_play_monster_action(monster, BsrReader.AnimationEntry.TYPE_ATTACK))
-		_after(lands_after + strike_after, func() -> void:
-			var hit := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_HIT, _player_weapon_group)
-			if hit != null:
-				_player_one_shot_until = _player_anim_time + _play_player_once(hit)
-			# The damage the player took, over the player's own head (human
-			# head height from the same PLAYER_SCALE_RATIO calibration the
-			# monster fallback uses), timed to when the counter-blow lands.
-			_floating_damage(player, 2.0 * PLAYER_SCALE_RATIO, result.player_damage_taken, DAMAGE_TAKEN_COLOUR))
+	# The monster strikes back as the player's blow lands -- from the zone's
+	# OpMonsterAttacked when a server sends one, else from this result
+	# (_draw_counter_at_landing, round 540). Only the monster that took the
+	# blow counterattacks, so it is pinned to `monster` too.
+	_draw_counter_at_landing(monster, result, lands_after)
+	if OS.get_environment("SRREVAMP_QA_MOB_STRIKE") != "":
+		_qa_mob_strike(monster, result)
 	if result.monster_died:
 		monster_status_label.text = "Hit for %d%s -- it died!" % [
 			result.monster_damage, " CRITICAL!" if result.player_critical else ""]
@@ -9608,26 +9629,13 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 		# refresh here rather than only on _on_quest_completed.
 		NetClient.list_quests(NetClient.current_character_name)
 	else:
-		# The recovered combat mechanics are only worth recovering if a player
-		# can see them happen: a critical doubles the blow, a block stops it
-		# dead. Both were computed and sent for several releases before
-		# anything read them.
-		var taken := "Took %d damage" % result.player_damage_taken
-		if result.player_blocked:
-			taken = "Blocked it"
-		elif result.monster_critical:
-			taken = "Took %d -- critical!" % result.player_damage_taken
-		monster_status_label.text = "Hit for %d%s (%d HP left). %s (HP %d)." % [
-			result.monster_damage, " CRITICAL!" if result.player_critical else "",
-			result.monster_remaining_hp, taken, result.player_hp
-		]
+		monster_status_label.text = _exchange_line(result)
 		# Dying was silent until now: the server has reported it since the
 		# first combat release and nothing read the flag. Above level 10 it
 		# also costs experience -- the real penalty, see
 		# leveldata.DeathPenaltyExp.
 		if result.player_died:
-			monster_status_label.text = "You were killed.%s" % (
-				" Lost %d experience." % result.death_exp_lost if result.death_exp_lost > 0 else "")
+			monster_status_label.text = _death_line(result.death_exp_lost)
 	NetClient.list_monsters()
 	# OpUseSkill's response reuses this same OpAttackResult (see
 	# SkillNet's doc comment) -- refresh here too so a just-used skill's
@@ -9635,6 +9643,241 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	# traffic for a plain (non-skill) attack, same tradeoff the quest
 	# refresh above already makes.
 	NetClient.list_skills(NetClient.current_character_name)
+
+# --- A monster's blow (round 540) -------------------------------------------
+#
+# srrevamp's own OpMonsterAttacked (0x007D), docs/protocol/monster_ai.md
+# "srrevamp's own monster protocol (placeholders)": one monster's blow on a
+# player, sent to everyone in the zone, the attacker included, right behind the
+# attacker's own OpAttackResult. No server sends it yet. Without it a counter is
+# drawn from the attacker's result, on the attacker's screen only; with it,
+# every player in the zone sees the blow. MonsterStrikes decides which of the
+# two draws a counter on the attacker's own screen.
+
+## The death line a blow that killed this player shows on the combat status
+## label. Above level 10 a death also costs experience, the real penalty
+## (leveldata.DeathPenaltyExp).
+func _death_line(exp_lost: int) -> String:
+	return "You were killed.%s" % (" Lost %d experience." % exp_lost if exp_lost > 0 else "")
+
+## The combat status label's line for an exchange the monster survived. The
+## recovered combat mechanics are only worth recovering if a player can see
+## them happen: a critical doubles the blow, a block stops it dead. Both were
+## computed and sent for several releases before anything read them. A swing
+## inside the monster's ReuseDelay draws no counter (combat.Hub.
+## CounterattackReady), and the line says nothing about one: "Took 0" read as
+## a blow that did nothing.
+func _exchange_line(result: CombatNet.AttackResult) -> String:
+	var taken := ""
+	if result.player_blocked:
+		taken = " Blocked it (HP %d)." % result.player_hp
+	elif result.player_damage_taken > 0:
+		taken = " Took %d%s (HP %d)." % [result.player_damage_taken,
+			" -- critical!" if result.monster_critical else " damage", result.player_hp]
+	return "Hit for %d%s (%d HP left).%s" % [
+		result.monster_damage, " CRITICAL!" if result.player_critical else "",
+		result.monster_remaining_hp, taken]
+
+## When the monster's attack clip lands its blow, in seconds after the clip
+## starts: the first hit event (BsrReader.AnimationEntry.EVENT_HIT) of its
+## TYPE_ATTACK entry -- mangnyang's attack01 at 651. The millisecond unit is
+## inferred from the key times, not read from the client's use of them
+## (docs/protocol/BSR_FORMAT.md, "Events and walk points"). 0 when the monster
+## has no assembled body or no such event.
+func _monster_strike_seconds(monster_id: int) -> float:
+	var assembled: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled.get(monster_id)
+	if assembled == null or assembled.parsed == null:
+		return 0.0
+	var strike := assembled.parsed.animation_entry_for(BsrReader.AnimationEntry.TYPE_ATTACK)
+	if strike == null:
+		return 0.0
+	var ms := strike.first_event_time(BsrReader.AnimationEntry.EVENT_HIT)
+	return float(ms) / 1000.0 if ms > 0 else 0.0
+
+## The counterattack `result` reports, drawn `lands_after` seconds from now,
+## when the player's own blow lands: from the zone's OpMonsterAttacked if it
+## has come by then (_settle_counter), else from the result. A result that
+## reports none draws none.
+func _draw_counter_at_landing(monster: int, result: CombatNet.AttackResult, lands_after: float) -> void:
+	if monster == -1 or not MonsterStrikes.result_countered(result):
+		# No monster to pin a push to (a server that names none and a queue
+		# that had nothing in flight): the result draws it, as before.
+		if result.player_damage_taken > 0:
+			_after(lands_after, _draw_counter_from_result.bind(monster, result))
+		return
+	var wait := MonsterStrikes.expect(_strike_waits, monster, result)
+	_after(lands_after, _settle_counter.bind(monster, result, wait))
+
+## The blow has landed: the counter is drawn from the push that claimed `wait`
+## (on this screen too the monster swings as the player's blow lands, not when
+## the push arrived), or, when none came, from the result.
+func _settle_counter(monster: int, result: CombatNet.AttackResult, wait: Dictionary) -> void:
+	var pushed := MonsterStrikes.settle(_strike_waits, monster, wait)
+	if pushed != null:
+		_draw_monster_strike(pushed, true)
+		return
+	print("World3D: monster %d counter from the result (no push)" % monster)
+	_draw_counter_from_result(monster, result)
+
+## The counter as the attacker's result reports it, for a server that sends no
+## OpMonsterAttacked: the monster's attack clip now, and the player's hit
+## reaction (type 3) and the number when that clip's hit event falls. Only a
+## blow that dealt damage is drawn, and only on an assembled body -- as before
+## round 540.
+func _draw_counter_from_result(monster: int, result: CombatNet.AttackResult) -> void:
+	if result.player_damage_taken <= 0 or _player_skeleton == null:
+		return
+	var strike_after := 0.0
+	if monster != -1:
+		strike_after = _monster_strike_seconds(monster)
+		if OS.get_environment("SRREVAMP_QA_ATTACK") != "" and monster != _last_attack_target:
+			print("World3D: counter-swing by monster %d (now targeting %d) -- animating %d" % [
+				monster, _last_attack_target, monster])
+		_play_monster_action(monster, BsrReader.AnimationEntry.TYPE_ATTACK)
+	_after(strike_after, func() -> void:
+		var hit := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_HIT, _player_weapon_group)
+		if hit != null:
+			_player_one_shot_until = _player_anim_time + _play_player_once(hit)
+		# The damage the player took, over the player's own head (human
+		# head height from the same PLAYER_SCALE_RATIO calibration the
+		# monster fallback uses), timed to when the counter-blow lands.
+		_floating_damage(player, 2.0 * PLAYER_SCALE_RATIO, result.player_damage_taken, DAMAGE_TAKEN_COLOUR))
+
+## One monster's blow (OpMonsterAttacked), for everyone in the zone. A blow on
+## this player repeats a counter its own result reported (MonsterStrikes.claim):
+## it is drawn when this player's blow lands (_settle_counter), or was already
+## drawn from the result. Any other blow -- on another player, or on a target
+## this client has not drawn -- is drawn at once.
+func _on_monster_attacked(attacked: CombatNet.MonsterAttacked) -> void:
+	if attacked == null:
+		return
+	var claim := MonsterStrikes.CLAIM_NONE
+	if not _other_bodies.has(attacked.target_character_id):
+		claim = MonsterStrikes.claim(_strike_waits, attacked)
+	var how := "on another player"
+	match claim:
+		MonsterStrikes.CLAIM_HELD:
+			how = "own counter, drawn as the blow lands"
+		MonsterStrikes.CLAIM_DRAWN:
+			how = "own counter, already drawn from the result"
+		_:
+			if not _other_bodies.has(attacked.target_character_id):
+				how = "target not drawn here"
+	# One line per push: a live run counts them against the counter results.
+	print("World3D: monster %d strikes %d for %d (HP %d)%s%s -- %s" % [
+		attacked.monster_id, attacked.target_character_id, attacked.damage, attacked.target_hp,
+		" BLOCKED" if attacked.blocked else (" CRIT" if attacked.critical else ""),
+		", died" if attacked.target_died else "", how])
+	if claim != MonsterStrikes.CLAIM_NONE:
+		_show_own_strike(attacked)
+		return
+	_draw_monster_strike(attacked, false)
+
+## A blow on this player: the HUD's HP from the push's target HP, and the death
+## line when it killed. The result that reported the same counter set both a
+## moment earlier (the push repeats its numbers, MonsterStrikes.repeats), so
+## this changes nothing against a server that sends both.
+func _show_own_strike(attacked: CombatNet.MonsterAttacked) -> void:
+	if _last_enter_world_max_hp > 0:
+		if _hud_player_info != null:
+			_hud_player_info.set_hp(attacked.target_hp, _last_enter_world_max_hp)
+		if _hud_panels != null:
+			_hud_panels.set_character_vitals(attacked.target_hp, _last_enter_world_max_hp, 1)
+	if attacked.target_died and monster_status_label != null:
+		monster_status_label.text = _death_line(attacked.death_exp_lost)
+
+## Draws one monster's blow from its push: the monster turned toward its target
+## and playing its attack clip (TYPE_ATTACK), then, at that clip's hit event
+## (_monster_strike_seconds), the target's hit reaction (TYPE_HIT, on the
+## player's body or another player's) and the red number over it. A blocked
+## blow is the swing alone: it dealt nothing. A target this client has not drawn
+## gets the swing alone, unturned.
+func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool) -> void:
+	var monster := attacked.monster_id
+	var target_id := attacked.target_character_id
+	var target: Node3D = null
+	if on_self:
+		target = player
+	elif _other_bodies.has(target_id) and is_instance_valid(_other_bodies[target_id]):
+		target = _other_bodies[target_id]
+	var strike_after := 0.0
+	var body = _monster_bodies.get(monster)
+	if body != null and is_instance_valid(body) and not _dying_until.has(monster):
+		if target != null:
+			_face_monster_toward(monster, Vector2(target.position.x, target.position.z))
+		_play_monster_action(monster, BsrReader.AnimationEntry.TYPE_ATTACK)
+		strike_after = _monster_strike_seconds(monster)
+	if target == null or attacked.blocked:
+		return
+	_after(strike_after, func() -> void:
+		# Looked up again: another player may have left the zone meanwhile.
+		var anchor = player if on_self else _other_bodies.get(target_id)
+		if anchor == null or not is_instance_valid(anchor):
+			return
+		if on_self:
+			if _player_skeleton != null:
+				var hit := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_HIT, _player_weapon_group)
+				if hit != null:
+					_player_one_shot_until = _player_anim_time + _play_player_once(hit)
+		else:
+			_play_other_hit(target_id)
+		# Over the head, at the height the player's own number uses.
+		_floating_damage(anchor, 2.0 * PLAYER_SCALE_RATIO, attacked.damage, DAMAGE_TAKEN_COLOUR))
+
+## Turns a monster's body to face `at` (world x, z) by its measured front
+## (MonsterMotion.front_of / facing_yaw). A model whose front was not measured,
+## and a target on the body itself, leave it as it is.
+func _face_monster_toward(monster_id: int, at: Vector2) -> void:
+	var body = _monster_bodies.get(monster_id)
+	if body == null or not is_instance_valid(body):
+		return
+	var front := MonsterMotion.front_of(String((body as Node3D).get_meta("model", "")))
+	var dir := at - Vector2((body as Node3D).position.x, (body as Node3D).position.z)
+	if front == "" or dir.is_zero_approx():
+		return
+	(body as Node3D).rotation.y = MonsterMotion.facing_yaw(dir, front)
+
+## Another player's hit reaction: the TYPE_HIT clip of their own body's
+## gender and weapon group, once, back to their stand or run after
+## (_play_once). A body with no assembled skeleton (the capsule) has none.
+func _play_other_hit(character_id: int) -> void:
+	var gait: Dictionary = _other_gaits.get(character_id, {})
+	if gait.is_empty() or not is_instance_valid(gait["skeleton"]):
+		return
+	var hit := _body_animation_for(gait["gender"], BsrReader.AnimationEntry.TYPE_HIT, gait["group"])
+	if hit != null:
+		_play_once(gait["skeleton"], hit)
+
+# --- A monster appearing (round 540) ------------------------------------------
+
+## A monster that has just appeared (srrevamp's own OpMonsterSpawned, 0x007E: a
+## respawn or a GM /spawn), pushed to the zone the moment it appears rather than
+## found on the next list. Its body is made the way a listed one is
+## (_spawn_or_update_monster) and faced along its heading. No server sends it
+## yet (docs/protocol/monster_ai.md).
+func _on_monster_spawned(spawned: CombatNet.MonsterSpawned) -> void:
+	if spawned == null or spawned.monster == null:
+		return
+	var m := spawned.monster
+	if _dying_until.has(m.monster_id):
+		return
+	var known := _monster_bodies.has(m.monster_id)
+	_spawn_or_update_monster(m)
+	_face_monster_heading(m.monster_id, spawned.heading)
+	print("World3D: monster %d spawned (push) %s at (%.1f,%.1f) heading %.2f%s" % [
+		m.monster_id, m.monster_name, m.x, m.z, spawned.heading, " (already drawn)" if known else ""])
+
+## Faces a standing monster's body along a server heading
+## (MonsterMotion.heading_dir) by its measured front. A body walking a leg
+## keeps facing its path; an unmeasured front leaves it as it is.
+func _face_monster_heading(monster_id: int, heading: float) -> void:
+	var body = _monster_bodies.get(monster_id)
+	if body == null or not is_instance_valid(body) or _monster_is_moving(monster_id):
+		return
+	var front := MonsterMotion.front_of(String((body as Node3D).get_meta("model", "")))
+	if front == "":
+		return
+	(body as Node3D).rotation.y = MonsterMotion.facing_yaw(MonsterMotion.heading_dir(heading), front)
 
 func _on_monster_damaged(damaged: CombatNet.MonsterDamaged) -> void:
 	# Someone else's hit on a monster: play its reaction now. The local
@@ -9685,6 +9928,9 @@ func _begin_monster_death(monster_id: int) -> void:
 		_drop_pending_attack()
 	# A dead monster walks no further; its die clip replaces the gait below.
 	_monster_motion.erase(monster_id)
+	# Nor strikes again: a counter still waiting for its blow to land keeps
+	# its own wait (the timer holds it), and nothing newer will come.
+	_strike_waits.erase(monster_id)
 	var seconds := _play_monster_action(monster_id, BsrReader.AnimationEntry.TYPE_DIE, true)
 	if seconds > 0.0:
 		# The hold restarts from the clip's real start, replacing the killer's

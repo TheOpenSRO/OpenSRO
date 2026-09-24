@@ -1152,12 +1152,16 @@ the server sends both, and only with its `-monster-ai` flag on, which is off by 
 runtime", below). On 2026-09-23,
 0x007C..0x007F appeared in no non-test file under `server/internal/session`,
 `server/internal/proto` or `client/scripts/net`. Round 536 declared the two in
-`server/internal/session/monstermove.go` (below); 0x007D and 0x007E stay free.
+`server/internal/session/monstermove.go` (below). Round 540 gave the client two more, 0x007D and
+0x007E, which no server sends yet ("The strike and spawn pushes", below); on 2026-09-24 neither
+appeared in any non-test file under `server/`.
 
 | op | dir | payload |
 |---|---|---|
 | `OpMonsterMoved 0x007c` | s→zone | s64 monster id, f32 x, f32 z (the server's position when it issued the move), f32 dest_x, f32 dest_z, f32 speed (world units per second), u8 mode (0 walk clip, 1 run clip) -- 29 bytes |
 | `OpMonsterMotionList 0x007f` | s→requester | u16 n, then n entries of {s64 id, f32 dest_x, f32 dest_z, f32 speed, u8 mode} (21 bytes each); sent right after an `OpMonsterListResult`, ONE packet per list |
+| `OpMonsterAttacked 0x007d` | s→zone, the attacker included | s64 monster id, s64 target character id, s32 damage (0 when blocked), u8 flags (bit 0 the monster's critical, bit 1 blocked, bit 2 the target died), s32 target HP after the blow (after a death, the HP it was put back on its feet with), s64 death exp lost -- 33 bytes; sent right AFTER the attacker's `OpAttackResult`, from the same goroutine |
+| `OpMonsterSpawned 0x007e` | s→zone | one record in `OpMonsterListResult`'s own encoding (s64 id, u16-prefixed name, u16-prefixed code name, f32 x/y/z, u32 max HP, HP, level, rarity), then f32 heading (radians, srrevamp's world frame: from +x toward +z) |
 
 Fixtures, pinned by `client/scripts/net/combat_test.gd`:
 
@@ -1165,6 +1169,13 @@ Fixtures, pinned by `client/scripts/net/combat_test.gd`:
   `07 00 00 00 00 00 00 00 00 00 c8 42 00 00 48 c3 00 00 0c 43 00 00 48 c3 00 00 00 41 00`.
 - `OpMonsterMotionList`, the same leg as its one entry:
   `01 00 07 00 00 00 00 00 00 00 00 00 0c 43 00 00 48 c3 00 00 00 41 00`.
+- `OpMonsterAttacked`, monster 7 strikes character 42 for 200, critical and killing (flags 0x05),
+  76 HP after the respawn, 25900 exp lost (fixture numbers, no species' own):
+  `07 00 00 00 00 00 00 00 2a 00 00 00 00 00 00 00 c8 00 00 00 05 4c 00 00 00 2c 65 00 00 00 00 00 00`.
+- `OpMonsterSpawned`, monster 31 "Mob" / `MOB_TEST` (a fixture species) at (100, 0, -200), 100/100
+  HP, level 1, rarity 0, heading pi/2 (f32 `0x3fc90fdb`, facing +z):
+  `1f 00 00 00 00 00 00 00 03 00 4d 6f 62 08 00 4d 4f 42 5f 54 45 53 54 00 00 c8 42 00 00 00 00 00 00 48 c3 64 00 00 00 64 00 00 00 01 00 00 00 00 00 00 00 db 0f c9 3f`.
+  `combat_test.gd` also rebuilds it from the list's own record builder plus the heading.
 
 **The stop.** `dest == (x, z)` means stop at (x, z). The server sends it with the leg's own speed,
 or the species' walk speed (characterdata col 46) when the monster was not moving, and the mode
@@ -1359,6 +1370,119 @@ characterdata rows (read on the box's `characterdata_5000.txt`: cols 52-56, coun
 col 50 BCRadius is), and their display
 names resolve to no row that has one. World3D draws them as the labelled capsule, which has no
 front. How the retail client draws a `_CLON` row is not established.
+
+### The strike and spawn pushes (round 540: the client half)
+
+Two more of srrevamp's own placeholders, in the table above. **No server sends either yet.** The
+server half comes next, each push behind its own default-off flag, flipped only once a client that
+draws them has been released. Client: `CombatNet.decode_monster_attacked` /
+`decode_monster_spawned`, `NetClient`'s `monster_attacked` / `monster_spawned` signals,
+`scripts/world/monster_strikes.gd` (`MonsterStrikes`), and `World3D._on_monster_attacked` /
+`_on_monster_spawned`.
+
+**What the strike push carries.** A counterattack is resolved in `performAttack`
+(`server/internal/session/combat.go`, the branch after `combat.Hub.CounterattackReady`; rounds 254
+and 505), and today it reaches only the attacker, in that attack's `OpAttackResult`. The push
+repeats the same outcome to everyone in the zone: `PlayerDamageTaken` as the damage,
+`MonsterCritical`, `PlayerBlocked` and `PlayerDied` as the flags, `PlayerHP` as the target HP and
+`DeathExpLost`. So a push adds no new number. A counter that lands deals at least 1
+(`combat.ResolveBlow` floors the blow at 1 in `MitigateDamage` and `ApplyLevelAdvantage`, and
+`ApplyFloorBand` never takes it below 1). So a result reports a counter exactly when its damage is
+above 0 or its block flag is set (`MonsterStrikes.result_countered`).
+
+**The order the client relies on.** The server sends the attacker's result first, then the push to
+the zone with the attacker included, both from the goroutine that ran `performAttack`. The
+attacker's client draws the counter when its own blow lands (`lands_after`, the swing's hit
+event), which is when the pre-540 client drew it too:
+
+- A result that reports a counter starts a **wait** (`MonsterStrikes.expect`), which holds the
+  counter's numbers.
+- A push that repeats those numbers for that monster (`MonsterStrikes.repeats`: damage, target
+  HP, critical, block, death) **claims** the oldest unclaimed wait (`MonsterStrikes.claim`).
+  Nothing is drawn when the push arrives.
+- When the blow lands (`World3D._settle_counter`), a claimed wait is drawn **from the push**. An
+  unclaimed one is drawn **from the result**, as before round 540, and stays marked drawn. A push
+  that comes after that is swallowed, not drawn again.
+- So a counter is drawn once against a server that sends the push, and once against one that
+  does not. `monster_strikes_test.gd` runs all three orders.
+- A new counter on the same monster drops the waits the result already drew. Their pushes would
+  have followed their own results, at least one attack earlier.
+- A monster that dies, leaves the list or is left behind by a zone change takes its waits with
+  it.
+
+**The client does not know its own character id.** `OpEnterWorldResult`
+(`server/internal/session/world.go`) carries a zone, a position, a gender, vitals and the others in
+the zone, but no id, and giving it one would change a layout. So a push is taken as a blow on this
+player only when it claims a wait: it repeats a counter this client's own result reported, and its
+target is none of the other players the client has drawn (`World3D._other_bodies`). Every blow a
+server can push today is such a counter. A monster striking on its own (mob-battle-chase) will need
+the id, and that is filed in `docs/TODO.md`.
+
+**How a blow is drawn** (`World3D._draw_monster_strike`):
+
+- The monster is turned toward its target by its measured front (`MonsterMotion.facing_yaw`, the
+  table above), and plays its attack clip (type 2, `TYPE_ATTACK`).
+- At that clip's first hit event (`EVENT_HIT`: `mangnyang_attack01` at 651), the target plays its
+  hit clip (type 3) and the red number rises over it.
+  - The target is the player's own body, or another player's body in `_other_bodies`, played with
+    that body's own gender and weapon group.
+  - The event's millisecond unit is **inferred** from the key times, not read from the client's use
+    of them (`docs/protocol/BSR_FORMAT.md`, "Events and walk points").
+- A blocked blow is the swing alone, because it dealt nothing.
+- A blow on a target this client has not drawn is the swing alone, unturned.
+- For a blow on this player, the HUD's HP is set from the target HP, and a killing blow shows the
+  death line on the combat status label. The result has already set both from the same numbers,
+  so this changes nothing when the server sends both messages.
+- Another player's body now changes its stand/run loop through `MonsterMotion.swap_loop`, so a
+  gait change during that hit clip does not leave two animation entries on one skeleton.
+
+**The spawn push** makes the body the way a listed one is made (`_spawn_or_update_monster`). It
+then faces the body along the heading, when the body is standing and its model's front was
+measured. `MonsterMotion.heading_dir` is (cos h, sin h) on (x, z). That is srrevamp's heading frame
+(`server/internal/ai/wander.go`), and it is the unit heading the engine's SetHeading writes to
++0x24/+0x28/+0x2c as (cos a, 0, sin a): `GObjPC::FUN_00482440` (IGObj slot 230; the CGObjMobile
+override `0x0048ba10` writes the same three), through `FUN_00489490` -> `0x009fc0b0` (the CRT's
+cos; its x87 path runs `fcos` at `0x9fc11d`) and `FUN_004894b0` -> `0x009fbf80` (sin, `fsin` at
+`0x9fbfed`). All of these were re-read on the RE box in round 540. The line
+`World3D: monster %d spawned (push)` is printed for each push.
+
+**Log lines for the live checks** (the server item runs them):
+
+- Every push prints `World3D: monster %d strikes %d for %d (HP %d)`, followed by the flags and how
+  it was taken: `own counter, drawn as the blow lands`, `own counter, already drawn from the
+  result`, `on another player` or `target not drawn here`.
+- Every counter a result drew because no push had come prints `World3D: monster %d counter from
+  the result (no push)`.
+- With the push on, the attacker's `strikes` lines should equal its counter results, **blocked ones
+  included** (damage 0, bit 1), and there should be no `counter from the result` lines. With the
+  push off, it is the reverse.
+
+**Measured live (round 540, 2026-09-24, render box, hardware GL).** The server was built from the
+tree at `e17cda3`, which sends no push. Both runs used `SRREVAMP_QA_ATTACK_FAST=1
+SRREVAMP_QA_ATTACK_NAME=Mangyang SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames
+600`.
+
+- **Run A, as it is (no push).** There were 38 counter results (took > 0; none blocked, since the
+  QA player carries no shield). The log has 37 `counter from the result (no push)` lines, for the
+  first 37 counters in order, and no `strikes` line. The 38th counter's result came at t=9.63, and
+  its blow was due about 0.2 s of game time later; the run's last result came at t=9.73, and the
+  run ended before the blow was due.
+- **Run B, with `SRREVAMP_QA_MOB_STRIKE=1`.** There were 44 counter results and 44 stand-in
+  pushes. The log has 44 `strikes` lines, all `own counter, drawn as the blow lands`, matching the
+  results monster for monster and number for number. It has no `counter from the result` line,
+  and 43 red numbers rose over the player. The 44th counter's result came at t=9.65, too late
+  for its blow to land before the run ended.
+- Neither run printed a SCRIPT ERROR. The frames were deleted.
+- Not seen live: a blocked counter, and another player's body. The headless tests cover both.
+
+**Stand-ins:**
+
+- Both layouts are srrevamp's own.
+- The pairing test (the numbers repeat, and the target is not another drawn player) stands in for
+  the character id the client does not have.
+- The target's number is drawn over its head at the height the player's own number uses.
+- `SRREVAMP_QA_MOB_STRIKE=1` stands in for a server with the push. It sends each counter result's
+  push through `NetClient._dispatch`, deferred to the end of the frame, with -1 for the target.
 
 ## srrevamp's runtime: the monster AI tick (round 537)
 

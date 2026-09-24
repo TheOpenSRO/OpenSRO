@@ -321,6 +321,91 @@ func _test_decode_monster_motion_list() -> void:
 	_check(CombatNet.decode_monster_motion_list(two).size() == 1, "n=2 with a truncated second entry gives 1 entry")
 	_check(CombatNet.decode_monster_motion_list(PackedByteArray([1])).is_empty(), "a payload without its count gives none")
 
+## The protocol table's OpMonsterAttacked fixture (docs/protocol/monster_ai.md,
+## "srrevamp's own monster protocol (placeholders)"): monster 7 strikes
+## character 42 for 200, critical and killing (flags 0x05), which leaves it on
+## 76 HP and costs it 25900 experience. The numbers are a fixture, not any
+## species' own.
+const STRIKE_FIXTURE := [0x07, 0, 0, 0, 0, 0, 0, 0, 0x2a, 0, 0, 0, 0, 0, 0, 0,
+	0xc8, 0x00, 0x00, 0x00, 0x05, 0x4c, 0x00, 0x00, 0x00, 0x2c, 0x65, 0, 0, 0, 0, 0, 0]
+## And its OpMonsterSpawned fixture: monster 31, "Mob" / MOB_TEST (a fixture
+## species), at (100, 0, -200) with 100/100 HP, level 1, rarity 0, heading
+## pi/2 (f32 0x3fc90fdb) -- facing +z.
+const SPAWN_FIXTURE := [0x1f, 0, 0, 0, 0, 0, 0, 0, 0x03, 0x00, 0x4d, 0x6f, 0x62,
+	0x08, 0x00, 0x4d, 0x4f, 0x42, 0x5f, 0x54, 0x45, 0x53, 0x54,
+	0x00, 0x00, 0xc8, 0x42, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x48, 0xc3,
+	0x64, 0, 0, 0, 0x64, 0, 0, 0, 0x01, 0, 0, 0, 0x00, 0, 0, 0,
+	0xdb, 0x0f, 0xc9, 0x3f]
+
+func _test_decode_monster_attacked() -> void:
+	var data := PackedByteArray(STRIKE_FIXTURE)
+	_check(data.size() == CombatNet.MONSTER_ATTACKED_SIZE, "the OpMonsterAttacked fixture is 33 bytes")
+	var m := CombatNet.decode_monster_attacked(data)
+	_check(m != null and m.monster_id == 7 and m.target_character_id == 42, "OpMonsterAttacked: monster 7 on character 42")
+	_check(m != null and m.damage == 200 and m.target_hp == 76, "OpMonsterAttacked: 200 damage, 76 HP after it")
+	_check(m != null and m.critical and not m.blocked and m.target_died, "OpMonsterAttacked: flags 0x05 are critical and died, not blocked")
+	_check(m != null and m.death_exp_lost == 25900, "OpMonsterAttacked: 25900 experience lost")
+	# A blocked blow: bit 1 alone, 0 damage.
+	var blocked := data.duplicate()
+	blocked.encode_s32(16, 0)
+	blocked[20] = CombatNet.STRIKE_BLOCKED
+	var b := CombatNet.decode_monster_attacked(blocked)
+	_check(b != null and b.blocked and not b.critical and not b.target_died and b.damage == 0,
+		"flags 0x02 alone is a block that dealt nothing")
+	_check(CombatNet.decode_monster_attacked(data.slice(0, 32)) == null, "32 bytes decode to null")
+	var longer := data.duplicate()
+	longer.append(0xff)
+	_check(CombatNet.decode_monster_attacked(longer) != null, "a byte past the 33rd is ignored")
+
+func _test_decode_monster_spawned() -> void:
+	var data := PackedByteArray(SPAWN_FIXTURE)
+	_check(data.size() == 55, "the OpMonsterSpawned fixture is 55 bytes")
+	# The record is OpMonsterListResult's own: the list's record builder,
+	# then the f32 heading, gives the fixture byte for byte.
+	var built := _build_monster_snapshot(31, "Mob", 100.0, 0.0, -200.0, 100, 100, "MOB_TEST", 1, 0)
+	var heading := PackedByteArray()
+	heading.resize(4)
+	heading.encode_float(0, PI / 2.0)
+	built.append_array(heading)
+	_check(built == data, "the list's record plus the heading is the fixture")
+	var s := CombatNet.decode_monster_spawned(data)
+	_check(s != null and s.monster != null and s.monster.monster_id == 31, "OpMonsterSpawned: monster 31")
+	if s != null and s.monster != null:
+		_check(s.monster.monster_name == "Mob" and s.monster.code_name == "MOB_TEST", "OpMonsterSpawned: the list record's name and code")
+		_check(s.monster.x == 100.0 and s.monster.y == 0.0 and s.monster.z == -200.0, "OpMonsterSpawned: at (100, 0, -200)")
+		_check(s.monster.max_hp == 100 and s.monster.hp == 100 and s.monster.level == 1 and s.monster.rarity == 0,
+			"OpMonsterSpawned: 100/100 HP, level 1, rarity 0")
+		_check(is_equal_approx(s.heading, PI / 2.0), "OpMonsterSpawned: heading pi/2 (got %s)" % str(s.heading))
+	_check(CombatNet.decode_monster_spawned(data.slice(0, 54)) == null, "a heading cut short decodes to null")
+	_check(CombatNet.decode_monster_spawned(data.slice(0, 20)) == null, "a record cut short decodes to null")
+
+## NEGATIVE (fails before round 540, where 0x007D and 0x007E fell to the
+## unhandled-opcode branch and no signal carried them): NetClient routes both
+## pushes to their signals, drops a short one rather than emitting null, and no
+## longer warns about either as unhandled.
+func _test_net_client_dispatch_strike_spawn() -> void:
+	var nc: Node = (load("res://scripts/net/net_client.gd") as GDScript).new()
+	_check(nc.has_signal("monster_attacked") and nc.has_signal("monster_spawned"),
+		"NetClient has the monster_attacked and monster_spawned signals")
+	if not (nc.has_signal("monster_attacked") and nc.has_signal("monster_spawned")):
+		nc.free()
+		return
+	var strikes: Array = []
+	var spawns: Array = []
+	nc.connect("monster_attacked", func(m): strikes.append(m))
+	nc.connect("monster_spawned", func(m): spawns.append(m))
+	nc.call("_dispatch", Packet.new(CombatNet.OP_MONSTER_ATTACKED, PackedByteArray(STRIKE_FIXTURE)))
+	_check(strikes.size() == 1 and strikes[0].damage == 200, "0x007D reaches monster_attacked")
+	nc.call("_dispatch", Packet.new(CombatNet.OP_MONSTER_ATTACKED, PackedByteArray(STRIKE_FIXTURE).slice(0, 20)))
+	_check(strikes.size() == 1, "a short 0x007D is dropped, not emitted as null")
+	nc.call("_dispatch", Packet.new(CombatNet.OP_MONSTER_SPAWNED, PackedByteArray(SPAWN_FIXTURE)))
+	_check(spawns.size() == 1 and spawns[0].monster.monster_id == 31, "0x007E reaches monster_spawned")
+	nc.call("_dispatch", Packet.new(CombatNet.OP_MONSTER_SPAWNED, PackedByteArray(SPAWN_FIXTURE).slice(0, 30)))
+	_check(spawns.size() == 1, "a short 0x007E is dropped, not emitted as null")
+	var warned: Dictionary = nc.get("_unhandled_warned")
+	_check(not warned.has(0x007d) and not warned.has(0x007e), "neither is warned about as unhandled")
+	nc.free()
+
 ## The approach walk's release, aim and refusal rules (round 533).
 func _test_approach_release_rules() -> void:
 	# Mangyang, unarmed: stop = reach = 10 (approach_band(4, 6, 0)).
@@ -368,6 +453,9 @@ func _init() -> void:
 	_test_decode_monster_motion_list()
 	_test_approach_release_rules()
 	_test_net_client_dispatch()
+	_test_decode_monster_attacked()
+	_test_decode_monster_spawned()
+	_test_net_client_dispatch_strike_spawn()
 	_test_encode_attack()
 	_test_decode_attack_result()
 	_test_decode_attack_result_appended_tail()

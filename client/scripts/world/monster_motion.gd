@@ -154,6 +154,19 @@ static func facing_yaw(dir: Vector2, front: String) -> float:
 			front_yaw = -PI / 2.0
 	return wrapf(atan2(dir.x, dir.y) - front_yaw, -PI, PI)
 
+## The ground direction (x, z) a server heading points along. srrevamp's
+## headings are radians in its world frame, measured from +x toward +z
+## (server/internal/ai/wander.go): the unit heading the engine's SetHeading
+## writes to an object's +0x24/+0x28/+0x2c is (cos a, 0, sin a) --
+## GObjPC::FUN_00482440 (IGObj slot 230; the CGObjMobile override 0x0048ba10
+## writes the same three), through FUN_00489490 -> 0x009fc0b0, the CRT's cos
+## (its x87 path runs fcos at 0x9fc11d), and FUN_004894b0 -> 0x009fbf80, its
+## sin (fsin at 0x9fbfed); re-read on the RE box in round 540. An
+## OpMonsterSpawned carries one (World3D._on_monster_spawned); facing_yaw
+## turns a body along it.
+static func heading_dir(heading: float) -> Vector2:
+	return Vector2(cos(heading), sin(heading))
+
 ## The clip for a gait: stand is the model's own idle (the assembler's
 ## `idle_animation`, which falls back to the name hints when the file has no
 ## groups -- animation_for(TYPE_STAND) returns nothing for those), walk and run
@@ -177,9 +190,11 @@ static func gait_clip(archive: Pk2Reader, assembled: SkinnedBsrAssembler.Assembl
 ## hold but has nothing to resume -- a hit on a body whose idle was never
 ## registered (a clip of one frame, SRREVAMP_NO_IDLE_ANIM) -- is given the new
 ## loop to resume (round 534; it used to be taken for a death and never got a
-## walk clip). A skeleton with no entry gets one. Never a second loop:
-## World3D's other-player gait swap appends when it finds no loop entry, which
-## beside a one-shot would leave two entries fighting over one skeleton.
+## walk clip). A skeleton with no entry gets one. Never a second loop: a swap
+## that appended whenever it found no loop entry would, beside a one-shot,
+## leave two entries fighting over one skeleton -- which is why World3D's
+## other-player gait swap (_set_other_gait) goes through here too since round
+## 540, when another player's body began playing a hit one-shot.
 ## Returns whether anything changed; a null clip changes nothing.
 static func swap_loop(animated: Array, skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, frames: int, now: float) -> bool:
 	if skeleton == null or anim == null or frames <= 1:

@@ -64,9 +64,16 @@ signal loot_dropped(dropped: CombatNet.LootDropped)
 signal monster_list_result(monsters: Array, error: String)
 ## srrevamp's own monster movement (CombatNet.OP_MONSTER_MOVED /
 ## OP_MONSTER_MOTION_LIST): one monster's new leg, and the legs of the listed
-## monsters sent right after a monster list. No server sends either yet.
+## monsters sent right after a monster list. The server sends both only with
+## its -monster-ai flag on (off by default).
 signal monster_moved(moved: CombatNet.MonsterMoved)
 signal monster_motion_list(entries: Array)
+## srrevamp's own monster pushes (CombatNet.OP_MONSTER_ATTACKED /
+## OP_MONSTER_SPAWNED): one monster's blow on a player, sent to the whole zone
+## with the attacker included, and a monster that has just appeared. No server
+## sends either yet (round 540 built this half first).
+signal monster_attacked(attacked: CombatNet.MonsterAttacked)
+signal monster_spawned(spawned: CombatNet.MonsterSpawned)
 ## Items on the ground (GroundItemsNet): the zone's list, one appearing, one
 ## leaving (picked or expired), one whose owner window passed, and the
 ## outcome of our own pick-up.
@@ -640,6 +647,14 @@ func _dispatch(p: Packet) -> void:
 				monster_moved.emit(moved)
 		CombatNet.OP_MONSTER_MOTION_LIST:
 			monster_motion_list.emit(CombatNet.decode_monster_motion_list(p.data))
+		CombatNet.OP_MONSTER_ATTACKED:
+			var attacked := CombatNet.decode_monster_attacked(p.data)
+			if attacked != null:
+				monster_attacked.emit(attacked)
+		CombatNet.OP_MONSTER_SPAWNED:
+			var mob_spawned := CombatNet.decode_monster_spawned(p.data)
+			if mob_spawned != null:
+				monster_spawned.emit(mob_spawned)
 		GroundItemsNet.OP_LIST_RESULT:
 			var gl := GroundItemsNet.decode_list_result(p.data)
 			ground_item_list_result.emit(gl.items, gl.error)

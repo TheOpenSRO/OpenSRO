@@ -33087,3 +33087,176 @@ left as it was. It suggested those texts say the whole transitive call graph of 
 and the 0x7074 handler was checked, not only the direct calls. This round did not walk that graph,
 so it does not make that claim. The INERT question on round 534's cost-order fix is the
 orchestrator's to decide.
+
+## Client: decode OpMonsterAttacked 0x007D and draw a monster's blow for everyone in the zone (round 540)
+
+This round builds the client half of two new zone pushes. The client can now draw a monster's blow
+for everyone in the zone, and a monster that has just appeared at the moment it appears. Nothing
+changes in play until a server sends either push, and none does yet. The server half comes next,
+each push behind its own default-off flag, and those flags are flipped only once this client has
+been released. Client only: the server is unchanged, and no existing opcode or layout changed.
+
+**Grounding, re-checked for this round.**
+
+- **0x007D and 0x007E were free.** Before this round neither appeared in any non-test file under
+  `server/` or `client/scripts/net` (grep, 2026-09-24), and `server/` still has neither.
+  0x007A/0x007B are repair and 0x007C/0x007F are monster motion.
+- **The counter pipeline** is `session/combat.go` `performAttack`, the branch after
+  `combat.Hub.CounterattackReady` (rounds 254 and 505). The push repeats that branch's
+  `PlayerDamageTaken`, `MonsterCritical`, `PlayerBlocked`, `PlayerDied`, `PlayerHP` and
+  `DeathExpLost`, so it adds no new number.
+- **A counter that lands deals at least 1.** `combat.ResolveBlow` floors the blow at 1 in
+  `MitigateDamage` and again in `ApplyLevelAdvantage`, and `ApplyFloorBand` never takes it lower.
+  So a result reports a counter exactly when its damage is above 0 or its block flag is set.
+- **The hit timing** is the attack clip's first `EVENT_HIT` (`mangnyang_attack01` at 651). Its
+  millisecond unit is inferred from the key times, not read (`docs/protocol/BSR_FORMAT.md`, "Events
+  and walk points"). The code says so at `World3D._monster_strike_seconds`.
+- **The spawn heading's frame** comes from `server/internal/ai/wander.go`: radians from +x toward
+  +z. It was re-read on the RE box: SetHeading `GObjPC::FUN_00482440` (IGObj slot 230) writes
+  +0x24 = `FUN_00489490` -> `0x009fc0b0`, +0x28 = 0, +0x2c = `FUN_004894b0` -> `0x009fbf80`.
+  The two CRT functions' x87 paths run `fcos` at `0x9fc11d` and `fsin` at `0x9fbfed`, so the
+  unit heading is (cos a, 0, sin a). The CGObjMobile override `0x0048ba10` writes the same three.
+- **A finding the plan did not have: the client does not know its own character id.**
+  `OpEnterWorldResult` (`session/world.go` `EnterWorldResult.Encode`) carries OK, the reason,
+  the zone, the position, the gender, HP and MaxHP, and the others in the zone, but no id. No other
+  message tells the client its id, and adding one would change a layout. The plan's "a 0x007D for
+  (monster, self)" therefore cannot compare ids. This round pairs a push with the attacker's own
+  result instead (below), and files the id as a prerequisite of mob-battle-chase in `docs/TODO.md`.
+
+**Wired.**
+
+- **The protocol table** (`docs/protocol/monster_ai.md`, "srrevamp's own monster protocol
+  (placeholders)") has two new rows and their fixtures:
+  - `OpMonsterAttacked 0x007d`, sent to the zone with the attacker included, right after the
+    attacker's `OpAttackResult`. 33 bytes: s64 monster, s64 target character, s32 damage, u8 flags
+    (bit 0 critical, bit 1 blocked, bit 2 died), s32 target HP, s64 death exp lost.
+  - `OpMonsterSpawned 0x007e`, sent to the zone: one `OpMonsterListResult` record, then an f32
+    heading.
+  - The new subsection "The strike and spawn pushes (round 540: the client half)".
+- **`CombatNet`:** `OP_MONSTER_ATTACKED`, `OP_MONSTER_SPAWNED`, `MonsterAttacked`,
+  `MonsterSpawned`, `MONSTER_ATTACKED_SIZE`, the three `STRIKE_*` flag bits,
+  `decode_monster_attacked` (null under 33 bytes) and `decode_monster_spawned` (null when the
+  record or the heading is cut short).
+- **`NetClient`:** the signals `monster_attacked` and `monster_spawned`, and their `_dispatch`
+  cases. A short payload is dropped, not emitted as null. The stale "no server sends either yet"
+  note on the 0x007C/0x007F signals now says both are sent only with `-monster-ai` on.
+- **New `client/scripts/world/monster_strikes.gd` (`MonsterStrikes`, pure).** It decides which of
+  a counter's two reports the attacker's own client draws it from:
+  - `result_countered` says whether a result reports a counter at all.
+  - `expect` starts a wait for the counter a result reports.
+  - `repeats` compares a push with a wait: damage, target HP, critical, block and death.
+  - `claim` lets a push take the oldest unclaimed wait it repeats, and returns
+    `CLAIM_NONE` / `CLAIM_HELD` / `CLAIM_DRAWN`.
+  - `settle`, when the blow lands, returns the push that claimed the wait. With no push it marks
+    the wait drawn, so a late push is swallowed instead of drawn a second time.
+  - A new counter on the same monster drops waits already drawn.
+- **`World3D`:**
+  - `_on_attack_result` hands the counter to `_draw_counter_at_landing`, which draws at
+    `lands_after` through `_settle_counter`: from the push when one claimed the wait, from the
+    result otherwise. Drawing from the result is the pre-540 code, moved unchanged into
+    `_draw_counter_from_result` and still printing its QA `counter-swing` line. That path now also
+    prints `World3D: monster %d counter from the result (no push)`.
+  - `_on_monster_attacked` prints `World3D: monster %d strikes %d for %d (HP %d)` with the flags
+    and how the push was taken. A push that claims nothing is drawn at once by
+    `_draw_monster_strike`: the monster turns toward its target by its measured front and plays its
+    attack clip, and at the clip's hit event the target plays its hit clip and a red number rises
+    over it. The target is the player's own body or another player's body in `_other_bodies`. A
+    blocked blow is the swing alone.
+  - A claimed push sets the HUD's HP from its target HP and shows the death line (`_show_own_strike`).
+    The result set both from the same numbers a moment earlier, so nothing visibly changes.
+  - `_on_monster_spawned` makes the body through `_spawn_or_update_monster` and faces a standing
+    body along the heading (`_face_monster_heading`, `MonsterMotion.heading_dir`). It prints
+    `World3D: monster %d spawned (push)`.
+  - The status label says "Took N" only when N > 0 (`_exchange_line`). A swing inside the
+    ReuseDelay used to read "Took 0 damage".
+  - `_set_other_gait` now goes through `MonsterMotion.swap_loop`, so another player's hit clip is
+    not joined by a second loop entry on the same skeleton when that player's gait changes.
+  - `_floating_damage` skips an anchor that is not in the tree.
+  - A monster's waits are dropped at its death, at its removal from the list and on a zone change.
+  - The QA hook `SRREVAMP_QA_MOB_STRIKE=1` stands in for a server with the push. It sends each
+    counter result's push through `NetClient._dispatch`, deferred to the end of the frame. It is
+    listed in World3D's QA header.
+- **`MonsterMotion.heading_dir`**, and the `swap_loop` note about `_set_other_gait`.
+
+**Plan items answered, and one changed.**
+
+- **The send order** (result first, then the push) is relied on, not changed, and there is no
+  layout change to `OpAttackResult`.
+- The attacker's own swing plays at `lands_after`, not on receipt.
+- Blows on other players are drawn on their `_other_bodies`.
+- "Took N" appears only for N > 0.
+- The live count takes blocked counters in: `result_countered` counts a blocked result, and a
+  blocked push is claimed like any other. No blocked counter happened live, because the QA player
+  has no shield. The headless tests cover it.
+- The EVENT_HIT millisecond unit is disclosed as inferred.
+- **Changed:** "a 0x007D for (monster, self)" is matched by pairing, because the client has no id
+  to compare. A push is this player's only when it repeats a counter this client's result reported
+  and its target is not another drawn player. The plan's own ordering makes that hold for every
+  blow a server can push today.
+
+**Tests.**
+
+- **`combat_test.gd`:**
+  - The 33-byte `OpMonsterAttacked` fixture decodes every field. Flags 0x02 decode as a block with
+    0 damage. 32 bytes give null, and a 34th byte is ignored.
+  - The 55-byte `OpMonsterSpawned` fixture decodes every field with heading pi/2. It equals the
+    list's own record builder plus the heading, byte for byte. A cut heading and a cut record both
+    give null.
+  - NetClient routes 0x007D and 0x007E to their signals, drops short payloads, and warns about
+    neither as unhandled.
+- **New `monster_strikes_test.gd`:**
+  - `result_countered`: a blow taken, a blow blocked, none inside the ReuseDelay, none on a kill,
+    none on a refusal.
+  - The counter is drawn exactly once in all three orders: from the push when it comes before
+    the blow lands, from the result when the push comes after (the late push is swallowed), and
+    from the result when no push comes.
+  - Claims: other numbers and another monster claim nothing. Two results followed by two pushes
+    pair oldest first. A blocked counter is claimed. A new counter drops a drawn wait.
+- **On a bare World3D:**
+  - The attacker's own push is not drawn on receipt. When the blow lands it is drawn from the
+    push: the Mangyang turns to the player, +X.
+  - With no push the result draws the counter, and a late push is swallowed.
+  - Another player's blow is drawn at once toward that body, +Z, and leaves this client's wait
+    unclaimed.
+  - A target not drawn here gets an unturned swing.
+  - A killing blow shows "You were killed. Lost 25900 experience."
+  - A spawn heading of pi/2 faces the body +Z and 0 faces it +X. A walking body and an
+    unmeasured model are left as they are.
+  - The status line has no "Took" without a counter.
+- **`monster_motion_test.gd`:** `heading_dir` for 0, pi/2 and pi, and a -Z front at pi/2 facing +z.
+
+Negatives proved:
+
+| production change | test | result |
+|---|---|---|
+| `World3D.gd`, `combat.gd`, `net_client.gd`, `monster_motion.gd` stashed and `monster_strikes.gd` removed, synced into a fresh box directory | `combat_test.gd` | FAILED: Parse Error, `decode_monster_attacked()` not found in `CombatNet` |
+| same | `monster_strikes_test.gd` | FAILED: Parse Error, `MonsterStrikes` not declared |
+| same | `monster_motion_test.gd` | FAILED: Parse Error, `heading_dir()` not found |
+| `MonsterStrikes.settle` no longer marks a wait drawn | `monster_strikes_test.gd` | 4 FAILURES, including "push after the blow lands: drawn once ... swallowed" and "a push that comes late is swallowed, not drawn a second time" |
+
+Every suite passed again once its file was restored, and the fresh directory was deleted.
+`client/tools/remote_godot.sh tests` ran 85 suites with 0 failing. `check` reports 256 scripts and
+5 scenes, ALL LOAD. `cd server && go build ./... && go test -count=1 -p 1 ./...` is green, and was
+re-run after the doc edits.
+
+**Live**, on the render box with hardware GL. The server was built from the tree at `e17cda3` and
+run as `SERVER_BIN=/var/tmp/r540/srrevamp-server`, with `SRREVAMP_QA_ATTACK_FAST=1
+SRREVAMP_QA_ATTACK_NAME=Mangyang SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames
+600`. The numbers are in `monster_ai.md`, "The strike and spawn pushes":
+
+- **Without a push:** 38 counter results. The first 37 each printed one `counter from the result
+  (no push)` line, in order. The 38th was due to land after the run's last frame. There were no
+  `strikes` lines.
+- **With `SRREVAMP_QA_MOB_STRIKE=1`:** 44 counter results and 44 `strikes` lines, every one `own
+  counter, drawn as the blow lands`, matching the results monster for monster and number for
+  number. There were no `counter from the result` lines, and 43 red numbers rose over the player;
+  the 44th counter came too late to land before the run ended.
+- No SCRIPT ERROR in either run. The frames and the lane directory were deleted.
+
+**Not done here.**
+
+- The server half: sending both pushes, the spawn-time heading, and the `readReply` test helper.
+- The live check against a server that really sends the pushes belongs to that item. It should
+  count `strikes` lines against every counter result, blocked ones included, and expect no
+  `counter from the result` lines.
+- A spawn push has not been seen live, because nothing sends one.
