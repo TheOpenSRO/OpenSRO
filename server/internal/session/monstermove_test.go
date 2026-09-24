@@ -44,13 +44,24 @@ func TestMonsterMotionListMatchesTheClientFixture(t *testing.T) {
 	if empty := (&MonsterMotionList{}).Encode(); !bytes.Equal(empty, []byte{0, 0}) {
 		t.Errorf("an empty list encodes as % x; want 00 00", empty)
 	}
+	// n = 2 with the second entry cut short: the whole first one is kept, as
+	// the client's decoder keeps it (combat_test.gd, "n=2 with a truncated
+	// second entry gives 1 entry"), and the cut is reported (round 539).
 	two := append([]byte{0x02, 0x00}, motionListFixture[2:]...)
 	two = append(two, motionListFixture[2:12]...)
-	if _, err := DecodeMonsterMotionList(two); err == nil {
-		t.Error("n = 2 with the second entry cut short must be refused")
+	cut, err := DecodeMonsterMotionList(two)
+	if err == nil {
+		t.Error("n = 2 with the second entry cut short must report the cut")
 	}
-	if _, err := DecodeMonsterMotionList([]byte{1}); err == nil {
-		t.Error("a payload without its count must be refused")
+	if cut == nil || len(cut.Entries) != 1 || cut.Entries[0] != l.Entries[0] {
+		t.Errorf("n = 2 with the second entry cut short gave %+v; want the whole first entry kept, as the client does", cut)
+	}
+	none, err := DecodeMonsterMotionList([]byte{1})
+	if err == nil {
+		t.Error("a payload without its count must report it")
+	}
+	if none == nil || len(none.Entries) != 0 {
+		t.Errorf("a payload without its count gave %+v; want no entries, as the client does", none)
 	}
 }
 

@@ -1391,7 +1391,7 @@ in `deploy/README.md`, "Monster AI (off by default)".
 | IDLE | dwell `ai.DwellMs` (`0x545b70`: 4000 +- rand % 2000, sign first); target cleared; for a monster whose run speed is above 0, the roam check, and `0x26` -> HOMING when it has strayed (`0x559c80`). **No stop:** a leg under way goes on. | at the dwell's end, IDLE's own `0x25` handler rolls another IDLE or WANDER (`0x559cf0`, `ai.IdleNext`: WANDER for 76 of 100) |
 | WANDER | refused when the run speed is not above 0; target cleared; `ai.PickWanderLeg`; dwell 5000..5999 ms, or 1000 ms with no leg; the leg starts in the clip `ai.MotionMode` picks (`0x559df0`) | the dwell's end -> `0x25` -> IDLE, **the leg not stopped**; else, with a run speed, the roam check -> `0x26` -> HOMING (`0x559eb0`) |
 | HOMING | dwell 50 000 ms (the default arm); `ai.HomeDestination` (`MoveHome` `0x545c50`, R/3 .. R/3 + trunc(R/3) toward the monster); the leg in `MotionMode`'s clip, 1 for HOMING; target cleared (`0x55a540`) | the dwell's end -> `0x25` -> IDLE; `ai.HasArrived` (under 5.0) -> `0x24` -> IDLE (`0x55a690`, `AITactics_HomingStep` `0x5496c0`) |
-| BATTLE | no timeout: `BATTLE::OnEnter` (`0x559fb0`) calls only the base `OnEnter` and never `AIState_DwellMs`, and the base `OnUpdate` (`0x558b90`) expires only a non-zero one, so a fight never times out | from the tick after entry: the target must be in the world and in the zone, else `0x23` -> IDLE; and the interim release (below) |
+| BATTLE | no timeout: `BATTLE::OnEnter` (`0x559fb0`) calls only the base `OnEnter` and never `AIState_DwellMs`, and the base `OnUpdate` (`0x558b90`) expires only a non-zero one, so a fight never times out | on every tick that drained no blow on it (its entry drains one): the target must be in the world and in the zone, else `0x23` -> IDLE; and the interim release (below) |
 
 **A blow.** `performAttack` calls `noteStruck` right after the damage lands, for a monster that
 survives it: a click, a keep-up repeat and a cast all come through there. The tick drains the
@@ -1446,17 +1446,43 @@ leg. The lock is per session, so a stalled client holds up only its own replies 
     band out of reach. The keep-up's next repeat would then end the run (keepup.go), and the
     release would let the monster walk off after one hit. `BATTLE::OnEnter` also stops a monster
     still on a leg, which the blow's stop leaves as a no-op.
-  - **The release.** The monster stays in BATTLE only while its attacker's keep-up is on it
-    (`keepUp.Target`), and goes to IDLE on the tick after that ends. This is disclosed, with what
-    it means:
+  - **The release.** The monster stays in BATTLE while any player in its zone has a keep-up on it
+    (`keepUp.Target` for each player `world.Hub` puts in the zone), and goes to IDLE only once
+    `MonsterHoldReleaseTicks` (2) ticks in a row have found none, with no blow drained in between.
+    *Changed in round 539* (round 537's review). Round 537 looked only at the first attacker's
+    keep-up and released on the first tick that found it gone. That lost a monster two ways:
+    - **The gaps.** An OpAttack notes its blow inside `performAttack` but arms the keep-up only
+      after `performAttack` returns, past the weapon wear, the counterattack and the reply. A cast
+      cancels the keep-up before its blow and re-arms it only at the hand-off. A tick in either gap
+      released the monster, and IDLE's roam check sent one strayed past the radius home at its run
+      speed until the next blow. Now an OpAttack's gap must outlast two tick periods from the blow,
+      and a cast's must outlast one period from its Cancel to its blow (the drained blow restarts
+      the count) or two from its blow to the re-arm.
+    - **Two players.** When the first attacker's keep-up ended, the monster was released although
+      a second player's was still on it.
+
+    A keep-up whose attacker is in another zone does not hold the monster; that keep-up ends at
+    its next swing anyway (`armKeepUp`'s zone test). What the release still means, disclosed:
     - a cast cancels the keep-up (`useSkillHandler`), and only a hand-off skill
       (`AutoAttackType` 1, no chain) arms it again, so a monster hit only by other casts idles and
       wanders between them;
     - a deployment with no base-attack row (no skill reference data) never arms a keep-up, so the
       hold lasts one tick;
     - a keep-up that ends out of reach releases the monster, and the trace line names it.
-  - **A blow on a monster already in BATTLE is ignored.** This is the rule-0 stand-in for
-    `BATTLE::OnAttacked` (`0x55a2e0` -> behaviour `+0xfc`): the first attacker is kept.
+  - **A blow on a monster already in BATTLE is ignored**, except that it restarts the release
+    count. This is the rule-0 stand-in for `BATTLE::OnAttacked` (`0x55a2e0` -> behaviour `+0xfc`):
+    the first attacker is kept as the target. So when that player leaves the zone or the world,
+    the monster goes by the `0x23` exit even while a second player's keep-up is on it. The second
+    player's next blow holds it again; in between, IDLE's roam check sends a monster strayed past
+    the radius home. The engine's retarget is the threat table's (mob-threat-retarget).
+  - **A drift the stop at the blow leaves open.** The OpAttack handler measures the reach
+    (`firstSwingInReach`) without the runtime's lock, and `noteStruck` stops the monster only after
+    `performAttack`'s `ApplyDamage`. A tick whose `StepAll` lands between the two still moves the
+    monster up to 0.1 s x its speed before the stop, so one struck at the very edge of the band can
+    still leave it. The window is the handler's own work between the two calls, not a tick.
+    Closing it would mean stopping the monster at the reach test, before the swing is known to be
+    ready or to land, so monsters would stop for clicks that deal nothing. Disclosed, not closed
+    (round 539).
 - **Not modelled on a blow:** the aggro link (behaviour `+0xf0`) and the attacker accounting's
   refusals (`CreditAttacker`, behaviour `+0xec`).
 - **Target validity is srrevamp's own:** "in `world.Hub`, same zone". The engine's is
@@ -1467,7 +1493,9 @@ leg. The lock is per session, so a stalled client holds up only its own replies 
   an IDLE spell averages 4.0 s and is followed by a leg 76 times in 100, whose WANDER spell averages
   5.5 s, so a monster starts 0.76 legs per 4.0 + 0.76 x 5.5 = 8.2 s, about 0.093 a second. (One
   seeded Mangyang in `TestMonsterAIWandersAtWalkSpeedInsideTheRoamRadius` started 14 legs in
-  120 s.) Add one `OpMonsterMotionList` per list request, at 21 bytes per walking monster.
+  120 s: 12 WANDER legs at the walk speed and 2 HOMING runs, the test's own log line "14 legs, 12
+  of them walked". Its WANDER rate, 0.1 a second, is one seeded sample, not a check of the
+  estimate.) Add one `OpMonsterMotionList` per list request, at 21 bytes per walking monster.
 - **A stalled client.** The tick's sends block on it, as `RunRegen`'s already do:
   `gateway.Session.Send` has no write deadline. The kill switch is the mitigation.
 
@@ -1492,9 +1520,14 @@ with the server built to `SERVER_BIN=/var/tmp/<lane>/srrevamp-server`.
   - no `ended out of reach` line while that keep-up runs.
 
   GOTO must teleport from a fresh snapshot (in the callback of a `list_monsters()` it requests) or
-  to a monster the client shows standing. Today's GOTO teleports beside the displayed body, which
-  the dilation makes stale, so most first swings would be refused as too far away. The GOTO change
-  is a client item.
+  to a monster the client shows standing. Round 537's GOTO teleported beside the displayed body,
+  which the dilation makes stale, so most first swings would have been refused as too far away.
+  *Done in round 539:* with a server, every QA swing asks for the list, and the reply stands the
+  player 8 units along +x from the position the server listed -- read before
+  `_sync_monster_bodies` rewrites a walking monster's listed position into its drawn one -- and
+  swings from there (`World3D._qa_goto_from_list`, the pure choice in `QaAttackGoto`). A player
+  already on that spot is not moved again, because the OpMove would end the keep-up holding the
+  monster.
 
 **Run 1, measured (round 538, 2026-09-24, server and client at `743f231`).** Server built from the
 tree (`GOOS=linux go build ./cmd/server`) and run as `SERVER_BIN=/var/tmp/mobai/srrevamp-server`,
@@ -1511,4 +1544,31 @@ from the default spot. **Passed**:
   `jangan`, and the pushes are zone-scoped, so that is the expected silence.
 - The client log shows `yaw 0.00 (facing unmeasured)` for the species whose model front round 533
   did not measure -- the disclosed behaviour, not a failure.
-Run 2 has not been run: it needs the fresh-snapshot GOTO above.
+
+**Run 2, measured (round 539, 2026-09-24, server and client at round 539's tree).** Server built
+from the tree and run as `SERVER_BIN=/var/tmp/mobai539/srrevamp-server`, with
+`SRREVAMP_MONSTER_AI=1 SRREVAMP_AI_TRACE=1 SRREVAMP_QA_MOB_LOG=1 SRREVAMP_QA_ATTACK_NAME=Mangyang
+SRREVAMP_QA_ATTACK_GOTO=1`, `--server --attack --frames 600`, from the default spot.
+
+- **The first attempt never swung, and that was a QA bug.** It printed no `QA ATTACK` line and
+  made 3 list requests in 600 frames. The QA setup block runs on the first physics frame. With no
+  `SRREVAMP_QA_AT` to wait for, that frame came while `_ready` was still awaiting the QA sign-in,
+  so the block found no connection and never armed the attack. Round 539 arms it when a QA server
+  is configured and swings only once connected. The re-run logs `QA ATTACK: armed at tick 0
+  (connected: false)`, which confirms that ordering.
+- **The re-run passed every assertion.**
+  - `server.log` has 9 `struck by` lines for 9 Mangyang ids (11, 25, 26, 27, 2, 29, 30, 31, 32;
+    25-32 are respawns). The client log has 9 kills, `monster <id> killed by own blow`, one for
+    each struck id. Each fell to the click plus two keep-up repeats.
+  - No struck id has a `leg to` line after its `struck by`.
+  - There is no `released` line at all, so no struck monster was released before it died.
+  - There is no `ended out of reach` line.
+  - Over the run, the AI started 682 legs (558 `IDLE->WANDER`).
+- **The GOTO did what it was for.** Every one of the 9 first swings landed, and no swing was
+  refused as too far away. Three targets were walking when struck (`WANDER->BATTLE`: 25, 27, 31).
+  Two of those were drawn 20.7 and 24.7 units from where the server listed them, where round 537's
+  GOTO would have put the player out of reach. Each stop push put the monster within 0.8 units of
+  its listed position: the list-to-blow drift was at most one tick's walk.
+- This run cannot see the three races the round-539 hold release closes: no cast, no second
+  player, and no release. The Go tests hold those.
+

@@ -37,11 +37,18 @@ func crandSign(rng *rand.Rand) int {
 
 // SpawnHeading is the heading a hatched monster faces: Nest_Hatch (0x005607b0,
 // 0x5609ee..0x560a15) takes rand() / 32767.0 (0xb45af8) * 2pi (0xb45c18)
-// + 0.0 (0xb45ab0), so [0, 2pi], for a monster whose species' rarity
-// (refChar+0x89) is not 3. A rarity-3 species faces its nest row's own
+// + 0.0 (0xb45ab0), so [0, 2pi], for a species of one TypeID shape whose
+// rarity (refChar+0x89) is not 3. The shape is the TypeID word w
+// (refChar+0x80, loaded at 0x56080e) with bit 1 set (si = (w >> 1) & 1,
+// `cmp si,1` at 0x56098a), (w & 0x1c) == 4 (0x560996), (w & 0x60) == 0x40
+// (0x56099e) and (w & 0x780) == 0x80 (0x5609aa..0x5609b4); the rarity test
+// is `cmp [edi+0x89],3` at 0x5609b6. Every other shape (0x560a1b), and a
+// rarity-3 species of this one (0x5609bf), faces its nest row's own
 // direction (+0x1c; docs/protocol/monster_ai.md, "The _RefNest row", row 8),
-// which srrevamp does not hold: no roster species is rarity 3. The engine
-// rounds each step to a float; this keeps float64.
+// which srrevamp does not hold. Every roster species is TypeID (1,2,1,1),
+// this shape (see IdleStayThreshold), and none is rarity 3, so all of them
+// take the random heading. The engine rounds each step to a float; this
+// keeps float64.
 func SpawnHeading(rng *rand.Rand) float64 {
 	return float64(crand(rng)) / 32767.0 * (2 * math.Pi)
 }
@@ -95,6 +102,14 @@ func IdleNext(rng *rand.Rand) State {
 // (FUN_00540f70). The returned heading is the leg's own direction, which the
 // move's start writes to the owner (CGObjMoverByDest 0x48c330 -> its slot 10,
 // 0x48c660: SetHeading to atan2 toward the destination).
+//
+// The heading is a choice, disclosed: the direction PickWanderLeg bisects is
+// passed as (cos heading, sin heading), the unit heading SetHeading writes at
+// the owner's +0x24/+0x2c (round 535's reading; see WanderLegDirection). The
+// engine's other writer, CGObj::vslot_000 (0x004848e0), zeroes that
+// direction, and its callers were not traced; for an owner left that way the
+// engine's leg is the absolute heading t from +x (WanderLegDirection's
+// zero-direction case), which this never produces.
 //
 // Not modelled, and disclosed: the ctx+0x14c term, which adds a unit vector
 // toward that object when it resolves (0x5459f0..0x545a50; what +0x14c holds
@@ -153,10 +168,17 @@ const RoamRule1Factor = 1.5
 // dist < radius (fcomp at 0x5460ae, `test ah,0x5; jnp`), so a monster exactly
 // on the radius has strayed.
 //
-// Which home and radius apply is the caller's: the nest's position and radius
-// with a nest, else the context's spawn record (ctx+0x1b4) and ctx+0x1cc; and
-// the engine answers "within" outright when there is no nest and the row's
-// +0x84 is below 1 (0x545fdb..0x545fe7).
+// Which home and radius apply is the caller's, and the engine picks them in
+// this order: first the owner's vtable slots 242 (+0x3c8, 0x545f84) and 243
+// (+0x3cc, 0x545f96) -- the two (1,2,4,x) TID-shape tests (see
+// IdleStayThreshold) -- and either answering non-zero sends the test to the
+// context's spawn record (ctx+0x1b4..0x1c8) and radius (ctx+0x1cc) at
+// 0x545ff0, past the nest and the +0x84 test (`jne 0x545ff0` at 0x545f8f and
+// 0x545fa0); else the nest's position and radius with a nest (ctx+0x30,
+// 0x545fa2..0x545fd9); else, with no nest, the engine answers "within"
+// outright when the row's +0x84 is below 1 (0x545fdb..0x545fe7), and uses the
+// spawn record and ctx+0x1cc otherwise. No roster species answers either
+// slot (every one is TypeID (1,2,1,1)).
 func WithinRoamRadius(homeX, homeZ, x, z, r float64, rule uint8) bool {
 	switch rule {
 	case 0:

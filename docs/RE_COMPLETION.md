@@ -32949,3 +32949,141 @@ first start (bound 324); and the only undrawn mover was the Donwhang Earth Ghost
 outside the client's zone. The frames were deleted from `/var/tmp` afterwards; the logs were kept
 off the box. Run 2 (a struck monster holds for the keep-up) still needs the fresh-snapshot GOTO,
 a client change. The flag stays off on the public server.
+
+## Batch-14 review follow-ups (rounds 534-537) and the fresh-snapshot QA GOTO for live check 2 (round 539)
+
+This round lands the review notes on rounds 534-537, adds the QA GOTO that live check 2 needed,
+and records live check 2's result. Each note was re-checked against the current tree, and each
+binary citation was re-read on the RE box (`/var/tmp/srv.asm`, `/var/tmp/decomp_server`).
+
+**Test hygiene (round 534's note).** `TestSkillRefusedAsTooFarCostsNothing` left group 250 armed in
+the process-wide `skillGroupCooldowns`, and MemStore hands the character ID 1 again on the next
+run. Before this round, `go test -count=2 -run TestSkillRefusedAsTooFarCostsNothing
+./internal/session/` FAILED on the second iteration at `skill_reach_test.go:143` ("skill on
+cooldown" instead of "too far away"). The test now saves `itemCooldowns` and
+`skillGroupCooldowns`, installs `newItemCooldownTracker()` and restores both in `t.Cleanup`, as
+`TestSkillCooldownGroupIsShared` does. The same command now passes.
+
+**Record wording (round 536's notes).**
+
+- `recovered_names.tsv`, `0x0048c4e0` `CGObjMoverByDest::ComputeClampedStep`: the row now says
+  "returns 0 unless this+0xc == 1". Re-read: `0x48c4e6 cmp DWORD PTR [edi+0xc],0x1; 0x48c4ea jne
+  0x48c64d`, and `0x48c64d` is `xor eax,eax; ... ret 0x8`. The `Assert_BreakIfDebugger` on
+  `+0xc != 1` is `FUN_0048bff0`'s: the decompile ends
+  `if (*(int *)(param_2 + 0xc) != 1) CGameServer::Assert_BreakIfDebugger();`.
+- `ai.WithinRoamRadius`: the doc now gives the engine's order. First the owner's vtable slots 242
+  (`+0x3c8`, called at `0x545f84..0x545f8b`) and 243 (`+0x3cc`, `0x545f96..0x545f9c`), where either
+  answering non-zero jumps to `0x545ff0` (`jne` at `0x545f8f` and `0x545fa0`). `0x545ff0` loads the
+  spawn record (`ctx+0x1b4..0x1c8`) and radius (`ctx+0x1cc`), past the nest (`ctx+0x30`,
+  `0x545fa2`) and the `+0x84` test (`0x545fdb..0x545fe7`).
+- `ai.SpawnHeading`: the random heading needs the TypeID shape as well as rarity != 3. The TypeID
+  word is `w` = refChar `+0x80`, loaded at `0x56080e`. The conditions are `si = (w >> 1) & 1`
+  (`0x560831..0x560833`) with `cmp si,1` at `0x56098a`, `(w & 0x1c) == 4` at `0x560996`,
+  `(w & 0x60) == 0x40` at `0x56099e`, and `(w & 0x780) == 0x80` at `0x5609aa..0x5609b4`. The
+  rarity test is `cmp [edi+0x89],3` at `0x5609b6`. Any other shape goes to `0x560a1b`, the nest
+  row's `+0x1c` direction; the decompile's own condition at that point has the same three masks.
+  The roster is TypeID (1,2,1,1), which is this shape, so no behaviour changes.
+- `ai.PickWanderLeg`: the doc now discloses the heading choice at the function itself. It passes
+  the unit heading `(cos h, sin h)` and never the zeroed direction `CGObj::vslot_000` leaves, for
+  which the engine's leg is the absolute heading t.
+- `session.DecodeMonsterMotionList` now keeps every whole entry before a cut, as
+  `CombatNet.decode_monster_motion_list` does, and reports the cut as an error alongside them. It
+  used to refuse the whole list. Only tests call it.
+- `combat.Hub.SpawnSpecies`: its doc now records that `Spawn` and `SpawnSpecies` return the live
+  record. Position, motion and HP change under `h.mu`, so a holder may read without the lock only
+  what is fixed at spawn. The callers that exist today read only ID, Name, Zone and Level.
+- Already done in round 537, and verified: the `"All"` knownOrphans key is gone (the probe finds
+  no `"All"` entry), and `monster_ai.md`'s round-251 sentence was rewritten, not just given a
+  pointer.
+
+**The hold's release (round 537's race notes), in `monsterai.go`. OWN DESIGN, disclosed in
+`monster_ai.md`, "srrevamp's runtime".** A held monster now stays in BATTLE while any player in its
+zone has a keep-up on it (`keptUpOn`: `keepUp.Target` for each player `world.Hub` puts in the
+zone). It is released only once `MonsterHoldReleaseTicks` (2) ticks in a row have found none, and
+every drained blow restarts that count (`brain.lastBlowTick` and `unheldTicks` replace
+`heldSinceTick`). This closes three releases round 537 allowed:
+
+- **The OpAttack gap.** `performAttack` notes the blow; the handler arms the keep-up only after
+  `performAttack` returns. A release now needs that gap to outlast two tick periods from the blow.
+- **The cast gap.** `useSkillHandler` runs `keepUp.Cancel`, then the blow, then the hand-off
+  re-arm. A release now needs one period from the Cancel to the blow, or two from the blow to the
+  re-arm.
+- **The second player.** A second player's keep-up still holds the monster after the first
+  player's ends.
+
+Two effects are disclosed, not closed:
+
+- The **target-gone exit** still follows only the first attacker, per the rule-0 stand-in. Closing
+  it is mob-threat-retarget.
+- The **drift window** between `firstSwingInReach` and `noteStruck`'s stop remains. Closing it
+  would stop monsters for clicks that deal nothing.
+
+With `-monster-ai` off none of this runs: the runtime is nil.
+
+**The QA GOTO (client).** With a server, `SRREVAMP_QA_ATTACK_GOTO` now asks for the monster list
+on every QA swing. `World3D._qa_goto_plan` picks the target from the list's own positions before
+`_sync_monster_bodies` rewrites a walking monster's position into its drawn one. The choice is
+`QaAttackGoto.pick`: the preferred id while listed alive, else the nearest by the list, never dead
+or dying. `_qa_goto_from_list` then stands the player 8 units along +x from that position
+(`QaAttackGoto.stand_spot`, the hook's own offset) and settles them onto the walkable graph at
+once. Otherwise the next physics frame's height change would send an OpMove after the swing,
+cancelling its keep-up. The swing goes out directly, because `_attack_monster` would measure the
+reach to the stale drawn body. A player already on the spot is not moved again
+(`QaAttackGoto.needs_teleport`): the OpMove would end the keep-up holding the monster. Without a
+server the hook is unchanged.
+
+Live check 2's first attempt then found a QA bug. The setup block that arms `--attack` runs on
+the first physics frame, which comes while `_ready` still awaits the QA sign-in, so a run from the
+default spot never armed and never swung. Now the attack is armed when a QA server is configured
+and swings only once connected. The re-run's first line, `QA ATTACK: armed at tick 0 (connected:
+false)`, confirms that ordering. Also fixed: World3D's comment beside the Ctrl+F3 binding now
+reads "(Ctrl+F3 -> Copy)".
+
+**Live check 2 passed.** The numbers are in `monster_ai.md`, "The live checks", under "Run 2,
+measured (round 539)". In short:
+
+- 9 `struck by` lines and 9 kills: each struck Mangyang died to the click and two keep-up repeats.
+- No `leg to` line for a struck id after its strike.
+- No `released` line at all, and no `ended out of reach` line.
+- All 9 first swings landed, with no "too far away" refusal. Two targets were drawn 20.7 and 24.7
+  units from their listed positions, and each stopped within 0.8 units of where it was listed.
+
+The frames and the lane directory were deleted from `/var/tmp` afterwards. `SYSTEMS.md`,
+`TODO.md` and `deploy/README.md` now record that both live checks passed. The flag stays off on
+the public server, as the operator decides.
+
+**Tests.**
+
+- **Go** (`monsterai_test.go`):
+  - R1 `TestMonsterAIHoldOutlastsTheGapBeforeTheKeepUpIsArmed`;
+  - R2 `TestMonsterAIHoldOutlastsACastsCancelAndReArm`;
+  - R3 `TestMonsterAIHoldStaysWhileAnyKeepUpInTheZoneIsOnIt`, with its controls: another zone's
+    keep-up does not hold the monster, and it is released on the second tick, not the first;
+  - `TestMonsterMotionListMatchesTheClientFixture`, which now expects the whole first entry kept.
+- **Client:** `client/scripts/qa/qa_attack_goto_test.gd`, 12 checks.
+- **Only a live run shows** the list-to-blow drift and the arming order; Run 2 measured both.
+
+Negatives proved:
+
+| production change | test | result |
+|---|---|---|
+| `monsterai.go`, `monstermove.go`, `wander.go`, `combat.go` stashed | R1 | FAILED: "state IDLE one tick into the gap before the keep-up is armed" |
+| same | R2 | FAILED: "state IDLE on the tick between the cast's Cancel and its blow" |
+| same | R3 | FAILED: "state IDLE 1 tick(s) after the first attacker's keep-up ended" |
+| same | the motion-list test | FAILED: "gave <nil>" |
+| same | N1 | still passed (unchanged behaviour) |
+| the blow's restart of the count removed | R2 | FAILED: "one tick after the cast's blow" |
+| `MonsterHoldReleaseTicks` = 1 | R1, R2, R3 | FAILED |
+| the release looking at the first attacker only | R3 | FAILED |
+| the release looking at every zone | R3's control | FAILED: "state BATTLE two ticks after ..." |
+| `World3D.gd` stashed and `qa_attack_goto.gd` moved aside, run in a scratch copy on the box | the client suite | FAILED: Parse Error, `QaAttackGoto` not declared |
+
+Every test passed again once its file was restored. `go build ./... && go test -count=1 -p 1
+./...` is green, and was re-run after the doc edits. `remote_godot.sh tests` ran 84 suites with 0
+failing, and `check` reports ALL LOAD.
+
+**Not done here.** The note about round 534's `skill.go` reach comment and `skill_use_gate.md` is
+left as it was. It suggested those texts say the whole transitive call graph of `Tick_UseSkill`
+and the 0x7074 handler was checked, not only the direct calls. This round did not walk that graph,
+so it does not make that claim. The INERT question on round 534's cost-order fix is the
+orchestrator's to decide.

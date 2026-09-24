@@ -91,19 +91,25 @@ func (l *MonsterMotionList) Encode() []byte {
 	return out
 }
 
-// DecodeMonsterMotionList refuses a payload without its count or with fewer
-// bytes than the count's entries need.
+// DecodeMonsterMotionList decodes an OpMonsterMotionList payload. A payload
+// cut short keeps every whole entry before the cut, as the client's
+// CombatNet.decode_monster_motion_list does, and the cut is reported as an
+// error alongside them; a payload without its count gives no entries and an
+// error. Round 539 (round 536's review): this half used to refuse the whole
+// list at a cut the client reads past, so the two halves of the codec
+// disagreed. Only tests call it -- the message goes server to client.
 func DecodeMonsterMotionList(data []byte) (*MonsterMotionList, error) {
+	l := &MonsterMotionList{Entries: []MonsterMotion{}}
 	if len(data) < 2 {
-		return nil, errors.New("session: decoding MonsterMotionList: truncated count")
+		return l, errors.New("session: decoding MonsterMotionList: truncated count")
 	}
 	n := int(binary.LittleEndian.Uint16(data))
 	rest := data[2:]
-	if len(rest) < n*MonsterMotionSize {
-		return nil, fmt.Errorf("session: decoding MonsterMotionList: %d entries need %d bytes, have %d", n, n*MonsterMotionSize, len(rest))
+	whole := len(rest) / MonsterMotionSize
+	if whole > n {
+		whole = n
 	}
-	l := &MonsterMotionList{Entries: make([]MonsterMotion, 0, n)}
-	for i := 0; i < n; i++ {
+	for i := 0; i < whole; i++ {
 		b := rest[i*MonsterMotionSize:]
 		l.Entries = append(l.Entries, MonsterMotion{
 			ID:    int64(binary.LittleEndian.Uint64(b[0:8])),
@@ -112,6 +118,10 @@ func DecodeMonsterMotionList(data []byte) (*MonsterMotionList, error) {
 			Speed: math.Float32frombits(binary.LittleEndian.Uint32(b[16:20])),
 			Mode:  b[20],
 		})
+	}
+	if whole < n {
+		return l, fmt.Errorf("session: decoding MonsterMotionList: %d entries need %d bytes, have %d; kept the %d whole one(s)",
+			n, n*MonsterMotionSize, len(rest), whole)
 	}
 	return l, nil
 }

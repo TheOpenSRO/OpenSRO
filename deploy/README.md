@@ -103,8 +103,8 @@ Reference data is otherwise not touched by the update loop.
 
 The server can run the monster AI tick: monsters stand for 2-6 s, then 76 times in 100 walk a
 46-124-unit leg at their walk speed; more than 200 units from their spawn point they run back; a
-monster a player hits stops where it is and stays there while that player's auto-attack runs, then
-idles. Everyone in the zone sees each move. A monster still strikes back only when struck. What is
+monster a player hits stops where it is and stays there while anyone in the zone keeps
+auto-attacking it, then idles. Everyone in the zone sees each move. A monster still strikes back only when struck. What is
 grounded and what is a stand-in is in `docs/protocol/monster_ai.md`, "srrevamp's runtime".
 
 It is behind the `-monster-ai` flag (env `SRREVAMP_MONSTER_AI`), and **the default is off**. Off,
@@ -118,7 +118,8 @@ operator turns it on. After an update the boot log reads
    and its zips are published. That is v0.1.435 (round 533) or later. An older client ignores the
    moves (its `NetClient` warns "unhandled opcode 0x007c" for each), so its players see monsters
    jump on each list refresh.
-2. The two live checks in `monster_ai.md` ("The live checks") pass on the render box.
+2. The two live checks in `monster_ai.md` ("The live checks") pass on the render box. Both have
+   passed: Run 1 in round 538, and Run 2 in round 539. Re-run them after any change to the tick.
 
 Know what it does before turning it on. Legs can cross walls and objects: the server holds no
 collision world yet. A monster hit only by skills that do not hand off to the auto-attack is let go

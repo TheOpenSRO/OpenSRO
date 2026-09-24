@@ -6016,7 +6016,9 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_ATTACK_NAME=s  only monsters whose plate contains s (e.g. Mangyang)
 ##   SRREVAMP_QA_ATTACK_GOTO=1  stand next to the target first (QA teleport);
 ##                          without it the player walks into reach the way a
-##                          click does (_attack_monster)
+##                          click does (_attack_monster). With a server it
+##                          asks for the monster list and stands beside where
+##                          the list puts the target (QaAttackGoto, round 539)
 ##   SRREVAMP_QA_ATTACK_ALTERNATE=1  with QA_ATTACK: swing at the nearest and the
 ##                          second-nearest monster in turn (a retarget every swing)
 ##   SRREVAMP_QA_ATTACK=1   attack the nearest monster every second, so a
@@ -6139,8 +6141,17 @@ func _qa_step() -> void:
 			# easier without a chat box across the bottom of it.
 			for node in [$UI/Control, $UI/HideUIButton]:
 				(node as CanvasItem).visible = false
-		if OS.get_environment("SRREVAMP_QA_ATTACK") != "" and NetClient.is_connected_to_server():
+		# SRREVAMP_QA_ATTACK needs a server. This block runs on the first
+		# physics frame, which can come while _ready is still awaiting the QA
+		# sign-in, so a run signing in to a QA server is armed here and swings
+		# only once connected (the tick below). Round 539: a `--server
+		# --attack` run from the default spot printed no QA ATTACK line at
+		# all -- with no SRREVAMP_QA_AT to wait for, this block had found the
+		# connection not yet up.
+		if OS.get_environment("SRREVAMP_QA_ATTACK") != "" \
+				and (NetClient.is_connected_to_server() or OS.get_environment("SRREVAMP_QA_SERVER") != ""):
 			_qa_attacking = true
+			print("QA ATTACK: armed at tick %d (connected: %s)" % [_qa_tick, str(NetClient.is_connected_to_server())])
 		# SRREVAMP_QA_CLICK="monster,npc,ground": synthetic left clicks through
 		# the real dispatcher, one after another (see _qa_advance_click).
 		var qa_click := OS.get_environment("SRREVAMP_QA_CLICK")
@@ -6397,7 +6408,7 @@ func _qa_step() -> void:
 	# attacks every 10 ticks so a render can land enough hits to kill and level
 	# within a reasonable frame budget -- a QA-only accelerant, never real play.
 	var _qa_attack_interval := 10 if OS.get_environment("SRREVAMP_QA_ATTACK_FAST") != "" else 60
-	if _qa_attacking and _qa_tick % _qa_attack_interval == 0:
+	if _qa_attacking and _qa_tick % _qa_attack_interval == 0 and NetClient.is_connected_to_server():
 		_qa_attack_nearest()
 	if not _qa_mob_move_done and OS.get_environment("SRREVAMP_QA_MOB_MOVE") != "":
 		_qa_mob_move()
@@ -6557,6 +6568,9 @@ func _qa_advance_shots() -> void:
 ## ended up, and how far apart they are.
 var _qa_attacking := false
 var _qa_alternate_flip := false
+## SRREVAMP_QA_ATTACK_GOTO with a server: the monster the next list result
+## stands the player beside (QaAttackGoto), -1 when no GOTO is waiting.
+var _qa_goto_pending_id := -1
 
 ## Attacks whichever live monster is nearest the player -- the same
 ## request the Attack button sends -- so the combat animations can be
@@ -6598,6 +6612,22 @@ func _qa_attack_nearest() -> void:
 	# SRREVAMP_QA_ATTACK_GOTO=1 stands the player a few units from the target
 	# first (a QA teleport, no collision), so the frames -- and any drop --
 	# are in front of the camera rather than 2,000 units away.
+	#
+	# With a server, not beside the drawn body: under qa_shot's time dilation
+	# a walking monster is drawn up to RESYNC_DISTANCE from where the server
+	# has it (live check 2 measured two targets 20.7 and 24.7 away), so a
+	# swing from beside the drawn body can be out of reach. So on every swing the
+	# list is asked for, and its reply stands the player beside the position
+	# the server listed -- unless the player already stands there -- and
+	# swings (_qa_goto_from_list, round 539). Every swing, not only when the
+	# drawn body is more than 12 away: that distance is the stale one, both
+	# ways.
+	if OS.get_environment("SRREVAMP_QA_ATTACK_GOTO") != "" and NetClient.is_connected_to_server():
+		_qa_goto_pending_id = nearest_id
+		print("QA ATTACK: asking for the monster list to stand beside monster %d where the server has it (drawn %.0f away)" % [
+			nearest_id, nearest])
+		NetClient.list_monsters()
+		return
 	if OS.get_environment("SRREVAMP_QA_ATTACK_GOTO") != "" and nearest > 12.0:
 		var target: Node3D = _monster_bodies[nearest_id]
 		var spot := target.global_position + Vector3(8.0, 0.0, 0.0)
@@ -6615,6 +6645,61 @@ func _qa_attack_nearest() -> void:
 	_last_attack_target = nearest_id
 	_show_target(nearest_id)
 	_attack_monster(nearest_id)
+
+## The GOTO half of a list result (round 539): which monster, and where to
+## stand, from the list's OWN positions -- so this runs before
+## _sync_monster_bodies, which rewrites a walking monster's listed x/z into
+## its drawn position (MonsterMotion.reconcile). {} when no GOTO is waiting
+## or the list has no such monster.
+func _qa_goto_plan(fresh: Array) -> Dictionary:
+	if _qa_goto_pending_id == -1:
+		return {}
+	var preferred := _qa_goto_pending_id
+	_qa_goto_pending_id = -1
+	var m := QaAttackGoto.pick(fresh, preferred, OS.get_environment("SRREVAMP_QA_ATTACK_NAME"),
+		player.global_position, _dying_until)
+	if m == null:
+		print("QA ATTACK: the fresh list has no monster to stand beside (wanted %d)" % preferred)
+		return {}
+	return {"id": m.monster_id, "at": Vector3(m.x, m.y, m.z), "spot": QaAttackGoto.stand_spot(m)}
+
+## Stands the player beside where the server listed the monster and swings
+## from there. The swing goes out at once (_flush_position, then
+## _send_attack), not through _attack_monster: that would measure the reach
+## to the DRAWN body, which under the dilation can be up to RESYNC_DISTANCE
+## from the listed position, and walk toward it. The server measures the
+## swing against where the monster is when it arrives: the list's position
+## plus however far it walked in between, which only a live run shows.
+##
+## A player already on the stand spot is not moved (QaAttackGoto.needs_teleport:
+## a move would cancel the keep-up holding the monster). One who is, is settled
+## onto the walkable graph at once, as the next physics frame would do: the
+## graph's height is not the terrain ray's, and the OpMove that frame sent
+## after the swing would cancel the keep-up the swing starts.
+func _qa_goto_from_list(plan: Dictionary) -> void:
+	var monster_id := int(plan["id"])
+	var at: Vector3 = plan["at"]
+	var spot: Vector3 = plan["spot"]
+	_drop_pending_attack()
+	var drawn := -1.0
+	var body = _monster_bodies.get(monster_id)
+	if body != null and is_instance_valid(body):
+		drawn = Vector2((body as Node3D).global_position.x, (body as Node3D).global_position.z).distance_to(Vector2(at.x, at.z))
+	if QaAttackGoto.needs_teleport(player.global_position, spot):
+		spot.y = _terrain_height_at(spot)
+		player.global_position = spot
+		player.velocity = Vector3.ZERO
+		_move_on_nav_graph(0.0)
+		print("QA ATTACK: moved next to monster %d as listed at %.1f,%.1f (drawn %.1f from there), standing %.1f away" % [
+			monster_id, at.x, at.z, drawn,
+			Vector2(player.global_position.x, player.global_position.z).distance_to(Vector2(at.x, at.z))])
+	else:
+		print("QA ATTACK: already beside monster %d as listed at %.1f,%.1f (drawn %.1f from there) -- not moved" % [
+			monster_id, at.x, at.z, drawn])
+	_last_attack_target = monster_id
+	_show_target(monster_id)
+	_flush_position()
+	_send_attack(monster_id, 0, "")
 
 ## SRREVAMP_QA_MOB_MOVE="dx,dz,speed,mode": once monster bodies exist, the
 ## nearest living one is sent on a leg from where it is drawn to (x+dx, z+dz)
@@ -8276,7 +8361,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	# F1..F4 belong to the QUICKSLOT PAGES, as in the original -- the player
 	# asked for them by name (playtest 2026-09-20). The two developer toggles
 	# that used to sit on F1 and F3 have moved to Ctrl+F1 and Ctrl+F3; the
-	# debug panel in particular is how visual bugs get reported (F3 -> Copy),
+	# debug panel in particular is how visual bugs get reported (Ctrl+F3 -> Copy),
 	# so it keeps a binding rather than losing one.
 	if event is InputEventKey and (event as InputEventKey).pressed \
 			and (event as InputEventKey).ctrl_pressed \
@@ -9189,11 +9274,15 @@ func _on_monster_list_result(monsters: Array, error: String) -> void:
 	for m in monsters:
 		print("  %s at %.0f, %.0f, %.0f (%d/%d hp)" % [
 			m.monster_name, m.x, m.y, m.z, m.hp, m.max_hp])
+	# Before the sync: it rewrites a walking monster's listed position.
+	var goto_plan := _qa_goto_plan(monsters)
 	_monsters.assign(monsters)
 	monster_list.clear()
 	for m in _monsters:
 		monster_list.add_item("%s (HP %d/%d)" % [m.monster_name, m.hp, m.max_hp])
 	_sync_monster_bodies(_monsters)
+	if not goto_plan.is_empty():
+		_qa_goto_from_list(goto_plan)
 
 # --- Server-driven monster movement (round 533) ---------------------------
 #

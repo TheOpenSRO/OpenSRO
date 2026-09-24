@@ -36,6 +36,18 @@ import (
 // wherever it stands (mask bit 0x10 is in both gates the tick runs before the
 // reach test, 0x4ae6af and 0x4aea11), which the handler did before too.
 func TestSkillRefusedAsTooFarCostsNothing(t *testing.T) {
+	// The group map is process-wide, and the in-reach cast at the end arms
+	// group 250 for a minute; MemStore hands the character ID 1 again on the
+	// next run, so without this a second run in the same process (-count=2)
+	// was refused "skill on cooldown" instead of "too far away" (round 534's
+	// review). Start from an empty tracker, keep the two names pointing at the
+	// one tracker as in production, and put the process's back afterwards --
+	// as TestSkillCooldownGroupIsShared (skill_test.go) does.
+	savedItems, savedGroups := itemCooldowns, skillGroupCooldowns
+	t.Cleanup(func() { itemCooldowns, skillGroupCooldowns = savedItems, savedGroups })
+	itemCooldowns = newItemCooldownTracker()
+	skillGroupCooldowns = itemCooldowns
+
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")

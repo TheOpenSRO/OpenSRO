@@ -180,14 +180,15 @@ In order. Each is checked off here when it ships in a release, with its round in
       roll, legs at the walk speed pushed to the zone as `OpMonsterMoved 0x007C`, IDLE never
       stopping a leg under way (`0x559c80`), HOMING at the run speed past a 200-unit roam radius
       (own design), one `OpMonsterMotionList 0x007F` after each monster list, and an interim hold
-      that stops a struck monster at the blow and keeps it in BATTLE while the attacker's keep-up is
-      on it. It stands on round 536's core (the roster's real speeds, `combat.MoverStep` with both
+      that stops a struck monster at the blow and keeps it in BATTLE while a keep-up of any player in
+      its zone is on it, released only after two ticks in a row without one (round 539). It stands on round 536's core (the roster's real speeds, `combat.MoverStep` with both
       of the engine's clamps, the hub motion API, the pure rules) and round 533's client, first
       released in v0.1.435. Every stand-in is in `docs/protocol/monster_ai.md`, "srrevamp's
       runtime". What is left, in order:
-      - **Turn it on for the public server**: once v0.1.435 or later is published with green CI and
-        the two render-box live checks in that section pass (their GOTO needs the fresh-snapshot
-        teleport, a client change), per `deploy/README.md`, "Monster AI (off by default)".
+      - **Turn it on for the public server**: once v0.1.435 or later is published with green CI,
+        per `deploy/README.md`, "Monster AI (off by default)". The two render-box live checks in
+        that section have passed: Run 1 in round 538, and Run 2 in round 539 with the
+        fresh-snapshot QA GOTO.
       - **mob-battle-chase**: the chase to the round-247 band at the run speed and the monster's
         own swing on its timer (after mob-battle-rules reads that timer), with the engine's `0x27`
         and `0x23` exits. It replaces the interim hold and its keep-up release, and retires the

@@ -407,6 +407,152 @@ func TestMonsterAIStrikeAtTheReachEdgeKeepsTheKeepUpInReach(t *testing.T) {
 	}
 }
 
+// holdForTest puts attacker in the zone, installs the runtime, hatches the
+// Mangyang into IDLE and returns the runtime, the hub, the monster id and the
+// clock after that tick.
+func holdForTest(t *testing.T, hub *world.Hub, seed int64) (*monsterAI, *combat.Hub, int64, time.Time) {
+	t.Helper()
+	monsters := combat.NewHub()
+	m := monsters.SpawnSpecies("jangan", testMangyang, 0, 0, 0, 1000, 0, 0, 0)
+	a := installMonsterAIForTest(t, hub, monsters, seed, (&pushRecorder{}).push)
+	now := aiT0
+	monsterAITick(now) // the brain hatches into IDLE
+	return a, monsters, m.ID, now.Add(MonsterAITick)
+}
+
+// armForTest arms a keep-up that never swings and cancels it when the test
+// ends.
+func armForTest(t *testing.T, characterID, monsterID int64) {
+	t.Helper()
+	keepUp.Arm(characterID, monsterID, time.Hour, func() (time.Duration, bool) { return 0, false })
+	t.Cleanup(func() { keepUp.Cancel(characterID) })
+}
+
+// NEGATIVE R1 (round 539), the OpAttack gap. performAttack notes the blow,
+// and the handler arms the keep-up only after performAttack returns. A tick
+// that drains the blow and a second tick that lands before the arm must not
+// release the monster: round 537 released it on the first tick that found no
+// keep-up.
+func TestMonsterAIHoldOutlastsTheGapBeforeTheKeepUpIsArmed(t *testing.T) {
+	hub := world.NewHub()
+	const attacker int64 = 91003
+	hub.Enter(gateway.NewTestSession(91003), attacker, "Aria", "jangan", world.Position{})
+	a, _, id, now := holdForTest(t, hub, 11)
+
+	noteStruck(a.monsters, id, attacker)
+	monsterAITick(now) // drains the blow: BATTLE
+	now = now.Add(MonsterAITick)
+	if st := stateOf(t, a, id); st != ai.StateBattle {
+		t.Fatalf("state %v after the blow, want BATTLE", st)
+	}
+	monsterAITick(now) // the keep-up is not armed yet
+	now = now.Add(MonsterAITick)
+	if st := stateOf(t, a, id); st != ai.StateBattle {
+		t.Fatalf("state %v one tick into the gap before the keep-up is armed, want BATTLE", st)
+	}
+	armForTest(t, attacker, id)
+	for i := 0; i < 50; i++ {
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+	}
+	if st := stateOf(t, a, id); st != ai.StateBattle {
+		t.Fatalf("state %v with the keep-up armed, want BATTLE", st)
+	}
+}
+
+// NEGATIVE R2 (round 539), the cast gap. A cast cancels the keep-up before
+// its blow and re-arms it only at the hand-off, after performAttack. A tick
+// between the Cancel and the blow must not release the monster, and the
+// drained blow restarts the count: one more tick without the keep-up after it
+// is still not a release. Without the restart the count would reach 2 there.
+func TestMonsterAIHoldOutlastsACastsCancelAndReArm(t *testing.T) {
+	hub := world.NewHub()
+	const attacker int64 = 91004
+	hub.Enter(gateway.NewTestSession(91004), attacker, "Aria", "jangan", world.Position{})
+	a, _, id, now := holdForTest(t, hub, 12)
+	armForTest(t, attacker, id)
+	noteStruck(a.monsters, id, attacker)
+	for i := 0; i < 5; i++ {
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+	}
+	if st := stateOf(t, a, id); st != ai.StateBattle {
+		t.Fatalf("state %v, want BATTLE before the cast", st)
+	}
+
+	keepUp.Cancel(attacker) // the cast's Cancel
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	if st := stateOf(t, a, id); st != ai.StateBattle {
+		t.Fatalf("state %v on the tick between the cast's Cancel and its blow, want BATTLE", st)
+	}
+	noteStruck(a.monsters, id, attacker) // the cast's blow
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	monsterAITick(now) // the hand-off has not re-armed yet
+	now = now.Add(MonsterAITick)
+	if st := stateOf(t, a, id); st != ai.StateBattle {
+		t.Fatalf("state %v one tick after the cast's blow, before the hand-off, want BATTLE (the blow restarts the count)", st)
+	}
+	armForTest(t, attacker, id) // the hand-off
+	for i := 0; i < 50; i++ {
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+	}
+	if st := stateOf(t, a, id); st != ai.StateBattle {
+		t.Fatalf("state %v after the hand-off re-armed the keep-up, want BATTLE", st)
+	}
+}
+
+// NEGATIVE R3 (round 539), two players on one monster. A struck first, and B
+// keeps up on it too. When A's keep-up ends the monster stays held while B's
+// runs -- round 537 released it at once. CONTROL: a keep-up on it from a
+// player in another zone does not hold it, and once B's ends it goes on the
+// second tick, not the first.
+func TestMonsterAIHoldStaysWhileAnyKeepUpInTheZoneIsOnIt(t *testing.T) {
+	hub := world.NewHub()
+	const aChar, bChar, cChar int64 = 91005, 91006, 91007
+	hub.Enter(gateway.NewTestSession(91005), aChar, "Aria", "jangan", world.Position{})
+	hub.Enter(gateway.NewTestSession(91006), bChar, "Bora", "jangan", world.Position{})
+	hub.Enter(gateway.NewTestSession(91007), cChar, "Cato", "donwhang", world.Position{})
+	a, _, id, now := holdForTest(t, hub, 13)
+	armForTest(t, aChar, id)
+	armForTest(t, bChar, id)
+	noteStruck(a.monsters, id, aChar)
+	noteStruck(a.monsters, id, bChar)
+	for i := 0; i < 5; i++ {
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+	}
+	a.mu.Lock()
+	target := a.brains[id].target
+	a.mu.Unlock()
+	if st := stateOf(t, a, id); st != ai.StateBattle || target != aChar {
+		t.Fatalf("state %v targeting %d, want BATTLE on the first attacker %d", st, target, aChar)
+	}
+
+	keepUp.Cancel(aChar)
+	for i := 0; i < 50; i++ {
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+		if st := stateOf(t, a, id); st != ai.StateBattle {
+			t.Fatalf("state %v %d tick(s) after the first attacker's keep-up ended, with the second one's still on it; want BATTLE", st, i+1)
+		}
+	}
+
+	armForTest(t, cChar, id) // another zone's keep-up
+	keepUp.Cancel(bChar)
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	if st := stateOf(t, a, id); st != ai.StateBattle {
+		t.Fatalf("state %v one tick after the last keep-up in the zone ended, want BATTLE until the second", st)
+	}
+	monsterAITick(now)
+	if st := stateOf(t, a, id); st != ai.StateIdle {
+		t.Fatalf("state %v two ticks after the last keep-up in the zone ended (another zone's still on it), want IDLE", st)
+	}
+}
+
 // aiTestServer is a gateway over in-memory stores with the login, world and
 // combat handlers, and Aria in the world. It returns her connection, the
 // world hub and her zone and position.

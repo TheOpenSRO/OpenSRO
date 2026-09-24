@@ -29,7 +29,8 @@ import (
 // walks each leg at its walk speed and pushes it to its zone as an
 // OpMonsterMoved (monstermove.go), runs home (HOMING) once it strays past the
 // roam radius, and -- the interim hold -- stands still where a player's blow
-// found it while that player's keep-up is on it. The rules are internal/ai's,
+// found it while a keep-up of any player in its zone is on it (round 539; the
+// first attacker's only in round 537). The rules are internal/ai's,
 // each cited where it is defined; the runtime's own choices are the stand-ins
 // in docs/protocol/monster_ai.md, "srrevamp's runtime", and each is marked
 // OWN DESIGN at the line that makes it.
@@ -52,6 +53,27 @@ const MonsterAITick = 100 * time.Millisecond
 // 9 (+0x20), which is server-database only; srrevamp treats each placement as
 // a nest with this radius.
 const MonsterRoamRadius = 200.0
+
+// MonsterHoldReleaseTicks is how many ticks in a row the interim hold's
+// release must find no keep-up on a held monster, with no blow drained on it
+// in between, before it lets the monster go (round 539). OWN DESIGN, the
+// hold's second half: 2, so the release waits out one whole MonsterAITick
+// after it first finds none.
+//
+// Both request paths leave a gap in which a monster that is still being
+// fought has no keep-up on it. An OpAttack notes its blow inside
+// performAttack (noteStruck) and arms the keep-up only after performAttack
+// returns, past the weapon wear, the counterattack and the reply
+// (combatHandler's armKeepUp). A cast cancels the keep-up before its blow
+// (useSkillHandler's keepUp.Cancel) and re-arms it only at the hand-off,
+// after performAttack. Round 537's release -- the first tick that found no
+// keep-up -- let a tick landing in either gap release the monster to IDLE,
+// and IDLE's roam check sends one strayed past the radius home at its run
+// speed until the next blow stops it. Now an OpAttack's gap must outlast
+// two tick periods from the blow, and a cast's must outlast one period from
+// its Cancel to its blow (the drained blow restarts the count) or two from
+// its blow to the re-arm, before either releases the monster.
+const MonsterHoldReleaseTicks = 2
 
 // MonsterAIConfig is what the operator sets on the runtime.
 type MonsterAIConfig struct {
@@ -120,9 +142,12 @@ type brain struct {
 	dwellMs   int
 	// target is the character id SetTarget (0x0053ffe0) holds, 0 for none.
 	target int64
-	// heldSinceTick is the tick BATTLE was entered on; the hold's release
-	// tests start on the next one.
-	heldSinceTick uint64
+	// lastBlowTick is the last tick that drained a blow on this monster
+	// (BATTLE's entry among them); the hold's release tests skip that tick.
+	lastBlowTick uint64
+	// unheldTicks counts the ticks in a row BATTLE found no keep-up on the
+	// monster since the last blow (MonsterHoldReleaseTicks).
+	unheldTicks int
 	// homingDestX/Z is where HOMING is walking (MoveHome 0x00545c50).
 	homingDestX, homingDestZ float64
 }
@@ -187,6 +212,16 @@ func newMonsterAI(hub *world.Hub, monsters *combat.Hub, logger *slog.Logger, cfg
 // Mangyang, 2.2 while HOMING at 22), enough to carry a monster struck at the
 // edge of reach out of it and end the player's keep-up (keepup.go's reach
 // test). The tick then sends the one stop push the zone is owed.
+//
+// A narrower drift remains, disclosed rather than closed (round 537's review,
+// re-checked in round 539): the OpAttack handler measures the reach
+// (firstSwingInReach) without this lock, and this stop comes only after
+// performAttack's ApplyDamage. A tick whose StepAll lands between the two
+// still moves the monster up to MonsterAITick x speed before the stop -- so
+// one struck at the very edge of reach can still leave it. The window is the
+// handler's own work between the two calls, not a tick. Closing it means
+// stopping the monster at the reach test, before the swing is known to be
+// ready or to land, which would stop monsters for clicks that deal nothing.
 func noteStruck(monsters *combat.Hub, monsterID, characterID int64) {
 	a := monsterAIRuntime.Load()
 	if a == nil || monsters == nil || monsters != a.monsters {
@@ -295,7 +330,9 @@ func sortedIDs(m map[int64]struckEvent) []int64 {
 // AITactics_CreditAttacker 0x005473c0, the test at 0x558edd). A monster
 // already in BATTLE ignores the blow: OWN DESIGN, the rule-0 stand-in for
 // CAIState_BATTLE::OnAttacked (0x0055a2e0 -> behaviour +0xfc), which under
-// the tactics row's rule 0 keeps the first attacker.
+// the tactics row's rule 0 keeps the first attacker. Every drained blow, one
+// on a monster already in BATTLE included, restarts the hold's release count
+// (MonsterHoldReleaseTicks).
 func (a *monsterAI) onStruck(id int64, ev struckEvent) {
 	b := a.brains[id]
 	if b == nil {
@@ -305,6 +342,7 @@ func (a *monsterAI) onStruck(id int64, ev struckEvent) {
 		// noteStruck stopped it at the blow; the zone still sees it walking.
 		a.queueStop(b.m)
 	}
+	b.lastBlowTick, b.unheldTicks = a.tickN, 0
 	if st := b.machine.State(); st == ai.StateBattle || st.Terminal() {
 		return
 	}
@@ -352,9 +390,9 @@ func (a *monsterAI) update(b *brain) {
 			a.dispatch(b, ai.MsgArrived)
 		}
 	case ai.StateBattle:
-		// BATTLE has no dwell (ai.BattleDwellMs), so nothing expires it. From
-		// the tick after entry:
-		if b.heldSinceTick == a.tickN {
+		// BATTLE has no dwell (ai.BattleDwellMs), so nothing expires it. Not
+		// on a tick that drained a blow on it, its entry among them:
+		if b.lastBlowTick == a.tickN {
 			return
 		}
 		// The target must still be in the world and in this zone: the
@@ -367,19 +405,51 @@ func (a *monsterAI) update(b *brain) {
 		if a.world != nil {
 			e, ok = a.world.EntityByCharacterID(b.target)
 		}
+		// Only the first attacker is the target (the rule-0 stand-in in
+		// onStruck), so when that player leaves, the monster goes by this
+		// exit even while another player's keep-up is on it; that player's
+		// next blow holds it again. In between, IDLE's roam check sends one
+		// strayed past the radius home. Disclosed (round 539): the engine's
+		// retarget is the threat table's (mob-threat-retarget).
 		if !ok || e.Zone != b.m.Zone {
 			a.tracef("ai: monster %d released (%s)", b.id, "target gone")
 			a.dispatch(b, ai.MsgCombatEnded)
 			return
 		}
-		// OWN DESIGN, the interim hold's release: the monster stays only
-		// while its attacker's keep-up is on it. mob-battle-chase replaces
-		// this with the chase and the engine's own exits.
-		if t, ok := keepUp.Target(b.target); !ok || t != b.id {
-			a.tracef("ai: monster %d released (%s)", b.id, "keep-up ended")
-			a.change(b, ai.StateIdle)
+		// OWN DESIGN, the interim hold's release: the monster stays while
+		// any player in its zone has a keep-up on it -- not only the first
+		// attacker's (round 539: with two players on one monster it was
+		// released when the first one's keep-up ended) -- and goes only once
+		// MonsterHoldReleaseTicks ticks in a row have found none.
+		// mob-battle-chase replaces this with the chase and the engine's own
+		// exits.
+		if a.keptUpOn(b) {
+			b.unheldTicks = 0
+			return
+		}
+		b.unheldTicks++
+		if b.unheldTicks < MonsterHoldReleaseTicks {
+			return
+		}
+		a.tracef("ai: monster %d released (%s)", b.id, "keep-up ended")
+		a.change(b, ai.StateIdle)
+	}
+}
+
+// keptUpOn reports whether any player in b's zone has a keep-up running
+// against it (keepUp.Target), the hold's release test. Only players this
+// runtime's world hub places in the monster's zone count: a keep-up whose
+// attacker is elsewhere ends at its next swing anyway (armKeepUp's zone test).
+func (a *monsterAI) keptUpOn(b *brain) bool {
+	if a.world == nil {
+		return false
+	}
+	for _, e := range a.world.EntitiesInZone(b.m.Zone) {
+		if t, ok := keepUp.Target(e.CharacterID); ok && t == b.id {
+			return true
 		}
 	}
+	return false
 }
 
 // newBrain builds a monster's machine in SPAWN (AI::CTactics::Init's one
@@ -498,7 +568,7 @@ func (a *monsterAI) enterHoming(b *brain) {
 // (noteStruck), so this finds it standing.
 func (a *monsterAI) enterBattle(b *brain) {
 	b.dwellMs = ai.BattleDwellMs
-	b.heldSinceTick = a.tickN
+	b.unheldTicks = 0
 	if b.m.Moving {
 		if m, ok := a.monsters.StopMotion(b.id); ok {
 			b.m = m

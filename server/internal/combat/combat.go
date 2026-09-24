@@ -795,6 +795,14 @@ type Species struct {
 
 // SpawnSpecies is Spawn with the species' code name carried along, so the
 // client can resolve the model without depending on the display name.
+//
+// Both return the hub's LIVE record, not a copy. Its position and motion
+// (StepAll, SetMotion, StopMotion -- the monster AI moves it every tick while
+// -monster-ai is on) and its HP (ApplyDamage) change under h.mu, so a holder
+// may read without the lock only what is fixed at spawn: the id, the species
+// fields and the zone. Everything else is read through Get (round 539; round
+// 536's review). Today's callers -- cmd/server's maintainMonster and gm's
+// spawn -- read only ID, Name, Zone and Level.
 func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP, defense, attack int, goldReward int64) *Monster {
 	// The engine scales a ranked monster's HP by its rank (champion x2, elite
 	// x4, giant x20, titan x100 -- RarityHPPercent, read from CGObjMob::
