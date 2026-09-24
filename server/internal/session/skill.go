@@ -914,6 +914,18 @@ func useSkillHandler(
 		// here means a cast short on health never spends mana on the way to
 		// being refused. refdata.Skill.ConsumeHP was exported and stored but
 		// never read until 2026-09-16; these 8 skills were free to cast.
+		//
+		// The gate passes on EQUAL (`cmp eax,[esp+0x10]` at 0x58e28c, `jge`
+		// at 0x58e290, SR_GameServer.exe -- combat.CanPaySkillHealth), so a
+		// cast whose cost is the caster's whole pool is allowed and lands her
+		// at exactly 0, ALIVE: life state 1 (the dead gate above still passes),
+		// no penalty, no respawn -- the payment's died flag (the store's
+		// transition to 0) is not a death and is not read. What the engine
+		// does with a pool its own cost emptied was not recovered
+		// (EngageSkill's slot 0x308 spends it; no OnDeath call was traced
+		// from there -- disclosed). What srrevamp guarantees instead: she
+		// stays killable -- the next monster or duel blow whose damage lands
+		// on her is her death (killLock, monsterstrike.go, round 551).
 		if hpCost > 0 {
 			hp, _, err := chars.ApplyDamage(ctx, characterID, 0)
 			if err != nil {

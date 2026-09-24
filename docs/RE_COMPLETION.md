@@ -34297,7 +34297,11 @@ runner can turn the test neither way. `go test -count=30 -p 1 -run
   the setter, which clamps: at or above `GetMaxHP` it stores the maximum, below 0 it stores 0
   (its own "CLAMP() ==> min exceeded max" log when the maximum is negative). The MP half is the
   same through `+0x10c`/`+0x114`/`FUN_004a6790` (`0x4a8888` `add edi,[ebp+0x8]`). The `0x4a86a0`
-  wrapper hands both deltas down (the MP delta floored at 0) after scaling each non-zero one by
+  wrapper hands both deltas down -- BOTH floored at 0: `test esi,esi; jge 0x4a874d; xor esi,esi` at
+  `0x4a8747..0x4a874b` for the HP delta, which `mov eax,esi` at `0x4a8759` hands to `FUN_004a87d0`
+  in EAX, and `test ebx,ebx; jge 0x4a8753; xor ebx,ebx` at `0x4a874d..0x4a8751` for the MP delta
+  (round 551 corrected this clause, which read "the MP delta floored at 0"; not load-bearing, a
+  revive's deltas being positive) -- after scaling each non-zero one by
   `1 - param/100`: the HP delta by param 143 (`mov eax,0x8f` at `0x4a86bb` into `EvaluateParam`
   `0x4b3740`, `fdiv QWORD ds:0xb45af0` at `0x4a86c9`, `fld1; fsubrp; fimul` at `0x4a86cf..0x4a86d3`),
   the MP delta by 144 (`mov eax,0x90` at `0x4a8706`, `fdiv` at `0x4a8714`, `fimul` at `0x4a871e`);
@@ -34314,7 +34318,11 @@ runner can turn the test neither way. `go test -count=30 -p 1 -run
   [esp+0x14],eax; fldcw [esp+0x14]; fistp QWORD [esp+0x18]; fldcw [esp+0x16]`** at
   `0x510102..0x51012a` -- rounding control bits 11, round toward zero, MSVC's inline `_ftol` -- the
   same for `GetParam(4)` at `0x510130..0x510159`, then `push 0x8; push eax; push edi; push esi;
-  call 0x4a86a0` at `0x510148..0x51015d`. The review note's "round(GetParam(3)*0.4)" was a misread
+  call 0x4a86a0` at `0x510148..0x51015d`. That is the death-cause-2 path (a); option 2's path (b)
+  has its own identical pair after its `Revive(1)` at `0x51018b`: `fnstcw` at `0x5101a6`, `or
+  eax,0xc00` at `0x5101af`, `fldcw` at `0x5101be`, `fistp` at `0x5101c6`, then the MP `fmul
+  QWORD ds:0xb460f0` at `0x5101d4` and its `fnstcw` at `0x5101da` (round 551 named the paths;
+  this entry first cited only (a)'s). The review note's "round(GetParam(3)*0.4)" was a misread
   of the `fistp`; `srrevamp`'s `int(float64(max) * 0.4)` is the same truncation.
 - **So retail's option-2 HP is `min(MaxHP, 1 + trunc(0.4 x MaxHP))`**: `Revive(1)` (`0x4df290`,
   param-1 tail) does `SetLifeState(1)` (`+0x1f0`), `+0x55c`, `SetBodyMode` (`+0x318`) and
@@ -34372,6 +34380,16 @@ runner can turn the test neither way. `go test -count=30 -p 1 -run
   only in the window between its dead gate (`deadCharacter`, under the flag) and the write -- now
   reports `(0, false)` and the duel goes on at `OpponentHP` 0, where it used to report a death and
   `ResetHP` a dead character (`Store`'s comment says so).
+  **CORRECTED IN ROUND 551 -- this arbiter was wrong, and the "reachable only in the window"
+  claim false.** A character can be ALIVE at 0 outside any window: an HP-cost cast lands its
+  caster at exactly 0 (`combat.CanPaySkillHealth` is the engine's `cmp eax,[esp+0x10]; jge` at
+  `0x58e28c`/`0x58e290`, which passes on equal, and `session/skill.go` pays through `ApplyDamage`
+  without treating the transition as a death). Under this round's rule every later monster blow
+  and every duel blow on her read `(0, false)` and were dropped -- she could not be killed, and
+  her duel could not end (the batch-18 review's blocking note). Round 551 moved the arbiter to a
+  per-character kill lock (`session.killLock`, `fallen`): a blow whose damage leaves the pool at 0
+  reads her back under it -- alive and still at 0, it is the kill. The store's `died` is now a
+  fact about the write only (`Store`'s comment, rewritten there).
 - `monsterStrike`: a blow that reads `(0, false)` returns `monsterStrikeOutcome{dropped: true}` --
   nothing landed, as `FUN_004a87d0` lands nothing off life state 1 -- and `performAttack` then
   carries no counter in the result and makes no push, `runStrike` pushes nothing (a trace line
@@ -34413,7 +34431,9 @@ sending; `_play_player_once` refuses a new one-shot while `_player_one_shot_hold
 clip is never replaced -- a late swing result no longer becomes the held pose); the death pose goes
 through `_hold_player_one_shot`, which sets the hold only if the die clip STARTED (a one-frame clip
 no longer pinned whatever one-shot was current); `show_revive_prompt` tests
-`panel.is_inside_tree()` after its frame, not `is_instance_valid`. The review's ":11054
+`panel.is_inside_tree()` after its frame, not `is_instance_valid` (**corrected in round 551: it
+needs BOTH** -- a prompt hidden in the frame it was shown is freed by the time the coroutine
+resumes, and `is_inside_tree` on it is a "previously freed" script error). The review's ":11054
 inventory-window item use" is the QA potion hook; the real bag route is the HUD's right-click, and
 both are gated. `_player_one_shot_until`, written by `_play_player_struck` and
 `_hold_player_one_shot` and read nowhere (the hold never used it), is removed.
@@ -34484,3 +34504,149 @@ simultaneous kills charge one penalty (before, two) and the guild gate's HP test
 (no effect while nobody is ever dead). The revive HP moves from 80 to 81 for a maximum of 200
 only under the flag. Round 549's order stands: tag and confirm the round-548 client before the
 flag is ever flipped.
+
+## Round-550 follow-up: an alive character at 0 HP can be killed again (no immunity), and the revive prompt guards a freed panel (round 551)
+
+Round 550's re-review found two BLOCKING defects in `118eaed`; this round fixes both as a new commit
+on top of it. No opcode or layout changed; every flag stays off by default.
+
+**Blocking 1, the exploit.** Round 550 made `character.Store.ApplyDamage`'s `died` -- the TRANSITION
+from above 0 to 0 -- the kill arbiter, so that two racing kills charge one penalty. But a character
+can be ALIVE at 0 outside any race: an HP-cost cast lands its caster at exactly 0 when the cost is
+her whole pool, and `session/skill.go` pays through `ApplyDamage` without treating the transition
+as a death (rightly: which death cause a self-emptied pool takes was never read). From then on
+every monster blow -- the AI swing and the synchronous counter -- and every duel blow on her read
+`(0, false)`, were dropped, and she fought on immune, her duel unable to end. Reachable by any
+HP-skill user whose pool is a multiple of the cost. The round-550 record's "reachable only in the
+window between the dead gate and the write" was false; corrected in place above.
+
+**Blocking 2, the freed panel.** `HudPanels.show_revive_prompt` (round 550) replaced
+`is_instance_valid(panel)` with `panel.is_inside_tree()` after its `await process_frame`. A
+`hide_revive_prompt` in the same frame -- a kill result and a revive result in one `NetClient`
+batch, or a second show, which hides first -- `queue_free`s the panel at the end of that frame, and
+the coroutine resumes on the next, so `is_inside_tree` runs on a freed instance: a script error.
+
+**Grounding, re-read on the RE box for this round (2026-09-24).**
+
+- **The skill gate's HP row passes on EQUAL, and its addresses are the SERVER's.** In
+  `/var/tmp/srv.asm` (`SR_GameServer.exe`): `58e279 cmp DWORD [esp+0x10],0x0`, `58e27e jle 58e29d`,
+  `58e282 mov eax,[edx+0x108]` (slot 66, `GetCurHP`), `58e28a call eax`, **`58e28c cmp
+  eax,[esp+0x10]`, `58e290 jge 58e29d`**, `58e292 mov ax,0x3013` -- every one an instruction start.
+  The review's "0058e292 is not an instruction start in `/var/tmp/sro_client.asm`" looked the
+  server's gate up in the client's image (`skill_use_gate.md`'s function is `SR_GameServer.exe`'s
+  `FUN_0058d8f0`), where the same offsets fall mid-instruction; the citation stood. So the retail
+  rule is `CurHP >= hpCost` -- `combat.CanPaySkillHealth` is unchanged and its comment now names the
+  binary and the file -- and a cast at exactly the cost is retail's own behaviour. What retail does
+  with the emptied pool afterwards is still not recovered (the cost is spent later, by
+  `EngageSkill`'s slot `0x308`; no `OnDeath` call was traced from there): srrevamp leaves her ALIVE
+  at 0, disclosed at the payment and in `skill_use_gate.md`, and guarantees she stays killable.
+- **`GObjPC::FUN_004a87d0` lands nothing off life state 1** (`cmp al,0x1` at `0x4a87e8` after the
+  `+0xf8` call at `0x4a87e6`; re-read) -- the reason a blow that finds the dead state is dropped.
+- **The review's nits, each verified in `srv.asm` before it was landed**: the `0x4a86a0` wrapper
+  floors BOTH deltas (`test esi,esi; jge 0x4a874d; xor esi,esi` at `0x4a8747..0x4a874b`, the HP
+  delta that `mov eax,esi` at `0x4a8759` hands to `FUN_004a87d0`; `test ebx,ebx; jge 0x4a8753; xor
+  ebx,ebx` at `0x4a874d..0x4a8751`, the MP delta); the truncation pair round 550 cited
+  (`0x510102..0x510122`, `0x510136..0x51014e`) is the death-cause-2 path's, and option 2's own is at
+  `0x5101a6` (`fnstcw`) / `0x5101af` (`or eax,0xc00`) / `0x5101be` (`fldcw`) / `0x5101c6` (`fistp`),
+  with the MP `fmul QWORD ds:0xb460f0` at `0x5101d4` and its `fnstcw` at `0x5101da`.
+
+**Wired, server.** The kill arbiter moves from the store's write to a per-character KILL LOCK in
+`session` (`monsterstrike.go`: `killLocks`, `killLock`, `fallen`). The rule, stated for each path:
+
+- `monsterStrike` (the AI swing and the synchronous counter alike): a blow whose damage leaves the
+  pool at 0 (`hp == 0 && incoming > 0`) takes the character's lock and reads her back under it. Not
+  in the dead state and still at 0: it is THE kill, and completes the death under the lock -- the
+  penalty from that same read (one `GetByID` fewer than before: the penalty's read is the
+  arbiter's), then `markDead` (flag on) or `RespawnHP` + `keepUp.Cancel` + the MP refill (flag off).
+  In life state 2, or above 0 again: another kill got there first, `dropped` (nothing reported;
+  the roll and the armour wear before the write stand, as round 550 disclosed). A blow that lands
+  nothing -- blocked, or a zero roll -- kills nobody at any pool and is reported as it is, at the
+  HP it found. The store's `died` is no longer read. GUARANTEES: flag on, the second of two racing
+  kills reads the first's life state 2 (the swap is under the lock); flag off, it reads the first's
+  `RespawnHP` (written under the lock) -- so ONE penalty either way; and a character alive at 0
+  reads back alive at 0, so she dies to the next blow.
+- `revivePlayer`: the compare-and-swap 2 -> 1 AND the pools under the same lock. Round 550's
+  state-first order closed the "alive at 0" window only under the transition rule; under the
+  round-551 rule a blow between the state and the pools would read "alive at 0" and kill her, and
+  the revive's `Heal` would then land on a dead character. Under the lock it reads life state 2
+  (dropped) or the revived pool (lands as usual).
+- `handleDuelAttack`: the same arbiter. A blow whose damage leaves the opponent at 0 takes her lock:
+  alive and still at 0, it is the duel's kill and `ResetHP` happens there (a monster's blow racing
+  it then finds her above 0); in the dead state, the blow is answered with the dead gate's own
+  refusal ("your opponent is dead"); above 0 again (a monster's kill and respawn got there first),
+  it is reported at the HP she has. `OpponentDied` no longer comes from the store.
+- `performAttack`: a dropped counter re-reads `PlayerHP` for the attacker's `OpAttackResult` (the
+  review's cosmetic note: the value seeded at the top was read before the racing kill).
+- `character.Store.ApplyDamage`'s contract, rewritten: `died` is a fact about the write -- whether
+  THIS call emptied the pool -- and not the verdict on a death; nothing in `session` reads it now,
+  and the store tests pin the arithmetic. `MemStore` and `SQLStore` are unchanged.
+- `runStrike`'s dropped trace says why ("another blow's kill got there first"); `markDead`'s and
+  `handStrike`'s comments name the lock.
+
+OWN DESIGN, disclosed at `killLocks`: the engine has no such lock -- its blows and revives run on
+one game-object queue. One mutex per character ever taken to 0, never removed. Lock order: the kill
+lock is taken with no other lock held (a strike worker's, a handler's, the auto-revive pass's
+goroutine), and under it only `world.Hub.mu`, the potion queue's and `keepUp`'s are taken, none of
+which ever takes it back.
+
+**Wired, client** (`hud_panels.gd`): `show_revive_prompt` resumes into `if not
+is_instance_valid(panel) or not panel.is_inside_tree(): return` -- the validity test round 550
+dropped, and the in-tree test it added, both.
+
+**Records.** `RE_COMPLETION` round 550 (the false "reachable only in the window" claim, the
+both-deltas floor, the two truncation paths, the client sentence); `character.go`; `attacktype.go`
+(the binary, the file, the re-read listing, the stand-in at zero); `skill.go`'s payment;
+`deadstate.go` (the header's paths, `markDead`, `reviveHPDelta`, `revivePlayer`); `monster_ai.md`
+(the worker-window bullet, the flag-on life-state bullet, the "no valid target" paragraph, the
+revive paragraph, the test list); `skill_use_gate.md` (rows 14 and 15 carry their compare
+instructions; a "Row 14 at exactly the cost" paragraph); `guild.md` row 2 of the founder table
+(the review's note: it still read "HP <= 0 standing in for dead"). `SYSTEMS.md` has no row
+describing this as unwired; unchanged. `WORLD_ISSUES.md` untouched, as in rounds 541-550. The
+review's remaining notes: the SQL two-round-trip HP read stays where it was (the arbiter's read is
+`GetByID`, one round trip, and replaces the penalty's); `monsterAI.strikeDone` stays the accepted
+unsynchronised test seam; the commit trailer's model name is the task text's, as before.
+
+**Tests** (`session`): `TestSwingOnACharacterAliveAtZeroKills` (flag on and off: Aria at 0 with no
+death, one AI swing -> one push with `TargetDied`, the 25900 penalty once, dead at 0 / respawned),
+`TestTwoSwingsOnACharacterAliveAtZeroChargeOnePenalty` (round 550's interleaving on a pool
+already at 0, where both blows read `(0, false)`: one push, one death, one penalty, both flags),
+`TestCounterOnACasterAliveAtZeroKills` (the wire, both flags: a cast whose `Consume_HP` is her
+whole 200 lands against a Mangyang whose counter is armed by hand -- `PlayerHP` 0, no death, life
+state 1 -- and her swing at a second, ready Mangyang draws the counter that kills: `PlayerDied`,
+`PlayerHP` the respawn or 0 with life state 2), `TestDuelBlowOnAnOpponentAliveAtZeroEndsTheDuel`
+(Bram at 0 alive: Aria's first blow is the kill, `OpDuelEnded` both sides, his HP reset, the duel
+over). Round 550's `TestTwoKillsChargeOneDeathPenalty`, `TestSwingOnAPlayerAlreadyDeadIsDropped`,
+`TestMonsterKillLeavesThePlayerDead`, `TestCounterKillLeavesThePlayerDeadUntilRevived` and the
+store's `TestApplyDamageOnACharacterAtZeroReportsNoDeath` / `TestSQLStoreApplyDamageAtZeroReportsNoDeath`
+stay green as written. `go build ./... && go test -count=1 -p 1 ./...` green, re-run after the doc
+edits; `go test -count=10 -race -run 'AlreadyDead|TwoKills|AliveAtZero|AutoReviveWarns'
+./internal/session/` green (70 s). Client (`monster_strikes_test.gd`, `_test_hud_prompt_freed`):
+show, hide in the same frame, two frames -- the prompt is freed (the probe), the HUD is clean, and
+a fresh prompt is placed after its own frame; `remote_godot.sh check`: `checked 256 scripts and 5
+scenes`, `ALL LOAD`; `remote_godot.sh tests`: `ran 85 suite(s), 0 failing`.
+
+**Negatives, proved with ONLY the production files stashed** (`git stash push -- <the eight
+server files>`; the tests left in place), each the reviewer's own scenario:
+
+| test | result without the change |
+|---|---|
+| `TestSwingOnACharacterAliveAtZeroKills` (both flags) | `a swing on a character alive at 0 pushed []; want exactly one killing blow costing 25900 exp` |
+| `TestTwoSwingsOnACharacterAliveAtZeroChargeOnePenalty` (both flags) | `0 blow(s) pushed, 0 of them a death`; `exp ... = 30000, want 4100`; `HP 0, life 1` |
+| `TestCounterOnACasterAliveAtZeroKills` (both flags) | `the counter on a caster alive at 0: {... PlayerDamageTaken:0 PlayerHP:0 PlayerDied:false ...}` |
+| `TestDuelBlowOnAnOpponentAliveAtZeroEndsTheDuel` | `{Damage:30 OpponentHP:0 OpponentDied:false}; want the duel's kill` |
+| `monster_strikes_test.gd` with `hud_panels.gd` stashed and shipped | `SCRIPT ERROR: Cannot call method 'is_inside_tree' on a previously freed instance. at: HudPanels.show_revive_prompt (res://scripts/ui/hud/hud_panels.gd:600)` -- and the suite still printed `ALL PASS` |
+
+Restored after each (`git stash pop`), all green again, the client shipped again. **The client
+negative is behavioural, not a harness FAIL, and that is a gap worth knowing**: `remote_godot.sh
+tests` marks a suite failed on `FAIL|FAILURES|Parse Error` in its output, and a GDScript runtime
+error prints `SCRIPT ERROR:` and lets the run go on to `ALL PASS`. No script can observe its own
+coroutine's abort (an errored coroutine still emits `completed`), so the new case asserts what a
+script can see and the error line is the evidence. Widening the harness's grep to `SCRIPT ERROR`
+would make this class fail loudly; it is outside this item's files and would need a pass over all
+85 suites for existing error lines first -- filed here, not done.
+
+**Deploy note.** Flag-independent behaviour change: a character alive at 0 HP (only an HP-cost
+caster reaches it) is killable again -- the pre-round-550 behaviour restored, without round 550's
+double penalty. Two simultaneous kills still charge one penalty under either flag. Nothing else on
+the wire moves; every flag stays off. Round 549's order stands: tag and confirm the round-548
+client before `-player-dead-state` is ever flipped.

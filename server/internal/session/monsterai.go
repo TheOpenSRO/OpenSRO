@@ -831,11 +831,11 @@ func (a *monsterAI) runStrike(id int64, job strikeJob) {
 		return
 	}
 	if out.dropped {
-		// The blow found the target already at 0 -- another kill landed
-		// between the dead check above and the store's write (round 550):
-		// the store admitted one death, this blow landed nothing, and
-		// nothing is pushed.
-		a.tracef("ai: monster %d swing at %d dropped: the target was already at 0 HP", id, job.target)
+		// The blow left the target at 0 but lost the kill under her kill
+		// lock (round 550; killLock since round 551) -- another kill landed
+		// between the dead check above and the read-back, and she is dead or
+		// respawned already: this blow landed nothing, and nothing is pushed.
+		a.tracef("ai: monster %d swing at %d dropped: another blow's kill got there first", id, job.target)
 		return
 	}
 	a.tracef("ai: monster %d strike %d for %d (HP %d)%s%s", id, job.target, out.damage, out.hp,

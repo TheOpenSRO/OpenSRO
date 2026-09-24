@@ -478,28 +478,38 @@ func ParseCastRequirements(packed string) []CastRequirement {
 
 // CanPaySkillHealth reports whether a character can pay a skill's health cost.
 //
-// RECOVERED from the skill-use precondition check at 0058e279, read in assembly
-// because the comparison is the whole content:
+// RECOVERED from the skill-use precondition check at 0058e279 in
+// SR_GameServer.exe (the SERVER binary: /var/tmp/srv.asm on the RE box, where
+// each of these is an instruction start; the same addresses in the client's
+// image are unrelated bytes, which a round-551 review lookup in
+// sro_client.asm mistook for a bad citation), read in assembly because the
+// comparison is the whole content; re-read 2026-09-24:
 //
 //	58e279  cmp DWORD PTR [esp+0x10],0x0   ; the cost
-//	58e27e  jle skip                       ; a cost <= 0 is not checked at all
-//	58e280  call [edx+0x108]               ; vtable slot 66 = IGObj::GetCurHP
+//	58e27e  jle 58e29d                     ; a cost <= 0 is not checked at all
+//	58e280  mov edx,[ebx]
+//	58e282  mov eax,[edx+0x108]            ; vtable slot 66 = IGObj::GetCurHP
+//	58e28a  call eax
 //	58e28c  cmp eax,[esp+0x10]             ; current HP vs cost
-//	58e290  jge ok                         ; passes on EQUAL
+//	58e290  jge 58e29d                     ; passes on EQUAL
 //	58e292  mov ax,0x3013                  ; else 0x3013, which the client names
 //	                                       ; UIIT_SKILL_USE_FAIL_NOTENOUGHHP
 //
 // So the bar is `currentHP >= cost`, not "must survive": a cast that spends the
 // caster's last point is allowed through. The MP check directly below it is the
-// same shape against slot 67 (GetCurMP), which is how the ordering here is known
-// -- the engine tests health first.
+// same shape against slot 67 (GetCurMP; `mov eax,[edx+0x10c]` at 58e2a3, `cmp
+// eax,edi; jge` at 58e2ad/58e2af, `mov ax,0x3004` at 58e2b1), which is how the
+// ordering here is known -- the engine tests health first.
 //
 // WHAT HAPPENS AT EXACTLY ZERO IS NOT RECOVERED. The comparison permitting
 // `currentHP == cost` is read; whether the engine then treats the caster as
-// dead is not. srrevamp's own rule applies (character.Store.ApplyDamage reports
-// died when HP reaches 0), which is a composition of two things that ARE known
-// rather than an invented behaviour -- but it is the one edge this citation does
-// not cover, and it is reachable only when HP equals the cost exactly.
+// dead is not (the cost is taken later, by EngageSkill's slot 0x308, and no
+// OnDeath call was traced from there). srrevamp's rule, disclosed: the caster
+// is left ALIVE at 0 -- life state 1, no penalty, no respawn -- and the next
+// monster or duel blow whose damage lands on her is her death
+// (session/monsterstrike.go's killLock, round 551). Round 550's arbiter, the
+// store's transition flag, made her unkillable instead; round 551 closed it.
+// It is reachable only when HP equals the cost exactly.
 func CanPaySkillHealth(currentHP, cost int) bool {
 	if cost <= 0 {
 		return true

@@ -1262,3 +1262,149 @@ func TestSkillCooldownGroupIsShared(t *testing.T) {
 	// 992's cast re-armed the group.
 	expect(993, "skill on cooldown", "group 2 re-armed by 992")
 }
+
+// A CAST THAT SPENDS THE CASTER'S WHOLE POOL LEAVES HER ALIVE AT 0, AND THE
+// NEXT BLOW KILLS HER (round 551). Aria, 200 HP, casts a skill whose
+// Consume_HP is 200 at a Mangyang whose counter is inside its ReuseDelay
+// (armed by hand through CounterattackReady), so the cast draws no reply: the
+// engine's gate passes on HP == cost (`cmp eax,[esp+0x10]; jge` at
+// 0x58e28c/0x58e290 in SR_GameServer.exe, combat.CanPaySkillHealth), the cast
+// lands, its result carries PlayerHP 0 and no death, and she stands in life
+// state 1. Then she swings at a second, ready Mangyang whose counter deals 15:
+// with -player-dead-state off that counter is her death -- PlayerDied, PlayerHP
+// the respawn -- and with it on, PlayerDied with PlayerHP 0 and life state 2.
+// On round 550's tree the counter read (0, false) from the store and was
+// dropped: no death, PlayerHP 0, and she went on swinging, immune.
+func TestCounterOnACasterAliveAtZeroKills(t *testing.T) {
+	for _, flag := range []bool{false, true} {
+		t.Run(map[bool]string{true: "dead state on", false: "dead state off"}[flag], func(t *testing.T) {
+			deadStateForTest(t, flag)
+			ctx := context.Background()
+			accounts := account.NewMemStore()
+			accounts.Add("alice", "hunter2")
+			chars := character.NewMemStore()
+			c, err := chars.Create(ctx, 1, "Aria")
+			if err != nil {
+				t.Fatalf("creating character: %v", err)
+			}
+			defer keepUp.Cancel(c.ID)
+			if c.MaxHP() != 200 {
+				t.Fatalf("test premise: a new character's max HP is %d, want 200", c.MaxHP())
+			}
+			// The rows are the test's: a sword and a skill costing the whole pool.
+			drain := &refdata.Skill{ID: 64, BasicLevel: 1, ReuseDelayMs: 60000, ConsumeHP: 200,
+				AttackPercent: 100, AttackType: 5}
+			ref := itemsAndSkills{
+				items:  map[int64]*refdata.Item{100: {ID: 100, TypeID4: 2, PhysAttackMax: 30, Range: 6}},
+				skills: map[int64]*refdata.Skill{2: {ID: 2, ReuseDelayMs: 60}, 64: drain},
+			}
+			eq := fixedEquipment{worn: []equipment.Equipped{{Slot: equipment.SlotWeapon, ItemID: 100, Durability: 50}}}
+			inv := inventory.NewMemStore(ref)
+			quests := quest.NewMemStore()
+			skills := skill.NewMemStore()
+			if err := skills.Learn(ctx, c.ID, drain.ID); err != nil {
+				t.Fatalf("Learn: %v", err)
+			}
+			hub := world.NewHub()
+			monsters := combat.NewHub()
+			mp := mana.NewTracker()
+			handle := gateway.Chain(
+				LoginHandler(accounts),
+				WorldHandler(chars, eq, hub),
+				UseSkillHandler(chars, eq, ref, skills, hub, monsters, quests, inv, ref, nil, mp, nil),
+				CombatHandler(chars, eq, ref, hub, monsters, quests, inv, skills, nil, mp, nil),
+			)
+			addr, cleanup := startTestServer(t, handle)
+			defer cleanup()
+			conn := dialTestServer(t, addr)
+			defer conn.Close()
+			r := bufio.NewReader(conn)
+			write := func(opcode uint16, data []byte) {
+				if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+					t.Fatalf("Write: %v", err)
+				}
+			}
+			attackResult := func(what string) *AttackResult {
+				t.Helper()
+				for {
+					conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+					p, err := proto.Read(r, nil, nil)
+					if err != nil {
+						t.Fatalf("waiting for %s: %v", what, err)
+					}
+					if p.Opcode != OpAttackResult {
+						continue
+					}
+					ar, err := DecodeAttackResult(p.Data)
+					if err != nil {
+						t.Fatalf("DecodeAttackResult: %v", err)
+					}
+					return ar
+				}
+			}
+			write(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+			conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+			if p, err := proto.Read(r, nil, nil); err != nil {
+				t.Fatalf("login: %v", err)
+			} else if lr, err := DecodeLoginResult(p.Data); err != nil || !lr.OK {
+				t.Fatalf("login failed: err=%v result=%+v", err, lr)
+			}
+			write(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode())
+			conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+			p, err := proto.Read(r, nil, nil)
+			if err != nil {
+				t.Fatalf("enter world: %v", err)
+			}
+			ewr, err := DecodeEnterWorldResult(p.Data)
+			if err != nil || !ewr.OK {
+				t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
+			}
+			x, z := float64(ewr.X), float64(ewr.Z)
+
+			// The cast's target: a Mangyang with its real 3000 ms ReuseDelay,
+			// armed now, so the cast is not answered ("there is no reply").
+			armed := monsters.SpawnSpecies("jangan", combat.Species{Name: "Mangyang", Level: 1, AttackReuseMs: 3000}, x, 0, z, 5000, 0, 15, 0)
+			if !monsters.CounterattackReady(armed.ID, time.Now()) {
+				t.Fatal("setup: a fresh monster's counter is not ready")
+			}
+			write(OpUseSkill, (&UseSkillRequest{CharacterName: "Aria", SkillID: drain.ID, TargetMonsterID: armed.ID}).Encode())
+			cast := attackResult("the cast's result")
+			if cast.Error != "" || cast.MonsterDamage <= 0 {
+				t.Fatalf("the cast costing the whole pool: %+v; want it to land (the gate passes on HP == cost)", cast)
+			}
+			if cast.PlayerDied || cast.PlayerHP != 0 || cast.PlayerDamageTaken != 0 {
+				t.Fatalf("the cast's result %+v; want PlayerHP 0, no death and no counter", cast)
+			}
+			at0, _ := chars.GetByID(ctx, c.ID)
+			if at0.HP != 0 {
+				t.Fatalf("stored HP after the cast = %d, want 0", at0.HP)
+			}
+			if e, ok := hub.EntityByCharacterID(c.ID); !ok || e.Life != world.LifeAlive {
+				t.Fatalf("life state after the cast = %d (in world %v), want 1: alive at 0", e.Life, ok)
+			}
+
+			// The next blow: a ready Mangyang's counter to her swing.
+			killer := monsters.Spawn("jangan", "Mangyang", x, 0, z, 5000, 0, 15, 0)
+			write(OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: killer.ID}).Encode())
+			blow := attackResult("the swing's result")
+			if blow.Error != "" {
+				t.Fatalf("the swing at 0 HP: %+v; want it to go through (alive, life state 1)", blow)
+			}
+			if !blow.PlayerDied || blow.PlayerDamageTaken != 15 {
+				t.Fatalf("the counter on a caster alive at 0: %+v; want PlayerDied with the 15-point blow (round 550 dropped it)", blow)
+			}
+			after, _ := chars.GetByID(ctx, c.ID)
+			e, _ := hub.EntityByCharacterID(c.ID)
+			if flag {
+				if blow.PlayerHP != 0 || after.HP != 0 || e.Life != world.LifeDead {
+					t.Errorf("flag on: PlayerHP %d, stored %d, life %d; want dead at 0", blow.PlayerHP, after.HP, e.Life)
+				}
+			} else {
+				want := int(float64(after.MaxHP()) * character.RespawnFraction)
+				if int(blow.PlayerHP) != want || after.HP != want || e.Life != world.LifeAlive {
+					t.Errorf("flag off: PlayerHP %d, stored %d, life %d; want the respawn HP %d, alive", blow.PlayerHP, after.HP, e.Life, want)
+				}
+			}
+		})
+	}
+}

@@ -34,8 +34,8 @@ Addresses are the refusal site; the condition is the test immediately above it.
 | 11 | `58e005` | `0x3032` | `SKILL_USE_FAIL_MUSICAL_RANGE` | flag `0x20` and `FUN_0059ddf0()` returns 0 |
 | 12 | `58e095` | `0x3005` | `SKILL_USE_FAIL_TIMEDELAY_COOL_TIME` | the cooldown check `FUN_0064c1a0` fails |
 | 13 | `58e186` | `0x3018`/`0x3009` | `SKILL_USE_FAIL_ITS_NOT_A_BATTLE_FIELD` | computed as `0x3018 - (0xf * (skill->+0x49c != 0))` |
-| 14 | `58e292` | `0x3013` | `SKILL_USE_FAIL_NOTENOUGHHP` | **`hpCost > 0 && CurHP < hpCost`** |
-| 15 | `58e2b1` | `0x3004` | `SKILL_USE_FAIL_NOTENOUGHMP` | **`mpCost > 0 && CurMP < mpCost`** |
+| 14 | `58e292` | `0x3013` | `SKILL_USE_FAIL_NOTENOUGHHP` | **`hpCost > 0 && CurHP < hpCost`** — `cmp DWORD [esp+0x10],0x0; jle` at `58e279`/`58e27e`, `GetCurHP` (slot `+0x108`) called at `58e28a`, `cmp eax,[esp+0x10]` at `58e28c`, `jge 58e29d` at `58e290`: **passes on EQUAL**, so a cast costing the caster's whole pool lands her at 0, alive (round 551, below) |
+| 15 | `58e2b1` | `0x3004` | `SKILL_USE_FAIL_NOTENOUGHMP` | **`mpCost > 0 && CurMP < mpCost`** — the same shape against slot `+0x10c`: `cmp eax,edi` at `58e2ad`, `jge 58e2bc` at `58e2af` |
 | 16 | `58e2fd` | `0x300c` | `SKILL_USE_FAIL_OVERLAP` | the buff is already applied |
 | 17 | `58e360` | `0x300e` | `SKILL_USE_FAIL_RUNOUT_AMMO` | no ammunition |
 | 18 | `58e52b` | `0x3010` | `SKILL_USE_FAIL_PATH_INTERRUPTED` | the path to the target is blocked |
@@ -79,6 +79,21 @@ is the engine's order and the engine's gating, rows 1, 12, 14 and 15 — which w
 not known to be the engine's order when it was written. Nothing changed; it is
 recorded because "we happen to agree" and "we match a read" are different
 claims and only the second is worth anything.
+
+**Row 14 at exactly the cost (round 551).** The compare is `jge`, so `CurHP ==
+hpCost` passes and `EngageSkill` then spends the whole pool: the caster stands
+at 0. What the engine does with a pool its own cost emptied was not recovered
+(no `OnDeath` call was traced from slot `0x308`'s spend). srrevamp's rule,
+disclosed at `combat.CanPaySkillHealth` and `session/skill.go`'s payment: the
+caster is left ALIVE at 0 -- life state 1, no death penalty, no respawn -- and
+the next monster or duel blow whose damage lands on her is her death, decided
+under her kill lock (`session/monsterstrike.go` `killLock`; `monster_ai.md`,
+"The player's dead state"). Round 550's arbiter, the store's transition flag,
+read every blow on her as `(0, false)` and dropped it, so a caster who had
+spent her last point could not be killed and her duel could not end; round
+551 closed it (`TestCounterOnACasterAliveAtZeroKills`). These addresses are
+`SR_GameServer.exe`'s (`/var/tmp/srv.asm` on the RE box); looked up in the
+client's image they fall mid-instruction, which is not a bad citation.
 
 ## The gate is a check, and the reach comes between it and the costs (round 534)
 

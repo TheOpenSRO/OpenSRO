@@ -2215,10 +2215,18 @@ re-read in `srv.asm` for this round):**
        (`chars.ApplyDamage` on the row) if the target changed zone or the monster died in the
        milliseconds between the tick's validity test and `monsterStrike` -- the same class of
        window as the flag-off counter's. A swing whose target another kill emptied inside that
-       window lands nothing and pushes nothing (round 550): `character.Store.ApplyDamage` reports
-       died only for the blow that took the pool from above 0 to 0, so ONE of two racing kills
-       charges the death penalty (`TestTwoKillsChargeOneDeathPenalty`, a deterministic
-       interleaving); until then both read died=true and both charged it. Since the hand-off
+       window lands nothing and pushes nothing (round 550), decided since round 551 under the
+       character's kill lock (`session.killLock`, `fallen`): a blow whose damage leaves the pool
+       at 0 reads her back under the lock, and only the one that finds her alive (not in life
+       state 2) and still at 0 is the kill, so ONE of two racing kills charges the death penalty
+       (`TestTwoKillsChargeOneDeathPenalty`, `TestTwoSwingsOnACharacterAliveAtZeroChargeOnePenalty`,
+       deterministic interleavings) and a character a cast has left ALIVE at 0 -- an HP-cost
+       skill's caster, the engine's gate passing on HP == cost (`skill_use_gate.md`, row 14) --
+       still dies to the next blow (`TestSwingOnACharacterAliveAtZeroKills`). Round 550 had the
+       store's transition flag decide (died only for the blow that took the pool from above 0 to
+       0), which could not tell her from a character another blow was killing that instant and
+       left her unkillable; before round 550 both racing blows read died=true and both charged
+       the penalty. Since the hand-off
        waits behind step 5, the pass's swings also wait on a session whose socket has stalled
        (`gateway.Session.Send` has no write deadline): the tick already did, so this is no new
        exposure, only the same one a swing later.
@@ -2479,12 +2487,17 @@ swing under `-monster-battle` alike, both through `monsterStrike` -- leaves the 
 
 - **life state 2** (`world.LifeDead`) in `world.Hub`'s entity, with the time of death, set by
   `session.markDead` through `Hub.SetLifeState`, a compare-and-swap from 1 to 2. Which of two
-  racing kills gets there is decided a step earlier, by the store (round 550):
-  `character.Store.ApplyDamage` reports died only for the blow that took the pool from above 0
-  to 0, and a blow that finds 0 lands nothing and pushes nothing -- so the death penalty is
-  charged ONCE per kill, flag on or off. Until that round a character at 0 reported died=true to
-  every further blow, and two strike workers passing `runStrike`'s dead check together each
-  charged `leveldata.DeathPenaltyExp` before the second's compare-and-swap failed;
+  racing kills gets there is decided a step earlier, under the character's kill lock (round 551,
+  `session.killLock`): a blow whose damage leaves the pool at 0 reads her back under the lock,
+  and only the one that finds her alive and still at 0 is the kill -- the other lands nothing
+  and pushes nothing -- so the death penalty is charged ONCE per kill, flag on or off, and a
+  living character at 0 (an HP-cost cast's caster) still dies to the next blow. `revivePlayer`
+  takes the same lock across its compare-and-swap and its pools, so no blow reads "alive at 0"
+  between the two. Round 550 had the store decide (`character.Store.ApplyDamage`'s died, the
+  transition from above 0 to 0), which left a character alive at 0 unkillable; until round 550 a
+  character at 0 reported died=true to every further blow, and two strike workers passing
+  `runStrike`'s dead check together each charged `leveldata.DeathPenaltyExp` before the second's
+  compare-and-swap failed;
 - **HP where `ApplyDamage` left it, 0**, and no `RespawnHP`: the result's `player_hp` and the push's
   `target_hp` carry 0, which is how round 548's client knows (`MonsterStrikes.leaves_dead`);
 - **the potion queue emptied** (`PotionQueue.drop`), as `GObjPC::FUN_004e67b0` empties both lists
@@ -2531,21 +2544,25 @@ gated, own design.
 == 1`, before its body-mode tests. `battleTick`'s validity test and the interim hold's now read the
 life state (`world.LifeDead` -> the `0x23` exit, "target dead" in the trace, the interim hold's
 line saying the same since round 550), and a swing already handed to a strike worker whose target
-has died meanwhile is dropped (`runStrike`); one that passes that check and finds the pool already
-at 0 lands nothing (the store's transition rule above) -- either way the death penalty is charged
-once. The round-547 `kills` record stays as the same exit one tick earlier.
+has died meanwhile is dropped (`runStrike`); one that passes that check, leaves the pool at 0 and
+loses the kill under her kill lock (round 551, above) lands nothing -- either way the death
+penalty is charged once. The round-547 `kills` record stays as the same exit one tick earlier.
 
 **The revive.** `OpRevive 0x0028` (empty, round 548's request; any payload is ignored so an option
 byte can be added later) -> `ReviveHandler` -> `revivePlayer`: only in life state 2 (the retail
 handler's `cmp al,0x2` at `0x510077`; a living character is answered `"not dead"`). Since round
 550 it takes the handler's own order and arithmetic: the compare-and-swap 2 -> 1 FIRST
 (`GObjPC::Revive(1)` passes 1 through `SetLifeState` before any pool), so of the handler and the
-fallback racing each other exactly one wins it and touches the pools and ONE result goes out; then
+fallback racing each other exactly one wins it and touches the pools and ONE result goes out --
+and since round 551 the swap and the pools together under the character's kill lock
+(`session.killLock`), so a blow never reads "alive at 0" between them; then
 HP through `Store.Heal` by `reviveHPDelta` = `1 + trunc(0.4 x MaxHP)`, clamped at the maximum --
 `Revive(1)`'s `ApplyHPMPDelta(this, 1, 0, 8)` and the handler's `ApplyHPMPDelta(trunc(GetParam(3)
 x 0.4), trunc(GetParam(4) x 0.4), 8)` both ADD (`GObjPC::FUN_004a87d0`, `add edi,ebx` at
 `0x4a8821`, then `SetHP`'s clamp at `GetMaxHP`), and the handler truncates (`fnstcw; or eax,0xc00;
-fldcw; fistp` at `0x510102..0x510122`, rounding control 11); then the MP tracker to
+fldcw; fistp`, rounding control 11: at `0x510102..0x510122` on its death-cause-2 path, and at
+`0x5101a6` / `0x5101af` / `0x5101be` / `0x5101c6` on option 2's own -- round 551 named the two;
+round 550 cited only the first); then the MP tracker to
 `character.RespawnMP` (the stand-in below). Round 549 wrote the pools first and the state last,
 which left a window (a blow finding HP above 0 in state 2) that ended with a character alive at 0
 HP; and it set HP to `trunc(0.4 x MaxHP)`, one short of retail's 81 for a maximum of 200. The
@@ -2624,7 +2641,13 @@ monster goes to IDLE on the next tick and swings no more over 4 s, a potion step
 `revivePlayer` gives `RespawnFraction` and life state 1, a second revive is `errNotDead`, and the
 revived player is struck again) and `TestSwingOnAPlayerAlreadyDeadIsDropped` (two Mangyangs' first
 swings, one blow; waited on through the workers' completion hook `monsterAI.strikeDone`, not a
-sleep, since CI run 36061784919 failed it with two blows on round 549's tree -- round 550);
+sleep, since CI run 36061784919 failed it with two blows on round 549's tree -- round 550),
+`TestTwoKillsChargeOneDeathPenalty` (round 550), and round 551's `TestSwingOnACharacterAliveAtZeroKills`
+and `TestTwoSwingsOnACharacterAliveAtZeroChargeOnePenalty` (a pool at 0 with no death, as an
+HP-cost cast leaves it: one killing blow, one penalty, the dead state or the respawn, flag on and
+off); `session/skill_test.go` `TestCounterOnACasterAliveAtZeroKills` (the wire: a cast costing the
+whole pool lands and leaves PlayerHP 0 alive, the next monster's counter is the death, flag on
+and off); `session/duel_test.go` `TestDuelBlowOnAnOpponentAliveAtZeroEndsTheDuel`;
 `session/monsterstrike_test.go`
 `TestCounterKillLeavesThePlayerDeadUntilRevived` (the wire: result and both pushes at HP 0, the
 dead swing refused with `deadRefusal`, the dead move not relayed nor stored, `OpRevive` ->

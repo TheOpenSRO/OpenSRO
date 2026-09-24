@@ -593,11 +593,17 @@ func show_revive_prompt(line: String) -> void:
 	if not panel.is_inside_tree():
 		return
 	await panel.get_tree().process_frame
-	# Still on a HUD in the tree? A valid node off it -- the HUD left the
-	# tree, or hide_revive_prompt removed the prompt, before this frame --
-	# has no viewport to read (round 550: is_instance_valid alone let
-	# get_viewport_rect run off the tree, an engine error).
-	if not panel.is_inside_tree():
+	# Still a live node on a HUD in the tree? Both halves are needed. A
+	# prompt hidden in the frame it was shown -- a kill result and a revive
+	# result in one NetClient batch, or a second show, which hides first --
+	# is FREED by now: hide_revive_prompt's queue_free runs at the end of that
+	# frame and this resumes on the next one, so is_inside_tree on it is
+	# "Attempt to call function 'is_inside_tree' in base 'previously freed'",
+	# a script error (round 551; round 550 dropped the validity test). A valid
+	# node off the tree -- the HUD left it, or the prompt was removed but not
+	# yet freed -- has no viewport to read (round 550: is_instance_valid alone
+	# let get_viewport_rect run off the tree, an engine error).
+	if not is_instance_valid(panel) or not panel.is_inside_tree():
 		return
 	# Centred, a little below the middle, so the fallen body stays in view
 	# above it. A placement of this project's own.

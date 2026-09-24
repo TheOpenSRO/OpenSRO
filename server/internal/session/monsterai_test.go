@@ -1989,3 +1989,160 @@ func TestPanickingPushLeavesTheWireLockFree(t *testing.T) {
 	}
 	l.Unlock()
 }
+
+// ---- Round-550 follow-up: a living character at 0 HP is killable (round 551) ----
+
+// zeroAria takes Aria's pool to 0 through the store WITHOUT a kill -- the
+// state an HP-cost cast leaves its caster in (session/skill.go pays through
+// Store.ApplyDamage and treats no transition as a death; the engine's gate
+// passes on HP == cost, `cmp eax,[esp+0x10]; jge` at 0x58e28c/0x58e290,
+// combat.CanPaySkillHealth): life state 1, HP 0.
+func zeroAria(t *testing.T, chars character.Store, hub *world.Hub, aria int64) {
+	t.Helper()
+	ctx := context.Background()
+	c, err := chars.GetByID(ctx, aria)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := chars.ApplyDamage(ctx, aria, c.HP); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ = chars.GetByID(ctx, aria); c.HP != 0 {
+		t.Fatalf("setup: Aria's HP %d, want 0", c.HP)
+	}
+	if e, ok := hub.EntityByCharacterID(aria); !ok || e.Life != world.LifeAlive {
+		t.Fatalf("setup: Aria's life state %d (in world %v), want 1: alive at 0", e.Life, ok)
+	}
+}
+
+// penaltyTableForTest is a two-row level table on which a level-11 death by
+// a monster costs 25900 experience (exp_unit 259 x 100), the number
+// TestTwoKillsChargeOneDeathPenalty pins.
+func penaltyTableForTest(t *testing.T) (*leveldata.Table, int64) {
+	t.Helper()
+	tbl, err := leveldata.ParseCSV(strings.NewReader("level,exp,mastery_sp,exp_unit\n10,23500,9,235\n11,34898,12,259\n"))
+	if err != nil {
+		t.Fatalf("ParseCSV: %v", err)
+	}
+	loss, ok := tbl.DeathPenaltyExp(11, leveldata.DeathPenaltyKilledByMonster)
+	if !ok || loss <= 0 {
+		t.Fatalf("setup: no death penalty at level 11 (%d, %v)", loss, ok)
+	}
+	prev := levelTable
+	SetLevelTable(tbl)
+	t.Cleanup(func() { SetLevelTable(prev) })
+	return tbl, loss
+}
+
+// A LIVING CHARACTER AT 0 HP IS KILLED BY THE NEXT BLOW (round 551). Aria's
+// pool is at 0 without a death -- an HP-cost cast's caster -- and a
+// Mangyang's swing lands on her: one push, TargetDied, the death penalty
+// charged once (level 11: 25900 of 30000), and then the dead state (flag on:
+// life state 2 at HP 0) or the respawn (flag off: RespawnFraction, alive).
+// On round 550's tree the swing read (0, false) from the store, was dropped,
+// and she stayed alive at 0 with her experience intact -- unkillable, for
+// ever (the batch-18 review's blocking note); the kill lock decides now.
+func TestSwingOnACharacterAliveAtZeroKills(t *testing.T) {
+	for _, flag := range []bool{true, false} {
+		t.Run(map[bool]string{true: "dead state on", false: "dead state off"}[flag], func(t *testing.T) {
+			battleForTest(t, true)
+			deadStateForTest(t, flag)
+			_, loss := penaltyTableForTest(t)
+			ctx := context.Background()
+			f := startBattleFixture(t, 38, 0, 0)
+			c, _ := f.chars.GetByID(ctx, f.aria)
+			const startExp = 30000
+			if err := f.chars.SetLeveling(ctx, f.aria, 11, startExp, c.StatPoints, c.Str, c.Int); err != nil {
+				t.Fatal(err)
+			}
+			zeroAria(t, f.chars, f.hub, f.aria)
+			m := f.monsters.SpawnSpecies("jangan", chaseMangyang, 8, 0, 0, 100000, 0, 15, 0)
+			f.a.runStrike(m.ID, strikeJob{m: *m, target: f.aria})
+			blows := f.rec.strikesOf(m.ID)
+			if len(blows) != 1 || !blows[0].TargetDied || blows[0].DeathExpLost != loss {
+				t.Fatalf("a swing on a character alive at 0 pushed %+v; want exactly one killing blow costing %d exp", blows, loss)
+			}
+			after, _ := f.chars.GetByID(ctx, f.aria)
+			if after.Exp != startExp-loss || after.Level != 11 {
+				t.Errorf("Aria after the kill: level %d exp %d, want level 11 exp %d (one penalty of %d)", after.Level, after.Exp, startExp-loss, loss)
+			}
+			e, _ := f.hub.EntityByCharacterID(f.aria)
+			if flag {
+				if after.HP != 0 || e.Life != world.LifeDead || blows[0].TargetHP != 0 {
+					t.Errorf("flag on: HP %d, life %d, pushed TargetHP %d; want dead at 0", after.HP, e.Life, blows[0].TargetHP)
+				}
+			} else {
+				want := int(float64(after.MaxHP()) * character.RespawnFraction)
+				if after.HP != want || e.Life != world.LifeAlive || int(blows[0].TargetHP) != want {
+					t.Errorf("flag off: HP %d, life %d, pushed TargetHP %d; want the respawn HP %d, alive", after.HP, e.Life, blows[0].TargetHP, want)
+				}
+			}
+		})
+	}
+}
+
+// TWO SWINGS ON A CHARACTER ALIVE AT 0 STILL CHARGE ONE PENALTY (round 551).
+// The same interleaving as TestTwoKillsChargeOneDeathPenalty (both blows read
+// the pool before either reads it back), on a pool that is ALREADY at 0: both
+// ApplyDamages report (0, false), so the store's transition cannot arbitrate
+// at all, and the kill lock must -- one push, one death, one penalty; flag
+// on: dead at 0; flag off: respawned. On round 550's tree both blows were
+// dropped: no push, no penalty, alive at 0.
+func TestTwoSwingsOnACharacterAliveAtZeroChargeOnePenalty(t *testing.T) {
+	for _, flag := range []bool{true, false} {
+		t.Run(map[bool]string{true: "dead state on", false: "dead state off"}[flag], func(t *testing.T) {
+			battleForTest(t, true)
+			deadStateForTest(t, flag)
+			_, loss := penaltyTableForTest(t)
+			ctx := context.Background()
+			f := startBattleFixture(t, 39, 0, 0)
+			c, _ := f.chars.GetByID(ctx, f.aria)
+			const startExp = 30000
+			if err := f.chars.SetLeveling(ctx, f.aria, 11, startExp, c.StatPoints, c.Str, c.Int); err != nil {
+				t.Fatal(err)
+			}
+			zeroAria(t, f.chars, f.hub, f.aria)
+			store := newTwoBlowStore(f.chars)
+			f.a.deps.chars = store
+			first := f.monsters.SpawnSpecies("jangan", chaseMangyang, 8, 0, 0, 100000, 0, 15, 0)
+			second := f.monsters.SpawnSpecies("jangan", chaseMangyang, -8, 0, 0, 100000, 0, 15, 0)
+			var wg sync.WaitGroup
+			for _, m := range []combat.Monster{*first, *second} {
+				wg.Add(1)
+				go func(m combat.Monster) {
+					defer wg.Done()
+					f.a.runStrike(m.ID, strikeJob{m: m, target: f.aria})
+				}(m)
+			}
+			done := make(chan struct{})
+			go func() { wg.Wait(); close(done) }()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the two workers did not both finish within 5 s: the interleaving deadlocked")
+			}
+			blows := append(f.rec.strikesOf(first.ID), f.rec.strikesOf(second.ID)...)
+			deaths := 0
+			for _, b := range blows {
+				if b.TargetDied {
+					deaths++
+				}
+			}
+			if len(blows) != 1 || deaths != 1 {
+				t.Errorf("%d blow(s) pushed, %d of them a death (%+v); want exactly one blow, the kill, on a character alive at 0", len(blows), deaths, blows)
+			}
+			after, _ := f.chars.GetByID(ctx, f.aria)
+			if after.Exp != startExp-loss {
+				t.Errorf("Aria's exp after two simultaneous blows at 0 = %d, want %d (one penalty of %d, not none and not two)", after.Exp, startExp-loss, loss)
+			}
+			e, _ := f.hub.EntityByCharacterID(f.aria)
+			if flag {
+				if after.HP != 0 || e.Life != world.LifeDead {
+					t.Errorf("flag on: HP %d, life %d; want dead at 0", after.HP, e.Life)
+				}
+			} else if want := int(float64(after.MaxHP()) * character.RespawnFraction); after.HP != want || e.Life != world.LifeAlive {
+				t.Errorf("flag off: HP %d, life %d; want the respawn HP %d, alive", after.HP, e.Life, want)
+			}
+		})
+	}
+}

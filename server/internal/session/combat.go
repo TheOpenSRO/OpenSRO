@@ -1433,11 +1433,18 @@ func performAttack(
 		if err != nil {
 			return err
 		}
-		// A counter that found the attacker already at 0 -- another monster's
-		// kill inside this handler's window (round 550) -- landed nothing: the
-		// result carries no counter, PlayerHP keeps the truth read above and
-		// no push is made (`strike` stays nil).
-		if !out.dropped {
+		// A counter that lost the kill to another monster's blow inside this
+		// handler's window (round 550; killLock since round 551) landed
+		// nothing: the result carries no counter and no push is made
+		// (`strike` stays nil). PlayerHP is re-read (round 551): the value
+		// seeded above was read BEFORE the racing kill, so it could carry a
+		// stale positive HP while she lies at 0 and the killer's own
+		// OpMonsterAttacked carries 0.
+		if out.dropped {
+			if hp, _, e := chars.ApplyDamage(ctx, characterID, 0); e == nil {
+				result.PlayerHP = int32(hp)
+			}
+		} else {
 			result.MonsterCritical = out.critical
 			result.PlayerBlocked = out.blocked
 			result.PlayerDamageTaken = int32(out.damage)

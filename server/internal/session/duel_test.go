@@ -507,3 +507,129 @@ func TestDuelUsesTheSharedPipeline(t *testing.T) {
 		t.Errorf("a blocked duel blow = %+v, want no damage", blocked)
 	}
 }
+
+// A DUEL BLOW ON AN OPPONENT ALIVE AT 0 ENDS THE DUEL (round 551). Bram's pool
+// is at 0 without a death -- an HP-cost cast's caster (session/skill.go; the
+// engine's gate passes on HP == cost, combat.CanPaySkillHealth) -- and Aria's
+// first blow is the duel's kill: OpponentDied, OpDuelEnded on both sides, his
+// HP reset, the duel over. On round 550's tree the blow read (0, false) from
+// the store and the duel "went on at OpponentHP 0" -- for ever, since every
+// further blow read the same; the kill lock decides now (handleDuelAttack).
+func TestDuelBlowOnAnOpponentAliveAtZeroEndsTheDuel(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	accounts.Add("bob", "hunter3")
+	chars := character.NewMemStore()
+	aria, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("creating Aria: %v", err)
+	}
+	bram, err := chars.Create(ctx, 2, "Bram")
+	if err != nil {
+		t.Fatalf("creating Bram: %v", err)
+	}
+	items := stubCombatItems{100: {ID: 100, PhysAttackMax: 30}}
+	inv := inventory.NewMemStore(items)
+	eq := equipment.NewMemStore(inv)
+	if err := inv.AddItem(ctx, aria.ID, 100, 1); err != nil {
+		t.Fatalf("seeding Aria's sword: %v", err)
+	}
+	if err := eq.Equip(ctx, aria.ID, equipment.SlotWeapon, 0); err != nil {
+		t.Fatalf("equipping Aria's sword: %v", err)
+	}
+	hub := world.NewHub()
+	duels := duel.NewHub()
+	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, eq, hub), DuelHandler(chars, eq, items, hub, duels))
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+	connA := dialTestServer(t, addr)
+	defer connA.Close()
+	rA := bufio.NewReader(connA)
+	connB := dialTestServer(t, addr)
+	defer connB.Close()
+	rB := bufio.NewReader(connB)
+	doSend := func(c net.Conn, r *bufio.Reader, opcode uint16, data []byte) *proto.Packet {
+		t.Helper()
+		if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		c.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		return resp
+	}
+	read := func(c net.Conn, r *bufio.Reader, what string) *proto.Packet {
+		t.Helper()
+		c.SetReadDeadline(time.Now().Add(2 * time.Second))
+		p, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("reading %s: %v", what, err)
+		}
+		return p
+	}
+	if lr, err := DecodeLoginResult(doSend(connA, rA, OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
+		t.Fatalf("alice login failed: err=%v result=%+v", err, lr)
+	}
+	if lr, err := DecodeLoginResult(doSend(connB, rB, OpLogin, (&LoginRequest{Username: "bob", Password: "hunter3"}).Encode()).Data); err != nil || !lr.OK {
+		t.Fatalf("bob login failed: err=%v result=%+v", err, lr)
+	}
+	if ewr, err := DecodeEnterWorldResult(doSend(connA, rA, OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode()).Data); err != nil || !ewr.OK {
+		t.Fatalf("aria enter world failed: err=%v result=%+v", err, ewr)
+	}
+	if ewr, err := DecodeEnterWorldResult(doSend(connB, rB, OpEnterWorld, (&EnterWorldRequest{CharacterName: "Bram"}).Encode()).Data); err != nil || !ewr.OK {
+		t.Fatalf("bram enter world failed: err=%v result=%+v", err, ewr)
+	}
+	read(connA, rA, "EntityEntered")
+	if cr, err := DecodeDuelChallengeResult(doSend(connA, rA, OpDuelChallenge, (&DuelChallengeRequest{CharacterName: "Aria", TargetName: "Bram"}).Encode()).Data); err != nil || !cr.OK {
+		t.Fatalf("challenge failed: err=%v result=%+v", err, cr)
+	}
+	read(connB, rB, "OpDuelInvite")
+	if rr, err := DecodeDuelRespondResult(doSend(connB, rB, OpDuelRespond, (&DuelRespondRequest{CharacterName: "Bram", ChallengerName: "Aria", Accept: true}).Encode()).Data); err != nil || !rr.OK {
+		t.Fatalf("respond failed: err=%v result=%+v", err, rr)
+	}
+	if p := read(connB, rB, "Bram's OpDuelStarted"); p.Opcode != OpDuelStarted {
+		t.Fatalf("Bram read %#04x, want OpDuelStarted", p.Opcode)
+	}
+	if p := read(connA, rA, "Aria's OpDuelStarted"); p.Opcode != OpDuelStarted {
+		t.Fatalf("Aria read %#04x, want OpDuelStarted", p.Opcode)
+	}
+
+	// Bram at 0, alive: the pool emptied through the store with no kill.
+	if _, _, err := chars.ApplyDamage(ctx, bram.ID, bram.HP); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := chars.GetByID(ctx, bram.ID); b.HP != 0 {
+		t.Fatalf("setup: Bram's HP %d, want 0", b.HP)
+	}
+	if e, ok := hub.EntityByCharacterID(bram.ID); !ok || e.Life != world.LifeAlive {
+		t.Fatalf("setup: Bram's life state %d (in world %v), want 1: alive at 0", e.Life, ok)
+	}
+
+	ar, err := DecodeDuelAttackResult(doSend(connA, rA, OpDuelAttack, (&DuelAttackRequest{CharacterName: "Aria"}).Encode()).Data)
+	if err != nil || ar.Error != "" {
+		t.Fatalf("the blow on an opponent alive at 0: %+v (err %v)", ar, err)
+	}
+	if !ar.OpponentDied || ar.Damage != 30 || ar.OpponentHP != 0 {
+		t.Fatalf("the blow on an opponent alive at 0: %+v; want the duel's kill (OpponentDied, 30 damage, HP 0) -- round 550 read (0, false) and the duel went on", ar)
+	}
+	if p := read(connA, rA, "Aria's OpDuelEnded"); p.Opcode != OpDuelEnded {
+		t.Errorf("after the kill Aria read %#04x, want OpDuelEnded", p.Opcode)
+	} else if de, err := DecodeDuelEnded(p.Data); err != nil || de.WinnerName != "Aria" {
+		t.Errorf("Aria's OpDuelEnded %+v (err %v), want the winner Aria", de, err)
+	}
+	if p := read(connB, rB, "Bram's OpDuelEnded"); p.Opcode != OpDuelEnded {
+		t.Errorf("after the kill Bram read %#04x, want OpDuelEnded (not OpDuelOpponentDamaged)", p.Opcode)
+	}
+	if b, _ := chars.GetByID(ctx, bram.ID); b.HP != b.MaxHP() {
+		t.Errorf("the loser's HP after the duel = %d, want the reset to %d", b.HP, b.MaxHP())
+	}
+	if _, ok := duels.OpponentOf(aria.ID); ok {
+		t.Error("Aria's duel did not end")
+	}
+	if _, ok := duels.OpponentOf(bram.ID); ok {
+		t.Error("Bram's duel did not end")
+	}
+}

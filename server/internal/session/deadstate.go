@@ -53,9 +53,13 @@ import (
 //     the FLOAT 0.4 widened to a double (round 550's correction of "the
 //     double 0.4"; character.RespawnFraction says why the exact 0.4 gives
 //     the same integer) -- and each product TRUNCATED: `fnstcw; or eax,0xc00;
-//     fldcw; fistp` at 0x510102..0x510122 and 0x510136..0x51014e sets
-//     rounding control 11, toward zero; (c) option 1 -> Revive(0), the
-//     return-point path, and GameEventLog 0x15/2.
+//     fldcw; fistp` sets rounding control 11, toward zero -- on path (a) at
+//     0x510102..0x510122 (HP) and 0x510136..0x51014e (MP); path (b) has its
+//     own identical pair, 0x5101a6 fnstcw / 0x5101af or eax,0xc00 / 0x5101be
+//     fldcw / 0x5101c6 fistp (HP), then the MP `fmul` at 0x5101d4 and its
+//     fnstcw at 0x5101da (round 551 named the paths; round 550 cited only
+//     (a)'s); (c) option 1 -> Revive(0), the return-point path, and
+//     GameEventLog 0x15/2.
 //   - GObjPC::ApplyHPMPDelta (0x4a86a0) is ADDITIVE (round 550): it hands
 //     both deltas to GObjPC::FUN_004a87d0 -- each non-zero one first scaled
 //     by 1 - param/100, param 143 for HP (`mov eax,0x8f` at 0x4a86bb, `fdiv
@@ -254,10 +258,13 @@ func deadCharacter(hub *world.Hub, characterID int64) bool {
 // ApplyHPMPDelta would land nothing on a dead character anyway (0x4a87e8) --
 // and the keep-up cancelled. HP stays where ApplyDamage left it, 0. It reports
 // whether the compare-and-swap made the change. Which of two racing kills
-// gets here is decided one step earlier, by the store (round 550):
-// Store.ApplyDamage reports died only for the blow that took the pool from
-// above 0 to 0, so the second blow never reaches this call and never charges
-// the penalty -- until that round both blows read died=true and both charged
+// gets here is decided one step earlier, under the character's kill lock
+// (killLock, round 551; the caller holds it): monsterStrike reads her back
+// under the lock and only the blow that finds her alive at 0 comes here, so
+// the second blow never charges the penalty and the swap cannot fail against
+// another kill or a revive (revivePlayer takes the same lock). Round 550 had
+// the store's transition flag decide instead, which left a character alive at
+// 0 unkillable; before that both blows read died=true and both charged
 // leveldata.DeathPenaltyExp before the second's compare-and-swap failed here.
 func markDead(deps strikeDeps, characterID int64, now time.Time) bool {
 	changed := deps.hub.SetLifeState(characterID, world.LifeAlive, world.LifeDead, now)
@@ -275,7 +282,8 @@ func markDead(deps strikeDeps, characterID int64, now time.Time) bool {
 // 0x4a86a0` at 0x51015d). Both go through GObjPC::FUN_004a87d0, which adds the
 // delta to GetHP (`add edi,ebx` at 0x4a8821) and clamps through SetHP
 // (GObjChar::FUN_004a66f0: GetMaxHP at or above it), and the handler
-// truncates (rounding control 11 at 0x510102..0x510122). So retail lands at
+// truncates (rounding control 11: 0x510102..0x510122 on the death-cause-2
+// path, 0x5101a6..0x5101c6 on option 2's -- the header). So retail lands at
 // min(MaxHP, 1 + trunc(0.4 x MaxHP)); Store.Heal is the same add-and-clamp.
 // The truncation is int()'s, and character.RespawnFraction's comment says why
 // the exact 0.4 gives the widened float's integer.
@@ -292,12 +300,14 @@ func reviveHPDelta(maxHP int) int {
 // one OpReviveResult goes out. Until round 550 the pools went first and the
 // state last, which left a window in which a blow found HP above 0 in life
 // state 2: its kill's compare-and-swap 1 -> 2 failed, and the revive then set
-// state 1 on a pool the blow had just emptied -- a character alive at 0 HP,
-// which the store's transition rule (Store.ApplyDamage) would no longer let
-// a further blow kill. State first closes it: a blow between the state and
-// the pools finds 0 and lands nothing; one after the pools kills as usual.
-// Then the HP: reviveHPDelta through Store.Heal (the handler's additive
-// arithmetic, clamped at the maximum), and the MP tracker to
+// state 1 on a pool the blow had just emptied -- a character alive at 0 HP.
+// State first, and since round 551 the whole of it -- the swap and the pools
+// -- under the character's kill lock (killLock): a blow that leaves her at 0
+// reads her back under that lock, so it sees either life state 2 (before
+// the swap: dropped) or the revived pool (after: it lands as usual), never
+// "alive at 0" between the two, which the round-551 arbiter would take for
+// a kill. Then the HP: reviveHPDelta through Store.Heal (the handler's
+// additive arithmetic, clamped at the maximum), and the MP tracker to
 // character.RespawnMP (the disclosed stand-in in the header). A store
 // failure after the state changed puts the state back with its time of
 // death, so the character is dead again for the next attempt rather than
@@ -310,6 +320,9 @@ func revivePlayer(ctx context.Context, chars character.Store, mp *mana.Tracker, 
 	if !ok || e.Life != world.LifeDead {
 		return nil, 0, errNotDead
 	}
+	l := killLock(characterID)
+	l.Lock()
+	defer l.Unlock()
 	if !hub.SetLifeState(characterID, world.LifeDead, world.LifeAlive, time.Time{}) {
 		return nil, 0, errNotDead
 	}

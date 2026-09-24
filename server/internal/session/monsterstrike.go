@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -144,12 +145,67 @@ type monsterStrikeOutcome struct {
 	died         bool
 	hp           int
 	deathExpLost int64
-	// dropped is a blow that found its target already at 0 HP (round 550):
-	// nothing landed and nothing is reported -- performAttack's result
-	// carries no counter and runStrike pushes nothing -- as the engine's
-	// GObjPC::FUN_004a87d0 lands nothing on a character whose life state is
-	// not 1 (`cmp al,0x1` at 0x4a87e8). The other fields are zero.
+	// dropped is a blow whose damage left its target at 0 HP but which lost
+	// the kill to another (round 550; the arbiter is killLock since round
+	// 551): the target was already in the dead state, or already back on its
+	// feet, when this blow read her back under the lock. Nothing landed and
+	// nothing is reported -- performAttack's result carries no counter and
+	// runStrike pushes nothing -- as the engine's GObjPC::FUN_004a87d0 lands
+	// nothing on a character whose life state is not 1 (`cmp al,0x1` at
+	// 0x4a87e8). The other fields are zero.
 	dropped bool
+}
+
+// killLocks holds one mutex per character a blow has ever left at 0 HP: the
+// kill arbiter (round 551). A blow whose damage leaves the pool at 0 takes the
+// character's lock and, under it, reads her back (fallen): alive and still at
+// 0, it is THE kill and completes the death -- the penalty, then markDead or
+// RespawnHP (monsterStrike), the duel's ResetHP (handleDuelAttack) -- before
+// it releases; dead already, or above 0 again, it lost to another kill and is
+// dropped. revivePlayer holds the same lock across its compare-and-swap 2 -> 1
+// and its pool writes, so no blow can read "alive at 0" between a revive's
+// state and its pools. Two kills racing each other therefore charge ONE death
+// penalty under either flag: with -player-dead-state on the loser finds life
+// state 2, off it finds the winner's RespawnHP already written.
+//
+// Round 550 arbitrated on character.Store.ApplyDamage's transition flag
+// instead (died only for the blow that took the pool from above 0 to 0), and
+// that left a living character at 0 HP unkillable: an HP-cost cast lands its
+// caster at exactly 0 -- the engine's own gate passes on equal, `cmp
+// eax,[esp+0x10]; jge` at 0x58e28c/0x58e290 in SR_GameServer.exe
+// (combat.CanPaySkillHealth) -- and every later blow then read (0, false) and
+// was dropped, for ever (the batch-18 review's blocking note). The lock tells
+// the two apart by reading the character, not the write.
+//
+// OWN DESIGN: the engine has no such lock -- its blows and revives run on one
+// game-object queue. Entries are never removed: one mutex per character ever
+// taken to 0 in the process's life, a few dozen bytes each.
+var killLocks sync.Map
+
+// killLock is characterID's kill lock (killLocks).
+func killLock(characterID int64) *sync.Mutex {
+	l, _ := killLocks.LoadOrStore(characterID, new(sync.Mutex))
+	return l.(*sync.Mutex)
+}
+
+// fallen decides, under characterID's kill lock (the caller holds it), whether
+// a blow that left her pool at 0 is THE kill: her row when she is not in the
+// dead state and her HP is still 0 -- the caller completes the death from that
+// row; nil when another kill has already put her in life state 2 or back on
+// her feet, or a heal landed between the blow's write and the lock -- that
+// blow landed nothing (round 551).
+func fallen(ctx context.Context, chars character.Store, hub *world.Hub, characterID int64) (*character.Character, error) {
+	if deadCharacter(hub, characterID) {
+		return nil, nil
+	}
+	c, err := chars.GetByID(ctx, characterID)
+	if err != nil {
+		return nil, err
+	}
+	if c.HP > 0 {
+		return nil, nil
+	}
+	return c, nil
 }
 
 // message is the outcome as the OpMonsterAttacked the zone is sent.
@@ -240,95 +296,106 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	} else if counter.Damage > 0 {
 		wearArmour(ctx, eq, characterID)
 	}
-	hp, playerDied, err := chars.ApplyDamage(ctx, characterID, incoming)
+	// The store's died flag (the transition from above 0 to 0) is not the
+	// arbiter here -- round 551, killLock's comment: it cannot tell a
+	// character alive at 0 (an HP-cost cast's caster) from one another blow
+	// is killing this instant.
+	hp, _, err := chars.ApplyDamage(ctx, characterID, incoming)
 	if err != nil {
 		return monsterStrikeOutcome{}, fmt.Errorf("combat: applying counterattack: %w", err)
 	}
-	if !playerDied && hp == 0 {
-		// The blow found the character already at 0: a second monster's kill,
-		// or this one's own earlier swing, landed between the caller's dead
-		// check and this write (round 550). The store made the call under its
-		// own lock -- died is the transition to 0, and a character at 0
-		// reports (0, false) -- so exactly ONE of two racing kills charges
-		// the death penalty and enters the dead state, whatever the flag:
-		// until this round both blows read died=true and both charged
-		// leveldata.DeathPenaltyExp. Nothing landed (the roll and the wear
-		// above stand, as before), so nothing is reported.
+	out.damage = incoming
+	if hp > 0 || incoming == 0 {
+		// Health left; or a blow that landed nothing -- blocked, or a zero
+		// roll -- which kills nobody whatever pool it found and is reported
+		// as it is, at the HP it found.
+		out.hp = hp
+		return out, nil
+	}
+	// The blow's damage left the pool at 0. Whether it is THE kill is decided
+	// under her kill lock (killLock, round 551): alive and still at 0 when
+	// read back, it is; already in the dead state, or already respawned or
+	// revived above 0, another kill got there first and this blow landed
+	// nothing -- dropped, nothing reported (the roll and the wear above
+	// stand, as before). So a character a cast has left alive at exactly 0
+	// dies to the next blow, and two kills racing each other charge ONE death
+	// penalty, flag on or off. The lock is held through the death below, so
+	// the second of two racing kills reads the first's life state 2 or its
+	// RespawnHP, never the pool between the two.
+	l := killLock(characterID)
+	l.Lock()
+	defer l.Unlock()
+	c, err := fallen(ctx, chars, deps.hub, characterID)
+	if err != nil {
+		return monsterStrikeOutcome{}, fmt.Errorf("combat: reading the fallen character: %w", err)
+	}
+	if c == nil {
 		return monsterStrikeOutcome{dropped: true}, nil
 	}
-	out.damage = incoming
-	out.died = playerDied
-	if playerDied {
-		// Dying costs experience, above level 10. Real: GObjPC_OnDeath
-		// multiplies the level's EXP unit -- the same field a kill is
-		// paid from -- by 100 when a monster did the killing and the
-		// victim carries no PK penalty points, which is the only branch
-		// this project can reach until there is a PK system. See
-		// leveldata.DeathPenaltyExp for the other three and for why the
-		// reduction stat is left out.
-		if levelTable != nil {
-			if c, e := chars.GetByID(ctx, characterID); e == nil && c != nil {
-				loss, ok := levelTable.DeathPenaltyExp(c.Level, leveldata.DeathPenaltyKilledByMonster)
-				if ok && loss > 0 {
-					exp := c.Exp - loss
-					if exp < 0 {
-						// The real formula clamps the LOSS so it cannot
-						// exceed what is there; clamping the result to
-						// zero is the same thing from this side. A death
-						// never costs a level -- nothing in
-						// GObjPC_OnDeath touches CurLevel.
-						exp = 0
-					}
-					// A death penalty takes experience only: level, stat
-					// points, Str and Int are carried through unchanged.
-					if err := chars.SetLeveling(ctx, characterID, c.Level, exp, c.StatPoints, c.Str, c.Int); err != nil {
-						return monsterStrikeOutcome{}, fmt.Errorf("combat: applying death penalty: %w", err)
-					}
-					out.deathExpLost = loss
-				}
+	out.died = true
+	// Dying costs experience, above level 10. Real: GObjPC_OnDeath
+	// multiplies the level's EXP unit -- the same field a kill is
+	// paid from -- by 100 when a monster did the killing and the
+	// victim carries no PK penalty points, which is the only branch
+	// this project can reach until there is a PK system. See
+	// leveldata.DeathPenaltyExp for the other three and for why the
+	// reduction stat is left out.
+	if levelTable != nil {
+		loss, ok := levelTable.DeathPenaltyExp(c.Level, leveldata.DeathPenaltyKilledByMonster)
+		if ok && loss > 0 {
+			exp := c.Exp - loss
+			if exp < 0 {
+				// The real formula clamps the LOSS so it cannot
+				// exceed what is there; clamping the result to
+				// zero is the same thing from this side. A death
+				// never costs a level -- nothing in
+				// GObjPC_OnDeath touches CurLevel.
+				exp = 0
 			}
-		}
-		if playerDeadState.Load() && deps.hub != nil {
-			// -player-dead-state (round 549, deadstate.go): the character
-			// STAYS dead -- life state 2, HP where ApplyDamage left it (0),
-			// the potion lists emptied and the keep-up ended, as
-			// GObjPC::FUN_004e67b0 and the engine's death path do -- until
-			// OpRevive or the auto-revive fallback. The result and the push
-			// therefore carry HP 0, which is how round 548's client knows
-			// (MonsterStrikes.leaves_dead). The compare-and-swap inside
-			// cannot lose to another kill (the store's transition above
-			// admits one), and a revive cannot be between its pools and
-			// its state (revivePlayer sets the state first); its result is
-			// therefore not read here.
-			markDead(deps, characterID, time.Now())
-			out.hp = 0
-			return out, nil
-		}
-		if err := chars.RespawnHP(ctx, characterID); err != nil {
-			return monsterStrikeOutcome{}, fmt.Errorf("combat: respawning player: %w", err)
-		}
-		// Death ends the action queue with everything else: no repeat
-		// fires for a character who has just been put back on their feet.
-		keepUp.Cancel(characterID)
-		// Back at character.RespawnFraction of the maximum, not all of
-		// it: the game restores a character whose stored pool is zero --
-		// which is what death leaves -- to 40%, for HP and MP alike. See
-		// character.RespawnFraction for the recovery. A level-up still
-		// heals to full, which is why that path calls ResetHP instead.
-		//
-		// Falls back to the starting maximum only if the re-read fails,
-		// which would mean the character vanished mid-respawn.
-		out.hp = character.StartingMaxHP
-		if reborn, e := chars.GetByID(ctx, characterID); e == nil {
-			out.hp = reborn.HP
-			if mp != nil {
-				mp.Refill(characterID, character.RespawnMP(reborn.MaxMP()))
+			// A death penalty takes experience only: level, stat
+			// points, Str and Int are carried through unchanged.
+			if err := chars.SetLeveling(ctx, characterID, c.Level, exp, c.StatPoints, c.Str, c.Int); err != nil {
+				return monsterStrikeOutcome{}, fmt.Errorf("combat: applying death penalty: %w", err)
 			}
+			out.deathExpLost = loss
 		}
-	} else {
-		out.hp = hp
 	}
-
+	if playerDeadState.Load() && deps.hub != nil {
+		// -player-dead-state (round 549, deadstate.go): the character
+		// STAYS dead -- life state 2, HP where ApplyDamage left it (0),
+		// the potion lists emptied and the keep-up ended, as
+		// GObjPC::FUN_004e67b0 and the engine's death path do -- until
+		// OpRevive or the auto-revive fallback. The result and the push
+		// therefore carry HP 0, which is how round 548's client knows
+		// (MonsterStrikes.leaves_dead). The compare-and-swap inside
+		// cannot lose to another kill or a revive: both take the kill
+		// lock this blow holds (round 551); its result is therefore not
+		// read here.
+		markDead(deps, characterID, time.Now())
+		out.hp = 0
+		return out, nil
+	}
+	if err := chars.RespawnHP(ctx, characterID); err != nil {
+		return monsterStrikeOutcome{}, fmt.Errorf("combat: respawning player: %w", err)
+	}
+	// Death ends the action queue with everything else: no repeat
+	// fires for a character who has just been put back on their feet.
+	keepUp.Cancel(characterID)
+	// Back at character.RespawnFraction of the maximum, not all of
+	// it: the game restores a character whose stored pool is zero --
+	// which is what death leaves -- to 40%, for HP and MP alike. See
+	// character.RespawnFraction for the recovery. A level-up still
+	// heals to full, which is why that path calls ResetHP instead.
+	//
+	// Falls back to the starting maximum only if the re-read fails,
+	// which would mean the character vanished mid-respawn.
+	out.hp = character.StartingMaxHP
+	if reborn, e := chars.GetByID(ctx, characterID); e == nil {
+		out.hp = reborn.HP
+		if mp != nil {
+			mp.Refill(characterID, character.RespawnMP(reborn.MaxMP()))
+		}
+	}
 	return out, nil
 }
 

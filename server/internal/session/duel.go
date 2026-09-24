@@ -407,9 +407,50 @@ func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		atkLevel, defLevel, characterID, opponent.CharacterID)
 	damage := blow.Damage
 
-	hp, opponentDied, err := chars.ApplyDamage(ctx, opponent.CharacterID, damage)
+	// The store's died flag is not read (round 551): the duel's kill is
+	// decided as a monster's is, under the opponent's kill lock (killLock,
+	// monsterstrike.go), because the flag cannot tell an opponent alive at 0
+	// -- an HP-cost cast lands its caster there, the engine's own gate passing
+	// on equal (combat.CanPaySkillHealth) -- from one a monster is killing
+	// this instant. Round 550 read the flag, and a duel against an opponent
+	// alive at 0 could never end.
+	hp, _, err := chars.ApplyDamage(ctx, opponent.CharacterID, damage)
 	if err != nil {
 		return fmt.Errorf("duel: applying damage: %w", err)
+	}
+	opponentDied := false
+	if hp == 0 && damage > 0 {
+		// The blow's damage left the opponent at 0. Under her kill lock: alive
+		// and still at 0, this blow is the duel's kill, and the loser's HP is
+		// reset there (a monster's blow racing this one then finds her above
+		// 0 and lands as usual); in the dead state, a monster's kill got
+		// there first and the blow is answered as the dead gate above would
+		// have answered it; above 0 again, a monster's kill and respawn got
+		// there first and the blow landed nothing -- reported at the HP she
+		// has. A blocked or zero blow kills nobody, at any pool.
+		l := killLock(opponent.CharacterID)
+		l.Lock()
+		c, ferr := fallen(ctx, chars, hub, opponent.CharacterID)
+		if ferr != nil {
+			l.Unlock()
+			return fmt.Errorf("duel: reading the fallen opponent: %w", ferr)
+		}
+		switch {
+		case c != nil:
+			opponentDied = true
+			if err := chars.ResetHP(ctx, opponent.CharacterID); err != nil {
+				l.Unlock()
+				return fmt.Errorf("duel: resetting loser's hp: %w", err)
+			}
+		case deadCharacter(hub, opponent.CharacterID):
+			l.Unlock()
+			return sess.Send(&proto.Packet{Opcode: OpDuelAttackResult, Data: (&DuelAttackResult{Error: "your opponent is dead"}).Encode()})
+		default:
+			if cur, e := chars.GetByID(ctx, opponent.CharacterID); e == nil && cur != nil {
+				hp = cur.HP
+			}
+		}
+		l.Unlock()
 	}
 
 	result := &DuelAttackResult{Damage: int32(damage), OpponentHP: int32(hp), OpponentDied: opponentDied,
@@ -423,8 +464,8 @@ func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		return opponent.Session.Send(&proto.Packet{Opcode: OpDuelOpponentDamaged, Data: damaged.Encode()})
 	}
 
-	// Duel over: reset the loser's HP and clear both sides from the active
-	// duel set.
+	// Duel over: the loser's HP was reset under her kill lock above; clear
+	// both sides from the active duel set.
 	//
 	// Losing a duel costs NO experience here. That is own design, and it is a
 	// deliberate divergence rather than a match: the engine does charge for a
@@ -450,9 +491,6 @@ func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	//
 	// The comment this replaces claimed "same as PvE", which stopped being
 	// true when PvE started applying the real 100x penalty.
-	if err := chars.ResetHP(ctx, opponent.CharacterID); err != nil {
-		return fmt.Errorf("duel: resetting loser's hp: %w", err)
-	}
 	duels.End(characterID)
 
 	if err := sess.Send(&proto.Packet{Opcode: OpDuelEnded, Data: (&DuelEnded{WinnerName: req.CharacterName}).Encode()}); err != nil {

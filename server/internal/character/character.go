@@ -142,7 +142,8 @@ const (
 // constants in this project now. RespawnFraction is the exact 0.4 rather than
 // that value, and for a pool it makes no difference: every use truncates
 // (int() here, FLOOR in the SQL store, the handler's own fistp under rounding
-// control 11 at 0x510122), and for an integer maximum m the fractional part
+// control 11 at 0x510122 on its death-cause-2 path and 0x5101c6 on option 2's
+// -- session/deadstate.go's header), and for an integer maximum m the fractional part
 // of 0.4 x m is one of 0, .2, .4, .6, .8, so the extra 5.96e-9 x m cannot
 // cross an integer below m = 33 million.
 //
@@ -383,21 +384,26 @@ type Store interface {
 
 	// ApplyDamage reduces characterID's HP by amount (never below 0),
 	// returning the resulting HP and whether THIS call took it from above 0
-	// to 0. A character already at 0 is left as it is and reports (0, false)
-	// -- the pool write is a no-op, made under the store's own lock or in
-	// one UPDATE, so two blows racing each other report one death between
-	// them (round 550). Until that round a character already at 0 reported
-	// died=true to every further blow, and two strike workers passing
-	// session.runStrike's dead check together each charged the death
-	// penalty. The engine's own rule is the same test one layer up:
-	// GObjPC::FUN_004a87d0 lands nothing unless GetLifeState() == 1
-	// (`cmp al,0x1` at 0x4a87e8); srrevamp's flag-off respawn path keeps
-	// no life state, so the store makes the call on the pool itself.
-	// session/duel.go's blow shares this: a duel blow that finds the
-	// opponent already at 0 -- only in the window between the duel's own
-	// dead gate and this write -- reports (0, false) and the duel goes on
-	// at OpponentHP 0, where it used to report a death and ResetHP a dead
-	// character.
+	// to 0 -- the transition. A character already at 0 is left as it is and
+	// reports (0, false): the pool write is a no-op, made under the store's
+	// own lock or in one UPDATE (round 550).
+	//
+	// died is a fact about the write, not the verdict on a death (round
+	// 551). Round 550 had the kill paths read it as the verdict -- two blows
+	// racing each other would report one transition between them -- and that
+	// made a character ALIVE at 0 unkillable: an HP-cost cast lands its
+	// caster at exactly 0 (the engine's gate passes on equal,
+	// combat.CanPaySkillHealth), the pool is then already at 0 for every
+	// later blow, and each read (0, false) and landed nothing, for ever
+	// (session/skill.go pays the cost through this method and does not
+	// treat its transition as a death). The kill is decided one layer up,
+	// by session's per-character kill lock (session/monsterstrike.go
+	// killLock, fallen): a blow whose damage leaves the pool at 0 reads the
+	// character back under it -- alive and still at 0, it is THE kill;
+	// already dead, or already respawned or revived, it lost. So this method
+	// promises only the arithmetic: HP after the call, and whether this call
+	// emptied the pool. Nothing in session reads died today; tests pin it
+	// (TestApplyDamageOnACharacterAtZeroReportsNoDeath).
 	ApplyDamage(ctx context.Context, characterID int64, amount int) (remainingHP int, died bool, err error)
 
 	// ResetHP restores characterID's HP to MaxHP. Used on a LEVEL-UP, where

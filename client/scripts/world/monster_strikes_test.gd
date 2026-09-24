@@ -182,6 +182,7 @@ func _initialize() -> void:
 	await process_frame
 	_check(root.is_inside_tree(), "the probe: after one frame the root is in the tree")
 	await _test_hud_prompt_off_the_tree()
+	await _test_hud_prompt_freed()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
@@ -500,4 +501,39 @@ func _test_hud_prompt_off_the_tree() -> void:
 	await process_frame
 	_check(is_instance_valid(prompt) and prompt.position == Vector2.ZERO,
 		"a prompt whose HUD left the tree before its frame is left unplaced (position %s)" % (str(prompt.position) if is_instance_valid(prompt) else "freed"))
+	panels.free()
+
+## Round 551: a prompt hidden in the same frame it was shown -- a kill result
+## and a revive result in one NetClient batch, or a second show, which hides
+## first -- is FREED before show_revive_prompt's coroutine resumes:
+## hide_revive_prompt's queue_free runs at the end of that frame, the
+## coroutine on the next frame's process_frame. The coroutine must test
+## is_instance_valid before it asks the node anything; round 550's
+## is_inside_tree alone was "Attempt to call function 'is_inside_tree' in
+## base 'previously freed'", a script error. The harness greps output for
+## FAIL and a script error prints no such word, so the negative's evidence is
+## that SCRIPT ERROR line (RE_COMPLETION round 551); this case asserts what a
+## script can see -- the freed prompt (the probe), a HUD left clean, and a
+## fresh prompt afterwards placed after its own frame.
+func _test_hud_prompt_freed() -> void:
+	var panels_script := load("res://scripts/ui/hud/hud_panels.gd") as GDScript
+	if panels_script == null:
+		return
+	var panels: Control = panels_script.new()
+	root.add_child(panels)
+	panels.call("show_revive_prompt", "You were killed.")
+	var prompt: Control = panels.get_node_or_null("RevivePrompt")
+	_check(prompt != null and prompt.is_inside_tree(), "the prompt is up, waiting for its frame")
+	panels.call("hide_revive_prompt") # the same frame: removed now, freed at its end
+	await process_frame
+	await process_frame
+	_check(not is_instance_valid(prompt), "the probe: the hidden prompt was freed before the coroutine resumed")
+	_check(panels.get_node_or_null("RevivePrompt") == null, "no prompt is left on the HUD")
+	panels.call("show_revive_prompt", "You were killed again.")
+	var again: Control = panels.get_node_or_null("RevivePrompt")
+	await process_frame
+	await process_frame
+	_check(is_instance_valid(again) and again.is_inside_tree() and again.position != Vector2.ZERO,
+		"a fresh prompt after the freed one is placed after its frame (position %s)" % (str(again.position) if is_instance_valid(again) else "freed"))
+	root.remove_child(panels)
 	panels.free()

@@ -60,7 +60,7 @@ create job's reply adds an eighth step, the payment:
 | step | engine test | refusal | srrevamp |
 |---|---|---|---|
 | 1 | `*(char *)(in_EAX[0xc] + 4) == 1`, the character lock | `0x4c09`, not in the client's message table | not modelled: no lock to hold (`char_lock.md`, "For srrevamp") |
-| 2 | vtable `+0xf8` `IGObj::GetLifeState` `!= 1` | `0x4c07` `GUILDERR_IM_DEAD` | **enforced**, with HP ≤ 0 standing in for dead |
+| 2 | vtable `+0xf8` `IGObj::GetLifeState` `!= 1` | `0x4c07` `GUILDERR_IM_DEAD` | **enforced**: the world hub's life state since round 550 (`handleGuildCreate`, `deadBySession` -- a monster's kill under `-player-dead-state`), with HP ≤ 0 the stand-in for a character the hub does not hold |
 | 3 | vtable `+0x124` `IGObj::GetLevel` `< 0x14` | `0x4c0a` `GUILDERR_TOO_LOW_CREATOR_LEVEL` | **enforced**: `guild.MinCreatorLevel` = 20 |
 | 4 | 64-bit gold at `in_EAX[0xd] + 0x78/+0x7c` `< 500000` | `0x4c0c` `GUILDERR_NOT_ENOUGH_GOLD` | **enforced**: `guild.CreateGoldRequired` = 500,000 |
 | 5 | vtable `+0x11c` `IGObj::GetJobState` `!= 4` | `0x4c57` `UIIT_CTL_GUILD_CREATE_JOB_ERROR` | not modelled: srrevamp has no job state |
