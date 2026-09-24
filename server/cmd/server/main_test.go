@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
@@ -457,5 +460,47 @@ func TestEnvBoolLeavesAnUnparsableSwitchOff(t *testing.T) {
 		if got != c.want || (err != nil) != c.wantErr {
 			t.Errorf("%q: %v, err %v; want %v, error %v", c.v, got, err, c.want, c.wantErr)
 		}
+	}
+}
+
+// Round 542: maintainMonster hands its first spawn and every respawn to the
+// spawned callback -- main passes session.BroadcastMonsterSpawned, the zone
+// push behind -monster-spawn-push -- each with the new monster's id, the one
+// the hub holds. The respawn waits out respawnDelay (10 s, disclosed own
+// design), so this test runs for about 12 s, in parallel with the rest.
+func TestMaintainMonsterReportsEverySpawn(t *testing.T) {
+	t.Parallel()
+	monsters := combat.NewHub()
+	ids := make(chan int64, 4)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	spec := monsterSpecs[0]
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	go maintainMonster(ctx, monsters, logger, spec, func(id int64) { ids <- id })
+
+	next := func(within time.Duration, what string) int64 {
+		t.Helper()
+		select {
+		case id := <-ids:
+			return id
+		case <-time.After(within):
+			t.Fatalf("no %s reported within %v", what, within)
+			return 0
+		}
+	}
+	first := next(2*time.Second, "first spawn")
+	m, ok := monsters.Get(first)
+	if !ok || m.Name != spec.Name {
+		t.Fatalf("the first spawn reported %d, which the hub does not hold as a %s (%+v)", first, spec.Name, m)
+	}
+	if _, died, ok := monsters.ApplyDamage(first, m.HP); !ok || !died {
+		t.Fatal("precondition: the first spawn dies")
+	}
+	second := next(respawnDelay+5*time.Second, "respawn")
+	if second == first {
+		t.Fatalf("the respawn reported the dead monster's id %d", first)
+	}
+	if again, ok := monsters.Get(second); !ok || again.Name != spec.Name {
+		t.Fatalf("the respawn reported %d, which the hub does not hold as a %s", second, spec.Name)
 	}
 }

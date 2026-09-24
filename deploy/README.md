@@ -174,3 +174,35 @@ restated `command:` list. The boot log then reads
 `monster strike push on: OpMonsterAttacked 0x007D to the zone after each counterattack`.
 
 **Off.** Remove that line (or set it to `"0"`), then run `docker compose up -d`.
+
+## Monster spawn push (off by default)
+
+The server can send a monster that has just appeared to everyone in its zone the moment it
+appears. That covers a roster monster's respawn (10 s after its death) and every monster a GM's
+`/spawn` makes. Without it, a client finds the monster only on its next monster list. The message
+is `OpMonsterSpawned 0x007E` (round 542): the list's own record for the monster, then the heading
+it hatched facing. Clients face the new body along that heading. The heading is the engine's hatch
+roll, `rand() / 32767 * 2pi`, and the monster AI starts the monster from the same heading. The push
+does not depend on the monster AI. What is grounded and what is a stand-in is in
+`docs/protocol/monster_ai.md`, "The spawn push's server half (round 542)".
+
+It is behind the `-monster-spawn-push` flag (env `SRREVAMP_MONSTER_SPAWN_PUSH`), and **the default
+is off**. With it off nothing is sent, and the wire is exactly what it was. After an update the
+boot log reads `monster spawn push off (-monster-spawn-push / SRREVAMP_MONSTER_SPAWN_PUSH)`.
+
+**Turn it on only when both of these hold:**
+
+1. A client release that carries round 540 is tagged, CI is green for it (`gh run list`), and its
+   zips are published. It is the release the strike push waits for too. An older client ignores
+   the push and warns "unhandled opcode" once per connection, so its players still find the
+   monster on their next list.
+2. The live check in that `monster_ai.md` section passes on the render box. It has not been run
+   yet.
+
+**On.** Add `SRREVAMP_MONSTER_SPAWN_PUSH: "1"` under the server's `environment:` in the untracked
+`docker-compose.override.yml`, the same way as `SRREVAMP_MONSTER_AI` above, then run
+`docker compose up -d`. You can instead append `- "-monster-spawn-push=true"` to the override's
+restated `command:` list. The boot log then reads
+`monster spawn push on: OpMonsterSpawned 0x007E to the zone for each respawn and GM /spawn`.
+
+**Off.** Remove that line (or set it to `"0"`), then run `docker compose up -d`.

@@ -129,6 +129,10 @@ type Result struct {
 	// KilledMonsterID is the monster /kill removed, for the session layer
 	// to announce to the zone the way a combat kill is announced.
 	KilledMonsterID int64
+	// SpawnedMonsterIDs are the monsters /spawn made, in order, for the
+	// session layer to push to the zone (session.BroadcastMonsterSpawned,
+	// round 542, behind -monster-spawn-push); empty for every other command.
+	SpawnedMonsterIDs []int64
 	// LevelUp is set when /level raised the character, carrying what the
 	// combat path's OpLevelUp carries.
 	LevelUp *LevelUp
@@ -412,14 +416,17 @@ func (d *Deps) spawn(actor Actor, args []string) Result {
 		return refuse("no monster called " + strings.Join(name, " ") + ". Monsters: " + d.speciesNames())
 	}
 	ids := make([]string, 0, n)
+	spawned := make([]int64, 0, n)
 	for i := 0; i < n; i++ {
 		x := actor.X + 6 + float64(i)*4
 		m := d.Monsters.SpawnSpecies(actor.Zone, sp.Species, x, actor.Y, actor.Z, sp.MaxHP, sp.Defense, sp.Attack, sp.Gold)
 		ids = append(ids, strconv.FormatInt(m.ID, 10))
+		spawned = append(spawned, m.ID)
 	}
 	return Result{
-		Text:            fmt.Sprintf("spawned %d x %s (level %d, HP %d) at %.0f, %.0f -- ids %s; no respawn", n, sp.Name, sp.Level, sp.MaxHP, actor.X+6, actor.Z, strings.Join(ids, ",")),
-		RefreshMonsters: true,
+		Text:              fmt.Sprintf("spawned %d x %s (level %d, HP %d) at %.0f, %.0f -- ids %s; no respawn", n, sp.Name, sp.Level, sp.MaxHP, actor.X+6, actor.Z, strings.Join(ids, ",")),
+		RefreshMonsters:   true,
+		SpawnedMonsterIDs: spawned,
 	}
 }
 

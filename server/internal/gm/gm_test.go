@@ -269,15 +269,28 @@ func TestSpawnAndKill(t *testing.T) {
 			t.Errorf("spawned monster %+v", m)
 		}
 	}
-	if res := f.run(t, "/spawn MOB_CH_MANGYANG"); res.Refused {
+	// Round 542: the result names the three it made, in order, for the
+	// session layer's zone push (session.BroadcastMonsterSpawned).
+	if len(res.SpawnedMonsterIDs) != 3 {
+		t.Fatalf("SpawnedMonsterIDs %v, want the 3 spawned", res.SpawnedMonsterIDs)
+	}
+	for i, id := range res.SpawnedMonsterIDs {
+		if m, ok := f.hub.Get(id); !ok || m.Name != "Mangyang" {
+			t.Errorf("SpawnedMonsterIDs[%d] = %d is not a spawned Mangyang", i, id)
+		}
+		if i > 0 && id <= res.SpawnedMonsterIDs[i-1] {
+			t.Errorf("SpawnedMonsterIDs %v are not in spawn order", res.SpawnedMonsterIDs)
+		}
+	}
+	if res := f.run(t, "/spawn MOB_CH_MANGYANG"); res.Refused || len(res.SpawnedMonsterIDs) != 1 {
 		t.Fatalf("/spawn by code, default count: %+v", res)
 	}
 	if got := len(f.hub.InZone("jangan")); got != 4 {
 		t.Fatalf("%d monsters after one more", got)
 	}
 	for _, bad := range []string{"/spawn", "/spawn dragon", "/spawn mangyang 0", "/spawn mangyang 21"} {
-		if res := f.run(t, bad); !res.Refused {
-			t.Errorf("%q should be refused: %+v", bad, res)
+		if res := f.run(t, bad); !res.Refused || len(res.SpawnedMonsterIDs) != 0 {
+			t.Errorf("%q should be refused, spawning nothing: %+v", bad, res)
 		}
 	}
 

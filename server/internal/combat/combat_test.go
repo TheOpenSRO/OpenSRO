@@ -26,6 +26,33 @@ func TestSpawnAssignsUniqueIDs(t *testing.T) {
 	}
 }
 
+// Round 542: each spawn draws its Heading from the hub's spawn-heading roll,
+// once, and keeps it; a copy from Get carries it. A hub given no roll hatches
+// every monster at 0. Before round 542 a monster carried no heading at all
+// (the monster AI's brain rolled its own), so nothing could push one.
+func TestSpawnSpeciesRollsTheHatchHeading(t *testing.T) {
+	if m := NewHub().SpawnSpecies("jangan", Species{Name: "Mangyang"}, 0, 0, 0, 54, 7, 0, 0); m.Heading != 0 {
+		t.Fatalf("a hub with no roll: heading %g, want 0", m.Heading)
+	}
+	h := NewHub()
+	draws := []float64{1.5, 4.25}
+	calls := 0
+	h.SetSpawnHeadingRoll(func() float64 {
+		v := draws[calls]
+		calls++
+		return v
+	})
+	a := h.SpawnSpecies("jangan", Species{Name: "Mangyang"}, 0, 0, 0, 54, 7, 0, 0)
+	b := h.Spawn("jangan", "Mangyang", 10, 0, 0, 54, 7, 0, 0)
+	if calls != 2 || a.Heading != 1.5 || b.Heading != 4.25 {
+		t.Fatalf("headings %g, %g after %d rolls, want 1.5 and 4.25 after 2", a.Heading, b.Heading, calls)
+	}
+	h.StepAll(1) // nothing moving; the heading is fixed at the spawn
+	if got, _ := h.Get(a.ID); got.Heading != 1.5 {
+		t.Fatalf("Get's copy carries heading %g, want 1.5", got.Heading)
+	}
+}
+
 func TestGetReturnsLiveMonster(t *testing.T) {
 	h := NewHub()
 	spawned := h.Spawn("jangan", "Mangyang", 0, 0, 0, 100, 10, 5, 50)

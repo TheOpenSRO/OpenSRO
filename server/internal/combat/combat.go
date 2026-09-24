@@ -67,6 +67,16 @@ type Monster struct {
 	// the nest's position or the context's spawn record, ctx+0x1b4 --
 	// docs/protocol/monster_ai.md, "HOMING"). Set by SpawnSpecies.
 	HomeX, HomeZ float64
+	// Heading is the way the monster faced when it hatched, in radians from
+	// +x toward +z (srrevamp's world frame, internal/ai/wander.go): Nest_Hatch
+	// (0x005607b0) gives every species of the roster's shape whose rarity is
+	// not 3 rand() / 32767.0 * 2pi (0x5609ee..0x560a15, ai.SpawnHeading), and
+	// a rarity-3 species its nest row's own direction, which srrevamp does not
+	// hold (docs/protocol/monster_ai.md, "The _RefNest row", row 8). Rolled by
+	// SpawnSpecies with the hub's spawn-heading roll (SetSpawnHeadingRoll) and
+	// fixed from then on; 0 on a hub given no roll. The monster AI's brain
+	// starts from it, and OpMonsterSpawned carries it (round 542).
+	Heading float64
 	// The current leg, set by Hub.SetMotion and advanced by Hub.StepAll
 	// (motion.go): the destination, the speed the leg walks at (world units
 	// per second), the clip mode (0 walk, 1 run -- AITactics_Handler_110's
@@ -705,11 +715,24 @@ type Hub struct {
 	nextID atomic.Int64
 	// lastBlow is when each monster last struck: the re-use gate below.
 	lastBlow map[int64]time.Time
+	// headingRoll draws a hatch heading (SetSpawnHeadingRoll); nil gives 0.
+	// Called under mu, which serialises whatever randomness it holds.
+	headingRoll func() float64
 }
 
 // NewHub returns an empty Hub.
 func NewHub() *Hub {
 	return &Hub{byID: make(map[int64]*Monster), lastBlow: make(map[int64]time.Time)}
+}
+
+// SetSpawnHeadingRoll installs the roll SpawnSpecies draws each monster's
+// Heading from. cmd/server installs Nest_Hatch's (ai.SpawnHeading over its own
+// rng) before the first spawn; a test installs a fixed one. The roll is called
+// under the hub's lock, so an rng it closes over needs no lock of its own.
+func (h *Hub) SetSpawnHeadingRoll(roll func() float64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.headingRoll = roll
 }
 
 // CounterattackReady reports whether monster id may strike at now, and when
@@ -800,7 +823,7 @@ type Species struct {
 // (StepAll, SetMotion, StopMotion -- the monster AI moves it every tick while
 // -monster-ai is on) and its HP (ApplyDamage) change under h.mu, so a holder
 // may read without the lock only what is fixed at spawn: the id, the species
-// fields and the zone. Everything else is read through Get (round 539; round
+// fields, the zone and the Heading. Everything else is read through Get (round 539; round
 // 536's review). Today's callers -- cmd/server's maintainMonster and gm's
 // spawn -- read only ID, Name, Zone and Level.
 func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP, defense, attack int, goldReward int64) *Monster {
@@ -815,6 +838,9 @@ func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP,
 	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, RefObjID: species.RefObjID, Level: species.Level, Rarity: species.Rarity, BCRadius: species.BCRadius, AttackReuseMs: species.AttackReuseMs, AttackRange: species.AttackRange, Critical: species.Critical, Block: species.Block, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax,
 		GoldReward: goldReward, GoldMin: species.GoldMin, GoldMax: species.GoldMax, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP),
 		WalkSpeed: species.WalkSpeed, RunSpeed: species.RunSpeed, HomeX: x, HomeZ: z, DestX: x, DestZ: z}
+	if h.headingRoll != nil {
+		m.Heading = h.headingRoll()
+	}
 	h.byID[id] = m
 	return m
 }

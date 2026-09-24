@@ -133,8 +133,10 @@ type brain struct {
 	m       combat.Monster // as of this tick, refreshed after every move
 	machine *ai.Machine
 	// heading is the unit heading the engine keeps at the owner's
-	// +0x24/+0x2c, in radians from +x toward +z: Nest_Hatch's random one at
-	// first (ai.SpawnHeading), then each leg's direction.
+	// +0x24/+0x2c, in radians from +x toward +z: the one the monster hatched
+	// facing at first (combat.Monster.Heading, Nest_Hatch's ai.SpawnHeading
+	// rolled at the spawn since round 542, so OpMonsterSpawned and the brain
+	// agree), then each leg's direction.
 	heading float64
 	// enteredAt and dwellMs are the state's +0x10 and +0x14
 	// (CAIState::OnEnter 0x00558b70).
@@ -265,10 +267,10 @@ func (a *monsterAI) tick(now time.Time) {
 	// 1. The mover (combat.MoverStep: the 160 cap and the no-overshoot clamp).
 	a.monsters.StepAll(dt)
 
-	// 2. A brain per live monster. A new one hatches facing Nest_Hatch's
-	// random heading and leaves SPAWN at once: message 0x21's default
-	// transition is IDLE. OWN DESIGN: SPAWN::OnUpdate's timing is unread, so
-	// it leaves on the first tick that sees it.
+	// 2. A brain per live monster. A new one faces the heading it hatched
+	// with (combat.Monster.Heading) and leaves SPAWN at once: message 0x21's
+	// default transition is IDLE. OWN DESIGN: SPAWN::OnUpdate's timing is
+	// unread, so it leaves on the first tick that sees it.
 	live := a.monsters.All()
 	sort.Slice(live, func(i, j int) bool { return live[i].ID < live[j].ID })
 	seen := make(map[int64]bool, len(live))
@@ -453,9 +455,13 @@ func (a *monsterAI) keptUpOn(b *brain) bool {
 }
 
 // newBrain builds a monster's machine in SPAWN (AI::CTactics::Init's one
-// ChangeState(0), ai.NewMachine) with the four states the runtime runs.
+// ChangeState(0), ai.NewMachine) with the four states the runtime runs. It
+// adopts the heading the monster hatched with (combat.Monster.Heading, rolled
+// at the spawn by the hub's Nest_Hatch roll) rather than rolling its own:
+// until round 542 it drew ai.SpawnHeading here, a heading nothing outside the
+// brain knew, so a spawn push could not have carried it.
 func (a *monsterAI) newBrain(m combat.Monster) *brain {
-	b := &brain{id: m.ID, m: m, heading: ai.SpawnHeading(a.rng)}
+	b := &brain{id: m.ID, m: m, heading: m.Heading}
 	var states [ai.StateCount]ai.Enterer
 	states[ai.StateIdle] = &brainState{a: a, b: b, state: ai.StateIdle, enter: func() { a.enterIdle(b) }}
 	states[ai.StateWander] = &brainState{a: a, b: b, state: ai.StateWander, enter: func() { a.enterWander(b) },

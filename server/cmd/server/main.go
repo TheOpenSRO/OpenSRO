@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"os"
 	"os/signal"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/account"
+	"github.com/OpenSRO/srrevamp/server/internal/ai"
 	"github.com/OpenSRO/srrevamp/server/internal/berserk"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
@@ -280,8 +282,11 @@ const respawnDelay = 10 * time.Second
 
 // maintainMonster keeps exactly one instance of spec's species alive in its
 // zone, respawning it respawnDelay after each death, until ctx is
-// canceled. main() runs one of these per monsterSpecs entry.
-func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Logger, spec monsterSpec) {
+// canceled. main() runs one of these per monsterSpecs entry. spawned, when
+// not nil, is called with the new monster's id after the first spawn and
+// after every respawn: main passes session.BroadcastMonsterSpawned, the zone
+// push behind -monster-spawn-push (round 542).
+func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Logger, spec monsterSpec, spawned func(id int64)) {
 	attack, gold := monsterStatsForLevel(spec.Level, spec.Rarity)
 	// Real flat absorption from characterdata col 71. A spec that forgot it
 	// falls back to the old disclosed curve rather than spawning a monster
@@ -299,6 +304,9 @@ func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Log
 	spawn := func() int64 {
 		m := monsters.SpawnSpecies(spec.Zone, combatSpeciesOf(spec), spec.X, 0, spec.Z, maxHP, defense, attack, gold)
 		logger.Info("monster spawned", "id", m.ID, "name", m.Name, "zone", m.Zone, "level", m.Level)
+		if spawned != nil {
+			spawned(m.ID)
+		}
 		return m.ID
 	}
 
@@ -487,6 +495,13 @@ func main() {
 			"OpAttackResult, so everyone sees the blow. Default OFF: off, nothing is sent and the wire "+
 			"is what it was. Needs a client release that carries round 540. See deploy/README.md, "+
 			"\"Monster strike push (off by default)\".")
+	spawnPushEnv, spawnPushEnvErr := envBool("SRREVAMP_MONSTER_SPAWN_PUSH")
+	spawnPush := flag.Bool("monster-spawn-push", spawnPushEnv,
+		"push a monster that has just appeared -- a respawn or a GM /spawn -- to its whole zone at "+
+			"once (env SRREVAMP_MONSTER_SPAWN_PUSH): OpMonsterSpawned 0x007E, the list's record plus "+
+			"the heading it hatched facing. Default OFF: off, nothing is sent and the wire is what it "+
+			"was, so a respawn appears on each client's next monster list. Needs a client release that "+
+			"carries round 540. See deploy/README.md, \"Monster spawn push (off by default)\".")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -497,6 +512,10 @@ func main() {
 	if strikePushEnvErr != nil {
 		logger.Warn("SRREVAMP_MONSTER_STRIKE_PUSH is not a boolean; the strike push stays off unless -monster-strike-push is given",
 			"err", strikePushEnvErr)
+	}
+	if spawnPushEnvErr != nil {
+		logger.Warn("SRREVAMP_MONSTER_SPAWN_PUSH is not a boolean; the spawn push stays off unless -monster-spawn-push is given",
+			"err", spawnPushEnvErr)
 	}
 
 	// Install the EXP curve if the operator provided one. Game data, so never
@@ -765,6 +784,15 @@ func main() {
 		Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker,
 	}, logger)
 	monsters := combat.NewHub()
+	// Every monster hatches facing Nest_Hatch's heading, rand() / 32767.0 *
+	// 2pi (0x5609ee..0x560a15, ai.SpawnHeading): the roster's species are all
+	// the TypeID shape that takes it, and none is rarity 3, whose heading is
+	// its nest row's own and server-database only (docs/protocol/monster_ai.md,
+	// "The _RefNest row", row 8). Rolled at the spawn, before the first one, so
+	// the spawn push and the monster AI's brain carry the same heading. The
+	// roll runs under the hub's lock, which is what guards this rng.
+	spawnHeadingRNG := rand.New(rand.NewSource(time.Now().UnixNano()))
+	monsters.SetSpawnHeadingRoll(func() float64 { return ai.SpawnHeading(spawnHeadingRNG) })
 	// Items on the ground: what a kill leaves near the corpse until it is
 	// picked up (internal/grounditem). The sweep releases ownerships after the
 	// 30 s window and removes stale items, telling each zone.
@@ -818,6 +846,16 @@ func main() {
 		}
 		logger.Info("npcpos placements loaded", "species_in_table", len(table), "roster_species_placed", applied)
 	}
+	// The spawn push (round 542), behind its own flag: a respawn or a GM /spawn
+	// is sent to its zone as OpMonsterSpawned the moment it appears. Set
+	// before the roster's first spawn, like the heading roll above.
+	session.SetMonsterSpawnPush(*spawnPush)
+	if *spawnPush {
+		logger.Info("monster spawn push on: OpMonsterSpawned 0x007E to the zone for each respawn and GM /spawn")
+	} else {
+		logger.Info("monster spawn push off (-monster-spawn-push / SRREVAMP_MONSTER_SPAWN_PUSH)")
+	}
+	spawned := func(id int64) { session.BroadcastMonsterSpawned(hub, monsters, id) }
 	for _, spec := range monsterSpecs {
 		// A species with real npcpos placements gets one monster per real
 		// row, where the game itself puts it. No spread: these are already
@@ -839,7 +877,7 @@ func main() {
 				}
 				inst := spec
 				inst.X, inst.Z = x, z
-				go maintainMonster(ctx, monsters, logger, inst)
+				go maintainMonster(ctx, monsters, logger, inst, spawned)
 				placed++
 			}
 			if placed > 0 {
@@ -860,7 +898,7 @@ func main() {
 			inst := spec
 			inst.X += float64((i%3)-1) * 130.0
 			inst.Z += float64(i/3) * 130.0
-			go maintainMonster(ctx, monsters, logger, inst)
+			go maintainMonster(ctx, monsters, logger, inst, spawned)
 		}
 	}
 

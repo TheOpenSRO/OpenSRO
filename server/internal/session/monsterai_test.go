@@ -803,3 +803,235 @@ func TestMonsterListWaitsForAPushInFlight(t *testing.T) {
 		}
 	}
 }
+
+// ---- The spawn push (round 542) ----
+
+// spawnFixture is the client's own OpMonsterSpawned fixture
+// (client/scripts/net/combat_test.gd, SPAWN_FIXTURE; docs/protocol/
+// monster_ai.md, "srrevamp's own monster protocol"): monster 31 "Mob" /
+// MOB_TEST (a fixture species) at (100, 0, -200), 100/100 HP, level 1,
+// rarity 0, heading pi/2 (f32 0x3fc90fdb, facing +z). The server's encoder
+// must produce it byte for byte.
+var spawnFixture = []byte{0x1f, 0, 0, 0, 0, 0, 0, 0, 0x03, 0x00, 0x4d, 0x6f, 0x62,
+	0x08, 0x00, 0x4d, 0x4f, 0x42, 0x5f, 0x54, 0x45, 0x53, 0x54,
+	0x00, 0x00, 0xc8, 0x42, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x48, 0xc3,
+	0x64, 0, 0, 0, 0x64, 0, 0, 0, 0x01, 0, 0, 0, 0x00, 0, 0, 0,
+	0xdb, 0x0f, 0xc9, 0x3f}
+
+func TestMonsterSpawnedMatchesTheClientFixture(t *testing.T) {
+	m := &MonsterSpawned{Monster: MonsterSnapshot{ID: 31, Name: "Mob", CodeName: "MOB_TEST", X: 100, Y: 0, Z: -200,
+		MaxHP: 100, HP: 100, Level: 1, Rarity: 0}, Heading: float32(math.Pi / 2)}
+	got := m.Encode()
+	if !bytes.Equal(got, spawnFixture) {
+		t.Fatalf("MonsterSpawned.Encode:\n got % x\nwant % x", got, spawnFixture)
+	}
+	// The record is the list's own: an OpMonsterListResult of that one
+	// monster is a u16 empty error, a u16 count and then these same bytes.
+	list := (&MonsterListResult{Monsters: []MonsterSnapshot{m.Monster}}).Encode()
+	if !bytes.Equal(got[:len(got)-4], list[4:]) {
+		t.Errorf("the record is not the list's:\n push % x\n list % x", got[:len(got)-4], list[4:])
+	}
+	back, err := DecodeMonsterSpawned(got)
+	if err != nil || *back != *m {
+		t.Fatalf("round trip: %+v, %v", back, err)
+	}
+	// As the client decodes it: a heading or a record cut short is refused.
+	for _, n := range []int{54, 40} {
+		if _, err := DecodeMonsterSpawned(spawnFixture[:n]); err == nil {
+			t.Errorf("a %d-byte MonsterSpawned must be refused", n)
+		}
+	}
+}
+
+// 0x007E is the opcode the client listens on (CombatNet.OP_MONSTER_SPAWNED)
+// and collides with no other session opcode in the 0x0060..0x007F block.
+func TestMonsterSpawnedOpcode(t *testing.T) {
+	if OpMonsterSpawned != 0x007E {
+		t.Fatalf("OpMonsterSpawned = 0x%04X; the client decodes 0x007E", OpMonsterSpawned)
+	}
+	for _, op := range []uint16{OpAttack, OpAttackResult, OpMonsterDamaged, OpMonsterDied, OpLootDropped,
+		OpMonsterList, OpMonsterListResult, OpLevelUp, OpBerserk, OpBerserkResult,
+		OpLearnSkill, OpLearnSkillResult, OpUseSkill, OpSkillList, OpSkillListResult,
+		OpSkillState, OpSkillStateResult, OpRaiseMastery, OpRaiseMasteryResult,
+		OpGroundItemList, OpGroundItemListResult, OpGroundItemSpawned, OpGroundItemRemoved,
+		OpGroundItemOwnerReleased, OpPickUp, OpPickUpResult, OpRepair, OpRepairResult,
+		OpMonsterMoved, OpMonsterAttacked, OpMonsterMotionList} {
+		if op == OpMonsterSpawned {
+			t.Errorf("OpMonsterSpawned collides with 0x%04X", op)
+		}
+	}
+}
+
+// spawnPushForTest turns -monster-spawn-push on or off for the rest of the
+// test and puts it back when the test ends.
+func spawnPushForTest(t *testing.T, on bool) {
+	t.Helper()
+	was := monsterSpawnPush.Load()
+	SetMonsterSpawnPush(on)
+	t.Cleanup(func() { SetMonsterSpawnPush(was) })
+}
+
+// listing asks for the monster list and returns every packet that arrived
+// before its reply, and the reply.
+func (c *strikeClient) listing(t *testing.T) ([]*proto.Packet, *MonsterListResult) {
+	t.Helper()
+	c.write(t, OpMonsterList, nil)
+	var before []*proto.Packet
+	for {
+		p := c.read(t)
+		if p.Opcode != OpMonsterListResult {
+			before = append(before, p)
+			continue
+		}
+		list, err := DecodeMonsterListResult(p.Data)
+		if err != nil {
+			t.Fatalf("%s: DecodeMonsterListResult: %v", c.name, err)
+		}
+		return before, list
+	}
+}
+
+// spawnPushes returns the OpMonsterSpawned pushes among pkts, decoded.
+func spawnPushes(t *testing.T, pkts []*proto.Packet) []*MonsterSpawned {
+	t.Helper()
+	var out []*MonsterSpawned
+	for _, p := range pkts {
+		if p.Opcode != OpMonsterSpawned {
+			continue
+		}
+		m, err := DecodeMonsterSpawned(p.Data)
+		if err != nil {
+			t.Fatalf("DecodeMonsterSpawned: %v", err)
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// recordingHeadingRoll installs Nest_Hatch's roll (ai.SpawnHeading) over a
+// seeded rng on monsters and returns the headings it has drawn so far.
+func recordingHeadingRoll(monsters *combat.Hub, seed int64) func() []float64 {
+	var mu sync.Mutex
+	var drawn []float64
+	rng := rand.New(rand.NewSource(seed))
+	monsters.SetSpawnHeadingRoll(func() float64 {
+		h := ai.SpawnHeading(rng)
+		mu.Lock()
+		drawn = append(drawn, h)
+		mu.Unlock()
+		return h
+	})
+	return func() []float64 {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]float64(nil), drawn...)
+	}
+}
+
+// THE RED (round 542): a respawn in jangan, handed to BroadcastMonsterSpawned
+// the way cmd/server's maintainMonster hands it every spawn, reaches both
+// jangan sessions at once, before either asks for the list: one
+// OpMonsterSpawned each, carrying the new id, the list's own record for it,
+// and the heading it hatched facing -- Nest_Hatch's roll, in [0, 2pi]
+// (ai.SpawnHeading can return 2pi itself, at rand() = 32767). Before round
+// 542 nothing sent 0x007E, so Bram's count was 0 and this fails.
+//
+// CONTROLS (they pass before the change too, since nothing was sent then):
+// Cyra, in donwhang, receives none, and a monster already gone when its push
+// is due sends nothing to anyone.
+func TestMonsterRespawnReachesTheZone(t *testing.T) {
+	spawnPushForTest(t, true)
+	z := startStrikeZone(t)
+	drawn := recordingHeadingRoll(z.monsters, 542)
+	m := z.monsters.SpawnSpecies("jangan", strikeMangyang, z.aria.x+30, 0, z.aria.z, 54, 7, 0, 0)
+	BroadcastMonsterSpawned(z.hub, z.monsters, m.ID)
+
+	if d := drawn(); len(d) != 1 || m.Heading != d[0] {
+		t.Fatalf("the spawn drew %v and hatched facing %g, want exactly one draw, its heading", d, m.Heading)
+	}
+	for _, c := range []*strikeClient{z.bram, z.aria} {
+		before, list := c.listing(t)
+		pushes := spawnPushes(t, before)
+		if len(pushes) != 1 {
+			t.Fatalf("%s, in jangan, received %d OpMonsterSpawned before the list (packets %#04x), want exactly 1",
+				c.name, len(pushes), opcodesOf(before))
+		}
+		got := pushes[0]
+		if got.Monster.ID != m.ID {
+			t.Errorf("%s's push is for monster %d, want the new %d", c.name, got.Monster.ID, m.ID)
+		}
+		var listed *MonsterSnapshot
+		for i := range list.Monsters {
+			if list.Monsters[i].ID == m.ID {
+				listed = &list.Monsters[i]
+			}
+		}
+		if listed == nil || got.Monster != *listed {
+			t.Errorf("%s's push record %+v, want the list's own record %+v", c.name, got.Monster, listed)
+		}
+		if got.Heading != float32(m.Heading) {
+			t.Errorf("%s's push faces %g, want the hatch heading %g", c.name, got.Heading, m.Heading)
+		}
+		if got.Heading < 0 || got.Heading > float32(2*math.Pi) {
+			t.Errorf("%s's push faces %g, outside Nest_Hatch's [0, 2pi]", c.name, got.Heading)
+		}
+	}
+
+	// CONTROL: another zone hears nothing.
+	if n := len(spawnPushes(t, z.cyra.barrier(t))); n != 0 {
+		t.Errorf("Cyra, in donwhang, received %d OpMonsterSpawned, want 0", n)
+	}
+
+	// CONTROL: a monster killed before its push is due sends nothing.
+	gone := z.monsters.SpawnSpecies("jangan", strikeMangyang, z.aria.x+60, 0, z.aria.z, 54, 7, 0, 0)
+	if _, died, ok := z.monsters.ApplyDamage(gone.ID, 54); !ok || !died {
+		t.Fatal("precondition: the second monster dies")
+	}
+	BroadcastMonsterSpawned(z.hub, z.monsters, gone.ID)
+	for _, c := range []*strikeClient{z.aria, z.bram, z.cyra} {
+		if n := len(spawnPushes(t, c.barrier(t))); n != 0 {
+			t.Errorf("%s received %d OpMonsterSpawned for a monster already gone, want 0", c.name, n)
+		}
+	}
+}
+
+// CONTROL, the default: with -monster-spawn-push off a spawn sends nothing,
+// and each session's next packet is its own list reply, as before round 542.
+func TestMonsterSpawnPushOffIsTheOldWire(t *testing.T) {
+	spawnPushForTest(t, false)
+	z := startStrikeZone(t)
+	m := z.monsters.SpawnSpecies("jangan", strikeMangyang, z.aria.x+30, 0, z.aria.z, 54, 7, 0, 0)
+	BroadcastMonsterSpawned(z.hub, z.monsters, m.ID)
+	for _, c := range []*strikeClient{z.aria, z.bram, z.cyra} {
+		if got := c.barrier(t); len(got) != 0 {
+			t.Errorf("%s received %#04x with the spawn push off, want nothing", c.name, opcodesOf(got))
+		}
+	}
+}
+
+// The brain starts from the heading the monster hatched with
+// (combat.Monster.Heading), the one OpMonsterSpawned carries, instead of
+// rolling its own. Before round 542 newBrain drew ai.SpawnHeading(a.rng), so
+// the pushed heading and the brain's would have been two different draws.
+func TestMonsterAIBrainStartsFromTheSpawnHeading(t *testing.T) {
+	monsters := combat.NewHub()
+	monsters.SetSpawnHeadingRoll(func() float64 { return 1.25 })
+	m := monsters.SpawnSpecies("jangan", testMangyang, 0, 0, 0, 1000, 0, 0, 0)
+	a := installMonsterAIForTest(t, world.NewHub(), monsters, 5, (&pushRecorder{}).push)
+	monsterAITick(aiT0)
+	a.mu.Lock()
+	b := a.brains[m.ID]
+	a.mu.Unlock()
+	if b == nil {
+		t.Fatal("no brain after the first tick")
+	}
+	if st := stateOf(t, a, m.ID); st != ai.StateIdle {
+		t.Fatalf("state %v after the first tick, want IDLE (no leg yet)", st)
+	}
+	a.mu.Lock()
+	heading := b.heading
+	a.mu.Unlock()
+	if heading != 1.25 {
+		t.Fatalf("the brain faces %g, want the hatch heading 1.25", heading)
+	}
+}

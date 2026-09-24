@@ -8,6 +8,7 @@ import (
 	"math"
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/berserk"
@@ -594,6 +595,109 @@ func DecodeMonsterListResult(data []byte) (*MonsterListResult, error) {
 	return r, nil
 }
 
+// monsterSnapshotOf is a live monster as one OpMonsterListResult record, the
+// record OpMonsterSpawned carries too.
+func monsterSnapshotOf(m combat.Monster) MonsterSnapshot {
+	return MonsterSnapshot{
+		ID: m.ID, Name: m.Name, CodeName: m.CodeName,
+		X: float32(m.X), Y: float32(m.Y), Z: float32(m.Z),
+		MaxHP: int32(m.MaxHP), HP: int32(m.HP), Level: int32(m.Level), Rarity: int32(m.Rarity),
+	}
+}
+
+// The spawn push (round 542): the server half of round 540's client
+// (docs/protocol/monster_ai.md, "The strike and spawn pushes";
+// client/scripts/net/combat.gd decode_monster_spawned). Until this round a
+// respawn or a GM /spawn reached a client only on its next monster list.
+// OpMonsterSpawned sends the new monster to everyone in its zone the moment it
+// appears, with the heading it hatched facing (combat.Monster.Heading,
+// Nest_Hatch's rand() / 32767.0 * 2pi: ai.SpawnHeading; monster_ai.md, "The
+// _RefNest row", row 8). The pattern is the ground-item spawn push
+// (OpGroundItemSpawned 0x006c, docs/protocol/ground_items.md): one packet to
+// every session in the zone, a failed write left to that session's reader.
+//
+// Behind cmd/server's -monster-spawn-push (SRREVAMP_MONSTER_SPAWN_PUSH), OFF by
+// default: off, nothing is sent and the wire is what it was. It is flipped only
+// once a client release that draws the push is out; an older client ignores
+// 0x007E with an "unhandled opcode" warning.
+//
+// An additive placeholder like every opcode here
+// (docs/protocol/PROTOCOL_DECISION.md). 0x007E was free: before round 540 no
+// non-test file under server/ or client/scripts/net used it, and before this
+// round none under server/ did (grep, 2026-09-24).
+const OpMonsterSpawned uint16 = 0x007e // server -> every session in the zone: a monster that has just appeared
+
+// MonsterSpawned is the OpMonsterSpawned payload: one record in
+// OpMonsterListResult's own encoding, then an f32 heading in radians from +x
+// toward +z (srrevamp's world frame, never an engine angle). A new message
+// rather than a longer list record: the list's records carry no per-record
+// length, so no record can grow without breaking every client.
+type MonsterSpawned struct {
+	Monster MonsterSnapshot
+	Heading float32
+}
+
+func (m *MonsterSpawned) Encode() []byte {
+	return append(m.Monster.Encode(), encodeFloat32(m.Heading)...)
+}
+
+// DecodeMonsterSpawned refuses a payload whose record or heading is cut short,
+// as the client does (CombatNet.decode_monster_spawned). Only tests call it --
+// the message goes server to client.
+func DecodeMonsterSpawned(data []byte) (*MonsterSpawned, error) {
+	snap, rest, err := decodeMonsterSnapshot(data)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding MonsterSpawned: %w", err)
+	}
+	heading, _, err := decodeFloat32(rest)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding MonsterSpawned: heading: %w", err)
+	}
+	return &MonsterSpawned{Monster: *snap, Heading: heading}, nil
+}
+
+// monsterSpawnPush is cmd/server's -monster-spawn-push, OFF by default. An
+// atomic because cmd/server sets it on the boot goroutine while the roster's
+// maintainMonster goroutines and the GM handler read it.
+var monsterSpawnPush atomic.Bool
+
+// SetMonsterSpawnPush turns the spawn push on or off. cmd/server calls it once
+// at boot, before the first spawn, with -monster-spawn-push.
+func SetMonsterSpawnPush(on bool) { monsterSpawnPush.Store(on) }
+
+// BroadcastMonsterSpawned sends monster id to every session in its zone as an
+// OpMonsterSpawned, when -monster-spawn-push is on; off, or for a monster that
+// is already gone, it sends nothing. cmd/server's maintainMonster calls it after
+// the first spawn and every respawn, and the GM console after each /spawn
+// (session/gm.go), the GM included.
+//
+// The record is read through Get at the send, not off the live record
+// SpawnSpecies returned (combat.Hub.SpawnSpecies: position and HP change under
+// the hub's lock). It takes no monster AI wire lock (monsterAI.wireLock),
+// which orders a list before the legs newer than it: a respawn is sent from
+// the goroutine that spawned it, while its brain's first leg waits out at least
+// one IDLE dwell (ai.DwellMs, 2001 ms or more), and a spawn push that did
+// arrive after a leg would find the body walking, which the client leaves
+// where it is drawn (unless it is past MonsterMotion.RESYNC_DISTANCE) and does
+// not turn (World3D._on_monster_spawned).
+func BroadcastMonsterSpawned(hub *world.Hub, monsters *combat.Hub, id int64) {
+	if !monsterSpawnPush.Load() || hub == nil || monsters == nil {
+		return
+	}
+	m, ok := monsters.Get(id)
+	if !ok {
+		return
+	}
+	msg := &MonsterSpawned{Monster: monsterSnapshotOf(m), Heading: float32(m.Heading)}
+	p := &proto.Packet{Opcode: OpMonsterSpawned, Data: msg.Encode()}
+	for _, e := range hub.EntitiesInZone(m.Zone) {
+		if e.Session == nil {
+			continue
+		}
+		_ = e.Session.Send(p)
+	}
+}
+
 // rollLoot rolls a kill's drops (real tables when the operator has supplied
 // them, own-design otherwise -- see dropsForKill) and adds what it won to
 // characterID's inventory, returning what actually landed. AddItem failures
@@ -781,11 +885,7 @@ func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.H
 	inZone := monsters.InZone(entity.Zone)
 	snapshots := make([]MonsterSnapshot, len(inZone))
 	for i, m := range inZone {
-		snapshots[i] = MonsterSnapshot{
-			ID: m.ID, Name: m.Name, CodeName: m.CodeName,
-			X: float32(m.X), Y: float32(m.Y), Z: float32(m.Z),
-			MaxHP: int32(m.MaxHP), HP: int32(m.HP), Level: int32(m.Level), Rarity: int32(m.Rarity),
-		}
+		snapshots[i] = monsterSnapshotOf(m)
 	}
 	if err := sess.Send(&proto.Packet{Opcode: OpMonsterListResult, Data: (&MonsterListResult{Monsters: snapshots}).Encode()}); err != nil || rt == nil {
 		return err

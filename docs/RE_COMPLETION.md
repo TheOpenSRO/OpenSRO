@@ -33387,3 +33387,145 @@ after the doc edits. The client is untouched, so `remote_godot.sh` was not neede
   expect no `counter from the result` line. `deploy/README.md` makes this a condition for turning
   the flag on.
 - The spawn push (0x007E) and its spawn-time heading. No server sends it yet.
+
+## Respawns and GM spawns pushed to the zone (OpMonsterSpawned 0x007E) with the hatch heading (round 542)
+
+This round builds the server half of round 540's spawn push. With the new flag on, a monster that
+has just appeared is sent to everyone in its zone at once as `OpMonsterSpawned 0x007E`. That covers
+the roster's first spawns and respawns and every monster a GM `/spawn` makes. The push carries the
+list's own record and the heading the monster hatched facing. The flag, `-monster-spawn-push`, is
+**off by default**. Off, nothing is sent and the wire is what it was, so the public server, which
+deploys `dev` automatically, sees no change. No existing opcode or layout changed. The client
+decode is round 540's, reused unchanged.
+
+**Grounding, re-checked for this round.**
+
+- **The spawn heading** is `Nest_Hatch`'s, re-read on the RE box (`/var/tmp/srv.asm`,
+  `objdump -s` of `SR_GameServer.exe`):
+  - The shape test runs `0x56098a..0x5609b4`, and the rarity test is `cmp BYTE PTR [edi+0x89],0x3`
+    at `0x5609b6`. A rarity-3 species jumps to the nest row's `+0x1c` word (`0x5609bf`); every
+    other species falls through to `0x5609ee`.
+  - At `0x5609ee`: `call 0x9dd338` (`rand()`); `fdiv` by the double at `0xb45af8`,
+    `0x40dfffc000000000` = 32767.0, rounded to a float (`0x560a01`); `fmul` by the double at
+    `0xb45c18`, `0x401921fb60000000` = 6.2831854820251465 (2pi at float precision); `fadd` of the
+    double at `0xb45ab0` (0.0); `fstp` to a float at `0x560a15`.
+  - So the heading lies in [0, 2pi]. It is 2pi itself when `rand()` returns 32767. The plan's
+    test said "[0, 2pi)", which is off by that endpoint; the tests check [0, 2pi].
+  - `docs/protocol/monster_ai.md`, "The `_RefNest` row", row 8, says the same. `ai.SpawnHeading`
+    already implemented it (round 536).
+- **The pattern** is the ground-item spawn push (`OpGroundItemSpawned 0x006c`, `dropKillLoot`,
+  `docs/protocol/ground_items.md`): one packet to every session in `hub.EntitiesInZone`, with a
+  failed write left to that session's own reader.
+- **0x007E was free on the server.** At the base commit it appeared in no non-test Go file under
+  `server/`. Two probes found only `combat_test.go`'s `readReply`: `git grep -i "0x007e\|OpMonsterSpawned"`
+  and `git grep -iE "uint16 = 0x0*7e\b|= 126\b"`. The layout and the 55-byte fixture are the
+  ones in `monster_ai.md`'s table, which the client has decoded since round 540.
+
+**Wired.**
+
+- **`internal/combat`**: `Monster.Heading`, and `Hub.SetSpawnHeadingRoll`. `SpawnSpecies` draws the
+  heading from the hub's roll under the hub's lock, once per spawn, and it never changes after
+  that. A hub given no roll hatches at 0; only tests build one.
+- **`internal/session/combat.go`**:
+  - `OpMonsterSpawned` (0x007e), `MonsterSpawned` with `Encode` (the list record, then an f32
+    heading), and `DecodeMonsterSpawned`, which only tests call. It refuses a cut record or
+    heading, as the client does.
+  - `monsterSnapshotOf`, which `handleMonsterList` now uses for every list record. The list's
+    bytes do not change, and `TestMonsterListWithoutTheAIIsTheOldReply` still passes.
+  - The flag, `monsterSpawnPush` (an atomic), and `SetMonsterSpawnPush`.
+  - `BroadcastMonsterSpawned(hub, monsters, id)`. It reads the monster through `Get` when it sends,
+    and sends to its zone. It sends nothing when the flag is off or the monster is gone.
+- **`internal/session/monsterai.go`**: `newBrain` adopts `Monster.Heading` instead of drawing
+  `ai.SpawnHeading` from the runtime's rng. The pushed heading and the brain's first heading are
+  now one number. The seeded AI tests replay different sequences and all still pass.
+- **`internal/gm`**: `Result.SpawnedMonsterIDs`, filled by `/spawn` in spawn order.
+- **`internal/session/gm.go`**: after the GM's reply, one `BroadcastMonsterSpawned` for each of
+  those ids. The whole zone gets them, the GM included, and they are sent whether or not the reply
+  went out.
+- **`cmd/server`**:
+  - `-monster-spawn-push` (env `SRREVAMP_MONSTER_SPAWN_PUSH` via `envBool`; a value that does not
+    parse leaves it off with a WARN), with its boot line.
+  - The heading roll (`ai.SpawnHeading` over its own rng), installed right after the hub is built.
+  - The flag set before the roster's first spawn.
+  - `maintainMonster` takes a `spawned` callback and calls it after the first spawn and every
+    respawn. `main` passes `session.BroadcastMonsterSpawned`.
+- **Docs:**
+  - `server/README.md`'s flag row.
+  - `deploy/README.md`, the new section "Monster spawn push (off by default)".
+  - `monster_ai.md`: the protocol intro, the table row, "The strike and spawn pushes", the new
+    subsection "The spawn push's server half (round 542)", and the runtime's step 2 (the brain's
+    heading).
+  - `SYSTEMS.md`'s Monster AI row (anchor `BroadcastMonsterSpawned`).
+  - `TODO.md`: the monster AI list, and the tester tools' item (3), a GM `/spawn` seen only on the
+    next list, struck through.
+  - `combat_test.go`'s `readReply` names `OpMonsterSpawned` instead of the bare 0x007e.
+
+**Plan items answered.**
+
+- **The split**: the client decode rode round 540, and the unknown-id pull shipped in round 533's
+  client. This round is the server half only, behind its own flag.
+- **An exported session helper, tested directly** (the finding that `main.go` cannot be driven by
+  a test): `BroadcastMonsterSpawned` is what both `maintainMonster` and the GM console call. The
+  session tests drive it. `maintainMonster`'s own callback is also covered, by a test in
+  `cmd/server/main_test.go`.
+- **The heading moved to spawn time**, with an injected roll, and the brain adopts it.
+- **Relabelled**: the donwhang cases are controls. The reds are "Bram, in jangan, receives it" for
+  a respawn and for a GM `/spawn`.
+
+**Tests.**
+
+- `server/internal/session/monsterai_test.go`:
+  - `TestMonsterSpawnedMatchesTheClientFixture`: `Encode` gives the 55-byte fixture byte for byte
+    (monster 31 "Mob" / `MOB_TEST` at (100, 0, -200), 100/100, level 1, rarity 0, heading pi/2).
+    The record equals an `OpMonsterListResult` record, it round-trips, and 54 or 40 bytes are
+    refused.
+  - `TestMonsterSpawnedOpcode`: 0x007E collides with nothing in the block.
+  - `TestMonsterRespawnReachesTheZone`, **the red**. It runs over TCP on in-memory stores, with
+    Aria and Bram in jangan and Cyra in donwhang, and the flag on. A Mangyang spawned under a
+    seeded `Nest_Hatch` roll is handed to `BroadcastMonsterSpawned`. Bram and Aria each receive
+    exactly one push before their next list, with the new id, the list's own record for it, and
+    the drawn heading, in [0, 2pi]. Controls: Cyra gets none, and a monster killed before its push
+    is due sends nothing to anyone.
+  - `TestMonsterSpawnPushOffIsTheOldWire`: the default-off control; nobody receives anything.
+  - `TestMonsterAIBrainStartsFromTheSpawnHeading`: a roll that answers 1.25 gives a brain facing
+    1.25 after its first tick.
+- `server/internal/session/gm_test.go`, `TestGMSpawnReachesTheZone`, **the GM red**. Aria (a GM)
+  runs `/spawn Mangyang 3`. Her reply comes first, then three pushes in spawn order, each with its
+  drawn heading and an id the reply names. Bram receives the same three, and Cyra none.
+  `monsterstrike_test.go`'s `startStrikeZone` gained the world hub and optional extra handlers for
+  this.
+- `server/internal/combat/combat_test.go`, `TestSpawnSpeciesRollsTheHatchHeading`: one roll per
+  spawn, carried by `Get`'s copy; no roll gives 0.
+- `server/internal/gm/gm_test.go`, `TestSpawnAndKill`: `SpawnedMonsterIDs` names the three, in
+  order; the default-count spawn names one; every refused `/spawn` names none.
+- `server/cmd/server/main_test.go`, `TestMaintainMonsterReportsEverySpawn`: the first spawn and,
+  after its death, the respawn reach the callback with ids the hub holds. It waits out the 10 s
+  `respawnDelay` and runs for about 12 s, in parallel with the package's other tests.
+
+Negatives proved:
+
+| production change | test | result |
+|---|---|---|
+| the six production files stashed | every new test | does not build (`undefined: OpMonsterSpawned`, `m.Heading undefined`, `res.SpawnedMonsterIDs undefined`, `maintainMonster` wants 4 arguments) |
+| only `BroadcastMonsterSpawned`'s send loop removed | `TestMonsterRespawnReachesTheZone` | FAIL: "Bram, in jangan, received 0 OpMonsterSpawned before the list (packets []), want exactly 1" |
+| same | `TestGMSpawnReachesTheZone` | FAIL: "Aria, in jangan, received 0 OpMonsterSpawned, want 3" |
+| same | `TestMonsterSpawnPushOffIsTheOldWire`, the fixture and opcode tests | PASS (controls) |
+| only the GM handler's broadcast loop removed | `TestGMSpawnReachesTheZone` | FAIL: "Aria, in jangan, received 0 OpMonsterSpawned, want 3" |
+| `newBrain` drawing `ai.SpawnHeading(a.rng)` again | `TestMonsterAIBrainStartsFromTheSpawnHeading` | FAIL: "the brain faces 4.867853090245093, want the hatch heading 1.25" |
+| `maintainMonster`'s callback call removed | `TestMaintainMonsterReportsEverySpawn` | FAIL: "no first spawn reported within 2s" |
+| `SpawnSpecies`'s roll removed | `TestSpawnSpeciesRollsTheHatchHeading` | FAIL: "headings 0, 0 after 0 rolls, want 1.5 and 4.25 after 2" |
+
+Every test passed again once its file was restored. The new session tests pass under `-race`
+(`-count=5`). `cd server && go build ./... && go test -count=1 -p 1 ./...` is green, and was re-run
+after the doc edits. The client is untouched, so `remote_godot.sh` was not needed.
+
+**Not done here.**
+
+- **The live check** against a server built from this tree with the flag on. This session was not
+  allowed to write to the render box. The command and what to expect are in `monster_ai.md`,
+  "The spawn push's server half (round 542)": one `World3D: monster <id> spawned (push)` line,
+  without `(already drawn)`, for each jangan respawn the server logs. `deploy/README.md` makes the
+  check a condition for turning the flag on.
+- **A stale client comment**: `client/scripts/net/combat.gd` still says no server sends 0x007D or
+  0x007E. Round 541 already made that stale for 0x007D. It is left for the next client round,
+  because this round does not touch the client.

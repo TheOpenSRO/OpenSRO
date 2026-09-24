@@ -113,8 +113,8 @@ func (s stubCombatItems) GetMaxStack(_ context.Context, id int64) (int, error) {
 // readReply reads the next packet on r that is not one of the monster pushes,
 // which can reach any session in a zone between a request and its reply and
 // are no request's reply: OpMonsterMoved 0x007C, OpMonsterAttacked 0x007D,
-// 0x007E (OpMonsterSpawned, which round 540's client decodes and no server
-// sends yet) and OpMonsterMotionList 0x007F. Round 541: with the strike push
+// OpMonsterSpawned 0x007E (round 542, behind -monster-spawn-push) and
+// OpMonsterMotionList 0x007F. Round 541: with the strike push
 // on, a counter's OpAttackResult is followed by an OpMonsterAttacked to the
 // attacker too, and a helper that reads exactly one packet per request would
 // take that push as the next request's reply.
@@ -127,7 +127,7 @@ func readReply(t *testing.T, conn net.Conn, r *bufio.Reader) *proto.Packet {
 			t.Fatalf("Read: %v", err)
 		}
 		switch p.Opcode {
-		case OpMonsterMoved, OpMonsterAttacked, 0x007e, OpMonsterMotionList:
+		case OpMonsterMoved, OpMonsterAttacked, OpMonsterSpawned, OpMonsterMotionList:
 			continue
 		}
 		return p

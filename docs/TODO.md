@@ -196,8 +196,12 @@ In order. Each is checked off here when it ships in a release, with its round in
         (`deploy/README.md`, "Monster strike push (off by default)"). What is left for it: its
         render-box live check, whose command and expectations are in `monster_ai.md`, "The strike
         push's server half (round 541)", and then turning it on once a client release that
-        carries round 540 is published. The spawn push (0x007E) is still unsent; it goes behind
-        its own default-off flag.
+        carries round 540 is published. **Round 542 built the spawn push's server half**
+        (`session.BroadcastMonsterSpawned`: every roster respawn and GM `/spawn`, with the hatch
+        heading rolled at the spawn) behind `-monster-spawn-push`, also off by default
+        (`deploy/README.md`, "Monster spawn push (off by default)"). What is left for it is the
+        same: its live check (`monster_ai.md`, "The spawn push's server half (round 542)"), then
+        turning it on with that client release.
       - **mob-battle-chase**: the chase to the round-247 band at the run speed and the monster's
         own swing on its timer (after mob-battle-rules reads that timer), with the engine's `0x27`
         and `0x23` exits. It replaces the interim hold and its keep-up release, and retires the
@@ -579,8 +583,11 @@ mechanism rather than with a deletion.
 `docs/DEBUG_TOOLS.md` and `docs/rounds/debug.md`. Left out of that lane: (1) the original's help
 dialogs / web panel were not recovered — the Help window's interior is ours inside the authored
 `ifgameguide` frame; (2) `/give` by item *code* is client-side only (the server's item table has no
-code column), so a code the client has not loaded is refused; (3) a GM `/spawn` reaches other
-clients only on their next monster list (there is no spawn broadcast); (4) ~~`client/docs/RELEASE_NOTES.md`
+code column), so a code the client has not loaded is refused; (3) ~~a GM `/spawn` reaches other
+clients only on their next monster list (there is no spawn broadcast)~~ — round 542 pushes each GM
+spawn to the zone as `OpMonsterSpawned 0x007E`, behind `-monster-spawn-push` (off by default until a
+client release that draws it is published; `deploy/README.md`, "Monster spawn push (off by
+default)"); (4) ~~`client/docs/RELEASE_NOTES.md`
 is a committed snapshot~~ — done at merge: the release workflow fetches tags and runs
 `bundle_docs.sh` before the export, and `internal/systems/bundled_docs_test.go` keeps the committed
 copies equal to `docs/`; (5) the GM run's `SRREVAMP_QA_COMMANDS` verification used frame ticks

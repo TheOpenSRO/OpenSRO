@@ -1156,14 +1156,16 @@ runtime", below). On 2026-09-23,
 0x007E ("The strike and spawn pushes", below); until round 541 neither appeared in any non-test
 file under `server/` (grep, 2026-09-24). Round 541 declared 0x007D in
 `server/internal/session/monsterstrike.go` and sends it only with its `-monster-strike-push` flag
-on, which is off by default ("The strike push's server half", below). No server sends 0x007E yet.
+on, which is off by default ("The strike push's server half", below). Round 542 declared 0x007E in
+`server/internal/session/combat.go` and sends it only with its own `-monster-spawn-push` flag on,
+which is off by default too ("The spawn push's server half", below).
 
 | op | dir | payload |
 |---|---|---|
 | `OpMonsterMoved 0x007c` | s→zone | s64 monster id, f32 x, f32 z (the server's position when it issued the move), f32 dest_x, f32 dest_z, f32 speed (world units per second), u8 mode (0 walk clip, 1 run clip) -- 29 bytes |
 | `OpMonsterMotionList 0x007f` | s→requester | u16 n, then n entries of {s64 id, f32 dest_x, f32 dest_z, f32 speed, u8 mode} (21 bytes each); sent right after an `OpMonsterListResult`, ONE packet per list |
 | `OpMonsterAttacked 0x007d` | s→zone, the attacker included | s64 monster id, s64 target character id, s32 damage (0 when blocked), u8 flags (bit 0 the monster's critical, bit 1 blocked, bit 2 the target died), s32 target HP after the blow (after a death, the HP it was put back on its feet with), s64 death exp lost -- 33 bytes; sent right AFTER the attacker's `OpAttackResult`, from the same goroutine, and after the zone's `OpMonsterDamaged` for the same swing; only with `-monster-strike-push` on (round 541) |
-| `OpMonsterSpawned 0x007e` | s→zone | one record in `OpMonsterListResult`'s own encoding (s64 id, u16-prefixed name, u16-prefixed code name, f32 x/y/z, u32 max HP, HP, level, rarity), then f32 heading (radians, srrevamp's world frame: from +x toward +z) |
+| `OpMonsterSpawned 0x007e` | s→zone | one record in `OpMonsterListResult`'s own encoding (s64 id, u16-prefixed name, u16-prefixed code name, f32 x/y/z, u32 max HP, HP, level, rarity), then f32 heading (radians, srrevamp's world frame: from +x toward +z); sent when a monster appears -- a roster respawn or a GM `/spawn` -- only with `-monster-spawn-push` on (round 542) |
 
 Fixtures, pinned by `client/scripts/net/combat_test.gd`:
 
@@ -1377,9 +1379,10 @@ front. How the retail client draws a `_CLON` row is not established.
 
 Two more of srrevamp's own placeholders, in the table above. Round 540 built the client half.
 **Round 541 built the strike push's server half** ("The strike push's server half (round 541)",
-below), behind `-monster-strike-push`, which is off by default. **No server sends the spawn push
-yet.** Each push has its own default-off flag, flipped only once a client that draws it has been
-released. Client: `CombatNet.decode_monster_attacked` /
+below), behind `-monster-strike-push`, which is off by default. **Round 542 built the spawn push's
+server half** ("The spawn push's server half (round 542)", below), behind `-monster-spawn-push`,
+also off by default. Each push has its own default-off flag, flipped only once a client that draws
+it has been released. Client: `CombatNet.decode_monster_attacked` /
 `decode_monster_spawned`, `NetClient`'s `monster_attacked` / `monster_spawned` signals,
 `scripts/world/monster_strikes.gd` (`MonsterStrikes`), and `World3D._on_monster_attacked` /
 `_on_monster_spawned`.
@@ -1559,6 +1562,108 @@ SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames 600`, with
 **Stand-ins:** none new. Every number is the counter's own, and the layout is srrevamp's own and
 additive.
 
+### The spawn push's server half (round 542)
+
+`session.BroadcastMonsterSpawned` (`server/internal/session/combat.go`) sends `OpMonsterSpawned`. It
+sends only when `cmd/server` runs with **`-monster-spawn-push`** (env `SRREVAMP_MONSTER_SPAWN_PUSH`,
+read like `SRREVAMP_MONSTER_AI`: a value that does not parse leaves it off with a WARN), which is
+**off by default**. With it off nothing is sent, and the wire is what it was before round 542. It
+does not depend on `-monster-ai` or `-monster-strike-push`. The boot log says which:
+`monster spawn push on: ...` or `monster spawn push off (-monster-spawn-push / SRREVAMP_MONSTER_SPAWN_PUSH)`.
+
+- **Who sends it.** `cmd/server`'s `maintainMonster` hands its first spawn and every respawn to a
+  `spawned` callback, and `main` passes `BroadcastMonsterSpawned`. The GM console sends one for each
+  monster a `/spawn` makes (`gm.Result.SpawnedMonsterIDs`, `session/gm.go`), to the whole zone, the
+  GM included, right after the GM's own reply. Until this round a GM `/spawn` reached the other
+  players only on their next monster list (`docs/TODO.md`, the tester tools' item (3)).
+- **The record** is the list's own. `BroadcastMonsterSpawned` reads the monster through
+  `combat.Hub.Get` when it sends, not off the live record `SpawnSpecies` returned, whose position
+  and HP change under the hub's lock. It encodes it with `monsterSnapshotOf`, the function
+  `handleMonsterList` now uses for every list record. A monster that is already gone sends nothing.
+- **The heading is rolled at the spawn.** `combat.Hub.SpawnSpecies` draws `Monster.Heading` from the
+  hub's roll (`SetSpawnHeadingRoll`), under the hub's lock, and it never changes after that. Before
+  the first spawn, `cmd/server` installs `ai.SpawnHeading` over an rng of its own. That is
+  `Nest_Hatch`'s heading for every species of the roster's TypeID shape whose rarity is not 3
+  (`0x5609ee..0x560a15`, re-read on the RE box in round 542):
+  - `call 0x9dd338` (the CRT's `rand()`);
+  - `fdiv` by the double at `0xb45af8`, `0x40dfffc000000000` = 32767.0, then a round to a float;
+  - `fmul` by the double at `0xb45c18`, `0x401921fb60000000` = 6.2831854820251465, which is 2pi
+    rounded to a float and widened back;
+  - `fadd` of the double at `0xb45ab0`, 0.0;
+  - `fstp` to a float at `0x560a15`.
+
+  So the heading lies in [0, 2pi], and it is 2pi itself when `rand()` returns 32767.
+- **The brain adopts it.** The monster AI's `newBrain` starts from `Monster.Heading` instead of
+  drawing `ai.SpawnHeading` from its own rng, so the pushed heading and the brain's first heading are
+  the same number. The brain's rng draws one value fewer per monster, which changes the sequences the
+  seeded AI tests replay; they all still pass.
+- **The frame** is srrevamp's world frame, radians from +x toward +z (`internal/ai/wander.go`), never
+  an engine angle. The client faces the body along (cos h, sin h) (`MonsterMotion.heading_dir`, "The
+  strike and spawn pushes" above).
+- **The pattern** is the ground-item spawn push (`OpGroundItemSpawned 0x006c`,
+  `docs/protocol/ground_items.md`): one packet to every session in the zone, and a failed write is
+  left to that session's own reader.
+- **No motion wire lock.** `monsterAI.wireLock` makes sure a list reaches a client before any leg
+  that is newer than it. A respawn's push goes out from the goroutine that spawned it, and its
+  brain's first leg waits out at least one IDLE dwell (`ai.DwellMs`, 2001 ms or more). A push that
+  did arrive after a leg would find the body walking. The client leaves a walking body where it is
+  drawn (unless it is past `RESYNC_DISTANCE`) and does not turn it (`World3D._on_monster_spawned`).
+
+**Tests** (over TCP, in-memory stores; Aria and Bram in jangan, Cyra moved to donwhang, the strike
+push's zone):
+
+- `TestMonsterSpawnedMatchesTheClientFixture`: the encoder gives the client's 55-byte fixture above,
+  and its record is byte for byte an `OpMonsterListResult` record. It round-trips, and 54 or 40
+  bytes are refused. `TestMonsterSpawnedOpcode`: 0x007E collides with no other session opcode.
+- `TestMonsterRespawnReachesTheZone`. **This is the red.** With the flag on, a Mangyang spawned in
+  jangan and handed to `BroadcastMonsterSpawned`, the way `maintainMonster` hands every spawn,
+  reaches Bram and Aria before their next list: exactly one push each, with the new id, the list's
+  own record for it and the heading the hub's Nest_Hatch roll drew, in [0, 2pi]. With only the send
+  removed, Bram receives 0 and the test fails. Two controls pass before and after: Cyra, in
+  donwhang, receives none, and a monster killed before its push is due sends nothing to anyone.
+- `TestGMSpawnReachesTheZone` (`session/gm_test.go`), **the GM red**. Aria, a GM, runs
+  `/spawn Mangyang 3`. Her reply comes first, then three pushes in spawn order, each with its hatch
+  heading and an id the reply names. Bram receives the same three. With only the GM handler's
+  broadcast loop removed, the test fails ("Aria ... received 0 OpMonsterSpawned, want 3"). The
+  control: Cyra receives none.
+- `TestMonsterSpawnPushOffIsTheOldWire`, the default-off control: nobody receives anything.
+- `TestMonsterAIBrainStartsFromTheSpawnHeading`: a hub whose roll answers 1.25 gives a brain that
+  faces 1.25 after its first tick. With `newBrain` drawing its own again, it faced 4.87 and the test
+  failed.
+- `TestSpawnSpeciesRollsTheHatchHeading` (`internal/combat`): one roll per spawn, kept by `Get`'s
+  copy; a hub with no roll hatches at 0. `TestSpawnAndKill` (`internal/gm`): `SpawnedMonsterIDs`
+  names the monsters a `/spawn` made, in order, and a refused `/spawn` names none.
+- `TestMaintainMonsterReportsEverySpawn` (`cmd/server`): `maintainMonster` reports its first spawn,
+  and after that monster's death the respawn, with ids the hub holds. It waits out the 10 s
+  `respawnDelay`, so it runs for about 12 s.
+
+**The live check has not been run yet.** This session was not allowed to write to the render box.
+Run it before the flag is turned on for the public server, with a server built from the tree and
+the flag on in qa_shot's environment:
+`SRREVAMP_MONSTER_SPAWN_PUSH=1 SRREVAMP_QA_ATTACK_FAST=1 SRREVAMP_QA_ATTACK_NAME=Mangyang
+SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames 600`, with `SERVER_BIN=<that build>`.
+The client runs about 20x slower than the server (the time dilation under "The live checks",
+below), so a kill early in the run leaves time for its 10 s respawn. Expect:
+
+- the server log saying `monster spawn push on`;
+- for each jangan respawn after the client connected (a `monster spawned` server line), one client
+  line `World3D: monster <id> spawned (push) ...` for that id, **without** `(already drawn)`: the
+  kill had removed that id from the last list;
+- no SCRIPT ERROR.
+
+**Stand-ins:**
+
+- The layout is srrevamp's own and additive.
+- `respawnDelay` stays 10 s, under its existing disclosure (`cmd/server/main.go`; "The `_RefNest`
+  row", above).
+- A rarity-3 species would face its nest row's own direction (row 8, `wInitialDir`), which is in the
+  server database only. No roster species is rarity 3, so every monster takes the random heading.
+- The push is zone-wide, with no interest management, like every push here.
+- A client that stops reading its socket stalls the goroutine that sends to it, because
+  `gateway.Session.Send` has no write deadline: that species' `maintainMonster`, or the GM's
+  reader. The ground-item pushes, regen and the AI tick already stall the same way. The kill switch
+  is the mitigation.
+
 ## srrevamp's runtime: the monster AI tick (round 537)
 
 `server/internal/session/monsterai.go` runs the machine above over the live monsters. It runs only
@@ -1574,9 +1679,11 @@ in `deploy/README.md`, "Monster AI (off by default)".
 
 1. `combat.Hub.StepAll(dt)`, `dt` being the wall time since the last tick: the engine's mover with
    both clamps (round 536).
-2. A brain per live monster, in monster-id order. A new one starts in SPAWN facing `Nest_Hatch`'s
-   random heading (`ai.SpawnHeading`) and takes message `0x21`'s default, IDLE, at once. A brain
-   whose monster is gone is dropped.
+2. A brain per live monster, in monster-id order. A new one starts in SPAWN facing the heading its
+   monster hatched with (`combat.Monster.Heading`: `Nest_Hatch`'s random heading, `ai.SpawnHeading`,
+   rolled by the hub at the spawn since round 542, so the spawn push and the brain carry the same
+   one) and takes message `0x21`'s default, IDLE, at once. A brain whose monster is gone is
+   dropped.
 3. The blows since the last tick (below).
 4. Each brain's `OnUpdate`, once.
 5. The pushes the pass collected, sent after it and outside every lock.

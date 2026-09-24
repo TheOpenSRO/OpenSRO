@@ -232,7 +232,16 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 		if out.RefreshEquipment {
 			result.Refresh |= gmRefreshEquipment
 		}
-		return sess.Send(&proto.Packet{Opcode: OpGMCommandResult, Data: result.Encode()})
+		err = sess.Send(&proto.Packet{Opcode: OpGMCommandResult, Data: result.Encode()})
+		// A GM /spawn is pushed to the whole zone, the GM included, after the
+		// GM's own reply (round 542, behind -monster-spawn-push; off, nothing
+		// is sent). Until then the other players found it only on their next
+		// monster list. Sent whether or not the reply went out: the monsters
+		// exist either way.
+		for _, id := range out.SpawnedMonsterIDs {
+			BroadcastMonsterSpawned(hub, deps.Monsters, id)
+		}
+		return err
 	}
 }
 

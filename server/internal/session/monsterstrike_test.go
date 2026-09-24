@@ -183,12 +183,16 @@ func opcodesOf(pkts []*proto.Packet) []uint16 {
 // (TestShieldBlocksInCombat's, BlockRatioMin 100).
 type strikeZone struct {
 	chars              character.Store
+	hub                *world.Hub
 	monsters           *combat.Hub
 	aria, bram, cyra   *strikeClient
 	ariaChar, bramChar int64
 }
 
-func startStrikeZone(t *testing.T) *strikeZone {
+// startStrikeZone starts the zone. Each extra builds one more handler over
+// the zone's own stores and hubs, chained after the combat handler (round
+// 542's GM /spawn test adds the GM console this way).
+func startStrikeZone(t *testing.T, extra ...func(chars character.Store, hub *world.Hub, monsters *combat.Hub) gateway.Handler) *strikeZone {
 	t.Helper()
 	ctx := context.Background()
 	accounts := account.NewMemStore()
@@ -215,11 +219,15 @@ func startStrikeZone(t *testing.T) *strikeZone {
 	}
 	hub := world.NewHub()
 	monsters := combat.NewHub()
-	handle := gateway.Chain(
+	handlers := []gateway.Handler{
 		LoginHandler(accounts),
 		WorldHandler(chars, eq, hub),
 		CombatHandler(chars, eq, items, hub, monsters, quest.NewMemStore(), inv, skill.NewMemStore(), nil, nil, nil),
-	)
+	}
+	for _, build := range extra {
+		handlers = append(handlers, build(chars, hub, monsters))
+	}
+	handle := gateway.Chain(handlers...)
 	addr, cleanup := startTestServer(t, handle)
 	t.Cleanup(cleanup)
 
@@ -239,7 +247,7 @@ func startStrikeZone(t *testing.T) *strikeZone {
 		c.x, c.z = float64(ewr.X), float64(ewr.Z)
 		return c
 	}
-	z := &strikeZone{chars: chars, monsters: monsters, ariaChar: ids["Aria"], bramChar: ids["Bram"]}
+	z := &strikeZone{chars: chars, hub: hub, monsters: monsters, ariaChar: ids["Aria"], bramChar: ids["Bram"]}
 	z.aria = join("alice", "hunter2", "Aria")
 	z.bram = join("bob", "hunter3", "Bram")
 	z.cyra = join("cara", "hunter4", "Cyra")
