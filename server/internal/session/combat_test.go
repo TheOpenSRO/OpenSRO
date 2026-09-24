@@ -3,6 +3,7 @@ package session
 import (
 	"bufio"
 	"context"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -109,10 +110,37 @@ func (s stubCombatItems) GetMaxStack(_ context.Context, id int64) (int, error) {
 	return 100, nil
 }
 
+// readReply reads the next packet on r that is not one of the monster pushes,
+// which can reach any session in a zone between a request and its reply and
+// are no request's reply: OpMonsterMoved 0x007C, OpMonsterAttacked 0x007D,
+// 0x007E (OpMonsterSpawned, which round 540's client decodes and no server
+// sends yet) and OpMonsterMotionList 0x007F. Round 541: with the strike push
+// on, a counter's OpAttackResult is followed by an OpMonsterAttacked to the
+// attacker too, and a helper that reads exactly one packet per request would
+// take that push as the next request's reply.
+func readReply(t *testing.T, conn net.Conn, r *bufio.Reader) *proto.Packet {
+	t.Helper()
+	for {
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		p, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		switch p.Opcode {
+		case OpMonsterMoved, OpMonsterAttacked, 0x007e, OpMonsterMotionList:
+			continue
+		}
+		return p
+	}
+}
+
 // TestCombatFullFlow logs in, enters the world, equips a weapon, then
 // attacks a monster until it dies, confirming damage/HP/gold-reward
 // behavior -- all through the real server stack over TCP.
 func TestCombatFullFlow(t *testing.T) {
+	// The strike push on (round 541): readReply skips the OpMonsterAttacked
+	// that now follows each counter, and the numbers below must not move.
+	strikePushForTest(t, true)
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")
@@ -178,12 +206,7 @@ func TestCombatFullFlow(t *testing.T) {
 		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
-		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r, nil, nil)
-		if err != nil {
-			t.Fatalf("Read: %v", err)
-		}
-		return resp
+		return readReply(t, conn, r)
 	}
 
 	resp := send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
@@ -253,6 +276,9 @@ func TestCombatFullFlow(t *testing.T) {
 // reduced by the real defender's equipped armor pieces (equipment.ArmorSlots)
 // summed via PhysDefenseMax, with a floor of 1 damage.
 func TestCombatArmorMitigation(t *testing.T) {
+	// The strike push on (round 541): readReply skips the OpMonsterAttacked
+	// that now follows each counter, and the numbers below must not move.
+	strikePushForTest(t, true)
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")
@@ -331,12 +357,7 @@ func TestCombatArmorMitigation(t *testing.T) {
 		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
-		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r, nil, nil)
-		if err != nil {
-			t.Fatalf("Read: %v", err)
-		}
-		return resp
+		return readReply(t, conn, r)
 	}
 
 	resp := send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
@@ -666,6 +687,9 @@ func TestMonsterListFlow(t *testing.T) {
 //	               player -- by 10, which is exactly the cap: 15 * 1.30 = 19.5,
 //	               rounded to 20.
 func TestLevelAdvantageAppliedInCombat(t *testing.T) {
+	// The strike push on (round 541): readReply skips the OpMonsterAttacked
+	// that now follows each counter, and the numbers below must not move.
+	strikePushForTest(t, true)
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")
@@ -732,12 +756,7 @@ func TestLevelAdvantageAppliedInCombat(t *testing.T) {
 		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
-		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r, nil, nil)
-		if err != nil {
-			t.Fatalf("Read: %v", err)
-		}
-		return resp
+		return readReply(t, conn, r)
 	}
 
 	if lr, err := DecodeLoginResult(send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
@@ -770,6 +789,9 @@ func TestLevelAdvantageAppliedInCombat(t *testing.T) {
 // the character read is missing. A level-11 character killed by a monster
 // loses exp_unit(11) * 100 = 259 * 100 = 25,900 experience and keeps its level.
 func TestDeathPenaltyAppliedInCombat(t *testing.T) {
+	// The strike push on (round 541): readReply skips the OpMonsterAttacked
+	// that now follows each counter, and the numbers below must not move.
+	strikePushForTest(t, true)
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")
@@ -848,12 +870,7 @@ func TestDeathPenaltyAppliedInCombat(t *testing.T) {
 		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
-		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r, nil, nil)
-		if err != nil {
-			t.Fatalf("Read: %v", err)
-		}
-		return resp
+		return readReply(t, conn, r)
 	}
 	if lr, err := DecodeLoginResult(send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
 		t.Fatalf("login failed: err=%v result=%+v", err, lr)
@@ -928,6 +945,9 @@ func TestPlayerMitigationPercentIsRecoveredZero(t *testing.T) {
 // against no armour, doubled to 30, and the monster and player are the same
 // level so no level term applies.
 func TestMonsterCriticalAppliedInCombat(t *testing.T) {
+	// The strike push on (round 541): readReply skips the OpMonsterAttacked
+	// that now follows each counter, and the numbers below must not move.
+	strikePushForTest(t, true)
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")
@@ -993,12 +1013,7 @@ func TestMonsterCriticalAppliedInCombat(t *testing.T) {
 		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
-		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r, nil, nil)
-		if err != nil {
-			t.Fatalf("Read: %v", err)
-		}
-		return resp
+		return readReply(t, conn, r)
 	}
 	if lr, err := DecodeLoginResult(send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
 		t.Fatalf("login failed: err=%v result=%+v", err, lr)
@@ -1127,6 +1142,9 @@ func TestPlayerCriticalAppliedInCombat(t *testing.T) {
 // Block ratio 100 is a certainty under the recovered roll, so this is
 // deterministic. The monster would otherwise hit for 15.
 func TestShieldBlocksInCombat(t *testing.T) {
+	// The strike push on (round 541): readReply skips the OpMonsterAttacked
+	// that now follows each counter, and the numbers below must not move.
+	strikePushForTest(t, true)
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")
@@ -1196,12 +1214,7 @@ func TestShieldBlocksInCombat(t *testing.T) {
 		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
-		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r, nil, nil)
-		if err != nil {
-			t.Fatalf("Read: %v", err)
-		}
-		return resp
+		return readReply(t, conn, r)
 	}
 	if lr, err := DecodeLoginResult(send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
 		t.Fatalf("login failed: err=%v result=%+v", err, lr)

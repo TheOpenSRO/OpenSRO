@@ -1153,14 +1153,16 @@ runtime", below). On 2026-09-23,
 0x007C..0x007F appeared in no non-test file under `server/internal/session`,
 `server/internal/proto` or `client/scripts/net`. Round 536 declared the two in
 `server/internal/session/monstermove.go` (below). Round 540 gave the client two more, 0x007D and
-0x007E, which no server sends yet ("The strike and spawn pushes", below); on 2026-09-24 neither
-appeared in any non-test file under `server/`.
+0x007E ("The strike and spawn pushes", below); until round 541 neither appeared in any non-test
+file under `server/` (grep, 2026-09-24). Round 541 declared 0x007D in
+`server/internal/session/monsterstrike.go` and sends it only with its `-monster-strike-push` flag
+on, which is off by default ("The strike push's server half", below). No server sends 0x007E yet.
 
 | op | dir | payload |
 |---|---|---|
 | `OpMonsterMoved 0x007c` | s→zone | s64 monster id, f32 x, f32 z (the server's position when it issued the move), f32 dest_x, f32 dest_z, f32 speed (world units per second), u8 mode (0 walk clip, 1 run clip) -- 29 bytes |
 | `OpMonsterMotionList 0x007f` | s→requester | u16 n, then n entries of {s64 id, f32 dest_x, f32 dest_z, f32 speed, u8 mode} (21 bytes each); sent right after an `OpMonsterListResult`, ONE packet per list |
-| `OpMonsterAttacked 0x007d` | s→zone, the attacker included | s64 monster id, s64 target character id, s32 damage (0 when blocked), u8 flags (bit 0 the monster's critical, bit 1 blocked, bit 2 the target died), s32 target HP after the blow (after a death, the HP it was put back on its feet with), s64 death exp lost -- 33 bytes; sent right AFTER the attacker's `OpAttackResult`, from the same goroutine |
+| `OpMonsterAttacked 0x007d` | s→zone, the attacker included | s64 monster id, s64 target character id, s32 damage (0 when blocked), u8 flags (bit 0 the monster's critical, bit 1 blocked, bit 2 the target died), s32 target HP after the blow (after a death, the HP it was put back on its feet with), s64 death exp lost -- 33 bytes; sent right AFTER the attacker's `OpAttackResult`, from the same goroutine, and after the zone's `OpMonsterDamaged` for the same swing; only with `-monster-strike-push` on (round 541) |
 | `OpMonsterSpawned 0x007e` | s→zone | one record in `OpMonsterListResult`'s own encoding (s64 id, u16-prefixed name, u16-prefixed code name, f32 x/y/z, u32 max HP, HP, level, rarity), then f32 heading (radians, srrevamp's world frame: from +x toward +z) |
 
 Fixtures, pinned by `client/scripts/net/combat_test.gd`:
@@ -1373,16 +1375,19 @@ front. How the retail client draws a `_CLON` row is not established.
 
 ### The strike and spawn pushes (round 540: the client half)
 
-Two more of srrevamp's own placeholders, in the table above. **No server sends either yet.** The
-server half comes next, each push behind its own default-off flag, flipped only once a client that
-draws them has been released. Client: `CombatNet.decode_monster_attacked` /
+Two more of srrevamp's own placeholders, in the table above. Round 540 built the client half.
+**Round 541 built the strike push's server half** ("The strike push's server half (round 541)",
+below), behind `-monster-strike-push`, which is off by default. **No server sends the spawn push
+yet.** Each push has its own default-off flag, flipped only once a client that draws it has been
+released. Client: `CombatNet.decode_monster_attacked` /
 `decode_monster_spawned`, `NetClient`'s `monster_attacked` / `monster_spawned` signals,
 `scripts/world/monster_strikes.gd` (`MonsterStrikes`), and `World3D._on_monster_attacked` /
 `_on_monster_spawned`.
 
 **What the strike push carries.** A counterattack is resolved in `performAttack`
 (`server/internal/session/combat.go`, the branch after `combat.Hub.CounterattackReady`; rounds 254
-and 505), and today it reaches only the attacker, in that attack's `OpAttackResult`. The push
+and 505; since round 541 that branch calls `monsterStrike`, its old body moved unchanged). Without
+the push it reaches only the attacker, in that attack's `OpAttackResult`. The push
 repeats the same outcome to everyone in the zone: `PlayerDamageTaken` as the damage,
 `MonsterCritical`, `PlayerBlocked` and `PlayerDied` as the flags, `PlayerHP` as the target HP and
 `DeathExpLost`. So a push adds no new number. A counter that lands deals at least 1
@@ -1391,7 +1396,9 @@ repeats the same outcome to everyone in the zone: `PlayerDamageTaken` as the dam
 above 0 or its block flag is set (`MonsterStrikes.result_countered`).
 
 **The order the client relies on.** The server sends the attacker's result first, then the push to
-the zone with the attacker included, both from the goroutine that ran `performAttack`. The
+the zone with the attacker included, both from the goroutine that ran `performAttack`. (Round
+541's server sends the zone's `OpMonsterDamaged` between the two, but that goes to everyone except
+the attacker, so the attacker still gets the push right after its result.) The
 attacker's client draws the counter when its own blow lands (`lands_after`, the swing's hit
 event), which is when the pre-540 client drew it too:
 
@@ -1446,7 +1453,8 @@ cos; its x87 path runs `fcos` at `0x9fc11d`) and `FUN_004894b0` -> `0x009fbf80` 
 `0x9fbfed`). All of these were re-read on the RE box in round 540. The line
 `World3D: monster %d spawned (push)` is printed for each push.
 
-**Log lines for the live checks** (the server item runs them):
+**Log lines for the live checks** (the server item's check; not run yet, see "The strike push's
+server half (round 541)"):
 
 - Every push prints `World3D: monster %d strikes %d for %d (HP %d)`, followed by the flags and how
   it was taken: `own counter, drawn as the blow lands`, `own counter, already drawn from the
@@ -1483,6 +1491,73 @@ SRREVAMP_QA_ATTACK_NAME=Mangyang SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server -
 - The target's number is drawn over its head at the height the player's own number uses.
 - `SRREVAMP_QA_MOB_STRIKE=1` stands in for a server with the push. It sends each counter result's
   push through `NetClient._dispatch`, deferred to the end of the frame, with -1 for the target.
+
+### The strike push's server half (round 541)
+
+`server/internal/session/monsterstrike.go` sends `OpMonsterAttacked`. It is sent only when
+`cmd/server` runs with **`-monster-strike-push`** (env `SRREVAMP_MONSTER_STRIKE_PUSH`, read like
+`SRREVAMP_MONSTER_AI`: a value that does not parse leaves it off with a WARN), which is **off by
+default**. With it off nothing is sent, and the wire is what it was before round 541. It does not
+depend on `-monster-ai`. The boot log says which: `monster strike push on: ...` or
+`monster strike push off (-monster-strike-push / SRREVAMP_MONSTER_STRIKE_PUSH)`.
+
+- **The counter did not change.** `performAttack`'s counter branch moved unchanged into
+  `monsterStrike`. The function returns the outcome (damage, critical, blocked, died, HP, death exp
+  lost) instead of writing it into the result. `performAttack` copies the outcome into
+  `OpAttackResult` field for field, so the result is the same as before.
+- **The push** is built from that same outcome (`monsterStrikeOutcome.message`), with the
+  attacker's character id as the target. `pushMonsterStrike` sends it to every session in the
+  monster's zone, and the attacker is one of them.
+- **The order.** `performAttack` sends the push last. It comes after the attacker's
+  `OpAttackResult`, and after the zone's `OpMonsterDamaged` for the same swing, which goes to
+  everyone except the attacker. It is sent from the goroutine that ran the swing: a session reader
+  for a click or a cast, the keep-up goroutine for a repeat. So the attacker gets the push right
+  after its result, and the other players get the swing's damage before the monster's reply.
+- **When nothing is sent.** A kill has no counter, and neither does a blow inside the monster's
+  ReuseDelay, so neither sends a push.
+- **No motion wire lock.** `monsterAI.wireLock` makes sure a monster list reaches a client before
+  any motion push that is newer than it. The strike push carries no position, so it does not take
+  that lock. `gateway.Session.Send` is already safe to call from several goroutines.
+- **The fixture** above is pinned on both sides: by `TestMonsterAttackedMatchesTheClientFixture`
+  in Go, and by `combat_test.gd` in the client.
+
+**Tests** (`server/internal/session/monsterstrike_test.go`, over TCP, in-memory stores; Aria and
+Bram in jangan, Cyra moved to donwhang):
+
+- `TestMonsterCounterReachesTheZone`. **This is the red.** With the flag on, Aria hits a Mangyang
+  whose counter is ready. Bram, in the same zone, receives exactly one `OpMonsterAttacked`, after
+  that swing's `OpMonsterDamaged`. Aria receives exactly one, as the very next packet after her
+  result. Both are equal to the counter her result reports. With only the push call removed from
+  `performAttack`, Bram receives nothing and the test fails. Two controls pass before and after: Cyra, in donwhang, receives
+  none, and a second blow inside the Mangyang's 3000 ms ReuseDelay draws no counter and sends
+  nothing to anyone.
+- `TestMonsterStrikePushCarriesTheFlags`. A killing critical on Aria (level 11) reaches Bram with
+  flags 0x05, her respawn HP and the 25900 experience it cost her, as her result reports them.
+  Bram's shield, which always blocks, blocks a counter, and Aria receives that push with bit 1 set
+  and 0 damage, on Bram.
+- `TestMonsterStrikePushOffIsTheOldWire`. This is the default-off control. Aria gets her result
+  and nothing after it. Bram gets only `OpMonsterDamaged`, and Cyra gets nothing.
+- The six counter-driven tests in `combat_test.go` now run with the push on. They read through
+  `readReply`, which skips 0x007C..0x007F, and their numbers are unchanged. Without `readReply`,
+  `TestCombatFullFlow` and `TestCombatArmorMitigation` fail, because their second attack reads
+  the first counter's push as its result.
+
+**The live check has not been run yet**: round 541's session was not allowed to write to the
+render box. Run it before the flag is turned on for the public server. Use a server built from the
+tree, with the flag on in qa_shot's environment. qa_shot passes its environment to the server it
+starts:
+`SRREVAMP_MONSTER_STRIKE_PUSH=1 SRREVAMP_QA_ATTACK_FAST=1 SRREVAMP_QA_ATTACK_NAME=Mangyang
+SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames 600`, with
+`SERVER_BIN=<that build>`. Expect:
+
+- one `World3D: monster %d strikes %d for %d (HP %d)` line for **every** counter result, blocked
+  ones included;
+- no `counter from the result (no push)` line;
+- no SCRIPT ERROR;
+- and the server log saying `monster strike push on`.
+
+**Stand-ins:** none new. Every number is the counter's own, and the layout is srrevamp's own and
+additive.
 
 ## srrevamp's runtime: the monster AI tick (round 537)
 

@@ -480,12 +480,23 @@ func main() {
 			"each move pushed to the zone. Default OFF, and the kill switch: off, no monster moves "+
 			"and the wire is what it was. Needs a client that draws OpMonsterMoved (v0.1.435 or "+
 			"later). See deploy/README.md, \"Monster AI (off by default)\".")
+	strikePushEnv, strikePushEnvErr := envBool("SRREVAMP_MONSTER_STRIKE_PUSH")
+	strikePush := flag.Bool("monster-strike-push", strikePushEnv,
+		"push a monster's counterattack to its whole zone, the attacker included (env "+
+			"SRREVAMP_MONSTER_STRIKE_PUSH): OpMonsterAttacked 0x007D, sent after the attacker's "+
+			"OpAttackResult, so everyone sees the blow. Default OFF: off, nothing is sent and the wire "+
+			"is what it was. Needs a client release that carries round 540. See deploy/README.md, "+
+			"\"Monster strike push (off by default)\".")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	if monsterAIEnvErr != nil {
 		logger.Warn("SRREVAMP_MONSTER_AI is not a boolean; the monster AI stays off unless -monster-ai is given",
 			"err", monsterAIEnvErr)
+	}
+	if strikePushEnvErr != nil {
+		logger.Warn("SRREVAMP_MONSTER_STRIKE_PUSH is not a boolean; the strike push stays off unless -monster-strike-push is given",
+			"err", strikePushEnvErr)
 	}
 
 	// Install the EXP curve if the operator provided one. Game data, so never
@@ -863,6 +874,16 @@ func main() {
 			session.MonsterAITick, session.MonsterRoamRadius))
 	} else {
 		logger.Info("monster AI off (-monster-ai / SRREVAMP_MONSTER_AI)")
+	}
+
+	// The strike push (round 541), behind its own flag and independent of the
+	// AI: a monster's counterattack is sent to its zone as OpMonsterAttacked.
+	// Set here, before the gateway serves, like the AI above.
+	session.SetMonsterStrikePush(*strikePush)
+	if *strikePush {
+		logger.Info("monster strike push on: OpMonsterAttacked 0x007D to the zone after each counterattack")
+	} else {
+		logger.Info("monster strike push off (-monster-strike-push / SRREVAMP_MONSTER_STRIKE_PUSH)")
 	}
 
 	// The GM console (docs/DEBUG_TOOLS.md). The gate is the account-username

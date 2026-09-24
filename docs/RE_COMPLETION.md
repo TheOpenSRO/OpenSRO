@@ -33260,3 +33260,130 @@ SRREVAMP_QA_ATTACK_NAME=Mangyang SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server -
   count `strikes` lines against every counter result, blocked ones included, and expect no
   `counter from the result` lines.
 - A spawn push has not been seen live, because nothing sends one.
+
+## The monster's blow becomes a zone push, behind -monster-strike-push (default off) (round 541)
+
+This round builds the server half of round 540's strike push. With the new flag on, a monster's
+counterattack is sent to everyone in its zone as `OpMonsterAttacked 0x007D`, the attacker included,
+after the attacker's `OpAttackResult`. The flag is **off by default**. Off, nothing is sent and the
+wire is what it was, so the public server, which deploys `dev` automatically, sees no change. The
+flag is to be flipped only once a client release that carries round 540 is out. No existing opcode
+or layout changed.
+
+**Grounding, re-checked for this round.**
+
+- **The counter pipeline** is `session/combat.go` `performAttack`, the branch after
+  `combat.Hub.CounterattackReady` (rounds 254 and 505). It was read in the current tree before the
+  move: `defenderArmor`, `defenderParryRate` and `monsterBlow`, then `resolveBlow`, then
+  `wearShield` / `wearArmour`, `chars.ApplyDamage`, `DeathPenaltyExp`, `RespawnHP`,
+  `keepUp.Cancel` and the MP refill. The push adds no number: every field is one the attacker's
+  result already carries.
+- **The push pattern** is the ground-item zone push (`dropKillLoot`, `docs/protocol/ground_items.md`):
+  one packet, sent to every session in `hub.EntitiesInZone`, with a failed write left to that
+  session's own reader. `OpDuelOpponentDamaged` (`session/duel.go`) is the direct-push precedent.
+  `gateway.Session.Send` takes the session's send mutex, so pushing from another session's
+  goroutine is safe.
+- **0x007D was free on the server.** Before this round it appeared in no non-test Go file under
+  `server/` (grep, 2026-09-24). The client has decoded it since round 540, and the 33-byte layout
+  and fixture are the ones in `docs/protocol/monster_ai.md`'s table.
+- **No new binary citation.** Every number is the existing counter's, and the layout is
+  srrevamp's own.
+
+**Wired.**
+
+- **New `server/internal/session/monsterstrike.go`:**
+  - `OpMonsterAttacked` (0x007d), `MonsterAttackedSize` (33), the flag bits `StrikeCritical` /
+    `StrikeBlocked` / `StrikeTargetDied`, `MonsterAttacked` with `Encode`, and
+    `DecodeMonsterAttacked`, which refuses a payload under 33 bytes and ignores bytes after the
+    33rd, as the client does.
+  - The flag: `monsterStrikePush` (an atomic) and `SetMonsterStrikePush`.
+  - `monsterStrike(ctx, strikeDeps, monster, characterID, playerLevel)`: `performAttack`'s counter
+    branch, moved **unchanged**. The only edits are that it writes to a `monsterStrikeOutcome`
+    instead of the result, and returns a zero outcome with each error. A diff of the moved body
+    against the old branch shows nothing else.
+  - `pushMonsterStrike`: when the flag is on, it sends to every session in the zone; when it is
+    off, it does nothing.
+- **`performAttack`** calls `monsterStrike` in the counter branch and copies the outcome into
+  `PlayerDamageTaken`, `MonsterCritical`, `PlayerBlocked`, `PlayerDied`, `PlayerHP` and
+  `DeathExpLost`. It then sends the push **last**: after the attacker's result, and after the
+  zone's `OpMonsterDamaged` for the same swing, which goes to everyone except the attacker. So the
+  attacker gets the push right after its result, which is the order round 540's `MonsterStrikes`
+  relies on. A kill has no counter and sends no push, and neither does a blow inside the ReuseDelay.
+- **`cmd/server`**: `-monster-strike-push` (env `SRREVAMP_MONSTER_STRIKE_PUSH` via `envBool`; a
+  value that does not parse leaves it off with a WARN). It is set before the gateway serves, and
+  the boot log reports `monster strike push on: ...` or `... off (...)`.
+- **Docs:**
+  - `server/README.md`'s flag table.
+  - `deploy/README.md`, the new section "Monster strike push (off by default)".
+  - `monster_ai.md`: the table row (the order, and that the push needs the flag), "The strike and
+    spawn pushes" (the server half now exists), and the new subsection "The strike push's server
+    half (round 541)".
+  - `SYSTEMS.md`'s Monster AI row (with the anchor `SetMonsterStrikePush`) and `TODO.md`.
+
+**Plan items answered.**
+
+- **Send order**: the result first, then the push, as the revision asked. This also answers the
+  blocking review finding.
+- **The `readReply` helper** is in `combat_test.go`. It skips 0x007C, 0x007D, 0x007E and 0x007F.
+  The six counter-driven tests (`TestCombatFullFlow`, `TestCombatArmorMitigation`,
+  `TestLevelAdvantageAppliedInCombat`, `TestDeathPenaltyAppliedInCombat`,
+  `TestMonsterCriticalAppliedInCombat`, `TestShieldBlocksInCombat`) read through it. They now run
+  **with the push on**, so the helper really has something to skip, and their numbers did not
+  move.
+  - The helper is `readReply(t, conn, r)`, not the plan's `readReply(r, want)`. The six tests'
+    `send()` does not know which reply it is waiting for, and the helper needs `t` and the
+    connection for the deadline.
+- **Relabelled**: the donwhang case and the inside-the-ReuseDelay case are controls. The red is
+  "Bram, in the same zone, receives exactly one 0x007D".
+
+**Tests** (`server/internal/session/monsterstrike_test.go`):
+
+- `TestMonsterAttackedMatchesTheClientFixture`. `Encode` gives the fixture in `monster_ai.md` and
+  `combat_test.gd` byte for byte (monster 7, character 42, 200, flags 0x05, 76 HP, 25900). The
+  round trip holds, 32 bytes are refused, a 34th byte is ignored, and a block is flags 0x02.
+- `TestMonsterAttackedOpcode`. The opcode is 0x007D, and it collides with nothing in the block.
+- `TestMonsterCounterReachesTheZone`. **The red.** It runs over TCP on in-memory stores, with Aria
+  and Bram in jangan and Cyra moved to donwhang, and the flag on.
+  - Aria hits a Mangyang whose counter is ready. Bram receives exactly one push, after
+    `OpMonsterDamaged`. Aria receives exactly one, as the very next packet after her result.
+  - Both pushes equal her result's counter, field for field, and they are equal to each other
+    byte for byte.
+  - Controls: Cyra receives none. A second blow inside the Mangyang's 3000 ms ReuseDelay reports no
+    counter and sends no push to anyone.
+- `TestMonsterStrikePushCarriesTheFlags`.
+  - A killing critical on Aria (level 11, the death-penalty test's table) reaches Bram with flags
+    0x05, her respawn HP and 259 x 100 = 25900 experience, as her result reports them.
+  - Bram's always-blocking shield blocks a counter. Aria receives that push with bit 1 set, 0
+    damage, and Bram as the target.
+- `TestMonsterStrikePushOffIsTheOldWire`. The default-off control: Aria gets her result and nothing
+  after it, Bram gets only `OpMonsterDamaged`, and Cyra gets nothing.
+- The 12 `PlayerDamageTaken` assertions in `combat_test.go` pass unchanged with the push on, and
+  with it forced off (a temporary edit, reverted).
+- The plan counted one more in `plainswing_test.go`. It is a comment on the fixture ("every swing
+  the monster survives costs the player 1"), not an assertion. That file's read loop already
+  skipped anything that is not a result, and its three tests pass with the push forced on (a
+  temporary edit, reverted).
+
+Negatives proved:
+
+| production change | test | result |
+|---|---|---|
+| `monsterstrike.go`, `combat.go`, `cmd/server/main.go` stashed | `TestMonsterCounterReachesTheZone` | does not build (`undefined: MonsterAttacked`, ...) |
+| only the `pushMonsterStrike` call removed from `performAttack` | `TestMonsterCounterReachesTheZone` | FAIL: "Bram, in the same zone, received 0 OpMonsterAttacked (packets [0x0062]), want exactly 1" |
+| same | `TestMonsterStrikePushCarriesTheFlags` | FAIL: "Bram received 0 OpMonsterAttacked, want 1" |
+| same | `TestMonsterStrikePushOffIsTheOldWire` | PASS (control) |
+| the six `send()` helpers back to one read per request, push on | `TestCombatFullFlow`, `TestCombatArmorMitigation` | FAIL: the second attack decodes the first counter's push as its result ("second hit (monster side): got ... MonsterRemainingHP:256 ...") |
+
+Every test passed again once its file was restored. The new tests and the six also pass under
+`-race`. `cd server && go build ./... && go test -count=1 -p 1 ./...` is green, and was re-run
+after the doc edits. The client is untouched, so `remote_godot.sh` was not needed.
+
+**Not done here.**
+
+- **The live check** against a server built from this tree with the flag on. Round 541's session
+  was not allowed to write to the render box, which ruled out uploading a server build and running
+  qa_shot. The command and what to expect are in `monster_ai.md`, "The strike push's server half
+  (round 541)". Count `strikes` lines against every counter result, blocked ones included, and
+  expect no `counter from the result` line. `deploy/README.md` makes this a condition for turning
+  the flag on.
+- The spawn push (0x007E) and its spawn-time heading. No server sends it yet.

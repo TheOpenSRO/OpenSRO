@@ -1112,6 +1112,9 @@ func performAttack(
 	}
 	var levelUp *LevelUp // set on a kill that crosses the exp curve, sent below
 	var killGold int64   // the kill's gold, dropped on the ground below when a ground hub exists
+	// The monster's counter as the zone push, set only when the monster struck
+	// back; sent last, below, and only with -monster-strike-push on.
+	var strike *MonsterAttacked
 
 	// A dead monster can't counterattack. A surviving one always hits
 	// back -- there's no dodge/evade system yet, see docs' open items.
@@ -1298,133 +1301,21 @@ func performAttack(
 		// in that skill's action and cannot strike again yet (combat.Hub.
 		// CounterattackReady). The player's blow landed; there is no reply.
 	} else {
-		armor, err := defenderArmor(ctx, characterID, eq, items)
+		// The monster strikes back: monsterStrike (monsterstrike.go) is this
+		// branch, moved there unchanged in round 541, and its outcome is copied
+		// into the result field for field, so the wire is what it was. The same
+		// outcome is the zone push below.
+		out, err := monsterStrike(ctx, strikeDeps{chars: chars, eq: eq, items: items, mp: mp}, monster, characterID, playerLevel)
 		if err != nil {
-			return fmt.Errorf("combat: reading armor: %w", err)
+			return err
 		}
-		// A monster attacks with its SKILL's damage range (characterdata col 83
-		// -> that skill's 'att' param), rolled the same way a weapon is. The
-		// flat disclosed Attack remains only for a monster with no range.
-		raw := monster.Attack
-		if monster.AttackMax > 0 {
-			// WHERE in that range the blow lands is the same centre-biased
-			// roll the player's attack takes, with the sides swapped: the
-			// monster's attack rate (2*level + 25) against the player's parry.
-			//
-			// Guarded the same way, and for the same reason: a player with no
-			// armour parry at all means an item table imported before itemdata
-			// col 68 existed, and treating that as a real zero would put every
-			// monster blow at the 90 % ceiling on exactly the deployments that
-			// have imported least.
-			parry, perr := defenderParryRate(ctx, characterID, eq, items)
-			if perr != nil {
-				parry = 0
-			}
-			raw = monsterBlow(monster, playerLevel, parry)
-		}
-		// The player's side of the SAME mitigation the monster gets, through
-		// the same function -- percentage term first, then the flat absorb.
-		// The player's percentage is ZERO, and that is recovered rather than
-		// a simplification: a player's ParamKeeper param 7 has exactly three
-		// writers, and none of them can make it non-zero here.
-		//
-		//   GObjMob_PublishStats     mobs only (characterdata col 73)
-		//   Char_PublishCombatStats  from a field no item column populates --
-		//                            a census of all 21,560 item rows finds
-		//                            no percentage-reduction column at all
-		//   the skill-effect applier only through the skill param code 'ar',
-		//                            which appears on ZERO of 29,342 skill
-		//                            rows (the one numeric hit is a skill id)
-		//
-		// So the asymmetry this code already had -- monsters carry a
-		// percentage, players do not -- is the game's own. Written as an
-		// explicit 0 through combat.MitigateDamage rather than as a bare
-		// subtraction, so the zero carries its citation instead of being a
-		// coincidence that happens to compute the same number.
-		// A blocked blow deals NOTHING, and the whole damage pipeline is
-		// skipped rather than reduced to zero -- which is exactly what the
-		// real resolve function does: a successful block jumps past every
-		// Formula_Mitigate* call and leaves the damage record at its
-		// zero-initialised value. So the roll comes first, and mitigation,
-		// the critical and the level term are the things it skips.
-		// The counterattack is the same pipeline with the roles swapped: the
-		// monster is the attacker, so its Critical applies and the player's
-		// shield is what blocks. combat.ResolveBlow does not care which side
-		// is a player, which is the point of it being one function.
-		counter := resolveBlow(raw, playerMitigationPercent, armor,
-			combat.EvadedChance(monster.Critical, playerEvasion),
-			combat.EvadedChance(defenderBlock(ctx, characterID, eq, items), monsterEvasion),
-			monster.Level, playerLevel, monster.ID, characterID)
-		incoming := counter.Damage
-		result.MonsterCritical = counter.Critical
-		result.PlayerBlocked = counter.Blocked
-		// The counterattack wears the defender's gear: a blocked hit the
-		// shield, any other hit one armour piece.
-		if counter.Blocked {
-			wearShield(ctx, eq, characterID)
-		} else if counter.Damage > 0 {
-			wearArmour(ctx, eq, characterID)
-		}
-		hp, playerDied, err := chars.ApplyDamage(ctx, characterID, incoming)
-		if err != nil {
-			return fmt.Errorf("combat: applying counterattack: %w", err)
-		}
-		result.PlayerDamageTaken = int32(incoming)
-		result.PlayerDied = playerDied
-		if playerDied {
-			// Dying costs experience, above level 10. Real: GObjPC_OnDeath
-			// multiplies the level's EXP unit -- the same field a kill is
-			// paid from -- by 100 when a monster did the killing and the
-			// victim carries no PK penalty points, which is the only branch
-			// this project can reach until there is a PK system. See
-			// leveldata.DeathPenaltyExp for the other three and for why the
-			// reduction stat is left out.
-			if levelTable != nil {
-				if c, e := chars.GetByID(ctx, characterID); e == nil && c != nil {
-					loss, ok := levelTable.DeathPenaltyExp(c.Level, leveldata.DeathPenaltyKilledByMonster)
-					if ok && loss > 0 {
-						exp := c.Exp - loss
-						if exp < 0 {
-							// The real formula clamps the LOSS so it cannot
-							// exceed what is there; clamping the result to
-							// zero is the same thing from this side. A death
-							// never costs a level -- nothing in
-							// GObjPC_OnDeath touches CurLevel.
-							exp = 0
-						}
-						// A death penalty takes experience only: level, stat
-						// points, Str and Int are carried through unchanged.
-						if err := chars.SetLeveling(ctx, characterID, c.Level, exp, c.StatPoints, c.Str, c.Int); err != nil {
-							return fmt.Errorf("combat: applying death penalty: %w", err)
-						}
-						result.DeathExpLost = loss
-					}
-				}
-			}
-			if err := chars.RespawnHP(ctx, characterID); err != nil {
-				return fmt.Errorf("combat: respawning player: %w", err)
-			}
-			// Death ends the action queue with everything else: no repeat
-			// fires for a character who has just been put back on their feet.
-			keepUp.Cancel(characterID)
-			// Back at character.RespawnFraction of the maximum, not all of
-			// it: the game restores a character whose stored pool is zero --
-			// which is what death leaves -- to 40%, for HP and MP alike. See
-			// character.RespawnFraction for the recovery. A level-up still
-			// heals to full, which is why that path calls ResetHP instead.
-			//
-			// Falls back to the starting maximum only if the re-read fails,
-			// which would mean the character vanished mid-respawn.
-			result.PlayerHP = int32(character.StartingMaxHP)
-			if reborn, e := chars.GetByID(ctx, characterID); e == nil {
-				result.PlayerHP = int32(reborn.HP)
-				if mp != nil {
-					mp.Refill(characterID, character.RespawnMP(reborn.MaxMP()))
-				}
-			}
-		} else {
-			result.PlayerHP = int32(hp)
-		}
+		result.MonsterCritical = out.critical
+		result.PlayerBlocked = out.blocked
+		result.PlayerDamageTaken = int32(out.damage)
+		result.PlayerDied = out.died
+		result.PlayerHP = int32(out.hp)
+		result.DeathExpLost = out.deathExpLost
+		strike = out.message(monster.ID, characterID)
 	}
 
 	if err := sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: result.Encode()}); err != nil {
@@ -1489,6 +1380,13 @@ func performAttack(
 	msg := &MonsterDamaged{MonsterID: targetMonsterID, Damage: int32(net), RemainingHP: int32(updated.HP)}
 	for _, e := range others {
 		e.Session.Send(&proto.Packet{Opcode: OpMonsterDamaged, Data: msg.Encode()})
+	}
+	// The monster's blow, to the whole zone with the attacker included, after
+	// the attacker's result and the zone's OpMonsterDamaged for this swing
+	// (round 541, OpMonsterAttacked; nothing is sent while
+	// -monster-strike-push is off). See pushMonsterStrike.
+	if strike != nil {
+		pushMonsterStrike(hub, monster.Zone, strike)
 	}
 	return nil
 }

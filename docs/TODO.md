@@ -191,8 +191,13 @@ In order. Each is checked off here when it ships in a release, with its round in
         fresh-snapshot QA GOTO.
       - **The strike and spawn pushes' server half**: round 540 built the client half
         (`OpMonsterAttacked 0x007D`, `OpMonsterSpawned 0x007E`, `docs/protocol/monster_ai.md`,
-        "The strike and spawn pushes"). The server sends neither yet; each goes behind its own
-        default-off flag, flipped only once a client with round 540 is released.
+        "The strike and spawn pushes"). **Round 541 built the strike push's server half**
+        (`session/monsterstrike.go`) behind `-monster-strike-push`, which is off by default
+        (`deploy/README.md`, "Monster strike push (off by default)"). What is left for it: its
+        render-box live check, whose command and expectations are in `monster_ai.md`, "The strike
+        push's server half (round 541)", and then turning it on once a client release that
+        carries round 540 is published. The spawn push (0x007E) is still unsent; it goes behind
+        its own default-off flag.
       - **mob-battle-chase**: the chase to the round-247 band at the run speed and the monster's
         own swing on its timer (after mob-battle-rules reads that timer), with the engine's `0x27`
         and `0x23` exits. It replaces the interim hold and its keep-up release, and retires the

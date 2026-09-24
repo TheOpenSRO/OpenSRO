@@ -144,3 +144,33 @@ it. The boot log then reads
 
 **Off, the kill switch.** Remove that line (or set it to `"0"`), then `docker compose up -d`. The
 update loop never touches the override, so the setting survives updates until it is removed.
+
+## Monster strike push (off by default)
+
+The server can send a monster's counterattack to everyone in its zone, not only to the player it
+struck. The message is `OpMonsterAttacked 0x007D` (round 541), and it goes right after the
+attacker's own result. Other players then see the monster swing and the number rise over its
+target. The counter itself has not changed, and no number changes: the push repeats what the
+attacker's result already says. It does not depend on the monster AI. What is grounded and what is
+a stand-in is in `docs/protocol/monster_ai.md`, "The strike push's server half (round 541)".
+
+It is behind the `-monster-strike-push` flag (env `SRREVAMP_MONSTER_STRIKE_PUSH`), and **the
+default is off**. With it off nothing is sent, and the wire is exactly what it was. After an update
+the boot log reads `monster strike push off (-monster-strike-push / SRREVAMP_MONSTER_STRIKE_PUSH)`.
+
+**Turn it on only when both of these hold:**
+
+1. A client release that carries round 540 is tagged, CI is green for it (`gh run list`), and its
+   zips are published. No tag carries round 540 yet; v0.1.435 is round 534. An older client
+   ignores the push and warns "unhandled opcode" once per connection, so its players see nothing
+   new.
+2. The live check in that `monster_ai.md` section passes on the render box. It has not been run
+   yet.
+
+**On.** Add `SRREVAMP_MONSTER_STRIKE_PUSH: "1"` under the server's `environment:` in the untracked
+`docker-compose.override.yml`, the same way as `SRREVAMP_MONSTER_AI` above, then run
+`docker compose up -d`. You can instead append `- "-monster-strike-push=true"` to the override's
+restated `command:` list. The boot log then reads
+`monster strike push on: OpMonsterAttacked 0x007D to the zone after each counterattack`.
+
+**Off.** Remove that line (or set it to `"0"`), then run `docker compose up -d`.
