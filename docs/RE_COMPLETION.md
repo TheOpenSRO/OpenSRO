@@ -32046,3 +32046,102 @@ write, and wording.
 **Found, not changed.** World3D's log line still says "Developer tools (zone travel, log out): F1",
 and `DEV_UI_NODES`'s comment says "Shown with F1". The binding moved to Ctrl+F1
 (`_unhandled_input`), which is outside this item.
+
+## The killer's own client plays the monster's death animation: the hold is set when the result arrives, the clip plays at the blow's hit event (round 532)
+
+The player who lands the killing blow now sees the monster play its death animation where it fell,
+held on the last frame until the clip ends. Before, it vanished on the list refresh that followed
+the result. The killer's target window now closes when the death clip starts; before, nothing
+cleared the target on an own kill. Client only. The server is unchanged.
+
+**Grounding, re-read for this round.**
+
+- The killer never receives `OpMonsterDied`. `session/combat.go` `performAttack` sends it only to
+  `others`, built with `e.Session.ID() != sess.ID()`. `session/gm.go`'s `/kill` broadcast skips the
+  GM the same way.
+- `World3D._on_attack_result` skipped the hit reaction on a kill and played nothing instead. It
+  ends with a synchronous `NetClient.list_monsters()`. `_sync_monster_bodies` freed every body
+  missing from that list unless `_dying_until` held it, and erased `_monster_assembled` with it.
+  Only `_on_monster_died` set `_dying_until`.
+- Type 4 is the die clip: `BsrReader.AnimationEntry.TYPE_DIE`, and `die` in mangnyang's `default`
+  group (`docs/protocol/BSR_FORMAT.md`, the default-group line).
+- The hold is the clip's own length, `BanReader` `duration_seconds()`.
+- `lands_after` is the swing's `EVENT_HIT`, the delay the handler already used. Its millisecond
+  unit is inferred from the numbers (BSR_FORMAT.md, "Events and walk points"). That is unchanged.
+- No new constant, no stand-in, and no packet or opcode change.
+
+**Wired.**
+
+- New `client/scripts/world/monster_bodies.gd` (`MonsterBodies`). `should_free(id, live_ids,
+  dying_until, now)` is the rule `_sync_monster_bodies` used inline, now called from there.
+  `hold_for_kill(dying_until, id, now, lands_after, die_seconds)` sets the hold to
+  `now + lands_after + die_seconds`, keeps any later hold, and sets nothing when `die_seconds` is 0.
+- `World3D._monster_action_seconds(monster_id, action_type)` does `_play_monster_action`'s lookup
+  without playing. It returns 0 wherever `_play_once` would play nothing: no assembled body, no
+  skeleton, no clip, or one of a single frame.
+- `_on_attack_result`, when the result says the monster died, calls `hold_for_kill` before the
+  deferred blow is scheduled and before its trailing list request. The deferred blow then calls
+  `_begin_monster_death` instead of skipping.
+- `_begin_monster_death` is `_on_monster_died`'s old body:
+  - it clears the target if it is this monster, and drops a walk toward it;
+  - it plays `TYPE_DIE`, held on the last frame;
+  - it resets the hold from the clip's real start, and sets a timer that asks for the list when
+    the clip ends;
+  - when nothing played but a kill hold is set, it lifts the hold and asks for the list.
+  `_on_monster_died` calls it, then asks for the list as before.
+- Log lines: `monster N killed by own blow t=T, clip starts in L`, `monster N dies, holding S t=`,
+  `monster N body removed t=R`, and `t=` on the existing `attack hit` line.
+
+**Disclosed residuals**, in the code at `hold_for_kill` and in WORLD_ISSUES round 532:
+
+- A keep-up swing sends its result from the keep-up goroutine (`session/keepup.go`
+  `autoAttack.loop`). `OpMonsterList` is answered on the session reader, so a list reply can
+  overtake a keep-up kill's result and free the body before any hold exists. This is the usual
+  kill path: the `OpAttack` handler swings once and then calls `armKeepUp` ("One click is the whole
+  fight"). Every kill past the first swing comes from that goroutine. The window is narrow,
+  though. A list request has to be handled on the reader between the kill's `ApplyDamage` (which
+  deletes the id) and the goroutine's `sess.Send` of the result.
+- A GM `/kill` still vanishes on the GM's own screen.
+
+**Other residuals found in review**, recorded in WORLD_ISSUES round 532 and not changed here:
+
+- `_try_attack_monster`, the real click picker, does not skip `_dying_until` ids. A click on the
+  killer's corpse can therefore open a target window on a dead monster, and nothing closes it.
+  Other players' corpses already behaved this way.
+- The hold is kept on `_idle_anim_time`, which the physics step advances, while the end-of-clip
+  timer counts process time. If physics lags, the corpse can hold its last frame until an
+  unrelated list refresh. The `_on_monster_died` path already had this.
+- A late blow from an earlier swing can replace the held die clip. It then holds its own last
+  frame, because the die entry has no resume. This predates the round.
+
+**Tests.**
+
+- New `client/scripts/world/monster_bodies_test.gd`, with fixture numbers (a 0.651 s hit event, a
+  1.4 s clip):
+  - a live id is never freed;
+  - an id with no hold is freed;
+  - after `hold_for_kill(d, 7, 10.0, 0.651, 1.4)`, the body is kept at 11.9 and freed at 12.052;
+  - `die_seconds` 0 sets no hold;
+  - a later existing hold is kept;
+  - a clip-start hold written over the predicted one is honoured.
+- NEGATIVE: a list 5 ms after the kill result (t = 10.005) that omits 7 must not free it. With
+  `hold_for_kill` still the no-op of the refactor step, which mirrors the old killer path, the
+  suite reported 2 FAILURES, this one among them. Implemented: ALL PASS.
+- `client/tools/remote_godot.sh tests`: 82 suites, 0 failing. `remote_godot.sh check`: 249 scripts
+  and 5 scenes, ALL LOAD. `cd server && go build ./... && go test -count=1 -p 1 ./...`: green,
+  re-run after the doc edits.
+- Not run: the live `qa_shot.sh` timing (`SRREVAMP_QA_ATTACK_FAST=1 SRREVAMP_QA_ATTACK_NAME=Mangyang
+  SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server <host:port> --attack --frames 900`). This round
+  used the render box only through `remote_godot.sh`. The box does have an executable server at
+  the script's default `SERVER_BIN` (`/opt/srrevamp-server/srrevamp-server`, 15,276,922 bytes).
+  But it is a 2026-09-19 build, older than this tree, so the check should run against a server
+  built from this tree, passed as `--server <host:port>`. The assertion it should meet is in
+  WORLD_ISSUES round 532.
+- Not covered headlessly: the World3D wiring. Nothing headless checks that `hold_for_kill` runs
+  before the trailing `list_monsters()`, that `_monster_action_seconds` matches
+  `_play_monster_action`, or `_begin_monster_death`'s branch for a clip that did not play. The
+  test covers `MonsterBodies` only, so this round's tag waits for the live check.
+
+**Docs.** WORLD_ISSUES round 532 was added. Round 208's "the die animation comes from the list
+sync" now carries a dated correction. `docs/SYSTEMS.md` has no row for the client's death
+animation, so it is unchanged.

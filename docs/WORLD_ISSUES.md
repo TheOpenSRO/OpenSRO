@@ -7075,6 +7075,134 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-thirty-second round: the killer sees the death -- a hold set when the result arrives, the clip played as the blow lands
+
+On the screen of the player who landed the killing blow, the monster did not die: it vanished. Every
+other player's client in the zone plays its die animation, from the zone's `OpMonsterDied` push
+(`_on_monster_died`). Both are read from the code below, not watched or timed in a run.
+
+**Why, read in the code.** The server tells the zone about a kill with `OpMonsterDied`, and it sends
+that push to everyone *except* the attacker: `session/combat.go` `performAttack` builds its
+broadcast list with `e.Session.ID() != sess.ID()`, and `session/gm.go`'s `/kill` does the same.
+The killer learns of the death only from its own `OpAttackResult`. On the client:
+
+- `_on_attack_result`'s deferred blow skipped the hit reaction when the blow killed, and animated
+  nothing in its place. Its comment said the die animation "comes from the list sync" (round 208).
+- The handler ends with a synchronous `NetClient.list_monsters()`, and that reply no longer names
+  the monster.
+- `_sync_monster_bodies` frees every body the list does not name, unless `_dying_until` holds it,
+  and erases `_monster_assembled` with it. After that `_play_monster_action` has nothing to play.
+- Only `_on_monster_died` set `_dying_until`, and that is the handler for the push the killer never
+  gets.
+
+So, going by the code, the body went on the first list reply after the result. That reply was
+expected a frame or two later; no run has measured it (see "Not measured" below).
+
+**The fix.**
+
+- `MonsterBodies` (`client/scripts/world/monster_bodies.gd`) holds the rule. `should_free` is
+  today's test, unchanged: free an id the list does not name unless a hold keeps it.
+  `hold_for_kill` is new: it sets `dying_until[id]` to `now + lands_after + die_seconds`, keeping
+  any later hold, and sets nothing when `die_seconds` is 0.
+- `_on_attack_result`, on a kill, calls `hold_for_kill` **before** the deferred blow is scheduled
+  and before its trailing list request. `lands_after` is the swing's own hit event, the value the
+  handler already waits on (`EVENT_HIT`; its millisecond unit is inferred from the numbers,
+  `docs/protocol/BSR_FORMAT.md` "Events and walk points"). `die_seconds` is the die clip's own
+  length, from the new `_monster_action_seconds`. That does `_play_monster_action`'s lookup without
+  playing, and returns 0 wherever `_play_once` would play nothing (a clip of one frame or fewer).
+- The deferred blow now calls `_begin_monster_death` when it killed. That is `_on_monster_died`'s
+  old body, factored out: clear the target if it is this monster, drop a walk toward it, play type
+  4 (`die` in mangnyang's `default` group, BSR_FORMAT.md) held on its last frame, and set the hold
+  again from the clip's real start, with a timer that asks for the list when it ends.
+  `_on_monster_died` calls it and then asks for the list, as before.
+- When `_begin_monster_death` plays nothing while a kill hold is set, it lifts the hold and asks for
+  a list. Otherwise no timer would come, and the body would stay until some unrelated refresh.
+- New log lines, so a run can be timed: `monster N killed by own blow t=T, clip starts in L`,
+  `monster N dies, holding S t=...`, `monster N body removed t=R`. The existing `attack hit ...`
+  line gains `t=`. `t` is `_idle_anim_time`, the clock the hold is kept on.
+
+**What a player sees change.** The killer's monster plays its death where it fell, held on the last
+frame until the clip ends, then goes. The killer's target window now closes when the death clip
+starts. Before, nothing cleared the target on an own kill: `_clear_target` was reached only from
+`_on_monster_died`.
+
+**Measured (headless, render box).** `monster_bodies_test.gd` uses fixture numbers: a 0.651 s hit
+event and a 1.4 s clip. They stand in for the real ones; the rule is what is under test. After
+`hold_for_kill(d, 7, 10.0, 0.651, 1.4)`, a list that omits 7 does not free the body at 10.005 or at
+11.9, and does free it at 12.052. The other cases:
+
+- A live id is never freed.
+- An id with no hold is freed.
+- `die_seconds` 0 sets no hold.
+- A later existing hold is kept.
+- A clip-start hold written over the predicted one is honoured.
+
+With `hold_for_kill` still the no-op it was at the refactor step (today's killer path, which sets
+no hold), the suite reported 2 FAILURES, the NEGATIVE among them: the list 5 ms after the kill
+freed the body. Implemented: ALL PASS. `remote_godot.sh tests`: 82 suites, 0 failing. `check`: 249
+scripts and 5 scenes load.
+
+**Not measured: the live run.** This round used the render box only through `remote_godot.sh`,
+which runs the headless suites and renders nothing. The box does have a server at `qa_shot.sh`'s
+default `SERVER_BIN`. `/opt/srrevamp-server/srrevamp-server` is an executable 64-bit ELF of
+15,276,922 bytes, dated 2026-09-19 04:04 (`stat`, `file`), so the script's `-x` guard passes.
+But that is a 2026-09-19 build, older than this tree: `git log --since` counts 129 commits under
+`server/` newer than it. The check still to run should use a server built from this tree, passed
+as `--server <host:port>`:
+`SRREVAMP_QA_ATTACK_FAST=1 SRREVAMP_QA_ATTACK_NAME=Mangyang SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh
+--server <host:port> --attack --frames 900 --out /var/tmp/mob_killer_death`. For each `killed by
+own blow t=T, clip starts in L` line, a `dies, holding S` line should follow, and the matching
+`body removed t=R` should have R >= T + L + S - 1/60. Before this fix, R - T was expected to be one
+or two frames. Neither number has been measured. Delete the frames afterwards.
+
+**Not covered headlessly, so do not tag before the live check.** `monster_bodies_test.gd` tests
+`MonsterBodies` only. Nothing headless covers the World3D wiring: that `hold_for_kill` runs
+before `_on_attack_result`'s trailing `list_monsters()`, that `_monster_action_seconds` matches
+`_play_monster_action`, or `_begin_monster_death`'s branch for a clip that did not play. The live
+check above is what would cover them. The round is worth a release, but its tag waits for that
+check.
+
+**Residual races, disclosed in the code at `hold_for_kill`:**
+
+- A keep-up swing sends its `OpAttackResult` from the keep-up goroutine
+  (`session/keepup.go` `autoAttack.loop`, which calls `performAttack`). `OpMonsterList` is answered
+  on the session's reader. A list reply can therefore overtake a keep-up kill's result, and free
+  the body before any hold exists. This is the **usual** kill path, not a special case. The
+  `OpAttack` handler in `session/combat.go` swings once and then, under the comment "One click is
+  the whole fight", calls `armKeepUp`. `Arm` starts the goroutine (`go a.loop`). So every kill
+  past the first swing comes from that goroutine. The window itself is narrow. A list request has
+  to be handled on the reader after the kill's `ApplyDamage` in `performAttack` (the hub deletes
+  the id there, `internal/combat/combat.go` `Hub.ApplyDamage`) and before the goroutine's
+  `sess.Send` of the result. The previous swing's own trailing request was answered a swing
+  earlier. A request in the window has to come from somewhere else, for example another player's
+  damage or died push, a death clip's end timer, or the refresh button.
+- A GM `/kill` still vanishes on the GM's own screen. `session/gm.go` refreshes the GM's list, sends
+  the GM no died push, and no attack result passes through `_on_attack_result`.
+
+**Other residuals found in review, not changed here:**
+
+- **A click can target a corpse.** The real click picker, `_try_attack_monster`, targets any body
+  with a `monster_id` meta, dying or not. `_step_pending_attack` and the QA picker
+  (`_qa_click_target_for`) skip `_dying_until` ids; `_try_attack_monster` does not. The killer's
+  corpse now stays up for about `lands_after` plus the die clip, so a click on it opens the target
+  window on a dead monster. The attack then goes nowhere. With a reach band, `_step_pending_attack`
+  drops it at once. With no band, `_attack_monster` sends it and the server answers "target not
+  found". Nothing closes the window afterwards. Other players' corpses already behaved this way;
+  this round extends it to the killer's.
+- **The two clocks can disagree.** The hold is kept on `_idle_anim_time`, which `_physics_process`
+  advances (through `_tick_idle_animations`). The end-of-clip `SceneTreeTimer` counts process
+  time. If physics falls behind (a low frame rate), the list that timer asks for can arrive while
+  `_idle_anim_time` is still short of the hold. Then `should_free` keeps the body, and no further
+  timer is set, so the corpse holds its last frame until some unrelated list refresh. The
+  `_on_monster_died` path already had this, and the killer's path now shares it. Not measured.
+- **A late blow from an earlier swing can replace the held die clip.** The earlier swing's deferred
+  closures (its `TYPE_HIT`, or the counter-swing's `TYPE_ATTACK`) can land after the die clip has
+  started. `_play_once` then replaces the die entry. The die entry has no resume, so the late clip
+  holds its own last frame instead. This needs two swings whose hit events are further apart than
+  the swing interval. A non-killer's late blow after `OpMonsterDied` has the same problem. Both
+  predate this round. A killing result itself carries no counter-swing: `performAttack`'s
+  counterattack is in the branch for a monster that did not die.
+
 ## Five-hundred-and-tenth round: NPCs face open space -- a disclosed stand-in
 
 Reported right after round 506: the buildings turned correctly, but "the NPCs are still facing the
@@ -11962,6 +12090,11 @@ the request did.
   result handler marks `_own_hit_until[monster]` for `lands_after + 750 ms`,
   and `_on_monster_damaged` skips its immediate reaction for a marked monster
   instead of comparing against the live target.
+  - *Correction, 2026-09-24:* the list sync plays no die animation. It frees
+    every body the list no longer names, unless `_dying_until` holds it, and
+    only `_on_monster_died` set a hold -- a push the killer never receives. So
+    on the killer's own screen the monster vanished on the list reply that
+    follows the result. Round 532 fixes it.
 - **QA.** `SRREVAMP_QA_ATTACK_ALTERNATE=1` makes the attack loop swing at the
   nearest and second-nearest monster in turn, and the deferred callbacks log
   `blow lands on monster X (now targeting Y) -- animating X` whenever the live

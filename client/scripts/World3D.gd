@@ -8995,16 +8995,16 @@ func _sync_monster_bodies(live: Array) -> void:
 		_spawn_or_update_monster(m)
 
 	for monster_id in _monster_bodies.keys():
-		if not live_ids.has(monster_id):
-			# A monster still playing its death is left where it fell
-			# until the animation has run; the timer _on_monster_died set
-			# asks for another list then, and this removes it.
-			if _dying_until.has(monster_id) and _idle_anim_time < float(_dying_until[monster_id]):
-				continue
-			_monster_bodies[monster_id].queue_free()
-			_monster_bodies.erase(monster_id)
-			_monster_assembled.erase(monster_id)
-			_dying_until.erase(monster_id)
+		# A monster still playing its death is left where it fell until the
+		# animation has run; the timer _begin_monster_death set asks for
+		# another list then, and this removes it (MonsterBodies.should_free).
+		if not MonsterBodies.should_free(monster_id, live_ids, _dying_until, _idle_anim_time):
+			continue
+		_monster_bodies[monster_id].queue_free()
+		_monster_bodies.erase(monster_id)
+		_monster_assembled.erase(monster_id)
+		_dying_until.erase(monster_id)
+		print("World3D: monster %d body removed t=%.2f" % [monster_id, _idle_anim_time])
 
 func _on_monster_list_result(monsters: Array, error: String) -> void:
 	if error != "":
@@ -9039,14 +9039,17 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 		print("World3D: attack refused: %s" % result.error)
 		return
 	# One line per exchange, so a render's log says what the fight did
-	# without reading it off a label.
-	print("World3D: attack hit for %d%s (%d left%s), took %d%s (HP %d)%s" % [
+	# without reading it off a label. t is the animation clock the death
+	# hold and the "body removed" line read, so a kill can be timed against
+	# its body's removal.
+	print("World3D: attack hit for %d%s (%d left%s), took %d%s (HP %d)%s t=%.2f" % [
 		result.monster_damage, " CRIT" if result.player_critical else "",
 		result.monster_remaining_hp, ", died" if result.monster_died else "",
 		result.player_damage_taken,
 		" BLOCKED" if result.player_blocked else (" CRIT" if result.monster_critical else ""),
 		result.player_hp,
-		", lost %d exp" % result.death_exp_lost if result.death_exp_lost > 0 else ""])
+		", lost %d exp" % result.death_exp_lost if result.death_exp_lost > 0 else "",
+		_idle_anim_time])
 	# A combat exchange keeps the player in the battle stance while idle.
 	_last_combat_time = _player_anim_time
 	# The player's swing: the next plain attack in the weapon group's
@@ -9086,15 +9089,30 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 		var dealt := result.monster_damage
 		var died := result.monster_died
 		_own_hit_until[monster] = Time.get_ticks_msec() + int(lands_after * 1000.0) + 750
+		if died:
+			# The killer is the one player the server never sends
+			# OpMonsterDied (session/combat.go performAttack skips the
+			# attacker), and the list requested at the end of this handler no
+			# longer names the monster -- which used to free its body at once,
+			# before any death was seen. Hold it now, before that request,
+			# for the rest of the swing and the die clip's own length; the
+			# clip itself starts when the blow lands, below. The races this
+			# leaves are disclosed at MonsterBodies.hold_for_kill.
+			MonsterBodies.hold_for_kill(_dying_until, monster, _idle_anim_time, lands_after,
+				_monster_action_seconds(monster, BsrReader.AnimationEntry.TYPE_DIE))
+			print("World3D: monster %d killed by own blow t=%.2f, clip starts in %.2fs" % [
+				monster, _idle_anim_time, lands_after])
 		_after(lands_after, func() -> void:
 			# The moment that used to go wrong: the blow lands a swing after it
 			# was sent, and the live target may already be another monster.
 			if OS.get_environment("SRREVAMP_QA_ATTACK") != "" and monster != _last_attack_target:
 				print("World3D: blow lands on monster %d (now targeting %d) -- animating %d" % [
 					monster, _last_attack_target, monster])
-			# A monster this blow killed keeps its die animation (played by the
-			# list sync) instead of a hit reaction; a surviving one flinches.
-			if not died:
+			# A monster this blow killed plays its die animation as the blow
+			# lands (held by the kill hold above); a surviving one flinches.
+			if died:
+				_begin_monster_death(monster)
+			else:
 				_play_monster_action(monster, BsrReader.AnimationEntry.TYPE_HIT)
 			var hit_body = _monster_bodies.get(monster)
 			if hit_body != null and is_instance_valid(hit_body):
@@ -9188,22 +9206,40 @@ func _after(seconds: float, what: Callable) -> void:
 		return
 	get_tree().create_timer(seconds).timeout.connect(what)
 
-## A monster's death plays its own die animation (type 4 of its `default`
-## group) and the body stays on its last frame until that has run; only
-## then is the list refreshed and the body removed.
+## Someone else's kill (the zone's OpMonsterDied, which the killer never
+## receives): the death plays at once, then the list is refreshed. The
+## killer's own kill comes through _on_attack_result instead.
 func _on_monster_died(monster_id: int) -> void:
+	_begin_monster_death(monster_id)
+	NetClient.list_monsters()
+
+## A monster's death plays its own die animation (type 4 of its `default`
+## group, docs/protocol/BSR_FORMAT.md) and the body stays on its last frame
+## until that has run; only then is the list refreshed and the body removed.
+## Reached from a zone's died push (_on_monster_died) and, for the killer, as
+## the killing blow lands (_on_attack_result).
+func _begin_monster_death(monster_id: int) -> void:
+	# The dead monster is nobody's target any more: its target window closes
+	# as the clip starts -- for the killer too, since this path was added.
 	if monster_id == _last_attack_target:
 		_clear_target()
 		_last_attack_target = -1
-	# Someone else's kill of the monster this player was walking to: no attack
-	# to send, and no reason to keep walking.
+	# A kill of the monster this player was walking to: no attack to send,
+	# and no reason to keep walking.
 	if not _pending_attack.is_empty() and int(_pending_attack["monster"]) == monster_id:
 		_drop_pending_attack()
 	var seconds := _play_monster_action(monster_id, BsrReader.AnimationEntry.TYPE_DIE, true)
 	if seconds > 0.0:
+		# The hold restarts from the clip's real start, replacing the killer's
+		# predicted one (MonsterBodies.hold_for_kill).
 		_dying_until[monster_id] = _idle_anim_time + seconds
 		get_tree().create_timer(seconds).timeout.connect(NetClient.list_monsters)
-	NetClient.list_monsters()
+	elif _dying_until.has(monster_id):
+		# Nothing played, yet a kill hold is set: no timer would come to
+		# lift it, so lift it now and let a fresh list remove the body.
+		_dying_until.erase(monster_id)
+		NetClient.list_monsters()
+	print("World3D: monster %d dies, holding %.2fs t=%.2f" % [monster_id, seconds, _idle_anim_time])
 
 ## The player has advanced a level (server's OpLevelUp, only ever sent to
 ## the character that levelled). Announces it with the client's own recovered
@@ -9330,6 +9366,19 @@ func _play_monster_action(monster_id: int, action_type: int, hold: bool = false)
 	if anim == null:
 		return 0.0
 	return _play_once(assembled.skeleton, anim, hold)
+
+## How long _play_monster_action(monster_id, action_type) would run, without
+## playing it: the same lookup, and 0 wherever _play_once would play nothing
+## (no assembled body, no clip, or a clip of one frame or fewer). The
+## killer's death hold (MonsterBodies.hold_for_kill) is sized by it.
+func _monster_action_seconds(monster_id: int, action_type: int) -> float:
+	var assembled: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled.get(monster_id)
+	if assembled == null or assembled.skeleton == null or _data_pk2 == null:
+		return 0.0
+	var anim := SkinnedBsrAssembler.animation_for(_data_pk2, assembled, action_type)
+	if anim == null or _frame_count(anim) <= 1:
+		return 0.0
+	return anim.duration_seconds()
 
 ## The client's own "item gained" chat line, from the UI text table: this
 ## archive's English is `item [%s %d pieces]gained.` for an expendable
