@@ -1495,3 +1495,20 @@ with the server built to `SERVER_BIN=/var/tmp/<lane>/srrevamp-server`.
   to a monster the client shows standing. Today's GOTO teleports beside the displayed body, which
   the dilation makes stale, so most first swings would be refused as too far away. The GOTO change
   is a client item.
+
+**Run 1, measured (round 538, 2026-09-24, server and client at `743f231`).** Server built from the
+tree (`GOOS=linux go build ./cmd/server`) and run as `SERVER_BIN=/var/tmp/mobai/srrevamp-server`,
+with `SRREVAMP_MONSTER_AI=1 SRREVAMP_AI_TRACE=1 SRREVAMP_QA_MOB_LOG=1`, `--server --frames 600`,
+from the default spot. **Passed**:
+- `server.log`: 551 `IDLE->WANDER` lines and 669 `leg to` lines over the run. The four Mangyang ids
+  (4, 7, 10, 14; the in-memory server's own-design anchors, not npcpos) walked 22, 22, 19 and 23
+  legs at `speed 8 mode 0`, and ran home at `speed 22 mode 1` 4-5 times each.
+- The client log drew the same ids: `monster <id> walk` 22, 22, 19 and 23 times -- one drawn walk
+  per server leg.
+- No drawn leg started farther than 271.2 units from that monster's first drawn start (a proxy
+  for its home, since the spawn log carries no position), under the 324 bound.
+- The one id with legs and no drawing, 15, is the Earth Ghost in `donwhang`; the client stood in
+  `jangan`, and the pushes are zone-scoped, so that is the expected silence.
+- The client log shows `yaw 0.00 (facing unmeasured)` for the species whose model front round 533
+  did not measure -- the disclosed behaviour, not a failure.
+Run 2 has not been run: it needs the fresh-snapshot GOTO above.

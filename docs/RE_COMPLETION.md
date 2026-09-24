@@ -32937,3 +32937,15 @@ Every test passed again once its file was restored.
 **Not done here.** The two render-box live checks were not run in this round: the lane's access to
 the box is read-only. They gate the operator's flip, not this commit. The fresh-snapshot GOTO they
 need is a client change. Nothing on the VM was edited, and the flag stays off there.
+
+## Live check 1 of the monster AI tick: it wanders, the client draws it (round 538)
+
+Round 537 left both render-box live checks unrun. Run 1 is now measured, and passed; the numbers
+are in `docs/protocol/monster_ai.md`, "The live checks", under "Run 1, measured (round 538)". In
+short: with `SRREVAMP_MONSTER_AI=1` on a server built from `743f231`, the in-memory server's four
+Mangyangs walked their legs at the read walk speed (8) and ran home at the read run speed (22);
+the client drew one walk per server leg for the same ids; no leg started beyond 271 units of its
+first start (bound 324); and the only undrawn mover was the Donwhang Earth Ghost, correctly
+outside the client's zone. The frames were deleted from `/var/tmp` afterwards; the logs were kept
+off the box. Run 2 (a struck monster holds for the keep-up) still needs the fresh-snapshot GOTO,
+a client change. The flag stays off on the public server.
