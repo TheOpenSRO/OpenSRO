@@ -421,11 +421,61 @@ monster into IDLE) when the owner's HP is 0 or a monster's `IsNPC` object has no
 
 	requires run speed > 1e-6 (0xb45c84) and the object's location record (+0x7c)
 	distance  = 85 +- (rand % 40)                      ; 0xb46160 = 85.0 -> 46..124 units
-	heading   = atan2(current direction) +- (45 + rand % 91) degrees   ; a 45..135 degree turn
-	direction = (cos, 0, sin) of that heading (FUN_00489490 / FUN_004894b0)
+	t         = +-(45 + rand % 91) degrees             ; x pi/180 (0xb45e00): 45..135 either side
+	h         = atan2(dir.z, dir.x) + t                ; dir = the owner's heading, +0x24/+0x2c
+	direction = normalize(dir + (cos h, 0, sin h))     ; FUN_00489490 / FUN_004894b0, FUN_004328c0
+	            -> for a unit heading, a turn of t/2 = 22.5..67.5 degrees (round 535)
+	if ctx+0x14c resolves to an object (FUN_00485d90):
+	    direction = normalize(direction + unit vector toward it)   ; 0x5459f0..0x545a50
 	probe     = position + direction * 30              ; 0xb45e58 = 30.0
 	world probe (DAT_00cc387c slot 12, flags (0|1, 1)) -> bit 0 or bit 28 set = blocked
 	    -> direction *= -1.0 (0xb45e68): walk the other way
+
+**Corrected in round 535.** Round 251 recorded `heading = atan2(current direction) +- (45 +
+rand % 91) degrees ; a 45..135 degree turn` and `direction = (cos, 0, sin) of that heading`. The
+binary does not use `(cos h, 0, sin h)` as the leg. It adds it to the owner's direction and
+normalizes the sum (`/var/tmp/srv.asm`, re-read 2026-09-24):
+
+- `0x545911`/`0x545918` load the owner's `+0x2c` and `+0x24`, and `0x545974` calls `0x9fc1aa`,
+  the CRT's `_CIatan2` (its dispatch table at `0xc81760` spells `atan2`), with `+0x2c` loaded
+  first: `atan2(dir.z, dir.x)`. `t` is added at `0x545984`.
+- `0x489490` -> `0x9fc0b0` (the CRT cosine; its x87 path runs `fcos`) and `0x4894b0` ->
+  `0x9fbf80` (its x87 path runs `fsin`) put `cos h` in `[esp+0x24]` and `sin h` in `[esp+0x2c]`.
+- `0x545981`/`0x545989` point `esi` at owner `+0x24`. `0x5459b3` `fld [esi]` + `fadd [esp+0x24]`,
+  `0x5459c1` `[esi+4]` + 0.0 (`0xb45ab0`), `0x5459d2` `[esi+8]` + `[esp+0x2c]`, all written to the
+  leg vector at `ebx`, and `0x5459eb` normalizes it (`FUN_004328c0`, which leaves a zero-length
+  vector zero).
+
+**What the owner's `+0x24` holds** (read in round 535). It is the unit heading
+`(cos a, 0, sin a)`. Two probes looked for its writers: a direct-store scan of
+`0x480000..0x49ffff` for `+0x2c`, and a scan of the whole server dump for functions storing all
+of `+0x24`, `+0x28` and `+0x2c` (77 functions; a name filter kept 19, and the 13 of those in
+GObj, AI-state, tactics and COS code were read). What writes a GObj's `+0x24`:
+
+- **SetHeading**, vtable slot 230 (offset `0x398`): `0x482440` for `CGObj` and the `CGObjMobile`
+  override `0x48ba10` that monsters inherit. Both write `+0x24 = cos a`, `+0x28 = 0`,
+  `+0x2c = sin a`; the override also keeps `a` in `+0x164` unless `+0x154` is set.
+- Slot 230's callers include **`CGObj::EnterWorld`** (`0x48541e`, the placement's angle argument)
+  and **every destination move's start**: `CGObjMoverByDest::vslot_004` (`0x48c330`) calls its own
+  slot 10 (`0x48c660`), which takes `FUN_00485c20`'s `atan2(dz, dx)` toward the destination and
+  passes it to slot 230. The mover then steps along `+0x24`/`+0x2c` (`FUN_0048bff0`).
+- **`CGObj::vslot_000`** (`0x4848e0`), the object's reset, zeroes `+0x24..+0x2c`. Its callers go
+  through vtable slot 0 and were not traced, so "the reset always runs before `EnterWorld`" is
+  not proven.
+
+The other hits that were read store into other records: copies of a location record
+(`CAIState_WATCHOUT::OnEnter` and `CAIState_PATROL::OnEnter` into their own state,
+`GObjPC::FUN_0059b480`), a log entry (`CGObjCOS_Summoned::FUN_00568090`), a small tactics record
+(`AI::CTactics::FUN_0055de20`), the tactics constructor filling its array of state pointers
+(`AI::CTactics::CTactics`), and records whose `+0x24` is a short or whose `+0x2c` is a byte. The
+filter's other six (terrain, main-process, training-camp and nav-mesh classes) were not read, nor
+were the 58 it dropped.
+
+So, unless the untraced reset runs after placement, a standing monster holds the heading of its
+last move or of its placement, at unit length, and the leg bisects that heading and
+`heading + t`: an effective turn of **t/2, 22.5..67.5 degrees** either side. For a zeroed
+heading, `atan2(0, 0) = 0` and the leg would be the absolute heading `t` from `+x`.
+`ai.WanderLegDirection` carries the rule with a test. What `ctx+0x14c` holds is unread.
 
 `FUN_00540f70(distance)` then sets the destination `position + direction * distance` and the
 walk begins. The leg's duration is the state's dwell: **`AIState_DwellMs`** (`0x545b70`,
@@ -441,8 +491,8 @@ FLEE, HOMING and EMOTION:
 | HOMING (5) and the rest | 50 000 ms |
 
 WANDER stores 1000 ms instead when no leg could be picked. So an idle monster stands
-2-6 s, walks 46-124 units off its heading for 5-6 s, and repeats -- going HOMING (via
-`0x26`) whenever `IsWithinRoamRadius` says it has strayed. `server/internal/ai` carries the
+2-6 s, walks 46-124 units at 22.5-67.5 degrees off its heading for 5-6 s, and repeats -- going
+HOMING (via `0x26`) whenever `IsWithinRoamRadius` says it has strayed. `server/internal/ai` carries the
 table (`DwellRange`) and the leg constants; srrevamp's server does not move monsters yet.
 
 ## The roster's real walk and run speeds (round 362)
@@ -810,14 +860,39 @@ goes out, `+0x164` gets a random sign, and `SetTarget(0)` forgets the fight.
 **`MoveHome`** (`0x545c50`): home is the nest's position record (`nest+0x10`)
 when there is a nest, else the context's own spawn record (`ctx+0x1b4`). With
 `R` = the nest's radius (`nest+0x20`) or the roam radius (`ctx+0x1cc`), the
-destination is home displaced along the home-to-monster line by
+destination is home moved toward the monster, along `normalize(monster - home)`, by
 
-	offset = rand % (1 + ftol(R / 3)) - R / 9        ; -3.0 at 0xb45e08, 3.0 at 0xb45ab8
-	                                                 ; i.e. -R/9 .. +2R/9 units
+	offset = rand % (1 + trunc(R / 3)) + R / 3       ; -3.0 at 0xb45e08, 3.0 at 0xb45ab8
+	                                                 ; i.e. R/3 .. R/3 + trunc(R/3) units
+	                                                 ; (66.7 .. 132.7 for R = 200)
 
-unless the owner's slot 243 says otherwise (then exactly home), and the world's
+unless the owner's slot 243 (`+0x3cc`) answers non-zero (then exactly home), and the world's
 move request (`DAT_00cc387c` slot 12) is issued -- flag 1 for a player or a
 slot-11 object, 0 for a monster.
+
+**Corrected in round 535.** Round 261 recorded `offset = rand % (1 + ftol(R / 3)) - R / 9`, i.e.
+`-R/9 .. +2R/9`. That came from the decompiler's `extraout_ST0 / 3.0`, which assumed
+`_ftol2_sse` (`0x9fbb40`) leaves its argument on the x87 stack. It pops it: the SSE2 path stores
+it with `fstp QWORD [esp]` (`0x9fbb52`) before `cvttsd2si`, and the x87 path from `0x9fbb7f`
+consumes `st0` as well. The stack walk at `0x545cff..0x545d70` (re-read 2026-09-24):
+
+	545cff  fld   [esp+0x10]        ; st0 = R (stored as a float at 0x545cf6)
+	545d05  fld   QWORD 0xb45e08    ; -3.0 ; st0 = -3, st1 = R
+	545d0b  fdivr st, st(1)         ; st0 = R / -3, st1 = R
+	545d0d  call  0x9fbb40          ; eax = trunc(-R/3), pops ; st0 = R
+	545d12  ecx = 1 - eax           ; 1 + trunc(R/3) ; idiv: edx = rand % ecx
+	545d30  fild  rem               ; st0 = rem, st1 = R
+	545d38  fxch  st(1)             ; st0 = R, st1 = rem
+	545d3c  fdiv  QWORD 0xb45ab8    ; 3.0 ; st0 = R/3
+	545d68  fstp  [esp+0x10]        ; R/3 as a float ; st0 = rem
+	545d6c  fadd  [esp+0x10]        ; st0 = rem + R/3
+	545d70  fstp  [esp+0x10]        ; the stack is empty
+
+That is the only reading that leaves the stack balanced. The direction is `FUN_00430ad0` with
+`esi` = the monster's position (`MoveHome`'s `ecx`, the owner's `+0x7c` record, passed at
+`0x55a5fc..0x55a5ff`) and `edi` = home (`0x545ccd`/`0x545cd1`), which returns
+`esi - edi` across regions, then `FUN_004328c0` normalizes it. `0x545d7a..0x545dc8` add
+`dir * offset` to the home record's x, y and z. `ai.HomingScatterRange` carries the corrected band.
 
 **The step**, behaviour `+0x118` (`AITactics_HomingStep`, `0x5496c0`), each
 time timer 0 of the context's table (`ctx+0x34`) is due: **arrived** when the

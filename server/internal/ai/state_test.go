@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"math"
 	"testing"
 	"time"
 )
@@ -337,19 +338,83 @@ func TestAggroLink(t *testing.T) {
 	}
 }
 
-// Homing: arrival at 5 units, the scatter band, and the re-aggro window a
+// Homing: arrival at 5 units, the offset band, and the re-aggro window a
 // Mangyang (detection 56 at run speed 50) keeps shut for 1120 ms.
+//
+// The band is MoveHome's (0x00545c50) rand % (1 + trunc(R/3)) + R/3 toward
+// the monster (round 535). Round 261's -R/9 .. +2R/9 came from the
+// decompiler's stale ST0 after _ftol2_sse, which pops its argument; that
+// reading put the destination up to R/9 BEHIND home, which the x87 walk at
+// 0x545cff..0x545d70 does not allow -- the offset is never below R/3.
 func TestHomingRules(t *testing.T) {
 	if HomingArrivalRadius != 5.0 {
 		t.Fatal("arrival is 5.0 units")
 	}
-	if lo, hi := HomingScatterRange(200); lo != -200.0/9 || hi != 66-200.0/9 {
-		t.Fatalf("scatter for R=200: %v..%v", lo, hi)
+	cases := []struct {
+		radius, lo, hi float64
+	}{
+		{200, 200.0 / 3, 200.0/3 + 66}, // 66.7 .. 132.7
+		{100, 100.0 / 3, 100.0/3 + 33}, // trunc(33.3) = 33
+		{9, 3, 6},                      // R/3 whole: 3 + rand % 4
+		{2, 2.0 / 3, 2.0 / 3},          // trunc(0.67) = 0: rand % 1, R/3 exactly
+		{0, 0, 0},                      // no radius: home itself
+	}
+	for _, c := range cases {
+		lo, hi := HomingScatterRange(c.radius)
+		if math.Abs(lo-c.lo) > 1e-9 || math.Abs(hi-c.hi) > 1e-9 {
+			t.Errorf("offset for R=%v: %v..%v; want %v..%v", c.radius, lo, hi, c.lo, c.hi)
+		}
+		if lo < c.radius/3 {
+			t.Errorf("R=%v: the offset starts at %v, short of R/3 (round 261's -R/9 reading)", c.radius, lo)
+		}
 	}
 	if d := HomingReaggroDelayMs(56, 50); d != 1120 {
 		t.Fatalf("re-aggro delay %d ms; want 1120", d)
 	}
 	if d := HomingReaggroDelayMs(56, 0); d != 0 {
 		t.Fatalf("no speed, no window: %d", d)
+	}
+}
+
+// angleBetween is the signed difference a - b folded into (-pi, pi].
+func angleBetween(a, b float64) float64 {
+	return math.Remainder(a-b, 2*math.Pi)
+}
+
+// PickWanderLeg's direction (0x005459b3..0x005459eb) is normalize(heading +
+// unit(heading + t)), so for a unit heading the leg turns by t/2: 22.5
+// degrees at the draw's smallest t, 67.5 at its largest, either side. Round
+// 251 recorded the full t (45..135); that rule is checked here as the one
+// the leg must NOT follow. A zeroed heading gives atan2(0, 0) = 0, and the leg
+// is the absolute heading t from +x.
+func TestWanderLegBisectsHeadingAndTurn(t *testing.T) {
+	const deg = math.Pi / 180
+	tMin := float64(WanderTurnMinDegrees)
+	tMax := float64(WanderTurnMinDegrees + WanderTurnSpreadDeg - 1)
+	if tMin != 45 || tMax != 135 {
+		t.Fatalf("the draw t is 45..135 degrees; constants give %v..%v", tMin, tMax)
+	}
+	for _, a := range []float64{0, 30, 90, 200, -120} {
+		for _, turn := range []float64{tMin, 90, tMax, -tMin, -tMax} {
+			x, z := WanderLegDirection(math.Cos(a*deg), math.Sin(a*deg), turn*deg)
+			if l := math.Hypot(x, z); math.Abs(l-1) > 1e-12 {
+				t.Errorf("heading %v, t %v: leg length %v; want 1", a, turn, l)
+			}
+			got := math.Atan2(z, x)
+			if d := angleBetween(got, (a+turn/2)*deg); math.Abs(d) > 1e-9 {
+				t.Errorf("heading %v, t %v: leg at %.4f deg; want the bisector %.4f",
+					a, turn, got/deg, a+turn/2)
+			}
+			if d := angleBetween(got, (a+turn)*deg); math.Abs(d) < 1e-3 {
+				t.Errorf("heading %v, t %v: leg turned the full t (round 251's reading)", a, turn)
+			}
+			if d := math.Abs(angleBetween(got, a*deg)) / deg; d < 22.5-1e-9 || d > 67.5+1e-9 {
+				t.Errorf("heading %v, t %v: turned %.4f deg; want 22.5..67.5", a, turn, d)
+			}
+		}
+	}
+	x, z := WanderLegDirection(0, 0, 100*deg)
+	if d := angleBetween(math.Atan2(z, x), 100*deg); math.Abs(d) > 1e-9 || math.Abs(math.Hypot(x, z)-1) > 1e-12 {
+		t.Errorf("zeroed heading, t 100: leg (%v, %v); want the unit vector at 100 deg", x, z)
 	}
 }

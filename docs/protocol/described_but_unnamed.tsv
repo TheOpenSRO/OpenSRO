@@ -18,7 +18,7 @@
 # disqualifier was found to need to be global.
 #
 # Named from this queue so far: Skill_CheckCastRequirement, CheckCurrencyRequirement (348),
-# SkillWithdraw_CheckPotions, Combat_ComputeWeaponDamage (349).
+# SkillWithdraw_CheckPotions, Combat_ComputeWeaponDamage (349), _ftol2_sse (535, row dropped).
 #
 # A THIRD CAVEAT, found in round 350: a document can describe what a CALL SITE
 # ACHIEVES rather than what the FUNCTION DOES, and the score cannot tell them apart.
@@ -35,7 +35,6 @@
 8	00425f70	FUN_00425f70	85	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/magic_options.md
 8	004496e0	GObjPC::FUN_004496e0	60	docs/WORLD_ISSUES.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/pets.md
 8	0047eda0	FUN_0047eda0	30	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
-8	009fbb40	FUN_009fbb40	28	docs/WORLD_ISSUES.md,docs/protocol/alchemy.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv,docs/protocol/status_effects.md
 7	007158f0	FUN_007158f0	1984	docs/RE_COMPLETION.md,docs/WORLD_ISSUES.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
 7	004df050	FUN_004df050	570	docs/protocol/PACKET_FORMAT.md,docs/protocol/described_but_unnamed.tsv
 7	00477880	FUN_00477880	525	docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md

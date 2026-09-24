@@ -32446,3 +32446,110 @@ client fixes, one dev-tool fix, and wording.
   doc edits.
 - Not driven: a live cast refused as too far away against a running server, and a crowd of more
   than 32 moving monsters. No server sends monster moves yet.
+
+## Record correction: HOMING's destination offset is +R/3 .. +R/3+trunc(R/3) toward the monster (MoveHome 0x545c50), and a WANDER leg bisects the current direction and heading+t (PickWanderLeg 0x545860) (round 535)
+
+**Why.** The round-534 attempt at the monster motion core aborted before any edit. Two pure rules it
+was to build on did not match the binary. This round corrects both in the record and in
+`server/internal/ai`, so the retry builds on what the engine runs. Behaviour is unchanged: the `ai`
+package is still parked (`unwired_test.go`), and nothing outside its tests calls either rule. Every
+step below was re-read on 2026-09-24 in `/var/tmp/srv.asm`, `/var/tmp/decomp_server` and the PE's
+`.rdata` (read-only).
+
+**HOMING (`CAIState_HOMING::MoveHome`, `0x545c50`).** Round 261 recorded the offset as
+`rand % (1 + ftol(R/3)) - R/9`, so `-R/9 .. +2R/9`. That reading came from the decompiler's
+`extraout_ST0 / 3.0`. It assumes `_ftol2_sse` (`0x9fbb40`) leaves its argument on the x87 stack.
+It does not:
+
+- its SSE2 path stores the argument with `fstp QWORD [esp]` (`0x9fbb52`) before `cvttsd2si`;
+- its x87 path from `0x9fbb7f` (`fld st(0)`, `fistp`, `fild`, `fsubp`, `fstp`) also consumes
+  `st0`.
+
+With the pop, the stack at `0x545cff..0x545d70` runs as follows:
+
+1. `fld R`, then `fld -3.0` (`0xb45e08`, read as a double).
+2. `fdivr st,st(1)`: `st0 = R/-3`, `st1 = R`.
+3. `_ftol2_sse` pops, and `ecx = 1 - trunc(-R/3)`.
+4. `fild` the remainder, `fxch`, then `fdiv 3.0` (`0xb45ab8`): `R/3`.
+5. `fstp`, then `fadd`: `rem + R/3`.
+6. `fstp`.
+
+Only this order leaves the stack empty. So the offset is
+**`rand % (1 + trunc(R/3)) + R/3`**, which is `[R/3, R/3 + trunc(R/3)]`: 66.7 .. 132.7 units for
+R = 200. It runs along `normalize(monster - home)`. `FUN_00430ad0` gets `esi` = the monster's
+position (the owner's `+0x7c` record, passed by `HOMING::OnEnter` at `0x55a5fc`) and `edi` = home.
+It returns `esi - edi` across regions, and `FUN_004328c0` normalizes the result. The destination is
+exactly home when the owner's slot 243 (`+0x3cc`) answers non-zero.
+
+**WANDER (`CAIState_WANDER::PickWanderLeg`, `0x545860`).** Round 251 recorded the leg as
+`heading + t`, a full 45..135 degree turn. What the binary does:
+
+- It computes `h = atan2(owner+0x2c, owner+0x24) + t`. `0x9fc1aa` is `_CIatan2`: its dispatch
+  table at `0xc81760` spells `atan2`, and `+0x2c` is loaded first.
+- The two helpers `0x489490` and `0x4894b0` reach `fcos` and `fsin`, giving `cos h` and `sin h`.
+- It adds those to the owner's own direction: `0x5459b3` `fld [esi]` with `esi` = owner `+0x24`
+  (set at `0x545989`), `fadd` the cosine; `+0x28` plus 0.0; `+0x2c` plus the sine.
+- It normalizes the sum at `0x5459eb`.
+
+So the leg is **`normalize(dir + (cos h, 0, sin h))`**. The draw `t = +-(45 + rand % 91)` degrees
+and the 46..124 leg length are unchanged.
+
+**What the owner's `+0x24` holds**, which decides the turn, was the open question round 534 left.
+It is the **unit heading** `(cos a, 0, sin a)`, and these write it:
+
+- **SetHeading, vtable slot 230** (`0x398`). `0x482440` is CGObj's version and `0x48ba10` is the
+  `CGObjMobile` override that monsters inherit. Both write `cos a`, 0 and `sin a` to
+  `+0x24/+0x28/+0x2c`.
+- **`CGObj::EnterWorld`** calls it at `0x48541e` with the placement angle.
+- **Every destination move's start** calls it: `CGObjMoverByDest::vslot_004` (`0x48c330`) calls its
+  own slot 10 (`0x48c660`), which passes `FUN_00485c20`'s `atan2` toward the destination.
+- **`CGObj::vslot_000`** (`0x4848e0`), the object's reset, zeroes it. Its callers were not traced.
+
+The probes, and what they did not cover, are in `monster_ai.md`, "WANDER's leg". Unless the reset
+runs after placement, a standing monster's leg bisects its heading and `heading + t`. That is a turn
+of **t/2, 22.5..67.5 degrees** either side. A zeroed heading would give the absolute heading `t`
+from `+x`. Two things stay unmodelled and unread:
+
+- the `ctx+0x14c` term, which adds a unit vector toward that object;
+- the 30-unit blocked-probe reversal.
+
+**Changed.**
+
+- **`ai.HomingScatterRange`** now returns `[R/3, R/3 + trunc(R/3)]`. Its doc comment carries the
+  stack walk.
+- **New `ai.WanderLegDirection(dirX, dirZ, turn)`** is the leg rule. The WANDER comment block is
+  corrected, and `WanderTurnSpreadDeg`'s comment now says `t` is 45..135 and the leg turns `t/2`.
+- **`monster_ai.md`**: "WANDER's leg and every state's dwell time (round 251)" and "HOMING: the way
+  home (round 261)" each carry an inline "Corrected in round 535" note with the evidence. The
+  original text is quoted, not silently rewritten.
+- **`SYSTEMS.md`**: the Monster AI row is corrected.
+- **`recovered_names.tsv`**:
+  - the `0x545860` and `0x545c50` rows are corrected;
+  - it gains `_ftol2_sse` (`0x9fbb40`: 612 direct call sites, and it pops its argument),
+    `CGObj::SetHeading` (`0x482440`) and `CGObjMobile::SetHeading` (`0x48ba10`), all filed with
+    origin `reading`.
+- **`described_but_unnamed.tsv`** drops its `FUN_009fbb40` row, as `handler_names_test.go`
+  requires once a name is filed.
+
+`WORLD_ISSUES.md` rounds 251 and 261 are left as the log of what was believed then.
+
+**Tests** (`server/internal/ai/state_test.go`).
+
+- **`TestHomingRules`** now checks the band for R = 200, 100, 9, 2 and 0. The expected values are
+  `R/3 .. R/3 + trunc(R/3)`, and it asserts the band never starts below `R/3`.
+- **New `TestWanderLegBisectsHeadingAndTurn`** covers five unit headings and `t` in {45, 90, 135,
+  -45, -135} degrees. It checks that:
+  - the leg has unit length;
+  - the leg sits at `heading + t/2`;
+  - the leg is NOT at `heading + t` (round 251's rule);
+  - the turn is within 22.5..67.5 degrees;
+  - a zeroed heading gives the absolute heading `t`.
+- **Negative cases.**
+  - With `state.go` stashed, the package fails to build (`undefined: WanderLegDirection`).
+  - For semantic negatives, the old `HomingScatterRange` body was restored alone in the working
+    copy. `TestHomingRules` then FAILED: -22.2..43.8 for R = 200, "short of R/3".
+  - Separately, `WanderLegDirection` was reduced to round 251's `(cos h, sin h)`.
+    `TestWanderLegBisectsHeadingAndTurn` then FAILED: "turned the full t", 135 degrees.
+  - With the file restored (byte-compared), both pass.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...` is green, and was re-run after the
+  doc edits. No client file changed.

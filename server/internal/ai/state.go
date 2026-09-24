@@ -43,6 +43,7 @@ package ai
 
 import (
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -313,20 +314,38 @@ const DwellDefaultMs = 50000
 // which WANDER::OnEnter runs for a monster whose run speed is above 1e-6:
 //
 //	distance  = 85 +- (rand % 40)                     ; 46 .. 124 world units (0xb46160 = 85.0)
-//	heading   = current heading +- (45 + rand % 91) deg ; a 45..135 degree turn, left or right
-//	direction = (cos heading, 0, sin heading)
+//	t         = +-(45 + rand % 91) deg                ; 45..135 either side (0xb45e00 = pi/180)
+//	h         = atan2(dir.z, dir.x) + t               ; dir = the owner's heading, +0x24/+0x2c
+//	direction = normalize(dir + (cos h, 0, sin h))    ; 0x5459b3..0x5459eb, FUN_004328c0
 //	probe     = position + direction * 30              ; 0xb45e58 = 30.0
 //	if the world's probe (DAT_00cc387c slot 12) of that point reports bit 0 or
 //	bit 28 -- blocked -- the direction is reversed (* -1.0, 0xb45e68)
 //
 // then FUN_00540f70 sets the destination position + direction * distance and
 // the move starts; the leg's state timeout is the WANDER dwell above. A leg
-// whose destination cannot be picked leaves the state after 1000 ms.
+// whose destination cannot be picked leaves the state after 1000 ms. Between
+// the leg and the probe, when ctx+0x14c resolves to an object (FUN_00485d90)
+// the unit vector toward that object is added and the sum normalized again
+// (0x5459f0..0x545a50); what +0x14c holds is unread, and neither that term
+// nor the probe is modelled here.
+//
+// Corrected in round 535. Round 251 read the leg as heading + t, a full
+// 45..135 degree turn. The binary ADDS the unit vector at heading + t to the
+// owner's direction (fld [esi] with esi = owner+0x24 at 0x545989, fadd the
+// cosine at [esp+0x24]; +0x28 plus 0.0; +0x2c plus the sine) and normalizes
+// the sum. The owner's +0x24/+0x2c is its unit heading: SetHeading (vtable
+// slot 230: 0x00482440, the CGObjMobile override 0x0048ba10) writes
+// (cos a, 0, sin a) there, called by CGObj::EnterWorld (0x48541e) and at
+// every destination move's start (CGObjMoverByDest 0x48c330 -> its slot 10,
+// 0x48c660); the only other GObj writer found, CGObj::vslot_000 (0x4848e0),
+// zeroes it and its callers were not traced (docs/protocol/monster_ai.md,
+// "WANDER's leg"). So the leg bisects the heading and heading + t: a turn of
+// t/2, 22.5..67.5 degrees either side. See WanderLegDirection.
 const (
 	WanderDistanceBase   = 85.0
 	WanderDistanceSpread = 40 // rand % 40, either sign
 	WanderTurnMinDegrees = 45
-	WanderTurnSpreadDeg  = 91 // rand % 91, so a turn of 45..135 degrees
+	WanderTurnSpreadDeg  = 91 // rand % 91, so t is 45..135 degrees; the leg turns t/2 (round 535)
 	WanderProbeDistance  = 30.0
 	WanderNoLegTimeoutMs = 1000
 	WanderMinRunSpeed    = 1e-6 // 0xb45c84
@@ -335,6 +354,23 @@ const (
 // WanderDistanceRange is the leg length's [min, max] in world units.
 func WanderDistanceRange() (min, max float64) {
 	return WanderDistanceBase - float64(WanderDistanceSpread-1), WanderDistanceBase + float64(WanderDistanceSpread-1)
+}
+
+// WanderLegDirection is PickWanderLeg's leg direction on the ground plane
+// (0x00545911..0x005459eb), before the ctx+0x14c term and the blocked-probe
+// reversal: the owner's direction (dirX, dirZ) -- its +0x24/+0x2c -- plus the
+// unit vector at atan2(dirZ, dirX) + turn (0x9fc1aa is the CRT's _CIatan2,
+// z loaded first; 0x489490/0x4894b0 reach fcos/fsin), normalized.
+// FUN_004328c0 leaves a zero-length vector zero. turn is t in radians,
+// signed. For a unit heading the result turns by turn/2; for a zeroed
+// direction atan2(0, 0) = 0 and it is the absolute heading turn from +x.
+func WanderLegDirection(dirX, dirZ, turn float64) (x, z float64) {
+	h := math.Atan2(dirZ, dirX) + turn
+	x, z = dirX+math.Cos(h), dirZ+math.Sin(h)
+	if l := math.Hypot(x, z); l > 0 {
+		return x / l, z / l
+	}
+	return 0, 0
 }
 
 // Target acquisition, read off the tactics context (round 257,
@@ -460,7 +496,8 @@ func AggroLinkDamage(damage int, link int, ratio float64) int {
 }
 
 // HOMING, read off CAIState_HOMING::OnEnter/MoveHome/OnUpdate and
-// AITactics_HomingStep (round 261, docs/protocol/monster_ai.md "HOMING").
+// AITactics_HomingStep (round 261, docs/protocol/monster_ai.md "HOMING";
+// MoveHome's offset corrected in round 535).
 const (
 	// HomingArrivalRadius: within this many units of the destination the
 	// monster is home (0xb45b28, fld DWORD 5.0).
@@ -471,12 +508,28 @@ const (
 	HomingWobbleMax = 1.5
 )
 
-// HomingScatterRange is the displacement of the homing destination along the
-// home-to-monster line for a nest radius (or roam radius) R:
-// rand % (1 + ftol(R/3)) - R/9, so [-R/9, +2R/9] in whole steps.
+// HomingScatterRange is how far from home CAIState_HOMING::MoveHome
+// (0x00545c50) puts the homing destination, along the line from home toward
+// the monster -- normalize(monster - home): FUN_00430ad0 with esi = the
+// monster's position and edi = home's (0x545ccd/0x545cd1), then FUN_004328c0
+// -- for a nest radius (or roam radius) R:
+//
+//	offset = rand % (1 + trunc(R/3)) + R/3     ; [R/3, R/3 + trunc(R/3)]
+//
+// so 66.7 .. 132.7 units toward the monster for R = 200. The engine holds R
+// and R/3 as floats (fstp DWORD at 0x545cf6 and 0x545d68). The destination
+// is exactly home when the owner's vtable slot 243 (+0x3cc) answers non-zero.
+//
+// Corrected in round 535. Round 261 read rand % (1 + ftol(R/3)) - R/9 off
+// the decompiler, whose extraout_ST0 / 3.0 assumed _ftol2_sse (0x009fbb40)
+// leaves its argument on the x87 stack. It pops it (fstp QWORD at 0x9fbb52;
+// the x87 path from 0x9fbb7f consumes st0 too), and the stack at
+// 0x545cff..0x545d70 balances only this way: fld R; fld -3.0 (0xb45e08);
+// fdivr -> st0 = R/-3, st1 = R; ftol pops, ecx = 1 - trunc(-R/3); fild rem;
+// fxch; fdiv 3.0 (0xb45ab8) -> R/3; fstp; fadd -> rem + R/3; fstp.
 func HomingScatterRange(radius float64) (min, max float64) {
-	third := float64(int(radius / 3))
-	return -radius / 9, third - radius/9
+	third := radius / 3
+	return third, third + float64(int(radius/3))
 }
 
 // HomingReaggroDelayMs is how long a homing monster ignores players: the
