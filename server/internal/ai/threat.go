@@ -33,6 +33,15 @@ package ai
 //
 // The attack interval the idle test doubles is the selector's +0x48:
 // ReuseDelay + rand % (J + 1), J = clamp(previous interval / 5, 500, 2000) ms.
+//
+// It does not pace the swings (round 545's timer read, monster_ai.md "The
+// pure BATTLE rules and the timer read"). Its readers found are this idle
+// window, BATTLE::OnEnter's arming of tactics timer 5 (0x55a018) and
+// Handler_0e8's re-arm of it after each pick (0x547342), and timer 5 is a
+// first-table timer, which every arming marks fired (ArmTimer 0x53d6c7): the
+// next check is due at once. The cadence between swings is the action
+// machine's ReuseDelay (round 254), and round 259's "3000..3600 ms" for a
+// Mangyang is corrected to 3000 there.
 
 // Retarget rules, the tactics row's column 9.
 const (

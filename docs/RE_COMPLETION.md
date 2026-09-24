@@ -33675,3 +33675,107 @@ commit message.
   under `t.Parallel`, so it overlaps the rest of `cmd/server`. An injectable delay would need
   `respawnDelay` to become a variable read by a goroutine the test does not own.
 - The spawn push's live check is still unrun; `deploy/README.md` and `TODO.md` say so.
+
+## Pure BATTLE rules and the timer read (inert, S) (round 545)
+
+The rule half of the BATTLE entry, built as pure functions with no runtime wiring: mob-battle-chase
+runs them next. No opcode, layout or flag changed, and the public server's behaviour is the same
+byte for byte -- nothing calls the new code. Every citation was re-read in `/var/tmp/srv.asm` and
+`/var/tmp/decomp_server` before it was written; the reading is in `docs/protocol/monster_ai.md`,
+"The pure BATTLE rules and the timer read (round 545)".
+
+**Grounding, re-checked for this round.**
+
+- **The reach test is inclusive with a nest and strict without one** (`AITactics_IsTargetWithinChaseRange`
+  `0x545e50`). Measured at the two `fcompp`s, not read off the decompile: no nest, `fcompp` at
+  `0x545e97` then `test ah,0x5; jnp` -- only C0 (dist below `+0x7c`) jumps to `mov al,1`, an equal
+  distance falls to `xor al,al`; a nest, `fcompp` at `0x545f38` with the reduced threshold in st(0)
+  then `test ah,0x1; jne` -- only threshold < dist answers 0. The nest path's threshold is the raw
+  `+0x7c` less the excess of the monster's distance from `ctx+0x1b4` over `ctx+0x1cc` x 1.5 (the
+  double at `0xb45d78`, `fmul` at `0x545f02`), applied only when positive (`fcom` against 0.0 at
+  `0x545f1a`). `+0x79` of 0 or 2 (`0x545e5c`, `0x545e6f`) and a zero `+0x7c` (`0x545e7f`) answer
+  "within" before either path.
+- **The give-up code compares the raw `+0x7c` with `>=`** (`AITactics_BattleGiveUpCheck` `0x5483c0`):
+  `fild [eax+0x7c]` at `0x54842a`, `fcompp` at `0x54842d`, `test ah,0x41; jp` -- C0 or C3 alone falls
+  to `mov byte [edi],1`. It runs only when tactics timer 6 is due (`mov ecx,6` `0x5483f0`, call
+  `0x5483f5`), which `AI::CTactics::Init` arms once with base `0x5dc` (`0x53f6ec`, call `0x53f6f6`):
+  1500 ms, due at once the first time. The plan's "unreachable under the stand-ins" is corrected to
+  "all but": with no nest never; with a nest only at dist exactly `+0x7c` inside 1.5 x the radius,
+  where both exits are IDLE. A test sweeps both paths and finds exactly that.
+- **The order.** `CAIState_BATTLE::OnUpdate` (`0x55a090`): target validity (`0x55a0dc`, `0x23` at
+  `0x55a116`), the reach test (`+0x100` at `0x55a175`, `0x27` at `0x55a187`), the give-up check
+  (`+0x104` at `0x55a1a2`, `0x2a` at `0x55a1b9`), the swing (`+0xe8` at `0x55a1d0`). The vanished
+  target's exit is `0x23`, grounded; round 537's stand-in "which branch fires is unread" is closed.
+- **The slot-6 citation.** BATTLE's slot 6 is `CAIState_BATTLE::OnAttacked` (`0x55a2e0`), which calls
+  behaviour `+0xfc` = `AITactics_Handler_0fc` (`0x548090`); the plan named the behaviour as the slot.
+  `CAIState::OnAttacked` (`0x558ea0`) does `SetTarget(1)` at `0x558eed` and `ChangeState(3)` (`lea
+  edi,[ebx+3]`), no aggression or range test; `CAIState_IDLE::OnEnter` (`0x559c80`) `SetTarget(0)`
+  then the roam check.
+- **The timer read** (`AITactics_TimerDue` `0x53d6e0`, `AITactics_ArmTimer` `0x53d600`, the table
+  builder `0x53d4b0`). The first table has 9 entries (`mov dword [this+4],9` at `0x53d4bb`), so
+  BATTLE's indices 3, 4, 5 and the give-up's 6 are first-table; the first-table arming path sets
+  `last = 0` (`0x53d6c0`) and `fired = 1` (`0x53d6c7`) whatever the period, and `TimerDue` answers a
+  fired entry at once (`0x53d751` -> `0x53d765`). Therefore: the first swing is immediate
+  (`BATTLE::OnEnter` arms 5 with the selector's `+0x48`, `0x55a018`); `Handler_0e8`'s re-arm at
+  `0x547342` also fires at once, so `ArmNextAttack`'s interval never delays a swing; the top-of-tick
+  gate `0x542670` (waits on timer 5 only while the selector's `+0x4c` bit 0 is set, then re-arms with
+  base 0 and clears it) never skips a tick after a swing; a refused Execute zeroes entry 5's `last`
+  (`0x5455f0`, `0x545617`). The period applies only after a `PickSkill` that returns nothing, which
+  no roster species has. The selector's initial `+0x48` is 0: `Init` -> `BindSkillsAndRanges`
+  (`0x53f8d5` slot 1) -> `0x561400` -> slot 2 -> `0x5619d0` -> `0x5614c0` (`mov [ecx+0x48],eax`,
+  eax 0). Round 259's "a Mangyang swings every 3000..3600 ms" is corrected in place: the cadence is
+  the action machine's `ReuseDelay` (round 254), 3000.
+- **The floats**: `0xb45e10` = `00 00 c8 42` (100.0), `0xb45f04` = `00 00 16 43` (150.0), `0xb45d78`
+  = 1.5 (double), read with `objdump -s`.
+- **`BATTLE::OnEnter` issues no stop** (`0x559fb0..0x55a08b`): timers 3/4 (100) and 5, the `+0x164`
+  sign, `FUN_00541820`, `CollectNearbyMonsters`, `+0xb8`, slot 11. The interim hold's stop at the
+  blow stays own design until the chase replaces the leg (the review's blocking finding, recorded).
+
+**Wired (inert).** `server/internal/ai/battle.go`:
+
+- `ChaseRange(giveUp, roamRadius, distFromHome)`: the nest path's reduction.
+- `TargetWithinChaseRange(dist, chaseSwitch, giveUp, nest, roamRadius, distFromHome)`: the four
+  answers, the path as an argument.
+- `GiveUpCode(dist, chaseSwitch, giveUp)`: the switch guard and code 1 on the raw distance; 0
+  elsewhere (codes 2 and 3 are notices, the timer is the caller's, the flag word is not held).
+- `GiveUpCheckPeriodMs` = 1500, and the four OWN-DESIGN stand-ins with their columns:
+  `TacticsChaseSwitch` 1 (col 35), `TacticsGiveUpDistance` 400 (col 36), `TacticsReachRule` 0
+  (col 40), `TacticsRetargetRule` `RetargetKeepFirst` (col 9). All four columns are
+  server-database only and no value for any was read; each constant says so.
+- `systems/orphans_test.go`: `TargetWithinChaseRange` and `GiveUpCode` in `knownOrphans` against
+  mob-battle-chase; `AttackIntervalRange`'s entry now carries the timer read's answer and points at
+  mob-threat-retarget (the idle window is its only use).
+- Comments: `ai/threat.go`'s interval note carries the correction; `session/monsterai.go`'s validity
+  comment spells the two validators by their new names.
+- `docs/protocol/recovered_names.tsv`: twelve rows -- `CAITimeManager::InitTables`,
+  `AITactics_ArmContextTimer` (force: the dump's HOMING module is wrong, BATTLE/FLEE/FOLLOW/PICKITEM
+  call it too), `AITactics_ValidTargetOrNull`, `AITactics_IsValidTarget`, `AITactics_ExpireAttackTimer`,
+  `CAIState_BATTLE::AttackTimerGate`, `AI::CAISkill::ResetArmed`, `AI::CAISkill_Basic::ResetArmed`,
+  `AISkill_SetHoldByte` (force: the dump's module is its caller's), `AISkill_SetHoldByteFromSkill`,
+  `Location_SameOrAdjacentRegion`, `Location_Copy`. None appears in a derived table.
+- `docs/SYSTEMS.md`: the Monster AI row anchors `GiveUpCode` and records the rules and the timer read.
+- `docs/protocol/monster_ai.md`: the new section; the round-259 correction in place; the runtime
+  stand-in list's validity line; the "What this gives srrevamp" tail.
+
+**Tests** (`server/internal/ai/battle_test.go`, seven): the disclosed stand-ins pinned; the nest
+reduction at 0, inside, exactly on 1.5R, 300 beyond, to zero and below; switch 0/2 and a zero
+distance always within on both paths, with switch 1 as the control; the no-nest path strict at
+399.99 / 400 / 400.01; the nest path inclusive against the reduced threshold (400 and 400.01 at
+home, 99 / 100 / 100.01 / 400 at 300 beyond, a negative threshold); the give-up code at 399.99 / 400
+/ 1000 under switch 1 and 0 under 0/2; and the sweep proving code 1 meets "within" nowhere with no
+nest and only at dist 400 inside 1.5R with one.
+
+Negatives proved:
+
+| production change | test | result |
+|---|---|---|
+| `battle.go` moved out of the tree (the plan's negative: the functions do not exist) | the seven | FAIL: `[build failed]`, `undefined: TacticsRetargetRule`, `GiveUpCheckPeriodMs`, ... |
+| the nest comparison mutated to strict (`dist <` for `dist <=`) | `TestTargetWithinChaseRangeNestIsInclusiveAgainstTheReducedRange`, `TestGiveUpCodeIsReachableOnlyAtTheOneEquality` | both FAIL |
+
+Restored byte for byte each time (`cmp` against a kept copy). `cd server && go build ./... && go test
+-count=1 -p 1 ./...` is green and was re-run after the doc edits. No client file changed, so
+`remote_godot.sh tests` was not run.
+
+**Behaviour change.** None. **Not done here:** the chase itself, the monster's own swing, the retire
+of the interim hold and the synchronous counter (mob-battle-chase); the retarget rules
+(mob-threat-retarget).

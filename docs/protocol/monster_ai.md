@@ -839,6 +839,14 @@ challenger seat (`0x545550`) and the newcomer starts a fresh seat with one hit.
 ReuseDelay" is the floor of that window. The idle test above doubles this
 interval.
 
+*Corrected in round 545.* The window does not pace the swings. `+0x48` is armed on tactics timer 5
+(`BATTLE::OnEnter` at `0x55a018`, `Handler_0e8`'s re-arm at `0x547342`), and timer 5 is a
+first-table timer, which every arming marks fired (`ArmTimer` `0x53d6c7`), so the next `TimerDue(5)`
+answers at once whatever the period; the readers of `+0x48` found are those two armings and the
+idle window above. The cadence between swings is the action machine's cooldown, round 254's
+`ReuseDelay` -- 3000 ms for a Mangyang, not 3000..3600. The reading is in "The pure BATTLE rules
+and the timer read (round 545)", below.
+
 `ai.ThreatTable` (`internal/ai/threat.go`) carries the credit, the drop, the
 three rules and the interval with tests; nothing in srrevamp runs it yet.
 
@@ -1011,6 +1019,8 @@ at `0x545fde`, then `mov al,1`), unless the owner's slot 242 or 243 answers non-
 TID shapes; slot 243 answering 1 makes `Attach` store 5.0 instead). So retail never applies the 200
 to a roster monster. srrevamp's runtime uses 200 as its own roam radius (below), disclosed as such.
 Round 537 built the roam radius and its HOMING exit; the give-up distance waits on the BATTLE chase.
+Round 545 built its two rules as pure functions (`ai.TargetWithinChaseRange`, `ai.GiveUpCode`), inert
+until mob-battle-chase runs them ("The pure BATTLE rules and the timer read", below).
 
 
 ## Flag bits 2 and 7 also switch the give-up check OFF (round 421)
@@ -1829,7 +1839,9 @@ leg. The lock is per session, so a stalled client holds up only its own replies 
 - **Not modelled on a blow:** the aggro link (behaviour `+0xf0`) and the attacker accounting's
   refusals (`CreditAttacker`, behaviour `+0xec`).
 - **Target validity is srrevamp's own:** "in `world.Hub`, same zone". The engine's is
-  `FUN_00540dc0` / `FUN_00540de0` (alive, life state 1).
+  `AITactics_ValidTargetOrNull` / `AITactics_IsValidTarget` (`0x540dc0` / `0x540de0`: alive, life
+  state 1, the body-mode refusals; named in round 545), and its exit is `0x23` (round 545 settled
+  the branch).
 - **The synchronous counterattack is unchanged.** A monster still strikes only when struck.
 - **Zone-wide pushes, no interest management.** About 33 leg pushes a second per Jangan session at
   about 350 monsters. That is an ESTIMATE from the read dwell and roll numbers, not a measurement:
@@ -1915,3 +1927,199 @@ SRREVAMP_QA_ATTACK_GOTO=1`, `--server --attack --frames 600`, from the default s
 - This run cannot see the three races the round-539 hold release closes: no cast, no second
   player, and no release. The Go tests hold those.
 
+## The pure BATTLE rules and the timer read (round 545)
+
+`server/internal/ai/battle.go` carries the two distance rules BATTLE runs on its target, the four
+`_RefTactics` stand-ins they read, and the period of the give-up timer; this section holds the
+reading behind them and the timer read that settles how a monster's swings are spaced. **Inert
+when built**: nothing calls `ai.TargetWithinChaseRange` or `ai.GiveUpCode` (both are in
+`systems/orphans_test.go`'s known list against mob-battle-chase), and round 539's interim hold
+still stands in `session/monsterai.go`. Every address below was re-read in `/var/tmp/srv.asm` and
+`/var/tmp/decomp_server` on 2026-09-24; the new names are in `recovered_names.tsv` under this round.
+
+**The order `CAIState_BATTLE::OnUpdate` (`0x55a090`) runs its tests in**, which the chase item
+keeps:
+
+1. the base `OnUpdate` (`0x558b90`, at `0x55a09e`): a non-zero timeout expired -> return (BATTLE's
+   is zero, `ai.BattleDwellMs`);
+2. `CAIState_BATTLE::AttackTimerGate` (`0x542670`, at `0x55a0ae`; the timer read, below) answering
+   0 -> return, the tick skipped;
+3. the target: `ctx+0xbc` resolved to its object (`0x55a0cd`), then `AITactics_ValidTargetOrNull`
+   (`0x540dc0`, at `0x55a0dc`; it wraps `AITactics_IsValidTarget` `0x540de0`, round 424's filter:
+   alive with life state 1, and the body-mode refusals), `ctx+0xa4` non-zero (`0x55a0e8`) and the
+   owner's slot 393 (`+0x624`, `0x55a0f6..0x55a104`) answering non-zero for it -- any failing sends
+   message **`0x23`** (`0x55a116`, the folded IDLE) and returns on 2. **This settles the stand-in
+   round 537 left open**: a vanished target leaves BATTLE by `0x23`;
+4. behaviour `+0x10c` (`0x55a132`, the dead request trigger of column 10) and `+0x108`
+   (`0x55a144`), whose non-zero answer sends `0x2b` (FOLLOW) with its byte;
+5. **the reach test**, behaviour `+0x100` = `AITactics_TargetOutOfReach` (`0x548120`, at
+   `0x55a175`): 1 -> message **`0x27`** (`push 0x27` at `0x55a187`, dispatched at `0x55a22c`) ->
+   IDLE; 0 -> on; any other value -> return (`cmp al,1; jne` at `0x55a17b`);
+6. **the give-up check**, behaviour `+0x104` = `AITactics_BattleGiveUpCheck` (`0x5483c0`, at
+   `0x55a1a2`): an answer of 2 sends message **`0x2a`** with the code byte it wrote (`0x55a1b9`),
+   and the base handler `CAIState::OnMsg_0x2a` (`0x559ad0`) makes code 1 -> IDLE and codes 2 and 3
+   a `0x704f` notice;
+7. **the swing**, behaviour `+0xe8` = `AITactics_Handler_0e8` (`0x5472a0`, at `0x55a1d0`): 0
+   (swung) or 2 (the timer refused) -> return; 1 (no skill picked, or the action machine refused)
+   -> the `+0x79 == 2` branch (`0x55a1dd`, the target's position handed to `FUN_00541110`) or
+   behaviour `+0x114` (`0x55a217`) -> `0x29`.
+
+So the reach test always runs before the give-up check, and the target's validity before both.
+
+**The reach test.** `AITactics_TargetOutOfReach` (`0x548120`) asserts flag bits 2 and 7 are clear
+(round 424), measures `GObj_DistanceBetween(self, target)` (`0x53d7a0`, at `0x54814c`), and
+switches on column 40 (`mov al,[edx+0x89]` `0x548158`): 0 -> the chase-range test (`test al,al;
+jbe 0x548182`); 1 or 2 -> out of reach at once (`cmp al,2; jbe 0x548179`, `mov eax,1`); 3 -> out
+while `AITactics_HPBucket` (`0x541d70`, at `0x54816a`) answers under 2, HP under 40 % (`cmp eax,2;
+setge al`); anything else -> the chase-range test. The chase-range test is
+`AITactics_IsTargetWithinChaseRange` (`0x545e50`, at `0x54818d`), negated (`neg al; sbb eax,eax;
+add eax,1`). In the engine's order it answers:
+
+| test | answer | where |
+|---|---|---|
+| column 35 (`+0x79`) is 0 or 2 | within | `cmp byte [eax+0x79],0` `0x545e5c`, `cmp ..,2` `0x545e6f`, both `je 0x545f5a` = `mov al,1` |
+| column 36 (`+0x7c`, `fild` at `0x545e60`) is 0 | within | `fucom` against 0.0 at `0x545e7f`; `test ah,0x44; jnp 0x545f58` (C3 alone, equal, jumps) |
+| no nest (`ctx+0x30 == 0`, `0x545e8e`) | within iff **dist < +0x7c, strict** | `fld [ebp+8]` the distance; `fcompp` `0x545e97`; `test ah,0x5; jnp 0x545f5a`: C0 alone jumps to `mov al,1`; an equal distance sets C3 only, even parity, falls to `xor al,al` at `0x545ea4` |
+| a nest | within iff **dist <= +0x7c - excess, inclusive**, `excess = max(0, |monster - nest position| - 1.5 x nest radius)` | `Location_Copy` (`0x4115d0`) of `ctx+0x1b4` at `0x545eba`; `Location_SameOrAdjacentRegion` (`0x430ce0`) at `0x545ecc`, 0 -> out (`je 0x545ea4`); difference `0x545eef`, length `0x545ef7`; `fld [ebx+0x1cc]; fmul QWORD 0xb45d78` (1.5, the double `WithinRoamRadius` reads under rule 1) `0x545efc..0x545f02`; `fsub` `0x545f0c`; `fcom` against 0.0 `0x545f1a`, `test ah,0x41; jne 0x545f2f` keeps the raw `+0x7c` when the excess is not positive; `fsubr [esp+0xc]` `0x545f25`; `fld [ebp+8]; fld [esp+0xc]; fcompp` `0x545f38` with the threshold in st(0); `test ah,0x1; jne 0x545f4e`: only threshold < dist reaches `xor eax,eax`, equal reaches `mov eax,1` at `0x545f41` |
+
+`ai.ChaseRange` is the nest path's reduction and `ai.TargetWithinChaseRange` the four answers, with
+the path as an argument. The position the nest path measures from is `ctx+0x1b4` and the radius
+`ctx+0x1cc`, which on this path are the nest's own (column 38's note: `Attach` stores
+`refNest+0x20` there when there is a nest); srrevamp treats each placement as a nest whose
+position is the spawn point and whose radius is `MonsterRoamRadius` (own design), so the chase
+item passes those. The strict/inclusive split is measured at the two `fcompp`s, not read off the
+decompile, whose `local_34 < param_1` on the nest path is the `return 0` arm of the same test.
+
+**The give-up check.** `AITactics_BattleGiveUpCheck` (`0x5483c0`), in order: flag bits 2 or 7
+(`test cl,4` `0x5483cc`; `test cl,cl; js` `0x5483d7`; round 421) -> 0; column 35 of 0 or 2
+(`mov al,[eax+0x79]` `0x5483db`; `test al,al; je` `0x5483de`; `cmp al,2; je` `0x5483e2`) -> 0;
+**tactics timer 6 not due** (`mov ecx,6` `0x5483f0`, `AITactics_TimerDue` `0x5483f5`, `test eax,eax;
+jg` `0x5483fa`) -> 0; a null target -> 2 with the code byte untouched (`0x54840c`); else the code
+byte is set to 0xff, the distance measured (`0x54841a`) and compared with the **raw** `+0x7c`
+(`fild [eax+0x7c]` `0x54842a`, `fcompp` `0x54842d` with `+0x7c` in st(0), `test ah,0x41; jp
+0x548444`): C0 alone (`+0x7c` below the distance) or C3 alone (equal) is odd parity and falls to
+**code 1** (`mov byte [edi],1` `0x548436`, `mov eax,2` `0x54843b`) -- so code 1 at **dist >=
++0x7c**. Nearer, and only once 5000 ms have passed since the last swing (`ctx+0xcc`: `sub ecx,
+[esi+0xcc]; cmp ecx,0x1388; jb` `0x54844a..0x548456`, else 0), the code is 3 at dist >= 100.0 (the
+float at `0xb45e10`, read: `00 00 c8 42`) for a target whose slot 304 (`[edx+0x4c0]` `0x54845a`)
+answers 1, else at >= 150.0 (`0xb45f04`, read: `00 00 16 43`), and 2 below either. `ai.GiveUpCode`
+carries the switch guard and code 1, and returns 0 elsewhere: the timer is the caller's
+(`ai.GiveUpCheckPeriodMs`), the flag word srrevamp does not hold, and codes 2 and 3 are notices,
+not transitions.
+
+**Why code 1 is all but unreachable under the stand-ins**, and the chase item still runs it. The
+reach test runs first. With no nest, within is `dist < +0x7c` and code 1 is `dist >= +0x7c`: never
+both. With a nest, within is `dist <= +0x7c - excess` and code 1 is `dist >= +0x7c`: both only at
+`dist == +0x7c` with a zero excess, the monster inside 1.5 x its radius -- there the inclusive reach
+test keeps the target and the give-up sends the monster to IDLE by `0x2a(1)` instead of `0x27`,
+the same state. Anywhere the reduction bites, `dist > threshold` exits by `0x27` first.
+`TestGiveUpCodeIsReachableOnlyAtTheOneEquality` sweeps both paths in quarter units and finds exactly
+that. The plan's "unreachable" is corrected to this.
+
+**The stand-ins**, each OWN DESIGN and each a constant in `battle.go` with its column:
+
+| stand-in | value | column | why this value |
+|---|---|---|---|
+| `TacticsChaseSwitch` | 1 | 35 (`+0x79`) | the one value under which either distance test does anything; `Init` (`0x53f4d0`) asserts an immobile monster with a detection distance has 1 |
+| `TacticsGiveUpDistance` | 400 | 36 (`+0x7c`) | twice `MonsterRoamRadius`'s own-design 200: a chase can run to the far edge of the roam circle and as far again. No value for the column was read anywhere |
+| `TacticsReachRule` | 0 | 40 (`+0x89`) | the one value under which a monster chases at all |
+| `TacticsRetargetRule` | 0, `RetargetKeepFirst` | 9 (`+0x20`) | the interim hold's behaviour since round 537; mob-threat-retarget revisits it |
+
+All four columns are server-database only (the `_RefTactics` row above). The roam radius (200) and
+"each placement is a nest" are round 537's stand-ins, unchanged. **BATTLE's entry stop stays own
+design**: `CAIState_BATTLE::OnEnter` (`0x559fb0..0x55a08b`) issues no stop -- it arms tactics timers
+3 and 4 with 100 (`push 0x64; push 3` `0x559fcf`, `push 4` `0x559fe8`) and 5 with the selector's
+`+0x48` (`0x55a001..0x55a018`, below), rolls the `+0x164` sign (`0x55a01d..0x55a03d`), calls
+`FUN_00541820` (the `0x704f` run mode), resolves the target, runs
+`AITactics_CollectNearbyMonsters`, stamps `+0xb8` and tail-calls slot 11 (`0x541810`). In the
+engine the leg is replaced by the chase's own move or the swing; the interim hold's stop at the blow
+(round 539) is the stand-in until mob-battle-chase replaces the leg.
+
+**The timer read.** The tactics timer table is a `CAITimeManager` at `ctx+0x34`
+(`CAITimeManager::InitTables` `0x53d4b0`, called by `AI::CTactics::Attach` at `0x53f377` with
+`ctx+0x34` pushed): a first table of **9** twelve-byte entries (`mov dword [this+4],9` at
+`0x53d4bb`; the vector at `+0xc/+0x10/+0x14`, each entry's first byte its index 0..8) and a second
+of 3 (`+0x1c/+0x20/+0x24`). An entry is `{index byte, fired byte, last (+4), period (+8)}`.
+
+- `AITactics_ArmTimer` (`0x53d600`; index in ECX, base in EAX, spread / time / one-shot flag on the
+  stack) splits on the index at `cmp ecx,[ebx+4]; jle` (`0x53d60d`): an index up to the first
+  table's count takes the first-table path. Both paths compute `period = base + |rand| % spread + 1`
+  when the spread is non-zero (`0x53d69f..0x53d6ad`), at least 1 (`0x53d6b1..0x53d6b9`), and store
+  it at `+8` (`0x53d6d0`). **The first-table path then sets `last = 0` (`mov dword [esi+4],0`
+  `0x53d6c0`) and `fired = 1` (`mov byte [esi+1],1` `0x53d6c7`)**; the second-table path instead
+  sets `last = time + rand % period` (`0x53d65e..0x53d66b`), a random phase, and no fired byte.
+- `AITactics_TimerDue` (`0x53d6e0`; index in ECX, now in EDI) consumes the one-shot at `+0x28` first
+  (`0x53d6e1..0x53d70b`), then the indexed entry: **fired -> due** (`cmp byte [esi+eax*4+1],1; je
+  0x53d765` at `0x53d751`); else due iff `now - period >= last` (`sub edx,[ecx+8]; cmp edx,[ecx+4];
+  jb not-due` `0x53d75d..0x53d763`, unsigned). Due consumes: `last = now` (`0x53d765`), `fired = 0`
+  (`0x53d769`), return 1.
+
+So **arming a first-table timer makes it due at once**, whatever its period; the period applies
+only from a consumption to the next arming. The indices BATTLE uses -- 3, 4, 5 and the give-up
+check's 6 -- are all first-table (one arming in the image uses a second-table index, 10, at
+`0x558fd6` in `FUN_00558f70`, not on BATTLE's path). From that:
+
+- **The first swing is immediate.** `BATTLE::OnEnter` arms timer 5 through the context wrapper
+  `AITactics_ArmContextTimer` (`0x540d00`, `add ebx,0x34` then `ArmTimer`) with base = the
+  selector's `+0x48` (`FUN_00540d80` at `0x55a001` reads `[ctx+0x9c]+0x48`; `mov ecx,[esp+0x14];
+  push ecx` `0x55a006`; `push 5` `0x55a011`; call `0x55a018`) and spread 0 (`xor edx,edx`), and
+  `Handler_0e8`'s first act is `TimerDue(5)` (`mov ecx,5` `0x5472af`, call `0x5472b6`; not due ->
+  return 2 at `0x5472c1`), which the fired byte answers.
+- **The re-arm at `0x547342` also fires at once**, so `ArmNextAttack`'s interval never delays a
+  swing. `Handler_0e8`, once the timer answers: the armed skill (`GetArmedSkill`, slot 4, `0x5472d6`)
+  or `PickSkill` (slot 7, `0x5472f6`); none -> return 1 **without re-arming** (`0x547302`); else
+  `AISkill_SetHoldByteFromSkill` (`0x561890`, at `0x547315`: the selector's `+0x4c` = the skill's
+  `+0x578 != 0`), the swing reach (`0x541dc0`), then **`ArmTimer(5, base = +0x48, spread 0)`**
+  (`mov eax,[edx+0x48]` `0x547335`, `push 0; push now; push 0; mov ecx,5` `0x547338..0x54733d`, call
+  `0x547342`) -- first table, fired -- then Execute (slot 8, `0x54735d`): refused -> 
+  `AITactics_ExpireAttackTimer` (`0x5455f0`, at `0x547365`: entry 5's `last = 0`, `mov [esi+0x40],0`
+  `0x545617`) and return 1; done -> `ctx+0xcc = now` (`0x547381`), face the target, return 0. The
+  next tick's `TimerDue(5)` finds the fired byte from the re-arm either way.
+- **`AttackTimerGate`** (`0x542670`), the test at the top of every BATTLE tick: only when the
+  selector's `+0x4c` has bit 0 (`mov al,[eax+0x4c]; test al,1` `0x542677`) does it wait on
+  `TimerDue(5)` (`0x542694`; not due -> return 0, the tick skipped) -- and when that answers it
+  re-arms timer 5 with base 0 (period 1: `xor eax,eax; lea ecx,[eax+5]` `0x5426ac..0x5426b3`) and
+  clears the byte (`AISkill_SetHoldByte` `0x5618b0` at `0x5426c5`, with the byte xor 1). After a
+  swing the fired byte is already set, so this gate never skips a tick either. What the skill's
+  `+0x578` is was not read.
+- **The one case the period applies**: a `PickSkill` that returns nothing consumes the timer and
+  does not re-arm, so the next attempt waits `+0x48` (or the 1 ms the gate left). Every roster
+  species has an attack skill (round 260: a monster with one always swings it), so it does not
+  arise in srrevamp.
+- **The give-up check runs on the first tick and then every 1500 ms.** `Init` arms timer 6 once with
+  base `0x5dc` and spread 0 (`push 0` `0x53f6ea`, `mov eax,0x5dc` `0x53f6ec`, `mov ecx,6` `0x53f6f1`,
+  call `0x53f6f6`); no other `call 0x53d600` in the image uses index 6. `ai.GiveUpCheckPeriodMs`.
+  (Init's other armings: 0 with 300 at `0x53f6dc`, 7 with 30 at `0x53f70d`, and 1 -- the acquire
+  scan -- with base 1000 and spread `|rand| % 491 + 10`, or 200 and `% 41 + 10` under flag bits 2/7,
+  at `0x53f765`; column 42's "first action delay" is that timer.)
+- **The selector's initial `+0x48` is 0.** `Init` -> `AI::CTactics::BindSkillsAndRanges`
+  (`0x53f780`) calls the selector's slot 1 (`mov ecx,[ebx+0x9c]; mov edx,[ecx]; call [edx+4]`
+  `0x53f8d5..0x53f8e0`) = `AI::CAISkill::vslot_001` (`0x561400`), whose first call is slot 2 =
+  `AI::CAISkill_Basic::ResetArmed` (`0x5619d0`) -> `AI::CAISkill::ResetArmed` (`0x5614c0`: `xor eax,
+  eax; mov [ecx+0x44],eax; mov [ecx+0x48],eax; mov [ecx+0x4c],al`). So a monster's first
+  `BATTLE::OnEnter` arms timer 5 with base 0 (period 1, fired), and `ArmNextAttack`'s first `J` is
+  `clamp(0, 500, 2000) = 500`: the first interval is `ReuseDelay + rand % 501`.
+
+**What this corrects.** Round 259 read `ArmNextAttack`'s window as the swing cadence ("a Mangyang
+swings every 3000..3600 ms once running"). The interval's readers found are the threat table's idle
+window (2 x `+0x48`, `ResolveTarget`), `BATTLE::OnEnter`'s arming and `Handler_0e8`'s re-arm, and
+the two armings fire at once; **the cadence between swings is the action machine's cooldown**,
+round 254's `ReuseDelay` (3000 ms for a Mangyang, `combat.Hub.CounterattackReady`'s number). The
+round-259 paragraph carries the correction in place, and `ai.AttackIntervalRange` is the idle
+window only. Round 261 recorded `AITactics_ArmTimer`'s shape and left each index's meaning unread;
+indices 5 (the swing) and 6 (the give-up check) are read above.
+
+**A blow, the citations corrected.** `CAIState::OnAttacked` (`0x558ea0`, the base slot 6 that IDLE,
+WANDER, FLEE and HOMING use): the aggro link (`+0xf0`), the record's hate, the accounting (`+0xec`),
+then `SetTarget(1)` (`push 1; call 0x53ffe0` at `0x558eed`) and `ChangeState(3)` (`xor ebx,ebx; lea
+edi,[ebx+3]` from `0x558efd`) -- no aggression test and no range test. BATTLE's own slot 6 is
+`CAIState_BATTLE::OnAttacked` (`0x55a2e0`), which calls behaviour `+0xfc` = `AITactics_Handler_0fc`
+(`0x548090`) -- the plan's "BATTLE's slot 6 is `Handler_0fc`" was that one step short -- and goes
+to IDLE only when the accounting refuses. `CAIState_IDLE::OnEnter` (`0x559c80`): the dwell,
+`SetTarget(0)`, then the roam check -> `0x26` for a monster with a run speed.
+
+**Not modelled, and disclosed:** the flag-word guards (no roster flags; rounds 421/424);
+`Location_SameOrAdjacentRegion` on the nest path (a monster a region from its nest is past any chase
+the stand-ins allow); give-up codes 2 and 3; the `+0x4c` hold byte's meaning; the TID-bit-15 variant
+`AITactics_BattleGiveUpCheck_TID8000` (`0x5484b0`: `+0x7c + 100`, 200.0/250.0); reach rule 3's HP
+bucket; the target's slot 304.

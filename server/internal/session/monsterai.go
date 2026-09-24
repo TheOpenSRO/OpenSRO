@@ -403,8 +403,9 @@ func (a *monsterAI) update(b *brain) {
 		}
 		// The target must still be in the world and in this zone: the
 		// engine's 0x23 exit, when CAIState_BATTLE::OnUpdate (0x0055a090)
-		// finds its target invalid through FUN_00540dc0 (which wraps
-		// FUN_00540de0's alive and life-state-1 tests). srrevamp's validity
+		// finds its target invalid through AITactics_ValidTargetOrNull
+		// (0x00540dc0, which wraps AITactics_IsValidTarget 0x00540de0's alive
+		// and life-state-1 tests; named in round 545). srrevamp's validity
 		// test is its own, disclosed: in world.Hub, same zone.
 		var e world.Entity
 		ok := false
