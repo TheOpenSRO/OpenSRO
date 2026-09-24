@@ -32757,3 +32757,183 @@ Headings stay in srrevamp's world frame; mob-ai-tick carries that disclosure.
 - `cd server && go build ./... && go test -count=1 -p 1 ./...` is green, and was re-run after the
   doc edits. The one client file changed is the verifier, a Python dev tool;
   `client/tools/remote_godot.sh tests` ran 83 suites, 0 failing.
+
+## Monster AI tick behind the -monster-ai kill switch (default OFF): SPAWN to IDLE to WANDER and back, HOMING inside a disclosed roam radius, a struck monster stops at the blow (round 537)
+
+**Why.** Rounds 533 and 536 built both halves of server-driven monster movement and switched
+neither on: the client draws `OpMonsterMoved 0x007c` and `OpMonsterMotionList 0x007f`, the server
+can encode them and step a leg with the engine's mover, and `server/internal/ai` holds the pure
+rules. This round is the runtime that drives them, behind a kill switch that is **off by default**.
+The public server auto-deploys `dev`, so with the flag off it must be byte-identical on the wire,
+and it is (control C1 below).
+
+**Grounding, re-read read-only on the RE box on 2026-09-24** (`/var/tmp/srv.asm`,
+`/var/tmp/decomp_server`, the PE):
+
+- **`CAIState::OnAttacked`** (`0x558ea0`). It saves the record's `+8` (`0x558ea6`), calls behaviour
+  `+0xf0` (the aggro link, `0x558ebb`), stores `ftol(saved x 1.15)` (`0xb46300`) back into `+8`
+  (`0x558ebd..0x558ecc`), and calls behaviour `+0xec` (`0x558ed2`). A non-zero answer returns
+  without a transition; otherwise it calls `SetTarget` with push 1 through `0x53ffe0` (`0x558eed`)
+  and then `ChangeState` (`0x53ff30`) with `lea edi,[ebx+3]` (`0x558f01`). There is no aggression or
+  range test.
+- **`CAIState_IDLE::OnEnter`** (`0x559c80`). It calls the base `OnEnter` (`0x558b70`), stores the
+  dwell from `AIState_DwellMs` (`0x559c9e` -> `+0x14`) and calls `SetTarget(0)` (`0x559cad`). Then,
+  only when `0 < run` (`fldz; fcomp [owner+0x170]; test ah,0x5; jp`), it runs `IsWithinRoamRadius`
+  (`0x559cca`) and dispatches `0x26` on false (`0x559cdf`). **No stop**: nothing in
+  `0x559c80..0x559ce8` touches the mover.
+- **`CAIState_BATTLE::OnEnter`** (`0x559fb0`). It calls the base `OnEnter`, arms timers 3 and 4
+  (100) and 5 through `0x540d00`, calls `FUN_00541820` (`0x55a04a`), `0x485d90` on `ctx+0xbc`,
+  `0x540580` and `0x541810` (slot 11), and sets `ctx+0xb8`. There is no `AIState_DwellMs` call and
+  no stop. The base `OnUpdate` (`0x558b90`) expires only a non-zero `+0x14`, so a fight never times
+  out.
+- **`CAIState_WANDER::OnEnter`** (`0x559df0`). It refuses on `!(0 < run)` and on `IsCOS` (slot 11)
+  without `IsMercenary` (slot 15). Then it calls the base `OnEnter`, `SetTarget(0)` (`0x559e4c`),
+  `PickWanderLeg` (`0x559e63`), `AIState_DwellMs(2)` (`0x559e72`, or `ebp = 0x3e8` with no leg),
+  `FUN_00541820` (`0x559e82`) and the move (`0x559e95`).
+- **`CAIState_WANDER::OnUpdate`** (`0x559eb0`). On expiry it dispatches `0x25` (`0x559ec9`), whose
+  default is IDLE. With a run speed, it runs the roam check and dispatches `0x26` (`0x559f38..0x559f65`).
+- **`CAIState_HOMING::OnEnter`** (`0x55a540`). It stores the dwell (`0x55a5f1`, the default arm),
+  calls `MoveHome` (`0x55a602`) and `FUN_00541820` (`0x55a64a`), and `SetTarget(0)` (`0x55a67a`).
+- **`CAIState_HOMING::OnUpdate`** (`0x55a690`). On expiry it dispatches `0x25` (`0x55a6a8`).
+- **`AIState_DwellMs`** (`0x545b70`). The jump table at `0x545c2c` was read from the PE:
+  `0x545b84` (IDLE), `0x545bbb` (WANDER), `0x545c23` (BATTLE), `0x545c08` (FLEE), `0x545c23`
+  (HOMING), `0x545c23` (MOVING), `0x545bd1` (EMOTION). IDLE draws its sign FIRST
+  (`0x545b84..0x545b9f`) and then `rand % 2000` (`0x545ba2`).
+- **`CAIState_BATTLE::OnUpdate`** (`0x55a090`). It dispatches `0x23` when `FUN_00540dc0` (which
+  wraps `FUN_00540de0`: alive, slot 62 == 1) fails.
+- **`FUN_00541820`** loads `[ctx+0x110]` at `0x541821` and calls it at `0x541838`. It is called
+  from eight sites: the `OnEnter` of WANDER, BATTLE, FLEE, HOMING and PICKITEM, plus
+  `AITactics_Handler_0fc`, `FUN_00549ac0` and `FUN_00549f80` (`monster_ai.md`'s behaviour-table
+  row, corrected).
+- **`AI::CTactics::Attach`** (`0x53f2a0`) stores 200.0 (`0xb45d68`, read from the PE) at `ctx+0x1cc`
+  only when there is no nest, no positive caller radius and `row+0x84 <= 0`. That is exactly the
+  case in which `IsWithinRoamRadius` (`0x545f70`) returns 1 without measuring
+  (`cmp [row+0x84],0; jg` at `0x545fde`, unless slot 242 or 243 answers non-zero).
+- **The aggro link** (`0x547570`) zeroes the record's `+4` (damage) at `0x547797` and scales `+8`
+  (hate) by the ratio after each forward (`0x54780c..0x54781a`). `AITactics_CreditAttacker`
+  (`0x5473c0`) reads the record as `{attacker, damage, hate, hatePercent}`.
+
+**Changed.**
+
+- **`server/cmd/server/main.go`**:
+  - `-monster-ai` (default from `SRREVAMP_MONSTER_AI` through the new `envBool`, which uses
+    `strconv.ParseBool` and treats an unparsable value as off, with a WARN);
+  - `session.RunMonsterAI`, installed after the spawns and before the gateway serves;
+  - the two boot lines. Checked on a real in-memory boot: default gives
+    `monster AI off (-monster-ai / SRREVAMP_MONSTER_AI)`; `SRREVAMP_MONSTER_AI=1` gives
+    `monster AI on: tick 100ms (own design), roam radius 200 (own design)`; `=yes` gives the WARN
+    and off. With `-monster-ai=true SRREVAMP_AI_TRACE=1` for 12 s there were 24 `IDLE->WANDER`, and
+    every leg was mode 0 at its species' walk speed (8, 9, 11, 12, 14, 15).
+- **New `server/internal/session/monsterai.go`**:
+  - `monsterAIRuntime` is an `atomic.Pointer`, nil while off.
+  - The runtime holds `struck` (first attacker, drained every tick), the brains, the seeded rng,
+    the recorder-injectable push, the trace switch and the roam radius.
+  - The tick runs StepAll -> reconcile (SPAWN -> IDLE by `0x21`'s default) -> the blows -> each
+    brain once, in monster-id order -> the pushes, sent after the pass.
+  - The states are the four in the table in `monster_ai.md`, "srrevamp's runtime", through
+    `ai.Machine`, with message defaults taken from `ai.Message.DefaultTransition`.
+- **`noteStruck`** is called from **`performAttack`**, right after `ApplyDamage` when the monster
+  survives. It records the blow and **stops a walking monster in the hub at the blow**; nothing is
+  sent from the request path.
+- **`handleMonsterList`**: with the runtime installed, ONE `OpMonsterMotionList` follows the
+  unchanged result, and both are built and written under the session's wire lock.
+- **`keepup.go`**: a trace line when a keep-up ends out of reach.
+- **`server/internal/ai/state.go`**:
+  - new `ai.DwellMs`, the engine's draw;
+  - the package doc (was NOT WIRED) and the `Enterer` doc (WANDER refuses on run speed <= 0 and on
+    a COS that is not a mercenary, not on HP);
+  - the aggro-link comments corrected from damage to hate.
+- **Stale "nothing calls this yet" comments** in `combat/motion.go`, `session/monstermove.go` and
+  `ai/wander.go`.
+- **`internal/systems`**: `parked["ai"]` removed; the four motion `knownOrphans` removed (now
+  called); and fourteen `ai` orphans that `TestEveryOrphanIsExplained` reported, each explained.
+  Eleven name the item that wires them: mob-aggro-link, mob-acquire, mob-battle-chase,
+  mob-threat-retarget, mob-second-skill and mob-ai-skill-triggers. Three (`DwellRange`,
+  `WanderDistanceRange`, `HomingScatterRange`) are the closed forms the tests hold the draws to,
+  and no item needs them at run time; their lines say so.
+- **Docs**:
+  - `server/README.md`: `-monster-ai` and `SRREVAMP_AI_TRACE`;
+  - `deploy/README.md`: "Monster AI (off by default)";
+  - `docs/protocol/monster_ai.md`: the clearest-refuser sentence and the round-251 opening (run
+    speed, not HP); round 363's "wrong question" superseded (the 0/1 selection is read, the
+    walk/run labels inferred); the `+0x110` behaviour-table row; the "200 units when nothing sets
+    it" correction; the aggro link's hate; the protocol and round-536 "nothing sends" notes; and the
+    new section "srrevamp's runtime" (the tick, the state table, every stand-in, the live checks);
+  - `docs/SYSTEMS.md`: the Monster AI row rewritten, plus the Monster profile row's tail;
+  - `docs/TODO.md`: the item rewritten as "Monsters move only with `-monster-ai` on", with the
+    100/50/25 % correction;
+  - `recovered_names.tsv`: the `OnAttacked` and link rows, hate for damage.
+
+**The review fixes applied.**
+
+1. **Stop at the blow** (blocking). The tick steps the mover before it drains the blows, so a stop
+   at the tick would come after up to 0.1 s x speed of walking. That carries a monster struck at
+   `int(reach) + 2.9` out of reach and ends the keep-up. `noteStruck` now stops the monster at the
+   blow under the runtime's lock, and the struck event records `wasMoving`, so the next tick still
+   sends the one stop push. N1b is the test.
+2. `server/README.md` names the flag (`TestServerReadmeIsCurrent`).
+3. The test install helper lives in `monsterai_test.go`, and the runtime is an `atomic.Pointer`,
+   installed before the gateway serves and loaded once into a local by each reader. The new tests
+   pass under `-race`.
+4. BATTLE has no dwell expiry (cited), and N1 holds for 60 s. The cast-only release is disclosed in
+   the stand-ins and in `deploy/README.md`. The HOMING bound comes from `ai.HomingScatterRange(200)`
+   -- round 535's band, not the plan's older `[-200/9, +400/9]`.
+5. The live-check requirements (at least one strike and one kill, no release before death, the new
+   out-of-reach line, the time dilation, GOTO from a fresh snapshot) are written into
+   `monster_ai.md`.
+6. **A stale motion list.** This round takes the first option, with the lock made per session
+   rather than global. The client asks for the list on every attack result, so a global lock held
+   across the tick's sends would let one stalled client freeze every fighting player's reader. The
+   per-session lock stalls only that client's own replies and the tick, as regen already is. Two
+   tests cover it.
+
+**One plan number corrected.** The plan put the push rate at "about 33 leg pushes/s per Jangan
+session at about 350 monsters", from "0.76 legs per 10.8 s cycle". Those two do not agree: 350 x
+0.76 / 10.8 is 25 a second. The read dwells give the cycle as 4.0 s of IDLE plus 0.76 x 5.5 s of
+WANDER, 8.2 s, which does give 33 a second. `monster_ai.md` carries that derivation, still labelled
+an estimate.
+
+**Tests** (`go test -count=1 -p 1 ./...`, green, re-run after the doc edits):
+
+- `session/monsterai_test.go` (seeded rng, injected clock, recorder push):
+  - `TestMonsterAIRuntimeNilByDefault`;
+  - `TestMonsterAIWandersAtWalkSpeedInsideTheRoamRadius`: 120 s gives 14 legs, walked at 8 in mode
+    0, any run at 22 in mode 1, no stop, and no start beyond 200 + 124;
+  - `TestMonsterAIHomingFromBeyondTheRoamRadius`: at 300 from home, exactly one push, mode 1 at 22,
+    from (300, 0) to x inside `HomingScatterRange(200)`, and IDLE on the tick it arrives;
+  - **`TestMonsterAIIdleDoesNotStopALegUnderWay`** (trap N2);
+  - `TestMonsterAIRunSpeedZeroNeverWalks` (control);
+  - **`TestMonsterAIHoldsAStruckMonsterWhileTheKeepUpRuns`** (N1): one stop push, 60 s with no push
+    and no step, BATTLE throughout, and IDLE by the second tick after `keepUp.Cancel`;
+  - **`TestMonsterAIStrikeAtTheReachEdgeKeepsTheKeepUpInReach`** (N1b);
+  - **`TestMonsterListWithoutTheAIIsTheOldReply`** (C1): the reply is byte-identical to the old
+    encoder's, nothing follows it, and `noteStruck` is a no-op;
+  - `TestMonsterListCarriesTheLegsWithTheAIOn`: the result plus one motion list, twice, and nothing
+    else;
+  - `TestAttackStopsAWalkingMonsterAtTheBlow` (the `performAttack` wiring, over TCP);
+  - `TestMonsterPushWaitsForAListReplyInFlight` and `TestMonsterListWaitsForAPushInFlight` (the
+    wire order; each waits a bounded 300 ms for a goroutine to block).
+- `ai`: `TestDwellMsDrawsTheSwitchArms` (sign first: `(1999, 2)` -> 4002; no draw for the default
+  arm; 4000 seeded draws per state inside `DwellRange`).
+- `cmd/server`: `TestEnvBoolLeavesAnUnparsableSwitchOff`.
+
+**Negatives, proved** by editing a production file, running the test, then restoring it:
+
+| production change | test | result |
+|---|---|---|
+| `noteStruck` a no-op (the plan's step-5 state, no hold) | N1 | FAILED: "the tick after the blow pushed [], want exactly one stop" |
+| same | N1b | FAILED: at 27.70 a second later |
+| same | `TestAttackStopsAWalkingMonsterAtTheBlow` | FAILED |
+| only the blow-instant stop removed (the tick-time hold kept) | N1b | FAILED: "struck at 18.9, the monster is at 19.70" -- the reviewer's 0.8-unit drift |
+| broadcast without the wire lock | `TestMonsterPushWaitsForAListReplyInFlight` | FAILED |
+| list handler without the wire lock | `TestMonsterListWaitsForAPushInFlight` | FAILED: `0x0066` arrived first |
+| the `performAttack` call removed | `TestAttackStopsAWalkingMonsterAtTheBlow` | FAILED |
+| IDLE stopping the leg | N2 | FAILED: "entering IDLE pushed 1 move(s)" |
+| the IDLE dwell drawn remainder-first | `TestDwellMsDrawsTheSwitchArms` | FAILED |
+| every production file stashed (`monsterai.go` moved aside) | the new tests | failed to build |
+
+Every test passed again once its file was restored.
+
+**Not done here.** The two render-box live checks were not run in this round: the lane's access to
+the box is read-only. They gate the operator's flip, not this commit. The fresh-snapshot GOTO they
+need is a client change. Nothing on the VM was edited, and the flag stays off there.

@@ -1,19 +1,22 @@
 // Package ai holds the monster AI state machine, recovered whole from
 // SR_GameServer.exe.
 //
-// NOT WIRED, and that is a GAP rather than a decision. Nothing outside this
-// package's own tests imports it. The states, the threat table and the
-// detection radii are all here and correct; what does not exist is a runtime to
-// drive them -- there is no monster tick, and no monster-initiated attack at
-// all (the counterattack in session/combat.go is a synchronous reply inside the
-// player's own attack handler, so a monster only ever acts when struck). This
-// is the open TODO "Monsters do not move, chase or notice anyone".
+// WIRED BEHIND A DEFAULT-OFF FLAG (round 537). session/monsterai.go drives
+// this machine on its own tick when cmd/server runs with -monster-ai
+// (SRREVAMP_MONSTER_AI); without the flag nothing here runs and the server
+// behaves exactly as it did before. The tick runs SPAWN, IDLE, WANDER and
+// HOMING by the rules below and in wander.go, and an interim BATTLE that only
+// holds a struck monster where the blow found it. Every stand-in it carries is
+// listed in docs/protocol/monster_ai.md, "srrevamp's runtime".
 //
-// Said here because two mechanics have already been recovered, implemented,
-// tested and left uncalled for weeks -- the HP/MP regen rule and the real drop
-// tables -- and both were found by accident rather than by anything in the
-// code saying so. internal/systems' unwired_test.go now holds this package to
-// that statement.
+// Still NOT wired: the BATTLE chase and the monster's own swing (the
+// counterattack in session/combat.go is still a synchronous reply inside the
+// player's attack handler, so a monster only ever strikes when struck), target
+// acquisition, the aggro link, the threat table's retarget rules and the skill
+// choice. internal/systems' orphans_test.go names each such function with the
+// item that will call it -- the rule this package was parked under until round
+// 537, after the HP/MP regen rule and the real drop tables were each found
+// recovered, tested and uncalled for weeks.
 //
 // Everything in this file was read out of the binary. The sixteen states are
 // not a guess at what a monster AI should have: each one is a compiled C++
@@ -44,6 +47,7 @@ package ai
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"time"
 )
 
@@ -211,9 +215,12 @@ const Handled = 2
 
 // Enterer is the part of a state the machine below needs: whether it accepts
 // being entered. OnEnter is vtable slot 2 and returns a negative value to
-// refuse; CAIState_WANDER (0x00559df0) is the clearest case, refusing with
-// -1 when the owner's run speed (+0x170) is not above zero (corrected in round
-// 536; this read "HP" before, see docs/protocol/monster_ai.md, "WANDER's leg").
+// refuse; CAIState_WANDER (0x00559df0) is the clearest case. It returns -1
+// when the owner's run speed (+0x170) is not above zero (`fldz; fcomp
+// [owner+0x170]; test ah,0x1`, 0x559df0..0x559e09), and when the owner is a
+// COS (IsCOS, slot 11) that is not a mercenary (IsMercenary, slot 15;
+// 0x559e15..0x559e30). It does not test HP: round 251 read HP there, and round
+// 536 corrected it (docs/protocol/monster_ai.md, "WANDER's leg").
 type Enterer interface {
 	// OnEnter reports whether the state accepts the transition.
 	OnEnter(from State) bool
@@ -310,6 +317,37 @@ func DwellRange(s State) (min, max int, ok bool) {
 
 // DwellDefaultMs is the switch's default arm.
 const DwellDefaultMs = 50000
+
+// DwellMs is AIState_DwellMs (0x00545b70) drawn for state s: a switch on
+// s - 1 through the jump table at 0x545c2c (seven entries, read from the PE:
+// IDLE 0x545b84, WANDER 0x545bbb, BATTLE 0x545c23, FLEE 0x545c08, HOMING
+// 0x545c23, MOVING 0x545c23, EMOTION 0x545bd1), with rand()'s draws in the
+// engine's order:
+//
+//	IDLE     a random sign first (0x545b84..0x545b9f; odd -> +1), then
+//	         4000 (0xfa0) + sign x (rand % 2000 (0x7d0))       -> 2001 .. 5999
+//	WANDER   5000 (0x1388) + rand % 1000 (0x3e8)               -> 5000 .. 5999
+//	FLEE     3000 (0xbb8) + |rand| % 2001 (0x7d1)              -> 3000 .. 5000
+//	EMOTION  a random sign, then 4000 + sign x (rand % 1000)   -> 3001 .. 4999
+//	the rest 50 000 (0xc350 at 0x545c23), drawing nothing
+//
+// so every value lies inside DwellRange(s). BATTLE's table entry is the
+// default, but BATTLE::OnEnter never calls this (BattleDwellMs).
+func DwellMs(rng *rand.Rand, s State) int {
+	switch s {
+	case StateIdle:
+		sign := crandSign(rng)
+		return 4000 + crand(rng)%2000*sign
+	case StateWander:
+		return 5000 + crand(rng)%1000
+	case StateFlee:
+		return 3000 + crand(rng)%2001
+	case StateEmotion:
+		sign := crandSign(rng)
+		return 4000 + crand(rng)%1000*sign
+	}
+	return DwellDefaultMs
+}
 
 // The wander leg, read off CAIState_WANDER::PickWanderLeg (0x00545860),
 // which WANDER::OnEnter runs for a monster whose run speed is above 1e-6:
@@ -450,9 +488,19 @@ func LevelScaledRadius(base float64, monsterLevel, targetLevel int) float64 {
 // struck monster gather the ten nearest monsters inside
 // LevelScaledRadius(its detection radius, attacker)
 // and forward the attack record to as many of them as the party has members
-// within 1000 units of the attacker; each successive link carries the damage
-// times the decrease ratio. A linked monster enters BATTLE against the
+// within 1000 units of the attacker; each successive link carries the record's
+// HATE times the decrease ratio. A linked monster enters BATTLE against the
 // attacker without linking further. A solo player never links anything.
+//
+// Corrected in round 537: the record is {attacker, damage (+4), hate (+8),
+// hatePercent (+0xc)} (AITactics_CreditAttacker 0x5473c0), and both factors
+// act on the hate, not the damage. The link zeroes the record's damage before
+// it forwards anything (`mov [edi+0x4],ebx` with ebx = 0 at 0x547797) and
+// scales the hate after each forward (`fild [esi+0x8]; fmul [0xc8252c]` ->
+// _ftol2_sse -> `mov [esi+0x8],eax`, 0x54780c..0x54781a); OnAttacked saves the
+// hate before the link and stores ftol(hate x 1.15) back over it afterwards
+// (0x558ea6, 0x558ebd..0x558ecc). So under a link neither the neighbours nor the
+// victim book the blow's damage.
 const (
 	// AggroLinkMaxHelpers is the gather's cap: the ten nearest monsters.
 	AggroLinkMaxHelpers = 10
@@ -460,13 +508,15 @@ const (
 	// attacker to count (0xb45c68, double).
 	AggroLinkMemberRange = 1000.0
 	// AggroLinkDecreaseRatio is MONSTER_AGGRO_LINK_DECREASE_RATIO's default,
-	// 0.5 (0xb45b68, fld DWORD): the factor each link's credited damage
-	// shrinks by. A configured value is a percentage over 100 with no floor.
+	// 0.5 (0xb45b68, fld DWORD): the factor each link's hate shrinks by
+	// (corrected in round 537 from "credited damage"). A configured value is
+	// a percentage over 100 with no floor.
 	AggroLinkDecreaseRatio = 0.5
 	// AggroVictimDamageFactor is what the struck monster itself books the
-	// blow at in its attacker accounting: raw damage x 1.15 (0xb46300, a
-	// double used nowhere else), truncated. The links get the raw value and
-	// its halvings; the victim weighs its own attacker 15 % heavier.
+	// record's HATE at in its attacker accounting: hate x 1.15 (0xb46300, a
+	// double used nowhere else), truncated (corrected in round 537 from "raw
+	// damage"). The links get the raw hate and its halvings; the victim weighs
+	// its own attacker 15 % heavier.
 	AggroVictimDamageFactor = 1.15
 )
 
@@ -486,9 +536,10 @@ func AggroLinkCount(membersNear, gathered int) int {
 	return membersNear
 }
 
-// AggroLinkDamage is the damage the i-th linked monster (0-based) is credited
-// with: the blow's damage times the decrease ratio i times, truncated toward
-// zero at each step as the engine's ftol does.
+// AggroLinkDamage is the hate the i-th linked monster (0-based) is credited
+// with: the record's hate times the decrease ratio i times, truncated toward
+// zero at each step as the engine's ftol does. The name predates round 537's
+// correction (the factor acts on the hate, +8, not the damage, +4).
 func AggroLinkDamage(damage int, link int, ratio float64) int {
 	for i := 0; i < link; i++ {
 		damage = int(float64(damage) * ratio)

@@ -98,3 +98,48 @@ removing the `-leveldata-csv` line stops levelling. The QA harness on the render
 same three CSVs from beside the pk2s (`PK2_DIR`), so keep a copy there too.
 
 Reference data is otherwise not touched by the update loop.
+
+## Monster AI (off by default)
+
+The server can run the monster AI tick: monsters stand for 2-6 s, then 76 times in 100 walk a
+46-124-unit leg at their walk speed; more than 200 units from their spawn point they run back; a
+monster a player hits stops where it is and stays there while that player's auto-attack runs, then
+idles. Everyone in the zone sees each move. A monster still strikes back only when struck. What is
+grounded and what is a stand-in is in `docs/protocol/monster_ai.md`, "srrevamp's runtime".
+
+It is behind the `-monster-ai` flag (env `SRREVAMP_MONSTER_AI`), and **the default is off**. Off,
+nothing moves and the wire is exactly what it was, so pushing to `dev` changes nothing until the
+operator turns it on. After an update the boot log reads
+`monster AI off (-monster-ai / SRREVAMP_MONSTER_AI)`.
+
+**Turn it on only when both of these hold:**
+
+1. The client release that draws server-driven moves is tagged, CI is green for it (`gh run list`)
+   and its zips are published. That is v0.1.435 (round 533) or later. An older client ignores the
+   moves (its `NetClient` warns "unhandled opcode 0x007c" for each), so its players see monsters
+   jump on each list refresh.
+2. The two live checks in `monster_ai.md` ("The live checks") pass on the render box.
+
+Know what it does before turning it on. Legs can cross walls and objects: the server holds no
+collision world yet. A monster hit only by skills that do not hand off to the auto-attack is let go
+between casts and may wander off. A client that stops reading its socket stalls the tick, as it
+already stalls regen.
+
+**On.** Add the variable under the server's `environment:` in the untracked
+`docker-compose.override.yml`, then `docker compose up -d`:
+
+```
+services:
+  server:
+    environment:
+      SRREVAMP_MONSTER_AI: "1"
+      # SRREVAMP_AI_TRACE: "1"     # every state change, leg and strike in the log; only for a check
+```
+
+Or append `- "-monster-ai=true"` to the `command:` list the override already restates (step 4 of the
+reference-data section above). An override's `command` REPLACES the base list, so restate all of
+it. The boot log then reads
+`monster AI on: tick 100ms (own design), roam radius 200 (own design)`.
+
+**Off, the kill switch.** Remove that line (or set it to `"0"`), then `docker compose up -d`. The
+update loop never touches the override, so the setting survives updates until it is removed.

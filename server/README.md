@@ -36,13 +36,16 @@ in `deploy/README.md` and `docs/HANDOFF_OPENSRO.md`.
 | `-items-csv` | `SRREVAMP_ITEMS_CSV` | item reference data (`export-refdata`), in-memory mode; PostgreSQL imports it instead |
 | `-npcpos-csv` | `SRREVAMP_NPCPOS_CSV` | the game's monster placements (`export-refdata -mode npcpos` on a client's `npcpos.txt`); every roster species with rows stands where the game puts it, otherwise at its own-design anchor near the town |
 | `-gm-accounts` | `SRREVAMP_GM_ACCOUNTS` | comma-separated account usernames allowed to run the in-game GM commands (`/tp`, `/give`, `/level`, ...); case as stored in `accounts.username`; default none. Every command is logged with the account. See `docs/DEBUG_TOOLS.md` |
+| `-monster-ai` | `SRREVAMP_MONSTER_AI` | **default off**, and the kill switch. On, the monster AI tick runs: monsters idle, wander at their walk speed, run home past a 200-unit roam radius (own design), and stand where a blow found them while the attacker's auto-attack runs, each move pushed to the zone (`OpMonsterMoved`). Off, nothing moves and the wire is what it was. The env value is `strconv.ParseBool`'s (`1`, `true`, ...); anything else is off with a WARN. Needs a client of v0.1.435 or later. The boot log says which (`monster AI on: ...` / `monster AI off ...`). See `deploy/README.md`, "Monster AI (off by default)" |
 
 At boot the server logs what reference data its database holds
 (`reference data in PostgreSQL items= skills= monsterDrops= dropGroupEntries=`)
 and **warns when it has no items** — that state is what made every hit deal 1
 and no kill pay EXP on the public server until 2026-09-19. Env-only settings
 are the QA accelerants, which are never for real play
-(`SRREVAMP_DURABILITY_LOSS_ALWAYS`). The GM console's account list is the
+(`SRREVAMP_DURABILITY_LOSS_ALWAYS`), and the monster AI's trace
+(`SRREVAMP_AI_TRACE`: every state change, leg, strike and release, and a keep-up
+that ends out of reach -- several lines a second in Jangan, so only for a check). The GM console's account list is the
 `-gm-accounts` flag above (env `SRREVAMP_GM_ACCOUNTS`); the commands a tester
 and a GM get are in `docs/DEBUG_TOOLS.md`.
 

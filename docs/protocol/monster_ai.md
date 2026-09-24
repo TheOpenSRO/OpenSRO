@@ -129,8 +129,11 @@ Step 6 is the part worth keeping exactly: element 1 is IDLE, and the refusal
 does not propagate. A state that refuses entry does not leave the monster where
 it was; it drops the monster into IDLE.
 
-`CAIState_WANDER::OnEnter` (`0x00559df0`) is the clearest refuser — it returns
-`-1` when the owner's HP has reached zero.
+`CAIState_WANDER::OnEnter` (`0x00559df0`) is the clearest refuser: it returns `-1` when the
+owner's run speed (`+0x170`) is not above zero, and when the owner is a COS (`IsCOS`, slot 11) that
+is not a mercenary (`IsMercenary`, slot 15). *Corrected in round 537:* this sentence said "when the
+owner's HP has reached zero"; round 536 corrected the same reading in the round-251 section below
+and missed this one (`0x559df0..0x559e30`, re-read 2026-09-24).
 
 ## The eleven messages
 
@@ -415,9 +418,11 @@ shape a population count, **not read** as such.
 ## WANDER's leg and every state's dwell time (round 251)
 
 `CAIState_WANDER::OnEnter` (`0x559df0`) refuses (returns -1, so `ChangeState` drops the
-monster into IDLE) when the owner's HP is 0 or a monster's `IsNPC` object has no home
-(slot 15); otherwise it clears the target and asks `CAIState_WANDER::PickWanderLeg`
-(`0x545860`) for a leg (*corrected in round 536*: the two refusals are read below the block):
+monster into IDLE) when the owner's run speed (`+0x170`) is not above zero, or the owner is a COS
+that is not a mercenary; otherwise it clears the target and asks `CAIState_WANDER::PickWanderLeg`
+(`0x545860`) for a leg. (Round 251 read the two refusals as "HP is 0" and "an `IsNPC` object with no
+home"; the correction and its addresses are below the block, from round 536, and round 537 carried
+it into this sentence.)
 
 	requires run speed > 1e-6 (0xb45c84) and the object's location record (+0x7c)
 	distance  = 85 +- (rand % 40)                      ; 0xb46160 = 85.0 -> 46..124 units
@@ -579,6 +584,15 @@ third field (`local_30 * local_30 + local_38 * local_38 + local_34 * local_34`)
 when reached through the owner pointer, `*(int *)(ctx + 4) + 0x16c`. Scoping the
 grep by *address range* does not separate these; only the **base object** does.
 
+*Superseded in round 537.* The question does have an answer, from the move's side rather than the
+leg's. `AITactics_Handler_110` (`0x5489b0`) picks the move's clip byte, 0 or 1 -- WANDER and FLEE
+0, every other state 1, and 0 or 1 outright when a speed is absent (round 536, "The server half") --
+and `FUN_00541820`, which WANDER's `OnEnter` calls at `0x559e82` before the move, passes it on (the
+behaviour-table row for `+0x110` below). That 0/1 selection is **read**. That 0 is the walk clip
+walked at the walk speed, and 1 the run clip at the run speed, is the **inference** srrevamp's
+runtime carries (below), because the mover's use of the owner's `+0x155`/`+0x174` is untraced. So a
+WANDER leg walks at the walk speed, and HOMING runs at the run speed, by inference.
+
 ## How the AI actually moves a monster (round 363)
 
 `FUN_00540f70`, the destination setter `PickWanderLeg` hands its leg to, ends by
@@ -738,6 +752,16 @@ so **as many neighbouring monsters as the party has members on the spot join
 the fight, each credited with a smaller share of the blow than the last** (the
 first link gets the raw damage, the second half of it, the third a quarter --
 `ftol` at each step), while the victim itself books 1.15 x the raw blow.
+
+*Corrected in round 537: those shares are HATE, not damage.* The attack record is `{attacker,
+damage (+4), hate (+8), hatePercent (+0xc)}` (`AITactics_CreditAttacker`, `0x5473c0`, below). The
+link zeroes the record's damage before its first forward (`mov [edi+0x4],ebx` with `ebx = 0` at
+`0x547797`) and scales the hate after each one (`fild [esi+0x8]; fmul DWORD [0xc8252c]`, then
+`_ftol2_sse` and `mov [esi+0x8],eax`, `0x54780c..0x54781a`). `OnAttacked` saves the hate before the
+link (`mov eax,[esi+0x8]` at `0x558ea6`) and writes `ftol(hate x 1.15)` back over it afterwards
+(`0x558ebd..0x558ecc`). So under a link the neighbours are credited 100/50/25 % of the record's
+hate and the victim 115 % of it, and nobody books the blow's damage. The pseudocode above, which
+says `record.damage`, is the round-258 reading.
 Command 0xe lands in **slot 29, `CAIState::OnAggroLinked`** (`0x559bb0`): the
 attacker accounting, `SetTarget(1)`, `ChangeState(3)` -- the same entry into
 BATTLE as a direct hit, but WITHOUT running the link again, so a link never
@@ -946,7 +970,7 @@ defaults and the tactics-driven overrides:
 | `+0x104` | `FUN_005483c0` (give-up check) | TID bit 15 -> `FUN_005484b0` | `BATTLE::OnUpdate` |
 | `+0x108` | `FUN_005485b0` | -- | `BATTLE::OnUpdate`, `WANDER::OnUpdate`, `EMOTION::FUN_0055a8b0` |
 | `+0x10c` | `FUN_00548950` (the dead request) | -- | `BATTLE::OnUpdate` |
-| `+0x110` | `AITactics_Handler_110` | -- | no state calls it through the context (the `Unique_Summon` AI skills reach the same address another way; unread) |
+| `+0x110` | `AITactics_Handler_110` | -- | `FUN_00541820` (loads `[ctx+0x110]` at `0x541821`, calls it at `0x541838`), called from the `OnEnter` of WANDER (`0x559e82`), BATTLE (`0x55a04a`), FLEE (`0x55a491`), HOMING (`0x55a64a`) and PICKITEM (`0x55abd6`), and from `AITactics_Handler_0fc` (`0x5480a1`), `FUN_00549ac0` (`0x549de7`) and `FUN_00549f80` (`0x54a141`). The `Unique_Summon` AI skills reach the same address another way (not followed). *Corrected in round 537*: this cell said no state calls it through the context |
 | `+0x114` | `FUN_00548be0` | TID bit 15 -> `FUN_00549460` | `BATTLE::OnUpdate` |
 | `+0x118` | `FUN_005496c0` | TID bit 15 -> `FUN_00549970` | `HOMING::OnUpdate` |
 | `+0x11c` | `FUN_00549ac0` | -- | `FOLLOW::OnUpdate` |
@@ -975,9 +999,18 @@ fallback ignoring its own `OnEnter` result.
 what WANDER picks for a destination or how BATTLE chooses a skill; those are
 `AI::CTactics`' own 19 slots and the `AI::CAISkill` hierarchy. The row layout
 above gives the rules that are now implementable without a tactics table at
-all: the roam radius (200 units when nothing sets it, x1.5 under rule 1) with
+all: the roam radius (x1.5 under rule 1) with
 its HOMING exit, and the give-up distance with its IDLE exit. Both wait on
 srrevamp's server moving monsters at all (`docs/TODO.md`).
+
+*Corrected in round 537.* This paragraph said the roam radius is "200 units when nothing sets it".
+`AI::CTactics::Attach` (`0x53f2a0`) does store 200.0 (`0xb45d68`, `fld` at `0x53f367`) when there is
+no nest, no caller radius and the row's `+0x84` (column 38) is not positive -- but in exactly that
+case `IsWithinRoamRadius` (`0x545f70`) answers "within" without measuring (`cmp [row+0x84],0; jg`
+at `0x545fde`, then `mov al,1`), unless the owner's slot 242 or 243 answers non-zero (the (1,2,4,x)
+TID shapes; slot 243 answering 1 makes `Attach` store 5.0 instead). So retail never applies the 200
+to a roster monster. srrevamp's runtime uses 200 as its own roam radius (below), disclosed as such.
+Round 537 built the roam radius and its HOMING exit; the give-up distance waits on the BATTLE chase.
 
 
 ## Flag bits 2 and 7 also switch the give-up check OFF (round 421)
@@ -1114,8 +1147,9 @@ Round 533 added two messages so the client can draw a monster the server moves. 
 srrevamp's own, additive placeholders (`docs/protocol/PROTOCOL_DECISION.md`); no existing layout
 changed. Client: `scripts/net/combat.gd` (`CombatNet.decode_monster_moved`,
 `decode_monster_motion_list`), drawn by `scripts/world/monster_motion.gd` (`MonsterMotion`) and
-`World3D._on_monster_moved` / `_on_monster_motion_list` / `_step_monster_bodies`. **No server sends
-either yet**; the monster AI that will is a later change behind a default-off flag. On 2026-09-23,
+`World3D._on_monster_moved` / `_on_monster_motion_list` / `_step_monster_bodies`. Since round 537
+the server sends both, and only with its `-monster-ai` flag on, which is off by default ("srrevamp's
+runtime", below). On 2026-09-23,
 0x007C..0x007F appeared in no non-test file under `server/internal/session`,
 `server/internal/proto` or `client/scripts/net`. Round 536 declared the two in
 `server/internal/session/monstermove.go` (below); 0x007D and 0x007E stay free.
@@ -1181,9 +1215,10 @@ turning the body, and ends in the stand clip.
 
 ### The server half (round 536): the encoders, the mover, the motion API and the pure rules
 
-**Inert.** Nothing calls any of it yet: `OpMonsterListResult` and its handler are unchanged (the
-list's round-trip and flow tests are the control), `combat.Hub`'s motion API has no caller
-outside tests, and `server/internal/ai` is still parked. Every address below was re-read in
+**Inert when built.** Nothing called any of it in round 536: `OpMonsterListResult` and its handler
+were unchanged (the list's round-trip and flow tests are the control), `combat.Hub`'s motion API had
+no caller outside tests, and `server/internal/ai` was still parked. Round 537's tick calls it, behind
+`-monster-ai` ("srrevamp's runtime", below). Every address below was re-read in
 `/var/tmp/srv.asm` and `/var/tmp/decomp_server` on 2026-09-24.
 
 **The wire.** `server/internal/session/monstermove.go` declares `OpMonsterMoved 0x007c` and
@@ -1324,3 +1359,139 @@ characterdata rows (read on the box's `characterdata_5000.txt`: cols 52-56, coun
 col 50 BCRadius is), and their display
 names resolve to no row that has one. World3D draws them as the labelled capsule, which has no
 front. How the retail client draws a `_CLON` row is not established.
+
+## srrevamp's runtime: the monster AI tick (round 537)
+
+`server/internal/session/monsterai.go` runs the machine above over the live monsters. It runs only
+when `cmd/server` is started with **`-monster-ai`** (env `SRREVAMP_MONSTER_AI`, parsed with
+`strconv.ParseBool`; anything unparsable is off, with a WARN). **The default is off**, and off is
+the kill switch: `RunMonsterAI` is never called, the runtime pointer stays nil, `noteStruck` does
+nothing and `OpMonsterList` is answered with the one list result it always was, byte for byte. The
+boot log says which: `monster AI off (-monster-ai / SRREVAMP_MONSTER_AI)` or
+`monster AI on: tick 100ms (own design), roam radius 200 (own design)`. How an operator flips it is
+in `deploy/README.md`, "Monster AI (off by default)".
+
+**One tick, in this order:**
+
+1. `combat.Hub.StepAll(dt)`, `dt` being the wall time since the last tick: the engine's mover with
+   both clamps (round 536).
+2. A brain per live monster, in monster-id order. A new one starts in SPAWN facing `Nest_Hatch`'s
+   random heading (`ai.SpawnHeading`) and takes message `0x21`'s default, IDLE, at once. A brain
+   whose monster is gone is dropped.
+3. The blows since the last tick (below).
+4. Each brain's `OnUpdate`, once.
+5. The pushes the pass collected, sent after it and outside every lock.
+
+**The states it runs.** Each is `ai.Machine.ChangeState`, so a refused entry falls back to IDLE
+(`0x53ff30`), and each entry sets `enteredAt` and a zero timeout first (`CAIState::OnEnter`,
+`0x558b70`).
+
+| state | on entry | on each tick |
+|---|---|---|
+| IDLE | dwell `ai.DwellMs` (`0x545b70`: 4000 +- rand % 2000, sign first); target cleared; for a monster whose run speed is above 0, the roam check, and `0x26` -> HOMING when it has strayed (`0x559c80`). **No stop:** a leg under way goes on. | at the dwell's end, IDLE's own `0x25` handler rolls another IDLE or WANDER (`0x559cf0`, `ai.IdleNext`: WANDER for 76 of 100) |
+| WANDER | refused when the run speed is not above 0; target cleared; `ai.PickWanderLeg`; dwell 5000..5999 ms, or 1000 ms with no leg; the leg starts in the clip `ai.MotionMode` picks (`0x559df0`) | the dwell's end -> `0x25` -> IDLE, **the leg not stopped**; else, with a run speed, the roam check -> `0x26` -> HOMING (`0x559eb0`) |
+| HOMING | dwell 50 000 ms (the default arm); `ai.HomeDestination` (`MoveHome` `0x545c50`, R/3 .. R/3 + trunc(R/3) toward the monster); the leg in `MotionMode`'s clip, 1 for HOMING; target cleared (`0x55a540`) | the dwell's end -> `0x25` -> IDLE; `ai.HasArrived` (under 5.0) -> `0x24` -> IDLE (`0x55a690`, `AITactics_HomingStep` `0x5496c0`) |
+| BATTLE | no timeout: `BATTLE::OnEnter` (`0x559fb0`) calls only the base `OnEnter` and never `AIState_DwellMs`, and the base `OnUpdate` (`0x558b90`) expires only a non-zero one, so a fight never times out | from the tick after entry: the target must be in the world and in the zone, else `0x23` -> IDLE; and the interim release (below) |
+
+**A blow.** `performAttack` calls `noteStruck` right after the damage lands, for a monster that
+survives it: a click, a keep-up repeat and a cast all come through there. The tick drains the
+blows and, for a monster not already in BATTLE, does what `CAIState::OnAttacked` (`0x558ea0`) does:
+`SetTarget(1)` (`0x53ffe0`, at `0x558eed`), then `ChangeState(3)` (`lea edi,[ebx+3]` at `0x558f01`)
+-- no aggression test and no range test. Trace lines, with `SRREVAMP_AI_TRACE` set:
+`ai: monster %d %s->%s`, `ai: monster %d leg to (%.0f,%.0f) speed %.0f mode %d`,
+`ai: monster %d struck by %d, holding`, `ai: monster %d released (%s)`, and from the keep-up,
+`ai: keep-up of %d on monster %d ended out of reach`.
+
+**The wire.** Every leg, and every stop, is an `OpMonsterMoved` pushed to every session in the
+monster's zone. With the runtime on, `handleMonsterList` sends its unchanged `OpMonsterListResult`
+and then ONE `OpMonsterMotionList` with the legs of the listed monsters still walking (n may be 0).
+Both replies are built and written under the requesting session's **wire lock**, the same lock the
+tick takes to push to that session. Without it a push for a newer leg could reach the client ahead
+of a list built before that leg began: the client would take the list's older destination last,
+re-aim (it differs by more than `REAIM_EPSILON`) and walk the body there until the monster's next
+leg. The lock is per session, so a stalled client holds up only its own replies and the tick.
+
+**The stand-ins, each marked OWN DESIGN at its line in `monsterai.go`:**
+
+- **The flag** is off by default.
+- **The tick period, 100 ms.** The engine's AI period is unread. The one period read on this path
+  is `CGObjChar::Update`'s 30 ms floor for an actor. A dwell ends within one tick of its time.
+- **SPAWN leaves on the first tick.** `SPAWN::OnUpdate`'s timing is unread.
+- **The roam radius, 200, for every placement, rule 0.** This is a user decision. It is the number
+  `AI::CTactics::Attach` stores for a nestless monster (`0xb45d68`), but in that case `0x545f70`
+  answers "within" without measuring, so retail never applies it (the correction in "What this
+  gives srrevamp", above). The real radius is the nest row's column 9 (`+0x20`), which is
+  server-database only. srrevamp treats each placement as a nest.
+- **No blocked probe.** A leg can cross walls and objects: `PickWanderLeg`'s 30-unit probe needs a
+  collision world the server does not hold (mob-server-geometry-probe).
+- **Not modelled:**
+  - `PickWanderLeg`'s `ctx+0x14c` leader term;
+  - the four IDLE-roll owner conditions;
+  - WANDER's COS-not-mercenary refusal (no roster species is a COS);
+  - HOMING's timer, re-aggro window and `+0x164` sign;
+  - BATTLE's timers, clip, gathering and `OnLeave` override;
+  - the acquire behaviour every `OnUpdate` calls (mob-acquire).
+- **Headings stay in srrevamp's world frame.** The engine's frame differs by the z mirror. That
+  changes no distribution: the hatch heading is uniform and the turns are symmetric.
+- **HOMING walks one straight leg.** `AITactics_HomingStep`'s heading wobble is deferred
+  (mob-homing-wobble), and its arrival is tested every tick.
+- **Mode 0 is the walk speed and mode 1 the run speed.** This is inferred (round 363's note above);
+  the 0/1 selection itself is read.
+- **The interim hold** (mob-battle-chase replaces all of it with the chase and the engine's exits):
+  - **The stop at the blow.** `noteStruck` stops a walking monster in the hub at the blow, and the
+    next tick pushes the one stop. The engine's `BATTLE::OnEnter` issues no stop: its chase replaces
+    the leg. The stop is at the blow, not at the tick, because the tick steps the mover before it
+    drains the blows. Stopped only at the tick, a monster would first walk up to 0.1 s x its speed
+    (0.8 units for a Mangyang, 2.2 while HOMING at 22), which carries one struck at the edge of the
+    band out of reach. The keep-up's next repeat would then end the run (keepup.go), and the
+    release would let the monster walk off after one hit. `BATTLE::OnEnter` also stops a monster
+    still on a leg, which the blow's stop leaves as a no-op.
+  - **The release.** The monster stays in BATTLE only while its attacker's keep-up is on it
+    (`keepUp.Target`), and goes to IDLE on the tick after that ends. This is disclosed, with what
+    it means:
+    - a cast cancels the keep-up (`useSkillHandler`), and only a hand-off skill
+      (`AutoAttackType` 1, no chain) arms it again, so a monster hit only by other casts idles and
+      wanders between them;
+    - a deployment with no base-attack row (no skill reference data) never arms a keep-up, so the
+      hold lasts one tick;
+    - a keep-up that ends out of reach releases the monster, and the trace line names it.
+  - **A blow on a monster already in BATTLE is ignored.** This is the rule-0 stand-in for
+    `BATTLE::OnAttacked` (`0x55a2e0` -> behaviour `+0xfc`): the first attacker is kept.
+- **Not modelled on a blow:** the aggro link (behaviour `+0xf0`) and the attacker accounting's
+  refusals (`CreditAttacker`, behaviour `+0xec`).
+- **Target validity is srrevamp's own:** "in `world.Hub`, same zone". The engine's is
+  `FUN_00540dc0` / `FUN_00540de0` (alive, life state 1).
+- **The synchronous counterattack is unchanged.** A monster still strikes only when struck.
+- **Zone-wide pushes, no interest management.** About 33 leg pushes a second per Jangan session at
+  about 350 monsters. That is an ESTIMATE from the read dwell and roll numbers, not a measurement:
+  an IDLE spell averages 4.0 s and is followed by a leg 76 times in 100, whose WANDER spell averages
+  5.5 s, so a monster starts 0.76 legs per 4.0 + 0.76 x 5.5 = 8.2 s, about 0.093 a second. (One
+  seeded Mangyang in `TestMonsterAIWandersAtWalkSpeedInsideTheRoamRadius` started 14 legs in
+  120 s.) Add one `OpMonsterMotionList` per list request, at 21 bytes per walking monster.
+- **A stalled client.** The tick's sends block on it, as `RunRegen`'s already do:
+  `gateway.Session.Send` has no write deadline. The kill switch is the mitigation.
+
+**The live checks, before the flag is flipped on the public server.** Both run on the render box
+with the server built to `SERVER_BIN=/var/tmp/<lane>/srrevamp-server`.
+
+- **Time dilation, which every assertion here has to allow for.** `qa_shot.sh`'s movie writer steps
+  the client 1/60 s per frame at about 0.33 s of wall time a frame, so the client runs about 20x
+  slower than the wall-clock server. A client's view of a monster is therefore stale, and a check
+  asserts **receipt** and the server's own trace, never the drawn position.
+- **Run 1:**
+  `SRREVAMP_MONSTER_AI=1 SRREVAMP_AI_TRACE=1 SRREVAMP_QA_MOB_LOG=1 client/tools/qa_shot.sh --server --frames 600 --out /var/tmp/mob_ai_tick`,
+  from the default spot, with no GOTO and no `--attack`. `server.log` must have `IDLE->WANDER` and
+  `leg to ... speed 8 mode 0` lines for Mangyang ids, and no leg starting beyond 324 of its home.
+  The client log must have `monster <id> walk` for the same ids.
+- **Run 2:** the same with `--attack`, `SRREVAMP_QA_ATTACK_NAME=Mangyang` and
+  `SRREVAMP_QA_ATTACK_GOTO=1`. It must show:
+  - at least one `struck by` line and at least one kill, or the run FAILS -- without a strike, the
+    rest holds vacuously;
+  - after `struck by` for id N, no `leg to` for N until `released`;
+  - no struck monster `released` before it dies;
+  - no `ended out of reach` line while that keep-up runs.
+
+  GOTO must teleport from a fresh snapshot (in the callback of a `list_monsters()` it requests) or
+  to a monster the client shows standing. Today's GOTO teleports beside the displayed body, which
+  the dilation makes stale, so most first swings would be refused as too far away. The GOTO change
+  is a client item.

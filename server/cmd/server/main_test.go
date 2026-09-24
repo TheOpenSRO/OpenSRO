@@ -433,3 +433,29 @@ func TestGroundDropRulesAdapter(t *testing.T) {
 		}
 	}
 }
+
+// The monster AI's kill switch reads its env default with strconv.ParseBool,
+// and a value that does not parse leaves it OFF with an error for main's WARN
+// -- a typo must never switch the AI on (round 537).
+func TestEnvBoolLeavesAnUnparsableSwitchOff(t *testing.T) {
+	const name = "SRREVAMP_TEST_ENVBOOL"
+	for _, c := range []struct {
+		v       string
+		want    bool
+		wantErr bool
+	}{
+		{"", false, false},
+		{"1", true, false},
+		{"true", true, false},
+		{"0", false, false},
+		{"false", false, false},
+		{"yes", false, true},
+		{"on", false, true},
+	} {
+		t.Setenv(name, c.v)
+		got, err := envBool(name)
+		if got != c.want || (err != nil) != c.wantErr {
+			t.Errorf("%q: %v, err %v; want %v, error %v", c.v, got, err, c.want, c.wantErr)
+		}
+	}
+}

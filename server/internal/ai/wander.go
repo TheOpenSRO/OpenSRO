@@ -9,9 +9,9 @@ import (
 // when it hatches, whether an idle spell ends in another idle or a WANDER leg,
 // where that leg goes, which clip a move plays, when it has strayed and where
 // HOMING walks it, and when it has arrived. Every rule below was read out of
-// SR_GameServer.exe; the addresses are cited at each. Nothing calls them yet
-// outside this package's tests (the package stays parked, unwired_test.go):
-// the tick that will is a later change.
+// SR_GameServer.exe; the addresses are cited at each. The monster AI tick
+// (session/monsterai.go, round 537, behind cmd/server's default-off
+// -monster-ai) runs them.
 //
 // Headings are angles in radians measured from +x toward +z: the unit heading
 // SetHeading (IGObj slot 230, 0x00482440 / the CGObjMobile override

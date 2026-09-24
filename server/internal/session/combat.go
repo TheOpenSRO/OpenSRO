@@ -759,10 +759,23 @@ func combatHandler(
 // session's current zone (via world.Hub -- same "who am I / where am I"
 // resolution chat/duel/trade already use). Without this, a client has no
 // way to discover a monster's ID to attack it at all.
+//
+// With the monster AI on (-monster-ai, round 537) ONE OpMonsterMotionList
+// follows the result, carrying the listed monsters' legs (n may be 0), and
+// both are built and written under the session's wire lock -- the lock the AI
+// tick takes to push to this session -- so a push for a newer leg can never
+// arrive ahead of a list built before it (monsterAI.wireLock). With it off the
+// reply is exactly what it always was.
 func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.Hub) error {
 	entity, ok := hub.EntityBySession(sess.ID())
 	if !ok {
 		return sess.Send(&proto.Packet{Opcode: OpMonsterListResult, Data: (&MonsterListResult{Error: "not in the world"}).Encode()})
+	}
+	rt := monsterAIRuntime.Load()
+	if rt != nil {
+		wire := rt.wireLock(sess)
+		wire.Lock()
+		defer wire.Unlock()
 	}
 
 	inZone := monsters.InZone(entity.Zone)
@@ -774,7 +787,10 @@ func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.H
 			MaxHP: int32(m.MaxHP), HP: int32(m.HP), Level: int32(m.Level), Rarity: int32(m.Rarity),
 		}
 	}
-	return sess.Send(&proto.Packet{Opcode: OpMonsterListResult, Data: (&MonsterListResult{Monsters: snapshots}).Encode()})
+	if err := sess.Send(&proto.Packet{Opcode: OpMonsterListResult, Data: (&MonsterListResult{Monsters: snapshots}).Encode()}); err != nil || rt == nil {
+		return err
+	}
+	return sess.Send(&proto.Packet{Opcode: OpMonsterMotionList, Data: motionListOf(inZone).Encode()})
 }
 
 // performAttack computes damage (the attacker's base weapon/unarmed damage
@@ -1061,6 +1077,12 @@ func performAttack(
 	updated, monsterDied, ok := monsters.ApplyDamage(targetMonsterID, net)
 	if !ok {
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found", MonsterID: targetMonsterID}).Encode()})
+	}
+	// The monster AI's struck event (round 537, monsterai.go): a surviving
+	// monster is attacked (CAIState::OnAttacked 0x558ea0) and stopped at the
+	// blow. A no-op while -monster-ai is off; nothing is sent from here.
+	if !monsterDied {
+		noteStruck(monsters, targetMonsterID, characterID)
 	}
 	// A landed blow wears the weapon: one roll at rate = hits (2% a hit).
 	wearWeapon(ctx, eq, characterID, hits)

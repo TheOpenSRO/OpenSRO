@@ -3,9 +3,10 @@ package combat
 import "math"
 
 // The monster motion core (round 536): the engine's per-tick mover, and the
-// hub calls a monster AI uses to start, stop and advance a leg. Nothing calls
-// SetMotion or StepAll yet -- the AI tick that will is a later change -- so a
-// spawned monster stands where it was put, exactly as before.
+// hub calls a monster AI uses to start, stop and advance a leg. The monster AI
+// tick (session/monsterai.go, round 537) is the only caller, and it runs only
+// with cmd/server's -monster-ai on (off by default); otherwise a spawned
+// monster stands where it was put, exactly as before.
 
 // MoverMaxStep is the most a mover advances an object in one step, whatever
 // the speed and the elapsed time: the .rdata float at 0x00b45ea8, 0x43200000

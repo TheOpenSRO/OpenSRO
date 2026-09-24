@@ -367,7 +367,12 @@ func armKeepUp(
 			return 0, false
 		}
 		if !keepUpInReach(attacker.Pos, m, equippedWeaponRange(ctx, characterID, deps.eq, deps.items)) {
-			// The engine would walk here. See the package comment.
+			// The engine would walk here. See the package comment. The
+			// monster AI's trace names the end (round 537): with the AI on,
+			// a keep-up that ends this way releases the monster it held.
+			if rt := monsterAIRuntime.Load(); rt != nil {
+				rt.tracef("ai: keep-up of %d on monster %d ended out of reach", characterID, target)
+			}
 			return 0, false
 		}
 		now := time.Now()

@@ -2,6 +2,7 @@ package ai
 
 import (
 	"math"
+	"math/rand"
 	"testing"
 	"time"
 )
@@ -277,6 +278,48 @@ func TestDwellRangesAreTheSwitchArms(t *testing.T) {
 	}
 	if lo, hi := WanderDistanceRange(); lo != 46 || hi != 124 {
 		t.Errorf("wander leg 85 +- 39: got %v..%v", lo, hi)
+	}
+}
+
+// AIState_DwellMs drawn (round 537, the monster AI tick's dwells). IDLE
+// draws its sign FIRST and the remainder second (0x545b84, then 0x545ba2): the
+// values (1999, 2) give 4000 + 2 = 4002, where remainder-first would give
+// 4000 - 1999 = 2001. WANDER and FLEE draw once; HOMING and BATTLE draw
+// nothing and take the 50 000 ms default arm. Every draw lies in DwellRange.
+func TestDwellMsDrawsTheSwitchArms(t *testing.T) {
+	exact := []struct {
+		s    State
+		vals []int
+		want int
+	}{
+		{StateIdle, []int{1, 1999}, 5999},
+		{StateIdle, []int{2, 1999}, 2001},
+		{StateIdle, []int{1999, 2}, 4002},
+		{StateWander, []int{999}, 5999},
+		{StateFlee, []int{2000}, 5000},
+		{StateEmotion, []int{1, 999}, 4999},
+		{StateEmotion, []int{2, 999}, 3001},
+	}
+	for _, c := range exact {
+		rng, src := seqRand(c.vals...)
+		if got := DwellMs(rng, c.s); got != c.want || src.i != len(c.vals) {
+			t.Errorf("%s with draws %v: %d after %d draws, want %d after %d", c.s, c.vals, got, src.i, c.want, len(c.vals))
+		}
+	}
+	for _, s := range []State{StateHoming, StateBattle, StateMoving} {
+		rng, src := seqRand(5)
+		if got := DwellMs(rng, s); got != DwellDefaultMs || src.i != 0 {
+			t.Errorf("%s: %d after %d draws, want the %d default and no draw", s, got, src.i, DwellDefaultMs)
+		}
+	}
+	rng := rand.New(rand.NewSource(537))
+	for _, s := range []State{StateIdle, StateWander, StateFlee, StateEmotion} {
+		min, max, _ := DwellRange(s)
+		for i := 0; i < 4000; i++ {
+			if got := DwellMs(rng, s); got < min || got > max {
+				t.Fatalf("%s drew %d, outside %d..%d", s, got, min, max)
+			}
+		}
 	}
 }
 

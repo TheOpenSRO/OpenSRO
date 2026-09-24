@@ -11,9 +11,10 @@ import (
 // client (docs/protocol/monster_ai.md, "srrevamp's own monster protocol
 // (placeholders)"; client/scripts/net/combat.gd decodes both). Additive
 // placeholders like every opcode here (docs/protocol/PROTOCOL_DECISION.md):
-// retail moves a monster with 0x7021/0xB021, which carry no speed. Nothing
-// sends either yet -- the monster AI tick that will is a later change -- and
-// OpMonsterListResult is unchanged.
+// retail moves a monster with 0x7021/0xB021, which carry no speed. Only the
+// monster AI sends them (monsterai.go, round 537, behind -monster-ai, off by
+// default): the tick pushes OpMonsterMoved, and handleMonsterList follows its
+// unchanged OpMonsterListResult with one OpMonsterMotionList.
 const (
 	OpMonsterMoved      uint16 = 0x007c // server -> every session in the zone: one monster's new leg
 	OpMonsterMotionList uint16 = 0x007f // server -> the requester, right after an OpMonsterListResult

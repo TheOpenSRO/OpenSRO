@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -74,8 +76,8 @@ type monsterSpec struct {
 	// columns of the same rows matching this roster as the control: round 362's
 	// table in docs/protocol/monster_ai.md ("The roster's real walk and run
 	// speeds"), re-read on the RE box 2026-09-23 and re-checked by
-	// client/tools/verify_monster_specs.py in round 536. Nothing moves a
-	// monster yet; combat.Hub's motion API carries them for the AI tick.
+	// client/tools/verify_monster_specs.py in round 536. The monster AI tick
+	// walks and runs them (-monster-ai, off by default; round 537).
 	WalkSpeed, RunSpeed float64
 	// A NEW SPECIES NEEDS ITS ATTACK AND PARRY RATES CHECKED. combat.MonsterRate
 	// computes both as 2*level + 25, which every one of the eleven species below
@@ -424,6 +426,22 @@ func groundDropRules(ctx context.Context, items interface {
 	}
 }
 
+// envBool reads a boolean switch from the environment with strconv.ParseBool
+// ("1", "true", "0", "false", ...). Unset or empty is false. A value that does
+// not parse is false as well, with the error returned so main can WARN once
+// the logger exists: a typo must leave a kill switch off, never on.
+func envBool(name string) (bool, error) {
+	v := os.Getenv(name)
+	if v == "" {
+		return false, nil
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return false, err
+	}
+	return b, nil
+}
+
 func main() {
 	addr := flag.String("addr", ":15779", "listen address for the gateway service")
 	postgresDSN := flag.String("postgres-dsn", "postgres://postgres:postgres@localhost:5432/srrevamp?sslmode=disable",
@@ -455,9 +473,20 @@ func main() {
 		"comma-separated account usernames allowed to run GM commands (env SRREVAMP_GM_ACCOUNTS). "+
 			"Case is compared as stored in accounts.username. Default none: nobody is a GM. See "+
 			"docs/DEBUG_TOOLS.md.")
+	monsterAIEnv, monsterAIEnvErr := envBool("SRREVAMP_MONSTER_AI")
+	monsterAI := flag.Bool("monster-ai", monsterAIEnv,
+		"run the monster AI (env SRREVAMP_MONSTER_AI): monsters idle, wander, run home past their "+
+			"roam radius, and stand where a blow found them while the attacker's auto-attack runs, "+
+			"each move pushed to the zone. Default OFF, and the kill switch: off, no monster moves "+
+			"and the wire is what it was. Needs a client that draws OpMonsterMoved (v0.1.435 or "+
+			"later). See deploy/README.md, \"Monster AI (off by default)\".")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	if monsterAIEnvErr != nil {
+		logger.Warn("SRREVAMP_MONSTER_AI is not a boolean; the monster AI stays off unless -monster-ai is given",
+			"err", monsterAIEnvErr)
+	}
 
 	// Install the EXP curve if the operator provided one. Game data, so never
 	// committed -- see docs/LEVELING.md. Kept in scope so the GM console's
@@ -822,6 +851,18 @@ func main() {
 			inst.Z += float64(i/3) * 130.0
 			go maintainMonster(ctx, monsters, logger, inst)
 		}
+	}
+
+	// The monster AI (round 537), behind its kill switch. Installed here,
+	// before the gateway serves, so no handler ever sees it half-started.
+	if *monsterAI {
+		session.RunMonsterAI(ctx, hub, monsters, logger, session.MonsterAIConfig{
+			Trace: os.Getenv("SRREVAMP_AI_TRACE") != "",
+		})
+		logger.Info(fmt.Sprintf("monster AI on: tick %v (own design), roam radius %.0f (own design)",
+			session.MonsterAITick, session.MonsterRoamRadius))
+	} else {
+		logger.Info("monster AI off (-monster-ai / SRREVAMP_MONSTER_AI)")
 	}
 
 	// The GM console (docs/DEBUG_TOOLS.md). The gate is the account-username

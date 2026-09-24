@@ -60,18 +60,40 @@ var knownOrphans = map[string]string{
 		"Kept as the matching half of a codec rather than shipped one-sided: a format recovered " +
 		"in one direction only is how a layout gets half-checked. Delete this line the moment " +
 		"the gateway accepts a real 0x7021.",
-	// Round 536's monster motion core (internal/combat/motion.go): the hub API the
-	// monster AI tick drives. Built and tested ahead of the tick so the public
-	// server stays inert; each line goes when the tick calls it.
-	"SetMotion": "starts a monster's leg (the OpMonsterMoved push's origin) -- wired by mob-ai-tick, " +
-		"the round that runs the monster AI behind a default-off flag.",
-	"StopMotion": "ends a monster's leg where it stands (the stop push) -- wired by mob-ai-tick, " +
-		"the round that runs the monster AI behind a default-off flag.",
-	"StepAll": "advances every moving monster with the engine's mover (MoverStep: the 160 cap of " +
-		"CGObjMoverByDest::FUN_0048bff0 and vslot_003's no-overshoot clamp) -- wired by mob-ai-tick, " +
-		"the round that runs the monster AI behind a default-off flag.",
-	"All": "the every-zone snapshot the AI tick walks -- wired by mob-ai-tick, the round that runs " +
-		"the monster AI behind a default-off flag.",
+	// internal/ai, unparked in round 537 when session/monsterai.go began driving
+	// the state machine behind -monster-ai. These are the recovered rules that
+	// tick does not run yet, each with the item that will call it.
+	"AggroLinkCount": "how many neighbours a party member's hit links (LinkAggroToNearbyMonsters " +
+		"0x547570, round 258) -- wired by mob-aggro-link.",
+	"AggroLinkDamage": "the hate each successive link carries (the record's +8 scaled by " +
+		"MONSTER_AGGRO_LINK_DECREASE_RATIO, round 258, corrected in round 537) -- wired by mob-aggro-link.",
+	"DetectionRadius": "how far a monster notices a player, BCRadius + _RefTactics +0x14 (round 257) " +
+		"-- wired by mob-acquire.",
+	"LevelScaledRadius": "the BATTLE-entry level bands on the detection radius (round 257) -- wired by " +
+		"mob-acquire and mob-aggro-link.",
+	"HomingReaggroDelayMs": "HOMING's re-aggro blackout, detectionRadius / runSpeed (round 261); it " +
+		"only matters once monsters notice players -- wired by mob-acquire.",
+	"AttackIntervalRange": "a monster's swing interval, ReuseDelay + rand % (J + 1) (ArmNextAttack " +
+		"0x5619e0, round 259); whether its jitter ever delays a swing is mob-battle-rules' timer read " +
+		"-- wired by mob-battle-chase.",
+	"Credit": "the threat table's attacker accounting (AITactics_CreditAttacker 0x5473c0, round 259); " +
+		"the interim hold keeps the first attacker without it -- wired by mob-threat-retarget.",
+	"FaceAfterHit": "the threat table's retarget rules, col 9 = 0/1/2 (Handler_0fc 0x548090, round " +
+		"259) -- wired by mob-threat-retarget.",
+	"Clear": "the threat table's SetTarget(0) reset (round 259) -- wired by mob-threat-retarget.",
+	"SkillWeight": "the weighted draw between a monster's attack skills (PickSkill 0x561b00, round " +
+		"260) -- wired by mob-second-skill.",
+	"TriggerHPBelowHolds": "a tactics-bound skill's HP-threshold trigger (0x5611d0, round 260) -- " +
+		"wired by mob-ai-skill-triggers.",
+	"DwellRange": "the closed [min, max] of each AIState_DwellMs arm; the tick draws with " +
+		"ai.DwellMs, and the tests hold every draw to this range. No item needs the range itself at " +
+		"run time: knowledge, not a gap.",
+	"WanderDistanceRange": "the closed 46..124 of PickWanderLeg's leg length; the tick draws with " +
+		"ai.PickWanderLeg, and the tests hold the legs (and the AI tick's leg starts) to it. No item " +
+		"needs the range itself at run time: knowledge, not a gap.",
+	"HomingScatterRange": "the closed R/3 .. R/3 + trunc(R/3) band of MoveHome (round 535); the tick " +
+		"draws with ai.HomeDestination, and the tests hold its destinations to this band. No item " +
+		"needs the band itself at run time: knowledge, not a gap.",
 }
 
 // baseline is the set of orphans that existed when this detector was written.

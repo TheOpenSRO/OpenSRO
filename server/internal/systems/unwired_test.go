@@ -63,13 +63,10 @@ var parked = map[string]string{
 	"statuseffect": "recovered abnormal-state rules; its own doc says 'this is the spec for one'",
 	"timedjob":     "recovered expiry machinery; srrevamp has no timed jobs to expire",
 
-	// NOT a parked spec -- an intended feature that is not built.
-	"ai": "RECOVERED WHOLE AND NOT WIRED. The monster AI state machine, threat table and " +
-		"detection radii are all here; what does not exist is a runtime to drive them -- " +
-		"no monster tick, and no monster-initiated attack (the counterattack is a synchronous " +
-		"reply inside the player's own attack handler). This is the open TODO 'Monsters do not " +
-		"move, chase or notice anyone', and it is the one entry in this map that is a gap " +
-		"rather than a decision.",
+	// "ai" left this map in round 537: session/monsterai.go imports it and
+	// drives the state machine behind cmd/server's -monster-ai (off by
+	// default). Its functions nothing calls yet are now explained one by one
+	// in orphans_test.go's knownOrphans, each with the item that wires it.
 }
 
 // unimportedInternalPackages returns the internal packages that no non-test

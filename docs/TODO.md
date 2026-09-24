@@ -172,50 +172,45 @@ In order. Each is checked off here when it ships in a release, with its round in
       the amount into the purchase record (`+0xa8`), and the reduction of the guild's total after
       that was not traced. `OpShopBuy` names only the item, which is all a price-keyed check needs.
       See `character_state.md`, "What the server checks at a guild store (round 530)".
-- [ ] **Monsters do not move, chase or notice anyone.** They strike only when struck (round 254's
-      cadence cap). The machine is read: sixteen states, WANDER's leg and dwell (round 251), BATTLE's
-      attack step through the same action machine as a player's cast (254), the approach walk
-      (`MoveTowardObject` to the round-247 band, 256) and now **target acquisition** (round 257):
-      radius = BCRadius + `_RefTactics.+0x14`, the nearest player, no level term; the level bands
-      1.4/1.2/1.0/0.8/0.6 scale a BATTLE-entry gathering of the ten nearest monsters, which is the
-      **aggro link** (round 258): a party member's hit pulls in as many of them as the party has
-      members within 1000 units, at 100/50/25 % credit; solo hits link nothing; and the threat
-      table (round 259): two seats, hate accounting, the retarget rule (col 9), a jittered swing
-      interval (ReuseDelay + 0..J); and the skill choice (round 260): `_RefAISkill` triggers first
-      (HP-threshold once / periodic), else a draw weighted by AI_AttackChance + reach margin. `ai.DetectionRadius` / `ai.LevelScaledRadius` /
-      `ai.AggroLinkCount` / `ai.ThreatTable` / `ai.AttackIntervalRange` carry them. To build: server-driven monster movement (a move packet the
-      client interpolates with the walk clip), WANDER legs on the dwell timer, BATTLE = walk to `stop`
-      then swing on ReuseDelay, give-up/HOMING by the read rules. The per-species detection distance is
-      in no archive we hold (the tactics table is shard-DB only; the package's GameServer minidumps have
-      no heap) -- disclose it per species when built.
-      **The speeds are no longer missing (round 362):** all eleven roster species' walk and run
-      speeds are read from the retail characterdata (cols 46/47, world units per second) and
-      tabled in `docs/protocol/monster_ai.md`, with an eleven-row level/HP control. Which of the
-      two a WANDER leg steps at turned out to be the WRONG QUESTION (round 363): no AI state
-      reads a speed to compute a step -- in the AI the walk/run fields appear only as immobility
-      gates. WANDER picks a destination and `FUN_00540f70` sends opcode **`0x7021`**, which is the
-      CLIENT'S OWN movement request (`client_senders.tsv`), so player and monster movement share
-      one path. Its payload is read in `monster_ai.md`: a kind byte, then either a heading or a
-      region word plus three coords (floats when `region & 0x8000`, else region-local u16s).
-      The BROADCAST class this needs is now enumerated: `docs/protocol/server_senders.tsv`
-      (round 368) lists every opcode the server composes, and its 0x3NNN group -- 159 of the 297
-      sites -- is the server's unprompted push to clients.
-      **That is the retail shape for srrevamp's move packet**, and per PROTOCOL_DECISION.md it is
-      the DESTINATION format rather than reference: fully specified with its field widths, angle
-      formula and controls in `docs/protocol/opcodes/movement.md` (round 364).
-      **The client half is the gate, and it is a push not a poll.** The client asks for monsters
-      only on events (`NetClient.list_monsters` at zone entry, on the refresh button and after an
-      attack) and draws them as `_monster_bodies` Node3Ds at the snapshot position, so server-side
-      movement with no move packet would make monsters JUMP on the next refresh rather than walk.
-      Build the move packet before the WANDER loop, not after.
-      **The client half is built (round 533).** srrevamp's own `OpMonsterMoved 0x007C` (one leg,
-      pushed to the zone) and `OpMonsterMotionList 0x007F` (the listed monsters' legs, one packet
-      after each list) are decoded and drawn: the engine's mover (the 160-unit step cap at
-      `0xb45ea8`, the no-overshoot clamp of `CGObjMoverByDest::vslot_003`), the walk/run clip, the
-      body turned by its measured front (all seven roster models read -Z) and a list refresh that no
-      longer teleports a walking body (`MonsterMotion.reconcile`). Table and stand-ins:
-      `docs/protocol/monster_ai.md`, "srrevamp's own monster protocol (placeholders)". Still to
-      build: the server half -- nothing sends either message yet.
+- [ ] **Monsters move only with `-monster-ai` on, and do not chase or notice anyone yet.** They
+      strike only when struck (round 254's cadence cap; the counter is still a synchronous reply in
+      the player's attack handler). **Round 537 built the monster AI tick** (`session.RunMonsterAI`,
+      `server/internal/session/monsterai.go`) behind cmd/server's `-monster-ai` flag
+      (`SRREVAMP_MONSTER_AI`), which is **off by default**: SPAWN -> IDLE -> the 76-in-100 WANDER
+      roll, legs at the walk speed pushed to the zone as `OpMonsterMoved 0x007C`, IDLE never
+      stopping a leg under way (`0x559c80`), HOMING at the run speed past a 200-unit roam radius
+      (own design), one `OpMonsterMotionList 0x007F` after each monster list, and an interim hold
+      that stops a struck monster at the blow and keeps it in BATTLE while the attacker's keep-up is
+      on it. It stands on round 536's core (the roster's real speeds, `combat.MoverStep` with both
+      of the engine's clamps, the hub motion API, the pure rules) and round 533's client, first
+      released in v0.1.435. Every stand-in is in `docs/protocol/monster_ai.md`, "srrevamp's
+      runtime". What is left, in order:
+      - **Turn it on for the public server**: once v0.1.435 or later is published with green CI and
+        the two render-box live checks in that section pass (their GOTO needs the fresh-snapshot
+        teleport, a client change), per `deploy/README.md`, "Monster AI (off by default)".
+      - **mob-battle-chase**: the chase to the round-247 band at the run speed and the monster's
+        own swing on its timer (after mob-battle-rules reads that timer), with the engine's `0x27`
+        and `0x23` exits. It replaces the interim hold and its keep-up release, and retires the
+        synchronous counter (mob-counter-retire).
+      - **mob-acquire**: target acquisition (round 257: radius = BCRadius + `_RefTactics.+0x14`,
+        the nearest player, no level term). The per-species distance is in no archive this project
+        holds (the tactics table is shard-DB only), so it is disclosed per species when built.
+      - **mob-aggro-link** (round 258): a party member's hit pulls in as many of the ten nearest
+        monsters as the party has members within 1000 units, credited 100/50/25 % of the attack
+        record's **hate**, and the struck monster books 1.15x that hate. *Corrected in round 537*:
+        this line said "credit" of the blow. The link zeroes the record's damage (+4) before it
+        forwards (`0x547797`), and both factors act on the hate (+8) (`CreditAttacker` `0x5473c0`,
+        `OnAttacked` `0x558ebd..0x558ecc`). A solo hit links nothing.
+      - Then the threat table's retarget rules (round 259, `ai.ThreatTable`, mob-threat-retarget),
+        the second attack skill and the AI-skill triggers (round 260, mob-second-skill and
+        mob-ai-skill-triggers), the HOMING wobble, and the server-side blocked probe that stops legs
+        crossing walls (mob-server-geometry-probe; whether to turn the flag on before it exists is
+        a user decision).
+      Background, still true: a monster moves in retail by issuing the client's own movement
+      request `0x7021` (`FUN_00540f70`; payload in `docs/protocol/opcodes/movement.md`, round 364),
+      the retail shape srrevamp's placeholder push will eventually give way to
+      (`PROTOCOL_DECISION.md`); the server's unprompted pushes are the 0x3NNN group of
+      `docs/protocol/server_senders.tsv` (round 368).
 - [ ] **Four roster species are drawn as capsules: their characterdata rows name no model (round
       533).** `MOB_CH_BIGEYEGHOST_CLON` (Small-eyed Ghost), `MOB_CH_GYO_CLON` (Old Weasel),
       `MOB_CH_WATERGHOST_CLON` (Water Ghost slave) and `MOB_CH_TOMBSTONE_CLON` (Tomb Stone Ghost)
@@ -305,7 +300,7 @@ In order. Each is checked off here when it ships in a release, with its round in
 - [x] **Attack distance -- v0.1.431 (round 519); v0.1.432 (round 522: a cast ends the walk, a hotbar click no longer replaces it).** BUILT for the player: the server refuses a first swing or
       cast out of reach ("too far away", `session.firstSwingInReach`/`skillInReach`), and the client
       walks into reach before it sends (`World3D._attack_monster`, below). The monster's own approach
-      in BATTLE is the "Monsters do not move" item above. The history: read in round 232: the SERVER
+      in BATTLE is the "Monsters move only with `-monster-ai` on" item above (mob-battle-chase). The history: read in round 232: the SERVER
       never refuses on distance -- `0x3007 UIIT_SKILL_USE_FAIL_WRONGDISTANCE` occurs nowhere in its
       dump while its neighbours 0x3003-0x3009 all do (`Skill_CheckUseConditions`, `CanBeAttackedBy`);
       the original's CLIENT walks into range before it sends. Basic attacks (`SKILL_*_BASE_01`,
