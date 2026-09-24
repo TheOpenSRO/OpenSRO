@@ -1559,6 +1559,16 @@ SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames 600`, with
 - no SCRIPT ERROR;
 - and the server log saying `monster strike push on`.
 
+**Measured (round 543, 2026-09-24): passed.** Server built from `97b4a94` (round 541), client at
+`cea193a` (round 542), the command above with `SERVER_BIN=/var/tmp/mobai/srrevamp-server-541`,
+600 frames. The server log says `monster strike push on`. The client log has 138 `attack hit`
+lines, of which 45 report a counter (`took N` with N > 0; no blocked counter occurred in the run),
+and exactly 45 `World3D: monster %d strikes %d for %d (HP %d)` lines, whose damage sequence equals
+the counters' `took` sequence in order (13, 13, 12, 12, ...). There is no `counter from the result
+(no push)` line and no `SCRIPT ERROR`. Not exercised by this run: a blocked counter (the QA
+character carries no shield), and an observer's screen (one client). The frames were deleted from
+`/var/tmp`; the logs were kept off the box.
+
 **Stand-ins:** none new. Every number is the counter's own, and the layout is srrevamp's own and
 additive.
 

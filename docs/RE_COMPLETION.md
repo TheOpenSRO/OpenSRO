@@ -33529,3 +33529,14 @@ after the doc edits. The client is untouched, so `remote_godot.sh` was not neede
 - **A stale client comment**: `client/scripts/net/combat.gd` still says no server sends 0x007D or
   0x007E. Round 541 already made that stale for 0x007D. It is left for the next client round,
   because this round does not touch the client.
+
+## Live check of the strike push: one push per counter, drawn once (round 543)
+
+Round 541 built the monster's blow as a zone push behind `-monster-strike-push` and left its
+render-box check unrun. It is now measured and passed; the numbers are in
+`docs/protocol/monster_ai.md`, "The strike push's server half (round 541)", under "Measured (round
+543)". In short: with the flag on, 45 of 138 attack results reported a counter and the client
+logged exactly 45 strike lines from the push, in the same damage order, with no fallback draw
+from the result and no script error. Not exercised: a blocked counter and an observer's screen.
+This closes the live-check condition for FLIP 2 in the deploy sequence; the flag stays off on the
+public server until the operator flips it after release B (v0.1.436).
