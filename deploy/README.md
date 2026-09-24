@@ -104,8 +104,9 @@ Reference data is otherwise not touched by the update loop.
 The server can run the monster AI tick: monsters stand for 2-6 s, then 76 times in 100 walk a
 46-124-unit leg at their walk speed; more than 200 units from their spawn point they run back; a
 monster a player hits stops where it is and stays there while anyone in the zone keeps
-auto-attacking it, then idles. Everyone in the zone sees each move. A monster still strikes back only when struck. What is
-grounded and what is a stand-in is in `docs/protocol/monster_ai.md`, "srrevamp's runtime".
+auto-attacking it, then idles. Everyone in the zone sees each move. A monster still strikes back
+only when struck. What is grounded and what is a stand-in is in `docs/protocol/monster_ai.md`,
+"srrevamp's runtime".
 
 It is behind the `-monster-ai` flag (env `SRREVAMP_MONSTER_AI`), and **the default is off**. Off,
 nothing moves and the wire is exactly what it was, so pushing to `dev` changes nothing until the
@@ -161,11 +162,11 @@ the boot log reads `monster strike push off (-monster-strike-push / SRREVAMP_MON
 **Turn it on only when both of these hold:**
 
 1. A client release that carries round 540 is tagged, CI is green for it (`gh run list`), and its
-   zips are published. No tag carries round 540 yet; v0.1.435 is round 534. An older client
-   ignores the push and warns "unhandled opcode" once per connection, so its players see nothing
-   new.
-2. The live check in that `monster_ai.md` section passes on the render box. It has not been run
-   yet.
+   zips are published. v0.1.436 (round 542) carries it, and its `Release client` run was green on
+   2026-09-24. An older client ignores the push and warns "unhandled opcode" once per connection,
+   so its players see nothing new.
+2. The live check in that `monster_ai.md` section passes on the render box. It passed in round
+   543 ("Measured (round 543)" there).
 
 **On.** Add `SRREVAMP_MONSTER_STRIKE_PUSH: "1"` under the server's `environment:` in the untracked
 `docker-compose.override.yml`, the same way as `SRREVAMP_MONSTER_AI` above, then run
@@ -181,7 +182,9 @@ The server can send a monster that has just appeared to everyone in its zone the
 appears. That covers a roster monster's respawn (10 s after its death) and every monster a GM's
 `/spawn` makes. Without it, a client finds the monster only on its next monster list. The message
 is `OpMonsterSpawned 0x007E` (round 542): the list's own record for the monster, then the heading
-it hatched facing. Clients face the new body along that heading. The heading is the engine's hatch
+it hatched facing. A client faces a standing body whose model front was measured (round 533) along
+that heading; a body walking a leg, or a model with no measured front, is left as it is
+(`World3D._face_monster_heading`). The heading is the engine's hatch
 roll, `rand() / 32767 * 2pi`, and the monster AI starts the monster from the same heading. The push
 does not depend on the monster AI. What is grounded and what is a stand-in is in
 `docs/protocol/monster_ai.md`, "The spawn push's server half (round 542)".
@@ -193,9 +196,10 @@ boot log reads `monster spawn push off (-monster-spawn-push / SRREVAMP_MONSTER_S
 **Turn it on only when both of these hold:**
 
 1. A client release that carries round 540 is tagged, CI is green for it (`gh run list`), and its
-   zips are published. It is the release the strike push waits for too. An older client ignores
-   the push and warns "unhandled opcode" once per connection, so its players still find the
-   monster on their next list.
+   zips are published. It is the release the strike push needs too: v0.1.436 (round 542), whose
+   `Release client` run was green on 2026-09-24. An older client ignores the push and warns
+   "unhandled opcode" once per connection, so its players still find the monster on their next
+   list.
 2. The live check in that `monster_ai.md` section passes on the render box. It has not been run
    yet.
 

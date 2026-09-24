@@ -1420,18 +1420,26 @@ event), which is when the pre-540 client drew it too:
 - A monster that dies, leaves the list or is left behind by a zone change takes its waits with
   it.
 
-**The client does not know its own character id.** `OpEnterWorldResult`
+**The client is not told its own character id when it enters the world.** `OpEnterWorldResult`
 (`server/internal/session/world.go`) carries a zone, a position, a gender, vitals and the others in
-the zone, but no id, and giving it one would change a layout. So a push is taken as a blow on this
+the zone, but no id, and giving it one would change a layout. A party reply does carry one per
+member (`PartyResult` / `PartyMemberSnapshot.CharacterID`, `server/internal/session/party.go`,
+which `PartyNet` decodes), so the id can be learned by name once such a reply has arrived -- but
+only then, and a character outside a party never gets one (`OpPartyInfo` answers it an empty
+roster). Round 540 wrote "the client has no way to know its own id", which overstated it
+(corrected in round 544); pairing was chosen so a blow is recognised from the first swing, party or
+no party. So a push is taken as a blow on this
 player only when it claims a wait: it repeats a counter this client's own result reported, and its
 target is none of the other players the client has drawn (`World3D._other_bodies`). Every blow a
 server can push today is such a counter. A monster striking on its own (mob-battle-chase) will need
-the id, and that is filed in `docs/TODO.md`.
+the id from the start, and that is filed in `docs/TODO.md`.
 
 **How a blow is drawn** (`World3D._draw_monster_strike`):
 
 - The monster is turned toward its target by its measured front (`MonsterMotion.facing_yaw`, the
-  table above), and plays its attack clip (type 2, `TYPE_ATTACK`).
+  table above), and plays its attack clip (type 2, `TYPE_ATTACK`). A body walking a leg is not
+  turned (round 544): the leg faced it at its start and nothing re-faces it mid-leg, so a turn
+  would have it walk sideways to its stop.
 - At that clip's first hit event (`EVENT_HIT`: `mangnyang_attack01` at 651), the target plays its
   hit clip (type 3) and the red number rises over it.
   - The target is the player's own body, or another player's body in `_other_bodies`, played with
@@ -1440,9 +1448,12 @@ the id, and that is filed in `docs/TODO.md`.
     of them (`docs/protocol/BSR_FORMAT.md`, "Events and walk points").
 - A blocked blow is the swing alone, because it dealt nothing.
 - A blow on a target this client has not drawn is the swing alone, unturned.
-- For a blow on this player, the HUD's HP is set from the target HP, and a killing blow shows the
-  death line on the combat status label. The result has already set both from the same numbers,
-  so this changes nothing when the server sends both messages.
+- For a blow on this player whose push claimed a wait still open (`CLAIM_HELD`), the HUD's HP is
+  set from the target HP, and a killing blow shows the death line on the combat status label. The
+  result has already set both from the same numbers, so this changes nothing when the server
+  sends both messages. A late push (`CLAIM_DRAWN`) sets neither: its counter was drawn from the
+  result, and a newer result -- a kill's level-up heal, the next counter -- may have moved the HP
+  since; until round 544 it repainted that stale HP until the next result.
 - Another player's body now changes its stand/run loop through `MonsterMotion.swap_loop`, so a
   gait change during that hit clip does not leave two animation entries on one skeleton.
 
@@ -1456,8 +1467,8 @@ cos; its x87 path runs `fcos` at `0x9fc11d`) and `FUN_004894b0` -> `0x009fbf80` 
 `0x9fbfed`). All of these were re-read on the RE box in round 540. The line
 `World3D: monster %d spawned (push)` is printed for each push.
 
-**Log lines for the live checks** (the server item's check; not run yet, see "The strike push's
-server half (round 541)"):
+**Log lines for the live checks** (the server item's check, measured in round 543; see "The strike
+push's server half (round 541)"):
 
 - Every push prints `World3D: monster %d strikes %d for %d (HP %d)`, followed by the flags and how
   it was taken: `own counter, drawn as the blow lands`, `own counter, already drawn from the
@@ -1490,7 +1501,7 @@ SRREVAMP_QA_ATTACK_NAME=Mangyang SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server -
 
 - Both layouts are srrevamp's own.
 - The pairing test (the numbers repeat, and the target is not another drawn player) stands in for
-  the character id the client does not have.
+  the character id the client is not told when it enters the world.
 - The target's number is drawn over its head at the height the player's own number uses.
 - `SRREVAMP_QA_MOB_STRIKE=1` stands in for a server with the push. It sends each counter result's
   push through `NetClient._dispatch`, deferred to the end of the frame, with -1 for the target.
@@ -1509,8 +1520,10 @@ depend on `-monster-ai`. The boot log says which: `monster strike push on: ...` 
   lost) instead of writing it into the result. `performAttack` copies the outcome into
   `OpAttackResult` field for field, so the result is the same as before.
 - **The push** is built from that same outcome (`monsterStrikeOutcome.message`), with the
-  attacker's character id as the target. `pushMonsterStrike` sends it to every session in the
-  monster's zone, and the attacker is one of them.
+  attacker's character id as the target. `pushMonsterStrike` sends it to the attacker's session and
+  to the sessions the swing's `OpMonsterDamaged` just went to: the one zone snapshot `performAttack`
+  took for the swing (round 544; round 541 took a second snapshot for the push, so a session
+  entering or leaving the zone between the two could get one message without the other).
 - **The order.** `performAttack` sends the push last. It comes after the attacker's
   `OpAttackResult`, and after the zone's `OpMonsterDamaged` for the same swing, which goes to
   everyone except the attacker. It is sent from the goroutine that ran the swing: a session reader
@@ -1540,15 +1553,21 @@ Bram in jangan, Cyra moved to donwhang):
   and 0 damage, on Bram.
 - `TestMonsterStrikePushOffIsTheOldWire`. This is the default-off control. Aria gets her result
   and nothing after it. Bram gets only `OpMonsterDamaged`, and Cyra gets nothing.
-- The six counter-driven tests in `combat_test.go` now run with the push on. They read through
-  `readReply`, which skips 0x007C..0x007F, and their numbers are unchanged. Without `readReply`,
-  `TestCombatFullFlow` and `TestCombatArmorMitigation` fail, because their second attack reads
-  the first counter's push as its result.
+- The six counter-driven tests in `combat_test.go` read through `readReply`, which skips
+  0x007C..0x007F, and their numbers are unchanged. Without `readReply`, `TestCombatFullFlow` and
+  `TestCombatArmorMitigation` fail with the push on, because their second attack reads the first
+  counter's push as its result. Since round 544 they, and the three other counter-driven tests
+  (`TestHwanIsEarnedOnTheKillingBlow`, `TestAttackResultNeverReportsZeroHealthForALivingPlayer`,
+  `TestSkillFullFlow`, whose readers took one packet per request until then), run at the top
+  level with the flag at its default, off, and again with it on under
+  `TestCounterTestsHoldWithTheStrikePushOn`.
+- `TestStrikePushRecipientsAreTheDamagedRecipientsPlusTheAttacker` (round 544): called with the
+  zone's server-side sessions, the push reaches the attacker and the swing's `others` exactly once
+  each and nobody else, and nothing with the flag off.
 
-**The live check has not been run yet**: round 541's session was not allowed to write to the
-render box. Run it before the flag is turned on for the public server. Use a server built from the
-tree, with the flag on in qa_shot's environment. qa_shot passes its environment to the server it
-starts:
+**The live check** (run in round 543, below; round 541's session was not allowed to write to the
+render box). Use a server built from the tree, with the flag on in qa_shot's environment. qa_shot
+passes its environment to the server it starts:
 `SRREVAMP_MONSTER_STRIKE_PUSH=1 SRREVAMP_QA_ATTACK_FAST=1 SRREVAMP_QA_ATTACK_NAME=Mangyang
 SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames 600`, with
 `SERVER_BIN=<that build>`. Expect:
@@ -1657,8 +1676,13 @@ below), so a kill early in the run leaves time for its 10 s respawn. Expect:
 
 - the server log saying `monster spawn push on`;
 - for each jangan respawn after the client connected (a `monster spawned` server line), one client
-  line `World3D: monster <id> spawned (push) ...` for that id, **without** `(already drawn)`: the
-  kill had removed that id from the last list;
+  line `World3D: monster <id> spawned (push) ...` for that id. A respawn takes a fresh id from the
+  hub's counter (`nextID`), so no list before its spawn can have carried it; the line carries
+  `(already drawn)` only when a list reply built after the spawn reached the client before the push
+  did (the two go out on different goroutines with no wire lock between them), and that is no
+  failure: the body is drawn once either way. What is guaranteed is one push per respawn, with its
+  new id. (Round 544 corrected round 542's reasoning here, which expected no `(already drawn)`
+  because "the kill had removed that id from the last list".)
 - no SCRIPT ERROR.
 
 **Stand-ins:**
@@ -1763,7 +1787,8 @@ leg. The lock is per session, so a stalled client holds up only its own replies 
     release would let the monster walk off after one hit. `BATTLE::OnEnter` also stops a monster
     still on a leg, which the blow's stop leaves as a no-op.
   - **The release.** The monster stays in BATTLE while any player in its zone has a keep-up on it
-    (`keepUp.Target` for each player `world.Hub` puts in the zone), and goes to IDLE only once
+    (`keepUp.Target` for each player `world.Hub` puts in the zone -- gathered once per tick into a
+    monster-and-zone set on the first release test, round 544), and goes to IDLE only once
     `MonsterHoldReleaseTicks` (2) ticks in a row have found none, with no blow drained in between.
     *Changed in round 539* (round 537's review). Round 537 looked only at the first attacker's
     keep-up and released on the first tick that found it gone. That lost a monster two ways:
@@ -1783,7 +1808,9 @@ leg. The lock is per session, so a stalled client holds up only its own replies 
       (`AutoAttackType` 1, no chain) arms it again, so a monster hit only by other casts idles and
       wanders between them;
     - a deployment with no base-attack row (no skill reference data) never arms a keep-up, so the
-      hold lasts one tick;
+      hold ends two ticks after the blow's: the tick that drains the blow enters BATTLE and skips
+      the release test, and `MonsterHoldReleaseTicks` (2) ticks in a row must then find no keep-up
+      (round 544 corrected round 539's "the hold lasts one tick");
     - a keep-up that ends out of reach releases the monster, and the trace line names it.
   - **A blow on a monster already in BATTLE is ignored**, except that it restarts the release
     count. This is the rule-0 stand-in for `BATTLE::OnAttacked` (`0x55a2e0` -> behaviour `+0xfc`):

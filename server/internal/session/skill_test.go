@@ -180,12 +180,11 @@ func TestSkillFullFlow(t *testing.T) {
 		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
-		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r, nil, nil)
-		if err != nil {
-			t.Fatalf("Read: %v", err)
-		}
-		return resp
+		// Through readReply (round 544): with -monster-strike-push on, the
+		// Power Strike cast's counter is followed by its OpMonsterAttacked,
+		// and a reader that took the next packet as the next reply decoded
+		// that push as the cooldown refusal (TestCounterTestsHoldWithTheStrikePushOn).
+		return readReply(t, conn, r)
 	}
 
 	resp := send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())

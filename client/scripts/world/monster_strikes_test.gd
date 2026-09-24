@@ -217,6 +217,26 @@ func _test_world_strikes(world_script: GDScript) -> void:
 	_check(label.text == "You were killed. Lost 25900 experience.", "a killing blow on this player shows the death line (got '%s')" % label.text)
 	waits.clear()
 
+	# A late push for a killing counter the result already drew (CLAIM_DRAWN)
+	# repaints nothing: a status line written since stays, as the HP a newer
+	# result set would on a real HUD (the same _show_own_strike sets both).
+	# Until round 544 it wrote the death line and the push's HP over them.
+	var r5 := _result(200, 76, false, true, true)
+	world.call("_draw_counter_at_landing", 7, r5, 0.0)
+	label.text = "Hit for 30 -- it died!"
+	world.call("_on_monster_attacked", _push_for(r5, 42))
+	_check(label.text == "Hit for 30 -- it died!" and not waits.has(7),
+		"a late push for a counter the result drew is swallowed without repainting (got '%s')" % label.text)
+
+	# A body walking a leg is not turned by a blow it deals: it keeps facing
+	# its path, as a spawn heading leaves it (round 544).
+	body.rotation.y = 0.0
+	(world.get("_monster_motion") as Dictionary)[7] = {"pos": Vector2.ZERO, "dest": Vector2(0, 40), "speed": 8.0,
+		"mode": 0, "moving": true, "stop": false}
+	world.call("_on_monster_attacked", _push_for(_result(9, 140), 55))
+	_check(body.rotation.y == 0.0, "a blow drawn on a walking monster does not turn it off its path")
+	(world.get("_monster_motion") as Dictionary).erase(7)
+
 	other.free()
 	body.free()
 	label.free()

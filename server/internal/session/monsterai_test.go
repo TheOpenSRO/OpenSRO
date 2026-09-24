@@ -50,6 +50,18 @@ func installMonsterAIForTest(t *testing.T, hub *world.Hub, monsters *combat.Hub,
 	return a
 }
 
+// newAIHub is a monster hub with Nest_Hatch's roll (ai.SpawnHeading) installed
+// over an rng seeded with seed, so the monsters the seeded AI tests hatch face
+// varied headings again. Round 542 moved the heading roll out of the brain
+// into the hub, and a hub given no roll hatches every monster at 0
+// (combat.Hub.SpawnSpecies), which had these tests start every WANDER from
+// heading 0 (round 544).
+func newAIHub(seed int64) *combat.Hub {
+	monsters := combat.NewHub()
+	recordingHeadingRoll(monsters, seed)
+	return monsters
+}
+
 // pushRecorder stands in for the zone broadcast.
 type pushRecorder struct {
 	mu    sync.Mutex
@@ -115,7 +127,7 @@ func TestMonsterAIRuntimeNilByDefault(t *testing.T) {
 // leg starts farther from its spawn than the roam radius plus one longest
 // leg, the most a leg IDLE did not stop can carry it past the radius.
 func TestMonsterAIWandersAtWalkSpeedInsideTheRoamRadius(t *testing.T) {
-	monsters := combat.NewHub()
+	monsters := newAIHub(1)
 	m := monsters.SpawnSpecies("jangan", testMangyang, 0, 0, 0, 1000, 0, 0, 0)
 	rec := &pushRecorder{}
 	installMonsterAIForTest(t, world.NewHub(), monsters, 1, rec.push)
@@ -163,7 +175,7 @@ func TestMonsterAIWandersAtWalkSpeedInsideTheRoamRadius(t *testing.T) {
 // R/3 .. R/3 + trunc(R/3) from home along the line to the monster, and it is
 // in IDLE on the tick it arrives.
 func TestMonsterAIHomingFromBeyondTheRoamRadius(t *testing.T) {
-	monsters := combat.NewHub()
+	monsters := newAIHub(2)
 	m := monsters.SpawnSpecies("jangan", testMangyang, 0, 0, 0, 1000, 0, 0, 0)
 	// Carry it 300 units east: two mover steps (the 160-unit cap).
 	monsters.SetMotion(m.ID, 300, 0, 300, 1)
@@ -221,7 +233,7 @@ func TestMonsterAIHomingFromBeyondTheRoamRadius(t *testing.T) {
 // WANDER spell that ends before its leg does leaves the monster in IDLE and
 // still walking, and nothing is pushed.
 func TestMonsterAIIdleDoesNotStopALegUnderWay(t *testing.T) {
-	monsters := combat.NewHub()
+	monsters := newAIHub(3)
 	m := monsters.SpawnSpecies("jangan", testMangyang, 0, 0, 0, 1000, 0, 0, 0)
 	rec := &pushRecorder{}
 	a := installMonsterAIForTest(t, world.NewHub(), monsters, 3, rec.push)
@@ -260,7 +272,7 @@ func TestMonsterAIIdleDoesNotStopALegUnderWay(t *testing.T) {
 // on a run speed not above 0, and the refusal drops it back into IDLE) and
 // never goes home (IDLE's roam check is skipped).
 func TestMonsterAIRunSpeedZeroNeverWalks(t *testing.T) {
-	monsters := combat.NewHub()
+	monsters := newAIHub(4)
 	still := testMangyang
 	still.WalkSpeed, still.RunSpeed = 0, 0
 	m := monsters.SpawnSpecies("jangan", still, 0, 0, 0, 1000, 0, 0, 0)
@@ -412,7 +424,7 @@ func TestMonsterAIStrikeAtTheReachEdgeKeepsTheKeepUpInReach(t *testing.T) {
 // clock after that tick.
 func holdForTest(t *testing.T, hub *world.Hub, seed int64) (*monsterAI, *combat.Hub, int64, time.Time) {
 	t.Helper()
-	monsters := combat.NewHub()
+	monsters := newAIHub(seed)
 	m := monsters.SpawnSpecies("jangan", testMangyang, 0, 0, 0, 1000, 0, 0, 0)
 	a := installMonsterAIForTest(t, hub, monsters, seed, (&pushRecorder{}).push)
 	now := aiT0

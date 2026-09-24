@@ -1481,12 +1481,12 @@ func performAttack(
 	for _, e := range others {
 		e.Session.Send(&proto.Packet{Opcode: OpMonsterDamaged, Data: msg.Encode()})
 	}
-	// The monster's blow, to the whole zone with the attacker included, after
-	// the attacker's result and the zone's OpMonsterDamaged for this swing
-	// (round 541, OpMonsterAttacked; nothing is sent while
-	// -monster-strike-push is off). See pushMonsterStrike.
+	// The monster's blow, to the attacker and to the same `others` this
+	// swing's OpMonsterDamaged just went to -- the one zone snapshot above,
+	// round 544 -- after both (round 541, OpMonsterAttacked; nothing is sent
+	// while -monster-strike-push is off). See pushMonsterStrike.
 	if strike != nil {
-		pushMonsterStrike(hub, monster.Zone, strike)
+		pushMonsterStrike(sess, others, strike)
 	}
 	return nil
 }

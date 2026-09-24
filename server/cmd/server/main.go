@@ -484,8 +484,8 @@ func main() {
 	monsterAIEnv, monsterAIEnvErr := envBool("SRREVAMP_MONSTER_AI")
 	monsterAI := flag.Bool("monster-ai", monsterAIEnv,
 		"run the monster AI (env SRREVAMP_MONSTER_AI): monsters idle, wander, run home past their "+
-			"roam radius, and stand where a blow found them while the attacker's auto-attack runs, "+
-			"each move pushed to the zone. Default OFF, and the kill switch: off, no monster moves "+
+			"roam radius, and stand where a blow found them while any player in the zone has an "+
+			"auto-attack on them, each move pushed to the zone. Default OFF, and the kill switch: off, no monster moves "+
 			"and the wire is what it was. Needs a client that draws OpMonsterMoved (v0.1.435 or "+
 			"later). See deploy/README.md, \"Monster AI (off by default)\".")
 	strikePushEnv, strikePushEnvErr := envBool("SRREVAMP_MONSTER_STRIKE_PUSH")

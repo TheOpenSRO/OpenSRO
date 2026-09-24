@@ -193,10 +193,10 @@ In order. Each is checked off here when it ships in a release, with its round in
         (`OpMonsterAttacked 0x007D`, `OpMonsterSpawned 0x007E`, `docs/protocol/monster_ai.md`,
         "The strike and spawn pushes"). **Round 541 built the strike push's server half**
         (`session/monsterstrike.go`) behind `-monster-strike-push`, which is off by default
-        (`deploy/README.md`, "Monster strike push (off by default)"). What is left for it: its
-        render-box live check, whose command and expectations are in `monster_ai.md`, "The strike
-        push's server half (round 541)", and then turning it on once a client release that
-        carries round 540 is published. **Round 542 built the spawn push's server half**
+        (`deploy/README.md`, "Monster strike push (off by default)"). Its render-box live check
+        passed in round 543 (`monster_ai.md`, "The strike push's server half (round 541)", under
+        "Measured (round 543)"), and v0.1.436 (round 542) carries round 540 with a green release
+        run, so what is left for it is the operator turning it on. **Round 542 built the spawn push's server half**
         (`session.BroadcastMonsterSpawned`: every roster respawn and GM `/spawn`, with the hatch
         heading rolled at the spawn) behind `-monster-spawn-push`, also off by default
         (`deploy/README.md`, "Monster spawn push (off by default)"). What is left for it is the
@@ -205,11 +205,12 @@ In order. Each is checked off here when it ships in a release, with its round in
       - **mob-battle-chase**: the chase to the round-247 band at the run speed and the monster's
         own swing on its timer (after mob-battle-rules reads that timer), with the engine's `0x27`
         and `0x23` exits. It replaces the interim hold and its keep-up release, and retires the
-        synchronous counter (mob-counter-retire). **Found in round 540:** the client does not know
-        its own character id (`OpEnterWorldResult` carries none), so it recognises a blow on
-        itself only by pairing the push with its own counter result (`MonsterStrikes`). A monster
-        that swings on its own timer sends no result to pair with, so this item has to give the
-        client its id first.
+        synchronous counter (mob-counter-retire). **Found in round 540, worded right in round
+        544:** the client is not told its own character id when it enters the world
+        (`OpEnterWorldResult` carries none; a party reply carries one per member, but only once
+        one has arrived), so it recognises a blow on itself by pairing the push with its own
+        counter result (`MonsterStrikes`). A monster that swings on its own timer sends no result
+        to pair with, so this item has to give the client its id at login first.
       - **mob-acquire**: target acquisition (round 257: radius = BCRadius + `_RefTactics.+0x14`,
         the nearest player, no level term). The per-species distance is in no archive this project
         holds (the tactics table is shard-DB only), so it is disclosed per species when built.
@@ -583,11 +584,11 @@ mechanism rather than with a deletion.
 `docs/DEBUG_TOOLS.md` and `docs/rounds/debug.md`. Left out of that lane: (1) the original's help
 dialogs / web panel were not recovered — the Help window's interior is ours inside the authored
 `ifgameguide` frame; (2) `/give` by item *code* is client-side only (the server's item table has no
-code column), so a code the client has not loaded is refused; (3) ~~a GM `/spawn` reaches other
-clients only on their next monster list (there is no spawn broadcast)~~ — round 542 pushes each GM
-spawn to the zone as `OpMonsterSpawned 0x007E`, behind `-monster-spawn-push` (off by default until a
-client release that draws it is published; `deploy/README.md`, "Monster spawn push (off by
-default)"); (4) ~~`client/docs/RELEASE_NOTES.md`
+code column), so a code the client has not loaded is refused; (3) a GM `/spawn` reaches other
+clients only on their next monster list **on the public server today**: round 542 built the push
+(`OpMonsterSpawned 0x007E`, behind `-monster-spawn-push`), but the flag is off by default and its
+live check is still to run, so this closes when the operator turns it on (`deploy/README.md`,
+"Monster spawn push (off by default)"); (4) ~~`client/docs/RELEASE_NOTES.md`
 is a committed snapshot~~ — done at merge: the release workflow fetches tags and runs
 `bundle_docs.sh` before the export, and `internal/systems/bundled_docs_test.go` keeps the committed
 copies equal to `docs/`; (5) the GM run's `SRREVAMP_QA_COMMANDS` verification used frame ticks

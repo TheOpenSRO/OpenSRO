@@ -6628,8 +6628,11 @@ func _qa_attack_nearest() -> void:
 	# a walking monster is drawn up to RESYNC_DISTANCE from where the server
 	# has it (live check 2 measured two targets 20.7 and 24.7 away), so a
 	# swing from beside the drawn body can be out of reach. So on every swing the
-	# list is asked for, and its reply stands the player beside the position
-	# the server listed -- unless the player already stands there -- and
+	# list is asked for, and the next list result to arrive -- that request's
+	# reply, or an earlier periodic request's still in flight; _qa_goto_plan
+	# takes the next result and does not track the request, and either is a
+	# server snapshot newer than the drawn body -- stands the player beside the
+	# position it listed -- unless the player already stands there -- and
 	# swings (_qa_goto_from_list, round 539). Every swing, not only when the
 	# drawn body is more than 12 away: that distance is the stale one, both
 	# ways.
@@ -6759,12 +6762,14 @@ func _qa_mob_move() -> void:
 			NetClient.list_monsters())
 
 ## SRREVAMP_QA_MOB_STRIKE=1: stands in for a server with the strike push
-## (OpMonsterAttacked 0x007D), which no server sends yet. Right behind each
+## (OpMonsterAttacked 0x007D), which a server sends only with its
+## -monster-strike-push flag on (round 541; off by default). Right behind each
 ## result that reports a counter, the push such a server sends -- the result's
-## own numbers in a 33-byte payload built here, with -1 for the target, because
-## the client does not know its own character id (MonsterStrikes) -- goes
-## through NetClient's own _dispatch, deferred to the end of the frame, as a
-## push arriving right behind its result would. Never fires in real play.
+## own numbers in a 33-byte payload built here, with -1 for the target, an id
+## the client is not told when it enters the world (MonsterStrikes pairs by
+## the numbers instead) -- goes through NetClient's own _dispatch, deferred to
+## the end of the frame, as a push arriving right behind its result would.
+## Never fires in real play.
 func _qa_mob_strike(monster: int, result: CombatNet.AttackResult) -> void:
 	if monster == -1 or not MonsterStrikes.result_countered(result):
 		return
@@ -9768,15 +9773,23 @@ func _on_monster_attacked(attacked: CombatNet.MonsterAttacked) -> void:
 		attacked.monster_id, attacked.target_character_id, attacked.damage, attacked.target_hp,
 		" BLOCKED" if attacked.blocked else (" CRIT" if attacked.critical else ""),
 		", died" if attacked.target_died else "", how])
-	if claim != MonsterStrikes.CLAIM_NONE:
+	# Only a push that claimed a counter still waiting for its blow repaints
+	# the vitals; a late one (CLAIM_DRAWN) is swallowed whole (round 544).
+	if claim == MonsterStrikes.CLAIM_HELD:
 		_show_own_strike(attacked)
+	if claim != MonsterStrikes.CLAIM_NONE:
 		return
 	_draw_monster_strike(attacked, false)
 
-## A blow on this player: the HUD's HP from the push's target HP, and the death
-## line when it killed. The result that reported the same counter set both a
-## moment earlier (the push repeats its numbers, MonsterStrikes.repeats), so
-## this changes nothing against a server that sends both.
+## A blow on this player, from a push that claimed a counter still waiting for
+## its blow to land (CLAIM_HELD): the HUD's HP from the push's target HP, and
+## the death line when it killed. The result that reported the same counter
+## set both a moment earlier (the push repeats its numbers,
+## MonsterStrikes.repeats), so this changes nothing against a server that
+## sends both. Never from a late push (CLAIM_DRAWN): its counter was drawn
+## from the result, and a newer result -- a kill's level-up heal, the next
+## counter -- may have moved the HP since, so repainting from it put a stale
+## number on the bar until the next result (round 544).
 func _show_own_strike(attacked: CombatNet.MonsterAttacked) -> void:
 	if _last_enter_world_max_hp > 0:
 		if _hud_player_info != null:
@@ -9826,10 +9839,13 @@ func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool) ->
 
 ## Turns a monster's body to face `at` (world x, z) by its measured front
 ## (MonsterMotion.front_of / facing_yaw). A model whose front was not measured,
-## and a target on the body itself, leave it as it is.
+## and a target on the body itself, leave it as it is. So does a body walking a
+## leg: it keeps facing its path, as _face_monster_heading leaves it -- the leg
+## faced it at its start (_apply_monster_leg) and nothing re-faces it mid-leg,
+## so a turn here would have it walk sideways to its stop (round 544).
 func _face_monster_toward(monster_id: int, at: Vector2) -> void:
 	var body = _monster_bodies.get(monster_id)
-	if body == null or not is_instance_valid(body):
+	if body == null or not is_instance_valid(body) or _monster_is_moving(monster_id):
 		return
 	var front := MonsterMotion.front_of(String((body as Node3D).get_meta("model", "")))
 	var dir := at - Vector2((body as Node3D).position.x, (body as Node3D).position.z)
@@ -9853,8 +9869,9 @@ func _play_other_hit(character_id: int) -> void:
 ## A monster that has just appeared (srrevamp's own OpMonsterSpawned, 0x007E: a
 ## respawn or a GM /spawn), pushed to the zone the moment it appears rather than
 ## found on the next list. Its body is made the way a listed one is
-## (_spawn_or_update_monster) and faced along its heading. No server sends it
-## yet (docs/protocol/monster_ai.md).
+## (_spawn_or_update_monster) and faced along its heading. A server sends it
+## only with its -monster-spawn-push flag on (round 542; off by default;
+## docs/protocol/monster_ai.md).
 func _on_monster_spawned(spawned: CombatNet.MonsterSpawned) -> void:
 	if spawned == null or spawned.monster == null:
 		return

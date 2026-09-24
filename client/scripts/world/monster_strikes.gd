@@ -29,15 +29,22 @@ class_name MonsterStrikes
 ##
 ## `waits` maps a monster id to its waits, oldest first.
 ##
-## THE CLIENT DOES NOT KNOW ITS OWN CHARACTER ID. No message tells it:
+## THE CLIENT IS NOT TOLD ITS OWN CHARACTER ID WHEN IT ENTERS THE WORLD.
 ## OpEnterWorldResult carries a zone, a position, a gender, vitals and the
 ## others in the zone, but no id (server/internal/session/world.go
-## EnterWorldResult), and adding one would change a layout. So a push is
-## taken as a strike on this player only when it repeats a counter this
-## client's own result reported (`repeats`) and its target is none of the
-## other players the client has drawn (World3D._other_bodies). Every strike
-## the server can push today is such a counter; a monster striking on its own
-## (mob-battle-chase) will need the id.
+## EnterWorldResult), and adding one would change a layout. A party reply does
+## carry one per member (PartyResult / PartyMemberSnapshot.CharacterID in
+## server/internal/session/party.go, which PartyNet decodes), so the id can be
+## learned by name once such a reply has arrived -- but only then, and a
+## character outside a party never gets one (OpPartyInfo answers it an empty
+## roster). Round 540 wrote "the client has no way to know its own id", which
+## overstated it (corrected in round 544); the pairing was chosen so a strike
+## is recognised from the first swing, party or no party. So a push is taken
+## as a strike on this player only when it repeats a counter this client's
+## own result reported (`repeats`) and its target is none of the other
+## players the client has drawn (World3D._other_bodies). Every strike the
+## server can push today is such a counter; a monster striking on its own
+## (mob-battle-chase) will need the id from the start.
 
 ## What claim() did with a push.
 ## CLAIM_NONE: it repeats no counter this client is waiting on -- another

@@ -117,7 +117,10 @@ func (s stubCombatItems) GetMaxStack(_ context.Context, id int64) (int, error) {
 // OpMonsterMotionList 0x007F. Round 541: with the strike push
 // on, a counter's OpAttackResult is followed by an OpMonsterAttacked to the
 // attacker too, and a helper that reads exactly one packet per request would
-// take that push as the next request's reply.
+// take that push as the next request's reply. The nine counter-driven tests
+// that read through it run at the top level with the flag at its default,
+// off, and again with it on under TestCounterTestsHoldWithTheStrikePushOn
+// (round 544).
 func readReply(t *testing.T, conn net.Conn, r *bufio.Reader) *proto.Packet {
 	t.Helper()
 	for {
@@ -138,9 +141,6 @@ func readReply(t *testing.T, conn net.Conn, r *bufio.Reader) *proto.Packet {
 // attacks a monster until it dies, confirming damage/HP/gold-reward
 // behavior -- all through the real server stack over TCP.
 func TestCombatFullFlow(t *testing.T) {
-	// The strike push on (round 541): readReply skips the OpMonsterAttacked
-	// that now follows each counter, and the numbers below must not move.
-	strikePushForTest(t, true)
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")
@@ -276,9 +276,6 @@ func TestCombatFullFlow(t *testing.T) {
 // reduced by the real defender's equipped armor pieces (equipment.ArmorSlots)
 // summed via PhysDefenseMax, with a floor of 1 damage.
 func TestCombatArmorMitigation(t *testing.T) {
-	// The strike push on (round 541): readReply skips the OpMonsterAttacked
-	// that now follows each counter, and the numbers below must not move.
-	strikePushForTest(t, true)
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")
@@ -687,9 +684,6 @@ func TestMonsterListFlow(t *testing.T) {
 //	               player -- by 10, which is exactly the cap: 15 * 1.30 = 19.5,
 //	               rounded to 20.
 func TestLevelAdvantageAppliedInCombat(t *testing.T) {
-	// The strike push on (round 541): readReply skips the OpMonsterAttacked
-	// that now follows each counter, and the numbers below must not move.
-	strikePushForTest(t, true)
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")
@@ -789,9 +783,6 @@ func TestLevelAdvantageAppliedInCombat(t *testing.T) {
 // the character read is missing. A level-11 character killed by a monster
 // loses exp_unit(11) * 100 = 259 * 100 = 25,900 experience and keeps its level.
 func TestDeathPenaltyAppliedInCombat(t *testing.T) {
-	// The strike push on (round 541): readReply skips the OpMonsterAttacked
-	// that now follows each counter, and the numbers below must not move.
-	strikePushForTest(t, true)
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")
@@ -945,9 +936,6 @@ func TestPlayerMitigationPercentIsRecoveredZero(t *testing.T) {
 // against no armour, doubled to 30, and the monster and player are the same
 // level so no level term applies.
 func TestMonsterCriticalAppliedInCombat(t *testing.T) {
-	// The strike push on (round 541): readReply skips the OpMonsterAttacked
-	// that now follows each counter, and the numbers below must not move.
-	strikePushForTest(t, true)
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")
@@ -1142,9 +1130,6 @@ func TestPlayerCriticalAppliedInCombat(t *testing.T) {
 // Block ratio 100 is a certainty under the recovered roll, so this is
 // deterministic. The monster would otherwise hit for 15.
 func TestShieldBlocksInCombat(t *testing.T) {
-	// The strike push on (round 541): readReply skips the OpMonsterAttacked
-	// that now follows each counter, and the numbers below must not move.
-	strikePushForTest(t, true)
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")

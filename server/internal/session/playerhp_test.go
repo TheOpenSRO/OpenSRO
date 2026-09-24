@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"testing"
-	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/account"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
@@ -88,12 +87,11 @@ func TestAttackResultNeverReportsZeroHealthForALivingPlayer(t *testing.T) {
 		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
-		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r, nil, nil)
-		if err != nil {
-			t.Fatalf("Read: %v", err)
-		}
-		return resp
+		// Through readReply (round 544): with -monster-strike-push on, the
+		// first swing's counter is followed by its OpMonsterAttacked, and a
+		// reader that took the next packet as the next reply decoded that push
+		// as the second swing's result (TestCounterTestsHoldWithTheStrikePushOn).
+		return readReply(t, conn, r)
 	}
 	if lr, err := DecodeLoginResult(send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
 		t.Fatalf("login failed: err=%v result=%+v", err, lr)

@@ -424,3 +424,80 @@ func TestMonsterStrikePushOffIsTheOldWire(t *testing.T) {
 		t.Errorf("Cyra received %#04x, want nothing", opcodesOf(got))
 	}
 }
+
+// The control for the counter path with -monster-strike-push ON (round 544).
+// The nine tests that swing at a monster whose counter is ready and read one
+// reply per request -- combat_test.go's six (TestCombatFullFlow,
+// TestCombatArmorMitigation, TestLevelAdvantageAppliedInCombat,
+// TestDeathPenaltyAppliedInCombat, TestMonsterCriticalAppliedInCombat,
+// TestShieldBlocksInCombat), TestHwanIsEarnedOnTheKillingBlow,
+// TestAttackResultNeverReportsZeroHealthForALivingPlayer and TestSkillFullFlow
+// -- run at the top level with the flag at its default, off, the public
+// server's wire. Here they run again with it on, so the OpMonsterAttacked that
+// then follows each counter has to be skipped by every reader (readReply).
+// Measured before this round, with the atomic's default flipped in a scratch
+// edit: the whole package failed in exactly the last three, each decoding the
+// first counter's push as its next reply. The flag goes back to what it was
+// when the test ends (strikePushForTest). The subtests run in order, on the
+// one test database the nine share; each takes about 0.15 s.
+func TestCounterTestsHoldWithTheStrikePushOn(t *testing.T) {
+	strikePushForTest(t, true)
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"TestCombatFullFlow", TestCombatFullFlow},
+		{"TestCombatArmorMitigation", TestCombatArmorMitigation},
+		{"TestLevelAdvantageAppliedInCombat", TestLevelAdvantageAppliedInCombat},
+		{"TestDeathPenaltyAppliedInCombat", TestDeathPenaltyAppliedInCombat},
+		{"TestMonsterCriticalAppliedInCombat", TestMonsterCriticalAppliedInCombat},
+		{"TestShieldBlocksInCombat", TestShieldBlocksInCombat},
+		{"TestHwanIsEarnedOnTheKillingBlow", TestHwanIsEarnedOnTheKillingBlow},
+		{"TestAttackResultNeverReportsZeroHealthForALivingPlayer", TestAttackResultNeverReportsZeroHealthForALivingPlayer},
+		{"TestSkillFullFlow", TestSkillFullFlow},
+	} {
+		if !monsterStrikePush.Load() {
+			t.Fatalf("the strike push went off before %s", tc.name)
+		}
+		t.Run(tc.name, tc.run)
+	}
+}
+
+// The push's recipients are the swing's OpMonsterDamaged recipients plus the
+// attacker, off the one zone snapshot performAttack took (round 544): the
+// attacker's own session first, then the entities performAttack collected as
+// `others`. Called directly with the zone's server-side sessions, which the
+// world hub holds: Aria as the attacker and Bram as the one other. Cyra -- in
+// the hub, not among the others -- receives nothing, and an entity that is
+// the attacker's own session is not sent a second copy. Off, nothing is sent
+// to anyone.
+func TestStrikePushRecipientsAreTheDamagedRecipientsPlusTheAttacker(t *testing.T) {
+	z := startStrikeZone(t)
+	aria, ok := z.hub.EntityByCharacterID(z.ariaChar)
+	bram, ok2 := z.hub.EntityByCharacterID(z.bramChar)
+	if !ok || !ok2 || aria.Session == nil || bram.Session == nil {
+		t.Fatalf("the world hub holds Aria (%v) and Bram (%v) with their sessions", ok, ok2)
+	}
+	msg := &MonsterAttacked{MonsterID: 7, TargetCharacterID: z.ariaChar, Damage: 12, TargetHP: 88}
+
+	strikePushForTest(t, true)
+	pushMonsterStrike(aria.Session, []world.Entity{bram, aria}, msg)
+	for _, c := range []*strikeClient{z.aria, z.bram} {
+		got := strikes(t, c.barrier(t))
+		if len(got) != 1 || *got[0] != *msg {
+			t.Errorf("%s received %d OpMonsterAttacked %+v, want exactly one equal to %+v", c.name, len(got), got, msg)
+		}
+	}
+	if got := z.cyra.barrier(t); len(got) != 0 {
+		t.Errorf("Cyra, not among the swing's others, received %#04x, want nothing", opcodesOf(got))
+	}
+
+	// CONTROL, the default: off, the same call sends nothing.
+	SetMonsterStrikePush(false)
+	pushMonsterStrike(aria.Session, []world.Entity{bram}, msg)
+	for _, c := range []*strikeClient{z.aria, z.bram, z.cyra} {
+		if got := c.barrier(t); len(got) != 0 {
+			t.Errorf("with the push off %s received %#04x, want nothing", c.name, opcodesOf(got))
+		}
+	}
+}

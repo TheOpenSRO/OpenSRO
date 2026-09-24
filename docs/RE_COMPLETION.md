@@ -33035,8 +33035,8 @@ server the hook is unchanged.
 Live check 2's first attempt then found a QA bug. The setup block that arms `--attack` runs on
 the first physics frame, which comes while `_ready` still awaits the QA sign-in, so a run from the
 default spot never armed and never swung. Now the attack is armed when a QA server is configured
-and swings only once connected. The re-run's first line, `QA ATTACK: armed at tick 0 (connected:
-false)`, confirms that ordering. Also fixed: World3D's comment beside the Ctrl+F3 binding now
+and swings only once connected. The re-run's first `QA ATTACK` line (not the log's first line;
+corrected in round 544), `QA ATTACK: armed at tick 0 (connected: false)`, confirms that ordering. Also fixed: World3D's comment beside the Ctrl+F3 binding now
 reads "(Ctrl+F3 -> Copy)".
 
 **Live check 2 passed.** The numbers are in `monster_ai.md`, "The live checks", under "Run 2,
@@ -33116,12 +33116,15 @@ been released. Client only: the server is unchanged, and no existing opcode or l
   +0x24 = `FUN_00489490` -> `0x009fc0b0`, +0x28 = 0, +0x2c = `FUN_004894b0` -> `0x009fbf80`.
   The two CRT functions' x87 paths run `fcos` at `0x9fc11d` and `fsin` at `0x9fbfed`, so the
   unit heading is (cos a, 0, sin a). The CGObjMobile override `0x0048ba10` writes the same three.
-- **A finding the plan did not have: the client does not know its own character id.**
-  `OpEnterWorldResult` (`session/world.go` `EnterWorldResult.Encode`) carries OK, the reason,
-  the zone, the position, the gender, HP and MaxHP, and the others in the zone, but no id. No other
-  message tells the client its id, and adding one would change a layout. The plan's "a 0x007D for
-  (monster, self)" therefore cannot compare ids. This round pairs a push with the attacker's own
-  result instead (below), and files the id as a prerequisite of mob-battle-chase in `docs/TODO.md`.
+- **A finding the plan did not have: the client is not told its own character id when it enters
+  the world.** `OpEnterWorldResult` (`session/world.go` `EnterWorldResult.Encode`) carries OK, the
+  reason, the zone, the position, the gender, HP and MaxHP, and the others in the zone, but no id,
+  and adding one would change a layout. (This entry first said "no other message tells the client
+  its id"; corrected in round 544: a party reply carries one per member, `PartyResult` /
+  `PartyMemberSnapshot.CharacterID`, which `party.gd` decodes -- but only once such a reply has
+  arrived, and never outside a party.) The plan's "a 0x007D for (monster, self)" therefore cannot
+  compare ids from the first swing. This round pairs a push with the attacker's own result instead
+  (below), and files the id as a prerequisite of mob-battle-chase in `docs/TODO.md`.
 
 **Wired.**
 
@@ -33153,8 +33156,11 @@ been released. Client only: the server is unchanged, and no existing opcode or l
 - **`World3D`:**
   - `_on_attack_result` hands the counter to `_draw_counter_at_landing`, which draws at
     `lands_after` through `_settle_counter`: from the push when one claimed the wait, from the
-    result otherwise. Drawing from the result is the pre-540 code, moved unchanged into
-    `_draw_counter_from_result` and still printing its QA `counter-swing` line. That path now also
+    result otherwise. Drawing from the result is the pre-540 code, moved into
+    `_draw_counter_from_result` and still printing its QA `counter-swing` line -- not unchanged,
+    as this entry first said (corrected in round 544): the `_player_skeleton != null` test and the
+    read of the attack clip's hit time (`strike_after`) moved from result time to landing time,
+    since the function now runs when the blow lands. That path now also
     prints `World3D: monster %d counter from the result (no push)`.
   - `_on_monster_attacked` prints `World3D: monster %d strikes %d for %d (HP %d)` with the flags
     and how the push was taken. A push that claims nothing is drawn at once by
@@ -33189,8 +33195,9 @@ been released. Client only: the server is unchanged, and no existing opcode or l
   blocked push is claimed like any other. No blocked counter happened live, because the QA player
   has no shield. The headless tests cover it.
 - The EVENT_HIT millisecond unit is disclosed as inferred.
-- **Changed:** "a 0x007D for (monster, self)" is matched by pairing, because the client has no id
-  to compare. A push is this player's only when it repeats a counter this client's result reported
+- **Changed:** "a 0x007D for (monster, self)" is matched by pairing, because the client is not
+  told its id when it enters the world (a party reply carries it, but only once one has arrived;
+  corrected in round 544). A push is this player's only when it repeats a counter this client's result reported
   and its target is not another drawn player. The plan's own ordering makes that hold for every
   blow a server can push today.
 
@@ -33357,8 +33364,10 @@ or layout changed.
     damage, and Bram as the target.
 - `TestMonsterStrikePushOffIsTheOldWire`. The default-off control: Aria gets her result and nothing
   after it, Bram gets only `OpMonsterDamaged`, and Cyra gets nothing.
-- The 12 `PlayerDamageTaken` assertions in `combat_test.go` pass unchanged with the push on, and
-  with it forced off (a temporary edit, reverted).
+- The 7 `PlayerDamageTaken` if-assertions in `combat_test.go` pass unchanged with the push on, and
+  with it forced off (a temporary edit, reverted). (This entry first counted 12; corrected in
+  round 544: the file mentions the field 12 times, of which 7 are assertions, 2 are struct literals
+  in encode-only tests and 3 are `Errorf` format arguments.)
 - The plan counted one more in `plainswing_test.go`. It is a comment on the fixture ("every swing
   the monster survives costs the player 1"), not an assertion. That file's read loop already
   skipped anything that is not a result, and its three tests pass with the push forced on (a
@@ -33540,3 +33549,129 @@ logged exactly 45 strike lines from the push, in the same damage order, with no 
 from the result and no script error. Not exercised: a blocked counter and an observer's screen.
 This closes the live-check condition for FLIP 2 in the deploy sequence; the flag stays off on the
 public server until the operator flips it after release B (v0.1.436).
+
+## Batch-15 review follow-ups (rounds 539-542): the flag-on test controls, the own-id overclaim, the late-push HP repaint, record wording (round 544)
+
+The batch-15 review notes (rounds 539-542), each re-checked before it was landed. Five code
+changes, each with a test that fails without it or a measurement; the rest are comments and
+records. No opcode or layout changed, and every flag stays off by default.
+
+**Grounding, re-checked for this round.**
+
+- **Which tests fail with `-monster-strike-push` on.** Measured, not taken from the review: with the
+  atomic's default flipped to true in a scratch `init()` (never committed), the whole
+  `internal/session` package failed in exactly three tests, `TestHwanIsEarnedOnTheKillingBlow`,
+  `TestAttackResultNeverReportsZeroHealthForALivingPlayer` and `TestSkillFullFlow`, each decoding
+  the first counter's `OpMonsterAttacked` as its next reply (a result with `MonsterDamage:0
+  MonsterRemainingHP:256`, the push's bytes read as an `AttackResult`).
+- **The `PlayerDamageTaken` count.** `combat_test.go` mentions the field 12 times: 7 `if`
+  assertions (lines 232, 246, 379, 393, 779, 1035, 1236 at `b97146c`), 2 struct literals in the
+  encode-only tests (39, 55) and 3 `Errorf` format arguments. Round 541's "12 assertions" is
+  corrected to 7 in place.
+- **The client's own id.** `PartyResult` and `PartyMemberJoined` carry `CharacterID` per member
+  (`session/party.go`, `PartyMemberSnapshot.Encode`), and `party.gd` decodes it; `handlePartyInfo`
+  answers a character outside a party with an empty `PartyResult`. So the id can be learned by name
+  once a party reply has arrived, and never outside a party. Round 540's "the client does not know
+  its own character id / no other message tells it" overstated it; the pairing design stands, and
+  the corrected reason is that a blow has to be recognised from the first swing, party or no party.
+- **A walking body's facing.** `World3D._step_monster_bodies` sets no rotation at all: a body is
+  faced once, at its leg's start (`_apply_monster_leg`, `MonsterMotion.facing_yaw`), and nothing
+  re-faces it mid-leg. The review's "harmless; `_step_monster_bodies` re-faces" is not what the
+  code does: a turn toward a strike target would persist and the body would walk sideways to its
+  stop. So the turn is guarded rather than noted.
+- **"Moved unchanged".** Diffed `e17cda3`'s counter block against `_draw_counter_from_result`: the
+  `_player_skeleton != null` test and the read of the attack clip's hit time (`strike_after`) moved
+  from result time to landing time, because the function now runs when the blow lands. Round 540's
+  entry is corrected in place.
+- **Nest_Hatch's other branches**, re-read in `/var/tmp/srv.asm`: `cmp BYTE PTR [edi+0x89],0x3` at
+  `0x5609b6`, `jne 0x5609ee` at `0x5609bd` (the `call 0x9dd338` rand path `ai.SpawnHeading`
+  reads); the fall-through at `0x5609bf` and the other-shape target `0x560a1b` both `movzx` the
+  nest row's `+0x1c` word (`ecx`/`eax` = `[ebp+8]`), `fild` it and scale it through the doubles at
+  `0xb45c28`, `0xb45c30` and `0xb45e00` (values not read). `combat.Hub.SpawnSpecies` runs the
+  hub's roll for every species regardless: disclosed at the roll.
+- **The round-539 release rule**, in `monsterAI.update`: the tick that drains the blow returns on
+  `lastBlowTick == tickN` before the release test; the next tick sets `unheldTicks` to 1; the one
+  after reaches `MonsterHoldReleaseTicks` (2) and releases. So with no keep-up ever armed the hold
+  ends two ticks after the blow's, not "one tick" as `monster_ai.md` said.
+- **The client release.** `v0.1.436` is `cea193a` (round 542) and carries rounds 540-542
+  (`git merge-base --is-ancestor`); `gh run list` shows its `Release client` run completed with
+  success at 2026-09-24T17:30:19Z. `server/README.md` and `deploy/README.md` still said no tag
+  carried round 540; corrected.
+
+**Wired.**
+
+- **`session/monsterstrike.go` `pushMonsterStrike(sess, others, msg)`** (note 541-2): it now sends
+  to the attacker's session and to the `others` `performAttack` collected for the swing's
+  `OpMonsterDamaged`, so the push's recipients are exactly the `OpMonsterDamaged` recipients plus
+  the attacker, off the one zone snapshot per swing. Round 541 called `hub.EntitiesInZone` a second
+  time here, so a session entering or leaving the zone between the two snapshots could receive one
+  message without the other. The attacker is sent first; an entity that is the attacker's own
+  session is not sent a second copy.
+- **`session/monsterai.go` `keptUpOn`** (note 539-3): the release test reads a per-tick set,
+  `keptUpSet`, keyed by monster and the attacker's zone, built on the first BATTLE brain that asks
+  in a tick (`heldTick`) from one `world.Hub.AllEntities` pass and one `keepUp.Target` per player.
+  Round 537's version took its own `EntitiesInZone` snapshot per held monster per tick. Same locks
+  in the same order (under `a.mu`: the world hub's, then the keep-up's). Measured with
+  `testing.AllocsPerRun` in a scratch test (deleted): allocations per tick with 5 kept-up monsters
+  and 5 players went from 26 to 9, and with 40 and 40 from 289 to 19.
+- **`combat.Hub.SpawnSpecies`** (note 542-2): the disclosure at the roll, above.
+- **`World3D._on_monster_attacked` / `_show_own_strike`** (note 540-2): the HUD's HP and the death
+  line are repainted only from a push that claimed a wait still open (`CLAIM_HELD`), never from a
+  late one (`CLAIM_DRAWN`), whose counter the result already drew and whose HP a newer result -- a
+  kill's level-up heal, the next counter -- may have moved since.
+- **`World3D._face_monster_toward`** (note 540-4): a body walking a leg is not turned, as
+  `_face_monster_heading` already left it.
+- **Wording**: `cmd/server` `-monster-ai` help and `server/README.md`'s row now say "while any
+  player in the zone has an auto-attack on them" (note 539-2); `World3D`'s QA GOTO comment says the
+  plan takes the next list result to arrive, not necessarily its own request's reply (539-4);
+  `deploy/README.md`'s monster AI paragraph is rewrapped, its strike section records the live check
+  and the release, and its spawn section says only a standing body with a measured front turns
+  (539-5, 542-4); `monster_strikes.gd`'s header, `World3D`'s two "no server sends it yet" notes and
+  `net/combat.gd`'s header are current (540-1, 542-6); `monster_ai.md`'s spawn-push expectation
+  says what is guaranteed (a respawn's id is fresh from `nextID`, so `(already drawn)` can appear
+  only when a list reply built after the spawn lands first, and that is no failure) (542-1);
+  `TODO.md`'s tester-tools item (3) is un-struck, since the public server still shows a GM `/spawn`
+  on the next list until the flag is on (542-3); `SYSTEMS.md`'s Monster AI row's "Next" reflects
+  the passed live check and `v0.1.436`.
+
+**Tests.**
+
+- **`TestCounterTestsHoldWithTheStrikePushOn`** (`session/monsterstrike_test.go`), the flag-on
+  control (note 541-1): sets the atomic on (restored in `t.Cleanup`) and runs the nine
+  counter-driven tests as subtests, the six of `combat_test.go` plus the three above. The three now
+  read through `readReply`. The six no longer set the flag themselves: all nine run at the top
+  level with the flag at its default, off, and again with it on here, so each path is covered both
+  ways (~0.15 s per subtest, 1.3 s for the control).
+- **`TestStrikePushRecipientsAreTheDamagedRecipientsPlusTheAttacker`**: `pushMonsterStrike` called
+  directly with the zone's server-side sessions (the world hub holds them), Aria as the attacker and
+  Bram as the one other, with Aria's own entity also among the others: Aria and Bram each receive
+  exactly one push equal to the message, Cyra none, and with the flag off nobody receives anything.
+- **`monster_strikes_test.gd`**, two checks on the bare `World3D`: a late push for a killing counter
+  the result already drew leaves a status line written since untouched (the same
+  `_show_own_strike` sets the HUD HP, which a bare World3D has no widget for), and a blow drawn on a
+  walking monster does not turn it.
+- **The seeded AI tests** hatch their monsters through `newAIHub`, a hub with Nest_Hatch's roll
+  over a seeded rng, so varied initial headings are covered again (note 542-5: since round 542
+  moved the roll into the hub, a hub given no roll hatched every test monster at heading 0). All
+  pass with the new headings.
+
+Negatives proved:
+
+| production change | test | result |
+|---|---|---|
+| the three tests' `send` back at `b97146c` (one read per request), control on | `TestCounterTestsHoldWithTheStrikePushOn` | FAIL in exactly its `TestHwanIsEarnedOnTheKillingBlow`, `TestAttackResultNeverReportsZeroHealthForALivingPlayer` and `TestSkillFullFlow` subtests; the six pass |
+| `pushMonsterStrike` mutated to skip the attacker (`if false && sess != nil`) | `TestStrikePushRecipientsAreTheDamagedRecipientsPlusTheAttacker` | FAIL: "Aria received 0 OpMonsterAttacked [], want exactly one" |
+| same | `TestMonsterCounterReachesTheZone` | FAIL: "after her result Aria received [], want exactly one OpMonsterAttacked" |
+| `World3D.gd` at `b97146c`, synced to the box | `monster_strikes_test.gd` | 2 FAILURES: "a late push for a counter the result drew is swallowed without repainting (got 'You were killed. Lost 25900 experience.')" and "a blow drawn on a walking monster does not turn it off its path" |
+
+Every test passed again once its file was restored (byte for byte, checked with `cmp`).
+`cd server && go build ./... && go test -count=1 -p 1 ./...` is green and was re-run after the doc
+edits; `client/tools/remote_godot.sh tests` and `check` on the render box are recorded in the
+commit message.
+
+**Not done here.**
+
+- `TestMaintainMonsterReportsEverySpawn`'s 12 s (note 542-7): left as the note allowed; it runs
+  under `t.Parallel`, so it overlaps the rest of `cmd/server`. An injectable delay would need
+  `respawnDelay` to become a variable read by a goroutine the test does not own.
+- The spawn push's live check is still unrun; `deploy/README.md` and `TODO.md` say so.

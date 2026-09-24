@@ -117,6 +117,10 @@ type monsterAI struct {
 	last, now  time.Time
 	tickN      uint64
 	pending    []monsterPush
+	// held is tick heldTick's keep-up set (keptUpSet), built on that tick's
+	// first release test and stale -- rebuilt -- on any other tick.
+	held     map[heldKey]struct{}
+	heldTick uint64
 }
 
 // struckEvent is a blow the tick has not seen yet.
@@ -438,20 +442,49 @@ func (a *monsterAI) update(b *brain) {
 	}
 }
 
+// heldKey names one keep-up as the release test sees it: the monster it is
+// on, and the zone the world hub places its attacker in.
+type heldKey struct {
+	monster int64
+	zone    string
+}
+
+// keptUpSet is every keep-up running now, keyed by its monster and its
+// attacker's zone: one pass over the world hub (AllEntities) and one
+// keepUp.Target per player. nil when no player has one.
+func (a *monsterAI) keptUpSet() map[heldKey]struct{} {
+	var held map[heldKey]struct{}
+	for _, e := range a.world.AllEntities() {
+		t, ok := keepUp.Target(e.CharacterID)
+		if !ok {
+			continue
+		}
+		if held == nil {
+			held = make(map[heldKey]struct{})
+		}
+		held[heldKey{t, e.Zone}] = struct{}{}
+	}
+	return held
+}
+
 // keptUpOn reports whether any player in b's zone has a keep-up running
 // against it (keepUp.Target), the hold's release test. Only players this
 // runtime's world hub places in the monster's zone count: a keep-up whose
 // attacker is elsewhere ends at its next swing anyway (armKeepUp's zone test).
+// The set is built once per tick, on the first BATTLE brain that asks (round
+// 544: until then every held monster took its own zone snapshot each tick,
+// O(held x players) and one allocation per held monster). The locks are the
+// ones it took before, in the same order: under a.mu, the world hub's, then
+// the keep-up's.
 func (a *monsterAI) keptUpOn(b *brain) bool {
 	if a.world == nil {
 		return false
 	}
-	for _, e := range a.world.EntitiesInZone(b.m.Zone) {
-		if t, ok := keepUp.Target(e.CharacterID); ok && t == b.id {
-			return true
-		}
+	if a.heldTick != a.tickN {
+		a.held, a.heldTick = a.keptUpSet(), a.tickN
 	}
-	return false
+	_, ok := a.held[heldKey{b.id, b.m.Zone}]
+	return ok
 }
 
 // newBrain builds a monster's machine in SPAWN (AI::CTactics::Init's one

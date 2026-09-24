@@ -18,8 +18,9 @@ const OP_BERSERK_RESULT := 0x0069   # server -> client, the gauge/active after t
 ## srrevamp's own monster messages (placeholders, additive; layouts in
 ## docs/protocol/monster_ai.md, "srrevamp's own monster protocol
 ## (placeholders)"). The server sends 0x007C/0x007F only with its -monster-ai
-## flag on (off by default); no server sends 0x007D or 0x007E yet (round 540
-## built the client half first). World3D draws all four.
+## flag on, 0x007D only with -monster-strike-push (round 541) and 0x007E only
+## with -monster-spawn-push (round 542); all three flags are off by default,
+## and round 540 built the client half first. World3D draws all four.
 const OP_MONSTER_MOVED := 0x007c        # server -> every session in the zone, one monster's new leg
 const OP_MONSTER_ATTACKED := 0x007d     # server -> every session in the zone, the attacker too: one monster's blow
 const OP_MONSTER_SPAWNED := 0x007e      # server -> every session in the zone: a monster that has just appeared

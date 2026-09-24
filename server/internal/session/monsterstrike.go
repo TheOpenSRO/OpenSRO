@@ -9,6 +9,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
+	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
@@ -289,21 +290,31 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	return out, nil
 }
 
-// pushMonsterStrike sends a monster's blow to every session in zone, the
-// attacker included, when -monster-strike-push is on, and does nothing when
-// it is off. performAttack calls it after the attacker's OpAttackResult and
+// pushMonsterStrike sends a monster's blow to the attacker's session sess and
+// to others -- the entities performAttack has just sent the swing's
+// OpMonsterDamaged, everyone else in the monster's zone at that moment -- when
+// -monster-strike-push is on, and does nothing when it is off. So the push's
+// recipients are exactly the OpMonsterDamaged recipients plus the attacker,
+// off the one zone snapshot performAttack took for the swing (round 544;
+// round 541 took a second snapshot here, so a session entering or leaving
+// the zone between the two could get one of the two messages without the
+// other). performAttack calls it after the attacker's OpAttackResult and
 // after the zone's OpMonsterDamaged for the same swing, from the goroutine
 // that ran the swing, so the attacker's client always has the result before
-// the push (round 540's MonsterStrikes pairs the two in that order). The
-// sending pattern is the ground-item pushes' (dropKillLoot): one packet, every
-// session in the zone, a failed write left to that session's own reader.
-func pushMonsterStrike(hub *world.Hub, zone string, msg *MonsterAttacked) {
+// the push (round 540's MonsterStrikes pairs the two in that order); the
+// attacker is sent first. The sending pattern is the ground-item pushes'
+// (dropKillLoot): one packet, a failed write left to that session's own
+// reader.
+func pushMonsterStrike(sess *gateway.Session, others []world.Entity, msg *MonsterAttacked) {
 	if !monsterStrikePush.Load() {
 		return
 	}
 	p := &proto.Packet{Opcode: OpMonsterAttacked, Data: msg.Encode()}
-	for _, e := range hub.EntitiesInZone(zone) {
-		if e.Session == nil {
+	if sess != nil {
+		_ = sess.Send(p)
+	}
+	for _, e := range others {
+		if e.Session == nil || e.Session == sess {
 			continue
 		}
 		_ = e.Session.Send(p)
