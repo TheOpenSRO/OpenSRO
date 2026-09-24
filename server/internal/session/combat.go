@@ -1396,6 +1396,14 @@ func performAttack(
 				return fmt.Errorf("combat: granting skill points: %w", err)
 			}
 		}
+	} else if monsterBattle.Load() {
+		// -monster-battle (round 546): the monster's blow is its own, from the
+		// AI tick's BATTLE -- it chases to its attack band and swings on its
+		// skill's ReuseDelay (monsterai.go battleTick), and the zone learns of
+		// each blow by an OpMonsterAttacked. Nothing is resolved here, so the
+		// result carries no counter and PlayerHP stays the seeded truth. Off,
+		// the synchronous counter below is what it was (mob-counter-retire
+		// deletes it).
 	} else if !monsters.CounterattackReady(monster.ID, time.Now()) {
 		// Inside its attack skill's re-use delay: the real monster is still
 		// in that skill's action and cannot strike again yet (combat.Hub.

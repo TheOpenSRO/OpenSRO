@@ -129,10 +129,25 @@ func _test_claims() -> void:
 	var w4 := MonsterStrikes.expect(waits, 7, _result(11, 77))
 	_check((waits[7] as Array).size() == 1 and is_same(waits[7][0], w4), "the next counter drops it")
 
+## Round 546: a push with no counter to pair with (the monster's own swing)
+## is this player's by elimination -- unless its target is drawn as another
+## player, or left the zone inside LEFT_GRACE_MS.
+func _test_own_unpaired() -> void:
+	var others := {55: true}
+	var left := {66: 1000}
+	_check(MonsterStrikes.is_own_unpaired(42, others, left, 5000), "a target drawn nowhere is this player")
+	_check(not MonsterStrikes.is_own_unpaired(55, others, left, 5000), "a drawn other player is not")
+	_check(not MonsterStrikes.is_own_unpaired(66, others, left, 5000), "nor one who left 4 s ago")
+	_check(not MonsterStrikes.is_own_unpaired(66, others, left, 1000 + MonsterStrikes.LEFT_GRACE_MS),
+		"the grace window is inclusive at LEFT_GRACE_MS")
+	_check(MonsterStrikes.is_own_unpaired(66, others, left, 1001 + MonsterStrikes.LEFT_GRACE_MS),
+		"past the grace window the id is this player's again")
+
 func _init() -> void:
 	_test_result_countered()
 	_test_drawn_once()
 	_test_claims()
+	_test_own_unpaired()
 
 ## World3D's glue, on a bare World3D (no scene; the nodes it touches are set
 ## by hand). Loaded in _initialize, not _init: World3D names the NetClient
@@ -204,10 +219,9 @@ func _test_world_strikes(world_script: GDScript) -> void:
 	_check(w3["push"] == null, "and does not claim this client's own counter")
 	waits.clear()
 
-	# A blow on a target this client has not drawn: the swing alone, unturned.
-	body.rotation.y = 0.0
-	world.call("_on_monster_attacked", _push_for(_result(5, 95), 99))
-	_check(body.rotation.y == 0.0, "a blow on a target not drawn here swings unturned")
+	# A blow on a target this client has not drawn was the swing alone,
+	# unturned, in round 540; since round 546 it is this player's own blow by
+	# elimination -- the case below, "Round 546, the monster's own swing".
 
 	# A killing counter shows the death line.
 	var r4 := _result(200, 76, false, true, true)
@@ -236,6 +250,27 @@ func _test_world_strikes(world_script: GDScript) -> void:
 	world.call("_on_monster_attacked", _push_for(_result(9, 140), 55))
 	_check(body.rotation.y == 0.0, "a blow drawn on a walking monster does not turn it off its path")
 	(world.get("_monster_motion") as Dictionary).erase(7)
+
+	# Round 546, the monster's own swing: a push on a target drawn nowhere,
+	# with no counter waiting, is this player's -- drawn at once, the monster
+	# turned to the player, and a killing one shows the death line. Before
+	# this round it was the swing alone, unturned, and no line.
+	body.rotation.y = 0.0
+	label.text = ""
+	world.call("_on_monster_attacked", _push_for(_result(200, 76, false, true, true), 77))
+	_check(_front(body).is_equal_approx(Vector3(1, 0, 0)),
+		"an unpaired blow on an undrawn target is drawn on this player: the monster turns to +X (front %s)" % str(_front(body)))
+	_check(label.text == "You were killed. Lost 25900 experience.",
+		"and a killing one shows the death line (got '%s')" % label.text)
+	_check(not waits.has(7), "and it leaves no wait behind")
+	# ...unless that target left the zone a moment ago: the swing alone.
+	body.rotation.y = 0.0
+	label.text = ""
+	(world.get("_recently_left") as Dictionary)[78] = Time.get_ticks_msec()
+	world.call("_on_monster_attacked", _push_for(_result(200, 76, false, true, true), 78))
+	_check(body.rotation.y == 0.0 and label.text == "",
+		"a blow on a player who left inside the grace window is the swing alone (label '%s')" % label.text)
+	(world.get("_recently_left") as Dictionary).clear()
 
 	other.free()
 	body.free()

@@ -176,6 +176,47 @@ restated `command:` list. The boot log then reads
 
 **Off.** Remove that line (or set it to `"0"`), then run `docker compose up -d`.
 
+## Monster battle (off by default)
+
+The server can let a struck monster fight on its own (round 546). It chases its attacker to its
+attack band at its run speed (every step an `OpMonsterMoved`, mode 1), swings as soon as it is in
+the band and then every ReuseDelay of its attack skill (3000 ms for a Mangyang), each blow reaching
+everyone in the zone as an `OpMonsterAttacked 0x007D` -- the blow itself is the same one the
+counterattack dealt -- and gives up when its target is more than 400 units away (an own-design
+stand-in for a server-database column) and walks home. The counterattack inside the attacker's own
+`OpAttackResult` is then no longer made: a player standing out of the band takes nothing until the
+monster gets there. What is grounded and what is a stand-in is in `docs/protocol/monster_ai.md`,
+"BATTLE's chase and the monster's own swing (round 546)".
+
+It is behind the `-monster-battle` flag (env `SRREVAMP_MONSTER_BATTLE`), and **the default is
+off**. Off, the interim hold and the counter are exactly what they were. It also **needs
+`SRREVAMP_MONSTER_AI` and `SRREVAMP_MONSTER_STRIKE_PUSH` both on**: without them the boot log reads
+`monster battle forced off why=...` and the flag does nothing (never an exit, so the update loop
+never rolls back over a flag combination). After an update the boot log reads
+`monster battle off (-monster-battle / SRREVAMP_MONSTER_BATTLE)`.
+
+**Turn it on only when all of these hold:**
+
+1. The monster AI and the strike push are on (the two sections above), with their own conditions
+   met.
+2. A client release that carries round 546 is tagged, CI is green for it (`gh run list`), and its
+   zips are published. An older client that carries round 540 still shows the monster's swing and
+   the other players' blows, but a blow on the player itself is drawn as the swing alone, with no
+   hit reaction, number or HP repaint, because that client pairs a blow on itself with its own
+   counter result and there is none any more. A client older than round 540 shows no monster
+   blow at all and takes silent HP loss.
+3. The live check in that `monster_ai.md` section passes on the render box (its "Measured"
+   paragraph says whether it has).
+
+**On.** Add `SRREVAMP_MONSTER_BATTLE: "1"` under the server's `environment:` in the untracked
+`docker-compose.override.yml`, beside `SRREVAMP_MONSTER_AI` and `SRREVAMP_MONSTER_STRIKE_PUSH`, then
+run `docker compose up -d`. You can instead append `- "-monster-battle=true"` to the override's
+restated `command:` list. The boot log then reads
+`monster battle on: a struck monster chases to its attack band ...`.
+
+**Off, the kill switch.** Remove that line (or set it to `"0"`), then run `docker compose up -d`.
+Turning `SRREVAMP_MONSTER_AI` off also turns this off (the chase runs in the AI tick).
+
 ## Monster spawn push (off by default)
 
 The server can send a monster that has just appeared to everyone in its zone the moment it

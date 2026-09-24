@@ -420,6 +420,9 @@ func TestGroundingAuditMatchesTheShippedCombat(t *testing.T) {
 		{"PlayerCritical", "Criticals are real and rolled"},
 		{"PlayerBlocked", "Blocking is real"},
 		{"CounterattackReady", "does NOT always counterattack"},
+		// Round 546: behind -monster-battle the monster fights on its own
+		// (the chase and the swing in session/monsterai.go's battleTick).
+		{"SetMonsterBattle", "swings on its own attack timer"},
 	} {
 		cmd := exec.Command("grep", "-rqlE", `\b`+m.symbol+`\b`,
 			"--include=*.go", filepath.Join(root, "server"))

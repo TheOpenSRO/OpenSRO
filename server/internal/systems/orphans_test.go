@@ -78,12 +78,6 @@ var knownOrphans = map[string]string{
 		"the interval is only ever armed on a first-table timer, which fires at once (ArmTimer " +
 		"0x53d6c7), so the swing cadence is the action machine's ReuseDelay (round 254) and this " +
 		"range is the threat table's idle window only -- wired by mob-threat-retarget.",
-	"TargetWithinChaseRange": "the BATTLE reach test under reach rule 0 (IsTargetWithinChaseRange " +
-		"0x545e50, round 545): strict with no nest, inclusive against ai.ChaseRange with one -- " +
-		"wired by mob-battle-chase.",
-	"GiveUpCode": "the give-up check's 0x2a code on the raw +0x7c (BattleGiveUpCheck 0x5483c0, " +
-		"round 545); all but unreachable behind the reach test under the stand-ins, carried so the " +
-		"chase runs the engine's order -- wired by mob-battle-chase.",
 	"Credit": "the threat table's attacker accounting (AITactics_CreditAttacker 0x5473c0, round 259); " +
 		"the interim hold keeps the first attacker without it -- wired by mob-threat-retarget.",
 	"FaceAfterHit": "the threat table's retarget rules, col 9 = 0/1/2 (Handler_0fc 0x548090, round " +

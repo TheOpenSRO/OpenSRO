@@ -12,8 +12,11 @@ import (
 	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/ai"
+	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
+	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/mana"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
@@ -34,6 +37,14 @@ import (
 // each cited where it is defined; the runtime's own choices are the stand-ins
 // in docs/protocol/monster_ai.md, "srrevamp's runtime", and each is marked
 // OWN DESIGN at the line that makes it.
+//
+// With -monster-battle on as well (SetMonsterBattle, round 546; OFF by
+// default, and cmd/server forces it off unless -monster-ai and
+// -monster-strike-push are both on), BATTLE is the engine's own instead of
+// the hold: the monster chases its attacker to its attack band at its run
+// speed and swings on its own timer, each blow pushed to the zone as an
+// OpMonsterAttacked, and leaves by the engine's exits (battleTick). The
+// synchronous counter in performAttack is then skipped.
 
 // MonsterAITick is how often the runtime steps the monsters and runs their
 // states. OWN DESIGN: the engine's AI period is unread; the one period read
@@ -81,7 +92,40 @@ type MonsterAIConfig struct {
 	// keep-up end (SRREVAMP_AI_TRACE). Off by default: at about 350 monsters
 	// in Jangan it is several lines a second.
 	Trace bool
+	// What a monster's own swing reads and writes (monsterStrike's strikeDeps):
+	// the target's character row, the gear it wears and wears down, the item
+	// table that gear resolves against, and the mana pool a death refills.
+	// Used only with -monster-battle on (SetMonsterBattle); with Chars nil the
+	// chase runs but no swing is made.
+	Chars     character.Store
+	Equipment equipment.Store
+	Items     combat.ItemLookup
+	Mana      *mana.Tracker
 }
+
+// monsterBattle is cmd/server's -monster-battle (SRREVAMP_MONSTER_BATTLE),
+// OFF by default. An atomic because cmd/server sets it on the boot goroutine
+// while performAttack reads it on session readers and keep-up goroutines and
+// the tick reads it on its own.
+var monsterBattle atomic.Bool
+
+// SetMonsterBattle turns the monster's own BATTLE -- the chase to its attack
+// band and the swing on its own timer, pushed to the zone -- on or off.
+// cmd/server calls it once at boot, before the gateway serves, and only
+// passes true when -monster-ai and -monster-strike-push are both on: the
+// chase needs the tick, and a swing nobody is told about is silent HP loss.
+// With it on, performAttack skips the synchronous counter; with it off, the
+// counter and the interim hold are what they were.
+func SetMonsterBattle(on bool) { monsterBattle.Store(on) }
+
+// ChaseReaimDistance is how far a BATTLE target must have moved since the
+// chase last aimed at it before the leg is re-issued to the zone (chase). OWN
+// DESIGN, an engineering choice: the engine re-aims its walk on every AI
+// update; pushing a new OpMonsterMoved every tick for a target that has not
+// moved would be ten pushes a second per chasing monster for no new
+// information. A monster that stopped short (a blow's stop, an arrival) is
+// re-issued whatever the target did.
+const ChaseReaimDistance = 1.0
 
 // monsterAIRuntime is the running monster AI, nil while -monster-ai is off.
 // An atomic pointer rather than a plain variable: RunMonsterAI stores it on
@@ -104,6 +148,16 @@ type monsterAI struct {
 	// wireMu guards only the creation of a session's wire lock (wireLock).
 	wireMu sync.Mutex
 
+	// kills holds, by monster id, the targets a strike worker killed since the
+	// last tick (runStrike writes it, the BATTLE tick drains it): the kill
+	// is the 0x23 exit's evidence, since srrevamp puts a dead player back on
+	// its feet at once (battleTick).
+	kills map[int64]struct{}
+
+	// deps is what a monster's own swing reads and writes (MonsterAIConfig);
+	// fixed at construction, read by the strike workers.
+	deps strikeDeps
+
 	// The rest belongs to the tick (monsterAITick), which holds mu while it
 	// touches it.
 	brains     map[int64]*brain
@@ -116,7 +170,10 @@ type monsterAI struct {
 	roamRadius float64
 	last, now  time.Time
 	tickN      uint64
-	pending    []monsterPush
+	// battle is -monster-battle as this pass read it (monsterBattle), once,
+	// so one pass runs one BATTLE or the other throughout.
+	battle  bool
+	pending []monsterPush
 	// held is tick heldTick's keep-up set (keptUpSet), built on that tick's
 	// first release test and stale -- rebuilt -- on any other tick.
 	held     map[heldKey]struct{}
@@ -156,6 +213,35 @@ type brain struct {
 	unheldTicks int
 	// homingDestX/Z is where HOMING is walking (MoveHome 0x00545c50).
 	homingDestX, homingDestZ float64
+
+	// The monster's own BATTLE (-monster-battle, battleTick):
+	//
+	// chaseAimX/Z is where the target stood when the chase last issued its
+	// leg, and chaseAimed whether one is out (ChaseReaimDistance).
+	chaseAimX, chaseAimZ float64
+	chaseAimed           bool
+	// lastSwing is when the monster last fired its attack skill, zero for
+	// never. It is the action machine's cooldown, not BATTLE's timer 5: that
+	// timer is armed fired at BATTLE::OnEnter (0x55a018) and after every swing
+	// (Handler_0e8 0x547342), so it is due at once each time (ArmTimer
+	// 0x53d6c7, round 545), and what spaces the swings is the skill's
+	// ReuseDelay through the action machine (round 254). So it persists
+	// across BATTLE entries, as the cooldown does.
+	lastSwing time.Time
+	// giveUpDueAt is when tactics timer 6 is next due (ai.GiveUpCheckPeriodMs):
+	// armed once at Init, due at once the first time it is asked, then the
+	// period after each consumption -- zero here is "due".
+	giveUpDueAt time.Time
+	// strikes feeds this monster's strike worker (queueStrike); nil until
+	// the first swing, closed when the brain is dropped.
+	strikes chan strikeJob
+}
+
+// strikeJob is one swing handed to a monster's strike worker: the monster as
+// the tick saw it and the character it swings at.
+type strikeJob struct {
+	m      combat.Monster
+	target int64
 }
 
 // monsterPush is one push collected during a pass, sent after it.
@@ -191,6 +277,8 @@ func (a *monsterAI) run(ctx context.Context) {
 func newMonsterAI(hub *world.Hub, monsters *combat.Hub, logger *slog.Logger, cfg MonsterAIConfig, rng *rand.Rand, push func(zone string, p *proto.Packet)) *monsterAI {
 	a := &monsterAI{
 		struck:     map[int64]struckEvent{},
+		kills:      map[int64]struct{}{},
+		deps:       strikeDeps{chars: cfg.Chars, eq: cfg.Equipment, items: cfg.Items, mp: cfg.Mana},
 		brains:     map[int64]*brain{},
 		rng:        rng,
 		monsters:   monsters,
@@ -228,6 +316,12 @@ func newMonsterAI(hub *world.Hub, monsters *combat.Hub, logger *slog.Logger, cfg
 // handler's own work between the two calls, not a tick. Closing it means
 // stopping the monster at the reach test, before the swing is known to be
 // ready or to land, which would stop monsters for clicks that deal nothing.
+//
+// With -monster-battle on there is no stop here: the engine's BATTLE::OnEnter
+// (0x559fb0..0x55a08b) issues none, and the tick's chase replaces the leg or
+// stops it in the band (battleTick), so the blow is only recorded. A monster
+// struck while walking away then walks on for at most one tick before the
+// chase turns it toward its attacker at its run speed.
 func noteStruck(monsters *combat.Hub, monsterID, characterID int64) {
 	a := monsterAIRuntime.Load()
 	if a == nil || monsters == nil || monsters != a.monsters {
@@ -236,9 +330,11 @@ func noteStruck(monsters *combat.Hub, monsterID, characterID int64) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	moving := false
-	if m, ok := monsters.Get(monsterID); ok && m.Moving {
-		monsters.StopMotion(monsterID)
-		moving = true
+	if !monsterBattle.Load() {
+		if m, ok := monsters.Get(monsterID); ok && m.Moving {
+			monsters.StopMotion(monsterID)
+			moving = true
+		}
 	}
 	ev, seen := a.struck[monsterID]
 	if !seen {
@@ -267,6 +363,7 @@ func (a *monsterAI) tick(now time.Time) {
 	}
 	a.last, a.now = now, now
 	a.tickN++
+	a.battle = monsterBattle.Load()
 
 	// 1. The mover (combat.MoverStep: the 160 cap and the no-overshoot clamp).
 	a.monsters.StepAll(dt)
@@ -288,9 +385,13 @@ func (a *monsterAI) tick(now time.Time) {
 		a.brains[m.ID] = b
 		a.dispatch(b, ai.MsgSpawned)
 	}
-	for id := range a.brains {
+	for id, b := range a.brains {
 		if !seen[id] {
+			if b.strikes != nil {
+				close(b.strikes) // the strike worker ends after what is queued
+			}
 			delete(a.brains, id)
+			delete(a.kills, id)
 		}
 	}
 
@@ -353,7 +454,11 @@ func (a *monsterAI) onStruck(id int64, ev struckEvent) {
 		return
 	}
 	b.target = ev.attacker
-	a.tracef("ai: monster %d struck by %d, holding", id, ev.attacker)
+	if a.battle {
+		a.tracef("ai: monster %d struck by %d, engaging", id, ev.attacker)
+	} else {
+		a.tracef("ai: monster %d struck by %d, holding", id, ev.attacker)
+	}
 	a.change(b, ai.StateBattle)
 }
 
@@ -396,8 +501,16 @@ func (a *monsterAI) update(b *brain) {
 			a.dispatch(b, ai.MsgArrived)
 		}
 	case ai.StateBattle:
-		// BATTLE has no dwell (ai.BattleDwellMs), so nothing expires it. Not
-		// on a tick that drained a blow on it, its entry among them:
+		// BATTLE has no dwell (ai.BattleDwellMs), so nothing expires it.
+		// With -monster-battle on it is the engine's own tick, every tick
+		// (CAIState_BATTLE::OnUpdate runs on every AI update, its entry
+		// tick's blow notwithstanding):
+		if a.battle {
+			a.battleTick(b)
+			return
+		}
+		// The interim hold. Not on a tick that drained a blow on it, its
+		// entry among them:
 		if b.lastBlowTick == a.tickN {
 			return
 		}
@@ -441,6 +554,193 @@ func (a *monsterAI) update(b *brain) {
 		a.tracef("ai: monster %d released (%s)", b.id, "keep-up ended")
 		a.change(b, ai.StateIdle)
 	}
+}
+
+// battleTick is CAIState_BATTLE::OnUpdate (0x0055a090) with -monster-battle
+// on, in the engine's order (round 545, docs/protocol/monster_ai.md, "The
+// pure BATTLE rules and the timer read"):
+//
+//  1. the target must be valid, else message 0x23 -> IDLE
+//     (AITactics_ValidTargetOrNull 0x540dc0 at 0x55a0dc, the exit at 0x55a116);
+//  2. the reach test, behaviour +0x100 at 0x55a175 (AITactics_TargetOutOfReach
+//     0x548120, under reach rule 0 the negation of IsTargetWithinChaseRange
+//     0x545e50): out -> message 0x27 -> IDLE (0x55a187);
+//  3. the give-up check, behaviour +0x104 at 0x55a1a2
+//     (AITactics_BattleGiveUpCheck 0x5483c0), only when tactics timer 6 is
+//     due: code 1 -> message 0x2a -> IDLE (0x55a1b9);
+//  4. the swing, behaviour +0xe8 at 0x55a1d0 (AITactics_Handler_0e8 0x5472a0):
+//     the walk to the attack band, else the attack skill through the action
+//     machine.
+//
+// Not modelled between 1 and 2: the +0x10c/+0x108 calls at 0x55a12e..0x55a15e
+// (message 0x2b, the follow-owner path; no roster species has an owner).
+//
+// Target validity is srrevamp's own, disclosed: in world.Hub, in this zone,
+// and not killed by this monster's last swing. The engine's IsValidTarget
+// (0x540de0) wants life state 1, which a kill leaves; srrevamp puts a dead
+// player back on its feet at once (monsterStrike's RespawnHP), so the strike
+// worker reports the kill (kills) and the next tick takes the same 0x23 exit.
+func (a *monsterAI) battleTick(b *brain) {
+	var e world.Entity
+	ok := false
+	if a.world != nil {
+		e, ok = a.world.EntityByCharacterID(b.target)
+	}
+	_, killed := a.kills[b.id]
+	delete(a.kills, b.id)
+	if !ok || e.Zone != b.m.Zone || killed {
+		why := "target gone"
+		if killed {
+			why = "target killed"
+		}
+		a.tracef("ai: monster %d released (%s)", b.id, why)
+		a.dispatch(b, ai.MsgCombatEnded)
+		return
+	}
+	dist := math.Hypot(e.Pos.X-b.m.X, e.Pos.Z-b.m.Z)
+	fromHome := math.Hypot(b.m.X-b.m.HomeX, b.m.Z-b.m.HomeZ)
+
+	// 2. The reach test. Every srrevamp placement is a nest whose position is
+	// the spawn point and whose radius is the roam radius (MonsterRoamRadius,
+	// own design), so this is the nest path: inclusive against the give-up
+	// distance reduced by the excess beyond 1.5 x the radius (ai.ChaseRange).
+	if !ai.TargetWithinChaseRange(dist, ai.TacticsChaseSwitch, ai.TacticsGiveUpDistance, true, a.roamRadius, fromHome) {
+		a.tracef("ai: monster %d released (out of reach: target %.0f away, %.0f from home)", b.id, dist, fromHome)
+		a.dispatch(b, ai.MsgUnused27)
+		return
+	}
+
+	// 3. The give-up check, behind tactics timer 6: due the first time it is
+	// asked (Init arms it fired, 0x53f6f6 -> 0x53d6c7) and then
+	// GiveUpCheckPeriodMs after each consumption.
+	if !a.now.Before(b.giveUpDueAt) {
+		b.giveUpDueAt = a.now.Add(ai.GiveUpCheckPeriodMs * time.Millisecond)
+		if ai.GiveUpCode(dist, ai.TacticsChaseSwitch, ai.TacticsGiveUpDistance) == 1 {
+			a.tracef("ai: monster %d released (give-up: target %.0f away)", b.id, dist)
+			a.dispatch(b, ai.MsgBodyChanged) // 0x2a with code 1: IDLE (CAIState::OnMsg_0x2a 0x559ad0)
+			return
+		}
+	}
+
+	// 4. The swing. The band is the attack-distance rule with the monster as
+	// the caster (combat.ApproachBand: Tick_Attack 0x4ad8e0 / Tick_UseSkill
+	// 0x4ae590, rounds 247/256/488): its BCRadius plus the player's, and its
+	// attack skill's Range (skilldata col 21, combat.Monster.AttackRange;
+	// round 254). A Mangyang's range is exactly 10, the rule's own hole, so
+	// stop = reach = 10 and it is in reach at int(dist) <= 12.
+	stop, reach := combat.ApproachBand(b.m.BCRadius, combat.PlayerBCRadius, combat.EffectiveRange(b.m.AttackRange, 0))
+	if !combat.InReach(dist, reach) {
+		a.chase(b, e.Pos, dist, stop)
+		return
+	}
+	// In reach: a monster still on a leg stops here, with the zone's stop.
+	if b.m.Moving {
+		if m, ok := a.monsters.StopMotion(b.id); ok {
+			b.m = m
+			a.queueStop(m)
+		}
+	}
+	b.chaseAimed = false
+	// The action machine's cooldown: the attack skill's ReuseDelay (skilldata
+	// col 14, combat.Monster.AttackReuseMs; round 254). The first swing is
+	// immediate (timer 5 armed fired at BATTLE::OnEnter, round 545). A species
+	// with no known ReuseDelay has no skill row to fire and swings not at all
+	// -- disclosed; every roster species carries one (cmd/server's roster).
+	if b.m.AttackReuseMs <= 0 {
+		return
+	}
+	if !b.lastSwing.IsZero() && a.now.Sub(b.lastSwing) < time.Duration(b.m.AttackReuseMs)*time.Millisecond {
+		return
+	}
+	b.lastSwing = a.now
+	a.queueStrike(b, e.CharacterID)
+}
+
+// chase is Handler_0e8's walk when the target is out of the band: the
+// engine's MoveTowardObject to round(stop) (docs/protocol/auto_command.md,
+// phase 1; rounds 254/256 for BATTLE's use of it), the point that many units
+// from the target on the line back to the monster, in the clip Handler_110
+// gives BATTLE -- 1, the run clip (FUN_00541820 at BATTLE::OnEnter 0x55a04a;
+// ai.MotionMode) -- at the speed that clip walks (startLeg's inference). The
+// leg is re-issued when the monster is standing, or when the target has moved
+// ChaseReaimDistance since the last aim. A species with no speed to chase at
+// stands where it is and swings only when the target comes to it.
+func (a *monsterAI) chase(b *brain, target world.Position, dist, stop float64) {
+	if b.m.Moving && b.chaseAimed && math.Hypot(target.X-b.chaseAimX, target.Z-b.chaseAimZ) < ChaseReaimDistance {
+		return
+	}
+	mode := ai.MotionMode(ai.StateBattle, b.m.WalkSpeed, b.m.RunSpeed)
+	speed := b.m.WalkSpeed
+	if mode != 0 {
+		speed = b.m.RunSpeed
+	}
+	if !(speed > 0) || !(dist > 0) {
+		return
+	}
+	d := math.Round(stop)
+	ux, uz := (b.m.X-target.X)/dist, (b.m.Z-target.Z)/dist
+	b.chaseAimX, b.chaseAimZ, b.chaseAimed = target.X, target.Z, true
+	a.startLeg(b, target.X+ux*d, target.Z+uz*d, mode, "BATTLE chase")
+}
+
+// queueStrike hands the swing to the monster's strike worker, started on
+// its first swing. The worker runs the blow's reads and writes (monsterStrike:
+// chars.ApplyDamage, the wear, a death's SetLeveling and RespawnHP) off the
+// tick goroutine, so a slow store never stalls a pass. OWN DESIGN: the
+// channel holds one swing; while one runs and one waits, a further swing is
+// dropped with a trace line rather than queued -- the cooldown between swings
+// (3000 ms for a Mangyang) is far longer than a store write, so a drop means a
+// stalled store, not a fight.
+func (a *monsterAI) queueStrike(b *brain, target int64) {
+	if a.deps.chars == nil {
+		return
+	}
+	if b.strikes == nil {
+		b.strikes = make(chan strikeJob, 1)
+		go a.strikeWorker(b.id, b.strikes)
+	}
+	select {
+	case b.strikes <- strikeJob{m: b.m, target: target}:
+		a.tracef("ai: monster %d swings at %d", b.id, target)
+	default:
+		a.tracef("ai: monster %d swing at %d dropped: the previous strike is still running", b.id, target)
+	}
+}
+
+// strikeWorker runs monster id's swings in order until its channel closes.
+func (a *monsterAI) strikeWorker(id int64, jobs <-chan strikeJob) {
+	for job := range jobs {
+		a.runStrike(id, job)
+	}
+}
+
+// runStrike resolves one swing -- the same blow the counter dealt
+// (monsterStrike, unchanged), on the target's level read here -- pushes it to
+// the zone as an OpMonsterAttacked through the runtime's push (the zone
+// broadcast under each session's wire lock, or a test's recorder), and
+// reports a kill to the tick (kills). The blow resolves at the swing's start;
+// the client delays only the drawing, to its clip's hit event.
+func (a *monsterAI) runStrike(id int64, job strikeJob) {
+	ctx := context.Background()
+	level := 0
+	if c, err := a.deps.chars.GetByID(ctx, job.target); err == nil && c != nil {
+		level = c.Level
+	}
+	out, err := monsterStrike(ctx, a.deps, job.m, job.target, level)
+	if err != nil {
+		if a.logger != nil {
+			a.logger.Warn("ai: strike failed", "monster", id, "target", job.target, "err", err)
+		}
+		return
+	}
+	a.tracef("ai: monster %d strike %d for %d (HP %d)%s%s", id, job.target, out.damage, out.hp,
+		map[bool]string{true: " blocked", false: ""}[out.blocked], map[bool]string{true: " killed", false: ""}[out.died])
+	if out.died {
+		a.mu.Lock()
+		a.kills[id] = struct{}{}
+		a.mu.Unlock()
+	}
+	a.push(job.m.Zone, &proto.Packet{Opcode: OpMonsterAttacked, Data: out.message(id, job.target).Encode()})
 }
 
 // heldKey names one keep-up as the release test sees it: the monster it is
@@ -583,7 +883,7 @@ func (a *monsterAI) enterWander(b *brain) {
 		return
 	}
 	b.dwellMs = ai.DwellMs(a.rng, ai.StateWander)
-	a.startLeg(b, destX, destZ, ai.MotionMode(ai.StateWander, b.m.WalkSpeed, b.m.RunSpeed))
+	a.startLeg(b, destX, destZ, ai.MotionMode(ai.StateWander, b.m.WalkSpeed, b.m.RunSpeed), "leg")
 }
 
 // enterHoming is CAIState_HOMING::OnEnter (0x0055a540): the dwell
@@ -595,21 +895,26 @@ func (a *monsterAI) enterWander(b *brain) {
 func (a *monsterAI) enterHoming(b *brain) {
 	b.dwellMs = ai.DwellMs(a.rng, ai.StateHoming)
 	b.homingDestX, b.homingDestZ = ai.HomeDestination(a.rng, b.m.HomeX, b.m.HomeZ, b.m.X, b.m.Z, a.roamRadius)
-	a.startLeg(b, b.homingDestX, b.homingDestZ, ai.MotionMode(ai.StateHoming, b.m.WalkSpeed, b.m.RunSpeed))
+	a.startLeg(b, b.homingDestX, b.homingDestZ, ai.MotionMode(ai.StateHoming, b.m.WalkSpeed, b.m.RunSpeed), "leg")
 	b.target = 0
 }
 
 // enterBattle is CAIState_BATTLE::OnEnter (0x00559fb0), which calls only the
-// base OnEnter for its timeout: none (ai.BattleDwellMs). Its timers, clip,
-// gathering and slot-11 call are not modelled. OWN DESIGN, the interim hold:
-// a monster still on a leg is stopped here with one stop push. The engine's
-// BATTLE::OnEnter issues no stop -- its chase replaces the leg, which is
-// mob-battle-chase. A monster struck mid-leg was already stopped at the blow
-// (noteStruck), so this finds it standing.
+// base OnEnter for its timeout: none (ai.BattleDwellMs). Its timers 3/4
+// (0x559fd8/0x559fef), gathering and slot-11 call are not modelled; its clip
+// call (FUN_00541820 at 0x55a04a, Handler_110: the run clip) and timer 5
+// (0x55a018, armed fired: the first swing is immediate) are what battleTick
+// runs. It issues no stop (0x559fb0..0x55a08b): with -monster-battle on the
+// chase replaces a leg under way, or the tick stops it in the band.
+//
+// With the flag off, OWN DESIGN, the interim hold: a monster still on a leg is
+// stopped here with one stop push. A monster struck mid-leg was already
+// stopped at the blow (noteStruck), so this finds it standing.
 func (a *monsterAI) enterBattle(b *brain) {
 	b.dwellMs = ai.BattleDwellMs
 	b.unheldTicks = 0
-	if b.m.Moving {
+	b.chaseAimed = false
+	if !a.battle && b.m.Moving {
 		if m, ok := a.monsters.StopMotion(b.id); ok {
 			b.m = m
 			a.queueStop(m)
@@ -622,8 +927,10 @@ func (a *monsterAI) enterBattle(b *brain) {
 // speed for 1 -- an inference (docs/protocol/monster_ai.md, "srrevamp's own
 // monster protocol": the mover's use of +0x155/+0x174 is untraced). The
 // heading turns toward the destination, as the move's start does
-// (CGObjMoverByDest 0x0048c330 -> its slot 10, 0x0048c660, SetHeading).
-func (a *monsterAI) startLeg(b *brain, destX, destZ float64, mode uint8) {
+// (CGObjMoverByDest 0x0048c330 -> its slot 10, 0x0048c660, SetHeading). what
+// names the leg in the trace line: "leg" for WANDER and HOMING, "BATTLE
+// chase" for the chase.
+func (a *monsterAI) startLeg(b *brain, destX, destZ float64, mode uint8, what string) {
 	speed := b.m.WalkSpeed
 	if mode != 0 {
 		speed = b.m.RunSpeed
@@ -640,7 +947,7 @@ func (a *monsterAI) startLeg(b *brain, destX, destZ float64, mode uint8) {
 		MonsterID: m.ID, X: float32(m.X), Z: float32(m.Z),
 		DestX: float32(destX), DestZ: float32(destZ), Speed: float32(speed), Mode: mode,
 	})
-	a.tracef("ai: monster %d leg to (%.0f,%.0f) speed %.0f mode %d", m.ID, destX, destZ, speed, mode)
+	a.tracef("ai: monster %d %s to (%.0f,%.0f) speed %.0f mode %d", m.ID, what, destX, destZ, speed, mode)
 }
 
 // queueStop queues the stop push for a monster standing at m's position:

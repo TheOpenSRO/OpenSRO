@@ -504,3 +504,29 @@ func TestMaintainMonsterReportsEverySpawn(t *testing.T) {
 		t.Fatalf("the respawn reported %d, which the hub does not hold as a %s", second, spec.Name)
 	}
 }
+
+// Round 546: -monster-battle takes effect only with -monster-ai (the chase
+// and the swing run in the AI tick) and -monster-strike-push (the swings reach
+// the zone only as OpMonsterAttacked) both on; any other combination leaves it
+// off with a reason for main's WARN, never an exit. Off asked for is off with
+// no reason.
+func TestMonsterBattleAllowed(t *testing.T) {
+	for _, c := range []struct {
+		battle, ai, push bool
+		want             bool
+		reason           bool
+	}{
+		{false, false, false, false, false},
+		{false, true, true, false, false},
+		{true, false, false, false, true},
+		{true, true, false, false, true},
+		{true, false, true, false, true},
+		{true, true, true, true, false},
+	} {
+		on, why := monsterBattleAllowed(c.battle, c.ai, c.push)
+		if on != c.want || (why != "") != c.reason {
+			t.Errorf("monsterBattleAllowed(battle %v, ai %v, push %v) = %v, %q; want %v with a reason: %v",
+				c.battle, c.ai, c.push, on, why, c.want, c.reason)
+		}
+	}
+}

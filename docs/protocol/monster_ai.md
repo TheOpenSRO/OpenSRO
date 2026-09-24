@@ -1019,8 +1019,9 @@ at `0x545fde`, then `mov al,1`), unless the owner's slot 242 or 243 answers non-
 TID shapes; slot 243 answering 1 makes `Attach` store 5.0 instead). So retail never applies the 200
 to a roster monster. srrevamp's runtime uses 200 as its own roam radius (below), disclosed as such.
 Round 537 built the roam radius and its HOMING exit; the give-up distance waits on the BATTLE chase.
-Round 545 built its two rules as pure functions (`ai.TargetWithinChaseRange`, `ai.GiveUpCode`), inert
-until mob-battle-chase runs them ("The pure BATTLE rules and the timer read", below).
+Round 545 built its two rules as pure functions (`ai.TargetWithinChaseRange`, `ai.GiveUpCode`), and
+round 546 runs them in the runtime's BATTLE tick behind `-monster-battle` ("BATTLE's chase and the
+monster's own swing (round 546)", below).
 
 
 ## Flag bits 2 and 7 also switch the give-up check OFF (round 421)
@@ -1174,7 +1175,7 @@ which is off by default too ("The spawn push's server half", below).
 |---|---|---|
 | `OpMonsterMoved 0x007c` | s→zone | s64 monster id, f32 x, f32 z (the server's position when it issued the move), f32 dest_x, f32 dest_z, f32 speed (world units per second), u8 mode (0 walk clip, 1 run clip) -- 29 bytes |
 | `OpMonsterMotionList 0x007f` | s→requester | u16 n, then n entries of {s64 id, f32 dest_x, f32 dest_z, f32 speed, u8 mode} (21 bytes each); sent right after an `OpMonsterListResult`, ONE packet per list |
-| `OpMonsterAttacked 0x007d` | s→zone, the attacker included | s64 monster id, s64 target character id, s32 damage (0 when blocked), u8 flags (bit 0 the monster's critical, bit 1 blocked, bit 2 the target died), s32 target HP after the blow (after a death, the HP it was put back on its feet with), s64 death exp lost -- 33 bytes; sent right AFTER the attacker's `OpAttackResult`, from the same goroutine, and after the zone's `OpMonsterDamaged` for the same swing; only with `-monster-strike-push` on (round 541) |
+| `OpMonsterAttacked 0x007d` | s→zone, the attacker included | s64 monster id, s64 target character id, s32 damage (0 when blocked), u8 flags (bit 0 the monster's critical, bit 1 blocked, bit 2 the target died), s32 target HP after the blow (after a death, the HP it was put back on its feet with), s64 death exp lost -- 33 bytes; sent right AFTER the attacker's `OpAttackResult`, from the same goroutine, and after the zone's `OpMonsterDamaged` for the same swing; only with `-monster-strike-push` on (round 541). With `-monster-battle` on as well (round 546) the same message carries the monster's OWN swing, from the AI tick's strike worker, with no `OpAttackResult` before it; the layout is unchanged |
 | `OpMonsterSpawned 0x007e` | s→zone | one record in `OpMonsterListResult`'s own encoding (s64 id, u16-prefixed name, u16-prefixed code name, f32 x/y/z, u32 max HP, HP, level, rarity), then f32 heading (radians, srrevamp's world frame: from +x toward +z); sent when a monster appears -- a roster respawn or a GM `/spawn` -- only with `-monster-spawn-push` on (round 542) |
 
 Fixtures, pinned by `client/scripts/net/combat_test.gd`:
@@ -1441,8 +1442,8 @@ roster). Round 540 wrote "the client has no way to know its own id", which overs
 no party. So a push is taken as a blow on this
 player only when it claims a wait: it repeats a counter this client's own result reported, and its
 target is none of the other players the client has drawn (`World3D._other_bodies`). Every blow a
-server can push today is such a counter. A monster striking on its own (mob-battle-chase) will need
-the id from the start, and that is filed in `docs/TODO.md`.
+server could push until round 546 is such a counter. A monster striking on its own (round 546, below) sends none, and the client takes such a push as its own by elimination (`MonsterStrikes.is_own_unpaired`); round 540 wrote here that it would need the id from
+the start, which `docs/TODO.md` now files as the follow-up that would make the pairing exact.
 
 **How a blow is drawn** (`World3D._draw_monster_strike`):
 
@@ -1787,7 +1788,7 @@ leg. The lock is per session, so a stalled client holds up only its own replies 
   (mob-homing-wobble), and its arrival is tested every tick.
 - **Mode 0 is the walk speed and mode 1 the run speed.** This is inferred (round 363's note above);
   the 0/1 selection itself is read.
-- **The interim hold** (mob-battle-chase replaces all of it with the chase and the engine's exits):
+- **The interim hold** (with `-monster-battle` OFF, the default; on, round 546's chase and the engine's exits replace all of it -- "BATTLE's chase and the monster's own swing (round 546)", below):
   - **The stop at the blow.** `noteStruck` stops a walking monster in the hub at the blow, and the
     next tick pushes the one stop. The engine's `BATTLE::OnEnter` issues no stop: its chase replaces
     the leg. The stop is at the blow, not at the tick, because the tick steps the mover before it
@@ -1842,7 +1843,7 @@ leg. The lock is per session, so a stalled client holds up only its own replies 
   `AITactics_ValidTargetOrNull` / `AITactics_IsValidTarget` (`0x540dc0` / `0x540de0`: alive, life
   state 1, the body-mode refusals; named in round 545), and its exit is `0x23` (round 545 settled
   the branch).
-- **The synchronous counterattack is unchanged.** A monster still strikes only when struck.
+- **The synchronous counterattack is unchanged with `-monster-battle` off.** A monster then strikes only when struck. With the flag on it swings on its own (round 546) and `performAttack` makes no counter.
 - **Zone-wide pushes, no interest management.** About 33 leg pushes a second per Jangan session at
   about 350 monsters. That is an ESTIMATE from the read dwell and roll numbers, not a measurement:
   an IDLE spell averages 4.0 s and is followed by a leg 76 times in 100, whose WANDER spell averages
@@ -1932,9 +1933,9 @@ SRREVAMP_QA_ATTACK_GOTO=1`, `--server --attack --frames 600`, from the default s
 `server/internal/ai/battle.go` carries the two distance rules BATTLE runs on its target, the four
 `_RefTactics` stand-ins they read, and the period of the give-up timer; this section holds the
 reading behind them and the timer read that settles how a monster's swings are spaced. **Inert
-when built**: nothing calls `ai.TargetWithinChaseRange` or `ai.GiveUpCode` (both are in
-`systems/orphans_test.go`'s known list against mob-battle-chase), and round 539's interim hold
-still stands in `session/monsterai.go`. Every address below was re-read in `/var/tmp/srv.asm` and
+when built** (round 545: nothing called `ai.TargetWithinChaseRange` or `ai.GiveUpCode`, and round
+539's interim hold stood in `session/monsterai.go`); **run since round 546** by `battleTick` behind
+`-monster-battle` (the next section). Every address below was re-read in `/var/tmp/srv.asm` and
 `/var/tmp/decomp_server` on 2026-09-24; the new names are in `recovered_names.tsv` under this round.
 
 **The order `CAIState_BATTLE::OnUpdate` (`0x55a090`) runs its tests in**, which the chase item
@@ -2033,7 +2034,7 @@ design**: `CAIState_BATTLE::OnEnter` (`0x559fb0..0x55a08b`) issues no stop -- it
 `FUN_00541820` (the `0x704f` run mode), resolves the target, runs
 `AITactics_CollectNearbyMonsters`, stamps `+0xb8` and tail-calls slot 11 (`0x541810`). In the
 engine the leg is replaced by the chase's own move or the swing; the interim hold's stop at the blow
-(round 539) is the stand-in until mob-battle-chase replaces the leg.
+(round 539) is the stand-in with `-monster-battle` off; on, round 546's chase replaces the leg and `noteStruck` issues no stop.
 
 **The timer read.** The tactics timer table is a `CAITimeManager` at `ctx+0x34`
 (`CAITimeManager::InitTables` `0x53d4b0`, called by `AI::CTactics::Attach` at `0x53f377` with
@@ -2123,3 +2124,173 @@ to IDLE only when the accounting refuses. `CAIState_IDLE::OnEnter` (`0x559c80`):
 the stand-ins allow); give-up codes 2 and 3; the `+0x4c` hold byte's meaning; the TID-bit-15 variant
 `AITactics_BattleGiveUpCheck_TID8000` (`0x5484b0`: `+0x7c + 100`, 200.0/250.0); reach rule 3's HP
 bucket; the target's slot 304.
+
+## BATTLE's chase and the monster's own swing (round 546)
+
+`session/monsterai.go`'s `battleTick` runs the engine's BATTLE tick behind **`-monster-battle`**
+(env `SRREVAMP_MONSTER_BATTLE`, parsed like `-monster-ai`'s; **off by default**; `cmd/server`
+forces it off with a WARN, never an exit, unless `-monster-ai` and `-monster-strike-push` are both
+on -- the chase runs in the AI tick, and a swing nobody is told about would be silent HP loss).
+Off, round 539's interim hold and `performAttack`'s synchronous counter are exactly what they were,
+byte for byte on the wire. On, a struck monster fights on its own and `performAttack` makes no
+counter (its `OpAttackResult` carries none; `PlayerHP` stays the seeded truth). The boot log says
+which: `monster battle on: ...`, `monster battle off (...)`, or `monster battle forced off why=...`.
+How an operator flips it is in `deploy/README.md`, "Monster battle (off by default)".
+
+**One BATTLE tick, on every tick, in `CAIState_BATTLE::OnUpdate`'s order (`0x55a090`, round 545;
+re-read in `srv.asm` for this round):**
+
+1. **The target must be valid** (`AITactics_ValidTargetOrNull` `0x540dc0` at `0x55a0dc`), else
+   message `0x23` -> IDLE (`0x55a116`). srrevamp's validity is its own, disclosed: in `world.Hub`,
+   in this zone, and not killed by this monster's last swing. The engine's `IsValidTarget`
+   (`0x540de0`) wants life state 1, which a kill leaves; srrevamp puts a dead player back on its
+   feet at once (`monsterStrike`'s `RespawnHP`), so the strike worker reports the kill and the
+   next tick takes the same exit. The `+0x10c`/`+0x108` calls between 1 and 2
+   (`0x55a12e..0x55a15e`, message `0x2b`, the follow-owner path) are not modelled: no roster
+   species has an owner.
+2. **The reach test**, behaviour `+0x100` at `0x55a175` (`AITactics_TargetOutOfReach` `0x548120`,
+   reach rule 0: `IsTargetWithinChaseRange` `0x545e50` negated): out -> `0x27` -> IDLE
+   (`0x55a187`). Every placement is a nest whose position is the spawn point and whose radius is
+   the roam radius (200, own design), so it is the nest path: within iff the distance is at most
+   `ai.ChaseRange(400, 200, distance from home)` -- the give-up distance less the excess beyond
+   1.5 x 200, inclusive (`ai.TargetWithinChaseRange`).
+3. **The give-up check**, behaviour `+0x104` at `0x55a1a2` (`AITactics_BattleGiveUpCheck`
+   `0x5483c0`), only when tactics timer 6 is due -- the first time it is asked, then every
+   `ai.GiveUpCheckPeriodMs` (1500) after each consumption, kept per brain from its creation as
+   `Init` arms it once (`0x53f6f6`): code 1 (`ai.GiveUpCode`: dist >= the raw 400) -> `0x2a` ->
+   IDLE (`0x55a1b9`; `CAIState::OnMsg_0x2a` `0x559ad0` turns a 1 into `ChangeState(1)`).
+4. **The swing**, behaviour `+0xe8` at `0x55a1d0` (`AITactics_Handler_0e8` `0x5472a0`):
+   - **The band**, with the monster as the caster: `combat.ApproachBand(monster BCRadius, player
+     BCRadius 4, its attack skill's Range)` -- `Tick_Attack` `0x4ad8e0` / `Tick_UseSkill` `0x4ae590`
+     (rounds 247/256/488), the Range being skilldata column 21 by characterdata column 83
+     (`combat.Monster.AttackRange`, round 254). A Mangyang's is exactly 10, the rule's own hole, so
+     stop = reach = 6 + 4 = 10 and it is in reach at `int(dist) <= 12` (`combat.InReach`).
+   - **Out of the band: the chase.** `MoveTowardObject` to `round(stop)` (`auto_command.md`, phase
+     1; rounds 254/256 for BATTLE's use of it): the destination is that many units from the target
+     on the line back to the monster, in the clip `Handler_110` gives BATTLE -- 1, the run clip
+     (`FUN_00541820` at `BATTLE::OnEnter` `0x55a04a`, `ai.MotionMode`) -- at the run speed (the
+     mode-to-speed inference above), pushed as an `OpMonsterMoved`. The leg is re-issued when the
+     monster is standing, or when the target has moved `ChaseReaimDistance` (1 unit, own design)
+     since the last aim.
+   - **In the band: the stop and the swing.** A monster still on a leg is stopped with one stop
+     push. The first swing is immediate: `BATTLE::OnEnter` arms timer 5 fired (`0x55a018`, round
+     545's timer read), and so does every re-arm after a swing (`0x547342`), so what spaces the
+     swings is the attack skill's ReuseDelay through the action machine (round 254; skilldata
+     column 14, `combat.Monster.AttackReuseMs`: 3000 ms for a Mangyang) -- kept per brain as the
+     time of the last swing, across BATTLE entries, as a cooldown is. A species with no known
+     ReuseDelay has no skill row to fire and swings not at all (disclosed; every roster species
+     has one).
+   - **The blow** is the counter's own: `monsterStrike` (`session/monsterstrike.go`, rounds 254 and
+     505, unchanged) on the target's level read at the time, run OFF the tick on one strike worker
+     per monster (a goroutine fed by a one-deep channel: while one swing runs and one waits, a
+     further swing is dropped with a trace line -- own design; a real 3 s gap never fills it), and
+     pushed to the zone as an `OpMonsterAttacked` through the runtime's push (the zone broadcast
+     under each session's wire lock). A kill is reported to the tick for step 1. The blow resolves
+     at the swing's start; the client delays only the drawing, to its clip's hit event.
+
+**A blow with the flag on.** `noteStruck` records the blow and issues NO stop: `BATTLE::OnEnter`
+(`0x559fb0..0x55a08b`) issues none, and the tick's chase replaces a leg under way or stops it in the
+band. A monster struck while walking away walks on for at most one tick before the chase turns it
+toward its attacker at its run speed. `enterBattle` stops nothing either. Under retarget rule 0
+(`ai.TacticsRetargetRule`, the stand-in) a blow on a monster already in BATTLE is ignored: the
+first attacker stays the target until it leaves, dies or is out of reach, and **a second attacker
+is never answered** -- disclosed; today, with the flag off, every striker is (the counter).
+
+**The exits leave the leg alone.** IDLE's `OnEnter` (`0x559c80`) does not stop a leg, so a monster
+released mid-chase runs to its last aim point; its roam check then sends one strayed past the
+radius home (HOMING, a new leg), which is how a chase that gave up "walks home".
+
+**Trace lines** (`SRREVAMP_AI_TRACE`): `ai: monster %d struck by %d, engaging`, `ai: monster %d
+BATTLE chase to (%.0f,%.0f) speed %.0f mode %d`, `ai: monster %d swings at %d`, `ai: monster %d
+strike %d for %d (HP %d)[ blocked][ killed]`, `ai: monster %d swing at %d dropped: ...`, and
+`ai: monster %d released (target gone | target killed | out of reach: ... | give-up: ...)`.
+
+**The client half** (`World3D._on_monster_attacked`, `MonsterStrikes.is_own_unpaired`, this round).
+A monster's own swing sends no `OpAttackResult` for the target's client to pair the push with
+(round 540's `MonsterStrikes`). The client is not told its own character id, and this round kept
+every layout as it was, so such a push is recognised **by elimination**: the server tells a client
+of every other player in its zone (the enter-world result's others, then an entered notice for
+each arrival, each drawn into `_other_bodies` before any blow on them can arrive), so a push whose
+target is drawn nowhere is a blow on this player -- drawn at once, the monster turned to the
+player, the player's hit reaction and number at the clip's hit event, the HUD's HP and the death
+line from the push (`_show_own_strike`). The one hole is a push for a player who has just LEFT the
+zone crossing that player's left notice (the strike worker sends off the tick; the notice comes
+from the world handler): for `MonsterStrikes.LEFT_GRACE_MS` (10 s, own design) after a left notice
+such a push is drawn as the swing alone. Disclosed: the retail client is told its id when it
+spawns; a message carrying it here is a protocol addition this round did not make
+(`docs/TODO.md`). An older client that carries round 540 draws a blow on itself as the swing alone
+(no hit reaction, number or HP repaint); one older than round 540 shows no monster blow at all.
+
+**The stand-ins, each OWN DESIGN at its line:** the four `_RefTactics` columns (round 545:
+switch 1, give-up 400, reach rule 0, retarget rule 0); target validity (above); the 1-unit re-aim
+threshold; the one-deep strike queue; no swing for a species with no ReuseDelay; the run speed for
+mode 1 (the inference); the client's elimination and its 10 s grace; and, as before, the tick
+period, the roam radius and the nest reading of each placement. Not modelled: the `0x2b` path,
+`BATTLE::OnEnter`'s timers 3/4, gathering and slot-11 call, `BATTLE::OnLeave`, the aggro link, the
+attacker accounting, the threat table's retarget rules (mob-threat-retarget), and every
+"not modelled" item of round 545's section.
+
+**The live check** (`SRREVAMP_QA_ATTACK_RETREAT`, a client QA hook added this round: once the
+first blow lands, the player walks that many units straight back from the target and stops the QA
+attack loop, so the server has to chase). On the render box, with the server built from the tree:
+
+```
+SRREVAMP_MONSTER_AI=1 SRREVAMP_MONSTER_STRIKE_PUSH=1 SRREVAMP_MONSTER_BATTLE=1 SRREVAMP_AI_TRACE=1 \
+SRREVAMP_QA_ATTACK_NAME=Mangyang SRREVAMP_QA_ATTACK_GOTO=1 SRREVAMP_QA_ATTACK_RETREAT=60 \
+SERVER_BIN=/var/tmp/<lane>/srrevamp-server client/tools/qa_shot.sh --server --attack \
+  --frames 600 --out /var/tmp/<run>
+```
+
+from the default spot: the round-539 GOTO stands the player 8 units from where the server lists the
+Mangyang -- in both bands, so the first blow lands and the monster's first swing is immediate --
+and the retreat then walks the player 60 units away, ending the keep-up (the OpMove) and leaving
+the monster's target out of its band, so it has to chase. It must show, in `server.log`, `monster
+battle on`, a `struck by ... engaging` line, then `BATTLE chase ... speed 22 mode 1` and `strike`
+lines for the same id; in the client log, `QA ATTACK: retreating`, then `monster <id> run` and
+`monster <id> strikes <player id> ... own blow, no result to pair with`; and no attack result line
+reporting `took N` with N > 0 (the result carries no counter).
+
+*Why not `--region '96\168.m' --at 1030,600`, 60 units west of the placement row (1089.65,
+600.09), as the plan had it.* Tried first (this round): the client stood where it was asked
+(`QA 60 local 1029, -52, 551` in its log) and the nearest Mangyang was 1995 units away
+(`QA ATTACK: monster 3 at 1995`), because under `--region` the client's world frame is the LOADED
+region's while the in-memory server lists monsters in the zone frame, centred on the town's region
+97/168 (`worldmap.ToZoneWorld`); the two differ by one region in z. The QA teleport is not a
+position in the server's frame. GOTO stands the player at the server's own numbers, which is why
+round 539 built it.
+
+**Measured (round 546, 2026-09-24, server and client at this round's tree).** Server built from
+the tree (`GOOS=linux go build ./cmd/server`) and run as `SERVER_BIN=/var/tmp/mobchase546/srrevamp-server`
+with the three flags and `SRREVAMP_AI_TRACE=1`, `--server --attack --frames 600` from the default
+spot with `SRREVAMP_QA_ATTACK_NAME=Mangyang SRREVAMP_QA_ATTACK_GOTO=1 SRREVAMP_QA_ATTACK_RETREAT=60`.
+**Passed:**
+
+- `server.log` boots `monster battle on: ...` (no `forced off`; the two WARN lines are the
+  in-memory notice and the client's disconnect at exit). The GOTO stood the player 8.0 from
+  Mangyang 4 where the server listed it (`QA ATTACK: moved next to monster 4 as listed at
+  -340.7,2335.2`); the first swing landed (`attack hit for 20 (34 left), took 0 (HP 200)`), the
+  server drained it (`ai: monster 4 struck by 1, engaging`) and, in the band from the start, swung
+  at once (`swings at 1` and `strike 1 for 13 (HP 187)` on the same tick as the entry,
+  19:21:33.449); the client drew it as its own (`monster 4 strikes 1 for 13 (HP 187) -- own blow,
+  no result to pair with (the monster's own swing), drawn at once`).
+- The retreat (`QA ATTACK: retreating 60 from monster 4 to -272.7,-31.7,2335.2; no more swings`)
+  set off **19 `BATTLE chase to (...) speed 22 mode 1` legs**, the first 5.1 s after the first
+  strike (19:21:38.550, the retreat's first OpMove under the dilation), each re-aimed 2-3 units
+  further as the player's position arrived, and no `leg to` for id 4 in between (its 17 `leg to`
+  lines are its WANDER and HOMING legs before and after the fight).
+- **21 strikes on player 1, 3.0-3.1 s apart** (the ReuseDelay to within one tick: 3.1 3.1 3.0
+  3.0 3.1 3.0 3.0 3.1 3.1 3.1 3.1 3.0 3.1 3.0 3.0 3.1 3.0 3.1 3.0 3.1), 11-13 damage each and one
+  critical for 22, taking the fresh character from 200 to 0. The 21st killed: `strike 1 for 11 (HP
+  80) killed`, HP 80 being 40 % of 200 (`character.RespawnFraction`), then `released (target
+  killed)` on the next tick and no swing after it. The client drew all 21 as its own and the last
+  with `, died`.
+- No attack result reported a counter: 0 lines with `took N` for N > 0 (the two results say
+  `took 0`; the second, `attack hit for 18 (16 left)`, is the keep-up's one repeat before the
+  retreat's OpMove ended it). No `dropped` swing, no `released` before the kill.
+- Not measured in this run: the client's `monster 4 run` lines are printed only under
+  `SRREVAMP_QA_MOB_LOG=1`, which this run did not set; a second run of the same command with it set (Mangyang 1, GOTO at `230.8,2410.1`, the retreat to `298.8,2409.7`) drew **23 `monster 1 run from (...) to (...) at 22.0/s` legs** after the retreat -- the chase legs, each 2-5 units on toward the player as the retreat's OpMoves arrived, with a `stop ... at 22.0/s` where the band was reached -- and 19 `own blow` strikes, again with no `took N` result. The `walk ... at 8.0/s` lines before the fight are its WANDER legs.
+- Time dilation applies as in the round-538/539 runs: the client saw the fight 20x slower, so its
+  drawn positions were not asserted; every assertion above is a server trace line or a client
+  receipt line.
+
+Frames deleted after the run (`/var/tmp/mob_chase546*`).

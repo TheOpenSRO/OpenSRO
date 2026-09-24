@@ -202,15 +202,27 @@ In order. Each is checked off here when it ships in a release, with its round in
         (`deploy/README.md`, "Monster spawn push (off by default)"). What is left for it is the
         same: its live check (`monster_ai.md`, "The spawn push's server half (round 542)"), then
         turning it on with that client release.
-      - **mob-battle-chase**: the chase to the round-247 band at the run speed and the monster's
-        own swing on its timer (after mob-battle-rules reads that timer), with the engine's `0x27`
-        and `0x23` exits. It replaces the interim hold and its keep-up release, and retires the
-        synchronous counter (mob-counter-retire). **Found in round 540, worded right in round
-        544:** the client is not told its own character id when it enters the world
-        (`OpEnterWorldResult` carries none; a party reply carries one per member, but only once
-        one has arrived), so it recognises a blow on itself by pairing the push with its own
-        counter result (`MonsterStrikes`). A monster that swings on its own timer sends no result
-        to pair with, so this item has to give the client its id at login first.
+      - **mob-battle-chase -- BUILT in round 546, behind `-monster-battle` (off by default; forced
+        off unless `-monster-ai` and `-monster-strike-push` are on).** The chase to the round-247
+        band at the run speed (`MoveTowardObject` to `round(stop)`, the run clip) and the monster's
+        own swing -- immediate on entering BATTLE, then every ReuseDelay through the action
+        machine, round 545's timer read -- with the engine's `0x23`, `0x27` and `0x2a` exits, each
+        blow the counter's own `monsterStrike` run off the tick and pushed as `OpMonsterAttacked`
+        (`session/monsterai.go` `battleTick`; `docs/protocol/monster_ai.md`, "BATTLE's chase and
+        the monster's own swing (round 546)"). With the flag on `performAttack` makes no counter;
+        with it off the interim hold and the counter are unchanged, so the flag-off tests stand.
+        What is left: **mob-counter-retire** (delete the counter branch, `CounterattackReady` and
+        `lastBlow` once the flag is on for good, and rewrite the six counter-driven tests to the
+        push), the flag's flip after a client release carrying round 546 and the live check
+        (`deploy/README.md`, "Monster battle (off by default)"), and **the client's own id**: the
+        client is not told its character id when it enters the world (`OpEnterWorldResult` carries
+        none, and the round-546 rule kept every layout as it was), so a blow on itself with no
+        counter result to pair with is recognised by elimination -- its target drawn as no other
+        player in the zone, and not one who left inside `MonsterStrikes.LEFT_GRACE_MS`
+        (`MonsterStrikes.is_own_unpaired`). The retail client is told its id at spawn; a message
+        carrying it (a protocol addition, a user decision under `PROTOCOL_DECISION.md`) would make
+        the pairing exact. Disclosed in the runtime: under retarget rule 0 a second attacker is
+        never answered (the first attacker is the target until it leaves, dies or is out of reach).
       - **mob-acquire**: target acquisition (round 257: radius = BCRadius + `_RefTactics.+0x14`,
         the nearest player, no level term). The per-species distance is in no archive this project
         holds (the tactics table is shard-DB only), so it is disclosed per species when built.

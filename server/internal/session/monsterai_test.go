@@ -62,26 +62,32 @@ func newAIHub(seed int64) *combat.Hub {
 	return monsters
 }
 
-// pushRecorder stands in for the zone broadcast.
+// pushRecorder stands in for the zone broadcast: the legs and stops
+// (OpMonsterMoved) and, since round 546, the monster's own blows
+// (OpMonsterAttacked, which the strike worker pushes off the tick).
 type pushRecorder struct {
-	mu    sync.Mutex
-	moves []MonsterMoved
-	other int
+	mu      sync.Mutex
+	moves   []MonsterMoved
+	strikes []MonsterAttacked
+	other   int
 }
 
 func (r *pushRecorder) push(_ string, p *proto.Packet) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if p.Opcode != OpMonsterMoved {
-		r.other++
-		return
+	switch p.Opcode {
+	case OpMonsterMoved:
+		if mv, err := DecodeMonsterMoved(p.Data); err == nil {
+			r.moves = append(r.moves, *mv)
+			return
+		}
+	case OpMonsterAttacked:
+		if s, err := DecodeMonsterAttacked(p.Data); err == nil {
+			r.strikes = append(r.strikes, *s)
+			return
+		}
 	}
-	mv, err := DecodeMonsterMoved(p.Data)
-	if err != nil {
-		r.other++
-		return
-	}
-	r.moves = append(r.moves, *mv)
+	r.other++
 }
 
 func (r *pushRecorder) of(id int64) []MonsterMoved {
@@ -96,10 +102,23 @@ func (r *pushRecorder) of(id int64) []MonsterMoved {
 	return out
 }
 
+// strikesOf is the blows monster id has pushed so far.
+func (r *pushRecorder) strikesOf(id int64) []MonsterAttacked {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []MonsterAttacked
+	for _, s := range r.strikes {
+		if s.MonsterID == id {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 func (r *pushRecorder) reset() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.moves, r.other = nil, 0
+	r.moves, r.strikes, r.other = nil, nil, 0
 }
 
 func isStop(mv MonsterMoved) bool { return mv.DestX == mv.X && mv.DestZ == mv.Z }
@@ -1045,5 +1064,332 @@ func TestMonsterAIBrainStartsFromTheSpawnHeading(t *testing.T) {
 	a.mu.Unlock()
 	if heading != 1.25 {
 		t.Fatalf("the brain faces %g, want the hatch heading 1.25", heading)
+	}
+}
+
+// ---- The monster's own BATTLE (round 546, behind -monster-battle) ----
+
+// chaseMangyang is testMangyang with the two numbers the chase reads: its
+// primary attack skill's ReuseDelay, 3000 ms, and Range, 10 (skilldata cols
+// 14/21 by characterdata col 83, round 254; cmd/server's roster). Range 10 is
+// the attack-distance rule's own hole (combat.ApproachBand): stop = reach =
+// the bare BC sum, 6 + 4 = 10, so the monster is in reach at int(dist) <= 12.
+var chaseMangyang = func() combat.Species {
+	s := testMangyang
+	s.AttackReuseMs, s.AttackRange = 3000, 10
+	return s
+}()
+
+// battleForTest turns -monster-battle on or off for the rest of the test and
+// puts it back when the test ends.
+func battleForTest(t *testing.T, on bool) {
+	t.Helper()
+	was := monsterBattle.Load()
+	SetMonsterBattle(on)
+	t.Cleanup(func() { SetMonsterBattle(was) })
+}
+
+// battleFixture is Aria standing in jangan under a runtime that can swing at
+// her: in-memory character and equipment stores behind the strike, a seeded
+// rng and a recorder in place of the zone broadcast.
+type battleFixture struct {
+	a        *monsterAI
+	hub      *world.Hub
+	monsters *combat.Hub
+	chars    character.Store
+	aria     int64
+	rec      *pushRecorder
+}
+
+func startBattleFixture(t *testing.T, seed int64, ariaX, ariaZ float64) *battleFixture {
+	t.Helper()
+	ctx := context.Background()
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("creating character: %v", err)
+	}
+	items := stubCombatItems{}
+	inv := inventory.NewMemStore(items)
+	eq := equipment.NewMemStore(inv)
+	hub := world.NewHub()
+	hub.Enter(gateway.NewTestSession(uint64(91100+seed)), c.ID, "Aria", "jangan", world.Position{X: ariaX, Z: ariaZ})
+	monsters := newAIHub(seed)
+	rec := &pushRecorder{}
+	a := newMonsterAI(hub, monsters, nil, MonsterAIConfig{Chars: chars, Equipment: eq, Items: items},
+		rand.New(rand.NewSource(seed)), rec.push)
+	monsterAIRuntime.Store(a)
+	t.Cleanup(func() { monsterAIRuntime.Store(nil) })
+	return &battleFixture{a: a, hub: hub, monsters: monsters, chars: chars, aria: c.ID, rec: rec}
+}
+
+// waitFor polls cond every few milliseconds for up to d: the strike worker
+// runs off the tick, so its push lands a moment after the tick that queued it.
+func waitFor(t *testing.T, d time.Duration, cond func() bool) bool {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return true
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return cond()
+}
+
+func TestMonsterBattleOffByDefault(t *testing.T) {
+	if monsterBattle.Load() {
+		t.Fatal("the monster battle is on with nothing having asked for it: -monster-battle is off by default")
+	}
+}
+
+// THE RED (round 546): a Mangyang in BATTLE against a player 60 units away.
+// Its first push is the chase -- mode 1 at the run speed 22, from where it
+// stands toward the point 10 units from the player on the line between them
+// (MoveTowardObject to round(stop)) -- and after enough ticks it stands
+// inside its band and an OpMonsterAttacked arrives: 15 damage on Aria, her HP
+// 15 down. Then it swings again exactly its skill's ReuseDelay later, 3000 ms,
+// to within a tick: four blows in the first 10 s in reach, and no leg or stop
+// pushed while it stands there. Before this round nothing chased and nothing
+// swung unstruck: the hold stood the monster where it was, and the only blow
+// was performAttack's synchronous counter.
+func TestMonsterChasesToItsBand(t *testing.T) {
+	battleForTest(t, true)
+	f := startBattleFixture(t, 21, 0, 0)
+	m := f.monsters.SpawnSpecies("jangan", chaseMangyang, 60, 0, 0, 1000, 0, 15, 0)
+	now := aiT0
+	monsterAITick(now) // the brain hatches into IDLE
+	now = now.Add(MonsterAITick)
+	noteStruck(f.monsters, m.ID, f.aria)
+	if cur, _ := f.monsters.Get(m.ID); cur.X != 60 {
+		t.Fatalf("setup: the monster stands at %g, want 60", cur.X)
+	}
+	f.rec.reset()
+
+	monsterAITick(now) // drains the blow: BATTLE, and the first chase leg
+	now = now.Add(MonsterAITick)
+	if st := stateOf(t, f.a, m.ID); st != ai.StateBattle {
+		t.Fatalf("state %v after the blow, want BATTLE", st)
+	}
+	moves := f.rec.of(m.ID)
+	if len(moves) != 1 {
+		t.Fatalf("the tick after the blow pushed %d move(s) %+v, want exactly the chase leg", len(moves), moves)
+	}
+	leg := moves[0]
+	if leg.Mode != 1 || leg.Speed != 22 {
+		t.Errorf("the chase leg is mode %d at %g, want mode 1 at the run speed 22 (Handler_110 gives BATTLE the run clip)", leg.Mode, leg.Speed)
+	}
+	if leg.X != 60 || leg.Z != 0 || math.Abs(float64(leg.DestX)-10) > 1e-3 || math.Abs(float64(leg.DestZ)) > 1e-3 {
+		t.Errorf("the chase leg %+v: want from (60, 0) to (10, 0), the stop distance 10 from the player", leg)
+	}
+	if n := len(f.rec.strikesOf(m.ID)); n != 0 {
+		t.Fatalf("%d blow(s) pushed from 60 units away, before the chase reached the band", n)
+	}
+
+	// 50 units at 22 u/s is 2.3 s; the band is entered at int(dist) <= 12.
+	inReach := false
+	for i := 0; i < 40 && !inReach; i++ {
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+		cur, _ := f.monsters.Get(m.ID)
+		inReach = int(math.Trunc(cur.X)) <= 12
+		if !inReach {
+			if n := len(f.rec.strikesOf(m.ID)); n != 0 {
+				t.Fatalf("a blow was pushed with the monster %.1f from the player, out of the band", cur.X)
+			}
+		}
+	}
+	if !inReach {
+		t.Fatal("the chase never brought the monster into its band in 4 s")
+	}
+	cur, _ := f.monsters.Get(m.ID)
+	if cur.Moving {
+		t.Errorf("in the band the monster is still walking: %+v", cur)
+	}
+	if !waitFor(t, 2*time.Second, func() bool { return len(f.rec.strikesOf(m.ID)) == 1 }) {
+		t.Fatalf("no OpMonsterAttacked within 2 s of the monster reaching its band (%d pushed)", len(f.rec.strikesOf(m.ID)))
+	}
+	got := f.rec.strikesOf(m.ID)[0]
+	want := MonsterAttacked{MonsterID: m.ID, TargetCharacterID: f.aria, Damage: 15, TargetHP: int32(character.StartingMaxHP) - 15}
+	if got != want {
+		t.Errorf("the blow %+v, want %+v", got, want)
+	}
+	if c, err := f.chars.GetByID(context.Background(), f.aria); err != nil || c.HP != character.StartingMaxHP-15 {
+		t.Errorf("Aria's HP after the blow = %d (err %v), want %d", c.HP, err, character.StartingMaxHP-15)
+	}
+
+	// The cadence: the next blows at exactly ReuseDelay, 3000 ms, after the
+	// last -- the 30th tick after each, never the 29th -- and nothing else
+	// pushed. Each blow's push is waited for before the clock runs on: the
+	// ticks take no wall time here, and the strike worker holds one swing
+	// while it runs one (queueStrike), which a real 3 s gap never fills.
+	movesBefore := len(f.rec.of(m.ID))
+	for blow := 2; blow <= 4; blow++ {
+		for i := 0; i < 29; i++ {
+			monsterAITick(now)
+			now = now.Add(MonsterAITick)
+		}
+		time.Sleep(20 * time.Millisecond)
+		if n := len(f.rec.strikesOf(m.ID)); n != blow-1 {
+			t.Fatalf("%d blows 2.9 s after blow %d, want none before the 3000 ms ReuseDelay", n, blow-1)
+		}
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+		if !waitFor(t, 2*time.Second, func() bool { return len(f.rec.strikesOf(m.ID)) == blow }) {
+			t.Fatalf("blow %d did not come on the 30th tick (3000 ms) after blow %d: %d pushed", blow, blow-1, len(f.rec.strikesOf(m.ID)))
+		}
+	}
+	if n := len(f.rec.strikesOf(m.ID)); n != 4 {
+		t.Errorf("%d blows in the first 9 s in the band, want exactly 4 (the first, then one per 3000 ms)", n)
+	}
+	if n := len(f.rec.of(m.ID)); n != movesBefore {
+		t.Errorf("%d move(s) pushed while the monster stood in its band: %+v", n-movesBefore, f.rec.of(m.ID)[movesBefore:])
+	}
+	if c, _ := f.chars.GetByID(context.Background(), f.aria); c.HP != character.StartingMaxHP-4*15 {
+		t.Errorf("Aria's HP after four blows = %d, want %d", c.HP, character.StartingMaxHP-4*15)
+	}
+	if st := stateOf(t, f.a, m.ID); st != ai.StateBattle {
+		t.Errorf("state %v with the target still in the band, want BATTLE", st)
+	}
+}
+
+// CONTROL, the default: with -monster-battle off the same blow puts the
+// monster in the interim hold -- it stands where it is, no chase leg, no
+// blow of its own in 5 s -- exactly as before this round.
+func TestMonsterBattleOffKeepsTheHold(t *testing.T) {
+	battleForTest(t, false)
+	f := startBattleFixture(t, 22, 0, 0)
+	m := f.monsters.SpawnSpecies("jangan", chaseMangyang, 60, 0, 0, 1000, 0, 15, 0)
+	now := aiT0
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	noteStruck(f.monsters, m.ID, f.aria)
+	f.rec.reset()
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	if st := stateOf(t, f.a, m.ID); st != ai.StateBattle {
+		t.Fatalf("state %v after the blow, want BATTLE", st)
+	}
+	if moves := f.rec.of(m.ID); len(moves) != 0 {
+		t.Fatalf("with the battle off the tick after the blow pushed %+v, want nothing (a standing monster held where it is)", moves)
+	}
+	// The hold: the monster stands through the next tick too, then -- with no
+	// keep-up on it -- the release lets IDLE have it (MonsterHoldReleaseTicks),
+	// and IDLE may wander; what it never does is chase or swing.
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	if st := stateOf(t, f.a, m.ID); st != ai.StateBattle {
+		t.Fatalf("state %v one tick into the hold, want BATTLE", st)
+	}
+	if cur, _ := f.monsters.Get(m.ID); cur.X != 60 || cur.Moving {
+		t.Fatalf("with the battle off the held monster is at %g (moving %v); the hold keeps it standing at 60", cur.X, cur.Moving)
+	}
+	for i := 0; i < 50; i++ {
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := len(f.rec.strikesOf(m.ID)); n != 0 {
+		t.Fatalf("with the battle off the monster pushed %d blow(s) of its own", n)
+	}
+	for _, mv := range f.rec.of(m.ID) {
+		if mv.Mode == 1 && math.Hypot(float64(mv.DestX), float64(mv.DestZ)) <= 12 {
+			t.Errorf("with the battle off a run to the player's band was pushed: %+v", mv)
+		}
+	}
+}
+
+// The engine's exits. A target 500 units away is past the give-up distance
+// (ai.TacticsGiveUpDistance, 400): the first BATTLE tick takes the 0x27 exit
+// to IDLE, and a monster at home pushes nothing. A monster carried 700 units
+// from home, struck by a player 60 away, is out of reach too -- the nest
+// path's threshold is 400 less the 400 excess beyond 1.5 x 200, zero
+// (ai.ChaseRange) -- and IDLE's roam check sends it home at once: HOMING, one
+// mode-1 leg at 22 toward a point in MoveHome's band from home.
+func TestMonsterBattleReleasesOutOfReachAndWalksHome(t *testing.T) {
+	battleForTest(t, true)
+	f := startBattleFixture(t, 23, 500, 0)
+	m := f.monsters.SpawnSpecies("jangan", chaseMangyang, 0, 0, 0, 1000, 0, 15, 0)
+	now := aiT0
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	noteStruck(f.monsters, m.ID, f.aria)
+	f.rec.reset()
+	monsterAITick(now)
+	if st := stateOf(t, f.a, m.ID); st != ai.StateIdle {
+		t.Fatalf("state %v with the target 500 away (give-up distance 400), want IDLE by the 0x27 exit", st)
+	}
+	if n := len(f.rec.of(m.ID)) + len(f.rec.strikesOf(m.ID)); n != 0 {
+		t.Fatalf("%d push(es) for a target out of reach from the start: %+v", n, f.rec.of(m.ID))
+	}
+
+	g := startBattleFixture(t, 24, 760, 0)
+	far := g.monsters.SpawnSpecies("jangan", chaseMangyang, 0, 0, 0, 1000, 0, 15, 0)
+	// Carry it 700 units east: five mover steps under the 160 cap.
+	g.monsters.SetMotion(far.ID, 700, 0, 700, 1)
+	for i := 0; i < 5; i++ {
+		g.monsters.StepAll(1)
+	}
+	if got, _ := g.monsters.Get(far.ID); got.X != 700 || got.Moving {
+		t.Fatalf("setup: the monster is at %g (moving %v), want standing at 700", got.X, got.Moving)
+	}
+	now = aiT0
+	monsterAITick(now) // hatches; IDLE's roam check already sends it home
+	now = now.Add(MonsterAITick)
+	noteStruck(g.monsters, far.ID, g.aria)
+	g.rec.reset()
+	monsterAITick(now)
+	if st := stateOf(t, g.a, far.ID); st != ai.StateHoming {
+		t.Fatalf("state %v after a blow 700 units from home, want HOMING (0x27 -> IDLE -> the roam check)", st)
+	}
+	moves := g.rec.of(far.ID)
+	lo, hi := ai.HomingScatterRange(MonsterRoamRadius)
+	if len(moves) != 1 || moves[0].Mode != 1 || moves[0].Speed != 22 ||
+		float64(moves[0].DestX) < lo-1e-3 || float64(moves[0].DestX) > hi+1e-3 || math.Abs(float64(moves[0].DestZ)) > 1e-3 {
+		t.Fatalf("after the release the tick pushed %+v, want one run home (mode 1 at 22) to x in [%.2f, %.2f]", moves, lo, hi)
+	}
+	if n := len(g.rec.strikesOf(far.ID)); n != 0 {
+		t.Errorf("%d blow(s) from a monster that gave up", n)
+	}
+}
+
+// A killing blow: the push carries the death, the HP the target was put back
+// on its feet with, and the next tick takes the 0x23 exit -- the target's
+// life state left 1 at the kill (AITactics_IsValidTarget 0x540de0) -- so the
+// monster is in IDLE and swings no more.
+func TestMonsterBattleKillSendsItToIdle(t *testing.T) {
+	battleForTest(t, true)
+	f := startBattleFixture(t, 25, 0, 0)
+	m := f.monsters.SpawnSpecies("jangan", chaseMangyang, 8, 0, 0, 100000, 0, 100000, 0)
+	now := aiT0
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	noteStruck(f.monsters, m.ID, f.aria)
+	f.rec.reset()
+	monsterAITick(now) // BATTLE, in reach from the start: the swing is immediate
+	now = now.Add(MonsterAITick)
+	if !waitFor(t, 2*time.Second, func() bool { return len(f.rec.strikesOf(m.ID)) == 1 }) {
+		t.Fatalf("no blow within 2 s of a monster entering BATTLE in reach (%d pushed)", len(f.rec.strikesOf(m.ID)))
+	}
+	got := f.rec.strikesOf(m.ID)[0]
+	after, err := f.chars.GetByID(context.Background(), f.aria)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.TargetDied || got.TargetHP <= 0 || int(got.TargetHP) != after.HP || got.DeathExpLost != 0 {
+		t.Errorf("the killing blow %+v; want the death, the respawn HP %d (character.RespawnFraction) and no exp lost without a level table", got, after.HP)
+	}
+	monsterAITick(now) // the kill is the 0x23 exit's evidence
+	now = now.Add(MonsterAITick)
+	if st := stateOf(t, f.a, m.ID); st != ai.StateIdle {
+		t.Fatalf("state %v on the tick after the kill, want IDLE", st)
+	}
+	for i := 0; i < 40; i++ {
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := len(f.rec.strikesOf(m.ID)); n != 1 {
+		t.Errorf("%d blows after the kill, want the one that killed", n-1)
 	}
 }

@@ -913,6 +913,10 @@ var _own_hit_until: Dictionary = {}
 ## when it has come by then, from the result when it has not (MonsterStrikes,
 ## round 540). monster_id -> the waits, oldest first.
 var _strike_waits: Dictionary = {}
+## Character id -> the tick (Time.get_ticks_msec) its left notice came, for
+## MonsterStrikes.is_own_unpaired's grace window (round 546); entries older
+## than LEFT_GRACE_MS are dropped as new ones come.
+var _recently_left: Dictionary = {}
 ## Underbar quickslot index -> {"id": skill id, "code": Basic_Code} for skills
 ## the player has put on the hotbar from the skill window. Activating a slot
 ## casts its skill.
@@ -6028,6 +6032,10 @@ func _update_blob_shadow() -> void:
 ##                          the list puts the target (QaAttackGoto, round 539)
 ##   SRREVAMP_QA_ATTACK_ALTERNATE=1  with QA_ATTACK: swing at the nearest and the
 ##                          second-nearest monster in turn (a retarget every swing)
+##   SRREVAMP_QA_ATTACK_RETREAT=n  with QA_ATTACK: once the first blow lands, walk
+##                          n units straight back from the target and stop
+##                          attacking, so a server with -monster-battle has to
+##                          chase (round 546's live check; _qa_retreat)
 ##   SRREVAMP_QA_ATTACK=1   attack the nearest monster every second, so a
 ##                          hit reaction and a death can be rendered
 ##   SRREVAMP_QA_MOB_MOVE="dx,dz,speed,mode"  send the nearest monster on a
@@ -6579,9 +6587,35 @@ func _qa_advance_shots() -> void:
 ## ended up, and how far apart they are.
 var _qa_attacking := false
 var _qa_alternate_flip := false
+## SRREVAMP_QA_ATTACK_RETREAT: the first landed blow is still to come.
+var _qa_retreat_pending := OS.get_environment("SRREVAMP_QA_ATTACK_RETREAT") != ""
 ## SRREVAMP_QA_ATTACK_GOTO with a server: the monster the next list result
 ## stands the player beside (QaAttackGoto), -1 when no GOTO is waiting.
 var _qa_goto_pending_id := -1
+
+## SRREVAMP_QA_ATTACK_RETREAT=n (round 546): the first blow has landed on
+## `monster`, so walk n units straight back from it -- the click-to-move walk,
+## whose OpMove ends this player's keep-up (session/world.go handleMove) -- and
+## stop the QA attack loop, so a server with -monster-battle has to chase the
+## player to its band before it can swing. One retreat a run.
+func _qa_retreat(monster: int) -> void:
+	_qa_retreat_pending = false
+	_qa_attacking = false
+	var units := float(OS.get_environment("SRREVAMP_QA_ATTACK_RETREAT"))
+	var body = _monster_bodies.get(monster)
+	var away := Vector3(1.0, 0.0, 0.0)
+	if body != null and is_instance_valid(body):
+		var d := player.global_position - (body as Node3D).global_position
+		d.y = 0.0
+		if not d.is_zero_approx():
+			away = d.normalized()
+	var spot := player.global_position + away * units
+	spot.y = _terrain_height_at(spot)
+	_drop_pending_attack()
+	_move_target = spot
+	_has_move_target = true
+	print("QA ATTACK: retreating %.0f from monster %d to %.1f,%.1f,%.1f; no more swings" % [
+		units, monster, spot.x, spot.y, spot.z])
 
 ## Attacks whichever live monster is nearest the player -- the same
 ## request the Attack button sends -- so the combat animations can be
@@ -7866,6 +7900,13 @@ func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 
 func _on_entity_left(character_id: int) -> void:
 	_other_gaits.erase(character_id)
+	# A monster's blow on this player may cross the notice (round 546,
+	# MonsterStrikes.is_own_unpaired); remembered for the grace window.
+	var now_ms := Time.get_ticks_msec()
+	for id in _recently_left.keys():
+		if now_ms - int(_recently_left[id]) > MonsterStrikes.LEFT_GRACE_MS:
+			_recently_left.erase(id)
+	_recently_left[character_id] = now_ms
 	if _other_bodies.has(character_id):
 		var body: Node3D = _other_bodies[character_id]
 		var departing_name := "Someone"
@@ -9577,6 +9618,8 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 			monster, _last_attack_target, monster])
 	elif OS.get_environment("SRREVAMP_QA_ATTACK") != "":
 		print("World3D: attack result for monster %d -> animating %d" % [monster, monster])
+	if _qa_retreat_pending and monster != -1 and result.monster_damage > 0 and not result.monster_died:
+		_qa_retreat(monster)
 	# A skill cast (not a plain attack) plays that skill's own hit effect on the
 	# target when the blow lands. Consumed here so the next plain attack doesn't
 	# inherit it.
@@ -9759,6 +9802,11 @@ func _on_monster_attacked(attacked: CombatNet.MonsterAttacked) -> void:
 	var claim := MonsterStrikes.CLAIM_NONE
 	if not _other_bodies.has(attacked.target_character_id):
 		claim = MonsterStrikes.claim(_strike_waits, attacked)
+	# A blow with no counter result to pair with -- the monster's own swing,
+	# from a server with -monster-battle (round 546) -- is this player's when
+	# its target is drawn nowhere here (MonsterStrikes.is_own_unpaired).
+	var own_unpaired := claim == MonsterStrikes.CLAIM_NONE and MonsterStrikes.is_own_unpaired(
+		attacked.target_character_id, _other_bodies, _recently_left, Time.get_ticks_msec())
 	var how := "on another player"
 	match claim:
 		MonsterStrikes.CLAIM_HELD:
@@ -9766,7 +9814,9 @@ func _on_monster_attacked(attacked: CombatNet.MonsterAttacked) -> void:
 		MonsterStrikes.CLAIM_DRAWN:
 			how = "own counter, already drawn from the result"
 		_:
-			if not _other_bodies.has(attacked.target_character_id):
+			if own_unpaired:
+				how = "own blow, no result to pair with (the monster's own swing), drawn at once"
+			elif not _other_bodies.has(attacked.target_character_id):
 				how = "target not drawn here"
 	# One line per push: a live run counts them against the counter results.
 	print("World3D: monster %d strikes %d for %d (HP %d)%s%s -- %s" % [
@@ -9778,6 +9828,12 @@ func _on_monster_attacked(attacked: CombatNet.MonsterAttacked) -> void:
 	if claim == MonsterStrikes.CLAIM_HELD:
 		_show_own_strike(attacked)
 	if claim != MonsterStrikes.CLAIM_NONE:
+		return
+	if own_unpaired:
+		# The push is the only report of this blow: the HUD's HP and the
+		# death line come from it, and it is drawn now, on this player.
+		_show_own_strike(attacked)
+		_draw_monster_strike(attacked, true)
 		return
 	_draw_monster_strike(attacked, false)
 

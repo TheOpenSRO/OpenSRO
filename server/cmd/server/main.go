@@ -450,6 +450,26 @@ func envBool(name string) (bool, error) {
 	return b, nil
 }
 
+// monsterBattleAllowed decides whether -monster-battle takes effect: only
+// with -monster-ai on (the chase and the swing run in the AI tick) and
+// -monster-strike-push on (each swing reaches the zone only as an
+// OpMonsterAttacked; without it a player would lose HP to blows nobody is
+// told about). The second value says why not. Never an exit: a flag
+// combination must not make the public server's update loop roll back.
+func monsterBattleAllowed(battle, monsterAI, strikePush bool) (on bool, why string) {
+	switch {
+	case !battle:
+		return false, ""
+	case !monsterAI && !strikePush:
+		return false, "needs -monster-ai (the chase runs in the AI tick) and -monster-strike-push (the swings reach the zone only as OpMonsterAttacked)"
+	case !monsterAI:
+		return false, "needs -monster-ai: the chase and the swing run in the AI tick"
+	case !strikePush:
+		return false, "needs -monster-strike-push: the swings reach the zone only as OpMonsterAttacked, and without it a player would lose HP to blows nobody is told about"
+	}
+	return true, ""
+}
+
 func main() {
 	addr := flag.String("addr", ":15779", "listen address for the gateway service")
 	postgresDSN := flag.String("postgres-dsn", "postgres://postgres:postgres@localhost:5432/srrevamp?sslmode=disable",
@@ -502,6 +522,15 @@ func main() {
 			"the heading it hatched facing. Default OFF: off, nothing is sent and the wire is what it "+
 			"was, so a respawn appears on each client's next monster list. Needs a client release that "+
 			"carries round 540. See deploy/README.md, \"Monster spawn push (off by default)\".")
+	battleEnv, battleEnvErr := envBool("SRREVAMP_MONSTER_BATTLE")
+	battle := flag.Bool("monster-battle", battleEnv,
+		"let a struck monster fight on its own (env SRREVAMP_MONSTER_BATTLE): it chases its attacker "+
+			"to its attack band at its run speed, swings on its attack skill's ReuseDelay with each blow "+
+			"pushed to the zone (OpMonsterAttacked 0x007D), and gives up by distance; the counterattack "+
+			"inside the attacker's OpAttackResult is then no longer made. Default OFF: off, the interim "+
+			"hold and the counter are what they were. Forced off with a WARN unless -monster-ai and "+
+			"-monster-strike-push are both on. Needs a client release that carries round 546. See "+
+			"deploy/README.md, \"Monster battle (off by default)\".")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -516,6 +545,10 @@ func main() {
 	if spawnPushEnvErr != nil {
 		logger.Warn("SRREVAMP_MONSTER_SPAWN_PUSH is not a boolean; the spawn push stays off unless -monster-spawn-push is given",
 			"err", spawnPushEnvErr)
+	}
+	if battleEnvErr != nil {
+		logger.Warn("SRREVAMP_MONSTER_BATTLE is not a boolean; the monster battle stays off unless -monster-battle is given",
+			"err", battleEnvErr)
 	}
 
 	// Install the EXP curve if the operator provided one. Game data, so never
@@ -902,11 +935,29 @@ func main() {
 		}
 	}
 
+	// The monster's own BATTLE (round 546), behind its own flag, which needs
+	// the tick (the chase runs in it) and the strike push (a swing nobody is
+	// told about is silent HP loss). Forced off with a WARN rather than an
+	// exit, so the update loop never rolls back over a flag combination. Set
+	// before the AI starts and before the gateway serves.
+	battleOn, battleWhy := monsterBattleAllowed(*battle, *monsterAI, *strikePush)
+	if *battle && !battleOn {
+		logger.Warn("monster battle forced off", "why", battleWhy)
+	}
+	session.SetMonsterBattle(battleOn)
+	if battleOn {
+		logger.Info("monster battle on: a struck monster chases to its attack band at its run speed and swings on its skill's ReuseDelay, each blow pushed as OpMonsterAttacked 0x007D")
+	} else {
+		logger.Info("monster battle off (-monster-battle / SRREVAMP_MONSTER_BATTLE)")
+	}
+
 	// The monster AI (round 537), behind its kill switch. Installed here,
 	// before the gateway serves, so no handler ever sees it half-started.
 	if *monsterAI {
 		session.RunMonsterAI(ctx, hub, monsters, logger, session.MonsterAIConfig{
 			Trace: os.Getenv("SRREVAMP_AI_TRACE") != "",
+			// What a monster's own swing reads and writes (-monster-battle).
+			Chars: chars, Equipment: eq, Items: refItems, Mana: manaTracker,
 		})
 		logger.Info(fmt.Sprintf("monster AI on: tick %v (own design), roam radius %.0f (own design)",
 			session.MonsterAITick, session.MonsterRoamRadius))

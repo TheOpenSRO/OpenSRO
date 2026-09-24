@@ -302,7 +302,13 @@ disclosed placeholder, to confirm against the client when the relevant system is
     `docs/RE_COMPLETION.md`, "Blocking: a blocked hit deals nothing (2026-09-15)".
   - **The monster does NOT always counterattack.** It strikes no more often than its attack
     skill's ReuseDelay — `combat.Hub.CounterattackReady`, round 254, with Mangyang 3000 ms,
-    Gyo 2000, Yeoha 2500.
+    Gyo 2000, Yeoha 2500. **And behind `-monster-battle` (round 546, off by default;
+    `session.SetMonsterBattle`) it does not counterattack at all: it chases its attacker to its
+    attack band at its run speed and swings on its own attack timer** -- immediate on entering
+    BATTLE, then every ReuseDelay through the action machine (round 545's timer read) -- with
+    each blow pushed to the zone as `OpMonsterAttacked`, and gives up by distance
+    (`ai.TargetWithinChaseRange` / `ai.GiveUpCode`, whose `_RefTactics` columns are disclosed
+    stand-ins). With the flag off the synchronous counter is what it was.
   - What survives: **parry and evade are still not rolled.** Parry is recovered as ParamKeeper
     param 9 but nothing wires it, and the evade tags in `combat/paramtags.go` are vocabulary
     only.

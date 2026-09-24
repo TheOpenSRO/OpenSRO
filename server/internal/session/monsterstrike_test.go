@@ -4,12 +4,15 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"math"
+	"math/rand"
 	"net"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/account"
+	"github.com/OpenSRO/srrevamp/server/internal/ai"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
@@ -116,6 +119,28 @@ func (c *strikeClient) read(t *testing.T) *proto.Packet {
 	return p
 }
 
+// readUntil reads packets for up to d and returns them all, up to and
+// including the first whose opcode is want; nil for that one when the deadline
+// passes first. Packets are a few dozen bytes on a local socket, so a
+// deadline mid-packet is not a practical risk at these durations.
+func (c *strikeClient) readUntil(t *testing.T, want uint16, d time.Duration) ([]*proto.Packet, *proto.Packet) {
+	t.Helper()
+	var got []*proto.Packet
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		c.conn.SetReadDeadline(deadline)
+		p, err := proto.Read(c.r, nil, nil)
+		if err != nil {
+			return got, nil
+		}
+		got = append(got, p)
+		if p.Opcode == want {
+			return got, p
+		}
+	}
+	return got, nil
+}
+
 // barrier asks for the monster list and returns every packet that arrived
 // before its reply. The server handles one connection's requests in order,
 // so when it returns, whatever this connection's earlier requests sent is in
@@ -183,6 +208,9 @@ func opcodesOf(pkts []*proto.Packet) []uint16 {
 // (TestShieldBlocksInCombat's, BlockRatioMin 100).
 type strikeZone struct {
 	chars              character.Store
+	inv                inventory.Store
+	eq                 equipment.Store
+	items              stubCombatItems
 	hub                *world.Hub
 	monsters           *combat.Hub
 	aria, bram, cyra   *strikeClient
@@ -208,7 +236,9 @@ func startStrikeZone(t *testing.T, extra ...func(chars character.Store, hub *wor
 		}
 		ids[name] = c.ID
 	}
-	items := stubCombatItems{101: {ID: 101, BlockRatioMin: 100}}
+	// 101 is Bram's shield; 102 a bow, Range 180 (itemdata col 94, the retail
+	// bow's), which round 546's TestBowShotIsNotAnsweredAtRange hands Aria.
+	items := stubCombatItems{101: {ID: 101, BlockRatioMin: 100}, 102: {ID: 102, PhysAttackMax: 30, Range: 180}}
 	inv := inventory.NewMemStore(items)
 	eq := equipment.NewMemStore(inv)
 	if err := inv.AddItem(ctx, ids["Bram"], 101, 1); err != nil {
@@ -247,7 +277,7 @@ func startStrikeZone(t *testing.T, extra ...func(chars character.Store, hub *wor
 		c.x, c.z = float64(ewr.X), float64(ewr.Z)
 		return c
 	}
-	z := &strikeZone{chars: chars, hub: hub, monsters: monsters, ariaChar: ids["Aria"], bramChar: ids["Bram"]}
+	z := &strikeZone{chars: chars, inv: inv, eq: eq, items: items, hub: hub, monsters: monsters, ariaChar: ids["Aria"], bramChar: ids["Bram"]}
 	z.aria = join("alice", "hunter2", "Aria")
 	z.bram = join("bob", "hunter3", "Bram")
 	z.cyra = join("cara", "hunter4", "Cyra")
@@ -499,5 +529,104 @@ func TestStrikePushRecipientsAreTheDamagedRecipientsPlusTheAttacker(t *testing.T
 		if got := c.barrier(t); len(got) != 0 {
 			t.Errorf("with the push off %s received %#04x, want nothing", c.name, opcodesOf(got))
 		}
+	}
+}
+
+// installMonsterAIForTestWith is installMonsterAIForTest with the runtime's
+// configuration -- the stores a monster's own swing needs (round 546).
+func installMonsterAIForTestWith(t *testing.T, hub *world.Hub, monsters *combat.Hub, cfg MonsterAIConfig, seed int64, push func(zone string, p *proto.Packet)) *monsterAI {
+	t.Helper()
+	a := newMonsterAI(hub, monsters, nil, cfg, rand.New(rand.NewSource(seed)), push)
+	monsterAIRuntime.Store(a)
+	t.Cleanup(func() { monsterAIRuntime.Store(nil) })
+	return a
+}
+
+// NEGATIVE (round 546), through the real stack: a bow shot from 150 units is
+// not answered at range. With -monster-battle on, Aria's OpAttackResult
+// carries no counter -- before this round the synchronous counter answered
+// every surviving blow at any distance, and nothing read Monster.AttackRange
+// -- and nothing reaches anyone as an OpMonsterAttacked until the AI tick has
+// chased the Mangyang to its own band, int(dist) <= 12. Then exactly one
+// blow, on Aria, reaches Aria and Bram (jangan) and not Cyra (donwhang), and
+// Aria's HP is 15 down. Bram's barrier also shows the chase legs Aria's
+// swing set off.
+func TestBowShotIsNotAnsweredAtRange(t *testing.T) {
+	battleForTest(t, true)
+	strikePushForTest(t, true)
+	z := startStrikeZone(t)
+	ctx := context.Background()
+	if err := z.inv.AddItem(ctx, z.ariaChar, 102, 1); err != nil {
+		t.Fatalf("seeding Aria's bow: %v", err)
+	}
+	if err := z.eq.Equip(ctx, z.ariaChar, equipment.SlotWeapon, 0); err != nil {
+		t.Fatalf("equipping Aria's bow: %v", err)
+	}
+	m := z.monsters.SpawnSpecies("jangan", chaseMangyang, z.aria.x+150, 0, z.aria.z, 100000, 0, 15, 0)
+	a := installMonsterAIForTestWith(t, z.hub, z.monsters,
+		MonsterAIConfig{Chars: z.chars, Equipment: z.eq, Items: z.items}, 31, nil) // the real zone broadcast
+
+	res, ariaAfter := z.aria.attack(t, m.ID)
+	if res.MonsterDamage <= 0 {
+		t.Fatalf("precondition: the bow shot lands from 150 (reach 6+4+180+2); got %+v", res)
+	}
+	if res.PlayerDamageTaken != 0 || res.PlayerBlocked || res.PlayerHP != int32(character.StartingMaxHP) {
+		t.Fatalf("the result answers a blow from 150 units away: %+v; with -monster-battle the monster swings only from its band", res)
+	}
+	if n := len(strikes(t, ariaAfter)); n != 0 {
+		t.Fatalf("Aria received %d OpMonsterAttacked right behind her result, want 0", n)
+	}
+	if ops := opcodesOf(z.bram.barrier(t)); len(ops) != 1 || ops[0] != OpMonsterDamaged {
+		t.Fatalf("Bram received %#04x behind Aria's swing, want only OpMonsterDamaged", ops)
+	}
+
+	// The tick: the blow is drained, BATTLE entered, the chase pushed.
+	now := aiT0
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	if st := stateOf(t, a, m.ID); st != ai.StateBattle {
+		t.Fatalf("state %v after the first tick, want BATTLE", st)
+	}
+	got, first := z.aria.readUntil(t, OpMonsterMoved, 2*time.Second)
+	if first == nil {
+		t.Fatalf("no chase leg reached Aria after the first tick (got %#04x)", opcodesOf(got))
+	}
+	if mv, err := DecodeMonsterMoved(first.Data); err != nil || mv.MonsterID != m.ID || mv.Mode != 1 || mv.Speed != 22 {
+		t.Fatalf("the first push %+v (err %v), want monster %d's chase at mode 1, speed 22", mv, err, m.ID)
+	}
+	// 140 units at 22 u/s: about 64 ticks. No blow until the band.
+	inReach := false
+	for i := 0; i < 90 && !inReach; i++ {
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+		cur, _ := z.monsters.Get(m.ID)
+		inReach = int(math.Trunc(math.Hypot(cur.X-z.aria.x, cur.Z-z.aria.z))) <= 12
+	}
+	if !inReach {
+		t.Fatal("the chase never brought the monster into its band in 9 s")
+	}
+	before, strike := z.aria.readUntil(t, OpMonsterAttacked, 3*time.Second)
+	if strike == nil {
+		t.Fatalf("no OpMonsterAttacked reached Aria within 3 s of the monster reaching its band (got %#04x)", opcodesOf(before))
+	}
+	for _, p := range before[:len(before)-1] {
+		if p.Opcode != OpMonsterMoved {
+			t.Errorf("Aria received %#04x during the chase, want only legs before the blow", p.Opcode)
+		}
+	}
+	blow, err := DecodeMonsterAttacked(strike.Data)
+	want := MonsterAttacked{MonsterID: m.ID, TargetCharacterID: z.ariaChar, Damage: 15, TargetHP: int32(character.StartingMaxHP) - 15}
+	if err != nil || *blow != want {
+		t.Errorf("the blow %+v (err %v), want %+v", blow, err, want)
+	}
+	if c, err := z.chars.GetByID(ctx, z.ariaChar); err != nil || c.HP != character.StartingMaxHP-15 {
+		t.Errorf("Aria's HP = %d (err %v), want %d", c.HP, err, character.StartingMaxHP-15)
+	}
+	bramStrikes := strikes(t, z.bram.barrier(t))
+	if len(bramStrikes) != 1 || *bramStrikes[0] != want {
+		t.Errorf("Bram received %d OpMonsterAttacked %+v, want exactly the one blow %+v", len(bramStrikes), bramStrikes, want)
+	}
+	if n := len(strikes(t, z.cyra.barrier(t))); n != 0 {
+		t.Errorf("Cyra, in donwhang, received %d OpMonsterAttacked, want 0", n)
 	}
 }

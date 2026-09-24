@@ -42,9 +42,21 @@ class_name MonsterStrikes
 ## is recognised from the first swing, party or no party. So a push is taken
 ## as a strike on this player only when it repeats a counter this client's
 ## own result reported (`repeats`) and its target is none of the other
-## players the client has drawn (World3D._other_bodies). Every strike the
-## server can push today is such a counter; a monster striking on its own
-## (mob-battle-chase) will need the id from the start.
+## players the client has drawn (World3D._other_bodies).
+##
+## A monster striking on its own (round 546: the server's -monster-battle, the
+## chase and the swing in session/monsterai.go's battleTick) sends no result
+## to pair with. Such a push is recognised BY ELIMINATION (is_own_unpaired):
+## the server tells this client of every other player in its zone -- the
+## enter-world result's others, then an entered notice for each arrival, each
+## drawn into World3D._other_bodies before any blow on them can arrive -- so a
+## push whose target is drawn nowhere is a blow on this player. The one hole,
+## closed here: a push for a player who has just LEFT the zone can cross that
+## player's left notice (the strike worker sends off the tick, the notice from
+## the world handler), and for LEFT_GRACE_MS after a left notice such a push
+## is drawn as the swing alone instead. A disclosed stand-in: the retail client
+## is told its own id when it spawns (the character-data packet), and a
+## message carrying it here is a protocol addition this round did not make.
 
 ## What claim() did with a push.
 ## CLAIM_NONE: it repeats no counter this client is waiting on -- another
@@ -142,3 +154,24 @@ static func settle(waits: Dictionary, monster_id: int, wait: Dictionary) -> Comb
 	if waits.has(monster_id) and list.is_empty():
 		waits.erase(monster_id)
 	return pushed
+
+## How long after a player's left notice a push naming them is still taken as
+## theirs rather than this player's (is_own_unpaired). OWN DESIGN, an
+## engineering margin: the crossing it covers is one strike worker's store
+## write against one world-handler notice, milliseconds apart on the server;
+## ten seconds is long enough for any stalled write and short enough that an
+## id the server reuses (it does not: character ids are the table's) could
+## not matter.
+const LEFT_GRACE_MS := 10000
+
+## Whether a push that claims no counter is a blow on THIS player: its target
+## is none of the other players drawn here (`others`, World3D._other_bodies,
+## keyed by character id) and none that left within LEFT_GRACE_MS of `now_ms`
+## (`left`, character id -> the tick the left notice came, World3D's
+## _recently_left). See the class comment for why elimination is sound.
+static func is_own_unpaired(target_id: int, others: Dictionary, left: Dictionary, now_ms: int) -> bool:
+	if others.has(target_id):
+		return false
+	if left.has(target_id) and now_ms - int(left[target_id]) <= LEFT_GRACE_MS:
+		return false
+	return true
