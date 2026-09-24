@@ -320,6 +320,62 @@ func TestGMSpawnCarriesBCRadius(t *testing.T) {
 	t.Error("Mangyang missing from gmSpecies")
 }
 
+// realMonsterSpeeds is characterdata cols 46 (walk) and 47 (run) by RefObjID,
+// re-read on the RE box 2026-09-23 from characterdata_5000.txt with the same
+// rows' Level (57), MaxHP (59) and BCRadius (50) matching the roster
+// (docs/protocol/monster_ai.md, "The roster's real walk and run speeds").
+var realMonsterSpeeds = map[int64][2]float64{
+	1933: {8, 22}, 1934: {14, 55}, 1935: {14, 55}, 1936: {12, 55}, 1937: {12, 55},
+	1938: {15, 55}, 1939: {15, 55}, 1950: {15, 55}, 1941: {14, 55}, 1943: {9, 20},
+	1963: {11, 75},
+}
+
+// TestMonsterSpeedsAreReal: every roster species carries its real walk and run
+// speed, and the table covers the roster exactly.
+func TestMonsterSpeedsAreReal(t *testing.T) {
+	if len(realMonsterSpeeds) != len(monsterSpecs) {
+		t.Fatalf("the speed table has %d species, the roster %d", len(realMonsterSpeeds), len(monsterSpecs))
+	}
+	for _, spec := range monsterSpecs {
+		want, ok := realMonsterSpeeds[spec.RefObjID]
+		if !ok {
+			t.Errorf("%s (%d) has no row in the speed table", spec.CodeName, spec.RefObjID)
+			continue
+		}
+		if spec.WalkSpeed != want[0] || spec.RunSpeed != want[1] {
+			t.Errorf("%s (%d): walk/run %v/%v; characterdata cols 46/47 read %v/%v",
+				spec.CodeName, spec.RefObjID, spec.WalkSpeed, spec.RunSpeed, want[0], want[1])
+		}
+	}
+}
+
+// TestGMSpawnCarriesSpeeds extends TestGMSpawnCarriesBCRadius to round 536's
+// speeds: gmSpecies passes them through combatSpeciesOf, and a monster the GM
+// console's /spawn puts in the world (combat.Hub.SpawnSpecies with the
+// gm.Species' species) carries them. A GM-spawned Mangyang walks at 8 and runs
+// at 22, not 0.
+func TestGMSpawnCarriesSpeeds(t *testing.T) {
+	species := gmSpecies()
+	for i, spec := range monsterSpecs {
+		if got := species[i].Species; got.WalkSpeed != spec.WalkSpeed || got.RunSpeed != spec.RunSpeed {
+			t.Errorf("%s: GM species walk/run %v/%v, want %v/%v", spec.CodeName,
+				got.WalkSpeed, got.RunSpeed, spec.WalkSpeed, spec.RunSpeed)
+		}
+	}
+	for _, sp := range species {
+		if sp.CodeName != "MOB_CH_MANGNYANG" {
+			continue
+		}
+		m := combat.NewHub().SpawnSpecies(sp.Zone, sp.Species, sp.X, 0, sp.Z, sp.MaxHP, sp.Defense, sp.Attack, sp.Gold)
+		if m.WalkSpeed != 8 || m.RunSpeed != 22 {
+			t.Errorf("a GM-spawned Mangyang walks at %v and runs at %v; want 8 and 22 (characterdata cols 46/47)",
+				m.WalkSpeed, m.RunSpeed)
+		}
+		return
+	}
+	t.Error("Mangyang missing from gmSpecies")
+}
+
 // fakeItemRows is a reference item store holding a fixed set of rows; id -1
 // answers a lookup error.
 type fakeItemRows map[int64]*refdata.Item

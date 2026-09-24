@@ -212,7 +212,8 @@ const Handled = 2
 // Enterer is the part of a state the machine below needs: whether it accepts
 // being entered. OnEnter is vtable slot 2 and returns a negative value to
 // refuse; CAIState_WANDER (0x00559df0) is the clearest case, refusing with
-// -1 when the owner's HP has reached zero.
+// -1 when the owner's run speed (+0x170) is not above zero (corrected in round
+// 536; this read "HP" before, see docs/protocol/monster_ai.md, "WANDER's leg").
 type Enterer interface {
 	// OnEnter reports whether the state accepts the transition.
 	OnEnter(from State) bool

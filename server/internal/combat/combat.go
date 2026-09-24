@@ -57,10 +57,27 @@ type Monster struct {
 	// Range -- see Species. The hub's CounterattackReady enforces the delay.
 	AttackReuseMs int
 	AttackRange   int
-	Zone          string
-	X, Y, Z       float64 // own design placeholder position -- see Hub.Spawn
-	MaxHP         int
-	HP            int
+	// WalkSpeed/RunSpeed are the species' walk and run speeds in world units
+	// per second -- characterdata cols 46/47, see Species.WalkSpeed.
+	WalkSpeed, RunSpeed float64
+	Zone                string
+	X, Y, Z             float64 // own design placeholder position -- see Hub.Spawn
+	// HomeX/HomeZ are where the monster was spawned, the point HOMING walks
+	// it back toward and the roam radius is measured from (the engine keeps
+	// the nest's position or the context's spawn record, ctx+0x1b4 --
+	// docs/protocol/monster_ai.md, "HOMING"). Set by SpawnSpecies.
+	HomeX, HomeZ float64
+	// The current leg, set by Hub.SetMotion and advanced by Hub.StepAll
+	// (motion.go): the destination, the speed the leg walks at (world units
+	// per second), the clip mode (0 walk, 1 run -- AITactics_Handler_110's
+	// byte, ai.MotionMode) and whether the monster is still on its way. A
+	// standing monster has its destination on its own position.
+	DestX, DestZ float64
+	MoveSpeed    float64
+	MoveMode     uint8
+	Moving       bool
+	MaxHP        int
+	HP           int
 	// Defense is the monster's flat absorption, and it is REAL: characterdata
 	// col 71, which GObjMob_PublishStats publishes into ParamKeeper param 5 --
 	// exactly the term Formula_MitigatePhysicalDamage subtracts. See
@@ -766,6 +783,14 @@ type Species struct {
 	// Block is the species' real block chance, characterdata col 76. See
 	// Monster.Block.
 	Block int
+	// WalkSpeed/RunSpeed are the species' Speed1 and Speed2, characterdata
+	// _RefObjChar cols 46 and 47, in world units per second (ParamKeeper
+	// params 23/24; the engine's mover multiplies the object's speed by
+	// seconds, CGObjMoverByDest::FUN_0048bff0). cmd/server's monsterSpec
+	// carries them per species (round 362's table, re-checked round 536).
+	// Zero means unknown: such a monster cannot WANDER (the leg needs a run
+	// speed above 1e-6, ai.WanderMinRunSpeed).
+	WalkSpeed, RunSpeed float64
 }
 
 // SpawnSpecies is Spawn with the species' code name carried along, so the
@@ -780,7 +805,8 @@ func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP,
 
 	id := h.nextID.Add(1)
 	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, RefObjID: species.RefObjID, Level: species.Level, Rarity: species.Rarity, BCRadius: species.BCRadius, AttackReuseMs: species.AttackReuseMs, AttackRange: species.AttackRange, Critical: species.Critical, Block: species.Block, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax,
-		GoldReward: goldReward, GoldMin: species.GoldMin, GoldMax: species.GoldMax, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP)}
+		GoldReward: goldReward, GoldMin: species.GoldMin, GoldMax: species.GoldMax, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP),
+		WalkSpeed: species.WalkSpeed, RunSpeed: species.RunSpeed, HomeX: x, HomeZ: z, DestX: x, DestZ: z}
 	h.byID[id] = m
 	return m
 }

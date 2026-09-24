@@ -32553,3 +32553,207 @@ from `+x`. Two things stay unmodelled and unread:
   - With the file restored (byte-compared), both pass.
 - `cd server && go build ./... && go test -count=1 -p 1 ./...` is green, and was re-run after the
   doc edits. No client file changed.
+
+## Server motion core (inert): grounded roster speeds, the engine mover with both clamps, a hub motion API, the corrected pure WANDER/HOMING rules, and the 0x007C/0x007F encoders (round 536)
+
+**Why.** Round 533 built the client half of server-driven monster movement: it decodes and draws
+`OpMonsterMoved 0x007c` and `OpMonsterMotionList 0x007f`, but no server sends either. This round
+builds the server half's core without switching anything on. The roster carries its real speeds,
+the hub can hold and advance a leg with the engine's own mover, the pure rules the AI tick will
+run are in `server/internal/ai`, and the two messages have encoders. Nothing calls any of it yet:
+
+- `OpMonsterListResult` and its handler are untouched (`TestMonsterListFlow` and
+  `TestMonsterListResultRoundTrip` are the controls);
+- the hub's motion methods have no caller outside tests (four `knownOrphans` lines, each "wired by
+  mob-ai-tick");
+- `ai` stays parked.
+
+So the public server's behaviour is unchanged. Round 534's first attempt at this aborted on two
+rules that did not match the binary; round 535 corrected them, and this round builds on the
+corrected readings. Every citation below was re-read on the RE box on 2026-09-24, read-only, in
+`/var/tmp/srv.asm`, `/var/tmp/decomp_server`, the PE's `.rdata` and `/var/tmp/tables`.
+
+**The speeds.** `characterdata_5000.txt` cols 46 (walk) and 47 (run), selected by `RefObjID`, match
+round 362's table for all 11 species. The same rows' Level (57), MaxHP (59) and BCRadius (50) match
+the roster, which is the control. `monsterSpec` gains `WalkSpeed`/`RunSpeed`, and `combatSpeciesOf`
+passes them to `combat.Species`, so the GM console's `/spawn` carries them too (round 488's drift
+class). `SpawnSpecies` copies them onto `combat.Monster`. `client/tools/verify_monster_specs.py`
+gains `"WalkSpeed": 46, "RunSpeed": 47` and was run on the box with the specs piped in, nothing
+written there:
+
+- specs without the speeds: 55 verified, 0 mismatched;
+- specs with the speeds: **77 verified, 0 mismatched**, 22 more fields;
+- control, Mangyang's walk set to 9: 76 verified, 1 mismatched (`WalkSpeed spec=9 table=8`).
+
+The last line shows the new fields are compared, not skipped: the table's values are integers, and
+`int()` parses them.
+
+**The mover, and the new clamp finding.** `CGObjMoverByDest::FUN_0048bff0` builds a step: the
+owner's unit heading (`+0x24`/`+0x2c`) times `min(|speed(+0x174) x dt|, 160.0f)`, where
+`0xb45ea8` = `00 00 20 43`. It zeroes a component under 0.01f (`0xb45df8` = `0x3c23d70a`). Round 533
+already cited the clamp in its caller for the client. This round reads it in full and files it:
+**`CGObjMoverByDest::vslot_003` (`0x48c4e0`), now named `CGObjMoverByDest::ComputeClampedStep`.**
+
+1. It calls slot 10 with `dt`.
+2. It builds the step with `FUN_0048bff0` (`0x48c547`) into the out vector at `ebx`.
+3. It takes dest - position with `FUN_00430ad0` (`0x48c5a9`): `(dest + region delta x 1920) - pos`,
+   y = 0.
+4. It takes both lengths through `0x405250`, a float square root (`0x9fc1c0`, `fsqrt` at
+   `0x9fc1fc`).
+5. At `0x48c622`, `fcompp` compares `st0` = |step| with `st1` = |remaining|.
+6. `test ah,0x41; jne 0x48c63f` keeps the step when it is shorter or equal, and `0x48c62b..0x48c63c`
+   copy dest - position over it when it is longer.
+
+So the engine's mover never overshoots. `FUN_0048bff0` alone, the reading an earlier plan called
+"the engine mover's rule", does overshoot. `combat.MoverStep` is the two together: a step that
+reaches or passes the destination lands on it and reports arrival. The 0.01f zeroing is not
+modelled. `MoverStep` takes the heading as the direction toward the destination, which is what the
+move's start sets (`0x48c330` -> slot 10, `0x48c660`, `SetHeading` toward the destination, round
+535).
+
+**The hub's motion API** (`server/internal/combat/motion.go`). `combat.Monster` gains `WalkSpeed`,
+`RunSpeed`, `HomeX`/`HomeZ` (the spawn point), `DestX`/`DestZ` (on the monster while it stands),
+`MoveSpeed`, `MoveMode` and `Moving`.
+
+- `SetMotion` returns the updated copy, whose position is the push's origin.
+- `StopMotion` sets the destination to the position and clears `Moving`, keeping the speed and mode
+  for the stop push.
+- `StepAll(dt)` advances every moving monster under `h.mu`, the lock `ApplyDamage` deletes a killed
+  monster under, and clears `Moving` on arrival.
+- `All` returns copies.
+
+**The IDLE roll, filed as `CAIState_IDLE::OnMsg_0x25` (`0x559cf0`).** This is IDLE's override of
+slot 41, the message-`0x25` handler; the dump calls it `vslot_041`.
+
+- `ebx = 0x19` at `0x559d01`.
+- `r = |rand()| % 100 + 1` at `0x559da3..0x559dba`.
+- `r < ebx` gives `ChangeState(1)` (IDLE); anything else gives `ChangeState(2)` (WANDER). That is
+  WANDER for 76 of 100.
+
+Four owner conditions raise the threshold to `0x65`, which means always IDLE: `IsMercenary` (slot
+15); a TypeID word whose fields read 1, 2, 3, 8; `IsAttackableCOS` (slot 16) with the owner's
+`+0x1cd8` -> `+0x1d18` set; and slot 243 (`+0x3cc`). None is modelled. Every roster species is
+TypeID (1,2,1,1) (characterdata cols 9..12, read on the box), so its threshold is 25.
+
+**The rest, re-read and encoded.**
+
+- **`AITactics_Handler_110`** (`0x5489b0..0x548a20`) picks the clip byte:
+  - run (`+0x170`) `<= 1e-6` (`0xb45c84`) gives 0;
+  - else walk (`+0x16c`) `<= 1e-6` gives 1;
+  - else WANDER gives 0, FLEE gives 0, and every other state gives 1.
+
+  FLEE's bucket-below-3 branch writes nothing, but the one caller, `FUN_00541820`, zeroes the byte
+  at `0x541833` (`mov byte [esp+0xa],0`) before the call.
+- **`IsWithinRoamRadius`** (`0x545f70`): `fcomp` at `0x5460ae`, then `test ah,0x5; jnp`. Within
+  only while dist < radius. Rule 1 multiplies the radius by 1.5 (`0xb45d78`), and any rule other
+  than 0 or 1 is always within.
+- **`HasArrived`** (`0x541f60`): `fcomp` against 5.0f (`0xb45b28`) at `0x541fb2`, then
+  `test ah,0x5; jp`. Arrived only while dist < 5.0.
+- **HasArrived keeps y; the roam test does not.** HasArrived's difference, `FUN_00430d40`, keeps y,
+  where the roam test's `FUN_00430ad0` zeroes it. srrevamp compares on the ground plane, because its
+  monsters carry no height of their own. This is a new detail, disclosed.
+- **BATTLE draws no dwell.** `CAIState_BATTLE::OnEnter` (`0x559fb0`) calls only the base `OnEnter`
+  (`0x558b70`: `+0x14 = 0`) and never `AIState_DwellMs`. The base `OnUpdate` (`0x558b90`) expires
+  only a non-zero `+0x14`, strictly after it. Slot 17 (`0x559310`) and `ExtendDwell` (slot 18,
+  `0x559450`) also write `+0x14`, and BATTLE inherits both; their callers were not traced.
+- **`WANDER::OnEnter`** (`0x559df0`) refuses on the owner's `+0x170 <= 0.0` (`fldz; fcomp`), which
+  is the **run speed**, not HP as round 251 had it. It also refuses a COS (slot 11) that is not a
+  mercenary (slot 15). `monster_ai.md`, `recovered_names.tsv` and `ai.Enterer`'s comment are
+  corrected.
+- **`PickWanderLeg`** (`0x545860`) makes four `rand()` draws, in this order:
+  - a sign (`0x5458cd`; odd -> +1);
+  - `% 40` (`0x5458eb`), giving `dist = 85.0 + sign x rem` (`0xb46160`);
+  - `|rand()| % 91 + 45` (`0x54591f`);
+  - a sign (`0x545934`).
+
+  Then `t = sign x m x pi/180`, and the leg is round 535's bisector.
+- **`Nest_Hatch`** (`0x5607b0`) sets the heading to `rand() / 32767.0` (`0xb45af8`) times `2pi`
+  (`0xb45c18`) for a species whose rarity is not 3.
+
+**Changed.**
+
+- `server/cmd/server/main.go`: `monsterSpec.WalkSpeed`/`RunSpeed` for all 11 species, passed
+  through `combatSpeciesOf`.
+- `server/internal/combat/combat.go`: the speed and motion fields on `Species` and `Monster`, set by
+  `SpawnSpecies`.
+- New `server/internal/combat/motion.go`: `MoverMaxStep`, `MoverStep` and the four hub methods.
+- New `server/internal/ai/wander.go`:
+  - `SpawnHeading`, `IdleNext`/`IdleStayThreshold` and `PickWanderLeg`;
+  - `MotionMode`, `WithinRoamRadius`/`RoamRule1Factor`, `HomeDestination` and `HasArrived`;
+  - `BattleDwellMs`/`DwellExpired`;
+  - C `rand()` drawn as `rng.Intn(32768)`, with the sign from its parity.
+
+  `HomeDestination` reuses round 535's band. The tests reuse `WanderDistanceRange`,
+  `HomingScatterRange` and `DwellRange`.
+- New `server/internal/session/monstermove.go`: `OpMonsterMoved 0x007c` and
+  `OpMonsterMotionList 0x007f` with `MonsterMoved` and `MonsterMotionList`, each with `Encode` and
+  `Decode`. `DecodeMonsterMoved` refuses fewer than 29 bytes. `handleMonsterList` is not touched.
+- `server/internal/systems/orphans_test.go`: `knownOrphans` for `SetMotion`, `StopMotion`,
+  `StepAll` and `All`, which is exactly what `TestEveryOrphanIsExplained` reported.
+- `client/tools/verify_monster_specs.py`: the two columns and the new RESULT block.
+- `docs/protocol/monster_ai.md`:
+  - the round-251 section carries the `WANDER::OnEnter` correction;
+  - the round-362 section says the speeds are carried;
+  - the protocol section notes the two opcodes are declared, and gains "The server half (round
+    536)" (the wire, the mover citing both functions, the IDLE slot-41 roll, the `Handler_110`
+    selection, the strict comparisons, BATTLE's missing dwell, the disclosures).
+- `docs/SYSTEMS.md`: the Monster profile row notes the speeds (and anchors on `WalkSpeed` and
+  `RunSpeed`), and the Monster AI row records the core and names the tick as next.
+- `docs/protocol/recovered_names.tsv`:
+  - it gains `CAIState_IDLE::OnMsg_0x25` (`0x559cf0`) and `CGObjMoverByDest::ComputeClampedStep`
+    (`0x48c4e0`, the clamp's description);
+  - the `0x559df0` row is corrected.
+
+**Not modelled, disclosed at each constant:**
+
+- `PickWanderLeg`'s `ctx+0x14c` leader term: what it holds has not been read, and for a nest
+  monster it is not verified to be empty;
+- the 30-unit blocked-probe reversal;
+- the four IDLE-roll owner conditions;
+- `MoveHome`'s slot-243 exact-home case;
+- the mover's 0.01f component zeroing.
+
+Headings stay in srrevamp's world frame; mob-ai-tick carries that disclosure.
+
+**Tests.**
+
+- `cmd/server`:
+  - **`TestMonsterSpeedsAreReal`**: every roster `RefObjID` carries the table, which covers the
+    roster exactly.
+  - **`TestGMSpawnCarriesSpeeds`** (NEGATIVE 2): each `gmSpecies` entry carries its spec's speeds,
+    and a GM-spawned Mangyang walks at 8 and runs at 22.
+- `combat`:
+  - **`TestMoverStepCapsAt160`**: 300 u/s x 1 s moves 160.
+  - **`TestStepAllNeverOvershoots`** (NEGATIVE 1): 3 units short at 22 u/s x 0.2 s ends exactly on
+    the destination, standing.
+  - **`TestHubMotionAPI`**: unknown ids return false; the stop keeps speed and mode; spawn seeds
+    home and destination.
+  - **`TestStepAllSkipsAMonsterKilledMidLeg`**: no panic, no resurrection, and the survivor still
+    steps.
+- `ai`:
+  - **`TestPickWanderLegDrawOrder`** pins the four draws: 124 units at -67.5 degrees, and 46 units
+    at +22.5.
+  - **`TestPickWanderLegLengthsAndTurns`**, over 4000 seeded legs: 46..124 units, turns 22.5..67.5
+    degrees either side and both ways, and the returned heading is the leg's.
+  - **`TestPickWanderLegNeedsARunSpeed`** and **`TestIdleNextWandersFor76Of100`** (a stub source
+    that walks r = 1..100; 24 stays IDLE, 25 wanders).
+  - **`TestMotionMode`**, **`TestWithinRoamRadius`** (exactly r is false; 1.5r under rule 1; rules
+    2 and above always within) and **`TestHasArrived`** (exactly 5.0 is false).
+  - **`TestHomeDestination`** (inside `HomingScatterRange(200)`, both ends reached, on the ray,
+    home when standing on it), **`TestSpawnHeading`** and **`TestBattleHasNoDwellExpiry`**.
+- `session`:
+  - **`TestMonsterMovedMatchesTheClientFixture`** and
+    **`TestMonsterMotionListMatchesTheClientFixture`**: byte-equal to `combat_test.gd`'s fixtures,
+    round trips, a 28-byte `MonsterMoved` and a truncated list refused.
+  - **`TestMonsterMoveOpcodes`**: no collision in 0x0060..0x007F.
+- **Negatives, proved.**
+  - NEGATIVE 1: with `MoverStep` written as `FUN_0048bff0` alone (no `vslot_003` clamp),
+    `TestStepAllNeverOvershoots` FAILED at (104.4, -200), "1.4 past it". Restored, it passes.
+  - NEGATIVE 2: with `main.go` and `combat.go` stashed, `cmd/server` failed to build
+    (`m.DestX undefined`). With only `combatSpeciesOf`'s speed line removed,
+    `TestGMSpawnCarriesSpeeds` FAILED ("GM species walk/run 0/0, want 8/22"). Restored, it passes.
+  - Each strict comparison and rule was also mutated once and its test went red: `<=` in the roam,
+    arrival and IDLE tests, FLEE -> 1, the full turn, round 261's homing band, and BATTLE expiring.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...` is green, and was re-run after the
+  doc edits. The one client file changed is the verifier, a Python dev tool;
+  `client/tools/remote_godot.sh tests` ran 83 suites, 0 failing.

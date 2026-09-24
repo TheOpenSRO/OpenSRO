@@ -417,7 +417,7 @@ shape a population count, **not read** as such.
 `CAIState_WANDER::OnEnter` (`0x559df0`) refuses (returns -1, so `ChangeState` drops the
 monster into IDLE) when the owner's HP is 0 or a monster's `IsNPC` object has no home
 (slot 15); otherwise it clears the target and asks `CAIState_WANDER::PickWanderLeg`
-(`0x545860`) for a leg:
+(`0x545860`) for a leg (*corrected in round 536*: the two refusals are read below the block):
 
 	requires run speed > 1e-6 (0xb45c84) and the object's location record (+0x7c)
 	distance  = 85 +- (rand % 40)                      ; 0xb46160 = 85.0 -> 46..124 units
@@ -430,6 +430,12 @@ monster into IDLE) when the owner's HP is 0 or a monster's `IsNPC` object has no
 	probe     = position + direction * 30              ; 0xb45e58 = 30.0
 	world probe (DAT_00cc387c slot 12, flags (0|1, 1)) -> bit 0 or bit 28 set = blocked
 	    -> direction *= -1.0 (0xb45e68): walk the other way
+
+**Corrected in round 536** (re-read in `/var/tmp/srv.asm`, 2026-09-24): `OnEnter`'s two refusals
+are the owner's `+0x170 <= 0.0` (`fldz; fcomp [owner+0x170]; test ah,0x1` at
+`0x559df0..0x559e09`) -- the **run speed**, the same field `AITactics_Handler_110` and HOMING's
+re-aggro window read, not HP -- and an owner that is a COS (`IsCOS`, slot 11) but not a mercenary
+(`IsMercenary`, slot 15; `0x559e15..0x559e30`).
 
 **Corrected in round 535.** Round 251 recorded `heading = atan2(current direction) +- (45 +
 rand % 91) degrees ; a 45..135 degree turn` and `direction = (cos, 0, sin) of that heading`. The
@@ -499,6 +505,13 @@ table (`DwellRange`) and the leg constants; srrevamp's server does not move mons
 
 WANDER needs a speed and srrevamp carries none. These are the game's own, read
 from the retail `characterdata_5000.txt` on 2026-09-21.
+
+*Carried since round 536*: `cmd/server`'s `monsterSpec.WalkSpeed`/`RunSpeed` hold the table below
+and pass it through `combatSpeciesOf` to every spawn, the GM console's included
+(`combat.Species`/`combat.Monster`). Re-read by `RefObjID` on 2026-09-23 with the Level, MaxHP and
+BCRadius controls matching, and re-checked by `client/tools/verify_monster_specs.py` (cols 46/47
+added to its `COL`): 77 verified, 0 mismatched -- 22 more fields than the 55 it verified before --
+and a specs line with Mangyang's walk speed set to 9 comes back as 1 mismatch.
 
 **The columns** are `Speed1` (col 46, walk) and `Speed2` (col 47, run) --
 published as ParamKeeper params 23 and 24 from the common record's words at
@@ -1104,7 +1117,8 @@ changed. Client: `scripts/net/combat.gd` (`CombatNet.decode_monster_moved`,
 `World3D._on_monster_moved` / `_on_monster_motion_list` / `_step_monster_bodies`. **No server sends
 either yet**; the monster AI that will is a later change behind a default-off flag. On 2026-09-23,
 0x007C..0x007F appeared in no non-test file under `server/internal/session`,
-`server/internal/proto` or `client/scripts/net`.
+`server/internal/proto` or `client/scripts/net`. Round 536 declared the two in
+`server/internal/session/monstermove.go` (below); 0x007D and 0x007E stay free.
 
 | op | dir | payload |
 |---|---|---|
@@ -1164,6 +1178,118 @@ turning the body, and ends in the stand clip.
 - **The resync position** follows a lead, not a reading: the `0xB021` reader
   `NetProcessInNavAndSkill::FUN_008a5750` / `FUN_008a5640` (`message_handlers.tsv`,
   `client_read_layouts.tsv`).
+
+### The server half (round 536): the encoders, the mover, the motion API and the pure rules
+
+**Inert.** Nothing calls any of it yet: `OpMonsterListResult` and its handler are unchanged (the
+list's round-trip and flow tests are the control), `combat.Hub`'s motion API has no caller
+outside tests, and `server/internal/ai` is still parked. Every address below was re-read in
+`/var/tmp/srv.asm` and `/var/tmp/decomp_server` on 2026-09-24.
+
+**The wire.** `server/internal/session/monstermove.go` declares `OpMonsterMoved 0x007c` and
+`OpMonsterMotionList 0x007f` with the `MonsterMoved` and `MonsterMotionList` encoders and decoders.
+`monstermove_test.go` pins both encoders to the client's two fixtures above, byte for byte, and
+refuses a 28-byte `MonsterMoved` as the client does.
+
+**The mover** is two functions, and `combat.MoverStep` is both:
+
+- `CGObjMoverByDest::FUN_0048bff0` builds the step: the owner's unit heading (`+0x24`/`+0x2c`)
+  times `min(|speed(+0x174) x dt|, 160.0f)`, with the cap the float at `0xb45ea8` (`00 00 20 43`)
+  and y = 0. It zeroes a component under 0.01f (`0xb45df8`), which is not modelled.
+- Its caller `CGObjMoverByDest::vslot_003` (`0x48c4e0`) calls it at `0x48c547`, then takes
+  dest - position with `FUN_00430ad0` at `0x48c5a9` (`(dest + region delta x 1920) - pos`, y = 0).
+  It takes both lengths through `0x405250` (a float square root: `0x9fc1c0`, whose x87 path
+  runs `fsqrt` at `0x9fc1fc`), leaving `st0` = |step| and `st1` = |dest - position|
+  at `0x48c622` `fcompp`. `test ah,0x41; jne 0x48c63f` keeps the step when it is shorter or equal,
+  and `0x48c62b..0x48c63c` copy dest - position over it when it is longer.
+
+So a monster never walks past its destination. A step that reaches or passes it lands on it, and
+`combat.Hub.StepAll` clears `Moving` there. `TestStepAllNeverOvershoots` is the negative case:
+3 units short at 22 u/s over 0.2 s, the step with only its 160 cap ends 1.4 units beyond.
+`MoverStep` takes the heading as the direction toward the destination, which is what the move's
+start sets (`0x48c330` -> slot 10, `0x48c660`, `SetHeading` toward the destination).
+
+**The hub's motion API** (`server/internal/combat/motion.go`). A spawn now carries its walk and
+run speed, its home (the spawn point) and a leg: a destination, a speed, a mode and `Moving`.
+
+- `SetMotion` starts a leg and returns the copy whose position is the push's origin.
+- `StopMotion` puts the destination on the monster and keeps the speed and mode for the stop push.
+- `StepAll(dt)` advances every moving monster under the hub's lock, the same lock `ApplyDamage`
+  deletes a killed monster under, so a monster killed mid-leg is neither stepped nor brought back.
+- `All` returns copies.
+
+**The IDLE roll** is `CAIState_IDLE::OnMsg_0x25` (`0x559cf0`), IDLE's override of slot 41, the
+handler for message `0x25`:
+
+- the threshold is `ebx = 0x19` (`0x559d01`);
+- it draws `r = |rand()| % 100 + 1` (`0x559da3..0x559dba`);
+- `r < ebx` stays IDLE (`ChangeState(1)`: `edi = 0x64 - 0x63` at `0x559dc3`), and anything else
+  goes to WANDER (`ChangeState(2)` at `0x559dd7`).
+
+That is WANDER for 76 of the 100 values. Four owner conditions raise the threshold to `0x65`,
+which means always IDLE:
+
+- `IsMercenary` (slot 15) answers 1;
+- the TypeID word (`FUN_00485c90`) has bit 1 set and fields 1, 2, 3, 8: `(w & 0x1c) == 4`,
+  `(w & 0x60) == 0x40`, `(w & 0x780) == 0x180`, `(w & 0xf800) == 0x4000`;
+- `IsAttackableCOS` (slot 16) answers non-zero and the owner's `+0x1cd8` record has `+0x1d18` set;
+- slot 243 (`+0x3cc`) answers non-zero.
+
+Every roster species is TypeID (1,2,1,1) (characterdata cols 9..12, read on the box): a plain
+monster, the shape `Nest_Hatch` tests with `(w & 0x780) == 0x80`. So the threshold is 25, and the
+four conditions are not modelled. `ai.IdleNext`, `ai.IdleStayThreshold`.
+
+**The clip byte** comes from `AITactics_Handler_110` (`0x5489b0..0x548a20`), and `ai.MotionMode`
+carries it:
+
+- run (`+0x170`) `<= 1e-6` (`0xb45c84`) gives 0;
+- else walk (`+0x16c`) `<= 1e-6` gives 1;
+- else the current state decides: WANDER gives 0, FLEE gives 0, and every other state gives 1.
+
+FLEE takes the HP-bucket branch (`AITactics_HPBucket` `0x541d70`). A bucket of 3 or more writes 0;
+below 3 it writes nothing. The only caller, `FUN_00541820`, zeroes the byte before the call
+(`mov byte [esp+0xa],0` at `0x541833`), so FLEE gives 0 either way. That caller then sends `0x704f`
+with `(mode == 1) + 2` when the byte differs from the owner's `+0x155`.
+
+**The strict comparisons.**
+
+- `AITactics_IsWithinRoamRadius` (`0x545f70`): `fcomp` at `0x5460ae`, then `test ah,0x5; jnp`.
+  A monster is within only while dist < radius, so one exactly on the radius has strayed. Rule 1
+  multiplies the radius by 1.5 (`0xb45d78`), and any rule other than 0 or 1 is always within.
+- `AITactics_HasArrived` (`0x541f60`): `fcomp DWORD 0xb45b28` (5.0f) at `0x541fb2`, then
+  `test ah,0x5; jp`. Arrived only while dist < 5.0.
+- The two measure differently. `IsWithinRoamRadius`'s difference (`FUN_00430ad0`) zeroes y, and
+  `HasArrived`'s (`FUN_00430d40`) keeps it. srrevamp's monsters carry no height of their own, so
+  `ai.HasArrived` compares on the ground plane.
+- `ai.WithinRoamRadius` and `ai.HasArrived` carry them.
+
+**BATTLE draws no dwell.** `CAIState_BATTLE::OnEnter` (`0x559fb0`) calls only the base
+`CAIState::OnEnter` (`0x558b70`: `+0x14 = 0`) and never `AIState_DwellMs`. The base `OnUpdate`
+(`0x558b90`) expires a state only when `+0x14 != 0`, and strictly after it
+(`timeout < now - enteredAt`). Slot 17 (`0x559310`) and `CAIState::ExtendDwell` (slot 18,
+`0x559450`) also write `+0x14`, and BATTLE inherits both; their callers were not traced.
+`ai.BattleDwellMs`, `ai.DwellExpired`.
+
+**The rest of the pure rules.**
+
+- **`ai.PickWanderLeg`** makes `PickWanderLeg`'s four `rand()` draws in the engine's order (sign,
+  `% 40`, `% 91`, sign). It walks the round-535 bisector for 46..124 units and returns the leg's
+  heading.
+- **`ai.HomeDestination`** is `MoveHome` with the round-535 band. A monster standing on its home
+  gets home.
+- **`ai.SpawnHeading`** is `Nest_Hatch`'s `rand() / 32767 * 2pi`.
+- C `rand()` is drawn as `rng.Intn(32768)`, and the sign idiom (`rand() & 0x80000001`, then
+  `neg/sbb/and 2/add -1`) gives +1 for an odd draw.
+
+**Not modelled, disclosed:**
+
+- `PickWanderLeg`'s `ctx+0x14c` term (unread; for a nest monster it is not verified to be empty);
+- the 30-unit blocked-probe reversal (srrevamp's server holds no collision world);
+- the four IDLE-roll owner conditions;
+- `MoveHome`'s slot-243 exact-home case;
+- the mover's 0.01f component zeroing.
+
+Headings stay in srrevamp's world frame; the tick that drives these rules carries that disclosure.
 
 ### Which way each roster model faces (round 533, measured)
 

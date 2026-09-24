@@ -18,6 +18,14 @@ RESULT, 2026-09-16 (first run): 44 direct fields and 11 attack ranges, 0
 mismatches. The skill code names corroborate the chain independently --
 MOB_CH_MANGNYANG's column 83 resolves to MSKILL_CH_MANGNYANG_ATTACK01.
 
+RESULT, 2026-09-24 (round 536, the walk and run speeds, cols 46/47, added):
+    specs without the speeds    55 verified, 0 mismatched, 0 unresolved
+    specs with the speeds       77 verified, 0 mismatched, 0 unresolved
+    control, Mangyang walk 9    76 verified, 1 mismatched (WalkSpeed spec=9 table=8)
+so the 22 new fields are compared, not skipped. The specs carried Level,
+MaxHP, Defense, Critical, AttackMin/AttackMax, WalkSpeed and RunSpeed for all
+11 roster species, generated from cmd/server's monsterSpecs.
+
 TRAPS, both of which cost a probe attempt each:
   * the tables are UTF-16 (BOM \\xff\\xfe), not ASCII
   * this project's characterdata column numbers are 0-INDEXED
@@ -30,7 +38,11 @@ import glob
 import os
 
 # 0-indexed field positions. See reference_characterdata_columns.
-COL = {"Level": 57, "Rarity": 15, "MaxHP": 59, "Defense": 71, "Block": 76, "Critical": 78}
+# WalkSpeed/RunSpeed are Speed1/Speed2 (cols 46/47, world units per second;
+# round 362's table in docs/protocol/monster_ai.md). The table stores them as
+# integers, so int() compares them without skipping a row.
+COL = {"Level": 57, "Rarity": 15, "MaxHP": 59, "Defense": 71, "Block": 76, "Critical": 78,
+       "WalkSpeed": 46, "RunSpeed": 47}
 COL_ATTACK_SKILL = 83
 ATT_CODE = "6386804"  # 0x617474, the 'att' multi-char literal as a decimal field
 

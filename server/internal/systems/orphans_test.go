@@ -60,6 +60,18 @@ var knownOrphans = map[string]string{
 		"Kept as the matching half of a codec rather than shipped one-sided: a format recovered " +
 		"in one direction only is how a layout gets half-checked. Delete this line the moment " +
 		"the gateway accepts a real 0x7021.",
+	// Round 536's monster motion core (internal/combat/motion.go): the hub API the
+	// monster AI tick drives. Built and tested ahead of the tick so the public
+	// server stays inert; each line goes when the tick calls it.
+	"SetMotion": "starts a monster's leg (the OpMonsterMoved push's origin) -- wired by mob-ai-tick, " +
+		"the round that runs the monster AI behind a default-off flag.",
+	"StopMotion": "ends a monster's leg where it stands (the stop push) -- wired by mob-ai-tick, " +
+		"the round that runs the monster AI behind a default-off flag.",
+	"StepAll": "advances every moving monster with the engine's mover (MoverStep: the 160 cap of " +
+		"CGObjMoverByDest::FUN_0048bff0 and vslot_003's no-overshoot clamp) -- wired by mob-ai-tick, " +
+		"the round that runs the monster AI behind a default-off flag.",
+	"All": "the every-zone snapshot the AI tick walks -- wired by mob-ai-tick, the round that runs " +
+		"the monster AI behind a default-off flag.",
 }
 
 // baseline is the set of orphans that existed when this detector was written.

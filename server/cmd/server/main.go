@@ -65,6 +65,18 @@ type monsterSpec struct {
 	// without one gets the 4 every playable body row carries -- the table's
 	// most common monster value too (5,644 of the rows).
 	BCRadius int
+	// WalkSpeed/RunSpeed are the species' Speed1/Speed2, characterdata cols 46
+	// and 47, in world units per second: the engine publishes them as
+	// ParamKeeper params 23/24 (docs/protocol/param_registry.md), and its mover
+	// multiplies the object's speed (+0x174) by seconds
+	// (CGObjMoverByDest::FUN_0048bff0). Read by RefObjID from the retail
+	// characterdata_5000.txt, with the Level (57), MaxHP (59) and BCRadius (50)
+	// columns of the same rows matching this roster as the control: round 362's
+	// table in docs/protocol/monster_ai.md ("The roster's real walk and run
+	// speeds"), re-read on the RE box 2026-09-23 and re-checked by
+	// client/tools/verify_monster_specs.py in round 536. Nothing moves a
+	// monster yet; combat.Hub's motion API carries them for the AI tick.
+	WalkSpeed, RunSpeed float64
 	// A NEW SPECIES NEEDS ITS ATTACK AND PARRY RATES CHECKED. combat.MonsterRate
 	// computes both as 2*level + 25, which every one of the eleven species below
 	// matches exactly -- but that is a regularity of the low-level China
@@ -168,6 +180,8 @@ func monsterStatsForLevel(level, rarity int) (attack int, gold int64) {
 // characterdata column 83 names a SKILL and that skill's 'att' parameter
 // carries the range. The skill names corroborate the chain on their own
 // (MOB_CH_MANGNYANG's column 83 resolves to MSKILL_CH_MANGNYANG_ATTACK01).
+// Round 536 added the walk and run speeds (cols 46/47) to the same run: 77
+// verified, 0 mismatched -- 22 more fields than the 55 above.
 //
 // "Grounded" is a claim about provenance, and provenance rots -- a
 // transcription slip or an upstream column shift leaves the comment saying
@@ -231,24 +245,24 @@ var monsterSpecs = []monsterSpec{
 	// are deliberately not carried: the client resolves standing height from
 	// the region's walkable graph and ignores the authored y, so a height
 	// here would be a number nothing reads.
-	{Zone: "jangan", Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", RefObjID: 1933, AttackReuseMs: 3000, AttackRange: 10, Level: 1, BCRadius: 6, Critical: 2, MaxHP: 54, Defense: 7, AttackMin: 17, AttackMax: 19, GoldMin: 28, GoldMax: 59, Spawns: []realSpawn{
+	{Zone: "jangan", Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", RefObjID: 1933, WalkSpeed: 8, RunSpeed: 22, AttackReuseMs: 3000, AttackRange: 10, Level: 1, BCRadius: 6, Critical: 2, MaxHP: 54, Defense: 7, AttackMin: 17, AttackMax: 19, GoldMin: 28, GoldMax: 59, Spawns: []realSpawn{
 		{RegionID: 24744, LocalX: 1089.65, LocalZ: 600.09003},
 		{RegionID: 24744, LocalX: 1842.3, LocalZ: 600.94},
 		{RegionID: 24744, LocalX: 553.73999, LocalZ: 471.07001},
 		{RegionID: 24744, LocalX: 1260.99, LocalZ: 22.690001},
 	}},
-	{Zone: "jangan", Name: "Small-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST_CLON", RefObjID: 1934, AttackReuseMs: 2000, AttackRange: 4, Level: 2, BCRadius: 6, Critical: 2, MaxHP: 55, Defense: 9, AttackMin: 21, AttackMax: 23, GoldMin: 32, GoldMax: 66, X: -170, Z: -880, Count: 2},
-	{Zone: "jangan", Name: "Big-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST", RefObjID: 1935, AttackReuseMs: 1500, AttackRange: 4, Level: 3, BCRadius: 6, Critical: 2, MaxHP: 85, Defense: 9, AttackMin: 25, AttackMax: 29, GoldMin: 35, GoldMax: 74, X: 170, Z: -880, Count: 2},
-	{Zone: "jangan", Name: "Old Weasel", CodeName: "MOB_CH_GYO_CLON", RefObjID: 1936, AttackReuseMs: 2000, AttackRange: 7, Level: 4, BCRadius: 10, Critical: 2, MaxHP: 83, Defense: 12, AttackMin: 30, AttackMax: 34, GoldMin: 39, GoldMax: 81, X: -170, Z: -760, Count: 2},
+	{Zone: "jangan", Name: "Small-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST_CLON", RefObjID: 1934, WalkSpeed: 14, RunSpeed: 55, AttackReuseMs: 2000, AttackRange: 4, Level: 2, BCRadius: 6, Critical: 2, MaxHP: 55, Defense: 9, AttackMin: 21, AttackMax: 23, GoldMin: 32, GoldMax: 66, X: -170, Z: -880, Count: 2},
+	{Zone: "jangan", Name: "Big-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST", RefObjID: 1935, WalkSpeed: 14, RunSpeed: 55, AttackReuseMs: 1500, AttackRange: 4, Level: 3, BCRadius: 6, Critical: 2, MaxHP: 85, Defense: 9, AttackMin: 25, AttackMax: 29, GoldMin: 35, GoldMax: 74, X: 170, Z: -880, Count: 2},
+	{Zone: "jangan", Name: "Old Weasel", CodeName: "MOB_CH_GYO_CLON", RefObjID: 1936, WalkSpeed: 12, RunSpeed: 55, AttackReuseMs: 2000, AttackRange: 7, Level: 4, BCRadius: 10, Critical: 2, MaxHP: 83, Defense: 12, AttackMin: 30, AttackMax: 34, GoldMin: 39, GoldMax: 81, X: -170, Z: -760, Count: 2},
 	// A higher ground east of the fields (the (340,-340) anchor):
-	{Zone: "jangan", Name: "Weasel", CodeName: "MOB_CH_GYO", RefObjID: 1937, AttackReuseMs: 2000, AttackRange: 7, Level: 5, BCRadius: 10, Critical: 2, MaxHP: 119, Defense: 12, AttackMin: 35, AttackMax: 40, GoldMin: 42, GoldMax: 88, X: 340, Z: -340, Count: 3},
-	{Zone: "jangan", Name: "Water Ghost slave", CodeName: "MOB_CH_WATERGHOST_CLON", RefObjID: 1938, AttackReuseMs: 2000, AttackRange: 16, Level: 6, BCRadius: 6, Critical: 2, MaxHP: 114, Defense: 15, AttackMin: 41, AttackMax: 47, GoldMin: 46, GoldMax: 96, X: 500, Z: -360, Count: 2},
-	{Zone: "jangan", Name: "Water Ghost", CodeName: "MOB_CH_WATERGHOST", RefObjID: 1939, AttackReuseMs: 2000, AttackRange: 16, Level: 7, BCRadius: 6, Critical: 2, MaxHP: 156, Defense: 15, AttackMin: 47, AttackMax: 54, GoldMin: 49, GoldMax: 103, X: 340, Z: -500, Count: 2},
-	{Zone: "jangan", Name: "Tomb Stone Ghost", CodeName: "MOB_CH_TOMBSTONE_CLON", RefObjID: 1950, AttackReuseMs: 2500, AttackRange: 100, Level: 8, BCRadius: 4, Critical: 2, MaxHP: 204, Defense: 15, AttackMin: 74, AttackMax: 83, GoldMin: 53, GoldMax: 110, X: 500, Z: -500, Count: 2},
-	{Zone: "jangan", Name: "Stone Ghost", CodeName: "MOB_CH_STONEGHOST", RefObjID: 1941, AttackReuseMs: 2500, AttackRange: 10, Level: 9, BCRadius: 10, Critical: 2, MaxHP: 194, Defense: 22, AttackMin: 60, AttackMax: 70, GoldMin: 56, GoldMax: 118, X: 200, Z: -480, Count: 2},
-	{Zone: "jangan", Name: "Yeoha", CodeName: "MOB_CH_YEOHA", RefObjID: 1943, AttackReuseMs: 2500, AttackRange: 7, Level: 10, BCRadius: 11, Critical: 2, MaxHP: 249, Defense: 22, AttackMin: 67, AttackMax: 79, GoldMin: 60, GoldMax: 125, X: 200, Z: -220, Count: 2},
+	{Zone: "jangan", Name: "Weasel", CodeName: "MOB_CH_GYO", RefObjID: 1937, WalkSpeed: 12, RunSpeed: 55, AttackReuseMs: 2000, AttackRange: 7, Level: 5, BCRadius: 10, Critical: 2, MaxHP: 119, Defense: 12, AttackMin: 35, AttackMax: 40, GoldMin: 42, GoldMax: 88, X: 340, Z: -340, Count: 3},
+	{Zone: "jangan", Name: "Water Ghost slave", CodeName: "MOB_CH_WATERGHOST_CLON", RefObjID: 1938, WalkSpeed: 15, RunSpeed: 55, AttackReuseMs: 2000, AttackRange: 16, Level: 6, BCRadius: 6, Critical: 2, MaxHP: 114, Defense: 15, AttackMin: 41, AttackMax: 47, GoldMin: 46, GoldMax: 96, X: 500, Z: -360, Count: 2},
+	{Zone: "jangan", Name: "Water Ghost", CodeName: "MOB_CH_WATERGHOST", RefObjID: 1939, WalkSpeed: 15, RunSpeed: 55, AttackReuseMs: 2000, AttackRange: 16, Level: 7, BCRadius: 6, Critical: 2, MaxHP: 156, Defense: 15, AttackMin: 47, AttackMax: 54, GoldMin: 49, GoldMax: 103, X: 340, Z: -500, Count: 2},
+	{Zone: "jangan", Name: "Tomb Stone Ghost", CodeName: "MOB_CH_TOMBSTONE_CLON", RefObjID: 1950, WalkSpeed: 15, RunSpeed: 55, AttackReuseMs: 2500, AttackRange: 100, Level: 8, BCRadius: 4, Critical: 2, MaxHP: 204, Defense: 15, AttackMin: 74, AttackMax: 83, GoldMin: 53, GoldMax: 110, X: 500, Z: -500, Count: 2},
+	{Zone: "jangan", Name: "Stone Ghost", CodeName: "MOB_CH_STONEGHOST", RefObjID: 1941, WalkSpeed: 14, RunSpeed: 55, AttackReuseMs: 2500, AttackRange: 10, Level: 9, BCRadius: 10, Critical: 2, MaxHP: 194, Defense: 22, AttackMin: 60, AttackMax: 70, GoldMin: 56, GoldMax: 118, X: 200, Z: -480, Count: 2},
+	{Zone: "jangan", Name: "Yeoha", CodeName: "MOB_CH_YEOHA", RefObjID: 1943, WalkSpeed: 9, RunSpeed: 20, AttackReuseMs: 2500, AttackRange: 7, Level: 10, BCRadius: 11, Critical: 2, MaxHP: 249, Defense: 22, AttackMin: 67, AttackMax: 79, GoldMin: 60, GoldMax: 125, X: 200, Z: -220, Count: 2},
 	// The donghwang example kept from before (a far, higher-level zone).
-	{Zone: "donwhang", Name: "Earth Ghost", CodeName: "MOB_WC_EARTHGHOST", RefObjID: 1963, AttackReuseMs: 2000, AttackRange: 7, Level: 27, BCRadius: 4, Critical: 2, MaxHP: 1451, Defense: 103, AttackMin: 219, AttackMax: 261, GoldMin: 119, GoldMax: 250, X: 70, Z: -50, Count: 1},
+	{Zone: "donwhang", Name: "Earth Ghost", CodeName: "MOB_WC_EARTHGHOST", RefObjID: 1963, WalkSpeed: 11, RunSpeed: 75, AttackReuseMs: 2000, AttackRange: 7, Level: 27, BCRadius: 4, Critical: 2, MaxHP: 1451, Defense: 103, AttackMin: 219, AttackMax: 261, GoldMin: 119, GoldMax: 250, X: 70, Z: -50, Count: 1},
 }
 
 // respawnDelay is DISCLOSED, own design. The real game respawns per NEST
@@ -353,7 +367,8 @@ func gmSpecies() []gm.Species {
 // BCRadius is characterdata col 50 (round 247, see monsterSpec.BCRadius); a
 // spec without one gets combat.PlayerBCRadius, the 4 every playable body row
 // carries. AttackReuseMs/AttackRange are the primary attack skill's
-// skilldata columns 14 and 21 (round 254).
+// skilldata columns 14 and 21 (round 254). WalkSpeed/RunSpeed are
+// characterdata cols 46/47 (round 536, see monsterSpec.WalkSpeed).
 func combatSpeciesOf(spec monsterSpec) combat.Species {
 	bc := spec.BCRadius
 	if bc == 0 {
@@ -361,7 +376,8 @@ func combatSpeciesOf(spec monsterSpec) combat.Species {
 	}
 	return combat.Species{Name: spec.Name, CodeName: spec.CodeName, RefObjID: spec.RefObjID, Level: spec.Level, Rarity: spec.Rarity, BCRadius: bc, AttackReuseMs: spec.AttackReuseMs, AttackRange: spec.AttackRange,
 		AttackMin: spec.AttackMin, AttackMax: spec.AttackMax,
-		GoldMin: spec.GoldMin, GoldMax: spec.GoldMax, Critical: spec.Critical}
+		GoldMin: spec.GoldMin, GoldMax: spec.GoldMax, Critical: spec.Critical,
+		WalkSpeed: spec.WalkSpeed, RunSpeed: spec.RunSpeed}
 }
 
 // refItemStore is the slice of reference data the running server needs:
