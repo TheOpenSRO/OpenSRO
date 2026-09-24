@@ -376,9 +376,15 @@ In order. Each is checked off here when it ships in a release, with its round in
         refusal, the walk releases only inside the stop distance (`CombatNet.approach_releases`), a
         margin of at least 3 units (`int(d) <= reach + 2` holds for every d below reach + 3, plus
         whatever the reach exceeds the stop by); and a "too far away" refusal of an attack the walk
-        released walks again, up to `CombatNet.APPROACH_RETRY_CAP` (3, srrevamp's own) times. That
-        holds while v x RTT stays under the margin: 8 u/s up to about 375 ms. A run (Earth Ghost's
-        75 u/s, 11 units of error at 150 ms) outruns the 50 u/s player and is never reached.
+        released walks again, up to `CombatNet.APPROACH_RETRY_CAP` (3, srrevamp's own) times -- a
+        plain swing only since round 534: a refused SKILL is not sent again, since the client plays
+        the cast when the request goes out, and the server now charges nothing for a cast refused as
+        too far away (`session/skill.go` tests the reach before it spends HP/MP or arms the cooldown,
+        as `Tick_UseSkill` walks before its phase-2 post), so the player's own retry pays once. That
+        holds while v x RTT stays under the margin: 8 u/s up to about 375 ms. A RUNNING monster
+        outruns the 50 u/s player and is never reached: 9 of the 11 roster species run at 55 u/s or
+        more (Earth Ghost 75, 11 units of error at 150 ms), and only Mangyang (22) and Yeoha (20)
+        run slower (`monster_ai.md`, "The roster's real walk and run speeds").
         Measured in a headless simulation (`monster_motion_test.gd`, 150 ms), not against a live
         moving monster: no server moves monsters yet, and a render-box check on localhost has a
         round trip near 0, so before the server's monster AI is switched on publicly, check the
@@ -387,9 +393,11 @@ In order. Each is checked off here when it ships in a release, with its round in
         plain click-to-move: the attack waits until WASD, typing or another click;
       - the debug panel's Skills-tab "Use" button (`World3D._on_skill_use_pressed`, a developer
         panel, not the HUD) still sends `use_skill` at once with no approach walk, so a DAMAGING
-        cast out of reach earns "too far away". A non-damaging one is accepted at any distance:
-        `session/skill.go`'s `noCombat || zeroDmg` return (NoCombatParam / ZeroDamage) comes before
-        `skillInReach` (round 527). The hotbar's casts go through `_cast_skill` -> `_attack_monster`.
+        cast out of reach earns "too far away" (and, since round 534, costs nothing). A non-damaging
+        one is accepted at any distance: `session/skill.go` skips `skillInReach` for a `noCombat ||
+        zeroDmg` row (NoCombatParam / ZeroDamage; round 527). Its reply no longer counts as the reply
+        to an attack the approach walk released (round 534 clears `_released_attack` there). The
+        hotbar's casts go through `_cast_skill` -> `_attack_monster`.
 - [x] **Four HUD surfaces let clicks through to the world -- done (round 529).** Round 522's
       review measured a click on the player-info block, the minimap's map, the target window or the
       hotbar's body away from its slots reaching `World3D._unhandled_input`, where it counts as a

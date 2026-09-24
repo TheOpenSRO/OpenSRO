@@ -31034,7 +31034,10 @@ per-member share, so kills gave the guild nothing. `SYSTEMS.md`'s Guild row and 
   al,0x5; ja` needs guild level 5 or below. Then it sends `0x78f7`.
 - **`CGuild::AddPoints` (`0x005c4110`, "CMainProcess::AddPoints" in the dump).** It calls
   `FUN_005d0c90(member)`, and only when that is nonzero does it do `rec+0x3c += d` (dirty bit 8)
-  and `member rec+0x40 += d` (dirty bit 4), then broadcast `0x38f5` types 5 and 6 through
+  and `member rec+0x40 += d` (dirty bit 4) [corrected in round 534: dirty FLAGS 8 and 4, mask
+  values, not bit indices -- `or [eax+0x8],0x8` at `0x5c4148` and `or [eax+0x8],0x4` at
+  `0x5c4175`, as round 531 (e) already fixed in the name row and `guild.md`], then broadcast
+  `0x38f5` types 5 and 6 through
   `CGuild::BroadcastToLocalMember`.
 - **`docs/protocol/db_bind_offsets.tsv`.** `_GUILD GatheredSP 0x3c`, `_GUILDMEMBER GP_Donation
   0x40`, `_GUILDMEMBER Contribution 0x58`. The same file's `_GUILD Lvl 0x38` and
@@ -31936,8 +31939,11 @@ write, and wording.
   level was not kept. A connection that drops after Postgres committed reports an error too, and
   then the level WAS kept, so the refund pays back a level the guild kept. The comment, the
   handler's comment and `guild.md` now say so. A `ctx` cancelled before the commit is not
-  ambiguous: `database/sql`'s `Tx.Commit` returns the context's error or `ErrTxDone`, and its
-  `awaitDone` has rolled the transaction back (read in the Go 1.25 source).
+  ambiguous: `database/sql`'s `Tx.Commit` checks the context first and, once it is done, returns
+  the context's error (or `ErrTxDone`) at once without sending COMMIT; the rollback runs
+  separately, in the `awaitDone` goroutine the transaction started (`DB.beginDC`), which may
+  not have run yet when `Commit` returns (read in the Go 1.25 source; reworded in round 534,
+  which found the earlier wording claimed the rollback had already happened).
 - **(e) Mask values, not bits.** `FUN_005cfc20` tests `& 1`, `& 2`, `& 4`, `& 8`, `& 0x10`,
   `& 0x20`, `& 0x40` (`getfn.sh 005cfc20`). "bit 4 Lvl, bit 8 GatheredSP" named mask values as bit
   indices. Now fixed in `guild.go`'s level-up comment and in `guild.md`'s ShardManager bullet. The
@@ -32307,3 +32313,136 @@ so they are drawn as capsules (docs/TODO.md).
 - WORLD_ISSUES round 533, with the probe's numbers and the live lines.
 - The `docs/SYSTEMS.md` Monster AI row: the client half is built, and the server half is next.
 - `client/tools/README.md` has the probe's entry.
+
+## Batch-13 review follow-ups (rounds 531-533): a refused skill is not re-cast, the approach-walk bookkeeping, the height budget, record wording (round 534)
+
+The reviewers' notes on rounds 531-533. Each claim was re-checked before anything was written: the
+server against `/var/tmp/srv.asm` and `/var/tmp/decomp_server` (read-only), the client against the
+render box. One server fix a player can notice (a cast refused as too far away costs nothing), four
+client fixes, one dev-tool fix, and wording.
+
+**Round 533: the approach walk and skills.**
+
+- **(a) A refused skill is not sent again.** `CombatNet.should_rewalk` takes the released attack's
+  skill id and answers true only for a plain swing (skill 0); `World3D._rewalk_after_refusal`
+  passes it and logs "not cast again" for a skill. The client plays a cast (its animation, the
+  battle stance, the hit effect it arms) when the request goes out (`_send_attack`), so a second
+  request after the walk played a second cast for one use. At round 533 the server had also already
+  charged the refused cast (b), so the second request was refused on cooldown or spent the MP again.
+- **(b) The server tests the reach before it spends (verified first, then changed).** The review
+  asked whether the engine spends MP or arms the cooldown for a cast it cannot reach. It does not:
+  - `CGCharAutoCommandActor::Tick_UseSkill` (`0x4ae590`) gates with mask `0x17` in phase 0 (`push
+    0x17` at `0x4ae6af`) and `0x91` in phase 1 (`0x4aea11`, the call at `0x4aea18`), then tests
+    `Action_IsTargetWithinReach` (`0x4aea39`). In reach it enters phase 2 (`0x4aea4b mov eax,2 ;
+    call 0x4ac9e0`). Out of reach it walks (`MoveTowardObject`, `0x4aeaca`) and stays in phase 1.
+    Phase 2 posts the 0x7070 command (`push 0x7070` at `0x4aebc6`).
+  - Nothing is spent before that post. Neither the tick nor the 0x7074 handler (`0x4acc40`) calls
+    `EngageSkill` (`0x593540`) or the reuse-timer arm `FUN_0064c700` (their direct calls, listed
+    from `srv.asm`). The gate spends nothing: no instruction in `58d8f0`-`58e52f` references
+    `+0x308`, the slot `EngageSkill`'s first step takes the costs through. The per-kind cast
+    handlers call both; `Skill_BuildUseContext_B` (`0x586700`), for one, copies Consume_HP/MP
+    (`+0xca`/`+0xcc`) into the context, arms the timer at `0x586c22` and calls `EngageSkill` at
+    `0x586c44`. Which function consumes 0x7070 was not traced; the order does not depend on it.
+  - The gate masks carry bit `0x1`, the cooldown row (`0x58e077 test al,0x1`, refusal at
+    `0x58e095`), and bit `0x10`, the HP and MP rows (`0x58e1ac test byte [ebp+0x10],0x10`,
+    refusals at `0x58e292`/`0x58e2b1`). So the engine refuses a cast on cooldown or short of
+    HP/MP before it looks at the reach.
+  - **Change.** `session/skill.go` now runs, in order: the cooldowns (unchanged); the new
+    `skillCostRefusal`, the HP and MP comparisons without spending; `skillInReach`, still skipped
+    for a `noCombat || zeroDmg` row; then the HP spend, the MP spend, `RecordUse`, the group arm.
+    The too-far refusal still cancels a running keep-up, as it did when it came after
+    `keepUp.Cancel`: the 0x7074 handler tests mask `0x37` but no reach before `Push`, so the engine
+    queues such a cast and the keep-up ends at depth 2 (`auto_command.md`). A cast short of mana
+    is refused for its mana wherever it stands, as before. Recorded in `skill_use_gate.md` ("The
+    gate is a check, and the reach comes between it and the costs") and the SYSTEMS.md damage row.
+  - The server change is live on deploy, not behind a flag: it changes no packet and needs no
+    client. It only stops charging a cast the server refuses. A round-533 client that re-walks a
+    refused skill now gets its cast on the retry instead of "skill on cooldown".
+- **(c) The released attack could outlive its attack.** A swing the server drops inside its re-use
+  delay gets no reply (`session/combat.go`, `swingReady`), and the debug panel's
+  `_on_skill_use_pressed` sent `use_skill` itself. Either way `_released_attack` stayed set, and a
+  later refusal could walk the old attack again. Now `_send_attack` clears it for every request
+  (`_release_pending_attack` records its own attack after the send, as before), and
+  `_on_skill_use_pressed` clears it before its send. There is no pure helper that decides
+  staleness. The rule is "any newer request forgets it", tested on a bare World3D.
+- **(d) The height budget takes turns.** `_step_monster_bodies` spent
+  `MAX_HEIGHT_RESOLVES_PER_FRAME` (32, srrevamp's own) in `_monster_motion`'s insertion order every
+  frame. Whenever more bodies wanted a ray than 32, the first ones took it every time and the later
+  ones never got theirs. The loop now steps every body first and collects which want a ray. The new
+  `MonsterMotion.height_turns(wants, cursor, budget)` then serves at most 32 of them, starting at
+  `_mob_height_cursor` and wrapping, and the next frame starts just after the last one served.
+- **(e) A death hold is marked, not inferred.** `MonsterMotion.swap_loop` treated any one-shot with
+  no resume as a death. A body whose idle was never registered (a clip of one frame, or
+  `SRREVAMP_NO_IDLE_ANIM`) has no resume after a HIT either, so it kept a non-looping entry and
+  never got a walk clip. `World3D._play_once` now writes an eighth element, `hold`, and
+  `swap_loop` leaves only that entry holding. A hit with nothing to resume is given the new clip
+  as a loop to resume into, still one entry for the skeleton.
+
+**Docs and tools.**
+
+- **(f) `TODO.md`, the Earth Ghost example.** 9 of the 11 roster species run at 55 u/s or more
+  (Earth Ghost 75); only Mangyang (22) and Yeoha (20) run slower (`monster_ai.md`, "The roster's
+  real walk and run speeds"). So any running monster but those two outruns the 50 u/s player. The
+  re-walk sentence now says it is for plain swings only, and why. The debug-panel bullet now says a
+  refused cast costs nothing and that its reply no longer counts for a released attack.
+- **(g) `probe_monster_front.gd` printed 25 `ERROR: Parameter "m" is null.` lines**, from the
+  headless (dummy) renderer's `mesh_get_surface_count`, when it freed each skeleton. Measured on
+  the render box: clearing each `MeshInstance3D`'s mesh before `skeleton.free()` leaves 0. Clearing
+  the skin instead, or freeing the children before the skeleton, left all 25. The probe's printed
+  readings are identical to the run before (diffed).
+- **(h) Round 531's pointers and bindings.**
+  - `place_minimap`'s doc sends the reader to `_toggle_ui_visibility` for the Hide UI button's
+    placement. The paragraph sat above `const DEV_UI_NODES`, so it documented the constant. It now
+    sits above `_toggle_ui_visibility`, which it describes.
+  - The binding is Ctrl+F1 (`_unhandled_input`; F1..F4 are the quickslot pages). Round 531 filed
+    this as "found, not changed". The log line now says "Developer tools (zone travel, log out):
+    Ctrl+F1", and `DEV_UI_NODES`'s comment says Ctrl+F1. The same stale key is corrected in the
+    System menu's Help line ("Ctrl+F1 dev tools, Ctrl+F3 debug panel"), the unstuck message and
+    its comment, the debug-panel log line ("...: Ctrl+F3") and three comments that named F3.
+- **(i) Round 531 (d).** It said `awaitDone` "has rolled the transaction back". In Go 1.25,
+  `Tx.Commit` checks the context first and returns its error (or `ErrTxDone`) at once without
+  sending COMMIT. The rollback runs separately, in the `awaitDone` goroutine the transaction
+  started (`DB.beginDC`), and may not have run yet. Reworded in place.
+- **(j) Round 525's "dirty bit 8" / "dirty bit 4"** for `CGuild::AddPoints` now carries an inline
+  correction: flags 8 and 4 (`or [eax+0x8],0x8` at `0x5c4148`, `,0x4` at `0x5c4175`, re-read).
+- **(k) `character_state.md`'s store-keyed bullet.** Round 531 called round 530's wording
+  "backwards". The two assumed different rules. Refusing every buy at a guild store refuses the
+  master, whom the engine serves (round 530). Refusing only a guildless buyer serves a plain member,
+  whom the engine refuses `0x18c4`, and spends no points (round 531). The bullet now names both
+  rules; neither matches the engine's table.
+
+**Tests.**
+
+- Server, the new `internal/session/skill_reach_test.go`, `TestSkillRefusedAsTooFarCostsNothing`,
+  with memory stores and a real `mana.Tracker`:
+  - A damaging cast (ConsumeMP 5, cooldown group 250, which no real table uses) from 400 units is
+    refused "too far away". MP stays full, `LastUsed` records no use, and the group is still ready.
+  - A health-cost cast from there leaves HP unchanged, and the monster takes nothing.
+  - An unaffordable cast from out of reach is refused "not enough mana" (the gate's order).
+  - After a move into reach, the same cast hits. MP is down by exactly one cost, and the group is
+    armed.
+  - NEGATIVE: with `session/skill.go` stashed, it FAILS: MP 195 of 200, the use recorded, group 250
+    armed, HP 193 of 200, and the in-reach cast refused "skill on cooldown". Restored, it passes.
+- Client:
+  - `combat_test.gd`: `should_rewalk(..., 50)` is false for a skill, and the swing cases pass
+    skill 0.
+  - `monster_motion_test.gd`, `_test_height_turns`: with 40 wanting and a budget of 32, frame 1
+    serves 32 and the next frame starts at the 33rd. All 40 are served within two frames, even
+    if all 40 still want a ray. A fixed start serves only the same 32. Only wanting bodies count,
+    and a cursor past the end wraps.
+  - `_test_swap_loop`: a death hold (eighth element true) is left holding. A hit with no resume
+    and no hold flag is given a walk LOOP to resume into, in one entry. A later swap replaces that
+    resume.
+  - `_test_world_rewalk`, on a bare World3D: a too-far refusal of a released skill does not walk,
+    and the result forgets it. `_send_attack` forgets a stale release. `_on_skill_use_pressed`,
+    with fixture lists, forgets it. A refusal right after a release still walks.
+  - NEGATIVE: with `World3D.gd`, `combat.gd` and `monster_motion.gd` stashed, both suites fail to
+    parse (`should_rewalk()` takes 3 arguments, and there is no `height_turns()`). For a semantic
+    negative, a throwaway script, run the same way, checked three behaviours against the stashed
+    files. The hit with no resume got no walk, the refused skill walked again, and `_send_attack`
+    kept the stale release: 3 FAILURES. Restored: 0. The script was deleted locally and on the box.
+- `remote_godot.sh tests`: 83 suites, 0 failing. `remote_godot.sh check`: 252 scripts and 5 scenes,
+  ALL LOAD. `cd server && go build ./... && go test -count=1 -p 1 ./...`: green, re-run after the
+  doc edits.
+- Not driven: a live cast refused as too far away against a running server, and a crowd of more
+  than 32 moving monsters. No server sends monster moves yet.

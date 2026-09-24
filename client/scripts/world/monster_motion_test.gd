@@ -68,6 +68,41 @@ func _test_needs_height() -> void:
 	_check(not MonsterMotion.needs_height(Vector2(5, 5), Vector2(6.9, 5)), "no height ray after 1.9 units")
 	_check(MonsterMotion.needs_height(Vector2(5, 5), Vector2(7.0, 5)), "a height ray after 2.0 units")
 
+## The height budget takes turns (round 534). NEGATIVE: before it, every frame
+## spent MAX_HEIGHT_RESOLVES_PER_FRAME from the first body, so with more
+## bodies wanting a ray than the budget covers, the later ones never got one.
+func _test_height_turns() -> void:
+	var budget := MonsterMotion.MAX_HEIGHT_RESOLVES_PER_FRAME
+	_check(budget == 32, "the budget under test is 32 rays a frame")
+	var wants: Array = []
+	for i in range(40):
+		wants.append(true)
+	var served := {}
+	var first := MonsterMotion.height_turns(wants, 0, budget)
+	_check((first["picked"] as Array).size() == 32 and int(first["cursor"]) == 32,
+		"frame 1 serves 32 of 40 and the next starts at the 33rd (%s)" % str(first["cursor"]))
+	for i in first["picked"]:
+		served[i] = true
+	# Even if all 40 still want one on the second frame, the eight passed over
+	# go first.
+	var second := MonsterMotion.height_turns(wants, int(first["cursor"]), budget)
+	for i in second["picked"]:
+		served[i] = true
+	_check(served.size() == 40, "all 40 bodies are served within two frames (served %d)" % served.size())
+	_check(int((second["picked"] as Array)[0]) == 32, "and the second frame starts with the ones passed over")
+	# The rule it replaces: the same start every frame serves the same 32.
+	var fixed := {}
+	for _frame in range(2):
+		for i in MonsterMotion.height_turns(wants, 0, budget)["picked"]:
+			fixed[i] = true
+	_check(fixed.size() == 32, "a fixed start leaves 8 bodies unserved (the round-533 rule)")
+	# Only the bodies that want a ray are counted against the budget.
+	var few: Array = [false, true, false, true]
+	var r := MonsterMotion.height_turns(few, 0, budget)
+	_check(str(r["picked"]) == "[1, 3]", "only wanting bodies are picked (%s)" % str(r["picked"]))
+	_check(str(MonsterMotion.height_turns(few, 7, budget)["picked"]) == "[3, 1]", "a cursor past the end wraps (7 of 4 starts at 3)")
+	_check((MonsterMotion.height_turns([], 5, budget)["picked"] as Array).is_empty(), "no bodies, no rays")
+
 ## NEGATIVE -- a genuine red before round 533: _spawn_or_update_monster set
 ## `existing.position = pos` on every list refresh, which teleports a walking
 ## body back by its lag (docs/TODO.md's "JUMP on the next refresh").
@@ -144,11 +179,23 @@ func _test_swap_loop() -> void:
 	# A null clip (a model with no walk or run) keeps the loop it has.
 	_check(not MonsterMotion.swap_loop(animated, sk, null, 0, 2.0) and animated[0][1] == walk,
 		"a missing clip keeps the current loop")
-	# A one-shot with nothing to resume is a death hold: nothing is swapped.
+	# A death hold (World3D._play_once's eighth element, true): nothing is
+	# swapped.
 	var die := _anim()
-	animated = [[sk, die, 40, 0.0, false, 1.0, null]]
+	animated = [[sk, die, 40, 0.0, false, 1.0, null, true]]
 	_check(not MonsterMotion.swap_loop(animated, sk, walk, 30, 2.0) and animated.size() == 1 and animated[0][6] == null,
 		"a death hold is left holding")
+	# NEGATIVE (round 534; before it any one-shot with nothing to resume was
+	# taken for a death): a HIT on a body whose idle was never registered has
+	# no resume either, and it is given the walk to resume into.
+	animated = [[sk, hit, 10, 0.0, false, 1.0, null, false]]
+	_check(MonsterMotion.swap_loop(animated, sk, walk, 30, 2.0) and animated.size() == 1,
+		"a hit with nothing to resume takes the walk, in one entry")
+	_check(animated[0][1] == hit and animated[0][6] != null and animated[0][6][1] == walk and bool(animated[0][6][4]),
+		"the hit keeps playing and resumes into a walk LOOP")
+	var run := _anim()
+	MonsterMotion.swap_loop(animated, sk, run, 24, 3.0)
+	_check(animated.size() == 1 and animated[0][6][1] == run, "a later swap replaces that resume, still one entry")
 	animated = []
 	MonsterMotion.swap_loop(animated, sk, walk, 30, 2.0)
 	_check(animated.size() == 1 and animated[0][4] == true, "a skeleton with no entry gets one loop")
@@ -206,7 +253,8 @@ func _simulate(band: Vector2, monster_speed: float, known_moving: bool, delay: f
 			var measured := MonsterMotion.step(monster, away, monster_speed, delay)
 			if CombatNet.in_reach(player.distance_to(measured), band.y):
 				return {"accepted": true, "releases": releases}
-			if not CombatNet.should_rewalk(CombatNet.REFUSED_TOO_FAR, true, retries):
+			# A plain swing (skill 0): a refused skill is not sent again (round 534).
+			if not CombatNet.should_rewalk(CombatNet.REFUSED_TOO_FAR, true, retries, 0):
 				return {"accepted": false, "releases": releases}
 			retries += 1
 			tight = true
@@ -237,6 +285,7 @@ func _init() -> void:
 	_test_step_clamps()
 	_test_gait_type()
 	_test_needs_height()
+	_test_height_turns()
 	_test_reconcile()
 	_test_begin()
 	_test_stop_push()
@@ -351,6 +400,51 @@ func _test_world_rewalk(world_script: GDScript) -> void:
 	world.call("_on_attack_result", refused)
 	_check((world.get("_pending_attack") as Dictionary).is_empty(), "a dying target is not walked to again")
 	(world.get("_dying_until") as Dictionary).erase(7)
+
+	# NEGATIVE (round 534; before it a refused skill walked and was cast
+	# again): a SKILL the walk released is not walked to again.
+	var skill_release := released.duplicate()
+	skill_release["skill"] = 50
+	skill_release["code"] = "SKILL_CH_SWORD_SMASH_A_01"
+	world.set("_has_move_target", false)
+	world.set("_released_attack", skill_release)
+	world.call("_on_attack_result", refused)
+	_check((world.get("_pending_attack") as Dictionary).is_empty() and not bool(world.get("_has_move_target")),
+		"a too-far refusal of a skill does not walk again")
+	_check((world.get("_released_attack") as Dictionary).is_empty(), "and the result forgets it")
+
+	# NEGATIVE (round 534): a released swing the server dropped gets no reply,
+	# so its entry used to outlive it. Any later request forgets it: the next
+	# swing or cast (_send_attack; not connected here, so nothing is sent) and
+	# the debug panel's Use button, which calls NetClient.use_skill itself.
+	world.set("_released_attack", released.duplicate())
+	world.call("_send_attack", 7, 0, "")
+	_check((world.get("_released_attack") as Dictionary).is_empty(), "a newer request forgets a stale release")
+	var skill_list := ItemList.new()
+	var monster_list := ItemList.new()
+	skill_list.add_item("Smash")
+	skill_list.select(0)
+	monster_list.add_item("Mangyang")
+	monster_list.select(0)
+	var skill_snap := SkillNet.SkillSnapshot.new()
+	skill_snap.skill_id = 50
+	var skills: Array[SkillNet.SkillSnapshot] = [skill_snap]
+	var monsters: Array[CombatNet.MonsterSnapshot] = [_snapshot(7, 30, 0)]
+	world.set("skill_list", skill_list)
+	world.set("monster_list", monster_list)
+	world.set("_skills", skills)
+	world.set("_monsters", monsters)
+	world.set("_released_attack", released.duplicate())
+	world.call("_on_skill_use_pressed")
+	_check((world.get("_released_attack") as Dictionary).is_empty(), "the debug panel's cast forgets a stale release")
+	world.set("_released_attack", released.duplicate())
+	world.call("_on_attack_result", refused)
+	_check(not (world.get("_pending_attack") as Dictionary).is_empty(),
+		"a refusal right after a release still walks again (the release is not stale)")
+	world.set("_pending_attack", {})
+	world.set("_has_move_target", false)
+	skill_list.free()
+	monster_list.free()
 
 	# The release itself records the attack: standing inside the reach, the
 	# pending attack goes out (not connected here, so nothing is sent).

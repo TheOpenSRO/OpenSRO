@@ -884,6 +884,9 @@ var _unknown_move_pull_msec := -1000000
 var _mob_height_resolves := 0
 var _mob_height_max := 0
 var _mob_height_window := 0.0
+## Where the next frame's height rays start in _step_monster_bodies' walk
+## order (MonsterMotion.height_turns), so the budget goes round every body.
+var _mob_height_cursor := 0
 var _last_sent_pos := Vector3.ZERO
 var _time_since_send := 0.0
 
@@ -1427,7 +1430,7 @@ func _try_initialize_pk2_ui() -> void:
 	if OS.get_environment("SRREVAMP_QA_MOVE") != "" and NetClient.is_connected_to_server():
 		_hud_panels.qa_move_sequence(OS.get_environment("SRREVAMP_QA_MOVE"))
 	# The Escape / System menu (see HudPanels): its Option button opens the
-	# settings panel (the same F3 debug panel that carries the working UI
+	# settings panel (the same Ctrl+F3 debug panel that carries the working UI
 	# scale, chat font, name range and camera view), Restart returns to the
 	# login screen, Exit quits, and Help prints where to look.
 	_hud_panels.system_option_requested.connect(func():
@@ -1443,7 +1446,7 @@ func _try_initialize_pk2_ui() -> void:
 		if _help_window != null:
 			_help_window.open()
 		else:
-			_log_system("Controls: click to move, drag to turn the camera, mouse wheel to zoom. F1 dev tools, F3 debug panel, I inventory, K skill, M map. Type /help for commands."))
+			_log_system("Controls: click to move, drag to turn the camera, mouse wheel to zoom. Ctrl+F1 dev tools, Ctrl+F3 debug panel, I inventory, K skill, M map. Type /help for commands."))
 	_hud_panels.skill_assign_requested.connect(_on_skill_assign_requested)
 	_hud_panels.skill_drop_requested.connect(_on_skill_drop_requested)
 	_hud_panels.item_drop_requested.connect(_on_item_drop_requested)
@@ -1547,14 +1550,14 @@ func _hide_debug_ui_replaced_by_hud() -> void:
 	# in every screenshot of this game, which is not what it should look
 	# like when someone plays it.
 	_set_dev_ui_visible(false)
-	_log_system("Developer tools (zone travel, log out): F1")
+	_log_system("Developer tools (zone travel, log out): Ctrl+F1")
 
 	# The debug panel, and the three things a player asked to be able to
 	# change from a couch: name range, UI scale (applied at boot) and chat
 	# font, all remembered by ClientSettings.
 	_debug_panel = DebugPanel.new(self)
 	$UI.add_child(_debug_panel)
-	_log_system("Debug panel (build, position, entities, loading, performance): F3")
+	_log_system("Debug panel (build, position, entities, loading, performance): Ctrl+F3")
 	_log_system("Stuck in a wall or building? Type /unstuck to return to the zone entry.")
 	_build_target_window()
 	set_name_plate_range(ClientSettings.name_plate_range(NAME_PLATE_RANGE))
@@ -3492,9 +3495,11 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 
 ## Everything in the world that plays an animation -- NPCs and monsters.
 ## Each entry is [Skeleton3D, ParsedAnimation, frame count, phase, loops,
-## started at, resume]: a looping idle, or a one-shot (a hit, a death) that
-## holds its last frame and then goes back to `resume` -- an idle entry, or
-## null to stay on the last frame, which is what a corpse does.
+## started at, resume, (hold)]: a looping idle, or a one-shot (a hit, a death)
+## that holds its last frame and then goes back to `resume` -- an idle entry,
+## or null to stay on the last frame, which is what a corpse does. A one-shot
+## from _play_once carries an eighth element, true for a death hold (round
+## 534); the loops have seven.
 ##
 ## Phase matters: without it every Mangyang in a field steps in perfect
 ## unison, which reads as a bug rather than as a crowd. Each character gets
@@ -3568,7 +3573,11 @@ func _play_once(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, hold: boo
 			resume = entry if entry[4] else entry[6]
 			_animated.remove_at(i)
 			break
-	_animated.append([skeleton, anim, frames, 0.0, false, _idle_anim_time, null if hold else resume])
+	# entry[7] marks the hold itself (round 534): a one-shot with no resume is
+	# not necessarily a death -- a body whose idle was never registered (a
+	# clip of one frame, SRREVAMP_NO_IDLE_ANIM) has nothing to resume after a
+	# hit either -- and MonsterMotion.swap_loop must tell the two apart.
+	_animated.append([skeleton, anim, frames, 0.0, false, _idle_anim_time, null if hold else resume, hold])
 	return anim.duration_seconds()
 
 ## Advances every idle animation. Entries whose skeleton has gone (a region
@@ -5334,17 +5343,18 @@ func _release_pending_attack() -> void:
 	_flush_position()
 	_send_attack(monster_id, int(attack["skill"]), String(attack["code"]))
 	# Kept until its result, which may send it walking again
-	# (_rewalk_after_refusal). Set after the send: _send_attack does not clear it.
+	# (_rewalk_after_refusal). Set after the send: _send_attack clears it.
 	_released_attack = attack
 
 ## The approach walk's answer to a refused release. The server measures the
 ## distance a round trip after the client did, and a target walking away has
 ## gained v x that in between; the engine's phase 1 simply keeps walking while
 ## the target is out of reach (docs/protocol/auto_command.md, "The attack
-## tick"). So a refusal as too far away for the attack the walk released --
-## its target alive and not dying -- walks again, now releasing only inside
-## the stop distance, up to CombatNet.APPROACH_RETRY_CAP times. True when it
-## walks again.
+## tick"). So a refusal as too far away for the plain swing the walk released
+## -- its target alive and not dying -- walks again, now releasing only inside
+## the stop distance, up to CombatNet.APPROACH_RETRY_CAP times. A skill is not
+## sent again (CombatNet.should_rewalk, round 534): its cast already played.
+## True when it walks again.
 func _rewalk_after_refusal(result: CombatNet.AttackResult) -> bool:
 	var released := _released_attack
 	_released_attack = {}
@@ -5356,9 +5366,13 @@ func _rewalk_after_refusal(result: CombatNet.AttackResult) -> bool:
 	var alive := _monster_snapshots.has(monster_id) and _monster_bodies.has(monster_id) \
 		and not _dying_until.has(monster_id)
 	var retries := int(released.get("retries", 0))
-	if not CombatNet.should_rewalk(result.error, alive, retries):
+	var skill_id := int(released.get("skill", 0))
+	if not CombatNet.should_rewalk(result.error, alive, retries, skill_id):
 		if result.error == CombatNet.REFUSED_TOO_FAR and alive:
-			print("World3D: monster %d still too far away after %d walk(s) -- giving up" % [monster_id, retries])
+			if skill_id != 0:
+				print("World3D: skill %d on monster %d refused as too far away -- not cast again" % [skill_id, monster_id])
+			else:
+				print("World3D: monster %d still too far away after %d walk(s) -- giving up" % [monster_id, retries])
 		return false
 	var again := released.duplicate()
 	again["tight"] = true
@@ -5386,7 +5400,15 @@ func _flush_position() -> void:
 ## Sends an attack request: a plain swing when skill_id is 0, else the cast --
 ## whose animation, battle stance and hit effect are armed here, when the
 ## request actually goes out, not when it was asked for.
+##
+## Any request forgets the attack the approach walk released before it
+## (round 534): the next refusal answers this request, not that one. A swing
+## the server drops inside its re-use delay gets no reply at all (round 255,
+## session/combat.go swingReady), so without this its entry outlived it and a
+## later refusal walked it again. _release_pending_attack records its own
+## attack after this returns.
 func _send_attack(monster_id: int, skill_id: int, basic_code: String) -> void:
+	_released_attack = {}
 	if skill_id == 0:
 		NetClient.attack(NetClient.current_character_name, monster_id)
 		return
@@ -6053,7 +6075,7 @@ func _update_blob_shadow() -> void:
 ##                          contains one of these fragments
 ##   SRREVAMP_QA_LOOK=1     print which real placed objects the camera is
 ##                          pointing at (model name, distance, placement)
-##   SRREVAMP_QA_DEBUG=1    open the debug panel (F3) as soon as the first
+##   SRREVAMP_QA_DEBUG=1    open the debug panel (Ctrl+F3) as soon as the first
 ##                          region has loaded, so a render shows it
 ##   SRREVAMP_QA_ZONE=z     after the first region loads, reload assets for
 ##                          this zone -- accepts the zone box's own
@@ -8161,28 +8183,12 @@ func _place_player_at_world(x: float, z: float) -> void:
 	_last_sent_pos = player.position
 	NetClient.move_to(player.position.x, player.position.y, player.position.z)
 
-## Toggles the whole hideable UI panel (character/zone labels, chat, action
-## tabs, etc.) -- see HideUIButton's own doc-free scene node and the
-## "toggle_ui" (F10) input action wired in _unhandled_input. HideUIButton
-## itself lives outside ui_control (a sibling under the UI CanvasLayer, not
-## a child of Control) specifically so it stays clickable to toggle the UI
-## back on even while everything else is hidden.
-##
-## It is Control's LATER sibling, and sits left of the minimap (round 531).
-## Godot 4.2 hit-tests a later sibling first. It used to be the earlier one,
-## under the minimap's top-right corner, and once round 529 made the minimap
-## STOP the minimap took every click on the part it covered: the button could
-## no longer hide the UI. Later in the tree, nothing in UI/Control can cover
-## it. Left of the minimap (place_minimap), it no longer covers the minimap's
-## area name either (GDR_MINIMAP_TEXT_AREANAME, 12,9 104x12 in the archive's
-## ifminimap.txt, dumped in round 531). The position is our own; this button
-## has no authored equivalent. hud_click_routing_test.gd measures it.
-##
 ## The developer chrome that has no authored equivalent yet: the zone travel
-## box, Log Out, and the Hide UI button. Shown with F1.
+## box, Log Out, and the Hide UI button. Shown with Ctrl+F1 (_unhandled_input;
+## F1..F4 are the quickslot pages).
 const DEV_UI_NODES := ["ZoneInput", "ChangeZoneButton", "DisconnectButton"]
 var _dev_ui_visible := true
-## The F3 panel: build, server, position, entities, loading failures,
+## The Ctrl+F3 panel: build, server, position, entities, loading failures,
 ## frame times, and the sliders for UI scale, chat font and name range.
 var _debug_panel: DebugPanel = null
 
@@ -8199,6 +8205,22 @@ func _toggle_dev_ui() -> void:
 	_set_dev_ui_visible(not _dev_ui_visible)
 	_log_system("Developer tools %s" % ("shown" if _dev_ui_visible else "hidden"))
 
+## Toggles the whole hideable UI panel (character/zone labels, chat, action
+## tabs, etc.) -- see HideUIButton's own doc-free scene node and the
+## "toggle_ui" (F10) input action wired in _unhandled_input. HideUIButton
+## itself lives outside ui_control (a sibling under the UI CanvasLayer, not
+## a child of Control) specifically so it stays clickable to toggle the UI
+## back on even while everything else is hidden.
+##
+## It is Control's LATER sibling, and sits left of the minimap (round 531).
+## Godot 4.2 hit-tests a later sibling first. It used to be the earlier one,
+## under the minimap's top-right corner, and once round 529 made the minimap
+## STOP the minimap took every click on the part it covered: the button could
+## no longer hide the UI. Later in the tree, nothing in UI/Control can cover
+## it. Left of the minimap (place_minimap), it no longer covers the minimap's
+## area name either (GDR_MINIMAP_TEXT_AREANAME, 12,9 104x12 in the archive's
+## ifminimap.txt, dumped in round 531). The position is our own; this button
+## has no authored equivalent. hud_click_routing_test.gd measures it.
 func _toggle_ui_visibility() -> void:
 	ui_control.visible = not ui_control.visible
 	hide_ui_button.text = "Show UI" if not ui_control.visible else "Hide UI"
@@ -8677,13 +8699,13 @@ func _send_chat(text: String) -> void:
 ## Frees a player wedged into geometry: teleports them back to the zone's own
 ## entry spawn (a known-open point the server placed them at) and clears any
 ## velocity. A stopgap until movement is navmesh-constrained -- free-physics
-## movement lets the capsule wedge into a concave building corner. F1 zone
-## travel does the same the heavy way; this stays in the zone. The move sync in
-## _process sends the new position (it differs from _last_sent_pos).
+## movement lets the capsule wedge into a concave building corner. Ctrl+F1's
+## zone travel does the same the heavy way; this stays in the zone. The move
+## sync in _process sends the new position (it differs from _last_sent_pos).
 func _unstuck_player() -> void:
 	var result = NetClient.last_enter_world_result
 	if result == null or not result.ok:
-		_log_system("Unstuck: no spawn point known yet -- try F1 zone travel.")
+		_log_system("Unstuck: no spawn point known yet -- try zone travel (Ctrl+F1).")
 		return
 	player.velocity = Vector3.ZERO
 	player.position = Vector3(result.x, result.y, result.z)
@@ -9300,13 +9322,17 @@ func _stop_monster_motion(monster_id: int) -> void:
 ## the approach walk aims at the body the player sees, and the height from the
 ## terrain ray only every HEIGHT_RESOLVE_STEP units and for at most
 ## MAX_HEIGHT_RESOLVES_PER_FRAME bodies a frame -- the rest keep their height
-## until a later frame. An arrival switches to the stand clip and keeps the
-## facing.
+## until a later frame, and take their turn first then
+## (MonsterMotion.height_turns, _mob_height_cursor). An arrival switches to the
+## stand clip and keeps the facing.
 func _step_monster_bodies(delta: float) -> void:
 	if _monster_motion.is_empty():
 		return
 	var logging := _mob_logging()
-	var resolved := 0
+	# The bodies stepped this frame and whether each wants a height ray, in
+	# the same order; the rays are handed out after the loop.
+	var stepped: Array = []
+	var wants: Array = []
 	for monster_id in _monster_motion.keys():
 		var body = _monster_bodies.get(monster_id)
 		if body == null or not is_instance_valid(body):
@@ -9334,11 +9360,17 @@ func _step_monster_bodies(delta: float) -> void:
 					print("World3D: monster %d at (%.1f,%.1f) %.1f to go" % [
 						monster_id, pos.x, pos.y, pos.distance_to(state["dest"])])
 		var last: Vector2 = state["h_xz"]
-		var wants := MonsterMotion.needs_height(last, pos) or (not bool(state["moving"]) and last != pos)
-		if wants and resolved < MonsterMotion.MAX_HEIGHT_RESOLVES_PER_FRAME:
-			(body as Node3D).position.y = _terrain_height_at((body as Node3D).position)
-			state["h_xz"] = pos
-			resolved += 1
+		stepped.append([body, state])
+		wants.append(MonsterMotion.needs_height(last, pos) or (not bool(state["moving"]) and last != pos))
+	var turns := MonsterMotion.height_turns(wants, _mob_height_cursor, MonsterMotion.MAX_HEIGHT_RESOLVES_PER_FRAME)
+	_mob_height_cursor = int(turns["cursor"])
+	var resolved := 0
+	for i in turns["picked"]:
+		var body: Node3D = stepped[i][0]
+		var state: Dictionary = stepped[i][1]
+		body.position.y = _terrain_height_at(body.position)
+		state["h_xz"] = state["pos"]
+		resolved += 1
 	_mob_height_resolves += resolved
 	_mob_height_max = maxi(_mob_height_max, resolved)
 	_mob_height_window += delta
@@ -9876,6 +9908,10 @@ func _on_skill_use_pressed() -> void:
 		return
 	var chosen: SkillNet.SkillSnapshot = _skills[selected[0]]
 	var target: CombatNet.MonsterSnapshot = _monsters[target_selected[0]]
+	# Its reply is not the reply to an attack the approach walk released, so
+	# that one is forgotten: a refusal of this cast must not walk it again
+	# (_rewalk_after_refusal; round 534).
+	_released_attack = {}
 	NetClient.use_skill(NetClient.current_character_name, chosen.skill_id, target.monster_id)
 
 # --- Shop tab ------------------------------------------------------------

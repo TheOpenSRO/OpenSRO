@@ -118,6 +118,15 @@ func _init() -> void:
 			control_axis = verdict
 		else:
 			fronts[bsr] = verdict if verdict != "" else "UNSETTLED"
+		# Each mesh is cleared before the skeleton is freed. Freed with its mesh
+		# still set, every skinned MeshInstance3D made Godot's headless (dummy)
+		# renderer print 'ERROR: Parameter "m" is null.' from
+		# mesh_get_surface_count -- 25 lines over the roster, measured on the
+		# render box (round 534); cleared first, none. Clearing the skin instead,
+		# or freeing the children before the skeleton, left all 25. The readings
+		# above are taken before this and do not change.
+		for mi in skeleton.find_children("*", "MeshInstance3D", true, false):
+			(mi as MeshInstance3D).mesh = null
 		skeleton.free()
 	for bsr in fronts:
 		print("MODEL %s %s" % [bsr, fronts[bsr]])

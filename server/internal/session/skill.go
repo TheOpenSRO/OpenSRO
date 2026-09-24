@@ -847,6 +847,55 @@ func useSkillHandler(
 		// check. Written down so that adding quivers later comes with the
 		// requirement already stated.
 
+		// THE REACH, BEFORE ANYTHING IS SPENT (round 534). The engine never
+		// pays for a cast its target is out of reach of: Tick_UseSkill
+		// (0x4ae590) phase 1 tests Action_IsTargetWithinReach (call at
+		// 0x4aea39) and, out of reach, walks (MoveTowardObject, 0x4aeaca) and
+		// stays in phase 1; only in reach does it enter phase 2 (0x4aea4b),
+		// which posts the 0x7070 command (0x4aebc6). Nothing is spent before
+		// that post: neither the tick nor the 0x7074 handler (0x4acc40) calls
+		// EngageSkill (0x593540) or the reuse-timer arm FUN_0064c700 (their
+		// direct calls, listed from srv.asm). Those are called by the
+		// per-kind cast handlers -- Skill_BuildUseContext_B (0x586700), for
+		// one, copies Consume_HP/Consume_MP (+0xca/+0xcc) into the context,
+		// arms the timer at 0x586c22 and calls EngageSkill at 0x586c44,
+		// whose first step takes both costs through vtable slot 0x308
+		// (docs/protocol/skill_params.md, "EngageSkill, step by step"). The
+		// function that consumes 0x7070 and dispatches them was not traced.
+		// srrevamp cannot walk the player, so it refuses instead -- and until
+		// round 534 it refused only AFTER paying the HP and MP and recording
+		// the use, so a cast refused as too far away cost its MP and its
+		// cooldown, and the client's retry after the walk was refused on
+		// cooldown or paid twice.
+		//
+		// What the engine DOES test before the reach, srrevamp tests first
+		// too: the cooldown (above) and whether the caster can pay. Both
+		// gates the tick runs before the reach test -- mask 0x17 in phase 0
+		// (0x4ae6af) and 0x91 in phase 1 (0x4aea11, called at 0x4aea18) --
+		// carry bit 0x1, the cooldown row (0x58e077 `test al,0x1`, refusal
+		// 0x3005 at 0x58e095), and bit 0x10, the HP/MP rows
+		// (0x58e1ac `test [ebp+0x10],0x10`, refusals 0x3013 at 0x58e292 and
+		// 0x3004 at 0x58e2b1). So a cast short of mana is refused for its mana
+		// wherever it stands, as it was here before. The costs themselves are
+		// still taken below, after the reach.
+		//
+		// A non-damaging cast (noCombat || zeroDmg) is accepted at any
+		// distance, as before round 534: its return below comes before any
+		// reach test. A refusal as too far away still ends a running keep-up,
+		// as it did when the refusal came after keepUp.Cancel: the engine's
+		// 0x7074 handler tests the gate (mask 0x37) but not the reach before
+		// Push, so an out-of-reach cast is queued and the keep-up ends itself
+		// when it sees a second action (docs/protocol/auto_command.md, "How an
+		// action arrives" and "The attack tick" phase 3).
+		if refusal := skillCostRefusal(ctx, chars, mp, characterID, hpCost, mpCost); refusal != "" {
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: refusal}).Encode()})
+		}
+		if !noCombat && !zeroDmg && !skillInReach(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID, skillRange) {
+			keepUp.Cancel(characterID)
+			res := &AttackResult{MonsterID: req.TargetMonsterID, Error: "too far away"}
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: res.Encode()})
+		}
+
 		// Pay the skill's real HEALTH cost first. The engine checks health
 		// before mana -- 0058e292 returns UIIT_SKILL_USE_FAIL_NOTENOUGHHP and
 		// 0058e2b1 returns ..._NOTENOUGHMP, in that order -- and doing the same
@@ -1000,21 +1049,18 @@ func useSkillHandler(
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: res.Encode()})
 		}
 
-		// THE SKILL'S OWN REACH. A cast was resolved at any distance at all --
-		// "when i use a skill on a monster even from far away, it still uses
-		// the skill. no distance checking" (playtest 2026-09-20).
+		// THE SKILL'S OWN REACH was tested above, before the costs (round
+		// 534). A cast was resolved at any distance at all -- "when i use a
+		// skill on a monster even from far away, it still uses the skill. no
+		// distance checking" (playtest 2026-09-20).
 		//
-		// This is the SAME recovered test a plain swing uses, given the skill's
+		// It is the SAME recovered test a plain swing uses, given the skill's
 		// range instead of the weapon's: combat.ApproachBand's reach is
 		// casterBC + targetBC + range with the +2 slack, and
 		// combat.EffectiveRange already takes a skill range as its first
 		// argument and falls back to the weapon's when the skill declares none
-		// (Action_Range, refdata.Skill.Range). Nothing here is new arithmetic;
-		// the skill path simply never called it.
-		if !skillInReach(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID, skillRange) {
-			res := &AttackResult{MonsterID: req.TargetMonsterID, Error: "too far away"}
-			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: res.Encode()})
-		}
+		// (Action_Range, refdata.Skill.Range). Nothing there is new
+		// arithmetic; the skill path simply never called it.
 
 		if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, dropSrc, characterID, req.TargetMonsterID, damageBonus, damagePercent, masteryPercent, hits, attackType); err != nil {
 			return err
@@ -1638,7 +1684,8 @@ func equippedTypes(ctx context.Context, characterID int64, eq equipment.Store, i
 //
 // UseSkillHandler above checks the skill is known, then the cooldown, then the
 // HP cost, then the MP cost, each gated on the cost being greater than zero.
-// That is the engine's order and the engine's gating:
+// That is the engine's order and the engine's gating (and since round 534 the
+// reach follows those checks and precedes the payment -- skillCostRefusal):
 //
 //	58d93f  0x3003  NOTLEARN              the skill does not resolve
 //	58e095  0x3005  TIMEDELAY_COOL_TIME   the cooldown check fails
@@ -1654,3 +1701,34 @@ func equippedTypes(ctx context.Context, characterID int64, eq equipment.Store, i
 // with the shape of each test: stealth and musical range, trap placement, buff
 // duplication and overlap, ammunition, line of sight, and a level requirement
 // read off the TARGET's ref object rather than the skill's.
+
+// skillCostRefusal is the gate's HP and MP rows as a CHECK, spending nothing:
+// "not enough health" when hpCost > 0 and the caster's HP is below it,
+// "not enough mana" when mpCost > 0 and the pool is below it, "lookup failed"
+// when the caster cannot be read, else "". The engine tests these rows (mask
+// bit 0x10, 0x58e1ac) in Tick_UseSkill's gates BEFORE the reach test, and
+// takes the costs only in EngageSkill, after the reach (round 534; see the
+// reach block in useSkillHandler). The same tests as the spending blocks that
+// follow the reach -- combat.CanPaySkillHealth and mana.Tracker's
+// `cur < cost` -- which still re-check when they spend.
+func skillCostRefusal(ctx context.Context, chars character.Store, mp *mana.Tracker, characterID int64, hpCost, mpCost int) string {
+	if hpCost > 0 {
+		hp, _, err := chars.ApplyDamage(ctx, characterID, 0)
+		if err != nil {
+			return "lookup failed"
+		}
+		if !combat.CanPaySkillHealth(hp, hpCost) {
+			return "not enough health"
+		}
+	}
+	if mp != nil && mpCost > 0 {
+		owned, err := chars.GetByID(ctx, characterID)
+		if err != nil {
+			return "lookup failed"
+		}
+		if mp.Current(characterID, owned.MaxMP()) < mpCost {
+			return "not enough mana"
+		}
+	}
+	return ""
+}

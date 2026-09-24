@@ -249,9 +249,9 @@ static func in_reach(distance: float, reach: float) -> bool:
 ## such China board rows (174 with Activity 1, 82 with 0; re-counted round 523)
 ## carry Target_Required 0, so this function gives them no walk either way.
 ## srrevamp's server accepts the non-damaging ones at any distance
-## (session/skill.go's NoCombatParam/ZeroDamage return comes before
-## skillInReach) -- see docs/TODO.md, "Attack distance", for the
-## damaging Target_Required 0 rows it still reach-gates.
+## (session/skill.go skips skillInReach for a NoCombatParam/ZeroDamage row) --
+## see docs/TODO.md, "Attack distance", for the damaging Target_Required 0 rows
+## it still reach-gates.
 static func skill_tick_approaches(target_required: int, target_land: int) -> bool:
 	if target_required == 0:
 		return false
@@ -308,11 +308,24 @@ static func approach_aim(stop: float, tight: bool, arrive: float) -> float:
 	return stop
 
 ## Whether an attack released from the approach walk and refused walks again:
-## the refusal is the reach one, the target is still alive and not dying, and
-## it has walked again fewer than APPROACH_RETRY_CAP times. Any other refusal
-## (a cooldown, a dead target) ends it, as before.
-static func should_rewalk(error: String, target_alive: bool, retries: int) -> bool:
-	return error == REFUSED_TOO_FAR and target_alive and retries < APPROACH_RETRY_CAP
+## it is a plain swing (skill_id 0), the refusal is the reach one, the target
+## is still alive and not dying, and it has walked again fewer than
+## APPROACH_RETRY_CAP times. Any other refusal (a cooldown, a dead target) ends
+## it, as before.
+##
+## A SKILL is never sent again (round 534). The client plays a cast -- its
+## animation, the battle stance, the hit effect it arms -- when the request
+## goes out (World3D._send_attack), so a second request after the walk would
+## play a second cast for one use of the skill. Until round 534 the server had
+## also already charged the refused cast: session/skill.go spent the HP and MP
+## and armed the cooldown before skillInReach refused it, so the second request
+## spent MP again or was refused on cooldown. The server now tests the reach
+## first, as the engine does (Tick_UseSkill 0x4ae590 tests reach at 0x4aea39,
+## before its phase-2 post of 0x7070 at 0x4aebc6, and nothing is spent before
+## that post -- docs/protocol/skill_use_gate.md, round 534), so a skill refused
+## as too far away costs nothing and the player can cast it again.
+static func should_rewalk(error: String, target_alive: bool, retries: int, skill_id: int) -> bool:
+	return skill_id == 0 and error == REFUSED_TOO_FAR and target_alive and retries < APPROACH_RETRY_CAP
 
 ## Encodes an OpAttack request.
 static func encode_attack(character_name: String, target_monster_id: int) -> PackedByteArray:

@@ -169,32 +169,71 @@ static func gait_clip(archive: Pk2Reader, assembled: SkinnedBsrAssembler.Assembl
 	return SkinnedBsrAssembler.animation_for(archive, assembled, gait)
 
 ## Replaces `skeleton`'s looping clip in World3D's `_animated` list (entries
-## [skeleton, anim, frames, phase, loops, started, resume]) with `anim`, in
-## place, keeping its phase. While a one-shot plays (a hit), the loop it will
+## [skeleton, anim, frames, phase, loops, started, resume, (hold)]) with `anim`,
+## in place, keeping its phase. While a one-shot plays (a hit), the loop it will
 ## resume -- its entry[6] -- is the one replaced, so the hit hands back to the
-## new gait. A one-shot with nothing to resume is a hold (a death) and keeps
-## its last frame: nothing is swapped. A skeleton with no entry gets one. Never
-## a second loop: World3D's other-player gait swap appends when it finds no
-## loop entry, which beside a one-shot would leave two entries fighting over
-## one skeleton. Returns whether anything changed; a null clip changes nothing.
+## new gait. A death hold (entry[7] true, set by World3D._play_once for a
+## death) keeps its last frame: nothing is swapped. A one-shot that is NOT a
+## hold but has nothing to resume -- a hit on a body whose idle was never
+## registered (a clip of one frame, SRREVAMP_NO_IDLE_ANIM) -- is given the new
+## loop to resume (round 534; it used to be taken for a death and never got a
+## walk clip). A skeleton with no entry gets one. Never a second loop:
+## World3D's other-player gait swap appends when it finds no loop entry, which
+## beside a one-shot would leave two entries fighting over one skeleton.
+## Returns whether anything changed; a null clip changes nothing.
 static func swap_loop(animated: Array, skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, frames: int, now: float) -> bool:
 	if skeleton == null or anim == null or frames <= 1:
 		return false
 	for entry in animated:
 		if entry[0] != skeleton:
 			continue
-		var loop = entry if entry[4] else entry[6]
-		if loop == null:
+		if entry[4]:
+			entry[1] = anim
+			entry[2] = frames
+			return true
+		if entry.size() > 7 and bool(entry[7]):
 			return false
-		loop[1] = anim
-		loop[2] = frames
+		if entry[6] == null:
+			entry[6] = _new_loop(animated, skeleton, anim, frames, now)
+			return true
+		entry[6][1] = anim
+		entry[6][2] = frames
 		return true
-	# The staggered phase World3D._animate_skeleton and _set_other_gait give a
-	# new loop, so a crowd does not step in time.
-	animated.append([skeleton, anim, frames, float(animated.size()) * 0.37, true, now, null])
+	animated.append(_new_loop(animated, skeleton, anim, frames, now))
 	return true
+
+## A loop entry for swap_loop, with the staggered phase
+## World3D._animate_skeleton and _set_other_gait give a new loop, so a crowd
+## does not step in time.
+static func _new_loop(animated: Array, skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, frames: int, now: float) -> Array:
+	return [skeleton, anim, frames, float(animated.size()) * 0.37, true, now, null]
 
 ## Whether a walking body has moved far enough since its last height ray to
 ## need another (HEIGHT_RESOLVE_STEP).
 static func needs_height(last_xz: Vector2, pos: Vector2) -> bool:
 	return last_xz.distance_to(pos) >= HEIGHT_RESOLVE_STEP
+
+## Which bodies get a height ray this frame, taking turns (round 534).
+## `wants[i]` says whether the i-th body of the frame's walk order needs one;
+## at most `budget` are served (MAX_HEIGHT_RESOLVES_PER_FRAME), starting at
+## `cursor` and wrapping round. {"picked": the served indices, in order,
+## "cursor": where the next frame starts -- just after the last one served,
+## so a body passed over this frame is served first the next}. Starting every
+## frame at the first body instead gave the budget to the same bodies whenever
+## more of them wanted a ray than it covers, and the rest never got theirs.
+## A cursor past the end (bodies left the list) wraps.
+static func height_turns(wants: Array, cursor: int, budget: int) -> Dictionary:
+	var picked: Array[int] = []
+	var n := wants.size()
+	if n == 0:
+		return {"picked": picked, "cursor": 0}
+	var start := posmod(cursor, n)
+	var next := start
+	for k in range(n):
+		if picked.size() >= budget:
+			break
+		var i := (start + k) % n
+		if bool(wants[i]):
+			picked.append(i)
+			next = (i + 1) % n
+	return {"picked": picked, "cursor": next}

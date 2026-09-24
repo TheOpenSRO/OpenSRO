@@ -80,6 +80,50 @@ not known to be the engine's order when it was written. Nothing changed; it is
 recorded because "we happen to agree" and "we match a read" are different
 claims and only the second is worth anything.
 
+## The gate is a check, and the reach comes between it and the costs (round 534)
+
+The gate spends nothing. Rows 14 and 15 compare the costs with the caster's HP
+and MP; the costs are TAKEN later, by `EngageSkill` (`0x593540`), whose first
+step is vtable slot `0x308` with the context's HP and MP costs
+(`skill_params.md`, "EngageSkill, step by step"). No instruction in the gate's
+range (`58d8f0`–`58e52f` in `srv.asm`) references offset `+0x308`, and none of
+its direct calls is `EngageSkill` or the reuse-timer arm `FUN_0064c700`.
+
+Which rows run depends on the caller's mask (the third argument, `[ebp+0x10]`):
+
+| bit | guards | where |
+|---|---|---|
+| `0x1` | row 12, the cooldown | `58e077 test al,0x1`, refusal at `58e095` |
+| `0x10` | rows 14 and 15, HP then MP | `58e1ac test byte [ebp+0x10],0x10`, refusals at `58e292`, `58e2b1` |
+
+`CGCharAutoCommandActor::Tick_UseSkill` (`0x4ae590`, `auto_command.md`) calls
+the gate with mask `0x17` in phase 0 (`push 0x17` at `4ae6af`) and `0x91` in
+phase 1 (`push 0x91` at `4aea11`, the call at `4aea18`). Both carry `0x1` and
+`0x10`. Only then does phase 1 test `Action_IsTargetWithinReach` (`4aea39`):
+in reach it enters phase 2 (`4aea4b mov eax,2 ; call 0x4ac9e0`), out of reach
+it walks (`MoveTowardObject`, `4aeaca`) and stays in phase 1. Phase 2 posts the
+0x7070 command (`push 0x7070` at `4aebc6`). Neither the tick nor the 0x7074
+handler (`0x4acc40`) calls `EngageSkill` or the reuse-timer arm `FUN_0064c700`
+(their direct calls, listed from `srv.asm`). The per-kind cast handlers call
+them; `Skill_BuildUseContext_B` (`0x586700`), for one, copies Consume_HP and
+Consume_MP (`+0xca`/`+0xcc`) into the context, arms the timer at `586c22` and
+calls `EngageSkill` at `586c44`. Which function consumes 0x7070 and reaches
+those handlers was not traced.
+
+So, for a targeted cast: **cooldown and affordability, then the reach, then the
+costs and the cooldown arm.** A cast whose target is out of reach costs nothing:
+the engine walks instead.
+
+**srrevamp since round 534.** `session/skill.go` refuses a cast out of reach
+("too far away") instead of walking, and until round 534 it did so after
+spending the HP and MP and recording the use. It now tests, in order: the
+cooldowns, affordability (`skillCostRefusal`, the same comparisons without
+spending), the reach (`skillInReach`, skipped for a non-damaging row as
+before), and only then spends the HP, the MP and records the use. The
+refusal as too far away still ends a running keep-up (the 0x7074 handler's
+mask `0x37` does not test reach, so the engine queues such a cast and the
+keep-up ends at depth 2). `TestSkillRefusedAsTooFarCostsNothing` holds it.
+
 
 ## Which row tests which param (2026-09-17)
 

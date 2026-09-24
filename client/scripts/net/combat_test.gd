@@ -331,11 +331,14 @@ func _test_approach_release_rules() -> void:
 	_check(is_equal_approx(CombatNet.approach_aim(10.0, true, 2.39), 7.61) and CombatNet.approach_aim(10.0, false, 2.39) == 10.0,
 		"a tight walk aims its arrival tolerance short of the stop")
 	_check(CombatNet.approach_aim(1.0, true, 2.39) == 0.0, "never past the target")
-	_check(CombatNet.should_rewalk("too far away", true, 0), "a too-far refusal on a live target walks again")
-	_check(CombatNet.should_rewalk("too far away", true, CombatNet.APPROACH_RETRY_CAP - 1), "up to the cap")
-	_check(not CombatNet.should_rewalk("too far away", true, CombatNet.APPROACH_RETRY_CAP), "not past it")
-	_check(not CombatNet.should_rewalk("too far away", false, 0), "not on a dead or dying target")
-	_check(not CombatNet.should_rewalk("skill on cooldown", true, 0), "not on another refusal")
+	_check(CombatNet.should_rewalk("too far away", true, 0, 0), "a too-far refusal of a swing on a live target walks again")
+	_check(CombatNet.should_rewalk("too far away", true, CombatNet.APPROACH_RETRY_CAP - 1, 0), "up to the cap")
+	_check(not CombatNet.should_rewalk("too far away", true, CombatNet.APPROACH_RETRY_CAP, 0), "not past it")
+	_check(not CombatNet.should_rewalk("too far away", false, 0, 0), "not on a dead or dying target")
+	_check(not CombatNet.should_rewalk("skill on cooldown", true, 0, 0), "not on another refusal")
+	# NEGATIVE (round 534; before it a refused skill walked and was sent again,
+	# playing a second cast): a skill release is never re-walked.
+	_check(not CombatNet.should_rewalk("too far away", true, 0, 50), "a too-far refusal of a SKILL does not walk again")
 
 ## NetClient routes the two new opcodes to their signals, and warns about an
 ## unhandled opcode once per connection rather than once per packet (an older

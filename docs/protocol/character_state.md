@@ -1770,10 +1770,13 @@ gold. No code changed, for three reasons:
 
 - The engine keys the refusal on the goods' price policy. It does not key it on
   a `GROUP_STORE_*_GUILD` store or on a `GUILD_PATTERNS` NPC, the two keys the
-  round was planned around. A store-keyed rule, refusing only a guildless
-  buyer, would SERVE a plain member, whom the engine refuses `0x18c4`, and
-  would spend no guild points (corrected in round 531: this bullet had it
-  backwards, saying such a rule would refuse the master).
+  round was planned around. No store-keyed rule matches the table above. One
+  that refuses EVERY buy at such a store also refuses the master, whom the
+  engine serves (round 530's wording assumed this rule). One that refuses only a
+  guildless buyer SERVES a plain member, whom the engine refuses `0x18c4`, and
+  spends no guild points (round 531's wording assumed this one). Each wording
+  holds for the rule it assumed; round 531 called round 530's "backwards", and
+  round 534 names both rules instead.
 - srrevamp imports no price policy. `refdata.Item` has no payment device.
 - `OpShopBuy` names only the item, not the NPC or the store. A store-keyed test
   would need a new packet layout. A price-keyed one would not.
