@@ -5,7 +5,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/guild"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
@@ -655,6 +659,14 @@ type deadWorldFixture struct {
 
 func startDeadWorldFixture(t *testing.T) *deadWorldFixture {
 	t.Helper()
+	return startDeadWorldFixtureWith(t, nil)
+}
+
+// startDeadWorldFixtureWith is startDeadWorldFixture with one more handler in
+// the chain, built over the fixture's stores (round 550: the guild gate's
+// test).
+func startDeadWorldFixtureWith(t *testing.T, extra func(chars character.Store, hub *world.Hub) gateway.Handler) *deadWorldFixture {
+	t.Helper()
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")
@@ -663,7 +675,11 @@ func startDeadWorldFixture(t *testing.T) *deadWorldFixture {
 	aria, _ := chars.Create(ctx, 1, "Aria")
 	bram, _ := chars.Create(ctx, 2, "Bram")
 	hub := world.NewHub()
-	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, nil, hub), ReviveHandler(chars, hub, RegenDeps{}))
+	handlers := []gateway.Handler{LoginHandler(accounts), WorldHandler(chars, nil, hub), ReviveHandler(chars, hub, RegenDeps{})}
+	if extra != nil {
+		handlers = append(handlers, extra(chars, hub))
+	}
+	handle := gateway.Chain(handlers...)
 	addr, cleanup := startTestServer(t, handle)
 	t.Cleanup(cleanup)
 	f := &deadWorldFixture{chars: chars, hub: hub, aria: aria.ID, bram: bram.ID}
@@ -805,8 +821,8 @@ func TestAutoReviveFallbackFreesAnOlderClient(t *testing.T) {
 		t.Fatalf("the fallback's result %+v (err %v), want a success", rr, err)
 	}
 	c, _ := f.chars.GetByID(ctx, f.aria)
-	if want := int(float64(c.MaxHP()) * character.RespawnFraction); c.HP != want || int(rr.HP) != want {
-		t.Errorf("the fallback revived at HP %d (result %d), want %d", c.HP, rr.HP, want)
+	if want := reviveHPDelta(c.MaxHP()); c.HP != want || int(rr.HP) != want {
+		t.Errorf("the fallback revived at HP %d (result %d), want %d (1 + trunc(0.4 x max), round 550)", c.HP, rr.HP, want)
 	}
 	if p := f.read(t, f.connA, f.rA); p.Opcode != OpCharacterStatsResult {
 		t.Errorf("after the fallback's result Aria received %#04x, want the stats push", p.Opcode)
@@ -866,5 +882,152 @@ func TestEnterWorldRevivesACharacterLoggedOutDead(t *testing.T) {
 	defer connB.Close()
 	if ewr := f.login(t, connB, bufio.NewReader(connB), "bob", "hunter3", "Bram"); ewr.HP <= 0 {
 		t.Errorf("with the flag off a character logged out dead entered at HP %d, want RespawnFraction of the maximum", ewr.HP)
+	}
+}
+
+// ---- Batch-17 review follow-ups (round 550) ----
+
+// failingPoolStore fails every pool write -- the revive's Heal, and the
+// RespawnHP an older revive used -- while fails is above 0, counting each
+// refusal down.
+type failingPoolStore struct {
+	character.Store
+	fails atomic.Int32
+}
+
+func (s *failingPoolStore) Heal(ctx context.Context, id int64, amount, maxHP int) (int, error) {
+	if s.fails.Add(-1) >= 0 {
+		return 0, errors.New("test: the pool write failed")
+	}
+	return s.Store.Heal(ctx, id, amount, maxHP)
+}
+
+func (s *failingPoolStore) RespawnHP(ctx context.Context, id int64) error {
+	if s.fails.Add(-1) >= 0 {
+		return errors.New("test: the pool write failed")
+	}
+	return s.Store.RespawnHP(ctx, id)
+}
+
+// resetAutoReviveWarned starts the test from an empty autoReviveWarned and
+// leaves one behind. The map is package state: an entry another test's
+// failing store left -- or, before round 550's review fix, the one a pass
+// kept for the character it had just revived -- reaches the next fixture's
+// Aria, id 1 in every fresh MemStore, and suppresses the WARN this test
+// counts (the test failed on -count=3 that way).
+func resetAutoReviveWarned(t *testing.T) {
+	t.Helper()
+	empty := func() {
+		autoReviveWarned.Range(func(k, _ any) bool {
+			autoReviveWarned.Delete(k)
+			return true
+		})
+	}
+	empty()
+	t.Cleanup(empty)
+}
+
+// A store that keeps failing the auto-revive is logged ONCE for the character
+// (round 550), not every pass; each failed attempt leaves her dead with her
+// time of death (revivePlayer puts the state back, so the next pass tries
+// again), and the pass on which the store recovers revives her, logs it and
+// forgets the warning -- so a later death of the same character that fails
+// again is logged again. Before this round every failing pass logged its own
+// WARN; the first cut of the fix kept the entry a pass past the revive.
+func TestAutoReviveWarnsOncePerCharacter(t *testing.T) {
+	resetAutoReviveWarned(t)
+	f := startDeadWorldFixture(t)
+	ctx := context.Background()
+	t0 := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	f.kill(t, f.aria, t0)
+	store := &failingPoolStore{Store: f.chars}
+	store.fails.Store(2)
+	var log lockedBuffer
+	logger := slog.New(slog.NewTextHandler(&log, nil))
+
+	for i := 1; i <= 2; i++ {
+		autoReviveTick(ctx, f.hub, store, RegenDeps{}, t0.Add(AutoReviveAfter+time.Duration(i)*time.Second), logger)
+		if e, _ := f.hub.EntityByCharacterID(f.aria); e.Life != world.LifeDead || !e.DiedAt.Equal(t0) {
+			t.Fatalf("after failed attempt %d: life %d, died at %v; want still dead since %v (the state put back)", i, e.Life, e.DiedAt, t0)
+		}
+		if c, _ := f.chars.GetByID(ctx, f.aria); c.HP != 0 {
+			t.Fatalf("after failed attempt %d: HP %d, want 0", i, c.HP)
+		}
+	}
+	if !f.nothing(t, f.connA, f.rA) {
+		t.Fatal("a failed attempt sent Aria something")
+	}
+	if n := strings.Count(log.String(), "auto-revive failed"); n != 1 {
+		t.Errorf("%d 'auto-revive failed' line(s) over two failing passes, want 1 (once per character); log:\n%s", n, log.String())
+	}
+
+	autoReviveTick(ctx, f.hub, store, RegenDeps{}, t0.Add(AutoReviveAfter+3*time.Second), logger)
+	if p := f.read(t, f.connA, f.rA); p.Opcode != OpReviveResult {
+		t.Fatalf("the pass on which the store recovered sent %#04x, want OpReviveResult", p.Opcode)
+	}
+	if e, _ := f.hub.EntityByCharacterID(f.aria); e.Life != world.LifeAlive {
+		t.Errorf("after the recovered pass: life %d, want 1", e.Life)
+	}
+	if c, _ := f.chars.GetByID(ctx, f.aria); c.HP != reviveHPDelta(c.MaxHP()) {
+		t.Errorf("after the recovered pass: HP %d, want %d", c.HP, reviveHPDelta(c.MaxHP()))
+	}
+	if n := strings.Count(log.String(), "auto-revive failed"); n != 1 {
+		t.Errorf("%d 'auto-revive failed' line(s) in all, want 1", n)
+	}
+	if !strings.Contains(log.String(), "msg=auto-revive ") {
+		t.Errorf("no 'auto-revive' line for the pass that revived her; log:\n%s", log.String())
+	}
+	if _, lingering := autoReviveWarned.Load(f.aria); lingering {
+		t.Error("Aria's 'warned' entry outlived the pass that revived her: a later failure of the same character inside that pass would go unlogged, and the next test's Aria inherits it")
+	}
+}
+
+// Guild work is refused while dead (round 550), on the life state the world
+// hub keeps rather than HP alone: FUN_00514b20 (the founder's pre-check) and
+// CGuild::HandleLevelUp (0x5c63d0) each ask IGObj::GetLifeState for 1 and
+// answer 0x4c07 GUILDERR_IM_DEAD otherwise. Aria is killed and then healed
+// without being revived -- a GM's /heal fills the pools and leaves the life
+// state -- so HP alone, the test until this round, would let her found a
+// guild while dead. Revived, the same request goes through.
+func TestGuildWorkIsRefusedWhileDead(t *testing.T) {
+	guilds := guild.NewMemStore()
+	f := startDeadWorldFixtureWith(t, func(chars character.Store, hub *world.Hub) gateway.Handler {
+		return GuildHandler(chars, guilds, hub)
+	})
+	ctx := context.Background()
+	aria, _ := f.chars.GetByID(ctx, f.aria)
+	qualifyFounder(t, f.chars, aria)
+	f.kill(t, f.aria, time.Now())
+	if _, err := f.chars.Heal(ctx, f.aria, aria.MaxHP(), aria.MaxHP()); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := f.chars.GetByID(ctx, f.aria); c.HP <= 0 {
+		t.Fatalf("setup: Aria's HP %d after the heal, want above 0 (dead with a full pool)", c.HP)
+	}
+
+	f.send(t, f.connA, OpGuildCreate, (&GuildCreateRequest{CharacterName: "Aria", GuildName: "Silk Legion"}).Encode())
+	gr, err := DecodeGuildResult(f.read(t, f.connA, f.rA).Data)
+	if err != nil || gr.Error != guildErrorMessage(guild.ErrCreatorDead) {
+		t.Fatalf("a dead founder's create answered %+v (err %v), want the refusal %q (0x4c07)", gr, err, guildErrorMessage(guild.ErrCreatorDead))
+	}
+	if _, err := guilds.GetByCharacter(ctx, f.aria); !errors.Is(err, guild.ErrNotInGuild) {
+		t.Fatalf("a guild was founded by a dead character (err %v)", err)
+	}
+	f.send(t, f.connA, OpGuildLevel, (&GuildLevelRequest{CharacterName: "Aria", LevelUp: true}).Encode())
+	lr, err := DecodeGuildLevelResult(f.read(t, f.connA, f.rA).Data)
+	if err != nil || lr.Error == "" || lr.Code != 0x4c07 {
+		t.Fatalf("a dead character's level-up answered %+v (err %v), want the refusal with code 0x4c07 ahead of the no-guild 0x4c0d", lr, err)
+	}
+
+	f.send(t, f.connA, OpRevive, nil)
+	if rr, err := DecodeReviveResult(f.read(t, f.connA, f.rA).Data); err != nil || rr.Error != "" {
+		t.Fatalf("OpRevive answered %+v (err %v), want a success", rr, err)
+	}
+	if p := f.read(t, f.connA, f.rA); p.Opcode != OpCharacterStatsResult {
+		t.Fatalf("after the revive result Aria received %#04x, want the stats push", p.Opcode)
+	}
+	f.send(t, f.connA, OpGuildCreate, (&GuildCreateRequest{CharacterName: "Aria", GuildName: "Silk Legion"}).Encode())
+	if gr, err := DecodeGuildResult(f.read(t, f.connA, f.rA).Data); err != nil || gr.Error != "" || gr.GuildID == 0 {
+		t.Fatalf("the revived founder's create answered %+v (err %v), want a guild", gr, err)
 	}
 }

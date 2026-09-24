@@ -898,7 +898,6 @@ var _player_anim_time := 0.0
 ## has run its frames.
 var _player_one_shot: BanReader.ParsedAnimation = null
 var _player_one_shot_start := 0.0
-var _player_one_shot_until := 0.0
 ## The monster the last attack was sent at, so its swing and the player's
 ## reaction to it can be played when the result comes back.
 var _last_attack_target := -1
@@ -925,9 +924,11 @@ var _recently_left: Dictionary = {}
 ## MonsterStrikes.leaves_dead says left the player dead; cleared by
 ## _leave_dead_state on an OpReviveResult. While it holds, movement and
 ## attack input are locked (_physics_process, _dispatch_left_click,
-## _attack_monster, _on_quickslot_activated), the die clip is held
-## (_play_player_struck) and the HUD shows the Revive button
-## (HudPanels.show_revive_prompt). Today's server never sets it: it revives a
+## _attack_monster, _on_quickslot_activated, and since round 550 the Skills
+## tab's Use, the QA potion and the bag's right-click through
+## HudPanels.player_dead), the die clip is held (_play_player_struck) and the
+## HUD shows the Revive button (HudPanels.show_revive_prompt). Today's
+## server never sets it: it revives a
 ## killed player at once (session/monsterstrike.go's RespawnHP) and reports
 ## the respawned HP, above 0. Its server half is -player-dead-state, off by
 ## default; docs/protocol/monster_ai.md, "The player's dead state".
@@ -4981,8 +4982,15 @@ func _set_other_gait(character_id: int, moving: bool) -> void:
 	MonsterMotion.swap_loop(_animated, gait["skeleton"], anim, frames, _idle_anim_time)
 
 ## Plays anim once on the player's body, over stand or run, and returns
-## how long it runs.
+## how long it runs. A one-shot HELD on its last frame -- the die clip,
+## _player_one_shot_hold -- is not replaced (round 550): until then a swing
+## whose result arrived after the die pose (sent just before the monster's
+## killing swing) started over the held clip and was itself held, a dead
+## body frozen mid-swing. Nothing plays over a held pose; _leave_dead_state
+## releases it. Returns 0 for a refused or a one-frame clip, and sets nothing.
 func _play_player_once(anim: BanReader.ParsedAnimation) -> float:
+	if _player_one_shot_hold:
+		return 0.0
 	var frames := _frame_count(anim)
 	if frames <= 1:
 		return 0.0
@@ -9969,16 +9977,23 @@ func _play_player_struck() -> void:
 		return
 	var hit := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_HIT, _player_weapon_group)
 	if hit != null:
-		_player_one_shot_until = _player_anim_time + _play_player_once(hit)
+		_play_player_once(hit)
 
 ## Plays the die clip once and holds its last frame (_player_one_shot_hold).
 ## A body with no such clip keeps whatever it plays.
 func _play_player_death_pose() -> void:
-	var die := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_DIE, _player_weapon_group)
+	_hold_player_one_shot(_body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_DIE, _player_weapon_group))
+
+## Plays `die` once and holds it -- only if it STARTED (round 550): a clip of
+## one frame, or none, starts nothing (_play_player_once), and setting the
+## hold regardless pinned whatever one-shot was current, a swing among them.
+## A pose already held stays held (the repeated kill report's second call).
+func _hold_player_one_shot(die: BanReader.ParsedAnimation) -> void:
 	if die == null:
 		return
-	_player_one_shot_until = _player_anim_time + _play_player_once(die)
-	_player_one_shot_hold = true
+	_play_player_once(die)
+	if _player_one_shot == die:
+		_player_one_shot_hold = true
 
 ## This player has been left dead: every walk and attack under way ends, the
 ## input locks (_player_dead), the death line goes to chat and the HUD shows
@@ -10002,6 +10017,7 @@ func _enter_dead_state(exp_lost: int) -> void:
 	var line := _death_line(exp_lost)
 	_log_system(line)
 	if _hud_panels != null:
+		_hud_panels.player_dead = true # the bag's right-click use (round 550)
 		_hud_panels.show_revive_prompt(line)
 	print("World3D: left dead (HP 0) t=%.2f -- input locked until the revive" % _idle_anim_time)
 
@@ -10014,6 +10030,7 @@ func _leave_dead_state() -> void:
 	_player_one_shot_hold = false
 	_player_one_shot = null
 	if _hud_panels != null:
+		_hud_panels.player_dead = false
 		_hud_panels.hide_revive_prompt()
 
 ## The Revive button (HudPanels.revive_requested), or the QA hook: ask the
@@ -10500,6 +10517,11 @@ func _on_learn_skill_result(ok: bool, reason: String) -> void:
 ## Monsters tab -- reuses that tab's own selection/target list rather than
 ## duplicating a second monster picker just for skills.
 func _on_skill_use_pressed() -> void:
+	if _player_dead:
+		# Dead (round 550): the one cast route round 548's lock missed. The
+		# server refuses it anyway (its OpUseSkill gate), so nothing goes out.
+		_log_system(DEAD_INPUT_LINE)
+		return
 	var selected := skill_list.get_selected_items()
 	if selected.is_empty():
 		skill_status_label.text = "Select a skill first."
@@ -11045,7 +11067,7 @@ func _on_use_item_result(result) -> void:
 ## SRREVAMP_QA_USEITEM; the ids are the real consumables the loot tables drop.
 var _qa_used_potion := false
 func _qa_use_first_potion(slots: Array, _error: String) -> void:
-	if _qa_used_potion or NetClient.current_character_name == "":
+	if _qa_used_potion or NetClient.current_character_name == "" or _player_dead:
 		return
 	for entry in slots:
 		var slot: InventoryNet.Slot = entry

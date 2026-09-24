@@ -21,6 +21,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
+	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/quest"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
@@ -1715,14 +1716,15 @@ func TestMonsterKillLeavesThePlayerDead(t *testing.T) {
 		t.Errorf("regen raised a dead character to %d", c.HP)
 	}
 
-	// The revive: in place, character.RespawnFraction of the maximum, life
-	// state 1, the time of death cleared; a second one finds nobody dead.
+	// The revive: in place, the retail handler's arithmetic from HP 0 --
+	// 1 + trunc(0.4 x MaxHP) (reviveHPDelta, round 550) -- life state 1, the
+	// time of death cleared; a second one finds nobody dead.
 	c, _, err := revivePlayer(ctx, f.chars, nil, f.hub, f.aria)
 	if err != nil {
 		t.Fatalf("revivePlayer: %v", err)
 	}
-	if want := int(float64(c.MaxHP()) * character.RespawnFraction); c.HP != want {
-		t.Errorf("revived at HP %d, want %d (RespawnFraction of %d)", c.HP, want, c.MaxHP())
+	if want := reviveHPDelta(c.MaxHP()); c.HP != want {
+		t.Errorf("revived at HP %d, want %d (1 + trunc(0.4 x %d))", c.HP, want, c.MaxHP())
 	}
 	if e, ok := f.hub.EntityByCharacterID(f.aria); !ok || e.Life != world.LifeAlive || !e.DiedAt.IsZero() {
 		t.Errorf("Aria's entity after the revive: life %d, died at %v; want life state 1 and no time of death", e.Life, e.DiedAt)
@@ -1747,10 +1749,18 @@ func TestMonsterKillLeavesThePlayerDead(t *testing.T) {
 // a dead character would charge the death penalty a second time (round 549,
 // runStrike). Two Mangyangs in BATTLE on Aria at once; the first kills her,
 // the second's swing of the same pass finds her dead.
+//
+// The wait is on the two workers' completion (observeStrikes / awaitStrikes),
+// not a sleep: CI run 36061784919 on round 549's tree failed this test on the
+// slower kakariko runner with "2 blows landed on one player from two
+// monsters' first swings, want exactly 1" -- the double kill the store's
+// transition rule closes (round 550) -- and its 300 ms sleep was the only
+// thing standing between the tick and the assertion.
 func TestSwingOnAPlayerAlreadyDeadIsDropped(t *testing.T) {
 	battleForTest(t, true)
 	deadStateForTest(t, true)
 	f := startBattleFixture(t, 28, 0, 0)
+	finished := observeStrikes(f.a)
 	first := f.monsters.SpawnSpecies("jangan", chaseMangyang, 8, 0, 0, 100000, 0, 100000, 0)
 	second := f.monsters.SpawnSpecies("jangan", chaseMangyang, -8, 0, 0, 100000, 0, 100000, 0)
 	now := aiT0
@@ -1761,7 +1771,7 @@ func TestSwingOnAPlayerAlreadyDeadIsDropped(t *testing.T) {
 	f.rec.reset()
 	monsterAITick(now) // both enter BATTLE in reach: two swings handed over this pass
 	now = now.Add(MonsterAITick)
-	time.Sleep(300 * time.Millisecond)
+	awaitStrikes(t, finished, first.ID, second.ID)
 	blows := len(f.rec.strikesOf(first.ID)) + len(f.rec.strikesOf(second.ID))
 	if blows != 1 {
 		t.Fatalf("%d blows landed on one player from two monsters' first swings, want exactly 1: the second found her dead", blows)
@@ -1778,4 +1788,204 @@ func TestSwingOnAPlayerAlreadyDeadIsDropped(t *testing.T) {
 			t.Errorf("monster %d in %v two seconds after the kill, want IDLE", id, st)
 		}
 	}
+}
+
+// observeStrikes hooks the runtime's strike workers (monsterAI.strikeDone)
+// and returns the channel each finished swing's monster id arrives on. Set
+// before the first tick: a worker starts on its monster's first swing and
+// reads the hook from then on. The hook never blocks a worker: a swing
+// nobody waits for is dropped once the buffer is full.
+func observeStrikes(a *monsterAI) <-chan int64 {
+	finished := make(chan int64, 64)
+	a.strikeDone = func(id int64) {
+		select {
+		case finished <- id:
+		default:
+		}
+	}
+	return finished
+}
+
+// awaitStrikes waits until each monster in ids has finished one swing --
+// landed or dropped -- and fails the test after 5 s otherwise: the workers'
+// completion is what the assertions after a tick's hand-off wait for, not a
+// sleep (round 550: CI run 36061784919).
+func awaitStrikes(t *testing.T, finished <-chan int64, ids ...int64) {
+	t.Helper()
+	pending := map[int64]bool{}
+	for _, id := range ids {
+		pending[id] = true
+	}
+	deadline := time.After(5 * time.Second)
+	for len(pending) > 0 {
+		select {
+		case id := <-finished:
+			delete(pending, id)
+		case <-deadline:
+			t.Fatalf("%d of %d strike workers had not finished a swing after 5 s: %v", len(pending), len(ids), pending)
+		}
+	}
+}
+
+// ---- Batch-17 review follow-ups (round 550) ----
+
+// twoBlowStore interleaves two strike workers' blows on one character
+// deterministically: the first ApplyDamage to arrive waits until the second
+// has arrived, then runs; the second runs right after it and BEFORE the first
+// worker's next store call (its penalty's GetByID) -- the window in which both
+// blows have read the pool and neither has written the penalty or the respawn.
+type twoBlowStore struct {
+	character.Store
+	arrivals                    atomic.Int32
+	both, firstDone, secondDone chan struct{}
+}
+
+func newTwoBlowStore(inner character.Store) *twoBlowStore {
+	return &twoBlowStore{Store: inner, both: make(chan struct{}), firstDone: make(chan struct{}), secondDone: make(chan struct{})}
+}
+
+func (s *twoBlowStore) ApplyDamage(ctx context.Context, id int64, amount int) (int, bool, error) {
+	switch s.arrivals.Add(1) {
+	case 1:
+		<-s.both
+		hp, died, err := s.Store.ApplyDamage(ctx, id, amount)
+		close(s.firstDone)
+		return hp, died, err
+	case 2:
+		close(s.both)
+		<-s.firstDone
+		hp, died, err := s.Store.ApplyDamage(ctx, id, amount)
+		close(s.secondDone)
+		return hp, died, err
+	}
+	return s.Store.ApplyDamage(ctx, id, amount)
+}
+
+func (s *twoBlowStore) GetByID(ctx context.Context, id int64) (*character.Character, error) {
+	select {
+	case <-s.firstDone:
+		<-s.secondDone // the first worker's penalty read waits for the second blow
+	default:
+	}
+	return s.Store.GetByID(ctx, id)
+}
+
+// ONE DEATH PENALTY PER KILL (round 550). Two monsters' swings land on Aria
+// inside each other's window: both pass runStrike's dead check, both reach
+// chars.ApplyDamage before either has written the penalty. The store admits
+// one transition to 0 (Store.ApplyDamage's contract), so exactly one blow is
+// a kill: one push, TargetDied once, the experience penalty charged ONCE
+// (level 11, exp_unit 259 x 100 = 25900 of her 30000), and the other blow
+// lands nothing and pushes nothing. Flag on: she is dead at HP 0 after it;
+// flag off: back on her feet at the respawn HP. Before this round both blows
+// read died=true (the store reported a character already at 0 as died) and
+// both charged the penalty -- her exp went to 0 -- and both pushed a death;
+// with the flag on the second's compare-and-swap in markDead failed only
+// after the penalty had landed.
+func TestTwoKillsChargeOneDeathPenalty(t *testing.T) {
+	tbl, err := leveldata.ParseCSV(strings.NewReader("level,exp,mastery_sp,exp_unit\n10,23500,9,235\n11,34898,12,259\n"))
+	if err != nil {
+		t.Fatalf("ParseCSV: %v", err)
+	}
+	loss, ok := tbl.DeathPenaltyExp(11, leveldata.DeathPenaltyKilledByMonster)
+	if !ok || loss <= 0 {
+		t.Fatalf("setup: no death penalty at level 11 (%d, %v)", loss, ok)
+	}
+	for _, flag := range []bool{true, false} {
+		t.Run(map[bool]string{true: "dead state on", false: "dead state off"}[flag], func(t *testing.T) {
+			battleForTest(t, true)
+			deadStateForTest(t, flag)
+			prev := levelTable
+			SetLevelTable(tbl)
+			t.Cleanup(func() { SetLevelTable(prev) })
+			ctx := context.Background()
+			f := startBattleFixture(t, 36, 0, 0)
+			c, _ := f.chars.GetByID(ctx, f.aria)
+			const startExp = 30000
+			if err := f.chars.SetLeveling(ctx, f.aria, 11, startExp, c.StatPoints, c.Str, c.Int); err != nil {
+				t.Fatal(err)
+			}
+			store := newTwoBlowStore(f.chars)
+			f.a.deps.chars = store
+			first := f.monsters.SpawnSpecies("jangan", chaseMangyang, 8, 0, 0, 100000, 0, 100000, 0)
+			second := f.monsters.SpawnSpecies("jangan", chaseMangyang, -8, 0, 0, 100000, 0, 100000, 0)
+			var wg sync.WaitGroup
+			for _, m := range []combat.Monster{*first, *second} {
+				wg.Add(1)
+				go func(m combat.Monster) {
+					defer wg.Done()
+					f.a.runStrike(m.ID, strikeJob{m: m, target: f.aria})
+				}(m)
+			}
+			done := make(chan struct{})
+			go func() { wg.Wait(); close(done) }()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the two workers did not both finish within 5 s: the interleaving deadlocked")
+			}
+			blows := append(f.rec.strikesOf(first.ID), f.rec.strikesOf(second.ID)...)
+			deaths := 0
+			for _, b := range blows {
+				if b.TargetDied {
+					deaths++
+				}
+			}
+			if len(blows) != 1 || deaths != 1 {
+				t.Errorf("%d blow(s) pushed, %d of them a death (%+v); want exactly one blow, the kill: the other found her at 0 and landed nothing", len(blows), deaths, blows)
+			}
+			after, _ := f.chars.GetByID(ctx, f.aria)
+			if after.Exp != startExp-loss {
+				t.Errorf("Aria's exp after two simultaneous kills = %d, want %d (one penalty of %d from %d, not two)", after.Exp, startExp-loss, loss, startExp)
+			}
+			if after.Level != 11 {
+				t.Errorf("Aria's level = %d, want 11 untouched", after.Level)
+			}
+			e, _ := f.hub.EntityByCharacterID(f.aria)
+			if flag {
+				if after.HP != 0 || e.Life != world.LifeDead {
+					t.Errorf("flag on: HP %d, life %d; want dead at 0", after.HP, e.Life)
+				}
+				if len(blows) == 1 && blows[0].TargetHP != 0 {
+					t.Errorf("flag on: the kill's push carries TargetHP %d, want 0", blows[0].TargetHP)
+				}
+			} else {
+				if want := int(float64(after.MaxHP()) * character.RespawnFraction); after.HP != want || e.Life != world.LifeAlive {
+					t.Errorf("flag off: HP %d, life %d; want the respawn HP %d, alive", after.HP, e.Life, want)
+				}
+			}
+		})
+	}
+}
+
+// A push that panics inside gateway.Session.Send -- here a test session with
+// no connection, through the real zone broadcast -- is swallowed by
+// runStrike's recover, and since round 550 leaves that session's wire lock
+// FREE: broadcast releases it by defer. Until this round the unlock came after
+// the Send, so the swallowed panic left the lock held and the next tick's
+// push to that session (and handleMonsterList on it) blocked for ever instead
+// of the process crashing. The blow itself had landed before the push.
+func TestPanickingPushLeavesTheWireLockFree(t *testing.T) {
+	battleForTest(t, true)
+	f := startBattleFixture(t, 37, 0, 0)
+	f.a.push = f.a.broadcast // the real push: each session's Send under its wire lock
+	var log lockedBuffer
+	f.a.logger = slog.New(slog.NewTextHandler(&log, nil))
+	m := f.monsters.SpawnSpecies("jangan", chaseMangyang, 8, 0, 0, 1000, 0, 15, 0)
+	f.a.runStrike(m.ID, strikeJob{m: *m, target: f.aria})
+	if !strings.Contains(log.String(), "strike panicked") {
+		t.Fatalf("no 'strike panicked' line: the test session's Send did not panic inside the push; log:\n%s", log.String())
+	}
+	if c, _ := f.chars.GetByID(context.Background(), f.aria); c.HP != character.StartingMaxHP-15 {
+		t.Errorf("Aria's HP %d, want %d: the blow lands before the push", c.HP, character.StartingMaxHP-15)
+	}
+	e, ok := f.hub.EntityByCharacterID(f.aria)
+	if !ok || e.Session == nil {
+		t.Fatal("setup: Aria has no session in the hub")
+	}
+	l := f.a.wireLock(e.Session)
+	if !l.TryLock() {
+		t.Fatal("Aria's wire lock is still held after a push that panicked inside Send: the next push to her, and her monster list, would block for ever")
+	}
+	l.Unlock()
 }

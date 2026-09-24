@@ -171,11 +171,18 @@ type monsterAI struct {
 
 	// The rest belongs to the tick (monsterAITick), which holds mu while it
 	// touches it.
-	brains     map[int64]*brain
-	rng        *rand.Rand
-	monsters   *combat.Hub
-	world      *world.Hub
-	push       func(zone string, p *proto.Packet)
+	brains   map[int64]*brain
+	rng      *rand.Rand
+	monsters *combat.Hub
+	world    *world.Hub
+	push     func(zone string, p *proto.Packet)
+	// strikeDone, when set, is told the monster id of each swing a strike
+	// worker has finished -- landed, dropped or panicked -- once runStrike
+	// has returned. A test's observer (round 550: the two-monster kill test
+	// waits on both workers through it instead of sleeping); nil in
+	// production. Set before the first tick: a worker starts on its
+	// monster's first swing and reads it from then on.
+	strikeDone func(monster int64)
 	logger     *slog.Logger
 	trace      bool
 	roamRadius float64
@@ -566,7 +573,11 @@ func (a *monsterAI) update(b *brain) {
 		// strayed past the radius home. Disclosed (round 539): the engine's
 		// retarget is the threat table's (mob-threat-retarget).
 		if !ok || e.Zone != b.m.Zone || e.Life == world.LifeDead {
-			a.tracef("ai: monster %d released (%s)", b.id, "target gone")
+			why := "target gone"
+			if ok && e.Life == world.LifeDead {
+				why = "target dead" // the word battleTick's line uses (round 550)
+			}
+			a.tracef("ai: monster %d released (%s)", b.id, why)
 			a.dispatch(b, ai.MsgCombatEnded)
 			return
 		}
@@ -757,10 +768,14 @@ func (a *monsterAI) handStrike(h strikeHandoff) {
 	}
 }
 
-// strikeWorker runs monster id's swings in order until its channel closes.
+// strikeWorker runs monster id's swings in order until its channel closes,
+// telling strikeDone of each one it finishes.
 func (a *monsterAI) strikeWorker(id int64, jobs <-chan strikeJob) {
 	for job := range jobs {
 		a.runStrike(id, job)
+		if a.strikeDone != nil {
+			a.strikeDone(id)
+		}
 	}
 }
 
@@ -777,13 +792,21 @@ func (a *monsterAI) strikeWorker(id int64, jobs <-chan strikeJob) {
 // A panic inside the blow -- a store's own -- is logged and the swing
 // dropped, and the worker goes on to the next (round 547): a goroutine's
 // panic is the process's, so without this one bad store write would take the
-// whole server down.
+// whole server down. The recover covers the push too, so a panic inside
+// gateway.Session.Send is swallowed the same way; broadcast releases each
+// session's wire lock by defer for exactly that reason (round 550: with the
+// unlock after the Send, a swallowed panic left the lock held and the next
+// tick blocked on it for ever). A runtime built without a logger -- only a
+// test's -- logs through slog's default rather than dropping the panic
+// silently.
 func (a *monsterAI) runStrike(id int64, job strikeJob) {
 	defer func() {
 		if r := recover(); r != nil {
-			if a.logger != nil {
-				a.logger.Error("ai: strike panicked, swing dropped", "monster", id, "target", job.target, "panic", r, "stack", string(debug.Stack()))
+			logger := a.logger
+			if logger == nil {
+				logger = slog.Default()
 			}
+			logger.Error("ai: strike panicked, swing dropped", "monster", id, "target", job.target, "panic", r, "stack", string(debug.Stack()))
 		}
 	}()
 	ctx := context.Background()
@@ -805,6 +828,14 @@ func (a *monsterAI) runStrike(id int64, job strikeJob) {
 		if a.logger != nil {
 			a.logger.Warn("ai: strike failed", "monster", id, "target", job.target, "err", err)
 		}
+		return
+	}
+	if out.dropped {
+		// The blow found the target already at 0 -- another kill landed
+		// between the dead check above and the store's write (round 550):
+		// the store admitted one death, this blow landed nothing, and
+		// nothing is pushed.
+		a.tracef("ai: monster %d swing at %d dropped: the target was already at 0 HP", id, job.target)
 		return
 	}
 	a.tracef("ai: monster %d strike %d for %d (HP %d)%s%s", id, job.target, out.damage, out.hp,
@@ -1048,7 +1079,9 @@ func (a *monsterAI) queue(zone string, mv *MonsterMoved) {
 // broadcast is the default push: every session in the zone, each under its
 // wire lock. OWN DESIGN: zone-wide, no interest management. A stalled client
 // blocks the send, as RunRegen's do (gateway.Session.Send has no write
-// deadline); the kill switch is the mitigation.
+// deadline); the kill switch is the mitigation. With -monster-battle on the
+// pass's swings wait behind these sends too (tick step 6), so a stalled
+// session delays the pass's blows as well as the tick.
 func (a *monsterAI) broadcast(zone string, p *proto.Packet) {
 	if a.world == nil {
 		return
@@ -1057,11 +1090,20 @@ func (a *monsterAI) broadcast(zone string, p *proto.Packet) {
 		if e.Session == nil {
 			continue
 		}
-		l := a.wireLock(e.Session)
-		l.Lock()
-		_ = e.Session.Send(p)
-		l.Unlock()
+		a.sendUnderWireLock(e.Session, p)
 	}
+}
+
+// sendUnderWireLock writes p to sess under its wire lock, released by defer
+// (round 550): a strike worker's push runs under runStrike's recover, so a
+// panic inside Send must not leave the lock held -- until this round it did,
+// and the next tick's push to that session, and handleMonsterList on it,
+// would have blocked for ever instead of the process crashing.
+func (a *monsterAI) sendUnderWireLock(sess *gateway.Session, p *proto.Packet) {
+	l := a.wireLock(sess)
+	l.Lock()
+	defer l.Unlock()
+	_ = sess.Send(p)
 }
 
 // monsterWireKey is where a session keeps its wire lock.

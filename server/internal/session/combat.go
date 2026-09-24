@@ -1433,13 +1433,19 @@ func performAttack(
 		if err != nil {
 			return err
 		}
-		result.MonsterCritical = out.critical
-		result.PlayerBlocked = out.blocked
-		result.PlayerDamageTaken = int32(out.damage)
-		result.PlayerDied = out.died
-		result.PlayerHP = int32(out.hp)
-		result.DeathExpLost = out.deathExpLost
-		strike = out.message(monster.ID, characterID)
+		// A counter that found the attacker already at 0 -- another monster's
+		// kill inside this handler's window (round 550) -- landed nothing: the
+		// result carries no counter, PlayerHP keeps the truth read above and
+		// no push is made (`strike` stays nil).
+		if !out.dropped {
+			result.MonsterCritical = out.critical
+			result.PlayerBlocked = out.blocked
+			result.PlayerDamageTaken = int32(out.damage)
+			result.PlayerDied = out.died
+			result.PlayerHP = int32(out.hp)
+			result.DeathExpLost = out.deathExpLost
+			strike = out.message(monster.ID, characterID)
+		}
 	}
 
 	if err := sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: result.Encode()}); err != nil {

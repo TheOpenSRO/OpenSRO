@@ -380,3 +380,27 @@ func TestSetHwanCountOnAMissingCharacter(t *testing.T) {
 		t.Errorf("SetHwanCount on a missing character returned %v, want ErrNotFound", err)
 	}
 }
+
+// died is the TRANSITION to 0 (round 550): a blow on a character already at 0
+// changes nothing and reports no death, so two blows racing each other report
+// one death between them. Until that round every blow on a character at 0
+// reported died=true, and two strike workers each charged the death penalty.
+func TestApplyDamageOnACharacterAtZeroReportsNoDeath(t *testing.T) {
+	store := NewMemStore()
+	ctx := context.Background()
+	c, _ := store.Create(ctx, 1, "Aria")
+
+	if _, died, err := store.ApplyDamage(ctx, c.ID, StartingMaxHP); err != nil || !died {
+		t.Fatalf("the killing blow: died=%v err=%v, want died=true", died, err)
+	}
+	hp, died, err := store.ApplyDamage(ctx, c.ID, 30)
+	if err != nil {
+		t.Fatalf("ApplyDamage on a character at 0: %v", err)
+	}
+	if died || hp != 0 {
+		t.Fatalf("a blow on a character at 0 reported hp=%d died=%v, want hp=0 died=false", hp, died)
+	}
+	if hp, died, _ := store.ApplyDamage(ctx, c.ID, 0); died || hp != 0 {
+		t.Fatalf("a zero blow (the HP read) on a character at 0 reported hp=%d died=%v, want 0 and no death", hp, died)
+	}
+}

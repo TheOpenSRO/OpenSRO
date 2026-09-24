@@ -1082,7 +1082,7 @@ func main() {
 		session.SkillStateHandler(chars, skills),
 		session.RaiseMasteryHandler(chars, skills),
 		session.PartyHandler(chars, parties),
-		session.GuildHandler(chars, guilds),
+		session.GuildHandler(chars, guilds, hub),
 		session.ChatHandler(hub),
 		session.QuestHandler(chars, quests),
 		session.DuelHandler(chars, eq, refItems, hub, duels),

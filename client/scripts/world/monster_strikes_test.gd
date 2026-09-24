@@ -172,6 +172,16 @@ func _initialize() -> void:
 		_test_world_exchange_line(world_script)
 		_test_world_dead_state(world_script)
 	_test_hud_revive_prompt()
+	# The in-tree check waits frames, so a watchdog fails the suite rather
+	# than hanging it if a script error stops it before it reports
+	# (hud_click_routing_test's pattern).
+	var watchdog := create_timer(60.0)
+	watchdog.timeout.connect(func() -> void:
+		print("FAIL the suite never reported (a script error stopped it)")
+		quit(1))
+	await process_frame
+	_check(root.is_inside_tree(), "the probe: after one frame the root is in the tree")
+	await _test_hud_prompt_off_the_tree()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
@@ -353,6 +363,35 @@ func _test_world_dead_state(world_script: GDScript) -> void:
 	_check(String(world.call("_dispatch_left_click", Vector2.ZERO)) == "dead", "a world click does nothing while dead")
 	world.call("_attack_monster", 7)
 	_check((world.get("_pending_attack") as Dictionary).is_empty(), "an attack while dead is neither walked nor sent")
+	# Round 550: the Skills tab's Use, the one cast route round 548 missed. A
+	# skill and a target are selected, so the ungated path would reach the
+	# send -- and would first forget the released attack (_released_attack),
+	# which is the sentinel here (NetClient is not connected in this suite).
+	var skill_list := ItemList.new()
+	skill_list.add_item("Smash")
+	skill_list.select(0)
+	var monster_list := ItemList.new()
+	monster_list.add_item("Mangyang")
+	monster_list.select(0)
+	var skills: Array[SkillNet.SkillSnapshot] = [SkillNet.SkillSnapshot.new()]
+	var monsters: Array[CombatNet.MonsterSnapshot] = [CombatNet.MonsterSnapshot.new()]
+	world.set("skill_list", skill_list)
+	world.set("monster_list", monster_list)
+	world.set("_skills", skills)
+	world.set("_monsters", monsters)
+	world.set("_released_attack", {"monster_id": 7})
+	world.call("_on_skill_use_pressed")
+	_check(not (world.get("_released_attack") as Dictionary).is_empty(), "the Skills tab's Use while dead sends nothing (the released attack is not forgotten)")
+	# Round 550: a held pose is not replaced. The die clip is held; a swing
+	# whose result arrives after it is refused, and the held clip stays.
+	var die := _clip(2)
+	var swing := _clip(2)
+	world.call("_hold_player_one_shot", die)
+	_check(is_same(world.get("_player_one_shot"), die) and bool(world.get("_player_one_shot_hold")), "the die clip is played and held")
+	_check(float(world.call("_play_player_once", swing)) == 0.0 and is_same(world.get("_player_one_shot"), die),
+		"a one-shot started over the held die clip is refused, and the held clip stays")
+	world.call("_hold_player_one_shot", die)
+	_check(is_same(world.get("_player_one_shot"), die) and bool(world.get("_player_one_shot_hold")), "the repeated kill report's second pose keeps the hold")
 	# A second kill report (the push repeating a result's) changes nothing.
 	world.call("_on_monster_attacked", _push_for(_result(200, 0, false, true, true), 77))
 	_check(bool(world.get("_player_dead")), "a repeated kill report keeps the state")
@@ -370,10 +409,32 @@ func _test_world_dead_state(world_script: GDScript) -> void:
 	world.call("_on_revive_result", revived)
 	_check(not bool(world.get("_player_dead")), "a revive result with no error brings the player back")
 	_check(not bool(world.get("_player_one_shot_hold")), "and releases the held pose")
+	# Alive again: the Skills tab's Use goes through (to a NetClient that is
+	# not connected, which sends nothing), and a one-frame die clip -- one
+	# that cannot start -- sets no hold on the swing that is playing.
+	world.set("_released_attack", {"monster_id": 7})
+	world.call("_on_skill_use_pressed")
+	_check((world.get("_released_attack") as Dictionary).is_empty(), "revived, the Skills tab's Use goes through")
+	world.call("_play_player_once", swing)
+	world.call("_hold_player_one_shot", _clip(1))
+	_check(is_same(world.get("_player_one_shot"), swing) and not bool(world.get("_player_one_shot_hold")),
+		"a die clip of one frame starts nothing and holds nothing (the swing under way is not pinned)")
 
+	skill_list.free()
+	monster_list.free()
 	label.free()
 	player.free()
 	world.free()
+
+## A clip of `frames` keyframes on one bone, half a second long.
+func _clip(frames: int) -> BanReader.ParsedAnimation:
+	var anim := BanReader.ParsedAnimation.new()
+	anim.duration_ms = 500
+	var bone := BanReader.Bone.new()
+	for i in frames:
+		bone.keyframes.append(BanReader.Keyframe.new())
+	anim.bones.append(bone)
+	return anim
 
 ## Round 548, the Revive button on a bare HUD (no archive, not in the tree):
 ## show puts one prompt up with a Revive button whose click emits
@@ -400,4 +461,43 @@ func _test_hud_revive_prompt() -> void:
 	_check(prompts.size() == 1, "a second show replaces the first (%d prompt(s) on the HUD)" % prompts.size())
 	panels.call("hide_revive_prompt")
 	_check(panels.get_node_or_null("RevivePrompt") == null, "hide_revive_prompt takes it down")
+	# Round 550: the bag's right-click use while dead goes to chat, not out.
+	var notices: Array[String] = []
+	panels.connect("system_notice", func(text: String) -> void: notices.append(text))
+	var icon := TextureRect.new()
+	icon.set_meta("inv_slot", 3)
+	icon.set_meta("inv_item_id", 4)
+	icon.set_meta("inv_qty", 1)
+	var right := InputEventMouseButton.new()
+	right.button_index = MOUSE_BUTTON_RIGHT
+	right.pressed = true
+	panels.set("player_dead", true)
+	panels.call("_on_inventory_cell_input", right, icon)
+	_check(notices.size() == 1 and notices[0] == "You are dead. Revive first.", "a right-click on a bag item while dead says so in chat (got %s)" % str(notices))
+	panels.set("player_dead", false)
+	panels.call("_on_inventory_cell_input", right, icon)
+	_check(notices.size() == 1, "alive, the same click is not refused here (the server decides)")
+	icon.free()
+	panels.free()
+
+## Round 550: a prompt whose HUD leaves the tree before the frame it waits
+## for is left where it is -- no viewport is read off the tree. Until then
+## is_instance_valid let get_viewport_rect run on the node outside the tree
+## (an engine error) and placed it at a negative x. Needs the root in the
+## tree, which a --script suite has only after _initialize's first frame.
+func _test_hud_prompt_off_the_tree() -> void:
+	var panels_script := load("res://scripts/ui/hud/hud_panels.gd") as GDScript
+	if panels_script == null:
+		return
+	var panels: Control = panels_script.new()
+	root.add_child(panels)
+	_check(panels.is_inside_tree(), "the probe: the HUD is in the tree")
+	panels.call("show_revive_prompt", "You were killed.")
+	var prompt: Control = panels.get_node_or_null("RevivePrompt")
+	_check(prompt != null and prompt.is_inside_tree(), "the prompt is up, waiting for its frame")
+	root.remove_child(panels)
+	await process_frame
+	await process_frame
+	_check(is_instance_valid(prompt) and prompt.position == Vector2.ZERO,
+		"a prompt whose HUD left the tree before its frame is left unplaced (position %s)" % (str(prompt.position) if is_instance_valid(prompt) else "freed"))
 	panels.free()

@@ -133,10 +133,18 @@ const (
 //	}
 //
 // The constant is `FMUL QWORD PTR ds:0xb460f0` at 0x004e1141 and 0x004e1190 --
-// a QWORD, so the double 0.4. At float width the same address reads
-// -1.08e-19, which would resurrect every character on a negative sliver of
-// health; only the double is coherent. Operand size has decided four constants
-// in this project now.
+// a QWORD, so a double: the bytes `00 00 00 a0 99 99 d9 3f` are
+// 0x3FD99999A0000000 = 0.4000000059604645, the FLOAT 0.4 widened to a double
+// (the exact double 0.4 would end ...999A; round 550 corrected the "double
+// 0.4" wording here and in the records). At float width the same address
+// reads -1.08e-19, which would resurrect every character on a negative sliver
+// of health; only the double is coherent. Operand size has decided four
+// constants in this project now. RespawnFraction is the exact 0.4 rather than
+// that value, and for a pool it makes no difference: every use truncates
+// (int() here, FLOOR in the SQL store, the handler's own fistp under rounding
+// control 11 at 0x510122), and for an integer maximum m the fractional part
+// of 0.4 x m is one of 0, .2, .4, .6, .8, so the extra 5.96e-9 x m cannot
+// cross an integer below m = 33 million.
 //
 // This does NOT apply to a level-up. Nothing in the level path zeroes the
 // stored pool, so the branch above never fires there and a level-up heals to
@@ -374,7 +382,22 @@ type Store interface {
 	SetHwanCount(ctx context.Context, characterID int64, count int) error
 
 	// ApplyDamage reduces characterID's HP by amount (never below 0),
-	// returning the resulting HP and whether this brought it to exactly 0.
+	// returning the resulting HP and whether THIS call took it from above 0
+	// to 0. A character already at 0 is left as it is and reports (0, false)
+	// -- the pool write is a no-op, made under the store's own lock or in
+	// one UPDATE, so two blows racing each other report one death between
+	// them (round 550). Until that round a character already at 0 reported
+	// died=true to every further blow, and two strike workers passing
+	// session.runStrike's dead check together each charged the death
+	// penalty. The engine's own rule is the same test one layer up:
+	// GObjPC::FUN_004a87d0 lands nothing unless GetLifeState() == 1
+	// (`cmp al,0x1` at 0x4a87e8); srrevamp's flag-off respawn path keeps
+	// no life state, so the store makes the call on the pool itself.
+	// session/duel.go's blow shares this: a duel blow that finds the
+	// opponent already at 0 -- only in the window between the duel's own
+	// dead gate and this write -- reports (0, false) and the duel goes on
+	// at OpponentHP 0, where it used to report a death and ResetHP a dead
+	// character.
 	ApplyDamage(ctx context.Context, characterID int64, amount int) (remainingHP int, died bool, err error)
 
 	// ResetHP restores characterID's HP to MaxHP. Used on a LEVEL-UP, where

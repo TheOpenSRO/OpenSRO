@@ -11,6 +11,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/guild"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
 // Guild opcodes, our own protocol. All require a prior OpLogin. Unlike
@@ -382,12 +383,14 @@ func guildLevelResult(g *guild.Guild, levelledUp bool) *GuildLevelResult {
 
 // GuildHandler returns a gateway.Handler implementing
 // OpGuildCreate/OpGuildJoin/OpGuildLeave/OpGuildInfo/OpGuildPoints/
-// OpGuildLevel against guilds.
-func GuildHandler(chars character.Store, guilds guild.Store) gateway.Handler {
+// OpGuildLevel against guilds. hub is the world hub whose life state the
+// founder's and the level-up's "must be alive" tests read (round 550); nil
+// leaves HP > 0 as the whole of that test, as before.
+func GuildHandler(chars character.Store, guilds guild.Store, hub *world.Hub) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
 		case OpGuildCreate:
-			return handleGuildCreate(ctx, sess, p, chars, guilds)
+			return handleGuildCreate(ctx, sess, p, chars, guilds, hub)
 		case OpGuildJoin:
 			return handleGuildJoin(ctx, sess, p, chars, guilds)
 		case OpGuildLeave:
@@ -397,7 +400,7 @@ func GuildHandler(chars character.Store, guilds guild.Store) gateway.Handler {
 		case OpGuildPoints:
 			return handleGuildPoints(ctx, sess, p, chars, guilds)
 		case OpGuildLevel:
-			return handleGuildLevel(ctx, sess, p, chars, guilds)
+			return handleGuildLevel(ctx, sess, p, chars, guilds, hub)
 		default:
 			return nil
 		}
@@ -463,8 +466,12 @@ func handleGuildPoints(ctx context.Context, sess *gateway.Session, p *proto.Pack
 // level-up is CGuild::HandleLevelUp's (0x005c63d0) path through
 // guild.Store.LevelUp, whose ladder (guild.CheckLevelUp) is the engine's
 // order: dead 0x4c07, no guild 0x4c0d, not the master 0x4c1e, level 5
-// 0x4c21, gold 0x4c31, guild points 0x4c32. Alive is HP > 0, the stand-in the
-// founder check uses for the same IGObj::GetLifeState test.
+// 0x4c21, gold 0x4c31, guild points 0x4c32. Alive is the world hub's life
+// state (world.LifeDead, a monster's kill under -player-dead-state, round 550)
+// with HP > 0 kept as the stand-in the founder check also keeps for a
+// character the hub does not hold -- the engine's test is IGObj::GetLifeState
+// == 1 (`mov edx,[eax+0xf8]` at 0x5c63e3, `call edx` at 0x5c63eb, `cmp al,0x1`
+// at 0x5c63ed, `mov ax,0x4c07` at 0x5c63f1), else 0x4c07.
 //
 // The gold goes through chars.DeductGold inside the store's LevelUp (its
 // pay step), so a guild never keeps a level it did not pay for. The engine
@@ -492,7 +499,7 @@ func handleGuildPoints(ctx context.Context, sess *gateway.Session, p *proto.Pack
 //
 // The server pushes no gold update (as after founding): the client re-reads
 // the character's stats, and the guild's points, after a level-up.
-func handleGuildLevel(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, guilds guild.Store) error {
+func handleGuildLevel(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, guilds guild.Store, hub *world.Hub) error {
 	reply := func(r *GuildLevelResult) error {
 		return sess.Send(&proto.Packet{Opcode: OpGuildLevelResult, Data: r.Encode()})
 	}
@@ -532,7 +539,7 @@ func handleGuildLevel(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		paid = gold
 		return nil
 	}
-	g, err := guilds.LevelUp(ctx, characterID, pc.HP > 0, pc.Gold, pay)
+	g, err := guilds.LevelUp(ctx, characterID, pc.HP > 0 && !deadBySession(hub, sess), pc.Gold, pay)
 	if err != nil {
 		if paid > 0 {
 			// Not ctx: a stop that cancelled the level-up must not cancel
@@ -559,7 +566,7 @@ func guildMemberSnapshots(members []guild.Member) []GuildMemberSnapshot {
 	return out
 }
 
-func handleGuildCreate(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, guilds guild.Store) error {
+func handleGuildCreate(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, guilds guild.Store, hub *world.Hub) error {
 	req, err := DecodeGuildCreateRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpGuildCreateResult, Data: (&GuildResult{Error: "malformed request"}).Encode()})
@@ -578,10 +585,15 @@ func handleGuildCreate(ctx context.Context, sess *gateway.Session, p *proto.Pack
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpGuildCreateResult, Data: (&GuildResult{Error: "lookup failed"}).Encode()})
 	}
-	// Alive is HP > 0. The engine asks IGObj::GetLifeState (vtable +0xf8) for
-	// 1; srrevamp stores no life state, and a character at 0 HP is the one
-	// ApplyDamage reports as died.
-	if err := guild.CheckCreator(founder.HP > 0, founder.Level, founder.Gold); err != nil {
+	// Alive is the life state proper since round 550: the world hub's
+	// world.LifeDead, which a monster's kill sets under -player-dead-state
+	// (deadBySession), with HP > 0 kept as the stand-in for a character the
+	// hub does not hold (no hub, or not in the world). The engine asks
+	// IGObj::GetLifeState (vtable +0xf8) for 1 in FUN_00514b20 and answers
+	// 0x4c07 GUILDERR_IM_DEAD otherwise (guild.md's founder-check table, step
+	// 2). HP alone let a dead character through once a GM's /heal had filled
+	// its pools without reviving it.
+	if err := guild.CheckCreator(founder.HP > 0 && !deadBySession(hub, sess), founder.Level, founder.Gold); err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpGuildCreateResult, Data: (&GuildResult{Error: guildErrorMessage(err)}).Encode()})
 	}
 

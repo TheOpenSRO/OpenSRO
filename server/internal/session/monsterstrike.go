@@ -54,7 +54,8 @@ const (
 // character TargetCharacterID. Every field is the attacker's OpAttackResult's
 // own number for that counter: Damage is PlayerDamageTaken (0 when blocked),
 // TargetHP is PlayerHP (after a death, the HP the target was put back on its
-// feet with) and DeathExpLost is DeathExpLost.
+// feet with -- or 0 under -player-dead-state, round 549) and DeathExpLost is
+// DeathExpLost.
 type MonsterAttacked struct {
 	MonsterID         int64
 	TargetCharacterID int64
@@ -143,6 +144,12 @@ type monsterStrikeOutcome struct {
 	died         bool
 	hp           int
 	deathExpLost int64
+	// dropped is a blow that found its target already at 0 HP (round 550):
+	// nothing landed and nothing is reported -- performAttack's result
+	// carries no counter and runStrike pushes nothing -- as the engine's
+	// GObjPC::FUN_004a87d0 lands nothing on a character whose life state is
+	// not 1 (`cmp al,0x1` at 0x4a87e8). The other fields are zero.
+	dropped bool
 }
 
 // message is the outcome as the OpMonsterAttacked the zone is sent.
@@ -237,6 +244,18 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	if err != nil {
 		return monsterStrikeOutcome{}, fmt.Errorf("combat: applying counterattack: %w", err)
 	}
+	if !playerDied && hp == 0 {
+		// The blow found the character already at 0: a second monster's kill,
+		// or this one's own earlier swing, landed between the caller's dead
+		// check and this write (round 550). The store made the call under its
+		// own lock -- died is the transition to 0, and a character at 0
+		// reports (0, false) -- so exactly ONE of two racing kills charges
+		// the death penalty and enters the dead state, whatever the flag:
+		// until this round both blows read died=true and both charged
+		// leveldata.DeathPenaltyExp. Nothing landed (the roll and the wear
+		// above stand, as before), so nothing is reported.
+		return monsterStrikeOutcome{dropped: true}, nil
+	}
 	out.damage = incoming
 	out.died = playerDied
 	if playerDied {
@@ -276,7 +295,11 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 			// GObjPC::FUN_004e67b0 and the engine's death path do -- until
 			// OpRevive or the auto-revive fallback. The result and the push
 			// therefore carry HP 0, which is how round 548's client knows
-			// (MonsterStrikes.leaves_dead).
+			// (MonsterStrikes.leaves_dead). The compare-and-swap inside
+			// cannot lose to another kill (the store's transition above
+			// admits one), and a revive cannot be between its pools and
+			// its state (revivePlayer sets the state first); its result is
+			// therefore not read here.
 			markDead(deps, characterID, time.Now())
 			out.hp = 0
 			return out, nil

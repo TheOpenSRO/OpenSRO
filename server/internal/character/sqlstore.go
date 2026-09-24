@@ -238,19 +238,32 @@ func (s *SQLStore) DeductStorageGold(ctx context.Context, characterID int64, amo
 	return nil
 }
 
-// ApplyDamage implements Store.
+// ApplyDamage implements Store. The UPDATE touches only a row above 0, so a
+// row it finds at 0 is left as it is and the row lock decides which of two
+// racing blows made the transition (Store's contract, round 550); a row the
+// UPDATE skipped is then told apart from a missing one.
 func (s *SQLStore) ApplyDamage(ctx context.Context, characterID int64, amount int) (int, bool, error) {
 	var hp int
 	err := s.db.QueryRowContext(ctx,
-		`UPDATE characters SET hp = GREATEST(hp - $1, 0) WHERE id = $2 RETURNING hp`,
+		`UPDATE characters SET hp = GREATEST(hp - $1, 0) WHERE id = $2 AND hp > 0 RETURNING hp`,
 		amount, characterID).Scan(&hp)
+	if err == nil {
+		return hp, hp == 0, nil
+	}
+	if err != sql.ErrNoRows {
+		return 0, false, fmt.Errorf("character: applying damage: %w", err)
+	}
+	// No row above 0: the character is missing, or the blow found it at 0.
+	// The 0 reported is the HP the blow found; nothing was written.
+	var exists bool
+	err = s.db.QueryRowContext(ctx, `SELECT true FROM characters WHERE id = $1`, characterID).Scan(&exists)
 	if err == sql.ErrNoRows {
 		return 0, false, ErrNotFound
 	}
 	if err != nil {
 		return 0, false, fmt.Errorf("character: applying damage: %w", err)
 	}
-	return hp, hp == 0, nil
+	return 0, false, nil
 }
 
 // Heal implements Store.

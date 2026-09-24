@@ -326,3 +326,38 @@ func TestSQLRespawnMatchesTheMemStore(t *testing.T) {
 		t.Errorf("SQL respawn gave the full pool (%d)", got.HP)
 	}
 }
+
+// The SQL store's ApplyDamage reports died only for the blow that took the
+// row from above 0 to 0 (round 550; the UPDATE touches only a row above 0),
+// tells a row it found at 0 apart from a missing one, and a blow of 0 -- the
+// HP read -- keeps reporting the pool.
+func TestSQLStoreApplyDamageAtZeroReportsNoDeath(t *testing.T) {
+	s := openTestSQLStore(t)
+	ctx := context.Background()
+	c, err := s.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if hp, died, err := s.ApplyDamage(ctx, c.ID, 30); err != nil || died || hp != c.HP-30 {
+		t.Fatalf("a blow of 30: hp=%d died=%v err=%v, want hp=%d and no death", hp, died, err, c.HP-30)
+	}
+	if hp, died, err := s.ApplyDamage(ctx, c.ID, 0); err != nil || died || hp != c.HP-30 {
+		t.Fatalf("the HP read on a living character: hp=%d died=%v err=%v, want hp=%d and no death", hp, died, err, c.HP-30)
+	}
+	if hp, died, err := s.ApplyDamage(ctx, c.ID, 1<<30); err != nil || !died || hp != 0 {
+		t.Fatalf("the killing blow: hp=%d died=%v err=%v, want hp=0 died=true", hp, died, err)
+	}
+	if hp, died, err := s.ApplyDamage(ctx, c.ID, 30); err != nil || died || hp != 0 {
+		t.Fatalf("a blow on a row at 0: hp=%d died=%v err=%v, want hp=0 died=false", hp, died, err)
+	}
+	if hp, died, err := s.ApplyDamage(ctx, c.ID, 0); err != nil || died || hp != 0 {
+		t.Fatalf("the HP read on a row at 0: hp=%d died=%v err=%v, want 0 and no death", hp, died, err)
+	}
+	if _, _, err := s.ApplyDamage(ctx, c.ID+999, 30); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("a blow on a missing character: %v, want ErrNotFound", err)
+	}
+	got, err := s.GetByID(ctx, c.ID)
+	if err != nil || got.HP != 0 {
+		t.Fatalf("the row after the blows: HP %d (err %v), want 0", got.HP, err)
+	}
+}

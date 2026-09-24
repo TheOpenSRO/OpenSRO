@@ -33940,13 +33940,15 @@ changed; every flag stays off by default, and all three code changes sit behind 
   copy made at `esp+0x20` (`0x545eb6..0x545eba`) plus 8 -- its word field; the two pointers pushed
   to `0x430ad0` at `0x545ee0`/`0x545ee6` are the same pair. The row's "two six-field location
   records" is corrected to the word pointers.
-- **`Nest_Hatch`'s heading branches** (`0x56098a..0x560a30`): the four TypeID-shape tests each `jne
+- **`Nest_Hatch`'s heading branches** (`0x56098a..0x560a3c`; round 547 wrote `..0x560a30`, two instructions short of the `0x560a1b` path's own `fmul`/`fstp` at `0x560a36`/`0x560a3c` -- corrected in round 550): the four TypeID-shape tests each `jne
   0x560a1b` (`0x56098e`, `0x56099c`, `0x5609a4`, `0x5609b4`); `cmp BYTE [edi+0x89],0x3` at
   `0x5609b6` and `jne 0x5609ee` at `0x5609bd` (the rand path); `0x5609bf` and `0x560a1b` both
   `movzx` the nest row's `+0x1c` word and scale it through `0xb45c28`, `0xb45c30`, `0xb45e00`.
   **The three doubles, read with `objdump -s`**: `0xb45c28` = `00 00 00 00 e0 ff ef 40` = 65535.0,
   `0xb45c30` = `00 00 00 00 00 80 76 40` = 360.0, `0xb45e00` = `00 00 00 a0 46 df 91 3f` =
-  0.017453292 (pi/180) -- round 239's row had them right; round 544's "not read" in `combat.go`
+  0.017453292 (pi/180; exactly `3f91df46a0000000` = 0.01745329238474369, float32(pi/180) widened
+  to a double, not the exact double pi/180 `3f91df46a2529d39` -- round 550's clause, so nobody
+  recomputes a heading bit-exactly from the double) -- round 239's row had them right; round 544's "not read" in `combat.go`
   and in its entry understated the record. So the `_RefNest` row-8 wording ("for a rarity-3
   species; every other species gets rand()") had the rule backwards for the other shapes: every
   shape but the roster's takes the nest direction, and of the roster's shape only a non-rarity-3
@@ -34056,10 +34058,12 @@ result. Client only; no existing opcode or layout changed; the server tree is un
   at `0x51017f`) -> `GObjPC::Revive(1)` (`push 0x1; call 0x4df290` at `0x5100e3`) and
   `ApplyHPMPDelta(GetParam(3) x 0.4, GetParam(4) x 0.4, 8)`; option 1 -> `Revive(0)`, the
   return-point path, and `GameEventLog_Record(0x15, 2, 0)`. **The fraction is read off the binary:
-  `fmul QWORD PTR ds:0xb460f0` at `0x5100fa`/`0x510130`, and `0xb460f0` = `00 00 00 a0 99 99 d9 3f`,
-  the double 0.4** -- the constant `character.RespawnFraction` already cites from the create/load
-  path (`0x4e1141`/`0x4e1190`). So "revive at 40 %" is the handler's own number, not only the load
-  path's. Filed on the `0050fee0` row of `recovered_names.tsv`.
+  `fmul QWORD PTR ds:0xb460f0` at `0x5100fa`/`0x510130`, and `0xb460f0` = `00 00 00 a0 99 99 d9 3f`**
+  -- the constant `character.RespawnFraction` already cites from the create/load path
+  (`0x4e1141`/`0x4e1190`). So "revive at 40 %" is the handler's own number, not only the load
+  path's. Filed on the `0050fee0` row of `recovered_names.tsv`. (Round 550: those bytes are
+  `0x3FD99999A0000000` = 0.4000000059604645, the FLOAT 0.4 widened to a double, not "the double
+  0.4" this entry called it -- the exact double ends `...999A`; no pool integer differs.)
 - **`GObjPC::Revive` (`0x4df290`)**: param 1 passes `1` through `SetLifeState` (`+0x1f0`), gives one
   HP through `ApplyHPMPDelta(this, 1, 0, 8)` and clears the cause byte `+0x72d`; param 0 does not
   set the life state and goes to a return point through `CGObjPC::FUN_004e08a0` and slot `0x378`.
@@ -34147,9 +34151,10 @@ pick-ups, duel blows, trade requests, zone changes and GM teleports are refused;
 treats it as no target; it comes back through `OpRevive 0x0028` (in place, at
 `character.RespawnFraction` of each maximum, answered by `OpReviveResult 0x0029` and a stats push)
 or, for a session that never sends one, through a disclosed 30 s auto-revive. **Flag off: nothing
-changes** -- the kill respawns at once and the wire is byte for byte what it was (the flag-off kill
-tests of rounds 541/546 still pin the respawned HP). No opcode number or layout changed; the pair
-0x0028/0x0029 is round 548's contract.
+changes on a kill** -- it respawns at once and the kill's wire is what it was (the flag-off kill
+tests of rounds 541/546 still pin the respawned HP); the entry revive of a stored HP 0 is
+deliberately flag-independent (below; round 550 softened this sentence, which said "byte for
+byte"). No opcode number or layout changed; the pair 0x0028/0x0029 is round 548's contract.
 
 **Grounding, re-read on the RE box for this round (2026-09-24; the reading is in
 `docs/protocol/monster_ai.md`, "The player's dead state: the server half (round 549)").**
@@ -34160,8 +34165,8 @@ tests of rounds 541/546 still pin the respawned HP). No opcode number or layout 
   or **option 2 with `IGObj::GetMaxLevel` at most 10** (`cmp al,0xa; ja` at `0x51017f`) ->
   `GObjPC::Revive(1)` (`push 0x1; call 0x4df290` at `0x5100e3` / `0x51018b`) +
   `ApplyHPMPDelta(GetParam(3) x 0.4, GetParam(4) x 0.4, 8)` (`fmul QWORD ds:0xb460f0` at `0x5100fa`
-  / `0x51019e`, the double `character.RespawnFraction` cites); **option 1 -> `Revive(0)`**, the
-  return-point path.
+  / `0x51019e`, the constant `character.RespawnFraction` cites -- the float 0.4 widened to a
+  double, each product truncated; round 550); **option 1 -> `Revive(0)`**, the return-point path.
 - **The return point, READ this round** (the plan asked for it before choosing): `Revive(0)` asks
   `CGObjPC::FUN_004e08a0` for a region, a position and a world id and teleports through slot
   `0x378`; that function reads **`_CHAR.AppointedTeleport`** (charData `+0xa4`) and takes the gate's
@@ -34171,8 +34176,9 @@ tests of rounds 541/546 still pin the respawned HP). No opcode number or layout 
   `CGObjPC::ResolveRevivePoint` on a new `recovered_names.tsv` row `004e08a0`. srrevamp has no
   appointed teleport, no gates and no region frame, so the return cannot be built: **a character of
   max level 10 or under revives in place as retail's option 2 does (grounded); above that the
-  in-place revive is a disclosed stand-in**, both on one code path, with `Level` standing in for
-  `GetMaxLevel` (equal here: a death never costs a level).
+  in-place revive is a disclosed stand-in**, both on one code path and no level test made
+  (`GetMaxLevel` is not modelled; round 550 corrected the "`Level` standing in" prose, which read
+  as if one were).
 - Life state 1 ALIVE / 2 DEAD: `character_state.md` rounds 411-413 (`world.LifeAlive` /
   `world.LifeDead`). `GObjPC::Revive` (`0x4df290`) passes 1 through `SetLifeState` on its param-1
   path only.
@@ -34195,8 +34201,9 @@ tests of rounds 541/546 still pin the respawned HP). No opcode number or layout 
   `OpReviveResult` with `ReviveResult` (`Encode` / `DecodeReviveResult`: u16 error + s32 HP + s32
   MP, the client's bytes), `AutoReviveAfter` (30 s, own design), `deadRefusal`, `deadBySession` /
   `deadCharacter`, `markDead` (state 2 + time, the potion queue dropped, the keep-up cancelled),
-  `revivePlayer` (only in state 2; `RespawnHP`, the MP tracker to `RespawnMP`, then the CAS 2 -> 1
-  last so two racing revives send one result), `sendRevived` (the result, then the stats push),
+  `revivePlayer` (only in state 2; as written here: `RespawnHP`, the MP tracker to `RespawnMP`, then
+  the CAS 2 -> 1 last -- round 550 turned it round to the handler's order, the CAS first and then
+  `Heal` by `1 + trunc(0.4 x max)`), `sendRevived` (the result, then the stats push),
   `ReviveHandler`, `RunAutoRevive` / `autoReviveTick`.
 - `session/monsterstrike.go`: `strikeDeps` gains `hub` and `potions`; a death under the flag
   calls `markDead` and returns `hp` 0 (no `RespawnHP`, no MP refill); off, as before. `performAttack`,
@@ -34222,7 +34229,7 @@ tests of rounds 541/546 still pin the respawned HP). No opcode number or layout 
 10; the empty request; the fallback and its 30 s; the refusal wording and the pick-up / duel /
 zone-change / GM refusals (retail handlers not read for a life-state test; the pick-up handler
 `0x034` is a vtable thunk); the trade-accept refusal; revive at entry rather than staying dead
-across sessions; `Level` for `GetMaxLevel`. Not modelled: the return point, the option byte, the
+across sessions. Not modelled: the return point, the option byte, the
 item kind usable while dead, the siege gate, the cause-2 branch, the duel's own death kind.
 
 **Tests** (`cd server && go build ./... && go test -count=1 -p 1 ./...` green; the list is in the
@@ -34254,3 +34261,226 @@ in rounds 541-548.
 `Release client` run is green (`gh run list`); an older client against the flag sees HP 0 and no
 button, cannot walk or swing, and is freed only by the 30 s fallback. Then the live check in the
 section, then the override line in `deploy/README.md`.
+
+## Batch-17 review follow-ups (rounds 547-549): one death penalty per kill, the recover narrowed to the blow, the dead gates the client and docs missed, record wording (round 550)
+
+The batch-17 review notes (rounds 547-549), each re-checked on the RE box (`/var/tmp/decomp_server`,
+`/var/tmp/srv.asm`, `objdump -s` on `/var/tmp/SR_GameServer.exe`) before it was landed. Six code
+changes -- four server, two client -- each with a test that fails without it; the rest are comments
+and records. The batch-18 review of this round's first cut sent back two blocking follow-ups, folded
+in before the commit: the CI failure below was unrecorded and its test slept, and the auto-revive
+warning's entry outlived the revive by a pass (the `autoReviveTick` bullet). No opcode or layout
+changed; every flag stays off by default. One review claim was
+found WRONG on re-reading and is corrected rather than implemented: the retail resurrect handler
+TRUNCATES its 0.4 products, it does not round.
+
+**The CI failure on the base, closed.** Run `36061784919` on `7b321dc` (round 549; the
+`kakariko-runner`, `go test ./... -v -p 1`; read with `gh run view --log-failed`) failed
+`TestSwingOnAPlayerAlreadyDeadIsDropped` in 0.30 s: `monsterai_test.go:1767: 2 blows landed on one
+player from two monsters' first swings, want exactly 1: the second found her dead` -- the double
+kill of the first code note below (both workers past `runStrike`'s dead check, both `ApplyDamage`s
+reporting `died=true`), surfacing on the slower runner where the dev box's 40 plain and 5 `-race`
+runs had not shown it. The store's transition rule (the first server bullet) is its fix. The test's
+only synchronisation with the two workers was a 300 ms `time.Sleep`; it now waits on both workers
+through `monsterAI.strikeDone`, a per-swing completion hook the worker calls after each `runStrike`
+(`observeStrikes` / `awaitStrikes`: a 5 s bound that fails loudly; nil in production), so a slow
+runner can turn the test neither way. `go test -count=30 -p 1 -run
+'TestSwingOnAPlayerAlreadyDeadIsDropped$' ./internal/session/` and `-count=10 -race` pass.
+
+**Grounding, re-read for this round.**
+
+- **`GObjPC::ApplyHPMPDelta` (`0x4a86a0`) is additive, through `GObjPC::FUN_004a87d0`
+  (`0x4a87d0`).** The core reads the life state first (`call [vtable+0xf8]` at `0x4a87e6`, `cmp
+  al,0x1; jne 0x4a88e0` at `0x4a87e8`: nothing lands off state 1), then for a non-zero HP delta
+  (EAX): `GetHP` (`+0x108`, `0x4a8813`) into EDI, **`add edi,ebx` at `0x4a8821`**, `GetMaxHP`
+  (`+0x110`), then `mov eax,edi; call 0x4a66f0` at `0x4a8849`/`0x4a884b` -- `GObjChar::FUN_004a66f0`,
+  the setter, which clamps: at or above `GetMaxHP` it stores the maximum, below 0 it stores 0
+  (its own "CLAMP() ==> min exceeded max" log when the maximum is negative). The MP half is the
+  same through `+0x10c`/`+0x114`/`FUN_004a6790` (`0x4a8888` `add edi,[ebp+0x8]`). The `0x4a86a0`
+  wrapper hands both deltas down (the MP delta floored at 0) after scaling each non-zero one by
+  `1 - param/100`: the HP delta by param 143 (`mov eax,0x8f` at `0x4a86bb` into `EvaluateParam`
+  `0x4b3740`, `fdiv QWORD ds:0xb45af0` at `0x4a86c9`, `fld1; fsubrp; fimul` at `0x4a86cf..0x4a86d3`),
+  the MP delta by 144 (`mov eax,0x90` at `0x4a8706`, `fdiv` at `0x4a8714`, `fimul` at `0x4a871e`);
+  `0xb45af0` = `00000000 00005940` = 100.0 (`objdump -s`). Those are the panic and combustion
+  percentages round 491 recorded (`AbnormalState_Panic_Apply21` writes 143,
+  `AbnormalState_Combustion_Apply22` 144, each only while the state is on -- the 2026-09-15
+  "structurally zero" was corrected there), so a revive's +1 and its trunc(0.4 x max) reach
+  `FUN_004a87d0` unscaled unless one of the two is on (not modelled, as round 491 says), and
+  `FUN_004a87d0` itself scales nothing.
+- **The handler's products are TRUNCATED, not rounded.** `GObjPC_HandleResurrectMsg_053`
+  (`0x50fee0`), the death-cause-2 / option-2 path: `push 0x1; call 0x4df290` (`0x5100e3`/`0x5100e7`,
+  `Revive(1)`), `GetParam(3)` (`push 0x3; call [vtable+0x104]` at `0x5100f4`/`0x5100f8`), `fmul
+  QWORD ds:0xb460f0` (`0x5100fa`), then **`fnstcw [esp+0x12]; movzx eax,...; or eax,0xc00; mov
+  [esp+0x14],eax; fldcw [esp+0x14]; fistp QWORD [esp+0x18]; fldcw [esp+0x16]`** at
+  `0x510102..0x51012a` -- rounding control bits 11, round toward zero, MSVC's inline `_ftol` -- the
+  same for `GetParam(4)` at `0x510130..0x510159`, then `push 0x8; push eax; push edi; push esi;
+  call 0x4a86a0` at `0x510148..0x51015d`. The review note's "round(GetParam(3)*0.4)" was a misread
+  of the `fistp`; `srrevamp`'s `int(float64(max) * 0.4)` is the same truncation.
+- **So retail's option-2 HP is `min(MaxHP, 1 + trunc(0.4 x MaxHP))`**: `Revive(1)` (`0x4df290`,
+  param-1 tail) does `SetLifeState(1)` (`+0x1f0`), `+0x55c`, `SetBodyMode` (`+0x318`) and
+  `ApplyHPMPDelta(this, 1, 0, 8)` -- HP 0 + 1 -- and the handler then adds `trunc(0.4 x MaxHP)`.
+  81 for a maximum of 200, where round 549 gave 80. MP: `min(MaxMP, MP at death + trunc(0.4 x
+  MaxMP))`; no MP write was found in `GObjPC_OnDeath` (`0x4e6980`) or `FUN_004e67b0` (one probe over
+  their decompiles for `+0x10c`/`+0x114`/`FUN_004a6790`/either `ApplyHPMPDelta`; not a proof).
+- **`0xb460f0` = `00 00 00 a0 99 99 d9 3f` = `0x3FD99999A0000000` = 0.4000000059604645**, the FLOAT
+  0.4 widened to a double (the exact double 0.4 is `0x3FD999999999999A`); **`0xb45e00` = `00 00 00
+  a0 46 df 91 3f` = `0x3F91DF46A0000000` = 0.01745329238474369**, float32(pi/180) widened (the
+  exact double pi/180 is `0x3F91DF46A2529D39`). Both re-read with `objdump -s`. For a pool the
+  widened 0.4 changes no integer: every use truncates, and for an integer maximum m the fraction of
+  0.4 x m is one of 0, .2, .4, .6, .8, so the extra 5.96e-9 x m cannot cross an integer below m =
+  33 million (`character.RespawnFraction`'s comment).
+- **The `0x4c07` `GUILDERR_IM_DEAD` returners** (`grep 0x4c07` over the decompile, then each read):
+  `FUN_00514b20` (the founder's pre-check), `CGuildManager::RequestAddGuildPoints` (`0x5c62e0`),
+  `CGuild::HandleLevelUp` (`0x5c63d0`), `FUN_005c6480` (life state, in a guild, `HasPermission`, a
+  title of 1..0x80 and a body of 1..0x800 -> ShardManager job 10: the guild notice),
+  `Guild_ValidateAllianceRequest` (`0x5c6550`) and `FUN_005c7880` (life state, in a guild, level
+  under 6, `+0x334` at least the amount -> job `0x2a`: the point donation). A second probe --
+  guild-named functions calling the life-state slot `(+0xf8)()` -- adds only
+  `GObjPC_HandleGuildSummonReqMsg_031` and `trs_sm_guildjob::FUN_004fdc70`. Neither found a guard
+  on join or withdraw; both are greps, so "not gated" for those is disclosed, not proved. The two
+  tests the handler enforces, in `srv.asm`: `FUN_00514b20`'s `cmp BYTE [eax+0x4],0x1` at `0x514b2f`
+  (`0x4c09`, the lock -- `guild.md`'s step 1) and then `call [edx+0xf8]` at `0x514b4c`, `cmp al,0x1`
+  at `0x514b4e`, `mov ax,0x4c07` at `0x514b52` (step 2, so the table's ordinal stands);
+  `CGuild::HandleLevelUp`'s `mov edx,[eax+0xf8]` at `0x5c63e3`, `call edx` at `0x5c63eb`, `cmp
+  al,0x1` at `0x5c63ed`, `mov ax,0x4c07` at `0x5c63f1` -- the compare is at `0x5c63ed` alone, not
+  "`0x5c63e3`/`0x5c63ed`" as `guild.go` and the `monster_ai.md` row first said (both corrected).
+- **`Nest_Hatch`'s range**: the `0x560a1b` path's own `fmul`/`fstp` are at `0x560a36`/`0x560a3c`,
+  past round 547's `..0x560a30`; cosmetic, corrected in that entry.
+- **The five code notes, re-checked in the tree at `7b321dc`**: `runStrike`'s dead check
+  (`deadCharacter`) is not atomic with `monsterStrike`'s `ApplyDamage`, and both stores' `ApplyDamage`
+  reported `died=true` for a character already at 0 (`MemStore`: `c.HP == 0`; `SQLStore`: `hp == 0`
+  after `GREATEST(hp - $1, 0)`), so two workers passing the check together each charged
+  `leveldata.DeathPenaltyExp` (proved by the negative below: exp 0 where one penalty leaves 4100,
+  two death pushes); `runStrike`'s recover wrapped `a.push`, and `broadcast` unlocked after the
+  `Send` rather than by defer (proved: the wire lock still held after a push that panicked);
+  `revivePlayer` wrote the pools before the state and set HP to `trunc(0.4 x max)` (proved: 80 for
+  81); `autoReviveTick` logged every failing pass (proved: two WARN lines for two passes);
+  `handleGuildCreate`/`handleGuildLevel` tested HP > 0 only (proved: a dead character with a
+  GM-healed pool founded a guild). Client: `_on_skill_use_pressed` and the bag's right-click
+  `use_item` had no dead gate (proved: the released attack forgotten, no chat line);
+  `show_revive_prompt`'s `is_instance_valid` let `get_viewport_rect` run on a prompt off the tree
+  (proved: position `(-74, 0)`).
+
+**Wired, server.**
+
+- `character.Store.ApplyDamage`'s contract: `died` is the TRANSITION from above 0 to 0; a character
+  already at 0 is left as it is and reports `(0, false)`. `MemStore` under its lock; `SQLStore` with
+  `... WHERE id = $2 AND hp > 0 RETURNING hp`, a skipped row then told apart from a missing one by a
+  `SELECT`. This is the one arbiter both flag paths share: with `-player-dead-state` off there is no
+  life state to compare-and-swap on, and the flag-on kill goes through the same `monsterStrike`.
+  `duel.go`'s blow shares the store: a duel blow finding the opponent already at 0 -- reachable
+  only in the window between its dead gate (`deadCharacter`, under the flag) and the write -- now
+  reports `(0, false)` and the duel goes on at `OpponentHP` 0, where it used to report a death and
+  `ResetHP` a dead character (`Store`'s comment says so).
+- `monsterStrike`: a blow that reads `(0, false)` returns `monsterStrikeOutcome{dropped: true}` --
+  nothing landed, as `FUN_004a87d0` lands nothing off life state 1 -- and `performAttack` then
+  carries no counter in the result and makes no push, `runStrike` pushes nothing (a trace line
+  says so). The roll and the armour wear before the pool write stand, as before. `markDead`
+  reports its compare-and-swap.
+- `revivePlayer`: the compare-and-swap 2 -> 1 FIRST (`Revive(1)`'s order), then `Store.Heal` by
+  `reviveHPDelta(max)` = `1 + trunc(0.4 x max)` (the same add-and-clamp as `FUN_004a87d0` +
+  `SetHP`), then the MP tracker to `RespawnMP`; a store failure after the state changed puts the
+  state back with its time of death. Round 549's pools-first order left a window (a blow finding
+  HP above 0 in state 2, its `markDead` failing, the revive then setting 1 on the emptied pool)
+  that, under the new transition rule, would have left a character alive at 0 HP that no blow
+  could kill; state-first closes it.
+- `monsterAI.broadcast` -> `sendUnderWireLock`, the unlock by defer; `runStrike`'s recover kept
+  whole (a panic in `Send` is a goroutine's panic like a store's) and logging through
+  `slog.Default()` when the runtime has no logger. The interim hold's release trace says "target
+  dead" for a dead target, as `battleTick`'s does.
+- `monsterAI.strikeDone`: a per-swing completion hook the strike worker calls after each `runStrike`
+  (landed, dropped or panicked); nil in production, the test's wait on its workers (the CI paragraph
+  above).
+- `autoReviveTick`: the "auto-revive failed" WARN once per character (`autoReviveWarned`). A pass
+  keeps only the characters whose revive FAILED on it and prunes the rest, so the entry goes on
+  the pass that revives her, finds her revived on request, or no longer lists her. The first cut
+  kept every DUE character -- the one it had just revived included -- so her entry outlived the
+  revive by a pass and, the map being package state, reached the next fixture's Aria (id 1 in every
+  fresh `MemStore`): the batch-18 review found `TestAutoReviveWarnsOncePerCharacter` failing on
+  `-count=3` and 9 of 10 under `-race` (`0 'auto-revive failed' line(s)`). The test now also
+  starts from and leaves an empty map (`resetAutoReviveWarned`) and asserts the entry is gone
+  after the reviving pass.
+- `GuildHandler(chars, guilds, hub)`: `handleGuildCreate`'s `CheckCreator` and `handleGuildLevel`'s
+  `LevelUp` get `alive = HP > 0 && !deadBySession(hub, sess)` -- the life state proper where the hub
+  holds the character, HP > 0 kept as the stand-in where it does not (no hub, not in the world).
+  The refusal is the existing `0x4c07` message and code. `cmd/server` passes the hub.
+
+**Wired, client** (`World3D.gd`, `hud_panels.gd`): `_on_skill_use_pressed` (the Skills tab's Use)
+and `_qa_use_first_potion` return on `_player_dead` (`DEAD_INPUT_LINE` for the former); the bag's
+right-click use (`HudPanels._on_inventory_cell_input`) reads the new `HudPanels.player_dead`, which
+`_enter_dead_state`/`_leave_dead_state` set, and emits `system_notice` with the same line instead of
+sending; `_play_player_once` refuses a new one-shot while `_player_one_shot_hold` (the held die
+clip is never replaced -- a late swing result no longer becomes the held pose); the death pose goes
+through `_hold_player_one_shot`, which sets the hold only if the die clip STARTED (a one-frame clip
+no longer pinned whatever one-shot was current); `show_revive_prompt` tests
+`panel.is_inside_tree()` after its frame, not `is_instance_valid`. The review's ":11054
+inventory-window item use" is the QA potion hook; the real bag route is the HUD's right-click, and
+both are gated. `_player_one_shot_until`, written by `_play_player_struck` and
+`_hold_player_one_shot` and read nowhere (the hold never used it), is removed.
+
+**Records.** `character.go` (the widened float and why the exact 0.4 gives the same integer);
+`deadstate.go`'s header (the flag-off sentence, the additive arithmetic and truncation, the MP
+stand-in, the flag-off respawn's number, the level prose); `monsterstrike.go` (the row's post-death
+HP); `monster_ai.md` (`_RefNest` row 8's float clause; the `OpMonsterAttacked` / `OpRevive` /
+`OpReviveResult` rows; the round-537 stall bullet; the round-546 worker bullets; the round-548
+section's 0.4 wording and the no-archives button; the round-549 section: the flag-off sentence, the
+store's transition rule, the guild row and the "Left allowed while dead, one by one" list, the
+revive paragraph, the level prose, the MP and flag-off-respawn stand-ins); this file's rounds 547
+(pi/180, the range), 548 (the 0.4) and 549 (flag-off, `GetMaxLevel`, `revivePlayer`'s order);
+`deploy/README.md` and `server/README.md` (the flag-off sentence, the revive numbers, the guild
+gate); `SYSTEMS.md`'s Guild row. `WORLD_ISSUES.md` stays untouched, as in rounds 541-549.
+
+**Tests.** `character`: `TestApplyDamageOnACharacterAtZeroReportsNoDeath`,
+`TestSQLStoreApplyDamageAtZeroReportsNoDeath` (against the local Postgres: the transition, the
+row at 0, the HP read at 0, a missing row). `session`: `TestTwoKillsChargeOneDeathPenalty` (flag
+on and off; a store hook interleaves two workers so both blows read the pool before either writes
+the penalty: one push, one death, exp 30000 - 25900 once, dead at 0 / respawned), 
+`TestPanickingPushLeavesTheWireLockFree` (the real broadcast to a connection-less test session:
+the blow lands, the panic is logged, `TryLock` on that session's wire lock succeeds),
+`TestAutoReviveWarnsOncePerCharacter` (a store failing both pool writes twice: one WARN, still dead
+with its time of death after each, revived on the third pass at 81, her `autoReviveWarned` entry
+gone with it; from and to an empty map, green on `-count=3` and `-count=10 -race`),
+`TestGuildWorkIsRefusedWhileDead`
+(killed, GM-healed to a full pool: create refused with `0x4c07`'s message, level-up with code
+`0x4c07` ahead of `0x4c0d`; revived, the create succeeds); the revive expectations of
+`TestMonsterKillLeavesThePlayerDead`, `TestCounterKillLeavesThePlayerDeadUntilRevived` and
+`TestAutoReviveFallbackFreesAnOlderClient` now `reviveHPDelta`. `go build ./... && go test -count=1
+-p 1 ./...` green, re-run after the doc edits; the racing tests pass under `-race`, and
+`TestSwingOnAPlayerAlreadyDeadIsDropped` 30x plain and 10x `-race` on the worker hook. Client
+(`monster_strikes_test.gd`, render box): the Skills tab's Use while dead keeps `_released_attack`
+and goes through once revived; the held die clip refuses a swing and keeps the hold; a one-frame
+die clip holds nothing; the bag's right-click while dead emits the line once and alive emits
+nothing; a prompt whose HUD left the tree before its frame stays at `(0, 0)` (an in-tree check
+after `await process_frame`, with `hud_click_routing_test`'s watchdog). `remote_godot.sh check`:
+`checked 256 scripts and 5 scenes`, `ALL LOAD`; `remote_godot.sh tests`: `ran 85 suite(s), 0
+failing`.
+
+Negatives proved behaviourally, each run alone:
+
+| test | change reverted | result without it |
+|---|---|---|
+| `TestApplyDamageOnACharacterAtZeroReportsNoDeath`, `TestSQLStoreApplyDamageAtZeroReportsNoDeath` | `memstore.go`, `sqlstore.go` stashed | `a blow on a character at 0 reported hp=0 died=true` / `a blow on a row at 0: hp=0 died=true` |
+| `TestTwoKillsChargeOneDeathPenalty` (both flags) | the same stash | `2 blow(s) pushed, 2 of them a death`; `exp after two simultaneous kills = 0, want 4100` |
+| `TestPanickingPushLeavesTheWireLockFree` | `monsterai.go` stashed | `Aria's wire lock is still held after a push that panicked inside Send` |
+| `TestAutoReviveWarnsOncePerCharacter` and the three revive expectations | HEAD's `deadstate.go` swapped in, `reviveHPDelta` shimmed in a scratch test file | `2 'auto-revive failed' line(s)`, `revived at HP 80, want 81` (x4) |
+| `TestGuildWorkIsRefusedWhileDead` | the two `&& !deadBySession(hub, sess)` clauses removed | `a dead founder's create answered {GuildID:1 ...}, want the refusal` |
+| `monster_strikes_test.gd` | `World3D.gd`, `hud_panels.gd` stashed and shipped | `FAIL the Skills tab's Use while dead sends nothing`, `Nonexistent function '_hold_player_one_shot'`, `FAIL a right-click on a bag item while dead says so in chat (got [])`, `FAIL a prompt whose HUD left the tree ... (position (-74, 0))` -- `4 FAILURES` |
+| `TestSwingOnAPlayerAlreadyDeadIsDropped` | (CI run `36061784919` on `7b321dc`, before the transition rule) | `2 blows landed on one player from two monsters' first swings, want exactly 1` |
+| `TestAutoReviveWarnsOncePerCharacter`, `-count=3` | the pass's keep-set built from the DUE characters (the first cut) instead of the failures | runs 2 and 3: `0 'auto-revive failed' line(s) over two failing passes, want 1`; with `resetAutoReviveWarned` kept, every run: `Aria's 'warned' entry outlived the pass that revived her` |
+
+Restored after each (`git stash pop` / the kept copy, `cmp` identical, the shim removed); all green
+again, the client shipped again.
+
+**Not landed, and why.** The round-548 note on `world.gd:26`'s 0x7053 is recorded in
+`monster_ai.md`'s `OpRevive` row (the precedent, not a read of `0x053`'s dispatch entry); the
+comment in `world.gd` is left as it is (a client file outside this item's list, and the doc row is
+where the caveat is looked up). `Revive(0)`, the option byte and the item kind usable while dead
+remain not modelled (round 549's list). The MP's additive base and the flag-off respawn's +1 are
+disclosed stand-ins, not built (above).
+
+**Deploy note.** Nothing here changes a default: every flag stays off. With `-player-dead-state`
+off the only behaviour change a player can meet is the store's transition rule, which makes two
+simultaneous kills charge one penalty (before, two) and the guild gate's HP test reading the hub
+(no effect while nobody is ever dead). The revive HP moves from 80 to 81 for a maximum of 200
+only under the flag. Round 549's order stands: tag and confirm the round-548 client before the
+flag is ever flipped.

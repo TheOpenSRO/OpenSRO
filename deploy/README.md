@@ -258,16 +258,19 @@ The server can leave a player a monster kills dead (round 549). The killing blow
 push then carry HP 0 (not the respawned 40 %), and the client that carries round 548 holds the
 die pose, locks movement and attacks, and shows a Revive button. While dead the server refuses the
 character's moves (neither stored nor relayed), attacks, casts, items, pick-ups, duel blows, trade
-requests, zone changes and GM `/tp`/`/goto`, empties its potion queue, and no monster targets it.
-`OpRevive 0x0028` (the button) brings it back where it lies at 40 % of each maximum -- the retail
-resurrect handler's own fraction, which retail grants in place only up to max level 10; above that
+requests, zone changes, GM `/tp`/`/goto` and guild founding and level-ups, empties its potion
+queue, and no monster targets it.
+`OpRevive 0x0028` (the button) brings it back where it lies -- HP at 1 + 40 % of the maximum
+(truncated; the retail resurrect handler's own arithmetic, round 550) and MP at 40 % -- which
+retail grants in place only up to max level 10; above that
 srrevamp's in-place revive is a disclosed stand-in for a return point it does not model. A session
 that never sends `OpRevive` is revived unasked after 30 s (the auto-revive fallback, own design).
 What is grounded and what is a stand-in is in `docs/protocol/monster_ai.md`, "The player's dead
 state: the server half (round 549)".
 
 It is behind the `-player-dead-state` flag (env `SRREVAMP_PLAYER_DEAD_STATE`), and **the default
-is off**. Off, a kill respawns the player at once and the wire is exactly what it was. It does not
+is off**. Off, a kill respawns the player at once and the kill's wire is what it was; the one
+flag-independent piece is the entry revive of a stored HP 0 (the last paragraph). It does not
 depend on the monster flags: it covers the counterattack inside the attacker's result and the
 monster's own swings under `-monster-battle` alike. After an update the boot log reads
 `player dead state off (-player-dead-state / SRREVAMP_PLAYER_DEAD_STATE)`.

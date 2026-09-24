@@ -545,6 +545,16 @@ func open_guild_leave_prompt(npc_name: String) -> void:
 ## The prompt's node name under this HUD; at most one is up at a time.
 const REVIVE_PROMPT := "RevivePrompt"
 
+## Whether the player is dead (World3D._player_dead, set by _enter_dead_state
+## and cleared by _leave_dead_state; round 550). The bag's right-click use
+## reads it: the server refuses a dead player's OpUseItem (Item_HandleUseItem
+## 0x510980 answers 0x1889 unless GetLifeState() == 1), so nothing goes out.
+var player_dead := false
+
+## The chat line for an item tried while dead: World3D.DEAD_INPUT_LINE's
+## wording (World3D has no class_name to read it from).
+const DEAD_INPUT_LINE := "You are dead. Revive first."
+
 ## The Revive button was clicked. World3D sends OpRevive (_on_revive_requested).
 signal revive_requested
 
@@ -583,11 +593,16 @@ func show_revive_prompt(line: String) -> void:
 	if not panel.is_inside_tree():
 		return
 	await panel.get_tree().process_frame
-	if is_instance_valid(panel):
-		# Centred, a little below the middle, so the fallen body stays in
-		# view above it. A placement of this project's own.
-		var view := panel.get_viewport_rect().size
-		panel.position = Vector2((view.x - panel.size.x) * 0.5, view.y * 0.62).round()
+	# Still on a HUD in the tree? A valid node off it -- the HUD left the
+	# tree, or hide_revive_prompt removed the prompt, before this frame --
+	# has no viewport to read (round 550: is_instance_valid alone let
+	# get_viewport_rect run off the tree, an engine error).
+	if not panel.is_inside_tree():
+		return
+	# Centred, a little below the middle, so the fallen body stays in view
+	# above it. A placement of this project's own.
+	var view := panel.get_viewport_rect().size
+	panel.position = Vector2((view.x - panel.size.x) * 0.5, view.y * 0.62).round()
 
 ## Takes the Revive prompt down (the revive came through, or a new prompt
 ## replaces it). Removed from the tree at once, so a prompt shown in the
@@ -1853,6 +1868,9 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 	var item_id := int(icon.get_meta("inv_item_id"))
 	var qty := int(icon.get_meta("inv_qty"))
 	if button == MOUSE_BUTTON_RIGHT:
+		if player_dead:
+			system_notice.emit(DEAD_INPUT_LINE)
+			return
 		if NetClient.current_character_name != "":
 			NetClient.use_item(NetClient.current_character_name, slot)
 		return

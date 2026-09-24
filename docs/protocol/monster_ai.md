@@ -326,7 +326,7 @@ as for the tactics row; widths and offsets are the parser's.
 | 3 | `+0x08` | u32 | **TacticsID** -- `AI::CNest::BindTactics` (`0x560570`) looks it up through the tactics map (`FUN_00501ac0`, the same lookup the tactics loader's duplicate check uses) and then the tactics' `RefObjID` through `FUN_004260b0` |
 | 4 | `+0x0c` | u16 | **RegionID** -- `NestRegionID[%d]`; copied to the runtime nest's `+0x18` |
 | 5-7 | `+0x10`, `+0x14`, `+0x18` | u32 x3 | the **position** (copied to the runtime nest's `+0x1c..+0x24`, validated with the region by `FUN_005380b0(world, 0, 0, region, x, y, z)`) |
-| 8 | `+0x1c` | u16 | **initial direction**: `Nest_Hatch` turns it into radians as `v / 65535.0 * 360.0 * (pi/180)` (`0xb45c28`, `0xb45c30`, `0xb45e00`; the three doubles read back with `objdump -s` in round 547: `40efffe000000000`, `4076800000000000`, `3f91df46a0000000`) for every species but one kind: a species of the roster's TypeID shape (the four tests at `0x56098a..0x5609b4`, each `jne 0x560a1b`, which reads this word) whose rarity is not 3 (`cmp [edi+0x89],3` at `0x5609b6`, `jne 0x5609ee` at `0x5609bd`) gets `rand()/32767 * 2pi` instead. A rarity-3 species of that shape (`0x5609bf`) and every other shape (`0x560a1b`) take this word (`ai.SpawnHeading`). Round 547 corrected this cell, which read "for a rarity-3 species; every other species gets rand()" and had the rule backwards for the other shapes |
+| 8 | `+0x1c` | u16 | **initial direction**: `Nest_Hatch` turns it into radians as `v / 65535.0 * 360.0 * (pi/180)` (`0xb45c28`, `0xb45c30`, `0xb45e00`; the three doubles read back with `objdump -s` in round 547: `40efffe000000000`, `4076800000000000`, `3f91df46a0000000` -- the last is float32(pi/180) widened to a double, 0.01745329238474369, not the exact double pi/180 `3f91df46a2529d39`, so a heading recomputed bit-exactly must use the float; round 550) for every species but one kind: a species of the roster's TypeID shape (the four tests at `0x56098a..0x5609b4`, each `jne 0x560a1b`, which reads this word) whose rarity is not 3 (`cmp [edi+0x89],3` at `0x5609b6`, `jne 0x5609ee` at `0x5609bd`) gets `rand()/32767 * 2pi` instead. A rarity-3 species of that shape (`0x5609bf`) and every other shape (`0x560a1b`) take this word (`ai.SpawnHeading`). Round 547 corrected this cell, which read "for a rarity-3 species; every other species gets rand()" and had the rule backwards for the other shapes |
 | 9 | `+0x20` | u32 | the **roam radius** handed to `AI::CTactics::Attach` when the monster has a nest (previous section) |
 | 10 | `+0x24` | u32 | passed as a float into the spawn routine `GObjPC::FUN_005f6eb0` beside the direction (its use inside is not traced) |
 | 11 | `+0x28` | u32 | **champion chance, percent**: `Nest_Hatch` rolls `rand() % 101 < +0x28` when the tactics row's `+0x8c` (tactics column 41) is non-zero; a second roll `rand() % 101 > GiantMonster_SpawnRatio` makes the hatch a **champion** (class 1, x2 HP), else a **giant** (class 4, x20 HP -- the rank table in `internal/combat/rarity.go`); the monster then runs under the tactics row `+0x8c` names (its own, with the class cleared, when that row does not exist). `GiantMonster_SpawnRatio` is the engine's own config key (`.rdata 0xae0a04`, read in `CMainProcess::FUN_00427050` as `atol(value)/100`, **default 14** when absent or zero), so with the default about 15 in 101 of the rolls come up giant |
@@ -1179,10 +1179,10 @@ on 2026-09-24 neither appeared in any non-test file under `server/internal` or
 |---|---|---|
 | `OpMonsterMoved 0x007c` | s→zone | s64 monster id, f32 x, f32 z (the server's position when it issued the move), f32 dest_x, f32 dest_z, f32 speed (world units per second), u8 mode (0 walk clip, 1 run clip) -- 29 bytes |
 | `OpMonsterMotionList 0x007f` | s→requester | u16 n, then n entries of {s64 id, f32 dest_x, f32 dest_z, f32 speed, u8 mode} (21 bytes each); sent right after an `OpMonsterListResult`, ONE packet per list |
-| `OpMonsterAttacked 0x007d` | s→zone, the attacker included | s64 monster id, s64 target character id, s32 damage (0 when blocked), u8 flags (bit 0 the monster's critical, bit 1 blocked, bit 2 the target died), s32 target HP after the blow (after a death, the HP it was put back on its feet with), s64 death exp lost -- 33 bytes; sent right AFTER the attacker's `OpAttackResult`, from the same goroutine, and after the zone's `OpMonsterDamaged` for the same swing; only with `-monster-strike-push` on (round 541). With `-monster-battle` on as well (round 546) the same message carries the monster's OWN swing, from the AI tick's strike worker, with no `OpAttackResult` before it; the layout is unchanged |
+| `OpMonsterAttacked 0x007d` | s→zone, the attacker included | s64 monster id, s64 target character id, s32 damage (0 when blocked), u8 flags (bit 0 the monster's critical, bit 1 blocked, bit 2 the target died), s32 target HP after the blow (after a death, the HP it was put back on its feet with -- or 0 under `-player-dead-state`, round 549), s64 death exp lost -- 33 bytes; sent right AFTER the attacker's `OpAttackResult`, from the same goroutine, and after the zone's `OpMonsterDamaged` for the same swing; only with `-monster-strike-push` on (round 541). With `-monster-battle` on as well (round 546) the same message carries the monster's OWN swing, from the AI tick's strike worker, with no `OpAttackResult` before it; the layout is unchanged |
 | `OpMonsterSpawned 0x007e` | s→zone | one record in `OpMonsterListResult`'s own encoding (s64 id, u16-prefixed name, u16-prefixed code name, f32 x/y/z, u32 max HP, HP, level, rarity), then f32 heading (radians, srrevamp's world frame: from +x toward +z); sent when a monster appears -- a roster respawn or a GM `/spawn` -- only with `-monster-spawn-push` on (round 542) |
-| `OpRevive 0x0028` | c→s | empty: asks to be revived where the character lies. Sent by the Revive button (`HudPanels.show_revive_prompt` -> `World3D._on_revive_requested` -> `NetClient.revive`) and by `SRREVAMP_QA_REVIVE_AFTER` (round 548). The retail request 0x7053 carries a u8 option instead ("The player's dead state", below); not carried here, a disclosed stand-in |
-| `OpReviveResult 0x0029` | s→requester | u16-prefixed error string (empty on success), then s32 HP and s32 MP -- `character.RespawnFraction` (0.4) of each maximum, the retail handler's own fraction; the decoder takes a refusal with or without the tail. Sent only with `-player-dead-state` on (the server half): after an `OpRevive`, or unasked by that half's auto-revive fallback |
+| `OpRevive 0x0028` | c→s | empty: asks to be revived where the character lies. Sent by the Revive button (`HudPanels.show_revive_prompt` -> `World3D._on_revive_requested` -> `NetClient.revive`) and by `SRREVAMP_QA_REVIVE_AFTER` (round 548). The retail request 0x7053 carries a u8 option instead ("The player's dead state", below); not carried here, a disclosed stand-in. The 0x7053 rests on the project's `0x7000 \| op` precedent for handler `_053` (`recovered_names.tsv`'s `0x0a7` -> wire `0x70a7`; `observed_opcodes.md`'s `0x70xx` family), not on a read of `0x053`'s dispatch entry (round 550) |
+| `OpReviveResult 0x0029` | s→requester | u16-prefixed error string (empty on success), then s32 HP and s32 MP -- HP `1 + trunc(0.4 x MaxHP)`, the retail handler's additive arithmetic from 0 (round 550, `session.reviveHPDelta`), MP `character.RespawnMP` (0.4 of the maximum, a disclosed stand-in for the same additive rule); the decoder takes a refusal with or without the tail. Sent only with `-player-dead-state` on (the server half): after an `OpRevive`, or unasked by that half's auto-revive fallback |
 
 Fixtures, pinned by `client/scripts/net/combat_test.gd`:
 
@@ -1864,7 +1864,9 @@ leg. The lock is per session, so a stalled client holds up only its own replies 
   of them walked". Its WANDER rate, 0.1 a second, is one seeded sample, not a check of the
   estimate.) Add one `OpMonsterMotionList` per list request, at 21 bytes per walking monster.
 - **A stalled client.** The tick's sends block on it, as `RunRegen`'s already do:
-  `gateway.Session.Send` has no write deadline. The kill switch is the mitigation.
+  `gateway.Session.Send` has no write deadline. With `-monster-battle` on the pass's swings wait
+  behind those sends too (round 547's step 6; noted in round 550), so a stalled session delays the
+  blows as well as the tick. The kill switch is the mitigation.
 
 **The live checks, before the flag is flipped on the public server.** Both run on the render box
 with the server built to `SERVER_BIN=/var/tmp/<lane>/srrevamp-server`.
@@ -2212,11 +2214,22 @@ re-read in `srv.asm` for this round):**
      - **The worker's window**, disclosed: a swing already handed over still resolves
        (`chars.ApplyDamage` on the row) if the target changed zone or the monster died in the
        milliseconds between the tick's validity test and `monsterStrike` -- the same class of
-       window as the flag-off counter's.
+       window as the flag-off counter's. A swing whose target another kill emptied inside that
+       window lands nothing and pushes nothing (round 550): `character.Store.ApplyDamage` reports
+       died only for the blow that took the pool from above 0 to 0, so ONE of two racing kills
+       charges the death penalty (`TestTwoKillsChargeOneDeathPenalty`, a deterministic
+       interleaving); until then both read died=true and both charged it. Since the hand-off
+       waits behind step 5, the pass's swings also wait on a session whose socket has stalled
+       (`gateway.Session.Send` has no write deadline): the tick already did, so this is no new
+       exposure, only the same one a swing later.
      - **A panic inside a worker's blow** -- a store's own -- is logged at ERROR (`ai: strike
        panicked, swing dropped`, with the stack) and the swing dropped; the worker serves the next
        (round 547). A goroutine's panic is the process's, so before that one bad store write would
-       have taken the server down.
+       have taken the server down. The recover covers the push too, so `broadcast` releases each
+       session's wire lock by defer (round 550): a panic inside `Session.Send` swallowed with the
+       lock held would have blocked the next tick's push to that session, and its monster list,
+       for ever (`TestPanickingPushLeavesTheWireLockFree`). A runtime built without a logger
+       (only a test's) logs the panic through slog's default instead of dropping it.
      - **No swing without every store**: the runtime swings only when it holds the character,
        equipment and item stores (`MonsterAIConfig`); the blow reads all three, and
        `defenderDefence`'s `eq.Get` has no nil guard. `cmd/server` passes all of them.
@@ -2366,8 +2379,11 @@ kill it reports carries the respawned HP, above 0, and it never sends `OpReviveR
   `leveldata.DeathCause`, whose 2 is `DeathCauseNoPenalty` and whose 3 is a monster's kill):
   `Revive(1)` (`push 0x1; call 0x4df290` at `0x5100e3`), then `ApplyHPMPDelta(GetParam(3) x 0.4,
   GetParam(4) x 0.4, 8)` -- `fmul QWORD PTR ds:0xb460f0` at `0x5100fa` and `0x510130`, and
-  **`0xb460f0` reads `00 00 00 a0 99 99 d9 3f`, the double 0.4** (`objdump -s`), the very constant
-  `character.RespawnFraction` cites from the create/load path (`0x4e1141`/`0x4e1190`). (2) Option
+  **`0xb460f0` reads `00 00 00 a0 99 99 d9 3f`** (`objdump -s`), the very constant
+  `character.RespawnFraction` cites from the create/load path (`0x4e1141`/`0x4e1190`). Round 550
+  corrects the label this section gave it: that is `0x3FD99999A0000000` = 0.4000000059604645,
+  the FLOAT 0.4 widened to a double, not the exact double 0.4 (`...999A`); for a pool it changes
+  no integer (`character.RespawnFraction`'s comment). (2) Option
   2: the same, only while `IGObj::GetMaxLevel` (vtable `+0x128`) is at most 10 (`cmp al,0xa` at
   `0x51017f`) -- reviving where one fell is a low-level privilege. (3) Option 1: `Revive(0)` (the
   return-point path) and `GameEventLog_Record(0x15, 2, 0)`. So the retail request is "return" (1)
@@ -2426,6 +2442,9 @@ round 540/544; a blow on itself is recognised by the pairing and by elimination 
   at a death was not read.
 - **The auto-revive fallback** (a disclosed 30 s in the plan) is the server half's; the client only
   takes its result.
+- **The button needs the pk2 HUD.** It is wired when `_hud_panels` initialises (the archives
+  present); without archives a dead player has `SRREVAMP_QA_REVIVE_AFTER` and the server half's
+  fallback (round 550's note). Consistent with the client requiring archives.
 
 **Not modelled:** the return point (option 1), the siege countdown gate, the cause-2 branch, the
 `+0x55c`/`+0x318`/`+0x378` calls inside `Revive`.
@@ -2450,15 +2469,22 @@ running client (a render, once the server half exists to kill against).
 
 The server half of `mob-player-dead-state`, behind `cmd/server`'s `-player-dead-state`
 (`SRREVAMP_PLAYER_DEAD_STATE`), **off by default** (`server/README.md`; `deploy/README.md`, "Player
-dead state (off by default)"). With it off nothing changes: a monster's kill respawns the player in
-the same call at `character.RespawnFraction` and the wire is byte for byte what it was (the
-flag-off kill tests of rounds 541 and 546 still pin the respawned HP). With it on, a monster's
+dead state (off by default)"). With it off nothing changes ON A KILL: a monster's kill respawns the
+player in the same call at `character.RespawnFraction` and the kill's wire is what it was (the
+flag-off kill tests of rounds 541 and 546 still pin the respawned HP); the one flag-independent
+piece is the entry revive of a stored HP 0 (the last stand-in below; round 550 softened this
+sentence, which said "byte for byte"). With it on, a monster's
 killing blow -- the synchronous counter inside the attacker's `OpAttackResult` and the AI's own
 swing under `-monster-battle` alike, both through `monsterStrike` -- leaves the character DEAD:
 
 - **life state 2** (`world.LifeDead`) in `world.Hub`'s entity, with the time of death, set by
-  `session.markDead` through `Hub.SetLifeState`, a compare-and-swap from 1 to 2 (so a second
-  monster's blow racing the first cannot re-record the death);
+  `session.markDead` through `Hub.SetLifeState`, a compare-and-swap from 1 to 2. Which of two
+  racing kills gets there is decided a step earlier, by the store (round 550):
+  `character.Store.ApplyDamage` reports died only for the blow that took the pool from above 0
+  to 0, and a blow that finds 0 lands nothing and pushes nothing -- so the death penalty is
+  charged ONCE per kill, flag on or off. Until that round a character at 0 reported died=true to
+  every further blow, and two strike workers passing `runStrike`'s dead check together each
+  charged `leveldata.DeathPenaltyExp` before the second's compare-and-swap failed;
 - **HP where `ApplyDamage` left it, 0**, and no `RespawnHP`: the result's `player_hp` and the push's
   `target_hp` carry 0, which is how round 548's client knows (`MonsterStrikes.leaves_dead`);
 - **the potion queue emptied** (`PotionQueue.drop`), as `GObjPC::FUN_004e67b0` empties both lists
@@ -2484,24 +2510,51 @@ string `deadRefusal` = "you are dead", srrevamp's wording):
 | `OpTradeRespond` (accept) | `handleTradeRespond`; the pending request is cancelled for the requester; a decline goes through | own design: `GObjPC_HandleTradeMsg_084` not opened for a life-state test |
 | `OpChangeZone` | `handleChangeZone` | own design: srrevamp's warp has no retail message, and round 548's client keeps its dead state across a `ChangeZoneResult`, so a warp would put a held die pose at the new zone's spawn |
 | GM `/tp`, `/goto` | `gm.Actor.Dead` -> "you are dead: revive first"; the other commands run (`/heal` fills the pools without reviving) | own design |
+| `OpGuildCreate`, `OpGuildLevel` (level-up) | `handleGuildCreate` / `handleGuildLevel` (round 550): alive is the hub's life state, with HP > 0 kept as the stand-in for a character the hub does not hold; `0x4c07`'s message and code | **read**: `FUN_00514b20` (the founder's pre-check) and `CGuild::HandleLevelUp` (`0x5c63d0`: `mov edx,[eax+0xf8]` at `0x5c63e3`, `call edx` at `0x5c63eb`, `cmp al,0x1` at `0x5c63ed`, `mov ax,0x4c07` at `0x5c63f1`) ask `IGObj::GetLifeState` for 1 and answer `0x4c07` `GUILDERR_IM_DEAD` otherwise (`guild.md`). HP alone let a dead character healed by a GM found a guild |
+
+**Left allowed while dead, one by one** (round 550; each is a request srrevamp handles that the
+engine's `0x4c07`/life-state guards were not found on, or whose retail handler was not read for
+one). `OpGuildJoin`, `OpGuildLeave`, `OpGuildInfo`, `OpGuildPoints` (the read-back): not gated --
+the functions returning `0x4c07` in `SR_GameServer.exe` are the founder's pre-check, the points
+credit (`CGuildManager::RequestAddGuildPoints`), the level-up, the notice (`FUN_005c6480`, job
+10), the alliance request and the point donation (`FUN_005c7880`, job `0x2a`), and the guild-named
+functions calling the life-state slot add only the summon (`GObjPC_HandleGuildSummonReqMsg_031`)
+and a ShardManager job reply; two probes, neither a proof for join or withdraw. Shop (buy, sell,
+list), storage, repair: not gated; `GObjPC_HandleShopMsg_046` was read for INTERACTMODE (round
+499), not for a life-state test. Party: not gated; retail's `CParty::CheckTargetAvailable`
+(`0x514010`, round 413) accepts a dead TARGET, the requester's side not read. Learn-skill and
+raise-mastery: not gated, handlers not read for a life-state test. Friend, chat, the lists: not
+gated, own design.
 
 **The monster AI treats a dead player as no target** -- the engine's own rule: `AITactics_IsValidTarget`
 (`0x540de0`, round 424) returns no target unless `(**(*target + 0xf8))() == 1`, i.e. `GetLifeState()
 == 1`, before its body-mode tests. `battleTick`'s validity test and the interim hold's now read the
-life state (`world.LifeDead` -> the `0x23` exit, "target dead" in the trace), and a swing already
-handed to a strike worker whose target has died meanwhile is dropped (`runStrike`): a second blow
-on the dead would charge the death penalty twice. The round-547 `kills` record stays as the same
-exit one tick earlier.
+life state (`world.LifeDead` -> the `0x23` exit, "target dead" in the trace, the interim hold's
+line saying the same since round 550), and a swing already handed to a strike worker whose target
+has died meanwhile is dropped (`runStrike`); one that passes that check and finds the pool already
+at 0 lands nothing (the store's transition rule above) -- either way the death penalty is charged
+once. The round-547 `kills` record stays as the same exit one tick earlier.
 
 **The revive.** `OpRevive 0x0028` (empty, round 548's request; any payload is ignored so an option
 byte can be added later) -> `ReviveHandler` -> `revivePlayer`: only in life state 2 (the retail
-handler's `cmp al,0x2` at `0x510077`; a living character is answered `"not dead"`), `RespawnHP` to
-`character.RespawnFraction` of the maximum, the MP tracker refilled to `character.RespawnMP`, then
-the compare-and-swap 2 -> 1 (the pools first, the state last, so the handler and the fallback
-racing each other restore the same pools twice and send ONE result). The reply is `OpReviveResult
-0x0029` -- u16 error (empty) + s32 HP + s32 MP, the client's fixture bytes
-`00 00 50 00 00 00 28 00 00 00` for 80/40 -- followed by an `OpCharacterStatsResult` push so the MP
-bar moves without the client's round trip. The character revives WHERE IT LIES.
+handler's `cmp al,0x2` at `0x510077`; a living character is answered `"not dead"`). Since round
+550 it takes the handler's own order and arithmetic: the compare-and-swap 2 -> 1 FIRST
+(`GObjPC::Revive(1)` passes 1 through `SetLifeState` before any pool), so of the handler and the
+fallback racing each other exactly one wins it and touches the pools and ONE result goes out; then
+HP through `Store.Heal` by `reviveHPDelta` = `1 + trunc(0.4 x MaxHP)`, clamped at the maximum --
+`Revive(1)`'s `ApplyHPMPDelta(this, 1, 0, 8)` and the handler's `ApplyHPMPDelta(trunc(GetParam(3)
+x 0.4), trunc(GetParam(4) x 0.4), 8)` both ADD (`GObjPC::FUN_004a87d0`, `add edi,ebx` at
+`0x4a8821`, then `SetHP`'s clamp at `GetMaxHP`), and the handler truncates (`fnstcw; or eax,0xc00;
+fldcw; fistp` at `0x510102..0x510122`, rounding control 11); then the MP tracker to
+`character.RespawnMP` (the stand-in below). Round 549 wrote the pools first and the state last,
+which left a window (a blow finding HP above 0 in state 2) that ended with a character alive at 0
+HP; and it set HP to `trunc(0.4 x MaxHP)`, one short of retail's 81 for a maximum of 200. The
+reply is `OpReviveResult 0x0029` -- u16 error (empty) + s32 HP + s32 MP, the client's fixture
+bytes `00 00 50 00 00 00 28 00 00 00` for 80/40 (a wire fixture; the numbers are the server's) --
+followed by an `OpCharacterStatsResult` push so the MP bar moves without the client's round trip.
+The character revives WHERE IT LIES. A store failure after the state changed puts the state back
+with its time of death, and the auto-revive's WARN for a character whose revive keeps failing is
+logged once per character (round 550), not every second.
 
 **The retail handler, re-read for this round** (`GObjPC_HandleResurrectMsg_053`, `0x50fee0`; the
 decompile and `srv.asm`): one u8 option; acts only in life state 2 (`cmp al,0x2` at `0x510077`);
@@ -2509,9 +2562,10 @@ refuses during a siege countdown above `0xa5`; then (a) death cause `[this+0x1cb
 (`leveldata.DeathCauseNoPenalty`, NOT a monster's kill, which is 3) or (b) **option 2 with
 `IGObj::GetMaxLevel` (`+0x128`) at most 10** (`cmp al,0xa; ja` at `0x51017f`) -> `GObjPC::Revive(1)`
 (`push 0x1; call 0x4df290` at `0x5100e3` / `0x51018b`) and `ApplyHPMPDelta(GetParam(3) x 0.4,
-GetParam(4) x 0.4, 8)`, the 0.4 being `fmul QWORD ds:0xb460f0` at `0x5100fa` / `0x51019e` -- the
-double `character.RespawnFraction` cites from the load path; (c) **option 1 -> `Revive(0)`**, the
-return-point path, and `GameEventLog_Record(0x15, 2, 0)`.
+GetParam(4) x 0.4, 8)` (`call 0x4a86a0` at `0x51015d`), the 0.4 being `fmul QWORD ds:0xb460f0` at
+`0x5100fa` / `0x51019e` -- the constant `character.RespawnFraction` cites from the load path, the
+float 0.4 widened to a double, each product truncated (round 550); (c) **option 1 ->
+`Revive(0)`**, the return-point path, and `GameEventLog_Record(0x15, 2, 0)`.
 
 **The return point, read this round and filed** (`recovered_names.tsv` row `004e08a0`,
 `CGObjPC::ResolveRevivePoint`, the function round 548 called `CGObjPC::FUN_004e08a0`):
@@ -2529,10 +2583,21 @@ with its last stored position as the fallback.
   above that retail offers only the return point, which srrevamp cannot build: no
   `_CHAR.AppointedTeleport`, no teleport gates, no region frame to put a `LatestRegion`/`Pos` into
   (`world.Position` is a zone label and a point). A character of level 11 or more therefore revives
-  where it fell, a stand-in. srrevamp's `Level` stands in for `GetMaxLevel`, which it equals here (a
-  death never costs a level; `GObjPC_OnDeath` leaves `CurLevel` alone). Both cases take the same
-  code path, so no wire field distinguishes them; the client message already says "in place at any
-  level" (round 548).
+  where it fell, a stand-in. No level test is made: both cases take the one in-place path, and
+  `GetMaxLevel` is not modelled (srrevamp's `Level` would equal it -- a death never costs a level,
+  `GObjPC_OnDeath` leaves `CurLevel` alone -- but nothing reads it; round 550 corrected the prose
+  that read as if a test existed). No wire field distinguishes them; the client message already
+  says "in place at any level" (round 548).
+- **The revived MP** (round 550). Retail ADDS `trunc(0.4 x MaxMP)` to the MP the character died
+  with (`ApplyHPMPDelta` is additive on both pools; no MP write was found in `GObjPC_OnDeath`
+  `0x4e6980` or `FUN_004e67b0` -- one probe over their decompiles for the MP slots and the
+  setters, not a proof); srrevamp SETS the tracker to `character.RespawnMP`. A stand-in:
+  `mana.Tracker` regenerates by wall clock while dead (its own rule; whether retail's MP regen runs
+  on a life state other than 1 was not read), so the additive base differs anyway. The HP is exact:
+  a dead character's HP is 0.
+- **The flag-off instant respawn** keeps the load path's `trunc(0.4 x MaxHP)` (`RespawnHP`), not
+  the handler's +1: that wire is what an older client's tests pin, and the compression of a death
+  and a revive into one call is the stand-in there, not the number (round 550).
 - **The empty request** against retail 0x7053's u8 option (round 548's contract).
 - **The auto-revive fallback, `AutoReviveAfter` = 30 s** (`RunAutoRevive`, a one-second pass): a
   session that never sends `OpRevive` -- a client older than round 548 -- is revived unasked and
@@ -2558,7 +2623,9 @@ store reads 0, the hub reads life state 2 with a time of death, the queued potio
 monster goes to IDLE on the next tick and swings no more over 4 s, a potion step and regen leave 0,
 `revivePlayer` gives `RespawnFraction` and life state 1, a second revive is `errNotDead`, and the
 revived player is struck again) and `TestSwingOnAPlayerAlreadyDeadIsDropped` (two Mangyangs' first
-swings, one blow); `session/monsterstrike_test.go`
+swings, one blow; waited on through the workers' completion hook `monsterAI.strikeDone`, not a
+sleep, since CI run 36061784919 failed it with two blows on round 549's tree -- round 550);
+`session/monsterstrike_test.go`
 `TestCounterKillLeavesThePlayerDeadUntilRevived` (the wire: result and both pushes at HP 0, the
 dead swing refused with `deadRefusal`, the dead move not relayed nor stored, `OpRevive` ->
 `OpReviveResult` at 40 % of each maximum then the stats push, the revived move relayed, a second

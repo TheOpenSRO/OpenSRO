@@ -710,9 +710,9 @@ func TestCounterKillLeavesThePlayerDeadUntilRevived(t *testing.T) {
 		t.Fatalf("the revive result %+v (err %v), want a success", rr, err)
 	}
 	reborn, _ := z.chars.GetByID(ctx, z.ariaChar)
-	wantHP := int(float64(reborn.MaxHP()) * character.RespawnFraction)
+	wantHP := reviveHPDelta(reborn.MaxHP()) // 1 + trunc(0.4 x max), the handler's sum from 0 (round 550)
 	if int(rr.HP) != wantHP || reborn.HP != wantHP {
-		t.Errorf("revived at HP %d (stored %d), want %d: RespawnFraction of %d", rr.HP, reborn.HP, wantHP, reborn.MaxHP())
+		t.Errorf("revived at HP %d (stored %d), want %d: 1 + trunc(0.4 x %d)", rr.HP, reborn.HP, wantHP, reborn.MaxHP())
 	}
 	if want := character.RespawnMP(reborn.MaxMP()); int(rr.MP) != want || tracker.Current(z.ariaChar, reborn.MaxMP()) != want {
 		t.Errorf("revived at MP %d (tracker %d), want %d", rr.MP, tracker.Current(z.ariaChar, reborn.MaxMP()), want)

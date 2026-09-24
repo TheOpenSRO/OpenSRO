@@ -171,11 +171,14 @@ func (m *MemStore) ApplyDamage(_ context.Context, characterID int64, amount int)
 	if !ok {
 		return 0, false, ErrNotFound
 	}
+	// died is the TRANSITION to 0 (Store's contract, round 550): a blow on
+	// a character already at 0 changes nothing and reports no death.
+	before := c.HP
 	c.HP -= amount
 	if c.HP < 0 {
 		c.HP = 0
 	}
-	return c.HP, c.HP == 0, nil
+	return c.HP, before > 0 && c.HP == 0, nil
 }
 
 // Heal implements Store.

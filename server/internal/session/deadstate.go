@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -26,11 +27,14 @@ import (
 // emptied and its keep-up cancelled; while dead its moves are neither stored
 // nor relayed and its attacks, casts, items, pick-ups, duel blows, trade
 // requests, zone changes and GM teleports are refused; the monster AI treats
-// it as no target. It comes back through OpRevive -- in place, at
-// character.RespawnFraction of each maximum -- or, for a session that never
-// sends one (a client older than round 548), through the auto-revive fallback
-// after AutoReviveAfter. With the flag off nothing changes: the kill respawns
-// at once and the wire is byte for byte what it was.
+// it as no target. It comes back through OpRevive -- in place, HP at
+// 1 + trunc(0.4 x MaxHP) as the retail handler's arithmetic lands it
+// (reviveHPDelta, round 550), MP at character.RespawnMP -- or, for a session
+// that never sends one (a client older than round 548), through the
+// auto-revive fallback after AutoReviveAfter. With the flag off nothing
+// changes ON A KILL: it respawns at once and the kill's wire is what it was;
+// the one flag-independent piece is the entry revive of a stored HP 0
+// (handleEnterWorld, the last stand-in below).
 //
 // GROUNDING, re-read on the RE box for this round (2026-09-24):
 //
@@ -43,12 +47,34 @@ import (
 //     kill, which is 3) or (b) option 2 with IGObj::GetMaxLevel (+0x128) at
 //     most 10 (`cmp al,0xa; ja` at 0x51017f) -> GObjPC::Revive(1) (`push 0x1;
 //     call 0x4df290` at 0x5100e3) and ApplyHPMPDelta(GetParam(3) x 0.4,
-//     GetParam(4) x 0.4, 8), the 0.4 being `fmul QWORD ds:0xb460f0` at
-//     0x5100fa / 0x51019e -- the double character.RespawnFraction cites; (c)
-//     option 1 -> Revive(0), the return-point path, and GameEventLog 0x15/2.
+//     GetParam(4) x 0.4, 8) (`call 0x4a86a0` at 0x51015d), the 0.4 being
+//     `fmul QWORD ds:0xb460f0` at 0x5100fa / 0x51019e -- 0xb460f0 reads
+//     `00 00 00 a0 99 99 d9 3f` = 0x3FD99999A0000000 = 0.4000000059604645,
+//     the FLOAT 0.4 widened to a double (round 550's correction of "the
+//     double 0.4"; character.RespawnFraction says why the exact 0.4 gives
+//     the same integer) -- and each product TRUNCATED: `fnstcw; or eax,0xc00;
+//     fldcw; fistp` at 0x510102..0x510122 and 0x510136..0x51014e sets
+//     rounding control 11, toward zero; (c) option 1 -> Revive(0), the
+//     return-point path, and GameEventLog 0x15/2.
+//   - GObjPC::ApplyHPMPDelta (0x4a86a0) is ADDITIVE (round 550): it hands
+//     both deltas to GObjPC::FUN_004a87d0 -- each non-zero one first scaled
+//     by 1 - param/100, param 143 for HP (`mov eax,0x8f` at 0x4a86bb, `fdiv
+//     QWORD ds:0xb45af0` = 100.0 at 0x4a86c9, `fld1; fsubrp; fimul`) and 144
+//     for MP (0x4a8706, 0x4a8714), the panic and combustion percentages of
+//     round 491, zero while neither state is on and not modelled -- which
+//     itself scales nothing: it reads GetHP (+0x108) and
+//     ADDS the delta (`add edi,ebx` at 0x4a8821) before SetHP
+//     (GObjChar::FUN_004a66f0: at or above GetMaxHP (+0x110) the maximum,
+//     below 0 zero), and the same for MP through +0x10c / +0x114 /
+//     FUN_004a6790. So option 2 lands at HP = min(MaxHP, 1 + trunc(0.4 x
+//     MaxHP)) -- the 1 from Revive(1) below -- and MP = min(MaxMP, MP at
+//     death + trunc(0.4 x MaxMP)), the death path not being seen to write
+//     MP (one probe: the decompiles of GObjPC_OnDeath 0x4e6980 and
+//     FUN_004e67b0 name neither MP slot, +0x10c / +0x114, nor FUN_004a6790
+//     nor either ApplyHPMPDelta; a write by another route is not excluded).
 //   - GObjPC::Revive (0x4df290): with 1 it passes 1 through SetLifeState
-//     (+0x1f0), then +0x55c, SetBodyMode (+0x318) and ApplyHPMPDelta(this, 1,
-//     0, 8) -- one HP, the pools being the caller's; with 0 it does NOT set
+//     (+0x1f0) FIRST, then +0x55c, SetBodyMode (+0x318) and ApplyHPMPDelta(this,
+//     1, 0, 8) -- one HP, the pools being the caller's; with 0 it does NOT set
 //     the life state there and asks CGObjPC::FUN_004e08a0 for the RETURN
 //     POINT, which this round read: the character's `_CHAR.AppointedTeleport`
 //     (+0xa4, the designated teleport gate, its position through
@@ -79,10 +105,23 @@ import (
 //     no `_CHAR.AppointedTeleport`, no teleport gates and no region frame to
 //     put a LatestRegion/Pos into (world.Position is a zone label and a
 //     point). So a character of level 11 or more revives where it fell, a
-//     stand-in; one of 10 or under revives as retail's option 2 does.
-//     srrevamp's Level stands in for GetMaxLevel, which it equals here: a
-//     death never costs a level (GObjPC_OnDeath leaves CurLevel alone) and
-//     nothing else lowers one.
+//     stand-in; one of 10 or under revives as retail's option 2 does. No
+//     level test is made: both take the one in-place path, and GetMaxLevel
+//     is not modelled (srrevamp's Level would equal it -- a death never
+//     costs a level, GObjPC_OnDeath leaves CurLevel alone -- but nothing
+//     here reads it).
+//   - The revived MP. Retail ADDS trunc(0.4 x MaxMP) to the MP the character
+//     died with (ApplyHPMPDelta above); srrevamp SETS the tracker to
+//     character.RespawnMP, a stand-in: mana.Tracker regenerates by wall
+//     clock while dead (its own rule; whether retail's MP regen runs on a
+//     life state other than 1 was not read), so the additive base differs
+//     anyway. The HP is exact: a dead character's HP is 0 (potions land
+//     nothing, no passive regen), and reviveHPDelta adds the handler's sum
+//     through Store.Heal, the same add-and-clamp.
+//   - The flag-off instant respawn (monsterStrike's RespawnHP) keeps the
+//     load path's trunc(0.4 x MaxHP), not the handler's +1: that wire is
+//     what an older client's tests pin, and the compression of a death and
+//     a revive into one call is the stand-in there, not the number.
 //   - The empty request. Round 548's client sends OpRevive with no payload;
 //     retail's 0x7053 carries the u8 option. An empty request is option-2
 //     semantics by that round's contract, and any payload is ignored here so
@@ -213,45 +252,84 @@ func deadCharacter(hub *world.Hub, characterID int64) bool {
 // life state 2 with the time of death (world.Hub.SetLifeState), the potion
 // queue emptied -- GObjPC::FUN_004e67b0's FUN_0049a4c0 empties both lists, and
 // ApplyHPMPDelta would land nothing on a dead character anyway (0x4a87e8) --
-// and the keep-up cancelled. HP stays where ApplyDamage left it, 0. A
-// character already dead (a second monster's swing racing the first's) is
-// left as it is: the compare-and-swap fails and the earlier time of death
-// stands.
-func markDead(deps strikeDeps, characterID int64, now time.Time) {
-	deps.hub.SetLifeState(characterID, world.LifeAlive, world.LifeDead, now)
+// and the keep-up cancelled. HP stays where ApplyDamage left it, 0. It reports
+// whether the compare-and-swap made the change. Which of two racing kills
+// gets here is decided one step earlier, by the store (round 550):
+// Store.ApplyDamage reports died only for the blow that took the pool from
+// above 0 to 0, so the second blow never reaches this call and never charges
+// the penalty -- until that round both blows read died=true and both charged
+// leveldata.DeathPenaltyExp before the second's compare-and-swap failed here.
+func markDead(deps strikeDeps, characterID int64, now time.Time) bool {
+	changed := deps.hub.SetLifeState(characterID, world.LifeAlive, world.LifeDead, now)
 	if deps.potions != nil {
 		deps.potions.drop(characterID)
 	}
 	keepUp.Cancel(characterID)
+	return changed
 }
 
-// revivePlayer brings characterID back where it lies: HP to
-// character.RespawnFraction of the maximum (chars.RespawnHP), MP the same
-// (character.RespawnMP through the tracker), then life state 1 -- the order
-// GObjPC_HandleResurrectMsg_053 takes is Revive(1) then ApplyHPMPDelta, and
-// the two writes are independent, so the pools go first here and the state's
-// compare-and-swap last: a revive that loses the race to another (the handler
-// against the fallback) has restored the same pools twice, harmlessly, and
-// answers errNotDead so only one OpReviveResult goes out. It returns the
-// character as it stands and its MP.
+// reviveHPDelta is what GObjPC_HandleResurrectMsg_053's option-2 path ADDS to
+// a dead character's HP, which is 0 (round 550): GObjPC::Revive(1)'s
+// ApplyHPMPDelta(this, 1, 0, 8) -- one HP -- and then the handler's own
+// ApplyHPMPDelta(trunc(GetParam(3) x 0.4), trunc(GetParam(4) x 0.4), 8) (`call
+// 0x4a86a0` at 0x51015d). Both go through GObjPC::FUN_004a87d0, which adds the
+// delta to GetHP (`add edi,ebx` at 0x4a8821) and clamps through SetHP
+// (GObjChar::FUN_004a66f0: GetMaxHP at or above it), and the handler
+// truncates (rounding control 11 at 0x510102..0x510122). So retail lands at
+// min(MaxHP, 1 + trunc(0.4 x MaxHP)); Store.Heal is the same add-and-clamp.
+// The truncation is int()'s, and character.RespawnFraction's comment says why
+// the exact 0.4 gives the widened float's integer.
+func reviveHPDelta(maxHP int) int {
+	return 1 + int(float64(maxHP)*character.RespawnFraction)
+}
+
+// revivePlayer brings characterID back where it lies, in the order
+// GObjPC_HandleResurrectMsg_053 takes: Revive(1) passes 1 through SetLifeState
+// FIRST, and the pools come after (Revive's own ApplyHPMPDelta(this, 1, 0, 8),
+// then the handler's). So the compare-and-swap 2 -> 1 goes first here: of two
+// revives racing each other (the handler against the fallback) exactly one
+// wins it and touches the pools; the loser answers errNotDead at once, and
+// one OpReviveResult goes out. Until round 550 the pools went first and the
+// state last, which left a window in which a blow found HP above 0 in life
+// state 2: its kill's compare-and-swap 1 -> 2 failed, and the revive then set
+// state 1 on a pool the blow had just emptied -- a character alive at 0 HP,
+// which the store's transition rule (Store.ApplyDamage) would no longer let
+// a further blow kill. State first closes it: a blow between the state and
+// the pools finds 0 and lands nothing; one after the pools kills as usual.
+// Then the HP: reviveHPDelta through Store.Heal (the handler's additive
+// arithmetic, clamped at the maximum), and the MP tracker to
+// character.RespawnMP (the disclosed stand-in in the header). A store
+// failure after the state changed puts the state back with its time of
+// death, so the character is dead again for the next attempt rather than
+// alive at 0. It returns the character as it stands and its MP.
 func revivePlayer(ctx context.Context, chars character.Store, mp *mana.Tracker, hub *world.Hub, characterID int64) (*character.Character, int, error) {
-	if !deadCharacter(hub, characterID) {
+	if hub == nil {
 		return nil, 0, errNotDead
 	}
-	if err := chars.RespawnHP(ctx, characterID); err != nil {
+	e, ok := hub.EntityByCharacterID(characterID)
+	if !ok || e.Life != world.LifeDead {
+		return nil, 0, errNotDead
+	}
+	if !hub.SetLifeState(characterID, world.LifeDead, world.LifeAlive, time.Time{}) {
+		return nil, 0, errNotDead
+	}
+	stillDead := func(err error) (*character.Character, int, error) {
+		hub.SetLifeState(characterID, world.LifeAlive, world.LifeDead, e.DiedAt)
 		return nil, 0, fmt.Errorf("session: reviving %d: %w", characterID, err)
 	}
 	c, err := chars.GetByID(ctx, characterID)
 	if err != nil {
-		return nil, 0, fmt.Errorf("session: reviving %d: %w", characterID, err)
+		return stillDead(err)
 	}
+	hp, err := chars.Heal(ctx, characterID, reviveHPDelta(c.MaxHP()), c.MaxHP())
+	if err != nil {
+		return stillDead(err)
+	}
+	c.HP = hp
 	mpNow := 0
 	if mp != nil {
 		mpNow = character.RespawnMP(c.MaxMP())
 		mp.Refill(characterID, mpNow)
-	}
-	if !hub.SetLifeState(characterID, world.LifeDead, world.LifeAlive, time.Time{}) {
-		return nil, 0, errNotDead
 	}
 	return c, mpNow, nil
 }
@@ -322,12 +400,25 @@ func RunAutoRevive(ctx context.Context, hub *world.Hub, chars character.Store, d
 	}
 }
 
+// autoReviveWarned holds the characters whose auto-revive has failed and been
+// logged, so a store that keeps failing is logged ONCE per character rather
+// than every pass (round 550). An entry lives exactly as long as the failures
+// do: a pass keeps only the characters whose revive FAILED on it and prunes
+// every other entry, so the entry goes on the very pass that revives her,
+// finds her revived on request, or no longer lists her. (The first cut kept
+// every DUE character, the one it had just revived included, so her entry
+// outlived the revive by a pass -- and, this being package state, reached the
+// next test's fresh store with the same id and suppressed its WARN; the
+// batch-18 review caught it as the test failing on -count=3.)
+var autoReviveWarned sync.Map
+
 // autoReviveTick is one pass at now. Split out so a test can drive it with
 // its own clock.
 func autoReviveTick(ctx context.Context, hub *world.Hub, chars character.Store, deps RegenDeps, now time.Time, logger *slog.Logger) {
 	if hub == nil || chars == nil {
 		return
 	}
+	failing := map[int64]bool{}
 	for _, e := range hub.AllEntities() {
 		if e.Life != world.LifeDead || e.DiedAt.IsZero() || now.Sub(e.DiedAt) < AutoReviveAfter {
 			continue
@@ -337,7 +428,8 @@ func autoReviveTick(ctx context.Context, hub *world.Hub, chars character.Store, 
 			continue // revived on request between the listing and now
 		}
 		if err != nil {
-			if logger != nil {
+			failing[e.CharacterID] = true
+			if _, warned := autoReviveWarned.LoadOrStore(e.CharacterID, struct{}{}); !warned && logger != nil {
 				logger.Warn("auto-revive failed", "character", e.CharacterID, "err", err)
 			}
 			continue
@@ -347,4 +439,10 @@ func autoReviveTick(ctx context.Context, hub *world.Hub, chars character.Store, 
 		}
 		_ = sendRevived(ctx, e.Session, c, mpNow, deps)
 	}
+	autoReviveWarned.Range(func(k, _ any) bool {
+		if id, ok := k.(int64); !ok || !failing[id] {
+			autoReviveWarned.Delete(k)
+		}
+		return true
+	})
 }
