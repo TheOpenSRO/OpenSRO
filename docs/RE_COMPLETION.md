@@ -34133,3 +34133,124 @@ fallback frees it -- which is why that half must carry the fallback. `server/REA
 penalty row is SPECIFIED on the penalty; the Monster AI row's anchors are server symbols), and the
 row for the server half is that half's to write. `WORLD_ISSUES.md` stays untouched, as in rounds
 541-547.
+
+## A player killed by a monster stays dead (life state 2), behind -player-dead-state (default off) (round 549)
+
+The server half of `mob-player-dead-state` (the client half is round 548). Until this round a
+monster's killing blow put the player back on its feet in the same call (`monsterStrike`'s
+`RespawnHP`), so no player was ever dead on the wire. Behind `cmd/server`'s `-player-dead-state`
+(env `SRREVAMP_PLAYER_DEAD_STATE`, **off by default**, named in `server/README.md` and
+`deploy/README.md`), a monster's kill -- the synchronous counter and the AI's own swing alike --
+now leaves the character in life state 2 at HP 0 with its potion queue emptied and its keep-up
+cancelled; while dead its moves are neither stored nor relayed and its attacks, casts, items,
+pick-ups, duel blows, trade requests, zone changes and GM teleports are refused; the monster AI
+treats it as no target; it comes back through `OpRevive 0x0028` (in place, at
+`character.RespawnFraction` of each maximum, answered by `OpReviveResult 0x0029` and a stats push)
+or, for a session that never sends one, through a disclosed 30 s auto-revive. **Flag off: nothing
+changes** -- the kill respawns at once and the wire is byte for byte what it was (the flag-off kill
+tests of rounds 541/546 still pin the respawned HP). No opcode number or layout changed; the pair
+0x0028/0x0029 is round 548's contract.
+
+**Grounding, re-read on the RE box for this round (2026-09-24; the reading is in
+`docs/protocol/monster_ai.md`, "The player's dead state: the server half (round 549)").**
+
+- **Step 1, as the plan ordered: the retail resurrect handler first.** `GObjPC_HandleResurrectMsg_053`
+  (`0x50fee0`): one u8 option; acts only in life state 2 (`cmp al,0x2` at `0x510077`); a siege
+  countdown above `0xa5` refused; then death cause 2 (`DeathCauseNoPenalty`, not a monster's kill)
+  or **option 2 with `IGObj::GetMaxLevel` at most 10** (`cmp al,0xa; ja` at `0x51017f`) ->
+  `GObjPC::Revive(1)` (`push 0x1; call 0x4df290` at `0x5100e3` / `0x51018b`) +
+  `ApplyHPMPDelta(GetParam(3) x 0.4, GetParam(4) x 0.4, 8)` (`fmul QWORD ds:0xb460f0` at `0x5100fa`
+  / `0x51019e`, the double `character.RespawnFraction` cites); **option 1 -> `Revive(0)`**, the
+  return-point path.
+- **The return point, READ this round** (the plan asked for it before choosing): `Revive(0)` asks
+  `CGObjPC::FUN_004e08a0` for a region, a position and a world id and teleports through slot
+  `0x378`; that function reads **`_CHAR.AppointedTeleport`** (charData `+0xa4`) and takes the gate's
+  position from `FUN_004e0a40`, falling back -- unknown gate ("someone designated unknown teleport
+  gate: %d") or a siege world -- to **`_CHAR.LatestRegion / PosX / PosY / PosZ / WorldID`**
+  (`+0x94 / +0x98 / +0x9c / +0xa0 / +0xec`; `docs/protocol/db_bind_offsets.tsv`). Filed as
+  `CGObjPC::ResolveRevivePoint` on a new `recovered_names.tsv` row `004e08a0`. srrevamp has no
+  appointed teleport, no gates and no region frame, so the return cannot be built: **a character of
+  max level 10 or under revives in place as retail's option 2 does (grounded); above that the
+  in-place revive is a disclosed stand-in**, both on one code path, with `Level` standing in for
+  `GetMaxLevel` (equal here: a death never costs a level).
+- Life state 1 ALIVE / 2 DEAD: `character_state.md` rounds 411-413 (`world.LifeAlive` /
+  `world.LifeDead`). `GObjPC::Revive` (`0x4df290`) passes 1 through `SetLifeState` on its param-1
+  path only.
+- `AITactics_IsValidTarget` (`0x540de0`, round 424): no target unless `GetLifeState() == 1`.
+- Death empties both potion lists, `GObjPC::FUN_004e67b0` (`0x4e67b7` -> `FUN_0049a4c0`);
+  `ApplyHPMPDelta` lands nothing unless the life state is 1 (`cmp al,0x1` at `0x4a87e8` after the
+  `+0xf8` call at `0x4a87e6`).
+- **Two refusals are the engine's own, read this round**: `Item_HandleUseItem` (`0x510980`) asks
+  `GetLifeState` at `0x510c9c` and answers `0x1889` (`0x510cd0`) unless 1 (`cmp al,0x1` at
+  `0x510ca6`) -- or 2 for one TID class (`(tid & 0xf800) == 0x3000`, `cmp al,0x2` at `0x510cb6`),
+  not modelled; `GObjPC_HandleTradeMsg_081` (`0x5154e0`) asks the requester's `GetLifeState` at
+  `0x515607` and answers `0x181d` unless 1 (`cmp al,0x1` at `0x515611`).
+
+**Wired.**
+
+- `internal/world`: `LifeState` (`LifeAlive` 1, `LifeDead` 2), `Entity.Life` / `Entity.DiedAt`
+  (`Enter` sets alive; `ChangeZone` carries them), `Hub.SetLifeState` -- a compare-and-swap keyed
+  by character, so a blow and a revive racing cannot both claim the change.
+- `session/deadstate.go` (new): the flag (`SetPlayerDeadState`), the pair `OpRevive` /
+  `OpReviveResult` with `ReviveResult` (`Encode` / `DecodeReviveResult`: u16 error + s32 HP + s32
+  MP, the client's bytes), `AutoReviveAfter` (30 s, own design), `deadRefusal`, `deadBySession` /
+  `deadCharacter`, `markDead` (state 2 + time, the potion queue dropped, the keep-up cancelled),
+  `revivePlayer` (only in state 2; `RespawnHP`, the MP tracker to `RespawnMP`, then the CAS 2 -> 1
+  last so two racing revives send one result), `sendRevived` (the result, then the stats push),
+  `ReviveHandler`, `RunAutoRevive` / `autoReviveTick`.
+- `session/monsterstrike.go`: `strikeDeps` gains `hub` and `potions`; a death under the flag
+  calls `markDead` and returns `hp` 0 (no `RespawnHP`, no MP refill); off, as before. `performAttack`,
+  `combatDeps`, `combatHandler` and the full constructors `CombatHandlerWithDrops` /
+  `UseSkillHandlerWithDrops` carry the potion queue; `MonsterAIConfig.Potions` for the AI's swings.
+- The gates: `handleMove` (dropped), `handleChangeZone`, `combatHandler`'s `OpAttack`,
+  `useSkillHandler`, `UseItemHandler` (which now takes the world hub),
+  `GroundItemHandler`'s pick-up, `handleDuelAttack` (attacker or opponent dead; the hub now passed
+  in), `handleTradeRequest` / `handleTradeRespond` (accept only), `gm.Actor.Dead` -> `/tp` and
+  `/goto`; `armKeepUp`'s swing closure ends on a dead attacker.
+- The AI: `battleTick` and the interim hold take the `0x23` exit on `LifeDead` ("target dead");
+  `runStrike` drops a swing whose target died inside the hand-off window (no double penalty).
+- `potionQueueTick` drops a dead character's lists and lands nothing; `handleEnterWorld` revives a
+  character entering at HP 0 at `RespawnFraction` -- the load path's own rule for a stored zero
+  pool (`GObjPC::FUN_004e1120`, the `fmul` at `0x4e1141`), applied with the flag on or off, since
+  the rule is not the flag's: a character dead when the flag is turned off is not left alive at
+  0 HP. The flag-off server never stores a zero otherwise, so its wire is unchanged.
+- `cmd/server`: the flag and env with the WARN on a non-boolean, the boot line, `RunAutoRevive`
+  only with the flag on, `ReviveHandler` registered, the potion queue threaded to the three
+  handlers and the AI.
+
+**Stand-ins, each disclosed at its line and in the section**: reviving in place above max level
+10; the empty request; the fallback and its 30 s; the refusal wording and the pick-up / duel /
+zone-change / GM refusals (retail handlers not read for a life-state test; the pick-up handler
+`0x034` is a vtable thunk); the trade-accept refusal; revive at entry rather than staying dead
+across sessions; `Level` for `GetMaxLevel`. Not modelled: the return point, the option byte, the
+item kind usable while dead, the siege gate, the cause-2 branch, the duel's own death kind.
+
+**Tests** (`cd server && go build ./... && go test -count=1 -p 1 ./...` green; the list is in the
+section): `TestMonsterKillLeavesThePlayerDead` (THE RED), `TestSwingOnAPlayerAlreadyDeadIsDropped`,
+`TestCounterKillLeavesThePlayerDeadUntilRevived` (the wire, the refusals, the revive, the stats
+push), `TestReviveResultMatchesTheClientFixture`, `TestDeadCharacterCannotChangeZoneUntilRevived`,
+`TestAutoReviveFallbackFreesAnOlderClient`, `TestEnterWorldRevivesACharacterLoggedOutDead` (flag
+on and off alike: the load path's rule is not the flag's), `TestPotionQueueTickLandsNothingOnTheDead`, `TestUseItemIsRefusedWhileDead`,
+`TestRegenTickLeavesTheDeadAtZero`, `TestDeadActorCannotTeleport`, `TestPlayerDeadStateOffByDefault`;
+the flag-off control is the existing `TestMonsterBattleKillSendsItToIdle` /
+`TestMonsterStrikePushCarriesTheFlags` pair, unchanged. **Negative, proved twice**: (1) the fifteen
+production files stashed (`git stash push -u -- ...`): the new tests fail to compile (`undefined:
+SetPlayerDeadState`, `unknown field Potions`, `world.Entity has no field or method Life`, `f.actor.Dead
+undefined`); (2) with ONLY `monsterStrike`'s kill branch reverted (the block and its `time` import),
+`TestMonsterKillLeavesThePlayerDead` fails on `TargetHP:80 ... want the death with TargetHP 0`, `HP
+after the kill = 80, want 0`, `life 1` and `potion queue survived her death`, and
+`TestCounterKillLeavesThePlayerDeadUntilRevived` on `PlayerHP:80 ... want PlayerDied with PlayerHP
+0`. Restored from a kept copy and diffed; both pass again. Client: untouched (`remote_godot.sh
+tests` not needed).
+
+**Records**: `server/README.md` (the flag row), `deploy/README.md` ("Player dead state (off by
+default)"), `docs/protocol/monster_ai.md` (the section), `docs/SYSTEMS.md` (the Item stats row: the
+death-path clear is modelled behind the flag), `docs/TODO.md` (both halves built; what is left, in
+order), `docs/protocol/recovered_names.tsv` (row `004e08a0`). `WORLD_ISSUES.md` stays untouched, as
+in rounds 541-548.
+
+**Deploy note.** The flag defaults off and pushing to `dev` deploys nothing new to a player.
+**Before it is ever flipped**: tag the client release that carries round 548 and confirm its
+`Release client` run is green (`gh run list`); an older client against the flag sees HP 0 and no
+button, cannot walk or swing, and is freed only by the 30 s fallback. Then the live check in the
+section, then the override line in `deploy/README.md`.

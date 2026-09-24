@@ -335,6 +335,9 @@ type combatDeps struct {
 	ground   *grounditem.Hub
 	// dropSrc is the real drop tables; nil falls back to combat.LootTables.
 	dropSrc DropSource
+	// potions is the potion queue a death empties under -player-dead-state
+	// (round 549); nil leaves nothing to empty.
+	potions *PotionQueue
 }
 
 // armKeepUp starts (or restarts) the character's keep-up against target,
@@ -362,8 +365,10 @@ func armKeepUp(
 		if !ok || m.HP <= 0 {
 			return 0, false
 		}
+		// A dead attacker's keep-up is over (round 549): markDead cancels it
+		// at the kill, and this closes the window of a repeat already due.
 		attacker, ok := deps.hub.EntityBySession(sess.ID())
-		if !ok || attacker.Zone != m.Zone {
+		if !ok || attacker.Zone != m.Zone || attacker.Life == world.LifeDead {
 			return 0, false
 		}
 		if !keepUpInReach(attacker.Pos, m, equippedWeaponRange(ctx, characterID, deps.eq, deps.items)) {
@@ -393,7 +398,7 @@ func armKeepUp(
 		// AutoAttackType-1 cast, so those swings are the base skill's too.
 		// masteryPercent stays 0 -- see performAttack.
 		sw := plainSwingOf(ctx, characterID, deps.eq, deps.items)
-		if err := performAttack(ctx, sess, deps.chars, deps.eq, deps.items, deps.hub, deps.monsters, deps.quests, deps.inv, deps.skills, deps.zerk, deps.mp, deps.parties, deps.ground, deps.dropSrc, characterID, target, sw.flat, sw.percent, 0, sw.hits, sw.atk); err != nil {
+		if err := performAttack(ctx, sess, deps.chars, deps.eq, deps.items, deps.hub, deps.monsters, deps.quests, deps.inv, deps.skills, deps.zerk, deps.mp, deps.parties, deps.ground, deps.dropSrc, deps.potions, characterID, target, sw.flat, sw.percent, 0, sw.hits, sw.atk); err != nil {
 			return 0, false
 		}
 		if m, ok := deps.monsters.Get(target); !ok || m.HP <= 0 {

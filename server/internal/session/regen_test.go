@@ -3,9 +3,12 @@ package session
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
+	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
+	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
 // The rule was recovered and never run. These pin the arithmetic the tick
@@ -74,5 +77,30 @@ func TestRegenHealsThroughTheStore(t *testing.T) {
 	}
 	if after.HP != before.HP+want {
 		t.Errorf("HP went %d -> %d, want +%d", before.HP, after.HP, want)
+	}
+}
+
+// The dead stay dead through regen (round 549): a character on 0 HP -- what
+// -player-dead-state leaves after a kill -- regains nothing from regenTick,
+// the same arithmetic RunRegen's comment describes (a cap of 0 at 0), asserted
+// here now that a character can stay at 0.
+func TestRegenTickLeavesTheDeadAtZero(t *testing.T) {
+	ctx := context.Background()
+	store := character.NewMemStore()
+	c, err := store.Create(ctx, 1, "Fallen")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.ApplyDamage(ctx, c.ID, 1<<30); err != nil {
+		t.Fatal(err)
+	}
+	hub := world.NewHub()
+	hub.Enter(gateway.NewTestSession(549), c.ID, "Fallen", "jangan", world.Position{})
+	hub.SetLifeState(c.ID, world.LifeAlive, world.LifeDead, time.Now())
+	for i := 0; i < 5; i++ {
+		regenTick(ctx, hub, store, RegenDeps{}, nil)
+	}
+	if after, _ := store.GetByID(ctx, c.ID); after.HP != 0 {
+		t.Errorf("regen raised a dead character from 0 to %d", after.HP)
 	}
 }

@@ -774,12 +774,15 @@ func (q *PotionQueue) drop(characterID int64) {
 //   - Retail ticks each PC on its own timer, so the phase of the first step
 //     after a drink is per character; here one ticker serves everyone. Either
 //     way the second step lands up to a second after the first.
-//   - Death. GObjPC::FUN_004e67b0, which CGObjPC slots 306 and 307 run while
-//     the life state is 1 (0x529b10, 0x52cdb0; round 508), empties both
-//     lists (0x4e67b7 -> FUN_0049a4c0), and ApplyHPMPDelta lands nothing
-//     unless GetLifeState is 1 (0x4a87e8 `cmp al,0x1`). srrevamp respawns a
-//     dead character at once (combat.go, RespawnHP) and does not clear the
-//     queue there, so steps still queued land on the respawned character.
+//   - Death, with -player-dead-state OFF. GObjPC::FUN_004e67b0, which CGObjPC
+//     slots 306 and 307 run while the life state is 1 (0x529b10, 0x52cdb0;
+//     round 508), empties both lists (0x4e67b7 -> FUN_0049a4c0), and
+//     ApplyHPMPDelta lands nothing unless GetLifeState is 1 (0x4a87e8 `cmp
+//     al,0x1`). With the flag off srrevamp respawns a dead character at once
+//     (monsterstrike.go, RespawnHP) and does not clear the queue there, so
+//     steps still queued land on the respawned character. With it ON both
+//     rules are modelled (round 549): the kill empties the queue (markDead ->
+//     drop) and potionQueueTick lands nothing on a dead character.
 //   - Panic and combustion cut every step through ApplyHPMPDelta (params
 //     143/144, UseItemHandler's note); srrevamp has no status effects.
 func RunPotionQueue(ctx context.Context, hub *world.Hub, chars character.Store, q *PotionQueue, deps RegenDeps, logger *slog.Logger) {
@@ -817,6 +820,15 @@ func potionQueueTick(ctx context.Context, hub *world.Hub, chars character.Store,
 	for _, id := range q.characters() {
 		e, online := hub.EntityByCharacterID(id)
 		if !online {
+			q.drop(id)
+			continue
+		}
+		// A dead character's lists died with it (round 549): the kill emptied
+		// them (markDead, as GObjPC::FUN_004e67b0 does), and ApplyHPMPDelta
+		// would land nothing on life state 2 anyway (`cmp al,0x1` at
+		// 0x4a87e8). Anything found here was queued by a drink racing the
+		// kill (drop's disclosed window); it goes the same way.
+		if e.Life == world.LifeDead {
 			q.drop(id)
 			continue
 		}
@@ -911,7 +923,12 @@ func potionQueueTick(ctx context.Context, hub *world.Hub, chars character.Store,
 // The one non-recovery kind srrevamp does model is the container expansion
 // (round 498, useExpansion): the warehouse item grows the account's
 // warehouse through warehouse (nil refuses it), and the bag item is refused.
-func UseItemHandler(chars character.Store, inv inventory.Store, items combat.ItemLookup, mp *mana.Tracker, warehouse *storage.Service, potions *PotionQueue) gateway.Handler {
+//
+// hub is the world hub, where a character's life state lives (round 549): with
+// it, a dead character's use is refused as Item_HandleUseItem refuses it
+// (0x1889). A nil hub refuses nothing on that ground, which is what every
+// caller before that round had.
+func UseItemHandler(chars character.Store, inv inventory.Store, items combat.ItemLookup, mp *mana.Tracker, warehouse *storage.Service, potions *PotionQueue, hub *world.Hub) gateway.Handler {
 	// The per-kind potion locks (round 508), keyed by character and
 	// potionReuseBit. The handler is built once per server (cmd/server), so
 	// this is process-wide there, as the item cooldowns are.
@@ -933,6 +950,18 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
 		if errStr != "" {
 			return fail(errStr)
+		}
+		// The life-state check (round 549): Item_HandleUseItem (0x00510980)
+		// asks GetLifeState (0x510c9c) after the empty-slot and rental tests
+		// and answers 0x1889 (0x510cd0) unless it is 1 (`cmp al,0x1` at
+		// 0x510ca6) -- or 2 for one TID class (`(tid & 0xf800) == 0x3000`
+		// under FUN_004929c0, `cmp al,0x2` at 0x510cb6), the kind usable while
+		// dead, which srrevamp does not model (it refuses every non-recovery
+		// kind below anyway). The wording is srrevamp's own; the engine's
+		// order is kept as far as the slot test, which comes after this here
+		// because the slot is read below.
+		if deadBySession(hub, sess) {
+			return fail(deadRefusal)
 		}
 		if inv == nil || items == nil {
 			return fail("cannot use items")
@@ -959,9 +988,10 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 			return fail("nothing known about that item")
 		}
 		// The item's own CanUse bit (round 489): Item_HandleUseItem
-		// (0x00510980) -- after the empty-slot (0x1809), rental-expiry
-		// (FUN_00492680, 0x183d) and life-state (0x1889) checks, which
-		// srrevamp does not model here (round 490) -- calls vtable slot
+		// (0x00510980) -- after the empty-slot (0x1809) and rental-expiry
+		// (FUN_00492680, 0x183d) checks, which srrevamp does not model here
+		// (round 490), and the life-state check (0x1889), which it does since
+		// round 549 (above) -- calls vtable slot
 		// 0xe0 -- IGObj::CanUse, CGObj::CanUse 0x00483ee0 on every CGItem*
 		// class, flags bit 8 of the ref row -- and a zero answers 0x183e
 		// UIIT_MSG_STRGERR_CANNOT_BE_USED before the TID match and the

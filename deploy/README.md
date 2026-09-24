@@ -251,3 +251,41 @@ restated `command:` list. The boot log then reads
 `monster spawn push on: OpMonsterSpawned 0x007E to the zone for each respawn and GM /spawn`.
 
 **Off.** Remove that line (or set it to `"0"`), then run `docker compose up -d`.
+
+## Player dead state (off by default)
+
+The server can leave a player a monster kills dead (round 549). The killing blow's result and
+push then carry HP 0 (not the respawned 40 %), and the client that carries round 548 holds the
+die pose, locks movement and attacks, and shows a Revive button. While dead the server refuses the
+character's moves (neither stored nor relayed), attacks, casts, items, pick-ups, duel blows, trade
+requests, zone changes and GM `/tp`/`/goto`, empties its potion queue, and no monster targets it.
+`OpRevive 0x0028` (the button) brings it back where it lies at 40 % of each maximum -- the retail
+resurrect handler's own fraction, which retail grants in place only up to max level 10; above that
+srrevamp's in-place revive is a disclosed stand-in for a return point it does not model. A session
+that never sends `OpRevive` is revived unasked after 30 s (the auto-revive fallback, own design).
+What is grounded and what is a stand-in is in `docs/protocol/monster_ai.md`, "The player's dead
+state: the server half (round 549)".
+
+It is behind the `-player-dead-state` flag (env `SRREVAMP_PLAYER_DEAD_STATE`), and **the default
+is off**. Off, a kill respawns the player at once and the wire is exactly what it was. It does not
+depend on the monster flags: it covers the counterattack inside the attacker's result and the
+monster's own swings under `-monster-battle` alike. After an update the boot log reads
+`player dead state off (-player-dead-state / SRREVAMP_PLAYER_DEAD_STATE)`.
+
+**Turn it on only when both of these hold:**
+
+1. A client release that carries round 548 is tagged, CI is green for it (`gh run list`), and its
+   zips are published. An older client sees HP 0 and no Revive button after a kill; only the 30 s
+   fallback frees it, and until then its walk is not relayed and its attacks are refused.
+2. The live check in that `monster_ai.md` section passes on the render box. It has not been run
+   yet.
+
+**On.** Add `SRREVAMP_PLAYER_DEAD_STATE: "1"` under the server's `environment:` in the untracked
+`docker-compose.override.yml`, the same way as `SRREVAMP_MONSTER_AI` above, then run
+`docker compose up -d`. You can instead append `- "-player-dead-state=true"` to the override's
+restated `command:` list. The boot log then reads
+`player dead state on: a monster's kill leaves the player dead ...`.
+
+**Off, the kill switch.** Remove that line (or set it to `"0"`), then run `docker compose up -d`.
+A character that was dead at the restart enters alive at 40 % on its next login (the load path's
+own rule for a stored zero pool).

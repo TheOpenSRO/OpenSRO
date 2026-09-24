@@ -19,6 +19,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
+	"github.com/OpenSRO/srrevamp/server/internal/mana"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/quest"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
@@ -628,5 +629,120 @@ func TestBowShotIsNotAnsweredAtRange(t *testing.T) {
 	}
 	if n := len(strikes(t, z.cyra.barrier(t))); n != 0 {
 		t.Errorf("Cyra, in donwhang, received %d OpMonsterAttacked, want 0", n)
+	}
+}
+
+// ---- The player's dead state, the server half (round 549) ----
+
+// THE RED at the wire (round 549), on the synchronous counter (-monster-battle
+// off, -player-dead-state on): Aria's swing draws a killing counter, and her
+// OpAttackResult and the zone's OpMonsterAttacked both carry PlayerDied with
+// HP 0 -- no respawn in the same call. Dead, her next swing is refused with
+// deadRefusal and her move reaches nobody. OpRevive (empty, round 548's
+// request) answers an OpReviveResult with character.RespawnFraction of each
+// maximum, followed by the stats push; alive again her move relays, a second
+// OpRevive is "not dead", and a fresh monster's counter lands on her. Before
+// this round the result and the push carried HP 80 (the respawn) and no
+// swing was ever refused for being dead -- TestMonsterStrikePushCarriesTheFlags
+// still pins the respawned HP with the flag off (the control).
+func TestCounterKillLeavesThePlayerDeadUntilRevived(t *testing.T) {
+	strikePushForTest(t, true)
+	deadStateForTest(t, true)
+	ctx := context.Background()
+	tracker := mana.NewTracker()
+	z := startStrikeZone(t, func(chars character.Store, hub *world.Hub, _ *combat.Hub) gateway.Handler {
+		return ReviveHandler(chars, hub, RegenDeps{Mana: tracker})
+	})
+	k := z.monsters.SpawnSpecies("jangan", strikeMangyang, z.aria.x, 0, z.aria.z, 100000, 0, 100000, 0)
+
+	res, ariaAfter := z.aria.attack(t, k.ID)
+	if !res.PlayerDied || res.PlayerHP != 0 {
+		t.Fatalf("the killing counter's result %+v; want PlayerDied with PlayerHP 0", res)
+	}
+	ariaStrikes := strikes(t, ariaAfter)
+	if len(ariaStrikes) != 1 || !ariaStrikes[0].TargetDied || ariaStrikes[0].TargetHP != 0 {
+		t.Errorf("Aria's own push %+v, want one blow with TargetDied and TargetHP 0", ariaStrikes)
+	}
+	bramStrikes := strikes(t, z.bram.barrier(t))
+	if len(bramStrikes) != 1 || !bramStrikes[0].TargetDied || bramStrikes[0].TargetHP != 0 {
+		t.Errorf("Bram's push %+v, want one blow with TargetDied and TargetHP 0", bramStrikes)
+	}
+	c, err := z.chars.GetByID(ctx, z.ariaChar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.HP != 0 {
+		t.Errorf("Aria's stored HP after the kill = %d, want 0", c.HP)
+	}
+	if e, ok := z.hub.EntityByCharacterID(z.ariaChar); !ok || e.Life != world.LifeDead {
+		t.Errorf("Aria's life state after the kill = %d (in world %v), want 2", e.Life, ok)
+	}
+
+	// Dead: a swing is refused before anything else is measured.
+	z.aria.write(t, OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: k.ID}).Encode())
+	p := z.aria.read(t)
+	if p.Opcode != OpAttackResult {
+		t.Fatalf("a dead swing was answered with %#04x, want OpAttackResult", p.Opcode)
+	}
+	if ar, err := DecodeAttackResult(p.Data); err != nil || ar.Error != deadRefusal {
+		t.Errorf("a dead swing's result %+v (err %v), want the refusal %q", ar, err, deadRefusal)
+	}
+	// Dead: a move is neither stored nor relayed.
+	z.aria.write(t, OpMove, (&MoveRequest{X: 50, Y: 0, Z: 50}).Encode())
+	z.aria.barrier(t)
+	for _, p := range z.bram.barrier(t) {
+		if p.Opcode == OpEntityMoved {
+			t.Errorf("Bram was relayed a dead character's move")
+		}
+	}
+	if e, _ := z.hub.EntityByCharacterID(z.ariaChar); e.Pos.X == 50 {
+		t.Errorf("a dead character's move was stored")
+	}
+
+	// The revive, on round 548's empty request.
+	z.aria.write(t, OpRevive, nil)
+	p = z.aria.read(t)
+	if p.Opcode != OpReviveResult {
+		t.Fatalf("OpRevive was answered with %#04x, want OpReviveResult", p.Opcode)
+	}
+	rr, err := DecodeReviveResult(p.Data)
+	if err != nil || rr.Error != "" {
+		t.Fatalf("the revive result %+v (err %v), want a success", rr, err)
+	}
+	reborn, _ := z.chars.GetByID(ctx, z.ariaChar)
+	wantHP := int(float64(reborn.MaxHP()) * character.RespawnFraction)
+	if int(rr.HP) != wantHP || reborn.HP != wantHP {
+		t.Errorf("revived at HP %d (stored %d), want %d: RespawnFraction of %d", rr.HP, reborn.HP, wantHP, reborn.MaxHP())
+	}
+	if want := character.RespawnMP(reborn.MaxMP()); int(rr.MP) != want || tracker.Current(z.ariaChar, reborn.MaxMP()) != want {
+		t.Errorf("revived at MP %d (tracker %d), want %d", rr.MP, tracker.Current(z.ariaChar, reborn.MaxMP()), want)
+	}
+	if p = z.aria.read(t); p.Opcode != OpCharacterStatsResult {
+		t.Errorf("after the revive result Aria received %#04x, want the stats push", p.Opcode)
+	}
+	if e, ok := z.hub.EntityByCharacterID(z.ariaChar); !ok || e.Life != world.LifeAlive {
+		t.Errorf("Aria's life state after the revive = %d, want 1", e.Life)
+	}
+	// Alive: the move relays, a second revive finds nobody dead, and a fresh
+	// monster's counter lands.
+	z.aria.write(t, OpMove, (&MoveRequest{X: 50, Y: 0, Z: 50}).Encode())
+	z.aria.barrier(t)
+	moved := false
+	for _, p := range z.bram.barrier(t) {
+		if p.Opcode == OpEntityMoved {
+			moved = true
+		}
+	}
+	if !moved {
+		t.Errorf("Bram was not relayed the revived character's move")
+	}
+	z.aria.write(t, OpRevive, nil)
+	if rr, err := DecodeReviveResult(z.aria.read(t).Data); err != nil || rr.Error != "not dead" {
+		t.Errorf("a living character's OpRevive answered %+v (err %v), want \"not dead\"", rr, err)
+	}
+	z.aria.x, z.aria.z = 50, 50
+	m := z.monsters.SpawnSpecies("jangan", strikeMangyang, z.aria.x, 0, z.aria.z, 1000, 0, 15, 0)
+	if res2, _ := z.aria.attack(t, m.ID); res2.PlayerDamageTaken != 15 || res2.PlayerHP != int32(wantHP-15) {
+		t.Errorf("the revived player's next fight %+v; want a 15-point counter from %d", res2, wantHP)
 	}
 }

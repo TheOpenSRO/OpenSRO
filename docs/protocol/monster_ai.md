@@ -2445,3 +2445,143 @@ found`) and so does `monster_strikes_test.gd` (`Static function "leaves_dead()" 
 "MonsterStrikes"`, `Cannot find member "ReviveResult" in base "WorldNet"`); `remote_godot.sh tests`
 counts a parse error as a failed suite. Not driven: the die clip on a real body and the prompt in a
 running client (a render, once the server half exists to kill against).
+
+## The player's dead state: the server half (round 549)
+
+The server half of `mob-player-dead-state`, behind `cmd/server`'s `-player-dead-state`
+(`SRREVAMP_PLAYER_DEAD_STATE`), **off by default** (`server/README.md`; `deploy/README.md`, "Player
+dead state (off by default)"). With it off nothing changes: a monster's kill respawns the player in
+the same call at `character.RespawnFraction` and the wire is byte for byte what it was (the
+flag-off kill tests of rounds 541 and 546 still pin the respawned HP). With it on, a monster's
+killing blow -- the synchronous counter inside the attacker's `OpAttackResult` and the AI's own
+swing under `-monster-battle` alike, both through `monsterStrike` -- leaves the character DEAD:
+
+- **life state 2** (`world.LifeDead`) in `world.Hub`'s entity, with the time of death, set by
+  `session.markDead` through `Hub.SetLifeState`, a compare-and-swap from 1 to 2 (so a second
+  monster's blow racing the first cannot re-record the death);
+- **HP where `ApplyDamage` left it, 0**, and no `RespawnHP`: the result's `player_hp` and the push's
+  `target_hp` carry 0, which is how round 548's client knows (`MonsterStrikes.leaves_dead`);
+- **the potion queue emptied** (`PotionQueue.drop`), as `GObjPC::FUN_004e67b0` empties both lists
+  (`0x4e67b7` -> `FUN_0049a4c0`); `potionQueueTick` also drops and lands nothing on a character in
+  life state 2, the rule `ApplyHPMPDelta` applies (`cmp al,0x1` at `0x4a87e8` after the `+0xf8` call
+  at `0x4a87e6`) -- so a drink racing the kill cannot heal the dead either;
+- **the keep-up cancelled**, and a repeat already due ends on the attacker's life state
+  (`armKeepUp`'s swing closure);
+- **the experience penalty as before** (`leveldata.DeathPenaltyKilledByMonster`, unchanged).
+
+**While dead, the server refuses** (each at the handler, each answering the request's own error
+string `deadRefusal` = "you are dead", srrevamp's wording):
+
+| request | gate | grounding |
+|---|---|---|
+| `OpMove` | `handleMove`: neither stored nor relayed | own design (round 548's client stops sending; this holds an older client's walk) |
+| `OpAttack` | `combatHandler`, before the reach test | own gate; the engine's action tick runs on a living PC |
+| `OpUseSkill` | `useSkillHandler`, before the cooldown and costs | the self-heal's own `GetLifeState == 1` at `0x5942c0` (round 503) |
+| `OpUseItem` | `UseItemHandler` (now given the world hub) | **read**: `Item_HandleUseItem` (`0x510980`) asks `GetLifeState` at `0x510c9c` and answers `0x1889` (`0x510cd0`) unless it is 1 (`cmp al,0x1` at `0x510ca6`) -- or 2 for one TID class, `(tid & 0xf800) == 0x3000` under `FUN_004929c0` (`cmp al,0x2` at `0x510cb6`), the kind usable while dead, not modelled |
+| `OpPickUp` | `GroundItemHandler`, `ErrCannotPick` | own design: the retail pick-up handler (dispatch `0x034`) is a vtable thunk through slot `0x608`, not read |
+| `OpDuelAttack` | `handleDuelAttack`: the attacker dead, or the opponent dead ("your opponent is dead") | own design; the opponent's side matters because a blow on a character a monster killed would report a second death and `ResetHP` a character in life state 2. A duel's own death path is unchanged (`ResetHP`, alive): the flag covers a monster's kill only |
+| `OpTradeRequest` | `handleTradeRequest`, first | **read**: `GObjPC_HandleTradeMsg_081` (`0x5154e0`) asks the REQUESTER's `GetLifeState` once the target is found (`0x515607`) and answers `0x181d` unless it is 1 (`cmp al,0x1` at `0x515611`) |
+| `OpTradeRespond` (accept) | `handleTradeRespond`; the pending request is cancelled for the requester; a decline goes through | own design: `GObjPC_HandleTradeMsg_084` not opened for a life-state test |
+| `OpChangeZone` | `handleChangeZone` | own design: srrevamp's warp has no retail message, and round 548's client keeps its dead state across a `ChangeZoneResult`, so a warp would put a held die pose at the new zone's spawn |
+| GM `/tp`, `/goto` | `gm.Actor.Dead` -> "you are dead: revive first"; the other commands run (`/heal` fills the pools without reviving) | own design |
+
+**The monster AI treats a dead player as no target** -- the engine's own rule: `AITactics_IsValidTarget`
+(`0x540de0`, round 424) returns no target unless `(**(*target + 0xf8))() == 1`, i.e. `GetLifeState()
+== 1`, before its body-mode tests. `battleTick`'s validity test and the interim hold's now read the
+life state (`world.LifeDead` -> the `0x23` exit, "target dead" in the trace), and a swing already
+handed to a strike worker whose target has died meanwhile is dropped (`runStrike`): a second blow
+on the dead would charge the death penalty twice. The round-547 `kills` record stays as the same
+exit one tick earlier.
+
+**The revive.** `OpRevive 0x0028` (empty, round 548's request; any payload is ignored so an option
+byte can be added later) -> `ReviveHandler` -> `revivePlayer`: only in life state 2 (the retail
+handler's `cmp al,0x2` at `0x510077`; a living character is answered `"not dead"`), `RespawnHP` to
+`character.RespawnFraction` of the maximum, the MP tracker refilled to `character.RespawnMP`, then
+the compare-and-swap 2 -> 1 (the pools first, the state last, so the handler and the fallback
+racing each other restore the same pools twice and send ONE result). The reply is `OpReviveResult
+0x0029` -- u16 error (empty) + s32 HP + s32 MP, the client's fixture bytes
+`00 00 50 00 00 00 28 00 00 00` for 80/40 -- followed by an `OpCharacterStatsResult` push so the MP
+bar moves without the client's round trip. The character revives WHERE IT LIES.
+
+**The retail handler, re-read for this round** (`GObjPC_HandleResurrectMsg_053`, `0x50fee0`; the
+decompile and `srv.asm`): one u8 option; acts only in life state 2 (`cmp al,0x2` at `0x510077`);
+refuses during a siege countdown above `0xa5`; then (a) death cause `[this+0x1cb4] == 2`
+(`leveldata.DeathCauseNoPenalty`, NOT a monster's kill, which is 3) or (b) **option 2 with
+`IGObj::GetMaxLevel` (`+0x128`) at most 10** (`cmp al,0xa; ja` at `0x51017f`) -> `GObjPC::Revive(1)`
+(`push 0x1; call 0x4df290` at `0x5100e3` / `0x51018b`) and `ApplyHPMPDelta(GetParam(3) x 0.4,
+GetParam(4) x 0.4, 8)`, the 0.4 being `fmul QWORD ds:0xb460f0` at `0x5100fa` / `0x51019e` -- the
+double `character.RespawnFraction` cites from the load path; (c) **option 1 -> `Revive(0)`**, the
+return-point path, and `GameEventLog_Record(0x15, 2, 0)`.
+
+**The return point, read this round and filed** (`recovered_names.tsv` row `004e08a0`,
+`CGObjPC::ResolveRevivePoint`, the function round 548 called `CGObjPC::FUN_004e08a0`):
+`GObjPC::Revive(0)` asks it for a region, a position and a world id and teleports through slot
+`0x378`. Outside a fortress war it looks up **`_CHAR.AppointedTeleport`** (charData `+0xa4`,
+`db_bind_offsets.tsv`) and takes that gate's position from `FUN_004e0a40`; an unknown gate logs
+"someone designated unknown teleport gate: %d" and falls back to **`_CHAR.LatestRegion / PosX / PosY
+/ PosZ / WorldID`** (`+0x94 / +0x98 / +0x9c / +0xa0 / +0xec`), which a siege world uses directly. So
+retail's "return" is the character's appointed teleport gate (the town it last registered at),
+with its last stored position as the fallback.
+
+**Stand-ins, each disclosed at its line (`session/deadstate.go`'s header):**
+
+- **Reviving in place at any level.** Grounded as retail's option 2 for a max level of 10 or under;
+  above that retail offers only the return point, which srrevamp cannot build: no
+  `_CHAR.AppointedTeleport`, no teleport gates, no region frame to put a `LatestRegion`/`Pos` into
+  (`world.Position` is a zone label and a point). A character of level 11 or more therefore revives
+  where it fell, a stand-in. srrevamp's `Level` stands in for `GetMaxLevel`, which it equals here (a
+  death never costs a level; `GObjPC_OnDeath` leaves `CurLevel` alone). Both cases take the same
+  code path, so no wire field distinguishes them; the client message already says "in place at any
+  level" (round 548).
+- **The empty request** against retail 0x7053's u8 option (round 548's contract).
+- **The auto-revive fallback, `AutoReviveAfter` = 30 s** (`RunAutoRevive`, a one-second pass): a
+  session that never sends `OpRevive` -- a client older than round 548 -- is revived unasked and
+  sent the same result and stats push. Own design and a user decision; the engine's nearest thing is
+  the fortress-war countdown (`CGObjPC::PeriodicUpdateInSiege` -> `GObjPC::Revive`), a per-second
+  countdown whose start value is unread and which runs only during a war.
+- **The refusals** whose retail handlers were not read (the table above), and the wording.
+- **Revive on entry.** A character logged out dead enters alive at `RespawnFraction`. The FRACTION
+  is the load path's own rule (`GObjPC::FUN_004e1120` restores a stored zero pool to MaxHP x 0.4,
+  the `fmul` at `0x4e1141`), and the rule is the load path's whatever the flag says, so
+  `handleEnterWorld` applies it with the flag on or off: a character dead when the flag is turned
+  off (or across a crash between a blow and the respawn) is not left alive at 0 HP, where regen
+  gives nothing. The flag-off server never stores a zero otherwise, so its wire is unchanged. Doing
+  it at entry rather than keeping the character dead across sessions is the stand-in.
+
+**Not modelled:** the return point (option 1) and its option byte; the item kind usable while dead;
+the siege countdown gate and the cause-2 branch; `Revive`'s `+0x55c` / `+0x318` (`SetBodyMode`) /
+`+0x378` calls; life states 3, 4 and 6.
+
+**Tests** (`cd server && go test -count=1 -p 1 ./...`): `session/monsterai_test.go`
+`TestMonsterKillLeavesThePlayerDead` (THE RED: the push carries `TargetDied` with `TargetHP` 0, the
+store reads 0, the hub reads life state 2 with a time of death, the queued potion is gone, the
+monster goes to IDLE on the next tick and swings no more over 4 s, a potion step and regen leave 0,
+`revivePlayer` gives `RespawnFraction` and life state 1, a second revive is `errNotDead`, and the
+revived player is struck again) and `TestSwingOnAPlayerAlreadyDeadIsDropped` (two Mangyangs' first
+swings, one blow); `session/monsterstrike_test.go`
+`TestCounterKillLeavesThePlayerDeadUntilRevived` (the wire: result and both pushes at HP 0, the
+dead swing refused with `deadRefusal`, the dead move not relayed nor stored, `OpRevive` ->
+`OpReviveResult` at 40 % of each maximum then the stats push, the revived move relayed, a second
+`OpRevive` "not dead", a fresh counter landing); `session/world_test.go`
+`TestReviveResultMatchesTheClientFixture` (the pair's numbers, the client's bytes, round trips, a
+truncation), `TestDeadCharacterCannotChangeZoneUntilRevived`, `TestAutoReviveFallbackFreesAnOlderClient`
+(a second early: nothing; on time: the unasked result and push, life state 1; a later pass: nothing)
+and `TestEnterWorldRevivesACharacterLoggedOutDead` (flag on: 40 %; flag off, the control: the stored
+0 untouched); `session/useitem_test.go` `TestPotionQueueTickLandsNothingOnTheDead` and
+`TestUseItemIsRefusedWhileDead` (refused and kept; revived, it lands); `session/regen_test.go`
+`TestRegenTickLeavesTheDeadAtZero`; `gm/gm_test.go` `TestDeadActorCannotTeleport`;
+`TestPlayerDeadStateOffByDefault`. **The flag-off control** is the existing pair
+`TestMonsterBattleKillSendsItToIdle` / `TestMonsterStrikePushCarriesTheFlags`, which pin the
+respawned HP in the push. **Negative, proved twice**: with the fifteen production files stashed the
+new tests do not compile (`undefined: SetPlayerDeadState`, `world.Entity has no field Life`, ...);
+with ONLY the kill branch of `monsterStrike` reverted, `TestMonsterKillLeavesThePlayerDead` fails
+on `TargetHP:80 ... want 0`, `HP after the kill = 80, want 0`, `life 1` and the surviving potion
+queue, and `TestCounterKillLeavesThePlayerDeadUntilRevived` on `PlayerHP 80, want 0`.
+
+**Live check (not yet run).** On the render box, server built with `SRREVAMP_PLAYER_DEAD_STATE=1`
+(and the monster flags as wanted), a client carrying round 548: `SRREVAMP_QA_COMMANDS='/spawn earth
+ghost'` beside a fresh character, `--attack`, `SRREVAMP_QA_REVIVE_AFTER=120`; assert in the client
+log the death line at HP 0 with no `strikes <self>` line until "Revived.", then a swing that lands;
+in the server log `auto-revive` absent (the request came first). A second run without
+`SRREVAMP_QA_REVIVE_AFTER` asserts `auto-revive character=... after=30s` and the client's "Revived."
+without a click.

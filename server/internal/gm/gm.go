@@ -90,6 +90,9 @@ type Actor struct {
 	X, Y, Z float64
 	// TargetMonsterID is the monster the client has selected, or 0.
 	TargetMonsterID int64
+	// Dead is the character's life state as world.Hub holds it (round 549,
+	// session/deadstate.go): /tp and /goto refuse a dead actor.
+	Dead bool
 }
 
 // Species is one kind of monster /spawn and /goto know, with the stats a
@@ -104,6 +107,14 @@ type Species struct {
 	Gold    int64
 	X, Z    float64
 }
+
+// deadRefusal is what /tp and /goto answer a dead actor (round 549). OWN
+// DESIGN, disclosed: a GM's teleport has no retail counterpart to read a
+// life-state test from; refusing keeps the server's position and the
+// client's held die pose together until the GM revives. The other commands
+// run as before -- /heal on a dead character fills its pools without reviving
+// it, which the Revive button then sets to the respawn fraction.
+const deadRefusal = "you are dead: revive first"
 
 // Result is a command's outcome, for the session layer to send back.
 type Result struct {
@@ -227,6 +238,9 @@ func (d *Deps) tp(actor Actor, args []string) Result {
 	if actor.Zone == "" {
 		return refuse("not in the world")
 	}
+	if actor.Dead {
+		return refuse(deadRefusal)
+	}
 	return Result{Text: fmt.Sprintf("teleporting to %.1f, %.1f", x, z), HasPos: true, X: x, Z: z}
 }
 
@@ -235,6 +249,9 @@ func (d *Deps) tp(actor Actor, args []string) Result {
 func (d *Deps) gotoSpot(actor Actor, args []string) Result {
 	if len(args) == 0 {
 		return refuse("usage: /goto <zone|monster>. Zones: " + strings.Join(d.Zones, ", ") + ". Monsters: " + d.speciesNames())
+	}
+	if actor.Dead {
+		return refuse(deadRefusal)
 	}
 	want := strings.ToLower(strings.Join(args, " "))
 	for _, z := range d.Zones {

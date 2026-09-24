@@ -11,6 +11,7 @@ package world
 
 import (
 	"sync"
+	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 )
@@ -21,6 +22,27 @@ type Position struct {
 	X, Y, Z float64
 }
 
+// LifeState is the engine's life-state byte as srrevamp keeps it: chardata[0],
+// read through IGObj::GetLifeState (vtable +0xf8) and written only through
+// IGObj::SetLifeState (+0x1f0) -- docs/protocol/character_state.md, "The life
+// state, and the siege revive countdown (round 411)" through "Life-state 2 is
+// the character's DEAD state, closed with a typed receiver (round 413)". Only
+// the two character values are modelled here; 3 ("removed from the world")
+// and the unread 4 and 6 are not. Kept in memory with the position, as the
+// engine keeps it on the PC object (round 549).
+type LifeState uint8
+
+const (
+	// LifeAlive is 1: the engine's own ALIVE, the value every "must be
+	// alive" guard wants (GUILDERR_IM_DEAD and 0x6807 on GetLifeState() != 1).
+	LifeAlive LifeState = 1
+	// LifeDead is 2: the character's DEAD state (round 413). The retail
+	// resurrect request acts only here (GObjPC_HandleResurrectMsg_053,
+	// `cmp al,0x2` at 0x510077) and GObjPC::Revive (0x4df290) is what leaves
+	// it, passing 1 through SetLifeState.
+	LifeDead LifeState = 2
+)
+
 // Entity is one character currently present in the world.
 type Entity struct {
 	Session     *gateway.Session
@@ -28,6 +50,13 @@ type Entity struct {
 	Name        string
 	Zone        string
 	Pos         Position
+	// Life is the character's life state, LifeAlive from Enter until a
+	// monster's killing blow sets LifeDead (session/monsterstrike.go, behind
+	// -player-dead-state) and a revive sets LifeAlive again.
+	Life LifeState
+	// DiedAt is when Life last became LifeDead, for the auto-revive fallback
+	// (session.RunAutoRevive); the zero time while alive.
+	DiedAt time.Time
 }
 
 // Hub tracks all entities currently in the world, grouped by zone. Safe for
@@ -56,7 +85,7 @@ func (h *Hub) Enter(sess *gateway.Session, characterID int64, name, zone string,
 
 	h.removeLocked(sess.ID())
 
-	e := &Entity{Session: sess, CharacterID: characterID, Name: name, Zone: zone, Pos: pos}
+	e := &Entity{Session: sess, CharacterID: characterID, Name: name, Zone: zone, Pos: pos, Life: LifeAlive}
 	h.bySession[sess.ID()] = e
 	if h.byZone[zone] == nil {
 		h.byZone[zone] = make(map[uint64]*Entity)
@@ -117,7 +146,10 @@ func (h *Hub) ChangeZone(sess *gateway.Session, newZone string, pos Position) (o
 	h.removeLocked(sess.ID())
 	remainingOld = h.othersInZoneLocked(old.Zone, sess.ID())
 
-	next := &Entity{Session: sess, CharacterID: old.CharacterID, Name: old.Name, Zone: newZone, Pos: pos}
+	// The life state travels with the character: a zone change is refused
+	// while dead (session.handleChangeZone), so this carries LifeAlive in
+	// practice, but a state is never reset by a move.
+	next := &Entity{Session: sess, CharacterID: old.CharacterID, Name: old.Name, Zone: newZone, Pos: pos, Life: old.Life, DiedAt: old.DiedAt}
 	h.bySession[sess.ID()] = next
 	if h.byZone[newZone] == nil {
 		h.byZone[newZone] = make(map[uint64]*Entity)
@@ -126,6 +158,36 @@ func (h *Hub) ChangeZone(sess *gateway.Session, newZone string, pos Position) (o
 	othersNew = h.othersInZoneLocked(newZone, sess.ID())
 
 	return old, remainingOld, othersNew, true
+}
+
+// SetLifeState moves characterID's life state from `from` to `to`, recording
+// `at` as the time of death when `to` is LifeDead and clearing it otherwise.
+// It reports whether the change was made: false when the character is not in
+// the world, or when its state is not `from` -- a compare-and-swap, so a
+// monster's blow and a revive racing each other cannot both claim the change
+// (session.revivePlayer relies on that to send one OpReviveResult). Keyed by
+// character rather than session because the writer that matters is a
+// monster's blow (session/monsterstrike.go), which knows only the character.
+func (h *Hub) SetLifeState(characterID int64, from, to LifeState, at time.Time) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for _, e := range h.bySession {
+		if e.CharacterID != characterID {
+			continue
+		}
+		if e.Life != from {
+			return false
+		}
+		e.Life = to
+		if to == LifeDead {
+			e.DiedAt = at
+		} else {
+			e.DiedAt = time.Time{}
+		}
+		return true
+	}
+	return false
 }
 
 // EntitiesInZone returns a snapshot of every entity currently in zone.

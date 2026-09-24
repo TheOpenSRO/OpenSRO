@@ -753,8 +753,13 @@ func CombatHandlerWithDrops(
 	parties *party.Hub,
 	ground *grounditem.Hub,
 	dropSrc DropSource,
+	// potions is the potion queue a death empties under -player-dead-state
+	// (round 549, markDead); nil leaves nothing to empty. The full
+	// constructor carries it because cmd/server is its one caller and the
+	// only deployment with a queue to empty.
+	potions *PotionQueue,
 ) gateway.Handler {
-	return combatHandler(chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, dropSrc)
+	return combatHandler(chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, dropSrc, potions)
 }
 
 // CombatHandlerWithGround is CombatHandler with a ground-item hub: a kill's
@@ -774,7 +779,7 @@ func CombatHandlerWithGround(
 	parties *party.Hub,
 	ground *grounditem.Hub,
 ) gateway.Handler {
-	return combatHandler(chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, nil)
+	return combatHandler(chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, nil, nil)
 }
 
 // combatHandler is the one implementation both exported constructors delegate
@@ -793,6 +798,7 @@ func combatHandler(
 	parties *party.Hub,
 	ground *grounditem.Hub,
 	dropSrc DropSource,
+	potions *PotionQueue,
 ) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
@@ -807,6 +813,13 @@ func combatHandler(
 			characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
 			if errStr != "" {
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: errStr}).Encode()})
+			}
+			// A dead character does not swing (round 549, deadstate.go): the
+			// engine's action tick runs on a living PC only, and the client
+			// half already refuses the click; this is the server's own gate,
+			// before the reach test so a dead click is not told "too far".
+			if deadBySession(hub, sess) {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: deadRefusal}).Encode()})
 			}
 
 			// Reach first, THEN the cooldown -- the order is the engine's.
@@ -839,7 +852,7 @@ func combatHandler(
 			// so its damage is that row's `att` share, hit count and mask --
 			// see plainSwingOf. masteryPercent stays 0: see performAttack.
 			sw := plainSwingOf(ctx, characterID, eq, items)
-			if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, dropSrc, characterID, req.TargetMonsterID, sw.flat, sw.percent, 0, sw.hits, sw.atk); err != nil {
+			if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, dropSrc, potions, characterID, req.TargetMonsterID, sw.flat, sw.percent, 0, sw.hits, sw.atk); err != nil {
 				return err
 			}
 			// One click is the whole fight: the server repeats the swing on
@@ -847,7 +860,7 @@ func combatHandler(
 			// 256, keepup.go). A target the swing could not find arms
 			// nothing; the first repeat would only find the same.
 			if m, ok := monsters.Get(req.TargetMonsterID); ok && m.HP > 0 {
-				deps := combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc}
+				deps := combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}
 				armKeepUp(sess, deps, characterID, req.TargetMonsterID, 0)
 			}
 			return nil
@@ -1010,6 +1023,9 @@ func performAttack(
 	parties *party.Hub,
 	ground *grounditem.Hub,
 	dropSrc DropSource,
+	// potions is the potion queue a death empties under -player-dead-state
+	// (round 549); nil leaves nothing to empty.
+	potions *PotionQueue,
 	characterID, targetMonsterID int64,
 	damageBonus int,
 	damagePercent int,
@@ -1413,7 +1429,7 @@ func performAttack(
 		// branch, moved there unchanged in round 541, and its outcome is copied
 		// into the result field for field, so the wire is what it was. The same
 		// outcome is the zone push below.
-		out, err := monsterStrike(ctx, strikeDeps{chars: chars, eq: eq, items: items, mp: mp}, monster, characterID, playerLevel)
+		out, err := monsterStrike(ctx, strikeDeps{chars: chars, eq: eq, items: items, mp: mp, hub: hub, potions: potions}, monster, characterID, playerLevel)
 		if err != nil {
 			return err
 		}

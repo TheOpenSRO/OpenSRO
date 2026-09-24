@@ -531,6 +531,15 @@ func main() {
 			"hold and the counter are what they were. Forced off with a WARN unless -monster-ai and "+
 			"-monster-strike-push are both on. Needs a client release that carries round 546. See "+
 			"deploy/README.md, \"Monster battle (off by default)\".")
+	deadStateEnv, deadStateEnvErr := envBool("SRREVAMP_PLAYER_DEAD_STATE")
+	deadState := flag.Bool("player-dead-state", deadStateEnv,
+		"leave a player a monster kills dead (env SRREVAMP_PLAYER_DEAD_STATE): life state 2 at HP 0, "+
+			"its potion queue emptied, its moves, attacks, casts, items, pick-ups, duel blows, trade "+
+			"requests, zone changes and GM teleports refused, and no monster's target, until it sends "+
+			"OpRevive 0x0028 (revived in place at 40% of each maximum) or 30 s pass (the auto-revive "+
+			"fallback). Default OFF: off, a kill respawns the player at once and the wire is what it "+
+			"was. Needs a client release that carries round 548 (the Revive button); an older client "+
+			"is freed by the fallback alone. See deploy/README.md, \"Player dead state (off by default)\".")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -549,6 +558,10 @@ func main() {
 	if battleEnvErr != nil {
 		logger.Warn("SRREVAMP_MONSTER_BATTLE is not a boolean; the monster battle stays off unless -monster-battle is given",
 			"err", battleEnvErr)
+	}
+	if deadStateEnvErr != nil {
+		logger.Warn("SRREVAMP_PLAYER_DEAD_STATE is not a boolean; the player dead state stays off unless -player-dead-state is given",
+			"err", deadStateEnvErr)
 	}
 
 	// Install the EXP curve if the operator provided one. Game data, so never
@@ -816,6 +829,19 @@ func main() {
 	go session.RunPotionQueue(ctx, hub, chars, potions, session.RegenDeps{
 		Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker,
 	}, logger)
+	// The player's dead state (round 549), behind its own flag: a monster's
+	// kill leaves the character dead until OpRevive or the auto-revive
+	// fallback, which runs only with the flag on (with it off nobody is ever
+	// dead). Set before the gateway serves, like the monster flags below.
+	session.SetPlayerDeadState(*deadState)
+	if *deadState {
+		go session.RunAutoRevive(ctx, hub, chars, session.RegenDeps{
+			Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker,
+		}, logger)
+		logger.Info(fmt.Sprintf("player dead state on: a monster's kill leaves the player dead (life state 2, HP 0) until OpRevive 0x0028 or the %v auto-revive fallback (own design)", session.AutoReviveAfter))
+	} else {
+		logger.Info("player dead state off (-player-dead-state / SRREVAMP_PLAYER_DEAD_STATE)")
+	}
 	monsters := combat.NewHub()
 	// Every monster hatches facing Nest_Hatch's heading, rand() / 32767.0 *
 	// 2pi (0x5609ee..0x560a15, ai.SpawnHeading): the roster's species are all
@@ -956,8 +982,9 @@ func main() {
 	if *monsterAI {
 		session.RunMonsterAI(ctx, hub, monsters, logger, session.MonsterAIConfig{
 			Trace: os.Getenv("SRREVAMP_AI_TRACE") != "",
-			// What a monster's own swing reads and writes (-monster-battle).
-			Chars: chars, Equipment: eq, Items: refItems, Mana: manaTracker,
+			// What a monster's own swing reads and writes (-monster-battle),
+			// and the potion queue its kill empties (-player-dead-state).
+			Chars: chars, Equipment: eq, Items: refItems, Mana: manaTracker, Potions: potions,
 		})
 		logger.Info(fmt.Sprintf("monster AI on: tick %v (own design), roam radius %.0f (own design)",
 			session.MonsterAITick, session.MonsterRoamRadius))
@@ -1042,11 +1069,15 @@ func main() {
 		session.ShopHandler(chars, shopSvc, trades),
 		session.RepairHandler(chars, eq, refItems, trades),
 		session.StorageHandler(chars, storageSvc, trades),
-		session.UseItemHandler(chars, inv, refItems, manaTracker, storageSvc, potions),
-		session.CombatHandlerWithDrops(chars, eq, refItems, hub, monsters, quests, inv, gpSkills, zerkTracker, manaTracker, parties, ground, dropSrc),
+		session.UseItemHandler(chars, inv, refItems, manaTracker, storageSvc, potions, hub),
+		session.CombatHandlerWithDrops(chars, eq, refItems, hub, monsters, quests, inv, gpSkills, zerkTracker, manaTracker, parties, ground, dropSrc, potions),
 		session.GroundItemHandler(chars, hub, ground, inv, parties),
 		session.LearnSkillHandler(chars, skills, refItems),
-		session.UseSkillHandlerWithDrops(chars, eq, refItems, gpSkills, hub, monsters, quests, inv, refItems, zerkTracker, manaTracker, parties, ground, dropSrc),
+		session.UseSkillHandlerWithDrops(chars, eq, refItems, gpSkills, hub, monsters, quests, inv, refItems, zerkTracker, manaTracker, parties, ground, dropSrc, potions),
+		// OpRevive (round 549): answered whatever the flag says -- with it off
+		// nobody is ever dead and the reply is "not dead", which no client
+		// asks for since none is dead.
+		session.ReviveHandler(chars, hub, session.RegenDeps{Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker}),
 		session.SkillListHandler(chars, skills),
 		session.SkillStateHandler(chars, skills),
 		session.RaiseMasteryHandler(chars, skills),

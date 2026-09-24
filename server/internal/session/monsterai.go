@@ -105,6 +105,10 @@ type MonsterAIConfig struct {
 	Equipment equipment.Store
 	Items     combat.ItemLookup
 	Mana      *mana.Tracker
+	// Potions is the potion queue a kill empties under -player-dead-state
+	// (round 549, markDead); nil leaves nothing to empty. The world hub the
+	// life state lives in is the runtime's own.
+	Potions *PotionQueue
 }
 
 // monsterBattle is cmd/server's -monster-battle (SRREVAMP_MONSTER_BATTLE),
@@ -154,9 +158,11 @@ type monsterAI struct {
 
 	// kills holds, by monster id, the targets a strike worker killed since the
 	// last tick (runStrike writes it, the BATTLE tick drains it): the kill
-	// is the 0x23 exit's evidence, since srrevamp puts a dead player back on
-	// its feet at once (battleTick). Written only while the monster's brain is
-	// there to drain it (round 547).
+	// is the 0x23 exit's evidence while -player-dead-state is off and a dead
+	// player is back on its feet at once (battleTick); with it on the life
+	// state itself is the evidence, and this record is the same exit a tick
+	// earlier. Written only while the monster's brain is there to drain it
+	// (round 547).
 	kills map[int64]struct{}
 
 	// deps is what a monster's own swing reads and writes (MonsterAIConfig);
@@ -293,7 +299,7 @@ func newMonsterAI(hub *world.Hub, monsters *combat.Hub, logger *slog.Logger, cfg
 	a := &monsterAI{
 		struck:     map[int64]struckEvent{},
 		kills:      map[int64]struct{}{},
-		deps:       strikeDeps{chars: cfg.Chars, eq: cfg.Equipment, items: cfg.Items, mp: cfg.Mana},
+		deps:       strikeDeps{chars: cfg.Chars, eq: cfg.Equipment, items: cfg.Items, mp: cfg.Mana, hub: hub, potions: cfg.Potions},
 		brains:     map[int64]*brain{},
 		rng:        rng,
 		monsters:   monsters,
@@ -540,12 +546,14 @@ func (a *monsterAI) update(b *brain) {
 		if b.lastBlowTick == a.tickN {
 			return
 		}
-		// The target must still be in the world and in this zone: the
+		// The target must still be in the world, in this zone and alive: the
 		// engine's 0x23 exit, when CAIState_BATTLE::OnUpdate (0x0055a090)
 		// finds its target invalid through AITactics_ValidTargetOrNull
 		// (0x00540dc0, which wraps AITactics_IsValidTarget 0x00540de0's alive
-		// and life-state-1 tests; named in round 545). srrevamp's validity
-		// test is its own, disclosed: in world.Hub, same zone.
+		// and life-state-1 tests; named in round 545). The life-state test is
+		// the engine's own (`GetLifeState() == 1`, round 549: a player dead
+		// under -player-dead-state is no target); the rest of srrevamp's
+		// validity test is its own, disclosed: in world.Hub, same zone.
 		var e world.Entity
 		ok := false
 		if a.world != nil {
@@ -557,7 +565,7 @@ func (a *monsterAI) update(b *brain) {
 		// next blow holds it again. In between, IDLE's roam check sends one
 		// strayed past the radius home. Disclosed (round 539): the engine's
 		// retarget is the threat table's (mob-threat-retarget).
-		if !ok || e.Zone != b.m.Zone {
+		if !ok || e.Zone != b.m.Zone || e.Life == world.LifeDead {
 			a.tracef("ai: monster %d released (%s)", b.id, "target gone")
 			a.dispatch(b, ai.MsgCombatEnded)
 			return
@@ -601,10 +609,12 @@ func (a *monsterAI) update(b *brain) {
 // Not modelled between 1 and 2: the +0x10c/+0x108 calls at 0x55a12e..0x55a15e
 // (message 0x2b, the follow-owner path; no roster species has an owner).
 //
-// Target validity is srrevamp's own, disclosed: in world.Hub, in this zone,
-// and not killed by this monster's last swing. The engine's IsValidTarget
-// (0x540de0) wants life state 1, which a kill leaves; srrevamp puts a dead
-// player back on its feet at once (monsterStrike's RespawnHP), so the strike
+// Target validity: the engine's IsValidTarget (0x540de0) wants life state 1,
+// which a kill leaves -- under -player-dead-state (round 549) the world hub
+// holds that state and a dead player is refused here on it, the engine's own
+// test. The rest is srrevamp's own, disclosed: in world.Hub, in this zone, and
+// not killed by this monster's last swing -- with the flag off a dead player
+// is back on its feet at once (monsterStrike's RespawnHP), so the strike
 // worker reports the kill (kills) and the next tick takes the same 0x23 exit.
 func (a *monsterAI) battleTick(b *brain) {
 	var e world.Entity
@@ -614,10 +624,12 @@ func (a *monsterAI) battleTick(b *brain) {
 	}
 	_, killed := a.kills[b.id]
 	delete(a.kills, b.id)
-	if !ok || e.Zone != b.m.Zone || killed {
+	if !ok || e.Zone != b.m.Zone || killed || e.Life == world.LifeDead {
 		why := "target gone"
 		if killed {
 			why = "target killed"
+		} else if ok && e.Life == world.LifeDead {
+			why = "target dead"
 		}
 		a.tracef("ai: monster %d released (%s)", b.id, why)
 		a.dispatch(b, ai.MsgCombatEnded)
@@ -723,8 +735,9 @@ func (a *monsterAI) queueStrike(b *brain, target int64) {
 
 // handStrike hands a swing to the monster's strike worker, started on its
 // first swing. The worker runs the blow's reads and writes (monsterStrike:
-// chars.ApplyDamage, the wear, a death's SetLeveling and RespawnHP) off the
-// tick goroutine, so a slow store never stalls a pass. OWN DESIGN: the
+// chars.ApplyDamage, the wear, a death's SetLeveling and RespawnHP or, under
+// -player-dead-state, markDead) off the tick goroutine, so a slow store never
+// stalls a pass. OWN DESIGN: the
 // channel holds one swing; while one runs and one waits, a further swing is
 // dropped with a trace line rather than queued -- the cooldown between swings
 // (3000 ms for a Mangyang) is far longer than a store write, so a drop means a
@@ -774,6 +787,15 @@ func (a *monsterAI) runStrike(id int64, job strikeJob) {
 		}
 	}()
 	ctx := context.Background()
+	// A swing handed over before its target died -- another monster's kill,
+	// or this one's own previous swing, landing inside the hand-off window --
+	// is not made: the engine's IsValidTarget refuses a life state other than
+	// 1 on every update, and a blow on a dead character would charge the
+	// death penalty twice (round 549). Nothing is pushed.
+	if deadCharacter(a.world, job.target) {
+		a.tracef("ai: monster %d swing at %d dropped: the target is dead", id, job.target)
+		return
+	}
 	level := 0
 	if c, err := a.deps.chars.GetByID(ctx, job.target); err == nil && c != nil {
 		level = c.Level

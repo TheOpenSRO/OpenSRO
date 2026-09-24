@@ -425,6 +425,14 @@ func handleTradeRequest(ctx context.Context, sess *gateway.Session, p *proto.Pac
 	refuse := func(reason string) error {
 		return sess.Send(&proto.Packet{Opcode: OpTradeRequestResult, Data: (&TradeRequestResult{Reason: reason}).Encode()})
 	}
+	// The requester must be alive (round 549): GObjPC_HandleTradeMsg_081
+	// (0x005154e0) asks its own GetLifeState once the target is found
+	// (0x515607) and answers 0x181d unless it is 1 (`cmp al,0x1` at 0x515611).
+	// The engine tests it after the target lookup; here it comes first, so a
+	// dead requester is told why rather than "player not found".
+	if deadBySession(hub, sess) {
+		return refuse(deadRefusal) // engine: 0x181d
+	}
 	targetEntity, ok := hub.FindByName(req.TargetName)
 	if !ok {
 		return refuse("player not found") // engine: 3
@@ -522,6 +530,17 @@ func handleTradeRespond(ctx context.Context, sess *gateway.Session, p *proto.Pac
 	characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
 	if errStr != "" {
 		return sess.Send(&proto.Packet{Opcode: OpTradeRespondResult, Data: (&TradeRespondResult{Reason: errStr}).Encode()})
+	}
+	// A dead responder cannot accept (round 549). OWN DESIGN, disclosed: the
+	// request side's life-state test is read (handleTradeRequest); the
+	// acceptance handler, GObjPC_HandleTradeMsg_084, was not opened for one.
+	// A decline is let through, so a request to a player who died meanwhile
+	// can still be closed.
+	if req.Accept && deadBySession(hub, sess) {
+		if requester, gone := trades.CancelPendingFor(characterID); gone {
+			requester.Session.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: (&TradeCancelled{}).Encode()})
+		}
+		return sess.Send(&proto.Packet{Opcode: OpTradeRespondResult, Data: (&TradeRespondResult{Reason: deadRefusal}).Encode()})
 	}
 
 	// THE RANGE AGAIN, ON ACCEPTANCE (round 500). CTradeMgr::

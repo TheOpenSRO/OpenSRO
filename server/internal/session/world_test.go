@@ -2,6 +2,7 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"net"
@@ -600,5 +601,270 @@ func TestWorldFullFlow(t *testing.T) {
 	leftMsg, err := DecodeEntityLeft(left.Data)
 	if err != nil || leftMsg.CharacterID != movedMsg.CharacterID {
 		t.Fatalf("unexpected EntityLeft: %+v (err=%v)", leftMsg, err)
+	}
+}
+
+// ---- The player's dead state, the server half (round 549) ----
+
+// The revive pair's numbers and bytes are the client's
+// (client/scripts/net/world.gd, pinned by world_test.gd; the fixtures in
+// docs/protocol/monster_ai.md): OpRevive 0x0028 empty, OpReviveResult 0x0029 a
+// u16-prefixed error then s32 HP and s32 MP -- 80/40 encodes as
+// `00 00 50 00 00 00 28 00 00 00`, and "not dead" as `08 00 6e 6f 74 20 64 65
+// 61 64` with no tail.
+func TestReviveResultMatchesTheClientFixture(t *testing.T) {
+	if OpRevive != 0x0028 || OpReviveResult != 0x0029 {
+		t.Fatalf("OpRevive/OpReviveResult = %#04x/%#04x; the client pins 0x0028/0x0029", OpRevive, OpReviveResult)
+	}
+	for _, op := range []uint16{OpEnterWorld, OpEnterWorldResult, OpMove, OpEntityEntered, OpEntityMoved, OpEntityLeft, OpChangeZone, OpChangeZoneResult} {
+		if op == OpRevive || op == OpReviveResult {
+			t.Errorf("the revive pair collides with world opcode %#04x", op)
+		}
+	}
+	ok := (&ReviveResult{HP: 80, MP: 40}).Encode()
+	if want := []byte{0x00, 0x00, 0x50, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00}; !bytes.Equal(ok, want) {
+		t.Errorf("a revive at 80/40 encodes as % x, want % x", ok, want)
+	}
+	refused := (&ReviveResult{Error: "not dead"}).Encode()
+	if want := []byte{0x08, 0x00, 'n', 'o', 't', ' ', 'd', 'e', 'a', 'd'}; !bytes.Equal(refused, want) {
+		t.Errorf("the refusal encodes as % x, want % x", refused, want)
+	}
+	for _, want := range []ReviveResult{{HP: 80, MP: 40}, {Error: "not dead"}, {HP: -1, MP: 0}} {
+		got, err := DecodeReviveResult(want.Encode())
+		if err != nil || *got != want {
+			t.Errorf("round trip of %+v: %+v (err %v)", want, got, err)
+		}
+	}
+	if _, err := DecodeReviveResult([]byte{0x00, 0x00, 0x50, 0x00}); err == nil {
+		t.Error("a success with truncated vitals decoded")
+	}
+}
+
+// deadWorldFixture is Aria and Bram in jangan over in-memory stores, with the
+// world and revive handlers and a way to kill Aria the way a monster's blow
+// does (HP 0 and life state 2 with a time of death).
+type deadWorldFixture struct {
+	chars      *character.MemStore
+	hub        *world.Hub
+	aria, bram int64
+	connA      net.Conn
+	rA         *bufio.Reader
+	connB      net.Conn
+	rB         *bufio.Reader
+}
+
+func startDeadWorldFixture(t *testing.T) *deadWorldFixture {
+	t.Helper()
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	accounts.Add("bob", "hunter3")
+	chars := character.NewMemStore()
+	aria, _ := chars.Create(ctx, 1, "Aria")
+	bram, _ := chars.Create(ctx, 2, "Bram")
+	hub := world.NewHub()
+	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, nil, hub), ReviveHandler(chars, hub, RegenDeps{}))
+	addr, cleanup := startTestServer(t, handle)
+	t.Cleanup(cleanup)
+	f := &deadWorldFixture{chars: chars, hub: hub, aria: aria.ID, bram: bram.ID}
+	f.connA = dialTestServer(t, addr)
+	t.Cleanup(func() { f.connA.Close() })
+	f.rA = bufio.NewReader(f.connA)
+	f.connB = dialTestServer(t, addr)
+	t.Cleanup(func() { f.connB.Close() })
+	f.rB = bufio.NewReader(f.connB)
+	f.login(t, f.connA, f.rA, "alice", "hunter2", "Aria")
+	f.login(t, f.connB, f.rB, "bob", "hunter3", "Bram")
+	if p := f.read(t, f.connA, f.rA); p.Opcode != OpEntityEntered { // Aria's notice of Bram
+		t.Fatalf("Aria's first packet after Bram entered is %#04x, want OpEntityEntered", p.Opcode)
+	}
+	return f
+}
+
+func (f *deadWorldFixture) read(t *testing.T, conn net.Conn, r *bufio.Reader) *proto.Packet {
+	t.Helper()
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	p, err := proto.Read(r, nil, nil)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	return p
+}
+
+// nothing reports that conn receives no packet within 300 ms.
+func (f *deadWorldFixture) nothing(t *testing.T, conn net.Conn, r *bufio.Reader) bool {
+	t.Helper()
+	conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+	p, err := proto.Read(r, nil, nil)
+	if err == nil {
+		t.Logf("unexpected packet %#04x", p.Opcode)
+	}
+	return err != nil
+}
+
+func (f *deadWorldFixture) send(t *testing.T, conn net.Conn, opcode uint16, data []byte) {
+	t.Helper()
+	if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+}
+
+func (f *deadWorldFixture) login(t *testing.T, conn net.Conn, r *bufio.Reader, user, pass, name string) *EnterWorldResult {
+	t.Helper()
+	f.send(t, conn, OpLogin, (&LoginRequest{Username: user, Password: pass}).Encode())
+	if lr, err := DecodeLoginResult(f.read(t, conn, r).Data); err != nil || !lr.OK {
+		t.Fatalf("%s login failed: err=%v result=%+v", user, err, lr)
+	}
+	f.send(t, conn, OpEnterWorld, (&EnterWorldRequest{CharacterName: name}).Encode())
+	ewr, err := DecodeEnterWorldResult(f.read(t, conn, r).Data)
+	if err != nil || !ewr.OK {
+		t.Fatalf("%s enter world failed: err=%v result=%+v", name, err, ewr)
+	}
+	return ewr
+}
+
+// kill is what markDead leaves behind a monster's killing blow: HP 0 and life
+// state 2 at `at`.
+func (f *deadWorldFixture) kill(t *testing.T, characterID int64, at time.Time) {
+	t.Helper()
+	if _, _, err := f.chars.ApplyDamage(context.Background(), characterID, 1<<30); err != nil {
+		t.Fatal(err)
+	}
+	if !f.hub.SetLifeState(characterID, world.LifeAlive, world.LifeDead, at) {
+		t.Fatalf("character %d could not be marked dead", characterID)
+	}
+}
+
+// A dead character does not change zone -- the request is refused with
+// deadRefusal and nobody in either zone hears of a move -- and a living one's
+// OpRevive is answered "not dead" (the retail handler's `cmp al,0x2` does
+// nothing for it). After the revive the same zone change goes through.
+func TestDeadCharacterCannotChangeZoneUntilRevived(t *testing.T) {
+	f := startDeadWorldFixture(t)
+	f.kill(t, f.aria, time.Now())
+
+	f.send(t, f.connA, OpChangeZone, (&ChangeZoneRequest{Zone: "donwhang"}).Encode())
+	czr, err := DecodeChangeZoneResult(f.read(t, f.connA, f.rA).Data)
+	if err != nil || czr.OK || czr.Reason != deadRefusal {
+		t.Fatalf("a dead zone change answered %+v (err %v), want the refusal %q", czr, err, deadRefusal)
+	}
+	if !f.nothing(t, f.connB, f.rB) {
+		t.Error("Bram heard of a dead character's zone change")
+	}
+	if e, _ := f.hub.EntityByCharacterID(f.aria); e.Zone != "jangan" {
+		t.Errorf("a dead character changed zone to %q", e.Zone)
+	}
+
+	f.send(t, f.connA, OpRevive, nil)
+	rr, err := DecodeReviveResult(f.read(t, f.connA, f.rA).Data)
+	if err != nil || rr.Error != "" {
+		t.Fatalf("OpRevive answered %+v (err %v), want a success", rr, err)
+	}
+	if p := f.read(t, f.connA, f.rA); p.Opcode != OpCharacterStatsResult {
+		t.Errorf("after the revive result Aria received %#04x, want the stats push", p.Opcode)
+	}
+	f.send(t, f.connA, OpChangeZone, (&ChangeZoneRequest{Zone: "donwhang"}).Encode())
+	if czr, err := DecodeChangeZoneResult(f.read(t, f.connA, f.rA).Data); err != nil || !czr.OK {
+		t.Fatalf("the revived character's zone change answered %+v (err %v), want OK", czr, err)
+	}
+	if p := f.read(t, f.connB, f.rB); p.Opcode != OpEntityLeft {
+		t.Errorf("Bram received %#04x after Aria left, want OpEntityLeft", p.Opcode)
+	}
+	f.send(t, f.connB, OpRevive, nil)
+	if rr, err := DecodeReviveResult(f.read(t, f.connB, f.rB).Data); err != nil || rr.Error != "not dead" {
+		t.Errorf("a living character's OpRevive answered %+v (err %v), want \"not dead\"", rr, err)
+	}
+}
+
+// The auto-revive fallback (round 549, own design): a session that never sends
+// OpRevive -- a client older than round 548, with no Revive button -- is
+// revived unasked once AutoReviveAfter has passed since the kill, and sent the
+// same OpReviveResult and stats push the handler sends. A tick a second early
+// does nothing; a tick after the revive finds nobody.
+func TestAutoReviveFallbackFreesAnOlderClient(t *testing.T) {
+	f := startDeadWorldFixture(t)
+	ctx := context.Background()
+	t0 := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	f.kill(t, f.aria, t0)
+
+	autoReviveTick(ctx, f.hub, f.chars, RegenDeps{}, t0.Add(AutoReviveAfter-time.Second), nil)
+	if !f.nothing(t, f.connA, f.rA) {
+		t.Fatal("the fallback revived a character a second early")
+	}
+	if e, _ := f.hub.EntityByCharacterID(f.aria); e.Life != world.LifeDead {
+		t.Fatalf("life state %d a second before the fallback is due, want 2", e.Life)
+	}
+
+	autoReviveTick(ctx, f.hub, f.chars, RegenDeps{}, t0.Add(AutoReviveAfter), nil)
+	p := f.read(t, f.connA, f.rA)
+	if p.Opcode != OpReviveResult {
+		t.Fatalf("the fallback sent %#04x, want OpReviveResult", p.Opcode)
+	}
+	rr, err := DecodeReviveResult(p.Data)
+	if err != nil || rr.Error != "" {
+		t.Fatalf("the fallback's result %+v (err %v), want a success", rr, err)
+	}
+	c, _ := f.chars.GetByID(ctx, f.aria)
+	if want := int(float64(c.MaxHP()) * character.RespawnFraction); c.HP != want || int(rr.HP) != want {
+		t.Errorf("the fallback revived at HP %d (result %d), want %d", c.HP, rr.HP, want)
+	}
+	if p := f.read(t, f.connA, f.rA); p.Opcode != OpCharacterStatsResult {
+		t.Errorf("after the fallback's result Aria received %#04x, want the stats push", p.Opcode)
+	}
+	if e, _ := f.hub.EntityByCharacterID(f.aria); e.Life != world.LifeAlive || !e.DiedAt.IsZero() {
+		t.Errorf("after the fallback: life %d, died at %v; want 1 and no time of death", e.Life, e.DiedAt)
+	}
+	autoReviveTick(ctx, f.hub, f.chars, RegenDeps{}, t0.Add(2*AutoReviveAfter), nil)
+	if !f.nothing(t, f.connA, f.rA) {
+		t.Error("a second pass revived a living character")
+	}
+	if !f.nothing(t, f.connB, f.rB) {
+		t.Error("Bram, alive throughout, was sent something by the fallback")
+	}
+}
+
+// A character logged out dead enters alive at character.RespawnFraction --
+// the load path's own rule for a stored zero pool (GObjPC::FUN_004e1120, the
+// 0.4 at 0x4e1141) -- with -player-dead-state on and off alike: the rule is
+// the load path's, not the flag's, so a character dead when the flag is
+// turned off is not left alive at 0 HP. (The flag-off server never stores a
+// zero otherwise, so nothing it sends changes.)
+func TestEnterWorldRevivesACharacterLoggedOutDead(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	accounts.Add("bob", "hunter3")
+	chars := character.NewMemStore()
+	aria, _ := chars.Create(ctx, 1, "Aria")
+	bram, _ := chars.Create(ctx, 2, "Bram")
+	for _, id := range []int64{aria.ID, bram.ID} {
+		if _, _, err := chars.ApplyDamage(ctx, id, 1<<30); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hub := world.NewHub()
+	addr, cleanup := startTestServer(t, gateway.Chain(LoginHandler(accounts), WorldHandler(chars, nil, hub)))
+	t.Cleanup(cleanup)
+	f := &deadWorldFixture{chars: chars, hub: hub}
+
+	deadStateForTest(t, true)
+	connA := dialTestServer(t, addr)
+	defer connA.Close()
+	ewr := f.login(t, connA, bufio.NewReader(connA), "alice", "hunter2", "Aria")
+	if want := int(float64(aria.MaxHP()) * character.RespawnFraction); int(ewr.HP) != want {
+		t.Errorf("a character logged out dead entered at HP %d, want %d (RespawnFraction of %d)", ewr.HP, want, aria.MaxHP())
+	}
+	if c, _ := chars.GetByID(ctx, aria.ID); c.HP == 0 {
+		t.Error("the entry revive did not reach the store")
+	}
+	if e, _ := hub.EntityByCharacterID(aria.ID); e.Life != world.LifeAlive {
+		t.Errorf("entered with life state %d, want 1", e.Life)
+	}
+
+	SetPlayerDeadState(false) // the load path's rule does not depend on the flag
+	connB := dialTestServer(t, addr)
+	defer connB.Close()
+	if ewr := f.login(t, connB, bufio.NewReader(connB), "bob", "hunter3", "Bram"); ewr.HP <= 0 {
+		t.Errorf("with the flag off a character logged out dead entered at HP %d, want RespawnFraction of the maximum", ewr.HP)
 	}
 }

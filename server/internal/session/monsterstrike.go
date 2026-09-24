@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
@@ -118,12 +119,17 @@ func SetMonsterStrikePush(on bool) { monsterStrikePush.Store(on) }
 
 // strikeDeps is what a monster's counterattack reads and writes: the
 // defender's character row, the gear it wears and wears down, the item table
-// that gear resolves against, and the mana pool a death refills.
+// that gear resolves against, the mana pool a death refills, and -- for the
+// dead state (round 549) -- the world hub that keeps the life state and the
+// potion queue a death empties. hub nil means no dead state can be kept, so a
+// kill respawns as with the flag off; cmd/server passes both.
 type strikeDeps struct {
-	chars character.Store
-	eq    equipment.Store
-	items combat.ItemLookup
-	mp    *mana.Tracker
+	chars   character.Store
+	eq      equipment.Store
+	items   combat.ItemLookup
+	mp      *mana.Tracker
+	hub     *world.Hub
+	potions *PotionQueue
 }
 
 // monsterStrikeOutcome is what one counterattack did to its target: the
@@ -151,11 +157,12 @@ func (o monsterStrikeOutcome) message(monsterID, targetID int64) *MonsterAttacke
 // monsterStrike is a surviving monster's counterattack on characterID, whose
 // level is playerLevel: the monster's blow through the same pipeline a
 // player's takes, the gear it wears, the damage, and -- on a death -- the
-// experience penalty, the respawn, the end of the keep-up and the mana
-// refill. performAttack calls it once CounterattackReady has said the monster
-// may strike. It is performAttack's counter branch moved here unchanged in
-// round 541 (rounds 254 and 505); only its result is returned instead of
-// written into the AttackResult, so the push can repeat it.
+// experience penalty, the end of the keep-up and then either the respawn and
+// the mana refill (the default) or, under -player-dead-state, the dead state
+// (markDead). performAttack calls it once CounterattackReady has said the
+// monster may strike. It is performAttack's counter branch moved here
+// unchanged in round 541 (rounds 254 and 505); only its result is returned
+// instead of written into the AttackResult, so the push can repeat it.
 func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster, characterID int64, playerLevel int) (monsterStrikeOutcome, error) {
 	chars, eq, items, mp := deps.chars, deps.eq, deps.items, deps.mp
 	var out monsterStrikeOutcome
@@ -261,6 +268,18 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 					out.deathExpLost = loss
 				}
 			}
+		}
+		if playerDeadState.Load() && deps.hub != nil {
+			// -player-dead-state (round 549, deadstate.go): the character
+			// STAYS dead -- life state 2, HP where ApplyDamage left it (0),
+			// the potion lists emptied and the keep-up ended, as
+			// GObjPC::FUN_004e67b0 and the engine's death path do -- until
+			// OpRevive or the auto-revive fallback. The result and the push
+			// therefore carry HP 0, which is how round 548's client knows
+			// (MonsterStrikes.leaves_dead).
+			markDead(deps, characterID, time.Now())
+			out.hp = 0
+			return out, nil
 		}
 		if err := chars.RespawnHP(ctx, characterID); err != nil {
 			return monsterStrikeOutcome{}, fmt.Errorf("combat: respawning player: %w", err)

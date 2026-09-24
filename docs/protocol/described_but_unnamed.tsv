@@ -382,7 +382,6 @@
 0	005ca5a0	CMainProcess::FUN_005ca5a0	415	docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
 0	00547ad0	FUN_00547ad0	411	docs/protocol/described_but_unnamed.tsv,docs/protocol/monster_ai.md
 0	00631630	GObjPC::FUN_00631630	411	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
-0	004e08a0	CGObjPC::FUN_004e08a0	408	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
 0	0060f710	EventDaemon_Action::FUN_0060f710	397	docs/protocol/described_but_unnamed.tsv,docs/protocol/source_files.tsv
 0	00525ac0	FUN_00525ac0	395	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
 0	00408120	GObjPC::FUN_00408120	393	docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md

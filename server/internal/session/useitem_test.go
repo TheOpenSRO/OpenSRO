@@ -103,7 +103,7 @@ func TestUseItemRefusesAnItemWhoseCanUseIsClear(t *testing.T) {
 		return -1, 0
 	}
 
-	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, nil, nil, nil))
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, nil, nil, nil, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -259,7 +259,7 @@ func TestUseItemRestoresOnlyForRecoveryKinds(t *testing.T) {
 		return -1, 0
 	}
 
-	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mp, nil, nil))
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mp, nil, nil, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -462,7 +462,7 @@ func TestUseItemScalesPotionByLevelAndStr(t *testing.T) {
 	}
 
 	potions := NewPotionQueue()
-	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mana.NewTracker(), nil, potions))
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mana.NewTracker(), nil, potions, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -558,7 +558,7 @@ func TestUseWarehouseExpansionItem(t *testing.T) {
 	warehouse.SetCapacityFunc(storage.CapacityOf(accounts))
 	svc := &storage.Service{Bag: inv, Warehouse: warehouse, Gold: chars, Accounts: accounts, ChestSizes: accounts}
 
-	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mana.NewTracker(), svc, nil), StorageHandler(chars, svc, nil))
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mana.NewTracker(), svc, nil, nil), StorageHandler(chars, svc, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -784,7 +784,7 @@ func TestPotionReuseDelayPerKind(t *testing.T) {
 		}
 	}
 
-	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mp, nil, potions))
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mp, nil, potions, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -1158,7 +1158,7 @@ func newPotionFixture(t *testing.T) *potionFixture {
 	f.store = &flakyHeal{MemStore: f.chars}
 
 	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(f.chars, nil, f.hub),
-		UseItemHandler(f.store, f.bag, items, f.mp, nil, f.potions))
+		UseItemHandler(f.store, f.bag, items, f.mp, nil, f.potions, f.hub))
 	addr, cleanup := startTestServer(t, handle)
 	t.Cleanup(cleanup)
 	f.conn = dialTestServer(t, addr)
@@ -1788,5 +1788,61 @@ func TestPotionDrinkThatFailsLeavesTheQueueAsItWas(t *testing.T) {
 	res = f.use(fixtureHPPotion)
 	if res.Error != "" || res.RestoredHP != 25 || res.HP != 75 || res.Remaining != 9 {
 		t.Fatalf("the same potion at the same instant, heal working: got %+v; want 25 at once, HP 75, 9 left", res)
+	}
+}
+
+// ---- The player's dead state, the server half (round 549) ----
+
+// A step queued on a dead character lands nothing and the list goes: the
+// engine's ApplyHPMPDelta refuses a life state other than 1 (`cmp al,0x1` at
+// 0x4a87e8) and its death path empties both lists (GObjPC::FUN_004e67b0), so
+// nothing a kill left queued -- or a drink racing it -- heals the dead.
+func TestPotionQueueTickLandsNothingOnTheDead(t *testing.T) {
+	ctx := context.Background()
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, _, err := chars.ApplyDamage(ctx, c.ID, 1<<30); err != nil {
+		t.Fatalf("damage: %v", err)
+	}
+	hub := world.NewHub()
+	hub.Enter(gateway.NewTestSession(5490), c.ID, "Aria", "jangan", world.Position{})
+	hub.SetLifeState(c.ID, world.LifeAlive, world.LifeDead, time.Now())
+	q := NewPotionQueue()
+	q.pushLocked(c.ID, potionPoolHP, potionEntry{step: 25, count: 4})
+	potionQueueTick(ctx, hub, chars, q, RegenDeps{}, nil)
+	if after, _ := chars.GetByID(ctx, c.ID); after.HP != 0 {
+		t.Errorf("a dead character was healed: HP %d, want 0", after.HP)
+	}
+	if ids := q.characters(); len(ids) != 0 {
+		t.Errorf("the dead character's queue was kept: %v", ids)
+	}
+}
+
+// A dead character's OpUseItem is refused and the potion kept: Item_HandleUseItem
+// answers 0x1889 unless GetLifeState is 1 (0x510ca6 / 0x510cd0). Revived, the
+// same potion lands.
+func TestUseItemIsRefusedWhileDead(t *testing.T) {
+	f := newPotionFixture(t)
+	f.setHP(100)
+	if !f.hub.SetLifeState(f.id, world.LifeAlive, world.LifeDead, time.Now()) {
+		t.Fatal("Aria could not be marked dead")
+	}
+	if res := f.use(fixtureHPPotion); res.Error != deadRefusal {
+		t.Fatalf("a dead character's potion answered %+v, want the refusal %q", res, deadRefusal)
+	}
+	if _, qty := f.stack(fixtureHPPotion); qty != 10 {
+		t.Errorf("the refused potion was spent: %d left, want 10", qty)
+	}
+	if f.hp() != 100 {
+		t.Errorf("the refused potion healed: HP %d, want 100", f.hp())
+	}
+	if !f.hub.SetLifeState(f.id, world.LifeDead, world.LifeAlive, time.Time{}) {
+		t.Fatal("Aria could not be revived")
+	}
+	if res := f.use(fixtureHPPotion); res.Error != "" || res.RestoredHP <= 0 {
+		t.Errorf("the revived character's potion answered %+v, want a heal", res)
 	}
 }

@@ -276,7 +276,7 @@ func DuelHandler(chars character.Store, eq equipment.Store, items combat.ItemLoo
 		case OpDuelRespond:
 			return handleDuelRespond(ctx, sess, p, chars, hub, duels)
 		case OpDuelAttack:
-			return handleDuelAttack(ctx, sess, p, chars, eq, items, duels)
+			return handleDuelAttack(ctx, sess, p, chars, eq, items, hub, duels)
 		default:
 			return nil
 		}
@@ -341,7 +341,7 @@ func handleDuelRespond(ctx context.Context, sess *gateway.Session, p *proto.Pack
 	return challenger.Session.Send(&proto.Packet{Opcode: OpDuelStarted, Data: (&DuelStarted{OpponentName: req.CharacterName}).Encode()})
 }
 
-func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, eq equipment.Store, items combat.ItemLookup, duels *duel.Hub) error {
+func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, eq equipment.Store, items combat.ItemLookup, hub *world.Hub, duels *duel.Hub) error {
 	req, err := DecodeDuelAttackRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpDuelAttackResult, Data: (&DuelAttackResult{Error: "malformed request"}).Encode()})
@@ -354,6 +354,19 @@ func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	opponent, ok := duels.OpponentOf(characterID)
 	if !ok {
 		return sess.Send(&proto.Packet{Opcode: OpDuelAttackResult, Data: (&DuelAttackResult{Error: "not in a duel"}).Encode()})
+	}
+	// Neither side of a duel blow may be dead (round 549, deadstate.go). OWN
+	// DESIGN, disclosed: the retail duel messages were not read for a
+	// life-state test. The opponent's side matters as much as the attacker's:
+	// a blow on a character a monster has already killed would find HP 0,
+	// report a second death and, below, ResetHP a character whose life state
+	// is still 2. A duel's own death path is unchanged (ResetHP, alive): the
+	// flag covers a monster's kill only, as the plan scoped it.
+	if deadBySession(hub, sess) {
+		return sess.Send(&proto.Packet{Opcode: OpDuelAttackResult, Data: (&DuelAttackResult{Error: deadRefusal}).Encode()})
+	}
+	if deadCharacter(hub, opponent.CharacterID) {
+		return sess.Send(&proto.Packet{Opcode: OpDuelAttackResult, Data: (&DuelAttackResult{Error: "your opponent is dead"}).Encode()})
 	}
 
 	// The attacker's Strength contributes to both ends of its damage range;

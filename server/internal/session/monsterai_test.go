@@ -1102,6 +1102,8 @@ type battleFixture struct {
 	chars    character.Store
 	aria     int64
 	rec      *pushRecorder
+	// potions is the queue a kill empties under -player-dead-state (round 549).
+	potions *PotionQueue
 }
 
 func startBattleFixture(t *testing.T, seed int64, ariaX, ariaZ float64) *battleFixture {
@@ -1119,11 +1121,12 @@ func startBattleFixture(t *testing.T, seed int64, ariaX, ariaZ float64) *battleF
 	hub.Enter(gateway.NewTestSession(uint64(91100+seed)), c.ID, "Aria", "jangan", world.Position{X: ariaX, Z: ariaZ})
 	monsters := newAIHub(seed)
 	rec := &pushRecorder{}
-	a := newMonsterAI(hub, monsters, nil, MonsterAIConfig{Chars: chars, Equipment: eq, Items: items},
+	potions := NewPotionQueue()
+	a := newMonsterAI(hub, monsters, nil, MonsterAIConfig{Chars: chars, Equipment: eq, Items: items, Potions: potions},
 		rand.New(rand.NewSource(seed)), rec.push)
 	monsterAIRuntime.Store(a)
 	t.Cleanup(func() { monsterAIRuntime.Store(nil) })
-	return &battleFixture{a: a, hub: hub, monsters: monsters, chars: chars, aria: c.ID, rec: rec}
+	return &battleFixture{a: a, hub: hub, monsters: monsters, chars: chars, aria: c.ID, rec: rec, potions: potions}
 }
 
 // waitFor polls cond every few milliseconds for up to d: the strike worker
@@ -1611,5 +1614,168 @@ func TestStopPrecedesTheFirstInBandBlow(t *testing.T) {
 	mu.Unlock()
 	if len(got) != 2 || got[0] != OpMonsterMoved || got[1] != OpMonsterAttacked {
 		t.Fatalf("the zone received opcodes %04x, want the stop 0x%04x before the blow 0x%04x", got, OpMonsterMoved, OpMonsterAttacked)
+	}
+}
+
+// ---- The player's dead state, the server half (round 549) ----
+
+// deadStateForTest turns -player-dead-state on for the rest of the test and
+// puts it back when the test ends.
+func deadStateForTest(t *testing.T, on bool) {
+	t.Helper()
+	was := playerDeadState.Load()
+	SetPlayerDeadState(on)
+	t.Cleanup(func() { SetPlayerDeadState(was) })
+}
+
+func TestPlayerDeadStateOffByDefault(t *testing.T) {
+	if playerDeadState.Load() {
+		t.Fatal("the player dead state is on with nothing having asked for it: -player-dead-state is off by default")
+	}
+}
+
+// THE RED (round 549): with -player-dead-state on, a Mangyang's killing blow
+// from the AI tick leaves Aria DEAD -- HP 0 in the store and in the push
+// (TargetDied with TargetHP 0, which is how round 548's client knows), life
+// state 2 in the world hub with the time of death, her queued potion gone --
+// and the monster, finding no valid target (IsValidTarget's life state 1),
+// goes to IDLE and swings no more. revivePlayer then brings her back where
+// she lies at character.RespawnFraction of her maximum, life state 1, and the
+// Mangyang fights her again. Before this round the same blow put her back on
+// her feet in the same call: the push carried the respawn HP (80, above 0),
+// the store read 80, and the hub knew no life state -- which is exactly what
+// TestMonsterBattleKillSendsItToIdle still pins with the flag off (the
+// control).
+func TestMonsterKillLeavesThePlayerDead(t *testing.T) {
+	battleForTest(t, true)
+	deadStateForTest(t, true)
+	ctx := context.Background()
+	f := startBattleFixture(t, 27, 0, 0)
+	// A potion step queued before the kill: the engine empties both lists at
+	// death (GObjPC::FUN_004e67b0).
+	f.potions.pushLocked(f.aria, potionPoolHP, potionEntry{step: 25, count: 4})
+	m := f.monsters.SpawnSpecies("jangan", chaseMangyang, 8, 0, 0, 100000, 0, 100000, 0)
+	now := aiT0
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	noteStruck(f.monsters, m.ID, f.aria)
+	f.rec.reset()
+	monsterAITick(now) // BATTLE, in reach from the start: the swing is immediate
+	now = now.Add(MonsterAITick)
+	if !waitFor(t, 2*time.Second, func() bool { return len(f.rec.strikesOf(m.ID)) == 1 }) {
+		t.Fatalf("no blow within 2 s of a monster entering BATTLE in reach (%d pushed)", len(f.rec.strikesOf(m.ID)))
+	}
+	got := f.rec.strikesOf(m.ID)[0]
+	if !got.TargetDied || got.TargetHP != 0 {
+		t.Errorf("the killing blow %+v; want the death with TargetHP 0 (no respawn)", got)
+	}
+	after, err := f.chars.GetByID(ctx, f.aria)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.HP != 0 {
+		t.Errorf("Aria's HP after the kill = %d, want 0: she stays dead", after.HP)
+	}
+	e, ok := f.hub.EntityByCharacterID(f.aria)
+	if !ok || e.Life != world.LifeDead || e.DiedAt.IsZero() {
+		t.Errorf("Aria's entity after the kill: in world %v, life %d, died at %v; want life state 2 with a time of death", ok, e.Life, e.DiedAt)
+	}
+	if ids := f.potions.characters(); len(ids) != 0 {
+		t.Errorf("Aria's potion queue survived her death: %v (FUN_004e67b0 empties both lists)", ids)
+	}
+
+	// The tick after: no valid target (life state 2), the 0x23 exit to IDLE,
+	// and nothing more is swung at a dead player over 4 s of ticks.
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	if st := stateOf(t, f.a, m.ID); st != ai.StateIdle {
+		t.Fatalf("state %v on the tick after the kill, want IDLE (a dead target is invalid)", st)
+	}
+	for i := 0; i < 40; i++ {
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := len(f.rec.strikesOf(m.ID)); n != 1 {
+		t.Errorf("%d blows after the kill, want none: the dead are no target", n-1)
+	}
+	// A step queued on a dead character lands nothing (ApplyHPMPDelta wants
+	// life state 1, 0x4a87e8) and the list goes.
+	f.potions.pushLocked(f.aria, potionPoolHP, potionEntry{step: 25, count: 4})
+	potionQueueTick(ctx, f.hub, f.chars, f.potions, RegenDeps{}, nil)
+	if c, _ := f.chars.GetByID(ctx, f.aria); c.HP != 0 {
+		t.Errorf("a potion step healed a dead character to %d", c.HP)
+	}
+	if ids := f.potions.characters(); len(ids) != 0 {
+		t.Errorf("a dead character's potion queue was kept: %v", ids)
+	}
+	// Regen leaves the dead at zero (mana.RegenPerTick's cap of 0 at 0).
+	regenTick(ctx, f.hub, f.chars, RegenDeps{}, nil)
+	if c, _ := f.chars.GetByID(ctx, f.aria); c.HP != 0 {
+		t.Errorf("regen raised a dead character to %d", c.HP)
+	}
+
+	// The revive: in place, character.RespawnFraction of the maximum, life
+	// state 1, the time of death cleared; a second one finds nobody dead.
+	c, _, err := revivePlayer(ctx, f.chars, nil, f.hub, f.aria)
+	if err != nil {
+		t.Fatalf("revivePlayer: %v", err)
+	}
+	if want := int(float64(c.MaxHP()) * character.RespawnFraction); c.HP != want {
+		t.Errorf("revived at HP %d, want %d (RespawnFraction of %d)", c.HP, want, c.MaxHP())
+	}
+	if e, ok := f.hub.EntityByCharacterID(f.aria); !ok || e.Life != world.LifeAlive || !e.DiedAt.IsZero() {
+		t.Errorf("Aria's entity after the revive: life %d, died at %v; want life state 1 and no time of death", e.Life, e.DiedAt)
+	}
+	if _, _, err := revivePlayer(ctx, f.chars, nil, f.hub, f.aria); err != errNotDead {
+		t.Errorf("a second revive: %v, want errNotDead", err)
+	}
+	// Alive again, she is a target again: the next blow she draws lands.
+	noteStruck(f.monsters, m.ID, f.aria)
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	if !waitFor(t, 2*time.Second, func() bool { return len(f.rec.strikesOf(m.ID)) == 2 }) {
+		t.Fatalf("no blow on the revived player within 2 s (%d pushed)", len(f.rec.strikesOf(m.ID)))
+	}
+	if second := f.rec.strikesOf(m.ID)[1]; !second.TargetDied || second.TargetHP != 0 {
+		t.Errorf("the second blow %+v; want another kill at HP 0", second)
+	}
+}
+
+// A swing already handed to a strike worker when its target died -- another
+// monster's kill inside the hand-off window -- is dropped, not made: a blow on
+// a dead character would charge the death penalty a second time (round 549,
+// runStrike). Two Mangyangs in BATTLE on Aria at once; the first kills her,
+// the second's swing of the same pass finds her dead.
+func TestSwingOnAPlayerAlreadyDeadIsDropped(t *testing.T) {
+	battleForTest(t, true)
+	deadStateForTest(t, true)
+	f := startBattleFixture(t, 28, 0, 0)
+	first := f.monsters.SpawnSpecies("jangan", chaseMangyang, 8, 0, 0, 100000, 0, 100000, 0)
+	second := f.monsters.SpawnSpecies("jangan", chaseMangyang, -8, 0, 0, 100000, 0, 100000, 0)
+	now := aiT0
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	noteStruck(f.monsters, first.ID, f.aria)
+	noteStruck(f.monsters, second.ID, f.aria)
+	f.rec.reset()
+	monsterAITick(now) // both enter BATTLE in reach: two swings handed over this pass
+	now = now.Add(MonsterAITick)
+	time.Sleep(300 * time.Millisecond)
+	blows := len(f.rec.strikesOf(first.ID)) + len(f.rec.strikesOf(second.ID))
+	if blows != 1 {
+		t.Fatalf("%d blows landed on one player from two monsters' first swings, want exactly 1: the second found her dead", blows)
+	}
+	if c, _ := f.chars.GetByID(context.Background(), f.aria); c.HP != 0 {
+		t.Errorf("HP %d after the kill, want 0", c.HP)
+	}
+	for i := 0; i < 20; i++ {
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+	}
+	for _, id := range []int64{first.ID, second.ID} {
+		if st := stateOf(t, f.a, id); st != ai.StateIdle {
+			t.Errorf("monster %d in %v two seconds after the kill, want IDLE", id, st)
+		}
 	}
 }

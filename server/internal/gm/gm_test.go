@@ -382,3 +382,24 @@ func TestMissingDependenciesRefuse(t *testing.T) {
 		t.Errorf("/kill against empty deps: %+v", res)
 	}
 }
+
+// A dead GM is not moved (round 549, session/deadstate.go): /tp and /goto
+// refuse with deadRefusal while Actor.Dead is set, and the rest of the console
+// -- /heal here -- runs as before.
+func TestDeadActorCannotTeleport(t *testing.T) {
+	f := newFixture(t)
+	f.actor.Dead = true
+	for _, line := range []string{"/tp -300 -880", "/goto donwhang", "/goto mangyang"} {
+		res := f.run(t, line)
+		if !res.Refused || res.HasPos || res.Zone != "" || res.Text != deadRefusal {
+			t.Errorf("%q for a dead actor: %+v, want the refusal %q with no move", line, res, deadRefusal)
+		}
+	}
+	if res := f.run(t, "/heal"); res.Refused {
+		t.Errorf("/heal for a dead actor was refused: %+v", res)
+	}
+	f.actor.Dead = false
+	if res := f.run(t, "/tp -300 -880"); res.Refused || !res.HasPos {
+		t.Errorf("/tp for a living actor: %+v, want the move", res)
+	}
+}

@@ -440,6 +440,13 @@ func GroundItemHandler(chars character.Store, hub *world.Hub, ground *grounditem
 			if !ok || ground == nil || inv == nil {
 				return reply(&PickUpResult{Code: grounditem.ErrCannotPick, GroundItemID: req.GroundItemID})
 			}
+			// A dead character picks nothing up (round 549, deadstate.go).
+			// OWN DESIGN, disclosed: the retail pick-up handler (dispatch
+			// 0x034, a vtable thunk through slot 0x608) was not read for a
+			// life-state test; the code is the generic refusal.
+			if entity.Life == world.LifeDead {
+				return reply(&PickUpResult{Code: grounditem.ErrCannotPick, GroundItemID: req.GroundItemID})
+			}
 			// The engine measures the 10 units in 3-D. Here the vertical term is
 			// dropped ON PURPOSE: srrevamp's monsters (and so their drops) sit
 			// at a placeholder y of 0 (combat.Monster: "own design placeholder

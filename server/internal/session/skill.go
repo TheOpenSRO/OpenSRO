@@ -546,7 +546,7 @@ func UseSkillHandlerWithGround(
 	parties *party.Hub,
 	ground *grounditem.Hub,
 ) gateway.Handler {
-	return useSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv, skillRef, zerk, mp, parties, ground, nil)
+	return useSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv, skillRef, zerk, mp, parties, ground, nil, nil)
 }
 
 // UseSkillHandlerWithDrops is UseSkillHandlerWithGround plus the real drop
@@ -567,8 +567,12 @@ func UseSkillHandlerWithDrops(
 	parties *party.Hub,
 	ground *grounditem.Hub,
 	dropSrc DropSource,
+	// potions is the potion queue a death empties under -player-dead-state
+	// (round 549, markDead); nil leaves nothing to empty. Carried by the full
+	// constructor, as CombatHandlerWithDrops carries it.
+	potions *PotionQueue,
 ) gateway.Handler {
-	return useSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv, skillRef, zerk, mp, parties, ground, dropSrc)
+	return useSkillHandler(chars, eq, items, skills, hub, monsters, quests, inv, skillRef, zerk, mp, parties, ground, dropSrc, potions)
 }
 
 func useSkillHandler(
@@ -586,6 +590,7 @@ func useSkillHandler(
 	parties *party.Hub,
 	ground *grounditem.Hub,
 	dropSrc DropSource,
+	potions *PotionQueue,
 ) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpUseSkill {
@@ -600,6 +605,13 @@ func useSkillHandler(
 		characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
 		if errStr != "" {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: errStr}).Encode()})
+		}
+		// A dead character casts nothing (round 549, deadstate.go): the
+		// engine's skill tick runs on a living PC, and even the self-heal
+		// below lands only on a living caster (0x5942c0, GetLifeState == 1).
+		// Before the cooldown and the costs, so a dead cast pays nothing.
+		if deadBySession(hub, sess) {
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: deadRefusal}).Encode()})
 		}
 
 		// Resolve the skill's cooldown and damage bonus. A real learned skill
@@ -1062,7 +1074,7 @@ func useSkillHandler(
 		// (Action_Range, refdata.Skill.Range). Nothing there is new
 		// arithmetic; the skill path simply never called it.
 
-		if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, dropSrc, characterID, req.TargetMonsterID, damageBonus, damagePercent, masteryPercent, hits, attackType); err != nil {
+		if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, dropSrc, potions, characterID, req.TargetMonsterID, damageBonus, damagePercent, masteryPercent, hits, attackType); err != nil {
 			return err
 		}
 		// The skill tick's hand-off (round 256, keepup.go): a row with
@@ -1073,7 +1085,7 @@ func useSkillHandler(
 		// TestSkillCastHandsOffToPlainSwings drives it through this handler.
 		if skillHandsOff(castRow) {
 			if m, ok := monsters.Get(req.TargetMonsterID); ok && m.HP > 0 {
-				deps := combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc}
+				deps := combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}
 				armKeepUp(sess, deps, characterID, req.TargetMonsterID, handOffDelay(castRow))
 			}
 		}

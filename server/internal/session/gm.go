@@ -190,6 +190,9 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 			if ent, ok := hub.EntityByCharacterID(characterID); ok {
 				actor.Zone = ent.Zone
 				actor.X, actor.Y, actor.Z = ent.Pos.X, ent.Pos.Y, ent.Pos.Z
+				// A dead GM is not moved (round 549): /tp and /goto refuse on
+				// this, the rest of the console runs (gm.Actor.Dead).
+				actor.Dead = ent.Life == world.LifeDead
 			}
 		}
 

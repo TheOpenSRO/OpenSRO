@@ -583,6 +583,25 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 			log.Printf("session: enter hook for %q: %v", owned.Name, err)
 		}
 	}
+	// A character logged out dead enters alive at character.RespawnFraction
+	// (round 549). The FRACTION is the load path's own rule -- GObjPC::
+	// FUN_004e1120 restores a stored zero pool to MaxHP x 0.4 (the `fmul
+	// QWORD ds:0xb460f0` at 0x4e1141 RespawnFraction cites) -- and a stored
+	// zero is what -player-dead-state leaves on a logout while dead. The rule
+	// is the load path's whatever the flag says, so it is applied with the
+	// flag on or off: a character dead when the flag is turned off (or across
+	// a crash between a blow and the respawn) must not enter alive at 0 HP,
+	// where regen gives nothing. The flag-off server never stores a zero
+	// otherwise (the kill respawns at once), so its wire is unchanged.
+	// Reviving at entry rather than keeping the character dead across
+	// sessions is the disclosed stand-in.
+	if owned.HP <= 0 {
+		if err := chars.RespawnHP(ctx, owned.ID); err != nil {
+			log.Printf("session: reviving %q on entry: %v", owned.Name, err)
+		} else if reborn, err := chars.GetByID(ctx, owned.ID); err == nil && reborn != nil {
+			owned = reborn
+		}
+	}
 
 	others := hub.Enter(sess, owned.ID, owned.Name, spawnZone, spawnPos)
 
@@ -632,6 +651,15 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	if !ok {
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "not in the world"}).Encode()})
 	}
+	// A dead character does not change zone (round 549, deadstate.go). OWN
+	// DESIGN, disclosed: srrevamp's zone change is its own discrete warp with
+	// no retail message to read a life-state test from, and round 548's
+	// client keeps its dead state across a ChangeZoneResult -- so a warp
+	// would put a held die pose at the new zone's spawn. Refusing keeps the
+	// two in step until the revive.
+	if current.Life == world.LifeDead {
+		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: deadRefusal}).Encode()})
+	}
 	if req.Zone == current.Zone {
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "already in that zone"}).Encode()})
 	}
@@ -678,6 +706,14 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub) error {
 		return nil // malformed move: drop it, don't kill the connection
 	}
 
+	// A dead character's position is neither stored nor relayed (round 549,
+	// deadstate.go): the body lies where the killing blow found it until the
+	// revive. Round 548's client stops sending its own moves while dead; this
+	// holds for an older client, whose walk would otherwise carry a dead
+	// character across the zone for everyone else.
+	if deadBySession(hub, sess) {
+		return nil
+	}
 	pos := world.Position{X: float64(req.X), Y: float64(req.Y), Z: float64(req.Z)}
 	entity, others, ok := hub.Move(sess, pos)
 	if !ok {
