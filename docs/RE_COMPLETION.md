@@ -33708,7 +33708,8 @@ byte for byte -- nothing calls the new code. Every citation was re-read in `/var
   target's exit is `0x23`, grounded; round 537's stand-in "which branch fires is unread" is closed.
 - **The slot-6 citation.** BATTLE's slot 6 is `CAIState_BATTLE::OnAttacked` (`0x55a2e0`), which calls
   behaviour `+0xfc` = `AITactics_Handler_0fc` (`0x548090`); the plan named the behaviour as the slot.
-  `CAIState::OnAttacked` (`0x558ea0`) does `SetTarget(1)` at `0x558eed` and `ChangeState(3)` (`lea
+  `CAIState::OnAttacked` (`0x558ea0`) does `SetTarget(1)` (`push 1` at `0x558eed`, the call at
+  `0x558eef`; round 547) and `ChangeState(3)` (`lea
   edi,[ebx+3]`), no aggression or range test; `CAIState_IDLE::OnEnter` (`0x559c80`) `SetTarget(0)`
   then the roam check.
 - **The timer read** (`AITactics_TimerDue` `0x53d6e0`, `AITactics_ArmTimer` `0x53d600`, the table
@@ -33722,7 +33723,8 @@ byte for byte -- nothing calls the new code. Every citation was re-read in `/var
   base 0 and clears it) never skips a tick after a swing; a refused Execute zeroes entry 5's `last`
   (`0x5455f0`, `0x545617`). The period applies only after a `PickSkill` that returns nothing, which
   no roster species has. The selector's initial `+0x48` is 0: `Init` -> `BindSkillsAndRanges`
-  (`0x53f8d5` slot 1) -> `0x561400` -> slot 2 -> `0x5619d0` -> `0x5614c0` (`mov [ecx+0x48],eax`,
+  (`0x53f8d5` slot 1) -> `0x561400` (through the Basic vtables' slot-1 thunk `0x5619c0`, `jmp
+  0x561400`; round 547) -> slot 2 -> `0x5619d0` -> `0x5614c0` (`mov [ecx+0x48],eax`,
   eax 0). Round 259's "a Mangyang swings every 3000..3600 ms" is corrected in place: the cadence is
   the action machine's `ReuseDelay` (round 254), 3000.
 - **The floats**: `0xb45e10` = `00 00 c8 42` (100.0), `0xb45f04` = `00 00 16 43` (150.0), `0xb45d78`
@@ -33916,3 +33918,119 @@ disclosed distance rule and walks home; the attacker's result carries no counter
 retarget rule 0 a second attacker is never answered. **Not done here:** mob-counter-retire (the
 counter's deletion and the six counter-driven tests' rewrite, once the flag is on for good),
 the client's own id (a protocol addition), mob-threat-retarget, mob-acquire, mob-aggro-link.
+
+## Batch-16 review follow-ups (rounds 544-546): the strike worker's recover guard, the kills leak, the stale name-table rows, record wording (round 547)
+
+The batch-16 review notes (rounds 544-546), each re-checked against `/var/tmp/srv.asm` and
+`/var/tmp/SR_GameServer.exe` before it was landed. Three code changes in `session/monsterai.go`,
+each with a test that fails without it; the rest are comments and records. No opcode or layout
+changed; every flag stays off by default, and all three code changes sit behind `-monster-battle`
+(the strike worker exists only with it on).
+
+**Grounding, re-read for this round.**
+
+- **`Handler_0e8`'s re-arm is timer 5, not 0**: `mov ecx,0x5` at `0x54733d`, `call 0x53d600` at
+  `0x547342` (and `TimerDue(5)`: `mov ecx,0x5` at `0x5472af`). `recovered_names.tsv`'s round-254
+  row `005472a0` said "re-arms timer 0"; corrected in place.
+- **`Location_SameOrAdjacentRegion` (`0x430ce0`) reads only a region word per side**: `movzx
+  ecx,WORD [edi]` / `movzx edx,WORD [esi]` (`0x430ce0`/`0x430ce3`), bit 15 of each, their low bytes
+  (`movzx eax,dl; movzx ecx,cl` at `0x430d06`), then `BYTE [edi+1]` / `BYTE [esi+1]` (`0x430d18`/
+  `0x430d1c`); nothing else through the `ret` at `0x430d34`. At its AI call site EDI = `[ebx+4]+0x84`
+  (`0x545ebf..0x545ec2`, the owner's region word) and ESI = `esp+0x28` (`0x545ec8`), the six-field
+  copy made at `esp+0x20` (`0x545eb6..0x545eba`) plus 8 -- its word field; the two pointers pushed
+  to `0x430ad0` at `0x545ee0`/`0x545ee6` are the same pair. The row's "two six-field location
+  records" is corrected to the word pointers.
+- **`Nest_Hatch`'s heading branches** (`0x56098a..0x560a30`): the four TypeID-shape tests each `jne
+  0x560a1b` (`0x56098e`, `0x56099c`, `0x5609a4`, `0x5609b4`); `cmp BYTE [edi+0x89],0x3` at
+  `0x5609b6` and `jne 0x5609ee` at `0x5609bd` (the rand path); `0x5609bf` and `0x560a1b` both
+  `movzx` the nest row's `+0x1c` word and scale it through `0xb45c28`, `0xb45c30`, `0xb45e00`.
+  **The three doubles, read with `objdump -s`**: `0xb45c28` = `00 00 00 00 e0 ff ef 40` = 65535.0,
+  `0xb45c30` = `00 00 00 00 00 80 76 40` = 360.0, `0xb45e00` = `00 00 00 a0 46 df 91 3f` =
+  0.017453292 (pi/180) -- round 239's row had them right; round 544's "not read" in `combat.go`
+  and in its entry understated the record. So the `_RefNest` row-8 wording ("for a rarity-3
+  species; every other species gets rand()") had the rule backwards for the other shapes: every
+  shape but the roster's takes the nest direction, and of the roster's shape only a non-rarity-3
+  species rolls. Corrected in the row, in the spawn-push stand-in and in `combat.go`'s comment
+  (whose "`cmp` ... jumps" now names the `jne` at `0x5609bd`).
+- **`FUN_00558f70` is on BATTLE's vtable.** It is CAIState vtable slot 8: `0xaf86d4+0x20` =
+  `0xaf86f4` reads `70 8f 55 00`, and so do `0xaf882c`, `0xaf88f4` and BATTLE's own `0xaf8b2c+0x20`
+  = `0xaf8b4c`. Its arming is `push 0xa` at `0x558fd6`, `mov al,1` at `0x558fd9` (the one-shot
+  flag), `call 0x540d00` at `0x558fdd`. Round 545's parenthetical "not on BATTLE's path" was not
+  established and is corrected in `monster_ai.md`; what calls slot 8 is not traced.
+- **The Basic vtables' slot 1 is a thunk**: `0xaf9d28` and `0xaf9dd0` both read `c0 19 56 00`, and
+  `0x5619c0` is `jmp 0x561400` -- the code round 545 named as `AI::CAISkill::vslot_001`, so the
+  `+0x48 = 0` conclusion stands; one clause added in `monster_ai.md` and in the round-545 entry.
+- **`CAIState::OnAttacked`'s `SetTarget(1)`**: `push 0x1` at `0x558eed`, `call 0x53ffe0` at
+  `0x558eef`; the round-545 entry's "at 0x558eed" and `monster_ai.md`'s now say both.
+- **The failed-swing tail** (`CAIState_BATTLE::OnUpdate` `0x55a1d2..0x55a22e`): `cmp eax,1; jne
+  0x55a22e` after the `+0xe8` call at `0x55a1d0`; on 1, `cmp BYTE [edx+0x79],0x2` at `0x55a1dd`
+  (the tactics row via `[ebx+4]+0x2c`) -- equal: two record copies (`call 0x4115d0` at `0x55a1ea`
+  and `0x55a1f8`) into `call 0x541110` at `0x55a200`, return 0; else behaviour `+0x114` at
+  `0x55a217`, whose non-zero answer is dispatched as message `0x29` (`push 0x29` at `0x55a220`,
+  `call [vtable+0x90]` at `0x55a22c`). Named in the round-546 section's "Not modelled" list. The
+  runtime does not model it: a species with no skill row makes no swing at all (disclosed there),
+  and every roster species carries one.
+- **The three code notes**, re-checked in the tree at `8d012fb`: `defenderDefence`
+  (`session/combat.go`) calls `eq.Get` first and unguarded, so a runtime with `Chars` set and
+  `Equipment` nil panicked on the worker goroutine (proved by the negative below: `invalid memory
+  address or nil pointer dereference`); `runStrike` wrote `a.kills[id]` under `a.mu` with no test
+  of the brain, after the tick's step-2 loop had deleted both the brain and the entry (proved:
+  `kills holds 1`); `queueStrike` sent the job to the worker's channel during the pass, under
+  `a.mu`, while the in-band stop sat in `a.pending` until step 5 (proved: the zone received
+  `[007d 007c]`, the blow before the stop).
+
+**Wired** (`session/monsterai.go`).
+
+- `runStrike` recovers: a panic inside the blow is logged at ERROR (`ai: strike panicked, swing
+  dropped`, with the monster, the target, the value and the stack) and the swing dropped; the
+  worker serves the next. A goroutine's panic is the process's, so until this round one bad store
+  write with `-monster-battle` on would have taken the server down (latent: `cmd/server` passes
+  every store).
+- `queueStrike` makes no swing unless the character, equipment AND item stores are all set
+  (`MonsterAIConfig`'s comment says so now; until this round only `Chars` was tested).
+- `runStrike` records a kill only while the monster's brain is still there (`a.brains[id]` under
+  `a.mu`); the removal loop's own `delete(a.kills, id)` stays. Ids are never reused, so the late
+  entry was harmless but never collected.
+- The swing hand-off moves out of the pass: `queueStrike` appends a `strikeHandoff`, and the tick
+  hands them to the workers (`handStrike`, the one-deep channel logic unchanged) as its **step 6,
+  after step 5 has pushed every stop**. So an in-band stop reaches every session before the first
+  blow. The trace lines are unchanged (`swings at` / `dropped` now print at the hand-off).
+- Comments: `pushMonsterStrike`'s `e.Session == sess` named as a guard for callers other than
+  `performAttack`; `combat.go`'s hatch-heading comment (the `jne`, the doubles);
+  `ai/threat_test.go`'s round-259 cadence wording (the window is the threat table's idle window;
+  the cadence is ReuseDelay).
+- Records: `recovered_names.tsv` rows `005472a0` (timer 5) and `00430ce0` (the argument wording);
+  `monster_ai.md`'s `_RefNest` row 8, the spawn-push stand-in, `FUN_00558f70`'s parenthetical, the
+  slot-1 thunk clause, `0x558eef`, the round-546 section's blow bullet (the hand-off order, the
+  worker-window zone/death case, the recover, the three-store rule) and its "Not modelled" list
+  (the failed-swing tail); this file's round-545 entry (`0x558eef`, the thunk).
+
+**Tests** (`session`): `TestStrikeWorkerSurvivesAPanic` (a character store whose first `GetByID`
+panics: the ERROR line, no push, Aria untouched, then the next swing one ReuseDelay on lands -- the
+worker lived), `TestStrikeNeedsEveryStore` (`Equipment` and `Items` nil: BATTLE entered, 35 ticks,
+no push, nothing logged, Aria untouched), `TestLateKillAfterTheBrainIsGoneLeavesNoRecord` (the
+monster killed and its brain dropped, then `runStrike` called as the late worker: the killing blow
+pushed, `kills` empty), `TestStopPrecedesTheFirstInBandBlow` (a monster on a leg struck inside its
+band: the push holds each stop up to 300 ms or until a blow is recorded, and the zone must still
+receive `0x007C` then `0x007D`). All four pass under `-race`.
+
+Negatives proved, with `monsterai.go`, `monsterstrike.go` and `combat.go` stashed (the tests
+compile against the old code) and each test run alone:
+
+| test | result without the change |
+|---|---|
+| `TestStrikeWorkerSurvivesAPanic` | the binary died: `panic: test: the character store fell over` |
+| `TestStrikeNeedsEveryStore` | the binary died: `panic: runtime error: invalid memory address or nil pointer dereference` |
+| `TestLateKillAfterTheBrainIsGoneLeavesNoRecord` | FAIL: `kills holds 1 entr(y/ies) and monster 1 is recorded (true) after its brain was dropped` |
+| `TestStopPrecedesTheFirstInBandBlow` | FAIL: `the zone received opcodes [007d 007c], want the stop 0x007c before the blow 0x007d` |
+
+Restored (`git stash pop`; `git status` checked); `cd server && go build ./... && go test -count=1
+-p 1 ./...` green and re-run after the doc edits. No client file changed.
+
+**Not landed, and why.** The round-544 note on its own entry's allocation numbers (from a deleted
+scratch test) is labelled as such there; `deploy/README.md`'s and `TODO.md`'s "Measured (round
+543)" anchors are prefixes of the real heading and grep to it; the round-546 plan text's "dropped
+while the previous one is still running" is the plan's, and the code and `monster_ai.md` describe
+the one-deep queue correctly; `WORLD_ISSUES.md` stays untouched, as in rounds 541-546. No
+`SYSTEMS.md` row describes any of this as unwired: the Monster AI row's description of the strike
+worker still holds, so that file is not touched.

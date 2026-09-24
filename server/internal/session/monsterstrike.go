@@ -304,7 +304,9 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 // the push (round 540's MonsterStrikes pairs the two in that order); the
 // attacker is sent first. The sending pattern is the ground-item pushes'
 // (dropKillLoot): one packet, a failed write left to that session's own
-// reader.
+// reader. The `e.Session == sess` test below is a guard for a caller other
+// than performAttack, whose others already excludes the attacker's session by
+// id; only the direct-call test reaches it (round 547's review note).
 func pushMonsterStrike(sess *gateway.Session, others []world.Entity, msg *MonsterAttacked) {
 	if !monsterStrikePush.Load() {
 		return

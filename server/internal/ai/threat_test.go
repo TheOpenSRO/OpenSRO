@@ -83,9 +83,15 @@ func TestThreatFaceAfterHit(t *testing.T) {
 	}
 }
 
-// The attack interval: ReuseDelay plus a jitter of a fifth of the previous
-// interval, clamped to 500..2000 ms -- Mangyang (3000) swings every
-// 3000..3600 ms once running.
+// The attack interval's window: ReuseDelay plus a jitter of a fifth of the
+// previous interval, clamped to 500..2000 ms -- for a Mangyang (3000) whose
+// previous interval was 3000, the window is 3000..3600 ms. This pins the
+// window's range, which feeds the threat table's idle window
+// (ThreatIdleIntervals); it is NOT the swing cadence: round 545's timer read
+// found every first-table arming fires at once (0x53d6c7), so the swings are
+// spaced by the action machine's ReuseDelay alone. Round 259's "swings every
+// 3000..3600 ms" wording stood here until round 547; threat.go and
+// docs/protocol/monster_ai.md were corrected in round 545.
 func TestAttackIntervalJitter(t *testing.T) {
 	if j := AttackJitterMs(3000); j != 600 {
 		t.Fatalf("3000/5 = %d; want 600", j)

@@ -4,10 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"log/slog"
 	"math"
 	"math/rand"
 	"net"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1391,5 +1394,222 @@ func TestMonsterBattleKillSendsItToIdle(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if n := len(f.rec.strikesOf(m.ID)); n != 1 {
 		t.Errorf("%d blows after the kill, want the one that killed", n-1)
+	}
+}
+
+// ---- Batch-16 review follow-ups (round 547) ----
+
+// lockedBuffer is a bytes.Buffer the strike worker and the test may both
+// touch: the worker logs off the tick.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// panicOnceChars is a character store whose first GetByID panics -- a store's
+// own fault, as a strike worker would meet it -- and behaves after that.
+type panicOnceChars struct {
+	character.Store
+	panicked atomic.Bool
+}
+
+func (s *panicOnceChars) GetByID(ctx context.Context, id int64) (*character.Character, error) {
+	if s.panicked.CompareAndSwap(false, true) {
+		panic("test: the character store fell over")
+	}
+	return s.Store.GetByID(ctx, id)
+}
+
+// A panic inside a strike worker's blow is logged and the swing dropped, and
+// the worker serves the next one (round 547, runStrike's recover). Before this
+// round the panic propagated off the worker goroutine and took the whole
+// process down: run without the recover, this test dies with the panic
+// instead of failing.
+func TestStrikeWorkerSurvivesAPanic(t *testing.T) {
+	battleForTest(t, true)
+	f := startBattleFixture(t, 31, 0, 0)
+	chars := &panicOnceChars{Store: f.chars}
+	var log lockedBuffer
+	f.a.deps.chars = chars
+	f.a.logger = slog.New(slog.NewTextHandler(&log, nil))
+	m := f.monsters.SpawnSpecies("jangan", chaseMangyang, 8, 0, 0, 1000, 0, 15, 0)
+	now := aiT0
+	monsterAITick(now) // IDLE
+	now = now.Add(MonsterAITick)
+	noteStruck(f.monsters, m.ID, f.aria)
+	f.rec.reset()
+	monsterAITick(now) // BATTLE, in reach: the first swing, which meets the panic
+	now = now.Add(MonsterAITick)
+	if !waitFor(t, 2*time.Second, func() bool {
+		return chars.panicked.Load() && strings.Contains(log.String(), "strike panicked")
+	}) {
+		t.Fatalf("no 'strike panicked' log line within 2 s of the swing that panicked (store panicked: %v); log:\n%s", chars.panicked.Load(), log.String())
+	}
+	if n := len(f.rec.strikesOf(m.ID)); n != 0 {
+		t.Fatalf("%d blow(s) pushed from a swing that panicked, want none: the swing is dropped", n)
+	}
+	if c, _ := f.chars.GetByID(context.Background(), f.aria); c.HP != character.StartingMaxHP {
+		t.Fatalf("Aria's HP %d after the dropped swing, want %d untouched", c.HP, character.StartingMaxHP)
+	}
+	// The worker is still there: the next swing, one ReuseDelay on, lands.
+	for i := 0; i < 30; i++ {
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+	}
+	if !waitFor(t, 2*time.Second, func() bool { return len(f.rec.strikesOf(m.ID)) == 1 }) {
+		t.Fatalf("the swing after the panic never landed (%d pushed): the worker died with the panic", len(f.rec.strikesOf(m.ID)))
+	}
+	if got := f.rec.strikesOf(m.ID)[0]; got.Damage != 15 || got.TargetHP != int32(character.StartingMaxHP)-15 {
+		t.Errorf("the blow after the panic %+v, want 15 on Aria from full", got)
+	}
+}
+
+// A runtime holding the character store but not the equipment and item
+// stores makes no swing at all (MonsterAIConfig; queueStrike's guard): the
+// blow reads all three and defenderDefence's eq.Get has no nil guard. The
+// chase still runs, nothing is pushed and nothing is logged. Before this
+// round the swing was made and the worker panicked on the nil equipment
+// store, which took the process down: run without the guard and the recover,
+// this test dies with the panic; with the recover alone it fails on the log.
+func TestStrikeNeedsEveryStore(t *testing.T) {
+	battleForTest(t, true)
+	f := startBattleFixture(t, 32, 0, 0)
+	var log lockedBuffer
+	f.a.deps.eq, f.a.deps.items = nil, nil
+	f.a.logger = slog.New(slog.NewTextHandler(&log, nil))
+	m := f.monsters.SpawnSpecies("jangan", chaseMangyang, 8, 0, 0, 1000, 0, 15, 0)
+	now := aiT0
+	monsterAITick(now) // IDLE
+	now = now.Add(MonsterAITick)
+	noteStruck(f.monsters, m.ID, f.aria)
+	f.rec.reset()
+	for i := 0; i < 35; i++ { // the entry tick and a whole ReuseDelay after it
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if st := stateOf(t, f.a, m.ID); st != ai.StateBattle {
+		t.Errorf("state %v, want BATTLE: the chase runs without the stores", st)
+	}
+	if n := len(f.rec.strikesOf(m.ID)); n != 0 {
+		t.Errorf("%d blow(s) pushed by a runtime with no equipment store, want none", n)
+	}
+	if s := log.String(); s != "" {
+		t.Errorf("a runtime with no equipment store logged, want no swing attempted at all:\n%s", s)
+	}
+	if c, _ := f.chars.GetByID(context.Background(), f.aria); c.HP != character.StartingMaxHP {
+		t.Errorf("Aria's HP %d, want %d untouched", c.HP, character.StartingMaxHP)
+	}
+}
+
+// A strike worker that finishes after the tick dropped its brain -- the
+// monster killed by the player inside the worker's window -- leaves nothing in
+// kills (round 547): ids are never reused (combat.Hub's nextID), so an entry
+// written after the removal loop's delete would never be collected. The blow
+// itself was resolved, so it is still pushed.
+func TestLateKillAfterTheBrainIsGoneLeavesNoRecord(t *testing.T) {
+	battleForTest(t, true)
+	f := startBattleFixture(t, 33, 0, 0)
+	m := f.monsters.SpawnSpecies("jangan", chaseMangyang, 8, 0, 0, 1000, 0, 100000, 0)
+	now := aiT0
+	monsterAITick(now) // the brain
+	now = now.Add(MonsterAITick)
+	asSeen, _ := f.monsters.Get(m.ID)
+	if _, died, ok := f.monsters.ApplyDamage(m.ID, 1000); !died || !ok {
+		t.Fatal("setup: the monster did not die")
+	}
+	monsterAITick(now) // the brain is dropped
+	now = now.Add(MonsterAITick)
+	f.a.mu.Lock()
+	_, hasBrain := f.a.brains[m.ID]
+	f.a.mu.Unlock()
+	if hasBrain {
+		t.Fatal("setup: the dead monster still has a brain")
+	}
+	// The worker's late finish: the killing blow, resolved after the drop.
+	f.a.runStrike(m.ID, strikeJob{m: asSeen, target: f.aria})
+	if strikes := f.rec.strikesOf(m.ID); len(strikes) != 1 || !strikes[0].TargetDied {
+		t.Fatalf("the late blow %+v, want one pushed killing blow", strikes)
+	}
+	f.a.mu.Lock()
+	_, recorded := f.a.kills[m.ID]
+	n := len(f.a.kills)
+	f.a.mu.Unlock()
+	if recorded || n != 0 {
+		t.Fatalf("kills holds %d entr(y/ies) and monster %d is recorded (%v) after its brain was dropped: nothing collects it", n, m.ID, recorded)
+	}
+}
+
+// A monster struck while still on a leg, inside its band: the pass queues the
+// in-band stop and the first swing on the same tick, and the stop must reach
+// the zone BEFORE the blow -- the client's walking-body rule leaves a body
+// unturned until the stop lands, so a blow ahead of it draws the first swing
+// on a still-walking body (round 547, tick step 6). Before this round the
+// swing was handed to its worker under a.mu, during the pass, and the worker
+// pushed the blow while the stop still sat in a.pending. The push here holds
+// every stop for up to 300 ms, or until a blow has been recorded, to give a
+// racing worker every chance to win -- the same bounded wait as the
+// wire-order tests.
+func TestStopPrecedesTheFirstInBandBlow(t *testing.T) {
+	battleForTest(t, true)
+	f := startBattleFixture(t, 34, 0, 0)
+	blowSeen := make(chan struct{})
+	var once sync.Once
+	var mu sync.Mutex
+	var order []uint16
+	f.a.push = func(zone string, p *proto.Packet) {
+		if p.Opcode == OpMonsterMoved {
+			select {
+			case <-blowSeen:
+			case <-time.After(300 * time.Millisecond):
+			}
+		}
+		mu.Lock()
+		order = append(order, p.Opcode)
+		mu.Unlock()
+		if p.Opcode == OpMonsterAttacked {
+			once.Do(func() { close(blowSeen) })
+		}
+		f.rec.push(zone, p)
+	}
+	m := f.monsters.SpawnSpecies("jangan", chaseMangyang, 8, 0, 0, 1000, 0, 15, 0)
+	now := aiT0
+	monsterAITick(now) // IDLE
+	now = now.Add(MonsterAITick)
+	// A leg under way, straight away from Aria, that one tick's step (0.8 at
+	// the walk speed 8) leaves inside the band: (8, 0.8) is 8.04 away.
+	if _, ok := f.monsters.SetMotion(m.ID, 8, 50, 8, 0); !ok {
+		t.Fatal("setup: no leg")
+	}
+	noteStruck(f.monsters, m.ID, f.aria) // with the flag on, no stop here
+	if cur, _ := f.monsters.Get(m.ID); !cur.Moving {
+		t.Fatal("setup: the blow stopped the monster; with -monster-battle on it must not")
+	}
+	f.rec.reset()
+	monsterAITick(now) // BATTLE, in reach and walking: the stop and the first swing
+	now = now.Add(MonsterAITick)
+	if !waitFor(t, 2*time.Second, func() bool { return len(f.rec.strikesOf(m.ID)) == 1 }) {
+		t.Fatalf("no blow within 2 s (%d pushed)", len(f.rec.strikesOf(m.ID)))
+	}
+	if moves := f.rec.of(m.ID); len(moves) != 1 || !isStop(moves[0]) {
+		t.Fatalf("the tick pushed %d move(s) %+v, want exactly the in-band stop", len(moves), moves)
+	}
+	mu.Lock()
+	got := append([]uint16(nil), order...)
+	mu.Unlock()
+	if len(got) != 2 || got[0] != OpMonsterMoved || got[1] != OpMonsterAttacked {
+		t.Fatalf("the zone received opcodes %04x, want the stop 0x%04x before the blow 0x%04x", got, OpMonsterMoved, OpMonsterAttacked)
 	}
 }

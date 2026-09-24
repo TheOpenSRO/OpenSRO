@@ -326,7 +326,7 @@ as for the tactics row; widths and offsets are the parser's.
 | 3 | `+0x08` | u32 | **TacticsID** -- `AI::CNest::BindTactics` (`0x560570`) looks it up through the tactics map (`FUN_00501ac0`, the same lookup the tactics loader's duplicate check uses) and then the tactics' `RefObjID` through `FUN_004260b0` |
 | 4 | `+0x0c` | u16 | **RegionID** -- `NestRegionID[%d]`; copied to the runtime nest's `+0x18` |
 | 5-7 | `+0x10`, `+0x14`, `+0x18` | u32 x3 | the **position** (copied to the runtime nest's `+0x1c..+0x24`, validated with the region by `FUN_005380b0(world, 0, 0, region, x, y, z)`) |
-| 8 | `+0x1c` | u16 | **initial direction**: `Nest_Hatch` turns it into radians as `v / 65535.0 * 360.0 * (pi/180)` (`0xb45c28`, `0xb45c30`, `0xb45e00`) for a rarity-3 species; every other species gets `rand()/32767 * 2pi` |
+| 8 | `+0x1c` | u16 | **initial direction**: `Nest_Hatch` turns it into radians as `v / 65535.0 * 360.0 * (pi/180)` (`0xb45c28`, `0xb45c30`, `0xb45e00`; the three doubles read back with `objdump -s` in round 547: `40efffe000000000`, `4076800000000000`, `3f91df46a0000000`) for every species but one kind: a species of the roster's TypeID shape (the four tests at `0x56098a..0x5609b4`, each `jne 0x560a1b`, which reads this word) whose rarity is not 3 (`cmp [edi+0x89],3` at `0x5609b6`, `jne 0x5609ee` at `0x5609bd`) gets `rand()/32767 * 2pi` instead. A rarity-3 species of that shape (`0x5609bf`) and every other shape (`0x560a1b`) take this word (`ai.SpawnHeading`). Round 547 corrected this cell, which read "for a rarity-3 species; every other species gets rand()" and had the rule backwards for the other shapes |
 | 9 | `+0x20` | u32 | the **roam radius** handed to `AI::CTactics::Attach` when the monster has a nest (previous section) |
 | 10 | `+0x24` | u32 | passed as a float into the spawn routine `GObjPC::FUN_005f6eb0` beside the direction (its use inside is not traced) |
 | 11 | `+0x28` | u32 | **champion chance, percent**: `Nest_Hatch` rolls `rand() % 101 < +0x28` when the tactics row's `+0x8c` (tactics column 41) is non-zero; a second roll `rand() % 101 > GiantMonster_SpawnRatio` makes the hatch a **champion** (class 1, x2 HP), else a **giant** (class 4, x20 HP -- the rank table in `internal/combat/rarity.go`); the monster then runs under the tactics row `+0x8c` names (its own, with the class cleared, when that row does not exist). `GiantMonster_SpawnRatio` is the engine's own config key (`.rdata 0xae0a04`, read in `CMainProcess::FUN_00427050` as `atol(value)/100`, **default 14** when absent or zero), so with the default about 15 in 101 of the rolls come up giant |
@@ -1701,8 +1701,10 @@ below), so a kill early in the run leaves time for its 10 s respawn. Expect:
 - The layout is srrevamp's own and additive.
 - `respawnDelay` stays 10 s, under its existing disclosure (`cmd/server/main.go`; "The `_RefNest`
   row", above).
-- A rarity-3 species would face its nest row's own direction (row 8, `wInitialDir`), which is in the
-  server database only. No roster species is rarity 3, so every monster takes the random heading.
+- A rarity-3 species of the roster's TypeID shape, and a species of any other shape, would face its
+  nest row's own direction (row 8, `wInitialDir`), which is in the server database only. Every
+  roster species is that shape and none is rarity 3 (`ai.SpawnHeading`), so every monster takes
+  the random heading. (Round 547 corrected this line, which named only rarity 3.)
 - The push is zone-wide, with no interest management, like every push here.
 - A client that stops reading its socket stalls the goroutine that sends to it, because
   `gateway.Session.Send` has no write deadline: that species' `maintainMonster`, or the GM's
@@ -1747,7 +1749,7 @@ in `deploy/README.md`, "Monster AI (off by default)".
 **A blow.** `performAttack` calls `noteStruck` right after the damage lands, for a monster that
 survives it: a click, a keep-up repeat and a cast all come through there. The tick drains the
 blows and, for a monster not already in BATTLE, does what `CAIState::OnAttacked` (`0x558ea0`) does:
-`SetTarget(1)` (`0x53ffe0`, at `0x558eed`), then `ChangeState(3)` (`lea edi,[ebx+3]` at `0x558f01`)
+`SetTarget(1)` (`0x53ffe0`: `push 1` at `0x558eed`, the call at `0x558eef`), then `ChangeState(3)` (`lea edi,[ebx+3]` at `0x558f01`)
 -- no aggression test and no range test. Trace lines, with `SRREVAMP_AI_TRACE` set:
 `ai: monster %d %s->%s`, `ai: monster %d leg to (%.0f,%.0f) speed %.0f mode %d`,
 `ai: monster %d struck by %d, holding`, `ai: monster %d released (%s)`, and from the keep-up,
@@ -2057,8 +2059,12 @@ of 3 (`+0x1c/+0x20/+0x24`). An entry is `{index byte, fired byte, last (+4), per
 
 So **arming a first-table timer makes it due at once**, whatever its period; the period applies
 only from a consumption to the next arming. The indices BATTLE uses -- 3, 4, 5 and the give-up
-check's 6 -- are all first-table (one arming in the image uses a second-table index, 10, at
-`0x558fd6` in `FUN_00558f70`, not on BATTLE's path). From that:
+check's 6 -- are all first-table (one arming in the image uses a second-table index, 10, with the
+one-shot flag -- `push 0xa` at `0x558fd6`, `mov al,1` at `0x558fd9`, `call 0x540d00` at `0x558fdd`
+-- in `FUN_00558f70`, which is CAIState vtable slot 8, `0xaf86d4+0x20` = `0xaf86f4` reading `70 8f
+55 00`, and BATTLE's own vtable carries it unchanged at `0xaf8b2c+0x20` = `0xaf8b4c`; so it IS
+reachable from BATTLE, and round 545's "not on BATTLE's path" here was not established -- what
+calls slot 8 is not traced; round 547). From that:
 
 - **The first swing is immediate.** `BATTLE::OnEnter` arms timer 5 through the context wrapper
   `AITactics_ArmContextTimer` (`0x540d00`, `add ebx,0x34` then `ArmTimer`) with base = the
@@ -2095,7 +2101,8 @@ check's 6 -- are all first-table (one arming in the image uses a second-table in
   at `0x53f765`; column 42's "first action delay" is that timer.)
 - **The selector's initial `+0x48` is 0.** `Init` -> `AI::CTactics::BindSkillsAndRanges`
   (`0x53f780`) calls the selector's slot 1 (`mov ecx,[ebx+0x9c]; mov edx,[ecx]; call [edx+4]`
-  `0x53f8d5..0x53f8e0`) = `AI::CAISkill::vslot_001` (`0x561400`), whose first call is slot 2 =
+  `0x53f8d5..0x53f8e0`) = `AI::CAISkill::vslot_001` (`0x561400`; the Basic vtables at `0xaf9d24` and
+  `0xaf9dcc` carry slot 1 as `0x5619c0`, a `jmp 0x561400` thunk -- the same code, round 547), whose first call is slot 2 =
   `AI::CAISkill_Basic::ResetArmed` (`0x5619d0`) -> `AI::CAISkill::ResetArmed` (`0x5614c0`: `xor eax,
   eax; mov [ecx+0x44],eax; mov [ecx+0x48],eax; mov [ecx+0x4c],al`). So a monster's first
   `BATTLE::OnEnter` arms timer 5 with base 0 (period 1, fired), and `ArmNextAttack`'s first `J` is
@@ -2187,6 +2194,23 @@ re-read in `srv.asm` for this round):**
      pushed to the zone as an `OpMonsterAttacked` through the runtime's push (the zone broadcast
      under each session's wire lock). A kill is reported to the tick for step 1. The blow resolves
      at the swing's start; the client delays only the drawing, to its clip's hit event.
+     - **The hand-off comes after the pass's pushes** (round 547; the tick's step 6): a stop the
+       same pass queued -- the in-band stop of a monster still on a leg -- is on every session's
+       wire before the blow. Until round 547 the worker was handed the swing during the pass, under
+       the runtime's lock, and could push the blow before the stop was flushed; a client then drew
+       the first swing on a still-walking body, which its walking-body rule leaves unturned until
+       the stop lands.
+     - **The worker's window**, disclosed: a swing already handed over still resolves
+       (`chars.ApplyDamage` on the row) if the target changed zone or the monster died in the
+       milliseconds between the tick's validity test and `monsterStrike` -- the same class of
+       window as the flag-off counter's.
+     - **A panic inside a worker's blow** -- a store's own -- is logged at ERROR (`ai: strike
+       panicked, swing dropped`, with the stack) and the swing dropped; the worker serves the next
+       (round 547). A goroutine's panic is the process's, so before that one bad store write would
+       have taken the server down.
+     - **No swing without every store**: the runtime swings only when it holds the character,
+       equipment and item stores (`MonsterAIConfig`); the blow reads all three, and
+       `defenderDefence`'s `eq.Get` has no nil guard. `cmd/server` passes all of them.
 
 **A blow with the flag on.** `noteStruck` records the blow and issues NO stop: `BATTLE::OnEnter`
 (`0x559fb0..0x55a08b`) issues none, and the tick's chase replaces a leg under way or stops it in the
@@ -2226,6 +2250,11 @@ switch 1, give-up 400, reach rule 0, retarget rule 0); target validity (above); 
 threshold; the one-deep strike queue; no swing for a species with no ReuseDelay; the run speed for
 mode 1 (the inference); the client's elimination and its 10 s grace; and, as before, the tick
 period, the roam radius and the nest reading of each placement. Not modelled: the `0x2b` path,
+the failed-swing tail (`0x55a1d2..0x55a22e`: `Handler_0e8` returning 1 -- no skill pick -- then,
+with the tactics row's `+0x79` == 2 (`0x55a1dd`), two record copies into `call 0x541110` at
+`0x55a200`, else behaviour `+0x114` at `0x55a217`, whose non-zero answer is dispatched as message
+`0x29` at `0x55a220..0x55a22c`; round 545's reading item 7, named here in round 547 -- the runtime
+makes no swing at all for a species with no skill row, above, and every roster species has one),
 `BATTLE::OnEnter`'s timers 3/4, gathering and slot-11 call, `BATTLE::OnLeave`, the aggro link, the
 attacker accounting, the threat table's retarget rules (mob-threat-retarget), and every
 "not modelled" item of round 545's section.

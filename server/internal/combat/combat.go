@@ -840,12 +840,15 @@ func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP,
 		WalkSpeed: species.WalkSpeed, RunSpeed: species.RunSpeed, HomeX: x, HomeZ: z, DestX: x, DestZ: z}
 	// The hatch heading. Nest_Hatch (0x005607b0) rolls a random one only for
 	// a species of the roster's TypeID shape whose rarity is not 3: `cmp
-	// [edi+0x89],3` at 0x5609b6 jumps to the rand() path at 0x5609ee
-	// (ai.SpawnHeading; re-read in srv.asm, round 544). A rarity-3 species
-	// of that shape falls through to 0x5609bf, and every other shape jumps
-	// to 0x560a1b, and both take the nest row's own direction instead: the
-	// row's +0x1c word (fild, then a scale through the doubles at 0xb45c28,
-	// 0xb45c30 and 0xb45e00, not read), which srrevamp does not hold
+	// [edi+0x89],3` at 0x5609b6, whose `jne` at 0x5609bd jumps to the rand()
+	// path at 0x5609ee (ai.SpawnHeading; re-read in srv.asm, round 544). A
+	// rarity-3 species of that shape falls through to 0x5609bf, and every
+	// other shape jumps to 0x560a1b, and both take the nest row's own
+	// direction instead: the row's +0x1c word (fild, then / 65535.0 * 360.0
+	// * pi/180 -- the doubles at 0xb45c28, 0xb45c30 and 0xb45e00, which
+	// round 239's row reads and round 547 read back with objdump -s:
+	// 40efffe000000000, 4076800000000000, 3f91df46a0000000), which srrevamp
+	// does not hold
 	// (docs/protocol/monster_ai.md, "The _RefNest row", row 8). DISCLOSED:
 	// this roll runs for every species, whatever its rarity or shape, so a
 	// rarity-3 or other-shape species added later would hatch facing a

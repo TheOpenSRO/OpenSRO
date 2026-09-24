@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math"
 	"math/rand"
+	"runtime/debug"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -95,8 +96,11 @@ type MonsterAIConfig struct {
 	// What a monster's own swing reads and writes (monsterStrike's strikeDeps):
 	// the target's character row, the gear it wears and wears down, the item
 	// table that gear resolves against, and the mana pool a death refills.
-	// Used only with -monster-battle on (SetMonsterBattle); with Chars nil the
-	// chase runs but no swing is made.
+	// Used only with -monster-battle on (SetMonsterBattle); with any of Chars,
+	// Equipment or Items nil the chase runs but no swing is made (queueStrike;
+	// round 547: the blow reads all three -- defenderDefence's eq.Get has no
+	// nil guard -- so a partial set would panic the strike worker). Mana may
+	// be nil: monsterStrike guards it. cmd/server passes all four.
 	Chars     character.Store
 	Equipment equipment.Store
 	Items     combat.ItemLookup
@@ -151,7 +155,8 @@ type monsterAI struct {
 	// kills holds, by monster id, the targets a strike worker killed since the
 	// last tick (runStrike writes it, the BATTLE tick drains it): the kill
 	// is the 0x23 exit's evidence, since srrevamp puts a dead player back on
-	// its feet at once (battleTick).
+	// its feet at once (battleTick). Written only while the monster's brain is
+	// there to drain it (round 547).
 	kills map[int64]struct{}
 
 	// deps is what a monster's own swing reads and writes (MonsterAIConfig);
@@ -174,6 +179,9 @@ type monsterAI struct {
 	// so one pass runs one BATTLE or the other throughout.
 	battle  bool
 	pending []monsterPush
+	// handoffs is the swings this pass decided on (queueStrike), handed to
+	// their strike workers after the pass's pushes are out (handStrike).
+	handoffs []strikeHandoff
 	// held is tick heldTick's keep-up set (keptUpSet), built on that tick's
 	// first release test and stale -- rebuilt -- on any other tick.
 	held     map[heldKey]struct{}
@@ -242,6 +250,13 @@ type brain struct {
 type strikeJob struct {
 	m      combat.Monster
 	target int64
+}
+
+// strikeHandoff is a swing a pass decided on, waiting for the pass's pushes to
+// go out before its brain's worker is handed it (tick step 6).
+type strikeHandoff struct {
+	b   *brain
+	job strikeJob
 }
 
 // monsterPush is one push collected during a pass, sent after it.
@@ -354,7 +369,8 @@ func monsterAITick(now time.Time) {
 
 // tick steps the monsters, reconciles the brains, drains the blows, runs
 // each brain once, and only then -- outside every lock -- sends what the pass
-// collected. Brains run in monster-id order so a seeded rng replays.
+// collected and, last, hands the pass's swings to their strike workers.
+// Brains run in monster-id order so a seeded rng replays.
 func (a *monsterAI) tick(now time.Time) {
 	a.mu.Lock()
 	dt := 0.0
@@ -409,13 +425,23 @@ func (a *monsterAI) tick(now time.Time) {
 		}
 	}
 
-	pending := a.pending
-	a.pending = nil
+	pending, handoffs := a.pending, a.handoffs
+	a.pending, a.handoffs = nil, nil
 	a.mu.Unlock()
 
 	// 5. The pushes, after the pass.
 	for _, p := range pending {
 		a.push(p.zone, p.packet)
+	}
+	// 6. The swings, after the pushes (round 547): a stop this pass queued --
+	// the in-band stop of a monster still on a leg -- is on the wire before
+	// the blow the same pass decided on. Until this round the worker was
+	// handed the swing during the pass, under a.mu, and could push the blow
+	// before the stop was flushed; a client then drew the first swing on a
+	// still-walking body (its walking-body rule leaves it unturned until the
+	// stop lands).
+	for _, h := range handoffs {
+		a.handStrike(h)
 	}
 }
 
@@ -683,27 +709,38 @@ func (a *monsterAI) chase(b *brain, target world.Position, dist, stop float64) {
 	a.startLeg(b, target.X+ux*d, target.Z+uz*d, mode, "BATTLE chase")
 }
 
-// queueStrike hands the swing to the monster's strike worker, started on
-// its first swing. The worker runs the blow's reads and writes (monsterStrike:
+// queueStrike records the swing the pass decided on; the tick hands it to the
+// monster's strike worker only once the pass's pushes are out (handStrike,
+// tick step 6), so a stop queued on the same pass reaches the zone before the
+// blow. No swing is made unless the runtime holds every store the blow reads
+// (MonsterAIConfig): the character, equipment and item stores.
+func (a *monsterAI) queueStrike(b *brain, target int64) {
+	if a.deps.chars == nil || a.deps.eq == nil || a.deps.items == nil {
+		return
+	}
+	a.handoffs = append(a.handoffs, strikeHandoff{b: b, job: strikeJob{m: b.m, target: target}})
+}
+
+// handStrike hands a swing to the monster's strike worker, started on its
+// first swing. The worker runs the blow's reads and writes (monsterStrike:
 // chars.ApplyDamage, the wear, a death's SetLeveling and RespawnHP) off the
 // tick goroutine, so a slow store never stalls a pass. OWN DESIGN: the
 // channel holds one swing; while one runs and one waits, a further swing is
 // dropped with a trace line rather than queued -- the cooldown between swings
 // (3000 ms for a Mangyang) is far longer than a store write, so a drop means a
-// stalled store, not a fight.
-func (a *monsterAI) queueStrike(b *brain, target int64) {
-	if a.deps.chars == nil {
-		return
-	}
+// stalled store, not a fight. Runs on the tick goroutine outside a.mu, the
+// only goroutine that touches a brain's channel (step 2 closes it there too).
+func (a *monsterAI) handStrike(h strikeHandoff) {
+	b := h.b
 	if b.strikes == nil {
 		b.strikes = make(chan strikeJob, 1)
 		go a.strikeWorker(b.id, b.strikes)
 	}
 	select {
-	case b.strikes <- strikeJob{m: b.m, target: target}:
-		a.tracef("ai: monster %d swings at %d", b.id, target)
+	case b.strikes <- h.job:
+		a.tracef("ai: monster %d swings at %d", b.id, h.job.target)
 	default:
-		a.tracef("ai: monster %d swing at %d dropped: the previous strike is still running", b.id, target)
+		a.tracef("ai: monster %d swing at %d dropped: the previous strike is still running", b.id, h.job.target)
 	}
 }
 
@@ -719,8 +756,23 @@ func (a *monsterAI) strikeWorker(id int64, jobs <-chan strikeJob) {
 // the zone as an OpMonsterAttacked through the runtime's push (the zone
 // broadcast under each session's wire lock, or a test's recorder), and
 // reports a kill to the tick (kills). The blow resolves at the swing's start;
-// the client delays only the drawing, to its clip's hit event.
+// the client delays only the drawing, to its clip's hit event. A swing already
+// handed over still resolves if the target changed zone or the monster died
+// between the tick's validity test and monsterStrike -- the same class of
+// window as the flag-off counter's, disclosed (round 547).
+//
+// A panic inside the blow -- a store's own -- is logged and the swing
+// dropped, and the worker goes on to the next (round 547): a goroutine's
+// panic is the process's, so without this one bad store write would take the
+// whole server down.
 func (a *monsterAI) runStrike(id int64, job strikeJob) {
+	defer func() {
+		if r := recover(); r != nil {
+			if a.logger != nil {
+				a.logger.Error("ai: strike panicked, swing dropped", "monster", id, "target", job.target, "panic", r, "stack", string(debug.Stack()))
+			}
+		}
+	}()
 	ctx := context.Background()
 	level := 0
 	if c, err := a.deps.chars.GetByID(ctx, job.target); err == nil && c != nil {
@@ -736,8 +788,15 @@ func (a *monsterAI) runStrike(id int64, job strikeJob) {
 	a.tracef("ai: monster %d strike %d for %d (HP %d)%s%s", id, job.target, out.damage, out.hp,
 		map[bool]string{true: " blocked", false: ""}[out.blocked], map[bool]string{true: " killed", false: ""}[out.died])
 	if out.died {
+		// Only while the brain is there to drain it (battleTick). A worker
+		// finishing after the tick dropped the brain -- the monster killed by
+		// the player inside the worker's window -- would otherwise leave an
+		// entry nothing collects: the removal loop's delete has run, and ids
+		// are never reused (combat.Hub's nextID) (round 547).
 		a.mu.Lock()
-		a.kills[id] = struct{}{}
+		if _, live := a.brains[id]; live {
+			a.kills[id] = struct{}{}
+		}
 		a.mu.Unlock()
 	}
 	a.push(job.m.Zone, &proto.Packet{Opcode: OpMonsterAttacked, Data: out.message(id, job.target).Encode()})
