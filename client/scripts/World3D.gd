@@ -917,6 +917,28 @@ var _strike_waits: Dictionary = {}
 ## MonsterStrikes.is_own_unpaired's grace window (round 546); entries older
 ## than LEFT_GRACE_MS are dropped as new ones come.
 var _recently_left: Dictionary = {}
+## Whether this player is DEAD (round 548): a monster's killing blow left it
+## at HP 0 -- the server's life state 2 (docs/protocol/character_state.md,
+## rounds 411-413: GObjPC::Revive 0x4df290 passes 1, the engine's ALIVE, back
+## through the SetLifeState slot) -- rather than putting it back on its feet
+## in the same call. Set by _enter_dead_state from a result or push that
+## MonsterStrikes.leaves_dead says left the player dead; cleared by
+## _leave_dead_state on an OpReviveResult. While it holds, movement and
+## attack input are locked (_physics_process, _dispatch_left_click,
+## _attack_monster, _on_quickslot_activated), the die clip is held
+## (_play_player_struck) and the HUD shows the Revive button
+## (HudPanels.show_revive_prompt). Today's server never sets it: it revives a
+## killed player at once (session/monsterstrike.go's RespawnHP) and reports
+## the respawned HP, above 0. Its server half is -player-dead-state, off by
+## default; docs/protocol/monster_ai.md, "The player's dead state".
+var _player_dead := false
+## Holds the player's one-shot on its last frame once it has run -- the die
+## clip -- instead of returning to the stand or run loop. Cleared with
+## _player_dead.
+var _player_one_shot_hold := false
+## The chat line for a cast or an item tried while dead. This project's own
+## wording (the server's refusal string is its own too).
+const DEAD_INPUT_LINE := "You are dead. Revive first."
 ## Underbar quickslot index -> {"id": skill id, "code": Basic_Code} for skills
 ## the player has put on the hotbar from the skill window. Activating a slot
 ## casts its skill.
@@ -1111,6 +1133,7 @@ func _ready() -> void:
 	NetClient.monster_attacked.connect(_on_monster_attacked)
 	NetClient.monster_spawned.connect(_on_monster_spawned)
 	NetClient.attack_result.connect(_on_attack_result)
+	NetClient.revive_result.connect(_on_revive_result)
 	NetClient.monster_damaged.connect(_on_monster_damaged)
 	NetClient.monster_died.connect(_on_monster_died)
 	NetClient.level_up.connect(_on_level_up)
@@ -1464,6 +1487,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.npc_service_selected.connect(_on_npc_service_selected)
 	_hud_panels.guild_create_requested.connect(_on_guild_create_requested)
 	_hud_panels.guild_leave_requested.connect(_on_guild_leave_requested)
+	# The Revive button (round 548): the one click a dead player has.
+	_hud_panels.revive_requested.connect(_on_revive_requested)
 	# A server refusal the panels hear about (a mastery raise) goes to chat.
 	_hud_panels.system_notice.connect(_log_system)
 
@@ -5076,6 +5101,12 @@ func _skill_is_assignable(skill_id: int) -> bool:
 ## A quickslot was activated (clicked, or its number key pressed): cast the
 ## skill assigned to it.
 func _on_quickslot_activated(slot_index: int) -> void:
+	if _player_dead:
+		# Dead (round 548): the server refuses a cast and an item alike
+		# (its OpUseSkill and OpUseItem gates, the dead state's server half;
+		# retail's `GetLifeState() != 1` guards), so nothing goes out.
+		_log_system(DEAD_INPUT_LINE)
+		return
 	var entry = _quickslot_skills.get(slot_index)
 	if entry != null:
 		_cast_skill(int(entry["id"]), String(entry["code"]))
@@ -5205,6 +5236,12 @@ func _cast_skill(skill_id: int, basic_code: String) -> void:
 ## the catalog does not know, no archive at all -- the request goes out at once
 ## and the server judges the distance, as before; the log says which.
 func _attack_monster(monster_id: int, skill_id: int = 0, basic_code: String = "") -> void:
+	if _player_dead:
+		# Dead (round 548): no swing, no cast, no walk into reach. A world
+		# click and a quickslot are stopped before this; the QA attack loop
+		# is stopped at the death. The server would refuse it anyway.
+		print("World3D: attack on monster %d while dead -- not sent" % monster_id)
+		return
 	# A new attack replaces one still walking into reach, and the walk that was
 	# for it ends too: a self-cast pressed on the way (the no_walk path below)
 	# would otherwise go out while the character kept walking to the old stop
@@ -6038,6 +6075,10 @@ func _update_blob_shadow() -> void:
 ##                          chase (round 546's live check; _qa_retreat)
 ##   SRREVAMP_QA_ATTACK=1   attack the nearest monster every second, so a
 ##                          hit reaction and a death can be rendered
+##   SRREVAMP_QA_REVIVE_AFTER=n  with a server whose -player-dead-state is on:
+##                          once a killing blow has left the player dead, send
+##                          OpRevive n physics frames later, as the Revive
+##                          button would (round 548; _on_revive_requested)
 ##   SRREVAMP_QA_MOB_MOVE="dx,dz,speed,mode"  send the nearest monster on a
 ##                          server-style leg (OpMonsterMoved, built and decoded
 ##                          here) from where it stands; with --server the list
@@ -6429,6 +6470,15 @@ func _qa_step() -> void:
 	var _qa_attack_interval := 10 if OS.get_environment("SRREVAMP_QA_ATTACK_FAST") != "" else 60
 	if _qa_attacking and _qa_tick % _qa_attack_interval == 0 and NetClient.is_connected_to_server():
 		_qa_attack_nearest()
+	# SRREVAMP_QA_REVIVE_AFTER=n: n physics frames after a killing blow left
+	# the player dead (_enter_dead_state), send OpRevive, as the Revive button
+	# would (round 548). Once per death; never fires in real play.
+	var qa_revive_after := OS.get_environment("SRREVAMP_QA_REVIVE_AFTER")
+	if qa_revive_after != "" and _player_dead and not _qa_revive_sent and _qa_dead_tick >= 0 \
+			and _qa_tick - _qa_dead_tick >= int(qa_revive_after) and NetClient.is_connected_to_server():
+		_qa_revive_sent = true
+		print("QA REVIVE: sending OpRevive %d frames after the death" % (_qa_tick - _qa_dead_tick))
+		_on_revive_requested()
 	if not _qa_mob_move_done and OS.get_environment("SRREVAMP_QA_MOB_MOVE") != "":
 		_qa_mob_move()
 	if not _qa_click_queue.is_empty():
@@ -6592,6 +6642,10 @@ var _qa_retreat_pending := OS.get_environment("SRREVAMP_QA_ATTACK_RETREAT") != "
 ## SRREVAMP_QA_ATTACK_GOTO with a server: the monster the next list result
 ## stands the player beside (QaAttackGoto), -1 when no GOTO is waiting.
 var _qa_goto_pending_id := -1
+## SRREVAMP_QA_REVIVE_AFTER (round 548): the tick a killing blow left the
+## player dead (-1: never), and whether that death's OpRevive has gone out.
+var _qa_dead_tick := -1
+var _qa_revive_sent := false
 
 ## SRREVAMP_QA_ATTACK_RETREAT=n (round 546): the first blow has landed on
 ## `monster`, so walk n units straight back from it -- the click-to-move walk,
@@ -6621,6 +6675,8 @@ func _qa_retreat(monster: int) -> void:
 ## request the Attack button sends -- so the combat animations can be
 ## rendered without a hand on the mouse.
 func _qa_attack_nearest() -> void:
+	if _player_dead:
+		return
 	var nearest_id := -1
 	var nearest := INF
 	# SRREVAMP_QA_ATTACK_NAME narrows the pick to monsters whose name plate
@@ -7602,7 +7658,13 @@ func _physics_process(delta: float) -> void:
 	# name prompt (round 521) walked the character on S, W and D until it
 	# was counted too.
 	var typing := _is_typing()
-	if typing:
+	# Dead (round 548): no key, click or QA walk moves the body and no attack
+	# walks into reach, as when typing -- the server neither stores nor relays
+	# a dead player's OpMove (the dead state's server half; retail's
+	# `GetLifeState() != 1` guards). Gravity, streaming and the position send
+	# below still run, as they do while typing.
+	var locked := typing or _player_dead
+	if locked:
 		_has_move_target = false
 		_pending_attack = {}
 		_released_attack = {}
@@ -7612,7 +7674,7 @@ func _physics_process(delta: float) -> void:
 	var manual_input := input_dir.length() > 0.0
 	# Holding the left button walks the character toward the cursor, refreshed
 	# every frame so it follows the pointer while held. WASD still overrides.
-	if _left_steering and not typing and not manual_input:
+	if _left_steering and not locked and not manual_input:
 		_try_set_move_target(get_viewport().get_mouse_position())
 	if manual_input:
 		input_dir = input_dir.normalized()
@@ -7663,7 +7725,7 @@ func _physics_process(delta: float) -> void:
 			player.velocity.x = dir.x * _move_speed
 			player.velocity.z = dir.z * _move_speed
 			player.rotation.y = atan2(dir.x, dir.z)
-	elif _qa_walk != "":
+	elif _qa_walk != "" and not _player_dead:
 		# SRREVAMP_QA_WALK: walk on a fixed world heading, as a held key
 		# would, so a render shows the run and the log the path.
 		var ang := deg_to_rad(float(_qa_walk))
@@ -7674,7 +7736,7 @@ func _physics_process(delta: float) -> void:
 		player.velocity.x = 0.0
 		player.velocity.z = 0.0
 
-	var is_moving := manual_input or _has_move_target or _qa_walk != ""
+	var is_moving := manual_input or _has_move_target or (_qa_walk != "" and not _player_dead)
 	# The camera keeps whatever orbit it was given (see CAMERA_VIEW_FREE).
 	# It used to swing back to the default yaw and pitch whenever the
 	# character moved, and, hanging from the body, turned with every click.
@@ -7814,9 +7876,12 @@ func _physics_process(delta: float) -> void:
 		_player_anim_time += delta
 		if _player_one_shot != null:
 			var elapsed := _player_anim_time - _player_one_shot_start
-			if elapsed >= _player_one_shot.duration_seconds():
+			if elapsed >= _player_one_shot.duration_seconds() and not _player_one_shot_hold:
 				_player_one_shot = null
 			else:
+				# A held one-shot (the die clip, round 548) keeps its last
+				# keyframe past its end: apply_ban_pose_at pins a non-looping
+				# clip on it once `seconds` reaches the duration.
 				Skeleton3DBuilder.apply_ban_pose_at(_player_skeleton, _player_one_shot, elapsed, false)
 		if _player_one_shot == null and anim != null and not anim.bones.is_empty():
 			var ref_track: BanReader.Bone = anim.bones[0]
@@ -8074,7 +8139,9 @@ func _on_chat_whisper_message(message: ChatNet.Message) -> void:
 func _log_system(text: String) -> void:
 	if _hud_chat != null:
 		_hud_chat.add_message("", "* " + text)
-	chat_log.add_text("* %s\n" % text)
+	# Null on a bare World3D (the headless suites drive one with no scene).
+	if chat_log != null:
+		chat_log.add_text("* %s\n" % text)
 
 # --- Debug console and Help window ----------------------------------------
 
@@ -8684,6 +8751,10 @@ func _apply_cursor(kind: String) -> void:
 ## the pick returns, never wall-first. Returns which path took the click,
 ## for the QA hook's log.
 func _dispatch_left_click(screen_pos: Vector2) -> String:
+	if _player_dead:
+		# Dead (round 548): a click on the world does nothing -- no pick-up,
+		# attack, talk or walk; the Revive button is what there is to click.
+		return "dead"
 	# An item lying on the ground first: it sits at a monster's feet inside
 	# the monster's tall click capsule, so testing the monster first would
 	# make a drop unpickable while its killer's next target stands over it.
@@ -9684,6 +9755,10 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 		# leveldata.DeathPenaltyExp.
 		if result.player_died:
 			monster_status_label.text = _death_line(result.death_exp_lost)
+			# Left dead, at HP 0 (round 548) -- or, from today's server, put
+			# back on its feet in the same call (MonsterStrikes.leaves_dead).
+			if MonsterStrikes.leaves_dead(result.player_died, result.player_hp):
+				_enter_dead_state(result.death_exp_lost)
 	NetClient.list_monsters()
 	# OpUseSkill's response reuses this same OpAttackResult (see
 	# SkillNet's doc comment) -- refresh here too so a just-used skill's
@@ -9783,9 +9858,9 @@ func _draw_counter_from_result(monster: int, result: CombatNet.AttackResult) -> 
 				monster, _last_attack_target, monster])
 		_play_monster_action(monster, BsrReader.AnimationEntry.TYPE_ATTACK)
 	_after(strike_after, func() -> void:
-		var hit := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_HIT, _player_weapon_group)
-		if hit != null:
-			_player_one_shot_until = _player_anim_time + _play_player_once(hit)
+		# The hit reaction -- or the held die clip when this blow left the
+		# player dead (round 548).
+		_play_player_struck()
 		# The damage the player took, over the player's own head (human
 		# head height from the same PLAYER_SCALE_RATIO calibration the
 		# monster fallback uses), timed to when the counter-blow lands.
@@ -9852,8 +9927,128 @@ func _show_own_strike(attacked: CombatNet.MonsterAttacked) -> void:
 			_hud_player_info.set_hp(attacked.target_hp, _last_enter_world_max_hp)
 		if _hud_panels != null:
 			_hud_panels.set_character_vitals(attacked.target_hp, _last_enter_world_max_hp, 1)
-	if attacked.target_died and monster_status_label != null:
-		monster_status_label.text = _death_line(attacked.death_exp_lost)
+	if attacked.target_died:
+		if monster_status_label != null:
+			monster_status_label.text = _death_line(attacked.death_exp_lost)
+		# Left dead, at HP 0 (round 548): the monster's own swing under
+		# -monster-battle reports a kill here alone, with no result before it.
+		if MonsterStrikes.leaves_dead(attacked.target_died, attacked.target_hp):
+			_enter_dead_state(attacked.death_exp_lost)
+
+# --- The player's dead state (round 548) --------------------------------------
+#
+# A server with -player-dead-state on (the server half; off by default) leaves
+# a player a monster kills at HP 0 in life state 2 -- docs/protocol/
+# character_state.md, rounds 411-413: 1 is ALIVE (the "must be alive" guards
+# answer GUILDERR_IM_DEAD and 0x6807 on GetLifeState() != 1), 2 is a PC the
+# engine revives into 1 (GObjPC::Revive 0x4df290) -- refuses its moves, blows,
+# casts and items, and revives it where it lies on OpRevive, at
+# character.RespawnFraction (0.4) of each maximum. That fraction is the retail
+# resurrect handler's own: GObjPC_HandleResurrectMsg_053 (0x50fee0) acts only
+# in life state 2 (`cmp al,0x2` at 0x510077), calls GObjPC::Revive(1) (`push
+# 0x1; call 0x4df290` at 0x5100e3) and lands GetParam(3) x 0.4 and GetParam(4)
+# x 0.4 through ApplyHPMPDelta (`fmul QWORD PTR ds:0xb460f0` at 0x5100fa and
+# 0x510130; 0xb460f0 = 00 00 00 a0 99 99 d9 3f, the double 0.4). Its u8 option
+# -- 1 return to the return point, 2 revive in place while the max level is at
+# most 10 -- and the return point itself are not modelled: srrevamp revives in
+# place at any level (docs/protocol/monster_ai.md, "The player's dead state").
+# Against today's server none of this fires: a kill arrives with the respawned
+# HP above 0 (MonsterStrikes.leaves_dead), and no OpReviveResult ever comes.
+
+## The player's own reaction to a blow that has just landed on it: the hit
+## clip (type 3) once, over stand or run -- or, when the blow left the player
+## dead (_player_dead), the die clip (type 4 of the weapon group's table,
+## `_a_diehardhit` by the body's own hints) held on its last frame until the
+## revive. That the retail client plays a death clip and leaves the body down
+## was not read here; the clip type is the body table's own.
+func _play_player_struck() -> void:
+	if _player_skeleton == null:
+		return
+	if _player_dead:
+		_play_player_death_pose()
+		return
+	var hit := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_HIT, _player_weapon_group)
+	if hit != null:
+		_player_one_shot_until = _player_anim_time + _play_player_once(hit)
+
+## Plays the die clip once and holds its last frame (_player_one_shot_hold).
+## A body with no such clip keeps whatever it plays.
+func _play_player_death_pose() -> void:
+	var die := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_DIE, _player_weapon_group)
+	if die == null:
+		return
+	_player_one_shot_until = _player_anim_time + _play_player_once(die)
+	_player_one_shot_hold = true
+
+## This player has been left dead: every walk and attack under way ends, the
+## input locks (_player_dead), the death line goes to chat and the HUD shows
+## the Revive button. The pose itself is played when the killing blow lands
+## (_play_player_struck), on the counter's own timing. Idempotent: a push that
+## repeats a result's kill (MonsterStrikes.CLAIM_HELD) reaches here twice.
+func _enter_dead_state(exp_lost: int) -> void:
+	if _player_dead:
+		return
+	_player_dead = true
+	_drop_pending_attack()
+	_has_move_target = false
+	_left_steering = false
+	player.velocity.x = 0.0
+	player.velocity.z = 0.0
+	# The QA attack loop stops here for good; SRREVAMP_QA_REVIVE_AFTER counts
+	# from this tick.
+	_qa_attacking = false
+	_qa_dead_tick = _qa_tick
+	_qa_revive_sent = false
+	var line := _death_line(exp_lost)
+	_log_system(line)
+	if _hud_panels != null:
+		_hud_panels.show_revive_prompt(line)
+	print("World3D: left dead (HP 0) t=%.2f -- input locked until the revive" % _idle_anim_time)
+
+## Back on its feet: an OpReviveResult with no error (_on_revive_result). The
+## held die clip is released to the stand loop and the prompt comes down.
+func _leave_dead_state() -> void:
+	if not _player_dead:
+		return
+	_player_dead = false
+	_player_one_shot_hold = false
+	_player_one_shot = null
+	if _hud_panels != null:
+		_hud_panels.hide_revive_prompt()
+
+## The Revive button (HudPanels.revive_requested), or the QA hook: ask the
+## server (OpRevive 0x0028, empty). Only while dead -- the server refuses it
+## otherwise, as the retail handler acts only in life state 2 (0x510077).
+func _on_revive_requested() -> void:
+	if not _player_dead or not NetClient.is_connected_to_server():
+		return
+	NetClient.revive()
+	print("World3D: revive requested")
+
+## OpReviveResult 0x0029: the character is back at character.RespawnFraction
+## of each maximum (WorldNet.ReviveResult), or the server refused. The HP is
+## painted from the result; the MP through the stats refresh, which carries
+## its maximum (this scene keeps none). A result that arrives unasked -- the
+## server half's auto-revive fallback for a session that never sent OpRevive
+## -- is taken the same way.
+func _on_revive_result(result: WorldNet.ReviveResult) -> void:
+	if result == null:
+		return
+	if result.error != "":
+		_log_system(result.error)
+		print("World3D: revive refused: %s" % result.error)
+		return
+	_leave_dead_state()
+	if _last_enter_world_max_hp > 0:
+		_last_enter_world_hp = result.hp
+		if _hud_player_info != null:
+			_hud_player_info.set_hp(result.hp, _last_enter_world_max_hp)
+		if _hud_panels != null:
+			_hud_panels.set_character_vitals(result.hp, _last_enter_world_max_hp, 1)
+	_request_world_stats()
+	# This project's own wording.
+	_log_system("Revived.")
+	print("World3D: revived (HP %d, MP %d)" % [result.hp, result.mp])
 
 ## Draws one monster's blow from its push: the monster turned toward its target
 ## and playing its attack clip (TYPE_ATTACK), then, at that clip's hit event
@@ -9884,10 +10079,9 @@ func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool) ->
 		if anchor == null or not is_instance_valid(anchor):
 			return
 		if on_self:
-			if _player_skeleton != null:
-				var hit := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_HIT, _player_weapon_group)
-				if hit != null:
-					_player_one_shot_until = _player_anim_time + _play_player_once(hit)
+			# The hit reaction -- or the held die clip when this blow left
+			# the player dead (round 548).
+			_play_player_struck()
 		else:
 			_play_other_hit(target_id)
 		# Over the head, at the height the player's own number uses.

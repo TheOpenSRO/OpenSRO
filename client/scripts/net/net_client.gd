@@ -74,6 +74,12 @@ signal monster_motion_list(entries: Array)
 ## sends either yet (round 540 built this half first).
 signal monster_attacked(attacked: CombatNet.MonsterAttacked)
 signal monster_spawned(spawned: CombatNet.MonsterSpawned)
+## The player's own revive (WorldNet.OP_REVIVE_RESULT, round 548): the HP and
+## MP the character came back with, or the server's refusal. Only a server
+## with its -player-dead-state flag on sends it (the dead state's server
+## half; off by default) -- after an OpRevive from this client, or on its own
+## when its auto-revive fallback brings a session back that never asked.
+signal revive_result(result: WorldNet.ReviveResult)
 ## Items on the ground (GroundItemsNet): the zone's list, one appearing, one
 ## leaving (picked or expired), one whose owner window passed, and the
 ## outcome of our own pick-up.
@@ -322,6 +328,12 @@ func move_to(x: float, y: float, z: float) -> void:
 
 func change_zone(zone: String) -> void:
 	_send(WorldNet.OP_CHANGE_ZONE, WorldNet.encode_change_zone(zone))
+
+## Asks to be revived where the character lies (WorldNet.OP_REVIVE, empty):
+## the Revive button, or the SRREVAMP_QA_REVIVE_AFTER hook. The reply is
+## revive_result. A server without the dead state answers nothing.
+func revive() -> void:
+	_send(WorldNet.OP_REVIVE, WorldNet.encode_revive())
 
 func list_inventory(char_name: String) -> void:
 	_send(InventoryNet.OP_LIST, InventoryNet.encode_list_request(char_name))
@@ -579,6 +591,8 @@ func _dispatch(p: Packet) -> void:
 			if zone_result.ok:
 				current_zone = zone_result.zone
 			change_zone_result.emit(zone_result)
+		WorldNet.OP_REVIVE_RESULT:
+			revive_result.emit(WorldNet.decode_revive_result(p.data))
 		InventoryNet.OP_LIST_RESULT:
 			var r := InventoryNet.decode_list_result(p.data)
 			last_inventory_durabilities = r.durabilities

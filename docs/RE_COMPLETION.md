@@ -34034,3 +34034,102 @@ while the previous one is still running" is the plan's, and the code and `monste
 the one-deep queue correctly; `WORLD_ISSUES.md` stays untouched, as in rounds 541-546. No
 `SYSTEMS.md` row describes any of this as unwired: the Monster AI row's description of the strike
 worker still holds, so that file is not touched.
+
+## Client: dead pose, input lock, Revive button, OpReviveResult (round 548)
+
+The client half of the player's dead state (`mob-player-dead-state`, split by the batch-17 review so
+this client is released before the server half's `-player-dead-state` flag is ever flipped). A
+monster's killing blow that leaves the player at HP 0 -- the server's life state 2, which only that
+server half will send -- now holds the die clip, locks movement and attack input, and offers a
+Revive button that sends `OpRevive 0x0028`; `OpReviveResult 0x0029` is decoded and brings the player
+back. **Inert against today's server**: every kill it reports carries the respawned HP
+(`session/monsterstrike.go`'s `RespawnHP`, 40 % of the maximum, above 0) and it never sends the
+result. Client only; no existing opcode or layout changed; the server tree is untouched.
+
+**Grounding, re-read on the RE box for this round** (the full reading is in
+`docs/protocol/monster_ai.md`, "The player's dead state: the client half (round 548)").
+
+- **The retail resurrect handler was read first, as the plan asked.** `GObjPC_HandleResurrectMsg_053`
+  (`0x50fee0`) reads ONE u8 option, acts only in life state 2 (`cmp al,0x2` at `0x510077`), turns
+  away a siege countdown above `0xa5`, and then: death cause `[this+0x1cb4] == 2`
+  (`leveldata.DeathCauseNoPenalty`) or option 2 with `IGObj::GetMaxLevel` at most 10 (`cmp al,0xa`
+  at `0x51017f`) -> `GObjPC::Revive(1)` (`push 0x1; call 0x4df290` at `0x5100e3`) and
+  `ApplyHPMPDelta(GetParam(3) x 0.4, GetParam(4) x 0.4, 8)`; option 1 -> `Revive(0)`, the
+  return-point path, and `GameEventLog_Record(0x15, 2, 0)`. **The fraction is read off the binary:
+  `fmul QWORD PTR ds:0xb460f0` at `0x5100fa`/`0x510130`, and `0xb460f0` = `00 00 00 a0 99 99 d9 3f`,
+  the double 0.4** -- the constant `character.RespawnFraction` already cites from the create/load
+  path (`0x4e1141`/`0x4e1190`). So "revive at 40 %" is the handler's own number, not only the load
+  path's. Filed on the `0050fee0` row of `recovered_names.tsv`.
+- **`GObjPC::Revive` (`0x4df290`)**: param 1 passes `1` through `SetLifeState` (`+0x1f0`), gives one
+  HP through `ApplyHPMPDelta(this, 1, 0, 8)` and clears the cause byte `+0x72d`; param 0 does not
+  set the life state and goes to a return point through `CGObjPC::FUN_004e08a0` and slot `0x378`.
+- **Life state 1 ALIVE / 2 DEAD**: `character_state.md` rounds 411-413 (cited by section; that file
+  is another lane's and was not edited). **`FUN_00540de0`** (round 424): no AI target unless
+  `GetLifeState() == 1`.
+- **0x0028/0x0029 free** in every non-test file under `server/internal` and `client/scripts/net`
+  (grep, 2026-09-24).
+
+**Wired.**
+
+- `WorldNet` (`scripts/net/world.gd`): `OP_REVIVE 0x0028` (empty, `encode_revive`) and
+  `OP_REVIVE_RESULT 0x0029` (`ReviveResult`: u16-prefixed error, then s32 HP and s32 MP;
+  `decode_revive_result`, a refusal's tail optional). `NetClient`: `revive()`, the `revive_result`
+  signal and its dispatch.
+- `MonsterStrikes.leaves_dead(died, hp_after)`: a kill reported at HP 0 left the player dead; one
+  reported with the respawned HP (today's server) did not. Read from both the attacker's result
+  (`_on_attack_result`) and the zone's push (`_show_own_strike`, the only report of the monster's
+  own swing under `-monster-battle`).
+- `World3D`, "The player's dead state (round 548)": `_enter_dead_state` (the flag, every walk and
+  attack under way ended, the QA loop stopped, the death line, the prompt), `_leave_dead_state`,
+  `_on_revive_requested` (sends only while dead and connected), `_on_revive_result` (HP painted,
+  MP via the stats refresh, "Revived."; a refusal logged), `_play_player_struck` /
+  `_play_player_death_pose` (the type-4 clip held on its last frame through the new
+  `_player_one_shot_hold`, which the one-shot tick honours), and the gates: `_physics_process`
+  (`locked := typing or _player_dead`, the QA walk too), `_dispatch_left_click` (`"dead"`),
+  `_attack_monster`, `_on_quickslot_activated` (`DEAD_INPUT_LINE`), `_qa_attack_nearest`.
+  `_log_system` now tolerates a bare World3D (no `chat_log`), which the suites drive.
+- `HudPanels` (the HUD file split, `docs/HANDOFF_UI.md`): `show_revive_prompt(line)` /
+  `hide_revive_prompt()` and the `revive_requested` signal -- the talk prompts' dark, gold-edged
+  box on the HUD itself, one button; World3D connects it beside the guild prompts.
+- `SRREVAMP_QA_REVIVE_AFTER=n` (the QA doc block, `_qa_step`'s tick): OpRevive n frames after the
+  death, once.
+- Records: `monster_ai.md` (two table rows, the fixtures, the new section, the intro's free-opcode
+  note); `TODO.md`'s monster-epic list (the client half built, the server half's contents, the
+  release-before-flag order, the stand-ins); `recovered_names.tsv` row `0050fee0`.
+
+**Stand-ins, disclosed in code and in the section**: the empty request against retail's u8 option
+and its level-10 rule for reviving in place (srrevamp revives in place at any level; the return
+point is not modelled), the button and its wording, the death clip's type, and the auto-revive
+fallback being the server half's.
+
+**Tests** (`client/tools/remote_godot.sh tests`, render box): `scripts/net/world_test.gd`
+(`_test_encode_revive`, `_test_decode_revive_result`: the pair's numbers, the empty request, the
+revive and refusal fixtures, three truncations) and `scripts/world/monster_strikes_test.gd`
+(`_test_leaves_dead`; `_test_world_dead_state` on a bare World3D through the push path -- HP 76
+alive, HP 0 dead with the walk, the steering and the QA loop ended, the world click `"dead"`, the
+attack not sent, a repeat harmless, a refusal still dead, a good result back with the hold released;
+`_test_hud_revive_prompt` on a bare HudPanels -- shown with its button, the click emits once, a
+second show replaces, hide removes). Both `ALL PASS`. The full run on the render box
+(2026-09-24): `remote_godot.sh tests` -- `ran 85 suite(s), 0 failing`; `remote_godot.sh check` --
+`checked 256 scripts and 5 scenes`, `ALL LOAD`. `cd server && go build ./... && go test -count=1 -p 1
+./...` green, re-run after the doc edits (no server file changed; the doc probes read
+`recovered_names.tsv`, whose `0050fee0` row this round extends).
+
+**Negative, proved**: with the five production files stashed (`git stash push -- world.gd
+net_client.gd World3D.gd monster_strikes.gd hud_panels.gd`), the working copy shipped and the two
+suites run alone: `world_test.gd` -- `Parse Error: Cannot find member "OP_REVIVE" in base
+"WorldNet"`, `Static function "decode_revive_result()" not found in base "WorldNet"`;
+`monster_strikes_test.gd` -- `Static function "leaves_dead()" not found in base "MonsterStrikes"`,
+`Cannot find member "ReviveResult" in base "WorldNet"`. `remote_godot.sh tests` counts a parse error
+as a failed suite. Restored (`git stash pop`; `git status` checked), shipped again: both `ALL PASS`.
+
+**Deploy note.** This is release C's successor: tag it, and confirm its `Release client` run is
+green (`gh run list`), BEFORE the server half's `-player-dead-state` is flipped on the public server.
+An older client against that flag sees HP 0 and no button, and only the server half's auto-revive
+fallback frees it -- which is why that half must carry the fallback. `server/README.md` and
+`deploy/README.md` are not touched here: the flag does not exist yet.
+
+**`SYSTEMS.md` is not touched**: no row describes the player's dead state as unwired (the Death
+penalty row is SPECIFIED on the penalty; the Monster AI row's anchors are server symbols), and the
+row for the server half is that half's to write. `WORLD_ISSUES.md` stays untouched, as in rounds
+541-547.

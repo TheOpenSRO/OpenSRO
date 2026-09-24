@@ -143,11 +143,20 @@ func _test_own_unpaired() -> void:
 	_check(MonsterStrikes.is_own_unpaired(66, others, left, 1001 + MonsterStrikes.LEFT_GRACE_MS),
 		"past the grace window the id is this player's again")
 
+## Round 548: whether a kill LEFT the player dead. A server with the dead
+## state reports HP 0; every server before it respawned the player in the
+## same call and reported the respawned HP (40 % of the maximum, above 0).
+func _test_leaves_dead() -> void:
+	_check(MonsterStrikes.leaves_dead(true, 0), "a kill reported at HP 0 leaves the player dead")
+	_check(not MonsterStrikes.leaves_dead(true, 80), "a kill reported with the respawned HP (today's server) does not")
+	_check(not MonsterStrikes.leaves_dead(false, 0), "a blow that did not kill never does, whatever the HP")
+
 func _init() -> void:
 	_test_result_countered()
 	_test_drawn_once()
 	_test_claims()
 	_test_own_unpaired()
+	_test_leaves_dead()
 
 ## World3D's glue, on a bare World3D (no scene; the nodes it touches are set
 ## by hand). Loaded in _initialize, not _init: World3D names the NetClient
@@ -161,6 +170,8 @@ func _initialize() -> void:
 		_test_world_strikes(world_script)
 		_test_world_spawn_facing(world_script)
 		_test_world_exchange_line(world_script)
+		_test_world_dead_state(world_script)
+	_test_hud_revive_prompt()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
@@ -311,3 +322,82 @@ func _test_world_exchange_line(world_script: GDScript) -> void:
 	_check(String(world.call("_exchange_line", _result(24, 76, false, true))).contains("Took 24 -- critical!"), "a critical says so")
 	_check(String(world.call("_exchange_line", _result(0, 100, true))).ends_with("Blocked it (HP 100)."), "a block says so")
 	world.free()
+
+## Round 548, the dead state: a killing blow reported at HP 0 enters it --
+## input locked, the state set -- and one reported with the respawned HP
+## (today's server) does not; a refused OpReviveResult leaves it as it was and
+## one with no error brings the player back. Driven through the push path:
+## the monster's own swing under -monster-battle is the case with no result
+## before it. Not driven: the die clip (no body here) and the HUD (below).
+func _test_world_dead_state(world_script: GDScript) -> void:
+	var world: Node = world_script.new()
+	var player := CharacterBody3D.new()
+	var label := Label.new()
+	world.set("player", player)
+	world.set("monster_status_label", label)
+
+	# Today's server: the kill and the respawn in one report, HP 76 after.
+	world.call("_on_monster_attacked", _push_for(_result(200, 76, false, true, true), 77))
+	_check(not bool(world.get("_player_dead")), "a kill reported with the respawned HP leaves the player alive (today's server)")
+	_check(label.text == "You were killed. Lost 25900 experience.", "and still shows the death line (got '%s')" % label.text)
+
+	# A server with the dead state: HP 0, and the player stays down.
+	world.set("_has_move_target", true)
+	world.set("_left_steering", true)
+	world.set("_qa_attacking", true)
+	world.call("_on_monster_attacked", _push_for(_result(200, 0, false, true, true), 77))
+	_check(bool(world.get("_player_dead")), "a kill reported at HP 0 leaves the player dead")
+	_check(not bool(world.get("_has_move_target")) and not bool(world.get("_left_steering")),
+		"the walk under way ends with it")
+	_check(not bool(world.get("_qa_attacking")), "and so does the QA attack loop")
+	_check(String(world.call("_dispatch_left_click", Vector2.ZERO)) == "dead", "a world click does nothing while dead")
+	world.call("_attack_monster", 7)
+	_check((world.get("_pending_attack") as Dictionary).is_empty(), "an attack while dead is neither walked nor sent")
+	# A second kill report (the push repeating a result's) changes nothing.
+	world.call("_on_monster_attacked", _push_for(_result(200, 0, false, true, true), 77))
+	_check(bool(world.get("_player_dead")), "a repeated kill report keeps the state")
+
+	# The server refused the revive: still dead.
+	var refused := WorldNet.ReviveResult.new()
+	refused.error = "not dead"
+	world.call("_on_revive_result", refused)
+	_check(bool(world.get("_player_dead")), "a refused revive leaves the player dead")
+
+	# Revived at 40 % (80 of 200): back on its feet.
+	var revived := WorldNet.ReviveResult.new()
+	revived.hp = 80
+	revived.mp = 40
+	world.call("_on_revive_result", revived)
+	_check(not bool(world.get("_player_dead")), "a revive result with no error brings the player back")
+	_check(not bool(world.get("_player_one_shot_hold")), "and releases the held pose")
+
+	label.free()
+	player.free()
+	world.free()
+
+## Round 548, the Revive button on a bare HUD (no archive, not in the tree):
+## show puts one prompt up with a Revive button whose click emits
+## revive_requested; a second show replaces the first; hide takes it down.
+func _test_hud_revive_prompt() -> void:
+	var panels_script := load("res://scripts/ui/hud/hud_panels.gd") as GDScript
+	var panels_ok := panels_script != null and panels_script.can_instantiate()
+	_check(panels_ok, "HudPanels compiles in _initialize")
+	if not panels_ok:
+		return
+	var panels: Control = panels_script.new()
+	var fired := [0]
+	panels.connect("revive_requested", func() -> void: fired[0] += 1)
+	panels.call("show_revive_prompt", "You were killed.")
+	var prompt := panels.get_node_or_null("RevivePrompt")
+	_check(prompt != null, "show_revive_prompt puts the prompt on the HUD")
+	var button: Button = prompt.find_child("Revive", true, false) as Button if prompt != null else null
+	_check(button != null, "with a Revive button")
+	if button != null:
+		button.pressed.emit()
+	_check(fired[0] == 1, "clicking it emits revive_requested once (got %d)" % fired[0])
+	panels.call("show_revive_prompt", "You were killed.")
+	var prompts := panels.get_children().filter(func(c: Node) -> bool: return c.name == "RevivePrompt")
+	_check(prompts.size() == 1, "a second show replaces the first (%d prompt(s) on the HUD)" % prompts.size())
+	panels.call("hide_revive_prompt")
+	_check(panels.get_node_or_null("RevivePrompt") == null, "hide_revive_prompt takes it down")
+	panels.free()

@@ -522,6 +522,83 @@ func open_guild_leave_prompt(npc_name: String) -> void:
 	])
 	_show_talk_prompt(window, panel, null)
 
+# --- The Revive button (round 548) -------------------------------------------
+#
+# A monster's killing blow can now leave the player DEAD -- the server's life
+# state 2 (docs/protocol/character_state.md, rounds 411-413), HP 0, behind its
+# -player-dead-state flag -- instead of putting it back on its feet in the same
+# call. World3D holds the death pose and locks movement and attack input
+# (World3D._enter_dead_state); this is the one thing left to click. Built in
+# the HUD file split (docs/HANDOFF_UI.md): World3D connects revive_requested
+# and sends OpRevive (NetClient.revive); the server's OpReviveResult takes the
+# prompt down (hide_revive_prompt).
+#
+# THIS PROJECT'S OWN DESIGN. The retail client's resurrection dialogue -- the
+# one behind 0x7053, whose server handler GObjPC_HandleResurrectMsg_053
+# (0x50fee0) reads a u8 option: 1 return to the return point, 2 revive here,
+# the latter only for a max level of 10 or under (docs/protocol/monster_ai.md,
+# "The player's dead state") -- was not read, and srrevamp's server revives in
+# place at any level (a disclosed stand-in), so there is one choice to offer.
+# The panel is the talk prompts' dark, gold-edged box (_talk_prompt), and its
+# wording is this project's.
+
+## The prompt's node name under this HUD; at most one is up at a time.
+const REVIVE_PROMPT := "RevivePrompt"
+
+## The Revive button was clicked. World3D sends OpRevive (_on_revive_requested).
+signal revive_requested
+
+## Puts the Revive prompt over the world: `line` (World3D's death line) and
+## the button. Replaces a prompt already up. Sits on this HUD, not on a
+## window, so it stays while every window closes and is never hidden with one.
+func show_revive_prompt(line: String) -> void:
+	hide_revive_prompt()
+	var panel := PanelContainer.new()
+	panel.name = REVIVE_PROMPT
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.07, 0.07, 0.08, 0.98)
+	style.border_color = Color(0.55, 0.45, 0.22)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(4)
+	style.set_content_margin_all(12)
+	panel.add_theme_stylebox_override("panel", style)
+	var box := VBoxContainer.new()
+	box.name = "VB"
+	box.add_theme_constant_override("separation", 8)
+	panel.add_child(box)
+	box.add_child(_shop_label(line, Color(0.95, 0.9, 0.72)))
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_child(row)
+	var btn := Button.new()
+	btn.name = "Revive"
+	btn.text = "Revive"
+	btn.custom_minimum_size = Vector2(96, 0)
+	btn.pressed.connect(func() -> void: revive_requested.emit())
+	row.add_child(btn)
+	add_child(panel)
+	panel.reset_size()
+	# Outside the scene tree (the headless suite drives this on a bare HUD)
+	# there is no frame to wait for.
+	if not panel.is_inside_tree():
+		return
+	await panel.get_tree().process_frame
+	if is_instance_valid(panel):
+		# Centred, a little below the middle, so the fallen body stays in
+		# view above it. A placement of this project's own.
+		var view := panel.get_viewport_rect().size
+		panel.position = Vector2((view.x - panel.size.x) * 0.5, view.y * 0.62).round()
+
+## Takes the Revive prompt down (the revive came through, or a new prompt
+## replaces it). Removed from the tree at once, so a prompt shown in the
+## same frame is not renamed around a node still on its way out.
+func hide_revive_prompt() -> void:
+	var old := get_node_or_null(REVIVE_PROMPT)
+	if old == null:
+		return
+	remove_child(old)
+	old.queue_free()
+
 # --- The NPC shop -----------------------------------------------------------
 #
 # The authored store window (ifstore) shows the NPC's real goods: the 6x5 grid

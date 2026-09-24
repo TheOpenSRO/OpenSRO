@@ -252,6 +252,36 @@ func _test_decode_change_zone_result_failure() -> void:
 	_check(not result.ok, "ok is false")
 	_check(result.reason == "already in that zone", "reason round-trips")
 
+## Round 548: the player's own revive. OpRevive is empty; OpReviveResult is a
+## u16-prefixed error, then s32 HP and s32 MP (docs/protocol/monster_ai.md,
+## "The player's dead state", whose fixtures these bytes are).
+func _test_encode_revive() -> void:
+	_check(WorldNet.OP_REVIVE == 0x0028 and WorldNet.OP_REVIVE_RESULT == 0x0029, "the revive pair is 0x0028/0x0029")
+	_check(WorldNet.encode_revive().is_empty(), "an OpRevive request carries nothing")
+
+func _test_decode_revive_result() -> void:
+	# Revived at 80 HP and 40 MP: 00 00 | 50 00 00 00 | 28 00 00 00.
+	var revived := PackedByteArray([0x00, 0x00, 0x50, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00])
+	var r := WorldNet.decode_revive_result(revived)
+	_check(r.error == "", "a revive has no error (got '%s')" % r.error)
+	_check(r.hp == 80 and r.mp == 40, "HP and MP round-trip (got %d/%d)" % [r.hp, r.mp])
+
+	# Refused: "not dead", and no tail after it.
+	var refused := PackedByteArray([0x08, 0x00]) + "not dead".to_utf8_buffer()
+	var f := WorldNet.decode_revive_result(refused)
+	_check(f.error == "not dead", "a refusal carries the server's reason (got '%s')" % f.error)
+	_check(f.hp == 0 and f.mp == 0, "and no pools")
+	# A refusal with the tail the server may still write decodes the same.
+	var refused_full := refused + PackedByteArray([0, 0, 0, 0, 0, 0, 0, 0])
+	_check(WorldNet.decode_revive_result(refused_full).error == "not dead", "a refusal with a zero tail is the same refusal")
+
+	# Cut short: a success header with only half its vitals.
+	var short := PackedByteArray([0x00, 0x00, 0x50, 0x00, 0x00, 0x00])
+	_check(WorldNet.decode_revive_result(short).error == "truncated vitals", "a success cut inside its vitals is a decode error")
+	_check(WorldNet.decode_revive_result(PackedByteArray([0x00])).error == "truncated", "one byte is a decode error")
+	_check(WorldNet.decode_revive_result(PackedByteArray([0x09, 0x00]) + "not dead".to_utf8_buffer()).error == "truncated error field",
+		"an error length past the payload is a decode error")
+
 func _init() -> void:
 	_test_encode_enter_world()
 	_test_encode_move()
@@ -263,6 +293,8 @@ func _init() -> void:
 	_test_encode_change_zone()
 	_test_decode_change_zone_result_success()
 	_test_decode_change_zone_result_failure()
+	_test_encode_revive()
+	_test_decode_revive_result()
 
 	if _failures == 0:
 		print("ALL PASS")

@@ -223,6 +223,25 @@ In order. Each is checked off here when it ships in a release, with its round in
         carrying it (a protocol addition, a user decision under `PROTOCOL_DECISION.md`) would make
         the pairing exact. Disclosed in the runtime: under retarget rule 0 a second attacker is
         never answered (the first attacker is the target until it leaves, dies or is out of reach).
+      - **mob-player-dead-state -- the CLIENT half is BUILT (round 548)**: a killing blow reported at
+        HP 0 (`MonsterStrikes.leaves_dead`) leaves the player dead -- the die clip held, movement and
+        attack input locked, a Revive button (`HudPanels.show_revive_prompt`, own design) that sends
+        `OpRevive 0x0028`, `OpReviveResult 0x0029` decoded, `SRREVAMP_QA_REVIVE_AFTER`
+        (`docs/protocol/monster_ai.md`, "The player's dead state: the client half"). Inert against
+        today's server, which respawns a killed player in the same call and reports HP above 0.
+        **Release this client (tag) BEFORE the server half's `-player-dead-state` is ever flipped**:
+        an older client sees HP 0 and no button, and only that half's auto-revive fallback frees
+        it. What is left is the SERVER half, behind `-player-dead-state` (off by default): life
+        state 2 on a monster kill with no `RespawnHP`, the potion queue emptied at death as
+        `FUN_004e67b0` does and `RunPotionQueue` gated on life state 1 (`0x4a87e8`), moves neither
+        stored nor relayed and blows, casts, items and zone change refused while dead, AI targets
+        dead-invalid (`FUN_00540de0`: `GetLifeState() != 1` returns no target), `handleRevive` in
+        place at `character.RespawnFraction` with an MP refill and a stats push, a disclosed
+        auto-revive fallback for a session that never sends `OpRevive`, and revive on entry for a
+        character logged out dead. Stand-ins, each disclosed in the section: the empty request
+        against retail 0x7053's u8 option (`GObjPC_HandleResurrectMsg_053` 0x50fee0: 1 return to
+        the return point, 2 revive in place only for a max level of 10 or under), revive in place at
+        any level, the button, the wording, the death clip's type.
       - **mob-acquire**: target acquisition (round 257: radius = BCRadius + `_RefTactics.+0x14`,
         the nearest player, no level term). The per-species distance is in no archive this project
         holds (the tactics table is shard-DB only), so it is disclosed per species when built.

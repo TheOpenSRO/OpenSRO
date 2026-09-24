@@ -13,6 +13,24 @@ const OP_ENTITY_MOVED := 0x0024        # server -> client, broadcast
 const OP_ENTITY_LEFT := 0x0025         # server -> client, broadcast
 const OP_CHANGE_ZONE := 0x0026         # client -> server
 const OP_CHANGE_ZONE_RESULT := 0x0027  # server -> client
+## The player's own revive (round 548; docs/protocol/monster_ai.md, "The
+## player's dead state"). Two more of srrevamp's own placeholders
+## (docs/protocol/PROTOCOL_DECISION.md), free in the world group on
+## 2026-09-24: 0x0028/0x0029 appeared in no non-test file under
+## server/internal or client/scripts/net. OpRevive is empty; OpReviveResult
+## is a u16-prefixed error string, then s32 HP and s32 MP -- the pools the
+## character came back with, character.RespawnFraction of their maxima. A
+## server sends the result only with its -player-dead-state flag on (the
+## server half; off by default), to the reviving session alone.
+##
+## The retail request is 0x7053 -> GObjPC_HandleResurrectMsg_053 (0x50fee0,
+## docs/protocol/server_handlers.tsv), which reads ONE u8 option: 1 returns
+## the character to its return point (GObjPC::Revive(0)), 2 revives it where
+## it lies -- only while its max level is at most 10 (`cmp al,0xa` at
+## 0x51017f on IGObj::GetMaxLevel, vtable +0x128). srrevamp's placeholder
+## carries no option and revives in place at any level: a disclosed stand-in.
+const OP_REVIVE := 0x0028              # client -> server, empty
+const OP_REVIVE_RESULT := 0x0029       # server -> client
 
 ## One character's presence in the world: who they are, where they are,
 ## which real armor pieces + whether a weapon/shield are equipped (the
@@ -315,4 +333,42 @@ static func decode_change_zone_result(data: PackedByteArray) -> ChangeZoneResult
 		result.others.append(decoded[0])
 		offset = decoded[1]
 
+	return result
+
+## Encodes an OpRevive request: nothing. The server knows who asks from the
+## session, and the retail option byte is not carried (see OP_REVIVE).
+static func encode_revive() -> PackedByteArray:
+	return PackedByteArray()
+
+## Result of decode_revive_result(): the HP and MP the character came back
+## with -- character.RespawnFraction (0.4) of each maximum, the same double
+## the retail resurrect handler applies (`GetParam(3) * 0.4` and
+## `GetParam(4) * 0.4`, `fmul QWORD PTR ds:0xb460f0` at 0x5100fa and
+## 0x510130; 0xb460f0 reads 00 00 00 a0 99 99 d9 3f) -- or why the server
+## refused ("not dead", ...). `error` also carries a decode error.
+class ReviveResult:
+	var error: String
+	var hp: int
+	var mp: int
+
+## Decodes an OpReviveResult payload: u16 error length, the error, then, when
+## the error is empty, s32 HP and s32 MP. A refusal's tail is optional.
+static func decode_revive_result(data: PackedByteArray) -> ReviveResult:
+	var result := ReviveResult.new()
+	if data.size() < 2:
+		result.error = "truncated"
+		return result
+	var error_len := data.decode_u16(0)
+	var offset := 2 + error_len
+	if offset > data.size():
+		result.error = "truncated error field"
+		return result
+	result.error = data.slice(2, offset).get_string_from_utf8()
+	if result.error != "":
+		return result
+	if offset + 8 > data.size():
+		result.error = "truncated vitals"
+		return result
+	result.hp = data.decode_s32(offset)
+	result.mp = data.decode_s32(offset + 4)
 	return result

@@ -175,3 +175,18 @@ static func is_own_unpaired(target_id: int, others: Dictionary, left: Dictionary
 	if left.has(target_id) and now_ms - int(left[target_id]) <= LEFT_GRACE_MS:
 		return false
 	return true
+
+## Whether a blow that killed this player LEFT it dead -- the server's life
+## state 2 (docs/protocol/character_state.md, rounds 411-413), HP 0 -- so the
+## client holds the death pose, locks input and offers the Revive button
+## (round 548). Told apart by the HP the report carries: a server with the
+## dead state (-player-dead-state, its server half) leaves HP at 0 and makes
+## no RespawnHP, while every server before it put the player back on its feet
+## in the same call (session/monsterstrike.go's RespawnHP) and reported the
+## respawned HP -- character.RespawnFraction of the maximum, 0.4, which is
+## above 0 for any character with a maximum of 3 or more (the lowest shipped
+## maximum is character.StartingMaxHP, far above it). Both the attacker's own
+## OpAttackResult (player_died, player_hp) and the zone's OpMonsterAttacked
+## (target_died, target_hp) are read through it, so the rule is one.
+static func leaves_dead(died: bool, hp_after: int) -> bool:
+	return died and hp_after <= 0
