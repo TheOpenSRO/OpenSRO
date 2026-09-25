@@ -96,8 +96,8 @@ round 562's three runs) and the HUD's (`_try_initialize_pk2_ui`) run in `_ready`
 steps, so neither reaches `longest work frame` -- they are part of `D` below, and the screen's
 cost is read from its own line. Three lines carry it:
 
-- `World3D: cell 97/167 built in N ms at frame f (terrain T [...], objects O [parse, own,
-  templates, place], npcs P [tables])` -- one per cell as it is built. The three group totals are
+- `World3D: cell 97/167 built in N ms at frame f (terrain T [...], objects O [...], npcs P
+  [tables])` -- one per cell as it is built. The three group totals are
   the stopwatches around the phases (the same numbers the `region grid loaded` split has summed
   since round 156) and are **main-thread time only**; the bracketed sub-phases are laps inside
   them, and need not add up to the group. Since round 565 a region's terrain is a job built on the
@@ -117,6 +117,20 @@ cost is read from its own line. Three lines carry it:
     task's own time and is **never** in `built in`, in a frame's work or in the `terrain` group
     totals; the job's snapshot ran between cells and is in no cell.
 
+  Since round 566 the objects are split the same way -- `_objects_job` (main thread: the object
+  index and a snapshot of the templates held, the textures uploaded and the heightmaps parsed),
+  `_objects_prepare` (plain data: `ObjectLoader.prepare_object` per model) and `_objects_commit`
+  -- and prepare on the same task, after the terrain (`_cell_prepare`). The objects list has the
+  same two shapes: on the main thread `objects O [snapshot, parse, own, models, textures,
+  templates, place]`; streamed, `objects O [textures, templates, place]` with `; off the main
+  thread: terrain P [...], objects Q [parse, own, models]` after the groups (a lap with nothing to
+  do is left out: a cell whose models the world already holds has no `templates`, one with no
+  `.o` stops after `parse`). The objects line of a streamed cell (`World3D: loaded N/M real map
+  objects from ...`) ends `-- prepared off the main thread, dispatched at frame f; K template(s)
+  built unprepared`: K counts the templates the commit had to build whole on the main thread
+  (one released or evicted between the dispatch and the commit), and is 0 when the prepare
+  covered them all.
+
   What the laps are: `read`/`parse` the `.m`; `lightmap` the `.t` decoded to an Image; `textures`
   the ground tiles this world does not hold yet decoded to Images; `mesh` the surfaces as arrays;
   `faces` the collision face list (`MapmTerrainBuilder.surface_faces`, what
@@ -126,8 +140,16 @@ cost is read from its own line. Three lines carry it:
   materials; `setup` the group, the untextured material, the placement and the nodes (round 564's
   lap); `collision` the `ConcavePolygonShape3D.set_faces` alone (round 156's bottleneck, now
   without the readback); `wallshape` the walls' shape and body; `water`; `graph` the walkable
-  graph's registration. Every stopwatch is a lap (round 564's rule, held by
-  `load_timings_test.gd`), so the laps cover each group less each lap's whole-ms truncation; outside
+  graph's registration. The objects': `snapshot` the job's; `parse` the `.o` and `.o2` read,
+  parsed, merged and de-duplicated; `own` the placement-ownership test, whose neighbour heightmaps
+  it reads and parses under Pk2Reader's lock when the grid does not hold them; `models`
+  `ObjectLoader.prepare_object` for every model the world holds no template for (the `.bsr`,
+  `.bms`, `.bmt` parsed, the mesh arrays and trimesh faces built, the textures decoded to Images
+  and their alpha classified on them); then `textures` the ImageTexture uploads; `templates`
+  `ObjectLoader.commit_object` (the ArrayMeshes, materials, shapes and nodes of each new
+  template, or a whole unprepared build); `place` the container, and each placement's duplicate,
+  transform and add. Every stopwatch is a lap (round 564's rule, held by `load_timings_test.gd`
+  for both groups), so the laps cover each group less each lap's whole-ms truncation; outside
   them are only the path check before the job, the log lines the commit prints first, and its
   closing print, unmeasured.
 - `World3D: region grid loaded in N ms (terrain T, objects O, npcs P) at frame f -- C cells S ms,
@@ -264,8 +286,77 @@ rounds 562-563 (`docs/RE_COMPLETION.md`, round 565, has the full lines):
 With `SRREVAMP_SYNC_LOAD=1` the same crossing command reads the old schedule back -- three cells a
 frame under the screen, the column one a frame at 245-308 ms, `longest work frame 314 ms`.
 
+AFTER round 566 (a streamed cell's objects prepared on the same task as its terrain, committed on
+the main thread; the SHIPPED code, whose pump commits a finished cell before it dispatches the
+next), against BASE (round 565's code) re-measured the same day on the same box
+(`docs/RE_COMPLETION.md`, round 566, has the full lines and the per-phase sums). Until round 566's
+second review this block held the first write's run, which dispatched first (crossing 112 ms,
+entry p95 1025 ms):
+
+```
+(a) BASE   cell 97/168 built in 5208 ms at frame 14 (objects 1974 [.. own 308, templates 1573 ..])
+           region grid loaded in 19795 ms (terrain 2810, objects 5346, npcs 2361) at frame 27
+               -- 25 cells 10517 ms, 9278 ms outside the cells over 14 awaited frames;
+               terrain 5795 ms prepared off the main thread
+           longest work frame 5269 ms at frame 14 (cell 97/168); p95 1848 ms; 13 over 100 ms
+    566    cell 97/168 built in 5073 ms at frame 13 (objects 1796 [.. own 318, models 1322,
+               textures 6, templates 55 ..]; synchronous by design)
+           region grid loaded in 18078 ms (terrain 2756, objects 2268, npcs 2434) at frame 29
+               -- 25 cells 7457 ms, 10621 ms outside the cells over 17 awaited frames;
+               terrain 5916 ms prepared off the main thread; objects 2869 ms prepared off the
+               main thread
+           longest work frame 5134 ms at frame 13 (cell 97/168); p95 990 ms; 8 over 100 ms
+(b) BASE   95..99/165: 108, 123, 123, 70, 69 ms at frames 161-165 (objects 65, 83, 42, 30, 26)
+           longest work frame 140 ms at frame 163 (cell 98/165) over 571 frames; 3 over 100 ms
+    566    95..99/165: 50, 46, 87, 51, 49 ms at frames 159-163 (objects 11, 7, 11, 10, 5 on the main
+               thread; 14-91 ms prepared off it)
+           longest work frame 118 ms at frame 161 (cell 98/165) over 571 frames; 1 over 100 ms
+```
+
+An earlier run of the same shipped order (the review fix's, before the counter was corrected):
+crossing `longest work frame 109 ms at frame 164 (cell 98/165)`, entry p95 947 ms, 7 over 100 ms.
+
+The review fix of round 566 (`_pump_cell_jobs` commits a finished cell before it dispatches the
+next; the `prepared again` line counts what a task prepared that another commit had cached),
+dispatch-first (A, as first written) against finish-first (B), the same instrumented code, one run
+each. Re-run by the second review fix with the corrected count (the first counter took textures a
+job only NAMED from its snapshot for decoded ones, and the objects' `here` heightmap for one they
+read; its A/B totals, 103 -> 66 and 145 -> 84, are withdrawn):
+
+```
+(a) A      region grid loaded in 17858 ms (terrain 2846, objects 2303, npcs 2510) at frame 29
+               -- 25 cells 7659 ms, 10199 ms outside the cells over 16 awaited frames
+           longest work frame 5090 ms at frame 14 (cell 97/168); p95 954 ms; 13 over 100 ms
+           prepared again over the 24 streamed cells: 10 tiles, 8 object navmeshes, 2 heightmaps,
+               16 models, 31 object textures (67); `decoded now` sum 58
+    B      region grid loaded in 18078 ms (terrain 2756, objects 2268, npcs 2434) at frame 29
+               -- 25 cells 7457 ms, 10621 ms outside the cells over 17 awaited frames
+           longest work frame 5134 ms at frame 13 (cell 97/168); p95 990 ms; 8 over 100 ms
+           prepared again: 3 tiles, 4 object navmeshes, 1 heightmap, 7 models, 13 object textures
+               (28); `decoded now` sum 51
+(b) A      95..99/165: 53, 51, 94, 49, 49 ms; longest work frame 114 ms at frame 164 (cell 98/165)
+               prepared again over 29 streamed cells: 102
+    B      95..99/165: 50, 46, 87, 51, 49 ms; longest work frame 118 ms at frame 161 (cell 98/165)
+               prepared again: 32
+```
+
+The first pair (same code but the counter) read (b) 111 -> 109 ms and (a) p95 1004 -> 947 ms: at
+one run each the order's effect on those frames is inside the run-to-run spread.
+
+Alpha probes in the load path (`SRREVAMP_QA_ALPHA_LOG=1` on command (a); BASE through a throwaway
+copy that prints the same line at each of its three `get_image()` probe sites): **0 before and 0
+after** -- every layer of every material the 25 cells build is decided by its flag word
+(`ObjectLoader.LAYER_FLAG_MASK`), so the readback path was never reached here. Forced with
+`SRREVAMP_QA_MATS=1` as a control (every solid textured material then consults its fraction):
+690 probes before, all texture readbacks; 690 after, 0 readbacks (449 on decoded Images, 241
+statistics measured earlier), the same 341 texture/statistic pairs consulted the same number of
+times and the same 52 `QA MAT` lines. 327 pairs read identically; 14 differ by at most 0.0002 of
+a fraction, and 6 of those gave two values across the readback's own consults while the Image
+gives one -- the readback is the unsteady side (none is near a threshold: 0.05 cuts, 0.20
+reports).
+
 Rules the off-thread loading items are held to, kept beside the benchmark so the two travel
-together. Round 565 (terrain) implements them; the objects item that follows inherits them.
+together. Round 565 (terrain) implements them, and round 566 (objects) holds to them too.
 
 1. **The prepare-thread rule.** A prepare constructs NO Node and NO RID-owning Resource --
    no `MeshInstance3D`, `StaticBody3D`, `ArrayMesh`, `Material`, `ImageTexture` or `Shape3D`;
@@ -274,14 +365,37 @@ together. Round 565 (terrain) implements them; the objects item that follows inh
    lines go in the job; the commit prints them in order). A main-thread commit builds the objects.
    World3D's `_terrain_prepare` is static, so it cannot reach the node's state;
    `terrain_prepare_test.gd` walks a prepared job and fails on any Node or Resource in it other
-   than an Image.
+   than an Image. Round 566: `_objects_prepare` and `_cell_prepare` are static too, and
+   `ObjectLoader.prepare_object` writes nothing static (what `_missing` would report and the QA
+   lines go in its result, for `commit_object` to report); `objects_prepare_test.gd` and
+   `object_loader_test.gd` walk the same way. No texture is read back to decide a material's
+   alpha: the probes measure the Image the texture is uploaded from (`ObjectLoader._alpha_stat`),
+   and `SRREVAMP_QA_ALPHA_LOG=1` prints one `QA ALPHA:` line per probe consulted -- the count of
+   alpha probes in the load path, each saying it came from the decoded Image or from a statistic
+   measured earlier.
 2. **Reads and caches.** The scene tree is not thread-safe, and `Pk2Reader` was not until round
    565: one handle shares one `FileAccess` (a read is a seek then a get_buffer) and one directory
    cache, and it now takes a per-handle lock around both (`pk2_reader_test.gd` runs 4 tasks x 200
    concurrent reads). Every World3D cache a prepare consults is snapshotted into its job on the
    main thread before dispatch (`_terrain_job`: ground tiles by filename and a decoded flag, never
-   the texture; the region's cached navmesh; a copy of the object navigation meshes), and the
-   commit merges what the prepare read back into the caches.
+   the texture; the region's cached navmesh; a copy of the object navigation meshes;
+   `_objects_job`, round 566: the template paths held, the uploaded textures by key, fourCC and
+   measured alpha statistics, never the texture, and the heightmaps the grid holds), and the
+   commit merges what the prepare read back into the caches, keeping an entry another commit
+   cached first. `_pump_cell_jobs` commits a finished cell BEFORE it dispatches the next (round
+   566's review; it dispatched first until then), so the next snapshot holds what that commit
+   cached. Each committed streamed cell prints `World3D: cell x/y prepared again what an earlier
+   commit had cached -- N ground tile(s), N navmesh(es), N object navigation mesh(es), N
+   heightmap(s) the objects read, N model(s), N object texture(s) decoded` (`_prepared_again`,
+   counted before its commit merges anything): what its task read or built that a commit landing
+   after its snapshot had already cached, so it was thrown away -- a texture only if the task
+   decoded it (one its snapshot held is named, not decoded, and not counted), a heightmap only if
+   the objects read it (not the region's own, taken from the terrain prepare's parse). It can stay
+   above zero: a job cannot see what the job preparing beside it will commit (the entry's 24
+   cells: 28 finish-first, 67 when the pump dispatched first; `docs/RE_COMPLETION.md`, round
+   566). The placement-ownership test's
+   neighbour heightmaps are READ ON THE TASK, under the lock, not pre-parsed on the main thread:
+   their parse is most of the `own` lap, which pre-parsing would put back in the frame.
 3. **The QA-drain contract.** A QA run (`SRREVAMP_MAPM_PATH` set, no `SRREVAMP_QA_FORCE_LOADING`)
    must still have every cell committed before its first shot, so `_drain_initial_load`'s QA branch
    dispatches, waits for each task (`WorkerThreadPool.wait_for_task_completion`) and commits
@@ -292,10 +406,15 @@ together. Round 565 (terrain) implements them; the objects item that follows inh
    and drop it (`N cell(s) still preparing dropped (<why>) -- waited M ms`), so a reconnect cannot
    commit into a freed world.
 
-`SRREVAMP_SYNC_LOAD=1` is the escape hatch for one release after round 565: every cell is
-prepared and committed on the main thread on the pre-round-565 schedule (above), for a tester to
-fall back to or compare against. The grid's centre is built on the main thread either way -- its
-height anchors every neighbour and its environment lights them.
+`SRREVAMP_SYNC_LOAD=1` is the escape hatch for one release after round 565: every cell's terrain
+and (round 566) objects are prepared and committed on the main thread on the pre-round-565
+schedule (above), for a tester to fall back to or compare against. It restores the SCHEDULE
+only, not the old code: the terrain still runs `_terrain_prepare` then `_terrain_commit` with
+the faces `MapmTerrainBuilder.surface_faces` builds, and the objects `_objects_prepare` then
+`_objects_commit`, through the split `ObjectLoader` (`prepare_object` then `commit_object`) and
+the trimesh faces `ObjectLoader._piece_faces` builds -- back to back on the main thread. The
+grid's centre is built on the main thread either way -- its height anchors every neighbour and
+its environment lights them.
 
 `dump_ddj.gd` — writes any real `.ddj` texture out as a PNG, and reports its fourCC, the format it
 decompresses to, and how many texels are opaque, transparent or partial. Written to settle which

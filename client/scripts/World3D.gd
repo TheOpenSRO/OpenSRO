@@ -80,10 +80,11 @@ extends Node3D
 ## inside SRREVAMP_PK2_PATH's Data.pk2, see docs/protocol/MAPO_FORMAT.md
 ## for how this was found; it was a confirmed dead end earlier in this
 ## project). SRREVAMP_SYNC_LOAD=1 (round 565, kept for one release as an
-## escape hatch) builds every streamed cell's terrain on the main thread on
-## the pre-round-565 schedule instead of preparing it on WorkerThreadPool
-## tasks (_threaded_load, _terrain_prepare). Any
-## variable left unset is skipped gracefully (a printed hint, not an error)
+## escape hatch) builds every streamed cell's terrain and objects on the main
+## thread on the pre-round-565 schedule instead of preparing them on
+## WorkerThreadPool tasks (_threaded_load, _terrain_prepare,
+## _objects_prepare) -- the schedule only: both still run their split
+## prepare and commit halves, back to back. Any variable left unset is skipped gracefully (a printed hint, not an error)
 ## -- this scene works fine with none of them set, same as always.
 ##
 ## The server now has a real multi-zone concept: OpChangeZone/
@@ -664,16 +665,18 @@ var _last_stream_cell := Vector2i(0x7fffffff, 0x7fffffff) # sentinel so the firs
 var _load_queue: Array = [] # of {rx, ry, dx, dy, anchor, key}; keys in _grid.queued_cells
 const STREAM_CELLS_PER_FRAME := 1
 ## At most this many streamed cells prepare their terrain on WorkerThreadPool
-## tasks at once (round 565; see _terrain_prepare). An OWN TUNING CHOICE, not
+## tasks at once (round 565; see _terrain_prepare) -- and, since round 566,
+## their objects in the same task (_cell_prepare). An OWN TUNING CHOICE, not
 ## a value from the game or the engine: two let one cell prepare while the
 ## previous one commits, which is all a budget of one commit a frame
 ## (STREAM_CELLS_PER_FRAME) can use, without more tasks queueing behind
 ## Pk2Reader's lock. The benchmark (client/tools/README.md, "Load
 ## benchmark") is what it is judged by.
 const TERRAIN_JOBS_IN_FLIGHT := 2
-## Streamed cells whose terrain is preparing on a WorkerThreadPool task
-## (round 565), oldest first, each {"task": the pool's task id, "cell": its
-## _load_queue entry, "job": the job Dictionary the task fills}. The task id
+## Streamed cells whose terrain (and, since round 566, objects) is preparing
+## on a WorkerThreadPool task (round 565), oldest first, each {"task": the
+## pool's task id, "cell": its _load_queue entry, "job": the job Dictionary
+## the task fills}. The task id
 ## is kept here and not in the job, because the task writes the job while it
 ## runs. A cell keeps its _grid.queued_cells mark until it is committed or
 ## dropped, so _maybe_stream_regions does not queue it a second time while
@@ -2399,9 +2402,14 @@ static func _print_job_log(lines: Array) -> void:
 static func _prepare_nav_graph(job: Dictionary) -> void:
 	var region: NvmReader.ParsedRegion = job.get("navmesh")
 	var used := {}
+	var parsed := {}
 	var lines: Array = []
 	job["nav_graph"] = null
 	job["used_collisions"] = used
+	# The ids of `used` this prepare read from the archive rather than found
+	# in the job's snapshot -- what _prepared_again counts (round 566's
+	# review).
+	job["parsed_collisions"] = parsed
 	job["nav_log"] = lines
 	if region == null:
 		return
@@ -2416,6 +2424,8 @@ static func _prepare_nav_graph(job: Dictionary) -> void:
 		if table != null:
 			for oi in range(region.objects.size()):
 				var obj: NvmReader.MapObject = region.objects[oi]
+				if not cache.has(obj.resource_id):
+					parsed[obj.resource_id] = true
 				var collision := _load_object_collision(cache, archive, table, obj.resource_id)
 				used[obj.resource_id] = collision
 				if collision == null:
@@ -3372,8 +3382,8 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 	# _process_stream_queue and, at world entry, the loading screen's pump),
 	# instead of all at once here -- that synchronous grid was most of the
 	# minute-long, no-feedback entry. Since round 565 their terrain prepares
-	# on WorkerThreadPool tasks and only its commit takes a frame
-	# (_pump_cell_jobs).
+	# on WorkerThreadPool tasks, since round 566 their objects in the same
+	# task, and only the commit takes a frame (_pump_cell_jobs).
 	_load_queue.clear()
 	_grid.queued_cells.clear()
 	var neighbours: Array = []
@@ -3399,10 +3409,12 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 ## around them (see _grid_origin_world's own doc comment).
 ##
 ## `prepared` (round 565) is a terrain job a WorkerThreadPool task has
-## already prepared (_dispatch_cell): only its commit runs here. Empty, the
-## terrain is prepared and committed here, on the main thread, as before.
-## Either way the objects and the NPCs follow in the same frame, after the
-## terrain group exists.
+## already prepared (_dispatch_cell): only its commit runs here -- and since
+## round 566 the same task has prepared the cell's objects too
+## (prepared["objects"], _cell_prepare), so only their commit runs here as
+## well. Empty, the terrain and the objects are prepared and committed here,
+## on the main thread, as before. Either way the objects and the NPCs follow
+## in the same frame, after the terrain group exists.
 func _load_region_cell(region_x: int, region_y: int, dx: int, dy: int, shared_anchor: float, prepared: Dictionary = {}) -> void:
 	var suffix := "_%d_%d" % [region_x, region_y]
 	var offset := _cell_offset(dx, dy)
@@ -3413,7 +3425,10 @@ func _load_region_cell(region_x: int, region_y: int, dx: int, dy: int, shared_an
 	else:
 		_terrain_commit(prepared)
 	var t1 := Time.get_ticks_usec()
-	_try_load_real_map_objects("%d\\%d.o" % [region_x, region_y], offset, suffix)
+	if prepared.has("objects"):
+		_objects_commit(prepared["objects"])
+	else:
+		_try_load_real_map_objects("%d\\%d.o" % [region_x, region_y], offset, suffix)
 	var t2 := Time.get_ticks_usec()
 	_try_spawn_region_npcs(region_x, region_y)
 	_note_cell_built(t0, t1, t2, Time.get_ticks_usec())
@@ -3555,7 +3570,8 @@ func _maybe_stream_regions() -> void:
 ## one. A cell the player has since moved away from is dropped, not built.
 ##
 ## Since round 565 (the default; SRREVAMP_SYNC_LOAD=1 keeps the loop below)
-## a cell's terrain prepares on a WorkerThreadPool task and this commits at
+## a cell's terrain (and since round 566 its objects) prepares on a
+## WorkerThreadPool task and this commits at
 ## most STREAM_CELLS_PER_FRAME finished ones a frame (_pump_cell_jobs) --
 ## except while _drain_initial_load pumps them itself, which owns the queue
 ## until it returns.
@@ -3586,20 +3602,32 @@ func _process_stream_queue() -> void:
 func _outside_stream_window(cell: Dictionary, margin: int) -> bool:
 	return absi(int(cell["dx"]) - _last_stream_cell.x) > margin or absi(int(cell["dy"]) - _last_stream_cell.y) > margin
 
-## Whether streamed cells prepare their terrain on WorkerThreadPool tasks
-## (round 565, the default). SRREVAMP_SYNC_LOAD=1 turns that off for one
-## release, as an escape hatch: every cell is then prepared and committed on
-## the main thread on the pre-round-565 schedule -- the entry drain's
+## Whether streamed cells prepare their terrain (round 565) and objects (round
+## 566) on WorkerThreadPool tasks, the default. SRREVAMP_SYNC_LOAD=1 turns
+## that off for one release, as an escape hatch: every cell is then prepared
+## and committed on the main thread on the pre-round-565 schedule -- the entry drain's
 ## LOADING_CELLS_PER_FRAME a frame plus the physics step's
 ## STREAM_CELLS_PER_FRAME from the same queue, and one a frame in play.
+## It restores the SCHEDULE only, not the old code: the terrain still goes
+## through _terrain_job / _terrain_prepare / _terrain_commit and the
+## collision faces MapmTerrainBuilder.surface_faces builds, and the objects
+## through _objects_job / _objects_prepare / _objects_commit, the split
+## ObjectLoader (prepare_object then commit_object) and the trimesh faces
+## ObjectLoader._piece_faces builds -- each half run back to back on the
+## main thread.
 func _threaded_load() -> bool:
 	return OS.get_environment("SRREVAMP_SYNC_LOAD") == ""
 
 ## The one pump of the threaded cell pipeline (round 565): commits up to
 ## `commit_budget` cells whose terrain has finished preparing, oldest first,
-## and keeps TERRAIN_JOBS_IN_FLIGHT preparing. After each finished task is
-## taken off the list another is dispatched before its commit runs, so the
-## next cell prepares while this one commits. With `wait` (the QA drain,
+## and keeps TERRAIN_JOBS_IN_FLIGHT preparing. Each finished cell is
+## committed BEFORE the next is dispatched, so the next job's snapshot
+## (_terrain_job, _objects_job) holds what that commit cached -- its ground
+## tiles, object navigation meshes, heightmaps, templates and textures --
+## and its task does not prepare them again; the other job in flight keeps
+## preparing while this one commits. Until round 566's review the next cell
+## was dispatched first, and _finish_cell_job's `prepared again` line
+## measured what that cost (docs/RE_COMPLETION.md, round 566). With `wait` (the QA drain,
 ## which must have every cell in before it returns) a commit that finds no
 ## finished task waits for the oldest -- the main thread holds no lock the
 ## task needs, and the task touches no server (_terrain_prepare's rule), so
@@ -3624,8 +3652,8 @@ func _pump_cell_jobs(commit_budget: int, wait: bool) -> int:
 		# WorkerThreadPool reference: a task id "already awaited and disposed
 		# of" no longer exists); for a finished one it returns at once.
 		WorkerThreadPool.wait_for_task_completion(flight["task"])
-		_dispatch_cell_jobs()
 		_finish_cell_job(flight)
+		_dispatch_cell_jobs()
 		finished += 1
 	return finished
 
@@ -3641,28 +3669,39 @@ func _dispatch_cell_jobs() -> void:
 			continue
 		_dispatch_cell(cell)
 
-## Starts one cell's terrain prepare on a WorkerThreadPool task: the job is
+## Starts one cell's prepare on a WorkerThreadPool task: the job is
 ## built here, on the main thread (_terrain_job's snapshot), and the task
-## runs the static _terrain_prepare over it. High priority: Godot 4.2's pool
-## runs low-priority tasks (add_task's default) on a share of its threads
+## runs the static _terrain_prepare over it (_cell_prepare, round 566). High
+## priority: Godot 4.2's pool runs low-priority tasks (add_task's default) on a share of its threads
 ## only -- threading/worker_pool/low_priority_thread_ratio, 0.3 in the
 ## project as shipped (read on the render box's 4.2.2, round 565) -- which on
 ## a small machine can be a single thread for both jobs.
+##
+## Since round 566 the task prepares the cell's objects after its terrain
+## (_cell_prepare): the objects job is built here too (_objects_job's
+## snapshot) and rides in job["objects"].
 func _dispatch_cell(cell: Dictionary) -> void:
 	var rx: int = cell["rx"]
 	var ry: int = cell["ry"]
-	var job := _terrain_job("%d\\%d.m" % [rx, ry], "", _cell_offset(cell["dx"], cell["dy"]), "_%d_%d" % [rx, ry],
+	var offset := _cell_offset(cell["dx"], cell["dy"])
+	var suffix := "_%d_%d" % [rx, ry]
+	var job := _terrain_job("%d\\%d.m" % [rx, ry], "", offset, suffix,
 		false, _grid_shared_anchor_height, false)
 	job["threaded"] = true
 	job["dispatched_frame"] = Engine.get_frames_drawn()
-	var task := WorkerThreadPool.add_task(_terrain_prepare.bind(job), true, "terrain %d/%d" % [rx, ry])
+	var objects := _objects_job("%d\\%d.o" % [rx, ry], offset, suffix)
+	objects["threaded"] = true
+	objects["dispatched_frame"] = job["dispatched_frame"]
+	job["objects"] = objects
+	var task := WorkerThreadPool.add_task(_cell_prepare.bind(job), true, "cell %d/%d" % [rx, ry])
 	_cell_jobs.append({"task": task, "cell": cell, "job": job})
 
 ## Commits a cell whose terrain has prepared -- the rest of the cell (its
 ## objects and NPCs) follows in the same frame, _load_region_cell -- unless
 ## the stale-cell guard drops it: a cell already loaded, or one whose window
 ## the player left while it prepared. A zone change never gets here with an
-## old grid's job: _clear_region_grid drops them first.
+## old grid's job: _clear_region_grid drops them first. A committed cell's
+## `prepared again` line follows its `built in` line (_prepared_again).
 func _finish_cell_job(flight: Dictionary) -> void:
 	var cell: Dictionary = flight["cell"]
 	_grid.queued_cells.erase(cell["key"])
@@ -3674,7 +3713,69 @@ func _finish_cell_job(flight: Dictionary) -> void:
 	if why != "":
 		print("World3D: cell %d/%d prepared but not committed -- %s" % [cell["rx"], cell["ry"], why])
 		return
+	var again := _prepared_again(flight["job"])
 	_load_region_cell(cell["rx"], cell["ry"], cell["dx"], cell["dy"], _grid_shared_anchor_height, flight["job"])
+	print("World3D: cell %d/%d prepared again what an earlier commit had cached -- %d ground tile(s), %d navmesh(es), %d object navigation mesh(es), %d heightmap(s) the objects read, %d model(s), %d object texture(s) decoded" % [
+		cell["rx"], cell["ry"], again["tiles"], again["navmesh"], again["collisions"],
+		again["heightmaps"], again["models"], again["textures"]])
+
+## What a streamed cell's task read or built that this world had cached by
+## the time the cell commits: a commit that landed after this cell's job
+## took its snapshot got there first, so this cell's copy is thrown away
+## (every commit keeps what is already cached). Counted on the main thread
+## before the commit merges anything, per cache -- `tiles` the ground tiles
+## _prepare_ground_textures decoded, `navmesh` the region's `.nvm`,
+## `collisions` the object navigation meshes _prepare_nav_graph read,
+## `heightmaps` the `.m` heightmaps _job_heightmap read and parsed for the
+## ownership test, `models` the models prepare_object prepared and
+## `textures` the textures it decoded. A null a prepare cached ("tried,
+## nothing") counts too: the archive was read again for it. The measurement
+## of round 566's review, which found _pump_cell_jobs dispatching the next
+## cell before committing the finished one (docs/RE_COMPLETION.md, round
+## 566).
+##
+## Two things a job holds are NOT counted, because its prepare did not read
+## them (round 566's second review, which found the first counter counting
+## both). A texture the job's snapshot already held (job["known_textures"])
+## is only named by the prepare -- ObjectLoader._prepare_material's `known`
+## branch, which files it with a null image -- so a texture counts only if
+## its entry carries an Image AND its key is not in that snapshot: the
+## prepare decoded it from the archive because the world had not uploaded
+## it when the job was built. (A known texture re-decoded for a statistic it
+## lacked, _alpha_stat, was uploaded before the snapshot, so no commit
+## landing after it could have spared the decode.) And the region's own
+## heightmap taken over from the terrain prepare's parse (job["here"],
+## _cell_prepare) was parsed for the terrain, which needs it whatever the
+## snapshot held, so a heightmap counts only if it is not that parse.
+func _prepared_again(job: Dictionary) -> Dictionary:
+	var again := {"tiles": 0, "navmesh": 0, "collisions": 0, "heightmaps": 0, "models": 0, "textures": 0}
+	for filename in job.get("new_images", {}):
+		if _ground_texture_cache.has(filename):
+			again["tiles"] += 1
+	if job.get("navmesh_loaded", false) and _grid.navmesh_cache.has(job["navmesh_key"]):
+		again["navmesh"] = 1
+	for id in job.get("parsed_collisions", {}):
+		if _grid.object_collision_cache.has(id):
+			again["collisions"] += 1
+	var objects: Dictionary = job.get("objects", {})
+	var here = objects.get("here")
+	var new_heightmaps: Dictionary = objects.get("new_heightmaps", {})
+	for key in new_heightmaps:
+		if here != null and new_heightmaps[key] == here:
+			continue
+		if _grid.parsed_heightmaps.has(key):
+			again["heightmaps"] += 1
+	for key in objects.get("models", {}):
+		if _object_templates != null and _object_templates.has(key):
+			again["models"] += 1
+	var known: Dictionary = objects.get("known_textures", {})
+	var textures: Dictionary = objects.get("textures", {})
+	for key in textures:
+		if known.has(key) or textures[key].get("image") == null:
+			continue
+		if _object_textures.has(key):
+			again["textures"] += 1
+	return again
 
 ## Waits for every preparing cell's task and drops it, uncommitted: a zone
 ## change (the grid it was for is gone), a new grid, the world leaving the
@@ -4074,12 +4175,31 @@ var _object_templates: ObjectTemplateCache
 ## texture_cache): two models naming one texture upload it once. Per
 ## world, never static -- statics are what a reconnect keeps.
 var _object_textures := {}
+## The models the objects job being committed prepared (round 566), lower-
+## cased path -> ObjectLoader.prepare_object's result: set by _objects_commit
+## around its placement loop, read by _load_object_template, empty
+## otherwise.
+var _prepared_models := {}
+## Templates _load_object_template built with no prepared model during the
+## current commit -- one whose template the grid released or evicted
+## between the job's dispatch and its commit, or one past the prepare's
+## MAX_MAP_OBJECTS bound. On the objects line of a streamed cell, so a
+## main-thread build is never silent.
+var _templates_unprepared := 0
 
-## ObjectTemplateCache's loader: one real .bsr/.cpd through ObjectLoader,
-## against this world's Data.pk2 and texture cache.
+## ObjectTemplateCache's loader: one real .bsr/.cpd, against this world's
+## Data.pk2 and texture cache -- committed from the model the job prepared
+## (ObjectLoader.commit_object, round 566), or, with none, loaded whole here
+## (ObjectLoader.load_object, both halves on the main thread).
 func _load_object_template(model_path: String) -> Node3D:
 	var sw := Time.get_ticks_usec()
-	var node := ObjectLoader.load_object(_open_pk2_if_set(), model_path, _object_textures)
+	var prepared: Dictionary = _prepared_models.get(model_path.to_lower(), {})
+	var node: Node3D
+	if not prepared.is_empty():
+		node = ObjectLoader.commit_object(prepared, _object_textures)
+	else:
+		_templates_unprepared += 1
+		node = ObjectLoader.load_object(_open_pk2_if_set(), model_path, _object_textures)
 	_load_timings.lap("objects", "templates", sw)
 	return node
 
@@ -4964,8 +5084,11 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 ## Resource in it other than an Image.
 ##
 ## What the commit still costs the main thread is measured per cell (its laps
-## in the `built in` line); the objects and NPC phases stay synchronous in
-## this round and run in the commit's frame, after the terrain group exists.
+## in the `built in` line); the objects and NPC phases stayed synchronous in
+## this round and ran in the commit's frame, after the terrain group exists.
+## Round 566 moved the objects' prepare onto the same task, after this one
+## (_cell_prepare, _objects_prepare); their commit and the NPCs still run in
+## the commit's frame.
 static func _terrain_prepare(job: Dictionary) -> void:
 	if _terrain_prepare_read(job):
 		_terrain_prepare_build(job)
@@ -5155,14 +5278,15 @@ func _terrain_light_into(job: Dictionary) -> void:
 
 ## Hands a job's prepare laps to _load_timings: main-thread phases for a job
 ## prepared on this thread, off-thread ones for a task's (LoadTimings.offthread
-## -- on the cell line, never in its frame's work).
-func _record_prepare_laps(job: Dictionary) -> void:
+## -- on the cell line, never in its frame's work). `group` is the terrain's,
+## or "objects" for an objects job (round 566).
+func _record_prepare_laps(job: Dictionary, group: String = "terrain") -> void:
 	var threaded: bool = job["threaded"]
 	for lap in job["laps"]:
 		if threaded:
-			_load_timings.offthread("terrain", lap[0], lap[1])
+			_load_timings.offthread(group, lap[0], lap[1])
 		else:
-			_load_timings.phase("terrain", lap[0], lap[1])
+			_load_timings.phase(group, lap[0], lap[1])
 	(job["laps"] as Array).clear()
 
 ## The commit half of a region's terrain (round 565; see _terrain_prepare):
@@ -6440,17 +6564,71 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 	if mapo_path == "":
 		print("World3D: SRREVAMP_MAPO_PATH not set -- no real map objects loaded")
 		return
+	# Both halves on this thread (round 566: see _objects_prepare) -- the
+	# grid's centre, every cell under SRREVAMP_SYNC_LOAD=1 and the standalone
+	# paths. A streamed cell prepares the same job on its WorkerThreadPool
+	# task, after its terrain (_cell_prepare), and commits it here in
+	# _load_region_cell.
+	var job := _objects_job(mapo_path, world_offset, node_suffix)
+	_objects_prepare(job)
+	_objects_commit(job)
 
-	var map_archive := _open_map_pk2_if_set()
-	# Sub-phase stopwatches (round 561): the cell's `objects [..]` list.
+## A region's objects prepared off the main thread (round 566).
+##
+## The objects of a cell are built in the same two halves as its terrain
+## (_terrain_prepare). The PREPARE half -- this function, static, plain data
+## -- reads and parses the region's `.o` and `.o2`, merges and de-duplicates
+## their placements, keeps the ones that stand on this region's ground
+## (_placements_belonging_here, whose neighbour heightmaps it reads under
+## Pk2Reader's lock: see below), resolves each placement's model in the
+## object index and prepares every model this world does not hold a
+## template for (ObjectLoader.prepare_object: the `.bsr`/`.bms`/`.bmt`
+## parsed, the mesh arrays and trimesh faces built, the textures decoded to
+## Images and the alpha classified on them). The COMMIT half,
+## _objects_commit, uploads the textures, commits each prepared model into
+## ObjectTemplateCache -- the templates' owner since round 559, so a placed
+## copy is still a duplicate() of the world's one template -- and places
+## the copies, on the main thread. Until round 566 all of it ran on the main
+## thread in the frame the cell was committed in: the load benchmark on
+## round 565's code measured 26-83 ms of objects a streamed cell at the
+## crossing and 5,346 ms over the entry's 25 cells, `templates` 3,526 of it
+## (docs/RE_COMPLETION.md, round 566).
+##
+## It keeps THE PREPARE-THREAD RULE of _terrain_prepare: no Node and no
+## RID-owning Resource (ObjectLoader.prepare_object's result holds Images,
+## arrays and the readers' structs), no tree, no server, no print (its lines
+## go in job["log"]), no write outside the job, archive reads only through
+## Pk2Reader, and every World3D cache it consults snapshotted into the job
+## on the main thread (_objects_job): the templates held, the textures held
+## (key, fourCC and measured alpha statistics -- never the texture), the
+## heightmaps parsed so far. objects_prepare_test.gd walks a prepared job for
+## Nodes and Resources other than Image.
+##
+## The neighbour heightmaps are read INSIDE the prepare, under Pk2Reader's
+## per-handle lock (every read_file takes it, round 565), not pre-parsed on
+## the main thread before dispatch: that parse is most of the `own` lap
+## (1,069 ms over round 561's 25 cells; 308 ms of the entry's centre and
+## 143 / 154 ms of its first neighbours at round 566's BASE), and
+## pre-parsing would put it back in the frame this round takes it out of. A
+## heightmap the grid already holds reaches the job as a reference (read
+## only after its parse), one it does not is parsed into
+## job["new_heightmaps"] for the commit to cache -- two tasks may both
+## parse the same neighbour; the first commit's is kept. The region's own
+## heightmap, when the same task's terrain prepare has parsed it
+## (job["here"], _cell_prepare), is that parse rather than a second one.
+static func _objects_prepare(job: Dictionary) -> void:
+	var mapo_path: String = job["mapo_path"]
+	var map_archive: Pk2Reader = job["map_pk2"]
 	var sw := Time.get_ticks_usec()
 	var mapo_bytes := AssetSource.read_bytes(mapo_path, map_archive)
 	if mapo_bytes.is_empty():
-		printerr("World3D: could not find map objects at ", mapo_path)
+		job["error"] = "World3D: could not find map objects at %s" % mapo_path
+		job["prepared"] = true
 		return
 	var region := MapoReader.parse(mapo_bytes)
 	if region == null:
-		printerr("World3D: could not parse map objects at ", mapo_path)
+		job["error"] = "World3D: could not parse map objects at %s" % mapo_path
+		job["prepared"] = true
 		return
 
 	# Real .o2 placements are collected the same way as .o's: same type ID
@@ -6545,23 +6723,142 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 		deduped.append(p)
 	var dropped := placements.size() - deduped.size()
 	if dropped > 0:
-		print("World3D: %s -- dropped %d duplicate real placements (%d -> %d)" % [
-			mapo_path, dropped, placements.size(), deduped.size()])
-	sw = _load_timings.lap("objects", "parse", sw)
-	placements = _placements_belonging_here(deduped, mapo_path)
-	sw = _load_timings.lap("objects", "own", sw)
+		(job["log"] as Array).append(["out", "World3D: %s -- dropped %d duplicate real placements (%d -> %d)" % [
+			mapo_path, dropped, placements.size(), deduped.size()]])
+	job["objects_o"] = region.objects.size()
+	job["objects_o2"] = o2_count
+	sw = _job_lap(job, "parse", sw)
+	placements = _placements_belonging_here(deduped, job)
+	sw = _job_lap(job, "own", sw)
 
 	if placements.is_empty():
-		printerr("World3D: no real objects parsed from ", mapo_path)
+		job["error"] = "World3D: no real objects parsed from %s" % mapo_path
+		job["prepared"] = true
+		return
+	var data_archive: Pk2Reader = job["data_pk2"]
+	if data_archive == null:
+		job["error"] = "World3D: SRREVAMP_PK2_PATH not set -- can't resolve real object type IDs"
+		job["prepared"] = true
+		return
+	var table: ObjidxReader.Table = job["object_index"]
+	if table == null:
+		# _load_object_index printed why, on the main thread, when the job
+		# was built.
+		job["stopped"] = true
+		job["prepared"] = true
 		return
 
-	var data_archive := _open_pk2_if_set()
-	if data_archive == null:
-		printerr("World3D: SRREVAMP_PK2_PATH not set -- can't resolve real object type IDs")
-		return
+	# Every model the commit will place and this world holds no template
+	# for, prepared once per job however often it is placed. Bounded the
+	# way the commit's loop is, by MAX_MAP_OBJECTS resolved placements: a
+	# placement past a failed one may still ask for a model this did not
+	# prepare, and the commit then loads it on the main thread as before
+	# (_load_object_template).
+	var models := {}
+	var textures := {}
+	var held: Dictionary = job["templates_held"]
+	var known: Dictionary = job["known_textures"]
+	var resolved := 0
+	for placement in placements:
+		if resolved >= MAX_MAP_OBJECTS:
+			break
+		var entry := table.lookup(placement["type_id"])
+		if entry == null:
+			continue
+		resolved += 1
+		var model_key: String = entry.path.to_lower()
+		if models.has(model_key) or held.has(model_key):
+			continue
+		models[model_key] = ObjectLoader.prepare_object(data_archive, entry.path, known, textures)
+	job["placements"] = placements
+	job["models"] = models
+	job["textures"] = textures
+	_job_lap(job, "models", sw)
+	job["prepared"] = true
+
+## An objects job for mapo_path, built on the main thread (round 566): the
+## placement the commit needs, the readers, the object index (loaded here if
+## this is the world's first region; _terrain_job loads the same table), and
+## a snapshot of every cache the prepare consults -- the parsed heightmaps
+## of the region and its eight neighbours that the grid holds, the model
+## paths ObjectTemplateCache holds a template for, and the textures this
+## world has uploaded (ObjectLoader.snapshot_textures: key, fourCC and
+## measured statistics, never a texture). See _objects_prepare.
+func _objects_job(mapo_path: String, world_offset: Vector3, node_suffix: String) -> Dictionary:
+	var sw := Time.get_ticks_usec()
 	var table := _load_object_index()
-	if table == null:
+	var coords := _parse_region_coords(mapo_path)
+	var heightmaps := {}
+	if not coords.is_empty():
+		for dy in [-1, 0, 1]:
+			for dx in [-1, 0, 1]:
+				var key := RegionGridState.region_key(int(coords["x"]) + (dx as int), int(coords["y"]) + (dy as int))
+				if _grid.parsed_heightmaps.has(key):
+					heightmaps[key] = _grid.parsed_heightmaps[key]
+	if _object_templates == null:
+		_object_templates = ObjectTemplateCache.new(_load_object_template)
+	var job := {
+		"mapo_path": mapo_path,
+		"world_offset": world_offset,
+		"node_suffix": node_suffix,
+		"coords": coords,
+		"map_pk2": _open_map_pk2_if_set(),
+		"data_pk2": _open_pk2_if_set(),
+		"object_index": table,
+		"heightmaps": heightmaps,
+		"new_heightmaps": {},
+		"here": null,
+		"templates_held": _object_templates.held_keys(),
+		"known_textures": ObjectLoader.snapshot_textures(_object_textures),
+		"threaded": false,
+		"dispatched_frame": -1,
+		"laps": [],
+		"log": [],
+	}
+	_load_timings.lap("objects", "snapshot", sw)
+	return job
+
+## A streamed cell's whole prepare, on its WorkerThreadPool task (round 566):
+## the terrain (_terrain_prepare), then the objects (_objects_prepare) over
+## the objects job _dispatch_cell put in job["objects"], handed the
+## region's own heightmap the terrain has just parsed. Static, like both.
+static func _cell_prepare(job: Dictionary) -> void:
+	_terrain_prepare(job)
+	var objects: Dictionary = job["objects"]
+	objects["here"] = job.get("region")
+	_objects_prepare(objects)
+
+## The commit half of a region's objects (round 566; see _objects_prepare),
+## on the main thread: the heightmaps the prepare parsed into the grid's
+## cache, the textures it decoded into this world's (uploaded here), the
+## container parented to the region's terrain group, and each placement a
+## duplicate of the world's template for its model -- built here from the
+## prepared model (_load_object_template) the first time the world places
+## it.
+func _objects_commit(job: Dictionary) -> void:
+	_record_prepare_laps(job, "objects")
+	_print_job_log(job["log"])
+	var mapo_path: String = job["mapo_path"]
+	if not job.get("prepared", false):
+		# The task ended before its last line: a script error on the worker,
+		# whose SCRIPT ERROR is in the log above this one.
+		printerr("World3D: the map objects for %s were not prepared (see the error above) -- nothing placed" % mapo_path)
 		return
+	var new_heightmaps: Dictionary = job["new_heightmaps"]
+	for key in new_heightmaps:
+		if not _grid.parsed_heightmaps.has(key):
+			_grid.parsed_heightmaps[key] = new_heightmaps[key]
+	if job.has("error"):
+		printerr(job["error"])
+		return
+	if job.get("stopped", false):
+		return
+	var placements: Array = job["placements"]
+	var table: ObjidxReader.Table = job["object_index"]
+	var node_suffix: String = job["node_suffix"]
+	var sw := Time.get_ticks_usec()
+	ObjectLoader.commit_textures(job["textures"], _object_textures)
+	sw = _load_timings.lap("objects", "textures", sw)
 
 	var container := Node3D.new()
 	container.name = "RealMapObjects" + node_suffix
@@ -6591,7 +6888,7 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 	if terrain_node != null:
 		terrain_node.add_child(container)
 	else:
-		container.position = world_offset
+		container.position = job["world_offset"]
 		add_child(container)
 
 	var loaded := 0
@@ -6606,16 +6903,16 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 	# per-call dictionary that was never freed; ObjectTemplateCache has what
 	# that leaked and the rules it now keeps. The region's own `.o` path is
 	# its key into the cache, so the streaming unload can release what only
-	# this region placed.
-	if _object_templates == null:
-		_object_templates = ObjectTemplateCache.new(_load_object_template)
+	# this region placed. Since round 566 a template this job prepared is
+	# committed from that (_prepared_models, read by _load_object_template).
 	var models_here := {} # distinct model paths this region placed
 	var reused_here := 0 # of those, how many another region had already built
+	_prepared_models = job["models"]
+	_templates_unprepared = 0
 	# `templates` is lapped inside _load_object_template, one lap per build;
-	# `place` is the rest of this loop -- the duplicate, the transform, the
-	# add -- so the two do not overlap.
+	# `place` is the rest of this loop -- the container, the duplicate, the
+	# transform, the add -- so the two do not overlap.
 	var templates_before := _load_timings.phase_usec("objects", "templates")
-	sw = Time.get_ticks_usec()
 	for placement in placements:
 		if loaded >= MAX_MAP_OBJECTS:
 			break
@@ -6652,12 +6949,17 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 		node.name = "Obj_%s_%d" % [entry.path.get_file().get_basename(), loaded]
 		container.add_child(node)
 		loaded += 1
+	_prepared_models = {}
 
 	_load_timings.phase("objects", "place",
 		Time.get_ticks_usec() - sw - (_load_timings.phase_usec("objects", "templates") - templates_before))
-	print("World3D: loaded %d/%d real map objects from %s (%d real .o + %d real .o2, %d unresolved type IDs skipped, %d distinct real models, %d templates reused, %d held for the world)" % [
-		loaded, placements.size(), mapo_path, region.objects.size(), o2_count, skipped_unresolved,
-		models_here.size(), reused_here, _object_templates.size()])
+	var unprepared := ""
+	if job["threaded"]:
+		unprepared = " -- prepared off the main thread, dispatched at frame %d; %d template(s) built unprepared" % [
+			job["dispatched_frame"], _templates_unprepared]
+	print("World3D: loaded %d/%d real map objects from %s (%d real .o + %d real .o2, %d unresolved type IDs skipped, %d distinct real models, %d templates reused, %d held for the world)%s" % [
+		loaded, placements.size(), mapo_path, job["objects_o"], job["objects_o2"], skipped_unresolved,
+		models_here.size(), reused_here, _object_templates.size(), unprepared])
 
 ## Keeps only the `.o2` placements that belong to this region, by asking
 ## which region's ground each one actually stands on.
@@ -6682,11 +6984,14 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 ## neighbour, so it stays. Only an entry that some neighbour explains
 ## better is dropped. `.o` placements are never filtered -- that file is
 ## the region's own list.
-func _placements_belonging_here(placements: Array, mapo_path: String) -> Array:
-	var coords := _parse_region_coords(mapo_path)
+##
+## Static since round 566: part of _objects_prepare, over the job's
+## heightmaps (_job_heightmap).
+static func _placements_belonging_here(placements: Array, job: Dictionary) -> Array:
+	var coords: Dictionary = job["coords"]
 	if coords.is_empty():
 		return placements
-	var here := _parsed_region_heightmap(coords["x"], coords["y"])
+	var here := _job_heightmap(job, coords["x"], coords["y"])
 	if here == null:
 		return placements
 
@@ -6707,7 +7012,7 @@ func _placements_belonging_here(placements: Array, mapo_path: String) -> Array:
 			for dx in [-1, 0, 1]:
 				if dx == 0 and dy == 0:
 					continue
-				var neighbour := _parsed_region_heightmap(
+				var neighbour := _job_heightmap(job,
 					coords["x"] + (dx as int), coords["y"] + (dy as int))
 				if neighbour == null:
 					continue
@@ -6724,8 +7029,8 @@ func _placements_belonging_here(placements: Array, mapo_path: String) -> Array:
 		else:
 			kept.append(p)
 	if moved > 0:
-		print("World3D: %s -- dropped %d real .o2 placement(s) that stand on a neighbouring region's ground" % [
-			mapo_path, moved])
+		(job["log"] as Array).append(["out", "World3D: %s -- dropped %d real .o2 placement(s) that stand on a neighbouring region's ground" % [
+			job["mapo_path"], moved]])
 	return kept
 
 ## How much better a neighbouring region has to explain a placement's own
@@ -6741,15 +7046,28 @@ const PLACEMENT_OWNERSHIP_MARGIN := 1.0
 ## anyway, so this is a second reference rather than a second parse of
 ## anything new. Held in _grid.parsed_heightmaps and dropped with the
 ## region (round 563).
-func _parsed_region_heightmap(region_x: int, region_y: int) -> MapmReader.ParsedRegion:
+##
+## Since round 566 the job's view of that cache (_objects_job snapshots it):
+## a heightmap not in it is read and parsed here, under Pk2Reader's lock --
+## or, for the region itself, taken from the terrain prepare's parse
+## (job["here"]) -- and recorded in job["new_heightmaps"], which
+## _objects_commit puts in the grid's cache. A null is cached too: "tried,
+## nothing".
+static func _job_heightmap(job: Dictionary, region_x: int, region_y: int) -> MapmReader.ParsedRegion:
 	var key := RegionGridState.region_key(region_x, region_y)
-	if _grid.parsed_heightmaps.has(key):
-		return _grid.parsed_heightmaps[key]
-	var bytes := AssetSource.read_bytes("%d\\%d.m" % [region_x, region_y], _open_map_pk2_if_set())
+	var heightmaps: Dictionary = job["heightmaps"]
+	if heightmaps.has(key):
+		return heightmaps[key]
+	var coords: Dictionary = job["coords"]
 	var parsed: MapmReader.ParsedRegion = null
-	if not bytes.is_empty():
-		parsed = MapmReader.parse(bytes)
-	_grid.parsed_heightmaps[key] = parsed
+	if job["here"] != null and region_x == int(coords["x"]) and region_y == int(coords["y"]):
+		parsed = job["here"]
+	else:
+		var bytes := AssetSource.read_bytes("%d\\%d.m" % [region_x, region_y], job["map_pk2"])
+		if not bytes.is_empty():
+			parsed = MapmReader.parse(bytes)
+	heightmaps[key] = parsed
+	(job["new_heightmaps"] as Dictionary)[key] = parsed
 	return parsed
 
 ## The real player capsule's own height, read from the real shape rather
@@ -7021,6 +7339,13 @@ func _update_blob_shadow() -> void:
 ##                          frames, its arrival, each height resolve's navmesh
 ##                          and terrain-ray answers side by side (round 557),
 ##                          and the resolve rate and cost every 10 s
+##   SRREVAMP_QA_ALPHA_LOG=1  print every alpha-cutout probe a material build
+##                          consults (ObjectLoader._alpha_stat, round 566):
+##                          `QA ALPHA: <texture> (<fourCC>) <statistic> <value>
+##                          -- from the decoded Image | from a statistic
+##                          measured earlier`. The load benchmark's count of
+##                          alpha probes in the load path; since round 566 none
+##                          reads a texture back
 ##   SRREVAMP_QA_MOB_STRIKE=1  stand in for a server with the strike push:
 ##                          behind each result that reports a counter, the
 ##                          OpMonsterAttacked it would send goes through

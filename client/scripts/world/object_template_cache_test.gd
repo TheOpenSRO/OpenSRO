@@ -62,6 +62,27 @@ func _test_one_build_per_path_across_regions() -> void:
 		n.free()
 	cache.free_all()
 
+## Round 566: an objects job snapshots the held paths on the main thread
+## (World3D._objects_job) so its off-thread prepare skips built models -- a
+## copy, lower-cased, that the cache's own changes do not reach. Reached
+## through call(), so a cache without it FAILS rather than failing to parse.
+func _test_held_keys_is_a_snapshot() -> void:
+	_reset()
+	var cache := ObjectTemplateCache.new(_fake_load)
+	_check(cache.has_method("held_keys"), "ObjectTemplateCache has held_keys (absent before round 566)")
+	if not cache.has_method("held_keys"):
+		return
+	_check(cache.call("held_keys") == {}, "an empty cache holds no key")
+	cache.instance("prim\\bsr\\Wall.bsr", "A").free()
+	cache.instance("missing\\x.bsr", "A")
+	var held: Dictionary = cache.call("held_keys")
+	_check(held == {"prim\\bsr\\wall.bsr": true}, "the held template's key, lower-cased; a failed load holds none (got %s)" % [held])
+	held["other.bsr"] = true
+	cache.release_region("A")
+	_check(cache.call("held_keys") == {} and held.size() == 2,
+		"a snapshot is a copy: the cache's release does not touch it, nor it the cache")
+	cache.free_all()
+
 func _test_failed_load_is_not_cached() -> void:
 	_reset()
 	var cache := ObjectTemplateCache.new(_fake_load)
@@ -137,6 +158,7 @@ func _test_cap_evicts_oldest_unused_first() -> void:
 
 func _init() -> void:
 	_test_one_build_per_path_across_regions()
+	_test_held_keys_is_a_snapshot()
 	_test_failed_load_is_not_cached()
 	_test_release_region_frees_at_last_user()
 	_test_forget_regions_keeps_templates()

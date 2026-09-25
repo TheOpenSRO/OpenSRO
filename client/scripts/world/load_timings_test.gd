@@ -237,6 +237,68 @@ func _test_world3d_terrain_laps_are_exhaustive() -> void:
 	_check(text.find(off_template) >= 0,
 		"the README's streamed cell-line template names the prepare's laps: `%s`" % off_template)
 
+## Round 566: the objects' laps, held the way round 565's terrain laps are.
+## The synchronous path (the grid's centre, SRREVAMP_SYNC_LOAD=1) records
+## [snapshot, parse, own, models, textures, templates, place] -- the job's
+## snapshot, the prepare's three laps as main-thread phases, the commit's --
+## and a streamed cell the commit's [textures, templates, place] with the
+## prepare's [parse, own, models] off the main thread. The prepare records
+## nothing in _load_timings (it can run on a task), and no stopwatch is
+## reset outside a lap. The NEGATIVE: before round 566 none of these
+## functions existed.
+const OBJECTS_JOB_LAPS := ["snapshot"]
+const OBJECTS_PREPARE_LAPS := ["parse", "own", "models"]
+const OBJECTS_COMMIT_LAPS := ["textures", "templates", "place"]
+
+func _test_world3d_objects_laps_are_exhaustive() -> void:
+	var src := _source_of("res://scripts/World3D.gd")
+	if src == "":
+		_check(false, "World3D.gd reads")
+		return
+	var bodies := {
+		"_objects_job": _body_of(src, "\nfunc _objects_job("),
+		"_objects_prepare": _body_of(src, "\nstatic func _objects_prepare("),
+		"_objects_commit": _body_of(src, "\nfunc _objects_commit("),
+		"_load_object_template": _body_of(src, "\nfunc _load_object_template("),
+		"_cell_prepare": _body_of(src, "\nstatic func _cell_prepare("),
+		"_placements_belonging_here": _body_of(src, "\nstatic func _placements_belonging_here("),
+		"_job_heightmap": _body_of(src, "\nstatic func _job_heightmap("),
+	}
+	for name in bodies:
+		_check(bodies[name] != "", "World3D.gd has %s (absent before round 566)" % name)
+	var main_lap := "_load_timings\\.lap\\(\"objects\", \"([a-z]+)\""
+	var main_phase := "_load_timings\\.phase\\(\"objects\", \"([a-z]+)\""
+	var job_lap := "_job_lap\\(job, \"([a-z]+)\""
+	var got_job := _laps_in(bodies["_objects_job"], main_lap)
+	_check(got_job == OBJECTS_JOB_LAPS, "_objects_job's laps are %s (got %s)" % [str(OBJECTS_JOB_LAPS), str(got_job)])
+	var got_prepare := _laps_in(bodies["_objects_prepare"], job_lap)
+	_check(got_prepare == OBJECTS_PREPARE_LAPS,
+		"_objects_prepare's laps, in order, are %s (got %s)" % [str(OBJECTS_PREPARE_LAPS), str(got_prepare)])
+	var got_commit := _laps_in(bodies["_objects_commit"], main_lap) + _laps_in(bodies["_load_object_template"], main_lap) \
+		+ _laps_in(bodies["_objects_commit"], main_phase)
+	_check(got_commit == OBJECTS_COMMIT_LAPS,
+		"the commit's laps -- _objects_commit's textures, _load_object_template's templates, the loop's place -- are %s (got %s)" % [
+			str(OBJECTS_COMMIT_LAPS), str(got_commit)])
+	for name in ["_objects_prepare", "_cell_prepare", "_placements_belonging_here", "_job_heightmap"]:
+		_check((bodies[name] as String).find("_load_timings") < 0,
+			"%s records no lap in _load_timings (it can run on a WorkerThreadPool task)" % name)
+	for name in bodies:
+		_check((bodies[name] as String).find("\tsw = Time.get_ticks_usec()") < 0,
+			"no stopwatch in %s is reset outside a lap" % name)
+	var readme := _source_of("res://tools/README.md")
+	if readme == "":
+		_check(false, "client/tools/README.md reads")
+		return
+	var flat := RegEx.new()
+	flat.compile("\\s+")
+	var text := flat.sub(readme, " ", true)
+	var sync_template := "objects O [" + ", ".join(PackedStringArray(OBJECTS_JOB_LAPS + OBJECTS_PREPARE_LAPS + OBJECTS_COMMIT_LAPS)) + "]"
+	_check(text.find(sync_template) >= 0, "the README's synchronous cell-line template names the objects' laps: `%s`" % sync_template)
+	var streamed_template := "objects O [" + ", ".join(PackedStringArray(OBJECTS_COMMIT_LAPS)) + "]"
+	_check(text.find(streamed_template) >= 0, "the README's streamed template names the objects commit's laps: `%s`" % streamed_template)
+	var off_template := "objects Q [" + ", ".join(PackedStringArray(OBJECTS_PREPARE_LAPS)) + "]"
+	_check(text.find(off_template) >= 0, "the README's streamed template names the objects prepare's laps: `%s`" % off_template)
+
 ## Round 565: work a cell had done off the main thread is on its line and in
 ## the drain's off-thread total, and NOT in its `built in` total, its group
 ## totals or its frame's work -- the main thread did not pay it.
@@ -277,6 +339,7 @@ func _init() -> void:
 	_test_end_cell_notes_the_frame()
 	_test_world3d_terrain_laps_are_exhaustive()
 	_test_offthread_phases()
+	_test_world3d_objects_laps_are_exhaustive()
 
 	if _failures == 0:
 		print("ALL PASS")

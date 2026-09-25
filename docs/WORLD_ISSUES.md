@@ -7075,6 +7075,82 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-sixty-sixth round: a streamed cell's objects prepare on its worker task too, and the alpha probes measure the decoded Image instead of reading the texture back
+
+Round 565 moved a streamed cell's terrain onto a `WorkerThreadPool` task and left its objects on
+the main thread, in the commit's frame: 26-83 ms a cell at the crossing and 5,346 ms over the
+entry's 25 cells on round 565's code. `docs/RE_COMPLETION.md`'s round 566 has the grounding,
+every log line and the tests; in short, anchored by function:
+
+- `ObjectLoader.load_object` is now `commit_object(prepare_object(...))`. `prepare_object` is the
+  plain-data half -- the `.bsr`/`.cpd`, `.bmt` and `.bms` parsed, each piece's surface arrays
+  (`BmsReader.to_arrays`) and trimesh faces (`_piece_faces`, the list `create_trimesh_shape()`
+  read back out of the mesh, equal to it element for element), each texture decoded to an Image
+  and each material's alpha classified on that Image. `commit_object` builds the ArrayMeshes,
+  textures, materials, shapes and nodes on the main thread.
+- The three alpha probes take the Image instead of calling `Texture2D.get_image()` (a readback of
+  the uploaded texture), same rules and thresholds, measured once per texture and kept in the
+  world's texture cache. `SRREVAMP_QA_ALPHA_LOG=1` prints each probe consulted. On the entry
+  benchmark the count is **0 before and 0 after**: every real layer the 25 cells build is decided
+  by its flag word, so the readback path was never reached there. Forced with `SRREVAMP_QA_MATS=1`
+  as a control: 690 readbacks before, 0 after, the same 341 texture statistics -- 327 identical,
+  14 within 0.0002, and on those the readback gave two different values for the same texture
+  where the Image gives one.
+- `World3D._objects_prepare` (static) runs on the cell's task after the terrain
+  (`_cell_prepare`): the `.o`/`.o2` merge, the ownership test -- whose neighbour heightmaps it
+  reads under Pk2Reader's lock rather than pre-parsing them on the main thread, since their parse
+  is what that lap costs -- and `prepare_object` for every model the world holds no template for.
+  `_objects_commit` uploads the textures and places the copies; `ObjectTemplateCache` still owns
+  one template per model, now committed from the prepared model.
+
+Measured, the README's two commands, BASE against the shipped code (the pump finishing before it
+dispatches, below; `fix2B_*` on the render box -- until the second review these figures were the
+first write's dispatch-first run): the crossing's column 95..99/165 went from 108/123/123/70/69 ms
+a cell to 50/46/87/51/49 (objects 26-83 -> 5-11 ms on the main thread), its longest work frame from
+140 ms to 118 (109 in the review fix's earlier run of the same order; 1 frame over 100 ms, from 3).
+The entry: the 24 neighbours' main-thread objects 3,360 -> 460 ms (2,857 ms now on the tasks), the
+cells' main-thread sum 10,517 -> 7,457 ms, p95 1,848 -> 990 ms (947 in the earlier run), the drain
+19.8 s -> 18.1 s. Every placement is the same -- the entry's 58 map-object lines and the crossing's
+67 are identical, and the synthetic objects' node trees, surfaces, faces and materials match
+fingerprints taken from round 565's `load_object`. Not better: the entry's NPC phase (692 ms at
+BASE, 728-876 over the round's four runs, unattributed), a reconnect mid-load waits 497 ms for the
+dropped tasks (18.8 in round 565's run; now a `docs/TODO.md` item), and the centre cell is still
+5.1 s by design. The crossing's longest frame is now the terrain commit (`collision` 25 ms), the
+NPCs (35 ms) and the frame's other work, not the objects; the objects' largest main-thread lap is
+`place`, the duplicates.
+
+The round's review found one orchestrator note neither done nor answered: `_pump_cell_jobs`
+dispatched the next cell BEFORE committing the finished one, so the next job's snapshot missed
+everything that commit cached and its task prepared it again. It now commits first. Counted, not
+inferred -- `_finish_cell_job` prints `cell x/y prepared again what an earlier commit had cached --
+N ground tile(s), N navmesh(es), N object navigation mesh(es), N heightmap(s) the objects read, N
+model(s), N object texture(s) decoded` (`_prepared_again`, before the commit merges anything).
+
+The second review found that count wrong as first committed, and the numbers this round first
+gave for it with it: it took every texture a job's prepare named for one it had DECODED, but a
+texture the job's snapshot already held is named, not decoded -- the render box's own log had
+`cell 97/169 prepared again ... 0 model(s), 2 object texture(s)` for the first streamed commit
+after the centre, where nothing could have been cached twice -- and it counted the region's own
+heightmap, which the objects take from the terrain prepare's parse. Corrected (a texture counts
+only with an Image and a key its snapshot lacked; the `here` parse is not counted; two new
+negatives in `objects_prepare_test` fail on the first counter) and the pair re-run: over the
+entry's 24 streamed cells, dispatch-first against finish-first, 67 -> 28 things prepared twice
+(tiles 10 -> 3, object navmeshes 8 -> 4, heightmaps 2 -> 1, models 16 -> 7, textures 31 -> 13),
+and the sum of the `decoded now` tile lines 58 -> 51, the same 7; the crossing 102 -> 32. (The
+first counter's 103 -> 66 and 145 -> 84 are withdrawn.) Per cell, what finish-first still counts
+follows one commit each -- the cell that was preparing beside it when it was dispatched (97/167
+beside 97/169, both dispatched from the snapshot after the centre: 19 of the entry's 28; then
+96/168, 96/166, and at the crossing 96/165), from the cells' dispatch and commit frames; the
+pump's order cannot hand a job what a job preparing at the same time has not committed yet. The
+frames a player sees show no order effect beyond run-to-run spread at one run each (this pair:
+crossing longest 114 -> 118 ms, entry p95 954 -> 990 ms; the first pair: 111 -> 109, 1,004 ->
+947); the drain's frames over 100 ms fell in both (13 -> 8, 13 -> 7). The cost is the overlap
+given up while a cell commits -- one more awaited frame in the entry, 1.1 s more waiting in the
+QA drain. The count also corrects the round's first reading of `own` (894 ms at BASE, 1.1-1.2 s on
+the tasks): only 2 and 1 heightmaps were read twice, so that difference is not duplicate parses
+-- it stays unattributed. `SRREVAMP_SYNC_LOAD=1` restores the schedule only: its objects
+still go through the split `ObjectLoader` and the prepared trimesh faces.
+
 ## Five-hundred-and-sixty-fifth round: a streamed cell's terrain prepares on a worker thread, and a boundary crossing's frame falls from 334 to 144 ms
 
 The hundred-and-fifty-fourth round left this open ("it does not thread the build, so a very heavy

@@ -52,8 +52,10 @@ class_name ObjectTemplateCache
 const DEFAULT_MAX_TEMPLATES := 600
 
 ## Builds a template: called as `loader.call(path)`, returns a Node3D or
-## null. World3D passes a method that runs ObjectLoader.load_object with
-## its archive and texture cache; the test passes a counter.
+## null. World3D passes a method that commits the model its objects job
+## prepared off the main thread (ObjectLoader.commit_object, round 566) or,
+## with none, runs ObjectLoader.load_object with its archive and texture
+## cache; the test passes a counter.
 var _loader: Callable
 var max_templates: int
 
@@ -96,6 +98,16 @@ func instance(path: String, region_key: String) -> Node3D:
 
 func has(path: String) -> bool:
 	return _templates.has(path.to_lower())
+
+## The path keys (lower-cased) a template is held for now, key -> true: an
+## objects job snapshots them on the main thread (World3D._objects_job,
+## round 566), so its off-thread prepare skips the models this world has
+## already built. A copy -- the cache itself stays the main thread's.
+func held_keys() -> Dictionary:
+	var keys := {}
+	for key in _templates:
+		keys[key] = true
+	return keys
 
 func size() -> int:
 	return _templates.size()

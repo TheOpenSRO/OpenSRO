@@ -60,22 +60,132 @@ static func _missing(what: String) -> void:
 ## per world (`_object_textures`, freed with the world). A call without one
 ## gets a fresh dictionary that is dropped with the call: the pieces of
 ## that one object share their textures, and nothing outlives the call.
+## An entry is `{"texture": Texture2D, "four_cc": String, "alpha": {..}}`,
+## the last the alpha statistics already measured on its Image (round 566,
+## _alpha_stat), so a texture is never read back to be measured again.
+##
+## Since round 566 this is the two halves below run back to back on the
+## caller's thread: `commit_object(prepare_object(...))`.
 static func load_object(archive: Pk2Reader, path: String, texture_cache: Dictionary = {}) -> Node3D:
-	if path.to_lower().ends_with(".cpd"):
-		return _load_compound_object(archive, path, texture_cache)
+	return commit_object(prepare_object(archive, path, snapshot_textures(texture_cache)), texture_cache)
 
+## An object prepared off the main thread (round 566) -- the PREPARE half of
+## load_object.
+##
+## Everything load_object did that produces plain data: the `.bsr` (or
+## `.cpd`) read and parsed, its `.bmt` read and inflated, every `.bms` piece
+## read, parsed and turned into its surface arrays (BmsReader.to_arrays) and
+## its collision faces (_piece_faces: the list `create_trimesh_shape()` read
+## back out of the uploaded mesh until this round), each texture decoded to
+## an Image (DdjReader.to_image) and each material's alpha classification
+## measured on that Image (_prepare_material). The COMMIT half, commit_object,
+## builds what owns a RenderingServer or PhysicsServer RID -- the ArrayMesh,
+## the ImageTexture, the materials, the shape -- and the nodes, on the main
+## thread. World3D prepares a streamed cell's objects on its WorkerThreadPool
+## task beside its terrain (World3D._objects_prepare); until this round all
+## of it ran on the main thread, a model at a time, inside the frame the cell
+## was committed in -- the load benchmark on round 565's code measured 26-83
+## ms of objects a streamed cell at the crossing, and `templates` 1,573 ms of
+## the entry's centre (docs/RE_COMPLETION.md, round 566).
+##
+## Held to THE PREPARE-THREAD RULE (World3D._terrain_prepare;
+## client/tools/README.md, "Load benchmark"): no Node and no RID-owning
+## Resource -- the result holds Images, packed arrays, Arrays, Dictionaries
+## and the readers' RefCounted structs only (object_loader_test.gd walks it)
+## -- no scene tree, no server, archive reads only through Pk2Reader (locked
+## per handle since round 565), and no write to this class's static state:
+## what _missing would report goes in `missing` and QA lines in `log`, for
+## the commit to report in order. A reader's own push_error on a malformed
+## file is printed from the calling thread, as the terrain prepare's readers'
+## are.
+##
+## `known_textures`: snapshot_textures of the cache the commit will use --
+## the textures it already holds, by key, with their four_cc and measured
+## statistics and never the Texture2D -- so a texture the world has uploaded
+## is not decoded again. `textures`: where the decoded ones go, key ->
+## `{"image": Image, "four_cc": String, "alpha": {..}}`; pass one dictionary
+## to every prepare of one job and two models naming one texture decode it
+## once (World3D does).
+##
+## Returns `{"path", "root", "textures", "missing", "log"}`; `root` is the
+## node description commit_object builds (`{"kind": "bsr", "name", "pieces"}`
+## or `{"kind": "cpd", "name", "children"}`), null where load_object returned
+## null.
+static func prepare_object(archive: Pk2Reader, path: String, known_textures: Dictionary = {}, textures: Dictionary = {}) -> Dictionary:
+	var prepared := {"path": path, "root": null, "textures": textures, "missing": [], "log": []}
+	prepared["root"] = _prepare_node(archive, path, known_textures, prepared)
+	return prepared
+
+## The COMMIT half of load_object (round 566), on the main thread: reports
+## what the prepare recorded (_missing, the QA lines), uploads the textures
+## it decoded that `texture_cache` does not hold yet (commit_textures), and
+## builds the node tree load_object has always returned -- a Node3D named
+## after the object, a MeshInstance3D per piece with its StaticBody3D and
+## trimesh shape and its material, a compound's sub-objects under its root.
+## Null where load_object returned null. Safe to call again on the same
+## prepared object: it builds a new tree and uploads nothing twice.
+static func commit_object(prepared: Dictionary, texture_cache: Dictionary = {}) -> Node3D:
+	for what in prepared["missing"]:
+		_missing(what)
+	for line in prepared["log"]:
+		print(line)
+	commit_textures(prepared["textures"], texture_cache)
+	var root = prepared["root"]
+	if root == null:
+		return null
+	return _commit_node(root, texture_cache)
+
+## `texture_cache` as prepare_object's `known_textures`: key -> `{"four_cc",
+## "alpha"}` (a copy), never the Texture2D. Main thread, like the cache.
+static func snapshot_textures(texture_cache: Dictionary) -> Dictionary:
+	var known := {}
+	for key in texture_cache:
+		var entry: Dictionary = texture_cache[key]
+		known[key] = {"four_cc": entry["four_cc"], "alpha": (entry.get("alpha", {}) as Dictionary).duplicate()}
+	return known
+
+## Puts what a prepare decoded into `texture_cache`, on the main thread: an
+## ImageTexture for each Image the cache does not hold yet -- a texture
+## another commit uploaded first is kept, not replaced -- and every alpha
+## statistic the prepare measured, so none is measured twice.
+static func commit_textures(textures: Dictionary, texture_cache: Dictionary) -> void:
+	for key in textures:
+		var decoded: Dictionary = textures[key]
+		if texture_cache.has(key):
+			var entry: Dictionary = texture_cache[key]
+			if not entry.has("alpha"):
+				entry["alpha"] = {}
+			for stat in decoded["alpha"]:
+				entry["alpha"][stat] = decoded["alpha"][stat]
+			continue
+		var image: Image = decoded["image"]
+		if image == null:
+			continue
+		var texture := ImageTexture.create_from_image(image)
+		if texture == null:
+			continue
+		texture_cache[key] = {"texture": texture,
+			"four_cc": decoded["four_cc"], "alpha": (decoded["alpha"] as Dictionary).duplicate()}
+
+## One node of the object: a `.cpd` compound (_prepare_compound) or a `.bsr`
+## (below), described as data. Null, with what _missing would have said in
+## prepared["missing"], where load_object returned null.
+static func _prepare_node(archive: Pk2Reader, path: String, known: Dictionary, prepared: Dictionary) -> Variant:
+	if path.to_lower().ends_with(".cpd"):
+		return _prepare_compound(archive, path, known, prepared)
+
+	var missing: Array = prepared["missing"]
 	var bsr_path := path
 	var bsr_entry := find_file(archive, bsr_path)
 	if bsr_entry == null:
-		_missing("%s not found in archive" % bsr_path)
+		missing.append("%s not found in archive" % bsr_path)
 		return null
 	var bsr_data := archive.read_file(bsr_entry)
 	var obj := BsrReader.parse(bsr_data)
 	if obj == null:
 		return null
 
-	var root := Node3D.new()
-	root.name = obj.object_name
+	var node := {"kind": "bsr", "name": obj.object_name, "pieces": []}
 
 	# A real, genuine mesh-less object (obj.mesh_path == "") is a real
 	# particle-effect-only marker, not a failure -- see BsrReader.parse's
@@ -108,23 +218,21 @@ static func load_object(archive: Pk2Reader, path: String, texture_cache: Diction
 		if not already:
 			mesh_paths.append(candidate)
 
-	var material := load_material(archive, obj.material_path) if obj.material_path != "" else null
+	var material := _read_material(archive, obj.material_path, missing) if obj.material_path != "" else null
 
 	var loaded_count := 0
 	for i in range(mesh_paths.size()):
 		var entry := find_file(archive, mesh_paths[i])
 		if entry == null:
-			_missing("%s not found in archive" % mesh_paths[i])
+			missing.append("%s not found in archive" % mesh_paths[i])
 			continue
 		var bms_data := archive.read_file(entry)
 		var mesh := BmsReader.parse(bms_data)
 		if mesh == null:
 			continue
 
-		var mesh_instance := MeshInstance3D.new()
-		mesh_instance.name = mesh.mesh_name
-		var array_mesh := BmsReader.to_array_mesh(mesh)
-		mesh_instance.mesh = array_mesh
+		var arrays := BmsReader.to_arrays(mesh)
+		var piece := {"name": mesh.mesh_name, "arrays": arrays, "faces": _piece_faces(arrays), "material": null}
 
 		# Real static collision, a trimesh shape derived directly from the
 		# real render mesh, the way World3D's own real terrain collision is
@@ -149,31 +257,94 @@ static func load_object(archive: Pk2Reader, path: String, texture_cache: Diction
 		#
 		# Skipped for meshes with no real geometry (create_trimesh_shape on
 		# an empty ArrayMesh is a needless real physics-body cost for
-		# nothing).
-		if array_mesh.get_surface_count() > 0:
-			var body := StaticBody3D.new()
-			var shape := CollisionShape3D.new()
-			shape.shape = array_mesh.create_trimesh_shape()
-			body.add_child(shape)
-			mesh_instance.add_child(body)
+		# nothing) -- decided by the commit, which uploads the surface
+		# (_commit_node); the faces the shape is built from are the prepare's.
 
 		if material != null and material.layers.size() > 0:
 			var layer_idx := _find_layer_by_name(material.layers, mesh.material_name)
 			if layer_idx == -1:
 				layer_idx = i if material.layers.size() == mesh_paths.size() else 0
-			var godot_material := build_godot_material(archive, obj.material_path, material.layers[layer_idx], texture_cache)
-			if godot_material != null:
-				mesh_instance.material_override = godot_material
+			piece["material"] = _prepare_material(archive, obj.material_path, material.layers[layer_idx], known, prepared)
 
-		root.add_child(mesh_instance)
+		(node["pieces"] as Array).append(piece)
 		loaded_count += 1
 
 	if loaded_count == 0 and not mesh_paths.is_empty():
-		_missing("%s: none of its %d mesh piece(s) could be loaded" % [bsr_path, mesh_paths.size()])
-		root.free()
+		missing.append("%s: none of its %d mesh piece(s) could be loaded" % [bsr_path, mesh_paths.size()])
 		return null
 
+	return node
+
+## The collision faces of one piece's surface, as `create_trimesh_shape()`
+## read them back out of the uploaded ArrayMesh until round 566 -- every
+## index's vertex, in index order, snapped to 0.0001: the list
+## MapmTerrainBuilder.surface_faces builds for the terrain, whose equality
+## with the engine's is measured in mapm_terrain_builder_test.gd (round 565)
+## and, for a `.bms` piece, in object_loader_test.gd. It matches Godot
+## 4.2's own code (read, round 566, from the 4.2-stable sources:
+## `Mesh::generate_triangle_mesh` copies `vr[index]` for every index of an
+## indexed triangle surface, `TriangleMesh::create` snaps each corner to
+## 0.0001 and skips no triangle, `TriangleMesh::get_faces` rebuilds them from
+## the snapped corners). Null -- the commit then reads the mesh back as
+## before -- for the two shapes that code handles differently and a `.bms`
+## is not expected to have: a surface with no index array (the engine reads
+## the vertices as the triangle list) and an index outside the vertex array.
+static func _piece_faces(arrays: Array) -> Variant:
+	var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+	var positions: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	if indices.is_empty():
+		return null
+	var count := positions.size()
+	for index in indices:
+		if index < 0 or index >= count:
+			return null
+	return MapmTerrainBuilder.surface_faces([{"arrays": arrays}])
+
+## Builds one node description on the main thread: a compound's root and its
+## sub-objects, or a `.bsr`'s root with a MeshInstance3D per piece -- its
+## ArrayMesh uploaded from the prepared arrays, a StaticBody3D with the
+## trimesh shape when the surface uploaded, and its material.
+static func _commit_node(node: Dictionary, texture_cache: Dictionary) -> Node3D:
+	var root := Node3D.new()
+	root.name = node["name"]
+	if node["kind"] == "cpd":
+		for child in node["children"]:
+			root.add_child(_commit_node(child, texture_cache))
+		return root
+	for piece in node["pieces"]:
+		var mesh_instance := MeshInstance3D.new()
+		mesh_instance.name = piece["name"]
+		var array_mesh := BmsReader.mesh_from_arrays(piece["arrays"])
+		mesh_instance.mesh = array_mesh
+		# The collision load_object has built since 2026-08-25 -- see the
+		# prepare's comment in _prepare_node for why it exists and why the
+		# object's own navigation mesh is not used instead.
+		if array_mesh.get_surface_count() > 0:
+			var body := StaticBody3D.new()
+			var shape := CollisionShape3D.new()
+			shape.shape = _trimesh_shape(piece["faces"], array_mesh)
+			body.add_child(shape)
+			mesh_instance.add_child(body)
+		if piece["material"] != null:
+			var godot_material := _commit_material(piece["material"], texture_cache)
+			if godot_material != null:
+				mesh_instance.material_override = godot_material
+		root.add_child(mesh_instance)
 	return root
+
+## The piece's trimesh from the prepared faces -- `create_trimesh_shape()`'s
+## shape without reading the mesh back (Mesh::create_trimesh_shape, 4.2:
+## `set_faces` on a new ConcavePolygonShape3D, or null when there are no
+## faces) -- or, where the prepare left none (_piece_faces), the old readback.
+static func _trimesh_shape(faces: Variant, array_mesh: ArrayMesh) -> Shape3D:
+	if faces == null:
+		return array_mesh.create_trimesh_shape()
+	var face_list: PackedVector3Array = faces
+	if face_list.is_empty():
+		return null
+	var shape := ConcavePolygonShape3D.new()
+	shape.set_faces(face_list)
+	return shape
 
 ## How far a real object navigation mesh's own blocking edges are extruded
 ## upward into wall collision.
@@ -232,39 +403,51 @@ static func _add_object_navmesh_collision(
 ## absolute vertex data -- the same real convention load_object's own doc
 ## comment already establishes for .bsr sub-mesh pieces, now confirmed for
 ## .cpd too. See CPD_FORMAT.md.
-static func _load_compound_object(archive: Pk2Reader, cpd_path: String, texture_cache: Dictionary = {}) -> Node3D:
+##
+## Prepared as data since round 566 (_prepare_node recurses once per
+## sub-object; _commit_node builds the tree), with what it would report in
+## prepared["missing"].
+static func _prepare_compound(archive: Pk2Reader, cpd_path: String, known: Dictionary, prepared: Dictionary) -> Variant:
+	var missing: Array = prepared["missing"]
 	var cpd_entry := find_file(archive, cpd_path)
 	if cpd_entry == null:
-		_missing("%s not found in archive" % cpd_path)
+		missing.append("%s not found in archive" % cpd_path)
 		return null
 	var compound := CpdReader.parse(archive.read_file(cpd_entry))
 	if compound == null:
 		return null
 
-	var root := Node3D.new()
-	root.name = compound.name
+	var node := {"kind": "cpd", "name": compound.name, "children": []}
 
 	var loaded_count := 0
 	for sub_path in compound.bsr_paths:
-		var child := load_object(archive, sub_path, texture_cache)
+		var child = _prepare_node(archive, sub_path, known, prepared)
 		if child == null:
 			continue
-		root.add_child(child)
+		(node["children"] as Array).append(child)
 		loaded_count += 1
 
 	if loaded_count == 0:
-		_missing("%s: none of its %d real compound piece(s) could be loaded" % [cpd_path, compound.bsr_paths.size()])
-		root.free()
+		missing.append("%s: none of its %d real compound piece(s) could be loaded" % [cpd_path, compound.bsr_paths.size()])
 		return null
 
-	return root
+	return node
 
 ## Loads and parses the .bmt at path within archive. Returns null (and
 ## pushes an error) on failure.
 static func load_material(archive: Pk2Reader, bmt_path: String) -> BmtReader.ParsedMaterial:
+	var missing: Array = []
+	var material := _read_material(archive, bmt_path, missing)
+	for what in missing:
+		_missing(what)
+	return material
+
+## load_material for a prepare (round 566): a missing file goes in `missing`
+## for the commit to report, not to _missing.
+static func _read_material(archive: Pk2Reader, bmt_path: String, missing: Array) -> BmtReader.ParsedMaterial:
 	var entry := find_file(archive, bmt_path)
 	if entry == null:
-		_missing("%s not found in archive" % bmt_path)
+		missing.append("%s not found in archive" % bmt_path)
 		return null
 	return BmtReader.parse(archive.read_file(entry))
 
@@ -349,25 +532,34 @@ static func _build_foliage_material(layer: BmtReader.Layer, tex: Texture2D) -> S
 ## `texture_cache`: see load_object. Only a texture that decoded is
 ## remembered, under its resolved path lower-cased (as find_file compares
 ## names); a miss reports and is retried next time, as before.
+##
+## Since round 566 the same two halves as load_object, back to back on the
+## caller's thread -- SkinnedBsrAssembler builds its NPC and item pieces'
+## materials through here: _prepare_material decodes the texture to an Image
+## and classifies its alpha on that Image, _commit_material builds the
+## material from the uploaded texture.
 static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: BmtReader.Layer, texture_cache: Dictionary = {}) -> Material:
-	var mat := StandardMaterial3D.new()
-	mat.resource_name = layer.layer_name
-	# The layer's colours are a D3DMATERIAL9 -- ambient, diffuse, specular,
-	# emissive, power, in that order -- and the fixed-function pipeline
-	# multiplies the *ambient* light by the ambient colour and only the
-	# directional light by the diffuse. This used to set the albedo from
-	# the diffuse, which is the same 0.59 as the ambient on every Jangan
-	# layer measured and so never showed -- until Alexandria, where 24 of
-	# the houses' 40 layers carry diffuse 0.14 against ambient 0.59 and
-	# every wall came out black (docs/WORLD_ISSUES.md, round 136). The
-	# ambient is the term a mostly-ambient scene is lit by. What this still
-	# gets wrong: a StandardMaterial3D scales the sun by the same colour, so
-	# a sunlit face of such a layer draws brighter here than in the original
-	# by diffuse/ambient; an exact split needs a shader's light() function.
-	mat.albedo_color = layer.ambient
+	var prepared := {"textures": {}, "missing": [], "log": []}
+	var plan := _prepare_material(archive, bmt_path, layer, snapshot_textures(texture_cache), prepared)
+	for what in prepared["missing"]:
+		_missing(what)
+	for line in prepared["log"]:
+		print(line)
+	commit_textures(prepared["textures"], texture_cache)
+	return _commit_material(plan, texture_cache)
 
+## The prepare half of a layer's material (round 566): its texture resolved
+## and -- unless `known` says the commit's cache holds it -- decoded to an
+## Image into prepared["textures"], and whether the layer is an alpha
+## cutout, decided on that Image. Returns the plan _commit_material builds
+## from: `{"layer", "texture_key", "cutout"}`, the key "" for a layer drawn
+## without a texture (none named, not found, not decodable -- exactly the
+## cases the one-piece build_godot_material returned its colours-only
+## material for).
+static func _prepare_material(archive: Pk2Reader, bmt_path: String, layer: BmtReader.Layer, known: Dictionary, prepared: Dictionary) -> Dictionary:
+	var plan := {"layer": layer, "texture_key": "", "cutout": false}
 	if layer.texture_path == "":
-		return mat
+		return plan
 
 	# Real texture_path is usually a bare filename (resolve against
 	# bmt_path's own directory, per this function's doc comment) -- but a
@@ -386,80 +578,173 @@ static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: Bm
 		var dir := bmt_path.replace("\\", "/").get_base_dir()
 		tex_path = dir + "/" + layer.texture_path if dir != "" else layer.texture_path
 	var cache_key := tex_path.to_lower()
-	var godot_tex: Texture2D = null
-	var four_cc := ""
-	if texture_cache.has(cache_key):
-		var cached: Dictionary = texture_cache[cache_key]
-		godot_tex = cached["texture"]
-		four_cc = cached["four_cc"]
+	var textures: Dictionary = prepared["textures"]
+	var decoded: Dictionary
+	if textures.has(cache_key):
+		decoded = textures[cache_key]
+	elif known.has(cache_key):
+		# Uploaded already: named, not decoded again. Its measured
+		# statistics come with it; one it lacks is measured from the file
+		# (_alpha_stat).
+		decoded = {"image": null, "four_cc": known[cache_key]["four_cc"],
+			"alpha": (known[cache_key]["alpha"] as Dictionary).duplicate()}
+		textures[cache_key] = decoded
 	else:
-		var tex_entry := find_file(archive, tex_path)
-		if tex_entry == null:
-			_missing("texture %s (referenced by %s) not found in archive" % [tex_path, bmt_path])
-			return mat
+		decoded = _decode_texture(archive, tex_path, bmt_path, prepared["missing"])
+		if decoded.is_empty():
+			return plan
+		textures[cache_key] = decoded
+	plan["texture_key"] = cache_key
+	var four_cc: String = decoded["four_cc"]
 
-		var parsed_tex := DdjReader.parse(archive.read_file(tex_entry))
-		if parsed_tex == null:
-			return mat
-		godot_tex = DdjReader.to_texture(parsed_tex)
-		four_cc = parsed_tex.four_cc
-		if godot_tex != null:
-			texture_cache[cache_key] = {"texture": godot_tex, "four_cc": four_cc}
-	if godot_tex != null:
-		mat.albedo_texture = godot_tex
-		# **Corrected 2026-08-26** (see docs/WORLD_ISSUES.md): this used to
-		# trigger cutout transparency + disabled backface culling purely
-		# from the texture's real compression *format* (DXT3/DXT5) -- but
-		# that format only means the format *supports* an alpha channel,
-		# not that this specific real texture actually uses it for cutout.
-		# A real, fully-opaque DXT3/DXT5 texture (an ordinary, unremarkable
-		# format choice for plain opaque art, e.g. real character skin) was
-		# getting backface culling disabled for no real reason -- on a real
-		# closed/solid body mesh, that lets a viewer see straight through
-		# to the mesh's own real back-facing surface, showing the wrong
-		# side's real texture region (a real, reported bug: front/back
-		# appearing swapped depending on viewing angle). Now actually
-		# decodes the real pixel data and only applies cutout+no-culling if
-		# a real texel's alpha is genuinely below opaque, instead of
-		# assuming from the format alone.
-		# The material itself says whether this layer is an alpha layer --
-		# see LAYER_FLAG_ALPHA. Everything below it is the older
-		# guess-from-the-pixels path, kept only for layers whose flag word
-		# does not look like a real flag word.
-		var needs_cutout := false
-		if layer.unknown & LAYER_FLAG_MASK != 0:
-			needs_cutout = layer.unknown & LAYER_FLAG_ALPHA != 0
-		elif _ALPHA_FOURCCS.has(four_cc):
-			if four_cc == "DXT1":
-				needs_cutout = _real_alpha_fraction(godot_tex) >= _DXT1_CUTOUT_MIN_ALPHA_FRACTION
-			else:
-				needs_cutout = _has_real_alpha_variance(godot_tex)
-		elif four_cc == "":
-			needs_cutout = _alpha_is_binary_cutout(godot_tex)
-		# Says so whenever a texture that plainly carries transparency is
-		# nonetheless about to be drawn opaque, which is what a leaf card
-		# rendering as a solid black rectangle looks like from here.
-		# Gated so an ordinary run costs nothing.
-		# Surfaces the case worth a human look: a texture that is heavily
-		# transparent while its own layer flag says the layer is solid.
-		# Some disagreement is expected and correct -- a gloss ramp is
-		# mostly non-opaque and rightly not a cutout -- so the bar is set
-		# well above that. Gated, so an ordinary run costs nothing.
-		if not needs_cutout and OS.get_environment("SRREVAMP_QA_MATS") != "":
-			var fraction := _real_alpha_fraction(godot_tex)
-			if fraction > _QA_MATS_REPORT_MIN_ALPHA_FRACTION:
-				print("QA MAT: %s (%s, %s) is %.1f%% non-opaque, flags 0x%04x, no cutout" % [
-					layer.layer_name, tex_path.get_file(), four_cc,
-					fraction * 100.0, layer.unknown])
+	# **Corrected 2026-08-26** (see docs/WORLD_ISSUES.md): this used to
+	# trigger cutout transparency + disabled backface culling purely
+	# from the texture's real compression *format* (DXT3/DXT5) -- but
+	# that format only means the format *supports* an alpha channel,
+	# not that this specific real texture actually uses it for cutout.
+	# A real, fully-opaque DXT3/DXT5 texture (an ordinary, unremarkable
+	# format choice for plain opaque art, e.g. real character skin) was
+	# getting backface culling disabled for no real reason -- on a real
+	# closed/solid body mesh, that lets a viewer see straight through
+	# to the mesh's own real back-facing surface, showing the wrong
+	# side's real texture region (a real, reported bug: front/back
+	# appearing swapped depending on viewing angle). Now actually
+	# decodes the real pixel data and only applies cutout+no-culling if
+	# a real texel's alpha is genuinely below opaque, instead of
+	# assuming from the format alone.
+	# The material itself says whether this layer is an alpha layer --
+	# see LAYER_FLAG_ALPHA. Everything below it is the older
+	# guess-from-the-pixels path, kept only for layers whose flag word
+	# does not look like a real flag word. Since round 566 the pixels are
+	# the decoded Image's, not a readback of the uploaded texture
+	# (_alpha_stat): the same rules and thresholds on the same texels.
+	var needs_cutout := false
+	if layer.unknown & LAYER_FLAG_MASK != 0:
+		needs_cutout = layer.unknown & LAYER_FLAG_ALPHA != 0
+	elif _ALPHA_FOURCCS.has(four_cc):
+		if four_cc == "DXT1":
+			needs_cutout = float(_alpha_stat(decoded, "fraction", archive, tex_path, bmt_path, prepared)) >= _DXT1_CUTOUT_MIN_ALPHA_FRACTION
+		else:
+			needs_cutout = bool(_alpha_stat(decoded, "variance", archive, tex_path, bmt_path, prepared))
+	elif four_cc == "":
+		needs_cutout = bool(_alpha_stat(decoded, "binary_cutout", archive, tex_path, bmt_path, prepared))
+	# Says so whenever a texture that plainly carries transparency is
+	# nonetheless about to be drawn opaque, which is what a leaf card
+	# rendering as a solid black rectangle looks like from here.
+	# Gated so an ordinary run costs nothing.
+	# Surfaces the case worth a human look: a texture that is heavily
+	# transparent while its own layer flag says the layer is solid.
+	# Some disagreement is expected and correct -- a gloss ramp is
+	# mostly non-opaque and rightly not a cutout -- so the bar is set
+	# well above that. Gated, so an ordinary run costs nothing.
+	if not needs_cutout and OS.get_environment("SRREVAMP_QA_MATS") != "":
+		var fraction := float(_alpha_stat(decoded, "fraction", archive, tex_path, bmt_path, prepared))
+		if fraction > _QA_MATS_REPORT_MIN_ALPHA_FRACTION:
+			(prepared["log"] as Array).append("QA MAT: %s (%s, %s) is %.1f%% non-opaque, flags 0x%04x, no cutout" % [
+				layer.layer_name, tex_path.get_file(), four_cc,
+				fraction * 100.0, layer.unknown])
+	plan["cutout"] = needs_cutout
+	return plan
 
-		if needs_cutout:
-			# Not a StandardMaterial3D: a real double-sided card has to keep
-			# its authored normal on both faces to light the way the real
-			# client lights it, which StandardMaterial3D cannot express.
-			# See foliage.gdshader.
-			return _build_foliage_material(layer, godot_tex)
+## The commit half of a layer's material, on the main thread: the
+## StandardMaterial3D the layer's colours make, textured from
+## `texture_cache` (commit_textures has put the prepare's upload there), or
+## the cutout foliage material when the prepare classified the layer so.
+static func _commit_material(plan: Dictionary, texture_cache: Dictionary) -> Material:
+	var layer: BmtReader.Layer = plan["layer"]
+	var mat := StandardMaterial3D.new()
+	mat.resource_name = layer.layer_name
+	# The layer's colours are a D3DMATERIAL9 -- ambient, diffuse, specular,
+	# emissive, power, in that order -- and the fixed-function pipeline
+	# multiplies the *ambient* light by the ambient colour and only the
+	# directional light by the diffuse. This used to set the albedo from
+	# the diffuse, which is the same 0.59 as the ambient on every Jangan
+	# layer measured and so never showed -- until Alexandria, where 24 of
+	# the houses' 40 layers carry diffuse 0.14 against ambient 0.59 and
+	# every wall came out black (docs/WORLD_ISSUES.md, round 136). The
+	# ambient is the term a mostly-ambient scene is lit by. What this still
+	# gets wrong: a StandardMaterial3D scales the sun by the same colour, so
+	# a sunlit face of such a layer draws brighter here than in the original
+	# by diffuse/ambient; an exact split needs a shader's light() function.
+	mat.albedo_color = layer.ambient
 
+	var key: String = plan["texture_key"]
+	if key == "" or not texture_cache.has(key):
+		return mat
+	var godot_tex: Texture2D = texture_cache[key]["texture"]
+	if godot_tex == null:
+		return mat
+	mat.albedo_texture = godot_tex
+	if plan["cutout"]:
+		# Not a StandardMaterial3D: a real double-sided card has to keep
+		# its authored normal on both faces to light the way the real
+		# client lights it, which StandardMaterial3D cannot express.
+		# See foliage.gdshader.
+		return _build_foliage_material(layer, godot_tex)
 	return mat
+
+## A texture read and decoded for a prepare: `{"image", "four_cc", "alpha":
+## {}}`, or empty -- nothing to draw with, as when the one-piece loader's
+## ImageTexture came out null -- with a file that is not there reported in
+## `missing`. An Image the decoder could not fill (Image.create_from_data
+## leaves it empty on a size mismatch) is refused here, where the old
+## `ImageTexture.create_from_image` refused it, so it is never cached.
+static func _decode_texture(archive: Pk2Reader, tex_path: String, bmt_path: String, missing: Array) -> Dictionary:
+	var tex_entry := find_file(archive, tex_path)
+	if tex_entry == null:
+		missing.append("texture %s (referenced by %s) not found in archive" % [tex_path, bmt_path])
+		return {}
+	var parsed_tex := DdjReader.parse(archive.read_file(tex_entry))
+	if parsed_tex == null:
+		return {}
+	var image := DdjReader.to_image(parsed_tex)
+	if image == null or image.is_empty():
+		return {}
+	return {"image": image, "four_cc": parsed_tex.four_cc, "alpha": {}}
+
+## One alpha statistic of a decoded texture -- `binary_cutout`
+## (_alpha_is_binary_cutout), `variance` (_has_real_alpha_variance) or
+## `fraction` (_real_alpha_fraction) -- measured on its decoded Image once
+## and remembered in `decoded["alpha"]`, which commit_textures carries into
+## the texture cache, so a texture is measured once per world. Until round
+## 566 each probe read the uploaded texture back (`Texture2D.get_image()`,
+## RenderingServer.texture_2d_get: a readback from the GPU on the GL
+## renderer) on every material that consulted it, which a WorkerThreadPool
+## task may not do and which the decoded Image makes unnecessary: the probes
+## scan the texels that Image was uploaded from. A texture the cache already
+## holds but whose statistic was never measured is read and decoded again
+## from the archive for it (the layer flag decides almost every real layer,
+## LAYER_FLAG_MASK, so this is rare), and an undecodable one measures as
+## the probes' own "no" (false, 0.0).
+##
+## SRREVAMP_QA_ALPHA_LOG=1 logs every consult -- `QA ALPHA: <file> (<fourCC>)
+## <stat> <value> -- from the decoded Image | from a statistic measured
+## earlier` -- the benchmark's count of alpha probes in the load path, all
+## of them on Images (client/tools/README.md, "Load benchmark").
+static func _alpha_stat(decoded: Dictionary, stat: String, archive: Pk2Reader, tex_path: String, bmt_path: String, prepared: Dictionary) -> Variant:
+	var alpha: Dictionary = decoded["alpha"]
+	var source := "a statistic measured earlier"
+	if not alpha.has(stat):
+		var image: Image = decoded["image"]
+		if image == null:
+			var again := _decode_texture(archive, tex_path, bmt_path, [])
+			if not again.is_empty():
+				image = again["image"]
+				decoded["image"] = image
+		match stat:
+			"binary_cutout":
+				alpha[stat] = _alpha_is_binary_cutout(image)
+			"variance":
+				alpha[stat] = _has_real_alpha_variance(image)
+			_:
+				alpha[stat] = _real_alpha_fraction(image)
+		source = "the decoded Image"
+	if OS.get_environment("SRREVAMP_QA_ALPHA_LOG") != "":
+		var value = alpha[stat]
+		(prepared["log"] as Array).append("QA ALPHA: %s (%s) %s %s -- from %s" % [
+			tex_path.get_file(), decoded["four_cc"] if decoded["four_cc"] != "" else "uncompressed", stat,
+			("%.4f" % value) if value is float else str(value), source])
+	return alpha[stat]
 
 ## Bit 0 of a real .bmt layer's own flag word: **this layer is an alpha
 ## layer**, i.e. its texture's alpha is a cutout mask to be honoured rather
@@ -529,13 +814,14 @@ const _QA_MATS_REPORT_MIN_ALPHA_FRACTION := 0.20
 ## cutout is recognised by having a real share of *fully* transparent
 ## texels **and** essentially no partial ones, which admits the weed and
 ## rejects both the blade and the shield by wide margins.
-static func _alpha_is_binary_cutout(texture: Texture2D) -> bool:
-	if texture == null:
+##
+## Measured on the decoded Image since round 566 (_alpha_stat), not on a
+## `Texture2D.get_image()` readback of the uploaded texture; a copy is
+## decompressed, so the Image the texture is uploaded from stays as it was.
+static func _alpha_is_binary_cutout(source: Image) -> bool:
+	if source == null:
 		return false
-	var image := texture.get_image()
-	if image == null:
-		return false
-	image = image.duplicate()
+	var image := source.duplicate() as Image
 	if image.is_compressed() and image.decompress() != OK:
 		return false
 	if image.get_format() != Image.FORMAT_RGBA8:
@@ -588,13 +874,15 @@ const _UNCOMPRESSED_CUTOUT_MIN_OPAQUE := 0.01
 ## (_ALPHA_FOURCCS) isn't a reliable signal that a real texture actually
 ## needs cutout transparency. 250/255 (not a stricter 255) as the opaque
 ## threshold tolerates real DXT compression's own lossy rounding on a
-## genuinely fully-opaque real source image.
-static func _has_real_alpha_variance(tex: Texture2D) -> bool:
-	var image := tex.get_image()
+## genuinely fully-opaque real source image. The decoded Image since round
+## 566 (see _alpha_is_binary_cutout); only a compressed one is copied, to
+## decompress, as before.
+static func _has_real_alpha_variance(source: Image) -> bool:
+	var image := source
 	if image == null:
 		return false
 	if image.is_compressed():
-		image = image.duplicate()
+		image = image.duplicate() as Image
 		if image.decompress() != OK:
 			return false
 	var data := image.get_data()
@@ -625,13 +913,11 @@ static func _has_real_alpha_variance(tex: Texture2D) -> bool:
 ## real DXT block-compression rounding), just counted rather than
 ## short-circuited on the first hit. Returns 0.0 for a texture that can't be
 ## decoded, so an undecodable real texture is never treated as a cutout.
-static func _real_alpha_fraction(texture: Texture2D) -> float:
-	if texture == null:
+## The decoded Image since round 566 (see _alpha_is_binary_cutout).
+static func _real_alpha_fraction(source: Image) -> float:
+	if source == null:
 		return 0.0
-	var image := texture.get_image()
-	if image == null:
-		return 0.0
-	image = image.duplicate()
+	var image := source.duplicate() as Image
 	image.decompress()
 	if image.get_format() != Image.FORMAT_RGBA8:
 		return 0.0

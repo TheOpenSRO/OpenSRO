@@ -510,6 +510,522 @@ func _distinct_albedo_textures(objects: Array) -> int:
 				seen[tex.get_instance_id()] = true
 	return seen.size()
 
+## --- Round 566: the prepare/commit split and the alpha probes on the Image --
+##
+## ObjectLoader.load_object is `commit_object(prepare_object(...))` since
+## round 566: the prepare (plain data, safe on a WorkerThreadPool task) and
+## the commit (the ArrayMesh, textures, materials, shape and nodes, main
+## thread). The new API is reached through load() and call(), so on a tree
+## without the split this suite FAILS rather than failing to parse, and its
+## load_object checks still run: they are what the old one-piece loader --
+## whose alpha probes read the uploaded texture back -- was measured
+## against. Held to account:
+## - the node tree, surface counts, collision faces and materials of every
+##   synthetic object, through load_object and through commit(prepare) --
+##   both against fingerprints MEASURED on the pre-split loader (BASE
+##   f8704c4, 2026-09-25, this suite's own `fingerprint` lines);
+## - the prepare on a task holds no Node and no Resource but Image;
+## - each piece's prepared faces are the uploaded mesh's
+##   `create_trimesh_shape().get_faces()`, element for element, with
+##   off-grid corners (the 0.0001 snap) and a degenerate triangle (kept);
+## - THE ALPHA RULE ON THE IMAGE (the NEGATIVE): layers whose flag word
+##   leaves the decision to the pixels (no bit 6, LAYER_FLAG_MASK) -- an
+##   uncompressed texture with binary alpha is a cutout and one with graded
+##   alpha is not, a DXT1 texture all punched out is a cutout and an opaque
+##   one is not. The readback path met these; an implementation that skips
+##   the Image fails them;
+## - the texture cache carries the measured statistics, so a texture the
+##   world holds is neither decoded nor measured again, and one whose
+##   statistic is missing is decoded for it; SRREVAMP_QA_ALPHA_LOG says
+##   which.
+
+## The pre-split loader's fingerprints (BASE f8704c4's load_object on the
+## render box, 2026-09-25).
+const EXPECTED_FINGERPRINTS := {
+	"testobj": "0:Node3D:TestObj | 1:MeshInstance3D:wall01 surfaces=1 [v=3 i=3 isum=3 psum=1.0000,0.0000,1.0000] mat=Shader(layer0,shader=true,tex=4x4,scissor=0.5,albedo=(0.588, 0.588, 0.588, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=1.0000,0.0000,1.0000 backface=false | 1:MeshInstance3D:wall02 surfaces=1 [v=3 i=3 isum=3 psum=1.0000,0.0000,1.0000] mat=Shader(layer0,shader=true,tex=4x4,scissor=0.5,albedo=(0.588, 0.588, 0.588, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=1.0000,0.0000,1.0000 backface=false",
+	"namematch": "0:Node3D:NameMatchObj | 1:MeshInstance3D:pieceA surfaces=1 [v=3 i=3 isum=3 psum=1.0000,0.0000,1.0000] mat=Standard(piece_a,tex=null,albedo=(1, 1, 1, 1),transparency=0,cull=0) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=1.0000,0.0000,1.0000 backface=false | 1:MeshInstance3D:pieceB surfaces=1 [v=3 i=3 isum=3 psum=1.0000,0.0000,1.0000] mat=Standard(piece_b,tex=null,albedo=(1, 1, 1, 1),transparency=0,cull=0) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=1.0000,0.0000,1.0000 backface=false",
+	"compound": "0:Node3D:TestCompound | 1:Node3D:TestCompoundPiece | 2:MeshInstance3D:simple surfaces=1 [v=3 i=3 isum=3 psum=1.0000,0.0000,1.0000] mat=null | 3:StaticBody3D:@ | 4:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=1.0000,0.0000,1.0000 backface=false",
+	"alphaobj": "0:Node3D:AlphaObj | 1:MeshInstance3D:bin surfaces=1 [v=3 i=6 isum=4 psum=0.5468,5.4445,1.2655] mat=Shader(bin,shader=true,tex=4x4,scissor=0.5,albedo=(1, 1, 1, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=6 fsum=3.9354,7.4444,5.0309 backface=false | 1:MeshInstance3D:graded surfaces=1 [v=3 i=3 isum=3 psum=0.5468,5.4445,1.2655] mat=Standard(graded,tex=4x4,albedo=(1, 1, 1, 1),transparency=0,cull=0) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=0.5468,5.4444,1.2655 backface=false | 1:MeshInstance3D:dxt1cut surfaces=1 [v=3 i=3 isum=3 psum=0.5468,5.4445,1.2655] mat=Shader(dxt1cut,shader=true,tex=4x4,scissor=0.5,albedo=(1, 1, 1, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=0.5468,5.4444,1.2655 backface=false | 1:MeshInstance3D:dxt1solid surfaces=1 [v=3 i=3 isum=3 psum=0.5468,5.4445,1.2655] mat=Standard(dxt1solid,tex=4x4,albedo=(1, 1, 1, 1),transparency=0,cull=0) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=0.5468,5.4444,1.2655 backface=false",
+}
+
+## The four alpha layers of the r566 archive, by piece: whether the rule
+## makes it a cutout.
+const ALPHA_EXPECTED := {"bin": true, "graded": false, "dxt1cut": true, "dxt1solid": false}
+
+func _test_round_566() -> void:
+	var OL = load("res://scripts/assets/object_loader.gd")
+	var names := {}
+	for m in (OL as GDScript).get_script_method_list():
+		names[m["name"]] = true
+	var split_present := true
+	for needed in ["prepare_object", "commit_object", "snapshot_textures", "commit_textures"]:
+		if not names.has(needed):
+			split_present = false
+		_check(names.has(needed), "ObjectLoader has %s (absent before round 566)" % needed)
+
+	var archives := {
+		"main": ["user://srrevamp_r566_objloader_main.pk2", "_build_archive", "prim/testobj.bsr", "testobj"],
+		"namematch": ["user://srrevamp_r566_objloader_nm.pk2", "_build_name_match_archive", "nameMatchObj.bsr", "namematch"],
+		"cpd": ["user://srrevamp_r566_objloader_cpd.pk2", "_build_cpd_archive", "testcompound.cpd", "compound"],
+		"alpha": ["user://srrevamp_r566_objloader_alpha.pk2", "_build_r566_archive", "alphaobj.bsr", "alphaobj"],
+	}
+	for which in archives:
+		var spec: Array = archives[which]
+		call(spec[1], spec[0])
+		var archive := Pk2Reader.open(spec[0])
+		_check(archive != null, "r566: opens the %s archive" % which)
+		if archive == null:
+			continue
+		var fp_name: String = spec[3]
+		var loaded := ObjectLoader.load_object(archive, spec[2])
+		var fp_loaded := _fingerprint(loaded) if loaded != null else "null"
+		print("fingerprint %s: %s" % [fp_name, fp_loaded])
+		var expected: String = EXPECTED_FINGERPRINTS[fp_name]
+		_check(fp_loaded == expected, "load_object builds %s exactly as the pre-split loader did" % fp_name)
+		if split_present:
+			var prepared: Dictionary = OL.prepare_object(archive, spec[2])
+			var committed: Node3D = OL.commit_object(prepared)
+			var fp_split := _fingerprint(committed) if committed != null else "null"
+			_check(fp_split == expected, "commit_object(prepare_object()) builds %s exactly as the pre-split loader did" % fp_name)
+			if fp_split != expected:
+				print("  got  %s" % fp_split)
+			_check_faces(prepared, fp_name)
+			if committed != null:
+				committed.free()
+		if loaded != null:
+			if which == "alpha":
+				_check_alpha_classes(loaded, "load_object")
+			loaded.free()
+		if which == "alpha" and split_present:
+			_test_alpha_on_the_image(OL, archive)
+			_test_prepare_on_a_task(OL, archive, spec[2])
+		archive.close()
+		DirAccess.remove_absolute(spec[0])
+
+## The four alpha pieces' materials: a cutout is the foliage ShaderMaterial,
+## anything else a StandardMaterial3D -- each textured.
+func _check_alpha_classes(root: Node, via: String) -> void:
+	for piece in ALPHA_EXPECTED:
+		var mi := root.get_node_or_null(piece) as MeshInstance3D
+		_check(mi != null, "%s: the %s piece is there" % [via, piece])
+		if mi == null:
+			continue
+		var cutout: bool = ALPHA_EXPECTED[piece]
+		var mat := mi.material_override
+		if cutout:
+			_check(mat is ShaderMaterial and (mat as ShaderMaterial).get_shader_parameter("albedo_texture") != null,
+				"%s: %s.ddj's alpha makes %s a cutout (got %s)" % [via, piece, piece, mat])
+		else:
+			_check(mat is StandardMaterial3D and (mat as StandardMaterial3D).albedo_texture != null,
+				"%s: %s.ddj's alpha leaves %s solid (got %s)" % [via, piece, piece, mat])
+
+## Each prepared piece's faces against the trimesh the engine builds from
+## the same arrays once uploaded -- the readback they replace.
+func _check_faces(prepared: Dictionary, what: String) -> void:
+	var pieces: Array = []
+	_collect_pieces(prepared.get("root"), pieces)
+	var compared := 0
+	for piece in pieces:
+		var mesh := ArrayMesh.new()
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, piece["arrays"])
+		var shape := mesh.create_trimesh_shape()
+		var engine_faces: PackedVector3Array = shape.get_faces() if shape != null else PackedVector3Array()
+		var ours: PackedVector3Array = piece["faces"] if piece["faces"] != null else PackedVector3Array()
+		_check(piece["faces"] != null and ours == engine_faces,
+			"%s piece %s: the prepared faces are create_trimesh_shape()'s, element for element (%d vs %d corners)" % [
+				what, piece["name"], ours.size(), engine_faces.size()])
+		compared += 1
+	_check(compared > 0, "%s: %d piece(s) compared" % [what, compared])
+
+func _collect_pieces(node, out: Array) -> void:
+	if node == null:
+		return
+	if node["kind"] == "cpd":
+		for child in node["children"]:
+			_collect_pieces(child, out)
+	else:
+		out.append_array(node["pieces"])
+
+## The rule, on the prepare's own data: the plan's classification per
+## piece, the statistic measured on the decoded Image, the cache carrying
+## it, and the QA line saying where each came from.
+func _test_alpha_on_the_image(OL, archive: Pk2Reader) -> void:
+	OS.set_environment("SRREVAMP_QA_ALPHA_LOG", "1")
+	var prepared: Dictionary = OL.prepare_object(archive, "alphaobj.bsr")
+	var plans := {}
+	var pieces: Array = []
+	_collect_pieces(prepared["root"], pieces)
+	for piece in pieces:
+		plans[piece["name"]] = piece["material"]
+	for piece in ALPHA_EXPECTED:
+		var plan = plans.get(piece)
+		_check(plan != null and plan["cutout"] == ALPHA_EXPECTED[piece] and plan["texture_key"] == piece + ".ddj",
+			"prepare: %s's plan is cutout=%s on %s.ddj (got %s)" % [piece, ALPHA_EXPECTED[piece], piece, plan])
+	var textures: Dictionary = prepared["textures"]
+	_check(textures.size() == 4, "prepare: the four textures decoded once each (got %d)" % textures.size())
+	for key in textures:
+		_check(textures[key]["image"] is Image, "prepare: %s decoded to an Image" % key)
+	_check(textures.get("bin.ddj", {}).get("alpha", {}) == {"binary_cutout": true}
+			and textures.get("graded.ddj", {}).get("alpha", {}) == {"binary_cutout": false},
+		"the uncompressed textures measured by the binary-cutout rule (got %s / %s)" % [
+			textures.get("bin.ddj", {}).get("alpha"), textures.get("graded.ddj", {}).get("alpha")])
+	_check(is_equal_approx(float(textures.get("dxt1cut.ddj", {}).get("alpha", {}).get("fraction", -1.0)), 1.0)
+			and is_equal_approx(float(textures.get("dxt1solid.ddj", {}).get("alpha", {}).get("fraction", -1.0)), 0.0),
+		"the DXT1 textures measured by their below-opaque fraction, 1.0 and 0.0 (got %s / %s)" % [
+			textures.get("dxt1cut.ddj", {}).get("alpha"), textures.get("dxt1solid.ddj", {}).get("alpha")])
+	var log_text := "\n".join(PackedStringArray(prepared["log"]))
+	_check(log_text.contains("QA ALPHA: bin.ddj (uncompressed) binary_cutout true -- from the decoded Image")
+			and log_text.contains("QA ALPHA: dxt1cut.ddj (DXT1) fraction 1.0000 -- from the decoded Image"),
+		"SRREVAMP_QA_ALPHA_LOG: each probe says it measured the decoded Image (log: %s)" % log_text)
+
+	# Committed into a cache, the statistics travel with the textures; a
+	# second prepare over the snapshot decodes nothing and measures nothing,
+	# and classifies the same.
+	var cache := {}
+	var first: Node3D = OL.commit_object(prepared, cache)
+	_check(first != null and cache.size() == 4 and cache["bin.ddj"]["alpha"] == {"binary_cutout": true}
+			and cache["bin.ddj"]["texture"] is ImageTexture,
+		"the cache holds each texture with the statistic measured on its Image")
+	if first != null:
+		_check_alpha_classes(first, "commit_object")
+		first.free()
+	var snapshot: Dictionary = OL.snapshot_textures(cache)
+	_check(_forbidden(snapshot).is_empty() and snapshot["bin.ddj"] == {"four_cc": "", "alpha": {"binary_cutout": true}},
+		"the snapshot names each texture by fourCC and statistics, never the texture (got %s)" % str(snapshot.get("bin.ddj")))
+	var again: Dictionary = OL.prepare_object(archive, "alphaobj.bsr", snapshot)
+	var decoded_again := 0
+	for key in again["textures"]:
+		if again["textures"][key]["image"] != null:
+			decoded_again += 1
+	_check(decoded_again == 0, "a texture the cache holds is not decoded again (%d were)" % decoded_again)
+	var again_log := "\n".join(PackedStringArray(again["log"]))
+	_check(again_log.contains("QA ALPHA: bin.ddj (uncompressed) binary_cutout true -- from a statistic measured earlier")
+			and not again_log.contains("from the decoded Image"),
+		"... nor measured again (log: %s)" % again_log)
+	var second: Node3D = OL.commit_object(again, cache)
+	if second != null:
+		_check_alpha_classes(second, "commit over the snapshot")
+		second.free()
+
+	# A statistic the snapshot lacks is measured from the file again -- never
+	# from a readback of the cached texture.
+	var partial: Dictionary = OL.snapshot_textures(cache)
+	partial["graded.ddj"]["alpha"] = {}
+	var third: Dictionary = OL.prepare_object(archive, "alphaobj.bsr", partial)
+	_check(third["textures"]["graded.ddj"]["image"] is Image
+			and third["textures"]["graded.ddj"]["alpha"] == {"binary_cutout": false},
+		"a cached texture missing its statistic is decoded and measured for it")
+	OS.set_environment("SRREVAMP_QA_ALPHA_LOG", "")
+
+	# build_godot_material (SkinnedBsrAssembler's path) takes the same rule.
+	var bmt_entry := ObjectLoader.find_file(archive, "alpha.bmt")
+	var material := BmtReader.parse(archive.read_file(bmt_entry)) if bmt_entry != null else null
+	_check(material != null and material.layers.size() == 4, "the r566 material parses, four layers")
+	if material != null:
+		for layer in material.layers:
+			var mat: Material = ObjectLoader.build_godot_material(archive, "alpha.bmt", layer)
+			_check((mat is ShaderMaterial) == ALPHA_EXPECTED[layer.layer_name],
+				"build_godot_material: %s is %s (got %s)" % [layer.layer_name,
+					"a cutout" if ALPHA_EXPECTED[layer.layer_name] else "solid", mat])
+
+## The prepare on a WorkerThreadPool task, the way World3D's cell task runs
+## it: it finishes, holds no Node and no Resource but Image, and commits to
+## the same tree as the main thread's.
+func _test_prepare_on_a_task(OL, archive: Pk2Reader, path: String) -> void:
+	var out := {}
+	var task := WorkerThreadPool.add_task(func(): out["prepared"] = OL.prepare_object(archive, path, {}, {}), true, "r566 object prepare test")
+	WorkerThreadPool.wait_for_task_completion(task)
+	_check(out.has("prepared") and out["prepared"]["root"] != null, "the prepare ran to the end on a task")
+	if not out.has("prepared"):
+		return
+	var bad := _forbidden(out["prepared"])
+	_check(bad.is_empty(), "the task's result holds no Node and no Resource but Image (found %s)" % str(bad))
+	var committed: Node3D = OL.commit_object(out["prepared"])
+	_check(committed != null and _fingerprint(committed) == EXPECTED_FINGERPRINTS["alphaobj"],
+		"the task-prepared object commits to the pre-split loader's tree")
+	_test_the_walk_sees_what_it_forbids(out["prepared"], committed)
+	if committed != null:
+		committed.free()
+
+## The walk's positive control (round 566's second review: every call above
+## expects it to find nothing, so it must be shown to find something). A
+## deep copy of the task's prepared object with forbidden things planted
+## where a prepare could leave them -- a texture inside a piece, the
+## committed Node, a mesh behind a RefCounted's script variable (the path the
+## walk takes into the readers' structs) -- must be reported, each by its
+## path, and an Image planted beside them must not.
+func _test_the_walk_sees_what_it_forbids(prepared: Dictionary, committed: Node3D) -> void:
+	var planted: Dictionary = prepared.duplicate(true)
+	var pieces: Array = (planted["root"] as Dictionary).get("pieces", [])
+	if pieces.is_empty() or committed == null:
+		_check(false, "the walk's control has a prepared piece and a committed node to plant")
+		return
+	(pieces[0] as Dictionary)["planted"] = ImageTexture.new()
+	planted["node"] = committed
+	var holder_script := GDScript.new()
+	holder_script.source_code = "extends RefCounted\nvar held\n"
+	holder_script.reload()
+	var holder = holder_script.new()
+	holder.held = ArrayMesh.new()
+	planted["holder"] = holder
+	planted["image"] = Image.create(1, 1, false, Image.FORMAT_RGBA8)
+	var found := _forbidden(planted)
+	found.sort()
+	_check(found == ["prepared.holder.held: ArrayMesh", "prepared.node: Node3D", "prepared.root.pieces[0].planted: ImageTexture"],
+		"the walk finds a texture in a piece, the committed Node and a mesh behind a script variable -- and passes the Image (got %s)" % str(found))
+
+## A test-local object tree fingerprint: per node its depth, class and name
+## (an engine-generated `@Class@n` name as `@`), per mesh its surfaces'
+## vertex/index counts and sums, per material its kind, name, texture size,
+## albedo and cutout settings, per shape its class and faces' count and sum.
+func _fingerprint(node: Node) -> String:
+	var parts := PackedStringArray()
+	_fp(node, 0, parts)
+	return " | ".join(parts)
+
+func _fp(node: Node, depth: int, parts: PackedStringArray) -> void:
+	var node_name := String(node.name)
+	var s := "%d:%s:%s" % [depth, node.get_class(), "@" if node_name.begins_with("@") else node_name]
+	if node is MeshInstance3D:
+		var mesh := (node as MeshInstance3D).mesh
+		s += " surfaces=%d" % (mesh.get_surface_count() if mesh != null else -1)
+		if mesh != null:
+			for i in range(mesh.get_surface_count()):
+				var arrays := mesh.surface_get_arrays(i)
+				var positions: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+				var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+				var psum := Vector3.ZERO
+				for p in positions:
+					psum += p
+				var isum := 0
+				for k in indices:
+					isum += k
+				s += " [v=%d i=%d isum=%d psum=%.4f,%.4f,%.4f]" % [positions.size(), indices.size(), isum, psum.x, psum.y, psum.z]
+		s += " mat=" + _mat_fp((node as MeshInstance3D).material_override)
+	elif node is CollisionShape3D:
+		var shape := (node as CollisionShape3D).shape
+		if shape == null:
+			s += " shape=null"
+		elif shape is ConcavePolygonShape3D:
+			var faces := (shape as ConcavePolygonShape3D).get_faces()
+			var fsum := Vector3.ZERO
+			for f in faces:
+				fsum += f
+			s += " shape=ConcavePolygonShape3D faces=%d fsum=%.4f,%.4f,%.4f backface=%s" % [
+				faces.size(), fsum.x, fsum.y, fsum.z, (shape as ConcavePolygonShape3D).backface_collision]
+		else:
+			s += " shape=" + shape.get_class()
+	parts.append(s)
+	for child in node.get_children():
+		_fp(child, depth + 1, parts)
+
+func _mat_fp(mat: Material) -> String:
+	if mat == null:
+		return "null"
+	if mat is ShaderMaterial:
+		var sm := mat as ShaderMaterial
+		var tex: Texture2D = sm.get_shader_parameter("albedo_texture")
+		return "Shader(%s,shader=%s,tex=%s,scissor=%s,albedo=%s)" % [sm.resource_name, sm.shader == ObjectLoader.FOLIAGE_SHADER,
+			"%dx%d" % [tex.get_width(), tex.get_height()] if tex != null else "null",
+			sm.get_shader_parameter("alpha_scissor"), sm.get_shader_parameter("albedo")]
+	if mat is StandardMaterial3D:
+		var std := mat as StandardMaterial3D
+		var tex := std.albedo_texture
+		return "Standard(%s,tex=%s,albedo=%s,transparency=%d,cull=%d)" % [std.resource_name,
+			"%dx%d" % [tex.get_width(), tex.get_height()] if tex != null else "null",
+			std.albedo_color, std.transparency, std.cull_mode]
+	return mat.get_class()
+
+## Every Object reachable from `v` that is a Node, or a Resource other than
+## an Image -- what the prepare-thread rule forbids (terrain_prepare_test's
+## walk, same rules).
+func _forbidden(v: Variant) -> Array:
+	var out: Array = []
+	_walk(v, {}, "prepared", out)
+	return out
+
+func _walk(v: Variant, seen: Dictionary, path: String, out: Array) -> void:
+	match typeof(v):
+		TYPE_ARRAY:
+			var a: Array = v
+			for i in range(a.size()):
+				_walk(a[i], seen, "%s[%d]" % [path, i], out)
+		TYPE_DICTIONARY:
+			var d: Dictionary = v
+			for k in d:
+				_walk(k, seen, "%s{key}" % path, out)
+				_walk(d[k], seen, "%s.%s" % [path, str(k)], out)
+		TYPE_OBJECT:
+			if v == null or not is_instance_valid(v):
+				return
+			var o: Object = v
+			if seen.has(o.get_instance_id()):
+				return
+			seen[o.get_instance_id()] = true
+			if o is Node or (o is Resource and not o is Image):
+				out.append("%s: %s" % [path, o.get_class()])
+				return
+			for prop in o.get_property_list():
+				if int(prop["usage"]) & PROPERTY_USAGE_SCRIPT_VARIABLE:
+					_walk(o.get(prop["name"]), seen, "%s.%s" % [path, prop["name"]], out)
+
+## The r566 archive, root-level only: `alphaobj.bsr` with four pieces whose
+## material names are the four layers of an uncompressed `alpha.bmt` with a
+## zero flag word (so the pixels decide, LAYER_FLAG_MASK), each layer's
+## texture `<name>.ddj`: `bin` uncompressed 32-bit BGRA with half its texels
+## at alpha 0 and half at 255, `graded` all at 128, `dxt1cut` one DXT1 block
+## in the three-colour mode with every index 3 (transparent), `dxt1solid`
+## one opaque four-colour block. The pieces' corners are off the 0.0001 grid
+## and `bin` carries a degenerate triangle. Synthetic, never game data.
+func _build_r566_archive(path: String) -> void:
+	var corners := [Vector3(0.123456, 1.000049, 2.5), Vector3(3.141593, 0.0, -1.23456), Vector3(-2.71828, 4.44444, 0.00005)]
+	var files := {}
+	files["alphaobj.bsr"] = _build_bsr("AlphaObj", "bin.bms", "alpha.bmt", ["graded.bms", "dxt1cut.bms", "dxt1solid.bms"])
+	files["bin.bms"] = _build_bms_tris("bin", "bin", corners, [[0, 1, 2], [0, 0, 1]])
+	files["graded.bms"] = _build_bms_tris("graded", "graded", corners, [[0, 2, 1]])
+	files["dxt1cut.bms"] = _build_bms_tris("dxt1cut", "dxt1cut", corners, [[1, 2, 0]])
+	files["dxt1solid.bms"] = _build_bms_tris("dxt1solid", "dxt1solid", corners, [[2, 1, 0]])
+	files["alpha.bmt"] = _build_uncompressed_bmt(["bin", "graded", "dxt1cut", "dxt1solid"])
+	var binary := PackedByteArray()
+	var graded := PackedByteArray()
+	for i in range(16):
+		binary.append(0 if i % 2 == 0 else 255)
+		graded.append(128)
+	files["bin.ddj"] = _build_bgra_ddj(4, 4, binary)
+	files["graded.ddj"] = _build_bgra_ddj(4, 4, graded)
+	files["dxt1cut.ddj"] = _build_dxt1_ddj(PackedByteArray([0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]))
+	files["dxt1solid.ddj"] = _build_dxt1_ddj(PackedByteArray([0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]))
+	_write_flat_pk2(path, files)
+
+## A `.bms` with the given corners and triangles (index triples), the
+## layout _build_bms writes.
+func _build_bms_tris(mesh_name: String, material_name: String, corners: Array, tris: Array) -> PackedByteArray:
+	var buf := PackedByteArray()
+	buf.resize(BmsReader.PREAMBLE_END)
+	var magic := BmsReader.MAGIC.to_ascii_buffer()
+	for i in range(magic.size()):
+		buf[i] = magic[i]
+	buf = _append_len_prefixed(buf, mesh_name)
+	buf = _append_len_prefixed(buf, material_name)
+	var counts := PackedByteArray()
+	counts.resize(8)
+	_put_u32(counts, 0, 1)
+	_put_u32(counts, 4, corners.size())
+	buf.append_array(counts)
+	for corner in corners:
+		var rec := PackedByteArray()
+		rec.resize(44)
+		_put_f32(rec, 0x00, corner.x)
+		_put_f32(rec, 0x04, corner.y)
+		_put_f32(rec, 0x08, corner.z)
+		_put_f32(rec, 0x10, 1.0) # normal.y
+		buf.append_array(rec)
+	var index_off := buf.size()
+	_put_u32(buf, BmsReader.HEADER_PTRS_BASE + 1 * 4, index_off)
+	var idx := PackedByteArray()
+	idx.resize(4 + tris.size() * 6)
+	_put_u32(idx, 0, tris.size())
+	for t in range(tris.size()):
+		for c in range(3):
+			idx[4 + t * 6 + c * 2] = tris[t][c]
+	buf.append_array(idx)
+	return buf
+
+## An uncompressed 32-bit `.ddj` with the standard BGRA masks declared
+## (DDJ_FORMAT.md; DdjReader decodes by the masks), colour fixed, alpha per
+## texel from `alphas`.
+func _build_bgra_ddj(width: int, height: int, alphas: PackedByteArray) -> PackedByteArray:
+	var dds := PackedByteArray()
+	dds.resize(4 + DdjReader.DDS_HEADER_SIZE + width * height * 4)
+	var magic_bytes := "DDS ".to_ascii_buffer()
+	for i in range(4):
+		dds[i] = magic_bytes[i]
+	_put_u32(dds, 4, DdjReader.DDS_HEADER_SIZE)
+	_put_u32(dds, 4 + 8, height)
+	_put_u32(dds, 4 + 12, width)
+	_put_u32(dds, 4 + 24, 1)
+	var pf_off := 4 + 72
+	_put_u32(dds, pf_off, 32)
+	_put_u32(dds, pf_off + 4, DdjReader.DDPF_RGB | DdjReader.DDPF_ALPHAPIXELS)
+	_put_u32(dds, pf_off + 12, 32)
+	_put_u32(dds, pf_off + 16, 0x00ff0000)
+	_put_u32(dds, pf_off + 20, 0x0000ff00)
+	_put_u32(dds, pf_off + 24, 0x000000ff)
+	_put_u32(dds, pf_off + 28, 0xff000000)
+	var px := 4 + DdjReader.DDS_HEADER_SIZE
+	for i in range(width * height):
+		dds[px + i * 4] = 0x40
+		dds[px + i * 4 + 1] = 0x80
+		dds[px + i * 4 + 2] = 0xc0
+		dds[px + i * 4 + 3] = alphas[i]
+	return _wrap_ddj(dds, 3)
+
+## A 4x4 DXT1 `.ddj` holding the one 8-byte block given.
+func _build_dxt1_ddj(block: PackedByteArray) -> PackedByteArray:
+	var dds := PackedByteArray()
+	dds.resize(4 + DdjReader.DDS_HEADER_SIZE)
+	var magic_bytes := "DDS ".to_ascii_buffer()
+	for i in range(4):
+		dds[i] = magic_bytes[i]
+	_put_u32(dds, 4, DdjReader.DDS_HEADER_SIZE)
+	_put_u32(dds, 4 + 8, 4)
+	_put_u32(dds, 4 + 12, 4)
+	_put_u32(dds, 4 + 24, 1)
+	var pf_off := 4 + 72
+	_put_u32(dds, pf_off, 32)
+	_put_u32(dds, pf_off + 4, DdjReader.DDPF_FOURCC)
+	var cc := "DXT1".to_ascii_buffer()
+	for i in range(4):
+		dds[pf_off + 8 + i] = cc[i]
+	dds.append_array(block)
+	return _wrap_ddj(dds, 1)
+
+func _wrap_ddj(dds: PackedByteArray, kind: int) -> PackedByteArray:
+	var buf := PackedByteArray()
+	buf.resize(DdjReader.WRAPPER_SIZE + dds.size())
+	var magic := DdjReader.MAGIC.to_ascii_buffer()
+	for i in range(magic.size()):
+		buf[i] = magic[i]
+	_put_u32(buf, 0x0c, buf.size() - DdjReader.MAGIC_LEN)
+	_put_u32(buf, 0x10, kind)
+	for i in range(dds.size()):
+		buf[DdjReader.WRAPPER_SIZE + i] = dds[i]
+	return buf
+
+## A root-level-only synthetic pk2 (at most 19 files, one block).
+func _write_flat_pk2(path: String, files: Dictionary) -> void:
+	var header := PackedByteArray()
+	header.resize(Pk2Reader.HEADER_SIZE)
+	var magic := "JoyMax File Manager!".to_ascii_buffer()
+	for i in range(magic.size()):
+		header[i] = magic[i]
+	var root_off := Pk2Reader.HEADER_SIZE
+	var data_off := root_off + Pk2Reader.BLOCK_SIZE
+	var block := PackedByteArray()
+	block.resize(Pk2Reader.BLOCK_SIZE)
+	_write_block_entry(block, 0, Pk2Reader.ENTRY_TYPE_FOLDER, ".", root_off, 0)
+	var data := PackedByteArray()
+	var slot := 1
+	for name in files:
+		var bytes: PackedByteArray = files[name]
+		_write_block_entry(block, slot, Pk2Reader.ENTRY_TYPE_FILE, name, data_off + data.size(), bytes.size())
+		data.append_array(bytes)
+		slot += 1
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_buffer(header)
+	f.store_buffer(block)
+	f.store_buffer(data)
+	f.close()
+
+func _write_block_entry(block: PackedByteArray, i: int, entry_type: int, name: String, offset: int, size: int) -> void:
+	var base := i * Pk2Reader.ENTRY_SIZE
+	block[base] = entry_type
+	var nb := name.to_ascii_buffer()
+	for j in range(nb.size()):
+		block[base + Pk2Reader.ENTRY_OFF_NAME + j] = nb[j]
+	_put_u32(block, base + Pk2Reader.ENTRY_OFF_POSITION, offset)
+	_put_u32(block, base + Pk2Reader.ENTRY_OFF_SIZE, size)
+
 func _init() -> void:
 	var path := "user://srrevamp_objloader_test.pk2"
 	_build_archive(path)
@@ -662,6 +1178,8 @@ func _init() -> void:
 			compound_obj.free()
 		cpd_archive.close()
 	DirAccess.remove_absolute(cpd_path)
+
+	_test_round_566()
 
 	if _failures == 0:
 		print("ALL PASS")

@@ -559,8 +559,17 @@ static func parse_collision(data: PackedByteArray) -> CollisionMesh:
 
 	return cm
 
-## Builds a renderable Godot ArrayMesh from a parsed Mesh.
+## Builds a renderable Godot ArrayMesh from a parsed Mesh: to_arrays, then
+## mesh_from_arrays.
 static func to_array_mesh(mesh: ParsedMesh) -> ArrayMesh:
+	return mesh_from_arrays(to_arrays(mesh))
+
+## The one surface to_array_mesh uploads, as the Mesh.ARRAY_MAX-sized arrays
+## `ArrayMesh.add_surface_from_arrays` takes (round 566). Plain data -- packed
+## arrays in an Array, no Resource -- so ObjectLoader.prepare_object builds it
+## on a WorkerThreadPool task and only mesh_from_arrays runs on the main
+## thread.
+static func to_arrays(mesh: ParsedMesh) -> Array:
 	var positions := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var uvs := PackedVector2Array()
@@ -628,6 +637,11 @@ static func to_array_mesh(mesh: ParsedMesh) -> ArrayMesh:
 		arrays[Mesh.ARRAY_BONES] = bones
 		arrays[Mesh.ARRAY_WEIGHTS] = weights
 
+	return arrays
+
+## The ArrayMesh to_array_mesh has always built, from to_arrays' surface.
+## Owns a RenderingServer RID: main thread only.
+static func mesh_from_arrays(arrays: Array) -> ArrayMesh:
 	var array_mesh := ArrayMesh.new()
 	array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	return array_mesh

@@ -655,6 +655,29 @@ and both timings); the tester's `user://logs/srrevamp.log` from a reconnect — 
 line, any `pk2: could not open`, any `SCRIPT ERROR`, and whether buildings and water were white too
 — decides it. `qa_shot.sh --reconnect <tick|drain>` is the run to re-measure with.
 
+### Loading freezes: what the off-thread rounds left (map/loading epic, 2026-09-25)
+
+Rounds 565-566 prepare a streamed cell's terrain and objects on a `WorkerThreadPool` task and
+commit them on the main thread (`client/tools/README.md`, "Load benchmark", has the benchmark and
+the rules; `docs/RE_COMPLETION.md`, rounds 565 and 566, the measurements).
+
+- [ ] **A zone change or reconnect in the middle of loading blocks the main thread for up to
+      about 0.5 s** (a regression of round 566, measured, not fixed). `World3D._drop_cell_jobs`
+      waits for every cell still preparing before it drops it -- a reconnect frees the world, and
+      a task still running would call into it -- and since round 566 a cell's task prepares its
+      objects after its terrain, so the wait covers both. Round 558's `qa_shot.sh --reconnect
+      drain` run printed `2 cell(s) still preparing dropped (the world left the tree) -- waited
+      497.2 ms for their tasks` on round 566's code (`/var/tmp/r566/drain.log` on the render box)
+      against 18.8 ms on round 565's. Proposed fix: a cancel check between models in
+      `World3D._objects_prepare` (and between the terrain and the objects in `_cell_prepare`) --
+      `_drop_cell_jobs` sets a cancel flag on each job before it waits, and a cancelled prepare
+      returns at the next model boundary, marked so the commit side never sees it. The flag has to
+      be one the main thread may write while the task reads it: which Godot 4.2 primitive gives
+      that (a `Mutex`-guarded value, or a key present from the job's build so the write never
+      reshapes the Dictionary) is to be read from the engine, not assumed. Test: a task over a
+      synthetic job with many models, cancelled mid-prepare, returns before the whole prepare
+      would have; re-measure with the same `--reconnect drain` run.
+
 ## Parked, with the state written down
 
 ### Moat water
