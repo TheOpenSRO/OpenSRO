@@ -18,6 +18,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
+	"github.com/OpenSRO/srrevamp/server/internal/party"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
@@ -45,7 +46,11 @@ import (
 // the hold: the monster chases its attacker to its attack band at its run
 // speed and swings on its own timer, each blow pushed to the zone as an
 // OpMonsterAttacked, and leaves by the engine's exits (battleTick). The
-// synchronous counter in performAttack is then skipped.
+// synchronous counter in performAttack is then skipped. The same flag carries
+// the aggro link (linkAggro, round 553): a party member's first hit on a
+// monster not yet fighting pulls as many of the ten nearest monsters as the
+// party has members within 1000 units of the attacker into BATTLE against
+// the attacker, each engaged by that chase and those swings.
 //
 // With -monster-aggro on as well (SetMonsterAggro, round 552; OFF by
 // default, and cmd/server forces it off unless -monster-battle is in effect
@@ -119,6 +124,11 @@ type MonsterAIConfig struct {
 	// (round 549, markDead); nil leaves nothing to empty. The world hub the
 	// life state lives in is the runtime's own.
 	Potions *PotionQueue
+	// Parties is the party hub the aggro link reads (round 553, linkAggro):
+	// a blow links only for a member of a party. nil links nothing. Read only
+	// with -monster-battle on. cmd/server passes the one hub every handler
+	// shares.
+	Parties *party.Hub
 }
 
 // monsterBattle is cmd/server's -monster-battle (SRREVAMP_MONSTER_BATTLE),
@@ -201,7 +211,10 @@ type monsterAI struct {
 	rng      *rand.Rand
 	monsters *combat.Hub
 	world    *world.Hub
-	push     func(zone string, p *proto.Packet)
+	// parties is the party hub the aggro link reads (MonsterAIConfig.Parties);
+	// nil links nothing.
+	parties *party.Hub
+	push    func(zone string, p *proto.Packet)
 	// strikeDone, when set, is told the monster id of each swing a strike
 	// worker has finished -- landed, dropped or panicked -- once runStrike
 	// has returned. A test's observer (round 550: the two-monster kill test
@@ -364,6 +377,7 @@ func newMonsterAI(hub *world.Hub, monsters *combat.Hub, logger *slog.Logger, cfg
 		rng:        rng,
 		monsters:   monsters,
 		world:      hub,
+		parties:    cfg.Parties,
 		logger:     logger,
 		trace:      cfg.Trace,
 		roamRadius: MonsterRoamRadius,
@@ -523,16 +537,17 @@ func sortedIDs(m map[int64]struckEvent) []int64 {
 }
 
 // onStruck is CAIState::OnAttacked (0x00558ea0) for a blow the tick drains:
-// SetTarget with push 1 (0x0053ffe0, called at 0x558eef), then ChangeState(3)
-// (`lea edi,[ebx+3]` at 0x558f01 into 0x0053ff30) -- no aggression or range
-// test. Not modelled: the aggro link (behaviour +0xf0, the call at 0x558ebb)
-// and the attacker accounting's refusal (behaviour +0xec,
-// AITactics_CreditAttacker 0x005473c0, the test at 0x558edd). A monster
-// already in BATTLE ignores the blow: OWN DESIGN, the rule-0 stand-in for
-// CAIState_BATTLE::OnAttacked (0x0055a2e0 -> behaviour +0xfc), which under
-// the tactics row's rule 0 keeps the first attacker. Every drained blow, one
-// on a monster already in BATTLE included, restarts the hold's release count
-// (MonsterHoldReleaseTicks).
+// the aggro link (behaviour +0xf0, the call at 0x558ebb; linkAggro, with
+// -monster-battle on), then SetTarget with push 1 (0x0053ffe0, called at
+// 0x558eef), then ChangeState(3) (`lea edi,[ebx+3]` at 0x558f01 into
+// 0x0053ff30) -- no aggression or range test. Not modelled: the attacker
+// accounting's refusal (behaviour +0xec, AITactics_CreditAttacker
+// 0x005473c0, the test at 0x558edd). A monster already in BATTLE ignores the
+// blow, the link included: OWN DESIGN, the rule-0 stand-in for
+// CAIState_BATTLE::OnAttacked (0x0055a2e0 -> behaviour +0xfc, which has no
+// +0xf0 call), which under the tactics row's rule 0 keeps the first attacker.
+// Every drained blow, one on a monster already in BATTLE included, restarts
+// the hold's release count (MonsterHoldReleaseTicks).
 func (a *monsterAI) onStruck(id int64, ev struckEvent) {
 	b := a.brains[id]
 	if b == nil {
@@ -546,6 +561,9 @@ func (a *monsterAI) onStruck(id int64, ev struckEvent) {
 	if st := b.machine.State(); st == ai.StateBattle || st.Terminal() {
 		return
 	}
+	if a.battle {
+		a.linkAggro(b, ev.attacker)
+	}
 	b.target = ev.attacker
 	if a.battle {
 		a.tracef("ai: monster %d struck by %d, engaging", id, ev.attacker)
@@ -553,6 +571,118 @@ func (a *monsterAI) onStruck(id int64, ev struckEvent) {
 		a.tracef("ai: monster %d struck by %d, holding", id, ev.attacker)
 	}
 	a.change(b, ai.StateBattle)
+}
+
+// linkAggro is AITactics_ExtRoutine::LinkAggroToNearbyMonsters (0x547570,
+// behaviour +0xf0), which CAIState::OnAttacked (0x558ea0) runs at 0x558ebb
+// before the victim's own SetTarget and ChangeState(3) -- so only a blow on a
+// monster NOT already in BATTLE links: BATTLE's slot 6 is Handler_0fc, which
+// has no +0xf0 call. It rides -monster-battle and needs no flag of its own: a
+// linked monster is engaged by the chase and the swings (under the interim
+// hold it would only stand where it was, the reason acquire needs the flag
+// too), and an older client draws its output -- legs as OpMonsterMoved, blows
+// as OpMonsterAttacked -- exactly as it draws a struck monster's. Its rules
+// are internal/ai's (state.go, "The aggro link"; docs/protocol/monster_ai.md,
+// "The aggro link: the runtime (round 553)"), in the engine's order:
+//
+//  1. the record's hate must be non-zero and the attacker a PC (0x547570's
+//     opening tests). Every srrevamp attacker is a character; a blow carries
+//     no hate value here, so every blow is taken as carrying some --
+//     DISCLOSED: what hate a plain blow's record holds is unread, and the
+//     threat table (CreditAttacker 0x5473c0) only means anything if it holds
+//     some; the magnitudes are mob-threat-retarget's;
+//  2. the attacker's party must exist (pc+0x1cb8) and share EXP (party+0x10
+//     bit 0). Every srrevamp party shares EXP (party.go), and, as killExpFor's
+//     gate reads it (round 485), a party is one of two or more: the engine
+//     never creates a party of one, srrevamp's create path does;
+//  3. the gather (AITactics_CollectNearbyMonsters 0x540580 -> ai.GatherWithin):
+//     the ten nearest OTHER monsters within ai.LevelScaledRadius(the victim's
+//     detection radius, victim level - attacker level) of the VICTIM. The
+//     attacker's level is the character row's (vtable slot 73 in the engine),
+//     one chars.GetByID per link event, on the tick: a link event is a party
+//     member's first blow on a monster that is not fighting, not a blow. With
+//     no character store nothing links, as queueStrike swings nothing without
+//     one. srrevamp's own, disclosed: the candidates are the monsters of the
+//     victim's zone (the engine walks the owner's regions), on the ground
+//     plane, and a monster hatched since this pass's step 2 has no brain yet
+//     and is skipped for this blow;
+//  4. n = the party members at most 1000.0 units from the attacker
+//     (0x5476e9..0x5476f6, inclusive; ai.AggroLinkMemberRange), the attacker
+//     counted without measuring; a member counts only when it resolves in
+//     the world and its region is the attacker's or adjacent (0x430ce0) --
+//     srrevamp: in world.Hub, in the attacker's zone, on the ground plane;
+//  5. n = CLAMP(n, 0, gathered) (ai.AggroLinkCount);
+//  6. the record's damage is zeroed (0x547797) and each of the n nearest gets
+//     command 0xe -> slot 29 (0x5477fd..0x54780a) when ValidTargetOrNull
+//     (0x540dc0 at 0x5477ea) accepts it -- every monster in the hub is alive
+//     -- with the hate floored at 1 before and scaled by the decrease ratio
+//     after (ai.AggroLinkHate, which nothing forwards yet: no hate value).
+//     CAIState::OnAggroLinked (0x559bb0): SetTarget(attacker), ChangeState(3),
+//     and NO further link -- a link never cascades. CAIState_BATTLE::
+//     OnAggroLinked (0x55a320) only credits: a gathered monster already in
+//     BATTLE keeps its target under rule 0 and still uses up its place among
+//     the n. DEAD refuses the transition (ai.Machine).
+//
+// Nothing is sent from here: a linked brain's update this same pass issues
+// its chase leg (battleTick), collected with the pass's pushes.
+func (a *monsterAI) linkAggro(b *brain, attacker int64) {
+	if a.parties == nil || a.world == nil || a.deps.chars == nil {
+		return
+	}
+	p, ok := a.parties.Get(attacker)
+	if !ok || p == nil || len(p.Members) < 2 {
+		return
+	}
+	self, ok := a.world.EntityByCharacterID(attacker)
+	if !ok {
+		return // the attacker must resolve (FUN_00485d90 at the routine's head)
+	}
+	c, err := a.deps.chars.GetByID(context.Background(), attacker)
+	if err != nil || c == nil {
+		if a.logger != nil {
+			a.logger.Warn("ai: aggro link skipped: the attacker's row did not read", "monster", b.id, "attacker", attacker, "err", err)
+		}
+		return
+	}
+	radius := ai.LevelScaledRadius(b.detection, b.m.Level, c.Level)
+	var cands []ai.Candidate
+	for _, m := range a.monsters.InZone(b.m.Zone) {
+		if m.ID == b.id || a.brains[m.ID] == nil {
+			continue
+		}
+		cands = append(cands, ai.Candidate{ID: m.ID, X: m.X, Z: m.Z})
+	}
+	gathered := ai.GatherWithin(cands, b.m.X, b.m.Z, radius)
+	near := 0
+	for _, mem := range p.Members {
+		if mem.CharacterID == attacker {
+			near++
+			continue
+		}
+		e, ok := a.world.EntityByCharacterID(mem.CharacterID)
+		if !ok || e.Zone != self.Zone {
+			continue
+		}
+		if math.Hypot(e.Pos.X-self.Pos.X, e.Pos.Z-self.Pos.Z) <= ai.AggroLinkMemberRange {
+			near++
+		}
+	}
+	n := ai.AggroLinkCount(near, len(gathered))
+	a.tracef("ai: monster %d struck by %d of a party: %d member(s) within %.0f, %d neighbour(s) within %d, linking %d",
+		b.id, attacker, near, ai.AggroLinkMemberRange, len(gathered), radius, n)
+	for i := 0; i < n; i++ {
+		nb := a.brains[gathered[i].ID]
+		switch st := nb.machine.State(); {
+		case st == ai.StateBattle:
+			a.tracef("ai: monster %d linked to %d by the hit on monster %d: already in BATTLE, keeps its target", nb.id, attacker, b.id)
+		case st.Terminal():
+			// ChangeState out of DEAD is the engine's silent no-op.
+		default:
+			nb.target = attacker
+			a.tracef("ai: monster %d linked to %d by the hit on monster %d, engaging", nb.id, attacker, b.id)
+			a.change(nb, ai.StateBattle)
+		}
+	}
 }
 
 // update is one state's OnUpdate.

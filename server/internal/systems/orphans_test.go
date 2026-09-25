@@ -63,13 +63,11 @@ var knownOrphans = map[string]string{
 	// internal/ai, unparked in round 537 when session/monsterai.go began driving
 	// the state machine behind -monster-ai. These are the recovered rules that
 	// tick does not run yet, each with the item that will call it.
-	"AggroLinkCount": "how many neighbours a party member's hit links (LinkAggroToNearbyMonsters " +
-		"0x547570, round 258) -- wired by mob-aggro-link.",
-	"AggroLinkDamage": "the hate each successive link carries (the record's +8 scaled by " +
-		"MONSTER_AGGRO_LINK_DECREASE_RATIO, round 258, corrected in round 537) -- wired by mob-aggro-link.",
-	"LevelScaledRadius": "the BATTLE-entry level bands on the detection radius (round 257), which " +
-		"scale the gather the aggro link forwards to; acquisition itself has no level term (round 552 " +
-		"wired it without this) -- wired by mob-aggro-link.",
+	"AggroLinkHate": "the hate each successive link carries (the record's +8 floored at 1 and scaled " +
+		"by MONSTER_AGGRO_LINK_DECREASE_RATIO, round 258, corrected in round 537, named in round 553). " +
+		"The link itself is wired (round 553, session/monsterai.go's linkAggro, behind -monster-battle) " +
+		"but forwards no hate: a blow carries no hate value in srrevamp, and the magnitudes are the " +
+		"threat table's -- wired by mob-threat-retarget.",
 	"AttackIntervalRange": "a monster's swing interval, ReuseDelay + rand % (J + 1) (ArmNextAttack " +
 		"0x5619e0, round 259). Round 545's timer read settled that the jitter never delays a swing: " +
 		"the interval is only ever armed on a first-table timer, which fires at once (ArmTimer " +

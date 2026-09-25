@@ -1008,7 +1008,7 @@ func main() {
 	}
 	session.SetMonsterBattle(battleOn)
 	if battleOn {
-		logger.Info("monster battle on: a struck monster chases to its attack band at its run speed and swings on its skill's ReuseDelay, each blow pushed as OpMonsterAttacked 0x007D")
+		logger.Info("monster battle on: a struck monster chases to its attack band at its run speed and swings on its skill's ReuseDelay, each blow pushed as OpMonsterAttacked 0x007D; a party member's first hit on a monster links as many of its ten nearest neighbours as the party has members within 1000 units")
 	} else {
 		logger.Info("monster battle off (-monster-battle / SRREVAMP_MONSTER_BATTLE)")
 	}
@@ -1035,8 +1035,10 @@ func main() {
 		session.RunMonsterAI(ctx, hub, monsters, logger, session.MonsterAIConfig{
 			Trace: os.Getenv("SRREVAMP_AI_TRACE") != "",
 			// What a monster's own swing reads and writes (-monster-battle),
-			// and the potion queue its kill empties (-player-dead-state).
+			// the potion queue its kill empties (-player-dead-state), and the
+			// party hub the aggro link reads (round 553, with the battle on).
 			Chars: chars, Equipment: eq, Items: refItems, Mana: manaTracker, Potions: potions,
+			Parties: parties,
 		})
 		logger.Info(fmt.Sprintf("monster AI on: tick %v (own design), roam radius %.0f (own design)",
 			session.MonsterAITick, session.MonsterRoamRadius))

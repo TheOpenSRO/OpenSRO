@@ -34774,3 +34774,91 @@ it is ever flipped: `-monster-battle` and `-player-dead-state` must be in effect
 releases they need (rounds 546 and 548) tagged and green, and the operator must want every roster
 species aggressive at 100 units -- there is no per-species setting, only this flag. Then the
 override line in `deploy/README.md`.
+
+## A party member's first hit pulls in nearby monsters (round 553)
+
+`mob-aggro-link`. Until this round a blow engaged the struck monster alone: round 258 had read the
+aggro link and `ai.AggroLinkCount`, `ai.AggroLinkDamage` and `ai.LevelScaledRadius` sat uncalled in
+`orphans_test.go`. Now, **with `-monster-battle` on** (no flag of its own: a linked monster is
+engaged by that flag's chase and swings, and an older client draws its legs and blows as
+`OpMonsterMoved 0x007C` / `OpMonsterAttacked 0x007D` exactly as a struck monster's), a party
+member's first blow on a monster that is not yet fighting gathers the ten nearest OTHER monsters of
+its zone within its detection radius scaled by the level gap and puts as many of them as the party
+has members within 1000 units of the attacker into BATTLE against the attacker, nearest first, with
+no cascade. A solo hit links nothing; a second blow on a fighting monster links nothing. **Flag off:
+nothing changes.** No opcode or layout changed. `-monster-battle` is off by default, so pushing to
+`dev` deploys nothing new to a player.
+
+**Grounding, re-read in `/var/tmp/srv.asm`, the decomp dump and `.rdata` (`objdump -s`) for this
+round (2026-09-25; the reading is in `docs/protocol/monster_ai.md`, "The aggro link: the runtime
+(round 553)", and the round-258 blocks were rewritten in place).**
+
+- `LinkAggroToNearbyMonsters` `0x547570`: the zero-hate and not-a-PC returns (`param_2[2] == 0`,
+  slot 7); the party (`pc+0x1cb8`) and its `+0x10` bit 0; the member count with the attacker
+  counted at `0x5476f6` and the 1000.0 (`0xb45c68`, the double) compared **inclusively** (`fcomp;
+  fnstsw ax; test ah,0x41; jp` `0x5476e9..0x5476f4`); the region-adjacency test `0x430ce0` (bit 15
+  of both region ids equal, then the x and y bytes each within 1); CLAMP at
+  `AITactics_ExtRoutine.cpp:0x662` (`0x547778..0x54778c`, `0x54782b..0x547839`); the record's damage
+  zeroed (`mov [edi+0x4],ebx` `0x547797`); the emptiness test on `ctx+0x80` (`0x5426e0`); the hate
+  floored at 1 before each forward (`0x5477b2..0x5477b8`); `ValidTargetOrNull` `0x540dc0` at
+  `0x5477ea`; command `0xe` (`0x547805..0x54780a`); the decay `fild [esi+0x8]; fmul DWORD
+  [0xc8252c]; _ftol2_sse` (`0x54780c..0x54781a`, ratio 0.5 at `0xb45b68`, a float).
+- `OnAttacked` `0x558ea0`: `+0xf0` at `0x558ebb` before `SetTarget(1)` (`0x558eef`) and
+  `ChangeState(3)` (`0x558f01`); `ftol(hate x 1.15f)` at `0x558ebd..0x558ecc` -- `0xb46300` is
+  `0x3ff2666660000000`, the float 1.15f widened, so 20 hate books 22. `OnAggroLinked` `0x559bb0`:
+  credit, `SetTarget(1)`, `ChangeState`, no `+0xf0` (no cascade); `CAIState_BATTLE::OnAggroLinked`
+  `0x55a320`: credit only. `CreditAttacker` `0x5473c0`: `+4` damage, `+8`/`+0xc` hate.
+- `CollectNearbyMonsters` `0x540580` -> `LevelScaledRadius` `0x541e00`: levels off slot 73 as
+  bytes, the bands, `fmul QWORD` on `0xb45c08`/`c00`/`bf0`/`bf8` -- **float literals widened**
+  (`0x3ff6666660000000` = 1.4f = 1.39999997615814, and 1.2f, 0.8f, 0.6f), **`fstp DWORD` `0x541e9b`**,
+  then **RC=chop** `fistp` (`0x541ea4..0x541ec2`) into an int out-parameter -- and
+  `GatherObjectsWithin` `0x540860`: the owner's regions, the owner skipped, kind mask 2, not
+  `MOB_AUTOMOB`, the float distance from the OWNER (`0x540a85..0x540a8d`) **at most** the radius,
+  sorted, ten popped.
+- The exp-share bit: `party+0x10` bit 0 (`party.md`, "Who reads the flag word"); every srrevamp
+  party shares EXP (`party.go`).
+
+**Wired.** `ai/state.go`: `LevelScaledRadius` returns the chopped int through the float store; the
+four factors and `AggroVictimDamageFactor` are `float64(float32(x))`, bit-exact to `.rdata`;
+`GatherWithin` (new); `AggroLinkHate` (was `AggroLinkDamage`, with the floor at 1); the header and
+the acquisition comment. `session/monsterai.go`: `MonsterAIConfig.Parties`, the runtime's
+`parties`, `linkAggro` (the engine's order, above), its call in `onStruck` under `a.battle`, the
+header. `cmd/server/main.go`: `Parties: parties`, the battle-on boot line. `orphans_test.go`:
+`AggroLinkCount` and `LevelScaledRadius` removed (called now); `AggroLinkHate` listed for
+mob-threat-retarget. `combat.go` and the client needed no change.
+
+**Stand-ins, each disclosed at its line and in the section**: every blow carries hate (the engine
+returns on a zero-hate record; a plain blow's hate is UNREAD, and srrevamp's blows carry none), a
+party is two or more (round 485's reading), the zone for the region set, the ground plane, ties by
+id in the gather, the attacker's level as one `chars.GetByID` on the tick per link event (none
+without a character store), a monster hatched inside the pass skipped, no hate forwarded, and the
+accounting's refusals still not modelled.
+
+**Tests** (`cd server && go build ./... && go test -count=1 -p 1 ./...` green; re-run after the doc
+edits): `session` -- `TestPartyHitLinksTheTwoNearestNeighbours` (THE RED),
+`TestPartyOfThreeLinksThree`, `TestSoloHitLinksNothing`, `TestSecondHitOnABattlingMonsterLinksNothing`,
+`TestPartyMateCountsAtAThousandUnitsNotBeyond` (1000 in, 1001 out),
+`TestAggroLinkRadiusScalesByTheLevelGap` (84 in, 85 out under a level-5 attacker),
+`TestAggroLinkNeedsTheBattleOn` (the flag-off control); `ai` -- `TestLevelScaledRadiusChops` (THE
+RED of the helper: 129.6 -> 129 where rounding gives 130; 110 x 1.4f -> 154 through the float store
+where chopping the exact product gives 153), `TestLevelRadiusFactorsAreTheRdataDoubles`,
+`TestGatherWithin`, `TestAggroLink` (the ladder 45, 22, 11, 5, 2, 1, 1; the victim's 51 and 22),
+`TestDetectionAndLevelScaledRadius` (ints). **Negatives, proved three ways**: the three production
+files stashed -- `ai` and `session` fail to build (`undefined: GatherWithin`, `undefined:
+AggroLinkHate`, `f.a.parties undefined`); ONLY `LevelScaledRadius` rounding -- `108 -> 130; want
+129` (and 85, 64); ONLY `linkAggro`'s body removed -- every positive fails (`in BATTLE after the
+blow: "A", want exactly A (struck), B and C (linked)`, ...) while the solo and flag-off controls
+hold. Restored byte for byte (`cmp`). Client untouched (`remote_godot.sh tests` not needed).
+
+**Live check: not feasible.** `qa_shot.sh` drives one client and a party needs two; the section
+above records what the check is once a second driven client exists. The Go tests are the evidence.
+
+**Records**: `docs/protocol/monster_ai.md` (the round-257 table's closer reading; the round-258
+blocks rewritten to hate in place; the runtime section's and the round-546 section's "not
+modelled" lines; the new section), `docs/SYSTEMS.md` (the Monster AI row: `AggroLinkCount`
+anchored, the link paragraph, the "Next" line), `docs/TODO.md` (mob-aggro-link built),
+`server/README.md` (the `-monster-battle` row), `deploy/README.md` ("Monster battle (off by
+default)"). `WORLD_ISSUES.md` stays untouched, as in rounds 541-552.
+
+**Deploy note.** Nothing to flip. The link is live wherever `-monster-battle` is on; that flag's
+own conditions (`deploy/README.md`) are unchanged.

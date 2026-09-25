@@ -10,13 +10,15 @@
 // listed in docs/protocol/monster_ai.md, "srrevamp's runtime".
 //
 // Since then, each behind its own default-off flag: the BATTLE chase and the
-// monster's own swing (round 546, -monster-battle; battle.go's rules) and
-// target acquisition (round 552, -monster-aggro; acquire.go's rules). Still
-// NOT wired: the aggro link, the threat table's retarget rules and the skill
-// choice. internal/systems' orphans_test.go names each such function with the
-// item that will call it -- the rule this package was parked under until round
-// 537, after the HP/MP regen rule and the real drop tables were each found
-// recovered, tested and uncalled for weeks.
+// monster's own swing (round 546, -monster-battle; battle.go's rules), target
+// acquisition (round 552, -monster-aggro; acquire.go's rules) and, riding
+// -monster-battle with no flag of its own, the aggro link (round 553; the
+// rules below, session/monsterai.go's linkAggro). Still NOT wired: the threat
+// table's retarget rules and the skill choice. internal/systems'
+// orphans_test.go names each such function with the item that will call it --
+// the rule this package was parked under until round 537, after the HP/MP
+// regen rule and the real drop tables were each found recovered, tested and
+// uncalled for weeks.
 //
 // Everything in this file was read out of the binary. The sixteen states are
 // not a guess at what a monster AI should have: each one is a compiled C++
@@ -48,6 +50,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"sort"
 	"time"
 )
 
@@ -436,27 +439,32 @@ func WanderLegDirection(dirX, dirZ, turn float64) (x, z float64) {
 // The level term lives elsewhere: on entering BATTLE the same base radius is
 // scaled against the TARGET's level and the ten nearest MONSTERS inside it
 // (never MOB_AUTOMOB) are gathered into ctx+0x80 (AITactics_LevelScaledRadius
-// 0x541e00 -> AITactics_GatherObjectsWithin 0x540860, mask 2). What that
-// list drives is unread. The factors are doubles (fmul QWORD):
+// 0x541e00 -> AITactics_GatherObjectsWithin 0x540860, mask 2). That list is
+// the aggro link's (below; round 258, wired in round 553). The factors are
+// doubles (fmul QWORD at 0x541e62/73/84/95), and each holds a FLOAT literal
+// widened -- 0xb45c08 is 0x3ff6666660000000, the float 1.4f, read off .rdata
+// in round 553 -- so the bands are (level difference = monster - target,
+// each level a byte off vtable slot 73, `movzx` at 0x541e47/0x541e54):
 //
-//	monster level - target level >= 4   : x 1.4  (0xb45c08)
-//	                          1 .. 3   : x 1.2  (0xb45c00)
-//	                         -3 .. 0   : x 1.0
-//	                         -6 .. -4  : x 0.8  (0xb45bf0)
-//	                          <= -7    : x 0.6  (0xb45bf8)
+//	monster level - target level >= 4   : x 1.4  (0xb45c08: 1.39999997615814)
+//	                          1 .. 3   : x 1.2  (0xb45c00: 1.20000004768372)
+//	                         -3 .. 0   : x 1.0  (no multiply: 0x541e8f jumps past it)
+//	                         -6 .. -4  : x 0.8  (0xb45bf0: 0.80000001192093)
+//	                          <= -7    : x 0.6  (0xb45bf8: 0.60000002384186)
 //
-// The per-species +0x14 distances are in no archive this project holds
-// (_RefTactics is a server database table; the package on the box carries
-// no shard backup, and its GameServer minidumps hold no heap), so a
-// monster's detection distance stays disclosed until a source appears:
-// TacticsDetectionDistance (acquire.go) is the one stand-in every species
-// gets under -monster-aggro.
+// The product is stored back as a float (fstp DWORD 0x541e9b) and then
+// chopped to an int (LevelScaledRadius). The per-species +0x14 distances are
+// in no archive this project holds (_RefTactics is a server database table;
+// the package on the box carries no shard backup, and its GameServer
+// minidumps hold no heap), so a monster's detection distance stays disclosed
+// until a source appears: TacticsDetectionDistance (acquire.go) is the one
+// stand-in every species gets under -monster-aggro.
 const (
-	LevelRadiusFarAbove  = 1.4 // target at least 4 levels below the monster
-	LevelRadiusAbove     = 1.2 // 1 to 3 levels below
-	LevelRadiusNear      = 1.0 // up to 3 levels above
-	LevelRadiusBelow     = 0.8 // 4 to 6 levels above
-	LevelRadiusFarBelow  = 0.6 // 7 or more levels above
+	LevelRadiusFarAbove  = float64(float32(1.4)) // target at least 4 levels below the monster; 0xb45c08 = 0x3ff6666660000000
+	LevelRadiusAbove     = float64(float32(1.2)) // 1 to 3 levels below; 0xb45c00 = 0x3ff3333340000000
+	LevelRadiusNear      = 1.0                   // up to 3 levels above: the base unchanged
+	LevelRadiusBelow     = float64(float32(0.8)) // 4 to 6 levels above; 0xb45bf0 = 0x3fe99999a0000000
+	LevelRadiusFarBelow  = float64(float32(0.6)) // 7 or more levels above; 0xb45bf8 = 0x3fe3333340000000
 	LevelRadiusAboveBand = 4
 	LevelRadiusBelowBand = -4
 	LevelRadiusFarBand   = -7
@@ -472,64 +480,147 @@ func DetectionRadius(bcRadius, tacticsDistance int) (radius float64, ok bool) {
 	return float64(bcRadius + tacticsDistance), true
 }
 
-// LevelScaledRadius applies the BATTLE-entry level bands to a base radius.
-func LevelScaledRadius(base float64, monsterLevel, targetLevel int) float64 {
+// LevelScaledRadius is AITactics_LevelScaledRadius (0x541e00): the base
+// radius -- ctx+0x15c, a float (`fld DWORD [eax+0x15c]` 0x541e00) -- times
+// the band's factor, stored back as a float (`fstp DWORD [esp+0x4]` 0x541e9b;
+// the -3..0 band skips the multiply and the store, 0x541e8f -> 0x541e9f) and
+// converted under RC=chop (`or eax,0xc00; fldcw; fistp QWORD`,
+// 0x541ea4..0x541ec2) into the INT the caller's out-parameter holds (`mov
+// [ebx],edx` 0x541ec2). A target the engine cannot resolve (edi = 0) chops the
+// raw base the same way (0x541e0d..0x541e29), which is the -3..0 band here.
+//
+// The float store is modelled: a float (24-bit significand) times a widened
+// float (24 bits) is exact in float64, so the one rounding on this path is
+// the store's, in both the engine and here -- 110 x 1.4f is 153.9999974,
+// which the store rounds to 154.0 and the chop leaves at 154; chopping the
+// exact product would give 153. Corrected in round 553: until then this
+// returned the unrounded float64 product of the base and 1.4 exactly.
+func LevelScaledRadius(base float64, monsterLevel, targetLevel int) int {
+	r := float32(base)
 	diff := monsterLevel - targetLevel
 	switch {
 	case diff >= LevelRadiusAboveBand:
-		return base * LevelRadiusFarAbove
+		r = float32(float64(r) * LevelRadiusFarAbove)
 	case diff >= 1:
-		return base * LevelRadiusAbove
+		r = float32(float64(r) * LevelRadiusAbove)
 	case diff <= LevelRadiusFarBand:
-		return base * LevelRadiusFarBelow
+		r = float32(float64(r) * LevelRadiusFarBelow)
 	case diff <= LevelRadiusBelowBand:
-		return base * LevelRadiusBelow
+		r = float32(float64(r) * LevelRadiusBelow)
 	}
-	return base * LevelRadiusNear
+	return int(r)
+}
+
+// GatherWithin is AITactics_GatherObjectsWithin (0x540860) for the aggro
+// link's list: of cands -- the OTHER monsters around the owner (the routine
+// skips the owner itself and keeps kind mask 2, never one named MOB_AUTOMOB)
+// -- those whose distance from the owner at (x, z) (GObj_DistanceBetween
+// 0x53d7a0 with the owner in eax and the candidate in ecx, 0x540a85..0x540a8d),
+// stored as a float, is AT MOST the radius (`fStack_48 <= fStack_58`, the
+// radius an int the routine widens to a float), nearest first, at most
+// AggroLinkMaxHelpers of them (the pop loop's `< 10`). srrevamp's own,
+// disclosed: the ground-plane distance (the engine's sums three axes and
+// srrevamp's monsters carry no height, as acquire measures), and ties broken
+// by id (the engine's sorted container keeps the region walk's order).
+func GatherWithin(cands []Candidate, x, z float64, radius int) []Candidate {
+	type at struct {
+		c Candidate
+		d float32
+	}
+	limit := float32(radius)
+	var in []at
+	for _, c := range cands {
+		if d := float32(math.Hypot(c.X-x, c.Z-z)); d <= limit {
+			in = append(in, at{c, d})
+		}
+	}
+	sort.Slice(in, func(i, j int) bool {
+		if in[i].d != in[j].d {
+			return in[i].d < in[j].d
+		}
+		return in[i].c.ID < in[j].c.ID
+	})
+	if len(in) > AggroLinkMaxHelpers {
+		in = in[:AggroLinkMaxHelpers]
+	}
+	out := make([]Candidate, len(in))
+	for i, a := range in {
+		out[i] = a.c
+	}
+	return out
 }
 
 // The aggro link, read off CAIState::OnAttacked (0x558ea0) and
-// AITactics_ExtRoutine::LinkAggroToNearbyMonsters (0x547570), round 258
-// (docs/protocol/monster_ai.md "The aggro link"). A hit from a member of an
-// EXP-SHARING party (the party's +0x10 bit 0, named in party.md) makes the
-// struck monster gather the ten nearest monsters inside
-// LevelScaledRadius(its detection radius, attacker)
-// and forward the attack record to as many of them as the party has members
-// within 1000 units of the attacker; each successive link carries the record's
-// HATE times the decrease ratio. A linked monster enters BATTLE against the
-// attacker without linking further. A solo player never links anything.
+// AITactics_ExtRoutine::LinkAggroToNearbyMonsters (0x547570, behaviour
+// +0xf0), round 258, re-read whole in round 553 (docs/protocol/monster_ai.md
+// "The aggro link"). OnAttacked -- the base slot 6 that IDLE, WANDER, FLEE
+// and HOMING use; BATTLE's own slot 6 has no link -- runs the link first
+// (the +0xf0 call at 0x558ebb), then the attacker accounting and the victim's
+// own SetTarget and ChangeState(3). The attack record is {attacker, damage
+// (+4), hate (+8), hatePercent (+0xc)} (AITactics_CreditAttacker 0x5473c0:
+// +4 goes to the seat's damage, +8 and +0xc to its hate). The link:
 //
-// Corrected in round 537: the record is {attacker, damage (+4), hate (+8),
-// hatePercent (+0xc)} (AITactics_CreditAttacker 0x5473c0), and both factors
-// act on the hate, not the damage. The link zeroes the record's damage before
-// it forwards anything (`mov [edi+0x4],ebx` with ebx = 0 at 0x547797) and
-// scales the hate after each forward (`fild [esi+0x8]; fmul [0xc8252c]` ->
-// _ftol2_sse -> `mov [esi+0x8],eax`, 0x54780c..0x54781a); OnAttacked saves the
-// hate before the link and stores ftol(hate x 1.15) back over it afterwards
-// (0x558ea6, 0x558ebd..0x558ecc). So under a link neither the neighbours nor the
-// victim book the blow's damage.
+//  1. returns before gathering when the record's HATE is zero or the attacker
+//     is not a PC (0x547570's opening tests: `param_2[2] == 0`, then vtable
+//     slot 7), and when the attacker has no party (pc+0x1cb8, `piVar4[0x72e]`)
+//     or the party's +0x10 bit 0 -- EXP sharing, named in party.md -- is clear;
+//  2. gathers the ten nearest OTHER monsters within LevelScaledRadius(the
+//     victim's detection radius, victim level - attacker level) of the
+//     victim (AITactics_CollectNearbyMonsters 0x540580 -> GatherWithin);
+//  3. counts the party members AT MOST 1000.0 units from the attacker
+//     (`fcomp QWORD 0xb45c68; fnstsw; test ah,0x41; jp` 0x5476e9..0x5476f4:
+//     below or equal), the attacker itself counted without measuring
+//     (0x5476f6 through the `member == attacker` arm), a member only when
+//     it resolves in the world and stands in the same or an adjacent region
+//     as the attacker or both are in a dungeon (0x430ce0: the region ids'
+//     bit 15 equal, then their x and y bytes within 1 -- which 1000 units
+//     already implies at a 1920-unit region span);
+//  4. clamps that count to the gathered count (AggroLinkCount);
+//  5. zeroes the record's damage (`mov [edi+0x4],ebx` with ebx = 0 at
+//     0x547797) and, for each of the nearest n: floors the record's hate at 1
+//     (`cmp [edi+0x8],0; jg; mov [edi+0x8],1` 0x5477b2..0x5477b8), forwards
+//     command 0xe to the monster when AITactics_ValidTargetOrNull (0x540dc0
+//     at 0x5477ea) accepts it and it has a command source (0x5477f3..0x54780a),
+//     then scales the hate by the decrease ratio (`fild [esi+0x8]; fmul
+//     DWORD [0xc8252c]` -> _ftol2_sse -> `mov [esi+0x8],eax`, 0x54780c..
+//     0x54781a; AggroLinkHate).
+//
+// Command 0xe is slot 29: CAIState::OnAggroLinked (0x559bb0) credits,
+// SetTarget(attacker)s and ChangeState(3)s with no +0xf0 call of its own, so
+// a link never cascades; CAIState_BATTLE::OnAggroLinked (0x55a320) only
+// credits, so a gathered monster already in BATTLE keeps its target under
+// rule 0 and still uses up its place among the n. OnAttacked saves the hate
+// before the link (`mov eax,[esi+0x8]` 0x558ea6) and stores ftol(hate x
+// 1.15f) back over it afterwards (0x558ebd..0x558ecc). So under a link
+// neither the neighbours nor the victim book the blow's damage (round 537's
+// correction of round 258's "damage"), and a solo player never links.
 const (
 	// AggroLinkMaxHelpers is the gather's cap: the ten nearest monsters.
 	AggroLinkMaxHelpers = 10
 	// AggroLinkMemberRange is how near a party member must stand to the
-	// attacker to count (0xb45c68, double).
+	// attacker to count: at most this (0xb45c68, the double 1000.0; the
+	// compare above is inclusive).
 	AggroLinkMemberRange = 1000.0
 	// AggroLinkDecreaseRatio is MONSTER_AGGRO_LINK_DECREASE_RATIO's default,
-	// 0.5 (0xb45b68, fld DWORD): the factor each link's hate shrinks by
-	// (corrected in round 537 from "credited damage"). A configured value is
-	// a percentage over 100 with no floor.
+	// 0.5 (0xb45b68, the float 0x3f000000): the factor each link's hate
+	// shrinks by. A configured value is a percentage over 100 with no floor.
 	AggroLinkDecreaseRatio = 0.5
 	// AggroVictimDamageFactor is what the struck monster itself books the
-	// record's HATE at in its attacker accounting: hate x 1.15 (0xb46300, a
-	// double used nowhere else), truncated (corrected in round 537 from "raw
-	// damage"). The links get the raw hate and its halvings; the victim weighs
-	// its own attacker 15 % heavier.
-	AggroVictimDamageFactor = 1.15
+	// record's HATE at in its attacker accounting: hate x 1.15f -- 0xb46300 is
+	// 0x3ff2666660000000, the float literal widened (1.14999997615814), read
+	// off .rdata in round 553 -- chopped by _ftol2_sse from the extended
+	// product with no float store between (0x558ebd..0x558ecc), so a hate of
+	// 20 books 22, not 23. The links get the raw hate and its halvings; the
+	// victim weighs its own attacker 15 % heavier. The name predates round
+	// 537's correction from "raw damage".
+	AggroVictimDamageFactor = float64(float32(1.15))
 )
 
 // AggroLinkCount is how many gathered monsters a hit links: the party
 // members near the attacker (the attacker included), clamped to the gathered
-// count -- the routine's own CLAMP (AITactics_ExtRoutine.cpp:0x662).
+// count -- the routine's own CLAMP (AITactics_ExtRoutine.cpp:0x662: a
+// negative count becomes 0 at 0x54782b..0x547839, one above the gathered
+// count becomes that count at 0x547778..0x54778c).
 func AggroLinkCount(membersNear, gathered int) int {
 	if membersNear < 0 {
 		membersNear = 0
@@ -543,15 +634,25 @@ func AggroLinkCount(membersNear, gathered int) int {
 	return membersNear
 }
 
-// AggroLinkDamage is the hate the i-th linked monster (0-based) is credited
-// with: the record's hate times the decrease ratio i times, truncated toward
-// zero at each step as the engine's ftol does. The name predates round 537's
-// correction (the factor acts on the hate, +8, not the damage, +4).
-func AggroLinkDamage(damage int, link int, ratio float64) int {
+// AggroLinkHate is the hate the i-th linked monster (0-based) is forwarded:
+// the record's hate, floored at 1 before each forward (0x5477b2..0x5477b8)
+// and scaled by the decrease ratio after it, truncated toward zero as
+// _ftol2_sse does (0x54780c..0x54781a) -- 45 hate reaches the links as 45,
+// 22, 11, 5, 2, 1, 1, ... and never 0. Named AggroLinkDamage until round 553
+// (the factor acts on the hate, +8, not the damage, +4: round 537). Nothing
+// forwards a hate yet: srrevamp's blows carry no hate value, and the
+// magnitudes are the threat table's (mob-threat-retarget).
+func AggroLinkHate(hate int, link int, ratio float64) int {
 	for i := 0; i < link; i++ {
-		damage = int(float64(damage) * ratio)
+		if hate < 1 {
+			hate = 1
+		}
+		hate = int(float64(hate) * ratio)
 	}
-	return damage
+	if hate < 1 {
+		hate = 1
+	}
+	return hate
 }
 
 // HOMING, read off CAIState_HOMING::OnEnter/MoveHome/OnUpdate and

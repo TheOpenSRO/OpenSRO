@@ -22,6 +22,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
+	"github.com/OpenSRO/srrevamp/server/internal/party"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/quest"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
@@ -2421,5 +2422,248 @@ func TestHomingMonsterNoticesNobodyInsideItsBlackout(t *testing.T) {
 	monsterAITick(now)
 	if st := stateOf(t, f.a, m.ID); st != ai.StateBattle {
 		t.Fatalf("at 4900 ms, past the blackout, the state is %v, want BATTLE", st)
+	}
+}
+
+// --- The aggro link (round 553, rides -monster-battle) -----------------------
+
+// linkStage is the aggro-link tests' stage: Aria at the origin (level 1, the
+// fixture's) with `members - 1` party mates standing together where each test
+// puts them, and Mangyangs (level 1; detection radius 6 + 100 = 106) at the
+// spots given, the first of which is A, the one Aria strikes. The standard
+// spots (standardSpots) are:
+//
+//	A (30, 0)     the struck one
+//	B (30, 30)    30 from A
+//	C (30, -50)   50 from A
+//	D (-40, 0)    70 from A -- but 40 from ARIA, nearer to her than C is: the
+//	              gather measures from the victim, and D tells that apart
+//	E (150, 0)    120 from A: outside its radius
+//	F (30, 130)   130 from A, outside its radius; 100 from B, inside B's --
+//	              the no-cascade witness
+//
+// so a party of two within 1000 units links exactly B and C, and a party of
+// three B, C and D.
+type linkStage struct {
+	f       *battleFixture
+	seed    int64
+	parties *party.Hub
+	partyID int64
+	mates   []int64
+	ids     []int64 // the monsters, A first
+}
+
+var standardSpots = [][2]float64{{30, 0}, {30, 30}, {30, -50}, {-40, 0}, {150, 0}, {30, 130}}
+
+// startLinkStage builds the stage; members 0 or 1 leaves Aria solo.
+func startLinkStage(t *testing.T, seed int64, members int, mateX, mateZ float64, spots [][2]float64) *linkStage {
+	t.Helper()
+	f := startBattleFixture(t, seed, 0, 0)
+	s := &linkStage{f: f, seed: seed}
+	if members >= 2 {
+		s.parties = party.NewHub()
+		f.a.parties = s.parties
+		pt, err := s.parties.Create(party.Member{Session: f.ariaSession(t), CharacterID: f.aria, Name: "Aria", Level: party.MinLevelToCreate})
+		if err != nil {
+			t.Fatalf("creating the party: %v", err)
+		}
+		s.partyID = pt.ID
+		for i := 1; i < members; i++ {
+			s.addMate(t, []string{"", "Bram", "Cass", "Dara"}[i], mateX, mateZ)
+		}
+	}
+	for _, p := range spots {
+		s.ids = append(s.ids, f.monsters.SpawnSpecies("jangan", chaseMangyang, p[0], 0, p[1], 1000, 0, 15, 0).ID)
+	}
+	return s
+}
+
+// addMate creates a level-1 character, stands it in jangan at (x, z) and
+// joins it to Aria's party.
+func (s *linkStage) addMate(t *testing.T, name string, x, z float64) {
+	t.Helper()
+	mate, err := s.f.chars.Create(context.Background(), 1, name)
+	if err != nil {
+		t.Fatalf("creating %s: %v", name, err)
+	}
+	sess := gateway.NewTestSession(uint64(91300 + 10*s.seed + int64(len(s.mates)+1)))
+	s.f.hub.Enter(sess, mate.ID, name, "jangan", world.Position{X: x, Z: z})
+	if _, err := s.parties.Join(s.partyID, party.Member{Session: sess, CharacterID: mate.ID, Name: name, Level: 1}); err != nil {
+		t.Fatalf("%s joining: %v", name, err)
+	}
+	s.mates = append(s.mates, mate.ID)
+}
+
+// strike is every link test's first two ticks: the brains hatch into IDLE,
+// Aria's blow lands on A, and the next tick drains it. It returns the clock
+// after that tick.
+func (s *linkStage) strike(t *testing.T) time.Time {
+	t.Helper()
+	now := aiT0
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	for i, id := range s.ids {
+		if st := stateOf(t, s.f.a, id); st != ai.StateIdle {
+			t.Fatalf("setup: monster %c is %v after the first tick, want IDLE", 'A'+i, st)
+		}
+	}
+	noteStruck(s.f.monsters, s.ids[0], s.f.aria)
+	s.f.rec.reset()
+	monsterAITick(now)
+	return now.Add(MonsterAITick)
+}
+
+// battling names the stage's monsters in BATTLE, as letters in spot order.
+func (s *linkStage) battling(t *testing.T) string {
+	t.Helper()
+	out := ""
+	for i, id := range s.ids {
+		if stateOf(t, s.f.a, id) == ai.StateBattle {
+			out += string(rune('A' + i))
+		}
+	}
+	return out
+}
+
+func (s *linkStage) targetOf(t *testing.T, id int64) int64 {
+	t.Helper()
+	s.f.a.mu.Lock()
+	defer s.f.a.mu.Unlock()
+	return s.f.a.brains[id].target
+}
+
+// THE RED (round 553): Aria and Bram are a party of two, Bram 500 units off.
+// Aria's first blow on the idle Mangyang A pulls in exactly B and C -- the two
+// nearest OTHER monsters to A inside its radius (106: level 1 on level 1) --
+// into BATTLE against Aria on the tick that drains the blow, and B's own push
+// that tick is the chase toward her (mode 1 at the run speed). D (nearer to
+// Aria than C, farther from A), E (outside the radius) and F (inside B's
+// radius, outside A's) stay idle, F still two ticks later: a link never
+// cascades. Before this round a blow engaged the struck monster alone.
+func TestPartyHitLinksTheTwoNearestNeighbours(t *testing.T) {
+	battleForTest(t, true)
+	s := startLinkStage(t, 41, 2, 0, 500, standardSpots)
+	now := s.strike(t)
+	if got := s.battling(t); got != "ABC" {
+		t.Fatalf("in BATTLE after the blow: %q, want exactly A (struck), B and C (linked)", got)
+	}
+	for _, i := range []int{1, 2} {
+		if tgt := s.targetOf(t, s.ids[i]); tgt != s.f.aria {
+			t.Errorf("%c's target is %d, want Aria %d", 'A'+i, tgt, s.f.aria)
+		}
+	}
+	moves := s.f.rec.of(s.ids[1])
+	if len(moves) != 1 || moves[0].Mode != 1 || moves[0].Speed != 22 {
+		t.Fatalf("B's pushes on the link tick: %+v, want one chase leg, mode 1 at the run speed 22", moves)
+	}
+	if d := math.Hypot(float64(moves[0].DestX), float64(moves[0].DestZ)); math.Abs(d-10) > 1.5 {
+		t.Errorf("B's chase leg ends %.1f from Aria, want about 10 (the stop distance)", d)
+	}
+	for i := 0; i < 2; i++ {
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+	}
+	if got := s.battling(t); got != "ABC" {
+		t.Fatalf("in BATTLE two ticks on: %q, want still exactly ABC (F is inside B's radius: no cascade)", got)
+	}
+}
+
+// A party of three within range links three: B, C and D -- the three nearest
+// to A, in that order, so D joins and E (outside the radius) does not.
+func TestPartyOfThreeLinksThree(t *testing.T) {
+	battleForTest(t, true)
+	s := startLinkStage(t, 42, 3, 0, 500, standardSpots)
+	s.strike(t)
+	if got := s.battling(t); got != "ABCD" {
+		t.Fatalf("in BATTLE after the blow: %q, want ABCD", got)
+	}
+}
+
+// CONTROL: a solo Aria's blow engages A alone -- with no party the routine
+// returns before gathering.
+func TestSoloHitLinksNothing(t *testing.T) {
+	battleForTest(t, true)
+	s := startLinkStage(t, 43, 0, 0, 0, standardSpots)
+	s.strike(t)
+	if got := s.battling(t); got != "A" {
+		t.Fatalf("in BATTLE after a solo blow: %q, want A alone", got)
+	}
+}
+
+// CONTROL: a second blow on A, already in BATTLE, links nothing more. Aria
+// and Bram's first blow links B and C; then Cass joins the party beside Bram,
+// so a link would now reach three, and D -- idle, 70 from A, inside its
+// radius -- would be the third. It is not: BATTLE's slot 6 has no link. Nor
+// does Bram's own first blow on the battling A link it.
+func TestSecondHitOnABattlingMonsterLinksNothing(t *testing.T) {
+	battleForTest(t, true)
+	s := startLinkStage(t, 44, 2, 0, 500, standardSpots)
+	now := s.strike(t)
+	if got := s.battling(t); got != "ABC" {
+		t.Fatalf("in BATTLE after the first blow: %q, want ABC", got)
+	}
+	s.addMate(t, "Cass", 0, 500)
+	noteStruck(s.f.monsters, s.ids[0], s.f.aria)
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	if got := s.battling(t); got != "ABC" {
+		t.Fatalf("in BATTLE after a second blow on the battling A: %q, want still ABC (three members near, D idle inside the radius, and no link)", got)
+	}
+	noteStruck(s.f.monsters, s.ids[0], s.mates[0])
+	monsterAITick(now)
+	if got := s.battling(t); got != "ABC" {
+		t.Fatalf("in BATTLE after Bram's blow on the battling A: %q, want still ABC", got)
+	}
+}
+
+// The member count's edge, the engine's `fcomp; test ah,0x41; jp`: a mate at
+// exactly 1000 units counts (two links, B and C), one at 1001 does not (one
+// link, B alone).
+func TestPartyMateCountsAtAThousandUnitsNotBeyond(t *testing.T) {
+	battleForTest(t, true)
+	t.Run("1001", func(t *testing.T) {
+		s := startLinkStage(t, 45, 2, 0, 1001, standardSpots)
+		s.strike(t)
+		if got := s.battling(t); got != "AB" {
+			t.Fatalf("Bram at 1001: in BATTLE %q, want AB (one member near: one link)", got)
+		}
+	})
+	t.Run("1000", func(t *testing.T) {
+		s := startLinkStage(t, 46, 2, 0, 1000, standardSpots)
+		s.strike(t)
+		if got := s.battling(t); got != "ABC" {
+			t.Fatalf("Bram at exactly 1000: in BATTLE %q, want ABC (two members near: two links)", got)
+		}
+	})
+}
+
+// The gather's radius scales by the level gap and chops: a level-5 Aria on a
+// level-1 Mangyang gets 106 x 0.8 = 84.8 -> 84. With two members near, the
+// neighbour at exactly 84 links and the one at 85 does not; unscaled, both
+// would (106) and the party's two links would take both.
+func TestAggroLinkRadiusScalesByTheLevelGap(t *testing.T) {
+	battleForTest(t, true)
+	spots := [][2]float64{{30, 0}, {114, 0}, {30, 85}} // B 84 from A, C 85
+	s := startLinkStage(t, 47, 2, 0, 500, spots)
+	if err := s.f.chars.SetLeveling(context.Background(), s.f.aria, 5, 0, 0, 0, 0); err != nil {
+		t.Fatalf("setting Aria's level: %v", err)
+	}
+	s.strike(t)
+	if got := s.battling(t); got != "AB" {
+		t.Fatalf("level-5 Aria: in BATTLE %q, want AB (radius 84: B at 84 in, C at 85 out)", got)
+	}
+}
+
+// CONTROL, the default: with -monster-battle off the same party blow only
+// holds A where it stands; nothing is linked, nothing chases.
+func TestAggroLinkNeedsTheBattleOn(t *testing.T) {
+	battleForTest(t, false)
+	s := startLinkStage(t, 48, 2, 0, 500, standardSpots)
+	s.strike(t)
+	if got := s.battling(t); got != "A" {
+		t.Fatalf("battle off: in BATTLE %q, want A alone (the interim hold)", got)
+	}
+	if n := len(s.f.rec.moves); n != 0 {
+		t.Fatalf("battle off: %d move(s) pushed after the blow, want none", n)
 	}
 }

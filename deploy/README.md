@@ -188,6 +188,15 @@ stand-in for a server-database column) and walks home. The counterattack inside 
 monster gets there. What is grounded and what is a stand-in is in `docs/protocol/monster_ai.md`,
 "BATTLE's chase and the monster's own swing (round 546)".
 
+Since round 553 the flag also carries the **aggro link**: a party member's first blow on a monster that
+is not yet fighting pulls in as many of the ten nearest other monsters -- within the struck monster's
+detection radius, scaled by the level gap between it and the attacker -- as the party has members
+within 1000 units of the attacker; each runs at the attacker and swings like a struck monster. A solo
+player links nothing, and an older client needs nothing new: the linked monsters' legs and blows are
+the same `OpMonsterMoved` and `OpMonsterAttacked` a struck monster's are. There is no separate switch;
+turning this flag off turns the link off. Its reading and stand-ins: `docs/protocol/monster_ai.md`,
+"The aggro link: the runtime (round 553)".
+
 It is behind the `-monster-battle` flag (env `SRREVAMP_MONSTER_BATTLE`), and **the default is
 off**. Off, the interim hold and the counter are exactly what they were. It also **needs
 `SRREVAMP_MONSTER_AI` and `SRREVAMP_MONSTER_STRIKE_PUSH` both on**: without them the boot log reads

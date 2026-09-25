@@ -257,12 +257,16 @@ In order. Each is checked off here when it ships in a release, with its round in
         (`ai.TacticsAggressionMode` 0) -- both user decisions; a per-species table is the open
         follow-up if one is ever wanted. Left: the flag's flip (`deploy/README.md`, "Monster aggro
         (off by default)"), after its live check's result in that section.
-      - **mob-aggro-link** (round 258): a party member's hit pulls in as many of the ten nearest
-        monsters as the party has members within 1000 units, credited 100/50/25 % of the attack
-        record's **hate**, and the struck monster books 1.15x that hate. *Corrected in round 537*:
-        this line said "credit" of the blow. The link zeroes the record's damage (+4) before it
-        forwards (`0x547797`), and both factors act on the hate (+8) (`CreditAttacker` `0x5473c0`,
-        `OnAttacked` `0x558ebd..0x558ecc`). A solo hit links nothing.
+      - **mob-aggro-link** -- BUILT in round 553, riding `-monster-battle` (no flag of its own):
+        a party member's first hit on a monster not yet fighting pulls in as many of the ten
+        nearest other monsters (within its detection radius scaled by the level gap, chopped to an
+        int) as the party has members within 1000 units (inclusive), nearest first, no cascade; a
+        solo hit links nothing (`monster_ai.md`, "The aggro link: the runtime (round 553)"). The
+        forwarded hate -- 100/50/25 % of the record's **hate**, floored at 1, the victim booking
+        1.15f x it (round 537's correction of round 258's "damage": the link zeroes the record's
+        damage (+4) at `0x547797`; `CreditAttacker` `0x5473c0`, `OnAttacked` `0x558ebd..0x558ecc`)
+        -- is not carried: srrevamp's blows have no hate value, and the magnitudes wait on
+        mob-threat-retarget. Live check not feasible with one driven client.
       - Then the threat table's retarget rules (round 259, `ai.ThreatTable`, mob-threat-retarget),
         the second attack skill and the AI-skill triggers (round 260, mob-second-skill and
         mob-ai-skill-triggers), the HOMING wobble, and the server-side blocked probe that stops legs

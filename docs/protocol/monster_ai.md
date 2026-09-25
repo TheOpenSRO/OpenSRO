@@ -710,6 +710,22 @@ What the gathered list drives was unread when this was written; round 258
 `AI::CTactics::FUN_00540500` builds the same list for an explicit target from
 `FUN_0053fe30`.
 
+*Read closer in round 553, when the link was wired.* `r` is an **int**: the base is the float at
+`ctx+0x15c` (`fld DWORD` `0x541e00`), the product is stored back as a float (`fstp DWORD [esp+0x4]`
+`0x541e9b`; the -3..0 band jumps past the multiply and the store, `0x541e8f` -> `0x541e9f`) and then
+chopped (`fnstcw; or eax,0xc00; fldcw; fistp QWORD` `0x541ea4..0x541ebe`) into the caller's
+out-parameter (`mov [ebx],edx` `0x541ec2`); the two levels are bytes off vtable slot 73 (`movzx`
+at `0x541e47`/`0x541e54`). And the four doubles are **float literals widened**, read off `.rdata`
+with `objdump -s`: `0xb45c08` is `0x3ff6666660000000` = 1.4f = 1.39999997615814, `0xb45c00`
+`0x3ff3333340000000` = 1.2f, `0xb45bf0` `0x3fe99999a0000000` = 0.8f, `0xb45bf8`
+`0x3fe3333340000000` = 0.6f. So 106 x 1.2 is 127 (127.2 chopped), 108 x 1.2 is 129 (129.6, not the
+130 rounding would give), and 110 x 1.4f is 154: the exact product 153.9999974 is rounded to 154.0
+by the float store before the chop. `GatherObjectsWithin` compares the float distance from the
+OWNER (`GObj_DistanceBetween` at `0x540a8d`, the owner in eax and the candidate in ecx) **at most**
+the radius widened to a float (`fStack_48 <= fStack_58`), the owner skipped, sorts nearest first and
+pops at most ten. `ai.LevelScaledRadius` returns that int since round 553, through the same float
+store, and `ai.GatherWithin` is the gather.
+
 **What srrevamp can use.** `ai.DetectionRadius` and `ai.LevelScaledRadius`
 carry the two rules with a test. The per-species `+0x14` distances are in no
 archive this project holds: `_RefTactics` is a shard-database table, the
@@ -721,7 +737,8 @@ disclosed per species, and the rule around it will not be. *Round 552 built it
 that way*: the scan runs in the runtime behind `-monster-aggro` with one disclosed distance for
 every species (`ai.TacticsDetectionDistance`, 100), and the rest -- the radius, the nearest rule,
 the cadence, the aggression roll, the truncations -- is the binary's ("Target acquisition: the
-runtime (round 552)", below).
+runtime (round 552)", below). *Round 553 built the aggro link on the level-scaled gather* ("The
+aggro link: the runtime (round 553)", below), riding `-monster-battle`.
 
 ## The aggro link: a party's hit pulls the neighbours in (round 258)
 
@@ -733,42 +750,62 @@ forwards a command to the current state's slot 5, `CAIState::DispatchCommand`,
 8->11 9->12 10->13 0xb->14 0xc->15 0xd->16 0xe->29 0xf->30 0x10->17 0x11->18`).
 Command 2 lands in **slot 6, `CAIState::OnAttacked`** (`0x558ea0`, the base
 used by IDLE, WANDER, FLEE and HOMING; BATTLE overrides it with the retarget
-rule of behaviour `+0xfc`):
+rule of behaviour `+0xfc`). The attack record is `{attacker, damage (+4), hate (+8), hatePercent
+(+0xc)}` (`AITactics_CreditAttacker`, `0x5473c0`, next section: `+4` goes to the seat's damage, `+8`
+and `+0xc` to its hate). *The two blocks below were rewritten in place in round 553: round 258's
+said `damage` where the binary reads the HATE, which round 537 had corrected only in a note under
+them.*
 
-	raw = record.damage
-	behaviour +0xf0 (record)                   ; the aggro link, below -- it decays record.damage
-	record.damage = ftol(raw * 1.15)           ; 0xb46300, double, its only use: the victim itself
-	                                           ; credits the attacker with 15 % MORE than the blow
+	saved = record.hate                        ; mov eax,[esi+0x8] 0x558ea6
+	behaviour +0xf0 (record)                   ; the aggro link, below: zeroes record.damage, decays record.hate
+	record.hate = ftol(saved * 1.15f)          ; 0xb46300 = 0x3ff2666660000000, the float 1.15f widened
+	                                           ; (1.14999997615814), its only use; _ftol2_sse on the extended
+	                                           ; product with no float store, so 20 hate books 22, not 23:
+	                                           ; the victim credits the attacker 15 % MORE than the record
 	if behaviour +0xec (attacker accounting) == 0:
 	    SetTarget(1) ; ChangeState(3)          ; edi = 3 -> BATTLE (asm: xor ebx,ebx ; lea edi,[ebx+3])
 
 **The link itself**, `AITactics_ExtRoutine::LinkAggroToNearbyMonsters`
 (`0x547570`, behaviour `+0xf0`, `AITactics_ExtRoutine.cpp` -- its CLAMP assert
-cites line 0x662):
+cites line 0x662), re-read whole in round 553:
 
-	attacker must be a PC; its party (pc+0x1cb8) must exist and have bit 0 of party+0x10
-	AITactics_CollectNearbyMonsters(attacker)             ; the ten nearest monsters inside
-	                                                      ; LevelScaledRadius(BCRadius + detection)
-	n = party members within 1000.0 units of the attacker ; 0xb45c68, double; the attacker counts
-	n = CLAMP(n, 0, gathered)
+	if record == null or record.hate == 0: return 1        ; a blow with no hate links nothing
+	attacker = resolve(record.attacker); must be a PC       ; FUN_00485d90, vtable slot 7; else return 1
+	party = pc+0x1cb8; none -> return 0                     ; piVar4[0x72e]
+	(party+0x10 & 1) == 0 -> return 0                       ; not exp-sharing
+	AITactics_CollectNearbyMonsters(attacker)               ; the ten nearest OTHER monsters within
+	                                                        ; LevelScaledRadius(ctx+0x15c, attacker) -- an
+	                                                        ; int, 0x541e00 -- of the VICTIM (0x540860)
+	n = 0
+	for each member of the party's list (party+0x18):
+	    if member == attacker: n++                          ; 0x5476f6, without measuring
+	    else if member resolves (FUN_00485dc0)
+	         and 0x430ce0(member.pos, attacker.pos)         ; same or adjacent region, or both in a dungeon
+	         and |member - attacker| <= 1000.0: n++         ; 0xb45c68; fcomp; fnstsw; test ah,0x41; jp
+	                                                        ; 0x5476e9..0x5476f4: INCLUSIVE
+	n = CLAMP(n, 0, gathered.size())                        ; 0x54782b..0x547839, 0x547778..0x54778c
+	record.damage = 0                                       ; mov [edi+0x4],ebx (ebx = 0) 0x547797
+	if gathered is empty or n <= 0: return 0                ; 0x5426e0 on ctx+0x80 (add esi,0x80 0x54771f), 0x5477a7
 	for i in 0 .. n-1:
-	    gathered[i].cmdsrc->slot7(0xe, record, 0)         ; command 0xe -> slot 29
-	    record.damage = ftol(record.damage * g_MonsterAggroLinkDecreaseRatio)
+	    if record.hate < 1: record.hate = 1                 ; 0x5477b2..0x5477b8
+	    m = gathered[i]
+	    if ValidTargetOrNull(m) and m.cmdsrc:               ; 0x540dc0 at 0x5477ea; +0x188
+	        m.cmdsrc->slot7(0xe, record, 0)                 ; command 0xe -> slot 29 (0x547805..0x54780a)
+	        record.hate = ftol(record.hate * ratio)         ; fild [esi+0x8]; fmul DWORD [0xc8252c];
+	                                                        ; _ftol2_sse; mov [esi+0x8],eax  0x54780c..0x54781a
+	return 0
 
 so **as many neighbouring monsters as the party has members on the spot join
-the fight, each credited with a smaller share of the blow than the last** (the
-first link gets the raw damage, the second half of it, the third a quarter --
-`ftol` at each step), while the victim itself books 1.15 x the raw blow.
+the fight, each forwarded a smaller share of the record's HATE than the last** (the first link the
+raw hate, the second half of it, the third a quarter -- `ftol` at each step, and never below 1),
+while the victim itself books 1.15f x the raw hate and nobody books the blow's damage. The region
+test `0x430ce0` compares the two positions' 16-bit region ids: bit 15 of both equal, both set (a
+dungeon) passing outright, else the x and y bytes each within 1 -- which 1000 units already implies
+at the 1920-unit region span. What hate a plain blow's record carries is unread.
 
-*Corrected in round 537: those shares are HATE, not damage.* The attack record is `{attacker,
-damage (+4), hate (+8), hatePercent (+0xc)}` (`AITactics_CreditAttacker`, `0x5473c0`, below). The
-link zeroes the record's damage before its first forward (`mov [edi+0x4],ebx` with `ebx = 0` at
-`0x547797`) and scales the hate after each one (`fild [esi+0x8]; fmul DWORD [0xc8252c]`, then
-`_ftol2_sse` and `mov [esi+0x8],eax`, `0x54780c..0x54781a`). `OnAttacked` saves the hate before the
-link (`mov eax,[esi+0x8]` at `0x558ea6`) and writes `ftol(hate x 1.15)` back over it afterwards
-(`0x558ebd..0x558ecc`). So under a link the neighbours are credited 100/50/25 % of the record's
-hate and the victim 115 % of it, and nobody books the blow's damage. The pseudocode above, which
-says `record.damage`, is the round-258 reading.
+*The correction's history.* Round 537 found the `+4`/`+8` split in `CreditAttacker` and recorded
+the shares as hate in a note; round 553 folded that note into the blocks, which until then still
+read `record.damage`.
 Command 0xe lands in **slot 29, `CAIState::OnAggroLinked`** (`0x559bb0`): the
 attacker accounting, `SetTarget(1)`, `ChangeState(3)` -- the same entry into
 BATTLE as a direct hit, but WITHOUT running the link again, so a link never
@@ -1861,8 +1898,9 @@ leg. The lock is per session, so a stalled client holds up only its own replies 
     Closing it would mean stopping the monster at the reach test, before the swing is known to be
     ready or to land, so monsters would stop for clicks that deal nothing. Disclosed, not closed
     (round 539).
-- **Not modelled on a blow:** the aggro link (behaviour `+0xf0`) and the attacker accounting's
-  refusals (`CreditAttacker`, behaviour `+0xec`).
+- **Not modelled on a blow:** the attacker accounting's refusals (`CreditAttacker`, behaviour
+  `+0xec`). The aggro link (behaviour `+0xf0`) is modelled since round 553 with `-monster-battle` on
+  ("The aggro link: the runtime (round 553)", below); with that flag off it is still not run.
 - **Target validity is srrevamp's own:** "in `world.Hub`, same zone". The engine's is
   `AITactics_ValidTargetOrNull` / `AITactics_IsValidTarget` (`0x540dc0` / `0x540de0`: alive, life
   state 1, the body-mode refusals; named in round 545), and its exit is `0x23` (round 545 settled
@@ -2298,7 +2336,8 @@ with the tactics row's `+0x79` == 2 (`0x55a1dd`), two record copies into `call 0
 `0x55a200`, else behaviour `+0x114` at `0x55a217`, whose non-zero answer is dispatched as message
 `0x29` at `0x55a220..0x55a22c`; round 545's reading item 7, named here in round 547 -- the runtime
 makes no swing at all for a species with no skill row, above, and every roster species has one),
-`BATTLE::OnEnter`'s timers 3/4, gathering and slot-11 call, `BATTLE::OnLeave`, the aggro link, the
+`BATTLE::OnEnter`'s timers 3/4, gathering and slot-11 call, `BATTLE::OnLeave`, the aggro link
+(modelled in round 553, "The aggro link: the runtime (round 553)", below), the
 attacker accounting, the threat table's retarget rules (mob-threat-retarget), and every
 "not modelled" item of round 545's section.
 
@@ -2922,3 +2961,124 @@ Frames deleted after the run (`/var/tmp/mob_aggro552b`); the server log is kept 
 `/var/tmp/mobaggro552/run3/server.log`. A first attempt with `--say "/spawn Mangyang"` (run 2,
 `/var/tmp/mobaggro552/run2/server.log`) spawned nothing, for the reason above, and is why the
 paragraph before this one no longer proposes it.
+
+## The aggro link: the runtime (round 553)
+
+`session/monsterai.go`'s `linkAggro` runs `AITactics_ExtRoutine::LinkAggroToNearbyMonsters`
+(`0x547570`, behaviour `+0xf0`) where `CAIState::OnAttacked` (`0x558ea0`) runs it -- at `0x558ebb`,
+on a blow drained for a monster NOT already in BATTLE, before that monster's own `SetTarget` and
+`ChangeState(3)` (`onStruck`) -- **with `-monster-battle` on**. It rides that flag and has none of
+its own: a linked monster is engaged by the chase and the monster's own swings exactly as a struck
+one is, and an older client draws its output -- legs as `OpMonsterMoved 0x007C`, blows as
+`OpMonsterAttacked 0x007D` -- as it draws a struck monster's; under the interim hold a linked
+monster would only stand where it was, the reason acquisition needs the flag too. With the flag
+off nothing links and the wire is what it was. No opcode or layout changed.
+
+**What it does.** A party member's first blow on a monster that is idle, wandering or running home
+gathers the ten nearest OTHER monsters of its zone within its detection radius scaled by the level
+gap -- `ai.LevelScaledRadius(BCRadius + 100, monster level - attacker level)`, an int: 106 for a
+level-1 Mangyang under a level-1 player, 84 (84.8 chopped) under a level-5 one, 63 under a level-8
+one -- counts the party members at most 1000 units from the attacker (the attacker included), and
+puts that many of the gathered, nearest first, into BATTLE against the attacker. A solo player links
+nothing. A second blow on a monster already fighting links nothing (BATTLE's slot 6 is
+`Handler_0fc`, which has no `+0xf0` call). A linked monster links nothing further
+(`CAIState::OnAggroLinked` `0x559bb0` has no `+0xf0` call). A gathered monster already in BATTLE
+keeps its target (`CAIState_BATTLE::OnAggroLinked` `0x55a320` only credits; rule 0) and still uses
+up its place among the n. Trace lines, with `SRREVAMP_AI_TRACE` set: `ai: monster %d struck by %d
+of a party: %d member(s) within 1000, %d neighbour(s) within %d, linking %d`, `ai: monster %d linked
+to %d by the hit on monster %d, engaging`, and `... already in BATTLE, keeps its target`.
+
+**Grounding, re-read for this round (2026-09-25: `/var/tmp/srv.asm`, the decomp dump, `objdump -s`
+on `.rdata`; the corrected blocks are in "The aggro link: a party's hit pulls the neighbours in",
+above):**
+
+- `OnAttacked` `0x558ea0`: the hate saved (`0x558ea6`), `+0xf0` at `0x558ebb`, `ftol(hate x 1.15f)`
+  written back (`0x558ebd..0x558ecc`), `+0xec` (`0x558ed2..0x558edd`), `SetTarget(1)` (`0x558eef`),
+  `ChangeState(3)` (`0x558f01`).
+- The link `0x547570`: the zero-hate and not-a-PC returns; the party and its `+0x10` bit 0; the
+  member count with the attacker counted at `0x5476f6` and the **inclusive** 1000.0 (`fcomp QWORD
+  0xb45c68; fnstsw ax; test ah,0x41; jp` `0x5476e9..0x5476f4`: the increment runs on "below" and
+  on "equal"); the region test `0x430ce0` before it; CLAMP (`0x547778..0x54778c`,
+  `0x54782b..0x547839`); the damage zeroed (`0x547797`); the emptiness test `0x5426e0` on `ctx+0x80`
+  (`add esi,0x80` `0x54771f`); the hate floor (`0x5477b2..0x5477b8`); `ValidTargetOrNull` at
+  `0x5477ea`; the forward `push 0; push esi; push 0xe; call edx` (`0x547805..0x54780a`); the decay
+  (`0x54780c..0x54781a`).
+- `CollectNearbyMonsters` `0x540580` -> `LevelScaledRadius` `0x541e00`: the levels off vtable slot 73
+  (`call eax` at `0x541e43`/`0x541e52`, `movzx` bytes), the bands (`cmp esi,4 / 1 / -7 / -4`),
+  `fmul QWORD` on the four doubles, **`fstp DWORD [esp+0x4]` `0x541e9b`** (the -3..0 band jumps
+  past it, `0x541e8f` -> `0x541e9f`), then `fnstcw; or eax,0xc00; fldcw; fistp QWORD` and `mov
+  [ebx],edx` (`0x541ea4..0x541ec2`): an INT out-parameter, chopped. The doubles, byte for byte:
+  `0xb45c08` `0x3ff6666660000000` (the float 1.4f widened, 1.39999997615814), `0xb45c00`
+  `0x3ff3333340000000` (1.2f), `0xb45bf0` `0x3fe99999a0000000` (0.8f), `0xb45bf8`
+  `0x3fe3333340000000` (0.6f); `0xb45c68` the double 1000.0; `0xb45b68` the float 0.5; `0xb46300`
+  `0x3ff2666660000000` (1.15f).
+- `GatherObjectsWithin` `0x540860`: the owner's regions within the radius (slot 5), the owner
+  skipped, kind mask 2, not `MOB_AUTOMOB`, the float distance from the OWNER
+  (`GObj_DistanceBetween` at `0x540a8d`, the owner in eax and the candidate in ecx) **at most** the
+  radius widened to a float (`fStack_48 <= fStack_58`), sorted, at most ten popped.
+- `CAIState::OnAggroLinked` `0x559bb0` (credit, `SetTarget(1)`, `ChangeState`, no `+0xf0`),
+  `CAIState_BATTLE::OnAggroLinked` `0x55a320` (credit only), `AITactics_CreditAttacker` `0x5473c0`
+  (`param_2[1]` = `+4` into the total and the seat's damage, `param_2[2]`/`[3]` = `+8`/`+0xc` into
+  its hate).
+
+**Wired.** `ai/state.go`: `LevelScaledRadius` returns the chopped int through the float store
+(until this round the float64 product); the four factors and the 1.15 are the widened floats
+(`float64(float32(1.4))` and so on, bit-exact to `.rdata`); `GatherWithin` (new); `AggroLinkHate`
+(was `AggroLinkDamage`; the floor at 1); `AggroLinkCount` unchanged; the header and the acquisition
+comment. `session/monsterai.go`: `MonsterAIConfig.Parties`, `linkAggro`, its call in `onStruck`
+under `a.battle`, the header. `cmd/server`: the party hub passed, the battle-on boot line.
+`orphans_test.go`: `AggroLinkCount` and `LevelScaledRadius` removed (called now); `AggroLinkHate`
+stays listed for mob-threat-retarget.
+
+**Stand-ins, each disclosed at its line:**
+
+- **Every blow carries hate.** The routine returns before gathering when the record's hate is 0,
+  and srrevamp's blows carry no hate value. What hate a plain blow's record holds is UNREAD; the
+  threat table's accounting (`CreditAttacker` adds the record's hate to the seat) only means
+  anything if it holds some, which is an inference, not a reading. The magnitudes are
+  mob-threat-retarget's, and no hate is forwarded (`ai.AggroLinkHate` is not called).
+- **A party is two or more.** The engine tests only the party pointer, but never creates a party
+  of one; srrevamp's create path does (round 485's reading, `killExpFor`).
+- **The zone for the region set** (the gather's regions; the member test's region adjacency, which
+  1000 units already implies), **the ground plane** (the engine sums three axes; srrevamp's
+  monsters have no height; as `acquire` and `battleTick` measure), **ties by id** in the gather
+  (the engine's container keeps the region walk's order).
+- **The attacker's level is one `chars.GetByID` on the tick**, per link event (a party member's
+  first blow on a monster that is not fighting), not per blow. With no character store nothing
+  links, as `queueStrike` swings nothing without one.
+- **A monster hatched since the pass's step 2** has no brain yet and is skipped for that blow.
+- **The attacker accounting's refusals** (`+0xec`) are still not modelled, on the victim or on a
+  linked monster.
+
+**Tests** (`cd server && go build ./... && go test -count=1 -p 1 ./...` green; re-run after the doc
+edits): `session` -- `TestPartyHitLinksTheTwoNearestNeighbours` (THE RED: a party of two, Bram 500
+off; exactly B and C, the two nearest to the VICTIM, in BATTLE on the tick that drains the blow,
+B's push the chase toward Aria; D nearer to Aria but farther from A, E outside the radius, F inside
+B's radius, all idle two ticks on: no cascade), `TestPartyOfThreeLinksThree`, the controls
+`TestSoloHitLinksNothing`, `TestSecondHitOnABattlingMonsterLinksNothing` (a third mate joins between
+the blows so a wrongful re-link would have a place for D) and `TestAggroLinkNeedsTheBattleOn` (the
+flag-off control: the hold alone, no push), `TestPartyMateCountsAtAThousandUnitsNotBeyond` (1000
+counts, 1001 does not), `TestAggroLinkRadiusScalesByTheLevelGap` (level 5 on level 1: 84 in, 85
+out); `ai` -- `TestLevelScaledRadiusChops` (THE RED of the helper: 108 x 1.2 = 129.6 -> 129, where
+rounding gives 130; 84.8 -> 84; 63.6 -> 63; and 110 x 1.4f -> 154 through the float store, where
+chopping the exact product gives 153), `TestLevelRadiusFactorsAreTheRdataDoubles` (bit-exact),
+`TestGatherWithin` (inclusive at the radius, nearest first, ties by id, the cap of ten),
+`TestAggroLink` (the hate ladder 45, 22, 11, 5, 2, 1, 1 and the victim's 51 and 22).
+**Negatives, proved three ways**: the three production files stashed (`ai/state.go`,
+`session/monsterai.go`, `cmd/server/main.go`): `ai` and `session` fail to build (`undefined:
+GatherWithin`, `undefined: AggroLinkHate`, `f.a.parties undefined`); with ONLY `LevelScaledRadius`
+rounding instead of chopping, `TestLevelScaledRadiusChops` fails on `108 -> 130; want 129` (and 85,
+64); with ONLY `linkAggro`'s body removed, every positive fails as written (`in BATTLE after the
+blow: "A", want exactly A (struck), B and C (linked)`, ...) while the solo and flag-off controls
+hold. Restored from kept copies, byte for byte (`cmp`).
+
+**Live: not feasible.** `qa_shot.sh` drives one client and a party needs two, so there is no
+render-box check for this round; the Go tests above are the evidence. When a second driven client
+exists, the check is: two characters in a party, one strikes a Mangyang standing among others; the
+server log shows `struck by ... of a party: 2 member(s) within 1000, K neighbour(s) within 106,
+linking 2` and two `linked to ... engaging` lines, and both clients draw two more monsters running
+at the attacker.
+
+**Deploy.** Nothing to flip: the link rides `-monster-battle`, which is off by default
+(`deploy/README.md`, "Monster battle (off by default)"). On a server with it on, the link is live
+at once with no client change.

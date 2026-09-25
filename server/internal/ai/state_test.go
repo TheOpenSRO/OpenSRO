@@ -324,9 +324,11 @@ func TestDwellMsDrawsTheSwitchArms(t *testing.T) {
 }
 
 // The detection radius is BCRadius + the row's distance, and nothing when the
-// row carries none; the BATTLE-entry bands are the five doubles at their
+// row carries none; the BATTLE-entry bands are the five factors at their
 // level differences, with the engine's own boundaries (>= 4, >= 1, <= -7,
-// <= -4, else 1.0).
+// <= -4, else 1.0), on a base of 100 -- a multiple of 5, so every product is
+// a whole number and the chop changes nothing here (TestLevelScaledRadiusChops
+// is where it does).
 func TestDetectionAndLevelScaledRadius(t *testing.T) {
 	if r, ok := DetectionRadius(6, 50); !ok || r != 56 {
 		t.Fatalf("DetectionRadius(6, 50) = %v,%v; want 56,true", r, ok)
@@ -336,24 +338,113 @@ func TestDetectionAndLevelScaledRadius(t *testing.T) {
 	}
 	cases := []struct {
 		monster, target int
-		want            float64
+		want            int
 	}{
-		{10, 6, 1.4}, {10, 5, 1.4}, // diff 4, 5
-		{10, 9, 1.2}, {10, 7, 1.2}, // diff 1, 3
-		{10, 10, 1.0}, {10, 13, 1.0}, // diff 0, -3
-		{10, 14, 0.8}, {10, 16, 0.8}, // diff -4, -6
-		{10, 17, 0.6}, {1, 60, 0.6}, // diff -7, -59
+		{10, 6, 140}, {10, 5, 140}, // diff 4, 5
+		{10, 9, 120}, {10, 7, 120}, // diff 1, 3
+		{10, 10, 100}, {10, 13, 100}, // diff 0, -3
+		{10, 14, 80}, {10, 16, 80}, // diff -4, -6
+		{10, 17, 60}, {1, 60, 60}, // diff -7, -59
 	}
 	for _, c := range cases {
-		if got := LevelScaledRadius(100, c.monster, c.target); got != 100*c.want {
-			t.Errorf("LevelScaledRadius(100, %d, %d) = %v; want %v", c.monster, c.target, got, 100*c.want)
+		if got := LevelScaledRadius(100, c.monster, c.target); got != c.want {
+			t.Errorf("LevelScaledRadius(100, %d, %d) = %v; want %v", c.monster, c.target, got, c.want)
 		}
 	}
 }
 
+// THE RED of round 553's helper half: LevelScaledRadius CHOPS (RC=chop at
+// 0x541ea4..0x541ec2), it does not round. 108 x 1.2 = 129.6 is 129 (rounding
+// would say 130); 106 x 1.2 = 127.2 is 127, and the Mangyang's 106 under a
+// level-5 and a level-8 player is 84 (84.8) and 63 (63.6). And the float store
+// before the chop (fstp DWORD 0x541e9b) is modelled: 110 x 1.4f is
+// 153.9999974, which the store rounds to 154.0 -- chopping the exact product
+// would give 153.
+func TestLevelScaledRadiusChops(t *testing.T) {
+	cases := []struct {
+		base            float64
+		monster, target int
+		want            int
+	}{
+		{108, 2, 1, 129}, // 129.6: the case rounding gets wrong
+		{106, 2, 1, 127}, // 127.2
+		{106, 1, 5, 84},  // 84.8
+		{106, 1, 8, 63},  // 63.6
+		{106, 5, 1, 148}, // 148.4
+		{110, 5, 1, 154}, // 153.9999974 stored as a float: 154.0
+		{111, 5, 1, 155}, // 155.4
+	}
+	for _, c := range cases {
+		if got := LevelScaledRadius(c.base, c.monster, c.target); got != c.want {
+			t.Errorf("LevelScaledRadius(%g, %d, %d) = %d; want %d", c.base, c.monster, c.target, got, c.want)
+		}
+	}
+}
+
+// The four band factors and the victim's 1.15 are the .rdata doubles byte for
+// byte: each is a FLOAT literal widened (objdump -s on SR_GameServer.exe,
+// round 553), not the decimal the round-257 table printed.
+func TestLevelRadiusFactorsAreTheRdataDoubles(t *testing.T) {
+	cases := []struct {
+		name string
+		v    float64
+		bits uint64
+	}{
+		{"1.4 at 0xb45c08", LevelRadiusFarAbove, 0x3ff6666660000000},
+		{"1.2 at 0xb45c00", LevelRadiusAbove, 0x3ff3333340000000},
+		{"0.8 at 0xb45bf0", LevelRadiusBelow, 0x3fe99999a0000000},
+		{"0.6 at 0xb45bf8", LevelRadiusFarBelow, 0x3fe3333340000000},
+		{"1.15 at 0xb46300", AggroVictimDamageFactor, 0x3ff2666660000000},
+	}
+	for _, c := range cases {
+		if got := math.Float64bits(c.v); got != c.bits {
+			t.Errorf("%s: %#x (%.17g); want %#x", c.name, got, c.v, c.bits)
+		}
+	}
+}
+
+// GatherWithin keeps the candidates at most the radius from the owner
+// (inclusive, as a float), nearest first with ties by id, and never more than
+// ten.
+func TestGatherWithin(t *testing.T) {
+	cands := []Candidate{
+		{ID: 7, X: 10, Z: 0},  // 10
+		{ID: 3, X: 0, Z: 10},  // 10: ties with 7, and the lower id goes first
+		{ID: 9, X: 84, Z: 0},  // exactly the radius: in
+		{ID: 2, X: 85, Z: 0},  // one past it: out
+		{ID: 5, X: 3, Z: 4},   // 5: the nearest
+		{ID: 11, X: 60, Z: 0}, // 60
+	}
+	got := GatherWithin(cands, 0, 0, 84)
+	want := []int64{5, 3, 7, 11, 9}
+	if len(got) != len(want) {
+		t.Fatalf("gathered %d %+v; want the ids %v", len(got), got, want)
+	}
+	for i, id := range want {
+		if got[i].ID != id {
+			t.Errorf("gathered[%d] is %d; want %d (nearest first, ties by id)", i, got[i].ID, id)
+		}
+	}
+	// Twelve inside the radius: the ten nearest.
+	var many []Candidate
+	for i := 1; i <= 12; i++ {
+		many = append(many, Candidate{ID: int64(100 - i), X: float64(i), Z: 0})
+	}
+	got = GatherWithin(many, 0, 0, 50)
+	if len(got) != AggroLinkMaxHelpers {
+		t.Fatalf("gathered %d of twelve; want the cap %d", len(got), AggroLinkMaxHelpers)
+	}
+	if got[0].ID != 99 || got[9].ID != 90 {
+		t.Errorf("the ten are %+v; want ids 99 (1 unit) .. 90 (10 units)", got)
+	}
+	if len(GatherWithin(nil, 0, 0, 50)) != 0 {
+		t.Error("no candidates gathers nothing")
+	}
+}
+
 // The link count is the nearby party members clamped to the gathered
-// monsters (at most ten), and each link's damage halves by default,
-// truncating like ftol.
+// monsters (at most ten), and each link's hate halves by default, truncating
+// like ftol and floored at 1 before each forward.
 func TestAggroLink(t *testing.T) {
 	if got := AggroLinkCount(3, 10); got != 3 {
 		t.Fatalf("3 members, 10 gathered: %d links; want 3", got)
@@ -367,17 +458,20 @@ func TestAggroLink(t *testing.T) {
 	if got := AggroLinkCount(-1, 5); got != 0 {
 		t.Fatalf("a negative count clamps to 0: got %d", got)
 	}
-	// 45 damage: the first linked monster is credited 45, the second 22, the
-	// third 11 (45 * 0.5 = 22.5 -> 22, 22 * 0.5 = 11).
-	for i, want := range []int{45, 22, 11, 5} {
-		if got := AggroLinkDamage(45, i, AggroLinkDecreaseRatio); got != want {
-			t.Errorf("link %d: %d damage; want %d", i, got, want)
+	// 45 hate: the first linked monster is forwarded 45, the second 22, the
+	// third 11 (45 * 0.5 = 22.5 -> 22, 22 * 0.5 = 11), then 5, 2, 1 -- and
+	// the floor keeps every later one at 1, never 0.
+	for i, want := range []int{45, 22, 11, 5, 2, 1, 1, 1} {
+		if got := AggroLinkHate(45, i, AggroLinkDecreaseRatio); got != want {
+			t.Errorf("link %d: %d hate; want %d", i, got, want)
 		}
 	}
-	// The victim books 45 * 1.15 = 51.75 -> 51.
-	raw := 45.0
-	if got := int(raw * AggroVictimDamageFactor); got != 51 {
-		t.Errorf("victim's own credit: %d; want 51", got)
+	// The victim books 45 x 1.15f = 51.7499989 -> 51, and 20 x 1.15f =
+	// 22.9999995 -> 22 (the decimal 1.15 would say 23).
+	for _, c := range []struct{ raw, want int }{{45, 51}, {20, 22}} {
+		if got := int(float64(c.raw) * AggroVictimDamageFactor); got != c.want {
+			t.Errorf("victim's own credit for %d: %d; want %d", c.raw, got, c.want)
+		}
 	}
 }
 
