@@ -6,7 +6,7 @@ committed snapshot rather than an empty file._
 
 ## v0.1.439 (2026-09-24)
 
-v0.1.439: rounds 549-551
+rounds 549-551
 
 - Server: a player killed by a monster stays dead behind -player-dead-state (default off): life state 2, potion queue dropped, movement/attacks/zone change refused, OpRevive/OpReviveResult, 30 s auto-revive (disclosed); the return point read (appointed teleport) and disclosed as a stand-in above level 10
 - One death penalty per kill under simultaneous blows, and no living character can be immune: a per-character kill lock arbitrates the death (monster swings, counters, duels); the game's HP-cost gate passes on equal (read in the server binary)
@@ -16,7 +16,7 @@ v0.1.439: rounds 549-551
 
 ## v0.1.438 (2026-09-24)
 
-v0.1.438: rounds 547-548 (monster-AI release D, client half of the player's dead state)
+rounds 547-548 (monster-AI release D, client half of the player's dead state)
 
 - Client: a player killed by a monster (HP 0 in the kill report) enters a dead state -- the die clip held, input locked, a Revive prompt that sends OpRevive (0x0028) and leaves the state on OpReviveResult (0x0029); inert against today's server, which revives in place at once
 - The retail resurrect handler (0x50fee0) READ: one option byte; in place at 40% (the handler's own 0.4) only while the character's max level is 10 or below, otherwise the return point; the return point is the server half's next read
@@ -25,7 +25,7 @@ v0.1.438: rounds 547-548 (monster-AI release D, client half of the player's dead
 
 ## v0.1.437 (2026-09-24)
 
-v0.1.437: rounds 543-546 (monster-AI release C)
+rounds 543-546 (monster-AI release C)
 
 - Client: a monster's own swing (no player attack to pair with) is drawn as this player's own, with HP and death from the push; inert until the server's -monster-battle flag is switched on
 - Server: BATTLE chases the attacker to its attack band at run speed and swings on its own timer, behind -monster-battle (default off; forced off unless -monster-ai and -monster-strike-push are on); live-checked on the render box (21 strikes one reuse delay apart)
@@ -35,7 +35,7 @@ v0.1.437: rounds 543-546 (monster-AI release C)
 
 ## v0.1.436 (2026-09-24)
 
-v0.1.436: rounds 538-542 (monster-AI release B)
+rounds 538-542 (monster-AI release B)
 
 - Client draws a monster's blow for everyone in the zone (OpMonsterAttacked) and decodes spawn announcements (OpMonsterSpawned); inert until the server flags are switched on
 - Server: the monster's blow as a zone push behind -monster-strike-push (default off); respawns and GM spawns pushed behind -monster-spawn-push (default off); heading rolled at spawn time
@@ -45,7 +45,7 @@ v0.1.436: rounds 538-542 (monster-AI release B)
 
 ## v0.1.435 (2026-09-24)
 
-v0.1.435: rounds 532-534 (monster-AI release A)
+rounds 532-534 (monster-AI release A)
 
 - The player who lands the killing blow now sees the monster's death animation, held until the clip ends
 - The client can decode and draw server-driven monster movement (walk/run clip, facing, height); inert until the server's monster AI is switched on
@@ -55,7 +55,7 @@ v0.1.435: rounds 532-534 (monster-AI release A)
 
 ## v0.1.434 (2026-09-24)
 
-v0.1.434: rounds 527-531
+rounds 527-531
 
 - Guild levelling: a guild master can raise the guild's level (up to 5) for the real gold and guild-point cost from the current level; the member cap follows the level; refusals in the engine's order with the game's own text
 - Clicks on the player-info block, minimap, target window and hotbar body no longer fall through to the world; a camera orbit keeps turning over HUD
@@ -65,7 +65,7 @@ v0.1.434: rounds 527-531
 
 ## v0.1.433 (2026-09-23)
 
-v0.1.433: rounds 523-526
+rounds 523-526
 
 - Guild points: members earn guild GP (GatheredSP and their own donation) from converted skill points, in batches of 10; leftovers are credited on logout; shown in the guild tab
 - A guild NPC's 'Buy' line appears only to a player in a guild, as in the real client
@@ -74,7 +74,7 @@ v0.1.433: rounds 523-526
 
 ## v0.1.432 (2026-09-23)
 
-v0.1.432: rounds 520-522
+rounds 520-522
 
 - Guild NPC talk menu follows membership: 'Create a new guild' (asks for a name) with no guild, 'Leave guild.' (asks first) as a member
 - Typing in a text box no longer walks the character; a left click on the world takes the keyboard back
@@ -84,7 +84,7 @@ v0.1.432: rounds 520-522
 
 ## v0.1.431 (2026-09-23)
 
-v0.1.431: rounds 518-519
+rounds 518-519
 
 - Clicking a distant monster walks the character into range, then swings or casts (Tick_Attack phase 1); skills with no target requirement cast in place
 - A repair refused while trading shows the game's own 'User is on other business.'
@@ -92,7 +92,7 @@ v0.1.431: rounds 518-519
 
 ## v0.1.430 (2026-09-23)
 
-v0.1.430: rounds 514-517
+rounds 514-517
 
 - Store window shows Repair / Repair All only at NPCs the game gives interaction id 4 (town and fortress smiths/armourers)
 - Refused pick-ups and repairs show the game's own text (error_text.gd)

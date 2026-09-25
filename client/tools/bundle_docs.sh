@@ -42,6 +42,10 @@ notes="$dst/RELEASE_NOTES.md"
       date="$(git -C "$repo_root" log -1 --format=%ad --date=short "$tag" 2>/dev/null || true)"
       echo "## $tag${date:+ ($date)}"
       echo
+      # The subject usually begins with the tag itself ("v0.1.439: rounds
+      # 549-551"); under a heading that already names the tag, print the rest.
+      subject="${subject#"$tag": }"
+      subject="${subject#"$tag" }"
       echo "${subject:-(no message)}"
       if [ -n "$body" ]; then
         echo
