@@ -79,7 +79,10 @@ extends Node3D
 ## type-ID-to-resource-path lookup (a real, root-level "object.ifo" file
 ## inside SRREVAMP_PK2_PATH's Data.pk2, see docs/protocol/MAPO_FORMAT.md
 ## for how this was found; it was a confirmed dead end earlier in this
-## project). Any
+## project). SRREVAMP_SYNC_LOAD=1 (round 565, kept for one release as an
+## escape hatch) builds every streamed cell's terrain on the main thread on
+## the pre-round-565 schedule instead of preparing it on WorkerThreadPool
+## tasks (_threaded_load, _terrain_prepare). Any
 ## variable left unset is skipped gracefully (a printed hint, not an error)
 ## -- this scene works fine with none of them set, same as always.
 ##
@@ -144,7 +147,7 @@ extends Node3D
 const TERRAIN_COLLISION_LAYER := 0b1001 # layer 1 (default) + layer 4 (terrain-only)
 const TERRAIN_ONLY_COLLISION_MASK := 0b1000 # layer 4 only
 
-## Real navmesh walls (see _try_add_navmesh_walls) get their own layer bit,
+## Real navmesh walls (see _add_navmesh_walls) get their own layer bit,
 ## deliberately *not* the default layer 1, because they are invisible
 ## gameplay boundaries rather than visible geometry. The player's own body
 ## masks this bit in (World3D.tscn), so they are stopped by them; the camera
@@ -660,6 +663,28 @@ var _last_stream_cell := Vector2i(0x7fffffff, 0x7fffffff) # sentinel so the firs
 # queued cells are ahead of the player and can arrive over the next frames.
 var _load_queue: Array = [] # of {rx, ry, dx, dy, anchor, key}; keys in _grid.queued_cells
 const STREAM_CELLS_PER_FRAME := 1
+## At most this many streamed cells prepare their terrain on WorkerThreadPool
+## tasks at once (round 565; see _terrain_prepare). An OWN TUNING CHOICE, not
+## a value from the game or the engine: two let one cell prepare while the
+## previous one commits, which is all a budget of one commit a frame
+## (STREAM_CELLS_PER_FRAME) can use, without more tasks queueing behind
+## Pk2Reader's lock. The benchmark (client/tools/README.md, "Load
+## benchmark") is what it is judged by.
+const TERRAIN_JOBS_IN_FLIGHT := 2
+## Streamed cells whose terrain is preparing on a WorkerThreadPool task
+## (round 565), oldest first, each {"task": the pool's task id, "cell": its
+## _load_queue entry, "job": the job Dictionary the task fills}. The task id
+## is kept here and not in the job, because the task writes the job while it
+## runs. A cell keeps its _grid.queued_cells mark until it is committed or
+## dropped, so _maybe_stream_regions does not queue it a second time while
+## it prepares.
+var _cell_jobs: Array = []
+## True while _drain_initial_load pumps the cell jobs itself (a world entry,
+## a zone change), so the physics step's _process_stream_queue leaves them
+## alone: one owner of the dispatch and of the commit budget at a time. Until
+## round 565 both built from the same _load_queue in the same frame -- the
+## drain's two cells plus the physics step's one (round 561).
+var _drain_pumping := false
 # The "NOW LOADING" screen shown to a real player during world entry (never a
 # QA render, whose synchronous load a screenshot depends on).
 var _loading_screen: LoadingScreen
@@ -1792,9 +1817,6 @@ var _env_light_diffuse := Color.WHITE
 var _env_terrain_ambient := Color.BLACK
 var _env_light_ready := false
 
-## The real per-tile ShadowMap from the region's own `.t`, stashed by
-## _load_real_terrain_lightmap for the mesh builder.
-var _last_terrain_shadow_map := PackedByteArray()
 var _tile_index_load_attempted := false
 
 ## Loads and caches the real tile2d.ifo table (see TILE_INDEX_PATH) from
@@ -2145,23 +2167,32 @@ func _load_tile_index() -> TileIndexReader.Table:
 ## `ground textures for` line (decoded count and ms). Cleared in _exit_tree.
 var _ground_texture_cache: Dictionary = {}
 
-## Loads every real per-vertex ground texture `region` actually
-## references, keyed by the real TextureInfo.ID MapmTerrainBuilder's
-## _vertex_color already decodes -- see docs/protocol/DDJ_FORMAT.md and
-## TILE2D_FORMAT.md's 2026-08-23 correction. Resolves each real ID through
-## tile_table to a real tile2d.ifo filename, then loads that file from
-## SRREVAMP_MAP_PK2_PATH's real `Tile2D\` folder (confirmed 2026-08-23 to
-## be where these actually live -- see server/cmd/pk2list's real listing
-## against a real Map.pk2). Returns {} (not an error) if tile_table is
-## null or SRREVAMP_MAP_PK2_PATH isn't set -- callers already treat an
-## empty lookup as "use the flat tile-type color instead."
-func _load_real_ground_textures(region: MapmReader.ParsedRegion, tile_table: TileIndexReader.Table, region_name: String = "") -> Dictionary:
-	var result := {}
-	if tile_table == null:
-		return result
-	var archive := _open_map_pk2_if_set()
-	if archive == null:
-		return result
+## Which of a region's real per-vertex ground texture IDs resolve, and the
+## ground tiles this world has not uploaded yet decoded to Images -- the
+## prepare half (round 565) of what `_load_real_ground_textures` did on the
+## main thread until then. Keyed by the real TextureInfo.ID
+## MapmTerrainBuilder's _vertex_color already decodes -- see
+## docs/protocol/DDJ_FORMAT.md and TILE2D_FORMAT.md's 2026-08-23 correction.
+## Each real ID resolves through the tile table to a real tile2d.ifo
+## filename, loaded from Map.pk2's real `Tile2D\` folder (confirmed
+## 2026-08-23 to be where these actually live -- see server/cmd/pk2list's
+## real listing against a real Map.pk2). Sets the job's `texture_files` (ID
+## -> filename, resolved IDs only) and `new_images` (filename -> Image, null
+## for a file missing or undecodable), both empty -- the flat colour, as
+## before -- with no tile table or no Map.pk2. A file the job's snapshot of
+## _ground_texture_cache names is not read again; one another in-flight job
+## is decoding too is decoded twice, and the commit that lands second keeps
+## the first upload (_terrain_commit).
+static func _prepare_ground_textures(job: Dictionary, region: MapmReader.ParsedRegion) -> void:
+	var files := {}
+	var new_images := {}
+	job["texture_files"] = files
+	job["new_images"] = new_images
+	var tile_table: TileIndexReader.Table = job["tile_table"]
+	var archive: Pk2Reader = job["map_pk2"]
+	if tile_table == null or archive == null:
+		return
+	var known: Dictionary = job["known_textures"]
 
 	var ids := {}
 	for block in region.blocks:
@@ -2179,11 +2210,19 @@ func _load_real_ground_textures(region: MapmReader.ParsedRegion, tile_table: Til
 		if entry == null or entry.filename == "":
 			no_entry += 1
 			continue
-		if not _ground_texture_cache.has(entry.filename):
+		var filename := entry.filename
+		var resolved: bool
+		if known.has(filename):
+			resolved = known[filename]
+		elif new_images.has(filename):
+			resolved = new_images[filename] != null
+		else:
 			decoded += 1
-		var tex := _load_ground_texture_file(entry.filename, archive)
-		if tex != null:
-			result[id] = tex
+			var image := _decode_ground_image(filename, archive)
+			new_images[filename] = image
+			resolved = image != null
+		if resolved:
+			files[id] = filename
 		else:
 			unreadable += 1
 	# One line per region, so a playtest log can say whether a flat or white
@@ -2192,24 +2231,23 @@ func _load_real_ground_textures(region: MapmReader.ParsedRegion, tile_table: Til
 	# The decoded count and time say what this world's own cache cost --
 	# on a second login every region's first textures are decoded again
 	# (round 560), which is the price of nothing outliving the instance.
-	print("World3D: ground textures for %s -- %d ids, %d resolved, %d decoded now in %d ms, %d without a tile2d.ifo entry, %d files missing or undecodable%s" % [
-		region_name, ids.size(), result.size(), decoded, Time.get_ticks_msec() - started_ms, no_entry, unreadable,
-		"" if not result.is_empty() else " -- NOTHING resolved, the region draws the flat fallback"])
-	return result
+	# Since round 565 the time is the decode alone, off the main thread for a
+	# streamed cell; the upload is the commit's `images` lap.
+	(job["log"] as Array).append(["out", "World3D: ground textures for %s -- %d ids, %d resolved, %d decoded now in %d ms, %d without a tile2d.ifo entry, %d files missing or undecodable%s" % [
+		job["mapm_path"], ids.size(), files.size(), decoded, Time.get_ticks_msec() - started_ms, no_entry, unreadable,
+		"" if not files.is_empty() else " -- NOTHING resolved, the region draws the flat fallback"]])
 
-## Loads and caches one real Tile2D\<filename>.ddj -- see
-## _load_real_ground_textures's doc comment for the cache's purpose.
-func _load_ground_texture_file(filename: String, archive: Pk2Reader) -> Texture2D:
-	if _ground_texture_cache.has(filename):
-		return _ground_texture_cache[filename]
+## One real Tile2D\<filename>.ddj decoded to an Image (no texture: the
+## commit uploads it), or null for a file missing or undecodable -- what
+## `_load_ground_texture_file` read and decoded until round 565.
+static func _decode_ground_image(filename: String, archive: Pk2Reader) -> Image:
 	var bytes := AssetSource.read_bytes("Tile2D\\%s" % filename, archive)
-	var tex: Texture2D = null
-	if not bytes.is_empty():
-		var parsed := DdjReader.parse(bytes)
-		if parsed != null:
-			tex = DdjReader.to_texture(parsed)
-	_ground_texture_cache[filename] = tex
-	return tex
+	if bytes.is_empty():
+		return null
+	var parsed := DdjReader.parse(bytes)
+	if parsed == null:
+		return null
+	return DdjReader.to_image(parsed)
 
 ## Real, per-world cache of the 30-frame real water animation loaded from
 ## Map.pk2's own real `Water\` folder (see docs/WORLD_ISSUES.md's
@@ -2301,22 +2339,39 @@ func _load_region_navmesh(mapm_path: String) -> NvmReader.ParsedRegion:
 	var key: int = RegionGridState.navmesh_key(int(coords["x"]), int(coords["y"]))
 	if _grid.navmesh_cache.has(key):
 		return _grid.navmesh_cache[key]
-	_grid.navmesh_cache[key] = null
+	var lines: Array = []
+	var parsed := _read_region_navmesh(_open_pk2_if_set(), key, lines)
+	_print_job_log(lines)
+	_grid.navmesh_cache[key] = parsed
+	return parsed
 
-	var archive := _open_pk2_if_set()
+## A region's real `.nvm` read and parsed, uncached -- _load_region_navmesh's
+## read, and the terrain prepare's (round 565), which runs on a
+## WorkerThreadPool task and so reports through `lines` ([["out"|"err",
+## line]], printed by the commit) instead of printing. Null with no
+## Data.pk2, no file or no parse.
+static func _read_region_navmesh(archive: Pk2Reader, key: int, lines: Array) -> NvmReader.ParsedRegion:
 	if archive == null:
 		return null
 	var nvm_path: String = NAVMESH_PATH_FORMAT % key
 	var bytes := AssetSource.read_bytes(nvm_path, archive)
 	if bytes.is_empty():
-		print("World3D: no real navmesh at %s -- this region gets no real walkability or water" % nvm_path)
+		lines.append(["out", "World3D: no real navmesh at %s -- this region gets no real walkability or water" % nvm_path])
 		return null
 	var parsed := NvmReader.parse(bytes)
 	if parsed == null:
-		printerr("World3D: could not parse real navmesh at ", nvm_path)
+		lines.append(["err", "World3D: could not parse real navmesh at %s" % nvm_path])
 		return null
-	_grid.navmesh_cache[key] = parsed
 	return parsed
+
+## Prints what a job (or a reader called on its behalf) logged, in order:
+## `["out", line]` to stdout, `["err", line]` to stderr.
+static func _print_job_log(lines: Array) -> void:
+	for line in lines:
+		if line[0] == "err":
+			printerr(line[1])
+		else:
+			print(line[1])
 
 ## Real walkable graphs, one per loaded region, live in _grid.nav_graphs as
 ## [NavGraph, Node3D] by region -- the graph plus the node whose own local
@@ -2330,20 +2385,39 @@ func _load_region_navmesh(mapm_path: String) -> NvmReader.ParsedRegion:
 ## real object that `.nvm` lists, each resolved to its own real navigation
 ## mesh. See NavGraph for how objects attach to a region and why this is data
 ## rather than collision shapes.
-func _build_region_nav_graph(terrain_group: Node3D, mapm_path: String) -> void:
-	var region := _load_region_navmesh(mapm_path)
+##
+## Part of the terrain prepare since round 565 (it was
+## `_build_region_nav_graph`, on the main thread): NavGraph.place and
+## NavGraph.build are plain GDScript over RefCounted data, and every input is
+## in the job -- the navmesh, Data.pk2 behind its lock, the object index and
+## a copy of the object navigation meshes already loaded. Sets `nav_graph`
+## (null with no navmesh), `used_collisions` (every object id the navmesh
+## lists -> its mesh or null, for the commit to put back in
+## _grid.object_collision_cache: an unload elsewhere may have pruned one
+## while this ran) and `nav_log`, the lines the commit prints once the graph
+## is registered.
+static func _prepare_nav_graph(job: Dictionary) -> void:
+	var region: NvmReader.ParsedRegion = job.get("navmesh")
+	var used := {}
+	var lines: Array = []
+	job["nav_graph"] = null
+	job["used_collisions"] = used
+	job["nav_log"] = lines
 	if region == null:
 		return
-	var archive := _open_pk2_if_set()
+	var mapm_path: String = job["mapm_path"]
+	var archive: Pk2Reader = job["data_pk2"]
+	var cache: Dictionary = job["collisions"]
 	var placed: Array[NavGraph.PlacedObject] = []
 	var missing := 0
 	var missing_names := {}
 	if archive != null and not region.objects.is_empty():
-		var table := _load_object_index()
+		var table: ObjidxReader.Table = job["object_index"]
 		if table != null:
 			for oi in range(region.objects.size()):
 				var obj: NvmReader.MapObject = region.objects[oi]
-				var collision := _load_object_collision(archive, table, obj.resource_id)
+				var collision := _load_object_collision(cache, archive, table, obj.resource_id)
+				used[obj.resource_id] = collision
 				if collision == null:
 					missing += 1
 					# Naming them matters: an object with no navigation mesh
@@ -2364,25 +2438,25 @@ func _build_region_nav_graph(terrain_group: Node3D, mapm_path: String) -> void:
 					placed_object.set_meta("model", entry.path.get_file().get_basename())
 				placed.append(placed_object)
 	var graph := NavGraph.build(region, placed)
-	# Non-empty: _load_region_navmesh above returned null without them.
-	var coords := _parse_region_coords(mapm_path)
-	_grid.add_nav_graph(int(coords["x"]), int(coords["y"]), graph, terrain_group)
-	print("World3D: real walkable graph for %s -- %d/%d real objects placed, %d real terrain blocking edges" % [
-		mapm_path, placed.size(), region.objects.size(), graph.terrain_blocking.size() / 2])
+	job["nav_graph"] = graph
+	lines.append(["out", "World3D: real walkable graph for %s -- %d/%d real objects placed, %d real terrain blocking edges" % [
+		mapm_path, placed.size(), region.objects.size(), graph.terrain_blocking.size() / 2]])
 	if missing > 0:
-		print("World3D:   (%d real objects in that region could not be resolved to a navigation mesh: %s)" % [
-			missing, ", ".join(PackedStringArray(missing_names.keys()))])
+		lines.append(["out", "World3D:   (%d real objects in that region could not be resolved to a navigation mesh: %s)" % [
+			missing, ", ".join(PackedStringArray(missing_names.keys()))]])
 
 ## Cache of real object navigation meshes by real resource ID, since a region
 ## repeats the same handful of real object types across many placements.
 ## Held in _grid.object_collision_cache; an unload prunes the ids no cached
-## navmesh lists any more (round 563).
-func _load_object_collision(
-	archive: Pk2Reader, table: ObjidxReader.Table, resource_id: int
+## navmesh lists any more (round 563). Static over an explicit `cache` since
+## round 565: the terrain prepare runs it on a WorkerThreadPool task against
+## its job's copy of that cache, and the commit merges what it loaded back.
+static func _load_object_collision(
+	cache: Dictionary, archive: Pk2Reader, table: ObjidxReader.Table, resource_id: int
 ) -> BmsReader.CollisionMesh:
-	if _grid.object_collision_cache.has(resource_id):
-		return _grid.object_collision_cache[resource_id]
-	_grid.object_collision_cache[resource_id] = null
+	if cache.has(resource_id):
+		return cache[resource_id]
+	cache[resource_id] = null
 	var entry = table.lookup(resource_id)
 	if entry == null:
 		return null
@@ -2419,7 +2493,7 @@ func _load_object_collision(
 	if parts.is_empty():
 		return null
 	var collision: BmsReader.CollisionMesh = parts[0] if parts.size() == 1 else BmsCollision.merge(parts)
-	_grid.object_collision_cache[resource_id] = collision
+	cache[resource_id] = collision
 	return collision
 
 ## The real walkable graph covering the player, as [NavGraph, Node3D], or an
@@ -2482,11 +2556,23 @@ func _nav_graph_for(world_position: Vector3) -> Array:
 func _nav_graph_for_region(region_x: int, region_y: int) -> Array:
 	return _grid.nav_graph_for_region(region_x, region_y)
 
-func _try_add_navmesh_walls(terrain_group: Node3D, mapm_path: String) -> void:
-	var region := _load_region_navmesh(mapm_path)
+##
+## Two halves since round 565: `_prepare_navmesh_walls` builds the triangles
+## (NvmCollision, plain data) in the terrain prepare, on a WorkerThreadPool
+## task for a streamed cell; `_add_navmesh_walls` builds the shape and the
+## body from them in the commit, on the main thread.
+static func _prepare_navmesh_walls(job: Dictionary) -> void:
+	var region: NvmReader.ParsedRegion = job.get("navmesh")
+	job["wall_faces"] = PackedVector3Array()
 	if region == null:
 		return
 	var faces := NvmCollision.build_wall_triangles(region, NAVMESH_WALL_HEIGHT)
+	job["wall_faces"] = faces
+	job["wall_line"] = "World3D: loaded real navmesh walls for %s (%d real blocking of %d internal + %d global edges)" % [
+		job["mapm_path"], NvmCollision.blocking_edges(region).size(), region.internal_edges.size(), region.global_edges.size()]
+
+func _add_navmesh_walls(terrain_group: Node3D, job: Dictionary) -> void:
+	var faces: PackedVector3Array = job["wall_faces"]
 	if faces.is_empty():
 		return
 	var shape := ConcavePolygonShape3D.new()
@@ -2500,10 +2586,9 @@ func _try_add_navmesh_walls(terrain_group: Node3D, mapm_path: String) -> void:
 	terrain_group.add_child(body)
 	if OS.get_environment("SRREVAMP_DEBUG_NAVMESH_WALLS") != "":
 		_add_navmesh_wall_debug_mesh(terrain_group, faces)
-	print("World3D: loaded real navmesh walls for %s (%d real blocking of %d internal + %d global edges)" % [
-		mapm_path, NvmCollision.blocking_edges(region).size(), region.internal_edges.size(), region.global_edges.size()])
+	print(job["wall_line"])
 
-## Draws the walls _try_add_navmesh_walls just built, so they can actually
+## Draws the walls _add_navmesh_walls just built, so they can actually
 ## be looked at. They are deliberately invisible in normal play -- they are
 ## walkability, not scenery -- which also means a misplaced one is
 ## impossible to see, and misplacement is exactly the failure this
@@ -2995,21 +3080,25 @@ func _load_real_terrain_texture(path_override: String = "") -> Texture2D:
 ## region has a `.t` file (only newer-generation "Shape B" regions do --
 ## see MAPM_FORMAT.md's Shape A/B split), so a missing file here is the
 ## normal, expected case, not an error.
-func _load_real_terrain_lightmap(mapm_path: String, archive: Pk2Reader) -> Texture2D:
+##
+## Static and texture-free since round 565: it runs in the terrain prepare,
+## on a WorkerThreadPool task for a streamed cell, so it returns the parsed
+## file with the lightmap as an Image (`image`; MapTReader.parse's
+## with_texture false) and the commit uploads it. The same real `.t` also
+## carries the real per-tile ShadowMap, the self-shadow term of the real
+## terrain equation, which goes into the job beside it for the mesh builder
+## (which does not apply it -- MapmTerrainBuilder._shadow_at says why). Until
+## round 565 that map was stashed in a member, so a region with no `.t`
+## handed the builder the previous region's -- harmless only because it is
+## not applied. Null with no file or no parse.
+static func _read_terrain_lightmap(mapm_path: String, archive: Pk2Reader) -> MapTReader.ParsedRegion:
 	if mapm_path == "" or not mapm_path.ends_with(".m"):
 		return null
 	var mapt_path := mapm_path.substr(0, mapm_path.length() - 1) + "t"
 	var bytes := AssetSource.read_bytes(mapt_path, archive)
 	if bytes.is_empty():
 		return null
-	var region := MapTReader.parse(bytes)
-	if region == null:
-		return null
-	# The same real `.t` also carries the real per-tile ShadowMap, which is the
-	# self-shadow term of the real terrain equation. Kept here so the terrain
-	# mesh built moments later can apply it without re-reading the file.
-	_last_terrain_shadow_map = region.shadow_map
-	return region.texture
+	return MapTReader.parse(bytes, false)
 
 ## The real Jangan region. **Corrected again 2026-09-01** (see
 ## docs/WORLD_ISSUES.md's thirty-ninth round): "89/182" (found 2026-08-26 by
@@ -3191,6 +3280,8 @@ static func _parse_region_coords(path: String) -> Dictionary:
 ## regions' walkable graphs answering position queries for regions that no
 ## longer exist.
 func _clear_region_grid() -> void:
+	# A cell still preparing belongs to the grid being torn down (round 565).
+	_drop_cell_jobs("the region grid was cleared")
 	# NPCs are parented to their region's terrain group, so tearing the grid
 	# down takes them with it. Without clearing their marks, every region
 	# still counts as "already populated" and a zone change leaves a world
@@ -3242,8 +3333,15 @@ func _clear_region_grid() -> void:
 ## to each calibrating themselves independently (NAN anchor) -- the original
 ## behavior -- since there's no real center reference to share in that case.
 func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGION_LOAD_RADIUS, texture_override: String = "") -> void:
+	# No job of an earlier grid may commit into this one (round 565);
+	# _reload_zone_assets has already dropped them, and the first entry has
+	# none.
+	_drop_cell_jobs("a new region grid")
 	# Timed like every other cell (round 561): the centre is the one cell a
-	# player waits for with nothing on screen yet.
+	# player waits for with nothing on screen yet. It is built whole on the
+	# main thread -- prepare and commit -- whatever SRREVAMP_SYNC_LOAD says:
+	# its near_height anchors every neighbour, its environment lights them,
+	# and the caller places the player on it next (round 565 keeps it so).
 	_load_timings.begin_cell(center_x, center_y)
 	var t0 := Time.get_ticks_usec()
 	var center_near_height := _try_load_real_terrain("%d\\%d.m" % [center_x, center_y], texture_override, Vector3.ZERO, "_%d_%d" % [center_x, center_y], true)
@@ -3273,7 +3371,9 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 	# The neighbours are queued nearest-first and built a few per frame (see
 	# _process_stream_queue and, at world entry, the loading screen's pump),
 	# instead of all at once here -- that synchronous grid was most of the
-	# minute-long, no-feedback entry.
+	# minute-long, no-feedback entry. Since round 565 their terrain prepares
+	# on WorkerThreadPool tasks and only its commit takes a frame
+	# (_pump_cell_jobs).
 	_load_queue.clear()
 	_grid.queued_cells.clear()
 	var neighbours: Array = []
@@ -3297,8 +3397,30 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 ## to wherever the player currently is, so every cell's real world
 ## position stays consistent as the player moves and more cells stream in
 ## around them (see _grid_origin_world's own doc comment).
-func _load_region_cell(region_x: int, region_y: int, dx: int, dy: int, shared_anchor: float) -> void:
+##
+## `prepared` (round 565) is a terrain job a WorkerThreadPool task has
+## already prepared (_dispatch_cell): only its commit runs here. Empty, the
+## terrain is prepared and committed here, on the main thread, as before.
+## Either way the objects and the NPCs follow in the same frame, after the
+## terrain group exists.
+func _load_region_cell(region_x: int, region_y: int, dx: int, dy: int, shared_anchor: float, prepared: Dictionary = {}) -> void:
 	var suffix := "_%d_%d" % [region_x, region_y]
+	var offset := _cell_offset(dx, dy)
+	_load_timings.begin_cell(region_x, region_y)
+	var t0 := Time.get_ticks_usec()
+	if prepared.is_empty():
+		_try_load_real_terrain("%d\\%d.m" % [region_x, region_y], "", offset, suffix, false, shared_anchor, false)
+	else:
+		_terrain_commit(prepared)
+	var t1 := Time.get_ticks_usec()
+	_try_load_real_map_objects("%d\\%d.o" % [region_x, region_y], offset, suffix)
+	var t2 := Time.get_ticks_usec()
+	_try_spawn_region_npcs(region_x, region_y)
+	_note_cell_built(t0, t1, t2, Time.get_ticks_usec())
+	_grid.mark_loaded(dx, dy, region_x, region_y)
+
+## A grid cell's world offset from the grid's origin cell.
+static func _cell_offset(dx: int, dy: int) -> Vector3:
 	# **Axes corrected 2026-09-02** (see docs/WORLD_ISSUES.md's forty-sixth
 	# round) -- this was Vector3(dx * REGION_SPAN, 0.0, dy * REGION_SPAN),
 	# i.e. region_x -> world X and region_y -> world Z. That was wrong, and
@@ -3314,16 +3436,7 @@ func _load_region_cell(region_x: int, region_y: int, dx: int, dy: int, shared_an
 	# what this code assumed. Verified on two unrelated real regions
 	# (96/169 and 98/157), same rule both times. So: region_x -> world Z,
 	# region_y -> world X.
-	var offset := Vector3(dy * REGION_SPAN, 0.0, dx * REGION_SPAN)
-	_load_timings.begin_cell(region_x, region_y)
-	var t0 := Time.get_ticks_usec()
-	_try_load_real_terrain("%d\\%d.m" % [region_x, region_y], "", offset, suffix, false, shared_anchor, false)
-	var t1 := Time.get_ticks_usec()
-	_try_load_real_map_objects("%d\\%d.o" % [region_x, region_y], offset, suffix)
-	var t2 := Time.get_ticks_usec()
-	_try_spawn_region_npcs(region_x, region_y)
-	_note_cell_built(t0, t1, t2, Time.get_ticks_usec())
-	_grid.mark_loaded(dx, dy, region_x, region_y)
+	return Vector3(dy * REGION_SPAN, 0.0, dx * REGION_SPAN)
 
 ## Closes the cell _load_timings has open (round 561): the three phase
 ## totals from the stopwatches around them -- the same numbers the `region
@@ -3440,8 +3553,21 @@ func _maybe_stream_regions() -> void:
 ## Builds up to STREAM_CELLS_PER_FRAME queued cells a frame, so a boundary
 ## crossing streams over several frames rather than freezing for one long
 ## one. A cell the player has since moved away from is dropped, not built.
+##
+## Since round 565 (the default; SRREVAMP_SYNC_LOAD=1 keeps the loop below)
+## a cell's terrain prepares on a WorkerThreadPool task and this commits at
+## most STREAM_CELLS_PER_FRAME finished ones a frame (_pump_cell_jobs) --
+## except while _drain_initial_load pumps them itself, which owns the queue
+## until it returns.
 func _process_stream_queue() -> void:
-	if _load_queue.is_empty() or not _grid_has_origin:
+	if not _grid_has_origin:
+		return
+	if _threaded_load():
+		if _drain_pumping or (_load_queue.is_empty() and _cell_jobs.is_empty()):
+			return
+		_pump_cell_jobs(STREAM_CELLS_PER_FRAME, false)
+		return
+	if _load_queue.is_empty():
 		return
 	var margin := _region_load_radius() + 1
 	var built := 0
@@ -3450,10 +3576,123 @@ func _process_stream_queue() -> void:
 		_grid.queued_cells.erase(cell["key"])
 		if _grid.loaded_cells.has(cell["key"]):
 			continue
-		if absi(cell["dx"] - _last_stream_cell.x) > margin or absi(cell["dy"] - _last_stream_cell.y) > margin:
+		if _outside_stream_window(cell, margin):
 			continue # the player left this cell's window before it built
 		_load_region_cell(cell["rx"], cell["ry"], cell["dx"], cell["dy"], _grid_shared_anchor_height)
 		built += 1
+
+## Whether a queued cell is now further from the player's cell than the
+## unload margin -- the player left its window before it was built.
+func _outside_stream_window(cell: Dictionary, margin: int) -> bool:
+	return absi(int(cell["dx"]) - _last_stream_cell.x) > margin or absi(int(cell["dy"]) - _last_stream_cell.y) > margin
+
+## Whether streamed cells prepare their terrain on WorkerThreadPool tasks
+## (round 565, the default). SRREVAMP_SYNC_LOAD=1 turns that off for one
+## release, as an escape hatch: every cell is then prepared and committed on
+## the main thread on the pre-round-565 schedule -- the entry drain's
+## LOADING_CELLS_PER_FRAME a frame plus the physics step's
+## STREAM_CELLS_PER_FRAME from the same queue, and one a frame in play.
+func _threaded_load() -> bool:
+	return OS.get_environment("SRREVAMP_SYNC_LOAD") == ""
+
+## The one pump of the threaded cell pipeline (round 565): commits up to
+## `commit_budget` cells whose terrain has finished preparing, oldest first,
+## and keeps TERRAIN_JOBS_IN_FLIGHT preparing. After each finished task is
+## taken off the list another is dispatched before its commit runs, so the
+## next cell prepares while this one commits. With `wait` (the QA drain,
+## which must have every cell in before it returns) a commit that finds no
+## finished task waits for the oldest -- the main thread holds no lock the
+## task needs, and the task touches no server (_terrain_prepare's rule), so
+## the wait cannot deadlock. Returns the cells finished -- committed, or
+## dropped by the stale-cell guard (_finish_cell_job).
+func _pump_cell_jobs(commit_budget: int, wait: bool) -> int:
+	_dispatch_cell_jobs()
+	var finished := 0
+	while finished < commit_budget and not _cell_jobs.is_empty():
+		var at := -1
+		for i in range(_cell_jobs.size()):
+			if WorkerThreadPool.is_task_completed(_cell_jobs[i]["task"]):
+				at = i
+				break
+		if at < 0:
+			if not wait:
+				break
+			at = 0
+		var flight: Dictionary = _cell_jobs[at]
+		_cell_jobs.remove_at(at)
+		# Every task is waited for once, which disposes of it (Godot 4.2's
+		# WorkerThreadPool reference: a task id "already awaited and disposed
+		# of" no longer exists); for a finished one it returns at once.
+		WorkerThreadPool.wait_for_task_completion(flight["task"])
+		_dispatch_cell_jobs()
+		_finish_cell_job(flight)
+		finished += 1
+	return finished
+
+## Tops the preparing cells up to TERRAIN_JOBS_IN_FLIGHT from the queue,
+## nearest-first, skipping a cell already loaded or one whose window the
+## player has left since it was queued.
+func _dispatch_cell_jobs() -> void:
+	var margin := _region_load_radius() + 1
+	while _cell_jobs.size() < TERRAIN_JOBS_IN_FLIGHT and not _load_queue.is_empty():
+		var cell: Dictionary = _load_queue.pop_front()
+		if _grid.loaded_cells.has(cell["key"]) or _outside_stream_window(cell, margin):
+			_grid.queued_cells.erase(cell["key"])
+			continue
+		_dispatch_cell(cell)
+
+## Starts one cell's terrain prepare on a WorkerThreadPool task: the job is
+## built here, on the main thread (_terrain_job's snapshot), and the task
+## runs the static _terrain_prepare over it. High priority: Godot 4.2's pool
+## runs low-priority tasks (add_task's default) on a share of its threads
+## only -- threading/worker_pool/low_priority_thread_ratio, 0.3 in the
+## project as shipped (read on the render box's 4.2.2, round 565) -- which on
+## a small machine can be a single thread for both jobs.
+func _dispatch_cell(cell: Dictionary) -> void:
+	var rx: int = cell["rx"]
+	var ry: int = cell["ry"]
+	var job := _terrain_job("%d\\%d.m" % [rx, ry], "", _cell_offset(cell["dx"], cell["dy"]), "_%d_%d" % [rx, ry],
+		false, _grid_shared_anchor_height, false)
+	job["threaded"] = true
+	job["dispatched_frame"] = Engine.get_frames_drawn()
+	var task := WorkerThreadPool.add_task(_terrain_prepare.bind(job), true, "terrain %d/%d" % [rx, ry])
+	_cell_jobs.append({"task": task, "cell": cell, "job": job})
+
+## Commits a cell whose terrain has prepared -- the rest of the cell (its
+## objects and NPCs) follows in the same frame, _load_region_cell -- unless
+## the stale-cell guard drops it: a cell already loaded, or one whose window
+## the player left while it prepared. A zone change never gets here with an
+## old grid's job: _clear_region_grid drops them first.
+func _finish_cell_job(flight: Dictionary) -> void:
+	var cell: Dictionary = flight["cell"]
+	_grid.queued_cells.erase(cell["key"])
+	var why := ""
+	if _grid.loaded_cells.has(cell["key"]):
+		why = "already loaded"
+	elif _outside_stream_window(cell, _region_load_radius() + 1):
+		why = "the player left its window while it prepared"
+	if why != "":
+		print("World3D: cell %d/%d prepared but not committed -- %s" % [cell["rx"], cell["ry"], why])
+		return
+	_load_region_cell(cell["rx"], cell["ry"], cell["dx"], cell["dy"], _grid_shared_anchor_height, flight["job"])
+
+## Waits for every preparing cell's task and drops it, uncommitted: a zone
+## change (the grid it was for is gone), a new grid, the world leaving the
+## tree (a reconnect frees this instance, and a task still running would
+## call into it). Blocks the main thread for at most the longest remaining
+## prepare -- a worker holds nothing the main thread holds, so the wait
+## ends -- and says how long it took.
+func _drop_cell_jobs(why: String) -> void:
+	if _cell_jobs.is_empty():
+		return
+	var started := Time.get_ticks_usec()
+	var n := _cell_jobs.size()
+	for flight in _cell_jobs:
+		WorkerThreadPool.wait_for_task_completion(flight["task"])
+		_grid.queued_cells.erase(flight["cell"]["key"])
+	_cell_jobs.clear()
+	print("World3D: %d cell(s) still preparing dropped (%s) -- waited %.1f ms for their tasks" % [
+		n, why, (Time.get_ticks_usec() - started) / 1000.0])
 
 ## Whether world entry shows the "NOW LOADING" screen: a real player does; a
 ## QA/dev render (SRREVAMP_MAPM_PATH set) does not, because its synchronous
@@ -3465,21 +3704,35 @@ func _should_show_loading_screen() -> bool:
 # Cells built per frame while the loading screen is up: the player is not
 # moving yet, so a bigger batch than the in-play stream is fine.
 #
-# Not the whole frame, though: the same frame's physics step runs
-# _process_stream_queue, which pops STREAM_CELLS_PER_FRAME more from the same
-# _load_queue (nothing gates it on the drain; _grid_has_origin is set before
-# it), so round 561's baseline built THREE cells a frame under the screen --
-# three `built in` lines at each of frames 14-21. Changing this constant
-# alone changes two of the three; the benchmark counts cells a frame from
-# the log (docs/RE_COMPLETION.md, round 561).
+# Threaded (round 565, the default): the drain commits at most this many
+# prepared cells a frame and is the only pump while it runs
+# (_drain_pumping), so a frame under the screen builds at most two -- and
+# only as many as have finished preparing, with TERRAIN_JOBS_IN_FLIGHT = 2
+# preparing at once.
+#
+# Under SRREVAMP_SYNC_LOAD=1, the pre-round-565 schedule: not the whole
+# frame, though -- the same frame's physics step runs _process_stream_queue,
+# which pops STREAM_CELLS_PER_FRAME more from the same _load_queue (nothing
+# gates it on the drain there; _grid_has_origin is set before it), so round
+# 561's baseline built THREE cells a frame under the screen -- three `built
+# in` lines at each of frames 14-21. The benchmark counts cells a frame
+# from the log (docs/RE_COMPLETION.md, rounds 561 and 565).
 const LOADING_CELLS_PER_FRAME := 2
 
 ## Finishes the initial region load that `_load_region_neighborhood` queued.
 ## With no loading screen (a QA render) the queue is drained at once, so the
 ## first frames show the whole world. With one, the queue is pumped a batch a
-## frame (plus the cell the same frame's physics step streams from it, see
-## LOADING_CELLS_PER_FRAME) and the gauge filled, so a real entry has feedback
-## instead of a black freeze. `frames_already_awaited` is what the caller
+## frame (see LOADING_CELLS_PER_FRAME) and the gauge filled, so a real entry
+## has feedback instead of a black freeze.
+##
+## Threaded (round 565, the default), the drain owns the cell pipeline until
+## it returns (_drain_pumping): its first jobs are dispatched before the
+## centre's frame is awaited, so they prepare while that frame draws; each
+## later frame commits up to LOADING_CELLS_PER_FRAME finished ones and the
+## gauge reads the cells finished over the total. The QA branch keeps the
+## QA-drain contract (client/tools/README.md, "Load benchmark"): it waits for
+## each task and commits every cell before it returns, so --shots, --radius
+## and the movie writer still see the whole grid from the first shot. `frames_already_awaited` is what the caller
 ## awaited between `region_started_ms` and here -- _ready's frame that drew
 ## the screen (round 562) -- so the `region grid loaded` line's count covers
 ## the same span as its total.
@@ -3487,8 +3740,14 @@ func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0
 	# No screen wanted (a QA render): build the queue at once so the first
 	# frames show the whole world.
 	if _loading_screen == null and not _should_show_loading_screen():
-		while not _load_queue.is_empty():
-			_build_one_queued_cell()
+		if _threaded_load():
+			_drain_pumping = true
+			while not _load_queue.is_empty() or not _cell_jobs.is_empty():
+				_pump_cell_jobs(TERRAIN_JOBS_IN_FLIGHT, true)
+			_drain_pumping = false
+		else:
+			while not _load_queue.is_empty():
+				_build_one_queued_cell()
 		print(_grid_loaded_line(region_started_ms, 0))
 		print(_load_timings.summary())
 		_qa_print_entry_probe()
@@ -3520,20 +3779,38 @@ func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0
 	# run) -- the later items are measured centre against centre.
 	var total := _load_queue.size() + 1
 	_loading_screen.set_progress(1.0 / float(total))
+	var threaded := _threaded_load()
+	if threaded:
+		# The first jobs start now and prepare while the centre's frame draws;
+		# dispatch is a snapshot, so the centre's frame gains next to nothing.
+		_drain_pumping = true
+		_pump_cell_jobs(0, false)
 	await get_tree().process_frame
 	frames_awaited += 1
 	if not is_inside_tree():
 		return
-	while not _load_queue.is_empty():
-		for _i in range(LOADING_CELLS_PER_FRAME):
-			if _load_queue.is_empty():
-				break
-			_build_one_queued_cell()
-		_loading_screen.set_progress(1.0 - float(_load_queue.size()) / float(total))
-		await get_tree().process_frame
-		frames_awaited += 1
-		if not is_inside_tree():
-			return
+	if threaded:
+		while not _load_queue.is_empty() or not _cell_jobs.is_empty():
+			_pump_cell_jobs(LOADING_CELLS_PER_FRAME, false)
+			var remaining := _load_queue.size() + _cell_jobs.size()
+			total = maxi(total, remaining + 1)
+			_loading_screen.set_progress(1.0 - float(remaining) / float(total))
+			await get_tree().process_frame
+			frames_awaited += 1
+			if not is_inside_tree():
+				return
+		_drain_pumping = false
+	else:
+		while not _load_queue.is_empty():
+			for _i in range(LOADING_CELLS_PER_FRAME):
+				if _load_queue.is_empty():
+					break
+				_build_one_queued_cell()
+			_loading_screen.set_progress(1.0 - float(_load_queue.size()) / float(total))
+			await get_tree().process_frame
+			frames_awaited += 1
+			if not is_inside_tree():
+				return
 	# The same phase split the synchronous QA path prints, so a reconnect
 	# run's two entries can be compared phase by phase (round 559), with the
 	# frames awaited between batches -- which is where this branch's total
@@ -3567,6 +3844,10 @@ func _grid_loaded_line(region_started_ms: int, frames_awaited: int) -> String:
 		Engine.get_frames_drawn(), _load_timings.cells, cells_ms, total - cells_ms, frames_awaited]
 	if cells_ms > total:
 		line += " -- the cell sum EXCEEDS the total: the drain's clock started after a cell"
+	# Work the cells had done on WorkerThreadPool tasks (round 565): not in
+	# the split or the sum above, which are the main thread's.
+	for g in _load_timings.offthread_ms:
+		line += "; %s %.0f ms prepared off the main thread" % [g, _load_timings.offthread_ms[g]]
 	return line
 
 ## Puts the "NOW LOADING" screen up (a real player only), so a caller can
@@ -3588,8 +3869,9 @@ func _show_loading_screen() -> int:
 	await get_tree().process_frame
 	return 1
 
-## Builds the next queued cell, if it is still wanted. Shared by the in-play
-## stream and the entry-time drain.
+## Builds the next queued cell, if it is still wanted, prepare and commit on
+## the main thread -- the SRREVAMP_SYNC_LOAD=1 path of the entry-time drain
+## (round 565: the threaded default pumps _pump_cell_jobs instead).
 func _build_one_queued_cell() -> void:
 	if _load_queue.is_empty():
 		return
@@ -3822,6 +4104,10 @@ func _load_object_template(model_path: String) -> Node3D:
 ##   the next one entered in the same process.
 ## Also called on quit, where all of it is harmless.
 func _exit_tree() -> void:
+	# A task still preparing a cell holds this node's static function and a
+	# job for its grid: waited for and dropped before anything here is freed
+	# (round 565), so a reconnect cannot commit into a freed world.
+	_drop_cell_jobs("the world left the tree")
 	var scenery_freed := 0
 	if _object_templates != null:
 		scenery_freed = _object_templates.free_all()
@@ -4609,49 +4895,132 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 		print("World3D: SRREVAMP_MAPM_PATH not set -- ground stays a placeholder")
 		return NAN
 
-	var archive := _open_map_pk2_if_set()
-	# Sub-phase stopwatches (round 561): each lap is one entry of the cell's
-	# `terrain [..]` list while a cell is open, and nothing otherwise.
+	# Both halves on this thread (round 565: see _terrain_prepare), in the
+	# order the one function ran them before the split: the region read and
+	# parsed; then -- the grid's centre only -- its environment applied, since
+	# only the player's own region drives the real sky colour (a neighbouring
+	# streamed-in region's own EnvironmentID, not confirmed to always match
+	# its neighbours', would otherwise overwrite it with whichever cell loaded
+	# last) and the mesh bakes that environment's light; then the rest of the
+	# prepare, and the commit. A streamed cell runs the same prepare on a
+	# WorkerThreadPool task instead (_dispatch_cell).
+	var job := _terrain_job(mapm_path, texture_override, world_offset, node_suffix, snap_player, shared_vertical_anchor, apply_environment_lighting)
+	var read_ok := _terrain_prepare_read(job)
+	_record_prepare_laps(job)
+	if read_ok:
+		if apply_environment_lighting:
+			var sw := Time.get_ticks_usec()
+			_apply_real_environment_lighting(job["region"], job["map_pk2"])
+			_terrain_light_into(job)
+			_load_timings.lap("terrain", "env", sw)
+		_terrain_prepare_build(job)
+		_record_prepare_laps(job)
+	return _terrain_commit(job)
+
+## Terrain prepared off the main thread (round 565).
+##
+## A region's terrain is built in two halves. The PREPARE half -- this
+## function: the `.m` read and parsed, the `.t` lightmap and the ground tiles
+## decoded to Images, the mesh surfaces and the collision faces as arrays
+## (MapmTerrainBuilder.build_full_region_surfaces_textured, surface_faces),
+## the navmesh read and parsed, the wall triangles and the walkable graph
+## (NavGraph.build) -- produces plain data, and a streamed cell runs it on a
+## WorkerThreadPool task (_dispatch_cell). The COMMIT half -- _terrain_commit:
+## the ImageTextures, the ArrayMesh and its materials, the nodes, the
+## collision shape, the walls' shape, the water and the graph's registration
+## -- builds everything that owns a RenderingServer or PhysicsServer RID or
+## touches the tree, on the main thread. Until round 565 all of it ran on the
+## main thread inside one frame (docs/WORLD_ISSUES.md, round 154: "it does
+## not thread the build, so a very heavy cell can still hitch"); round 561's
+## crossing benchmark measured one ~300 ms frame per streamed cell, ~250 ms of
+## it terrain and ~125 ms of that the mesh (client/tools/README.md, "Load
+## benchmark").
+##
+## THE PREPARE-THREAD RULE (client/tools/README.md, "Load benchmark", has it
+## too). The prepare constructs NO Node and NO RID-owning Resource -- no
+## MeshInstance3D, StaticBody3D, ArrayMesh, Material, ImageTexture or
+## Shape3D; Images, packed arrays, Arrays, Dictionaries and the readers'
+## RefCounted structs only -- touches neither the scene tree nor the
+## RenderingServer nor the PhysicsServer, and reads the archives only through
+## Pk2Reader, whose reads are behind a per-handle lock since this round. It is
+## static, so it cannot reach this node's state: every cache it consults is
+## snapshotted into the job on the main thread before dispatch (_terrain_job),
+## it writes nothing but the job, and it prints nothing (its lines go in the
+## job for the commit to print, in order). The grounding: Godot 4.2's
+## "Thread-safe APIs" page -- "Interacting with the active scene tree is NOT
+## thread-safe"; building scene chunks outside the tree and loading
+## resources on a thread are supported; "Accessing servers from threads is
+## supported (for RenderingServer and Physics servers, ensure threaded or
+## thread-safe operation is enabled in the project settings!)".
+## client/project.godot sets neither, so both are at 4.2.2's defaults (read
+## on the render box, round 565: rendering/driver/threads/thread_model 1,
+## Single-Safe; physics/3d/run_on_separate_thread false): the physics server
+## is not threaded at all, and under Single-Safe a RenderingServer call from
+## another thread is -- this item's grounding verifier's reading, not
+## measured here -- queued for the main thread and waited on, a deadlock
+## while the main thread waits for the task (_drop_cell_jobs, the QA drain).
+## The rule keeps the worker away from both.
+## terrain_prepare_test.gd walks a prepared job and fails on any Node or
+## Resource in it other than an Image.
+##
+## What the commit still costs the main thread is measured per cell (its laps
+## in the `built in` line); the objects and NPC phases stay synchronous in
+## this round and run in the commit's frame, after the terrain group exists.
+static func _terrain_prepare(job: Dictionary) -> void:
+	if _terrain_prepare_read(job):
+		_terrain_prepare_build(job)
+
+## A lap of the prepare half: into the job as [name, usec], not into
+## _load_timings, which is the main thread's -- the commit hands them on
+## (_record_prepare_laps), as main-thread phases for a job prepared on the
+## main thread and as off-thread ones for a task's.
+static func _job_lap(job: Dictionary, name: String, since_usec: int) -> int:
+	var now := Time.get_ticks_usec()
+	(job["laps"] as Array).append([name, now - since_usec])
+	return now
+
+## The prepare's first half: the region's `.m` read and parsed into
+## job["region"]. False, with the error the commit prints, when there is no
+## terrain to build.
+static func _terrain_prepare_read(job: Dictionary) -> bool:
+	var mapm_path: String = job["mapm_path"]
 	var sw := Time.get_ticks_usec()
-	var bytes := AssetSource.read_bytes(mapm_path, archive)
-	sw = _load_timings.lap("terrain", "read", sw)
+	var bytes := AssetSource.read_bytes(mapm_path, job["map_pk2"])
+	sw = _job_lap(job, "read", sw)
 	if bytes.is_empty():
-		printerr("World3D: could not find terrain at ", mapm_path)
-		return NAN
-
+		job["error"] = "World3D: could not find terrain at %s" % mapm_path
+		job["prepared"] = true
+		return false
 	var region := MapmReader.parse(bytes)
-	sw = _load_timings.lap("terrain", "parse", sw)
+	_job_lap(job, "parse", sw)
 	if region == null:
-		printerr("World3D: could not parse terrain at ", mapm_path)
-		return NAN
+		job["error"] = "World3D: could not parse terrain at %s" % mapm_path
+		job["prepared"] = true
+		return false
+	job["region"] = region
+	return true
 
-	# Only the player's own (center) region drives the real sky color -- a
-	# neighboring streamed-in region's own EnvironmentID (which hasn't been
-	# confirmed to always match its neighbors') would otherwise overwrite it
-	# with whichever cell happened to load last, unrelated to where the
-	# player actually is. See _load_region_cell's call below.
-	if apply_environment_lighting:
-		_apply_real_environment_lighting(region, archive)
-		sw = _load_timings.lap("terrain", "env", sw)
-
-	# Real .t lightmap, loaded up front so it's available to whichever mesh
-	# builder runs below -- see _load_real_terrain_lightmap's doc comment
-	# and docs/protocol/MAPT_FORMAT.md. Corrects an earlier same-day
-	# attempt that decoded the wrong bytes entirely (before .t's real
-	# structure -- a ShadowMap plus a properly-headered embedded DDS --
-	# was found via public documentation) and applied the result as direct
-	# detail-albedo color, which looked like broken color-noise static and
-	# was reverted. The real embedded texture is a genuine grayscale
-	# shadow map (white = fully lit), which Godot's ao_texture consumes
-	# directly with no custom shader needed.
-	var lightmap := _load_real_terrain_lightmap(mapm_path, archive)
-	sw = _load_timings.lap("terrain", "lightmap", sw)
-	# Cached after the first cell, which pays it whole: 943 ms of the centre
-	# cell's 1590 in the entry benchmark's first run, against 2 ms of
-	# lightmap for every neighbour -- its own lap, so a one-time table load
-	# is not read as the lightmap's cost.
-	var tile_table := _load_tile_index()
-	sw = _load_timings.lap("terrain", "tiletable", sw)
+## The prepare's second half, over job["region"]: the lightmap, the ground
+## tiles, the mesh surfaces, the collision faces, the navmesh, the wall
+## triangles and the walkable graph. Sets job["prepared"] last, so a commit
+## can tell a task that finished from one a script error ended.
+static func _terrain_prepare_build(job: Dictionary) -> void:
+	var mapm_path: String = job["mapm_path"]
+	var region: MapmReader.ParsedRegion = job["region"]
+	var sw := Time.get_ticks_usec()
+	# Real .t lightmap, read up front so it is there for whichever mesh the
+	# commit builds -- see _read_terrain_lightmap's doc comment and
+	# docs/protocol/MAPT_FORMAT.md. Corrects an earlier same-day attempt that
+	# decoded the wrong bytes entirely (before .t's real structure -- a
+	# ShadowMap plus a properly-headered embedded DDS -- was found via public
+	# documentation) and applied the result as direct detail-albedo color,
+	# which looked like broken color-noise static and was reverted. The real
+	# embedded texture is a genuine grayscale shadow map (white = fully lit),
+	# which Godot's ao_texture consumes directly with no custom shader needed.
+	var lightmap := _read_terrain_lightmap(mapm_path, job["map_pk2"])
+	job["lightmap"] = lightmap.image if lightmap != null else null
+	job["shadow_map"] = lightmap.shadow_map if lightmap != null else PackedByteArray()
+	sw = _job_lap(job, "lightmap", sw)
 
 	# Real per-quad ground textures (2026-08-23) -- see
 	# docs/protocol/DDJ_FORMAT.md and MapmTerrainBuilder's top comment for
@@ -4659,41 +5028,202 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	# folder, an archive/folder an earlier search never checked. Only
 	# used if at least one of this region's real texture IDs actually
 	# resolved to a real file -- otherwise the flat tile-type color
-	# (build_full_region_mesh) is a strictly better fallback than a
+	# (build_full_region_arrays) is a strictly better fallback than a
 	# multi-surface mesh where every single surface is the color fallback
 	# anyway.
-	var ground_textures := _load_real_ground_textures(region, tile_table, mapm_path)
-	sw = _load_timings.lap("terrain", "textures", sw)
-	var textured := not ground_textures.is_empty()
+	_prepare_ground_textures(job, region)
+	sw = _job_lap(job, "textures", sw)
+	var files: Dictionary = job["texture_files"]
+	var textured := not files.is_empty()
+	job["textured"] = textured
 
 	# Real, fully deterministic full-region assembly (2026-08-23) -- see
 	# MapmTerrainBuilder.build_full_region_mesh's doc comment and
 	# MAPM_FORMAT.md. MapmReader now parses a region's real, confirmed 6x6
 	# block grid directly (no more row/column guessing), so this always
-	# produces the complete real 97x97 mesh on a successful parse.
+	# produces the complete real 97x97 grid on a successful parse. As arrays
+	# here; the commit builds the mesh. The textured surfaces bake the real
+	# per-vertex terrain lighting the way the real client does (see
+	# MapmTerrainBuilder._lit_vertex_color), from the light terms the job was
+	# given on the main thread (_terrain_light_into).
+	var surfaces: Array = []
+	if textured:
+		surfaces = MapmTerrainBuilder.build_full_region_surfaces_textured(
+			region, files, job["light_dir"], job["light_diffuse"], job["light_ambient"], job["shadow_map"])
+	else:
+		var arrays := MapmTerrainBuilder.build_full_region_arrays(region)
+		if not arrays.is_empty():
+			surfaces = [{"arrays": arrays, "texture_key": -1, "blend": false, "unshaded": false}]
+	sw = _job_lap(job, "mesh", sw)
+	if surfaces.is_empty():
+		job["error"] = "World3D: parsed %d real blocks from %s but couldn't build a mesh from them" % [region.blocks.size(), mapm_path]
+		job["prepared"] = true
+		return
+	job["surfaces"] = surfaces
+	job["near_height"] = MapmTerrainBuilder.near_row_middle_height(region)
+	# The trimesh's faces, as create_trimesh_shape() would have read them
+	# back out of the mesh (MapmTerrainBuilder.surface_faces).
+	job["faces"] = MapmTerrainBuilder.surface_faces(surfaces)
+	sw = _job_lap(job, "faces", sw)
+
+	if not job["navmesh_cached"] and int(job["navmesh_key"]) >= 0:
+		job["navmesh"] = _read_region_navmesh(job["data_pk2"], job["navmesh_key"], job["log"])
+		job["navmesh_loaded"] = true
+	sw = _job_lap(job, "navmesh", sw)
+	_prepare_navmesh_walls(job)
+	sw = _job_lap(job, "walls", sw)
+	_prepare_nav_graph(job)
+	_job_lap(job, "navgraph", sw)
+	job["prepared"] = true
+
+## A terrain job for mapm_path, built on the main thread (round 565): the
+## placement the commit needs, the readers, and a snapshot of every World3D
+## cache the prepare consults -- the tile table and the object index (loaded
+## here if this is the world's first region; the laps say what that cost),
+## which ground-tile files this world already holds and whether each decoded
+## (filenames and flags, never the textures: those own RIDs), the region's
+## cached navmesh, a copy of the object navigation meshes loaded so far, and
+## the baked-light terms. The prepare writes its results into the same
+## Dictionary -- see _terrain_prepare for the rule both are held to.
+func _terrain_job(mapm_path: String, texture_override: String, world_offset: Vector3, node_suffix: String, snap_player: bool, shared_vertical_anchor: float, apply_environment_lighting: bool) -> Dictionary:
+	var sw := Time.get_ticks_usec()
+	# Cached after the first cell, which pays it whole: 943 ms of the centre
+	# cell's 1590 in the entry benchmark's first run (round 561), against 2
+	# ms of lightmap for every neighbour -- its own lap, so a one-time table
+	# load is not read as anything else's cost.
+	var tile_table := _load_tile_index()
+	sw = _load_timings.lap("terrain", "tiletable", sw)
+	# The walkable graph's object table, cached the same way. Until round 565
+	# the graph loaded it on the main thread when a region's navmesh first
+	# listed objects, inside the `navgraph` lap.
+	var object_index := _load_object_index()
+	sw = _load_timings.lap("terrain", "objindex", sw)
+	var coords := _parse_region_coords(mapm_path)
+	var navmesh_key := -1
+	var navmesh_cached := false
+	var navmesh: NvmReader.ParsedRegion = null
+	if not coords.is_empty():
+		navmesh_key = RegionGridState.navmesh_key(int(coords["x"]), int(coords["y"]))
+		if _grid.navmesh_cache.has(navmesh_key):
+			navmesh_cached = true
+			navmesh = _grid.navmesh_cache[navmesh_key]
+	var known_textures := {}
+	for filename in _ground_texture_cache:
+		known_textures[filename] = _ground_texture_cache[filename] != null
+	var job := {
+		"mapm_path": mapm_path,
+		"texture_override": texture_override,
+		"world_offset": world_offset,
+		"node_suffix": node_suffix,
+		"snap_player": snap_player,
+		"anchor": shared_vertical_anchor,
+		"apply_env": apply_environment_lighting,
+		"coords": coords,
+		"map_pk2": _open_map_pk2_if_set(),
+		"data_pk2": _open_pk2_if_set(),
+		"tile_table": tile_table,
+		"object_index": object_index,
+		"known_textures": known_textures,
+		"navmesh_key": navmesh_key,
+		"navmesh_cached": navmesh_cached,
+		"navmesh": navmesh,
+		"collisions": _grid.object_collision_cache.duplicate(),
+		"threaded": false,
+		"dispatched_frame": -1,
+		"laps": [],
+		"log": [],
+	}
+	_terrain_light_into(job)
+	_load_timings.lap("terrain", "snapshot", sw)
+	return job
+
+## The baked-light terms a job's mesh is built with, read on the main thread:
+## the directional light's direction converted into the region's own local
+## space, where the mesh is built (a terrain group carries scale.z = -1 for
+## the world mirror and no rotation, so a world direction's Z simply flips),
+## and environment.ifo's diffuse and terrain-ambient colours -- once a
+## region's environment has been applied (_apply_real_environment_lighting);
+## a zero direction, the engine lighting the terrain, before that.
+func _terrain_light_into(job: Dictionary) -> void:
+	var light_dir := Vector3.ZERO
+	if _env_light_ready and directional_light != null:
+		var to_light := directional_light.global_transform.basis.z.normalized()
+		light_dir = Vector3(to_light.x, to_light.y, -to_light.z)
+	job["light_dir"] = light_dir
+	job["light_diffuse"] = _env_light_diffuse
+	job["light_ambient"] = _env_terrain_ambient
+
+## Hands a job's prepare laps to _load_timings: main-thread phases for a job
+## prepared on this thread, off-thread ones for a task's (LoadTimings.offthread
+## -- on the cell line, never in its frame's work).
+func _record_prepare_laps(job: Dictionary) -> void:
+	var threaded: bool = job["threaded"]
+	for lap in job["laps"]:
+		if threaded:
+			_load_timings.offthread("terrain", lap[0], lap[1])
+		else:
+			_load_timings.phase("terrain", lap[0], lap[1])
+	(job["laps"] as Array).clear()
+
+## The commit half of a region's terrain (round 565; see _terrain_prepare):
+## on the main thread, from a job the prepare filled, everything that owns a
+## RenderingServer or PhysicsServer RID or touches the tree -- the textures,
+## the mesh and its materials, the terrain group and its placement, the
+## collision shape, the walls, the water, the graph's registration -- and
+## the caches the prepare read around. Returns the near_height the region was
+## placed by (NAN on any failure path), as _try_load_real_terrain always has.
+func _terrain_commit(job: Dictionary) -> float:
+	_record_prepare_laps(job)
+	_print_job_log(job["log"])
+	var mapm_path: String = job["mapm_path"]
+	if not job.get("prepared", false):
+		# The task ended before its last line: a script error on the worker,
+		# whose SCRIPT ERROR is in the log above this one.
+		printerr("World3D: the terrain for %s was not prepared (see the error above) -- nothing built" % mapm_path)
+		return NAN
+	if job.has("error"):
+		printerr(job["error"])
+		return NAN
+	var region: MapmReader.ParsedRegion = job["region"]
+	var sw := Time.get_ticks_usec()
+
+	# What the prepare read, into this world's caches: the navmesh (a null
+	# too -- "tried, nothing"), every object navigation mesh its graph used,
+	# and the ground tiles it decoded, uploaded here. A tile another job's
+	# commit uploaded first is kept, not replaced.
+	var navmesh_key: int = job["navmesh_key"]
+	if job.get("navmesh_loaded", false) and not _grid.navmesh_cache.has(navmesh_key):
+		_grid.navmesh_cache[navmesh_key] = job["navmesh"]
+	var used: Dictionary = job["used_collisions"]
+	for id in used:
+		if not _grid.object_collision_cache.has(id):
+			_grid.object_collision_cache[id] = used[id]
+	var new_images: Dictionary = job["new_images"]
+	for filename in new_images:
+		if not _ground_texture_cache.has(filename):
+			var image: Image = new_images[filename]
+			_ground_texture_cache[filename] = ImageTexture.create_from_image(image) if image != null else null
+	var ground_textures := {}
+	var files: Dictionary = job["texture_files"]
+	for id in files:
+		var tex: Texture2D = _ground_texture_cache.get(files[id])
+		if tex != null:
+			ground_textures[id] = tex
+	var lightmap_image: Image = job["lightmap"]
+	var lightmap: Texture2D = ImageTexture.create_from_image(lightmap_image) if lightmap_image != null else null
+	sw = _load_timings.lap("terrain", "images", sw)
+
+	var textured: bool = job["textured"]
+	var surfaces: Array = job["surfaces"]
 	var terrain_mesh: ArrayMesh
 	if textured:
-		# Real per-vertex terrain lighting, baked the way the real client does
-		# (see MapmTerrainBuilder._lit_vertex_color). The light direction is
-		# converted into the region's own local space, where the mesh is built:
-		# a terrain group carries scale.z = -1 for the world mirror and no
-		# rotation, so a world direction's Z simply flips.
-		var light_dir := Vector3.ZERO
-		if _env_light_ready and directional_light != null:
-			var to_light := directional_light.global_transform.basis.z.normalized()
-			light_dir = Vector3(to_light.x, to_light.y, -to_light.z)
-		terrain_mesh = MapmTerrainBuilder.build_full_region_mesh_textured(
-			region, ground_textures, lightmap, light_dir, _env_light_diffuse, _env_terrain_ambient,
-			_last_terrain_shadow_map)
+		terrain_mesh = MapmTerrainBuilder.surfaces_to_mesh(surfaces, ground_textures, lightmap)
 	else:
-		terrain_mesh = MapmTerrainBuilder.build_full_region_mesh(region)
-	sw = _load_timings.lap("terrain", "mesh", sw)
-	if terrain_mesh == null:
-		printerr("World3D: parsed ", region.blocks.size(), " real blocks from ", mapm_path, " but couldn't build a mesh from them")
-		return NAN
+		terrain_mesh = MapmTerrainBuilder.arrays_to_mesh(surfaces[0]["arrays"])
+	sw = _load_timings.lap("terrain", "upload", sw)
 
 	var terrain_group := Node3D.new()
-	terrain_group.name = "RealTerrain" + node_suffix
+	terrain_group.name = "RealTerrain" + String(job["node_suffix"])
 
 	# Real per-quad textures (see above) already carry their own
 	# per-surface materials (including the real .t lightmap) from
@@ -4705,7 +5235,7 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	var mat: StandardMaterial3D = null
 	if not textured:
 		mat = StandardMaterial3D.new()
-		var real_texture := _load_real_terrain_texture(texture_override)
+		var real_texture := _load_real_terrain_texture(job["texture_override"])
 		var row_count_estimate := aabb.size.z / MapmTerrainBuilder.TILE_SIZE + 1
 		if real_texture != null:
 			mat.albedo_texture = real_texture
@@ -4741,12 +5271,13 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	# camera. Rotating 180 degrees around Y flips both axes consistently
 	# (a pure rotation, so front-face winding/normals stay correct) so
 	# successive rows extend further *into* view instead.
-	# Read directly from the parsed region rather than the built mesh --
-	# see near_row_middle_height's doc comment: the textured mesh path
-	# above can split row 0 across several surfaces, so surface 0 alone
-	# no longer reliably holds this vertex the way the old single-surface
-	# mesh did.
-	var near_height := MapmTerrainBuilder.near_row_middle_height(region)
+	# Read directly from the parsed region rather than the built mesh (the
+	# prepare did, MapmTerrainBuilder.near_row_middle_height) -- see
+	# near_row_middle_height's doc comment: the textured mesh path can split
+	# row 0 across several surfaces, so surface 0 alone no longer reliably
+	# holds this vertex the way the old single-surface mesh did.
+	var near_height: float = job["near_height"]
+	var shared_vertical_anchor: float = job["anchor"]
 	var anchor_height := near_height if is_nan(shared_vertical_anchor) else shared_vertical_anchor
 	# **Corrected 2026-09-05** (see docs/WORLD_ISSUES.md): this was
 	# `rotation.y = PI` plus an `aabb.size.x / 2.0` X offset, which placed
@@ -4794,6 +5325,7 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	# (verified: the real building renders solid, not inside-out, under this
 	# mirror), so `BmsReader`'s existing winding reversal stays exactly as
 	# it is and no mesh data needs rewriting.
+	var world_offset: Vector3 = job["world_offset"]
 	var placement := Vector3(
 		-REGION_SPAN / 2.0, -anchor_height, -REGION_SPAN / 2.0) + world_offset
 	terrain_group.position = Vector3(placement.x, placement.y, -placement.z)
@@ -4813,20 +5345,21 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	var patch_body := StaticBody3D.new()
 	patch_body.collision_layer = TERRAIN_COLLISION_LAYER
 	var patch_shape := CollisionShape3D.new()
-	# Everything since the mesh lap -- the null check, the group, the
-	# untextured material, the vertical calibration and placement, the body
-	# and shape nodes -- is the `setup` lap (round 564). Until then this line
-	# reset the stopwatch, so that span was in no lap: round 561's cell lines
-	# left it between a cell's terrain group and its laps' sum, 8-13 ms a
-	# cell over the entry and crossing runs (the centre 1609 against 1597;
-	# 97/165 246 against 233), part of which is the whole-ms truncation of
-	# each printed lap. With it the laps cover the group from the read to the
-	# nav graph; only the path check and _open_map_pk2_if_set() before the
-	# first stopwatch and the closing print after `navgraph` are outside
-	# them, unmeasured. Round 156 named the trimesh
-	# the load's largest single cost: its own lap, with nothing else in it.
+	# Everything since the upload -- the group, the untextured material, the
+	# vertical calibration and placement, the body and shape nodes -- is the
+	# `setup` lap (round 564's, which named the span between the mesh and the
+	# trimesh; a bare stopwatch reset left it in no lap until then).
 	sw = _load_timings.lap("terrain", "setup", sw)
-	patch_shape.shape = terrain_mesh.create_trimesh_shape()
+	# The collision shape from the faces the prepare built -- the same face
+	# list create_trimesh_shape() read back out of the mesh until round 565
+	# (MapmTerrainBuilder.surface_faces; the builder's suite compares the
+	# two). Round 156 named the trimesh the load's largest single cost: its
+	# own lap, with nothing else in it.
+	var faces: PackedVector3Array = job["faces"]
+	if not faces.is_empty():
+		var shape := ConcavePolygonShape3D.new()
+		shape.set_faces(faces)
+		patch_shape.shape = shape
 	sw = _load_timings.lap("terrain", "collision", sw)
 	patch_body.add_child(patch_shape)
 	var single_patch := MeshInstance3D.new()
@@ -4836,12 +5369,16 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	single_patch.add_child(patch_body)
 	terrain_group.add_child(single_patch)
 
-	_try_add_navmesh_walls(terrain_group, mapm_path)
-	sw = _load_timings.lap("terrain", "walls", sw)
+	_add_navmesh_walls(terrain_group, job)
+	sw = _load_timings.lap("terrain", "wallshape", sw)
 	_try_add_real_water(terrain_group, mapm_path)
 	sw = _load_timings.lap("terrain", "water", sw)
-	_build_region_nav_graph(terrain_group, mapm_path)
-	_load_timings.lap("terrain", "navgraph", sw)
+	var graph: NavGraph = job.get("nav_graph")
+	if graph != null:
+		var coords: Dictionary = job["coords"]
+		_grid.add_nav_graph(int(coords["x"]), int(coords["y"]), graph, terrain_group)
+	_print_job_log(job["nav_log"])
+	_load_timings.lap("terrain", "graph", sw)
 
 	# The vertical calibration above only guarantees one specific mesh vertex
 	# lines up near world Y=0 -- it says nothing about the height of whatever
@@ -4854,12 +5391,13 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	# grid's center region (see _load_region_neighborhood) does this --
 	# snapping onto every speculative neighbor as it loads would fight over
 	# the player's position for no reason.
-	if snap_player:
+	if job["snap_player"]:
 		call_deferred("_snap_player_onto_terrain")
 
-	print("World3D: loaded real terrain from %s (%d real blocks, %d rows stitched, real collision shape built) at frame %d" % [
-		mapm_path, region.blocks.size(), terrain_mesh.get_aabb().size.z / MapmTerrainBuilder.TILE_SIZE + 1,
-		Engine.get_frames_drawn()])
+	print("World3D: loaded real terrain from %s (%d real blocks, %d rows stitched, real collision shape built, %d faces) at frame %d%s" % [
+		mapm_path, region.blocks.size(), terrain_mesh.get_aabb().size.z / MapmTerrainBuilder.TILE_SIZE + 1, faces.size() / 3,
+		Engine.get_frames_drawn(),
+		" -- prepared off the main thread, dispatched at frame %d" % job["dispatched_frame"] if job["threaded"] else ""])
 	return near_height
 
 ## Practical safety net for the real terrain-alignment gap noted where this
@@ -6944,7 +7482,8 @@ func _qa_step() -> void:
 	# the first tick that finds it has an empty queue and is _ready's own
 	# await, not the drain's.
 	var reconnect := OS.get_environment("SRREVAMP_QA_RECONNECT")
-	if reconnect != "" and ((reconnect == "drain" and _loading_screen != null and not _load_queue.is_empty()) \
+	if reconnect != "" and ((reconnect == "drain" and _loading_screen != null \
+			and (not _load_queue.is_empty() or not _cell_jobs.is_empty())) \
 			or (reconnect.is_valid_int() and _qa_tick == int(reconnect))):
 		# Cleared here, before it fires, so neither the next tick nor the
 		# next instance arms it again. Deferred: change_scene_to_file
@@ -7083,8 +7622,8 @@ static func _parse_shot(spec: String) -> Dictionary:
 ## close, so two QaTester entities can coexist briefly.
 func _qa_reconnect(when: String, armed_tick: int) -> void:
 	var via_login := OS.get_environment("SRREVAMP_QA_RECONNECT_VIA_LOGIN") != ""
-	print("QA RECONNECT: leaving the world at frame %d, tick %d (%s, route %s, entry %d, %d cells still queued)" % [
-		Engine.get_frames_drawn(), armed_tick, when, "login" if via_login else "direct", _qa_entry, _load_queue.size()])
+	print("QA RECONNECT: leaving the world at frame %d, tick %d (%s, route %s, entry %d, %d cells still queued, %d preparing)" % [
+		Engine.get_frames_drawn(), armed_tick, when, "login" if via_login else "direct", _qa_entry, _load_queue.size(), _cell_jobs.size()])
 	if via_login:
 		NetClient.disconnect_from_server()
 		return
@@ -7108,7 +7647,7 @@ func _qa_reconnect(when: String, armed_tick: int) -> void:
 ## the centre cell was built with. Then one `QA TEXPROBE <n> surface <i>
 ## ...` line per surface material of the centre cell's terrain
 ## (RealTerrain_<x>_<y>/SubPatch, built by
-## MapmTerrainBuilder._build_textured_mesh_from_cells: surface 0 the flat
+## MapmTerrainBuilder._textured_surfaces_from_cells: surface 0 the flat
 ## base, then one per texture pass): whether its albedo texture is set, its
 ## RID valid, its size, the mean of 64 texels read back from the renderer,
 ## the material's shading mode and albedo colour, and the min and mean of

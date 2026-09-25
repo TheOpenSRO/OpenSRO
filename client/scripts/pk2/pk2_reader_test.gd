@@ -93,6 +93,85 @@ func _build_simple_archive(path: String) -> void:
 	f.store_buffer(file_data)
 	f.close()
 
+## Round 565: World3D reads a region's terrain files through a Pk2Reader on a
+## WorkerThreadPool task while the main thread keeps reading scenery, NPC
+## and UI assets through the same handle. read_file is a seek then a
+## get_buffer on the one FileAccess the handle holds, so two threads
+## interleaving them read from each other's position. CONCURRENT_TASKS tasks
+## x CONCURRENT_READS read_file()s of one entry, each compared to a
+## single-threaded read of it; the reader's per-handle lock is what keeps
+## every one of them whole. The payload is large enough that a get_buffer
+## takes long enough to be overtaken.
+const CONCURRENT_TASKS := 4
+const CONCURRENT_READS := 200
+const CONCURRENT_PAYLOAD := 64 * 1024
+
+func _read_many(reader: Pk2Reader, entry: Pk2Reader.Entry, expected: PackedByteArray, tally: Dictionary, lock: Mutex) -> void:
+	var wrong := 0
+	for _i in range(CONCURRENT_READS):
+		if reader.read_file(entry) != expected:
+			wrong += 1
+	lock.lock()
+	tally["reads"] = int(tally["reads"]) + CONCURRENT_READS
+	tally["wrong"] = int(tally["wrong"]) + wrong
+	lock.unlock()
+
+func _test_concurrent_reads() -> void:
+	var path := "user://srrevamp_concurrent_test.pk2"
+	var payload := PackedByteArray()
+	payload.resize(CONCURRENT_PAYLOAD)
+	for i in range(payload.size()):
+		payload[i] = (i * 7 + 3) & 0xFF
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	var header := PackedByteArray()
+	header.resize(Pk2Reader.HEADER_SIZE)
+	var magic := "JoyMax File Manager!".to_ascii_buffer()
+	for i in range(magic.size()):
+		header[i] = magic[i]
+	var block := PackedByteArray()
+	block.resize(Pk2Reader.BLOCK_SIZE)
+	_write_entry(block, 0, Pk2Reader.ENTRY_TYPE_FOLDER, ".", Pk2Reader.HEADER_SIZE, 0)
+	# A second file before the big one, so a read that lands on the wrong
+	# position reads other bytes rather than running off the end.
+	var other := PackedByteArray()
+	other.resize(4096)
+	other.fill(0xEE)
+	var other_at := Pk2Reader.HEADER_SIZE + Pk2Reader.BLOCK_SIZE
+	_write_entry(block, 1, Pk2Reader.ENTRY_TYPE_FILE, "other.bin", other_at, other.size())
+	_write_entry(block, 2, Pk2Reader.ENTRY_TYPE_FILE, "big.bin", other_at + other.size(), payload.size())
+	f.store_buffer(header)
+	f.store_buffer(block)
+	f.store_buffer(other)
+	f.store_buffer(payload)
+	f.close()
+
+	var reader := Pk2Reader.open(path)
+	_check(reader != null, "opens the synthetic archive for the concurrent reads")
+	if reader == null:
+		return
+	var entry: Pk2Reader.Entry = null
+	for e in reader.read_dir():
+		if e.name == "big.bin":
+			entry = e
+	_check(entry != null, "finds big.bin")
+	if entry == null:
+		return
+	var expected := reader.read_file(entry)
+	_check(expected == payload, "a single-threaded read returns the payload")
+	var tally := {"reads": 0, "wrong": 0}
+	var lock := Mutex.new()
+	var tasks: Array[int] = []
+	for _t in range(CONCURRENT_TASKS):
+		tasks.append(WorkerThreadPool.add_task(_read_many.bind(reader, entry, expected, tally, lock), true, "pk2 concurrent read"))
+	for id in tasks:
+		WorkerThreadPool.wait_for_task_completion(id)
+	_check(int(tally["reads"]) == CONCURRENT_TASKS * CONCURRENT_READS,
+		"%d tasks ran %d reads each (got %d reads)" % [CONCURRENT_TASKS, CONCURRENT_READS, int(tally["reads"])])
+	_check(int(tally["wrong"]) == 0,
+		"every concurrent read_file returns the single-threaded bytes (%d of %d wrong)" % [int(tally["wrong"]), int(tally["reads"])])
+	reader.close()
+	DirAccess.remove_absolute(path)
+
 func _init() -> void:
 	var path := "user://srrevamp_test.pk2"
 	_build_simple_archive(path)
@@ -125,6 +204,8 @@ func _init() -> void:
 		_check(names.has("block1_file01.txt") and names.has("block2_file00.txt") and names.has("block2_file01.txt"), "entries from both blocks present")
 		chained_reader.close()
 	DirAccess.remove_absolute(chained_path)
+
+	_test_concurrent_reads()
 
 	if _failures == 0:
 		print("ALL PASS")

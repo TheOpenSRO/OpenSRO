@@ -18,7 +18,8 @@ class_name TileIndexReader
 ## actually exist anywhere" -- that search only ever checked Data.pk2/
 ## Media.pk2/Particles.pk2. They really do exist, in a real Map.pk2\Tile2D\
 ## folder this project hadn't checked yet at the time. World3D.gd's
-## _load_real_ground_textures resolves them from there and, live-verified
+## _prepare_ground_textures (round 565; _load_real_ground_textures before)
+## resolves them from there and, live-verified
 ## multiple times this session (including a full-catalog audit,
 ## 2026-08-25), gets a 100% real resolution rate.
 

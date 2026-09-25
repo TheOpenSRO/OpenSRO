@@ -7075,6 +7075,51 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-sixty-fifth round: a streamed cell's terrain prepares on a worker thread, and a boundary crossing's frame falls from 334 to 144 ms
+
+The hundred-and-fifty-fourth round left this open ("it does not thread the build, so a very heavy
+cell can still hitch -- threading the region build off the main thread is the next step"), and
+round 561's benchmark put a number on it: one ~300 ms frame per streamed cell, five in a row, ~250
+of each the terrain. `docs/RE_COMPLETION.md`'s round 565 has the grounding, every log line and the
+tests; in short, anchored by function:
+
+- `World3D._try_load_real_terrain` is split into `_terrain_job` (main thread: the one-time tables
+  and a snapshot of every cache the prepare reads), a static `_terrain_prepare` (the `.m` read and
+  parse, the `.t` lightmap and ground tiles as Images, the mesh surfaces and the collision faces as
+  arrays, the navmesh, the wall triangles, `NavGraph.build`) and `_terrain_commit` (the textures,
+  the ArrayMesh, the nodes, the shapes, the water, the graph's registration). A streamed cell runs
+  the prepare on a `WorkerThreadPool` task (`_dispatch_cell`, two at a time -- an own tuning
+  choice) and `_pump_cell_jobs` commits finished ones, one a frame in play and two a frame under
+  the loading screen, which now owns the pump while it runs instead of sharing the queue with the
+  physics step. The grid's centre still builds whole on the main thread.
+- The prepare-thread rule, written at `_terrain_prepare` and in `client/tools/README.md`: no Node
+  and no RID-owning Resource off the main thread, no tree, no server, reads only through
+  `Pk2Reader` -- which takes a per-handle lock since this round (without it, 4 tasks x 200
+  concurrent reads of one entry got 10-13 of 800 wrong) -- and caches reach the task as snapshots.
+- The trimesh is no longer read back out of the mesh: `MapmTerrainBuilder.surface_faces` builds
+  the same face list from the arrays (equal to `create_trimesh_shape().get_faces()` element for
+  element, measured on off-grid heights, which shows the engine's 0.0001 snap), so the commit's
+  `collision` lap is `set_faces` alone -- 25-33 ms a cell, from 52-61.
+- A QA run still commits every cell before its first shot (25 cells at frame 0 at radius 2); a
+  prepared cell the player has walked away from is dropped at commit; a zone change, a new grid and
+  the world leaving the tree wait for the tasks still running and drop them -- round 558's
+  reconnect-mid-load dropped two after an 18.8 ms wait, with 0 `SCRIPT ERROR`.
+
+Measured, the README's two commands, BASE against this round: the crossing's column 95..99/165
+went from 304/304/328/271/291 ms a cell to 105/127/123/73/69 (terrain 231-262 -> 39-44 on the main
+thread, 202-227 on the task), and its longest work frame from 334 ms to 144 (the 50 % target met:
+57 %). The entry drain builds two cells a frame over twelve frames instead of three over eight: p95
+2,841 -> 1,772 ms, the cells' main-thread sum 15,181 -> 10,430 ms, the whole drain 22.7 s -> 19.7
+s. The entry's longest frame is still the synchronous centre (5.2 s, mostly one-time tables,
+scenery templates and NPCs), and the objects group got ~10 % slower beside the busy tasks (2,923
+-> 3,214 ms over 24 cells) -- both for the next items. Visuals: the builder's surfaces are held to
+fingerprints of the pre-split builder, and the reconnect run's 49 `QA TEXPROBE` lines of the
+centre's terrain are identical to round 560's. The trimesh repeats every ground triangle about 2.5
+times (45,768 faces for 97/168 against the base surface's 18,432), kept as it was; after this
+round a neighbour's `collision` is 746 of the 24 neighbours' 1,265 ms of main-thread terrain --
+the input the heightfield item is gated on. `SRREVAMP_SYNC_LOAD=1` restores the old path for one
+release (measured: three cells a frame under the screen, 314 ms at the crossing).
+
 ## Five-hundred-and-sixty-fourth round: batch-20 review follow-ups -- record wording, the QA header, a `setup` lap; no behaviour change
 
 The review notes on rounds 558-563 (and round 555's, left open since the batch-18 cleanup), each

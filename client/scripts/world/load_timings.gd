@@ -27,6 +27,12 @@ class_name LoadTimings
 ##   between physics steps goes beside it (`note_wall`), the movie writer's
 ##   own per-frame floor included (about 0.33 s a frame on the render box,
 ##   AGENTS.md, "Looking at the world").
+## - Off the main thread (round 565). `offthread` records a sub-phase a cell
+##   had done on a WorkerThreadPool task -- World3D prepares a streamed
+##   cell's terrain there and commits it on the main thread. It is printed
+##   after the cell's groups and summed into the drain's `offthread_ms`, and
+##   never counted in the cell's `built in` total or its frame's work: the
+##   main thread did not pay it.
 ## - A drain. `begin_drain` zeroes the grid totals where a drain's clock
 ##   starts (a world entry, a zone change), so a second entry's split is its
 ##   own and not the sum of both -- until this round World3D's three
@@ -46,6 +52,8 @@ const HITCH_MS := 100.0
 ## phase-group time, group name -> ms.
 var cells := 0
 var group_ms := {}
+## The drain's off-the-main-thread totals, group name -> ms (offthread).
+var offthread_ms := {}
 ## Every closed cell's whole time in usec, for the frame accounting: a
 ## caller timing a frame that built cells inside it subtracts what end_cell
 ## has already noted (World3D._physics_process).
@@ -58,6 +66,9 @@ var _group_order: Array[String] = []
 var _group_usec := {}
 var _phase_order := {} # group -> Array of names, in first-seen order
 var _phase_usec := {} # group -> {name: usec}
+var _off_order: Array[String] = [] # groups with off-thread phases, first seen first
+var _off_phase_order := {} # group -> Array of names, in first-seen order
+var _off_phase_usec := {} # group -> {name: usec}
 
 # The open frame, the window since the last summary, and the run.
 var _frame_open := false
@@ -81,6 +92,7 @@ var hitches := 0
 func begin_drain() -> void:
 	cells = 0
 	group_ms = {}
+	offthread_ms = {}
 
 func begin_cell(region_x: int, region_y: int) -> void:
 	_cell_open = true
@@ -89,6 +101,9 @@ func begin_cell(region_x: int, region_y: int) -> void:
 	_group_usec.clear()
 	_phase_order.clear()
 	_phase_usec.clear()
+	_off_order.clear()
+	_off_phase_order.clear()
+	_off_phase_usec.clear()
 
 ## A phase group's whole time, measured around it by the caller.
 func group(name: String, usec: int) -> void:
@@ -119,6 +134,26 @@ func lap(group_name: String, name: String, since_usec: int) -> int:
 	phase(group_name, name, now - since_usec)
 	return now
 
+## A sub-phase of the open cell done OFF the main thread (round 565), in
+## usec; repeats add up. On the cell line after its groups -- `; off the main
+## thread: terrain 214 [read 1, parse 15, ...]` -- and in the drain's
+## `offthread_ms`, never in the cell's total or its frame's work. Nothing is
+## kept while no cell is open, like phase().
+func offthread(group_name: String, name: String, usec: int) -> void:
+	if not _cell_open:
+		return
+	if not _off_phase_usec.has(group_name):
+		_off_order.append(group_name)
+		_off_phase_usec[group_name] = {}
+		_off_phase_order[group_name] = []
+	var usecs: Dictionary = _off_phase_usec[group_name]
+	if not usecs.has(name):
+		(_off_phase_order[group_name] as Array).append(name)
+	usecs[name] = int(usecs.get(name, 0)) + usec
+
+func offthread_total_ms(group_name: String) -> float:
+	return float(offthread_ms.get(group_name, 0.0))
+
 func phase_usec(group_name: String, name: String) -> int:
 	if not _phase_usec.has(group_name):
 		return 0
@@ -130,7 +165,9 @@ func total_ms(group_name: String) -> float:
 ## Closes the cell: adds it to the drain's totals, notes its whole time as
 ## work on `frame`, and returns its line -- `World3D: cell 97/169 built in
 ## 512 ms at frame 88 (terrain 310 [read 12, parse 88, ...], objects 180
-## [...], npcs 22)`. A cell with no groups is `built in 0 ms` with no list.
+## [...], npcs 22)`, then `; off the main thread: terrain 214 [read 1, ...]`
+## when offthread() recorded any (round 565). A cell with no groups is
+## `built in 0 ms` with no list.
 func end_cell(frame: int) -> String:
 	if not _cell_open:
 		return ""
@@ -155,6 +192,18 @@ func end_cell(frame: int) -> String:
 	var line := "World3D: cell %s built in %d ms at frame %d" % [name, int(total_usec / 1000.0), frame]
 	if not parts.is_empty():
 		line += " (" + ", ".join(parts) + ")"
+	var off_parts: Array[String] = []
+	for g in _off_order:
+		var off_usec := 0
+		var subs: Array[String] = []
+		for p in _off_phase_order[g]:
+			var usec: int = _off_phase_usec[g][p]
+			off_usec += usec
+			subs.append("%s %d" % [p, int(usec / 1000.0)])
+		offthread_ms[g] = float(offthread_ms.get(g, 0.0)) + off_usec / 1000.0
+		off_parts.append("%s %d [%s]" % [g, int(off_usec / 1000.0), ", ".join(subs)])
+	if not off_parts.is_empty():
+		line += "; off the main thread: " + ", ".join(off_parts)
 	return line
 
 ## Main-thread work on a drawn frame, in ms: a cell's build (end_cell) or a
@@ -226,6 +275,8 @@ func summary() -> String:
 	line += "; run longest %s; grid %d cells terrain %.0f objects %.0f npcs %.0f ms" % [
 		_at(longest_ms, longest_frame, longest_label), cells,
 		total_ms("terrain"), total_ms("objects"), total_ms("npcs")]
+	for g in offthread_ms:
+		line += " + %s %.0f ms off the main thread" % [g, offthread_ms[g]]
 	_win_ms = PackedFloat32Array()
 	_win_longest_ms = 0.0
 	_win_longest_frame = -1

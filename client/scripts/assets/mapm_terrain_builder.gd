@@ -107,13 +107,24 @@ static func build_mesh(region: MapmReader.ParsedRegion, block_index: int = 0) ->
 ## this on a successful parse, so this should only trip on a malformed
 ## caller-constructed region).
 static func build_full_region_mesh(region: MapmReader.ParsedRegion) -> ArrayMesh:
+	var arrays := build_full_region_arrays(region)
+	if arrays.is_empty():
+		return null
+	return arrays_to_mesh(arrays)
+
+## build_full_region_mesh's one surface as plain data (round 565): the
+## Mesh.ARRAY_MAX-sized arrays it hands the engine, or [] (after the same
+## error) for a region without a real 6x6 block grid. No Mesh is built, so a
+## WorkerThreadPool task can call it -- World3D._terrain_prepare does, for a
+## region none of whose ground textures resolved.
+static func build_full_region_arrays(region: MapmReader.ParsedRegion) -> Array:
 	var bands_per_side := MapmReader.BLOCKS_PER_SIDE
 	if region.blocks.size() != bands_per_side * bands_per_side:
 		push_error("MapmTerrainBuilder: region has %d blocks, want %d" % [region.blocks.size(), bands_per_side * bands_per_side])
-		return null
+		return []
 	var full_size := bands_per_side * (GRID_WIDTH - 1) + 1
 	var grid := _full_region_cells(region, bands_per_side, full_size)
-	return _build_mesh_from_cells(grid, full_size, full_size)
+	return _mesh_arrays_from_cells(grid, full_size, full_size)
 
 ## Same real stitched region layout as build_full_region_mesh, but each
 ## quad is placed on its own real-textured surface instead of a single
@@ -124,7 +135,8 @@ static func build_full_region_mesh(region: MapmReader.ParsedRegion) -> ArrayMesh
 ## is where every earlier search this project ran looked. texture_lookup
 ## maps a real TextureInfo.ID (the same real 10-bit field _vertex_color
 ## already decodes) to an already-loaded real Texture2D -- built by the
-## caller (World3D._load_real_ground_textures) since only it can reach the
+## caller (World3D._terrain_commit, from the Images
+## World3D._prepare_ground_textures decoded) since only it can reach the
 ## real pk2 archive. A quad whose top-left corner's ID isn't in
 ## texture_lookup falls back to the existing tile-type/hue-sweep vertex
 ## color on its own separate surface, so a region with only partial real
@@ -138,17 +150,117 @@ static func build_full_region_mesh(region: MapmReader.ParsedRegion) -> ArrayMesh
 ## (ARRAY_TEX_UV2) instead, since it needs the opposite: one continuous
 ## real shadow map stretched over the entire mesh, not repeated per quad.
 ## `light_dir`, `light_diffuse` and `light_ambient` bake the real client's own
-## terrain lighting into vertex colour (see _build_textured_mesh_from_cells).
+## terrain lighting into vertex colour (see _textured_surfaces_from_cells).
 ## Leave `light_dir` at Vector3.ZERO to skip it and let the engine light the
 ## terrain instead, which is what every caller did before 2026-09-07.
 static func build_full_region_mesh_textured(region: MapmReader.ParsedRegion, texture_lookup: Dictionary, ao_texture: Texture2D = null, light_dir: Vector3 = Vector3.ZERO, light_diffuse: Color = Color.WHITE, light_ambient: Color = Color.BLACK, shadow_map: PackedByteArray = PackedByteArray()) -> ArrayMesh:
+	var surfaces := build_full_region_surfaces_textured(region, texture_lookup, light_dir, light_diffuse, light_ambient, shadow_map)
+	if surfaces.is_empty():
+		return null
+	return surfaces_to_mesh(surfaces, texture_lookup, ao_texture)
+
+## build_full_region_mesh_textured's surfaces as plain data (round 565), in
+## the mesh's own surface order -- one Dictionary per surface:
+##   "arrays"      the Mesh.ARRAY_MAX-sized surface arrays (vertex, normal,
+##                 uv, uv2, colour, index), exactly what the mesh is built from;
+##   "texture_key" the real TextureInfo.ID whose texture the pass samples, or
+##                 -1 for none (the flat base, and the pass of quads whose
+##                 dominant ID did not resolve);
+##   "blend"       whether the pass is an alpha-blended overlay;
+##   "unshaded"    whether the real lighting is baked into the vertex colour.
+## Only Arrays, packed arrays and Dictionaries -- no Mesh, Material or
+## Texture, each of which owns a RenderingServer RID -- so World3D's
+## WorkerThreadPool task (_terrain_prepare) builds it off the main thread and
+## surfaces_to_mesh turns it into the ArrayMesh on the main thread. Of
+## texture_lookup only the KEYS are read (which IDs resolved to a texture),
+## so the task passes a Dictionary of IDs; surfaces_to_mesh reads the values.
+## [] (after the same error build_full_region_mesh_textured has always
+## pushed) for a region without a real 6x6 block grid.
+static func build_full_region_surfaces_textured(region: MapmReader.ParsedRegion, texture_lookup: Dictionary, light_dir: Vector3 = Vector3.ZERO, light_diffuse: Color = Color.WHITE, light_ambient: Color = Color.BLACK, shadow_map: PackedByteArray = PackedByteArray()) -> Array:
 	var bands_per_side := MapmReader.BLOCKS_PER_SIDE
 	if region.blocks.size() != bands_per_side * bands_per_side:
 		push_error("MapmTerrainBuilder: region has %d blocks, want %d" % [region.blocks.size(), bands_per_side * bands_per_side])
-		return null
+		return []
 	var full_size := bands_per_side * (GRID_WIDTH - 1) + 1
 	var grid := _full_region_cells(region, bands_per_side, full_size)
-	return _build_textured_mesh_from_cells(grid, full_size, full_size, texture_lookup, ao_texture, light_dir, light_diffuse, light_ambient, shadow_map)
+	return _textured_surfaces_from_cells(grid, full_size, full_size, texture_lookup, light_dir, light_diffuse, light_ambient, shadow_map)
+
+## The ArrayMesh of `surfaces` (build_full_region_surfaces_textured's
+## output), one mesh surface per entry in order, each with the material
+## the textured builder has always given it: the pass's texture
+## from texture_lookup (none for key -1), the vertex colour as albedo,
+## unshaded when the light is baked, alpha-blended without depth writes for
+## an overlay, and ao_texture (the real .t lightmap) on UV2 when there is
+## one. Main thread only: the mesh and every material own RIDs.
+static func surfaces_to_mesh(surfaces: Array, texture_lookup: Dictionary, ao_texture: Texture2D = null) -> ArrayMesh:
+	var array_mesh := ArrayMesh.new()
+	for surface in surfaces:
+		array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, surface["arrays"])
+		array_mesh.surface_set_material(array_mesh.get_surface_count() - 1,
+			_surface_material(surface, texture_lookup, ao_texture))
+	return array_mesh
+
+## One pass's material -- see surfaces_to_mesh. A key the lookup does not
+## hold is an error, not a silent untextured pass: an unset sampler draws
+## white under GLES3, which is the "white ground" symptom (round 558), and
+## the key set came from this same lookup, so a miss means a caller bug.
+static func _surface_material(surface: Dictionary, texture_lookup: Dictionary, ao_texture: Texture2D) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	var key: int = surface["texture_key"]
+	if key != -1:
+		if texture_lookup.has(key):
+			mat.albedo_texture = texture_lookup[key]
+		else:
+			push_error("MapmTerrainBuilder: surface texture %d is not in the lookup" % key)
+	mat.vertex_color_use_as_albedo = true
+	if surface["unshaded"]:
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	if surface["blend"]:
+		# Only the feathered neighbour overlays are transparent; a quad's own
+		# texture is opaque (see _textured_surfaces_from_cells' doc comment).
+		# depth_draw_disabled keeps these coplanar overlays from fighting the
+		# opaque pass they sit exactly on top of.
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	if ao_texture != null:
+		mat.ao_enabled = true
+		mat.ao_texture = ao_texture
+		mat.ao_light_affect = 1.0
+		mat.ao_on_uv2 = true
+	return mat
+
+## The collision faces of the mesh built from `surfaces` (round 565), as
+## `Mesh.create_trimesh_shape()` would hand them to its ConcavePolygonShape3D:
+## every triangle of every surface, surfaces in order and each surface's
+## triangles in index order, each corner snapped to 0.0001. Plain data, so
+## World3D's WorkerThreadPool task builds it and the main thread only calls
+## `ConcavePolygonShape3D.set_faces`, instead of create_trimesh_shape reading
+## the arrays back out of the RenderingServer and re-keying every vertex.
+##
+## Equality with create_trimesh_shape is MEASURED, not read from the engine:
+## mapm_terrain_builder_test.gd compares this against
+## `surfaces_to_mesh(...).create_trimesh_shape().get_faces()` element by
+## element on synthetic regions whose heights sit off the 0.0001 grid, which
+## is what shows the snap (the Godot 4.2.2 build this project ships was not
+## read for it). Every surface is kept -- the base, the opaque passes and the
+## blend overlays repeat the same triangles -- so the shape is the one the
+## terrain has always had, duplicates included.
+static func surface_faces(surfaces: Array) -> PackedVector3Array:
+	var total := 0
+	for surface in surfaces:
+		total += (surface["arrays"][Mesh.ARRAY_INDEX] as PackedInt32Array).size()
+	var faces := PackedVector3Array()
+	faces.resize(total)
+	var snap := Vector3(0.0001, 0.0001, 0.0001)
+	var w := 0
+	for surface in surfaces:
+		var arrays: Array = surface["arrays"]
+		var positions: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+		for i in indices:
+			faces[w] = positions[i].snapped(snap)
+			w += 1
+	return faces
 
 ## Shared real 6x6-block stitching behind build_full_region_mesh and
 ## build_full_region_mesh_textured -- see either's doc comment for the
@@ -191,6 +303,18 @@ static func _block_to_cells(block: MapmReader.Block) -> Array:
 ## cells.size()/cells[0].size() (passed separately since callers may have
 ## already validated/trimmed them).
 static func _build_mesh_from_cells(cells: Array, row_count: int, col_count: int) -> ArrayMesh:
+	return arrays_to_mesh(_mesh_arrays_from_cells(cells, row_count, col_count))
+
+## One surface's arrays as an ArrayMesh, no material (the untextured path
+## sets material_override instead). Main thread only: the mesh owns an RID
+## (World3D._terrain_commit builds the untextured fallback with it).
+static func arrays_to_mesh(arrays: Array) -> ArrayMesh:
+	var array_mesh := ArrayMesh.new()
+	array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return array_mesh
+
+## _build_mesh_from_cells' surface arrays, built without a Mesh (round 565).
+static func _mesh_arrays_from_cells(cells: Array, row_count: int, col_count: int) -> Array:
 	var positions := PackedVector3Array()
 	positions.resize(row_count * col_count)
 	for r in range(row_count):
@@ -237,10 +361,7 @@ static func _build_mesh_from_cells(cells: Array, row_count: int, col_count: int)
 	arrays[Mesh.ARRAY_TEX_UV] = uvs
 	arrays[Mesh.ARRAY_COLOR] = colors
 	arrays[Mesh.ARRAY_INDEX] = indices
-
-	var array_mesh := ArrayMesh.new()
-	array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	return array_mesh
+	return arrays
 
 ## Returns the real 10-bit TextureInfo.ID a quad's top-left corner encodes,
 ## or -1 if extra is too short to have one, or the ID has no real texture
@@ -446,7 +567,17 @@ static func _quad_uv_corners(r: int, c: int, repeat: float = 1.0) -> PackedVecto
 ## own texture is opaque rather than faded toward a flat gray base. Fading
 ## toward gray desaturated real textures unevenly per region, producing the
 ## washed-out per-region tinting a real playtest reported.
-static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_count: int, texture_lookup: Dictionary, ao_texture: Texture2D, light_dir: Vector3 = Vector3.ZERO, light_diffuse: Color = Color.WHITE, light_ambient: Color = Color.BLACK, shadow_map: PackedByteArray = PackedByteArray()) -> ArrayMesh:
+##
+## **Data, not a mesh, since round 565.** This was
+## `_build_textured_mesh_from_cells`, which built the ArrayMesh and its
+## materials itself; it now returns the surfaces as plain data (see
+## build_full_region_surfaces_textured for the shape) so a WorkerThreadPool
+## task can build them, and surfaces_to_mesh / _surface_material build the
+## mesh and the materials on the main thread. The arrays, the surface order
+## and every material flag are the ones the mesh was built from before the
+## split: mapm_terrain_builder_test.gd holds both paths to fingerprints
+## measured on the pre-split builder.
+static func _textured_surfaces_from_cells(cells: Array, row_count: int, col_count: int, texture_lookup: Dictionary, light_dir: Vector3 = Vector3.ZERO, light_diffuse: Color = Color.WHITE, light_ambient: Color = Color.BLACK, shadow_map: PackedByteArray = PackedByteArray()) -> Array:
 	var positions := PackedVector3Array()
 	positions.resize(row_count * col_count)
 	for r in range(row_count):
@@ -536,7 +667,7 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 			var i11 := i01 + 1
 			base_indices.append_array(PackedInt32Array([i00, i10, i11, i00, i11, i01]))
 
-	var array_mesh := ArrayMesh.new()
+	var surfaces: Array = []
 	var base_arrays := []
 	base_arrays.resize(Mesh.ARRAY_MAX)
 	base_arrays[Mesh.ARRAY_VERTEX] = positions
@@ -544,19 +675,10 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 	base_arrays[Mesh.ARRAY_TEX_UV2] = uv2s
 	base_arrays[Mesh.ARRAY_COLOR] = base_colors
 	base_arrays[Mesh.ARRAY_INDEX] = base_indices
-	array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, base_arrays)
-	var base_mat := StandardMaterial3D.new()
-	base_mat.vertex_color_use_as_albedo = true
-	# Real lighting is already in the vertex colour, so the engine must not
-	# light it a second time.
-	if bake_light:
-		base_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	if ao_texture != null:
-		base_mat.ao_enabled = true
-		base_mat.ao_texture = ao_texture
-		base_mat.ao_light_affect = 1.0
-		base_mat.ao_on_uv2 = true
-	array_mesh.surface_set_material(0, base_mat)
+	# The base's material: the vertex colour as albedo, and -- real lighting
+	# being already in the vertex colour, so the engine must not light it a
+	# second time -- unshaded when baked (_surface_material).
+	surfaces.append({"arrays": base_arrays, "texture_key": -1, "blend": false, "unshaded": bake_light})
 
 	# `buffers` holds each quad's own dominant real texture, drawn fully
 	# opaque so the ground is never see-through; `blend_buffers` holds every
@@ -641,6 +763,9 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 					blend_buffers[k] = new_buffer.call()
 				emit.call(blend_buffers[k], r, c, idx, alphas, repeat, Color.WHITE)
 
+	# One surface per pass; its material (the pass's texture, the vertex
+	# colour as albedo, unshaded when baked, alpha-blended without depth
+	# writes for an overlay, the lightmap on UV2) is _surface_material's.
 	var add_surface := func(key: int, buf: Dictionary, is_blend: bool) -> void:
 		var arrays := []
 		arrays.resize(Mesh.ARRAY_MAX)
@@ -650,27 +775,7 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 		arrays[Mesh.ARRAY_TEX_UV2] = buf["uv2s"]
 		arrays[Mesh.ARRAY_COLOR] = buf["colors"]
 		arrays[Mesh.ARRAY_INDEX] = buf["indices"]
-		array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-
-		var mat := StandardMaterial3D.new()
-		if key != -1:
-			mat.albedo_texture = texture_lookup[key]
-		mat.vertex_color_use_as_albedo = true
-		if bake_light:
-			mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		if is_blend:
-			# Only the feathered neighbour overlays are transparent; a
-			# quad's own texture is opaque (see this function's doc
-			# comment). depth_draw_disabled keeps these coplanar overlays
-			# from fighting the opaque pass they sit exactly on top of.
-			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-			mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
-		if ao_texture != null:
-			mat.ao_enabled = true
-			mat.ao_texture = ao_texture
-			mat.ao_light_affect = 1.0
-			mat.ao_on_uv2 = true
-		array_mesh.surface_set_material(array_mesh.get_surface_count() - 1, mat)
+		surfaces.append({"arrays": arrays, "texture_key": key, "blend": is_blend, "unshaded": bake_light})
 
 	var keys := buffers.keys()
 	keys.sort()
@@ -683,7 +788,7 @@ static func _build_textured_mesh_from_cells(cells: Array, row_count: int, col_co
 	for key in blend_keys:
 		add_surface.call(key, blend_buffers[key], true)
 
-	return array_mesh
+	return surfaces
 
 ## Real full-region wrapper around build_water_mesh, same real 6x6-block
 ## stitching as build_full_region_mesh/build_full_region_mesh_textured --

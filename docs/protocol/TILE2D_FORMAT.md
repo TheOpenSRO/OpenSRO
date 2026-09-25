@@ -99,8 +99,10 @@ settled, until it has.
 `client/scripts/tile2d/tile_index_reader.gd` (`TileIndexReader`) parses the real structure above
 and is re-verified against the real 719-entry sample. `MapmTerrainBuilder.build_full_region_mesh_textured()`
 resolves each real vertex's `TextureInfo.ID` through a parsed table to a real `tile2d.ifo`
-filename, which `World3D._load_real_ground_textures()` loads from `Map.pk2\Tile2D\<filename>` via
-`DdjReader` (cached by filename across regions) and passes back in as a real per-ID texture lookup
+filename, which `World3D._prepare_ground_textures()` loads from `Map.pk2\Tile2D\<filename>` via
+`DdjReader` (decoded to an Image on the terrain's prepare thread since round 565, uploaded and
+cached by filename across regions by `World3D._terrain_commit`; `_load_real_ground_textures()`
+did both on the main thread before) and passes back in as a real per-ID texture lookup
 — each real quad gets its own real texture on its own mesh surface. A quad whose resolved ID has no
 real texture (or when no `SRREVAMP_MAP_PK2_PATH` is set at all) falls back to
 `_vertex_color()`'s `TileType`-driven color coding, unchanged from before this correction.

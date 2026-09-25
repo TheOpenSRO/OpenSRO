@@ -36597,3 +36597,222 @@ map/loading section; nothing there.
 
 **Deploy note.** Client only, not tag-worthy: nothing a player sees. The `setup` lap adds one
 bracketed number to a log line the benchmark greps by prefix; no server change.
+
+## Terrain cells prepared on a worker thread (read, parse, images, mesh arrays) and committed on the main thread (round 565)
+
+Client only, tag-worthy: the loading-freeze item of the map/loading epic (2026-09-25). Nothing on
+the wire, no flag, no server change (`server/` untouched; `go build ./...` and `go test -count=1
+-p 1 ./...` green before and after the doc edits). A streamed region cell's terrain -- the `.m`
+read and parse, the `.t` lightmap and the ground tiles decoded to Images, the mesh surfaces and
+the collision faces as arrays, the navmesh, the wall triangles and the walkable graph -- now
+prepares on a `WorkerThreadPool` task, and only its commit (the uploads, the nodes, the shapes,
+the water, the graph's registration) runs on the main thread; the objects and NPC phases stay
+synchronous in the commit's frame. `SRREVAMP_SYNC_LOAD=1` restores the synchronous path for one
+release. Every number below is a log line from the render box (2026-09-25, hardware GL through
+VirtualGL, lane lock `/var/tmp/r565/lock`, round 558's server binary) or from this checkout; the
+logs are `/var/tmp/r565/{base_entry,base_cross,after_entry,after_cross,sync_cross,drain,qa}.log`
+with `run.sh` and `after.sh`, the exact commands (frames deleted).
+
+**Grounding, re-read at BASE (`d255c92`).**
+
+- `World3D._load_region_cell` called `_try_load_real_terrain`, `_try_load_real_map_objects` and
+  `_try_spawn_region_npcs` back to back on the main thread, and `_try_load_real_terrain` built
+  everything from the file read to the nav graph inside one call; `grep -rn
+  "Thread\|WorkerThreadPool\|Mutex" client/scripts` was empty. `docs/WORLD_ISSUES.md`, round 154:
+  "it does not thread the build, so a very heavy cell can still hitch -- threading the region
+  build off the main thread is the next step".
+- `Pk2Reader`: one `_file: FileAccess` per handle, `read_file` = `seek` + `get_buffer`,
+  `_read_block_chain` a seek and a get_buffer per block, `_dir_cache` per handle -- not
+  thread-safe, and every World3D reader shares the world's three handles.
+- Godot 4.2's "Thread-safe APIs" page (fetched 2026-09-25): "Interacting with the active scene
+  tree is **NOT** thread-safe"; "creating scene chunks (nodes in tree arrangement) outside the
+  active tree is fine"; resources "can be loaded and manipulated on a thread"; "Accessing servers
+  from threads is supported (for RenderingServer and Physics servers, ensure threaded or
+  thread-safe operation is enabled in the project settings!)". `client/project.godot` sets
+  neither; read on the box's 4.2.2 (a throwaway `--script`, deleted):
+  `rendering/driver/threads/thread_model` 1 (Single-Safe), `physics/3d/run_on_separate_thread`
+  false, `threading/worker_pool/low_priority_thread_ratio` 0.3, 10 cores. The WorkerThreadPool
+  4.2 reference: `add_task(action, high_priority = false, description = "")`, and
+  `wait_for_task_completion` returns `ERR_INVALID_PARAMETER` for a task that was "already awaited
+  and disposed of" -- waiting is what disposes of a task.
+- The BEFORE, re-measured today on BASE with the README's two commands (the box's client copy
+  md5-identical to BASE): see the tables below. Round 561's figures (centre 5,373, crossing 328)
+  were from before rounds 562-563; today's BASE is what this round is measured against.
+
+**The findings and the orchestrator's notes, answered.**
+
+- *The QA path* (verifier (a)): `_drain_initial_load`'s no-screen branch dispatches, waits for
+  each task (`_pump_cell_jobs(TERRAIN_JOBS_IN_FLIGHT, wait = true)`) and commits every cell before
+  it returns. Measured (`qa.log`, `--radius 2`, no server, no `FORCE_LOADING`): all 25 `built in`
+  lines `at frame 0`, `region grid loaded in 12465 ms ... at frame 0`, then `QA SHOT square frame
+  13` -- the contract holds.
+- *The bound* (verifier (b), the orchestrator's acceptance): measured, below -- the crossing's
+  longest work frame 334 -> 144 ms. The verifier was right that `create_trimesh_shape()` would stay
+  in the commit; this round does not keep it: the prepare builds the face list the trimesh would
+  have read back out of the mesh (`MapmTerrainBuilder.surface_faces`, held equal to
+  `create_trimesh_shape().get_faces()` element for element by the builder's suite), and the commit
+  calls `ConcavePolygonShape3D.set_faces` alone -- the `collision` lap fell from 52-61 ms a cell to
+  25-33 with the shape unchanged. `NavGraph.build` moved into the prepare as suggested (its inputs
+  -- the navmesh, Data.pk2 behind the new lock, the object index and a copy of the object
+  navigation meshes -- are all in the job).
+- *The prepare-thread rule* (verifier (c), orchestrator): written at `World3D._terrain_prepare`
+  and in `client/tools/README.md`, "Load benchmark" (rules 1-4). `_terrain_prepare` and its
+  helpers are `static`, so they cannot reach the node's state; they print nothing (their lines go
+  in the job, printed in order by the commit) and record their laps in the job (LoadTimings is the
+  main thread's).
+- *The cache race* (verifier (d)): `_terrain_job` snapshots, on the main thread before dispatch,
+  the ground-tile cache as filename -> decoded flag (never the texture), the region's cached
+  navmesh and a copy of the object-collision cache; the commit merges back what the prepare read
+  (a tile another job's commit uploaded first is kept). `_last_terrain_shadow_map`, a member the
+  lightmap loader stashed for the mesh builder, is gone -- the map travels in the job (at BASE a
+  region without a `.t` handed the builder the previous region's, harmless only because the
+  builder does not apply it, `MapmTerrainBuilder._shadow_at`).
+- *Three sittings* (verifier (e)): one round, as the item was issued, in three parts each with its
+  own test and negative -- the Pk2Reader lock, the builder's surfaces split, the job pipeline.
+- *The co-pumped queue* (round 561's correction): `_pump_cell_jobs` is the one place that
+  dispatches and commits; while `_drain_initial_load` runs it is the only caller
+  (`_drain_pumping` makes `_process_stream_queue` step aside). Per frame under the screen: at most
+  `LOADING_CELLS_PER_FRAME` = 2 commits, as many as have finished -- the logs show two `built in`
+  lines at each of frames 15-26 (entry) and 17-28 (crossing), against three at 14-21 at BASE. The
+  gauge is `1 - (queued + preparing) / total`.
+- *Headless negatives*: (a) the concurrent reads fail without the lock -- 11, 10 and 13 of 800
+  wrong in three runs, so it did not happen to pass; (b) the surfaces path fails to parse against
+  the pre-split builder; (c) the forbidden-object walk, with a positive control of its own (it
+  finds a mesh in an Array, a Node in a Dictionary, a shape, and an ImageTexture inside a reader
+  struct's variable).
+- *The stale-cell guard and the exit*: a prepared cell is committed only if it is still wanted
+  (`cell x/y prepared but not committed -- already loaded | the player left its window while it
+  prepared`); `_clear_region_grid`, `_load_region_neighborhood` and `_exit_tree` wait for every
+  task still running and drop it (`N cell(s) still preparing dropped (<why>) -- waited M ms`).
+  Round 558's `--reconnect drain` variant (`drain.log`): `QA RECONNECT: leaving the world at frame
+  15, tick 15 (drain, route direct, entry 1, 6 cells still queued, 2 preparing)`, then `World3D: 2
+  cell(s) still preparing dropped (the world left the tree) -- waited 18.8 ms for their tasks`,
+  entry 2 loaded and shot; **0 `SCRIPT ERROR`**, and the `ERROR:` set identical to round 560's
+  drain run (two missing `.bsr`s, the gacha machine, the exit-time texture leak). The hook fires on
+  queued OR preparing cells now.
+
+**What changed.**
+
+- `pk2/pk2_reader.gd`: `_lock` (a `Mutex` per handle) around `read_file`, `_read_block_chain`
+  (its body is `_read_block_chain_locked`) and `close`.
+- `assets/mapm_terrain_builder.gd`: `build_full_region_surfaces_textured` (the surfaces as data:
+  arrays, texture key, blend, unshaded; `texture_lookup` read for its keys only),
+  `surfaces_to_mesh` + `_surface_material` (the ArrayMesh and the materials the builder always
+  made), `surface_faces` (the trimesh's faces, each corner snapped to 0.0001 -- the snap is what the
+  suite measured, on off-grid heights), `build_full_region_arrays` / `arrays_to_mesh` (the
+  untextured surface). `_build_textured_mesh_from_cells` became `_textured_surfaces_from_cells`,
+  returning data; `build_full_region_mesh(_textured)` are built on top, unchanged for callers.
+- `ddj/ddj_reader.gd`: `to_image` (everything `to_texture` did before its `ImageTexture`);
+  `mapt/mapt_reader.gd`: `parse(data, with_texture = true)` with an `image` field for
+  `with_texture` false.
+- `world/load_timings.gd`: `offthread(group, name, usec)` -- on the cell line after the groups
+  (`; off the main thread: terrain P [...]`), in the drain's `offthread_ms` and the summary (`+
+  terrain X ms off the main thread`), never in `built in`, a group total or a frame's work.
+- `World3D.gd`: `_terrain_job` (main thread: the one-time tables, the snapshot, the light terms),
+  `_terrain_prepare` = `_terrain_prepare_read` + `_terrain_prepare_build` (static), with
+  `_prepare_ground_textures`, `_decode_ground_image`, `_read_terrain_lightmap`,
+  `_read_region_navmesh`, `_prepare_navmesh_walls`, `_prepare_nav_graph` and a static
+  `_load_object_collision(cache, ...)`; `_terrain_commit`; `_try_load_real_terrain` runs both
+  halves inline (the grid's centre, always, and every cell under `SRREVAMP_SYNC_LOAD=1`), applying
+  the centre's environment between them since the mesh bakes its light;
+  `_load_region_cell(..., prepared)`; `_pump_cell_jobs`, `_dispatch_cell_jobs`, `_dispatch_cell`
+  (a high-priority task: at the 0.3 ratio a low-priority pair could share one thread on a small
+  machine), `_finish_cell_job`, `_drop_cell_jobs`, `_outside_stream_window`, `_threaded_load`;
+  `TERRAIN_JOBS_IN_FLIGHT` = 2, an own tuning choice disclosed at the constant; the drain's two
+  branches; `_grid_loaded_line`'s off-thread total; the QA reconnect hook and its line; the
+  header's `SRREVAMP_SYNC_LOAD`. The centre cell stays synchronous: its height anchors every
+  neighbour, its environment lights them, and the caller places the player on it next.
+- Comments naming the removed `_load_real_ground_textures` updated in `tile2d/tile_index_reader.gd`
+  and `docs/protocol/TILE2D_FORMAT.md`.
+
+**Measured: the benchmark, BASE against this round** (the README's two commands; (b)'s crossing
+figure is the tick-600 summary).
+
+| | BASE (`d255c92`) | round 565 |
+|---|---|---|
+| (a) centre cell | `97/168 built in 5202 ms at frame 13` | `5245 ms at frame 14` (unchanged by design) |
+| (a) `region grid loaded` | `22726 ms (terrain 7961, objects 4890, npcs 2331) at frame 22 -- 25 cells 15181 ms, 7545 ms outside the cells over 10 awaited frames` | `19711 ms (terrain 2873, objects 5182, npcs 2375) at frame 27 -- 25 cells 10430 ms, 9281 ms outside the cells over 14 awaited frames; terrain 5809 ms prepared off the main thread` |
+| (a) drain summary | `longest work frame 5265 ms at frame 13 (cell 97/168) ...; p95 2841 ms; 9 over 100 ms` | `5306 ms at frame 14 (cell 97/168) ...; p95 1772 ms; 13 over 100 ms` |
+| (a) cells a frame under the screen | three at frames 14-21 | two at frames 15-26 |
+| (b) the column 95..99/165 | `304, 304, 328, 271, 291 ms` at frames 161-165 (terrain 231-262 each) | `105, 127, 123, 73, 69 ms` at frames 162-166 (terrain 39-44 each; prepared 202-227 ms off the main thread) |
+| (b) tick-600 summary | `longest work frame 334 ms at frame 163 (cell 98/165) over 575 frames ...; p95 5 ms; 5 over 100 ms` | `longest work frame 144 ms at frame 163 (cell 96/165) over 570 frames ...; p95 5 ms; 3 over 100 ms` |
+
+The crossing's longest work frame fell 57 % (334 -> 144 ms), past the plan's 50 % target; 144 is
+the 127 ms cell (terrain commit 40, objects 86, npcs 0) plus 17 ms of that frame's physics step
+(the dispatch's snapshot is in it; not split further). Over the entry's 24 neighbours, the
+per-phase sums (from the cell lines): main-thread terrain 6,364 -> 1,265 ms (collision 1,367 ->
+746, water 297 -> 346 -- the one-time water frames land in whichever cell first has water --
+upload 128, images 2); off the main thread 5,796 ms (mesh 3,512, navgraph 728, navmesh 602,
+parse 544, faces 200, textures 85, lightmap 31). The mesh takes 3,512 ms on the tasks against
+3,047 on the main thread at BASE, and the objects group rose 2,923 -> 3,214 ms: two tasks now
+share the CPU and the archive lock with the main thread; not investigated here (the objects item
+is next). The entry's `built in` sum fell 9,965 -> 5,173 ms over the 24, its worst non-centre
+frame from BASE's frame 14 (1,112 + 1,097 + 626 ms) to frame 15 (914 + 853 ms; the p95), while the
+drain takes more, shorter frames (13 over 100 ms against 9) and its awaited frames' wall time is
+in `D` (9,281 ms outside the cells over 14 frames). The entry's longest frame is still the
+synchronous centre, 5.2 s -- one-time tables (tile index 964, NPC tables 953, object index 13),
+templates 1,555 and npcs 1,693; the next items' ground.
+
+Also measured: `SRREVAMP_SYNC_LOAD=1` (`sync_cross.log`) restores the old schedule -- three cells a
+frame at 15-22, the column one a frame at 160-164 at 245-308 ms, `longest work frame 314 ms at
+frame 162 (cell 98/165)`; its terrain is 209-238 ms a cell against BASE's 231-262 because the
+prepared faces replace `create_trimesh_shape` there too (collision 28-31). And the centre terrain
+draws what it drew: all 49 `QA TEXPROBE` lines of the reconnect run (both entries' centre
+surfaces: texture set, RID valid, size, texel means, shading, baked vertex colours, vertex counts)
+are identical to round 560's drain run's. The trimesh carries every ground triangle about 2.5
+times -- 45,768 faces for 97/168 against the base surface's 18,432 (the opaque passes and the
+blend overlays repeat the base's triangles); kept, so the shape is the one the terrain always had.
+Recorded for map-terrain-heightfield's gate: after this round a neighbour's `collision` lap is
+25-33 ms of a 39-51 ms terrain commit (746 of 1,265 ms over the 24), 14 % of the cells' main-thread
+time; de-duplicating the faces would cut it without a new shape type.
+
+**Tests.** `pk2/pk2_reader_test.gd` gains `_test_concurrent_reads` (4 high-priority tasks x 200
+`read_file`s of a 64 KiB entry, each compared to a single-threaded read). `assets/
+mapm_terrain_builder_test.gd` gains `_test_surfaces_path`: two synthetic regions (off-grid heights;
+IDs 1, 2 and an unresolved 3, so the base, the fallback pass, opaque passes and a blend overlay are
+all built; case B bakes the light and sets a lightmap) whose fingerprints -- per surface: vertex,
+index and index-sum counts, position/UV/UV2 sums, texture, transparency, shading, depth draw, ao
+-- were measured on the PRE-SPLIT builder (BASE's file loaded beside the new one on the box,
+2026-09-25; the two ArrayMeshes fingerprinted identically) and are now held by both the surfaces
+and the ArrayMesh path; the surfaces' arrays equal what the mesh reads back (colours within one
+8-bit step: worst 0.00196 and 0.00332); `surface_faces` equals `create_trimesh_shape().get_faces()`
+element for element (110,976 and 110,592 corners), and so does the flat path's.
+`world/terrain_prepare_test.gd` (new): synthetic Map.pk2 and Data.pk2 (`97\168.m/.t`,
+`Tile2D\t1.ddj`, `navmesh\nv_61a8.nvm`), a bare World3D, `_terrain_job` on the main thread and
+`_terrain_prepare` on a high-priority task: the job holds no Node and no Resource but Image before
+and after; the task produced the surfaces, the faces, the lightmap and tile Images (a missing tile
+as null), the navmesh, the walls and the graph, and the laps in order; the main-thread prepare
+builds the same; and with t1.ddj uploaded and the navmesh cached, the next job carries `{"t1.ddj":
+true}` and the cached navmesh, never the texture, and its task neither decodes nor reads them
+again. `world/load_timings_test.gd`: `_test_offthread_phases` (the exact line, totals, the frame's
+work 130 not 256, the summary suffix, `begin_drain`) and round 564's lap check held to the split
+(`_terrain_job` [tiletable, objindex, snapshot], `env` alone in `_try_load_real_terrain` between
+the halves, the prepare [read ... navgraph] through `_job_lap`, the commit [images ... graph], no
+bare stopwatch, no `_load_timings` in the prepare, the README's three templates).
+**NEGATIVE, proven**: with the seven production files stashed (`git stash push --` World3D.gd,
+mapm_terrain_builder.gd, ddj_reader.gd, mapt_reader.gd, pk2_reader.gd, tile_index_reader.gd,
+load_timings.gd; the tests and README left) and the tree shipped: `pk2_reader_test` `FAIL every
+concurrent read_file returns the single-threaded bytes (11 of 800 wrong)` (10 and 13 on two
+re-runs); `mapm_terrain_builder_test` `SCRIPT ERROR: Parse Error: Static function
+"build_full_region_surfaces_textured()" not found in base "MapmTerrainBuilder"`;
+`terrain_prepare_test` `FAIL World3D.gd has _terrain_job (absent before round 565)`, `FAILURES: 2`;
+`load_timings_test` `FAIL World3D.gd has _terrain_job` ... and `SCRIPT ERROR: Invalid call.
+Nonexistent function 'offthread'`. Restored (`git stash pop`), all four `ALL PASS`.
+`remote_godot.sh tests`: `ran 91 suite(s), 0 failing` (90 + the new suite), on the tree before and
+after the README's AFTER block; `remote_godot.sh check`: `checked 265 scripts and 5 scenes`, `ALL
+LOAD`.
+
+**Records.** This entry; `docs/WORLD_ISSUES.md`'s five-hundred-and-sixty-fifth round;
+`client/tools/README.md`, "Load benchmark" (the cell-line templates, the per-frame schedule, rules
+1-4, `SRREVAMP_SYNC_LOAD`, this round's AFTER); `World3D.gd`'s header; the two format comments
+above. `docs/SYSTEMS.md` has no row for world loading, streaming or the client's threads
+(re-checked: `stream|loading|thread` match only the packet row), so nothing there to change;
+`docs/TODO.md` has no map/loading section. Beyond the item's file list, disclosed:
+`ddj/ddj_reader.gd`, `mapt/mapt_reader.gd`, `tile2d/tile_index_reader.gd` and
+`world/region_grid_state.gd` (comments: `queued_cells` keeps a preparing cell's key),
+`docs/protocol/TILE2D_FORMAT.md`, `world/load_timings_test.gd` and the new
+`world/terrain_prepare_test.gd`.
+
+**Deploy note.** Client only; tag-worthy -- a boundary crossing's frame falls from ~300 ms to
+~70-130 ms and the loading gauge moves two cells a frame. `SRREVAMP_SYNC_LOAD=1` is the escape
+hatch for one release. No server change, no flag.

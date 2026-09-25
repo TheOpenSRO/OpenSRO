@@ -52,6 +52,173 @@ func _make_region(block_fn: Callable) -> MapmReader.ParsedRegion:
 			r.blocks.append(block_fn.call(band_row, band_col))
 	return r
 
+## Round 565's equivalence fixtures: two synthetic regions (never real game
+## data) the surfaces path and the ArrayMesh path are held to. Heights are
+## off the 0.0001 grid on purpose (the + 0.00003), so the collision-face
+## check below can tell a snapped corner from an unsnapped one. TextureInfo
+## ID 1 on the western half, 2 on the eastern, 3 (never in a lookup) on the
+## last two block rows, so every pass kind is built: the base, opaque passes
+## of resolved IDs, the -1 fallback pass, and blend overlays.
+func _fixture_region() -> MapmReader.ParsedRegion:
+	return _make_region(func(band_row, band_col):
+		var tex_info := 1 if band_col < 3 else 2
+		if band_row >= 4:
+			tex_info = 3
+		return _make_block(func(r, c):
+			return float((band_row * 16 + r) * 7 + (band_col * 16 + c) * 3) * 0.37 + 0.00003, tex_info))
+
+## The two cases: [lookup, ao texture, light_dir, light_diffuse, light_ambient].
+## A: IDs 1 and 2 resolve, no baked light, no lightmap. B: only ID 1
+## resolves (2 joins 3 in the fallback), the light is baked (unshaded
+## passes) and a lightmap is set (ao on UV2).
+func _fixture_cases() -> Array:
+	var tex_a := ImageTexture.create_from_image(Image.create(2, 2, false, Image.FORMAT_RGBA8))
+	var tex_b := ImageTexture.create_from_image(Image.create(2, 2, false, Image.FORMAT_RGBA8))
+	var ao := ImageTexture.create_from_image(Image.create(2, 2, false, Image.FORMAT_RGBA8))
+	return [
+		[{1: tex_a, 2: tex_b}, null, Vector3.ZERO, Color.WHITE, Color.BLACK],
+		[{1: tex_a}, ao, Vector3(0.3, 0.8, -0.5), Color(0.9, 0.85, 0.8), Color(0.2, 0.25, 0.3)],
+	]
+
+## One surface's arrays reduced to what the equivalence is about: vertex and
+## index counts, the index sum, and the position / UV / UV2 sums in
+## thousandths, as integers so the fingerprint prints and compares exactly.
+static func _arrays_fingerprint(a: Array) -> Array:
+	var pos: PackedVector3Array = a[Mesh.ARRAY_VERTEX]
+	var idx: PackedInt32Array = a[Mesh.ARRAY_INDEX]
+	var sx := 0.0
+	var sy := 0.0
+	var sz := 0.0
+	for p in pos:
+		sx += p.x
+		sy += p.y
+		sz += p.z
+	var isum := 0
+	for i in idx:
+		isum += i
+	var su := 0.0
+	if a[Mesh.ARRAY_TEX_UV] != null:
+		for t in (a[Mesh.ARRAY_TEX_UV] as PackedVector2Array):
+			su += t.x + t.y
+	var su2 := 0.0
+	if a[Mesh.ARRAY_TEX_UV2] != null:
+		for t in (a[Mesh.ARRAY_TEX_UV2] as PackedVector2Array):
+			su2 += t.x + t.y
+	return [pos.size(), idx.size(), isum, roundi(sx * 1000.0), roundi(sy * 1000.0), roundi(sz * 1000.0),
+		roundi(su * 1000.0), roundi(su2 * 1000.0)]
+
+## A material reduced to its flags: textured, transparency, shading mode,
+## depth draw mode, ao.
+static func _material_fingerprint(mat: StandardMaterial3D) -> Array:
+	return [mat.albedo_texture != null, mat.transparency, mat.shading_mode, mat.depth_draw_mode, mat.ao_enabled, mat.ao_on_uv2]
+
+static func _mesh_fingerprint(mesh: ArrayMesh) -> Array:
+	var out := []
+	for i in range(mesh.get_surface_count()):
+		out.append(_arrays_fingerprint(mesh.surface_get_arrays(i)) + _material_fingerprint(mesh.surface_get_material(i)))
+	return out
+
+## The fixtures' fingerprints on the PRE-SPLIT builder: BASE d255c92's
+## mapm_terrain_builder.gd (with its class_name line removed, loaded beside
+## the new one) run through `build_full_region_mesh_textured` on the render
+## box, 2026-09-25 (round 565). The ArrayMesh the old builder made and the
+## one the surfaces path makes fingerprinted identically in that run; these
+## hold both paths to it from here on. Per surface: vertex count, index
+## count, index sum, position x/y/z sums, UV and UV2 sums (thousandths), then
+## textured, transparency, shading mode, depth draw mode, ao, ao on UV2.
+## Case A: base, the -1 fallback pass, opaque 1, opaque 2, blend 2. Case B:
+## base, the -1 pass, opaque 1 -- ID 2 unresolved, so no overlay.
+const PRE_SPLIT_FINGERPRINTS := [
+	[[9409, 55296, 260112384, 9032640000, 1671038683, 9032640000, 0, 9409000, false, 0, 1, 0, false, false],
+		[12288, 18432, 113233920, 11796480000, 3200778612, 19660800000, 1572864000, 16384000, false, 0, 1, 0, false, false],
+		[12288, 18432, 113233920, 5898240000, 1345782128, 7864320000, 688128000, 7168000, true, 0, 1, 0, false, false],
+		[12288, 18432, 113233920, 17694720000, 2000486768, 7864320000, 1277952000, 13312000, true, 0, 1, 0, false, false],
+		[256, 384, 48896, 243200000, 34714888, 163840000, 20352000, 212000, true, 1, 1, 2, false, false]],
+	[[9409, 55296, 260112384, 9032640000, 1671038683, 9032640000, 0, 9409000, false, 0, 0, 0, true, true],
+		[24576, 36864, 452960256, 29491200000, 5201265380, 27525120000, 2850816000, 29696000, false, 0, 0, 0, true, true],
+		[12288, 18432, 113233920, 5898240000, 1345782128, 7864320000, 688128000, 7168000, true, 0, 0, 0, true, true]],
+]
+## The untextured fallback's one surface on the pre-split builder
+## (build_full_region_mesh), the same run.
+const PRE_SPLIT_FLAT_FINGERPRINT := [9409, 55296, 260112384, 9032640000, 1671038683, 9032640000, 9409000, 0]
+
+## Round 565: the textured terrain is built in two halves -- the surfaces as
+## plain data (build_full_region_surfaces_textured, on a WorkerThreadPool task
+## in World3D) and the ArrayMesh from them (surfaces_to_mesh, main thread) --
+## plus the collision faces from the same data (surface_faces). Held here:
+## both paths reproduce the pre-split builder's fingerprints; the surfaces'
+## arrays are exactly what the mesh reads back; the materials match; and the
+## faces equal what `create_trimesh_shape()` gives the ConcavePolygonShape3D,
+## element by element, which is what lets the commit skip it.
+func _test_surfaces_path() -> void:
+	var region := _fixture_region()
+	var cases := _fixture_cases()
+	for n in range(cases.size()):
+		var c: Array = cases[n]
+		var surfaces := MapmTerrainBuilder.build_full_region_surfaces_textured(region, c[0], c[2], c[3], c[4])
+		var mesh := MapmTerrainBuilder.build_full_region_mesh_textured(region, c[0], c[1], c[2], c[3], c[4])
+		var golden: Array = PRE_SPLIT_FINGERPRINTS[n]
+		_check(_mesh_fingerprint(mesh) == golden,
+			"case %d: build_full_region_mesh_textured still builds the pre-split mesh (got %s)" % [n, str(_mesh_fingerprint(mesh))])
+		var from_data := []
+		for surface in surfaces:
+			from_data.append(_arrays_fingerprint(surface["arrays"])
+				+ _material_fingerprint(MapmTerrainBuilder._surface_material(surface, c[0], c[1])))
+		_check(from_data == golden,
+			"case %d: the surfaces as data carry the pre-split surfaces, in order, with their materials (got %s)" % [n, str(from_data)])
+		_check(surfaces.size() == mesh.get_surface_count(), "case %d: one surface entry per mesh surface" % n)
+		var exact := true
+		var colours := true
+		var worst := 0.0
+		for i in range(mini(surfaces.size(), mesh.get_surface_count())):
+			var data: Array = surfaces[i]["arrays"]
+			var back := mesh.surface_get_arrays(i)
+			for slot in [Mesh.ARRAY_VERTEX, Mesh.ARRAY_INDEX, Mesh.ARRAY_TEX_UV, Mesh.ARRAY_TEX_UV2]:
+				if data[slot] != back[slot]:
+					exact = false
+			var dc: PackedColorArray = data[Mesh.ARRAY_COLOR]
+			var bc: PackedColorArray = back[Mesh.ARRAY_COLOR]
+			if dc.size() != bc.size():
+				colours = false
+			else:
+				# Stored 8 bits a channel (this file's own tolerance note):
+				# within one step of 1/255.
+				for k in range(dc.size()):
+					worst = maxf(worst, maxf(maxf(absf(dc[k].r - bc[k].r), absf(dc[k].g - bc[k].g)),
+						maxf(absf(dc[k].b - bc[k].b), absf(dc[k].a - bc[k].a))))
+				if worst > 1.0 / 255.0:
+					colours = false
+			var textured: bool = surfaces[i]["texture_key"] != -1
+			var mat := mesh.surface_get_material(i) as StandardMaterial3D
+			if textured and mat.albedo_texture != c[0][surfaces[i]["texture_key"]]:
+				exact = false
+		_check(exact, "case %d: every surface's positions, indices, UVs and texture are exactly what the mesh holds" % n)
+		_check(colours, "case %d: every surface's vertex colours are the mesh's, to 8-bit storage (worst channel difference %.5f)" % [n, worst])
+		var faces := MapmTerrainBuilder.surface_faces(surfaces)
+		var trimesh: PackedVector3Array = mesh.create_trimesh_shape().get_faces()
+		_check(faces == trimesh,
+			"case %d: surface_faces is create_trimesh_shape's face list, element for element (%d vs %d corners)" % [n, faces.size(), trimesh.size()])
+	# The off-grid heights are what make the face check mean something: an
+	# unsnapped corner differs from the trimesh's at the fifth decimal.
+	var raw: PackedVector3Array = MapmTerrainBuilder.build_full_region_surfaces_textured(region, cases[0][0])[0]["arrays"][Mesh.ARRAY_VERTEX]
+	_check(raw[1] != raw[1].snapped(Vector3(0.0001, 0.0001, 0.0001)),
+		"the fixture's heights sit off the 0.0001 grid (so the face check sees the snap)")
+
+	# The untextured fallback: one surface of arrays, the same mesh and faces.
+	var arrays := MapmTerrainBuilder.build_full_region_arrays(region)
+	_check(_arrays_fingerprint(arrays) == PRE_SPLIT_FLAT_FINGERPRINT,
+		"build_full_region_arrays carries the pre-split flat surface (got %s)" % str(_arrays_fingerprint(arrays)))
+	var flat := MapmTerrainBuilder.build_full_region_mesh(region)
+	_check(flat != null and _arrays_fingerprint(flat.surface_get_arrays(0)) == PRE_SPLIT_FLAT_FINGERPRINT,
+		"build_full_region_mesh still builds the pre-split flat mesh")
+	if flat != null:
+		_check(MapmTerrainBuilder.surface_faces([{"arrays": arrays}]) == flat.create_trimesh_shape().get_faces(),
+			"surface_faces of the flat arrays is the flat mesh's trimesh face list")
+	_check(MapmTerrainBuilder.build_full_region_surfaces_textured(MapmReader.ParsedRegion.new(), {}).is_empty(),
+		"build_full_region_surfaces_textured rejects a region without a real 6x6 block grid")
+	_check(MapmTerrainBuilder.build_full_region_arrays(MapmReader.ParsedRegion.new()).is_empty(),
+		"build_full_region_arrays rejects a region without a real 6x6 block grid")
+
 func _init() -> void:
 	# build_mesh: a single real block.
 	var region1 := MapmReader.ParsedRegion.new()
@@ -186,7 +353,7 @@ func _init() -> void:
 		# Surface 0 is the whole-grid flat-color base; then one **opaque**
 		# surface per real texture that is dominant in some quad; then one
 		# **alpha-blended** surface per real texture that appears in a quad
-		# without dominating it. See _build_textured_mesh_from_cells'
+		# without dominating it. See _textured_surfaces_from_cells'
 		# doc comment (reworked 2026-09-06 to real per-vertex splatting).
 		_check(textured_mesh.get_surface_count() >= 4,
 			"base + an opaque surface per real texture + at least one blend surface (got %d)" % textured_mesh.get_surface_count())
@@ -261,6 +428,8 @@ func _init() -> void:
 	_check(MapmTerrainBuilder.build_full_region_water_mesh(region_no_water, tile_table) == null, "returns null when a real region has no WATER/DEEP_WATER quads at all")
 	_check(MapmTerrainBuilder.build_full_region_water_mesh(region_water, null) == null, "returns null with no real tile table to classify against")
 	_check(MapmTerrainBuilder.build_full_region_water_mesh(MapmReader.ParsedRegion.new(), tile_table) == null, "rejects a region without a real 6x6 block grid")
+
+	_test_surfaces_path()
 
 	if _failures == 0:
 		print("ALL PASS")

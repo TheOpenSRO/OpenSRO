@@ -96,6 +96,18 @@ static func parse(data: PackedByteArray) -> ParsedTexture:
 ## according to the embedded DDS pixel format. Returns null (and pushes an
 ## error) for a compression format not yet handled.
 static func to_texture(tex: ParsedTexture) -> ImageTexture:
+	var image := to_image(tex)
+	if image == null:
+		return null
+	return ImageTexture.create_from_image(image)
+
+## to_texture's Image, before the ImageTexture (round 565). An Image owns no
+## RenderingServer RID, so a WorkerThreadPool task can decode one
+## (World3D._terrain_prepare does, for a region's ground tiles) and the main
+## thread uploads it with ImageTexture.create_from_image -- to_texture is
+## exactly that pair. Null (and the same pushed errors) where to_texture
+## returns null.
+static func to_image(tex: ParsedTexture) -> Image:
 	var pixels := tex.dds.slice(4 + DDS_HEADER_SIZE)
 	var image: Image
 
@@ -194,7 +206,7 @@ static func to_texture(tex: ParsedTexture) -> ImageTexture:
 	if image == null:
 		push_error("ddj: failed to build Image from decoded pixel data")
 		return null
-	return ImageTexture.create_from_image(image)
+	return image
 
 ## Number of trailing zero bits in a channel mask -- how far right to shift
 ## the masked value to get the raw channel. 0 for an empty mask.

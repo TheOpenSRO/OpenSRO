@@ -38,7 +38,10 @@ class_name RegionGridState
 var loaded_cells := {}
 ## Cells waiting in World3D._load_queue, "dx_dy" -> true, so a cell is not
 ## queued twice. A loaded cell is never queued: the queue drops a key as it
-## pops it and skips a loaded one, so unload() leaves this alone.
+## pops it and skips a loaded one, so unload() leaves this alone. Since round
+## 565 a cell whose terrain is preparing on a WorkerThreadPool task keeps its
+## key until it is committed or dropped (World3D._cell_jobs), so it is not
+## queued again while it prepares.
 var queued_cells := {}
 ## Regions whose NPCs stand in the tree, "x_y" -> true, so streaming back
 ## into a region does not stack a second copy of everyone in it. Cleared

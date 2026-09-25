@@ -79,6 +79,19 @@ var _root_offset: int
 ## top comment) so caching them is always safe.
 var _dir_cache := {}
 
+## One lock per handle (round 565), taken by every method that touches the
+## two things above that a read shares: `_file`'s seek position (read_file is
+## a seek then a get_buffer, _read_block_chain a seek then a get_buffer per
+## block) and `_dir_cache`. Until round 565 every read ran on the main
+## thread; World3D now reads a region's terrain files on a WorkerThreadPool
+## task while the main thread keeps reading scenery, NPC and UI assets
+## through the same handle, and two threads interleaving seek and get_buffer
+## each read the other's bytes. Godot's Mutex is reentrant, so read_dir and
+## read_dir_at need no lock of their own: all they share is behind
+## _read_block_chain's. Reads are short and sequential, so one lock costs
+## little; pk2_reader_test.gd's concurrent-read case is the regression guard.
+var _lock := Mutex.new()
+
 ## Opens path for reading. Returns null (and pushes an error) on failure.
 static func open(path: String) -> Pk2Reader:
 	var f := FileAccess.open(path, FileAccess.READ)
@@ -105,8 +118,10 @@ static func open(path: String) -> Pk2Reader:
 	return reader
 
 func close() -> void:
+	_lock.lock()
 	if _file != null:
 		_file.close()
+	_lock.unlock()
 
 ## Returns the entries of the root directory.
 func read_dir() -> Array[Entry]:
@@ -125,8 +140,11 @@ func read_file(file: Entry) -> PackedByteArray:
 	if file.is_dir:
 		push_error("pk2: %s is a folder, not a file" % file.name)
 		return PackedByteArray()
+	_lock.lock()
 	_file.seek(file._offset)
-	return _file.get_buffer(file.size)
+	var bytes := _file.get_buffer(file.size)
+	_lock.unlock()
+	return bytes
 
 ## Reads a directory's full entry list, following the real "next block"
 ## continuation mechanism: only the last (20th) entry slot of a block
@@ -143,6 +161,14 @@ func read_file(file: Entry) -> PackedByteArray:
 ## the field layout. MAX_CHAIN_BLOCKS bounds the walk as a
 ## cycle/corruption guard, not a real observed limit.
 func _read_block_chain(offset: int) -> Array[Entry]:
+	_lock.lock()
+	var out := _read_block_chain_locked(offset)
+	_lock.unlock()
+	return out
+
+## _read_block_chain's body, run under `_lock` -- split out so every return
+## path unlocks in one place.
+func _read_block_chain_locked(offset: int) -> Array[Entry]:
 	var cache_key := offset
 	if _dir_cache.has(cache_key):
 		return _dir_cache[cache_key]

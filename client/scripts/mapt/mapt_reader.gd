@@ -43,6 +43,11 @@ class ParsedRegion:
 	## one real, confirmed FourCC (DXT1) this reader supports, or if
 	## decoding otherwise fails.
 	var texture: Texture2D
+	## The same lightmap as a decompressed Image, set instead of `texture`
+	## when parse() is asked for no texture (round 565): an Image owns no
+	## RenderingServer RID, so World3D's WorkerThreadPool task reads a
+	## region's `.t` this way and the main thread uploads it.
+	var image: Image
 
 ## Parses a .t file's raw bytes. Returns null (and pushes an error) on a
 ## structural failure (bad magic, too small, TextureLength not matching
@@ -50,7 +55,10 @@ class ParsedRegion:
 ## itself is not fatal (texture is left null, matching the real "this
 ## region has no confirmed real ground detail" case elsewhere in this
 ## project).
-static func parse(data: PackedByteArray) -> ParsedRegion:
+## `with_texture` false (round 565) decodes the lightmap into `image` and
+## leaves `texture` null, building nothing that owns an RID -- for a caller
+## off the main thread. The Image is the one `texture` is uploaded from.
+static func parse(data: PackedByteArray, with_texture: bool = true) -> ParsedRegion:
 	if data.size() < HEADER_LEN + SHADOW_MAP_LEN + LENGTH_FIELDS_LEN:
 		push_error("mapt: file too small to contain a header, shadow map, and texture-length fields")
 		return null
@@ -74,14 +82,19 @@ static func parse(data: PackedByteArray) -> ParsedRegion:
 		push_error("mapt: TextureLength implies %d embedded texture bytes, but %d remain in the file" % [dds_len, data.size() - off])
 		return null
 
-	r.texture = _decode_dds(data.slice(off, off + dds_len))
+	var image := _decode_dds_image(data.slice(off, off + dds_len))
+	if with_texture:
+		r.texture = ImageTexture.create_from_image(image) if image != null else null
+	else:
+		r.image = image
 	return r
 
 ## Decodes a real, complete, standard DDS file's DXT1 payload into a
-## Texture2D. Returns null (no error pushed -- an honest, expected
+## decompressed Image (an ImageTexture of it until round 565; parse()
+## uploads it when asked for the texture). Returns null (no error pushed -- an honest, expected
 ## "couldn't decode this one" outcome, not a structural parse failure) if
 ## the DDS is too small, isn't really a DDS, or isn't DXT1-compressed.
-static func _decode_dds(dds: PackedByteArray) -> Texture2D:
+static func _decode_dds_image(dds: PackedByteArray) -> Image:
 	if dds.size() < DDS_HEADER_LEN:
 		return null
 	if dds.slice(0, 4).get_string_from_ascii() != DDS_MAGIC:
@@ -102,4 +115,4 @@ static func _decode_dds(dds: PackedByteArray) -> Texture2D:
 	if img == null:
 		return null
 	img.decompress()
-	return ImageTexture.create_from_image(img)
+	return img

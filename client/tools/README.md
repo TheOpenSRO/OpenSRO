@@ -96,20 +96,40 @@ round 562's three runs) and the HUD's (`_try_initialize_pk2_ui`) run in `_ready`
 steps, so neither reaches `longest work frame` -- they are part of `D` below, and the screen's
 cost is read from its own line. Three lines carry it:
 
-- `World3D: cell 97/167 built in N ms at frame f (terrain T [read, parse, lightmap, tiletable,
-  textures, mesh, setup, collision, walls, water, navgraph], objects O [parse, own, templates,
-  place],
-  npcs P [tables])` -- one per cell as it is built. The three group totals are the stopwatches
-  around the phases (the same numbers the `region grid loaded` split has summed since round 156);
-  the bracketed sub-phases are laps inside them, and need not add up to the group (`collision` is
-  `create_trimesh_shape` alone, round 156's bottleneck; the centre cell also has `env`, and
-  `tiletable` and `tables` are cached after the first call, so only the centre's are non-zero;
-  `setup`, round 564, is the span between the mesh build and the trimesh -- the group, the
-  untextured material, the vertical calibration -- which was a bare stopwatch reset in no lap
-  until then, so the terrain laps now cover the group from the file read to the nav graph, less
-  each lap's whole-ms truncation; outside them are only the path check and
-  `_open_map_pk2_if_set()` before the first stopwatch (Map.pk2 is already held by then: `_ready`'s
-  `_try_add_real_sky` opens it) and the closing print after `navgraph`, unmeasured).
+- `World3D: cell 97/167 built in N ms at frame f (terrain T [...], objects O [parse, own,
+  templates, place], npcs P [tables])` -- one per cell as it is built. The three group totals are
+  the stopwatches around the phases (the same numbers the `region grid loaded` split has summed
+  since round 156) and are **main-thread time only**; the bracketed sub-phases are laps inside
+  them, and need not add up to the group. Since round 565 a region's terrain is a job built on the
+  main thread (`_terrain_job`: the one-time tables and a snapshot of the caches), a *prepare*
+  (`_terrain_prepare`: plain data) and a *commit* (`_terrain_commit`: everything that owns an RID
+  or touches the tree), and the terrain list has two shapes:
+  - a cell built on the main thread -- the grid's centre, always, and every cell under
+    `SRREVAMP_SYNC_LOAD=1` -- lists all three halves in order: `terrain T [tiletable, objindex,
+    snapshot, read, parse, env, lightmap, textures, mesh, faces, navmesh, walls, navgraph,
+    images, upload, setup, collision, wallshape, water, graph]` (`env` the centre's alone;
+    `tiletable` and `objindex` are cached after the first call, so only the centre's are
+    non-zero);
+  - a streamed neighbour (the default) lists the commit alone as its terrain and the prepare after
+    the groups, off the main thread: `terrain T [images, upload, setup, collision, wallshape,
+    water, graph], objects O [...], npcs P [...]; off the main thread: terrain P [read, parse,
+    lightmap, textures, mesh, faces, navmesh, walls, navgraph]`. The off-thread figure is the
+    task's own time and is **never** in `built in`, in a frame's work or in the `terrain` group
+    totals; the job's snapshot ran between cells and is in no cell.
+
+  What the laps are: `read`/`parse` the `.m`; `lightmap` the `.t` decoded to an Image; `textures`
+  the ground tiles this world does not hold yet decoded to Images; `mesh` the surfaces as arrays;
+  `faces` the collision face list (`MapmTerrainBuilder.surface_faces`, what
+  `create_trimesh_shape()` used to read back out of the mesh); `navmesh` the `.nvm` read and
+  parsed; `walls` the wall triangles; `navgraph` the object navigation meshes and
+  `NavGraph.build`; then `images` the ImageTexture uploads; `upload` the ArrayMesh and its
+  materials; `setup` the group, the untextured material, the placement and the nodes (round 564's
+  lap); `collision` the `ConcavePolygonShape3D.set_faces` alone (round 156's bottleneck, now
+  without the readback); `wallshape` the walls' shape and body; `water`; `graph` the walkable
+  graph's registration. Every stopwatch is a lap (round 564's rule, held by
+  `load_timings_test.gd`), so the laps cover each group less each lap's whole-ms truncation; outside
+  them are only the path check before the job, the log lines the commit prints first, and its
+  closing print, unmeasured.
 - `World3D: region grid loaded in N ms (terrain T, objects O, npcs P) at frame f -- C cells S ms,
   D ms outside the cells over A awaited frames` -- the drain's total against the cells' own sum.
   **The check is `S <= N`, not equality**: under the loading screen (`SRREVAMP_QA_FORCE_LOADING=1`)
@@ -117,11 +137,16 @@ cost is read from its own line. Three lines carry it:
   562; the drain built it after the centre cell until then), the HUD is built between the centre
   cell and the drain, and the drain awaits a frame after every batch -- all of that is `D`, and
   `A` counts the screen's frame with the drain's own (`_ready` hands it on); on the synchronous
-  QA path `D` is small. A sum above the total is a bug in the clock and the line says so. A batch is `LOADING_CELLS_PER_FRAME` = 2, but the frame builds three: the same frame's
-  physics step runs `_process_stream_queue`, which pops `STREAM_CELLS_PER_FRAME` = 1 more from the
-  same `_load_queue` (nothing gates it on the drain) -- the baseline's three `built in` lines a
-  frame at frames 14-21. A later change to `LOADING_CELLS_PER_FRAME` alone changes two of the
-  three; read the cells a frame from the log, not from the constant.
+  QA path `D` is small. A sum above the total is a bug in the clock and the line says so. Since
+  round 565 the line ends `; terrain X ms prepared off the main thread` when cells prepared on
+  tasks -- not in the split or in `S`, which are the main thread's. Cells a frame under the
+  screen: threaded (the default), the drain is the only pump while it runs and commits at most
+  `LOADING_CELLS_PER_FRAME` = 2 prepared cells a frame, as many as have finished preparing
+  (`TERRAIN_JOBS_IN_FLIGHT` = 2 prepare at once). Under `SRREVAMP_SYNC_LOAD=1` it is the
+  pre-round-565 schedule: a batch is `LOADING_CELLS_PER_FRAME` = 2, but the frame builds three --
+  the same frame's physics step runs `_process_stream_queue`, which pops `STREAM_CELLS_PER_FRAME`
+  = 1 more from the same `_load_queue` -- the baseline's three `built in` lines a frame at frames
+  14-21. Read the cells a frame from the log, not from the constants.
 - `World3D: longest work frame W ms at frame f (cell x/y) over F frames since the last summary;
   p95 Q ms; H over 100 ms; longest wall gap G ms at frame f; run longest ...; grid C cells terrain T
   objects O npcs P ms` -- at the end of each drain, every 600 physics ticks (`_qa_step` runs for
@@ -215,16 +240,62 @@ first run had the first two neighbours in the centre's frame and the longest wor
 a change that merges it with a batch would show here as a regression and later as an improvement
 without either being one; read the cells a frame from the log when the longest frame moves.
 
-Rules the later, off-thread loading items are held to, kept beside the benchmark so the two
-travel together: (1) nothing that owns a Node or a RenderingServer/PhysicsServer RID
-(`MeshInstance3D`, `StaticBody3D`, `ArrayMesh`, `Shape3D`, `Material`, `ImageTexture`) is
-constructed off the main thread -- a prepare job produces plain data (bytes, parsed structs,
-arrays) and a main-thread commit builds the objects; (2) `Pk2Reader` is not thread-safe and
-neither is the scene tree -- a job gets its own reader or a snapshot of what it reads, and reaches
-the tree only through `call_deferred`; (3) the QA-drain contract: a QA run (`SRREVAMP_MAPM_PATH`
-set, no `SRREVAMP_QA_FORCE_LOADING`) must still have every cell committed before its first shot,
-so a threaded loader's synchronous branch waits for its jobs and commits before
-`_drain_initial_load` returns -- `--shots`, `--radius` and the movie writer keep their contract.
+AFTER round 565 (a streamed cell's terrain prepared on a worker thread, committed on the main
+thread), against BASE re-measured the same day on the same box -- round 561's BEFORE predates
+rounds 562-563 (`docs/RE_COMPLETION.md`, round 565, has the full lines):
+
+```
+(a) BASE   cell 97/168 built in 5202 ms at frame 13; three cells a frame at 14-21
+           region grid loaded in 22726 ms (terrain 7961, objects 4890, npcs 2331) at frame 22
+               -- 25 cells 15181 ms, 7545 ms outside the cells over 10 awaited frames
+           longest work frame 5265 ms at frame 13 (cell 97/168); p95 2841 ms; 9 over 100 ms
+    565    cell 97/168 built in 5245 ms at frame 14 (synchronous by design); two a frame at 15-26
+           region grid loaded in 19711 ms (terrain 2873, objects 5182, npcs 2375) at frame 27
+               -- 25 cells 10430 ms, 9281 ms outside the cells over 14 awaited frames;
+               terrain 5809 ms prepared off the main thread
+           longest work frame 5306 ms at frame 14 (cell 97/168); p95 1772 ms; 13 over 100 ms
+(b) BASE   95..99/165: 304, 304, 328, 271, 291 ms at frames 161-165 (terrain 231-262 each)
+           longest work frame 334 ms at frame 163 (cell 98/165) over 575 frames; 5 over 100 ms
+    565    95..99/165: 105, 127, 123, 73, 69 ms at frames 162-166 (terrain 39-44 each, and
+               202-227 ms prepared off the main thread)
+           longest work frame 144 ms at frame 163 (cell 96/165) over 570 frames; 3 over 100 ms
+```
+
+With `SRREVAMP_SYNC_LOAD=1` the same crossing command reads the old schedule back -- three cells a
+frame under the screen, the column one a frame at 245-308 ms, `longest work frame 314 ms`.
+
+Rules the off-thread loading items are held to, kept beside the benchmark so the two travel
+together. Round 565 (terrain) implements them; the objects item that follows inherits them.
+
+1. **The prepare-thread rule.** A prepare constructs NO Node and NO RID-owning Resource --
+   no `MeshInstance3D`, `StaticBody3D`, `ArrayMesh`, `Material`, `ImageTexture` or `Shape3D`;
+   Images, packed arrays, Arrays, Dictionaries and the readers' RefCounted structs only -- touches
+   neither the scene tree nor the RenderingServer nor the PhysicsServer, and prints nothing (its
+   lines go in the job; the commit prints them in order). A main-thread commit builds the objects.
+   World3D's `_terrain_prepare` is static, so it cannot reach the node's state;
+   `terrain_prepare_test.gd` walks a prepared job and fails on any Node or Resource in it other
+   than an Image.
+2. **Reads and caches.** The scene tree is not thread-safe, and `Pk2Reader` was not until round
+   565: one handle shares one `FileAccess` (a read is a seek then a get_buffer) and one directory
+   cache, and it now takes a per-handle lock around both (`pk2_reader_test.gd` runs 4 tasks x 200
+   concurrent reads). Every World3D cache a prepare consults is snapshotted into its job on the
+   main thread before dispatch (`_terrain_job`: ground tiles by filename and a decoded flag, never
+   the texture; the region's cached navmesh; a copy of the object navigation meshes), and the
+   commit merges what the prepare read back into the caches.
+3. **The QA-drain contract.** A QA run (`SRREVAMP_MAPM_PATH` set, no `SRREVAMP_QA_FORCE_LOADING`)
+   must still have every cell committed before its first shot, so `_drain_initial_load`'s QA branch
+   dispatches, waits for each task (`WorkerThreadPool.wait_for_task_completion`) and commits
+   before it returns -- `--shots`, `--radius` and the movie writer keep their contract.
+4. **Stale jobs.** A prepared cell is committed only if it is still wanted (not loaded meanwhile,
+   still inside the player's window -- else `cell x/y prepared but not committed -- <why>`), and
+   a zone change, a new grid and the world leaving the tree wait for every task still running
+   and drop it (`N cell(s) still preparing dropped (<why>) -- waited M ms`), so a reconnect cannot
+   commit into a freed world.
+
+`SRREVAMP_SYNC_LOAD=1` is the escape hatch for one release after round 565: every cell is
+prepared and committed on the main thread on the pre-round-565 schedule (above), for a tester to
+fall back to or compare against. The grid's centre is built on the main thread either way -- its
+height anchors every neighbour and its environment lights them.
 
 `dump_ddj.gd` — writes any real `.ddj` texture out as a PNG, and reports its fourCC, the format it
 decompresses to, and how many texels are opaque, transparent or partial. Written to settle which
