@@ -651,7 +651,16 @@ const QA_FLOAT_MAX_ROWS := 200
 ## every cell. This mapping stays fixed for a zone's whole lifetime, even
 ## as cells stream in/out around it, so already-placed nodes never need to
 ## move.
+##
+## Since round 570 the origin is the coordinate FRAME the server names on the
+## wire (FrameRegion; _frame_coords), and _grid_centre_region is the region
+## the grid is built around (the zone's own, _resolve_zone_region). They are
+## the same region for every zone today, and then _grid_origin_world is the
+## centre group's own position, as before; when they differ the centre is the
+## cell (centre - frame) and _grid_origin_world the frame region's corner,
+## where no group need stand (RegionGridState's "THE COORDINATE FRAME").
 var _grid_origin_region := Vector2i.ZERO
+var _grid_centre_region := Vector2i.ZERO
 var _grid_origin_world := Vector3.ZERO
 var _grid_shared_anchor_height := NAN
 var _grid_has_origin := false
@@ -3349,7 +3358,8 @@ func _clear_region_grid() -> void:
 ## because this project only has a handful of real regions to test with) are
 ## skipped the same honest way a single missing region already was --
 ## _try_load_real_terrain/_try_load_real_map_objects print and move on
-## rather than treating it as fatal. Only the center cell (0,0) snaps the
+## rather than treating it as fatal. Only the center cell (the grid's (0,0) while
+## the frame is the centre, see `frame` below) snaps the
 ## player onto its terrain (see _snap_player_onto_terrain) -- that's real
 ## spawn-adjacent ground, not any of the speculative neighbors.
 ##
@@ -3361,11 +3371,35 @@ func _clear_region_grid() -> void:
 ## cell itself fails to load (missing file, bad data), neighbors fall back
 ## to each calibrating themselves independently (NAN anchor) -- the original
 ## behavior -- since there's no real center reference to share in that case.
-func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGION_LOAD_RADIUS, texture_override: String = "") -> void:
+##
+## `frame` (round 570) is the coordinate frame the grid is built in, {"x",
+## "y"} as _parse_region_coords gives it: the region whose middle is the world
+## origin, which the server names on the wire (FrameRegion; _frame_coords).
+## Empty -- a QA run, or an older server -- is the centre itself, which is
+## what the frame always was before it was named and still is for every zone.
+## Every cell key, _last_stream_cell and _grid_origin_region are relative to
+## the FRAME, so a frame other than the centre puts the centre at cell
+## (centre - frame) rather than (0, 0); the grid is still built around the
+## centre. With frame == centre every value below is exactly what it was.
+func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGION_LOAD_RADIUS, texture_override: String = "", frame: Dictionary = {}) -> void:
 	# No job of an earlier grid may commit into this one (round 565);
 	# _reload_zone_assets has already dropped them, and the first entry has
 	# none.
 	_drop_cell_jobs("a new region grid")
+	var frame_x: int = frame.get("x", center_x)
+	var frame_y: int = frame.get("y", center_y)
+	# The centre's cell in the frame: (0, 0) whenever the frame is the centre.
+	var cdx := center_x - frame_x
+	var cdy := center_y - frame_y
+	var centre_offset := _cell_offset(cdx, cdy)
+	# The vertical anchor. Frame == centre: NAN, and the centre calibrates
+	# itself on its own near-row vertex, as it always has. Otherwise the
+	# FRAME region's near-row height, so every grid built in one frame shares
+	# one height origin (_frame_anchor_height); NAN again when that cannot
+	# be read.
+	var anchor := NAN
+	if cdx != 0 or cdy != 0:
+		anchor = _frame_anchor_height(frame_x, frame_y)
 	# Timed like every other cell (round 561): the centre is the one cell a
 	# player waits for with nothing on screen yet. It is built whole on the
 	# main thread -- prepare and commit -- whatever SRREVAMP_SYNC_LOAD says:
@@ -3373,9 +3407,9 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 	# and the caller places the player on it next (round 565 keeps it so).
 	_load_timings.begin_cell(center_x, center_y)
 	var t0 := Time.get_ticks_usec()
-	var center_near_height := _try_load_real_terrain("%d\\%d.m" % [center_x, center_y], texture_override, Vector3.ZERO, "_%d_%d" % [center_x, center_y], true)
+	var center_near_height := _try_load_real_terrain("%d\\%d.m" % [center_x, center_y], texture_override, centre_offset, "_%d_%d" % [center_x, center_y], true, anchor)
 	var t1 := Time.get_ticks_usec()
-	_try_load_real_map_objects("%d\\%d.o" % [center_x, center_y], Vector3.ZERO, "_%d_%d" % [center_x, center_y])
+	_try_load_real_map_objects("%d\\%d.o" % [center_x, center_y], centre_offset, "_%d_%d" % [center_x, center_y])
 	var t2 := Time.get_ticks_usec()
 	# The centre cell is loaded here rather than through _load_region_cell,
 	# so it needs its own NPC pass -- without this the one region the player
@@ -3384,18 +3418,25 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 	_note_cell_built(t0, t1, t2, Time.get_ticks_usec())
 
 	_update_zone_label_for_region(center_x, center_y)
-	_grid_origin_region = Vector2i(center_x, center_y)
-	_grid_shared_anchor_height = center_near_height
+	_grid_origin_region = Vector2i(frame_x, frame_y)
+	_grid_centre_region = Vector2i(center_x, center_y)
+	_grid_shared_anchor_height = center_near_height if is_nan(anchor) else anchor
 	_grid_has_origin = true
 	_grid.loaded_cells.clear()
-	_grid.mark_loaded(0, 0, center_x, center_y)
-	# The centre cell is (0,0); the neighbours stream in from here. Set the
-	# stream cell to it (not the sentinel) so the queue's stale-guard keeps
-	# the neighbours we are about to enqueue, and so a later _maybe_stream_regions
-	# does not redundantly re-scan the same centre.
-	_last_stream_cell = Vector2i(0, 0)
+	_grid.mark_loaded(cdx, cdy, center_x, center_y)
+	# The centre cell is (cdx, cdy) -- (0, 0) while the frame is the centre;
+	# the neighbours stream in from here. Set the stream cell to it (not the
+	# sentinel) so the queue's stale-guard keeps the neighbours we are about
+	# to enqueue, and so a later _maybe_stream_regions does not redundantly
+	# re-scan the same centre.
+	_last_stream_cell = Vector2i(cdx, cdy)
+	# The frame region's corner: the centre group's position less the
+	# centre's world offset from the frame (RegionGridState.cell_world_offset,
+	# after the mirror -- _cell_offset is before it), which is zero while
+	# the frame is the centre.
 	var center_node := get_node_or_null("RealTerrain_%d_%d" % [center_x, center_y])
-	_grid_origin_world = center_node.position if center_node != null else Vector3.ZERO
+	var centre_world: Vector3 = center_node.position if center_node != null else Vector3.ZERO
+	_grid_origin_world = centre_world - RegionGridState.cell_world_offset(cdx, cdy)
 
 	# The neighbours are queued nearest-first and built a few per frame (see
 	# _process_stream_queue and, at world entry, the loading screen's pump),
@@ -3410,9 +3451,11 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 		for dx in range(-radius, radius + 1):
 			if dx == 0 and dy == 0:
 				continue # center cell already loaded above
+			# dx/dy here are from the centre; the cell's own are from the
+			# frame (see _load_region_cell).
 			neighbours.append({
-				"rx": center_x + dx, "ry": center_y + dy, "dx": dx, "dy": dy,
-				"key": "%d_%d" % [dx, dy], "dist": absi(dx) + absi(dy),
+				"rx": center_x + dx, "ry": center_y + dy, "dx": cdx + dx, "dy": cdy + dy,
+				"key": "%d_%d" % [cdx + dx, cdy + dy], "dist": absi(dx) + absi(dy),
 			})
 	neighbours.sort_custom(func(a, b): return a["dist"] < b["dist"])
 	for cell in neighbours:
@@ -3453,7 +3496,21 @@ func _load_region_cell(region_x: int, region_y: int, dx: int, dy: int, shared_an
 	_note_cell_built(t0, t1, t2, Time.get_ticks_usec())
 	_grid.mark_loaded(dx, dy, region_x, region_y)
 
-## A grid cell's world offset from the grid's origin cell.
+## Where a region's terrain group stands (_terrain_commit): the half-span
+## centring, the vertical anchor and the cell's offset from the frame region
+## (_cell_offset), with z negated -- together with the group's scale.z = -1
+## that is the world's one global z -> -z mirror (the **Un-mirrored** comment
+## in _terrain_commit). A static function since round 570 so the frame test
+## (region_grid_state_test.gd) holds this placement, not a copy of it, to
+## server/internal/worldmap.ToWorld.
+static func _group_position(world_offset: Vector3, anchor_height: float) -> Vector3:
+	var placement := Vector3(
+		-REGION_SPAN / 2.0, -anchor_height, -REGION_SPAN / 2.0) + world_offset
+	return Vector3(placement.x, placement.y, -placement.z)
+
+## A grid cell's offset from the frame region's (the grid origin's) cell,
+## BEFORE the mirror: _group_position negates its z. The world-space offset,
+## after it, is RegionGridState.cell_world_offset.
 static func _cell_offset(dx: int, dy: int) -> Vector3:
 	# **Axes corrected 2026-09-02** (see docs/WORLD_ISSUES.md's forty-sixth
 	# round) -- this was Vector3(dx * REGION_SPAN, 0.0, dy * REGION_SPAN),
@@ -3515,7 +3572,7 @@ func _maybe_stream_regions() -> void:
 	# in, terrain still underfoot behind them was unloaded, and the zone
 	# label changed a half-region early. Flooring puts the boundary where the
 	# real region boundary actually is.
-	var cur := Vector2i(int(floorf(-rel.z / REGION_SPAN)), int(floorf(rel.x / REGION_SPAN)))
+	var cur := RegionGridState.cell_at(rel)
 	if cur == _last_stream_cell:
 		return
 	_last_stream_cell = cur
@@ -4066,7 +4123,7 @@ func _load_initial_region_neighborhood() -> void:
 	# player's actual first spawn.
 	var result := NetClient.last_enter_world_result
 	if result != null and result.ok and result.zone != "":
-		_reload_zone_assets(result.zone)
+		_reload_zone_assets(result.zone, result.frame)
 		_place_at_zone_spawn(result.zone)
 	else:
 		print("World3D: no real zone to load (no SRREVAMP_MAPM_PATH set and no real logged-in session) -- ground stays a placeholder")
@@ -4078,7 +4135,11 @@ func _load_initial_region_neighborhood() -> void:
 ## real region coordinate (see _zone_paths), this just clears back to the
 ## placeholder ground with no objects -- same honest "nothing to load"
 ## behavior as an unset env var, not a guess.
-func _reload_zone_assets(zone: String) -> void:
+##
+## `frame` is the server's FrameRegion for the zone (round 570), "" from an
+## older server or a QA run: the grid is built around the zone's own region
+## inside that frame (_frame_coords).
+func _reload_zone_assets(zone: String, frame: String = "") -> void:
 	_clear_region_grid()
 	ground_mesh.visible = true
 	ground_collision.disabled = false
@@ -4094,8 +4155,56 @@ func _reload_zone_assets(zone: String) -> void:
 		_grid_has_origin = false
 		return
 
+	var frame_coords := _frame_coords(coords, frame)
+	# One line whenever the server named a frame, so a run can measure which
+	# frame a grid was built in rather than infer it from a missing line.
+	if frame != "":
+		if _parse_region_coords(frame).is_empty():
+			print("World3D: the server's frame %s for zone %s isn't a region (x/y) -- building in the zone's own frame, %s" % [frame, zone, region])
+		elif int(frame_coords["x"]) == int(coords["x"]) and int(frame_coords["y"]) == int(coords["y"]):
+			print("World3D: zone %s (%s) is built in its own frame -- the server's FrameRegion %s" % [zone, region, frame])
+		else:
+			print("World3D: zone %s (%s) is built in the frame of %s, the server's FrameRegion -- the centre is cell %d/%d" % [
+				zone, region, frame, int(coords["x"]) - int(frame_coords["x"]), int(coords["y"]) - int(frame_coords["y"])])
 	var paths := _zone_paths(zone)
-	_load_region_neighborhood(coords["x"], coords["y"], _region_load_radius(), paths.get("minimap", ""))
+	_load_region_neighborhood(coords["x"], coords["y"], _region_load_radius(), paths.get("minimap", ""), frame_coords)
+
+## The coordinate frame a zone's grid is built in (round 570), {"x", "y"}:
+## the region the server named as its FrameRegion when it named one that
+## parses, else the zone's own centre -- the frame every server's coordinates
+## were in before the server named it, and still are for every zone
+## (server/internal/worldmap.FrameFor returns ZoneCentre, which
+## _resolve_zone_region equals; zone_centres_test.gd).
+static func _frame_coords(centre: Dictionary, frame: String) -> Dictionary:
+	if frame != "":
+		var named := _parse_region_coords(frame)
+		if not named.is_empty():
+			return named
+	return centre
+
+## The vertical anchor of a grid whose frame is not its centre (round 570):
+## the FRAME region's own near-row height (MapmTerrainBuilder.
+## near_row_middle_height, the vertex a centre calibrates on), so every grid
+## built in one frame shares one height origin and a place stands at the same
+## height whether it was walked to or arrived at. NAN -- the centre then
+## calibrates itself, as it always has -- when the frame's `.m` cannot be
+## read. Read on the main thread, once per zone load.
+##
+## Unreachable today: the server names every zone's own centre as its frame.
+## Whoever names another frame (the later single-frame item) must first
+## check each zone's drawn heights under that frame's anchor against the snap
+## ray (_snap_player_onto_terrain, +-1000) and WORLD_FLOOR_Y; round 570
+## (docs/RE_COMPLETION.md) records the five town centres' under 97/168.
+func _frame_anchor_height(frame_x: int, frame_y: int) -> float:
+	var bytes := AssetSource.read_bytes("%d\\%d.m" % [frame_x, frame_y], _open_map_pk2_if_set())
+	if bytes.is_empty():
+		print("World3D: the frame region %d/%d has no terrain to anchor on -- the centre calibrates itself" % [frame_x, frame_y])
+		return NAN
+	var parsed := MapmReader.parse(bytes)
+	if parsed == null:
+		print("World3D: the frame region %d/%d's terrain does not parse -- the centre calibrates itself" % [frame_x, frame_y])
+		return NAN
+	return MapmTerrainBuilder.near_row_middle_height(parsed)
 
 ## Reacts to a successful real zone change (see NetClient.change_zone/
 ## OpChangeZoneResult): updates the zone label and reloads this scene's
@@ -4118,6 +4227,12 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	if not is_inside_tree():
 		return
 	zone_label.text = "Zone: %s" % result.zone
+	# In the server's frame (result.frame, round 570). That frame is the
+	# zone's own centre today, so (0, 0, 0) is the centre region's middle. A
+	# server naming any other frame must send a position inside the centre
+	# region: the grid is built around the centre, and (0, 0, 0) would be
+	# the FRAME region's middle, off it -- the later single-frame item's to
+	# satisfy.
 	player.position = Vector3(result.x, result.y, result.z)
 	_last_sent_pos = player.position
 	# The monsters of the old zone are left behind, and so is any attack
@@ -4154,7 +4269,7 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	# covers every cell its split counts (round 561).
 	var zone_started_ms := Time.get_ticks_msec()
 	_load_timings.begin_drain()
-	_reload_zone_assets(result.zone)
+	_reload_zone_assets(result.zone, result.frame)
 
 	# Only now, with the new region's terrain and walkable graph actually
 	# built, can an `@x,z` from the zone box be honoured -- see
@@ -5515,9 +5630,7 @@ func _terrain_commit(job: Dictionary) -> float:
 	# mirror), so `BmsReader`'s existing winding reversal stays exactly as
 	# it is and no mesh data needs rewriting.
 	var world_offset: Vector3 = job["world_offset"]
-	var placement := Vector3(
-		-REGION_SPAN / 2.0, -anchor_height, -REGION_SPAN / 2.0) + world_offset
-	terrain_group.position = Vector3(placement.x, placement.y, -placement.z)
+	terrain_group.position = _group_position(world_offset, anchor_height)
 	terrain_group.scale.z = -1.0
 	add_child(terrain_group)
 	ground_mesh.visible = false
@@ -7945,7 +8058,7 @@ func _qa_step() -> void:
 	# after the sign-in, frames after this block first ran (round 567's first
 	# entry pair fired on an empty world on a fixed ten-frame timer).
 	if _qa_ground_rays > 0 and _load_queue.is_empty() and _cell_jobs.is_empty() \
-			and has_node("RealTerrain_%d_%d" % [_grid_origin_region.x, _grid_origin_region.y]):
+			and has_node("RealTerrain_%d_%d" % [_grid_centre_region.x, _grid_centre_region.y]):
 		_qa_ground_rays_waited += 1
 		if _qa_ground_rays_waited >= 10:
 			var samples := _qa_ground_rays
@@ -8140,9 +8253,9 @@ func _qa_print_entry_probe() -> void:
 	if not _grid_has_origin:
 		print("QA TEXPROBE %d: no region grid origin -- nothing to probe" % _qa_entry)
 		return
-	var patch := get_node_or_null("RealTerrain_%d_%d/SubPatch" % [_grid_origin_region.x, _grid_origin_region.y]) as MeshInstance3D
+	var patch := get_node_or_null("RealTerrain_%d_%d/SubPatch" % [_grid_centre_region.x, _grid_centre_region.y]) as MeshInstance3D
 	if patch == null or patch.mesh == null:
-		print("QA TEXPROBE %d: no RealTerrain_%d_%d/SubPatch to probe" % [_qa_entry, _grid_origin_region.x, _grid_origin_region.y])
+		print("QA TEXPROBE %d: no RealTerrain_%d_%d/SubPatch to probe" % [_qa_entry, _grid_centre_region.x, _grid_centre_region.y])
 		return
 	var mesh: Mesh = patch.mesh
 	for i in range(mesh.get_surface_count()):
@@ -8916,10 +9029,11 @@ func _qa_columns_report(spec: String) -> void:
 			continue
 		var x := float(parts[0])
 		var z := float(parts[1])
-		# World space is anchored on whatever region the grid was BUILT
-		# around (see _grid_origin_region), and the server shares that frame
-		# only when that region is the zone's own centre. So the origin is
-		# printed with the coordinate rather than left implied -- a reading
+		# World space is anchored on the grid's FRAME region (see
+		# _grid_origin_region: the server's FrameRegion since round 570, else
+		# the region the grid was built around), and the server shares that
+		# frame only when it named it or it is the zone's own centre. So the
+		# origin is printed with the coordinate rather than left implied -- a reading
 		# taken in a QA run centred somewhere else is in a different frame,
 		# and saying "the server's coordinates" unconditionally made two
 		# runs look like they disagreed when they did not.

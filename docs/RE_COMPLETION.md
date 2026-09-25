@@ -37928,3 +37928,232 @@ world frame, so it is unchanged.
 a tagged client shows; `hotan` and `samarkand` start agreeing with tagged clients. The client needs
 a tag: with it, `/goto donwhang` and `/goto dunhuang` build Donwhang's own region 102/153 (the town's
 18 NPCs) and `/goto constantinople` 105/79. Samarkand stays an open question.
+
+## The server names the coordinate frame on the wire (trailing FrameRegion) and the client builds its grid inside that frame (round 570)
+
+Server and client, tag-worthy: the second item of batch 22 of the map/travel epic (2026-09-25, "I
+want this whole map loaded and explorable"). A world coordinate only means something once you say
+which region the frame is centred on (`worldmap.go`'s header). Until this round that was implicit:
+the server converted into `worldmap.ZoneCentre`, and the client built its grid around
+`World3D._resolve_zone_region`. Now the server names the frame in both world results, and the
+client builds the zone's grid inside the frame it is told. Round 569 made the two sides agree on
+every town's centre, and the frame named here is that centre for every zone. So nothing changes in
+what the coordinates mean, and no grid a client builds changes. This is the groundwork the
+single-frame item needs. No opcode changes and no flag. The one packet change is a field appended
+after the entity list, where a tagged client stops reading.
+
+**First, the check the re-spec required: the frame is the centre for all six labels.** I read the
+current tree before any edit:
+
+| label | `worldmap.ZoneCentre` (server) | `_resolve_zone_region` (client) |
+|---|---|---|
+| jangan | 97/168 | `JANGAN_ZONE_REGION` "97/168" |
+| dunhuang, donwhang | 102/153 | `DUNHUANG_ZONE_REGION` "102/153" (both labels) |
+| constantinople | 105/79 | `CONSTANTINOPLE_ZONE_REGION` "105/79" |
+| hotan | 92/135 | `HOTAN_ZONE_REGION` "92/135" |
+| samarkand | 106/107 (unresolved, disclosed in round 569) | `SAMARKAND_ZONE_REGION` "106/107" |
+
+All six agree. An "x/y" label is its own frame on both sides: the server parses it, and the client
+passes it through. So the first attempt's abort case (a frame that is not the centre) cannot arise
+from any label.
+
+**What was wired.**
+
+- `worldmap.ParseRegionLabel("x/y")` parses a label into a region. Each part must be 0..255,
+  because a real region id carries each coordinate in one byte (`RegionXY`).
+  `worldmap.FrameFor(zone)` returns the zone's `ZoneCentre`, else the region an "x/y" label names,
+  else no frame. `ToWorld` is unchanged.
+- `session.EnterWorldResult.FrameRegion` and `session.ChangeZoneResult.FrameRegion` are a
+  u16-prefixed "x/y" string (`encodeStrings`), appended after `Others`. `handleEnterWorld` sends
+  `frameFor(spawnZone)` and `handleChangeZone` sends `frameFor(req.Zone)`. `frameFor` returns
+  `FrameFor`'s region as "x/y", or "" for a label with no frame, such as "Jangan" or a typo; the
+  client then keeps its own case-insensitive reading of the label, which lands on the same centre.
+  `decodeFrameRegion` reads "" when nothing follows the list and returns an error when the field is
+  cut short.
+- `WorldNet` (client): `EnterWorldResult.frame` and `ChangeZoneResult.frame`, read by
+  `_decode_frame` after the list with the same rule as the Go side. `NetClient` passes the decoded
+  objects through unchanged, so it needed no edit.
+- `RegionGridState` holds the frame helpers:
+  - `frame_world(rx, ry, lx, lz, fx, fy)` is a term-for-term port of `ToWorld`, in world space
+    after the mirror.
+  - `cell_world_offset(dx, dy)` is `(dy*1920, 0, -dx*1920)`, also after the mirror.
+  - `cell_at(rel)` is `_maybe_stream_regions`' floor test, moved here unchanged and now called
+    from there.
+
+  These live in the existing RegionGridState rather than a new file, as the re-spec allowed:
+  `region_grid.gd` does not exist. The pre-mirror offset stays `World3D._cell_offset`, which is
+  reused, as the re-spec asked. The terrain group's placement moved out of `_terrain_commit` into
+  `World3D._group_position(world_offset, anchor)` with the same arithmetic, so the test holds the
+  real placement to `ToWorld`, not a copy of it.
+- `World3D` changes:
+  - `_reload_zone_assets(zone, frame)` takes the server's frame. The first entry
+    (`_load_initial_region_neighborhood`, `result.frame`) and a zone change
+    (`_on_change_zone_result`) pass it. `SRREVAMP_QA_ZONE` and `SRREVAMP_MAPM_PATH` pass none.
+  - `_frame_coords(centre, frame)` returns the named frame if it parses, else the centre.
+  - `_load_region_neighborhood(..., frame)` builds the centre at `_cell_offset(centre - frame)`. It
+    sets `_grid_origin_region` to the frame and a new `_grid_centre_region` to the centre. It keys
+    the centre's cell, `_last_stream_cell` and every neighbour relative to the frame. It sets
+    `_grid_origin_world` to the centre group's position minus `cell_world_offset(centre - frame)`.
+  - With frame == centre, every one of those values equals what it was before this round.
+  - `_reload_zone_assets` prints one line whenever the server named a frame (`is built in its own
+    frame -- the server's FrameRegion x/y`), so a later run can measure the frame rather than infer
+    it from a missing line.
+
+**2. Server first is safe: I read the decoders before the change.** Go's `DecodeEnterWorldResult`
+and `DecodeChangeZoneResult` returned straight after the `Others` loop and never looked at the
+leftover bytes. GDScript's `WorldNet.decode_enter_world_result` and `decode_change_zone_result` did
+the same. So a tagged client reads every byte it read before and ignores the new tail.
+`TestWorldResultsCarryTheFrameAfterTheList` checks this: it builds the pre-570 payload by hand and
+confirms the new one is that payload, byte for byte, plus the frame. The precedent is
+`StorageListResult`'s trailing capacity ("where an older client stops reading, so the list still
+decodes there").
+
+**3. The transform and the sign rule**, with the axes checked: region y drives world X, region x
+drives world Z, and Z is mirrored (AGENTS.md; the terrain group has `scale.z = -1` and its
+position's z negated).
+
+- `ToWorld` gives `x = (ry-fy)*1920 + lx-960` and `z = (fx-rx)*1920 + 960-lz`.
+- `World3D._cell_offset(dx, dy) = (dy*1920, 0, dx*1920)` is the offset BEFORE the mirror.
+  `_group_position` negates its z, so a group stands at `(-960 + dy*1920, -anchor, 960 - dx*1920)`,
+  and a local point lands at that position plus `(lx, y, -lz)`. That is `ToWorld`.
+- `_maybe_stream_regions`' `floor(-rel.z/1920), floor(rel.x/1920)` against the frame region's
+  corner gives `(rx-fx, ry-fy)`.
+
+The rows the client test reproduces were generated by `ToWorld` itself, using a throwaway test file
+that was deleted afterwards. `worldmap_test.go`'s `TestFrameTableTheClientReproduces` holds the Go
+side to the same rows, so the client's literals are `ToWorld`'s, not typed from prose:
+
+- In the frame of 97/168, the rows are the measured table from `worldmap.go`'s header: 97/168
+  (1002, 1020) is (42, -60); the middles of 97/169, 97/167, 98/168 and 96/168 are (1920, 0),
+  (-1920, 0), (0, -1920) and (0, 1920). Also 98/157's middle is (-21120, -1920) and 102/153's is
+  (-28800, -9600).
+- In the frame of 98/157, the same points are (21162, 1860), (23040, 1920), (19200, 1920),
+  (21120, 0), (21120, 3840), (0, 0) and (-7680, -7680).
+- Moving a point from the 97/168 frame into 98/157's shifts it by minus 98/157's middle in the
+  97/168 frame, which is **(+21120, +1920)**. Both tests derive this. The batch plan's
+  "(21120, -1920)" had the sign of z wrong, and a test written to it would fail a correct
+  implementation.
+
+**4. Where World3D could assume centre == frame, and what I checked.**
+
+- `_grid_origin_region`, now the frame:
+  - `_maybe_stream_regions` uses it for the zone label (frame + cell), for the new cells' regions
+    (frame + dx) and for the unloaded region (frame + key). All three are correct for any frame.
+  - `_qa_columns_report` prints it as "the frame centred on". That is correct, and its comment now
+    says so.
+  - The `SRREVAMP_QA_GROUND_RAYS` wait and `QA TEXPROBE` used it to mean "the centre's terrain
+    node". Both now read `_grid_centre_region`.
+- `_grid.loaded_cells` keys and `_grid.mark_loaded`: relative to the frame everywhere.
+  `_load_region_cell`, `_load_region_neighborhood`'s neighbours (now `cdx + dx`), `_dispatch_cell`,
+  `_finish_cell_job`, `_build_one_queued_cell` and `_process_stream_queue` all take dx/dy from the
+  queued cell. `RegionGridState.unload` finds a cell by its region, not its key.
+- `_last_stream_cell` is set to the centre's cell. `_outside_stream_window` compares
+  frame-relative dx/dy.
+- `_grid_origin_world` is read only as `rel.x` and `rel.z` in `_maybe_stream_regions`.
+- These are frame-agnostic, because each goes through a nav graph's group transform:
+  - the minimap and world map (`_refresh_zone_label_position` reads the region and the local
+    position from the group);
+  - `_place_at_zone_spawn` and `_place_at_region_local`;
+  - `_teleport_local` (`SRREVAMP_QA_AT`);
+  - `_where_report` (the console's /where lines);
+  - NPCs, which are parented to their region's group.
+- `_place_player_at_world` (a GM /goto position) is in the server's frame, which is the grid's
+  frame by construction.
+- The stream tests: `objects_prepare_test.gd` sets `_last_stream_cell` to (0, 0) with frame ==
+  centre, which is unchanged.
+
+**5. What happens when the frame is not the centre.** Nothing reaches this today; the later
+single-frame item must satisfy two constraints, and both are also written into the code:
+
+- **The landing.** The server's position is in the FRAME. `spawnPos` (0, 0, 0) is the frame
+  region's middle, which is off the grid the client builds around the centre. A server naming
+  another frame must send a position inside the centre region. This is recorded at
+  `ChangeZoneResult`'s doc, at `_on_change_zone_result` and at `worldmap.FrameFor`. Nothing was
+  built for it here.
+- **The height anchor.** With frame == centre, the centre calibrates itself on its own near-row
+  vertex (`anchor` NAN), as before. With any other frame, `_frame_anchor_height` reads the frame's
+  own `.m` on the main thread and returns its `near_row_middle_height`, so every grid built in one
+  frame shares one height origin. It returns NAN, and the centre calibrates itself, when that
+  `.m` cannot be read. Whoever names another frame must first check each zone's drawn heights
+  under that frame's anchor.
+
+For the frame the single-frame item is expected to name, 97/168, round 569's recorded raw ranges
+minus 97/168's anchor (-2.49, measured with `heightat` in the aborted attempt and in round 569)
+give these town centres:
+
+| centre | raw (round 569) | drawn under 97/168's anchor |
+|---|---|---|
+| 97/168 | -60.86 .. 3.91 | -58.37 .. 6.40 |
+| 102/153 | -154.15 .. -86.70 | -151.66 .. -84.21 |
+| 105/79 | -141.16 .. 112.38 | -138.67 .. 114.87 |
+| 92/135 | 0.00 .. 251.70 | 2.49 .. 254.19 |
+| 106/107 | 180.00 .. 186.36 | 182.49 .. 188.85 |
+
+Every one lies inside `_snap_player_onto_terrain`'s +-1000 ray and above `WORLD_FLOOR_Y` (-500).
+That is the reason one Jangan-anchored frame is acceptable for the centres. The radius-2
+neighbours were NOT measured and are that item's to check. The aborted attempt's 87/118 (2497.52)
+is why the check matters: it is no longer any zone's centre or frame.
+
+**Tests.**
+
+- Server:
+  - `TestEnterWorldResultRoundTripSuccess` and `TestChangeZoneResultRoundTripSuccess` are extended
+    with `FrameRegion`.
+  - `TestWorldResultsCarryTheFrameAfterTheList` (new) checks four things. Each new payload is the
+    hand-built pre-570 payload plus the frame. That old payload decodes with `FrameRegion` "". A
+    frame cut short fails to decode. One stray byte after the list fails to decode.
+  - `TestFrameForNamesEachZonesCentre` (new) checks all six labels, "100/100", "Jangan" -> "" and
+    "nowhere" -> "".
+  - `TestChangeZoneFlow` now checks the live frames over TCP: entry names "97/168", and the change
+    to "100/100" names "100/100".
+  - `worldmap_test.go` adds `TestParseRegionLabel`, `TestFrameForIsEveryZonesOwnCentre` and
+    `TestFrameTableTheClientReproduces` (the rows and the derived shift).
+- Client:
+  - `net/world_test.gd` checks hand-built payloads. A `ChangeZoneResult` with a trailing frame
+    decodes `frame == "97/168"` and one without decodes `frame == ""`, as do the same two
+    `EnterWorldResult` cases. A cut-short frame and a stray byte are decode errors, and a refusal
+    has no frame. The frame is read through `get()`, so an old WorldNet FAILS the checks rather
+    than failing to parse.
+  - `world/region_grid_state_test.gd` now runs from `_initialize`, since World3D.gd needs the
+    NetClient autoload.
+    - For every row: `frame_world` is `ToWorld`'s value.
+    - The real placement (`_group_position` of `_cell_offset`, through a `scale.z = -1` basis)
+      puts the local point at the same world point.
+    - The group less `cell_world_offset` is the frame's corner.
+    - `cell_at` finds the row's region.
+    - Separately, the shift into 98/157's frame is derived.
+    - The intuitive axes (region x -> world X) miss the measured 98/168 -> (0, -1920) row.
+    - `_frame_coords` gives each of the six labels' server frames as that zone's own centre; ""
+      and an unparseable frame give the centre, and "97/168" for Donwhang gives 97/168.
+- **Negatives, run.**
+  - Server: I stashed `session/world.go` and `worldmap/worldmap.go`. Both test packages then fail
+    to build (`undefined: ParseRegionLabel`, `FrameFor`; `unknown field FrameRegion`). I restored
+    the files and both pass.
+  - Client: I stashed `World3D.gd`, `net/world.gd` and `world/region_grid_state.gd` and shipped the
+    tree. `world_test.gd` then gave `7 FAILURES` ("got <no frame property>", and the cut-short and
+    stray-byte payloads accepted), and `region_grid_state_test.gd` gave `3 FAILURES` (no
+    `frame_world` / `cell_world_offset` / `cell_at`), with no parse error. I restored the files and
+    both print ALL PASS.
+- Full runs:
+  - `cd server && go build ./... && go vet ./... && go test -count=1 -p 1 ./...` is green before
+    and after the doc edits.
+  - `client/tools/remote_godot.sh tests` (lane lock `/var/tmp/r569/lock`, since the shared lock is
+    still held by the orphans): `ran 94 suite(s), 0 failing`.
+  - `remote_godot.sh check`: `checked 269 scripts and 5 scenes`, `ALL LOAD`.
+
+**Not run, disclosed:** a live server-backed QA run. This item's rules keep the render box
+read-only apart from `remote_godot.sh`, so no server binary or frames were written there. The frame
+path is held by the headless suites above, which run the real placement code. The new
+`_reload_zone_assets` line is what a live run should look for: `is built in its own frame -- the
+server's FrameRegion 97/168` on entry, and the zone's own region after a /goto.
+
+**Records.** This entry; `docs/WORLD_ISSUES.md`'s five-hundred-and-seventieth round;
+`docs/protocol/teleport_network.md`'s new "srrevamp wire: FrameRegion" note; the comments on
+`worldmap.go`'s header, `FrameFor`, `ChangeZoneResult`, `RegionGridState`'s "THE COORDINATE FRAME"
+and World3D's grid-origin variables. `docs/SYSTEMS.md` has no row for zones or the world frame, so
+it is unchanged.
+
+**Deploy note.** Server first: it auto-deploys, and every tagged client ignores the trailing field,
+because both of its decoders return after the entity list. Then a client tag. A tagged client
+builds exactly the grid it built before, since the frame it now reads is the centre it already
+used. There is no flag, because the wire's meaning is unchanged until the single-frame item.

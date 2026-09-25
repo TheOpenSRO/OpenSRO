@@ -15,6 +15,9 @@
 // World3D.gd's _load_region_neighborhood and JANGAN_ZONE_REGION). So a world
 // coordinate only means something once you say which region the frame is
 // centred on, and ToWorld takes that as an argument rather than assuming it.
+// Since round 570 the server says it on the wire: EnterWorldResult and
+// ChangeZoneResult carry FrameFor(zone) as FrameRegion, and the client builds
+// the zone's grid inside that frame. For every zone it is the zone's centre.
 //
 // The transform below was MEASURED, not derived from the region layout. Every
 // term was read out of the real client's own region group nodes in headless
@@ -55,7 +58,11 @@
 // the retail client DISPLAYS, has no mirror, and must not be substituted here.
 package worldmap
 
-import "sort"
+import (
+	"sort"
+	"strconv"
+	"strings"
+)
 
 // RegionSpan is one region's extent in world units, on both axes. The real
 // value: a region's own mesh is 97 vertices at TILE_SIZE, exactly 1920 units.
@@ -130,6 +137,44 @@ var ZoneCentre = map[string][2]int{
 	"constantinople": {105, 79},
 	"hotan":          {92, 135},
 	"samarkand":      {106, 107},
+}
+
+// ParseRegionLabel reads a zone label shaped "x/y" -- the project's own
+// region notation, which a client sends for a raw region (World3D.gd's
+// _zone_paths: "97/168" is Jangan's file 97\168.m) -- into the region's x and
+// y. ok is false for any other shape, and for a part outside 0..255: a real
+// region id carries each in one byte (RegionXY).
+func ParseRegionLabel(label string) (x, y int, ok bool) {
+	parts := strings.Split(label, "/")
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	x, errX := strconv.Atoi(parts[0])
+	y, errY := strconv.Atoi(parts[1])
+	if errX != nil || errY != nil || x < 0 || x > 0xFF || y < 0 || y > 0xFF {
+		return 0, 0, false
+	}
+	return x, y, true
+}
+
+// FrameFor is the region a zone's world coordinates are relative to, which
+// the server names on the wire as FrameRegion (session's EnterWorldResult and
+// ChangeZoneResult, round 570): a named zone's ZoneCentre, or the region an
+// "x/y" label names. ok is false for any other label -- there is no frame the
+// server could name, and the client keeps its own reading of the label.
+//
+// Every frame this returns is the zone's own centre, the region the client
+// builds its grid around for the same label (World3D._resolve_zone_region,
+// which passes an "x/y" label through): so naming it changes nothing a client
+// does with the coordinates. A frame that is NOT the zone's centre is the
+// later single-frame item's to introduce, and it must then send a position
+// inside the centre region -- (0, 0, 0) in another region's frame is that
+// region's middle, outside the grid the client builds.
+func FrameFor(zone string) (rx, ry int, ok bool) {
+	if centre, found := ZoneCentre[zone]; found {
+		return centre[0], centre[1], true
+	}
+	return ParseRegionLabel(zone)
 }
 
 // ZoneNames returns the named zones ToZoneWorld can convert into, sorted --

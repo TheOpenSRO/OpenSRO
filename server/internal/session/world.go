@@ -12,6 +12,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
 )
 
 // World opcodes, our own protocol. OpEnterWorld requires a prior OpLogin;
@@ -200,7 +201,8 @@ func DecodeEnterWorldRequest(data []byte) (*EnterWorldRequest, error) {
 }
 
 // EnterWorldResult is the OpEnterWorldResult payload. On failure, only
-// OK/Reason are meaningful -- Zone/position/Gender/Others aren't encoded.
+// OK/Reason are meaningful -- Zone/position/Gender/Others/FrameRegion aren't
+// encoded.
 // Gender is the entering character's own real Gender (see
 // character.GenderChinaMan/GenderChinaWoman) -- the client needs this to
 // build its *own* real assembled character; Others already carries each
@@ -217,6 +219,14 @@ type EnterWorldResult struct {
 	HP     int32
 	MaxHP  int32
 	Others []EntitySnapshot
+	// FrameRegion is the region X/Y/Z are relative to, "x/y" (round 570; see
+	// frameFor), or "" when the zone has none. It trails Others, where an
+	// older client stops reading -- WorldNet.decode_enter_world_result
+	// returns after the entity list without looking at what is left, the
+	// same way StorageListResult's trailing capacity reaches older clients
+	// -- and an older server's payload, which ends at Others, decodes it as
+	// "".
+	FrameRegion string
 }
 
 func (r *EnterWorldResult) Encode() []byte {
@@ -239,7 +249,7 @@ func (r *EnterWorldResult) Encode() []byte {
 	for _, o := range r.Others {
 		out = append(out, o.Encode()...)
 	}
-	return out
+	return append(out, encodeStrings(r.FrameRegion)...)
 }
 
 func DecodeEnterWorldResult(data []byte) (*EnterWorldResult, error) {
@@ -305,7 +315,38 @@ func DecodeEnterWorldResult(data []byte) (*EnterWorldResult, error) {
 		}
 		r.Others = append(r.Others, *snap)
 	}
+	if r.FrameRegion, err = decodeFrameRegion(rest); err != nil {
+		return nil, fmt.Errorf("session: decoding EnterWorldResult: %w", err)
+	}
 	return r, nil
+}
+
+// decodeFrameRegion reads the FrameRegion that trails an EnterWorldResult or
+// a ChangeZoneResult (round 570): "" when nothing follows the entity list --
+// an older server's payload -- and an error when the field is cut short.
+func decodeFrameRegion(rest []byte) (string, error) {
+	if len(rest) == 0 {
+		return "", nil
+	}
+	fields, _, err := decodeStringsPrefix(rest, 1)
+	if err != nil {
+		return "", fmt.Errorf("frame region: %w", err)
+	}
+	return fields[0], nil
+}
+
+// frameFor is the FrameRegion a result names for zone: worldmap.FrameFor's
+// region as "x/y", or "" for a label with none (the client then keeps its
+// own reading of the label, as every client did before round 570). For every
+// label it is the zone's own centre -- the region the client builds its grid
+// around, whose middle is spawnPos -- so it names the frame the coordinates
+// were already in rather than changing it.
+func frameFor(zone string) string {
+	rx, ry, ok := worldmap.FrameFor(zone)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("%d/%d", rx, ry)
 }
 
 // MoveRequest is the OpMove payload: a new position, no reply expected.
@@ -404,12 +445,21 @@ func DecodeChangeZoneRequest(data []byte) (*ChangeZoneRequest, error) {
 // needs a fresh "who's already here" snapshot of the new zone, the same as
 // entering the world the first time -- their own client has no other way to
 // learn who else is present (broadcasts only reach everyone *else*).
+//
+// FrameRegion (round 570) is the region X/Y/Z are relative to, trailing
+// Others exactly as EnterWorldResult's does. Position is in that frame: today
+// every zone's frame is its own centre, so spawnPos is the centre region's
+// middle. A server that names any other frame (the later single-frame item)
+// must send a position inside the zone's centre region, because the client
+// builds its grid around the centre and (0, 0, 0) would be the FRAME region's
+// middle, off that grid.
 type ChangeZoneResult struct {
-	OK      bool
-	Reason  string
-	Zone    string
-	X, Y, Z float32
-	Others  []EntitySnapshot
+	OK          bool
+	Reason      string
+	Zone        string
+	X, Y, Z     float32
+	Others      []EntitySnapshot
+	FrameRegion string
 }
 
 func (r *ChangeZoneResult) Encode() []byte {
@@ -427,7 +477,7 @@ func (r *ChangeZoneResult) Encode() []byte {
 	for _, o := range r.Others {
 		out = append(out, o.Encode()...)
 	}
-	return out
+	return append(out, encodeStrings(r.FrameRegion)...)
 }
 
 func DecodeChangeZoneResult(data []byte) (*ChangeZoneResult, error) {
@@ -475,6 +525,9 @@ func DecodeChangeZoneResult(data []byte) (*ChangeZoneResult, error) {
 			return nil, fmt.Errorf("session: decoding ChangeZoneResult: entity %d: %w", i, err)
 		}
 		r.Others = append(r.Others, *snap)
+	}
+	if r.FrameRegion, err = decodeFrameRegion(rest); err != nil {
+		return nil, fmt.Errorf("session: decoding ChangeZoneResult: %w", err)
 	}
 	return r, nil
 }
@@ -614,10 +667,11 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	result := &EnterWorldResult{
 		OK: true, Zone: spawnZone,
 		X: float32(spawnPos.X), Y: float32(spawnPos.Y), Z: float32(spawnPos.Z),
-		Gender: owned.Gender,
-		HP:     int32(owned.HP),
-		MaxHP:  int32(owned.MaxHP()),
-		Others: otherSnapshots,
+		Gender:      owned.Gender,
+		HP:          int32(owned.HP),
+		MaxHP:       int32(owned.MaxHP()),
+		Others:      otherSnapshots,
+		FrameRegion: frameFor(spawnZone),
 	}
 	if err := sess.Send(&proto.Packet{Opcode: OpEnterWorldResult, Data: result.Encode()}); err != nil {
 		return err
@@ -679,7 +733,8 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	result := &ChangeZoneResult{
 		OK: true, Zone: req.Zone,
 		X: float32(spawnPos.X), Y: float32(spawnPos.Y), Z: float32(spawnPos.Z),
-		Others: otherSnapshots,
+		Others:      otherSnapshots,
+		FrameRegion: frameFor(req.Zone),
 	}
 	if err := sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: result.Encode()}); err != nil {
 		return err

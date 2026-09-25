@@ -245,6 +245,53 @@ func _test_decode_change_zone_result_success() -> void:
 		_check(result.others[0].character_id == 42, "other's character_id round-trips")
 		_check(result.others[0].char_name == "Bram", "other's name round-trips")
 
+## Round 570: the server names the coordinate frame. FrameRegion is a
+## u16-prefixed "x/y" string trailing the entity list
+## (server/internal/session/world.go's EnterWorldResult/ChangeZoneResult);
+## a payload that ends at the list -- every server before round 570 -- decodes
+## with frame "", and one cut inside the field is a decode error. The frame is
+## read through get(), so a WorldNet without the field FAILS here rather than
+## failing to parse (before round 570 there is no `frame` and every row below
+## fails).
+func _with_frame(payload: PackedByteArray, frame: String) -> PackedByteArray:
+	var frame_bytes := frame.to_utf8_buffer()
+	var len_buf := PackedByteArray()
+	len_buf.resize(2)
+	len_buf.encode_u16(0, frame_bytes.size())
+	return payload + len_buf + frame_bytes
+
+func _frame_of(result: Object) -> String:
+	var frame = result.get("frame")
+	return frame if frame is String else "<no frame property>"
+
+func _test_decode_frame_region() -> void:
+	var others := [{"id": 42, "name": "Bram", "x": 4.0, "y": 5.0, "z": 6.0, "gender": CharacterNet.GENDER_CHINA_MAN}]
+	var zone_legacy := _build_change_zone_result(true, "", "jangan", 0.0, 0.0, 0.0, others)
+	var zone_framed := WorldNet.decode_change_zone_result(_with_frame(zone_legacy, "97/168"))
+	_check(zone_framed.error == "", "a ChangeZoneResult with a trailing frame decodes (error '%s')" % zone_framed.error)
+	_check(_frame_of(zone_framed) == "97/168", "its frame is 97/168 (got %s)" % _frame_of(zone_framed))
+	_check(zone_framed.zone == "jangan" and zone_framed.others.size() == 1 and zone_framed.others[0].char_name == "Bram",
+		"and everything before the frame reads as it did")
+	var zone_old := WorldNet.decode_change_zone_result(zone_legacy)
+	_check(zone_old.error == "" and zone_old.others.size() == 1, "an older server's ChangeZoneResult still decodes")
+	_check(_frame_of(zone_old) == "", "with frame \"\" (got %s)" % _frame_of(zone_old))
+	var zone_cut := zone_legacy + PackedByteArray([0x06, 0x00]) + "97/1".to_utf8_buffer()
+	_check(WorldNet.decode_change_zone_result(zone_cut).error == "truncated frame", "a frame cut short is a decode error")
+	_check(WorldNet.decode_change_zone_result(zone_legacy + PackedByteArray([0x06])).error == "truncated frame length",
+		"one stray byte after the list is a decode error")
+
+	var enter_legacy := _build_enter_world_result(true, "", "jangan", 0.0, 0.0, 0.0, CharacterNet.GENDER_CHINA_MAN, others, 73, 100)
+	var enter_framed := WorldNet.decode_enter_world_result(_with_frame(enter_legacy, "97/168"))
+	_check(enter_framed.error == "" and _frame_of(enter_framed) == "97/168",
+		"an EnterWorldResult's trailing frame decodes to 97/168 (got %s, error '%s')" % [_frame_of(enter_framed), enter_framed.error])
+	_check(enter_framed.hp == 73 and enter_framed.max_hp == 100 and enter_framed.others.size() == 1, "and its vitals and list read as before")
+	var enter_old := WorldNet.decode_enter_world_result(enter_legacy)
+	_check(enter_old.error == "" and _frame_of(enter_old) == "", "an older server's EnterWorldResult decodes with frame \"\" (got %s)" % _frame_of(enter_old))
+
+	# A refusal carries no frame, as it carries no zone.
+	var refused := WorldNet.decode_change_zone_result(_build_change_zone_result(false, "already in that zone", "", 0, 0, 0))
+	_check(refused.error == "" and _frame_of(refused) == "", "a refusal has frame \"\"")
+
 func _test_decode_change_zone_result_failure() -> void:
 	var payload := _build_change_zone_result(false, "already in that zone", "", 0, 0, 0)
 	var result := WorldNet.decode_change_zone_result(payload)
@@ -293,6 +340,7 @@ func _init() -> void:
 	_test_encode_change_zone()
 	_test_decode_change_zone_result_success()
 	_test_decode_change_zone_result_failure()
+	_test_decode_frame_region()
 	_test_encode_revive()
 	_test_decode_revive_result()
 

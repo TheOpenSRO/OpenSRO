@@ -195,6 +195,38 @@ recovery, from the same kind of table.
 What it could **not** yet claim is the cost and the level gate, until the
 `_REFTELELINK` consumer is read.
 
+### srrevamp wire: FrameRegion (round 570)
+
+A teleport lands a player in another town's coordinates, so both ends must
+agree which region those coordinates are relative to. srrevamp's own
+placeholder world results name it (`docs/protocol/PROTOCOL_DECISION.md`: own
+scaffolding, not a retail layout). `OpEnterWorldResult` (0x0021) and
+`OpChangeZoneResult` (0x0027) end with a **FrameRegion**: a u16 length, then
+the "x/y" of the region whose middle is the world origin for the X/Y/Z in
+the same result. It follows the entity list, which is where a client before
+round 570 stops reading, so the result still decodes there. A payload that
+ends at the list, from a server before round 570, means "" (no frame named),
+and the client uses the zone's own centre, which is what the frame was.
+
+- Value: `worldmap.FrameFor(zone)`. That is `worldmap.ZoneCentre` for a named
+  zone, the region itself for an "x/y" label, and "" otherwise. For every
+  label it is the zone's own centre (the same region `World3D._resolve_zone_region`
+  gives, which round 569 made agree), so naming it changed no coordinate's
+  meaning.
+- Client: `World3D._reload_zone_assets(zone, frame)` builds the grid around
+  the zone's centre inside the named frame.
+- If a server ever names a frame that is not the zone's centre (the
+  single-frame item), it must send a position inside the centre region.
+  (0, 0, 0) would be the frame region's middle, off the client's grid. It
+  must also have checked the zone's drawn heights under the frame's anchor
+  (`World3D._frame_anchor_height`).
+
+The transform in the frame is `worldmap.ToWorld`: `x = (ry-fy)*1920 + lx-960`,
+`z = (fx-rx)*1920 + 960-lz`. Region y drives world X, region x drives world
+Z, and Z is mirrored. A point moved from the frame of 97/168 into that of
+98/157 shifts by (+21120, +1920). `docs/RE_COMPLETION.md`, round 570, has
+the evidence and the tests.
+
 
 ## The gate surcharge is the fortress tax, and it is now read (round 321)
 

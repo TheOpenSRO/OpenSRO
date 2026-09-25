@@ -91,6 +91,11 @@ class EnterWorldResult:
 	var hp: int
 	var max_hp: int
 	var others: Array[EntitySnapshot] = []
+	## The region x/y/z are relative to, "x/y" -- the server's FrameRegion
+	## (round 570), trailing the entity list. "" from an older server, which
+	## does not send it; World3D then frames the grid on the zone's own
+	## centre, which is what the server's frame was before it named it.
+	var frame: String = ""
 	var error: String # decode error, distinct from a well-formed "not ok" response
 
 ## Parses one EntitySnapshot from data starting at offset, returning it
@@ -217,7 +222,29 @@ static func decode_enter_world_result(data: PackedByteArray) -> EnterWorldResult
 		result.others.append(decoded[0])
 		offset = decoded[1]
 
+	var frame := _decode_frame(data, offset)
+	result.frame = frame[0]
+	result.error = frame[1]
 	return result
+
+## Reads the FrameRegion that trails an OpEnterWorldResult or an
+## OpChangeZoneResult (round 570; server/internal/session/world.go's
+## decodeFrameRegion is the same rule): a u16-prefixed "x/y" string after the
+## entity list. Returns [frame, error]: ["", ""] when the payload ends at the
+## list -- an older server's -- and an error when the field is cut short. The
+## field trails the list because that is where a client before round 570
+## stops reading: both decoders above returned right after the loop without
+## looking at what was left, so it reaches them unread.
+static func _decode_frame(data: PackedByteArray, offset: int) -> Array:
+	if offset >= data.size():
+		return ["", ""]
+	if offset + 2 > data.size():
+		return ["", "truncated frame length"]
+	var frame_len := data.decode_u16(offset)
+	offset += 2
+	if offset + frame_len > data.size():
+		return ["", "truncated frame"]
+	return [data.slice(offset, offset + frame_len).get_string_from_utf8(), ""]
 
 ## Decodes an OpEntityEntered broadcast payload (a single EntitySnapshot).
 static func decode_entity_entered(data: PackedByteArray) -> EntitySnapshot:
@@ -274,6 +301,9 @@ class ChangeZoneResult:
 	var y: float
 	var z: float
 	var others: Array[EntitySnapshot] = []
+	## The region x/y/z are relative to, "x/y" (round 570), as on
+	## EnterWorldResult; "" from an older server.
+	var frame: String = ""
 	var error: String # decode error, distinct from a well-formed "not ok" response
 
 ## Decodes an OpChangeZoneResult payload.
@@ -333,6 +363,9 @@ static func decode_change_zone_result(data: PackedByteArray) -> ChangeZoneResult
 		result.others.append(decoded[0])
 		offset = decoded[1]
 
+	var frame := _decode_frame(data, offset)
+	result.frame = frame[0]
+	result.error = frame[1]
 	return result
 
 ## Encodes an OpRevive request: nothing. The server knows who asks from the

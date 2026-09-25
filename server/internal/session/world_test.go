@@ -85,7 +85,8 @@ func TestEnterWorldResultRoundTripSuccess(t *testing.T) {
 	want := &EnterWorldResult{
 		OK: true, Zone: "jangan", X: 1, Y: 2, Z: 3, Gender: character.GenderChinaMan,
 		HP: 73, MaxHP: character.StartingMaxHP,
-		Others: []EntitySnapshot{{CharacterID: 1, Name: "Bram", X: 4, Y: 5, Z: 6, Equipped: worn(int64(equipment.SlotMail), 4842, int64(equipment.SlotShield), 3639), Gender: character.GenderChinaWoman}},
+		Others:      []EntitySnapshot{{CharacterID: 1, Name: "Bram", X: 4, Y: 5, Z: 6, Equipped: worn(int64(equipment.SlotMail), 4842, int64(equipment.SlotShield), 3639), Gender: character.GenderChinaWoman}},
+		FrameRegion: "97/168",
 	}
 	got, err := DecodeEnterWorldResult(want.Encode())
 	if err != nil {
@@ -102,6 +103,11 @@ func TestEnterWorldResultRoundTripSuccess(t *testing.T) {
 	// check above is part of this test rather than a separate one.
 	if got.HP != want.HP || got.MaxHP != want.MaxHP {
 		t.Fatalf("got HP %d/%d, want %d/%d", got.HP, got.MaxHP, want.HP, want.MaxHP)
+	}
+	// The frame trails the entity list (round 570), so it round-trips only
+	// if every field before it was read to the byte.
+	if got.FrameRegion != want.FrameRegion {
+		t.Fatalf("got FrameRegion %q, want %q", got.FrameRegion, want.FrameRegion)
 	}
 }
 
@@ -212,7 +218,8 @@ func TestChangeZoneRequestRoundTrip(t *testing.T) {
 func TestChangeZoneResultRoundTripSuccess(t *testing.T) {
 	want := &ChangeZoneResult{
 		OK: true, Zone: "100/100", X: 1, Y: 2, Z: 3,
-		Others: []EntitySnapshot{{CharacterID: 1, Name: "Bram", X: 4, Y: 5, Z: 6, Gender: character.GenderChinaMan}},
+		Others:      []EntitySnapshot{{CharacterID: 1, Name: "Bram", X: 4, Y: 5, Z: 6, Gender: character.GenderChinaMan}},
+		FrameRegion: "100/100",
 	}
 	got, err := DecodeChangeZoneResult(want.Encode())
 	if err != nil {
@@ -223,6 +230,96 @@ func TestChangeZoneResultRoundTripSuccess(t *testing.T) {
 	}
 	if !sameSnapshot(got.Others[0], want.Others[0]) {
 		t.Fatalf("got other %+v, want %+v", got.Others[0], want.Others[0])
+	}
+	if got.FrameRegion != want.FrameRegion {
+		t.Fatalf("got FrameRegion %q, want %q", got.FrameRegion, want.FrameRegion)
+	}
+}
+
+// legacyWorldTail is how every server before round 570 ended an
+// EnterWorldResult or a ChangeZoneResult: the u16 entity count and the
+// snapshots, nothing after them. Built by hand, not by Encode, so the
+// compatibility test below does not lean on the code it checks.
+func legacyWorldTail(others []EntitySnapshot) []byte {
+	out := []byte{byte(len(others)), byte(len(others) >> 8)}
+	for _, o := range others {
+		out = append(out, o.Encode()...)
+	}
+	return out
+}
+
+// The frame rides where an older client stops reading (round 570): the new
+// payload is the old one, byte for byte, with FrameRegion appended -- so a
+// tagged client's decoder, which returns after the entity list, reads exactly
+// what it read before -- and an older server's payload, which ends at the
+// list, decodes with FrameRegion "". A frame cut short is a decode error.
+// NEGATIVE: before round 570 the structs have no FrameRegion and this does
+// not compile.
+func TestWorldResultsCarryTheFrameAfterTheList(t *testing.T) {
+	others := []EntitySnapshot{{CharacterID: 1, Name: "Bram", X: 4, Y: 5, Z: 6, Gender: character.GenderChinaMan}}
+
+	cz := &ChangeZoneResult{OK: true, Zone: "hotan", X: 1, Y: 2, Z: 3, Others: others, FrameRegion: "92/135"}
+	legacy := encodeOKReason(true, "")
+	legacy = append(legacy, encodeStrings(cz.Zone)...)
+	legacy = append(legacy, encodeFloat32(cz.X)...)
+	legacy = append(legacy, encodeFloat32(cz.Y)...)
+	legacy = append(legacy, encodeFloat32(cz.Z)...)
+	legacy = append(legacy, legacyWorldTail(others)...)
+	framed := cz.Encode()
+	if !bytes.Equal(framed, append(append([]byte{}, legacy...), encodeStrings("92/135")...)) {
+		t.Fatalf("ChangeZoneResult is not the old payload plus the frame:\n got  % x\n want % x + frame", framed, legacy)
+	}
+	old, err := DecodeChangeZoneResult(legacy)
+	if err != nil || old.FrameRegion != "" || old.Zone != "hotan" || len(old.Others) != 1 {
+		t.Fatalf("an older server's ChangeZoneResult: %+v (err=%v), want zone hotan, one other, FrameRegion \"\"", old, err)
+	}
+	if _, err := DecodeChangeZoneResult(framed[:len(framed)-2]); err == nil {
+		t.Fatal("a ChangeZoneResult cut inside its frame decoded; want an error")
+	}
+
+	ew := &EnterWorldResult{OK: true, Zone: "jangan", X: 1, Y: 2, Z: 3, Gender: character.GenderChinaMan,
+		HP: 73, MaxHP: 100, Others: others, FrameRegion: "97/168"}
+	legacy = encodeOKReason(true, "")
+	legacy = append(legacy, encodeStrings(ew.Zone)...)
+	legacy = append(legacy, encodeFloat32(ew.X)...)
+	legacy = append(legacy, encodeFloat32(ew.Y)...)
+	legacy = append(legacy, encodeFloat32(ew.Z)...)
+	legacy = append(legacy, encodeStrings(ew.Gender)...)
+	legacy = append(legacy, 73, 0, 0, 0, 100, 0, 0, 0)
+	legacy = append(legacy, legacyWorldTail(others)...)
+	framed = ew.Encode()
+	if !bytes.Equal(framed, append(append([]byte{}, legacy...), encodeStrings("97/168")...)) {
+		t.Fatalf("EnterWorldResult is not the old payload plus the frame:\n got  % x\n want % x + frame", framed, legacy)
+	}
+	oldEnter, err := DecodeEnterWorldResult(legacy)
+	if err != nil || oldEnter.FrameRegion != "" || oldEnter.HP != 73 || len(oldEnter.Others) != 1 {
+		t.Fatalf("an older server's EnterWorldResult: %+v (err=%v), want HP 73, one other, FrameRegion \"\"", oldEnter, err)
+	}
+	if _, err := DecodeEnterWorldResult(append(append([]byte{}, legacy...), 0x06)); err == nil {
+		t.Fatal("an EnterWorldResult with one stray byte after its list decoded; want an error")
+	}
+}
+
+// The frame each result names is the zone's own centre -- worldmap.FrameFor,
+// the region the client builds the zone around (round 569 made the two
+// agree) -- so naming it changes no coordinate's meaning. An "x/y" label is
+// its own frame; a label with no frame names none, and the client keeps its
+// own reading of it.
+func TestFrameForNamesEachZonesCentre(t *testing.T) {
+	for zone, want := range map[string]string{
+		"jangan":         "97/168",
+		"dunhuang":       "102/153",
+		"donwhang":       "102/153",
+		"constantinople": "105/79",
+		"hotan":          "92/135",
+		"samarkand":      "106/107",
+		"100/100":        "100/100",
+		"Jangan":         "",
+		"nowhere":        "",
+	} {
+		if got := frameFor(zone); got != want {
+			t.Errorf("frameFor(%q) = %q, want %q", zone, got, want)
+		}
 	}
 }
 
@@ -315,6 +412,8 @@ func TestChangeZoneFlow(t *testing.T) {
 		resp = sendRecv(conn, r, OpEnterWorld, (&EnterWorldRequest{CharacterName: charName}).Encode())
 		if ewr, err := DecodeEnterWorldResult(resp.Data); err != nil || !ewr.OK {
 			t.Fatalf("%s enter world failed: err=%v result=%+v", charName, err, ewr)
+		} else if ewr.FrameRegion != "97/168" {
+			t.Fatalf("%s entered jangan in frame %q, want 97/168 (its ZoneCentre)", charName, ewr.FrameRegion)
 		}
 	}
 
@@ -351,6 +450,9 @@ func TestChangeZoneFlow(t *testing.T) {
 	czr, err := DecodeChangeZoneResult(resp.Data)
 	if err != nil || !czr.OK || czr.Zone != "100/100" {
 		t.Fatalf("Bram's zone change: got %+v (err=%v), want ok zone=100/100", czr, err)
+	}
+	if czr.FrameRegion != "100/100" {
+		t.Fatalf("Bram's zone change names frame %q, want 100/100 (an x/y label is its own frame)", czr.FrameRegion)
 	}
 	if len(czr.Others) != 0 {
 		t.Fatalf("Bram should be alone in 100/100, got Others=%+v", czr.Others)

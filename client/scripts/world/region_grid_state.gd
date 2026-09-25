@@ -32,7 +32,8 @@ class_name RegionGridState
 ## more -- and leaves every other region's entries alone; a region unloaded
 ## and marked again is populated again; `clear_all()` is the zone change.
 
-## Loaded cells, "dx_dy" relative to World3D's grid origin ->
+## Loaded cells, "dx_dy" relative to World3D's grid origin (the frame
+## region, round 570; the centre's cell is (0, 0) only while the two agree) ->
 ## Vector2i(region_x, region_y): the region the cell holds, so an unload by
 ## region finds its cell without the origin.
 var loaded_cells := {}
@@ -78,6 +79,49 @@ static func region_key(region_x: int, region_y: int) -> String:
 ## World3D._load_region_navmesh has always cached by.
 static func navmesh_key(region_x: int, region_y: int) -> int:
 	return (region_x << 8) | region_y
+
+## One region's extent in world units, on both axes: server/internal/
+## worldmap.RegionSpan, World3D.REGION_SPAN (a region's own mesh is 97
+## vertices at TILE_SIZE, exactly 1920; AGENTS.md, "Region span").
+const REGION_SPAN := 1920.0
+
+## THE COORDINATE FRAME (round 570). World space is laid out around one
+## region, the FRAME: its middle is the world origin, and every other region
+## sits a whole number of spans from it. The server names the frame on the
+## wire (EnterWorldResult / ChangeZoneResult's FrameRegion); World3D builds
+## its grid around the zone's CENTRE inside that frame. The two are the same
+## region for every zone today (worldmap.FrameFor is ZoneCentre, which
+## World3D._resolve_zone_region equals -- zone_centres_test.gd). The axes are
+## the measured ones (AGENTS.md; worldmap.go's header): region y drives world
+## X, region x drives world Z, and Z is mirrored -- a terrain group carries
+## scale.z = -1 and its position's z negated (World3D._group_position).
+
+## World X/Z of a point at region-local (local_x, local_z) in region
+## (region_x, region_y), in the frame centred on region (frame_x, frame_y):
+## a port of server/internal/worldmap.ToWorld, term for term --
+## x = (ry - fy) * 1920 + lx - 960, z = (fx - rx) * 1920 + 960 - lz. The
+## world-space answer, after the mirror; World3D._cell_offset is the offset
+## BEFORE it, which the terrain placement negates in z.
+static func frame_world(region_x: int, region_y: int, local_x: float, local_z: float, frame_x: int, frame_y: int) -> Vector2:
+	return Vector2(
+		float(region_y - frame_y) * REGION_SPAN + (local_x - REGION_SPAN / 2.0),
+		float(frame_x - region_x) * REGION_SPAN + (REGION_SPAN / 2.0 - local_z))
+
+## How far cell (dx, dy) -- a region dx in x and dy in y from the frame --
+## stands from the frame region in world space, after the mirror: region y
+## to +X, region x to -Z. What World3D subtracts from the centre group's
+## position to find the frame region's corner (_grid_origin_world) when the
+## centre is not the frame.
+static func cell_world_offset(dx: int, dy: int) -> Vector3:
+	return Vector3(dy * REGION_SPAN, 0.0, -dx * REGION_SPAN)
+
+## The cell (dx, dy), relative to the frame region, that a world point lies
+## in, given `rel` = the point minus the frame region's group position (its
+## corner, World3D._grid_origin_world): _maybe_stream_regions' test, floor
+## rather than round (docs/WORLD_ISSUES.md, round 65), with region x read off
+## -Z for the mirror.
+static func cell_at(rel: Vector3) -> Vector2i:
+	return Vector2i(int(floorf(-rel.z / REGION_SPAN)), int(floorf(rel.x / REGION_SPAN)))
 
 func mark_loaded(dx: int, dy: int, region_x: int, region_y: int) -> void:
 	loaded_cells["%d_%d" % [dx, dy]] = Vector2i(region_x, region_y)
