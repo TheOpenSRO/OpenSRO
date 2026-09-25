@@ -494,6 +494,22 @@ func _build_cpd_archive(path: String) -> void:
 	f.store_buffer(cpd_data)
 	f.close()
 
+## How many distinct Texture2D objects the mesh pieces of these objects draw
+## with, through either material kind ObjectLoader builds.
+func _distinct_albedo_textures(objects: Array) -> int:
+	var seen := {}
+	for obj in objects:
+		for child in obj.get_children():
+			var mat: Material = (child as MeshInstance3D).material_override
+			var tex: Texture2D = null
+			if mat is ShaderMaterial:
+				tex = (mat as ShaderMaterial).get_shader_parameter("albedo_texture")
+			elif mat is StandardMaterial3D:
+				tex = (mat as StandardMaterial3D).albedo_texture
+			if tex != null:
+				seen[tex.get_instance_id()] = true
+	return seen.size()
+
 func _init() -> void:
 	var path := "user://srrevamp_objloader_test.pk2"
 	_build_archive(path)
@@ -533,6 +549,32 @@ func _init() -> void:
 					if mat.albedo_texture != null:
 						_check(mat.albedo_texture.get_width() == 4 and mat.albedo_texture.get_height() == 4, "child %s's texture is 4x4 (got %dx%d)" % [child.name, mat.albedo_texture.get_width(), mat.albedo_texture.get_height()])
 			real.free()
+
+		# The texture cache (round 559): every material built through one
+		# dictionary that names the same .ddj shares ONE Texture2D -- here
+		# two pieces per load and two loads, four materials, one texture.
+		# Without a cache each call gets its own dictionary: the two pieces
+		# of one load share, the two loads do not -- two textures, which is
+		# also the check that the omitted argument is a fresh dictionary per
+		# call (a shared default would give one texture: a process-wide
+		# cache, exactly the cross-instance state round 558 measured
+		# against; the old per-piece decode gave four).
+		var texture_cache := {}
+		var first := ObjectLoader.load_object(archive, "prim/testobj.bsr", texture_cache)
+		var second := ObjectLoader.load_object(archive, "prim/testobj.bsr", texture_cache)
+		var plain_a := ObjectLoader.load_object(archive, "prim/testobj.bsr")
+		var plain_b := ObjectLoader.load_object(archive, "prim/testobj.bsr")
+		_check(first != null and second != null and plain_a != null and plain_b != null, "texture cache: all four loads succeed")
+		if first != null and second != null and plain_a != null and plain_b != null:
+			var shared := _distinct_albedo_textures([first, second])
+			_check(shared == 1, "four pieces over two loads through one cache share one texture (got %d distinct)" % shared)
+			_check(texture_cache.size() == 1 and texture_cache.keys()[0] == "prim/mtrl/walltex.ddj",
+				"the cache holds the one .ddj under its resolved lower-cased path (got %s)" % [texture_cache.keys()])
+			var separate := _distinct_albedo_textures([plain_a, plain_b])
+			_check(separate == 2, "without a cache each call decodes its own texture and the calls do not share (got %d distinct; 1 would be a shared default)" % separate)
+		for loaded in [first, second, plain_a, plain_b]:
+			if loaded != null:
+				loaded.free()
 
 		archive.close()
 	DirAccess.remove_absolute(path)

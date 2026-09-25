@@ -7075,6 +7075,45 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-fifty-ninth round: one scenery template per model per world, freed with the world
+
+Round 558 measured what a reconnect costs -- orphan nodes exactly doubled, texture memory x1.69 --
+and named the cause: `_try_load_real_map_objects` kept its built object templates in a dictionary
+local to each call, so every region built its own copy of every model it placed (the `cj_s.bsr`
+wall five times over five regions) and none was ever freed. The templates now live in one
+`ObjectTemplateCache` per world (`client/scripts/world/object_template_cache.gd`): built once per
+model path, duplicated per placement, released when the last region placing them streams out, kept
+across a zone change (the same models recur; a 600-template cap, an own safety limit, bounds them),
+freed in the new `World3D._exit_tree` and again if the cache itself is deleted. `ObjectLoader`
+takes a per-world texture cache with it, so two models naming one `.ddj` upload it once. The full
+record is `docs/RE_COMPLETION.md`'s round 559; the same reconnect command as round 558, before (this
+change absent) and after:
+
+| | before, entry 1 -> 2 | after, entry 1 -> 2 |
+|---|---|---|
+| texture memory (MB) | 139.96 -> 237.58 (x1.70) | 78.38 -> 92.49 (x1.18) |
+| video memory (MB) | 186.41 -> 294.20 (x1.58) | 121.95 -> 137.78 (x1.13) |
+| orphan nodes | 3,770 -> 7,540 (x2.000) | 2,757 -> 2,981 (x1.08) |
+| templates built per entry | 358 (the nine cells' distinct models summed) | 226 (132 placements reused a neighbour's) |
+| exit census: Mesh / Material / Texture / Body / Shape | 2468 / 2468 / 2469 / 2114 / 2114 | 354 / 354 / 355 / none / none |
+| `region grid loaded` (ms) | 16,963 / 16,978 | 15,665 / 14,656 (objects 2,260 / 2,104) |
+| lower-40% mean of the `square` shot | (0.271501, 0.260978, 0.249704) | the same, to six decimals |
+
+- Every leaked Body/Shape was a template piece: the 2,114 drop per type is exactly what leaves the
+  Mesh, Material and Texture counts, and what stays (354 / 354 / 355) is the leaked pieces that had
+  no `StaticBody3D` -- consistent with the skinned NPC templates in `_npc_model_cache`, which
+  `map-reconnect-fix` frees, together with the static caches. Consistent with, not proven from the
+  census.
+- Two things the tests caught before the final run: a `free_all()` called from a RefCounted's
+  `NOTIFICATION_PREDELETE` is a call on a null instance (no reference left to make `self` from), so
+  the freeing is inlined there; and a `replace_all` that turned the new `four_cc = parsed_tex.four_cc`
+  into `four_cc = four_cc`, named by the existing DXT3 cutout test.
+- The box: an orphaned re-run of round 558's command was holding `/var/tmp/godot-lock/lock` in a
+  `flock` inside `flock` (qa_shot.sh takes the lock itself; wrapping it in another one deadlocks it
+  before any Godot starts). It runs nothing and was not this lane's to end; this round used a
+  lane-local `GODOT_LOCK` after checking no Godot or Xvfb was alive. A human should end PIDs
+  1203107 / 1203108 / 1203110 / 1203113 on 192.168.5.78.
+
 ## Five-hundred-and-fifty-eighth round: the reconnect, scripted -- textured on the box, twice the orphans, and one batch built into a dead world
 
 The tester's report (2026-09-25): disconnect and reconnect without closing the client, and the

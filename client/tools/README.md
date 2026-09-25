@@ -42,7 +42,8 @@ World3D, which isolates `World3D.gd`'s `static var` caches); `--reconnect-via-lo
 tester's route through Login and CharacterSelect, which sign back in with the QA account. Every
 hook re-arms on the second entry, so `--shots` names each viewpoint once per entry, and each
 entry prints a `QA ENTRY <n> loaded ...` line (renderer texture/buffer/video memory, object and
-orphan counts, the static caches, the viewport's `debug_draw`, the fog and baked-light inputs)
+orphan counts, the static caches, the world's scenery template and texture caches, the
+viewport's `debug_draw`, the fog and baked-light inputs)
 and one `QA TEXPROBE <n> surface <i> ...` line per surface material of the centre cell's
 terrain. Measure, do not look: the lower 40% of the two `QA SHOT` frames from the same camera
 (`convert f<n>.png -gravity south -crop 100%x40%+0+0 -format "%[fx:mean.r] %[fx:mean.g]

@@ -3133,6 +3133,11 @@ func _clear_region_grid() -> void:
 	# counts as "already populated" and a zone change leaves a world with
 	# nobody in it -- which is exactly what a zone-changed render showed.
 	_npc_regions_done.clear()
+	# A zone change keeps the scenery templates (round 559): the same models
+	# recur across towns, and ObjectTemplateCache's cap bounds them. Their
+	# region uses are withdrawn, so they are the first the cap evicts.
+	if _object_templates != null:
+		_object_templates.forget_regions()
 	for child in get_children():
 		if child.name.begins_with("RealTerrain") or child.name.begins_with("RealMapObjects"):
 			remove_child(child)
@@ -3323,6 +3328,16 @@ func _maybe_stream_regions() -> void:
 		var objects_node := get_node_or_null("RealMapObjects" + suffix)
 		if objects_node != null:
 			objects_node.queue_free()
+		# The scenery templates only this region placed go with it (round
+		# 559); the key is the region's own `.o` path, as
+		# _try_load_real_map_objects registered it.
+		if _object_templates != null:
+			var region_x := _grid_origin_region.x + kdx
+			var region_y := _grid_origin_region.y + kdy
+			var freed := _object_templates.release_region("%d\\%d.o" % [region_x, region_y])
+			if freed > 0:
+				print("World3D: region %d/%d unloaded -- %d scenery templates only it placed freed, %d held" % [
+					region_x, region_y, freed, _object_templates.size()])
 		_loaded_cells.erase(key)
 
 ## Builds up to STREAM_CELLS_PER_FRAME queued cells a frame, so a boundary
@@ -3383,7 +3398,10 @@ func _drain_initial_load(region_started_ms: int) -> void:
 			_build_one_queued_cell()
 		_loading_screen.set_progress(1.0 - float(_load_queue.size()) / float(total))
 		await get_tree().process_frame
-	print("World3D: region grid loaded in %d ms" % (Time.get_ticks_msec() - region_started_ms))
+	# The same phase split the synchronous QA path prints, so a reconnect
+	# run's two entries can be compared phase by phase (round 559).
+	print("World3D: region grid loaded in %d ms (terrain %.0f, objects %.0f, npcs %.0f)" % [
+		Time.get_ticks_msec() - region_started_ms, _load_ms_terrain, _load_ms_objects, _load_ms_npcs])
 	_qa_print_entry_probe()
 	_loading_screen.set_progress(1.0)
 	_loading_screen.set_caption("Entering the world...")
@@ -3581,6 +3599,38 @@ var _animated: Array = []
 # template is never parented, so unloading a region frees the duplicates, not
 # it. See _try_spawn_region_npcs.
 var _npc_model_cache := {} # model path -> SkinnedBsrAssembler.AssembledCharacter
+
+## Scenery templates -- one per model path across every region this world
+## loads, owned and freed with the world (ObjectTemplateCache, round 559).
+## Built by _try_load_real_map_objects on first use; released per region by
+## the streaming unload (_maybe_stream_regions), kept across a zone change
+## (_clear_region_grid), freed in _exit_tree. Until round 559 these were a
+## per-call dictionary that was never freed: every region built its own
+## copies, and they outlived the region, the zone change and the instance.
+var _object_templates: ObjectTemplateCache
+## Decoded scenery textures, `.ddj` path -> Texture2D, shared by every
+## scenery material this world builds (ObjectLoader.build_godot_material's
+## texture_cache): two models naming one texture upload it once. Per
+## world, never static -- statics are what a reconnect keeps.
+var _object_textures := {}
+
+## ObjectTemplateCache's loader: one real .bsr/.cpd through ObjectLoader,
+## against this world's Data.pk2 and texture cache.
+func _load_object_template(model_path: String) -> Node3D:
+	return ObjectLoader.load_object(_open_pk2_if_set(), model_path, _object_textures)
+
+## What this world owns outside the tree goes when the world does (round
+## 559): the scenery templates and the decoded-texture cache. Without this
+## the templates outlived the instance -- a scripted reconnect doubled the
+## orphan nodes exactly (3,770 -> 7,540) and the exit report counted every
+## template's mesh, material, texture, body and shape as leaked (round
+## 558's run A2: 2468 / 2468 / 2469 / 2114 / 2114). The NPC templates in
+## _npc_model_cache are not freed here yet; that is map-reconnect-fix's,
+## which extends this.
+func _exit_tree() -> void:
+	if _object_templates != null:
+		print("World3D: left the tree -- %d scenery templates freed" % _object_templates.free_all())
+	_object_textures.clear()
 
 ## Registers an assembled character for idle animation, if it has one.
 ##
@@ -5747,10 +5797,19 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 	var skipped_unresolved := 0
 	# A real region repeats the same handful of real object types across
 	# dozens/hundreds of placements (see docs/PROGRESS.md -- a real 58-
-	# object region had only 4 distinct types) -- load each distinct real
-	# .bsr once and duplicate the built node for repeat placements, rather
-	# than re-parsing the same real .bms/.bmt/.ddj chain per placement.
-	var templates := {} # resolved .bsr path -> loaded template Node3D
+	# object region had only 4 distinct types), and neighbouring regions
+	# repeat each other's (the `cj_s.bsr` wall above is placed by five) --
+	# so each distinct real .bsr is built once PER WORLD and duplicated per
+	# placement, rather than re-parsing the same real .bms/.bmt/.ddj chain
+	# per placement or per region. Until round 559 the templates were a
+	# per-call dictionary that was never freed; ObjectTemplateCache has what
+	# that leaked and the rules it now keeps. The region's own `.o` path is
+	# its key into the cache, so the streaming unload can release what only
+	# this region placed.
+	if _object_templates == null:
+		_object_templates = ObjectTemplateCache.new(_load_object_template)
+	var models_here := {} # distinct model paths this region placed
+	var reused_here := 0 # of those, how many another region had already built
 	for placement in placements:
 		if loaded >= MAX_MAP_OBJECTS:
 			break
@@ -5759,15 +5818,14 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 			skipped_unresolved += 1
 			continue
 
-		var node: Node3D
-		if templates.has(entry.path):
-			node = templates[entry.path].duplicate()
-		else:
-			var template := ObjectLoader.load_object(data_archive, entry.path)
-			if template == null:
-				continue
-			templates[entry.path] = template
-			node = template.duplicate()
+		var model_key: String = entry.path.to_lower()
+		if not models_here.has(model_key):
+			models_here[model_key] = true
+			if _object_templates.has(model_key):
+				reused_here += 1
+		var node := _object_templates.instance(entry.path, mapo_path)
+		if node == null:
+			continue
 		# Real, absolute-within-its-region position -- see this function's
 		# own doc comment above (container placement) for how this is now
 		# known correct rather than an artificial recentering.
@@ -5789,8 +5847,9 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 		container.add_child(node)
 		loaded += 1
 
-	print("World3D: loaded %d/%d real map objects from %s (%d real .o + %d real .o2, %d unresolved type IDs skipped, %d distinct real models)" % [
-		loaded, placements.size(), mapo_path, region.objects.size(), o2_count, skipped_unresolved, templates.size()])
+	print("World3D: loaded %d/%d real map objects from %s (%d real .o + %d real .o2, %d unresolved type IDs skipped, %d distinct real models, %d templates reused, %d held for the world)" % [
+		loaded, placements.size(), mapo_path, region.objects.size(), o2_count, skipped_unresolved,
+		models_here.size(), reused_here, _object_templates.size()])
 
 ## Keeps only the `.o2` placements that belong to this region, by asking
 ## which region's ground each one actually stands on.
@@ -6211,8 +6270,9 @@ func _update_blob_shadow() -> void:
 ##                          buffer / video memory, object, node, orphan and
 ##                          resource counts, the viewport's debug_draw, this
 ##                          script's static caches and their cached nulls, the
-##                          baked-light and fog inputs -- and one `QA TEXPROBE
-##                          <n> surface <i> ...` line per surface material of
+##                          world's scenery template and texture caches (round
+##                          559), the baked-light and fog inputs -- and one
+##                          `QA TEXPROBE <n> surface <i> ...` line per surface material of
 ##                          the centre cell's terrain (_qa_print_entry_probe),
 ##                          so what a reconnect changed is a grep, not a look.
 ##
@@ -6707,7 +6767,9 @@ func _qa_reconnect(when: String) -> void:
 ## resource counts and static memory; the root viewport's debug_draw (the
 ## one cross-instance state that paints every surface white by itself --
 ## DEBUG_DRAW_LIGHTING, set only by debug_panel._on_draw_mode_selected);
-## this script's static caches with their cached-null count; and the
+## this script's static caches with their cached-null count; the world's
+## scenery template and texture caches (round 559: with them owned per
+## world, the orphan count no longer doubles between entries); and the
 ## baked-light and fog inputs the centre cell was built with. Then one
 ## `QA TEXPROBE <n> surface <i> ...` line per surface material of the
 ## centre cell's terrain (RealTerrain_<x>_<y>/SubPatch, built by
@@ -6726,7 +6788,7 @@ func _qa_print_entry_probe() -> void:
 		if tex == null:
 			nulls += 1
 	var env: Environment = world_environment.environment if world_environment != null else null
-	print("QA ENTRY %d loaded: frame %d tex_mem=%d buf_mem=%d video_mem=%d objects=%d nodes=%d orphans=%d resources=%d static_mem=%d debug_draw=%d cache_ground=%d cache_ground_nulls=%d cache_water_frames=%d water_attempted=%s env_table=%s light_ready=%s light_diffuse=%s terrain_ambient=%s fog_enabled=%s fog_color=%s fog_density=%s" % [
+	print("QA ENTRY %d loaded: frame %d tex_mem=%d buf_mem=%d video_mem=%d objects=%d nodes=%d orphans=%d resources=%d static_mem=%d debug_draw=%d cache_ground=%d cache_ground_nulls=%d cache_water_frames=%d water_attempted=%s env_table=%s light_ready=%s light_diffuse=%s terrain_ambient=%s fog_enabled=%s fog_color=%s fog_density=%s object_templates=%d object_textures=%d" % [
 		_qa_entry, Engine.get_frames_drawn(),
 		RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TEXTURE_MEM_USED),
 		RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_BUFFER_MEM_USED),
@@ -6742,7 +6804,8 @@ func _qa_print_entry_probe() -> void:
 		str(_env_light_ready), str(_env_light_diffuse), str(_env_terrain_ambient),
 		str(env.fog_enabled) if env != null else "no-env",
 		str(env.fog_light_color) if env != null else "no-env",
-		str(env.fog_density) if env != null else "no-env"])
+		str(env.fog_density) if env != null else "no-env",
+		_object_templates.size() if _object_templates != null else 0, _object_textures.size()])
 	if not _grid_has_origin:
 		print("QA TEXPROBE %d: no region grid origin -- nothing to probe" % _qa_entry)
 		return

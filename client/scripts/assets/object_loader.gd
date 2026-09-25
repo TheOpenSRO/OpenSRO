@@ -52,9 +52,17 @@ static func _missing(what: String) -> void:
 ## recurses back into this same function once per real sub-object and
 ## groups the results under one root Node3D. Returns null (and pushes an
 ## error) on failure.
-static func load_object(archive: Pk2Reader, path: String) -> Node3D:
+##
+## `texture_cache` (round 559): `.ddj` path -> the Texture2D decoded for
+## it, shared by every material built through the same dictionary, so two
+## models -- or two pieces of one -- that name the same texture decode and
+## upload it once. The caller owns it and its lifetime: World3D keeps one
+## per world (`_object_textures`, freed with the world). A call without one
+## gets a fresh dictionary that is dropped with the call: the pieces of
+## that one object share their textures, and nothing outlives the call.
+static func load_object(archive: Pk2Reader, path: String, texture_cache: Dictionary = {}) -> Node3D:
 	if path.to_lower().ends_with(".cpd"):
-		return _load_compound_object(archive, path)
+		return _load_compound_object(archive, path, texture_cache)
 
 	var bsr_path := path
 	var bsr_entry := find_file(archive, bsr_path)
@@ -153,7 +161,7 @@ static func load_object(archive: Pk2Reader, path: String) -> Node3D:
 			var layer_idx := _find_layer_by_name(material.layers, mesh.material_name)
 			if layer_idx == -1:
 				layer_idx = i if material.layers.size() == mesh_paths.size() else 0
-			var godot_material := build_godot_material(archive, obj.material_path, material.layers[layer_idx])
+			var godot_material := build_godot_material(archive, obj.material_path, material.layers[layer_idx], texture_cache)
 			if godot_material != null:
 				mesh_instance.material_override = godot_material
 
@@ -224,7 +232,7 @@ static func _add_object_navmesh_collision(
 ## absolute vertex data -- the same real convention load_object's own doc
 ## comment already establishes for .bsr sub-mesh pieces, now confirmed for
 ## .cpd too. See CPD_FORMAT.md.
-static func _load_compound_object(archive: Pk2Reader, cpd_path: String) -> Node3D:
+static func _load_compound_object(archive: Pk2Reader, cpd_path: String, texture_cache: Dictionary = {}) -> Node3D:
 	var cpd_entry := find_file(archive, cpd_path)
 	if cpd_entry == null:
 		_missing("%s not found in archive" % cpd_path)
@@ -238,7 +246,7 @@ static func _load_compound_object(archive: Pk2Reader, cpd_path: String) -> Node3
 
 	var loaded_count := 0
 	for sub_path in compound.bsr_paths:
-		var child := load_object(archive, sub_path)
+		var child := load_object(archive, sub_path, texture_cache)
 		if child == null:
 			continue
 		root.add_child(child)
@@ -338,7 +346,10 @@ static func _build_foliage_material(layer: BmtReader.Layer, tex: Texture2D) -> S
 	mat.set_shader_parameter("alpha_scissor", FOLIAGE_ALPHA_SCISSOR)
 	return mat
 
-static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: BmtReader.Layer) -> Material:
+## `texture_cache`: see load_object. Only a texture that decoded is
+## remembered, under its resolved path lower-cased (as find_file compares
+## names); a miss reports and is retried next time, as before.
+static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: BmtReader.Layer, texture_cache: Dictionary = {}) -> Material:
 	var mat := StandardMaterial3D.new()
 	mat.resource_name = layer.layer_name
 	# The layer's colours are a D3DMATERIAL9 -- ambient, diffuse, specular,
@@ -374,15 +385,26 @@ static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: Bm
 	else:
 		var dir := bmt_path.replace("\\", "/").get_base_dir()
 		tex_path = dir + "/" + layer.texture_path if dir != "" else layer.texture_path
-	var tex_entry := find_file(archive, tex_path)
-	if tex_entry == null:
-		_missing("texture %s (referenced by %s) not found in archive" % [tex_path, bmt_path])
-		return mat
+	var cache_key := tex_path.to_lower()
+	var godot_tex: Texture2D = null
+	var four_cc := ""
+	if texture_cache.has(cache_key):
+		var cached: Dictionary = texture_cache[cache_key]
+		godot_tex = cached["texture"]
+		four_cc = cached["four_cc"]
+	else:
+		var tex_entry := find_file(archive, tex_path)
+		if tex_entry == null:
+			_missing("texture %s (referenced by %s) not found in archive" % [tex_path, bmt_path])
+			return mat
 
-	var parsed_tex := DdjReader.parse(archive.read_file(tex_entry))
-	if parsed_tex == null:
-		return mat
-	var godot_tex := DdjReader.to_texture(parsed_tex)
+		var parsed_tex := DdjReader.parse(archive.read_file(tex_entry))
+		if parsed_tex == null:
+			return mat
+		godot_tex = DdjReader.to_texture(parsed_tex)
+		four_cc = parsed_tex.four_cc
+		if godot_tex != null:
+			texture_cache[cache_key] = {"texture": godot_tex, "four_cc": four_cc}
 	if godot_tex != null:
 		mat.albedo_texture = godot_tex
 		# **Corrected 2026-08-26** (see docs/WORLD_ISSUES.md): this used to
@@ -407,12 +429,12 @@ static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: Bm
 		var needs_cutout := false
 		if layer.unknown & LAYER_FLAG_MASK != 0:
 			needs_cutout = layer.unknown & LAYER_FLAG_ALPHA != 0
-		elif _ALPHA_FOURCCS.has(parsed_tex.four_cc):
-			if parsed_tex.four_cc == "DXT1":
+		elif _ALPHA_FOURCCS.has(four_cc):
+			if four_cc == "DXT1":
 				needs_cutout = _real_alpha_fraction(godot_tex) >= _DXT1_CUTOUT_MIN_ALPHA_FRACTION
 			else:
 				needs_cutout = _has_real_alpha_variance(godot_tex)
-		elif parsed_tex.four_cc == "":
+		elif four_cc == "":
 			needs_cutout = _alpha_is_binary_cutout(godot_tex)
 		# Says so whenever a texture that plainly carries transparency is
 		# nonetheless about to be drawn opaque, which is what a leaf card
@@ -427,7 +449,7 @@ static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: Bm
 			var fraction := _real_alpha_fraction(godot_tex)
 			if fraction > _QA_MATS_REPORT_MIN_ALPHA_FRACTION:
 				print("QA MAT: %s (%s, %s) is %.1f%% non-opaque, flags 0x%04x, no cutout" % [
-					layer.layer_name, tex_path.get_file(), parsed_tex.four_cc,
+					layer.layer_name, tex_path.get_file(), four_cc,
 					fraction * 100.0, layer.unknown])
 
 		if needs_cutout:

@@ -35581,3 +35581,162 @@ client's reconnect, so nothing there to change.
 
 **Deploy note.** Nothing to deploy: QA hooks, prints and two QA-only fixes (the sign-in's name
 check, the shots' wait for the drain). Not tag-worthy on its own.
+
+## One object template per .bsr per world, freed with the world: no re-parse per region and no leaked scenery templates (round 559)
+
+Client only, tag-worthy: faster region loads where models repeat (towns especially) and no GPU/RAM
+growth per region load, zone change or reconnect. Nothing on the wire, no flag, no server change.
+Visuals unchanged by construction -- a placement is still a `duplicate()` of the same built
+template -- and measured below against the before run's own frame. Every number is from the
+render box (2026-09-25, hardware GL through VirtualGL) or from this checkout.
+
+**Grounding, re-read for this round.**
+
+- `World3D._try_load_real_map_objects` at BASE (`6787d63`): `var templates := {} # resolved .bsr
+  path -> loaded template Node3D`, `node = templates[entry.path].duplicate()`, the template never
+  parented and never freed -- one dictionary per CALL, i.e. per region. Contrast `_npc_model_cache`,
+  instance-level and cross-region (and also never freed; not this round's). `ObjectLoader.load_object`
+  builds a `MeshInstance3D` plus a `StaticBody3D`/trimesh per piece with geometry, and
+  `build_godot_material` decoded and uploaded a fresh `ImageTexture` per material. `World3D.gd` had
+  no `_exit_tree`.
+- The leak, measured before this change on the identical command (run `before`, below): at exit
+  `2468 RID allocations of type 'N5GLES34MeshE' were leaked at exit`, 2468 Material, 2469 Texture,
+  2468 `RendererSceneCull::Instance`, 2114 `GodotBody3D`, 2114 `GodotShape3D`, 10,447 `leaked`
+  lines -- twice `/var/tmp/yawshot.log`'s single-entry 1234 / 1234 / 1235 / 1057 / 1057, which is
+  a radius-1, 9-cell run (the verifiers' correction, not radius 2). Orphan nodes 3,770 -> 7,540
+  across the reconnect, x2.000 (round 558's figure, reproduced).
+- Why freeing a template is safe for placed copies: `Node.duplicate()` copies the node tree and
+  shares its Resources (Mesh, Material, Texture) by reference, so a template's own cost is its
+  Nodes and their instance/body/shape RIDs. The census agrees: every leaked Body/Shape (2114) was
+  a template piece, and the meshes and textures still reported after this change, 354 and 355,
+  are exactly 2468 - 2114 and 2469 - 2114 -- the leaked pieces that had no `StaticBody3D`
+  (scenery pieces with geometry always get one, skinned NPC pieces never do), consistent with
+  `_npc_model_cache`'s templates, which `map-reconnect-fix` frees. Consistent with, not proven
+  from the census alone.
+- `ObjectLoader.find_file` compares names lower-cased, so the cache keys (model path, texture
+  path) are lower-cased too.
+- The 600-template cap is an own safety limit, disclosed in the code comment, not a game value: a
+  radius-1 Jangan grid holds 226 (below).
+
+**Change.**
+
+- `client/scripts/world/object_template_cache.gd` (new, `ObjectTemplateCache`, RefCounted):
+  `instance(path, region_key)` builds a template once per lower-cased path through a loader
+  Callable and returns a `duplicate()` per placement, recording the region as a user;
+  `release_region(key)` frees the templates whose last using region left; `forget_regions()` (a
+  zone change) withdraws every use but keeps the templates; `free_all()`; `NOTIFICATION_PREDELETE`
+  frees whatever is still held; a cap (`DEFAULT_MAX_TEMPLATES` 600) evicts the oldest, unused
+  first, and prints each eviction pass. A failed load is not cached, as before. Counters `loads`,
+  `reuses`, `evictions`.
+- `World3D`: `_object_templates` (built on first use with `_load_object_template`, the
+  ObjectLoader call against this world's Data.pk2) and `_object_textures` replace the per-call
+  dictionary; `_try_load_real_map_objects` keys placements by the region's own `.o` path;
+  `_maybe_stream_regions`' unload releases that key (`region x/y unloaded -- N scenery templates
+  only it placed freed, M held`); `_clear_region_grid` calls `forget_regions()`; the new
+  `_exit_tree` frees them all (`left the tree -- N scenery templates freed`) and clears the
+  texture cache. The load print gains `%d templates reused, %d held for the world`; its `distinct
+  real models` now counts every distinct model path the table resolved for the region, loaded or
+  not (BASE counted loaded templates only: 97\169 reads 63 here against 61 before, two of its
+  models fail to load). `QA ENTRY` gains `object_templates=%d object_textures=%d`; the
+  loading-screen drain's `region grid loaded` line gains the same `(terrain, objects, npcs)` split
+  the synchronous QA path already printed.
+- `ObjectLoader.load_object` / `_load_compound_object` / `build_godot_material` take an optional
+  `texture_cache: Dictionary` (`.ddj` path, lower-cased -> `{texture, four_cc}`), passed down the
+  compound recursion; only a decoded texture is remembered, a miss reports and retries as before. A
+  call without one gets a fresh dictionary per call (checked: two plain loads do not share), so the
+  pieces of one object share their textures and nothing outlives the call. `SkinnedBsrAssembler`,
+  `GroundItems` and `check_npc_models` call it as before.
+
+**Tests.**
+
+- NEGATIVE, proven with only the production files at BASE (`git stash push -u --
+  client/scripts/World3D.gd client/scripts/assets/object_loader.gd
+  client/scripts/world/object_template_cache.gd`; the new and changed tests shipped with
+  `remote_godot.sh sync`): `object_template_cache_test.gd` fails to parse (`Identifier
+  "ObjectTemplateCache" not declared in the current scope`), `object_loader_test.gd` fails to parse
+  (`Too many arguments for "load_object()" call. Expected at most 2 but received 3`); and the
+  `before` reconnect run below is the same command on that tree -- orphans x2.000, the 2468 / 2469 /
+  2114 census. Restored with `git stash pop`.
+- POSITIVE: `object_template_cache_test.gd` (new, 31 checks): one build for three placements over
+  two regions and three spellings; each placement its own copy, per-placement state never on the
+  template; a failed load asked again and not held; `release_region` frees only the template whose
+  last user left while placed copies survive; `forget_regions` keeps a template, the next zone
+  reuses it, its new last user frees it; `free_all`, and deleting the cache frees what it still
+  held; a cap of 2 evicts the unused before the older in-use, then the oldest, and a placed copy
+  survives its template's eviction. `object_loader_test.gd` gains the texture-cache case (four
+  pieces over two loads through one cache share one texture, held under `prim/mtrl/walltex.ddj`;
+  two plain loads give two). Both `ALL PASS` on the box; `remote_godot.sh check`: `checked 258
+  scripts and 5 scenes`, `ALL LOAD`; `remote_godot.sh tests`: `ran 86 suite(s), 0 failing` (85 before plus the new one).
+- Two defects the first positive run caught, both fixed before the final live run: (1)
+  `free_all()` from `_notification(NOTIFICATION_PREDELETE)` on a RefCounted is `Attempt to call
+  function 'free_all' in base 'null instance'` -- at its predelete the object has no reference
+  left, so `self` as a call base is null; the freeing is inlined there (members and the
+  templates' own methods are reachable), and the run `after` shows the error twice where `after2`
+  shows none. (2) A `replace_all` of `parsed_tex.four_cc` -> `four_cc` also rewrote the new
+  assignment into `four_cc = four_cc`, so the flag-less fallback treated every texture as
+  uncompressed; `object_loader_test.gd`'s existing DXT3 case (`real DXT3 alpha yields the real
+  cutout foliage material`) failed and named it.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...` green before and after the doc
+  edits.
+
+**Live (render box).** Round 558's command (`qa_shot.sh --server --region '97\168.m' --radius 1
+--frames 400 --reconnect 200 --shots 'square@1002,1020:0,-25,700'`, round 558's server binary --
+`server/` is unchanged since `504b68f`), `before` with production at BASE, `after2` with the code
+committed here (`after`, the same code before the two fixes, gave byte-identical memory, orphan and
+census numbers plus the two predelete SCRIPT ERRORs). 400 frames, 0 empty, in each. Logs under
+`/var/tmp/r559/` with `run.sh` and `measure.sh`; the frames were deleted after measuring.
+
+| | before, entry 1 | before, entry 2 | after2, entry 1 | after2, entry 2 |
+|---|---|---|---|---|
+| texture memory (MB) | 139.96 | 237.58 (x1.70) | 78.38 | 92.49 (x1.18) |
+| video memory (MB) | 186.41 | 294.20 (x1.58) | 121.95 | 137.78 (x1.13) |
+| buffer memory (MB) | 46.45 | 56.62 | 43.57 | 45.29 |
+| static memory (MB) | 965.7 | 1,091.0 | 922.0 | 925.1 |
+| orphan nodes | 3,770 | 7,540 (x2.000) | 2,757 | 2,981 (x1.08) |
+| object templates held / textures cached | -- (358 built per entry) | -- | 226 / 365 | 226 / 365 |
+| `region grid loaded` (ms) | 16,963 | 16,978 | 15,665 (objects 2,260) | 14,656 (objects 2,104) |
+| `SCRIPT ERROR` | 0 | 0 | 0 | 0 |
+
+- Exit census, before -> after2: Mesh 2468 -> 354, Material 2468 -> 354, Texture 2469 -> 355,
+  SceneCull Instance 2468 -> 354, GodotBody3D 2114 -> not reported, GodotShape3D 2114 -> not
+  reported, Shader 2 -> 2; `leaked` lines 10,447 -> 1,763. The relative drop is 2,114 per type,
+  against 226 distinct templates held per entry -- the plan's "at least the number of distinct
+  templates" -- and entry 2 is no longer about double entry 1 on any line. The plan's absolute
+  `< 50` per type was never a post-fix measurement and is not claimed: the residual is
+  `_npc_model_cache`'s templates and the static caches, `map-reconnect-fix`'s.
+- Templates: the nine cells' distinct model counts sum to 358 per entry (69, 63, 20, 49, 63, 14,
+  37, 13, 32); 132 of those placements reused a neighbour's template (`reused` 0, 23, 5, 17, 27,
+  9, 22, 9, 20 in load order), so 226 are built per entry and `left the tree -- 226 scenery
+  templates freed` prints once per instance.
+- Timing: the whole grid load is 1.3 s / 2.3 s faster per entry; the `objects` phase of the eight
+  neighbour cells is 2.3 s / 2.1 s per entry after. BASE's drain print had no phase split, so the
+  before phase figure is not in its log -- the total is the comparison; the centre cell is timed by
+  neither.
+- Visuals, measured: the `square` shot's lower-40% mean is (0.271501, 0.260978, 0.249704) on pass
+  1 and (0.271502, 0.260978, 0.249705) on pass 2 in BOTH runs (round 558's figures); full-frame
+  means agree to the fourth decimal; the normalised RMSE between the before and after2 frames is
+  0.0024 (pass 1) and 0.0070 (pass 2), smaller than the 0.0121 between after2's own two passes
+  (moving NPCs), so the shared textures and templates draw the same picture.
+- Entry-1 texture memory falls 44% (139.96 -> 78.38 MB) before any reconnect: 365 textures decoded
+  once per world instead of once per material, and 226 templates instead of 358.
+
+**Two facts about the box, for whoever runs next.** (1) When this round started,
+`/var/tmp/godot-lock/lock` was held by an orphaned re-run of round 558's command (`rev558`, parent
+PID 1, no live ssh session), launched as `flock <lock> run.sh ...` around a `qa_shot.sh` that
+re-executes itself under the same `flock` unless `QA_SHOT_LOCKED` is set: the inner flock waits on
+its own parent for ever and no Godot ever starts (0 Godot/Xvfb processes, a 0-byte log after nine
+minutes). The batch NOTE's recipe, `flock /var/tmp/godot-lock/lock env SERVER_BIN=... qa_shot.sh
+...`, is that deadlock -- call `qa_shot.sh` directly, it takes the lock itself; `remote_godot.sh`
+takes it too. Ending the four orphaned processes was denied to this lane, so they are still there
+(PIDs 1203107 / 1203108 / 1203110 / 1203113); this round ran under a lane-local lock
+(`GODOT_LOCK=/var/tmp/r559/lock`, the env override both scripts document) after checking that no
+Godot or Xvfb was running, and a human should end them. (2) Not a fix for anything the tester saw:
+this round removes resource growth; round 558's white ground was not reproduced on the box and the
+tester's log still decides.
+
+**Records.** This entry; `docs/WORLD_ISSUES.md`'s five-hundred-and-fifty-ninth round;
+`client/tools/README.md` (the `QA ENTRY` list); `World3D.gd`'s QA header. `docs/SYSTEMS.md` has no
+row for world loading, scenery or the client's reconnect (round 558 checked), so nothing there to
+change.
+
+**Deploy note.** Client release, tag-worthy; no server change.
