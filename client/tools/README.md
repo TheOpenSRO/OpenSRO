@@ -106,14 +106,14 @@ cost is read from its own line. Three lines carry it:
   or touches the tree), and the terrain list has two shapes:
   - a cell built on the main thread -- the grid's centre, always, and every cell under
     `SRREVAMP_SYNC_LOAD=1` -- lists all three halves in order: `terrain T [tiletable, objindex,
-    snapshot, read, parse, env, lightmap, textures, mesh, faces, navmesh, walls, navgraph,
+    snapshot, read, parse, env, lightmap, textures, mesh, heights, navmesh, walls, navgraph,
     images, upload, setup, collision, wallshape, water, graph]` (`env` the centre's alone;
     `tiletable` and `objindex` are cached after the first call, so only the centre's are
     non-zero);
   - a streamed neighbour (the default) lists the commit alone as its terrain and the prepare after
     the groups, off the main thread: `terrain T [images, upload, setup, collision, wallshape,
     water, graph], objects O [...], npcs P [...]; off the main thread: terrain P [read, parse,
-    lightmap, textures, mesh, faces, navmesh, walls, navgraph]`. The off-thread figure is the
+    lightmap, textures, mesh, heights, navmesh, walls, navgraph]`. The off-thread figure is the
     task's own time and is **never** in `built in`, in a frame's work or in the `terrain` group
     totals; the job's snapshot ran between cells and is in no cell.
 
@@ -133,13 +133,16 @@ cost is read from its own line. Three lines carry it:
 
   What the laps are: `read`/`parse` the `.m`; `lightmap` the `.t` decoded to an Image; `textures`
   the ground tiles this world does not hold yet decoded to Images; `mesh` the surfaces as arrays;
-  `faces` the collision face list (`MapmTerrainBuilder.surface_faces`, what
-  `create_trimesh_shape()` used to read back out of the mesh); `navmesh` the `.nvm` read and
+  `heights` the collision's data: the region's 97x97 height grid (`TerrainCollision.heights_from_region`,
+  round 567), or under `SRREVAMP_TERRAIN_TRIMESH=1` the trimesh's face list
+  (`MapmTerrainBuilder.surface_faces`, what `create_trimesh_shape()` used to read back out of the
+  mesh; the lap was `faces` in rounds 565-566); `navmesh` the `.nvm` read and
   parsed; `walls` the wall triangles; `navgraph` the object navigation meshes and
   `NavGraph.build`; then `images` the ImageTexture uploads; `upload` the ArrayMesh and its
   materials; `setup` the group, the untextured material, the placement and the nodes (round 564's
-  lap); `collision` the `ConcavePolygonShape3D.set_faces` alone (round 156's bottleneck, now
-  without the readback); `wallshape` the walls' shape and body; `water`; `graph` the walkable
+  lap); `collision` the shape alone -- since round 567 the `HeightMapShape3D` (`TerrainCollision.make_shape`),
+  until then and under `SRREVAMP_TERRAIN_TRIMESH=1` the `ConcavePolygonShape3D.set_faces` (round
+  156's bottleneck, before round 160's archive fix); `wallshape` the walls' shape and body; `water`; `graph` the walkable
   graph's registration. The objects': `snapshot` the job's; `parse` the `.o` and `.o2` read,
   parsed, merged and de-duplicated; `own` the placement-ownership test, whose neighbour heightmaps
   it reads and parses under Pk2Reader's lock when the grid does not hold them; `models`
@@ -355,6 +358,45 @@ a fraction, and 6 of those gave two values across the readback's own consults wh
 gives one -- the readback is the unsteady side (none is near a threshold: 0.05 cuts, 0.20
 reports).
 
+AFTER round 567 (a region's terrain collision is a `HeightMapShape3D` over its height grid,
+`TerrainCollision`, instead of a `ConcavePolygonShape3D` of the mesh's triangles), against BASE
+(round 566's code) re-measured the same day on the same box, and the same code with
+`SRREVAMP_TERRAIN_TRIMESH=1` (the old trimesh, for A/B); `docs/RE_COMPLETION.md`, round 567, has
+the full lines, the per-phase sums and the ground probes. The streamed-cell sums are over the
+cells' own lines (the entry's 24 neighbours, the crossing run's 29 streamed cells):
+
+```
+(a) BASE   cell 97/168 built in 5035 ms at frame 14 (terrain 1563 [.. faces 7 .. collision 27 ..])
+           region grid loaded in 18042 ms (terrain 2753, objects 2248, npcs 2448) at frame 30
+               -- 25 cells 7449 ms, 10593 ms outside the cells over 17 awaited frames
+           longest work frame 5095 ms at frame 14 (cell 97/168); p95 950 ms; 9 over 100 ms
+           24 streamed cells: built in 2399 ms; terrain commit 1177, collision 657 (23-37 each)
+    567    cell 97/168 built in 5011 ms at frame 13 (terrain 1528 [.. heights 3 .. collision 0 ..])
+           region grid loaded in 17299 ms (terrain 2054, objects 2283, npcs 2421) at frame 29
+               -- 25 cells 6757 ms, 10542 ms outside the cells over 17 awaited frames
+           longest work frame 5074 ms at frame 13 (cell 97/168); p95 914 ms; 5 over 100 ms
+           24 streamed cells: built in 1735 ms; terrain commit 513, collision 0 (every cell)
+    TRI    region grid loaded in 18048 ms (terrain 2739, ...); p95 957 ms; 9 over 100 ms
+           24 streamed cells: built in 2345 ms; terrain commit 1160, collision 656
+(b) BASE   95..99/165: 50, 45, 85, 49, 49 ms at frames 161-165 (collision 24, 24, 25, 26, 27)
+           longest work frame 106 ms at frame 163 (cell 98/165) over 569 frames; 1 over 100 ms
+           29 streamed cells: built in 2617 ms; terrain commit 1367, collision 791
+    567    95..99/165: 29, 21, 60, 23, 22 ms at frames 162-166 (collision 0 each)
+           longest work frame 86 ms at frame 164 (cell 98/165) over 569 frames; 0 over 100 ms
+           29 streamed cells: built in 1868 ms; terrain commit 584, collision 0
+    TRI    95..99/165: 49, 45, 85, 48, 49 ms (collision 24-27); longest work frame 113 ms at
+               frame 163 (cell 98/165); 1 over 100 ms
+```
+
+The `heights` lap is the prepare's (off the main thread for a streamed cell: 86 ms over the
+entry's 24 against `faces`' 193). The heightfield's `collision` lap reads 0 on every cell line --
+whole-ms truncation, so under 1 ms a cell. `SRREVAMP_QA_GROUND_RAYS=n` (World3D.gd's QA header)
+is the regression probe for the ground itself: on an n x n lattice of every loaded region it fires
+vertical and slanted rays at the terrain collision and holds each hit to the drawn mesh's own
+triangle, sweeps the camera arm's sphere down (`cast_motion`, the camera spring's query) and moves
+the player's own body down (`body_test_motion`, move_and_slide's), printing `QA GROUND` lines to
+diff between a run and a `SRREVAMP_TERRAIN_TRIMESH=1` run.
+
 Rules the off-thread loading items are held to, kept beside the benchmark so the two travel
 together. Round 565 (terrain) implements them, and round 566 (objects) holds to them too.
 
@@ -410,7 +452,8 @@ together. Round 565 (terrain) implements them, and round 566 (objects) holds to 
 and (round 566) objects are prepared and committed on the main thread on the pre-round-565
 schedule (above), for a tester to fall back to or compare against. It restores the SCHEDULE
 only, not the old code: the terrain still runs `_terrain_prepare` then `_terrain_commit` with
-the faces `MapmTerrainBuilder.surface_faces` builds, and the objects `_objects_prepare` then
+the collision round 567 gives it (the heightfield; the faces `MapmTerrainBuilder.surface_faces`
+builds under `SRREVAMP_TERRAIN_TRIMESH=1`), and the objects `_objects_prepare` then
 `_objects_commit`, through the split `ObjectLoader` (`prepare_object` then `commit_object`) and
 the trimesh faces `ObjectLoader._piece_faces` builds -- back to back on the main thread. The
 grid's centre is built on the main thread either way -- its height anchors every neighbour and

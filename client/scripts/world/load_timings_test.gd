@@ -149,7 +149,7 @@ func _test_end_cell_notes_the_frame() -> void:
 ## truncation and the little outside them: the path check before the job,
 ## the log prints at the commit's start and its closing print.
 const TERRAIN_JOB_LAPS := ["tiletable", "objindex", "snapshot"]
-const TERRAIN_PREPARE_LAPS := ["read", "parse", "lightmap", "textures", "mesh", "faces", "navmesh", "walls", "navgraph"]
+const TERRAIN_PREPARE_LAPS := ["read", "parse", "lightmap", "textures", "mesh", "heights", "navmesh", "walls", "navgraph"]
 const TERRAIN_COMMIT_LAPS := ["images", "upload", "setup", "collision", "wallshape", "water", "graph"]
 
 func _source_of(path: String) -> String:

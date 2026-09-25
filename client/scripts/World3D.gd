@@ -16,10 +16,12 @@ extends Node3D
 ## -- .mapm's grid width (17) is now a real, mechanistically confirmed
 ## constant (see docs/protocol/MAPM_FORMAT.md and MapmTerrainBuilder), not
 ## the unresolved blocker it used to be. The real collision shape is a
-## ConcavePolygonShape3D built directly from the same real triangle data as
-## the visual mesh (Mesh.create_trimesh_shape() -- no separate collision
-## geometry to keep in sync), so the player physically walks on the actual
-## real terrain surface, not a flat box, whenever real terrain data loads.
+## HeightMapShape3D over the same real 97x97 height grid the visual mesh is
+## built from, split into the mesh's own triangles (TerrainCollision, round
+## 567; a ConcavePolygonShape3D of the mesh's triangles until then, still
+## built under SRREVAMP_TERRAIN_TRIMESH=1 for A/B), so the player physically
+## walks on the actual real terrain surface, not a flat box, whenever real
+## terrain data loads.
 ## The terrain's real world position/scale relative to a player's actual
 ## spawn coordinate is still unconfirmed -- it's placed near the player for
 ## visibility, not at a confirmed real-world offset. Other entities are
@@ -84,7 +86,11 @@ extends Node3D
 ## thread on the pre-round-565 schedule instead of preparing them on
 ## WorkerThreadPool tasks (_threaded_load, _terrain_prepare,
 ## _objects_prepare) -- the schedule only: both still run their split
-## prepare and commit halves, back to back. Any variable left unset is skipped gracefully (a printed hint, not an error)
+## prepare and commit halves, back to back. SRREVAMP_TERRAIN_TRIMESH=1 (round
+## 567, kept for A/B) gives each region's terrain the trimesh collision it had
+## until round 567 -- a ConcavePolygonShape3D of every triangle of the drawn
+## mesh (MapmTerrainBuilder.surface_faces) -- instead of the heightfield
+## (TerrainCollision). Any variable left unset is skipped gracefully (a printed hint, not an error)
 ## -- this scene works fine with none of them set, same as always.
 ##
 ## The server now has a real multi-zone concept: OpChangeZone/
@@ -3610,7 +3616,9 @@ func _outside_stream_window(cell: Dictionary, margin: int) -> bool:
 ## STREAM_CELLS_PER_FRAME from the same queue, and one a frame in play.
 ## It restores the SCHEDULE only, not the old code: the terrain still goes
 ## through _terrain_job / _terrain_prepare / _terrain_commit and the
-## collision faces MapmTerrainBuilder.surface_faces builds, and the objects
+## collision round 567 gives it (the heightfield, TerrainCollision; the faces
+## MapmTerrainBuilder.surface_faces builds under SRREVAMP_TERRAIN_TRIMESH=1),
+## and the objects
 ## through _objects_job / _objects_prepare / _objects_commit, the split
 ## ObjectLoader (prepare_object then commit_object) and the trimesh faces
 ## ObjectLoader._piece_faces builds -- each half run back to back on the
@@ -5041,8 +5049,10 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 ##
 ## A region's terrain is built in two halves. The PREPARE half -- this
 ## function: the `.m` read and parsed, the `.t` lightmap and the ground tiles
-## decoded to Images, the mesh surfaces and the collision faces as arrays
-## (MapmTerrainBuilder.build_full_region_surfaces_textured, surface_faces),
+## decoded to Images, the mesh surfaces and the collision's height grid as
+## arrays (MapmTerrainBuilder.build_full_region_surfaces_textured,
+## TerrainCollision.heights_from_region -- round 567; the trimesh's faces,
+## surface_faces, until then and under SRREVAMP_TERRAIN_TRIMESH=1),
 ## the navmesh read and parsed, the wall triangles and the walkable graph
 ## (NavGraph.build) -- produces plain data, and a streamed cell runs it on a
 ## WorkerThreadPool task (_dispatch_cell). The COMMIT half -- _terrain_commit:
@@ -5124,7 +5134,8 @@ static func _terrain_prepare_read(job: Dictionary) -> bool:
 	return true
 
 ## The prepare's second half, over job["region"]: the lightmap, the ground
-## tiles, the mesh surfaces, the collision faces, the navmesh, the wall
+## tiles, the mesh surfaces, the collision's height grid (or, under
+## SRREVAMP_TERRAIN_TRIMESH=1, the trimesh's faces), the navmesh, the wall
 ## triangles and the walkable graph. Sets job["prepared"] last, so a commit
 ## can tell a task that finished from one a script error ended.
 static func _terrain_prepare_build(job: Dictionary) -> void:
@@ -5184,10 +5195,17 @@ static func _terrain_prepare_build(job: Dictionary) -> void:
 		return
 	job["surfaces"] = surfaces
 	job["near_height"] = MapmTerrainBuilder.near_row_middle_height(region)
-	# The trimesh's faces, as create_trimesh_shape() would have read them
-	# back out of the mesh (MapmTerrainBuilder.surface_faces).
-	job["faces"] = MapmTerrainBuilder.surface_faces(surfaces)
-	sw = _job_lap(job, "faces", sw)
+	# The collision's data (round 567): the region's height grid, which the
+	# commit hands a HeightMapShape3D (TerrainCollision -- the mesh's own
+	# grid and triangles). Under SRREVAMP_TERRAIN_TRIMESH=1 (A/B), the
+	# trimesh's faces instead, as create_trimesh_shape() would have read them
+	# back out of the mesh (MapmTerrainBuilder.surface_faces; `faces` was
+	# this lap's name until round 567).
+	if job.get("trimesh", false):
+		job["faces"] = MapmTerrainBuilder.surface_faces(surfaces)
+	else:
+		job["heights"] = TerrainCollision.heights_from_region(region)
+	sw = _job_lap(job, "heights", sw)
 
 	if not job["navmesh_cached"] and int(job["navmesh_key"]) >= 0:
 		job["navmesh"] = _read_region_navmesh(job["data_pk2"], job["navmesh_key"], job["log"])
@@ -5251,6 +5269,10 @@ func _terrain_job(mapm_path: String, texture_override: String, world_offset: Vec
 		"navmesh_cached": navmesh_cached,
 		"navmesh": navmesh,
 		"collisions": _grid.object_collision_cache.duplicate(),
+		# The terrain's collision shape: the heightfield (round 567), or the
+		# pre-567 trimesh for A/B -- read here, on the main thread, because
+		# the prepare is static and may run on a task.
+		"trimesh": OS.get_environment("SRREVAMP_TERRAIN_TRIMESH") == "1",
 		"threaded": false,
 		"dispatched_frame": -1,
 		"laps": [],
@@ -5474,16 +5496,35 @@ func _terrain_commit(job: Dictionary) -> float:
 	# `setup` lap (round 564's, which named the span between the mesh and the
 	# trimesh; a bare stopwatch reset left it in no lap until then).
 	sw = _load_timings.lap("terrain", "setup", sw)
-	# The collision shape from the faces the prepare built -- the same face
-	# list create_trimesh_shape() read back out of the mesh until round 565
-	# (MapmTerrainBuilder.surface_faces; the builder's suite compares the
-	# two). Round 156 named the trimesh the load's largest single cost: its
-	# own lap, with nothing else in it.
-	var faces: PackedVector3Array = job["faces"]
-	if not faces.is_empty():
-		var shape := ConcavePolygonShape3D.new()
-		shape.set_faces(faces)
-		patch_shape.shape = shape
+	# The collision shape: its own lap, with nothing else in it. Since round
+	# 567 a HeightMapShape3D over the region's height grid, which the prepare
+	# laid out (TerrainCollision: the mesh's own vertices and triangles, the
+	# shape's transform in this group's local space). Until then -- and under
+	# SRREVAMP_TERRAIN_TRIMESH=1, kept for A/B -- a ConcavePolygonShape3D of
+	# the faces the prepare built, the list create_trimesh_shape() read back
+	# out of the mesh until round 565 (MapmTerrainBuilder.surface_faces; the
+	# builder's suite compares the two), whose BVH build was this lap: 25-33
+	# ms of a streamed cell's 39-51 ms terrain commit after round 565, 27-30 %
+	# of the streamed cells' main-thread time after round 566. The
+	# heightfield's reads 0 ms on every cell line of round 567's benchmark
+	# (whole-ms truncation: under 1 ms a cell; docs/RE_COMPLETION.md, round
+	# 567).
+	# Round 156 named the trimesh the load's largest single cost -- before
+	# round 160's archive fix, which took most of the terrain phase.
+	var faces: PackedVector3Array = job.get("faces", PackedVector3Array())
+	var heights: PackedFloat32Array = job.get("heights", PackedFloat32Array())
+	var collision_kind := "none"
+	if job.get("trimesh", false):
+		if not faces.is_empty():
+			var shape := ConcavePolygonShape3D.new()
+			shape.set_faces(faces)
+			patch_shape.shape = shape
+			collision_kind = "trimesh, %d faces" % (faces.size() / 3)
+	else:
+		patch_shape.shape = TerrainCollision.make_shape(heights)
+		patch_shape.transform = TerrainCollision.shape_transform()
+		if patch_shape.shape != null:
+			collision_kind = "heightfield %dx%d" % [TerrainCollision.SIDE, TerrainCollision.SIDE]
 	sw = _load_timings.lap("terrain", "collision", sw)
 	patch_body.add_child(patch_shape)
 	var single_patch := MeshInstance3D.new()
@@ -5518,8 +5559,8 @@ func _terrain_commit(job: Dictionary) -> float:
 	if job["snap_player"]:
 		call_deferred("_snap_player_onto_terrain")
 
-	print("World3D: loaded real terrain from %s (%d real blocks, %d rows stitched, real collision shape built, %d faces) at frame %d%s" % [
-		mapm_path, region.blocks.size(), terrain_mesh.get_aabb().size.z / MapmTerrainBuilder.TILE_SIZE + 1, faces.size() / 3,
+	print("World3D: loaded real terrain from %s (%d real blocks, %d rows stitched, real collision shape built: %s) at frame %d%s" % [
+		mapm_path, region.blocks.size(), terrain_mesh.get_aabb().size.z / MapmTerrainBuilder.TILE_SIZE + 1, collision_kind,
 		Engine.get_frames_drawn(),
 		" -- prepared off the main thread, dispatched at frame %d" % job["dispatched_frame"] if job["threaded"] else ""])
 	return near_height
@@ -7401,6 +7442,13 @@ func _update_blob_shadow() -> void:
 ##                          in; `rx/ry@x,z` asks any loaded region, which is
 ##                          how a real npcpos spawn point (a region id plus
 ##                          a local position) gets a world coordinate
+##   SRREVAMP_QA_GROUND_RAYS=n  (round 567) fire rays and sweep the camera
+##                          arm's sphere and the player's capsule at the
+##                          terrain collision on an n x n lattice of every
+##                          loaded region, and hold each ray's hit against the
+##                          drawn mesh's own triangle (`QA GROUND` lines; see
+##                          _qa_ground_rays_report) -- the heightfield against
+##                          SRREVAMP_TERRAIN_TRIMESH=1's trimesh, by number
 ##   SRREVAMP_QA_HIDE=a,b    hide every mesh whose own real mesh name
 ##                          contains one of these fragments
 ##   SRREVAMP_QA_LOOK=1     print which real placed objects the camera is
@@ -7460,6 +7508,10 @@ func _update_blob_shadow() -> void:
 ## built -- the numbers of client/tools/README.md's "Load benchmark".
 var _qa_done := false
 var _qa_tick := 0
+## SRREVAMP_QA_GROUND_RAYS's lattice size once armed (0: not armed, or
+## fired), and the ticks it has waited with the grid loaded (round 567).
+var _qa_ground_rays := 0
+var _qa_ground_rays_waited := 0
 ## SRREVAMP_QA_ENTRY as this instance read it in _ready: 0 outside a reconnect
 ## run; the world entry number (1, 2, ...) inside one.
 var _qa_entry := 0
@@ -7604,6 +7656,10 @@ func _qa_step() -> void:
 		var columns := OS.get_environment("SRREVAMP_QA_COLUMNS")
 		if columns != "":
 			_qa_columns_report(columns)
+		var ground_rays := OS.get_environment("SRREVAMP_QA_GROUND_RAYS")
+		if ground_rays != "":
+			# Armed here, fired below once the grid is in.
+			_qa_ground_rays = maxi(int(ground_rays), 1)
 		var qa_zone := OS.get_environment("SRREVAMP_QA_ZONE")
 		if qa_zone != "":
 			var target := _split_zone_target(qa_zone)
@@ -7823,6 +7879,20 @@ func _qa_step() -> void:
 		# after this tick's increment, and round 558's line read
 		# `tick 201 (200, ...)`.
 		call_deferred("_qa_reconnect", reconnect, _qa_tick)
+
+	# SRREVAMP_QA_GROUND_RAYS fires ten ticks after the grid is in -- nothing
+	# queued or preparing and the centre region's group in the tree -- so
+	# every shape the entry built is in the physics space and the deferred
+	# ground snap has run. A run signed in to a server builds the grid only
+	# after the sign-in, frames after this block first ran (round 567's first
+	# entry pair fired on an empty world on a fixed ten-frame timer).
+	if _qa_ground_rays > 0 and _load_queue.is_empty() and _cell_jobs.is_empty() \
+			and has_node("RealTerrain_%d_%d" % [_grid_origin_region.x, _grid_origin_region.y]):
+		_qa_ground_rays_waited += 1
+		if _qa_ground_rays_waited >= 10:
+			var samples := _qa_ground_rays
+			_qa_ground_rays = 0
+			_qa_ground_rays_report(samples)
 
 	_qa_tick += 1
 	# The load summary every ten seconds of game time (round 561): the window
@@ -8898,6 +8968,177 @@ static func _vec_min(a: Vector3, b: Vector3) -> Vector3:
 
 static func _vec_max(a: Vector3, b: Vector3) -> Vector3:
 	return Vector3(maxf(a.x, b.x), maxf(a.y, b.y), maxf(a.z, b.z))
+
+## Where in a quad SRREVAMP_QA_GROUND_RAYS aims, as a fraction of a tile on
+## local x and z: off the grid lines and off both of the quad's diagonals,
+## where a shape that split the quad the other way from the mesh would be off
+## by 0.45 of the quad's non-planarity (h00 + h11 - h10 - h01). A probe
+## placement, not a game value.
+const QA_GROUND_IN_QUAD := Vector2(0.45, 0.55)
+## How far above the drawn surface a swept shape (the arm's sphere's centre,
+## the player body's feet) starts, and how far it sweeps down: 4.2.2's
+## cast_motion and body_test_motion bisect the motion eight times
+## (servers/physics_3d/godot_space_3d.cpp), so their answer is good to about
+## 1/256 of the sweep -- 0.23 unit over 60. Probe placement, not game values.
+const QA_GROUND_SWEEP_START := 30.0
+const QA_GROUND_SWEEP := 60.0
+
+## SRREVAMP_QA_GROUND_RAYS=n (round 567): the terrain's collision measured
+## against the ground that is DRAWN, so the heightfield (TerrainCollision)
+## and the trimesh it replaced (SRREVAMP_TERRAIN_TRIMESH=1) can be compared
+## by number rather than by picture. For every loaded region, on an n x n
+## lattice of region-local columns each inside a quad (QA_GROUND_IN_QUAD),
+## four probes against the terrain alone (TERRAIN_ONLY_COLLISION_MASK):
+## a vertical ray; a slanted ray (region-local direction (-1, -1, -0.6), about
+## 41 degrees below the horizontal) through the column's drawn surface
+## point; the camera arm's own shape swept straight down onto it with
+## cast_motion (the query the camera spring makes); and the player's own body
+## moved straight down onto it with PhysicsServer3D.body_test_motion (the
+## query move_and_slide makes, in _physics_process's fallback when no
+## walkable graph covers the player). A ray's hit is
+## held against the drawn mesh's own triangle under it
+## (TerrainCollision.mesh_height_at over the region's parsed heightmap); the
+## sweeps have no drawn answer and are for comparing two runs. Per region a
+## `QA GROUND <rx>/<ry>` summary (with how many of its probed quads are
+## non-planar enough that the other diagonal would be off the drawn ground by
+## over 0.5 there, and the steepest quad edge, rise over run -- what makes the
+## lattice a test of the diagonal) and a `QA GROUND VALUES <rx>/<ry>` line
+## (every probe's number in lattice order: the vertical hit's local y, the
+## oblique hit's distance along its ray, how far the sphere and the body
+## travelled before they touched -- `sphere=` and `body=`; `miss` for
+## none), and first `QA GROUND SNAP`: the ray
+## _snap_player_onto_terrain fires, at the player's column.
+func _qa_ground_rays_report(samples: int) -> void:
+	var space := get_world_3d().direct_space_state
+	var snap := PhysicsRayQueryParameters3D.create(
+		player.position + Vector3(0.0, 1000.0, 0.0), player.position + Vector3(0.0, -1000.0, 0.0))
+	snap.exclude = [player.get_rid()]
+	snap.collision_mask = TERRAIN_ONLY_COLLISION_MASK
+	var snap_hit := space.intersect_ray(snap)
+	var under := _nav_graph_for(player.global_position)
+	if snap_hit.is_empty() or under.is_empty():
+		print("QA GROUND SNAP: the snap's ray finds no terrain under the player at world %s" % str(player.global_position))
+	else:
+		var group_under: Node3D = under[1]
+		var local_hit := group_under.to_local(snap_hit.position as Vector3)
+		var local_feet := group_under.to_local(player.global_position)
+		print("QA GROUND SNAP: %s local (%.2f, %.2f): the snap's ray lands at local y %.3f; the player stands at %.3f" % [
+			String(group_under.name).trim_prefix("RealTerrain_").replace("_", "/"), local_feet.x, local_feet.z,
+			local_hit.y, local_feet.y])
+	var groups: Array = []
+	for child in get_children():
+		if child is Node3D and String(child.name).begins_with("RealTerrain_"):
+			groups.append(child)
+	groups.sort_custom(func(a, b): return String(a.name) < String(b.name))
+	var sphere: Shape3D = camera_arm.shape if camera_arm.shape != null else SphereShape3D.new()
+	# body_test_motion takes the body's own mask: the terrain's alone while
+	# the probe runs, restored at its end.
+	var player_mask := player.collision_mask
+	player.collision_mask = TERRAIN_ONLY_COLLISION_MASK
+	var tile := MapmTerrainBuilder.TILE_SIZE
+	var tiles_per_step := REGION_SPAN / tile / float(samples)
+	var oblique := Vector3(-1.0, -1.0, -0.6).normalized()
+	for group in groups:
+		var g: Node3D = group
+		var parts := String(g.name).trim_prefix("RealTerrain_").split("_")
+		var region_name := "%s/%s" % [parts[0], parts[1]] if parts.size() == 2 else String(g.name)
+		var region: MapmReader.ParsedRegion = null
+		if parts.size() == 2:
+			region = _grid.parsed_heightmaps.get(RegionGridState.region_key(int(parts[0]), int(parts[1])))
+		var heights := TerrainCollision.heights_from_region(region)
+		if heights.is_empty():
+			print("QA GROUND %s: no parsed heightmap held for it -- not probed" % region_name)
+			continue
+		var counts := {"vertical": 0, "oblique": 0, "sphere": 0, "body": 0}
+		# Arrays, not PackedStringArrays: a packed array is a value type, and
+		# one appended to through a Dictionary subscript is a copy.
+		var values := {"vertical": [], "oblique": [], "sphere": [], "body": []}
+		var worst_vertical := 0.0
+		var worst_vertical_at := Vector2.ZERO
+		var worst_oblique := 0.0
+		var other_diagonal_off := 0
+		var steepest := 0.0
+		for iz in range(samples):
+			for ix in range(samples):
+				var lx := (floorf((float(ix) + 0.5) * tiles_per_step) + QA_GROUND_IN_QUAD.x) * tile
+				var lz := (floorf((float(iz) + 0.5) * tiles_per_step) + QA_GROUND_IN_QUAD.y) * tile
+				var drawn := TerrainCollision.mesh_height_at(heights, lx, lz)
+				# How much this quad would punish the wrong diagonal: at
+				# QA_GROUND_IN_QUAD the other split is off by 0.45 of
+				# h00 + h11 - h10 - h01; and the quad's steepest edge.
+				var qc := int(lx / tile)
+				var qr := int(lz / tile)
+				var side := TerrainCollision.SIDE
+				var h00 := heights[(side - 1 - qr) * side + qc]
+				var h10 := heights[(side - 1 - qr) * side + qc + 1]
+				var h01 := heights[(side - 2 - qr) * side + qc]
+				var h11 := heights[(side - 2 - qr) * side + qc + 1]
+				if absf(h00 + h11 - h10 - h01) * QA_GROUND_IN_QUAD.x > 0.5:
+					other_diagonal_off += 1
+				steepest = maxf(steepest, maxf(absf(h10 - h00), absf(h01 - h00)) / tile)
+				var ray := PhysicsRayQueryParameters3D.create(
+					g.to_global(Vector3(lx, drawn + 300.0, lz)), g.to_global(Vector3(lx, drawn - 300.0, lz)))
+				ray.collision_mask = TERRAIN_ONLY_COLLISION_MASK
+				var hit := space.intersect_ray(ray)
+				if hit.is_empty():
+					values["vertical"].append("miss")
+				else:
+					counts["vertical"] += 1
+					var y := g.to_local(hit.position as Vector3).y
+					values["vertical"].append("%.3f" % y)
+					if absf(y - drawn) > worst_vertical:
+						worst_vertical = absf(y - drawn)
+						worst_vertical_at = Vector2(lx, lz)
+				var through := Vector3(lx, drawn, lz)
+				var from := g.to_global(through - oblique * 400.0)
+				ray = PhysicsRayQueryParameters3D.create(from, g.to_global(through + oblique * 400.0))
+				ray.collision_mask = TERRAIN_ONLY_COLLISION_MASK
+				hit = space.intersect_ray(ray)
+				if hit.is_empty():
+					values["oblique"].append("miss")
+				else:
+					counts["oblique"] += 1
+					var at := g.to_local(hit.position as Vector3)
+					values["oblique"].append("%.3f" % from.distance_to(hit.position as Vector3))
+					var off := absf(at.y - TerrainCollision.mesh_height_at(heights, at.x, at.z))
+					if not is_nan(off):
+						worst_oblique = maxf(worst_oblique, off)
+				# The camera spring's query: the arm's own shape swept down with
+				# cast_motion, its centre QA_GROUND_SWEEP_START above the column.
+				var params := PhysicsShapeQueryParameters3D.new()
+				params.shape = sphere
+				params.collision_mask = TERRAIN_ONLY_COLLISION_MASK
+				params.exclude = [player.get_rid()]
+				params.transform = Transform3D(Basis(), g.to_global(Vector3(lx, drawn + QA_GROUND_SWEEP_START, lz)))
+				params.motion = Vector3(0.0, -QA_GROUND_SWEEP, 0.0)
+				var fractions := space.cast_motion(params)
+				if fractions.size() < 2 or fractions[0] >= 1.0:
+					values["sphere"].append("miss")
+				else:
+					counts["sphere"] += 1
+					values["sphere"].append("%.3f" % (QA_GROUND_SWEEP * fractions[0]))
+				# move_and_slide's query: the player's own body (its origin is
+				# its feet) moved down with body_test_motion from the same
+				# height -- from a transform of its own, so the player does
+				# not move; the mask is the terrain's alone for the probe.
+				var motion := PhysicsTestMotionParameters3D.new()
+				motion.from = Transform3D(player.global_transform.basis,
+					g.to_global(Vector3(lx, drawn + QA_GROUND_SWEEP_START, lz)))
+				motion.motion = Vector3(0.0, -QA_GROUND_SWEEP, 0.0)
+				var moved := PhysicsTestMotionResult3D.new()
+				if PhysicsServer3D.body_test_motion(player.get_rid(), motion, moved):
+					counts["body"] += 1
+					values["body"].append("%.3f" % moved.get_travel().length())
+				else:
+					values["body"].append("miss")
+		var n := samples * samples
+		print("QA GROUND %s: vertical %d/%d hit, worst %.4f from the drawn triangle (local %.0f, %.0f); oblique %d/%d hit, worst %.4f off the drawn surface; sphere %d/%d touched; body %d/%d touched; %d quad(s) where the other diagonal would be off by over 0.5, steepest edge %.2f" % [
+			region_name, counts["vertical"], n, worst_vertical, worst_vertical_at.x, worst_vertical_at.y,
+			counts["oblique"], n, worst_oblique, counts["sphere"], n, counts["body"], n, other_diagonal_off, steepest])
+		print("QA GROUND VALUES %s vertical=%s oblique=%s sphere=%s body=%s" % [
+			region_name, ",".join(PackedStringArray(values["vertical"])), ",".join(PackedStringArray(values["oblique"])),
+			",".join(PackedStringArray(values["sphere"])), ",".join(PackedStringArray(values["body"]))])
+	player.collision_mask = player_mask
 
 func _qa_scan_report(samples: int) -> void:
 	var pair := _nav_graph_for(player.global_position)

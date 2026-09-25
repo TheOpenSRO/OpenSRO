@@ -7075,6 +7075,52 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-sixty-seventh round: the terrain collides as a heightfield cut the way the ground is drawn, and a streamed cell's collision lap goes from ~25 ms to under 1
+
+The hundred-and-fifty-sixth round named `terrain_mesh.create_trimesh_shape()` the load's
+bottleneck and proposed a `HeightMapShape3D` from the height grid instead -- a reading from before
+the hundred-and-sixtieth round's archive fix, which took most of the terrain phase with it. So this
+round was gated on a fresh measurement: after rounds 565-566 moved the prepare off the main thread,
+the trimesh's `collision` lap (`ConcavePolygonShape3D.set_faces`, the BVH build) was 27-30 % of the
+streamed cells' main-thread commit (22-39 ms a cell, over half of each cell's terrain commit), in
+round 566's shipped-code logs and in today's BASE alike. Over the 25 % bar, so done.
+`docs/RE_COMPLETION.md`'s round 567 has the grounding, every log line and the tests; in short,
+anchored by function:
+
+- `TerrainCollision` (new): `heights_from_region` lays the region's 97x97 grid out as the shape's
+  `map_data` on the prepare's task; `make_shape` and `shape_transform` build and place the shape in
+  `World3D._terrain_commit`. `SRREVAMP_TERRAIN_TRIMESH=1` builds the old trimesh for A/B.
+- **The plan's layout would have been wrong, and a picture would not have shown it.** Godot
+  4.2.2's heightmap (read from the 4.2.2-stable source) cuts each cell along the diagonal from
+  (x + 1, z) to (x, z + 1); the drawn mesh cuts each quad from (r, c) to (r + 1, c + 1). Laid out
+  row for row, as the item proposed, every vertex is in place and every quad is split the other
+  way, so inside a non-planar quad the collision is not the drawn ground -- on the suite's
+  synthetic hills that layout's rays miss the drawn triangles by up to 17.4 units, and on the real
+  Jangan grid 252 of 1,600 probed quads are non-planar enough for it to be off by over 0.5. The
+  rows are stored reversed and the shape's z axis flipped back, which also cancels the terrain
+  group's mirror: the shape's global basis is a plain (20, 1, 20) scale.
+- Benchmark (the README's two commands; BASE / round 567 / the A/B flag): the streamed cells'
+  `collision` 657 -> 0 -> 656 ms over the entry's 24 and 791 -> 0 -> 780 over the crossing's 29
+  (0 on every cell line: under 1 ms each); the crossing's column 95..99/165 50/45/85/49/49 ->
+  29/21/60/23/22 ms a cell, its longest work frame 106 -> 86 ms (113 with the flag), 1 -> 0 frames
+  over 100 ms; the entry drain's p95 950 -> 914 ms and frames over 100 ms 9 -> 5.
+- **Measured, not pictured** -- a new `SRREVAMP_QA_GROUND_RAYS=n` probes the terrain collision on
+  an n x n lattice of every loaded region and holds each hit to the drawn mesh's own triangle. On
+  1,600 real columns, heightfield against trimesh: every vertical ray hits both, the heightfield's
+  within 0.0009 of the drawn triangle and 0.001 of the trimesh's (steepest probed quad edge 5.43 a
+  unit); slanted rays agree within 0.004 (the same 4 missing on both); the camera arm's sphere
+  swept down stops at the same travel on 1,594 and within 0.352 on the rest; the snap's ray at the
+  server's spawn lands at -54.394 on both; the crossing walk's lines are identical tick for tick.
+- **One behaviour did change, and it was a latent bug.** The player's own body moved down with
+  `body_test_motion` -- move_and_slide's query -- touched the heightfield at 1,600 of 1,600 columns
+  and the old trimesh at **0**. The trimesh was one-sided under the world's mirror, the trap the
+  sixty-first and sixty-third rounds found (and fixed with `backface_collision`) for the objects'
+  navigation-mesh collision; the suite shows the same trimesh unmirrored, or two-sided, is
+  touched. So when no walkable graph covered the player, `_physics_process`'s move_and_slide
+  fallback sank into the terrain (3.26 units in the suite's 2 s walk) and relied on
+  `_recover_if_below_terrain`; on the heightfield it stands on it. Not yet measured in-game on a
+  region without a navmesh.
+
 ## Five-hundred-and-sixty-sixth round: a streamed cell's objects prepare on its worker task too, and the alpha probes measure the decoded Image instead of reading the texture back
 
 Round 565 moved a streamed cell's terrain onto a `WorkerThreadPool` task and left its objects on

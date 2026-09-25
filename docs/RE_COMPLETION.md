@@ -37241,3 +37241,258 @@ streamed cells' tasks prepare 58-69% fewer things another cell had already commi
 the corrected `prepared again` line: the entry's 67 -> 28, the crossing's 102 -> 32; models
 prepared twice 16 -> 7 and 23 -> 7, object textures decoded twice 31 -> 13 and 47 -> 13).
 `SRREVAMP_SYNC_LOAD=1` stays the escape hatch (the schedule only). No server change, no flag.
+
+## Terrain collision from the height grid (HeightMapShape3D) instead of a per-region trimesh BVH (round 567)
+
+Client only, tag-worthy: the third loading-freeze item of the map/loading epic (2026-09-25), on
+top of rounds 565-566's off-thread prepare. Nothing on the wire, no server change (`server/`
+untouched; `go build ./...` and `go test -count=1 -p 1 ./...` green before and after the doc
+edits). A region's terrain collision is now one `HeightMapShape3D` over its 97x97 height grid, cut
+into the drawn mesh's own triangles (`TerrainCollision`), in place of a `ConcavePolygonShape3D` of
+every triangle of every surface of the mesh, whose BVH the commit built on the main thread;
+`SRREVAMP_TERRAIN_TRIMESH=1` builds the old trimesh for A/B. The item was gated on a measured
+share, and the gate said yes. Every number below is a log line from the render box (2026-09-25,
+hardware GL through VirtualGL, lane lock `/var/tmp/r567/lock`, round 558's server binary) or from
+this checkout. The logs are `/var/tmp/r567/{base,after,tri}_{entry,cross}.log` (the README's two
+commands on BASE, on this round, and on this round with `SRREVAMP_TERRAIN_TRIMESH=1`) and
+`rays3_{entry,cross}_{hf,tri}.log` (the ground probes, below), with `run.sh`, `base.sh`,
+`after.sh`, `rays.sh` and `rays3.sh`, the exact commands (frames deleted), and `gate.py`,
+`nbsum2.py` and `raysab.py` beside them, which sum the cell lines and diff the ray runs.
+BASE ran from `git archive f25ab65` in `/var/tmp/r567/base_client`. The benchmark runs ran this
+round's code before `SRREVAMP_QA_GROUND_RAYS` was changed to wait for the grid (a QA-only hook they
+do not enable); the `rays3_*` runs ran the committed code. An earlier ray pair (`rays_*`) fired its
+probe on a fixed timer, which in a run signed in to the server lands before the grid is built --
+its entry pair probed an empty world -- and is superseded; `rays2_*`, on the fixed hook but before
+the non-planarity count was added to its line, read the same numbers as `rays3_*` below.
+
+**The gate, measured.** The item's own gate (`collision` >= 25 % of the terrain phase) was
+answered NO by round 561's BEFORE (~57 of ~267 ms a neighbour cell, ~21 %); the orchestrator
+re-gated it on collision's share of what still runs on the main thread per streamed cell after
+rounds 565-566 -- the commit. Round 565 recorded, for this gate, `collision` 25-33 ms of a 39-51 ms
+terrain commit (14 % of the cells' main-thread time then, with the objects still on the main
+thread). Round 566 took the objects off it, so the share was re-read from round 566's own
+shipped-code logs (`/var/tmp/r566/fix2B_entry.log`, `fix2B_cross.log`) and re-measured today on
+BASE with the README's two commands, summing each streamed cell's own line:
+
+| | streamed cells | `built in` sum | terrain commit | `collision` | its share of the cells | per-cell median |
+|---|---|---|---|---|---|---|
+| (a) entry, round 566's `fix2B` | 24 | 2,372 ms | 1,154 | 643 | 27.1 % | 52 % |
+| (b) crossing, round 566's `fix2B` | 29 | 2,665 | 1,353 | 783 | 29.4 % | 53 % |
+| (a) entry, BASE today | 24 | 2,399 | 1,177 | 657 | 27.4 % | 52 % |
+| (b) crossing, BASE today | 29 | 2,617 | 1,367 | 791 | 30.2 % | 53 % |
+
+`collision` is over 25 % of the streamed cells' main-thread commit in all four (22-39 ms a cell,
+55-58 % of each cell's terrain commit), so the item was done. Round 156's "the real bottleneck is
+terrain, and within it `terrain_mesh.create_trimesh_shape()`" is a pre-round-160 reading: round
+160's archive fix took the grid's terrain phase from 37.4 s to 6.4 s, and round 561 re-measured the
+trimesh as the terrain's second-largest lap, not its largest. This round's gate is the re-measure.
+
+**Grounding, re-read at BASE (`f25ab65`).**
+
+- `World3D._terrain_commit`: `ConcavePolygonShape3D.set_faces(job["faces"])` alone in the
+  `collision` lap, the faces `MapmTerrainBuilder.surface_faces` built in the prepare (its `faces`
+  lap) -- every index of every surface, so each ground triangle about 2.5 times over (round 565:
+  45,768 faces for 97/168 against the base surface's 18,432). The terrain group:
+  `position = (placement.x, placement.y, -placement.z)`, `scale.z = -1`, no rotation; the
+  StaticBody3D (`TERRAIN_COLLISION_LAYER`) under the `SubPatch` MeshInstance3D, at identity.
+- `MapmTerrainBuilder._textured_surfaces_from_cells` and `_mesh_arrays_from_cells`: vertex
+  (r, c) at local `(c * TILE_SIZE, h, r * TILE_SIZE)`, TILE_SIZE 20, 97 a side (the builder's doc
+  comment; `docs/protocol/MAPM_FORMAT.md`); quad (r, c) drawn as `[i00, i10, i11, i00, i11, i01]`,
+  so its diagonal joins (r, c) to (r + 1, c + 1). `_full_region_cells` stitches the blocks in
+  nested file order, a later block winning a shared edge.
+- Godot 4.2.2's heightmap, read from the 4.2.2-stable sources (raw GitHub, 2026-09-25;
+  `servers/physics_3d/godot_shape_3d.{h,cpp}`, `scene/resources/height_map_shape_3d.cpp`):
+  `GodotHeightMapShape3D::_get_point` places `heights[z * width + x]` at `(x - (width - 1) / 2, h,
+  z - (depth - 1) / 2)`; `cull` (every shape query) and `_heightmap_cell_cull_segment` (rays) cut
+  cell (x, z) into `(x, z), (x + 1, z), (x, z + 1)` and `(x + 1, z), (x + 1, z + 1), (x, z + 1)`,
+  whose diagonal is (x + 1, z)-(x, z + 1). `HeightMapShape3D::set_map_data` copies the array and
+  the server's `_setup` builds a 16-cell min/max grid -- no BVH. **The item's plan was wrong here**:
+  `map_data[r * 97 + c] = height(r, c)` under a (TILE_SIZE, 1, TILE_SIZE) scale puts every vertex
+  in place but cuts every quad along the OTHER diagonal, so inside any quad whose corners are not
+  coplanar the collision is not the drawn ground. Measured, not argued: built that way in
+  GodotPhysics, its vertical rays miss the drawn triangles by up to 17.4 units on the suite's
+  synthetic hills, and on the real grid 252 of the 1,600 probed quads are non-planar enough that it
+  would be off the drawn ground by over 0.5 at the probe point (below). So the rows are stored
+  reversed (`z = 96 - r`) and the shape's z axis flipped back (`TerrainCollision.shape_transform`:
+  basis diag(20, 1, -20), origin (960, 0, 960)); shape cell (x, z) is then mesh quad (95 - z, x)
+  and its diagonal the mesh's own. The plan's NEGATIVE ("map_data[1 * 97 + 2] must be 12, not 21")
+  holds in the flipped layout's own terms: the sample the shape reads for mesh (1, 2) is 12.
+- `CollisionShape3D::get_configuration_warnings` (4.2.2) warns on any non-uniform scale ("A
+  non-uniformly scaled CollisionShape3D node will probably not function as expected"); it is an
+  editor configuration warning and is not printed at run time -- 0 lines matching
+  `uniform|scaled` in this round's six benchmark logs.
+- Face sidedness, read from the same sources: a ConcavePolygonShape3D's triangles are one-sided
+  (`backface_collision` false by default) to rays and shape queries alike; a heightmap cell's are
+  two-sided to a ray that stays in one cell when the query hits back faces (the default), one-sided
+  to a ray crossing cells, and two-sided to every shape query (`cull` sets `backface_collision =
+  !p_invert_backface_collision`). So the two may differ where a probe meets the ground from below.
+
+**The findings and the orchestrator's notes, answered.**
+
+- *The re-gate* (orchestrator): the table above -- 27-30 % of the streamed cells' main-thread
+  commit, over 25 % in both runs of both commands.
+- *The non-uniform, negative scale* (both verifiers, orchestrator): the shape's own transform is
+  diag(20, 1, -20), non-uniform and a reflection, but composed with the group's `scale.z = -1` its
+  GLOBAL basis is diag(20, 1, 20) -- no reflection left (measured in the suite). The configuration
+  warning applies and does not appear in a run's log (above). GodotPhysics honours the scale:
+  measured three ways -- the suite's rays, sweeps, body motions and walk against the trimesh under
+  the same group transform; the real 25-region grid (below); and the crossing walk.
+- *Rays on sloped columns and a `--walk` crossing as the acceptance* (orchestrator): below -- every
+  one of 1,600 real columns (steepest probed quad edge rising 5.43 a unit, 252 quads where the
+  wrong diagonal would be off by over 0.5) lands within 0.0009 of the drawn triangle and within
+  0.001 of the trimesh; the snap's ray at the server's spawn lands at the same height on both
+  (-54.394); the crossing walk's positions and ground readings are the same tick for tick.
+- *SRREVAMP_TERRAIN_TRIMESH=1 for A/B*: kept; `_terrain_job` reads it on the main thread into the
+  job (`"trimesh"`), the prepare builds `surface_faces` instead of the height grid in the same lap,
+  and the commit the ConcavePolygonShape3D as before. It reads BASE's `collision` back (below).
+- *Round 156 marked pre-round-160* (feasibility verifier): above, and in `_terrain_commit`'s
+  comment.
+- *The collision lap before/after*: below.
+
+**What changed.**
+
+- `assets/terrain_collision.gd` (new, `TerrainCollision`): `SIDE` = 97;
+  `heights_from_region(region)` (the grid as `map_data`, rows reversed, stitched in
+  `_full_region_cells`' order; plain data, built on the prepare's task); `shape_transform()`;
+  `make_shape(heights)` (main thread: a Shape3D owns a PhysicsServer RID);
+  `mesh_height_at(heights, x, z)` (the drawn triangle's height, for the QA probe).
+- `World3D.gd`: `_terrain_job` carries `"trimesh"`; `_terrain_prepare_build` builds
+  `job["heights"]` (or `job["faces"]` under the flag) in a lap renamed `faces` -> `heights`;
+  `_terrain_commit` builds the HeightMapShape3D at `shape_transform()` (or the trimesh), and the
+  terrain line says which (`real collision shape built: heightfield 97x97` | `trimesh, N faces`);
+  `SRREVAMP_QA_GROUND_RAYS=n` -- `_qa_ground_rays_report`, armed in `_qa_step`'s first-tick block
+  and fired ten ticks after the grid is in (nothing queued or preparing, the centre's group in the
+  tree); the header's `SRREVAMP_TERRAIN_TRIMESH` and QA list; the prepare's and `_threaded_load`'s
+  comments.
+- `world/load_timings_test.gd` (the prepare's laps) and `world/terrain_prepare_test.gd` (the
+  height grid by default, the faces under the flag, the renamed lap) follow the change;
+  `client/tools/README.md`, "Load benchmark": the cell-line templates, the laps' meanings, the
+  `SRREVAMP_SYNC_LOAD` paragraph's collision and this round's AFTER.
+
+**Measured: the benchmark** (the README's two commands; the crossing's figure is the tick-600
+summary; the streamed-cell sums are over the cells' own lines).
+
+| | BASE (`f25ab65`) | round 567 | round 567, `SRREVAMP_TERRAIN_TRIMESH=1` |
+|---|---|---|---|
+| (a) centre cell | `97/168 built in 5035 ms at frame 14 (terrain 1563 [.. faces 7 .. collision 27 ..]` | `5011 ms at frame 13 (terrain 1528 [.. heights 3 .. collision 0 ..]` | `5019 ms at frame 14 (terrain 1567 [.. heights 7 .. collision 27 ..]` |
+| (a) `region grid loaded` | `18042 ms (terrain 2753, objects 2248, npcs 2448) at frame 30 -- 25 cells 7449 ms, 10593 ms outside the cells over 17 awaited frames` | `17299 ms (terrain 2054, objects 2283, npcs 2421) at frame 29 -- 25 cells 6757 ms, 10542 ms outside the cells over 17 awaited frames` | `18048 ms (terrain 2739, objects 2248, npcs 2387) at frame 30 -- 25 cells 7374 ms` |
+| (a) drain summary | `longest work frame 5095 ms at frame 14 (cell 97/168) ...; p95 950 ms; 9 over 100 ms` | `5074 ms at frame 13 ...; p95 914 ms; 5 over 100 ms` | `5079 ms at frame 14 ...; p95 957 ms; 9 over 100 ms` |
+| (a) 24 streamed cells | `built in` 2,399 ms; terrain commit 1,177, `collision` 657 (23-37 each) | 1,735; 513, **0 on every cell** | 2,345; 1,160, 656 |
+| (b) the column 95..99/165 | `50, 45, 85, 49, 49 ms` at frames 161-165 (`collision` 24, 24, 25, 26, 27) | `29, 21, 60, 23, 22 ms` at frames 162-166 (`collision` 0 each; terrain commit 13-16) | `49, 45, 85, 48, 49 ms` (`collision` 24-27) |
+| (b) tick-600 summary | `longest work frame 106 ms at frame 163 (cell 98/165) over 569 frames ...; p95 5 ms; 1 over 100 ms` | `86 ms at frame 164 (cell 98/165) over 569 frames ...; p95 5 ms; 0 over 100 ms` | `113 ms at frame 163 (cell 98/165); 1 over 100 ms` |
+| (b) 29 streamed cells | `built in` 2,617 ms; terrain commit 1,367, `collision` 791 | 1,868; 584, 0 | 2,647; 1,347, 780 |
+
+The heightfield's `collision` lap reads 0 on every cell line of both runs: `LoadTimings` truncates
+to whole milliseconds, so it is under 1 ms a cell -- against 22-39 ms for the trimesh. Off the main
+thread the prepare's collision lap fell too (`faces` 193 ms -> `heights` 86 ms over the entry's 24;
+237 -> 113 over the crossing's 29). The crossing's longest frame is now the 60 ms 98/165 cell (its
+NPCs 33 ms) plus that frame's other work. The flag reads BASE back within run-to-run spread
+(656/780 ms of collision against 657/791; crossing longest 113 against 106 ms). The entry's centre
+cell is still 5.0 s by design. The logs' `ERROR:` lines are BASE's set (the two missing `.bsr`s,
+the gacha machine, the exit-time texture leak) and there is no `SCRIPT ERROR`.
+
+**Measured: the ground, heightfield against trimesh.** `SRREVAMP_QA_GROUND_RAYS=8` on the QA
+synchronous drain (no `FORCE_LOADING`, so the whole grid is built before the probe), signed in to
+the server, `--region '97\168.m' --radius 2`: (a) `--frames 60` at the server's spawn and (b)
+`--at 120,1020 --walk 270 --frames 600`, each once with the heightfield (`rays3_*_hf`) and once
+with `SRREVAMP_TERRAIN_TRIMESH=1` (`rays3_*_tri`). 25 regions x 64 columns = 1,600 columns a run,
+each inside a quad at (0.45, 0.55) of a tile, where the wrong diagonal is off by 0.45 of the quad's
+non-planarity:
+
+- *Vertical rays* (`intersect_ray`, terrain-only mask): 1,600 of 1,600 hit on both; the
+  heightfield's hit is within **0.0009** of the drawn triangle (`TerrainCollision.mesh_height_at`)
+  on every column, the trimesh's within 0.0001, and the two within 0.001 of each other. The
+  probed quads are not flat: 252 of the 1,600 are non-planar enough that the other diagonal would
+  be off the drawn ground by over 0.5 there (2-24 a region), and the steepest probed quad edge
+  rises 5.43 a unit (99/170).
+- *Slanted rays* (region-local direction (-1, -1, -0.6), 400 units either side of the drawn
+  point): 1,596 hit on both, the same 4 columns missing on both (in 98/170 and 99/170, not
+  investigated); the hits within 0.004 of each other along the ray and within 0.0008 of the drawn
+  surface.
+- *The camera arm's sphere* swept down 60 from 30 above with `cast_motion` (the camera spring's
+  query): 1,600 of 1,600 touch on both; 1,594 stop at the same travel, 4 within 0.25 of each other,
+  2 up to 0.352 (4.2.2's `cast_motion` bisects eight times: ~0.23 of 60).
+- *The snap's ray* (`_snap_player_onto_terrain`'s, at the player's column): at the server's spawn
+  `97/168 local (960.00, 960.00): the snap's ray lands at local y -54.394; the player stands at
+  -32.609` on both (the player on the gate deck, the terrain under it); at the crossing's start
+  `local y 0.000` on both.
+- *The crossing walk*: the `QA <tick> local` lines at ticks 60-540 are identical on both runs --
+  positions, the walkable graph's reading, and the terrain-layer ray's drawn surface -- bar one
+  `0.0` printed `-0.0`; both walks cross into 97/167 at tick 147 and stream the 95..99/165 column.
+- *The player's own body* moved down 60 from 30 above with `PhysicsServer3D.body_test_motion`
+  (move_and_slide's query), terrain-only mask: **1,600 of 1,600 touch the heightfield and 0 of
+  1,600 the trimesh**, in both runs.
+
+**Two differences, recorded rather than hidden.** (1) That last line: the pre-567 trimesh, a
+one-sided ConcavePolygonShape3D under the world's mirror, is invisible to `body_test_motion`'s
+cast. The suite pins the cause to the mirror and the sidedness -- the same trimesh unmirrored, or
+two-sided under the mirror, is touched at every column -- which is the same thing the sixty-first
+and sixty-third rounds found for the objects' navigation-mesh collision
+(`ObjectLoader._add_object_navmesh_collision` sets `backface_collision` for it); the terrain's
+trimesh never got it. What it did to a player: `World3D._physics_process` falls back to
+`move_and_slide` when no walkable graph covers the player (a region with no `.nvm`, or before one
+streams in), and in the suite a 2 s `move_and_slide` walk on the trimesh sinks 3.26 units into the
+ground and stays there (caught part-way, not a clean fall -- `_recover_if_below_terrain` would lift
+such a player in the game), while on the heightfield it walks 80 of 80 units without going below
+it and ends 0.58 above. The heightfield changes that fallback from sinking to standing; nothing
+else in the measured paths moved. Not measured in-game on a region without a navmesh. (2) An upward
+vertical ray from under the ground finds the heightfield (two-sided within one cell) and not the
+trimesh. The one upward ray among `World3D.gd`'s 22 `PhysicsRayQueryParameters3D.create` sites,
+`_has_roof_overhead`, starts 0.5 * PLAYER_SCALE_RATIO (about 4 units) above the position it is
+given -- ground the snap or the roof escape has just put the player on -- so it does not meet the
+terrain from below; recorded in the suite.
+
+**Tests.** `assets/terrain_collision_test.gd` (new; `TerrainCollision` reached through `load()`,
+so a tree without it FAILS rather than failing to parse): on the field height = 10 r + c, every one
+of `build_full_region_mesh`'s 97 x 97 vertices (and the textured path's base surface's) equals the
+shape's sample under `shape_transform()` placed as 4.2.2's `_get_point` places it, exactly; the
+sample for mesh (1, 2) is 12, not 21; a transposed grid is caught; a region whose block edges
+disagree takes the later block's value at every shared vertex (the four-block corner reads block
+7's 7000); every heightmap cell's two triangles, in 4.2.2's `cull` order, are the mesh's own two
+for that quad -- and the first plan's layout places every vertex but fails that for all 9,216
+quads; `mesh_height_at` is the drawn triangle's height. In the engine, on non-planar hills under a
+terrain group's own transform: the shape's global basis is diag(20, 1, 20); 672 columns' vertical
+rays hit the heightfield within 0.0006 of the drawn triangle and of the trimesh's hit, slanted
+rays' hits lie on the drawn surface on both (within 0.0005) and within 0.042 of each other; the plan's
+layout misses the drawn triangles by up to 17.4; the arm's sphere and the player's capsule swept
+with `cast_motion`, and the capsule body moved with `body_test_motion`, stop at the trimesh's
+travel on the heightfield (worst 0.000 over 99); recorded: `body_test_motion` touches the mirrored
+one-sided trimesh at 0 of 99 columns, the unmirrored one and the two-sided one at 99; an upward ray
+from under the ground hits the heightfield and not the trimesh; `move_and_slide` walks a capsule 80
+of 80 units across rolling ground on the heightfield without going below it and sinks 3.26 into
+the trimesh. `world/terrain_prepare_test.gd`: the task's job holds the 97 x 97 grid (and no faces),
+equal to `heights_from_region` of its own parse; with the job's `trimesh` flag the prepare builds
+`surface_faces` of its surfaces and no grid, in the same `heights` lap; `_terrain_job` reads the
+flag off when the variable is unset. `world/load_timings_test.gd`: the prepare's laps
+`[read, parse, lightmap, textures, mesh, heights, navmesh, walls, navgraph]`, in World3D.gd and in
+the README's templates.
+**NEGATIVE, proven twice.** (1) The two production files stashed (`git stash push
+--include-untracked --` World3D.gd, terrain_collision.gd; the tests and README left), the tree
+shipped and the box's copy of `terrain_collision.gd` removed (a sync does not delete), re-imported:
+`terrain_collision_test` `FAIL TerrainCollision loads (absent before round 567)`, `FAILURES: 1`;
+`terrain_prepare_test` `SCRIPT ERROR: Parse Error: Could not find script for class
+"TerrainCollision".`; `load_timings_test` `FAIL the prepare's laps, in order, are [..., "mesh",
+"heights", ...] (got [..., "mesh", "faces", ...])`. Restored (`git stash pop`; World3D.gd's md5
+the same as the copy the final ray runs ran). (2) The item's own layout as a mutation of
+`TerrainCollision` -- `heights_from_region` row for row, `shape_transform`'s z scale +20 --
+shipped: `FAILURES: 20`, among them `mesh row 1, column 2 is sampled as 12, not 21 (got 952)`,
+`every heightmap cell's two triangles (4.2.2's cull order) are the mesh's own two for that quad`
+and, in the engine, `vertical rays: the heightfield's hit is the trimesh's (worst 17.42505 over 672
+columns)` (some of the 20 are the suite's own helpers reading the mutated grid); the file
+restored (`grep -c MUTATION` 0). `remote_godot.sh tests`: `ran 93 suite(s), 0 failing` (92 + the
+new suite); `remote_godot.sh check`: `checked 268 scripts and 5 scenes`, `ALL LOAD`.
+
+**Records.** This entry; `docs/WORLD_ISSUES.md`'s five-hundred-and-sixty-seventh round;
+`client/tools/README.md`, "Load benchmark" (templates, laps, AFTER, the `SRREVAMP_SYNC_LOAD`
+paragraph, `SRREVAMP_QA_GROUND_RAYS`); `World3D.gd`'s header. `docs/SYSTEMS.md` has no row for the
+terrain, its collision or world loading (re-checked: `collision|trimesh|terrain` match only the
+packet row's own text), so nothing there to change. Beyond the item's file list, disclosed:
+`world/load_timings_test.gd` and `world/terrain_prepare_test.gd`. Follow-ups, not done here: the
+4 slanted rays both shapes miss; the move_and_slide fallback on the heightfield measured in-game
+(a region without a navmesh); `docs/TODO.md`'s drop-wait item (round 566) is untouched.
+
+**Deploy note.** Client only; tag-worthy -- a streamed cell's collision leaves its frame (22-39 ms
+-> under 1 ms; the crossing's column 45-85 -> 21-60 ms a cell, its longest frame 106 -> 86 ms, the
+entry drain's frames over 100 ms 9 -> 5), the ground answers every probed ray where it is drawn,
+and the player's move_and_slide fallback stands on the terrain instead of sinking into it.
+`SRREVAMP_TERRAIN_TRIMESH=1` builds the old trimesh for A/B. No server change.

@@ -14,9 +14,11 @@ extends SceneTree
 ## caches the prepare consults reach it as a snapshot: a ground tile this
 ## world has already uploaded is named by filename and flag, never handed
 ## over as its texture, and is not decoded again. Also that the task
-## actually produced the terrain (the surfaces, the collision faces, the
-## lightmap and ground-tile Images, the navmesh, the walls and the walkable
-## graph) and that the same prepare on the main thread produces the same.
+## actually produced the terrain (the surfaces, the collision's height grid --
+## or, under SRREVAMP_TERRAIN_TRIMESH=1's job flag, the trimesh faces (round
+## 567) -- the lightmap and ground-tile Images, the navmesh, the walls and the
+## walkable graph) and that the same prepare on the main thread produces the
+## same.
 ##
 ## Two synthetic pk2 archives stand in for Map.pk2 (`97\168.m`, `97\168.t`,
 ## `Tile2D\t1.ddj`) and Data.pk2 (`navmesh\nv_61a8.nvm`); the tile table and
@@ -108,10 +110,14 @@ func _test_prepare_off_the_main_thread(S: GDScript) -> void:
 	bad = _forbidden(job)
 	_check(bad.is_empty(), "after the task the job still holds no Node and no Resource but Image (found %s)" % str(bad))
 	var surfaces: Array = job.get("surfaces", [])
-	var faces: PackedVector3Array = job.get("faces", PackedVector3Array())
+	var heights: PackedFloat32Array = job.get("heights", PackedFloat32Array())
 	_check(job.get("textured", false) and surfaces.size() >= 3,
 		"textured surfaces as data: the base, the fallback pass and ID 1's (got %d)" % surfaces.size())
-	_check(faces.size() > 0 and faces.size() % 3 == 0, "the collision faces as data (%d corners)" % faces.size())
+	# Round 567: the collision is the region's height grid, not the faces.
+	_check(heights.size() == 97 * 97 and not job.has("faces"),
+		"the collision's height grid as data, 97 x 97, and no trimesh faces (%d heights; faces %s)" % [heights.size(), str(job.has("faces"))])
+	_check(heights == TerrainCollision.heights_from_region(job.get("region")),
+		"the height grid is TerrainCollision.heights_from_region of the job's own parse")
 	_check(job.get("lightmap") is Image, "the .t lightmap as an Image, not a texture")
 	var files: Dictionary = job.get("texture_files", {})
 	var new_images: Dictionary = job.get("new_images", {})
@@ -127,17 +133,34 @@ func _test_prepare_off_the_main_thread(S: GDScript) -> void:
 	var laps: Array = []
 	for lap in job["laps"]:
 		laps.append(lap[0])
-	_check(laps == ["read", "parse", "lightmap", "textures", "mesh", "faces", "navmesh", "walls", "navgraph"],
+	_check(laps == ["read", "parse", "lightmap", "textures", "mesh", "heights", "navmesh", "walls", "navgraph"],
 		"the prepare's laps are in the job, in order, for the commit to record (got %s)" % str(laps))
 
 	# The same prepare on this thread gives the same terrain.
 	var job_main: Dictionary = w.call("_terrain_job", "97\\168.m", "", Vector3.ZERO, "_97_168", false, NAN, false)
 	w.call("_terrain_prepare", job_main)
-	var same: bool = (job_main.get("surfaces", []) as Array).size() == surfaces.size() and job_main.get("faces") == faces
+	var same: bool = (job_main.get("surfaces", []) as Array).size() == surfaces.size() and job_main.get("heights") == heights
 	for i in range(mini(surfaces.size(), (job_main.get("surfaces", []) as Array).size())):
 		if surfaces[i]["arrays"][Mesh.ARRAY_VERTEX] != job_main["surfaces"][i]["arrays"][Mesh.ARRAY_VERTEX]:
 			same = false
-	_check(same, "the prepare on the main thread builds the same surfaces and faces as the task")
+	_check(same, "the prepare on the main thread builds the same surfaces and height grid as the task")
+
+	# SRREVAMP_TERRAIN_TRIMESH=1 (A/B, round 567): the job's flag, read by
+	# _terrain_job on the main thread, makes the prepare build the pre-567
+	# trimesh faces -- MapmTerrainBuilder.surface_faces of the same surfaces --
+	# in the same lap, and no height grid.
+	var job_tri: Dictionary = w.call("_terrain_job", "97\\168.m", "", Vector3.ZERO, "_97_168", false, NAN, false)
+	_check(job_tri.has("trimesh") and not job_tri["trimesh"],
+		"_terrain_job reads the trimesh flag on the main thread (off when SRREVAMP_TERRAIN_TRIMESH is unset)")
+	job_tri["trimesh"] = true
+	w.call("_terrain_prepare", job_tri)
+	var tri_faces: PackedVector3Array = job_tri.get("faces", PackedVector3Array())
+	_check(not job_tri.has("heights") and tri_faces.size() > 0 and tri_faces == MapmTerrainBuilder.surface_faces(job_tri.get("surfaces", [])),
+		"with the flag the prepare builds the trimesh faces of its surfaces and no height grid (%d corners)" % tri_faces.size())
+	var tri_laps: Array = []
+	for lap in job_tri["laps"]:
+		tri_laps.append(lap[0])
+	_check(tri_laps == laps, "the flag's faces are in the same `heights` lap (got %s)" % str(tri_laps))
 
 	# The snapshot: once this world holds t1.ddj's texture and the region's
 	# navmesh (what the commit would have stored), the next job names the
