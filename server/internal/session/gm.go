@@ -188,6 +188,19 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 		}
 		if hub != nil {
 			if ent, ok := hub.EntityByCharacterID(characterID); ok {
+				// The entity's zone is its hub BUCKET (world.Entity.Zone): the
+				// zone label, or worldmap.WorldBucket for every label with a
+				// frame under -single-frame (round 571). The console's uses,
+				// mapped: /spawn spawns into it and /kill's broadcast goes to
+				// it (both want the bucket, where the players are); /tp is in
+				// its frame (the one world's, under the flag); /goto compares
+				// it with LABELS, and under the flag no label equals the
+				// bucket -- so /goto <zone> always travels (a label is a grid
+				// hint, not where the GM is) and /goto <monster> always names
+				// the species' zone label for the client to re-centre on
+				// (gm.Actor.Zone). The reply's Zone below is therefore always
+				// a label: gotoSpot's zone or species zone, never the bucket,
+				// and /kill's bucket is cleared from it.
 				actor.Zone = ent.Zone
 				actor.X, actor.Y, actor.Z = ent.Pos.X, ent.Pos.Y, ent.Pos.Z
 				// A dead GM is not moved (round 549): /tp and /goto refuse on

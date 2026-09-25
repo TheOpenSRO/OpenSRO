@@ -17,7 +17,9 @@
 // centred on, and ToWorld takes that as an argument rather than assuming it.
 // Since round 570 the server says it on the wire: EnterWorldResult and
 // ChangeZoneResult carry FrameFor(zone) as FrameRegion, and the client builds
-// the zone's grid inside that frame. For every zone it is the zone's centre.
+// the zone's grid inside that frame. For every zone it is the zone's centre --
+// unless cmd/server runs with -single-frame (round 571), when every zone with
+// a frame is named in ONE frame, WorldOrigin's, and lands at Landing.
 //
 // The transform below was MEASURED, not derived from the region layout. Every
 // term was read out of the real client's own region group nodes in headless
@@ -166,15 +168,77 @@ func ParseRegionLabel(label string) (x, y int, ok bool) {
 // Every frame this returns is the zone's own centre, the region the client
 // builds its grid around for the same label (World3D._resolve_zone_region,
 // which passes an "x/y" label through): so naming it changes nothing a client
-// does with the coordinates. A frame that is NOT the zone's centre is the
-// later single-frame item's to introduce, and it must then send a position
-// inside the centre region -- (0, 0, 0) in another region's frame is that
-// region's middle, outside the grid the client builds.
+// does with the coordinates. A frame that is NOT the zone's centre is
+// -single-frame's (round 571): session then names WorldOrigin for every zone
+// this answers ok for, and sends Landing -- a position inside the centre
+// region -- because (0, 0, 0) in another region's frame is that region's
+// middle, outside the grid the client builds.
 func FrameFor(zone string) (rx, ry int, ok bool) {
 	if centre, found := ZoneCentre[zone]; found {
 		return centre[0], centre[1], true
 	}
 	return ParseRegionLabel(zone)
+}
+
+// WorldOrigin is the region the ONE world frame is centred on when cmd/server
+// runs with -single-frame (round 571): Jangan's 97/168, ZoneCentre's "jangan".
+// Under it every zone's coordinates, every roster monster and every player
+// share this frame, so a walk from one town to another is a walk inside one
+// coordinate system, and FrameRegion names this region for every zone.
+//
+// OWN DESIGN, disclosed: the retail client addresses a position by region id
+// plus region-local offset, and srrevamp's placeholder protocol has no retail
+// world frame to copy. Jangan is the choice because every character enters
+// there (session's spawnZone), because the transform above was measured in
+// its frame, and because Jangan's own coordinates are then the same with the
+// flag on or off (ToWorld against 97/168 is Jangan's zone frame).
+//
+// The far towns sit 28,800 (Donwhang) to 170,880 (Constantinople) units from
+// this origin in X, where a float32 -- the wire's position type and the
+// client's -- steps by 1/512 to 1/64 of a unit (docs/RE_COMPLETION.md, round
+// 571). Recorded, not rebased here.
+var WorldOrigin = [2]int{97, 168}
+
+// WorldBucket is the world hub's zone -- the bucket a character is kept and
+// broadcast in -- that every label with a frame (FrameFor) shares under
+// -single-frame (round 571; session.ZoneBucket), and the zone every roster
+// monster is spawned in then. A label is then only the client's grid-centre
+// hint; the bucket is where the entity is. OWN DESIGN, disclosed with
+// WorldOrigin: one bucket, no spatial filter (a move, a chat line and the
+// monster list reach the whole world).
+const WorldBucket = "world"
+
+// Landing is where a character arriving in zone stands, in the frame centred
+// on region (frameX, frameY): the middle of the zone's centre region, local
+// (960, 960). FrameFor is that centre -- every zone's own frame is its centre
+// (round 570) -- so with the frame the centre this is (0, 0), session's
+// spawnPos, the point every zone change has always landed at; round 569
+// measured it open, walkable terrain on each corrected town's own graph
+// (docs/RE_COMPLETION.md, round 569, "6. The landing"; the client then moves a
+// Jangan arrival on to ZONE_SPAWN_LOCAL itself). In any other frame it is the
+// same place, named in that frame -- what -single-frame sends, since the client
+// builds the zone's grid around its centre and (0, 0, 0) would be the frame
+// region's middle, off that grid. ok is false for a label with no frame.
+func Landing(zone string, frameX, frameY int) (x, z float64, ok bool) {
+	rx, ry, ok := FrameFor(zone)
+	if !ok {
+		return 0, 0, false
+	}
+	x, z = ToWorld(rx, ry, halfSpan, halfSpan, frameX, frameY)
+	return x, z, true
+}
+
+// Rebase names a world point given in the frame centred on region
+// (fromX, fromY) in the frame centred on (toX, toY): the same place, other
+// coordinates. The shift is the from-region's middle as the to-frame sees it,
+// ToWorld(from, (960, 960), to) -- the same derivation as round 570's "a point
+// moved from the 97/168 frame into 98/157's shifts by (+21120, +1920)", which
+// is Rebase(x, z, 97, 168, 98, 157) - (x, z). It is how -single-frame moves an
+// own-design anchor, which is relative to its zone's centre, into WorldOrigin's
+// frame.
+func Rebase(x, z float64, fromX, fromY, toX, toY int) (float64, float64) {
+	dx, dz := ToWorld(fromX, fromY, halfSpan, halfSpan, toX, toY)
+	return x + dx, z + dz
 }
 
 // ZoneNames returns the named zones ToZoneWorld can convert into, sorted --

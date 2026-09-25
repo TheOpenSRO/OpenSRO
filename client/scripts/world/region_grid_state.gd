@@ -109,9 +109,8 @@ static func frame_world(region_x: int, region_y: int, local_x: float, local_z: f
 
 ## How far cell (dx, dy) -- a region dx in x and dy in y from the frame --
 ## stands from the frame region in world space, after the mirror: region y
-## to +X, region x to -Z. What World3D subtracts from the centre group's
-## position to find the frame region's corner (_grid_origin_world) when the
-## centre is not the frame.
+## to +X, region x to -Z. Every cell's group stands at the frame region's
+## corner (World3D._frame_corner, _grid_origin_world) plus this.
 static func cell_world_offset(dx: int, dy: int) -> Vector3:
 	return Vector3(dy * REGION_SPAN, 0.0, -dx * REGION_SPAN)
 

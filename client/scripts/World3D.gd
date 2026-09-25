@@ -641,24 +641,25 @@ const QA_FLOAT_MAX_ROWS := 200
 ## wherever they are, not just where they started.
 ##
 ## _grid_origin_region/_grid_origin_world anchor the mapping between real
-## region coordinates and Godot world space: _grid_origin_world is
-## whatever world position the real (dx=0, dy=0) cell's own terrain_group
-## ended up at (captured once, right after it loads) -- every other real
-## cell's world position is `_grid_origin_world + Vector3(dx, 0, dy) *
-## REGION_SPAN` by construction (see _load_region_cell), so this doesn't
-## need to know the exact real per-cell placement bias (the half-REGION_SPAN
-## centring offset) in closed form, just that it's identical for
-## every cell. This mapping stays fixed for a zone's whole lifetime, even
-## as cells stream in/out around it, so already-placed nodes never need to
-## move.
+## region coordinates and Godot world space: _grid_origin_world is the
+## world position the real (dx=0, dy=0) cell's own terrain_group stands at
+## (or would stand at) -- every real cell's world position is
+## `_grid_origin_world + RegionGridState.cell_world_offset(dx, dy)` by
+## construction (see _load_region_cell and _group_position). Until round 571
+## it was read off the centre group once it had loaded; since then it is
+## computed from the grid's anchor (_frame_corner), because the centre's own
+## terrain can fail to load and the corner is the same either way. This
+## mapping stays fixed for a zone's whole lifetime, even as cells stream
+## in/out around it, so already-placed nodes never need to move.
 ##
 ## Since round 570 the origin is the coordinate FRAME the server names on the
 ## wire (FrameRegion; _frame_coords), and _grid_centre_region is the region
 ## the grid is built around (the zone's own, _resolve_zone_region). They are
-## the same region for every zone today, and then _grid_origin_world is the
-## centre group's own position, as before; when they differ the centre is the
-## cell (centre - frame) and _grid_origin_world the frame region's corner,
-## where no group need stand (RegionGridState's "THE COORDINATE FRAME").
+## the same region for every zone unless the server runs -single-frame (round
+## 571, default off). When they are the same, _grid_origin_world is where the
+## centre group stands; when they differ the centre is the cell (centre -
+## frame) and _grid_origin_world the frame region's corner, where no group
+## need stand (RegionGridState's "THE COORDINATE FRAME").
 var _grid_origin_region := Vector2i.ZERO
 var _grid_centre_region := Vector2i.ZERO
 var _grid_origin_world := Vector3.ZERO
@@ -3380,7 +3381,9 @@ func _clear_region_grid() -> void:
 ## Every cell key, _last_stream_cell and _grid_origin_region are relative to
 ## the FRAME, so a frame other than the centre puts the centre at cell
 ## (centre - frame) rather than (0, 0); the grid is still built around the
-## centre. With frame == centre every value below is exactly what it was.
+## centre. With frame == centre every value below is exactly what it was,
+## except _grid_origin_world when the centre's terrain fails to load (round
+## 571, _frame_corner).
 func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGION_LOAD_RADIUS, texture_override: String = "", frame: Dictionary = {}) -> void:
 	# No job of an earlier grid may commit into this one (round 565);
 	# _reload_zone_assets has already dropped them, and the first entry has
@@ -3430,13 +3433,9 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 	# to enqueue, and so a later _maybe_stream_regions does not redundantly
 	# re-scan the same centre.
 	_last_stream_cell = Vector2i(cdx, cdy)
-	# The frame region's corner: the centre group's position less the
-	# centre's world offset from the frame (RegionGridState.cell_world_offset,
-	# after the mirror -- _cell_offset is before it), which is zero while
-	# the frame is the centre.
-	var center_node := get_node_or_null("RealTerrain_%d_%d" % [center_x, center_y])
-	var centre_world: Vector3 = center_node.position if center_node != null else Vector3.ZERO
-	_grid_origin_world = centre_world - RegionGridState.cell_world_offset(cdx, cdy)
+	# The frame region's corner, from the anchor every cell of this grid is
+	# placed on (_frame_corner), whether or not the centre's terrain loaded.
+	_grid_origin_world = _frame_corner(_grid_shared_anchor_height)
 
 	# The neighbours are queued nearest-first and built a few per frame (see
 	# _process_stream_queue and, at world entry, the loading screen's pump),
@@ -3507,6 +3506,28 @@ static func _group_position(world_offset: Vector3, anchor_height: float) -> Vect
 	var placement := Vector3(
 		-REGION_SPAN / 2.0, -anchor_height, -REGION_SPAN / 2.0) + world_offset
 	return Vector3(placement.x, placement.y, -placement.z)
+
+## The frame region's corner -- _grid_origin_world, which _maybe_stream_regions
+## measures the player from (RegionGridState.cell_at) -- for a grid placed on
+## `anchor_height` (_grid_shared_anchor_height): where the frame region's own
+## group stands, or would stand, _group_position of no offset. Every cell of
+## the grid, the centre included, stands at this corner plus its
+## RegionGridState.cell_world_offset (region_grid_state_test.gd holds that
+## for every FRAME_ROWS region), so the corner does not need the centre's
+## terrain to have loaded.
+##
+## Round 571 (the review of round 570): until then _load_region_neighborhood
+## read the corner off the centre group and, when the centre's terrain had
+## failed to load, took Vector3.ZERO as the centre group's position. The
+## corner then stood at minus the centre's cell_world_offset -- for a frame
+## other than the centre, what the server's -single-frame names for every
+## town but Jangan, regions away from the grid (grid_origin_test.gd derives
+## where); for a frame that is the centre, half a region off, at the centre
+## region's middle. Only x and z are read (cell_at). With no height known --
+## neither the frame's nor the centre's `.m` gave one -- y is 0, as the old
+## fallback's was.
+static func _frame_corner(anchor_height: float) -> Vector3:
+	return _group_position(Vector3.ZERO, 0.0 if is_nan(anchor_height) else anchor_height)
 
 ## A grid cell's offset from the frame region's (the grid origin's) cell,
 ## BEFORE the mirror: _group_position negates its z. The world-space offset,
@@ -4172,9 +4193,10 @@ func _reload_zone_assets(zone: String, frame: String = "") -> void:
 ## The coordinate frame a zone's grid is built in (round 570), {"x", "y"}:
 ## the region the server named as its FrameRegion when it named one that
 ## parses, else the zone's own centre -- the frame every server's coordinates
-## were in before the server named it, and still are for every zone
-## (server/internal/worldmap.FrameFor returns ZoneCentre, which
-## _resolve_zone_region equals; zone_centres_test.gd).
+## were in before the server named it, and still are for every zone by
+## default (server/internal/worldmap.FrameFor returns ZoneCentre, which
+## _resolve_zone_region equals; zone_centres_test.gd). The server's
+## -single-frame (round 571, default off) names 97/168 for every town.
 static func _frame_coords(centre: Dictionary, frame: String) -> Dictionary:
 	if frame != "":
 		var named := _parse_region_coords(frame)
@@ -4190,11 +4212,12 @@ static func _frame_coords(centre: Dictionary, frame: String) -> Dictionary:
 ## calibrates itself, as it always has -- when the frame's `.m` cannot be
 ## read. Read on the main thread, once per zone load.
 ##
-## Unreachable today: the server names every zone's own centre as its frame.
-## Whoever names another frame (the later single-frame item) must first
-## check each zone's drawn heights under that frame's anchor against the snap
-## ray (_snap_player_onto_terrain, +-1000) and WORLD_FLOOR_Y; round 570
-## (docs/RE_COMPLETION.md) records the five town centres' under 97/168.
+## Reached only under the server's -single-frame (round 571, default off),
+## which names 97/168 as the frame of every town; by default the server names
+## each zone's own centre. Round 571 (docs/RE_COMPLETION.md, "Heights under
+## ONE frame") checked each town's drawn heights under 97/168's anchor
+## against the snap ray (_snap_player_onto_terrain, +-1000) and WORLD_FLOOR_Y,
+## after round 570 recorded the five town centres' under 97/168.
 func _frame_anchor_height(frame_x: int, frame_y: int) -> float:
 	var bytes := AssetSource.read_bytes("%d\\%d.m" % [frame_x, frame_y], _open_map_pk2_if_set())
 	if bytes.is_empty():
@@ -4228,11 +4251,12 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 		return
 	zone_label.text = "Zone: %s" % result.zone
 	# In the server's frame (result.frame, round 570). That frame is the
-	# zone's own centre today, so (0, 0, 0) is the centre region's middle. A
-	# server naming any other frame must send a position inside the centre
-	# region: the grid is built around the centre, and (0, 0, 0) would be
-	# the FRAME region's middle, off it -- the later single-frame item's to
-	# satisfy.
+	# zone's own centre by default, so (0, 0, 0) is the centre region's
+	# middle. Under the server's -single-frame (round 571, default off) it is
+	# 97/168 for every town, and the server sends the town's landing -- its
+	# centre region's middle named in that frame (worldmap.Landing) -- inside
+	# the grid, which is built around the centre; (0, 0, 0) would be the
+	# FRAME region's middle, off it.
 	player.position = Vector3(result.x, result.y, result.z)
 	_last_sent_pos = player.position
 	# The monsters of the old zone are left behind, and so is any attack

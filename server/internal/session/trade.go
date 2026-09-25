@@ -376,10 +376,13 @@ const tradeTooFarReason = "too far away"
 // tradeInRange reports whether a and b stand closer than trade.RequestRange:
 // the 3-D distance GObjPC_HandleTradeMsg_081 (`0x005154e0`) takes with
 // FUN_00405270 and holds against 320.0 at `0x51571c`, strictly below it
-// (see trade.RequestRange). Two players in different zones are out of range.
-// A srrevamp zone is a label with no coordinate transform between zones
-// (handleChangeZone puts everyone at the one spawnPos), so their coordinates
-// cannot be compared. The engine's nearest case is FUN_00430ba0, which gives a
+// (see trade.RequestRange). Two players in different zones are out of range:
+// with -single-frame off each zone is its own frame (its centre region,
+// worldmap.FrameFor) and its own hub bucket, so coordinates from two zones
+// name places in different frames and cannot be compared. Under -single-frame
+// (round 571) every framed zone shares one frame and one bucket
+// (worldmap.WorldBucket), so a.Zone == b.Zone and the distance below is taken
+// in that one frame. The engine's nearest case is FUN_00430ba0, which gives a
 // 1e38 offset (.rdata 0xb45c44) when one position is in a dungeon and the
 // other is not.
 func tradeInRange(a, b world.Entity) bool {

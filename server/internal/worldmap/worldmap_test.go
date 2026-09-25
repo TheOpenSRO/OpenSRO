@@ -1,6 +1,9 @@
 package worldmap
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 // The id packing, checked against the same row the client's own npc table
 // test pins: 25257 is region 98/169.
@@ -286,5 +289,78 @@ func TestFrameTableTheClientReproduces(t *testing.T) {
 	if -middleX <= 0 || -middleZ <= 0 {
 		t.Errorf("the shift into 98/157's frame is (%g, %g); both terms are positive (the frame's y, 157, is below 168, which moves every point +X; its x, 98, is above 97, which moves every point +Z)",
 			-middleX, -middleZ)
+	}
+}
+
+// The one world frame of -single-frame (round 571) is Jangan's own centre, so
+// Jangan's coordinates are the same with the flag on or off.
+func TestWorldOriginIsJangansCentre(t *testing.T) {
+	if WorldOrigin != ZoneCentre["jangan"] {
+		t.Fatalf("WorldOrigin = %v, want jangan's centre %v", WorldOrigin, ZoneCentre["jangan"])
+	}
+	if _, _, ok := FrameFor(WorldBucket); ok {
+		t.Fatalf("the bucket's name %q parses as a frame; it must not name a zone of its own", WorldBucket)
+	}
+}
+
+// Landing is the middle of the zone's centre region: (0, 0) in the zone's own
+// frame -- spawnPos, where every zone change has always landed -- and the same
+// place in any other frame. Every expected value is ToWorld's own, derived
+// here rather than written from prose.
+func TestLandingIsTheCentresMiddleInAnyFrame(t *testing.T) {
+	for zone, centre := range ZoneCentre {
+		if x, z, ok := Landing(zone, centre[0], centre[1]); !ok || x != 0 || z != 0 {
+			t.Errorf("Landing(%q) in its own frame = (%g, %g, %v), want (0, 0) -- spawnPos", zone, x, z, ok)
+		}
+		wantX, wantZ := ToWorld(centre[0], centre[1], halfSpan, halfSpan, WorldOrigin[0], WorldOrigin[1])
+		if x, z, ok := Landing(zone, WorldOrigin[0], WorldOrigin[1]); !ok || x != wantX || z != wantZ {
+			t.Errorf("Landing(%q) in 97/168's frame = (%g, %g, %v), want ToWorld(%d/%d middle) = (%g, %g)",
+				zone, x, z, ok, centre[0], centre[1], wantX, wantZ)
+		}
+	}
+	// Donwhang's 102/153 is 15 regions below Jangan in y (world X negative)
+	// and 5 above in x (world Z negative: the mirror). Derived, then checked
+	// for sign against the axes AGENTS.md records.
+	x, z, _ := Landing("donwhang", WorldOrigin[0], WorldOrigin[1])
+	if wantX, wantZ := ToWorld(102, 153, 960, 960, 97, 168); x != wantX || z != wantZ || x >= 0 || z >= 0 {
+		t.Errorf("Donwhang's landing in the one frame = (%g, %g), want ToWorld = (%g, %g), both negative", x, z, wantX, wantZ)
+	}
+	// An "x/y" label's centre is its own region; a label with no frame has
+	// no landing.
+	if x, z, ok := Landing("100/100", 97, 168); !ok {
+		t.Error("an x/y label has no landing")
+	} else if wantX, wantZ := ToWorld(100, 100, 960, 960, 97, 168); x != wantX || z != wantZ {
+		t.Errorf("Landing(100/100) = (%g, %g), want (%g, %g)", x, z, wantX, wantZ)
+	}
+	for _, zone := range []string{"nowhere", "Jangan", WorldBucket, ""} {
+		if _, _, ok := Landing(zone, 97, 168); ok {
+			t.Errorf("Landing(%q) is ok for a label with no frame", zone)
+		}
+	}
+}
+
+// Rebase names the same place in another frame: a real point's coordinates
+// in one frame, rebased, are ToWorld's in the other -- among them round 570's
+// "(+21120, +1920) into 98/157's frame" and a real Earth Ghost row.
+func TestRebaseIsTheSamePlaceInTheOtherFrame(t *testing.T) {
+	frames := [][2]int{{97, 168}, {102, 153}, {98, 157}, {105, 79}, {92, 135}, {106, 107}}
+	points := []struct {
+		rx, ry         int
+		localX, localZ float64
+	}{{97, 168, 1002, 1020}, {101, 151, 460.51, 1023.06}, {102, 153, 10, 1900}, {106, 108, 270, 1421}}
+	for _, from := range frames {
+		for _, to := range frames {
+			for _, p := range points {
+				x0, z0 := ToWorld(p.rx, p.ry, p.localX, p.localZ, from[0], from[1])
+				wantX, wantZ := ToWorld(p.rx, p.ry, p.localX, p.localZ, to[0], to[1])
+				x, z := Rebase(x0, z0, from[0], from[1], to[0], to[1])
+				// A float64 sum of region offsets and a fractional local: equal
+				// to the last few ulps, not bit for bit.
+				if math.Abs(x-wantX) > 1e-6 || math.Abs(z-wantZ) > 1e-6 {
+					t.Errorf("%d/%d (%g, %g) rebased from %v into %v = (%g, %g), want (%g, %g)",
+						p.rx, p.ry, p.localX, p.localZ, from, to, x, z, wantX, wantZ)
+				}
+			}
+		}
 	}
 }

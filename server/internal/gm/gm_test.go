@@ -15,6 +15,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
 )
 
 // The gate is a plain username list: trimmed, case kept, nobody by default.
@@ -140,6 +141,33 @@ func TestGoto(t *testing.T) {
 	}
 	if res := f.run(t, "/goto nowhere"); !res.Refused || !strings.Contains(res.Text, "jangan") {
 		t.Fatalf("/goto unknown should list the places: %+v", res)
+	}
+}
+
+// Under cmd/server's -single-frame (round 571) the actor's Zone is the hub
+// bucket every framed label shares, worldmap.WorldBucket, and the console's
+// uses map as session/gm.go lays out: no zone label equals the bucket, so
+// /goto <zone> always travels -- including to "jangan", which a GM who walked
+// to Donwhang has not left by label -- and /goto <monster> always carries the
+// species' zone LABEL for the client to re-centre on, never the bucket;
+// /spawn spawns into the bucket, where the players are.
+func TestGotoAndSpawnInTheOneWorldBucket(t *testing.T) {
+	f := newFixture(t)
+	f.actor.Zone = worldmap.WorldBucket
+	for _, zone := range []string{"jangan", "donwhang"} {
+		if res := f.run(t, "/goto "+zone); res.Refused || res.Zone != zone || res.HasPos {
+			t.Errorf("/goto %s from the one bucket: %+v, want travelling to the label", zone, res)
+		}
+	}
+	if res := f.run(t, "/goto mangyang"); res.Refused || !res.HasPos || res.Zone != "jangan" || res.X != 100 || res.Z != 200 {
+		t.Errorf("/goto mangyang from the one bucket: %+v, want the label jangan and the spot (100, 200)", res)
+	}
+	res := f.run(t, "/spawn mangyang")
+	if res.Refused || len(res.SpawnedMonsterIDs) != 1 {
+		t.Fatalf("/spawn in the one bucket: %+v", res)
+	}
+	if m, ok := f.hub.Get(res.SpawnedMonsterIDs[0]); !ok || m.Zone != worldmap.WorldBucket {
+		t.Errorf("the GM's spawn is in %q, want the bucket %q", m.Zone, worldmap.WorldBucket)
 	}
 }
 

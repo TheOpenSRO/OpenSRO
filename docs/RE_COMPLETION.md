@@ -38157,3 +38157,345 @@ it is unchanged.
 because both of its decoders return after the entity list. Then a client tag. A tagged client
 builds exactly the grid it built before, since the frame it now reads is the centre it already
 used. There is no flag, because the wire's meaning is unchanged until the single-frame item.
+
+## One world frame behind -single-frame (default OFF): every monster and player in the Jangan-centred frame and one bucket, so a walk from Jangan reaches Donwhang's monsters (round 571)
+
+Server, plus one client fix the review asked for (the grid's corner, below); not tag-worthy: the
+third item of batch 22 of the map/travel epic (2026-09-25, "I want this whole map loaded and
+explorable"). Rounds 569 and 570 made the server and the client
+agree on every town's centre and put the frame on the wire, each zone still in its own frame and its
+own broadcast bucket. So a player who walked out of Jangan toward Donwhang stayed in Jangan's bucket
+and never met Donwhang's monsters, which were converted into Donwhang's frame. This round adds ONE
+frame and ONE bucket behind a new flag, `-single-frame` (env `SRREVAMP_SINGLE_FRAME`), **default
+off**. Off, every byte on the wire is what it was. No opcode and no packet layout changes.
+
+**What was wired.**
+
+- `worldmap`:
+  - `WorldOrigin` = {97, 168}, Jangan's centre.
+  - `WorldBucket` = "world", the hub zone every framed label shares.
+  - `Landing(zone, frame)`: the middle (960, 960) of the zone's centre region (`FrameFor`), named
+    in the given frame.
+  - `Rebase(x, z, from, to)`: the same place named in another frame.
+  - The header and `FrameFor`'s comment now say what the flag changes.
+- `session`:
+  - `SetSingleFrame` / `SingleFrame`, an atomic like the monster flags.
+  - `ZoneBucket(label)`: the label, or `WorldBucket` for every label `FrameFor` knows while the flag
+    is on.
+  - `arrival(zone)`: the bucket, position and `FrameRegion` for an entry or a zone change.
+    - Flag off, or a label with no frame: the label's own bucket, `spawnPos`, `frameFor(zone)`.
+    - Flag on and a framed label: `WorldBucket`, `Landing(zone, 97/168)`, "97/168".
+  - `handleEnterWorld` and `handleChangeZone` enter the hub, answer and broadcast through it.
+  - `handleChangeZone` skips "already in that zone" for a one-world arrival (below).
+- `cmd/server`:
+  - The flag, with the env WARN pattern and the boot lines `single frame off (-single-frame /
+    SRREVAMP_SINGLE_FRAME)` / `single frame on: origin 97/168 ...`.
+  - `session.SetSingleFrame` is called before the roster spawns.
+  - `realSpawnWorld` converts every npcpos row against 97/168 under the flag, whatever its zone.
+  - `anchorWorld` moves an own-design anchor, which is relative to its zone's centre, into 97/168's
+    frame with `Rebase`.
+  - `rosterInstances` is the spawn loop's body, factored out unchanged so a test can hold it. It
+    gives every instance the bucket `session.ZoneBucket(spec.Zone)`.
+  - `gmSpecies` places through the same two conversions and keeps the zone LABEL.
+  - The review's consistency fix: `realSpawnWorld` converts under the flag only for a zone
+    `worldmap.FrameFor` knows, and `anchorWorld` rebases from `FrameFor` rather than `ZoneCentre`,
+    so both key on what `session.ZoneBucket` keys on. A zone with no frame then gets no instance at
+    all under the flag: before, its rows converted into world-frame coordinates in a bucket of its
+    own. `gmSpecies` leaves out a species with no place, rather than offering an anchor-only one at
+    (0, 0). Latent: the roster's zones are jangan and donwhang, both framed.
+- client, `World3D.gd` (the orchestrator's note from round 570's review, below):
+  `_frame_corner`, and `_load_region_neighborhood` takes `_grid_origin_world` from it.
+- Comments only: `world.Entity.Zone` (it is the bucket), `Hub.ChangeZone` (a same-bucket change),
+  `gm.Actor.Zone`, `gm.Species.Zone`, the label mapping in `session/gm.go`, `tradeInRange`'s
+  (its "handleChangeZone puts everyone at the one spawnPos" is untrue under the flag), and three
+  in `World3D.gd` that called this "the later single-frame item" (`_frame_coords`,
+  `_frame_anchor_height`, `_on_change_zone_result`). `ChangeZoneResult`'s
+  stale "Position is always spawnPos: this project has no confirmed real transform" is corrected;
+  the transform is `worldmap.ToWorld`, measured (round 569's record has the table).
+
+**The grounding.** The frame and the bucket are OWN DESIGN, disclosed: the retail client addresses a
+position by region id plus region-local offset, and srrevamp's placeholder protocol has no world
+frame to copy. Jangan is the origin because every character enters there (`spawnZone`), because
+`ToWorld` was measured in its frame, and because Jangan's coordinates are then identical with the
+flag on or off. Everything else is earlier rounds' measurements, re-read against the current tree:
+`ToWorld` (the measured table in `worldmap.go`'s header), `ZoneCentre` (round 569's NPC rows and
+gates), `FrameRegion` and the client's grid built inside it (round 570). The axes, checked for every
+expected value: region y drives world X, region x drives world Z, and Z is mirrored (AGENTS.md; the
+client's terrain group has `scale.z = -1`). No dump address is involved.
+
+**The landing (the orchestrator's note).** Under the flag a zone change lands at the town's landing
+named in the one frame, not at `spawnPos`. Round 569's step 6 measured each corrected centre's middle
+as open, walkable terrain, and the client moves a Jangan arrival on to `ZONE_SPAWN_LOCAL` itself.
+`Landing` is that middle: (0, 0) in the zone's own frame, which is `spawnPos`, where every zone
+change has always landed. Under the flag it is the same place, named in 97/168's frame. Every value
+below is `ToWorld(centre, 960, 960, 97, 168)`, derived in the tests:
+
+| town | centre | landing in the one frame | float32 step at the landing, X / Z |
+|---|---|---|---|
+| jangan | 97/168 | (0, 0) | -- |
+| donwhang, dunhuang | 102/153 | (-28800, -9600) | 1/512 / 1/1024 |
+| constantinople | 105/79 | (-170880, -15360) | 1/64 / 1/1024 |
+| hotan | 92/135 | (-63360, 9600) | 1/256 / 1/1024 |
+| samarkand | 106/107 | (-117120, -17280) | 1/128 / 1/512 |
+
+The y stays `spawnPos`'s 0, and the client snaps it (below). The client builds the zone's grid
+around its centre, in the frame the server names (round 570's `_load_region_neighborhood`), so the
+landing is inside that grid. (0, 0, 0) would be 97/168's middle, which is off the grid.
+
+**Float precision (recorded, not fixed).** The last column is `math.Nextafter32`'s step at each
+coordinate. A float32 is the wire's position type, and Godot's too. Constantinople's grid reaches
+X -175,680, still 1/64 of a unit. Re-basing the origin is the deferred map-origin-rebasing item.
+
+**Heights under ONE frame (the orchestrator's note).** Under the flag, every grid the client builds
+takes 97/168's near-row vertex as its anchor, -2.49 (round 570's `_frame_anchor_height`). With the
+flag off, a town's grid takes its own centre's vertex. I measured every town centre and its radius-2
+neighbours: 125 regions, every vertex of every `.m`. The measurement was read-only against the render
+box's Map.pk2. A scratch copy of `internal/pk2` and `internal/mapm` read the archive through a
+Python process on the box that only `seek`s and `read`s; nothing was written there, and none of it
+is committed. It reproduces round 569's numbers exactly: 97/168 anchor -2.49, raw -60.86 .. 3.91,
+middle -54.39; 102/153 -99.12, -154.15 .. -86.70, -106.56. "Drawn" is raw minus the anchor:
+
+| town | own anchor | radius-2 raw min .. max | drawn, own anchor (flag off) | drawn, -2.49 (flag on) | landing (middle) drawn off / on |
+|---|---|---|---|---|---|
+| Jangan 97/168 | -2.49 | -94.79 .. 1072.92 | -92.30 .. 1075.41 | the same | -51.90 / -51.90 |
+| Donwhang 102/153 | -99.12 | -182.52 .. 1630.38 | -83.40 .. 1729.50 | -180.03 .. 1632.87 | -7.44 / -104.07 |
+| Constantinople 105/79 | 80.00 | -414.73 .. 686.59 | -494.73 .. 606.59 | -412.24 .. 689.08 | 3.74 / 86.23 |
+| Hotan 92/135 | 243.81 | -820.49 .. 1826.57 | -1064.30 .. 1582.76 | -818.00 .. 1829.06 | 0.02 / 246.32 |
+| Samarkand 106/107 | 180.00 | 87.37 .. 1106.19 | -92.63 .. 926.19 | 89.86 .. 1108.68 | 0.00 / 182.49 |
+
+The note asks for whole-region ranges inside the +-1000 snap ray and above `WORLD_FLOOR_Y` (-500).
+Taken literally, that envelope is broken today, with the flag off, by 1 of Jangan's 25 regions
+(99/170 peaks at 1075.41), 15 of Donwhang's, 23 of Hotan's (a floor at about raw -600 across 90-93/134-137,
+and 92/136 at -820.49) and none of Constantinople's or Samarkand's. With the flag on it is broken by 1,
+14, 19, 0 and 2. The one frame takes no region out of the envelope for Jangan, Donwhang, Hotan or
+Constantinople; Donwhang's 100/153 and four of Hotan's come back into it. It takes two out for
+Samarkand: the peaks of 108/105 and 108/106 draw at 1052.1 and 1108.7, against 869.6 and 926.2 under
+Samarkand's own anchor.
+
+A whole-region envelope that the default Jangan grid already fails cannot be the gate. So I checked
+the places where the client actually puts something at a height the server chose:
+
+- **The landing.** A zone change places the player at the server's y 0. `_snap_player_onto_terrain`
+  casts from y +1000 down to -1000 and only lifts. Every landing draws at -104.07 .. 246.32 under
+  the flag: inside the ray, and above -500.
+- **Monsters -- NOT covered on a first placement.** A monster also arrives at y 0. The first draft
+  of this entry said the client places it on its region's walkable graph first and falls back to
+  the +-1000 ray; the review read the code and that is wrong for a NEW body.
+  - `_spawn_or_update_monster` places a new body at `_terrain_height_at(pos)` alone. That ray
+    returns `pos.y`, the server's 0, when no terrain is loaded under the point. The navmesh-first
+    height (`_moving_monster_height_at`) is for walking bodies: the existing-body branch while one
+    moves, and `_step_monster_bodies`, which steps only bodies with a motion state.
+  - Nothing re-grounds a standing body when its region loads: no loop over `_monster_bodies` does.
+    The next monster list re-places it (the existing-body branch's `_terrain_height_at`, at the
+    list's y 0 again). The client asks for a list on world entry and a zone change, after an attack
+    result, a damage or monster-died push, a kill's death hold, a GM reply that asks for it, the
+    Refresh button, and (with the monster AI on) a move for a body it does not know.
+  - Under the flag a player who enters Jangan is sent every monster in the one bucket, the Earth
+    Ghost's 65 rows among them, while Donwhang's regions are unloaded. Each ghost is drawn at y 0
+    and stays there after a walk to Donwhang until one of those lists. The rows
+    (`/var/tmp/tables/npcpos.txt` joined on the first column, id 1963) sample at raw -119.27 ..
+    121.95, which is -116.78 .. 124.44 under the flag (-20.15 .. 221.07 with it off): a ghost can
+    stand up to 116.78 above its ground or 124.44 below it.
+  - With the flag off the same limit holds for any listed monster outside the regions a player has
+    loaded; the flag is what puts the Earth Ghost's rows in a Jangan player's list.
+  - Not fixed here (a client change to re-ground standing bodies as cells load is the next client
+    round's); written into `deploy/README.md`'s flip conditions.
+  - Jangan's rows keep Jangan's anchor with the flag on or off. Nothing is placed near Samarkand's
+    two peaks.
+- **The floor.** `WORLD_FLOOR_Y` returns the player to their last grounded spot only when they are
+  below -500 AND the ground ray finds no terrain within 20 units under them. Standing on Hotan's floor
+  near raw -600 is grounded. Under the flag that floor draws 246.30 HIGHER than with the flag off, so it
+  moves away from -500.
+- **A GM `/tp` onto a peak.** The ray starts at the GM's own height. If it misses, the buried-player
+  probe (`_recover_if_below_terrain`, a 1920-unit reach) lifts them, flag or no flag.
+
+So no town needed gating for the player, and none is gated; the monsters' first placement is the
+recorded client limit above. Samarkand's two newly-high peaks are recorded here. They matter only
+if something is ever placed on them at y 0. The review re-read the heights independently and
+reports that they match; the probe that measured them is not committed (above), so they are not
+reproducible from the repo alone.
+
+**Walking out of Jangan is the same with the flag on or off.** A grid streams every neighbour under
+its centre's anchor, so a player who walks from Jangan draws every region under -2.49 either way.
+Over the walking box between the two towns (x 95-104, y 151-170, 200 regions, 15 of them missing
+from the archive, all at x 103-104), 4 regions dip below -500: 97/151 -700.90, 97/159 -538.32,
+98/159 -514.99, and one vertex of 104/162 at -21586.9, a spike in the data. 73 regions peak above
++1000. All of this is the same with the flag off; the flag changes only the grids centred on the
+other towns.
+
+**Label -> bucket, every comparison mapped (the orchestrator's note).** `world.Entity.Zone` is the
+BUCKET. Under the flag the label is never stored; it lives only in the results and on the client.
+
+- The bucket-to-bucket comparisons are unchanged and correct: every player and roster monster of a
+  framed zone is in `WorldBucket`. These are `handleMonsterList`'s `monsters.InZone(entity.Zone)`,
+  the AI paths (`monsterai.go`'s `InZone(b.m.Zone)`, `e.Zone != b.m.Zone`, the held keys, the
+  pushes), `combat.go` and `keepup.go`'s `attacker.Zone != m.Zone`, the ground-item drops and lists,
+  `chat.go`'s zone broadcast, and `tradeInRange`, whose 320-unit test now compares positions in one
+  frame.
+- `handleChangeZone`'s `req.Zone == current.Zone` compared a LABEL with the bucket. Under the flag
+  it is skipped for a one-world arrival: a label names no place the character is "already in", since
+  it can have walked from Jangan to Donwhang with its label unchanged. A change to a town is always
+  a warp to its landing. `hub.ChangeZone` re-enters the same bucket, so everyone else gets the
+  mover's `OpEntityLeft` and then its `OpEntityEntered` at the landing. That is a flicker, not a
+  bug, and the test holds it.
+- `session/gm.go` hands the GM console the bucket as `gm.Actor.Zone`:
+  - `/spawn` spawns into it and `/kill`'s broadcast goes to it; both want the bucket.
+  - `/tp` is in its frame.
+  - `gm.gotoSpot` compares it with LABELS. No label equals `WorldBucket`, so `/goto <zone>` always
+    travels, and `/goto <monster>` always carries the species' label (`gm.Species.Zone`, kept by
+    `gmSpecies`), so the client re-centres on that town before it moves the GM.
+  - The reply's `Zone` is therefore always a label; `/kill`'s bucket is cleared from it, as before.
+- A label with no frame (a typo, "Jangan" with a capital) keeps its own bucket, `spawnPos` and
+  `FrameRegion` "" with the flag on too. The client builds it in its own frame, so its coordinates
+  cannot join the world's. A label spelled like the bucket, "world", lands in the world's bucket at
+  (0, 0), Jangan's middle in the one frame: a real place in it, and harmless.
+
+**Also disclosed.** One bucket has no spatial filter: moves, local chat and the monster and
+ground-item lists (the round's verifier counted 413 roster monsters with `-npcpos-csv`: Jangan's
+348 and the Earth Ghost's 65) reach every player. Four limits of the client, which this round does
+not change, and one of the list are written into the deploy section as flip conditions:
+
+- `/unstuck` returns to the ENTRY position, Jangan's middle in the one frame.
+- `_apply_gm_move` compares a `/goto` reply's zone with the label the player ENTERED with, so a GM
+  who walked to Donwhang and types `/goto jangan` stays put. The zone box has no such check.
+- A monster's first placement at y 0 over unloaded terrain (above).
+- The float steps above.
+- The monster list's headroom (the review's count, re-derived here). The list is one packet,
+  capped at 32,767 payload bytes (`sizeMask`, `internal/proto/packet.go`); each monster is 40 bytes
+  plus its name and code name (`MonsterSnapshot.Encode`), and the list adds 4. Counting the real
+  npcpos rows per roster id on the box (read-only: 1933 55, 1934 37, 1935 37, 1936 41, 1937 30,
+  1938 20, 1939 31, 1950 35, 1941 36, 1943 26, 1963 65) against the roster's names gives 23,769
+  bytes for Jangan's 348 with the flag off and 28,189 for the one bucket's 413. A Mangyang is 64
+  bytes, so 72 more overflow the one bucket (141 overflow Jangan's with the flag off). A GM
+  `/spawn` is at most 20 (`gm.MaxSpawn`) and never respawns; `combat.Hub` drops a monster only when
+  it dies. Past the cap every list fails in `proto.Write` and the gateway closes the session, for
+  every player with the flag on.
+
+`handleChangeZone`'s `!oneWorld &&` guard cannot change an outcome under the flag (the review's
+note): a framed label never equals the bucket "world", which `FrameFor` does not know, and with the
+flag on no one sits in a framed label's bucket. It stays as the statement that a one-world arrival
+is always a warp.
+
+Persisting a position with its frame is the next item's.
+
+**The grid's corner (the orchestrator's note from round 570's review).**
+`World3D._load_region_neighborhood` took `_grid_origin_world`, the corner `_maybe_stream_regions`
+measures the player from (`RegionGridState.cell_at`), as the centre group's position less the
+centre's `cell_world_offset`, and used `Vector3.ZERO` as the group's position when the centre's
+terrain had failed to load. The review estimated the error at half a region; that is the frame == centre case.
+With the frame not the centre -- every town but Jangan under the flag -- `grid_origin_test.gd`
+derives it from the code: Donwhang's corner in 97/168's frame came out (28800, 0, 9600) against
+(-960, -anchor, 960), and its landing streamed as cell (10, -30), region 107/138, not 102/153. The
+stream window would have been built and pruned around the wrong region.
+
+- `_frame_corner(anchor)` is `_group_position(Vector3.ZERO, anchor)`: where the frame region's own
+  group stands, or would stand, on the grid's anchor (`_grid_shared_anchor_height`). Every cell's
+  group stands at that corner plus its `cell_world_offset` (region_grid_state_test.gd holds it for
+  every FRAME_ROWS region). So the corner needs no centre.
+- `_load_region_neighborhood` now takes the corner from it, whether or not the centre loaded. With
+  the centre loaded it is the value read off the group before: `_grid_shared_anchor_height` is the
+  height the centre was placed on (its own near height, or the frame's anchor).
+- With no height known (neither the frame's nor the centre's `.m` read), y is 0, as the old
+  fallback's was. Only x and z are read.
+- This also changes one flag-off path, the only one: a zone in its own frame whose centre fails to
+  load. Its corner was (0, 0, 0), half a region off, and is now the region's corner.
+
+**Tests.**
+
+- `session/world_test.go`, in-memory stores over TCP (`startFrameWorld`):
+  - `TestSingleFramePutsEveryTownInOneFrameAndOneBucket`, flag on:
+    - (a) Entry names "97/168" at Jangan's landing. A change to "donwhang" names "97/168" at
+      `ToWorld(102, 153, 960, 960, 97, 168)` within 0.01, y 0.
+    - (b) Bram warps to Donwhang, then Aria enters Jangan. Bram is in her `Others` at Donwhang's
+      landing, and Bram receives her `OpEntityEntered`. Bram then warps to Hotan, and Aria receives
+      his `OpEntityLeft` and then his `OpEntityEntered` at Hotan's landing.
+    - A second change to Hotan is another warp.
+    - An unframed label gets `FrameRegion` "" and `spawnPos`, alone, and Aria hears only the Left.
+  - `TestSingleFrameOffKeepsEachZoneInItsOwnFrame`, the NEGATIVE, flag off:
+    - Donwhang names its own "102/153", derived from `worldmap.FrameFor`. The plan's "98/157"
+      predates round 569.
+    - Every position is `spawnPos`.
+    - Neither player hears the other across zones, and a repeat change is refused "already in that
+      zone".
+  - `TestArrivalKeepsEveryLabelInZoneBucket`: arrival's bucket is `ZoneBucket`'s, with the flag on
+    and off.
+- `cmd/server/main_test.go`, `TestSingleFramePlacesTheRosterInJangansFrame`:
+  - (c) Flag on: the Earth Ghost's first npcpos row (26007 = 101/151, local (460.51, 1023.06))
+    spawns one instance in `WorldBucket` at `ToWorld(row, 97, 168)`, from both `rosterInstances` and
+    `gmSpecies`. `gmSpecies` keeps the label "donwhang".
+  - The own-design anchor is checked as a region-local point of 102/153 against `ToWorld` in the
+    zone's own frame, then named in 97/168's.
+  - Flag off, the same row converts against 102/153 in bucket "donwhang".
+  - Every Jangan instance is the same place with the flag on or off, and only its bucket moves.
+- `worldmap_test.go`:
+  - `TestWorldOriginIsJangansCentre`.
+  - `TestLandingIsTheCentresMiddleInAnyFrame`: (0, 0) in each zone's own frame; `ToWorld`'s value in
+    97/168's; Donwhang's sign checked against the axes.
+  - `TestRebaseIsTheSamePlaceInTheOtherFrame`: 6 frames x 6 frames x 4 real points, each against
+    `ToWorld`.
+- `gm_test.go`, `TestGotoAndSpawnInTheOneWorldBucket`: from the bucket, `/goto jangan` and
+  `/goto donwhang` travel, `/goto mangyang` carries the label "jangan", and `/spawn` lands in the
+  bucket.
+- `cmd/server/main_test.go`, `TestSingleFrameLeavesAZoneWithNoFrameOutOfTheWorld` (the review's
+  consistency fix):
+  - Flag on: a row of a zone with no frame ("nowhere") does not convert, neither it nor its anchor
+    spawns an instance, and `gmSpecies` does not offer it.
+  - An "x/y" label (102/153) joins the world: its row at `ToWorld(row, 97, 168)` and its anchor
+    rebased from 102/153, both in `WorldBucket`.
+  - Flag off (the NEGATIVE): "nowhere" keeps its anchor cluster in its own bucket and `gmSpecies`
+    offers it there, as before.
+  - Against the pre-fix `main.go` it fails 4 checks: the "nowhere" row converts to (-33139.49,
+    -7743.06) into bucket "nowhere", `gmSpecies` offers it there, and the 102/153 anchor spawns
+    nothing. The flag-off checks pass before and after.
+- `client/scripts/world/grid_origin_test.gd` (new): `_load_region_neighborhood` itself, radius 0,
+  on bare World3D instances whose archives are one synthetic pk2 holding only `97\168.m`:
+  - Frame 97/168, centre 102/153 missing: the frame's anchor is read, the loader puts the centre at
+    cell (5, -15), `_grid_origin_world` is `_group_position(Vector3.ZERO, anchor)`, and the
+    streaming test puts the landing and four corners of 102/153 in cell (5, -15) and each
+    neighbour's middle in its own cell. The pre-571 value is derived in the test and shown to miss.
+  - Frame = centre 102/153, missing: no anchor, the corner is (-960, 0, 960), and both halves of
+    the region stream as cell (0, 0).
+  - Frame = centre 97/168, loaded: `_grid_origin_world` is the group's own position.
+  - Every expected value is derived from `_group_position` and `RegionGridState.frame_world`.
+  - Freeing the loaded instance prints one dummy-renderer `ERROR: Parameter "m" is null`
+    (mesh_get_surface_count), not traced further; `ERROR:` is not a failure (round 556), and the
+    suite's own header says so.
+  - NEGATIVE, run: with `World3D.gd` at the round's first draft (no `_frame_corner`), the suite gave
+    `FAILURES: 14` -- the missing method, the frame != centre corner (got (28800, 0, 9600)) and
+    every streamed cell from it (got (10, -30) for the landing), and the frame = centre corner (got
+    (0, 0, 0)) with its west and north halves as (0, -1) and (-1, 0). The loaded case passed. With
+    the fix restored, ALL PASS.
+- **Negatives, run.**
+  - With the six production files stashed (`main.go`, `session/world.go`, `session/gm.go`,
+    `world/world.go`, `worldmap/worldmap.go`, `gm/gm.go`), the session, worldmap, gm and cmd/server
+    test packages fail to build: `undefined: SetSingleFrame`, `WorldOrigin`, `Landing`,
+    `worldmap.WorldBucket`, `rosterInstances`.
+  - In the same stashed tree, the flag-off test alone, with its one `SetSingleFrame(false)` line
+    removed, PASSES against the pre-change server: the flag-off wire is what it was.
+  - Behavioural mutations, each restored afterwards:
+    - With `arrival`'s flag test forced false, the flag-on test fails: `Bram's change to donwhang:
+      ... X:0 Y:0 Z:0 ... FrameRegion:102/153}, want ok donwhang in 97/168 at (-28800, 0, -9600)`.
+      So does `TestArrivalKeepsEveryLabelInZoneBucket`.
+    - With `realSpawnWorld`'s forced false, the roster test fails: `X:-4339.49 Z:1856.94 ..., want
+      one in "world" at ToWorld against 97/168 = (-33139.49, -7743.06)`.
+    - Restored, all green.
+- `cd server && go build ./... && go vet ./... && go test -count=1 -p 1 ./...` is green, before and
+  after the doc edits.
+- `client/tools/remote_godot.sh tests` (lane lock `/var/tmp/r569/lock`): `ran 95 suite(s), 0
+  failing`. `remote_godot.sh check`: `checked 270 scripts and 5 scenes`, `ALL LOAD`.
+- No live server-backed run: this item kept the render box read-only apart from
+  `remote_godot.sh`, and the height and npcpos probes only read.
+
+**Records.** This entry; `docs/WORLD_ISSUES.md`'s five-hundred-and-seventy-first round;
+`deploy/README.md`'s "Single world frame (off by default)"; `server/README.md`'s `-single-frame` row;
+`docs/protocol/teleport_network.md`'s FrameRegion note (the frame that is not the centre is this
+flag's); and the comments above. `docs/SYSTEMS.md` has no row for zones or the world frame, so it is
+unchanged.
+
+**Deploy note.** The server half auto-deploys with the flag OFF, which changes nothing on the wire.
+The client half (the grid's corner) rides in the next client tag; it changes nothing a player sees
+unless a centre region fails to load. Flip `SRREVAMP_SINGLE_FRAME=1` in the compose override only
+after a client tag carrying rounds 569 to 571 is published and CI is green (`gh run list`), and
+only accepting the limits listed there. An older client builds each zone in its own centre's frame
+and places a zone change's one-frame coordinates inside it, regions away. The flip, the limits and
+the kill switch are in `deploy/README.md`.

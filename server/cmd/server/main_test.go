@@ -16,6 +16,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/grounditem"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/srrevamp/server/internal/session"
 	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
 )
 
@@ -195,6 +196,180 @@ func TestEarthGhostConvertsInDonwhangsTownFrame(t *testing.T) {
 	}
 	if !found {
 		t.Error("gmSpecies has no Earth Ghost")
+	}
+}
+
+// Under -single-frame (round 571) the roster stands in ONE frame and ONE
+// bucket: every instance rosterInstances hands the spawn loop is in
+// worldmap.WorldBucket, where every player of every town is, and each real
+// npcpos row is converted against worldmap.WorldOrigin (97/168) whatever its
+// zone -- the Earth Ghost's first row (26007 = 101/151, local (460.51,
+// 1023.06)) to ToWorld(row, 97, 168), derived, not written. /goto keeps the
+// zone LABEL so the client re-centres on Donwhang. The own-design anchor is
+// the same place named in the one frame. With the flag off (the NEGATIVE) the
+// same rows convert against the zone's own centre, in the zone's own bucket,
+// exactly as before.
+func TestSingleFramePlacesTheRosterInJangansFrame(t *testing.T) {
+	t.Cleanup(func() { session.SetSingleFrame(false) })
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	idx := -1
+	for i, s := range monsterSpecs {
+		if s.CodeName == "MOB_WC_EARTHGHOST" {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		t.Fatal("the Earth Ghost is not in the roster")
+	}
+	row := realSpawn{RegionID: 26007, LocalX: 460.51, LocalZ: 1023.06}
+	rx, ry := worldmap.RegionXY(row.RegionID)
+	saved := monsterSpecs[idx].Spawns
+	monsterSpecs[idx].Spawns = []realSpawn{row}
+	defer func() { monsterSpecs[idx].Spawns = saved }()
+	ghost := monsterSpecs[idx]
+
+	for _, on := range []bool{true, false} {
+		session.SetSingleFrame(on)
+		frameX, frameY, bucket := worldmap.WorldOrigin[0], worldmap.WorldOrigin[1], worldmap.WorldBucket
+		if !on {
+			frameX, frameY, bucket = 102, 153, "donwhang"
+		}
+		wantX, wantZ := worldmap.ToWorld(rx, ry, row.LocalX, row.LocalZ, frameX, frameY)
+
+		insts := rosterInstances(ghost, logger)
+		if len(insts) != 1 || insts[0].Zone != bucket || insts[0].X != wantX || insts[0].Z != wantZ {
+			t.Fatalf("single frame %v: the Earth Ghost's row spawns %+v, want one in %q at ToWorld against %d/%d = (%g, %g)",
+				on, insts, bucket, frameX, frameY, wantX, wantZ)
+		}
+		for _, sp := range gmSpecies() {
+			if sp.CodeName == "MOB_WC_EARTHGHOST" && (sp.Zone != "donwhang" || sp.X != wantX || sp.Z != wantZ) {
+				t.Errorf("single frame %v: /goto Earth Ghost -> %s (%g, %g), want the label donwhang at (%g, %g)", on, sp.Zone, sp.X, sp.Z, wantX, wantZ)
+			}
+		}
+
+		// The anchor: relative to Donwhang's centre, the region-local point
+		// (960 + X, 960 - Z) of 102/153 -- checked against ToWorld in the
+		// zone's own frame first -- then named in the frame under test. A lone
+		// instance stands 130 to its left (the spread's first column).
+		anchored := ghost
+		anchored.Spawns = nil
+		lx, lz := 960+anchored.X, 960-anchored.Z
+		if x, z := worldmap.ToWorld(102, 153, lx, lz, 102, 153); x != anchored.X || z != anchored.Z {
+			t.Fatalf("the anchor's region-local point (%g, %g) is (%g, %g) in Donwhang's frame, not the anchor (%g, %g)", lx, lz, x, z, anchored.X, anchored.Z)
+		}
+		ax, az := worldmap.ToWorld(102, 153, lx, lz, frameX, frameY)
+		insts = rosterInstances(anchored, logger)
+		if len(insts) != 1 || insts[0].Zone != bucket || insts[0].X != ax-130 || insts[0].Z != az {
+			t.Errorf("single frame %v: the Earth Ghost's anchor spawns %+v, want one in %q at (%g, %g)", on, insts, bucket, ax-130, az)
+		}
+	}
+
+	// Jangan's own rows are the same with the flag on or off -- the one frame
+	// is Jangan's centre -- and only the bucket changes.
+	for _, spec := range monsterSpecs {
+		if spec.Zone != "jangan" {
+			continue
+		}
+		session.SetSingleFrame(false)
+		off := rosterInstances(spec, logger)
+		session.SetSingleFrame(true)
+		on := rosterInstances(spec, logger)
+		if len(off) != len(on) {
+			t.Fatalf("%s: %d instances with the flag off, %d on", spec.Name, len(off), len(on))
+		}
+		for i := range off {
+			if off[i].X != on[i].X || off[i].Z != on[i].Z || off[i].Zone != "jangan" || on[i].Zone != worldmap.WorldBucket {
+				t.Errorf("%s instance %d: off %s (%g, %g), on %s (%g, %g); want the same place, jangan then %s",
+					spec.Name, i, off[i].Zone, off[i].X, off[i].Z, on[i].Zone, on[i].X, on[i].Z, worldmap.WorldBucket)
+			}
+		}
+	}
+}
+
+// Under -single-frame, realSpawnWorld, anchorWorld and session.ZoneBucket key
+// on the same worldmap.FrameFor (round 571's review), so the roster never puts
+// an instance in world-frame coordinates outside the world's bucket, and
+// gmSpecies never offers a species at (0, 0). A zone with no frame
+// ("nowhere") has no place in the one world: no row converts, no anchor
+// rebases, no instance spawns and /goto and /spawn do not offer it. An "x/y"
+// label has a frame, the region it names, and joins the world like a town:
+// its rows convert against 97/168 and its anchor is rebased from that region,
+// derived from ToWorld. With the flag off (the NEGATIVE) the frameless zone
+// keeps its anchor cluster in its own bucket and gmSpecies offers it there,
+// exactly as before. Before the review's fix (run): the flag-on "nowhere" row
+// converted, so one instance stood in bucket "nowhere" at world-frame
+// coordinates and gmSpecies offered it there (an anchor-only species of such a
+// zone would have been offered at (0, 0)), and the 102/153 anchor spawned
+// nothing, anchorWorld keying on ZoneCentre.
+func TestSingleFrameLeavesAZoneWithNoFrameOutOfTheWorld(t *testing.T) {
+	t.Cleanup(func() { session.SetSingleFrame(false) })
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	idx := -1
+	for i, s := range monsterSpecs {
+		if s.CodeName == "MOB_WC_EARTHGHOST" {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		t.Fatal("the Earth Ghost is not in the roster")
+	}
+	const nowhere = "nowhere"
+	if _, _, framed := worldmap.FrameFor(nowhere); framed {
+		t.Fatalf("%q has a frame, so it cannot stand for a zone without one", nowhere)
+	}
+	row := realSpawn{RegionID: 26007, LocalX: 460.51, LocalZ: 1023.06}
+	lost := monsterSpecs[idx]
+	lost.Zone, lost.Name, lost.CodeName = nowhere, "Lost Ghost", "MOB_TEST_NOWHERE"
+	lost.Spawns = []realSpawn{row}
+	lostAnchor := lost
+	lostAnchor.Spawns = nil
+	saved := monsterSpecs
+	monsterSpecs = append(append([]monsterSpec(nil), saved...), lost)
+	defer func() { monsterSpecs = saved }()
+	offered := func() []string {
+		var zones []string
+		for _, sp := range gmSpecies() {
+			if sp.CodeName == lost.CodeName {
+				zones = append(zones, fmt.Sprintf("%s (%g, %g)", sp.Zone, sp.X, sp.Z))
+			}
+		}
+		return zones
+	}
+
+	session.SetSingleFrame(true)
+	if x, z, ok := realSpawnWorld(nowhere, row); ok {
+		t.Errorf("single frame: a %q row converts to (%g, %g), want not ok", nowhere, x, z)
+	}
+	if insts := rosterInstances(lost, logger); len(insts) != 0 {
+		t.Errorf("single frame: the %q species spawns %+v, want none", nowhere, insts)
+	}
+	if insts := rosterInstances(lostAnchor, logger); len(insts) != 0 {
+		t.Errorf("single frame: the %q anchor spawns %+v, want none", nowhere, insts)
+	}
+	if got := offered(); len(got) != 0 {
+		t.Errorf("single frame: gmSpecies offers the %q species at %v, want it left out", nowhere, got)
+	}
+
+	framed := monsterSpecs[idx]
+	framed.Zone = "102/153"
+	framed.Spawns = []realSpawn{row}
+	rx, ry := worldmap.RegionXY(row.RegionID)
+	wantX, wantZ := worldmap.ToWorld(rx, ry, row.LocalX, row.LocalZ, worldmap.WorldOrigin[0], worldmap.WorldOrigin[1])
+	if insts := rosterInstances(framed, logger); len(insts) != 1 || insts[0].Zone != worldmap.WorldBucket || insts[0].X != wantX || insts[0].Z != wantZ {
+		t.Errorf("single frame: a 102/153 row spawns %+v, want one in %q at ToWorld against 97/168 = (%g, %g)", insts, worldmap.WorldBucket, wantX, wantZ)
+	}
+	framed.Spawns = nil
+	ax, az := worldmap.ToWorld(102, 153, 960+framed.X, 960-framed.Z, worldmap.WorldOrigin[0], worldmap.WorldOrigin[1])
+	if insts := rosterInstances(framed, logger); len(insts) != 1 || insts[0].Zone != worldmap.WorldBucket || insts[0].X != ax-130 || insts[0].Z != az {
+		t.Errorf("single frame: a 102/153 anchor spawns %+v, want one in %q at (%g, %g)", insts, worldmap.WorldBucket, ax-130, az)
+	}
+
+	session.SetSingleFrame(false)
+	if insts := rosterInstances(lost, logger); len(insts) != 1 || insts[0].Zone != nowhere || insts[0].X != lost.X-130 || insts[0].Z != lost.Z {
+		t.Errorf("flag off: the %q species spawns %+v, want its anchor cluster's one instance in %q at (%g, %g), as before", nowhere, insts, nowhere, lost.X-130, lost.Z)
+	}
+	if got, want := offered(), []string{fmt.Sprintf("%s (%g, %g)", nowhere, lost.X, lost.Z)}; len(got) != 1 || got[0] != want[0] {
+		t.Errorf("flag off: gmSpecies offers the %q species at %v, want %v, as before", nowhere, got, want)
 	}
 }
 

@@ -86,7 +86,11 @@ type Actor struct {
 	Name        string
 	// Zone and the position come from world.Hub; Zone is "" when the
 	// character has not entered the world, which the world-bound commands
-	// refuse.
+	// refuse. Zone is the hub's bucket (world.Entity.Zone): the zone label,
+	// or worldmap.WorldBucket under cmd/server's -single-frame (round 571),
+	// which no zone label equals -- so there /goto <zone> is never "already
+	// in" and /goto <monster> always carries the species' zone, and the
+	// client re-centres its grid on that town before it moves the GM.
 	Zone    string
 	X, Y, Z float64
 	// TargetMonsterID is the monster the client has selected, or 0.
@@ -101,6 +105,10 @@ type Actor struct {
 // maintainMonster -- and the spot the roster keeps it at.
 type Species struct {
 	combat.Species
+	// Zone is the species' zone LABEL (cmd/server's roster zone), what
+	// /goto hands the client to re-centre on -- not the hub bucket its
+	// monsters are spawned in, which under -single-frame is the one world's
+	// (round 571). X/Z are in the frame the server keeps the monster in.
 	Zone    string
 	MaxHP   int
 	Defense int

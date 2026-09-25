@@ -7075,6 +7075,58 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-seventy-first round: one world frame and one bucket behind `-single-frame`, default off
+
+With each zone in its own frame and its own broadcast bucket, a player who walked out of Jangan
+toward Donwhang stayed in Jangan's bucket and never met Donwhang's monsters, which stood in
+Donwhang's frame. `-single-frame` (env `SRREVAMP_SINGLE_FRAME`, **default off**) names every framed
+zone in Jangan's 97/168 frame and keeps every player and roster monster of those zones in one bucket.
+The full record is `docs/RE_COMPLETION.md`'s round 571.
+
+- **The landing moves with the frame.** A zone change lands at the middle of the town's centre, as
+  it always has, now named in the one frame: `worldmap.Landing`. Donwhang is
+  `ToWorld(102, 153, 960, 960, 97, 168)` = (-28800, -9600), not (0, 0, 0), which would be Jangan's
+  middle and off the grid a Donwhang client builds.
+- **Heights, measured, not assumed.** Every vertex of the five town centres and their radius-2
+  neighbours was read from the box's Map.pk2 (125 regions), read-only.
+  - Whole-region ranges break the +-1000 / -500 envelope with the flag OFF already: Jangan's own
+    99/170 peaks at 1075.41, and Hotan's neighbours fall to -1064.30.
+  - The one frame takes regions out of the envelope for Samarkand only: the peaks of 108/105 and
+    108/106 draw at 1052.1 and 1108.7.
+  - The landing passes the check the client runs at a server-given height: the landings draw at
+    -104.07 .. 246.32, inside the +-1000 snap ray and above -500. No town is gated.
+  - A monster's FIRST placement gets no such check (corrected by the round's review; the first
+    draft of this entry said every server-given height passed). `_spawn_or_update_monster` places a
+    new body with `_terrain_height_at` alone, whose ray keeps the server's y 0 when no terrain is
+    loaded under the point, and nothing re-grounds a standing body when its region loads; only the
+    next monster list does. Under the flag a player in Jangan is sent the Earth Ghost's 65 rows
+    while Donwhang is unloaded, so each ghost is drawn at y 0 -- its ground draws at -116.78 ..
+    124.44 -- until the next list. A flip condition in `deploy/README.md`, not fixed here.
+- **Walking out of Jangan is unchanged by the flag.** A grid streams every neighbour under its
+  centre's anchor, so the walk to Donwhang draws each region the same way with the flag on or off.
+  Four regions of the walking box dip below -500: 97/151, 97/159, 98/159, and a -21586.9 spike in
+  104/162.
+- **Labels become hints.** Under the flag a change to a town is always a warp, never "already in
+  that zone". The rest of the world sees the mover leave and re-enter, a flicker. `/goto` always
+  travels.
+- **Float32 at the far towns.** Constantinople's landing is 170,880 units out, where a position steps
+  by 1/64 of a unit. This is recorded, not rebased.
+- **The grid's corner no longer needs the centre's terrain (client, from round 570's review).**
+  `_grid_origin_world`, the corner the streaming test measures the player from, was read off the
+  centre's terrain group, with (0, 0, 0) standing in for the group when the centre failed to load.
+  With the frame not the centre -- every town but Jangan under the flag -- that put the corner at
+  minus the centre's cell offset: Donwhang's landing streamed as region 107/138, not 102/153
+  (`grid_origin_test.gd` derives it). It is now `_frame_corner` of the grid's anchor, whether or
+  not the centre loaded; with the centre loaded the value is the one read off the group before.
+- **The monster list gets closer to its packet cap.** One bucket's list is 28,189 bytes (Jangan's
+  348 plus the Earth Ghost's 65) against 32,767; 72 more GM-spawned Mangyangs overflow it for every
+  player (`deploy/README.md`).
+
+Measured by the Go suite (the flag-on and flag-off world tests over TCP, the roster placement and
+the zone with no frame, `Landing`/`Rebase`, the GM mapping), by `grid_origin_test.gd` on the render
+box, and by the read-only height probe. No live run. The flip waits for a client tag carrying rounds
+569 to 571 (`deploy/README.md`).
+
 ## Five-hundred-and-seventieth round: the server names the coordinate frame on the wire, and the client builds its grid inside it
 
 A world coordinate means something only once you say which region the frame is centred on. Until

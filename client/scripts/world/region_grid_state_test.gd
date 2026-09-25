@@ -151,8 +151,9 @@ func _test_frame(state: RefCounted) -> void:
 		var placed := Transform3D(Basis.from_scale(Vector3(1, 1, -1)), pos) * Vector3(row[2], 0.0, row[3])
 		_check(Vector2(placed.x, placed.z) == want, "the terrain placement puts %s at %s (got %s)" % [label, want, Vector2(placed.x, placed.z)])
 		# The frame region's corner is the group's position less the cell's
-		# POST-mirror offset: what _load_region_neighborhood takes as
-		# _grid_origin_world when the centre is not the frame.
+		# POST-mirror offset: World3D._frame_corner, what
+		# _load_region_neighborhood takes as _grid_origin_world (round 571;
+		# grid_origin_test.gd).
 		var off: Vector3 = state.call("cell_world_offset", rx - fx, ry - fy)
 		_check(pos - off == corner, "%d/%d's group less cell_world_offset(%d, %d) is the frame's corner" % [rx, ry, rx - fx, ry - fy])
 		# And the streaming test finds the row's region from its world point.

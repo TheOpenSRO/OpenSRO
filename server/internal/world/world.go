@@ -48,8 +48,14 @@ type Entity struct {
 	Session     *gateway.Session
 	CharacterID int64
 	Name        string
-	Zone        string
-	Pos         Position
+	// Zone is the bucket the entity is kept and broadcast in: everyone in it
+	// hears its moves, and its monsters, chat and ground items are the
+	// bucket's. It is the zone label the client asked for, except under
+	// cmd/server's -single-frame (round 571), where every label with a frame
+	// shares worldmap.WorldBucket (session.ZoneBucket) and the label is only
+	// the client's grid-centre hint, never stored here.
+	Zone string
+	Pos  Position
 	// Life is the character's life state, LifeAlive from Enter until a
 	// monster's killing blow sets LifeDead (session/monsterstrike.go, behind
 	// -player-dead-state) and a revive sets LifeAlive again.
@@ -147,6 +153,10 @@ func (h *Hub) Move(sess *gateway.Session, pos Position) (entity Entity, others [
 // state before the move, everyone left behind in the old zone (to notify
 // they left), and everyone already present in the new zone (to notify
 // someone new arrived) -- or ok=false if the session wasn't in the world.
+// A change into the zone the character is already in (-single-frame's warp
+// between two towns of the one bucket, round 571) removes and re-adds it, so
+// everyone else in the zone is in both lists: they hear it leave and then
+// arrive at pos.
 func (h *Hub) ChangeZone(sess *gateway.Session, newZone string, pos Position) (old Entity, remainingOld []Entity, othersNew []Entity, ok bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

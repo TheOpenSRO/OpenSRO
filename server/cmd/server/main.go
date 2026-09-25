@@ -144,9 +144,107 @@ type realSpawn struct {
 // gmSpecies both place through it, so a moved centre (round 569: donwhang
 // 98/157 -> 102/153) moves every row of the zone the same way. ok is false
 // for a zone with no known centre.
+//
+// Under -single-frame (round 571, session.SingleFrame) every row of a zone
+// with a frame (worldmap.FrameFor) is converted against worldmap.WorldOrigin
+// instead: the one frame the server then names for every such zone, so
+// Jangan's and Donwhang's monsters stand in one coordinate system and a player
+// walking between them meets both. A zone with no frame is not ok under the
+// flag either: session.ZoneBucket keeps it in its own bucket, keyed on the
+// same FrameFor, where world-frame coordinates would name no place (round
+// 571's review).
 func realSpawnWorld(zone string, s realSpawn) (x, z float64, ok bool) {
 	rx, ry := worldmap.RegionXY(s.RegionID)
+	if session.SingleFrame() {
+		if _, _, framed := worldmap.FrameFor(zone); !framed {
+			return 0, 0, false
+		}
+		x, z = worldmap.ToWorld(rx, ry, s.LocalX, s.LocalZ, worldmap.WorldOrigin[0], worldmap.WorldOrigin[1])
+		return x, z, true
+	}
 	return worldmap.ToZoneWorld(zone, rx, ry, s.LocalX, s.LocalZ)
+}
+
+// anchorWorld is where a species' own-design anchor (monsterSpec.X/Z) stands.
+// The anchor is relative to its zone's frame region (worldmap.FrameFor: the
+// town's centre, or the region an "x/y" label names), so with -single-frame
+// off it is used as it is; with it on (round 571) it is the same place named
+// in worldmap.WorldOrigin's frame -- worldmap.Rebase from that region -- so a
+// roster run without -npcpos-csv puts the Earth Ghost where it always stood,
+// near the middle of Donwhang's region, and not near Jangan's. ok is false
+// under the flag for a zone with no frame: its anchor names no place in the
+// one frame. FrameFor, not ZoneCentre, so this, realSpawnWorld and
+// session.ZoneBucket agree on which zones join the one world (round 571's
+// review).
+func anchorWorld(spec monsterSpec) (x, z float64, ok bool) {
+	if !session.SingleFrame() {
+		return spec.X, spec.Z, true
+	}
+	fx, fy, framed := worldmap.FrameFor(spec.Zone)
+	if !framed {
+		return 0, 0, false
+	}
+	x, z = worldmap.Rebase(spec.X, spec.Z, fx, fy, worldmap.WorldOrigin[0], worldmap.WorldOrigin[1])
+	return x, z, true
+}
+
+// rosterInstances is every monster the roster keeps alive for spec: one per
+// real npcpos row when the species has them (converted by realSpawnWorld,
+// no spread -- these are the authored positions, and nudging them would throw
+// away the only part of this that is grounded), else Count instances spread
+// around the own-design anchor (anchorWorld) on a small deterministic grid, so
+// respawns land back in place -- a cluster, not a stack, ~130 units apart,
+// well over a monster's ~77-unit capsule. A species whose rows all fail to
+// convert falls back to the anchor rather than leaving the world.
+//
+// Each instance's Zone is the hub bucket it is spawned in,
+// session.ZoneBucket(spec.Zone): the species' zone, or worldmap.WorldBucket
+// under -single-frame (round 571), where the players of every town are too.
+// main runs maintainMonster on each.
+func rosterInstances(spec monsterSpec, logger *slog.Logger) []monsterSpec {
+	bucket := session.ZoneBucket(spec.Zone)
+	var out []monsterSpec
+	if len(spec.Spawns) > 0 {
+		for _, s := range spec.Spawns {
+			x, z, ok := realSpawnWorld(spec.Zone, s)
+			if !ok {
+				// The zone's own centre region is what world coordinates
+				// are relative to; without it there is no frame to convert
+				// into, and placing the monster at the local position
+				// would silently put it somewhere arbitrary.
+				logger.Warn("real spawn skipped: zone has no known centre region",
+					"zone", spec.Zone, "name", spec.Name, "region", s.RegionID)
+				continue
+			}
+			inst := spec
+			inst.X, inst.Z, inst.Zone = x, z, bucket
+			out = append(out, inst)
+		}
+		if len(out) > 0 {
+			return out
+		}
+		// Nothing converted. Fall through to the own-design anchor rather
+		// than leaving the species out of the world entirely.
+		logger.Warn("no real spawn converted, falling back to the anchor", "name", spec.Name)
+	}
+	ax, az, ok := anchorWorld(spec)
+	if !ok {
+		logger.Warn("species skipped: its zone has no known centre region to place its anchor in the one world frame",
+			"zone", spec.Zone, "name", spec.Name)
+		return nil
+	}
+	count := spec.Count
+	if count < 1 {
+		count = 1
+	}
+	for i := 0; i < count; i++ {
+		inst := spec
+		inst.X = ax + float64((i%3)-1)*130.0
+		inst.Z = az + float64(i/3)*130.0
+		inst.Zone = bucket
+		out = append(out, inst)
+	}
+	return out
 }
 
 // monsterStatsForLevel is the FALLBACK half of a monster's combat profile:
@@ -393,6 +491,14 @@ func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Log
 // defence and gold). Its go-to spot is the species' first real npcpos
 // placement in world coordinates when it has one, else the own-design
 // anchor -- so /goto lands where the server actually keeps the monster.
+// Both go through the spawn loop's own conversions (realSpawnWorld,
+// anchorWorld), so under -single-frame the spot is in the one world frame
+// too. Its Zone stays the roster's zone LABEL, not the hub bucket: it is what
+// /goto hands the client to re-centre its grid on (gm.Species). A species with
+// no place at all -- under -single-frame, one whose zone has no frame -- is
+// left out, as rosterInstances leaves it out of the world, rather than
+// offered at (0, 0) (round 571's review); with the flag off every species has
+// its anchor, so none is.
 func gmSpecies() []gm.Species {
 	out := make([]gm.Species, 0, len(monsterSpecs))
 	for _, spec := range monsterSpecs {
@@ -405,11 +511,14 @@ func gmSpecies() []gm.Species {
 		if maxHP < 1 {
 			maxHP = 1
 		}
-		x, z := spec.X, spec.Z
+		x, z, placed := anchorWorld(spec)
 		if len(spec.Spawns) > 0 {
 			if wx, wz, ok := realSpawnWorld(spec.Zone, spec.Spawns[0]); ok {
-				x, z = wx, wz
+				x, z, placed = wx, wz, true
 			}
+		}
+		if !placed {
+			continue
 		}
 		out = append(out, gm.Species{
 			Species: combatSpeciesOf(spec),
@@ -624,9 +733,24 @@ func main() {
 			"struck and the wire is what it was. Forced off with a WARN unless -monster-battle is in "+
 			"effect and -player-dead-state is on. Needs the client releases those two need (rounds 546 "+
 			"and 548). See deploy/README.md, \"Monster aggro (off by default)\".")
+	singleFrameEnv, singleFrameEnvErr := envBool("SRREVAMP_SINGLE_FRAME")
+	singleFrame := flag.Bool("single-frame", singleFrameEnv,
+		"put the whole world in ONE coordinate frame (env SRREVAMP_SINGLE_FRAME): every zone with a "+
+			"frame is named in Jangan's 97/168 (FrameRegion \"97/168\") and kept in one broadcast bucket, "+
+			"every roster monster with it, and a zone change (so a GM /goto <town> too) lands at the "+
+			"town's landing named in that frame -- so a player who walks from Jangan toward Donwhang meets Donwhang's "+
+			"monsters and every other player. Default OFF, and the kill switch: off, every zone keeps "+
+			"its own frame and bucket and the wire is what it was. Needs a client release that carries "+
+			"round 570 (it builds a zone's grid inside the server's FrameRegion) and round 569 (the "+
+			"corrected town centres and the \"donwhang\" label). See deploy/README.md, \"Single world "+
+			"frame (off by default)\".")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	if singleFrameEnvErr != nil {
+		logger.Warn("SRREVAMP_SINGLE_FRAME is not a boolean; the single frame stays off unless -single-frame is given",
+			"err", singleFrameEnvErr)
+	}
 	if monsterAIEnvErr != nil {
 		logger.Warn("SRREVAMP_MONSTER_AI is not a boolean; the monster AI stays off unless -monster-ai is given",
 			"err", monsterAIEnvErr)
@@ -993,6 +1117,17 @@ func main() {
 		}
 		logger.Info("npcpos placements loaded", "species_in_table", len(table), "roster_species_placed", applied)
 	}
+	// The one world frame (round 571), behind its own flag. Set before the
+	// roster spawns and before gmSpecies: both read it for their monsters'
+	// zone and coordinates (rosterInstances), and the world handlers for every
+	// arrival (session.arrival).
+	session.SetSingleFrame(*singleFrame)
+	if *singleFrame {
+		logger.Info(fmt.Sprintf("single frame on: origin %d/%d -- every zone with a frame is named in one frame and kept in one bucket (%q), every roster monster with it; a zone change lands at the town's landing in that frame",
+			worldmap.WorldOrigin[0], worldmap.WorldOrigin[1], worldmap.WorldBucket))
+	} else {
+		logger.Info("single frame off (-single-frame / SRREVAMP_SINGLE_FRAME)")
+	}
 	// The spawn push (round 542), behind its own flag: a respawn or a GM /spawn
 	// is sent to its zone as OpMonsterSpawned the moment it appears. Set
 	// before the roster's first spawn, like the heading roll above.
@@ -1003,47 +1138,11 @@ func main() {
 		logger.Info("monster spawn push off (-monster-spawn-push / SRREVAMP_MONSTER_SPAWN_PUSH)")
 	}
 	spawned := func(id int64) { session.BroadcastMonsterSpawned(hub, monsters, id) }
+	// Every species' instances -- a monster per real npcpos row, or a cluster
+	// around the own-design anchor -- in the zone and frame -single-frame
+	// (set above) says: rosterInstances.
 	for _, spec := range monsterSpecs {
-		// A species with real npcpos placements gets one monster per real
-		// row, where the game itself puts it. No spread: these are already
-		// the authored positions, and nudging them would throw away the only
-		// part of this that is grounded.
-		if len(spec.Spawns) > 0 {
-			placed := 0
-			for _, s := range spec.Spawns {
-				x, z, ok := realSpawnWorld(spec.Zone, s)
-				if !ok {
-					// The zone's own centre region is what world coordinates
-					// are relative to; without it there is no frame to convert
-					// into, and placing the monster at the local position
-					// would silently put it somewhere arbitrary.
-					logger.Warn("real spawn skipped: zone has no known centre region",
-						"zone", spec.Zone, "name", spec.Name, "region", s.RegionID)
-					continue
-				}
-				inst := spec
-				inst.X, inst.Z = x, z
-				go maintainMonster(ctx, monsters, logger, inst, spawned)
-				placed++
-			}
-			if placed > 0 {
-				continue
-			}
-			// Nothing converted. Fall through to the own-design anchor rather
-			// than leaving the species out of the world entirely.
-			logger.Warn("no real spawn converted, falling back to the anchor", "name", spec.Name)
-		}
-		count := spec.Count
-		if count < 1 {
-			count = 1
-		}
-		// Spread a species' instances around its anchor on a small deterministic
-		// grid (so respawns land back in place) -- a cluster, not a stack. ~130
-		// units apart, well over a monster's ~77-unit capsule.
-		for i := 0; i < count; i++ {
-			inst := spec
-			inst.X += float64((i%3)-1) * 130.0
-			inst.Z += float64(i/3) * 130.0
+		for _, inst := range rosterInstances(spec, logger) {
 			go maintainMonster(ctx, monsters, logger, inst, spawned)
 		}
 	}

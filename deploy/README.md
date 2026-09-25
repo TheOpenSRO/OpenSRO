@@ -353,3 +353,66 @@ log then reads `monster aggro on: a monster notices the nearest living player ..
 
 **Off, the kill switch.** Remove that line (or set it to `"0"`), then run `docker compose up -d`.
 Turning `SRREVAMP_MONSTER_BATTLE` or `SRREVAMP_PLAYER_DEAD_STATE` off also turns this off.
+
+## Single world frame (off by default)
+
+The server can put the whole world in ONE coordinate frame (round 571), so a player who walks out
+of Jangan toward Donwhang stays in everyone else's coordinates and meets Donwhang's monsters. Every
+zone the server knows a frame for -- the named towns and any `x/y` region label -- is then named in
+Jangan's frame (`FrameRegion` "97/168" on `OpEnterWorldResult` and `OpChangeZoneResult`) and kept in
+ONE broadcast bucket, and every roster monster with it: each npcpos row is converted against 97/168,
+and an own-design anchor is moved into that frame. A zone change (and so a GM `/goto <town>`) lands
+at the middle of the town's centre region named in that frame -- the same place it lands with the
+flag off, in the other frame's numbers (Donwhang: `ToWorld(102, 153, 960, 960, 97, 168)`). The zone
+label stays the client's grid-centre hint. What the choice is and what it is not is in
+`docs/RE_COMPLETION.md`, round 571: the frame and the bucket are OWN DESIGN.
+
+What changes for players with it on: a change to a town is always a warp to its landing, never
+"already in that zone", and the rest of the world sees the mover leave and re-enter (a flicker).
+One bucket has no spatial filter, so moves, local chat and the monster list (413 monsters with
+`-npcpos-csv`) reach every player. A label with no frame (a typo, "Jangan" with a capital) keeps its
+own bucket and the old wire.
+
+It is behind the `-single-frame` flag (env `SRREVAMP_SINGLE_FRAME`), and **the default is off**:
+off, every zone keeps its own frame and bucket and the wire is what it was. After an update the boot
+log reads `single frame off (-single-frame / SRREVAMP_SINGLE_FRAME)`.
+
+**Turn it on only when all of these hold:**
+
+1. A client release that carries rounds 569 to 571 is tagged, CI is green for it (`gh run list`),
+   and its zips are published. Round 570's client builds a zone's grid inside the server's
+   `FrameRegion`; an older client ignores the field, builds each zone in its own centre's frame and
+   puts a zone change's one-frame coordinates inside that grid -- Donwhang's landing, 28,800 units
+   out in X, lands it regions away, off the ground it built. Round 569's client resolves the
+   server's "donwhang" label and builds the towns' corrected centres. Round 571's client finds the
+   grid's corner without the centre's terrain: before it, a town whose centre region failed to load
+   streamed its grid around the wrong region (Donwhang's landing as 107/138, not 102/153).
+2. You accept these limits of that client, which the flag does not fix:
+   - `/unstuck` returns to the ENTRY position, which in the one frame is Jangan's middle wherever
+     the player is.
+   - The GM console compares a `/goto` reply's zone with the zone the player ENTERED with, so a GM
+     who walked to Donwhang and types `/goto jangan` stays put (the zone box's change works).
+   - A monster is first drawn at the server's y 0 when no terrain is loaded under it, and nothing
+     lowers or lifts a standing one when its region loads later; only the next monster list does
+     (an attack, a kill, a GM refresh, the Refresh button). With the flag on, a player in Jangan is
+     sent the Earth Ghost's 65 rows while Donwhang is unloaded, so after a walk there each ghost can
+     stand up to 116.78 above or 124.44 below its ground until that list (round 571's heights).
+   - The far towns sit up to 170,880 units from the origin, where a float32 position steps by 1/64
+     of a unit (Constantinople) -- recorded, not rebased.
+3. You accept the monster list's size. It is one packet, capped at 32,767 payload bytes (`sizeMask`,
+   `internal/proto/packet.go`), and each monster costs 40 bytes plus its name and code name
+   (`MonsterSnapshot.Encode`). With `-npcpos-csv` Jangan's 348 roster monsters are 23,769 bytes
+   today; the one bucket holds them and the Earth Ghost's 65, 28,189 bytes, for every player.
+   72 more Mangyang-sized entries (64 bytes each; four GM `/spawn 20`s, which nothing respawns and
+   `combat.Hub` drops only when they die) push it over the cap: every list request then fails in
+   `proto.Write` (`payload ... too large for a single frame`) and the gateway closes that player's
+   session (`handler error, closing session`). With the flag off it takes 141 in Jangan's bucket
+   alone; with it on, 72 anywhere, and every player's list fails.
+
+**On.** Add `SRREVAMP_SINGLE_FRAME: "1"` under the server's `environment:` in the untracked
+`docker-compose.override.yml`, the same way as `SRREVAMP_MONSTER_AI` above, then run
+`docker compose up -d`. You can instead append `- "-single-frame=true"` to the override's restated
+`command:` list. The boot log then reads `single frame on: origin 97/168 ...`.
+
+**Off, the kill switch.** Remove that line (or set it to `"0"`), then run `docker compose up -d`.
+Nothing is stored in the frame, so every zone is back in its own frame on the next login.

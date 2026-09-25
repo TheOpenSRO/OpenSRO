@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"strings"
 	"sync/atomic"
@@ -20,6 +22,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
 )
 
 // worldTestMaxStacks is a fixed-answer inventory.MaxStackLookup for
@@ -500,6 +503,215 @@ func TestChangeZoneFlow(t *testing.T) {
 	leftMsg, err := DecodeEntityLeft(left.Data)
 	if err != nil || leftMsg.CharacterID != 3 {
 		t.Fatalf("Aria's EntityLeft should name Cyra (id 3): %+v (err=%v)", leftMsg, err)
+	}
+}
+
+// startFrameWorld serves the world handlers over TCP with in-memory stores
+// for the single-frame tests (round 571): two accounts, alice/Aria and
+// bob/Bram, connected but not yet in the world, so each test decides who
+// enters and moves when. The fixture's read/send/login/nothing helpers need
+// no state of their own, so a zero deadWorldFixture carries them.
+func startFrameWorld(t *testing.T) (f *deadWorldFixture, connA net.Conn, rA *bufio.Reader, connB net.Conn, rB *bufio.Reader) {
+	t.Helper()
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	accounts.Add("bob", "hunter3")
+	chars := character.NewMemStore()
+	chars.Create(ctx, 1, "Aria")
+	chars.Create(ctx, 2, "Bram")
+	hub := world.NewHub()
+	addr, cleanup := startTestServer(t, gateway.Chain(LoginHandler(accounts), WorldHandler(chars, nil, hub)))
+	t.Cleanup(cleanup)
+	connA = dialTestServer(t, addr)
+	t.Cleanup(func() { connA.Close() })
+	connB = dialTestServer(t, addr)
+	t.Cleanup(func() { connB.Close() })
+	return &deadWorldFixture{}, connA, bufio.NewReader(connA), connB, bufio.NewReader(connB)
+}
+
+// changeZone sends one OpChangeZone and decodes the reply.
+func changeZone(t *testing.T, f *deadWorldFixture, conn net.Conn, r *bufio.Reader, zone string) *ChangeZoneResult {
+	t.Helper()
+	f.send(t, conn, OpChangeZone, (&ChangeZoneRequest{Zone: zone}).Encode())
+	p := f.read(t, conn, r)
+	if p.Opcode != OpChangeZoneResult {
+		t.Fatalf("change to %q answered %#04x, want OpChangeZoneResult", zone, p.Opcode)
+	}
+	czr, err := DecodeChangeZoneResult(p.Data)
+	if err != nil {
+		t.Fatalf("decoding the change to %q: %v", zone, err)
+	}
+	return czr
+}
+
+// near reports whether (x, z) is within 0.01 of (wantX, wantZ).
+func near(x, z float32, wantX, wantZ float64) bool {
+	return math.Abs(float64(x)-wantX) < 0.01 && math.Abs(float64(z)-wantZ) < 0.01
+}
+
+// Under -single-frame (round 571) every town is named in ONE frame, Jangan's
+// 97/168, and every player is in ONE bucket. Expected positions are derived
+// from worldmap.ToWorld, never written from prose (the batch's sign rule),
+// with the axes AGENTS.md records: region y drives world X, region x drives
+// world Z, Z mirrored. A zone change lands at the middle of the town's centre
+// region -- local (960, 960), where spawnPos stands in the zone's own frame --
+// named in the one frame: Donwhang's 102/153 is 15 regions down in y (X
+// negative) and 5 up in x (Z negative, the mirror).
+func TestSingleFramePutsEveryTownInOneFrameAndOneBucket(t *testing.T) {
+	SetSingleFrame(true)
+	t.Cleanup(func() { SetSingleFrame(false) })
+	f, connA, rA, connB, rB := startFrameWorld(t)
+	origin := worldmap.WorldOrigin
+	originLabel := fmt.Sprintf("%d/%d", origin[0], origin[1])
+	if originLabel != "97/168" {
+		t.Fatalf("the one frame's origin is %s, want Jangan's 97/168", originLabel)
+	}
+
+	// Bram enters at Jangan: the one frame, at Jangan's landing -- (0, 0),
+	// where spawnPos has always put him.
+	ewrB := f.login(t, connB, rB, "bob", "hunter3", "Bram")
+	janganX, janganZ := worldmap.ToWorld(97, 168, 960, 960, origin[0], origin[1])
+	if ewrB.Zone != "jangan" || ewrB.FrameRegion != "97/168" || !near(ewrB.X, ewrB.Z, janganX, janganZ) || ewrB.Y != 0 {
+		t.Fatalf("Bram entered %q in frame %q at (%g, %g, %g), want jangan in 97/168 at (%g, 0, %g)",
+			ewrB.Zone, ewrB.FrameRegion, ewrB.X, ewrB.Y, ewrB.Z, janganX, janganZ)
+	}
+
+	// He warps to Donwhang: the label stays the client's ("donwhang", the grid
+	// centre it builds around), the frame is the one world's, and the position
+	// is Donwhang's landing named in it -- not (0, 0, 0), which in 97/168's
+	// frame is Jangan's middle, off the grid a Donwhang client builds.
+	donX, donZ := worldmap.ToWorld(102, 153, 960, 960, origin[0], origin[1])
+	czr := changeZone(t, f, connB, rB, "donwhang")
+	if !czr.OK || czr.Zone != "donwhang" || czr.FrameRegion != "97/168" || !near(czr.X, czr.Z, donX, donZ) || czr.Y != 0 {
+		t.Fatalf("Bram's change to donwhang: %+v, want ok donwhang in 97/168 at (%g, 0, %g)", czr, donX, donZ)
+	}
+	if len(czr.Others) != 0 {
+		t.Fatalf("nobody else is in the world yet, got Others=%+v", czr.Others)
+	}
+
+	// Aria enters at Jangan. One bucket: Bram is in her list, standing at
+	// Donwhang's landing, and Bram -- the Donwhang player -- hears the Jangan
+	// player arrive.
+	ewrA := f.login(t, connA, rA, "alice", "hunter2", "Aria")
+	if ewrA.FrameRegion != "97/168" || len(ewrA.Others) != 1 || ewrA.Others[0].Name != "Bram" ||
+		!near(ewrA.Others[0].X, ewrA.Others[0].Z, donX, donZ) {
+		t.Fatalf("Aria entered in frame %q with Others=%+v, want 97/168 and Bram at (%g, %g)", ewrA.FrameRegion, ewrA.Others, donX, donZ)
+	}
+	p := f.read(t, connB, rB)
+	if p.Opcode != OpEntityEntered {
+		t.Fatalf("Bram in Donwhang got %#04x after Aria entered Jangan, want OpEntityEntered", p.Opcode)
+	}
+	if snap, _, err := decodeEntitySnapshot(p.Data); err != nil || snap.Name != "Aria" || !near(snap.X, snap.Z, janganX, janganZ) {
+		t.Fatalf("Bram's OpEntityEntered: %+v (err=%v), want Aria at (%g, %g)", snap, err, janganX, janganZ)
+	}
+
+	// Bram warps on to Hotan. The same bucket is left and re-entered, so Aria
+	// hears him leave and then arrive at Hotan's landing: the Jangan player
+	// gets the other's OpEntityEntered too (the flicker the round records).
+	hotX, hotZ := worldmap.ToWorld(92, 135, 960, 960, origin[0], origin[1])
+	czr = changeZone(t, f, connB, rB, "hotan")
+	if !czr.OK || czr.FrameRegion != "97/168" || !near(czr.X, czr.Z, hotX, hotZ) || len(czr.Others) != 1 || czr.Others[0].Name != "Aria" {
+		t.Fatalf("Bram's change to hotan: %+v, want ok in 97/168 at (%g, %g) with Aria in Others", czr, hotX, hotZ)
+	}
+	if p := f.read(t, connA, rA); p.Opcode != OpEntityLeft {
+		t.Fatalf("Aria's first packet after Bram's warp is %#04x, want OpEntityLeft", p.Opcode)
+	}
+	p = f.read(t, connA, rA)
+	if p.Opcode != OpEntityEntered {
+		t.Fatalf("Aria's second packet after Bram's warp is %#04x, want OpEntityEntered", p.Opcode)
+	}
+	if snap, _, err := decodeEntitySnapshot(p.Data); err != nil || snap.Name != "Bram" || !near(snap.X, snap.Z, hotX, hotZ) {
+		t.Fatalf("Aria's OpEntityEntered: %+v (err=%v), want Bram at (%g, %g)", snap, err, hotX, hotZ)
+	}
+
+	// In one bucket a label is a grid hint, not a place he is "already in":
+	// asking for Hotan again is another warp to its landing.
+	if czr = changeZone(t, f, connB, rB, "hotan"); !czr.OK || !near(czr.X, czr.Z, hotX, hotZ) {
+		t.Fatalf("Bram's second change to hotan: %+v, want ok at (%g, %g)", czr, hotX, hotZ)
+	}
+	f.read(t, connA, rA) // Aria's OpEntityLeft
+	f.read(t, connA, rA) // Aria's OpEntityEntered
+
+	// A label with no frame keeps its own bucket and the old wire: FrameRegion
+	// "", spawnPos, alone -- Aria hears him leave and nothing more.
+	czr = changeZone(t, f, connB, rB, "nowhere")
+	if !czr.OK || czr.FrameRegion != "" || czr.X != float32(spawnPos.X) || czr.Y != float32(spawnPos.Y) || czr.Z != float32(spawnPos.Z) || len(czr.Others) != 0 {
+		t.Fatalf("Bram's change to an unframed label: %+v, want ok, no frame, spawnPos, alone", czr)
+	}
+	if p := f.read(t, connA, rA); p.Opcode != OpEntityLeft {
+		t.Fatalf("Aria's packet after Bram left the world bucket is %#04x, want OpEntityLeft", p.Opcode)
+	}
+	if !f.nothing(t, connA, rA) {
+		t.Fatal("Aria heard more than Bram's OpEntityLeft when he went to an unframed label")
+	}
+}
+
+// With -single-frame off -- the default, and the NEGATIVE of the test above --
+// the wire is what it was: each zone is named in its own centre's frame
+// (worldmap.FrameFor: Donwhang's 102/153 since round 569), every arrival
+// stands at spawnPos, each zone is its own bucket, and a change to the zone
+// a character is in is refused.
+func TestSingleFrameOffKeepsEachZoneInItsOwnFrame(t *testing.T) {
+	SetSingleFrame(false)
+	f, connA, rA, connB, rB := startFrameWorld(t)
+	atSpawn := func(x, y, z float32) bool {
+		return x == float32(spawnPos.X) && y == float32(spawnPos.Y) && z == float32(spawnPos.Z)
+	}
+	frameOf := func(zone string) string {
+		rx, ry, ok := worldmap.FrameFor(zone)
+		if !ok {
+			t.Fatalf("%s has no frame", zone)
+		}
+		return fmt.Sprintf("%d/%d", rx, ry)
+	}
+
+	ewrB := f.login(t, connB, rB, "bob", "hunter3", "Bram")
+	if ewrB.FrameRegion != frameOf("jangan") || !atSpawn(ewrB.X, ewrB.Y, ewrB.Z) {
+		t.Fatalf("Bram entered in frame %q at (%g, %g, %g), want %s at spawnPos", ewrB.FrameRegion, ewrB.X, ewrB.Y, ewrB.Z, frameOf("jangan"))
+	}
+	czr := changeZone(t, f, connB, rB, "donwhang")
+	if !czr.OK || czr.FrameRegion != frameOf("donwhang") || czr.FrameRegion != "102/153" || !atSpawn(czr.X, czr.Y, czr.Z) {
+		t.Fatalf("Bram's change to donwhang: %+v, want ok in 102/153 at spawnPos", czr)
+	}
+
+	// Aria enters Jangan: a different bucket from Bram's, so neither hears of
+	// the other.
+	ewrA := f.login(t, connA, rA, "alice", "hunter2", "Aria")
+	if len(ewrA.Others) != 0 {
+		t.Fatalf("Aria in Jangan sees Others=%+v, want nobody (Bram is in Donwhang's bucket)", ewrA.Others)
+	}
+	if !f.nothing(t, connB, rB) {
+		t.Fatal("Bram in Donwhang received a packet when Aria entered Jangan")
+	}
+	czr = changeZone(t, f, connB, rB, "hotan")
+	if !czr.OK || czr.FrameRegion != frameOf("hotan") || !atSpawn(czr.X, czr.Y, czr.Z) {
+		t.Fatalf("Bram's change to hotan: %+v, want ok in %s at spawnPos", czr, frameOf("hotan"))
+	}
+	if !f.nothing(t, connA, rA) {
+		t.Fatal("Aria in Jangan received a packet when Bram went from Donwhang to Hotan")
+	}
+	if czr = changeZone(t, f, connB, rB, "hotan"); czr.OK || czr.Reason != "already in that zone" {
+		t.Fatalf("Bram's second change to hotan: %+v, want refused 'already in that zone'", czr)
+	}
+}
+
+// ZoneBucket and arrival are one rule: the bucket arrival keeps a character
+// in is ZoneBucket's for the same label, with the flag on and off.
+func TestArrivalKeepsEveryLabelInZoneBucket(t *testing.T) {
+	t.Cleanup(func() { SetSingleFrame(false) })
+	for _, on := range []bool{false, true} {
+		SetSingleFrame(on)
+		for _, zone := range []string{"jangan", "donwhang", "dunhuang", "constantinople", "hotan", "samarkand", "100/100", "Jangan", "nowhere", worldmap.WorldBucket} {
+			bucket, _, _, oneWorld := arrival(zone)
+			if bucket != ZoneBucket(zone) {
+				t.Errorf("single frame %v: arrival(%q) keeps it in %q, ZoneBucket says %q", on, zone, bucket, ZoneBucket(zone))
+			}
+			_, _, framed := worldmap.FrameFor(zone)
+			if want := on && framed; oneWorld != want {
+				t.Errorf("single frame %v: arrival(%q) oneWorld = %v, want %v", on, zone, oneWorld, want)
+			}
+		}
 	}
 }
 

@@ -215,11 +215,14 @@ and the client uses the zone's own centre, which is what the frame was.
   meaning.
 - Client: `World3D._reload_zone_assets(zone, frame)` builds the grid around
   the zone's centre inside the named frame.
-- If a server ever names a frame that is not the zone's centre (the
-  single-frame item), it must send a position inside the centre region.
-  (0, 0, 0) would be the frame region's middle, off the client's grid. It
-  must also have checked the zone's drawn heights under the frame's anchor
-  (`World3D._frame_anchor_height`).
+- A frame that is not the zone's centre is `-single-frame`'s (round 571,
+  default off): the server then names "97/168" (`worldmap.WorldOrigin`) for
+  every zone with a frame and sends `worldmap.Landing`, the middle of the
+  zone's centre region named in that frame -- a position inside the centre
+  region, since (0, 0, 0) would be the frame region's middle, off the
+  client's grid. The drawn heights under that frame's anchor
+  (`World3D._frame_anchor_height`, -2.49) were measured for every town and its
+  radius-2 neighbours in `docs/RE_COMPLETION.md`, round 571.
 
 The transform in the frame is `worldmap.ToWorld`: `x = (ry-fy)*1920 + lx-960`,
 `z = (fx-rx)*1920 + 960-lz`. Region y drives world X, region x drives world

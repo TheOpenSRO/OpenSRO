@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync/atomic"
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
@@ -220,7 +221,8 @@ type EnterWorldResult struct {
 	MaxHP  int32
 	Others []EntitySnapshot
 	// FrameRegion is the region X/Y/Z are relative to, "x/y" (round 570; see
-	// frameFor), or "" when the zone has none. It trails Others, where an
+	// frameFor, and arrival for -single-frame's "97/168", round 571), or ""
+	// when the zone has none. It trails Others, where an
 	// older client stops reading -- WorldNet.decode_enter_world_result
 	// returns after the entity list without looking at what is left, the
 	// same way StorageListResult's trailing capacity reaches older clients
@@ -335,18 +337,83 @@ func decodeFrameRegion(rest []byte) (string, error) {
 	return fields[0], nil
 }
 
-// frameFor is the FrameRegion a result names for zone: worldmap.FrameFor's
-// region as "x/y", or "" for a label with none (the client then keeps its
-// own reading of the label, as every client did before round 570). For every
-// label it is the zone's own centre -- the region the client builds its grid
-// around, whose middle is spawnPos -- so it names the frame the coordinates
-// were already in rather than changing it.
+// frameFor is the FrameRegion a result names for zone with -single-frame off:
+// worldmap.FrameFor's region as "x/y", or "" for a label with none (the
+// client then keeps its own reading of the label, as every client did before
+// round 570). For every label it is the zone's own centre -- the region the
+// client builds its grid around, whose middle is spawnPos -- so it names the
+// frame the coordinates were already in rather than changing it. arrival
+// names worldmap.WorldOrigin instead when the flag is on.
 func frameFor(zone string) string {
 	rx, ry, ok := worldmap.FrameFor(zone)
 	if !ok {
 		return ""
 	}
 	return fmt.Sprintf("%d/%d", rx, ry)
+}
+
+// singleFrame is cmd/server's -single-frame (SRREVAMP_SINGLE_FRAME), OFF by
+// default (round 571): every zone with a frame in ONE world frame, centred on
+// worldmap.WorldOrigin (Jangan's 97/168), and in ONE hub bucket,
+// worldmap.WorldBucket, where every roster monster is kept too -- so a player
+// who walks from Jangan toward Donwhang stays in the coordinates and the
+// broadcasts of everyone else and reaches Donwhang's monsters. OWN DESIGN,
+// disclosed (worldmap.WorldOrigin). An atomic, like the monster flags: set on
+// the boot goroutine before the gateway serves, read by every handler.
+var singleFrame atomic.Bool
+
+// SetSingleFrame turns the one world frame on or off. cmd/server calls it once
+// at boot, before the roster spawns (its monsters' zone and coordinates read
+// it through ZoneBucket and SingleFrame) and before the gateway serves. Off,
+// every zone keeps its own frame and bucket and the wire is what it was.
+func SetSingleFrame(on bool) { singleFrame.Store(on) }
+
+// SingleFrame reports whether -single-frame is on, for cmd/server's roster:
+// its placements are converted into worldmap.WorldOrigin's frame when it is.
+func SingleFrame() bool { return singleFrame.Load() }
+
+// ZoneBucket is the world hub's zone -- the bucket an entity is kept and
+// broadcast in (world.Entity.Zone) -- for something in zone label `zone`:
+// the label itself, as it has always been, or worldmap.WorldBucket for every
+// label worldmap.FrameFor knows (the named towns and any "x/y" region) while
+// -single-frame is on. A label with no frame ("Jangan", a typo) keeps its own
+// bucket with the flag on too: the client builds such a label in its own
+// frame (FrameRegion ""), so its coordinates cannot share the world's. That
+// includes a label spelled like the bucket itself, "world": it then lands in
+// the world's bucket at spawnPos, which is Jangan's middle in the one frame
+// (worldmap.Landing of "jangan") -- a real place in it, harmless.
+func ZoneBucket(zone string) string {
+	if singleFrame.Load() {
+		if _, _, ok := worldmap.FrameFor(zone); ok {
+			return worldmap.WorldBucket
+		}
+	}
+	return zone
+}
+
+// arrival is where a character entering the world or changing zone to zone
+// is kept, where it stands and which frame the result names:
+//
+//   - -single-frame off, or a label with no frame: the zone's own bucket,
+//     spawnPos and frameFor(zone) -- the wire as it was.
+//   - -single-frame on and a label with a frame: worldmap.WorldBucket,
+//     worldmap.Landing(zone) in worldmap.WorldOrigin's frame -- the middle of
+//     the zone's centre region, the same place spawnPos is in the zone's own
+//     frame, named in the world's (a Donwhang arrival stands at
+//     ToWorld(102, 153, 960, 960, 97, 168)) -- and FrameRegion "97/168". The
+//     client builds the zone's grid around its centre in that frame (round
+//     570's _load_region_neighborhood), so the landing is inside the grid,
+//     not at the frame region's middle; y stays spawnPos's 0, and the client
+//     snaps it onto the ground (the heights under the one frame are round
+//     571's table). oneWorld is then true.
+func arrival(zone string) (bucket string, pos world.Position, frame string, oneWorld bool) {
+	if singleFrame.Load() {
+		if x, z, ok := worldmap.Landing(zone, worldmap.WorldOrigin[0], worldmap.WorldOrigin[1]); ok {
+			frame = fmt.Sprintf("%d/%d", worldmap.WorldOrigin[0], worldmap.WorldOrigin[1])
+			return ZoneBucket(zone), world.Position{X: x, Y: spawnPos.Y, Z: z}, frame, true
+		}
+	}
+	return zone, spawnPos, frameFor(zone), false
 }
 
 // MoveRequest is the OpMove payload: a new position, no reply expected.
@@ -437,22 +504,22 @@ func DecodeChangeZoneRequest(data []byte) (*ChangeZoneRequest, error) {
 
 // ChangeZoneResult is the OpChangeZoneResult payload, direct ack to whoever
 // requested the zone change. On failure only OK/Reason are meaningful.
-// Position is always spawnPos: this project has no confirmed real transform
-// between one region's local coordinates and another's (see
-// docs/protocol/MAPO_FORMAT.md's "real-world placement scale" open item), so
-// a zone change is a discrete warp to a fixed point, not a continuous
-// cross-region walk. Others mirrors EnterWorldResult's own field: the mover
+// A zone change is a discrete warp to a fixed point: spawnPos, the middle of
+// the new zone's centre region, with -single-frame off, and the same place in
+// the one world frame with it on (FrameRegion below). Others mirrors
+// EnterWorldResult's own field: the mover
 // needs a fresh "who's already here" snapshot of the new zone, the same as
 // entering the world the first time -- their own client has no other way to
 // learn who else is present (broadcasts only reach everyone *else*).
 //
 // FrameRegion (round 570) is the region X/Y/Z are relative to, trailing
-// Others exactly as EnterWorldResult's does. Position is in that frame: today
-// every zone's frame is its own centre, so spawnPos is the centre region's
-// middle. A server that names any other frame (the later single-frame item)
-// must send a position inside the zone's centre region, because the client
-// builds its grid around the centre and (0, 0, 0) would be the FRAME region's
-// middle, off that grid.
+// Others exactly as EnterWorldResult's does. Position is in that frame: with
+// -single-frame off every zone's frame is its own centre, so spawnPos is the
+// centre region's middle. With it on (round 571) the frame is
+// worldmap.WorldOrigin for every zone with a frame, and the position is the
+// same place named in it, worldmap.Landing -- inside the zone's centre region,
+// because the client builds its grid around the centre and (0, 0, 0) would be
+// the FRAME region's middle, off that grid (arrival).
 type ChangeZoneResult struct {
 	OK          bool
 	Reason      string
@@ -657,8 +724,11 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	}
 
 	// The level rides the entity (world.Entity.Level, round 555) so the monster
-	// AI's link and swings read it there instead of from the store.
-	others := hub.Enter(sess, owned.ID, owned.Name, owned.Level, spawnZone, spawnPos)
+	// AI's link and swings read it there instead of from the store. The bucket,
+	// the position and the frame are arrival's: spawnZone's own, or the one
+	// world's under -single-frame, where Jangan's landing is (0, 0) as well.
+	bucket, pos, frame, _ := arrival(spawnZone)
+	others := hub.Enter(sess, owned.ID, owned.Name, owned.Level, bucket, pos)
 
 	otherSnapshots := make([]EntitySnapshot, len(others))
 	for i, o := range others {
@@ -666,12 +736,12 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	}
 	result := &EnterWorldResult{
 		OK: true, Zone: spawnZone,
-		X: float32(spawnPos.X), Y: float32(spawnPos.Y), Z: float32(spawnPos.Z),
+		X: float32(pos.X), Y: float32(pos.Y), Z: float32(pos.Z),
 		Gender:      owned.Gender,
 		HP:          int32(owned.HP),
 		MaxHP:       int32(owned.MaxHP()),
 		Others:      otherSnapshots,
-		FrameRegion: frameFor(spawnZone),
+		FrameRegion: frame,
 	}
 	if err := sess.Send(&proto.Packet{Opcode: OpEnterWorldResult, Data: result.Encode()}); err != nil {
 		return err
@@ -679,7 +749,7 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 
 	entered := &EntitySnapshot{
 		CharacterID: owned.ID, Name: owned.Name,
-		X: float32(spawnPos.X), Y: float32(spawnPos.Y), Z: float32(spawnPos.Z),
+		X: float32(pos.X), Y: float32(pos.Y), Z: float32(pos.Z),
 		Equipped: equippedItems(ctx, eq, owned.ID),
 		Gender:   owned.Gender,
 	}
@@ -692,8 +762,17 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 // handleChangeZone implements OpChangeZone: a discrete warp for the
 // character already in the world on sess to a new zone label, at the same
 // fixed spawnPos every OpEnterWorld uses (see ChangeZoneResult's doc
-// comment for why -- no confirmed real inter-region coordinate transform
-// exists yet).
+// comment) -- or, under -single-frame, at the zone's landing in the one
+// world frame (arrival).
+//
+// Under -single-frame every label with a frame shares one bucket, so the
+// label names no place a character is "already in": the character may have
+// walked from Jangan to Donwhang without its label changing. A change to
+// such a label is then always a warp to that town's landing, never refused
+// as "already in that zone", and hub.ChangeZone re-enters the same bucket --
+// everyone else in the world gets the mover's OpEntityLeft and then its
+// OpEntityEntered at the landing (a flicker, recorded in round 571, not a
+// bug). A label with no frame keeps the old rule.
 func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packet, eq equipment.Store, chars character.Store, hub *world.Hub) error {
 	req, err := DecodeChangeZoneRequest(p.Data)
 	if err != nil {
@@ -716,11 +795,12 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	if current.Life == world.LifeDead {
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: deadRefusal}).Encode()})
 	}
-	if req.Zone == current.Zone {
+	bucket, pos, frame, oneWorld := arrival(req.Zone)
+	if !oneWorld && req.Zone == current.Zone {
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "already in that zone"}).Encode()})
 	}
 
-	old, remainingOld, othersNew, ok := hub.ChangeZone(sess, req.Zone, spawnPos)
+	old, remainingOld, othersNew, ok := hub.ChangeZone(sess, bucket, pos)
 	if !ok {
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "not in the world"}).Encode()})
 	}
@@ -732,9 +812,9 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	}
 	result := &ChangeZoneResult{
 		OK: true, Zone: req.Zone,
-		X: float32(spawnPos.X), Y: float32(spawnPos.Y), Z: float32(spawnPos.Z),
+		X: float32(pos.X), Y: float32(pos.Y), Z: float32(pos.Z),
 		Others:      otherSnapshots,
-		FrameRegion: frameFor(req.Zone),
+		FrameRegion: frame,
 	}
 	if err := sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: result.Encode()}); err != nil {
 		return err
@@ -747,7 +827,7 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 
 	entered := &EntitySnapshot{
 		CharacterID: old.CharacterID, Name: old.Name,
-		X: float32(spawnPos.X), Y: float32(spawnPos.Y), Z: float32(spawnPos.Z),
+		X: float32(pos.X), Y: float32(pos.Y), Z: float32(pos.Z),
 		Equipped: equippedItems(ctx, eq, old.CharacterID),
 		Gender:   genderOf(ctx, chars, old.CharacterID),
 	}
