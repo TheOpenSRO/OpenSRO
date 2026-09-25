@@ -28,6 +28,13 @@
 #   --gender g        the gender a character created for --server is given
 #                     (china_man or china_woman)
 #   --attack          attack the nearest monster every second (needs --server)
+#                     A --server run whose question is about the GROUND under a
+#                     monster or another player passes the zone's own centre as
+#                     --region ('97\168.m' for Jangan): the world is centred on
+#                     --region (default 98\168.m) before the session is looked
+#                     at, and the server's coordinates are in the zone-centre
+#                     frame, so the default drew a Jangan monster on 98/168's
+#                     ground (round 557; _qa_columns_report says the same).
 #   --debug           open the debug panel (F3) once the first region loads
 #   --columns "x,z;.." report what the walkable graph knows at these columns
 #   --equip "s=id,.." dress the player (no server) from a "slot=item_id"

@@ -1290,8 +1290,11 @@ turning the body, and ends in the stand clip.
   and its idle once it arrives (`docs/protocol/BSR_FORMAT.md`). A model with no such clip keeps
   the loop it has.
 - The body turns to face its destination by its MEASURED front (below). The height comes from the
-  terrain-only ray every `HEIGHT_RESOLVE_STEP` units, at most `MAX_HEIGHT_RESOLVES_PER_FRAME`
-  bodies a frame.
+  region's walkable graph -- `NavGraph.landing_height_at`, the path an NPC is placed by, through
+  `World3D._moving_monster_height_at` since round 557; the terrain-only ray where no loaded region
+  covers the body, and alone before that round -- every `HEIGHT_RESOLVE_STEP` units, at most
+  `MAX_HEIGHT_RESOLVES_PER_FRAME` bodies a frame. A list refresh mid-leg resolves a walking body
+  the same way.
 - An `OpMonsterMoved` for a monster the client has no body for asks for the list, at most once
   every `UNKNOWN_MOVE_PULL_SECONDS`. A motion-list entry re-aims a body only when its destination
   differs from the one it is walking to by more than `REAIM_EPSILON`; a body the list leaves out
@@ -1308,7 +1311,11 @@ turning the body, and ends in the stand clip.
 - **srrevamp's own numbers:** `RESYNC_DISTANCE` 32 (it must exceed Earth Ghost's 75 u/s run over a
   0.3 s round trip, 22.5), `HEIGHT_RESOLVE_STEP` 2, `MAX_HEIGHT_RESOLVES_PER_FRAME` 32,
   `UNKNOWN_MOVE_PULL_SECONDS` 5, `REAIM_EPSILON` 0.5.
-- **The height along a leg** is the terrain-only ray, not the navmesh.
+- **The height along a leg** was the terrain-only ray, not the navmesh, until round 557. It is now
+  the region's walkable graph's landing height (`World3D._moving_monster_height_at`: the highest
+  walkable surface, so a body under an overpass is drawn on top of it, as an NPC is), with the ray
+  where no loaded region covers the body. Measured on the render box in `docs/WORLD_ISSUES.md`'s
+  557th round, with the cost of a resolve and the QA-frame trap that hid the plaza in the first run.
 - **The resync position** follows a lead, not a reading: the `0xB021` reader
   `NetProcessInNavAndSkill::FUN_008a5750` / `FUN_008a5640` (`message_handlers.tsv`,
   `client_read_layouts.tsv`).

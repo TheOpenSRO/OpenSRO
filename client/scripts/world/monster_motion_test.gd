@@ -318,12 +318,115 @@ func _initialize() -> void:
 		_test_receding_target(arrive)
 		_test_world_move(world_script)
 		_test_world_rewalk(world_script)
+		# The height fixture's region group must be IN the tree for
+		# to_local/to_global to have a global transform, and a --script
+		# suite's root enters the tree only after _initialize returns
+		# (hud_click_routing_test measured the `!is_inside_tree()`; this
+		# suite's first run printed the same seven times), so it waits a
+		# frame. A watchdog fails the suite rather than hanging it if a
+		# script error stops it before it reports (round 556's open trap).
+		var watchdog := create_timer(60.0)
+		watchdog.timeout.connect(func() -> void:
+			print("FAIL the suite never reported (a script error stopped it)")
+			quit(1))
+		await process_frame
+		_test_world_height(world_script)
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
 	else:
 		print("%d FAILURES" % _failures)
 		quit(1)
+
+## A region whose terrain is flat at `height`, every tile on cell 0
+## (nav_graph_test.gd's fixture), so the graph's tile -> cell lookup works.
+func _flat_region(height: float) -> NvmReader.ParsedRegion:
+	var r := NvmReader.ParsedRegion.new()
+	r.heights.resize(NvmReader.HEIGHT_COUNT)
+	r.heights.fill(height)
+	var cell := NvmReader.Cell.new()
+	cell.rect_min = Vector2.ZERO
+	cell.rect_max = Vector2(1920.0, 1920.0)
+	r.cells.append(cell)
+	for _i in range(NvmReader.TILE_COUNT):
+		var t := NvmReader.Tile.new()
+		t.cell_index = 0
+		r.tiles.append(t)
+	return r
+
+func _cedge(v0: int, v1: int, cell_from: int, cell_to: int, flags: int) -> BmsReader.CollisionEdge:
+	var e := BmsReader.CollisionEdge.new()
+	e.v0 = v0
+	e.v1 = v1
+	e.cell_from = cell_from
+	e.cell_to = cell_to
+	e.flags = flags
+	return e
+
+## A flat walkable deck, `size` square, as a placed object at `at`
+## (nav_graph_test.gd's _quad: two cells, its sides walls -- flag 3 -- and
+## its two ends open -- flag 0 -- with the diagonal internal).
+func _deck(size: float, at: Vector3) -> NavGraph.PlacedObject:
+	var cm := BmsReader.CollisionMesh.new()
+	for p in [Vector3(0.0, 0.0, 0.0), Vector3(size, 0.0, 0.0), Vector3(size, 0.0, size), Vector3(0.0, 0.0, size)]:
+		var v := BmsReader.CollisionVertex.new()
+		v.position = p
+		cm.vertices.append(v)
+	for tri in [[0, 1, 2], [0, 2, 3]]:
+		var c := BmsReader.CollisionCell.new()
+		c.a = tri[0]
+		c.b = tri[1]
+		c.c = tri[2]
+		cm.cells.append(c)
+	cm.outline_edges.append(_cedge(0, 1, 0, BmsReader.NO_CELL, 0))
+	cm.outline_edges.append(_cedge(1, 2, 0, BmsReader.NO_CELL, 3))
+	cm.outline_edges.append(_cedge(2, 3, 1, BmsReader.NO_CELL, 0))
+	cm.outline_edges.append(_cedge(3, 0, 1, BmsReader.NO_CELL, 3))
+	cm.internal_edges.append(_cedge(0, 2, 0, 1, 4))
+	return NavGraph.place(cm, 0, at, 0.0)
+
+## NEGATIVE (fails before round 557, when a walking body's height was the
+## terrain-only ray: in the world that ray sees no placed object, and on
+## this bare World3D it has no physics world to fire in at all, so the body
+## stays where it was). A body walking over a placed deck is drawn ON the
+## deck, at the graph's landing height -- Jangan's plaza case, a deck 13.8
+## up against height_at's 12.0 reach (nav_graph_test.gd) -- through the
+## same throttled resolve, and the navmesh answers only inside a loaded
+## region.
+func _test_world_height(world_script: GDScript) -> void:
+	var world: Node = world_script.new()
+	var deck_rise: float = NavGraph.SURFACE_REACH_UP + 1.8
+	var decks: Array[NavGraph.PlacedObject] = [_deck(40.0, Vector3(100.0, deck_rise, 200.0))]
+	var graph := NavGraph.build(_flat_region(0.0), decks)
+	# The region's group node: in the tree so to_local/to_global have a
+	# global transform, at the origin so region-local is world.
+	var group := Node3D.new()
+	root.add_child(group)
+	(world.get("_region_nav_graphs") as Array).append([graph, group])
+	var body := Node3D.new()
+	body.position = Vector3(110.0, 0.0, 239.0)
+	(world.get("_monster_bodies") as Dictionary)[7] = body
+	(world.get("_monster_snapshots") as Dictionary)[7] = _snapshot(7, 110.0, 239.0)
+	(world.get("_monster_motion") as Dictionary)[7] = {"pos": Vector2(110.0, 239.0), "dest": Vector2(120.0, 239.0),
+		"speed": 8.0, "mode": 0, "moving": true, "stop": false, "h_xz": Vector2(-1000.0, -1000.0), "log_frames": 0}
+	world.call("_step_monster_bodies", 1.0 / 60.0)
+	_check(absf(body.position.y - deck_rise) < 0.01,
+		"a walking body over a placed deck %.1f up is drawn on it, at the navmesh landing height (got y %.2f)" % [
+			deck_rise, body.position.y])
+	_check(body.position.x > 110.0 and body.position.x < 110.2,
+		"and the same frame stepped it 8/60 along its leg (x %.3f)" % body.position.x)
+	var state: Dictionary = (world.get("_monster_motion") as Dictionary)[7]
+	_check(state["h_xz"] == state["pos"], "and the resolve is booked at the body's position for the throttle")
+	var on_terrain = world.call("_navmesh_height_at", Vector3(20.0, 50.0, 20.0))
+	_check(on_terrain is float and absf(on_terrain) < 0.01,
+		"off the deck the navmesh height is the terrain's own, 0 (got %s)" % str(on_terrain))
+	var outside = world.call("_navmesh_height_at", Vector3(3000.0, 0.0, 3000.0))
+	_check(outside is float and is_nan(outside),
+		"outside every loaded region the navmesh has no answer, and the terrain ray's turn comes (got %s)" % str(outside))
+	body.free()
+	root.remove_child(group)
+	group.free()
+	world.free()
 
 func _snapshot(id: int, x: float, z: float) -> CombatNet.MonsterSnapshot:
 	var snap := CombatNet.MonsterSnapshot.new()

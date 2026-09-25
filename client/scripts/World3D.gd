@@ -879,10 +879,14 @@ var _monster_motion := {}
 ## When a move for an unknown monster last asked for the list
 ## (MonsterMotion.UNKNOWN_MOVE_PULL_SECONDS), in Time.get_ticks_msec().
 var _unknown_move_pull_msec := -1000000
-## Height rays over the current 10-second window, and the most in one frame,
-## for the gated 'monster height resolves' log line.
+## Height resolves over the current 10-second window, the most in one frame,
+## and the microseconds spent in them (the navmesh lookups and any terrain
+## rays -- not the QA compare line, which is timed out), for the gated
+## 'monster height resolves' log line.
 var _mob_height_resolves := 0
 var _mob_height_max := 0
+var _mob_height_usec := 0
+var _mob_height_usec_max := 0
 var _mob_height_window := 0.0
 ## Where the next frame's height rays start in _step_monster_bodies' walk
 ## order (MonsterMotion.height_turns), so the budget goes round every body.
@@ -6092,7 +6096,9 @@ func _update_blob_shadow() -> void:
 ##                          here) from where it stands; with --server the list
 ##                          is asked for at half the leg (_qa_mob_move)
 ##   SRREVAMP_QA_MOB_LOG=1  print each monster leg, its progress every 30
-##                          frames, its arrival and the height-ray rate
+##                          frames, its arrival, each height resolve's navmesh
+##                          and terrain-ray answers side by side (round 557),
+##                          and the resolve rate and cost every 10 s
 ##   SRREVAMP_QA_MOB_STRIKE=1  stand in for a server with the strike push:
 ##                          behind each result that reports a counter, the
 ##                          OpMonsterAttacked it would send goes through
@@ -8981,6 +8987,40 @@ func _terrain_height_at(pos: Vector3) -> float:
 		return pos.y
 	return hit.position.y + 0.05 * PLAYER_SCALE_RATIO
 
+## The height the region's walkable graph gives a world position: its landing
+## height -- the highest walkable surface there, the terrain or a placed
+## object's navigation mesh (a bridge, a floor, Jangan's plaza deck) -- the
+## same NavGraph.landing_height_at an NPC is placed with (_try_spawn_region_npcs
+## asks its region's own graph on the authored region-local position; its doc
+## comment has the plaza deck measured 13.8 above the terrain against
+## height_at's 12.0 reach). The graph is found here by _nav_graph_for and the
+## position carried through the region group's to_local/to_global, the
+## click-target and zone-entry placement pattern. NAN when no loaded region
+## covers the point, so the caller can fall back to the terrain ray.
+## landing_height_at is the HIGHEST surface, so a body under an overpass is
+## drawn on top of it -- the limit the NPC path shares.
+func _navmesh_height_at(pos: Vector3) -> float:
+	var pair := _nav_graph_for(pos)
+	if pair.is_empty():
+		return NAN
+	var group: Node3D = pair[1]
+	var local := group.to_local(pos)
+	return group.to_global(Vector3(local.x, (pair[0] as NavGraph).landing_height_at(local.x, local.z), local.z)).y
+
+## A moving monster's height (round 557): the navmesh first, the terrain ray
+## where no loaded region covers the point. Before this round a walking body
+## took _terrain_height_at alone, whose ray sees only the terrain layer
+## (TERRAIN_ONLY_COLLISION_MASK), so a body walking onto a structure sank to
+## the ground under it. The authored heights are no help: they disagree with
+## the navmesh by 10-40 units on real rows (server/internal/worldmap, the
+## ToWorld comment). A standing body's placement (_spawn_or_update_monster)
+## still takes the ray.
+func _moving_monster_height_at(pos: Vector3) -> float:
+	var nav := _navmesh_height_at(pos)
+	if is_nan(nav):
+		return _terrain_height_at(pos)
+	return nav
+
 ## Creates or moves the real 3D body representing one live server-tracked
 ## monster (see CombatNet.MonsterSnapshot's X/Y/Z). Those coordinates are
 ## world-space and are used as sent; only the height is resolved here, off
@@ -9056,9 +9096,13 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 		var placed := MonsterMotion.reconcile(Vector2(existing.position.x, existing.position.z),
 			Vector2(monster.x, monster.z), moving)
 		# The height is resolved where the body is placed, not at the list's
-		# x/z, which can be up to RESYNC_DISTANCE away.
+		# x/z, which can be up to RESYNC_DISTANCE away -- and for a walking
+		# body from the navmesh (round 557), as the leg's own resolves are,
+		# so a mid-leg refresh does not drop it off a deck for the two units
+		# until the next one.
+		var at := Vector3(placed.x, monster.y, placed.y)
 		existing.position = Vector3(placed.x,
-			_terrain_height_at(Vector3(placed.x, monster.y, placed.y)), placed.y)
+			_moving_monster_height_at(at) if moving else _terrain_height_at(at), placed.y)
 		monster.x = placed.x
 		monster.z = placed.y
 		if state != null:
@@ -9573,18 +9617,22 @@ func _stop_monster_motion(monster_id: int) -> void:
 
 ## One physics frame of every walking body: the engine's mover
 ## (MonsterMotion.step), the drawn x/z written into the monster's snapshot so
-## the approach walk aims at the body the player sees, and the height from the
-## terrain ray only every HEIGHT_RESOLVE_STEP units and for at most
-## MAX_HEIGHT_RESOLVES_PER_FRAME bodies a frame -- the rest keep their height
-## until a later frame, and take their turn first then
+## the approach walk aims at the body the player sees, and the height from
+## the navmesh -- the terrain ray where no loaded region covers the body
+## (_moving_monster_height_at, round 557) -- only every HEIGHT_RESOLVE_STEP
+## units and for at most MAX_HEIGHT_RESOLVES_PER_FRAME bodies a frame -- the
+## rest keep their height until a later frame, and take their turn first then
 ## (MonsterMotion.height_turns, _mob_height_cursor). An arrival switches to the
 ## stand clip and keeps the facing.
 func _step_monster_bodies(delta: float) -> void:
 	if _monster_motion.is_empty():
 		return
 	var logging := _mob_logging()
-	# The bodies stepped this frame and whether each wants a height ray, in
-	# the same order; the rays are handed out after the loop.
+	# SRREVAMP_QA_MOB_LOG alone, not /wire: the measurement line below fires
+	# the terrain ray beside the navmesh lookup, a second answer per resolve.
+	var compare := logging and OS.get_environment("SRREVAMP_QA_MOB_LOG") != ""
+	# The bodies stepped this frame and whether each wants a height resolve,
+	# in the same order; the resolves are handed out after the loop.
 	var stepped: Array = []
 	var wants: Array = []
 	for monster_id in _monster_motion.keys():
@@ -9614,26 +9662,40 @@ func _step_monster_bodies(delta: float) -> void:
 					print("World3D: monster %d at (%.1f,%.1f) %.1f to go" % [
 						monster_id, pos.x, pos.y, pos.distance_to(state["dest"])])
 		var last: Vector2 = state["h_xz"]
-		stepped.append([body, state])
+		stepped.append([body, state, monster_id])
 		wants.append(MonsterMotion.needs_height(last, pos) or (not bool(state["moving"]) and last != pos))
 	var turns := MonsterMotion.height_turns(wants, _mob_height_cursor, MonsterMotion.MAX_HEIGHT_RESOLVES_PER_FRAME)
 	_mob_height_cursor = int(turns["cursor"])
 	var resolved := 0
+	var spent := 0
 	for i in turns["picked"]:
 		var body: Node3D = stepped[i][0]
 		var state: Dictionary = stepped[i][1]
-		body.position.y = _terrain_height_at(body.position)
+		var started := Time.get_ticks_usec()
+		var height := _moving_monster_height_at(body.position)
+		spent += Time.get_ticks_usec() - started
+		if compare:
+			var nav := _navmesh_height_at(body.position)
+			print("World3D: monster %d height at (%.1f,%.1f): navmesh %s, terrain ray %.2f" % [
+				stepped[i][2], body.position.x, body.position.z,
+				"none" if is_nan(nav) else "%.2f" % nav, _terrain_height_at(body.position)])
+		body.position.y = height
 		state["h_xz"] = state["pos"]
 		resolved += 1
 	_mob_height_resolves += resolved
 	_mob_height_max = maxi(_mob_height_max, resolved)
+	_mob_height_usec += spent
+	_mob_height_usec_max = maxi(_mob_height_usec_max, spent)
 	_mob_height_window += delta
 	if _mob_height_window >= 10.0:
 		if logging:
-			print("World3D: monster height resolves %d/s, max %d in a frame" % [
-				int(round(float(_mob_height_resolves) / _mob_height_window)), _mob_height_max])
+			print("World3D: monster height resolves %d/s, max %d in a frame; %.2f ms in them over %.1f s, max %.3f ms in a frame" % [
+				int(round(float(_mob_height_resolves) / _mob_height_window)), _mob_height_max,
+				float(_mob_height_usec) / 1000.0, _mob_height_window, float(_mob_height_usec_max) / 1000.0])
 		_mob_height_resolves = 0
 		_mob_height_max = 0
+		_mob_height_usec = 0
+		_mob_height_usec_max = 0
 		_mob_height_window = 0.0
 
 func _on_attack_pressed() -> void:

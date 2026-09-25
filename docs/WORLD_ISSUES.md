@@ -7075,6 +7075,83 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-fifty-seventh round: a walking monster stands on the plaza deck, not 13.8 units inside it
+
+Since round 533 a monster the server moves took its height from `_terrain_height_at` -- a ray on
+the terrain layer alone -- every 2 units of its walk. The ray does not see a placed object, so a
+body walking onto Jangan's octagonal plaza (a placed object, `cj_jang_gate`, whose deck the
+`landing_height_at` comment measured 13.8 above the terrain at local 985, 1000) was drawn on the
+ground under it. NPCs on the same deck have stood on it since that comment was written, through
+`_nav_graph_for` + `to_local` + `NavGraph.landing_height_at`. This round gives a walking body the
+same path (`World3D._moving_monster_height_at`: the navmesh, the ray only where no loaded region
+covers the body), on round 534's throttle and budget. Nothing changes in play until a server with
+`-monster-ai` on moves a monster; `SRREVAMP_QA_MOB_MOVE` drives it without one. The full entry is
+`docs/RE_COMPLETION.md`, round 557; the numbers are here.
+
+**The leg.** `SRREVAMP_QA_MOB_MOVE=-45,180,20,1 SRREVAMP_QA_MOB_LOG=1 qa_shot.sh --server
+--frames 1300`: the nearest monster, Yeoha 19 at world (70, -220), runs to (25, -40) -- local (985,
+1000) of 97/168, the deck's measured column. Under the log switch each height resolve now prints
+the navmesh and the terrain-ray answers side by side; the terrain ray's number carries its own
++0.40 lift (`0.05 x PLAYER_SCALE_RATIO`, 14.34 / 1.8).
+
+**Run 1 was in the wrong frame, and it is the recipe's trap, not the code's.** All 119 resolves
+read `navmesh 41.04, terrain ray 41.44`, start to arrival: flat ground, no deck at the deck's own
+column. `qa_shot.sh` exports `SRREVAMP_MAPM_PATH` from `--region` unconditionally, its default is
+`98\168.m` (the palace, one region north), and `World3D._load_initial_region_neighborhood` centres
+the world on that before it looks at the server session. The server's coordinates are in the
+zone's own frame (97/168 for Jangan), so the monster was drawn on 98/168's ground. The
+`_qa_columns_report` comment already says the two frames agree only when the grid is centred on
+the zone's centre; round 533's live leg ran in the same frame. **A `--server` run that cares where
+the ground is passes `--region '97\168.m'`** (now in `qa_shot.sh`'s usage comment).
+
+**Run 2, `--region '97\168.m'`.** The navmesh answer is `-30.12` on every one of the 119 resolves,
+from (69.4, -217.7) to the arrival at (25.0, -40.0). The terrain ray reads `-30.27` for the first
+92 -- with its lift removed, 0.55 under the surface -- then, from (39.4, -97.8), falls one step a
+resolve (`-31.32, -32.37, -33.43, ... -42.77, -43.22`) to `-43.52` for the last ten, arrival
+included. Lift removed, the terrain at (25, -40) is -43.92, and the deck stands **13.80 above it**:
+the comment's 13.8, reproduced by a different probe (both absolute numbers sit 2.48 above that
+round's -32.6 / -46.4, so the region's vertical anchor differs between the two measurements; the
+difference is the reading). Under the old ray the body would have been drawn 13.8 down, inside the
+plaza, for the leg's last 40 units.
+
+**The mid-leg refresh.** The hook asks for the list at half the leg. The list put the monster at
+the server's (70, -220), 93 units from the drawn body and past `RESYNC_DISTANCE` 32, so
+`reconcile` set it back there and the leg re-walked (`178.5 to go` after `95.5 to go`) -- round
+533's rule on a QA-only move the server never made (round 533's 40-unit leg kept the refresh under
+the 32). The refresh's height came through the walking branch.
+
+**What a resolve costs**, from the loop's own timer (the QA compare ray is outside it). Run 1, on
+98/168's open ground: `3.00 ms over 10.0 s` at 8/s and `1.31 ms over 10.0 s` at 3/s, max `0.071 ms`
+in a frame -- about 0.04 ms a resolve. Run 2, in the town: `18.67 ms over 10.0 s` at 8/s and `7.75
+ms over 10.0 s` at 3/s, max `0.259 ms` in a frame -- about 0.23-0.26 ms a resolve, where the
+column's cell lists many placed objects and every triangle of each is tested. One body; a crowd
+was not measured. At the 32-a-frame budget the town's cost extrapolates to about 8 ms in a frame
+-- an extrapolation, not a reading; the budget bounds it and is not changed here.
+
+**Cross-check with `--columns`, a probe with a different failure mode.** In the server runs the
+columns report fired on `_qa_step`'s first tick, before the world existed (`region 97/168 is not
+loaded`, `not standing in any loaded region`). A third run without a server -- `qa_shot.sh
+--region '97\168.m' --at 1002,1020 --radius 0 --frames 10 --columns
+'1030,1180;1010,1100;990,1020;985,1000'`, the graph's own report, region-local, no physics ray:
+
+```
+QA COLUMN (1030, 1180): terrain -33.2, surfaces [-33.17, -32.61], landing -32.6 | world (70, -220)
+QA COLUMN (1010, 1100): terrain -33.2, surfaces [-33.17, -32.61], landing -32.6 | world (50, -140)
+QA COLUMN (990, 1020):  terrain -46.4, surfaces [-46.41, -32.61], landing -32.6 | world (30, -60)
+QA COLUMN (985, 1000):  terrain -46.4, surfaces [-46.41, -32.61], landing -32.6 | world (25, -40)
+```
+
+One placed surface at -32.61 spans the whole leg, 0.55 over the terrain at its start and 13.8 over
+it at the plaza column: what the walking body's resolves read in run 2 (its world-frame numbers sit
+a uniform 2.49 above these region-local ones, deck and terrain alike; the offset between a radius-2
+server run's frame and a radius-0 one's was not chased -- the difference is the reading), and the
+-32.6 / -46.4 the round that wrote `landing_height_at`'s comment recorded, to the decimal.
+
+Both runs: no `SCRIPT ERROR`, 1302 frames, none empty, frames deleted. Still open: a STANDING
+monster's placement takes the ray (a body spawned on the deck stands inside it until it moves),
+and `landing_height_at` answers with the highest surface, so a body under an overpass is drawn on
+top of it, as an NPC is.
+
 ## Five-hundred-and-thirty-third round: a monster the server moves walks, faces its path and is not teleported back by the next list
 
 No server moves monsters yet. This round built the client half so that one can: srrevamp's own

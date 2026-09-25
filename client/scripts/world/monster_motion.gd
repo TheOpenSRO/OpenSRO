@@ -31,12 +31,13 @@ const MOVER_STEP_CAP := 160.0
 ## (characterdata col 47, docs/protocol/monster_ai.md "The roster's real walk
 ## and run speeds") -- over a 0.3 s round trip is 22.5.
 const RESYNC_DISTANCE := 32.0
-## How far a walking body moves between two terrain-height rays. srrevamp's own
-## number; the height comes from the terrain-only ray (World3D._terrain_height_at),
-## not the navmesh.
+## How far a walking body moves between two height resolves. srrevamp's own
+## number; the height comes from the region's walkable graph, with the
+## terrain-only ray where no loaded region covers the body
+## (World3D._moving_monster_height_at, round 557; before it the ray alone).
 const HEIGHT_RESOLVE_STEP := 2.0
-## At most this many height rays a frame across every walking body; the rest
-## keep their height until a later frame. srrevamp's own number.
+## At most this many height resolves a frame across every walking body; the
+## rest keep their height until a later frame. srrevamp's own number.
 const MAX_HEIGHT_RESOLVES_PER_FRAME := 32
 ## A move for a monster the client has not been told about asks for the list,
 ## but no more than once in this many seconds. srrevamp's own number.
