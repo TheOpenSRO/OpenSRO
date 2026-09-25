@@ -658,8 +658,9 @@ line, any `pk2: could not open`, any `SCRIPT ERROR`, and whether buildings and w
 ### Loading freezes: what the off-thread rounds left (map/loading epic, 2026-09-25)
 
 Rounds 565-566 prepare a streamed cell's terrain and objects on a `WorkerThreadPool` task and
-commit them on the main thread (`client/tools/README.md`, "Load benchmark", has the benchmark and
-the rules; `docs/RE_COMPLETION.md`, rounds 565 and 566, the measurements).
+commit them on the main thread, and round 567 makes the terrain's collision a heightfield
+(`client/tools/README.md`, "Load benchmark", has the benchmark and the rules;
+`docs/RE_COMPLETION.md`, rounds 565-568, the measurements and the review notes).
 
 - [ ] **A zone change or reconnect in the middle of loading blocks the main thread for up to
       about 0.5 s** (a regression of round 566, measured, not fixed). `World3D._drop_cell_jobs`
@@ -667,8 +668,12 @@ the rules; `docs/RE_COMPLETION.md`, rounds 565 and 566, the measurements).
       a task still running would call into it -- and since round 566 a cell's task prepares its
       objects after its terrain, so the wait covers both. Round 558's `qa_shot.sh --reconnect
       drain` run printed `2 cell(s) still preparing dropped (the world left the tree) -- waited
-      497.2 ms for their tasks` on round 566's code (`/var/tmp/r566/drain.log` on the render box)
-      against 18.8 ms on round 565's. Proposed fix: a cancel check between models in
+      497.2 ms for their tasks` on the FIRST write of round 566's code, whose pump still
+      dispatched the next cell before committing the finished one (`/var/tmp/r566/drain.log` on
+      the render box, 15:48, before the review fix; it has no `prepared again` line), against
+      18.8 ms on round 565's. The shipped finish-first order's wait was never re-measured: it
+      should be close, since the wait follows the length of the prepare, not the pump's order
+      (round 566's second review; said so since round 568). Proposed fix: a cancel check between models in
       `World3D._objects_prepare` (and between the terrain and the objects in `_cell_prepare`) --
       `_drop_cell_jobs` sets a cancel flag on each job before it waits, and a cancelled prepare
       returns at the next model boundary, marked so the commit side never sees it. The flag has to
@@ -677,6 +682,26 @@ the rules; `docs/RE_COMPLETION.md`, rounds 565 and 566, the measurements).
       reshapes the Dictionary) is to be read from the engine, not assumed. Test: a task over a
       synthetic job with many models, cancelled mid-prepare, returns before the whole prepare
       would have; re-measure with the same `--reconnect drain` run.
+- [ ] **The heightfield under the `move_and_slide` fallback, in game** (round 567, kept on the list
+      by its review). `World3D._physics_process` falls back to `move_and_slide` where no walkable
+      graph covers the player; the heightfield is two-sided to shape queries (4.2.2's `cull`), so
+      the player's capsule now collides with the terrain there, where the old mirrored one-sided
+      trimesh let it sink (0 of 1,600 `body_test_motion` columns touched it). Measured only in the
+      suite, inside one region. Not probed: a region without a `.nvm` in game; a region SEAM,
+      where two heightfield bodies meet edge to edge (the sixty-third round found a two-sided
+      surface pinning a capsule at a seam); the camera arm's sphere meeting the terrain from below
+      (round 567's sweeps start 30 above the ground); and the 4 slanted rays both shapes miss in
+      98/170 and 99/170. A `--walk` across a seam on a region with no navmesh, with
+      `SRREVAMP_QA_GROUND_RAYS`, is the check.
+- [ ] **Two entry drains at once** (round 565's review; predates round 565, found by reading, not
+      reproduced). A zone change that starts a second `_drain_initial_load` while the first is
+      still suspended leaves both pumping the one queue; whichever finishes first sets
+      `_drain_pumping` false -- letting `_process_stream_queue` pump beside the other -- and frees
+      and nulls the loading screen the other still sets the progress of. A drain generation (or
+      one drain at a time) would close it; a scripted double zone change is the test.
+- [ ] **The `prepared again` line prints for every committed streamed cell in a player's build**
+      (round 566's follow-up). A playtest diagnostic; it could sit behind a QA variable like the
+      rest of the load instrumentation.
 
 ## Parked, with the state written down
 

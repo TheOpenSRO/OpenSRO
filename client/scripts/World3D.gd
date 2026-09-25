@@ -3747,11 +3747,22 @@ func _finish_cell_job(flight: Dictionary) -> void:
 ## both). A texture the job's snapshot already held (job["known_textures"])
 ## is only named by the prepare -- ObjectLoader._prepare_material's `known`
 ## branch, which files it with a null image -- so a texture counts only if
-## its entry carries an Image AND its key is not in that snapshot: the
-## prepare decoded it from the archive because the world had not uploaded
-## it when the job was built. (A known texture re-decoded for a statistic it
-## lacked, _alpha_stat, was uploaded before the snapshot, so no commit
-## landing after it could have spared the decode.) And the region's own
+## its entry carries an Image: the prepare decoded it from the archive. One
+## whose key is NOT in that snapshot was decoded because the world had not
+## uploaded it when the job was built, and counts if it is uploaded now. One
+## whose key IS in the snapshot was decoded AGAIN by _alpha_stat, for a
+## statistic the snapshot lacked; it counts only if a statistic it measured
+## that the snapshot lacked is in the world's entry now -- a commit after
+## the snapshot carried it in (ObjectLoader.commit_textures merges a
+## prepare's statistics into a texture already cached), so a snapshot taken
+## after that commit would have spared the decode. Until round 568 the
+## counter skipped every snapshot-held key, and this comment said no later
+## commit could have spared such a decode -- wrong, by commit_textures
+## (round 566's second review, re-read in round 568). The change can only
+## ADD a texture the old rule skipped, and only after a re-decode: the load
+## benchmark's command (a) consults no alpha probe at all (0 in round 566's
+## alpha_after.log), so its recorded counts cannot move; the crossing, (b),
+## was never run with SRREVAMP_QA_ALPHA_LOG. And the region's own
 ## heightmap taken over from the terrain prepare's parse (job["here"],
 ## _cell_prepare) was parsed for the terrain, which needs it whatever the
 ## snapshot held, so a heightmap counts only if it is not that parse.
@@ -3779,10 +3790,20 @@ func _prepared_again(job: Dictionary) -> Dictionary:
 	var known: Dictionary = objects.get("known_textures", {})
 	var textures: Dictionary = objects.get("textures", {})
 	for key in textures:
-		if known.has(key) or textures[key].get("image") == null:
+		var decoded: Dictionary = textures[key]
+		if decoded.get("image") == null or not _object_textures.has(key):
 			continue
-		if _object_textures.has(key):
+		if not known.has(key):
 			again["textures"] += 1
+			continue
+		# Decoded again for a statistic the snapshot lacked (_alpha_stat):
+		# counts only if a commit since has carried that statistic in.
+		var had: Dictionary = known[key].get("alpha", {})
+		var now: Dictionary = _object_textures[key].get("alpha", {})
+		for stat in decoded.get("alpha", {}):
+			if not had.has(stat) and now.has(stat):
+				again["textures"] += 1
+				break
 	return again
 
 ## Waits for every preparing cell's task and drops it, uncommitted: a zone
@@ -5075,8 +5096,12 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 ## Pk2Reader, whose reads are behind a per-handle lock since this round. It is
 ## static, so it cannot reach this node's state: every cache it consults is
 ## snapshotted into the job on the main thread before dispatch (_terrain_job),
-## it writes nothing but the job, and it prints nothing (its lines go in the
-## job for the commit to print, in order). The grounding: Godot 4.2's
+## it writes nothing but the job, and it prints none of its own lines (they go
+## in the job for the commit to print, in order). The readers it calls may
+## still push_error from the task on a malformed file -- DdjReader.to_image's
+## "failed to build Image", MapmTerrainBuilder's "region has N blocks", the
+## MapmReader and NvmReader parse errors (round 565's review; the rule was
+## worded "prints nothing" until round 568). The grounding: Godot 4.2's
 ## "Thread-safe APIs" page -- "Interacting with the active scene tree is NOT
 ## thread-safe"; building scene chunks outside the tree and loading
 ## resources on a thread are supported; "Accessing servers from threads is
@@ -5336,7 +5361,12 @@ func _terrain_commit(job: Dictionary) -> float:
 	# What the prepare read, into this world's caches: the navmesh (a null
 	# too -- "tried, nothing"), every object navigation mesh its graph used,
 	# and the ground tiles it decoded, uploaded here. A tile another job's
-	# commit uploaded first is kept, not replaced.
+	# commit uploaded first is kept, not replaced. So is a navmesh the main
+	# thread cached while this job read its own -- and the graph registered
+	# below is built on the job's copy, so that region then keeps two parses
+	# of its `.nvm` alive: memory only (round 565's review). The `prepared
+	# again` line counts it as a navmesh read twice; 0 in every run round 566
+	# counted (docs/RE_COMPLETION.md, round 566).
 	var navmesh_key: int = job["navmesh_key"]
 	if job.get("navmesh_loaded", false) and not _grid.navmesh_cache.has(navmesh_key):
 		_grid.navmesh_cache[navmesh_key] = job["navmesh"]
@@ -6637,8 +6667,10 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 ##
 ## It keeps THE PREPARE-THREAD RULE of _terrain_prepare: no Node and no
 ## RID-owning Resource (ObjectLoader.prepare_object's result holds Images,
-## arrays and the readers' structs), no tree, no server, no print (its lines
-## go in job["log"]), no write outside the job, archive reads only through
+## arrays and the readers' structs), no tree, no server, no line of its own
+## printed (they go in job["log"]; a reader's push_error on a malformed file
+## still prints from the task, as the terrain readers' do), no write outside
+## the job, archive reads only through
 ## Pk2Reader, and every World3D cache it consults snapshotted into the job
 ## on the main thread (_objects_job): the templates held, the textures held
 ## (key, fourCC and measured alpha statistics -- never the texture), the
@@ -6946,6 +6978,11 @@ func _objects_commit(job: Dictionary) -> void:
 	# its key into the cache, so the streaming unload can release what only
 	# this region placed. Since round 566 a template this job prepared is
 	# committed from that (_prepared_models, read by _load_object_template).
+	# A prepared model whose template another job's commit built first is
+	# never committed, so ITS `missing` and QA lines (`QA MAT`, `QA ALPHA`)
+	# never print -- the job that committed the model printed its own, and
+	# the `prepared again` line counts the copy (round 566's review: a gap in
+	# the log only).
 	var models_here := {} # distinct model paths this region placed
 	var reused_here := 0 # of those, how many another region had already built
 	_prepared_models = job["models"]
@@ -7328,12 +7365,14 @@ func _update_blob_shadow() -> void:
 ##                          none otherwise (_should_show_loading_screen); the
 ##                          load benchmark's two runs set it. Since round 562
 ##                          the screen goes up, and one frame is awaited,
-##                          BEFORE the centre cell (_ready), so without
-##                          --server (whose sign-in already awaited ahead of
-##                          the world) and without SRREVAMP_QA_AT (whose
-##                          first-tick block waits for a region) _qa_step's
-##                          first tick, and its one-time block, run before
-##                          the world and the HUD exist. In that block
+##                          BEFORE the centre cell (_ready). So WITHOUT
+##                          SRREVAMP_QA_AT, _qa_step's first tick and its
+##                          one-time block run before the world and the HUD
+##                          exist -- with --server too: there the block runs
+##                          during QaSignIn's awaited frames, before the
+##                          world, as it has since before round 562 (round
+##                          539 found it: the block's ATTACK comment), so a
+##                          --server run is no safer. In that block
 ##                          SRREVAMP_QA_DEBUG and SRREVAMP_QA_WORLDMAP do
 ##                          nothing, through their null guards; the
 ##                          SRREVAMP_QA_HIDE, _FLOAT, _THROUGH, _SCAN and
@@ -7342,17 +7381,23 @@ func _update_blob_shadow() -> void:
 ##                          about the world; and SRREVAMP_QA_ZONE's
 ##                          _reload_zone_assets runs before
 ##                          _load_initial_region_neighborhood builds the
-##                          SRREVAMP_MAPM_PATH centre. (SRREVAMP_QA_AT holds
-##                          the block only until the region under the player
-##                          has a graph; the rest of the grid still drains
-##                          behind the screen after it, as it did before
-##                          round 562.) And every tick-indexed hook
-##                          below fires one physics tick earlier relative to
-##                          the world build than it did before round 562
-##                          (one step a frame: the project sets no physics
-##                          rate and the movie writer's fps is 60). Read from
-##                          _ready and _qa_step in round 564, not measured;
-##                          nothing was moved
+##                          SRREVAMP_MAPM_PATH centre. And, still without
+##                          SRREVAMP_QA_AT, every tick-indexed hook below
+##                          fires one physics tick earlier relative to the
+##                          world build than it did before round 562 (the
+##                          screen's awaited frame; one step a frame: the
+##                          project sets no physics rate and the movie
+##                          writer's fps is 60). WITH SRREVAMP_QA_AT neither
+##                          applies: _qa_step returns before it counts a
+##                          tick (`_qa_tick += 1`) until the region under the
+##                          player has a graph, so the block runs on a built
+##                          region and the ticks count from it -- the load
+##                          benchmark's crossing run (--at 120,1020) is one;
+##                          the rest of the grid still drains behind the
+##                          screen after it, as it did before round 562.
+##                          Read from _ready, _qa_step and QaSignIn.run in
+##                          rounds 564 and 568, not measured; nothing was
+##                          moved
 ##   SRREVAMP_QA_WORLDMAP=1 open the world map window over the world
 ##   SRREVAMP_QA_ATTACK_NAME=s  only monsters whose plate contains s (e.g. Mangyang)
 ##   SRREVAMP_QA_ATTACK_GOTO=1  stand next to the target first (QA teleport);

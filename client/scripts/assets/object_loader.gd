@@ -688,7 +688,10 @@ static func _commit_material(plan: Dictionary, texture_cache: Dictionary) -> Mat
 ## ImageTexture came out null -- with a file that is not there reported in
 ## `missing`. An Image the decoder could not fill (Image.create_from_data
 ## leaves it empty on a size mismatch) is refused here, where the old
-## `ImageTexture.create_from_image` refused it, so it is never cached.
+## `ImageTexture.create_from_image` refused it, so it is never cached --
+## without a line of this function's own, where create_from_image printed
+## the engine's "Invalid image" error (round 566's review; the material comes
+## out the same, untextured, only the log differs).
 static func _decode_texture(archive: Pk2Reader, tex_path: String, bmt_path: String, missing: Array) -> Dictionary:
 	var tex_entry := find_file(archive, tex_path)
 	if tex_entry == null:

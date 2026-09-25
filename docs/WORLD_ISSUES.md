@@ -7075,6 +7075,46 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-sixty-eighth round: batch-21 review follow-ups -- record wording, run counts, the test gaps; no behaviour change
+
+The review notes on rounds 564-567, each re-checked against the logs under `/var/tmp/r565..r567`,
+`/var/tmp/srv.asm` and the code before it was landed; the full list, note by note, is
+`docs/RE_COMPLETION.md`'s round 568. Nothing a player sees; what changed, anchored by function:
+
+- **The crossing column was listed in commit order and labelled as if in region order.** Every
+  benchmark crossing of rounds 565-567 commits 97, 96, 98, 95, 99/165, one a frame, so round
+  567's "95..99/165: 50/45/85/49/49" put 98/165's 85 ms under 97/165 for anyone reading it as
+  95, 96, 97, 98, 99. Relabelled wherever the column is listed (the README's AFTER blocks, rounds
+  565-567 here and in `RE_COMPLETION.md`); the numbers are unchanged.
+- **Round 566 had five entry runs, not four.** The entry's NPC phase over the 24 neighbours is 876,
+  839 and 840 ms in the three dispatch-first runs and 728 and 743 in the two finish-first ones
+  (BASE 692); `fixA`'s 839 had been left out. The range stands. And the 497 ms drop wait was
+  measured on the round's first write, which still dispatched before it committed; the shipped
+  order's wait was never re-measured (`docs/TODO.md` says so now).
+- `World3D._prepared_again`: its comment claimed no later commit could spare the re-decode of a
+  held texture missing an alpha statistic; `ObjectLoader.commit_textures` merges statistics into a
+  cached texture, so one can. The count now includes that case -- a log line only, in a path the
+  entry benchmark never reaches (it consults no alpha probe at all).
+- The QA header's `SRREVAMP_QA_FORCE_LOADING` note is re-scoped: the unbuilt-world trap (the
+  `SRREVAMP_QA_HIDE` / `_FLOAT` / `_THROUGH` / `_SCAN` / `_COLUMNS` probes reporting on a world not
+  yet built) holds with `--server` too -- the block runs during the sign-in's awaited frames -- and
+  neither it nor the one-tick shift applies under `SRREVAMP_QA_AT`, whose ticks count from the
+  built region.
+- Tests for what had none: `_terrain_commit`'s collision wiring (a prepared job committed headless
+  -- the heightfield at `TerrainCollision.shape_transform()`, a plain (20, 1, 20) scale once the
+  terrain group's mirror is composed in; deleting the transform line had left every suite green),
+  `_finish_cell_job`'s stale-cell guard and `_drop_cell_jobs`, and the held-texture re-decode
+  above -- each shown failing on the code it guards against.
+- Wording: the prepare "prints nothing" -> prints none of its own lines (a reader may still
+  `push_error` from the task); `SRREVAMP_SYNC_LOAD=1` restores the schedule, not the old code; the
+  round-154 quote gets back its "if it is still felt"; the SYSTEMS Monster AI row says the strike
+  worker's fallback does read the row's level; `recovered_names.tsv`'s `PickSkill` row gains its
+  third bounds check (`0x561d52`/`0x561d54`); round 567's entry p95 (950 -> 914 ms) is inside the
+  spread, and its benchmark runs predate the ground-rays hook's wait for the grid.
+- Recorded, not fixed (`docs/TODO.md`): the heightfield under the `move_and_slide` fallback in game
+  -- a region with no navmesh, a region seam (the sixty-third round's pinned capsule), the camera
+  arm from below; two entry drains at once; the `prepared again` line in players' builds.
+
 ## Five-hundred-and-sixty-seventh round: the terrain collides as a heightfield cut the way the ground is drawn, and a streamed cell's collision lap goes from ~25 ms to under 1
 
 The hundred-and-fifty-sixth round named `terrain_mesh.create_trimesh_shape()` the load's
@@ -7101,9 +7141,13 @@ anchored by function:
   group's mirror: the shape's global basis is a plain (20, 1, 20) scale.
 - Benchmark (the README's two commands; BASE / round 567 / the A/B flag): the streamed cells'
   `collision` 657 -> 0 -> 656 ms over the entry's 24 and 791 -> 0 -> 780 over the crossing's 29
-  (0 on every cell line: under 1 ms each); the crossing's column 95..99/165 50/45/85/49/49 ->
+  (0 on every cell line: under 1 ms each); the crossing's column, in commit order 97, 96, 98, 95,
+  99/165 (so the 85 is 98/165's; labelled `95..99/165` until round 568), 50/45/85/49/49 ->
   29/21/60/23/22 ms a cell, its longest work frame 106 -> 86 ms (113 with the flag), 1 -> 0 frames
-  over 100 ms; the entry drain's p95 950 -> 914 ms and frames over 100 ms 9 -> 5.
+  over 100 ms; the entry drain's frames over 100 ms 9 -> 5 (9 with the flag), and its p95 950 ->
+  914 ms, inside run-to-run spread (957 with the flag). The round-567 and flag runs ran the code
+  before `SRREVAMP_QA_GROUND_RAYS` was changed to wait for the grid (a QA-only hook they do not
+  enable); the ray runs below ran the committed code.
 - **Measured, not pictured** -- a new `SRREVAMP_QA_GROUND_RAYS=n` probes the terrain collision on
   an n x n lattice of every loaded region and holds each hit to the drawn mesh's own triangle. On
   1,600 real columns, heightfield against trimesh: every vertical ray hits both, the heightfield's
@@ -7151,16 +7195,18 @@ every log line and the tests; in short, anchored by function:
 
 Measured, the README's two commands, BASE against the shipped code (the pump finishing before it
 dispatches, below; `fix2B_*` on the render box -- until the second review these figures were the
-first write's dispatch-first run): the crossing's column 95..99/165 went from 108/123/123/70/69 ms
-a cell to 50/46/87/51/49 (objects 26-83 -> 5-11 ms on the main thread), its longest work frame from
+first write's dispatch-first run): the crossing's column, in commit order 97, 96, 98, 95, 99/165
+(`95..99/165` until round 568), went from 108/123/123/70/69 ms a cell to 50/46/87/51/49 (objects 26-83 -> 5-11 ms on the main thread), its longest work frame from
 140 ms to 118 (109 in the review fix's earlier run of the same order; 1 frame over 100 ms, from 3).
 The entry: the 24 neighbours' main-thread objects 3,360 -> 460 ms (2,857 ms now on the tasks), the
 cells' main-thread sum 10,517 -> 7,457 ms, p95 1,848 -> 990 ms (947 in the earlier run), the drain
 19.8 s -> 18.1 s. Every placement is the same -- the entry's 58 map-object lines and the crossing's
 67 are identical, and the synthetic objects' node trees, surfaces, faces and materials match
 fingerprints taken from round 565's `load_object`. Not better: the entry's NPC phase (692 ms at
-BASE, 728-876 over the round's four runs, unattributed), a reconnect mid-load waits 497 ms for the
-dropped tasks (18.8 in round 565's run; now a `docs/TODO.md` item), and the centre cell is still
+BASE, 728-876 over the round's five entry runs -- three dispatch-first, 876/839/840, two
+finish-first, 728/743; "four" until round 568 -- unattributed), a reconnect mid-load waits 497 ms
+for the dropped tasks (18.8 in round 565's run; measured on the round's first write, which still
+dispatched first -- the shipped order's wait was not re-measured; now a `docs/TODO.md` item), and the centre cell is still
 5.1 s by design. The crossing's longest frame is now the terrain commit (`collision` 25 ms), the
 NPCs (35 ms) and the frame's other work, not the objects; the objects' largest main-thread lap is
 `place`, the duplicates.
@@ -7200,7 +7246,8 @@ still go through the split `ObjectLoader` and the prepared trimesh faces.
 ## Five-hundred-and-sixty-fifth round: a streamed cell's terrain prepares on a worker thread, and a boundary crossing's frame falls from 334 to 144 ms
 
 The hundred-and-fifty-fourth round left this open ("it does not thread the build, so a very heavy
-cell can still hitch -- threading the region build off the main thread is the next step"), and
+cell can still hitch -- threading the region build off the main thread is the next step if it is
+still felt"; its last words restored in round 568), and
 round 561's benchmark put a number on it: one ~300 ms frame per streamed cell, five in a row, ~250
 of each the terrain. `docs/RE_COMPLETION.md`'s round 565 has the grounding, every log line and the
 tests; in short, anchored by function:
@@ -7227,8 +7274,8 @@ tests; in short, anchored by function:
   the world leaving the tree wait for the tasks still running and drop them -- round 558's
   reconnect-mid-load dropped two after an 18.8 ms wait, with 0 `SCRIPT ERROR`.
 
-Measured, the README's two commands, BASE against this round: the crossing's column 95..99/165
-went from 304/304/328/271/291 ms a cell to 105/127/123/73/69 (terrain 231-262 -> 39-44 on the main
+Measured, the README's two commands, BASE against this round: the crossing's column, in commit
+order 97, 96, 98, 95, 99/165 (`95..99/165` until round 568), went from 304/304/328/271/291 ms a cell to 105/127/123/73/69 (terrain 231-262 -> 39-44 on the main
 thread, 202-227 on the task), and its longest work frame from 334 ms to 144 (the 50 % target met:
 57 %). The entry drain builds two cells a frame over twelve frames instead of three over eight: p95
 2,841 -> 1,772 ms, the cells' main-thread sum 15,181 -> 10,430 ms, the whole drain 22.7 s -> 19.7
@@ -7239,8 +7286,10 @@ fingerprints of the pre-split builder, and the reconnect run's 49 `QA TEXPROBE` 
 centre's terrain are identical to round 560's. The trimesh repeats every ground triangle about 2.5
 times (45,768 faces for 97/168 against the base surface's 18,432), kept as it was; after this
 round a neighbour's `collision` is 746 of the 24 neighbours' 1,265 ms of main-thread terrain --
-the input the heightfield item is gated on. `SRREVAMP_SYNC_LOAD=1` restores the old path for one
-release (measured: three cells a frame under the screen, 314 ms at the crossing).
+the input the heightfield item is gated on. `SRREVAMP_SYNC_LOAD=1` restores the old schedule for one
+release -- the schedule, not the pre-change code: the split builder and the prepared faces still
+run ("the old path" until round 568; measured: three cells a frame under the screen, 314 ms at the
+crossing).
 
 ## Five-hundred-and-sixty-fourth round: batch-20 review follow-ups -- record wording, the QA header, a `setup` lap; no behaviour change
 
@@ -7266,7 +7315,9 @@ the world's files, anchored by function:
   world not yet built, and `SRREVAMP_QA_ZONE`'s `_reload_zone_assets` runs before
   `_load_initial_region_neighborhood` builds the `SRREVAMP_MAPM_PATH` centre -- and tick-indexed
   hooks fire one tick earlier relative to the world build. Read from `_ready` and `_qa_step`, not
-  measured; nothing moved.
+  measured; nothing moved. (Round 568 re-scoped it: the trap holds with `--server` too -- the
+  block runs during the sign-in's awaited frames, before the world -- and neither it nor the tick
+  shift applies under `SRREVAMP_QA_AT`, whose ticks count from the built region.)
 - The Restart comment in `_try_initialize_pk2_ui` no longer claims the engine "replaces a pending
   scene"; the second call came from a node `_on_disconnected` had already detached. The detached,
   not-yet-freed state (`data.tree` null) is what round 558's runs C and D logged on the mid-load

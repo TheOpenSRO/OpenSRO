@@ -33,7 +33,12 @@ extends SceneTree
 ## - round 566's second review: _prepared_again counts only what the prepare
 ##   itself decoded or read -- NOT a texture its snapshot held (named, image
 ##   null) and NOT the region's heightmap taken from the terrain prepare's
-##   parse -- two negatives that fail on the counter as first committed.
+##   parse -- two negatives that fail on the counter as first committed;
+## - round 568: the third texture case -- a HELD texture _alpha_stat decoded
+##   again for a statistic its snapshot lacked -- counts once a later commit
+##   has carried that statistic in, and not before; and the stale-cell guard
+##   (_finish_cell_job) and the drop (_drop_cell_jobs), which had no headless
+##   coverage.
 ##
 ## World3D.gd is reached through load() and call(), so on a tree without the
 ## split the suite FAILS instead of failing to parse (round 563's pattern).
@@ -66,6 +71,7 @@ func _initialize() -> void:
 		_test_the_walk_sees_what_it_forbids()
 		_test_objects_off_the_main_thread(S)
 	_test_pump_commits_before_it_dispatches()
+	_test_stale_cells_are_not_committed()
 	_finish()
 
 ## The walk is the rule's guard, so it is held first: it must find a Node, a
@@ -315,6 +321,7 @@ func _test_prepared_again(S: GDScript, map_pk2: Pk2Reader, data_pk2: Pk2Reader) 
 	got = w.call("_prepared_again", {"objects": fourth})
 	_check(got == {"tiles": 0, "navmesh": 0, "collisions": 0, "heightmaps": 0, "models": 2, "textures": 0},
 		"a texture the snapshot held is not counted as decoded again, its models are (got %s)" % str(got))
+	_test_held_texture_decoded_again(w, data_pk2, none)
 	# The terrain's three caches, over the keys _terrain_prepare leaves in a
 	# job: a tile, the navmesh and one of two object navigation meshes cached
 	# since its snapshot.
@@ -325,6 +332,100 @@ func _test_prepared_again(S: GDScript, map_pk2: Pk2Reader, data_pk2: Pk2Reader) 
 		"navmesh_loaded": true, "navmesh_key": 5, "parsed_collisions": {7: true, 8: true}})
 	_check(got == {"tiles": 1, "navmesh": 1, "collisions": 1, "heightmaps": 0, "models": 0, "textures": 0},
 		"the terrain's tile, navmesh and object navigation mesh cached since the snapshot are counted (got %s)" % str(got))
+	w.free()
+
+## Round 568 (round 566's second review, nonblocking): the third texture
+## case, which negative (a) above cannot tell from the other two -- its
+## texture has image == null, so either exclusion would skip it. A texture
+## the job's snapshot HELD, but without a statistic a layer asks for, is
+## decoded again by ObjectLoader._alpha_stat (image set, key in
+## known_textures). That decode counts only once a commit after the
+## snapshot has carried the statistic into the world's entry
+## (ObjectLoader.commit_textures merges a prepare's statistics into a
+## texture already cached -- what World3D._objects_commit calls): a snapshot
+## taken after that commit would have spared it. With nothing carried in,
+## the decode was needed and does not count.
+##
+## The layer here has no flag word (LAYER_FLAG_MASK clear), so the pixels
+## decide, and the texture is the uncompressed scenery.ddj (fourCC ""), whose
+## statistic is `binary_cutout`; the world's entry for it holds no statistic
+## (the synthetic material's flag word 0x40 decided every layer so far).
+## World3D.gd as first committed in round 566 skipped every snapshot-held key,
+## so the last check FAILS there.
+func _test_held_texture_decoded_again(w: Node, data_pk2: Pk2Reader, none: Dictionary) -> void:
+	var key := "prim/scenery.ddj"
+	var world_textures: Dictionary = w.get("_object_textures")
+	_check(world_textures.has(key) and (world_textures[key]["alpha"] as Dictionary).is_empty(),
+		"the world holds %s with no alpha statistic measured (got %s)" % [key, str(world_textures.keys())])
+	if not world_textures.has(key):
+		return
+	var pixels := BmtReader.Layer.new()
+	pixels.layer_name = "pixels"
+	pixels.texture_path = "scenery.ddj"
+	pixels.unknown = 0
+	var snapshot := ObjectLoader.snapshot_textures(world_textures)
+	var fifth := {"textures": {}, "missing": [], "log": []}
+	ObjectLoader._prepare_material(data_pk2, "prim\\scenery.bmt", pixels, snapshot, fifth)
+	var redecoded: Dictionary = (fifth["textures"] as Dictionary).get(key, {})
+	_check(snapshot.has(key) and redecoded.get("image") is Image
+			and (redecoded.get("alpha", {}) as Dictionary).has("binary_cutout"),
+		"a layer the pixels decide decodes the held texture again for the statistic its snapshot lacked (got %s)" % str(redecoded))
+	var job := {"objects": {"known_textures": snapshot, "textures": fifth["textures"]}}
+	var got: Dictionary = w.call("_prepared_again", job)
+	_check(got == none, "with no statistic carried in since the snapshot, that decode was needed and is not counted (got %s)" % str(got))
+	# Another job measured the same statistic and committed first.
+	var sixth := {"textures": {}, "missing": [], "log": []}
+	ObjectLoader._prepare_material(data_pk2, "prim\\scenery.bmt", pixels, ObjectLoader.snapshot_textures(world_textures), sixth)
+	ObjectLoader.commit_textures(sixth["textures"], world_textures)
+	_check((world_textures[key]["alpha"] as Dictionary).has("binary_cutout"),
+		"that commit merged the statistic into the uploaded texture's entry (ObjectLoader.commit_textures)")
+	got = w.call("_prepared_again", job)
+	_check(got == {"tiles": 0, "navmesh": 0, "collisions": 0, "heightmaps": 0, "models": 0, "textures": 1},
+		"a held texture decoded again counts once a later commit has carried in the statistic it was decoded for (got %s)" % str(got))
+
+## Round 568 (round 565's review, nonblocking: the stale-cell guard and the
+## drop had no headless coverage; no box log from rounds 565-567 carries a
+## `prepared but not committed` line). World3D._finish_cell_job commits a
+## prepared cell only if it is still wanted -- not already loaded, and still
+## inside the player's window (the unload margin, _region_load_radius() + 1)
+## -- and _drop_cell_jobs waits for every task still preparing and forgets
+## it. A subclass records _load_region_cell's calls instead of building, so
+## the guard's own decision is what is held; a cell still wanted is its
+## control.
+func _test_stale_cells_are_not_committed() -> void:
+	var sub := GDScript.new()
+	sub.source_code = "\n".join(PackedStringArray([
+		"extends \"res://scripts/World3D.gd\"",
+		"var built: Array = []",
+		"func _load_region_cell(region_x: int, region_y: int, dx: int, dy: int, shared_anchor: float, prepared: Dictionary = {}) -> void:",
+		"\tbuilt.append(\"%d/%d\" % [region_x, region_y])",
+		""]))
+	_check(sub.reload() == OK and sub.can_instantiate(), "a subclass of World3D.gd recording its commits compiles")
+	if not sub.can_instantiate():
+		return
+	var w: Node = sub.new()
+	w.set("_last_stream_cell", Vector2i(0, 0))
+	var far: int = int(w.call("_region_load_radius")) + 2
+	var grid = w.get("_grid")
+	for key in ["loaded", "far", "wanted"]:
+		grid.queued_cells[key] = true
+	grid.loaded_cells["loaded"] = true
+	w.call("_finish_cell_job", {"cell": {"rx": 97, "ry": 169, "dx": 0, "dy": 1, "key": "loaded"}, "job": {}})
+	w.call("_finish_cell_job", {"cell": {"rx": 97 + far, "ry": 168, "dx": far, "dy": 0, "key": "far"}, "job": {}})
+	var built: Array = w.get("built")
+	_check(built.is_empty(), "a cell already loaded, and one %d cells from the player's (past the unload margin), are not committed (got %s)" % [far, str(built)])
+	_check(not grid.queued_cells.has("loaded") and not grid.queued_cells.has("far"), "and both leave the queued set")
+	w.call("_finish_cell_job", {"cell": {"rx": 97, "ry": 167, "dx": 0, "dy": -1, "key": "wanted"}, "job": {}})
+	built = w.get("built")
+	_check(built == ["97/167"] and not grid.queued_cells.has("wanted"), "a cell still wanted is committed (the control; got %s)" % str(built))
+	var jobs: Array = w.get("_cell_jobs")
+	for k in ["x", "y"]:
+		grid.queued_cells[k] = true
+		jobs.append({"task": WorkerThreadPool.add_task(func(): OS.delay_msec(20), true, "r568 drop test"), "cell": {"key": k}, "job": {}})
+	w.call("_drop_cell_jobs", "the test is over")
+	_check((w.get("_cell_jobs") as Array).is_empty() and not grid.queued_cells.has("x") and not grid.queued_cells.has("y")
+			and (w.get("built") as Array).size() == 1,
+		"_drop_cell_jobs waits for both preparing cells and forgets them, uncommitted")
 	w.free()
 
 ## Round 566's review: _pump_cell_jobs commits a finished cell BEFORE it

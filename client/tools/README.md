@@ -115,7 +115,13 @@ cost is read from its own line. Three lines carry it:
     water, graph], objects O [...], npcs P [...]; off the main thread: terrain P [read, parse,
     lightmap, textures, mesh, heights, navmesh, walls, navgraph]`. The off-thread figure is the
     task's own time and is **never** in `built in`, in a frame's work or in the `terrain` group
-    totals; the job's snapshot ran between cells and is in no cell.
+    totals. A streamed cell's job snapshots -- `_terrain_job`'s and, since round 566,
+    `_objects_job`'s (`ObjectTemplateCache.held_keys()`, `ObjectLoader.snapshot_textures`, each
+    O(entries)) -- are built at dispatch, between cells, so they are on no cell line (their
+    `snapshot` laps are dropped: no cell is open). In play the dispatch runs inside the physics
+    step (`_process_stream_queue`), so it counts in that frame's work; under the loading screen
+    the drain's coroutine dispatches outside any physics step, so it counts in no frame's work and
+    lands in `D`. Neither is measured on its own (round 565's and 566's reviews).
 
   Since round 566 the objects are split the same way -- `_objects_job` (main thread: the object
   index and a snapshot of the templates held, the textures uploaded and the heightmaps parsed),
@@ -267,7 +273,11 @@ without either being one; read the cells a frame from the log when the longest f
 
 AFTER round 565 (a streamed cell's terrain prepared on a worker thread, committed on the main
 thread), against BASE re-measured the same day on the same box -- round 561's BEFORE predates
-rounds 562-563 (`docs/RE_COMPLETION.md`, round 565, has the full lines):
+rounds 562-563 (`docs/RE_COMPLETION.md`, round 565, has the full lines). In this block and the
+AFTER blocks below, (b)'s column is listed in the order its cells were committed -- 97, 96, 98,
+95, 99/165, the same in every crossing run of rounds 565-567 -- not in region order: the 85 ms of
+round 567's BASE is 98/165's, not 97/165's (labelled `95..99/165` until round 568; round 567's
+review):
 
 ```
 (a) BASE   cell 97/168 built in 5202 ms at frame 13; three cells a frame at 14-21
@@ -279,9 +289,9 @@ rounds 562-563 (`docs/RE_COMPLETION.md`, round 565, has the full lines):
                -- 25 cells 10430 ms, 9281 ms outside the cells over 14 awaited frames;
                terrain 5809 ms prepared off the main thread
            longest work frame 5306 ms at frame 14 (cell 97/168); p95 1772 ms; 13 over 100 ms
-(b) BASE   95..99/165: 304, 304, 328, 271, 291 ms at frames 161-165 (terrain 231-262 each)
+(b) BASE   97,96,98,95,99/165: 304, 304, 328, 271, 291 ms at frames 161-165 (terrain 231-262 each)
            longest work frame 334 ms at frame 163 (cell 98/165) over 575 frames; 5 over 100 ms
-    565    95..99/165: 105, 127, 123, 73, 69 ms at frames 162-166 (terrain 39-44 each, and
+    565    97,96,98,95,99/165: 105, 127, 123, 73, 69 ms at frames 162-166 (terrain 39-44 each, and
                202-227 ms prepared off the main thread)
            longest work frame 144 ms at frame 163 (cell 96/165) over 570 frames; 3 over 100 ms
 ```
@@ -309,10 +319,11 @@ entry p95 1025 ms):
                terrain 5916 ms prepared off the main thread; objects 2869 ms prepared off the
                main thread
            longest work frame 5134 ms at frame 13 (cell 97/168); p95 990 ms; 8 over 100 ms
-(b) BASE   95..99/165: 108, 123, 123, 70, 69 ms at frames 161-165 (objects 65, 83, 42, 30, 26)
+(b) BASE   97,96,98,95,99/165: 108, 123, 123, 70, 69 ms at frames 161-165
+               (objects 65, 83, 42, 30, 26)
            longest work frame 140 ms at frame 163 (cell 98/165) over 571 frames; 3 over 100 ms
-    566    95..99/165: 50, 46, 87, 51, 49 ms at frames 159-163 (objects 11, 7, 11, 10, 5 on the main
-               thread; 14-91 ms prepared off it)
+    566    97,96,98,95,99/165: 50, 46, 87, 51, 49 ms at frames 159-163 (objects 11, 7, 11, 10, 5
+               on the main thread; 14-91 ms prepared off it)
            longest work frame 118 ms at frame 161 (cell 98/165) over 571 frames; 1 over 100 ms
 ```
 
@@ -337,9 +348,11 @@ read; its A/B totals, 103 -> 66 and 145 -> 84, are withdrawn):
            longest work frame 5134 ms at frame 13 (cell 97/168); p95 990 ms; 8 over 100 ms
            prepared again: 3 tiles, 4 object navmeshes, 1 heightmap, 7 models, 13 object textures
                (28); `decoded now` sum 51
-(b) A      95..99/165: 53, 51, 94, 49, 49 ms; longest work frame 114 ms at frame 164 (cell 98/165)
+(b) A      97,96,98,95,99/165: 53, 51, 94, 49, 49 ms; longest work frame 114 ms at frame 164
+               (cell 98/165)
                prepared again over 29 streamed cells: 102
-    B      95..99/165: 50, 46, 87, 51, 49 ms; longest work frame 118 ms at frame 161 (cell 98/165)
+    B      97,96,98,95,99/165: 50, 46, 87, 51, 49 ms; longest work frame 118 ms at frame 161
+               (cell 98/165)
                prepared again: 32
 ```
 
@@ -363,7 +376,13 @@ AFTER round 567 (a region's terrain collision is a `HeightMapShape3D` over its h
 (round 566's code) re-measured the same day on the same box, and the same code with
 `SRREVAMP_TERRAIN_TRIMESH=1` (the old trimesh, for A/B); `docs/RE_COMPLETION.md`, round 567, has
 the full lines, the per-phase sums and the ground probes. The streamed-cell sums are over the
-cells' own lines (the entry's 24 neighbours, the crossing run's 29 streamed cells):
+cells' own lines (the entry's 24 neighbours, the crossing run's 29 streamed cells). Which code:
+BASE ran `git archive f25ab65`; the 567 and TRI runs ran round 567's code before
+`SRREVAMP_QA_GROUND_RAYS` was changed to wait for the grid -- a QA-only hook neither run enables
+(round 567 says so; its ray runs, `rays3_*`, ran the committed code). The entry's p95 950 -> 914
+ms is inside run-to-run spread (TRI, the old collision on the same code, read 957); the frames over
+100 ms (9 -> 5, TRI 9) and the per-cell `collision` lap are the numbers that moved (round 567's
+review):
 
 ```
 (a) BASE   cell 97/168 built in 5035 ms at frame 14 (terrain 1563 [.. faces 7 .. collision 27 ..])
@@ -378,13 +397,14 @@ cells' own lines (the entry's 24 neighbours, the crossing run's 29 streamed cell
            24 streamed cells: built in 1735 ms; terrain commit 513, collision 0 (every cell)
     TRI    region grid loaded in 18048 ms (terrain 2739, ...); p95 957 ms; 9 over 100 ms
            24 streamed cells: built in 2345 ms; terrain commit 1160, collision 656
-(b) BASE   95..99/165: 50, 45, 85, 49, 49 ms at frames 161-165 (collision 24, 24, 25, 26, 27)
+(b) BASE   97,96,98,95,99/165: 50, 45, 85, 49, 49 ms at frames 161-165
+               (collision 24, 24, 25, 26, 27)
            longest work frame 106 ms at frame 163 (cell 98/165) over 569 frames; 1 over 100 ms
            29 streamed cells: built in 2617 ms; terrain commit 1367, collision 791
-    567    95..99/165: 29, 21, 60, 23, 22 ms at frames 162-166 (collision 0 each)
+    567    97,96,98,95,99/165: 29, 21, 60, 23, 22 ms at frames 162-166 (collision 0 each)
            longest work frame 86 ms at frame 164 (cell 98/165) over 569 frames; 0 over 100 ms
            29 streamed cells: built in 1868 ms; terrain commit 584, collision 0
-    TRI    95..99/165: 49, 45, 85, 48, 49 ms (collision 24-27); longest work frame 113 ms at
+    TRI    97,96,98,95,99/165: 49, 45, 85, 48, 49 ms (collision 24-27); longest work frame 113 ms at
                frame 163 (cell 98/165); 1 over 100 ms
 ```
 
@@ -403,8 +423,12 @@ together. Round 565 (terrain) implements them, and round 566 (objects) holds to 
 1. **The prepare-thread rule.** A prepare constructs NO Node and NO RID-owning Resource --
    no `MeshInstance3D`, `StaticBody3D`, `ArrayMesh`, `Material`, `ImageTexture` or `Shape3D`;
    Images, packed arrays, Arrays, Dictionaries and the readers' RefCounted structs only -- touches
-   neither the scene tree nor the RenderingServer nor the PhysicsServer, and prints nothing (its
-   lines go in the job; the commit prints them in order). A main-thread commit builds the objects.
+   neither the scene tree nor the RenderingServer nor the PhysicsServer, and prints none of its
+   own lines (they go in the job; the commit prints them in order) -- though a reader it calls
+   may still `push_error` from the task on a malformed file (`DdjReader.to_image`'s "failed to
+   build Image", `MapmTerrainBuilder`'s "region has N blocks", the `MapmReader` / `NvmReader` and
+   object readers' parse errors; worded "prints nothing" until round 568, round 565's review). A
+   main-thread commit builds the objects.
    World3D's `_terrain_prepare` is static, so it cannot reach the node's state;
    `terrain_prepare_test.gd` walks a prepared job and fails on any Node or Resource in it other
    than an Image. Round 566: `_objects_prepare` and `_cell_prepare` are static too, and
@@ -431,7 +455,9 @@ together. Round 565 (terrain) implements them, and round 566 (objects) holds to 
    heightmap(s) the objects read, N model(s), N object texture(s) decoded` (`_prepared_again`,
    counted before its commit merges anything): what its task read or built that a commit landing
    after its snapshot had already cached, so it was thrown away -- a texture only if the task
-   decoded it (one its snapshot held is named, not decoded, and not counted), a heightmap only if
+   decoded it (one its snapshot held is named, not decoded, and not counted -- unless
+   `_alpha_stat` decoded it again for a statistic the snapshot lacked and a commit since has
+   carried that statistic in, which counts from round 568), a heightmap only if
    the objects read it (not the region's own, taken from the terrain prepare's parse). It can stay
    above zero: a job cannot see what the job preparing beside it will commit (the entry's 24
    cells: 28 finish-first, 67 when the pump dispatched first; `docs/RE_COMPLETION.md`, round
@@ -446,7 +472,8 @@ together. Round 565 (terrain) implements them, and round 566 (objects) holds to 
    still inside the player's window -- else `cell x/y prepared but not committed -- <why>`), and
    a zone change, a new grid and the world leaving the tree wait for every task still running
    and drop it (`N cell(s) still preparing dropped (<why>) -- waited M ms`), so a reconnect cannot
-   commit into a freed world.
+   commit into a freed world. `objects_prepare_test.gd` holds the guard and the drop headless
+   since round 568 (no box log of rounds 565-567 carries a `prepared but not committed` line).
 
 `SRREVAMP_SYNC_LOAD=1` is the escape hatch for one release after round 565: every cell's terrain
 and (round 566) objects are prepared and committed on the main thread on the pre-round-565

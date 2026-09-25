@@ -18,7 +18,9 @@ extends SceneTree
 ## or, under SRREVAMP_TERRAIN_TRIMESH=1's job flag, the trimesh faces (round
 ## 567) -- the lightmap and ground-tile Images, the navmesh, the walls and the
 ## walkable graph) and that the same prepare on the main thread produces the
-## same.
+## same. And (round 568) that _terrain_commit wires the collision the prepare
+## laid out: the heightfield at TerrainCollision.shape_transform(), or the
+## trimesh under the job's flag.
 ##
 ## Two synthetic pk2 archives stand in for Map.pk2 (`97\168.m`, `97\168.t`,
 ## `Tile2D\t1.ddj`) and Data.pk2 (`navmesh\nv_61a8.nvm`); the tile table and
@@ -183,11 +185,87 @@ func _test_prepare_off_the_main_thread(S: GDScript) -> void:
 		"a cached navmesh is not read again")
 	_check(_forbidden(job2).is_empty(), "the second job holds no Node and no Resource but Image after its task")
 
+	_test_the_commit_wires_the_collision(S, w, job, job_tri)
+
 	w.free()
 	map_pk2.close()
 	data_pk2.close()
 	DirAccess.remove_absolute(map_path)
 	DirAccess.remove_absolute(data_path)
+
+## Round 568 (round 567's review, nonblocking): no suite ran
+## World3D._terrain_commit's collision wiring -- `patch_shape.shape =
+## TerrainCollision.make_shape(heights)` and `patch_shape.transform =
+## TerrainCollision.shape_transform()` -- so deleting the transform line left
+## every suite green (terrain_collision_test holds TerrainCollision in its own
+## group; only the render box's SRREVAMP_QA_GROUND_RAYS runs would have
+## caught it). Here the prepared jobs above are committed on the bare world
+## (not in the tree; the scene's ground stand-ins, which the commit hides,
+## are stubbed) and the shapes the commit built are read back: the
+## heightfield over the job's own grid at shape_transform(), whose basis
+## composed with its parents' up to the terrain group is a plain (20, 1, 20)
+## scale (the group's z mirror cancels the shape's own, round 567), on the
+## terrain body's layer; and under the job's trimesh flag the pre-567
+## ConcavePolygonShape3D of the job's faces at the identity.
+func _test_the_commit_wires_the_collision(S: GDScript, w: Node, job: Dictionary, job_tri: Dictionary) -> void:
+	var names := {}
+	for m in S.get_script_method_list():
+		names[m["name"]] = true
+	_check(names.has("_terrain_commit"), "World3D.gd has _terrain_commit")
+	if not names.has("_terrain_commit"):
+		return
+	var terrain_layer: int = S.get_script_constant_map().get("TERRAIN_COLLISION_LAYER", -1)
+	var stub_mesh := MeshInstance3D.new()
+	var stub_collision := CollisionShape3D.new()
+	w.set("ground_mesh", stub_mesh)
+	w.set("ground_collision", stub_collision)
+
+	w.call("_terrain_commit", job)
+	var shape_node := _terrain_shape_node(w, "RealTerrain_97_168")
+	_check(shape_node != null, "the commit built RealTerrain_97_168/SubPatch with a body and a collision shape")
+	if shape_node != null:
+		var hm := shape_node.shape as HeightMapShape3D
+		_check(hm != null and hm.map_width == TerrainCollision.SIDE and hm.map_depth == TerrainCollision.SIDE
+				and hm.map_data == job["heights"],
+			"its shape is a HeightMapShape3D over the job's own 97 x 97 grid (got %s)" % str(shape_node.shape))
+		_check(shape_node.transform.is_equal_approx(TerrainCollision.shape_transform()),
+			"the shape sits at TerrainCollision.shape_transform() (got %s)" % str(shape_node.transform))
+		var basis := Basis.IDENTITY
+		var n: Node = shape_node
+		while n != null and n != w:
+			basis = (n as Node3D).transform.basis * basis
+			n = n.get_parent()
+		_check(basis.is_equal_approx(Basis.from_scale(Vector3(20.0, 1.0, 20.0))),
+			"composed up to the terrain group, the shape's basis is a plain (20, 1, 20) scale -- no mirror left (got %s)" % str(basis))
+		var body := shape_node.get_parent() as StaticBody3D
+		_check(body != null and body.collision_layer == terrain_layer,
+			"on the terrain body's layer, TERRAIN_COLLISION_LAYER (%d)" % terrain_layer)
+
+	job_tri["node_suffix"] = "_97_168_tri"
+	w.call("_terrain_commit", job_tri)
+	var tri_node := _terrain_shape_node(w, "RealTerrain_97_168_tri")
+	var tri: ConcavePolygonShape3D = null
+	if tri_node != null:
+		tri = tri_node.shape as ConcavePolygonShape3D
+	_check(tri != null and tri.get_faces().size() == (job_tri["faces"] as PackedVector3Array).size()
+			and tri_node.transform.is_equal_approx(Transform3D.IDENTITY),
+		"under the job's trimesh flag the commit builds the ConcavePolygonShape3D of the job's faces, at the identity")
+	w.set("ground_mesh", null)
+	w.set("ground_collision", null)
+	stub_mesh.free()
+	stub_collision.free()
+
+## The CollisionShape3D under a committed terrain group's SubPatch body.
+func _terrain_shape_node(w: Node, group_name: String) -> CollisionShape3D:
+	var patch := w.get_node_or_null(group_name + "/SubPatch")
+	if patch == null:
+		return null
+	for child in patch.get_children():
+		if child is StaticBody3D:
+			for grandchild in child.get_children():
+				if grandchild is CollisionShape3D:
+					return grandchild
+	return null
 
 ## Every Object reachable from `v` -- through Arrays, Dictionaries and each
 ## object's script variables -- that is a Node, or a Resource other than an

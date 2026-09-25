@@ -36449,7 +36449,9 @@ this file's round-555 entry, `monster_ai.md`'s round-554 draw's-moment bullet an
 `+0x44` clear at `0x53fb7e`, the one thing modelled (`leaveBattle`), is unaffected. (c)
 `recovered_names.tsv`'s `00561b00` row: the bounds checks `je`/`jae 0x561d56` at
 `0x561d19`/`0x561d24` jump to `0x561d56`, whose `call 0x5632d0` is the `invalid vector<T>
-subscript` throw -- one hop more than "the throw the bounds checks jump to". (d) `monsterai.go`'s
+subscript` throw -- one hop more than "the throw the bounds checks jump to" (not exhaustive: a
+third check, `cmp ecx,edx; jb 0x561d5b` at `0x561d52`/`0x561d54`, on the picked index, falls
+through to `0x561d56` too -- added to the row in round 568). (d) `monsterai.go`'s
 `acquire` comment, steps 2-3: between `TimerDue` (`0x54793f`) and the aggression byte (`0x547958`)
 the routine tests its own `[ebp+8]` argument (`cmp [ebp+8],edi; setne al; cmp al,1; je 0x54796a`,
 `0x54794e..0x547956`) and skips the byte gate when it is non-zero; what the callers pass there is
@@ -36529,7 +36531,10 @@ false-negative trap: added on round 564's own review); and `SRREVAMP_QA_ZONE`'s
 player has a graph; the rest of the grid drains after it, as before round 562) -- and every
 tick-indexed hook fires one physics tick earlier relative to the world build (one step a frame:
 `project.godot` sets no physics rate and the writer's fps is 60). Read from `_ready` and
-`_qa_step`, not measured; nothing moved. (b) The README says now that only physics steps and cell
+`_qa_step`, not measured; nothing moved. (Round 568: the unbuilt-world trap holds with `--server`
+too -- there the block runs during `QaSignIn`'s awaited frames, before the world, as it has since
+before round 562 (round 539) -- and the one-tick shift is scoped to runs without
+`SRREVAMP_QA_AT`, whose ticks count from the built region; the header says both now.) (b) The README says now that only physics steps and cell
 builds are work: the screen's build (672-711 ms in round 562's three runs) and the HUD's run in
 `_ready` between steps, so neither reaches `longest work frame`; they are in `D`.
 
@@ -36607,8 +36612,9 @@ read and parse, the `.t` lightmap and the ground tiles decoded to Images, the me
 the collision faces as arrays, the navmesh, the wall triangles and the walkable graph -- now
 prepares on a `WorkerThreadPool` task, and only its commit (the uploads, the nodes, the shapes,
 the water, the graph's registration) runs on the main thread; the objects and NPC phases stay
-synchronous in the commit's frame. `SRREVAMP_SYNC_LOAD=1` restores the synchronous path for one
-release. Every number below is a log line from the render box (2026-09-25, hardware GL through
+synchronous in the commit's frame. `SRREVAMP_SYNC_LOAD=1` restores the synchronous schedule for
+one release (the schedule, not the pre-change code: "Also measured" below; worded "path" until
+round 568). Every number below is a log line from the render box (2026-09-25, hardware GL through
 VirtualGL, lane lock `/var/tmp/r565/lock`, round 558's server binary) or from this checkout; the
 logs are `/var/tmp/r565/{base_entry,base_cross,after_entry,after_cross,sync_cross,drain,qa}.log`
 with `run.sh` and `after.sh`, the exact commands (frames deleted).
@@ -36620,7 +36626,8 @@ with `run.sh` and `after.sh`, the exact commands (frames deleted).
   everything from the file read to the nav graph inside one call; `grep -rn
   "Thread\|WorkerThreadPool\|Mutex" client/scripts` was empty. `docs/WORLD_ISSUES.md`, round 154:
   "it does not thread the build, so a very heavy cell can still hitch -- threading the region
-  build off the main thread is the next step".
+  build off the main thread is the next step if it is still felt" (the quote's last four words
+  restored in round 568).
 - `Pk2Reader`: one `_file: FileAccess` per handle, `read_file` = `seek` + `get_buffer`,
   `_read_block_chain` a seek and a get_buffer per block, `_dir_cache` per handle -- not
   thread-safe, and every World3D reader shares the world's three handles.
@@ -36657,8 +36664,10 @@ with `run.sh` and `after.sh`, the exact commands (frames deleted).
   navigation meshes -- are all in the job).
 - *The prepare-thread rule* (verifier (c), orchestrator): written at `World3D._terrain_prepare`
   and in `client/tools/README.md`, "Load benchmark" (rules 1-4). `_terrain_prepare` and its
-  helpers are `static`, so they cannot reach the node's state; they print nothing (their lines go
-  in the job, printed in order by the commit) and record their laps in the job (LoadTimings is the
+  helpers are `static`, so they cannot reach the node's state; they print none of their own lines
+  (those go in the job, printed in order by the commit) -- a reader they call may still
+  `push_error` from the task on a malformed file (`DdjReader.to_image`, `MapmTerrainBuilder`,
+  `MapmReader`, `NvmReader`; "print nothing" until round 568) -- and record their laps in the job (LoadTimings is the
   main thread's).
 - *The cache race* (verifier (d)): `_terrain_job` snapshots, on the main thread before dispatch,
   the ground-tile cache as filename -> decoded flag (never the texture), the region's cached
@@ -36734,7 +36743,7 @@ figure is the tick-600 summary).
 | (a) `region grid loaded` | `22726 ms (terrain 7961, objects 4890, npcs 2331) at frame 22 -- 25 cells 15181 ms, 7545 ms outside the cells over 10 awaited frames` | `19711 ms (terrain 2873, objects 5182, npcs 2375) at frame 27 -- 25 cells 10430 ms, 9281 ms outside the cells over 14 awaited frames; terrain 5809 ms prepared off the main thread` |
 | (a) drain summary | `longest work frame 5265 ms at frame 13 (cell 97/168) ...; p95 2841 ms; 9 over 100 ms` | `5306 ms at frame 14 (cell 97/168) ...; p95 1772 ms; 13 over 100 ms` |
 | (a) cells a frame under the screen | three at frames 14-21 | two at frames 15-26 |
-| (b) the column 95..99/165 | `304, 304, 328, 271, 291 ms` at frames 161-165 (terrain 231-262 each) | `105, 127, 123, 73, 69 ms` at frames 162-166 (terrain 39-44 each; prepared 202-227 ms off the main thread) |
+| (b) the column 97, 96, 98, 95, 99/165 (commit order; labelled `95..99/165` until round 568) | `304, 304, 328, 271, 291 ms` at frames 161-165 (terrain 231-262 each) | `105, 127, 123, 73, 69 ms` at frames 162-166 (terrain 39-44 each; prepared 202-227 ms off the main thread) |
 | (b) tick-600 summary | `longest work frame 334 ms at frame 163 (cell 98/165) over 575 frames ...; p95 5 ms; 5 over 100 ms` | `longest work frame 144 ms at frame 163 (cell 96/165) over 570 frames ...; p95 5 ms; 3 over 100 ms` |
 
 The crossing's longest work frame fell 57 % (334 -> 144 ms), past the plan's 50 % target; 144 is
@@ -36855,7 +36864,7 @@ with `fixrun.sh`, and the second review fix's `/var/tmp/r566/{fix2A,fix2B}_{entr
 - BASE re-measured today with the README's two commands (the box's client copy md5-identical to
   BASE): objects **5,346 ms** of the entry's 25 cells (`templates` 3,526 = centre 1,573 + 1,953
   over the 24 neighbours; `own` 1,202 = 308 + 894), and 26-83 ms a cell of the crossing's column
-  (65, 83, 42, 30, 26). The item's figures (templates 3,356, own 1,069) are round 561's, before
+  (65, 83, 42, 30, 26, in commit order: 97, 96, 98, 95, 99/165). The item's figures (templates 3,356, own 1,069) are round 561's, before
   rounds 562-565.
 - Godot 4.2's trimesh, read from the 4.2-stable sources (raw GitHub, 2026-09-25):
   `Mesh::generate_triangle_mesh` copies `vr[index]` for every index of an indexed triangle surface
@@ -36984,7 +36993,7 @@ with `fixrun.sh`, and the second review fix's `/var/tmp/r566/{fix2A,fix2B}_{entr
   10199 ms outside the cells over 16 awaited frames` against `18078 ms ... at frame 29 -- 25
   cells 7457 ms, 10621 ms outside the cells over 17 awaited frames`; drain summary `longest work
   frame 5090 ms at frame 14 (cell 97/168) ...; p95 954 ms; 13 over 100 ms` against `5134 ms at
-  frame 13 ...; p95 990 ms; 8 over 100 ms`; crossing column 95..99/165 (commit order)
+  frame 13 ...; p95 990 ms; 8 over 100 ms`; crossing column 97, 96, 98, 95, 99/165 (commit order)
   53/51/94/49/49 ms against 50/46/87/51/49 ms, tick-600 summary `longest work frame 114 ms at frame
   164 (cell 98/165)` against `118 ms at frame 161 (cell 98/165)`, 1 over 100 ms in both. The first
   pair (`fixA_*`, `fixB_*`, same code but the counter) read 111 against 109 ms and p95 1,004
@@ -37011,7 +37020,9 @@ with `fixrun.sh`, and the second review fix's `/var/tmp/r566/{fix2A,fix2B}_{entr
   cell drops both. Round 558's `--reconnect drain` (`drain.log`): `QA RECONNECT: leaving the world
   at frame 15, tick 15 (drain, route direct, entry 1, 6 cells still queued, 2 preparing)`, then
   `World3D: 2 cell(s) still preparing dropped (the world left the tree) -- waited 497.2 ms for
-  their tasks`, entry 2 loaded and shot; **0 `SCRIPT ERROR`**, and the `ERROR:` lines identical to round 565's same run
+  their tasks` (this run, 15:48 on the box, is the first write's: the pump still dispatched before
+  it finished, and the log has no `prepared again` line; the shipped finish-first order's drop
+  wait was not re-measured -- round 568), entry 2 loaded and shot; **0 `SCRIPT ERROR`**, and the `ERROR:` lines identical to round 565's same run
   (`/var/tmp/r565/drain.log`: two missing `.bsr`s, the gacha machine once per entry, the
   exit-time texture leak). The wait
   was 18.8 ms in round 565's run: a task now prepares the objects too, so a drop waits for more of
@@ -37070,12 +37081,12 @@ comparison, and the review fix's earlier run of the shipped order (`fixB_*`) bes
 | (a) `region grid loaded` | `19795 ms (terrain 2810, objects 5346, npcs 2361) at frame 27 -- 25 cells 10517 ms, 9278 ms outside the cells over 14 awaited frames; terrain 5795 ms prepared off the main thread` | `18078 ms (terrain 2756, objects 2268, npcs 2434) at frame 29 -- 25 cells 7457 ms, 10621 ms outside the cells over 17 awaited frames; terrain 5916 ms prepared off the main thread; objects 2869 ms prepared off the main thread` |
 | (a) drain summary | `longest work frame 5269 ms at frame 14 (cell 97/168) ...; p95 1848 ms; 13 over 100 ms` | `5134 ms at frame 13 (cell 97/168) ...; p95 990 ms; 8 over 100 ms` |
 | (a) the first two neighbours' frame (their `built in` sum) | frame 15, 1,843 ms (97/169 935 + 97/167 908) | frame 16, 874 ms (97/169 371 + 97/167 503, NPCs 280 + 213 of it) |
-| (b) the column 95..99/165, in commit order | `108, 123, 123, 70, 69 ms` at frames 161-165 (objects 65, 83, 42, 30, 26) | `50, 46, 87, 51, 49 ms` at frames 159-163 (objects 11, 7, 11, 10, 5; prepared 48, 91, 20, 15, 14 ms off the main thread) |
+| (b) the column 97, 96, 98, 95, 99/165 (commit order) | `108, 123, 123, 70, 69 ms` at frames 161-165 (objects 65, 83, 42, 30, 26) | `50, 46, 87, 51, 49 ms` at frames 159-163 (objects 11, 7, 11, 10, 5; prepared 48, 91, 20, 15, 14 ms off the main thread) |
 | (b) tick-600 summary | `longest work frame 140 ms at frame 163 (cell 98/165) over 571 frames ...; p95 5 ms; 3 over 100 ms` | `longest work frame 118 ms at frame 161 (cell 98/165) over 571 frames ...; p95 5 ms; 1 over 100 ms` |
 
 The same order's earlier run (`fixB_*`): crossing `longest work frame 109 ms at frame 164 (cell
 98/165)`, drain p95 947 ms, 7 over 100 ms. The first write's dispatch-first run (`after_*`):
-crossing 112 ms, drain p95 1,025 ms, 13 over 100 ms, column 54/48/93/47/48 ms. So over two runs of
+crossing 112 ms, drain p95 1,025 ms, 13 over 100 ms, column 54/48/93/47/48 ms (commit order). So over two runs of
 the shipped code the crossing's longest frame is 109-118 ms against BASE's 140, and the drain's p95
 947-990 ms against 1,848.
 
@@ -37086,9 +37097,10 @@ write's sums from `after_entry.log`): main-thread objects 3,360 -> 460 ms (`temp
 (2,611 in the first write's run). The crossing's longest frame is the 87 ms cell (terrain commit
 39 with `collision` 25, objects 11, NPCs 35) plus 31 ms of the frame's other work; the objects are
 no longer the largest part of any streamed cell. What did not improve or got worse, measured and
-not investigated: the entry's NPC phase over the 24 neighbours, 692 ms at BASE, is 876 and 840 ms
-in the two dispatch-first runs and 728 and 743 ms in the two finish-first runs -- still above BASE
-in every run, unattributed (the tasks read the object files through the same Data.pk2 handle and
+not investigated: the entry's NPC phase over the 24 neighbours, 692 ms at BASE, is 876, 839 and
+840 ms in the three dispatch-first runs (`after_entry`, `fixA_entry`, `fix2A_entry`) and 728 and
+743 ms in the two finish-first runs (`fixB_entry`, `fix2B_entry`) -- five runs; until round 568
+this said two and two, leaving `fixA_entry`'s 839 out -- still above BASE in every run, unattributed (the tasks read the object files through the same Data.pk2 handle and
 lock the NPC loader uses, and share the CPU; not separated out); the first neighbours commit three
 frames after the centre rather than one (frame 16 after 13, against 15 after 14), because their
 tasks take longer (the drain awaits 17 frames against 14);
@@ -37219,7 +37231,8 @@ disclosed: `bms/bms_reader.gd`, `world/object_template_cache.gd` and its test,
 above and not done here: the drop's wait (497 ms) and a check between models -- a cancel flag
 `_objects_prepare` reads between models would bound it, and needs a thread-safe flag and its own
 test, so it is left for its own item, now `docs/TODO.md`'s; the entry's NPC phase beside the busier
-tasks (692 ms at BASE, 728-876 over this round's four runs, unattributed); `place` (386 ms over
+tasks (692 ms at BASE, 728-876 over this round's five entry runs -- "four" until round 568 --
+unattributed); `place` (386 ms over
 the 24 neighbours in the shipped order's run) is now the objects' largest main-thread lap; the
 `prepared again` line prints for every committed streamed cell in a player's build too -- a
 playtest diagnostic, which could sit behind a QA variable like the rest of the instrumentation; the dispatch's two
@@ -37378,7 +37391,7 @@ summary; the streamed-cell sums are over the cells' own lines).
 | (a) `region grid loaded` | `18042 ms (terrain 2753, objects 2248, npcs 2448) at frame 30 -- 25 cells 7449 ms, 10593 ms outside the cells over 17 awaited frames` | `17299 ms (terrain 2054, objects 2283, npcs 2421) at frame 29 -- 25 cells 6757 ms, 10542 ms outside the cells over 17 awaited frames` | `18048 ms (terrain 2739, objects 2248, npcs 2387) at frame 30 -- 25 cells 7374 ms` |
 | (a) drain summary | `longest work frame 5095 ms at frame 14 (cell 97/168) ...; p95 950 ms; 9 over 100 ms` | `5074 ms at frame 13 ...; p95 914 ms; 5 over 100 ms` | `5079 ms at frame 14 ...; p95 957 ms; 9 over 100 ms` |
 | (a) 24 streamed cells | `built in` 2,399 ms; terrain commit 1,177, `collision` 657 (23-37 each) | 1,735; 513, **0 on every cell** | 2,345; 1,160, 656 |
-| (b) the column 95..99/165 | `50, 45, 85, 49, 49 ms` at frames 161-165 (`collision` 24, 24, 25, 26, 27) | `29, 21, 60, 23, 22 ms` at frames 162-166 (`collision` 0 each; terrain commit 13-16) | `49, 45, 85, 48, 49 ms` (`collision` 24-27) |
+| (b) the column 97, 96, 98, 95, 99/165 (commit order: 85 ms is 98/165's; labelled `95..99/165` until round 568) | `50, 45, 85, 49, 49 ms` at frames 161-165 (`collision` 24, 24, 25, 26, 27) | `29, 21, 60, 23, 22 ms` at frames 162-166 (`collision` 0 each; terrain commit 13-16) | `49, 45, 85, 48, 49 ms` (`collision` 24-27) |
 | (b) tick-600 summary | `longest work frame 106 ms at frame 163 (cell 98/165) over 569 frames ...; p95 5 ms; 1 over 100 ms` | `86 ms at frame 164 (cell 98/165) over 569 frames ...; p95 5 ms; 0 over 100 ms` | `113 ms at frame 163 (cell 98/165); 1 over 100 ms` |
 | (b) 29 streamed cells | `built in` 2,617 ms; terrain commit 1,367, `collision` 791 | 1,868; 584, 0 | 2,647; 1,347, 780 |
 
@@ -37496,3 +37509,206 @@ packet row's own text), so nothing there to change. Beyond the item's file list,
 entry drain's frames over 100 ms 9 -> 5), the ground answers every probed ray where it is drawn,
 and the player's move_and_slide fallback stands on the terrain instead of sinking into it.
 `SRREVAMP_TERRAIN_TRIMESH=1` builds the old trimesh for A/B. No server change.
+
+## Batch-21 review follow-ups (rounds 564-567): record wording, run counts, the test gaps -- no behaviour change (round 568)
+
+The nonblocking review notes on rounds 564-567, each re-checked before it was landed -- against
+the logs under `/var/tmp/r565..r567` on the render box (`/var/tmp/r564` holds only its lock),
+`/var/tmp/srv.asm`, and this checkout (2026-09-25). Nothing a player sees changes: comments,
+records, three test additions and one log counter. The one change beyond comments is that counter
+-- the `prepared again` line's texture count gains the case its review found it missing (4(b)
+below); it is log-only, in a path the load benchmark's command (a) never reaches. Nothing on the
+wire, no flag, no server code. Godot was not re-run for any wording; the client suites and `check`
+ran on the final tree, plus the negatives below. Lane lock `/var/tmp/r568/lock`; no render, no
+frames.
+
+**1. Round 564's notes.** (a) `docs/SYSTEMS.md`, the Monster AI row: round 564's "no LEVEL read
+from the character store on the AI tick or the strike worker" was still too broad --
+`monsterai.go`'s `runStrike` reads the row's level (`a.deps.chars.GetByID`) when the target has no
+world entity, which the clause went on to say and then called "always said so". Now: "no LEVEL
+read on the hub path; `runStrike`'s fallback for a target no longer in the world takes the row's
+level (`chars.GetByID`), and `fallen` reads the row under the kill lock" -- which the code
+(`runStrike`, `monsterstrike.go`'s `fallen`) and the round-555 entry ("the one store read left
+before the blow") match. (b) `World3D.gd`'s QA header, `SRREVAMP_QA_FORCE_LOADING`: "every
+tick-indexed hook fires one physics tick earlier" read as universal. With `SRREVAMP_QA_AT` set,
+`_qa_step` returns before `_qa_tick += 1` until the region under the player has a graph, so its
+ticks count from the built region and do not shift -- the benchmark's crossing run (`--at
+120,1020`) among them, as the README's "`_qa_tick` counts ... less the frames `--at` waits for its
+region" already said. The shift is now scoped to runs without `SRREVAMP_QA_AT` (it applies with
+and without `--server`: either way the screen's awaited frame now sits between the first tick and
+the centre cell). (c) Same entry: the unbuilt-world trap was scoped to "without `--server`", but
+with `--server` and no `--at` the one-time block runs during `QaSignIn.run`'s awaited frames (it
+awaits `tree.process_frame` between the sign-in's signals, and `_physics_step` calls `_qa_step`
+unconditionally), before the world -- as it has since before round 562; round 539 found it (the
+block's own ATTACK comment). The header now says so outright: a `--server` run is no safer. Both
+read from `_ready`, `_qa_step` and `QaSignIn.run`, not measured; round 564's 6(a) here and
+`WORLD_ISSUES.md`'s five-hundred-and-sixty-fourth round are marked in place. (d)
+`recovered_names.tsv`'s `00561b00` row and this file's round-564 1(c): a third bounds check,
+`cmp ecx,edx; jb 0x561d5b` at `0x561d52`/`0x561d54` (read off `srv.asm`), on the picked index,
+falls through to `0x561d56`'s `call 0x5632d0` too; added to both. (e) Round 564's commit
+(`d255c92`) carries an extra `Co-Authored-By` line beside the session's attribution -- cosmetic,
+and not fixable without rewriting a pushed commit; recorded only. (f) The implementer's report
+named `f4c939b`, the draft `d255c92` amended (its parent `8e28093`, so nothing else was
+rewritten); the draft's false "no function at 540cb0" is not in the record. Nothing to do.
+
+**2. Round 565's notes.** (a) "The prepare prints nothing" (`World3D._terrain_prepare`'s doc,
+README rule 1, this file's round 565): the readers a prepare calls still `push_error` from the task
+on a malformed file -- `DdjReader.to_image`'s "failed to build Image from decoded pixel data",
+`MapmTerrainBuilder`'s "region has %d blocks, want %d", the `MapmReader` and `NvmReader` parse
+errors (grepped). All three now say the prepare prints none of its OWN lines and a reader may
+`push_error`; `_objects_prepare`'s "no print" likewise (`ObjectLoader.prepare_object`'s doc already
+said it). (b) `mapm_terrain_builder_test`'s `PRE_SPLIT_FINGERPRINTS` omit vertex colours, so case
+B's baked lighting is held new-surfaces against new-mesh only, never against the pre-split
+builder: recorded, not closed -- the fingerprints were measured on BASE's builder loaded beside the
+new one on the box, which no suite can re-run; the colour code was untouched by the split, and the
+live evidence is round 565's 49 `QA TEXPROBE` lines (baked vertex colours among them), identical
+to round 560's. (c) No headless coverage of `_finish_cell_job`'s stale-cell guard or of
+`_drop_cell_jobs` -- confirmed: no log under `/var/tmp/r565..r567` carries a `prepared but not
+committed` line, and the drop ran only in the two `drain.log` runs. Closed by a test (below). (d)
+The pump dispatching before it finished: answered by round 566 (`_pump_cell_jobs` commits first;
+its top-of-function `_dispatch_cell_jobs()` only tops up free slots). The two-`ParsedRegion`
+case (a navmesh the main thread cached while a job read its own: the commit keeps the cache's and
+registers a graph built on the job's) is still possible by reading `_terrain_commit`; memory only,
+and the `prepared again` line's navmesh count -- exactly that case -- read 0 on every committed
+streamed cell of round 566's four corrected-counter runs (`fix2A`/`fix2B`, entry 24 + 24, crossing
+29 + 29). A comment at the merge says so. (e) `SRREVAMP_SYNC_LOAD=1` restores the schedule, not
+the pre-change code: already said at `_threaded_load`, in the README and in round 566's entry; this
+file's round-565 intro ("restores the synchronous path") and `WORLD_ISSUES.md`'s five-hundred-and-
+sixty-fifth round ("restores the old path") now say schedule, marked in place. (f)
+`LoadTimings.offthread_total_ms` has no production caller (`grep -rn` finds only
+`load_timings_test.gd`): recorded; the client has no orphan probe and removing it would only move
+the test's read to `offthread_ms` -- left. (g) The dispatch's snapshots are on no cell line: under
+the loading screen the drain coroutine dispatches outside any physics step, so they count in no
+frame's work either (in play, `_process_stream_queue` dispatches inside the step, so they count in
+that frame's). `LoadTimings.phase` keeps nothing while no cell is open, so their `snapshot` laps
+are dropped. The README's cell-line paragraph says all of it now (it said only "in no cell"). (h)
+The round-154 quote in this file's round 565 and `WORLD_ISSUES.md`'s five-hundred-and-sixty-fifth
+round dropped the original's closing "if it is still felt" (`WORLD_ISSUES.md`, the
+hundred-and-fifty-fourth round's text); restored in both. (i) Two `_drain_initial_load`s at once
+(a zone change while the first is suspended): by reading, both pump the one queue, the first to
+finish clears `_drain_pumping` and frees the loading screen the other still drives; predates round
+565, not reproduced -- now a `docs/TODO.md` item.
+
+**3. Round 566's first review.** (a) The drop's wait (18.8 -> 497 ms) and the cancel flag: already
+`docs/TODO.md`'s item; see 4(d) for which code measured it. (b) `SRREVAMP_SYNC_LOAD=1` and the
+objects: round 566's second review already added it (the split `ObjectLoader` and
+`_piece_faces` still run under the flag -- `_threaded_load`, the README, round 566's "Also
+measured"); the implementer's "restores the synchronous path" was a report, not a record. Nothing
+left. (c) The objects' snapshot per dispatch on no cell line: 2(g). (d) A prepared model another job
+committed first is thrown away uncommitted, so its `missing` and `QA MAT`/`QA ALPHA` lines never
+print: already in round 566's log-only gaps; now also a comment in `_objects_commit`. (e)
+`ObjectLoader._decode_texture` refuses an empty Image without a line of its own where
+`ImageTexture.create_from_image` printed the engine's "Invalid image": already in round 566's
+gaps; now in its doc comment. (f) The reviewer's two stray files (deleted by the reviewer): nothing.
+
+**4. Round 566's second review.** (a) The NPC-phase run count: the box holds FIVE round-566 entry
+runs, and the entry's 24-neighbour NPC sums (the `npcs N` of every `built in` line but 97/168's)
+are `after_entry` 876, `fixA_entry` 839, `fixB_entry` 728, `fix2A_entry` 840, `fix2B_entry` 743 ms
+(BASE 692) -- three dispatch-first (the first write's, and the two pairs' A) and two finish-first.
+Round 566's "876 and 840 ... 728 and 743", "four runs" (twice) and `WORLD_ISSUES.md`'s "the round's
+four runs" left `fixA`'s 839 out; all three now say five, marked in place. The 728-876 range
+stands. Round 566's commit message ("over four runs") is not rewritten. (b) `_prepared_again`'s
+doc comment said a known texture re-decoded for a statistic it lacked "was uploaded before the
+snapshot, so no commit landing after it could have spared the decode". Wrong:
+`ObjectLoader.commit_textures` merges a prepare's alpha statistics into a texture already in the
+cache (its `texture_cache.has(key)` branch), and `_objects_commit` calls it for every job, so a
+commit after this job's snapshot can carry the missing statistic in, and a job dispatched after it
+would not decode. The counter skipped every snapshot-held key, so it missed exactly that decode.
+**Changed, log-only:** a texture whose key the snapshot held and which carries an Image (decoded
+again by `_alpha_stat`) now counts when a statistic it measured that the snapshot lacked is in the
+world's entry by the commit; with nothing carried in, the decode was needed and does not count. It
+can only add to the old count, and only after a re-decode: command (a) consults no alpha probe at
+all (`/var/tmp/r566/alpha_after.log`, 0 `QA ALPHA` lines), so none of its recorded counts can move;
+the crossing, (b), was never run with `SRREVAMP_QA_ALPHA_LOG`, so for its recorded counts
+(`fix2A`/`fix2B_cross`: 102 / 32) this is not established -- only bounded below by the old rule.
+The doc comment and README rule 2 say so. (c) Negative (a) could not tell the counter's two
+exclusions apart (its texture's image is null): the third case now has its test (below). (d)
+`docs/TODO.md`'s "497.2 ms ... on round 566's code": `/var/tmp/r566/drain.log` is from 15:48, run
+by `after.sh`, before the review fix (`fixrun.sh`, 16:13), and has no `prepared again` line -- it
+measured the FIRST write's dispatch-first pump. The TODO item, this file's round 566 and
+`WORLD_ISSUES.md`'s five-hundred-and-sixty-sixth round now say so; the shipped finish-first order's
+wait was never re-measured (the wait follows the prepare's length, not the order, so it should be
+close -- not measured). (e) The crossing column's order: every crossing run of rounds 565-567
+commits 97/165, 96, 98, 95, 99/165 at consecutive frames (grepped on the thirteen benchmark
+crossing logs: `r565/{base,after,sync}_cross`, `r566/{base,after,fixA,fixB,fix2A,fix2B,sync}_cross`,
+`r567/{base,after,tri}_cross`),
+so `95..99/165` read as region order put 98/165's figure third. Relabelled `97, 96, 98, 95,
+99/165` (commit order) in the README's three AFTER blocks (with one sentence saying so) and
+wherever this file's rounds 565-567 and `WORLD_ISSUES.md`'s rounds 565-567 list the column; the
+numbers are unchanged. (f) The `prepared again` line in players' builds: already a disclosed
+follow-up; now a `docs/TODO.md` item.
+
+**5. Round 567's notes.** (a) The column labels: 4(e) -- round 567's table row and README block
+said `95..99/165`; relabelled. (b) No suite ran `_terrain_commit`'s collision wiring (`patch_shape.shape
+= TerrainCollision.make_shape(heights)`, `patch_shape.transform = TerrainCollision.shape_transform()`):
+closed by a test that commits a prepared job headless (below) -- a runtime check rather than the
+source-level one the note suggested, because it can be done headless. (c) The heightfield under
+the `move_and_slide` fallback -- seams, a region without a navmesh, the camera arm from below, the
+4 slanted rays both shapes miss: kept on the list as a `docs/TODO.md` item (the sixty-third round's
+seam pin, re-read, is the case to probe). (d) The plan's layout deviation, justified and
+reproduced by the reviewer: nothing. (e) `TerrainCollision.make_shape`'s setter order (the
+accelerator built twice on zeros) and `patch_shape.transform` set when `make_shape` returns null:
+no action -- the lap reads under 1 ms and the null case builds no shape. (f) Which code the
+benchmark measured: the round-567 and TRI runs (`after_*`, `tri_*`, 17:56-18:06) ran before
+`SRREVAMP_QA_GROUND_RAYS` was changed to wait for the grid (`rays_*` at 18:06-18:15 still fired on
+the timer; `rays2_*` from 18:17 on the fixed hook), a QA-only hook neither enables; round 567's
+entry said so, and now the README's AFTER block and `WORLD_ISSUES.md`'s five-hundred-and-sixty-
+seventh round do too. The box's `/opt/srrevamp-client` copies of `World3D.gd`,
+`terrain_collision.gd` and `terrain_collision_test.gd` were md5-identical to HEAD (`66f71b2`) when
+this round began. (g) The entry's p95 950 -> 914 ms is inside run-to-run spread (TRI 957):
+`WORLD_ISSUES.md`'s round 567 listed it beside the frames over 100 ms as a result; it now says so,
+and the README's AFTER block too. The load-bearing numbers are the frames over 100 ms (9 -> 5, TRI
+9) and the per-cell `collision` lap.
+
+**Tests.** (1) `world/objects_prepare_test.gd`, `_test_held_texture_decoded_again` (inside the
+`_prepared_again` block): the world holds `prim/scenery.ddj` with no statistic (the synthetic
+material's flag word decides); a layer with no flag word (the pixels decide) prepared through
+`ObjectLoader._prepare_material` over a snapshot decodes the held texture AGAIN for
+`binary_cutout` (image set, key in the snapshot); `_prepared_again` counts it **0** while nothing
+has carried the statistic in, then, after a second prepare's `ObjectLoader.commit_textures`
+merges it into the world's entry, **1**. (2) Same suite, `_test_stale_cells_are_not_committed`: a
+subclass of `World3D.gd` records `_load_region_cell` instead of building; `_finish_cell_job`
+commits neither a cell already loaded nor one `_region_load_radius() + 2` cells from the player's
+(past the unload margin), both leave the queued set, a cell still wanted IS committed (the
+control), and `_drop_cell_jobs` waits for two preparing tasks and forgets them uncommitted. (3)
+`world/terrain_prepare_test.gd`, `_test_the_commit_wires_the_collision`: the task-prepared job is
+committed on the bare world (the scene's ground stand-ins stubbed): its shape is a
+`HeightMapShape3D` over the job's own 97 x 97 grid, at `TerrainCollision.shape_transform()`,
+whose basis composed up to the terrain group is a plain (20, 1, 20) scale, on
+`TERRAIN_COLLISION_LAYER` (9); the trimesh-flag job commits a `ConcavePolygonShape3D` of its faces
+at the identity. `object_loader_test`'s walk control, which the orchestrator listed "if still
+missing", is there (round 566's second review added it); nothing added.
+**NEGATIVES, proven.** (1) `client/scripts/World3D.gd` alone stashed (`git stash push --`; the
+tests left), the tree shipped: `objects_prepare_test` `FAIL a held texture decoded again counts
+once a later commit has carried in the statistic it was decoded for (got { ... "textures": 0 })`,
+`FAILURES: 1`, every other check ok; restored (`git stash pop`, md5 as before). (2) Mutations of
+`World3D.gd` in one shipped tree (each line marked `MUTATION`, 4 marks): the shape's transform line
+deleted -- `terrain_prepare_test` `FAIL the shape sits at TerrainCollision.shape_transform() (got
+[X: (1, 0, 0), ...])` and `FAIL composed up to the terrain group, the shape's basis is a plain (20,
+1, 20) scale -- no mirror left (got [... Z: (0, 0, -1)])`, `FAILURES: 2`; `_finish_cell_job`'s two
+guards short-circuited and `_drop_cell_jobs`' forgetting removed -- `objects_prepare_test` `FAIL a
+cell already loaded, and one 4 cells from the player's (past the unload margin), are not committed
+(got ["97/169", "101/168"])`, `FAIL a cell still wanted is committed (the control; got [...])` and
+`FAIL _drop_cell_jobs waits for both preparing cells and forgets them, uncommitted`, `FAILURES: 3`;
+the file restored from its copy (md5 as before, `grep -c MUTATION` 0). The wording notes have no
+negative (prose cannot fail a test). `remote_godot.sh tests`: `ran 93 suite(s), 0 failing` (no new
+suite; the new cases run inside two existing ones); `remote_godot.sh check`: `checked 268 scripts
+and 5 scenes`, `ALL LOAD`; `cd server && go build ./... && go test -count=1 -p 1 ./...` green
+before and after the doc edits (the doc probes read `SYSTEMS.md` and `recovered_names.tsv` at
+runtime).
+
+**Records.** This entry; `docs/WORLD_ISSUES.md`'s five-hundred-and-sixty-eighth round, and its
+five-hundred-and-sixty-fourth to -seventh reworded in place; this file's rounds 564, 565, 566 and
+567, each marked in place; `docs/SYSTEMS.md` (the Monster AI row's round-555 clause);
+`docs/TODO.md` (the drop's-wait item's code, and three new items: the heightfield fallback in game,
+two drains at once, the `prepared again` line in players' builds); `client/tools/README.md`, "Load
+benchmark" (the snapshots' accounting, rules 1, 2 and 4, the column's order, the AFTER-567 block's
+code and spread); `World3D.gd` (the QA header, `_terrain_prepare`, `_objects_prepare`,
+`_prepared_again`, `_terrain_commit`'s cache merge, `_objects_commit`); `object_loader.gd`
+(`_decode_texture`'s comment). Beyond the item's file list, disclosed:
+`docs/protocol/recovered_names.tsv` (1(d)) and `client/scripts/world/terrain_prepare_test.gd`
+(test (3)). `docs/SYSTEMS.md` has no row for world loading; its one change is 1(a).
+
+**Deploy note.** Client and docs only; not tag-worthy -- nothing a player sees. The `prepared
+again` line's texture count can read higher than before only where a held texture was decoded
+again for a statistic another commit has since supplied. No server change, no flag.
