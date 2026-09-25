@@ -115,11 +115,26 @@ AGENTS.md's hard rule. `remote_godot.sh` ships the working copy to
 
 ```
 client/tools/remote_godot.sh check     # every script and scene compiles
-client/tools/remote_godot.sh tests     # all 59 *_test.gd suites
+client/tools/remote_godot.sh tests     # every *_test.gd (discovered, not listed)
 client/tools/remote_godot.sh script '--script res://tools/dump_layout.gd -- --pk2=... --file=ifinventory'
 client/tools/remote_godot.sh sync      # ship the working copy, run nothing
 ```
 
 `check` and `tests` run the import first, because `check_scripts.gd` cannot
 tell a broken script from an unregistered `class_name` on a cold cache.
+
+`tests` marks a suite failed on a `FAIL` line, a `Parse Error`, or a
+`SCRIPT ERROR` -- Godot's line for a GDScript runtime error (a call on a
+freed instance, a script that failed to compile). Such an error aborts only
+the function it happened in and lets the suite go on to `ALL PASS`, so
+until round 556 a suite could pass while a script errored (round 522 saw
+`hud_window_test.gd` do it on every run; round 551's freed-panel negative
+printed the error and `ALL PASS` in one output). The `at:` line under the
+error is printed with it. `ERROR:` does not fail a suite: readers
+`push_error` on the bad input their negative cases feed them (20 of 85
+suites in round 556's audit), and the dummy renderer reports leaked RIDs
+at exit (3 more: `character_assembler`, `monster_assembler`, `hud_window`).
+A suite that errors in `_init` before its `quit()` does not fail;
+it hangs, because the run never ends -- put the checks in a callee, or
+reach a method through `has_method`/`call` so a missing one FAILS instead.
 

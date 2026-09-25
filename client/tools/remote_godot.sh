@@ -84,14 +84,38 @@ case "$cmd" in
     import_project
     # Discovered, not listed: a hand-kept list drifted to 55 entries against
     # 56 real test files, so a test could be added and silently never run.
+    #
+    # A suite fails on its own FAIL lines, on a parse error, and on a
+    # GDScript RUNTIME error. Godot prints `SCRIPT ERROR:` for the latter --
+    # a call on a freed instance, a script that failed to compile -- aborts
+    # only the function it happened in, and lets the run go on to ALL PASS.
+    # So a grep for FAIL alone reported a suite green while a script
+    # errored: round 522 watched hud_window_test.gd do it on every run, and
+    # round 551's negative (a freed panel in show_revive_prompt) printed the
+    # error and ALL PASS in the same output (docs/RE_COMPLETION.md, rounds
+    # 551 and 556). The `at:` line under a SCRIPT ERROR names the function
+    # and script line, so it is shown with it.
+    #
+    # `ERROR:` is NOT a failure. Round 556's audit of all 85 suites found it
+    # in 23 of them, none a defect: 20 are a reader's push_error on the bad
+    # input a negative case feeds it ("bad magic", "file too small", ...),
+    # 3 the dummy renderer's leaked-RID report at exit (character_assembler,
+    # monster_assembler, hud_window -- the last from the Label, gauge and
+    # lattice it builds, so the 23 stand before and after its fix).
+    fail_re='FAIL|FAILURES|Parse Error|SCRIPT ERROR'
     failed=0
     count=0
     while IFS= read -r path; do
       count=$((count + 1))
       rel="res://${path#client/}"
-      if ! out=$(remote_godot "--script '$rel'" 2>&1) || echo "$out" | grep -qE "FAIL|FAILURES|Parse Error"; then
+      if ! out=$(remote_godot "--script '$rel'" 2>&1) || echo "$out" | grep -qE "$fail_re"; then
         echo "FAILED: $rel"
-        echo "$out" | grep -E "FAIL|Parse Error" | head -5
+        # `|| true`: a grep with no match exits 1, and under `set -e` with
+        # `pipefail` that ended the whole run at the first suite whose only
+        # failure was a SCRIPT ERROR -- no summary line, the suites after it
+        # never run (round 556's first proof run stopped at suite 65 of 86).
+        echo "$out" | grep -E "FAIL|Parse Error" | head -5 || true
+        echo "$out" | grep -E -A1 "SCRIPT ERROR" | head -10 || true
         failed=$((failed + 1))
       fi
     done < <(cd "$repo_root" && find client -name '*_test.gd' | sort)

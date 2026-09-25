@@ -55,8 +55,7 @@ func _init() -> void:
 	var layout := UiLayoutParser.parse(_synthetic_layout())
 	_check(layout != null, "synthetic layout parses")
 	if layout == null:
-		_finish()
-		return
+		return  # _initialize still runs, and reports the failure
 	var sec := layout.get_section("Create")
 	_check(sec != null and sec.controls.size() == 3, "3 controls parsed (got %d)" % (sec.controls.size() if sec != null else -1))
 
@@ -109,20 +108,54 @@ func _init() -> void:
 	# Every control above carries a different one; none may reach modulate.
 	_check(label.modulate == Color.WHITE, "Color is not applied as a tint (got %s)" % label.modulate)
 
+	# The HudPanels checks are in _initialize, below, which also reports.
+
+## The HudPanels constant checks, and the report.
+##
+## These run here and not in _init: hud_panels.gd names the NetClient
+## autoload, which a --script suite registers only after _init (round 514's
+## measurement, recorded in npc_service_reader_test.gd's check (j)). Naming
+## HudPanels by its class_name from _init compiled the script before the
+## autoload existed, so every run printed `SCRIPT ERROR: Compile Error:
+## Identifier not found: NetClient` and still passed (round 522 found it;
+## round 556's harness counts that line as a failure). The script is loaded
+## by path, so that nothing compiles it before the autoload exists.
+func _initialize() -> void:
+	var panels_script := load("res://scripts/ui/hud/hud_panels.gd") as GDScript
+	var compiled := panels_script != null and panels_script.can_instantiate()
+	_check(compiled, "HudPanels compiles in _initialize, once the NetClient autoload is registered")
+	var consts: Dictionary = panels_script.get_script_constant_map() if compiled else {}
+	var panels: Dictionary = consts.get("PANELS", {})
+	var menu_items: Array = consts.get("MENU_ITEMS", [])
+	# Read by name off the constant map, so a renamed constant fails here
+	# rather than letting the two loops below pass over nothing.
+	_check(not panels.is_empty() and not menu_items.is_empty(),
+		"HudPanels.PANELS and MENU_ITEMS are non-empty constants (got %d and %d)" % [panels.size(), menu_items.size()])
+
 	# Every panel HudPanels offers must have a layout path, a title and a
 	# hotkey slot, or open() will fail on a malformed entry at runtime.
-	for panel_id in HudPanels.PANELS:
-		var spec: Array = HudPanels.PANELS[panel_id]
+	# The `all N` summaries are gated: an empty map (the script did not
+	# compile, or a constant was renamed) already FAILs above and must not
+	# also print `ok  all 0 ...`, nor may a malformed entry be followed by
+	# `all ... are well formed`.
+	var bad_specs := 0
+	for panel_id in panels:
+		var spec: Array = panels[panel_id]
 		if spec.size() != 3 or not (spec[0] as String).begins_with("resinfo\\"):
 			_check(false, "panel %s has a malformed spec" % panel_id)
-	_check(true, "all %d panel specs are well formed" % HudPanels.PANELS.size())
+			bad_specs += 1
+	if not panels.is_empty() and bad_specs == 0:
+		_check(true, "all %d panel specs are well formed" % panels.size())
 
 	# Every id the MENU offers must be a panel that exists, or the menu has
 	# an entry that can never open anything.
-	for item in HudPanels.MENU_ITEMS:
-		if not HudPanels.PANELS.has(item[0]):
+	var bad_items := 0
+	for item in menu_items:
+		if not panels.has(item[0]):
 			_check(false, "MENU item %s is not a known panel" % item[0])
-	_check(true, "all %d MENU items map to real panels" % HudPanels.MENU_ITEMS.size())
+			bad_items += 1
+	if not menu_items.is_empty() and bad_items == 0:
+		_check(true, "all %d MENU items map to real panels" % menu_items.size())
 
 	_finish()
 

@@ -35137,3 +35137,118 @@ in this batch, and the round-552 selector shadowing is disclosed rather than mod
 with it on, the aggro link and the swings stop reading the character store on the tick and the
 worker, and a monster draws its skill afresh in every fight. `world.Hub.Enter` gained a parameter,
 which is internal.
+
+## A GDScript runtime error fails a client suite: remote_godot.sh tests counts SCRIPT ERROR lines (round 556)
+
+Developer tooling and one test suite; nothing on the wire, no flag, no server change. Round 551's
+review note filed it; round 522 had observed it. Everything below was measured on the render box
+(2026-09-25, each Godot under the box lock as ghidra) or in this checkout.
+
+**The gap.** `client/tools/remote_godot.sh tests` marked a suite failed on `FAIL|FAILURES|Parse
+Error` in its output. Godot prints a GDScript runtime error as `SCRIPT ERROR: <message>` with an
+`at:` line under it, aborts only the function it happened in, and lets the run go on -- so a suite
+reached `ALL PASS` and exited 0 with the error on its output, and the harness counted it green.
+Round 522 watched `hud_window_test.gd` do it on every run; round 551's negative (a freed panel in
+`show_revive_prompt`) printed the error and `ALL PASS` in one output.
+
+**The audit first: all 85 suites, each run once with its full output kept** (the harness discards
+a passing suite's), then grepped.
+- `SCRIPT ERROR`: one suite, `hud_window_test.gd`, two lines -- `Compile Error: Identifier not
+  found: NetClient` at `GDScript::reload (res://scripts/ui/hud/hud_panels.gd:685)` and a follow-on
+  empty `Compile Error:` at `hud_window_test.gd:-1`, with the engine's `ERROR: Failed to load
+  script "res://scripts/ui/hud/hud_window_test.gd" with error "Compilation failed"` under them --
+  and then all eleven checks `ok` and `ALL PASS`. The cause is round 514's measurement: `hud_panels.gd`
+  names the `NetClient` autoload, which a `--script` suite registers only after `_init`, and the
+  suite read `HudPanels.PANELS` and `HudPanels.MENU_ITEMS` by class_name from `_init`, so the
+  script was compiled before the autoload existed. A defect in the suite, not in `HudPanels`;
+  fixed below, no allow-list entry.
+- `ERROR:`: 23 suites, none a defect, so it does not join the failure pattern. 20 are a reader's
+  `push_error` on the bad input a negative case feeds it (`at: push_error` under each: `ban: bad
+  magic`, `bsk: 1 bone name(s) announced but never resolved`, `environment: file too small to
+  contain a header`, `mapm`, `mapo`, `mapo2`, `mapt`, `nvm`, `tile2d`, `ObjectLoader: ... not found
+  in archive`, and the bmt/bsr/cpd/ddj/efp/objidx/regioninfo/terrain-builder readers' own), each
+  printed beside the `ok` line of the negative case that fed it. 3 are the dummy renderer's housekeeping at exit
+  (`Pages in use exist at exit in PagedAllocator`, `RID allocations ... were leaked at exit`, in
+  `character_assembler_test`, `monster_assembler_test` and `hud_window_test` -- the last three lines
+  of `DummyTexture`, `ShapedTextDataAdvanced` and `FontAdvanced` RIDs from the Label, gauge and
+  lattice the suite builds in `_init`, which the fix below does not touch; `object_loader_test`,
+  one of the 20, also gets its `Parameter "m" is null` from `mesh_get_surface_count` in the dummy
+  mesh storage). Before the fix `hud_window_test` printed the engine's `Failed to load script ...
+  "Compilation failed"` echo of its SCRIPT ERROR as well; the fix removes that line and leaves the
+  RID lines, so the count is 23 suites before and after -- measured both ways, the BASE suite run
+  once more on the box under a probe name (deleted after) printing the two SCRIPT ERRORs, the echo
+  and the same three RID lines. (The first draft of this entry counted 2 renderer suites and
+  called the 23rd the compile echo, "gone with the fix"; the review's own full-output run of the
+  committed tree, then a second full-output run of all 85 suites on the final tree -- 23 `ERROR:`
+  suites, 20 with `at: push_error`, 3 with `RID allocations`, no overlap -- corrected it.) No suite
+  prints `USER ERROR`.
+- No passing suite prints `FAIL` (`error_text_test.gd`'s echo-the-key-only-on-a-miss precaution
+  holds). Three suites end with their own pass line rather than `ALL PASS` (`level_up_effect_test`,
+  `npc_facing_test`, `qa_attack_goto_test`); left as they are, they print no FAIL and exit 0.
+
+**Change.**
+- `client/tools/remote_godot.sh` `tests`: the failure pattern is now `FAIL|FAILURES|Parse
+  Error|SCRIPT ERROR`, and a failed suite's `SCRIPT ERROR` lines are printed with the `at:` line
+  under each (`grep -A1`). Found by the first proof run and fixed in the same edit: the two print
+  lines end in `|| true`, because a `grep` with no match exits 1 and under the script's `set -euo
+  pipefail` that ended the whole run at the first suite whose only failure was a SCRIPT ERROR --
+  `FAILED: res://scripts/qa/script_error_probe_test.gd`, no offending line, no summary, exit 1,
+  and the 21 suites after it (it was suite 65 of 86) never ran. The BASE script carried the same
+  latent trap for a suite exiting non-zero without a FAIL line.
+- `client/scripts/ui/hud/hud_window_test.gd`: the two `HudPanels` constant checks moved from `_init`
+  to a new `_initialize`, which loads `hud_panels.gd` by path (`load(...) as GDScript`,
+  `can_instantiate()`, `get_script_constant_map()` -- the idiom of `npc_service_reader_test.gd`'s
+  check (j) and `monster_motion_test.gd`) and reports. A new check requires `PANELS` and
+  `MENU_ITEMS` to be non-empty, so a renamed constant fails instead of letting the two loops pass
+  over nothing; the two `all N ...` summary lines print only when the map is non-empty and no
+  entry failed, so an empty map does not add `ok  all 0 panel specs are well formed` under its
+  FAIL line (the review's note). The null-layout early return no longer calls `_finish()`;
+  `_initialize` still runs and reports it. Under the fix the suite prints no `SCRIPT ERROR` and no
+  `Failed to load script`.
+- `client/tools/README.md`: the stale `all 59 *_test.gd suites`, a paragraph on what fails a suite
+  and why `ERROR:` does not, and the note that a suite erroring in `_init` before its `quit()`
+  hangs rather than fails (round 519's `item_table_reader_test` negative in this document was
+  ended by PID for that reason).
+
+**Tests (render box).** The throwaway `client/scripts/qa/script_error_probe_test.gd` -- a freed
+`Node`'s `is_inside_tree()` in a callee `_poke`, then `ALL PASS` and `quit(0)`, round 551's shape --
+was NOT committed; `git status` at the commit shows no untracked file.
+- The new harness, the probe present and `hud_window_test.gd` stashed back to BASE (`git stash
+  push -- client/scripts/ui/hud/hud_window_test.gd`, popped after): `ran 86 suite(s), 2 failing`,
+  exit 1 -- `FAILED: res://scripts/qa/script_error_probe_test.gd` / `SCRIPT ERROR: Cannot call
+  method 'is_inside_tree' on a previously freed instance.` / `at: _poke
+  (res://scripts/qa/script_error_probe_test.gd:11)`, and `FAILED:
+  res://scripts/ui/hud/hud_window_test.gd` with its two `SCRIPT ERROR` lines and their `at:` lines.
+- NEGATIVE, proved with only the production file stashed (`git stash push --
+  client/tools/remote_godot.sh`; the probe and the fixed suite in place; the stashed script greps
+  `SCRIPT ERROR` zero times): `ran 86 suite(s), 0 failing`, exit 0 -- the probe's SCRIPT ERROR
+  passed unseen, exactly the gap. Restored (`git stash pop`).
+- The final tree, the probe deleted, the new harness: `ran 85 suite(s), 0 failing`, exit 0;
+  `check`: `checked 256 scripts and 5 scenes`, `ALL LOAD`. 256 counts the box's working copy,
+  not the repo: `check_scripts.gd` walks the box filesystem, `sync`'s tar extraction never
+  deletes, and the box holds one `.gd` over the repo's 255 -- a stray `tools/dump_item.gd`
+  (2026-09-18, in no commit), which is why rounds up to 555 recorded 256. The first draft of
+  this entry recorded 257 and called the box "the committed client tree": the extra was this
+  round's own probe, deleted from the checkout but still on the box; the review caught it, the
+  probe was removed over ssh (the path `sync` writes) and `check` re-run: 256, `ALL LOAD`.
+  `hud_window_test.gd` run alone
+  (`remote_godot.sh script`) under the fix prints no `SCRIPT ERROR` and no `Failed to load
+  script`; its new `_initialize` reports `HudPanels compiles in _initialize, once the NetClient
+  autoload is registered`, `... non-empty constants (got 18 and 12)`, then `all 18 panel specs
+  are well formed` and `all 12 MENU items map to real panels` as before, and `ALL PASS`. Run once
+  more on the byte-exact committed client tree, after the review's fixes above (the gated
+  summaries are the only client-code change since the first draft; the probe is off the box):
+  `ran 85 suite(s), 0 failing`, exit 0.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...` green (58 packages `ok`); no Go
+  file changed, re-run after the doc edits.
+
+**Records**: `client/tools/README.md` (the harness section), this entry. `docs/SYSTEMS.md` has no
+row for the client harness, so nothing there changes; `WORLD_ISSUES.md` stays untouched, as in
+rounds 541-555. Round 522's "Found, not caused here" and round 551's "filed here, not done" are
+answered by this round and left as written. Still open, outside this item: a suite that errors in
+`_init` before its `quit()` hangs the run instead of failing it (no timeout per suite), and three
+suites end with a pass line other than `ALL PASS`, which the harness does not require.
+
+**Deploy note.** Nothing to flip and nothing shipped: developer tooling and one test suite. From
+this round a client suite cannot pass while a script errors at runtime, and `remote_godot.sh
+tests` prints the erroring line and its `at:` under the suite's `FAILED:` line.
