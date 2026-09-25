@@ -268,8 +268,8 @@ In order. Each is checked off here when it ships in a release, with its round in
         -- is not carried: srrevamp's blows have no hate value, and the magnitudes wait on
         mob-threat-retarget. Live check not feasible with one driven client.
       - Then the threat table's retarget rules (round 259, `ai.ThreatTable`, mob-threat-retarget),
-        the second attack skill and the AI-skill triggers (round 260, mob-second-skill and
-        mob-ai-skill-triggers), the HOMING wobble, and the server-side blocked probe that stops legs
+        the AI-skill triggers (round 260, mob-ai-skill-triggers; the second attack skill is built,
+        round 554), the HOMING wobble, and the server-side blocked probe that stops legs
         crossing walls (mob-server-geometry-probe; whether to turn the flag on before it exists is
         a user decision).
       Background, still true: a monster moves in retail by issuing the client's own movement

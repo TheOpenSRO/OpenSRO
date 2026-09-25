@@ -197,6 +197,17 @@ the same `OpMonsterMoved` and `OpMonsterAttacked` a struck monster's are. There 
 turning this flag off turns the link off. Its reading and stand-ins: `docs/protocol/monster_ai.md`,
 "The aggro link: the runtime (round 553)".
 
+Since round 554 the flag also carries the **second attack skill**: four species -- Mangyang, Water
+Ghost slave, Water Ghost and Yeoha -- carry two attack skills in the client's own tables, and a
+monster in BATTLE draws each swing between them (by the skill's AI_AttackChance and how far inside
+its reach the target stands), walks to the drawn skill's band and cools down for its ReuseDelay. A
+Yeoha may therefore open from up to ~115 units with its harder ATTACK03 instead of closing to 22,
+and a Water Ghost's ATTACK02 (a status skill this server has no system for) lands a blow of 0. An
+older client needs nothing new: the legs and blows are the same `OpMonsterMoved` and
+`OpMonsterAttacked`. The other seven species and the flag-off counterattack are unchanged. No
+separate switch. Its reading and stand-ins: `docs/protocol/monster_ai.md`, "The second attack
+skill: the runtime (round 554)".
+
 It is behind the `-monster-battle` flag (env `SRREVAMP_MONSTER_BATTLE`), and **the default is
 off**. Off, the interim hold and the counter are exactly what they were. It also **needs
 `SRREVAMP_MONSTER_AI` and `SRREVAMP_MONSTER_STRIKE_PUSH` both on**: without them the boot log reads

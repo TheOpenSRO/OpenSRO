@@ -98,6 +98,19 @@ type monsterSpec struct {
 	// AttackMin/AttackMax are the real damage range of the species' primary
 	// attack SKILL (characterdata col 83 -> that skill's 'att' param).
 	AttackMin, AttackMax int
+	// Skills is every attack skill the species carries, characterdata cols
+	// 83..92 in column order (AI::CTactics::BindSkillsAndRanges 0x53f951..
+	// 0x53f98a registers the ten dwords at RefObjChar+0x260), each with its
+	// skilldata row's ReuseDelay (col 14), Range (col 21), 'att' min/max and
+	// AI_AttackChance (col 66) -- read from the retail tables on the RE box
+	// 2026-09-25 (round 554) and re-derived by verify_monster_specs.py. The
+	// first is the col-83 skill, whose numbers AttackReuseMs, AttackRange,
+	// AttackMin and AttackMax also carry (TestRosterSkillsLeadWithThePrimary
+	// holds the two equal). Four species carry a second: Mangyang 161,
+	// Water Ghost slave 167, Water Ghost 169, Yeoha 177; the other seven
+	// have col 84 = 0. With -monster-battle on, BATTLE draws each swing
+	// between them by AI_AttackChance and reach (ai.PickSkill).
+	Skills []combat.MonsterSkill
 	// GoldMin/GoldMax are the real per-level gold range (levelgold.txt).
 	GoldMin, GoldMax int64
 	// Critical is the species' real critical-hit chance, characterdata col 78.
@@ -249,24 +262,43 @@ var monsterSpecs = []monsterSpec{
 	// are deliberately not carried: the client resolves standing height from
 	// the region's walkable graph and ignores the authored y, so a height
 	// here would be a number nothing reads.
-	{Zone: "jangan", Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", RefObjID: 1933, WalkSpeed: 8, RunSpeed: 22, AttackReuseMs: 3000, AttackRange: 10, Level: 1, BCRadius: 6, Critical: 2, MaxHP: 54, Defense: 7, AttackMin: 17, AttackMax: 19, GoldMin: 28, GoldMax: 59, Spawns: []realSpawn{
-		{RegionID: 24744, LocalX: 1089.65, LocalZ: 600.09003},
-		{RegionID: 24744, LocalX: 1842.3, LocalZ: 600.94},
-		{RegionID: 24744, LocalX: 553.73999, LocalZ: 471.07001},
-		{RegionID: 24744, LocalX: 1260.99, LocalZ: 22.690001},
-	}},
-	{Zone: "jangan", Name: "Small-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST_CLON", RefObjID: 1934, WalkSpeed: 14, RunSpeed: 55, AttackReuseMs: 2000, AttackRange: 4, Level: 2, BCRadius: 6, Critical: 2, MaxHP: 55, Defense: 9, AttackMin: 21, AttackMax: 23, GoldMin: 32, GoldMax: 66, X: -170, Z: -880, Count: 2},
-	{Zone: "jangan", Name: "Big-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST", RefObjID: 1935, WalkSpeed: 14, RunSpeed: 55, AttackReuseMs: 1500, AttackRange: 4, Level: 3, BCRadius: 6, Critical: 2, MaxHP: 85, Defense: 9, AttackMin: 25, AttackMax: 29, GoldMin: 35, GoldMax: 74, X: 170, Z: -880, Count: 2},
-	{Zone: "jangan", Name: "Old Weasel", CodeName: "MOB_CH_GYO_CLON", RefObjID: 1936, WalkSpeed: 12, RunSpeed: 55, AttackReuseMs: 2000, AttackRange: 7, Level: 4, BCRadius: 10, Critical: 2, MaxHP: 83, Defense: 12, AttackMin: 30, AttackMax: 34, GoldMin: 39, GoldMax: 81, X: -170, Z: -760, Count: 2},
+	{Zone: "jangan", Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", RefObjID: 1933, WalkSpeed: 8, RunSpeed: 22, AttackReuseMs: 3000, AttackRange: 10, Level: 1, BCRadius: 6, Critical: 2, MaxHP: 54, Defense: 7, AttackMin: 17, AttackMax: 19, GoldMin: 28, GoldMax: 59,
+		Skills: []combat.MonsterSkill{{ID: 160, ReuseMs: 3000, Range: 10, AttMin: 17, AttMax: 19, Chance: 100}, {ID: 161, ReuseMs: 3000, Range: 10, AttMin: 17, AttMax: 19, Chance: 100}},
+		Spawns: []realSpawn{
+			{RegionID: 24744, LocalX: 1089.65, LocalZ: 600.09003},
+			{RegionID: 24744, LocalX: 1842.3, LocalZ: 600.94},
+			{RegionID: 24744, LocalX: 553.73999, LocalZ: 471.07001},
+			{RegionID: 24744, LocalX: 1260.99, LocalZ: 22.690001},
+		}},
+	{Zone: "jangan", Name: "Small-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST_CLON", RefObjID: 1934, WalkSpeed: 14, RunSpeed: 55, AttackReuseMs: 2000, AttackRange: 4, Level: 2, BCRadius: 6, Critical: 2, MaxHP: 55, Defense: 9, AttackMin: 21, AttackMax: 23, GoldMin: 32, GoldMax: 66,
+		Skills: []combat.MonsterSkill{{ID: 162, ReuseMs: 2000, Range: 4, AttMin: 21, AttMax: 23, Chance: 100}}, X: -170, Z: -880, Count: 2},
+	{Zone: "jangan", Name: "Big-eyed Ghost", CodeName: "MOB_CH_BIGEYEGHOST", RefObjID: 1935, WalkSpeed: 14, RunSpeed: 55, AttackReuseMs: 1500, AttackRange: 4, Level: 3, BCRadius: 6, Critical: 2, MaxHP: 85, Defense: 9, AttackMin: 25, AttackMax: 29, GoldMin: 35, GoldMax: 74,
+		Skills: []combat.MonsterSkill{{ID: 163, ReuseMs: 1500, Range: 4, AttMin: 25, AttMax: 29, Chance: 100}}, X: 170, Z: -880, Count: 2},
+	{Zone: "jangan", Name: "Old Weasel", CodeName: "MOB_CH_GYO_CLON", RefObjID: 1936, WalkSpeed: 12, RunSpeed: 55, AttackReuseMs: 2000, AttackRange: 7, Level: 4, BCRadius: 10, Critical: 2, MaxHP: 83, Defense: 12, AttackMin: 30, AttackMax: 34, GoldMin: 39, GoldMax: 81,
+		Skills: []combat.MonsterSkill{{ID: 164, ReuseMs: 2000, Range: 7, AttMin: 30, AttMax: 34, Chance: 100}}, X: -170, Z: -760, Count: 2},
 	// A higher ground east of the fields (the (340,-340) anchor):
-	{Zone: "jangan", Name: "Weasel", CodeName: "MOB_CH_GYO", RefObjID: 1937, WalkSpeed: 12, RunSpeed: 55, AttackReuseMs: 2000, AttackRange: 7, Level: 5, BCRadius: 10, Critical: 2, MaxHP: 119, Defense: 12, AttackMin: 35, AttackMax: 40, GoldMin: 42, GoldMax: 88, X: 340, Z: -340, Count: 3},
-	{Zone: "jangan", Name: "Water Ghost slave", CodeName: "MOB_CH_WATERGHOST_CLON", RefObjID: 1938, WalkSpeed: 15, RunSpeed: 55, AttackReuseMs: 2000, AttackRange: 16, Level: 6, BCRadius: 6, Critical: 2, MaxHP: 114, Defense: 15, AttackMin: 41, AttackMax: 47, GoldMin: 46, GoldMax: 96, X: 500, Z: -360, Count: 2},
-	{Zone: "jangan", Name: "Water Ghost", CodeName: "MOB_CH_WATERGHOST", RefObjID: 1939, WalkSpeed: 15, RunSpeed: 55, AttackReuseMs: 2000, AttackRange: 16, Level: 7, BCRadius: 6, Critical: 2, MaxHP: 156, Defense: 15, AttackMin: 47, AttackMax: 54, GoldMin: 49, GoldMax: 103, X: 340, Z: -500, Count: 2},
-	{Zone: "jangan", Name: "Tomb Stone Ghost", CodeName: "MOB_CH_TOMBSTONE_CLON", RefObjID: 1950, WalkSpeed: 15, RunSpeed: 55, AttackReuseMs: 2500, AttackRange: 100, Level: 8, BCRadius: 4, Critical: 2, MaxHP: 204, Defense: 15, AttackMin: 74, AttackMax: 83, GoldMin: 53, GoldMax: 110, X: 500, Z: -500, Count: 2},
-	{Zone: "jangan", Name: "Stone Ghost", CodeName: "MOB_CH_STONEGHOST", RefObjID: 1941, WalkSpeed: 14, RunSpeed: 55, AttackReuseMs: 2500, AttackRange: 10, Level: 9, BCRadius: 10, Critical: 2, MaxHP: 194, Defense: 22, AttackMin: 60, AttackMax: 70, GoldMin: 56, GoldMax: 118, X: 200, Z: -480, Count: 2},
-	{Zone: "jangan", Name: "Yeoha", CodeName: "MOB_CH_YEOHA", RefObjID: 1943, WalkSpeed: 9, RunSpeed: 20, AttackReuseMs: 2500, AttackRange: 7, Level: 10, BCRadius: 11, Critical: 2, MaxHP: 249, Defense: 22, AttackMin: 67, AttackMax: 79, GoldMin: 60, GoldMax: 125, X: 200, Z: -220, Count: 2},
+	{Zone: "jangan", Name: "Weasel", CodeName: "MOB_CH_GYO", RefObjID: 1937, WalkSpeed: 12, RunSpeed: 55, AttackReuseMs: 2000, AttackRange: 7, Level: 5, BCRadius: 10, Critical: 2, MaxHP: 119, Defense: 12, AttackMin: 35, AttackMax: 40, GoldMin: 42, GoldMax: 88,
+		Skills: []combat.MonsterSkill{{ID: 165, ReuseMs: 2000, Range: 7, AttMin: 35, AttMax: 40, Chance: 100}}, X: 340, Z: -340, Count: 3},
+	{Zone: "jangan", Name: "Water Ghost slave", CodeName: "MOB_CH_WATERGHOST_CLON", RefObjID: 1938, WalkSpeed: 15, RunSpeed: 55, AttackReuseMs: 2000, AttackRange: 16, Level: 6, BCRadius: 6, Critical: 2, MaxHP: 114, Defense: 15, AttackMin: 41, AttackMax: 47, GoldMin: 46, GoldMax: 96,
+		Skills: []combat.MonsterSkill{{ID: 166, ReuseMs: 2000, Range: 16, AttMin: 41, AttMax: 47, Chance: 100}, {ID: 167, ReuseMs: 2500, Range: 16, AttMin: 41, AttMax: 47, Chance: 100}}, X: 500, Z: -360, Count: 2},
+	// Water Ghost's second skill, MSKILL_CH_WATERGHOST_ATTACK02 169, carries a
+	// zero-damage 'att' block (9,0,0,0,100) beside a `ps` param 28787
+	// (34,100,16): a status skill, which srrevamp has no system for, so a
+	// swing of it lands nothing (session.monsterStrike). Its chance is 10
+	// against ATTACK01's 100.
+	{Zone: "jangan", Name: "Water Ghost", CodeName: "MOB_CH_WATERGHOST", RefObjID: 1939, WalkSpeed: 15, RunSpeed: 55, AttackReuseMs: 2000, AttackRange: 16, Level: 7, BCRadius: 6, Critical: 2, MaxHP: 156, Defense: 15, AttackMin: 47, AttackMax: 54, GoldMin: 49, GoldMax: 103,
+		Skills: []combat.MonsterSkill{{ID: 168, ReuseMs: 2000, Range: 16, AttMin: 47, AttMax: 54, Chance: 100}, {ID: 169, ReuseMs: 4000, Range: 16, AttMin: 0, AttMax: 0, Chance: 10}}, X: 340, Z: -500, Count: 2},
+	{Zone: "jangan", Name: "Tomb Stone Ghost", CodeName: "MOB_CH_TOMBSTONE_CLON", RefObjID: 1950, WalkSpeed: 15, RunSpeed: 55, AttackReuseMs: 2500, AttackRange: 100, Level: 8, BCRadius: 4, Critical: 2, MaxHP: 204, Defense: 15, AttackMin: 74, AttackMax: 83, GoldMin: 53, GoldMax: 110,
+		Skills: []combat.MonsterSkill{{ID: 171, ReuseMs: 2500, Range: 100, AttMin: 74, AttMax: 83, Chance: 100}}, X: 500, Z: -500, Count: 2},
+	{Zone: "jangan", Name: "Stone Ghost", CodeName: "MOB_CH_STONEGHOST", RefObjID: 1941, WalkSpeed: 14, RunSpeed: 55, AttackReuseMs: 2500, AttackRange: 10, Level: 9, BCRadius: 10, Critical: 2, MaxHP: 194, Defense: 22, AttackMin: 60, AttackMax: 70, GoldMin: 56, GoldMax: 118,
+		Skills: []combat.MonsterSkill{{ID: 172, ReuseMs: 2500, Range: 10, AttMin: 60, AttMax: 70, Chance: 100}}, X: 200, Z: -480, Count: 2},
+	// Yeoha's second skill, MSKILL_CH_YEOHA_ATTACK03 177, reaches 100 units
+	// against ATTACK01's 7, with a harder blow (94-105 against 67-79).
+	{Zone: "jangan", Name: "Yeoha", CodeName: "MOB_CH_YEOHA", RefObjID: 1943, WalkSpeed: 9, RunSpeed: 20, AttackReuseMs: 2500, AttackRange: 7, Level: 10, BCRadius: 11, Critical: 2, MaxHP: 249, Defense: 22, AttackMin: 67, AttackMax: 79, GoldMin: 60, GoldMax: 125,
+		Skills: []combat.MonsterSkill{{ID: 176, ReuseMs: 2500, Range: 7, AttMin: 67, AttMax: 79, Chance: 100}, {ID: 177, ReuseMs: 2500, Range: 100, AttMin: 94, AttMax: 105, Chance: 100}}, X: 200, Z: -220, Count: 2},
 	// The donghwang example kept from before (a far, higher-level zone).
-	{Zone: "donwhang", Name: "Earth Ghost", CodeName: "MOB_WC_EARTHGHOST", RefObjID: 1963, WalkSpeed: 11, RunSpeed: 75, AttackReuseMs: 2000, AttackRange: 7, Level: 27, BCRadius: 4, Critical: 2, MaxHP: 1451, Defense: 103, AttackMin: 219, AttackMax: 261, GoldMin: 119, GoldMax: 250, X: 70, Z: -50, Count: 1},
+	{Zone: "donwhang", Name: "Earth Ghost", CodeName: "MOB_WC_EARTHGHOST", RefObjID: 1963, WalkSpeed: 11, RunSpeed: 75, AttackReuseMs: 2000, AttackRange: 7, Level: 27, BCRadius: 4, Critical: 2, MaxHP: 1451, Defense: 103, AttackMin: 219, AttackMax: 261, GoldMin: 119, GoldMax: 250,
+		Skills: []combat.MonsterSkill{{ID: 210, ReuseMs: 2000, Range: 7, AttMin: 219, AttMax: 261, Chance: 100}}, X: 70, Z: -50, Count: 1},
 }
 
 // respawnDelay is DISCLOSED, own design. The real game respawns per NEST
@@ -378,14 +410,16 @@ func gmSpecies() []gm.Species {
 // spec without one gets combat.PlayerBCRadius, the 4 every playable body row
 // carries. AttackReuseMs/AttackRange are the primary attack skill's
 // skilldata columns 14 and 21 (round 254). WalkSpeed/RunSpeed are
-// characterdata cols 46/47 (round 536, see monsterSpec.WalkSpeed).
+// characterdata cols 46/47 (round 536, see monsterSpec.WalkSpeed). Skills
+// is the species' attack-skill list, cols 83..92 (round 554, see
+// monsterSpec.Skills).
 func combatSpeciesOf(spec monsterSpec) combat.Species {
 	bc := spec.BCRadius
 	if bc == 0 {
 		bc = combat.PlayerBCRadius
 	}
 	return combat.Species{Name: spec.Name, CodeName: spec.CodeName, RefObjID: spec.RefObjID, Level: spec.Level, Rarity: spec.Rarity, BCRadius: bc, AttackReuseMs: spec.AttackReuseMs, AttackRange: spec.AttackRange,
-		AttackMin: spec.AttackMin, AttackMax: spec.AttackMax,
+		AttackMin: spec.AttackMin, AttackMax: spec.AttackMax, Skills: spec.Skills,
 		GoldMin: spec.GoldMin, GoldMax: spec.GoldMax, Critical: spec.Critical,
 		WalkSpeed: spec.WalkSpeed, RunSpeed: spec.RunSpeed}
 }

@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -377,6 +380,163 @@ func TestGMSpawnCarriesSpeeds(t *testing.T) {
 		return
 	}
 	t.Error("Mangyang missing from gmSpecies")
+}
+
+// realMonsterSkills is characterdata cols 83..92 by RefObjID -- every non-zero
+// entry, in column order -- joined to each skilldata row's ReuseDelay (col
+// 14), Range (col 21), 'att' min/max (values [2] and [3] of the block at col
+// 69) and AI_AttackChance (col 66). Read on the RE box 2026-09-25 (round 554)
+// from characterdata_5000.txt and skilldata_*.txt; the names corroborate the
+// chain (160 MSKILL_CH_MANGNYANG_ATTACK01, 161 ..._ATTACK02, 167
+// MSKILL_CH_WATERGHOST_CLON_ATTACK03, 169 MSKILL_CH_WATERGHOST_ATTACK02, 177
+// MSKILL_CH_YEOHA_ATTACK03). The seven single-skill species read col 84 = 0.
+var realMonsterSkills = map[int64][]combat.MonsterSkill{
+	1933: {{ID: 160, ReuseMs: 3000, Range: 10, AttMin: 17, AttMax: 19, Chance: 100}, {ID: 161, ReuseMs: 3000, Range: 10, AttMin: 17, AttMax: 19, Chance: 100}},
+	1934: {{ID: 162, ReuseMs: 2000, Range: 4, AttMin: 21, AttMax: 23, Chance: 100}},
+	1935: {{ID: 163, ReuseMs: 1500, Range: 4, AttMin: 25, AttMax: 29, Chance: 100}},
+	1936: {{ID: 164, ReuseMs: 2000, Range: 7, AttMin: 30, AttMax: 34, Chance: 100}},
+	1937: {{ID: 165, ReuseMs: 2000, Range: 7, AttMin: 35, AttMax: 40, Chance: 100}},
+	1938: {{ID: 166, ReuseMs: 2000, Range: 16, AttMin: 41, AttMax: 47, Chance: 100}, {ID: 167, ReuseMs: 2500, Range: 16, AttMin: 41, AttMax: 47, Chance: 100}},
+	1939: {{ID: 168, ReuseMs: 2000, Range: 16, AttMin: 47, AttMax: 54, Chance: 100}, {ID: 169, ReuseMs: 4000, Range: 16, AttMin: 0, AttMax: 0, Chance: 10}},
+	1950: {{ID: 171, ReuseMs: 2500, Range: 100, AttMin: 74, AttMax: 83, Chance: 100}},
+	1941: {{ID: 172, ReuseMs: 2500, Range: 10, AttMin: 60, AttMax: 70, Chance: 100}},
+	1943: {{ID: 176, ReuseMs: 2500, Range: 7, AttMin: 67, AttMax: 79, Chance: 100}, {ID: 177, ReuseMs: 2500, Range: 100, AttMin: 94, AttMax: 105, Chance: 100}},
+	1963: {{ID: 210, ReuseMs: 2000, Range: 7, AttMin: 219, AttMax: 261, Chance: 100}},
+}
+
+// TestRosterSkillsAreReal (round 554): every roster species carries its
+// attack-skill list exactly as characterdata cols 83..92 and skilldata state
+// it -- the four two-skill species (Mangyang, Water Ghost slave, Water Ghost,
+// Yeoha) with both, the other seven with one -- and the table covers the
+// roster exactly.
+func TestRosterSkillsAreReal(t *testing.T) {
+	if len(realMonsterSkills) != len(monsterSpecs) {
+		t.Fatalf("the skill table has %d species, the roster %d", len(realMonsterSkills), len(monsterSpecs))
+	}
+	two := 0
+	for _, spec := range monsterSpecs {
+		want, ok := realMonsterSkills[spec.RefObjID]
+		if !ok {
+			t.Errorf("%s (%d) has no row in the skill table", spec.CodeName, spec.RefObjID)
+			continue
+		}
+		if len(spec.Skills) != len(want) {
+			t.Errorf("%s (%d): %d skill(s) %+v; cols 83..92 name %d: %+v", spec.CodeName, spec.RefObjID, len(spec.Skills), spec.Skills, len(want), want)
+			continue
+		}
+		for i := range want {
+			if spec.Skills[i] != want[i] {
+				t.Errorf("%s (%d): skill %d is %+v; the tables read %+v", spec.CodeName, spec.RefObjID, i, spec.Skills[i], want[i])
+			}
+		}
+		if len(want) == 2 {
+			two++
+		}
+	}
+	if two != 4 {
+		t.Errorf("%d species carry a second skill, want the four (col 84 = 161, 167, 169, 177)", two)
+	}
+}
+
+// TestRosterSkillsLeadWithThePrimary: the first skill of every species' list
+// is the col-83 skill, whose numbers the older primary fields carry too --
+// the counter (flag off), CounterattackReady and the single-skill swing read
+// those, the draw reads the list, and the two must not drift apart.
+func TestRosterSkillsLeadWithThePrimary(t *testing.T) {
+	for _, spec := range monsterSpecs {
+		if len(spec.Skills) == 0 {
+			t.Errorf("%s has no skill list", spec.CodeName)
+			continue
+		}
+		p := spec.Skills[0]
+		if p.ReuseMs != spec.AttackReuseMs || p.Range != spec.AttackRange || p.AttMin != spec.AttackMin || p.AttMax != spec.AttackMax {
+			t.Errorf("%s: Skills[0] %+v disagrees with the primary fields reuse %d range %d att %d-%d",
+				spec.CodeName, p, spec.AttackReuseMs, spec.AttackRange, spec.AttackMin, spec.AttackMax)
+		}
+		for i, s := range spec.Skills {
+			if s.ID == 0 || s.Chance == 0 || s.ReuseMs <= 0 || s.Range <= 0 || s.AttMin > s.AttMax {
+				t.Errorf("%s: skill %d %+v is not a whole row", spec.CodeName, i, s)
+			}
+		}
+	}
+}
+
+// TestGMSpawnCarriesSkills extends TestGMSpawnCarriesSpeeds to round 554's
+// skill list: gmSpecies passes it through combatSpeciesOf, and a monster the
+// GM console's /spawn puts in the world carries it, so a GM-spawned Yeoha
+// draws between its two skills as a roster one does.
+func TestGMSpawnCarriesSkills(t *testing.T) {
+	species := gmSpecies()
+	for i, spec := range monsterSpecs {
+		got := species[i].Species.Skills
+		if len(got) != len(spec.Skills) {
+			t.Errorf("%s: GM species carries %d skill(s), the roster %d", spec.CodeName, len(got), len(spec.Skills))
+			continue
+		}
+		for j := range got {
+			if got[j] != spec.Skills[j] {
+				t.Errorf("%s: GM species skill %d %+v, want %+v", spec.CodeName, j, got[j], spec.Skills[j])
+			}
+		}
+	}
+	for _, sp := range species {
+		if sp.CodeName != "MOB_CH_YEOHA" {
+			continue
+		}
+		m := combat.NewHub().SpawnSpecies(sp.Zone, sp.Species, sp.X, 0, sp.Z, sp.MaxHP, sp.Defense, sp.Attack, sp.Gold)
+		if len(m.Skills) != 2 || m.Skills[0].ID != 176 || m.Skills[1].ID != 177 || m.Skills[1].Range != 100 {
+			t.Errorf("a GM-spawned Yeoha carries skills %+v; want 176 then 177 (range 100)", m.Skills)
+		}
+		return
+	}
+	t.Error("Yeoha missing from gmSpecies")
+}
+
+// monsterSpecLines is the roster in client/tools/verify_monster_specs.py's
+// input form -- `code<TAB>name<TAB>K=V,K=V,...` with the skill list as
+// `Skills=id:reuse:range:attmin:attmax:chance;...` -- so the verifier's run
+// is generated from the live table, never typed (round 554; the earlier runs'
+// files were written by hand from the same rows).
+func monsterSpecLines() []string {
+	var out []string
+	for _, spec := range monsterSpecs {
+		var skills []string
+		for _, s := range spec.Skills {
+			skills = append(skills, fmt.Sprintf("%d:%d:%d:%d:%d:%d", s.ID, s.ReuseMs, s.Range, s.AttMin, s.AttMax, s.Chance))
+		}
+		out = append(out, fmt.Sprintf("%s\t%s\tLevel=%d,Rarity=%d,MaxHP=%d,Defense=%d,Critical=%d,AttackMin=%d,AttackMax=%d,WalkSpeed=%d,RunSpeed=%d,Skills=%s",
+			spec.CodeName, spec.Name, spec.Level, spec.Rarity, spec.MaxHP, spec.Defense, spec.Critical, spec.AttackMin, spec.AttackMax,
+			int(spec.WalkSpeed), int(spec.RunSpeed), strings.Join(skills, ";")))
+	}
+	return out
+}
+
+// TestWriteMonsterSpecsForVerifier holds the verifier's input to its shape
+// (three tab fields, one skill per list entry) and, when SRREVAMP_WRITE_SPECS
+// names a path, writes it there for a run on the RE box:
+//
+//	SRREVAMP_WRITE_SPECS=/path/specs.txt go test ./cmd/server -run TestWriteMonsterSpecsForVerifier
+func TestWriteMonsterSpecsForVerifier(t *testing.T) {
+	lines := monsterSpecLines()
+	if len(lines) != len(monsterSpecs) {
+		t.Fatalf("%d lines for %d species", len(lines), len(monsterSpecs))
+	}
+	for i, line := range lines {
+		fields := strings.Split(line, "\t")
+		if len(fields) != 3 {
+			t.Fatalf("line %d has %d tab fields, want 3: %q", i, len(fields), line)
+		}
+		skills := strings.TrimPrefix(fields[2][strings.Index(fields[2], "Skills="):], "Skills=")
+		if n := len(strings.Split(skills, ";")); n != len(monsterSpecs[i].Skills) {
+			t.Fatalf("line %d lists %d skill(s), the spec %d: %q", i, n, len(monsterSpecs[i].Skills), line)
+		}
+	}
+	if path := os.Getenv("SRREVAMP_WRITE_SPECS"); path != "" {
+		if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+			t.Fatalf("writing %s: %v", path, err)
+		}
+		t.Logf("wrote %d spec lines to %s", len(lines), path)
+	}
 }
 
 // fakeItemRows is a reference item store holding a fixed set of rows; id -1

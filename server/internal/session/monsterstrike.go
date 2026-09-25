@@ -226,7 +226,12 @@ func (o monsterStrikeOutcome) message(monsterID, targetID int64) *MonsterAttacke
 // monster may strike. It is performAttack's counter branch moved here
 // unchanged in round 541 (rounds 254 and 505); only its result is returned
 // instead of written into the AttackResult, so the push can repeat it.
-func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster, characterID int64, playerLevel int) (monsterStrikeOutcome, error) {
+//
+// skill is the attack skill the swing fires (round 554): BATTLE's armed pick,
+// whose 'att' block the blow rolls in place of the monster's primary range.
+// The zero value -- performAttack's counter, and a monster with no skill list
+// -- is the primary range, monster.AttackMin/AttackMax, as before.
+func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster, skill combat.MonsterSkill, characterID int64, playerLevel int) (monsterStrikeOutcome, error) {
 	chars, eq, items, mp := deps.chars, deps.eq, deps.items, deps.mp
 	var out monsterStrikeOutcome
 	armor, err := defenderArmor(ctx, characterID, eq, items)
@@ -237,7 +242,28 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	// -> that skill's 'att' param), rolled the same way a weapon is. The
 	// flat disclosed Attack remains only for a monster with no range.
 	raw := monster.Attack
-	if monster.AttackMax > 0 {
+	// A swing of a drawn skill rolls THAT skill's 'att' block (round 554). A
+	// block whose max is 0 -- MSKILL_CH_WATERGHOST_ATTACK02 169, att
+	// 9,0,0,0,100 (its effect is a `ps` param srrevamp has no status system
+	// for) -- deals nothing, explicitly: monsterBlow's AttackMax <= 0 branch
+	// is the flat disclosed Attack for a monster with no range at all, which
+	// a zero-damage skill is not, and the pipeline below is skipped rather
+	// than run on a 0 (its floor band and level term each raise a 0 to 1).
+	// combat.Monster's own range stands in for the swing's when no skill is
+	// named.
+	swung := monster
+	if skill.ID != 0 {
+		swung.AttackMin, swung.AttackMax = skill.AttMin, skill.AttMax
+		if skill.AttMax <= 0 {
+			hp, _, err := chars.ApplyDamage(ctx, characterID, 0)
+			if err != nil {
+				return monsterStrikeOutcome{}, fmt.Errorf("combat: applying counterattack: %w", err)
+			}
+			out.hp = hp
+			return out, nil
+		}
+	}
+	if swung.AttackMax > 0 {
 		// WHERE in that range the blow lands is the same centre-biased
 		// roll the player's attack takes, with the sides swapped: the
 		// monster's attack rate (2*level + 25) against the player's parry.
@@ -251,7 +277,7 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 		if perr != nil {
 			parry = 0
 		}
-		raw = monsterBlow(monster, playerLevel, parry)
+		raw = monsterBlow(swung, playerLevel, parry)
 	}
 	// The player's side of the SAME mitigation the monster gets, through
 	// the same function -- percentage term first, then the flat absorb.

@@ -34862,3 +34862,102 @@ default)"). `WORLD_ISSUES.md` stays untouched, as in rounds 541-552.
 
 **Deploy note.** Nothing to flip. The link is live wherever `-monster-battle` is on; that flag's
 own conditions (`deploy/README.md`) are unchanged.
+
+## Four species draw their second attack skill (round 554)
+
+`mob-second-skill`. Until this round every roster species swung its col-83 attack skill alone, and
+round 260's `ai.SkillWeight` sat uncalled in `orphans_test.go`. Now, **with `-monster-battle` on**
+(no flag of its own: the swing is that flag's, and an older client draws the legs and blows as the
+same `OpMonsterMoved 0x007C` / `OpMonsterAttacked 0x007D`), a monster in BATTLE draws each swing
+among its attack skills by AI_AttackChance and reach margin, walks to the drawn skill's band, fires
+it and cools down for its ReuseDelay: Mangyang (160/161), Water Ghost slave (166/167), Water Ghost
+(168/169) and Yeoha (176/177) carry two; a Yeoha that draws its 100-unit ATTACK03 swings from where
+it stands, and a Water Ghost's ATTACK02 -- a zero-damage `att` block beside a `ps` status param --
+lands an explicit 0 rather than the flat disclosed Attack it would have fallen through to. Single-
+skill species are unchanged. **Flag off: nothing changes** (the counter rolls the primary range). No
+opcode or layout changed; `-monster-battle` is off by default, so pushing to `dev` deploys nothing
+new to a player.
+
+**Grounding, re-read on the RE box for this round (2026-09-25; the reading is in
+`docs/protocol/monster_ai.md`, "The second attack skill: the runtime (round 554)", and "The skill
+choice" was corrected in place).**
+
+- `AI::CTactics::BindSkillsAndRanges` `0x53f780`: the ten dwords at `RefObjChar+0x260`
+  (`add eax,0x260` `0x53f95b`, `mov dword [esp+0x14],0xa` `0x53f941`, the loop `0x53f964..0x53f98a`
+  through `ResolveUsableSkillRef` `0x59d600` and `RegisterAISkill` `0x53fa70`) -- characterdata cols
+  83..92 by the `+0x230` = col 71 anchor. The plan's citation holds.
+- `/var/tmp/tables`: col 84 = 161 / 167 / 169 / 177 for exactly the four species, 0 for the other
+  seven, cols 85..92 all 0; the eight rows' cols 14 / 21 / 66 and `att` blocks (the tables in the
+  section). 169: `att` 9,0,0,0,100, chance 10, ReuseDelay 4000, plus `ps` 28787 (34,100,16). The
+  plan's data holds; its "169 has no att" was already corrected by the review's CHANGES.
+- `AI::CAISkill_Basic::PickSkill` `0x561b00`, re-read in `srv.asm` and `.rdata`: **the plan's
+  formula was incomplete.** Between the margin compare and the `ftol` sit `fmul QWORD [0xb45b00];
+  fdiv QWORD [0xb45c60]` (`0x561c93..0x561c9f`), and `objdump -s` reads `0xb45b00` =
+  `0x4014000000000000` = 5.0, `0xb45c60` = `0x4024000000000000` = 10.0: a skill gains HALF its reach
+  margin in whole units, not the whole margin round 260 recorded (the decompile drops both
+  FPU-stack operations, the trap of round 535's `ftol2` pop). The margin is float arithmetic (`fstp
+  DWORD` `0x561c72`, `0x561c7e`; the float `GObj_DistanceBetween` stored at `0x561bae`), added only
+  above 0 (`test ah,0x41; jne` `0x561c91`). The draw: `r = |rand()| % (total + 1)`
+  (`0x561cee..0x561cfc`), the first cumulative weight `>= r` (`cmp [esi],eax; jae` `0x561d2e`), so the
+  first entry takes one outcome more than its weight. And **`0x5632d0`, which the plan and round 260
+  called "the cumulative draw", is the `invalid vector<T> subscript` throw** the bounds checks jump
+  to; the draw is inline in `PickSkill`. Carried as a grounded correction, not an abort: the
+  function is the one cited and the corrected rule is read off it and the binary's own constants.
+- `AITactics_Handler_0e8` `0x5472a0`: the armed pick (slot 4) before a new `PickSkill` (slot 7),
+  none -> return 1; Execute (slot 8) through the action machine -- the pick precedes the walk, so
+  the band follows the pick. `ArmNextAttack` `0x5619e0`: `+0x44` = the skill, `+0x48` = ReuseDelay
+  + rand % (J + 1) (round 259; round 545: the idle window, not the cadence).
+
+**Wired.** `combat.MonsterSkill`, `combat.Species.Skills`, `combat.Monster.Skills` (copied at the
+spawn); `cmd/server`'s `monsterSpec.Skills` on all eleven species through `combatSpeciesOf` (GM
+spawns too). `ai.SkillWeight` corrected (half the margin, in floats, with the two `.rdata` doubles
+cited), `ai.AttackSkill`, `ai.PickSkill` and `pickByWeight`. `session/monsterai.go`: the brain's
+`armed` / `hasArmed` / `swungReuseMs`, `armSkill`, `battleTick`'s step 4 (the armed skill's Range
+sets the band, the fired skill the cooldown), `strikeJob.skill`, `queueStrike`. `session/
+monsterstrike.go`: `monsterStrike(..., skill, ...)` rolls the named skill's `att` block, lands an
+explicit 0 for a zero block and skips the pipeline (whose floor band and level term each raise a
+0 to 1); the counter in `session/combat.go` passes no skill. `orphans_test.go`: `SkillWeight`
+removed (called now). `combat_test.go`: `TestGetReturnsLiveMonster` compares with
+`reflect.DeepEqual`. `client/tools/verify_monster_specs.py`: the `Skills=` chain, `--specs -`;
+`cmd/server`'s `monsterSpecLines` / `TestWriteMonsterSpecsForVerifier` generate its input. Run on
+the RE box against the roster: **103 verified, 0 mismatched, 0 unresolved**; the control with
+Yeoha's second skill dropped: 1 mismatched (`spec has 1 [176], cols 83..92 name 2 [176, 177]`); the
+control with 177's range altered to 99: 1 mismatched (`skill[1] spec=(177, 2500, 99, ...)
+table=(177, 2500, 100, ...)`).
+
+**Stand-ins, each disclosed at its line and in the section**: one cooldown per monster (the fired
+skill's ReuseDelay; per-skill re-use in the action machine not read), the draw's moment (the first
+BATTLE tick with nothing armed, at that tick's distance; when `+0x44` is cleared not read), the
+`att` percent unapplied (mob-monster-att-percent, to be read before any damage scaling), a
+zero-`att` skill landing 0 (no status system; the client may draw the 0), no `_RefAISkill`
+triggers (mob-ai-skill-triggers), the failed-swing tail as in round 546.
+
+**Tests** (`cd server && go build ./... && go test -count=1 -p 1 ./...` green; re-run after the doc
+edits): `session` -- `TestYeohaDrawsItsLongSkillAndSwingsFromAfar` (THE RED),
+`TestYeohaDrawsItsShortSkillAndChasesToItsBand`, `TestWaterGhostZeroDamageSkillLandsNothing`,
+`TestMonsterStrikeRollsTheNamedSkill`, `TestBattleOffDrawsNoSkill` (the flag-off control); `ai` --
+`TestSkillChoice` (corrected), `TestPickByWeight`, `TestPickSkillDraws` (the single-skill CONTROL
+inside it); `cmd/server` -- `TestRosterSkillsAreReal`, `TestRosterSkillsLeadWithThePrimary`,
+`TestGMSpawnCarriesSkills`, `TestWriteMonsterSpecsForVerifier`. **Negatives, proved four ways,
+each restored and compared byte for byte (`cmp`, and the tree's `git diff` md5 before and
+after)**: (A) round 260's whole margin put back -- `TestSkillChoice` fails `weight 37; want 30 +
+3`, `TestPickSkillDraws` fails `ATTACK01 drawn 7754 of 20000, want about 101/228`; (B) the draw
+neutralised to the col-83 skill -- `armed skill 176, want ATTACK03 177` and `armed skill 168, want
+ATTACK02 169`; (C) the explicit zero removed -- both zero tests fail with `Damage:18`; (D) all six
+production files stashed to BASE -- `ai`, `session` and `cmd/server` fail to build (`undefined:
+combat.MonsterSkill`, `spec.Skills undefined`). Client untouched (`remote_godot.sh tests` not
+needed).
+
+**Live check: not run.** The Go tests are the evidence; the optional `SRREVAMP_QA_ATTACK_NAME=Yeoha`
+run and what it must show are in the section.
+
+**Records**: `docs/protocol/monster_ai.md` ("The skill choice" corrected in place -- the half
+margin, the inclusive draw, the `0x5632d0` label, the "whole Jangan roster" line; the new
+section), `docs/SYSTEMS.md` (the Monster AI row: `PickSkill` anchored, the skill-choice phrase,
+the round-554 paragraph; the Monster profile row), `docs/TODO.md` (mob-second-skill built),
+`server/README.md` (the `-monster-battle` row), `deploy/README.md` ("Monster battle (off by
+default)"), `client/tools/verify_monster_specs.py` (the docstring's new RESULT pointer).
+`WORLD_ISSUES.md` stays untouched, as in rounds 541-553.
+
+**Deploy note.** Nothing to flip. The draw is live wherever `-monster-battle` is on; that flag's own
+conditions (`deploy/README.md`) are unchanged.

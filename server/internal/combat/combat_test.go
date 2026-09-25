@@ -3,6 +3,7 @@ package combat
 import (
 	"math"
 	"math/rand"
+	"reflect"
 	"testing"
 )
 
@@ -61,7 +62,9 @@ func TestGetReturnsLiveMonster(t *testing.T) {
 	if !ok {
 		t.Fatal("expected to find the spawned monster")
 	}
-	if got != *spawned {
+	// DeepEqual since round 554: Monster carries a skill list, so the struct
+	// is no longer comparable with ==.
+	if !reflect.DeepEqual(got, *spawned) {
 		t.Fatalf("got %+v, want %+v", got, *spawned)
 	}
 }

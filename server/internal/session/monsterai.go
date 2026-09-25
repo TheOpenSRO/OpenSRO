@@ -288,8 +288,19 @@ type brain struct {
 	// (Handler_0e8 0x547342), so it is due at once each time (ArmTimer
 	// 0x53d6c7, round 545), and what spaces the swings is the skill's
 	// ReuseDelay through the action machine (round 254). So it persists
-	// across BATTLE entries, as the cooldown does.
-	lastSwing time.Time
+	// across BATTLE entries, as the cooldown does. swungReuseMs is the
+	// ReuseDelay of the skill that swing fired, the length of the cooldown
+	// (round 554: a species with two skills has two).
+	lastSwing    time.Time
+	swungReuseMs int
+	// armed is the attack skill the next swing fires -- the selector's +0x44,
+	// which PickSkill (0x561b00) fills through ArmNextAttack (0x5619e0) and
+	// Handler_0e8 (0x5472a0) reads first (its slot 4) before it asks for a
+	// pick -- and hasArmed whether one is held (round 554). Drawn by armSkill
+	// on the first BATTLE tick that finds none, at that tick's distance, and
+	// cleared when it fires.
+	armed    combat.MonsterSkill
+	hasArmed bool
 	// giveUpDueAt is when tactics timer 6 is next due (ai.GiveUpCheckPeriodMs):
 	// armed once at Init, due at once the first time it is asked, then the
 	// period after each consumption -- zero here is "due".
@@ -329,6 +340,10 @@ type brain struct {
 type strikeJob struct {
 	m      combat.Monster
 	target int64
+	// skill is the attack skill the swing fires (round 554): the brain's
+	// armed pick, whose 'att' block the blow rolls; the zero value is a
+	// species with no skill list, whose blow is the monster's primary fields.
+	skill combat.MonsterSkill
 }
 
 // strikeHandoff is a swing a pass decided on, waiting for the pass's pushes to
@@ -938,13 +953,21 @@ func (a *monsterAI) battleTick(b *brain) {
 		}
 	}
 
-	// 4. The swing. The band is the attack-distance rule with the monster as
-	// the caster (combat.ApproachBand: Tick_Attack 0x4ad8e0 / Tick_UseSkill
-	// 0x4ae590, rounds 247/256/488): its BCRadius plus the player's, and its
-	// attack skill's Range (skilldata col 21, combat.Monster.AttackRange;
-	// round 254). A Mangyang's range is exactly 10, the rule's own hole, so
-	// stop = reach = 10 and it is in reach at int(dist) <= 12.
-	stop, reach := combat.ApproachBand(b.m.BCRadius, combat.PlayerBCRadius, combat.EffectiveRange(b.m.AttackRange, 0))
+	// 4. The swing. The skill first (Handler_0e8 0x5472a0: the selector's
+	// current pick, else PickSkill; none -> return 1, no swing): the one
+	// armed, or a fresh draw at this tick's distance (armSkill, round 554).
+	sk, ok := a.armSkill(b, dist)
+	if !ok {
+		return
+	}
+	// The band is the attack-distance rule with the monster as the caster
+	// (combat.ApproachBand: Tick_Attack 0x4ad8e0 / Tick_UseSkill 0x4ae590,
+	// rounds 247/256/488): its BCRadius plus the player's, and the armed
+	// skill's Range (skilldata col 21; round 254). A Mangyang's range is
+	// exactly 10, the rule's own hole, so stop = reach = 10 and it is in
+	// reach at int(dist) <= 12; a Yeoha that drew MSKILL_CH_YEOHA_ATTACK03
+	// (range 100) is in reach from 100 + 11 + 4 + 2 units and walks nowhere.
+	stop, reach := combat.ApproachBand(b.m.BCRadius, combat.PlayerBCRadius, combat.EffectiveRange(sk.Range, 0))
 	if !combat.InReach(dist, reach) {
 		a.chase(b, e.Pos, dist, stop)
 		return
@@ -957,19 +980,61 @@ func (a *monsterAI) battleTick(b *brain) {
 		}
 	}
 	b.chaseAimed = false
-	// The action machine's cooldown: the attack skill's ReuseDelay (skilldata
-	// col 14, combat.Monster.AttackReuseMs; round 254). The first swing is
-	// immediate (timer 5 armed fired at BATTLE::OnEnter, round 545). A species
-	// with no known ReuseDelay has no skill row to fire and swings not at all
-	// -- disclosed; every roster species carries one (cmd/server's roster).
-	if b.m.AttackReuseMs <= 0 {
+	// The action machine's cooldown: the ReuseDelay of the skill the LAST
+	// swing fired (skilldata col 14; round 254), swungReuseMs. The first
+	// swing is immediate (timer 5 armed fired at BATTLE::OnEnter, round 545).
+	// A species with no known ReuseDelay has no skill row to fire and swings
+	// not at all -- disclosed; every roster species carries one (cmd/server's
+	// roster). OWN DESIGN: one cooldown per monster, not one per skill --
+	// whether the engine's action machine would fire the OTHER skill inside
+	// the first's re-use delay is not read (docs/protocol/monster_ai.md, "The
+	// second attack skill: the runtime (round 554)").
+	if sk.ReuseMs <= 0 {
 		return
 	}
-	if !b.lastSwing.IsZero() && a.now.Sub(b.lastSwing) < time.Duration(b.m.AttackReuseMs)*time.Millisecond {
+	if !b.lastSwing.IsZero() && a.now.Sub(b.lastSwing) < time.Duration(b.swungReuseMs)*time.Millisecond {
 		return
 	}
-	b.lastSwing = a.now
-	a.queueStrike(b, e.CharacterID)
+	b.lastSwing, b.swungReuseMs = a.now, sk.ReuseMs
+	b.hasArmed = false
+	a.queueStrike(b, e.CharacterID, sk)
+}
+
+// armSkill is the attack skill the next swing fires: the one already armed
+// (Handler_0e8's slot-4 read of the selector's +0x44), else a fresh draw over
+// the monster's skill list at this tick's distance (PickSkill 0x561b00 ->
+// ArmNextAttack 0x5619e0, ai.PickSkill), kept until it fires. It answers
+// false when no skill has an AI_AttackChance -- the engine's PickSkill returns
+// false and Handler_0e8 returns 1, no swing (its failed-swing tail is not
+// modelled, round 546's "not modelled"). A monster spawned without a list
+// (a test's species, Spawn's) swings its primary fields, as it did before
+// round 554: the same numbers as the col-83 skill's, with no draw to make.
+//
+// OWN DESIGN, disclosed: the draw is made on the first BATTLE tick that finds
+// nothing armed -- the tick BATTLE is entered on, and the tick after each
+// swing -- at that tick's distance. When the engine clears +0x44 between two
+// swings (at Execute, or at the action's end) is not read; only that
+// Handler_0e8 reads the armed pick before it asks for a new one.
+func (a *monsterAI) armSkill(b *brain, dist float64) (combat.MonsterSkill, bool) {
+	if b.hasArmed {
+		return b.armed, true
+	}
+	if len(b.m.Skills) == 0 {
+		return combat.MonsterSkill{ReuseMs: b.m.AttackReuseMs, Range: b.m.AttackRange, AttMin: b.m.AttackMin, AttMax: b.m.AttackMax}, true
+	}
+	choices := make([]ai.AttackSkill, len(b.m.Skills))
+	for i, s := range b.m.Skills {
+		choices[i] = ai.AttackSkill{Chance: s.Chance, Range: s.Range}
+	}
+	i := ai.PickSkill(a.rng, choices, b.m.BCRadius, combat.PlayerBCRadius, dist)
+	if i < 0 {
+		return combat.MonsterSkill{}, false
+	}
+	b.armed, b.hasArmed = b.m.Skills[i], true
+	if len(b.m.Skills) > 1 {
+		a.tracef("ai: monster %d arms skill %d (range %d) at %.0f", b.id, b.armed.ID, b.armed.Range, dist)
+	}
+	return b.armed, true
 }
 
 // chase is Handler_0e8's walk when the target is out of the band: the
@@ -1004,11 +1069,11 @@ func (a *monsterAI) chase(b *brain, target world.Position, dist, stop float64) {
 // tick step 6), so a stop queued on the same pass reaches the zone before the
 // blow. No swing is made unless the runtime holds every store the blow reads
 // (MonsterAIConfig): the character, equipment and item stores.
-func (a *monsterAI) queueStrike(b *brain, target int64) {
+func (a *monsterAI) queueStrike(b *brain, target int64, skill combat.MonsterSkill) {
 	if a.deps.chars == nil || a.deps.eq == nil || a.deps.items == nil {
 		return
 	}
-	a.handoffs = append(a.handoffs, strikeHandoff{b: b, job: strikeJob{m: b.m, target: target}})
+	a.handoffs = append(a.handoffs, strikeHandoff{b: b, job: strikeJob{m: b.m, target: target, skill: skill}})
 }
 
 // handStrike hands a swing to the monster's strike worker, started on its
@@ -1090,7 +1155,7 @@ func (a *monsterAI) runStrike(id int64, job strikeJob) {
 	if c, err := a.deps.chars.GetByID(ctx, job.target); err == nil && c != nil {
 		level = c.Level
 	}
-	out, err := monsterStrike(ctx, a.deps, job.m, job.target, level)
+	out, err := monsterStrike(ctx, a.deps, job.m, job.skill, job.target, level)
 	if err != nil {
 		if a.logger != nil {
 			a.logger.Warn("ai: strike failed", "monster", id, "target", job.target, "err", err)

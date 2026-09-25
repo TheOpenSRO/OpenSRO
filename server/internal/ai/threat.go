@@ -1,5 +1,10 @@
 package ai
 
+import (
+	"math"
+	"math/rand"
+)
+
 // The attacker accounting -- who a monster fights when more than one thing
 // hits it. Read off AITactics_CreditAttacker (0x5473c0, behaviour +0xec),
 // AITactics_ResolveTarget (0x545680), AITactics_Handler_0fc (0x548090) and
@@ -206,7 +211,8 @@ func (t *ThreatTable) FaceAfterHit(rule, code int, attacker int64, targetValid b
 
 // The skill choice, read off AI::CAISkill_Basic::PickSkill (0x561b00) and its
 // trigger evaluators (0x5611d0, 0x561210), round 260 (docs/protocol/
-// monster_ai.md "The skill choice"). Triggers -- skills bound to the tactics
+// monster_ai.md "The skill choice"); the weight and the draw re-read in
+// srv.asm and .rdata in round 554. Triggers -- skills bound to the tactics
 // row by a _RefAISkill row -- are checked first; otherwise one attack skill
 // is drawn at random in proportion to its weight.
 
@@ -216,19 +222,93 @@ const (
 	TriggerPeriodic = 1 // every column-4 ms; column 5 bit 0 fires at once the first time
 )
 
+// The reach margin's scale in SkillWeight: the engine multiplies the margin
+// by the double at .rdata 0xb45b00 and divides by the one at 0xb45c60 before
+// the ftol (`fmul QWORD [0xb45b00]; fdiv QWORD [0xb45c60]; call 0x9fbb40` at
+// 0x561c93..0x561c9f). Read with objdump -s, 2026-09-25: 0xb45b00 is
+// 0x4014000000000000 = 5.0 and 0xb45c60 is 0x4024000000000000 = 10.0, so a
+// skill gains HALF its margin in whole units. Round 260 recorded the whole
+// margin: the decompile drops the two FPU-stack operations between the
+// compare and the call (the same trap as round 535's ftol2 pop).
+const (
+	skillMarginMul = 5.0
+	skillMarginDiv = 10.0
+)
+
 // SkillWeight is an attack skill's share of the draw: its AI_AttackChance
-// (skilldata column 66) plus, when the target is inside the skill's reach,
-// the margin in whole units (skill Range + both BCRadius - distance, ftol'd).
-// A skill with AI_AttackChance 0 is never drawn.
+// (skilldata column 66, CRefSkill+0x164) plus, when the target is inside the
+// skill's reach, HALF the margin in whole units -- trunc((skill Range +
+// ownerBC + targetBC - distance) x 5 / 10), the margin computed in floats
+// (`fstp DWORD` at 0x561c72 and 0x561c7e; the distance is the float
+// GObj_DistanceBetween stored at 0x561bae) and added only when it is above
+// 0 (`fcom; fnstsw; test ah,0x41; jne` 0x561c88..0x561c91). A skill with
+// AI_AttackChance 0 is never in the draw (`cmp word [esi+0x164],0; je`
+// 0x561c26) and weighs 0 here.
 func SkillWeight(attackChance, skillRange, ownerBC, targetBC int, distance float64) int {
 	if attackChance == 0 {
 		return 0
 	}
 	w := attackChance
-	if margin := float64(skillRange+ownerBC+targetBC) - distance; margin > 0 {
-		w += int(margin)
+	if margin := float32(skillRange+ownerBC+targetBC) - float32(distance); margin > 0 {
+		w += int(math.Trunc(float64(margin) * skillMarginMul / skillMarginDiv))
 	}
 	return w
+}
+
+// AttackSkill is what the draw reads of one attack-list skill: its
+// AI_AttackChance (skilldata column 66) and Range (column 21).
+type AttackSkill struct {
+	Chance, Range int
+}
+
+// PickSkill is the attack-list draw of AI::CAISkill_Basic::PickSkill
+// (0x561b00, the loop at 0x561c00..0x561ce3 and the draw at
+// 0x561ce9..0x561d61), once the triggers have declined: every skill with an
+// AI_AttackChance is entered with SkillWeight as its share and the running
+// total recorded beside it ({skill, cumulative} pairs, 8 bytes each), then
+//
+//	r = |rand()| % (total + 1)              ; 0x561cee..0x561cfc
+//	the first entry whose cumulative >= r    ; `cmp [esi],eax; jae` 0x561d2e
+//
+// is the pick. The modulus is total + 1 and the compare inclusive, so r runs
+// 0..total and the first entry takes one outcome more than its weight (r = 0
+// as well as 1..w1); the last entry's cumulative is the total, so some entry
+// is always picked once any is entered. It returns the index into skills of
+// the pick, or -1 when no skill has a chance (the engine's PickSkill leaves
+// the pick empty and returns false: Handler_0e8 0x5472a0 makes no swing).
+// ownerBC and targetBC are the two collision radii (ctx+0x158 and the
+// target's slot 344) and distance the ground distance between the two.
+func PickSkill(rng *rand.Rand, skills []AttackSkill, ownerBC, targetBC int, distance float64) int {
+	weights := make([]int, len(skills))
+	for i, s := range skills {
+		weights[i] = SkillWeight(s.Chance, s.Range, ownerBC, targetBC, distance)
+	}
+	return pickByWeight(crand(rng), weights)
+}
+
+// pickByWeight is PickSkill's draw over the entered skills' weights, given
+// the engine's rand() value: a weight of 0 is a skill not entered (no
+// AI_AttackChance), and -1 is no pick.
+func pickByWeight(r int, weights []int) int {
+	total := 0
+	for _, w := range weights {
+		total += w
+	}
+	if total == 0 {
+		return -1
+	}
+	r %= total + 1
+	cumulative := 0
+	for i, w := range weights {
+		if w == 0 {
+			continue
+		}
+		cumulative += w
+		if cumulative >= r {
+			return i
+		}
+	}
+	return -1
 }
 
 // TriggerHPBelowHolds is trigger type 0: the owner's HP percentage

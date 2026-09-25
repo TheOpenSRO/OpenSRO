@@ -1428,8 +1428,10 @@ func performAttack(
 		// The monster strikes back: monsterStrike (monsterstrike.go) is this
 		// branch, moved there unchanged in round 541, and its outcome is copied
 		// into the result field for field, so the wire is what it was. The same
-		// outcome is the zone push below.
-		out, err := monsterStrike(ctx, strikeDeps{chars: chars, eq: eq, items: items, mp: mp, hub: hub, potions: potions}, monster, characterID, playerLevel)
+		// outcome is the zone push below. No skill is named: the counter rolls
+		// the monster's primary range, the col-83 skill's (round 554's draw is
+		// BATTLE's, under -monster-battle, which this branch is not).
+		out, err := monsterStrike(ctx, strikeDeps{chars: chars, eq: eq, items: items, mp: mp, hub: hub, potions: potions}, monster, combat.MonsterSkill{}, characterID, playerLevel)
 		if err != nil {
 			return err
 		}

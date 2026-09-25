@@ -127,6 +127,11 @@ type Monster struct {
 	// param carries the damage range. With no weapon to scale, the project's
 	// already-grounded skill formula collapses to rand(min, max).
 	AttackMin, AttackMax int
+	// Skills is every attack skill the species carries, col 83 first -- see
+	// Species.Skills. The monster AI's BATTLE draws its next swing from them
+	// (round 554); nil for a monster spawned without a list, whose swings
+	// are the primary fields above.
+	Skills []MonsterSkill
 	// GoldReward is the flat disclosed fallback; GoldMin/GoldMax are the real
 	// per-level range. See RollGold.
 	GoldReward       int64
@@ -814,6 +819,39 @@ type Species struct {
 	// Zero means unknown: such a monster cannot WANDER (the leg needs a run
 	// speed above 1e-6, ai.WanderMinRunSpeed).
 	WalkSpeed, RunSpeed float64
+	// Skills is every attack skill the species carries, in characterdata
+	// column order: cols 83..92 name up to ten skilldata rows, and the
+	// engine registers each one that resolves (AI::CTactics::
+	// BindSkillsAndRanges 0x53f951..0x53f98a: the ten dwords at
+	// RefObjChar+0x260, +0x260 being col 83 by the +0x230 = col 71 anchor of
+	// Monster.Critical's run). Skills[0] is therefore the col-83 skill whose
+	// numbers AttackReuseMs, AttackRange, AttackMin and AttackMax also carry.
+	// The monster AI's BATTLE draws its next swing from this list (ai.
+	// PickSkill, round 554); a species with none (a test's, Spawn's) swings
+	// the primary fields as before. Four roster species carry a second one;
+	// none carries a third (cmd/server's roster, read from the retail tables
+	// 2026-09-25).
+	Skills []MonsterSkill
+}
+
+// MonsterSkill is one attack skill as the monster AI draws and fires it:
+// its skilldata id, the numbers the draw and the swing read off the row --
+// ReuseDelay (column 14, ms), Range (column 21, world units) and
+// AI_AttackChance (column 66, CRefSkill+0x164 in PickSkill 0x561b00) -- and
+// the min and max of its 'att' block (values [2] and [3] of the six-word run
+// at CRefSkill+0x230, docs/protocol/skill_params.md "Fixed-run codes").
+// A skill whose Chance is 0 is never drawn (`cmp word [esi+0x164],0; je` at
+// 0x561c26). A skill whose AttMax is 0 -- MSKILL_CH_WATERGHOST_ATTACK02 169,
+// att 9,0,0,0,100 beside a `ps` param 28787 (34,100,16) whose effect
+// srrevamp has no status system for -- deals nothing (session.monsterStrike
+// resolves it to 0 explicitly rather than falling through to the flat
+// disclosed Attack). The 'att' percent (value [1]) is not applied to a
+// monster's blow, as it never has been (deferred, mob-monster-att-percent).
+type MonsterSkill struct {
+	ID             int64
+	ReuseMs, Range int
+	AttMin, AttMax int
+	Chance         int
 }
 
 // SpawnSpecies is Spawn with the species' code name carried along, so the
@@ -837,7 +875,7 @@ func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP,
 	id := h.nextID.Add(1)
 	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, RefObjID: species.RefObjID, Level: species.Level, Rarity: species.Rarity, BCRadius: species.BCRadius, AttackReuseMs: species.AttackReuseMs, AttackRange: species.AttackRange, Critical: species.Critical, Block: species.Block, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax,
 		GoldReward: goldReward, GoldMin: species.GoldMin, GoldMax: species.GoldMax, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP),
-		WalkSpeed: species.WalkSpeed, RunSpeed: species.RunSpeed, HomeX: x, HomeZ: z, DestX: x, DestZ: z}
+		WalkSpeed: species.WalkSpeed, RunSpeed: species.RunSpeed, Skills: species.Skills, HomeX: x, HomeZ: z, DestX: x, DestZ: z}
 	// The hatch heading. Nest_Hatch (0x005607b0) rolls a random one only for
 	// a species of the roster's TypeID shape whose rarity is not 3: `cmp
 	// [edi+0x89],3` at 0x5609b6, whose `jne` at 0x5609bd jumps to the rand()

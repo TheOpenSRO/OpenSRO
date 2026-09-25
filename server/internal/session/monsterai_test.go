@@ -2667,3 +2667,262 @@ func TestAggroLinkNeedsTheBattleOn(t *testing.T) {
 		t.Fatalf("battle off: %d move(s) pushed after the blow, want none", n)
 	}
 }
+
+// The two-skill species of round 554, exactly as cmd/server's roster carries
+// them (characterdata cols 83/84 -> skilldata cols 14/21/66 and the 'att'
+// block, read on the RE box 2026-09-25): Yeoha's ATTACK01 176 (range 7,
+// 67-79) and ATTACK03 177 (range 100, 94-105), both chance 100 and ReuseDelay
+// 2500; Water Ghost's ATTACK01 168 (range 16, 47-54, chance 100, 2000 ms) and
+// ATTACK02 169 (range 16, att 9,0,0,0,100 -- no damage --, chance 10, 4000 ms).
+var testYeoha = combat.Species{Name: "Yeoha", CodeName: "MOB_CH_YEOHA", RefObjID: 1943, Level: 10, BCRadius: 11, WalkSpeed: 9, RunSpeed: 20,
+	AttackReuseMs: 2500, AttackRange: 7, AttackMin: 67, AttackMax: 79,
+	Skills: []combat.MonsterSkill{{ID: 176, ReuseMs: 2500, Range: 7, AttMin: 67, AttMax: 79, Chance: 100}, {ID: 177, ReuseMs: 2500, Range: 100, AttMin: 94, AttMax: 105, Chance: 100}}}
+
+var testWaterGhost = combat.Species{Name: "Water Ghost", CodeName: "MOB_CH_WATERGHOST", RefObjID: 1939, Level: 7, BCRadius: 6, WalkSpeed: 15, RunSpeed: 55,
+	AttackReuseMs: 2000, AttackRange: 16, AttackMin: 47, AttackMax: 54,
+	Skills: []combat.MonsterSkill{{ID: 168, ReuseMs: 2000, Range: 16, AttMin: 47, AttMax: 54, Chance: 100}, {ID: 169, ReuseMs: 4000, Range: 16, AttMin: 0, AttMax: 0, Chance: 10}}}
+
+// armedSkillOf is the skill monster id's brain last armed (armSkill).
+func armedSkillOf(t *testing.T, a *monsterAI, id int64) (combat.MonsterSkill, bool) {
+	t.Helper()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	b := a.brains[id]
+	if b == nil {
+		t.Fatalf("monster %d has no brain", id)
+	}
+	return b.armed, b.hasArmed
+}
+
+// THE RED (round 554): a Yeoha in BATTLE against a player 60 units away, its
+// dice (seed 2) drawing MSKILL_CH_YEOHA_ATTACK03 -- at 60 units it weighs 100
+// + trunc((100 + 11 + 4 - 60) x 5 / 10) = 127 against ATTACK01's 100. Its
+// reach is 100 + 11 + 4 = 115, so the Yeoha is in reach where it stands: no
+// chase leg is pushed, and its first blow lands at once from 60 units, for at
+// least ATTACK03's 94 (Aria is unarmoured: no mitigation, no shield to block;
+// the level term and a critical only raise it). Before this round every
+// species swung its col-83 skill alone, and a Yeoha at 60 units ran to its
+// range-7 band (stop 22) before it could land anything.
+func TestYeohaDrawsItsLongSkillAndSwingsFromAfar(t *testing.T) {
+	battleForTest(t, true)
+	f := startBattleFixture(t, 2, 0, 0)
+	m := f.monsters.SpawnSpecies("jangan", testYeoha, 60, 0, 0, 1000, 0, 15, 0)
+	now := aiT0
+	monsterAITick(now) // the brain hatches into IDLE
+	now = now.Add(MonsterAITick)
+	noteStruck(f.monsters, m.ID, f.aria)
+	f.rec.reset()
+
+	monsterAITick(now) // drains the blow: BATTLE, the draw, and the swing
+	if st := stateOf(t, f.a, m.ID); st != ai.StateBattle {
+		t.Fatalf("state %v after the blow, want BATTLE", st)
+	}
+	armed, _ := armedSkillOf(t, f.a, m.ID)
+	if armed.ID != 177 {
+		t.Fatalf("the Yeoha armed skill %d, want ATTACK03 177 under seed 2 (the draw's dice; re-seed if the rng's consumers change)", armed.ID)
+	}
+	if moves := f.rec.of(m.ID); len(moves) != 0 {
+		t.Fatalf("a Yeoha that drew its 100-unit skill pushed %d move(s) %+v from 60 units, want no chase: it is in reach where it stands", len(moves), moves)
+	}
+	if !waitFor(t, 2*time.Second, func() bool { return len(f.rec.strikesOf(m.ID)) == 1 }) {
+		t.Fatalf("no OpMonsterAttacked within 2 s from 60 units (%d pushed): the swing did not use ATTACK03's range", len(f.rec.strikesOf(m.ID)))
+	}
+	got := f.rec.strikesOf(m.ID)[0]
+	if got.TargetCharacterID != f.aria || got.Damage < 94 || got.Blocked {
+		t.Errorf("the blow %+v, want ATTACK03's on Aria: at least its 94, unblocked", got)
+	}
+	if cur, _ := f.monsters.Get(m.ID); cur.X != 60 || cur.Moving {
+		t.Errorf("the Yeoha moved: %+v, want standing at 60", cur)
+	}
+	if c, _ := f.chars.GetByID(context.Background(), f.aria); c.HP != character.StartingMaxHP-int(got.Damage) && c.HP != 0 {
+		t.Errorf("Aria's HP after the blow = %d, want %d less than %d (or 0, dead)", c.HP, got.Damage, character.StartingMaxHP)
+	}
+}
+
+// The other branch of the same draw (seed 1: ATTACK01 176): the band follows
+// the ARMED skill, so this Yeoha chases to the range-7 band -- the leg to
+// round(stop) at the run speed 20 -- pushes no blow on the way, and lands
+// ATTACK01 (at least its 67) once int(dist) is within that band's reach.
+func TestYeohaDrawsItsShortSkillAndChasesToItsBand(t *testing.T) {
+	battleForTest(t, true)
+	f := startBattleFixture(t, 1, 0, 0)
+	m := f.monsters.SpawnSpecies("jangan", testYeoha, 60, 0, 0, 1000, 0, 15, 0)
+	now := aiT0
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	noteStruck(f.monsters, m.ID, f.aria)
+	f.rec.reset()
+
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	armed, _ := armedSkillOf(t, f.a, m.ID)
+	if armed.ID != 176 {
+		t.Fatalf("the Yeoha armed skill %d, want ATTACK01 176 under seed 1 (the draw's dice)", armed.ID)
+	}
+	stop, reach := combat.ApproachBand(11, combat.PlayerBCRadius, 7)
+	moves := f.rec.of(m.ID)
+	if len(moves) != 1 {
+		t.Fatalf("the tick after the blow pushed %d move(s) %+v, want exactly the chase leg to ATTACK01's band", len(moves), moves)
+	}
+	if leg := moves[0]; leg.Mode != 1 || leg.Speed != 20 || math.Abs(float64(leg.DestX)-math.Round(stop)) > 1e-3 || math.Abs(float64(leg.DestZ)) > 1e-3 {
+		t.Errorf("the chase leg %+v: want mode 1 at 20 to (%g, 0), round(stop) for range 7", leg, math.Round(stop))
+	}
+	if n := len(f.rec.strikesOf(m.ID)); n != 0 {
+		t.Fatalf("%d blow(s) pushed from 60 units with the range-7 skill armed", n)
+	}
+	inReach := false
+	for i := 0; i < 40 && !inReach; i++ {
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+		cur, _ := f.monsters.Get(m.ID)
+		inReach = combat.InReach(cur.X, reach)
+		if !inReach {
+			if n := len(f.rec.strikesOf(m.ID)); n != 0 {
+				t.Fatalf("a blow was pushed with the Yeoha %.1f from the player, outside ATTACK01's band", cur.X)
+			}
+		}
+	}
+	if !inReach {
+		t.Fatal("the chase never brought the Yeoha into its range-7 band in 4 s")
+	}
+	if !waitFor(t, 2*time.Second, func() bool { return len(f.rec.strikesOf(m.ID)) == 1 }) {
+		t.Fatalf("no OpMonsterAttacked within 2 s of reaching the band (%d pushed)", len(f.rec.strikesOf(m.ID)))
+	}
+	if got := f.rec.strikesOf(m.ID)[0]; got.Damage < 67 || got.Blocked {
+		t.Errorf("the blow %+v, want ATTACK01's: at least its 67, unblocked", got)
+	}
+}
+
+// The zero-damage skill (round 554's hazard, made explicit): a Water Ghost in
+// its band whose dice (seed 21) draw MSKILL_CH_WATERGHOST_ATTACK02 169 --
+// att 9,0,0,0,100 -- lands a blow of 0: pushed, unblocked, Aria's HP untouched.
+// Its flat disclosed Attack is 15 here, so a swing that fell through
+// monsterBlow's "no range" branch would land 15 or more. The cooldown is then
+// 169's own ReuseDelay, 4000 ms: no second blow on the 39th tick after it,
+// one on the 40th (ATTACK01's 2000 would have swung on the 20th).
+func TestWaterGhostZeroDamageSkillLandsNothing(t *testing.T) {
+	battleForTest(t, true)
+	f := startBattleFixture(t, 21, 0, 0)
+	m := f.monsters.SpawnSpecies("jangan", testWaterGhost, 20, 0, 0, 1000, 0, 15, 0)
+	now := aiT0
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	noteStruck(f.monsters, m.ID, f.aria)
+	f.rec.reset()
+
+	monsterAITick(now) // BATTLE, the draw, and -- in the band at 20 -- the swing
+	armed, _ := armedSkillOf(t, f.a, m.ID)
+	if armed.ID != 169 {
+		t.Fatalf("the Water Ghost armed skill %d, want ATTACK02 169 under seed 21 (the draw's dice)", armed.ID)
+	}
+	if !waitFor(t, 2*time.Second, func() bool { return len(f.rec.strikesOf(m.ID)) == 1 }) {
+		t.Fatalf("no OpMonsterAttacked within 2 s (%d pushed)", len(f.rec.strikesOf(m.ID)))
+	}
+	got := f.rec.strikesOf(m.ID)[0]
+	want := MonsterAttacked{MonsterID: m.ID, TargetCharacterID: f.aria, Damage: 0, TargetHP: int32(character.StartingMaxHP)}
+	if got != want {
+		t.Fatalf("the zero-damage skill's blow %+v, want %+v (nothing landed, nothing blocked)", got, want)
+	}
+	if c, _ := f.chars.GetByID(context.Background(), f.aria); c.HP != character.StartingMaxHP {
+		t.Errorf("Aria's HP after the zero-damage swing = %d, want %d untouched", c.HP, character.StartingMaxHP)
+	}
+	for i := 0; i < 39; i++ {
+		now = now.Add(MonsterAITick)
+		monsterAITick(now)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if n := len(f.rec.strikesOf(m.ID)); n != 1 {
+		t.Fatalf("%d blows 3.9 s after the ATTACK02 swing, want none before its 4000 ms ReuseDelay", n)
+	}
+	now = now.Add(MonsterAITick)
+	monsterAITick(now)
+	if !waitFor(t, 2*time.Second, func() bool { return len(f.rec.strikesOf(m.ID)) == 2 }) {
+		t.Fatalf("no second blow on the 40th tick (4000 ms) after the ATTACK02 swing: %d pushed", len(f.rec.strikesOf(m.ID)))
+	}
+}
+
+// monsterStrike by skill (round 554), directly: the drawn skill's own 'att'
+// block is what the blow rolls -- 169's zero block lands nothing, 168's
+// 47-54 lands at least 47 -- and no skill named (performAttack's counter, a
+// species without a list) is the monster's primary range, as before. The
+// CONTROL of the hazard: a monster with no range and no skill still deals its
+// flat disclosed Attack, which is the case that branch exists for.
+func TestMonsterStrikeRollsTheNamedSkill(t *testing.T) {
+	f := startBattleFixture(t, 44, 0, 0)
+	m := f.monsters.SpawnSpecies("jangan", testWaterGhost, 20, 0, 0, 1000, 0, 15, 0)
+	cur, _ := f.monsters.Get(m.ID)
+	ctx := context.Background()
+	out, err := monsterStrike(ctx, f.a.deps, cur, cur.Skills[1], f.aria, 1)
+	if err != nil || out.damage != 0 || out.blocked || out.critical || out.died || out.hp != character.StartingMaxHP {
+		t.Fatalf("a swing of 169 (att max 0) = %+v (err %v), want 0 damage at HP %d, nothing else", out, err, character.StartingMaxHP)
+	}
+	if c, _ := f.chars.GetByID(ctx, f.aria); c.HP != character.StartingMaxHP {
+		t.Fatalf("Aria's HP after the zero swing = %d, want %d", c.HP, character.StartingMaxHP)
+	}
+	out, err = monsterStrike(ctx, f.a.deps, cur, cur.Skills[0], f.aria, 1)
+	if err != nil || out.damage < 47 {
+		t.Fatalf("a swing of 168 (47-54) = %+v (err %v), want at least 47", out, err)
+	}
+	f.chars.ResetHP(ctx, f.aria)
+	out, err = monsterStrike(ctx, f.a.deps, cur, combat.MonsterSkill{}, f.aria, 1)
+	if err != nil || out.damage < 47 {
+		t.Fatalf("a swing with no skill named = %+v (err %v), want the primary range's at least 47", out, err)
+	}
+	f.chars.ResetHP(ctx, f.aria)
+	bare := cur
+	bare.AttackMin, bare.AttackMax, bare.Skills = 0, 0, nil
+	out, err = monsterStrike(ctx, f.a.deps, bare, combat.MonsterSkill{}, f.aria, 1)
+	if err != nil || out.damage < 15 {
+		t.Fatalf("a swing of a monster with no range at all = %+v (err %v), want its flat Attack, at least 15", out, err)
+	}
+}
+
+// CONTROL, the default: with -monster-battle off a struck Yeoha is in the
+// interim hold, exactly as before this round -- it stands where it is through
+// the hold's ticks with no skill drawn or armed, and once the release lets
+// IDLE have it, it may wander but never runs to the player's band or swings.
+// The counter it would answer with is performAttack's, which rolls the
+// primary range (TestMonsterStrikeRollsTheNamedSkill's no-skill case).
+func TestBattleOffDrawsNoSkill(t *testing.T) {
+	battleForTest(t, false)
+	f := startBattleFixture(t, 2, 0, 0)
+	m := f.monsters.SpawnSpecies("jangan", testYeoha, 60, 0, 0, 1000, 0, 15, 0)
+	now := aiT0
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	noteStruck(f.monsters, m.ID, f.aria)
+	f.rec.reset()
+	for i := 0; i < 2; i++ { // the entry tick and one tick into the hold
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+		if st := stateOf(t, f.a, m.ID); st != ai.StateBattle {
+			t.Fatalf("state %v %d tick(s) after the blow, want BATTLE (the hold)", st, i+1)
+		}
+		if _, has := armedSkillOf(t, f.a, m.ID); has {
+			t.Fatal("a skill was armed with the battle off: the draw is BATTLE's, under the flag")
+		}
+		if moves := f.rec.of(m.ID); len(moves) != 0 {
+			t.Fatalf("with the battle off the hold pushed %+v, want nothing", moves)
+		}
+		if cur, _ := f.monsters.Get(m.ID); cur.X != 60 || cur.Moving {
+			t.Fatalf("the held Yeoha is at %g (moving %v), want standing at 60", cur.X, cur.Moving)
+		}
+	}
+	stop, _ := combat.ApproachBand(11, combat.PlayerBCRadius, 7)
+	for i := 0; i < 50; i++ {
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := len(f.rec.strikesOf(m.ID)); n != 0 {
+		t.Fatalf("with the battle off the Yeoha pushed %d blow(s) of its own", n)
+	}
+	if _, has := armedSkillOf(t, f.a, m.ID); has {
+		t.Error("a skill was armed with the battle off")
+	}
+	for _, mv := range f.rec.of(m.ID) {
+		if mv.Mode == 1 && math.Hypot(float64(mv.DestX), float64(mv.DestZ)) <= math.Round(stop)+combat.ReachSlack {
+			t.Errorf("with the battle off a run to the player's band was pushed: %+v", mv)
+		}
+	}
+}
