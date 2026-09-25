@@ -519,6 +519,15 @@ landed this pass.
     that nothing in this project currently reads — water tiles get the same flat tile-type-color
     fallback as any other unresolved ground texture. A real, understood, not-yet-addressed gap
     (no dynamic water shader/animation exists at all), not a new bug.
+    **Corrected 2026-09-25 (round 569, `docs/RE_COMPLETION.md`):** `102/153` is Donwhang itself,
+    not a crossing near it. The game's own tables put the town there: 15 of its 26 `NPC_WC_*`
+    npcpos rows (6 more in `103/153`) and its dimensional gate `GATE_WC` (teleportdata,
+    `SN_ZONE_22002` "Donwhang") are in `102/153`, and `textzonename.txt` names `102/153` "Donwhang"
+    and the density pick `98/157` "Donwhang Ferry". Both sides now centre the zone on `102/153`.
+    The same round moved Constantinople from `104/80` to `105/79` (10 of 33 `NPC_EU_*` rows and
+    `GATE_EU`), confirmed Hotan's `92/135` (the most `NPC_KT_*` rows and `GATE_KT`), and left
+    Samarkand's `106/107` as a disclosed open question: its `NPC_CA_*` rows split over the four
+    regions at the `106-107/107-108` corner and `GATE_CA` is in `106/108`.
 - Sent the user a batch of the new renders (Hotan walls, the Samarkand biome transition, the
   Dunhuang river).
 - Full verification swept clean afterward: `go build`/`go vet`/`go test ./...`, every GDScript
@@ -534,7 +543,9 @@ landed this pass.
 - Continued the map sweep beyond Jangan. Reused `findregionassets` to locate a second real named
   location purely from real object placement data (the same technique that found Jangan): searched
   for any real object whose resolved path contains "constantinople", found a dense real cluster
-  centered on region `104/80` (European-style architecture — `res\bldg\europe\constantinople\...`),
+  centered on region `104/80` (European-style architecture — `res\bldg\europe\constantinople\...`;
+  **corrected 2026-09-25, round 569:** the town's own NPC rows and gate are one region over, in
+  `105/79`, and both sides centre the zone there now -- see the "cont'd 80" correction above),
   and rendered it. Real drawbridge/gate structure with chains, cobblestone streets, wooden
   staircases, benches, and a real 23-piece merchant stall (`euro_constan_special.bsr` — walls,
   roof, sign, goods, pottery, carpet, flag) all loaded and positioned correctly, all real errors in

@@ -106,3 +106,74 @@ func TestToZoneWorldRejectsAnUnknownZone(t *testing.T) {
 		t.Errorf("jangan (96/168, 1090, 600) = (%g, %g), want (130, 2280)", x, z)
 	}
 }
+
+// Every named zone's centre is the region the game's own tables put the town
+// in, and the same region the client's World3D.gd builds for the label
+// (_resolve_zone_region; client/scripts/world/zone_centres_test.gd pins the
+// client side to these same rows). Measured on the render box on 2026-09-25
+// (round 569) from /var/tmp/tables: npcpos.txt joined to characterdata on the
+// first column, counted by the town's NPC code, against teleportdata.txt's
+// GATE_<code> row:
+//
+//	NPC_CH_ 97/168 18 of 67, GATE_CH (SN_ZONE_22001 "Jangan")         97/168
+//	NPC_WC_ 102/153 15 of 26, GATE_WC (SN_ZONE_22002 "Donwhang")      102/153
+//	NPC_EU_ 105/79 10 of 33, GATE_EU (SN_ZONE_22004 "Constantinople") 105/79
+//	NPC_KT_ 92/135 6 of 29, GATE_KT (SN_ZONE_22003 "Hotan")           92/135
+//
+// Samarkand's rows and gate do not agree (NPC_CA_ 5/4/4/3 over
+// 107/108, 106/108, 107/107, 106/107; GATE_CA, SN_ZONE_22005 "Samarkand", in
+// 106/108), so its row is the client's own SAMARKAND_ZONE_REGION, disclosed as
+// unresolved rather than chosen between the tables.
+//
+// Until round 569 the server said dunhuang/donwhang 98/157 (textzonename:
+// "Donwhang Ferry"), constantinople 100/98, hotan 87/118 and samarkand 88/130,
+// and every one of those rows fails here.
+func TestZoneCentresAreTheTownsOwnRegions(t *testing.T) {
+	want := map[string][2]int{
+		"jangan":         {97, 168},
+		"dunhuang":       {102, 153},
+		"donwhang":       {102, 153},
+		"constantinople": {105, 79},
+		"hotan":          {92, 135},
+		"samarkand":      {106, 107},
+	}
+	for zone, w := range want {
+		got, ok := ZoneCentre[zone]
+		if !ok {
+			t.Errorf("ZoneCentre has no %q", zone)
+			continue
+		}
+		if got != w {
+			t.Errorf("ZoneCentre[%q] = %d/%d, want %d/%d", zone, got[0], got[1], w[0], w[1])
+		}
+	}
+	if len(ZoneCentre) != len(want) {
+		t.Errorf("ZoneCentre has %d zones, want %d -- a new zone needs its row here, from the tables",
+			len(ZoneCentre), len(want))
+	}
+}
+
+// Moving a zone's centre moves its whole frame: a real placement converts to
+// ToWorld of its own row against the new centre, never the old one. The
+// expected value is derived from ToWorld, not written as a literal, with the
+// axes as TestToWorldMatchesTheMeasuredColumns measured them: region y drives
+// world X, region x drives world Z, and Z is mirrored.
+func TestDonwhangConvertsInTheTownsFrame(t *testing.T) {
+	// A real MOB_WC_EARTHGHOST (1963) row, the first npcpos.txt gives it:
+	// region 26007 = 101/151, local (460.51, 1023.06).
+	rx, ry := RegionXY(26007)
+	x, z, ok := ToZoneWorld("donwhang", rx, ry, 460.51, 1023.06)
+	if !ok {
+		t.Fatal("donwhang must convert")
+	}
+	wantX, wantZ := ToWorld(rx, ry, 460.51, 1023.06, 102, 153)
+	if x != wantX || z != wantZ {
+		t.Errorf("donwhang (101/151, 460.51, 1023.06) = (%g, %g), want ToWorld against 102/153 = (%g, %g)",
+			x, z, wantX, wantZ)
+	}
+	// And not in the old frame, 98/157 ("Donwhang Ferry"), which puts the
+	// same row somewhere else.
+	if oldX, oldZ := ToWorld(rx, ry, 460.51, 1023.06, 98, 157); x == oldX && z == oldZ {
+		t.Errorf("donwhang (101/151) still converts against the old centre 98/157, to (%g, %g)", x, z)
+	}
+}

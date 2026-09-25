@@ -138,6 +138,17 @@ type realSpawn struct {
 	LocalX, LocalZ float64
 }
 
+// realSpawnWorld is where a real npcpos row stands in its zone's world: the
+// row converted against the zone's centre region (worldmap.ZoneCentre), the
+// frame the client builds that zone's grid in. The spawn loop in main and
+// gmSpecies both place through it, so a moved centre (round 569: donwhang
+// 98/157 -> 102/153) moves every row of the zone the same way. ok is false
+// for a zone with no known centre.
+func realSpawnWorld(zone string, s realSpawn) (x, z float64, ok bool) {
+	rx, ry := worldmap.RegionXY(s.RegionID)
+	return worldmap.ToZoneWorld(zone, rx, ry, s.LocalX, s.LocalZ)
+}
+
 // monsterStatsForLevel is the FALLBACK half of a monster's combat profile:
 // a flat counter-attack and a flat gold reward derived from the grounded
 // level, used only for a species whose real numbers are missing. In the live
@@ -297,6 +308,15 @@ var monsterSpecs = []monsterSpec{
 	{Zone: "jangan", Name: "Yeoha", CodeName: "MOB_CH_YEOHA", RefObjID: 1943, WalkSpeed: 9, RunSpeed: 20, AttackReuseMs: 2500, AttackRange: 7, Level: 10, BCRadius: 11, Critical: 2, MaxHP: 249, Defense: 22, AttackMin: 67, AttackMax: 79, GoldMin: 60, GoldMax: 125,
 		Skills: []combat.MonsterSkill{{ID: 176, ReuseMs: 2500, Range: 7, AttMin: 67, AttMax: 79, Chance: 100}, {ID: 177, ReuseMs: 2500, Range: 100, AttMin: 94, AttMax: 105, Chance: 100}}, X: 200, Z: -220, Count: 2},
 	// The donghwang example kept from before (a far, higher-level zone).
+	// Its X/Z anchor is own design and, like every coordinate in a zone, is
+	// relative to the zone's centre region (worldmap.ZoneCentre). Round 569
+	// moved donwhang's centre from 98/157 (textzonename: "Donwhang Ferry") to
+	// the town, 102/153, so without -npcpos-csv this one monster now stands
+	// at (-60, -50) -- the anchor plus the spread's -130 for a lone instance
+	// -- from the middle of the town's region rather than the ferry's.
+	// With -npcpos-csv it takes MOB_WC_EARTHGHOST's 65 real rows instead,
+	// all in the regions around the town (96-105/148-156, none in 102/153 or
+	// 103/153), each converted by realSpawnWorld against the new centre.
 	{Zone: "donwhang", Name: "Earth Ghost", CodeName: "MOB_WC_EARTHGHOST", RefObjID: 1963, WalkSpeed: 11, RunSpeed: 75, AttackReuseMs: 2000, AttackRange: 7, Level: 27, BCRadius: 4, Critical: 2, MaxHP: 1451, Defense: 103, AttackMin: 219, AttackMax: 261, GoldMin: 119, GoldMax: 250,
 		Skills: []combat.MonsterSkill{{ID: 210, ReuseMs: 2000, Range: 7, AttMin: 219, AttMax: 261, Chance: 100}}, X: 70, Z: -50, Count: 1},
 }
@@ -387,9 +407,7 @@ func gmSpecies() []gm.Species {
 		}
 		x, z := spec.X, spec.Z
 		if len(spec.Spawns) > 0 {
-			s := spec.Spawns[0]
-			rx, ry := worldmap.RegionXY(s.RegionID)
-			if wx, wz, ok := worldmap.ToZoneWorld(spec.Zone, rx, ry, s.LocalX, s.LocalZ); ok {
+			if wx, wz, ok := realSpawnWorld(spec.Zone, spec.Spawns[0]); ok {
 				x, z = wx, wz
 			}
 		}
@@ -993,8 +1011,7 @@ func main() {
 		if len(spec.Spawns) > 0 {
 			placed := 0
 			for _, s := range spec.Spawns {
-				rx, ry := worldmap.RegionXY(s.RegionID)
-				x, z, ok := worldmap.ToZoneWorld(spec.Zone, rx, ry, s.LocalX, s.LocalZ)
+				x, z, ok := realSpawnWorld(spec.Zone, s)
 				if !ok {
 					// The zone's own centre region is what world coordinates
 					// are relative to; without it there is no frame to convert

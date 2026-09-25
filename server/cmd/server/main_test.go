@@ -138,6 +138,66 @@ func TestMangyangStandsWhereTheGamePutsIt(t *testing.T) {
 	}
 }
 
+// The Earth Ghost's real rows convert in the town's frame (round 569). Its
+// zone label is "donwhang", whose centre moved from 98/157 (textzonename:
+// "Donwhang Ferry") to 102/153, the region Donwhang's own NPC rows and its
+// gate GATE_WC are in (worldmap.ZoneCentre). With -npcpos-csv the spawn loop
+// in main and gmSpecies (/goto) both place a row through realSpawnWorld, so
+// both must give ToWorld of the row against 102/153 -- derived, not written
+// as a literal (the axes: region y -> world X, region x -> world Z, Z
+// mirrored; worldmap's TestToWorldMatchesTheMeasuredColumns). Against the old
+// centre the same row lands elsewhere, which is what fails here on a server
+// still built around 98/157.
+func TestEarthGhostConvertsInDonwhangsTownFrame(t *testing.T) {
+	idx := -1
+	for i, s := range monsterSpecs {
+		if s.CodeName == "MOB_WC_EARTHGHOST" {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		t.Fatal("the Earth Ghost is not in the roster")
+	}
+	spec := monsterSpecs[idx]
+	if spec.Zone != "donwhang" {
+		t.Fatalf("the Earth Ghost's zone is %q, want donwhang", spec.Zone)
+	}
+	// MOB_WC_EARTHGHOST (1963)'s first npcpos.txt row: region 26007 =
+	// 101/151, local (460.51, 1023.06) -- one of its 65, all in 96-105/148-156.
+	row := realSpawn{RegionID: 26007, LocalX: 460.51, LocalZ: 1023.06}
+	rx, ry := worldmap.RegionXY(row.RegionID)
+	wantX, wantZ := worldmap.ToWorld(rx, ry, row.LocalX, row.LocalZ, 102, 153)
+
+	x, z, ok := realSpawnWorld(spec.Zone, row)
+	if !ok {
+		t.Fatal("the Earth Ghost's row did not convert -- donwhang has no centre")
+	}
+	if x != wantX || z != wantZ {
+		t.Errorf("spawn loop: Earth Ghost row 101/151 -> (%g, %g), want ToWorld against 102/153 = (%g, %g)",
+			x, z, wantX, wantZ)
+	}
+
+	// /goto Earth Ghost goes to the species' first real row, through the
+	// same conversion.
+	saved := monsterSpecs[idx].Spawns
+	monsterSpecs[idx].Spawns = []realSpawn{row}
+	defer func() { monsterSpecs[idx].Spawns = saved }()
+	found := false
+	for _, sp := range gmSpecies() {
+		if sp.CodeName != "MOB_WC_EARTHGHOST" {
+			continue
+		}
+		found = true
+		if sp.Zone != "donwhang" || sp.X != wantX || sp.Z != wantZ {
+			t.Errorf("/goto Earth Ghost -> %s (%g, %g), want donwhang (%g, %g)", sp.Zone, sp.X, sp.Z, wantX, wantZ)
+		}
+	}
+	if !found {
+		t.Error("gmSpecies has no Earth Ghost")
+	}
+}
+
 // TestMonsterDefenceIsReal pins the per-species flat absorption against the
 // ORIGINAL client's characterdata column 71, and checks the starter weapon can
 // still hurt the early ladder through the game's own mitigation.

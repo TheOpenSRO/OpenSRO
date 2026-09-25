@@ -7075,6 +7075,59 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-sixty-ninth round: every town's centre is the same on the server and the client, from the game's own NPC rows and gates
+
+The frame-on-the-wire item aborted because the server's `worldmap.ZoneCentre` and the client's
+`*_ZONE_REGION` constants named different regions for constantinople (server 100/98, client
+104/80), hotan (87/118, 92/135) and samarkand (88/130, 106/107). This round makes them agree, and
+the full table, evidence and tests are `docs/RE_COMPLETION.md`'s round 569.
+
+**The rule.** A town's centre is the region where its own NPC rows (npcpos joined to characterdata
+on the first column, counted by the town's code: CH, WC, KT, EU, CA) and its dimensional gate
+(`teleportdata.txt`'s `GATE_<code>`, `SN_ZONE_22001..22005`) agree. Where they disagree, the
+server takes the client's constant and the disagreement stays open.
+
+- **Donwhang 98/157 -> 102/153**, both sides: 15 of 26 `NPC_WC_*` rows and `GATE_WC`.
+  `textzonename.txt` names 98/157 "Donwhang Ferry" and 102/153 "Donwhang". The density pick of
+  2026-08-24 had called 102/153 a ferry crossing near the town; it is the town.
+- **Constantinople 104/80 -> 105/79**, both sides: 10 of 33 `NPC_EU_*` rows and `GATE_EU`.
+- **Hotan 92/135**: the client was right; the server moves from 87/118 ("Aircraft dock").
+- **Samarkand 106/107, unresolved**: its `NPC_CA_*` rows split 5/4/4/3 over the four regions at the
+  106-107/107-108 corner and `GATE_CA` lands in 106/108, so the server takes the client's 106/107
+  (from 88/130, "East-Karakoram"). The plan had read `NPC_SD_*` as Samarkand's; `SD` is Alexandria
+  (the text tables name its NPCs, its gates `GATE_SD1`/`SD2` and its regions 90/48-94/48
+  "Alexandria").
+- **"donwhang"** -- the server's spelling, on the /goto list and the Earth Ghost's roster zone --
+  resolves on the client now; until this round it fell through and a `/goto donwhang` left the
+  placeholder ground.
+
+**Measured, not pictured.** Each centre's heightmap, read over all 10,404 vertices against its own
+anchor (the near-row vertex the client sets to y = 0; the frame is the centre, so each town
+calibrates itself): 102/153 draws -55.0 .. 12.4, 105/79 -221.2 .. 32.4, 92/135 -243.8 .. 7.9,
+106/107 0.0 .. 6.4 -- inside the +-1000 snap ray and above `WORLD_FLOOR_Y` (-500) everywhere. The
+server lands a player at (0, 0, 0), the centre's middle; `walk_probe.gd` from local (960, 960) finds
+open terrain in all four (y -106.6, 83.7, 243.8, 180.0 raw) and 120 units of walking with no wall,
+so no `ZONE_SPAWN_LOCAL` entry was added.
+
+The QA runs on the box (`/var/tmp/r569/<town>.log`, a GM `/goto <town>` from Jangan with this
+round's server and client, radius 1):
+
+| town | centre built | landing (local, the walkable graph) |
+|---|---|---|
+| donwhang | `102\153.m` at frame 74, 18/19 NPCs | (960, -106.6, 960) on terrain, the drawn ground at the same height |
+| constantinople | `105\79.m` at frame 75, 13/14 NPCs | (960, 83.7, 960) on terrain, drawn the same |
+| hotan | `92\135.m` at frame 74, 10/11 NPCs | (960, 243.8, 960) on terrain, drawn the same |
+| samarkand | `106\107.m` at frame 75, 3/3 NPCs | (960, 180.0, 960) on terrain; the drawn ray meets a placed weed model 64.1 above first |
+
+0 `SCRIPT ERROR` in any of the four.
+
+**What a tagged client sees after the server deploys.** Nothing it shows changes: the server uses a
+zone's centre only to convert real placements into it, and only "jangan" and "donwhang" hold roster
+species; a tagged client cannot build "donwhang" at all (placeholder ground before and after), its
+"dunhuang" still builds 98/157 in the same place, and its hotan and samarkand now agree with the
+server. Without `-npcpos-csv`, the Earth Ghost's own-design anchor is relative to the centre and so
+stands in the town's region now, 78 units from the landing in the Donwhang run.
+
 ## Five-hundred-and-sixty-eighth round: batch-21 review follow-ups -- record wording, run counts, the test gaps; no behaviour change
 
 The review notes on rounds 564-567, each re-checked against the logs under `/var/tmp/r565..r567`,

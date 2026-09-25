@@ -37712,3 +37712,219 @@ code and spread); `World3D.gd` (the QA header, `_terrain_prepare`, `_objects_pre
 **Deploy note.** Client and docs only; not tag-worthy -- nothing a player sees. The `prepared
 again` line's texture count can read higher than before only where a held texture was decoded
 again for a statistic another commit has since supplied. No server change, no flag.
+
+## Every town's centre is the same on the server and the client: Donwhang, Constantinople and Hotan from the game's own tables, Samarkand disclosed as unresolved, and the client resolves the server's "donwhang" label (round 569)
+
+Server and client, tag-worthy: the first item of batch 22 of the map/travel epic (2026-09-25, "I
+want this whole map loaded and explorable"). A first attempt at the batch's frame-on-the-wire item
+aborted before any edit, because the server's `worldmap.ZoneCentre` and the client's
+`World3D.gd` `*_ZONE_REGION` constants disagreed for three of the six zone labels -- the frame
+could not be named on the wire while the two sides meant different regions by it. This round makes
+them agree for every label, from the game's own tables where the tables agree. No opcode, no
+packet layout and no flag changes.
+
+**What was wired.**
+
+- `worldmap.ZoneCentre` (server): `dunhuang`/`donwhang` 98/157 -> **102/153**, `constantinople`
+  100/98 -> **105/79**, `hotan` 87/118 -> **92/135**, `samarkand` 88/130 -> **106/107**; `jangan`
+  97/168 unchanged. Its comment claimed the entries mirrored the client's constants, which was
+  false for three of them; it now states the rule, the table below and the Samarkand disclosure.
+- `World3D.gd` (client): `DUNHUANG_ZONE_REGION` "98/157" -> **"102/153"**,
+  `CONSTANTINOPLE_ZONE_REGION` "104/80" -> **"105/79"**; `HOTAN_ZONE_REGION` "92/135" and
+  `SAMARKAND_ZONE_REGION` "106/107" unchanged, now documented as confirmed and as unresolved
+  respectively. `_resolve_zone_region` resolves **"donwhang"** (the server's spelling) to the same
+  region as "dunhuang".
+- `cmd/server`: `realSpawnWorld(zone, row)`, the one conversion both the roster spawn loop in `main`
+  and `gmSpecies` (/goto) now place a real npcpos row through; the Earth Ghost's roster comment
+  records what its own-design anchor means under the new centre (below).
+
+**1. The measurement** (render box, 2026-09-25, read-only, `/var/tmp/tables`; each table's UTF-16
+BOM stripped before the join). `npcpos.txt` (12,367 rows) was joined to `characterdata_*.txt` on
+the FIRST column (id), never by grepping an id; 1,710 rows did not join (ids 38148-38257, beyond
+the six characterdata parts on the box; none of them sits in any region of the table below). The
+town codes are the game's own: `teleportdata.txt`'s five `GATE_<code>` rows name
+`SN_ZONE_22001..22005`, which
+`textdata_object.txt` resolves to Jangan (CH), Donwhang (WC), Hotan (KT), Constantinople (EU) and
+Samarkand (CA). `teleportbuilding.txt`'s `STORE_<code>_GATE` row is the gate's building (region id
+column 42), and `textzonename.txt` names each region by id:
+
+| town | NPC_<code>_ rows, by region | GATE_<code> (teleportdata) | STORE_<code>_GATE (teleportbuilding) | client before | server before (textzonename) | centre now |
+|---|---|---|---|---|---|---|
+| Jangan (CH) | 97/168 18, 97/167 8, 97/169 7, 98/167 5, ... of 67 | 97/168 (969, 1369) | 97/168 | 97/168 | 97/168 | 97/168 |
+| Donwhang (WC) | 102/153 15, 103/153 6, 5 elsewhere, of 26 | 102/153 (957, 1508) | 103/153 at local (962, 8) | 98/157 | 98/157 "Donwhang Ferry" | **102/153** "Donwhang" |
+| Constantinople (EU) | 105/79 10, 107/79 3, 105/78 3, 105/77 3, 104/80 3, 104/78 3, ... of 33 | 105/79 (950, 1070) | 105/79 | 104/80 | 100/98 "Cleopatra's Gate" | **105/79** "Constantinople" |
+| Hotan (KT) | 92/135 6, 91/135 4, 92/136 3, ... of 29 | 92/135 (1138, 153) | 92/135 | 92/135 | 87/118 "Aircraft dock" | **92/135** "Hotan Kingdom" |
+| Samarkand (CA) | 107/108 5, 106/108 4, 107/107 4, 106/107 3, 3 elsewhere, of 19 | 106/108 (270, 1421) | 107/107 at local (1917, 108) | 106/107 | 88/130 "East-Karakoram" | **106/107**, unresolved |
+
+The server's three disagreeing values arrived in `edc6fea` (the Mangyang transform round) with no
+recorded source (`git log -S` on `worldmap.go` finds that commit only, and neither its message nor
+any doc names them); by the game's own region names none of them is its town. The client's picks
+were densest-architecture scans (`cmd/scanlandmarks`, `cmd/findregionassets`; `docs/PROGRESS.md`,
+2026-08-24), which chose a neighbour of the town twice.
+
+**A correction to the plan's measurement.** The plan (from its verifier) read Samarkand's NPCs as
+`NPC_SD_*` in 91/48-94/48 and its gate as "GATE_SD 106/108". `SD` is Alexandria:
+`textdata_object.txt` names the `SN_NPC_SD_*` rows "Alexandria Trade center", "Weapon Trader
+Hemaka" and so on, `GATE_SD1`/`GATE_SD2` are `SN_ZONE_21836_15`/`_16`, "Alexandria (South)" and
+"(North)", in 90/48 and 92/51, and `textzonename.txt` names 90/48-94/48 "Alexandria". Samarkand's
+code is `CA` (`GATE_CA` = `SN_ZONE_22005` "Samarkand", `SN_NPC_CA_GATE`). The rule's outcome for
+Samarkand is the same either way -- its rows and its gate do not agree on one region -- so the
+item was implemented as planned; the evidence is corrected here.
+
+**2. The rule, one for every town.** Where a town's NPC rows (the region holding the most of them)
+AND its `GATE_<code>` row agree on a region, that region is the centre on both sides. Where they
+disagree, the server takes the client's current constant, so both sides agree, and the
+disagreement is recorded as an open question; no choice is made between conflicting rows.
+
+- Jangan, Constantinople, Hotan: rows and gate agree (97/168, 105/79, 92/135), and the gate
+  building is in the same region.
+- Donwhang: the most rows and `GATE_WC` agree on 102/153. The gate's building row puts its origin
+  in 103/153 at local z 8 -- ToWorld in the 102/153 frame gives (2, -968), 8 units past the
+  region's edge at z -960 -- so the building straddles the line while its landing point is well
+  inside 102/153; both regions are named "Donwhang". Recorded, not a disagreement about the town.
+- **Samarkand: unresolved, disclosed.** Its 16 in-town `NPC_CA_*` rows split 5/4/4/3 over 107/108,
+  106/108, 107/107 and 106/107, the four regions that meet at one corner; its gate soldiers stand
+  on the walls on both sides of those lines (`SOLDIER_SO1`/`SO2` 133 units apart across the 107/108
+  line in region x 106, `WE1`/`WE2` at 107/107's low-X edge, `EA1`/`EA2` at 107/108's high-X edge);
+  `GATE_CA` lands in 106/108; and the gate building stands in 107/107 at local (1917, 108), about
+  108 units from the corner. Both sides take the client's 106/107, one of the four (textzonename:
+  "Samarkand"). Open question: which region, if any, the real client treats as the town's.
+
+**3. Records corrected.** `worldmap.ZoneCentre`'s comment; `docs/PROGRESS.md`'s 2026-08-24 entries
+("cont'd 80": 102/153 is Donwhang itself, not "a river/ferry crossing near Dunhuang"; "cont'd 79":
+Constantinople's 104/80), each with a dated note in place; `docs/GROUNDING_AUDIT.md`'s named-zone
+row (the new evidence) and a new row for Samarkand as UNRESOLVED.
+
+**4. "donwhang" on a tagged client, read from the code before the change.** The server's roster zone
+for the Earth Ghost, `worldmap.ZoneNames` and so the GM console's `/goto` list all say "donwhang".
+`World3D._resolve_zone_region` knew "dunhuang" only, so "donwhang" came back unchanged,
+`_parse_region_coords` and `_zone_paths` gave `{}`, and `_reload_zone_assets` printed "zone
+donwhang isn't shaped like a real region (x/y)" and left the placeholder ground. The client test's
+negative run below shows exactly that (`got donwhang`, paths `{  }`). The alias is added.
+
+**5. Heights: each town calibrates itself.** The frame is the centre (the server's (0, 0, 0) is the
+middle of the centre region), and `_load_region_neighborhood` builds the centre with no shared
+anchor, so `_terrain_commit` takes the centre's own near-row vertex
+(`MapmTerrainBuilder.near_row_middle_height`, block 0 vertex 8 = local (160, 0)) as y = 0 and hands
+that same value to every neighbour (`_grid_shared_anchor_height`) -- confirmed in the code, no
+other region's anchor is involved. Each centre's `.m` was pulled with `tools/extract_pk2_file.gd`
+(to `/var/tmp/r569`, deleted after) and read over all 36 x 289 vertices with a scratch copy of
+`internal/mapm` (not committed); "rel" is raw minus the anchor, the height the client draws:
+
+| centre | anchor (160, 0) | raw min .. max | rel min .. max | middle (960, 960) raw / rel |
+|---|---|---|---|---|
+| 97/168 Jangan | -2.49 | -60.86 .. 3.91 | -58.36 .. 6.40 | -54.39 / -51.90 (the nav graph stands on `cj_jang_gate` at -32.6) |
+| 102/153 Donwhang | -99.12 | -154.15 .. -86.70 | -55.03 .. 12.42 | -106.56 / -7.44 |
+| 105/79 Constantinople | 80.00 | -141.16 .. 112.38 | -221.16 .. 32.38 | 83.74 / 3.74 |
+| 92/135 Hotan | 243.81 | 0.00 .. 251.70 | -243.81 .. 7.89 | 243.83 / 0.02 |
+| 106/107 Samarkand | 180.00 | 180.00 .. 186.36 | 0.00 .. 6.36 | 180.00 / 0.00 |
+
+Every centre's whole drawn range lies inside `_snap_player_onto_terrain`'s +-1000 ray and above
+`WORLD_FLOOR_Y` (-500); the lowest drawn point of any centre is Hotan's -243.81. The anchors agree
+with the aborted item's `heightat` readings (97/168 -2.49, 92/135 243.81, 106/107 180.00, and the
+old picks 98/157 21.13, 104/80 -138.28). For the record, the old Constantinople pick's middle was
+140.34 below its own anchor (104/80, rel -161.72 .. 218.28).
+
+**6. The landing.** A zone change and `/goto <town>` land at the server's `spawnPos` (0, 0, 0), the
+middle of the centre region (`ZONE_SPAWN_LOCAL` covers 97/168 only). Measured on each corrected
+centre's walkable graph with `tools/walk_probe.gd` from local (960, 960), heading 0, 60 steps of 2:
+
+| centre | at (960, 960) | 120 units north |
+|---|---|---|
+| 102/153 | terrain, y -106.6 | terrain, 0 wall contacts |
+| 105/79 | terrain, y 83.7 | terrain, 0 wall contacts |
+| 92/135 | terrain, y 243.8 | terrain (244.0), 0 wall contacts |
+| 106/107 | terrain, y 180.0 | terrain, 0 wall contacts |
+
+(and the gate points: 102/153 (957, 1508) terrain -106.8, 0 walls; 105/79 (950, 1070) terrain 83.7,
+a wall 94 units north then onto `euro_constan_bl_02`; 92/135 (1138, 153) on `oas_hot_plaza01` at
+244.3.) Every middle is open, walkable terrain, so no `ZONE_SPAWN_LOCAL` entry was added: the
+server's landing is usable as it is, and a grounded gate point stays available (the debug panel's
+town buttons already travel to the five towns' `GATE_*` points, and Alexandria's `GATE_SD1`) if a
+later round wants the gate as the landing.
+
+**7. The Earth Ghost.** `MOB_WC_EARTHGHOST` (1963) has 65 npcpos rows, all in 96-105/148-156 and
+none in 102/153 or 103/153 (the town itself). With `-npcpos-csv` each is converted by
+`realSpawnWorld` against the zone's centre, so moving the centre moves every row the same way:
+`TestEarthGhostConvertsInDonwhangsTownFrame` holds the spawn loop's conversion and `gmSpecies`'
+/goto spot for a real row (26007 = 101/151, local (460.51, 1023.06)) to `worldmap.ToWorld(row, 102,
+153)` -- derived from ToWorld, not written as a literal (axes: region y -> world X, region x ->
+world Z, Z mirrored, as `TestToWorldMatchesTheMeasuredColumns` measured them). Disclosed: WITHOUT
+`-npcpos-csv` the Earth Ghost stands at its own-design anchor (70, -50) plus the spawn spread, which
+is relative to the centre and so now in the middle of the town's region instead of the ferry's (the
+Donwhang QA run below: `monster Earth Ghost ... at -60,-7,-50 (78 from the player)`). Monster AI and
+aggro are off by default, so it does not attack; the public server's `-npcpos-csv` replaces the
+anchor with the 65 real rows.
+
+**8. Tagged clients after the server change (auto-deploys).** Nothing a tagged client shows changes:
+the server uses a zone's centre only to convert real placements into it (`realSpawnWorld`) and for
+the /goto list's names, which are unchanged, and only the "jangan" and "donwhang" zones have roster
+species. Per label:
+
+- `jangan`: unchanged, 97/168 both sides.
+- `dunhuang`: a tagged client still builds 98/157 and lands in its middle, exactly as before; the
+  server's frame for the label is now 102/153, but no species and no conversion uses it, so the
+  latent disagreement is invisible (the new client agrees).
+- `donwhang`: a tagged client cannot resolve the label (step 4) before or after, so it shows the
+  placeholder ground either way. Its Earth Ghosts: the own-design anchor is the same world point as
+  before; with `-npcpos-csv` the 65 rows each move by ToWorld(row, 102, 153) - ToWorld(row, 98,
+  157), on a placeholder ground in both cases -- nothing that works today breaks.
+- `constantinople`: a tagged client builds 104/80; the server's frame goes from 100/98 (4 regions
+  off in x, 18 in y) to 105/79 (1 and 1). No species converts in it; invisible either way.
+- `hotan` and `samarkand`: the server moves to the tagged client's own regions, 92/135 (from
+  87/118, 5 regions off in x and 17 in y) and 106/107 (from 88/130, 18 and 23), so the two now
+  agree.
+
+**Tests.**
+
+- Go, `worldmap_test.go`: `TestZoneCentresAreTheTownsOwnRegions` (a row for every zone, and the
+  zone count) and `TestDonwhangConvertsInTheTownsFrame` (a real Earth Ghost row converts to ToWorld
+  against 102/153, and not against 98/157). `cmd/server/main_test.go`:
+  `TestEarthGhostConvertsInDonwhangsTownFrame` (the spawn loop's `realSpawnWorld` and `gmSpecies`).
+- Client, `client/scripts/world/zone_centres_test.gd` (new): `_resolve_zone_region` for jangan,
+  dunhuang, donwhang (and "Donwhang"), constantinople, hotan, samarkand gives the server's rows;
+  `_zone_paths("donwhang")` gives `102\153.m`/`.o`; `_parse_region_coords` gives 102/153; a raw
+  "x/y" label still passes through. `ALL PASS` on the box.
+- NEGATIVE, run: with `worldmap.go` stashed (the old `ZoneCentre`), `TestZoneCentresAreTheTownsOwnRegions`
+  fails on five rows (`ZoneCentre["dunhuang"] = 98/157, want 102/153`, donwhang the same,
+  `constantinople = 100/98`, `hotan = 87/118`, `samarkand = 88/130`),
+  `TestDonwhangConvertsInTheTownsFrame` fails (`= (-12019.49, -5823.0599999999995), want ToWorld
+  against 102/153 = (-4339.49, 1856.94)`), and `TestEarthGhostConvertsInDonwhangsTownFrame` fails on both the spawn
+  loop and /goto with the same numbers; with `main.go` stashed as well the test does not build
+  (`undefined: realSpawnWorld`). With `World3D.gd` stashed, `zone_centres_test.gd` prints `FAILURES:
+  6`: dunhuang `got 98/157`, donwhang `got donwhang`, constantinople `got 104/80`, "Donwhang",
+  and donwhang's paths and region `{  }`. Each restored and green again.
+- On the box, one server-backed QA run per town (`/var/tmp/r569/run.sh`, this round's server binary
+  and client, `SRREVAMP_GM_ACCOUNTS=qa`, `SRREVAMP_QA_COMMANDS="/goto <town>"` from Jangan's
+  `--at 1002,1020`, `--radius 1 --frames 360`; logs `/var/tmp/r569/<town>.log`, frames deleted):
+
+  | town | GM reply | centre the client built | its NPCs | landing (the `QA <tick> local` lines, ticks 120-300) | SCRIPT ERROR |
+  |---|---|---|---|---|---|
+  | donwhang | `travelling to donwhang` | `loaded real terrain from 102\153.m ... at frame 74` | 18/19 placed in 102/153 | local (960, -106, 960) on terrain at -106.6, 0.0 below feet, drawn heightfield at -106.6 | 0 |
+  | constantinople | `travelling to constantinople` | `105\79.m ... at frame 75` | 13/14 in 105/79 | (960, 83, 960) on terrain at 83.7, drawn 83.7 | 0 |
+  | hotan | `travelling to hotan` | `92\135.m ... at frame 74` | 10/11 in 92/135 | (960, 243, 960) on terrain at 243.8, drawn 243.8 | 0 |
+  | samarkand | `travelling to samarkand` | `106\107.m ... at frame 75` | 3/3 in 106/107 | (960, 180, 960) on terrain at 180.0; the drawn ray's first hit is a placed `oas_grs_weed02` at 244.1, 64.1 above the graph | 0 |
+
+  Every landing is the centre region's middle on its own walkable graph, still there four samples
+  later, the drawn heightfield agreeing with the graph to 0.0 except Samarkand's, where the ray from
+  200 above meets a weed model first (the graph and the walk_probe say open terrain; the region and
+  the landing are what tagged clients already get). The Donwhang run also shows the Earth Ghost's
+  own-design anchor under the new centre: `monster Earth Ghost (MOB_WC_EARTHGHOST) ... at -60,-7,-50
+  (78 from the player)` (the QA server runs without `-npcpos-csv`).
+
+- `cd server && go build ./... && go test -count=1 -p 1 ./...` green before and after the doc
+  edits; `client/tools/remote_godot.sh tests` (lane lock `/var/tmp/r569/lock`): `ran 94 suite(s), 0
+  failing` (93 before plus `zone_centres_test.gd`); `remote_godot.sh check`: `checked 269 scripts and
+  5 scenes`, `ALL LOAD`.
+
+**Records.** This entry; `docs/WORLD_ISSUES.md`'s five-hundred-and-sixty-ninth round;
+`docs/PROGRESS.md` (the two 2026-08-24 corrections); `docs/GROUNDING_AUDIT.md` (the named-zone row
+and the Samarkand row); `worldmap.go`'s and `World3D.gd`'s comments. Beyond the item's file list,
+disclosed: `docs/GROUNDING_AUDIT.md` and the new suite `client/scripts/world/zone_centres_test.gd`
+(the plan's `region_grid_test.gd` does not exist). `docs/SYSTEMS.md` has no row for zones or the
+world frame, so it is unchanged.
+
+**Deploy note.** Server and client. The server change auto-deploys and, per step 8, changes nothing
+a tagged client shows; `hotan` and `samarkand` start agreeing with tagged clients. The client needs
+a tag: with it, `/goto donwhang` and `/goto dunhuang` build Donwhang's own region 102/153 (the town's
+18 NPCs) and `/goto constantinople` 105/79. Samarkand stays an open question.

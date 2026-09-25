@@ -3175,27 +3175,36 @@ const ZONE_SPAWN_LOCAL := {
 	"97/168": Vector2(1002.0, 1020.0),
 }
 
-## The real Dunhuang region, found 2026-08-26 the same way as
-## JANGAN_ZONE_REGION (server/cmd/scanlandmarks scanning for real
-## "Res\Bldg\China\Dunhuang\..." resource paths across all 4,050 real
-## regions) -- "98/157" has 279 matching real placements, the densest real
-## match found.
-const DUNHUANG_ZONE_REGION := "98/157"
-
-## Three more real named regions, found 2026-08-24 by the same real
-## technique as Jangan/Dunhuang (server/cmd/findregionassets, scanning every
-## real object placement across all 4,050 real regions for a path
-## containing the candidate name, then picking the densest real cluster --
-## see docs/PROGRESS.md's 2026-08-24 "cont'd 79"/"cont'd 80" entries for the
-## full real render verification each one already got). Confirmed real,
-## distinct architecture for each at the time: Constantinople (European
-## drawbridge/gate, cobblestone streets, a real 23-piece merchant stall),
-## Hotan (Middle-Eastern/oasis castellated stone walls, a real domed
-## building with carved lattice screens), Samarkand (smaller real cluster,
-## real sand-to-grass biome transition terrain). These were real, confirmed
-## finds that simply never got wired into this lookup table until now --
-## not new RE work, just real data that existed and wasn't connected yet.
-const CONSTANTINOPLE_ZONE_REGION := "104/80"
+## The towns' regions. Each must equal the server's worldmap.ZoneCentre for
+## the same label: the server's coordinates for a zone and the grid this
+## client builds for it are one frame only when the two agree
+## (server/internal/worldmap; client/scripts/world/zone_centres_test.gd and
+## worldmap_test.go's TestZoneCentresAreTheTownsOwnRegions pin both sides).
+##
+## **Corrected 2026-09-25 (round 569)** from the game's own tables, where a
+## town's NPC rows and its dimensional gate agree on a region: npcpos.txt
+## joined to characterdata on the first column and counted by the town's
+## code, against teleportdata.txt's GATE_<code> row (SN_ZONE_22001..22005,
+## named Jangan, Donwhang, Hotan, Constantinople, Samarkand). Until then
+## these were the densest cluster of each town's architecture
+## (server/cmd/scanlandmarks, findregionassets; docs/PROGRESS.md 2026-08-24),
+## which picked a neighbour of the town twice:
+##
+##   Donwhang 98/157 -> 102/153: NPC_WC_ 15 of 26 rows (6 more in 103/153)
+##     and GATE_WC are in 102/153; textzonename.txt names 98/157 "Donwhang
+##     Ferry" and 102/153 "Donwhang". Walkable at its middle: walk_probe
+##     from local 960,960 stands on terrain and walks 120 units clear.
+##   Constantinople 104/80 -> 105/79: NPC_EU_ 10 of 33 rows and GATE_EU
+##     are in 105/79.
+##   Hotan 92/135, unchanged and now confirmed: NPC_KT_ 6 of 29 rows (the
+##     most) and GATE_KT.
+##   Samarkand 106/107, unchanged and UNRESOLVED (disclosed): NPC_CA_ rows
+##     split 5/4/4/3 over 107/108, 106/108, 107/107 and 106/107 around their
+##     shared corner and GATE_CA is in 106/108, so the tables do not name
+##     one region. 106/107 is one of the four (textzonename: "Samarkand");
+##     the server takes the same.
+const DUNHUANG_ZONE_REGION := "102/153"
+const CONSTANTINOPLE_ZONE_REGION := "105/79"
 const HOTAN_ZONE_REGION := "92/135"
 const SAMARKAND_ZONE_REGION := "106/107"
 
@@ -3210,11 +3219,15 @@ const SAMARKAND_ZONE_REGION := "106/107"
 ## unchanged, for _zone_paths/_parse_region_coords to interpret (a raw
 ## "<x>/<y>" coordinate, matching any of this client's real 4,050 regions,
 ## already works today without a name -- see _zone_paths) or reject as usual.
+## "donwhang" is the server's own spelling of Dunhuang (worldmap.ZoneCentre,
+## the GM console's /goto list, the Earth Ghost's roster zone); until round
+## 569 it fell through unresolved and a `/goto donwhang` left the placeholder
+## ground.
 static func _resolve_zone_region(zone: String) -> String:
 	var lower := zone.to_lower()
 	if lower == "jangan":
 		return JANGAN_ZONE_REGION
-	if lower == "dunhuang":
+	if lower == "dunhuang" or lower == "donwhang":
 		return DUNHUANG_ZONE_REGION
 	if lower == "constantinople":
 		return CONSTANTINOPLE_ZONE_REGION

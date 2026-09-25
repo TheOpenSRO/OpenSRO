@@ -91,17 +91,45 @@ func ToWorld(rx, ry int, localX, localZ float64, originX, originY int) (x, z flo
 }
 
 // ZoneCentre is the region each named zone's world is built around, and so
-// the region that zone's world coordinates are relative to. These mirror the
-// client's own *_ZONE_REGION constants, each found by scanning every real
-// object placement for the zone's own architecture and taking the densest
-// cluster (server/cmd/findregionassets).
+// the region that zone's world coordinates are relative to. It must equal the
+// client's own World3D.gd *_ZONE_REGION constants (what _resolve_zone_region
+// returns for the same label): the server's world coordinates for a zone and
+// the grid the client builds for it are one frame only when the two agree.
+//
+// Until round 569 three entries did not: constantinople {100, 98}, hotan
+// {87, 118} and samarkand {88, 130} arrived in edc6fea with no recorded
+// source, and the game's own region names (textzonename.txt, keyed by region
+// id) call those three regions "Cleopatra's Gate", "Aircraft dock" and
+// "East-Karakoram" -- none of them the town.
+//
+// The rule since round 569 (docs/RE_COMPLETION.md, round 569, has the table):
+// where a town's own NPC rows and its dimensional gate agree on a region,
+// that region is the centre, on both sides. The NPC rows are npcpos.txt
+// joined to characterdata on the first column, counted by the town's code
+// (NPC_CH_ Jangan, NPC_WC_ Donwhang, NPC_KT_ Hotan, NPC_EU_ Constantinople,
+// NPC_CA_ Samarkand); the gate is teleportdata.txt's GATE_<code> row
+// (SN_ZONE_22001..22005, whose names are the five towns):
+//
+//	jangan          97/168  NPC_CH_ 18 of 67 (the most), GATE_CH 97/168
+//	donwhang        102/153 NPC_WC_ 15 of 26 (6 more in 103/153), GATE_WC 102/153
+//	constantinople  105/79  NPC_EU_ 10 of 33 (the most), GATE_EU 105/79
+//	hotan           92/135  NPC_KT_ 6 of 29 (the most), GATE_KT 92/135
+//
+// Samarkand is UNRESOLVED, disclosed: its NPC_CA_ rows split 5/4/4/3 over
+// 107/108, 106/108, 107/107 and 106/107 (the town sits on their shared
+// corner), and GATE_CA is in 106/108, so rows and gate do not agree on one
+// region. Rather than pick between them, the entry takes the client's
+// SAMARKAND_ZONE_REGION, 106/107 -- one of the four, named "Samarkand" by
+// textzonename -- so the two sides at least agree. "dunhuang" and
+// "donwhang" are the same town; the server's roster and ZoneNames say
+// "donwhang", and the client resolves both.
 var ZoneCentre = map[string][2]int{
 	"jangan":         {97, 168},
-	"dunhuang":       {98, 157},
-	"donwhang":       {98, 157},
-	"constantinople": {100, 98},
-	"hotan":          {87, 118},
-	"samarkand":      {88, 130},
+	"dunhuang":       {102, 153},
+	"donwhang":       {102, 153},
+	"constantinople": {105, 79},
+	"hotan":          {92, 135},
+	"samarkand":      {106, 107},
 }
 
 // ZoneNames returns the named zones ToZoneWorld can convert into, sorted --
