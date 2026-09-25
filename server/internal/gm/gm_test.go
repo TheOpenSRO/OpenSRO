@@ -8,11 +8,13 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
+	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
+	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
 // The gate is a plain username list: trimmed, case kept, nobody by default.
@@ -47,7 +49,10 @@ type fixture struct {
 	equip  *equipment.MemStore
 	skills *skill.MemStore
 	hub    *combat.Hub
-	actor  Actor
+	// world holds Aria in jangan, so /level's write to the entity's cached
+	// level (round 555) can be read back.
+	world *world.Hub
+	actor Actor
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -71,9 +76,11 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatalf("ParseCSV: %v", err)
 	}
+	wh := world.NewHub()
+	wh.Enter(gateway.NewTestSession(7001), c.ID, "Aria", c.Level, "jangan", world.Position{X: 10, Z: 20})
 	deps := &Deps{
 		Chars: chars, Inv: inv, Equip: equip, Items: items, Skills: skills,
-		Monsters: hub, Mana: mana.NewTracker(), Levels: tbl,
+		Monsters: hub, World: wh, Mana: mana.NewTracker(), Levels: tbl,
 		Species: []Species{{
 			Species: combat.Species{Name: "Mangyang", CodeName: "MOB_CH_MANGYANG", Level: 1},
 			Zone:    "jangan", MaxHP: 60, Defense: 1, Attack: 5, Gold: 10, X: 100, Z: 200,
@@ -81,7 +88,7 @@ func newFixture(t *testing.T) *fixture {
 		Zones: []string{"jangan", "donwhang"},
 	}
 	actor := Actor{Account: "alice", CharacterID: c.ID, Name: "Aria", Zone: "jangan", X: 10, Z: 20}
-	return &fixture{ctx: ctx, deps: deps, chars: chars, inv: inv, equip: equip, skills: skills, hub: hub, actor: actor}
+	return &fixture{ctx: ctx, deps: deps, chars: chars, inv: inv, equip: equip, skills: skills, hub: hub, world: wh, actor: actor}
 }
 
 func (f *fixture) run(t *testing.T, line string) Result {
@@ -218,6 +225,12 @@ func TestLevelFollowsTheLevelUpArithmetic(t *testing.T) {
 	}
 	if res.LevelUp.StatPoints != after.StatPoints {
 		t.Fatalf("announced stat points %d, stored %d", res.LevelUp.StatPoints, after.StatPoints)
+	}
+	// The world entity's cached level moved with the row (round 555): the
+	// monster AI reads the level there, so a /level that left it at 1 would
+	// have every monster fight a level-1 character.
+	if e, ok := f.world.EntityByCharacterID(f.actor.CharacterID); !ok || e.Level != 4 {
+		t.Fatalf("the world entity's level after /level 4 = %d (in world %v), want 4", e.Level, ok)
 	}
 	if res := f.run(t, "/level 4"); !res.Refused {
 		t.Fatalf("the same level again should be refused: %+v", res)

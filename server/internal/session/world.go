@@ -603,7 +603,9 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		}
 	}
 
-	others := hub.Enter(sess, owned.ID, owned.Name, spawnZone, spawnPos)
+	// The level rides the entity (world.Entity.Level, round 555) so the monster
+	// AI's link and swings read it there instead of from the store.
+	others := hub.Enter(sess, owned.ID, owned.Name, owned.Level, spawnZone, spawnPos)
 
 	otherSnapshots := make([]EntitySnapshot, len(others))
 	for i, o := range others {

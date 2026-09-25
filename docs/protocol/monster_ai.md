@@ -1857,7 +1857,8 @@ leg. The lock is per session, so a stalled client holds up only its own replies 
   - WANDER's COS-not-mercenary refusal (no roster species is a COS);
   - HOMING's timer and `+0x164` sign (its re-aggro window is modelled since round 552, behind
     `-monster-aggro`);
-  - BATTLE's timers, clip, gathering and `OnLeave` override;
+  - BATTLE's timers, clip and gathering; of its `OnLeave` override (`ResetThreat`) only the
+    selector's `+0x44` clear is modelled (`leaveBattle`, round 555), not the threat seats;
   - the acquire behaviour every `OnUpdate` calls -- modelled since round 552, behind
     `-monster-aggro` ("Target acquisition: the runtime (round 552)", below); with that flag off it
     is still not run.
@@ -2354,7 +2355,8 @@ with the tactics row's `+0x79` == 2 (`0x55a1dd`), two record copies into `call 0
 `0x55a200`, else behaviour `+0x114` at `0x55a217`, whose non-zero answer is dispatched as message
 `0x29` at `0x55a220..0x55a22c`; round 545's reading item 7, named here in round 547 -- the runtime
 makes no swing at all for a species with no skill row, above, and every roster species has one),
-`BATTLE::OnEnter`'s timers 3/4, gathering and slot-11 call, `BATTLE::OnLeave`, the aggro link
+`BATTLE::OnEnter`'s timers 3/4, gathering and slot-11 call, `BATTLE::OnLeave` (its `ResetThreat`'s
+threat seats; the armed pick's clear IS modelled since round 555, `leaveBattle`), the aggro link
 (modelled in round 553, "The aggro link: the runtime (round 553)", below), the
 attacker accounting, the threat table's retarget rules (mob-threat-retarget), and every
 "not modelled" item of round 545's section.
@@ -2792,8 +2794,21 @@ the row's `+0x14` is non-zero), followed by the `0x22` the calling state dispatc
      eax,0xc00; fldcw; fistp QWORD` at `0x5466c8..0x5466e6` (the first pick) and
      `0x54673a..0x546758` (later ones); the compare `fild [best]; fcomp st(1); test ah,0x41; jne
      reject` at `0x546725..0x546738` rejects on best < dist or best == dist. A stored 0 -- a pick
-     under one unit away -- reads as no pick yet (`cmp [edx],ebx`, ebx = 0, at `0x54671b`), so any
+     under one unit away -- reads as no pick yet (`mov eax,[edx]; cmp eax,ebx`, ebx = 0, at
+     `0x546719..0x54671b`; round 555 corrected the mnemonic, which read `cmp [edx],ebx`), so any
      later candidate in range replaces it. `ai.Nearest` carries all three as read.
+   - **Read closer in round 555, and NOT carried**: the PC branch (`0x546563..0x546675`) stores
+     `ValidTargetOrNull`'s result back OVER the candidate (`mov [ebp+0x10],eax` `0x546590`; 0 at
+     `0x5465a9` when the owner's slot 355 refuses it), lets a nearer valid summoned object of that
+     player replace the candidate and its distance (`0x546646`, `0x546642`), reloads the result at
+     `0x546675` and runs the radius and best-so-far compares on it with NO null test before the
+     store (`mov [eax],esi` `0x546702`; `ScanForTargets` `0x5405b0` hands every player of the regions
+     but the owner to the selector and goes on to the next). So a player the validity test rejects
+     -- dead, under `-player-dead-state` -- is not skipped the way `acquire` skips one: it leaves a
+     NULL pick at its own distance, which a later candidate must be strictly nearer than. `acquire`
+     drops dead players before the scan, so a dead body nearer the monster than a living player
+     never shadows the living one in srrevamp; in the engine it would. Round 552's "one
+     `ValidTargetOrNull` accepts" overstated the selector's fidelity by this much. Disclosed.
 5. The pick -> `AI::CTactics::SetTarget` (`0x53ffe0` at `0x547a67`) -> return 2 -> the state
    dispatches `0x22`; `CAIState::OnMsg_0x22` (`0x559900`) asks `ValidTargetOrNull` again and then
    `AITactics_IsTargetWithinChaseRange` (`0x545e50`, `ai.TargetWithinChaseRange` with round 546's
@@ -2999,10 +3014,18 @@ level-1 Mangyang under a level-1 player, 84 (84.8 chopped) under a level-5 one, 
 one -- counts the party members at most 1000 units from the attacker (the attacker included), and
 puts that many of the gathered, nearest first, into BATTLE against the attacker. A solo player links
 nothing. A second blow on a monster already fighting links nothing (BATTLE's slot 6 is
-`Handler_0fc`, which has no `+0xf0` call). A linked monster links nothing further
+`CAIState_BATTLE::OnAttacked` `0x55a2e0`, which calls behaviour `+0xfc` = `AITactics_Handler_0fc`
+`0x548090` and, on its non-zero answer -- the 1 `Handler_0fc` returns only when the `+0xec`
+accounting refuses, the round-546 paragraph "The choice" above -- `ChangeState(1)`s to IDLE (`lea
+edi,[ebx+1]; call 0x53ff30` `0x55a302..0x55a305`); no `+0xf0` call; round 555 corrected "slot 6 is
+`Handler_0fc`", one step short, as the round-546 section already had it). A linked monster links nothing further
 (`CAIState::OnAggroLinked` `0x559bb0` has no `+0xf0` call). A gathered monster already in BATTLE
-keeps its target (`CAIState_BATTLE::OnAggroLinked` `0x55a320` only credits; rule 0) and still uses
-up its place among the n. Trace lines, with `SRREVAMP_AI_TRACE` set: `ai: monster %d struck by %d
+keeps its target (`CAIState_BATTLE::OnAggroLinked` `0x55a320` credits it through `+0xec` and, when
+the accounting refuses, `ChangeState(1)`s to IDLE -- `lea edi,[ebx+1]; call 0x53ff30`
+`0x55a342..0x55a345` -- a branch the round-258 paragraph records and this section had compressed to
+"only credits" until round 555; the refusal is not modelled, so here it keeps its target under rule
+0) and still uses up its place among the n; so does a DEAD one, which the forward reaches and which
+refuses the transition. Trace lines, with `SRREVAMP_AI_TRACE` set: `ai: monster %d struck by %d
 of a party: %d member(s) within 1000, %d neighbour(s) within %d, linking %d`, `ai: monster %d linked
 to %d by the hit on monster %d, engaging`, and `... already in BATTLE, keeps its target`.
 
@@ -3035,9 +3058,10 @@ above):**
   (`GObj_DistanceBetween` at `0x540a8d`, the owner in eax and the candidate in ecx) **at most** the
   radius widened to a float (`fStack_48 <= fStack_58`), sorted, at most ten popped.
 - `CAIState::OnAggroLinked` `0x559bb0` (credit, `SetTarget(1)`, `ChangeState`, no `+0xf0`),
-  `CAIState_BATTLE::OnAggroLinked` `0x55a320` (credit only), `AITactics_CreditAttacker` `0x5473c0`
-  (`param_2[1]` = `+4` into the total and the seat's damage, `param_2[2]`/`[3]` = `+8`/`+0xc` into
-  its hate).
+  `CAIState_BATTLE::OnAggroLinked` `0x55a320` (credit, and IDLE on the accounting's refusal),
+  `AITactics_CreditAttacker` `0x5473c0` (`param_2[1]` = `+4` into the total and the seat's damage,
+  `param_2[2]`/`[3]` = `+8`/`+0xc` into its hate; returns 1 -- drop -- for a code-0 record whose
+  hate lands below 1).
 
 **Wired.** `ai/state.go`: `LevelScaledRadius` returns the chopped int through the float store
 (until this round the float64 product); the four factors and the 1.15 are the widened floats
@@ -3051,19 +3075,25 @@ stays listed for mob-threat-retarget.
 **Stand-ins, each disclosed at its line:**
 
 - **Every blow carries hate.** The routine returns before gathering when the record's hate is 0,
-  and srrevamp's blows carry no hate value. What hate a plain blow's record holds is UNREAD; the
-  threat table's accounting (`CreditAttacker` adds the record's hate to the seat) only means
-  anything if it holds some, which is an inference, not a reading. The magnitudes are
-  mob-threat-retarget's, and no hate is forwarded (`ai.AggroLinkHate` is not called).
+  and srrevamp's blows carry no hate value. What hate a plain blow's record holds is UNREAD. The
+  stand-in is consistent with the model the runtime already rests on rather than a fresh inference
+  (round 555): `CreditAttacker` `0x5473c0` returns 1 -- drop -- for a code-0 record whose hate
+  lands below 1, and `CAIState::OnAttacked` only `SetTarget`s and `ChangeState(3)`s when `+0xec`
+  returns 0, so a zero-hate first blow would not even engage its victim -- and round 546's BATTLE
+  entry on every blow already assumes a blow engages. The magnitudes are mob-threat-retarget's, and
+  no hate is forwarded (`ai.AggroLinkHate` is not called).
 - **A party is two or more.** The engine tests only the party pointer, but never creates a party
   of one; srrevamp's create path does (round 485's reading, `killExpFor`).
 - **The zone for the region set** (the gather's regions; the member test's region adjacency, which
   1000 units already implies), **the ground plane** (the engine sums three axes; srrevamp's
   monsters have no height; as `acquire` and `battleTick` measure), **ties by id** in the gather
   (the engine's container keeps the region walk's order).
-- **The attacker's level is one `chars.GetByID` on the tick**, per link event (a party member's
-  first blow on a monster that is not fighting), not per blow. With no character store nothing
-  links, as `queueStrike` swings nothing without one.
+- **The attacker's level is the world entity's cached level** (`world.Entity.Level`; round 555,
+  which replaced this round's one `chars.GetByID` per link event under the tick's lock -- one slow
+  store read stalled every monster's tick -- and `runStrike`'s one per swing). The cache is the
+  row's at enter-world and moves with the row at the two places a level changes, the level-up in
+  `performAttack` and gm's `/level`; nothing else moves a level. A character store is no longer
+  needed for the link, only for the swing.
 - **A monster hatched since the pass's step 2** has no brain yet and is skipped for that blow.
 - **The attacker accounting's refusals** (`+0xec`) are still not modelled, on the victim or on a
   linked monster.
@@ -3192,9 +3222,20 @@ mismatched).
   the engine's action machine keeps a per-skill re-use timer for a monster -- so that the OTHER
   skill could fire inside the first's delay -- is not read;
 - **the draw's moment**: the first BATTLE tick that finds nothing armed -- the entry tick, and
-  the tick after each swing -- at that tick's distance; when the engine clears `+0x44` between
-  two swings (at Execute, or at the action's end) is not read, only that `Handler_0e8` reads the
-  armed pick before it asks for a new one;
+  the tick after each swing -- at that tick's distance. **Every entry draws afresh (round 555):**
+  `CAIState_BATTLE::OnLeave` (`0x55a240`) calls only `AI::CTactics::ResetThreat` (`0x53fb20`, at
+  `0x55a243`), which zeroes the selector's `+0x44` -- `xor eax,eax` `0x53fb28`, `mov
+  ecx,[edi+0x9c]; mov [ecx+0x44],eax` `0x53fb78..0x53fb7e` -- with the two threat seats
+  `+0xbc..+0xe0`, the `+0xac` byte and `+0xa4`/`+0xa8` (its other callers: `Init` at `0x53f4e7`
+  and the unnamed `FUN_00559140` at `0x55915a`). `leaveBattle` clears the brain's pick on every
+  exit from BATTLE, the `0x23`/`0x27`/`0x2a` releases among them; until round 555 a pick armed but
+  not fired -- a Yeoha that drew its range-7 176 at 60 units and lost its target on the way in --
+  survived the exit and was swung in the next fight without a draw, so this bullet was true only of
+  a monster that had never armed one. When the engine clears `+0x44` between two swings of ONE
+  fight (at Execute, or at the action's end) is still not read, only that `Handler_0e8` reads the
+  armed pick before it asks for a new one; the rest of `ResetThreat` has no counterpart in a brain
+  (the threat table is mob-threat-retarget's; the target, one of the seats, is zeroed by IDLE's
+  `OnEnter` through `SetTarget(0)`), and the cooldown is the action machine's and persists;
 - **the `att` percent unapplied** (mob-monster-att-percent);
 - **a zero-`att` skill lands 0**, pushed as a 0-damage `OpMonsterAttacked` (unblocked, no
   critical, the target's HP as found); srrevamp has no status system for its `ps` param, and the
@@ -3202,7 +3243,10 @@ mismatched).
 - **no `_RefAISkill` triggers**: the rows are server-database only, so every skill is an
   attack-list skill (mob-ai-skill-triggers);
 - the failed-swing tail (no pick) is not modelled, as in round 546 -- no roster skill has chance
-  0, so no roster monster reaches it.
+  0, so no roster monster reaches it. A monster that did (a list in which no skill has an
+  `AI_AttackChance`) stands in BATTLE, neither chasing nor swinging, until the give-up check or the
+  target's exit releases it (`battleTick` returns before the chase when `armSkill` answers false;
+  noted in round 555).
 
 **Trace line** (`SRREVAMP_AI_TRACE`), for a species with more than one skill only: `ai: monster %d
 arms skill %d (range %d) at %.0f`.

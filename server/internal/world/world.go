@@ -57,6 +57,17 @@ type Entity struct {
 	// DiedAt is when Life last became LifeDead, for the auto-revive fallback
 	// (session.RunAutoRevive); the zero time while alive.
 	DiedAt time.Time
+	// Level is the character's level as the character store holds it, cached
+	// here so the monster AI reads it off the entity instead of the store on
+	// its tick and on its strike workers (round 555; until then
+	// session/monsterai.go's linkAggro made one character.Store.GetByID per
+	// link event under the tick's lock, and runStrike one per swing). Set from
+	// the row at Enter and moved by SetLevel where a level changes: the
+	// level-up in session.performAttack and gm's /level. Nothing else moves a
+	// level -- a death penalty takes experience only (GObjPC_OnDeath touches
+	// no CurLevel; session/monsterstrike.go) and a stat-point spend keeps it
+	// (session/stats.go) -- so the two writers are the whole set.
+	Level int
 }
 
 // Hub tracks all entities currently in the world, grouped by zone. Safe for
@@ -75,17 +86,19 @@ func NewHub() *Hub {
 	}
 }
 
-// Enter adds sess's character to zone at pos. If the session was already in
-// the world (e.g. re-entering without a clean Leave), it's moved rather
-// than duplicated. Returns a snapshot of the other entities already in that
-// zone, for the caller to send an initial "who's here" packet.
-func (h *Hub) Enter(sess *gateway.Session, characterID int64, name, zone string, pos Position) []Entity {
+// Enter adds sess's character, at level, to zone at pos. If the session was
+// already in the world (e.g. re-entering without a clean Leave), it's moved
+// rather than duplicated. Returns a snapshot of the other entities already in
+// that zone, for the caller to send an initial "who's here" packet. The level
+// is a parameter rather than a later SetLevel so no entity ever exists
+// without one (Entity.Level).
+func (h *Hub) Enter(sess *gateway.Session, characterID int64, name string, level int, zone string, pos Position) []Entity {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	h.removeLocked(sess.ID())
 
-	e := &Entity{Session: sess, CharacterID: characterID, Name: name, Zone: zone, Pos: pos, Life: LifeAlive}
+	e := &Entity{Session: sess, CharacterID: characterID, Name: name, Zone: zone, Pos: pos, Life: LifeAlive, Level: level}
 	h.bySession[sess.ID()] = e
 	if h.byZone[zone] == nil {
 		h.byZone[zone] = make(map[uint64]*Entity)
@@ -146,10 +159,10 @@ func (h *Hub) ChangeZone(sess *gateway.Session, newZone string, pos Position) (o
 	h.removeLocked(sess.ID())
 	remainingOld = h.othersInZoneLocked(old.Zone, sess.ID())
 
-	// The life state travels with the character: a zone change is refused
-	// while dead (session.handleChangeZone), so this carries LifeAlive in
-	// practice, but a state is never reset by a move.
-	next := &Entity{Session: sess, CharacterID: old.CharacterID, Name: old.Name, Zone: newZone, Pos: pos, Life: old.Life, DiedAt: old.DiedAt}
+	// The life state and the level travel with the character: a zone change
+	// is refused while dead (session.handleChangeZone), so this carries
+	// LifeAlive in practice, but a state is never reset by a move.
+	next := &Entity{Session: sess, CharacterID: old.CharacterID, Name: old.Name, Zone: newZone, Pos: pos, Life: old.Life, DiedAt: old.DiedAt, Level: old.Level}
 	h.bySession[sess.ID()] = next
 	if h.byZone[newZone] == nil {
 		h.byZone[newZone] = make(map[uint64]*Entity)
@@ -186,6 +199,25 @@ func (h *Hub) SetLifeState(characterID int64, from, to LifeState, at time.Time) 
 			e.DiedAt = time.Time{}
 		}
 		return true
+	}
+	return false
+}
+
+// SetLevel moves characterID's cached level to level (Entity.Level) and
+// reports whether the character was in the world to take it. The two callers
+// are the two places a level changes: session.performAttack's level-up and
+// gm's /level, each right after its character.Store.SetLeveling. Keyed by
+// character, as SetLifeState is, because the readers that matter (the monster
+// AI's link and swing) know only the character.
+func (h *Hub) SetLevel(characterID int64, level int) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for _, e := range h.bySession {
+		if e.CharacterID == characterID {
+			e.Level = level
+			return true
+		}
 	}
 	return false
 }

@@ -1296,3 +1296,90 @@ func TestWeaponRangeScalesMagicalDamageWithIntellect(t *testing.T) {
 		t.Errorf("magical blow: got %d-%d, want %d (INTELLECT, not Strength)", mMin, mMax, wantMag)
 	}
 }
+
+// THE LEVEL-UP MOVES THE WORLD ENTITY'S CACHED LEVEL (round 555): the monster
+// AI reads a character's level off world.Entity.Level rather than the store,
+// so the level-up in performAttack must write it there next to SetLeveling.
+// One kill under a table whose level 1 ends at 10 experience levels Aria up;
+// the entity's level after the kill is the row's new level, above 1. Before
+// this round the entity carried no level at all.
+func TestLevelUpMovesTheEntityLevel(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("creating character: %v", err)
+	}
+	tbl, err := leveldata.ParseCSV(strings.NewReader("level,exp,mastery_sp,exp_unit\n1,10,1,5000\n2,20,1,5000\n3,1000000,1,5000\n"))
+	if err != nil {
+		t.Fatalf("ParseCSV: %v", err)
+	}
+	prevTable := levelTable
+	SetLevelTable(tbl)
+	t.Cleanup(func() { SetLevelTable(prevTable) })
+
+	items := stubCombatItems{100: {ID: 100, PhysAttackMax: 30}}
+	inv := inventory.NewMemStore(items)
+	if err := inv.AddItem(ctx, c.ID, 100, 1); err != nil {
+		t.Fatalf("seeding inventory: %v", err)
+	}
+	eq := equipment.NewMemStore(inv)
+	if err := eq.Equip(ctx, c.ID, equipment.SlotWeapon, 0); err != nil {
+		t.Fatalf("equipping weapon: %v", err)
+	}
+	hub := world.NewHub()
+	monsters := combat.NewHub()
+	target := monsters.SpawnSpecies("jangan", combat.Species{Name: "Mangyang", Level: 1}, 0, 0, 0, 1, 0, 0, 0)
+
+	handle := gateway.Chain(
+		LoginHandler(accounts),
+		WorldHandler(chars, eq, hub),
+		CombatHandler(chars, eq, items, hub, monsters, quest.NewMemStore(), inv, skill.NewMemStore(), nil, nil, nil),
+	)
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+	sendFor := func(opcode uint16, data []byte, want uint16) *proto.Packet {
+		t.Helper()
+		if err := proto.Write(conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		for {
+			conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+			resp, err := proto.Read(r, nil, nil)
+			if err != nil {
+				t.Fatalf("Read waiting for 0x%04x: %v", want, err)
+			}
+			if resp.Opcode == want {
+				return resp
+			}
+		}
+	}
+	if lr, err := DecodeLoginResult(sendFor(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode(), OpLoginResult).Data); err != nil || !lr.OK {
+		t.Fatalf("login failed: err=%v result=%+v", err, lr)
+	}
+	if ewr, err := DecodeEnterWorldResult(sendFor(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode(), OpEnterWorldResult).Data); err != nil || !ewr.OK {
+		t.Fatalf("enter world failed: err=%v result=%+v", err, ewr)
+	}
+	if e, ok := hub.EntityByCharacterID(c.ID); !ok || e.Level != 1 {
+		t.Fatalf("the entity after enter-world: %+v (ok=%v), want level 1 from the row", e, ok)
+	}
+	ar, err := DecodeAttackResult(sendFor(OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: target.ID}).Encode(), OpAttackResult).Data)
+	if err != nil || ar.Error != "" || !ar.MonsterDied {
+		t.Fatalf("kill: err=%v result=%+v", err, ar)
+	}
+	after, err := chars.GetByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if after.Level <= 1 {
+		t.Fatalf("the kill did not level Aria up (level %d): the fixture's table is wrong", after.Level)
+	}
+	if e, _ := hub.EntityByCharacterID(c.ID); e.Level != after.Level {
+		t.Fatalf("the entity's level after the level-up = %d, want the row's %d", e.Level, after.Level)
+	}
+}

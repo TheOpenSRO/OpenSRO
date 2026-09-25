@@ -342,7 +342,7 @@ func TestMonsterAIHoldsAStruckMonsterWhileTheKeepUpRuns(t *testing.T) {
 	m := monsters.SpawnSpecies("jangan", testMangyang, 0, 0, 0, 1000, 0, 0, 0)
 	hub := world.NewHub()
 	const attacker int64 = 91001
-	hub.Enter(gateway.NewTestSession(91001), attacker, "Aria", "jangan", world.Position{})
+	hub.Enter(gateway.NewTestSession(91001), attacker, "Aria", 1, "jangan", world.Position{})
 	rec := &pushRecorder{}
 	a := installMonsterAIForTest(t, hub, monsters, 5, rec.push)
 
@@ -406,7 +406,7 @@ func TestMonsterAIStrikeAtTheReachEdgeKeepsTheKeepUpInReach(t *testing.T) {
 	m := monsters.SpawnSpecies("jangan", testMangyang, edge, 0, 0, 1000, 0, 0, 0)
 	hub := world.NewHub()
 	const attacker int64 = 91002
-	hub.Enter(gateway.NewTestSession(91002), attacker, "Aria", "jangan", world.Position{})
+	hub.Enter(gateway.NewTestSession(91002), attacker, "Aria", 1, "jangan", world.Position{})
 	rec := &pushRecorder{}
 	a := installMonsterAIForTest(t, hub, monsters, 6, rec.push)
 
@@ -472,7 +472,7 @@ func armForTest(t *testing.T, characterID, monsterID int64) {
 func TestMonsterAIHoldOutlastsTheGapBeforeTheKeepUpIsArmed(t *testing.T) {
 	hub := world.NewHub()
 	const attacker int64 = 91003
-	hub.Enter(gateway.NewTestSession(91003), attacker, "Aria", "jangan", world.Position{})
+	hub.Enter(gateway.NewTestSession(91003), attacker, "Aria", 1, "jangan", world.Position{})
 	a, _, id, now := holdForTest(t, hub, 11)
 
 	noteStruck(a.monsters, id, attacker)
@@ -504,7 +504,7 @@ func TestMonsterAIHoldOutlastsTheGapBeforeTheKeepUpIsArmed(t *testing.T) {
 func TestMonsterAIHoldOutlastsACastsCancelAndReArm(t *testing.T) {
 	hub := world.NewHub()
 	const attacker int64 = 91004
-	hub.Enter(gateway.NewTestSession(91004), attacker, "Aria", "jangan", world.Position{})
+	hub.Enter(gateway.NewTestSession(91004), attacker, "Aria", 1, "jangan", world.Position{})
 	a, _, id, now := holdForTest(t, hub, 12)
 	armForTest(t, attacker, id)
 	noteStruck(a.monsters, id, attacker)
@@ -548,9 +548,9 @@ func TestMonsterAIHoldOutlastsACastsCancelAndReArm(t *testing.T) {
 func TestMonsterAIHoldStaysWhileAnyKeepUpInTheZoneIsOnIt(t *testing.T) {
 	hub := world.NewHub()
 	const aChar, bChar, cChar int64 = 91005, 91006, 91007
-	hub.Enter(gateway.NewTestSession(91005), aChar, "Aria", "jangan", world.Position{})
-	hub.Enter(gateway.NewTestSession(91006), bChar, "Bora", "jangan", world.Position{})
-	hub.Enter(gateway.NewTestSession(91007), cChar, "Cato", "donwhang", world.Position{})
+	hub.Enter(gateway.NewTestSession(91005), aChar, "Aria", 1, "jangan", world.Position{})
+	hub.Enter(gateway.NewTestSession(91006), bChar, "Bora", 1, "jangan", world.Position{})
+	hub.Enter(gateway.NewTestSession(91007), cChar, "Cato", 1, "donwhang", world.Position{})
 	a, _, id, now := holdForTest(t, hub, 13)
 	armForTest(t, aChar, id)
 	armForTest(t, bChar, id)
@@ -1120,7 +1120,7 @@ func startBattleFixture(t *testing.T, seed int64, ariaX, ariaZ float64) *battleF
 	inv := inventory.NewMemStore(items)
 	eq := equipment.NewMemStore(inv)
 	hub := world.NewHub()
-	hub.Enter(gateway.NewTestSession(uint64(91100+seed)), c.ID, "Aria", "jangan", world.Position{X: ariaX, Z: ariaZ})
+	hub.Enter(gateway.NewTestSession(uint64(91100+seed)), c.ID, "Aria", 1, "jangan", world.Position{X: ariaX, Z: ariaZ})
 	monsters := newAIHub(seed)
 	rec := &pushRecorder{}
 	potions := NewPotionQueue()
@@ -1423,18 +1423,20 @@ func (b *lockedBuffer) String() string {
 	return b.buf.String()
 }
 
-// panicOnceChars is a character store whose first GetByID panics -- a store's
-// own fault, as a strike worker would meet it -- and behaves after that.
+// panicOnceChars is a character store whose first ApplyDamage panics -- a
+// store's own fault, as a strike worker would meet it -- and behaves after
+// that. ApplyDamage is the first store call a swing makes: until round 555 it
+// was the level read, a GetByID, which now comes off the world entity.
 type panicOnceChars struct {
 	character.Store
 	panicked atomic.Bool
 }
 
-func (s *panicOnceChars) GetByID(ctx context.Context, id int64) (*character.Character, error) {
+func (s *panicOnceChars) ApplyDamage(ctx context.Context, id int64, amount int) (int, bool, error) {
 	if s.panicked.CompareAndSwap(false, true) {
 		panic("test: the character store fell over")
 	}
-	return s.Store.GetByID(ctx, id)
+	return s.Store.ApplyDamage(ctx, id, amount)
 }
 
 // A panic inside a strike worker's blow is logged and the swing dropped, and
@@ -2282,7 +2284,7 @@ func TestMonsterNoticesTheNearerOfTwoPlayers(t *testing.T) {
 	if bram.ID <= f.aria {
 		t.Fatalf("setup: Bram's id %d is not above Aria's %d", bram.ID, f.aria)
 	}
-	f.hub.Enter(gateway.NewTestSession(91232), bram.ID, "Bram", "jangan", world.Position{X: 50, Z: 0})
+	f.hub.Enter(gateway.NewTestSession(91232), bram.ID, "Bram", 1, "jangan", world.Position{X: 50, Z: 0})
 	m := f.monsters.SpawnSpecies("jangan", chaseMangyang, 0, 0, 0, 1000, 0, 15, 0)
 	now := aiT0
 	monsterAITick(now)
@@ -2487,7 +2489,7 @@ func (s *linkStage) addMate(t *testing.T, name string, x, z float64) {
 		t.Fatalf("creating %s: %v", name, err)
 	}
 	sess := gateway.NewTestSession(uint64(91300 + 10*s.seed + int64(len(s.mates)+1)))
-	s.f.hub.Enter(sess, mate.ID, name, "jangan", world.Position{X: x, Z: z})
+	s.f.hub.Enter(sess, mate.ID, name, 1, "jangan", world.Position{X: x, Z: z})
 	if _, err := s.parties.Join(s.partyID, party.Member{Session: sess, CharacterID: mate.ID, Name: name, Level: 1}); err != nil {
 		t.Fatalf("%s joining: %v", name, err)
 	}
@@ -2530,6 +2532,140 @@ func (s *linkStage) targetOf(t *testing.T, id int64) int64 {
 	s.f.a.mu.Lock()
 	defer s.f.a.mu.Unlock()
 	return s.f.a.brains[id].target
+}
+
+// levelAria sets Aria's level the way the level-up path does (round 555): the
+// row through SetLeveling and the world entity's cache through SetLevel.
+func (s *linkStage) levelAria(t *testing.T, level int) {
+	t.Helper()
+	if err := s.f.chars.SetLeveling(context.Background(), s.f.aria, level, 0, 0, 0, 0); err != nil {
+		t.Fatalf("setting Aria's level: %v", err)
+	}
+	if !s.f.hub.SetLevel(s.f.aria, level) {
+		t.Fatal("Aria is not in the world")
+	}
+}
+
+// countingStore counts the GetByID reads made through a character store.
+type countingStore struct {
+	character.Store
+	reads atomic.Int32
+}
+
+func (s *countingStore) GetByID(ctx context.Context, id int64) (*character.Character, error) {
+	s.reads.Add(1)
+	return s.Store.GetByID(ctx, id)
+}
+
+// NO CHARACTER-STORE READ ON THE TICK OR ON THE SWING (round 555): the
+// attacker's level for the gather's radius and the target's level for the
+// blow are the world entity's cached level, not a GetByID. A level-5 Aria (the
+// row and the entity both, as the level-up path writes them) in a party of
+// two strikes A: the radius is 84, so B at 84 links and C at 85 does not --
+// the level was read -- and the character store saw NO GetByID through the
+// link tick, the chase and A's first blow on her. Until this round linkAggro
+// read the row under a.mu on the tick (one slow store read stalled every
+// monster's tick) and runStrike read it again on every swing.
+func TestAggroLinkAndSwingReadNoCharacterRow(t *testing.T) {
+	battleForTest(t, true)
+	spots := [][2]float64{{30, 0}, {114, 0}, {30, 85}} // B 84 from A, C 85
+	s := startLinkStage(t, 49, 2, 0, 500, spots)
+	s.levelAria(t, 5)
+	// The swap takes a.mu: deps is the tick's, read under it (no strike worker
+	// exists yet at this point, but a -race run should not have to know that).
+	s.f.a.mu.Lock()
+	counting := &countingStore{Store: s.f.a.deps.chars}
+	s.f.a.deps.chars = counting
+	s.f.a.mu.Unlock()
+	now := s.strike(t)
+	if got := s.battling(t); got != "AB" {
+		t.Fatalf("level-5 Aria: in BATTLE %q, want AB (the entity's level 5 gave the radius 84)", got)
+	}
+	if n := counting.reads.Load(); n != 0 {
+		t.Fatalf("the link tick made %d GetByID read(s) on the character store, want none: the level is the entity's", n)
+	}
+	for i := 0; i < 30 && len(s.f.rec.strikesOf(s.ids[0])) == 0; i++ {
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+		time.Sleep(2 * time.Millisecond)
+	}
+	if !waitFor(t, 2*time.Second, func() bool { return len(s.f.rec.strikesOf(s.ids[0])) >= 1 }) {
+		t.Fatal("A never swung at Aria within 3 s of AI time")
+	}
+	if n := counting.reads.Load(); n != 0 {
+		t.Fatalf("the chase and the swing made %d GetByID read(s) on the character store, want none: the target's level is the entity's", n)
+	}
+}
+
+// The link's BATTLE branch (round 553's untested case, pinned in round 555): a
+// gathered neighbour already fighting keeps its own target under rule 0 and
+// still uses up one of the n places. A solo Cass -- no party, so her blow links
+// nothing -- strikes B first; then Aria (a party of two) strikes A: the two
+// nearest to A are B and C, so B is one of the two places and C is linked,
+// while D, next in line, stays idle. B's target is still Cass, not Aria.
+func TestALinkedNeighbourAlreadyInBattleKeepsItsTargetAndUsesAPlace(t *testing.T) {
+	battleForTest(t, true)
+	s := startLinkStage(t, 50, 2, 0, 500, standardSpots)
+	cass, err := s.f.chars.Create(context.Background(), 1, "Cass")
+	if err != nil {
+		t.Fatalf("creating Cass: %v", err)
+	}
+	s.f.hub.Enter(gateway.NewTestSession(91350), cass.ID, "Cass", 1, "jangan", world.Position{X: 30, Z: 60})
+	now := aiT0
+	monsterAITick(now) // the brains hatch into IDLE
+	now = now.Add(MonsterAITick)
+	noteStruck(s.f.monsters, s.ids[1], cass.ID)
+	monsterAITick(now) // B fights Cass; solo, so nothing links
+	now = now.Add(MonsterAITick)
+	if got := s.battling(t); got != "B" {
+		t.Fatalf("after the solo blow on B: in BATTLE %q, want B alone", got)
+	}
+	noteStruck(s.f.monsters, s.ids[0], s.f.aria)
+	monsterAITick(now) // Aria's party blow on A: B (fighting) and C are the two places
+	if got := s.battling(t); got != "ABC" {
+		t.Fatalf("after the party blow on A: in BATTLE %q, want ABC (B keeps its place, C linked, D idle)", got)
+	}
+	if tgt := s.targetOf(t, s.ids[1]); tgt != cass.ID {
+		t.Errorf("B's target is %d, want Cass %d kept under rule 0 (Aria is %d)", tgt, cass.ID, s.f.aria)
+	}
+	if tgt := s.targetOf(t, s.ids[2]); tgt != s.f.aria {
+		t.Errorf("C's target is %d, want Aria %d", tgt, s.f.aria)
+	}
+}
+
+// The link's DEAD branch (round 553's other untested case, pinned in round
+// 555): a gathered neighbour in the terminal state is passed over -- its brain
+// untouched, no target set, no state change attempted -- and still uses up its
+// place among the n, as the engine forwards command 0xe to the first n gathered
+// whatever each one's state. B's machine is put in DEAD by hand (the runtime
+// never enters it: a killed monster's brain is dropped), Aria's party blow on
+// A links C alone, and D stays idle.
+func TestADeadNeighbourIsSkippedButUsesAPlace(t *testing.T) {
+	battleForTest(t, true)
+	s := startLinkStage(t, 51, 2, 0, 500, standardSpots)
+	now := aiT0
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	s.f.a.mu.Lock()
+	if _, err := s.f.a.brains[s.ids[1]].machine.ChangeState(ai.StateDead); err != nil {
+		s.f.a.mu.Unlock()
+		t.Fatalf("putting B in DEAD: %v", err)
+	}
+	s.f.a.mu.Unlock()
+	if st := stateOf(t, s.f.a, s.ids[1]); st != ai.StateDead {
+		t.Fatalf("B is %v, want DEAD", st)
+	}
+	noteStruck(s.f.monsters, s.ids[0], s.f.aria)
+	monsterAITick(now)
+	if got := s.battling(t); got != "AC" {
+		t.Fatalf("after the party blow on A with B dead: in BATTLE %q, want AC (B's place used, C linked, D idle)", got)
+	}
+	if st := stateOf(t, s.f.a, s.ids[1]); st != ai.StateDead {
+		t.Errorf("B is %v after the link, want still DEAD", st)
+	}
+	if tgt := s.targetOf(t, s.ids[1]); tgt != 0 {
+		t.Errorf("the dead B's target is %d, want 0: the terminal branch touches nothing", tgt)
+	}
 }
 
 // THE RED (round 553): Aria and Bram are a party of two, Bram 500 units off.
@@ -2645,9 +2781,7 @@ func TestAggroLinkRadiusScalesByTheLevelGap(t *testing.T) {
 	battleForTest(t, true)
 	spots := [][2]float64{{30, 0}, {114, 0}, {30, 85}} // B 84 from A, C 85
 	s := startLinkStage(t, 47, 2, 0, 500, spots)
-	if err := s.f.chars.SetLeveling(context.Background(), s.f.aria, 5, 0, 0, 0, 0); err != nil {
-		t.Fatalf("setting Aria's level: %v", err)
-	}
+	s.levelAria(t, 5)
 	s.strike(t)
 	if got := s.battling(t); got != "AB" {
 		t.Fatalf("level-5 Aria: in BATTLE %q, want AB (radius 84: B at 84 in, C at 85 out)", got)
@@ -2924,5 +3058,60 @@ func TestBattleOffDrawsNoSkill(t *testing.T) {
 		if mv.Mode == 1 && math.Hypot(float64(mv.DestX), float64(mv.DestZ)) <= math.Round(stop)+combat.ReachSlack {
 			t.Errorf("with the battle off a run to the player's band was pushed: %+v", mv)
 		}
+	}
+}
+
+// THE ARMED PICK IS CLEARED WITH BATTLE (round 555): CAIState_BATTLE::OnLeave
+// calls ResetThreat, which zeroes the selector's +0x44, so every BATTLE entry
+// draws its skill afresh. Seed 1's Yeoha arms its range-7 ATTACK01 at 60 units
+// and starts its chase; Aria leaves the world before it arrives, the next tick
+// takes the 0x23 exit, and the pick is gone with it. She re-enters and strikes
+// again: a second draw is made (a second `arms skill` trace line) and a pick
+// is armed again. Until this round the unfired 176 survived the exit and the
+// second fight swung it with no draw.
+func TestBattleExitClearsTheArmedPick(t *testing.T) {
+	battleForTest(t, true)
+	f := startBattleFixture(t, 1, 0, 0)
+	var log lockedBuffer
+	f.a.logger = slog.New(slog.NewTextHandler(&log, nil))
+	f.a.trace = true
+	m := f.monsters.SpawnSpecies("jangan", testYeoha, 60, 0, 0, 1000, 0, 15, 0)
+	now := aiT0
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	noteStruck(f.monsters, m.ID, f.aria)
+	monsterAITick(now) // BATTLE: the draw (176 under seed 1) and the chase leg
+	now = now.Add(MonsterAITick)
+	if armed, has := armedSkillOf(t, f.a, m.ID); !has || armed.ID != 176 {
+		t.Fatalf("armed %+v (has %v) after the blow, want ATTACK01 176 under seed 1 (the draw's dice)", armed, has)
+	}
+	if n := strings.Count(log.String(), "arms skill"); n != 1 {
+		t.Fatalf("%d `arms skill` trace line(s) after the first fight's entry, want 1", n)
+	}
+	sess := f.ariaSession(t)
+	if _, _, ok := f.hub.Leave(sess); !ok {
+		t.Fatal("Aria could not leave the world")
+	}
+	monsterAITick(now) // the target is gone: the 0x23 exit, and OnLeave's clear
+	now = now.Add(MonsterAITick)
+	if st := stateOf(t, f.a, m.ID); st != ai.StateIdle {
+		t.Fatalf("state %v after Aria left, want IDLE (the 0x23 exit)", st)
+	}
+	if armed, has := armedSkillOf(t, f.a, m.ID); has {
+		t.Fatalf("the pick %+v survived the BATTLE exit; ResetThreat at BATTLE::OnLeave clears the selector's +0x44", armed)
+	}
+	f.hub.Enter(sess, f.aria, "Aria", 1, "jangan", world.Position{})
+	noteStruck(f.monsters, m.ID, f.aria)
+	// The second fight: a fresh draw on its entry tick. Whether the pick is
+	// still armed after that tick depends on the dice -- IDLE never stopped
+	// the chase leg, so from where the Yeoha now stands a drawn 177 is in
+	// reach and fires (clearing the pick) on the same tick -- so the draw
+	// itself is the evidence: its trace line.
+	monsterAITick(now)
+	if st := stateOf(t, f.a, m.ID); st != ai.StateBattle {
+		t.Fatalf("state %v after the second blow, want BATTLE", st)
+	}
+	if n := strings.Count(log.String(), "arms skill"); n != 2 {
+		t.Fatalf("%d `arms skill` trace line(s) over two fights, want 2: one draw per BATTLE entry", n)
 	}
 }

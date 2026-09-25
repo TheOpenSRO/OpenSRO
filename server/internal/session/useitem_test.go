@@ -1578,8 +1578,8 @@ func TestPotionQueueTickStuckInAStoreCallHoldsUpNoOtherDrink(t *testing.T) {
 		t.Fatalf("damage: %v", err)
 	}
 	hub := world.NewHub()
-	hub.Enter(gateway.NewTestSession(1), aria.ID, "Aria", "z", world.Position{})
-	hub.Enter(gateway.NewTestSession(2), bea.ID, "Bea", "z", world.Position{})
+	hub.Enter(gateway.NewTestSession(1), aria.ID, "Aria", 1, "z", world.Position{})
+	hub.Enter(gateway.NewTestSession(2), bea.ID, "Bea", 1, "z", world.Position{})
 	chars := &slowHeal{MemStore: mem, slowID: aria.ID, entered: make(chan struct{}), release: make(chan struct{})}
 	var once sync.Once
 	letGo := func() { once.Do(func() { close(chars.release) }) }
@@ -1808,7 +1808,7 @@ func TestPotionQueueTickLandsNothingOnTheDead(t *testing.T) {
 		t.Fatalf("damage: %v", err)
 	}
 	hub := world.NewHub()
-	hub.Enter(gateway.NewTestSession(5490), c.ID, "Aria", "jangan", world.Position{})
+	hub.Enter(gateway.NewTestSession(5490), c.ID, "Aria", 1, "jangan", world.Position{})
 	hub.SetLifeState(c.ID, world.LifeAlive, world.LifeDead, time.Now())
 	q := NewPotionQueue()
 	q.pushLocked(c.ID, potionPoolHP, potionEntry{step: 25, count: 4})

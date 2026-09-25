@@ -147,12 +147,14 @@ type monsterStrikeOutcome struct {
 	deathExpLost int64
 	// dropped is a blow whose damage left its target at 0 HP but which lost
 	// the kill to another (round 550; the arbiter is killLock since round
-	// 551): the target was already in the dead state, or already back on its
-	// feet, when this blow read her back under the lock. Nothing landed and
-	// nothing is reported -- performAttack's result carries no counter and
-	// runStrike pushes nothing -- as the engine's GObjPC::FUN_004a87d0 lands
-	// nothing on a character whose life state is not 1 (`cmp al,0x1` at
-	// 0x4a87e8). The other fields are zero.
+	// 551): the target was already in the dead state, or already back on her
+	// feet, when this blow read her back under the lock. The blow is
+	// UNREPORTED -- its damage is in the pool the winner read (or under the
+	// winner's RespawnHP), but performAttack's result carries no counter,
+	// runStrike pushes nothing, and no penalty is charged for it -- the
+	// engine's GObjPC::FUN_004a87d0 landing nothing on a character whose life
+	// state is not 1 (`cmp al,0x1` at 0x4a87e8) being the nearest thing to it
+	// (round 555 corrected "nothing landed"). The other fields are zero.
 	dropped bool
 }
 
@@ -192,8 +194,13 @@ func killLock(characterID int64) *sync.Mutex {
 // a blow that left her pool at 0 is THE kill: her row when she is not in the
 // dead state and her HP is still 0 -- the caller completes the death from that
 // row; nil when another kill has already put her in life state 2 or back on
-// her feet, or a heal landed between the blow's write and the lock -- that
-// blow landed nothing (round 551).
+// her feet, or a heal landed between the blow's write and the lock. In the
+// heal's case the damage DID land -- the pool went to 0 -- and the heal
+// covered it: the blow is then unreported (no push, no counter, no penalty),
+// and with -player-dead-state on a potion step in that microsecond window
+// keeps her alive at the healed HP with no death. Not an exploit -- she stays
+// killable by the next blow -- and disclosed (round 551; wording corrected in
+// round 555 from "that blow landed nothing").
 func fallen(ctx context.Context, chars character.Store, hub *world.Hub, characterID int64) (*character.Character, error) {
 	if deadCharacter(hub, characterID) {
 		return nil, nil

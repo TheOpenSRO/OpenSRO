@@ -297,8 +297,9 @@ type brain struct {
 	// which PickSkill (0x561b00) fills through ArmNextAttack (0x5619e0) and
 	// Handler_0e8 (0x5472a0) reads first (its slot 4) before it asks for a
 	// pick -- and hasArmed whether one is held (round 554). Drawn by armSkill
-	// on the first BATTLE tick that finds none, at that tick's distance, and
-	// cleared when it fires.
+	// on the first BATTLE tick that finds none, at that tick's distance,
+	// cleared when it fires and when BATTLE is left (leaveBattle, round 555:
+	// the engine zeroes +0x44 in ResetThreat at BATTLE::OnLeave).
 	armed    combat.MonsterSkill
 	hasArmed bool
 	// giveUpDueAt is when tactics timer 6 is next due (ai.GiveUpCheckPeriodMs):
@@ -591,8 +592,15 @@ func (a *monsterAI) onStruck(id int64, ev struckEvent) {
 // linkAggro is AITactics_ExtRoutine::LinkAggroToNearbyMonsters (0x547570,
 // behaviour +0xf0), which CAIState::OnAttacked (0x558ea0) runs at 0x558ebb
 // before the victim's own SetTarget and ChangeState(3) -- so only a blow on a
-// monster NOT already in BATTLE links: BATTLE's slot 6 is Handler_0fc, which
-// has no +0xf0 call. It rides -monster-battle and needs no flag of its own: a
+// monster NOT already in BATTLE links: BATTLE's slot 6 is
+// CAIState_BATTLE::OnAttacked (0x55a2e0), which calls behaviour +0xfc
+// (AITactics_Handler_0fc 0x548090, `mov edx,[ecx+0xfc]; call edx` at
+// 0x55a2ea..0x55a2f3) and, on its non-zero answer -- the 1 Handler_0fc
+// returns only when the +0xec accounting refuses -- ChangeState(1)s to IDLE
+// (`lea edi,[ebx+1]; call 0x53ff30` at 0x55a302..0x55a305); no +0xf0 call
+// is made on it (round 555 corrected "slot 6 is Handler_0fc", one step
+// short). It rides
+// -monster-battle and needs no flag of its own: a
 // linked monster is engaged by the chase and the swings (under the interim
 // hold it would only stand where it was, the reason acquire needs the flag
 // too), and an older client draws its output -- legs as OpMonsterMoved, blows
@@ -603,9 +611,14 @@ func (a *monsterAI) onStruck(id int64, ev struckEvent) {
 //  1. the record's hate must be non-zero and the attacker a PC (0x547570's
 //     opening tests). Every srrevamp attacker is a character; a blow carries
 //     no hate value here, so every blow is taken as carrying some --
-//     DISCLOSED: what hate a plain blow's record holds is unread, and the
-//     threat table (CreditAttacker 0x5473c0) only means anything if it holds
-//     some; the magnitudes are mob-threat-retarget's;
+//     DISCLOSED: what hate a plain blow's record holds is unread. The
+//     stand-in is the one the runtime already rests on rather than a fresh
+//     inference: AITactics_CreditAttacker (0x5473c0) returns 1 -- drop -- for
+//     a code-0 record whose hate lands below 1 (`if ((iVar4 == 0) && (iVar3 <
+//     1)) return 1`), and CAIState::OnAttacked only SetTargets and
+//     ChangeState(3)s when +0xec returns 0, so a zero-hate first blow would
+//     not even engage its victim, which round 546's BATTLE entry on every
+//     blow already assumes it does; the magnitudes are mob-threat-retarget's;
 //  2. the attacker's party must exist (pc+0x1cb8) and share EXP (party+0x10
 //     bit 0). Every srrevamp party shares EXP (party.go), and, as killExpFor's
 //     gate reads it (round 485), a party is one of two or more: the engine
@@ -614,13 +627,13 @@ func (a *monsterAI) onStruck(id int64, ev struckEvent) {
 //     the ten nearest OTHER monsters within ai.LevelScaledRadius(the victim's
 //     detection radius, victim level - attacker level) of the VICTIM. The
 //     attacker's level is the character row's (vtable slot 73 in the engine),
-//     one chars.GetByID per link event, on the tick: a link event is a party
-//     member's first blow on a monster that is not fighting, not a blow. With
-//     no character store nothing links, as queueStrike swings nothing without
-//     one. srrevamp's own, disclosed: the candidates are the monsters of the
-//     victim's zone (the engine walks the owner's regions), on the ground
-//     plane, and a monster hatched since this pass's step 2 has no brain yet
-//     and is skipped for this blow;
+//     read off the world entity's cache (world.Entity.Level: the row's at
+//     enter-world, moved by the level-up and /level) -- round 555; until then
+//     one chars.GetByID per link event under a.mu, so one slow store read
+//     stalled every monster's tick. srrevamp's own, disclosed: the candidates
+//     are the monsters of the victim's zone (the engine walks the owner's
+//     regions), on the ground plane, and a monster hatched since this pass's
+//     step 2 has no brain yet and is skipped for this blow;
 //  4. n = the party members at most 1000.0 units from the attacker
 //     (0x5476e9..0x5476f6, inclusive; ai.AggroLinkMemberRange), the attacker
 //     counted without measuring; a member counts only when it resolves in
@@ -634,14 +647,20 @@ func (a *monsterAI) onStruck(id int64, ev struckEvent) {
 //     after (ai.AggroLinkHate, which nothing forwards yet: no hate value).
 //     CAIState::OnAggroLinked (0x559bb0): SetTarget(attacker), ChangeState(3),
 //     and NO further link -- a link never cascades. CAIState_BATTLE::
-//     OnAggroLinked (0x55a320) only credits: a gathered monster already in
-//     BATTLE keeps its target under rule 0 and still uses up its place among
-//     the n. DEAD refuses the transition (ai.Machine).
+//     OnAggroLinked (0x55a320) credits the attacker (+0xec, `mov
+//     edx,[ecx+0xec]; call edx` 0x55a32a..0x55a333) and, when the accounting
+//     refuses, ChangeState(1)s to IDLE (`lea edi,[ebx+1]; call 0x53ff30`
+//     0x55a342..0x55a345); the refusal is not modelled (as on the victim), so
+//     here a gathered monster already in BATTLE keeps its target under rule 0
+//     and still uses up its place among the n. DEAD refuses the transition
+//     (ai.Machine), and uses up its place too: the engine's forward is to the
+//     first n gathered whatever each one's state.
 //
 // Nothing is sent from here: a linked brain's update this same pass issues
-// its chase leg (battleTick), collected with the pass's pushes.
+// its chase leg (battleTick), collected with the pass's pushes. Nothing is
+// read from a store either (round 555).
 func (a *monsterAI) linkAggro(b *brain, attacker int64) {
-	if a.parties == nil || a.world == nil || a.deps.chars == nil {
+	if a.parties == nil || a.world == nil {
 		return
 	}
 	p, ok := a.parties.Get(attacker)
@@ -652,14 +671,7 @@ func (a *monsterAI) linkAggro(b *brain, attacker int64) {
 	if !ok {
 		return // the attacker must resolve (FUN_00485d90 at the routine's head)
 	}
-	c, err := a.deps.chars.GetByID(context.Background(), attacker)
-	if err != nil || c == nil {
-		if a.logger != nil {
-			a.logger.Warn("ai: aggro link skipped: the attacker's row did not read", "monster", b.id, "attacker", attacker, "err", err)
-		}
-		return
-	}
-	radius := ai.LevelScaledRadius(b.detection, b.m.Level, c.Level)
+	radius := ai.LevelScaledRadius(b.detection, b.m.Level, self.Level)
 	var cands []ai.Candidate
 	for _, m := range a.monsters.InZone(b.m.Zone) {
 		if m.ID == b.id || a.brains[m.ID] == nil {
@@ -827,17 +839,36 @@ func (a *monsterAI) update(b *brain) {
 //     roster species is one;
 //  2. tactics timer 1 must be due (`mov ecx,0x1` 0x54793a, AITactics_TimerDue
 //     0x53d6e0 at 0x54793f): armed at Init with ai.ScanPeriodMs, fired at first
-//     (ArmTimer 0x53d6c7), and consumed here whenever it is due, found or not;
+//     (ArmTimer 0x53d6c7), and consumed here whenever it is due, found or not
+//     -- BEFORE the aggression byte is read, so a non-aggressive monster
+//     consumes its timer too (round 555 put the two tests in this order;
+//     under the mode-0 stand-in every brain is aggressive and nothing could
+//     tell, but a per-species mode would);
 //  3. the aggression byte must be 0 or 3 (0x547958..0x547964; ai.Aggressive);
 //  4. the scan: the regions within trunc(ctx+0x15c) (RC=chop, `or eax,0xc00`
 //     0x547989, `fistp` 0x54799a) for players -- kind mask 1, the nearest
 //     selector 2 (0x5479b9..0x5479be under the stand-in flag word) -- through
-//     AITactics_ScanForTargets (0x5405b0 at 0x547a07), whose selector
-//     AITactics_Select_Nearest (0x5464e0, ai.Nearest) keeps the nearest
-//     candidate at most the radius away and, for a player, one
-//     AITactics_ValidTargetOrNull (0x540dc0) accepts: life state 1
-//     (AITactics_IsValidTarget 0x540de0) -- so a player dead under
-//     -player-dead-state is no candidate;
+//     AITactics_ScanForTargets (0x5405b0 at 0x547a07), which hands every
+//     player of those regions but the owner to the selector,
+//     AITactics_Select_Nearest (0x5464e0, ai.Nearest): the nearest candidate
+//     at most the radius away, a player only through
+//     AITactics_ValidTargetOrNull (0x540dc0), whose AITactics_IsValidTarget
+//     (0x540de0) wants life state 1 -- so a player dead under
+//     -player-dead-state is never picked. Read closer in round 555 (the
+//     selector's PC branch, 0x546563..0x546675): the validity call's result
+//     is stored back OVER the candidate (`mov [ebp+0x10],eax` 0x546590; 0 on
+//     the owner's slot-355 refusal, 0x5465a9), a nearer valid summoned
+//     object of that player may replace it and its distance (0x546642,
+//     0x546646), and the reloaded value (0x546675) goes through the radius
+//     and best-so-far compares and into the pick slot with NO null test
+//     (`mov [eax],esi` 0x546702) -- so a rejected player is not skipped: it
+//     leaves a NULL pick at its own distance, which a later candidate must
+//     be strictly nearer than to replace. srrevamp drops dead players before
+//     the scan instead, so a dead player nearer the monster than a living
+//     one never shadows the living one here as it would in the engine.
+//     DISCLOSED, not modelled: a dead body that close is the round-552 live
+//     check's own situation, and the flag's operator would want the living
+//     player noticed;
 //  5. the pick -> SetTarget (0x53ffe0 at 0x547a67) -> 2 -> the state
 //     dispatches 0x22, whose handler asks ValidTargetOrNull again and then
 //     AITactics_IsTargetWithinChaseRange (0x545e50; ai.TargetWithinChaseRange
@@ -853,13 +884,16 @@ func (a *monsterAI) update(b *brain) {
 // modelled: the summoned-object detour and the owner's slot-355 test inside
 // the selector (ai.Nearest), and the +0x168 byte's other writers.
 func (a *monsterAI) acquire(b *brain) bool {
-	if !a.aggro || !b.aggressive || !(b.detection > 0) || a.world == nil {
+	if !a.aggro || !(b.detection > 0) || a.world == nil {
 		return false
 	}
 	if a.now.Before(b.scanDueAt) {
 		return false
 	}
 	b.scanDueAt = a.now.Add(time.Duration(b.scanPeriodMs) * time.Millisecond)
+	if !b.aggressive {
+		return false // the timer consumed, the byte read after it (0x54793f before 0x547958)
+	}
 	var cands []ai.Candidate
 	for _, e := range a.world.EntitiesInZone(b.m.Zone) {
 		if e.Life != world.LifeAlive {
@@ -956,6 +990,11 @@ func (a *monsterAI) battleTick(b *brain) {
 	// 4. The swing. The skill first (Handler_0e8 0x5472a0: the selector's
 	// current pick, else PickSkill; none -> return 1, no swing): the one
 	// armed, or a fresh draw at this tick's distance (armSkill, round 554).
+	// With none -- a list in which no skill has an AI_AttackChance -- the
+	// monster stands here in BATTLE, neither chasing nor swinging, until the
+	// give-up check or the target's exit releases it: Handler_0e8's
+	// failed-swing tail is not modelled (round 546), and no roster species
+	// reaches this (every roster skill's chance is 100 or 10).
 	sk, ok := a.armSkill(b, dist)
 	if !ok {
 		return
@@ -1003,18 +1042,21 @@ func (a *monsterAI) battleTick(b *brain) {
 // armSkill is the attack skill the next swing fires: the one already armed
 // (Handler_0e8's slot-4 read of the selector's +0x44), else a fresh draw over
 // the monster's skill list at this tick's distance (PickSkill 0x561b00 ->
-// ArmNextAttack 0x5619e0, ai.PickSkill), kept until it fires. It answers
-// false when no skill has an AI_AttackChance -- the engine's PickSkill returns
-// false and Handler_0e8 returns 1, no swing (its failed-swing tail is not
-// modelled, round 546's "not modelled"). A monster spawned without a list
-// (a test's species, Spawn's) swings its primary fields, as it did before
-// round 554: the same numbers as the col-83 skill's, with no draw to make.
+// ArmNextAttack 0x5619e0, ai.PickSkill), kept until it fires or BATTLE is
+// left (leaveBattle). It answers false when no skill has an AI_AttackChance
+// -- the engine's PickSkill returns false and Handler_0e8 returns 1, no swing
+// (its failed-swing tail is not modelled, round 546's "not modelled"). A
+// monster spawned without a list (a test's species, Spawn's) swings its
+// primary fields, as it did before round 554: the same numbers as the col-83
+// skill's, with no draw to make.
 //
 // OWN DESIGN, disclosed: the draw is made on the first BATTLE tick that finds
-// nothing armed -- the tick BATTLE is entered on, and the tick after each
-// swing -- at that tick's distance. When the engine clears +0x44 between two
-// swings (at Execute, or at the action's end) is not read; only that
-// Handler_0e8 reads the armed pick before it asks for a new one.
+// nothing armed -- the tick BATTLE is entered on (every entry: the last
+// fight's pick was cleared on the way out, the engine's own ResetThreat at
+// BATTLE::OnLeave), and the tick after each swing -- at that tick's distance.
+// When the engine clears +0x44 between two swings of ONE fight (at Execute,
+// or at the action's end) is not read; only that Handler_0e8 reads the armed
+// pick before it asks for a new one.
 func (a *monsterAI) armSkill(b *brain, dist float64) (combat.MonsterSkill, bool) {
 	if b.hasArmed {
 		return b.armed, true
@@ -1078,9 +1120,10 @@ func (a *monsterAI) queueStrike(b *brain, target int64, skill combat.MonsterSkil
 
 // handStrike hands a swing to the monster's strike worker, started on its
 // first swing. The worker runs the blow's reads and writes (monsterStrike:
-// chars.ApplyDamage, the wear, a death's SetLeveling and RespawnHP or, under
-// -player-dead-state, markDead) off the tick goroutine, so a slow store never
-// stalls a pass. OWN DESIGN: the
+// chars.ApplyDamage, the wear, and a kill's whole death under the character's
+// kill lock -- killLock, round 551: the read-back, SetLeveling and RespawnHP
+// or, under -player-dead-state, markDead) off the tick goroutine, so a slow
+// store, or a wait on that lock, never stalls a pass. OWN DESIGN: the
 // channel holds one swing; while one runs and one waits, a further swing is
 // dropped with a trace line rather than queued -- the cooldown between swings
 // (3000 ms for a Mangyang) is far longer than a store write, so a drop means a
@@ -1112,14 +1155,17 @@ func (a *monsterAI) strikeWorker(id int64, jobs <-chan strikeJob) {
 }
 
 // runStrike resolves one swing -- the same blow the counter dealt
-// (monsterStrike, unchanged), on the target's level read here -- pushes it to
-// the zone as an OpMonsterAttacked through the runtime's push (the zone
+// (monsterStrike, unchanged), on the target's level as the world entity
+// caches it (round 555; until then one chars.GetByID per swing) -- pushes it
+// to the zone as an OpMonsterAttacked through the runtime's push (the zone
 // broadcast under each session's wire lock, or a test's recorder), and
 // reports a kill to the tick (kills). The blow resolves at the swing's start;
 // the client delays only the drawing, to its clip's hit event. A swing already
 // handed over still resolves if the target changed zone or the monster died
 // between the tick's validity test and monsterStrike -- the same class of
-// window as the flag-off counter's, disclosed (round 547).
+// window as the flag-off counter's, disclosed (round 547); a target who left
+// the world inside that window has no entity to read a level from, and the
+// row is read then, the one store read left before the blow.
 //
 // A panic inside the blow -- a store's own -- is logged and the swing
 // dropped, and the worker goes on to the next (round 547): a goroutine's
@@ -1142,18 +1188,26 @@ func (a *monsterAI) runStrike(id int64, job strikeJob) {
 		}
 	}()
 	ctx := context.Background()
-	// A swing handed over before its target died -- another monster's kill,
-	// or this one's own previous swing, landing inside the hand-off window --
-	// is not made: the engine's IsValidTarget refuses a life state other than
-	// 1 on every update, and a blow on a dead character would charge the
-	// death penalty twice (round 549). Nothing is pushed.
-	if deadCharacter(a.world, job.target) {
-		a.tracef("ai: monster %d swing at %d dropped: the target is dead", id, job.target)
-		return
+	// One world-hub read for the dead check and the level. A swing handed
+	// over before its target died -- another monster's kill, or this one's
+	// own previous swing, landing inside the hand-off window -- is not made:
+	// the engine's IsValidTarget refuses a life state other than 1 on every
+	// update, and a blow on a dead character would charge the death penalty
+	// twice (round 549). Nothing is pushed.
+	level, inWorld := 0, false
+	if a.world != nil {
+		if e, ok := a.world.EntityByCharacterID(job.target); ok {
+			if e.Life == world.LifeDead {
+				a.tracef("ai: monster %d swing at %d dropped: the target is dead", id, job.target)
+				return
+			}
+			level, inWorld = e.Level, true
+		}
 	}
-	level := 0
-	if c, err := a.deps.chars.GetByID(ctx, job.target); err == nil && c != nil {
-		level = c.Level
+	if !inWorld {
+		if c, err := a.deps.chars.GetByID(ctx, job.target); err == nil && c != nil {
+			level = c.Level
+		}
 	}
 	out, err := monsterStrike(ctx, a.deps, job.m, job.skill, job.target, level)
 	if err != nil {
@@ -1166,7 +1220,7 @@ func (a *monsterAI) runStrike(id int64, job strikeJob) {
 		// The blow left the target at 0 but lost the kill under her kill
 		// lock (round 550; killLock since round 551) -- another kill landed
 		// between the dead check above and the read-back, and she is dead or
-		// respawned already: this blow landed nothing, and nothing is pushed.
+		// respawned already: this blow goes unreported, and nothing is pushed.
 		a.tracef("ai: monster %d swing at %d dropped: another blow's kill got there first", id, job.target)
 		return
 	}
@@ -1255,7 +1309,8 @@ func (a *monsterAI) newBrain(m combat.Monster) *brain {
 	states[ai.StateIdle] = &brainState{a: a, b: b, state: ai.StateIdle, enter: func() { a.enterIdle(b) }}
 	states[ai.StateWander] = &brainState{a: a, b: b, state: ai.StateWander, enter: func() { a.enterWander(b) },
 		refuses: func() bool { return !(b.m.RunSpeed > 0) }}
-	states[ai.StateBattle] = &brainState{a: a, b: b, state: ai.StateBattle, enter: func() { a.enterBattle(b) }}
+	states[ai.StateBattle] = &brainState{a: a, b: b, state: ai.StateBattle, enter: func() { a.enterBattle(b) },
+		leave: func() { a.leaveBattle(b) }}
 	states[ai.StateHoming] = &brainState{a: a, b: b, state: ai.StateHoming, enter: func() { a.enterHoming(b) }}
 	b.machine = ai.NewMachine(states)
 	return b
@@ -1270,6 +1325,9 @@ type brainState struct {
 	// refuses is the state's OnEnter refusal, tested before the base OnEnter
 	// runs (WANDER's, 0x00559df0..0x00559e30).
 	refuses func() bool
+	// leave is the state's OnLeave override, nil for the base's `return 0`
+	// (BATTLE's, 0x0055a240).
+	leave func()
 }
 
 // OnEnter is slot 2: the refusal, then CAIState::OnEnter (0x00558b70:
@@ -1284,9 +1342,13 @@ func (s *brainState) OnEnter(from ai.State) bool {
 	return true
 }
 
-// OnLeave is slot 4. BATTLE's override (0x0055a240) is not modelled; the
-// base is `return 0`.
-func (s *brainState) OnLeave(ai.State) {}
+// OnLeave is slot 4: the state's own override when it has one (BATTLE's,
+// leaveBattle), else the base's `return 0`.
+func (s *brainState) OnLeave(ai.State) {
+	if s.leave != nil {
+		s.leave()
+	}
+}
 
 // change is AI::CTactics::ChangeState (0x0053ff30), refusal fallback and
 // all (ai.Machine). The states asked for here are constants, always valid.
@@ -1381,6 +1443,25 @@ func (a *monsterAI) enterBattle(b *brain) {
 			a.queueStop(m)
 		}
 	}
+}
+
+// leaveBattle is CAIState_BATTLE::OnLeave (0x0055a240), which calls only
+// AI::CTactics::ResetThreat (0x0053fb20, `call 0x53fb20` at 0x55a243) -- run
+// by ai.Machine on every exit from BATTLE, the 0x23/0x27/0x2a releases among
+// them (round 555). ResetThreat zeroes the selector's armed pick, `xor
+// eax,eax` 0x53fb28 ... `mov ecx,[edi+0x9c]; mov [ecx+0x44],eax`
+// 0x53fb78..0x53fb7e (the same +0x44 PickSkill fills through ArmNextAttack
+// and Handler_0e8 reads first), so every BATTLE entry draws its skill afresh
+// at that fight's distance; until this round a pick armed but not fired --
+// a Yeoha that drew its range-7 skill at 60 units and lost its target on the
+// way in -- survived the exit and was swung in the next fight without a
+// draw. The rest of what ResetThreat zeroes -- the two threat seats
+// +0xbc..+0xe0 (the target among them, which IDLE's OnEnter zeroes here
+// through SetTarget(0)), the +0xac byte and +0xa4/+0xa8 -- has no counterpart
+// in a brain (the threat table is mob-threat-retarget's). The cooldown
+// (lastSwing) is the action machine's, not a threat seat, and persists.
+func (a *monsterAI) leaveBattle(b *brain) {
+	b.armed, b.hasArmed = combat.MonsterSkill{}, false
 }
 
 // startLeg starts a leg to (destX, destZ) in clip mode (0 walk, 1 run) and

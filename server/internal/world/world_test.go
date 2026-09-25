@@ -16,12 +16,12 @@ func TestEnterReturnsExistingOccupants(t *testing.T) {
 	h := NewHub()
 	s1, s2 := fakeSession(1), fakeSession(2)
 
-	others := h.Enter(s1, 100, "Aria", "jangan", Position{X: 1, Y: 2, Z: 3})
+	others := h.Enter(s1, 100, "Aria", 1, "jangan", Position{X: 1, Y: 2, Z: 3})
 	if len(others) != 0 {
 		t.Fatalf("first entrant should see nobody else, got %+v", others)
 	}
 
-	others = h.Enter(s2, 200, "Bram", "jangan", Position{})
+	others = h.Enter(s2, 200, "Bram", 1, "jangan", Position{})
 	if len(others) != 1 || others[0].Name != "Aria" {
 		t.Fatalf("second entrant should see Aria, got %+v", others)
 	}
@@ -31,8 +31,8 @@ func TestEnterIsolatesZones(t *testing.T) {
 	h := NewHub()
 	s1, s2 := fakeSession(1), fakeSession(2)
 
-	h.Enter(s1, 100, "Aria", "jangan", Position{})
-	others := h.Enter(s2, 200, "Bram", "donwhang", Position{})
+	h.Enter(s1, 100, "Aria", 1, "jangan", Position{})
+	others := h.Enter(s2, 200, "Bram", 1, "donwhang", Position{})
 	if len(others) != 0 {
 		t.Fatalf("different zone should see nobody, got %+v", others)
 	}
@@ -41,8 +41,8 @@ func TestEnterIsolatesZones(t *testing.T) {
 func TestMoveUpdatesPositionAndReturnsOthers(t *testing.T) {
 	h := NewHub()
 	s1, s2 := fakeSession(1), fakeSession(2)
-	h.Enter(s1, 100, "Aria", "jangan", Position{})
-	h.Enter(s2, 200, "Bram", "jangan", Position{})
+	h.Enter(s1, 100, "Aria", 1, "jangan", Position{})
+	h.Enter(s2, 200, "Bram", 1, "jangan", Position{})
 
 	entity, others, ok := h.Move(s1, Position{X: 5, Y: 6, Z: 7})
 	if !ok {
@@ -67,8 +67,8 @@ func TestMoveUnknownSessionFails(t *testing.T) {
 func TestLeaveRemovesAndReturnsRemaining(t *testing.T) {
 	h := NewHub()
 	s1, s2 := fakeSession(1), fakeSession(2)
-	h.Enter(s1, 100, "Aria", "jangan", Position{})
-	h.Enter(s2, 200, "Bram", "jangan", Position{})
+	h.Enter(s1, 100, "Aria", 1, "jangan", Position{})
+	h.Enter(s2, 200, "Bram", 1, "jangan", Position{})
 
 	left, remaining, ok := h.Leave(s1)
 	if !ok || left.Zone != "jangan" || left.Name != "Aria" {
@@ -95,9 +95,9 @@ func TestLeaveUnknownSessionFails(t *testing.T) {
 func TestEntitiesInZoneIncludesEveryone(t *testing.T) {
 	h := NewHub()
 	s1, s2, s3 := fakeSession(1), fakeSession(2), fakeSession(3)
-	h.Enter(s1, 100, "Aria", "jangan", Position{})
-	h.Enter(s2, 200, "Bram", "jangan", Position{})
-	h.Enter(s3, 300, "Cora", "donwhang", Position{})
+	h.Enter(s1, 100, "Aria", 1, "jangan", Position{})
+	h.Enter(s2, 200, "Bram", 1, "jangan", Position{})
+	h.Enter(s3, 300, "Cora", 1, "donwhang", Position{})
 
 	entities := h.EntitiesInZone("jangan")
 	if len(entities) != 2 {
@@ -123,8 +123,8 @@ func TestEntitiesInZoneEmptyForUnknownZone(t *testing.T) {
 func TestReenterMovesRatherThanDuplicates(t *testing.T) {
 	h := NewHub()
 	s1 := fakeSession(1)
-	h.Enter(s1, 100, "Aria", "jangan", Position{})
-	h.Enter(s1, 100, "Aria", "donwhang", Position{}) // re-enter, different zone
+	h.Enter(s1, 100, "Aria", 1, "jangan", Position{})
+	h.Enter(s1, 100, "Aria", 1, "donwhang", Position{}) // re-enter, different zone
 
 	_, remaining, ok := h.Leave(s1)
 	if !ok {
@@ -138,9 +138,9 @@ func TestReenterMovesRatherThanDuplicates(t *testing.T) {
 func TestChangeZoneMovesEntityAndReturnsBothSides(t *testing.T) {
 	h := NewHub()
 	s1, s2, s3 := fakeSession(1), fakeSession(2), fakeSession(3)
-	h.Enter(s1, 100, "Aria", "jangan", Position{X: 1, Y: 2, Z: 3})
-	h.Enter(s2, 200, "Bram", "jangan", Position{})
-	h.Enter(s3, 300, "Cyra", "donwhang", Position{})
+	h.Enter(s1, 100, "Aria", 1, "jangan", Position{X: 1, Y: 2, Z: 3})
+	h.Enter(s2, 200, "Bram", 1, "jangan", Position{})
+	h.Enter(s3, 300, "Cyra", 1, "donwhang", Position{})
 
 	old, remainingOld, othersNew, ok := h.ChangeZone(s1, "donwhang", Position{X: 9, Y: 8, Z: 7})
 	if !ok {
@@ -172,5 +172,32 @@ func TestChangeZoneUnknownSessionFails(t *testing.T) {
 	_, _, _, ok := h.ChangeZone(fakeSession(1), "donwhang", Position{})
 	if ok {
 		t.Fatal("expected ChangeZone to fail for a session never in the world")
+	}
+}
+
+// The cached level (round 555): Enter records it, ChangeZone carries it,
+// SetLevel moves it for a character in the world and reports false for one
+// who is not.
+func TestEnterCarriesTheLevelAndSetLevelMovesIt(t *testing.T) {
+	h := NewHub()
+	s1 := fakeSession(1)
+	h.Enter(s1, 100, "Aria", 7, "jangan", Position{})
+	if e, ok := h.EntityByCharacterID(100); !ok || e.Level != 7 {
+		t.Fatalf("after Enter at level 7: %+v (ok=%v)", e, ok)
+	}
+	if _, _, _, ok := h.ChangeZone(s1, "donwhang", Position{}); !ok {
+		t.Fatal("ChangeZone failed")
+	}
+	if e, _ := h.EntityByCharacterID(100); e.Level != 7 {
+		t.Fatalf("the level did not travel with the zone change: %+v", e)
+	}
+	if !h.SetLevel(100, 8) {
+		t.Fatal("SetLevel reported the character absent")
+	}
+	if e, _ := h.EntityByCharacterID(100); e.Level != 8 {
+		t.Fatalf("after SetLevel(8): %+v", e)
+	}
+	if h.SetLevel(999, 3) {
+		t.Fatal("SetLevel reported a change for a character not in the world")
 	}
 }

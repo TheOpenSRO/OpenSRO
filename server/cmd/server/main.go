@@ -1102,7 +1102,7 @@ func main() {
 	}
 	gmDeps := &gm.Deps{
 		Chars: chars, Inv: inv, Equip: eq, Items: refItems, Skills: skills,
-		Monsters: monsters, Mana: manaTracker, Levels: levelTable,
+		Monsters: monsters, World: hub, Mana: manaTracker, Levels: levelTable,
 		Species: gmSpecies(), Zones: worldmap.ZoneNames(), Logger: logger,
 	}
 

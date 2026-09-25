@@ -34,6 +34,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
+	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
 // Gate is the set of account usernames allowed to run GM commands.
@@ -165,9 +166,12 @@ type Deps struct {
 	Items    combat.ItemLookup
 	Skills   skill.Store
 	Monsters *combat.Hub
-	Mana     *mana.Tracker
-	Levels   *leveldata.Table
-	Species  []Species
+	// World is the world hub whose cached level /level moves with the row
+	// (world.Entity.Level, round 555); nil leaves the cache alone.
+	World   *world.Hub
+	Mana    *mana.Tracker
+	Levels  *leveldata.Table
+	Species []Species
 	// Zones are the named zones /goto accepts (worldmap.ZoneCentre's keys).
 	Zones  []string
 	Logger *slog.Logger
@@ -369,6 +373,11 @@ func (d *Deps) level(ctx context.Context, actor Actor, args []string) Result {
 	newInt := c.Int + gained*character.StatGrowthPerLevel
 	if err := d.Chars.SetLeveling(ctx, actor.CharacterID, want, 0, newStatPoints, newStr, newInt); err != nil {
 		return refuse("setting the level failed: " + err.Error())
+	}
+	if d.World != nil {
+		// The entity's cached level follows the row, as performAttack's
+		// level-up does (round 555): the monster AI reads it there.
+		d.World.SetLevel(actor.CharacterID, want)
 	}
 	if err := d.Chars.ResetHP(ctx, actor.CharacterID); err != nil {
 		return refuse("refilling hp failed: " + err.Error())

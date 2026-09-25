@@ -1387,6 +1387,11 @@ func performAttack(
 				return fmt.Errorf("combat: applying experience: %w", err)
 			}
 			if gained > 0 {
+				// The world entity's cached level follows the row (round 555):
+				// the monster AI's aggro link and swings read it there, never
+				// the store, and this is one of the two places a level moves
+				// (gm's /level is the other).
+				hub.SetLevel(characterID, newLevel)
 				if err := chars.ResetHP(ctx, characterID); err != nil {
 					return fmt.Errorf("combat: refilling hp on level up: %w", err)
 				}

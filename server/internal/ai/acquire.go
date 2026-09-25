@@ -83,11 +83,17 @@ const TacticsFlagsFastScan = 0x84
 //
 //	period = base + |rand| % spread + 1 ; `div ebp` at 0x53d6ab, `lea edi,[edx+edi*1+0x1]` at 0x53d6ad
 //	                                    ;   (the second table's twin is 0x53d64e..0x53d650)
+//	(a second rand(), discarded)        ; `call 0x9dd338` at 0x53d6bb: nothing reads its result --
+//	                                    ;   the second-table twin at 0x53d65e seeds that entry's
+//	                                    ;   last (`div edi; add edx,[esp+0x18]; mov [esi+0x4],edx`
+//	                                    ;   0x53d663..0x53d66b), the first-table path zeroes it
 //	entry.last = 0, entry.fired = 1     ; 0x53d6c0, 0x53d6c7: due the first time it is asked
 //	entry.period = period               ; 0x53d6d0
 //
 // so the period lies in [1001, 1500] ms, or [201, 250] on the fast branch,
-// rolled once per spawn, and the first scan is immediate. AITactics_TimerDue
+// rolled once per spawn, and the first scan is immediate; the path draws
+// rand() twice, the second draw to no effect but the engine's rng stream,
+// which srrevamp's own rng does not share (round 555). AITactics_TimerDue
 // (0x53d6e0) answers due on the fired byte (`cmp byte [..+1],1; je` 0x53d751)
 // and otherwise once now - last >= period (`sub edx,[ecx+8]; cmp edx,[ecx+4];
 // jb not-due` 0x53d75d..0x53d763), consuming it (`mov [ecx+4],edi` 0x53d765).
@@ -160,16 +166,29 @@ type Candidate struct {
 //     pick and 0x54673a..0x546758 after; the compare `fild [best]; fcomp
 //     st(1); test ah,0x41; jne reject` at 0x546725..0x546738 rejects on
 //     best < dist or best == dist). A stored 0 -- a pick under one unit away
-//     -- is read as no pick yet (`cmp [edx],ebx` with ebx = 0 at 0x54671b),
-//     so any later candidate in range replaces it. Carried as read.
+//     -- is read as no pick yet (`mov eax,[edx]; cmp eax,ebx` with ebx = 0
+//     at 0x546719..0x54671b; round 555 corrected the mnemonic, which read
+//     `cmp [edx],ebx`), so any later candidate in range replaces it.
+//     Carried as read.
 //
 // The distance srrevamp measures is the ground plane's, the one battleTick
 // uses; GObj_DistanceBetween (0x53d7a0) sums three axes across regions, and
-// srrevamp's monsters carry no height. Not modelled: a player's summoned
-// objects (GObjPC::FUN_004fc160 at the PC branch, unread beyond its shape) and
-// the owner's slot 355 test on the pick (`[eax+0x58c]` in the same branch).
-// The candidates' order is the caller's; the engine's is the region's player
-// list, which srrevamp does not have.
+// srrevamp's monsters carry no height. The candidates' order is the caller's;
+// the engine's is the region's player list, which srrevamp does not have.
+//
+// Not modelled, read closer in round 555: the PC branch (0x546563..0x546675)
+// stores AITactics_ValidTargetOrNull's result back OVER the candidate (`mov
+// [ebp+0x10],eax` 0x546590; `mov [ebp+0x10],ebx`, 0, at 0x5465a9 when the
+// owner's slot 355 `[edx+0x58c]` refuses it), lets a nearer valid summoned
+// object of that player (GObjPC::FUN_004fc160's list, 0x5465c2..0x546656)
+// replace both the candidate (0x546646) and its distance (0x546642), reloads
+// the result at 0x546675 and runs the two compares above on it with NO null
+// test before the store (`mov [eax],esi` at 0x546702). So a player the
+// validity test rejects -- dead, under -player-dead-state -- is not skipped
+// the way Nearest's caller skips one: it leaves a NULL pick at its own
+// distance, which a later candidate must be strictly nearer than. srrevamp's
+// callers drop dead players before the scan, so a dead body nearer than a
+// living player never shadows the living one here; in the engine it would.
 func Nearest(cands []Candidate, x, z, radius float64) (best Candidate, dist float64, ok bool) {
 	limit := math.Trunc(radius)
 	stored := 0

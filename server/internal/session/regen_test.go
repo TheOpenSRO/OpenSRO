@@ -95,7 +95,7 @@ func TestRegenTickLeavesTheDeadAtZero(t *testing.T) {
 		t.Fatal(err)
 	}
 	hub := world.NewHub()
-	hub.Enter(gateway.NewTestSession(549), c.ID, "Fallen", "jangan", world.Position{})
+	hub.Enter(gateway.NewTestSession(549), c.ID, "Fallen", 1, "jangan", world.Position{})
 	hub.SetLifeState(c.ID, world.LifeAlive, world.LifeDead, time.Now())
 	for i := 0; i < 5; i++ {
 		regenTick(ctx, hub, store, RegenDeps{}, nil)

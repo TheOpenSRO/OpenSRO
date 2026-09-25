@@ -34556,8 +34556,10 @@ the coroutine resumes on the next, so `is_inside_tree` runs on a freed instance:
 - `monsterStrike` (the AI swing and the synchronous counter alike): a blow whose damage leaves the
   pool at 0 (`hp == 0 && incoming > 0`) takes the character's lock and reads her back under it. Not
   in the dead state and still at 0: it is THE kill, and completes the death under the lock -- the
-  penalty from that same read (one `GetByID` fewer than before: the penalty's read is the
-  arbiter's), then `markDead` (flag on) or `RespawnHP` + `keepUp.Cancel` + the MP refill (flag off).
+  penalty from that same read (one `GetByID` fewer than an arbiter-plus-penalty design would make:
+  the penalty's read is the arbiter's; against round 550 the kill path still makes two, the
+  arbiter's and the reborn re-read -- round 555 corrected "fewer than before"), then `markDead`
+  (flag on) or `RespawnHP` + `keepUp.Cancel` + the MP refill (flag off).
   In life state 2, or above 0 again: another kill got there first, `dropped` (nothing reported;
   the roll and the armour wear before the write stand, as round 550 disclosed). A blow that lands
   nothing -- blocked, or a zero roll -- kills nobody at any pool and is reported as it is, at the
@@ -34580,8 +34582,9 @@ the coroutine resumes on the next, so `is_inside_tree` runs on a freed instance:
 - `character.Store.ApplyDamage`'s contract, rewritten: `died` is a fact about the write -- whether
   THIS call emptied the pool -- and not the verdict on a death; nothing in `session` reads it now,
   and the store tests pin the arithmetic. `MemStore` and `SQLStore` are unchanged.
-- `runStrike`'s dropped trace says why ("another blow's kill got there first"); `markDead`'s and
-  `handStrike`'s comments name the lock.
+- `runStrike`'s dropped trace says why ("another blow's kill got there first"); `markDead`'s
+  comment names the lock (`handStrike`'s did not until round 555, which this line claimed; it does
+  now).
 
 OWN DESIGN, disclosed at `killLocks`: the engine has no such lock -- its blows and revives run on
 one game-object queue. One mutex per character ever taken to 0, never removed. Lock order: the kill
@@ -34676,7 +34679,14 @@ reading is in `docs/protocol/monster_ai.md`, "Target acquisition: the runtime (r
 - The selector `AITactics_Select_Nearest` `0x5464e0`: at most the radius (`0x54668d..0x5466a0`),
   `ValidTargetOrNull` `0x540dc0` in the PC branch (life state 1, `IsValidTarget` `0x540de0`),
   strictly nearer than the pick's TRUNCATED stored distance (`0x5466c8..0x5466e6`,
-  `0x546725..0x546758`), a stored 0 read as no pick (`0x54671b`). Carried as read (`ai.Nearest`).
+  `0x546725..0x546758`), a stored 0 read as no pick (`mov eax,[edx]; cmp eax,ebx` at
+  `0x546719..0x54671b`; `ai.Nearest`'s comment had the mnemonic wrong, `cmp [edx],ebx`, corrected
+  in round 555). Carried as read (`ai.Nearest`) -- **overstated by one thing, read in round 555**:
+  the PC branch stores `ValidTargetOrNull`'s result back over the candidate (`0x546590`; 0 on the
+  slot-355 refusal at `0x5465a9`), reloads it at `0x546675` and stores it as the pick with no null
+  test (`0x546702`), so a rejected (dead) player leaves a NULL pick at its own distance that a later
+  candidate must be strictly nearer than; srrevamp drops dead players before the scan and does not
+  model that shadowing (`monster_ai.md`, the round-552 section's step 4).
 - The aggression roll, `Init` `0x53f5be..0x53f5e1`: the mode as it is unless 2, then `rand % 100
   >= pct` -> 1 (not aggressive). `ai.Aggressive`.
 - **The cadence, from the asm** (the decompile drops `ArmTimer`'s ECX/EAX arguments): `Init`
@@ -34807,7 +34817,9 @@ round (2026-09-25; the reading is in `docs/protocol/monster_ai.md`, "The aggro l
   `ChangeState(3)` (`0x558f01`); `ftol(hate x 1.15f)` at `0x558ebd..0x558ecc` -- `0xb46300` is
   `0x3ff2666660000000`, the float 1.15f widened, so 20 hate books 22. `OnAggroLinked` `0x559bb0`:
   credit, `SetTarget(1)`, `ChangeState`, no `+0xf0` (no cascade); `CAIState_BATTLE::OnAggroLinked`
-  `0x55a320`: credit only. `CreditAttacker` `0x5473c0`: `+4` damage, `+8`/`+0xc` hate.
+  `0x55a320`: credit, and `ChangeState(1)` to IDLE when the accounting refuses (`0x55a342..0x55a345`;
+  round 555 corrected "credit only" -- the refusal is not modelled). `CreditAttacker` `0x5473c0`:
+  `+4` damage, `+8`/`+0xc` hate; returns 1 for a code-0 record whose hate lands below 1.
 - `CollectNearbyMonsters` `0x540580` -> `LevelScaledRadius` `0x541e00`: levels off slot 73 as
   bytes, the bands, `fmul QWORD` on `0xb45c08`/`c00`/`bf0`/`bf8` -- **float literals widened**
   (`0x3ff6666660000000` = 1.4f = 1.39999997615814, and 1.2f, 0.8f, 0.6f), **`fstp DWORD` `0x541e9b`**,
@@ -34831,8 +34843,10 @@ mob-threat-retarget. `combat.go` and the client needed no change.
 returns on a zero-hate record; a plain blow's hate is UNREAD, and srrevamp's blows carry none), a
 party is two or more (round 485's reading), the zone for the region set, the ground plane, ties by
 id in the gather, the attacker's level as one `chars.GetByID` on the tick per link event (none
-without a character store), a monster hatched inside the pass skipped, no hate forwarded, and the
-accounting's refusals still not modelled.
+without a character store; **replaced in round 555** by the world entity's cached level, no store
+read on the tick), a monster hatched inside the pass skipped, no hate forwarded, and the
+accounting's refusals still not modelled (round 555 pinned the two neighbour branches with tests:
+a fighting neighbour keeps its target and uses a place, a DEAD one is passed over and uses a place).
 
 **Tests** (`cd server && go build ./... && go test -count=1 -p 1 ./...` green; re-run after the doc
 edits): `session` -- `TestPartyHitLinksTheTwoNearestNeighbours` (THE RED),
@@ -34927,7 +34941,9 @@ table=(177, 2500, 100, ...)`).
 
 **Stand-ins, each disclosed at its line and in the section**: one cooldown per monster (the fired
 skill's ReuseDelay; per-skill re-use in the action machine not read), the draw's moment (the first
-BATTLE tick with nothing armed, at that tick's distance; when `+0x44` is cleared not read), the
+BATTLE tick with nothing armed, at that tick's distance; when `+0x44` is cleared between two swings
+of one fight not read -- round 555 read that `BATTLE::OnLeave`'s `ResetThreat` clears it on every
+exit, so every entry draws afresh, and `leaveBattle` follows it), the
 `att` percent unapplied (mob-monster-att-percent, to be read before any damage scaling), a
 zero-`att` skill landing 0 (no status system; the client may draw the 0), no `_RefAISkill`
 triggers (mob-ai-skill-triggers), the failed-swing tail as in round 546.
@@ -34961,3 +34977,163 @@ default)"), `client/tools/verify_monster_specs.py` (the docstring's new RESULT p
 
 **Deploy note.** Nothing to flip. The draw is live wherever `-monster-battle` is on; that flag's own
 conditions (`deploy/README.md`) are unchanged.
+
+## Batch-18 review follow-ups (rounds 551-554): the level cache off the AI tick, the stale armed pick, the untested link branches, the names-file rows, record wording (round 555)
+
+The review notes on rounds 551-554, each re-checked on the RE box before it was landed
+(`/var/tmp/srv.asm`, the decomp dump, `.rdata`; 2026-09-25). Two behaviour changes, both inside
+flags that are OFF by default (`-monster-battle`; the level cache is read only by it), no opcode or
+layout changed, no new flag, client untouched.
+
+**1. No character-store read on the AI tick or the strike worker.** Round 553's `linkAggro` read the
+attacker's level with one `chars.GetByID` per link event UNDER `a.mu`, so one slow store read
+stalled every monster's tick, and round 546's `runStrike` read the target's level with one per
+swing. Now `world.Entity` carries `Level`: the row's at `Hub.Enter` (a parameter, so no entity ever
+exists without one -- `handleEnterWorld` passes `owned.Level`), carried by `ChangeZone`, and moved
+by `Hub.SetLevel` at the two places a level changes -- `performAttack`'s level-up next to its
+`SetLeveling`, and gm's `/level` (`gm.Deps.World`, the hub `cmd/server` passes). Nothing else moves a
+level: a death penalty takes experience only (`GObjPC_OnDeath` touches no `CurLevel`, round 550's
+reading in `monsterstrike.go`) and a stat-point spend keeps it (`stats.go`). `linkAggro` reads
+`self.Level` off the entity it already resolves (the character-store gate is gone: the link needs
+the party hub and the world hub only); `runStrike` makes one hub read for the dead check and the
+level, and falls back to the row only for a target no longer in the world (the hand-off window of
+round 547 -- the swing still resolves, and its level is then the row's, the one store read left
+before the blow). `world.Hub.Enter`'s signature changed (level after name); 30 test call sites updated.
+
+**2. The armed pick is cleared with BATTLE.** The review's question was what the engine does with
+the selector's `+0x44` across `ChangeState`. Answered: `CAIState_BATTLE::OnLeave` (`0x55a240`) calls
+only `AI::CTactics::ResetThreat` (`0x53fb20`, `call 0x53fb20` at `0x55a243`), and `ResetThreat` zeroes
+the selector's armed pick inline -- `xor eax,eax` `0x53fb28`, `mov ecx,[edi+0x9c]; mov [ecx+0x44],eax`
+`0x53fb78..0x53fb7e` -- with the two threat seats `+0xbc..+0xe0`, the `+0xac` byte and `+0xa4`/`+0xa8`
+(its other callers: `Init` at `0x53f4e7`, and the unnamed `FUN_00559140` at `0x55915a`). The
+vtable-slot-6 clear `0x561a40` (`mov [ecx+0x44],0`; slot 6 of `0xaf9d24`/`0xaf9dcc` -- `401a5600` at
+each vtable's `+0x18` in `.rdata`) that round 554 could not cheaply trace is reached through the
+slot-6 thunk `FUN_00540cf0` (`mov ecx,[eax+0x9c]; mov edx,[ecx]; mov eax,[edx+0x18]; call eax`),
+whose only callers are `0x558fb3` and `0x558fe5` inside the unnamed `FUN_00558f70` (itself
+vtable-reached: no direct `call 0x558f70` in `srv.asm`, and `708f5500` sits in the state vtables in
+`.rdata`, 18 entries) -- not the BATTLE exit's path. This entry's first draft also named
+`CSockDatagram::vslot_004` as a caller of the clear; neither `srv.asm` nor the decomp dump supports
+it (`0x561a40` is referenced nowhere outside its own body, and `FUN_00540cf0`'s two callers are both
+in `FUN_00558f70`), so that attribution is withdrawn. `BATTLE::OnEnter` (`0x559fb0`) READS the
+selector and is not seen to clear it -- the first draft's "touches the selector not at all" was wrong,
+and contradicted the ArmContextTimer row already in `monster_ai.md`: `FUN_00540d80` at `0x55a001`
+loads the selector's `+0x48` and `+0x44` (`mov eax,[eax+0x9c]; mov ecx,[eax+0x48]; mov
+eax,[eax+0x44]` `0x540d80..0x540d89`) and hands them out through two out-params (`mov [esi],ecx; mov
+[edx],ecx`, the second replaced by the armed pick's `+0x78` when `+0x44` is non-null,
+`0x540d92..0x540d97`), timer 5's base among them (that row), writing nothing of the selector's; and
+`0x541810` at `0x55a081` is a thunk into the selector's vtable slot 11 (`+0x2c`: `mov ecx,[eax+0x9c];
+mov edx,[ecx]; mov eax,[edx+0x2c]; jmp eax`), whose target is unread. So the clear that IS read is
+`OnLeave`'s, the engine draws afresh on every BATTLE entry, and the runtime now does too:
+`brainState.leave`, BATTLE's
+`leaveBattle`, run by `ai.Machine` on every exit -- the `0x23`/`0x27`/`0x2a` releases among them --
+clears `armed`/`hasArmed`. Until this round a pick armed but not fired (seed 1's Yeoha drawing its
+range-7 176 at 60 units and losing its target on the way in) survived the exit and was swung in the
+next fight with no draw, so round 554's "the draw's moment: the entry tick" was true only of a
+monster that had never armed one. The rest of `ResetThreat` has no counterpart in a brain (the
+threat table is mob-threat-retarget's; the target, one of the seats, is zeroed by IDLE's `OnEnter`
+through `SetTarget(0)`); the cooldown (`lastSwing`) is the action machine's and persists.
+
+**3. The two untested link branches, pinned.** A gathered neighbour already in BATTLE keeps its own
+target under rule 0 and still uses up one of the n places; a DEAD neighbour is passed over -- brain
+untouched, no target set, no transition attempted -- and uses up its place too (the engine forwards
+command `0xe` to the first n gathered whatever each one's state). Tests below; a mutation of each
+branch fails its test.
+
+**4. The names file and the `fallen` wording.** `recovered_names.tsv`'s `00561b00`
+`AI::CAISkill_Basic::PickSkill` row still carried round 260's reading -- the whole margin, and "rand()
+draw (0x5632d0)" -- which round 554 corrected everywhere else: it now reads half the margin
+(`fmul QWORD [0xb45b00]; fdiv QWORD [0xb45c60]` `0x561c93..0x561c9f`, 5.0 and 10.0 in `.rdata`), the
+inline draw (`0x561ce9..0x561d2e`) and `0x5632d0` as the `invalid vector<T> subscript` throw. The
+`fallen` comment and `monsterStrikeOutcome.dropped`'s: a blow a heal covered between its write and
+the lock did land (the pool went to 0) -- the blow is UNREPORTED (no push, no counter, no penalty),
+and with `-player-dead-state` on a potion step in that microsecond window keeps her alive at the
+healed HP with no death; not an exploit (she stays killable), and now worded so. `runStrike`'s dropped
+comment likewise.
+
+**5. Record wording, each re-verified.** (a) BATTLE's slot 6 is `CAIState_BATTLE::OnAttacked`
+`0x55a2e0`, which calls behaviour `+0xfc` (`AITactics_Handler_0fc` `0x548090`: `mov edx,[ecx+0xfc];
+call edx` `0x55a2ea..0x55a2f3`), then `test eax,eax; je 0x55a30c` and, on a non-zero answer -- the 1
+`Handler_0fc` returns only when the `+0xec` accounting refuses, the round-546 section's "a refusal
+returns 1 (-> IDLE)" -- `ChangeState(1)`s to IDLE (`xor ebx,ebx; push 0; lea edi,[ebx+1]; call
+0x53ff30` `0x55a2fe..0x55a305`), and has no `+0xf0` call -- `linkAggro`'s comment and the round-553
+section had "slot 6 is `Handler_0fc`", one step short; the round-546 section already had it right.
+(This round's first draft of that comment and section wrote "`Handler_0fc` and nothing else", which
+the IDLE branch refutes; the load-bearing fact, no `+0xf0` call, stands.)
+(b) `CAIState_BATTLE::OnAggroLinked` `0x55a320` credits through `+0xec` and, on the accounting's
+refusal, `ChangeState(1)`s to IDLE (`lea edi,[ebx+1]; call 0x53ff30` `0x55a342..0x55a345`; the
+round-258 paragraph had it) -- "only credits"/"credit only" corrected in the comment, the section
+and the round-553 entry; the refusal stays unmodelled. (c) The every-blow-carries-hate stand-in now
+cites the stronger ground: `AITactics_CreditAttacker` `0x5473c0` returns 1 (drop) for a code-0
+record whose hate lands below 1 (`if ((iVar4 == 0) && (iVar3 < 1)) return 1`), and
+`CAIState::OnAttacked` only `SetTarget`s and `ChangeState(3)`s when `+0xec` returns 0, so a zero-hate
+first blow would not even engage its victim, which round 546's BATTLE entry on every blow already
+assumes -- consistent with the existing model, not a fresh inference. (d) The round-552 selector
+nits: `mov eax,[edx]; cmp eax,ebx` at `0x546719..0x54671b` (the comment's `cmp [edx],ebx` was the
+wrong mnemonic); and the fidelity overstatement, read to the end this round -- the PC branch
+(`0x546563..0x546675`) stores `ValidTargetOrNull`'s result back over the candidate (`0x546590`; 0 at
+`0x5465a9` on the owner's slot-355 refusal), lets a nearer valid summoned object replace the
+candidate and its distance (`0x546646`, `0x546642`), reloads the result at `0x546675` and runs the
+radius and best-so-far compares on it with NO null test before `mov [eax],esi` `0x546702`
+(`ScanForTargets` `0x5405b0` hands every player of the regions but the owner to the selector and
+goes on to the next) -- so a rejected, dead player leaves a NULL pick at its own distance that a
+later candidate must be strictly nearer than; `acquire` drops dead players before the scan and so
+does not model a dead body shadowing a living player. Disclosed in `ai.Nearest`'s comment,
+`acquire`'s and the section; not modelled (the flag's operator would want the living player
+noticed). (e) The engine consumes tactics timer 1 (`TimerDue` at `0x54793f`) BEFORE the aggression
+byte gate (`0x547958`); `acquire` tested `b.aggressive` first, so a non-aggressive monster never
+consumed its timer -- now in the engine's order (unobservable under the mode-0 stand-in; a
+per-species mode would see it). (f) `ArmTimer`'s first-table path draws `rand()` twice, the second
+(`call 0x9dd338` at `0x53d6bb`) to no effect -- the second-table twin at `0x53d65e` seeds that entry's
+last (`0x53d663..0x53d66b`), the first-table path zeroes it -- noted in `acquire.go`'s cadence
+comment; srrevamp's rng is its own. (g) `handStrike`'s comment names the kill lock, as the round-551
+entry claimed. (h) `battleTick`'s note: a monster with no skill carrying an `AI_AttackChance` stands
+in BATTLE, neither chasing nor swinging, until the give-up check or the target's exit releases it;
+no roster species reaches it. (i) Round 551's "one `GetByID` fewer than before" is one fewer than an
+arbiter-plus-penalty design, not than round 550 (the kill path still makes two); corrected in place.
+
+**Tests** (`cd server && go build ./... && go test -count=1 -p 1 ./...` green; re-run after the doc
+edits): `session` -- `TestAggroLinkAndSwingReadNoCharacterRow` (THE RED of 1: a level-5 Aria, row and
+entity both, in a party of two; the radius is 84 -- B at 84 links, C at 85 does not -- and a
+counting character store saw NO `GetByID` through the link tick, the chase and A's first blow),
+`TestBattleExitClearsTheArmedPick` (THE RED of 2: seed 1's Yeoha arms 176 at 60 and chases; Aria
+leaves the world, the `0x23` exit leaves nothing armed; she re-enters and strikes, and a second
+`arms skill` trace line shows the fresh draw), `TestALinkedNeighbourAlreadyInBattleKeepsItsTargetAndUsesAPlace`
+(a solo Cass engages B first; Aria's party blow on A links C alone -- B's place used, D idle -- and
+B's target is still Cass), `TestADeadNeighbourIsSkippedButUsesAPlace` (B's machine put in DEAD by
+hand: Aria's party blow on A links C alone, B stays DEAD with target 0, D idle),
+`TestLevelUpMovesTheEntityLevel` (one kill under a table whose level 1 ends at 10 experience levels
+Aria up; the entity's level is the row's new level), `TestAggroLinkRadiusScalesByTheLevelGap` (now
+sets the level the way the level-up path does, row and entity: `levelAria`);
+`TestStrikeWorkerSurvivesAPanic`'s injected panic moved from the store's `GetByID` (no longer on the
+swing's path) to its `ApplyDamage`, the first store call a swing now makes; `world` --
+`TestEnterCarriesTheLevelAndSetLevelMovesIt`; `gm` -- `TestLevelFollowsTheLevelUpArithmetic` reads
+the entity's level back after `/level 4`. **Negatives, proved with the production files stashed or
+the branch mutated, each restored and compared byte for byte (`cmp`; no stash left):**
+
+| without | result |
+|---|---|
+| `monsterai.go` alone stashed | `TestAggroLinkAndSwingReadNoCharacterRow`: `the link tick made 1 GetByID read(s) on the character store, want none`; `TestBattleExitClearsTheArmedPick`: `the pick {ID:176 ...} survived the BATTLE exit`; the two branch tests PASS (they pin existing code) and the level-gap test passes (it sets the row too) |
+| the switch's BATTLE case removed | `B's target is 1, want Cass 3 kept under rule 0` |
+| the switch's Terminal case removed | `the dead B's target is 1, want 0: the terminal branch touches nothing` |
+| `combat.go` alone stashed | `TestLevelUpMovesTheEntityLevel`: `the entity's level after the level-up = 1, want the row's 3` |
+| `world.go` alone stashed | `world` tests do not build (`too many arguments in call to h.Enter`) |
+| `gm.go` alone stashed | `gm` tests do not build (`unknown field World in struct literal of type Deps`) |
+
+`acquire.go` and `monsterstrike.go` changed only in comments and in `acquire`'s test order (nothing
+observable under mode 0), so no negative is claimed for them. Client untouched (`remote_godot.sh
+tests` not needed).
+
+**Records**: `docs/protocol/recovered_names.tsv` (the `00561b00` row), `docs/protocol/monster_ai.md`
+(the round-552 section's step 4, the round-553 section's slot 6 / `OnAggroLinked` / hate / level
+bullets, the round-554 section's draw's-moment and failed-swing bullets, the runtime section's and
+the round-546 section's `OnLeave` lines), `docs/SYSTEMS.md` (the Monster AI row's round-553 and
+round-554 stand-ins), this file's round-551 (two clauses), round-552 (the selector bullet),
+round-553 (`credit only`; the stand-ins) and round-554 (the draw's moment) entries, each marked as
+corrected in round 555. `WORLD_ISSUES.md` stays untouched, as in rounds 541-554. Not landed, by
+design: the round-551 harness widening (`SCRIPT ERROR` in `remote_godot.sh tests`) is its own item
+in this batch, and the round-552 selector shadowing is disclosed rather than modelled.
+
+**Deploy note.** Nothing to flip. Both behaviour changes ride `-monster-battle`, off by default;
+with it on, the aggro link and the swings stop reading the character store on the tick and the
+worker, and a monster draws its skill afresh in every fight. `world.Hub.Enter` gained a parameter,
+which is internal.
