@@ -36101,3 +36101,150 @@ so nothing there either.
 **Deploy note.** Client only, not tag-worthy alone; ships in the next tag with the fix that
 follows. Frames of both runs deleted from `/var/tmp/r561/` (the logs `entry.log` and `cross.log`
 and `run.sh` kept, 87 KB).
+
+## The loading screen is up before the first cell builds, and it reuses the held Media.pk2 handle (round 562)
+
+Client only, tag-worthy: the first visible fix of the map/loading epic (2026-09-25), to ship in the
+next tag. Nothing on the wire, no flag, no server change. Every number below is from the render box
+(2026-09-25, hardware GL through VirtualGL, lane lock `/var/tmp/r562/lock`, round 558's server
+binary -- `server/` is unchanged since `504b68f`, `git diff --stat` between it and BASE empty) or
+from this checkout.
+
+**Grounding, re-read for this round.**
+
+- The order at BASE (`e2a65df`): `World3D._ready` ran `_load_initial_region_neighborhood()` (the
+  synchronous centre cell), `_try_initialize_pk2_ui()`, `_try_load_cursors()` and only then
+  `await _drain_initial_load(_t_region)`, whose screen branch did `_loading_screen =
+  LoadingScreen.new()` and awaited one frame before its first batch. `_show_loading_screen()`
+  served the teleport path alone (`_on_change_zone_result` awaits it before `_reload_zone_assets`),
+  and the drain reused a screen a caller had put up. So the entry's centre cell was built with no
+  screen in existence: round 561's baseline log (`/var/tmp/r561/entry.log`) has no `LoadingScreen`
+  line at all, and `cell 97/168 built in 5373 ms at frame 13`.
+- `LoadingScreen._init(backdrop_ddj)` took no archive; its `_ready` called `FrontEndUi.open_media()`,
+  which is `Pk2Reader.open(Pk2Config.media_path())` -- a reader of its own on every login and every
+  teleport, while `World3D._media_pk2` was already open (`_load_character_assets` at the top of
+  `_ready`; `_open_media_pk2_if_set` returns it, or opens it for a world without character tables).
+  Media.pk2 is 1,547,583,488 bytes on the box (`ls -l /opt/sro-files/client/Media.pk2`). The
+  feasibility verifier's correction stands: `Pk2Reader.open` reads the 256-byte header and walks
+  directories lazily (`_read_block_chain`, cached per reader), so the saving was to be measured by
+  the new print, never taken from round 160's ~1 s, and the NEGATIVE is "no `media` line / a second
+  reader", not a non-zero time.
+- CanvasItem draw order is child order, and `ui_control.add_child` for the minimap, world map,
+  underbar, player info, panels and chat all run inside `_try_initialize_pk2_ui`, after the point
+  where the screen now goes up (the grounding verifier's finding, answered with
+  `cover_siblings()` after the HUD is built).
+- `SRREVAMP_QA_NOUI=1` hides `$UI/Control` on the first physics tick (`_qa_step`), and the screen
+  is that Control's child, so the benchmark's own frames can never show it: the benchmark proves
+  the order by its log, and a run without `NOUI` proves it on the frames.
+- The plan's "black window" is not what a QA run's frames show (below: the placeholder scene). A
+  real player's window before this round kept whatever it had drawn last while the main thread
+  built the centre cell; nothing here calls it black.
+- The plan's "frame 0" was a guess too: the QA sign-in awaits ahead of the world, so the screen's
+  frame is 13 in every run here, one before the centre cell's 14 -- the order is the measurement,
+  not the absolute frame.
+
+**Change** (client only: `World3D.gd`, `ui/loading_screen.gd`, `tools/README.md`, and the new
+`ui/loading_screen_test.gd`).
+
+- `World3D._ready`: `var screen_frames: int = await _show_loading_screen()` before
+  `_load_initial_region_neighborhood()`, with round 560's `is_inside_tree()` guard after the await;
+  after `_try_initialize_pk2_ui()` and `_try_load_cursors()`, `_loading_screen.cover_siblings()`
+  puts the screen back over the HUD; `_drain_initial_load(_t_region, screen_frames)` so the
+  `region grid loaded` line's awaited-frame count covers the span its total covers (the clock
+  `_t_region` stays ahead of the screen, so the total compares with round 561's).
+- `_show_loading_screen() -> int` builds `LoadingScreen.new(LoadingScreen.DEFAULT_BACKDROP,
+  _open_media_pk2_if_set())` and returns the frames it awaited (1, or 0 under QA / with a screen
+  already up). The drain's own fallback creation passes the same handle.
+- `_drain_initial_load` draws one frame before its first batch whether or not it made the screen,
+  and the gauge counts the centre cell (`total = queue + 1`, the first tick `1 / total`). This is
+  the round's own finding, not the plan's: the first AFTER run (`/var/tmp/r562/entry1.log`) had the
+  drain's first batch join the centre cell's frame -- the await that used to separate them was the
+  screen's creation, which moved -- and the benchmark's longest work frame read `7506 ms at frame
+  14 (cell 97/167)` for a 5,234 ms centre cell. The player sees the same frozen art either way;
+  the metric the later items are measured on has to read the centre cell alone.
+- `_qa_step`'s `--reconnect drain` hook gains `and not _load_queue.is_empty()`: with the screen up
+  from before the centre cell, "the first tick that finds the screen up" is `_ready`'s own await
+  with nothing queued; the hook keeps round 558's meaning (mid-drain, cells queued). QA header
+  updated.
+- `LoadingScreen._init(backdrop_ddj := DEFAULT_BACKDROP, media: Pk2Reader = null)`; `_ready` uses
+  the handle when given (`media_source = "reused"`), else the old `open_media()` path (`"opened"`,
+  timed in `media_open_ms`, or `"none"`); prints `LoadingScreen: up at frame %d (media %s, %d ms;
+  backdrop %s, %d ms; built in %d ms)`; `cover_siblings()` is `move_child` to the last index, a
+  no-op without a parent.
+
+**Measured.** Benchmark (a) of `client/tools/README.md`, "Load benchmark", verbatim
+(`SRREVAMP_QA_FORCE_LOADING=1 SRREVAMP_QA_NOUI=1 ... --radius 2 --frames 200`),
+`/var/tmp/r562/entry.log`:
+
+```
+LoadingScreen: up at frame 13 (media reused, 0 ms; backdrop decoded, 674 ms; built in 676 ms)
+World3D: ground textures for 97\168.m -- 26 ids, 26 resolved, 26 decoded now in 123 ms, ...          (after it)
+World3D: cell 97/168 built in 5200 ms at frame 14 (terrain 1575 [read 82, parse 16, env 4, lightmap 2, tiletable 937, textures 128, mesh 122, collision 57, walls 15, water 6, navgraph 195], objects 1951 [parse 9, own 323, templates 1532, place 84], npcs 1673 [tables 939])
+World3D: cell 97/169 built in 1162 ms at frame 15 (...)   World3D: cell 97/167 built in 1145 ms at frame 15 (...)   -- three a frame at frames 15-22
+World3D: region grid loaded in 22884 ms (terrain 8004, objects 5015, npcs 2347) at frame 23 -- 25 cells 15365 ms, 7519 ms outside the cells over 10 awaited frames
+World3D: longest work frame 5259 ms at frame 14 (cell 97/168) over 24 frames since the last summary; p95 2919 ms; 9 over 100 ms; longest wall gap 7761 ms at frame 15; run longest 5259 ms at frame 14 (cell 97/168); grid 25 cells terrain 8004 objects 5015 npcs 2347 ms
+World3D: longest work frame 7 ms at frame 64 over 176 frames since the last summary; p95 6 ms; 0 over 100 ms; longest wall gap 366 ms at frame 159; ...                        (in play)
+```
+
+Against round 561's BEFORE: the screen exists at frame 13 and the centre cell builds at frame 14
+(before: the centre at 13, no screen until after it); `region grid loaded` 22,884 ms against
+22,752 (+0.6 %, inside the spread -- the first AFTER run read 22,257), over 10 awaited frames
+against 9 (the one the drain now draws after the centre cell); cells 15,365 against 15,388; the
+longest work frame 5,259 ms at frame 14 = the centre cell, against 5,374 at frame 13; p95 2,919
+against 2,844; 9 over 100 ms both; cells a frame 1 then 3 x 8, as before; in play 7 / 6 ms
+against 6 / 6. `media reused, 0 ms`: one reader. What the screen itself costs is now a number:
+the backdrop's decode, 669-708 ms across the three runs, nearly all of the screen's 672-711 ms;
+the plan had no measurement for it. 0 `SCRIPT ERROR` in the run: the frame `_ready` now awaits
+before any terrain or HUD exists ran its physics step without error. (b), the crossing, was not
+re-run: nothing in play changed.
+
+The frames, from a run with the HUD shown (`--radius 1 --frames 40`, the same environment less
+`NOUI`, `/var/tmp/r562/first.log`, ImageMagick on the box, `/var/tmp/r562/measure_first.sh`):
+frames 0-12 are the placeholder scene before any region (mean RGB 0.391 / 0.602 / 0.484, every
+pixel above 5 % grey, 60-63 KB PNGs; frame 12 differs from frame 0 by 1,565 pixels, the labels'
+text). Frame 13 -- the frame the line names -- is the client's own `loading_default.ddj` (mean
+0.254 / 0.198 / 0.176, 1.27 MB; 921,479 of the 1280 x 720 = 921,600 pixels changed from frame 12).
+Frame 14, after the centre cell, the HUD's build and `cover_siblings`, differs from 13 by 6,557
+pixels (0.7 %): 1,527 inside the gauge's trough (the first tick, 1/9 of 752 x 18), 1,924 in the
+scene's "Hide UI" button's rectangle (`$UI/HideUIButton`, the one sibling drawn over `$UI/Control`
+and so over the screen -- as it was over the drain's screen before -- hidden by
+`_set_dev_ui_visible(false)` in the HUD's init), the rest scattered along the art's high-contrast
+edges at the 2 % threshold, not attributed. Inside the minimap's rectangle 437 pixels differ and
+inside the chat's 68 -- against 22,157 and 125,136 between frame 14 and frame 21, where the world
+and the HUD are drawn -- so the HUD stayed under the screen. Frames 15-16 are the same art with
+the gauge ticking; 21 and 35 the world.
+
+**Tests.** `client/scripts/ui/loading_screen_test.gd`, 21 checks: (1) a screen given a
+`Pk2Reader` stand-in (a subclass answering an empty root directory and counting the reads)
+reports `media reused`, read its backdrop through that handle (1 directory read), paid no open,
+and still works as a gauge without art; a screen given no handle reports `opened` or `none`,
+never `reused`; (2) `cover_siblings` makes a screen created before two later siblings the last
+child, moves rather than adds, and is a no-op without a parent; (3) from `World3D.gd`'s own
+source, because `_ready` cannot run headless: `await _show_loading_screen()` precedes
+`_load_initial_region_neighborhood()`, `.cover_siblings()` comes after `_try_initialize_pk2_ui()`
+and before `_drain_initial_load(`, and every `LoadingScreen.new(` in the script is given
+`_open_media_pk2_if_set()` (2 of 2). The suite probes the script's method and property lists
+before calling anything, because a runtime error in `_initialize` never reaches `quit()` and
+would hold the box lock for ever; and it awaits one `process_frame` first, since a node added
+under the root inside `_initialize` gets no `_ready` (measured: `media_source` stayed empty until
+the wait was added; hud_click_routing_test's pattern, with its 60 s watchdog). NEGATIVE, proven
+with the final suite: with `World3D.gd` and `loading_screen.gd` stashed and the tree shipped, the
+suite fails to parse -- `SCRIPT ERROR: Parse Error: Too many arguments for "new()" call. Expected
+at most 1 but received 2.`, exit 1, Godot exiting on its own; restored, `ALL PASS`.
+`remote_godot.sh tests`: 89 suites, 0 failing (88 + this one). `remote_godot.sh check`: 262
+scripts and 5 scenes ALL LOAD (261 + the suite) -- re-run on the final tree after a first run's
+sync raced a comment edit (`tar: client/scripts: file changed as we read it`). `cd server && go
+build ./... && go test -count=1 -p 1 ./...`: green before and after the doc edits (no server
+change).
+
+**Records.** This entry; `docs/WORLD_ISSUES.md`'s five-hundred-and-sixty-second round;
+`client/tools/README.md`, "Load benchmark" (the `LoadingScreen: up` line, what `D` and `A` now
+contain, the AFTER beside the BEFORE, the drain's frame); `World3D.gd`'s QA header (the `drain`
+hook's queue condition). `docs/SYSTEMS.md` has no row for world loading, scenery or the client's
+entry (rounds 558-561 checked; re-checked with a grep for "loading"), so nothing there to change;
+`docs/TODO.md` has no map/loading section either.
+
+**Deploy note.** Client only; tag-worthy -- the first visible fix of the epic (the plan: tag with
+`map-reconnect-fix` or the next visible fix). Frames of the three runs deleted from
+`/var/tmp/r562/` (`entry1.log`, `entry.log`, `first.log`, `run.sh`, `measure_first.sh` and the
+half-size diff PNGs kept).

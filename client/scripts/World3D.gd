@@ -1298,10 +1298,31 @@ func _ready() -> void:
 	_apply_camera_far_plane()
 	var _t_region := Time.get_ticks_msec()
 	_load_timings.begin_drain()
+	# The "NOW LOADING" screen goes up here, before the centre cell (round
+	# 562). Until then _drain_initial_load created it after the synchronous
+	# centre-cell build below, so for the whole of it the window kept
+	# whatever it had drawn last, with no screen in existence -- round 561's
+	# baseline entry log: `cell 97/168 built in 5373 ms at frame 13` with no
+	# LoadingScreen line before it; round 562's runs put the screen at frame
+	# 13 and the centre cell at 14. The teleport path (_on_change_zone_result)
+	# already had this order.
+	# The clock above stays ahead of the screen, so the `region grid loaded`
+	# total still covers the screen's build and the frame that draws it, as
+	# it did when the drain built the screen; that frame is handed on so the
+	# line's awaited-frame count still includes it.
+	var screen_frames: int = await _show_loading_screen()
+	# A drop during that frame changed scene under this instance (round
+	# 560's guard in the drain): nothing left to build for.
+	if not is_inside_tree():
+		return
 	_load_initial_region_neighborhood()
 	_try_initialize_pk2_ui()
 	_try_load_cursors()
-	await _drain_initial_load(_t_region)
+	# The HUD was just added to ui_control AFTER the screen, and CanvasItem
+	# draw order is child order: back over it before the drain shows it.
+	if _loading_screen != null:
+		_loading_screen.cover_siblings()
+	await _drain_initial_load(_t_region, screen_frames)
 
 ## Where the minimap sits: the top-right corner, 136x175 (the frame's size,
 ## HudMinimap.setup), 14 in from the right edge and 10 down. Our own
@@ -3431,8 +3452,11 @@ const LOADING_CELLS_PER_FRAME := 2
 ## first frames show the whole world. With one, the queue is pumped a batch a
 ## frame (plus the cell the same frame's physics step streams from it, see
 ## LOADING_CELLS_PER_FRAME) and the gauge filled, so a real entry has feedback
-## instead of a black freeze.
-func _drain_initial_load(region_started_ms: int) -> void:
+## instead of a black freeze. `frames_already_awaited` is what the caller
+## awaited between `region_started_ms` and here -- _ready's frame that drew
+## the screen (round 562) -- so the `region grid loaded` line's count covers
+## the same span as its total.
+func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0) -> void:
 	# No screen wanted (a QA render): build the queue at once so the first
 	# frames show the whole world.
 	if _loading_screen == null and not _should_show_loading_screen():
@@ -3443,8 +3467,9 @@ func _drain_initial_load(region_started_ms: int) -> void:
 		_qa_print_entry_probe()
 		_initial_load_done = true
 		return
-	# Reuse a screen a caller already put up (a teleport does, so even its
-	# centre-cell load is covered), else make one now.
+	# Reuse the screen the caller put up (_ready and _on_change_zone_result
+	# both do, ahead of their centre cell, since round 562), else make one
+	# now -- kept for a caller that did not, with the same held archive.
 	#
 	# After every await: a socket drop while this is suspended (a server
 	# redeploy landing on a player still loading) has _on_disconnected
@@ -3455,15 +3480,23 @@ func _drain_initial_load(region_started_ms: int) -> void:
 	# 558's runs C and D: two `!is_inside_tree()` errors, then `Invalid get
 	# index 'process_frame' (on base: 'null instance')`, one per drop, on
 	# both routes). Out of the tree there is nothing left to load for.
-	var frames_awaited := 0
+	var frames_awaited := frames_already_awaited
 	if _loading_screen == null:
-		_loading_screen = LoadingScreen.new()
+		_loading_screen = LoadingScreen.new(LoadingScreen.DEFAULT_BACKDROP, _open_media_pk2_if_set())
 		ui_control.add_child(_loading_screen)
-		await get_tree().process_frame
-		frames_awaited += 1
-		if not is_inside_tree():
-			return
-	var total := maxi(_load_queue.size(), 1)
+	# The gauge counts the centre cell the caller built before this drain
+	# (the + 1), and one frame is drawn before the first batch, so the centre
+	# cell stays a frame of its own. Until round 562 that frame was the
+	# screen's own creation here; with the screen up before the centre cell
+	# the first batch joined the centre's frame, and the benchmark's longest
+	# work frame read 7,506 ms for a 5,234 ms centre cell (round 562's first
+	# run) -- the later items are measured centre against centre.
+	var total := _load_queue.size() + 1
+	_loading_screen.set_progress(1.0 / float(total))
+	await get_tree().process_frame
+	frames_awaited += 1
+	if not is_inside_tree():
+		return
 	while not _load_queue.is_empty():
 		for _i in range(LOADING_CELLS_PER_FRAME):
 			if _load_queue.is_empty():
@@ -3510,14 +3543,23 @@ func _grid_loaded_line(region_started_ms: int, frames_awaited: int) -> String:
 	return line
 
 ## Puts the "NOW LOADING" screen up (a real player only), so a caller can
-## cover a load whose first, synchronous part runs before the drain -- a
-## teleport's centre cell. A no-op under QA or if one is already up.
-func _show_loading_screen() -> void:
+## cover a load whose first, synchronous part runs before the drain -- the
+## entry's centre cell (round 562) or a teleport's. Returns the frames it
+## awaited: one, for the frame that draws the screen, or none under QA or
+## when one is already up. The screen reads its backdrop through the
+## Media.pk2 this world already holds (_load_character_assets opens it at
+## the top of _ready; _open_media_pk2_if_set returns that handle, or opens it
+## for a world without character tables) rather than through a reader of its
+## own -- until round 562 every screen, every login and every teleport,
+## opened the 1.5 GB archive again (FrontEndUi.open_media); the screen's own
+## `LoadingScreen: up at frame` line says which it did and what it cost.
+func _show_loading_screen() -> int:
 	if _loading_screen != null or not _should_show_loading_screen():
-		return
-	_loading_screen = LoadingScreen.new()
+		return 0
+	_loading_screen = LoadingScreen.new(LoadingScreen.DEFAULT_BACKDROP, _open_media_pk2_if_set())
 	ui_control.add_child(_loading_screen)
 	await get_tree().process_frame
+	return 1
 
 ## Builds the next queued cell, if it is still wanted. Shared by the in-play
 ## stream and the entry-time drain.
@@ -3615,7 +3657,10 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	# A teleport shows the "NOW LOADING" screen (the playtester's call: the
 	# loading screen belongs on a teleport). Up before the zone assets load so
 	# even the synchronous centre-cell build is behind it; the queued
-	# neighbours then pump behind it in _drain_initial_load below.
+	# neighbours then pump behind it in _drain_initial_load below. The zone
+	# drain's clock starts after this frame (below), so the frame it returns
+	# is not this drain's to count; the entry's clock in _ready runs from
+	# before its screen and does count it (round 562).
 	await _show_loading_screen()
 	# The same guard as the drain's: a drop during that frame leaves nothing
 	# to rebuild for (round 560).
@@ -6432,9 +6477,11 @@ func _update_blob_shadow() -> void:
 ##                          and reconnect without closing the client", after
 ##                          which the ground came back white. Fires at that
 ##                          QA tick, or -- "drain" -- on the first tick that
-##                          finds the entry's loading screen up, while
-##                          _drain_initial_load is suspended on a frame await
-##                          with cells still queued (needs
+##                          finds the entry's loading screen up with cells
+##                          still queued, while _drain_initial_load is
+##                          suspended on a frame await (the screen is up from
+##                          before the centre cell since round 562, so "up"
+##                          alone would be _ready's own await; needs
 ##                          SRREVAMP_QA_FORCE_LOADING=1; qa_shot --reconnect
 ##                          exports it). Direct by default: World3D ->
 ##                          World3D (until round 560 the route that isolated
@@ -6810,11 +6857,14 @@ func _qa_step() -> void:
 
 	# SRREVAMP_QA_RECONNECT=<tick|drain> (round 558): leave and re-enter the
 	# world in this process. "drain" fires on the first tick that finds the
-	# entry's loading screen up -- _drain_initial_load is then suspended on
-	# `await get_tree().process_frame` with cells still queued, which is
-	# where a server redeploy lands on a tester who is still loading.
+	# entry's loading screen up WITH cells still queued -- _drain_initial_load
+	# is then suspended on `await get_tree().process_frame`, which is where a
+	# server redeploy lands on a tester who is still loading. The queue check
+	# is round 562's: the screen is up from before the centre cell now, so
+	# the first tick that finds it has an empty queue and is _ready's own
+	# await, not the drain's.
 	var reconnect := OS.get_environment("SRREVAMP_QA_RECONNECT")
-	if reconnect != "" and ((reconnect == "drain" and _loading_screen != null) \
+	if reconnect != "" and ((reconnect == "drain" and _loading_screen != null and not _load_queue.is_empty()) \
 			or (reconnect.is_valid_int() and _qa_tick == int(reconnect))):
 		# Cleared here, before it fires, so neither the next tick nor the
 		# next instance arms it again. Deferred: change_scene_to_file

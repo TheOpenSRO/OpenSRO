@@ -90,9 +90,11 @@ each cell's build is timed around `_load_region_cell` (and the centre cell in
 - `World3D: region grid loaded in N ms (terrain T, objects O, npcs P) at frame f -- C cells S ms,
   D ms outside the cells over A awaited frames` -- the drain's total against the cells' own sum.
   **The check is `S <= N`, not equality**: under the loading screen (`SRREVAMP_QA_FORCE_LOADING=1`)
-  the drain builds the screen first and awaits a frame after every batch, and that is `D`; on
-  the synchronous QA path `D` is small. A sum above the total is a bug in the clock and the line
-  says so. A batch is `LOADING_CELLS_PER_FRAME` = 2, but the frame builds three: the same frame's
+  `_ready` puts the screen up and awaits the frame that draws it before the centre cell (round
+  562; the drain built it after the centre cell until then), the HUD is built between the centre
+  cell and the drain, and the drain awaits a frame after every batch -- all of that is `D`, and
+  `A` counts the screen's frame with the drain's own (`_ready` hands it on); on the synchronous
+  QA path `D` is small. A sum above the total is a bug in the clock and the line says so. A batch is `LOADING_CELLS_PER_FRAME` = 2, but the frame builds three: the same frame's
   physics step runs `_process_stream_queue`, which pops `STREAM_CELLS_PER_FRAME` = 1 more from the
   same `_load_queue` (nothing gates it on the drain) -- the baseline's three `built in` lines a
   frame at frames 14-21. A later change to `LOADING_CELLS_PER_FRAME` alone changes two of the
@@ -104,6 +106,16 @@ each cell's build is timed around `_load_region_cell` (and the centre cell in
   summary covers the window since the previous one, so the drain's summary is the
   entry and the tick-600 summary is the play after it (a crossing). 100 ms is a reporting bucket,
   not a game value. The wall gap carries the movie writer's floor: compare on the work column.
+- `LoadingScreen: up at frame f (media reused|opened|none, N ms; backdrop decoded|missing, N ms;
+  built in N ms)` -- the frame the "NOW LOADING" screen joined the tree in (drawn from the next
+  one on), whether it read its backdrop through the Media.pk2 the world already held (`reused`,
+  every login and teleport since round 562) or opened a reader of its own (`opened`, what every
+  screen did before), what that open and the backdrop's decode cost, and the screen's whole
+  build. Its place in the log is the entry's first check: it comes before the centre cell's
+  `ground textures for` and `built in` lines, or the player watched a black window for the
+  centre cell. `SRREVAMP_QA_NOUI=1` hides `$UI/Control`, which the screen is a child of, so a
+  benchmark run's frames never show it; the log order is the measurement, and a run without
+  `NOUI` shows the art from the first drawn frame after the line.
 
 The two runs, verbatim, so before/after numbers come from identical commands. Both hide the HUD
 and take the real awaiting drain (the QA path would build the whole grid in `_ready`, one frame);
@@ -138,7 +150,7 @@ less the frames `--at` waits for its region (`_qa_step`), so with `--frames 600`
 summary lands on the run's last frame or two (in the baseline, 576 frames after the drain's at
 frame 23), and a run where it lands after `--quit-after` leaves the same window to `_exit_tree`'s
 summary. To read a run:
-`grep -E 'built in|region grid loaded|longest work frame|footing settled|^QA +[0-9]+ local' <run>.log`.
+`grep -E 'LoadingScreen: up|built in|region grid loaded|longest work frame|footing settled|^QA +[0-9]+ local' <run>.log`.
 The BEFORE for the whole map/loading epic (round 561, 2026-09-25, hardware GL, the commands
 above; the full lines and the per-phase sums are in `docs/RE_COMPLETION.md`, round 561):
 
@@ -155,6 +167,30 @@ above; the full lines and the per-phase sums are in `docs/RE_COMPLETION.md`, rou
         5 over 100 ms; longest wall gap 723 ms   -- the tick-600 summary; the column
         95..99/165 streamed one cell a frame at frames 160-164, 270..323 ms each
 ```
+
+AFTER round 562 (the screen before the centre cell, on the archive the world already holds; the
+same command, the same box, 2026-09-25; `docs/RE_COMPLETION.md`, round 562, has the full lines and
+the frame measurements of a run with the HUD shown):
+
+```
+(a) LoadingScreen: up at frame 13 (media reused, 0 ms; backdrop decoded, 674 ms; built in 676 ms)
+    cell 97/168 built in 5200 ms at frame 14 (terrain 1575 [.. tiletable 937, navgraph 195 ..],
+        objects 1951 [.. own 323, templates 1532 ..], npcs 1673 [tables 939])   -- the centre,
+        the frame after the screen's
+    24 neighbours three a frame at frames 15-22 (2 drain + 1 stream)
+    region grid loaded in 22884 ms (terrain 8004, objects 5015, npcs 2347) at frame 23
+        -- 25 cells 15365 ms, 7519 ms outside the cells over 10 awaited frames
+    longest work frame 5259 ms at frame 14 (cell 97/168); p95 2919 ms; 9 over 100 ms
+    in play (exit summary, 176 frames): longest work frame 7 ms; p95 6 ms; wall gap 366 ms
+(b) not re-run: nothing in play changed.
+```
+
+The tenth awaited frame is the one `_drain_initial_load` now draws after the centre cell and
+before its first batch (the gauge's first tick, which counts the centre): without it round 562's
+first run had the first two neighbours in the centre's frame and the longest work frame read
+7,506 ms for a 5,234 ms centre cell. The centre cell is what the next rounds are measured on, so
+a change that merges it with a batch would show here as a regression and later as an improvement
+without either being one; read the cells a frame from the log when the longest frame moves.
 
 Rules the later, off-thread loading items are held to, kept beside the benchmark so the two
 travel together: (1) nothing that owns a Node or a RenderingServer/PhysicsServer RID

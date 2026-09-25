@@ -7075,6 +7075,44 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-sixty-second round: the loading screen before the centre cell, on the archive the world already holds
+
+The first visible fix of the map/loading epic (2026-09-25), measured on round 561's benchmark and
+on the frames; the full record with every line is `docs/RE_COMPLETION.md`'s round 562.
+
+- **The screen exists before the centre cell.** `World3D._ready` awaits `_show_loading_screen()`
+  before `_load_initial_region_neighborhood()` -- the order the teleport path already had -- and
+  moves the screen back over the HUD (`LoadingScreen.cover_siblings`; CanvasItem draw order is
+  child order) once `_try_initialize_pk2_ui` has added the HUD after it. Benchmark (a):
+  `LoadingScreen: up at frame 13 (media reused, 0 ms; backdrop decoded, 674 ms; built in 676 ms)`
+  before the centre cell's lines, `cell 97/168 built in 5200 ms at frame 14`; grid 22,884 ms over
+  10 awaited frames against the BEFORE's 22,752 over 9 (the one frame the drain now draws after
+  the centre cell); longest work frame 5,259 ms at frame 14 = the centre cell, against 5,374; cells
+  a frame 1 then 3 x 8, as before; 0 script errors.
+- **On the frames** (a run with the HUD shown): frames 0-12 are the placeholder scene, not black
+  (mean RGB 0.391 / 0.602 / 0.484 -- the plan's "black window" is not what a QA run shows; a real
+  player's window before this round kept whatever it had drawn last); frame 13 is the client's own
+  `loading_default.ddj` (921,479 of 921,600 pixels changed); frame 14, after the centre cell and
+  the HUD's build, differs by 6,557 pixels: the gauge's first tick (1,527 in the trough), the
+  scene's Hide UI button hidden by the HUD init's `_set_dev_ui_visible(false)` (1,924), speckle
+  along the art's edges; 437 in the minimap's rectangle and 68 in the chat's, against 22,157 and
+  125,136 once the HUD is really drawn -- the HUD stayed under the screen.
+- **One reader, not two.** The screen reads its backdrop through `World3D._media_pk2`
+  (`_load_character_assets` opens it at the top of `_ready`) instead of `FrontEndUi.open_media()`'s
+  own `Pk2Reader.open` of the 1.5 GB archive on every login and teleport. The open it saves was
+  never measured and is not claimed as a number (the verifier's point: `Pk2Reader.open` reads a
+  256-byte header and walks directories lazily). What the screen costs is measured now: the
+  backdrop's decode, 669-708 ms, nearly all of its 672-711 ms.
+- **The drain draws a frame before its first batch, and the gauge counts the centre cell.** Not
+  the plan's: the first AFTER run had the first two neighbours join the centre cell's frame (the
+  frame that used to separate them was the screen's creation, which moved) and the longest work
+  frame read 7,506 ms for a 5,234 ms centre cell. The player sees the same frozen art; the metric
+  the next items are measured on has to read the centre cell alone, and it does.
+- **`--reconnect drain` now also needs cells queued**, or it would fire on `_ready`'s own await
+  with nothing loading; the hook meant a drop mid-drain (round 558).
+- Tests: `loading_screen_test.gd`, 21 checks, its negative a parse error against the pre-change
+  screen; 89 suites green; `check` ALL LOAD.
+
 ## Five-hundred-and-sixty-first round: the load measured per cell, per phase and per frame -- and the benchmark the map epic is measured on
 
 The first item of the map/loading epic (2026-09-25) is the instrument, not a fix: before anything
