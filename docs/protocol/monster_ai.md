@@ -3233,8 +3233,10 @@ mismatched).
   `CAIState_BATTLE::OnLeave` (`0x55a240`) calls only `AI::CTactics::ResetThreat` (`0x53fb20`, at
   `0x55a243`), which zeroes the selector's `+0x44` -- `xor eax,eax` `0x53fb28`, `mov
   ecx,[edi+0x9c]; mov [ecx+0x44],eax` `0x53fb78..0x53fb7e` -- with the two threat seats
-  `+0xbc..+0xe0`, the `+0xac` byte and `+0xa4`/`+0xa8` (its other callers: `Init` at `0x53f4e7`
-  and the unnamed `FUN_00559140` at `0x55915a`). `leaveBattle` clears the brain's pick on every
+  `+0xbc..+0xe0`, the `+0xac` byte and `+0xa4`/`+0xa8` -- and, first, `call 0x540cb0` at `0x53fb23`
+  (`FUN_00540cb0`: hands `+0xa4` to `FUN_0055de60` when it is non-zero, then zeroes
+  `+0xa4`/`+0xa8` itself; omitted here until round 564; the `+0x44` clear is unaffected) -- (its
+  other callers: `Init` at `0x53f4e7` and the unnamed `FUN_00559140` at `0x55915a`). `leaveBattle` clears the brain's pick on every
   exit from BATTLE, the `0x23`/`0x27`/`0x2a` releases among them; until round 555 a pick armed but
   not fired -- a Yeoha that drew its range-7 176 at 60 units and lost its target on the way in --
   survived the exit and was swung in the next fight without a draw, so this bullet was true only of

@@ -11,7 +11,9 @@ extends SceneTree
 ## longest and not the last (a note_frame that overwrote would pass a
 ## one-frame check and fails here), that one frame's notes add up and keep
 ## the cell's label, the p95, the hitch count, the wall gap, and the window
-## a summary closes while the run's longest stands.
+## a summary closes while the run's longest stands. And, from World3D.gd's
+## own source (round 564), that _try_load_real_terrain's terrain laps are
+## exhaustive and the README's cell-line template names them.
 
 var _failures := 0
 
@@ -123,6 +125,64 @@ func _test_end_cell_notes_the_frame() -> void:
 	_check(s.begins_with("World3D: longest work frame 402 ms at frame 12 (cell 96/167)"),
 		"a closed cell is that frame's work, labelled, and the step adds to it (got: %s)" % s)
 
+## The laps World3D._try_load_real_terrain records, in order -- the cell
+## line's `terrain [..]` list. Held from the script's own source, the way
+## loading_screen_test.gd holds _ready's order, because the function cannot
+## run headless (it needs an archive): every stopwatch from `read` to
+## `navgraph` is a named lap and none is reset unnamed, so the laps add up
+## to the group less each lap's whole-ms truncation and the little outside
+## them (the path check and _open_map_pk2_if_set() before `read`, the
+## closing print after `navgraph`). `setup` (round 564) is
+## the span from the mesh build to the trimesh -- the group, the untextured
+## material, the vertical calibration -- which until then was a bare
+## `sw = Time.get_ticks_usec()`, a reset that put it in no lap. `env` is the
+## centre cell's alone, so the README's template lists the laps without it.
+const TERRAIN_LAPS := ["read", "parse", "env", "lightmap", "tiletable",
+	"textures", "mesh", "setup", "collision", "walls", "water", "navgraph"]
+
+func _source_of(path: String) -> String:
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return ""
+	return f.get_as_text()
+
+## The NEGATIVE of round 564: on the tree before it the list has no `setup`
+## and the body has the bare reset, so the first two checks fail.
+func _test_world3d_terrain_laps_are_exhaustive() -> void:
+	var src := _source_of("res://scripts/World3D.gd")
+	_check(src != "", "World3D.gd reads")
+	if src == "":
+		return
+	var header := "\nfunc _try_load_real_terrain("
+	var at := src.find(header)
+	_check(at >= 0, "World3D.gd has _try_load_real_terrain")
+	if at < 0:
+		return
+	var next_func := RegEx.new()
+	next_func.compile("(?m)^(?:static )?func ")
+	var after := next_func.search(src, at + header.length())
+	var body := src.substr(at, (after.get_start() if after != null else src.length()) - at)
+	var lap := RegEx.new()
+	lap.compile("_load_timings\\.lap\\(\"terrain\", \"([a-z]+)\"")
+	var names := []
+	for m in lap.search_all(body):
+		names.append(m.get_string(1))
+	_check(names == TERRAIN_LAPS,
+		"_try_load_real_terrain's terrain laps, in order, are %s (got %s)" % [str(TERRAIN_LAPS), str(names)])
+	_check(body.find("\tsw = Time.get_ticks_usec()") < 0,
+		"no stopwatch in _try_load_real_terrain is reset outside a lap (a bare `sw = Time.get_ticks_usec()` drops the time since the previous lap)")
+	var readme := _source_of("res://tools/README.md")
+	_check(readme != "", "client/tools/README.md reads (shipped with the working copy)")
+	if readme == "":
+		return
+	var flat := RegEx.new()
+	flat.compile("\\s+")
+	var text := flat.sub(readme, " ", true)
+	var listed: Array = TERRAIN_LAPS.filter(func(n): return n != "env")
+	var template := "terrain T [" + ", ".join(PackedStringArray(listed)) + "]"
+	_check(text.find(template) >= 0,
+		"the README's cell-line template names the laps: `%s`" % template)
+
 func _init() -> void:
 	_test_cell_line()
 	_test_empty_cell()
@@ -132,6 +192,7 @@ func _init() -> void:
 	_test_frame_notes_add_up_and_keep_the_label()
 	_test_p95_and_window()
 	_test_end_cell_notes_the_frame()
+	_test_world3d_terrain_laps_are_exhaustive()
 
 	if _failures == 0:
 		print("ALL PASS")

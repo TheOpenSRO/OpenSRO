@@ -41,10 +41,14 @@ class_name ObjectTemplateCache
 ## The most templates held at once. An own safety valve, disclosed: not a
 ## game value. Chosen so a long walk cannot hold every model ever seen
 ## while staying several towns' worth: round 558's radius-1 Jangan grid
-## reports 69, 63 and 20 distinct models for its three largest cells
-## (`loaded ... distinct real models` lines), so 9 cells hold well under
-## 200. When the cap is passed the oldest templates go first, unused ones
-## before ones a loaded region still places.
+## (`/var/tmp/r558/runA2.log`, the `loaded ... distinct real models`
+## lines) reports 69, 63 and 61 distinct models for its three largest
+## cells (97/168, 97/167, 97/169) and 358 over all nine -- 226 templates
+## once shared (round 559) -- so 9 cells hold well under this cap. (Round
+## 564: this comment had "69, 63 and 20 ... its three largest"; 20 is the
+## third cell the log prints, 96/168, not the third largest.) When the cap
+## is passed the oldest templates go first, unused ones before ones a
+## loaded region still places.
 const DEFAULT_MAX_TEMPLATES := 600
 
 ## Builds a template: called as `loader.call(path)`, returns a Node3D or

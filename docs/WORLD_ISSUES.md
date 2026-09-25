@@ -7075,6 +7075,52 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-sixty-fourth round: batch-20 review follow-ups -- record wording, the QA header, a `setup` lap; no behaviour change
+
+The review notes on rounds 558-563 (and round 555's, left open since the batch-18 cleanup), each
+re-checked against the logs under `/var/tmp/r558..r563`, `/var/tmp/srv.asm` and the code before it
+was landed; the full list, note by note, is `docs/RE_COMPLETION.md`'s round 564. What changed in
+the world's files, anchored by function:
+
+- `World3D._try_load_real_terrain`: the stopwatch reset before `create_trimesh_shape` is now the
+  `setup` lap (the group, the untextured material, the vertical calibration, the body and shape
+  nodes), so the terrain laps cover the group from the file read to the nav graph -- outside them
+  are only the path check and `_open_map_pk2_if_set()` before the first stopwatch and the closing
+  print after `navgraph`. Round 561's lines left 8-13 ms a cell between a cell's terrain group and
+  its laps' sum (typically 10-11, over the entry run's 25 cells and the crossing's 30; the centre
+  1,609 against 1,597, the crossing's 97/165 246 against 233), part of it the whole-ms truncation
+  of each printed lap. A group is measured around its laps, so the benchmark's numbers are
+  unchanged and were not re-run; `load_timings_test.gd` reads the function's laps off the source
+  and fails on the tree before this round (proven).
+- The QA header names `SRREVAMP_QA_FORCE_LOADING` and what round 562 moved under it: without
+  `--server` and `SRREVAMP_QA_AT`, `_qa_step`'s first tick and its one-time block run before the
+  world and the HUD exist -- `SRREVAMP_QA_DEBUG` / `SRREVAMP_QA_WORLDMAP` no-op through their null
+  guards, the `SRREVAMP_QA_HIDE` / `_FLOAT` / `_THROUGH` / `_SCAN` / `_COLUMNS` probes run against a
+  world not yet built, and `SRREVAMP_QA_ZONE`'s `_reload_zone_assets` runs before
+  `_load_initial_region_neighborhood` builds the `SRREVAMP_MAPM_PATH` centre -- and tick-indexed
+  hooks fire one tick earlier relative to the world build. Read from `_ready` and `_qa_step`, not
+  measured; nothing moved.
+- The Restart comment in `_try_initialize_pk2_ui` no longer claims the engine "replaces a pending
+  scene"; the second call came from a node `_on_disconnected` had already detached. The detached,
+  not-yet-freed state (`data.tree` null) is what round 558's runs C and D logged on the mid-load
+  drain path; the Restart call itself was not logged.
+- `CharacterSelect`: an empty character list, or a list error, under the scripted reconnect now
+  says so in the log.
+- Records: this file's five-hundred-and-fifty-eighth round ("to the fourth decimal" -> 1e-6 apart
+  at the printed precision: the pair differs by 0.000001 in red and blue) and
+  five-hundred-and-sixty-first (368 ms is the run's longest in-play wall gap, not a typical frame;
+  AGENTS.md's 0.33 s stands);
+  `RE_COMPLETION.md`'s round 560 (`tick200` entry 1 decoded 133 ms, not 136; four other statics,
+  not three) and 563 (the BASE log is 1,719 lines, not 1,708); `ObjectTemplateCache`'s cap
+  comment (69, 63, 20 are the first three cells printed, not the three largest; the largest are
+  69, 63, 61 and the nine sum to 358); the round-555 monster-AI records (`ResetThreat`'s first
+  call, the `PickSkill` throw's one hop, `acquire`'s `[ebp+8]` test, the thunk's `push eax`, the
+  SYSTEMS row's "no LEVEL read").
+- Recorded, not fixed: no headless test reaches `_maybe_stream_regions`' call to `_grid.unload`
+  (archives); the hop tour is its evidence. The heightfield-collision gate: `collision` is 57 of a
+  neighbour cell's 266 ms of terrain in the round-561 BEFORE (21-23 %, under the plan's 25 %);
+  re-gated on its share after the off-thread items, not skipped.
+
 ## Five-hundred-and-sixty-third round: the streaming unload forgets the region -- NPCs respawn on return, and a freed group no longer aborts every position lookup
 
 The third item of the map/loading epic (2026-09-25); the full record with every line is
@@ -7166,7 +7212,9 @@ benchmark's definition and its two commands are `client/tools/README.md`, "Load 
   would read 16.7 ms for ever. `LoadTimings` (`client/scripts/world/load_timings.gd`) sums, per
   drawn frame, each cell's build time and `World3D._physics_process`'s own step, and reports the
   longest, the p95 and the count over 100 ms (a reporting bucket, not a game value); the wall gap
-  between steps goes beside it and carries the writer's ~0.37 s floor.
+  between steps goes beside it and carries the writer's per-frame floor (about 0.33 s a frame,
+  AGENTS.md; the entry run's longest in-play gap was 368 ms -- a longest, not a typical frame;
+  round 564 reworded this from "~0.37 s").
 - **The lines.** One `World3D: cell x/y built in N ms at frame f (terrain T [read, parse, env,
   lightmap, tiletable, textures, mesh, collision, walls, water, navgraph], objects O [parse, own,
   templates, place], npcs P [tables])` per cell, the centre included (it was never timed); `region
@@ -7310,7 +7358,9 @@ camera on both passes. The full record is `docs/RE_COMPLETION.md`'s round 558; t
 | `SCRIPT ERROR` after the reconnect | -- | 0 / 0 | 1 / 1, the same line |
 
 - **Not reproduced under Mesa/VirtualGL**, on either route or timing: pass 2 draws the textures
-  pass 1 drew, to the fourth decimal of the frame mean, with every texture RID valid and every
+  pass 1 drew, its lower-40% frame mean 1e-6 from pass 1's at the printed precision (round 564's
+  wording), with
+  every texture RID valid and every
   texel mean intact (one of the 48 reads exactly (0.40, 0.38, 0.31), round 252's offline decode of
   `c_marble_jang_02`). A fact about the box's driver path, not a refutation of the Windows report.
 - **What a reconnect costs**, measured: the orphan nodes double exactly (the never-freed per-region

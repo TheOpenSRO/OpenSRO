@@ -147,6 +147,9 @@ func _build_ui() -> void:
 func _on_list_result(characters: Array, error: String) -> void:
 	if error != "":
 		_status.text = "Error: %s" % error
+		# The scripted reconnect stalls here too, with nothing in the log
+		# (round 564's own review): say so, as the empty list below does.
+		_qa_report(_status.text + " -- no list to start from, staying on the select screen")
 		return
 	_summaries = characters
 	for child in _list_box.get_children():
@@ -165,6 +168,11 @@ func _on_list_result(characters: Array, error: String) -> void:
 		_list_box.add_child(entry)
 	if _summaries.is_empty():
 		_status.text = "No characters yet -- Create one."
+		# A scripted reconnect (round 558) has no one to start here and
+		# stalls on this screen; say so in the log, which is all it can
+		# read (round 558's review, landed in round 564). _qa_start reports
+		# the other stall, a list without the QA character.
+		_qa_report(_status.text + " -- nothing to start, staying on the select screen")
 		_select(-1)
 	else:
 		# Keep the previous selection if still valid, else the first.

@@ -35005,10 +35005,16 @@ the selector's `+0x44` across `ChangeState`. Answered: `CAIState_BATTLE::OnLeave
 only `AI::CTactics::ResetThreat` (`0x53fb20`, `call 0x53fb20` at `0x55a243`), and `ResetThreat` zeroes
 the selector's armed pick inline -- `xor eax,eax` `0x53fb28`, `mov ecx,[edi+0x9c]; mov [ecx+0x44],eax`
 `0x53fb78..0x53fb7e` -- with the two threat seats `+0xbc..+0xe0`, the `+0xac` byte and `+0xa4`/`+0xa8`
-(its other callers: `Init` at `0x53f4e7`, and the unnamed `FUN_00559140` at `0x55915a`). The
+-- after its first instruction past the prologue, `call 0x540cb0` at `0x53fb23`: `FUN_00540cb0`
+(`0x540cb0..0x540ce3`) loads `+0xa4` and, when it is non-zero, hands it and the object to
+`FUN_0055de60` (`push edi; lea eax,[esp+0x8]; push eax; call 0x55de60`), then zeroes `+0xa4`/`+0xa8`
+itself; this entry's first form omitted the call (added in round 564; the `+0x44` clear at
+`0x53fb7e` is unaffected) -- (its other callers: `Init` at `0x53f4e7`, and the unnamed
+`FUN_00559140` at `0x55915a`). The
 vtable-slot-6 clear `0x561a40` (`mov [ecx+0x44],0`; slot 6 of `0xaf9d24`/`0xaf9dcc` -- `401a5600` at
 each vtable's `+0x18` in `.rdata`) that round 554 could not cheaply trace is reached through the
-slot-6 thunk `FUN_00540cf0` (`mov ecx,[eax+0x9c]; mov edx,[ecx]; mov eax,[edx+0x18]; call eax`),
+slot-6 thunk `FUN_00540cf0` (`mov ecx,[eax+0x9c]; mov edx,[ecx]; push eax; mov eax,[edx+0x18]; call
+eax`, `0x540cf0..0x540cfc` -- the `push eax` at `0x540cf8` was missing from this quote until round 564),
 whose only callers are `0x558fb3` and `0x558fe5` inside the unnamed `FUN_00558f70` (itself
 vtable-reached: no direct `call 0x558f70` in `srv.asm`, and `708f5500` sits in the state vtables in
 `.rdata`, 18 entries) -- not the BATTLE exit's path. This entry's first draft also named
@@ -35403,7 +35409,8 @@ box lock as ghidra, this tree's server binary in memory) or from this checkout.
   `disconnect_from_server()` -> `disconnected` -> `World3D._on_disconnected` ->
   `change_scene_to_file(Login)`; `CharacterSelect._on_enter_world_result` ->
   `change_scene_to_file(World3D)` builds a brand-new instance. The System menu's Restart lambda in
-  `_ready` calls `disconnect_from_server()` (whose emit already queues Login) and then queues Login
+  `_try_initialize_pk2_ui` (which `_ready` calls; "`_ready`" until round 564) calls
+  `disconnect_from_server()` (whose emit already queues Login) and then queues Login
   itself -- twice, as the plan's citation says; left alone here.
 - What outlives a World3D instance, in this checkout: `World3D.gd`'s `static var`s
   (`_ground_texture_cache`, `_water_frames_cache` + `_water_frames_load_attempted`,
@@ -35502,8 +35509,10 @@ fog_density=0.00005`; the lower-40% mean of the pass-1 `square` frame is
 | C | Login route | `drain`: tick 15, frame 14, 7 cells queued | 198.24 / 52.68 / 250.92 | 5,947 / 14,102 / 470,916 / 112 | 1037.6 | (0.271502, 0.260978, 0.249705) (no pass-1 shot: it left mid-load) | 0 / 1 (`_drain_initial_load`, below) |
 | D | direct | `drain`: tick 15, frame 14, 7 cells queued | 197.76 / 52.68 / 250.45 | 5,947 / 14,102 / 470,910 / 110 | 1037.0 | (0.271502, 0.260978, 0.249705) | 0 / 1 (the same line) |
 
-- **The ground is textured on pass 2, on every route.** Pass 2's lower-40% mean equals pass 1's to
-  the fourth decimal (a difference of 0.000001 in red and blue), far from the 0.9 "white" bound.
+- **The ground is textured on pass 2, on every route.** Pass 2's lower-40% mean is 1e-6 from
+  pass 1's at the printed precision (a difference of 0.000001 in red and blue, none in green, in
+  `measure.sh`'s six-significant-digit `%[fx:mean]`; round 564 aligned this wording with round
+  560's), far from the 0.9 "white" bound.
   Every `QA TEXPROBE 2` line equals its `QA TEXPROBE 1` line: 48 of 48 texture passes
   `rid_valid=true size=512x512`, texel means intact (26 distinct, from (0.16, 0.23, 0.06) to
   (0.54, 0.42, 0.23); one pass reads exactly **(0.40, 0.38, 0.31)**, round 252's offline decode of
@@ -35749,9 +35758,9 @@ change.
 Client only, hygiene, tag-worthy together with round 559 (one client release after both): a second
 login in one client process starts from nothing the first one built. Nothing on the wire, no flag,
 no server change. **What this round does not claim**: that it cures the tester's white ground after
-a reconnect. Round 558 did not reproduce that on the render box (pass 2 textured to the fourth
-decimal of pass 1's frame mean, on both routes and both timings, Mesa/VirtualGL), and this round's
-runs say the same after the change; the tester's `user://logs/srrevamp.log` from a reconnect
+a reconnect. Round 558 did not reproduce that on the render box (pass 2's lower-40% frame mean
+1e-6 from pass 1's at the printed precision, on both routes and both timings, Mesa/VirtualGL), and
+this round's runs say the same after the change; the tester's `user://logs/srrevamp.log` from a reconnect
 decides it (below, "Deploy note"). What this round removes is every piece of World3D state that
 outlived the instance, each measured or read in rounds 558/559, with the before/after on round
 558's own command. Every number is from the render box (2026-09-25, hardware GL through VirtualGL,
@@ -35763,7 +35772,7 @@ lane-local lock `/var/tmp/r560/lock`, round 558's server binary -- `server/` is 
 - The five `static var`s in `World3D.gd` at BASE (`e9c203b`): `_ground_texture_cache`,
   `_water_frames_cache`, `_water_frames_load_attempted`, `_environment_table`,
   `_environment_load_attempted` (`grep -n 'static var' client/scripts`: five in `World3D.gd`; the
-  other three statics in `client/scripts` -- `ui_builder.gd`'s `_flat_texture`, a 1x1 white UI
+  other four statics in `client/scripts` (three files; "three" until round 564) -- `ui_builder.gd`'s `_flat_texture`, a 1x1 white UI
   texture, `regioninfo_names.gd`'s `_overrides`, `object_loader.gd`'s `missing_count` /
   `missing_recent` -- are not world state and are left alone). A GDScript static is one value per
   loaded script, not per instance (the GDScript reference, "Static variables"); round 558 measured
@@ -35775,7 +35784,8 @@ lane-local lock `/var/tmp/r560/lock`, round 558's server binary -- `server/` is 
   instances, consistent with these (not proven from the census).
 - `debug_panel._on_draw_mode_selected` sets `get_viewport().debug_draw = mode`; nothing in
   `client/scripts` resets it; the viewport is the root Window, which outlives every scene.
-- The Restart lambda (`World3D._ready`, `system_restart_requested`) called
+- The Restart lambda (`World3D._try_initialize_pk2_ui`, which `_ready` calls -- "`World3D._ready`"
+  until round 564; `system_restart_requested`) called
   `NetClient.disconnect_from_server()` and then `change_scene_to_file(Login)`;
   `NetClient.disconnect_from_server` emits `disconnected` unconditionally, and `_on_disconnected`
   (connected in `_ready`) already changes scene to Login -- the Log Out button relies on exactly
@@ -35867,7 +35877,7 @@ and `measure.sh`, the exact commands; the frames were deleted after measuring.
 | orphan nodes | 2,757 -> 2,981 (x1.08) | 2,757 | 2,757 (x1.000) | 2,757 |
 | objects / nodes / resources | -- | 462,378 / 14,102 / 110 | 462,379 / 14,102 / 110 | 462,379 / 14,102 / 110 |
 | `cache_ground` / water frames / env at the probe | 43 / 30 / loaded (reused) | 43 / 30 / loaded | 43 / 30 / loaded (this instance's) | 43 / 30 / loaded |
-| ground textures decoded, ms (9 regions) | entry 2: 0 | 43, 136 | 43, 136 | 43, 138 |
+| ground textures decoded, ms (9 regions) | entry 2: 0 | 43, 133 | 43, 136 | 43, 138 |
 | water frames decoded, ms | entry 2: 0 | 30, 139 | 30, 146 | 30, 140 |
 | `region grid loaded` (ms) | 15,665 -> 14,656 | 15,543 | 15,205 | 15,152 |
 | lower-40% mean of `square` | (0.271501, 0.260978, 0.249704) -> (0.271502, 0.260978, 0.249705) | (0.271501, 0.260978, 0.249704) | (0.271502, 0.260978, 0.249705) | (0.271502, 0.260978, 0.249705) |
@@ -35897,7 +35907,9 @@ and `measure.sh`, the exact commands; the frames were deleted after measuring.
   The four `ERROR:` lines that remain after the reconnect in both runs are the archive's
   (`gacha_machine.bsr is not a character .bsr`, two `.bsr not found in archive`) and the exit-time
   texture above; all four print on entry 1 as well.
-- **Pass 2 is textured, as before**: lower-40% mean equal to pass 1 to the sixth decimal, `QA
+- **Pass 2 is textured, as before**: lower-40% mean 1e-6 from pass 1's at the printed precision
+  (0.271501 -> 0.271502, 0.249704 -> 0.249705: "equal to the sixth decimal" until round 564 --
+  they differ in it), `QA
   TEXPROBE` pass 1 == pass 2 (49 lines), 48 of 48 `rid_valid=true`, `debug_draw=0`. Unchanged by
   this round, which is the point: nothing here was drawing white on the box before, and the
   tester's log is still the measurement that decides the report.
@@ -36067,8 +36079,9 @@ The consistency check, as the findings restated it: `S <= N` holds in both runs 
 15,278 <= 22,754), and before this round no `built in` line existed, so S was 0. `N - S` is 7.4 s
 over 9 awaited frames: what `_ready` runs between `_t_region` and the drain besides the cells
 (`_try_initialize_pk2_ui`, `_try_load_cursors`), the LoadingScreen's own build (Media.pk2, the
-backdrop) and the 9 awaited movie frames (a play frame's wall time is ~0.37 s, the exit summary's
-`longest wall gap 368 ms`); not split further this round. Round 560's `region grid loaded` figures
+backdrop) and the 9 awaited movie frames (the exit summary's `longest wall gap 368 ms` is the in-play
+window's LONGEST gap, an upper bound on a play frame, not its typical wall time -- AGENTS.md's
+figure is 0.33 s a frame; round 564 reworded this from "~0.37 s"); not split further this round. Round 560's `region grid loaded` figures
 (15.1-15.7 s) were `--radius 1`, nine cells; what N measures has not changed.
 
 **Tests.** `client/scripts/world/load_timings_test.gd`, 22 checks: the cell line from groups and
@@ -36371,7 +36384,8 @@ the same spot did not repeat. From there the route is the designed one:
   `unloaded` before it: its templates were all shared, `release_region` freed 0 -- why the
   `forgotten` line is unconditional), the /170 row built at 140-142; `home frame 181 at 97_169
   local 1002,1020`. `QA SHOT: all 7 viewpoints visited`; **0 `SCRIPT ERROR` lines in 311 (BASE: 687
-  in 1708)**; 21 cells built over the run; exit `left the tree -- 234 scenery templates and 41 NPC
+  in 1,719 -- "1708" until round 564: the line `left the tree` is on, without the 11-line
+  movie-writer / RID trailer after it)**; 21 cells built over the run; exit `left the tree -- 234 scenery templates and 41 NPC
   templates freed`.
 - The counters (`QA GRID`, w1 / w3 / e2 / e3 = home): `cells=12 npc_regions=12 nav_graphs=12
   navmesh=12` at every viewpoint -- the window plus the margin, never more; `heightmaps` 28 / 25 /
@@ -36408,3 +36422,178 @@ deleted.
 **Deploy note.** Client only; tag-worthy -- the whole-map walk needs it (a town walked away from
 and back to is populated again, and the first unload no longer breaks every position lookup for
 the rest of the session). No server change, no flag.
+
+## Batch-20 review follow-ups (rounds 558-563): record wording, the QA header, the timing laps -- no behaviour change (round 564)
+
+The review notes on rounds 558-563, and round 555's notes (the batch-18 cleanup's review, which
+no round since had picked up), each re-checked before it was landed -- against the logs under
+`/var/tmp/r558..r563` on the render box, `/var/tmp/srv.asm`, and this checkout (2026-09-25). No
+behaviour a player can see: comments, records, one QA-only log line and one timing lap that names
+a span the cell line's group already contained. Nothing on the wire, no flag; the one server file
+touched (`monsterai.go`) changed in a comment. Godot was not re-run for any wording; the client
+suites and `check` ran once on the final tree, plus the negative below.
+
+**1. Round 555's notes.** (a) `docs/SYSTEMS.md`, the Monster AI row: "no character-store read on
+the AI tick or the strike worker" was broader than the code -- `runStrike` still reads the row
+(`chars.GetByID`) for a target no longer in the world, and `fallen` reads it under the kill lock on
+a kill -- so the row now says no LEVEL read, which is what round 555 removed; the round-555 entry
+and the code comments already said so. (b) `AI::CTactics::ResetThreat` `0x53fb20`: its first
+instruction past the prologue is `call 0x540cb0` at `0x53fb23`, and `FUN_00540cb0`
+(`0x540cb0..0x540ce3`, read off `srv.asm`; the decomp dump's `FUN_00540cb0`, 52 bytes, agrees --
+`getfn.sh` takes the zero-padded key `00540cb0`, and the bare `540cb0` prints `no such function`,
+as the bare `53fb20` does for `ResetThreat` itself) loads
+`+0xa4` and, when it is non-zero, hands it and the object to `FUN_0055de60` (`push edi; lea
+eax,[esp+0x8]; push eax; call 0x55de60`), then zeroes `+0xa4`/`+0xa8` itself; the enumeration in
+this file's round-555 entry, `monster_ai.md`'s round-554 draw's-moment bullet and
+`recovered_names.tsv`'s `0053fb20` row (round 259) omitted the call. Added to all three; the
+`+0x44` clear at `0x53fb7e`, the one thing modelled (`leaveBattle`), is unaffected. (c)
+`recovered_names.tsv`'s `00561b00` row: the bounds checks `je`/`jae 0x561d56` at
+`0x561d19`/`0x561d24` jump to `0x561d56`, whose `call 0x5632d0` is the `invalid vector<T>
+subscript` throw -- one hop more than "the throw the bounds checks jump to". (d) `monsterai.go`'s
+`acquire` comment, steps 2-3: between `TimerDue` (`0x54793f`) and the aggression byte (`0x547958`)
+the routine tests its own `[ebp+8]` argument (`cmp [ebp+8],edi; setne al; cmp al,1; je 0x54796a`,
+`0x54794e..0x547956`) and skips the byte gate when it is non-zero; what the callers pass there is
+unread, so it is not modelled (unobservable under mode 0). (e) The `FUN_00540cf0` thunk quote in
+the round-555 entry gains its `push eax` (`0x540cf8`). (f) The round-555 file-list disclosure
+needs nothing.
+
+**2. Round 558.** `CharacterSelect._qa_start` ran only in the non-empty-list branch, so a QA
+server with no character at all stalled on the select screen with the on-screen text and nothing
+in the log; the empty branch now routes its status through `_qa_report` (a `QA RECONNECT:
+CharacterSelect: No characters yet -- Create one. -- nothing to start, staying on the select
+screen` line under `SRREVAMP_QA_RECONNECT_VIA_LOGIN`, nothing otherwise), and so does the list's
+`Error: %s` branch, which stalled the same way (`... -- no list to start from, staying on the
+select screen`; added on round 564's own review). QA-only. Its (a)-(c) went to round 560's spec
+and were landed there.
+
+**3. Round 559.** Its three notes were routed to rounds 560 (number/wording), 563 (the
+never-exercised unload release -- exercised end to end by round 563's tour) and 561 (`_load_ms_*`
+never reset -- `begin_drain`); nothing left here.
+
+**4. Round 560.** (a) The Restart comment in `_try_initialize_pk2_ui` (which `_ready` calls;
+`system_restart_requested`): the parenthetical "SceneTree replaces a pending scene, so the second
+call merely won; the first instance was already freed" was an unmeasured engine claim and
+contradicted what round 558's runs C and D logged on the mid-load drain path (detached and not yet
+freed, `data.tree` null); it now reads that the second call came from a node `_on_disconnected`
+had already detached, where `get_tree()` is null -- that state is the drain path's, carried over
+by reading; the Restart lambda's own call was never logged. Rounds 558's and 560's entries
+anchored the lambda in `_ready` (it has been in `_try_initialize_pk2_ui` at every commit since);
+marked in both. (b) The round-560 table's
+`tick200, entry 1` decode cell: `43, 136` -> `43, 133` -- `/var/tmp/r560/tick200.log`'s nine
+entry-1 `decoded now in` lines are 125+2+2+0+1+0+1+0+2 = 133 ms and entry 2's sum to 136 (the
+prose had 133; `drain`'s entry 2 is 138, as the table says). (c) "equal to the sixth decimal"
+(round 560) and "to the fourth decimal" (rounds 558 and 560): the pair is (0.271501, 0.260978,
+0.249704) against (0.271502, 0.260978, 0.249705), a difference of 1e-6 in red and blue -- it
+differs IN the sixth decimal; all three now say 1e-6 apart at the printed precision, here and in
+`WORLD_ISSUES.md`'s five-hundred-and-fifty-eighth round (`/var/tmp/r558/measure.sh` prints
+ImageMagick's `%[fx:mean.r]`, six significant digits, so the true difference is only bounded,
+under 2e-6; the frames are deleted, so it cannot be read closer). Round 559's "full-frame means
+agree to the fourth decimal" is a different pair (the full-frame means) and stands. (d) "the other three statics in
+`client/scripts`" listed four (`grep -rn 'static var' client/scripts`: `_flat_texture`,
+`_overrides`, `missing_count`, `missing_recent`, in three files); says four.
+
+**5. Round 561.** (a) "a play frame's wall time is ~0.37 s (longest wall gap 368 ms)": 368 ms is
+the exit summary's LONGEST gap over the entry run's 177 in-play frames
+(`/var/tmp/r561/entry.log`, `longest wall gap 368 ms at frame 107`), an upper bound; AGENTS.md's
+figure is 0.33 s a frame. Reworded here and in `WORLD_ISSUES.md`'s five-hundred-and-sixty-first
+round. (b) `World3D._try_load_real_terrain`: between the `mesh` lap and the trimesh the stopwatch
+was reset (`sw = Time.get_ticks_usec()`), so the null check, the group, the untextured material,
+the vertical calibration and placement and the body/shape nodes were in no lap -- the residual
+round 561's own lines carry between a cell's terrain group and its laps' sum: 8-13 ms a cell,
+typically 10-11, over the entry run's 25 cells and the crossing's 30 (the centre: 1,609 against
+1,597; the crossing's 97/165: 246 against 233; entry 98/168: 292 against 284). Part of each is the
+whole-ms truncation of every printed lap, so the span itself is not claimed at a number here --
+the lap measures it from now on. That reset is the `setup` lap; the terrain list reads `[read,
+parse, (env,) lightmap, tiletable, textures, mesh, setup, collision, walls, water, navgraph]`, and
+the laps cover the group from the file read to the nav graph: outside them are only the path check
+and `_open_map_pk2_if_set()` before the first stopwatch (a held handle by then -- `_ready`'s
+`_try_add_real_sky` opens Map.pk2 before the centre cell) and the closing print (with the
+centre's `call_deferred`) after `navgraph`, which are not measured. The
+README's template names it. The benchmark's group totals and every other line are unchanged, so
+no re-run: a group is measured around its laps, not summed from them. (c) The README's cell-line
+template already carried `tiletable` and `npcs P [tables]` (fixed in round 561 itself; verified
+against the shipped labels), and already said the exit summary carries the same window when the
+tick-600 summary lands after `--quit-after`; nothing to change there beyond `setup`.
+
+**6. Round 562.** (a) The QA header documents `SRREVAMP_QA_FORCE_LOADING` (it had appeared only
+inside the `--reconnect` paragraph) and what round 562 moved: the screen goes up, and one frame
+is awaited, before the centre cell, so without `--server` (whose sign-in already awaited ahead of
+the world) and without `SRREVAMP_QA_AT` (whose first-tick block waits for a region), `_qa_step`'s
+first tick and its one-time block run before the world and the HUD exist -- `SRREVAMP_QA_DEBUG`
+and `SRREVAMP_QA_WORLDMAP` do nothing there, through their `!= null` guards; the
+`SRREVAMP_QA_HIDE`, `_FLOAT`, `_THROUGH`, `_SCAN` and `_COLUMNS` probes, in the same block, run
+against a world not yet built, so what they report there says nothing about the world (a
+false-negative trap: added on round 564's own review); and `SRREVAMP_QA_ZONE`'s
+`_reload_zone_assets` runs before `_load_initial_region_neighborhood` builds the
+`SRREVAMP_MAPM_PATH` centre (`SRREVAMP_QA_AT` holds the block only until the region under the
+player has a graph; the rest of the grid drains after it, as before round 562) -- and every
+tick-indexed hook fires one physics tick earlier relative to the world build (one step a frame:
+`project.godot` sets no physics rate and the writer's fps is 60). Read from `_ready` and
+`_qa_step`, not measured; nothing moved. (b) The README says now that only physics steps and cell
+builds are work: the screen's build (672-711 ms in round 562's three runs) and the HUD's run in
+`_ready` between steps, so neither reaches `longest work frame`; they are in `D`.
+
+**7. Round 563.** (a) "687 in 1708 lines": `/var/tmp/r563/before.log` is 1,719 lines; 1,708 is
+the line `left the tree` is on, and the 11-line movie-writer / RID trailer after it was not
+counted. 687 and every other figure hold. `WORLD_ISSUES.md`'s five-hundred-and-sixty-third round
+never carried the total, so only this file changed. (b) Recorded, not fixed: no headless test
+exercises `World3D._maybe_stream_regions` calling `_grid.unload` (it needs archives); the
+wiring's evidence is the hop tour alone (`after.log`: `97/169 forgotten -- ... 7 NPC holder(s)
+freed` then `7/7 NPC(s) placed in 97/169`). (c) `RegionGridState.unload()` runs
+`prune_heightmaps()` / `prune_object_collisions()` once per unloaded region rather than once per
+sweep -- trivial, left as is; and backtracking re-parses the pruned neighbour heightmaps, a cost
+the off-thread items should keep in mind but which no run has measured. The nearest measured
+figure is round 561's objects `own` lap -- `_placements_belonging_here`, which includes the
+neighbour heightmap parses -- 1,069 ms over the entry run's 25 cells (1,126 over the crossing's
+30). Round 563's first after-run figures (5 heightmaps, ~52,000 objects, ~62 MB at the tour's end)
+are the memory the prune frees, read from the run without it, not the re-parse cost.
+
+**8. Found on the way.** `ObjectTemplateCache`'s cap comment said round 558's grid "reports 69,
+63 and 20 distinct models for its three largest cells": 69, 63 and 20 are the first three cells
+the log prints (97/168, 97/167, 96/168); by distinct models the three largest are 69, 63 and 61
+(97/169), and the nine sum to 358 (`/var/tmp/r558/runA2.log`, the `distinct real models` lines --
+the 358 of round 559's table). Reworded; the cap's reasoning (nine cells well under it: 226
+templates built per entry once shared) stands. The comment's RID figures (1234 / 1234 / 1235 /
+1057 / 1057 in `yawshot.log`; 2468 / 2468 / 2469 / 2114 / 2114 in run A2) were re-read and hold.
+
+**9. The heightfield-collision gate, recorded from the round-561 BEFORE.** Per neighbour cell,
+`collision` is (1,433 - 60) / 24 = 57 ms of (7,987 - 1,609) / 24 = 266 ms of terrain (the
+per-phase table; 57 of 246 on the crossing's cell 97/165): 21-23 %, under the 25 % bar the plan
+set for a `HeightMapShape3D` item on its own. The orchestrator's decision: the item is re-gated
+in this batch on its share of the post-off-thread commit, not skipped.
+
+**Tests.** `client/scripts/world/load_timings_test.gd` gains `_test_world3d_terrain_laps_are_exhaustive`
+(the function cannot run headless, so it reads `World3D.gd`'s source, the loading-screen suite's
+way): the `terrain` laps of `_try_load_real_terrain`, in order, are the twelve above; no bare `sw
+= Time.get_ticks_usec()` reset remains in the function; and `client/tools/README.md`'s cell-line
+template (read from the shipped copy, whitespace-flattened) names the same laps less `env`.
+NEGATIVE, proven: with `client/scripts/World3D.gd` alone stashed (`git stash push --
+client/scripts/World3D.gd`) and the tree shipped (`remote_godot.sh sync`), `remote_godot.sh script
+res://scripts/world/load_timings_test.gd` printed `FAIL _try_load_real_terrain's terrain laps, in
+order, are [...] (got [... "mesh", "collision", ...])`, `FAIL no stopwatch in _try_load_real_terrain
+is reset outside a lap`, `2 FAILURES` (the README check passed, as it should: the doc was
+already edited); restored (`git stash pop`), the suite is in the run below. The wording notes have
+no negative (prose cannot fail a test). `remote_godot.sh tests`: `ran 90 suite(s), 0 failing` (round 563's 90; the new case passes inside `load_timings_test.gd`); `remote_godot.sh
+check`: `checked 264 scripts and 5 scenes`, `ALL LOAD` (no new file); `cd server && go build ./... && go test -count=1 -p 1 ./...`: green before and
+after the doc edits (the doc probes read `SYSTEMS.md` and `recovered_names.tsv` at runtime). Lane
+lock `/var/tmp/r564/lock`; no render, no frames. Round 564's own review (the dump claim in 1(b),
+the per-cell residual in `WORLD_ISSUES.md`, and the wording notes folded into 2, 4, 5, 6 and 7)
+changed prose, comments and one QA-only log line (no test reaches `CharacterSelect`, so that line
+has no negative); on that tree `remote_godot.sh tests` again printed `ran 90 suite(s), 0 failing`,
+`check` `checked 264 scripts and 5 scenes` / `ALL LOAD`, and `go build ./... && go test -count=1
+-p 1 ./...` was green.
+
+**Records.** This entry; `docs/WORLD_ISSUES.md`'s five-hundred-and-sixty-fourth round, and its
+five-hundred-and-fifty-eighth and five-hundred-and-sixty-first reworded; this file's round-555,
+-558, -560, -561 and -563 entries, each marked in place; `docs/SYSTEMS.md` (the Monster AI row's
+round-555 clause); `docs/protocol/monster_ai.md` (the round-554 draw's-moment bullet);
+`docs/protocol/recovered_names.tsv` (`0053fb20`, `00561b00`); `client/tools/README.md`, "Load
+benchmark"; `World3D.gd`'s QA header, Restart comment and `_try_load_real_terrain`;
+`CharacterSelect.gd`; `object_template_cache.gd`; `monsterai.go` (comment). Beyond the item's
+file list, disclosed: `docs/SYSTEMS.md`, `docs/protocol/monster_ai.md`,
+`docs/protocol/recovered_names.tsv` and `server/internal/session/monsterai.go` (round 555's notes
+live there) and `client/scripts/world/load_timings_test.gd` (the test). `docs/TODO.md` has no
+map/loading section; nothing there.
+
+**Deploy note.** Client only, not tag-worthy: nothing a player sees. The `setup` lap adds one
+bracketed number to a log line the benchmark greps by prefix; no server change.

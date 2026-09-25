@@ -90,15 +90,26 @@ frame however long the frame took -- a hitch metric built on `delta` reads 16.7 
 wall clock is no better, because every movie frame pays the writer's readback and PNG (the 0.33 s
 a frame above). So `World3D._physics_process` times its own step with `Time.get_ticks_usec()`,
 each cell's build is timed around `_load_region_cell` (and the centre cell in
-`_load_region_neighborhood`), and the two are summed per drawn frame. Three lines carry it:
+`_load_region_neighborhood`), and the two are summed per drawn frame. Nothing else counts as
+work: the loading screen's own build (`LoadingScreen: up ... built in N ms`, 672-711 ms across
+round 562's three runs) and the HUD's (`_try_initialize_pk2_ui`) run in `_ready` between physics
+steps, so neither reaches `longest work frame` -- they are part of `D` below, and the screen's
+cost is read from its own line. Three lines carry it:
 
 - `World3D: cell 97/167 built in N ms at frame f (terrain T [read, parse, lightmap, tiletable,
-  textures, mesh, collision, walls, water, navgraph], objects O [parse, own, templates, place],
+  textures, mesh, setup, collision, walls, water, navgraph], objects O [parse, own, templates,
+  place],
   npcs P [tables])` -- one per cell as it is built. The three group totals are the stopwatches
   around the phases (the same numbers the `region grid loaded` split has summed since round 156);
   the bracketed sub-phases are laps inside them, and need not add up to the group (`collision` is
   `create_trimesh_shape` alone, round 156's bottleneck; the centre cell also has `env`, and
-  `tiletable` and `tables` are cached after the first call, so only the centre's are non-zero).
+  `tiletable` and `tables` are cached after the first call, so only the centre's are non-zero;
+  `setup`, round 564, is the span between the mesh build and the trimesh -- the group, the
+  untextured material, the vertical calibration -- which was a bare stopwatch reset in no lap
+  until then, so the terrain laps now cover the group from the file read to the nav graph, less
+  each lap's whole-ms truncation; outside them are only the path check and
+  `_open_map_pk2_if_set()` before the first stopwatch (Map.pk2 is already held by then: `_ready`'s
+  `_try_add_real_sky` opens it) and the closing print after `navgraph`, unmeasured).
 - `World3D: region grid loaded in N ms (terrain T, objects O, npcs P) at frame f -- C cells S ms,
   D ms outside the cells over A awaited frames` -- the drain's total against the cells' own sum.
   **The check is `S <= N`, not equality**: under the loading screen (`SRREVAMP_QA_FORCE_LOADING=1`)

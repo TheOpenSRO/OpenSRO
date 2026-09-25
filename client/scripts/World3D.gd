@@ -1533,8 +1533,13 @@ func _try_initialize_pk2_ui() -> void:
 	# `disconnected` unconditionally, and _on_disconnected is what takes this
 	# instance to Login -- for a dropped peer, for the Log Out button
 	# (_on_disconnect_pressed) and for this. Until round 560 this lambda
-	# queued Login a second time itself (SceneTree replaces a pending scene,
-	# so the second call merely won; the first instance was already freed).
+	# queued Login a second time itself, from a node _on_disconnected had
+	# already detached, where get_tree() is null. That state -- detached and
+	# not yet freed, `data.tree` null -- is what round 558's runs C and D
+	# logged on the mid-load drain path; this lambda's own call was not
+	# logged, the same detach is read as applying. Round 564 reworded this: the
+	# earlier parenthetical, that the engine "replaces a pending scene" and
+	# the first instance was already freed, was an unmeasured claim.
 	_hud_panels.system_restart_requested.connect(func(): NetClient.disconnect_from_server())
 	_hud_panels.system_exit_requested.connect(func(): get_tree().quit())
 	_hud_panels.system_help_requested.connect(func():
@@ -4808,9 +4813,19 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	var patch_body := StaticBody3D.new()
 	patch_body.collision_layer = TERRAIN_COLLISION_LAYER
 	var patch_shape := CollisionShape3D.new()
-	# Round 156 named this the load's largest single cost: its own lap, with
-	# nothing else in it.
-	sw = Time.get_ticks_usec()
+	# Everything since the mesh lap -- the null check, the group, the
+	# untextured material, the vertical calibration and placement, the body
+	# and shape nodes -- is the `setup` lap (round 564). Until then this line
+	# reset the stopwatch, so that span was in no lap: round 561's cell lines
+	# left it between a cell's terrain group and its laps' sum, 8-13 ms a
+	# cell over the entry and crossing runs (the centre 1609 against 1597;
+	# 97/165 246 against 233), part of which is the whole-ms truncation of
+	# each printed lap. With it the laps cover the group from the read to the
+	# nav graph; only the path check and _open_map_pk2_if_set() before the
+	# first stopwatch and the closing print after `navgraph` are outside
+	# them, unmeasured. Round 156 named the trimesh
+	# the load's largest single cost: its own lap, with nothing else in it.
+	sw = _load_timings.lap("terrain", "setup", sw)
 	patch_shape.shape = terrain_mesh.create_trimesh_shape()
 	sw = _load_timings.lap("terrain", "collision", sw)
 	patch_body.add_child(patch_shape)
@@ -6411,6 +6426,36 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_FREE=1     let the camera pass through geometry
 ##   SRREVAMP_QA_NOFOG=1    disable fog (for high overview shots)
 ##   SRREVAMP_QA_NOUI=1     hide the HUD (for comparison shots)
+##   SRREVAMP_QA_FORCE_LOADING=1  show the "NOW LOADING" screen on a QA run,
+##                          which builds its grid synchronously and shows
+##                          none otherwise (_should_show_loading_screen); the
+##                          load benchmark's two runs set it. Since round 562
+##                          the screen goes up, and one frame is awaited,
+##                          BEFORE the centre cell (_ready), so without
+##                          --server (whose sign-in already awaited ahead of
+##                          the world) and without SRREVAMP_QA_AT (whose
+##                          first-tick block waits for a region) _qa_step's
+##                          first tick, and its one-time block, run before
+##                          the world and the HUD exist. In that block
+##                          SRREVAMP_QA_DEBUG and SRREVAMP_QA_WORLDMAP do
+##                          nothing, through their null guards; the
+##                          SRREVAMP_QA_HIDE, _FLOAT, _THROUGH, _SCAN and
+##                          _COLUMNS probes run against a world not yet
+##                          built, so an empty report there says nothing
+##                          about the world; and SRREVAMP_QA_ZONE's
+##                          _reload_zone_assets runs before
+##                          _load_initial_region_neighborhood builds the
+##                          SRREVAMP_MAPM_PATH centre. (SRREVAMP_QA_AT holds
+##                          the block only until the region under the player
+##                          has a graph; the rest of the grid still drains
+##                          behind the screen after it, as it did before
+##                          round 562.) And every tick-indexed hook
+##                          below fires one physics tick earlier relative to
+##                          the world build than it did before round 562
+##                          (one step a frame: the project sets no physics
+##                          rate and the movie writer's fps is 60). Read from
+##                          _ready and _qa_step in round 564, not measured;
+##                          nothing was moved
 ##   SRREVAMP_QA_WORLDMAP=1 open the world map window over the world
 ##   SRREVAMP_QA_ATTACK_NAME=s  only monsters whose plate contains s (e.g. Mangyang)
 ##   SRREVAMP_QA_ATTACK_GOTO=1  stand next to the target first (QA teleport);

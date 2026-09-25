@@ -843,7 +843,11 @@ func (a *monsterAI) update(b *brain) {
 //     -- BEFORE the aggression byte is read, so a non-aggressive monster
 //     consumes its timer too (round 555 put the two tests in this order;
 //     under the mode-0 stand-in every brain is aggressive and nothing could
-//     tell, but a per-species mode would);
+//     tell, but a per-species mode would) -- and between the timer and the
+//     byte the routine tests its own [ebp+8] argument (`cmp [ebp+8],edi;
+//     setne al; cmp al,1; je 0x54796a` 0x54794e..0x547956): non-zero skips
+//     the byte gate. What its callers pass there is unread, so it is not
+//     modelled (round 564's note; unobservable under mode 0);
 //  3. the aggression byte must be 0 or 3 (0x547958..0x547964; ai.Aggressive);
 //  4. the scan: the regions within trunc(ctx+0x15c) (RC=chop, `or eax,0xc00`
 //     0x547989, `fistp` 0x54799a) for players -- kind mask 1, the nearest
