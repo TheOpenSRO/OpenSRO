@@ -273,3 +273,17 @@ func (m *MemStore) SetLeveling(_ context.Context, characterID int64, level int, 
 	c.Int = intel
 	return nil
 }
+
+// SavePosition implements Store.
+func (m *MemStore) SavePosition(_ context.Context, characterID int64, zone, frame string, x, y, z float64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	c, ok := m.byID[characterID]
+	if !ok {
+		return ErrNotFound
+	}
+	c.Zone, c.Frame = zone, frame
+	c.PosX, c.PosY, c.PosZ = x, y, z
+	return nil
+}

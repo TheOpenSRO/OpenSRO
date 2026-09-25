@@ -292,6 +292,41 @@ func _test_decode_frame_region() -> void:
 	var refused := WorldNet.decode_change_zone_result(_build_change_zone_result(false, "already in that zone", "", 0, 0, 0))
 	_check(refused.error == "" and _frame_of(refused) == "", "a refusal has frame \"\"")
 
+## Round 573: a restored entry. Restored is ONE byte after the frame
+## (server/internal/session/world.go's EnterWorldResult.Restored), sent only
+## when the server read the position back from the character's row; a payload
+## that ends at the frame -- every other entry, and every older server's --
+## decodes as not restored, and so does one that ends at the list. The flag is
+## read through get(), so a WorldNet without it FAILS here rather than failing
+## to parse (before round 573 every restored row below fails).
+func _restored_of(result: Object) -> String:
+	var restored = result.get("restored")
+	return str(restored) if restored is bool else "<no restored property>"
+
+func _test_decode_restored() -> void:
+	var others := [{"id": 42, "name": "Bram", "x": 4.0, "y": 5.0, "z": 6.0, "gender": CharacterNet.GENDER_CHINA_MAN}]
+	var legacy := _build_enter_world_result(true, "", "jangan", 100.0, 0.0, -200.0, CharacterNet.GENDER_CHINA_MAN, others, 73, 100)
+	var framed := _with_frame(legacy, "97/168")
+
+	var restored := WorldNet.decode_enter_world_result(framed + PackedByteArray([0x01]))
+	_check(restored.error == "" and _restored_of(restored) == "true",
+		"a trailing 0x01 after the frame decodes as restored (got %s, error '%s')" % [_restored_of(restored), restored.error])
+	_check(restored.frame == "97/168" and restored.x == 100.0 and restored.z == -200.0 and restored.zone == "jangan",
+		"and the frame, zone and position before it read as they did")
+	_check(restored.hp == 73 and restored.others.size() == 1 and restored.others[0].char_name == "Bram",
+		"and the vitals and the list too")
+
+	var not_restored := WorldNet.decode_enter_world_result(framed)
+	_check(not_restored.error == "" and _restored_of(not_restored) == "false",
+		"a payload that ends at the frame is not restored (got %s)" % _restored_of(not_restored))
+	var zero := WorldNet.decode_enter_world_result(framed + PackedByteArray([0x00]))
+	_check(zero.error == "" and _restored_of(zero) == "false", "a trailing 0x00 is not restored (got %s)" % _restored_of(zero))
+	var old := WorldNet.decode_enter_world_result(legacy)
+	_check(old.error == "" and _restored_of(old) == "false",
+		"an older server's payload, ending at the list, is not restored (got %s)" % _restored_of(old))
+	var refused := WorldNet.decode_enter_world_result(_build_enter_world_result(false, "no such character", "", 0, 0, 0, "", []))
+	_check(refused.error == "" and not refused.ok and _restored_of(refused) == "false", "a refusal is not restored")
+
 func _test_decode_change_zone_result_failure() -> void:
 	var payload := _build_change_zone_result(false, "already in that zone", "", 0, 0, 0)
 	var result := WorldNet.decode_change_zone_result(payload)
@@ -341,6 +376,7 @@ func _init() -> void:
 	_test_decode_change_zone_result_success()
 	_test_decode_change_zone_result_failure()
 	_test_decode_frame_region()
+	_test_decode_restored()
 	_test_encode_revive()
 	_test_decode_revive_result()
 

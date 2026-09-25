@@ -6,7 +6,9 @@
 //
 // Deliberately in-memory only, unlike account/character's SQLite stores —
 // live position data resetting on a server restart is normal for an MMO,
-// not a bug to fix.
+// not a bug to fix. Where a character last stood is kept on its character
+// row instead, under cmd/server's -persist-position (round 573,
+// session/position.go), and read back when it enters the world again.
 package world
 
 import (

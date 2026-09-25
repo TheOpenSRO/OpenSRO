@@ -77,6 +77,24 @@ var Mapping = []FieldMapping{
 		Note: "the berserk orbs. Bound by CharData_BindDBColumns to charData +0x86 " +
 			"(docs/protocol/db_bind_offsets.tsv), so the engine persists it on the " +
 			"character row and srrevamp now does too -- it used to clear on disconnect"},
+	{Field: "Zone", Column: "",
+		Note: "DIVERGENCE. The engine has no zone label: a region id says where. srrevamp " +
+			"keeps the label the client built its grid from (\"jangan\", \"97/168\"), " +
+			"because the label is what picks the hub bucket and the client's grid centre " +
+			"(round 573, cmd/server's -persist-position)"},
+	{Field: "Frame", Column: "LatestRegion",
+		Note: "the region the position is relative to, bound to charData +0x94 " +
+			"(docs/protocol/db_bind_offsets.tsv). The engine's position is LOCAL to that " +
+			"region's corner; srrevamp's is a world point in the frame centred on it " +
+			"(worldmap.ToWorld), kept as \"x/y\" -- the FrameRegion the session named -- so a " +
+			"position saved in one frame can be named in another (round 573)"},
+	{Field: "PosX", Column: "PosX",
+		Note: "charData +0x98; a world coordinate in Frame's frame, not region-local (round 573)"},
+	{Field: "PosY", Column: "PosY",
+		Note: "charData +0x9c; the client's height in Frame's frame (round 573)"},
+	{Field: "PosZ", Column: "PosZ",
+		Note: "charData +0xa0; a world coordinate in Frame's frame, Z mirrored (worldmap), not " +
+			"region-local (round 573)"},
 }
 
 // EngineOnlyColumns are `_CHAR` columns srrevamp models nowhere. Listed rather
@@ -92,10 +110,6 @@ var EngineOnlyColumns = map[string]string{
 	"RemainSkillPoint":  "srrevamp keeps SP in internal/skill's own store, not on the character",
 	"GatheredExpPoint":  "a lifetime total beside the per-level ExpOffset",
 	"MP":                "SEE internal/mana: the engine PERSISTS current MP and srrevamp does not",
-	"LatestRegion":      "position, which srrevamp keeps in the live world rather than on the row",
-	"PosX":              "position",
-	"PosY":              "position",
-	"PosZ":              "position",
 	"AppointedTeleport": "a bound return point",
 	"AutoInvestExp":     "automatic stat investment",
 	"InventorySize":     "a per-character inventory width; srrevamp's is fixed",

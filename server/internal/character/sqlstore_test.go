@@ -361,3 +361,34 @@ func TestSQLStoreApplyDamageAtZeroReportsNoDeath(t *testing.T) {
 		t.Fatalf("the row after the blows: HP %d (err %v), want 0", got.HP, err)
 	}
 }
+
+// The same round trip against PostgreSQL, through the round-573 migration's
+// columns (latest_zone, latest_frame, pos_x/pos_y/pos_z): a new row reads
+// nothing saved, a save is read back by GetByID and ListByAccount, and a
+// missing character is ErrNotFound.
+func TestSQLStoreSavePosition(t *testing.T) {
+	store := openTestSQLStore(t)
+	ctx := context.Background()
+	c, err := store.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	fresh, err := store.GetByID(ctx, c.ID)
+	if err != nil || fresh.Zone != "" || fresh.Frame != "" || fresh.PosX != 0 || fresh.PosY != 0 || fresh.PosZ != 0 {
+		t.Fatalf("a new row has a saved position: %+v (err=%v)", fresh, err)
+	}
+	if err := store.SavePosition(ctx, c.ID, "jangan", "97/168", 100.5, 7.25, -200.75); err != nil {
+		t.Fatalf("SavePosition: %v", err)
+	}
+	got, err := store.GetByID(ctx, c.ID)
+	if err != nil || got.Zone != "jangan" || got.Frame != "97/168" || got.PosX != 100.5 || got.PosY != 7.25 || got.PosZ != -200.75 {
+		t.Fatalf("GetByID after a save: %+v (err=%v), want jangan 97/168 at (100.5, 7.25, -200.75)", got, err)
+	}
+	list, err := store.ListByAccount(ctx, 1)
+	if err != nil || len(list) != 1 || list[0].Zone != "jangan" || list[0].PosZ != -200.75 {
+		t.Fatalf("ListByAccount after a save: %+v (err=%v)", list, err)
+	}
+	if err := store.SavePosition(ctx, c.ID+1000, "jangan", "97/168", 0, 0, 0); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("SavePosition on a missing character: %v, want ErrNotFound", err)
+	}
+}

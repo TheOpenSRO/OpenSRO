@@ -441,7 +441,7 @@ func TestGuildPointsDisconnectFlush(t *testing.T) {
 	hub := world.NewHub()
 	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, eq, hub))
 	flush := GuildPointsDisconnectHandler(hub, gp)
-	leave := WorldDisconnectHandler(hub)
+	leave := WorldDisconnectHandler(hub, nil)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

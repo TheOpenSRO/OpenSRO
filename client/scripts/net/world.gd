@@ -96,6 +96,14 @@ class EnterWorldResult:
 	## does not send it; World3D then frames the grid on the zone's own
 	## centre, which is what the server's frame was before it named it.
 	var frame: String = ""
+	## True when x/y/z are where the character last stood, read back from its
+	## row under the server's -persist-position (round 573), rather than the
+	## zone's arrival point: World3D then keeps the position instead of moving
+	## the player on to the zone's landing spot (ZONE_SPAWN_LOCAL). One byte
+	## after the frame, sent only when set -- server/internal/session/world.go's
+	## EnterWorldResult.Restored -- so false from every server that did not
+	## restore and from every older one.
+	var restored: bool = false
 	var error: String # decode error, distinct from a well-formed "not ok" response
 
 ## Parses one EntitySnapshot from data starting at offset, returning it
@@ -225,26 +233,34 @@ static func decode_enter_world_result(data: PackedByteArray) -> EnterWorldResult
 	var frame := _decode_frame(data, offset)
 	result.frame = frame[0]
 	result.error = frame[1]
+	# Restored (round 573): the byte after the frame, absent -- false -- from a
+	# server that did not restore the position or predates the field.
+	var after_frame: int = frame[2]
+	if result.error == "" and after_frame < data.size():
+		result.restored = data[after_frame] != 0
 	return result
 
 ## Reads the FrameRegion that trails an OpEnterWorldResult or an
 ## OpChangeZoneResult (round 570; server/internal/session/world.go's
 ## decodeFrameRegion is the same rule): a u16-prefixed "x/y" string after the
-## entity list. Returns [frame, error]: ["", ""] when the payload ends at the
-## list -- an older server's -- and an error when the field is cut short. The
-## field trails the list because that is where a client before round 570
-## stops reading: both decoders above returned right after the loop without
-## looking at what was left, so it reaches them unread.
+## entity list. Returns [frame, error, next]: ["", "", offset] when the payload
+## ends at the list -- an older server's -- and an error when the field is cut
+## short; `next` is the offset just past the field, where an
+## OpEnterWorldResult's Restored byte sits (round 573). The field trails the
+## list because that is where a client before round 570 stops reading: both
+## decoders above returned right after the loop without looking at what was
+## left, so it reaches them unread -- and a round-570 client returns right
+## after the frame the same way, so the Restored byte reaches it unread.
 static func _decode_frame(data: PackedByteArray, offset: int) -> Array:
 	if offset >= data.size():
-		return ["", ""]
+		return ["", "", offset]
 	if offset + 2 > data.size():
-		return ["", "truncated frame length"]
+		return ["", "truncated frame length", offset]
 	var frame_len := data.decode_u16(offset)
 	offset += 2
 	if offset + frame_len > data.size():
-		return ["", "truncated frame"]
-	return [data.slice(offset, offset + frame_len).get_string_from_utf8(), ""]
+		return ["", "truncated frame", offset]
+	return [data.slice(offset, offset + frame_len).get_string_from_utf8(), "", offset + frame_len]
 
 ## Decodes an OpEntityEntered broadcast payload (a single EntitySnapshot).
 static func decode_entity_entered(data: PackedByteArray) -> EntitySnapshot:

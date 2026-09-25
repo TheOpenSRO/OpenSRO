@@ -38937,3 +38937,202 @@ or above the void catch waits for real terrain; the ground items keep at least h
 height budget when they wait; and every vertical terrain ray (the player's snap, ground check and
 buried check among them) steps off the heightfield's grid lines, reading a height at most 0.19 off
 (0.033 in 97/168) where a column lies within 0.01 of one.
+
+## A character logs back in where it left off, behind -persist-position (default OFF), and the client honours a restored position (round 573)
+
+Server behind a new default-OFF flag, `-persist-position` (env `SRREVAMP_PERSIST_POSITION`), plus a
+client change; tag-worthy. With the flag on and round 573's client, a disconnect, a logout or a
+server restart no longer sends the player back to Jangan's square: the next entry answers where
+the character stood. With the flag off nothing is saved or read and the wire is byte for byte what
+it was. Tagged clients ignore a restored position in Jangan (measured, step 7), so the flag's flip
+waits for the client tag that carries this round. No opcode changes; `OpEnterWorldResult` gains
+one trailing byte, sent only when a position was restored.
+
+**1. Grounding, re-checked on the tree at bbafa37.**
+
+- The engine keeps the position on the character row. `_CHAR` declares `LatestRegion`, `PosX`,
+  `PosY`, `PosZ` (`persistence.TableColumns["_CHAR"]`, held equal to
+  `character.EngineCharColumns`), and `CharData_BindDBColumns` binds them to charData `+0x94`,
+  `+0x98`, `+0x9c`, `+0xa0` (`docs/protocol/db_bind_offsets.tsv`; `persistence.ColumnOffsets`,
+  whose controls include exactly these three Pos offsets). Until this round
+  `character.EngineOnlyColumns` listed all four as "position, which srrevamp keeps in the live
+  world rather than on the row".
+- `session.handleEnterWorld` always entered `arrival(spawnZone)`: "jangan", `spawnPos`, and the
+  zone's frame (or the one frame under `-single-frame`).
+- The character store's migration pattern is `ALTER TABLE characters ADD COLUMN IF NOT EXISTS ...`
+  inside `character/sqlstore.go`'s `schema`, run by `OpenSQLStore`.
+- The client threw a Jangan position away on every entry, tagged or not:
+  `World3D._load_initial_region_neighborhood` -> `_place_at_zone_spawn(zone)` ->
+  `ZONE_SPAWN_LOCAL["97/168"]` = local (1002, 1020) for any label that resolves to 97/168 (the
+  grounding verifier's finding; read, and measured in step 7). So a server-only change would have
+  passed its Go test and done nothing where testers log out.
+- A trailing byte after `FrameRegion` reaches every tagged client unread. Go
+  `DecodeEnterWorldResult` / `decodeFrameRegion` and GDScript `decode_enter_world_result` /
+  `_decode_frame` all return after the frame without looking at what is left (read), and the
+  round-570 decoder decodes a payload with a trailing 0x01 with error `''` (step 6's negative run
+  of `world_test.gd` on the pre-573 `world.gd`). Clients before round 570 stop after the entity
+  list.
+
+**2. Own design, disclosed at each constant (`session/position.go`'s header).**
+
+- The SHAPE: a zone label, the frame region the coordinates are relative to ("x/y", the
+  `FrameRegion` the session named) and a world point in that frame -- not the engine's region id
+  and region-local point. `character.Mapping` records it: `Frame` -> `LatestRegion`, `PosX/Y/Z` ->
+  `PosX/Y/Z` with that divergence noted, `Zone` -> no column (a divergence: the engine has no
+  label).
+- WHEN it is saved: on a disconnect (`WorldDisconnectHandler`, from the entity `hub.Leave`
+  returns), on each successful zone change (the arrival), at most once every
+  `positionSaveInterval` = 30 s from the move handler, and for every character still in the world
+  when the server stops (`SaveAllPositions`, called after the listener stops, because the gateway
+  runs no `OnDisconnect` for sessions open at a stop -- so a deploy keeps them). Each write is
+  bounded by `positionSaveTimeout` = 5 s and a failure is logged, never returned. The retail save
+  cadence was not read.
+- The FRAME RULE (`inFrame`): the same frame keeps the point exactly; two different regions move
+  x and z by `worldmap.Rebase` -- the region-delta form of `worldmap.ToWorld` -- and set the
+  height to `spawnPos.Y` (0), because the client anchors each frame's heights on that frame's own
+  region (round 570's `_frame_anchor_height`) and the server knows no ground; the client lifts the
+  player as it does every arrival. A frame that cannot be converted ("" or not a region, and not
+  equal to today's) enters at the spawn.
+- The label is remembered on the session (`placeKey`): the hub keeps only the bucket, which under
+  `-single-frame` is `world` for every framed label.
+
+**3. The sign rule, as checked.** Region y drives world X, region x drives world Z, Z mirrored
+(AGENTS.md; `worldmap.go`'s measured columns). A point saved under 98/157 and read under 97/168
+moves by `ToWorld(98, 157, 960, 960, 97, 168)` = (-21120, -1920): 157 < 168 puts it at negative X
+and 98 > 97 at negative Z. The plan's test said (21120, -1920); the feasibility verifier caught it,
+and the test derives the shift from `ToWorld` and asserts its signs from the convention instead.
+A mutation that swaps `Rebase`'s frames gives (21220, 1720) for the saved (100, -200) and fails it.
+
+**4. The change.**
+
+- `character`: `Character.Zone`, `Frame`, `PosX/PosY/PosZ`; `Store.SavePosition`; `SQLStore` adds
+  `latest_zone`, `latest_frame` (TEXT, default '') and `pos_x/pos_y/pos_z` (DOUBLE PRECISION,
+  default 0) with the usual `ADD COLUMN IF NOT EXISTS` and selects them in `ListByAccount` and
+  `GetByID`; `MemStore` the same. An existing row reads `latest_zone` '' -- nothing saved.
+- `session`: `position.go` (`SetPersistPosition`, `rememberPlace`, `savePosition`,
+  `savePositionEvery`, `SaveAllPositions`, `restoredArrival`, `inFrame`); `handleEnterWorld`
+  enters `restoredArrival` when it answers -- the saved label, that label's bucket and frame as
+  `arrival` gives them that day, the saved point named in that frame -- and sets
+  `EnterWorldResult.Restored`; `handleChangeZone` remembers the new label and frame and saves the
+  arrival; `handleMove` saves every 30 s; `WorldDisconnectHandler(hub, chars)` saves on leave
+  (its callers in tests pass nil). `EnterWorldResult.Restored` is ONE byte, 0x01, after
+  `FrameRegion`, sent only when true; `decodeFrameRegion` now returns what follows it.
+- `cmd/server`: the flag (the `envBool` pattern, a WARN on an unparsable value), its boot line,
+  `SetPersistPosition` before the gateway serves, and `SaveAllPositions` after the listener stops.
+- Client: `WorldNet.EnterWorldResult.restored` from the byte after the frame (`_decode_frame`
+  returns the offset past the field); `World3D._load_initial_region_neighborhood` skips
+  `_place_at_zone_spawn` for a restored entry and prints `World3D: the server restored <zone> at
+  (x, y, z) in frame <f> -- kept, not moved to the zone's landing spot`; `_unstuck_player` takes a
+  restored entry to the current zone's landing (`_place_at_zone_landing`: `ZONE_SPAWN_LOCAL`, else
+  the centre region's local (960, 960), `worldmap.Landing`'s point) and leaves the move sync to
+  report it. No placement ray was added or changed.
+
+**5. A restored position inside geometry (the orchestrator's question), read from the code.** What
+runs on a restored entry: the centre region's deferred `_snap_player_onto_terrain` (its terrain
+build's `snap_player` job), which only LIFTS -- it returns when the terrain under the point is not
+above the player's feet -- and `_avoid_spawning_under_roof` only after such a lift; and
+`_recover_if_below_terrain` every physics frame, which lifts a player with terrain overhead. So a
+character saved standing under a roof, on a deck or in a building is left where it stood; only a
+saved height below the drawn ground is lifted. `/unstuck` returned to the ENTRY point, which for a
+restored entry is the saved spot itself -- so the plan's "`/unstuck` handles it" was false until
+`_unstuck_player` above; it now lands at the zone's landing.
+
+**6. Tests.**
+
+- Go, `session/world_test.go`: `TestEnterWorldResultCarriesRestoredAfterTheFrame` (a result that
+  restored nothing is byte for byte round 570's payload; a restored one is that plus 0x01; the
+  frame-ended and the list-ended payloads decode not restored);
+  `TestPersistPositionReentersWhereTheCharacterLeft` (flag on: enter at spawnPos, OpMove to
+  (100, 0, -200), disconnect, the row holds jangan / 97/168 / (100, 0, -200), enter again ->
+  `Restored`, jangan, 97/168, (100, 0, -200), the hub keeps it there; a change to donwhang is saved
+  at once and a re-entry after walking there answers donwhang in 102/153 at the walked point);
+  `TestPersistPositionOffEntersAtTheSpawn` (NEGATIVE, flag off: nothing saved, the second entry is
+  jangan at spawnPos, not restored -- today's behaviour);
+  `TestPersistPositionNamesASavedPointInTodaysFrame` (98/157 read under 97/168 at the derived
+  shift and y 0; a Donwhang save in 102/153 read under `-single-frame` at
+  `ToWorld(102, 153, 960, 960, 97, 168)` + the point, in the `world` bucket; a frame "" for a label
+  that has one enters at the spawn); `TestPersistPositionSavesAWalkEveryInterval` (no write with
+  the flag off, none inside 30 s, one past it, the clock restarted);
+  `TestSaveAllPositionsSavesEveryoneStillInTheWorld`. The disconnect tests wait on the handler's
+  return (a channel after it), not on the hub, so no save can land after a read.
+- Go, `character`: `TestSavePositionRoundTrip` (MemStore) and `TestSQLStoreSavePosition`
+  (PostgreSQL, through the migration): nothing saved on a new row, a save read back by `GetByID`
+  and `ListByAccount`, a later save replaces it, a missing character is `ErrNotFound`.
+  `schema_test.go`'s mapping checks pass with the four columns moved from engine-only to mapped.
+- Client: `net/world_test.gd`'s `_test_decode_restored` (0x01 after the frame is restored, 0x00 and
+  a payload ending at the frame or the list are not, a refusal is not; read through `get()`);
+  `world/restored_entry_test.gd` (World3D.tscn with a recording subclass of World3D.gd, the
+  height_retry_test pattern: an entry that restored nothing is placed at 97/168 (1002, 1020) and
+  stands at `RegionGridState.frame_world`'s (42, 0, -60) -- the probe, passing before and after;
+  a restored entry builds the same grid, is not placed, and stands at (100, 5, -200); `/unstuck`
+  after a non-restored entry returns to the entry point; after a restored one it lands at 97/168's
+  landing spot, or at 102/153's local (960, 960) in donwhang, leaving the landing to the move sync).
+- NEGATIVE, proved. With the production files stashed (`character.go`, `sqlstore.go`,
+  `memstore.go`, `schema.go`, `session/world.go`, `session/position.go`, `cmd/server/main.go`,
+  `net/world.gd`, `World3D.gd`): the Go tests do not compile (`c.Zone undefined`, `store.SavePosition
+  undefined`); `restored_entry_test.gd` prints 5 FAILURES (the restored entry placed at
+  [[97, 168, 1002, 1020]] and standing at (42, 0, -60); both restored `/unstuck` rows) while its
+  probe rows pass; `world_test.gd` prints 5 FAILURES (`<no restored property>`). Behaviourally, on
+  the finished tree: dropping the restore in `handleEnterWorld` and the disconnect save fails
+  `TestPersistPositionReentersWhereTheCharacterLeft` (`saved on disconnect: zone "" ...`) and
+  `TestPersistPositionNamesASavedPointInTodaysFrame` (answered (0, 0, 0)); the swapped `Rebase`
+  fails the latter. Everything restored and re-run green.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...`: every package ok (the orphan probe
+  caught the first draft's `WorldDisconnectHandler(hub)` wrapper left with no non-test caller; the
+  store now rides its one signature). Client suites: step 8.
+
+**7. Live, on the render box (`GODOT_LOCK=/var/tmp/r573/lock`).** This tree's server, built for
+linux/amd64 (before the final signature fold of `WorldDisconnectHandler`, a rename with no change
+in behaviour), run in-memory by `qa_shot.sh --server` with `SRREVAMP_PERSIST_POSITION=1`, and
+`--region ''`, so `SRREVAMP_MAPM_PATH` is empty and the client takes a logged-in player's path
+(`_load_initial_region_neighborhood`'s server branch and the loading-screen drain): `--radius 1
+--walk 270 --reconnect 300 --size 640x360`. Hardware GL, 0 empty frames, frames deleted; logs
+`/var/tmp/r573/on.log` and `/var/tmp/r573/oldclient.log`, each with its `server.log`.
+
+- With this round's client (900 frames): entry 1 lands on Jangan's landing spot and walks west on
+  the gate deck -- `QA   60 local 972, -32, 1020  on object cj_jang_gate at -32.6` ... `QA  300
+  local 772, -32, 1020` -- then `QA RECONNECT: leaving the world at frame 300, tick 300 (300,
+  route direct, ...)`. Entry 2: `World3D: the server restored jangan at (-188.8, -30.1, -60.0) in
+  frame 97/168 -- kept, not moved to the zone's landing spot`. In 97/168's frame that is local
+  (771.2, 1020) (`ToWorld(97, 168, 771.2, 1020, 97, 168)` = (-188.8, -60)): the last move entry 1
+  sent, a few frames after its tick-300 line. Entry 2's walk goes on from there, still on the deck:
+  `QA   60 local 735, -32, 1020  on object cj_jang_gate at -32.6 (0.0 below feet)`. 0 `SCRIPT
+  ERROR`. The server's boot line: `persist position on: ...`.
+- NEGATIVE, the same server binary and flag with the client at bbafa37 (`World3D.gd` and
+  `net/world.gd` from HEAD; 700 frames): entry 1 reads the same (`QA  300 local 772, -32, 1020`);
+  entry 2 is back at the landing spot, `QA   60 local 967, -32, 1020`, and walks west from there.
+  It decoded the restored payload without a complaint (entry 2 loaded, 0 `SCRIPT ERROR`). That is
+  the tagged client's behaviour the deploy note ties the flip to.
+- In the direct route the old socket's disconnect was handled before the new entry read the row
+  (entry 2 answered entry 1's last move). A reconnect faster than the server's handling of the old
+  socket's close would read the previous save; not measured beyond this route.
+
+**8. Client suites.** `client/tools/remote_godot.sh tests` (`GODOT_LOCK=/var/tmp/r573/lock`):
+`ran 97 suite(s), 0 failing` (the new `restored_entry_test.gd` among them). `check`: `checked 272
+scripts and 5 scenes`, `ALL LOAD`.
+
+**Limits, not fixed here.**
+
+- A restored position more than two regions from the zone's centre (reachable only by walking,
+  e.g. from Jangan toward Donwhang under `-single-frame`, where the label stays "jangan") is
+  outside the grid the entry builds around the label's centre; the stream then builds around the
+  player as after a far GM `/tp`, and until its cell commits the player may fall (the void
+  recovery returns it to its last grounded position). Read, not measured. `docs/TODO.md` has the
+  item.
+- An old client with the flag on: in Jangan the player is drawn at the landing spot while the
+  server and everyone else hold it at the saved point until its first move; elsewhere the old
+  client keeps the saved point and its `/unstuck` returns there.
+- Turning the flag off and on again restores the positions saved while it was last on.
+
+**Records.** This entry; `docs/WORLD_ISSUES.md`'s round; `deploy/README.md`, "Saved position (off
+by default)", and the single-frame section's kill-switch line; `server/README.md`'s flag row;
+`docs/TODO.md` (the far restore, and the in-place revive's stand-in wording);
+`character/schema.go`'s mapping; `world/world.go`'s package note; `session/deadstate.go`'s and
+`docs/protocol/monster_ai.md`'s in-place-revive stand-in, which said srrevamp had "no region frame
+to put a LatestRegion/Pos into" -- stale since round 570's frame and now this round's row; the
+stand-in itself stands (no `AppointedTeleport`, no gates). `docs/SYSTEMS.md` has no row for
+character position persistence.
+
+**Deploy note.** Server: auto-deploys OFF; the character store adds five columns on first start,
+flag or no flag. Client: needs a tag. Flip `-persist-position` on srrevamp-01 only after the client
+tag that carries this round is published (`deploy/README.md`).

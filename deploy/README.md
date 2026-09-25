@@ -415,4 +415,63 @@ log reads `single frame off (-single-frame / SRREVAMP_SINGLE_FRAME)`.
 `command:` list. The boot log then reads `single frame on: origin 97/168 ...`.
 
 **Off, the kill switch.** Remove that line (or set it to `"0"`), then run `docker compose up -d`.
-Nothing is stored in the frame, so every zone is back in its own frame on the next login.
+Every zone is back in its own frame on the next login. A position `-persist-position` saved in the
+one frame (below) carries that frame and is named in the zone's own on the next login.
+
+## Saved position (off by default)
+
+The server can put a character back where it left off (round 573). With the flag on it saves the
+character's zone label, the frame region its coordinates are in and its position on the character
+row -- on a disconnect or logout, on each zone change, at most every 30 s while it walks, and for
+everyone still in the world when the server stops (so a deploy keeps them too) -- and the next
+login's `OpEnterWorldResult` answers them: the saved label, that label's bucket and frame as they
+are that day, and the saved point named in that frame, with a trailing `Restored` byte after
+`FrameRegion`. The engine keeps the same fields on its own row (`_CHAR.LatestRegion`, `PosX`,
+`PosY`, `PosZ`, bound to charData +0x94..+0xa0 in `docs/protocol/db_bind_offsets.tsv`); when
+srrevamp saves them, their shape and the frame rule are own design -- `docs/RE_COMPLETION.md`,
+round 573.
+
+The columns (`latest_zone`, `latest_frame`, `pos_x`, `pos_y`, `pos_z`) are added by the character
+store's usual `ADD COLUMN IF NOT EXISTS` migration on the first start of this build, flag or no
+flag; an existing row reads "nothing saved" and enters at the spawn.
+
+What changes for players with it on:
+
+- A disconnect, a logout or a server restart no longer sends them back to Jangan's square: they
+  enter where they stood, in the zone they were in.
+- A save made in one frame and read under another -- `-single-frame` flipped between the two, or a
+  town's centre corrected by a later round -- is the same place named in the new frame
+  (`worldmap.Rebase`: saved under 98/157 and read under 97/168, a point moves by
+  `ToWorld(98, 157, 960, 960, 97, 168)` = (-21120, -1920)), at height 0, which the client lifts onto
+  the ground. A save whose frame cannot be converted enters at the spawn.
+- A character saved inside a building stays inside it: the client lifts a player only when the
+  saved height is below the drawn ground, and moves one out from under a roof only after such a
+  lift. `/unstuck` (round 573's client) then takes it to the zone's landing spot.
+- A position more than two regions from the zone's centre -- reachable only by walking there, e.g.
+  from Jangan toward Donwhang under `-single-frame`, where the label stays "jangan" -- is outside
+  the grid the entry builds around the label's centre; the stream then builds around the player,
+  as after a GM `/tp` far away. Not measured.
+
+It is behind the `-persist-position` flag (env `SRREVAMP_PERSIST_POSITION`), and **the default is
+off**: off, nothing is saved or read, every entry lands at the zone spawn, and the wire is what it
+was. After an update the boot log reads
+`persist position off (-persist-position / SRREVAMP_PERSIST_POSITION)`.
+
+**Turn it on only when:** a client release that carries round 573 is tagged, CI is green for it
+(`gh run list`), and its zips are published. An older client ignores the `Restored` byte: it moves
+a restored Jangan entry on to Jangan's landing spot (local 1002, 1020 of 97/168) as it moves every
+Jangan entry -- the flag then does nothing in Jangan, where testers log out, and until the player's
+first move the server and everyone else hold it at the saved point, not at the landing spot -- keeps
+a restored entry in any other zone where the server put it, and its `/unstuck` returns such a
+player to the saved point itself.
+
+**On.** Add `SRREVAMP_PERSIST_POSITION: "1"` under the server's `environment:` in the untracked
+`docker-compose.override.yml`, the same way as `SRREVAMP_MONSTER_AI` above, then run
+`docker compose up -d`. You can instead append `- "-persist-position=true"` to the override's
+restated `command:` list. The boot log then reads `persist position on: a character re-enters
+where it last stood ...`.
+
+**Off, the kill switch.** Remove that line (or set it to `"0"`), then run `docker compose up -d`.
+Every login is back at the spawn. The saved columns stay; nothing reads or writes them while the
+flag is off, so turning it on again restores each character to where it stood when the flag was
+last on.

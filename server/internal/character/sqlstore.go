@@ -39,6 +39,16 @@ ALTER TABLE characters ADD COLUMN IF NOT EXISTS hwan_count INTEGER NOT NULL DEFA
 -- otherwise leave every migrated character on zero health.
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS str INTEGER NOT NULL DEFAULT 20;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS intel INTEGER NOT NULL DEFAULT 20;
+-- Where the character last stood (round 573, cmd/server's -persist-position):
+-- the engine's _CHAR.LatestRegion / PosX / PosY / PosZ (charData +0x94..+0xa0,
+-- docs/protocol/db_bind_offsets.tsv), in srrevamp's shape -- the zone label,
+-- the frame region "x/y" and a world point in that frame (Character.Zone).
+-- latest_zone '' is "nothing saved": every existing row enters at the spawn.
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS latest_zone TEXT NOT NULL DEFAULT '';
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS latest_frame TEXT NOT NULL DEFAULT '';
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS pos_x DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS pos_y DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS pos_z DOUBLE PRECISION NOT NULL DEFAULT 0;
 CREATE UNIQUE INDEX IF NOT EXISTS characters_name_lower ON characters (LOWER(name));
 CREATE INDEX IF NOT EXISTS characters_account_id ON characters(account_id);
 `
@@ -75,7 +85,7 @@ func (s *SQLStore) Close() error {
 // ListByAccount implements Store.
 func (s *SQLStore) ListByAccount(ctx context.Context, accountID int64) ([]*Character, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, account_id, name, gold, hp, gender, level, exp, stat_points, str, intel, storage_gold, hwan_count FROM characters WHERE account_id = $1 ORDER BY id`, accountID)
+		`SELECT id, account_id, name, gold, hp, gender, level, exp, stat_points, str, intel, storage_gold, hwan_count, latest_zone, latest_frame, pos_x, pos_y, pos_z FROM characters WHERE account_id = $1 ORDER BY id`, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("character: listing characters: %w", err)
 	}
@@ -84,7 +94,8 @@ func (s *SQLStore) ListByAccount(ctx context.Context, accountID int64) ([]*Chara
 	var out []*Character
 	for rows.Next() {
 		var c Character
-		if err := rows.Scan(&c.ID, &c.AccountID, &c.Name, &c.Gold, &c.HP, &c.Gender, &c.Level, &c.Exp, &c.StatPoints, &c.Str, &c.Int, &c.StorageGold, &c.HwanCount); err != nil {
+		if err := rows.Scan(&c.ID, &c.AccountID, &c.Name, &c.Gold, &c.HP, &c.Gender, &c.Level, &c.Exp, &c.StatPoints, &c.Str, &c.Int, &c.StorageGold, &c.HwanCount,
+			&c.Zone, &c.Frame, &c.PosX, &c.PosY, &c.PosZ); err != nil {
 			return nil, fmt.Errorf("character: scanning row: %w", err)
 		}
 		out = append(out, &c)
@@ -331,8 +342,9 @@ func (s *SQLStore) ResetHP(ctx context.Context, characterID int64) error {
 func (s *SQLStore) GetByID(ctx context.Context, characterID int64) (*Character, error) {
 	var c Character
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, account_id, name, gold, hp, gender, level, exp, stat_points, str, intel, storage_gold, hwan_count FROM characters WHERE id = $1`, characterID,
-	).Scan(&c.ID, &c.AccountID, &c.Name, &c.Gold, &c.HP, &c.Gender, &c.Level, &c.Exp, &c.StatPoints, &c.Str, &c.Int, &c.StorageGold, &c.HwanCount)
+		`SELECT id, account_id, name, gold, hp, gender, level, exp, stat_points, str, intel, storage_gold, hwan_count, latest_zone, latest_frame, pos_x, pos_y, pos_z FROM characters WHERE id = $1`, characterID,
+	).Scan(&c.ID, &c.AccountID, &c.Name, &c.Gold, &c.HP, &c.Gender, &c.Level, &c.Exp, &c.StatPoints, &c.Str, &c.Int, &c.StorageGold, &c.HwanCount,
+		&c.Zone, &c.Frame, &c.PosX, &c.PosY, &c.PosZ)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}
@@ -365,6 +377,24 @@ func (s *SQLStore) SetGender(ctx context.Context, characterID int64, gender stri
 	res, err := s.db.ExecContext(ctx, `UPDATE characters SET gender = $1 WHERE id = $2`, gender, characterID)
 	if err != nil {
 		return fmt.Errorf("character: setting gender: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("character: checking update result: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SavePosition implements Store.
+func (s *SQLStore) SavePosition(ctx context.Context, characterID int64, zone, frame string, x, y, z float64) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE characters SET latest_zone = $1, latest_frame = $2, pos_x = $3, pos_y = $4, pos_z = $5 WHERE id = $6`,
+		zone, frame, x, y, z, characterID)
+	if err != nil {
+		return fmt.Errorf("character: saving position: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {

@@ -7075,6 +7075,32 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-seventy-third round: a character logs back in where it left off, behind `-persist-position`, and the client keeps a restored position
+
+The server saves a character's zone label, frame region and position on its row -- on a
+disconnect, on each zone change, at most every 30 s of walking and for everyone still in the world
+when it stops -- and the next entry answers them with a trailing `Restored` byte, behind
+`-persist-position` (env `SRREVAMP_PERSIST_POSITION`, **default off**). The engine keeps the same
+four fields on `_CHAR` (`LatestRegion`, `PosX/Y/Z`, charData +0x94..+0xa0); the cadence, the
+shape and the frame rule are own design. The full record is `docs/RE_COMPLETION.md`'s round 573.
+
+- **The client was the half that mattered.** `_load_initial_region_neighborhood` moves every entry
+  whose zone resolves to 97/168 on to `ZONE_SPAWN_LOCAL` (1002, 1020), so a server-only change
+  would have done nothing in Jangan. Measured live with the flag on and the reconnect hook
+  (`--region ''`, the logged-in path): this round's client re-entered at `(-188.8, -30.1, -60.0)`,
+  local (771.2, 1020) on the gate deck -- the last move before the drop -- and walked on from it
+  (`QA   60 local 735, -32, 1020`); the client at bbafa37, against the same server, went back to
+  the landing spot (`QA   60 local 967, -32, 1020`).
+- **A saved height below the ground is lifted; a saved spot under a roof is kept.** The snap on a
+  restored entry only lifts, and the roof escape runs only after a lift. `/unstuck` used to return
+  to the entry point -- for a restored entry, the saved spot itself -- and now lands at the zone's
+  landing.
+- **Frames.** A save read under another frame is the same place named in it (`worldmap.Rebase`):
+  98/157 read under 97/168 moves by (-21120, -1920), derived from `ToWorld`; the plan's
+  (21120, -1920) had the X sign wrong.
+- **Open:** a restored point more than two regions from the label's centre lands outside the
+  entry grid (`docs/TODO.md`, "Saved position").
+
 ## Five-hundred-and-seventy-second round: a monster whose height ray found no ground at spawn keeps retrying until the ground commits
 
 The user, 2026-09-25: "Mangyangs are now floating". The full record -- the logs, the change, the

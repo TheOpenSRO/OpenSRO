@@ -4164,7 +4164,22 @@ func _load_initial_region_neighborhood() -> void:
 	var result := NetClient.last_enter_world_result
 	if result != null and result.ok and result.zone != "":
 		_reload_zone_assets(result.zone, result.frame)
-		_place_at_zone_spawn(result.zone)
+		# A restored entry (round 573: the server's -persist-position read back
+		# where the character last stood, WorldNet.EnterWorldResult.restored)
+		# keeps the server's position -- _ready already put the player there.
+		# Moving it on to the zone's landing spot is what every other entry
+		# does, and what a client before round 573 does to a restored Jangan
+		# entry too. What still runs on it: the centre region's deferred
+		# _snap_player_onto_terrain, which only LIFTS a player the ground is
+		# above (a saved height below the drawn ground), and only after a lift
+		# _avoid_spawning_under_roof -- so a character saved standing under a
+		# roof is left under it, where it stood; /unstuck
+		# (_unstuck_player) then takes it to the zone's landing.
+		if result.restored:
+			print("World3D: the server restored %s at (%.1f, %.1f, %.1f) in frame %s -- kept, not moved to the zone's landing spot" % [
+				result.zone, result.x, result.y, result.z, result.frame])
+		else:
+			_place_at_zone_spawn(result.zone)
 	else:
 		print("World3D: no real zone to load (no SRREVAMP_MAPM_PATH set and no real logged-in session) -- ground stays a placeholder")
 
@@ -10211,6 +10226,20 @@ func _place_at_region_local(region_x: int, region_y: int, local_x: float, local_
 	_last_sent_pos = player.position
 	return true
 
+## Moves the player to a zone's landing whatever the zone (round 573, for
+## /unstuck after a restored entry): its own landing spot where one is known
+## (_place_at_zone_spawn, ZONE_SPAWN_LOCAL), else the middle of its centre
+## region, local (960, 960) -- where the server lands every entry and zone
+## change that restores nothing (server/internal/worldmap.Landing). False when
+## the zone's centre region has no walkable graph loaded to land on.
+func _place_at_zone_landing(zone: String) -> bool:
+	if _place_at_zone_spawn(zone):
+		return true
+	var coords := _parse_region_coords(_resolve_zone_region(zone))
+	if coords.is_empty():
+		return false
+	return _place_at_region_local(coords["x"], coords["y"], REGION_SPAN / 2.0, REGION_SPAN / 2.0)
+
 ## Moves the player to a zone's own landing spot (see ZONE_SPAWN_LOCAL) if
 ## one is known, once that zone's region has actually loaded. Zones with
 ## no entry keep the server's fixed spawn position.
@@ -11074,6 +11103,18 @@ func _unstuck_player() -> void:
 		_log_system("Unstuck: no spawn point known yet -- try zone travel (Ctrl+F1).")
 		return
 	player.velocity = Vector3.ZERO
+	# A restored entry's point is where the character logged out (round 573)
+	# -- the very spot a player may be wedged at -- so /unstuck lands it at
+	# the current zone's landing instead. _place_at_region_local marks the
+	# landing as already sent; it is not, so the mark is put back and the move
+	# sync reports the landing, as it reports the entry point below.
+	if result.restored:
+		var sent := _last_sent_pos
+		var zone: String = NetClient.current_zone if NetClient.current_zone != "" else result.zone
+		if _place_at_zone_landing(zone):
+			_last_sent_pos = sent
+			_log_system("Unstuck: returned to the zone's landing spot.")
+			return
 	player.position = Vector3(result.x, result.y, result.z)
 	_log_system("Unstuck: returned to the zone entry point.")
 

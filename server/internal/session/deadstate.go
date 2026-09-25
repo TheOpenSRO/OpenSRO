@@ -106,14 +106,15 @@ import (
 //   - Reviving IN PLACE at any level. The retail handler revives in place
 //     (option 2) only while GetMaxLevel is at most 10; above that the client
 //     offers the return point (option 1), which srrevamp cannot build: it has
-//     no `_CHAR.AppointedTeleport`, no teleport gates and no region frame to
-//     put a LatestRegion/Pos into (world.Position is a zone label and a
-//     point). So a character of level 11 or more revives where it fell, a
-//     stand-in; one of 10 or under revives as retail's option 2 does. No
-//     level test is made: both take the one in-place path, and GetMaxLevel
-//     is not modelled (srrevamp's Level would equal it -- a death never
-//     costs a level, GObjPC_OnDeath leaves CurLevel alone -- but nothing
-//     here reads it).
+//     no `_CHAR.AppointedTeleport` and no teleport gates. (The last-resort
+//     LatestRegion/Pos is kept on the row since round 573, under
+//     -persist-position -- but it is where the character already stands, so
+//     it builds no return point either.) So a character of level 11 or
+//     more revives where it fell, a stand-in; one of 10 or under revives as
+//     retail's option 2 does. No level test is made: both take the one
+//     in-place path, and GetMaxLevel is not modelled (srrevamp's Level
+//     would equal it -- a death never costs a level, GObjPC_OnDeath leaves
+//     CurLevel alone -- but nothing here reads it).
 //   - The revived MP. Retail ADDS trunc(0.4 x MaxMP) to the MP the character
 //     died with (ApplyHPMPDelta above); srrevamp SETS the tracker to
 //     character.RespawnMP, a stand-in: mana.Tracker regenerates by wall

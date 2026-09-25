@@ -152,7 +152,7 @@ func TestWorldHandlerRunsTheEnterHookFirst(t *testing.T) {
 	}
 	addr := ln.Addr().String()
 	ln.Close()
-	srv := &gateway.Server{Addr: addr, Handle: handle, OnDisconnect: WorldDisconnectHandler(hub)}
+	srv := &gateway.Server{Addr: addr, Handle: handle, OnDisconnect: WorldDisconnectHandler(hub, nil)}
 	srvCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go srv.ListenAndServe(srvCtx)
@@ -381,7 +381,7 @@ func TestChangeZoneFlow(t *testing.T) {
 	addr := ln.Addr().String()
 	ln.Close()
 
-	srv := &gateway.Server{Addr: addr, Handle: handle, OnDisconnect: WorldDisconnectHandler(hub)}
+	srv := &gateway.Server{Addr: addr, Handle: handle, OnDisconnect: WorldDisconnectHandler(hub, nil)}
 	srvCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go srv.ListenAndServe(srvCtx)
@@ -789,7 +789,7 @@ func TestWorldFullFlow(t *testing.T) {
 	addr := ln.Addr().String()
 	ln.Close()
 
-	srv := &gateway.Server{Addr: addr, Handle: handle, OnDisconnect: WorldDisconnectHandler(hub)}
+	srv := &gateway.Server{Addr: addr, Handle: handle, OnDisconnect: WorldDisconnectHandler(hub, nil)}
 	srvCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go srv.ListenAndServe(srvCtx)
@@ -1343,5 +1343,354 @@ func TestGuildWorkIsRefusedWhileDead(t *testing.T) {
 	f.send(t, f.connA, OpGuildCreate, (&GuildCreateRequest{CharacterName: "Aria", GuildName: "Silk Legion"}).Encode())
 	if gr, err := DecodeGuildResult(f.read(t, f.connA, f.rA).Data); err != nil || gr.Error != "" || gr.GuildID == 0 {
 		t.Fatalf("the revived founder's create answered %+v (err %v), want a guild", gr, err)
+	}
+}
+
+// Round 573: Restored trails FrameRegion as one byte, sent only when true. A
+// result that did not restore is byte for byte the round-570 payload (the old
+// payload plus the frame), so the flag-off wire and every entry without a
+// saved position are unchanged; a restored one is that payload plus 0x01. A
+// payload without the byte -- every older server's -- decodes as not
+// restored. NEGATIVE: before round 573 EnterWorldResult has no Restored and
+// this does not compile.
+func TestEnterWorldResultCarriesRestoredAfterTheFrame(t *testing.T) {
+	others := []EntitySnapshot{{CharacterID: 1, Name: "Bram", X: 4, Y: 5, Z: 6, Gender: character.GenderChinaMan}}
+	ew := &EnterWorldResult{OK: true, Zone: "jangan", X: 100, Y: 0, Z: -200, Gender: character.GenderChinaMan,
+		HP: 73, MaxHP: 100, Others: others, FrameRegion: "97/168"}
+	legacy := encodeOKReason(true, "")
+	legacy = append(legacy, encodeStrings(ew.Zone)...)
+	legacy = append(legacy, encodeFloat32(ew.X)...)
+	legacy = append(legacy, encodeFloat32(ew.Y)...)
+	legacy = append(legacy, encodeFloat32(ew.Z)...)
+	legacy = append(legacy, encodeStrings(ew.Gender)...)
+	legacy = append(legacy, 73, 0, 0, 0, 100, 0, 0, 0)
+	legacy = append(legacy, legacyWorldTail(others)...)
+	framed := append(append([]byte{}, legacy...), encodeStrings("97/168")...)
+
+	if got := ew.Encode(); !bytes.Equal(got, framed) {
+		t.Fatalf("a result that did not restore is not the round-570 payload:\n got  % x\n want % x", got, framed)
+	}
+	ew.Restored = true
+	restored := ew.Encode()
+	if !bytes.Equal(restored, append(append([]byte{}, framed...), 1)) {
+		t.Fatalf("a restored result is not the round-570 payload plus 0x01:\n got  % x\n want % x 01", restored, framed)
+	}
+
+	got, err := DecodeEnterWorldResult(restored)
+	if err != nil || !got.Restored || got.FrameRegion != "97/168" || got.X != 100 || got.Z != -200 || len(got.Others) != 1 {
+		t.Fatalf("decoding a restored result: %+v (err=%v), want Restored at (100, -200) in 97/168 with one other", got, err)
+	}
+	for name, payload := range map[string][]byte{"the round-570 payload": framed, "an older server's payload": legacy} {
+		got, err := DecodeEnterWorldResult(payload)
+		if err != nil || got.Restored {
+			t.Fatalf("%s decodes Restored=%v (err=%v), want false", name, got.Restored, err)
+		}
+	}
+}
+
+// positionWorld is alice/Aria over in-memory stores, served with the world
+// handlers and the disconnect handler that saves where a character left
+// (round 573). Every enter dials a fresh connection, as a client that
+// reconnects does. left receives once each time the disconnect handler has
+// returned, so a test reads the store only after any save it made.
+type positionWorld struct {
+	chars *character.MemStore
+	hub   *world.Hub
+	addr  string
+	aria  int64
+	f     *deadWorldFixture // its read/send/login helpers need no state
+	left  chan struct{}
+}
+
+func startPositionWorld(t *testing.T) *positionWorld {
+	t.Helper()
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	aria, err := chars.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	hub := world.NewHub()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	left := make(chan struct{}, 8)
+	disconnect := WorldDisconnectHandler(hub, chars)
+	srv := &gateway.Server{Addr: addr, Handle: gateway.Chain(LoginHandler(accounts), WorldHandler(chars, nil, hub)),
+		OnDisconnect: func(sess *gateway.Session) {
+			disconnect(sess)
+			left <- struct{}{}
+		}}
+	srvCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go srv.ListenAndServe(srvCtx)
+	return &positionWorld{chars: chars, hub: hub, addr: addr, aria: aria.ID, f: &deadWorldFixture{}, left: left}
+}
+
+// enter signs alice in on a new connection and enters Aria.
+func (w *positionWorld) enter(t *testing.T) (net.Conn, *bufio.Reader, *EnterWorldResult) {
+	t.Helper()
+	conn := dialTestServer(t, w.addr)
+	t.Cleanup(func() { conn.Close() })
+	r := bufio.NewReader(conn)
+	return conn, r, w.f.login(t, conn, r, "alice", "hunter2", "Aria")
+}
+
+// moveTo sends one OpMove and waits until the hub holds it, so a disconnect
+// that follows cannot overtake it.
+func (w *positionWorld) moveTo(t *testing.T, conn net.Conn, x, y, z float32) {
+	t.Helper()
+	w.f.send(t, conn, OpMove, (&MoveRequest{X: x, Y: y, Z: z}).Encode())
+	want := world.Position{X: float64(x), Y: float64(y), Z: float64(z)}
+	w.until(t, "the hub holds the move", func() bool {
+		e, ok := w.hub.EntityByCharacterID(w.aria)
+		return ok && e.Pos == want
+	})
+}
+
+// leave closes conn and waits until the disconnect handler has returned, any
+// save it made included.
+func (w *positionWorld) leave(t *testing.T, conn net.Conn) {
+	t.Helper()
+	conn.Close()
+	select {
+	case <-w.left:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the disconnect handler")
+	}
+	if _, ok := w.hub.EntityByCharacterID(w.aria); ok {
+		t.Fatal("Aria is still in the hub after the disconnect handler returned")
+	}
+}
+
+func (w *positionWorld) until(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting: %s", what)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func (w *positionWorld) saved(t *testing.T) *character.Character {
+	t.Helper()
+	c, err := w.chars.GetByID(context.Background(), w.aria)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	return c
+}
+
+// With -persist-position on, a character re-enters where it left off (round
+// 573): enter, walk to (100, 0, -200), disconnect, enter again -- the second
+// OpEnterWorldResult answers (100, 0, -200) in the saved zone and frame with
+// Restored set, where the first answered spawnPos. A zone change is saved at
+// once and a re-entry after it answers the new zone's label and frame.
+func TestPersistPositionReentersWhereTheCharacterLeft(t *testing.T) {
+	SetPersistPosition(true)
+	t.Cleanup(func() { SetPersistPosition(false) })
+	w := startPositionWorld(t)
+
+	conn, r, first := w.enter(t)
+	if first.Restored || first.Zone != spawnZone || first.X != float32(spawnPos.X) || first.Z != float32(spawnPos.Z) {
+		t.Fatalf("the first entry, with nothing saved: %+v, want %s at spawnPos, not restored", first, spawnZone)
+	}
+	w.moveTo(t, conn, 100, 0, -200)
+	w.leave(t, conn)
+	if c := w.saved(t); c.Zone != "jangan" || c.Frame != frameFor("jangan") || c.PosX != 100 || c.PosY != 0 || c.PosZ != -200 {
+		t.Fatalf("saved on disconnect: zone %q frame %q at (%g, %g, %g), want jangan %s at (100, 0, -200)",
+			c.Zone, c.Frame, c.PosX, c.PosY, c.PosZ, frameFor("jangan"))
+	}
+
+	conn, r, again := w.enter(t)
+	if !again.Restored || again.Zone != "jangan" || again.FrameRegion != frameFor("jangan") ||
+		again.X != 100 || again.Y != 0 || again.Z != -200 {
+		t.Fatalf("the second entry: zone %q frame %q at (%g, %g, %g) restored %v, want jangan %s at (100, 0, -200) restored",
+			again.Zone, again.FrameRegion, again.X, again.Y, again.Z, again.Restored, frameFor("jangan"))
+	}
+	if e, ok := w.hub.EntityByCharacterID(w.aria); !ok || e.Zone != "jangan" || e.Pos != (world.Position{X: 100, Y: 0, Z: -200}) {
+		t.Fatalf("the hub keeps the re-entered Aria as %+v (in world %v), want bucket jangan at (100, 0, -200)", e, ok)
+	}
+
+	// A zone change is saved at once, at the arrival: Donwhang's own frame
+	// and spawnPos with -single-frame off.
+	if czr := changeZone(t, w.f, conn, r, "donwhang"); !czr.OK {
+		t.Fatalf("change to donwhang: %+v", czr)
+	}
+	if c := w.saved(t); c.Zone != "donwhang" || c.Frame != frameFor("donwhang") || c.PosX != spawnPos.X || c.PosZ != spawnPos.Z {
+		t.Fatalf("saved on the zone change: zone %q frame %q at (%g, %g), want donwhang %s at spawnPos",
+			c.Zone, c.Frame, c.PosX, c.PosZ, frameFor("donwhang"))
+	}
+	w.moveTo(t, conn, 250, 3, 400)
+	w.leave(t, conn)
+	_, _, third := w.enter(t)
+	if !third.Restored || third.Zone != "donwhang" || third.FrameRegion != frameFor("donwhang") || third.X != 250 || third.Y != 3 || third.Z != 400 {
+		t.Fatalf("the entry after Donwhang: %+v, want donwhang in %s at (250, 3, 400) restored", third, frameFor("donwhang"))
+	}
+}
+
+// NEGATIVE, and today's behaviour with the flag off (the default): nothing is
+// saved, and the second entry answers spawnPos in spawnZone, not restored --
+// the same before and after round 573.
+func TestPersistPositionOffEntersAtTheSpawn(t *testing.T) {
+	SetPersistPosition(false)
+	w := startPositionWorld(t)
+	conn, _, _ := w.enter(t)
+	w.moveTo(t, conn, 100, 0, -200)
+	w.leave(t, conn)
+	if c := w.saved(t); c.Zone != "" || c.Frame != "" || c.PosX != 0 || c.PosZ != 0 {
+		t.Fatalf("with the flag off a position was saved: zone %q frame %q at (%g, %g)", c.Zone, c.Frame, c.PosX, c.PosZ)
+	}
+	_, _, again := w.enter(t)
+	if again.Restored || again.Zone != spawnZone || again.X != float32(spawnPos.X) || again.Y != float32(spawnPos.Y) || again.Z != float32(spawnPos.Z) {
+		t.Fatalf("with the flag off the second entry: %+v, want %s at spawnPos, not restored", again, spawnZone)
+	}
+}
+
+// A position saved in one frame is named in the frame the zone has at entry
+// (round 573, inFrame): worldmap.Rebase, the region-delta form of
+// worldmap.ToWorld. Region y drives world X, region x drives world Z, Z
+// mirrored (AGENTS.md): 98/157 is 11 regions DOWN in y from 97/168 (X
+// negative) and one UP in x (Z negative, the mirror), so a point saved under
+// 98/157 and read under 97/168 moves by ToWorld(98, 157, 960, 960, 97, 168) --
+// derived here, never typed from prose -- and stands at spawnPos's height.
+// Under -single-frame a Donwhang save in its own frame 102/153 is named in
+// 97/168's the same way, in the one world's bucket. A frame that cannot be
+// converted (saved "" for a label that has one today) enters at the spawn.
+func TestPersistPositionNamesASavedPointInTodaysFrame(t *testing.T) {
+	SetPersistPosition(true)
+	t.Cleanup(func() { SetPersistPosition(false); SetSingleFrame(false) })
+	ctx := context.Background()
+	w := startPositionWorld(t)
+
+	dx, dz := worldmap.ToWorld(98, 157, 960, 960, 97, 168)
+	if dx >= 0 || dz >= 0 {
+		t.Fatalf("the sign rule: 98/157's middle in 97/168's frame is (%g, %g), want X < 0 (lower region y) and Z < 0 (higher region x, mirrored)", dx, dz)
+	}
+	if err := w.chars.SavePosition(ctx, w.aria, "jangan", "98/157", 100, 7, -200); err != nil {
+		t.Fatal(err)
+	}
+	conn, _, got := w.enter(t)
+	if !got.Restored || got.Zone != "jangan" || got.FrameRegion != "97/168" || !near(got.X, got.Z, 100+dx, -200+dz) || got.Y != float32(spawnPos.Y) {
+		t.Fatalf("saved under 98/157, read under 97/168: %+v, want jangan in 97/168 at (%g, %g, %g) restored",
+			got, 100+dx, spawnPos.Y, -200+dz)
+	}
+	w.leave(t, conn)
+
+	SetSingleFrame(true)
+	ddx, ddz := worldmap.ToWorld(102, 153, 960, 960, 97, 168)
+	if err := w.chars.SavePosition(ctx, w.aria, "donwhang", "102/153", 30, 5, -40); err != nil {
+		t.Fatal(err)
+	}
+	conn, _, got = w.enter(t)
+	if !got.Restored || got.Zone != "donwhang" || got.FrameRegion != "97/168" || !near(got.X, got.Z, 30+ddx, -40+ddz) || got.Y != float32(spawnPos.Y) {
+		t.Fatalf("a Donwhang save read under -single-frame: %+v, want donwhang in 97/168 at (%g, %g, %g) restored",
+			got, 30+ddx, spawnPos.Y, -40+ddz)
+	}
+	if e, ok := w.hub.EntityByCharacterID(w.aria); !ok || e.Zone != worldmap.WorldBucket {
+		t.Fatalf("under -single-frame the restored Aria is kept in %q (in world %v), want %q", e.Zone, ok, worldmap.WorldBucket)
+	}
+	w.leave(t, conn)
+	SetSingleFrame(false)
+
+	if err := w.chars.SavePosition(ctx, w.aria, "jangan", "", 100, 7, -200); err != nil {
+		t.Fatal(err)
+	}
+	_, _, got = w.enter(t)
+	if got.Restored || got.Zone != spawnZone || got.X != float32(spawnPos.X) || got.Z != float32(spawnPos.Z) {
+		t.Fatalf("a save with no frame for a label that has one: %+v, want %s at spawnPos, not restored", got, spawnZone)
+	}
+}
+
+// The move handler saves a walk at most once every positionSaveInterval
+// (round 573): a move inside the interval is not written, one past it is and
+// restarts the clock, and with the flag off nothing is written at all.
+func TestPersistPositionSavesAWalkEveryInterval(t *testing.T) {
+	ctx := context.Background()
+	chars := character.NewMemStore()
+	c, _ := chars.Create(ctx, 1, "Aria")
+	hub := world.NewHub()
+	sess := gateway.NewTestSession(1)
+	hub.Enter(sess, c.ID, c.Name, c.Level, "jangan", spawnPos)
+	move := func(x, z float32) {
+		t.Helper()
+		if err := handleMove(sess, &proto.Packet{Opcode: OpMove, Data: (&MoveRequest{X: x, Z: z}).Encode()}, hub, chars); err != nil {
+			t.Fatalf("handleMove: %v", err)
+		}
+	}
+	savedX := func() float64 {
+		got, _ := chars.GetByID(ctx, c.ID)
+		return got.PosX
+	}
+
+	SetPersistPosition(false)
+	rememberPlace(sess, "jangan", "97/168", time.Now().Add(-2*positionSaveInterval))
+	move(10, 10)
+	if got, _ := chars.GetByID(ctx, c.ID); got.Zone != "" {
+		t.Fatalf("with the flag off a move was saved: %+v", got)
+	}
+
+	SetPersistPosition(true)
+	t.Cleanup(func() { SetPersistPosition(false) })
+	rememberPlace(sess, "jangan", "97/168", time.Now())
+	move(20, 20)
+	if got, _ := chars.GetByID(ctx, c.ID); got.Zone != "" {
+		t.Fatalf("a move inside the interval was saved: %+v", got)
+	}
+	rememberPlace(sess, "jangan", "97/168", time.Now().Add(-positionSaveInterval-time.Second))
+	move(30, 30)
+	if got, _ := chars.GetByID(ctx, c.ID); got.Zone != "jangan" || got.Frame != "97/168" || got.PosX != 30 || got.PosZ != 30 {
+		t.Fatalf("a move past the interval: saved %+v, want jangan 97/168 at (30, 30)", got)
+	}
+	move(40, 40)
+	if savedX() != 30 {
+		t.Fatalf("the save did not restart the clock: the next move saved x %g, want 30 kept", savedX())
+	}
+}
+
+// The gateway runs no OnDisconnect for sessions open when it stops, so
+// SaveAllPositions saves everyone still in the world (round 573) -- every
+// deploy is such a stop. With the flag off it writes nothing.
+func TestSaveAllPositionsSavesEveryoneStillInTheWorld(t *testing.T) {
+	ctx := context.Background()
+	chars := character.NewMemStore()
+	aria, _ := chars.Create(ctx, 1, "Aria")
+	bram, _ := chars.Create(ctx, 2, "Bram")
+	hub := world.NewHub()
+	sa, sb := gateway.NewTestSession(1), gateway.NewTestSession(2)
+	hub.Enter(sa, aria.ID, aria.Name, 1, "jangan", world.Position{X: 1, Y: 2, Z: 3})
+	hub.Enter(sb, bram.ID, bram.Name, 1, "donwhang", world.Position{X: 4, Y: 5, Z: 6})
+	rememberPlace(sa, "jangan", "97/168", time.Now())
+	rememberPlace(sb, "donwhang", "102/153", time.Now())
+
+	SetPersistPosition(false)
+	SaveAllPositions(hub, chars)
+	if got, _ := chars.GetByID(ctx, aria.ID); got.Zone != "" {
+		t.Fatalf("with the flag off SaveAllPositions saved %+v", got)
+	}
+
+	SetPersistPosition(true)
+	t.Cleanup(func() { SetPersistPosition(false) })
+	SaveAllPositions(hub, chars)
+	for _, want := range []struct {
+		id          int64
+		zone, frame string
+		pos         world.Position
+	}{
+		{aria.ID, "jangan", "97/168", world.Position{X: 1, Y: 2, Z: 3}},
+		{bram.ID, "donwhang", "102/153", world.Position{X: 4, Y: 5, Z: 6}},
+	} {
+		got, _ := chars.GetByID(ctx, want.id)
+		if got.Zone != want.zone || got.Frame != want.frame || (world.Position{X: got.PosX, Y: got.PosY, Z: got.PosZ}) != want.pos {
+			t.Errorf("character %d saved as %q %q at (%g, %g, %g), want %q %q at %+v",
+				want.id, got.Zone, got.Frame, got.PosX, got.PosY, got.PosZ, want.zone, want.frame, want.pos)
+		}
 	}
 }

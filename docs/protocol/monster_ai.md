@@ -2677,8 +2677,9 @@ with its last stored position as the fallback.
 
 - **Reviving in place at any level.** Grounded as retail's option 2 for a max level of 10 or under;
   above that retail offers only the return point, which srrevamp cannot build: no
-  `_CHAR.AppointedTeleport`, no teleport gates, no region frame to put a `LatestRegion`/`Pos` into
-  (`world.Position` is a zone label and a point). A character of level 11 or more therefore revives
+  `_CHAR.AppointedTeleport` and no teleport gates (a `LatestRegion`/`Pos`-shaped last position is
+  kept on the row since round 573, under `-persist-position`, but it is where the character already
+  stands). A character of level 11 or more therefore revives
   where it fell, a stand-in. No level test is made: both cases take the one in-place path, and
   `GetMaxLevel` is not modelled (srrevamp's `Level` would equal it -- a death never costs a level,
   `GObjPC_OnDeath` leaves `CurLevel` alone -- but nothing reads it; round 550 corrected the prose

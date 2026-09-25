@@ -241,7 +241,7 @@ In order. Each is checked off here when it ships in a release, with its round in
         (3) the flag's flip (`deploy/README.md`, "Player dead state (off by default)"). Stand-ins,
         each disclosed at its line: reviving in place above max level 10 (retail returns the
         character to `_CHAR.AppointedTeleport`, `CGObjPC::ResolveRevivePoint` -- srrevamp has no
-        appointed teleport and no region frame), the empty request against retail 0x7053's u8
+        appointed teleport and no gates), the empty request against retail 0x7053's u8
         option, the fallback and its 30 s, the refusal wording, the pick-up / duel / zone-change / GM
         refusals (their retail handlers not read for a life-state test), the item kind usable while
         dead (`(tid & 0xf800) == 0x3000` in `Item_HandleUseItem`), the duel's own death path (still
@@ -715,6 +715,22 @@ commit them on the main thread, and round 567 makes the terrain's collision a he
 - [ ] **The `prepared again` line prints for every committed streamed cell in a player's build**
       (round 566's follow-up). A playtest diagnostic; it could sit behind a QA variable like the
       rest of the load instrumentation.
+
+### Saved position (map/travel epic, round 573)
+
+`-persist-position` (default off) puts a character back where it left off, and round 573's client
+keeps a restored entry's position (`docs/RE_COMPLETION.md`, round 573; `deploy/README.md`, "Saved
+position (off by default)").
+
+- [ ] **A restored position far from its zone's centre** (read in round 573, not measured). The
+      entry builds its grid around the LABEL's centre region, radius 2; a character saved more
+      than two regions out -- by walking there, e.g. from Jangan toward Donwhang under
+      `-single-frame`, where the label stays "jangan" -- is placed outside it, and the stream then
+      builds around the player as after a far GM `/tp`; until its cell commits the player may fall
+      and the void recovery returns it to its last grounded position. Building the entry's grid
+      around the region the restored point lies in (inside the server's frame, round 570's
+      `_load_region_neighborhood` already takes a centre and a frame apart) would close it; a
+      `--region ''` reconnect run after a long `--walk` is the check.
 
 ## Parked, with the state written down
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"sync/atomic"
+	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
@@ -229,6 +230,16 @@ type EnterWorldResult struct {
 	// -- and an older server's payload, which ends at Others, decodes it as
 	// "".
 	FrameRegion string
+	// Restored says X/Y/Z are where the character last stood, read back from
+	// its row under cmd/server's -persist-position (round 573), rather than
+	// the zone's arrival point. It trails FrameRegion as ONE byte, 1, and is
+	// sent only when true: every other payload is byte for byte what it was.
+	// A client that honours it keeps the position; one that does not -- every
+	// release before round 573, whose decoder returns after FrameRegion (or
+	// after the entity list) without looking at what is left -- moves a
+	// Jangan entry on to its own landing spot as it always has
+	// (World3D._place_at_zone_spawn).
+	Restored bool
 }
 
 func (r *EnterWorldResult) Encode() []byte {
@@ -251,7 +262,11 @@ func (r *EnterWorldResult) Encode() []byte {
 	for _, o := range r.Others {
 		out = append(out, o.Encode()...)
 	}
-	return append(out, encodeStrings(r.FrameRegion)...)
+	out = append(out, encodeStrings(r.FrameRegion)...)
+	if r.Restored {
+		out = append(out, 1)
+	}
+	return out
 }
 
 func DecodeEnterWorldResult(data []byte) (*EnterWorldResult, error) {
@@ -317,24 +332,29 @@ func DecodeEnterWorldResult(data []byte) (*EnterWorldResult, error) {
 		}
 		r.Others = append(r.Others, *snap)
 	}
-	if r.FrameRegion, err = decodeFrameRegion(rest); err != nil {
+	if r.FrameRegion, rest, err = decodeFrameRegion(rest); err != nil {
 		return nil, fmt.Errorf("session: decoding EnterWorldResult: %w", err)
 	}
+	// Restored (round 573): one byte after the frame, absent -- false -- from
+	// a server that did not restore the position or predates the field.
+	r.Restored = len(rest) > 0 && rest[0] != 0
 	return r, nil
 }
 
 // decodeFrameRegion reads the FrameRegion that trails an EnterWorldResult or
 // a ChangeZoneResult (round 570): "" when nothing follows the entity list --
-// an older server's payload -- and an error when the field is cut short.
-func decodeFrameRegion(rest []byte) (string, error) {
+// an older server's payload -- and an error when the field is cut short. It
+// returns what follows the field: an EnterWorldResult's Restored byte (round
+// 573).
+func decodeFrameRegion(rest []byte) (string, []byte, error) {
 	if len(rest) == 0 {
-		return "", nil
+		return "", rest, nil
 	}
-	fields, _, err := decodeStringsPrefix(rest, 1)
+	fields, after, err := decodeStringsPrefix(rest, 1)
 	if err != nil {
-		return "", fmt.Errorf("frame region: %w", err)
+		return "", nil, fmt.Errorf("frame region: %w", err)
 	}
-	return fields[0], nil
+	return fields[0], after, nil
 }
 
 // frameFor is the FrameRegion a result names for zone with -single-frame off:
@@ -593,7 +613,7 @@ func DecodeChangeZoneResult(data []byte) (*ChangeZoneResult, error) {
 		}
 		r.Others = append(r.Others, *snap)
 	}
-	if r.FrameRegion, err = decodeFrameRegion(rest); err != nil {
+	if r.FrameRegion, _, err = decodeFrameRegion(rest); err != nil {
 		return nil, fmt.Errorf("session: decoding ChangeZoneResult: %w", err)
 	}
 	return r, nil
@@ -635,7 +655,7 @@ func WorldHandlerWithHook(chars character.Store, eq equipment.Store, hub *world.
 		case OpEnterWorld:
 			return handleEnterWorld(ctx, sess, p, chars, eq, hub, onEnter)
 		case OpMove:
-			return handleMove(sess, p, hub)
+			return handleMove(sess, p, hub, chars)
 		case OpChangeZone:
 			return handleChangeZone(ctx, sess, p, eq, chars, hub)
 		default:
@@ -645,15 +665,19 @@ func WorldHandlerWithHook(chars character.Store, eq equipment.Store, hub *world.
 }
 
 // WorldDisconnectHandler returns a func suitable for gateway.Server's
-// OnDisconnect hook: removes the disconnecting session from hub and
-// notifies whoever was left in its zone.
-func WorldDisconnectHandler(hub *world.Hub) func(sess *gateway.Session) {
+// OnDisconnect hook: removes the disconnecting session from hub, saves where
+// its character stood when it left -- the entity hub.Leave returns -- under
+// -persist-position (round 573, position.go), and notifies whoever was left
+// in its zone. chars may be nil (tests of other features): nothing is saved
+// then.
+func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *gateway.Session) {
 	return func(sess *gateway.Session) {
 		left, remaining, ok := hub.Leave(sess)
 		if !ok {
 			return
 		}
 		keepUp.Cancel(left.CharacterID)
+		savePosition(chars, sess, left)
 		msg := &EntityLeft{CharacterID: left.CharacterID}
 		for _, other := range remaining {
 			other.Session.Send(&proto.Packet{Opcode: OpEntityLeft, Data: msg.Encode()})
@@ -726,22 +750,32 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	// The level rides the entity (world.Entity.Level, round 555) so the monster
 	// AI's link and swings read it there instead of from the store. The bucket,
 	// the position and the frame are arrival's: spawnZone's own, or the one
-	// world's under -single-frame, where Jangan's landing is (0, 0) as well.
+	// world's under -single-frame, where Jangan's landing is (0, 0) as well --
+	// unless -persist-position restores where the character last stood
+	// (round 573, restoredArrival): its saved label, that label's bucket and
+	// frame today, and the saved point named in that frame.
+	zone := spawnZone
 	bucket, pos, frame, _ := arrival(spawnZone)
+	savedZone, savedBucket, savedPos, savedFrame, restored := restoredArrival(owned)
+	if restored {
+		zone, bucket, pos, frame = savedZone, savedBucket, savedPos, savedFrame
+	}
 	others := hub.Enter(sess, owned.ID, owned.Name, owned.Level, bucket, pos)
+	rememberPlace(sess, zone, frame, time.Now())
 
 	otherSnapshots := make([]EntitySnapshot, len(others))
 	for i, o := range others {
 		otherSnapshots[i] = entitySnapshotFromWorld(ctx, eq, chars, o)
 	}
 	result := &EnterWorldResult{
-		OK: true, Zone: spawnZone,
+		OK: true, Zone: zone,
 		X: float32(pos.X), Y: float32(pos.Y), Z: float32(pos.Z),
 		Gender:      owned.Gender,
 		HP:          int32(owned.HP),
 		MaxHP:       int32(owned.MaxHP()),
 		Others:      otherSnapshots,
 		FrameRegion: frame,
+		Restored:    restored,
 	}
 	if err := sess.Send(&proto.Packet{Opcode: OpEnterWorldResult, Data: result.Encode()}); err != nil {
 		return err
@@ -805,6 +839,12 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "not in the world"}).Encode()})
 	}
 	keepUp.Cancel(old.CharacterID)
+	// The new label and frame are what a later save writes under, and the
+	// arrival itself is saved at once under -persist-position (round 573).
+	rememberPlace(sess, req.Zone, frame, time.Now())
+	moved := old
+	moved.Zone, moved.Pos = bucket, pos
+	savePosition(chars, sess, moved)
 
 	otherSnapshots := make([]EntitySnapshot, len(othersNew))
 	for i, o := range othersNew {
@@ -837,7 +877,7 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	return nil
 }
 
-func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub) error {
+func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars character.Store) error {
 	req, err := DecodeMoveRequest(p.Data)
 	if err != nil {
 		return nil // malformed move: drop it, don't kill the connection
@@ -859,6 +899,9 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub) error {
 	// A move is the player's own cancel of a running auto-attack -- see
 	// keepup.go for why this packet stands in for the retail client's.
 	keepUp.Cancel(entity.CharacterID)
+	// Under -persist-position the walk is saved at most once every
+	// positionSaveInterval (round 573), so a crash loses little of it.
+	savePositionEvery(chars, sess, entity, time.Now())
 
 	msg := &EntityMoved{CharacterID: entity.CharacterID, X: req.X, Y: req.Y, Z: req.Z}
 	for _, other := range others {

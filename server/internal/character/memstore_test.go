@@ -404,3 +404,48 @@ func TestApplyDamageOnACharacterAtZeroReportsNoDeath(t *testing.T) {
 		t.Fatalf("a zero blow (the HP read) on a character at 0 reported hp=%d died=%v, want 0 and no death", hp, died)
 	}
 }
+
+// Where a character last stood round-trips through the store (round 573): a
+// new character has nothing saved (Zone ""), a save is what GetByID and
+// ListByAccount then read, a later save replaces it, and a missing character
+// is ErrNotFound. NEGATIVE: before round 573 Store has no SavePosition and
+// Character no Zone, so this does not compile.
+func TestSavePositionRoundTrip(t *testing.T) {
+	store := NewMemStore()
+	ctx := context.Background()
+	c, err := store.Create(ctx, 1, "Aria")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if c.Zone != "" || c.Frame != "" || c.PosX != 0 || c.PosY != 0 || c.PosZ != 0 {
+		t.Fatalf("a new character has a saved position: %+v", c)
+	}
+
+	if err := store.SavePosition(ctx, c.ID, "jangan", "97/168", 100.5, 7.25, -200.75); err != nil {
+		t.Fatalf("SavePosition: %v", err)
+	}
+	got, err := store.GetByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Zone != "jangan" || got.Frame != "97/168" || got.PosX != 100.5 || got.PosY != 7.25 || got.PosZ != -200.75 {
+		t.Fatalf("GetByID after a save: zone %q frame %q at (%g, %g, %g), want jangan 97/168 at (100.5, 7.25, -200.75)",
+			got.Zone, got.Frame, got.PosX, got.PosY, got.PosZ)
+	}
+	list, err := store.ListByAccount(ctx, 1)
+	if err != nil || len(list) != 1 || list[0].Zone != "jangan" || list[0].PosZ != -200.75 {
+		t.Fatalf("ListByAccount after a save: %+v (err=%v)", list, err)
+	}
+
+	if err := store.SavePosition(ctx, c.ID, "donwhang", "102/153", 1, 2, 3); err != nil {
+		t.Fatalf("second SavePosition: %v", err)
+	}
+	got, _ = store.GetByID(ctx, c.ID)
+	if got.Zone != "donwhang" || got.Frame != "102/153" || got.PosX != 1 || got.PosY != 2 || got.PosZ != 3 {
+		t.Fatalf("a later save does not replace the first: %+v", got)
+	}
+
+	if err := store.SavePosition(ctx, 999, "jangan", "97/168", 0, 0, 0); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("SavePosition on a missing character: %v, want ErrNotFound", err)
+	}
+}

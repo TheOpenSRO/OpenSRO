@@ -744,9 +744,23 @@ func main() {
 			"round 570 (it builds a zone's grid inside the server's FrameRegion) and round 569 (the "+
 			"corrected town centres and the \"donwhang\" label). See deploy/README.md, \"Single world "+
 			"frame (off by default)\".")
+	persistPositionEnv, persistPositionEnvErr := envBool("SRREVAMP_PERSIST_POSITION")
+	persistPosition := flag.Bool("persist-position", persistPositionEnv,
+		"a character logs back in where it left off (env SRREVAMP_PERSIST_POSITION): its zone label, "+
+			"frame region and position are saved on its row -- on a disconnect, on each zone change, at "+
+			"most every 30 s while it walks (own design) and for everyone still in the world when the "+
+			"server stops -- and the next OpEnterWorldResult answers them, named in the zone's frame of "+
+			"the day, with a trailing Restored byte. Default OFF: off, nothing is saved or read and every "+
+			"entry lands at the zone spawn with the wire as it was. Needs a client release that carries "+
+			"round 573: an older one moves a restored Jangan entry on to Jangan's landing spot. See "+
+			"deploy/README.md, \"Saved position (off by default)\".")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	if persistPositionEnvErr != nil {
+		logger.Warn("SRREVAMP_PERSIST_POSITION is not a boolean; the saved position stays off unless -persist-position is given",
+			"err", persistPositionEnvErr)
+	}
 	if singleFrameEnvErr != nil {
 		logger.Warn("SRREVAMP_SINGLE_FRAME is not a boolean; the single frame stays off unless -single-frame is given",
 			"err", singleFrameEnvErr)
@@ -1128,6 +1142,15 @@ func main() {
 	} else {
 		logger.Info("single frame off (-single-frame / SRREVAMP_SINGLE_FRAME)")
 	}
+	// The saved position (round 573), behind its own flag. Set before the
+	// gateway serves, like the single frame above: every world handler reads
+	// it.
+	session.SetPersistPosition(*persistPosition)
+	if *persistPosition {
+		logger.Info("persist position on: a character re-enters where it last stood (saved on disconnect, zone change, every 30 s of walking and at stop)")
+	} else {
+		logger.Info("persist position off (-persist-position / SRREVAMP_PERSIST_POSITION)")
+	}
 	// The spawn push (round 542), behind its own flag: a respawn or a GM /spawn
 	// is sent to its zone as OpMonsterSpawned the moment it appears. Set
 	// before the roster's first spawn, like the heading roll above.
@@ -1294,7 +1317,7 @@ func main() {
 		session.FriendHandler(chars, friends, hub),
 	)
 
-	worldDisconnect := session.WorldDisconnectHandler(hub)
+	worldDisconnect := session.WorldDisconnectHandler(hub, chars)
 	partyDisconnect := session.PartyDisconnectHandler(parties)
 	duelDisconnect := session.DuelDisconnectHandler(hub, duels)
 	tradeDisconnect := session.TradeDisconnectHandler(hub, trades)
@@ -1355,4 +1378,8 @@ func main() {
 	flushCtx, cancelFlush := context.WithTimeout(context.Background(), 30*time.Second)
 	gpSkills.FlushAllPending(flushCtx)
 	cancelFlush()
+	// The same gap for the saved position (round 573): every character still
+	// in the world is saved where it stands, before the deferred store Closes.
+	// A no-op with -persist-position off.
+	session.SaveAllPositions(hub, chars)
 }

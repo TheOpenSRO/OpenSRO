@@ -339,6 +339,25 @@ type Character struct {
 	// The orbs are earned on a killing blow and spent five at a time on
 	// activation -- see internal/berserk, where the rates are recovered.
 	HwanCount int
+
+	// Zone, Frame and PosX/PosY/PosZ are where the character last stood in
+	// the world, written by session under cmd/server's -persist-position
+	// (round 573) and read back when it enters again. Zone "" means nothing
+	// is saved -- a new character, or one that has not been in the world
+	// with the flag on -- and it enters at the zone spawn as it always has.
+	//
+	// GROUNDED as persisted columns: `_CHAR.LatestRegion` and
+	// `PosX`/`PosY`/`PosZ` are bound by CharData_BindDBColumns to charData
+	// +0x94, +0x98, +0x9c and +0xa0 (docs/protocol/db_bind_offsets.tsv), so
+	// the engine keeps the position on the character row. The SHAPE is
+	// srrevamp's own (schema.go's Mapping says how): the engine's position is
+	// local to LatestRegion, srrevamp's is a world point in the frame centred
+	// on region Frame ("x/y", the FrameRegion the session named -- see
+	// worldmap.ToWorld), plus the zone label the client builds its grid from.
+	// When the save happens is srrevamp's own too (session/position.go).
+	Zone             string
+	Frame            string
+	PosX, PosY, PosZ float64
 }
 
 // MaxHP is this character's maximum health, from its Str and Level.
@@ -445,6 +464,12 @@ type Store interface {
 	// have already checked, same as this project's other Store methods
 	// trusting their caller for business-rule validation.
 	SetGender(ctx context.Context, characterID int64, gender string) error
+
+	// SavePosition stores where characterID last stood: the zone label, the
+	// frame region x/y/z are relative to ("x/y", or "" for a label with
+	// none), and the point (Character.Zone, Frame, PosX/PosY/PosZ). Returns
+	// ErrNotFound if no such character.
+	SavePosition(ctx context.Context, characterID int64, zone, frame string, x, y, z float64) error
 }
 
 // RespawnMP is the mana a character comes back from death with:
