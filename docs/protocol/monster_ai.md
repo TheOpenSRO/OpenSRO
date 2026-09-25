@@ -155,7 +155,7 @@ so 2 means "consumed, stop this tick" and 0 means "carry on".
 | msg | slot | default handler does | senders |
 |---|---|---|---|
 | `0x21` | 37 | → IDLE | `SPAWN::OnUpdate` |
-| `0x22` | 38 | range test, then → **BATTLE** | `EMOTION`, `HOMING`, `WANDER`, `WATCHOUT` |
+| `0x22` | 38 | range test, then → **BATTLE** | `IDLE` (round 552: `0x55a8b0` is slot 3 of IDLE's vtable `0xaf899c` as well as EMOTION's), `EMOTION`, `HOMING`, `WANDER`, `WATCHOUT` |
 | `0x23` | 39 | → IDLE (folded) | `BATTLE::OnUpdate`, `FLEE::OnUpdate` |
 | `0x24` | 40 | → IDLE (folded) | `FOLLOW`, `HOMING`, `MOVING` |
 | `0x25` | 41 | → IDLE (folded) | `AUTOCOMMAND`, `HOMING`, `PICKITEM`, `WANDER` |
@@ -259,9 +259,9 @@ locals) found no reader in the AI namespace.
 | 3 | `+0x08` | u8 |  |
 | 4 | `+0x0c` | u32 |  |
 | 5 | `+0x10` | u8 |  |
-| 6 | `+0x14` | u32 | the **detection distance** (world units): the target-acquisition radius is `BCRadius + this` (`ctx+0x15c`, round 257 below). Non-zero installs the acquire-a-target behaviour at context `+0xf8` (`AITactics_AcquireTarget`, `0x5478f0`; zero installs the no-op `FUN_00559000`), lets the AI-skill scan (`AI::CTactics::RegisterAISkill`, `0x53fa70`) raise the context's max skill range `+0x160`, and at `Init` seeds `+0x7c` from that range for an immobile monster (run speed `+0x170 <= 0`). `FUN_005473c0` (behaviour `+0xec`) credits an attacker of an immobile monster only when `Distance(self, attacker) <= +0x14` |
-| 7 | `+0x18` | u8 | **aggression mode** 0/1/2 (above) |
-| 8 | `+0x1c` | u32 | **aggressive chance, percent**, for mode 2 |
+| 6 | `+0x14` | u32 | the **detection distance** (world units): the target-acquisition radius is `BCRadius + this` (`ctx+0x15c`, round 257 below). Non-zero installs the acquire-a-target behaviour at context `+0xf8` (`AITactics_AcquireTarget`, `0x5478f0`; zero installs the no-op `FUN_00559000`), lets the AI-skill scan (`AI::CTactics::RegisterAISkill`, `0x53fa70`) raise the context's max skill range `+0x160`, and at `Init` seeds `+0x7c` from that range for an immobile monster (run speed `+0x170 <= 0`). `FUN_005473c0` (behaviour `+0xec`) credits an attacker of an immobile monster only when `Distance(self, attacker) <= +0x14`. **srrevamp's stand-in: 100** for every species (`ai.TacticsDetectionDistance`, round 552; own design, a user decision) |
+| 7 | `+0x18` | u8 | **aggression mode** 0/1/2 (above). **srrevamp's stand-in: 0**, every species aggressive (`ai.TacticsAggressionMode`, round 552; own design, a user decision -- the `-monster-aggro` flag itself is the "none aggressive" setting) |
+| 8 | `+0x1c` | u32 | **aggressive chance, percent**, for mode 2. srrevamp's stand-in: 0, not read under mode 0 (`ai.TacticsAggressionPct`) |
 | 9 | `+0x20` | u8 | **retarget rule** (round 259, "The threat table"): 0 keep the first attacker; 1 face the latest attacker; 2 by hate -- `AITactics_ResolveTarget`: the challenger overtakes on more hate or after two idle attack intervals, a third attacker only when it stands farther than the target (round 238 read `FUN_00545680` as an owner lookup; it is the hate resolver) |
 | 10 | `+0x21` | u8 | `== 2` disables behaviour `+0x10c` (`FUN_00548950`), whose message builder `FUN_00541200` writes this byte, the object id, the TacticsID and slot 73's byte into a request. In this build the trigger also needs the HP bucket (`FUN_00541d70`: `GetCurHP/GetMaxHP` against 0.2/0.4/0.6/0.8) to be **negative**, which it never is -- `jge` at `0x54898d` -- so the request is dead |
 | 11 | `+0x22` | u8 | read by `AI::CTactics::FUN_00540120` (unread) |
@@ -281,7 +281,7 @@ locals) found no reader in the AI namespace.
 | 39 | `+0x88` | u8 |  |
 | 40 | `+0x89` | u8 | 0..3 in `FUN_00548120` (behaviour `+0x100`, the reach test `BATTLE::OnUpdate` runs first): 1 or 2 -> returns 1 at once; 3 -> returns 1 while the HP bucket is < 2 (HP under 40%); otherwise the `+0x7c` test decides |
 | 41 | `+0x8c` | u32 |  |
-| 42 | `+0x90` | u32 | **flags**. Bit 2 (`0x4`), bit 7 (`0x80`) and bit 8 (`0x100`) pick the target-kind filter pair the acquire behaviour scans with ((2,1) default, (3,5) bit 2, (4,5) bit 7, (5,0x11) bit 8); bits 2/7 also swap the `+0x100` behaviour for `FUN_005481a0`/`FUN_00548270`, make the give-up check return 0, disable the `+0x10c` trigger, and shorten `Init`'s first action delay from `rand()%491+10` to `rand()%41+10` (unit unread -- `FUN_0053d600`) |
+| 42 | `+0x90` | u32 | **flags**. Bit 2 (`0x4`), bit 7 (`0x80`) and bit 8 (`0x100`) pick the target-kind filter pair the acquire behaviour scans with ((2,1) default, (3,5) bit 2, (4,5) bit 7, (5,0x11) bit 8 -- each pair is (selector, kind mask): the default is selector 2, the nearest, over kind mask 1, players; round 552 corrected a reading of it as kinds (1,2)); bits 2/7 also swap the `+0x100` behaviour for `FUN_005481a0`/`FUN_00548270`, make the give-up check return 0, disable the `+0x10c` trigger, and shorten `Init`'s scan timer (tactics timer 1, the acquire's cadence: base 1000 ms with spread `10 + |rand| % 491`, to base 200 with spread `10 + |rand| % 41`; the unit is milliseconds and the arming is `AITactics_ArmTimer` `0x53d600` -- read in round 552, "Target acquisition: the runtime"). srrevamp's stand-in: 0 (`ai.TacticsFlags`) |
 | 43 | string | 2-byte length + bytes | stored at record `+0x94`; no reader found (round 238 called it the skill list -- wrong, the skills come from `_RefAISkill` rows, below) |
 
 **The give-up distance, `+0x7c`.** `BATTLE::OnUpdate` calls behaviour `+0x100`
@@ -656,10 +656,13 @@ largest skill `Range` (`CRefSkill+0x92`) and, only when `+0x14` is non-zero,
 `ctx+0x160` too.
 
 **The scan.** `AITactics_AcquireTarget` (`0x5478f0`, behaviour `+0xf8`,
-installed only when `+0x14` is non-zero; run from WANDER, HOMING, WATCHOUT and
-EMOTION while the aggression byte `+0x168` is 0 or 3):
+installed only when `+0x14` is non-zero; run from IDLE, WANDER, HOMING, WATCHOUT and
+EMOTION while the aggression byte `+0x168` is 0 or 3 -- IDLE added in round 552: `0x55a8b0` is
+slot 3 of IDLE's vtable `0xaf899c` as well as EMOTION's `0xaf8e4c`; and paced by tactics timer 1,
+"Target acquisition: the runtime (round 552)"):
 
-	radius   = round(ctx+0x15c)
+	radius   = trunc(ctx+0x15c)              ; RC=chop: `or eax,0xc00` 0x547989, `fistp` 0x54799a
+	                                         ; (round 552 corrected this line's "round")
 	kinds, selector = (1, 2)                 ; players, "nearest"
 	              | (5, 3) when row+0x90 has bit 2
 	              | (5, 4) when it has bit 7
@@ -714,7 +717,11 @@ server package on the box has no shard backup (its `SR_GameRefData` folder is
 the client-side text tables plus shop/teleport/quest files; its three
 `SR_GameServer` minidumps are 2 MB thread-and-module dumps with no heap). So
 when srrevamp's monsters learn to notice a player, the distance itself will be
-disclosed per species, and the rule around it will not be.
+disclosed per species, and the rule around it will not be. *Round 552 built it
+that way*: the scan runs in the runtime behind `-monster-aggro` with one disclosed distance for
+every species (`ai.TacticsDetectionDistance`, 100), and the rest -- the radius, the nearest rule,
+the cadence, the aggression roll, the truncations -- is the binary's ("Target acquisition: the
+runtime (round 552)", below).
 
 ## The aggro link: a party's hit pulls the neighbours in (round 258)
 
@@ -898,8 +905,11 @@ rules with a test.
 spawn record and asserts out (-> state 0) when that has none. Then: a timer is
 armed through the indexed setter (`0x53d600`, arguments `(2, 500)`), the dwell
 is `AIState_DwellMs` (HOMING's 50 s), `MoveHome` starts the walk, the state's
-`+0x1c` is set to **`round(detectionRadius / runSpeed x 1000)` ms** (the
-`ctx+0x15c` radius over the owner's `+0x170`), the `0x704f` motion notice
+`+0x1c` is set to **`trunc(detectionRadius / runSpeed x 1000)` ms** (the
+`ctx+0x15c` radius over the owner's `+0x170`; `0x55a60e..0x55a63e`: `fld; fdiv; fmul QWORD
+0xb45c68` under the control word as found, then `or eax,0xc00; fldcw; fistp QWORD` -- RC=chop for
+the conversion alone; round 552 corrected this line's "round", and `ai.HomingReaggroDelayMs`, which
+added 0.5), the `0x704f` motion notice
 goes out, `+0x164` gets a random sign, and `SetTarget(0)` forgets the fight.
 
 **`MoveHome`** (`0x545c50`): home is the nest's position record (`nest+0x10`)
@@ -972,7 +982,7 @@ defaults and the tactics-driven overrides:
 | `+0xec` | `FUN_005473c0` (attacker accounting) | -- | `Handler_0fc`, `BATTLE::vslot_029`, `FUN_00558ea0`, `FUN_00559bb0` |
 | `+0xf0` | `AITactics_ExtRoutine::FUN_00547570` | -- | `FUN_00558ea0` |
 | `+0xf4` | `FUN_00547860` | -- | |
-| `+0xf8` | `FUN_00559000` (no-op) | `+0x14 != 0` -> `FUN_005478f0` (acquire a target); TacticsID 0x21/0x3f/0x71 -> `FUN_00547ad0` | `WANDER`, `HOMING`, `WATCHOUT` updates, `EMOTION::FUN_0055a8b0` |
+| `+0xf8` | `FUN_00559000` (no-op) | `+0x14 != 0` -> `FUN_005478f0` (acquire a target); TacticsID 0x21/0x3f/0x71 -> `FUN_00547ad0` | `IDLE`, `WANDER`, `HOMING`, `WATCHOUT` updates, `EMOTION::FUN_0055a8b0` (which is IDLE's slot 3 too: vtable `0xaf899c`, round 552) |
 | `+0xfc` | `AITactics_Handler_0fc` (on hit: retarget by `+0x20`) | -- | `BATTLE::vslot_006` |
 | `+0x100` | `FUN_00548120` (reach test) | flags bit 2 -> `FUN_005481a0`; bit 7 -> `FUN_00548270`; TacticsID 0x21/0x3f/0x71 -> `FUN_00548340` | `BATTLE::OnUpdate` |
 | `+0x104` | `FUN_005483c0` (give-up check) | TID bit 15 -> `FUN_005484b0` | `BATTLE::OnUpdate` |
@@ -1790,9 +1800,12 @@ leg. The lock is per session, so a stalled client holds up only its own replies 
   - `PickWanderLeg`'s `ctx+0x14c` leader term;
   - the four IDLE-roll owner conditions;
   - WANDER's COS-not-mercenary refusal (no roster species is a COS);
-  - HOMING's timer, re-aggro window and `+0x164` sign;
+  - HOMING's timer and `+0x164` sign (its re-aggro window is modelled since round 552, behind
+    `-monster-aggro`);
   - BATTLE's timers, clip, gathering and `OnLeave` override;
-  - the acquire behaviour every `OnUpdate` calls (mob-acquire).
+  - the acquire behaviour every `OnUpdate` calls -- modelled since round 552, behind
+    `-monster-aggro` ("Target acquisition: the runtime (round 552)", below); with that flag off it
+    is still not run.
 - **Headings stay in srrevamp's world frame.** The engine's frame differs by the z mirror. That
   changes no distribution: the hatch heading is uniform and the turns are symmetric.
 - **HOMING walks one straight leg.** `AITactics_HomingStep`'s heading wobble is deferred
@@ -2675,3 +2688,237 @@ log the death line at HP 0 with no `strikes <self>` line until "Revived.", then 
 in the server log `auto-revive` absent (the request came first). A second run without
 `SRREVAMP_QA_REVIVE_AFTER` asserts `auto-revive character=... after=30s` and the client's "Revived."
 without a click.
+
+## Target acquisition: the runtime (round 552)
+
+`session/monsterai.go`'s `acquire` runs the engine's acquire behaviour behind **`-monster-aggro`**
+(env `SRREVAMP_MONSTER_AGGRO`, parsed like `-monster-ai`'s; **off by default**; `cmd/server` forces
+it off with a WARN, never an exit, unless `-monster-battle` is in effect -- so `-monster-ai` and
+`-monster-strike-push` too -- and `-player-dead-state` is on: a noticed player is engaged by the
+chase and the monster's own swings, and a monster that seeks players out kills ones who never
+struck it, who must then stay dead). Off, nothing scans, the brains draw nothing new from the rng,
+and the wire is what it was: a monster fights only when struck. On, a monster idle, wandering or,
+past its blackout, running home notices the nearest living player inside its acquisition radius
+and enters BATTLE against it as a blow would. The boot log says which: `monster aggro on: ...`,
+`monster aggro off (...)`, or `monster aggro forced off why=...`. How an operator flips it is in
+`deploy/README.md`, "Monster aggro (off by default)".
+
+The rule itself is round 257's ("Target acquisition: the detection radius and the nearest-player
+rule", above): radius = BCRadius + `_RefTactics` column 6, the nearest player, no level term. What
+this round read, all of it re-read in `/var/tmp/srv.asm`, is the rest of what a scan needs:
+
+**One scan, in `AITactics_AcquireTarget`'s order (`0x5478f0`, behaviour `+0xf8`, installed when
+the row's `+0x14` is non-zero), followed by the `0x22` the calling state dispatches on its 2:**
+
+1. An owner that is a COS never scans (slot 11 at `0x547923..0x54792b`); no roster species is one.
+2. **Tactics timer 1 must be due** (`lea eax,[ctx+0x34]; mov ecx,0x1; call AITactics_TimerDue` at
+   `0x547937..0x54793f`), and is consumed whenever it is, found or not. Its arming is below.
+3. **The aggression byte `ctx+0x168` must be 0 or 3** (`test al,al; je` `0x54795e`, `cmp al,0x3;
+   jne` `0x547962`). `AI::CTactics::Init` writes it once (`0x53f5be..0x53f5e1`): the row's mode as
+   it is (`mov al,[row+0x18]`; `mov [ctx+0x168],al`), except that mode 2 rolls `rand % 100 >=
+   pct` into it (`cdq; idiv 100`; `cmp edx,[row+0x1c]; setge cl`) -- a draw at or above the
+   percent makes the byte 1, NOT aggressive. So mode 0 always scans, mode 1 never, mode 2 by its
+   percent, and a byte of 3 would (nothing in the roster's reach writes one). `ai.Aggressive`.
+4. **The scan**: the regions within **`trunc(ctx+0x15c)`** -- RC=chop, `or eax,0xc00` at
+   `0x547989`, `fldcw`, `fistp QWORD` at `0x54799a` (round 257 wrote "round"; corrected in place
+   above) -- for **players**, kind mask 1 with the nearest selector 2 (`mov byte [esp+0x18],0x1`
+   `0x5479b9`, `mov byte [esp+0x14],0x2` `0x5479be`, the pair the row's flag word 0 leaves),
+   through `AITactics_ScanForTargets` (`0x5405b0` at `0x547a07`). Its selector,
+   `AITactics_Select_Nearest` (`0x5464e0`), for each candidate that passes the kind mask:
+   - at most the radius away: `fild [radius]; fcomp st(1); test ah,0x5; jnp reject`
+     (`0x54668d..0x5466a0`) rejects only when the radius is below the distance;
+   - for a player, `AITactics_ValidTargetOrNull` (`0x540dc0`) in the PC branch, whose
+     `AITactics_IsValidTarget` (`0x540de0`) wants **life state 1** -- so a player dead under
+     `-player-dead-state` is no candidate; then the owner's slot 355 (`[eax+0x58c]`, not
+     modelled) and the summoned-object detour (`GObjPC::FUN_004fc160`, unread beyond shape);
+   - STRICTLY nearer than the pick so far, whose distance is stored TRUNCATED: `fnstcw; or
+     eax,0xc00; fldcw; fistp QWORD` at `0x5466c8..0x5466e6` (the first pick) and
+     `0x54673a..0x546758` (later ones); the compare `fild [best]; fcomp st(1); test ah,0x41; jne
+     reject` at `0x546725..0x546738` rejects on best < dist or best == dist. A stored 0 -- a pick
+     under one unit away -- reads as no pick yet (`cmp [edx],ebx`, ebx = 0, at `0x54671b`), so any
+     later candidate in range replaces it. `ai.Nearest` carries all three as read.
+5. The pick -> `AI::CTactics::SetTarget` (`0x53ffe0` at `0x547a67`) -> return 2 -> the state
+   dispatches `0x22`; `CAIState::OnMsg_0x22` (`0x559900`) asks `ValidTargetOrNull` again and then
+   `AITactics_IsTargetWithinChaseRange` (`0x545e50`, `ai.TargetWithinChaseRange` with round 546's
+   nest reading: every placement a nest at its spawn point with the 200 roam radius) before
+   `ChangeState(3)`. A pick out of chase range stays the target and the state stays.
+
+**Who runs it.** `CAIState_IDLE::OnUpdate` (`0x55a8b0` -- slot 3 of IDLE's vtable `0xaf899c`,
+read off `.rdata`: `80dd5300 80635000 809c5500 b0a85500`, i.e. the destructor, `GetStateID`
+`0x506380`, `OnEnter` `0x559c80`, `OnUpdate` `0x55a8b0`; EMOTION's vtable `0xaf8e4c` shares the
+slot, which is why the decompile filed the function under EMOTION and round 257 listed only
+WANDER, HOMING, WATCHOUT and EMOTION), past the expiry: `+0xf8`, and on its 2 `Dispatch(0x22)`;
+`CAIState_WANDER::OnUpdate` (`0x559eb0`) between the expiry and the roam check;
+`CAIState_HOMING::OnUpdate` (`0x55a690`) once slot 48, `ReaggroWindowPassed` (`0x55a720`: `now -
+enteredAt > +0x1c`, STRICT), answers 1, before `HomingStep`. WATCHOUT and EMOTION the runtime does
+not run.
+
+**The cadence, read from the asm** (the decompile drops `ArmTimer`'s register arguments: the
+index in ECX, the base in EAX, the spread on the stack). `Init` `0x53f712..0x53f765`:
+
+	eax = [row+0x90]                        ; the flag word
+	test al,4 -> fast ; test al,al; js -> fast   ; bits 2 and 7 (0x53f71b, 0x53f741..0x53f743)
+	slow: spread = 10 + |rand| % 491, base = 1000   ; idiv 0x1eb 0x53f755, mov eax,0x3e8 0x53f757, add edx,0xa 0x53f75c
+	fast: spread = 10 + |rand| % 41,  base = 200    ; idiv 0x29 0x53f738, mov eax,0xc8 0x53f73a
+	push spread; mov ecx,1; call AITactics_ArmTimer ; 0x53f75f..0x53f765
+
+`AITactics_ArmTimer` (`0x53d600`), on the first-table path index 1 takes (`cmp ecx,[ebx+4]; jle`
+at `0x53d60d`; nine first-table entries):
+
+	period = base + |rand| % spread + 1     ; div ebp 0x53d6ab, lea edi,[edx+edi*1+0x1] 0x53d6ad
+	                                        ; (the second table's twin: 0x53d64e..0x53d650)
+	entry.last = 0 ; entry.fired = 1        ; 0x53d6c0, 0x53d6c7 -- due the first time it is asked
+	entry.period = period                   ; 0x53d6d0
+
+so the period is **1001..1500 ms** (201..250 under bits 2/7), rolled once per spawn, and **the
+first scan is immediate**. `AITactics_TimerDue` (`0x53d6e0`) answers due on the fired byte (`cmp
+byte [..+1],1; je` `0x53d751`) and otherwise once `now - last >= period` (`sub edx,[ecx+8]; cmp
+edx,[ecx+4]; jb not-due` `0x53d75d..0x53d763`), consuming it (`mov [ecx+4],edi` `0x53d765`). The
+plan for this round first asserted the period lay in `[1011, 1501]`; the `+1` and the spread's
+floor of 10 put it at `[1001, 1500]`, and `ai.ScanPeriodMs`'s test holds 20 000 draws to that,
+with the low end under 1011 reached. `ai.ScanPeriodMs`.
+
+**HOMING's blackout**, `CAIState_HOMING::OnEnter` `0x55a60e..0x55a63e`: `fld [ctx+0x15c]; fdiv
+[owner+0x170]; fmul QWORD 0xb45c68` (1000.0) under the control word as found, then `or
+eax,0xc00; fldcw; fistp QWORD` -> the state's `+0x1c` = **`trunc(radius / runSpeed x 1000)`**
+ms. Round 261 wrote "round" and `ai.HomingReaggroDelayMs` added 0.5; both corrected (5 units at
+3/s is 1666 ms, not 1667). Under the stand-in a Mangyang's is **4818 ms** (106 / 22 x 1000 =
+4818.18; a value derived from the stand-in, not read).
+
+**In the runtime** (`monsterai.go`): each brain gets its acquisition radius at creation
+(`ai.DetectionRadius(BCRadius, ai.TacticsDetectionDistance)`: 104..111 for the roster) and, with
+the flag on, Init's two rolls in Init's order -- the aggression verdict, then timer 1's period, the
+timer starting due. `acquire` runs from IDLE (after the expiry), WANDER (after the expiry, before
+the roam check) and HOMING (after the expiry, once `elapsed > +0x1c`, before the arrival test),
+gathers `world.Hub`'s entities in the monster's zone in life state 1 as candidates in character-id
+order, takes `ai.Nearest`'s pick, sets the target, tests `ai.TargetWithinChaseRange` and dispatches
+`0x22` -> BATTLE, where round 546's `battleTick` chases and swings. The blackout is set at every
+HOMING entry (`homingBlackoutMs`) whether or not the flag is on: it is arithmetic.
+
+**Trace lines** (`SRREVAMP_AI_TRACE`): `ai: monster %d noticed %d at %.0f, engaging`, `ai: monster
+%d noticed %d at %.0f, out of chase range (%.0f from home)`, `ai: monster %d homing, noticing
+nobody for %d ms`; then round 546's `BATTLE chase` and `strike` lines.
+
+**The stand-ins, each OWN DESIGN at its line:**
+
+- **The flag** is off by default, and `-monster-aggro` is the "no species aggressive" setting.
+- **Column 6, the detection distance: 100 for every species** (`ai.TacticsDetectionDistance`). A
+  user decision; the column is server-database only and no value for any species was read
+  anywhere (round 257's search of the box). The roster's radii are therefore 104..111.
+- **Column 7, the aggression mode: 0, every species aggressive** (`ai.TacticsAggressionMode`); a
+  user decision. Column 8 is not read under it (`ai.TacticsAggressionPct`, 0).
+- **Column 42, the flag word: 0** (`ai.TacticsFlags`): the slow timer and the (players, nearest)
+  pair. A non-zero word would also need the wider kind masks, which the runtime does not carry.
+- **Candidates are players only**, the world hub's entities in the zone -- srrevamp has no
+  regions -- in character-id order where the engine walks the region's player list. A pet is never
+  a candidate: srrevamp summons nothing.
+- **The distance is the ground plane's**, as `battleTick`'s; `GObj_DistanceBetween` (`0x53d7a0`)
+  sums three axes across regions, and srrevamp's monsters carry no height.
+- **The timer is not polled while the flag is off**, and the brains roll nothing for it then, so
+  the flag-off runtime draws exactly what it drew before this round (seeded replays unchanged);
+  nothing on the wire can tell.
+- **Not modelled:** the selector's slot-355 test and summoned-object detour; the `+0x168` byte's
+  other writers; WATCHOUT's and EMOTION's scans (states the runtime does not run); the flag word's
+  wider kinds and fast timer (constants carried, never taken).
+
+**Tests** (`session`): `TestMonsterNoticesAPlayerWalkingIntoRange` (THE RED: 3 s at 200 units
+unnoticed; a walk to 50 units of the monster is noticed within 16 ticks, the target is she, the
+next push is the chase leg -- mode 1 at 22, ending about 10 from her -- and the first blow lands),
+`TestMonsterNoticesTheNearerOfTwoPlayers` (Aria, the lower id, at 80 and Bram at 50: Bram is the
+target on the first tick -- the first scan is immediate -- and the chase leg ends at (40, 0)),
+`TestMonsterAcquisitionRadiusIsInclusive` (110 unnoticed in 3 s -- a control -- and exactly 106
+noticed within a scan period), `TestMonsterDoesNotNoticeADeadPlayer` (dead at 10 unnoticed in 3 s
+-- a control -- and noticed within a scan period once revived),
+`TestHomingMonsterNoticesNobodyInsideItsBlackout` (carried 300 units out, running home past Aria
+at 150: inside 106 from about 2 s on, HOMING through the tick at 4800 ms -- a control -- and
+BATTLE at 4900), `TestMonsterAggroOffLeavesPlayersUnnoticed` (the flag-off control: 6 s at 50
+units, IDLE throughout, no blow), `TestMonsterAggroOffByDefault`; `ai`:
+`TestScanPeriodRangesAsRead`, `TestAggressiveByMode`, `TestNearestPicksTheCloserAndTruncatesTheRadius`
+(106.7 admits 106 and refuses 106.5; the truncated-best rule; the stored-0 rule),
+`TestDetectionRadiusUnderTheStandIn`, and `TestHomingRules`' new 1666 and 4818 cases;
+`cmd/server`: `TestMonsterAggroAllowed`. **Negatives, proved two ways**: with the four production
+files stashed, the new tests do not compile; with only `acquire`'s body replaced by `return false`
+the five positive halves fail as written ("not in BATTLE 1.6 s after Aria walked to 50 units",
+"state IDLE after the first tick", "a player at exactly 106 units was not noticed", "revived at 10
+units she was not noticed", "at 4900 ms, past the blackout, the state is HOMING") while the two
+controls hold, and with only the helper's `+ 0.5` restored `TestHomingRules` fails on "1667 ms;
+want 1666".
+
+**The live check.** The plan's design -- stand an unarmed player about 50 units from a monster and
+wait -- has no QA hook that can do it in the server's frame: `--say` is chat (`NetClient.say`), not
+a GM command (`OpGMCommand 0x00F1`, which only the chat box's `forward_gm` sends), so `--say "/spawn
+Mangyang"` spawns nothing (tried first this round: the server logged the session and no command);
+`SRREVAMP_QA_AT` converts a region-local spot relative to the LOADED region, not the zone frame
+(round 546's finding); and the GOTO swings. What the existing hooks CAN do is make the monster's
+re-engagement provably unstruck: the QA character attacks a **Yeoha** (249 HP, 67-79 a blow every
+2500 ms: it kills a fresh 200-HP character in three blows, while she barely scratches it) from the
+GOTO's 8 units, dies to it, lies dead at ~8 units -- and is not noticed, since a dead player is no
+candidate -- until `SRREVAMP_QA_REVIVE_AFTER` sends `OpRevive`; the QA attack loop has stopped for
+good at the death (`World3D._enter_dead_state`), so from the revive on the only way the Yeoha can
+re-engage her is the scan. On the render box, with the server built from the tree and all five
+flags on:
+
+```
+SRREVAMP_MONSTER_AI=1 SRREVAMP_MONSTER_STRIKE_PUSH=1 SRREVAMP_MONSTER_SPAWN_PUSH=1 \
+SRREVAMP_MONSTER_BATTLE=1 SRREVAMP_PLAYER_DEAD_STATE=1 SRREVAMP_MONSTER_AGGRO=1 \
+SRREVAMP_AI_TRACE=1 SRREVAMP_QA_MOB_LOG=1 SRREVAMP_QA_ATTACK_NAME=Yeoha SRREVAMP_QA_ATTACK_GOTO=1 \
+SRREVAMP_QA_REVIVE_AFTER=60 SERVER_BIN=/var/tmp/<lane>/srrevamp-server \
+client/tools/qa_shot.sh --server --attack --frames 600 --out /var/tmp/<run>
+```
+
+It must show, in `server.log`: `monster aggro on` (no `forced off`); for the Yeoha the first fight
+(`struck by 1, engaging` or, should the scan beat the GOTO's swing, `noticed 1 at N, engaging`),
+`strike 1 for ... killed`, `released (target dead)`; then NO `noticed` line for her while she is
+dead; then, after the client's `QA REVIVE: sending OpRevive`, a `noticed 1 at N, engaging` line for
+that id with NO `struck by` line between the release and it, followed by `strike 1 for ...` lines
+(and `BATTLE chase ... speed 20 mode 1` if she lies outside its 22-unit band). In the client log:
+`QA REVIVE: sending OpRevive ...`, "Revived.", then `monster <id> strikes 1 ... own blow`. Under
+the movie writer's dilation (the client runs about 20x slower than the wall-clock server) every
+assertion is a server trace line or a client receipt line, never a drawn position.
+
+**Measured (round 552, 2026-09-25, server and client at this round's tree).** Server built from
+the tree (`GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/server`) and run as
+`SERVER_BIN=/var/tmp/mobaggro552/srrevamp-server` with the five flags, `SRREVAMP_AI_TRACE=1` and
+`SRREVAMP_QA_MOB_LOG=1`, `--server --attack --frames 600` from the default spot with
+`SRREVAMP_QA_ATTACK_NAME=Yeoha SRREVAMP_QA_ATTACK_GOTO=1 SRREVAMP_QA_REVIVE_AFTER=60`. **Passed**, and
+more cleanly than the design above needed, because the player never landed a blow at all:
+
+- `server.log` boots `monster aggro on: ...` (no `forced off`; the two WARN lines are the in-memory
+  notice and the client's disconnect at exit). **There is no `struck by` line in the whole run**:
+  the QA attack loop armed at tick 0 and the client was still loading its world when the fight
+  began, and after the first death the loop is off for good. Every engagement below is the scan's.
+- The default spot is the zone frame's origin (`QA 60 local 960, 40, 960`: region 97/168's centre),
+  and a Yeoha (id 9; BCRadius 11, so radius 111; walk 9, run 20; ReuseDelay 2500) wandering off its
+  own-design anchor at (200, -220) came within it 25 s after the session connected:
+  `ai: monster 9 noticed 1 at 104, engaging` (00:03:50.071), `IDLE->BATTLE` on the same tick, then
+  `BATTLE chase to (14,-14) speed 20 mode 1` (the point 22 units from her: 11 + 4 + its range 7),
+  and 4.1 s later -- about 80 units at 20 u/s -- `strike 1 for 77 (HP 123)`, `strike 1 for 77 (HP
+  50)` and `strike 1 for 79 (HP 0) killed` **2.5 s apart** (the Yeoha's ReuseDelay to within a
+  tick), `released (target killed)`, `BATTLE->IDLE`, and at once `homing, noticing nobody for 5550
+  ms` -- trunc(111 / 20 x 1000), the blackout under the stand-in -- since the kill left it 275
+  units from its anchor.
+- The client drew all three as its own (`monster 9 strikes 1 for 77 (HP 123) -- own blow, no result
+  to pair with`), the third `died`, and `left dead (HP 0) t=0.50 -- input locked until the revive`;
+  60 physics frames later `QA REVIVE: sending OpRevive 60 frames after the death`, `revived (HP 81,
+  MP 80)` (1 + trunc(0.4 x 200), round 550's arithmetic).
+- **The second engagement is the unstruck re-acquisition the design asked for**: the Yeoha ran
+  home, wandered, and 46 s after the revive came back within range -- `ai: monster 9 noticed 1 at
+  100, engaging` (00:05:06.971), `BATTLE chase to (0,-20) speed 20 mode 1`, `strike 1 for 168 (HP
+  0) killed` (a critical, the client's `CRIT`), `released (target killed)`, its blackout again --
+  with no `struck by` and no player packet but the revive between the first release and it. The
+  client drew it, died again (`left dead (HP 0) t=3.75`), and the QA revive brought her back once
+  more (`revived (HP 81, MP 80)`); the run ended before a third pass.
+- No other monster noticed anyone (the town spawn is beyond every other anchor's reach), and the
+  monster 9 lines are the only `noticed` lines. 121 `homing, noticing nobody for N ms` lines over an
+  earlier run of the same tree from the same spot (run 2, without the Yeoha's visit) carried the
+  per-species truncations: 2000 (110/55), 1927 (106/55), 1890 (104/55), 1386 (104/75), 5550
+  (111/20), 4818 (106/22).
+- Not measured: the dead player lying inside a monster's radius (the Yeoha was 130+ units off while
+  she was dead, so "not noticed while dead" was vacuous here); `TestMonsterDoesNotNoticeADeadPlayer`
+  holds it. Time dilation applies as in the earlier runs: every assertion above is a server trace
+  line or a client receipt line.
+
+Frames deleted after the run (`/var/tmp/mob_aggro552b`); the server log is kept as
+`/var/tmp/mobaggro552/run3/server.log`. A first attempt with `--say "/spawn Mangyang"` (run 2,
+`/var/tmp/mobaggro552/run2/server.log`) spawned nothing, for the reason above, and is why the
+paragraph before this one no longer proposes it.

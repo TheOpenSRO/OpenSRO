@@ -470,6 +470,28 @@ func monsterBattleAllowed(battle, monsterAI, strikePush bool) (on bool, why stri
 	return true, ""
 }
 
+// monsterAggroAllowed decides whether -monster-aggro takes effect: only with
+// -monster-battle in effect (battleOn is monsterBattleAllowed's answer, so the
+// AI and the strike push are on too: a noticed player is engaged by the chase
+// and the monster's own swings, and under the interim hold the monster would
+// only stand where it noticed) and -player-dead-state on (a monster that seeks
+// players out kills ones who never struck it, and a kill must leave them dead
+// rather than respawned in place at 40 %). The second value says why not.
+// Never an exit, for the same reason as monsterBattleAllowed.
+func monsterAggroAllowed(aggro, battleOn, deadState bool) (on bool, why string) {
+	switch {
+	case !aggro:
+		return false, ""
+	case !battleOn && !deadState:
+		return false, "needs -monster-battle in effect (a noticed player is engaged by the chase and the monster's own swings) and -player-dead-state (a monster that seeks players out kills ones who never struck it)"
+	case !battleOn:
+		return false, "needs -monster-battle in effect: a noticed player is engaged by the chase and the monster's own swings"
+	case !deadState:
+		return false, "needs -player-dead-state: a monster that seeks players out kills ones who never struck it, and a kill must leave them dead"
+	}
+	return true, ""
+}
+
 func main() {
 	addr := flag.String("addr", ":15779", "listen address for the gateway service")
 	postgresDSN := flag.String("postgres-dsn", "postgres://postgres:postgres@localhost:5432/srrevamp?sslmode=disable",
@@ -540,6 +562,16 @@ func main() {
 			"fallback). Default OFF: off, a kill respawns the player at once and the wire is what it "+
 			"was. Needs a client release that carries round 548 (the Revive button); an older client "+
 			"is freed by the fallback alone. See deploy/README.md, \"Player dead state (off by default)\".")
+	aggroEnv, aggroEnvErr := envBool("SRREVAMP_MONSTER_AGGRO")
+	aggro := flag.Bool("monster-aggro", aggroEnv,
+		"let monsters notice players (env SRREVAMP_MONSTER_AGGRO): a monster idle, wandering or, once "+
+			"its blackout has passed, running home scans every 1001-1500 ms for the nearest living player "+
+			"within its collision radius + 100 units (the detection distance, an own-design stand-in for "+
+			"a server-database column: 104-111 units for the roster) and engages it as a blow would, "+
+			"through -monster-battle's chase and swings. Default OFF: off, a monster fights only when "+
+			"struck and the wire is what it was. Forced off with a WARN unless -monster-battle is in "+
+			"effect and -player-dead-state is on. Needs the client releases those two need (rounds 546 "+
+			"and 548). See deploy/README.md, \"Monster aggro (off by default)\".")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -562,6 +594,10 @@ func main() {
 	if deadStateEnvErr != nil {
 		logger.Warn("SRREVAMP_PLAYER_DEAD_STATE is not a boolean; the player dead state stays off unless -player-dead-state is given",
 			"err", deadStateEnvErr)
+	}
+	if aggroEnvErr != nil {
+		logger.Warn("SRREVAMP_MONSTER_AGGRO is not a boolean; the monster aggro stays off unless -monster-aggro is given",
+			"err", aggroEnvErr)
 	}
 
 	// Install the EXP curve if the operator provided one. Game data, so never
@@ -975,6 +1011,22 @@ func main() {
 		logger.Info("monster battle on: a struck monster chases to its attack band at its run speed and swings on its skill's ReuseDelay, each blow pushed as OpMonsterAttacked 0x007D")
 	} else {
 		logger.Info("monster battle off (-monster-battle / SRREVAMP_MONSTER_BATTLE)")
+	}
+
+	// Target acquisition (round 552), behind its own flag, which needs the
+	// battle in effect (a noticed player is engaged by the chase and the
+	// swings) and the dead state (a monster that seeks players out kills ones
+	// who never struck it). Forced off with a WARN, never an exit. Set before
+	// the AI starts, like the battle above.
+	aggroOn, aggroWhy := monsterAggroAllowed(*aggro, battleOn, *deadState)
+	if *aggro && !aggroOn {
+		logger.Warn("monster aggro forced off", "why", aggroWhy)
+	}
+	session.SetMonsterAggro(aggroOn)
+	if aggroOn {
+		logger.Info(fmt.Sprintf("monster aggro on: a monster notices the nearest living player within its collision radius + %d units (own design) every 1001-1500 ms while idle, wandering or home from its blackout, and engages it", ai.TacticsDetectionDistance))
+	} else {
+		logger.Info("monster aggro off (-monster-aggro / SRREVAMP_MONSTER_AGGRO)")
 	}
 
 	// The monster AI (round 537), behind its kill switch. Installed here,

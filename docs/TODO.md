@@ -247,9 +247,16 @@ In order. Each is checked off here when it ships in a release, with its round in
         dead (`(tid & 0xf800) == 0x3000` in `Item_HandleUseItem`), the duel's own death path (still
         `ResetHP`, alive: which death kind a duel is remains unread), and revive at entry rather than
         staying dead across sessions. Not modelled: the siege countdown gate, the cause-2 branch.
-      - **mob-acquire**: target acquisition (round 257: radius = BCRadius + `_RefTactics.+0x14`,
-        the nearest player, no level term). The per-species distance is in no archive this project
-        holds (the tactics table is shard-DB only), so it is disclosed per species when built.
+      - **mob-acquire** -- BUILT in round 552 behind `-monster-aggro` (default off; forced off
+        unless `-monster-battle` is in effect and `-player-dead-state` is on): target acquisition
+        (round 257: radius = BCRadius + `_RefTactics.+0x14`, the nearest player, no level term) with
+        the cadence, the aggression roll and the truncations read for it (`monster_ai.md`, "Target
+        acquisition: the runtime (round 552)"). The per-species distance is in no archive this
+        project holds (the tactics table is shard-DB only), so it is ONE disclosed stand-in for
+        every species, 100 (`ai.TacticsDetectionDistance`), with every species aggressive
+        (`ai.TacticsAggressionMode` 0) -- both user decisions; a per-species table is the open
+        follow-up if one is ever wanted. Left: the flag's flip (`deploy/README.md`, "Monster aggro
+        (off by default)"), after its live check's result in that section.
       - **mob-aggro-link** (round 258): a party member's hit pulls in as many of the ten nearest
         monsters as the party has members within 1000 units, credited 100/50/25 % of the attack
         record's **hate**, and the struck monster books 1.15x that hate. *Corrected in round 537*:

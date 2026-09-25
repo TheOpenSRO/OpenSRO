@@ -530,3 +530,29 @@ func TestMonsterBattleAllowed(t *testing.T) {
 		}
 	}
 }
+
+// Round 552: -monster-aggro takes effect only with -monster-battle in effect
+// (a noticed player is engaged by the chase and the monster's own swings) and
+// -player-dead-state on (a monster that seeks players out kills ones who never
+// struck it); any other combination leaves it off with a reason for main's
+// WARN, never an exit. Off asked for is off with no reason.
+func TestMonsterAggroAllowed(t *testing.T) {
+	for _, c := range []struct {
+		aggro, battleOn, dead bool
+		want                  bool
+		reason                bool
+	}{
+		{false, false, false, false, false},
+		{false, true, true, false, false},
+		{true, false, false, false, true},
+		{true, true, false, false, true},
+		{true, false, true, false, true},
+		{true, true, true, true, false},
+	} {
+		on, why := monsterAggroAllowed(c.aggro, c.battleOn, c.dead)
+		if on != c.want || (why != "") != c.reason {
+			t.Errorf("monsterAggroAllowed(aggro %v, battleOn %v, dead %v) = %v, %q; want %v with a reason: %v",
+				c.aggro, c.battleOn, c.dead, on, why, c.want, c.reason)
+		}
+	}
+}

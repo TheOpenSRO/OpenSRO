@@ -417,6 +417,16 @@ func TestHomingRules(t *testing.T) {
 	if d := HomingReaggroDelayMs(56, 0); d != 0 {
 		t.Fatalf("no speed, no window: %d", d)
 	}
+	// The conversion truncates (fistp under RC=chop, 0x55a622/0x55a636):
+	// 5/3 s is 1666 ms, not the 1667 the helper gave until round 552 -- the
+	// helper's own negative. The Mangyang's blackout under the stand-in
+	// (radius 106, run 22) is 4818 ms, a value derived from that stand-in.
+	if d := HomingReaggroDelayMs(5, 3); d != 1666 {
+		t.Fatalf("re-aggro delay for 5 units at 3/s = %d ms; want 1666 (truncated), not 1667 (rounded)", d)
+	}
+	if d := HomingReaggroDelayMs(106, 22); d != 4818 {
+		t.Fatalf("the Mangyang's blackout = %d ms; want 4818", d)
+	}
 }
 
 // angleBetween is the signed difference a - b folded into (-pi, pi].

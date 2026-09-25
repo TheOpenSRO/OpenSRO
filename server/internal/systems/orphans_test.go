@@ -67,12 +67,9 @@ var knownOrphans = map[string]string{
 		"0x547570, round 258) -- wired by mob-aggro-link.",
 	"AggroLinkDamage": "the hate each successive link carries (the record's +8 scaled by " +
 		"MONSTER_AGGRO_LINK_DECREASE_RATIO, round 258, corrected in round 537) -- wired by mob-aggro-link.",
-	"DetectionRadius": "how far a monster notices a player, BCRadius + _RefTactics +0x14 (round 257) " +
-		"-- wired by mob-acquire.",
-	"LevelScaledRadius": "the BATTLE-entry level bands on the detection radius (round 257) -- wired by " +
-		"mob-acquire and mob-aggro-link.",
-	"HomingReaggroDelayMs": "HOMING's re-aggro blackout, detectionRadius / runSpeed (round 261); it " +
-		"only matters once monsters notice players -- wired by mob-acquire.",
+	"LevelScaledRadius": "the BATTLE-entry level bands on the detection radius (round 257), which " +
+		"scale the gather the aggro link forwards to; acquisition itself has no level term (round 552 " +
+		"wired it without this) -- wired by mob-aggro-link.",
 	"AttackIntervalRange": "a monster's swing interval, ReuseDelay + rand % (J + 1) (ArmNextAttack " +
 		"0x5619e0, round 259). Round 545's timer read settled that the jitter never delays a swing: " +
 		"the interval is only ever armed on a first-table timer, which fires at once (ArmTimer " +

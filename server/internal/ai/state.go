@@ -9,10 +9,10 @@
 // holds a struck monster where the blow found it. Every stand-in it carries is
 // listed in docs/protocol/monster_ai.md, "srrevamp's runtime".
 //
-// Still NOT wired: the BATTLE chase and the monster's own swing (the
-// counterattack in session/combat.go is still a synchronous reply inside the
-// player's attack handler, so a monster only ever strikes when struck), target
-// acquisition, the aggro link, the threat table's retarget rules and the skill
+// Since then, each behind its own default-off flag: the BATTLE chase and the
+// monster's own swing (round 546, -monster-battle; battle.go's rules) and
+// target acquisition (round 552, -monster-aggro; acquire.go's rules). Still
+// NOT wired: the aggro link, the threat table's retarget rules and the skill
 // choice. internal/systems' orphans_test.go names each such function with the
 // item that will call it -- the rule this package was parked under until round
 // 537, after the HP/MP regen rule and the real drop tables were each found
@@ -421,12 +421,17 @@ func WanderLegDirection(dirX, dirZ, turn float64) (x, z float64) {
 //	                                                    ; fiadd [row+0x14])
 //
 // AITactics_AcquireTarget (0x5478f0, behaviour +0xf8, installed only when the
-// row's +0x14 is non-zero) scans the regions within round(detection) for
-// PLAYERS (kind mask 1 by default; the row's flag bits 2/7/8 widen the kinds)
-// and takes the NEAREST by the region-aware distance (selector 2,
-// 0x5464e0). No level term: a level-1 Mangyang and a level-60 player are the
-// same candidate. The row's aggression mode gates whether the scan runs at
-// all (mode 1 never, mode 2 by its percent, rolled once at spawn).
+// row's +0x14 is non-zero) scans the regions within trunc(detection) (RC=chop:
+// `or eax,0xc00` 0x547989, `fistp` 0x54799a; round 552 corrected round 257's
+// "round") for PLAYERS (kind mask 1 by default; the row's flag bits 2/7/8
+// widen the kinds) and takes the NEAREST by the region-aware distance
+// (selector 2, 0x5464e0; acquire.go's Nearest carries its compare). No level
+// term: a level-1 Mangyang and a level-60 player are the same candidate. The
+// row's aggression mode gates whether the scan runs at all (mode 1 never,
+// mode 2 by its percent, rolled once at spawn: Aggressive), and tactics timer
+// 1 paces it (ScanPeriodMs). IDLE, WANDER, HOMING (after its blackout),
+// WATCHOUT and EMOTION run it from their OnUpdate; the runtime's three are
+// session/monsterai.go's acquire, behind -monster-aggro (round 552).
 //
 // The level term lives elsewhere: on entering BATTLE the same base radius is
 // scaled against the TARGET's level and the ten nearest MONSTERS inside it
@@ -443,7 +448,9 @@ func WanderLegDirection(dirX, dirZ, turn float64) (x, z float64) {
 // The per-species +0x14 distances are in no archive this project holds
 // (_RefTactics is a server database table; the package on the box carries
 // no shard backup, and its GameServer minidumps hold no heap), so a
-// monster's detection distance stays disclosed until a source appears.
+// monster's detection distance stays disclosed until a source appears:
+// TacticsDetectionDistance (acquire.go) is the one stand-in every species
+// gets under -monster-aggro.
 const (
 	LevelRadiusFarAbove  = 1.4 // target at least 4 levels below the monster
 	LevelRadiusAbove     = 1.2 // 1 to 3 levels below
@@ -586,11 +593,20 @@ func HomingScatterRange(radius float64) (min, max float64) {
 
 // HomingReaggroDelayMs is how long a homing monster ignores players: the
 // time to cover its detection radius at its run speed (units per second),
-// rounded to milliseconds. Zero speed means never (the engine would divide
-// by zero; an immobile monster does not home).
+// TRUNCATED to milliseconds. CAIState_HOMING::OnEnter (0x55a540) computes the
+// state's +0x1c at 0x55a60e..0x55a63e as `fld [ctx+0x15c]; fdiv [owner+
+// 0x170]; fmul QWORD 0xb45c68` (1000.0) under the control word it found, then
+// `or eax,0xc00; fldcw; fistp QWORD` -- RC=chop for the conversion alone --
+// and ReaggroWindowPassed (0x55a720) is `now - enteredAt > +0x1c`, strict.
+// Corrected in round 552: round 261 read it as rounded, and the helper added
+// 0.5 (5/3 s gave 1667; the engine's is 1666). Zero speed means never (the
+// engine would divide by zero; an immobile monster does not home). The two
+// roundings before the conversion are float64's here as the x87's at its
+// default 53-bit precision; the roster's values (106/22 -> 4818.18) are
+// nowhere near an integer.
 func HomingReaggroDelayMs(detectionRadius, runSpeed float64) int {
 	if runSpeed <= 0 {
 		return 0
 	}
-	return int(detectionRadius/runSpeed*1000 + 0.5)
+	return int(detectionRadius / runSpeed * 1000)
 }

@@ -2146,3 +2146,280 @@ func TestTwoSwingsOnACharacterAliveAtZeroChargeOnePenalty(t *testing.T) {
 		})
 	}
 }
+
+// --- Target acquisition, -monster-aggro (round 552) --------------------------
+
+// aggroForTest turns -monster-aggro on or off for the rest of the test and
+// puts it back when the test ends. Production only ever passes true with the
+// battle in effect and the dead state on (cmd/server's monsterAggroAllowed),
+// so the tests below set all three.
+func aggroForTest(t *testing.T, on bool) {
+	t.Helper()
+	was := monsterAggro.Load()
+	SetMonsterAggro(on)
+	t.Cleanup(func() { SetMonsterAggro(was) })
+}
+
+// standingMangyang is chaseMangyang with no speed at all: it can neither
+// WANDER (the leg needs a run speed) nor chase, so a control about the
+// acquisition radius is measured from where it was spawned.
+var standingMangyang = func() combat.Species {
+	s := chaseMangyang
+	s.WalkSpeed, s.RunSpeed = 0, 0
+	return s
+}()
+
+// ariaSession is Aria's session in the fixture's hub, for a walk (hub.Move).
+func (f *battleFixture) ariaSession(t *testing.T) *gateway.Session {
+	t.Helper()
+	e, ok := f.hub.EntityByCharacterID(f.aria)
+	if !ok {
+		t.Fatal("Aria is not in the world")
+	}
+	return e.Session
+}
+
+// tickUntilBattle ticks from now until monster id is in BATTLE or n ticks
+// have passed, and returns the clock and whether it got there.
+func tickUntilBattle(t *testing.T, a *monsterAI, id int64, now time.Time, n int) (time.Time, bool) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+		if stateOf(t, a, id) == ai.StateBattle {
+			return now, true
+		}
+	}
+	return now, false
+}
+
+func TestMonsterAggroOffByDefault(t *testing.T) {
+	if monsterAggro.Load() {
+		t.Fatal("the monster aggro is on with nothing having asked for it: -monster-aggro is off by default")
+	}
+}
+
+// THE RED (round 552): with -monster-aggro on, a player who walks to 50
+// units of an idle Mangyang (acquisition radius 6 + 100 = 106) is noticed
+// within one scan period (at most 1500 ms, 15 ticks), the monster enters
+// BATTLE with her as its target, its first push is the chase leg toward her
+// (mode 1 at the run speed), and its first swing lands once it reaches its
+// band. Standing 200 units off she is never noticed. Before this round
+// nothing noticed anyone: a monster entered BATTLE only when struck.
+func TestMonsterNoticesAPlayerWalkingIntoRange(t *testing.T) {
+	battleForTest(t, true)
+	deadStateForTest(t, true)
+	aggroForTest(t, true)
+	f := startBattleFixture(t, 31, 200, 0)
+	m := f.monsters.SpawnSpecies("jangan", chaseMangyang, 0, 0, 0, 1000, 0, 15, 0)
+	now := aiT0
+	// 3 s out of range: a WANDER leg at 8 u/s moves the monster at most 24
+	// units, so she stays beyond 106.
+	for i := 0; i < 30; i++ {
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+		if st := stateOf(t, f.a, m.ID); st == ai.StateBattle {
+			t.Fatalf("tick %d: BATTLE with Aria 200 units off (radius 106)", i)
+		}
+	}
+	// She walks to 50 units of wherever the monster stands now.
+	cur, _ := f.monsters.Get(m.ID)
+	f.hub.Move(f.ariaSession(t), world.Position{X: cur.X + 50, Z: cur.Z})
+	f.rec.reset()
+	now, noticed := tickUntilBattle(t, f.a, m.ID, now, 16)
+	if !noticed {
+		t.Fatalf("not in BATTLE 1.6 s after Aria walked to 50 units (the scan period is at most 1500 ms); state %v", stateOf(t, f.a, m.ID))
+	}
+	f.a.mu.Lock()
+	target := f.a.brains[m.ID].target
+	f.a.mu.Unlock()
+	if target != f.aria {
+		t.Fatalf("the target is %d, want Aria %d", target, f.aria)
+	}
+	// The next tick's push is the chase toward her: mode 1 at 22.
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	moves := f.rec.of(m.ID)
+	if len(moves) == 0 {
+		t.Fatal("no leg pushed on the tick after the monster noticed her")
+	}
+	leg := moves[len(moves)-1]
+	if leg.Mode != 1 || leg.Speed != 22 {
+		t.Errorf("the leg after noticing is mode %d at %g, want the chase: mode 1 at the run speed 22", leg.Mode, leg.Speed)
+	}
+	e, _ := f.hub.EntityByCharacterID(f.aria)
+	if d := math.Hypot(float64(leg.DestX)-e.Pos.X, float64(leg.DestZ)-e.Pos.Z); math.Abs(d-10) > 1.5 {
+		t.Errorf("the chase leg ends %.1f from Aria, want about 10 (the stop distance)", d)
+	}
+	// 40 units at 22 u/s is under 2 s; then the first swing.
+	for i := 0; i < 40 && len(f.rec.strikesOf(m.ID)) == 0; i++ {
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+		time.Sleep(2 * time.Millisecond)
+	}
+	if !waitFor(t, 2*time.Second, func() bool { return len(f.rec.strikesOf(m.ID)) >= 1 }) {
+		t.Fatal("no blow on Aria within 4 s of the monster noticing her")
+	}
+	if s := f.rec.strikesOf(m.ID)[0]; s.TargetCharacterID != f.aria || s.Damage != 15 {
+		t.Errorf("the first blow %+v, want 15 on Aria %d", s, f.aria)
+	}
+}
+
+// Two players in range: the NEARER one is the target, not the first by id.
+// Aria (the lower id) stands 80 units off and Bram 50, so Bram is picked,
+// and the chase leg aims at him. The first scan is immediate (timer 1 starts
+// fired), so the monster is in BATTLE on its first tick.
+func TestMonsterNoticesTheNearerOfTwoPlayers(t *testing.T) {
+	battleForTest(t, true)
+	deadStateForTest(t, true)
+	aggroForTest(t, true)
+	f := startBattleFixture(t, 32, -80, 0)
+	bram, err := f.chars.Create(context.Background(), 1, "Bram")
+	if err != nil {
+		t.Fatalf("creating Bram: %v", err)
+	}
+	if bram.ID <= f.aria {
+		t.Fatalf("setup: Bram's id %d is not above Aria's %d", bram.ID, f.aria)
+	}
+	f.hub.Enter(gateway.NewTestSession(91232), bram.ID, "Bram", "jangan", world.Position{X: 50, Z: 0})
+	m := f.monsters.SpawnSpecies("jangan", chaseMangyang, 0, 0, 0, 1000, 0, 15, 0)
+	now := aiT0
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	if st := stateOf(t, f.a, m.ID); st != ai.StateBattle {
+		t.Fatalf("state %v after the first tick, want BATTLE: the first scan is immediate", st)
+	}
+	f.a.mu.Lock()
+	target := f.a.brains[m.ID].target
+	f.a.mu.Unlock()
+	if target != bram.ID {
+		t.Fatalf("the target is %d, want Bram %d (50 units off; Aria is 80 off)", target, bram.ID)
+	}
+	monsterAITick(now)
+	moves := f.rec.of(m.ID)
+	if len(moves) != 1 || moves[0].Mode != 1 || math.Abs(float64(moves[0].DestX)-40) > 1e-3 || math.Abs(float64(moves[0].DestZ)) > 1e-3 {
+		t.Fatalf("the chase leg %+v, want one leg to (40, 0), the stop distance from Bram", moves)
+	}
+}
+
+// CONTROL, the default: with -monster-aggro off the same player 50 units
+// from a Mangyang is never noticed -- no BATTLE, no leg but its own wandering,
+// no blow -- exactly as before this round. The battle and dead-state flags
+// are on, as they would be in production alongside the aggro.
+func TestMonsterAggroOffLeavesPlayersUnnoticed(t *testing.T) {
+	battleForTest(t, true)
+	deadStateForTest(t, true)
+	aggroForTest(t, false)
+	f := startBattleFixture(t, 33, 50, 0)
+	m := f.monsters.SpawnSpecies("jangan", standingMangyang, 0, 0, 0, 1000, 0, 15, 0)
+	now := aiT0
+	for i := 0; i < 60; i++ {
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+		if st := stateOf(t, f.a, m.ID); st != ai.StateIdle {
+			t.Fatalf("tick %d: state %v with the aggro off, want IDLE throughout", i, st)
+		}
+	}
+	if n := len(f.rec.strikesOf(m.ID)); n != 0 {
+		t.Errorf("%d blow(s) on Aria with the aggro off", n)
+	}
+	if c, _ := f.chars.GetByID(context.Background(), f.aria); c.HP != character.StartingMaxHP {
+		t.Errorf("Aria's HP %d, want untouched %d", c.HP, character.StartingMaxHP)
+	}
+}
+
+// The radius truncates and is inclusive: a player at 110 units of a standing
+// Mangyang (radius 106) is not noticed in 3 s, while one at exactly 106 is on
+// the first tick. The 110 half is a control (it holds before this round too);
+// the 106 half is not.
+func TestMonsterAcquisitionRadiusIsInclusive(t *testing.T) {
+	battleForTest(t, true)
+	deadStateForTest(t, true)
+	aggroForTest(t, true)
+	f := startBattleFixture(t, 34, 110, 0)
+	m := f.monsters.SpawnSpecies("jangan", standingMangyang, 0, 0, 0, 1000, 0, 15, 0)
+	now := aiT0
+	if now2, noticed := tickUntilBattle(t, f.a, m.ID, now, 30); noticed {
+		t.Fatal("a player at 110 units was noticed (radius 106)")
+	} else {
+		now = now2
+	}
+	f.hub.Move(f.ariaSession(t), world.Position{X: 106, Z: 0})
+	if _, noticed := tickUntilBattle(t, f.a, m.ID, now, 16); !noticed {
+		t.Fatalf("a player at exactly 106 units was not noticed within a scan period; state %v", stateOf(t, f.a, m.ID))
+	}
+}
+
+// A dead player is no candidate (IsValidTarget 0x540de0 wants life state 1,
+// asked inside the selector's PC branch and again by the 0x22 handler): dead
+// at 10 units she is not noticed in 3 s; revived, she is within a scan
+// period. The dead half is a control; the revived half is not.
+func TestMonsterDoesNotNoticeADeadPlayer(t *testing.T) {
+	battleForTest(t, true)
+	deadStateForTest(t, true)
+	aggroForTest(t, true)
+	f := startBattleFixture(t, 35, 10, 0)
+	if !f.hub.SetLifeState(f.aria, world.LifeAlive, world.LifeDead, aiT0) {
+		t.Fatal("setup: could not mark Aria dead")
+	}
+	m := f.monsters.SpawnSpecies("jangan", standingMangyang, 0, 0, 0, 1000, 0, 15, 0)
+	now := aiT0
+	now2, noticed := tickUntilBattle(t, f.a, m.ID, now, 30)
+	if noticed {
+		t.Fatal("a dead player at 10 units was noticed")
+	}
+	now = now2
+	if !f.hub.SetLifeState(f.aria, world.LifeDead, world.LifeAlive, now) {
+		t.Fatal("setup: could not revive Aria")
+	}
+	if _, noticed := tickUntilBattle(t, f.a, m.ID, now, 16); !noticed {
+		t.Fatalf("revived at 10 units she was not noticed within a scan period; state %v", stateOf(t, f.a, m.ID))
+	}
+}
+
+// HOMING's blackout: a Mangyang running home ignores players for
+// trunc(106 / 22 x 1000) = 4818 ms (a value derived from the detection
+// stand-in), then notices them. Carried 300 units east, it runs home at 22
+// past Aria at 150: she is inside 106 from about 2 s on and ignored through
+// the tick at 4800 ms (the window is strict: elapsed > 4818), and noticed on
+// the tick at 4900 ms. The first half is a control; the second is not.
+func TestHomingMonsterNoticesNobodyInsideItsBlackout(t *testing.T) {
+	battleForTest(t, true)
+	deadStateForTest(t, true)
+	aggroForTest(t, true)
+	f := startBattleFixture(t, 36, 150, 0)
+	m := f.monsters.SpawnSpecies("jangan", chaseMangyang, 0, 0, 0, 1000, 0, 15, 0)
+	f.monsters.SetMotion(m.ID, 300, 0, 300, 1)
+	f.monsters.StepAll(1)
+	f.monsters.StepAll(1)
+	if got, _ := f.monsters.Get(m.ID); got.X != 300 || got.Moving {
+		t.Fatalf("setup: the monster is at %g (moving %v), want standing at 300", got.X, got.Moving)
+	}
+	now := aiT0
+	monsterAITick(now) // hatches, IDLE's roam check sends it home: enteredAt = aiT0
+	if st := stateOf(t, f.a, m.ID); st != ai.StateHoming {
+		t.Fatalf("state %v after the first tick, want HOMING", st)
+	}
+	f.a.mu.Lock()
+	blackout := f.a.brains[m.ID].homingBlackoutMs
+	f.a.mu.Unlock()
+	if blackout != 4818 {
+		t.Fatalf("the blackout is %d ms, want 4818 (trunc(106 / 22 x 1000))", blackout)
+	}
+	for i := 1; i <= 48; i++ { // the ticks at 100 .. 4800 ms
+		now = now.Add(MonsterAITick)
+		monsterAITick(now)
+		cur, _ := f.monsters.Get(m.ID)
+		if d := math.Hypot(cur.X-150, cur.Z); i >= 25 && d > 106 {
+			t.Fatalf("setup: at %d ms the monster is %.1f from Aria, outside 106", i*100, d)
+		}
+		if st := stateOf(t, f.a, m.ID); st != ai.StateHoming {
+			t.Fatalf("at %d ms the state is %v, want HOMING through the 4818 ms blackout", i*100, st)
+		}
+	}
+	now = now.Add(MonsterAITick) // 4900 ms: past the window
+	monsterAITick(now)
+	if st := stateOf(t, f.a, m.ID); st != ai.StateBattle {
+		t.Fatalf("at 4900 ms, past the blackout, the state is %v, want BATTLE", st)
+	}
+}

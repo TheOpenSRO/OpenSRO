@@ -292,3 +292,44 @@ restated `command:` list. The boot log then reads
 **Off, the kill switch.** Remove that line (or set it to `"0"`), then run `docker compose up -d`.
 A character that was dead at the restart enters alive at 40 % on its next login (the load path's
 own rule for a stored zero pool).
+
+## Monster aggro (off by default)
+
+The server can let monsters notice players (round 552). A monster idle, wandering or, once its
+blackout has passed, running home scans on its own timer -- every 1001-1500 ms, rolled once per
+spawn, the first scan at once -- for the nearest LIVING player within its acquisition radius, its
+collision radius + 100 units (the detection distance is an own-design stand-in for a
+server-database column; the roster's radii are 104-111 units), and engages it exactly as a blow
+would: `-monster-battle`'s chase (`OpMonsterMoved` mode 1) and swings (`OpMonsterAttacked 0x007D`),
+the give-up by distance and the walk home. A monster running home ignores players for the time it
+takes to run its own radius (4818 ms for a Mangyang, a value derived from the stand-in). A dead
+player is never noticed. What is grounded and what is a stand-in is in
+`docs/protocol/monster_ai.md`, "Target acquisition: the runtime (round 552)".
+
+It is behind the `-monster-aggro` flag (env `SRREVAMP_MONSTER_AGGRO`), and **the default is off**:
+off, a monster fights only when struck, exactly as before. It also **needs `SRREVAMP_MONSTER_BATTLE`
+in effect (so `SRREVAMP_MONSTER_AI` and `SRREVAMP_MONSTER_STRIKE_PUSH` too) and
+`SRREVAMP_PLAYER_DEAD_STATE` on**: a noticed player is engaged by the chase and the monster's own
+swings, and a monster that seeks players out kills ones who never struck it, who must then stay
+dead rather than respawn in place. Without them the boot log reads `monster aggro forced off
+why=...` and the flag does nothing (never an exit, so the update loop never rolls back over a flag
+combination). After an update the boot log reads
+`monster aggro off (-monster-aggro / SRREVAMP_MONSTER_AGGRO)`.
+
+**Turn it on only when all of these hold:**
+
+1. The monster battle and the player dead state are on (the two sections above), with their own
+   conditions met -- in particular the client releases they need (rounds 546 and 548), since a
+   noticed player is chased, struck and killed by a monster it never touched.
+2. The live check in that `monster_ai.md` section passes on the render box (its "Measured"
+   paragraph says whether it has).
+3. You want EVERY roster species aggressive at 100 units. That is the stand-in; there is no
+   per-species setting yet, and the only other setting is this flag off.
+
+**On.** Add `SRREVAMP_MONSTER_AGGRO: "1"` under the server's `environment:` in the untracked
+`docker-compose.override.yml`, beside the four flags above, then run `docker compose up -d`. You
+can instead append `- "-monster-aggro=true"` to the override's restated `command:` list. The boot
+log then reads `monster aggro on: a monster notices the nearest living player ...`.
+
+**Off, the kill switch.** Remove that line (or set it to `"0"`), then run `docker compose up -d`.
+Turning `SRREVAMP_MONSTER_BATTLE` or `SRREVAMP_PLAYER_DEAD_STATE` off also turns this off.

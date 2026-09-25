@@ -34650,3 +34650,127 @@ caster reaches it) is killable again -- the pre-round-550 behaviour restored, wi
 double penalty. Two simultaneous kills still charge one penalty under either flag. Nothing else on
 the wire moves; every flag stays off. Round 549's order stands: tag and confirm the round-548
 client before `-player-dead-state` is ever flipped.
+
+## Monsters notice the nearest player, behind -monster-aggro (default off) (round 552)
+
+`mob-acquire`. Until this round a monster entered BATTLE only when struck: round 257 had read the
+acquisition rule (radius = BCRadius + `_RefTactics` column 6, the nearest player, no level term)
+and `ai.DetectionRadius` sat uncalled in `orphans_test.go`. Behind `cmd/server`'s
+`-monster-aggro` (env `SRREVAMP_MONSTER_AGGRO`, **off by default**, named in `server/README.md` and
+`deploy/README.md`; forced off with a WARN unless `-monster-battle` is in effect and
+`-player-dead-state` is on), a monster idle, wandering or, past HOMING's blackout, running home now
+scans on tactics timer 1 for the nearest living player inside its acquisition radius and engages it
+as a blow would, through round 546's chase and swings. **Flag off: nothing changes** -- no scan, no
+new rng draw, the wire as it was. No opcode or layout changed.
+
+**Grounding, re-read in `/var/tmp/srv.asm` and the decomp dump for this round (2026-09-24; the
+reading is in `docs/protocol/monster_ai.md`, "Target acquisition: the runtime (round 552)").**
+
+- The radius: `BindSkillsAndRanges` `0x53fa23..0x53fa4f` (`fild` BCRadius, `fiadd [row+0x14]`,
+  `fstp [ctx+0x15c]`). The scan: `AITactics_AcquireTarget` `0x5478f0` -- the COS refusal
+  (`0x547923..0x54792b`), **timer 1** (`mov ecx,0x1` `0x54793a`, `AITactics_TimerDue` at
+  `0x54793f`), the aggression byte 0 or 3 (`0x547958..0x547964`), **trunc(ctx+0x15c)** under
+  RC=chop (`or eax,0xc00` `0x547989`, `fistp` `0x54799a`), **kind mask 1 with selector 2**
+  (`0x5479b9`/`0x5479be`; the plan's "kinds (1,2)" corrected), `ScanForTargets` `0x5405b0`,
+  `SetTarget` `0x53ffe0` at `0x547a67`.
+- The selector `AITactics_Select_Nearest` `0x5464e0`: at most the radius (`0x54668d..0x5466a0`),
+  `ValidTargetOrNull` `0x540dc0` in the PC branch (life state 1, `IsValidTarget` `0x540de0`),
+  strictly nearer than the pick's TRUNCATED stored distance (`0x5466c8..0x5466e6`,
+  `0x546725..0x546758`), a stored 0 read as no pick (`0x54671b`). Carried as read (`ai.Nearest`).
+- The aggression roll, `Init` `0x53f5be..0x53f5e1`: the mode as it is unless 2, then `rand % 100
+  >= pct` -> 1 (not aggressive). `ai.Aggressive`.
+- **The cadence, from the asm** (the decompile drops `ArmTimer`'s ECX/EAX arguments): `Init`
+  `0x53f712..0x53f765` -- spread `10 + |rand| % 491` with base 1000 (`0x1eb` at `0x53f750`, `0x3e8`
+  at `0x53f757`, `add edx,0xa` at `0x53f75c`), or `10 + |rand| % 41` with base 200 under flag bits
+  2/7 (`0x53f71b`, `0x53f741`; `0x29`, `0xc8`), `mov ecx,1; call 0x53d600` at `0x53f760..0x53f765`;
+  `ArmTimer` first-table path: `period = base + |rand| % spread + 1` (`div ebp` `0x53d6ab`, `lea
+  edi,[edx+edi*1+0x1]` `0x53d6ad`; the second table's twin `0x53d650`), `last = 0`, `fired = 1`
+  (`0x53d6c0`, `0x53d6c7`). So **[1001, 1500] ms** (the plan's [1011, 1501] was wrong by the +1 and
+  the floor), the first scan immediate; `TimerDue` `0x53d751`/`0x53d75d..0x53d765`.
+  `ai.ScanPeriodMs`.
+- Who runs it: `CAIState_IDLE::OnUpdate` `0x55a8b0` -- **slot 3 of IDLE's vtable `0xaf899c`**,
+  read off `.rdata` (`80dd5300 80635000 809c5500 b0a85500`), shared with EMOTION's `0xaf8e4c`, which
+  is why round 257 listed only WANDER/HOMING/WATCHOUT/EMOTION; `WANDER::OnUpdate` `0x559eb0`;
+  `HOMING::OnUpdate` `0x55a690` after slot 48 `ReaggroWindowPassed` `0x55a720` (`now - enteredAt >
+  +0x1c`, strict). The `0x22` handler `0x559900`: `ValidTargetOrNull`, `IsTargetWithinChaseRange`
+  `0x545e50`, `ChangeState(3)`.
+- HOMING's blackout, `HOMING::OnEnter` `0x55a60e..0x55a63e`: `fld; fdiv; fmul QWORD 0xb45c68` then
+  `or eax,0xc00; fldcw; fistp` -> **trunc**(radius / runSpeed x 1000) ms. `ai.HomingReaggroDelayMs`
+  added 0.5 (5/3 s gave 1667; the engine's is 1666): fixed, and `monster_ai.md`'s two "round"s (the
+  scan's radius and this) corrected in place. No level term in acquisition (round 257).
+
+**Wired.** `ai/acquire.go` (new): the four column stand-ins `TacticsDetectionDistance` (100),
+`TacticsAggressionMode` (0), `TacticsAggressionPct` (0), `TacticsFlags` (0) and
+`TacticsFlagsFastScan` (0x84); `ScanPeriodMs`, `Aggressive`, `Candidate`, `Nearest`.
+`ai/state.go`: the header, the acquisition comment (trunc; IDLE among the callers),
+`HomingReaggroDelayMs` truncating. `session/monsterai.go`: `SetMonsterAggro` / `monsterAggro`;
+the brain's `detection`, `aggressive`, `scanPeriodMs`, `scanDueAt`, `homingBlackoutMs`; `newBrain`
+rolls Init's two draws only under the flag (so the flag-off runtime's seeded replays are unchanged);
+`acquire` (the order above, players in life state 1 in the monster's zone, character-id order,
+`ai.Nearest`, `SetTarget`, the chase-range test, `0x22` -> BATTLE); its three call sites in
+`update` -- IDLE after the expiry (which now returns, as the engine's does), WANDER before the roam
+check, HOMING once `elapsed > homingBlackoutMs` and before the arrival test; `enterHoming` sets the
+blackout on every entry. `cmd/server`: the flag with its env and WARN, `monsterAggroAllowed`, the
+boot lines, `SetMonsterAggro` before the AI starts. `orphans_test.go`: `DetectionRadius` and
+`HomingReaggroDelayMs` removed (both called now); `LevelScaledRadius` narrowed to mob-aggro-link
+(acquisition has no level term). `combat/combat.go` needed no change.
+
+**Stand-ins, each disclosed at its line and in the section**: detection distance 100 for every
+species and aggression mode 0 for every species (both user decisions; the columns are
+server-database only and no value was read anywhere -- the flag is the "none aggressive" setting),
+the flag word 0, players only (srrevamp summons nothing), the world hub's zone as the region set,
+character-id candidate order, the ground-plane distance (as `battleTick`'s; `GObj_DistanceBetween`
+sums three axes and srrevamp's monsters have no height), the timer unpolled while the flag is off.
+Derived, not read: the Mangyang's 4818 ms blackout (106 / 22). Not modelled: the selector's
+slot-355 test and summoned-object detour, WATCHOUT's and EMOTION's scans, the fast timer and wider
+kinds a non-zero flag word would need.
+
+**Tests** (`cd server && go build ./... && go test -count=1 -p 1 ./...` green; re-run after the doc
+edits): `session` -- `TestMonsterNoticesAPlayerWalkingIntoRange` (THE RED),
+`TestMonsterNoticesTheNearerOfTwoPlayers`, `TestMonsterAcquisitionRadiusIsInclusive`,
+`TestMonsterDoesNotNoticeADeadPlayer`, `TestHomingMonsterNoticesNobodyInsideItsBlackout`,
+`TestMonsterAggroOffLeavesPlayersUnnoticed` (the flag-off control), `TestMonsterAggroOffByDefault`;
+`ai` -- `TestScanPeriodRangesAsRead` (20 000 draws in [1001, 1500], the low end under 1011 reached;
+[201, 250] under 0x4/0x80/0x84), `TestAggressiveByMode`,
+`TestNearestPicksTheCloserAndTruncatesTheRadius`, `TestDetectionRadiusUnderTheStandIn`,
+`TestHomingRules` (+ 1666 and 4818); `cmd/server` -- `TestMonsterAggroAllowed`. **Negatives, proved
+two ways**: (1) the four production files stashed (`git stash push -u -- internal/ai/acquire.go
+internal/ai/state.go internal/session/monsterai.go cmd/server/main.go`): `ai`, `session` and
+`cmd/server` tests fail to build (`undefined: Aggressive`, `undefined: SetMonsterAggro`,
+`homingBlackoutMs undefined`, `undefined: monsterAggroAllowed`); (2) with ONLY `acquire`'s body
+replaced by `return false`, the five positive halves fail as written -- `not in BATTLE 1.6 s after
+Aria walked to 50 units ... state WANDER`, `state IDLE after the first tick, want BATTLE`, `a player
+at exactly 106 units was not noticed`, `revived at 10 units she was not noticed`, `at 4900 ms, past
+the blackout, the state is HOMING` -- while the two controls hold; and with ONLY the helper's
+`+ 0.5` restored, `TestHomingRules` fails on `1667 ms; want 1666`. Restored from kept copies (byte
+for byte, `cmp`) and green again. Client untouched (`remote_godot.sh tests` not needed).
+
+**Live check (render box, 2026-09-25): PASSED** -- `monster_ai.md`, the section's "Measured". The
+plan's design (`--say "/spawn Mangyang"`, an unarmed player 50 units off) cannot run as written: a
+GM command is `OpGMCommand 0x00F1`, which only the chat box's `forward_gm` sends, while `--say` is
+chat; the first run spawned nothing (logged). The run that passed used only existing hooks --
+`--attack` with the GOTO on a Yeoha and `SRREVAMP_QA_REVIVE_AFTER=60` -- and needed none of them:
+the whole 600-frame run has **no `struck by` line**. A Yeoha wandering off its anchor noticed the
+still-loading player at 104 units (`ai: monster 9 noticed 1 at 104, engaging`), chased at 20
+(`BATTLE chase ... speed 20 mode 1`), killed her in three blows 2.5 s apart (its ReuseDelay), ran
+home with its 5550 ms blackout (trunc(111 / 20 x 1000)), and 46 s after the QA revive noticed her
+again at 100 with no player blow in between, killed her again, and the QA revive brought her back
+once more. The client drew every blow as its own, locked at HP 0 and revived at 81 (round 550's
+arithmetic). Frames deleted; both runs' server logs kept under `/var/tmp/mobaggro552/`. A lane
+lesson recorded here: `qa_shot.sh` re-execs itself under `/var/tmp/godot-lock/lock`, so a caller
+that already holds that lock must pass `QA_SHOT_LOCKED=1` or it deadlocks (the first launch did;
+killed by pid, not `pkill -f`).
+
+**Records**: `server/README.md` (the flag row), `deploy/README.md` ("Monster aggro (off by
+default)"), `docs/protocol/monster_ai.md` (the new section; the `0x22` senders, column 6/7/8/42
+notes, the scan's `trunc`, the HOMING `trunc`, the behaviour table's `+0xf8` callers, the runtime
+section's two "not modelled" bullets, the round-257 closing paragraph), `docs/SYSTEMS.md` (the
+Monster AI row: `SetMonsterAggro` anchored, the acquisition paragraph, the "Next" list),
+`docs/TODO.md` (mob-acquire built; what is left). `WORLD_ISSUES.md` stays untouched, as in rounds
+541-551.
+
+**Deploy note.** The flag defaults off and pushing to `dev` deploys nothing new to a player. Before
+it is ever flipped: `-monster-battle` and `-player-dead-state` must be in effect with the client
+releases they need (rounds 546 and 548) tagged and green, and the operator must want every roster
+species aggressive at 100 units -- there is no per-species setting, only this flag. Then the
+override line in `deploy/README.md`.

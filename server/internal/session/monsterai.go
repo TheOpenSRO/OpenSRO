@@ -46,6 +46,16 @@ import (
 // speed and swings on its own timer, each blow pushed to the zone as an
 // OpMonsterAttacked, and leaves by the engine's exits (battleTick). The
 // synchronous counter in performAttack is then skipped.
+//
+// With -monster-aggro on as well (SetMonsterAggro, round 552; OFF by
+// default, and cmd/server forces it off unless -monster-battle is in effect
+// and -player-dead-state is on), a monster notices players on its own
+// (acquire): idle, wandering or, once its blackout has passed, running home,
+// it scans on tactics timer 1 for the nearest living player inside its
+// acquisition radius -- BCRadius + ai.TacticsDetectionDistance, 104..111 for
+// the roster -- and engages it as a blow would, through BATTLE's chase and
+// swings. Off, a monster fights only when struck, and the runtime draws
+// nothing new from its rng.
 
 // MonsterAITick is how often the runtime steps the monsters and runs their
 // states. OWN DESIGN: the engine's AI period is unread; the one period read
@@ -126,6 +136,22 @@ var monsterBattle atomic.Bool
 // counter and the interim hold are what they were.
 func SetMonsterBattle(on bool) { monsterBattle.Store(on) }
 
+// monsterAggro is cmd/server's -monster-aggro (SRREVAMP_MONSTER_AGGRO), OFF
+// by default. An atomic for the same reason monsterBattle is one: set on the
+// boot goroutine, read by the tick on its own.
+var monsterAggro atomic.Bool
+
+// SetMonsterAggro turns target acquisition -- a monster noticing the nearest
+// living player inside its acquisition radius and engaging it unstruck -- on
+// or off. cmd/server calls it once at boot, before the AI starts, and only
+// passes true when -monster-battle is in effect (a noticed player is engaged
+// by the chase and the monster's own swings; under the interim hold the
+// monster would only stand where it noticed) and -player-dead-state is on (a
+// monster that seeks players out kills ones who never struck it, and a kill
+// must leave them dead rather than respawned in place). With it off nothing
+// scans, and the brains draw nothing new from the rng.
+func SetMonsterAggro(on bool) { monsterAggro.Store(on) }
+
 // ChaseReaimDistance is how far a BATTLE target must have moved since the
 // chase last aimed at it before the leg is re-issued to the zone (chase). OWN
 // DESIGN, an engineering choice: the engine re-aims its walk on every AI
@@ -189,8 +215,10 @@ type monsterAI struct {
 	last, now  time.Time
 	tickN      uint64
 	// battle is -monster-battle as this pass read it (monsterBattle), once,
-	// so one pass runs one BATTLE or the other throughout.
+	// so one pass runs one BATTLE or the other throughout; aggro is
+	// -monster-aggro the same way (monsterAggro).
 	battle  bool
+	aggro   bool
 	pending []monsterPush
 	// handoffs is the swings this pass decided on (queueStrike), handed to
 	// their strike workers after the pass's pushes are out (handStrike).
@@ -256,6 +284,31 @@ type brain struct {
 	// strikes feeds this monster's strike worker (queueStrike); nil until
 	// the first swing, closed when the brain is dropped.
 	strikes chan strikeJob
+
+	// Target acquisition (-monster-aggro, acquire):
+	//
+	// detection is the acquisition radius, ctx+0x15c: BCRadius plus the
+	// detection distance (ai.DetectionRadius with ai.TacticsDetectionDistance,
+	// the stand-in for _RefTactics column 6); 0 for a species that never
+	// acquires. Set for every brain -- it is arithmetic -- and read only
+	// under the flag.
+	detection float64
+	// aggressive is the aggression byte's verdict, ctx+0x168 (ai.Aggressive,
+	// rolled at Init 0x53f5be..0x53f5e1), fixed for the monster's life.
+	aggressive bool
+	// scanPeriodMs is tactics timer 1's period, rolled once at Init
+	// (ai.ScanPeriodMs; 1001..1500 ms under the stand-in flags), and scanDueAt
+	// is when the timer is next due: zero is "due", the first-table arming's
+	// fired start (ArmTimer 0x53d6c7), and each consumption sets it a period
+	// on (TimerDue 0x53d765). Both are the flag's: rolled only when this pass
+	// read it on, so the flag-off runtime draws nothing new from the rng.
+	scanPeriodMs int
+	scanDueAt    time.Time
+	// homingBlackoutMs is HOMING's re-aggro window, the state's +0x1c
+	// (ai.HomingReaggroDelayMs: trunc(detection / run speed x 1000) ms,
+	// CAIState_HOMING::OnEnter 0x55a60e..0x55a63e), set on each entry;
+	// ReaggroWindowPassed (0x55a720) is `now - enteredAt > +0x1c`, strict.
+	homingBlackoutMs int
 }
 
 // strikeJob is one swing handed to a monster's strike worker: the monster as
@@ -393,6 +446,7 @@ func (a *monsterAI) tick(now time.Time) {
 	a.last, a.now = now, now
 	a.tickN++
 	a.battle = monsterBattle.Load()
+	a.aggro = monsterAggro.Load()
 
 	// 1. The mover (combat.MoverStep: the 160 cap and the no-overshoot clamp).
 	a.monsters.StepAll(dt)
@@ -506,20 +560,29 @@ func (a *monsterAI) update(b *brain) {
 	elapsed := int(a.now.Sub(b.enteredAt) / time.Millisecond)
 	switch b.machine.State() {
 	case ai.StateIdle:
-		// CAIState::OnUpdate's expiry (0x00558b90) dispatches 0x25, which IDLE
-		// overrides with the roll (slot 41, CAIState_IDLE::OnMsg_0x25
-		// 0x00559cf0): another idle spell, or WANDER.
+		// CAIState_IDLE::OnUpdate (0x0055a8b0, slot 3 of IDLE's vtable
+		// 0xaf899c): CAIState::OnUpdate's expiry (0x00558b90) dispatches 0x25,
+		// which IDLE overrides with the roll (slot 41, CAIState_IDLE::OnMsg_0x25
+		// 0x00559cf0): another idle spell, or WANDER -- and the update ends
+		// there. Otherwise the acquire behaviour (+0xf8) and, on its 2, message
+		// 0x22 -> BATTLE (acquire). The +0x108 call after it is not modelled.
 		if ai.DwellExpired(b.dwellMs, elapsed) {
 			a.change(b, ai.IdleNext(a.rng))
+			return
 		}
+		a.acquire(b)
 	case ai.StateWander:
 		// CAIState_WANDER::OnUpdate (0x00559eb0): the expiry dispatches 0x25
-		// (0x559ec9), whose default is IDLE -- the leg is NOT stopped; then,
-		// for a monster that can run, the roam check sends 0x26 (0x559f38..
-		// 0x559f65). The acquire (+0xf8) and +0x108 calls between them are
-		// not modelled.
+		// (0x559ec9), whose default is IDLE -- the leg is NOT stopped; then
+		// the acquire behaviour (+0xf8) and, on its 2, message 0x22 -> BATTLE
+		// (acquire); then, for a monster that can run, the roam check sends
+		// 0x26 (0x559f38..0x559f65). The +0x108 call between the acquire and
+		// the roam check is not modelled.
 		if ai.DwellExpired(b.dwellMs, elapsed) {
 			a.dispatch(b, ai.MsgInterrupted)
+			return
+		}
+		if a.acquire(b) {
 			return
 		}
 		if b.m.RunSpeed > 0 && !a.withinRoam(b) {
@@ -527,13 +590,19 @@ func (a *monsterAI) update(b *brain) {
 		}
 	case ai.StateHoming:
 		// CAIState_HOMING::OnUpdate (0x0055a690): the 50 s expiry dispatches
-		// 0x25 (0x55a6a8) -> IDLE; AITactics_HomingStep (behaviour +0x118,
-		// 0x005496c0) reports arrival (AITactics_HasArrived 0x00541f60, under
-		// 5.0) -> 0x24 -> IDLE. OWN DESIGN: HOMING walks one straight leg
-		// (below) and the step is tested every tick; the step's heading wobble
-		// and the re-aggro window are not modelled.
+		// 0x25 (0x55a6a8) -> IDLE; then, once the state's slot 48 answers
+		// (CAIState_HOMING::ReaggroWindowPassed 0x0055a720: now - enteredAt >
+		// the +0x1c blackout, strict), the acquire behaviour (+0xf8) and, on
+		// its 2, message 0x22 -> BATTLE (acquire); then AITactics_HomingStep
+		// (behaviour +0x118, 0x005496c0) reports arrival (AITactics_HasArrived
+		// 0x00541f60, under 5.0) -> 0x24 -> IDLE. OWN DESIGN: HOMING walks one
+		// straight leg (below) and the step is tested every tick; the step's
+		// heading wobble is not modelled.
 		if ai.DwellExpired(b.dwellMs, elapsed) {
 			a.dispatch(b, ai.MsgInterrupted)
+			return
+		}
+		if elapsed > b.homingBlackoutMs && a.acquire(b) {
 			return
 		}
 		if ai.HasArrived(b.m.X, b.m.Z, b.homingDestX, b.homingDestZ) {
@@ -599,6 +668,74 @@ func (a *monsterAI) update(b *brain) {
 		a.tracef("ai: monster %d released (%s)", b.id, "keep-up ended")
 		a.change(b, ai.StateIdle)
 	}
+}
+
+// acquire is the acquire behaviour, AITactics_AcquireTarget (0x005478f0,
+// behaviour +0xf8, installed when the tactics row's +0x14 is non-zero),
+// followed by the message 0x22 the calling state dispatches on its 2
+// (CAIState::OnMsg_0x22 0x00559900), behind -monster-aggro. It reports
+// whether the state changed, the 2 the caller returns on. In the engine's
+// order (round 552, docs/protocol/monster_ai.md, "Target acquisition: the
+// runtime"):
+//
+//  1. an owner that is a COS never scans (slot 11 at 0x547923..0x54792b); no
+//     roster species is one;
+//  2. tactics timer 1 must be due (`mov ecx,0x1` 0x54793a, AITactics_TimerDue
+//     0x53d6e0 at 0x54793f): armed at Init with ai.ScanPeriodMs, fired at first
+//     (ArmTimer 0x53d6c7), and consumed here whenever it is due, found or not;
+//  3. the aggression byte must be 0 or 3 (0x547958..0x547964; ai.Aggressive);
+//  4. the scan: the regions within trunc(ctx+0x15c) (RC=chop, `or eax,0xc00`
+//     0x547989, `fistp` 0x54799a) for players -- kind mask 1, the nearest
+//     selector 2 (0x5479b9..0x5479be under the stand-in flag word) -- through
+//     AITactics_ScanForTargets (0x5405b0 at 0x547a07), whose selector
+//     AITactics_Select_Nearest (0x5464e0, ai.Nearest) keeps the nearest
+//     candidate at most the radius away and, for a player, one
+//     AITactics_ValidTargetOrNull (0x540dc0) accepts: life state 1
+//     (AITactics_IsValidTarget 0x540de0) -- so a player dead under
+//     -player-dead-state is no candidate;
+//  5. the pick -> SetTarget (0x53ffe0 at 0x547a67) -> 2 -> the state
+//     dispatches 0x22, whose handler asks ValidTargetOrNull again and then
+//     AITactics_IsTargetWithinChaseRange (0x545e50; ai.TargetWithinChaseRange
+//     with battleTick's nest reading) before ChangeState(3). A pick out of
+//     chase range stays the target and the state stays.
+//
+// srrevamp's own, disclosed: the flag gate; the candidates are the world hub's
+// entities in the monster's zone (srrevamp has no regions), taken in
+// character-id order where the engine walks the region's player list; the
+// distance is the ground plane's, as battleTick's (GObj_DistanceBetween
+// 0x53d7a0 sums three axes, and srrevamp's monsters carry no height); the
+// timer is not polled while the flag is off, which nothing can observe. Not
+// modelled: the summoned-object detour and the owner's slot-355 test inside
+// the selector (ai.Nearest), and the +0x168 byte's other writers.
+func (a *monsterAI) acquire(b *brain) bool {
+	if !a.aggro || !b.aggressive || !(b.detection > 0) || a.world == nil {
+		return false
+	}
+	if a.now.Before(b.scanDueAt) {
+		return false
+	}
+	b.scanDueAt = a.now.Add(time.Duration(b.scanPeriodMs) * time.Millisecond)
+	var cands []ai.Candidate
+	for _, e := range a.world.EntitiesInZone(b.m.Zone) {
+		if e.Life != world.LifeAlive {
+			continue
+		}
+		cands = append(cands, ai.Candidate{ID: e.CharacterID, X: e.Pos.X, Z: e.Pos.Z})
+	}
+	sort.Slice(cands, func(i, j int) bool { return cands[i].ID < cands[j].ID })
+	pick, dist, ok := ai.Nearest(cands, b.m.X, b.m.Z, b.detection)
+	if !ok {
+		return false
+	}
+	b.target = pick.ID
+	fromHome := math.Hypot(b.m.X-b.m.HomeX, b.m.Z-b.m.HomeZ)
+	if !ai.TargetWithinChaseRange(dist, ai.TacticsChaseSwitch, ai.TacticsGiveUpDistance, true, a.roamRadius, fromHome) {
+		a.tracef("ai: monster %d noticed %d at %.0f, out of chase range (%.0f from home)", b.id, pick.ID, dist, fromHome)
+		return false
+	}
+	a.tracef("ai: monster %d noticed %d at %.0f, engaging", b.id, pick.ID, dist)
+	a.dispatch(b, ai.MsgEnemyInRange)
+	return true
 }
 
 // battleTick is CAIState_BATTLE::OnUpdate (0x0055a090) with -monster-battle
@@ -908,6 +1045,17 @@ func (a *monsterAI) keptUpOn(b *brain) bool {
 // brain knew, so a spawn push could not have carried it.
 func (a *monsterAI) newBrain(m combat.Monster) *brain {
 	b := &brain{id: m.ID, m: m, heading: m.Heading}
+	// The acquisition radius, ctx+0x15c (BindSkillsAndRanges 0x53fa23..
+	// 0x53fa4f): BCRadius + the detection distance, the stand-in for a
+	// server-database column (ai.TacticsDetectionDistance). Under -monster-
+	// aggro, AI::CTactics::Init's two rolls in its order: the aggression byte
+	// (0x53f5be..0x53f5e1), then tactics timer 1's period (0x53f745..
+	// 0x53f765 -> ArmTimer), which starts fired (scanDueAt zero).
+	b.detection, _ = ai.DetectionRadius(m.BCRadius, ai.TacticsDetectionDistance)
+	if a.aggro {
+		b.aggressive = ai.Aggressive(a.rng, ai.TacticsAggressionMode, ai.TacticsAggressionPct)
+		b.scanPeriodMs = ai.ScanPeriodMs(a.rng, ai.TacticsFlags)
+	}
 	var states [ai.StateCount]ai.Enterer
 	states[ai.StateIdle] = &brainState{a: a, b: b, state: ai.StateIdle, enter: func() { a.enterIdle(b) }}
 	states[ai.StateWander] = &brainState{a: a, b: b, state: ai.StateWander, enter: func() { a.enterWander(b) },
@@ -1000,13 +1148,19 @@ func (a *monsterAI) enterWander(b *brain) {
 
 // enterHoming is CAIState_HOMING::OnEnter (0x0055a540): the dwell
 // (AIState_DwellMs at 0x55a5f1, the 50 000 ms default arm), MoveHome
-// (0x55a602, ai.HomeDestination with MonsterRoamRadius), the clip
-// (FUN_00541820 at 0x55a64a: Handler_110 gives 1, the run clip, for HOMING)
-// and SetTarget(0) (0x55a67a). Not modelled: the timer armed at 0x55a5e0,
-// the re-aggro window (+0x1c) and the +0x164 sign.
+// (0x55a602, ai.HomeDestination with MonsterRoamRadius), the re-aggro window
+// (+0x1c at 0x55a60e..0x55a63e: trunc(ctx+0x15c / run speed x 1000) ms,
+// ai.HomingReaggroDelayMs, read by the update's ReaggroWindowPassed), the
+// clip (FUN_00541820 at 0x55a64a: Handler_110 gives 1, the run clip, for
+// HOMING) and SetTarget(0) (0x55a67a). Not modelled: the timer armed at
+// 0x55a5e0 and the +0x164 sign.
 func (a *monsterAI) enterHoming(b *brain) {
 	b.dwellMs = ai.DwellMs(a.rng, ai.StateHoming)
 	b.homingDestX, b.homingDestZ = ai.HomeDestination(a.rng, b.m.HomeX, b.m.HomeZ, b.m.X, b.m.Z, a.roamRadius)
+	b.homingBlackoutMs = ai.HomingReaggroDelayMs(b.detection, b.m.RunSpeed)
+	if a.aggro && b.aggressive {
+		a.tracef("ai: monster %d homing, noticing nobody for %d ms", b.id, b.homingBlackoutMs)
+	}
 	a.startLeg(b, b.homingDestX, b.homingDestZ, ai.MotionMode(ai.StateHoming, b.m.WalkSpeed, b.m.RunSpeed), "leg")
 	b.target = 0
 }
