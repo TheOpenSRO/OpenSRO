@@ -99,6 +99,23 @@ jobs:
           chmod +x dist/srrevamp-linux/srrevamp.x86_64 || true
           cd dist && zip -r srrevamp-linux.zip srrevamp-linux
 
+      # The release body is the tag's own annotation -- the human changelog
+      # written when the tag was cut -- with GitHub's generated commit list
+      # appended after it. It used to be the generated list alone, which is a
+      # condensed set of commit subjects; testers asked for the actual
+      # changes without leaving the client or reading GitHub (2026-09-25).
+      - name: Write the release body from the tag message
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          git fetch --tags --force --quiet || true
+          {
+            git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" | sed -e 's/[[:space:]]*$//'
+          } > "${RUNNER_TEMP}/release_body.md"
+          if [ ! -s "${RUNNER_TEMP}/release_body.md" ]; then
+            echo "(no tag message)" > "${RUNNER_TEMP}/release_body.md"
+          fi
+          cat "${RUNNER_TEMP}/release_body.md"
+
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -106,4 +123,5 @@ jobs:
           files: |
             client/dist/srrevamp-windows.zip
             client/dist/srrevamp-linux.zip
+          body_path: ${{ runner.temp }}/release_body.md
           generate_release_notes: true

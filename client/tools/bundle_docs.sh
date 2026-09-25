@@ -31,13 +31,22 @@ notes="$dst/RELEASE_NOTES.md"
   echo "committed snapshot rather than an empty file._"
   echo
   if git -C "$repo_root" tag >/dev/null 2>&1 && [ -n "$(git -C "$repo_root" tag)" ]; then
-    # Newest first: the last ~20 version tags with their messages.
+    # Newest first: the last ~20 version tags with their FULL messages -- the
+    # subject line and every bullet under it. This used to print only the
+    # subject, which left testers one line per version in the Help window and
+    # sent them to GitHub for the actual changes (playtest feedback,
+    # 2026-09-25). The tag message is the changelog; print all of it.
     while IFS= read -r tag; do
-      msg="$(git -C "$repo_root" tag -l --format='%(contents:subject)' "$tag")"
+      subject="$(git -C "$repo_root" tag -l --format='%(contents:subject)' "$tag")"
+      body="$(git -C "$repo_root" tag -l --format='%(contents:body)' "$tag" | sed -e 's/[[:space:]]*$//' | awk 'NF{p=1} p' | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')"
       date="$(git -C "$repo_root" log -1 --format=%ad --date=short "$tag" 2>/dev/null || true)"
       echo "## $tag${date:+ ($date)}"
       echo
-      echo "${msg:-(no message)}"
+      echo "${subject:-(no message)}"
+      if [ -n "$body" ]; then
+        echo
+        printf '%s\n' "$body"
+      fi
       echo
     done < <(git -C "$repo_root" tag --sort=-creatordate | grep -E '^v[0-9]' | head -20)
   else
