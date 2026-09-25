@@ -64,6 +64,109 @@ qa_shot.sh --out /var/tmp/reconnect --server --region '97\168.m' --radius 1 --fr
   --reconnect 200 --shots "square@1002,1020:0,-25,700"
 ```
 
+### Load benchmark
+
+Every map and loading change is measured on the two runs below, before and after, and on nothing
+else. The numbers are log lines from `World3D.gd`'s `LoadTimings`
+(`client/scripts/world/load_timings.gd`, round 561), never a frame.
+
+**The metric is main-thread work time per frame, not `delta`.** `qa_shot.sh` always passes
+`--write-movie`, and Godot's movie writer forces `--fixed-fps`, which "disables real-time
+synchronization" (Godot 4.2, command line reference); `editor/movie_writer/fps` is 60 and the
+project does not override it, so `_process`/`_physics_process` receive `delta` = 1/60 s on every
+frame however long the frame took -- a hitch metric built on `delta` reads 16.7 ms for ever. The
+wall clock is no better, because every movie frame pays the writer's readback and PNG (the 0.33 s
+a frame above). So `World3D._physics_process` times its own step with `Time.get_ticks_usec()`,
+each cell's build is timed around `_load_region_cell` (and the centre cell in
+`_load_region_neighborhood`), and the two are summed per drawn frame. Three lines carry it:
+
+- `World3D: cell 97/167 built in N ms at frame f (terrain T [read, parse, lightmap, tiletable,
+  textures, mesh, collision, walls, water, navgraph], objects O [parse, own, templates, place],
+  npcs P [tables])` -- one per cell as it is built. The three group totals are the stopwatches
+  around the phases (the same numbers the `region grid loaded` split has summed since round 156);
+  the bracketed sub-phases are laps inside them, and need not add up to the group (`collision` is
+  `create_trimesh_shape` alone, round 156's bottleneck; the centre cell also has `env`, and
+  `tiletable` and `tables` are cached after the first call, so only the centre's are non-zero).
+- `World3D: region grid loaded in N ms (terrain T, objects O, npcs P) at frame f -- C cells S ms,
+  D ms outside the cells over A awaited frames` -- the drain's total against the cells' own sum.
+  **The check is `S <= N`, not equality**: under the loading screen (`SRREVAMP_QA_FORCE_LOADING=1`)
+  the drain builds the screen first and awaits a frame after every batch, and that is `D`; on
+  the synchronous QA path `D` is small. A sum above the total is a bug in the clock and the line
+  says so. A batch is `LOADING_CELLS_PER_FRAME` = 2, but the frame builds three: the same frame's
+  physics step runs `_process_stream_queue`, which pops `STREAM_CELLS_PER_FRAME` = 1 more from the
+  same `_load_queue` (nothing gates it on the drain) -- the baseline's three `built in` lines a
+  frame at frames 14-21. A later change to `LOADING_CELLS_PER_FRAME` alone changes two of the
+  three; read the cells a frame from the log, not from the constant.
+- `World3D: longest work frame W ms at frame f (cell x/y) over F frames since the last summary;
+  p95 Q ms; H over 100 ms; longest wall gap G ms at frame f; run longest ...; grid C cells terrain T
+  objects O npcs P ms` -- at the end of each drain, every 600 physics ticks (`_qa_step` runs for
+  every player, so a real player's log carries it too) and when the world leaves the tree. A
+  summary covers the window since the previous one, so the drain's summary is the
+  entry and the tick-600 summary is the play after it (a crossing). 100 ms is a reporting bucket,
+  not a game value. The wall gap carries the movie writer's floor: compare on the work column.
+
+The two runs, verbatim, so before/after numbers come from identical commands. Both hide the HUD
+and take the real awaiting drain (the QA path would build the whole grid in `_ready`, one frame);
+both sign in to a server, so the entry is the player-shaped one. While the box lock is held by
+round 558's orphaned run (2026-09-25), export `GODOT_LOCK=/var/tmp/<lane>/lock` first.
+
+(a) Entry -- the 5x5 grid a player waits for:
+
+```
+SRREVAMP_QA_FORCE_LOADING=1 SRREVAMP_QA_NOUI=1 qa_shot.sh --out /var/tmp/loadbench --server \
+  --region '97\168.m' --radius 2 --frames 200
+```
+
+(b) Crossing -- a walk west out of 97/168 into 97/167, so in-play streaming is measured too:
+
+```
+SRREVAMP_QA_FORCE_LOADING=1 SRREVAMP_QA_NOUI=1 qa_shot.sh --out /var/tmp/loadcross --server \
+  --region '97\168.m' --radius 2 --at 120,1020 --walk 270 --frames 600
+```
+
+The start (120, 1020) was picked with `walk_probe.gd` (`--region=97/168 --from=120,1020
+--heading=270 --steps=400`, round 561): open terrain at y 0.0 all the way past local x = 0 with no
+wall contact, where (150, 1020) stands on `cj_armo` and meets a wall at x = 138. World heading 270
+is local -x; at the character table's 50 units a second (`World3D.gd`, `_move_speed`) the edge is
+2.4 s, 144 movie frames, in, so the new column streams well inside 600. Read the first
+`NAV <tick>: footing settled on terrain at local x, z` line and the `QA 60 local x, y, z` line to
+see where the walk really began (the roof-escape can move a start near a building; in the
+baseline run tick 60 stood at local 71, 0, 1020 -- fifty units west of the start, as 50 a second
+says), and take the crossing's longest frame from the tick-600 summary, not the drain's -- or from
+the exit summary if no tick-600 summary printed: `_qa_tick` counts physics steps from `_ready` on,
+less the frames `--at` waits for its region (`_qa_step`), so with `--frames 600` the tick-600
+summary lands on the run's last frame or two (in the baseline, 576 frames after the drain's at
+frame 23), and a run where it lands after `--quit-after` leaves the same window to `_exit_tree`'s
+summary. To read a run:
+`grep -E 'built in|region grid loaded|longest work frame|footing settled|^QA +[0-9]+ local' <run>.log`.
+The BEFORE for the whole map/loading epic (round 561, 2026-09-25, hardware GL, the commands
+above; the full lines and the per-phase sums are in `docs/RE_COMPLETION.md`, round 561):
+
+```
+(a) cell 97/168 built in 5373 ms at frame 13 (terrain 1609 [.. tiletable 944, navgraph 212 ..],
+        objects 2093 [.. own 319, templates 1670 ..], npcs 1671 [tables 925])   -- the centre
+    24 neighbours 231..1120 ms, mean 417, three a frame at frames 14-21 (2 drain + 1 stream)
+    region grid loaded in 22752 ms (terrain 7996, objects 5037, npcs 2355) at frame 22
+        -- 25 cells 15388 ms, 7364 ms outside the cells over 9 awaited frames
+    longest work frame 5374 ms at frame 13 (cell 97/168); p95 2844 ms; 9 over 100 ms
+    in play (exit summary, 177 frames): longest work frame 6 ms; p95 6 ms; wall gap 368 ms
+        standing at the server's spawn: QA 60 local 960, -32, 960 on object cj_jang_gate at -32.6
+(b) longest work frame 328 ms at frame 162 (cell 98/165) over 576 frames; p95 5 ms;
+        5 over 100 ms; longest wall gap 723 ms   -- the tick-600 summary; the column
+        95..99/165 streamed one cell a frame at frames 160-164, 270..323 ms each
+```
+
+Rules the later, off-thread loading items are held to, kept beside the benchmark so the two
+travel together: (1) nothing that owns a Node or a RenderingServer/PhysicsServer RID
+(`MeshInstance3D`, `StaticBody3D`, `ArrayMesh`, `Shape3D`, `Material`, `ImageTexture`) is
+constructed off the main thread -- a prepare job produces plain data (bytes, parsed structs,
+arrays) and a main-thread commit builds the objects; (2) `Pk2Reader` is not thread-safe and
+neither is the scene tree -- a job gets its own reader or a snapshot of what it reads, and reaches
+the tree only through `call_deferred`; (3) the QA-drain contract: a QA run (`SRREVAMP_MAPM_PATH`
+set, no `SRREVAMP_QA_FORCE_LOADING`) must still have every cell committed before its first shot,
+so a threaded loader's synchronous branch waits for its jobs and commits before
+`_drain_initial_load` returns -- `--shots`, `--radius` and the movie writer keep their contract.
+
 `dump_ddj.gd` — writes any real `.ddj` texture out as a PNG, and reports its fourCC, the format it
 decompresses to, and how many texels are opaque, transparent or partial. Written to settle which
 spelling of the region minimap filename was real (`<y>x<x>.ddj`), and useful whenever a texture

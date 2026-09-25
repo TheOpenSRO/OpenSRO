@@ -7075,6 +7075,56 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-sixty-first round: the load measured per cell, per phase and per frame -- and the benchmark the map epic is measured on
+
+The first item of the map/loading epic (2026-09-25) is the instrument, not a fix: before anything
+about loading changes, what a change is measured with and the BEFORE it is measured against. The
+full record with every line and the per-phase sums is `docs/RE_COMPLETION.md`'s round 561; the
+benchmark's definition and its two commands are `client/tools/README.md`, "Load benchmark".
+
+- **The metric is main-thread work time per frame, not `delta`.** Every benchmark runs under
+  `qa_shot.sh`, which always passes `--write-movie`; Godot's movie writer forces `--fixed-fps`,
+  which "disables real-time synchronization" (Godot 4.2, command line reference), at the project's
+  60, so `delta` reads 1/60 s on every frame however long it took, and a hitch metric built on it
+  would read 16.7 ms for ever. `LoadTimings` (`client/scripts/world/load_timings.gd`) sums, per
+  drawn frame, each cell's build time and `World3D._physics_process`'s own step, and reports the
+  longest, the p95 and the count over 100 ms (a reporting bucket, not a game value); the wall gap
+  between steps goes beside it and carries the writer's ~0.37 s floor.
+- **The lines.** One `World3D: cell x/y built in N ms at frame f (terrain T [read, parse, env,
+  lightmap, tiletable, textures, mesh, collision, walls, water, navgraph], objects O [parse, own,
+  templates, place], npcs P [tables])` per cell, the centre included (it was never timed); `region
+  grid loaded in N ms (...) at frame f -- C cells S ms, D ms outside the cells over A awaited
+  frames`, whose check is `S <= N` (under the loading screen `D` is the screen's build, the UI init
+  and the awaited frames, so equality cannot hold); `World3D: longest work frame ...` at the end
+  of each drain, every 600 physics ticks (`_qa_step` runs for every player, so a real player's log
+  carries it too) and on leaving the tree, each covering the window since the previous one. The
+  three accumulators the split summed since round 156 were never reset (round
+  559's review); the drain totals now start with the drain's clock.
+- **The BEFORE** (`--radius 2`, the real awaiting drain, HUD hidden, a server behind it). Entry:
+  the centre cell **5,373 ms in one frame** before the loading screen exists (tile index 944, NPC
+  tables 925, templates 1,670 for 69 models, the eight neighbour heightmaps 319 -- 2.6 s of it is
+  one-time or first-time work no neighbour pays); the 24 neighbours 231..1,120 ms, mean 417,
+  **three a frame** at frames 14-21 (three `built in` lines per frame in the log, 8 x 3 = 24):
+  `_drain_initial_load`'s `LOADING_CELLS_PER_FRAME` = 2 per awaited frame, plus the one the same
+  frame's physics step pops through `_process_stream_queue` (`STREAM_CELLS_PER_FRAME`) from the
+  same `_load_queue` -- nothing gates the in-play pump on the drain, so a change to the constant
+  alone changes two of the three; `region grid loaded in 22,752 ms`, cells 15,388, 7,364 outside
+  over 9 awaited frames (the screen's one plus 8 batches); longest work frame 5,374 ms, p95 2,844
+  (frame 14's three cells: 1,120 + 1,109 + 609), 9 over 100 ms (the centre plus 8). In play: p95 6
+  ms, longest 6 ms.
+  Crossing (`--at 120,1020 --walk 270`, the edge at tick 147): the new column 95..99/165 streamed
+  one cell a frame, 270..323 ms each, longest work frame 328 ms, 5 over 100 ms, p95 5 ms.
+- **Where the 15.4 s of cell work goes** (25 cells): terrain 7,987 (mesh 3,177, collision 1,433,
+  tiletable 944, navgraph 749, walls 389, parse 386, water 302, textures 199), objects 5,022
+  (templates 3,356, own 1,069, place 460), npcs 2,351 (tables 925; the centre's spawning 746).
+  The textured mesh build is now the largest terrain lap and `create_trimesh_shape` second, the
+  other way round from round 156's reading (round 160's archive fix lies between; re-measured, not
+  re-derived).
+- The crossing start (120, 1020) was picked with `walk_probe.gd` (terrain, no wall to -280; (150,
+  1020) is on `cj_armo` with a wall at 138) and confirmed by the run's own `NAV 1: footing settled
+  ... at local 120.0, 1020.0`. Tests: `load_timings_test.gd`, 22 checks, its negative the longest
+  frame kept over a later shorter one; 88 suites green; `check` ALL LOAD.
+
 ## Five-hundred-and-sixtieth round: nothing of one login reaches the next -- entry 2 equals entry 1, and a drop mid-load builds nothing into a dead world
 
 Round 558 listed what outlived a `World3D` instance; round 559 took the largest piece (the scenery

@@ -35919,3 +35919,185 @@ the second `character/item/NPC tables loaded` block's `ground textures for 97\16
 resolved, D decoded now in M ms` line (or `NOTHING resolved`), any `pk2: could not open`, any
 `SCRIPT ERROR`, the `left the tree -- ...` line between the blocks, and whether buildings and
 water were white too. No server change.
+
+## Per-cell, per-phase and longest-work-frame load timings, and the one qa_shot benchmark every later item is measured on (round 561)
+
+Client only, log lines only, no gameplay change; not tag-worthy on its own (it ships in the next
+tag with whichever fix follows). Nothing on the wire, no flag, no server change. The first item of
+the map/loading epic (2026-09-25): before any loading change, the instrument it is measured with
+and the BEFORE it is measured against. Every number below is from the render box (2026-09-25,
+hardware GL through VirtualGL, lane lock `/var/tmp/r561/lock`, round 558's server binary --
+`server/` is unchanged since `504b68f`) or from this checkout.
+
+**Grounding, re-read for this round.**
+
+- The accumulators at BASE (`b13bfb8`): `World3D._load_region_cell` timed its three calls with
+  `Time.get_ticks_usec()` into `_load_ms_terrain/_objects/_npcs`, which nothing reset; both
+  branches of `_drain_initial_load` printed `region grid loaded in %d ms (terrain %.0f, objects
+  %.0f, npcs %.0f)` -- the screen branch since round 559, so the plan's finding that it printed
+  without the breakdown was already answered at BASE. The centre cell (`_load_region_neighborhood`)
+  was not timed at all, and no per-cell number has existed since round 160 removed round 156's
+  instrumentation (`docs/WORLD_ISSUES.md`, the hundred-and-sixtieth round: "The profiling
+  instrumentation added to find this was removed"; the hundred-and-fifty-sixth: "across 24 cells,
+  terrain ~37s, objects ~17s, NPCs ~2.4s ... the real bottleneck is terrain, and within it
+  `terrain_mesh.create_trimesh_shape()`").
+- Why `delta` is not the metric (the grounding verifier's blocking finding, confirmed): `qa_shot.sh`
+  always passes `--write-movie`; Godot 4.2's command line reference says of `--write-movie`
+  "`--fixed-fps` is forced when enabled" and of `--fixed-fps <fps>` "Force a fixed number of
+  frames per second. This setting disables real-time synchronization"; the ProjectSettings
+  reference: `editor/movie_writer/fps = 60`, "Simulation speed will adjust to always match the
+  specified framerate" (`client/project.godot` sets no `movie_writer` key). The project had met it
+  already: `World3D.gd`'s worldmap hook comment ("movie-writing mode advances scene time by a
+  fixed 1/60 a frame regardless of how long the frame really took") and `docs/TODO.md`'s
+  tester-tools item (5), the `SceneTreeTimer` that did not fire under the writer.
+- `World3D` has no `_process`; its per-frame work is `_physics_process` (no `await` in it,
+  checked, so a timing wrapper is safe) plus what the drain's `process_frame` coroutine builds
+  outside any callback of this scene. `_load_tile_index` and `_load_npc_tables` are cached after
+  the first call (their own guards), which is why the centre cell's laps below carry them whole.
+- The crossing start: `walk_probe.gd --region=97/168 --from=120,1020 --heading=270 --steps=400`
+  walks terrain at y 0.0 to local -280 with 0 wall contacts; from (150, 1020) the probe starts on
+  `cj_armo[19]` and meets a wall at x 138. The probe's heading is region-local (motion (sin h, cos
+  h)), so 270 is -x, the direction the live client's world heading 270 walks (memory
+  `reference_qa_walk_gotchas`). The run speed is the character table's 50 units a second
+  (`World3D.gd`, `_move_speed`, round 231): the edge in 2.4 s. Measured in the run: `NAV 1: footing
+  settled on terrain at local 120.0, 1020.0`, `NAV 147: ... at local 1919.2, 1020.0` -- the
+  crossing at tick 147.
+
+**What changed.**
+
+- `client/scripts/world/load_timings.gd`, `LoadTimings` (RefCounted, `class_name`): `begin_drain`;
+  `begin_cell` / `group` / `phase` / `lap` / `phase_usec` / `end_cell -> String`; `note_frame` /
+  `note_wall`; `summary -> String`; `total_ms`. `HITCH_MS = 100.0` is a reporting bucket, disclosed
+  as such. The frame record sums the work noted against one drawn frame (each cell's build from
+  `end_cell`, the physics step from `World3D._physics_process`), keeps the longest with its label,
+  counts frames over the bucket and keeps every frame for a p95; a summary reports the window
+  since the previous summary and the run's longest, then starts a new window, so the drain's
+  summary is the entry and the tick-600 summary is the play after it.
+- `World3D.gd`: `_load_timings` replaces the three accumulators; `_ready` and
+  `_on_change_zone_result` call `begin_drain()` where their clock starts (round 559's review: the
+  split no longer sums two drains), and the zone change's clock now starts BEFORE
+  `_reload_zone_assets`, so its total covers the centre cell its split counts;
+  `_load_region_neighborhood` and `_load_region_cell` open a cell and close it through the new
+  `_note_cell_built`, which prints the cell line; laps in `_try_load_real_terrain` (read, parse,
+  env, lightmap, tiletable, textures, mesh, collision, walls, water, navgraph),
+  `_try_load_real_map_objects` (parse, own, place; `templates` inside `_load_object_template`, one
+  lap per build, subtracted from `place` so the two do not overlap) and `_try_spawn_region_npcs`
+  (tables); `_grid_loaded_line` prints the total, the split, the frame, the cells' own sum, the
+  remainder and the frames awaited, and says so if the sum exceeds the total; `_physics_process`
+  is a wrapper that times `_physics_step` (the old body) less the cells built inside it and notes
+  the wall gap between steps; `summary()` prints at the end of both drain branches, every 600
+  physics ticks (`_qa_step` runs for every player, so a real player's log carries it too) and in
+  `_exit_tree`; `loaded real terrain from` carries `at frame N`. The `region grid loaded` prefix
+  is unchanged; nothing in `client/tools` or `server/` parses that line.
+- `client/tools/README.md`, "Load benchmark": the metric and why, the three lines, the two
+  commands verbatim, the `S <= N` check, the prepare-thread rule and the QA-drain contract for the
+  off-thread items, and the BEFORE.
+
+**The BEFORE.** Both commands as the README gives them (`--radius 2`, `SRREVAMP_QA_FORCE_LOADING=1
+SRREVAMP_QA_NOUI=1 --server`), 2026-09-25, hardware GL; 0 `SCRIPT ERROR` in either log.
+
+Entry (a), `--frames 200`, 1 m 35 s wall for the whole run:
+
+```
+World3D: cell 97/168 built in 5373 ms at frame 13 (terrain 1609 [read 82, parse 13, env 4, lightmap 2, tiletable 944, textures 131, mesh 127, collision 60, walls 15, water 7, navgraph 212], objects 2093 [parse 9, own 319, templates 1670, place 92], npcs 1671 [tables 925])
+World3D: region grid loaded in 22752 ms (terrain 7996, objects 5037, npcs 2355) at frame 22 -- 25 cells 15388 ms, 7364 ms outside the cells over 9 awaited frames
+World3D: longest work frame 5374 ms at frame 13 (cell 97/168) over 23 frames since the last summary; p95 2844 ms; 9 over 100 ms; longest wall gap 11854 ms at frame 14; run longest 5374 ms at frame 13 (cell 97/168); grid 25 cells terrain 7996 objects 5037 npcs 2355 ms
+World3D: longest work frame 6 ms at frame 179 over 177 frames since the last summary; p95 6 ms; 0 over 100 ms; longest wall gap 368 ms at frame 107; run longest 5374 ms at frame 13 (cell 97/168); grid 25 cells terrain 7996 objects 5037 npcs 2355 ms
+```
+
+The 24 neighbours: 231..1120 ms, mean 417 (the two over a second, 97/169 and 97/167, are the
+town's own east and west thirds: `templates` 395 / 354, `npcs` 287 / 163). **Three cells a
+frame at frames 14-21**, not `LOADING_CELLS_PER_FRAME`'s two: the log carries three `built in`
+lines at each of the eight frames (frame 14: 97/169 1,120, 97/167 1,109, 96/168 609; 8 x 3 = 24),
+and `cross.log` the same at frames 15-22. The mechanism, from the code: `_drain_initial_load`
+builds two per awaited `process_frame`, and the same frame's physics step (`_physics_step` ->
+`_process_stream_queue`) pops `STREAM_CELLS_PER_FRAME` = 1 more from the same `_load_queue` --
+nothing gates the in-play pump on the drain (`_grid_has_origin` is set in
+`_load_region_neighborhood`, before the drain, and `_last_stream_cell` is (0, 0), so every
+radius-2 cell is inside its margin). The arithmetic closes only at three: `over 9 awaited frames`
+is the screen's one plus 8 batches, `9 over 100 ms` is the centre plus 8, and the drain's `p95
+2844 ms` is frame 14's three cells (1,120 + 1,109 + 609 = 2,838, plus the step). A later item that
+changes only `LOADING_CELLS_PER_FRAME` changes two of the three, and is measured against three.
+The per-phase sums over the 25 cells (ms; the cell lines truncate each lap to a whole ms, so a sum
+can sit a few ms under the grid line's float total):
+
+| group | total | sub-phases, largest first |
+|---|---|---|
+| terrain | 7,987 | mesh 3,177, collision 1,433, tiletable 944 (all the centre's, one-time), navgraph 749, walls 389, parse 386, water 302, textures 199 (131 the centre's), read 82 (all the centre's: the archive's first read), lightmap 50 |
+| objects | 5,022 | templates 3,356 (1,670 the centre's: 69 distinct models), own 1,069 (319 the centre's: eight neighbours' heightmaps parsed for `_placements_belonging_here`), place 460, parse 101 |
+| npcs | 2,351 | tables 925 (the centre's, one-time); the rest is spawning, 746 of it the centre's |
+
+Where (a) stands: the server's spawn (0, 0, 0) (`spawnPos`, `server/internal/session/world.go`),
+which the run's own `QA 60 local 960, -32, 960 on object cj_jang_gate at -32.6` line puts on the
+gate object's navigation at y -32.6 for the whole run, not on the town's ground; the in-play column
+above (p95 6 ms) does not depend on the spot, and (b) uses `--at`. Noted for the epic; not this
+item's.
+
+Crossing (b), `--at 120,1020 --walk 270 --frames 600`, 4 m 16 s wall: the entry the same to a few
+percent (centre 5,250 ms at frame 14; grid 22,754 ms, 25 cells 15,278 ms, 7,476 outside over 9
+awaited frames; drain summary 5,251 ms / p95 2,854 / 9 over 100 ms), then:
+
+```
+World3D: cell 97/165 built in 299 ms at frame 160 (terrain 246 [read 0, parse 15, lightmap 2, tiletable 0, textures 6, mesh 120, collision 57, walls 20, water 6, navgraph 7], objects 52 [parse 1, own 0, templates 42, place 8], npcs 0 [tables 0])
+World3D: cell 96/165 built in 303 ms at frame 161 (...)
+World3D: cell 98/165 built in 323 ms at frame 162 (... npcs 33 [tables 0])
+World3D: cell 95/165 built in 270 ms at frame 163 (...)
+World3D: cell 99/165 built in 291 ms at frame 164 (...)
+World3D: longest work frame 328 ms at frame 162 (cell 98/165) over 576 frames since the last summary; p95 5 ms; 5 over 100 ms; longest wall gap 723 ms at frame 162; run longest 5251 ms at frame 14 (cell 97/168); grid 30 cells terrain 9218 objects 5145 npcs 2404 ms
+```
+
+`QA 60 local 71, 0, 1020` (fifty units west of the start in a second, as the table's speed says),
+`QA 120 local 21`, `QA 180 local 1891` -- in 97/167. The new column 95..99/165 streamed one cell a
+frame (`STREAM_CELLS_PER_FRAME`), each a frame of 270-323 ms of work; the play frames between are
+5 ms at the 95th percentile.
+
+What the BEFORE says, for the items after it: (1) the single largest line is the centre cell,
+5.4 s of one frame before the loading screen exists (`_load_region_neighborhood` runs before
+`_drain_initial_load` creates it) -- and 2.6 s of it is one-time or first-time work the neighbours
+never pay (tile index 944, NPC tables 925, the first archive read 82, the eight heightmaps 319,
+the first textures); (2) under the screen the drain is three cells a frame (the batch's two plus the
+one the same frame's physics step streams from the same queue, above), 9 frames over 100 ms with a
+p95 of 2.8 s; (3) a crossing is one ~300 ms frame per streamed cell, five in a row, which is the
+in-play hitch; (4) inside terrain the textured mesh build (`mesh`, 3.2 s over 25 cells) is now the
+largest lap and `create_trimesh_shape` (`collision`, 1.4 s) second -- round 156 named the trimesh
+first, and round 160's re-opened-archive fix sits between the two measurements; not re-derived
+here, only re-measured; (5) `templates` is 3.4 s, half of it the centre's, and `own` 1.1 s.
+
+The consistency check, as the findings restated it: `S <= N` holds in both runs (15,388 <= 22,752;
+15,278 <= 22,754), and before this round no `built in` line existed, so S was 0. `N - S` is 7.4 s
+over 9 awaited frames: what `_ready` runs between `_t_region` and the drain besides the cells
+(`_try_initialize_pk2_ui`, `_try_load_cursors`), the LoadingScreen's own build (Media.pk2, the
+backdrop) and the 9 awaited movie frames (a play frame's wall time is ~0.37 s, the exit summary's
+`longest wall gap 368 ms`); not split further this round. Round 560's `region grid loaded` figures
+(15.1-15.7 s) were `--radius 1`, nine cells; what N measures has not changed.
+
+**Tests.** `client/scripts/world/load_timings_test.gd`, 22 checks: the cell line from groups and
+sub-phases with a repeated sub-phase summed; a cell with no phases is `built in 0 ms` with no
+bracket list, and a phase with no cell open reaches no total; `lap` and `phase_usec`; two cells
+summed and `begin_drain` zeroing them; the NEGATIVE the plan asked for -- `note_frame(300, 10)` then
+`note_frame(50, 11)` reports 300 at frame 10 with its cell label (an implementation that overwrote
+would report 50), the exact summary string, the run record; one frame's notes adding up and
+keeping the cell's label; the p95 of 1..100 ms being 95 with none over 100; the window restarting
+after a summary while the run's longest stands, and an empty window saying so; a closed cell being
+its frame's work with the step added. Negative case proven the batch's way: with `World3D.gd` and
+`load_timings.gd` stashed (`git stash push -u`) and the tree shipped, `remote_godot.sh script
+res://scripts/world/load_timings_test.gd` printed `SCRIPT ERROR: Parse Error: Identifier
+"LoadTimings" not declared in the current scope` and exited 1; restored, `ALL PASS`. That negative
+proves only that the suite needs the class; the check an overwriting implementation fails is the
+in-suite `note_frame(300, 10)` then `note_frame(50, 11)`, and the `World3D` wiring is exercised by
+the two box runs alone (their logs, read above) -- what log-only instrumentation gets.
+`remote_godot.sh tests`: 88 suites, 0 failing -- twice, before and after the `tiletable` and
+`tables` laps were split out of `lightmap` and `npcs` on the first run's evidence;
+`remote_godot.sh check`: 261 scripts and 5 scenes ALL LOAD (`world3d_reentry_test.gd` loads
+`World3D.gd`, so its parse is in the suite). `cd server && go build ./... && go test -count=1 -p 1
+./...`: green, 58 packages, before and after the doc edits (no server change).
+
+**Records.** This entry; `docs/WORLD_ISSUES.md`'s five-hundred-and-sixty-first round;
+`client/tools/README.md`, "Load benchmark"; `World3D.gd`'s QA header. `docs/SYSTEMS.md` has no row
+for world loading, scenery or the client's entry (rounds 558-560 checked; re-checked), so nothing
+there to change. `docs/TODO.md` has no map/loading section (the epic's order is the batch's own),
+so nothing there either.
+
+**Deploy note.** Client only, not tag-worthy alone; ships in the next tag with the fix that
+follows. Frames of both runs deleted from `/var/tmp/r561/` (the logs `entry.log` and `cross.log`
+and `run.sh` kept, 87 KB).

@@ -664,10 +664,14 @@ var _loading_screen: LoadingScreen
 ## before `region grid loaded` (round 558's first run), so the frame it named
 ## was of no world at all.
 var _initial_load_done := false
-# Per-phase load timing accumulators (ms), for the entry profile.
-var _load_ms_terrain := 0.0
-var _load_ms_objects := 0.0
-var _load_ms_npcs := 0.0
+## Where this world's load time goes -- per cell, per phase and per frame
+## (round 561, LoadTimings; the benchmark it feeds is client/tools/README.md's
+## "Load benchmark"). Per instance, like every other cache here. Its grid
+## totals are zeroed where a drain's clock starts (_ready,
+## _on_change_zone_result): until this round the three accumulators here
+## were never reset, so a second drain's `region grid loaded` split summed
+## both drains (round 559's review).
+var _load_timings := LoadTimings.new()
 
 @onready var player: CharacterBody3D = $Player
 @onready var player_mesh: MeshInstance3D = $Player/Mesh
@@ -1293,6 +1297,7 @@ func _ready() -> void:
 	_try_add_real_sky()
 	_apply_camera_far_plane()
 	var _t_region := Time.get_ticks_msec()
+	_load_timings.begin_drain()
 	_load_initial_region_neighborhood()
 	_try_initialize_pk2_ui()
 	_try_load_cursors()
@@ -3204,12 +3209,19 @@ func _clear_region_grid() -> void:
 ## to each calibrating themselves independently (NAN anchor) -- the original
 ## behavior -- since there's no real center reference to share in that case.
 func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGION_LOAD_RADIUS, texture_override: String = "") -> void:
+	# Timed like every other cell (round 561): the centre is the one cell a
+	# player waits for with nothing on screen yet.
+	_load_timings.begin_cell(center_x, center_y)
+	var t0 := Time.get_ticks_usec()
 	var center_near_height := _try_load_real_terrain("%d\\%d.m" % [center_x, center_y], texture_override, Vector3.ZERO, "_%d_%d" % [center_x, center_y], true)
+	var t1 := Time.get_ticks_usec()
 	_try_load_real_map_objects("%d\\%d.o" % [center_x, center_y], Vector3.ZERO, "_%d_%d" % [center_x, center_y])
+	var t2 := Time.get_ticks_usec()
 	# The centre cell is loaded here rather than through _load_region_cell,
 	# so it needs its own NPC pass -- without this the one region the player
 	# is actually standing in is the only one with nobody in it.
 	_try_spawn_region_npcs(center_x, center_y)
+	_note_cell_built(t0, t1, t2, Time.get_ticks_usec())
 
 	_update_zone_label_for_region(center_x, center_y)
 	_grid_origin_region = Vector2i(center_x, center_y)
@@ -3270,17 +3282,27 @@ func _load_region_cell(region_x: int, region_y: int, dx: int, dy: int, shared_an
 	# (96/169 and 98/157), same rule both times. So: region_x -> world Z,
 	# region_y -> world X.
 	var offset := Vector3(dy * REGION_SPAN, 0.0, dx * REGION_SPAN)
+	_load_timings.begin_cell(region_x, region_y)
 	var t0 := Time.get_ticks_usec()
 	_try_load_real_terrain("%d\\%d.m" % [region_x, region_y], "", offset, suffix, false, shared_anchor, false)
 	var t1 := Time.get_ticks_usec()
 	_try_load_real_map_objects("%d\\%d.o" % [region_x, region_y], offset, suffix)
 	var t2 := Time.get_ticks_usec()
 	_try_spawn_region_npcs(region_x, region_y)
-	var t3 := Time.get_ticks_usec()
-	_load_ms_terrain += (t1 - t0) / 1000.0
-	_load_ms_objects += (t2 - t1) / 1000.0
-	_load_ms_npcs += (t3 - t2) / 1000.0
+	_note_cell_built(t0, t1, t2, Time.get_ticks_usec())
 	_loaded_cells["%d_%d" % [dx, dy]] = true
+
+## Closes the cell _load_timings has open (round 561): the three phase
+## totals from the stopwatches around them -- the same numbers the `region
+## grid loaded` split has summed since round 156 -- and one `World3D: cell
+## x/y built in N ms at frame f (terrain [..], objects [..], npcs)` line per
+## cell, the sub-phases inside from _try_load_real_terrain's and
+## _try_load_real_map_objects' own laps.
+func _note_cell_built(t0: int, t1: int, t2: int, t3: int) -> void:
+	_load_timings.group("terrain", t1 - t0)
+	_load_timings.group("objects", t2 - t1)
+	_load_timings.group("npcs", t3 - t2)
+	print(_load_timings.end_cell(Engine.get_frames_drawn()))
 
 ## Streams additional real region cells in as the player moves, keeping a
 ## real REGION_LOAD_RADIUS window centered on whichever real region
@@ -3394,20 +3416,30 @@ func _should_show_loading_screen() -> bool:
 
 # Cells built per frame while the loading screen is up: the player is not
 # moving yet, so a bigger batch than the in-play stream is fine.
+#
+# Not the whole frame, though: the same frame's physics step runs
+# _process_stream_queue, which pops STREAM_CELLS_PER_FRAME more from the same
+# _load_queue (nothing gates it on the drain; _grid_has_origin is set before
+# it), so round 561's baseline built THREE cells a frame under the screen --
+# three `built in` lines at each of frames 14-21. Changing this constant
+# alone changes two of the three; the benchmark counts cells a frame from
+# the log (docs/RE_COMPLETION.md, round 561).
 const LOADING_CELLS_PER_FRAME := 2
 
 ## Finishes the initial region load that `_load_region_neighborhood` queued.
 ## With no loading screen (a QA render) the queue is drained at once, so the
 ## first frames show the whole world. With one, the queue is pumped a batch a
-## frame and the gauge filled, so a real entry has feedback instead of a black
-## freeze.
+## frame (plus the cell the same frame's physics step streams from it, see
+## LOADING_CELLS_PER_FRAME) and the gauge filled, so a real entry has feedback
+## instead of a black freeze.
 func _drain_initial_load(region_started_ms: int) -> void:
 	# No screen wanted (a QA render): build the queue at once so the first
 	# frames show the whole world.
 	if _loading_screen == null and not _should_show_loading_screen():
 		while not _load_queue.is_empty():
 			_build_one_queued_cell()
-		print("World3D: region grid loaded in %d ms (terrain %.0f, objects %.0f, npcs %.0f)" % [Time.get_ticks_msec() - region_started_ms, _load_ms_terrain, _load_ms_objects, _load_ms_npcs])
+		print(_grid_loaded_line(region_started_ms, 0))
+		print(_load_timings.summary())
 		_qa_print_entry_probe()
 		_initial_load_done = true
 		return
@@ -3423,10 +3455,12 @@ func _drain_initial_load(region_started_ms: int) -> void:
 	# 558's runs C and D: two `!is_inside_tree()` errors, then `Invalid get
 	# index 'process_frame' (on base: 'null instance')`, one per drop, on
 	# both routes). Out of the tree there is nothing left to load for.
+	var frames_awaited := 0
 	if _loading_screen == null:
 		_loading_screen = LoadingScreen.new()
 		ui_control.add_child(_loading_screen)
 		await get_tree().process_frame
+		frames_awaited += 1
 		if not is_inside_tree():
 			return
 	var total := maxi(_load_queue.size(), 1)
@@ -3437,12 +3471,15 @@ func _drain_initial_load(region_started_ms: int) -> void:
 			_build_one_queued_cell()
 		_loading_screen.set_progress(1.0 - float(_load_queue.size()) / float(total))
 		await get_tree().process_frame
+		frames_awaited += 1
 		if not is_inside_tree():
 			return
 	# The same phase split the synchronous QA path prints, so a reconnect
-	# run's two entries can be compared phase by phase (round 559).
-	print("World3D: region grid loaded in %d ms (terrain %.0f, objects %.0f, npcs %.0f)" % [
-		Time.get_ticks_msec() - region_started_ms, _load_ms_terrain, _load_ms_objects, _load_ms_npcs])
+	# run's two entries can be compared phase by phase (round 559), with the
+	# frames awaited between batches -- which is where this branch's total
+	# leaves the cells' own sum behind (round 561, _grid_loaded_line).
+	print(_grid_loaded_line(region_started_ms, frames_awaited))
+	print(_load_timings.summary())
 	_qa_print_entry_probe()
 	_loading_screen.set_progress(1.0)
 	_loading_screen.set_caption("Entering the world...")
@@ -3452,6 +3489,25 @@ func _drain_initial_load(region_started_ms: int) -> void:
 	_loading_screen.queue_free()
 	_loading_screen = null
 	_initial_load_done = true
+
+## The `region grid loaded` line (round 561): the drain's wall time from its
+## clock start, the terrain/objects/npcs split both branches have printed
+## since round 559, the frame, and the cells' own sum against the total. The
+## difference is what the drain paid outside the cells: under the loading
+## screen, the screen's own build and every frame awaited between batches,
+## so the sum is at most the total and never equal to it (the plan's "equal
+## within 5%" cannot hold on that branch by construction); on the
+## synchronous QA path the two are close. A sum above the total would mean
+## the clock started after some cell, which the line says outright.
+func _grid_loaded_line(region_started_ms: int, frames_awaited: int) -> String:
+	var total := Time.get_ticks_msec() - region_started_ms
+	var cells_ms := _load_timings.total_ms("terrain") + _load_timings.total_ms("objects") + _load_timings.total_ms("npcs")
+	var line := "World3D: region grid loaded in %d ms (terrain %.0f, objects %.0f, npcs %.0f) at frame %d -- %d cells %.0f ms, %.0f ms outside the cells over %d awaited frames" % [
+		total, _load_timings.total_ms("terrain"), _load_timings.total_ms("objects"), _load_timings.total_ms("npcs"),
+		Engine.get_frames_drawn(), _load_timings.cells, cells_ms, total - cells_ms, frames_awaited]
+	if cells_ms > total:
+		line += " -- the cell sum EXCEEDS the total: the drain's clock started after a cell"
+	return line
 
 ## Puts the "NOW LOADING" screen up (a real player only), so a caller can
 ## cover a load whose first, synchronous part runs before the drain -- a
@@ -3597,6 +3653,11 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	NetClient.list_monsters()
 	NetClient.list_ground_items()
 
+	# The zone drain's clock and grid totals start here, ahead of the centre
+	# cell _reload_zone_assets builds, so its `region grid loaded` total
+	# covers every cell its split counts (round 561).
+	var zone_started_ms := Time.get_ticks_msec()
+	_load_timings.begin_drain()
 	_reload_zone_assets(result.zone)
 
 	# Only now, with the new region's terrain and walkable graph actually
@@ -3624,7 +3685,7 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 
 	# Pump the new zone's queued neighbour cells behind the loading screen (if
 	# one is up), then drop it -- the same drain the first entry uses.
-	await _drain_initial_load(Time.get_ticks_msec())
+	await _drain_initial_load(zone_started_ms)
 
 ## Everything in the world that plays an animation -- NPCs and monsters.
 ## Each entry is [Skeleton3D, ParsedAnimation, frame count, phase, loops,
@@ -3664,7 +3725,10 @@ var _object_textures := {}
 ## ObjectTemplateCache's loader: one real .bsr/.cpd through ObjectLoader,
 ## against this world's Data.pk2 and texture cache.
 func _load_object_template(model_path: String) -> Node3D:
-	return ObjectLoader.load_object(_open_pk2_if_set(), model_path, _object_textures)
+	var sw := Time.get_ticks_usec()
+	var node := ObjectLoader.load_object(_open_pk2_if_set(), model_path, _object_textures)
+	_load_timings.lap("objects", "templates", sw)
+	return node
 
 ## What this world owns outside the tree goes when the world does, and what
 ## it set on state it does not own is put back (rounds 559, 560), so that
@@ -3709,6 +3773,7 @@ func _exit_tree() -> void:
 	var viewport := get_viewport()
 	if viewport != null:
 		viewport.debug_draw = Viewport.DEBUG_DRAW_DISABLED
+	print(_load_timings.summary())
 	print("World3D: left the tree -- %d scenery templates and %d NPC templates freed" % [scenery_freed, npc_freed])
 
 ## Registers an assembled character for idle animation, if it has one.
@@ -4323,7 +4388,11 @@ func _npc_spawn_total() -> int:
 func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 	if _npc_regions_done.has("%d_%d" % [region_x, region_y]):
 		return
+	# Cached after the first cell, which pays it whole -- its own lap (round
+	# 561), so the centre cell's `npcs` is not read as spawning alone.
+	var sw := Time.get_ticks_usec()
 	_load_npc_tables()
+	_load_timings.lap("npcs", "tables", sw)
 	if _npc_spawns_by_region.is_empty():
 		return
 	var archive := _open_pk2_if_set()
@@ -4462,12 +4531,17 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 		return NAN
 
 	var archive := _open_map_pk2_if_set()
+	# Sub-phase stopwatches (round 561): each lap is one entry of the cell's
+	# `terrain [..]` list while a cell is open, and nothing otherwise.
+	var sw := Time.get_ticks_usec()
 	var bytes := AssetSource.read_bytes(mapm_path, archive)
+	sw = _load_timings.lap("terrain", "read", sw)
 	if bytes.is_empty():
 		printerr("World3D: could not find terrain at ", mapm_path)
 		return NAN
 
 	var region := MapmReader.parse(bytes)
+	sw = _load_timings.lap("terrain", "parse", sw)
 	if region == null:
 		printerr("World3D: could not parse terrain at ", mapm_path)
 		return NAN
@@ -4479,6 +4553,7 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	# player actually is. See _load_region_cell's call below.
 	if apply_environment_lighting:
 		_apply_real_environment_lighting(region, archive)
+		sw = _load_timings.lap("terrain", "env", sw)
 
 	# Real .t lightmap, loaded up front so it's available to whichever mesh
 	# builder runs below -- see _load_real_terrain_lightmap's doc comment
@@ -4491,7 +4566,13 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	# shadow map (white = fully lit), which Godot's ao_texture consumes
 	# directly with no custom shader needed.
 	var lightmap := _load_real_terrain_lightmap(mapm_path, archive)
+	sw = _load_timings.lap("terrain", "lightmap", sw)
+	# Cached after the first cell, which pays it whole: 943 ms of the centre
+	# cell's 1590 in the entry benchmark's first run, against 2 ms of
+	# lightmap for every neighbour -- its own lap, so a one-time table load
+	# is not read as the lightmap's cost.
 	var tile_table := _load_tile_index()
+	sw = _load_timings.lap("terrain", "tiletable", sw)
 
 	# Real per-quad ground textures (2026-08-23) -- see
 	# docs/protocol/DDJ_FORMAT.md and MapmTerrainBuilder's top comment for
@@ -4503,6 +4584,7 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	# multi-surface mesh where every single surface is the color fallback
 	# anyway.
 	var ground_textures := _load_real_ground_textures(region, tile_table, mapm_path)
+	sw = _load_timings.lap("terrain", "textures", sw)
 	var textured := not ground_textures.is_empty()
 
 	# Real, fully deterministic full-region assembly (2026-08-23) -- see
@@ -4526,6 +4608,7 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 			_last_terrain_shadow_map)
 	else:
 		terrain_mesh = MapmTerrainBuilder.build_full_region_mesh(region)
+	sw = _load_timings.lap("terrain", "mesh", sw)
 	if terrain_mesh == null:
 		printerr("World3D: parsed ", region.blocks.size(), " real blocks from ", mapm_path, " but couldn't build a mesh from them")
 		return NAN
@@ -4651,7 +4734,11 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	var patch_body := StaticBody3D.new()
 	patch_body.collision_layer = TERRAIN_COLLISION_LAYER
 	var patch_shape := CollisionShape3D.new()
+	# Round 156 named this the load's largest single cost: its own lap, with
+	# nothing else in it.
+	sw = Time.get_ticks_usec()
 	patch_shape.shape = terrain_mesh.create_trimesh_shape()
+	sw = _load_timings.lap("terrain", "collision", sw)
 	patch_body.add_child(patch_shape)
 	var single_patch := MeshInstance3D.new()
 	single_patch.name = "SubPatch"
@@ -4661,8 +4748,11 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	terrain_group.add_child(single_patch)
 
 	_try_add_navmesh_walls(terrain_group, mapm_path)
+	sw = _load_timings.lap("terrain", "walls", sw)
 	_try_add_real_water(terrain_group, mapm_path)
+	sw = _load_timings.lap("terrain", "water", sw)
 	_build_region_nav_graph(terrain_group, mapm_path)
+	_load_timings.lap("terrain", "navgraph", sw)
 
 	# The vertical calibration above only guarantees one specific mesh vertex
 	# lines up near world Y=0 -- it says nothing about the height of whatever
@@ -4678,8 +4768,9 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 	if snap_player:
 		call_deferred("_snap_player_onto_terrain")
 
-	print("World3D: loaded real terrain from %s (%d real blocks, %d rows stitched, real collision shape built)" % [
-		mapm_path, region.blocks.size(), terrain_mesh.get_aabb().size.z / MapmTerrainBuilder.TILE_SIZE + 1])
+	print("World3D: loaded real terrain from %s (%d real blocks, %d rows stitched, real collision shape built) at frame %d" % [
+		mapm_path, region.blocks.size(), terrain_mesh.get_aabb().size.z / MapmTerrainBuilder.TILE_SIZE + 1,
+		Engine.get_frames_drawn()])
 	return near_height
 
 ## Practical safety net for the real terrain-alignment gap noted where this
@@ -5724,6 +5815,8 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 		return
 
 	var map_archive := _open_map_pk2_if_set()
+	# Sub-phase stopwatches (round 561): the cell's `objects [..]` list.
+	var sw := Time.get_ticks_usec()
 	var mapo_bytes := AssetSource.read_bytes(mapo_path, map_archive)
 	if mapo_bytes.is_empty():
 		printerr("World3D: could not find map objects at ", mapo_path)
@@ -5827,7 +5920,9 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 	if dropped > 0:
 		print("World3D: %s -- dropped %d duplicate real placements (%d -> %d)" % [
 			mapo_path, dropped, placements.size(), deduped.size()])
+	sw = _load_timings.lap("objects", "parse", sw)
 	placements = _placements_belonging_here(deduped, mapo_path)
+	sw = _load_timings.lap("objects", "own", sw)
 
 	if placements.is_empty():
 		printerr("World3D: no real objects parsed from ", mapo_path)
@@ -5889,6 +5984,11 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 		_object_templates = ObjectTemplateCache.new(_load_object_template)
 	var models_here := {} # distinct model paths this region placed
 	var reused_here := 0 # of those, how many another region had already built
+	# `templates` is lapped inside _load_object_template, one lap per build;
+	# `place` is the rest of this loop -- the duplicate, the transform, the
+	# add -- so the two do not overlap.
+	var templates_before := _load_timings.phase_usec("objects", "templates")
+	sw = Time.get_ticks_usec()
 	for placement in placements:
 		if loaded >= MAX_MAP_OBJECTS:
 			break
@@ -5926,6 +6026,8 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 		container.add_child(node)
 		loaded += 1
 
+	_load_timings.phase("objects", "place",
+		Time.get_ticks_usec() - sw - (_load_timings.phase_usec("objects", "templates") - templates_before))
 	print("World3D: loaded %d/%d real map objects from %s (%d real .o + %d real .o2, %d unresolved type IDs skipped, %d distinct real models, %d templates reused, %d held for the world)" % [
 		loaded, placements.size(), mapo_path, region.objects.size(), o2_count, skipped_unresolved,
 		models_here.size(), reused_here, _object_templates.size()])
@@ -6362,7 +6464,10 @@ func _update_blob_shadow() -> void:
 ## Position is reported every 60 physics frames as `QA <tick> local x, y, z`,
 ## so a run's log says exactly where each frame was taken. See
 ## `client/tools/qa_shot.sh` for the runner that drives this and collects the
-## frames.
+## frames. Every 600, at the end of each drain and in _exit_tree, a
+## `World3D: longest work frame ...` load summary (LoadTimings, round 561)
+## goes with it; each cell prints `World3D: cell x/y built in ...` as it is
+## built -- the numbers of client/tools/README.md's "Load benchmark".
 var _qa_done := false
 var _qa_tick := 0
 ## SRREVAMP_QA_ENTRY as this instance read it in _ready: 0 outside a reconnect
@@ -6726,6 +6831,14 @@ func _qa_step() -> void:
 		call_deferred("_qa_reconnect", reconnect, _qa_tick)
 
 	_qa_tick += 1
+	# The load summary every ten seconds of game time (round 561): the window
+	# since the last one, so the play after the entry -- a boundary crossing
+	# -- is reported apart from the entry itself. _qa_step runs for every
+	# player, so a real player's log carries it too: log-only and bounded
+	# (the window restarts each summary), like the `QA <tick> local` line
+	# below.
+	if _qa_tick % 600 == 0:
+		print(_load_timings.summary())
 	if _qa_tick % 60 == 0:
 		var where := "off-region"
 		var standing := ""
@@ -8004,7 +8117,27 @@ func _is_typing() -> bool:
 		return true
 	return _hud_panels != null and _hud_panels.is_typing()
 
+## The per-frame work clock (round 561). The whole step is timed and noted
+## against the drawn frame, less the cells _process_stream_queue built inside
+## it, which end_cell has already noted on their own; the wall clock between
+## steps goes beside it. Work time and not `delta`: every benchmark runs
+## under qa_shot.sh's `--write-movie`, which forces `--fixed-fps` ("disables
+## real-time synchronization", Godot 4.2's command line reference;
+## `editor/movie_writer/fps` default 60), so `delta` reads 1/60 s on every
+## frame however long it took -- LoadTimings' doc comment and
+## client/tools/README.md, "Load benchmark".
 func _physics_process(delta: float) -> void:
+	var sw := Time.get_ticks_usec()
+	var cells_before := _load_timings.cell_work_usec
+	_physics_step(delta)
+	var now := Time.get_ticks_usec()
+	var frame := Engine.get_frames_drawn()
+	_load_timings.note_frame((now - sw - (_load_timings.cell_work_usec - cells_before)) / 1000.0, frame, "")
+	_load_timings.note_wall(frame, now)
+
+## One physics step of the world: the sky, the monsters' legs, the player's
+## input and walk, the QA hooks, region streaming and the position send.
+func _physics_step(delta: float) -> void:
 	if _sky_dome != null:
 		_sky_dome.global_position = player.global_position + Vector3(0.0, SKY_DOME_HEIGHT_ABOVE_PLAYER, 0.0)
 		_cloud_uv_offset.x += CLOUD_DRIFT_UV_PER_SECOND * delta
