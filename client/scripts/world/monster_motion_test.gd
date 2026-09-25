@@ -402,7 +402,9 @@ func _test_world_height(world_script: GDScript) -> void:
 	# global transform, at the origin so region-local is world.
 	var group := Node3D.new()
 	root.add_child(group)
-	(world.get("_region_nav_graphs") as Array).append([graph, group])
+	# The pair lives in the world's RegionGridState since round 563; the
+	# region named does not matter to a position lookup.
+	(world.get("_grid") as RegionGridState).add_nav_graph(0, 0, graph, group)
 	var body := Node3D.new()
 	body.position = Vector3(110.0, 0.0, 239.0)
 	(world.get("_monster_bodies") as Dictionary)[7] = body

@@ -33,7 +33,19 @@ qa_shot.sh --out /var/tmp/tour --frames 220 --region '97\168.m' --radius 1 \
 
 Each viewpoint prints `QA SHOT <name> frame <n>` in the log; pull that numbered frame from the
 output directory. Six viewpoints this way took 116 seconds against about nine and a half minutes
-as six separate runs.
+as six separate runs. Beside each, a `QA GRID <name> frame <n> at <x/y> local <lx>,<lz>: cells=..
+queued=.. npc_regions=.. nav_graphs=.. navmesh=.. heightmaps=.. collisions=.. object_templates=..
+objects=.. orphans=.. static_mem=..` line (round 563) names the region the player is standing in
+and reads the region grid's bookkeeping (`RegionGridState`) and the process's object and memory
+counts at that moment. A viewpoint's `x,z` are local to the region
+under the player, so a spot just past its edge hops one region over -- `w@-30,1020` lands 30
+units into the region to the west, `e@1950,1020` into the one to the east -- which is how a
+boundary-crossing tour is taken in 28 ticks a hop instead of a 38-second walk: round 563's
+`w1..w3@-30,1020;e1..e3@1950,1020` at `--radius 1` unloads 97/168 at the third hop and streams
+it back in at the fifth, and its `region x/y unloaded` / `region x/y forgotten` / `NPC(s) placed
+in x/y` lines are the measurement. `qa_shot.sh` runs no import, so a script that names a new
+`class_name` needs one `remote_godot.sh check` (or `tests`) shipped first, or `World3D.gd` fails
+to parse with `Identifier "..." not declared` (round 563 lost one run to it).
 
 **A reconnect is a run, not a hand test.** `--reconnect <tick|drain>` leaves the world and
 re-enters it in the same process -- the tester's "disconnect and reconnect without closing the

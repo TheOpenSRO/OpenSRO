@@ -7075,6 +7075,45 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-sixty-third round: the streaming unload forgets the region -- NPCs respawn on return, and a freed group no longer aborts every position lookup
+
+The third item of the map/loading epic (2026-09-25); the full record with every line is
+`docs/RE_COMPLETION.md`'s round 563.
+
+- **What the unload left behind.** `_maybe_stream_regions` freed a region's terrain and objects
+  nodes, released its scenery templates (round 559) and erased its `_loaded_cells` key -- and kept
+  its `_npc_regions_done` mark (so `_try_spawn_region_npcs` returned at its first line when the cell
+  streamed back in: the NPCs are the terrain node's children and had gone with it), its
+  `[NavGraph, group]` pair, and its entries in `_navmesh_cache`, `_parsed_region_heightmaps` and
+  `_object_collision_cache`, none of which anything ever pruned.
+- **Measured at BASE, not the plan's failure first.** A `--shots` tour that hops one region a
+  viewpoint (`-30,1020` west, `1950,1020` east; a viewpoint is local to the region under the
+  player) at `--radius 1` produced the first `region 97/169 unloaded -- 32 scenery templates only
+  it placed freed` lines of any log and then 687 x `SCRIPT ERROR: Trying to assign invalid
+  previously freed instance. at: _nav_graph_for (World3D.gd:2452)`: the freed group's pair was
+  still in the list, the typed `var group: Node3D = pair[1]` raised on it and aborted the function
+  on every tick for every region after it, so every later viewpoint and `QA <tick> local` read
+  `off-region` and the run went nowhere. A town walked away from and back to came back empty
+  only if the walk survived this.
+- **The fix is one object.** `RegionGridState` (`client/scripts/world/region_grid_state.gd`) holds
+  the seven per-region members; `unload(x, y)` drops the region's cell, NPC mark, nav graph,
+  navmesh and heightmap, then the heightmaps of regions neither loaded nor next to a loaded one
+  (the ownership test parses neighbours that are not cells: 28 heightmaps for 12 cells) and the
+  object collision meshes no cached navmesh lists; the lookups test `is_instance_valid` before
+  any typed assignment; `clear_all()` is the zone change. The unload loop prints `region x/y
+  forgotten -- <what>; N NPC holder(s) freed with its terrain`, and each viewpoint a `QA GRID
+  <name> frame <n> at <x/y> local <lx>,<lz>: cells=.. navmesh=.. heightmaps=.. collisions=.. ...
+  objects=.. orphans=.. static_mem=..` line.
+- **Measured after.** The same tour: `97/169 forgotten -- ... 30 object collision mesh(es); 7 NPC
+  holder(s) freed with its terrain` at the third hop, `7/7 NPC(s) placed in 97/169` (and `2/2 in
+  98/169`) again when the row streamed back at the fifth; 0 script errors in 311 lines; `cells=12
+  npc_regions=12 nav_graphs=12 navmesh=12` at every viewpoint, `heightmaps` 28 -> 21 and
+  `static_mem` 1,040 MB -> 967 MB across the tour, against a growing-only BASE. The first hop of
+  the tour does not stand (the player is at `97_168 local 90,1020` at frame 13) -- a QA-harness
+  interaction at the first tick, not chased.
+- Tests: `region_grid_state_test.gd`, 28 checks, its negative a `FAIL` on the pre-change tree;
+  `monster_motion_test.gd` injects through the state; `check` 264 scripts ALL LOAD.
+
 ## Five-hundred-and-sixty-second round: the loading screen before the centre cell, on the archive the world already holds
 
 The first visible fix of the map/loading epic (2026-09-25), measured on round 561's benchmark and

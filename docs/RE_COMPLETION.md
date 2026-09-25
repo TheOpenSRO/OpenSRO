@@ -36248,3 +36248,163 @@ entry (rounds 558-561 checked; re-checked with a grep for "loading"), so nothing
 `map-reconnect-fix` or the next visible fix). Frames of the three runs deleted from
 `/var/tmp/r562/` (`entry1.log`, `entry.log`, `first.log`, `run.sh`, `measure_first.sh` and the
 half-size diff PNGs kept).
+
+## Streaming unload forgets the region: NPCs respawn on return and per-region caches stop growing (round 563)
+
+Client only, tag-worthy: the third item of the map/loading epic (2026-09-25), required for the
+whole-map walk. Nothing on the wire, no flag, no server change (`server/` untouched; `go build`
+and `go test -count=1 -p 1 ./...` green before and after the doc edits). Every number below is a
+log line from the render box (2026-09-25, hardware GL through VirtualGL, lane lock
+`/var/tmp/r563/lock` -- the box lock is still held by round 558's orphaned re-run -- no server,
+the QA path's synchronous grid at `--radius 1`) or from this checkout; the runs and how to read
+them are in `client/tools/README.md` (the `--shots` paragraph).
+
+**Grounding, re-read at BASE (`b402675`).**
+
+- `World3D._maybe_stream_regions`' unload loop, for every loaded cell outside
+  `_region_load_radius() + 1`: `queue_free()` of `RealTerrain_<x>_<y>` and `RealMapObjects_<x>_<y>`,
+  `_object_templates.release_region()` (round 559) and `_loaded_cells.erase(key)`. Nothing else.
+- `_try_spawn_region_npcs` returned at its first line on `_npc_regions_done.has("x_y")`, set the
+  mark after finding the region's terrain group, and parented every `Npc_<id>_<n>` holder to that
+  group -- so the unload freed the NPCs with the terrain and left the mark. `grep` at BASE: the mark
+  was cleared in `_clear_region_grid` (a zone change) and nowhere else.
+- `_region_nav_graphs` (an Array of `[NavGraph, Node3D]`) was appended in `_build_region_nav_graph`
+  and cleared in `_clear_region_grid` only; `_nav_graph_for` did `var group: Node3D = pair[1]`
+  BEFORE its `is_instance_valid` check.
+- `_navmesh_cache` (key `(x << 8) | y`, `_load_region_navmesh`), `_parsed_region_heightmaps`
+  (`"x_y"`, `_parsed_region_heightmap`, filled for a region's eight neighbours by
+  `_placements_belonging_here` whether or not they are cells) and `_object_collision_cache`
+  (resource id, `_load_object_collision`): no `erase` or `clear` anywhere in the client.
+- One reader outside `World3D.gd`: `monster_motion_test.gd` appended a pair to
+  `world.get("_region_nav_graphs")`.
+- `docs/SYSTEMS.md` has no row for world loading, streaming or the client's NPC placement
+  (re-checked: `stream|unload|respawn|prune|region grid` hit only the item, packet and monster rows),
+  so nothing there to change; `docs/TODO.md` has no map/loading section.
+
+**The baseline, measured before any edit** (`/var/tmp/r563/before.log`; the box's client copy
+byte-identical to BASE, `World3D.gd` md5 `4bf3246d…`). The tour: `--region '97\168.m' --radius 1
+--at 1002,1020 --frames 270 --shots "w1@-30,1020;w2@-30,1020;w3@-30,1020;e1@1950,1020;
+e2@1950,1020;e3@1950,1020;home@1002,1020"` (camera `0,-25,700` on each) -- a viewpoint is local to
+the region under the player, so `-30` lands 30 units into the region to the west and `1950` into
+the one to the east, at the clamped edge height (`NvmCollision.sample_height`; neighbouring edge
+rows match exactly, `AGENTS.md`), 28 ticks a hop. What BASE did with it:
+
+- The grid: `region grid loaded in 11497 ms … 9 cells` at frame 0, then the /166 row; `18/19 NPC(s)
+  placed in 97/168`, `7/7 … in 97/169`, `2/2 … in 98/169`, `8/8 … in 97/167`.
+- The first `unloaded` lines of any log -- round 559's release path had never fired end to end:
+  `region 97/169 unloaded -- 32 scenery templates only it placed freed, 196 held`, `96/169 … 2 …
+  194`, `98/169 … 14 … 180`, and the /165 row built at frames 56-58.
+- Then **687 × `SCRIPT ERROR: Trying to assign invalid previously freed instance.` at
+  `_nav_graph_for (World3D.gd:2452)`**, one per physics tick to the end: the freed /169 groups were
+  still in `_region_nav_graphs`, the typed assignment raised on the first of them and aborted the
+  function for every region loaded after it. From there `QA 60/120/180/240 local off-region`,
+  every later viewpoint printed its frame without moving the player, no further cell built or
+  unloaded, and the run ended with 97/168 never unloaded -- at BASE the respawn could not even be
+  attempted. Exit: `left the tree -- 200 scenery templates and 41 NPC templates freed`. (The
+  plan's "the count is 0 on return" is the code's guard; the run shows the earlier failure that
+  the same missing unload causes.)
+
+**Change** (client only: `World3D.gd`, the new `world/region_grid_state.gd` and its suite,
+`world/monster_motion_test.gd`, `tools/README.md`).
+
+- `RegionGridState` (RefCounted, per World3D instance as `_grid`): `loaded_cells` ("dx_dy" ->
+  `Vector2i(region_x, region_y)`, so an unload by region finds its cell), `queued_cells`,
+  `npc_regions_done`, `nav_graphs` ("x_y" -> `[NavGraph, Node3D]`), `navmesh_cache`,
+  `parsed_heightmaps`, `object_collision_cache`; `mark_loaded`, `mark_npcs_done` / `npcs_done`,
+  `add_nav_graph`, `nav_graph_for_region` and `nav_graph_pairs()` (both test `is_instance_valid`
+  before anything is assigned typed); **`unload(x, y)`** drops the region's cell, NPC mark, nav
+  graph, navmesh and heightmap, then `prune_heightmaps()` (heightmaps of regions neither loaded
+  nor next to a loaded one) and `prune_object_collisions()` (ids no cached navmesh lists), and
+  returns the names of what it dropped; `clear_all()`; `counts_line()`.
+- `World3D`: every site of the seven members reads the state; `_maybe_stream_regions`' unload loop
+  counts the terrain node's `Npc_` children, keeps round 559's release and line, then calls
+  `_grid.unload()` and prints `World3D: region x/y forgotten -- <what>; N NPC holder(s) freed with
+  its terrain`; `_clear_region_grid` calls `clear_all()`; `_nav_graph_for` iterates
+  `nav_graph_pairs()`; `_nav_graph_for_region` and `_place_at_region_local` read the dictionary;
+  `_try_spawn_region_npcs` documents why its guard now clears on unload; `_qa_advance_shots`
+  prints a `QA GRID <name> frame <n> at <x/y> local <lx>,<lz>: <counts> object_templates=…
+  objects=… orphans=… static_mem=…` line beside each `QA SHOT` line (a line of its own, so the
+  `QA SHOT … frame n` contract is untouched).
+- `monster_motion_test.gd` injects its pair through `_grid.add_nav_graph`.
+
+**Tests.** `region_grid_state_test.gd`, 28 checks: mark 97/167 and 97/168 loaded, populated,
+graphed, with navmeshes listing objects {10, 11} and {11, 12}, heightmaps for both and for
+neighbours 96/166, 98/169, 96/167, collision entries 10 (a cached null), 11, 12; `unload(97,167)`
+-> `npcs_done(97,167)` false and 97/168's true, `nav_graph_for_region(97,167)` empty and 97/168's
+`[graph, group]`, no 97/167 navmesh / heightmap / cell key while 97/168's stay, object 10 pruned
+and 11, 12 kept, neighbour heightmap 96/166 pruned and 98/169, 96/167 kept, the dropped names,
+idempotence, a never-loaded region, `counts_line`, a freed group never handed out; a second state:
+unload then `mark_loaded` again -> not populated until `mark_npcs_done`; `clear_all`. The class is
+reached by `load()` + `has_method`, so on the pre-change tree the suite FAILS instead of failing
+to parse. **NEGATIVE, proven**: `git stash push -u -- client/scripts/World3D.gd
+client/scripts/world/region_grid_state.gd` (the test and `monster_motion_test.gd` left in place),
+`remote_godot.sh sync`, `remote_godot.sh script res://scripts/world/region_grid_state_test.gd`:
+`FAIL region_grid_state.gd loads and can instantiate (absent before round 563)`, `1 FAILURES`
+(Godot: `Attempt to open script 'res://scripts/world/region_grid_state.gd' resulted in error 'File
+not found'`); `git stash pop`, sync, the same command: `ALL PASS`. `remote_godot.sh check`: 264
+scripts and 5 scenes ALL LOAD (262 + the class + the suite). `remote_godot.sh tests`: 90 suites,
+0 failing (recorded below for the final tree). A lost run on the way: `qa_shot.sh` runs no import,
+so the tour booted against a class cache without `RegionGridState` and `World3D.gd` failed to
+parse (`Identifier "RegionGridState" not declared`) -- `check` first, then the tour; the README
+says so now.
+
+**Measured: the same tour on the final tree** (`/var/tmp/r563/after.log`, after `check` had
+registered the class; `QA GRID`'s `at` field names the region under the player, so the tour reads
+off the log). The first hop did not stand -- at frame 13 the player was at `97_168 local 90,1020`,
+not in 97/167; not chased, a QA-harness interaction at the first tick that the second hop from
+the same spot did not repeat. From there the route is the designed one:
+
+- `w2 frame 41 at 97_167 local 1890,1020` (cur dy -1: nothing streams, the /169 row is at the
+  margin) -> `w3 frame 69 at 97_166 local 1890,1020` (cur -2): the /165 row built at frames 56-58
+  and the /169 row went -- `region 97/169 unloaded -- 32 scenery templates only it placed freed,
+  196 held` **then `region 97/169 forgotten -- cell 0_1, npcs, nav graph, navmesh, heightmap, 30
+  object collision mesh(es); 7 NPC holder(s) freed with its terrain`**, `96/169 forgotten -- … 1
+  neighbour heightmap(s); 0 NPC holder(s)`, `98/169 forgotten -- … 2 neighbour heightmap(s), 9
+  object collision mesh(es); 2 NPC holder(s)`.
+- `e1 frame 97 at 97_167 local 30,1020` (cur -1: silent, as the margin says) -> `e2 frame 125 at
+  97_168 local 30,1020` (cur 0): the /165 row forgotten, and the /169 row **streamed back in at
+  frames 112-114 with `7/7 NPC(s) placed in 97/169`, `0/2 … in 96/169`, `2/2 … in 98/169`** -- the
+  same counts the unload freed. That is the respawn: at BASE `_npc_regions_done` still held
+  `97_169` and `_try_spawn_region_npcs` returned at its first line (the plan's NEGATIVE; the BASE
+  run never got this far because `_nav_graph_for` was aborting by then).
+- `e3 frame 153 at 97_169 local 30,1020` (cur +1): the /166 row forgotten (97/166's line has no
+  `unloaded` before it: its templates were all shared, `release_region` freed 0 -- why the
+  `forgotten` line is unconditional), the /170 row built at 140-142; `home frame 181 at 97_169
+  local 1002,1020`. `QA SHOT: all 7 viewpoints visited`; **0 `SCRIPT ERROR` lines in 311 (BASE: 687
+  in 1708)**; 21 cells built over the run; exit `left the tree -- 234 scenery templates and 41 NPC
+  templates freed`.
+- The counters (`QA GRID`, w1 / w3 / e2 / e3 = home): `cells=12 npc_regions=12 nav_graphs=12
+  navmesh=12` at every viewpoint -- the window plus the margin, never more; `heightmaps` 28 / 25 /
+  25 / 21; `collisions` 137 / 113 / 137 / 136; `object_templates` 228 / 200 / 228 / 234; `objects`
+  521,084 / 486,464 / 490,560 / 448,944; `orphans` 2,768 / 2,334 / 2,776 / 2,797; `static_mem`
+  1,040,450,504 / 992,121,212 / 1,009,792,120 / 967,381,740. At BASE the navmesh, heightmap and
+  collision dictionaries had no erase path, so on this tour they could only grow (there is no
+  BASE `QA GRID` line; the code is the evidence). A first run of the after tree without the
+  neighbour-heightmap prune read `heightmaps` 28 / 28 / 28 / 26, `objects` 521,084 / 517,787 /
+  521,883 / 501,149 and `static_mem` 1,040,410,780 / 1,032,475,284 / 1,050,146,192 /
+  1,029,015,444 at the same viewpoints: the neighbours the ownership test parses without loading
+  them were 5 heightmaps, ~52,000 objects and ~62 MB at the tour's end, and `prune_heightmaps` is
+  why the state keeps a heightmap only for a loaded region or its neighbour.
+- Godot's peak RSS over the rerun, sampled every 2 s by binary path: 1,428,552 kB. No BASE figure:
+  the baseline's sampler matched its own command line (3,028 kB) and is not a measurement. The
+  plan's long `--walk` (radius 2 needs a 4-region, ~7,000-frame walk each way) was not run; the
+  hop tour is the substitute and the `QA GRID` counters are its memory measurement.
+- The plan's "0 on return": `HudMinimap: signs drawn 2 of 41 entities` before the unload, `0 of
+  33` after it (41 - 7 - 0 - 2 + 1 from 98/165), and 41 again is not printed on return (the
+  minimap line is throttled); the `NPC(s) placed` lines above are the count.
+
+`remote_godot.sh tests` on the final tree (shipped by the same `check` the tour booted on): 90
+suites, 0 failing (89 + this one). `cd server && go build ./... && go test -count=1 -p 1 ./...`:
+green before and after the doc edits (no server change).
+
+**Records.** This entry; `docs/WORLD_ISSUES.md`'s five-hundred-and-sixty-third round;
+`client/tools/README.md`'s `--shots` paragraph (the `QA GRID` line, the hop tour, the import
+trap); `World3D.gd`'s QA header (`SRREVAMP_QA_SHOTS`), `_try_spawn_region_npcs`' doc,
+`_nav_graph_for`'s comment. `docs/SYSTEMS.md` has no row for world loading, streaming or NPC
+placement (checked as above), so nothing there to change; `docs/TODO.md` has no map/loading
+section. On the box: `/var/tmp/r563/{before,after}.log`, `after.rss`, `run.sh`; every frame
+deleted.
+
+**Deploy note.** Client only; tag-worthy -- the whole-map walk needs it (a town walked away from
+and back to is populated again, and the first unload no longer breaks every position lookup for
+the rest of the session). No server change, no flag.

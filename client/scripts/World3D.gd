@@ -645,15 +645,20 @@ var _grid_origin_region := Vector2i.ZERO
 var _grid_origin_world := Vector3.ZERO
 var _grid_shared_anchor_height := NAN
 var _grid_has_origin := false
-var _loaded_cells := {} # "dx_dy" (relative to _grid_origin_region) -> true
+## The per-region bookkeeping of the loaded grid -- the loaded and queued
+## cells ("dx_dy", relative to _grid_origin_region), the NPC marks, the nav
+## graphs and the navmesh / heightmap / object-collision caches -- in one
+## object, so the streaming unload forgets a region whole
+## (RegionGridState.unload, round 563) and a zone change clears it whole
+## (clear_all). Per instance: a reconnect's second World3D starts empty.
+var _grid := RegionGridState.new()
 var _last_stream_cell := Vector2i(0x7fffffff, 0x7fffffff) # sentinel so the first real check always runs
 # Region cells waiting to be built, streamed a few per frame instead of a
 # whole leading row in one frame -- that synchronous row was the ~1s freeze
 # on every boundary crossing (a playtest complaint). The cell underfoot is
 # always already loaded (it was a neighbour before the crossing), so the
 # queued cells are ahead of the player and can arrive over the next frames.
-var _load_queue: Array = [] # of {rx, ry, dx, dy, anchor, key}
-var _queued_cells := {} # key -> true, so a cell is not queued twice
+var _load_queue: Array = [] # of {rx, ry, dx, dy, anchor, key}; keys in _grid.queued_cells
 const STREAM_CELLS_PER_FRAME := 1
 # The "NOW LOADING" screen shown to a real player during world entry (never a
 # QA render, whose synchronous load a screenshot depends on).
@@ -2282,17 +2287,16 @@ func _load_real_water_animation(archive: Pk2Reader) -> AnimatedTexture:
 ## Real per-region parsed navmesh, loaded once and shared by everything
 ## that needs it -- real walkability walls and real water surfaces both come
 ## out of the same real file, so it is not worth reading twice. A null entry
-## means "already tried, nothing usable", and is cached too.
-var _navmesh_cache: Dictionary = {}
-
+## means "already tried, nothing usable", and is cached too. Held in
+## _grid.navmesh_cache and dropped with the region (round 563).
 func _load_region_navmesh(mapm_path: String) -> NvmReader.ParsedRegion:
 	var coords := _parse_region_coords(mapm_path)
 	if coords.is_empty():
 		return null
-	var key: int = (int(coords["x"]) << 8) | int(coords["y"])
-	if _navmesh_cache.has(key):
-		return _navmesh_cache[key]
-	_navmesh_cache[key] = null
+	var key: int = RegionGridState.navmesh_key(int(coords["x"]), int(coords["y"]))
+	if _grid.navmesh_cache.has(key):
+		return _grid.navmesh_cache[key]
+	_grid.navmesh_cache[key] = null
 
 	var archive := _open_pk2_if_set()
 	if archive == null:
@@ -2306,15 +2310,16 @@ func _load_region_navmesh(mapm_path: String) -> NvmReader.ParsedRegion:
 	if parsed == null:
 		printerr("World3D: could not parse real navmesh at ", nvm_path)
 		return null
-	_navmesh_cache[key] = parsed
+	_grid.navmesh_cache[key] = parsed
 	return parsed
 
-## Real walkable graphs, one per loaded region, keyed by the region's own
-## terrain group. Each entry is [NavGraph, Node3D] -- the graph plus the node
-## whose own local space *is* that region's real coordinate space, so
-## converting between the two is done with the node's real transform rather
-## than by re-deriving the region placement (and its mirror) by hand.
-var _region_nav_graphs: Array = []
+## Real walkable graphs, one per loaded region, live in _grid.nav_graphs as
+## [NavGraph, Node3D] by region -- the graph plus the node whose own local
+## space *is* that region's real coordinate space, so converting between the
+## two is done with the node's real transform rather than by re-deriving the
+## region placement (and its mirror) by hand. Read through
+## _grid.nav_graph_pairs() and _nav_graph_for_region; a region's pair goes
+## with its unload (round 563).
 
 ## Builds the real walkable graph for a region: its terrain `.nvm` plus every
 ## real object that `.nvm` lists, each resolved to its own real navigation
@@ -2354,7 +2359,9 @@ func _build_region_nav_graph(terrain_group: Node3D, mapm_path: String) -> void:
 					placed_object.set_meta("model", entry.path.get_file().get_basename())
 				placed.append(placed_object)
 	var graph := NavGraph.build(region, placed)
-	_region_nav_graphs.append([graph, terrain_group])
+	# Non-empty: _load_region_navmesh above returned null without them.
+	var coords := _parse_region_coords(mapm_path)
+	_grid.add_nav_graph(int(coords["x"]), int(coords["y"]), graph, terrain_group)
 	print("World3D: real walkable graph for %s -- %d/%d real objects placed, %d real terrain blocking edges" % [
 		mapm_path, placed.size(), region.objects.size(), graph.terrain_blocking.size() / 2])
 	if missing > 0:
@@ -2363,14 +2370,14 @@ func _build_region_nav_graph(terrain_group: Node3D, mapm_path: String) -> void:
 
 ## Cache of real object navigation meshes by real resource ID, since a region
 ## repeats the same handful of real object types across many placements.
-var _object_collision_cache := {}
-
+## Held in _grid.object_collision_cache; an unload prunes the ids no cached
+## navmesh lists any more (round 563).
 func _load_object_collision(
 	archive: Pk2Reader, table: ObjidxReader.Table, resource_id: int
 ) -> BmsReader.CollisionMesh:
-	if _object_collision_cache.has(resource_id):
-		return _object_collision_cache[resource_id]
-	_object_collision_cache[resource_id] = null
+	if _grid.object_collision_cache.has(resource_id):
+		return _grid.object_collision_cache[resource_id]
+	_grid.object_collision_cache[resource_id] = null
 	var entry = table.lookup(resource_id)
 	if entry == null:
 		return null
@@ -2407,7 +2414,7 @@ func _load_object_collision(
 	if parts.is_empty():
 		return null
 	var collision: BmsReader.CollisionMesh = parts[0] if parts.size() == 1 else BmsCollision.merge(parts)
-	_object_collision_cache[resource_id] = collision
+	_grid.object_collision_cache[resource_id] = collision
 	return collision
 
 ## The real walkable graph covering the player, as [NavGraph, Node3D], or an
@@ -2448,10 +2455,14 @@ func _load_object_index() -> ObjidxReader.Table:
 	return _object_index_cache
 
 func _nav_graph_for(world_position: Vector3) -> Array:
-	for pair in _region_nav_graphs:
+	# nav_graph_pairs() has already skipped a freed group. At BASE the list
+	# kept an unloaded region's pair, and the typed assignment below raised
+	# `Trying to assign invalid previously freed instance` on it and aborted
+	# this function on every tick, for every region loaded after it (round
+	# 563's baseline tour: 687 such errors, the player `off-region` for the
+	# rest of the run). The unload now drops the pair as well.
+	for pair in _grid.nav_graph_pairs():
 		var group: Node3D = pair[1]
-		if group == null or not is_instance_valid(group):
-			continue
 		var local := group.to_local(world_position)
 		if local.x < 0.0 or local.z < 0.0 or local.x > REGION_SPAN or local.z > REGION_SPAN:
 			continue
@@ -2464,13 +2475,7 @@ func _nav_graph_for(world_position: Vector3) -> Array:
 ## position, never a world one), which is what lets a QA probe ask about a
 ## region the player is not standing in.
 func _nav_graph_for_region(region_x: int, region_y: int) -> Array:
-	var group := get_node_or_null("RealTerrain_%d_%d" % [region_x, region_y]) as Node3D
-	if group == null:
-		return []
-	for pair in _region_nav_graphs:
-		if pair[1] == group:
-			return pair
-	return []
+	return _grid.nav_graph_for_region(region_x, region_y)
 
 func _try_add_navmesh_walls(terrain_group: Node3D, mapm_path: String) -> void:
 	var region := _load_region_navmesh(mapm_path)
@@ -3176,16 +3181,18 @@ static func _parse_region_coords(path: String) -> Dictionary:
 ## grid-origin lookup and _maybe_stream_regions' per-cell lookup resolved
 ## to the stale node too.
 ##
-## _region_nav_graphs is cleared here too -- it holds a reference to every
-## terrain group, so leaving it populated kept the old regions' walkable
-## graphs answering position queries for regions that no longer exist.
+## The nav graphs (_grid.nav_graphs) are cleared here too -- they hold a
+## reference to every terrain group, so leaving them populated kept the old
+## regions' walkable graphs answering position queries for regions that no
+## longer exist.
 func _clear_region_grid() -> void:
-	_region_nav_graphs.clear()
 	# NPCs are parented to their region's terrain group, so tearing the grid
-	# down takes them with it. Without clearing this, every region still
-	# counts as "already populated" and a zone change leaves a world with
-	# nobody in it -- which is exactly what a zone-changed render showed.
-	_npc_regions_done.clear()
+	# down takes them with it. Without clearing their marks, every region
+	# still counts as "already populated" and a zone change leaves a world
+	# with nobody in it -- which is exactly what a zone-changed render showed.
+	# The nav graphs, the loaded and queued cells and the per-region caches
+	# go with them (RegionGridState.clear_all, round 563).
+	_grid.clear_all()
 	# A zone change keeps the scenery templates (round 559): the same models
 	# recur across towns, and ObjectTemplateCache's cap bounds them. Their
 	# region uses are withdrawn, so they are the first the cap evicts.
@@ -3248,8 +3255,8 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 	_grid_origin_region = Vector2i(center_x, center_y)
 	_grid_shared_anchor_height = center_near_height
 	_grid_has_origin = true
-	_loaded_cells.clear()
-	_loaded_cells["0_0"] = true
+	_grid.loaded_cells.clear()
+	_grid.mark_loaded(0, 0, center_x, center_y)
 	# The centre cell is (0,0); the neighbours stream in from here. Set the
 	# stream cell to it (not the sentinel) so the queue's stale-guard keeps
 	# the neighbours we are about to enqueue, and so a later _maybe_stream_regions
@@ -3263,7 +3270,7 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 	# instead of all at once here -- that synchronous grid was most of the
 	# minute-long, no-feedback entry.
 	_load_queue.clear()
-	_queued_cells.clear()
+	_grid.queued_cells.clear()
 	var neighbours: Array = []
 	for dy in range(-radius, radius + 1):
 		for dx in range(-radius, radius + 1):
@@ -3275,11 +3282,11 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 			})
 	neighbours.sort_custom(func(a, b): return a["dist"] < b["dist"])
 	for cell in neighbours:
-		_queued_cells[cell["key"]] = true
+		_grid.queued_cells[cell["key"]] = true
 		_load_queue.append(cell)
 
 ## Loads one real region cell (terrain + objects) at grid position (dx, dy)
-## relative to _grid_origin_region, and marks it loaded in _loaded_cells.
+## relative to _grid_origin_region, and marks it loaded in _grid.loaded_cells.
 ## Shared by the initial neighborhood load and _maybe_stream_regions --
 ## dx/dy must always be relative to the fixed _grid_origin_region, never
 ## to wherever the player currently is, so every cell's real world
@@ -3311,7 +3318,7 @@ func _load_region_cell(region_x: int, region_y: int, dx: int, dy: int, shared_an
 	var t2 := Time.get_ticks_usec()
 	_try_spawn_region_npcs(region_x, region_y)
 	_note_cell_built(t0, t1, t2, Time.get_ticks_usec())
-	_loaded_cells["%d_%d" % [dx, dy]] = true
+	_grid.mark_loaded(dx, dy, region_x, region_y)
 
 ## Closes the cell _load_timings has open (round 561): the three phase
 ## totals from the stopwatches around them -- the same numbers the `region
@@ -3369,7 +3376,7 @@ func _maybe_stream_regions() -> void:
 	for dy in range(cur.y - radius, cur.y + radius + 1):
 		for dx in range(cur.x - radius, cur.x + radius + 1):
 			var key := "%d_%d" % [dx, dy]
-			if _loaded_cells.has(key) or _queued_cells.has(key):
+			if _grid.loaded_cells.has(key) or _grid.queued_cells.has(key):
 				continue
 			new_cells.append({
 				"rx": _grid_origin_region.x + dx, "ry": _grid_origin_region.y + dy,
@@ -3378,22 +3385,31 @@ func _maybe_stream_regions() -> void:
 			})
 	new_cells.sort_custom(func(a, b): return a["dist"] < b["dist"])
 	for cell in new_cells:
-		_queued_cells[cell["key"]] = true
+		_grid.queued_cells[cell["key"]] = true
 		_load_queue.append(cell)
 
 	# Unload real cells now well outside the real load radius, so a player
 	# walking through a real, large world doesn't accumulate every region
 	# they've ever passed through as permanently-loaded nodes.
 	var unload_margin := _region_load_radius() + 1
-	for key in _loaded_cells.keys().duplicate():
+	for key in _grid.loaded_cells.keys().duplicate():
 		var parts := (key as String).split("_")
 		var kdx := int(parts[0])
 		var kdy := int(parts[1])
 		if absi(kdx - cur.x) <= unload_margin and absi(kdy - cur.y) <= unload_margin:
 			continue
-		var suffix := "_%d_%d" % [_grid_origin_region.x + kdx, _grid_origin_region.y + kdy]
+		var region_x := _grid_origin_region.x + kdx
+		var region_y := _grid_origin_region.y + kdy
+		var suffix := "_%d_%d" % [region_x, region_y]
+		# The region's NPCs are children of its terrain node (see
+		# _try_spawn_region_npcs) and go with it; counted so the log reads
+		# against the `NPC(s) placed in x/y` line of the region's return.
+		var npcs_freed := 0
 		var terrain_node := get_node_or_null("RealTerrain" + suffix)
 		if terrain_node != null:
+			for child in terrain_node.get_children():
+				if String(child.name).begins_with("Npc_"):
+					npcs_freed += 1
 			terrain_node.queue_free()
 		var objects_node := get_node_or_null("RealMapObjects" + suffix)
 		if objects_node != null:
@@ -3402,13 +3418,19 @@ func _maybe_stream_regions() -> void:
 		# 559); the key is the region's own `.o` path, as
 		# _try_load_real_map_objects registered it.
 		if _object_templates != null:
-			var region_x := _grid_origin_region.x + kdx
-			var region_y := _grid_origin_region.y + kdy
 			var freed := _object_templates.release_region("%d\\%d.o" % [region_x, region_y])
 			if freed > 0:
 				print("World3D: region %d/%d unloaded -- %d scenery templates only it placed freed, %d held" % [
 					region_x, region_y, freed, _object_templates.size()])
-		_loaded_cells.erase(key)
+		# And everything the world remembered about it (round 563): its
+		# cell; its NPC mark, so _try_spawn_region_npcs runs again when the
+		# cell streams back in; its nav graph, whose freed group left in the
+		# list aborted _nav_graph_for on every tick; its navmesh, its
+		# heightmap and the object collision meshes only it referenced.
+		# Until this round only the cell key was erased.
+		var dropped := _grid.unload(region_x, region_y)
+		print("World3D: region %d/%d forgotten -- %s; %d NPC holder(s) freed with its terrain" % [
+			region_x, region_y, ", ".join(dropped), npcs_freed])
 
 ## Builds up to STREAM_CELLS_PER_FRAME queued cells a frame, so a boundary
 ## crossing streams over several frames rather than freezing for one long
@@ -3420,8 +3442,8 @@ func _process_stream_queue() -> void:
 	var built := 0
 	while built < STREAM_CELLS_PER_FRAME and not _load_queue.is_empty():
 		var cell: Dictionary = _load_queue.pop_front()
-		_queued_cells.erase(cell["key"])
-		if _loaded_cells.has(cell["key"]):
+		_grid.queued_cells.erase(cell["key"])
+		if _grid.loaded_cells.has(cell["key"]):
 			continue
 		if absi(cell["dx"] - _last_stream_cell.x) > margin or absi(cell["dy"] - _last_stream_cell.y) > margin:
 			continue # the player left this cell's window before it built
@@ -3567,8 +3589,8 @@ func _build_one_queued_cell() -> void:
 	if _load_queue.is_empty():
 		return
 	var cell: Dictionary = _load_queue.pop_front()
-	_queued_cells.erase(cell["key"])
-	if not _loaded_cells.has(cell["key"]):
+	_grid.queued_cells.erase(cell["key"])
+	if not _grid.loaded_cells.has(cell["key"]):
 		_load_region_cell(cell["rx"], cell["ry"], cell["dx"], cell["dy"], _grid_shared_anchor_height)
 
 ## _ready()'s own entry point into the region grid: reads SRREVAMP_MAPM_PATH
@@ -3636,11 +3658,10 @@ func _reload_zone_assets(zone: String) -> void:
 	if coords.is_empty():
 		print("World3D: zone %s isn't shaped like a real region (x/y) -- no per-zone assets to load" % zone)
 		# _clear_region_grid() above already removed every real region node
-		# -- also drop the real streaming state that referenced them, so
-		# _maybe_stream_regions doesn't keep trying to grow a grid around a
-		# real origin cell that no longer exists.
+		# and cleared the grid state that referenced them -- also drop the
+		# origin, so _maybe_stream_regions doesn't keep trying to grow a
+		# grid around a real origin cell that no longer exists.
 		_grid_has_origin = false
-		_loaded_cells.clear()
 		return
 
 	var paths := _zone_paths(zone)
@@ -3993,9 +4014,10 @@ var _guild_level := 0
 var _guild_max_members := 0
 var _guild_next_gold := 0
 var _guild_next_gp := 0
-## Regions whose NPCs have already been placed, so streaming back into a
-## region doesn't stack a second copy of everyone in it.
-var _npc_regions_done: Dictionary = {}
+## Regions whose NPCs have already been placed live in _grid.npc_regions_done,
+## so streaming back into a still-loaded region doesn't stack a second copy
+## of everyone in it; a streamed-out region's mark goes with its terrain
+## node (RegionGridState.unload), so it is populated again on return.
 
 func _load_npc_tables() -> void:
 	if _npc_tables_loaded:
@@ -4430,8 +4452,16 @@ func _npc_spawn_total() -> int:
 ## region, so standing them on the graph is what actually puts their feet on
 ## this ground. The authored Y is kept as the fallback when a region has no
 ## graph.
+##
+## The guard below is per loaded region, not per region ever seen: the mark
+## is set once the NPCs stand under the region's terrain node and cleared
+## when that node is unloaded (`_maybe_stream_regions` -> `_grid.unload`,
+## round 563), because the NPCs are its children and are freed with it.
+## Until then the mark outlived the node -- the only clearing was the zone
+## change's `_clear_region_grid` -- so a town walked away from and back to
+## came back with nobody in it.
 func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
-	if _npc_regions_done.has("%d_%d" % [region_x, region_y]):
+	if _grid.npcs_done(region_x, region_y):
 		return
 	# Cached after the first cell, which pays it whole -- its own lap (round
 	# 561), so the centre cell's `npcs` is not read as spawning alone.
@@ -4446,7 +4476,8 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 	var group := get_node_or_null("RealTerrain_%d_%d" % [region_x, region_y]) as Node3D
 	if group == null:
 		return
-	_npc_regions_done["%d_%d" % [region_x, region_y]] = true
+	_grid.mark_npcs_done(region_x, region_y)
+	var region_pair := _grid.nav_graph_for_region(region_x, region_y)
 
 	var spawns: Array = _npc_spawns_by_region.get("%d_%d" % [region_x, region_y], [])
 	if spawns.is_empty():
@@ -4495,17 +4526,15 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 		var local: Vector3 = spawn.local_position
 		var height: float = local.y
 		var npc_graph: NavGraph = null
-		for pair in _region_nav_graphs:
-			if pair[1] == group:
-				npc_graph = pair[0] as NavGraph
-				# The authored Y is passed as the mover's height, not
-				# discarded: height_at resolves several stacked walkable
-				# surfaces by picking the one nearest the mover, and asking
-				# from 0 puts anyone standing on a raised deck underneath it.
-				# Jangan's octagonal plaza is a placed object, so every NPC
-				# on the town square came out buried in it.
-				height = (pair[0] as NavGraph).landing_height_at(local.x, local.z)
-				break
+		if not region_pair.is_empty():
+			npc_graph = region_pair[0] as NavGraph
+			# The authored Y is passed as the mover's height, not
+			# discarded: height_at resolves several stacked walkable
+			# surfaces by picking the one nearest the mover, and asking
+			# from 0 puts anyone standing on a raised deck underneath it.
+			# Jangan's octagonal plaza is a placed object, so every NPC
+			# on the town square came out buried in it.
+			height = npc_graph.landing_height_at(local.x, local.z)
 		holder.position = Vector3(local.x, height, local.z)
 		# Which way it faces is a DISCLOSED STAND-IN: the game's value is
 		# Tab_RefNest.wInitialDir, server-database data no shipped file
@@ -6157,18 +6186,17 @@ const PLACEMENT_OWNERSHIP_MARGIN := 1.0
 ## a neighbour's terrain without rebuilding it. Parsing is the expensive
 ## part and every region in the grid gets parsed for its own terrain
 ## anyway, so this is a second reference rather than a second parse of
-## anything new.
-var _parsed_region_heightmaps := {}
-
+## anything new. Held in _grid.parsed_heightmaps and dropped with the
+## region (round 563).
 func _parsed_region_heightmap(region_x: int, region_y: int) -> MapmReader.ParsedRegion:
-	var key := "%d_%d" % [region_x, region_y]
-	if _parsed_region_heightmaps.has(key):
-		return _parsed_region_heightmaps[key]
+	var key := RegionGridState.region_key(region_x, region_y)
+	if _grid.parsed_heightmaps.has(key):
+		return _grid.parsed_heightmaps[key]
 	var bytes := AssetSource.read_bytes("%d\\%d.m" % [region_x, region_y], _open_map_pk2_if_set())
 	var parsed: MapmReader.ParsedRegion = null
 	if not bytes.is_empty():
 		parsed = MapmReader.parse(bytes)
-	_parsed_region_heightmaps[key] = parsed
+	_grid.parsed_heightmaps[key] = parsed
 	return parsed
 
 ## The real player capsule's own height, read from the real shape rather
@@ -6426,6 +6454,13 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_SHOTS=...   visit several viewpoints in one run, as
 ##                          `name@x,z:yaw,pitch,dist` separated by `;` --
 ##                          each prints the movie frame it landed on
+##                          (`QA SHOT <name> frame <n>`) and, on its own
+##                          `QA GRID <name>` line, the region grid's
+##                          bookkeeping and the object/memory counts (round
+##                          563). x,z are local to the region under the
+##                          player, so a spot past its edge (x = -30) hops
+##                          one region over -- how round 563's tour crossed
+##                          boundaries in 28 ticks a hop
 ##   SRREVAMP_QA_RADIUS=n   load an n-region radius instead of the default
 ##   SRREVAMP_QA_ANIM=1     play the real character animation (off by
 ##                          default -- it still renders wrongly, see
@@ -7136,6 +7171,22 @@ func _qa_advance_shots() -> void:
 	if _qa_shot_index >= 0 and _qa_shot_frames == QA_SHOT_HOLD:
 		print("QA SHOT %s frame %d" % [
 			_qa_shots[_qa_shot_index]["name"], Engine.get_frames_drawn()])
+		# The grid's bookkeeping and the process's object and memory counts
+		# at the same moment (round 563), on a line of their own so the `QA
+		# SHOT <name> frame <n>` contract above is untouched: a tour that
+		# crosses region boundaries shows the per-region caches bounded by
+		# the window instead of growing with every region ever visited.
+		var under := _nav_graph_for(player.global_position)
+		var where := "off-region"
+		if not under.is_empty():
+			var local := (under[1] as Node3D).to_local(player.global_position)
+			where = "%s local %.0f,%.0f" % [String((under[1] as Node3D).name).trim_prefix("RealTerrain_"), local.x, local.z]
+		print("QA GRID %s frame %d at %s: %s object_templates=%d objects=%d orphans=%d static_mem=%d" % [
+			_qa_shots[_qa_shot_index]["name"], Engine.get_frames_drawn(), where, _grid.counts_line(),
+			_object_templates.size() if _object_templates != null else 0,
+			int(Performance.get_monitor(Performance.OBJECT_COUNT)),
+			int(Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT)),
+			int(Performance.get_monitor(Performance.MEMORY_STATIC))])
 	_qa_shot_frames -= 1
 	if _qa_shot_frames > 0:
 		return
@@ -7671,7 +7722,7 @@ func _qa_float_report(radius: float) -> void:
 			continue
 		var region_group := group as Node3D
 		var graph: NavGraph = null
-		for entry in _region_nav_graphs:
+		for entry in _grid.nav_graph_pairs():
 			if entry[1] == region_group:
 				graph = entry[0]
 				break
@@ -8629,21 +8680,18 @@ func _drawn_surface_height(group: Node3D, local_x: float, local_z: float, graph_
 ## real signal ordinary movement stands on, so this lands on a staircase
 ## or a bridge deck rather than in the terrain under it.
 func _place_at_region_local(region_x: int, region_y: int, local_x: float, local_z: float) -> bool:
-	var group := get_node_or_null("RealTerrain_%d_%d" % [region_x, region_y]) as Node3D
-	if group == null:
+	var pair := _grid.nav_graph_for_region(region_x, region_y)
+	if pair.is_empty():
 		return false
-	for pair in _region_nav_graphs:
-		if pair[1] != group:
-			continue
-		var graph: NavGraph = pair[0]
-		# Landing, not walking: someone placed into the world arrives from
-		# above and comes to rest on the highest surface here.
-		player.global_position = group.to_global(
-			Vector3(local_x, graph.landing_height_at(local_x, local_z), local_z))
-		player.velocity = Vector3.ZERO
-		_last_sent_pos = player.position
-		return true
-	return false
+	var graph: NavGraph = pair[0]
+	var group: Node3D = pair[1]
+	# Landing, not walking: someone placed into the world arrives from
+	# above and comes to rest on the highest surface here.
+	player.global_position = group.to_global(
+		Vector3(local_x, graph.landing_height_at(local_x, local_z), local_z))
+	player.velocity = Vector3.ZERO
+	_last_sent_pos = player.position
+	return true
 
 ## Moves the player to a zone's own landing spot (see ZONE_SPAWN_LOCAL) if
 ## one is known, once that zone's region has actually loaded. Zones with
@@ -8783,11 +8831,11 @@ func _where_report() -> PackedStringArray:
 	out.append("zone: %s" % zone)
 	# The region is whichever loaded cell's own space contains the player --
 	# each RealTerrain_<x>_<y> node's local space IS that region's real
-	# coordinate space (see _region_nav_graphs), so this is the inverse of
+	# coordinate space (see _grid.nav_graphs), so this is the inverse of
 	# _place_at_region_local rather than arithmetic on the world origin,
 	# which named the *relative* cell (0/-1) instead of the real one (97/168).
 	var found := false
-	for pair in _region_nav_graphs:
+	for pair in _grid.nav_graph_pairs():
 		var group := pair[1] as Node3D
 		var graph := pair[0] as NavGraph
 		if group == null or graph == null:
