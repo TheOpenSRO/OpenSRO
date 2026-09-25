@@ -37,6 +37,18 @@ extends SceneTree
 ##   trimesh under the world's mirror is not touched by body_test_motion's
 ##   cast at all -- the unmirrored or two-sided trimesh is -- and the walk
 ##   sinks into it, where on the heightfield it stays on the ground.
+## - THE GRID LINES (round 572): a vertical ray exactly on one of the
+##   heightfield's grid lines often finds nothing (TerrainCollision's doc
+##   comment has the reading of 4.2.2's source). A radius-2 grid of 25 regions
+##   placed by TerrainCollision.place_group -- World3D's own placement -- at
+##   the frame origin, over one world-continuous non-planar field, probed at
+##   every one of each region's 9,409 vertices and at the centre's cell-edge
+##   midpoints: the plain vertical ray (the NEGATIVE -- it must miss, or the
+##   probe is not on the lines) against TerrainCollision.vertical_ray, which
+##   must miss at none, and must land within RAY_GRID_EPSILON times the
+##   steepest triangle of the drawn vertex height. The band the epsilon was
+##   chosen from is re-measured (rays moved (d, d) off every vertex), and a
+##   lone region -- its outer edges have no neighbour -- is probed too.
 ##
 ## TerrainCollision is reached through load(), so on a tree without it the
 ## suite FAILS rather than failing to parse.
@@ -537,6 +549,233 @@ func _test_walk() -> void:
 	for node in groups + walkers:
 		(node as Node).queue_free()
 
+## One world-continuous field for the grid probe: the height at world
+## vertex (gi, gk) -- world (20 gi, 20 gk) -- so regions that share an edge
+## share its heights, as real neighbours do (World3D._cell_offset's
+## doc comment: 0.000000 mean difference on real edges). Non-planar, with
+## slopes of a few units a unit.
+func _world_field(gi: int, gk: int) -> float:
+	return 40.0 * sin(float(gi) * 0.9) * cos(float(gk) * 0.7) + 3.0 * float(posmod(gi * 7 + gk * 13, 5))
+
+## The group-local region whose group place_group puts at `offset`, heights
+## from _world_field at each vertex's world position: mesh vertex (r, c) is
+## at group-local (20 c, 20 r) and its world position is read back through
+## the group itself (in the tree), so the probe does not restate the
+## placement.
+func _grid_region_heights(g: Node3D) -> PackedFloat32Array:
+	var region := _field_region(func(r, c):
+		var w := g.to_global(Vector3(float(c) * TILE, 0.0, float(r) * TILE))
+		return _world_field(roundi(w.x / TILE), roundi(w.z / TILE)))
+	return TC.heights_from_region(region)
+
+## The steepest drawn triangle of a height grid, as |dh/dx| + |dh/dz| (the
+## mesh's split; World3D._qa_terrain_slope_report reads real regions the same
+## way): what bounds how far a height read RAY_GRID_EPSILON off on each axis
+## can be from the exact column's.
+func _steepest(heights: PackedFloat32Array) -> float:
+	var steepest := 0.0
+	for r in range(SIDE - 1):
+		for c in range(SIDE - 1):
+			var h00 := heights[(SIDE - 1 - r) * SIDE + c]
+			var h10 := heights[(SIDE - 1 - r) * SIDE + c + 1]
+			var h01 := heights[(SIDE - 2 - r) * SIDE + c]
+			var h11 := heights[(SIDE - 2 - r) * SIDE + c + 1]
+			steepest = maxf(steepest, maxf(absf(h10 - h00) + absf(h11 - h10), absf(h11 - h01) + absf(h01 - h00)) / TILE)
+	return steepest
+
+## A terrain group at `offset` (whole region spans from the frame origin),
+## placed by TerrainCollision.place_group, its heightfield on `layer`.
+func _grid_region(offset: Vector3, layer: int) -> Array:
+	var g := Node3D.new()
+	TC.place_group(g, offset, 12.5)
+	root.add_child(g)
+	var heights := _grid_region_heights(g)
+	var body := StaticBody3D.new()
+	body.collision_layer = layer
+	body.collision_mask = 0
+	var cs := CollisionShape3D.new()
+	cs.shape = TC.make_shape(heights)
+	cs.transform = TC.shape_transform()
+	body.add_child(cs)
+	g.add_child(body)
+	return [g, heights]
+
+func _plain_hit(space: PhysicsDirectSpaceState3D, x: float, z: float, mask: int) -> Dictionary:
+	var q := PhysicsRayQueryParameters3D.create(Vector3(x, 1000.0, z), Vector3(x, -1000.0, z))
+	q.collision_mask = mask
+	return space.intersect_ray(q)
+
+func _test_grid_lines() -> void:
+	var started := Time.get_ticks_msec()
+	var eps: float = TC.RAY_GRID_EPSILON
+	# ray_columns, by value.
+	var cols: PackedFloat64Array = TC.ray_columns(123.4)
+	_check(cols.size() == 1 and cols[0] == 123.4, "a column off every grid line is fired as it is (got %s)" % str(cols))
+	cols = TC.ray_columns(340.0)
+	_check(cols.size() == 2 and cols[0] == 340.0 + eps and cols[1] == 340.0 - eps,
+		"a column on a grid line (340, a multiple of 20) is fired %.2f off it, the + side first, then the - side (got %s)" % [eps, str(cols)])
+	cols = TC.ray_columns(339.996)
+	_check(cols.size() == 2 and cols[0] == 340.0 - eps and cols[1] == 340.0 + eps,
+		"a column just under a line is moved to the - side first (got %s)" % str(cols))
+	cols = TC.ray_columns(-500.0)
+	_check(cols.size() == 2 and cols[0] == -500.0 + eps and cols[1] == -500.0 - eps,
+		"negative coordinates too (got %s)" % str(cols))
+	cols = TC.ray_columns(340.0 + 2.0 * eps)
+	_check(cols.size() == 1, "a column twice the epsilon off a line is left alone (got %s)" % str(cols))
+
+	# The radius-2 grid at the frame origin, on layer 256 (bit 9), which no
+	# other probe in this suite uses.
+	var layer := 256
+	var regions := {}
+	for dx in range(-2, 3):
+		for dz in range(-2, 3):
+			regions[Vector2i(dx, dz)] = _grid_region(Vector3(float(dx) * 1920.0, 0.0, float(dz) * 1920.0), layer)
+	await physics_frame
+	await physics_frame
+	var space := root.get_world_3d().direct_space_state
+	var steepest := 0.0
+	for key in regions:
+		steepest = maxf(steepest, _steepest(regions[key][1]))
+	var off_lattice := 0
+	var plain_total := 0
+	var plain_regions := 0
+	var helper_total := 0
+	var worst := 0.0
+	var centre_plain := 0
+	var centre_helper := 0
+	var per_region := PackedStringArray()
+	for key in regions:
+		var g: Node3D = regions[key][0]
+		var heights: PackedFloat32Array = regions[key][1]
+		var plain := 0
+		var helper := 0
+		for j in range(SIDE):
+			for i in range(SIDE):
+				var w := g.to_global(Vector3(float(i) * TILE, 0.0, float(j) * TILE))
+				# place_group puts every vertex on world multiples of TILE_SIZE,
+				# the lines ray_columns steps off.
+				if fmod(absf(w.x), TILE) != 0.0 or fmod(absf(w.z), TILE) != 0.0:
+					off_lattice += 1
+				if _plain_hit(space, w.x, w.z, layer).is_empty():
+					plain += 1
+				var hit: Dictionary = TC.vertical_ray(space, w.x, w.z, 1000.0, -1000.0, layer)
+				if hit.is_empty():
+					helper += 1
+				else:
+					var drawn := g.to_global(Vector3(float(i) * TILE, heights[(SIDE - 1 - j) * SIDE + i], float(j) * TILE)).y
+					worst = maxf(worst, absf((hit.position as Vector3).y - drawn))
+		plain_total += plain
+		helper_total += helper
+		if plain > 0:
+			plain_regions += 1
+			per_region.append("%s %d" % [str(key), plain])
+		if key == Vector2i(0, 0):
+			centre_plain = plain
+			centre_helper = helper
+	_check(off_lattice == 0, "place_group puts every vertex of the 25 regions on world multiples of %.0f, the lines ray_columns knows (%d off)" % [TILE, off_lattice])
+	# The NEGATIVE: the probe is on the lines -- the plain vertical ray misses.
+	_check(centre_plain > 0,
+		"NEGATIVE: at the frame origin's region the plain vertical ray misses at %d of its 9,409 vertices" % centre_plain)
+	_check(centre_helper == 0,
+		"TerrainCollision.vertical_ray misses at none of the centre region's 9,409 vertices (missed %d)" % centre_helper)
+	_check(helper_total == 0,
+		"nor at any of the 25 regions' 235,225 (missed %d; the plain ray %d, in %d regions: %s)" % [
+			helper_total, plain_total, plain_regions, ", ".join(per_region)])
+	_check(worst <= eps * steepest + 0.001,
+		"each hit is within the epsilon times the steepest triangle (%.3f x %.3f = %.4f) of the drawn vertex height (worst %.4f)" % [
+			eps, steepest, eps * steepest, worst])
+
+	# The centre's cell-edge midpoints: on one grid line, halfway along a cell.
+	var g0: Node3D = regions[Vector2i(0, 0)][0]
+	var edge_plain := [0, 0]
+	var edge_helper := [0, 0]
+	for j in range(SIDE):
+		for i in range(SIDE):
+			for k in range(2):
+				if (k == 0 and i == SIDE - 1) or (k == 1 and j == SIDE - 1):
+					continue
+				var local := Vector3((float(i) + (0.5 if k == 0 else 0.0)) * TILE, 0.0, (float(j) + (0.5 if k == 1 else 0.0)) * TILE)
+				var w := g0.to_global(local)
+				if _plain_hit(space, w.x, w.z, layer).is_empty():
+					edge_plain[k] += 1
+				if (TC.vertical_ray(space, w.x, w.z, 1000.0, -1000.0, layer) as Dictionary).is_empty():
+					edge_helper[k] += 1
+	_check(edge_helper[0] == 0 and edge_helper[1] == 0,
+		"the centre's 9,312 + 9,312 cell-edge midpoints: the helper misses none (%d, %d); the plain ray %d on lines of constant z, %d on lines of constant x" % [
+			edge_helper[0], edge_helper[1], edge_plain[0], edge_plain[1]])
+
+	# The band RAY_GRID_EPSILON was chosen from: every vertex of the 25
+	# regions moved (d, d) into its own cell (towards its region's interior on
+	# the regions' last rows and columns, which have no cell beyond them in
+	# that region), plain rays.
+	var band := {}
+	for d in [0.00001, 0.0001, 0.001, eps]:
+		var missed := 0
+		for key in regions:
+			var g: Node3D = regions[key][0]
+			for j in range(SIDE):
+				for i in range(SIDE):
+					var local := Vector3(float(i) * TILE + (d if i < SIDE - 1 else -d), 0.0, float(j) * TILE + (d if j < SIDE - 1 else -d))
+					var w := g.to_global(local)
+					if _plain_hit(space, w.x, w.z, layer).is_empty():
+						missed += 1
+		band[d] = missed
+	print("info: plain rays moved (d, d) off the 25 regions' 235,225 vertices, misses: d 0.00001 -> %d, 0.0001 -> %d, 0.001 -> %d, %s -> %d" % [
+		band[0.00001], band[0.0001], band[0.001], str(eps), band[eps]])
+	_check(band[0.00001] > 0 and band[eps] == 0,
+		"the band: 0.00001 off the vertices still misses (%d), RAY_GRID_EPSILON (%s) off misses none (%d)" % [band[0.00001], str(eps), band[eps]])
+	for key in regions:
+		(regions[key][0] as Node).queue_free()
+	await physics_frame
+
+	# A lone region at the frame origin: its outer edges have no neighbour,
+	# so a vertex there answers only from the side ray_columns tries second.
+	var lone: Array = _grid_region(Vector3.ZERO, layer)
+	await physics_frame
+	await physics_frame
+	var lone_g: Node3D = lone[0]
+	var lone_miss := 0
+	var lone_plain := 0
+	for j in range(SIDE):
+		for i in range(SIDE):
+			var w := lone_g.to_global(Vector3(float(i) * TILE, 0.0, float(j) * TILE))
+			if (TC.vertical_ray(space, w.x, w.z, 1000.0, -1000.0, layer) as Dictionary).is_empty():
+				lone_miss += 1
+			if _plain_hit(space, w.x, w.z, layer).is_empty():
+				lone_plain += 1
+	_check(lone_miss == 0, "a lone region (no neighbours): the helper misses none of its 9,409 vertices, its outer edges included (missed %d; plain %d)" % [lone_miss, lone_plain])
+	lone_g.queue_free()
+
+	# Far from the frame origin the same placement leaves the shape's local
+	# coordinates inexact, and the plain ray does not miss there: recorded.
+	# Two far cells: 60 region spans out on both axes (world ~115,000), and the
+	# far corner cell of Constantinople's radius-2 grid in 97/168's frame --
+	# the server's -single-frame (round 571): World3D._cell_offset(10, -91),
+	# world x from -175,680 to -173,760, where float32's spacing is 1/64 and
+	# the helper's 0.01 rounds to 0.015625 off the line (RAY_GRID_EPSILON's
+	# doc comment).
+	var fars := [
+		["60 region spans out (world ~115,000)", Vector3(60.0 * 1920.0, 0.0, 60.0 * 1920.0)],
+		["Constantinople's radius-2 far corner under -single-frame (world x to -175,680)", Vector3(-91.0 * 1920.0, 0.0, 10.0 * 1920.0)],
+	]
+	for far_case in fars:
+		var far: Array = _grid_region(far_case[1], layer)
+		await physics_frame
+		await physics_frame
+		var far_g: Node3D = far[0]
+		var far_plain := 0
+		var far_helper := 0
+		for j in range(SIDE):
+			for i in range(SIDE):
+				var w := far_g.to_global(Vector3(float(i) * TILE, 0.0, float(j) * TILE))
+				if _plain_hit(space, w.x, w.z, layer).is_empty():
+					far_plain += 1
+				if (TC.vertical_ray(space, w.x, w.z, 1000.0, -1000.0, layer) as Dictionary).is_empty():
+					far_helper += 1
+		_check(far_helper == 0, "%s: the helper misses none of 9,409 (%d; plain %d, recorded)" % [far_case[0], far_helper, far_plain])
+		far_g.queue_free()
+	print("info: the grid probe took %d ms" % (Time.get_ticks_msec() - started))
+
 func _initialize() -> void:
 	var watchdog := create_timer(60.0)
 	watchdog.timeout.connect(func() -> void:
@@ -549,6 +788,10 @@ func _initialize() -> void:
 		return
 	_test_layout()
 	await _test_physics()
+	if TC.get_script_constant_map().has("RAY_GRID_EPSILON"):
+		await _test_grid_lines()
+	else:
+		_check(false, "TerrainCollision has RAY_GRID_EPSILON and vertical_ray (absent before round 572)")
 	_finish()
 
 func _finish() -> void:

@@ -41,6 +41,17 @@ extends SceneTree
 ## through load() and call(), so they do not fail to parse). A helper with the
 ## region axes the intuitive way round (region x -> world X) misses the
 ## measured 98/168 row, which is why that row is here.
+## ONE PLACEMENT (round 572). _terrain_commit places a region's group with
+## TerrainCollision.place_group -- the heightfield's grid lines, which
+## TerrainCollision.vertical_ray steps off, follow from it -- while the frame
+## rows above and the frame's corner (_frame_corner, _grid_origin_world) read
+## World3D._group_position. The suite holds the node place_group positions to
+## Transform3D(Basis(1, 1, -1), _group_position) for every FRAME_ROWS cell, for
+## Constantinople's centre and the far corner of its radius-2 grid in 97/168's
+## frame (the server's -single-frame, round 571: world x to -175,680), and for
+## several anchors, so the corner the streaming test measures from and the
+## heightfield's grid lines cannot drift apart. NEGATIVE: before round 572
+## TerrainCollision has no place_group, and the method-list guard FAILS.
 ## World3D.gd needs the NetClient autoload registered before it compiles,
 ## which is the case in _initialize and not in _init (zone_centres_test.gd),
 ## so this suite runs from _initialize since round 570.
@@ -192,7 +203,48 @@ func _test_frame(state: RefCounted) -> void:
 	_check(_is_region(w.call("_frame_coords", donwhang, ""), 102, 153), "no FrameRegion (an older server): the zone's own centre")
 	_check(_is_region(w.call("_frame_coords", donwhang, "97/168"), 97, 168), "a FrameRegion other than the centre is the frame the grid is built in")
 	_check(_is_region(w.call("_frame_coords", donwhang, "jangan"), 102, 153), "a FrameRegion that is not x/y falls back to the centre")
+	_test_one_placement(w)
 	w.free()
+
+## ONE PLACEMENT (the header's section of that name, round 572).
+func _test_one_placement(w: Node) -> void:
+	var tc := load("res://scripts/assets/terrain_collision.gd") as GDScript
+	var has := false
+	if tc != null:
+		for m in tc.get_script_method_list():
+			if String(m.get("name", "")) == "place_group":
+				has = true
+	_check(has, "TerrainCollision has place_group (absent before round 572)")
+	if not has:
+		return
+	# [label, the cell's offset from the frame region, pre-mirror].
+	var cells := []
+	for row in FRAME_ROWS:
+		cells.append(["%d/%d in the frame of %d/%d" % [row[0], row[1], row[4], row[5]],
+			w.call("_cell_offset", int(row[0]) - int(row[4]), int(row[1]) - int(row[5]))])
+	# Constantinople (105/79) in 97/168's frame, and its radius-2 grid's far
+	# corner cell (107/77), whose low-x edge is the grid's farthest x.
+	cells.append(["105/79 in the frame of 97/168", w.call("_cell_offset", 105 - 97, 79 - 168)])
+	cells.append(["107/77 in the frame of 97/168", w.call("_cell_offset", 107 - 97, 77 - 168)])
+	# Anchors: arbitrary inputs, both signs. A NAN anchor reaches neither
+	# function: _terrain_commit falls back to the near-row height, and
+	# _frame_corner to 0.
+	var anchors := [0.0, 12.5, -37.25, 1234.5]
+	var farthest := 0.0
+	for cell in cells:
+		var mismatched := PackedStringArray()
+		for anchor in anchors:
+			var g := Node3D.new()
+			tc.call("place_group", g, cell[1], anchor)
+			var pos: Vector3 = w.call("_group_position", cell[1], anchor)
+			var want := Transform3D(Basis.from_scale(Vector3(1, 1, -1)), pos)
+			if g.position != pos or g.scale != Vector3(1, 1, -1) or g.transform != want:
+				mismatched.append("anchor %s: place_group %s scale %s, _group_position %s" % [anchor, g.position, g.scale, pos])
+			farthest = maxf(farthest, absf(pos.x))
+			g.free()
+		_check(mismatched.is_empty(), "%s: place_group's node stands at _group_position with scale.z = -1, at all %d anchors%s" % [
+			cell[0], anchors.size(), "" if mismatched.is_empty() else " (" + "; ".join(mismatched) + ")"])
+	_check(farthest == 175680.0, "the far corner's group stands at world x -175,680, the -single-frame grid's farthest (got %.1f)" % -farthest)
 
 func _test_unload_forgets_one_region(state: RefCounted) -> void:
 	var group_167 := Node3D.new()

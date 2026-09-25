@@ -102,6 +102,12 @@ func _test_height_turns() -> void:
 	_check(str(r["picked"]) == "[1, 3]", "only wanting bodies are picked (%s)" % str(r["picked"]))
 	_check(str(MonsterMotion.height_turns(few, 7, budget)["picked"]) == "[3, 1]", "a cursor past the end wraps (7 of 4 starts at 3)")
 	_check((MonsterMotion.height_turns([], 5, budget)["picked"] as Array).is_empty(), "no bodies, no rays")
+	# Round 572: the monsters' share when ground items wait for ground too.
+	var share := func(items: int) -> int: return MonsterMotion.monster_height_share(budget, items)
+	_check(share.call(0) == budget and share.call(-1) == budget, "no items waiting: the monsters may take the whole budget")
+	_check(share.call(3) == budget - 3, "3 items waiting: the monsters may take all but their 3 (%d)" % share.call(3))
+	_check(share.call(budget / 2) == budget / 2 and share.call(1000) == budget / 2,
+		"half the budget or more wanted by the items: an even split (%d, %d)" % [share.call(budget / 2), share.call(1000)])
 
 ## NEGATIVE -- a genuine red before round 533: _spawn_or_update_monster set
 ## `existing.position = pos` on every list refresh, which teleports a walking

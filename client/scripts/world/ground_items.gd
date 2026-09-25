@@ -26,12 +26,21 @@ var _drop_models: Dictionary = {}
 var _name_for: Callable
 ## Builds a name plate the way World3D does for monsters: (text, above) -> Label3D.
 var _plate_for: Callable
-## Snaps a position to the terrain: (Vector3) -> float height.
+## The terrain's height under a position: (Vector3) -> float, NAN when
+## nothing is there yet (World3D._terrain_hit_height).
 var _height_at: Callable
 ## ground item id -> its node.
 var _nodes: Dictionary = {}
 ## ground item id -> its latest snapshot.
 var _items: Dictionary = {}
+## ground item id -> the physics frame its height ray first found no ground.
+## Such an item is drawn at the server's y -- for a monster's drop, the
+## monster's listed y (session/grounditem.go dropKillLoot), 0 for a Mangyang
+## -- until resolve_pending finds the ground. The zone's list is asked for
+## in World3D._ready, while the region grid is still loading, so an item in
+## a neighbour region can arrive before that region's terrain collision; the
+## same race floated the monsters.
+var _pending: Dictionary = {}
 
 func setup(archive: Pk2Reader, drop_models: Dictionary, name_for: Callable, plate_for: Callable, height_at: Callable) -> void:
 	_archive = archive
@@ -42,6 +51,13 @@ func setup(archive: Pk2Reader, drop_models: Dictionary, name_for: Callable, plat
 
 func count() -> int:
 	return _nodes.size()
+
+## How many items are still waiting for ground under them.
+func pending_count() -> int:
+	return _pending.size()
+
+func is_pending(ground_id: int) -> bool:
+	return _pending.has(ground_id)
 
 func has(ground_id: int) -> bool:
 	return _nodes.has(ground_id)
@@ -79,7 +95,13 @@ func spawn(snap: GroundItemsNet.Snapshot) -> void:
 	_items[snap.id] = snap
 	var pos := Vector3(snap.x, snap.y, snap.z)
 	if _height_at.is_valid():
-		pos.y = _height_at.call(pos)
+		var found: float = _height_at.call(pos)
+		if is_nan(found):
+			if not _pending.has(snap.id):
+				_pending[snap.id] = Engine.get_physics_frames()
+		else:
+			pos.y = found
+			_pending.erase(snap.id)
 	if _nodes.has(snap.id):
 		(_nodes[snap.id] as Node3D).position = pos
 		return
@@ -141,6 +163,37 @@ func remove(ground_id: int) -> void:
 		node.queue_free()
 	_nodes.erase(ground_id)
 	_items.erase(ground_id)
+	_pending.erase(ground_id)
+
+## One frame's retry of the items whose height ray found no ground, at most
+## `budget` rays (World3D._step_heights hands on what the monsters left of
+## MonsterMotion.MAX_HEIGHT_RESOLVES_PER_FRAME -- at least half of it
+## whenever the items want that much, MonsterMotion.monster_height_share). A
+## hit sets the item's height and says so once; a miss goes to the back of
+## the queue, so every waiting item gets its turn. Returns the rays fired.
+func resolve_pending(budget: int) -> int:
+	if _pending.is_empty() or budget <= 0 or not _height_at.is_valid():
+		return 0
+	var fired := 0
+	for id in _pending.keys():
+		if fired >= budget:
+			break
+		var node: Node3D = _nodes.get(id)
+		var snap: GroundItemsNet.Snapshot = _items.get(id)
+		if node == null or snap == null:
+			_pending.erase(id)
+			continue
+		fired += 1
+		var since: int = _pending[id]
+		_pending.erase(id)
+		var found: float = _height_at.call(Vector3(snap.x, snap.y, snap.z))
+		if is_nan(found):
+			_pending[id] = since
+			continue
+		node.position.y = found
+		print("GroundItems: item %d height resolved after %d frame(s): %.2f" % [
+			id, Engine.get_physics_frames() - since, found])
+	return fired
 
 ## The item's 30 s window has passed: anyone may pick it now. Recorded on
 ## the snapshot; nothing visual is claimed for it (whether the original

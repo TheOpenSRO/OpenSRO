@@ -229,6 +229,18 @@ static func _new_loop(animated: Array, skeleton: Skeleton3D, anim: BanReader.Par
 static func needs_height(last_xz: Vector2, pos: Vector2) -> bool:
 	return last_xz.distance_to(pos) >= HEIGHT_RESOLVE_STEP
 
+## How much of a frame's height budget the monsters' queue may take when
+## `item_wants` ground items are waiting for ground too (round 572): the
+## budget less the items' want, up to half of it. So two queues that both want
+## more than half share it evenly, and either one takes what the other does
+## not want -- the items take whatever the monsters leave
+## (World3D._step_heights). Until round 572 the items had only what the
+## monsters left, and from MAX_HEIGHT_RESOLVES_PER_FRAME monster bodies that
+## can never resolve (listed outside every loaded region) they had nothing.
+## The even split is srrevamp's own design, not a tuned number.
+static func monster_height_share(budget: int, item_wants: int) -> int:
+	return budget - mini(maxi(item_wants, 0), budget / 2)
+
 ## Which bodies get a height ray this frame, taking turns (round 534).
 ## `wants[i]` says whether the i-th body of the frame's walk order needs one;
 ## at most `budget` are served (MAX_HEIGHT_RESOLVES_PER_FRAME), starting at

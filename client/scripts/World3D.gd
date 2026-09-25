@@ -935,18 +935,32 @@ var _monster_snapshots := {}
 ## "log_frames"), from a server-driven move (_on_monster_moved,
 ## _on_monster_motion_list). A body with no entry stands where the list put it.
 var _monster_motion := {}
+## monster_id -> the physics frame (Engine.get_physics_frames) its body's
+## height ray first found no ground: the body is drawn at the server's y
+## until _step_monster_bodies' retry finds it (_book_monster_height). Every
+## place that drops a body from _monster_bodies drops it here too.
+var _monster_heights_pending := {}
+## The scene's stand-in floors' RIDs, which _terrain_hit_height's ray passes
+## through (_stand_in_floor_rids); filled on first use.
+var _stand_in_rids: Array = []
 ## When a move for an unknown monster last asked for the list
 ## (MonsterMotion.UNKNOWN_MOVE_PULL_SECONDS), in Time.get_ticks_msec().
 var _unknown_move_pull_msec := -1000000
 ## Height resolves over the current 10-second window, the most in one frame,
 ## and the microseconds spent in them (the navmesh lookups and any terrain
 ## rays -- not the QA compare line, which is timed out), for the gated
-## 'monster height resolves' log line.
+## 'monster height resolves' log line. Since round 572 these count the
+## walking legs' resolves only; a resolve for a body still waiting for ground
+## (_monster_heights_pending) is a retry, counted and timed apart
+## (_mob_height_retries and the rest), so the line measures each.
 var _mob_height_resolves := 0
 var _mob_height_max := 0
 var _mob_height_usec := 0
 var _mob_height_usec_max := 0
 var _mob_height_window := 0.0
+var _mob_height_retries := 0
+var _mob_height_retries_max := 0
+var _mob_height_retry_usec := 0
 ## Where the next frame's height rays start in _step_monster_bodies' walk
 ## order (MonsterMotion.height_turns), so the budget goes round every body.
 var _mob_height_cursor := 0
@@ -3501,7 +3515,12 @@ func _load_region_cell(region_x: int, region_y: int, dx: int, dy: int, shared_an
 ## that is the world's one global z -> -z mirror (the **Un-mirrored** comment
 ## in _terrain_commit). A static function since round 570 so the frame test
 ## (region_grid_state_test.gd) holds this placement, not a copy of it, to
-## server/internal/worldmap.ToWorld.
+## server/internal/worldmap.ToWorld. Since round 572 _terrain_commit places
+## the group itself with TerrainCollision.place_group, whose arithmetic the
+## heightfield's grid lines follow from; this is the same position without a
+## node (for _frame_corner), and region_grid_state_test.gd holds the two equal
+## -- position and scale -- for every frame row's cell, Constantinople's under
+## the server's -single-frame, and several anchors.
 static func _group_position(world_offset: Vector3, anchor_height: float) -> Vector3:
 	var placement := Vector3(
 		-REGION_SPAN / 2.0, -anchor_height, -REGION_SPAN / 2.0) + world_offset
@@ -4284,6 +4303,7 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 		_monster_bodies[monster_id].queue_free()
 	_monster_bodies.clear()
 	_monster_motion.clear()
+	_monster_heights_pending.clear()
 	_strike_waits.clear()
 	NetClient.list_monsters()
 	NetClient.list_ground_items()
@@ -5653,9 +5673,17 @@ func _terrain_commit(job: Dictionary) -> float:
 	# (verified: the real building renders solid, not inside-out, under this
 	# mirror), so `BmsReader`'s existing winding reversal stays exactly as
 	# it is and no mesh data needs rewriting.
-	var world_offset: Vector3 = job["world_offset"]
-	terrain_group.position = _group_position(world_offset, anchor_height)
-	terrain_group.scale.z = -1.0
+	#
+	# The arithmetic is TerrainCollision.place_group's (round 572): the
+	# heightfield's grid lines follow from it, and the vertical terrain rays
+	# step off them (TerrainCollision.vertical_ray), so the two are one
+	# function and the grid probe in terrain_collision_test.gd runs it.
+	# _group_position (round 570) is the same position without a node -- the
+	# frame's corner (_frame_corner) and the frame test read it -- and
+	# region_grid_state_test.gd holds the two equal for every FRAME_ROWS cell
+	# and several anchors, so the grid corner and the heightfield's grid lines
+	# cannot drift apart.
+	TerrainCollision.place_group(terrain_group, job["world_offset"], anchor_height)
 	add_child(terrain_group)
 	ground_mesh.visible = false
 	ground_collision.disabled = true
@@ -5789,11 +5817,10 @@ const BURIED_PROBE_HEIGHT := REGION_SPAN
 ## interiors, arches -- from being mistaken for ground overhead.
 func _recover_if_below_terrain() -> void:
 	var feet := player.position
-	var query := PhysicsRayQueryParameters3D.create(
-		feet + Vector3(0.0, BURIED_PROBE_HEIGHT, 0.0), feet)
-	query.exclude = [player.get_rid()]
-	query.collision_mask = TERRAIN_ONLY_COLLISION_MASK
-	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	# Off the heightfield's grid lines (TerrainCollision.vertical_ray, round
+	# 572): straight down onto one of them the ray often finds nothing.
+	var hit := TerrainCollision.vertical_ray(get_world_3d().direct_space_state, feet.x, feet.z,
+		feet.y + BURIED_PROBE_HEIGHT, feet.y, TERRAIN_ONLY_COLLISION_MASK, [player.get_rid()])
 	if hit.is_empty():
 		return
 	# A player standing correctly *on* the ground still registers a hit here,
@@ -5810,17 +5837,16 @@ func _recover_if_below_terrain() -> void:
 const BURIED_EPSILON := 0.25
 
 func _snap_player_onto_terrain() -> void:
-	var space_state := get_world_3d().direct_space_state
-	var query := PhysicsRayQueryParameters3D.create(
-		player.position + Vector3(0.0, 1000.0, 0.0),
-		player.position + Vector3(0.0, -1000.0, 0.0))
-	query.exclude = [player.get_rid()]
 	# Terrain-only (see TERRAIN_ONLY_COLLISION_MASK's doc comment) -- without
 	# this, a real building standing at the spawn X/Z (its collision defaults
 	# to the same layer terrain used to) is whatever this ray hits first from
 	# 1000 units up, landing the player on its roof instead of the ground.
-	query.collision_mask = TERRAIN_ONLY_COLLISION_MASK
-	var hit := space_state.intersect_ray(query)
+	# Off the heightfield's grid lines (TerrainCollision.vertical_ray, round
+	# 572): the server's spawn (0, 0, 0) is itself a vertex of the entry
+	# region, where a plain vertical ray misses as often as not.
+	var p := player.position
+	var hit := TerrainCollision.vertical_ray(get_world_3d().direct_space_state, p.x, p.z,
+		p.y + 1000.0, p.y - 1000.0, TERRAIN_ONLY_COLLISION_MASK, [player.get_rid()])
 	if hit.is_empty():
 		return
 	var surface: float = hit.position.y + 0.05 * PLAYER_SCALE_RATIO
@@ -5882,17 +5908,17 @@ func _avoid_spawning_under_roof() -> void:
 		for i in range(ROOF_ESCAPE_DIRECTIONS):
 			var angle := TAU * i / ROOF_ESCAPE_DIRECTIONS
 			var candidate_xz := player.position + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
-			var query := PhysicsRayQueryParameters3D.create(
-				candidate_xz + Vector3(0.0, 1000.0, 0.0),
-				candidate_xz + Vector3(0.0, -1000.0, 0.0))
-			query.exclude = [player.get_rid()]
 			# Terrain-only (see TERRAIN_ONLY_COLLISION_MASK's doc comment) --
 			# without this, a candidate ring position could land on a
 			# *different* real building's roof, which also has clear sky
 			# above it, so _has_roof_overhead(candidate) below would wrongly
 			# accept it as "escaped" -- moved off one roof, onto another.
-			query.collision_mask = TERRAIN_ONLY_COLLISION_MASK
-			var hit := space_state.intersect_ray(query)
+			# Off the heightfield's grid lines (TerrainCollision.vertical_ray,
+			# round 572): from a player on a grid vertex -- the server's spawn
+			# is one -- the rings' points at 0, 90, 180 and 270 degrees lie on
+			# grid lines.
+			var hit := TerrainCollision.vertical_ray(space_state, candidate_xz.x, candidate_xz.z,
+				candidate_xz.y + 1000.0, candidate_xz.y - 1000.0, TERRAIN_ONLY_COLLISION_MASK, [player.get_rid()])
 			if hit.is_empty():
 				continue
 			var candidate: Vector3 = hit.position + Vector3(0.0, 0.05 * PLAYER_SCALE_RATIO, 0.0)
@@ -7574,7 +7600,20 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_MOB_LOG=1  print each monster leg, its progress every 30
 ##                          frames, its arrival, each height resolve's navmesh
 ##                          and terrain-ray answers side by side (round 557),
-##                          and the resolve rate and cost every 10 s
+##                          and every 10 s the walking legs' resolve rate and
+##                          cost, with the retries of bodies still waiting
+##                          for ground counted apart (round 572)
+##   SRREVAMP_QA_MOB_HEIGHTS="t1,t2,..."  (round 572) at each listed QA tick,
+##                          one `QA MOB HEIGHT` line per monster body: where
+##                          it is drawn against the terrain ray (the game's
+##                          own, TerrainCollision.vertical_ray, and which
+##                          region answered), a plain vertical ray at the
+##                          exact column, and the drawn mesh's own triangle
+##                          from the parsed heightmap; whether it still waits
+##                          for ground (_qa_mob_heights_report); and one `QA
+##                          TERRAIN SLOPE` line per held region, the steepest
+##                          triangle -- what bounds the grid-line nudge's
+##                          height error (_qa_terrain_slope_report)
 ##   SRREVAMP_QA_ALPHA_LOG=1  print every alpha-cutout probe a material build
 ##                          consults (ObjectLoader._alpha_stat, round 566):
 ##                          `QA ALPHA: <texture> (<fourCC>) <statistic> <value>
@@ -7882,6 +7921,10 @@ func _qa_step() -> void:
 		print("QA HELP: opened the Help window")
 	if OS.get_environment("SRREVAMP_QA_COMMANDS") != "" and _qa_tick == 60:
 		_run_qa_commands(OS.get_environment("SRREVAMP_QA_COMMANDS"))
+	var mob_heights := OS.get_environment("SRREVAMP_QA_MOB_HEIGHTS")
+	if mob_heights != "" and mob_heights.split(",").has(str(_qa_tick)):
+		_qa_mob_heights_report()
+		_qa_terrain_slope_report()
 
 	# SRREVAMP_QA_CASTANIM="<anim_base>" plays a skill's cast animation on the
 	# player at tick 90 (and replays it), so a render can verify the grounded
@@ -8129,10 +8172,10 @@ func _qa_step() -> void:
 			# standing waist-deep in a plaza.
 			var space := get_world_3d().direct_space_state
 			var from := player.global_position + Vector3(0, 200, 0)
-			var query := PhysicsRayQueryParameters3D.create(from, from + Vector3(0, -800, 0))
-			query.collision_mask = TERRAIN_COLLISION_LAYER
-			query.exclude = [player.get_rid()]
-			var hit := space.intersect_ray(query)
+			# Off the heightfield's grid lines (TerrainCollision.vertical_ray,
+			# round 572).
+			var hit := TerrainCollision.vertical_ray(space, from.x, from.z, from.y, from.y - 800.0,
+				TERRAIN_COLLISION_LAYER, [player.get_rid()])
 			if hit.is_empty():
 				standing += "  drawn surface: none found"
 			else:
@@ -8569,6 +8612,132 @@ func _qa_goto_from_list(plan: Dictionary) -> void:
 	_flush_position()
 	_send_attack(monster_id, 0, "")
 
+## SRREVAMP_QA_MOB_HEIGHTS (round 572): every monster body's drawn height
+## against the ground under it now, three ways. The terrain ray is the one
+## the game places a body with (TerrainCollision.vertical_ray on the
+## terrain-only layer, the stand-in floors excluded) fired by the report at
+## the body's drawn x/z, with no lift -- a body placed on the terrain stands
+## 0.05 * PLAYER_SCALE_RATIO above it -- and names the region whose collider
+## answered (or the node, if something else did). The plain ray is a
+## straight PhysicsRayQueryParameters3D at the exact column, the ray before
+## the helper: it can come back `none` on a heightfield grid line (it did at
+## 7 of the 9 Jangan bodies on 97/168's grid vertices, and at none of the 10
+## on exactly one line). The drawn mesh is TerrainCollision.mesh_height_at
+## over the region's parsed heightmap -- the drawn triangle's height, no
+## physics at all.
+func _qa_mob_heights_report() -> void:
+	var space := get_world_3d().direct_space_state
+	var held := {}
+	for monster_id in _monster_bodies:
+		var body = _monster_bodies[monster_id]
+		if body == null or not is_instance_valid(body):
+			continue
+		var p: Vector3 = (body as Node3D).global_position
+		var hit := TerrainCollision.vertical_ray(space, p.x, p.z, p.y + 1000.0, p.y - 1000.0,
+			TERRAIN_ONLY_COLLISION_MASK, _stand_in_floor_rids())
+		var query := PhysicsRayQueryParameters3D.create(p + Vector3(0.0, 1000.0, 0.0), p + Vector3(0.0, -1000.0, 0.0))
+		query.collision_mask = TERRAIN_ONLY_COLLISION_MASK
+		query.exclude = _stand_in_floor_rids()
+		var plain := space.intersect_ray(query)
+		var mesh := _qa_drawn_mesh_height(p, held)
+		var ray_text := "none"
+		if not hit.is_empty():
+			var who := "?"
+			var node = hit.get("collider")
+			while node is Node:
+				if String((node as Node).name).begins_with("RealTerrain_"):
+					who = String((node as Node).name).trim_prefix("RealTerrain_").replace("_", "/")
+					break
+				node = (node as Node).get_parent()
+			if who == "?" and hit.get("collider") is Node:
+				who = "NOT TERRAIN: %s" % String((hit["collider"] as Node).name)
+			ray_text = "%.2f on %s (drawn %.2f above it)" % [hit.position.y, who, p.y - hit.position.y]
+		var snap = _monster_snapshots.get(monster_id)
+		print("QA MOB HEIGHT tick %d frame %d: monster %d %s at (%.1f, %.1f) drawn y %.2f, terrain ray %s, plain ray %s, drawn mesh %s%s" % [
+			_qa_tick, Engine.get_frames_drawn(), monster_id, snap.monster_name if snap != null else "?", p.x, p.z, p.y,
+			ray_text, "none" if plain.is_empty() else "%.2f" % plain.position.y,
+			"none" if mesh.is_empty() else "%.2f (%s)" % [mesh[0], mesh[1]],
+			", waiting for ground" if _monster_heights_pending.has(monster_id) else ""])
+
+## The drawn terrain's height at world p's x/z: the first loaded region group
+## whose 1920-square holds it, its parsed heightmap (_grid.parsed_heightmaps)
+## and TerrainCollision.mesh_height_at -- [height, "rx/ry"], or [] when no
+## held region covers p. `held` caches each region's height grid for one
+## report.
+func _qa_drawn_mesh_height(p: Vector3, held: Dictionary) -> Array:
+	for child in get_children():
+		if not (child is Node3D) or not String(child.name).begins_with("RealTerrain_"):
+			continue
+		var g := child as Node3D
+		var local := g.to_local(p)
+		if local.x < 0.0 or local.z < 0.0 or local.x > REGION_SPAN or local.z > REGION_SPAN:
+			continue
+		var parts := String(g.name).trim_prefix("RealTerrain_").split("_")
+		if parts.size() != 2:
+			continue
+		if not held.has(g.name):
+			held[g.name] = TerrainCollision.heights_from_region(
+				_grid.parsed_heightmaps.get(RegionGridState.region_key(int(parts[0]), int(parts[1]))))
+		var heights: PackedFloat32Array = held[g.name]
+		var h := TerrainCollision.mesh_height_at(heights, local.x, local.z)
+		if is_nan(h):
+			continue
+		return [g.to_global(Vector3(local.x, h, local.z)).y, "%s/%s" % [parts[0], parts[1]]]
+	return []
+
+## Region name -> [the steepest triangle's |dh/dx| + |dh/dz|, its quad] for
+## _qa_terrain_slope_report, so each region's 18,432 triangles are read once.
+var _qa_slopes := {}
+
+## SRREVAMP_QA_MOB_HEIGHTS' second report (round 572): for every loaded
+## region with a parsed heightmap, the steepest of the drawn mesh's
+## triangles, as |dh/dx| + |dh/dz| over the triangle -- the most a height
+## read RAY_GRID_EPSILON off on each axis (TerrainCollision.vertical_ray) can
+## differ from the height at the exact column. The mesh's own split
+## (TerrainCollision.mesh_height_at): [i00, i10, i11] rises (h10 - h00) along
+## x and (h11 - h10) along z, [i00, i11, i01] (h11 - h01) and (h01 - h00),
+## over a TILE_SIZE run. One line per region the first time a report sees
+## it, then the steepest over every region seen so far.
+func _qa_terrain_slope_report() -> void:
+	var tile := MapmTerrainBuilder.TILE_SIZE
+	var side := TerrainCollision.SIDE
+	for child in get_children():
+		if not (child is Node3D) or not String(child.name).begins_with("RealTerrain_"):
+			continue
+		var parts := String(child.name).trim_prefix("RealTerrain_").split("_")
+		if parts.size() != 2:
+			continue
+		var region_name := "%s/%s" % [parts[0], parts[1]]
+		if _qa_slopes.has(region_name):
+			continue
+		var heights := TerrainCollision.heights_from_region(
+			_grid.parsed_heightmaps.get(RegionGridState.region_key(int(parts[0]), int(parts[1]))))
+		if heights.is_empty():
+			continue
+		var steepest := 0.0
+		var at := Vector2i.ZERO
+		for r in range(side - 1):
+			for c in range(side - 1):
+				var h00 := heights[(side - 1 - r) * side + c]
+				var h10 := heights[(side - 1 - r) * side + c + 1]
+				var h01 := heights[(side - 2 - r) * side + c]
+				var h11 := heights[(side - 2 - r) * side + c + 1]
+				var g := maxf(absf(h10 - h00) + absf(h11 - h10), absf(h11 - h01) + absf(h01 - h00)) / tile
+				if g > steepest:
+					steepest = g
+					at = Vector2i(r, c)
+		_qa_slopes[region_name] = [steepest, at]
+		print("QA TERRAIN SLOPE %s: steepest triangle |dh/dx| + |dh/dz| %.3f at quad (row %d, column %d): a %.2f nudge moves a height by at most %.4f there" % [
+			region_name, steepest, at.x, at.y, TerrainCollision.RAY_GRID_EPSILON, steepest * TerrainCollision.RAY_GRID_EPSILON])
+	var worst := 0.0
+	var worst_name := ""
+	for region_name in _qa_slopes:
+		if float(_qa_slopes[region_name][0]) > worst:
+			worst = float(_qa_slopes[region_name][0])
+			worst_name = region_name
+	print("QA TERRAIN SLOPE: %d region(s) read; steepest triangle %.3f (%s): the grid-line nudge (%.2f) moves a height by at most %.4f" % [
+		_qa_slopes.size(), worst, worst_name, TerrainCollision.RAY_GRID_EPSILON, worst * TerrainCollision.RAY_GRID_EPSILON])
+
 ## SRREVAMP_QA_MOB_MOVE="dx,dz,speed,mode": once monster bodies exist, the
 ## nearest living one is sent on a leg from where it is drawn to (x+dx, z+dz)
 ## at `speed` units a second, mode 0 walk / 1 run -- a 29-byte OpMonsterMoved
@@ -8828,9 +8997,10 @@ func _qa_rig_report() -> void:
 	# between standing on the plaza and standing inside it.
 	var space_state := get_world_3d().direct_space_state
 	var from := player.global_position + Vector3(0.0, 60.0, 0.0)
-	var query := PhysicsRayQueryParameters3D.create(from, player.global_position - Vector3(0.0, 20.0, 0.0))
-	query.exclude = [player.get_rid()]
-	var hit := space_state.intersect_ray(query)
+	# Every layer, as before; off the heightfield's grid lines
+	# (TerrainCollision.vertical_ray, round 572).
+	var hit := TerrainCollision.vertical_ray(space_state, from.x, from.z, from.y,
+		player.global_position.y - 20.0, 0xFFFFFFFF, [player.get_rid()])
 	if hit.is_empty():
 		print("QA RIG   nothing under the column from %.1f above the feet" % 60.0)
 	else:
@@ -8914,12 +9084,11 @@ func _qa_float_report(radius: float) -> void:
 				# the two are different surfaces, and what a player sees
 				# scenery hanging over is the rendered one.
 				var space := get_viewport().world_3d.direct_space_state
-				var from_above := node3d.global_position + Vector3.UP * 400.0
-				var to_below := node3d.global_position - Vector3.UP * 400.0
-				var query := PhysicsRayQueryParameters3D.create(from_above, to_below)
-				query.collision_mask = TERRAIN_COLLISION_LAYER
-				query.exclude = [player.get_rid()]
-				var hit := space.intersect_ray(query)
+				var at := node3d.global_position
+				# Off the heightfield's grid lines
+				# (TerrainCollision.vertical_ray, round 572).
+				var hit := TerrainCollision.vertical_ray(space, at.x, at.z, at.y + 400.0, at.y - 400.0,
+					TERRAIN_COLLISION_LAYER, [player.get_rid()])
 				if hit.is_empty():
 					continue
 				# Only the object's *own* region counts. Each region node
@@ -9206,11 +9375,12 @@ const QA_GROUND_SWEEP := 60.0
 ## _snap_player_onto_terrain fires, at the player's column.
 func _qa_ground_rays_report(samples: int) -> void:
 	var space := get_world_3d().direct_space_state
-	var snap := PhysicsRayQueryParameters3D.create(
-		player.position + Vector3(0.0, 1000.0, 0.0), player.position + Vector3(0.0, -1000.0, 0.0))
-	snap.exclude = [player.get_rid()]
-	snap.collision_mask = TERRAIN_ONLY_COLLISION_MASK
-	var snap_hit := space.intersect_ray(snap)
+	# The snap's own ray, so through TerrainCollision.vertical_ray as the snap
+	# is (round 572). The lattice's vertical rays below are not: they probe
+	# the shape itself, inside quads at QA_GROUND_IN_QUAD -- 9 and 11 units
+	# off the nearest grid lines, where the helper would fire the same ray.
+	var snap_hit := TerrainCollision.vertical_ray(space, player.position.x, player.position.z,
+		player.position.y + 1000.0, player.position.y - 1000.0, TERRAIN_ONLY_COLLISION_MASK, [player.get_rid()])
 	var under := _nav_graph_for(player.global_position)
 	if snap_hit.is_empty() or under.is_empty():
 		print("QA GROUND SNAP: the snap's ray finds no terrain under the player at world %s" % str(player.global_position))
@@ -9361,10 +9531,10 @@ func _qa_scan_report(samples: int) -> void:
 			var head := walkable + _player_capsule_height() * 2.0
 			var top := group.to_global(Vector3(lx, head, lz))
 			var bottom := group.to_global(Vector3(lx, walkable - 1.0, lz))
-			var query := PhysicsRayQueryParameters3D.create(top, bottom)
-			query.collision_mask = 0xFFFFFFFF
-			query.exclude = [player.get_rid()]
-			var hit := space.intersect_ray(query)
+			# Off the heightfield's grid lines (TerrainCollision.vertical_ray,
+			# round 572): at 48 samples the lattice is on them.
+			var hit := TerrainCollision.vertical_ray(space, top.x, top.z, top.y, bottom.y,
+				0xFFFFFFFF, [player.get_rid()])
 			if hit.is_empty():
 				continue
 			checked += 1
@@ -9593,8 +9763,10 @@ func _physics_step(delta: float) -> void:
 		_sun_glow.global_position = player.global_position + _sun_glow_offset
 
 	# Monsters walking a server-driven leg step first, so an approach walk's
-	# reach test below measures to where they are drawn this frame.
-	_step_monster_bodies(delta)
+	# reach test below measures to where they are drawn this frame; the
+	# ground items still waiting for ground share the frame's height budget
+	# with them (_step_heights).
+	_step_heights(delta)
 
 	var input_dir := Vector3.ZERO
 	# Real, dedicated move_* actions (WASD + arrow keys both bound, see
@@ -9712,11 +9884,11 @@ func _physics_step(delta: float) -> void:
 	# separate quirk not chased this round) -- a direct raycast is used
 	# instead to tell "resting on real ground" from "still falling" for
 	# _last_grounded_position's purposes.
-	var ground_check := PhysicsRayQueryParameters3D.create(
-		player.position + Vector3(0.0, 10.0, 0.0), player.position + Vector3(0.0, -3000.0, 0.0))
-	ground_check.exclude = [player.get_rid()]
-	ground_check.collision_mask = TERRAIN_ONLY_COLLISION_MASK
-	var ground_hit := get_world_3d().direct_space_state.intersect_ray(ground_check)
+	# Off the heightfield's grid lines (TerrainCollision.vertical_ray, round
+	# 572).
+	var ground_hit := TerrainCollision.vertical_ray(get_world_3d().direct_space_state,
+		player.position.x, player.position.z, player.position.y + 10.0, player.position.y - 3000.0,
+		TERRAIN_ONLY_COLLISION_MASK, [player.get_rid()])
 	if not ground_hit.is_empty() and player.position.y - ground_hit.position.y < 20.0:
 		_last_grounded_position = player.position
 	elif player.position.y < WORLD_FLOOR_Y:
@@ -10009,10 +10181,10 @@ func _drawn_surface_height(group: Node3D, local_x: float, local_z: float, graph_
 		return graph_height
 	var top := group.to_global(Vector3(local_x, graph_height + DRAWN_SURFACE_CLEARANCE, local_z))
 	var bottom := group.to_global(Vector3(local_x, graph_height - DRAWN_SURFACE_CLEARANCE, local_z))
-	var query := PhysicsRayQueryParameters3D.create(top, bottom)
-	query.collision_mask = TERRAIN_COLLISION_LAYER
-	query.exclude = [player.get_rid()]
-	var hit := space.intersect_ray(query)
+	# Off the heightfield's grid lines (TerrainCollision.vertical_ray, round
+	# 572): a zone's spawn is a round local position, often on one.
+	var hit := TerrainCollision.vertical_ray(space, top.x, top.z, top.y, bottom.y,
+		TERRAIN_COLLISION_LAYER, [player.get_rid()])
 	if hit.is_empty():
 		return graph_height
 	var drawn: float = group.to_local(hit.position).y
@@ -10916,15 +11088,53 @@ func _on_disconnected() -> void:
 ## _snap_player_onto_terrain uses for the player, reused here so monsters
 ## don't spawn embedded in or floating above the real terrain grid either.
 func _terrain_height_at(pos: Vector3) -> float:
-	var space_state := get_world_3d().direct_space_state
-	var query := PhysicsRayQueryParameters3D.create(
-		pos + Vector3(0.0, 1000.0, 0.0),
-		pos + Vector3(0.0, -1000.0, 0.0))
-	query.collision_mask = TERRAIN_ONLY_COLLISION_MASK # see its own doc comment -- same "landed on a roof" bug applies to monster placement
-	var hit := space_state.intersect_ray(query)
+	var height := _terrain_hit_height(pos)
+	return pos.y if is_nan(height) else height
+
+## The same ray as _terrain_height_at, but a miss says so: NAN when nothing on
+## the terrain layer lies under pos's X/Z -- no region there has committed its
+## terrain collision yet, or none ever will. A caller that places something
+## once and never looks again (a monster body, a ground item) keeps it on a
+## retry list on a miss instead of leaving it at the server's height (round
+## 572: every Mangyang was drawn at the server's y 0 when the monster list
+## beat its region's terrain).
+##
+## The ray is TerrainCollision.vertical_ray's, off the heightfield's grid
+## lines (round 572: a plain vertical ray found nothing under 7 of the 9
+## Jangan monsters standing on 97/168's grid vertices), and it passes through
+## the scene's two stand-in floors (_stand_in_floor_rids): only real terrain
+## counts as ground here.
+func _terrain_hit_height(pos: Vector3) -> float:
+	var hit := TerrainCollision.vertical_ray(get_world_3d().direct_space_state, pos.x, pos.z,
+		pos.y + 1000.0, pos.y - 1000.0,
+		TERRAIN_ONLY_COLLISION_MASK, # see its own doc comment -- same "landed on a roof" bug applies to monster placement
+		_stand_in_floor_rids())
 	if hit.is_empty():
-		return pos.y
+		return NAN
 	return hit.position.y + 0.05 * PLAYER_SCALE_RATIO
+
+## The scene's stand-in floors, which sit on the terrain-only layer
+## (collision_layer 9, World3D.tscn) but are not terrain: the placeholder
+## `Ground` (a 200 x 1 x 200 box at the origin, top at y 0.5), switched off
+## when the first terrain group commits (_terrain_commit) and on again by
+## _reload_zone_assets, and `VoidCatchFloor` (top at y -1995). A placement ray
+## that answered from either would place a body on it for good and never
+## retry it: on the loading-screen path the monster list is applied before
+## the centre commits, so a body listed within 100 of the origin was drawn on
+## the placeholder at 0.898 (round 572's review). _terrain_hit_height -- and
+## so every monster, ground-item and player placement that goes through it --
+## excludes them. Left as they are for everything else: the player's body
+## stands on the placeholder until the terrain commits (move_and_slide, layer
+## 1), its ground check keeps _last_grounded_position there (the void-fall
+## return), and the snap runs after the centre's commit has switched the
+## placeholder off; VoidCatchFloor is the void catch.
+func _stand_in_floor_rids() -> Array:
+	if _stand_in_rids.is_empty():
+		for path in ["Ground", "VoidCatchFloor"]:
+			var body := get_node_or_null(path) as CollisionObject3D
+			if body != null:
+				_stand_in_rids.append(body.get_rid())
+	return _stand_in_rids
 
 ## The height the region's walkable graph gives a world position: its landing
 ## height -- the highest walkable surface there, the terrain or a placed
@@ -10955,10 +11165,40 @@ func _navmesh_height_at(pos: Vector3) -> float:
 ## ToWorld comment). A standing body's placement (_spawn_or_update_monster)
 ## still takes the ray.
 func _moving_monster_height_at(pos: Vector3) -> float:
+	var height := _moving_monster_hit_height(pos)
+	return pos.y if is_nan(height) else height
+
+## _moving_monster_height_at, but NAN when neither the navmesh nor the
+## terrain ray has an answer (_terrain_hit_height).
+func _moving_monster_hit_height(pos: Vector3) -> float:
 	var nav := _navmesh_height_at(pos)
 	if is_nan(nav):
-		return _terrain_height_at(pos)
+		return _terrain_hit_height(pos)
 	return nav
+
+## Books one height answer for a monster's body (a *_hit_height result) and
+## returns the height to draw it at. A miss (NAN) returns `fallback` -- what
+## the body was placed at before round 572, the server's y -- and puts the
+## body on _monster_heights_pending, keeping the frame it first went there; a
+## hit takes it off (_monster_height_found) and is returned.
+func _book_monster_height(monster_id: int, height: float, fallback: float) -> float:
+	if is_nan(height):
+		if not _monster_heights_pending.has(monster_id):
+			_monster_heights_pending[monster_id] = Engine.get_physics_frames()
+		return fallback
+	_monster_height_found(monster_id, height)
+	return height
+
+## A body's height was found: off the retry list, saying so once if it was on
+## it.
+func _monster_height_found(monster_id: int, height: float) -> void:
+	if not _monster_heights_pending.has(monster_id):
+		return
+	var frames: int = Engine.get_physics_frames() - int(_monster_heights_pending[monster_id])
+	_monster_heights_pending.erase(monster_id)
+	var snap = _monster_snapshots.get(monster_id)
+	print("World3D: monster %d %s height resolved after %d frame(s): %.2f at frame %d" % [
+		monster_id, snap.monster_name if snap != null else "?", frames, height, Engine.get_frames_drawn()])
 
 ## Creates or moves the real 3D body representing one live server-tracked
 ## monster (see CombatNet.MonsterSnapshot's X/Y/Z). Those coordinates are
@@ -11039,9 +11279,11 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 		# body from the navmesh (round 557), as the leg's own resolves are,
 		# so a mid-leg refresh does not drop it off a deck for the two units
 		# until the next one.
+		# A miss keeps the list's y, as before, and puts the body on the retry
+		# list (_book_monster_height); a hit takes it off.
 		var at := Vector3(placed.x, monster.y, placed.y)
-		existing.position = Vector3(placed.x,
-			_moving_monster_height_at(at) if moving else _terrain_height_at(at), placed.y)
+		var found := _moving_monster_hit_height(at) if moving else _terrain_hit_height(at)
+		existing.position = Vector3(placed.x, _book_monster_height(monster.monster_id, found, at.y), placed.y)
 		monster.x = placed.x
 		monster.z = placed.y
 		if state != null:
@@ -11052,8 +11294,13 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 		_set_hp_bar(existing, monster.hp, monster.max_hp)
 		return
 
+	# The ray finds no ground where the monster's region has not committed its
+	# terrain collision yet -- the list asked for in _ready routinely arrives
+	# before the neighbour cells do -- and nothing else re-places a standing
+	# body. So a miss is drawn at the server's y for now and retried each
+	# physics frame (_book_monster_height, _step_monster_bodies).
 	var pos := Vector3(monster.x, monster.y, monster.z)
-	pos.y = _terrain_height_at(pos)
+	pos.y = _book_monster_height(monster.monster_id, _terrain_hit_height(pos), pos.y)
 	var body := Node3D.new()
 	body.position = pos
 
@@ -11082,10 +11329,11 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 	# Says which of the three ways a monster can come out wrong happened:
 	# the species not in the tables, the model not assembling, or a real
 	# model placed somewhere the player will never be.
-	print("World3D: monster %s (%s) -> model '%s' skeleton=%s at %.0f,%.0f,%.0f (%.0f from the player)" % [
+	print("World3D: monster %s (%s) -> model '%s' skeleton=%s at %.0f,%.0f,%.0f (%.0f from the player)%s" % [
 		monster.monster_name, monster.code_name if monster.code_name != "" else "no code",
 		monster_model, "yes" if monster_skeleton != null else "NO",
-		pos.x, pos.y, pos.z, pos.distance_to(player.global_position)])
+		pos.x, pos.y, pos.z, pos.distance_to(player.global_position),
+		" (height pending: no ground under it yet)" if _monster_heights_pending.has(monster.monster_id) else ""])
 
 	# Real model height varies a lot by species/asset (real monster
 	# skeletons are nowhere near the human PLAYER_SCALE_RATIO-derived
@@ -11197,7 +11445,7 @@ func _try_setup_ground_items() -> void:
 		return
 	_ground_items = GroundItems.new()
 	_ground_items.name = "GroundItems"
-	_ground_items.setup(_data_pk2, _item_drop_models, _item_display_name, _name_plate, _terrain_height_at)
+	_ground_items.setup(_data_pk2, _item_drop_models, _item_display_name, _name_plate, _terrain_hit_height)
 	other_entities.add_child(_ground_items)
 
 ## The object-name table (textdata_object.txt), parsed once on first use and
@@ -11244,7 +11492,8 @@ func _on_ground_item_list_result(items: Array, error: String) -> void:
 	if _ground_items == null:
 		return
 	_ground_items.apply_list(items)
-	print("World3D: %d item(s) on the ground in this zone" % _ground_items.count())
+	print("World3D: %d item(s) on the ground in this zone (%d with no ground under them yet)" % [
+		_ground_items.count(), _ground_items.pending_count()])
 
 func _on_ground_item_spawned(snap: GroundItemsNet.Snapshot) -> void:
 	if _ground_items == null:
@@ -11410,6 +11659,7 @@ func _sync_monster_bodies(live: Array) -> void:
 		_monster_assembled.erase(monster_id)
 		_dying_until.erase(monster_id)
 		_monster_motion.erase(monster_id)
+		_monster_heights_pending.erase(monster_id)
 		_strike_waits.erase(monster_id)
 		print("World3D: monster %d body removed t=%.2f" % [monster_id, _idle_anim_time])
 
@@ -11563,9 +11813,18 @@ func _stop_monster_motion(monster_id: int) -> void:
 ## rest keep their height until a later frame, and take their turn first then
 ## (MonsterMotion.height_turns, _mob_height_cursor). An arrival switches to the
 ## stand clip and keeps the facing.
-func _step_monster_bodies(delta: float) -> void:
-	if _monster_motion.is_empty():
-		return
+##
+## The same budget serves the bodies whose height ray found no ground
+## (_monster_heights_pending): each wants a resolve every frame until one hits
+## -- a body with a leg by the leg's rule above, a standing one by the
+## terrain ray its placement took (_spawn_or_update_monster). Nothing tries
+## from inside a region's commit: the StaticBody3D it adds may not answer a
+## ray before the next physics step, and the retry every frame finds it then.
+## At most `budget` resolves (_step_heights hands it the monsters' share);
+## returns the resolves spent, so the ground items' retry takes what is left.
+func _step_monster_bodies(delta: float, budget: int = MonsterMotion.MAX_HEIGHT_RESOLVES_PER_FRAME) -> int:
+	if _monster_motion.is_empty() and _monster_heights_pending.is_empty():
+		return 0
 	var logging := _mob_logging()
 	# SRREVAMP_QA_MOB_LOG alone, not /wire: the measurement line below fires
 	# the terrain ray beside the navmesh lookup, a second answer per resolve.
@@ -11602,40 +11861,88 @@ func _step_monster_bodies(delta: float) -> void:
 						monster_id, pos.x, pos.y, pos.distance_to(state["dest"])])
 		var last: Vector2 = state["h_xz"]
 		stepped.append([body, state, monster_id])
-		wants.append(MonsterMotion.needs_height(last, pos) or (not bool(state["moving"]) and last != pos))
-	var turns := MonsterMotion.height_turns(wants, _mob_height_cursor, MonsterMotion.MAX_HEIGHT_RESOLVES_PER_FRAME)
+		wants.append(MonsterMotion.needs_height(last, pos) or (not bool(state["moving"]) and last != pos)
+			or _monster_heights_pending.has(monster_id))
+	# Standing bodies still waiting for ground, after the walking ones.
+	for monster_id in _monster_heights_pending.keys():
+		if _monster_motion.has(monster_id):
+			continue
+		var body = _monster_bodies.get(monster_id)
+		if body == null or not is_instance_valid(body):
+			_monster_heights_pending.erase(monster_id)
+			continue
+		stepped.append([body, null, monster_id])
+		wants.append(true)
+	var turns := MonsterMotion.height_turns(wants, _mob_height_cursor, budget)
 	_mob_height_cursor = int(turns["cursor"])
 	var resolved := 0
 	var spent := 0
+	var retried := 0
+	var retry_spent := 0
 	for i in turns["picked"]:
 		var body: Node3D = stepped[i][0]
-		var state: Dictionary = stepped[i][1]
+		var state = stepped[i][1]
+		var monster_id: int = stepped[i][2]
+		var retry := _monster_heights_pending.has(monster_id)
 		var started := Time.get_ticks_usec()
-		var height := _moving_monster_height_at(body.position)
-		spent += Time.get_ticks_usec() - started
+		var height := _moving_monster_hit_height(body.position) if state != null else _terrain_hit_height(body.position)
+		if retry:
+			retry_spent += Time.get_ticks_usec() - started
+			retried += 1
+		else:
+			spent += Time.get_ticks_usec() - started
 		if compare:
 			var nav := _navmesh_height_at(body.position)
 			print("World3D: monster %d height at (%.1f,%.1f): navmesh %s, terrain ray %.2f" % [
-				stepped[i][2], body.position.x, body.position.z,
+				monster_id, body.position.x, body.position.z,
 				"none" if is_nan(nav) else "%.2f" % nav, _terrain_height_at(body.position)])
-		body.position.y = height
-		state["h_xz"] = state["pos"]
-		resolved += 1
+		# A miss leaves the height as it is -- what the walking resolve did
+		# before, when the ray's miss returned the body's own y.
+		if not is_nan(height):
+			body.position.y = height
+			_monster_height_found(monster_id, height)
+		if state != null:
+			state["h_xz"] = state["pos"]
+		if not retry:
+			resolved += 1
 	_mob_height_resolves += resolved
 	_mob_height_max = maxi(_mob_height_max, resolved)
 	_mob_height_usec += spent
 	_mob_height_usec_max = maxi(_mob_height_usec_max, spent)
+	_mob_height_retries += retried
+	_mob_height_retries_max = maxi(_mob_height_retries_max, retried)
+	_mob_height_retry_usec += retry_spent
 	_mob_height_window += delta
 	if _mob_height_window >= 10.0:
 		if logging:
-			print("World3D: monster height resolves %d/s, max %d in a frame; %.2f ms in them over %.1f s, max %.3f ms in a frame" % [
+			print("World3D: monster height resolves %d/s, max %d in a frame; %.2f ms in them over %.1f s, max %.3f ms in a frame; waiting-for-ground retries %d/s, max %d in a frame, %.2f ms in them" % [
 				int(round(float(_mob_height_resolves) / _mob_height_window)), _mob_height_max,
-				float(_mob_height_usec) / 1000.0, _mob_height_window, float(_mob_height_usec_max) / 1000.0])
+				float(_mob_height_usec) / 1000.0, _mob_height_window, float(_mob_height_usec_max) / 1000.0,
+				int(round(float(_mob_height_retries) / _mob_height_window)), _mob_height_retries_max,
+				float(_mob_height_retry_usec) / 1000.0])
 		_mob_height_resolves = 0
 		_mob_height_max = 0
 		_mob_height_usec = 0
 		_mob_height_usec_max = 0
+		_mob_height_retries = 0
+		_mob_height_retries_max = 0
+		_mob_height_retry_usec = 0
 		_mob_height_window = 0.0
+	return resolved + retried
+
+## One physics frame's height work (round 572): the monsters' walking legs
+## and waiting bodies (_step_monster_bodies) and the ground items waiting for
+## ground (GroundItems.resolve_pending) share MAX_HEIGHT_RESOLVES_PER_FRAME --
+## the monsters up to MonsterMotion.monster_height_share of it, the items
+## whatever the monsters leave, which is at least half the budget whenever
+## they want that much. Until round 572 the items took only what the
+## monsters left.
+func _step_heights(delta: float) -> void:
+	var budget := MonsterMotion.MAX_HEIGHT_RESOLVES_PER_FRAME
+	var item_wants := _ground_items.pending_count() if _ground_items != null else 0
+	var spent := _step_monster_bodies(delta, MonsterMotion.monster_height_share(budget, item_wants))
+	if _ground_items != null:
+		_ground_items.resolve_pending(budget - spent)
 
 func _on_attack_pressed() -> void:
 	var selected := monster_list.get_selected_items()

@@ -693,6 +693,19 @@ commit them on the main thread, and round 567 makes the terrain's collision a he
       (round 567's sweeps start 30 above the ground); and the 4 slanted rays both shapes miss in
       98/170 and 99/170. A `--walk` across a seam on a region with no navmesh, with
       `SRREVAMP_QA_GROUND_RAYS`, is the check.
+- [x] **Round 567's heightfield has no answer on its own grid lines** (found and fixed in round
+      572). A vertical ray exactly on a grid line of a `HeightMapShape3D` tests one cell with
+      closed barycentric bounds and misses about as often as not (the synthetic grid probe: 6,909
+      of 9,409 vertices of the region at the frame origin; 50,391 of a radius-2 grid's 235,225); on
+      Jangan's real ground the plain ray missed at 7 of the 9 monsters standing on 97/168's grid
+      vertices (the trimesh answered at all 23 monster columns, 19 of them on grid lines). Every
+      vertical terrain ray now goes through `TerrainCollision.vertical_ray` (0.01 off the lines,
+      disclosed at `RAY_GRID_EPSILON`); the grid probe is in `terrain_collision_test.gd`; all 23
+      resolve on the heightfield.
+- [x] **The scene's placeholder ground answers the height ray** (round 572's review; fixed in
+      round 572). `_terrain_hit_height` passes through `Ground` and `VoidCatchFloor`
+      (`_stand_in_floor_rids`); `height_retry_test.gd` keeps them on their layer and lists bodies
+      over them.
 - [ ] **Two entry drains at once** (round 565's review; predates round 565, found by reading, not
       reproduced). A zone change that starts a second `_drain_initial_load` while the first is
       still suspended leaves both pumping the one queue; whichever finishes first sets

@@ -76,6 +76,111 @@ class_name TerrainCollision
 ## doc comment; docs/protocol/MAPM_FORMAT.md).
 const SIDE := MapmReader.BLOCKS_PER_SIDE * (MapmTerrainBuilder.GRID_WIDTH - 1) + 1
 
+## THE GRID LINES (round 572). A VERTICAL ray (one whose begin and end fall in
+## the same cell) exactly on one of the heightfield's grid lines often finds
+## nothing. Read from Godot 4.2.2's source (servers/physics_3d/godot_shape_3d.cpp,
+## GodotHeightMapShape3D::intersect_segment, and core/math/geometry_3d.h,
+## segment_intersects_triangle): such a ray tests only the one cell that
+## `floor()` of its shape-local x and z picks, and each of that cell's two
+## triangles with Moller-Trumbore's closed bounds (`u < 0`, `v < 0` reject); a
+## point on the cell's edge has a barycentric of zero, which rounding makes
+## -0.000... about as often as not, and the neighbouring cell -- which the point
+## lies on as well -- is never tried. (Which rounding, was not traced; the
+## counts below fit a coin flip per coordinate: 4,512 of 9,312 points on one
+## line miss, 6,909 of 9,409 on two.) MEASURED (terrain_collision_test.gd's
+## grid probe, on the render box): of the 9,409 vertices of the region at the
+## frame origin (World3D's placement, place_group), 6,909 miss; of a radius-2
+## grid's 25 regions around it, 13 miss at some -- 50,391 of the 235,225
+## vertices -- the ones whose placement keeps the shape-local coordinates
+## exact; a region 60 spans out misses at none (its coordinates round off
+## the line, into the cell floor() picks). 9 of Jangan's 23 monsters stand
+## on 97/168's vertices (world x and z multiples of 20); the plain ray
+## missed at 7 of them, which were never placed on the heightfield (round
+## 572).
+##
+## vertical_ray fires every vertical terrain ray instead: at the point itself
+## when it lies RAY_GRID_EPSILON or more off every grid line, and otherwise
+## RAY_GRID_EPSILON off the line on each side in turn (ray_columns). The shape
+## is not changed.
+##
+## RAY_GRID_EPSILON is srrevamp's own engineering choice, in world units,
+## justified by that probe: with every vertex of the 25 regions moved (d, d)
+## into its cell, plain vertical rays miss at 50,391 of 235,225 for d =
+## 0.00001 (as many as on the vertices themselves: a move that small is below
+## float32's spacing at most of these coordinates), at 3,416
+## for d = 0.0001, and at 0 for d = 0.001 and for d = 0.01. It is ten times the
+## smallest distance measured with no miss, and above float32's spacing (what
+## the physics server holds a ray's coordinates in) everywhere below 131,072
+## world units (0.0078 there). Under the server's -single-frame (round 571)
+## world x reaches -175,680 (Constantinople's radius-2 grid): from 131,072 to
+## 262,144 float32's spacing is 1/64, so a column 0.01 off a line is fired
+## 0.015625 off it -- further off, still clear of the line, the height error
+## bound below growing by the same factor (the grid probe fires at that grid's
+## far corner cell and misses none); from 262,144 up the spacing is 1/32 and
+## 0.01 would round back onto the line. What it costs: the height is read up
+## to RAY_GRID_EPSILON away on each axis, so it can be off by RAY_GRID_EPSILON
+## times the steepest triangle's |dh/dx| + |dh/dz| -- MEASURED on Jangan's 25
+## regions by SRREVAMP_QA_MOB_HEIGHTS's slope line (docs/RE_COMPLETION.md,
+## round 572) -- and only where the column lies within RAY_GRID_EPSILON of a
+## line; everywhere else the ray is the plain one.
+const RAY_GRID_EPSILON := 0.01
+
+## Where World3D puts a region's terrain group (World3D._terrain_commit; the
+## placement's reasons -- the half-span shift and the un-mirroring -- are in the
+## comment there): the group's origin at (offset.x - 960, -anchor_height, 960 -
+## offset.z) and its `scale.z = -1`. `world_offset` is the cell's multiple of
+## the region span (World3D._cell_offset). Here, not in World3D, because the
+## grid lines vertical_ray steps off follow from it: with shape_transform's
+## 960 = 48 * TILE_SIZE and an offset of whole region spans (96 * TILE_SIZE),
+## every region's grid lines fall on world multiples of TILE_SIZE, on x and on
+## z -- which terrain_collision_test.gd's grid probe holds, through this
+## function.
+static func place_group(group: Node3D, world_offset: Vector3, anchor_height: float) -> void:
+	var half := float(SIDE - 1) * MapmTerrainBuilder.TILE_SIZE / 2.0
+	var placement := Vector3(-half, -anchor_height, -half) + world_offset
+	group.position = Vector3(placement.x, placement.y, -placement.z)
+	group.scale.z = -1.0
+
+## The world x (or z) values a vertical ray through `v` is fired at, in order:
+## `v` alone when it lies RAY_GRID_EPSILON or more off every grid line (world
+## multiples of TILE_SIZE, place_group); otherwise the nearest line plus and
+## minus RAY_GRID_EPSILON, the side `v` is on first. The second side is for a
+## line that is a region's edge whose neighbour is not loaded: the first side
+## is then off the ground altogether.
+static func ray_columns(v: float) -> PackedFloat64Array:
+	var tile := MapmTerrainBuilder.TILE_SIZE
+	var line := roundf(v / tile) * tile
+	var off := v - line
+	if absf(off) >= RAY_GRID_EPSILON:
+		return PackedFloat64Array([v])
+	if off < 0.0:
+		return PackedFloat64Array([line - RAY_GRID_EPSILON, line + RAY_GRID_EPSILON])
+	return PackedFloat64Array([line + RAY_GRID_EPSILON, line - RAY_GRID_EPSILON])
+
+## A vertical ray from `top` down (or up) to `bottom` through world (x, z), off
+## the heightfield's grid lines (THE GRID LINES above): every vertical ray the
+## client fires onto the terrain goes through here (World3D's list:
+## _terrain_hit_height and what calls it, the player's snap, ground check and
+## buried check, the roof escape, the drawn-surface lift, the QA reports).
+## `mask` and `exclude` as PhysicsRayQueryParameters3D's. The first hit, as
+## intersect_ray returns it (its position is at the column that answered, up
+## to RAY_GRID_EPSILON from x, z), or {} when no column hits.
+static func vertical_ray(space: PhysicsDirectSpaceState3D, x: float, z: float, top: float, bottom: float, mask: int, exclude: Array = []) -> Dictionary:
+	if space == null:
+		return {}
+	var xs := ray_columns(x)
+	var zs := ray_columns(z)
+	for cx in xs:
+		for cz in zs:
+			var query := PhysicsRayQueryParameters3D.create(Vector3(cx, top, cz), Vector3(cx, bottom, cz))
+			query.collision_mask = mask
+			if not exclude.is_empty():
+				query.exclude = exclude
+			var hit := space.intersect_ray(query)
+			if not hit.is_empty():
+				return hit
+	return {}
+
 ## The region's height grid as a HeightMapShape3D's map_data: SIDE x SIDE
 ## heights, the mesh's row r stored at shape row SIDE - 1 - r (see THE
 ## DIAGONAL above), column c at shape column c. Stitched exactly as

@@ -37417,7 +37417,22 @@ non-planarity:
   on every column, the trimesh's within 0.0001, and the two within 0.001 of each other. The
   probed quads are not flat: 252 of the 1,600 are non-planar enough that the other diagonal would
   be off the drawn ground by over 0.5 there (2-24 a region), and the steepest probed quad edge
-  rises 5.43 a unit (99/170).
+  rises 5.43 a unit (99/170). **Corrected in round 572** ("A monster whose height ray found no
+  ground at spawn keeps retrying until the ground commits"): these 1,600 columns all lie inside
+  quads -- `_qa_ground_rays_report` fires at `(floor(...) + QA_GROUND_IN_QUAD) * tile`, 0.45 and
+  0.55 of a tile, 9 and 11 units off the nearest grid lines, and the suite's rays at (0.45, 0.55),
+  (0.3, 0.2) and (0.7, 0.9) of a cell -- so they say nothing about a column ON a grid line, and
+  there the heightfield often has no answer. In round 572's grid probe (`terrain_collision_test.gd`:
+  a synthetic, world-continuous height field -- not 97/168's real heights -- in the region slot at
+  the frame origin, where a Jangan entry puts 97/168, and a radius-2 grid around it) a plain
+  vertical ray misses at 6,909 of that slot's 9,409 vertices and at 50,391 of the grid's 235,225.
+  On Jangan's real ground (round 572's runs, tick 340) the plain ray missed at 7 of the 9 monsters
+  standing on 97/168's grid vertices (world x and z both multiples of 20) -- it answered at
+  (-300, -880) and (-300, -760) -- and at none of the 10 standing on exactly one grid line; the
+  trimesh (`SRREVAMP_TERRAIN_TRIMESH=1`, the first pass's `tri.log`) answered at all 23 monster
+  columns, 19 of them on grid lines, the 9 vertices among them. Not "every vertical ray hits";
+  every vertical ray off the grid lines does. Since round 572 every vertical terrain ray steps off
+  the lines (`TerrainCollision.vertical_ray`).
 - *Slanted rays* (region-local direction (-1, -1, -0.6), 400 units either side of the drawn
   point): 1,596 hit on both, the same 4 columns missing on both (in 98/170 and 99/170, not
   investigated); the hits within 0.004 of each other along the ray and within 0.0008 of the drawn
@@ -38499,3 +38514,426 @@ after a client tag carrying rounds 569 to 571 is published and CI is green (`gh 
 only accepting the limits listed there. An older client builds each zone in its own centre's frame
 and places a zone change's one-frame coordinates inside it, regions away. The flip, the limits and
 the kill switch are in `deploy/README.md`.
+
+## A monster whose height ray found no ground at spawn keeps retrying until the ground commits (round 572)
+
+Client only, tag-worthy: the user's "Mangyangs are now floating" (2026-09-25, a tagged client --
+most likely v0.1.446 or v0.1.447 -- against the public test server). No opcode, packet or server
+change.
+
+**1. What the logs showed, re-measured -- and the condition that decides it: the loading-screen
+drain.** `World3D._spawn_or_update_monster` prints a body's position after its height ray, so its
+`-> model ... at x,y,z` line is the height it is drawn at; a miss hands back the server's y, which is
+0 for every Jangan monster. The render box holds 63 first entries with monsters from rounds 558-569
+(this round's four aside), and they split on one condition, whether the entry took the
+loading-screen drain:
+
+| first entries (render box) | loading screen | code | the list is applied | bodies at the server's y 0 |
+|---|---|---|---|---|
+| 14: `/var/tmp/r558` (6), `r559` (3), `r560` (3), `r561` (2) | yes: `--reconnect`, which exports `SRREVAMP_QA_FORCE_LOADING=1` (round 558's `neg` run exported it by hand, per its record), or the variable itself (round 561's runner); round 561's grid line says `over 9 awaited frames` | rounds 558-561: the screen goes up after the centre cell | after the centre's commit, before any neighbour's (96/168 among them) | 4 of 23 in every one: the Mangyangs, `at 130,0,2280`, `882,0,2279`, `301,0,2857`, `-406,0,2409` |
+| 33: `/var/tmp/r562` (3), `r565` (6), `r566` (18), `r567` (the 6 `SRREVAMP_QA_FORCE_LOADING` runs) | yes: `LoadingScreen: up at frame <n>`, the list's line right after it | round 562 on: the screen's frame comes before the centre cell | before any terrain | 23 of 23 in every one |
+| 16: `/var/tmp/r567/rays{,2,3}_{entry,cross}_{hf,tri}.log` (12), `/var/tmp/r569/{constantinople,donwhang,hotan,samarkand}.log` (4) | no: the QA path, `over 0 awaited frames` | round 565 on | after the whole grid: its 25 cells (radius 2) or 9 (radius 1) all commit in one frame (12, 13 or 14) before `server reports 23 monster(s)` | the Mangyangs on the ground in every one (e.g. `rays_entry_hf.log`: `130,-37,2280`); 7 of 23 in the 10 heightfield runs -- the 7 vertex bodies where the plain ray misses (step 5) -- and 0 of 23 in the 6 `SRREVAMP_TERRAIN_TRIMESH=1` runs |
+
+This round's runs (`/var/tmp/rfloat`, step 8) are loading-screen entries and read like the second
+row at spawn: 23 of 23 listed before any terrain, at y 0.
+
+The loading-screen drain is the real player's path: `_should_show_loading_screen` is true whenever
+`SRREVAMP_MAPM_PATH` is unset, and a player's client never sets it. A QA render sets it (`qa_shot.sh
+--region`) and builds the grid in one frame unless `SRREVAMP_QA_FORCE_LOADING` asks for the screen --
+World3D's own `QA RECONNECT` refusal says the same ("the QA path builds the grid in one frame"). So a
+default QA render, `--server` included, applies the list to a finished grid and draws every monster
+whose ray finds the ground where it belongs: the 16 runs of the third row are the counter-case, and
+why a default QA render does not show the float. Only the loading-screen runs measure what a player
+sees.
+
+The two second entries of round 558 (`runB`, `runC`, a reconnect whose terrain was already built)
+print the same four Mangyangs at -38, -49, -37 and -42: the ground there, not 0. Nothing re-rays a
+standing body afterwards: the callers of `NetClient.list_monsters()` are `_ready`'s guarded block,
+the zone change, the Monsters tab's refresh button, an attack result, a damage or death push, the
+death path (its hold's timer, or at once when no die clip played), a move for an unknown monster, a
+GM command's refresh and two QA hooks; `_step_monster_bodies` returned at once when no body had a
+leg; and nothing in a region's commit looks at the monsters.
+
+**2. Why the ray missed, measured.** The list is asked for in `_ready`'s guarded block and applied
+whenever the reply arrives. In every in-memory log above, the reply is applied on the first frame
+the entry awaits, so what decides the float is where that frame falls:
+
+- **Loading screen, before round 562.** In rounds 558 to 561's code (each read, round 560's as
+  tagged v0.1.442), `_ready` calls `NetClient.list_monsters()` and then
+  `_load_initial_region_neighborhood()` -- the centre's synchronous build -- with no await between
+  them; the first awaited frame is the drain's, after the centre and before its neighbours. So the
+  list lands between 97/168 and 96/168 (round 561's `entry.log`: the centre at frame 13, 96/168 at
+  frame 14) and only the Mangyangs, in the neighbour 96/168, miss.
+- **Loading screen, round 562 on.** Round 562 (first tagged in v0.1.443) put `await
+  _show_loading_screen()` between those two calls, and the list lands in the screen's frame, before
+  any terrain. `/var/tmp/r562/entry.log`, round 562's own code, is the first log with 23 of 23 at y
+  0 (the list at its log line 24, 97/168's commit at line 85, frame 14). In this round's runs,
+  likewise, `server reports 23 monster(s)` comes before `loaded real terrain from 97\168.m ... at
+  frame 13` (or 14), and the Mangyangs' 96/168 commits at frame 17, 18 or 19.
+- **No screen (the QA path).** No frame is awaited between `_ready`'s request and the end of the
+  grid build (`over 0 awaited frames`; every cell's commit names the same frame), so the list is
+  applied to every cell's terrain (the third row).
+
+**The "why now" hypothesis is not confirmed.** The plan's reading -- that the public server's
+latency used to let 96/168 commit first, and rounds 565-567 (neighbours prepared on a worker and
+committed one a frame, v0.1.444+) took that away -- would need a public-server log or a delayed-list
+knob run against a pre-565 build, and neither was done. What the logs do establish: on the
+loading-screen path the float is not specific to the public server -- the in-memory server floated
+at least the Mangyangs in every such entry since round 558 -- and from round 562's code on it is not
+specific to Mangyangs.
+
+**3. The change** (`client/scripts/World3D.gd`, `client/scripts/world/ground_items.gd`,
+`client/scripts/world/monster_motion.gd`, `client/scripts/assets/terrain_collision.gd`).
+
+- `_terrain_hit_height(pos)`: the terrain-layer ray, returning NAN on a miss; `_terrain_height_at`
+  calls it and keeps its contract (pos.y on a miss) for its other callers. `_moving_monster_hit_height`
+  is the same for a walking body's rule (navmesh first, then the ray). The ray itself is
+  `TerrainCollision.vertical_ray` (step 5), and it passes through the scene's two stand-in floors
+  (step 6).
+- `_monster_heights_pending` (monster id -> the physics frame its ray first missed) and
+  `_book_monster_height`: a new body, or a list refresh of an existing one, whose ray misses is
+  drawn at the server's y as before and goes on the list; a hit takes it off. The spawn line says
+  so -- `... (height pending: no ground under it yet)` -- and the resolve prints once:
+  `World3D: monster <id> <name> height resolved after <n> frame(s): <y> at frame <drawn frame>`.
+- `_step_monster_bodies` serves the waiting bodies inside the existing budget
+  (`MonsterMotion.height_turns`, `MAX_HEIGHT_RESOLVES_PER_FRAME`, 32): a body with a leg entry
+  wants a resolve every frame while it waits and is resolved by the step's own rule; a standing one
+  is added after the walking ones and resolved by the terrain ray its placement took. A miss leaves
+  the height as it is (what the walking resolve already did). The step runs when either set is
+  non-empty. The rule follows the leg entry, not the gait: a body that has stopped at the end of a
+  leg keeps its entry, so its retry is navmesh first, while a list refresh of the same standing body
+  fires the terrain ray -- the split its arrival resolve and its refresh already had before this
+  round.
+- **The ground items' fair share.** `World3D._step_heights` runs the frame's height work: the
+  monsters may take `MonsterMotion.monster_height_share(32, items waiting)` -- the budget less the
+  items' want, up to half of it -- and `GroundItems.resolve_pending` takes whatever the monsters
+  left. So two queues that both want more than half split it 16/16, and either takes what the other
+  does not want. The even split is srrevamp's own design, not a tuned number. The first pass gave
+  the items only what the monsters left, which from 32 monster bodies that never resolve (listed
+  outside every loaded region) is nothing.
+- **The retries' own counter.** `SRREVAMP_QA_MOB_LOG`'s 10-second line counts a resolve for a body
+  still on the wait list as a retry, apart from the walking legs' resolves: `monster height
+  resolves N/s, max M in a frame; T ms in them over 10.0 s, max U ms in a frame; waiting-for-ground
+  retries R/s, max S in a frame, V ms in them`. The first pass counted both as resolves.
+- The wait list is emptied wherever a body leaves `_monster_bodies`: `_sync_monster_bodies` (the
+  only place one body is erased), `_on_change_zone_result` (all bodies cleared), and the step itself
+  (an id whose body is gone). The death path keeps its body drawn until the list drops it, so a
+  dying body may still resolve. `_exit_tree` needs nothing: the dictionary is instance state (round
+  560) and goes with the instance.
+- `TerrainCollision.place_group`: `_terrain_commit`'s terrain-group placement, moved unchanged
+  (position (offset.x - 960, -anchor, 960 - offset.z), `scale.z = -1`; the long comment on why stays
+  in `_terrain_commit`), because the heightfield's grid lines follow from it (step 5) and the grid
+  probe should run the game's own placement, not a copy. On dev, round 570 had put the same
+  arithmetic in `World3D._group_position`, which round 571's `_frame_corner` reads for the grid's
+  corner: `_terrain_commit` places through `place_group`, `_group_position` stays for the corner,
+  and a test holds the two equal (step 9).
+- Physics timing, measured rather than assumed: in the suite, a terrain-layer ray fired right after
+  a StaticBody3D is added to the tree, with no physics step in between, already hits it (`info: ...
+  hits at y -50.00`). The retry does not depend on it either way -- it runs every physics frame
+  and never from inside a commit; in the live run the bodies resolve on the frame after their
+  region's commit.
+
+**4. The same pattern elsewhere** (a height ray fired once when something is placed):
+
+- **Ground items -- identical, fixed.** Listed in `_ready` beside the monsters, placed by one ray in
+  `GroundItems.spawn`, and a kill's drop carries the monster's listed y (`session/grounditem.go`
+  `dropKillLoot`) -- 0 for a Mangyang. `setup` took `_terrain_height_at`, so a miss fell back to the
+  server's y exactly as a monster's did; with `_terrain_hit_height` passed instead, a miss is
+  kept on `GroundItems._pending` and `resolve_pending(budget)` retries it with the items' share of
+  the frame's 32 (a missed item goes to the back of the queue). The list line says how many wait:
+  `N item(s) on the ground in this zone (M with no ground under them yet)`. Held by the suite only:
+  the live runs had no items on the ground.
+- **Other players' bodies**: no ray -- drawn at the y their own client sent. Not the pattern.
+- **NPCs**: placed when their own region commits, from that region's walkable graph
+  (`landing_height_at`). No ray, no race.
+- **The player** (`_qa_goto_from_list`, `_qa_attack_nearest`'s goto, `_qa_retreat`,
+  `_place_player_at_world` for a GM move): one ray each (`_terrain_height_at`), but the player is
+  grounded again every physics frame (the walkable graph, or gravity and
+  `_recover_if_below_terrain`). No retry added; the ray now steps off the grid lines and passes
+  through the stand-in floors like every other placement's.
+- **A walking body's own resolve that misses** keeps its height and is tried again two units later;
+  one that misses on its arrival keeps it. Not put on the wait list (not a placement at spawn);
+  disclosed.
+
+**5. Round 567's heightfield has no answer on its own grid lines -- fixed with one ray helper.**
+The first pass of this round left 7 of the 23 Jangan bodies waiting to the end of its run, all in
+97/168 and all on grid vertices of it (world x and z multiples of 20); `SRREVAMP_TERRAIN_TRIMESH=1`
+placed all 23. Nine of the 23 stand on 97/168's vertices: the first pass's ray (a plain one)
+answered at the other two, (-300, -880) and (-300, -760), and at all 10 bodies that lie on exactly
+one grid line.
+
+- *Why, read from Godot 4.2.2's source* (`servers/physics_3d/godot_shape_3d.cpp`,
+  `GodotHeightMapShape3D::intersect_segment`, and `core/math/geometry_3d.h`,
+  `segment_intersects_triangle`, at the 4.2.2-stable tag): a ray whose begin and end fall in the
+  same cell tests only the cell `floor()` of its shape-local x and z picks, and each of its two
+  triangles with Moller-Trumbore's closed bounds (`u < 0` or `v < 0` rejects). A point on the
+  cell's edge has a barycentric of zero; the neighbouring cell, which it lies on too, is never
+  tried. Which rounding makes the zero negative was not traced; the counts below fit a coin flip
+  per coordinate (4,512 of 9,312 points on one line miss, 6,909 of 9,409 on two).
+- *Measured, the grid probe* (`terrain_collision_test.gd`, committed; synthetic heights, no game
+  data): 25 regions of a radius-2 grid placed by `TerrainCollision.place_group` -- the placement
+  `_terrain_commit` calls (step 3: the arithmetic moved, not changed) -- at the frame
+  origin, over one world-continuous non-planar field, plain vertical rays from +1000 to -1000 at
+  every vertex: **6,909 of the centre region's 9,409 miss, and 50,391 of the 25 regions' 235,225**,
+  in 13 regions (as (dx, dz) from the origin: (0, 0) 6,909; (0, 1) 5,358; the other seven of the
+  dx = 0 column and the dz = 0 row 4,558-4,564 each; the other four of the dz = 1 row 1,552 each;
+  the other 12 none). A region 60
+  spans out misses at none: there the shape-local coordinates are not exact, and rounding puts the
+  point inside the cell `floor()` picks. The centre's cell-edge midpoints: 4,512 of 9,312 on lines
+  of constant z and 4,512 of 9,312 on lines of constant x.
+- *The fix*: `TerrainCollision.vertical_ray(space, x, z, top, bottom, mask, exclude)`. It fires at
+  the column itself when it lies `RAY_GRID_EPSILON` or more off every grid line, and otherwise at
+  `RAY_GRID_EPSILON` off the nearest line, on the side the column is on first and the other side
+  if that misses (`ray_columns`): a line that is a region's edge has ground on only one side while
+  the neighbour is not loaded. Grid lines are world multiples of `TILE_SIZE` (20) on x and z,
+  because of the placement (half-span 960 = 48 x 20, offsets of whole 1920 = 96 x 20 spans); the
+  probe checks every vertex of the 25 regions against that (0 off). The shape is not changed.
+  With the helper: **0 misses** at the 235,225 vertices, 0 at the centre's 18,624 midpoints, 0 at
+  a lone region's 9,409 (its outer edges answer from the second side; plain rays miss 6,909), 0 at
+  the far region's.
+- *`RAY_GRID_EPSILON` = 0.01 world units, srrevamp's own engineering choice, disclosed at the
+  constant.* The probe's band: every vertex moved (d, d) into its cell, plain rays miss at 50,391
+  of 235,225 for d = 0.00001 (as many as on the vertices: below float32's spacing at most of these
+  coordinates), 3,416 for d = 0.0001, **0 for d = 0.001 and 0 for d = 0.01**. 0.01 is ten times the
+  smallest distance with no miss, and above float32's spacing (the physics server's precision for a
+  ray's coordinates) everywhere below 131,072 world units (0.0078 there). Its cost: a height read up
+  to 0.01 off on each axis, only for a column within 0.01 of a line, can differ by at most 0.01
+  times the triangle's |dh/dx| + |dh/dz|. Measured on Jangan's 25 regions from their parsed
+  heightmaps (`QA TERRAIN SLOPE`, step 8's run): the steepest triangle is **19.165** (99/170, quad
+  row 67, column 89), so at most **0.19**; in 97/168, where 19 of the 23 monsters stand, 3.314, at
+  most 0.033; the others 1.650-11.120. In the suite the hits land within 0.0298 of the drawn vertex
+  height against a bound of 0.0293 for its field's steepest 2.933 (float32's spacing at those
+  coordinates, 0.00049, makes up the difference; the check allows 0.001).
+- *Every vertical ray onto the terrain now goes through it* (`grep` of `PhysicsRayQueryParameters3D.create`
+  and `intersect_ray` in `client/scripts`, all in `World3D.gd`): `_terrain_hit_height` (and so
+  `_terrain_height_at`, the walking fallback, the ground items, `_place_player_at_world`, the QA
+  goto and retreat placements, `_where_report`'s terrain line and the `SRREVAMP_QA_MOB_LOG` compare
+  line); `_snap_player_onto_terrain` (the server's spawn (0, 0, 0) is itself a vertex of the entry
+  region; round 567's snap there hit -- one of the vertices that answer); `_recover_if_below_terrain`;
+  `_avoid_spawning_under_roof`'s ring (from a vertex, its 0/90/180/270-degree points lie on lines);
+  `_physics_step`'s ground check; `_drawn_surface_height`; and the QA reports -- `_qa_step`'s `QA
+  <tick> local` drawn-surface ray, `SRREVAMP_QA_RIG`'s column ray (all layers, as before),
+  `SRREVAMP_QA_FLOAT`, `SRREVAMP_QA_SCAN` (at 48 samples its lattice is on the vertices), `QA GROUND
+  SNAP` (the snap's own ray) and `SRREVAMP_QA_MOB_HEIGHTS`. Left as they are: `QA GROUND`'s lattice
+  of vertical rays (a probe of the shape itself, at 0.45 and 0.55 of a tile -- 9 and 11 units off
+  the lines, where the helper fires the same single ray); `_has_roof_overhead` (upward, every
+  layer, from half a character height above the feet: its question is a roof, not the ground);
+  `SRREVAMP_QA_MOB_HEIGHTS`' plain ray (kept on purpose, the negative inside the report); and the
+  rays that are not vertical -- the six camera picks, `QA THROUGH`'s and `QA NPCBODY`'s horizontal
+  rays, `QA GROUND`'s slanted rays and sweeps: a ray that crosses cells walks the grid
+  (`_intersect_grid_segment`), not the one-cell test.
+- *Round 567's record corrected in place* (this file and `docs/WORLD_ISSUES.md`): its "1,600 of
+  1,600 hit on both" / "every vertical ray hits both" held only off the lines -- verified from its
+  code: `_qa_ground_rays_report` fires at `(floor(...) + QA_GROUND_IN_QUAD) * tile`, 0.45 and 0.55
+  of a tile, and `terrain_collision_test.gd`'s rays at (0.45, 0.55), (0.3, 0.2) and (0.7, 0.9) of a
+  cell; none on a line.
+
+**6. The scene's placeholder ground no longer answers the height ray -- fixed.** `World3D.tscn`'s
+`Ground` is a StaticBody3D at the origin with `collision_layer = 9` -- the terrain-only bit
+included -- and a 200 x 1 x 200 `BoxShape3D`, top at y 0.5; it is switched off
+(`ground_collision.disabled`) when the first terrain group commits and on again by
+`_reload_zone_assets`. On the loading-screen path the list is applied before the centre commits
+(step 2), so the first pass's `_terrain_hit_height` placed a body listed within 100 of the origin on
+it, at 0.898, for good (the review's probe; no Jangan monster is inside it -- the nearest, Yeoha at
+(70, -220), is 220 out on z). The same class, found here: `VoidCatchFloor` (layer 9, 200,000 wide,
+top at y -1995) answers the ray of a body listed at y -995 or lower -- the suite's body listed at
+-1500 was placed on it at -1994.60.
+
+- *Chosen: the placement ray passes through both* (`_stand_in_floor_rids`, the ray's `exclude`),
+  rather than taking the placeholder off the terrain-only layer. Read first what else relies on
+  them being there: the player's body stands on the placeholder until the terrain commits
+  (`move_and_slide`, layer 1 of its mask 17 -- unaffected either way); `_physics_step`'s ground
+  check keeps `_last_grounded_position` on it in that window (the void-fall return needs it --
+  taking it off the layer would stop that); the snap runs deferred after the centre's commit, which
+  has switched it off; `VoidCatchFloor` is the void catch itself. So only the placement ray --
+  `_terrain_hit_height`, and so every monster, ground item and player placement through
+  `_terrain_height_at` -- ignores them; everything else is as it was.
+
+**7. Tests.**
+
+- `client/scripts/assets/terrain_collision_test.gd`: the grid probe of step 5, 4.6 s on the box --
+  `ray_columns` by value (a column off the lines fired as it is; on a line 0.01 off it, + side
+  first, then -; negative coordinates; twice the epsilon off left alone); every vertex of the 25
+  regions on world multiples of 20 through `place_group`; **the NEGATIVE: the plain ray misses at
+  6,909 of the centre's 9,409 vertices** (it must, or the probe is not on the lines); the helper at
+  none of the 235,225, nor at the 18,624 midpoints, nor at the lone region's 9,409, nor 60 spans
+  out; each hit within the epsilon times the steepest triangle of the drawn vertex height; the band
+  (0.00001 still misses, 0.01 does not).
+- `client/scripts/world/height_retry_test.gd` (World3D.tscn with a quiet subclass; the first pass's
+  cases kept -- a body with no ground waits at y 0 and stands at -50 + 0.398 one physics frame after
+  the ground appears; removal leaves the list; a hit at spawn never waits; 40 waiting bodies resolve
+  32 then 8 -- and the scene's stand-in floors now LEFT ON, where the first pass took them off every
+  layer): a plain terrain-only ray at (50, 50) stops on the placeholder's top (0.500), while
+  `_terrain_hit_height` there is NAN; bodies listed at (50, 50) and (-90, 90) wait at y 0; a body
+  listed at y -1500 waits at -1500, not on the void catch; the terrain appears and the two resolve
+  through the placeholder, which is still on. A real 97 x 97 heightfield placed by `place_group` at
+  the frame origin: 6 vertices outside the placeholder where the plain ray finds nothing (the
+  NEGATIVE, checked per column) -- monsters listed there are placed at once at the vertex height +
+  the lift (worst 0.0007 off), the player's snap from 20 under one lifts the player onto it, and a
+  ground item on another is placed at once. The fair share: 40 bodies that never resolve and 3
+  ground items -- one `_step_heights` frame brings all 3 items down, the monsters take the other 29
+  (counted as retries, the walking resolves +0); with 20 more items waiting the monsters take 16.
+- `client/scripts/world/monster_motion_test.gd`: `monster_height_share` -- the whole budget with no
+  items, all but 3 for 3, half for 16 or 1,000.
+- **NEGATIVES, headless** (each production change undone in a copy of the client synced to this
+  lane's render dir, the worktree untouched; the suites as committed):
+  - the helper bypassed (`ray_columns` returns the column itself): `terrain_collision_test.gd`
+    `FAILURES: 7` -- the helper misses 6,909 of the centre's 9,409, 50,391 of 235,225, 4,512 + 4,512
+    midpoints and 6,909 of the lone region's, and `ray_columns` fails its three on-line cases;
+    `height_retry_test.gd` `3 FAILURES` -- 0 of the 6 vertex monsters placed, the snap leaves the
+    player at -51.545 (20 under the ground), the item at y 0.000.
+  - the stand-in floors not excluded: `height_retry_test.gd` `5 FAILURES` -- `_terrain_hit_height`
+    0.898 at (50, 50), both bodies drawn at 0.898 and not waiting, the -1500 body placed on the void
+    catch at -1994.60, both still at 0.898 after the terrain appears.
+  - the monsters given the whole budget (the first pass's split): `4 FAILURES` -- the 3 items left
+    waiting, the monsters 32 retries, 32 again with 23 items waiting.
+  - the first pass's production files (`bc9f368`) under the new suites: `terrain_collision_test.gd`
+    `FAILURES: 1` (no `RAY_GRID_EPSILON`), and `height_retry_test.gd` and `monster_motion_test.gd`
+    stop at a parse error (`place_group`, `monster_height_share` absent).
+  - Kept from the first pass: with this round's World3D.gd and ground_items.gd stashed, the retry
+    cases print `12 FAILURES` (the body stays at y 0.000).
+- `client/tools/remote_godot.sh tests` (lane lock `/var/tmp/rfloat/lock`): `ran 95 suite(s), 0
+  failing`; `remote_godot.sh check`: `checked 269 scripts and 5 scenes`, `ALL LOAD`; `cd server &&
+  go build ./... && go test -count=1 -p 1 ./...`: 58 packages ok (no server change).
+
+**8. Live, the acceptance** (render box, this lane's server binary built from the worktree,
+`SRREVAMP_QA_FORCE_LOADING=1` -- the real loading-screen drain -- `--server --region '97\168.m' --at
+1002,1020 --radius 2`, `SRREVAMP_QA_MOB_HEIGHTS=1,10,30,60,120,240,340`; on the HEIGHTFIELD, no
+`SRREVAMP_TERRAIN_TRIMESH`; logs `/var/tmp/rfloat/{after2,nohelper,cost2}.log`, the first pass's
+`{after,before,tri,cost}.log` beside them; hardware GL, 0 empty frames, frames deleted). Each `QA
+MOB HEIGHT` line now carries three answers: the terrain ray (the game's, through the helper, with the
+region whose collider answered), a plain ray at the exact column, and the drawn mesh --
+`TerrainCollision.mesh_height_at` over the region's parsed heightmap, no physics at all.
+
+| run (`--frames`) | at spawn | resolved | at tick 340 (frame 355) | SCRIPT ERROR |
+|---|---|---|---|---|
+| fixed (`after2`, 360) | 23 of 23 `height pending` (the list at log line 24, right after `LoadingScreen: up at frame 13`) | the 19 in 97/168 after 1 frame at frame 15 (97/168 committed at 14), the 7 vertex bodies where the plain ray misses among them; the 4 Mangyangs after 6 frames at frame 20 (96/168 at 19) | **all 23 drawn 0.40 above their terrain ray; 0 `terrain ray none`** (4 at tick 1: the Mangyangs, before 96/168); every ray answered by a region (97/168 or 96/168), none by anything else; the drawn mesh equals the ray on all 23; the plain ray `none` at 7 of the 9 bodies on 97/168's grid vertices -- it answers at (-300, -880) (-1.38) and (-300, -760) (-3.51) -- and at none of the 10 on exactly one grid line | 0 |
+| helper bypassed (`nohelper`, 360; the mutation above, live) | 23 of 23 pending | 16 | the 7 vertex bodies where the plain ray misses at y 0, `terrain ray none, plain ray none`, the drawn mesh under them -30.67 (Yeoha (200, -220), Stone Ghost (200, -480), Water Ghost (340, -500)), -30.51 (Weasel (340, -340)), -3.50 (Big-eyed Ghost (40, -880)), 2.45 (Tomb Stone Ghost (500, -500)), 2.49 (Water Ghost slave (500, -360)): 30.51-30.67 above the ground for four, 3.50 for one, 2.45 and 2.49 under it for two; the other two vertex bodies, (-300, -880) and (-300, -760), drawn at -0.98 and -3.11, 0.40 above their ray, as in the fixed run | 0 |
+
+The 7 vertex bodies where the plain ray misses, in the fixed run, drawn / ground: -30.11 / -30.51
+(340, -340), 2.89 / 2.49 (500, -360), 2.84 / 2.45 (500, -500), -30.27 / -30.67 at (200, -220),
+(340, -500) and (200, -480), -3.10 / -3.50 (40, -880) -- the trimesh run's ground at the same
+columns in the first pass (`tri.log`, whose tick-340 report has an answer at all 23 monster
+columns, 19 of them on grid lines, the 9 vertices among them). The Mangyangs: -36.74, -42.14,
+-38.48, -49.02, 0.40 above -37.13, -42.53, -38.88, -49.42, as in the first pass.
+
+**The orchestrator's "-30.27" question, answered by measurement.** -30.27 is -30.67 plus the
+placement's lift (0.05 x `PLAYER_SCALE_RATIO` = 0.398): at (70, -220), (70, -480), (210, -500),
+(210, -340), (200, -220), (340, -500) and (200, -480) the terrain ray is answered by 97/168's
+collider and the drawn mesh from the parsed heightmap reads -30.67 -- real ground (flat there), not
+a stand-in. The ghosts near 0 likewise: (-300, -880) -0.98 over -1.38, (-170, -880) -1.11 over
+-1.51, (-170, -760) -1.27 over -1.67, (170, -880) -1.36 over -1.75, and (470, -340) 2.89 over 2.49
+-- ray and drawn mesh agree on every one.
+
+**The retries' cost and counter, live** (`cost2`: the fixed build, `--frames 700`,
+`SRREVAMP_QA_MOB_LOG=1`, `SRREVAMP_QA_MOB_MOVE=60,0,8,0` -- Yeoha sent from (70, -220) to (130,
+-220) at 8 a second, which arrives): `monster height resolves 3/s, max 1 in a frame; 6.83 ms in them
+over 10.0 s, max 0.273 ms in a frame; waiting-for-ground retries 6/s, max 23 in a frame, 0.63 ms in
+them` -- the walking leg's resolves (60 units at one per `HEIGHT_RESOLVE_STEP`, 2) apart from the
+entry's retries (23 bodies, all resolved: 23 `height resolved` lines). With no body left waiting, the
+first pass's 425 retries a second (7 bodies that never resolved) are gone. A resolve fires one ray,
+or up to 2 (a column on a line) or 4 (on a vertex) when the first side misses; the budget counts
+resolves.
+
+**9. Landed on round 571's code (the combined-code measurements).** The branch was cut from round
+569; rounds 570 and 571 landed on dev first. The cherry-pick conflicted only in `_terrain_commit`,
+where round 570 had placed the group with `terrain_group.position = _group_position(world_offset,
+anchor_height)` and `scale.z = -1`, and in the two records' append points.
+
+- *One placement.* The same arithmetic both ways: `place_group`'s half is (SIDE - 1) x TILE_SIZE /
+  2 = 96 x 20 / 2 = 960 = `REGION_SPAN` / 2, the same z negation, the same `scale.z = -1`.
+  `_terrain_commit` now calls `place_group` alone. `_group_position` stays, because `_frame_corner`
+  and round 570's frame test read it without a node. `region_grid_state_test.gd` holds the node
+  that `place_group` positions to `Transform3D(Basis(1, 1, -1), _group_position(...))`. It checks
+  every `FRAME_ROWS` cell (14 of them, in the frames of 97/168 and of 98/157), Constantinople's
+  105/79 in 97/168's frame, and the far corner cell of its radius-2 grid (107/77, group at world x
+  -175,680). Each cell is checked at four arbitrary anchors: 0, 12.5, -37.25 and 1234.5. Result:
+  16 of 16 equal. NEGATIVE: with `place_group`'s half set to SIDE x TILE_SIZE / 2 (970), all 16
+  FAIL (`16 FAILURES`), and every other frame check in the suite still passes. So without this
+  test, the grid corner and the heightfield's grid lines could drift apart unnoticed.
+- *Checked against rounds 570-571, hunk by hunk. Nothing else interacts.*
+  - The frame wire (`result.frame` into `_reload_zone_assets`): no hunk of this round touches it.
+    The wait list is still cleared in `_on_change_zone_result`, beside `_monster_bodies.clear()`,
+    which round 570 left where it was.
+  - The frame anchor (`_frame_anchor_height`): it moves y only. Grid lines are x and z.
+  - `_load_region_neighborhood`'s centre offset: `_cell_offset(cdx, cdy)` is whole region spans in
+    any frame, so every region's grid lines stay on world multiples of 20. `place_group`'s doc
+    comment relies on exactly that, and the grid probe checks it.
+  - `_grid_origin_world = _frame_corner(...)`: that is `_group_position`, held equal above.
+  - `region_grid_state`: `_qa_drawn_mesh_height` and `_qa_terrain_slope_report` read
+    `_grid.parsed_heightmaps` through `RegionGridState.region_key`, which round 570 left as it was.
+    They find groups by their `RealTerrain_<x>_<y>` names, which are frame-independent.
+  - The QA hooks round 570 moved to `_grid_centre_region`: `SRREVAMP_QA_GROUND_RAYS`' gate is one
+    of them. This round changed only the snap ray inside that report.
+  - The placeholder `Ground`, which `_reload_zone_assets` re-enables: it stays at the world origin,
+    which under `-single-frame` is 97/168's middle, not the town's. `_terrain_hit_height` passes
+    through it either way.
+  - The rays: no hunk of rounds 570-571 adds one. A grep of `PhysicsRayQueryParameters3D.create`
+    in the combined `World3D.gd` finds exactly the rays step 5 lists as left off the helper: the
+    NPC-body, `QA THROUGH`, `QA GROUND` lattice and six camera-pick rays, `_has_roof_overhead` and
+    the report's plain ray. Every other vertical ray goes through `TerrainCollision.vertical_ray`.
+  - `_step_monster_bodies`' only caller is `_step_heights`.
+- *Float32 under `-single-frame`* (disclosed at `RAY_GRID_EPSILON`; the arithmetic was checked with
+  numpy's float32). Under round 571's flag, world x reaches -175,680 at the edge of
+  Constantinople's radius-2 grid. From 131,072 to 262,144 float32's spacing is 1/64, so a column
+  0.01 off a line is stored 0.015625 off it: further off the line, still clear of it, and the
+  height bound grows by the same factor. From 65,536 to 131,072 the offset is stored as 0.0078125.
+  From 262,144 up the spacing is 1/32, and 0.01 would round back onto the line. The grid probe now
+  also fires at that far corner cell (`World3D._cell_offset(10, -91)`): the helper misses none of
+  its 9,409 vertices, and neither does the plain ray (the same as at 60 spans).
+- `cd server && go build ./... && go test -count=1 -p 1 ./...`: 58 packages ok.
+  `client/tools/remote_godot.sh tests` (`GODOT_LOCK=/var/tmp/r572/lock`): `ran 96 suite(s), 0
+  failing`. `check`: `checked 271 scripts and 5 scenes`, `ALL LOAD`.
+- *The live acceptance, on the combined code.* This tree's server was built for linux/amd64 and
+  run in-memory by `qa_shot.sh --server`, with default flags: no `-single-frame`. The run used
+  `SRREVAMP_QA_FORCE_LOADING=1 SRREVAMP_QA_MOB_HEIGHTS=1,10,30,60,120,240,340 ... --region
+  '97\168.m' --at 1002,1020 --radius 2 --frames 360`, on the heightfield. Hardware GL, 0 empty
+  frames, frames deleted; the log is `/var/tmp/r572/accept.log`.
+  - Spawn: `LoadingScreen: up at frame 12`, and 23 of 23 bodies `height pending` at spawn.
+  - The 19 bodies in 97/168 resolved after 1 frame, at frame 14 (97/168 was built at frame 13).
+    The 9 bodies on 97/168's grid vertices are among them, the 7 where the plain ray misses
+    included.
+  - The 4 Mangyangs resolved after 5 frames, at frame 18 (96/168 was built at 17). Their heights:
+    -36.74, -42.14, -38.48, -49.02.
+  - At tick 340 (frame 354): all 23 bodies are drawn 0.40 above their own terrain ray. 19 of those
+    rays were answered by 97/168 and 4 by 96/168; 0 `NOT TERRAIN`. The drawn mesh equals the ray
+    on all 23.
+  - The plain ray is `none` at 7 of the 9 bodies on 97/168's grid vertices (world x and z both
+    multiples of 20): (40, -880), (200, -220), (200, -480), (340, -340), (340, -500), (500, -360)
+    and (500, -500). It answers at the other two, (-300, -880) (-1.38) and (-300, -760) (-3.51),
+    and at all 10 bodies on exactly one grid line.
+  - 0 `terrain ray none`, 0 `waiting for ground`, 0 `SCRIPT ERROR`. At tick 1, 4 bodies were still
+    `none`: the Mangyangs, before 96/168 committed.
+  - `QA TERRAIN SLOPE`: 25 regions; the steepest triangle is 19.165 (99/170), and 3.314 in 97/168.
+    These match step 8.
+- *README benchmark (b), the crossing, once on the combined code.* The command is the README's
+  verbatim, with `GODOT_LOCK=/var/tmp/r572/lock` and this tree's server. Hardware GL, 600 frames, 0
+  empty, frames deleted; the log is `/var/tmp/r572/cross.log`.
+  - The walk: `NAV 1: footing settled on terrain at local 120.0, 1020.0` and `QA 60 local 71, 0,
+    1020`, the same start as the baseline.
+  - The tick-600 summary: **`longest work frame 85 ms at frame 163 (cell 98/165) over 569 frames
+    since the last summary; p95 5 ms; 0 over 100 ms`**. Round 567 read `86 ms at frame 164 (cell
+    98/165) over 569 frames ...; p95 5 ms; 0 over 100 ms`.
+  - The column, in commit order 97, 96, 98, 95, 99/165: 25, 21, 60, 22, 22 ms at frames 161-165,
+    with `collision` 0 on each. Round 567 read 29, 21, 60, 23, 22.
+  - The crossing's own entry drain: `region grid loaded in 17754 ms ... at frame 30`, p95 900 ms,
+    5 frames over 100 ms. Round 567 recorded a drain for run (a) only: 17299 ms at frame 29, p95
+    914, 5 over 100.
+  - Its entry placed the same 23 bodies pending and resolved all 23. 0 `SCRIPT ERROR`.
+  - So rounds 565-567's walking frames did not regress: one run each, inside run-to-run spread.
+
+**Records.** This entry; round 567's entries corrected in place (here and in `docs/WORLD_ISSUES.md`);
+`docs/WORLD_ISSUES.md`'s round; `docs/TODO.md` (the grid-line and placeholder items done);
+`World3D.gd`'s QA header (`SRREVAMP_QA_MOB_HEIGHTS`, `SRREVAMP_QA_MOB_LOG`); `TerrainCollision`'s
+doc comment (THE GRID LINES, `RAY_GRID_EPSILON`'s disclosure, with the float32 note under
+`-single-frame`); `region_grid_state_test.gd`'s header (ONE PLACEMENT). `docs/SYSTEMS.md` has no row for
+monster placement or terrain rays.
+
+**Deploy note.** Client only; needs a tag. With it, on Jangan's loading-screen entry (the player's
+path) all 23 monsters come down onto the ground on the physics frame after their region's terrain
+commits -- 19 one frame after the centre, the Mangyangs 6 frames after they were listed -- the 7 on
+97/168's grid vertices where a plain ray finds nothing included; a body listed over the placeholder
+or above the void catch waits for real terrain; the ground items keep at least half of each frame's
+height budget when they wait; and every vertical terrain ray (the player's snap, ground check and
+buried check among them) steps off the heightfield's grid lines, reading a height at most 0.19 off
+(0.033 in 97/168) where a column lies within 0.01 of one.
