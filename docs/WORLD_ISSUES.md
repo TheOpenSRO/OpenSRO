@@ -7075,6 +7075,48 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-fifty-eighth round: the reconnect, scripted -- textured on the box, twice the orphans, and one batch built into a dead world
+
+The tester's report (2026-09-25): disconnect and reconnect without closing the client, and the
+ground is white. Nothing was fixed this round; it was MEASURED, in one process, with a hook that
+leaves the world and comes back (`SRREVAMP_QA_RECONNECT`, `qa_shot.sh --reconnect`), on both the
+direct route (World3D -> World3D, which isolates `World3D.gd`'s `static var` caches) and the
+tester's (World3D -> Login -> CharacterSelect -> World3D, the front-end screens signing back in),
+at tick 200 and mid-load (`drain`). Each entry prints its renderer memory, object and orphan
+counts, the static caches, the viewport's `debug_draw`, and one texel probe per surface material
+of the centre cell's terrain; the frame is measured as the lower-40% mean of the same `--shots`
+camera on both passes. The full record is `docs/RE_COMPLETION.md`'s round 558; the numbers:
+
+| | pass 1 (every run) | pass 2, tick 200 (direct / Login) | pass 2 after a mid-load drop (Login / direct) |
+|---|---|---|---|
+| lower-40% frame mean | (0.271501, 0.260978, 0.249704) | (0.271502, 0.260978, 0.249705) both | the same, both |
+| texture passes `rid_valid=true` | 48 of 48 | 48 of 48, texel means identical | 48 of 48 |
+| texture / video memory (MB) | 139.96 / 186.41 | 236.84 / 293.45 -- 237.32 / 293.93 | 198.24 / 250.92 -- 197.76 / 250.45 |
+| orphan nodes | 3,770 | 7,540 / 7,540 (x2.000) | 5,947 / 5,947 |
+| `debug_draw` | 0 | 0 | 0 |
+| `SCRIPT ERROR` after the reconnect | -- | 0 / 0 | 1 / 1, the same line |
+
+- **Not reproduced under Mesa/VirtualGL**, on either route or timing: pass 2 draws the textures
+  pass 1 drew, to the fourth decimal of the frame mean, with every texture RID valid and every
+  texel mean intact (one of the 48 reads exactly (0.40, 0.38, 0.31), round 252's offline decode of
+  `c_marble_jang_02`). A fact about the box's driver path, not a refutation of the Windows report.
+- **What a reconnect costs**, measured: the orphan nodes double exactly (the never-freed per-region
+  object templates), texture memory x1.69, video memory x1.57, static memory +120 MB, per reconnect.
+- **A drop while loading** resumes `_drain_initial_load` on the detached instance: it builds one
+  more batch of two cells into a world that is already gone, then dies at
+  `await get_tree().process_frame` with `SCRIPT ERROR: Invalid get index 'process_frame' (on base:
+  'null instance')` (`World3D.gd:3385`). That line is what `map-reconnect-fix` guards.
+- On 42 of the 48 texture passes the baked vertex colour is exactly 1.000, so the texture is the
+  ground's only colour source there: a sampler resolving to GLES3's default white draws exactly the
+  tester's picture, a missing texture draws the 0.5-grey fallback. The tester's own
+  `user://logs/srrevamp.log` -- the second `character/item/NPC tables loaded` block's `ground
+  textures for 97\168.m -- N ids, N resolved` line, any `pk2: could not open`, any `SCRIPT ERROR`
+  between the blocks, and whether buildings and water were white too -- tells the two apart.
+- Found on the way: `QaSignIn.run` compared the wanted name against `Summary` objects, so every
+  sign-in after a server's first stopped at `name already taken` (fixed); a `--shots` frame armed
+  at tick 0 was named during the sign-in, before any world existed (the shots now wait for the
+  entry drain).
+
 ## Five-hundred-and-fifty-seventh round: a walking monster stands on the plaza deck, not 13.8 units inside it
 
 Since round 533 a monster the server moves took its height from `_terrain_height_at` -- a ray on

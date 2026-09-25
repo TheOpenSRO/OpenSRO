@@ -65,6 +65,36 @@ func _ready() -> void:
 	# Enter submits from any field.
 	for field in [username_edit, password_edit, server_address_edit]:
 		field.text_submitted.connect(func(_t): _on_login_pressed())
+	# SRREVAMP_QA_RECONNECT_VIA_LOGIN (round 558): a scripted reconnect that
+	# takes the tester's route lands here from World3D._on_disconnected.
+	# Sign back in with the QA account through the same Connect path a click
+	# takes, so this screen's own work (Media.pk2, the net flow, the
+	# remembered settings) runs as it does for a player; CharacterSelect
+	# then starts the QA character.
+	if OS.get_environment("SRREVAMP_QA_RECONNECT_VIA_LOGIN") != "":
+		_qa_sign_in()
+
+## SRREVAMP_QA_RECONNECT_VIA_LOGIN: fill the fields from the QA environment
+## (SRREVAMP_QA_SERVER; the account QaSignIn reads) and press Connect. Says
+## why when it cannot, so a run that stalls on this screen says so in its
+## log rather than in a status label no log carries.
+func _qa_sign_in() -> void:
+	var target := OS.get_environment("SRREVAMP_QA_SERVER")
+	if target == "":
+		printerr("QA RECONNECT: Login has no SRREVAMP_QA_SERVER to sign in to -- staying on the login screen")
+		return
+	var credentials := QaSignIn.account_credentials()
+	server_address_edit.text = target
+	username_edit.text = credentials[0]
+	password_edit.text = credentials[1]
+	print("QA RECONNECT: Login signing in to %s as %s at frame %d" % [target, credentials[0], Engine.get_frames_drawn()])
+	_on_login_pressed()
+
+## Under SRREVAMP_QA_RECONNECT_VIA_LOGIN the status label's text also goes
+## to the log, which is all a scripted run can read.
+func _qa_report(text: String) -> void:
+	if OS.get_environment("SRREVAMP_QA_RECONNECT_VIA_LOGIN") != "":
+		print("QA RECONNECT: Login: %s" % text)
 
 # --- Building the screen ---------------------------------------------------
 
@@ -302,13 +332,16 @@ func _send_pending_action() -> void:
 
 func _on_connection_failed() -> void:
 	status_label.text = "Could not connect to server."
+	_qa_report(status_label.text)
 
 func _on_login_result(ok: bool, reason: String) -> void:
 	if ok:
 		status_label.text = "Login OK."
+		_qa_report(status_label.text)
 		get_tree().change_scene_to_file("res://scenes/CharacterSelect.tscn")
 	else:
 		status_label.text = "Login failed: %s" % reason
+		_qa_report(status_label.text)
 
 func _on_register_result(ok: bool, reason: String) -> void:
 	if ok:

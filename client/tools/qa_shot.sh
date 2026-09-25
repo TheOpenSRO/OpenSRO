@@ -41,6 +41,28 @@
 #                     loadout, e.g. "1=3637,4=3638,5=3639,6=3632"
 #   --nofog           disable fog, for high overview shots
 #   --free            let the camera pass through geometry
+#   --reconnect <when> leave the world and re-enter it in the SAME process --
+#                     the tester's "disconnect and reconnect without closing
+#                     the client", after which the ground was white (round
+#                     558). <when> is a QA tick (60 a second of game time,
+#                     one a movie frame) or "drain", the first tick that
+#                     finds the entry's loading screen up, i.e. a drop while
+#                     the world is still loading. Exports
+#                     SRREVAMP_QA_FORCE_LOADING=1 (both entries take the
+#                     real loading-screen drain; the QA path would build the
+#                     grid in one frame and "drain" could never fire) and
+#                     SRREVAMP_QA_NOUI=1 (the run's product is a frame-colour
+#                     statistic over the lower part of the picture, where
+#                     the chat log and hotbar sit). Every SRREVAMP_QA_* hook
+#                     re-arms on the second entry, so --shots names each
+#                     viewpoint twice: `QA SHOT <name> frame <n>` once per
+#                     entry, and each entry prints `QA ENTRY <n> ...` and
+#                     `QA TEXPROBE <n> ...` lines to grep (World3D.gd's QA
+#                     header). Direct by default: World3D -> World3D.
+#   --reconnect-via-login  route the reconnect the way a tester's goes:
+#                     World3D -> Login -> CharacterSelect -> World3D, the
+#                     front-end screens signing back in with the QA account
+#                     (needs --server)
 #   --out <dir>       where to write frames (required)
 #
 # Startup dominates a run -- roughly 65 seconds of loading against 0.33
@@ -72,6 +94,7 @@ GODOT="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
 REGION='98\168.m'; FRAMES=120; SIZE=1280x720; OUT=""; SCENE="res://scenes/World3D.tscn"
 AT=""; YAW=""; PITCH=""; DIST=""; WALK=""; NOFOG=""; FREE=""; RADIUS=""; SHOTS=""
 PANELS=""; WORLDMAP=""; SAY=""; SERVER=""; GENDER=""; ATTACK=""; DEBUG=""; COLUMNS=""; EQUIP=""; SERVER_BIN="${SERVER_BIN:-/opt/srrevamp-server/srrevamp-server}"
+RECONNECT=""; RECONNECT_VIA_LOGIN=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -109,6 +132,8 @@ while [ $# -gt 0 ]; do
       else SERVER="start"; shift; fi ;;
     --nofog)  NOFOG=1;     shift ;;
     --free)   FREE=1;      shift ;;
+    --reconnect) RECONNECT="$2"; shift 2 ;;
+    --reconnect-via-login) RECONNECT_VIA_LOGIN=1; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -224,6 +249,17 @@ fi
 [ -n "$DEBUG" ] && export SRREVAMP_QA_DEBUG=1
 [ -n "$COLUMNS" ] && export SRREVAMP_QA_COLUMNS="$COLUMNS"
 [ -n "$EQUIP" ] && export SRREVAMP_QA_EQUIP="$EQUIP"
+# --reconnect (round 558): both entries take the real loading-screen drain,
+# and the HUD is hidden -- see the option's note in the header.
+if [ -n "$RECONNECT" ]; then
+  export SRREVAMP_QA_RECONNECT="$RECONNECT"
+  export SRREVAMP_QA_FORCE_LOADING=1
+  export SRREVAMP_QA_NOUI=1
+fi
+if [ -n "$RECONNECT_VIA_LOGIN" ]; then
+  export SRREVAMP_QA_RECONNECT_VIA_LOGIN=1
+  [ -n "$SERVER" ] || echo "qa_shot: --reconnect-via-login without --server -- Login has nothing to sign back in to, the run will stop on the login screen" >&2
+fi
 
 # --resolution as well as the X screen: Godot renders at the project's own
 # window size otherwise, so asking for a square screen alone still produced

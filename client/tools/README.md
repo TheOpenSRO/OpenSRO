@@ -35,6 +35,29 @@ Each viewpoint prints `QA SHOT <name> frame <n>` in the log; pull that numbered 
 output directory. Six viewpoints this way took 116 seconds against about nine and a half minutes
 as six separate runs.
 
+**A reconnect is a run, not a hand test.** `--reconnect <tick|drain>` leaves the world and
+re-enters it in the same process -- the tester's "disconnect and reconnect without closing the
+client", after which the ground came back white (round 558). Direct by default (World3D ->
+World3D, which isolates `World3D.gd`'s `static var` caches); `--reconnect-via-login` takes the
+tester's route through Login and CharacterSelect, which sign back in with the QA account. Every
+hook re-arms on the second entry, so `--shots` names each viewpoint once per entry, and each
+entry prints a `QA ENTRY <n> loaded ...` line (renderer texture/buffer/video memory, object and
+orphan counts, the static caches, the viewport's `debug_draw`, the fog and baked-light inputs)
+and one `QA TEXPROBE <n> surface <i> ...` line per surface material of the centre cell's
+terrain. Measure, do not look: the lower 40% of the two `QA SHOT` frames from the same camera
+(`convert f<n>.png -gravity south -crop 100%x40%+0+0 -format "%[fx:mean.r] %[fx:mean.g]
+%[fx:mean.b]" info:`), pass 2 against pass 1's own mean, with >= 0.9 the "white" bound; the
+`QA ENTRY` numbers of pass 2 against pass 1's; and `grep -c 'SCRIPT ERROR\|previously freed'`
+split at the `QA RECONNECT` line. `--reconnect drain` fires while the entry's loading screen is
+still up (the drop that lands on a tester mid-load); it needs the loading-screen drain, which
+`--reconnect` exports (`SRREVAMP_QA_FORCE_LOADING=1`), and hides the HUD (`SRREVAMP_QA_NOUI=1`)
+because the HUD sits in the measured band:
+
+```
+qa_shot.sh --out /var/tmp/reconnect --server --region '97\168.m' --radius 1 --frames 400 \
+  --reconnect 200 --shots "square@1002,1020:0,-25,700"
+```
+
 `dump_ddj.gd` — writes any real `.ddj` texture out as a PNG, and reports its fourCC, the format it
 decompresses to, and how many texels are opaque, transparent or partial. Written to settle which
 spelling of the region minimap filename was real (`<y>x<x>.ddj`), and useful whenever a texture

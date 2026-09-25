@@ -50,16 +50,10 @@ static func run(tree: SceneTree) -> bool:
 		if port_text.is_valid_int():
 			port = port_text.to_int()
 
-	var account := OS.get_environment("SRREVAMP_QA_ACCOUNT")
-	if account == "":
-		account = ACCOUNT_DEFAULT
-	var split := account.find(":")
-	var user := account if split < 0 else account.substr(0, split)
-	var password := "" if split < 0 else account.substr(split + 1)
-
-	var who := OS.get_environment("SRREVAMP_QA_CHARACTER")
-	if who == "":
-		who = CHARACTER_DEFAULT
+	var credentials := account_credentials()
+	var user := credentials[0]
+	var password := credentials[1]
+	var who := character_name()
 
 	print("QA sign-in: connecting to %s:%d as %s / %s" % [host, port, user, who])
 	NetClient.connect_to_server(host, port)
@@ -84,7 +78,14 @@ static func run(tree: SceneTree) -> bool:
 	if listed.is_empty():
 		printerr("QA sign-in: no answer to the character list -- rendering offline")
 		return false
-	var names: Array = listed[1]
+	# The list carries CharacterNet.Summary objects, not names: `who in
+	# listed[1]` was always false, so every run after a server's first tried
+	# to create the character again and stopped at "name already taken" --
+	# unseen while each in-memory QA server was fresh, found by round 558's
+	# reconnect, whose second sign-in reached the same server.
+	var names: Array = []
+	for summary in listed[1]:
+		names.append(summary.char_name)
 	if not (who in names):
 		NetClient.create_character(who, OS.get_environment("SRREVAMP_QA_GENDER"))
 		var created: Array = await _first_of(tree, [NetClient.character_create_result])
@@ -108,6 +109,26 @@ static func run(tree: SceneTree) -> bool:
 	if say != "":
 		NetClient.say(say)
 	return true
+
+## The QA account as [user, password], from SRREVAMP_QA_ACCOUNT ("user:pass")
+## or ACCOUNT_DEFAULT. Shared with the front-end screens: a reconnect run
+## routed through Login (SRREVAMP_QA_RECONNECT_VIA_LOGIN, round 558) signs
+## back in with the same account this sequence used.
+static func account_credentials() -> PackedStringArray:
+	var account := OS.get_environment("SRREVAMP_QA_ACCOUNT")
+	if account == "":
+		account = ACCOUNT_DEFAULT
+	var split := account.find(":")
+	var user := account if split < 0 else account.substr(0, split)
+	var password := "" if split < 0 else account.substr(split + 1)
+	return PackedStringArray([user, password])
+
+## The QA character's name, from SRREVAMP_QA_CHARACTER or CHARACTER_DEFAULT.
+static func character_name() -> String:
+	var who := OS.get_environment("SRREVAMP_QA_CHARACTER")
+	if who == "":
+		who = CHARACTER_DEFAULT
+	return who
 
 static func _reason(result: Array, index: int) -> String:
 	return str(result[index]) if result.size() > index else "no reason given"

@@ -35387,3 +35387,197 @@ with `-monster-ai` on moves a monster onto a structure. Still open, outside this
 monster's placement takes the terrain ray (a body spawned on a deck stands inside it until it
 moves), `landing_height_at`'s highest-surface answer under an overpass, and the resolve budget
 against the town's 0.25 ms lookups once a crowd walks.
+
+## Scripted one-process reconnect: QA hook, texel probe and frame-colour measurement for the white ground (round 558)
+
+Client only, QA tooling: nothing on the wire, no flag, no server change, nothing a player sees.
+This round MEASURES the tester's "disconnect and reconnect without closing the client, and the
+ground is white" (2026-09-25) in a scripted run, so that the next two items
+(`map-object-template-cache`, `map-reconnect-fix`) claim only what a log line supports. Every
+number below is from the render box (2026-09-25, hardware GL through VirtualGL, each run under the
+box lock as ghidra, this tree's server binary in memory) or from this checkout.
+
+**Grounding, re-read for this round.**
+
+- The disconnect path: `NetClient._process` sees the peer leave `STATUS_CONNECTED` ->
+  `disconnect_from_server()` -> `disconnected` -> `World3D._on_disconnected` ->
+  `change_scene_to_file(Login)`; `CharacterSelect._on_enter_world_result` ->
+  `change_scene_to_file(World3D)` builds a brand-new instance. The System menu's Restart lambda in
+  `_ready` calls `disconnect_from_server()` (whose emit already queues Login) and then queues Login
+  itself -- twice, as the plan's citation says; left alone here.
+- What outlives a World3D instance, in this checkout: `World3D.gd`'s `static var`s
+  (`_ground_texture_cache`, `_water_frames_cache` + `_water_frames_load_attempted`,
+  `_environment_table` + `_environment_load_attempted`), the `NetClient` autoload, the root
+  viewport's `debug_draw` (`debug_panel._on_draw_mode_selected` sets it; nothing resets it), the
+  `Environment_world3d` sub-resource the scene shares and mutates in place, and the function-local
+  `templates` dict of `_try_load_real_map_objects` plus `_npc_model_cache` -- template Nodes never
+  freed or parented. `/var/tmp/yawshot.log` (a radius-1, 9-region run: nine `ground textures for`
+  lines) reports at exit `1234 RID allocations of type 'N5GLES34MeshE'`, `1234 ... 'N5GLES38MaterialE'`,
+  `1235 ... 'N5GLES37TextureE'`, `1057 ... 'P11GodotBody3D'` and `1057 ... 'P12GodotShape3D'`.
+- Why a live texture cannot draw white by itself (the verifiers' correction, confirmed in code): a
+  static Dictionary keeps its `Ref<ImageTexture>`, and every terrain surface's `StandardMaterial3D`
+  holds its own Ref (`MapmTerrainBuilder._build_textured_mesh_from_cells`: `albedo_texture` per
+  texture pass, `vertex_color_use_as_albedo`, `SHADING_MODE_UNSHADED` when the light is baked,
+  albedo `(1, 1, 1, 1)`); the flat fallback is `UNKNOWN_TILE_COLOR` 0.5 grey and prints
+  `NOTHING resolved`. The plan's step-7 rule ("white + rid_valid=true => the cached-texture path")
+  was therefore inverted and is NOT used; the rule written below is the orchestrator's.
+- The marble reference: `docs/WORLD_ISSUES.md`'s two-hundred-and-fifty-second round measured
+  `c_marble_jang_02`'s decoded DXT1 top mip at (0.40, 0.38, 0.31) -- a texel mean of one tile
+  texture, not a frame mean. It is used here only against the TEXPROBE texel means.
+- Server side, reworded from the plan: `Hub.Enter` removes the SAME session id; the first socket's
+  entity leaves through `WorldDisconnectHandler -> hub.Leave` when the gateway sees the close, and
+  `handleEnterWorld` has no per-character dedupe, so two `QaTester` entities can coexist briefly.
+
+**Change.**
+
+- `World3D._qa_step`: `SRREVAMP_QA_RECONNECT=<tick|drain>`. At that QA tick, or -- `drain` -- on
+  the first tick that finds the entry's loading screen up, the env var is cleared and
+  `_qa_reconnect` is `call_deferred`: direct route (default) disconnects `_on_disconnected`, drops
+  the socket and changes scene straight back to `World3D.tscn`; with
+  `SRREVAMP_QA_RECONNECT_VIA_LOGIN=1` it only calls `NetClient.disconnect_from_server()`, the same
+  call `NetClient._process` makes when the peer drops, and the tester's path runs from there.
+  Deferred because the first run fired it from inside `_physics_process` and the remainder of that
+  call ran on the detached node (ten `!is_inside_tree()` errors and a `direct_space_state` on a
+  null world at `_physics_process`) -- the hook's own artefact, gone in every later run.
+- `World3D._ready`: the entry count lives in `SRREVAMP_QA_ENTRY` (bumped per instance, never a
+  static -- statics are what is measured), `QA ENTRY <n>: world instance ...` beside the tables
+  line; `QaSignIn.run` now runs only when `NetClient` is not already connected, because a reconnect
+  through Login and CharacterSelect arrives signed in as a player does. `_drain_initial_load` prints
+  `QA ENTRY <n> loaded: ...` (`RenderingServer.get_rendering_info` texture/buffer/video memory,
+  `Performance` object/node/orphan/resource counts and static memory, the viewport's `debug_draw`,
+  the static caches with their cached-null count, the baked-light and fog inputs) and one
+  `QA TEXPROBE <n> surface <i>: ...` line per surface material of `RealTerrain_<x>_<y>/SubPatch`
+  (texture set, RID valid, size, mean of 64 texels read back through `Texture2D.get_image`,
+  shading mode, albedo, `vertex_color_use_as_albedo`, transparency, min/mean of the baked vertex
+  colours) -- `_qa_print_entry_probe`, `_qa_texel_mean`.
+- `World3D._initial_load_done`: the QA shots wait for the entry drain. The negative run showed
+  `QA SHOT square frame 13` printed during the sign-in, 160 log lines before `region grid loaded`:
+  under the loading-screen drain a shot armed at tick 0 named a frame of no world.
+- `Login._qa_sign_in` / `CharacterSelect._qa_start` (both under `SRREVAMP_QA_RECONNECT_VIA_LOGIN`):
+  fill the fields from `SRREVAMP_QA_SERVER` and the QA account and press Connect; select the QA
+  character in the real list and press Start; the status texts go to the log as
+  `QA RECONNECT: Login: ...` / `QA RECONNECT: CharacterSelect: ...`.
+- `QaSignIn.account_credentials()` / `character_name()` (shared with the two screens), and a bug
+  the first direct run exposed: `who in listed[1]` compared a String against
+  `CharacterNet.Summary` objects, so every sign-in after a server's first tried to create the
+  character again and stopped at `could not create QaTester (name already taken) -- rendering
+  offline`. Unseen while every in-memory QA server was fresh; the reconnect's second sign-in
+  reached the same server. Fixed by comparing `char_name`; the second entry then re-enters for
+  real (`QaTester is in the world at jangan` twice).
+- `qa_shot.sh --reconnect <when>` (exports `SRREVAMP_QA_RECONNECT`, `SRREVAMP_QA_FORCE_LOADING=1`
+  so both entries take the real drain -- `drain` cannot fire otherwise -- and `SRREVAMP_QA_NOUI=1`,
+  the HUD sits in the measured band) and `--reconnect-via-login`; documented in the header, in
+  `client/tools/README.md` and in `World3D.gd`'s QA header.
+
+**Tests.**
+
+- NEGATIVE, both halves, with only the five production files at BASE (`git stash push --
+  client/scripts/World3D.gd client/scripts/Login.gd client/scripts/CharacterSelect.gd
+  client/scripts/qa/qa_sign_in.gd client/tools/qa_shot.sh`, shipped with `sync`): (1) BASE's
+  `qa_shot.sh --reconnect 200 --out ...` prints `unknown option: --reconnect`, exit 2; (2) the same
+  command with the env exported by hand (`SRREVAMP_QA_RECONNECT=200 SRREVAMP_QA_FORCE_LOADING=1
+  SRREVAMP_QA_NOUI=1 qa_shot.sh --server --region '97\168.m' --radius 1 --frames 300 --shots
+  "square@1002,1020:0,-25,700"`): `tables_loaded=1 qa_shot=1 reconnect=0 entry=0 texprobe=0`, so
+  every `== 2` assertion fails. Restored (`git stash pop`, `sync`): the runs below.
+- POSITIVE (the run in the plan, `--frames 400`): two `character/item/NPC tables loaded` lines,
+  two `QA SHOT square frame <n>` lines, `QA ENTRY 1/2 loaded`, 49 `QA TEXPROBE` lines per entry
+  (surface 0 the flat base plus 48 texture passes), 400 frames, 0 empty, in runs A2 and B.
+- `client/tools/remote_godot.sh check`: `checked 256 scripts and 5 scenes`, `ALL LOAD`;
+  `remote_godot.sh tests`: `ran 85 suite(s), 0 failing`.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...` green before and after the doc edits.
+
+**Live (render box). Five runs, pass 1 identical in all of them.** Pass 1, every run:
+`tex_mem=139,960,996 buf_mem=46,447,552 video_mem=186,408,548 objects=465,253 nodes=14,102
+orphans=3,770 resources=110 static_mem=965.7 MB debug_draw=0 cache_ground=43 (0 nulls)
+cache_water_frames=30 env_table=loaded light_ready=true light_diffuse=(0.7255, 0.7214, 0.7165)
+terrain_ambient=(0.9985, 0.9988, 0.9983) fog_enabled=true fog_color=(0.3572, 0.5802, 0.6772)
+fog_density=0.00005`; the lower-40% mean of the pass-1 `square` frame is
+**(0.271501, 0.260978, 0.249704)** (full frame (0.311996, 0.332597, 0.329623)).
+
+| run | route | fired at | pass-2 tex / buf / video mem (MB) | pass-2 orphans / nodes / objects / resources | pass-2 static MB | pass-2 lower-40% mean | SCRIPT ERROR before / after |
+|---|---|---|---|---|---|---|---|
+| A (hook inside `_physics_process`, superseded) | direct | tick 200, frame 200 | 234.00 / 55.17 / 289.17 | 7,540 / 13,932 / 449,113 / 110 | 1056.6 | (0.271502, 0.260978, 0.249705) | 0 / 1 (`direct_space_state` on a null world, `_physics_process`) |
+| A2 | direct | tick 200, frame 200 | 236.84 / 56.62 / 293.45 | 7,540 / 14,102 / 474,222 / 110 | 1085.3 | (0.271502, 0.260978, 0.249705) | 0 / 0 |
+| B | Login -> CharacterSelect -> World3D | tick 200, frame 200 | 237.32 / 56.61 / 293.93 | 7,540 / 14,102 / 474,228 / 112 | 1085.9 | (0.271502, 0.260978, 0.249705) | 0 / 0 |
+| C | Login route | `drain`: tick 15, frame 14, 7 cells queued | 198.24 / 52.68 / 250.92 | 5,947 / 14,102 / 470,916 / 112 | 1037.6 | (0.271502, 0.260978, 0.249705) (no pass-1 shot: it left mid-load) | 0 / 1 (`_drain_initial_load`, below) |
+| D | direct | `drain`: tick 15, frame 14, 7 cells queued | 197.76 / 52.68 / 250.45 | 5,947 / 14,102 / 470,910 / 110 | 1037.0 | (0.271502, 0.260978, 0.249705) | 0 / 1 (the same line) |
+
+- **The ground is textured on pass 2, on every route.** Pass 2's lower-40% mean equals pass 1's to
+  the fourth decimal (a difference of 0.000001 in red and blue), far from the 0.9 "white" bound.
+  Every `QA TEXPROBE 2` line equals its `QA TEXPROBE 1` line: 48 of 48 texture passes
+  `rid_valid=true size=512x512`, texel means intact (26 distinct, from (0.16, 0.23, 0.06) to
+  (0.54, 0.42, 0.23); one pass reads exactly **(0.40, 0.38, 0.31)**, round 252's offline decode of
+  `c_marble_jang_02`, reproduced here by the renderer's own read-back), `shading=0` (unshaded, the
+  light is baked), albedo `(1, 1, 1, 1)`, `debug_draw=0`; the `ground textures for 97\168.m -- 26
+  ids, 26 resolved` line prints on both passes (it prints on cache hits too). Pass 2's
+  `cache_ground=43` with 0 nulls, `cache_water_frames=30`, `env_table=loaded`: the statics are
+  simply reused. So, by the orchestrator's rule, case (ii): **not reproduced under Mesa/VirtualGL**
+  (radeonsi on the RX 5700 XT through VirtualGL); recorded plainly, not as "does not reproduce"
+  -- the tester's machine is Windows, a different driver and a different GL texture path.
+- **What a reconnect does cost, measured.** Orphan nodes exactly double, 3,770 -> 7,540 (x2.000)
+  on both routes; texture memory 139.96 -> 236.84 MB (x1.69); video memory 186.41 -> 293.45 MB
+  (x1.57); buffer memory +10.2 MB; static memory +119.6 MB; the node count returns to 14,102 (the
+  tree is rebuilt at the same size) while `objects` grows by ~9,000. The mid-load drop's pass 2
+  sits between: 5,947 orphans, 198 MB of textures -- the first instance had built its centre cell,
+  one queued cell (7 of the 8 neighbours were still queued when the hook fired: the in-play stream,
+  `_process_stream_queue` at one cell a frame, drains the same queue beside the loading screen) and,
+  as the next bullet shows, one more batch. The orphans are the never-freed
+  per-region `templates` (and `_npc_model_cache`) Nodes; this is the before figure for
+  `map-object-template-cache`'s before/after on the SAME `--reconnect` run.
+- **The mid-load drop (runs C and D, both routes): what `map-reconnect-fix` guards.**
+  `change_scene_to_file` detaches the old instance at once and frees it later in the frame -- the
+  measured order, not a reading of the engine: `process_frame` reached the old instance while it
+  was out of the tree and not yet freed -- so `_drain_initial_load`, suspended on `await
+  get_tree().process_frame` with 7 cells queued, RESUMES on the detached instance: by the loop's
+  own order it builds one more batch
+  (`LOADING_CELLS_PER_FRAME` = 2 cells -- the two `!is_inside_tree()` / `get_global_transform`
+  errors are that build), updates the screen, and dies at the next await with
+  `SCRIPT ERROR: Invalid get index 'process_frame' (on base: 'null instance'). at:
+  _drain_initial_load (res://scripts/World3D.gd:3385)` plus `ERROR: Parameter "data.tree" is
+  null. at: get_tree (scene/main/node.h:413)`. Exactly one SCRIPT ERROR per drop, the same line on
+  both routes; `previously freed` / `instance is gone` never appear (the node is detached, not yet
+  freed, when it resumes). A tester whose server redeploys mid-load therefore pays one more batch
+  of region building into a dead world before the login screen is usable. The guard is an
+  `is_inside_tree()` check after each await in the drain (or cancelling it from `_exit_tree`); not
+  done here, this round only measures.
+- **The Login route works unattended.** Run B: `QA RECONNECT: leaving ... route login` at frame
+  200, `Login signing in to 127.0.0.1:15899 as qa at frame 200`, `Login: Login OK.`,
+  `CharacterSelect starting QaTester at frame 203`, `entering the world at frame 204`,
+  `QA ENTRY 2` at frame 204 with `connected: true` and no second `QA sign-in` (World3D skipped it).
+  The only difference from the direct route in the numbers: `resources` 110 -> 112 (two Resource
+  objects the two front-end screens leave behind; not chased).
+- **Server log.** Each run's `server.log` has two `session disconnected` lines -- the first at the
+  reconnect (e.g. run A2 `04:43:11.951Z` against the hook's fire) and the second at exit -- and
+  logs no entry, so the window in which two `QaTester` entities coexist is not readable from it;
+  the transient duplicate is accepted and recorded, not measured.
+- The frame files and the `f.wav`s (3.0 GB) were deleted after measuring; the logs stay under
+  `/var/tmp/r558/` with `run.sh` and `measure.sh`, the exact commands.
+
+**Decision rule for the next two items (the orchestrator's, not the plan's).** (i) pass-2 frame
+>= 0.9 with `rid_valid=true`, sizes intact, texture/video memory roughly doubled -> resource
+growth is the live hypothesis, tested by `map-object-template-cache`'s before/after on the same
+run; (ii) pass 2 textured within a few % of pass 1's own mean -> not reproduced on the box, ship the
+hygiene items, the tester's log decides; (iii) `debug_draw=<n>` with n != 0 -> the persisted
+viewport state (only if a tester touched Ctrl+F3 Draw). **This round lands in (ii)** on both
+routes and both timings, with the growth of (i) measured regardless (x2.00 orphans, x1.69 texture
+memory per reconnect). One more measured fact narrows the tester's picture: on 42 of the 48
+texture passes the baked vertex colour is `vcol_min=1.000 vcol_mean=1.000` (diffuse 0.7255 plus
+terrain ambient 0.9985 clamps to 1), so the texture is the ground's only colour source there, and
+a sampler that resolves to GLES3's default white texture draws exactly white -- the tester's
+symptom -- while a missing texture draws the 0.5-grey flat fallback. Which of the two it was is in
+the tester's log.
+
+**The tester's log decides, in minutes** (`user://logs/srrevamp.log` from a reconnect, the SECOND
+`character/item/NPC tables loaded` block): its `ground textures for 97\168.m -- N ids, N
+resolved` line (or `NOTHING resolved, the region draws the flat fallback`), any `pk2: could not
+open`, any `SCRIPT ERROR` / `previously freed` between the two blocks, and whether the buildings
+and water were white too (a static cache explains neither). The orchestrator is asking for that log
+in parallel.
+
+**Records.** This entry; `docs/WORLD_ISSUES.md`'s five-hundred-and-fifty-eighth round (the table);
+`client/tools/README.md` and `qa_shot.sh`'s header (`--reconnect`, `--reconnect-via-login`, the
+measurement); `World3D.gd`'s QA header. `docs/SYSTEMS.md` has no row for world loading or the
+client's reconnect, so nothing there to change.
+
+**Deploy note.** Nothing to deploy: QA hooks, prints and two QA-only fixes (the sign-in's name
+check, the shots' wait for the drain). Not tag-worthy on its own.

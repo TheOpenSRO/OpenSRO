@@ -658,6 +658,12 @@ const STREAM_CELLS_PER_FRAME := 1
 # The "NOW LOADING" screen shown to a real player during world entry (never a
 # QA render, whose synchronous load a screenshot depends on).
 var _loading_screen: LoadingScreen
+## True once _drain_initial_load has finished this instance's entry (either
+## path). The QA shots wait on it: under the loading-screen drain a shot
+## armed at tick 0 printed its frame during the sign-in, 160 log lines
+## before `region grid loaded` (round 558's first run), so the frame it named
+## was of no world at all.
+var _initial_load_done := false
 # Per-phase load timing accumulators (ms), for the entry profile.
 var _load_ms_terrain := 0.0
 var _load_ms_objects := 0.0
@@ -1100,11 +1106,24 @@ const CHAT_MARGIN_X := 8.0
 const CHAT_MARGIN_Y := 6.0
 
 func _ready() -> void:
+	# SRREVAMP_QA_RECONNECT (round 558): number this process's world entries
+	# through the environment -- never a static, statics are what a reconnect
+	# run measures. The count arms the QA ENTRY / QA TEXPROBE prints and is
+	# off unless a reconnect run set it or is about to.
+	var qa_reconnect := OS.get_environment("SRREVAMP_QA_RECONNECT")
+	if qa_reconnect != "" or OS.get_environment("SRREVAMP_QA_ENTRY") != "":
+		_qa_entry = OS.get_environment("SRREVAMP_QA_ENTRY").to_int() + 1
+		OS.set_environment("SRREVAMP_QA_ENTRY", str(_qa_entry))
+	if qa_reconnect == "drain" and not _should_show_loading_screen():
+		printerr("QA RECONNECT: 'drain' needs SRREVAMP_QA_FORCE_LOADING=1 -- the QA path builds the grid in one frame, so this hook would never fire")
 	# A QA run boots this scene directly, so there is no Login or character
 	# select behind it. With SRREVAMP_QA_SERVER set, sign in first -- that
 	# is what makes a render show real equipment, real vitals and the
-	# server's own monsters rather than a client talking to nothing.
-	if OS.get_environment("SRREVAMP_QA_SERVER") != "":
+	# server's own monsters rather than a client talking to nothing. A
+	# reconnect run that came back through Login and CharacterSelect
+	# (SRREVAMP_QA_RECONNECT_VIA_LOGIN) arrives already signed in, the way a
+	# player does, so it must not sign in a second time here.
+	if OS.get_environment("SRREVAMP_QA_SERVER") != "" and not NetClient.is_connected_to_server():
 		await QaSignIn.run(get_tree())
 
 	character_label.text = "Character: %s" % NetClient.current_character_name
@@ -1112,6 +1131,9 @@ func _ready() -> void:
 	var _t_assets := Time.get_ticks_msec()
 	_load_character_assets()
 	print("World3D: character/item/NPC tables loaded in %d ms" % (Time.get_ticks_msec() - _t_assets))
+	if _qa_entry > 0:
+		print("QA ENTRY %d: world instance %d at frame %d (connected: %s)" % [
+			_qa_entry, get_instance_id(), Engine.get_frames_drawn(), str(NetClient.is_connected_to_server())])
 
 	var result := NetClient.last_enter_world_result
 	if result != null and result.ok:
@@ -3344,6 +3366,8 @@ func _drain_initial_load(region_started_ms: int) -> void:
 		while not _load_queue.is_empty():
 			_build_one_queued_cell()
 		print("World3D: region grid loaded in %d ms (terrain %.0f, objects %.0f, npcs %.0f)" % [Time.get_ticks_msec() - region_started_ms, _load_ms_terrain, _load_ms_objects, _load_ms_npcs])
+		_qa_print_entry_probe()
+		_initial_load_done = true
 		return
 	# Reuse a screen a caller already put up (a teleport does, so even its
 	# centre-cell load is covered), else make one now.
@@ -3360,11 +3384,13 @@ func _drain_initial_load(region_started_ms: int) -> void:
 		_loading_screen.set_progress(1.0 - float(_load_queue.size()) / float(total))
 		await get_tree().process_frame
 	print("World3D: region grid loaded in %d ms" % (Time.get_ticks_msec() - region_started_ms))
+	_qa_print_entry_probe()
 	_loading_screen.set_progress(1.0)
 	_loading_screen.set_caption("Entering the world...")
 	await get_tree().process_frame
 	_loading_screen.queue_free()
 	_loading_screen = null
+	_initial_load_done = true
 
 ## Puts the "NOW LOADING" screen up (a real player only), so a caller can
 ## cover a load whose first, synchronous part runs before the drain -- a
@@ -6160,6 +6186,35 @@ func _update_blob_shadow() -> void:
 ##                          rebuild it for somewhere else) with no server
 ##                          in the loop, which is how the stale-node bug
 ##                          in _clear_region_grid was caught and checked.
+##   SRREVAMP_QA_RECONNECT=<tick|drain>
+##                          leave the world and re-enter it in the SAME
+##                          process (round 558): the tester's "disconnect
+##                          and reconnect without closing the client", after
+##                          which the ground came back white. Fires at that
+##                          QA tick, or -- "drain" -- on the first tick that
+##                          finds the entry's loading screen up, while
+##                          _drain_initial_load is suspended on a frame await
+##                          with cells still queued (needs
+##                          SRREVAMP_QA_FORCE_LOADING=1; qa_shot --reconnect
+##                          exports it). Direct by default: World3D ->
+##                          World3D, which isolates this script's `static
+##                          var`s. With SRREVAMP_QA_RECONNECT_VIA_LOGIN=1 it
+##                          takes the tester's route -- disconnect_from_server
+##                          -> `disconnected` -> _on_disconnected -> Login ->
+##                          CharacterSelect -> World3D, the front-end screens
+##                          signing back in with the QA account. Cleared once
+##                          it fires, so the next instance does not fire again.
+##   SRREVAMP_QA_ENTRY=n    set by the hook above (a player run never has it):
+##                          how many times this process has entered the world.
+##                          While set, each entry prints `QA ENTRY <n> ...`
+##                          beside `region grid loaded` -- renderer texture /
+##                          buffer / video memory, object, node, orphan and
+##                          resource counts, the viewport's debug_draw, this
+##                          script's static caches and their cached nulls, the
+##                          baked-light and fog inputs -- and one `QA TEXPROBE
+##                          <n> surface <i> ...` line per surface material of
+##                          the centre cell's terrain (_qa_print_entry_probe),
+##                          so what a reconnect changed is a grep, not a look.
 ##
 ## Position is reported every 60 physics frames as `QA <tick> local x, y, z`,
 ## so a run's log says exactly where each frame was taken. See
@@ -6167,6 +6222,9 @@ func _update_blob_shadow() -> void:
 ## frames.
 var _qa_done := false
 var _qa_tick := 0
+## SRREVAMP_QA_ENTRY as this instance read it in _ready: 0 outside a reconnect
+## run; the world entry number (1, 2, ...) inside one.
+var _qa_entry := 0
 ## SRREVAMP_QA_WALK, read once: a heading in degrees to keep walking on,
 ## driven from _physics_process like a held key so the run plays.
 var _qa_walk := OS.get_environment("SRREVAMP_QA_WALK")
@@ -6498,8 +6556,28 @@ func _qa_step() -> void:
 	if not _qa_click_queue.is_empty():
 		_qa_advance_click()
 
-	if not _qa_shots.is_empty():
+	# Not before the entry has finished loading: see _initial_load_done.
+	if not _qa_shots.is_empty() and _initial_load_done:
 		_qa_advance_shots()
+
+	# SRREVAMP_QA_RECONNECT=<tick|drain> (round 558): leave and re-enter the
+	# world in this process. "drain" fires on the first tick that finds the
+	# entry's loading screen up -- _drain_initial_load is then suspended on
+	# `await get_tree().process_frame` with cells still queued, which is
+	# where a server redeploy lands on a tester who is still loading.
+	var reconnect := OS.get_environment("SRREVAMP_QA_RECONNECT")
+	if reconnect != "" and ((reconnect == "drain" and _loading_screen != null) \
+			or (reconnect.is_valid_int() and _qa_tick == int(reconnect))):
+		# Cleared here, before it fires, so neither the next tick nor the
+		# next instance arms it again. Deferred: change_scene_to_file
+		# detaches this instance at once, and the first run fired it from
+		# inside this very _physics_process, whose remainder then ran on a
+		# detached node (ten `!is_inside_tree()` errors and a
+		# `direct_space_state` on a null world) -- the hook's own artefact,
+		# not the tester's path, where the drop arrives from NetClient's
+		# _process, outside any World3D callback.
+		OS.set_environment("SRREVAMP_QA_RECONNECT", "")
+		call_deferred("_qa_reconnect", reconnect)
 
 	_qa_tick += 1
 	if _qa_tick % 60 == 0:
@@ -6593,6 +6671,131 @@ static func _parse_shot(spec: String) -> Dictionary:
 		if cam[i].strip_edges().is_valid_float():
 			out[keys[i]] = float(cam[i])
 	return out
+
+## SRREVAMP_QA_RECONNECT (round 558): leave the world and come back in this
+## process, the tester's reconnect. Direct: drop the socket without letting
+## `disconnected` send this instance to Login, and change scene straight
+## back to World3D -- the new instance's _ready signs in again (QaSignIn)
+## and re-arms every SRREVAMP_QA_* hook from the unchanged environment,
+## while this script's `static var`s (_ground_texture_cache,
+## _water_frames_cache, _environment_table and their load flags) outlive
+## the instance. Via Login: the same call NetClient._process makes when the
+## peer drops (disconnect_from_server -> `disconnected` -> _on_disconnected
+## -> Login), with Login and CharacterSelect signing back in under
+## SRREVAMP_QA_RECONNECT_VIA_LOGIN. The env var was cleared when _qa_step
+## armed this, so the next instance does not fire again; the entry count
+## lives in SRREVAMP_QA_ENTRY, not a static, because the statics are what
+## is under measurement. Server side there is no per-character dedupe: the
+## first socket's entity leaves through WorldDisconnectHandler -> hub.Leave
+## when the gateway sees the close, so two QaTester entities can coexist
+## briefly.
+func _qa_reconnect(when: String) -> void:
+	var via_login := OS.get_environment("SRREVAMP_QA_RECONNECT_VIA_LOGIN") != ""
+	print("QA RECONNECT: leaving the world at frame %d, tick %d (%s, route %s, entry %d, %d cells still queued)" % [
+		Engine.get_frames_drawn(), _qa_tick, when, "login" if via_login else "direct", _qa_entry, _load_queue.size()])
+	if via_login:
+		NetClient.disconnect_from_server()
+		return
+	if NetClient.disconnected.is_connected(_on_disconnected):
+		NetClient.disconnected.disconnect(_on_disconnected)
+	NetClient.disconnect_from_server()
+	get_tree().change_scene_to_file("res://scenes/World3D.tscn")
+
+## One `QA ENTRY <n> loaded ...` line per world entry, printed beside `region
+## grid loaded` when SRREVAMP_QA_ENTRY is set (round 558): the renderer's
+## texture, buffer and video memory; the object, node, orphan-node and
+## resource counts and static memory; the root viewport's debug_draw (the
+## one cross-instance state that paints every surface white by itself --
+## DEBUG_DRAW_LIGHTING, set only by debug_panel._on_draw_mode_selected);
+## this script's static caches with their cached-null count; and the
+## baked-light and fog inputs the centre cell was built with. Then one
+## `QA TEXPROBE <n> surface <i> ...` line per surface material of the
+## centre cell's terrain (RealTerrain_<x>_<y>/SubPatch, built by
+## MapmTerrainBuilder._build_textured_mesh_from_cells: surface 0 the flat
+## base, then one per texture pass): whether its albedo texture is set, its
+## RID valid, its size, the mean of 64 texels read back from the renderer,
+## the material's shading mode and albedo colour, and the min and mean of
+## the surface's baked vertex colours. Growth between two entries' lines is
+## the leak measurement; a white pass 2 with rid_valid=true and intact
+## texel means says the texture is alive and the cause is downstream of it.
+func _qa_print_entry_probe() -> void:
+	if _qa_entry <= 0:
+		return
+	var nulls := 0
+	for tex in _ground_texture_cache.values():
+		if tex == null:
+			nulls += 1
+	var env: Environment = world_environment.environment if world_environment != null else null
+	print("QA ENTRY %d loaded: frame %d tex_mem=%d buf_mem=%d video_mem=%d objects=%d nodes=%d orphans=%d resources=%d static_mem=%d debug_draw=%d cache_ground=%d cache_ground_nulls=%d cache_water_frames=%d water_attempted=%s env_table=%s light_ready=%s light_diffuse=%s terrain_ambient=%s fog_enabled=%s fog_color=%s fog_density=%s" % [
+		_qa_entry, Engine.get_frames_drawn(),
+		RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TEXTURE_MEM_USED),
+		RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_BUFFER_MEM_USED),
+		RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_VIDEO_MEM_USED),
+		int(Performance.get_monitor(Performance.OBJECT_COUNT)),
+		int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)),
+		int(Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT)),
+		int(Performance.get_monitor(Performance.OBJECT_RESOURCE_COUNT)),
+		int(Performance.get_monitor(Performance.MEMORY_STATIC)),
+		get_viewport().debug_draw,
+		_ground_texture_cache.size(), nulls, _water_frames_cache.size(), str(_water_frames_load_attempted),
+		"loaded" if _environment_table != null else ("attempted" if _environment_load_attempted else "none"),
+		str(_env_light_ready), str(_env_light_diffuse), str(_env_terrain_ambient),
+		str(env.fog_enabled) if env != null else "no-env",
+		str(env.fog_light_color) if env != null else "no-env",
+		str(env.fog_density) if env != null else "no-env"])
+	if not _grid_has_origin:
+		print("QA TEXPROBE %d: no region grid origin -- nothing to probe" % _qa_entry)
+		return
+	var patch := get_node_or_null("RealTerrain_%d_%d/SubPatch" % [_grid_origin_region.x, _grid_origin_region.y]) as MeshInstance3D
+	if patch == null or patch.mesh == null:
+		print("QA TEXPROBE %d: no RealTerrain_%d_%d/SubPatch to probe" % [_qa_entry, _grid_origin_region.x, _grid_origin_region.y])
+		return
+	var mesh: Mesh = patch.mesh
+	for i in range(mesh.get_surface_count()):
+		var arrays := mesh.surface_get_arrays(i)
+		var colors := PackedColorArray()
+		if arrays.size() > Mesh.ARRAY_COLOR and arrays[Mesh.ARRAY_COLOR] != null:
+			colors = arrays[Mesh.ARRAY_COLOR]
+		var vcol_min := 1.0
+		var vcol_sum := 0.0
+		for c: Color in colors:
+			var luma: float = (c.r + c.g + c.b) / 3.0
+			vcol_min = minf(vcol_min, luma)
+			vcol_sum += luma
+		var vcol_mean := vcol_sum / float(maxi(colors.size(), 1))
+		var mat := mesh.surface_get_material(i) as StandardMaterial3D
+		if mat == null:
+			print("QA TEXPROBE %d surface %d: no StandardMaterial3D (material_override %s) vcol_min=%.3f vcol_mean=%.3f verts=%d" % [
+				_qa_entry, i, str(patch.material_override != null), vcol_min, vcol_mean, colors.size()])
+			continue
+		var tex := mat.albedo_texture
+		var line := "QA TEXPROBE %d surface %d: tex=%s" % [_qa_entry, i, str(tex != null)]
+		if tex != null:
+			line += " rid_valid=%s size=%dx%d texel_mean=%s" % [
+				str(tex.get_rid().is_valid()), tex.get_width(), tex.get_height(), _qa_texel_mean(tex)]
+		line += " shading=%d albedo=%s vcol_albedo=%s transparency=%d vcol_min=%.3f vcol_mean=%.3f verts=%d" % [
+			mat.shading_mode, str(mat.albedo_color), str(mat.vertex_color_use_as_albedo), mat.transparency,
+			vcol_min, vcol_mean, colors.size()]
+		print(line)
+
+## The mean colour of 64 texels of `tex` on an 8x8 grid, read back from the
+## renderer (Texture2D.get_image is RenderingServer.texture_2d_get, so a
+## texture the GPU no longer holds reads as "no-image"), decompressed first
+## because the Tile2D ground textures are DXT1 (round 252). The number to
+## hold it against is round 252's decoded top-mip mean of the same kind --
+## Jangan's c_marble_jang_02 (0.40, 0.38, 0.31) -- a texel mean, never a
+## rendered frame's.
+func _qa_texel_mean(tex: Texture2D) -> String:
+	var img := tex.get_image()
+	if img == null or img.is_empty():
+		return "no-image"
+	if img.is_compressed() and img.decompress() != OK:
+		return "undecompressable(format %d)" % img.get_format()
+	var sum := Color(0.0, 0.0, 0.0, 0.0)
+	for gy in range(8):
+		for gx in range(8):
+			sum += img.get_pixel(gx * img.get_width() / 8, gy * img.get_height() / 8)
+	return "(%.2f, %.2f, %.2f)" % [sum.r / 64.0, sum.g / 64.0, sum.b / 64.0]
 
 ## Walks a run through several viewpoints, announcing the movie frame each
 ## one lands on.

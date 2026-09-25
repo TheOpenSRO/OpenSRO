@@ -171,6 +171,30 @@ func _on_list_result(characters: Array, error: String) -> void:
 		var keep: int = _selected if _selected >= 0 and _selected < _summaries.size() else 0
 		(_list_box.get_child(keep) as Button).button_pressed = true
 		_select(keep)
+		# SRREVAMP_QA_RECONNECT_VIA_LOGIN (round 558): a scripted reconnect
+		# on the tester's route -- once the real list is in, start the QA
+		# character the way a click on Start does.
+		if OS.get_environment("SRREVAMP_QA_RECONNECT_VIA_LOGIN") != "":
+			_qa_start(QaSignIn.character_name())
+
+## SRREVAMP_QA_RECONNECT_VIA_LOGIN: select `who` in the list the server just
+## sent and press Start. Says so when the name is not there rather than
+## starting someone else.
+func _qa_start(who: String) -> void:
+	for i in range(_summaries.size()):
+		if _summaries[i].char_name == who:
+			(_list_box.get_child(i) as Button).button_pressed = true
+			_select(i)
+			print("QA RECONNECT: CharacterSelect starting %s at frame %d" % [who, Engine.get_frames_drawn()])
+			_on_enter_pressed()
+			return
+	printerr("QA RECONNECT: CharacterSelect has no character named %s -- staying on the select screen" % who)
+
+## Under SRREVAMP_QA_RECONNECT_VIA_LOGIN the status text also goes to the
+## log, which is all a scripted run can read.
+func _qa_report(text: String) -> void:
+	if OS.get_environment("SRREVAMP_QA_RECONNECT_VIA_LOGIN") != "":
+		print("QA RECONNECT: CharacterSelect: %s" % text)
 
 func _select(index: int) -> void:
 	_selected = index
@@ -223,8 +247,11 @@ func _on_enter_pressed() -> void:
 func _on_enter_world_result(result: WorldNet.EnterWorldResult) -> void:
 	if result.error != "":
 		_status.text = "Malformed response: %s" % result.error
+		_qa_report(_status.text)
 		return
 	if not result.ok:
 		_status.text = "Enter world failed: %s" % result.reason
+		_qa_report(_status.text)
 		return
+	_qa_report("entering the world at frame %d" % Engine.get_frames_drawn())
 	get_tree().change_scene_to_file("res://scenes/World3D.tscn")
