@@ -642,7 +642,18 @@ copies equal to `docs/`; (5) the GM run's `SRREVAMP_QA_COMMANDS` verification us
 because a `SceneTreeTimer` did not fire inside a movie-writer run — worth understanding; (6) ~~**a real bug
 the tools surfaced**: every zone change prints `Trying to assign invalid previously freed instance` from
 `_tick_idle_animations` (World3D.gd:3406) ~125 times~~ — fixed at merge (round 214): the raw
-Variant is checked with `is_instance_valid` before the typed assignment.
+Variant is checked with `is_instance_valid` before the typed assignment; (7) **reconnect hygiene
+(rounds 558-560)**: nothing of one login reaches the next in the same client process any more —
+`World3D.gd`'s five caches are instance state, `_exit_tree` frees the scenery and NPC templates,
+clears the caches and resets the viewport's `debug_draw`, the scene's `Environment` is
+`resource_local_to_scene`, Restart changes scene once, and a socket drop mid-load no longer builds
+a batch into a dead world (round 558's one `SCRIPT ERROR` per drop is 0). **What this did not
+settle**: the tester's white ground after a reconnect was not reproduced on the render box (round
+558, Mesa/VirtualGL: pass 2 textured to the fourth decimal of pass 1's frame mean, on both routes
+and both timings); the tester's `user://logs/srrevamp.log` from a reconnect — the second
+`character/item/NPC tables loaded` block's `ground textures for 97\168.m -- N ids, N resolved`
+line, any `pk2: could not open`, any `SCRIPT ERROR`, and whether buildings and water were white too
+— decides it. `qa_shot.sh --reconnect <tick|drain>` is the run to re-measure with.
 
 ## Parked, with the state written down
 

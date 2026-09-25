@@ -38,14 +38,19 @@ as six separate runs.
 **A reconnect is a run, not a hand test.** `--reconnect <tick|drain>` leaves the world and
 re-enters it in the same process -- the tester's "disconnect and reconnect without closing the
 client", after which the ground came back white (round 558). Direct by default (World3D ->
-World3D, which isolates `World3D.gd`'s `static var` caches); `--reconnect-via-login` takes the
+World3D; until round 560 the route that isolated `World3D.gd`'s `static var` caches, which are
+instance state since); `--reconnect-via-login` takes the
 tester's route through Login and CharacterSelect, which sign back in with the QA account. Every
 hook re-arms on the second entry, so `--shots` names each viewpoint once per entry, and each
 entry prints a `QA ENTRY <n> loaded ...` line (renderer texture/buffer/video memory, object and
-orphan counts, the static caches, the world's scenery template and texture caches, the
-viewport's `debug_draw`, the fog and baked-light inputs)
+orphan counts, the world's ground/water/environment caches, its scenery template and texture
+caches, the viewport's `debug_draw`, the fog and baked-light inputs)
 and one `QA TEXPROBE <n> surface <i> ...` line per surface material of the centre cell's
-terrain. Measure, do not look: the lower 40% of the two `QA SHOT` frames from the same camera
+terrain; a zone change's drain prints the same lines tagged `zone` (`QA ENTRY <n> zone loaded`),
+so a count of `QA ENTRY <n> loaded` stays one per entry. What a second entry pays to decode its
+own textures is on its `ground textures for <region> -- N ids, N resolved, D decoded now in M ms`
+lines and its `water animation -- 30 of 30 frames decoded in M ms` line (round 560).
+Measure, do not look: the lower 40% of the two `QA SHOT` frames from the same camera
 (`convert f<n>.png -gravity south -crop 100%x40%+0+0 -format "%[fx:mean.r] %[fx:mean.g]
 %[fx:mean.b]" info:`), pass 2 against pass 1's own mean, with >= 0.9 the "white" bound; the
 `QA ENTRY` numbers of pass 2 against pass 1's; and `grep -c 'SCRIPT ERROR\|previously freed'`

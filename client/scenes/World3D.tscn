@@ -29,6 +29,7 @@ size = Vector3(200000, 10, 200000)
 radius = 3.0
 
 [sub_resource type="Environment" id="Environment_world3d"]
+resource_local_to_scene = true
 background_mode = 1
 background_color = Color(0.55, 0.7, 0.9, 1)
 ambient_light_source = 2

@@ -7075,6 +7075,53 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-sixtieth round: nothing of one login reaches the next -- entry 2 equals entry 1, and a drop mid-load builds nothing into a dead world
+
+Round 558 listed what outlived a `World3D` instance; round 559 took the largest piece (the scenery
+templates). This round takes the rest, and measures round 558's command again (`qa_shot.sh
+--reconnect 200` and `--reconnect drain`, the same camera, round 558's server binary). It is
+hygiene, recorded as hygiene: the tester's white ground after a reconnect was not reproduced on
+the box before this round (the five-hundred-and-fifty-eighth round) and is not after it; the
+tester's log decides that report. The full record is `docs/RE_COMPLETION.md`'s round 560.
+
+What crossed instances, and what was done with each, anchored by function:
+- `World3D.gd`'s five `static var`s (`_ground_texture_cache`, `_water_frames_cache` and its flag,
+  `_environment_table` and its flag) -- one value per loaded script, so entry 2 started with entry
+  1's 43 ground textures (`cache_ground=43` before it had loaded a region; at BASE this round entry
+  2 decoded 0). Instance vars now; a second login decodes its own, and the `ground textures for`
+  line says what that cost (`26 decoded now in 125 ms` for the centre cell).
+- `_npc_model_cache`'s templates, never parented and never freed (their doc comment) -- round
+  559's exit census still counted 354 meshes / 355 textures. Freed in `_exit_tree`, which also
+  clears the caches, frees a loading screen still up and resets the root viewport's `debug_draw`
+  (set by `debug_panel._on_draw_mode_selected`, reset by nothing; the panel now reads the
+  viewport's mode when built).
+- The Restart lambda's second `change_scene_to_file(Login)`: `disconnect_from_server` emits
+  `disconnected` unconditionally and `_on_disconnected` already changes scene, as the Log Out
+  button relies on; one call now.
+- `World3D.tscn`'s shared `Environment_world3d`: every write to it is absolute (benign by reading);
+  `resource_local_to_scene = true`, so each instance owns its copy.
+- `_drain_initial_load` resumed on a detached instance after a drop mid-load (the
+  five-hundred-and-fifty-eighth round's runs C and D): `if not is_inside_tree(): return` after each
+  of its awaits, and after `_on_change_zone_result`'s.
+
+| | round 559, entry 1 -> 2 | this round, entry 1 -> 2 (`tick200`) |
+|---|---|---|
+| texture memory (MB) | 78.38 -> 92.49 (x1.18) | 78.38 -> 78.51 (x1.002) |
+| video memory (MB) | 121.95 -> 137.78 (x1.13) | 121.95 -> 122.11 |
+| orphan nodes | 2,757 -> 2,981 (x1.08) | 2,757 -> 2,757 |
+| exit census: Mesh / Material / Texture | 354 / 354 / 355 | -- / -- / 1 (pre-existing, outside World3D) |
+| `leaked` lines at exit; ObjectDB / resources-in-use reports | 1,763; 1 / 1 | 2; 0 / 0 |
+| lower-40% mean of `square`, pass 1 -> 2 | (0.271501, 0.260978, 0.249704) -> (0.271502, 0.260978, 0.249705) | the same |
+| `SCRIPT ERROR` after a drop mid-load (`drain`) | 1 (round 558; `base_drain` on this tree: 1) | 0 |
+
+- The price: about 280 ms per login (43 ground textures in 136 ms, 30 water frames in 146 ms) --
+  what entry 1 always paid, now paid by entry 2 as well, inside a 15 s grid load that is not
+  measurably slower.
+- `left the tree -- 226 scenery templates and 40 NPC templates freed` prints once per instance;
+  the instance that left mid-load frees 109 and 26.
+- The proof the suite carries (`world3d_reentry_test.gd`): at BASE, instance `b` saw instance `a`'s
+  cache key and `Script.get()` returned the statics (`FAILURES: 11`); with the change, `ALL PASS`.
+
 ## Five-hundred-and-fifty-ninth round: one scenery template per model per world, freed with the world
 
 Round 558 measured what a reconnect costs -- orphan nodes exactly doubled, texture memory x1.69 --
@@ -7141,10 +7188,13 @@ camera on both passes. The full record is `docs/RE_COMPLETION.md`'s round 558; t
   `c_marble_jang_02`). A fact about the box's driver path, not a refutation of the Windows report.
 - **What a reconnect costs**, measured: the orphan nodes double exactly (the never-freed per-region
   object templates), texture memory x1.69, video memory x1.57, static memory +120 MB, per reconnect.
-- **A drop while loading** resumes `_drain_initial_load` on the detached instance: it builds one
-  more batch of two cells into a world that is already gone, then dies at
-  `await get_tree().process_frame` with `SCRIPT ERROR: Invalid get index 'process_frame' (on base:
-  'null instance')` (`World3D.gd:3385`). That line is what `map-reconnect-fix` guards.
+- **A drop while loading** resumes `_drain_initial_load` on the detached instance (detached and
+  not yet freed when the next `process_frame` reached it, by the logs: two `!is_inside_tree()`
+  errors, then `data.tree` null, no `previously freed`): it builds one more batch of two cells into
+  a world that is already gone, then dies at the second `await get_tree().process_frame` in
+  `_drain_initial_load` -- the one at the bottom of its loop -- with `SCRIPT ERROR: Invalid get
+  index 'process_frame' (on base: 'null instance')`. That await is what `map-reconnect-fix`
+  guards (the five-hundred-and-sixtieth round).
 - On 42 of the 48 texture passes the baked vertex colour is exactly 1.000, so the texture is the
   ground's only colour source there: a sampler resolving to GLES3's default white draws exactly the
   tester's picture, a missing texture draws the 0.5-grey fallback. The tester's own

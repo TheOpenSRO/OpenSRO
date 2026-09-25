@@ -35525,21 +35525,24 @@ fog_density=0.00005`; the lower-40% mean of the pass-1 `square` frame is
   per-region `templates` (and `_npc_model_cache`) Nodes; this is the before figure for
   `map-object-template-cache`'s before/after on the SAME `--reconnect` run.
 - **The mid-load drop (runs C and D, both routes): what `map-reconnect-fix` guards.**
-  `change_scene_to_file` detaches the old instance at once and frees it later in the frame -- the
-  measured order, not a reading of the engine: `process_frame` reached the old instance while it
-  was out of the tree and not yet freed -- so `_drain_initial_load`, suspended on `await
+  `change_scene_to_file` detaches the old instance at once; what the logs show is that it was
+  detached and not yet freed when the next `process_frame` reached it (two `!is_inside_tree()`
+  errors, then `data.tree` null, and no `previously freed`) -- the order of the engine's own
+  free is not read here -- so `_drain_initial_load`, suspended on the loop's `await
   get_tree().process_frame` with 7 cells queued, RESUMES on the detached instance: by the loop's
   own order it builds one more batch
   (`LOADING_CELLS_PER_FRAME` = 2 cells -- the two `!is_inside_tree()` / `get_global_transform`
-  errors are that build), updates the screen, and dies at the next await with
+  errors are that build), updates the screen, and dies at the next await -- the second `await
+  get_tree().process_frame` in `_drain_initial_load`, the one at the bottom of the loop -- with
   `SCRIPT ERROR: Invalid get index 'process_frame' (on base: 'null instance'). at:
-  _drain_initial_load (res://scripts/World3D.gd:3385)` plus `ERROR: Parameter "data.tree" is
+  _drain_initial_load` plus `ERROR: Parameter "data.tree" is
   null. at: get_tree (scene/main/node.h:413)`. Exactly one SCRIPT ERROR per drop, the same line on
   both routes; `previously freed` / `instance is gone` never appear (the node is detached, not yet
   freed, when it resumes). A tester whose server redeploys mid-load therefore pays one more batch
   of region building into a dead world before the login screen is usable. The guard is an
   `is_inside_tree()` check after each await in the drain (or cancelling it from `_exit_tree`); not
-  done here, this round only measures.
+  done here, this round only measures (round 560 guards it; re-anchored there from a code line
+  number to the await itself).
 - **The Login route works unattended.** Run B: `QA RECONNECT: leaving ... route login` at frame
   200, `Login signing in to 127.0.0.1:15899 as qa at frame 200`, `Login: Login OK.`,
   `CharacterSelect starting QaTester at frame 203`, `entering the world at frame 204`,
@@ -35740,3 +35743,179 @@ row for world loading, scenery or the client's reconnect (round 558 checked), so
 change.
 
 **Deploy note.** Client release, tag-worthy; no server change.
+
+## No state crosses World3D instances: per-instance asset caches, an _exit_tree that frees the templates and resets the viewport, one change_scene on Restart (round 560)
+
+Client only, hygiene, tag-worthy together with round 559 (one client release after both): a second
+login in one client process starts from nothing the first one built. Nothing on the wire, no flag,
+no server change. **What this round does not claim**: that it cures the tester's white ground after
+a reconnect. Round 558 did not reproduce that on the render box (pass 2 textured to the fourth
+decimal of pass 1's frame mean, on both routes and both timings, Mesa/VirtualGL), and this round's
+runs say the same after the change; the tester's `user://logs/srrevamp.log` from a reconnect
+decides it (below, "Deploy note"). What this round removes is every piece of World3D state that
+outlived the instance, each measured or read in rounds 558/559, with the before/after on round
+558's own command. Every number is from the render box (2026-09-25, hardware GL through VirtualGL,
+lane-local lock `/var/tmp/r560/lock`, round 558's server binary -- `server/` is unchanged since
+`504b68f`) or from this checkout.
+
+**Grounding, re-read for this round.**
+
+- The five `static var`s in `World3D.gd` at BASE (`e9c203b`): `_ground_texture_cache`,
+  `_water_frames_cache`, `_water_frames_load_attempted`, `_environment_table`,
+  `_environment_load_attempted` (`grep -n 'static var' client/scripts`: five in `World3D.gd`; the
+  other three statics in `client/scripts` -- `ui_builder.gd`'s `_flat_texture`, a 1x1 white UI
+  texture, `regioninfo_names.gd`'s `_overrides`, `object_loader.gd`'s `missing_count` /
+  `missing_recent` -- are not world state and are left alone). A GDScript static is one value per
+  loaded script, not per instance (the GDScript reference, "Static variables"); round 558 measured
+  it: entry 2 printed `cache_ground=43 (0 nulls) cache_water_frames=30 env_table=loaded` before it
+  had loaded a region, and this round's BASE run below decodes 0 ground textures on entry 2.
+- `_npc_model_cache`'s doc comment: "The template is never parented, so unloading a region frees
+  the duplicates, not it" -- never freed anywhere at BASE. Round 559's exit census after freeing the
+  scenery templates still reported 354 meshes / 354 materials / 355 textures / 354 scene-cull
+  instances, consistent with these (not proven from the census).
+- `debug_panel._on_draw_mode_selected` sets `get_viewport().debug_draw = mode`; nothing in
+  `client/scripts` resets it; the viewport is the root Window, which outlives every scene.
+- The Restart lambda (`World3D._ready`, `system_restart_requested`) called
+  `NetClient.disconnect_from_server()` and then `change_scene_to_file(Login)`;
+  `NetClient.disconnect_from_server` emits `disconnected` unconditionally, and `_on_disconnected`
+  (connected in `_ready`) already changes scene to Login -- the Log Out button relies on exactly
+  that (`_on_disconnect_pressed` only disconnects).
+- `World3D.tscn`'s `Environment_world3d` sub-resource had no `resource_local_to_scene`, so every
+  instance of the scene shared one `Environment`. Its writes in `World3D.gd` are all absolute
+  (`sky`, `background_mode` in `_try_add_real_sky`; `ambient_light_color` in
+  `_apply_real_environment_lighting`; the fog block's `fog_enabled` / `fog_light_color` /
+  `fog_density` / `fog_sun_scatter` / `fog_aerial_perspective`; `SRREVAMP_QA_NOFOG`'s fog-off
+  writes), so it was benign by reading -- mutated idempotently, as the grounding verifier said.
+- The mid-load drop: round 558's runs C and D, re-anchored this round from a code line number to
+  the await itself -- the second `await get_tree().process_frame` in `_drain_initial_load`, the
+  one at the bottom of its loop -- and its wording softened to what the logs show (detached and not
+  yet freed when the next `process_frame` reached it: two `!is_inside_tree()` errors, then
+  `data.tree` null, no `previously freed`). Reproduced at BASE on this tree before the change
+  (below).
+- `hud_window_test.gd`'s `_initialize()` pattern: a script that needs the `NetClient` autoload
+  compiles there and not in `_init`. `World3D.gd`'s instance initialisers are constants, env reads
+  and one `preload`, so `S.new()` headless is feasible (the grounding verifier's check, confirmed by
+  the suite running).
+
+**Change.**
+
+- `World3D.gd`: the five statics are instance vars, doc comments updated; `_load_real_ground_textures`'
+  per-region line gains `, D decoded now in M ms` (after `N ids, N resolved`, which round 558's
+  tester instructions and measure scripts grep), and `_load_real_water_animation` prints `water
+  animation -- N of 30 frames decoded in M ms` once per world -- the price of the change, on the
+  tester's own log.
+- `World3D._exit_tree` (round 559's, extended): frees the scenery templates and clears the texture
+  cache as before; frees every `_npc_model_cache` template (`character.skeleton.free()`, the
+  never-parented root) and clears the dictionary; clears the five caches; frees a loading screen
+  still up; resets the root viewport's `debug_draw` to `DEBUG_DRAW_DISABLED` (null-guarded for a
+  detached call); prints `left the tree -- N scenery templates and M NPC templates freed`. The
+  reset lives here and not in the debug panel's Close button because a draw mode is chosen to look
+  at the world with the panel out of the way; the panel now reads the viewport's mode when it is
+  built (`debug_panel._build_tools_row`), so its dropdown says what is drawn.
+- `_drain_initial_load`: `if not is_inside_tree(): return` after each of its three awaits (the
+  first frame, the loop's, the closing one) -- a socket drop while it is suspended has
+  `_on_disconnected` change scene, which removes this instance at once, and out of the tree there
+  is nothing to load for. The same one-line guard after `_on_change_zone_result`'s `await
+  _show_loading_screen()`, the one other await followed by world building.
+- The Restart lambda calls only `NetClient.disconnect_from_server()`; `_on_disconnected` makes the
+  one scene change.
+- `World3D.tscn`: `resource_local_to_scene = true` on `Environment_world3d`, so each instance gets
+  its own copy at instantiation. Chosen over restoring the authored values on exit because it is
+  the direct form of "no state crosses instances" and needs no exit-time bookkeeping; the writes
+  were absolute, so nothing visible changes.
+- QA follow-ups from round 558's review: `_qa_reconnect` prints the tick it was armed on
+  (`call_deferred("_qa_reconnect", reconnect, _qa_tick)`; the line read `tick 201 (200, ...)`,
+  now `frame 200, tick 200 (200, ...)`); `_qa_print_entry_probe` tags a zone change's lines `zone`
+  (`QA ENTRY <n> zone loaded`, `QA TEXPROBE <n> zone surface <i>`) so `QA ENTRY <n> loaded` counts
+  one per entry; the QA header, `_qa_reconnect`'s and `_qa_print_entry_probe`'s doc comments and
+  `client/tools/README.md` no longer describe the statics as what a reconnect keeps.
+
+**Tests.**
+
+- `client/scripts/world/world3d_reentry_test.gd` (new, 16 checks): two bare `World3D.gd` instances
+  (`S.new()`, no `_ready`), `a` caches a probe key, appends a water frame and sets both load flags;
+  `b` sees none of it, and `S.get(<name>)` is null for all five names; then `a._exit_tree()` on
+  the detached instance frees an `AssembledCharacter` template's `Skeleton3D`
+  (`is_instance_valid` false), empties `_npc_model_cache` and clears the five caches, with no
+  viewport to reset.
+- NEGATIVE, proven with only the production files at BASE (`git stash push --
+  client/scripts/World3D.gd client/scripts/ui/debug_panel.gd client/scenes/World3D.tscn`, the new
+  test shipped with `remote_godot.sh sync`): `FAILURES: 11` -- `FAIL ground texture cache is per
+  World3D instance (b does not see a's probe.ddj)`, the water cache and both flags shared, `S.get`
+  returning the static for four of the five names (`_environment_table` is null on a fresh
+  script either way, so its two checks pass at BASE and are not the negative), `_exit_tree` leaving
+  the NPC template alive and the caches full. Restored (`git stash pop`, `sync`): `ALL PASS`, the
+  run printing `left the tree -- 0 scenery templates and 1 NPC templates freed`.
+- `client/tools/remote_godot.sh check`: `checked 259 scripts and 5 scenes`, `ALL LOAD` (the scene
+  with `resource_local_to_scene` loads); `remote_godot.sh tests`: `ran 87 suite(s), 0 failing` (86
+  before plus this one), both under the lane lock after the live runs.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...` green before and after the doc
+  edits.
+
+**Live (render box).** Round 558's command, `qa_shot.sh --server --region '97\168.m' --radius 1
+--frames 400 --shots 'square@1002,1020:0,-25,700'` with `--reconnect 200` (`tick200`) and
+`--reconnect drain` (`drain`, and `base_drain` with the three production files at BASE, run in the
+negative's stash window). 400 frames, 0 empty, in each. Logs under `/var/tmp/r560/` with `run.sh`
+and `measure.sh`, the exact commands; the frames were deleted after measuring.
+
+| | round 559 `after2`, entry 1 -> 2 | `tick200`, entry 1 | `tick200`, entry 2 | `drain`, entry 2 |
+|---|---|---|---|---|
+| texture memory (MB) | 78.38 -> 92.49 (x1.18) | 78.38 | 78.51 (x1.002) | 78.51 |
+| video memory (MB) | 121.95 -> 137.78 (x1.13) | 121.95 | 122.11 (x1.001) | 122.11 |
+| buffer memory (MB) | 43.57 -> 45.29 | 43.57 | 43.60 | 43.60 |
+| static memory (MB) | 922.0 -> 925.1 | 922.0 | 922.2 | 922.1 |
+| orphan nodes | 2,757 -> 2,981 (x1.08) | 2,757 | 2,757 (x1.000) | 2,757 |
+| objects / nodes / resources | -- | 462,378 / 14,102 / 110 | 462,379 / 14,102 / 110 | 462,379 / 14,102 / 110 |
+| `cache_ground` / water frames / env at the probe | 43 / 30 / loaded (reused) | 43 / 30 / loaded | 43 / 30 / loaded (this instance's) | 43 / 30 / loaded |
+| ground textures decoded, ms (9 regions) | entry 2: 0 | 43, 136 | 43, 136 | 43, 138 |
+| water frames decoded, ms | entry 2: 0 | 30, 139 | 30, 146 | 30, 140 |
+| `region grid loaded` (ms) | 15,665 -> 14,656 | 15,543 | 15,205 | 15,152 |
+| lower-40% mean of `square` | (0.271501, 0.260978, 0.249704) -> (0.271502, 0.260978, 0.249705) | (0.271501, 0.260978, 0.249704) | (0.271502, 0.260978, 0.249705) | (0.271502, 0.260978, 0.249705) |
+| `SCRIPT ERROR` before / after the reconnect | 0 / 0 | -- | 0 / 0 | 0 / 0 (`base_drain`: 0 / 1) |
+
+- **Entry 2 now equals entry 1**: texture memory +0.13 MB (round 559 left +14.1 MB, round 558
+  +97 MB), orphan nodes identical (round 559 +224, round 558 x2.000), `objects` +1, `resources`
+  equal. `left the tree -- 226 scenery templates and 40 NPC templates freed` prints per instance
+  (the mid-load instance: 109 and 26). Exit census `before` (round 559) -> round 559 `after2` ->
+  here: Mesh 2468 -> 354 -> not reported, Material 2468 -> 354 -> not reported, Texture 2469 ->
+  355 -> **1**, SceneCull Instance 2468 -> 354 -> not reported; `leaked` lines 10,447 -> 1,763 ->
+  **2**; `ObjectDB instances leaked at exit` and `Resources still in use at exit` both gone (1 -> 0
+  each). The 354/355 residual was the NPC templates, as round 559 said it was consistent with. The
+  one texture left (GL id 504, 5,460 bytes, destroyed after the RenderingServer -- `~ImageTexture`,
+  `RenderingServer::get_singleton() is null`) appears in round 559's `after2.log` and in
+  `base_drain` too: pre-existing, process-lifetime, outside World3D; consistent with the one static
+  `ImageTexture` left in `client/scripts` (`UiBuilder._flat_texture`), not identified, not chased.
+- **The price, measured**: a second login decodes its own 43 ground textures (136 ms, 125 of them
+  the centre cell's 26) and 30 water frames (146 ms) -- about 280 ms, the same as entry 1 pays
+  (133 + 139), inside a 15 s grid load; entry 2's `region grid loaded` is not slower than entry 1's
+  in either run (the run-to-run spread of these totals is larger than the decode).
+- **The mid-load drop, before and after on this tree**: `base_drain` (BASE production, the same
+  command, same day) printed after its reconnect line exactly round 558's set -- `SCRIPT ERROR:
+  Invalid get index 'process_frame' (on base: 'null instance')`, two `Condition
+  "!is_inside_tree()" is true` at `get_global_transform`, `Parameter "data.tree" is null` -- and
+  `drain` printed none of them: `SCRIPT ERROR` 1 -> 0, the batch built into a dead world 1 -> 0.
+  The four `ERROR:` lines that remain after the reconnect in both runs are the archive's
+  (`gacha_machine.bsr is not a character .bsr`, two `.bsr not found in archive`) and the exit-time
+  texture above; all four print on entry 1 as well.
+- **Pass 2 is textured, as before**: lower-40% mean equal to pass 1 to the sixth decimal, `QA
+  TEXPROBE` pass 1 == pass 2 (49 lines), 48 of 48 `rid_valid=true`, `debug_draw=0`. Unchanged by
+  this round, which is the point: nothing here was drawing white on the box before, and the
+  tester's log is still the measurement that decides the report.
+- `QA RECONNECT: leaving the world at frame 200, tick 200 (200, ...)` and `frame 14, tick 14
+  (drain, ...)`: the armed tick, as round 558's review asked.
+
+**Records.** This entry; `docs/WORLD_ISSUES.md`'s five-hundred-and-sixtieth round, and its
+five-hundred-and-fifty-eighth re-anchored (the await, not a line number; the softened order);
+round 558's entry above, the same two edits; `docs/TODO.md`, tester-tools item (7) -- a new item,
+since item (6) is the struck-through round-214 bug the plan pointed at; `client/tools/README.md`
+(the reconnect paragraph: the caches, the `zone` tag, the decode lines); `World3D.gd`'s QA header.
+`docs/SYSTEMS.md` has no row for world loading, scenery or the client's reconnect (rounds 558 and
+559 checked; re-checked), so nothing there to change.
+
+**Deploy note.** Client release, tag-worthy, in one tag with round 559 (the orchestrator cuts it).
+The tag message should say that the reconnect white ground was NOT reproduced on the render box
+(rounds 558 and 560) and ask testers who see it for `user://logs/srrevamp.log` after a reconnect:
+the second `character/item/NPC tables loaded` block's `ground textures for 97\168.m -- N ids, N
+resolved, D decoded now in M ms` line (or `NOTHING resolved`), any `pk2: could not open`, any
+`SCRIPT ERROR`, the `left the tree -- ...` line between the blocks, and whether buildings and
+water were white too. No server change.

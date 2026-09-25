@@ -141,8 +141,17 @@ func _build_tools_row() -> HBoxContainer:
 	row.add_child(_view_mode)
 	row.add_child(_label("  Draw"))
 	_draw_mode = OptionButton.new()
+	# Reads the viewport's mode rather than assuming "Normal": debug_draw is
+	# the root Window's, set by _on_draw_mode_selected and put back to
+	# DEBUG_DRAW_DISABLED when the world leaves the tree (World3D._exit_tree,
+	# round 560) -- it is not reset when this panel closes, because a draw
+	# mode is chosen to look at the world with the panel out of the way.
+	var viewport := _world.get_viewport()
+	var current: int = viewport.debug_draw if viewport != null else Viewport.DEBUG_DRAW_DISABLED
 	for mode in DRAW_MODES:
 		_draw_mode.add_item(mode[0])
+		if mode[1] == current:
+			_draw_mode.select(_draw_mode.item_count - 1)
 	_draw_mode.item_selected.connect(_on_draw_mode_selected)
 	row.add_child(_draw_mode)
 	_free_camera = CheckButton.new()

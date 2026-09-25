@@ -1498,9 +1498,13 @@ func _try_initialize_pk2_ui() -> void:
 		_hud_panels.close("system")
 		if _debug_panel != null:
 			_debug_panel.visible = true)
-	_hud_panels.system_restart_requested.connect(func():
-		NetClient.disconnect_from_server()
-		get_tree().change_scene_to_file("res://scenes/Login.tscn"))
+	# Restart is one scene change: NetClient.disconnect_from_server() emits
+	# `disconnected` unconditionally, and _on_disconnected is what takes this
+	# instance to Login -- for a dropped peer, for the Log Out button
+	# (_on_disconnect_pressed) and for this. Until round 560 this lambda
+	# queued Login a second time itself (SceneTree replaces a pending scene,
+	# so the second call merely won; the first instance was already freed).
+	_hud_panels.system_restart_requested.connect(func(): NetClient.disconnect_from_server())
 	_hud_panels.system_exit_requested.connect(func(): get_tree().quit())
 	_hud_panels.system_help_requested.connect(func():
 		_hud_panels.close("system")
@@ -2092,13 +2096,18 @@ func _load_tile_index() -> TileIndexReader.Table:
 		print("World3D: loaded real tile index (%d real tile types) from %s" % [_tile_index_cache.entries.size(), TILE_INDEX_PATH])
 	return _tile_index_cache
 
-## Real per-.ddj-filename texture cache, shared across every region loaded
-## this run -- most real tile2d.ifo IDs a region uses (grass/dirt/stone,
+## Real per-.ddj-filename texture cache, shared across every region this
+## world loads -- most real tile2d.ifo IDs a region uses (grass/dirt/stone,
 ## etc) repeat across many regions, so this avoids re-reading and
 ## re-decoding the same real Tile2D\*.ddj file over and over. A null entry
 ## means "already tried, no real file/decode" -- also cached, so a
-## consistently-missing ID doesn't retry every region load.
-static var _ground_texture_cache: Dictionary = {}
+## consistently-missing ID doesn't retry every region load. Per instance,
+## not static, since round 560: as a `static var` it outlived the world
+## (round 558's scripted reconnect measured entry 2 starting with entry 1's
+## 43 textures, `cache_ground=43`, before it had loaded a region), and a
+## second login in one process now decodes its own -- the cost is on the
+## `ground textures for` line (decoded count and ms). Cleared in _exit_tree.
+var _ground_texture_cache: Dictionary = {}
 
 ## Loads every real per-vertex ground texture `region` actually
 ## references, keyed by the real TextureInfo.ID MapmTerrainBuilder's
@@ -2127,11 +2136,15 @@ func _load_real_ground_textures(region: MapmReader.ParsedRegion, tile_table: Til
 
 	var no_entry := 0
 	var unreadable := 0
+	var decoded := 0
+	var started_ms := Time.get_ticks_msec()
 	for id in ids.keys():
 		var entry := tile_table.lookup(id)
 		if entry == null or entry.filename == "":
 			no_entry += 1
 			continue
+		if not _ground_texture_cache.has(entry.filename):
+			decoded += 1
 		var tex := _load_ground_texture_file(entry.filename, archive)
 		if tex != null:
 			result[id] = tex
@@ -2140,8 +2153,11 @@ func _load_real_ground_textures(region: MapmReader.ParsedRegion, tile_table: Til
 	# One line per region, so a playtest log can say whether a flat or white
 	# floor was a texture the archive did not have (unreadable), an id the
 	# tile table did not know (no entry), or neither (a rendering problem).
-	print("World3D: ground textures for %s -- %d ids, %d resolved, %d without a tile2d.ifo entry, %d files missing or undecodable%s" % [
-		region_name, ids.size(), result.size(), no_entry, unreadable,
+	# The decoded count and time say what this world's own cache cost --
+	# on a second login every region's first textures are decoded again
+	# (round 560), which is the price of nothing outliving the instance.
+	print("World3D: ground textures for %s -- %d ids, %d resolved, %d decoded now in %d ms, %d without a tile2d.ifo entry, %d files missing or undecodable%s" % [
+		region_name, ids.size(), result.size(), decoded, Time.get_ticks_msec() - started_ms, no_entry, unreadable,
 		"" if not result.is_empty() else " -- NOTHING resolved, the region draws the flat fallback"])
 	return result
 
@@ -2159,13 +2175,15 @@ func _load_ground_texture_file(filename: String, archive: Pk2Reader) -> Texture2
 	_ground_texture_cache[filename] = tex
 	return tex
 
-## Real, per-run cache of the 30-frame real water animation loaded from
+## Real, per-world cache of the 30-frame real water animation loaded from
 ## Map.pk2's own real `Water\` folder (see docs/WORLD_ISSUES.md's
 ## 2026-08-26 asset-taxonomy entry) -- every region shares the same real
-## water animation, so this is only ever built once regardless of how many
-## real regions with real water tiles get loaded.
-static var _water_frames_cache: Array = []
-static var _water_frames_load_attempted := false
+## water animation, so this is only ever built once per world regardless
+## of how many real regions with real water tiles get loaded. Instance
+## state since round 560 (statics outlived the world; see
+## _ground_texture_cache); cleared in _exit_tree.
+var _water_frames_cache: Array = []
+var _water_frames_load_attempted := false
 
 ## Loads the real 30-frame water flip-book animation
 ## (Water\water101.ddj..water130.ddj -- a real numbered-frame sequence, not
@@ -2181,6 +2199,7 @@ const WATER_FRAME_FPS := 8.0
 func _load_real_water_animation(archive: Pk2Reader) -> AnimatedTexture:
 	if not _water_frames_load_attempted:
 		_water_frames_load_attempted = true
+		var started_ms := Time.get_ticks_msec()
 		for i in range(WATER_FRAME_COUNT):
 			var filename := "water1%02d.ddj" % (i + 1)
 			var bytes := AssetSource.read_bytes("Water\\%s" % filename, archive)
@@ -2194,6 +2213,11 @@ func _load_real_water_animation(archive: Pk2Reader) -> AnimatedTexture:
 				_water_frames_cache.append(tex)
 		if _water_frames_cache.is_empty():
 			print("World3D: no real water frames found under Water\\ -- water tiles render as plain ground")
+		else:
+			# Once per world: what a second login pays to decode its own
+			# frames (round 560), beside the ground textures' own line.
+			print("World3D: water animation -- %d of %d frames decoded in %d ms" % [
+				_water_frames_cache.size(), WATER_FRAME_COUNT, Time.get_ticks_msec() - started_ms])
 
 	if _water_frames_cache.is_empty():
 		return null
@@ -2602,8 +2626,11 @@ var _sky_material: ProceduralSkyMaterial
 ## 0.5 too; a live day/night cycle would be OUR design, not a recovered one.
 ## The server's game clock (0x34be) feeds nothing in the sky.
 const ENVIRONMENT_REFERENCE_TIME := 0.5
-static var _environment_table: EnvironmentReader.ParsedFile = null
-static var _environment_load_attempted := false
+## The parsed environment.ifo, once per world (instance state since round
+## 560, statics until then -- see _ground_texture_cache); cleared in
+## _exit_tree.
+var _environment_table: EnvironmentReader.ParsedFile = null
+var _environment_load_attempted := false
 
 func _try_add_real_sky() -> void:
 	var archive := _open_map_pk2_if_set()
@@ -2702,7 +2729,7 @@ func _build_sun_glow(glow_tex: Texture2D) -> void:
 	_sun_glow.position = _sun_glow_offset
 	add_child(_sun_glow)
 
-## Loads and caches the real environment.ifo (Map.pk2's root) once per run --
+## Loads and caches the real environment.ifo (Map.pk2's root) once per world --
 ## every real zone shares the same table, only the looked-up Key differs.
 func _load_environment_table(archive: Pk2Reader) -> EnvironmentReader.ParsedFile:
 	if not _environment_load_attempted:
@@ -3386,10 +3413,22 @@ func _drain_initial_load(region_started_ms: int) -> void:
 		return
 	# Reuse a screen a caller already put up (a teleport does, so even its
 	# centre-cell load is covered), else make one now.
+	#
+	# After every await: a socket drop while this is suspended (a server
+	# redeploy landing on a player still loading) has _on_disconnected
+	# change scene, which removes this instance from the tree at once; the
+	# next process_frame still resumed this coroutine on the detached
+	# instance, which built one more batch of cells into a world already
+	# gone and died at the following await, get_tree() being null (round
+	# 558's runs C and D: two `!is_inside_tree()` errors, then `Invalid get
+	# index 'process_frame' (on base: 'null instance')`, one per drop, on
+	# both routes). Out of the tree there is nothing left to load for.
 	if _loading_screen == null:
 		_loading_screen = LoadingScreen.new()
 		ui_control.add_child(_loading_screen)
 		await get_tree().process_frame
+		if not is_inside_tree():
+			return
 	var total := maxi(_load_queue.size(), 1)
 	while not _load_queue.is_empty():
 		for _i in range(LOADING_CELLS_PER_FRAME):
@@ -3398,6 +3437,8 @@ func _drain_initial_load(region_started_ms: int) -> void:
 			_build_one_queued_cell()
 		_loading_screen.set_progress(1.0 - float(_load_queue.size()) / float(total))
 		await get_tree().process_frame
+		if not is_inside_tree():
+			return
 	# The same phase split the synchronous QA path prints, so a reconnect
 	# run's two entries can be compared phase by phase (round 559).
 	print("World3D: region grid loaded in %d ms (terrain %.0f, objects %.0f, npcs %.0f)" % [
@@ -3406,6 +3447,8 @@ func _drain_initial_load(region_started_ms: int) -> void:
 	_loading_screen.set_progress(1.0)
 	_loading_screen.set_caption("Entering the world...")
 	await get_tree().process_frame
+	if not is_inside_tree():
+		return
 	_loading_screen.queue_free()
 	_loading_screen = null
 	_initial_load_done = true
@@ -3518,6 +3561,10 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	# even the synchronous centre-cell build is behind it; the queued
 	# neighbours then pump behind it in _drain_initial_load below.
 	await _show_loading_screen()
+	# The same guard as the drain's: a drop during that frame leaves nothing
+	# to rebuild for (round 560).
+	if not is_inside_tree():
+		return
 	zone_label.text = "Zone: %s" % result.zone
 	player.position = Vector3(result.x, result.y, result.z)
 	_last_sent_pos = player.position
@@ -3619,18 +3666,50 @@ var _object_textures := {}
 func _load_object_template(model_path: String) -> Node3D:
 	return ObjectLoader.load_object(_open_pk2_if_set(), model_path, _object_textures)
 
-## What this world owns outside the tree goes when the world does (round
-## 559): the scenery templates and the decoded-texture cache. Without this
-## the templates outlived the instance -- a scripted reconnect doubled the
-## orphan nodes exactly (3,770 -> 7,540) and the exit report counted every
-## template's mesh, material, texture, body and shape as leaked (round
-## 558's run A2: 2468 / 2468 / 2469 / 2114 / 2114). The NPC templates in
-## _npc_model_cache are not freed here yet; that is map-reconnect-fix's,
-## which extends this.
+## What this world owns outside the tree goes when the world does, and what
+## it set on state it does not own is put back (rounds 559, 560), so that
+## nothing of one login reaches the next in the same process:
+## - the scenery templates and the decoded-texture cache (round 559: as a
+##   per-call dictionary they outlived the instance -- a scripted reconnect
+##   doubled the orphan nodes exactly, 3,770 -> 7,540, and the exit report
+##   counted every template's mesh, material, texture, body and shape as
+##   leaked, round 558's run A2: 2468 / 2468 / 2469 / 2114 / 2114);
+## - the NPC templates in _npc_model_cache, never parented (their own doc
+##   comment), so nothing else frees them -- round 559's exit census still
+##   reported 354 meshes / 355 textures after the scenery templates were
+##   freed, consistent with these;
+## - this instance's ground, water and environment caches (instance state
+##   since round 560, statics until then);
+## - a loading screen still up, so a resumed drain has nothing to draw on;
+## - the root viewport's debug_draw, which is the Window's and not this
+##   scene's: debug_panel._on_draw_mode_selected sets it and nothing reset
+##   it, so a Wireframe or Lighting view chosen in one world was applied to
+##   the next one entered in the same process.
+## Also called on quit, where all of it is harmless.
 func _exit_tree() -> void:
+	var scenery_freed := 0
 	if _object_templates != null:
-		print("World3D: left the tree -- %d scenery templates freed" % _object_templates.free_all())
+		scenery_freed = _object_templates.free_all()
 	_object_textures.clear()
+	var npc_freed := 0
+	for template in _npc_model_cache.values():
+		var character := template as SkinnedBsrAssembler.AssembledCharacter
+		if character != null and is_instance_valid(character.skeleton):
+			character.skeleton.free()
+			npc_freed += 1
+	_npc_model_cache.clear()
+	_ground_texture_cache.clear()
+	_water_frames_cache.clear()
+	_water_frames_load_attempted = false
+	_environment_table = null
+	_environment_load_attempted = false
+	if _loading_screen != null:
+		_loading_screen.queue_free()
+		_loading_screen = null
+	var viewport := get_viewport()
+	if viewport != null:
+		viewport.debug_draw = Viewport.DEBUG_DRAW_DISABLED
+	print("World3D: left the tree -- %d scenery templates and %d NPC templates freed" % [scenery_freed, npc_freed])
 
 ## Registers an assembled character for idle animation, if it has one.
 ##
@@ -6256,8 +6335,9 @@ func _update_blob_shadow() -> void:
 ##                          with cells still queued (needs
 ##                          SRREVAMP_QA_FORCE_LOADING=1; qa_shot --reconnect
 ##                          exports it). Direct by default: World3D ->
-##                          World3D, which isolates this script's `static
-##                          var`s. With SRREVAMP_QA_RECONNECT_VIA_LOGIN=1 it
+##                          World3D (until round 560 the route that isolated
+##                          this script's `static var`s; they are instance
+##                          state now). With SRREVAMP_QA_RECONNECT_VIA_LOGIN=1 it
 ##                          takes the tester's route -- disconnect_from_server
 ##                          -> `disconnected` -> _on_disconnected -> Login ->
 ##                          CharacterSelect -> World3D, the front-end screens
@@ -6269,12 +6349,15 @@ func _update_blob_shadow() -> void:
 ##                          beside `region grid loaded` -- renderer texture /
 ##                          buffer / video memory, object, node, orphan and
 ##                          resource counts, the viewport's debug_draw, this
-##                          script's static caches and their cached nulls, the
-##                          world's scenery template and texture caches (round
-##                          559), the baked-light and fog inputs -- and one
+##                          world's ground / water / environment caches and
+##                          their cached nulls, the world's scenery template
+##                          and texture caches (round 559), the baked-light
+##                          and fog inputs -- and one
 ##                          `QA TEXPROBE <n> surface <i> ...` line per surface material of
 ##                          the centre cell's terrain (_qa_print_entry_probe),
 ##                          so what a reconnect changed is a grep, not a look.
+##                          A zone change's drain prints the same lines
+##                          tagged `zone` (round 560).
 ##
 ## Position is reported every 60 physics frames as `QA <tick> local x, y, z`,
 ## so a run's log says exactly where each frame was taken. See
@@ -6637,7 +6720,10 @@ func _qa_step() -> void:
 		# not the tester's path, where the drop arrives from NetClient's
 		# _process, outside any World3D callback.
 		OS.set_environment("SRREVAMP_QA_RECONNECT", "")
-		call_deferred("_qa_reconnect", reconnect)
+		# The tick it was armed on goes with it: the deferred call runs
+		# after this tick's increment, and round 558's line read
+		# `tick 201 (200, ...)`.
+		call_deferred("_qa_reconnect", reconnect, _qa_tick)
 
 	_qa_tick += 1
 	if _qa_tick % 60 == 0:
@@ -6736,23 +6822,26 @@ static func _parse_shot(spec: String) -> Dictionary:
 ## process, the tester's reconnect. Direct: drop the socket without letting
 ## `disconnected` send this instance to Login, and change scene straight
 ## back to World3D -- the new instance's _ready signs in again (QaSignIn)
-## and re-arms every SRREVAMP_QA_* hook from the unchanged environment,
-## while this script's `static var`s (_ground_texture_cache,
-## _water_frames_cache, _environment_table and their load flags) outlive
-## the instance. Via Login: the same call NetClient._process makes when the
+## and re-arms every SRREVAMP_QA_* hook from the unchanged environment.
+## Until round 560 this route was what isolated this script's `static var`s
+## (_ground_texture_cache, _water_frames_cache, _environment_table and
+## their load flags), which outlived the instance; they are instance state
+## now, and _exit_tree frees or resets everything else the instance owned
+## outside the tree, so the two routes differ only in the front-end
+## screens. Via Login: the same call NetClient._process makes when the
 ## peer drops (disconnect_from_server -> `disconnected` -> _on_disconnected
 ## -> Login), with Login and CharacterSelect signing back in under
 ## SRREVAMP_QA_RECONNECT_VIA_LOGIN. The env var was cleared when _qa_step
 ## armed this, so the next instance does not fire again; the entry count
-## lives in SRREVAMP_QA_ENTRY, not a static, because the statics are what
-## is under measurement. Server side there is no per-character dedupe: the
-## first socket's entity leaves through WorldDisconnectHandler -> hub.Leave
-## when the gateway sees the close, so two QaTester entities can coexist
-## briefly.
-func _qa_reconnect(when: String) -> void:
+## lives in SRREVAMP_QA_ENTRY, never in this script, because what this
+## script keeps across entries is what is under measurement. Server side
+## there is no per-character dedupe: the first socket's entity leaves
+## through WorldDisconnectHandler -> hub.Leave when the gateway sees the
+## close, so two QaTester entities can coexist briefly.
+func _qa_reconnect(when: String, armed_tick: int) -> void:
 	var via_login := OS.get_environment("SRREVAMP_QA_RECONNECT_VIA_LOGIN") != ""
 	print("QA RECONNECT: leaving the world at frame %d, tick %d (%s, route %s, entry %d, %d cells still queued)" % [
-		Engine.get_frames_drawn(), _qa_tick, when, "login" if via_login else "direct", _qa_entry, _load_queue.size()])
+		Engine.get_frames_drawn(), armed_tick, when, "login" if via_login else "direct", _qa_entry, _load_queue.size()])
 	if via_login:
 		NetClient.disconnect_from_server()
 		return
@@ -6766,13 +6855,16 @@ func _qa_reconnect(when: String) -> void:
 ## texture, buffer and video memory; the object, node, orphan-node and
 ## resource counts and static memory; the root viewport's debug_draw (the
 ## one cross-instance state that paints every surface white by itself --
-## DEBUG_DRAW_LIGHTING, set only by debug_panel._on_draw_mode_selected);
-## this script's static caches with their cached-null count; the world's
-## scenery template and texture caches (round 559: with them owned per
-## world, the orphan count no longer doubles between entries); and the
-## baked-light and fog inputs the centre cell was built with. Then one
-## `QA TEXPROBE <n> surface <i> ...` line per surface material of the
-## centre cell's terrain (RealTerrain_<x>_<y>/SubPatch, built by
+## DEBUG_DRAW_LIGHTING, set only by debug_panel._on_draw_mode_selected, and
+## reset by _exit_tree since round 560); this world's ground, water and
+## environment caches with their cached-null count (per instance since
+## round 560, so entry 2 starts empty and refills -- statics until then,
+## when entry 2 began with entry 1's 43); the world's scenery template and
+## texture caches (round 559: with them owned per world, the orphan count
+## no longer doubles between entries); and the baked-light and fog inputs
+## the centre cell was built with. Then one `QA TEXPROBE <n> surface <i>
+## ...` line per surface material of the centre cell's terrain
+## (RealTerrain_<x>_<y>/SubPatch, built by
 ## MapmTerrainBuilder._build_textured_mesh_from_cells: surface 0 the flat
 ## base, then one per texture pass): whether its albedo texture is set, its
 ## RID valid, its size, the mean of 64 texels read back from the renderer,
@@ -6780,16 +6872,20 @@ func _qa_reconnect(when: String) -> void:
 ## the surface's baked vertex colours. Growth between two entries' lines is
 ## the leak measurement; a white pass 2 with rid_valid=true and intact
 ## texel means says the texture is alive and the cause is downstream of it.
+## A zone change drains through the same function once the entry is done,
+## so its lines read `QA ENTRY <n> zone loaded` / `QA TEXPROBE <n> zone
+## surface` and a count of `QA ENTRY <n> loaded` lines stays one per entry.
 func _qa_print_entry_probe() -> void:
 	if _qa_entry <= 0:
 		return
+	var tag := "zone " if _initial_load_done else ""
 	var nulls := 0
 	for tex in _ground_texture_cache.values():
 		if tex == null:
 			nulls += 1
 	var env: Environment = world_environment.environment if world_environment != null else null
-	print("QA ENTRY %d loaded: frame %d tex_mem=%d buf_mem=%d video_mem=%d objects=%d nodes=%d orphans=%d resources=%d static_mem=%d debug_draw=%d cache_ground=%d cache_ground_nulls=%d cache_water_frames=%d water_attempted=%s env_table=%s light_ready=%s light_diffuse=%s terrain_ambient=%s fog_enabled=%s fog_color=%s fog_density=%s object_templates=%d object_textures=%d" % [
-		_qa_entry, Engine.get_frames_drawn(),
+	print("QA ENTRY %d %sloaded: frame %d tex_mem=%d buf_mem=%d video_mem=%d objects=%d nodes=%d orphans=%d resources=%d static_mem=%d debug_draw=%d cache_ground=%d cache_ground_nulls=%d cache_water_frames=%d water_attempted=%s env_table=%s light_ready=%s light_diffuse=%s terrain_ambient=%s fog_enabled=%s fog_color=%s fog_density=%s object_templates=%d object_textures=%d" % [
+		_qa_entry, tag, Engine.get_frames_drawn(),
 		RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TEXTURE_MEM_USED),
 		RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_BUFFER_MEM_USED),
 		RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_VIDEO_MEM_USED),
@@ -6828,11 +6924,11 @@ func _qa_print_entry_probe() -> void:
 		var vcol_mean := vcol_sum / float(maxi(colors.size(), 1))
 		var mat := mesh.surface_get_material(i) as StandardMaterial3D
 		if mat == null:
-			print("QA TEXPROBE %d surface %d: no StandardMaterial3D (material_override %s) vcol_min=%.3f vcol_mean=%.3f verts=%d" % [
-				_qa_entry, i, str(patch.material_override != null), vcol_min, vcol_mean, colors.size()])
+			print("QA TEXPROBE %d %ssurface %d: no StandardMaterial3D (material_override %s) vcol_min=%.3f vcol_mean=%.3f verts=%d" % [
+				_qa_entry, tag, i, str(patch.material_override != null), vcol_min, vcol_mean, colors.size()])
 			continue
 		var tex := mat.albedo_texture
-		var line := "QA TEXPROBE %d surface %d: tex=%s" % [_qa_entry, i, str(tex != null)]
+		var line := "QA TEXPROBE %d %ssurface %d: tex=%s" % [_qa_entry, tag, i, str(tex != null)]
 		if tex != null:
 			line += " rid_valid=%s size=%dx%d texel_mean=%s" % [
 				str(tex.get_rid().is_valid()), tex.get_width(), tex.get_height(), _qa_texel_mean(tex)]
