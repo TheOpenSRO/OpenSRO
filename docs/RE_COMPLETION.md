@@ -41824,8 +41824,10 @@ It fetches ID 0 (GDR_TW_PLAYERWND) -> +0x378, 1 (JOB_PLAYERWND) -> +0x37c, 2 (SP
 (0x699115..0x699164). Then it fetches ID 8 (GDR_TW_FORTRESSSTRUCTER) -> +0x384 and hides it
 (0x699166..0x699180). The close button (ID 11) is not fetched here. The select function moves it
 to (window x + 0xb0, window y + 9) each time it shows a monster or a player (0x699658..0x699684),
-which is its authored (176, 9). In the branches for other object classes it moves it to x + 0xd8
-instead (0x699c4b, 0x699cfc, 0x699dbc, 0x699fe8, 0x69a0a4).
+which is its authored (176, 9). **Misread, corrected in round 592:** it then moves the button by
+(+0x28, 0) before any class test (0x699686..0x69969b), so it sits at (216, 9). In the branches for
+other object classes it moves it to x + 0xd8, which is also 216 (0x699c4b, 0x699cfc, 0x699dbc,
+0x699fe8, 0x69a0a4).
 
 ### The defines
 
@@ -41842,8 +41844,8 @@ it with no null check (0x699177). So the container is read with both, and the ki
 UI_UPDATE_2009_FIRST.
 
 **Counter-evidence, measured.** In the 2009 branch two of the four pieces do not match their
-atlas regions. `window_all.ddj` is 1024x512 (measured). The common enemy's region is 236x36 (x
-741, y 453): its art is opaque in rows 453..488 and transparent from row 489 down, so it is
+atlas regions. `window_all.ddj` is 1024x512 (measured). The common enemy's region is 236 x 35.99
+(its UV span; x 741, y 453): its art is opaque in rows 453..488 and transparent from row 489 down, so it is
 drawn into a 51-tall rect. The job player's region is the #else branch's 196-wide one (x 543,
 y 210), for a 236-wide rect. The special mob (236x78) and player (236x35) pieces match exactly,
 and every #else piece matches its rect. The branch follows the define reading above, not this
@@ -41872,7 +41874,8 @@ data. HudTarget logs both mismatches (`HudTarget: … piece is … but authored 
 HudTarget shows the common-enemy window for rarity 0 and the special-mob one otherwise. The asm
 says otherwise. The select function (0x699540) tests the target's class. Its first test (0x6996a0)
 is against the descriptor 0xef1a84. The object factory 0x9c1fa0 gives that descriptor to an object
-whose type bits are TypeID2 1, TypeID3 2, TypeID4 1, i.e. a monster (read; the TypeID reading of
+whose type bits are TypeID1 1, TypeID2 2, TypeID3 1 (characterdata cols 9-11, as round 589 says),
+i.e. a monster (read; the TypeID reading of
 those bit fields is inferred). In that branch the rarity byte (+0x7ac) selects through the table
 0x69a2d0. Every case (0, 1, 3, 4, 5, 6, 7, 8) shows **+0x380, the special-mob window**, and calls
 the rank-icon function 0x69b4c0 on it. Case 2 shows nothing. The common-enemy window (+0x374) is
@@ -41890,7 +41893,8 @@ AFTER (this tree) against round 587's tree. 0 `SCRIPT ERROR`.
 - **Target**: 196x51 -> **236x51** for a rarity-0 target, and the special-mob window 196x78 ->
   236x78. The frames' atlas regions are (741, 453, 236, 36) and (741, 374, 236, 78), were (543,
   0, 196, 51) and (543, 52, 196, 78). The name rows are 170 wide, were 137. Two hidden kinds were
-  added: PLAYERWND 236x35 and JOB_PLAYERWND 236x58. The close button is unchanged at 176,9,16,16.
+  added: PLAYERWND 236x35 and JOB_PLAYERWND 236x58. The close button is unchanged at 176,9,16,16
+  (where the client puts it at 216,9 -- round 592).
   Findings: the one SAMERECT (the gem label and its art, round 585: not an alternate) before and
   after. No OUTSIDE.
 - **Tree diff**: every other widget, the main popup's seven tabs included, is identical.
@@ -41936,13 +41940,14 @@ tests`: 111 suites, 0 failing (`SCRIPT ERROR` counts as failing). `cd server && 
 Client only. Nothing on the wire changes and the server is unchanged. Round 588 found that
 HudTarget's rule (common-enemy window for rarity 0, special-mob otherwise) contradicts the asm,
 and it left the rule in place. Since that round, the rule also drew the 2009 common-enemy piece's
-236x36 art stretched into its 51-tall rect for every normal monster. This round makes the
+236 x 35.99 art stretched into its 51-tall rect for every normal monster. This round makes the
 selection follow the client. Labels as before: **read**, **measured**, **inferred**.
 
 ### The class branches of CIFTargetWindow's select function (0x699540, read in the asm)
 
 It hides every kind (0x699584..0x6995e2) and finds the object. If there is none, it stops. Then it
-shows the window (0x699607) and moves the close button to (x+0xb0, y+9). It then tests the object's
+shows the window (0x699607), moves the close button to (x+0xb0, y+9) and then by (+0x28, 0)
+(round 592). It then tests the object's
 class with IsKindOf (0xb94b90) against five runtime-class descriptors, in this order.
 **The descriptor names are read, not inferred:** each descriptor is built by a static initialiser
 that passes the class name. For CICMonster, 0xd76490..0xd764b0 pushes 0xde281c (`"CICMonster"`),
@@ -41987,7 +41992,10 @@ The window is still shown (0x699607, and 0x69a28f at the end), with only its clo
 the buff viewer is shown (the flag at 0x6999ec). In this client that means the close button
 alone. **Measured:** in the 63 of 63 characterdata files the index lists (17,868 IDs), the
 CICMonster rows (TypeID 1/2/1, 7,604 of them, all Service 1) have rarity 0: 6,421, 1: 85,
-3: 812, 4: 2, 6: 111, 7: 91, 8: 82. **No monster has rarity 2** (or 5). So the "none" case is
+3: 812, 4: 2, 6: 111, 7: 91, 8: 82 when a repeated ID takes its first file's row, or 3: 813 and
+8: 81 when it takes its last: ID 38210 MOB_SD_OSIRIS_3 is rarity 8 in characterdata_39000 and
+3 in characterdata_40000 (round 592; which one the client keeps was not read). **No monster has
+rarity 2** (or 5) either way. So the "none" case is
 unreachable with this archive, and is implemented only because the table says so.
 
 ### The special-mob window's rows (0x69b4c0, read)
@@ -42040,7 +42048,7 @@ unreachable with this archive, and is implemented only because the table says so
 
 | Target | Retail (read) | fd8df3a | This round |
 |---|---|---|---|
-| Mangyang (rarity 0, measured in characterdata) | special mob, normal icon, "General", "Lv 1" | common enemy 236x51 with 236x36 art stretched, no rank or level row | special mob 236x78, normal icon, "General", "Lv 1" (live shot on the box) |
+| Mangyang (rarity 0, measured in characterdata) | special mob, normal icon, "General", "Lv 1" | common enemy 236x51 with 236 x 35.99 art stretched, no rank or level row | special mob 236x78, normal icon, "General", "Lv 1" (live shot on the box) |
 | a champion (rarity 1) | special mob, champion icon, "Champion" | special mob with the champion icon, empty rank and level rows | special mob, champion icon, "Champion", "Lv N" (fixture test; none spawns here: every species in the server's list is rarity 0 in characterdata, measured) |
 | an NPC (CICNPC) | common enemy, player gem | no target window (the talk box opens) | unchanged: no target window |
 | a player (CICUser) | player or job-player window | never targeted | unchanged: never targeted |
@@ -42173,8 +42181,8 @@ windows were centred and always fitted.
 `HudMainPopup.keep_on_screen()` now clamps the window into the viewport, x and y, pulling it to
 the top or left edge when it cannot fit. It runs after every tab selection (so on every open and
 tab switch) and whenever the viewport resizes. **This is our deviation, labelled so in the code;
-the client does not do it.** A clamped y stays where it was put, the way the client keeps a y the
-player dragged to; the selector only ever sets x.
+the client does not do it.** (The first version of this round clamped the drawn position and
+kept it, so a clamped y never returned to 262; round 592 keeps the wanted position apart.)
 
 The target window gets the same clamp (`HudTarget.place`). For it the clamp changes nothing unless
 the logical viewport is narrower than 236 or shorter than 85: the piece is centred, so it fits
@@ -42263,6 +42271,136 @@ NEGATIVE, run on the box against 35f52ee's scripts: **13 FAIL lines** from the p
 Plus 1 FAIL line from the target test:
 
 - `FAIL in a 200-wide viewport the 236-wide window is held at x 0 (got (-18, 7))`
+
+On this tree both print ALL PASS.
+
+**Verified.** `remote_godot.sh check`: 293 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`: 111
+suites, 0 failing. `cd server && go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok.
+
+## The target window's close button, health bar and rank row sit where the client puts them (round 592)
+
+Client only. This round fixes the review findings for rounds 588-591: three misreads in functions
+those rounds cite as read, a count, two labelling nits, and the popup's clamp. Each was
+re-verified in the asm before it was changed. I agree with all of them.
+
+### 1. The close button is at (216, 9) (read)
+
+The select function (0x699540) moves ID 11 to (x + 0xb0, y + 9) at 0x699658..0x699684, as round
+588 said. It then does, before any class test:
+
+```
+699686: push 0x0
+699688: push 0x28
+69968a: push 0x1
+69968c: push 0xb
+69968e: lea  ecx,[esi+0x1bc]
+699694: call 0x8b51f0        ; fetch ID 11 -- ret 0x8 (0x8b523d), so 0x28 and 0 stay pushed
+699699: mov  ecx,eax
+69969b: call 0xb90db0        ; mov/mov/mov/mov, jmp 0xb90c60
+```
+
+0xb90c60 does `add [esi+0x40],ebp` (dx, the first argument, 0x28) and `add [esi+0x44],eax` (dy,
+0), then walks the children with itself (0xb90caa). That is MoveBy(dx, dy). So the button sits at
+(216, 9) for every target. The NPC and structure branches' absolute `x + 0xd8` is 216 too. Round
+588 stopped reading at the first move. `HudTarget` now places it at `CLOSE_BUTTON_AT` (216, 9) and
+settles it there.
+
+### 2. The rank rows are moved before the rarity switch (read)
+
+0x69b4c0 reads the special-mob piece's own rect (0xb8f420 at 0x69b52a, into [esp+0x34]). Then:
+
+- The rank icon (ID 3) moves to (x + 0x55, y + 0x36) = **(85, 54)** (0x69b52f..0x69b55a).
+- The rank text (+0x378, which is ID 2 in CIFTargetWindowSpecialMob::Create) moves to
+  (x + 0x69, y + 0x38) = **(105, 56)** (0x69b55c..0x69b57a).
+
+The layout has (65, 54) and (85, 56), which is what we drew. For a party monster (+0x7ad == 1),
+0x69b890..0x69b98d re-centres the rank row by the text's width (0x8b2f20) and moves the icon by
+(−20, 0) (0xb90db0 at 0x69b988). The server sends no party flag, so that path is open along with
+"(Party)".
+
+### 3. The special-mob HP gauge is 208x4 (read)
+
+CIFTargetWindowSpecialMob::Create (0x69b410) fetches ID 1 into +0x374 and, at
+0x69b495..0x69b4a7, does `push 4; push 0xd0; call [vtbl+0x54]` (slot 21, SetSize). That is 208x4,
+not the layout's 168x4. Measured in window_all.ddj: the 2009 special-mob piece's gauge trough
+(rows 37-41) is dark from x ~15 to x 221, with its border at 222, so 14 + 208 = 222. The common enemy's Create (0x69aaa0) resizes nothing. Only the special mob's gauge changes.
+
+### 4. Corroboration for UI_UPDATE_2009_FIRST
+
+The class code widens the special-mob rows by exactly the 40 pixels between the #else branch's
+196-wide pieces and the 2009 branch's 236:
+
+| What | Width |
+|---|---|
+| gauge | 168 -> 208 (+40) |
+| rank icon and text | +20 each: centred in 40 more |
+| close button | 176 -> 216 (+40) |
+
+This is independent of round 585's chat evidence for the define. (The 2009 name rows grow
+137 -> 170, which is in the layout, not the code.)
+
+### 5. Rarity 7 renames the target (read)
+
+At 0x6997b9..0x699834, for rarity 7, the name is rebuilt:
+
+- 0x8c9c30 resolves `UIIT_STT_MOB_STRONG`.
+- 0x50e300 appends `L" "` (0xe19330, the bytes `20 00 00 00`).
+- 0x541210 appends the name.
+
+The result replaces the name that 0x69b380 then sets. So a rarity-7 monster reads
+"Elite <name>" in the archive's English. `HudTarget.monster_name` does this. If the text table
+cannot resolve the key, the plain name is shown; that fallback is ours.
+
+### 6. Counts
+
+ID 38210 (MOB_SD_OSIRIS_3) is in two files, as rarity 8 in characterdata_39000 and as rarity 3 in
+characterdata_40000. It is the only CICMonster ID whose repeated rows differ (measured: of the
+IDs in more than one file, only 38210 and 61183 NPC_SOSUN differ at all). So rarity 3 is 812 and
+8 is 82 if the first file's row wins, or 813 and 81 if the last wins. Which one the client keeps
+was not read. Both are stated in round 589, and rarity 2 is 0 either way.
+
+### 7. Nits
+
+- Round 588's type bits now read "TypeID1 1, TypeID2 2, TypeID3 1", as the data's columns 9-11 and
+  round 589 have them.
+- The 2009 common-enemy region is 236 x 35.99 (its UV span), not 236x36.
+
+### 8. The main popup's clamp no longer sticks (our deviation, fixed)
+
+Round 591 clamped the drawn position and kept it. After a clamp at 1366x768 x1.5 and a resize
+back to 1920x1080, the popup stayed at y 104, and every tab then opened there. `HudMainPopup` now
+keeps `wanted` apart:
+
+- the selector's x;
+- y from the registry's 262, or wherever the player last dragged it (a new `HudWindow.dragged`
+  signal).
+
+`keep_on_screen` draws `wanted` clamped. The clamp never feeds back. Round 591's reason ("the way
+the client keeps a y the player dragged to") is withdrawn in that entry.
+
+### Tests
+
+- `hud_target_layout_test.gd`:
+  - the close button at 216,9;
+  - the gauge at 14,37,208,4, the rank icon at 85,54 and the rank text at 105,56, as settled rects
+    and as drawn;
+  - rarity 7 reads "Elite Mangyang" and rarity 1 the plain name.
+- `hud_main_popup_test.gd`:
+  - clamped at 1366x768 x1.5 and resized back, y is 262 again, and a tab opened then is at the
+    selector's (W − 468, 262);
+  - a drag to (452, 112) is kept through a clamp and back.
+
+NEGATIVE, run on the box against 76d8d23's scripts: **8 FAIL lines**:
+
+- `FAIL clamped at 1366x768 x1.5 and resized back, the window is at y 262 again (got (522, 104))`
+- `FAIL and a tab opened then is at the selector's (W - 468, 262) (got (1452, 104))`
+- `FAIL a drag to (452, 0) is kept through a clamp and back (got (452, 0))` (with the clamp stuck at
+  y 104, the drag's −150 lands at 0)
+- `FAIL the close button settles at 216,9,16,16, the authored 176,9 moved by (+0x28, 0) at 0x69969b (got [P: (176, 9), S: (16, 16)])`
+- `FAIL GDR_TWSM_GAUGE_HPGAUGE is at [P: (14, 37), S: (208, 4)] (rect [P: (14, 37), S: (168, 4)], drawn at [P: (14, 37), S: (168, 4)])`
+- `FAIL GDR_TWSM_ICON is at [P: (85, 54), S: (16, 16)] (rect [P: (65, 54), S: (16, 16)], drawn at [P: (65, 54), S: (16, 16)])`
+- `FAIL GDR_TWSM_TEXT_LEV is at [P: (105, 56), S: (168, 12)] (rect [P: (85, 56), S: (168, 12)], drawn at [P: (85, 56), S: (168, 17)])`
+- `FAIL rarity 7: the name reads 'Elite Mangyang' (got 'Mangyang')`
 
 On this tree both print ALL PASS.
 

@@ -172,8 +172,8 @@ func _checks(script: GDScript) -> void:
 		close.size = Vector2(40, 40)
 		for i in 5:
 			await process_frame
-		_check(close.position == Vector2(176, 9) and close.size == Vector2(16, 16),
-			"the close button settles back to its authored 176,9,16,16 (got %s)" % Rect2(close.position, close.size))
+		_check(close.position == Vector2(216, 9) and close.size == Vector2(16, 16),
+			"the close button settles at 216,9,16,16, the authored 176,9 moved by (+0x28, 0) at 0x69969b (got %s)" % Rect2(close.position, close.size))
 	# The pieces, built from the 2009 branch.
 	var common := target.get_node_or_null("GDR_TW_COMMONENEMY") as Control
 	var frame := common.get_node_or_null("Frame") as TextureRect if common != null else null
@@ -208,6 +208,25 @@ func _checks(script: GDScript) -> void:
 		var level := target.find_child("GDR_TWSM_LEVEL", true, false) as Label
 		_check(rank != null and rank.text == case[2], "rarity %d: the rank row reads '%s' (got '%s')" % [rarity, case[2], rank.text if rank != null else null])
 		_check(level != null and level.text == "Lv 9", "rarity %d: the level row reads 'Lv 9' (got '%s')" % [rarity, level.text if level != null else null])
+	# Where CIFTargetWindowSpecialMob::Create and 0x69b4c0 put the rows
+	# (round 592): the gauge 208x4 at 14,37, the rank icon at 85,54 and the
+	# rank text at 105,56 -- and they stay there once settled.
+	for i in 5:
+		await process_frame
+	for row in [["GDR_TWSM_GAUGE_HPGAUGE", Rect2(14, 37, 208, 4)], ["GDR_TWSM_ICON", Rect2(85, 54, 16, 16)],
+			["GDR_TWSM_TEXT_LEV", Rect2(105, 56, 168, 12)]]:
+		var n := target.find_child(row[0], true, false) as Control
+		var got: Rect2 = n.get_meta(UiBuilder.AUTHORED_RECT_META) if n != null and n.has_meta(UiBuilder.AUTHORED_RECT_META) else Rect2()
+		var drawn := Rect2(n.position, n.size) if n != null else Rect2()
+		_check(got == row[1] and drawn.position == row[1].position,
+			"%s is at %s (rect %s, drawn at %s)" % [row[0], row[1], got, drawn])
+	# Rarity 7 (0x6997b9..0x699834): the name becomes UIIT_STT_MOB_STRONG's
+	# text, a space, then the name; other rarities keep the plain name.
+	target.call("show_target", "Mangyang", 9, 7, 54, 54)
+	var name7 := target.find_child("GDR_TWSM_TEXT_ID", true, false) as Label
+	_check(name7 != null and name7.text == "Elite Mangyang", "rarity 7: the name reads 'Elite Mangyang' (got '%s')" % (name7.text if name7 != null else null))
+	target.call("show_target", "Mangyang", 9, 1, 54, 54)
+	_check(name7 != null and name7.text == "Mangyang", "rarity 1: the name is the plain name (got '%s')" % (name7.text if name7 != null else null))
 	for rarity in [2, 9]:
 		target.call("show_target", "Nothing", 9, rarity, 54, 54)
 		var any := false

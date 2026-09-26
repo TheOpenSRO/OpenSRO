@@ -7083,6 +7083,23 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Round 592: the target window's close button, health bar and rank row sit where the client puts them
+
+The review of rounds 588-591 found three misreads, each re-verified in the asm. The full record is
+`docs/RE_COMPLETION.md`'s entry of the same name.
+
+- **Close button at (216, 9), not (176, 9).** After the first move, the select function calls
+  MoveBy(+0x28, 0) on the button (0x69969b -> 0xb90c60).
+- **Rank icon at (85, 54), rank text at (105, 56).** 0x69b4c0 moves them before its rarity switch.
+- **Special-mob HP gauge 208x4, not 168.** Its class's Create resizes it (0x69b4a7).
+- These all widen by the 40 pixels between the 196- and 236-wide pieces, which independently
+  supports the UI_UPDATE_2009_FIRST choice.
+- **Rarity 7 is shown as "Elite <name>"** (0x6997b9).
+- ID 38210's rarity is 8 in one characterdata file and 3 in another. The counts are stated both ways.
+- The main popup keeps its wanted position apart from the clamped one, so y returns to 262 and a
+  drag is kept.
+- The tests fail 8 times against 76d8d23.
+
 ## Round 591: the main window stays on screen at every window size and UI scale
 
 The review findings for round 587. The full record is `docs/RE_COMPLETION.md`'s entry of the same
@@ -7140,7 +7157,7 @@ The full record is `docs/RE_COMPLETION.md`'s entry of the same name.
 - **Defines.** The `#ifdef` table is one global map, so the chat's evidence for
   UI_UPDATE_2009_FIRST (round 585, re-read at 0x7abc9c) holds here. Create's unguarded use of ID 8
   gives APPLY_SIEGE_FORTRESS_SYSTEM. So the pieces are the 236-wide ones, and the name rows are 170
-  wide. Measured against that: in the 2009 branch the common enemy's atlas art is 236x36 for a
+  wide. Measured against that: in the 2009 branch the common enemy's atlas art is 236 x 35.99 for a
   51-tall rect, and the job player's is 196 wide for 236. Both are drawn stretched.
 - **Built.** The container comes from the live file. The two player kinds are built and hidden, as
   Create leaves them. The close button, re-parented outside every settled root, is now settled.

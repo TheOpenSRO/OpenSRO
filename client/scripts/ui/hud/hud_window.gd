@@ -36,6 +36,10 @@ const UiBuilder = preload("res://scripts/ui/ui_builder.gd")
 const UiLayoutParser = preload("res://scripts/ui/ui_layout_parser.gd")
 
 signal closed
+## Emitted while the player drags the window by its strip, after each move,
+## so an owner that keeps its own idea of where the window should be (the
+## main popup) can take the player's position as the new one.
+signal dragged
 
 ## Window chrome, taken from the layouts that spell theirs out.
 ##
@@ -438,6 +442,7 @@ func _gui_input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion and _dragging:
 		position += (event as InputEventMouseMotion).position - _drag_offset
 		_clamp_to_viewport()
+		dragged.emit()
 		accept_event()
 
 ## Keeps a dragged window from being lost off the edge of the screen --

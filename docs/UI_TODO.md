@@ -217,7 +217,9 @@ is presentation work on solved data; if you find yourself editing the protocol, 
   - ~~The target window's rarity rule is contradicted by the asm (round 588).~~ Fixed in round 589:
     a monster (CICMonster) shows the special-mob window for rarity 0, 1 and 3-8 and no piece for 2,
     with the rank row and `Lv %d` filled (0x69b4c0), and placed where the client places it,
-    ((screen width − piece width) >> 1, 7) (0x69a161, round 590). Still open: the party suffix.
+    ((screen width − piece width) >> 1, 7) (0x69a161, round 590); its close button, gauge and rank
+    rows as the class code moves them (round 592). Still open: the party suffix and the party
+    re-centring of the rank row.
   - The store's registry height (317 / 360 / 370) turns on `RENEWAL_SHOP_SYSTEM` and
     `RESTORE_SOLDITEM_INSHOP`, which are unreadable. With our `[]` choice, Repair sits at y
     332-356, below a 317 frame.

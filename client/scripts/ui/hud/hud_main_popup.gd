@@ -135,6 +135,11 @@ const FIRST_TAB := "character"
 
 var window: HudWindow = null
 var current := FIRST_TAB
+## Where the window should be: the selector's x, and y from the registry's 262
+## or wherever the player last dragged it. keep_on_screen draws this, clamped;
+## the clamp never feeds back into it, so a clamp for a small viewport is
+## undone when the viewport grows again.
+var wanted := Vector2.ZERO
 var _builder: UiBuilder = null
 var _captions := {}
 ## A tab's caption when the text table cannot resolve its UIIT key: the
@@ -194,10 +199,13 @@ func build(builder: UiBuilder, win: HudWindow, title: String,
 	var reg := win.registry_def
 	if reg != null:
 		# The window's starting y is its registry rect's; x follows the tab.
-		win.position.y = reg.rect.position.y
+		wanted.y = reg.rect.position.y
+		win.position.y = wanted.y
 	var vp := win.get_viewport()
 	if vp != null:
 		vp.size_changed.connect(keep_on_screen)
+	# A drag is the player's own placement: it becomes the wanted position.
+	win.dragged.connect(func() -> void: wanted = win.position)
 	return true
 
 ## **Our deviation, not the client's.** The selector's placement (x at the
@@ -209,14 +217,16 @@ func build(builder: UiBuilder, win: HudWindow, title: String,
 ## ~1.15 and at 1920x1080 above ~1.61; either x needs a logical width of 468.
 ## So after every placement, and whenever the viewport resizes, the window is
 ## pulled back inside the viewport (to the top or left edge when it cannot
-## fit). The client does none of this.
+## fit). The client does none of this. What is clamped is `wanted`, never the
+## drawn position, so growing the viewport again brings the window back to
+## where the selector (or the player) put it.
 func keep_on_screen() -> void:
 	if window == null or not window.is_inside_tree():
 		return
 	var view := window.get_viewport_rect().size
 	window.position = Vector2(
-		clampf(window.position.x, 0.0, maxf(0.0, view.x - window.size.x)),
-		clampf(window.position.y, 0.0, maxf(0.0, view.y - window.size.y)))
+		clampf(wanted.x, 0.0, maxf(0.0, view.x - window.size.x)),
+		clampf(wanted.y, 0.0, maxf(0.0, view.y - window.size.y)))
 
 ## The pane control the layout declared under `pane_name`, or null.
 func pane_control(pane_name: String) -> Control:
@@ -267,9 +277,9 @@ func select(panel_id: String) -> void:
 			tile.size = r.size
 	var view_w := window.get_viewport_rect().size.x
 	if spec["right"]:
-		window.position.x = view_w - window.size.x - SIDE_MARGIN
+		wanted.x = view_w - window.size.x - SIDE_MARGIN
 	else:
-		window.position.x = SIDE_MARGIN
+		wanted.x = SIDE_MARGIN
 	keep_on_screen()
 
 ## Shows the window for `panel_id` the way the key handlers do (C 0x79ace0,

@@ -73,7 +73,7 @@ extends Control
 ##     ID 2) and call the rank function 0x69b4c0 on it. Rarity 2, and any
 ##     value above 8 (`cmp eax,8 / ja`), jump past every piece to 0x6999c1:
 ##     the window is shown with **no piece** -- only its close button (moved
-##     to 176,9 before the switch) and the buff viewer. No monster in the
+##     to 216,9 before the switch, see below) and the buff viewer. No monster in the
 ##     archive has rarity 2 (measured: 0 of 7,604 CICMonster rows).
 ##   - CICCos (0xeef6f0, pets, horses, transport): the **common-enemy** window,
 ##     tw_gem_animal (0x699a55..).
@@ -165,6 +165,28 @@ var _icon: TextureRect = null
 var _level_row: Label = null
 var _rank_row: Label = null
 
+## Where the close button ends up (see setup): the authored (176, 9) moved by
+## (+0x28, 0).
+const CLOSE_BUTTON_AT := Vector2(176 + 0x28, 9)
+
+## The special-mob window's rows as its class and 0x69b4c0 place them,
+## relative to the piece (read, round 592):
+## - CIFTargetWindowSpecialMob::Create (0x69b410) sizes its HP gauge (ID 1,
+##   +0x374) with slot 21: `push 4; push 0xd0` (0x69b495..0x69b4a7) -- 208x4,
+##   not the layout's 168x4.
+## - 0x69b4c0 moves the rank icon (ID 3) to (x + 0x55, y + 0x36) and the rank
+##   text (+0x378, ID 2) to (x + 0x69, y + 0x38) before its rarity switch
+##   (0x69b52f..0x69b57a), x and y being the piece's own (0xb8f420 at
+##   0x69b52a): (85, 54) and (105, 56), not the layout's (65, 54), (85, 56).
+## For a party monster it then re-centres the rank row by the text's width
+## (0x69b890..0x69b98d); the server sends no party flag, so that is not done.
+const SPECIAL_GAUGE_SIZE := Vector2(0xd0, 4)
+const SPECIAL_RANK_ICON_AT := Vector2(0x55, 0x36)
+const SPECIAL_RANK_TEXT_AT := Vector2(0x69, 0x38)
+## Rarity 7's name prefix (0x6997b9..0x699834): the target's name becomes
+## UIIT_STT_MOB_STRONG + L" " (0xe19330) + name before 0x69b380 sets it.
+const STRONG_NAME_KEY := "UIIT_STT_MOB_STRONG"
+
 ## The y the select function puts the window at (0x69a171, `push 7`).
 const TOP_Y := 7.0
 
@@ -228,6 +250,10 @@ func setup() -> bool:
 	_special = _build_kind(sec.control_by_name.get("GDR_TW_SPECIALMOBWND"), SPECIAL_LAYOUT, "GDR_TWSM_GEM")
 	if _common == null and _special == null:
 		return false
+	if _special != null:
+		_move_authored(_special.find_child("GDR_TWSM_GAUGE_HPGAUGE", true, false), null, SPECIAL_GAUGE_SIZE)
+		_move_authored(_special.find_child("GDR_TWSM_ICON", true, false), SPECIAL_RANK_ICON_AT, null)
+		_move_authored(_special.find_child("GDR_TWSM_TEXT_LEV", true, false), SPECIAL_RANK_TEXT_AT, null)
 	_player = _build_kind(sec.control_by_name.get("GDR_TW_PLAYERWND"), PLAYER_LAYOUT)
 	_job_player = _build_kind(sec.control_by_name.get("GDR_TW_JOB_PLAYERWND"), JOB_PLAYER_LAYOUT)
 	for w in [_common, _special, _player, _job_player]:
@@ -236,10 +262,16 @@ func setup() -> bool:
 			add_child(w)
 			UiBuilder.settle_authored_rects(w)
 
-	# The container's own close button, at its authored place; it sits above
-	# whichever window is showing. CIFTargetWindow moves it to (window x +
-	# 0xb0, window y + 9) each time it shows a monster or a player
-	# (0x699658..0x699684), which is its authored (176, 9).
+	# The container's own close button; it sits above whichever window is
+	# showing. Read (round 592): each time the select function 0x699540
+	# shows a target it moves the button to (window x + 0xb0, window y + 9)
+	# (0x699658..0x699684) -- the authored (176, 9) -- and then, before any
+	# class test, fetches it again (`push 0; push 0x28; push 1; push 0xb;
+	# call 0x8b51f0`, which pops only its own two) and calls 0xb90db0 on it,
+	# a thunk to 0xb90c60, MoveBy(dx, dy): `add [esi+0x40],dx; add
+	# [esi+0x44],dy` and the same for its children (0x699686..0x69969b). So
+	# it sits at (216, 9), which is also where the NPC and structure
+	# branches put it outright (x + 0xd8). CLOSE_BUTTON_AT.
 	var chrome := _builder.build_section(container, "Create")
 	if chrome != null:
 		var btn := chrome.find_child("GDR_TW_CLOSE", true, false) as BaseButton
@@ -248,8 +280,10 @@ func setup() -> bool:
 			_close = btn
 			_close.pressed.connect(func() -> void: clear(); closed.emit())
 			add_child(_close)
-			# It carries its authored rect; settle it with the kinds, as
+			# Where the client puts it, held there by the settling pass as
 			# every built control is (round 585).
+			_close.set_meta(UiBuilder.AUTHORED_RECT_META, Rect2(CLOSE_BUTTON_AT, _close.size))
+			_close.position = CLOSE_BUTTON_AT
 			UiBuilder.settle_authored_rects(_close)
 		chrome.queue_free()
 
@@ -258,6 +292,23 @@ func setup() -> bool:
 	custom_minimum_size = first.size
 	size = first.size
 	return true
+
+## Moves and/or resizes a built control the way the class does in code,
+## keeping the settling pass's rect in step so it holds the new one.
+static func _move_authored(node: Node, at, to) -> void:
+	var c := node as Control
+	if c == null:
+		return
+	var rect: Rect2 = c.get_meta(UiBuilder.AUTHORED_RECT_META) if c.has_meta(UiBuilder.AUTHORED_RECT_META) \
+		else Rect2(c.position, c.size)
+	if at != null:
+		rect.position = at
+	if to != null:
+		rect.size = to
+	c.set_meta(UiBuilder.AUTHORED_RECT_META, rect)
+	c.custom_minimum_size = Vector2.ZERO
+	c.position = rect.position
+	c.size = rect.size
 
 ## One kind: its atlas-piece frame at the authored size, with that kind's own
 ## inner layout on top, read with KIND_DEFINES. `gem_name` names the kind's
@@ -387,7 +438,7 @@ func show_target(target_name: String, level: int, rarity: int, hp: int, max_hp: 
 	_select(rarity)
 	var cls := difficulty_class(level)
 	if _name != null:
-		_name.text = target_name
+		_name.text = monster_name(target_name, rarity)
 		_name.add_theme_color_override("font_color", COLOUR_BY_CLASS[cls])
 	if _gem != null:
 		_gem.texture = _builder.load_texture(GEM_DIR + GEM_BY_CLASS[cls]) if _builder != null else null
@@ -403,6 +454,17 @@ func show_target(target_name: String, level: int, rarity: int, hp: int, max_hp: 
 	set_hp(hp, max_hp)
 	visible = true
 	place()
+
+## The name the window shows: rarity 7 prefixes it with UIIT_STT_MOB_STRONG's
+## text and a space (read, STRONG_NAME_KEY). If the text table cannot resolve
+## the key, the plain name is shown (our fallback).
+func monster_name(target_name: String, rarity: int) -> String:
+	if rarity != 7 or _builder == null:
+		return target_name
+	var prefix := _builder.resolve_text(STRONG_NAME_KEY)
+	if prefix == "" or prefix == STRONG_NAME_KEY:
+		return target_name
+	return prefix + " " + target_name
 
 ## The rank row's text for a rarity, through the client's text table, or ""
 ## where 0x69b4c0 sets none.

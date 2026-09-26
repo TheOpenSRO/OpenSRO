@@ -363,6 +363,44 @@ func _popup_checks(panels_script: GDScript) -> void:
 		"opened at 1920x1080 and resized to 1152x648, the window %s is pulled inside the viewport %s" % [after, window.get_viewport_rect().size])
 	root.size = Vector2i(1920, 1080)
 	await process_frame
+	# The clamp is only drawn (round 592): back at 1920x1080 the window is
+	# where the selector wants it again, y 262, not stuck at the clamped y.
+	root.size = Vector2i(1366, 768)
+	root.content_scale_factor = 1.5
+	await process_frame
+	await process_frame
+	root.size = Vector2i(1920, 1080)
+	root.content_scale_factor = 1.0
+	await process_frame
+	await process_frame
+	_check(window.position.y == 262.0, "clamped at 1366x768 x1.5 and resized back, the window is at y 262 again (got %s)" % window.position)
+	panels.call("open", "skill")
+	_check(window.position == Vector2(window.get_viewport_rect().size.x - 468.0, 262.0),
+		"and a tab opened then is at the selector's (W - 468, 262) (got %s)" % window.position)
+	# A real drag is kept: drag by the caption strip, shrink, grow back.
+	var press := InputEventMouseButton.new()
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	press.position = Vector2(100, 10)
+	window.call("_gui_input", press)
+	var motion := InputEventMouseMotion.new()
+	motion.position = Vector2(100, 10) + Vector2(-1000, -150)
+	window.call("_gui_input", motion)
+	var release := InputEventMouseButton.new()
+	release.button_index = MOUSE_BUTTON_LEFT
+	release.pressed = false
+	window.call("_gui_input", release)
+	var dragged_to := window.position
+	root.size = Vector2i(1366, 768)
+	root.content_scale_factor = 1.5
+	await process_frame
+	await process_frame
+	root.size = Vector2i(1920, 1080)
+	root.content_scale_factor = 1.0
+	await process_frame
+	await process_frame
+	_check(dragged_to == Vector2(window.get_viewport_rect().size.x - 468.0 - 1000.0, 112.0) and window.position == dragged_to,
+		"a drag to %s is kept through a clamp and back (got %s)" % [dragged_to, window.position])
 
 	# The character pane's rows, filled from the server's stats.
 	var stats := StatsNet.Stats.new()
