@@ -41179,3 +41179,160 @@ belongs to the outer-frame item. One cost until then: the header was always draw
 is opaque in all 588 columns), but the window now also blocks clicks over the see-through area
 below it and right of the 440-wide body, x 446 to 594 and y 112 to 314.
 
+## Windows show one control of each authored alternate, the HUD's text sits on its authored rows, and the underbar and minimap are built once (round 585)
+
+Client only. Nothing on the wire changes and the server is unchanged. Three more defects from the
+read-only GUI audit of v0.1.450 (its causes 4, 6 and 7), fixed on top of the previous round.
+Every decision below was read from `sro_client.exe` (the decompile in `/var/tmp/decomp_client`
+and the linear `sro_client.asm` on the RE box) or measured in the node dump of every panel. None
+was chosen by how a picture looked.
+
+Two conventions are used throughout. They were checked in the asm, and the equipment window's
+click table independently confirms them. `FUN_008b51f0(id, 1)` fetches a child control by its
+layout `ID`, and returns 0 for an ID the layout lacks, without asserting. Virtual `+0x5c` (slot
+23) is ShowWindow(bool): `CIFEquipment::vslot_023` (`0x6ac010`) is that slot.
+
+### A. Same-rect alternates: every group, its decision and its evidence
+
+The audit found 47 `SAMERECT` lines, which are named, visible controls drawn at one rect. This
+section covers each of them.
+
+**The #ifdef define set cannot be read from the binary.** The layout parser's `#ifdef` handling
+is `IFTVariable` `0xb37a30`. It asks `0x5004a0` whether a symbol is defined, and `0x5004a0` looks
+the symbol up in a hash_map at `0xeed4e0`. A raw byte search of the whole file for the addresses
+`0xeed4d0`..`0xeed50c` finds only that lookup (`0x500503`, `0x50053f`, `0x50054b`). Nothing
+visible constructs or fills the map, so the defined set is not readable. **Evidence for a branch
+therefore comes from the class code.** If a class fetches a control that exists only in one
+branch and uses it with no null check, a build reading the other branch would crash there. That
+is inferred from the code, not read from a define.
+
+| Window | Group (authored rect) | Decision | Evidence |
+|---|---|---|---|
+| inventory (docked ifequipment) | `GDR_EQ_BTN_CHANGE_AVATAR_SLOT` (ID 13) / `_CHANGE_EQUIP_SLOT` (14), 1,305,40,40 | **13 shown, 14 hidden; either one toggles** | `CIFEquipment::Create` `0x6ac1c0` loads `resinfo\ifequipment.txt` (`push 0xda7410`). It fetches 13 (`0x6ac29d`, into `+0x26b0`), 14 (`0x6ac2ee`, `+0x26b4`), 100..112 (loop `0x6ac930`, array `+0x26a0`), 113..117 (`+0x5e4`..`+0x5f4`) and 500 (`0x6aca00`, `+0xf0c`, hidden at once). The refresh is `0x6abde0`. With the flag `+0xf08` clear it shows 100..112 and 13, and hides 113..117, 14 and 500. With the flag set it hides 100..112 except array index 8 (ID 108), shows 113..117 and 14, and hides 13. It shows 500 only for an avatar item of one type with a value above 0. Buttons 13 and 14 both run `0x6abf60` (`cmp [ecx+0xf08],0 / sete / jmp 0x6abde0`). Their click-table entries are `0xeb8378` and `0xeb83a0`; the same table maps 10/11/12 to the rotate handlers, which confirms the reading. The constructor clears the flag (`0x6ab569`), and so does ShowWindow(false). |
+| inventory | `GDR_EQUIPMENT_SLOT_100..104` / `GDR_AVATAR_SLOT_01..05` (5 pairs) | **worn slots shown, avatar slots hidden; the toggle swaps them** | Same refresh. |
+| inventory | (no pair) `GDR_AVATAR_SKILL_WND` (ID 500), 0,240,177,50 | **hidden** | Hidden at create (`0x6aca12`). The condition that shows it needs avatar items, which this client does not have. |
+| academy | `GDR_APPRENTICESHIP_PICTURE` (41) / `_LEADER_STATUS` (46), 9,33,28,28 | **PICTURE hidden, LEADER_STATUS kept** | `CIFApprenticeShip::vslot_010` `0x6e9770` fetches 0x29 (`0x6e9833`, into `+0x370`) and calls ShowWindow with `ebx` (`0x6e9848`). `ebx` is zeroed at `0x6e97b5`. The reset `0x6e8c30` hides it again (`0x6e8d3a`). Only the fill `0x6e9b00` shows it (`0x6e9f31`), once a member's face is set. 0x2e (`+0x3a4`) is never shown or hidden. Only its image changes: empty on reset (`0x6e8d65`), `interface\party\pt_no_face.ddj` when the record byte `[edi+0x74]==1` (`0x6e9f35`..`0x6e9fa8`). It is an overlay, not an alternate. |
+| alchemy | `GDR_AB_MANUFACTURING_BUTTON_PROCESS` (30) / `_CANCEL` (35), 253,179 | **Process shown, Cancel hidden** | `CIFAlchemyProcess::vslot_023` `0x725740`, the show handler, runs `FUN_008b51f0(0x23,1)` then ShowWindow(0) on every show. `FUN_00723bb0(bool)` swaps Cancel against Process and All-compound (31). It is called with 0 when a compound starts (`0x7247ae`, `0x725118`) and with 1 when one ends or is cancelled (`0x72525f`, `0x7252cc`, `0x726468`, `0x72666a`). This client runs no compound, so Process stays. |
+| chat | `GDR_LIST_CHATTING` (16), `_CHATPARTY` (17), `_CHATGUILD` (18), `_CHATALLIACNE` (19), `_APPRENTICE` (30), 27,28,365,343 | **16 shown, the other four hidden** | `CIFChatViewer::Create` `0x7ab920` fetches 16, 17, 18, 19 and 30 into `+0x450`..`+0x460` (`0x7abe24`..`0x7abe73`). The loop `0x7abe80`..`0x7abf4b` shows index 0 (`push 1`) and hides the rest (`push ebp`, and `ebp` is 0 for the whole function, from `0x7ab972`). A tab switch (`0x7aa690`) hides all five and shows one. The tabs are built in code, and this client has none to wire. |
+| chat | the `#ifdef UI_UPDATE_2009_FIRST` branch | **selected** | The layout declares 30, 31, 41 and 42 only under that `#ifdef`, and the class uses each with no null check: Create fetches 30, 31 and 42 (30 is dereferenced in the list loop, 42 is vcalled at `0x7abc9c`, 31 is hidden at `0x7ac03b`), and 41 is used by other `CIFChatViewer` methods (e.g. a `+0x5c` vcall at `0x7a9c25`), not by Create. The parser implements `#ifdef`/`#else`/`#endif`, and `ifchatviewer.txt`'s only `#else` is the input rect, so selecting the define changes exactly that one rect. The define's visible effect is `GDR_CHAT_INPUTBOX`: 38,378,360,20 instead of the `#else` 18,378,381,20, which lay under `GDR_CHAT_MODE_BTN` (18,378,20,20). The audit's SAMERECT check does not see that overlap, because the two rects differ. |
+| exchange | `GDR_EXCHANGE_USER_NORMAL` / `_USER_VISUAL` / `_USER_VISUAL_TOOLTIP`; `_PLAYER_NORMAL` / `_PLAYER_VISUAL`; `_TEXT_BOX_FRAME_BG` / `_TEXT_BOX` (all at x = 9999) | **unchanged: all stay parked** | `CIFExchange::Create` `0x7b27d0` makes 15 child fetches, among them 250, 150, 155, 156, 153 and 304. It draws the 3D previews into 250 and 150 (`vslot_015`, `0x7b21b0`), and shows or hides 153, 155 and 156 on a name check (`0x7b38f2`..`0x7b39cd`). It never moves any of them. The value 9999 (`0x270f`) occurs twice in the code section (`0x501780`, `0x502e4d`), and neither is exchange code. No member lands inside the 245-wide window, so there is no on-screen default to pick. Whether another class moves them was not searched further. |
+| storage | `GDR_STORAGE_TXT_MONEY_TITLE` (14) / `_STA_MONEY` (10) / `_STA_GOLD` (12), 9,283,236,24 | **not alternates: all three kept** | Each one's `ClientRect` gives it its own text area inside the strip: title x 17-71 (centred), amount x 104-201 (right-aligned), "Gold" x 210-237 (right-aligned). `FUN_006cc120` hides 10, 11, 12 and 14 together, and nothing shows one without the others. `CIFStorageRoom::Create` `0x6cc780` keeps 10 at `+0x7d4`, and `FUN_006cc470` writes the amount there. |
+| target | `GDR_TWCE_GEM` / `GDR_TWCE_GEM_art`, 8,5,20,20 | **not an alternate** | `_art` is this client's own TextureRect (`HudTarget._build_kind`) over the empty gem Label, and only the art draws. It was drawn 20x23 because it copied the Label's clamped size. It now takes the slot's authored rect (see B). |
+| community | seven panes at 13,61,451,320: `GDR_COMMUNITY_GUILD` (10), `_GUILD_RELATIONS` (11), `_WAR_STATE` (12), `_FRIEND` (13), `_LETTER` (14), and ID 15, which is `CIFBlocking` under `#ifdef CHATTING_BLOCKING_SYSTEM` or else `CIFWhisperBlocking` under `WHISPER_BLOCKING_SYSTEM` | **open, unchanged** | This client never loads `ifcommunity.txt`. The string is not in the exe, in ASCII or UTF-16. `CIFCommunity` is created only by name from `ginterface.txt` (ID 23, empty SubSection). Its create `0x707af0` calls only `CIFMainFrame::vslot_010` (`0x816f80`) and `CIFFrame::vslot_010` (`0x815230`), which load no layout. `CIFGuild`, `CIFGuildRelations`, `CIFWarState` and `CIFLetter` do not exist in the exe: there is no RTTI and no factory string. `CIFBlocking` exists (its create `0x71cbd0` loads `resinfo\ifblocking.txt` and builds two tabs), but `ifcommunity.txt` is the only layout that names it, so it is never built either. The window players see is the newer `CNIFCommunityWnd` (`res_ui\cumunity_friend.2dt`, `_note.2dt`, `_cut.2dt`). On show (`0x58ec40` -> `0x5b3ba0`) it selects the first of three tab buttons. Which pane that tab is lives in the `.2dt` data, which is not extracted and not read. **So `community` is not added to `PANEL_DEFINES`.** Nothing supports a define set for a layout this build does not read. With `[]` the parser would also drop ID 15 entirely: the choice would be made by the define table, not by evidence. |
+| guild | `GDR_GUILD_COMMAND_BUTTON_5` (105, UIIT_STT_GUILD_NAME_GRANT) / `_6` (106, UIIT_CTL_GUILD_POSITION_GRANT), 353,250 | **open, unchanged** | For the same reason: `ifguild.txt` is not in the exe, and there is no `CIFGuild` class. The live guild window is `CNIFGuildWnd` (`res_ui\guild_w.2dt`, `guild_r.2dt`). `UIIT_CTL_GUILD_POSITION_GRANT` is used only in `0x5b63e0`, in the new-UI code. Nothing fetches IDs 105 or 106. |
+| underbar (24 lines), minimap (7 lines) | every control twice | **one copy** | Defect C below. These are not alternates. |
+
+`HudPanels.HIDDEN_AT_CREATE` carries the academy and alchemy entries. `HudPanels._wire_equipment_modes`
+and `set_equipment_avatar_mode` run CIFEquipment's two modes. They are wired to the two change
+buttons, and hiding the window returns to equipment mode. A drop onto an equipment slot is
+unaffected, because `_equipment_slot_at` already skips slots that are not visible. `HudChat` reads
+its layout with `UI_UPDATE_2009_FIRST` (`LAYOUT_DEFINES`) and hides `HIDDEN_LISTS`.
+
+### B. The HUD's labels settle
+
+`UiBuilder.apply_authored_rects` ran only from `HudWindow._process`. A Label built before it is in
+the tree is clamped to the height of Godot's default 16px face, 23 pixels, so every authored
+label in the five HUD widgets that are not HudWindows stayed 23 tall. The settling pass is now
+one shared function, `UiBuilder.settle_authored_rects(root)`. It applies the authored rects over
+`root` on each of the next `SETTLE_FRAMES` (3) frames, starting when `root` enters the tree.
+`HudWindow` uses it (`_settle`: the built layout and the title bar, which now carries its rect in
+the same meta), and so do `HudWorldmap` (it called `set_process(true)` for the old pass), the
+underbar, minimap, player info, chat and both target pieces. HudWindow's pass is deliberately
+scoped to `panel_root` and the title bar, as the old `_process` was. Settling the whole window
+first moved HudWorldmap's registry frame to its screen position (100,100), which is what the tree
+diff below caught.
+
+A Label still cannot be shorter than its font's line height. That is Godot's minimum-size rule
+(`Label::get_minimum_size`), not a size this pass chooses, so a 12-pixel row settles at 14 in the
+client's font, as it already did in every window.
+
+Measured in the audit's node dump, label heights before -> after:
+
+| Widget | Before | After |
+|---|---|---|
+| underbar | 6 labels, all 23 (3 of them the second copy) | 3 labels, all 14 |
+| minimap | 6, all 23 | 3, all 14 |
+| chat | `GDR_CHAT_STA_PENALTY` 23 | 20 (authored 20) |
+| player info | 31: 25 at 23, 5 at 28, 1 at 24 | 20 at 14, 2 at 13, 2 at 15, 1 at 20, 5 at 28, 1 at 24 |
+| target | 6, all 23 | 3 at 14, 2 at 20, 1 at 16 |
+
+The 28 and 24 are labels authored that tall. The gem art `GDR_TWCE_GEM_art` / `GDR_TWSM_GEM_art`
+went from 20x23 to 20x20.
+
+### C. The underbar and minimap are built once
+
+`World3D._try_initialize_pk2_ui` called `ui_control.add_child(widget)`, which runs `_ready` ->
+`setup()`, and then called `setup()` again. The only guard was `_ready`'s own
+`if get_child_count() == 0`, so the second call built a second copy stacked exactly on the first.
+It also connected a second set of quickslot handlers to the second copy's slots. `HudUnderbar`
+and `HudMinimap` now keep a `_built` flag: `setup()` builds once and a later call returns.
+World3D's two explicit calls are removed, because nothing between `add_child` and them depended
+on a second build: the anchors and offsets set in between do not feed `setup()`. Every other
+caller was checked. `hud_click_routing_test`, `npc_service_reader_test`,
+`hud_underbar_test` and `hud_minimap_test` all call `setup()` before `add_child`, which leaves
+`_ready` a no-op, and the audit tool calls it after, as World3D did. Measured: the underbar goes
+from 279 nodes to 140 (the second copy's background, root and 137 controls are gone), and the
+minimap from 29 to 15.
+
+### Measurements
+
+The audit tool (`zz_gui_audit.gd`, the previous round's scratch tool, not committed) was run in
+the gui2 lane on the RX 5700 XT (GL Compatibility), `--norender`. BEFORE is d640880's scripts,
+and its 47 SAMERECT lines are identical to that round's own post-fix dump. AFTER is this tree.
+0 `SCRIPT ERROR` in either run.
+
+- **SAMERECT: 47 -> 7.** By window, before -> after: inventory 6 -> 0, academy 1 -> 0, alchemy
+  1 -> 0, chat 1 -> 0, underbar 24 -> 0, minimap 7 -> 0. Unchanged: community 1 and guild 1
+  (open), exchange 3 (parked, never moved), storage 1 (layered, not alternates), target 1 (ours,
+  not an alternate).
+- **Tree diff, every widget.** No window changed size, and no node was added or removed except
+  the underbar's and minimap's second copies. Every other panel window's only change is that its
+  `TitleBar` now carries the authored-rect meta, with the rect unchanged. The other changes are
+  the intended ones:
+  - inventory: 5 avatar slots, `CHANGE_EQUIP` and `AVATAR_SKILL_WND` hidden, 24 nodes counting
+    their children;
+  - academy: PICTURE hidden;
+  - alchemy: CANCEL hidden;
+  - chat: 4 lists hidden, and the input line at 38,378,360;
+  - the HUD label heights above.
+
+**Tests.** There are three new suites, each run on the box against d640880's scripts (the NEGATIVE)
+and against this tree:
+- `hud_alternates_test.gd` builds the academy, alchemy, inventory (with equipment docked) and
+  chat from fixtures that carry the authored names, IDs and rects. It checks that exactly one
+  control of each same-rect group is shown, that the equipment toggle both ways shows the right
+  set, that hiding the window resets it to equipment, and the chat input rect. Against d640880:
+  **14 FAIL lines**, among them
+  `FAIL alchemy: one of PROCESS / CANCEL shown, PROCESS (got [["GDR_AB_MANUFACTURING_BUTTON_CANCEL", "GDR_AB_MANUFACTURING_BUTTON_PROCESS"]])`,
+  `FAIL inventory: exactly one control of each same-rect group shown (got [["GDR_EQ_BTN_CHANGE_AVATAR_SLOT", "GDR_EQ_BTN_CHANGE_EQUIP_SLOT"], ["GDR_EQUIPMENT_SLOT_104", "GDR_AVATAR_SLOT_05"], ...])`
+  and `FAIL chat: the input line is at its UI_UPDATE_2009_FIRST rect 38,378,360,20 (got [P: (18, 378), S: (381, 20)])`.
+- `hud_settle_test.gd` builds the five HUD widgets and a HudWindow from fixtures, waits, and
+  checks that every authored label is at max(authored height, its font's minimum) and that the
+  gem art is 20x20. Against d640880: **13 FAIL lines**, for example
+  `FAIL underbar: GDR_STATIC_EXP is (198, 17) -- authored (198, 12), font minimum 17 (got (198, 23))`
+  and `FAIL target: the gem art is at the authored 8,5,20,20 (got [P: (8, 5), S: (20, 23)])`.
+  With no archive loaded, the font minimum here is Godot's default face at 12px, 17 tall.
+- `hud_build_once_test.gd` sets up each widget, adds it to the tree, sets it up again, and
+  counts copies. It also reads World3D's init for the removed calls. Against d640880:
+  **8 FAIL lines**, for example `FAIL underbar: one GDR_BTN_MENU after a second setup() (got 2)` and
+  `FAIL minimap: a second setup() adds no children (3 -> 6)`.
+
+All three print ALL PASS on this tree.
+
+**Verified.** `remote_godot.sh check`: 285 scripts and 5 scenes, ALL LOAD. `remote_godot.sh
+tests`: ran 107 suite(s), 0 failing, 0 SCRIPT ERROR. `cd server && go build ./... && go test
+-count=1 -p 1 ./...`: 59 packages ok.
+
+**Found, not fixed here (for later rounds):**
+- `HudPanels._update_storage_gold_labels` writes the stored amount into
+  `GDR_STORAGE_STA_GOLD`, and the carried amount into `GDR_INVENTORY_STA_GOLD`. Those are the
+  "Gold" unit labels; the client writes amounts into `STA_MONEY` (ID 10, `FUN_006cc470`).
+- `UiBuilder` ignores `ClientRect`, the text insets that separate the storage strip's three texts.
+- ifexchange's `APPLY_EXCHANGE_UPDATE_1TH` and `UI_UPDATE_2009_FIRST` controls (153, 156 and
+  304) are used with no null check, which is evidence that both branches are in this build.
+  Selecting them would change several exchange rects, which was not measured here.
+- `LayoutDef.get_section` falls back to the first section when a name is missing, so a missing
+  extra section silently builds "Create" a second time.
+- CIFMainFrame's own title, drag and close geometry (`0x816f80`: title `{10, 12, width-0x15,
+  12}`, close `{width-0x1a, 10, 16, 16}`) is a lead for the non-registry outer-frame item. The
+  drag strip's width was not read directly.

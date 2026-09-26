@@ -110,6 +110,7 @@ func setup() -> void:
 	if root == null:
 		return
 	add_child(root)
+	UiBuilder.settle_authored_rects(root)
 
 	# Show only the always-on block, and hide everything else the layout
 	# carries. That file is 53 controls: the expandable character panel

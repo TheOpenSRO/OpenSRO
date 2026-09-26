@@ -18,12 +18,31 @@ class_name HudChat
 ##                               rect for the party, guild, alliance and
 ##                               apprentice channels
 ##   GDR_STATIC_*LAMP            the per-channel tab lamps along the top
-##   GDR_CHAT_INPUTBOX           the input line, 381x20 at 18,378
-##   GDR_CHAT_MODE_BTN           the channel selector beside it
+##   GDR_CHAT_INPUTBOX           the input line, 360x20 at 38,378
+##   GDR_CHAT_MODE_BTN           the channel selector left of it, 20x20 at
+##                               18,378
 ##
 ## Only the "all" channel is wired to anything: the server has one chat
 ## stream and one whisper stream, and the other four tabs would be empty
-## rather than filtered. They are built and left as the layout draws them.
+## rather than filtered.
+##
+## **One list at a time, the "all" one first** (round 585,
+## docs/RE_COMPLETION.md). CIFChatViewer::Create (0x7ab920) fetches the five
+## lists -- IDs 16 (all), 17 (party), 18 (guild), 19 (alliance) and 30
+## (apprentice) -- and its loop at 0x7abe80..0x7abf4b shows the first and
+## hides the other four; a tab switch (0x7aa690) hides all five and shows
+## the selected one. The tabs are built in code and this client has none, so
+## the four are hidden and stay hidden (HIDDEN_LISTS).
+##
+## **Read with UI_UPDATE_2009_FIRST defined.** The same Create fetches IDs
+## 30, 31, 41 and 42, which the layout declares only under
+## `#ifdef UI_UPDATE_2009_FIRST`, and calls on each without a null check --
+## the child fetch returns 0 for an ID the layout lacks, so a build reading
+## the other branch would crash there. That is inferred from the code, not
+## read from a define table (the client's own table, at 0xeed4e0, is
+## consulted by 0x5004a0 and referenced by nothing else in the file). The
+## define's one visible effect here is the input line's rect: the `#else`
+## branch puts it at 18,378,381,20, under the mode button.
 
 const UiBuilder = preload("res://scripts/ui/ui_builder.gd")
 const UiLayoutParser = preload("res://scripts/ui/ui_layout_parser.gd")
@@ -33,6 +52,10 @@ signal message_submitted(text: String)
 
 const LAYOUT_PATH := "resinfo\\ifchatviewer.txt"
 const REGISTRY_NAME := "GDR_CHAT_BOARD"
+const LAYOUT_DEFINES := ["UI_UPDATE_2009_FIRST"]
+## The channel lists Create hides; see the header.
+const HIDDEN_LISTS := ["GDR_LIST_CHATPARTY", "GDR_LIST_CHATGUILD",
+	"GDR_LIST_CHATALLIACNE", "GDR_LIST_APPRENTICE"]
 
 ## Fallback size if the registry is unreadable; the registry's own is used
 ## when it is there.
@@ -73,13 +96,14 @@ func setup() -> void:
 
 	if _builder == null:
 		return
-	var layout := _builder.load_layout(LAYOUT_PATH)
+	var layout := _builder.load_layout(LAYOUT_PATH, PackedStringArray(LAYOUT_DEFINES), true)
 	if layout == null:
 		return
 	var root := _builder.build_section(layout, "Create")
 	if root == null:
 		return
 	add_child(root)
+	UiBuilder.settle_authored_rects(root)
 
 	# The whisper list is authored *above* the window (y=-152) and is a
 	# pop-up, not part of the resting window. Hidden until there is
@@ -87,6 +111,10 @@ func setup() -> void:
 	var whisper := root.get_node_or_null("GDR_WHISPERLIST")
 	if whisper is CanvasItem:
 		(whisper as CanvasItem).visible = false
+	for list_name in HIDDEN_LISTS:
+		var list := root.get_node_or_null(list_name)
+		if list is CanvasItem:
+			(list as CanvasItem).visible = false
 
 	_install_message_area(root)
 	_install_input(root)

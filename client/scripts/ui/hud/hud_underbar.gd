@@ -39,11 +39,20 @@ func _init(builder: UiBuilder = null, media_pk2: Pk2Reader = null, text_table: U
 	_media_pk2 = media_pk2
 	_text_table = text_table
 
+## Whether setup() has run. It builds once: World3D adds the bar to the tree,
+## whose _ready runs setup, and it used to call setup again after placing it,
+## which built a second bar -- 76 more controls, a second background and
+## second slot handlers -- stacked exactly on the first (the audit's node
+## dumps, round 585). A later call now does nothing.
+var _built := false
+
 func _ready() -> void:
-	if get_child_count() == 0:
-		setup()
+	setup()
 
 func setup(layout_data: Variant = null) -> void:
+	if _built:
+		return
+	_built = true
 	# The bar's own size and background come from the client's window
 	# registry, not from ifunderbar.txt: that file lists the bar's 76 child
 	# controls but never names the bar itself. `GDR_UNDERBAR` in
@@ -85,9 +94,8 @@ func setup(layout_data: Variant = null) -> void:
 	# is (World3D._unhandled_input, playtest 2026-09-20). STOP now keeps a
 	# middle press on the body from reaching World3D, so the body fires it
 	# here, as each slot does for a press on the slot (a slot is STOP too, so
-	# its press does not also bubble here). Connected once: World3D adds the
-	# bar to the tree (whose _ready runs setup) and then calls setup again.
-	# The same relay serves World3D's other STOP surfaces (round 531).
+	# its press does not also bubble here). The same relay serves World3D's
+	# other STOP surfaces (round 531).
 	relay_middle_button(self)
 
 	# The bar background, behind every child.
@@ -117,6 +125,7 @@ func setup(layout_data: Variant = null) -> void:
 
 	if layout_root != null:
 		add_child(layout_root)
+		UiBuilder.settle_authored_rects(layout_root)
 		_gauge_sp = layout_root.get_node_or_null("GDR_GAUGE_SP") as TextureProgressBar
 		_lbl_sp = layout_root.get_node_or_null("GDR_STATIC_SP") as Label
 		_lbl_exp = layout_root.get_node_or_null("GDR_STATIC_EXP") as Label

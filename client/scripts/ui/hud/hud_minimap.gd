@@ -65,11 +65,20 @@ func _init(builder: UiBuilder = null, media_pk2: Pk2Reader = null, text_table: U
 	_media_pk2 = media_pk2
 	_text_table = text_table
 
+## Whether setup() has run. It builds once: World3D adds the minimap to the
+## tree, whose _ready runs setup, and it used to call setup again after
+## placing it, which built a second map, frame and layout stacked exactly on
+## the first (the audit's node dumps, round 585). A later call now does
+## nothing.
+var _built := false
+
 func _ready() -> void:
-	if get_child_count() == 0:
-		setup()
+	setup()
 
 func setup(layout_data: Variant = null) -> void:
+	if _built:
+		return
+	_built = true
 	custom_minimum_size = Vector2(136, 175)
 	size = Vector2(136, 175)
 	# The minimap consumes the clicks on it (round 529). Its rect is the
@@ -167,6 +176,7 @@ func setup(layout_data: Variant = null) -> void:
 
 	if layout_root != null:
 		add_child(layout_root)
+		UiBuilder.settle_authored_rects(layout_root)
 
 		# `GDR_MINIMAP_ALPHA` is a **mask**, not art: its mm_alpha.ddj is
 		# black everywhere with alpha 255 inside a circle and 0 outside.

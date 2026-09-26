@@ -72,6 +72,100 @@ const PANEL_DEFINES := {
 	"store": [],
 }
 
+## Controls a window's own class hides when it creates the window, so they
+## are hidden here once, when the window is built. Each is one member of a
+## group of controls authored at the same rect; the others stay as built.
+## Read from the class's code (docs/RE_COMPLETION.md, round 585; addresses
+## are sro_client.exe's). Groups whose default could not be read are not
+## here and are listed there as open.
+##
+## - **academy**: CIFApprenticeShip::vslot_010 (0x6e9770) fetches
+##   GDR_APPRENTICESHIP_PICTURE (ID 41) and hides it at once (0x6e9848,
+##   ShowWindow(0)); it is shown only when a member's face is filled in
+##   (0x6e9f31). GDR_APPRENTICESHIP_LEADER_STATUS (ID 46), at the same rect,
+##   is never shown or hidden -- only its image changes -- so it stays.
+## - **alchemy**: CIFAlchemyProcess::vslot_023 (0x725740), the show handler,
+##   hides GDR_AB_MANUFACTURING_BUTTON_CANCEL (ID 35) every time the window
+##   is shown. FUN_00723bb0 swaps it with Process (ID 30) while a compound
+##   runs, which this client does not do, so Process is the one shown.
+const HIDDEN_AT_CREATE := {
+	"academy": ["GDR_APPRENTICESHIP_PICTURE"],
+	"alchemy": ["GDR_AB_MANUFACTURING_BUTTON_CANCEL"],
+}
+
+func _hide_at_create(panel_id: String, window: HudWindow) -> void:
+	for control_name in HIDDEN_AT_CREATE.get(panel_id, []):
+		var node := window.node(control_name) as CanvasItem
+		if node != null:
+			node.visible = false
+
+## The equipment window's two modes, as CIFEquipment runs them (round 585,
+## docs/RE_COMPLETION.md). Its refresh (0x6abde0) reads one flag (+0xf08):
+##
+## - **equipment** (the flag clear): the thirteen worn slots
+##   GDR_EQUIPMENT_SLOT_100..112 and the change-to-avatar button
+##   GDR_EQ_BTN_CHANGE_AVATAR_SLOT (ID 13) shown; the avatar slots
+##   GDR_AVATAR_SLOT_01..05 (IDs 113-117), the change-to-equipment button
+##   GDR_EQ_BTN_CHANGE_EQUIP_SLOT (ID 14) and the avatar skill strip
+##   GDR_AVATAR_SKILL_WND (ID 500) hidden (0x6abef0..0x6abf53).
+## - **avatar** (the flag set): the worn slots hidden except SLOT_108, the
+##   avatar slots and button 14 shown, button 13 hidden (0x6abe10..0x6abee3).
+##   The skill strip is shown only for an avatar item of a particular type
+##   with a value above zero; this client has no avatar items, so it stays
+##   hidden.
+##
+## The constructor clears the flag (0x6ab569) and so does hiding the window,
+## so every open starts in equipment mode. Buttons 13 and 14 both run
+## 0x6abf60, which flips the flag and refreshes (the click table entries at
+## 0xeb8378 and 0xeb83a0).
+const EQUIPMENT_MODE_SLOTS := 13
+const EQUIPMENT_MODE_KEPT_SLOT := 108
+const AVATAR_SLOT_NAMES := ["GDR_AVATAR_SLOT_01", "GDR_AVATAR_SLOT_02",
+	"GDR_AVATAR_SLOT_03", "GDR_AVATAR_SLOT_04", "GDR_AVATAR_SLOT_05"]
+const BTN_TO_AVATAR := "GDR_EQ_BTN_CHANGE_AVATAR_SLOT"
+const BTN_TO_EQUIPMENT := "GDR_EQ_BTN_CHANGE_EQUIP_SLOT"
+const AVATAR_SKILL_STRIP := "GDR_AVATAR_SKILL_WND"
+var _equipment_avatar_mode := false
+var _equipment_window: HudWindow = null
+
+func _wire_equipment_modes(window: HudWindow) -> void:
+	_equipment_window = window
+	for button_name in [BTN_TO_AVATAR, BTN_TO_EQUIPMENT]:
+		var button := window.node(button_name) as BaseButton
+		if button != null:
+			button.pressed.connect(func() -> void:
+				set_equipment_avatar_mode(not _equipment_avatar_mode))
+	window.visibility_changed.connect(func() -> void:
+		if not window.visible:
+			set_equipment_avatar_mode(false))
+	set_equipment_avatar_mode(false)
+
+## Shows the equipment window's worn slots (false) or its avatar slots
+## (true); the comment above EQUIPMENT_MODE_SLOTS has what each mode shows.
+func set_equipment_avatar_mode(avatar: bool) -> void:
+	_equipment_avatar_mode = avatar
+	var window := _equipment_window
+	if window == null or not is_instance_valid(window):
+		return
+	for i in EQUIPMENT_MODE_SLOTS:
+		var id := EQUIPMENT_SLOT_BASE + i
+		_set_shown(window, "GDR_EQUIPMENT_SLOT_%d" % id,
+			not avatar or id == EQUIPMENT_MODE_KEPT_SLOT)
+	for avatar_slot in AVATAR_SLOT_NAMES:
+		_set_shown(window, avatar_slot, avatar)
+	_set_shown(window, BTN_TO_AVATAR, not avatar)
+	_set_shown(window, BTN_TO_EQUIPMENT, avatar)
+	_set_shown(window, AVATAR_SKILL_STRIP, false)
+
+## Whether the equipment window is showing its avatar slots.
+func is_equipment_avatar_mode() -> bool:
+	return _equipment_avatar_mode
+
+static func _set_shown(window: HudWindow, control_name: String, shown: bool) -> void:
+	var node := window.node(control_name) as CanvasItem
+	if node != null:
+		node.visible = shown
+
 ## Emitted by the System window's buttons, wired in _wire_system. World3D
 ## connects them: Option opens the settings panel, Restart returns to the
 ## login screen, Exit quits.
@@ -267,12 +361,14 @@ func open(panel_id: String) -> HudWindow:
 			window.queue_free()
 			_unavailable[panel_id] = true
 			return null
+		_hide_at_create(panel_id, window)
 		if panel_id == "inventory":
 			# Dock the equipment paper doll flush to the right of the bag: the
 			# authored bag frame is INVENTORY_CONTENT_WIDTH wide, so the two
 			# read as the client's single fused inventory window.
 			_inventory_eq_root = window.dock_companion(
 				_builder, PANELS["equipment"][0], INVENTORY_CONTENT_WIDTH)
+			_wire_equipment_modes(window)
 		window.centre()
 		_windows[panel_id] = window
 		if panel_id == "system":

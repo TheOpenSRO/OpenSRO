@@ -299,6 +299,42 @@ static func apply_authored_rects(root: Node) -> void:
 	for child in root.get_children():
 		apply_authored_rects(child)
 
+## Frames the settling pass runs for. One is normally enough; a few are cheap
+## and remove the guesswork about exactly which frame the theme cache
+## refreshes on.
+const SETTLE_FRAMES := 3
+
+## Runs apply_authored_rects over `root` on each of the next SETTLE_FRAMES
+## frames it spends in the tree, starting when it enters one.
+##
+## This is the one settling pass every built widget shares. HudWindow ran it
+## from its own _process, and nothing ran it for the HUD widgets that build
+## sections without being a HudWindow -- the underbar, minimap, player info,
+## target window and chat -- so every authored label there kept the 23-pixel
+## height of Godot's default face (the audit's node dumps: GDR_STATIC_EXP
+## authored 198x12 drawn 198x23, GDR_PMI_TXT_HP 124x12 drawn 124x23).
+##
+## A Label still cannot be shorter than its own font's line height, which is
+## Godot's minimum-size rule, not a size this pass chooses: a 12-pixel row
+## in the client's font settles at that font's height, as it does in every
+## window.
+##
+## Calling it again while a pass is running starts another; both only
+## re-apply the same authored rects, so an overlap is harmless.
+static func settle_authored_rects(root: Node, frames: int = SETTLE_FRAMES) -> void:
+	if root == null:
+		return
+	if not root.is_inside_tree():
+		root.tree_entered.connect(func() -> void: settle_authored_rects(root, frames),
+			CONNECT_ONE_SHOT)
+		return
+	var tree := root.get_tree()
+	for i in frames:
+		await tree.process_frame
+		if not is_instance_valid(root):
+			return
+		apply_authored_rects(root)
+
 ## The size of a control's own artwork, or zero if it has none.
 func _natural_size(def: UiLayoutParser.ControlDef) -> Vector2:
 	var art := def.ddj

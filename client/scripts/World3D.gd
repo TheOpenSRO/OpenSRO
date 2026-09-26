@@ -1437,9 +1437,10 @@ func _try_initialize_pk2_ui() -> void:
 	# Setup authentic Minimap
 	_hud_minimap = HudMinimap.new(_ui_builder, _media_pk2, _ui_text_table)
 	_hud_minimap.name = "HudMinimap"
+	# add_child builds it: HudMinimap._ready runs setup(), which builds once.
+	# A second setup() here used to build a second map stacked on the first.
 	ui_control.add_child(_hud_minimap)
 	place_minimap(_hud_minimap)
-	_hud_minimap.setup()
 
 	# The world map, opened from the minimap's own map button. It is built
 	# once and kept hidden: the frame and the map table are read at build
@@ -1483,7 +1484,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_underbar.offset_right = HudUnderbar.BODY_WIDTH / 2.0
 	_hud_underbar.offset_top = -float(HudUnderbar.BODY_HEIGHT)
 	_hud_underbar.offset_bottom = 0.0
-	_hud_underbar.setup()
+	# Built by add_child above (HudUnderbar._ready runs setup(), which builds
+	# once); a second setup() here used to stack a second bar on the first.
 	_hud_underbar.quickslot_activated.connect(_on_quickslot_activated)
 
 	# The always-on block at the top left: portrait, name, level, HP and MP.

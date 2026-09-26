@@ -138,7 +138,7 @@ func build(builder: UiBuilder, layout_path: String, title: String,
 	add_child(panel_root)
 
 	_add_title_bar(_authored_title(builder, sec, title))
-	set_process(true)
+	_settle()
 	return true
 
 ## Docks a second layout's "Create" section inside this window, to the right
@@ -178,13 +178,13 @@ func dock_companion(builder: UiBuilder, layout_path: String, x_offset: float) ->
 	# Re-span the title bar and move the close button to the new right edge.
 	var bar := get_node_or_null("TitleBar") as Control
 	if bar != null:
-		bar.size = Vector2(size.x - TITLE_INSET * 2.0, TITLE_TEXT_HEIGHT)
+		_place_title_bar(bar)
 	var close := get_node_or_null("CloseButton") as Control
 	if close != null:
 		close.position = Vector2(size.x - CLOSE_BUTTON_INSET, CLOSE_BUTTON_Y)
-	# Re-run the settle loop so the widened title bar and authored rects re-apply.
-	_settle_frames_left = SETTLE_FRAMES
-	set_process(true)
+	# Settle again, so the companion's authored rects and the widened title
+	# bar are re-applied once the tree has settled.
+	_settle()
 	return companion
 
 static func _find_close_button_in(root: Node) -> BaseButton:
@@ -215,34 +215,30 @@ static func _authored_title(builder: UiBuilder, sec: UiLayoutParser.SectionDef,
 
 const FRAME_TYPES := ["CIFFrame", "CIFSubFrame", "CIFStretchWnd"]
 
-## Puts every control back on the rect its layout asked for.
-##
-## Godot clamps a Control's size up to its minimum, and a Label's minimum is
-## computed from the theme's default font until the theme cache refreshes --
-## which takes a frame in the tree. Until then every authored row is forced
-## to the height of Godot's own 16px face: ifplayerinfo's 12-pixel exp rows
-## came out 23 tall, and so did every window's close button. So the rects
-## are applied once more after a frame has passed.
-## Frames left in the settling pass. A Label's minimum size is computed
-## from the theme's *default* font until its theme cache refreshes, and
-## Godot clamps `size` up to that minimum, so a rect applied too early is
-## silently inflated -- ifplayerinfo's 12-pixel exp rows came out 23 tall,
-## the height of Godot's own 16px face. One frame is normally enough; a
-## few are cheap and remove the guesswork about exactly which one.
-const SETTLE_FRAMES := 3
-var _settle_frames_left := SETTLE_FRAMES
-
-func _process(_delta: float) -> void:
-	_settle_frames_left -= 1
-	if _settle_frames_left <= 0:
-		set_process(false)
-	if panel_root != null and is_instance_valid(panel_root):
-		UiBuilder.apply_authored_rects(panel_root)
+## Puts every control back on the rect its layout asked for, over the next
+## few frames: UiBuilder.settle_authored_rects, the settling pass every built
+## widget shares (its comment has why a rect applied at build time comes out
+## inflated). It runs over the built layout and the title bar, which carries
+## its rect in the same meta, and over nothing else: a subclass can hang a
+## control built elsewhere on the window -- HudWorldmap's frame is the
+## registry's GDR_WORLDMAP, whose authored rect is a screen position (100,100)
+## the window deliberately moves to its own origin.
+func _settle() -> void:
+	if panel_root != null:
+		UiBuilder.settle_authored_rects(panel_root)
 	var bar := get_node_or_null("TitleBar")
-	if bar is Control:
-		var label := bar as Control
-		label.custom_minimum_size = Vector2.ZERO
-		label.size = Vector2(size.x - TITLE_INSET * 2.0, TITLE_TEXT_HEIGHT)
+	if bar != null:
+		UiBuilder.settle_authored_rects(bar)
+
+## The title bar's rect: the strip inset from both sides at the caption's
+## authored row (TITLE_INSET, TITLE_TEXT_Y, TITLE_TEXT_HEIGHT), as wide as the
+## window now is. Stored where the settling pass reads it.
+func _place_title_bar(bar: Control) -> void:
+	var rect := Rect2(Vector2(TITLE_INSET, TITLE_TEXT_Y),
+		Vector2(size.x - TITLE_INSET * 2.0, TITLE_TEXT_HEIGHT))
+	bar.set_meta(UiBuilder.AUTHORED_RECT_META, rect)
+	bar.position = rect.position
+	bar.size = rect.size
 
 func _add_title_bar(title: String) -> void:
 	var bar := Label.new()
@@ -250,8 +246,7 @@ func _add_title_bar(title: String) -> void:
 	bar.text = title
 	bar.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	bar.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	bar.position = Vector2(TITLE_INSET, TITLE_TEXT_Y)
-	bar.size = Vector2(size.x - TITLE_INSET * 2.0, TITLE_TEXT_HEIGHT)
+	_place_title_bar(bar)
 	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar.add_theme_color_override("font_color", Color(0.93, 0.87, 0.70))
 	# The client's own UI font, so a window title doesn't sit in Godot's

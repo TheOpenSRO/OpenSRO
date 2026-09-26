@@ -121,7 +121,7 @@ func build_worldmap() -> bool:
 
 	_add_title_bar(_builder.resolve_text(_table.world().name_key))
 	_show_map(_table.world())
-	set_process(true)
+	_settle()
 	return true
 
 ## Reads the map table out of the archive the builder is holding.

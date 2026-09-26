@@ -113,6 +113,7 @@ func setup() -> bool:
 		if w != null:
 			w.visible = false
 			add_child(w)
+			UiBuilder.settle_authored_rects(w)
 
 	# The container's own close button, at its authored place; it sits above
 	# whichever window is showing.
@@ -174,8 +175,17 @@ func _build_kind(piece: UiLayoutParser.ControlDef, layout_path: String) -> Contr
 	if gem_slot != null:
 		var gem := TextureRect.new()
 		gem.name = gem_name + "_art"
-		gem.position = gem_slot.position
-		gem.size = gem_slot.size
+		# The slot's authored rect, not its size: the slot is a Label, whose
+		# size is clamped up to the default font's height until the tree
+		# settles (UiBuilder.settle_authored_rects), so copying its size drew
+		# the gem 20x23 over an authored 20x20. The meta keeps the settling
+		# pass holding it there too.
+		var rect := Rect2(gem_slot.position, gem_slot.size)
+		if gem_slot.has_meta(UiBuilder.AUTHORED_RECT_META):
+			rect = gem_slot.get_meta(UiBuilder.AUTHORED_RECT_META)
+			gem.set_meta(UiBuilder.AUTHORED_RECT_META, rect)
+		gem.position = rect.position
+		gem.size = rect.size
 		gem.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		gem.stretch_mode = TextureRect.STRETCH_SCALE
 		gem.mouse_filter = Control.MOUSE_FILTER_IGNORE

@@ -109,7 +109,10 @@ Every window in the real client is authored data, and building one is now mechan
    the theme's *default* font until its theme cache refreshes a frame later (re-apply the rect);
    a `Button` with text has one from its own label (use a `TextureButton`). `UiBuilder` records
    each authored rect in metadata and `apply_authored_rects` restores it — and it must record what
-   the layout asked for, never `node.size`, which is already clamped.
+   the layout asked for, never `node.size`, which is already clamped. **Anything that builds a
+   section calls `UiBuilder.settle_authored_rects(root)`**, which re-applies the rects for the
+   first few frames in the tree (round 585). The HUD widgets that did not are why their labels
+   stayed 23 tall. A Label still stops at its own font's line height.
 
 The network layer behind all of this is already implemented and unit-tested — `client/scripts/net/`
 has `party`, `guild`, `quest`, `inventory`, `skill`, `shop`, `trade`, `friend`, `chat`, `combat`,
@@ -138,11 +141,43 @@ is presentation work on solved data; if you find yourself editing the protocol, 
 - **Frames and window sizes measured, not assumed** (round 584) -- every frame piece is drawn at
   its own texture's size and never clamped up to it. Windows count the art they draw and skip
   parked controls. Party and academy are now 364x363, alchemy 357x207, guild 594x314 and
-  Exchange 245x352 (it was 10344 wide and centred off-screen at x=-4222). Still open from the same
-  audit: section alternates, the outer registry frame (Exchange has no window frame of its own),
-  the community tabs, the HUD settle and the double setup. For the outer-frame item: guild's
-  594-wide window now blocks clicks over a see-through area below its 588-wide header and right
-  of the 440-wide body (x 446 to 594, y 112 to 314).
+  Exchange 245x352 (it was 10344 wide and centred off-screen at x=-4222).
+- **One control of each authored alternate, settled HUD text, one underbar and minimap** (round
+  585) -- the audit's section alternates, HUD settle and double setup, done. Each same-rect
+  group's default was read from its class in the binary, as `docs/RE_COMPLETION.md` records.
+  The equipment window opens on its worn slots, and its change buttons flip to the avatar slots.
+  The academy's portrait, alchemy's Cancel and the chat's four other channel lists are hidden,
+  and the chat reads `UI_UPDATE_2009_FIRST`. Every widget that builds a section settles through
+  `UiBuilder.settle_authored_rects`. The underbar and minimap build once. **Still open from the
+  same audit, in order:**
+  1. The outer registry frame. Exchange has no window frame of its own. Guild's 594-wide window
+     blocks clicks over a see-through area below its 588-wide header and right of the 440-wide
+     body (x 446 to 594, y 112 to 314).
+  2. Community and guild are not the client's windows. This client never loads
+     `ifcommunity.txt` or `ifguild.txt` (neither name is in the exe, ASCII or UTF-16, nor in the
+     decompile, and `CIFGuild` / `CIFGuildRelations` / `CIFWarState` / `CIFLetter` do not exist).
+     The live windows are `CNIFCommunityWnd` / `CNIFGuildWnd`, built from `res_ui\*.2dt`. We
+     still build `PANELS["community"]` (key U and the underbar button) and `PANELS["guild"]`
+     (key G) from those dead layouts; community is seven empty framed panes stacked at
+     13,61,451,320. The fix is to build both from the `.2dt` files, not to pick panes out of
+     the dead layouts; community has no `PANEL_DEFINES` entry for that reason.
+  3. The non-registry outer frame, from the binary. A lead is `CIFMainFrame::vslot_010`
+     (`0x816f80`): title at `{10, 12, width-0x15, 12}`, close at `{width-0x1a, 10, 16, 16}`.
+  4. Inventory docking.
+
+  Found on the way, not yet fixed:
+  - The storage and bag gold amounts go into the "Gold" unit labels (`STA_GOLD`), not
+    `STA_MONEY`.
+  - `ClientRect` text insets are ignored.
+  - ifexchange's `APPLY_EXCHANGE_UPDATE_1TH` / `UI_UPDATE_2009_FIRST` branches are evidenced but
+    not selected.
+  - A missing extra section builds "Create" twice (`LayoutDef.get_section`'s fallback).
+  - The chat's channel lamps: `CIFChatViewer`'s Create shows lamp 20 and hides lamps 21, 22, 23
+    and 31 (`0x7abfb0`..`0x7ac03c`); we still show all five (review of round 585).
+  - `GDR_CHAT_INPUTBOX` is a LineEdit held 31 tall by the theme's minimum against its authored
+    20, so it hangs past the chat's bottom (398). Predates round 585.
+  - HudTarget's `GDR_TW_CLOSE` is re-parented outside every settled root. It is a TextureButton,
+    so no inflation was measured, but it is not settled.
 - **The teleport board** (round 578) — the Dimensional Teleporter, `resinfo\ifteleportboard.txt`,
   built by the recipe: `HudPanels.PANELS["teleport"]`, and its five `CIFTeleportAreaSlot` rows
   (`GDR_TB_TASLOT1..5`) filled from `resinfo\ifteleportareaslot.txt`'s own section (place, price,

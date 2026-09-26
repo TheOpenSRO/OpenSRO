@@ -7083,6 +7083,40 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-eighty-fifth round: windows show one control of each authored alternate, the HUD's text sits on its authored rows, and the underbar and minimap are built once
+
+Three more defects from the read-only GUI audit, after the frame round below. The full record,
+with every group and its evidence, is `docs/RE_COMPLETION.md`'s entry of the same name.
+
+- **Alternates (47 same-rect groups in the audit).** Each one's default was read from the
+  class's own code in `sro_client.exe`:
+  - The equipment window opens with its worn slots and the change-to-avatar button showing
+    (`CIFEquipment` refresh `0x6abde0`). Either change button flips to the avatar slots and back
+    (`0x6abf60`), and closing the window resets it.
+  - The academy hides its portrait at create (`0x6e9848`).
+  - Alchemy shows Process, not Cancel (`0x725740`).
+  - The chat shows the "all" list and hides the other four (`0x7abe80`). Its layout is read with
+    `UI_UPDATE_2009_FIRST`: Create uses that branch's controls with no null check, and the
+    branch moves the input line off the mode button.
+  - Left as they were, with the reason recorded: storage's three texts are one layered strip,
+    each with its own ClientRect; exchange's groups stay parked at x = 9999, and nothing moves
+    them; the target gem art is our own node.
+  - Open: community's seven panes and guild's buttons 5/6. This client never loads
+    `ifcommunity.txt` or `ifguild.txt`; its live windows are the newer `CNIFCommunityWnd` /
+    `CNIFGuildWnd`, built from `.2dt` data. So `community` is **not** added to `PANEL_DEFINES`.
+  - The binary's own `#ifdef` table (`0xeed4e0`) is referenced only by its lookup, so a define
+    set cannot be read from it.
+- **HUD settle.** `UiBuilder.settle_authored_rects` is now the one settling pass. HudWindow, the
+  world map, the underbar, minimap, player info, chat and target all use it. HUD labels went
+  from 23 tall to their authored height or their font's line height (14 for a 12-pixel row), as
+  windows already did.
+- **Double build.** The underbar and minimap build once (a `_built` guard), and World3D's second
+  `setup()` calls are gone. The underbar has 140 nodes instead of 279, and the minimap 15
+  instead of 29.
+- **Measured.** SAMERECT went from 47 to 7 across every panel's node dump. No window changed
+  size. The three new suites fail 14, 13 and 8 times against the previous tree.
+  `remote_godot.sh tests`: 107 suites, 0 failing.
+
 ## Five-hundred-and-eighty-fourth round: window frames are sliced from each piece's own texture, and windows are sized from what they actually draw
 
 Three defects from the read-only GUI audit, each re-measured on the box before it was fixed. The
