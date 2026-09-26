@@ -42451,3 +42451,125 @@ On this tree: ALL PASS.
 
 **Verified.** `remote_godot.sh check`: 292 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`: 111
 suites, 0 failing. `cd server && go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok.
+
+## The client reads the retail .2dt window files (round 594)
+
+Client only. Nothing on the wire changes and the server is unchanged. The newer windows of the
+retail client (`CNIF*`: guild and community, quest list, enchant, world-map guide, the menu bar
+and the rest) are not `resinfo\if*.txt` layouts. They are binary `res_ui\*.2dt` files, and this
+client could not read them. This round adds the reader and the builder; the next one rebuilds the
+guild and community window on them. `docs/protocol/2DT_FORMAT.md` is the full spec. Every address
+is `sro_client.exe`'s (md5 `2a5794b72c90908d945be8b3f3f2edd4`), in the decompile
+`/var/tmp/decomp_client` and the asm `/var/tmp/sro_client.asm` on the RE box. A research pass
+wrote the first spec; everything this round builds on was re-read or re-measured, and where it
+differed, the re-reading is what is recorded here.
+
+**The format (read, and measured).** A `u32` count, then that many 976-byte records, and nothing
+else: `ReadFile(h, &count, 4)` at 0x48f983..0x48f990 and one `ReadFile(h, buf, 0x3d0)` per record
+(`push 0x3d0` at 0x48f9b5) in the loop 0x48f9a4..0x48fc7e. The record offsets were checked against
+that loop (the buffer is `[esp+0xac]` at its top): rect at 0x35c (`[esp+0x408]`), type 0x340 and
+id 0x344 passed to 0x489b10, parent 0x348 and grandparent 0x34c (`[esp+0x3f4]`, `[esp+0x3f8]`),
+tab group 0x38c and pane 0x390 stored at wnd+0x368 / +0x36c for a CNIFTabButton (0x48faf9..
+0x48fb0f), the root flag 0x394 (0x48fb15), and the name at 0 queued for OnCreate (0x48fbaf..
+0x48fc2b). `TwoDtReader.parse` refuses a file that is not exactly `4 + count * 976` bytes.
+
+**Parents (read, `0x48cb00`).** Ids repeat within a file, so a record is linked by (parent,
+grandparent): the loader walks the windows already created (loader+4, appended at creation) for
+`id == parent` whose own parent's id is the grandparent (0x48cba3..0x48cbbc), restricted to the
+same file by +0x1f8, the file's root window (set at 0x48fa9c, compared at 0x48cbce). A grandparent
+of 0 is the load parent. A pair that matches nothing leaves the window under the root. The reader
+does exactly this, over earlier records only.
+
+**What each type draws (read).** The factory 0x489b80's cases, and the strings they push, give
+the defaults: MainFrame `interface\frame\mframe_wnd_`, Frame `interface\inventory\int_window_`,
+NormalTile `...\bg_tile\com_bg_tile_b.ddj`, StretchWnd `...\com_blacksquare_`, Button
+`...\com_button.ddj`, Lattice `...\lattice_window\com_lattice_`, Gauge
+`interface\playerminiinfo\pmi_hp.ddj`, CheckBox `...\com_checkbutton02_on.ddj`, SliderCtrl
+`interface\recovery\re_selectbar.ddj`. Newly read this round:
+
+- A **tab** loads `on`, `off` and `disable` into +0x370, +0x374, +0x378 (0x47a594..0x47a78a, the
+  three strings at 0xe17ec0 / c8 / d0). The click handler 0x47a240 puts +0x370 up on the tab it
+  checks (0x47a387) and +0x374 on those it unchecks (0x47a2f7). So **`on` is the checked piece**,
+  which the research pass had left as inferred. A click is on the release (message 0x202); it
+  unchecks every same-group sibling and hides its pane (locked tabs keep their look but still
+  lose the pane), checks itself, shows its own pane, and then tells the parent (0xb8f150).
+- A **check box** cuts its texture after the last `_` like a tab and appends `off.ddj` and
+  `on.ddj`: `off` is the box (set with 0x470ce0 at 0x482ef2), `on` goes to a child window, the
+  mark (0x482bd0 at 0x482f2c).
+- A **window starts visible**: the base constructor 0xb9e270 (vtable 0xe08f0c) sets +0x61, the
+  byte the visibility test 0xb8f530 reads, to 1 (0xb9e284). That this constructor is in every
+  CNIF window's chain is inferred from their RTTI chains.
+- CNIFMainFrame's chrome (0x479a50), re-read in the asm: caption (10, 12, W-21, 12), drag
+  (10, 0, W-21, 34), close (W-26, 10, 16, 16) on `com_windowclose.ddj`, the same as
+  CIFMainFrame's (round 586).
+
+**What is inferred, and labelled so in the code.** The colour field goes to the text object, so
+it is the text colour, never a tint. The alignment bytes go to the text object's slots 5 and 6,
+the slots the `.txt` builder feeds HAlign / VAlign; the 0 / 1 / 2 meaning is the `.txt` path's
+mapping, not traced. The sample text at 0x300 is used only in editor mode, which is the loose-file
+flag, and retail has no loose `res_ui`: it is never drawn. The draw order is file order, back to
+front, by measurement (below), not by reading the render loop.
+
+**The code.**
+- `client/scripts/ui/twodt_reader.gd` (`TwoDtReader`): the parse, the fields, the links,
+  root-relative and parent-relative rects, and `child_with_id`. Only the four ASCII string fields
+  are decoded. The comment and the sample text stay bytes.
+- `client/scripts/ui/twodt_builder.gd` (`TwoDtBuilder`): builds the whole tree in file order (back
+  to front, the opposite of `UiBuilder.build_section`). Frames go through round 584's
+  `UiBuilder._build_frame` (every piece at its own size), and bars through `_add_row_bar_from`.
+  Tiles, lattices and texture loading are UiBuilder's too. Tabs follow SetCheck / click. `child`
+  is the client's GetChild (direct children only), and `find_path` chains it. Text goes on a
+  `Text` label in the record's colour, font and (inferred) alignment. The types whose classes
+  draw their own art (edit, text box, combo box, vertical scroll, page manager, both-sides gauge,
+  spin) are built as empty controls marked `twodt_unbuilt`.
+- `UiBuilder.load_2dt(path)`: loads and caches a file from Media.pk2.
+
+**Measured** (`client/tools/check_2dt_files.gd`, on the RE box against the retail Media.pk2):
+
+```
+TYPES 0:25 1:60 2:89 3:61 4:223 5:1116 6:12 7:4 8:165 9:1 10:16 11:88 12:22 13:27 14:4 15:219 16:29 17:2 18:146 19:3
+UNRESOLVED cumunity_note.2dt #111 id=58 parent=0 gp=0
+UNRESOLVED nifstallnetworkmsgbox.2dt #17 id=26 parent=0 gp=0
+TOTAL files=42 records=2312 bad_size=0 bad_root=0 unresolved=2 ambiguous=0 non_ascii=0 required_pieces=2555/2555 optional_pieces=604/698 textured_off_size=80/283
+ORDER overlapping sibling pairs of a tile and a content control: tile first 690, tile after 4
+```
+
+- All 42 files are exactly `4 + n*976`, 2312 records, one root each at record 0.
+- 2310 records link through (parent, grandparent) to an earlier record of their file, none
+  ambiguously. The two that do not have parent 0 and stay under the root, as the loader leaves
+  them.
+- The name, base, texture and text-id fields are ASCII in every record.
+- Every required piece the builder derives exists: 2555 of 2555. The optional button and tab
+  variants: 604 of 698, which the builder takes when present.
+- Tiles come before the content they overlap in 690 of 694 sibling pairs. The four exceptions
+  are the statics the research pass found, in `nifstallnetworkmsgbox`, `open_market_main`,
+  `silkrecievelist` and `silksearch`. The research pass counted 661 of 665 with a different pair
+  definition.
+- 80 of 283 textured statics, slots and plain windows are authored at a rect other than their
+  texture's size (two in the guild files: `guild.2dt` #29, `gil_windo02_off.ddj` 504x28 drawn
+  572x28, and `guild_w.2dt` #59, `com_grayline.ddj` 256x4 drawn 338x4). How the client draws
+  those is not read. The builder stretches them, as the `.txt` path does, and it is recorded as
+  open.
+
+**Tests.** `client/scripts/ui/twodt_reader_test.gd`, on synthetic records built in the test (no
+game data). It reaches the two scripts through `load()`, so a tree without them FAILS rather than
+failing to compile. It checks:
+- files one byte long or short are refused, as is a count that disagrees with the size;
+- every field at its offset;
+- a grandchild whose parent id names two windows goes under the one its grandparent id picks;
+- parent 0 and a missing parent stay under the root;
+- rects are relative to the parent;
+- children are in file order, the tile backmost;
+- the text id resolves, the colour is the text colour and not a tint, and the sample text and
+  comment are never drawn;
+- each type's pieces (the 8-slice default, bar left/mid/right, button focus/press, check box
+  off/on);
+- SetCheck and a click swap the panes and the on/off art.
+
+NEGATIVE, run on the box against fcd0b08's scripts: `FAIL the .2dt reader exists
+(res://scripts/ui/twodt_reader.gd)` and `FAIL the .2dt builder exists
+(res://scripts/ui/twodt_builder.gd)`. With the change: ALL PASS.
+
+**Verified.** `remote_godot.sh check`: 293 scripts and 5 scenes, ALL LOAD. `remote_godot.sh
+tests`: 110 suites, 0 failing. `cd server && go build ./... && go test -count=1 -p 1 ./...`: 59
+packages ok.

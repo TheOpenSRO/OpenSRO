@@ -50,6 +50,27 @@ func load_layout(layout_path: String, defines: PackedStringArray = PackedStringA
 	_layout_cache[cache_key] = layout
 	return layout
 
+## Parsed `res_ui\*.2dt` window files by archive path (TwoDtReader). A test
+## puts synthetic ones here; nothing is committed from the archive.
+var _twodt_cache: Dictionary = {}
+
+## Loads and caches a `.2dt` window file from Media.pk2 by its archive path
+## (e.g. "res_ui\\guild.2dt"). Null if it is not there or does not parse.
+func load_2dt(path: String) -> TwoDtReader.TwoDtFile:
+	var key := path.to_lower()
+	if _twodt_cache.has(key):
+		return _twodt_cache[key]
+	if _media_pk2 == null:
+		return null
+	var entry := ObjectLoader.find_file(_media_pk2, path)
+	if entry == null:
+		push_warning("UiBuilder: %s not in Media.pk2" % path)
+		return null
+	var file := TwoDtReader.parse(_media_pk2.read_file(entry))
+	if file != null:
+		_twodt_cache[key] = file
+	return file
+
 ## The size a window built from this section should be: its frame's rect,
 ## extended by any **artwork** that reaches past it.
 ##

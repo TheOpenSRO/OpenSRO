@@ -7083,6 +7083,29 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-ninety-fourth round: the client reads the retail .2dt window files
+
+The newer windows of the retail client (guild and community, quest list, enchant, world-map
+guide, the menu bar and the rest) are binary `res_ui\*.2dt` files, not `resinfo\if*.txt`
+layouts. The full record is `docs/RE_COMPLETION.md`'s entry of the same name, and
+`docs/protocol/2DT_FORMAT.md` is the spec.
+
+- **Format, read.** A `u32` count, then 976-byte records (0x48f983, `push 0x3d0` at 0x48f9b5),
+  nothing else. The reader refuses any other size. Parents are linked by (parent, grandparent),
+  because ids repeat, over the same file's earlier windows (0x48cb00, the file check at 0x48cbce).
+- **Newly read.** `on` is a tab's checked piece (0x47a387 / 0x47a2f7). A check box's `off` is the
+  box and its `on` the mark (0x482ef2 / 0x482f2c). Windows start visible (0xb9e284).
+  CNIFMainFrame's chrome is CIFMainFrame's numbers (0x479a50).
+- **Inferred, and labelled so.** The colour is the text colour, never a tint. The alignment
+  bytes' 0 / 1 / 2 meaning is the `.txt` path's. The sample text at 0x300 is never drawn.
+- **Measured** (`client/tools/check_2dt_files.gd`, new): 42 files, 2312 records, all exact. 2310
+  links resolve, and 2 have parent 0. None is ambiguous. All strings are ASCII. 2555 of 2555
+  required pieces exist. Tiles precede the content they overlap in 690 of 694 sibling pairs.
+- **Tests.** `twodt_reader_test.gd` on synthetic bytes fails twice against fcd0b08 (the scripts
+  do not exist) and passes here. 110 suites, 0 failing. Go: 59 packages ok.
+- **Open.** The draw loop, the alignment values, how an off-size textured static is drawn (80 of
+  283), and the classes' own art for edit, combo, scroll, page and spin controls.
+
 ## Five-hundred-and-ninety-third round: the bag stays beside a shop or storage through a window resize
 
 This was a regression from round 592. The full record is `docs/RE_COMPLETION.md`'s entry of the

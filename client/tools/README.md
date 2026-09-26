@@ -595,6 +595,13 @@ compression of named `.ddj` textures — a frame's insets, a name plate's cap wi
 numbers are measured rather than eyeballed. Both take forward slashes in archive paths, because
 backslashes do not survive ssh and su to the render box.
 
+`check_2dt_files.gd` — reads every `res_ui\*.2dt` window file in a real `Media.pk2` with
+`TwoDtReader` and checks each the way the client's loader takes it: the size is exactly
+`4 + count * 976`, one root at record 0, every (parent, grandparent) link resolves, the string
+fields are ASCII, and every texture piece `TwoDtBuilder` derives exists in the archive. It also
+measures the tile-before-content draw order the builder relies on. `docs/protocol/2DT_FORMAT.md`
+is the format.
+
 `render_map_objects.gd` — loads a real `.o` (`Map.pk2` object-placement) file through
 `MapoReader` and renders a top-down scatter of every placed object's real world position, colored
 by type ID, to disk. Doesn't resolve type IDs to real `.bsr` models — no mapping from a `.mapo`
