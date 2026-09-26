@@ -4913,7 +4913,7 @@ func _set_hp_bar(body: Node3D, hp: int, max_hp: int) -> void:
 
 ## The target window: whatever the player has clicked, at the top of the
 ## screen. Built by HudTarget from the client's own layouts
-## (iftargetwindowex + iftw_commonenemy / iftw_specialmob) and placed where
+## (iftargetwindow + iftw_commonenemy / iftw_specialmob) and placed where
 ## ginterface.txt registers GDR_TARGETWINDOW; shown on click/attack, updated
 ## on damage, hidden on death or when nothing is targeted. Everything it
 ## shows is the server's snapshot -- see hud_target.gd for the recovery.
@@ -4929,7 +4929,8 @@ func _build_target_window() -> void:
 		return
 	# The registry puts it at (442, 10) in the client's 1024-wide layout. That
 	# is not a centring number ((1024-196)/2 is 414), so it is kept as an
-	# offset from the layout's centre line: identical at 1024 wide, and the
+	# offset from the layout's centre line (the window was 196 wide when this
+	# was written; it is 236 now, round 588): identical at 1024 wide, and the
 	# window stays near the top centre on wider screens. Whether the real
 	# client anchors it to the left edge or the centre is not recovered.
 	var reg := _ui_builder.window_def(HudTarget.REGISTRY_NAME) if _ui_builder != null else null

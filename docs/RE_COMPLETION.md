@@ -41792,3 +41792,137 @@ and looks for each same-rect group inside its pane.
   puts the window partly off the left edge, as the client's would.
 - The quest pane is not built. Q stays on `ifquest.txt` as its own window until the questlist
   `.2dt` window is built.
+
+## The target window is built from iftargetwindow.txt, the layout the client loads (round 588)
+
+Client only. Nothing on the wire changes and the server is unchanged. HudTarget built its
+container from `resinfo\iftargetwindowex.txt`, which the exe never names. Labels as in round 587:
+**read**, **measured**, **inferred**.
+
+### Which files are live
+
+| File | Label | Evidence |
+|---|---|---|
+| `iftargetwindow.txt` | read | `CIFTargetWindow::Create` (0x699080) pushes 0xda5170 (`resinfo\iftargetwindow.txt`) at 0x69908b and builds "Create" into the window (`push esi` 0x699097). |
+| `iftargetwindowex.txt` | measured: not in the exe | The exact name, case-insensitive, in ASCII and UTF-16: 0 hits. The substring `targetwindowex` in both: 0 hits. Positive control, same probe: `iftargetwindow.txt` found (ASCII, 0xda5178). It is in the archive but nothing loads it. |
+| `iftw_commonenemy.txt`, `iftw_specialmob.txt` | read | pushed at 0x69aaab and 0x69b41b, each by its class's Create. |
+| `iftw_player.txt` | read | `CIFTargetWindowPlayer::Create` (0x69b180) pushes 0xda5760 at 0x69b18b and builds it into itself. |
+| `iftw_jobplayer_trijob2.txt` | read: **live** | `CIFTargetWindowJobPlayer::Create` (0x69ac40) pushes 0xda5588 at 0x69ac4b and builds it into itself. The class is the container's `GDR_TW_JOB_PLAYERWND` (ID 1), so it is created with the target window. The plain `iftw_jobplayer.txt` is not in the exe (both encodings, 0 hits). The strings next to it name `tw_job_merchant/thief/hunter.ddj` and the class `CIFTargetWindowJobPlayer`. |
+| `iftw_fortressstructure.txt` | read | pushed at 0x56548c. Not built here (see Open). |
+
+The decompile renders none of these layout pushes as strings (a grep there finds only
+`iftw_fortressstructure.txt`), so it is not used as a probe.
+
+### What Create does (0x699080, read in the asm)
+
+It fetches ID 0 (GDR_TW_PLAYERWND) -> +0x378, 1 (JOB_PLAYERWND) -> +0x37c, 2 (SPECIALMOBWND) ->
++0x380, 4 (COMMONENEMY) -> +0x374 and 100 (the buff viewer) -> +0x388, and hides all five
+(0x699115..0x699164). Then it fetches ID 8 (GDR_TW_FORTRESSSTRUCTER) -> +0x384 and hides it
+(0x699166..0x699180). The close button (ID 11) is not fetched here. The select function moves it
+to (window x + 0xb0, window y + 9) each time it shows a monster or a player (0x699658..0x699684),
+which is its authored (176, 9). In the branches for other object classes it moves it to x + 0xd8
+instead (0x699c4b, 0x699cfc, 0x699dbc, 0x699fe8, 0x69a0a4).
+
+### The defines
+
+`iftargetwindow.txt` has the four kind pieces in two `#ifdef UI_UPDATE_2009_FIRST` branches (236
+wide, or 196 wide), and the fortress piece under `#ifdef APPLY_SIEGE_FORTRESS_SYSTEM`. The iftw_*
+files branch on UI_UPDATE_2009_FIRST for their name rows (34,10,170,12, or 34,10,137,12 and
+42,10,122,12). **The define set is one global map (read):** 0xeed4e0's only reader is 0x5004a0,
+whose only caller is the parser's IFTVariable (0xb37aeb). So every layout is parsed under the same
+set. **UI_UPDATE_2009_FIRST is in it (inferred, round 585):** CIFChatViewer::Create fetches ID 42,
+which ifchatviewer.txt declares only under that define, and dereferences it with no null check
+(0x7abc91 -> `mov edx,[eax]` at 0x7abc9c, re-read this round). **APPLY_SIEGE_FORTRESS_SYSTEM is in
+it (inferred):** CIFTargetWindow::Create fetches ID 8, declared only under it, and calls through
+it with no null check (0x699177). So the container is read with both, and the kinds' insides with
+UI_UPDATE_2009_FIRST.
+
+**Counter-evidence, measured.** In the 2009 branch two of the four pieces do not match their
+atlas regions. `window_all.ddj` is 1024x512 (measured). The common enemy's region is 236x36 (x
+741, y 453): its art is opaque in rows 453..488 and transparent from row 489 down, so it is
+drawn into a 51-tall rect. The job player's region is the #else branch's 196-wide one (x 543,
+y 210), for a 236-wide rect. The special mob (236x78) and player (236x35) pieces match exactly,
+and every #else piece matches its rect. The branch follows the define reading above, not this
+data. HudTarget logs both mismatches (`HudTarget: … piece is … but authored …`).
+
+### What is built
+
+- HudTarget reads `iftargetwindow.txt` with `UI_UPDATE_2009_FIRST` and
+  `APPLY_SIEGE_FORTRESS_SYSTEM` (`CONTAINER_DEFINES`), and the kinds' insides with
+  `UI_UPDATE_2009_FIRST` (`KIND_DEFINES`).
+- The common-enemy and special-mob windows are the 236-wide pieces. Their name rows are 34,10,170,12.
+- The player and job-player kinds are built from `iftw_player.txt` and
+  `iftw_jobplayer_trijob2.txt` and hidden, as Create leaves them. This window only shows monsters
+  today (World3D's attack target), so nothing selects them yet.
+- The buff viewer and the fortress piece are not built. Both are hidden at create and have no
+  behaviour here.
+- **The close button is settled.** It is re-parented from the container's section into the window,
+  outside every settled root (UI_TODO's round-585 note). It now gets
+  `UiBuilder.settle_authored_rects` like every built control. No inflation had been measured (it is
+  a TextureButton), and the test knocks it off its rect to show the pass holds it.
+- Everything HudTarget did is kept: the level-difference gem and name colour, the rank icon, the
+  HP gauge, the clicks it consumes, the rarity rule (below).
+
+### Found, not changed: which window a monster shows
+
+HudTarget shows the common-enemy window for rarity 0 and the special-mob one otherwise. The asm
+says otherwise. The select function (0x699540) tests the target's class. Its first test (0x6996a0)
+is against the descriptor 0xef1a84. The object factory 0x9c1fa0 gives that descriptor to an object
+whose type bits are TypeID2 1, TypeID3 2, TypeID4 1, i.e. a monster (read; the TypeID reading of
+those bit fields is inferred). In that branch the rarity byte (+0x7ac) selects through the table
+0x69a2d0. Every case (0, 1, 3, 4, 5, 6, 7, 8) shows **+0x380, the special-mob window**, and calls
+the rank-icon function 0x69b4c0 on it. Case 2 shows nothing. The common-enemy window (+0x374) is
+shown only in two other class branches: descriptor 0xeef6f0 at 0x699ad2, and one case of 0xef1ac4
+at 0x699c8e. So a normal monster shows the 236x78 special-mob window with the "normal" rank icon,
+which is what `rank_icon_path`'s rarity-0 entry exists for.
+This round was scoped to the container, so the rule is unchanged and the doubt is written into
+HudTarget's header. It matters more now: a rarity-0 monster draws the 2009 common-enemy piece,
+whose 36-tall art is stretched to 51 (above).
+
+### Measured (the audit, as in round 587)
+
+AFTER (this tree) against round 587's tree. 0 `SCRIPT ERROR`.
+
+- **Target**: 196x51 -> **236x51** for a rarity-0 target, and the special-mob window 196x78 ->
+  236x78. The frames' atlas regions are (741, 453, 236, 36) and (741, 374, 236, 78), were (543,
+  0, 196, 51) and (543, 52, 196, 78). The name rows are 170 wide, were 137. Two hidden kinds were
+  added: PLAYERWND 236x35 and JOB_PLAYERWND 236x58. The close button is unchanged at 176,9,16,16.
+  Findings: the one SAMERECT (the gem label and its art, round 585: not an alternate) before and
+  after. No OUTSIDE.
+- **Tree diff**: every other widget, the main popup's seven tabs included, is identical.
+
+### Tests
+
+`hud_target_layout_test.gd` (new) builds HudTarget from fixtures with the real names, IDs, rects
+and UVs of `iftargetwindow.txt` (both branches spelled as the archive has them), the four iftw_*
+files, and a synthetic 1024x512 atlas. The old `iftargetwindowex.txt` is also cached, so an old
+tree builds. It checks the container's name, the 236-wide pieces and their atlas region, the
+170-wide name row, the two player kinds built and hidden, no fortress piece shown, and that the
+close button settles back to 176,9,16,16. NEGATIVE, run on the box against fcd0b08's scripts:
+**8 FAIL lines**:
+
+- `FAIL the container is iftargetwindow.txt, the layout CIFTargetWindow::Create loads (got resinfo\iftargetwindowex.txt)`
+- `FAIL a common enemy's window is UI_UPDATE_2009_FIRST's 236x51 piece (got (196, 51))`
+- `FAIL its frame is the atlas's 236-wide region (got (196, 51), region [P: (542.9996, 0), S: (196.0007, 51.00001)])`
+- `FAIL the name row is UI_UPDATE_2009_FIRST's 34,10,170,12 (got [P: (34, 10), S: (137, 12)])`
+- `FAIL a special mob's window is the 236x78 piece (got (196, 78))`
+- `FAIL GDR_TW_PLAYERWND is built from iftw_player.txt and hidden`
+- `FAIL GDR_TW_JOB_PLAYERWND is built from iftw_jobplayer_trijob2.txt and hidden`
+- `FAIL the close button settles back to its authored 176,9,16,16 (got [P: (0, 0), S: (40, 40)])`
+
+On this tree: ALL PASS. `hud_settle_test.gd`'s target fixture moved to the layout and defines
+HudTarget now reads.
+
+**Verified.** `remote_godot.sh check`: 293 scripts and 5 scenes, ALL LOAD. `remote_godot.sh
+tests`: 111 suites, 0 failing (`SCRIPT ERROR` counts as failing). `cd server && go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok.
+
+### Open
+
+- The rarity rule (above).
+- The 2009 common-enemy piece's 36-tall art in a 51-tall rect, and the job player's 196-wide art in
+  a 236-wide rect: how the client draws a region into a larger rect was not read. Both are drawn
+  stretched here, as UiBuilder draws every atlas piece.
+- The fortress-structure piece and `iftw_fortressstructure.txt` (loaded at 0x56548c) are not
+  built. There is no siege here.
+- The special-mob window's level rows (`GDR_TWSM_LEVEL`, `GDR_TWSM_TEXT_LEV`) are not filled, as
+  before. What 0x69b380 and 0x69b3c0 write was not read.

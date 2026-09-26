@@ -7083,6 +7083,27 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Round 588: the target window is built from iftargetwindow.txt, the layout the client loads
+
+The full record is `docs/RE_COMPLETION.md`'s entry of the same name.
+
+- **Read.** `CIFTargetWindow::Create` (0x699080) loads `iftargetwindow.txt`. The
+  `iftargetwindowex.txt` we built from is in neither encoding in the exe. `iftw_jobplayer_trijob2.txt`
+  is live: its class is the container's ID 1, and its Create loads it (0x69ac4b).
+- **Defines.** The `#ifdef` table is one global map, so the chat's evidence for
+  UI_UPDATE_2009_FIRST (round 585, re-read at 0x7abc9c) holds here. Create's unguarded use of ID 8
+  gives APPLY_SIEGE_FORTRESS_SYSTEM. So the pieces are the 236-wide ones, and the name rows are 170
+  wide. Measured against that: in the 2009 branch the common enemy's atlas art is 236x36 for a
+  51-tall rect, and the job player's is 196 wide for 236. Both are drawn stretched.
+- **Built.** The container comes from the live file. The two player kinds are built and hidden, as
+  Create leaves them. The close button, re-parented outside every settled root, is now settled.
+- **Found, not changed.** In the asm a monster (class descriptor 0xef1a84, TypeID 1/1/2/1 in the
+  factory 0x9c1fa0) shows the special-mob window for every rarity but 2. HudTarget still shows the
+  common-enemy window for rarity 0, and that is now the stretched 2009 piece. It is the next thing
+  to change.
+- **Measured.** The target is 196x51 -> 236x51 (236x78 for a special mob), and nothing else in the
+  audit's tree changed. `hud_target_layout_test.gd` fails 8 times against fcd0b08 and passes here. 111 suites, 0 failing; Go: 59 packages ok.
+
 ## Round 587: the character, inventory, skill, action, party and academy windows are one framed window with a pane per tab, as the client builds them
 
 Items 2 and 3 of the GUI audit's open list: the self-framed windows' outer frame, and the

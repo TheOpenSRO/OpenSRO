@@ -9,18 +9,39 @@ extends Control
 ##
 ## - `resinfo\ginterface.txt` registers `GDR_TARGETWINDOW` (`CIFTargetWindow`)
 ##   at (442, 10) with a 10x10 rect -- "use the art's own size".
-## - `resinfo\iftargetwindowex.txt` is the container: a 16x16
-##   `CIFCloseButton` at (176, 9) and one sub-window per target kind, each an
-##   atlas piece of `interface\ifcommon\window_all.ddj` drawn at its own size:
-##   `GDR_TW_COMMONENEMY` 196x51, `GDR_TW_SPECIALMOBWND` 196x78,
-##   `GDR_TW_PLAYERWND` 196x36, `GDR_TW_JOB_PLAYERWND` 196x58. (The older
-##   `iftargetwindow.txt` lists the same pieces plus 236-wide twins and a buff
-##   viewer; both agree on the common-enemy piece.)
+## - `resinfo\iftargetwindow.txt` is the container, and it is the one the
+##   client loads: `CIFTargetWindow::Create` (0x699080) pushes it (0xda5170,
+##   at 0x69908b) and builds it into the window itself. The file this window
+##   used to read, `iftargetwindowex.txt`, is not in the exe in ASCII or
+##   UTF-16 (nor is the substring `targetwindowex`). It holds a 16x16
+##   `CIFCloseButton` at (176, 9), a buff viewer, a fortress-structure piece
+##   under `#ifdef APPLY_SIEGE_FORTRESS_SYSTEM`, and one sub-window per target
+##   kind, each an atlas piece of `interface\ifcommon\window_all.ddj`, in two
+##   `#ifdef UI_UPDATE_2009_FIRST` branches: `GDR_TW_COMMONENEMY` 236x51 /
+##   196x51, `GDR_TW_SPECIALMOBWND` 236x78 / 196x78, `GDR_TW_JOB_PLAYERWND`
+##   236x58 / 196x58, `GDR_TW_PLAYERWND` 236x35 / 196x36.
+## - It is read with the defines this build takes (CONTAINER_DEFINES). The
+##   define table (0xeed4e0) is one global map with one reader (0x5004a0,
+##   called only from the parser's IFTVariable at 0xb37aeb), so every layout
+##   parses under the same set. UI_UPDATE_2009_FIRST is in it -- inferred in
+##   round 585 from CIFChatViewer, which dereferences a control only that
+##   branch declares with no null check (ID 42, 0x7abc9c). So is
+##   APPLY_SIEGE_FORTRESS_SYSTEM: CIFTargetWindow::Create fetches ID 8, which
+##   only that branch declares, and calls through it with no null check
+##   (0x699177). Both inferred from class code, as the define table itself
+##   is never visibly filled.
+## - Each kind's class loads its own inside into itself: the common enemy
+##   `iftw_commonenemy.txt`, the special mob `iftw_specialmob.txt`, the player
+##   `iftw_player.txt` (0x69b18b) and the job player
+##   `iftw_jobplayer_trijob2.txt` (0x69ac4b, CIFTargetWindowJobPlayer::Create;
+##   the plain `iftw_jobplayer.txt` is not in the exe). Create hides all
+##   four kinds, the buff viewer and the fortress piece (0x699115..0x699180).
 ## - `resinfo\iftw_commonenemy.txt` is a normal monster's inside: the gem
 ##   `GDR_TWCE_GEM` at (8, 5) 20x20, the HP gauge `GDR_TWCE_GAUGE_HPGAUGE`
 ##   (`CIFGauge`, `interface\targetwindow\tw_hp.ddj`) at (14, 37) 168x4, and
-##   the name `GDR_TWCE_TEXT_ID` at (34, 10) 137x12, centred. No level text
-##   and no rank icon: a common enemy shows its level only through the gem.
+##   the name `GDR_TWCE_TEXT_ID` at (34, 10), 170x12 under
+##   UI_UPDATE_2009_FIRST (137x12 without), centred. No level text and no
+##   rank icon: a common enemy shows its level only through the gem.
 ## - `resinfo\iftw_specialmob.txt` adds, on the 78-tall piece, `GDR_TWSM_LEVEL`
 ##   (10, 56) 30x16, the rank icon `GDR_TWSM_ICON` (65, 54) 16x16 and
 ##   `GDR_TWSM_TEXT_LEV` (85, 56) 168x12.
@@ -30,6 +51,18 @@ extends Control
 ## - `CIFTargetWindow` (`0x00699540`) switches on the target's rarity: 0 is
 ##   the common-enemy window, the others the special-mob one with the rank
 ##   icon (`Client_TargetWindow_RankIcon`).
+##   **Contradicted by the asm, not changed here (round 588):** the select
+##   function's first class test (0x6996a0) is against the descriptor
+##   0xef1a84, which the object factory 0x9c1fa0 gives an object whose type
+##   bits are TypeID2 1, TypeID3 2, TypeID4 1 -- a monster. In that branch
+##   every case of the rarity table 0x69a2d0 (rarity byte +0x7ac) shows the
+##   special-mob window (+0x380, ID 2) and its rank icon, except 2, which
+##   shows none. The common-enemy window (+0x374, ID 4) is shown only in two
+##   other class branches (0x699ad2, 0x699c8e). So a normal monster shows
+##   the special-mob window with the normal rank icon, which is what
+##   rank_icon_path's rarity-0 entry is for. The rule above is kept as it
+##   was, because this round only switched the container; the next one
+##   should change it (docs/RE_COMPLETION.md, round 588).
 ## - The gem and the name colour come together from one classifier,
 ##   `FUN_007780c0(targetLevel)`: `d = targetLevel - playerLevel`; d < -6 ->
 ##   `tw_gem_weak2` and 0x87d2ff, d < -3 -> `weak1` and 0xa5e0ce, d <= 0 ->
@@ -48,9 +81,15 @@ extends Control
 signal closed
 
 const REGISTRY_NAME := "GDR_TARGETWINDOW"
-const CONTAINER_LAYOUT := "resinfo\\iftargetwindowex.txt"
+const CONTAINER_LAYOUT := "resinfo\\iftargetwindow.txt"
 const COMMON_LAYOUT := "resinfo\\iftw_commonenemy.txt"
 const SPECIAL_LAYOUT := "resinfo\\iftw_specialmob.txt"
+const PLAYER_LAYOUT := "resinfo\\iftw_player.txt"
+const JOB_PLAYER_LAYOUT := "resinfo\\iftw_jobplayer_trijob2.txt"
+## The defines the container and the kinds' insides are read with (see the
+## header). The kinds' layouts branch only on UI_UPDATE_2009_FIRST.
+const CONTAINER_DEFINES := ["UI_UPDATE_2009_FIRST", "APPLY_SIEGE_FORTRESS_SYSTEM"]
+const KIND_DEFINES := ["UI_UPDATE_2009_FIRST"]
 const GEM_DIR := "interface\\targetwindow\\"
 
 ## Level-difference classes, from FUN_007780c0: gem art and name colour.
@@ -68,6 +107,11 @@ var _player_level := 0
 ## One built window per kind, only one visible at a time.
 var _common: Control = null
 var _special: Control = null
+## The two player kinds, built from their live layouts and hidden, as
+## Create leaves them. This window shows only monsters today (World3D's
+## attack target), so nothing selects them yet.
+var _player: Control = null
+var _job_player: Control = null
 var _close: BaseButton = null
 
 ## Handles into the visible window's controls, refreshed by _select().
@@ -98,25 +142,30 @@ func setup() -> bool:
 	visible = false
 	if _builder == null:
 		return false
-	var container := _builder.load_layout(CONTAINER_LAYOUT)
+	var container := _builder.load_layout(CONTAINER_LAYOUT,
+		PackedStringArray(CONTAINER_DEFINES), true)
 	if container == null:
 		return false
 	var sec := container.get_section("Create")
 	if sec == null:
 		return false
 
-	_common = _build_kind(sec.control_by_name.get("GDR_TW_COMMONENEMY"), COMMON_LAYOUT)
-	_special = _build_kind(sec.control_by_name.get("GDR_TW_SPECIALMOBWND"), SPECIAL_LAYOUT)
+	_common = _build_kind(sec.control_by_name.get("GDR_TW_COMMONENEMY"), COMMON_LAYOUT, "GDR_TWCE_GEM")
+	_special = _build_kind(sec.control_by_name.get("GDR_TW_SPECIALMOBWND"), SPECIAL_LAYOUT, "GDR_TWSM_GEM")
 	if _common == null and _special == null:
 		return false
-	for w in [_common, _special]:
+	_player = _build_kind(sec.control_by_name.get("GDR_TW_PLAYERWND"), PLAYER_LAYOUT)
+	_job_player = _build_kind(sec.control_by_name.get("GDR_TW_JOB_PLAYERWND"), JOB_PLAYER_LAYOUT)
+	for w in [_common, _special, _player, _job_player]:
 		if w != null:
 			w.visible = false
 			add_child(w)
 			UiBuilder.settle_authored_rects(w)
 
 	# The container's own close button, at its authored place; it sits above
-	# whichever window is showing.
+	# whichever window is showing. CIFTargetWindow moves it to (window x +
+	# 0xb0, window y + 9) each time it shows a monster or a player
+	# (0x699658..0x699684), which is its authored (176, 9).
 	var chrome := _builder.build_section(container, "Create")
 	if chrome != null:
 		var btn := chrome.find_child("GDR_TW_CLOSE", true, false) as BaseButton
@@ -125,6 +174,9 @@ func setup() -> bool:
 			_close = btn
 			_close.pressed.connect(func() -> void: clear(); closed.emit())
 			add_child(_close)
+			# It carries its authored rect; settle it with the kinds, as
+			# every built control is (round 585).
+			UiBuilder.settle_authored_rects(_close)
 		chrome.queue_free()
 
 	# The window is the size of the piece showing; start with the common one.
@@ -134,11 +186,14 @@ func setup() -> bool:
 	return true
 
 ## One kind: its atlas-piece frame at the authored size, with that kind's own
-## inner layout on top. Returns null if the piece or the layout is missing.
-func _build_kind(piece: UiLayoutParser.ControlDef, layout_path: String) -> Control:
+## inner layout on top, read with KIND_DEFINES. `gem_name` names the kind's
+## art-less gem slot, if it has one. Returns null if the piece or the layout
+## is missing.
+func _build_kind(piece: UiLayoutParser.ControlDef, layout_path: String,
+		gem_name: String = "") -> Control:
 	if piece == null or piece.ddj == "":
 		return null
-	var layout := _builder.load_layout(layout_path)
+	var layout := _builder.load_layout(layout_path, PackedStringArray(KIND_DEFINES), true)
 	if layout == null:
 		return null
 	var win := Control.new()
@@ -170,7 +225,8 @@ func _build_kind(piece: UiLayoutParser.ControlDef, layout_path: String) -> Contr
 
 	# The gem slot is an art-less static, which the builder makes a Label;
 	# put a TextureRect at exactly its authored rect instead.
-	var gem_name := "GDR_TWCE_GEM" if layout_path == COMMON_LAYOUT else "GDR_TWSM_GEM"
+	if gem_name == "":
+		return win
 	var gem_slot := inner.find_child(gem_name, true, false) as Control
 	if gem_slot != null:
 		var gem := TextureRect.new()
@@ -199,7 +255,7 @@ func _select(rarity: int) -> void:
 	var want: Control = _special if (rarity != 0 and _special != null) else _common
 	if want == null:
 		want = _special
-	for w in [_common, _special]:
+	for w in [_common, _special, _player, _job_player]:
 		if w != null:
 			w.visible = (w == want)
 	size = want.size

@@ -44,13 +44,14 @@ func _player_info() -> String:
 		+ _control("GDR_PMI_TXT_LEVEL", "CIFStatic", "168,7,37,15")
 		+ _control("GDR_PMI_TXT_HP", "CIFStatic", "79,26,124,12"))
 
-## iftargetwindowex.txt's container piece and iftw_commonenemy.txt's rows.
+## iftargetwindow.txt's container piece and iftw_commonenemy.txt's rows, in
+## the UI_UPDATE_2009_FIRST branch the target window reads (round 588).
 func _target_container() -> String:
-	return _layout(_control("GDR_TW_COMMONENEMY", "CIFStatic", "0,0,196,51", "interface\\targetwindow\\fixture.ddj"))
+	return _layout(_control("GDR_TW_COMMONENEMY", "CIFStatic", "0,0,236,51", "interface\\targetwindow\\fixture.ddj"))
 
 func _target_common() -> String:
 	return _layout(_control("GDR_TWCE_GEM", "CIFStatic", "8,5,20,20")
-		+ _control("GDR_TWCE_TEXT_ID", "CIFStatic", "34,10,137,12"))
+		+ _control("GDR_TWCE_TEXT_ID", "CIFStatic", "34,10,170,12"))
 
 ## ifchatviewer.txt's penalty line.
 func _chat() -> String:
@@ -66,8 +67,8 @@ func _builder() -> UiBuilder:
 	var builder := UiBuilder.new(null, null)
 	var cache: Dictionary = builder.get("_layout_cache")
 	cache["resinfo\\ifplayerminiinfo.txt"] = UiLayoutParser.parse(_player_info())
-	cache["resinfo\\iftargetwindowex.txt"] = UiLayoutParser.parse(_target_container())
-	cache["resinfo\\iftw_commonenemy.txt"] = UiLayoutParser.parse(_target_common())
+	cache[_ifdef_key("resinfo\\iftargetwindow.txt", ["UI_UPDATE_2009_FIRST", "APPLY_SIEGE_FORTRESS_SYSTEM"])] = UiLayoutParser.parse(_target_container())
+	cache[_ifdef_key("resinfo\\iftw_commonenemy.txt", ["UI_UPDATE_2009_FIRST"])] = UiLayoutParser.parse(_target_common())
 	cache["resinfo\\ifchatviewer.txt"] = UiLayoutParser.parse(_chat())
 	cache[_ifdef_key("resinfo\\ifchatviewer.txt", ["UI_UPDATE_2009_FIRST"])] = UiLayoutParser.parse(_chat(), true, PackedStringArray(["UI_UPDATE_2009_FIRST"]))
 	return builder

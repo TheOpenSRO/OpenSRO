@@ -204,8 +204,13 @@ is presentation work on solved data; if you find yourself editing the protocol, 
     and 31 (`0x7abfb0`..`0x7ac03c`); we still show all five (review of round 585).
   - `GDR_CHAT_INPUTBOX` is a LineEdit held 31 tall by the theme's minimum against its authored
     20, so it hangs past the chat's bottom (398). Predates round 585.
-  - HudTarget's `GDR_TW_CLOSE` is re-parented outside every settled root. It is a TextureButton,
-    so no inflation was measured, but it is not settled.
+  - ~~HudTarget's `GDR_TW_CLOSE` is re-parented outside every settled root.~~ Settled since round
+    588, which also builds the target window from `iftargetwindow.txt`, the layout
+    `CIFTargetWindow::Create` loads (with UI_UPDATE_2009_FIRST: 236-wide pieces).
+  - **The target window's rarity rule is contradicted by the asm (round 588).** A monster shows the
+    special-mob window for every rarity but 2 (`0x699540`, class 0xef1a84, table 0x69a2d0); HudTarget
+    shows the common-enemy one for rarity 0, whose 2009 art (236x36) is stretched into its 51-tall
+    rect.
   - The store's registry height (317 / 360 / 370) turns on `RENEWAL_SHOP_SYSTEM` and
     `RESTORE_SOLDITEM_INSHOP`, which are unreadable. With our `[]` choice, Repair sits at y
     332-356, below a 317 frame.
