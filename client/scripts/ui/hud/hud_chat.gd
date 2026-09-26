@@ -215,7 +215,7 @@ func _trim() -> void:
 ## Whether the player is typing, so the world should not treat their keys as
 ## movement.
 func is_typing() -> bool:
-	return _input != null and _input.has_focus()
+	return _input != null and _input.has_focus() and _input.is_visible_in_tree()
 
 ## Puts the caret in the input line, for the Enter-to-chat convention.
 func focus_input() -> void:

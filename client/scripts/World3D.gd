@@ -13429,12 +13429,28 @@ func _setup_keys() -> void:
 		"is_typing": Callable(self, "_is_typing"),
 		"run": Callable(self, "_run_key_action"),
 		"held": Callable(self, "_on_key_held"),
+		"panel": Callable(self, "_run_panel_key"),
 	})
 	_key_input.name = "KeyInput"
 	add_child(_key_input)
 
+## A window's key (KeyMap's "panel:" slots, and M for the world map), read
+## by KeyInput before the GUI so no focused control on the way can take it
+## (v0.1.453 playtest: Tab, read there, worked; the window keys, left to
+## HudPanels' _unhandled_key_input, did not). The same toggles HudPanels' own
+## key handler uses. Returns a line for the log.
+func _run_panel_key(action: String) -> String:
+	if _hud_panels == null:
+		return "no HUD"
+	if action == "worldmap":
+		_hud_panels.world_map_toggle_requested.emit()
+		return "world map toggled"
+	var panel_id := action.substr(6)
+	_hud_panels.toggle(panel_id)
+	return "%s %s" % [panel_id, "open" if _hud_panels.is_open(panel_id) else "closed"]
+
 ## One key action (KeyMap), and a line for the log saying what it did.
-## The windows' keys never get here (HudPanels runs them).
+## The windows' keys come through _run_panel_key instead.
 func _run_key_action(action: String, arg: int) -> String:
 	match action:
 		"berserk":

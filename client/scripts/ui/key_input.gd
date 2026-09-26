@@ -2,10 +2,11 @@ extends Node
 class_name KeyInput
 
 ## Turns key presses into KeyMap actions and hands them to the world (round
-## 608). The windows' keys (KeyMap's "panel:" slots and M) stay with
-## HudPanels, which reads the same table; Enter stays with HudChat and
-## Escape with HudPanels. Everything else the keyboard does comes through
-## here, so World3D no longer reads keys itself.
+## 608). Since round 609 that includes the windows' keys (KeyMap's "panel:"
+## slots and M), through the host's "panel" callable, read here before the
+## GUI like every other key; HudPanels' own handler for them remains as the
+## fallback for a host without one. Enter stays with HudChat and Escape with
+## HudPanels. World3D reads no keys itself.
 ##
 ## The keys are read in _input, before the GUI: with a button focused (a
 ## click leaves UiBuilder's FOCUS_ALL TextureButtons with the keyboard) the
@@ -98,7 +99,7 @@ func _input(event: InputEvent) -> void:
 	if not key.pressed:
 		_on_release(key)
 		return
-	if key.keycode == KEY_SPACE:
+	if key_code_of(key) == KEY_SPACE:
 		# Alt+Space is the OS's window menu (KeyMap.is_os_combination).
 		if not _typing() and not KeyMap.is_os_combination(KEY_SPACE, key.alt_pressed):
 			_space_held = true
@@ -109,20 +110,38 @@ func _input(event: InputEvent) -> void:
 			if get_viewport().gui_get_focus_owner() is BaseButton:
 				get_viewport().set_input_as_handled()
 		return
-	if _typing() and not KeyMap.runs_while_typing(key.keycode):
+	var keycode := key_code_of(key)
+	if _typing() and not KeyMap.runs_while_typing(keycode):
+		_log_typing()
 		return
-	var hit := KeyMap.resolve(key.keycode, key.ctrl_pressed, key.alt_pressed, key.meta_pressed, _space_held)
+	_typing_logged = false
+	var hit := KeyMap.resolve(keycode, key.ctrl_pressed, key.alt_pressed, key.meta_pressed, _space_held)
 	if hit.is_empty():
+		if not key.echo:
+			_log_key(key, keycode, "no action")
 		return
 	var action: String = hit[0]
-	# The windows' keys are HudPanels' (the same table), in its
-	# _unhandled_key_input.
+	# The windows' keys (the "panel:" slots and M) run here too, before the
+	# GUI, when the host has a "panel" callable (World3D does): left to
+	# HudPanels' _unhandled_key_input they reach it only if no control on the
+	# way takes them -- the same trap Tab fell into (round 608's measurement
+	# above), and the one Tab, read here, never hit (v0.1.453 playtest: Tab
+	# worked, the window keys did not). Without the callable (the suite's
+	# stub hosts) they stay with HudPanels as before.
 	if action.begins_with("panel:") or action == "worldmap":
+		var panel: Callable = host.get("panel", Callable())
+		if not panel.is_valid():
+			return
+		get_viewport().set_input_as_handled()
+		if key.echo:
+			return
+		var done := String(panel.call(action))
+		_log_key(key, keycode, "%s: %s" % [action, done])
 		return
 	get_viewport().set_input_as_handled()
 	if KeyMap.is_hold(action):
 		if not _held.has(action):
-			_held[action] = key.keycode
+			_held[action] = keycode
 			var f: Callable = host.get("held", Callable())
 			if f.is_valid():
 				f.call(action, true)
@@ -132,18 +151,50 @@ func _input(event: InputEvent) -> void:
 		return
 	_run(OS.get_keycode_string(key.get_keycode_with_modifiers()), action, int(hit[1]))
 
+## The key's code: its keycode, or, when the platform leaves that empty
+## (KEY_NONE) but sends the physical key, the code the current layout gives
+## that key -- so a table key is never lost to an event that carries only
+## the physical code. Ours.
+static func key_code_of(key: InputEventKey) -> int:
+	if key.keycode != KEY_NONE:
+		return key.keycode
+	if key.physical_keycode != KEY_NONE:
+		return DisplayServer.keyboard_get_keycode_from_physical(key.physical_keycode)
+	return KEY_NONE
+
+## One line in the log per key press that is not typing, saying where it
+## went -- the playtest log is how a key problem on a tester's machine gets
+## seen (ours). The focus owner is named, never the text of a line.
+func _log_key(key: InputEventKey, keycode: int, what: String) -> void:
+	var focus := get_viewport().gui_get_focus_owner() if is_inside_tree() else null
+	print("KEY %s (code %d, physical %d): %s; focus %s" % [
+		OS.get_keycode_string(keycode), keycode, key.physical_keycode, what,
+		("%s<%s>" % [focus.name, focus.get_class()]) if focus != null else "none"])
+
+## While a text line has the keyboard, one line when that starts, naming the
+## line -- never the keys, which are the player's text.
+var _typing_logged := false
+func _log_typing() -> void:
+	if _typing_logged:
+		return
+	_typing_logged = true
+	var focus := get_viewport().gui_get_focus_owner() if is_inside_tree() else null
+	print("KEY typing: keys go to %s until it lets go of the keyboard" % [
+		("%s<%s>" % [focus.name, focus.get_class()]) if focus != null else "a text line"])
+
 func _on_release(key: InputEventKey) -> void:
-	if key.keycode == KEY_SPACE:
+	var keycode := key_code_of(key)
+	if keycode == KEY_SPACE:
 		_space_held = false
 		return
 	for action in _held.keys():
-		if int(_held[action]) == key.keycode:
+		if int(_held[action]) == keycode:
 			_let_go(action)
-	var hit := KeyMap.resolve_release(key.keycode)
+	var hit := KeyMap.resolve_release(keycode)
 	if hit.is_empty():
 		return
 	get_viewport().set_input_as_handled()
-	_run(OS.get_keycode_string(key.keycode), String(hit[0]), int(hit[1]))
+	_run(OS.get_keycode_string(keycode), String(hit[0]), int(hit[1]))
 
 func _run(key_name: String, action: String, arg: int) -> void:
 	var f: Callable = host.get("run", Callable())

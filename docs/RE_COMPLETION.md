@@ -45999,3 +45999,53 @@ no WM_SYSKEY* message). Negative, the suite against 8650cab (`/var/tmp/rkeymap2/
 	FAIL Alt+Tab does not go berserk (ran [["berserk", 8]])
 	FAIL Alt+F4 does not select page 4 (ran [["page", 4]])
 	FAIL Alt+Space starts no Space chord: 1 is the page's slot (ran [["quickslot", 41]])
+
+## The window keys are read before the interface can take them, and every key press is logged (round 609)
+
+Client only. **v0.1.453 playtest:** "tab seems to work but none of the other keyboard shortcuts".
+The tester's log (Windows 10.0.26200, v0.1.453) shows why it was Tab and not the others: Tab
+is read by `KeyInput._input`, **before** the GUI, while the window keys (I, C, S, Q, U, M, ...)
+were left to `HudPanels._unhandled_key_input`, which a key reaches only if no control on its way
+takes it. Round 608's own header had measured exactly this trap for Tab (a focused control
+consumed it before the unhandled stage) and moved Tab early; the window keys stayed late. The
+log also shows no chat text and no key action at all for letters, only `Ctrl+F3` (a key that
+runs while typing).
+
+**Which control took the keys on the tester's machine is not established**: the v0.1.453 log
+has no per-key line, and the same build handles every key on the render box, through Login and
+Character Select with real X keyboard events (`xdotool`, not `push_input`), measured this
+round. So the fix removes the whole class rather than one culprit:
+
+- **KeyInput now runs the window keys too**, in `_input` before the GUI, through a new host
+  callable `"panel"` (`World3D._run_panel_key`: `HudPanels.toggle`, or the world map's
+  `world_map_toggle_requested` for M). A key repeat does not toggle twice. While a text line has
+  the keyboard nothing changes: the keys go into the line. A host without `"panel"` (the old
+  stub hosts in the suites) leaves them to HudPanels as before, so `HudPanels._unhandled_key_input`
+  still works as a fallback.
+- **`KeyInput.key_code_of`**: an event whose `keycode` is empty but whose `physical_keycode` is
+  set resolves through the layout (`DisplayServer.keyboard_get_keycode_from_physical`). Ours;
+  not seen in the log, closed because it is the other way a letter can go missing.
+- **`HudChat.is_typing`** now also requires the chat line to be visible (a hidden focused line
+  must not swallow keys).
+- **Every key press is logged** (ours, for playtest reports): one `KEY <name> (code, physical):
+  <what it did>; focus <control>` line per press that is not typing, and one `KEY typing: keys go
+  to <control>` line when a text line takes the keyboard -- never the typed keys themselves.
+
+**Negative** (`client/scripts/ui/key_before_gui_test.gd`, through `Viewport.push_input`, a
+focused control that accepts every key): against v0.1.453's scripts (63a899b) it prints
+
+```
+FAIL I, C, S and M reach the window toggles past a focused control that takes every key (got [])
+FAIL the focused control never sees them (saw [73, 67, 83, 77])
+ok  Tab still runs berserk (ran [["berserk", 8]])
+FAIL a held I toggles once, not on its repeats (got [])
+FAIL an I that carries only its physical code still opens the inventory (got [])
+FAIL KeyInput.key_code_of exists
+FAILURES: 5
+```
+
+-- Tab passing while the window keys fail is the tester's report, reproduced. On this tree: ALL
+PASS. **Live**, real X keys through Login -> Character Select -> world: `KEY I ... inventory
+open`, `C ... character open`, `S ... skill open`, `Q ... quest open`, `U ... guild open`,
+`M ... world map toggled`, Tab berserk, G, N, X. `remote_godot.sh check`: 313 scripts ALL LOAD;
+`tests`: 122 suites, 0 failing.

@@ -7083,6 +7083,18 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-ninth round: the window keys are read before the interface can take them, and every key press is logged
+
+- **Report (v0.1.453):** Tab worked, none of the other keys did. Tab is read by KeyInput before
+  the GUI; the window keys were left to HudPanels' `_unhandled_key_input`, which a focused control
+  can starve -- the trap round 608 measured for Tab. The tester's log shows no per-key line, so the
+  control on that machine is not identified; the fix removes the class.
+- **Fix:** KeyInput runs the window keys itself (host `"panel"` -> `World3D._run_panel_key`),
+  a keycode-less event resolves from its physical key, a hidden chat line no longer counts as
+  typing, and every key press logs one `KEY ...` line (never typed text).
+- **Tests:** `key_before_gui_test.gd` fails 5 checks on v0.1.453 (Tab passing, I/C/S/M swallowed)
+  and passes here; real X keys through Login -> Character Select open every window.
+
 ## Six-hundred-and-eighth round: the keyboard is the retail client's own key table -- G picks up, V hides, Z names the drops, Tab goes berserk, and no key walks
 
 The full record is `docs/RE_COMPLETION.md`'s entry of the same name (round 608).
