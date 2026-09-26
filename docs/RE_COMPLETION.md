@@ -41050,3 +41050,132 @@ It loaded `object.ifo` with 3,307 entries. The default hides 57 type ids (christ
 - `remote_godot.sh check`: 285 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`: ran 105
   suites, 0 failing, and 0 `SCRIPT ERROR`.
 - `go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok.
+
+## Window frames are sliced from each piece's own texture, and windows are sized from what they actually draw (round 584)
+
+Client only. Nothing on the wire changes and the server is unchanged. Three defects from the
+read-only GUI audit (its v0.1.450 baseline), each re-measured before it was fixed.
+
+**1. Every frame piece at its own size -- read from CNIFFrame, not assumed.** `UiBuilder._build_frame`
+sized all eight pieces from `left_up`. Most eight-piece sets are not uniform: `sframe_wnd_` has
+a 36-tall top and a 16-tall bottom, `msgbox2_window_` 40/16, `mframe_wnd_` 68/48, `game_window_`
+42x42 corners around 8-thick edges, `opt_inner_box_` 20x24 corners with a 28-tall top edge and a
+12-tall bottom one. So the bottom corners were stretched, the bottom edge was drawn at the top's
+thickness (the doubled line under the Quest list), and the side rails stopped 20 pixels short.
+The geometry now follows the client's own code (decompile on the render box,
+`/var/tmp/decomp_client/funcs_001.c`):
+
+- the frame's loader `FUN_004745a0` (just before `CNIFFrame::vslot_000`, same object offsets)
+  passes the four corners to `FUN_004750a0` and the four edges to `FUN_00475400`, which keeps
+  each texture's own width and height beside it (edges at `+0x76c..+0x788`, in the order
+  left_side, mid_up, right_side, mid_down -- the order the draw then places them in);
+- `FUN_00474d00` lays each corner quad at that corner's own width and height, anchored at its
+  corner of the window rect;
+- the draw, `FUN_004736a0` (slot 13 of 41 window classes' vtables; the one hierarchy the dump
+  prints, CNIFGPHistoryWnd's, runs through CNIFMainFrame to CNIFFrame), tiles each
+  edge at its **own** thickness across the gap between the corners it meets, and crops the last
+  tile through its UV: the top edge at y = top, x from left + left_up.w to right - right_up.w; the
+  bottom at y = bottom - own.h, x from left + left_down.w to right - right_down.w; the left at
+  x = left, y from top + left_up.h to bottom - left_down.h; the right at x = right - own.w, from
+  top + **left_up**.h for height - right_up.h - right_down.h. The last detail is copied as read.
+  All 18 eight-piece bases named by the archive's 229 layouts have left_up and right_up the same
+  size, so it changes nothing today.
+- the layouts' own control types (`CIFFrame`, `CIFSubFrame`, `CIFMainFrame`) are a separate CIF
+  family with its own copy of this code, and the review read that one too: loader
+  `FUN_00815300` (corners through `FUN_0081ae80`, edges through `FUN_0081b1b0`), corner layout
+  `FUN_0081a740`, draw `FUN_00815490` (slot 13 across 93 classes). The geometry is identical,
+  the object offsets are shifted by +0x24, and the right edge starts at left_up's height there
+  too. The CNIF functions above were read first; the link from the layouts to them was assumed
+  until the CIF copy was read.
+
+Godot's `STRETCH_TILE` tiles from the rect's origin and crops the last tile, which is the same
+thing. Six-piece sets (no `mid_up`/`mid_down`) are a different class, laid out by
+`FUN_00499e10` around an inner rect. How that maps onto a control's rect is not read, so their
+geometry is left as it was. It is unchanged for `com_lattice_outline_` and `com_blacksquare_`,
+which are 4x4 in every piece. It is open for `com_square_` (4x64 sides, one control in the
+archive). The clamp fix in point 2 does change `com_square_`'s drawing: its top and bottom,
+which reuse the 4x64 side piece, are no longer forced to 64 tall. Its only control is in
+ifskillpracticebox, which no panel builds, so nothing on screen changes today.
+
+**2. A piece shorter than its texture is no longer clamped up to it.** `_add_slice` set `size`
+before `expand_mode = EXPAND_IGNORE_SIZE`. With the default expand mode a TextureRect's minimum
+size is its texture, so the size was clamped to it, and switching the mode afterwards never gave
+it back. The Action window's 117-tall subframes grew 128-tall side rails that ran into the next
+subframe. The same happened to the Party Match search frame's 52-tall rails (for a 29 gap) and
+to the Exchange subframes. The modes are now set first. The other caller, `_add_row_bar_from`,
+is affected once: of the 134 row-bar controls in the layouts, only ifjobcontributionrank's
+150x22 bar is shorter than the 24-tall art, and it now draws 22 tall instead of 24.
+
+**3. `UiBuilder.section_size` counts what is drawn.** It ignored art with a zero-size rect, which
+`build_control` draws at the art's natural size (UI_TODO rule 4). It also counted ifexchange's
+controls parked at `x = 9999`. It now takes the builder (`section_size(sec, builder)`, passed by
+both `HudWindow` callers) and counts a zero-size control at its natural size. It skips any
+control with `x >= 9999` (`UiBuilder.PARKED_X`, `is_parked`). That convention is the data's.
+ifexchange has 13 such controls: the message box and its two backings under
+`UI_UPDATE_2009_FIRST`, the six avatar-view controls under `APPLY_EXCHANGE_UPDATE_1TH`, and the
+two `ch_line.ddj` dividers. No other control in the 229 layouts reaches past x = 864 (ifunderbar's
+`800,0,64,52`) or y = 652. Whether the client later moves them into view is not read. They are
+still built where the layout puts them, and only the size ignores them.
+
+**Measured** (the audit tool `zz_gui_audit.gd` builds every panel and dumps its node tree, run in
+the gui lane `/opt/srrevamp-client-gui`, GL Compatibility on the RX 5700 XT; a scratch script
+compares every frame piece's drawn rect with its texture and with the gap it spans):
+
+- frame groups with a piece at the wrong size, or an edge not spanning its gap exactly: **13 of
+  218 before, 0 of 218 after**. By window, before -> after (piece rects are x,y,w,h):
+  - character `GDR_PI_SUBFRAME` 364x356, quest `GDR_QUEST_FRAME` 365x355, party
+    `GDR_PARTY_FRAMEL`, academy `GDR_APPRENTICESHIP_FRAMEL`, storage `GDR_STORAGE_BG_CTRL`
+    (`sframe_wnd_`): bottom corners 16x36 -> 16x16, bottom edge 36 -> 16 tall. Quest's
+    left rail is `0,36,16,283` -> `0,36,16,303`, and its bottom edge `16,319,333,36` ->
+    `16,339,333,16`.
+  - action, four subframes (`GDR_ACTION_BG_CTRL`/`_ACT` 364x117, `_SUM`/`_BRU` 178x117): side
+    rails `0,36,16,128` -> `0,36,16,65` (they ran 47 pixels past the frame), and the bottom
+    `16,81,332,36` -> `16,101,332,16`.
+  - partymatch `GDR_PARTYMATCH_SEARCH_FRAME` 735x61 (`frameg_wnd_`): rails `26,69,24,52` ->
+    `26,69,24,29`.
+  - exchange `GDR_EXCHANGE_MY_SUBFRAME`/`_OTHER_SUBFRAME` 236x141: rails 128 -> 89 tall, and the
+    bottom `25,287,204,36` -> `25,307,204,16`.
+  - worldmap `GDR_WORLDMAP` 652x424 (`mframe_wnd_`): bottom `40,356,572,68` -> `40,376,572,48`.
+    The side rail now ends at 376, which matches the map viewport HudWorldmap already cut from
+    the pieces' own sizes (424 - 68 - 48 = 308).
+- window sizes, before -> after: party 364x339 -> **364x363** and academy 364x339 -> **364x363**
+  (the Invite/Set/Match buttons, `0,0` rects at y=339 with 76x24 art, were outside the window);
+  alchemy 340x203 -> **357x207** (the 104x28 Fuse/Fuse all/Cancel buttons and the 24x24 arrows);
+  guild 446x314 -> **594x314** (`GDR_GUILD_INFO_WND`'s 588x108 `gil_windo01.ddj` at 6,4; the
+  376-wide GP bar in the GuildInfo section now fits too); exchange 10344x458 -> **245x352**, and
+  `centre()` now puts it at **(828, 399)** on a 1900x1150 screen instead of (-4222, 346). The
+  other 20 widgets are unchanged in size.
+- The audit's other findings for these windows: party's 6, academy's 4, alchemy's 8 of 9 and
+  guild's 3 OUTSIDE findings are gone. What remains is alchemy's count `LineEdit` (67x31, its
+  minimum height, not art) and exchange's 33, which are all the parked controls and their frame
+  pieces at x >= 9999. The `EDGE_TILED_OFF` findings left (inventory, action, exchange, guild,
+  partymatch, store, storage) are six-piece sets, where a `_side` piece is reused as the top and
+  bottom, as read in round 126.
+
+**Tests.** `ui_builder_test.gd`, `_check_frame_pieces_at_own_size`: synthetic textures with
+`sframe_wnd_`'s, `game_window_`'s and `opt_inner_box_`'s real piece sizes, built at 364x117,
+200x150 and 120x100. Every piece is checked at its own size, the rails are not clamped to their
+texture, and every edge spans exactly the gap between its corners. `_check_section_size_measures_what_is_drawn`:
+an Exchange-like fixture with two controls parked at x=9999 and a zero-size 76x24 button below a
+364x303 frame gives 364x339 without a builder and 364x363 with one; `is_parked` is also checked.
+NEGATIVE, run on the box against the previous `ui_builder.gd` (with the two calls that the old
+API lacks rewritten to it): **14 FAIL lines** (the sframe rails `16x128` for `16x65`, the bottom
+corners `16x36`, game_window's edges 42 thick and 160 long, opt_inner_box's bottom edge 24 tall,
+the parked controls giving `(10336, 429)`, and the zero-size button not counted). With the
+change: ALL PASS.
+
+**Verified.** `remote_godot.sh check`: 285 scripts and 5 scenes, ALL LOAD. `remote_godot.sh
+tests`: ran 104 suite(s), 0 failing. `cd server && go build ./... && go test -count=1 -p 1 ./...`:
+59 packages ok. The audit run printed 0 `SCRIPT ERROR`. Its pages were looked at to show the
+change, not to decide it: the Action window's rails no longer cross into the next subframe, the
+Quest list has one bottom line, and Exchange is on screen. The frames were deleted after
+measuring.
+
+**Not done here (later rounds, from the same audit):** section alternates, the outer registry
+frame (Exchange still draws no window frame of its own), the community tabs, the HUD settle, the
+double setup. Also not done: whether guild's 588-wide header really belongs in a 446-wide frame,
+or marks a different outer frame. The window now encloses what it draws, and that question
+belongs to the outer-frame item. One cost until then: the header was always drawn (the texture
+is opaque in all 588 columns), but the window now also blocks clicks over the see-through area
+below it and right of the 440-wide body, x 446 to 594 and y 112 to 314.
+

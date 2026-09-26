@@ -95,7 +95,7 @@ func build(builder: UiBuilder, layout_path: String, title: String,
 	if sec == null or sec.controls.is_empty():
 		return false
 
-	var window_size := UiBuilder.section_size(sec)
+	var window_size := UiBuilder.section_size(sec, builder)
 	if window_size == Vector2.ZERO:
 		return false
 	custom_minimum_size = window_size
@@ -169,7 +169,7 @@ func dock_companion(builder: UiBuilder, layout_path: String, x_offset: float) ->
 	if comp_close != null:
 		(comp_close as CanvasItem).visible = false
 
-	var companion_size := UiBuilder.section_size(sec)
+	var companion_size := UiBuilder.section_size(sec, builder)
 	size.x = x_offset + companion_size.x
 	# Grow to the taller of the two so the companion's frame isn't clipped
 	# (the equipment frame runs to 355, past the bag's 333).

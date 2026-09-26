@@ -65,20 +65,56 @@ func load_layout(layout_path: String, defines: PackedStringArray = PackedStringA
 ## archive's 140 framed sections, artwork stays inside the frame in 103 and
 ## every control in only 92 -- and the sections where artwork does overrun
 ## are the ones, like the inventory, where it is meant to.
-static func section_size(sec: UiLayoutParser.SectionDef) -> Vector2:
+##
+## **Art is measured at the size it is drawn.** A zero-size rect means "the
+## artwork's own size" (build_control draws it so), and ignoring those let
+## the party, academy and alchemy windows' buttons and the guild window's
+## 588x108 header and 376-wide GP bar hang outside a window sized without
+## them. Reading a natural size needs the archive, so a caller passes its
+## builder; with none, zero-size art counts only as the point it is placed
+## at, as before.
+##
+## **Parked controls are skipped.** ifexchange declares 13 controls at
+## `x = 9999` -- the message box and its two backings (under
+## `#ifdef UI_UPDATE_2009_FIRST`), the six avatar-view controls (under
+## `APPLY_EXCHANGE_UPDATE_1TH`) and the two `ch_line.ddj` dividers -- and
+## counting them made the Exchange window 10344 wide, which centred it at
+## x = -4222. 9999 is the only such coordinate in the archive: across all
+## 229 `resinfo\if*.txt` layouts no other control reaches past x = 864
+## (ifunderbar's `800,0,64,52`) or y = 652. Whether the client moves them
+## into view later is not read; they are built where the layout puts them,
+## and only the window's size ignores them.
+static func section_size(sec: UiLayoutParser.SectionDef, builder: UiBuilder = null) -> Vector2:
 	var framed := Vector2.ZERO
 	var art := Vector2.ZERO
 	var bounds := Vector2.ZERO
 	for def in sec.controls:
-		var far := Vector2(def.rect.position + def.rect.size)
+		if is_parked(def.rect):
+			continue
+		var extent := Vector2(def.rect.size)
+		var natural := false
+		if (def.rect.size.x <= 0 or def.rect.size.y <= 0) and builder != null:
+			var art_size := builder._natural_size(def)
+			if art_size != Vector2.ZERO:
+				extent = art_size
+				natural = true
+		var far := Vector2(def.rect.position) + extent
 		bounds = Vector2(maxf(bounds.x, far.x), maxf(bounds.y, far.y))
-		if def.ddj != "":
+		if def.ddj != "" or natural:
 			art = Vector2(maxf(art.x, far.x), maxf(art.y, far.y))
 		if def.rect.position == Vector2i.ZERO and def.rect.size.x > framed.x:
 			framed = Vector2(def.rect.size)
 	if framed == Vector2.ZERO:
 		return bounds
 	return Vector2(maxf(framed.x, art.x), maxf(framed.y, art.y))
+
+## Where a layout parks a control it does not show: `x = 9999`, used by 13 of
+## ifexchange's controls and by nothing else in the archive (see
+## section_size).
+const PARKED_X := 9999
+
+static func is_parked(rect: Rect2i) -> bool:
+	return rect.position.x >= PARKED_X
 
 func _init(media_pk2: Pk2Reader = null, text_table: UiTextTable = null) -> void:
 	_media_pk2 = media_pk2
@@ -447,36 +483,97 @@ func _build_frame(def: UiLayoutParser.ControlDef) -> Control:
 		# `com_lattice_outline_` is the set in play here -- the border the
 		# inventory draws around its item grid -- four corners and two
 		# sides, all 4x4.
+		var top_reused := mu == null
+		var bottom_reused := md == null
 		if mu == null and ls != null:
 			mu = ls
 		if md == null and rs != null:
 			md = rs
 
-		var corner_w := lu.get_width() if lu != null else 10
-		var corner_h := lu.get_height() if lu != null else 10
+		# **Each piece at its own size**, as the client lays them out -- read
+		# from CNIFFrame's own code, not inferred. The loader
+		# (`FUN_004745a0`) fills four corner slots and four edge slots, and
+		# for every texture stores its width and height beside it
+		# (`FUN_00475400` at +0x76c..+0x788 for the edges). The corner quads
+		# (`FUN_00474d00`) are each that corner's own width and height,
+		# anchored to their corner of the frame. The draw (`FUN_004736a0`)
+		# then tiles each edge at its **own** thickness, across the gap
+		# between the two corners it meets, the last tile cropped:
+		#
+		#   top     y = top,             x from left + left_up.w  to right - right_up.w
+		#   bottom  y = bottom - own.h,  x from left + left_down.w to right - right_down.w
+		#   left    x = left,            y from top + left_up.h   to bottom - left_down.h
+		#   right   x = right - own.w,   y from top + left_up.h, for height - right_up.h - right_down.h
+		#
+		# The layouts' own types (CIFFrame / CIFSubFrame / CIFMainFrame) are
+		# a sibling family with its own copy of this code -- loader
+		# `FUN_00815300`, corners `FUN_0081ae80` / `FUN_0081a740`, edges
+		# `FUN_0081b1b0`, draw `FUN_00815490` -- with the same geometry at
+		# offsets shifted by +0x24.
+		#
+		# (The right edge really does start at *left_up*'s height. All 18
+		# eight-piece bases the archive's layouts name have left_up and
+		# right_up the same size, so it only matters to a set not yet seen.)
+		#
+		# Sizing all eight from `left_up` instead is what stretched every
+		# `sframe_wnd_` bottom corner from 16 to 36 tall (its top pieces are
+		# 36, its bottom ones 16), drew `mframe_wnd_`'s 48-tall bottom 68
+		# tall, and left the side edges 20 pixels short of the bottom
+		# corners. Godot's STRETCH_TILE tiles from the rect's origin and crops
+		# the last tile, which is the client's own tiling.
+		#
+		# A six-piece set (no mid_up / mid_down, the sides reused for the top
+		# and bottom) belongs to a different class whose layout
+		# (`FUN_00499e10`) places its quads around an inner rect and is not
+		# this one; how it maps onto a control's rect is not read. Its
+		# geometry is left as it was: a reused top or bottom takes the
+		# adjoining corner's thickness (no longer clamped up to its texture,
+		# which changes com_square_'s 4x64 reuse; no panel builds it). `com_lattice_outline_` and
+		# `com_blacksquare_` are 4x4 in every piece, so for them the question
+		# does not arise; `com_square_`'s sides are 4x64 (one control in the
+		# archive), and for it the answer is open.
+		var w := def.rect.size.x
+		var h := def.rect.size.y
+		var lu_s := _piece_size(lu)
+		var ru_s := _piece_size(ru)
+		var ld_s := _piece_size(ld)
+		var rd_s := _piece_size(rd)
+		var top_h := lu_s.y if top_reused else _piece_size(mu).y
+		var bottom_h := ld_s.y if bottom_reused else _piece_size(md).y
+		var left_w := lu_s.x if top_reused else _piece_size(ls).x
+		var right_w := ru_s.x if bottom_reused else _piece_size(rs).x
 
-		_add_slice(container, lu, Rect2(0, 0, corner_w, corner_h))
-		_add_slice(container, mu, Rect2(corner_w, 0, def.rect.size.x - corner_w * 2, corner_h), true)
-		_add_slice(container, ru, Rect2(def.rect.size.x - corner_w, 0, corner_w, corner_h))
+		_add_slice(container, lu, Rect2(Vector2.ZERO, lu_s))
+		_add_slice(container, mu, Rect2(lu_s.x, 0, w - lu_s.x - ru_s.x, top_h), true)
+		_add_slice(container, ru, Rect2(Vector2(w - ru_s.x, 0), ru_s))
 
-		_add_slice(container, ls, Rect2(0, corner_h, corner_w, def.rect.size.y - corner_h * 2), true)
-		_add_slice(container, rs, Rect2(def.rect.size.x - corner_w, corner_h, corner_w, def.rect.size.y - corner_h * 2), true)
+		_add_slice(container, ls, Rect2(0, lu_s.y, left_w, h - lu_s.y - ld_s.y), true)
+		_add_slice(container, rs, Rect2(w - right_w, lu_s.y, right_w, h - ru_s.y - rd_s.y), true)
 
-		_add_slice(container, ld, Rect2(0, def.rect.size.y - corner_h, corner_w, corner_h))
-		_add_slice(container, md, Rect2(corner_w, def.rect.size.y - corner_h, def.rect.size.x - corner_w * 2, corner_h), true)
-		_add_slice(container, rd, Rect2(def.rect.size.x - corner_w, def.rect.size.y - corner_h, corner_w, corner_h))
+		_add_slice(container, ld, Rect2(Vector2(0, h - ld_s.y), ld_s))
+		_add_slice(container, md, Rect2(ld_s.x, h - bottom_h, w - ld_s.x - rd_s.x, bottom_h), true)
+		_add_slice(container, rd, Rect2(Vector2(w - rd_s.x, h - rd_s.y), rd_s))
 
 	return container
+
+## A frame piece's own size, or zero when the archive has no such piece.
+static func _piece_size(tex: Texture2D) -> Vector2:
+	return tex.get_size() if tex != null else Vector2.ZERO
 
 func _add_slice(parent: Control, tex: Texture2D, rect: Rect2, tile: bool = false) -> void:
 	if tex == null or rect.size.x <= 0 or rect.size.y <= 0:
 		return
 	var tr := TextureRect.new()
 	tr.texture = tex
-	tr.position = rect.position
-	tr.size = rect.size
+	# The modes go on **before** the size. With the default expand mode a
+	# TextureRect's minimum size is its texture, and assigning `size` first
+	# is clamped up to it -- which is how the Action window's 117-tall
+	# subframes grew 128-tall side rails (the side piece is 16x128), and
+	# setting IGNORE_SIZE afterwards never gave the height back.
 	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	tr.stretch_mode = TextureRect.STRETCH_TILE if tile else TextureRect.STRETCH_SCALE
+	tr.position = rect.position
+	tr.size = rect.size
 	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	parent.add_child(tr)
 

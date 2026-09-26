@@ -29,6 +29,11 @@ Every window in the real client is authored data, and building one is now mechan
    8-slice base ending in `_` (`interface\frame\mframe_wnd_`, `interface\messagebox\
    msgbox2_window_`), expanded as `_left_up`, `_mid_up`, `_right_up`, `_left_side`, `_right_side`,
    `_left_down`, `_mid_down`, `_right_down`. `UiBuilder._build_frame` already does this.
+   **Each piece is drawn at its own size**: corners at their own width and height, and each edge
+   at its own thickness, tiled across the gap between the corners it meets (CNIFFrame's
+   `FUN_00474d00` / `FUN_004736a0`, round 584). The pieces of one set are often not the same size:
+   `sframe_wnd_` has a 36 top and 16 bottom, `mframe_wnd_` 68/48, and `game_window_` 42 corners
+   with 8 edges. Never size one piece from another.
 8. **Interface art is 16-bit ARGB1555**, decoded by `DdjReader` since the hundred-and-first round.
 9. **A section lists its controls front to back.** The window's own frame is always the *last*
    entry (`GDR_PI_SUBFRAME`, `GDR_INVENTORY_FRAME`), so children go into the Godot tree
@@ -61,6 +66,9 @@ Every window in the real client is authored data, and building one is now mechan
 13. **A window is its frame plus any artwork hanging off it**, not the bounding box of every
    control. ifinventory's gold row sits 25 pixels below the frame; ifplayerinfo's `TEXT_HP_DAT` is
    a text field that overruns the right edge by 17 and must not widen the window.
+   Art with a zero-size rect counts at its natural size (rule 4), which is how it is drawn. A
+   control parked at `x = 9999` does not count: ifexchange has 13, and nothing else in the
+   archive goes past x = 864 (`UiBuilder.is_parked`, round 584).
 14. **A `ddj` ending in `_` is an 8-slice base, whatever the control type is called.** (This is
    *our* dispatch strategy, not a claim about the client — there, each class calls its own piece
    loader. What is read from the client is how many pieces each of those loaders takes: eight for
@@ -127,6 +135,14 @@ is presentation work on solved data; if you find yourself editing the protocol, 
   6-piece frames, text-table lookup, texture cache, and `window_def()` for the registry.
 - **Window interiors and item grids** (hundred-and-thirteenth round) — panels are no longer
   hollow and the inventory draws its real 4×8 grid of authored slots.
+- **Frames and window sizes measured, not assumed** (round 584) -- every frame piece is drawn at
+  its own texture's size and never clamped up to it. Windows count the art they draw and skip
+  parked controls. Party and academy are now 364x363, alchemy 357x207, guild 594x314 and
+  Exchange 245x352 (it was 10344 wide and centred off-screen at x=-4222). Still open from the same
+  audit: section alternates, the outer registry frame (Exchange has no window frame of its own),
+  the community tabs, the HUD settle and the double setup. For the outer-frame item: guild's
+  594-wide window now blocks clicks over a see-through area below its 588-wide header and right
+  of the 440-wide body (x 446 to 594, y 112 to 314).
 - **The teleport board** (round 578) — the Dimensional Teleporter, `resinfo\ifteleportboard.txt`,
   built by the recipe: `HudPanels.PANELS["teleport"]`, and its five `CIFTeleportAreaSlot` rows
   (`GDR_TB_TASLOT1..5`) filled from `resinfo\ifteleportareaslot.txt`'s own section (place, price,

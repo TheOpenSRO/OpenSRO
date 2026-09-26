@@ -88,6 +88,8 @@ Section = Create,"0,0,200,100","0"
 	_check_lattice()
 	_check_slice_base_beats_the_type_name()
 	_check_font_table()
+	_check_frame_pieces_at_own_size()
+	_check_section_size_measures_what_is_drawn()
 
 	if _failures == 0:
 		print("ALL PASS")
@@ -223,3 +225,153 @@ func _check_font_table() -> void:
 	var with_name := UiTextTable.parse("1\tUIC_STT_FONTNAME\t굴림체\t0\t0\t0\t0\t0\t0\tTahoma\n".to_utf16_buffer())
 	_check(UiBuilder.new(null, with_name).ui_face_name() == "Tahoma",
 		"the text table's UIC_STT_FONTNAME English column names the face")
+
+## A builder with no archive, holding synthetic pieces in its texture cache
+## under `test\<base>_<suffix>.ddj`, each a blank texture of the given size.
+func _synthetic_builder(pieces: Dictionary) -> UiBuilder:
+	var builder := UiBuilder.new(null, null)
+	for key in pieces:
+		var sz: Vector2i = pieces[key]
+		var img := Image.create(sz.x, sz.y, false, Image.FORMAT_RGBA8)
+		builder._texture_cache[String(key).to_lower()] = ImageTexture.create_from_image(img)
+	return builder
+
+## The eight pieces of a frame built from `base` at `rect`, keyed by suffix.
+func _frame_pieces(builder: UiBuilder, base: String, rect: String) -> Dictionary:
+	var layout := UiLayoutParser.parse("""
+Interface Text
+
+Section = Create,"0,0,0,0","0"
+{
+	GDR_FRAME:CIFFrame
+	{
+		Rect=RECT,"%s"
+		DDJ=STRING,"%s"
+	}
+}
+""" % [rect, base])
+	var root := builder.build_section(layout, "Create")
+	var by_tex := {}
+	for key in builder._texture_cache:
+		var parts := String(key).split("\\")[-1].trim_suffix(".ddj").split("_")
+		by_tex[builder._texture_cache[key].get_instance_id()] = parts[-2] + "_" + parts[-1]
+	var out := {}
+	var frame := root.get_node_or_null("GDR_FRAME")
+	if frame != null:
+		for child in frame.get_children():
+			if child is TextureRect and (child as TextureRect).texture != null:
+				out[by_tex.get((child as TextureRect).texture.get_instance_id(), "?")] = Rect2(child.position, child.size)
+	root.free()
+	return out
+
+func _check_piece(pieces: Dictionary, suffix: String, want: Rect2, what: String) -> void:
+	var got: Variant = pieces.get(suffix)
+	_check(got == want, "%s: %s at %s (got %s)" % [what, suffix, str(want), str(got)])
+
+## **Every frame piece at its own size.** The client's CNIFFrame
+## (FUN_00474d00 / FUN_004736a0) draws each corner at that corner's own
+## width and height and tiles each edge at its own thickness across the gap
+## between the corners it meets. Sizing all eight from left_up stretched
+## sframe_wnd_'s 16-tall bottom corners to 36 and drew its bottom edge 36
+## tall; setting the size before EXPAND_IGNORE_SIZE clamped a 65-tall side
+## rail up to its 128-tall texture.
+func _check_frame_pieces_at_own_size() -> void:
+	# sframe_wnd_'s real piece sizes: 36-tall top, 16-tall bottom.
+	var s := _synthetic_builder({
+		"test\\sf_left_up.ddj": Vector2i(16, 36), "test\\sf_mid_up.ddj": Vector2i(128, 36),
+		"test\\sf_right_up.ddj": Vector2i(16, 36), "test\\sf_left_side.ddj": Vector2i(16, 128),
+		"test\\sf_right_side.ddj": Vector2i(16, 128), "test\\sf_left_down.ddj": Vector2i(16, 16),
+		"test\\sf_mid_down.ddj": Vector2i(128, 16), "test\\sf_right_down.ddj": Vector2i(16, 16)})
+	# The Action window's GDR_ACTION_BG_CTRL: 364x117, shorter than the side piece.
+	var p := _frame_pieces(s, "test\\sf_", "0,0,364,117")
+	_check(p.size() == 8, "all eight pieces are built (got %d)" % p.size())
+	_check_piece(p, "left_up", Rect2(0, 0, 16, 36), "sframe 364x117")
+	_check_piece(p, "mid_up", Rect2(16, 0, 332, 36), "sframe 364x117")
+	_check_piece(p, "right_up", Rect2(348, 0, 16, 36), "sframe 364x117")
+	_check_piece(p, "left_side", Rect2(0, 36, 16, 65), "sframe 364x117, not clamped to the 128-tall texture")
+	_check_piece(p, "right_side", Rect2(348, 36, 16, 65), "sframe 364x117, not clamped to the 128-tall texture")
+	_check_piece(p, "left_down", Rect2(0, 101, 16, 16), "sframe 364x117, bottom corner at its own 16")
+	_check_piece(p, "mid_down", Rect2(16, 101, 332, 16), "sframe 364x117, bottom edge at its own 16")
+	_check_piece(p, "right_down", Rect2(348, 101, 16, 16), "sframe 364x117, bottom corner at its own 16")
+
+	# game_window_'s shape: 42x42 corners around 8-thick edges.
+	var g := _synthetic_builder({
+		"test\\gw_left_up.ddj": Vector2i(42, 42), "test\\gw_mid_up.ddj": Vector2i(56, 8),
+		"test\\gw_right_up.ddj": Vector2i(42, 42), "test\\gw_left_side.ddj": Vector2i(8, 160),
+		"test\\gw_right_side.ddj": Vector2i(8, 160), "test\\gw_left_down.ddj": Vector2i(42, 42),
+		"test\\gw_mid_down.ddj": Vector2i(56, 8), "test\\gw_right_down.ddj": Vector2i(42, 42)})
+	p = _frame_pieces(g, "test\\gw_", "0,0,200,150")
+	_check_piece(p, "mid_up", Rect2(42, 0, 116, 8), "game_window 200x150, top edge 8 thick")
+	_check_piece(p, "left_side", Rect2(0, 42, 8, 66), "game_window 200x150, left edge 8 wide, not clamped to 160")
+	_check_piece(p, "right_side", Rect2(192, 42, 8, 66), "game_window 200x150, right edge flush right")
+	_check_piece(p, "mid_down", Rect2(42, 142, 116, 8), "game_window 200x150, bottom edge flush bottom")
+	_check_piece(p, "right_down", Rect2(158, 108, 42, 42), "game_window 200x150")
+
+	# opt_inner_box_'s shape: an edge thicker than the corners it meets.
+	var o := _synthetic_builder({
+		"test\\ob_left_up.ddj": Vector2i(20, 24), "test\\ob_mid_up.ddj": Vector2i(64, 28),
+		"test\\ob_right_up.ddj": Vector2i(20, 24), "test\\ob_left_side.ddj": Vector2i(20, 64),
+		"test\\ob_right_side.ddj": Vector2i(20, 64), "test\\ob_left_down.ddj": Vector2i(20, 24),
+		"test\\ob_mid_down.ddj": Vector2i(64, 12), "test\\ob_right_down.ddj": Vector2i(20, 24)})
+	p = _frame_pieces(o, "test\\ob_", "0,0,120,100")
+	_check_piece(p, "mid_up", Rect2(20, 0, 80, 28), "opt_inner_box 120x100, top edge its own 28")
+	_check_piece(p, "mid_down", Rect2(20, 88, 80, 12), "opt_inner_box 120x100, bottom edge its own 12")
+	_check_piece(p, "left_side", Rect2(0, 24, 20, 52), "opt_inner_box 120x100, side spans corner to corner")
+
+	# Every edge spans exactly the gap between the corners it meets.
+	p = _frame_pieces(s, "test\\sf_", "0,0,236,241")
+	var lu: Rect2 = p.get("left_up", Rect2()); var ru: Rect2 = p.get("right_up", Rect2())
+	var ld: Rect2 = p.get("left_down", Rect2()); var rd: Rect2 = p.get("right_down", Rect2())
+	var mu: Rect2 = p.get("mid_up", Rect2()); var md: Rect2 = p.get("mid_down", Rect2())
+	var ls: Rect2 = p.get("left_side", Rect2()); var rs: Rect2 = p.get("right_side", Rect2())
+	_check(mu.position.x == lu.end.x and mu.end.x == ru.position.x, "top edge spans left_up..right_up (%s)" % str(mu))
+	_check(md.position.x == ld.end.x and md.end.x == rd.position.x, "bottom edge spans left_down..right_down (%s)" % str(md))
+	_check(ls.position.y == lu.end.y and ls.end.y == ld.position.y, "left edge spans left_up..left_down (%s)" % str(ls))
+	_check(rs.position.y == ru.end.y and rs.end.y == rd.position.y, "right edge spans right_up..right_down (%s)" % str(rs))
+
+## **A window is sized from what it draws.** A zero-size rect draws its art at
+## the art's own size, so it counts at that size (ifparty's buttons at
+## y=339, 24 tall, below a 303-tall frame); a control parked at x=9999, as 13
+## of ifexchange's are, is not drawn in the window and does not count.
+func _check_section_size_measures_what_is_drawn() -> void:
+	var layout := UiLayoutParser.parse("""
+Interface Text
+
+Section = Create,"0,0,0,0","0"
+{
+	GDR_TEXT_BOX_FRAME_BG:CIFNormalTile
+	{
+		Rect=RECT,"9999,342,337,87"
+		DDJ=STRING,"test\\tile.ddj"
+	}
+	GDR_USER_LINE:CIFStatic
+	{
+		Rect=RECT,"9999,61,8,116"
+		DDJ=STRING,"test\\line.ddj"
+	}
+	GDR_BTN_MATCH:CIFButton
+	{
+		Rect=RECT,"230,339,0,0"
+		DDJ=STRING,"test\\button.ddj"
+	}
+	GDR_FRAME:CIFFrame
+	{
+		Rect=RECT,"0,0,364,303"
+	}
+}
+""")
+	var sec := layout.get_section("Create")
+	_check(sec != null, "section parsed for the drawn-size check")
+	if sec == null:
+		return
+	# No builder: nothing can say how big the zero-size button is (it counts
+	# as the point at its origin, y=339), but the parked controls are already
+	# excluded.
+	_check(UiBuilder.section_size(sec) == Vector2(364, 339),
+		"controls parked at x=9999 do not widen the window (got %s)" % str(UiBuilder.section_size(sec)))
+	var b := _synthetic_builder({"test\\button.ddj": Vector2i(76, 24),
+		"test\\tile.ddj": Vector2i(64, 64), "test\\line.ddj": Vector2i(8, 116)})
+	_check(UiBuilder.section_size(sec, b) == Vector2(364, 363),
+		"a zero-size button counts at its art's 76x24, so the window reaches y=363 (got %s)" % str(UiBuilder.section_size(sec, b)))
+	_check(UiBuilder.is_parked(Rect2i(9999, 70, 100, 104)) and not UiBuilder.is_parked(Rect2i(800, 0, 64, 52)),
+		"x=9999 is parked; ifunderbar's 800,0 is not")

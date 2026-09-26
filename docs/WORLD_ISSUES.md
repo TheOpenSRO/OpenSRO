@@ -7083,6 +7083,36 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-eighty-fourth round: window frames are sliced from each piece's own texture, and windows are sized from what they actually draw
+
+Three defects from the read-only GUI audit, each re-measured on the box before it was fixed. The
+full record is `docs/RE_COMPLETION.md`'s entry of the same name.
+
+- **Frame pieces.** `UiBuilder._build_frame` sized all eight pieces from `left_up`. The client
+  does not. CNIFFrame's corner layout (`FUN_00474d00`) and its draw (`FUN_004736a0`) put each
+  corner at its own size and tile each edge at its own thickness between the corners it meets.
+  The CIF family the layouts actually name (`CIFFrame`/`CIFSubFrame`/`CIFMainFrame`: loader
+  `FUN_00815300`, corners `FUN_0081a740`, draw `FUN_00815490`) carries the same geometry at
+  offsets shifted by +0x24, read in review.
+  Measured across the audit's node dump of every panel, frame groups with a piece at the wrong
+  size or an edge off its gap went from 13 of 218 to 0. Examples: the `sframe_wnd_` bottom
+  corners drew 16x36 for 16x16 art (character, quest, party, academy, storage, action, exchange);
+  the worldmap's `mframe_wnd_` bottom drew 68 tall for 48 tall art.
+- **Clamped rails.** `_add_slice` set `size` before `EXPAND_IGNORE_SIZE`, so a piece shorter than
+  its texture was clamped up to it. The Action window's 117-tall subframes had 128-tall rails,
+  now 65. The Party Match search frame's rails were 52 tall and are now 29; the Exchange
+  subframes' were 128 and are now 89.
+- **Window sizes.** `section_size` now counts zero-size art at its natural size and skips
+  controls parked at `x = 9999` (13 in ifexchange; no other control in 229 layouts goes past
+  x = 864). Party and academy went from 364x339 to 364x363, alchemy from 340x203 to 357x207 and
+  guild from 446x314 to 594x314. Exchange went from 10344x458, centred at (-4222, 346), to 245x352
+  at (828, 399).
+- **Tests.** `ui_builder_test.gd` gained two checks, and they fail 14 times against the previous
+  builder. `remote_godot.sh tests`: 104 suites, 0 failing.
+- **Open.** The six-piece stretch window's geometry (`FUN_00499e10`) is not read and is unchanged.
+  Guild's 588-wide header may mean a different outer frame. Both are for the later audit rounds
+  (outer registry frame, alternates, community tabs, HUD settle, double setup).
+
 ## Five-hundred-and-eighty-third round: seasonal event decorations (Christmas, Halloween, the open-beta event, the summer festival) are hidden by default
 
 The user decided on 2026-09-26 that early testing gets no seasonal decorations, and chose four
@@ -7125,6 +7155,7 @@ full record, with the layer tables that ground the folder-to-event mapping, is
 - **Tests**: `seasonal_objects_test.gd`, with 7 FAILURES on round 582's tree. On this tree,
   `remote_godot.sh check` loads 285 scripts and `tests` runs 105 suites with 0 failing, and the
   Go packages pass.
+
 
 ## Five-hundred-and-eighty-second round: a second Move before the teleport's reply can no longer charge twice
 
