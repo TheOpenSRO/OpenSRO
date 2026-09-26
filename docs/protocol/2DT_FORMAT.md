@@ -114,7 +114,7 @@ parent is found, `0x48cb00` asks it for a direct child with the record's own id 
 `0x48cbe6..0x48cbf7`) and does not re-link when it already has one; the record stays under the
 root. **Parent 0:** the id is first compared with loader+0x3c (`0x48cb0f`), which is 0 (stored at
 `0x48999a`; its setter `0x48cd60` has no direct caller), so a parent id of 0 takes that first
-branch, finds loader+0x38 empty and returns at `0x48cc27` without a move. Linking moves a
+branch, finds loader+0x38 empty and returns 1 at `0x48cc27` (`mov eax,0x1`) without a move. Linking moves a
 window between child lists (AddChild, vslot `0x1c`, a push_back) and does not move it on screen.
 Measured with the reader's rule (earlier records only, with the guard): **2310 of 2312 records
 link, none ambiguously, none needs a later record, and the guard leaves none behind**; the other
@@ -126,6 +126,15 @@ file order is **back to front**: in 690 of 694 overlapping sibling pairs of a No
 content control (anything but a frame or stretch border), the tile comes first
 (`check_2dt_files.gd`'s ORDER line). That is the opposite of the `.txt` layouts, whose frame is
 the last entry. The render loop was not read.
+
+**Moving a window (read).** Vslot `0x9c` (`0x46cfa0`, the same entry in CNIFGuildWnd's vtable
+`0xd9285c` and CNIFMultiLetter's `0xd943bc`) calls vslot `0x98` with its two arguments; `0x98`
+(`0x46cfc0`) calls `0xb90d90` -> `0xb90cf0`, which sets +0x40 = x and +0x44 = y **absolutely**,
+moves by the same delta each child whose `[+0x38]` is non-zero and byte `[+0x3c]` is zero
+(`0xb90d3c..0xb90d46`, via `0xb90c60`), and ends by calling vslot `0x94` (`0xb90d6c`); `0x46cfc0`
+then calls vslot `0xa4`. +0x48 / +0x4c are the width and
+height (GetSize `0xb8f480`). So a class that moves a window after loading moves it with its
+children, as `GuildWindow` does by moving a node.
 
 **Visibility at creation (read, with one inference).** The window base constructor `0xb9e270`
 (vtable `0xe08f0c`) sets the visible byte +0x61 to 1 (`0xb9e284`); `0xb8f530` is the visibility

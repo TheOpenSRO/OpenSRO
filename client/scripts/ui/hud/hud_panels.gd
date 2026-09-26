@@ -96,7 +96,8 @@ const GUILD_WINDOW_KEY := "guild"
 ## window draws them even when it is built after they arrive (the client
 ## builds its window at game start and fills it from data it already holds).
 var _friends: Array = []
-var _has_guild := false
+## The last guild reply without an error (null: none yet).
+var _guild_result: GuildNet.Result = null
 ## The last panel id _populate was asked for (a test hook).
 var last_populated := ""
 
@@ -565,7 +566,7 @@ func _guild_window() -> GuildWindow:
 	window.hide()
 	# Centred on every show by the window itself (GuildWindow.place_centred,
 	# 0x798c50), not once here.
-	window.set_has_guild(_has_guild)
+	_apply_guild(window)
 	window.fill_friends(_friends)
 	# The window's own left-menu buttons switch views; ask for that view's
 	# data as U and the community button do.
@@ -3796,7 +3797,19 @@ func connect_net() -> void:
 	# fill_friends, the client's own row fill), as it filled the old
 	# window's list overlay.
 	NetClient.friend_list_result.connect(_on_friend_list_result)
+	# Every reply that says which guild the player is in: info, create and
+	# join carry it, a successful leave means none.
 	NetClient.guild_info_result.connect(_on_guild_info_result)
+	NetClient.guild_create_result.connect(_on_guild_info_result)
+	NetClient.guild_join_result.connect(_on_guild_info_result)
+	NetClient.guild_leave_result.connect(_on_guild_leave_result)
+	# Replies that arrived before this node existed (World3D asks for the
+	# guild and the friends before its loading screen and builds the HUD
+	# after it): NetClient keeps the last of each.
+	if NetClient.last_guild_result != null:
+		_on_guild_info_result(NetClient.last_guild_result)
+	if NetClient.has_friend_list:
+		_on_friend_list_result(NetClient.last_friend_list, "")
 	NetClient.character_stats_result.connect(_apply_stats)
 	NetClient.skill_state_result.connect(_apply_skill_state)
 	NetClient.raise_mastery_result.connect(_on_raise_mastery_result)
@@ -3825,16 +3838,34 @@ func _on_friend_list_result(friends: Array, error: String) -> void:
 	if guild != null:
 		guild.fill_friends(_friends)
 
-## A guild_info reply: whether the player is in a guild (guild id not 0),
-## which picks the guild window's information branch (0x5b5eb0). World3D
-## still handles the rest of the reply.
+## A guild reply (info, create or join): whether the player is in a guild
+## (guild id not 0), its name and its master, which the guild window's
+## information draws (0x5b5eb0). World3D still handles the rest of the
+## reply. A refused reply changes nothing.
 func _on_guild_info_result(result: GuildNet.Result) -> void:
 	if result == null or result.error != "":
 		return
-	_has_guild = result.guild_id != 0
+	_guild_result = result
 	var guild := _windows.get(GUILD_WINDOW_KEY) as GuildWindow
 	if guild != null:
-		guild.set_has_guild(_has_guild)
+		_apply_guild(guild)
+
+## A successful leave: no guild.
+func _on_guild_leave_result(ok: bool, _reason: String) -> void:
+	if ok:
+		_on_guild_info_result(GuildNet.Result.new())
+
+func _apply_guild(window: GuildWindow) -> void:
+	var r := _guild_result
+	if r == null or r.guild_id == 0:
+		window.set_guild(false)
+		return
+	var master := ""
+	for m in r.members:
+		if m.role == GuildNet.ROLE_LEADER or (r.leader_id != 0 and m.character_id == r.leader_id):
+			master = m.member_name
+			break
+	window.set_guild(true, r.guild_name, master)
 
 ## The character pane's own control names, from resinfo\\ifplayerinfo_trijob2.txt,
 ## the layout CIFPlayerInfo::Create (0x6b84ec) loads. Every name wired below is

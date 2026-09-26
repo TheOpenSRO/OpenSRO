@@ -7083,6 +7083,27 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-ninety-seventh round: a guild member's Guild window leaves the no-guild state
+
+A re-review fix to the round below. The full record is `docs/RE_COMPLETION.md`'s entry of the
+same name.
+
+- **The bug.** Only the no-guild branch of `0x5b5eb0` was drawn. U shows the window before
+  guild_info is asked for, so a member saw "<No guild>" for good.
+- **The fix.** Both branches are drawn now, each undoing the other. The in-guild branch was read
+  (`0x5b5eff..0x5b61d6`): 66 the name, 150 shown, 124 the master. Level, the member count over
+  its cap, points and notice are left blank: guild_info carries the member list but no level
+  (which the cap needs), points or notice.
+- **Every guild reply counts:** info, create and join, and a leave for none.
+- **Replies that arrive before the HUD exists** (World3D asks for them before its loading
+  screen) are kept in NetClient and adopted when the HUD is built. This covers the friend list
+  too.
+- **Read.** Vslot `0x9c` -> `0x98` -> `0xb90cf0` is an absolute move with the children, so the
+  multi-letter window's move is applied.
+- **Fixed.** F10 no longer re-centres the window. There is now a negative for centring on
+  every show.
+- **Tests.** Against 3dd65be: 8 FAIL lines. Against 8dad706: the centring FAIL. ALL PASS here.
+
 ## Five-hundred-and-ninety-sixth round: the Guild window starts in the state the client leaves it in
 
 A review fix to the round below. Every finding was re-read in the asm first, and all six hold.

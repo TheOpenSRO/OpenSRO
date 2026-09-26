@@ -270,6 +270,10 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 		return
 	_connecting = true
 
+func _keep_guild(result: GuildNet.Result) -> void:
+	if result != null and result.error == "":
+		last_guild_result = result
+
 func disconnect_from_server() -> void:
 	if _peer is StreamPeerTLS:
 		(_peer as StreamPeerTLS).disconnect_from_stream()
@@ -280,6 +284,7 @@ func disconnect_from_server() -> void:
 	_connected = false
 	_tls_handshaking = false
 	_attack_targets_in_flight.clear()
+	_forget_session_lists()
 	disconnected.emit()
 
 func is_connected_to_server() -> bool:
@@ -317,6 +322,21 @@ var current_character_name := ""
 ## -- a scene loaded after the signal already fired still needs the data.
 var last_enter_world_result: WorldNet.EnterWorldResult
 
+## The player's guild as the last guild reply said -- a guild_info, create
+## or join reply without an error, or a guild with id 0 after a successful
+## leave -- and the last friend list; null / not had until one arrives. Kept
+## for a window built after the reply (World3D asks for both before the
+## loading screen and builds HudPanels after it). Cleared on entering the
+## world and on disconnecting.
+var last_guild_result: GuildNet.Result = null
+var last_friend_list: Array = []
+var has_friend_list := false
+
+func _forget_session_lists() -> void:
+	last_guild_result = null
+	last_friend_list = []
+	has_friend_list = false
+
 ## The current zone label, updated from last_enter_world_result.zone on
 ## entering the world and again from a successful change_zone_result --
 ## scenes that need to know "which real region's assets to load" (see
@@ -325,6 +345,7 @@ var current_zone := ""
 
 func enter_world(char_name: String) -> void:
 	current_character_name = char_name
+	_forget_session_lists()
 	_send(WorldNet.OP_ENTER_WORLD, WorldNet.encode_enter_world(char_name))
 
 func move_to(x: float, y: float, z: float) -> void:
@@ -725,14 +746,22 @@ func _dispatch(p: Packet) -> void:
 		PartyNet.OP_INFO_RESULT:
 			party_info_result.emit(PartyNet.decode_result(p.data))
 		GuildNet.OP_CREATE_RESULT:
-			guild_create_result.emit(GuildNet.decode_result(p.data))
+			var r := GuildNet.decode_result(p.data)
+			_keep_guild(r)
+			guild_create_result.emit(r)
 		GuildNet.OP_JOIN_RESULT:
-			guild_join_result.emit(GuildNet.decode_result(p.data))
+			var r := GuildNet.decode_result(p.data)
+			_keep_guild(r)
+			guild_join_result.emit(r)
 		GuildNet.OP_LEAVE_RESULT:
 			var r := GuildNet.decode_leave_result(p.data)
+			if r.error == "" and r.ok:
+				_keep_guild(GuildNet.Result.new())
 			guild_leave_result.emit(r.ok, r.reason if r.error == "" else r.error)
 		GuildNet.OP_INFO_RESULT:
-			guild_info_result.emit(GuildNet.decode_result(p.data))
+			var r := GuildNet.decode_result(p.data)
+			_keep_guild(r)
+			guild_info_result.emit(r)
 		GuildNet.OP_POINTS_RESULT:
 			guild_points_result.emit(GuildNet.decode_points_result(p.data))
 		GuildNet.OP_LEVEL_RESULT:
@@ -809,6 +838,9 @@ func _dispatch(p: Packet) -> void:
 			friend_decline_result.emit(r.ok, r.reason if r.error == "" else r.error)
 		FriendNet.OP_LIST_RESULT:
 			var r := FriendNet.decode_list_result(p.data)
+			if r.error == "":
+				last_friend_list = r.friends.duplicate()
+				has_friend_list = true
 			friend_list_result.emit(r.friends, r.error)
 		FriendNet.OP_REMOVE_RESULT:
 			var r := Auth.decode_result(p.data)

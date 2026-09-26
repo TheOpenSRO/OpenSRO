@@ -131,6 +131,8 @@ const INFO_GAUGE := 120
 const INFO_NAME := 66
 const INFO_RACE := 150
 const INFO_CLEARED := [115, 124, 126, 121, 116]
+## The master's name line (the in-guild branch's +0x34 string, 0x5b6015).
+const INFO_MASTER := 124
 ## With no guild, 0x5b5eb0 (0x5b6223..) puts this on 66 (UTF-16 at 0xd92b3c).
 const NO_GUILD_TEXT := "UIIT_STT_NO_GUILD"
 ## The five command buttons (47 -> 37..41, +0x7e8..+0x7f8) and the notice
@@ -157,6 +159,13 @@ var _community_view := false
 ## Until one arrives the window takes 0x5b5eb0's no-guild branch; that the
 ## client's own guild record starts without its flag is **inferred**.
 var _has_guild := false
+var _guild_name := ""
+var _guild_master := ""
+## The window's own visible flag as last seen, so a show is acted on only
+## when the window itself goes from hidden to shown -- not when an ancestor
+## (the HUD, hidden with F10) is hidden and shown again, which Godot also
+## reports as a visibility change.
+var _shown_flag := false
 ## The friend list the rows are drawn from (0x5a85c0 reads the pane's own
 ## list; this is the last friend list this client received).
 var _friends: Array = []
@@ -287,8 +296,15 @@ func _apply_create_state() -> void:
 							part.visible = false
 		# cumunity_note, whose queue ends with CNIFLetter 0x5c4a70: 800
 		# hidden (0x5c4abc), and 0x5bec70 hides 900, CNIFMultiLetter, which
-		# its own OnCreate (0x5c9080) had hidden as well.
+		# its own OnCreate (0x5c9080) had hidden as well -- after moving
+		# itself to its parent's position + (0x11, 0x20) (0x5c90a3..0x5c90d1,
+		# vslot 0x9c -> 0x98, an absolute SetPos: 0x46cfa0 -> 0x46cfc0 ->
+		# 0xb90d90 -> 0xb90cf0). Its parent is the letter pane, so it sits at
+		# (17, 32) in it.
 		var letter := TwoDtBuilder.child(community_root, ID_LETTER)
+		var multi := TwoDtBuilder.child(letter, 900) if letter != null else null
+		if multi != null:
+			_place(multi, Vector2(0x11, 0x20))
 		if letter != null:
 			for id in [800, 900]:
 				var c := TwoDtBuilder.child(letter, id)
@@ -361,27 +377,50 @@ func _on_shown() -> void:
 	_guild_info()
 	place_centred()
 
-## 0x5b5eb0 for a player with no guild (0x9870d0's record, flag +4 clear:
-## 0x5b5ef2 -> 0x5b6223): 66 reads UIIT_STT_NO_GUILD, 115, 124, 126, 121
-## and 116 are set to "" (0xe17460), the race mark 150 is hidden
-## (0x5b6266..0x5b6272), the GP gauge 120 set to 0 (+0x368 / +0x36c), and
-## the notice line 222 -> 117 set to "" (0x5b54c0).
+## The guild information, 0x5b5eb0. Its two branches write the same fields,
+## so each undoes the other. `0x9870d0`'s record, flag +4, picks the branch.
 ##
-## **Open:** the in-guild branch (name, level, master, member count, GP,
-## race mark) is not drawn; a guild member sees the fields as built.
+## **No guild** (flag clear, 0x5b5ef2 -> 0x5b6223): 66 reads
+## UIIT_STT_NO_GUILD, 115, 124, 126, 121 and 116 are set to "" (0xe17460),
+## the race mark 150 is hidden (0x5b6266..0x5b6272), the GP gauge 120 set to
+## 0 (+0x368 / +0x36c), and the notice line 222 -> 117 set to "" (0x5b54c0).
+##
+## **In a guild** (0x5b5eff..0x5b61d6), with what a guild_info reply carries:
+## - 66: the record's std::wstring at +0x18 (buffer at +0x1c; 0x5b5f0d).
+##   That it is the guild's name is read: 0x5b6390 assigns record+0x18 from
+##   the packet's guild name (via 0x88a420 / 0x5b7b80) and puts it on 66.
+##   Ours is the reply's guild name.
+## - 124: the record's string at +0x34 (0x5b6015), the name the race lookup
+##   looks a member up by (0x5b5f6a..0x5b5f77), beside the "Guild master"
+##   label 122: the master's name (**inferred**); ours is the reply's leader.
+## - 150: shown (0x5b5f47), its art set from that member's character record
+##   (0x9960a0 -> 0x93f370 -> 0x98caa0); when the lookup fails the art is set
+##   to "" (0x5b5fcf..0x5b6005). Our reply carries no character record, so
+##   it is shown with no art, as the client does on a failed lookup.
+## - 115 "Level %d" (0xd92bb0, byte +5), 126 "%d / %d" (0xd92ba0: members,
+##   0x988a40, over the level's cap, [level*4 + 0xd92384]: 15, 20, 25, 35,
+##   50 for levels 1..5), 116 "%d / %d" (GP +0xc over [level*4 + 0xd92398]:
+##   5400, 50400, 135000, 378000, 0 for levels 1..5), 121 "%d%%" (0xd8a948) and the gauge
+##   120 (their ratio), and the notice 222 -> 117 (the record's +0x50, or
+##   UIIT_MSG_GUILD_COMMON_NOTEXIST when it is empty): the guild_info reply
+##   carries no level, points or notice, so these are left blank ("" and 0)
+##   rather than filled with a guess. **Open.**
 func _guild_info() -> void:
-	if _has_guild:
-		return
 	var name_node := _at([ID_INFO, INFO_NAME])
 	if name_node != null:
-		_twodt.set_text(name_node, _builder.resolve_text(NO_GUILD_TEXT))
+		_twodt.set_text(name_node, _guild_name if _has_guild else _builder.resolve_text(NO_GUILD_TEXT))
 	for id in INFO_CLEARED:
 		var c := _at([ID_INFO, id])
-		if c != null and (TwoDtBuilder.text_of(c) != "" or c.get_node_or_null(TwoDtBuilder.TEXT_NODE) != null):
-			_twodt.set_text(c, "")
+		if c == null:
+			continue
+		var text := _guild_master if (_has_guild and id == INFO_MASTER) else ""
+		if text != "" or TwoDtBuilder.text_of(c) != "" or c.get_node_or_null(TwoDtBuilder.TEXT_NODE) != null:
+			_twodt.set_text(c, text)
 	var race := _at([ID_INFO, INFO_RACE])
 	if race != null:
-		race.visible = false
+		race.visible = _has_guild
+		if _has_guild:
+			_set_texture(race, "")
 	var gauge := _at([ID_INFO, INFO_GAUGE]) as Range
 	if gauge != null:
 		gauge.value = 0
@@ -389,9 +428,13 @@ func _guild_info() -> void:
 	if notice != null and notice.get_node_or_null(TwoDtBuilder.TEXT_NODE) != null:
 		_twodt.set_text(notice, "")
 
-## Whether the player is in a guild (a guild_info reply: guild id not 0).
-func set_has_guild(in_guild: bool) -> void:
+## The player's guild as the last guild reply said (guild_info, create or
+## join; a leave sets it to none): whether they are in one, its name and its
+## master's name. Redraws the information at once if the window is up.
+func set_guild(in_guild: bool, guild_name: String = "", master_name: String = "") -> void:
 	_has_guild = in_guild
+	_guild_name = guild_name if in_guild else ""
+	_guild_master = master_name if in_guild else ""
 	if visible:
 		_guild_info()
 
@@ -457,8 +500,9 @@ func _wire() -> void:
 			view_changed.emit("community"))
 	# The window's ShowWindow(1) (0x5bb150).
 	visibility_changed.connect(func() -> void:
-		if visible:
-			_on_shown())
+		if visible and not _shown_flag:
+			_on_shown()
+		_shown_flag = visible)
 	if community_root != null:
 		# The friend pane's ShowWindow(1) refreshes its rows (0x5a9a40 ->
 		# 0x5a97b0, at 0x5a9a4c).

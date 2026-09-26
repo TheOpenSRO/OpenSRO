@@ -101,6 +101,7 @@ func _guild() -> Array:
 		x += 115
 	recs.append({"type": 5, "id": 115, "parent": 47, "gp": 176, "rect": Rect2i(625, 163, 69, 15)})
 	recs.append({"type": 5, "id": 66, "parent": 47, "gp": 176, "rect": Rect2i(357, 161, 198, 16)})
+	recs.append({"type": 5, "id": 124, "parent": 47, "gp": 176, "rect": Rect2i(261, 196, 266, 15)})
 	recs.append({"type": 5, "id": 150, "parent": 47, "gp": 176, "rect": Rect2i(241, 195, 16, 16), "tex": RACE})
 	recs.append({"type": 10, "id": 120, "parent": 47, "gp": 176, "rect": Rect2i(328, 222, 193, 8)})
 	recs.append({"type": 8, "id": 222, "name": "CNIFGuildNotifySlot", "parent": 47, "gp": 176, "rect": Rect2i(129, 257, 572, 28)})
@@ -449,6 +450,9 @@ func _run() -> void:
 	await process_frame
 	_check(window.visible and _caption(window) == "Guild (text table)", "G opens the guild view (a project binding, not the retail one)")
 
+	await _guild_member_checks(panels, window, groot)
+	await _move_checks(panels, window)
+
 	# UI scale 1.5 on the client's default 1152x648: a 768x432 view, 2 short
 	# of the window's 434. Centring alone puts it at y = -1; it is kept at 0.
 	window.hide()
@@ -468,3 +472,132 @@ class _Entry:
 	func _init(n: String, o: bool) -> void:
 		friend_name = n
 		online = o
+
+# --- a guild member, replies before the HUD existed, moves -----------------
+
+func _net() -> Node:
+	return get_root().get_node_or_null("NetClient")
+
+func _guild_reply(guild_id: int, guild_name: String, master: String) -> GuildNet.Result:
+	var r := GuildNet.Result.new()
+	r.guild_id = guild_id
+	r.guild_name = guild_name
+	r.leader_id = 70
+	var m := GuildNet.Member.new()
+	m.character_id = 70
+	m.member_name = master
+	m.role = GuildNet.ROLE_LEADER
+	r.members.append(m)
+	return r
+
+func _text(node: Control) -> String:
+	var l := node.get_node_or_null("Text") as Label if node != null else null
+	return l.text if l != null else "<no label>"
+
+func _guild_member_checks(panels: Control, window: Control, groot: Control) -> void:
+	# The window is up in the guild view with no guild. A guild_info reply
+	# for guild 7 arrives while it is shown -- the order U produces, since U
+	# shows the window before _populate asks the server.
+	window.hide()
+	_press(panels, KEY_U)
+	await process_frame
+	_check(_text(_at(groot, [47, 66])) == "No guild (text table)", "before any guild reply the window shows the no-guild state")
+	if panels.has_method("_on_guild_info_result"):
+		panels.call("_on_guild_info_result", _guild_reply(7, "Seven", "Boss"))
+	await process_frame
+	_check(_text(_at(groot, [47, 66])) == "Seven", "a guild reply while the window is up replaces UIIT_STT_NO_GUILD with the guild's name (got '%s')" % _text(_at(groot, [47, 66])))
+	_check(_flag_on(_at(groot, [47, 150])), "and shows the race mark 150 again (0x5b5f47)")
+	_check(_text(_at(groot, [47, 124])) == "Boss", "and puts the master's name on 124 (got '%s')" % _text(_at(groot, [47, 124])))
+	_press(panels, KEY_U)
+	await process_frame
+	_press(panels, KEY_U)
+	await process_frame
+	_check(window.visible and _text(_at(groot, [47, 66])) == "Seven", "reopened, the guild is still shown (got '%s')" % _text(_at(groot, [47, 66])))
+	# Leaving: back to no guild.
+	_check(panels.has_method("_on_guild_leave_result"), "HudPanels takes guild leave replies")
+	if panels.has_method("_on_guild_leave_result"):
+		panels.call("_on_guild_leave_result", true, "")
+	await process_frame
+	_check(_text(_at(groot, [47, 66])) == "No guild (text table)" and _hidden(_at(groot, [47, 150])), "after a successful leave the no-guild state is back")
+	# Joining mid-session: the join reply alone tells the window.
+	var net := _net()
+	if net != null and panels.has_method("connect_net"):
+		panels.call("connect_net")
+		net.emit_signal("guild_join_result", _guild_reply(9, "Nine", "Chief"))
+		await process_frame
+		_check(_text(_at(groot, [47, 66])) == "Nine", "a guild join reply mid-session shows the guild (got '%s')" % _text(_at(groot, [47, 66])))
+	else:
+		_check(false, "NetClient is registered for this suite")
+	window.hide()
+
+	# Replies that came before the HUD was built: NetClient keeps them.
+	if net == null:
+		return
+	var kept_guild := "last_guild_result" in net
+	_check(kept_guild, "NetClient keeps the last guild reply")
+	if not kept_guild:
+		return
+	net.set("last_guild_result", _guild_reply(11, "Eleven", "Elder"))
+	net.set("last_friend_list", [_Entry.new("Kept", true)])
+	net.set("has_friend_list", true)
+	var script := load(PANELS_PATH) as GDScript
+	var later: Control = script.new(_builder())
+	get_root().add_child(later)
+	later.call("connect_net")
+	await process_frame
+	later.call("toggle", "guild")
+	await process_frame
+	var w2 := _visible_window(later)
+	var g2 := _guild_root(w2)
+	_check(g2 != null and _text(_at(g2, [47, 66])) == "Eleven", "a guild reply that came before the HUD existed is shown (got '%s')" % _text(_at(g2, [47, 66])))
+	var c2 := _community_root(w2)
+	_check(c2 != null and _text(_at(c2, [646, 339, 341])) == "Kept", "and so is a friend list (got '%s')" % _text(_at(c2, [646, 339, 341])))
+	net.set("last_guild_result", null)
+	net.set("last_friend_list", [])
+	net.set("has_friend_list", false)
+	later.free()
+
+func _drag(window: Control, from: Vector2, by: Vector2) -> void:
+	var press := InputEventMouseButton.new()
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	press.position = from
+	window.call("_gui_input", press)
+	var motion := InputEventMouseMotion.new()
+	motion.position = from + by
+	window.call("_gui_input", motion)
+	var release := InputEventMouseButton.new()
+	release.button_index = MOUSE_BUTTON_LEFT
+	release.pressed = false
+	release.position = from + by
+	window.call("_gui_input", release)
+
+func _move_checks(panels: Control, window: Control) -> void:
+	_press(panels, KEY_U)
+	await process_frame
+	if not window.visible:
+		_press(panels, KEY_U)
+		await process_frame
+	var centred := window.position
+	_drag(window, Vector2(300, 20), Vector2(-100, 60))
+	var dragged := window.position
+	_check(dragged == centred + Vector2(-100, 60), "the window drags by its caption strip (got %s from %s)" % [dragged, centred])
+	# F10 hides the HUD (an ancestor) and shows it again: not a show of the
+	# window, so it stays where it was dragged.
+	panels.visible = false
+	await process_frame
+	panels.visible = true
+	await process_frame
+	panels.visible = false
+	await process_frame
+	panels.visible = true
+	await process_frame
+	_check(window.position == dragged, "hiding and showing the HUD twice leaves the window where it was dragged (got %s, dragged %s)" % [window.position, dragged])
+	# Closing and reopening is a show: centred again (0x5bb16c).
+	_press(panels, KEY_U)
+	await process_frame
+	_press(panels, KEY_U)
+	await process_frame
+	_check(window.visible and window.position == Vector2(266, 107), "closed after a drag and reopened, the window is centred again at (266, 107) (got %s)" % window.position)
+	window.hide()
+

@@ -262,13 +262,28 @@ is presentation work on solved data; if you find yourself editing the protocol, 
   window's check boxes are built without their classes' own art or behaviour; the style bits
   set on 66, 115, 121 and 400..403 are not applied; the draw loop, the alignment values and
   how an off-size static is drawn are not read; a guild member's information, rights (which
-  command buttons the client enables) and member rows are not drawn. **Buttons with no
+  command buttons the client enables) and member rows are not drawn -- a member now sees the
+  guild's name and master (round 597), but not its level, member count over the cap, points or
+  notice: guild_info carries the member list but no level (which the cap needs), points or
+  notice. No test covers the letter pane's 900 move to (17, 32); it is applied but hidden. **Buttons with no
   behaviour yet** (built, drawn, inert; named by their art or caption, what each does is not
   read): guild view -- 86 (`gil_shape01`), 23 (`stl_condition`), 81 (`stl_edit_button`,
   disabled as the client disables it), 400..403 (the column buttons captioned Member / Level /
   Level / Donate GP), 250 (`com_donation_button`); community view -- 255
   (`gil_subj_button05`), 39 / 40 / 41 (captioned Whisper / Add friend / Delete friend), 62
-  (captioned Friends list).
+  (captioned Friends list). By their text keys and art (all `com_mid_button02` unless named):
+  war pane 548 -- 247 (`gil_subj_button06`, UIIT_STT_WARCONTRIBUTION_RANKING), 248
+  (`gil_subj_button09`, UIIT_MSG_LETTERERR_GUILD), 63 (`gil_subj_button09`,
+  UIIT_STT_WARCONTRIBUTION_POINT); relations, hostile pane 164 -> 2000 -- 52
+  (UIIT_CTL_GUILDWAR_DECLAREWAR), 53 (UIIT_CTL_GUILDWAR_WARCONCLUSION), 60 (`gil_subj_button03`,
+  UIIT_STT_LEVEL_LV), 56 (`gil_subj_button09`, UIIT_CTL_GUILD_NAME); relations, alliance pane
+  164 -> 86 -- 51 / 52 / 53 (UIIT_STT_GUILD_RESPECT_ALLY_JOIN / _EXIT / _EXPULSION), 60, 56 (as
+  in 2000); block pane 59 -- 255 (`gil_subj_button05`), 40 (UIIT_STT_BLOCKMAN_ENTRY), 41
+  (UIIT_STT_BLOCKMAN_CANCEL); letter pane 700 -- 55 (UIIT_CTL_LETTER_SEND), 40
+  (UIIT_STT_LETTER_READ), 41 (UIIT_CTL_LETTER_DELETE), 56 (UIIT_CTL_LETTERERR_GUILD), 57
+  (UIIT_CTL_LETTERERR_UNION), 113 (`gil_subj_button09`, UIIT_STT_LETTER_ADDTIME), 114
+  (`gil_subj_button13`, UIIT_STT_LETTER_SENDER); and, in the letter's hidden write frame 800 and
+  multi-letter window 900, 100, 200, 118, 119, 120 and 115.
   The command buttons 37..41 are disabled as the client disables them for a player with no
   guild.
 - **The teleport board** (round 578) — the Dimensional Teleporter, `resinfo\ifteleportboard.txt`,

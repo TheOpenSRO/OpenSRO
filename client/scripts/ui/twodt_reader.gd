@@ -32,7 +32,7 @@ class_name TwoDtReader
 ## root, where it was created (0x48cb00 returns 0 without re-parenting).
 ## A parent id of 0 takes 0x48cb00's first branch (0x48cb0f: the id equals
 ## loader+0x3c, which is 0 -- stored at 0x48999a; its setter 0x48cd60 has
-## no direct caller) and returns at 0x48cc27 without a move. And after
+## no direct caller) and returns 1 at 0x48cc27 without a move. And after
 ## finding the parent, 0x48cb00 asks it for a direct child with the record's
 ## own id (GetChild, 0x48cbe6..0x48cbf7) and does not re-link when it has
 ## one: the record stays under the root (kept_under_root).

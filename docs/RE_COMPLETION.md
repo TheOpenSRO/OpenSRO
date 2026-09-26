@@ -42675,7 +42675,9 @@ become Godot tooltips.
 
 Two things are left as built because their code is not traced here. CNIFMultiLetter's own move
 (`0x5c90d1`, vslot `0x9c`, the letter pane's position + (0x11, 0x20)) is not applied, since what
-vslot `0x9c` does was not read and the window is hidden. CNIFAllianceGuild's refresh `0x57c6f0`
+vslot `0x9c` does was not read and the window is hidden. **Corrected later** ("A guild member's
+Guild window leaves the no-guild state"): vslot `0x9c` is now read -- an absolute move -- and
+the move is applied. CNIFAllianceGuild's refresh `0x57c6f0`
 is not run: it shows or hides about 40 controls on the player's alliance state (`0x988a50`).
 
 ### Data (kept, and moved onto the new controls)
@@ -42935,3 +42937,98 @@ NEGATIVE, run on the box against 8dad706's scripts:
 
 Both print ALL PASS on this tree. `check_2dt_files.gd`: unchanged totals, and `LINKER-GUARD ...
 0`.
+
+## A guild member's Guild window leaves the no-guild state (round 597)
+
+Client only. Nothing on the wire changes; NetClient now keeps the last guild and friend
+replies. This round fixes a blocking bug found in the previous round's re-review. I read the
+in-guild branch of `0x5b5eb0` in the asm before changing anything.
+
+### B1: the in-guild branch (read), and every guild reply (fixed)
+
+The previous round drew only the no-guild branch of `0x5b5eb0`, and for a member it drew
+nothing. So "<No guild>" and the hidden race mark stayed: U shows the window (and runs the
+show path) before `_populate` asks for guild_info, so the reply arrived too late to change
+anything. The branch picked by the guild record's flag +4 writes the same fields as the other,
+and `GuildWindow._guild_info` now writes both, so each undoes the other. The in-guild branch
+(`0x5b5eff..0x5b61d6`, record = `0x9870d0`), field by field:
+
+| field | write | ours |
+|---|---|---|
+| 66 | SetText of the record's std::wstring at +0x18 (character buffer at +0x1c) (`0x5b5f0d`) | the reply's guild name. That +0x18 is the name was inferred here and is **read** in review: `0x5b6390` assigns its argument to record+0x18 (`lea ecx,[eax+0x18]`) and puts it on 66; its callers are the guild update `0x5b7b80` and the object guild-name handler `0x88a420`, which reads the name from the packet, hands it to the object's guild-tag setter `0x9dc460`, and calls `0x5b6390` when the object is the player |
+| 115 | printf `"Level %d"` (`0xd92bb0`), byte +5 (`0x5b5f1e..0x5b5f37`) | "" (the reply carries no level) |
+| 150 | ShowWindow(1) (`0x5b5f47`); its art from the member named by +0x34 (`0x9960a0` -> `0x93f370` -> `0x98caa0`), or "" when the lookup fails (`0x5b5fcf..0x5b6005`) | shown with no art, as on a failed lookup; the reply carries no character record |
+| 124 | SetText(record +0x34) (`0x5b6015`) | the reply's leader (a member with the leader role or the leader id). That +0x34 is the master is **inferred**, and firmer after review: `0x9960a0` searches the guild's member list (+0x1d4) by the member name at +4, and in guild.2dt 124 sits at (261, 196) beside 122 `UIIT_STT_GUILD_LEADER` at (137, 196), with the race mark 150 between them |
+| 126 | printf `"%d / %d"` (`0xd92ba0`): the member count (`0x988a40`) over the level's cap, indexed `[level*4 + 0xd92384]` (index 0 is `0xcececece`, so levels 1..5 read 15, 20, 25, 35, 50 from `0xd92388`) | "": the reply carries the member list but no level, and the cap needs the level |
+| 116 | printf `"%d / %d"`: GP (+0xc) over the level's table, indexed `[level*4 + 0xd92398]` (`0x5b6069`, `0x5b60a7`): levels 1..5 read 5400, 50400, 135000, 378000, 0 -- the 50 at `0xd92398` itself is the cap table's level-5 entry, overlapping, and the level-5 0 is why `0x5b617a` special-cases level 5. This agrees with the server's own table (`0xade8f0`: 5400, 50400, 135000, 378000). An earlier version of this row listed the table from `0xd92398` as "50, 5400, ...", misreading the index (corrected in review) | "" (no points in guild_info) |
+| 121 | printf `"%d%%"` (`0xd8a948`), the GP ratio | "" |
+| 120 | the gauge, that ratio (+0x368 / +0x36c); 0 at level 5 (`0x5b617a..0x5b61af`) | 0 |
+| 222->117 | the record's +0x50, or `UIIT_MSG_GUILD_COMMON_NOTEXIST` (`0xd92b60`) when +0x64 is 0 (`0x5b60f5..0x5b6175`) | "" (no notice in guild_info; not assumed empty) |
+
+What is blank is blank because guild_info does not carry it. World3D gets the level and points
+from other replies, which the window does not use yet (open). Both branches end in the shared
+tail `0x5b61da`. It copies the record's string at +0x6c and passes it through `0x5aad40` to the
+window at +0x7a8, probably the notice view. It is not drawn here.
+
+- **State from every guild reply.** `HudPanels` now takes guild_info, create and join replies
+  (the same GuildNet.Result) and a successful leave (no guild). Before, it took guild_info
+  only, so creating or joining mid-session kept the no-guild state until the next open.
+- **Replies before the HUD existed.** World3D asks for the guild and the friend list
+  (World3D.gd ~1367) before `await _show_loading_screen()` and builds HudPanels after it, so a
+  reply handled in that frame was lost. `NetClient` now keeps `last_guild_result` (every error-
+  free guild reply, and a guild id of 0 after a successful leave) and `last_friend_list` /
+  `has_friend_list`. Both are cleared on enter_world and on disconnect. `HudPanels.connect_net`
+  adopts them. The friend list had the same loss, and it is fixed the same way.
+
+### D1: the move (read)
+
+CNIFGuildWnd's vtable is at `0xd9285c` (`0x5bb150` at +0x5c). Slot `0x9c` is `0x46cfa0`, which
+calls this window's slot `0x98` with its two arguments. Slot `0x98` is `0x46cfc0`, which calls
+`0xb90d90` -> `0xb90cf0`. That sets +0x40 = x and +0x44 = y absolutely, moves by the same delta
+each child whose `[+0x38]` is non-zero and byte `[+0x3c]` is zero (`0xb90d3c..0xb90d46`, via
+`0xb90c60`), and ends by calling vslot `0x94` (`0xb90d6c`); `0x46cfc0` then calls vslot `0xa4`
+after `0xb90d90` returns. +0x48 / +0x4c are the width and height (GetSize
+`0xb8f480`). CNIFMultiLetter's vtable (`0xd943bc`) has the same two entries. So its move at
+`0x5c90d1`, to the letter pane's position + (0x11, 0x20), is now read and applied: 900 sits at
+(17, 32) in the letter pane. The centring's move through slot `0x9c` is therefore read, not
+inferred. `docs/protocol/2DT_FORMAT.md` records the chain.
+
+### Non-blocking
+
+- **N1.** F10 hides and shows the HUD, and Godot reports that as a visibility change on the
+  window too, so it re-ran the show path and re-centred the window. The show path now runs only
+  when the window's own flag goes from hidden to shown.
+- **N2.** A negative for centring on show: drag, close, reopen gives (266, 107).
+- **N3.** The shared tail `0x5b61da`, as above.
+- **N5.** Parent 0 returns 1 at `0x48cc27` (`mov eax,0x1`), without a move.
+- **D2.** UI_TODO's list of inert buttons now covers the war pane (247, 248, 63), both relations
+  panes (2000: 52, 53, 60, 56; 86: 51, 52, 53, 60, 56), the block pane (255, 40, 41), the letter
+  pane (55, 40, 41, 56, 57, 113, 114) and the hidden 800 / 900 buttons. Each is named by its text
+  key and art.
+
+**API.** No builder change. The reader change is a comment only. `GuildWindow.set_guild(in_guild,
+guild_name, master_name)` is new; `set_has_guild`, which nothing called, was removed on landing. On `HudPanels`, the new methods are
+`_on_guild_leave_result` and `_apply_guild`. On `NetClient`, `last_guild_result`,
+`last_friend_list` and `has_friend_list` are new.
+
+**Tests.** `guild_window_test.gd` gained:
+- the window up with no guild, then a guild_id 7 reply;
+- a reopen;
+- a leave;
+- a join reply mid-session through `NetClient.guild_join_result`;
+- replies kept in NetClient before a second HudPanels is built (guild and friends);
+- a drag, F10 twice, and close-and-reopen.
+
+NEGATIVE against 3dd65be's scripts: **8 FAIL lines**:
+- `FAIL a guild reply while the window is up replaces UIIT_STT_NO_GUILD with the guild's name (got 'No guild (text table)')`
+- `FAIL and shows the race mark 150 again (0x5b5f47)`
+- `FAIL and puts the master's name on 124 (got '<no label>')`
+- `FAIL reopened, the guild is still shown (got 'No guild (text table)')`
+- `FAIL HudPanels takes guild leave replies`
+- `FAIL a guild join reply mid-session shows the guild (got 'No guild (text table)')`
+- `FAIL NetClient keeps the last guild reply`
+- `FAIL hiding and showing the HUD twice leaves the window where it was dragged (got (266, 107), dragged (166, 167))`
+
+Against 8dad706's scripts, the centring negative fails:
+`FAIL closed after a drag and reopened, the window is centred again at (266, 107) (got (166, 167))`.
+On this tree the suite prints ALL PASS.
