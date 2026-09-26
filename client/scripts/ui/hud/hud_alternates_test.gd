@@ -11,10 +11,14 @@ extends SceneTree
 ## - academy: GDR_APPRENTICESHIP_PICTURE hidden at create, LEADER_STATUS kept
 ##   (CIFApprenticeShip 0x6e9848).
 ## - alchemy: Process shown, Cancel hidden (CIFAlchemyProcess 0x725740).
-## - inventory's docked equipment: the worn slots and the change-to-avatar
+## - the equipment pane beside the bag: the worn slots and the change-to-avatar
 ##   button shown; the avatar slots, change-to-equipment button and avatar
 ##   skill strip hidden; either button flips the two sets; hiding the window
 ##   goes back to equipment (CIFEquipment 0x6abde0 / 0x6abf60).
+##
+## The academy, the bag and the equipment are panes of the main popup (the
+## main popup round), so the fixture carries its registry entry and
+## ifmainpopup.txt's panes, and each group is looked for inside its pane.
 ## - chat: the "all" list shown, the other four hidden; the input line at
 ##   its UI_UPDATE_2009_FIRST rect, clear of the mode button (CIFChatViewer
 ##   0x7ab920).
@@ -97,6 +101,30 @@ func _chat() -> String:
 		+ "#ifdef UI_UPDATE_2009_FIRST\n" + _control("GDR_CHAT_MODE_BTN", "CIFButton", 41, "18,378,20,20") + "#endif\n"
 		+ input)
 
+## ifmainpopup.txt's panes at their authored rects (APPLY_MENTOR_SYSTEM taken),
+## and ginterface.txt's GDR_MAINPOPUP.
+func _mainpopup() -> String:
+	return _layout(_control("GDR_APPRENTICESHIP", "CIFApprenticeShip", 77, "13,38,365,355")
+		+ _control("GDR_QUEST", "CIFQuest", 76, "13,38,365,355")
+		+ _control("GDR_PLAYERINFO", "CIFPlayerInfo", 75, "13,38,364,356")
+		+ _control("GDR_ACTION", "CIFAction", 74, "13,38,364,357")
+		+ _control("GDR_SKILL", "CIFSkill", 73, "13,63,364,333")
+		+ _control("GDR_PARTY", "CIFParty", 72, "13,38,364,337")
+		+ _control("GDR_EQUIPMENT", "CIFEquipment", 71, "198,41,178,355")
+		+ _control("GDR_INVENTORY", "CIFInventory", 70, "13,63,176,333"))
+
+func _registry() -> String:
+	return "Interface Text\n\nSection = Create,\"0,0,0,0\",\"0\"\n{\n\tGDR_MAINPOPUP:CIFMainPopup\n\t{\n\t\tDDJ=STRING,\"interface\\\\frame\\\\mframe_wnd_\"\n\t\tID=INTEGER,\"25\"\n\t\tRect=RECT,\"595,262,388,408\"\n\t\tText=STRING,\"\"\n\t}\n}\n"
+
+## The same-rect groups inside the named panes of `window`, together.
+func _pane_groups(window: Node, panes: Array) -> Array:
+	var out := []
+	for pane in panes:
+		var node := window.call("node", pane) as Node
+		if node != null:
+			out.append_array(_same_rect_groups(node))
+	return out
+
 ## UiBuilder.load_layout's cache key for a layout read with these defines
 ## (the path, \x01, the defines joined by \x02).
 func _ifdef_key(path: String, defines: Array) -> String:
@@ -115,6 +143,10 @@ func _builder() -> UiBuilder:
 	# chat asked for shows in the input line's rect.
 	cache["resinfo\\ifchatviewer.txt"] = UiLayoutParser.parse(_chat())
 	cache[_ifdef_key("resinfo\\ifchatviewer.txt", ["UI_UPDATE_2009_FIRST"])] = UiLayoutParser.parse(_chat(), true, PackedStringArray(["UI_UPDATE_2009_FIRST"]))
+	cache[_ifdef_key("resinfo\\ifmainpopup.txt", ["APPLY_MENTOR_SYSTEM"])] = UiLayoutParser.parse(_mainpopup(), true, PackedStringArray(["APPLY_MENTOR_SYSTEM"]))
+	builder.set("_window_registry", UiLayoutParser.parse(_registry()))
+	builder.set("_window_registry_loaded", true)
+	builder.set("_window_registry_data", _registry())
 	return builder
 
 ## Every group of GDR_ controls under `root` authored at one on-screen rect,
@@ -176,7 +208,7 @@ func _panel_checks(panels_script: GDScript) -> void:
 	var academy: Node = panels.call("open", "academy")
 	_check(academy != null, "the academy window builds from the fixture")
 	if academy != null:
-		var shown := _shown(_same_rect_groups(academy))
+		var shown := _shown(_pane_groups(academy, ["GDR_APPRENTICESHIP"]))
 		_check(shown == [["GDR_APPRENTICESHIP_LEADER_STATUS"]],
 			"academy: one of PICTURE / LEADER_STATUS shown, LEADER_STATUS (got %s)" % [shown])
 
@@ -189,11 +221,11 @@ func _panel_checks(panels_script: GDScript) -> void:
 		_check(_visible(alchemy, "GDR_AB_MANUFACTURING_BUTTON_ALL_PROCESS"), "alchemy: All-compound stays shown")
 
 	var inv: Node = panels.call("open", "inventory")
-	_check(inv != null, "the inventory window builds with the equipment docked")
+	_check(inv != null, "the main popup builds on its inventory tab, the bag and the equipment")
 	if inv == null:
 		panels.free()
 		return
-	var groups := _same_rect_groups(inv)
+	var groups := _pane_groups(inv, ["GDR_INVENTORY", "GDR_EQUIPMENT"])
 	_check(groups.size() == 6, "inventory: six same-rect groups -- five slot pairs and the change buttons (got %d)" % groups.size())
 	var one_each := true
 	for names in _shown(groups):
@@ -227,7 +259,7 @@ func _panel_checks(panels_script: GDScript) -> void:
 	_check(_visible(inv, "GDR_EQ_BTN_CHANGE_EQUIP_SLOT") and not _visible(inv, "GDR_EQ_BTN_CHANGE_AVATAR_SLOT"),
 		"change-to-avatar: the buttons swap")
 	var one_each_avatar := true
-	for names in _shown(_same_rect_groups(inv)):
+	for names in _shown(_pane_groups(inv, ["GDR_INVENTORY", "GDR_EQUIPMENT"])):
 		if (names as Array).size() != 1:
 			one_each_avatar = false
 	_check(one_each_avatar, "avatar mode: still exactly one of each same-rect group shown")

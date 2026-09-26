@@ -24,7 +24,7 @@ Every window in the real client is authored data, and building one is now mechan
    of the same 76. `FontColor` is the one to honour.
 6. **Buttons come as `X.ddj` / `X_focus.ddj` / `X_press.ddj` / `X_disable.ddj`**, which maps
    straight onto `TextureButton`'s four texture slots.
-7. **Panel windows are self-framed.** Inventory, Skill, Action and friends are *not* in the
+7. **Some panel windows are self-framed.** Quest, Guild, Alchemy and friends are *not* in the
    registry; their own layout file carries a `CIFFrame` / `CIFStretchWnd` whose `ddj` is an
    8-slice base ending in `_` (`interface\frame\mframe_wnd_`, `interface\messagebox\
    msgbox2_window_`), expanded as `_left_up`, `_mid_up`, `_right_up`, `_left_side`, `_right_side`,
@@ -34,6 +34,10 @@ Every window in the real client is authored data, and building one is now mechan
    `FUN_00474d00` / `FUN_004736a0`, round 584). The pieces of one set are often not the same size:
    `sframe_wnd_` has a 36 top and 16 bottom, `mframe_wnd_` 68/48, and `game_window_` 42 corners
    with 8 edges. Never size one piece from another.
+   **Inventory, equipment, character, skill, action, party and academy are not self-framed**
+   (round 587): they are panes of the registry's `GDR_MAINPOPUP` (a CIFMainPopup, 388x408 on
+   `mframe_wnd_`), each at its `ifmainpopup.txt` rect with its own layout at the pane's origin, and
+   the keys select its tabs (`HudMainPopup`).
 8. **Interface art is 16-bit ARGB1555**, decoded by `DdjReader` since the hundred-and-first round.
 9. **A section lists its controls front to back.** The window's own frame is always the *last*
    entry (`GDR_PI_SUBFRAME`, `GDR_INVENTORY_FRAME`), so children go into the Godot tree
@@ -172,17 +176,24 @@ is presentation work on solved data; if you find yourself editing the protocol, 
      (key G) from those dead layouts; community is seven empty framed panes stacked at
      13,61,451,320. The fix is to build both from the `.2dt` files, not to pick panes out of
      the dead layouts; community has no `PANEL_DEFINES` or `REGISTRY_FRAMES` entry for that reason.
-  2. The non-registry outer frame, from the binary. The self-framed classes (CIFInventory,
-     CIFPlayerInfo, CIFSkill, CIFQuest, CIFParty, CIFAction, CIFApprenticeShip, CIFEquipment)
-     are plain `CIFWnd`s, not CIFMainFrames, so CIFMainFrame's chrome is not theirs by
-     inheritance. Their current chrome constants come from `ifalchemybox.txt`, which the exe never
-     loads (it reads `ifnewalchemybox.txt`). A lead: `GDR_MAINPOPUP`, a
-     `CIFMainPopup : CIFMainFrame` at 388x408 on `mframe_wnd_`. Guild's 594-wide window still
-     blocks clicks over a see-through area below its 588-wide header and right of the 440-wide
-     body (x 446 to 594, y 112 to 314).
-  3. Inventory docking.
+  2. The non-registry outer frame -- **done for seven of the eight classes (round 587).**
+     CIFInventory, CIFEquipment, CIFPlayerInfo, CIFSkill, CIFAction, CIFParty and
+     CIFApprenticeShip are panes of `GDR_MAINPOPUP` and now open inside it, with CIFMainFrame's
+     chrome. CIFQuest is a pane too, but nothing reachable shows it (its tab button is hidden at
+     create, and Q opens the `res_ui\questlist.2dt` window), so the quest panel keeps the
+     `ifalchemybox.txt` chrome until that window is built. Still open from this item: guild's
+     594-wide window blocks clicks over a see-through area below its 588-wide header and right of
+     the 440-wide body (x 446 to 594, y 112 to 314); its layout is dead anyway (item 1).
+  3. Inventory docking -- **done (round 587).** `dock_companion` is gone. The bag and the
+     equipment are the popup's inventory tab, at (13, 63) and (198, 41), with the popup's tile
+     in the 9-pixel gap between them (`0x6a1f70`).
 
   Found on the way, not yet fixed:
+  - The paper doll keeps its chosen rect (40, 46, 98, 236) in the equipment pane. The client's
+    model viewport is read, (2, 15, 176, 318) in the pane (`CIFEquipment::vslot_013`), but its
+    camera is not (round 587).
+  - A CIFSubFrame's own Text (the party's UIIT_STT_PARTY_INFO, the action subframes' titles) is not
+    drawn, and `CIFCheckBox` has no builder (trijob2's two stat-row check boxes). Round 587.
   - The storage and bag gold amounts go into the "Gold" unit labels (`STA_GOLD`), not
     `STA_MONEY`.
   - `ClientRect` text insets are ignored.

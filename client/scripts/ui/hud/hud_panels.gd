@@ -17,16 +17,27 @@ class_name HudPanels
 
 const UiBuilder = preload("res://scripts/ui/ui_builder.gd")
 const HudWindow = preload("res://scripts/ui/hud/hud_window.gd")
+const HudMainPopup = preload("res://scripts/ui/hud/hud_main_popup.gd")
 const ErrorText = preload("res://scripts/net/error_text.gd")
 
 ## key: the panel id used by the underbar's menu_action and by hotkeys.
 ## Each entry is [layout path, window title, hotkey action name or ""].
+##
+## **Inventory, equipment, character, skill, party, action and academy are
+## not windows of their own**: they are panes of the client's main popup
+## (HudMainPopup, `resinfo\\ifmainpopup.txt` in the registry's GDR_MAINPOPUP
+## frame), and their keys select its tabs. Their layout paths here are the
+## panes' own layouts, which HudMainPopup.PANE_LAYOUTS builds. The keys are
+## this client's: the retail defaults (read from 0x7778be and dispatched in
+## 0x780610) are C, I, S, A, P and L for the same six tabs, with no key for
+## equipment; skill is K here because S walks backwards.
 const PANELS := {
 	"inventory": ["resinfo\\ifinventory.txt", "Inventory", KEY_I],
-	# The equipment window: the dressed character (the paper doll) with the
-	# worn slots around it. Its own window rather than fused to the bag.
+	# The equipment pane, beside the bag on the popup's inventory tab.
 	"equipment": ["resinfo\\ifequipment.txt", "Equipment", KEY_O],
-	"character": ["resinfo\\ifplayerinfo.txt", "Character", KEY_C],
+	# CIFPlayerInfo::Create (0x6b84ec) loads ifplayerinfo_trijob2.txt; the
+	# exe never names ifplayerinfo.txt, in ASCII or UTF-16.
+	"character": ["resinfo\\ifplayerinfo_trijob2.txt", "Character", KEY_C],
 	"skill": ["resinfo\\ifskill.txt", "Skill", KEY_K],
 	"quest": ["resinfo\\ifquest.txt", "Quest list", KEY_Q],
 	"party": ["resinfo\\ifparty.txt", "Party", KEY_P],
@@ -176,16 +187,23 @@ const AVATAR_SKILL_STRIP := "GDR_AVATAR_SKILL_WND"
 var _equipment_avatar_mode := false
 var _equipment_window: HudWindow = null
 
-func _wire_equipment_modes(window: HudWindow) -> void:
+## `pane` is the equipment pane inside the main popup: switching to another
+## tab hides it (0x6a1c70 calls every pane's ShowWindow(0)), which clears the
+## flag the same way closing the window does.
+func _wire_equipment_modes(window: HudWindow, pane: CanvasItem = null) -> void:
 	_equipment_window = window
 	for button_name in [BTN_TO_AVATAR, BTN_TO_EQUIPMENT]:
 		var button := window.node(button_name) as BaseButton
 		if button != null:
 			button.pressed.connect(func() -> void:
 				set_equipment_avatar_mode(not _equipment_avatar_mode))
-	window.visibility_changed.connect(func() -> void:
-		if not window.visible:
-			set_equipment_avatar_mode(false))
+	for watched in [window, pane]:
+		if watched == null:
+			continue
+		var item: CanvasItem = watched
+		item.visibility_changed.connect(func() -> void:
+			if not item.visible:
+				set_equipment_avatar_mode(false))
 	set_equipment_avatar_mode(false)
 
 ## Shows the equipment window's worn slots (false) or its avatar slots
@@ -385,11 +403,10 @@ func show_menu(near: Vector2) -> void:
 ## possibility (layout names are our own mapping) and should not be an
 ## error the player sees.
 func open(panel_id: String) -> HudWindow:
-	# The client presents the bag and the equipment paper doll as one fused
-	# window; we build that by docking the equipment layout inside the inventory
-	# window, so the 'O' key and the bag both land on the same combined window.
-	if panel_id == "equipment":
-		panel_id = "inventory"
+	# The bag, the equipment, the character, skill, action, party and academy
+	# are panes of the main popup: one window, a tab each.
+	if HudMainPopup.hosts(panel_id):
+		return _open_main_popup(panel_id)
 	if _unavailable.has(panel_id):
 		return null
 	var window: HudWindow = _windows.get(panel_id)
@@ -413,28 +430,62 @@ func open(panel_id: String) -> HudWindow:
 		_hide_at_create(panel_id, window)
 		if panel_id == "system":
 			_layout_system_window(window)
-		if panel_id == "inventory":
-			# Dock the equipment paper doll flush to the right of the bag: the
-			# authored bag frame is INVENTORY_CONTENT_WIDTH wide, so the two
-			# read as the client's single fused inventory window.
-			_inventory_eq_root = window.dock_companion(
-				_builder, PANELS["equipment"][0], INVENTORY_CONTENT_WIDTH)
-			_wire_equipment_modes(window)
 		window.centre()
 		_windows[panel_id] = window
 		if panel_id == "system":
 			_wire_system(window)
-		if panel_id == "inventory":
-			_apply_equipment_slot_backgrounds()
-			_place_paper_doll_docked()
-			_fill_equipment_slots(_equipped_items)
-		if panel_id == "skill":
-			_fill_skill_masteries(window)
 		_populate(panel_id)
 	window.show()
 	window.move_to_front()
 	_populate(panel_id)
 	return window
+
+## The main popup, built on first use (HudMainPopup), and the panel ids its
+## tabs answer to.
+var _popup: HudMainPopup = null
+const MAIN_POPUP_ID := "mainpopup"
+
+## Shows the main popup on `panel_id`'s tab, building it the first time.
+## Returns the popup window, or null when its layout is not in the archive.
+func _open_main_popup(panel_id: String) -> HudWindow:
+	var tab := HudMainPopup.tab_of(panel_id)
+	if _unavailable.has(MAIN_POPUP_ID):
+		return null
+	if _popup == null:
+		var window := HudWindow.new()
+		window.name = "Window_" + MAIN_POPUP_ID
+		add_child(window)
+		var popup := HudMainPopup.new()
+		for id in HudMainPopup.TABS:
+			popup.fallback_titles[id] = PANELS[id][1]
+		# A pane's extra sections, as each window composed them before.
+		var extras := {
+			"GDR_SKILL": EXTRA_SECTIONS.get("skill", []),
+			"GDR_APPRENTICESHIP": EXTRA_SECTIONS.get("academy", []),
+		}
+		if not popup.build(_builder, window, "", extras):
+			print("HudPanels: the main popup is unavailable (layout %s did not build)" % HudMainPopup.LAYOUT)
+			window.queue_free()
+			_unavailable[MAIN_POPUP_ID] = true
+			return null
+		_popup = popup
+		for id in HudMainPopup.TABS.keys() + HudMainPopup.ALIASES.keys():
+			_windows[id] = window
+		_hide_at_create("academy", window)
+		_wire_equipment_modes(window, popup.pane_control("GDR_EQUIPMENT"))
+		_apply_equipment_slot_backgrounds()
+		_place_paper_doll_docked()
+		_fill_equipment_slots(_equipped_items)
+	# The skill board reads a few MB of tables, so it is filled the first time
+	# its tab is shown, as it was the first time its window opened.
+	if tab == "skill" and not _skill_board_filled:
+		_skill_board_filled = true
+		_fill_skill_masteries(_popup.window)
+	_popup.open(tab)
+	_populate(tab)
+	return _popup.window
+
+var _skill_board_filled := false
 
 ## Opens the NPC dialogue for an NPC of the given name: the authored paper
 ## window (if_npctalk) titled with the name, greeting and the choices the
@@ -1848,24 +1899,30 @@ func qa_gold_deposit(amount: int) -> void:
 ## column, between the two rows of worn slots.
 var _paper_doll_texture: Texture2D = null
 
-## The inventory bag's authored content width -- ifinventory's own frame is
-## 176 wide, and the equipment paper doll docks flush to its right so the two
-## authored windows read as the client's one fused inventory. Grounded in the
-## DUCKROAD layout, not eyeballed.
-const INVENTORY_CONTENT_WIDTH := 176.0
-## The equipment section docked inside the inventory window (see open()).
-var _inventory_eq_root: Control = null
-
 func set_paper_doll_texture(texture: Texture2D) -> void:
 	_paper_doll_texture = texture
 	_place_paper_doll_docked()
 
-## Draws the live 3D paper doll in the equipment section docked inside the
-## inventory window, in the central column between its two worn-slot columns.
+## The paper doll's place in the equipment pane, relative to the pane (and to
+## ifequipment's own origin): x 40..138, y 46..282. This is the placement the
+## doll has had since it was docked -- between the two slot columns (x 5 and
+## x 141, 32 wide) -- and it was chosen, not read. What the client does is
+## read (CIFEquipment::vslot_013, 0x6ad8ae..0x6ad8ed): it renders the model
+## into the pane's rect grown by (+2, +0x0f, -2, -0x25), i.e. (2, 15, 176, 318)
+## for the 178x355 pane, with a camera that was not read. Until the camera is,
+## the doll keeps its old rect rather than a new one fitted to that viewport.
+const PAPER_DOLL_RECT := Rect2(40, 46, 98, 236)
+
+## Draws the live 3D paper doll in the equipment pane of the main popup, in
+## the central column between its two worn-slot columns.
 func _place_paper_doll_docked() -> void:
-	if _paper_doll_texture == null or _inventory_eq_root == null:
+	if _paper_doll_texture == null or _popup == null:
 		return
-	var doll := _inventory_eq_root.get_node_or_null("PaperDoll") as TextureRect
+	var pane := _popup.pane_control("GDR_EQUIPMENT")
+	if pane == null or pane.get_child_count() == 0:
+		return
+	var eq_root := pane.get_child(0) as Control
+	var doll := eq_root.get_node_or_null("PaperDoll") as TextureRect
 	if doll == null:
 		doll = TextureRect.new()
 		doll.name = "PaperDoll"
@@ -1875,9 +1932,9 @@ func _place_paper_doll_docked() -> void:
 		# Between the equipment window's two slot columns (slots at x 5 and
 		# x 141, 32 wide, over a 177-wide window): the central column x 40..138,
 		# below the title bar to just above the avatar-skill strip.
-		doll.position = Vector2(40, HudWindow.TITLE_BAR_HEIGHT + 4.0)
-		doll.size = Vector2(98, 236)
-		_inventory_eq_root.add_child(doll)
+		doll.position = PAPER_DOLL_RECT.position
+		doll.size = PAPER_DOLL_RECT.size
+		eq_root.add_child(doll)
 	doll.texture = _paper_doll_texture
 
 ## The System window as CIFSystemWnd::Create (0x6f6610) leaves it, which is
@@ -1994,21 +2051,36 @@ func _wire_system(window: HudWindow) -> void:
 		if button != null:
 			button.pressed.connect(wiring[control_name])
 
+## Closes a panel. A tab of the main popup closes the popup, but only while
+## that tab is the one showing.
 func close(panel_id: String) -> void:
+	if HudMainPopup.hosts(panel_id):
+		if is_open(panel_id):
+			_popup.window.hide()
+		return
 	var window: HudWindow = _windows.get(panel_id)
 	if window != null:
 		window.hide()
 
 ## Whether this panel's window is on screen. World3D asks it before rebuilding
-## the talk menu after a guild reply (round 521).
+## the talk menu after a guild reply (round 521). For a tab of the main popup,
+## the popup must be up with that tab showing.
 func is_open(panel_id: String) -> bool:
+	if HudMainPopup.hosts(panel_id):
+		return _popup != null and _popup.is_open(panel_id)
 	var window: HudWindow = _windows.get(panel_id)
 	return window != null and window.visible
 
+## A tab of the main popup toggles the way the client's keys do
+## (HudMainPopup.toggle): its key hides the popup only when its own tab is the
+## one showing, and otherwise brings the popup up on it.
 func toggle(panel_id: String) -> void:
-	# Equipment is docked in the inventory window (see open()).
-	if panel_id == "equipment":
-		panel_id = "inventory"
+	if HudMainPopup.hosts(panel_id):
+		if is_open(panel_id):
+			_popup.window.hide()
+		else:
+			open(panel_id)
+		return
 	var window: HudWindow = _windows.get(panel_id)
 	if window != null and window.visible:
 		window.hide()
@@ -2309,7 +2381,7 @@ func _cancel_bag_drag() -> void:
 ## _fill_inventory_grid draws by.
 func _bag_slot_at(point: Vector2) -> int:
 	var window: HudWindow = _windows.get("inventory")
-	if window == null or not window.visible:
+	if window == null or not is_open("inventory"):
 		return -1
 	var grid := window.node("GDR_INVENTORY_LATTICE") as Control
 	if grid == null:
@@ -2324,7 +2396,7 @@ func _bag_slot_at(point: Vector2) -> int:
 ## EquipmentNet.SLOT_* index), or -1.
 func _equipment_slot_at(point: Vector2) -> int:
 	var window: HudWindow = _windows.get("inventory")
-	if window == null or not window.visible:
+	if window == null or not is_open("inventory"):
 		return -1
 	for i in range(17):
 		var slot := window.node("GDR_EQUIPMENT_SLOT_%d" % (EQUIPMENT_SLOT_BASE + i)) as Control
@@ -2481,7 +2553,7 @@ func _drop_worn_item(worn_slot: int, at: Vector2) -> void:
 ## Whether a global point is over the open inventory window at all.
 func _over_inventory_window(at: Vector2) -> bool:
 	var win: HudWindow = _windows.get("inventory")
-	if win == null or not win.visible:
+	if win == null or not is_open("inventory"):
 		return false
 	return win.get_global_rect().has_point(at)
 
@@ -3406,8 +3478,7 @@ func _on_skill_learn(skill_id: int) -> void:
 ## A learn succeeded (or failed) -- re-read the skill state so a newly learned
 ## skill shows its badge and the next level's "+" (or SP is restored on fail).
 func _on_learn_skill_result(_ok: bool, _reason: String) -> void:
-	var window: HudWindow = _windows.get("skill")
-	if window == null or not window.visible:
+	if not is_open("skill"):
 		return
 	var who := NetClient.current_character_name
 	if who != "":
@@ -3448,8 +3519,7 @@ func _on_mastery_levelup(mastery_id: int) -> void:
 ## After an attack (a kill grants skill points), re-read the skill state so the
 ## open window's "Skill point" total stays current.
 func _on_attack_refresh_skill(_result) -> void:
-	var window: HudWindow = _windows.get("skill")
-	if window == null or not window.visible:
+	if not is_open("skill"):
 		return
 	var who := NetClient.current_character_name
 	if who != "":
@@ -3545,8 +3615,8 @@ func _apply_equipment_slot_backgrounds() -> void:
 		bg.texture = _builder.load_texture(EQUIP_SLOT_TEXTURES[i])
 
 func _fill_equipment_slots(items: Array) -> void:
-	# Equipment is docked inside the inventory window (see open()); its slots
-	# hang under that window's panel_root, so node() finds them there.
+	# The equipment is a pane of the main popup, shown with the bag on its
+	# inventory tab; its slots hang under the popup's panel_root, so node() finds them.
 	var window: HudWindow = _windows.get("inventory")
 	if window == null:
 		return
@@ -3643,8 +3713,12 @@ func connect_net() -> void:
 	NetClient.storage_withdraw_result.connect(_on_storage_withdraw_result)
 	NetClient.storage_gold_result.connect(_on_storage_gold_result)
 
-## The character panel's own control names, from resinfo\\ifplayerinfo.txt
-## (dumped 2026-09-19; 73 controls). Every value field is the `_DAT` -- or
+## The character pane's own control names, from resinfo\\ifplayerinfo_trijob2.txt,
+## the layout CIFPlayerInfo::Create (0x6b84ec) loads. Every name wired below is
+## in it at the same rect as in the older ifplayerinfo.txt, which the exe
+## never loads; the two differ only in the job rows (trijob2's GDR_PI_JOB_*
+## replace the per-job trader/hunter/thief rows), the two stat-row check
+## boxes it adds, and a few label rects. Every value field is the `_DAT` -- or
 ## `2` -- sibling of its label: the label `GDR_PI_TEXT_CURXP` sits at (32, 41)
 ## and the VALUE `GDR_PI_TEXT_CURXP2` at (96, 41), likewise `NEXTXP`/`NEXTXP2`
 ## and `STAT`/`STAT2`. The "+" buttons beside Str and Int are named
@@ -3743,7 +3817,7 @@ var _stat_buttons_wired := false
 ##                       item's own per-instance rate, which needs the item
 ##                       variance this server does not carry -- and the engine
 ##                       never reads either param (docs/RE_COMPLETION.md).
-##   Trader/Hunter/Thief no job system on this server.
+##   Job alias/grade/exp  (GDR_PI_JOB_*) no job system on this server.
 ##   Honor point         no honour system on this server.
 ## A guessed number in any of these would be indistinguishable from a real one.
 func _fill_character_window(window: HudWindow, s: StatsNet.Stats) -> void:
@@ -3863,7 +3937,7 @@ func _populate(panel_id: String) -> void:
 	match panel_id:
 		"inventory":
 			NetClient.list_inventory(who)
-			# The equipment paper doll is docked in this window; refresh it too.
+			# The equipment pane shows with the bag; refresh it too.
 			_fill_equipment_slots(_equipped_items)
 			NetClient.list_equipment(who)
 		"quest":

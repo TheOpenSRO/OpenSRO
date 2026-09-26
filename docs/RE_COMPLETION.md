@@ -41589,3 +41589,206 @@ On this tree it prints ALL PASS.
 108 suites, 0 failing
 (`SCRIPT ERROR` counts as failing). `cd server && go build ./... && go test -count=1 -p 1 ./...`:
 59 packages ok.
+
+## The character, inventory, skill, action, party and academy windows are one framed window with a pane per tab, as the client builds them (round 587)
+
+Client only. Nothing on the wire changes and the server is unchanged. This is item 2 of the GUI
+audit's open list (the non-registry outer frame) and item 3 (inventory docking). Before it, the
+six windows were separate self-framed windows: HudWindow floated ifalchemybox.txt's caption and
+close button over each one's authored art (the audit's CHROME findings), and `dock_companion`
+put the equipment frame beside the bag at x 176, y 0, unjoined. Every value below was read from
+`sro_client.exe` (md5 `2a5794b72c90908d945be8b3f3f2edd4`; the decompile in `/var/tmp/decomp_client`,
+checked against the linear `/var/tmp/sro_client.asm`) or measured in the archive's layouts or the
+audit's node dump. Labels: **read** (the binary, at the cited address), **measured** (counted in
+data or a dump), **inferred** (a conclusion from read or measured facts, with its basis). Nothing
+was decided from a picture.
+
+### Premise, re-verified
+
+| Claim | Label | Evidence |
+|---|---|---|
+| C, I and S open `IFMainPopup` | read | `0x79ace0`, `0x79b020`, `0x79ae00` each read CGInterface's `+0x728` and call its slot 23 (ShowWindow) and `0x6a1f70` with 0x4b, 0x46 and 0x49. The dispatcher `0x780610` reaches them for command codes 0x43, 0x49 and 0x53 (its tables `0x780e48`/`0x780e00` and `0x780e90`). |
+| `+0x728` is GDR_MAINPOPUP | read / measured | CGInterface fetches ID 0x19 into it (0x78ca87) and hides it (0x78cac8). `ginterface.txt`'s GDR_MAINPOPUP is `CIFMainPopup`, ID 25, `595,262,388,408`, `interface\frame\mframe_wnd_`, Text empty, outside every `#ifdef` (measured in the archive's copy, md5 `fce2ab6a…`). |
+| GDR_QUEST and GDR_EQUIPMENT are declared in ifmainpopup.txt | measured | Both are in its Create section (IDs 76 and 71), with GDR_INVENTORY (70), GDR_PARTY (72), GDR_SKILL (73), GDR_ACTION (74), GDR_PLAYERINFO (75) and, under `APPLY_MENTOR_SYSTEM`, GDR_APPRENTICESHIP (77). |
+| CIFMainPopup is a CIFMainFrame and loads ifmainpopup.txt | read | RTTI chain `CIFMainPopup : CIFMainFrame : CIFFrame : …`. Create `0x6a2560` calls `0x816f80` (CIFMainFrame's chrome, round 586) at 0x6a2598, pushes `0xda693c` (ASCII `resinfo\ifmainpopup.txt`; the decompile misrenders it as wide) at 0x6a25a3, and builds "Create" with itself as the parent (`push esi` 0x6a25af, builder 0x6a25d6). |
+| CIFPlayerInfo loads ifplayerinfo_trijob2.txt, and the exe never names ifplayerinfo.txt | read / measured | `CIFPlayerInfo::Create` `0x6b84e0` pushes `0xda7b70` (`resinfo\ifplayerinfo_trijob2.txt`) at 0x6b84ec and builds it into itself (`push esi` 0x6b84f8). Two probes for the negative, case-insensitive over the whole file: the exact name `ifplayerinfo.txt` in ASCII and UTF-16 (0 hits), and the substring `playerinfo.txt` in both (0 hits), with the positive control `ifplayerinfo_trijob2.txt` found by the same probe (ASCII, 0xda7b78). The decompile renders none of these layout pushes as strings (a grep for `trijob2` or `ifinventory` there finds nothing), so it cannot serve as a probe here, and is not claimed as one. |
+
+The other panes' classes load their own layout into themselves, each with `push esi` straight
+after the load (read): CIFInventory `ifinventory.txt` 0x6b244b, CIFEquipment `ifequipment.txt`
+0x6ac1fa, CIFSkill `ifskill.txt` 0x6a6e17, CIFAction `ifaction.txt` 0x6a487f, CIFParty
+`ifparty.txt` 0x6d6ffa, CIFApprenticeShip `ifapprenticeship.txt` 0x6e979f, CIFQuest `ifquest.txt`
+0x6df82b. So by round 586's factory rule (0xba223e adds the parent's position), each pane's
+layout sits at its pane's origin, and each pane at its ifmainpopup rect inside the popup.
+
+### CIFMainPopup::Create (0x6a2560, read in the asm)
+
+- Child fetches (0x8b51f0, ID then store): 70 -> +0x7bc, 71 -> +0x7c0, 73 -> +0x7c4, 74 -> +0x7c8,
+  72 -> +0x7cc, 75 -> +0x7d0, 76 -> +0x7d4, 77 -> +0x7d8; buttons 11 -> +0x7dc, 12 -> +0x7e0,
+  13 -> +0x7e4, 14 -> +0x7e8, 10 -> +0x7ec, 15 -> +0x7f0, 16 -> +0x7f4; the tile 3 -> +0x7f8. The
+  decompile got the order right; the store follows the next call's pushes in the asm.
+- `0x655fa0(8)` on buttons 10, 11, 12, 13, 14 and 15 (not 16), and `0x6a6e60(1)` on the skill
+  pane. What either does was not read.
+- Tooltips on the seven buttons (UIIT_STT_TOGGLE_INVENTORY, _CHARACTER, _SKILL, _ACTION, _PARTY,
+  _QUEST, UIIT_CTL_TC_SHORTKEY_L, set through 0x653dc0), then **ShowWindow(0) on all seven**
+  (`push ebx`, ebx 0, 0x6a290b..0x6a295f) **and on ID 4**, the left decoration (0x6a2974).
+- Slot 20 (`+0x50`) on the inventory pane (0x6a297e). Not read.
+- **Never shown again (two probes).** Every `+0x7dc`..`+0x7f4` reference in 0x6a1000-0x6a3000 is in
+  Create. CGInterface's popup users (every `+0x728` reference: its creation at 0x78ca87..0x78cb7f and
+  the handlers 0x79ace0..0x79df53) touch the popup's children only through `0x6a1cf0` (fetch a pane, read its visibility byte
+  +0x61, 0xb8f530), the eight pane getters 0x6a1d20..0x6a1e70 (+0x7bc..+0x7d8, no button among
+  them) and the tab selector. The click table the buttons would use is at 0xeb8058 (entries 0x28 apart: ID,
+  ID, message 0xc, handler at +0x10, installed at 0xd6c370): 10 -> 0x6a24f0 (0x4b), 11 -> 0x6a2500
+  (0x46), 12 -> 0x6a2510 (0x49), 13 -> 0x6a2520 (0x4a), 14 -> 0x6a2530 (0x48), 15 -> 0x6a2540
+  (0x4c), 16 -> 0x6a2550 (0x4d).
+- **The define.** IDs 16 and 77 exist only under `#ifdef APPLY_MENTOR_SYSTEM`. Create calls through
+  +0x7f4 with no null check (0x6a28e4, 0x6a2953), and 0x6a1c70 through +0x7d8. **Inferred:** the
+  define is set, by the same argument round 585 used for the chat (the define table 0xeed4e0 is a
+  single global map, read: its one reader is 0x5004a0 and its one caller is 0xb37aeb, so every
+  layout parses under the same set).
+
+### The tab selector 0x6a1f70 (read in the asm)
+
+It hides every pane (0x6a1c70), reads the window's rect (0xb8f420: x, y, w, h) and the display
+mode's +0x24, then switches on the tab code through its table 0x6a236c (codes 0x46..0x4d):
+
+| Code | +0x7fc | Caption (slot 45) | Panes shown | Tile | Window x |
+|---|---|---|---|---|---|
+| 0x4b | 0 | UIIT_STT_CHARACTER | PLAYERINFO | hidden | 0x50 |
+| 0x46 | 1 | UIIT_STT_INVENTORY | INVENTORY, EQUIPMENT | shown at (x+0xbd, y+0x44), 9x0x124 | W − w − 0x50 |
+| 0x49 | 2 | UIIT_STT_SKILL | SKILL | hidden | W − w − 0x50 |
+| 0x4a | 3 | UIIT_STT_ACTION | ACTION | shown at (x+0x28, y+0x9a), 0x134x0x7c | W − w − 0x50 |
+| 0x48 | 4 | UIIT_STT_PARTY | PARTY | hidden | W − w − 0x50 |
+| 0x4c | 5 | UIIT_STT_QUEST | QUEST | hidden | 0x50 |
+| 0x4d | 6 | UIIT_CTL_TC_TRAININGCAMP | APPRENTICESHIP | shown, then hidden | 0x50 |
+| 0x47 | — | — | — (the table's default) | — | — |
+
+The window moves with slot 0x98 to (that x, its own y) and then calls its slot 20. The caption
+strings are UTF-16 at 0xd96794, 0xd9676c, 0xd9674c, 0xd9672c, 0xd941fc, 0xd9670c and 0xd96344.
+The tile's rects relative to the window are **(189, 68, 9, 292)** for the inventory tab, the
+strip between the bag (13..189) and the equipment frame (198..376), and **(40, 154, 308, 124)**
+for the action tab, which is its authored rect. The asm's stack offsets were followed through
+each push (the rect is at `[esp+0x70]` before the pushes). `W` is the display mode's +0x24. That
++0x24 is the width is **inferred** from a centring routine that halves +0x24 for x and +0x28 for
+y (0x4f8de3, 0x4f8dfc). The window's starting y is its registry rect's (262); nothing else was
+found to move it.
+
+`CIFMainPopup::vslot_023` (ShowWindow, 0x6a2390): showing re-selects the tab stored at +0x7fc;
+hiding hides all eight panes. The constructor (0x6a1bc0) clears +0x7fc, so the first tab is the
+character's.
+
+### The keys (read)
+
+The dispatcher `0x780610` translates a key to a command code (0x778310) and switches on it; with
+the default bindings (the 33 virtual-key codes at 0x7778be) the codes are the letters'. Through its
+tables (0x780e48 / 0x780e00 for 0x09..0x50, 0x780e90 for 0x52..0x59) it reaches: A (0x41)
+0x79d5b0 (0x4a), C (0x43) 0x79ace0 (0x4b), I (0x49) 0x79b020 (0x46), L (0x4c) 0x79b0b0 (0x4d),
+P (0x50) 0x79ae90 (0x48), S (0x53) 0x79ae00 (0x49). The underbar menu's dispatcher (0x60cd4c)
+calls the same six. Each one does the same thing: if the popup is
+visible and its own pane is visible (0x6a1cf0), it hides the popup. Otherwise it shows the popup
+(which re-selects the current tab), selects its own tab unless its pane is already showing
+(A selects unconditionally), and calls 0x79a7e0 on the popup (not read; we raise the window).
+P and L also call 0x8cbac0 with their code (not read). The equipment toggle 0x79ad70 checks the
+inventory pane and selects 0x46. No code reference to its address was found in the asm (it may be
+reached through data), and O is not a default binding. **Q is not a tab:** code 0x51 goes to 0x7990e0, which toggles CGInterface's window 0x4c,
+the window game start builds from `res_ui\questlist.2dt` if absent (0x787024 -> push 0xdb9144 ->
+0x469140). The popup's quest pane is reachable only through button 15, which Create hides.
+
+**Our keys stay as they were:** C, I, K (skill: S walks backwards here), A, P, L, and O for the
+equipment, which lands on the inventory tab.
+
+### What is built
+
+- `HudMainPopup` (new, `client/scripts/ui/hud/hud_main_popup.gd`) builds the popup through the
+  shared registry path (`HudWindow.build` with `GDR_MAINPOPUP`, round 586): the 388x408
+  `mframe_wnd_` frame, CIFMainFrame's caption (10, 12, 367), drag strip and close button
+  (362, 10). ifmainpopup.txt is read with `APPLY_MENTOR_SYSTEM`. Each hosted pane's own layout is
+  built into its pane control at the pane's origin, with the extra sections the old windows
+  composed (skill's MainSkillWnd, the academy's NotifySubBox and NotifyContents). The seven
+  buttons and ID 4 are hidden at build. All panes are hidden until a tab shows them.
+- A tab selection runs the table above: panes, caption (resolved through the text table; measured
+  in `textuisystem.txt`: Character, Inventory, Skill, Action, Party, Academy), tile, and the
+  window's x.
+- `HudPanels`: `open`, `toggle`, `is_open` and `close` of the six panels (and `equipment`) go to
+  the popup's tabs with the keys' semantics. `_windows` maps each tab to the popup window, so
+  every existing lookup by control name still finds its control (no two pane layouts share a
+  control name: measured over the eight layouts). The drag targets (`_bag_slot_at`,
+  `_equipment_slot_at`, `_over_inventory_window`) and the skill refreshes now need their tab to be
+  showing, not just the window.
+- **Equipment modes:** the avatar flag now also clears when another tab hides the equipment pane,
+  as 0x6a1c70's ShowWindow(0) does to CIFEquipment (its vslot_023 clears it, round 585).
+- **Character pane:** built from ifplayerinfo_trijob2.txt. Every control the stats wiring fills
+  (level, current and next EXP, stat points, Str, Int, HP and MP with their gauges, the four
+  attack and defence rows, the two "+" buttons) is in it at the same rect as in ifplayerinfo.txt
+  (measured by diffing the two dumps). The differences: trijob2 has `GDR_PI_JOB_*` rows instead of
+  the per-job trader/hunter/thief rows (never filled; the server has no job system), two
+  `CIFCheckBox`es (93434, 93435) beside the stat rows, and moved STR/INT/honour labels. No field
+  that was filled is dropped.
+- `HudWindow.dock_companion` and `HudPanels.INVENTORY_CONTENT_WIDTH` are removed.
+- **Paper doll:** it keeps the rect it had inside the equipment layout, (40, 46, 98, 236), which
+  was chosen, not read, and is now named `PAPER_DOLL_RECT` and says so. What the client does was
+  read: `CIFEquipment::vslot_013` renders the model into the pane's rect grown by (+2, +0xf, −2,
+  −0x25), i.e. (2, 15, 176, 318) (0x6ad8ae..0x6ad8ed). Its camera was not read, so the doll was
+  not refitted to that viewport.
+
+### Measured (audit, `zz_gui_audit.gd` extended to dump each panel as it opens)
+
+Run in the popup lane (`/opt/srrevamp-client-popup`), GL Compatibility on the RX 5700 XT,
+`--norender`. BEFORE is fcd0b08's scripts, AFTER this tree. 0 `SCRIPT ERROR` in both.
+
+- **Sizes**: inventory/equipment 354x355, character 364x356, skill 364x333, party 364x363, action
+  364x357 and academy 364x363 -> **one window, 388x408**, at (1432, 262) on the right-hand tabs and
+  (80, 262) on character and academy, on the 1900-wide page.
+- **Frame pieces**: all eight `mframe_wnd_` pieces at their own size and spanning their gaps
+  (0,0,40,68 / 40,0,308,68 / 348,0,40,68 / 0,68,40,292 / 348,68,40,292 / 0,360,40,48 /
+  40,360,308,48 / 348,360,40,48).
+- **Findings per tab, before -> after**: CHROME 9 -> **0** (inventory 2, character 3, skill 2,
+  and the equipment view of the same window 2). OUTSIDE: character 2 -> 2 (the authored 228-wide
+  HP and MP values, round 584's rule 13), skill 52 -> 51 (the board's scroll content, clipped by
+  the board). SAMERECT 0 -> 3: each is a pane control and its own frame at one rect (GDR_EQUIPMENT
+  / GDR_EQ_FRAME, GDR_PLAYERINFO / GDR_PI_SUBFRAME, GDR_SKILL / GDR_SKILL_FRAME), which is the
+  composition: the pane is an art-less container. NULLTEX (empty item and slot icons) and
+  EDGE_TILED_OFF (round 584's six-piece sets) are unchanged in count on every tab.
+- **Tree diff**: all 19 other widgets (quest, community, guild, partymatch, autopotion, alchemy,
+  exchange, system, npctalk, store, storage, teleport, underbar, minimap, chat, player info,
+  target, world map, help) are identical line for line, with auto-generated node names normalised.
+
+### Tests
+
+`hud_main_popup_test.gd` (new) builds the popup through `HudPanels.open` from fixtures with the
+real names, IDs and rects (GDR_MAINPOPUP, ifmainpopup.txt with both `#ifdef` branches spelled as
+the archive has them, a frame and a few controls from each pane's layout) and synthetic textures.
+It checks one window for all seven panel ids, the 388x408 size and frame, CIFMainFrame's caption
+and close, every pane at its rect with its layout at its origin, the strip hidden and built once,
+per tab the panes, caption, tile and x, the keys' toggle, the equipment reset on a tab switch,
+the bag's drag target per tab, and the character rows from a `StatsNet.Stats`.
+NEGATIVE, run on the box against fcd0b08's scripts: **57 FAIL lines**, among them
+
+- `FAIL PANELS["character"] is ifplayerinfo_trijob2.txt, the layout CIFPlayerInfo loads (got ["resinfo\\ifplayerinfo.txt", "Character", 67])`
+- `FAIL skill opens the same window as inventory (got Window_skill:<Control#52059702971>)`
+- `FAIL the window is GDR_MAINPOPUP's (388, 408) (got (354, 355))`
+- `FAIL the caption is CIFMainFrame's (10, 12, 367 wide) (got [(10, 18), (334, 17)])`
+- `FAIL GDR_EQUIPMENT's layout starts at the pane's origin (198, 41) (its frame at (176, 0))`
+- `FAIL the same point does not count as the bag on the character tab`
+
+On this tree: ALL PASS. `hud_alternates_test.gd` now carries the popup's registry entry and panes,
+and looks for each same-rect group inside its pane.
+
+**Verified.** `remote_godot.sh check`: 291 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`:
+110 suites, 0 failing (`SCRIPT ERROR` counts as failing). `cd server && go build ./... && go test
+-count=1 -p 1 ./...`: 59 packages ok.
+
+### Open
+
+- The paper doll's camera (above). Its viewport is read; its framing is not.
+- A `CIFSubFrame`'s own Text (UIIT_STT_PARTY_INFO on the party pane, UIIT_CTL_TC_MEMBER on the
+  academy's, the four action subframe titles) is not drawn: UiBuilder's frames draw no text, and
+  how CIFSubFrame draws its caption was not read. Before this round the party's and academy's were
+  used as their window titles instead.
+- `CIFCheckBox` has no builder (UiBuilder builds it as an empty control), so trijob2's two check
+  boxes are not drawn. What they do was not read.
+- Not read: slot 20 on the inventory pane and on the popup after each selection, `0x6a6e60(1)` on
+  the skill pane, `0x655fa0(8)` on six buttons, `0x79a7e0`, and `0x8cbac0` after P and L.
+- The x placement is the client's formula. On a viewport narrower than 548 logical pixels it
+  puts the window partly off the left edge, as the client's would.
+- The quest pane is not built. Q stays on `ifquest.txt` as its own window until the questlist
+  `.2dt` window is built.

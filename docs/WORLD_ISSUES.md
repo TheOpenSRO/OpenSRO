@@ -7083,6 +7083,33 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Round 587: the character, inventory, skill, action, party and academy windows are one framed window with a pane per tab, as the client builds them
+
+Items 2 and 3 of the GUI audit's open list: the self-framed windows' outer frame, and the
+inventory docking. The full record, with every address, is `docs/RE_COMPLETION.md`'s entry of
+the same name.
+
+- **Read.** C, I and S (and A, P, L) all go to one window, CGInterface's `GDR_MAINPOPUP`: a
+  `CIFMainPopup : CIFMainFrame`, 388x408 on `mframe_wnd_`. Its Create (0x6a2560) builds
+  CIFMainFrame's chrome and `ifmainpopup.txt`, whose panes are the bag (13,63), the equipment
+  (198,41), the character, action, party, academy and quest (13,38) and the skill (13,63). Each
+  pane's class loads its own layout into itself. The tab strip left of the window is built and
+  then hidden at create, and nothing shows it again: keys switch the panes. The selector
+  (0x6a1f70) sets the caption, shows the tab's panes, moves a background tile into the 9-pixel gap
+  between bag and equipment (inventory) or to (40,154) (action), and moves the window: right-hand
+  tabs to the screen width − width − 80, character and academy to x 80.
+- **Character.** CIFPlayerInfo loads `ifplayerinfo_trijob2.txt`, not `ifplayerinfo.txt`, which is
+  in neither encoding in the exe. Every stat row we fill is in it at the same rect.
+- **Q is not a tab.** It toggles the window game start builds from `res_ui\questlist.2dt`. The
+  quest panel keeps its own window until that is built.
+- **Measured.** One 388x408 window instead of six (354x355, 364x356, 364x333, 364x363, 364x357,
+  364x363), its frame pieces all at their own size. CHROME findings 9 -> 0. The other 19 widgets'
+  trees are identical. `hud_main_popup_test.gd` fails 57 times against fcd0b08 and passes here.
+  110 suites, 0 failing. Go: 59 packages ok.
+- **Open.** The paper doll keeps its old, chosen rect: the model's viewport is read, (2, 15, 176,
+  318) in the pane, but its camera is not. Subframe captions and the two trijob2 check boxes are not
+  drawn. A few calls in Create and the key handlers are not read.
+
 ## Five-hundred-and-eighty-sixth round: storage, exchange, system, party match, auto potion and help open inside their registry frame, with the caption and close button where the client puts them
 
 Cause 2 of the GUI audit, after the alternates round below. The full record, with every address,
