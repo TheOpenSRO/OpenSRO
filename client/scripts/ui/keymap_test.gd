@@ -256,6 +256,18 @@ func _check_modifiers() -> void:
 		_check(one[0] == [["quickslot_key", 1]], "%s+1 fires the page's slot 1 (ran %s)" % [mods[0], one[0]])
 		var f1 := _what_mod(KEY_F1, mods)
 		_check(f1[0] == [["page", 1]], "%s+F1 selects page 1 (ran %s)" % [mods[0], f1[0]])
+	# The OS's window combinations do nothing (ours; retail's are unread).
+	var alt_tab := _what_mod(KEY_TAB, ["alt"])
+	_check(alt_tab[0].is_empty(), "Alt+Tab does not go berserk (ran %s)" % [alt_tab[0]])
+	var alt_f4 := _what_mod(KEY_F4, ["alt"])
+	_check(alt_f4[0].is_empty(), "Alt+F4 does not select page 4 (ran %s)" % [alt_f4[0]])
+	var alt_space := _event(KEY_SPACE, true)
+	alt_space.alt_pressed = true
+	get_root().push_input(alt_space)
+	var after_alt_space := _what(KEY_1)
+	get_root().push_input(_event(KEY_SPACE, false))
+	_check(after_alt_space[0] == [["quickslot_key", 1]],
+		"Alt+Space starts no Space chord: 1 is the page's slot (ran %s)" % [after_alt_space[0]])
 	var ctrl_f4 := _what_mod(KEY_F4, ["ctrl"])
 	_check(ctrl_f4[0] == [["page", 4]], "Ctrl+F4 selects page 4 (only Ctrl+F1-F3 are ours; ran %s)" % [ctrl_f4[0]])
 	var meta := _what_mod(KEY_G, ["meta"])

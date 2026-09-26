@@ -45964,9 +45964,11 @@ dropped after; `/var/tmp/rkeymap2/live3.log`):
    4). Meta does nothing (ours). **Alt, unsettled:** the message map at `0xd71100` registers
    WM_CHAR, WM_KEYDOWN, WM_KEYUP and 0x8077 only (entries at `0xebe280`, stride 0x28, read), and
    Win32 sends Alt+key and F10 as WM_SYSKEYDOWN, yet `0x780610` has an F10 case; how system keys
-   reach it was not read. Alt is treated as Ctrl and Shift are. **Collisions:** Alt+F4 also selects
-   page 4 as the OS closes the window; Alt+Tab would go berserk if the OS let Tab through (not
-   measured); Alt+Space opens the window menu on Windows and starts a Space chord here.
+   reach it was not read. Alt is treated as Ctrl and Shift are, **except the OS's three window
+   combinations, which do nothing (ours; `KeyMap.is_os_combination`)**: Alt+Tab (switching away
+   must not burn the berserk gauge), Alt+F4 (closing must not select page 4) and Alt+Space (the
+   window menu must not start a Space chord). Retail's handling of them is unread: the map at
+   `0xd71100` registers no WM_SYSKEY* message.
 4. **H's comment.** KeyMap said this client has no `GDR_GAMEGUIDE`; HelpWindow is built in that
    very registry frame (`REGISTRY = {"name": "GDR_GAMEGUIDE"}`). Only its contents are ours.
 5. **Also:** without Media.pk2 (no HUD) `_is_typing` falls back to the viewport's focus owner, so
@@ -45989,3 +45991,11 @@ FAIL lines, among them:
 	FAIL Meta+G and Meta+S do nothing (ran [], toggled ["skill"])
 	FAIL with a text line focused F1-F4, F9, F10, Ctrl+F1-F3 and PrintScreen still run, and the line keeps the focus (["F1 ran []", "F4 ran []", "F9 ran []", "F10 ran []", "Ctrl+F1 ran []", "Ctrl+F2 ran []", "Ctrl+F3 ran []", "PrintScreen ran []"])
 	FAIL Space+1 with a button focused fires slot 41 and does not press the button (ran [["quickslot", 41]], pressed 1)
+
+**The OS's window combinations (second review note).** Alt+Tab, Alt+F4 and Alt+Space do nothing
+(`KeyMap.is_os_combination`, ours; retail's handling is unread, the map at `0xd71100` registering
+no WM_SYSKEY* message). Negative, the suite against 8650cab (`/var/tmp/rkeymap2/neg_os.log`):
+
+	FAIL Alt+Tab does not go berserk (ran [["berserk", 8]])
+	FAIL Alt+F4 does not select page 4 (ran [["page", 4]])
+	FAIL Alt+Space starts no Space chord: 1 is the page's slot (ran [["quickslot", 41]])

@@ -72,7 +72,7 @@ keys type into it; the F keys, Ctrl+F1 to F3 and Print Screen still work.
 
 As in the original, Ctrl, Shift and Alt do not change a key: Ctrl+S opens
 Skills like S. The exceptions are Ctrl+1 to 8 (select) and Ctrl+F1 to F3
-(developer panels).
+(developer panels); Alt+Tab, Alt+F4 and Alt+Space are left to your system.
 
 Click an NPC to talk, buy, or use storage. **Click a monster once to attack
 it**: as in the original, your character keeps swinging at the weapon's own

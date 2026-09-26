@@ -99,7 +99,8 @@ func _input(event: InputEvent) -> void:
 		_on_release(key)
 		return
 	if key.keycode == KEY_SPACE:
-		if not _typing():
+		# Alt+Space is the OS's window menu (KeyMap.is_os_combination).
+		if not _typing() and not KeyMap.is_os_combination(KEY_SPACE, key.alt_pressed):
 			_space_held = true
 			# Space presses a focused button (ui_accept, measured), which the
 			# client does not do -- it has no keyboard focus on buttons -- and

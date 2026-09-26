@@ -7117,7 +7117,8 @@ The full record is `docs/RE_COMPLETION.md`'s entry of the same name (round 608).
   the chat line stays focused after a message, so Ctrl+F3, F10, F1-F4, F9 and PrintScreen were
   dead after any line of chat; they run while typing again (a line never takes them). Table keys
   fire with Ctrl, Shift or Alt, as retail's `0x778310`/`0x780610` test no modifier (Ctrl+1..8 and
-  Space+digit unchanged, Ctrl+F1-F3 ours). Corrected: `+0x3ce` kills the letter scan codes only,
+  Space+digit unchanged, Ctrl+F1-F3 ours; Alt+Tab, Alt+F4 and Alt+Space left to the OS, ours).
+  Corrected: `+0x3ce` kills the letter scan codes only,
   not the digits, and its meaning is unknown; HelpWindow is in the GDR_GAMEGUIDE frame. Also the
   no-HUD typing fallback, F9 saved and shown in the debug panel, Space not pressing a focused
   button, and the cursor refreshed on V.

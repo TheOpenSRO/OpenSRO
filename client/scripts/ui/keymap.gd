@@ -239,12 +239,11 @@ static func is_hold(action: String) -> bool:
 ## WM_KEYDOWN and WM_KEYUP only, and Win32 sends a key with Alt held (and F10)
 ## as WM_SYSKEYDOWN; since 0x780610 does have an F10 case, how system keys
 ## reach it was not read. Alt is treated like Ctrl and Shift here (the
-## user's "as the original"); Alt+F4 selects page 4 as the OS closes the
-## window, and Alt+Tab would go berserk if the OS let the Tab through
-## (not measured). PrintScreen resolves on its release only
-## (resolve_release).
+## user's "as the original"), except for the three window combinations the
+## OS owns, which do nothing (is_os_combination; ours). PrintScreen resolves
+## on its release only (resolve_release).
 static func resolve(keycode: int, ctrl: bool, alt: bool, meta: bool, space_held: bool) -> Array:
-	if meta:
+	if meta or is_os_combination(keycode, alt):
 		return []
 	if ctrl:
 		match keycode:
@@ -277,6 +276,14 @@ static func resolve(keycode: int, ctrl: bool, alt: bool, meta: bool, space_held:
 	if slot == null:
 		return []
 	return [String(slot["action"]), int(slot["slot"])]
+
+## The OS's window combinations, left to the OS (ours): Alt+Tab (switching
+## away must not burn the berserk gauge), Alt+F4 (closing must not select
+## page 4) and Alt+Space (the window menu must not start a Space chord).
+## Retail's handling of them is unread: its message map (0xd71100)
+## registers no WM_SYSKEYDOWN/WM_SYSKEYUP.
+static func is_os_combination(keycode: int, alt: bool) -> bool:
+	return alt and keycode in [KEY_TAB, KEY_F4, KEY_SPACE]
 
 ## Whether a key still runs while a text line has the keyboard: the keys a
 ## line never takes -- F1-F12 (with or without Ctrl) and PrintScreen. Letters,
