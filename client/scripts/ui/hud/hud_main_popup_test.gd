@@ -86,7 +86,8 @@ func _layout(body: String) -> String:
 
 func _registry() -> String:
 	return "Interface Text\n\n" + _section("Create",
-		_control("GDR_MAINPOPUP", "CIFMainPopup", "595,262,388,408", MFRAME, 25))
+		_control("GDR_MAINPOPUP", "CIFMainPopup", "595,262,388,408", MFRAME, 25)
+		+ _control("GDR_STORAGEROOM", "CIFStorageRoom", "0,0,254,317", MFRAME, 19))
 
 ## ifmainpopup.txt: the panes, then the tab strip in both #ifdef branches as
 ## the archive has them, then the background tile.
@@ -168,6 +169,8 @@ func _builder() -> UiBuilder:
 	var cache: Dictionary = builder.get("_layout_cache")
 	cache[_ifdef_key(POPUP_LAYOUT, ["APPLY_MENTOR_SYSTEM"])] = UiLayoutParser.parse(_mainpopup(), true, PackedStringArray(["APPLY_MENTOR_SYSTEM"]))
 	cache["resinfo\\ifinventory.txt"] = UiLayoutParser.parse(_inventory())
+	# ifstorageroom.txt's inner frame, for the warehouse the bag pairs with.
+	cache["resinfo\\ifstorageroom.txt"] = UiLayoutParser.parse(_single("GDR_STORAGE_BG_CTRL", "9,38,236,241"))
 	cache["resinfo\\ifequipment.txt"] = UiLayoutParser.parse(_equipment())
 	cache["resinfo\\ifplayerinfo_trijob2.txt"] = UiLayoutParser.parse(_playerinfo())
 	cache["resinfo\\ifskill.txt"] = UiLayoutParser.parse(_single("GDR_SKILL_FRAME", "0,0,364,333"))
@@ -401,6 +404,24 @@ func _popup_checks(panels_script: GDScript) -> void:
 	await process_frame
 	_check(dragged_to == Vector2(window.get_viewport_rect().size.x - 468.0 - 1000.0, 112.0) and window.position == dragged_to,
 		"a drag to %s is kept through a clamp and back (got %s)" % [dragged_to, window.position])
+
+	# The bag beside the warehouse (open_storage, likewise open_shop): placed
+	# through the popup's wanted position, so a window resize keeps the
+	# pairing instead of snapping the bag back to its tab's side (round 593).
+	root.size = Vector2i(1920, 1080)
+	root.content_scale_factor = 1.0
+	await process_frame
+	panels.call("open_storage", "Keeper")
+	var paired := window.position
+	_check(paired == Vector2(968, 336), "the bag opens beside the warehouse at (968, 336) (got %s)" % paired)
+	root.size = Vector2i(1900, 1070)
+	await process_frame
+	await process_frame
+	_check(window.position == paired, "a resize to 1900x1070 keeps the bag at %s (got %s)" % [paired, window.position])
+	root.size = Vector2i(1920, 1080)
+	await process_frame
+	await process_frame
+	_check(window.position == paired, "and back to 1920x1080 it is still at %s (got %s)" % [paired, window.position])
 
 	# The character pane's rows, filled from the server's stats.
 	var stats := StatsNet.Stats.new()

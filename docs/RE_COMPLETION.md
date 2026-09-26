@@ -41921,7 +41921,7 @@ close button settles back to 176,9,16,16. NEGATIVE, run on the box against fcd0b
 On this tree: ALL PASS. `hud_settle_test.gd`'s target fixture moved to the layout and defines
 HudTarget now reads.
 
-**Verified.** `remote_godot.sh check`: 293 scripts and 5 scenes, ALL LOAD. `remote_godot.sh
+**Verified.** `remote_godot.sh check`: 292 scripts and 5 scenes, ALL LOAD (first printed as 293: the lane also held a scratch audit tool, removed in round 593). `remote_godot.sh
 tests`: 111 suites, 0 failing (`SCRIPT ERROR` counts as failing). `cd server && go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok.
 
 ### Open
@@ -42081,7 +42081,7 @@ fd8df3a's scripts: **14 FAIL lines**:
 
 On this tree: ALL PASS.
 
-**Verified.** `remote_godot.sh check`: 293 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`:
+**Verified.** `remote_godot.sh check`: 292 scripts and 5 scenes, ALL LOAD (first printed as 293: the lane also held a scratch audit tool, removed in round 593). `remote_godot.sh tests`:
 111 suites, 0 failing (`SCRIPT ERROR` counts as failing). `cd server && go build ./... && go test
 -count=1 -p 1 ./...`: 59 packages ok, run after the doc edits.
 
@@ -42161,7 +42161,7 @@ On this tree: ALL PASS. The close-button settle check from round 588 was also mo
 settling pass's first frames. Placed after the new awaits, it ran once the three-frame pass was
 over and failed for that reason alone, which showed the check had depended on timing.
 
-**Verified.** `remote_godot.sh check`: 293 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`: 111
+**Verified.** `remote_godot.sh check`: 292 scripts and 5 scenes, ALL LOAD (first printed as 293: the lane also held a scratch audit tool, removed in round 593). `remote_godot.sh tests`: 111
 suites, 0 failing. `cd server && go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok.
 
 ## The main window stays on screen at every window size and UI scale (round 591)
@@ -42274,7 +42274,7 @@ Plus 1 FAIL line from the target test:
 
 On this tree both print ALL PASS.
 
-**Verified.** `remote_godot.sh check`: 293 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`: 111
+**Verified.** `remote_godot.sh check`: 292 scripts and 5 scenes, ALL LOAD (first printed as 293: the lane also held a scratch audit tool, removed in round 593). `remote_godot.sh tests`: 111
 suites, 0 failing. `cd server && go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok.
 
 ## The target window's close button, health bar and rank row sit where the client puts them (round 592)
@@ -42313,7 +42313,8 @@ settles it there.
 - The rank text (+0x378, which is ID 2 in CIFTargetWindowSpecialMob::Create) moves to
   (x + 0x69, y + 0x38) = **(105, 56)** (0x69b55c..0x69b57a).
 
-The layout has (65, 54) and (85, 56), which is what we drew. For a party monster (+0x7ad == 1),
+The layout has (65, 54) and (85, 56), which is what we drew. For a party monster (+0x7ad == 1,
+tested at 0x69b834) whose rarity is not 0 (`cmp [ebp+0x7ac],bl; je` at 0x69b890),
 0x69b890..0x69b98d re-centres the rank row by the text's width (0x8b2f20) and moves the icon by
 (−20, 0) (0xb90db0 at 0x69b988). The server sends no party flag, so that path is open along with
 "(Party)".
@@ -42404,5 +42405,49 @@ NEGATIVE, run on the box against 76d8d23's scripts: **8 FAIL lines**:
 
 On this tree both print ALL PASS.
 
-**Verified.** `remote_godot.sh check`: 293 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`: 111
+**Verified.** `remote_godot.sh check`: 292 scripts and 5 scenes, ALL LOAD (first printed as 293: the lane also held a scratch audit tool, removed in round 593). `remote_godot.sh tests`: 111
+suites, 0 failing. `cd server && go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok.
+
+## The bag stays beside a shop or storage through a window resize (round 593)
+
+Client only. A regression from round 592, found in review. `open_shop` and `open_storage` open the
+bag (the main popup's inventory tab) and pair it with the vendor window. The vendor window goes at
+(W/2 − its width − 8, centred) and the bag at (W/2 + 8, centred). The bag's position was written
+directly, bypassing the popup's `wanted` position. `keep_on_screen()` rebuilds from `wanted`, so
+the first `size_changed` threw the pairing away. Measured by the reviewer: at 76d8d23 the bag was
+paired at (968, 336) and still there after a resize to 1900x1070; at 8805abb it jumped to
+(1452, 112).
+
+**Fix.** `HudMainPopup.place_at(pos)` sets `wanted` and clamps. `HudPanels.place_window(window,
+pos)` routes a placement through it when the window is the popup, and sets `position` otherwise.
+The shop and storage pairings use it. A grep for position writes in `hud_panels.gd` and
+`World3D.gd` found one more on the popup: the QA panels hook's centring and tiling. That now uses
+`place_window` too. Every other write is to a child control or a non-popup window. `HudWindow`'s
+own drag writes `position` and then emits `dragged`, which round 592 already feeds into `wanted`.
+
+**Also in this round (review nits):**
+
+- `hud_target_layout_test.gd`'s comment named the authored 176,9. It now says 216,9 and why.
+- Round 592's party path is gated on rarity as well: `+0x7ad == 1` (0x69b834) **and** rarity ≠ 0
+  (`cmp [ebp+0x7ac],bl; je` at 0x69b890). That entry is corrected.
+- Rounds 588-592 recorded `check` as 293 scripts. The lane (`/opt/srrevamp-client-popup`) also held
+  the scratch audit tool `tools/zz_popup_audit.gd`, which is not in the repo, so the count was one
+  too many. With it removed, `check` prints 292. Those entries are corrected.
+- **Open, recorded:** `GDR_TWSM_TEXT_LEV` is authored 168 wide. At the x 105 the client moves it to,
+  it reaches 273 in the 236-wide piece. The audit reports it as OUTSIDE. The width is the layout's
+  (predates this round); whether the client clips the text there was not read.
+
+### Tests
+
+`hud_main_popup_test.gd` opens the warehouse (fixtures: GDR_STORAGEROOM and ifstorageroom's
+inner frame) at 1920x1080. The bag must be at (968, 336), stay there after a resize to 1900x1070,
+and stay there after a resize back. NEGATIVE, run on the box against 8805abb's scripts: **2 FAIL lines**, which reproduce the
+reviewer's measurement:
+
+- `FAIL a resize to 1900x1070 keeps the bag at (968, 336) (got (1452, 112))`
+- `FAIL and back to 1920x1080 it is still at (968, 336) (got (1452, 112))`
+
+On this tree: ALL PASS.
+
+**Verified.** `remote_godot.sh check`: 292 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`: 111
 suites, 0 failing. `cd server && go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok.

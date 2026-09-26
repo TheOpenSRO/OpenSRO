@@ -282,6 +282,13 @@ func select(panel_id: String) -> void:
 		wanted.x = SIDE_MARGIN
 	keep_on_screen()
 
+## Puts the window at `at` because this client chose to (the bag beside a
+## shop or storage, a QA layout): it becomes the wanted position, so a later
+## clamp or resize starts from it instead of undoing it.
+func place_at(at: Vector2) -> void:
+	wanted = at
+	keep_on_screen()
+
 ## Shows the window for `panel_id` the way the key handlers do (C 0x79ace0,
 ## I 0x79b020, S 0x79ae00, A 0x79d5b0, P 0x79ae90, L 0x79b0b0): ShowWindow(1)
 ## re-selects the current tab (CIFMainPopup::vslot_023, 0x6a2390), then the

@@ -7083,6 +7083,16 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Round 593: the bag stays beside a shop or storage through a window resize
+
+This was a regression from round 592. The full record is `docs/RE_COMPLETION.md`'s entry of the
+same name. The shop and storage placed the bag by writing its position directly, and the popup
+rebuilds from its `wanted` position on every resize. So a resize snapped the bag from (968, 336)
+back to (1452, 112). The placements now go through `HudMainPopup.place_at`, via
+`HudPanels.place_window`, and so does the QA panels layout. Also fixed: round 592's party path
+needs rarity ≠ 0 as well. The script count is 292: 293 counted a scratch tool in the lane. The rank
+text's authored 168 width, which overruns the 236 piece, is recorded as open.
+
 ## Round 592: the target window's close button, health bar and rank row sit where the client puts them
 
 The review of rounds 588-591 found three misreads, each re-verified in the asm. The full record is

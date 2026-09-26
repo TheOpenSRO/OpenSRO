@@ -219,7 +219,8 @@ is presentation work on solved data; if you find yourself editing the protocol, 
     with the rank row and `Lv %d` filled (0x69b4c0), and placed where the client places it,
     ((screen width − piece width) >> 1, 7) (0x69a161, round 590); its close button, gauge and rank
     rows as the class code moves them (round 592). Still open: the party suffix and the party
-    re-centring of the rank row.
+    re-centring of the rank row, and `GDR_TWSM_TEXT_LEV`'s authored 168 width reaching x 273 in the
+    236-wide piece (round 593).
   - The store's registry height (317 / 360 / 370) turns on `RENEWAL_SHOP_SYSTEM` and
     `RESTORE_SOLDITEM_INSHOP`, which are unreadable. With our `[]` choice, Repair sits at y
     332-356, below a 317 frame.

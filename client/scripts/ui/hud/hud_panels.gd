@@ -440,6 +440,18 @@ func open(panel_id: String) -> HudWindow:
 	_populate(panel_id)
 	return window
 
+## Moves a window this client placed itself. The main popup keeps a wanted
+## position that its clamp and every resize rebuild from
+## (HudMainPopup.keep_on_screen), so it is moved through that; writing its
+## `position` directly would be undone by the next viewport resize.
+func place_window(window: HudWindow, at: Vector2) -> void:
+	if window == null:
+		return
+	if _popup != null and window == _popup.window:
+		_popup.place_at(at)
+	else:
+		window.position = at
+
 ## The main popup, built on first use (HudMainPopup), and the panel ids its
 ## tabs answer to.
 var _popup: HudMainPopup = null
@@ -971,7 +983,7 @@ func open_shop(npc_name: String, tabs: Array, npc_code: String = "") -> void:
 	if bag != null:
 		var view := get_viewport_rect().size
 		window.position = Vector2(view.x * 0.5 - window.size.x - 8.0, (view.y - window.size.y) * 0.5).round()
-		bag.position = Vector2(view.x * 0.5 + 8.0, (view.y - bag.size.y) * 0.5).round()
+		place_window(bag, Vector2(view.x * 0.5 + 8.0, (view.y - bag.size.y) * 0.5).round())
 		bag.move_to_front()
 		window.move_to_front()
 	# Prices for just this NPC's goods, and the current purse. The catalogue is
@@ -1574,7 +1586,7 @@ func open_storage(npc_name: String) -> void:
 	if bag != null:
 		var view := get_viewport_rect().size
 		window.position = Vector2(view.x * 0.5 - window.size.x - 8.0, (view.y - window.size.y) * 0.5).round()
-		bag.position = Vector2(view.x * 0.5 + 8.0, (view.y - bag.size.y) * 0.5).round()
+		place_window(bag, Vector2(view.x * 0.5 + 8.0, (view.y - bag.size.y) * 0.5).round())
 		bag.move_to_front()
 		window.move_to_front()
 	if NetClient.is_connected_to_server():

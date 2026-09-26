@@ -162,7 +162,8 @@ func _checks(script: GDScript) -> void:
 		target.free()
 		return
 
-	# The close button at its authored 176,9 and held there by the settling
+	# The close button at 216,9 -- the authored 176,9 moved by (+0x28, 0), as
+	# the select function does (round 592) -- and held there by the settling
 	# pass, like every other built control: knock it off its rect while that
 	# pass runs (its first frames in the tree) and wait.
 	var close := target.find_child("GDR_TW_CLOSE", true, false) as Control

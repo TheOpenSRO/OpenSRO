@@ -2130,16 +2130,17 @@ func _qa_open_panels(spec: String) -> void:
 		windows.append(window)
 		if not in_place:
 			# A single window centres for a clean shot, clear of the left-side
-			# chat log; several tile across the top.
+			# chat log; several tile across the top. Through place_window, so
+			# the main popup keeps the placement through a resize.
+			var view := get_viewport().get_visible_rect().size
 			if ids.size() == 1:
-				window.centre()
+				_hud_panels.place_window(window, ((view - window.size) / 2.0).round())
 			else:
-				var view := get_viewport().get_visible_rect().size
 				var column := (windows.size() - 1) % 3
 				var row: int = (windows.size() - 1) / 3
-				window.position = Vector2(
+				_hud_panels.place_window(window, Vector2(
 					20.0 + column * (view.x - 40.0) / 3.0,
-					90.0 + row * 200.0)
+					90.0 + row * 200.0))
 		print("QA PANELS: %s opened %dx%d at %s%s" % [
 			panel_id, int(window.size.x), int(window.size.y), window.position,
 			" (its own placement)" if in_place else ""])
