@@ -663,7 +663,7 @@ state setters**:
 	0x4a9df0  CGObjChar::SetLocked        slot 342
 	0x4a9fc0  CGObjChar::SetBodyMode      slot 198
 
-It writes **ParamKeeper param 2** and, when handed a kind other than `0xff` and
+It writes **ParamKeeper param 2** [corrected round 605: params **25 and 26** (`hprg`/`mprg`, id in EDI: `mov edi,0x19` / `mov edi,0x1a`), slot 0 with **ctx** 2 -- the 2 is the pushed context, not the id; 8.0 for SIT, 0.8 otherwise] and, when handed a kind other than `0xff` and
 a positive duration, schedules a timed change:
 
 	if (kind != 0xff && duration > 0.0) {
@@ -692,6 +692,15 @@ the duration lives in an `AJStateChanger` record, not in `_CHAR`.
 different value ranges (2 or 3 from the COS path, `0xc` and `0x12` from
 `FUN_004b1480`'s switch), so the kind covers more than one thing and this round
 did not settle it.
+
+> **Settled in round 605: kind 1 is the MOTION STATE** (`MOTIONSTATE_*`, names at
+> `.rdata 0x00c63f90`). Slot 343 is `SetMotionState(state, nextKind, duration)`;
+> it stores the state at `chardata+2`, the byte round 416 looked for. The ranges
+> above are all motion states: 2/3 WALK/RUN, 4 SIT, `0xc` REQ_HELP, `0x12`
+> CHANGEMOTION. `FUN_004b1480` is the `0x704f` motion request (handler index
+> `0x04f`), and it broadcasts the resolved state. `docs/protocol/opcodes/motion.md`.
+> What this round said about `FUN_004aa3c0` stands; the writer of `chardata+2` is
+> slot 343 itself (`mov [edx+2],bl` at `0x4a9d2a`).
 
 **And one hypothesis is refuted.** `FUN_004aa3c0`, on the kind-1 path, looked
 like a candidate writer for `chardata+2` — the motion state, whose writer round

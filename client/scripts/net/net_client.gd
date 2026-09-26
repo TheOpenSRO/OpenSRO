@@ -28,6 +28,9 @@ signal entity_entered(snapshot: WorldNet.EntitySnapshot)
 signal entity_moved(moved: WorldNet.EntityMoved)
 signal entity_left(character_id: int)
 signal change_zone_result(result: WorldNet.ChangeZoneResult)
+## A character's state changed (WorldNet.OP_STATE_CHANGE, round 605): kind 1 is
+## the motion state -- someone sat down or stood up, this player included.
+signal state_changed(change: WorldNet.StateChange)
 
 signal inventory_list_result(slots: Array, error: String)
 ## The most recent inventory/equipment list's per-slot durability
@@ -358,6 +361,10 @@ func enter_world(char_name: String) -> void:
 func move_to(x: float, y: float, z: float) -> void:
 	_send(WorldNet.OP_MOVE, WorldNet.encode_move(x, y, z))
 
+## Asks to sit down or stand up (WorldNet.OP_MOTION_REQUEST [4], the N key).
+func request_motion(value: int) -> void:
+	_send(WorldNet.OP_MOTION_REQUEST, WorldNet.encode_motion_request(value))
+
 func change_zone(zone: String) -> void:
 	_send(WorldNet.OP_CHANGE_ZONE, WorldNet.encode_change_zone(zone))
 
@@ -631,6 +638,10 @@ func _dispatch(p: Packet) -> void:
 			change_zone_result.emit(zone_result)
 		WorldNet.OP_REVIVE_RESULT:
 			revive_result.emit(WorldNet.decode_revive_result(p.data))
+		WorldNet.OP_STATE_CHANGE:
+			var change := WorldNet.decode_state_change(p.data)
+			if change != null:
+				state_changed.emit(change)
 		InventoryNet.OP_LIST_RESULT:
 			var r := InventoryNet.decode_list_result(p.data)
 			last_inventory_durabilities = r.durabilities

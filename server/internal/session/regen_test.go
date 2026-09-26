@@ -11,79 +11,149 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
-// The rule was recovered and never run. These pin the arithmetic the tick
-// applies, so "hp recovery exists" cannot quietly stop being true again.
-func TestRegenPerTickShape(t *testing.T) {
-	// A percentage of the CURRENT pool, not the maximum -- the part srrevamp
-	// had wrong before internal/mana was corrected.
-	if got := mana.RegenPerTick(1000, 2000); got != 40 {
-		t.Errorf("RegenPerTick(1000, 2000) = %d, want 40 (4%% of CURRENT)", got)
+// engineRegen restates CGObjPC::vslot_362's per-tick amount from the read
+// constants, independently of mana.RegenPerTick, so the tests below check the
+// tick against the reading rather than against the code under test:
+// trunc(float32(max) x rate / 100), floored at 1, capped at trunc(max x 0.5).
+func engineRegen(max int, rate float32) int {
+	pool := float64(float32(max))
+	n := int(pool * float64(rate) / 100.0)
+	if n < 1 {
+		n = 1
 	}
-	// Full pool: the engine's own first test returns immediately.
-	if got := mana.RegenPerTick(500, 500); got != 0 {
-		t.Errorf("RegenPerTick at full = %d, want 0", got)
+	if c := int(pool * 0.5); n > c {
+		n = c
 	}
-	// The floor at 1 for a small pool...
-	if got := mana.RegenPerTick(10, 500); got != 1 {
-		t.Errorf("RegenPerTick(10, 500) = %d, want the floor 1", got)
-	}
-	// ...but the half-of-current cap beats the floor at the very bottom, which
-	// is why a character on 1 point does not regenerate at all.
-	if got := mana.RegenPerTick(1, 500); got != 0 {
-		t.Errorf("RegenPerTick(1, 500) = %d, want 0 -- the cap truncates the floor", got)
-	}
-	// And the dead stay dead: 0 current gives a cap of 0.
-	if got := mana.RegenPerTick(0, 500); got != 0 {
-		t.Errorf("RegenPerTick(0, 500) = %d, want 0 -- regen must not revive", got)
-	}
+	return n
 }
 
 // A tick with nobody online must not panic or touch anything.
 func TestRegenTickWithNoPlayers(t *testing.T) {
-	regenTick(context.Background(), nil, nil, RegenDeps{}, nil)
+	regenPass(context.Background(), nil, nil, RegenDeps{}, nil, time.Now(), true)
 }
 
-// The healed amount must reach the store, or the bar moves and the row does
-// not.
-func TestRegenHealsThroughTheStore(t *testing.T) {
+// A standing, damaged character regains 0.8% of its MAXIMUM HP and MP a tick
+// (round 605): the slot the tick multiplies is ftol(EvaluateParam(3)), and
+// SetMotionState(STAND) writes 0.8 to 'hprg' and 'mprg'. The fixture's pools
+// are chosen so 4% of the current pool -- the rule this replaced -- gives a
+// different number, and so MP moves too, which the old tick never did.
+func TestRegenStandingIsPointEightPercentOfTheMaximum(t *testing.T) {
+	f := startDeadWorldFixture(t)
+	ctx := context.Background()
+	c, err := f.chars.GetByID(ctx, f.aria)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maxHP, maxMP := c.MaxHP(), c.MaxMP()
+	if _, _, err := f.chars.ApplyDamage(ctx, f.aria, maxHP/2); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := f.chars.GetByID(ctx, f.aria)
+	mp := mana.NewTracker()
+	if _, ok := mp.Spend(f.aria, maxMP, maxMP/2); !ok {
+		t.Fatalf("could not spend half of %d MP", maxMP)
+	}
+	mpBefore := mp.Current(f.aria, maxMP)
+
+	regenPass(ctx, f.hub, f.chars, RegenDeps{Mana: mp}, nil, time.Now(), true)
+
+	after, _ := f.chars.GetByID(ctx, f.aria)
+	wantHP := engineRegen(maxHP, 0.8)
+	if got := after.HP - before.HP; got != wantHP {
+		t.Errorf("standing tick healed %d HP at %d/%d, want %d (0.8%% of the maximum, floored at 1)",
+			got, before.HP, maxHP, wantHP)
+	}
+	wantMP := engineRegen(maxMP, 0.8)
+	if got := mp.Current(f.aria, maxMP) - mpBefore; got != wantMP {
+		t.Errorf("standing tick restored %d MP at %d/%d, want %d", got, mpBefore, maxMP, wantMP)
+	}
+}
+
+// Sitting is 8%, ten times standing, and walking, running and the 1.5 s
+// transition regenerate nothing -- CGObjPC::vslot_362 returns unless the
+// motion state is STAND or SIT.
+func TestRegenFollowsTheMotionState(t *testing.T) {
 	ctx := context.Background()
 	store := character.NewMemStore()
-	c, err := store.Create(ctx, 1, "Woundedsoul")
+	c, err := store.Create(ctx, 1, "Restful")
 	if err != nil {
 		t.Fatal(err)
 	}
-	maxHP := character.MaxHPFor(c.Str, c.Level)
-	if maxHP <= 2 {
-		t.Fatalf("max HP is %d; the fixture cannot be damaged meaningfully", maxHP)
-	}
-	// Drop to half so there is a deficit to heal.
-	if _, _, err := store.ApplyDamage(ctx, c.ID, maxHP/2); err != nil {
+	maxHP := c.MaxHP()
+	if _, _, err := store.ApplyDamage(ctx, c.ID, maxHP-2); err != nil { // HP 2
 		t.Fatal(err)
 	}
-	before, err := store.GetByID(ctx, c.ID)
-	if err != nil {
-		t.Fatal(err)
+	hub := world.NewHub()
+	hub.Enter(gateway.NewTestSession(605), c.ID, "Restful", 1, "jangan", world.Position{})
+	e, _ := hub.EntityByCharacterID(c.ID)
+	e.Session = nil // no client: nothing to send the stats to
+	t0 := time.Now()
+	motions.enter(c.ID, t0)
+	t.Cleanup(func() { motions.clear(c.ID) })
+	hp := func() int {
+		got, _ := store.GetByID(ctx, c.ID)
+		return got.HP
 	}
-	want := mana.RegenPerTick(before.HP, maxHP)
-	if want <= 0 {
-		t.Fatalf("no regen expected at %d/%d; the fixture proves nothing", before.HP, maxHP)
+
+	// Walking: a move 100 ms ago.
+	motions.moved(c.ID, t0)
+	was := hp()
+	regenOne(ctx, e, store, RegenDeps{}, nil, t0.Add(100*time.Millisecond))
+	if hp() != was {
+		t.Errorf("a walking character regenerated %d HP", hp()-was)
 	}
-	if _, err := store.Heal(ctx, c.ID, want, maxHP); err != nil {
-		t.Fatal(err)
+	// Standing still again.
+	was = hp()
+	regenOne(ctx, e, store, RegenDeps{}, nil, t0.Add(time.Second))
+	if got, want := hp()-was, engineRegen(maxHP, 0.8); got != want {
+		t.Errorf("standing: +%d HP, want %d", got, want)
 	}
-	after, err := store.GetByID(ctx, c.ID)
-	if err != nil {
-		t.Fatal(err)
+	// Sitting down: 1.5 s of CHANGEMOTION, nothing.
+	sitAt := t0.Add(2 * time.Second)
+	if v, ok := motions.request(c.ID, MotionSit, sitAt); !ok || v != MotionSit {
+		t.Fatalf("sit request: value %d ok %v", v, ok)
 	}
-	if after.HP != before.HP+want {
-		t.Errorf("HP went %d -> %d, want +%d", before.HP, after.HP, want)
+	was = hp()
+	regenOne(ctx, e, store, RegenDeps{}, nil, sitAt.Add(1400*time.Millisecond))
+	if hp() != was {
+		t.Errorf("a character sitting down regenerated %d HP in the transition", hp()-was)
+	}
+	// Seated: 8%.
+	was = hp()
+	regenOne(ctx, e, store, RegenDeps{}, nil, sitAt.Add(MotionChangeDuration))
+	if got, want := hp()-was, engineRegen(maxHP, 8.0); got != want {
+		t.Errorf("sitting: +%d HP, want %d (8%% of %d)", got, want, maxHP)
+	}
+	if engineRegen(maxHP, 8.0) <= engineRegen(maxHP, 0.8) {
+		t.Fatalf("the fixture's max HP %d cannot tell the two rates apart", maxHP)
 	}
 }
 
-// The dead stay dead through regen (round 549): a character on 0 HP -- what
-// -player-dead-state leaves after a kill -- regains nothing from regenTick,
-// the same arithmetic RunRegen's comment describes (a cap of 0 at 0), asserted
-// here now that a character can stay at 0.
+// The timer is the character's own: first due 4 s after it enters, then every
+// 4 s, and sitting does not re-arm it.
+func TestRegenTimerIsPerCharacterFromEntry(t *testing.T) {
+	const id = 605001
+	t.Cleanup(func() { motions.clear(id) })
+	t0 := time.Now()
+	motions.enter(id, t0)
+	if motions.regenDue(id, t0.Add(mana.RegenInterval-time.Millisecond)) {
+		t.Error("the first tick fired before 4 s")
+	}
+	if !motions.regenDue(id, t0.Add(mana.RegenInterval)) {
+		t.Error("the first tick did not fire at 4 s")
+	}
+	motions.request(id, MotionSit, t0.Add(5*time.Second))
+	if motions.regenDue(id, t0.Add(8*time.Second-time.Millisecond)) {
+		t.Error("sitting re-armed the timer: a tick fired before 8 s")
+	}
+	if !motions.regenDue(id, t0.Add(8*time.Second)) {
+		t.Error("the second tick did not fire at 8 s")
+	}
+}
+
+// The dead stay dead through regen (round 549): the tick's first test is the
+// life state, so a character on 0 HP in life state 2 regains nothing -- now
+// that the amount comes from the maximum, the life test is what holds it.
 func TestRegenTickLeavesTheDeadAtZero(t *testing.T) {
 	ctx := context.Background()
 	store := character.NewMemStore()
@@ -98,7 +168,7 @@ func TestRegenTickLeavesTheDeadAtZero(t *testing.T) {
 	hub.Enter(gateway.NewTestSession(549), c.ID, "Fallen", 1, "jangan", world.Position{})
 	hub.SetLifeState(c.ID, world.LifeAlive, world.LifeDead, time.Now())
 	for i := 0; i < 5; i++ {
-		regenTick(ctx, hub, store, RegenDeps{}, nil)
+		regenPass(ctx, hub, store, RegenDeps{}, nil, time.Now(), true)
 	}
 	if after, _ := store.GetByID(ctx, c.ID); after.HP != 0 {
 		t.Errorf("regen raised a dead character from 0 to %d", after.HP)

@@ -260,7 +260,7 @@ has been applied. The four remaining are the `IGOBJ::` spelling variants:
 | 65 | `0x104` | `IGObj::GetParam` |
 | 66 | `0x108` | `IGObj::GetCurHP` |
 | 67 | `0x10c` | `IGObj::GetCurMP` |
-| 68 | `0x110` | **`IGObj::GetMaxHP`** — the stub string says `GetCurHP`, the behaviour says maximum; see the correction above and the third witness below |
+| 68 | `0x110` | **`IGObj::GetMaxHP`** — the stub string says `GetCurHP`, the behaviour says maximum; see the correction above and the third witness below. Round 605: in `CGObjPC`'s own vtable (`0x00af59fc`) the slot is `0x4a6830` = `ftol(EvaluateParam(3))`, and slot 66 is `0x4aa5e0`, the stored value -- which settles the regen tick's pool |
 | 69 | `0x114` | **`IGObj::GetMaxMP`** — same correction, by the same argument |
 | 70 | `0x118` | `IGObj::IsTargeting` |
 | 71 | `0x11c` | `IGObj::GetJobState` |

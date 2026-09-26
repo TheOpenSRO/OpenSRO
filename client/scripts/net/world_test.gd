@@ -364,7 +364,24 @@ func _test_decode_revive_result() -> void:
 	_check(WorldNet.decode_revive_result(PackedByteArray([0x09, 0x00]) + "not dead".to_utf8_buffer()).error == "truncated error field",
 		"an error length past the payload is a decode error")
 
+## Sitting (round 605): the retail opcodes and payloads, matching
+## server/internal/session/motion.go (TestStateChangeLayout encodes the same
+## six bytes).
+func _test_motion() -> void:
+	_check(WorldNet.OP_MOTION_REQUEST == 0x704F, "the motion request is the retail 0x704f")
+	_check(WorldNet.OP_STATE_CHANGE == 0x30BF, "the state change is the retail 0x30bf")
+	var req := WorldNet.encode_motion_request(WorldNet.MOTION_SIT)
+	_check(req == PackedByteArray([4]), "N sends the one byte 4 (got %s)" % str(req))
+	var sc := WorldNet.decode_state_change(PackedByteArray([0x04, 0x03, 0x02, 0x01, 0x01, 0x04]))
+	_check(sc != null and sc.object_id == 0x01020304, "the id is a little-endian u32")
+	_check(sc != null and sc.kind == WorldNet.STATE_KIND_MOTION and sc.value == WorldNet.MOTION_SIT, "kind 1, value 4")
+	_check(WorldNet.decode_state_change(PackedByteArray([1, 2, 3, 4, 5])) == null, "a short payload decodes to null")
+	_check(WorldNet.MOTION_CHANGE_SECONDS == 1.5, "the transition is .rdata 0x00b45c10 = 1.5")
+	_check(BsrReader.AnimationEntry.TYPE_SIT_DOWN == 13 and BsrReader.AnimationEntry.TYPE_SITTING == 14 \
+		and BsrReader.AnimationEntry.TYPE_STAND_UP == 15, "sit down / sitting / stand up are action types 13 / 14 / 15")
+
 func _init() -> void:
+	_test_motion()
 	_test_encode_enter_world()
 	_test_encode_move()
 	_test_decode_enter_world_result_success()

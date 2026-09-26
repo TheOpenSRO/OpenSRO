@@ -1714,7 +1714,7 @@ func TestMonsterKillLeavesThePlayerDead(t *testing.T) {
 		t.Errorf("a dead character's potion queue was kept: %v", ids)
 	}
 	// Regen leaves the dead at zero (mana.RegenPerTick's cap of 0 at 0).
-	regenTick(ctx, f.hub, f.chars, RegenDeps{}, nil)
+	regenPass(ctx, f.hub, f.chars, RegenDeps{}, nil, time.Now(), true)
 	if c, _ := f.chars.GetByID(ctx, f.aria); c.HP != 0 {
 		t.Errorf("regen raised a dead character to %d", c.HP)
 	}

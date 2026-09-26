@@ -32,6 +32,23 @@ const OP_CHANGE_ZONE_RESULT := 0x0027  # server -> client
 const OP_REVIVE := 0x0028              # client -> server, empty
 const OP_REVIVE_RESULT := 0x0029       # server -> client
 
+## Sitting down and standing up (round 605), on the RETAIL opcodes: the payloads
+## are read from both binaries (docs/protocol/opcodes/motion.md), so they are not
+## placeholders. The N key sends OP_MOTION_REQUEST with the one byte 4, as the
+## client's 0x793b00 -> 0x81e750(4) does, and nothing animates until the server
+## answers with OP_STATE_CHANGE {u32 id, u8 kind, u8 value} -- kind 1 is the
+## motion state, value 4 sitting and 0 standing (the client's 0x8a80a0 handler).
+## The id is the server's character id in the retail u32 field (ours).
+const OP_MOTION_REQUEST := 0x704F      # client -> server, u8
+const OP_STATE_CHANGE := 0x30BF        # server -> client, broadcast
+const STATE_KIND_MOTION := 1
+## MOTIONSTATE values, named by the server's own table at .rdata 0x00c63f90.
+const MOTION_STAND := 0
+const MOTION_SIT := 4
+## The server's sit/stand transition, .rdata 0x00b45c10 = 1.5 s: it refuses a
+## move or another request for that long after it accepts one.
+const MOTION_CHANGE_SECONDS := 1.5
+
 ## One character's presence in the world: who they are, where they are,
 ## which real armor pieces + whether a weapon/shield are equipped (the
 ## server's actual, live equipment-store answer at the moment this
@@ -283,6 +300,29 @@ static func decode_entity_moved(data: PackedByteArray) -> EntityMoved:
 	m.y = data.decode_float(12)
 	m.z = data.decode_float(16)
 	return m
+
+## One OP_STATE_CHANGE broadcast: whose state, which kind, what value.
+class StateChange:
+	var object_id: int
+	var kind: int
+	var value: int
+
+## Encodes an OP_MOTION_REQUEST: the one requested byte (4 toggles sitting).
+static func encode_motion_request(value: int) -> PackedByteArray:
+	var out := PackedByteArray()
+	out.resize(1)
+	out.encode_u8(0, value)
+	return out
+
+## Decodes an OP_STATE_CHANGE payload, or null when it is short.
+static func decode_state_change(data: PackedByteArray) -> StateChange:
+	if data.size() < 6:
+		return null
+	var s := StateChange.new()
+	s.object_id = data.decode_u32(0)
+	s.kind = data.decode_u8(4)
+	s.value = data.decode_u8(5)
+	return s
 
 ## Decodes an OpEntityLeft broadcast payload, returning the character ID
 ## (or -1 on truncation).

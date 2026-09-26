@@ -3916,6 +3916,13 @@ overlooked.
 
 ## Passive regeneration does not exist, and "unwritten means zero" was wrong (2026-09-15)
 
+> **Superseded twice.** 2026-09-16 found the 4 s timer (`CGObjPC::vslot_362`), so
+> passive regeneration exists. Round 605 (the end of this file) found that
+> "all seven writes of 'hprg'/'mprg' come from skill effects, never slot 0" was a
+> census of skill-effect writers only: `SetMotionState` (`0x4a9d00`) writes slot
+> 0 of both, 0.8 standing and 8.0 sitting. What this entry measured -- the HP/MP
+> pool writers, none clock-driven -- is true; what it concluded is not.
+
 > **OVERTURNED 2026-09-16 — passive regeneration DOES exist.** Section 1 below is
 > wrong, and its own method is why: it enumerated every WRITER of the HP/MP pool,
 > correctly and exhaustively, and then concluded "not one is driven by a clock"
@@ -16330,6 +16337,14 @@ aimed at an explicitly recorded open question, not at a lever that looked
 promising.
 
 ## 2026-09-16 — passive regeneration exists, and the tick is a timer callback
+
+> **CORRECTED in round 605** (see "N sits down and stands up" at the end of this
+> file, and `docs/protocol/opcodes/motion.md`). The timer and the floor below
+> stand. Two readings do not: the value multiplied is the **maximum** pool, not
+> the current one (slot `0x110` in `CGObjPC`'s vtable is `0x4a6830`,
+> `ftol(EvaluateParam(3))`), and `hprg`/`mprg` are not "only written by skill
+> effects" -- `SetMotionState` writes their base slot, 0.8 standing and 8.0
+> sitting. The 4% of current shipped here is gone.
 
 **This overturns a shipped claim**, reached by following up the previous tick's
 param-read correction: 29 param ids are read only through `EvaluateParam`, and
@@ -45298,3 +45313,187 @@ sync` adds and overwrites but never deletes, so the lane still held the scratch
 - The length-1 branch at `0x7ad826`: which mode and which line leave the input there.
 - The flood block (above).
 - What the CIFEdit `0x201` conditions (`0xb9da40`, the `0xb8f4d0` pair) select.
+
+## N sits down and stands up, and sitting regenerates HP and MP at the client's rate (round 605)
+
+Server and client. Binaries: `SR_GameServer.exe` (`/var/tmp/SR_GameServer.exe`, dump
+`/var/tmp/decomp_server`, asm `/var/tmp/srv.asm`) and `sro_client.exe` (md5
+`2a5794b72c90908d945be8b3f3f2edd4`), both on the RE box; `Data.pk2` for the clips. Every fact is
+labelled **read**, **measured**, **inferred** (basis given) or **ours**. The protocol page is
+`docs/protocol/opcodes/motion.md`; this entry is the round's record.
+
+### The regeneration formula, settled (read)
+
+The keymap research left one question open: the tick multiplies vtable slot `0x110`, which
+`igobj_vtable.md` calls GetMaxHP, while `mana.go` and the 2026-09-16 entry called the rate a
+percentage of the CURRENT pool. Read in `CGObjPC`'s own vtable (`0x00af59fc`, found from slot 362
+= `0x4e2990` at `0xaf5fa4`):
+
+	+0x108  0x4aa5e0   mov ecx,[ecx+0x34]; jmp [charData vtable+0x38]   the stored current HP
+	+0x110  0x4a6830   EvaluateParam(3) -> __ftol2                        param 3 'hp', the maximum
+	+0x114  0x4a6850   EvaluateParam(4) -> __ftol2                        param 4 'mp'
+
+**The pool is the maximum.** The tick (`0x4e2990`, asm in `/var/tmp/rkeymap/regen.asm`):
+
+	alive (slot 0xf8 == 1)                                     else nothing
+	PKPenaltyPoint > 0 and a state byte == 0                   drain trunc(MaxHP x 0.02) instead (not modelled)
+	status bit 0x20 (zombie)                                   nothing
+	MaxHP == CurHP and MaxMP == CurMP                           nothing
+	motion state not STAND (0) or SIT (4)                       nothing
+	hp = trunc(float(MaxHP) x EvaluateParam(25) / 100.0), max 1, clamp [0, trunc(MaxHP x 0.5)]   if this[0xa2d]
+	mp = the same with MaxMP and param 26                                                         if this[0xa2c]
+	ApplyHPMPDelta(hp, mp, 0x10)                               x (1 - p143/100), x (1 - p144/100), clamped to max
+
+- **Rounding (read):** the pool is `fild`ed and stored as a float (`fstp DWORD [esp+0x38]`),
+  multiplied by the param in the FPU, divided by the double 100.0 (`0xb45af0`), truncated by
+  `__ftol2` (`0x9fbb40`). **Measured:** for every pool 1..2,000,000 the float32 rate truncates the
+  same as a float64 0.8, so the float is fidelity only.
+- **Caps (read):** floor 1 (`0x4e2afb`), then `CLAMP(amount, 0, trunc(max x 0.5))` (the assert
+  `GObjPC.cpp` line `0xdf9`, MP `0xe02`). Against the maximum the half cap binds only on a pool of 1.
+- **The rates (read):** `SetMotionState` (slot 343, `0x4a9d00`) writes the base slot (`SetParam(slot
+  0, ctx 2, v)`, id in EDI `0x19` / `0x1a`) of params 25 `hprg` and 26 `mprg` for a PC: **8.0**
+  (`.rdata 0x00b45e14`) when the new state is SIT, **0.8** (`.rdata 0x00b45b94`) otherwise. The
+  constructor (`0x4a6fd3..0x4a6fe8`) and `GObjPC::Revive` (`0x4df427`) call it with STAND.
+- **The flags `this[0xa2d]`/`[0xa2c]` (read):** set to 1 in the constructor (`0x4a6e6a`); only
+  `TickTimedSkillEffect` clears and resets them (a timed HP/MP effect suspends regen). srrevamp has
+  no such effect, so they are always on.
+- **The timer (read):** registered in the constructor with 4.0 (`0xb45dc0`); the record starts at 0
+  elapsed (`0x4ab640`), the list tick adds `dt`, fires once when the interval is reached and
+  subtracts it (`0x4ab6fb..0x4ab72c`). **First tick 4 s after the character is made; sitting does
+  not re-arm it** (SetMotionState touches no timer).
+- **MP (read):** the same arithmetic with MaxMP and `mprg`; both are computed every tick even when
+  only one pool is short, and the setter clamps.
+
+Worked, measured live below: MaxHP 568 -> 4 a tick standing (4.544), 45 sitting (45.44).
+
+### Which record was wrong, and what each measured
+
+- **"No passive regeneration" (2026-09-15)** enumerated the HP/MP pool writers and found none driven
+  by a clock. The writers were right; the clock is one indirection out (the 2026-09-16 entry).
+- **2026-09-16** found the timer but read slot `0x110` as the current pool and shipped 4% of current
+  as own design. The slot is the maximum -- `igobj_vtable.md` had corrected slot 68 the same day from
+  `CGObjCOS_Summoned`, `GObjPC_SetLevel` and the skill gate; the regen note never followed.
+- **"hprg/mprg are not a resting rate: all seven writes come from skill effects, never slot 0"**
+  counted skill-effect writers only. `param_writers.md` (2026-09-18) already listed
+  `GObjPC::FUN_004a9d00` as a writer of 25 and 26; that function is SetMotionState.
+- **`character_state.md` round 446** read slot 343 as writing "param 2": the 2 is the pushed ctx; the
+  ids are 25 and 26 in EDI. Corrected there, and kind 1 of `0x30bf` is now named: the motion state.
+
+Each is corrected in place (`mana.go`, `param_registry.md`, `absence_audit.md`,
+`PLAYTEST_2026_09_20b.md`, `character_state.md`, `igobj_vtable.md`, both RE_COMPLETION entries).
+
+### The request and the transition (read)
+
+- **`0x704f` is handler index `0x04f` (read, new).** `FUN_004b0b70` fills the table at `0xccf110`;
+  `0x4b0ccd` stores the thunk `0x4b23f0` (`jmp [eax+0x5f4]`) at `0xccf388`; `CGObjPC`'s `+0x5f4`
+  is `0x4b1450`, which reads a u8 and calls `FUN_004b1480`. The keymap research had this as
+  inferred.
+- **`FUN_004b1480`**: refused in CHANGEMOTION (`0x12`); 4 while SIT -> 0, 4 while STAND -> 4, 4 from
+  anything else refused; sit = `SetMotionState(0x12, 4, 1.5)`, stand = `SetMotionState(0x12, 0,
+  1.5)` (switch index `0x4b161c`, jumps `0x4b1608`); then `0x30bf {id, 1, value}`. 1.5 is `.rdata
+  0x00b45c10`; the `AJStateChanger` record counts it down by `dt` (`0x405f79`), and its case 1
+  (`0x405fe6`) finishes with `SetMotionState(kind, 0xff, 0)`, which does not broadcast.
+- **Moving while sitting (read, new).** `0x7021` is index `0x021` (thunk `0x4b23e0`, `jmp
+  [eax+0x5e4]`, `CGObjPC` `+0x5e4` = `0x4b0ea0`). The movement handler refuses motion states 8,
+  `0x10` and `0x12` only, and then calls `SetMotionState(2 + run, 0xff, 0)`: **a move while SIT is
+  accepted and stands the character at once**, with no transition and no `0x30bf`. A move in the
+  transition is refused.
+- **A blow stands a sitter (read):** `Combat_ApplyActionEffects` `0x593aec` calls
+  `FUN_004b1480(0)` when the target is SIT, the per-target record's `+0x10` is 0 and status bit
+  `0x40` is clear (the last two unread).
+- **Casting while seated is refused (read):** the skill-use gate answers `0x3009` for SIT
+  (`0x58ded4`) and for SIT, `0x12`, 8, `0xf`, `0x11` (`0x58e0cb`). The client name of `0x3009` is
+  not in `error_codes.md`.
+
+### The clips (read, measured)
+
+The client's sit entry (`0xa5a270`, asm read) plays type **14** `(0xe, 200, 0, 0, 1.0, 1.0)` and,
+when the previous mask had bit 3 (standing), type **13** `(0xd, 0, 200, 0, 1.0, 1.0)`; its stand
+entry (`0xa5a160`) plays type **15** when the previous mask had bit 6 (sitting), then state 8
+(unread). The type is resolved in the body `.bsr`. **Measured** (`/var/tmp/rkeymap/sit_bodies.txt`
+and the live log): `chinaman_fighter` -> `chinaman_a_sitground` / `_sitbreath` / `_sitstand`,
+`chinawoman_fighter` -> `chinawoman_a_*`.
+
+### What was built
+
+- **Server** (`session/motion.go`, `regen.go`, `mana`): `0x704f` handled with the toggle and the
+  1.5 s CHANGEMOTION; `0x30bf {u32 id, kind 1, value}` to everyone in the zone, the requester
+  included. `RunRegen` fires each character's own 4 s timer (from world entry) through the read
+  formula for HP and MP; mana.Tracker no longer regenerates lazily (it could not see the motion
+  state). A move in the transition is dropped (neither stored nor relayed); a move while seated
+  stands at once; a landed blow stands a sitter through the transition; a swing or cast while
+  seated is refused; revive and zone change stand the character; disconnect forgets it.
+- **Client** (`World3D.gd`, `net/world.gd`, `net_client.gd`, `bsr_reader.gd`): N (one marked
+  `KEY_N` check in `_unhandled_input`, for the keymap round) sends `0x704f [04]` after stopping the
+  body; `0x30bf` kind 1 plays 13 then 14, or 15, from the body's own `.bsr`, for this player and for
+  others (`_apply_other_motion`); movement input and position sends are held while a request is out
+  and for 1.5 s after the answer, and no position is sent while seated; a move while seated ends the
+  sit without a clip; death, revive, zone change and world entry reset it.
+- **Ours, disclosed:** the server has no WALK/RUN state (the client streams positions), so an
+  accepted move under 0.5 s old counts as walking; the regen loop polls every 100 ms; the 0x30bf id
+  is the character id in the u32; this client learns its own id from the first answer to its own N
+  (the enter-world result does not carry one); an unanswered N holds movement for 1.0 s; a dead
+  character's request is dropped; the unread request gates (slot `0x5a0`, `+0xc20`,
+  `chardata+0xe`) are not modelled; "a blow that landed damage" stands in for the unread `+0x10` and
+  status-`0x40` tests; a zone change stands the character (inferred from the object's re-creation,
+  not read); the refusal text "cannot attack while sitting".
+
+### Measured live (render box, `qa_shot.sh --server`, `/var/tmp/rsit/sit_live.sh`, run 4 on the final code)
+
+GM `/level 20` (MaxHP = MaxMP = 568), three sword-smash casts and the QA attack loop for damage,
+the loop stopped at tick 240, N at 600 and 760. From `/var/tmp/rsit/live4.log` (one line per
+server stats push, i.e. per regen tick; the movie writer runs the game at about a third of wall
+time, so a 4 s tick is ~45 frames):
+
+	QA STATS: t=8.90 tick=551 HP 149/568 MP 543/568 sitting=false pelvis 9.36
+	QA STATS: t=9.65 tick=596 HP 153/568 MP 547/568 sitting=false pelvis 9.12
+	SIT: N pressed -- sending 0x704f [04] (sitting=false)
+	SIT: player sits -- clip chinaman_a_sitground.ban (action type 13), then chinaman_a_sitbreath.ban (type 14, loop)
+	QA STATS: t=10.42 tick=642 HP 198/568 MP 568/568 sitting=true pelvis 3.25
+	QA STATS: t=11.17 tick=687 HP 243/568 MP 568/568 sitting=true pelvis 0.93
+	QA STATS: t=11.93 tick=733 HP 288/568 MP 568/568 sitting=true pelvis 0.93
+	SIT: N pressed -- sending 0x704f [04] (sitting=true)
+	SIT: player stands -- clip chinaman_a_sitstand.ban (action type 15)
+	QA STATS: t=12.70 tick=779 HP 292/568 MP 568/568 sitting=false pelvis 0.93
+	QA STATS: t=13.45 tick=824 HP 296/568 MP 568/568 sitting=false pelvis 4.03
+	QA STATS: t=14.22 tick=870 HP 300/568 MP 568/568 sitting=false pelvis 9.15
+
+Standing: **+4 HP and +4 MP a tick** (129 -> 153 and 523 -> 547 over six ticks). Sitting: **+45 HP
+a tick** (153 -> 198 -> 243 -> 288), MP 547 -> 568 capped. Standing again after the stand-up: +4
+(eight ticks, 292 -> 324). The pelvis bone (`Bip01 Pelvis`, height above the feet in world units)
+drops from ~9.2 to 0.93 in the sitting loop and is back at 9.15 after the stand-up clip -- the
+pose measured, not looked at. Run 3 (the code before the position-send hold) gave the same
+numbers.
+Run 1 (80 frames a tick) showed the transition: N at tick 1320, and **no stats line between 1258 and
+1422** (measured); that the tick due at ~1338, 18 frames (~0.9 s) after N, fell in the 1.5 s
+CHANGEMOTION is the inference. The server logs of runs 2 and 3 each carry one `opcode=28751 size=1`
+(0x704f) per N.
+
+### Negatives
+
+- **Against d4d1303** (a `git archive` of the tree, the same assertions through `regenTick` and
+  `startDeadWorldFixture`):
+  - `standing tick healed 4 HP at 100/200, want 1 (0.8% of the maximum)` (4% of current)
+  - `standing tick restored 0 MP at 100/200, want 1`
+  - `N answered ...`: `Read: read tcp ...: i/o timeout` (no handler for 0x704f)
+- **Mutations of this tree** (a copy, one change each):
+  - sit rate 0.8: `sitting: +1 HP, want 16 (8% of 200)`, `SitRegenPercent = 0.8, want 8.0`
+  - no transition: `a second N inside the transition was accepted; the engine refuses 0x12`
+  - a move in the transition accepted: `a move inside the sit-down transition was accepted`,
+    `Bram heard a move Aria made while sitting down`
+  - stand-on-hit removed: `a landed blow on a sitter left state 0x4, want CHANGEMOTION`
+  - walking regenerates: `a walking character regenerated 1 HP`
+  - the current pool instead of the maximum: `sitting: +1 HP, want 16 (8% of 200)`
+
+### Open
+
+- **Other players' sit animation was not seen live** (one client per run); the broadcast is tested
+  over the wire and the client path shares the loop/one-shot helpers the hit reaction uses.
+- **What the retail client does on a ground click or an attack while seated** was not read. Here a
+  click walks (the server stands the character), a swing in reach is refused by the server.
+- **The Action window's Sit/Stand label** (`IFAction::0x6a3fb0`, `UIIT_CTL_SIT` / `_STAND`) and the
+  quick-slot bar's update (`0x60c600`): no action window exists here.
+- **The stand entry's state 8**, the `+0x10`/status-`0x40` conditions on stand-on-hit, slot `0x5a0`,
+  the `+0xc20` action gate and `chardata+0xe` are unread. The client name of `0x3009` is unknown.
+- **The PK-penalty drain, zombie, timed-effect switch, skill buffs on 25/26 and params 143/144**
+  are read and not modelled (no source here).

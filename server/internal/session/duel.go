@@ -418,6 +418,8 @@ func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	if err != nil {
 		return fmt.Errorf("duel: applying damage: %w", err)
 	}
+	// A blow that lands stands a sitting opponent up (round 605, motion.go).
+	standOnHit(hub, opponent.CharacterID, damage)
 	opponentDied := false
 	if hp == 0 && damage > 0 {
 		// The blow's damage left the opponent at 0. Under her kill lock: alive

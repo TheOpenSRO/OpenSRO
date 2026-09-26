@@ -61,9 +61,14 @@ dereferences the pointer with no null check. So:
 
 - **Only 7 of 120 params have a non-zero default**, and every one of them is
   `100`: ids **34, 35, 36, 37, 50, 51, 140**. Everything else defaults to **0**.
-- `hprg`/`mprg` (25/26) default to **0**, so the game's baseline passive
-  regeneration rate is zero -- which is consistent with there being no
-  timer-driven pool writer at all (see `mana`'s package comment).
+- `hprg`/`mprg` (25/26) default to **0** in this table. **That default is never
+  what a character regenerates at (corrected round 605):** `SetMotionState`
+  (`0x4a9d00`) writes their base slot on every motion change -- 8.0 when the
+  new state is SIT, 0.8 for any other -- and the character's constructor and
+  `GObjPC::Revive` both call it with STAND, so a living PC carries 0.8. The
+  "no timer-driven pool writer" this line used to lean on was already wrong on
+  2026-09-16 (the 4 s timer, `CGObjPC::vslot_362`).
+  `docs/protocol/opcodes/motion.md` has the reading.
 - `257` (death-penalty reduction) defaults to **0**, so a character with no
   premium benefit really does take the full penalty. That value is RECOVERED.
 - The damage-pipeline params `128-131, 178, 180, 187, 188, 259` all default to

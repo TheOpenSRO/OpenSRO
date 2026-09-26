@@ -338,6 +338,9 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 		return monsterStrikeOutcome{}, fmt.Errorf("combat: applying counterattack: %w", err)
 	}
 	out.damage = incoming
+	// A blow that lands stands a sitter up (Combat_ApplyActionEffects'
+	// FUN_004b1480(0) at 0x593aec; round 605, motion.go).
+	standOnHit(deps.hub, characterID, incoming)
 	if hp > 0 || incoming == 0 {
 		// Health left; or a blow that landed nothing -- blocked, or a zero
 		// roll -- which kills nobody whatever pool it found and is reported

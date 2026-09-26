@@ -7083,6 +7083,33 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-fifth round: N sits down and stands up, and sitting regenerates HP and MP at the client's rate
+
+The full record is `docs/RE_COMPLETION.md`'s entry of the same name (round 605); the protocol page
+is `docs/protocol/opcodes/motion.md`.
+
+- **The formula (read).** `CGObjPC::vslot_362` restores `trunc(MaxHP x hprg / 100)`, floored at 1,
+  clamped to `[0, trunc(MaxHP x 0.5)]`, MP the same with `mprg`, every 4 s on the character's own
+  timer (first tick 4 s after it is made; sitting does not re-arm it), only in STAND or SIT.
+  `SetMotionState` (`0x4a9d00`) writes `hprg`/`mprg` = **8.0 sitting, 0.8 otherwise**. The pool is
+  the **maximum**: slot `0x110` in `CGObjPC`'s vtable is `0x4a6830` = `ftol(EvaluateParam(3))`.
+  The 4%-of-current rule that shipped since 2026-09-16 was own design on a misread slot, and the
+  "hprg is only written by skills" census had missed SetMotionState; both records are corrected.
+- **The request (read).** `0x704f` is handler `0x04f` -> `0x4b1450` -> `FUN_004b1480`: a toggle
+  through 1.5 s of CHANGEMOTION, then `0x30bf {id, 1, value}`. `0x7021`'s handler refuses a move
+  only in states 8, `0x10`, `0x12`, so **a move while seated is accepted and stands at once**; a
+  blow stands a sitter; the skill gate refuses a cast while seated.
+- **The clips (measured).** Types 13/14/15 from the body's `.bsr`: `chinaman_a_sitground` /
+  `_sitbreath` / `_sitstand` for the man, `chinawoman_a_*` for the woman.
+- **Live (measured, `/var/tmp/rsit/live4.log`).** MaxHP/MaxMP 568: standing **+4 HP, +4 MP** a
+  tick, sitting **+45 HP** a tick (MP 547 -> 568, capped), +4 again after standing up; `Bip01
+  Pelvis` 9.2 above the feet standing, 0.93 seated. The log lines are in the RE_COMPLETION entry.
+- **Ours, disclosed:** walking is an accepted OpMove under 0.5 s old (the server has no WALK
+  state); this client learns its own id from the answer to its own N; the id is the character id
+  in the u32; the refusal text; the regen poll of 100 ms.
+- **Open:** other players' sit was not seen live (tested over the wire); the retail client's
+  handling of a click or swing while seated is unread; the Action window's Sit/Stand label has no
+  window to go in here.
 ## Six-hundred-and-sixth round: A window over a text line takes the keyboard, and Enter opens and closes the chat line as the client's does
 
 The full record is `docs/RE_COMPLETION.md`'s entry of the same name (round 606).

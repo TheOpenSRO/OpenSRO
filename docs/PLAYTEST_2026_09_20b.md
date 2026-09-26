@@ -45,6 +45,11 @@ holds `CGObjPC::vslot_362` — a percentage of the **current** pool, floored at 
 capped at half the current pool, on a **real** 4-second interval
 (`.rdata 0x00b45dc0` = 4.0, unit read in round 223).
 
+**Corrected round 605:** the pool is the **maximum** (vtable slot `0x110` in
+`CGObjPC` is `ftol(EvaluateParam(3))`), the rate is 0.8% standing still and 8%
+sitting (`SetMotionState` writes `hprg`/`mprg`), and nothing regenerates while
+moving. `docs/protocol/opcodes/motion.md`.
+
 **Nothing ever called it.** `RegenPerTick` had no callers outside its own tests.
 
 `session.RunRegen` now ticks every online character on that interval, heals

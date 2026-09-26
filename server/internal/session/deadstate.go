@@ -340,6 +340,9 @@ func revivePlayer(ctx context.Context, chars character.Store, mp *mana.Tracker, 
 		return stillDead(err)
 	}
 	c.HP = hp
+	// GObjPC::Revive stands the character (SetMotionState(STAND) at
+	// 0x4df427; round 605, motion.go).
+	motions.stand(characterID, time.Now())
 	mpNow := 0
 	if mp != nil {
 		mpNow = character.RespawnMP(c.MaxMP())

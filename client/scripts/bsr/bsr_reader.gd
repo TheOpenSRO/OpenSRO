@@ -78,6 +78,13 @@ class AnimationEntry:
 	const TYPE_STAND_BATTLE := 6
 	const TYPE_RUN := 7
 	const TYPE_HIT_HARD := 9
+	## Sitting (round 605). The client's sit entry (0xa5a270) plays 13 when
+	## it comes from standing and 14 as the loop; its stand entry (0xa5a160)
+	## plays 15 when it comes from sitting. Looked up by type in the body's
+	## own table, which is why the clips differ per body.
+	const TYPE_SIT_DOWN := 13
+	const TYPE_SITTING := 14
+	const TYPE_STAND_UP := 15
 	const TYPE_WALK_BACKWARD := 23
 	const TYPE_DIE_LOOP := 36
 

@@ -1,0 +1,176 @@
+package session
+
+import (
+	"testing"
+	"time"
+
+	"github.com/OpenSRO/srrevamp/server/internal/character"
+	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/srrevamp/server/internal/world"
+)
+
+// The wire layout is GObjPC::BroadcastStateChange's: u32 id, u8 kind, u8 value.
+func TestStateChangeLayout(t *testing.T) {
+	got := (&StateChange{ObjectID: 0x01020304, Kind: StateKindMotion, Value: MotionSit}).Encode()
+	want := []byte{0x04, 0x03, 0x02, 0x01, 0x01, 0x04}
+	if string(got) != string(want) {
+		t.Fatalf("StateChange encodes % x, want % x", got, want)
+	}
+	back, ok := DecodeStateChange(got)
+	if !ok || back.ObjectID != 0x01020304 || back.Kind != 1 || back.Value != 4 {
+		t.Fatalf("round trip: %+v ok %v", back, ok)
+	}
+	if _, ok := DecodeStateChange(got[:5]); ok {
+		t.Error("a 5-byte payload decoded")
+	}
+	if OpMotionRequest != 0x704f || OpStateChange != 0x30bf {
+		t.Errorf("opcodes %#04x/%#04x, want the retail 0x704f/0x30bf", OpMotionRequest, OpStateChange)
+	}
+}
+
+// FUN_004b1480's toggle: 4 from STAND sits, 4 from SIT stands, each through
+// 1.5 s of CHANGEMOTION in which every request is refused.
+func TestMotionToggleThroughTheTransition(t *testing.T) {
+	const id = 605010
+	t.Cleanup(func() { motions.clear(id) })
+	t0 := time.Now()
+	motions.enter(id, t0)
+
+	v, ok := motions.request(id, MotionSit, t0)
+	if !ok || v != MotionSit {
+		t.Fatalf("N while standing: value %d ok %v, want 4", v, ok)
+	}
+	if s := motions.state(id, t0.Add(MotionChangeDuration-time.Millisecond)); s != MotionChangeMotion {
+		t.Errorf("1.499 s after N the state is %#x, want CHANGEMOTION 0x12", s)
+	}
+	if _, ok := motions.request(id, MotionSit, t0.Add(time.Second)); ok {
+		t.Error("a second N inside the transition was accepted; the engine refuses 0x12")
+	}
+	if s := motions.state(id, t0.Add(MotionChangeDuration)); s != MotionSit {
+		t.Fatalf("1.5 s after N the state is %#x, want SIT", s)
+	}
+
+	t1 := t0.Add(10 * time.Second)
+	v, ok = motions.request(id, MotionSit, t1)
+	if !ok || v != MotionStand {
+		t.Fatalf("N while sitting: value %d ok %v, want 0 (stand)", v, ok)
+	}
+	if s := motions.state(id, t1.Add(time.Second)); s != MotionChangeMotion {
+		t.Errorf("getting up: state %#x, want CHANGEMOTION", s)
+	}
+	if s := motions.state(id, t1.Add(MotionChangeDuration)); s != MotionStand {
+		t.Errorf("1.5 s after the second N the state is %#x, want STAND", s)
+	}
+}
+
+// The requests FUN_004b1480 does nothing for.
+func TestMotionRequestsTheEngineRefuses(t *testing.T) {
+	const id = 605011
+	t.Cleanup(func() { motions.clear(id) })
+	t0 := time.Now()
+	motions.enter(id, t0)
+	for _, req := range []byte{MotionStand, MotionWalk, MotionRun, 0x0c, 0x07} {
+		if v, ok := motions.request(id, req, t0); ok {
+			t.Errorf("request %#x while standing was accepted with value %d", req, v)
+		}
+	}
+	if s := motions.state(id, t0); s != MotionStand {
+		t.Errorf("a refused request moved the state to %#x", s)
+	}
+}
+
+// A move while seated is accepted and stands the character at once (the
+// movement handler's SetMotionState(WALK/RUN), no transition); a move in the
+// transition is refused (state 0x12 blocks 0x4b0ea0).
+func TestMoveWhileSeated(t *testing.T) {
+	const id = 605012
+	t.Cleanup(func() { motions.clear(id) })
+	t0 := time.Now()
+	motions.enter(id, t0)
+	motions.request(id, MotionSit, t0)
+	if ok, _ := motions.moved(id, t0.Add(time.Second)); ok {
+		t.Error("a move inside the sit-down transition was accepted")
+	}
+	seatedAt := t0.Add(MotionChangeDuration)
+	ok, left := motions.moved(id, seatedAt)
+	if !ok || !left {
+		t.Fatalf("a move while sitting: accepted %v left %v, want both", ok, left)
+	}
+	if s := motions.state(id, seatedAt); s != MotionStand {
+		t.Errorf("after the move the state is %#x, want STAND at once", s)
+	}
+	if _, ok := motions.regenRate(id, seatedAt.Add(100*time.Millisecond)); ok {
+		t.Error("a character that just moved regenerates")
+	}
+}
+
+// A landed blow stands a sitter through the transition; a blow that landed
+// nothing and a blow on a standing character change nothing.
+func TestStandOnHit(t *testing.T) {
+	const id = 605013
+	t.Cleanup(func() { motions.clear(id) })
+	hub := world.NewHub() // no entity: nobody to broadcast to
+	t0 := time.Now().Add(-10 * time.Second)
+	motions.enter(id, t0)
+
+	standOnHit(hub, id, 25)
+	if s := motions.state(id, time.Now()); s != MotionStand {
+		t.Fatalf("a blow on a standing character moved it to %#x", s)
+	}
+	motions.request(id, MotionSit, t0)
+	standOnHit(hub, id, 0)
+	if s := motions.state(id, time.Now()); s != MotionSit {
+		t.Fatalf("a blow that landed nothing stood the sitter up (state %#x)", s)
+	}
+	standOnHit(hub, id, 25)
+	now := time.Now()
+	if s := motions.state(id, now); s != MotionChangeMotion {
+		t.Fatalf("a landed blow on a sitter left state %#x, want CHANGEMOTION", s)
+	}
+	if !seated(id, now) {
+		t.Error("seated() is false while getting up; the skill gate refuses CHANGEMOTION")
+	}
+	if s := motions.state(id, now.Add(MotionChangeDuration)); s != MotionStand {
+		t.Errorf("1.5 s after the blow the state is %#x, want STAND", s)
+	}
+}
+
+// Over the wire: Aria's N reaches Aria and Bram as 0x30bf {Aria, 1, 4}; her move
+// inside the transition is dropped, so Bram hears nothing of it; her second N
+// once seated broadcasts 0 (stand). A request from a dead character is dropped.
+func TestMotionRequestBroadcasts(t *testing.T) {
+	f := startDeadWorldFixtureWith(t, func(chars character.Store, hub *world.Hub) gateway.Handler {
+		return MotionHandler(hub)
+	})
+	t.Cleanup(func() { motions.clear(f.aria); motions.clear(f.bram) })
+	expect := func(who string, p *proto.Packet, value byte) {
+		t.Helper()
+		if p.Opcode != OpStateChange {
+			t.Fatalf("%s got %#04x, want 0x30bf", who, p.Opcode)
+		}
+		sc, ok := DecodeStateChange(p.Data)
+		if !ok || sc.ObjectID != uint32(f.aria) || sc.Kind != StateKindMotion || sc.Value != value {
+			t.Fatalf("%s got %+v, want {Aria %d, kind 1, value %d}", who, sc, f.aria, value)
+		}
+	}
+
+	f.send(t, f.connA, OpMotionRequest, []byte{MotionSit})
+	expect("Aria", f.read(t, f.connA, f.rA), MotionSit)
+	expect("Bram", f.read(t, f.connB, f.rB), MotionSit)
+
+	f.send(t, f.connA, OpMove, (&MoveRequest{X: 5, Y: 0, Z: 5}).Encode())
+	if !f.nothing(t, f.connB, f.rB) {
+		t.Error("Bram heard a move Aria made while sitting down")
+	}
+	time.Sleep(MotionChangeDuration)
+	f.send(t, f.connA, OpMotionRequest, []byte{MotionSit})
+	expect("Aria", f.read(t, f.connA, f.rA), MotionStand)
+	expect("Bram", f.read(t, f.connB, f.rB), MotionStand)
+
+	f.kill(t, f.bram, time.Now())
+	f.send(t, f.connB, OpMotionRequest, []byte{MotionSit})
+	if !f.nothing(t, f.connA, f.rA) {
+		t.Error("a dead character's N was broadcast")
+	}
+}

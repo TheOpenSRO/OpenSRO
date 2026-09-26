@@ -613,6 +613,11 @@ func useSkillHandler(
 		if deadBySession(hub, sess) {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: deadRefusal}).Encode()})
 		}
+		// Nor does a seated one: the skill-use gate refuses SIT and
+		// CHANGEMOTION (0x58ded4, 0x58e0cb; round 605, motion.go).
+		if seated(characterID, time.Now()) {
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: seatedRefusal}).Encode()})
+		}
 
 		// Resolve the skill's cooldown and damage bonus. A real learned skill
 		// (refdata) uses its real ReuseDelay cooldown; its extra damage is a

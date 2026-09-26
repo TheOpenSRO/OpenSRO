@@ -1024,6 +1024,27 @@ var _player_one_shot_hold := false
 ## The chat line for a cast or an item tried while dead. This project's own
 ## wording (the server's refusal string is its own too).
 const DEAD_INPUT_LINE := "You are dead. Revive first."
+## Sitting (round 605; docs/protocol/opcodes/motion.md). Whether the server has
+## told this player it sits (OP_STATE_CHANGE kind 1, value 4) -- the stand/run
+## loop becomes the body's sitting loop (action type 14) while it holds.
+var _player_sitting := false
+## Until when (_player_anim_time) movement input is held: the server's 1.5 s
+## sit/stand transition, in which it refuses a move (the retail movement
+## handler refuses state 0x12), from the moment its answer arrives; and while
+## a request is on its way, from the key press.
+var _player_motion_lock_until := 0.0
+## When the last N went out (_player_anim_time), or -1: a request in flight.
+## Held for MOTION_REQUEST_WAIT at most -- a refused request has no answer.
+var _motion_request_sent_at := -1.0
+## The server's id for this player, learned from the first OP_STATE_CHANGE
+## that answers this client's own N (the enter-world result does not carry
+## it); -1 until then.
+var _player_own_id := -1
+## How long an unanswered N holds movement. Ours: a round trip, with room.
+const MOTION_REQUEST_WAIT := 1.0
+## The sit-down or stand-up clip playing as _player_one_shot, or null; a move
+## cuts it short (_leave_sit_by_moving).
+var _player_sit_clip: BanReader.ParsedAnimation = null
 ## Underbar quickslot index -> {"id": skill id, "code": Basic_Code} for skills
 ## the player has put on the hotbar from the skill window. Activating a slot
 ## casts its skill.
@@ -1243,6 +1264,7 @@ func _ready() -> void:
 	NetClient.monster_spawned.connect(_on_monster_spawned)
 	NetClient.attack_result.connect(_on_attack_result)
 	NetClient.revive_result.connect(_on_revive_result)
+	NetClient.state_changed.connect(_on_state_changed)
 	NetClient.monster_damaged.connect(_on_monster_damaged)
 	NetClient.monster_died.connect(_on_monster_died)
 	NetClient.level_up.connect(_on_level_up)
@@ -1504,6 +1526,11 @@ func _try_initialize_pk2_ui() -> void:
 	if _last_enter_world_max_hp > 0:
 		_hud_player_info.set_hp(_last_enter_world_hp, _last_enter_world_max_hp)
 	NetClient.enter_world_result.connect(func(result) -> void:
+		if result != null and result.ok:
+			# A character enters standing, and may be another character
+			# than the last one this client played (round 605).
+			_player_own_id = -1
+			_reset_player_motion()
 		if result != null and result.ok and result.max_hp > 0:
 			_last_enter_world_hp = result.hp
 			_last_enter_world_max_hp = result.max_hp
@@ -4353,6 +4380,9 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	# leave it set for a later one.
 	var teleport_arrival := _teleport_arrival_pending
 	_teleport_arrival_pending = false
+	if result != null and result.ok:
+		# The server stands a character that changes zone (round 605).
+		_reset_player_motion()
 	if not result.ok:
 		# An accepted teleport whose move failed (warpTo's "not in the world";
 		# the server refunds the fee): the request is over, so a destination
@@ -6487,6 +6517,10 @@ func _set_other_gait(character_id: int, moving: bool) -> void:
 	if gait.is_empty() or bool(gait["moving"]) == moving:
 		return
 	gait["moving"] = moving
+	# A sitter who moves is on their feet at once, as the server's movement
+	# handler makes them (round 605); one who stops is not seated again.
+	if moving:
+		gait["sitting"] = false
 	var action := BsrReader.AnimationEntry.TYPE_RUN if moving else BsrReader.AnimationEntry.TYPE_STAND
 	var anim := _body_animation_for(gait["gender"], action, gait["group"])
 	var frames := _frame_count(anim)
@@ -6993,6 +7027,10 @@ func _rewalk_after_refusal(result: CombatNet.AttackResult) -> bool:
 ## end the swings it had just started.
 func _flush_position() -> void:
 	if not NetClient.is_connected_to_server() or player.position == _last_sent_pos:
+		return
+	# Not while seated (round 605): the server would take it as walking off
+	# and stand the character, and a swing from the seat is refused anyway.
+	if _player_sitting or _motion_locked():
 		return
 	NetClient.move_to(player.position.x, player.position.y, player.position.z)
 	_last_sent_pos = player.position
@@ -7917,6 +7955,11 @@ func _update_blob_shadow() -> void:
 ##                          chase (round 546's live check; _qa_retreat)
 ##   SRREVAMP_QA_ATTACK=1   attack the nearest monster every second, so a
 ##                          hit reaction and a death can be rendered
+##   SRREVAMP_QA_ATTACK_UNTIL=t  with QA_ATTACK: stop the attack loop at tick t
+##                          (round 605: take damage, then sit and measure)
+##   SRREVAMP_QA_STATS_LOG=1  print every stats update's HP and MP with the
+##                          time and whether the player sits (`QA STATS:`),
+##                          so regeneration is measured from the log
 ##   SRREVAMP_QA_REVIVE_AFTER=n  with a server whose -player-dead-state is on:
 ##                          once a killing blow has left the player dead, send
 ##                          OpRevive n physics frames later, as the Revive
@@ -8606,6 +8649,12 @@ func _qa_step() -> void:
 	# attacks every 10 ticks so a render can land enough hits to kill and level
 	# within a reasonable frame budget -- a QA-only accelerant, never real play.
 	var _qa_attack_interval := 10 if OS.get_environment("SRREVAMP_QA_ATTACK_FAST") != "" else 60
+	# SRREVAMP_QA_ATTACK_UNTIL=<tick> ends the QA attack loop at that tick, so a
+	# run can take damage and then rest (round 605's sit measurement). QA only.
+	var qa_attack_until := OS.get_environment("SRREVAMP_QA_ATTACK_UNTIL")
+	if _qa_attacking and qa_attack_until.is_valid_int() and _qa_tick >= int(qa_attack_until):
+		_qa_attacking = false
+		print("QA ATTACK: stopped at tick %d (SRREVAMP_QA_ATTACK_UNTIL)" % _qa_tick)
 	if _qa_attacking and _qa_tick % _qa_attack_interval == 0 and NetClient.is_connected_to_server():
 		_qa_attack_nearest()
 	# SRREVAMP_QA_REVIVE_AFTER=n: n physics frames after a killing blow left
@@ -10416,7 +10465,10 @@ func _physics_step(delta: float) -> void:
 	# a dead player's OpMove (the dead state's server half; retail's
 	# `GetLifeState() != 1` guards). Gravity, streaming and the position send
 	# below still run, as they do while typing.
-	var locked := typing or _player_dead
+	# Getting up or down (round 605): the server refuses a move in its 1.5 s
+	# transition, so none is made; a move while seated is allowed and stands
+	# the character at once (_leave_sit_by_moving), as the server's does.
+	var locked := typing or _player_dead or _motion_locked()
 	if locked:
 		_has_move_target = false
 		_pending_attack = {}
@@ -10490,6 +10542,8 @@ func _physics_step(delta: float) -> void:
 		player.velocity.z = 0.0
 
 	var is_moving := manual_input or _has_move_target or (_qa_walk != "" and not _player_dead)
+	if is_moving and (_player_sitting or (_player_sit_clip != null and _player_one_shot == _player_sit_clip)):
+		_leave_sit_by_moving()
 	# The camera keeps whatever orbit it was given (see CAMERA_VIEW_FREE).
 	# It used to swing back to the default yaw and pitch whenever the
 	# character moved, and, hanging from the body, turned with every click.
@@ -10538,7 +10592,12 @@ func _physics_step(delta: float) -> void:
 	_update_blob_shadow()
 
 	_time_since_send += delta
-	if _time_since_send >= MIN_SEND_INTERVAL and player.position.distance_to(_last_sent_pos) >= MIN_SEND_DISTANCE:
+	# No position goes out while seated or getting up or down (round 605): the
+	# server takes any move while seated as walking off and stands the
+	# character, and refuses one in its transition -- a settling body must not
+	# do either. A real move clears the sit above (_leave_sit_by_moving) first.
+	if _time_since_send >= MIN_SEND_INTERVAL and player.position.distance_to(_last_sent_pos) >= MIN_SEND_DISTANCE \
+			and not _player_sitting and not _motion_locked():
 		NetClient.move_to(player.position.x, player.position.y, player.position.z)
 		_last_sent_pos = player.position
 		_time_since_send = 0.0
@@ -10624,6 +10683,9 @@ func _physics_step(delta: float) -> void:
 		var action: int
 		if is_moving:
 			action = BsrReader.AnimationEntry.TYPE_RUN
+		elif _player_sitting:
+			# The sitting loop, under the sit-down one-shot while that runs.
+			action = BsrReader.AnimationEntry.TYPE_SITTING
 		elif _player_anim_time - _last_combat_time < COMBAT_STANCE_SECONDS:
 			# Recently in combat: hold the battle stance rather than the town idle.
 			action = BsrReader.AnimationEntry.TYPE_STAND_BATTLE
@@ -11444,6 +11506,15 @@ func _unhandled_input(event: InputEvent) -> void:
 			and (event as InputEventKey).keycode == KEY_R \
 			and NetClient.current_character_name != "" and NetClient.is_connected_to_server():
 		NetClient.berserk(NetClient.current_character_name)
+		get_viewport().set_input_as_handled()
+		return
+	# N sits down or stands up (round 605): the retail client's N slot, command
+	# 0x4e (docs/protocol/opcodes/motion.md). KEYMAP: a direct keycode, in this
+	# one place, for the keymap round to fold into its table.
+	if event is InputEventKey and (event as InputEventKey).pressed \
+			and not (event as InputEventKey).echo \
+			and (event as InputEventKey).keycode == KEY_N:
+		_request_sit_toggle()
 		get_viewport().set_input_as_handled()
 		return
 	if event.is_action_pressed("toggle_ui"):
@@ -13196,6 +13267,7 @@ func _enter_dead_state(exp_lost: int) -> void:
 	if _player_dead:
 		return
 	_player_dead = true
+	_player_sitting = false
 	_drop_pending_attack()
 	_has_move_target = false
 	_left_steering = false
@@ -13322,6 +13394,151 @@ func _play_other_hit(character_id: int) -> void:
 	var hit := _body_animation_for(gait["gender"], BsrReader.AnimationEntry.TYPE_HIT, gait["group"])
 	if hit != null:
 		_play_once(gait["skeleton"], hit)
+
+# --- Sitting down and standing up (round 605) ----------------------------------
+#
+# docs/protocol/opcodes/motion.md. N asks the server (OP_MOTION_REQUEST [4]) and
+# nothing animates until it answers with OP_STATE_CHANGE kind 1 -- as the retail
+# client does (its N handler only sends; 0x8a80a0 animates on the answer). The
+# clips are the body's own, looked up by action type in its .bsr: 13 sit down,
+# 14 sitting (a loop), 15 stand up -- the retail sit entry (0xa5a270) plays 13
+# only when it comes from standing, and its stand entry (0xa5a160) plays 15 only
+# when it comes from sitting.
+
+## N: ask to sit down or stand up. Not while dead, not while a request is
+## already out or the server is still in its transition (it would refuse), and
+## not without a server. The body stops first: the server sits a walker down by
+## stopping it (slot 0x4b0), and this server cannot stop the client.
+func _request_sit_toggle() -> void:
+	if _player_dead or _is_typing() or not NetClient.is_connected_to_server() or _motion_locked():
+		return
+	_has_move_target = false
+	_left_steering = false
+	_drop_pending_attack()
+	player.velocity.x = 0.0
+	player.velocity.z = 0.0
+	# The stop is sent before the request, so the server does not take a
+	# later position update for a move made in its transition.
+	if player.position != _last_sent_pos:
+		NetClient.move_to(player.position.x, player.position.y, player.position.z)
+		_last_sent_pos = player.position
+		_time_since_send = 0.0
+	_motion_request_sent_at = _player_anim_time
+	print("SIT: N pressed -- sending 0x704f [04] (sitting=%s)" % str(_player_sitting))
+	NetClient.request_motion(WorldNet.MOTION_SIT)
+
+## Whether movement input is held for the motion: a request in flight, or the
+## server's transition after its answer.
+func _motion_locked() -> bool:
+	if _motion_request_sent_at >= 0.0 and _player_anim_time - _motion_request_sent_at < MOTION_REQUEST_WAIT:
+		return true
+	return _player_anim_time < _player_motion_lock_until
+
+## QA: how high the body's Bip01 Pelvis is above the player's feet, in world
+## units -- a sitting pose measured rather than looked at. "-" without a body.
+func _qa_pelvis_height() -> String:
+	if _player_skeleton == null or not is_instance_valid(_player_skeleton):
+		return "-"
+	var bone := _player_skeleton.find_bone("Bip01 Pelvis")
+	if bone < 0:
+		return "-"
+	var at := _player_skeleton.global_transform * _player_skeleton.get_bone_global_pose(bone)
+	return "%.2f" % (at.origin.y - player.global_position.y)
+
+## Back to standing with nothing pending: entering the world, a zone change.
+func _reset_player_motion() -> void:
+	_player_sitting = false
+	_player_motion_lock_until = 0.0
+	_motion_request_sent_at = -1.0
+
+## OP_STATE_CHANGE: kind 1 is the motion state. This player's own id is not in
+## the enter-world result, so the first answer to its own N teaches it; any
+## other id is another player's body.
+func _on_state_changed(change: WorldNet.StateChange) -> void:
+	if change == null or change.kind != WorldNet.STATE_KIND_MOTION:
+		return
+	if _other_bodies.has(change.object_id):
+		_apply_other_motion(change.object_id, change.value)
+		return
+	if _player_own_id == -1 and _motion_request_sent_at >= 0.0:
+		_player_own_id = change.object_id
+	if change.object_id == _player_own_id:
+		_apply_player_motion(change.value)
+	else:
+		print("SIT: state change for unknown id %d (value %d) ignored" % [change.object_id, change.value])
+
+## The server's answer for this player: sit (4) or stand (0), through the 1.5 s
+## transition in which it refuses a move.
+func _apply_player_motion(value: int) -> void:
+	_motion_request_sent_at = -1.0
+	_player_motion_lock_until = _player_anim_time + WorldNet.MOTION_CHANGE_SECONDS
+	var from_standing := not _player_sitting
+	match value:
+		WorldNet.MOTION_SIT:
+			_player_sitting = true
+			var loop := _body_animation_path(_player_gender, BsrReader.AnimationEntry.TYPE_SITTING, _player_weapon_group)
+			if from_standing:
+				var down := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_SIT_DOWN, _player_weapon_group)
+				if _play_player_once(down) > 0.0:
+					_player_sit_clip = down
+				print("SIT: player sits -- clip %s (action type 13), then %s (type 14, loop)" % [
+					_body_animation_path(_player_gender, BsrReader.AnimationEntry.TYPE_SIT_DOWN, _player_weapon_group), loop])
+			else:
+				print("SIT: player sits -- clip %s (type 14, loop)" % loop)
+		WorldNet.MOTION_STAND:
+			_player_sitting = false
+			if not from_standing:
+				var up := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_STAND_UP, _player_weapon_group)
+				if _play_player_once(up) > 0.0:
+					_player_sit_clip = up
+				print("SIT: player stands -- clip %s (action type 15)" % _body_animation_path(
+					_player_gender, BsrReader.AnimationEntry.TYPE_STAND_UP, _player_weapon_group))
+		_:
+			print("SIT: motion value %d for the player is not one srrevamp plays" % value)
+
+## A move while seated: the server accepts it and puts the character on its
+## feet at once (its movement handler's SetMotionState(WALK/RUN), no
+## transition), so the sit ends here without the stand-up clip, and a sit-down
+## or stand-up clip still running gives way to the run.
+func _leave_sit_by_moving() -> void:
+	var was_sitting := _player_sitting
+	_player_sitting = false
+	if not _player_one_shot_hold and _player_sit_clip != null and _player_one_shot == _player_sit_clip:
+		_player_one_shot = null
+	_player_sit_clip = null
+	if was_sitting:
+		print("SIT: moved while seated -- standing at once, no clip (the server's move sets WALK/RUN)")
+
+## Another player's answer: the sitting loop under the sit-down clip, or the
+## stand loop under the stand-up clip, from their own body's table.
+func _apply_other_motion(character_id: int, value: int) -> void:
+	var gait: Dictionary = _other_gaits.get(character_id, {})
+	if gait.is_empty() or not is_instance_valid(gait["skeleton"]):
+		return
+	var was_sitting := bool(gait.get("sitting", false))
+	var loop_type := BsrReader.AnimationEntry.TYPE_STAND
+	var once_type := -1
+	match value:
+		WorldNet.MOTION_SIT:
+			gait["sitting"] = true
+			loop_type = BsrReader.AnimationEntry.TYPE_SITTING
+			if not was_sitting:
+				once_type = BsrReader.AnimationEntry.TYPE_SIT_DOWN
+		WorldNet.MOTION_STAND:
+			gait["sitting"] = false
+			if was_sitting:
+				once_type = BsrReader.AnimationEntry.TYPE_STAND_UP
+		_:
+			return
+	var loop := _body_animation_for(gait["gender"], loop_type, gait["group"])
+	MonsterMotion.swap_loop(_animated, gait["skeleton"], loop, _frame_count(loop), _idle_anim_time)
+	if once_type != -1:
+		var once := _body_animation_for(gait["gender"], once_type, gait["group"])
+		if once != null:
+			_play_once(gait["skeleton"], once)
+	print("SIT: player %d %s -- loop %s (type %d)%s" % [character_id, "sits" if value == WorldNet.MOTION_SIT else "stands",
+		_body_animation_path(gait["gender"], loop_type, gait["group"]), loop_type,
+		"" if once_type == -1 else ", once %s (type %d)" % [_body_animation_path(gait["gender"], once_type, gait["group"]), once_type]])
 
 # --- A monster appearing (round 540) ------------------------------------------
 
@@ -13455,6 +13672,9 @@ func _request_world_stats() -> void:
 func _on_world_stats(stats: StatsNet.Stats) -> void:
 	if stats == null or stats.error != "":
 		return
+	if OS.get_environment("SRREVAMP_QA_STATS_LOG") != "":
+		print("QA STATS: t=%.2f tick=%d HP %d/%d MP %d/%d sitting=%s pelvis %s" % [_player_anim_time, _qa_tick,
+			stats.hp, stats.max_hp, stats.mp, stats.max_mp, str(_player_sitting), _qa_pelvis_height()])
 	if stats.max_hp > 0:
 		_last_enter_world_hp = stats.hp
 		_last_enter_world_max_hp = stats.max_hp

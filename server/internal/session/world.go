@@ -677,6 +677,7 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 			return
 		}
 		keepUp.Cancel(left.CharacterID)
+		motions.clear(left.CharacterID)
 		savePosition(chars, sess, left)
 		msg := &EntityLeft{CharacterID: left.CharacterID}
 		for _, other := range remaining {
@@ -762,6 +763,10 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	}
 	others := hub.Enter(sess, owned.ID, owned.Name, owned.Level, bucket, pos)
 	rememberPlace(sess, zone, frame, time.Now())
+	// Standing, with the regen timer at 0 elapsed: the engine's constructor
+	// registers the timer and calls SetMotionState(STAND) (round 605,
+	// motion.go).
+	motions.enter(owned.ID, time.Now())
 
 	otherSnapshots := make([]EntitySnapshot, len(others))
 	for i, o := range others {
@@ -852,6 +857,10 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 		return false, sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "not in the world"}).Encode()})
 	}
 	keepUp.Cancel(old.CharacterID)
+	// A character arrives standing (round 605, motion.go; ours: the retail
+	// object's re-creation is inferred). The client drops its own sit on the
+	// zone change too.
+	motions.stand(old.CharacterID, time.Now())
 	// The new label and frame are what a later save writes under, and the
 	// arrival itself is saved at once under -persist-position (round 573).
 	rememberPlace(sess, zone, frame, time.Now())
@@ -903,6 +912,16 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 	// character across the zone for everyone else.
 	if deadBySession(hub, sess) {
 		return nil
+	}
+	// A move in the sit/stand transition is refused, as the retail movement
+	// handler refuses MOTIONSTATE_CHANGEMOTION (0x4b0f83); a move while
+	// sitting is accepted and stands the character at once, as its
+	// SetMotionState(WALK/RUN) does (round 605, motion.go). Neither the store
+	// nor the zone hears a refused one, as for the dead.
+	if e, inWorld := hub.EntityBySession(sess.ID()); inWorld {
+		if accepted, _ := motions.moved(e.CharacterID, time.Now()); !accepted {
+			return nil
+		}
 	}
 	pos := world.Position{X: float64(req.X), Y: float64(req.Y), Z: float64(req.Z)}
 	entity, others, ok := hub.Move(sess, pos)

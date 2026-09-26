@@ -14,39 +14,36 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
-// RunRegen is the engine's passive recovery, applied to every online character
-// once per mana.RegenInterval.
+// RunRegen is the engine's passive recovery: CGObjPC::vslot_362 on each
+// character's own 4 s timer (mana's package note has the whole reading).
 //
-// WHY THIS EXISTS. `internal/mana` has carried the recovered rule for a while --
-// `CGObjPC::vslot_362`, a percentage of the CURRENT pool, floored at 1, capped
-// at half the current pool -- and nothing ever called it. A player reported it
-// as "there is such thing as hp recovery, its a stat for the player and it
-// passively restores health" (playtest 2026-09-20), and they were right: the
-// mechanic was recovered, implemented and unwired.
+// Round 605 settled it: a tick restores a percentage of the MAXIMUM HP and MP
+// -- 0.8% standing still, 8% sitting -- floored at 1 and capped at half the
+// maximum, and restores nothing while walking, running or getting up or down.
+// Before that this loop healed 4% of the CURRENT HP on one global ticker and
+// mana regenerated lazily inside mana.Tracker at the same rate; the percentage
+// was our own and the pool was the wrong one.
 //
-// The interval is REAL (`.rdata 0x00b45dc0` = 4.0, and round 223 read the unit
-// as seconds). The percentage is the disclosed part, and mana.RegenPerTick says
-// so at its definition rather than here.
-//
-// A character at full health is skipped, which is the engine's own first test:
-// `if (curHP == maxHP && curMP == maxMP) return;`. So is a character at 1 point,
-// because the half-of-current cap truncates its floored amount to zero -- that
-// is a mechanic the engine spends four instructions on, not a rounding artifact.
-//
-// Nothing here heals the dead: a character on 0 HP has a cap of 0 and regains
-// nothing, which is the same arithmetic rather than a special case.
+// The timer is per character, as the engine's is: registered when the
+// character enters the world (motions.enter), first firing 4 s later and then
+// every 4 s. This loop polls at regenPoll to find the characters whose timer
+// is due; the poll granularity is ours.
 func RunRegen(ctx context.Context, hub *world.Hub, chars character.Store, deps RegenDeps, logger *slog.Logger) {
-	ticker := time.NewTicker(mana.RegenInterval)
+	ticker := time.NewTicker(regenPoll)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			regenTick(ctx, hub, chars, deps, logger)
+		case now := <-ticker.C:
+			regenPass(ctx, hub, chars, deps, logger, now, false)
 		}
 	}
 }
+
+// regenPoll is how often RunRegen looks for due timers. OURS: a tick fires up
+// to this late.
+const regenPoll = 100 * time.Millisecond
 
 // RegenDeps are what building a stats reply needs, so the healed character's
 // bar moves without waiting for the client to ask.
@@ -57,39 +54,67 @@ type RegenDeps struct {
 	Mana      *mana.Tracker
 }
 
-// regenTick is one pass over the online characters. Split out so a test can
-// drive it without waiting four seconds.
-func regenTick(ctx context.Context, hub *world.Hub, chars character.Store, deps RegenDeps, logger *slog.Logger) {
+// regenPass fires the tick for every online character whose timer is due at
+// now -- or, with all, for every one of them whatever their timers say, which
+// is how a test drives the rule without waiting.
+func regenPass(ctx context.Context, hub *world.Hub, chars character.Store, deps RegenDeps, logger *slog.Logger, now time.Time, all bool) {
 	if hub == nil || chars == nil {
 		return
 	}
 	for _, e := range hub.AllEntities() {
-		c, err := chars.GetByID(ctx, e.CharacterID)
-		if err != nil {
-			continue
+		if all || motions.regenDue(e.CharacterID, now) {
+			regenOne(ctx, e, chars, deps, logger, now)
 		}
-		maxHP := character.MaxHPFor(c.Str, c.Level)
-		amount := mana.RegenPerTick(c.HP, maxHP)
-		if amount <= 0 {
-			continue
-		}
-		newHP, err := chars.Heal(ctx, c.ID, amount, maxHP)
-		if err != nil {
+	}
+}
+
+// regenOne is one firing of CGObjPC::vslot_362 for e.
+func regenOne(ctx context.Context, e world.Entity, chars character.Store, deps RegenDeps, logger *slog.Logger, now time.Time) {
+	// `if (GetLifeState() != 1) return;` -- the first test.
+	if e.Life != world.LifeAlive {
+		return
+	}
+	c, err := chars.GetByID(ctx, e.CharacterID)
+	if err != nil {
+		return
+	}
+	maxHP, maxMP := c.MaxHP(), c.MaxMP()
+	curMP := maxMP
+	if deps.Mana != nil {
+		curMP = deps.Mana.Current(c.ID, maxMP)
+	}
+	// Both pools full: nothing to do.
+	if c.HP >= maxHP && curMP >= maxMP {
+		return
+	}
+	// Only STAND and SIT regenerate, at their own rate.
+	rate, ok := motions.regenRate(c.ID, now)
+	if !ok {
+		return
+	}
+	hp := mana.RegenPerTick(maxHP, rate)
+	mp := mana.RegenPerTick(maxMP, rate)
+	newHP, newMP := c.HP, curMP
+	if hp > 0 && c.HP < maxHP {
+		if newHP, err = chars.Heal(ctx, c.ID, hp, maxHP); err != nil {
 			if logger != nil {
 				logger.Warn("regen: healing failed", "character", c.ID, "err", err)
 			}
-			continue
+			return
 		}
-		// Tell the client, or the bar only moves when something else happens
-		// to refresh it. The stats reply is what the HUD already listens to.
-		if e.Session != nil {
-			c.HP = newHP
-			if result, err := buildCharacterStats(ctx, c, c.ID, deps.Equipment, deps.Items, deps.Skills, deps.Mana); err == nil {
-				_ = e.Session.Send(&proto.Packet{Opcode: OpCharacterStatsResult, Data: result.Encode()})
-			}
+	}
+	if mp > 0 && curMP < maxMP && deps.Mana != nil {
+		newMP = deps.Mana.Restore(c.ID, maxMP, mp)
+	}
+	// Tell the client, or the bar only moves when something else happens to
+	// refresh it. The stats reply is what the HUD already listens to.
+	if e.Session != nil {
+		c.HP = newHP
+		if result, err := buildCharacterStats(ctx, c, c.ID, deps.Equipment, deps.Items, deps.Skills, deps.Mana); err == nil {
+			_ = e.Session.Send(&proto.Packet{Opcode: OpCharacterStatsResult, Data: result.Encode()})
 		}
-		if logger != nil {
-			logger.Debug("regen", "character", c.ID, "amount", amount, "hp", newHP, "max", maxHP)
-		}
+	}
+	if logger != nil {
+		logger.Debug("regen", "character", c.ID, "rate", rate, "hp", newHP, "maxHP", maxHP, "mp", newMP, "maxMP", maxMP)
 	}
 }

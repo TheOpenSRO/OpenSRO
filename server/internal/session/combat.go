@@ -821,6 +821,11 @@ func combatHandler(
 			if deadBySession(hub, sess) {
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: deadRefusal}).Encode()})
 			}
+			// Nor does a seated one: the skill-use gate refuses SIT and
+			// CHANGEMOTION (0x58ded4, 0x58e0cb; round 605, motion.go).
+			if seated(characterID, time.Now()) {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: seatedRefusal}).Encode()})
+			}
 
 			// Reach first, THEN the cooldown -- the order is the engine's.
 			// Its phase 1 measures the approach band and only gates on the
