@@ -86,8 +86,9 @@ qa_shot.sh --out /var/tmp/reconnect --server --region '97\168.m' --radius 1 --fr
 
 **A town teleport is a run too** (round 578). `--teleport <id>` with `SRREVAMP_QA_CLICK=gate`
 exported clicks the nearest Dimensional Gate, chooses its 'Select teleport area' line through the
-talk box's own handler, and presses the board's Move for teleportdata id `<id>` (2 is Donwhang from
-Jangan), printing the page as drawn (`QA TELEPORT: page 1 GDR_TB_TASLOT1: Donwhang | ...`) and
+talk box's own handler, and clicks the talk box's destination line for teleportdata id `<id>` (2 is
+Donwhang from Jangan; round 603 -- the client lists destinations in the talk box, there is no
+board), printing the talk box's lines as drawn (`QA TELEPORT: talk line: 1. ...`) and
 `QA TELEPORT: requested <gate> -> <id>`. The server needs the teleport tables
 (`SRREVAMP_TELEPORT_DIR`, or `$PK2_DIR/teleport`; `qa_shot.sh` passes `-teleport-dir` when the
 CSVs are there). Measure from the log: `World3D: teleport accepted -- ... waiver <w>: <receipt>`,

@@ -803,6 +803,26 @@ commit them on the main thread, and round 567 makes the terrain's collision a he
       (round 566's follow-up). A playtest diagnostic; it could sit behind a QA variable like the
       rest of the load instrumentation.
 
+### Town teleporters (rounds 576-578, 603)
+
+- [ ] **The server serves any OpTeleportUse whose gate id it knows, wherever the player stands**
+      (round 603's review). A session's packets are handled one at a time, in order
+      (`gateway.serveConn`), so a second request can never overlap a warp in flight: it waits,
+      and is served after `warpTo` has moved the player. Nothing then ties the request to the
+      player's position. `session/teleport.go` has no interaction-range test and no "already
+      teleporting" state, so a stale second request from the old gate is charged and moves the
+      player again. The client closes the gap on its side: round 603 keeps the request pending
+      from the click to the arrival's zone change. A hand-built client is not closed out.
+      Candidates, none trivial:
+      - the retail range test, `GObjPC::IsWithinInteractionRange` (0x4a8e10), unread;
+      - refusing a gate whose point is not in the requester's zone bucket, which does nothing
+        under `-single-frame`, where every town shares one bucket;
+      - a teleport state like the engine's 0x1c14 (`IGObj::GetTeleportState`), which needs its
+        lifetime read.
+
+      The check is a session test that sends two OpTeleportUse back to back and expects one
+      charge.
+
 ### Saved position (map/travel epic, round 573)
 
 `-persist-position` (default off) puts a character back where it left off, and round 573's client

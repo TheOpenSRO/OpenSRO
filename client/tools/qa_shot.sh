@@ -39,8 +39,9 @@
 #                     ground (round 557; _qa_columns_report says the same).
 #   --teleport <id>   (round 578; needs --server and SRREVAMP_QA_CLICK=gate)
 #                     once the gate's talk box is up, choose its teleport
-#                     line and press the board's Move for this teleportdata
-#                     id (2 = Donwhang from Jangan): the log carries
+#                     line, then click the talk box's destination line for
+#                     this teleportdata id (round 603; 2 = Donwhang from
+#                     Jangan): the log carries
 #                     `QA TELEPORT: requested <gate> -> <id>`, the receipt,
 #                     and the arrival's second region grid
 #   --debug           open the debug panel (F3) once the first region loads

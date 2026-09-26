@@ -26,11 +26,12 @@ Every window in the real client is authored data, and building one is now mechan
    of the same 76. `FontColor` is the one to honour.
 6. **Buttons come as `X.ddj` / `X_focus.ddj` / `X_press.ddj` / `X_disable.ddj`**, which maps
    straight onto `TextureButton`'s four texture slots.
-7. **Some panel windows are self-framed.** Quest, guild, community, alchemy, the NPC talk box, the
-   store and the teleport board are framed by this client from their own layout. That is not
+7. **Some panel windows are self-framed.** Quest, guild, community, alchemy, the NPC talk box and
+   the store are framed by this client from their own layout. That is not
    because the registry lacks them: GDR_COMMUNITY, GDR_ALCHEMYBOX, GDR_STORE and GDR_NPCWINDOW
-   are in `ginterface.txt` and are not used, each for the reason round 586 records. Guild and the
-   teleport board have no entry, and quest's class is a main-popup pane. Their own layout file
+   are in `ginterface.txt` and are not used, each for the reason round 586 records. Guild has no
+   entry, and quest's class is a main-popup pane. (The teleport board had none either; round 603
+   removed it, since the client shows a gate's destinations in the talk box.) Their own layout file
    carries a `CIFFrame` / `CIFStretchWnd` whose `ddj` is an
    8-slice base ending in `_` (`interface\frame\mframe_wnd_`, `interface\messagebox\
    msgbox2_window_`), expanded as `_left_up`, `_mid_up`, `_right_up`, `_left_side`, `_right_side`,
@@ -318,7 +319,9 @@ is presentation work on solved data; if you find yourself editing the protocol, 
   quest's state -- that window is not built); the check box 8 takes no click
   (retail: the quick list `questminilist.2dt`, at most three, `0x6e55d0`, not built). Escape
   closes it, as `0x6dbe40` does for key 0x1b (this client's Escape closes the topmost window).
-- **The teleport board** (round 578) — the Dimensional Teleporter, `resinfo\ifteleportboard.txt`,
+- **The teleport board** (round 578; **replaced in round 603** by the talk box's own destination
+  lines, as the client lists them — the board's layouts are not in the exe) — the Dimensional
+  Teleporter, `resinfo\ifteleportboard.txt`,
   built by the recipe: `HudPanels.PANELS["teleport"]`, and its five `CIFTeleportAreaSlot` rows
   (`GDR_TB_TASLOT1..5`) filled from `resinfo\ifteleportareaslot.txt`'s own section (place, price,
   Move) the way CIFSkillBoard's rows are code-built (`TeleportBoard`), `GDR_TB_SPIN_PAGE` paging
@@ -364,8 +367,12 @@ like the guild window:
    spinner and the dungeon maps, the other signs, and the fortress caption's guild.
 4. **Y -> `nifenchantwnd.2dt`** (`CNIFEnchantWnd` / `CNIFAlchemyWnd`, id 168): Y reaches
    `0x798e20`, which loads or destroys it. We build `ifalchemyprocess.txt`.
-5. **The teleport board's live source**: `ifteleportboard.txt` and `ifteleportareaslot.txt` are
-   not in the exe, and which window the client shows is **not established**.
+5. ~~**The teleport board's live source**~~ **Done (round 603).** There is no teleport window:
+   the client lists a gate's destinations as lines of the NPC talk box itself
+   (`UI_TELEPORT::FUN_006fd3e0`, called from the talk box's click handler at `0x702973`), and a
+   click on a line sends the request. The board built from `ifteleportboard.txt` is removed, and
+   the destinations are now the talk box's own lines. Still open: the line colours the client
+   passes (`0xffefdaa4`, `0xffff8a00`), which the talk box does not draw for any of its lines yet.
 
 ### 1. Fill the panels with their authored presentation
 The windows are real; their *contents* are a plain list laid over the frame. Each one wants its

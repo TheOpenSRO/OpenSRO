@@ -44253,3 +44253,330 @@ On this tree the suite prints ALL PASS.
 **Results** (this round's tree, a fresh copy on the box). `remote_godot.sh check`: 303 scripts and
 5 scenes, ALL LOAD. `remote_godot.sh tests`: 116 suites, 0 failing, 0 SCRIPT ERROR. `cd server &&
 go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok, 10 with no tests.
+
+## A Dimensional Gate lists its destinations in its own talk box, as the client does; the separate board is gone (round 603)
+
+Client only. Round 578 built a Dimensional Teleporter board from `resinfo\ifteleportboard.txt` and
+`ifteleportareaslot.txt`. The 2dt research found that neither name is in the exe and that what
+the client shows instead was "not established". This round establishes it: **the retail client
+has no teleport window.** 'Select teleport area' rewrites the NPC talk box's own list with the
+gate's destinations, and clicking a line sends the request. srrevamp now does the same, and the
+board is removed. Every fact below is labelled read, measured, inferred or ours. Binary:
+`sro_client.exe`, md5 `2a5794b72c90908d945be8b3f3f2edd4`, `/var/tmp/decomp_client` and
+`/var/tmp/sro_client.asm` on the render box.
+
+### Step 0: what the talk line opens (read)
+
+- **The line.** `FUN_006fcd60(n, type, sub)` builds one numbered talk line (`"%d. "` plus text)
+  and stores its type at +0 and 0 at +0x10. Its case 10 is `UIIT_CTL_TELEPORT_TARGET`.
+- **The click.** `CIF_NPCTalk::FUN_007020c0`, the talk box's click handler, switches on the
+  clicked line's type (`switch(*puVar4)`). For type 10:
+  - with +0x10 == 0 it calls `UI_TELEPORT::FUN_006fd3e0` on the talk box itself (`mov ecx,esi;
+    call 0x6fd3e0` at `0x702973`), passing a counter it has just set to 1 (`0x70296b`);
+  - with +0x10 == 1 it sends: `push 2; push [edi+0xc]; push eax; mov ecx,0xeecbf4; call 0x81ddf0`
+    (`0x70293d..0x702946`). `0x81ddf0` logs `"TELEPORTGATE -> Type(%d), Target(%d)"` and writes
+    request `0x705a` (npc, type 2, the 4-byte target).
+- **The list.** `FUN_006fd3e0` works on the same window:
+  - First `FUN_006fb530(this, this+0x7d4)` (`0x6fd424..0x6fd435`). That clears the list
+    (`0x6fabc0`) and sets the list's +0x3a0 to 0x400. It then adds the text at +0x7d4, the talk
+    box's own current text, as a white line with no data. Last it adds a white line of two spaces
+    (`0xdacf4c` = `20 00 20 00 00 00`).
+  - Then one line per link of the gate, for `k < FUN_009767b0()`. Each line is a 0x18-byte item
+    with type 10 at +0, sub-type 1 at +0x10 and the link's value at +0xc. Its text is `"%d. %s"`
+    with the counter, then 1, 2, and so on. The `%s` is `UIIT_CTL_TELEPORT_FREE_RESULT` (fee word
+    0) or `UIIT_CTL_TELEPORT_RESULT` (fee plus the `FUN_006fc910` surcharge), filled with the
+    destination's name. `teleport_network.md`'s "The client's list, read" covers this part.
+  - The colours go to `FUN_0064f8a0`: text `0xffefdaa4`, then `0xffff8a00` twice, or
+    `0xff969696` three times when the line is greyed. Greying happens only at
+    `STORE_TOMB_GATE_IN`.
+  - Last it calls `FUN_006fcd60(n, 0, 0)`, the talk box's end line numbered next, and
+    `FUN_006f73b0`.
+- **After the send.** The handler calls `0x6f74a0(0,0)` and `0x6f74c0(0,0)`. They only store
+  zeros at +0x8e0..+0x8e5. The click path does not close the talk box.
+- **The destination.** The value at +0xc is what `0x81ddf0`'s own log calls the "Target"
+  (read). `FUN_006fd3e0` also passes it to `FUN_009370d0`, the lookup it uses on the gate's own
+  id. That it is the destination's teleportdata id is **inferred** from those two uses.
+- **Nothing else is opened.** There is no confirmation, no Move button and no paging.
+
+**Negative, two probes.** Neither probe finds the board's layouts or their class.
+- **Exe strings.** A case-insensitive count over the whole exe, ASCII and UTF-16LE, finds 0 of
+  each of `ifteleportboard`, `ifteleportareaslot`, `TeleportAreaSlot`, `TeleportBoard`, `GDR_TB_`,
+  `GDR_TAS_`, `tpt_window`, `UIIT_PAG_TELEPORT` and `UIIT_CTL_MOVE`. Two controls show that the
+  probe can hit: `UIIT_CTL_TELEPORT_TARGET` is found once in UTF-16 and `iftargetwindow.txt` once
+  in ASCII (measured).
+- **The class and the data.** A grep of the decompile's function index and all its `funcs_*.c`
+  shards finds no `CIFTeleport`, `TeleportAreaSlot` or `ifteleport`. The index's teleport-named
+  classes are `CITeleportGate`, `CTeleportBuilding`, `CTeleportData`, `CTeleportLink`,
+  `SC_CameraTeleport` and `SC_Teleport`, plus the `UI_TELEPORT` module. The exe's RTTI teleport
+  strings are the same six (`.?AV...`). None of the 42 `.2dt` files in `/var/tmp/r2dt/files` is a
+  teleport, gate or NPC window (measured, listed).
+
+This is a different failure mode from the first probe, and it agrees. Taken with the positive
+reading above, the client has **no teleport window**; the talk box is the list.
+
+### What srrevamp does now
+
+- `TeleportBoard` (`client/scripts/ui/hud/teleport_board.gd`) is now the list's helpers. It
+  keeps `price_text` and adds three more:
+  - `list_lines` gives one BBCode link per destination, `"n. <price_text>"`, then the end line
+    numbered next;
+  - `escape` turns `[` into `[lb]`, so "[Donwhang]" is drawn and not read as a tag;
+  - `dest_from_key` reads a line's destination.
+
+  The paging, slot and Move helpers are gone.
+- `HudPanels` has no `"teleport"` window, and `ifteleportboard.txt` is no longer built.
+  - `open_teleport_list(gate, entries)` rewrites the open talk box. It keeps the text on top
+    (`_fill_npc_talk` now keeps it as meta, as the client re-adds +0x7d4), then a blank line, the
+    destinations and the end line.
+  - `_on_npc_talk_choice` emits `teleport_requested(dest)` for a destination line, and the talk
+    box stays up.
+  - `teleport_list_shown()` reports whether the talk box holds the list.
+  - `qa_press_teleport_line(dest)` prints the lines as drawn and clicks through the label's own
+    `meta_clicked`.
+  - `refresh_npc_talk` (a guild reply) leaves a shown list alone.
+- `World3D`:
+  - `_open_teleport_list` replaces `_open_teleport_board`, with the same entries;
+  - an accepted result no longer closes a board; the zone change that follows closes the talk box
+    (`_close_gate_ui`), as before. The request stays pending across the accepted result until
+    that zone change (the review fix below);
+  - `_qa_advance_teleport` waits for the list and clicks the line.
+
+### Behaviours carried over, and how each was checked
+
+- **Destinations and fees from the tables, file order.** The live run below prints `World3D:
+  teleport list at STORE_CH_GATE (point 1, level 1): 2 Donwhang 5000, 175 Alexandria (South)
+  40000, ...`, and the headless test checks the named and codename places.
+- **The request.** A click on a line is `OpTeleportUse` (live: `teleport requested 1 -> 2`).
+  The second-click guard (round 582) is kept. It is **ours**: the client sends through
+  `Net_SendRequestPacket(0x705a, 0)`, and with a second argument of 0 that marks nothing pending
+  (`0x841780`, read). Tested: a pending click is ignored, and so is one after listing again,
+  and (review fix below) one between the server's yes and the zone change.
+- **The receipt and the loading-screen arrival.** Live, below.
+- **Free under level 21, for GMs, or under the testing flag.** These are the server's rules,
+  unchanged. The list shows the free format for level 20 or below. That is srrevamp's display,
+  as in round 578; the retail list formats on the fee word alone. Live run A (level 1, waiver 1)
+  and run B (GM, waiver 2).
+- **QA hooks.** `--teleport` and `SRREVAMP_QA_CLICK=gate` drive the line (live).
+- **Five a page: dropped, deliberately.** The client has no pages; the list holds every link
+  (read above). **Measured** on the real archive at 1152x648 and UI scale 1.5 (the scratch
+  `zz_tele_audit.gd`, not committed):
+  - Donwhang's gate, the most links of any town gate (10; Jangan and the others 6, Alexandria 4),
+    draws 13 lines;
+  - the text's content height is 182 of the box's 328, with no wrapped line;
+  - the talk window at (200, 21) 369x390 is inside the 768x432 logical view.
+- **The price that ran under Move (v0.1.450): gone with the board.** Measured before, on
+  840466a: the price label grew to its text, 343 wide for "Teleport to [Alexandria
+  (South)]area. [40000]gold" in a 182 box, spanning x 117..460 across Move at 299..391. The
+  board was at y -56, above a 1152x648 view at scale 1.5. After, each line is one line of the
+  317-wide talk text.
+
+### Not reproduced (disclosed)
+
+- The line colours (`0xffefdaa4`, and `0xffff8a00` for the two other states, read). The talk box
+  draws every line, menu and list alike, in `ROW_TEXT_COLOUR`. Matching them is the talk box's
+  own work.
+- The greyed tomb-gate lines (`STORE_TOMB_GATE_IN` only, a gate srrevamp does not bind).
+- The surcharge (`FUN_006fc910`; there are no fortresses).
+- The client-side checks before the send that end in system messages `0x1c1c` and `0x1c1e`
+  (`0x702817..0x702916`), not read further.
+- `UIIT_STT_NPC_CHATTING_WND_TALKEND2`, which `FUN_006fcd60` case 0 picks on a condition not read
+  here. The talk box always uses `_TALKEND`, as its menu does.
+- The retail spacer is two spaces; ours is an empty line, as the menu's.
+
+### Tests
+
+`client/scripts/ui/hud/teleport_board_test.gd` is rewritten, with fixture text only ("Fixture to
+[%s] for [%d] coins."). The old suite's price fixtures quoted the archive's 16-column rows word
+for word; that is fixed here.
+- **Pure checks.** `price_text`; `list_lines` on six entries gives 7 lines, with the escaped
+  first line, the sixth on the same list and the end line 7; `dest_from_key` and its negative.
+- **HudPanels checks.**
+  - `PANELS` has no teleport window, and with no talk box the list draws nowhere;
+  - the talk box shows its text, a blank line, all six destinations and the end line, as drawn;
+  - no other window is open;
+  - a click on line 3 emits 176, and the talk box stays;
+  - QA clicks line 6, and 999 clicks nothing;
+  - a refresh keeps the list, and a new conversation drops it;
+  - two destinations number the end line 3, and the end line closes the box.
+- **World3D checks.** Over synthetic tables, the list, the offline line, the pending guard, a
+  refusal, the arrival mark and the zone change.
+
+**NEGATIVE, run against 840466a's scripts** (`/opt/srrevamp-client-tele-base`, a `git archive
+840466a` of `client/`, with only this test copied in): `9 FAILURES`.
+- `FAIL TeleportBoard has price_text, list_lines and dest_from_key`
+- `FAIL PANELS has no teleport window (got ["resinfo\\ifteleportboard.txt", "", 0])`
+- `FAIL HudPanels has open_teleport_list, teleport_list_shown, qa_press_teleport_line and teleport_requested`
+- `FAIL the teleport line lists the destinations in the talk box`
+- `FAIL the talk text, a blank line, six destinations and the end line (got 3: ["...", "", "1. Fixture end."])`
+- `FAIL a line clicked offline says it needs the server (chat: )`
+- `FAIL a refusal leaves the list up`
+- `FAIL the gate's talk box lists the destinations before the zone change`
+- `FAIL a refused zone change leaves the talk box, its list and the talk code`
+
+**This tree:** ALL PASS.
+
+### Audit (measured, headless, the real Media.pk2, 1152x648 at UI scale 1.5)
+
+`zz_tele_audit.gd` dumps every visible node. `zz_gui_audit.gd --panels=npctalk,teleport
+--norender=1` was run as well.
+- **Before (840466a).** Two windows. The talk box shows the gate's three lines. The board,
+  `Window_teleport` at (164, -56) 440x544, is outside the view. It has five slots, each with
+  leftover `RowBar`, `ItemIcon` and `CountLabel` placeholders, prices overflowing under Move, the
+  spinner on page 1 of 2, and Samarkand not on the page.
+- **After.** One window, the talk box, whose tree is identical to before (the audit's npctalk
+  widget diffs clean). `TalkText` shows `...`, a blank line, `1. Teleport to [Donwhang]area.
+  [5000]gold` through `6. Teleport to [Samarkand]area. [5000]gold`, and `7. End conversation.`,
+  content 126 of 328. Donwhang's ten destinations fit, content 182 of 328. The level-1 list shows
+  "Teleport to [Donwhang]area." and so on. `OPEN teleport -> null`.
+
+### Live (render box, `GODOT_LOCK=/var/tmp/rtele/lock`, frames deleted)
+
+The server is this tree's, built for linux, with the round-576 export of the teleport CSVs. The
+command was `qa_shot.sh --out /var/tmp/rtele/live<X> --server --region '97\168.m' --radius 1 --at
+1230,1380 --frames 1100 --size 640x360 --teleport 2` with `SRREVAMP_QA_CLICK=gate`, on hardware GL
+(`qa_shot: hardware GL via VirtualGL on /dev/dri/renderD128`).
+
+- **A, level 1.** Each line below was printed in the run:
+  - `World3D: teleport gate STORE_CH_GATE bound to Obj_cj_portal_220 (3.6 units ...)`
+  - `NPCTALK Dimensional Gate line 2: 2. Select teleport area`
+  - `QA CLICK gate: dispatched -> talk`
+  - `World3D: teleport list at STORE_CH_GATE (point 1, level 1): 2 Donwhang 5000, 175 Alexandria
+    (South) 40000, 176 Alexandria (North) 40000, 5 Hotan 5000, 20 Constantinople 5000, 25
+    Samarkand 5000`
+  - `HudPanels: teleport list for Dimensional Gate -- 6 destination(s) in the talk box`
+  - `QA TELEPORT: talk line: 1. Teleport to [Donwhang]area.` through `7. End conversation.`
+  - `World3D: teleport requested 1 -> 2`
+  - `World3D: teleport accepted -- to SN_ZONE_22002, 0 gold charged, waiver 1: Teleport to
+    [Donwhang]area.`
+  - `World3D: teleport arrival in RealTerrain_102_153 at local (957.0, 1508.0), height -7.64`
+  - a second `region grid loaded ... at frame 199`
+  - Donwhang's gate binds (`STORE_WC_GATE bound to Obj_w_cd_portal_0`)
+  - the server: `msg=teleport account=qa ... gate=STORE_CH_GATE from=GATE_CH dest=GATE_WC
+    zone=donwhang frame=102/153 x=-3 z=-548 fee=0 waiver=1 gm=false free_flag=false`
+
+  0 SCRIPT ERROR.
+- **B, a GM at level 30** (`SRREVAMP_GM_ACCOUNTS=qa`, `SRREVAMP_QA_COMMANDS="/level 30"`,
+  `SRREVAMP_QA_FORCE_LOADING=1`):
+  - `GM REPLY: level 1 -> 30: ...`
+  - `World3D: teleport list at STORE_CH_GATE (point 1, level 30): ...` (the same six)
+  - the lines as drawn, `QA TELEPORT: talk line: 1. Teleport to [Donwhang]area. [5000]gold`
+    through `6. Teleport to [Samarkand]area. [5000]gold` (Alexandria's two at 40000), then
+    `7. End conversation.`
+  - `World3D: teleport requested 1 -> 2`
+  - `World3D: teleport accepted -- to SN_ZONE_22002, 0 gold charged, waiver 2: Teleport to
+    [Donwhang]area.`
+  - `LoadingScreen: up at frame 200`
+  - the same arrival, `RealTerrain_102_153 at local (957.0, 1508.0)`
+  - the server: `... fee=0 waiver=2 gm=true free_flag=false`
+
+  0 SCRIPT ERROR.
+- **Not measured live**, as in round 578: a paying run and the short-purse `0x1c07`. The QA
+  character can be raised only by a GM, and a GM is never charged; the session test covers both.
+
+### Suites
+
+The first cut (on 840466a):
+- `client/tools/remote_godot.sh check`: `checked 300 scripts and 5 scenes`, ALL LOAD.
+- `remote_godot.sh tests`: `ran 114 suite(s), 0 failing`, 0 SCRIPT ERROR in the log.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok, none failing,
+  run after the doc edits (the doc probes read docs at run time).
+
+After the review fix, rebased on dev 3321ce1 (rounds 601 and 602): see the review section's
+Suites below.
+
+### Records
+
+This entry. `docs/WORLD_ISSUES.md`'s six-hundred-and-third round. `docs/protocol/teleport_network.md`
+gains "The destination list (round 603)", and "The teleport board (round 578)" is marked
+superseded. `docs/UI_TODO.md`: its item 5 is done, the Done entry is annotated, and rule 7 is
+corrected. `docs/SYSTEMS.md`'s Teleport network row. `client/tools/README.md`'s teleport run.
+`server/internal/systems/orphans_test.go`'s `LinksFrom` note ("the talk box shows").
+
+### Review fix (same round)
+
+The review re-read every claim above and confirmed that the client has no teleport window. It also
+probed 0xb05a's handler in a different way. It found one blocking regression, which is fixed here.
+This round was rebased on dev 3321ce1 and renumbered from 601 to 603.
+
+**Blocking: a second charge between the server's yes and its zone change (fixed).**
+- **The gap.** `session/teleport.go` sends `OpTeleportResult` first. `warpTo` then does its
+  per-entity work (the zone change, the position save, a snapshot per other entity) before it
+  sends `OpChangeZoneResult`, so the client can receive the two in different frames (read).
+  - The first cut cleared `_teleport_request_pending` on any reply, the accepted one included.
+  - The talk box and its list now stay up until the zone change.
+  - So a click in that gap sent a second `OpTeleportUse`.
+- **Why that charges twice.** The server handles one session's packets one at a time, in order
+  (`gateway.serveConn`, read). The second request therefore waits until the first has moved the
+  player, and is then served: it has no range test and no teleport state, so it charges again
+  and moves the player on.
+- **The review measured it on dae2dc9:** pending after the yes = false, list shown = true, and
+  the click reached the send path. At 840466a the board closed on the yes, so the gap is new
+  with this round.
+- **The fix (ours).**
+  - `_on_teleport_result` leaves the request pending on `ok` and clears it on a refusal.
+  - `_close_gate_ui` clears it on the arrival's zone change, as before.
+  - `_on_change_zone_result` clears it on a refused zone change that was a teleport's arrival
+    (`warpTo`'s "not in the world"; the server refunds the fee, `teleport.go`).
+  - A refused zone change that is not a teleport's arrival leaves a pending request alone.
+- **The server side is not changed.** It is recorded in `docs/TODO.md`, "Town teleporters". A
+  guard on a warp in flight is moot, since the serial handling means no two requests overlap. The
+  real gap is that a request is not tied to where the player stands. The candidates:
+  - the unread range test (`0x4a8e10`);
+  - a zone-bucket test, which does nothing under `-single-frame`;
+  - a teleport state like 0x1c14, whose lifetime is unread.
+
+  None is trivial, and none is read.
+
+**Non-blocking, done.**
+- **`price_text`'s fallback keeps the place.** With the archive's formats missing, a line now
+  reads `1. <place> -- <fee> gold` or `<place> -- No cost` (ours), not `1. 5000 gold`. With no
+  place it is the bare fee, as before.
+- **Stale comments.**
+  - `client/tools/qa_shot.sh`'s `--teleport` said "press the board's Move";
+  - `client/scripts/ui/hud/hud_window.gd`'s header listed the board as a self-framed window;
+  - `server/internal/session/teleport.go` said "the gate's board and talk box".
+- **The talk text does not scroll: a limit, recorded, not changed.** `TalkText` is built with
+  `scroll_active = false` (`HudPanels._fill_npc_talk`), so content taller than the box is cut
+  without a sign.
+  - Every real gate fits today: Donwhang's 13 lines are 182 of 328 px (measured above).
+  - The authored `GDR_NPCTALK_SCROLL` (336,27,16,320) is built but not wired.
+  - Turning on Godot's own scroll bar would put art the client does not have on every NPC's talk
+    box. That is the talk box's own work, not this round's.
+- **An unaccounted client write.** Before sending, `0x81ddf0` runs
+  `mov ecx,[0xeed870]; push 2; call 0x84ab10` (`0x81de28..0x81de33`). `0x84ab10` stores its
+  argument at `this+0xe0` (read). What that field means, and who reads it, is not read, and
+  srrevamp keeps no such state.
+  - `Net_SendRequestPacket(0x705a, 0)` refuses when a request of the same group is marked
+    pending. With a 0 second argument it marks nothing itself (`0x841780`, read).
+  - So the one-request guard is still ours.
+- **SYSTEMS.md.** The "0x1c15 refusal with no warp" was measured live through round 578's board.
+  This round checked a refusal headless only. The row now says so.
+- **Test fixtures.** `_reader()`'s comment said "fixture values, not the retail fees", but five of
+  its six fees were retail's. The fees are now synthetic (1111, 2222, 3333, 4444, 0, 5555), and so
+  are `_entries()` and the pure price checks.
+
+**Tests.** `teleport_board_test.gd` gains three sets of checks:
+- the fallback with the place, a missing free format, the bare fee with no place, and a
+  formatless line that names its place;
+- an accepted reply leaves the request pending, and a click after the yes and before the zone
+  change is ignored;
+- a refused zone change after the yes clears the request and a click works again, while an
+  unrelated refused zone change keeps a pending request (NEGATIVE).
+
+**NEGATIVE, run against dae2dc9's scripts** (`/opt/srrevamp-client-tele-base`, a `git archive
+dae2dc9` of `client/` with only this test copied in): `5 FAILURES`.
+- `FAIL a malformed format falls back to our own wording with the place (got 1111 gold)`
+- `FAIL a missing free format falls back with the place (got No cost)`
+- `FAIL with no archive formats a line still names its place (got ["[url=teleport_dest:2]1. 1111 gold[/url]", "[url=end]2. End conversation.[/url]"])`
+- `FAIL an accepted reply leaves the request pending until the zone change`
+- `FAIL a click after the yes and before the zone change is ignored (chat: * Teleporting needs the server.)`
+
+**This tree:** ALL PASS.
+
+**Not re-run live.** The fix changes only when the pending flag clears. The arrival path the two
+live runs above measured, and the log lines they quote, are unchanged.
+
+**Suites** (rebased on 3321ce1):
+- `remote_godot.sh check`: `checked 303 scripts and 5 scenes`, ALL LOAD;
+- `remote_godot.sh tests`: `ran 116 suite(s), 0 failing`, 0 SCRIPT ERROR;
+- `go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok, none failing, run after the doc edits.

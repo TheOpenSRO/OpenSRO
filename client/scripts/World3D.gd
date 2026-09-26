@@ -1637,7 +1637,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.npc_service_selected.connect(_on_npc_service_selected)
 	_hud_panels.guild_create_requested.connect(_on_guild_create_requested)
 	_hud_panels.guild_leave_requested.connect(_on_guild_leave_requested)
-	# The teleport board's Move (round 578): sent with the gate it was opened at.
+	# A gate's destination line in the talk box (round 603; the board's Move
+	# until then): sent with the gate the list was opened at.
 	_hud_panels.teleport_requested.connect(_on_teleport_requested)
 	# The Revive button (round 548): the one click a dead player has.
 	_hud_panels.revive_requested.connect(_on_revive_requested)
@@ -4351,13 +4352,18 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	var teleport_arrival := _teleport_arrival_pending
 	_teleport_arrival_pending = false
 	if not result.ok:
+		# An accepted teleport whose move failed (warpTo's "not in the world";
+		# the server refunds the fee): the request is over, so a destination
+		# line works again (round 603's review). A refused zone change that is
+		# not a teleport's arrival leaves a pending request alone.
+		if teleport_arrival:
+			_teleport_request_pending = false
 		return
 	# No gate UI survives a zone change (round 578): its gate is behind. The
-	# board goes, and so do the talk box it was opened from and the NPC it
-	# names -- HudPanels keeps the talk box up behind a service window, so a
-	# talk box left up here would reopen the old gate's board from the new
-	# zone (its teleport line reads _talk_npc_code), and Move would send the
-	# old gate's links from there; the server has no range test
+	# talk box and the destinations it lists go, and so does the NPC it
+	# names -- a talk box left up here would list the old gate's destinations
+	# in the new zone (its teleport line reads _talk_npc_code), and a click
+	# would send the old gate's links from there; the server has no range test
 	# (session/teleport.go's header).
 	_close_gate_ui()
 	# A teleport shows the "NOW LOADING" screen (the playtester's call: the
@@ -7972,7 +7978,7 @@ func _update_blob_shadow() -> void:
 ##                          its drawn box
 ##   SRREVAMP_QA_TELEPORT=<dest id> (round 578; with SRREVAMP_QA_CLICK=gate
 ##                          and a server) choose the gate's teleport line,
-##                          then press the board's Move for that teleportdata
+##                          then click the talk box's line for that teleportdata
 ##                          id: `QA TELEPORT: requested <gate> -> <dest>`
 ##                          (_qa_advance_teleport)
 ##   SRREVAMP_QA_EQUIP="s=id,.." dress the player from this loadout when no
@@ -9249,10 +9255,10 @@ func _qa_advance_click() -> void:
 
 ## SRREVAMP_QA_TELEPORT=<dest id> (round 578): once a gate's talk box is up
 ## (SRREVAMP_QA_CLICK=gate), choose its 'Select teleport area' line through
-## the talk box's own handler, then press the board's Move for that
-## destination (HudPanels.qa_press_teleport_move) and print
+## the talk box's own handler, then click that destination's line in the talk
+## box (HudPanels.qa_press_teleport_line, round 603) and print
 ## `QA TELEPORT: requested <gate> -> <dest>`. Stage 0 waits for the talk box,
-## 1 for the board, 2 is done.
+## 1 for the destination list, 2 is done.
 var _qa_teleport_stage := 0
 var _qa_teleport_wait := 0
 
@@ -9273,13 +9279,13 @@ func _qa_advance_teleport() -> void:
 			_qa_teleport_stage = 1
 			_qa_teleport_wait = 30
 		return
-	if not _hud_panels.is_open("teleport"):
+	if not _hud_panels.teleport_list_shown():
 		return
 	var dest := int(want)
-	if _hud_panels.qa_press_teleport_move(dest):
+	if _hud_panels.qa_press_teleport_line(dest):
 		print("QA TELEPORT: requested %d -> %d" % [_teleport_gate_point_id, dest])
 	else:
-		print("QA TELEPORT: the board lists no destination %d" % dest)
+		print("QA TELEPORT: the talk box lists no destination %d" % dest)
 	_qa_teleport_stage = 2
 
 ## The nearest target of a kind: {pos, half_height, name}, or {} if none.
@@ -10674,17 +10680,23 @@ func _place_at_region_local(region_x: int, region_y: int, local_x: float, local_
 func _on_teleport_result(result: TeleportNet.Result) -> void:
 	if result == null:
 		return
-	_teleport_request_pending = false
 	if result.ok:
 		_teleport_arrival_pending = true
-		# The board goes on the server's yes (round 578); a refusal leaves it
-		# up to choose again.
-		if _hud_panels != null:
-			_hud_panels.close("teleport")
+		# The talk box and its list stay until the zone change that follows
+		# (_close_gate_ui). The request stays pending until then too (round
+		# 603's review): the server sends this receipt, then warpTo does its
+		# per-entity work before OpChangeZoneResult, so the two can land in
+		# different frames, and a click on a destination line between them
+		# would send a second OpTeleportUse that the server (no range test)
+		# serves and charges again. _close_gate_ui clears it on the arrival;
+		# a refused zone change clears it (_on_change_zone_result; the server
+		# refunds a move that failed).
 		var receipt := TeleportNet.receipt_line(_teleport_place_name(result.destination), result.fee, _ui_text_table)
 		_log_system(receipt)
 		print("World3D: teleport accepted -- to %s, %d gold charged, waiver %d: %s" % [result.destination, result.fee, result.waiver, receipt])
 	else:
+		# A refusal leaves the list up to choose again.
+		_teleport_request_pending = false
 		_log_system(ErrorText.teleport_line(result.code, _ui_text_table, result.reason))
 		print("World3D: teleport refused -- code 0x%x (%s)" % [result.code, result.reason])
 
@@ -11540,8 +11552,8 @@ func _npc_services(code: String) -> Array:
 	var out := NpcServiceReader.services_for(code, _npc_shop_set, _guild_id, _guild_master)
 	# A teleport gate (round 577, _bind_region_gates): its lines come from its
 	# teleportdata point -- the two registration columns and whether any link
-	# leaves it (NpcServiceReader.gate_services). "teleport" opens the board
-	# (_open_teleport_board, round 578); the recall lines fall to
+	# leaves it (NpcServiceReader.gate_services). "teleport" lists the
+	# destinations in the talk box (_open_teleport_list, round 603); the recall lines fall to
 	# _on_npc_service_selected's default until they have a server.
 	if _teleport_reader != null:
 		var point := _teleport_reader.point_for_building(code)
@@ -11594,20 +11606,23 @@ func _on_npc_service_selected(key: String) -> void:
 			else:
 				_log_system("Leaving a guild needs the server.")
 		"teleport":
-			# A Dimensional Gate's 'Select a teleport area:' (round 578).
-			_open_teleport_board()
+			# A Dimensional Gate's 'Select a teleport area:' (round 578): its
+			# destinations, in the talk box (round 603).
+			_open_teleport_list()
 		_:
 			_log_system("%s is not available yet." % key.capitalize())
 
-## The gate the teleport board was last opened at (a teleportdata id), what
-## Move sends as the source (_on_teleport_requested); 0 before any.
+## The gate the destination list was last opened at (a teleportdata id), what
+## a destination line sends as the source (_on_teleport_requested); 0 before any.
 var _teleport_gate_point_id := 0
 ## The character's level from the last stats packet (_on_world_stats), for
-## the board's display of the level waiver; 0 until one arrives.
+## the list's display of the level waiver; 0 until one arrives.
 var _player_level := 0
 
-## Opens the teleport board at the gate being talked to (round 578): one row
-## per link leaving its teleportdata point, in the link table's file order --
+## Lists the destinations of the gate being talked to in its talk box (round
+## 578's board; the talk box's own lines since round 603, as the client's
+## UI_TELEPORT::FUN_006fd3e0 does -- TeleportBoard's header): one line per
+## link leaving its teleportdata point, in the link table's file order --
 ## the order the retail dialog lists them in (UI_TELEPORT::FUN_006fd3e0,
 ## docs/protocol/teleport_network.md "The client's list, read") -- with the
 ## link's fee (teleportlink column 3, the word GObjPC::HandleTeleportUse
@@ -11617,7 +11632,7 @@ var _player_level := 0
 ## `cmp al,0x14; ja` at 0x5136de); it reads the current level where the
 ## engine reads GetMaxLevel, and the GM and testing waivers are the server's
 ## to report in the receipt -- srrevamp's display, disclosed in TeleportBoard.
-func _open_teleport_board() -> void:
+func _open_teleport_list() -> void:
 	# No NPC being talked to (a zone change cleared it, _close_gate_ui): no
 	# gate to list, and nothing to say.
 	if _teleport_reader == null or _hud_panels == null or _talk_npc_code == "":
@@ -11639,14 +11654,15 @@ func _open_teleport_board() -> void:
 		listed.append("%d %s %d" % [link.to_id, place, link.fee])
 	_teleport_gate_point_id = point.id
 	# _teleport_request_pending is NOT cleared here (round 582): the talk box
-	# stays up behind the board, so Move -> reopen the board from it -> Move
-	# again before the reply sent a second OpTeleportUse, and the server
-	# charged twice. A request out stays out until its reply or a zone change.
-	print("World3D: teleport board at %s (point %d, level %d): %s" % [_talk_npc_code, point.id, _player_level, ", ".join(listed)])
-	_hud_panels.open_teleport_board(_talk_npc_name, entries)
+	# stays up after a destination is clicked, so click -> reopen the list ->
+	# click again before the reply would send a second OpTeleportUse, and the
+	# server would charge twice. A request out stays out until its reply or a
+	# zone change.
+	print("World3D: teleport list at %s (point %d, level %d): %s" % [_talk_npc_code, point.id, _player_level, ", ".join(listed)])
+	_hud_panels.open_teleport_list(_talk_npc_name, entries)
 
-## Closes the gate's UI -- the teleport board and the talk box it was opened
-## from -- and forgets the NPC being talked to and the board's gate, so
+## Closes the gate's UI -- the talk box and the destinations it lists -- and
+## forgets the NPC being talked to and the list's gate, so
 ## nothing from a gate left behind can send its links (round 578's review).
 ## Called on a zone change (_on_change_zone_result). Walking away from a gate
 ## does NOT close them: the retail interaction range is unread (0x4a8e10), so
@@ -11654,29 +11670,32 @@ func _open_teleport_board() -> void:
 ## test in docs/protocol/teleport_network.md.
 func _close_gate_ui() -> void:
 	if _hud_panels != null:
-		_hud_panels.close("teleport")
 		_hud_panels.close("npctalk")
 	_talk_npc_code = ""
 	_talk_npc_name = ""
 	_teleport_gate_point_id = 0
 	_teleport_request_pending = false
 
-## A Move on the teleport board (round 578): asks the server to travel from
-## the board's gate to dest_id (NetClient.teleport_use, round 576). The reply
-## is _on_teleport_result; the arrival _on_change_zone_result.
+## A destination line clicked in a gate's talk box (round 603; the board's
+## Move in round 578): asks the server to travel from the list's gate to
+## dest_id (NetClient.teleport_use, round 576). The reply is
+## _on_teleport_result; the arrival _on_change_zone_result.
 ##
-## One request at a time (round 578's review): a second Move pressed before
+## One request at a time (round 578's review; srrevamp's guard -- the client's
+## click path at 0x70293d sends with no such check): a second click before
 ## the reply would be a second OpTeleportUse, which the server -- with no
 ## range test -- serves from wherever the first put the player, charging the
-## fee again. So Move is ignored while _teleport_request_pending; the reply
-## clears it, and so does a zone change (_close_gate_ui). Reopening the board
-## does NOT (round 582: until then it did, and Move -> reopen from the talk box
-## still up behind the board -> Move before the reply charged twice). A reply
+## fee again. So a click is ignored while _teleport_request_pending. A
+## refusal clears it; an accepted reply does NOT, since the talk box is still
+## up until the zone change that follows, and the zone change clears it
+## (_close_gate_ui; a refused one after an accepted reply too). Reopening the
+## list does NOT (round 582: until then it did, and Move -> reopen -> Move
+## before the reply charged twice). A reply
 ## lost to a dropped connection cannot wedge it: `disconnected` sends this
 ## instance to Login (_on_disconnected), and the flag leaves the world with it.
 func _on_teleport_requested(dest_id: int) -> void:
 	if _teleport_request_pending:
-		print("World3D: teleport Move ignored -- a request is already pending")
+		print("World3D: teleport click ignored -- a request is already pending")
 		return
 	if not NetClient.is_connected_to_server():
 		_log_system("Teleporting needs the server.")
@@ -11685,8 +11704,10 @@ func _on_teleport_requested(dest_id: int) -> void:
 	_teleport_request_pending = true
 	NetClient.teleport_use(_teleport_gate_point_id, dest_id)
 
-## An OpTeleportUse is out and its OpTeleportResult not yet back
-## (_on_teleport_requested).
+## An OpTeleportUse is out and not yet over (_on_teleport_requested): set on
+## the send, cleared by a refusal, by the arrival's zone change
+## (_close_gate_ui) or by a refused one after an accepted receipt
+## (_on_change_zone_result). An accepted receipt alone does not clear it.
 var _teleport_request_pending := false
 
 ## The talk box's guild name prompt was submitted (round 521).

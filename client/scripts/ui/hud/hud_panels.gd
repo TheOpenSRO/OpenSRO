@@ -65,7 +65,9 @@ const PANELS := {
 	# menu the original raises over everything: Option, Help, Restart, Exit.
 	"system": ["resinfo\\ifsystemwnd.txt", "System", 0],
 	# Opened by clicking an NPC (World3D._try_talk_to_npc), titled with the
-	# NPC's name. The authored paper dialogue the original raises.
+	# NPC's name. The authored paper dialogue the original raises. A
+	# Dimensional Gate's destinations are this box's own lines
+	# (open_teleport_list, round 603): the client has no teleport window.
 	"npctalk": ["resinfo\\if_npctalk.txt", "", 0],
 	# Opened from the talk box's Buy option (open_shop), titled with the NPC's
 	# name. The authored store window: a 6x5 goods grid, a page spinner, and
@@ -74,13 +76,6 @@ const PANELS := {
 	# Opened from the talk box's Storage option (open_storage). The authored
 	# warehouse window: a 6x5 grid of the character's stored items.
 	"storage": ["resinfo\\ifstorageroom.txt", "Storage", 0],
-	# Opened from a Dimensional Gate's talk line 'Select a teleport area:'
-	# (open_teleport_board, round 578). The title is "": the layout has no
-	# frame at the origin, so HudWindow._authored_title finds nothing, and the
-	# layout's own GDR_TB_STATIC_TITLE (13,17,393,21, UIIT_PAG_TELEPORT)
-	# already draws the caption -- a title here would draw a second one over
-	# it. Its close button is the authored GDR_TB_BTN_CLOSE (406,15,16,16).
-	"teleport": ["resinfo\\ifteleportboard.txt", "", 0],
 }
 
 ## Keys this project binds that are not the retail client's, each to a panel
@@ -319,9 +314,9 @@ signal guild_leave_requested
 ## A line for the chat's system channel -- today a server refusal of a mastery
 ## raise, which used to be dropped silently. World3D logs it (_log_system).
 signal system_notice(text: String)
-## A Move button on the teleport board (open_teleport_board, round 578) was
-## pressed: `dest_id` is its row's destination, a teleportdata id. World3D
-## sends it with the gate the board was opened at (NetClient.teleport_use).
+## A destination line of a gate's talk box (open_teleport_list, round 603) was
+## clicked: `dest_id` is its destination, a teleportdata id. World3D sends it
+## with the gate the list was opened at (NetClient.teleport_use).
 signal teleport_requested(dest_id: int)
 
 ## Sections beyond "Create" that a panel's window builds.
@@ -615,6 +610,10 @@ func open_npc_talk(npc_name: String, greeting: String = "", services: Array = []
 func refresh_npc_talk(npc_name: String, greeting: String, services: Array) -> void:
 	if not is_open("npctalk"):
 		return
+	# A gate's destination list (round 603) holds no guild line, and a guild
+	# reply must not turn it back into the gate's menu.
+	if teleport_list_shown():
+		return
 	_fill_npc_talk(_windows["npctalk"], npc_name, greeting, services)
 
 func _fill_npc_talk(window: HudWindow, npc_name: String, greeting: String, services: Array) -> void:
@@ -655,11 +654,20 @@ func _fill_npc_talk(window: HudWindow, npc_name: String, greeting: String, servi
 	lines.append("")
 	lines.append_array(NpcServiceReader.talk_menu_lines(npc_name, services, _resolve_ui))
 	body.text = "\n".join(lines)
+	# The text on top is kept for a gate's destination list (open_teleport_list).
+	window.set_meta(TALK_TEXT_META, lines[0])
+	window.set_meta(TELEPORT_LIST_META, false)
 
 func _on_npc_talk_choice(meta: Variant) -> void:
 	var key := str(meta)
 	if key == "end":
 		close("npctalk")
+		return
+	# A gate's destination line (round 603): the request goes at once, as the
+	# client's does, and the talk box stays up.
+	var dest_id := TeleportBoard.dest_from_key(key)
+	if dest_id >= 0:
+		teleport_requested.emit(dest_id)
 		return
 	# A real service was chosen. The talk box stays open behind the service
 	# window (the client keeps it up), so World3D decides what to raise.
@@ -931,91 +939,62 @@ func hide_revive_prompt() -> void:
 	remove_child(old)
 	old.queue_free()
 
-# --- The teleport board (round 578) -------------------------------------------
+# --- The gate's destinations (round 603) ------------------------------------
 #
-# The Dimensional Teleporter: the authored board (ifteleportboard) with its
-# five area slots filled from ifteleportareaslot (TeleportBoard), five
-# destinations a page, the page spinner stepping through the rest. Each row is
-# a destination of the gate the player talked to, in the link table's file
-# order, with its fee (World3D._open_teleport_board builds the entries from
-# TeleportReader.links_from). Move emits teleport_requested; the board closes
-# when the server accepts (World3D._on_teleport_result) and on any zone change.
+# 'Select teleport area' lists the gate's destinations in the talk box itself,
+# as the retail client does (UI_TELEPORT::FUN_006fd3e0, TeleportBoard's
+# header): the box's own text stays on top, then one numbered line per
+# destination of the gate the player talked to, in the link table's file order
+# with its fee (World3D._open_teleport_list builds the entries from
+# TeleportReader.links_from), then the end line. Clicking a destination line
+# emits teleport_requested. The talk box stays up; it closes on any zone
+# change (World3D._close_gate_ui) or on its end line.
 
-## The board's destinations, all pages: Dictionaries {dest_id, place, fee,
-## waived} (TeleportBoard.fill_rows), and the page shown.
-var _teleport_entries: Array = []
-var _teleport_page := 0
+## The talk box's meta: the text shown above its lines (_fill_npc_talk), which
+## the destination list keeps on top, as FUN_006fb530 re-adds this+0x7d4.
+const TALK_TEXT_META := "talk_text"
+## The talk box's meta: true while it shows a gate's destinations.
+const TELEPORT_LIST_META := "teleport_list"
 
-## Opens the teleport board for the gate `gate_name` with its destinations.
-## Returns the window, or null when the archive has no board layout.
-func open_teleport_board(gate_name: String, entries: Array) -> HudWindow:
-	var window := open("teleport")
-	if window == null:
-		return null
-	_teleport_entries = entries.duplicate()
-	_teleport_page = 0
-	var spin := window.node(TeleportBoard.SPIN_NAME) as Control
-	if not window.has_meta("teleport_rows_built"):
-		window.set_meta("teleport_rows_built", true)
-		var slot_layout: UiLayoutParser.LayoutDef = _builder.load_layout(TeleportBoard.SLOT_LAYOUT) if _builder != null else null
-		var built := TeleportBoard.build_rows(window, _builder, slot_layout,
-			func(dest_id: int) -> void: teleport_requested.emit(dest_id))
-		print("HudPanels: teleport board built %d of %d area slot(s)%s" % [built, TeleportBoard.SLOT_NAMES.size(),
-			"" if slot_layout != null else " -- no %s in the archive, so no Move" % TeleportBoard.SLOT_LAYOUT])
-		if spin != null:
-			spin.connect("spin_changed", func(value: int) -> void:
-				_teleport_page = value
-				_fill_teleport_page())
-	if spin != null:
-		UiBuilder.set_spin_range(spin, 0, maxi(0, TeleportBoard.page_count(_teleport_entries.size()) - 1))
-		spin.set_meta("value", 0)
-		UiBuilder._spin_refresh(spin)
-	_fill_teleport_page()
-	print("HudPanels: teleport board for %s -- %d destination(s), %d page(s)" % [
-		gate_name, _teleport_entries.size(), TeleportBoard.page_count(_teleport_entries.size())])
-	return window
-
-func _fill_teleport_page() -> void:
-	var window: HudWindow = _windows.get("teleport")
-	if window == null:
-		return
-	TeleportBoard.fill_rows(window, TeleportBoard.page_rows(_teleport_entries, _teleport_page),
-		_resolve_ui(TeleportBoard.RESULT_TOKEN, ""), _resolve_ui(TeleportBoard.FREE_TOKEN, ""))
-
-## SRREVAMP_QA_TELEPORT (World3D): turns the board to the page holding
-## dest_id and presses that row's own Move button, so the request goes out
-## through the same connection a click takes. False when the board is not
-## open or does not list dest_id.
-func qa_press_teleport_move(dest_id: int) -> bool:
-	var window: HudWindow = _windows.get("teleport")
-	if window == null or not window.visible:
+## Replaces the open talk box's lines with the gate's destinations (entries:
+## Dictionaries {dest_id, place, fee, waived}) and the end line. False, and
+## nothing drawn, when the talk box is not open.
+func open_teleport_list(gate_name: String, entries: Array) -> bool:
+	if not is_open("npctalk"):
 		return false
-	var index := -1
-	for i in range(_teleport_entries.size()):
-		if int((_teleport_entries[i] as Dictionary).get("dest_id", 0)) == dest_id:
-			index = i
-			break
-	if index < 0:
+	var window: HudWindow = _windows["npctalk"]
+	var body := window.get_node_or_null("TalkText") as RichTextLabel
+	if body == null:
 		return false
-	_teleport_page = floori(float(index) / TeleportBoard.PER_PAGE)
-	var spin := window.node(TeleportBoard.SPIN_NAME) as Control
-	if spin != null:
-		spin.set_meta("value", _teleport_page)
-		UiBuilder._spin_refresh(spin)
-	_fill_teleport_page()
-	# The page as drawn, so a run measures what the board showed.
-	for slot_name in TeleportBoard.SLOT_NAMES:
-		var slot := window.node(slot_name) as Control
-		if slot == null or not slot.visible:
-			continue
-		var place := slot.find_child(TeleportBoard.PLACE_NAME, true, false) as Label
-		var price := slot.find_child(TeleportBoard.PRICE_NAME, true, false) as Label
-		print("QA TELEPORT: page %d %s: %s | %s" % [_teleport_page + 1, slot_name,
-			place.text if place != null else "", price.text if price != null else ""])
-	var move := TeleportBoard.move_button_for(window, dest_id)
-	if move == null:
+	var lines := PackedStringArray()
+	# The same text, drawn as _fill_npc_talk drew it.
+	lines.append(str(window.get_meta(TALK_TEXT_META, "...")))
+	lines.append("")
+	lines.append_array(TeleportBoard.list_lines(gate_name, entries, _resolve_ui))
+	body.text = "\n".join(lines)
+	window.set_meta(TELEPORT_LIST_META, true)
+	print("HudPanels: teleport list for %s -- %d destination(s) in the talk box" % [gate_name, entries.size()])
+	return true
+
+## Whether the talk box is up and shows a gate's destinations.
+func teleport_list_shown() -> bool:
+	return is_open("npctalk") and bool((_windows["npctalk"] as HudWindow).get_meta(TELEPORT_LIST_META, false))
+
+## SRREVAMP_QA_TELEPORT (World3D): prints the talk box's lines as drawn and
+## clicks dest_id's line through the label's own meta_clicked, the signal a
+## click raises. False when the list is not shown or does not hold dest_id.
+func qa_press_teleport_line(dest_id: int) -> bool:
+	if not teleport_list_shown():
 		return false
-	move.pressed.emit()
+	var body := (_windows["npctalk"] as HudWindow).get_node_or_null("TalkText") as RichTextLabel
+	if body == null:
+		return false
+	var key := "%s%d" % [TeleportBoard.DEST_KEY_PREFIX, dest_id]
+	for line in body.get_parsed_text().split("\n"):
+		print("QA TELEPORT: talk line: %s" % line)
+	if body.text.find("[url=%s]" % key) < 0:
+		return false
+	body.meta_clicked.emit(key)
 	return true
 
 # --- The NPC shop -----------------------------------------------------------

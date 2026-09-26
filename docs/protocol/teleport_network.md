@@ -399,13 +399,54 @@ textuisystem.txt resolves. `UiTextTable` keeps the later 19-column rows ("Design
 as return/recall point", "Select teleport area"), not the earlier 16-column rows'
 "Designate this region as your return & recall point!" / "Select a teleport area:".
 
-Since round 578 "teleport" opens the board ("The teleport board (round 578)"
-below). The two recall lines still say "... is not available yet"
+Since round 603 "teleport" lists the gate's destinations in the talk box itself ("The
+destination list (round 603)" below; round 578 opened a separate board). The two recall lines still say "... is not available yet"
 (`World3D._on_npc_service_selected`'s default): srrevamp models no return point.
 `SRREVAMP_QA_CLICK=gate` clicks the nearest bound gate through the real
 dispatcher.
 
-### The teleport board (round 578)
+### The destination list (round 603)
+
+**The retail client has no teleport window.** Its talk box lists the destinations in place
+(read in `sro_client.exe`; the full record is `docs/RE_COMPLETION.md`, round 603):
+
+- `CIF_NPCTalk::FUN_007020c0`, the talk box's click handler, switches on the clicked line's
+  type. Type 10 is the line `FUN_006fcd60` labels `UIIT_CTL_TELEPORT_TARGET`. With sub-type 0 it
+  calls `UI_TELEPORT::FUN_006fd3e0` on the talk box (`call 0x6fd3e0` at `0x702973`), passing a
+  counter set to 1.
+- `FUN_006fd3e0` clears the box's list and adds the box's own current text back on top
+  (`FUN_006fb530` with `this+0x7d4`: that text, then a line of two spaces). For each of the
+  gate's links in the client's own order, it adds a line `"%d. %s"` of type 10, sub-type 1, which
+  carries the destination. The `%s` is `UIIT_CTL_TELEPORT_FREE_RESULT` or
+  `UIIT_CTL_TELEPORT_RESULT` ("The client's list, read", above). Last comes
+  `FUN_006fcd60(n, 0, 0)`, the box's own end line, numbered next.
+- A click on a sub-type-1 line sends at once: `push 2; push [line+0xc]; push npc; call 0x81ddf0`
+  (`0x70293d..0x702946`). `0x81ddf0` logs `"TELEPORTGATE -> Type(%d), Target(%d)"` and writes
+  request `0x705a`. There is no confirmation, no Move button and no paging, and the click path
+  does not close the talk box: the two calls after the send, `0x6f74a0` and `0x6f74c0`, only
+  store zeros.
+- `ifteleportboard.txt`, `ifteleportareaslot.txt`, `CIFTeleportAreaSlot`, `GDR_TB_`/`GDR_TAS_`
+  and `tpt_window` are in neither the exe's ASCII nor its UTF-16 strings, and no `.2dt` of the 42
+  is a teleport window.
+
+srrevamp now does the same. The gate's 'Select teleport area' line rewrites the talk box
+(`HudPanels.open_teleport_list`, `TeleportBoard.list_lines`). The box's own text stays on top,
+followed by a blank line, one numbered line per link in file order, and the end line. A click on
+a destination line is `OpTeleportUse` (srrevamp's wire, round 576). The talk box stays up and
+closes on any zone change. The fee, the place, the level-waiver display and the one-request
+guard are as in round 578 (below), and the guard is srrevamp's own: the retail click path sends
+through `Net_SendRequestPacket(0x705a, 0)`, which marks nothing pending. An accepted reply keeps
+the request pending until the arrival's zone change, since the list is still up between the two
+(round 603's review). The server still serves a second request once the first has moved the
+player; see `docs/TODO.md`, "Town teleporters". Not reproduced,
+disclosed: the line colours (`0xffefdaa4` and `0xffff8a00`, `0xff969696` greyed; the talk box
+draws every line in one colour), the tomb gate's greying, the surcharge, and the client-side
+checks that end in messages `0x1c1c`/`0x1c1e`.
+
+### The teleport board (round 578) -- superseded by round 603
+
+The board below is gone. Its layouts are not in the exe, and the retail destinations are talk
+lines (above). It is kept here as the record of what round 578 built.
 
 The talk line opens the authored Dimensional Teleporter, `resinfo\ifteleportboard.txt`
 (`HudPanels.PANELS["teleport"]`, `TeleportBoard`). Its five `CIFTeleportAreaSlot` controls

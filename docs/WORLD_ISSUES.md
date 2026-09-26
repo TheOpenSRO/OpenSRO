@@ -7083,6 +7083,43 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-third round: a Dimensional Gate lists its destinations in its own talk box, as the client does; the separate board is gone
+
+The full record is `docs/RE_COMPLETION.md`'s entry of the same name.
+
+- **Step 0 (read).** 'Select teleport area' is talk line type 10 (`FUN_006fcd60`). The talk box's
+  click handler `CIF_NPCTalk::FUN_007020c0` calls `UI_TELEPORT::FUN_006fd3e0` on the talk box
+  itself (`0x702973`). That function clears the box's list, puts the box's own text back on
+  top, adds one `"%d. %s"` line per gate link, and ends with the box's own end line. A click on a
+  destination line sends request `0x705a` at once (`0x70293d..0x702946`). There is no
+  confirmation, no Move button and no paging, and the click path does not close the box.
+  **The client has no teleport window.**
+- **Negative, two probes (measured).** The board's names (`ifteleportboard`,
+  `ifteleportareaslot`, `TeleportAreaSlot`, `GDR_TB_`, `GDR_TAS_`, `tpt_window`) are absent from
+  the exe's ASCII and UTF-16 strings. The probe does hit `UIIT_CTL_TELEPORT_TARGET` and
+  `iftargetwindow.txt`. They are also absent from the whole decompile. None of the 42 `.2dt`
+  files is a teleport window.
+- **Fixed.** The board (`PANELS["teleport"]`) is removed. The gate's line now rewrites the talk
+  box with the destinations and the end line, and a click on a line is `OpTeleportUse`. The
+  tables, fees, file order, receipt, arrival, waivers, second-click guard and QA hooks carry over.
+  Five-a-page is dropped because the client has no pages. Donwhang's ten destinations fit, at 182
+  of 328 pixels (measured). The price that ran under Move is gone with the board.
+- **Measured before.** At 1152x648 and scale 1.5 the board sat at y -56, outside the view. Its
+  price labels were up to 343 wide in 182 boxes, across Move.
+- **Not reproduced (disclosed).** The retail line colours (`0xffefdaa4`, `0xffff8a00`), the tomb
+  gate's greying, the surcharge, and the pre-send checks that end in `0x1c1c`/`0x1c1e`.
+- **Tests.** `teleport_board_test.gd` is rewritten, fixture text only: 9 FAIL against 840466a,
+  ALL PASS here. Two live runs (level 1 and a GM at level 30) went Jangan -> Donwhang through the
+  talk line.
+- **Review fix (blocking).** An accepted reply cleared the pending request, but the list now
+  stays up until the zone change. A click between the server's yes and its zone change would
+  therefore send a second OpTeleportUse, and the server charges it. The request now stays
+  pending until the arrival, or until a refused arrival (refunded). 5 FAIL against dae2dc9, ALL
+  PASS here. The server side, where a request is not tied to where the player stands, is in
+  `docs/TODO.md`.
+- **Review fix (other).** The fallback price line keeps the place, three stale comments are
+  fixed, and the fixture fees are synthetic. Two things are recorded, not changed: the talk
+  text's lack of scrolling (a limit), and 0x81ddf0's write to `[0xeed870]+0xe0`.
 ## Six-hundred-and-second round: windows draw and take clicks above the chat
 
 The full record is `docs/RE_COMPLETION.md`'s entry of the same name.

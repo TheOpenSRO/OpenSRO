@@ -95,7 +95,7 @@ var knownOrphans = map[string]string{
 	// (UI_TELEPORT::FUN_006fd3e0 reads the client's link records,
 	// teleport_network.md "The client's list, read"), so no server message
 	// carries it yet.
-	"LinksFrom": "a gate's outgoing links in file order, the destination list the board shows. The " +
+	"LinksFrom": "a gate's outgoing links in file order, the destination list the talk box shows. The " +
 		"client builds that list from its own teleportlink rows, as the retail dialog does " +
 		"(UI_TELEPORT::FUN_006fd3e0); the server answers only the MOVE (session.TeleportHandler, " +
 		"round 576). Knowledge until a server-side list message exists.",
