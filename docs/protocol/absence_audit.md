@@ -44,7 +44,7 @@ word anywhere in the name.
 | `duel` | 2 codes, both free-PvP mode changes | **holds** — no duel challenge/accept/refuse family exists |
 | `quest` | 4 genuine codes (Roc entrance, trap-making) | **holds** — specific mechanics, no system limit |
 | `berserk` | 1 code, `HWANITEM_CANNOT_USE`, about an item | holds — and the mechanic was separately recovered anyway |
-| `mana` | none | **holds** — the "no passive regen" this row once cited was wrong (2026-09-16: the 4 s timer; round 605: the rate is 0.8% of the maximum standing, 8% sitting, `docs/protocol/opcodes/motion.md`) |
+| `mana` | none | **holds** — the "no passive regen" this row once cited was wrong (2026-09-16: the 4 s timer; round 607: the rate is 0.8% of the maximum standing, 8% sitting, `docs/protocol/opcodes/motion.md`) |
 | `leveldata` | none | holds |
 | `rates` | none | holds — the knobs were recovered from the config loader, not an error path |
 | `combat` (loot) | none | holds — needs operator drop tables, already disclosed |

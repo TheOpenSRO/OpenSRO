@@ -168,7 +168,7 @@ ALTER TABLE skills ADD COLUMN IF NOT EXISTS self_heal_mp INTEGER NOT NULL DEFAUL
 -- The cooldown group, Action_Overlap's high byte (round 504); zero on an older
 -- import, which means no shared timer.
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS cooldown_group INTEGER NOT NULL DEFAULT 0;
--- The skill gate's motion-state refusals (round 605); zero on an older import,
+-- The skill gate's motion-state refusals (round 607); zero on an older import,
 -- which means none.
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS sit_gate INTEGER NOT NULL DEFAULT 0;
 

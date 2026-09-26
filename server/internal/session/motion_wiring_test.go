@@ -1,6 +1,6 @@
 package session
 
-// Round 605's review: the handlers really consult the motion state. Each of
+// Round 607's review: the handlers really consult the motion state. Each of
 // these fails when its call is removed (see the round's record for the
 // mutations).
 

@@ -62,7 +62,7 @@ dereferences the pointer with no null check. So:
 - **Only 7 of 120 params have a non-zero default**, and every one of them is
   `100`: ids **34, 35, 36, 37, 50, 51, 140**. Everything else defaults to **0**.
 - `hprg`/`mprg` (25/26) default to **0** in this table. **That default is never
-  what a character regenerates at (corrected round 605):** `SetMotionState`
+  what a character regenerates at (corrected round 607):** `SetMotionState`
   (`0x4a9d00`) writes their base slot on every motion change -- 8.0 when the
   new state is SIT, 0.8 for any other -- and the character's constructor and
   `GObjPC::Revive` both call it with STAND, so a living PC carries 0.8. The

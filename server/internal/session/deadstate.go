@@ -117,7 +117,7 @@ import (
 //     CurLevel alone -- but nothing here reads it).
 //   - The revived MP. Retail ADDS trunc(0.4 x MaxMP) to the MP the character
 //     died with (ApplyHPMPDelta above); srrevamp SETS the tracker to
-//     character.RespawnMP, a stand-in. (Corrected round 605: this used to
+//     character.RespawnMP, a stand-in. (Corrected round 607: this used to
 //     say mana.Tracker regenerates by wall clock while dead. It regenerates
 //     nothing now, and the regen tick's first test is the life state --
 //     read, 0x4e29a9 -- so the MP she died with is intact; SET for ADD is
@@ -343,7 +343,7 @@ func revivePlayer(ctx context.Context, chars character.Store, mp *mana.Tracker, 
 	}
 	c.HP = hp
 	// GObjPC::Revive stands the character (SetMotionState(STAND) at
-	// 0x4df427; round 605, motion.go).
+	// 0x4df427; round 607, motion.go).
 	motions.stand(characterID, time.Now())
 	mpNow := 0
 	if mp != nil {

@@ -33,7 +33,7 @@ func TestRegenTickWithNoPlayers(t *testing.T) {
 }
 
 // A standing, damaged character regains 0.8% of its MAXIMUM HP and MP a tick
-// (round 605): the slot the tick multiplies is ftol(EvaluateParam(3)), and
+// (round 607): the slot the tick multiplies is ftol(EvaluateParam(3)), and
 // SetMotionState(STAND) writes 0.8 to 'hprg' and 'mprg'. The fixture's pools
 // are chosen so 4% of the current pool -- the rule this replaced -- gives a
 // different number, and so MP moves too, which the old tick never did.
@@ -176,9 +176,10 @@ func TestRegenTickLeavesTheDeadAtZero(t *testing.T) {
 }
 
 // A tick in the gap between a lethal blow's write and its kill decision must
-// not lift the pool off 0 (round 605's review): the blow's fallen() would then
+// not lift the pool off 0 (round 607's review): the blow's fallen() would then
 // find her alive above 0 and drop the kill. Alive at HP 0 -- the state that gap
-// leaves -- regenerates nothing, standing or sitting.
+// leaves -- regenerates no HP, standing or sitting; her MP still comes back
+// (an HP-cost caster left at 0 is the other character in that state).
 func TestRegenLeavesAnAliveCharacterAtZero(t *testing.T) {
 	ctx := context.Background()
 	store := character.NewMemStore()
@@ -201,6 +202,13 @@ func TestRegenLeavesAnAliveCharacterAtZero(t *testing.T) {
 	regenOne(ctx, hub, e, store, RegenDeps{}, nil, t0)
 	if after, _ := store.GetByID(ctx, c.ID); after.HP != 0 {
 		t.Errorf("a character alive at HP 0 regenerated to %d; the kill that is deciding her would be dropped", after.HP)
+	}
+	mp := mana.NewTracker()
+	mp.Spend(c.ID, c.MaxMP(), c.MaxMP()/2)
+	before := mp.Current(c.ID, c.MaxMP())
+	regenOne(ctx, hub, e, store, RegenDeps{Mana: mp}, nil, t0)
+	if got := mp.Current(c.ID, c.MaxMP()); got <= before {
+		t.Errorf("MP stayed at %d for a character alive at HP 0; only HP is held back", got)
 	}
 }
 

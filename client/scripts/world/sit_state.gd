@@ -1,7 +1,7 @@
 extends RefCounted
 class_name SitState
 
-## The local player's sit state (round 605; docs/protocol/opcodes/motion.md):
+## The local player's sit state (round 607; docs/protocol/opcodes/motion.md):
 ## what this client believes about its own motion, and what it must tell the
 ## server so the two agree. Pure, so a headless test holds every rule to
 ## account; World3D (_request_sit_toggle, _on_state_changed,

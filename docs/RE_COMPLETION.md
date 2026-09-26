@@ -3628,7 +3628,7 @@ gameplay numbers are a much shorter list, and `mana`'s comment pointed at a real
 gap — "the real game has an `'mprg'` parameter … but its value has not been
 recovered".
 
-> **Corrected in round 605** (`docs/protocol/opcodes/motion.md`; the round's entry at the end of this file). Params 25/26 ARE
+> **Corrected in round 607** (`docs/protocol/opcodes/motion.md`; the round's entry at the end of this file). Params 25/26 ARE
 > written at baseline: `SetMotionState` (`0x4a9d00`) sets their slot 0 to 0.8 in every motion state
 > but SIT and 8.0 in SIT, and every PC passes through it at construction (`0x4a6fd3`). The three
 > publishers below write neither -- that part is true -- but they are not the only baseline writers,
@@ -3796,7 +3796,7 @@ rate for a gauge the game does not have — and the test deliberately pins only
   is DB-side here, the same finding this project already reached for starting
   Str/Int, so a new character's default slot count is a database default and not
   in this executable.
-- > **Corrected in round 605** (`docs/protocol/opcodes/motion.md`; the round's entry at the end of this file). The rate is read: `hprg`/`mprg` = 0.8, or 8.0 while
+- > **Corrected in round 607** (`docs/protocol/opcodes/motion.md`; the round's entry at the end of this file). The rate is read: `hprg`/`mprg` = 0.8, or 8.0 while
   sitting, written by `SetMotionState`; "zero without a buff" below is wrong.
 - **`mana`'s regeneration rate**, half-settled. Its comment hoped for an
   `'mprg'` default; params 25 and 26 are written by no baseline publisher
@@ -3925,7 +3925,7 @@ overlooked.
 ## Passive regeneration does not exist, and "unwritten means zero" was wrong (2026-09-15)
 
 > **Superseded twice.** 2026-09-16 found the 4 s timer (`CGObjPC::vslot_362`), so
-> passive regeneration exists. Round 605 (the end of this file) found that
+> passive regeneration exists. Round 607 (the end of this file) found that
 > "all seven writes of 'hprg'/'mprg' come from skill effects, never slot 0" was a
 > census of skill-effect writers only: `SetMotionState` (`0x4a9d00`) writes slot
 > 0 of both, 0.8 standing and 8.0 sitting. What this entry measured -- the HP/MP
@@ -4069,7 +4069,7 @@ restored, this time on data:
   non-premium character takes the full penalty. **Recovered, not chosen.**
 - `berserk`'s damage-completeness note — 128-131, 178, 180, 187, 188 and 259 all
   default to 0, so an unbuffed character's damage pipeline really is complete.
-- `mana` — [**corrected in round 605**: the registry default is 0, but `SetMotionState`
+- `mana` — [**corrected in round 607**: the registry default is 0, but `SetMotionState`
   writes 0.8 / 8.0 to slot 0 for every PC, so the resting rate is 0.8% of the maximum a tick, not
   zero; `docs/protocol/opcodes/motion.md`] `'hprg'`/`'mprg'` default to 0, so the engine's resting regeneration
   rate is zero. That agrees with yesterday's independent result that no pool
@@ -14420,7 +14420,7 @@ absence so a later tick has to explain itself rather than quietly fill them in.
 
 ### A finding that refines rather than overturns
 
-> **Corrected in round 605** (`docs/protocol/opcodes/motion.md`; the round's entry at the end of this file). "Nothing does" below is wrong
+> **Corrected in round 607** (`docs/protocol/opcodes/motion.md`; the round's entry at the end of this file). "Nothing does" below is wrong
 > twice over: the 4 s timer (`CGObjPC::vslot_362`, found 2026-09-16) writes the pools, and
 > `SetMotionState` writes params 25/26 at baseline (0.8 standing, 8.0 sitting). Items grant on top
 > of that baseline; regeneration is not only an item stat.
@@ -16353,7 +16353,7 @@ promising.
 
 ## 2026-09-16 — passive regeneration exists, and the tick is a timer callback
 
-> **CORRECTED in round 605** (see "N sits down and stands up" at the end of this
+> **CORRECTED in round 607** (see "N sits down and stands up" at the end of this
 > file, and `docs/protocol/opcodes/motion.md`). The timer and the floor below
 > stand. Two readings do not: the value multiplied is the **maximum** pool, not
 > the current one (slot `0x110` in `CGObjPC`'s vtable is `0x4a6830`,
@@ -19173,7 +19173,7 @@ hours**, and this loop had been treating the two as the same thing.
 
 ## The regen row's last open item, and a shipped test that was wrong (2026-09-17)
 
-> **Corrected in round 605** (`docs/protocol/opcodes/motion.md`; the round's entry at the end of this file). The comparison read here is right --
+> **Corrected in round 607** (`docs/protocol/opcodes/motion.md`; the round's entry at the end of this file). The comparison read here is right --
 > `min(amount, cap)` after the floor -- but the pool it caps is the **maximum**, not the current
 > one: the value in `EDI` is vtable slot `0x110`, which in `CGObjPC`'s vtable is `0x4a6830` =
 > `ftol(EvaluateParam(3))`. So `cap = trunc(MaxHP x 0.5)`, and "a character at 1 point does not
@@ -45336,7 +45336,7 @@ sync` adds and overwrites but never deletes, so the lane still held the scratch
 - The flood block (above).
 - What the CIFEdit `0x201` conditions (`0xb9da40`, the `0xb8f4d0` pair) select.
 
-## N sits down and stands up, and sitting regenerates HP and MP at the client's rate (round 605)
+## N sits down and stands up, and sitting regenerates HP and MP at the client's rate (round 607)
 
 Server and client. Binaries: `SR_GameServer.exe` (`/var/tmp/SR_GameServer.exe`, dump
 `/var/tmp/decomp_server`, asm `/var/tmp/srv.asm`) and `sro_client.exe` (md5
@@ -45460,7 +45460,9 @@ and the live log): `chinaman_fighter` -> `chinaman_a_sitground` / `_sitbreath` /
   character's request is dropped; the unread request gates (slot `0x5a0`, `+0xc20`,
   `chardata+0xe`) are not modelled; "a blow that landed damage" stands in for the unread `+0x10` and
   status-`0x40` tests; a zone change stands the character (inferred from the object's re-creation,
-  not read); the refusal text "cannot attack while sitting".
+  not read); the refusal text -- "cannot use that skill while sitting", for the 59 gated skills
+  (the first commit's "cannot attack while sitting", for every swing and cast, was overstated;
+  see the follow-up).
 
 ### Measured live (render box, `qa_shot.sh --server`, `/var/tmp/rsit/sit_live.sh`, run 4 on the final code)
 
@@ -45523,7 +45525,7 @@ CHANGEMOTION is the inference. The server logs of runs 2 and 3 each carry one `o
 - **The PK-penalty drain, zombie, timed-effect switch, skill buffs on 25/26 and params 143/144**
   are read and not modelled (no source here).
 
-### Follow-up after review (round 605, second commit)
+### Follow-up after review (round 607, second commit)
 
 The review re-read the formula, rates, timer, toggle, broadcast, move rule, stand-on-hit and clips
 against the asm and confirmed them. Each item below was re-verified before it was changed.
@@ -45564,13 +45566,16 @@ lock; a tick in that gap raised the pool (the old current-pool cap made that 0),
 dropped the kill; a stale life state in the pass's snapshot could heal the dead. `regenOne` now runs
 under `killLock`, re-reads the life state from the hub and the row from the store there, and skips
 a character alive at HP 0. The engine has no such window (one object queue), so skipping HP 0 is
-ours.
+ours. [Third commit: the window is **narrowed, not closed** -- the blow's own write is not under the
+lock, so a heal between the tick's read and its write can still cover a blow; only HP is held back
+at 0 now, MP still regenerates; and the stats push goes out after the lock.]
 
 **4. Client/server drift on a tap (fixed).** The client ended its sit on any movement intent while
 the server heard of it only from an OpMove past the send distance. `SitState.leave_by_moving` now
 tells World3D to send the position at once, so the server's "a move while seated stands" fires too.
 
-**5. Late arrivals (ours, implemented).** The snapshot carries no motion state; the server now sends
+**5. Late arrivals (ours, implemented).** [**Did not work -- replaced in the third commit below.**
+The review measured the `0x30bf` arriving in the same read as the result and being lost.] The snapshot carries no motion state; the server now sends
 the newcomer `0x30bf {id, 1, 4}` for each character sitting or sitting down, right after the
 enter-world or zone-change list (`tellSeated`), and the client takes the loop without the sit-down
 clip for a body drawn under 1 s ago. The retail spawn packet's motion field was not read.
@@ -45636,3 +45641,66 @@ Mutations of this tree, each one change:
 Standing +4 HP +4 MP a tick, sitting +45 HP +45 MP; the server loaded 33,660 skills with the column.
 No stats line between ticks 732 and 823 (measured), where one was due at ~777 (45-frame spacing):
 the tick fell in the stand-up transition (inferred from the timing).
+
+### Second review follow-up (round 607, third commit)
+
+Rebased onto dev `4a4d085` (the keys rounds took 605 and 606); this round is renumbered 607.
+
+**1. Players already sitting are drawn seated -- carried in the result, not a separate packet.** The
+review measured the previous commit's `tellSeated` doing nothing in the real client: in 20 of 20
+runs the enter-world result and the `0x30bf` arrived in one read and `NetClient._process` emitted
+both in one loop, before CharacterSelect's `change_scene_to_file` had added World3D (whose listener
+is connected in `_ready`); on a zone change `_on_change_zone_result` awaits the loading screen
+before it respawns the bodies, so the `0x30bf` found the old zone's. Now `EnterWorldResult` and
+`ChangeZoneResult` carry a **`Seated` tail**: the ids among `Others` who sit or are sitting down, a
+u16 count and an i64 id each, after `Restored` (then always written) and after the change-zone
+frame respectively, sent only when someone sits, so every other payload is byte for byte what it
+was and an older client stops reading before it (`TestSeatedTailIsASuffix`). `World3D` spawns both
+results' players through `_spawn_result_others`, which draws the named ones in the sitting loop
+(no sit-down clip). `tellSeated` is gone, and with it the risk the review named: an unanswered N
+under 1 s old taking a sitter's id as this player's. OURS: the retail spawn packet's motion field
+was not read.
+
+**Measured live** (`/var/tmp/rsit/spawn.log`; two scratch bots, not committed, sit in jangan and in
+donwhang before the QA client signs in; the client enters jangan, then `/goto donwhang`):
+
+	SITBOT Ttbotj (botj) in jangan: 0x30bf &{ObjectID:2 Kind:1 Value:4}
+	SITBOT Ttbotd (botd) in donwhang: 0x30bf &{ObjectID:1 Kind:1 Value:4}
+	SIT: player 2 drawn seated on spawn -- loop chinaman_a_sitbreath.ban (type 14)
+	QA COMMAND: /goto donwhang
+	GM REPLY: travelling to donwhang
+	SIT: player 1 drawn seated on spawn -- loop chinaman_a_sitbreath.ban (type 14)
+
+**2. Deploy.** `deploy/README.md` now says srrevamp-01 needs `export-refdata -mode skills` re-run with
+the new binary, the new `import-refdata`, and a server restart (the schema change applies on boot);
+until then SitGate is 0 and the gate fails open. The "latest column" note names skill columns 45
+and 46.
+
+**3. The rest.**
+- `World3D._flush_position`'s "a swing from the seat is refused anyway" and this entry's refusal
+  text corrected.
+- `regenOne`'s stats push goes out after the kill lock is released (`regenApply` holds it).
+- "Cannot drop the kill" was overstated: the blow's own write is not under the lock, so a heal
+  between the tick's read and its write can still cover a blow. The window is **narrowed, not
+  closed**; wording corrected in `regen.go`, `motion.md` and above.
+- A character alive at HP 0 now gets no HP from a tick but still gets MP (ours), so an HP-cost
+  caster left at 0 -- the 8 `SKILL_EU_BARD_RECOVERA_ABNORMALTIME` rows -- keeps regenerating mana.
+- **Seated fighting, recorded plainly** (`motion.md`): the read server gate refuses only 59 skills and
+  nothing in a cast or swing stands the caster, so a seated character can fight from the seat at 8% a
+  tick. That is the server binary's behaviour; whether the retail client lets a seated player attack
+  was not read.
+
+**Negatives.**
+
+	server, Seated removed from warpTo:     FAIL TestLateArrivalHearsWhoIsSeated: change back to jangan: &{... Seated:[]}, want Seated [Aria 1]
+	server, Seated removed from enter:      FAIL TestLateArrivalHearsWhoIsSeated: Bram's enter-world result: 0x0021 &{... }, want Seated [Aria 1]
+	server, HP 0 skips MP too (the previous commit): FAIL TestRegenLeavesAnAliveCharacterAtZero: MP stayed at 100 for a character alive at HP 0; only HP is held back
+	server, HP 0 heals:                      FAIL TestRegenLeavesAnAliveCharacterAtZero: a character alive at HP 0 regenerated to 17
+	client, no seating in _spawn_result_others: FAIL Bram, in the result's Seated tail, is drawn seated / FAIL Dara, seated in the zone-change result, is drawn seated
+	client, zone change back on its own loop:  FAIL _on_change_zone_result spawns the new zone's players through _spawn_result_others with its Seated tail
+	client, decoder ignores the tail:           FAIL the enter-world result names Bram as seated (got [])
+
+The previous commit's own failure is the review's measurement (a `0x30bf` delivered before any body
+could take it); its test only checked the wire, which is why it stayed green. The send-after-unlock
+change has no test: a blocking write cannot be provoked through the test gateway without a
+connection that refuses to read.

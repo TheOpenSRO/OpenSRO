@@ -550,7 +550,7 @@ func TestSkillCSVCooldownGroupIsAStrictSuffix(t *testing.T) {
 	}
 }
 
-// SitGate (round 605) is a strict suffix: an export predating it loads 0 -- no
+// SitGate (round 607) is a strict suffix: an export predating it loads 0 -- no
 // motion-state refusal -- and the column, when present, is read.
 func TestSkillCSVSitGateIsAStrictSuffix(t *testing.T) {
 	old := make([]string, 46) // through CooldownGroup

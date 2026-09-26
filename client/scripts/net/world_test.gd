@@ -364,7 +364,7 @@ func _test_decode_revive_result() -> void:
 	_check(WorldNet.decode_revive_result(PackedByteArray([0x09, 0x00]) + "not dead".to_utf8_buffer()).error == "truncated error field",
 		"an error length past the payload is a decode error")
 
-## Sitting (round 605): the retail opcodes and payloads, matching
+## Sitting (round 607): the retail opcodes and payloads, matching
 ## server/internal/session/motion.go (TestStateChangeLayout encodes the same
 ## six bytes).
 func _test_motion() -> void:
@@ -380,7 +380,49 @@ func _test_motion() -> void:
 	_check(BsrReader.AnimationEntry.TYPE_SIT_DOWN == 13 and BsrReader.AnimationEntry.TYPE_SITTING == 14 \
 		and BsrReader.AnimationEntry.TYPE_STAND_UP == 15, "sit down / sitting / stand up are action types 13 / 14 / 15")
 
+## The Seated tail (round 607): after an enter-world result's Restored byte and
+## a zone-change result's frame, a u16 count and an s64 id per sitter --
+## server/internal/session/world.go's encodeSeated, TestSeatedTailIsASuffix.
+func _seated_tail(ids: Array) -> PackedByteArray:
+	var out := PackedByteArray()
+	out.resize(2)
+	out.encode_u16(0, ids.size())
+	for id in ids:
+		var b := PackedByteArray()
+		b.resize(8)
+		b.encode_s64(0, int(id))
+		out.append_array(b)
+	return out
+
+func _frame_bytes(frame: String) -> PackedByteArray:
+	var fb := frame.to_utf8_buffer()
+	var out := PackedByteArray()
+	out.resize(2)
+	out.encode_u16(0, fb.size())
+	out.append_array(fb)
+	return out
+
+func _test_decode_seated() -> void:
+	var others := [{"id": 42, "name": "Bram", "x": 4.0, "y": 5.0, "z": 6.0, "gender": CharacterNet.GENDER_CHINA_MAN}]
+	var enter := _build_enter_world_result(true, "", "jangan", 1.0, 2.0, 3.0, CharacterNet.GENDER_CHINA_MAN, others, 10, 20)
+	enter.append_array(_frame_bytes("97/168"))
+	var plain := WorldNet.decode_enter_world_result(enter)
+	_check(plain.error == "" and plain.seated.is_empty(), "an enter-world result with no tail seats nobody")
+	enter.append(0) # Restored, written as 0 when a Seated tail follows
+	enter.append_array(_seated_tail([42]))
+	var r := WorldNet.decode_enter_world_result(enter)
+	_check(r.error == "" and not r.restored, "the tail decodes, Restored false (error %s)" % r.error)
+	_check(r.seated == [42], "the enter-world result names Bram as seated (got %s)" % str(r.seated))
+	var zone := _build_change_zone_result(true, "", "jangan", 0.0, 0.0, 0.0, others)
+	zone.append_array(_frame_bytes("97/168"))
+	zone.append_array(_seated_tail([42]))
+	var z := WorldNet.decode_change_zone_result(zone)
+	_check(z.error == "" and z.seated == [42], "the zone-change result names Bram as seated (got %s, error %s)" % [str(z.seated), z.error])
+	var cut := zone.slice(0, zone.size() - 3)
+	_check(WorldNet.decode_change_zone_result(cut).error != "", "a seated tail cut short is a decode error")
+
 func _init() -> void:
+	_test_decode_seated()
 	_test_motion()
 	_test_encode_enter_world()
 	_test_encode_move()

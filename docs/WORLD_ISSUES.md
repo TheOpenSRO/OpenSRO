@@ -7083,9 +7083,9 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
-## Six-hundred-and-fifth round: N sits down and stands up, and sitting regenerates HP and MP at the client's rate
+## Six-hundred-and-seventh round: N sits down and stands up, and sitting regenerates HP and MP at the client's rate
 
-The full record is `docs/RE_COMPLETION.md`'s entry of the same name (round 605); the protocol page
+The full record is `docs/RE_COMPLETION.md`'s entry of the same name (round 607); the protocol page
 is `docs/protocol/opcodes/motion.md`.
 
 - **The formula (read).** `CGObjPC::vslot_362` restores `trunc(MaxHP x hprg / 100)`, floored at 1,
@@ -7116,11 +7116,21 @@ is `docs/protocol/opcodes/motion.md`.
   skills carrying `ao`/`pw` (58 rows: the Cold/Fire walls, the fortress repair kits) or a kind-1
   `msch` (the monster transform) are refused, via the exporter's new `SitGate` column; a plain or
   duel swing is not refused and the attacker stays seated. Regen runs under the kill lock and skips
-  HP 0 (a lethal blow's kill could be dropped); a move while seated is sent at once (a tap left
+  HP 0 (a lethal blow's kill could be dropped; the window is narrowed, not closed, and MP still
+  regenerates at HP 0); a move while seated is sent at once (a tap left
   client and server disagreeing); newcomers are told who sits; the own-id window expires. Stale
   records ("no passive regen", "an item stat", "1 point does not regenerate", the dead tracker)
   corrected in place. Time to full from 50% at MaxHP 568: 76 s before, 284 s standing, 28 s
   sitting; nothing regenerates while moving. Negatives against b62e19c in the RE_COMPLETION entry.
+- **Second follow-up (third commit).** Renumbered 607 after dev's keys rounds. Players already
+  sitting are drawn seated: the enter-world and zone-change results carry a `Seated` tail, because a
+  separate `0x30bf` behind them was measured arriving before any body could take it (the previous
+  commit's `tellSeated`, removed). Live: two bots seated in jangan and donwhang, the client entering
+  one and `/goto`-ing to the other -- `SIT: player 2 drawn seated on spawn` and `player 1`.
+  `deploy/README.md` says srrevamp-01 must re-export, re-import and restart before the skill gate
+  works (until then it fails open). Regen's stats push leaves the lock first; alive at HP 0 still
+  gets MP; the kill window is narrowed, not closed. Seated fighting at 8% is recorded as a
+  consequence of the read server gate, the retail client's side unread.
 
 ## Six-hundred-and-sixth round: A window over a text line takes the keyboard, and Enter opens and closes the chat line as the client's does
 

@@ -1,6 +1,6 @@
 extends SceneTree
 
-## SitState's rules (round 605), run headless:
+## SitState's rules (round 607), run headless:
 ##   godot4 --headless --path client --script res://scripts/world/sit_state_test.gd
 
 var _failures := 0
@@ -28,7 +28,7 @@ func _test_press_and_answer() -> void:
 	_check(not s.sitting, "the player stands")
 	_check(s.answer(0, 20.0) == "stand", "a stand answer while standing plays nothing")
 
-## Round 605's review: a refused N has no answer, so the id-learning window
+## Round 607's review: a refused N has no answer, so the id-learning window
 ## must close, or any stranger's 0x30bf would be taken as this player's.
 func _test_request_expires() -> void:
 	var s := SitState.new()
@@ -39,7 +39,7 @@ func _test_request_expires() -> void:
 	_check(s.own_id == -1, "and teaches nothing")
 	_check(s.classify(77, true, 5.0) == "other", "another body's id is another player's")
 
-## Round 605's review: the client ended its sit on any movement intent while the
+## Round 607's review: the client ended its sit on any movement intent while the
 ## server heard of it only from an OpMove past the send distance, so a one-frame
 ## tap left the client standing and the server seated. Leaving the seat must
 ## send the position at once.

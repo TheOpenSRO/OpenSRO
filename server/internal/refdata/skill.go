@@ -255,7 +255,7 @@ type Skill struct {
 	CooldownGroup int
 
 	// SitGate is which of the skill-use gate's motion-state refusals apply
-	// (round 605; docs/protocol/opcodes/motion.md), a bit mask:
+	// (round 607; docs/protocol/opcodes/motion.md), a bit mask:
 	// SitGateActionOff (1) -- the skill carries 'ao' or 'pw', so a PC may not
 	// cast it sitting or getting up or down (0x58e0ad..0x58e0cd);
 	// SitGateTransform (2) -- 'msch' value[0] == 1, refused sitting

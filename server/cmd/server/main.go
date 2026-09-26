@@ -1060,7 +1060,7 @@ func main() {
 
 	// Passive recovery: CGObjPC::vslot_362 on each character's own 4 s timer,
 	// a percentage of the MAXIMUM HP and MP -- 0.8% standing still, 8%
-	// sitting, nothing while moving (round 605; internal/mana's note).
+	// sitting, nothing while moving (round 607; internal/mana's note).
 	go session.RunRegen(ctx, hub, chars, session.RegenDeps{
 		Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker,
 	}, logger)
@@ -1356,7 +1356,7 @@ func main() {
 		session.DuelHandler(chars, eq, refItems, hub, duels),
 		session.TradeHandler(chars, inv, refItems, hub, trades),
 		session.FriendHandler(chars, friends, hub),
-		// N sits down and stands up (round 605): the retail 0x704f request
+		// N sits down and stands up (round 607): the retail 0x704f request
 		// and its 0x30bf broadcast; the motion state sets the regen rate.
 		session.MotionHandler(hub),
 	)

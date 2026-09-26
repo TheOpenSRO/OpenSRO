@@ -17,7 +17,7 @@ import (
 // RunRegen is the engine's passive recovery: CGObjPC::vslot_362 on each
 // character's own 4 s timer (mana's package note has the whole reading).
 //
-// Round 605 settled it: a tick restores a percentage of the MAXIMUM HP and MP
+// Round 607 settled it: a tick restores a percentage of the MAXIMUM HP and MP
 // -- 0.8% standing still, 8% sitting -- floored at 1 and capped at half the
 // maximum, and restores nothing while walking, running or getting up or down.
 // Before that this loop healed 4% of the CURRENT HP on one global ticker and
@@ -70,31 +70,55 @@ func regenPass(ctx context.Context, hub *world.Hub, chars character.Store, deps 
 
 // regenOne is one firing of CGObjPC::vslot_362 for e.
 //
-// It runs under e's kill lock (killLock), reading the life state and the pool
-// afresh there, because a blow and its death are not one step here as they are
-// in the engine (whose object queue runs both before anything else): a blow
-// writes HP 0 and only then takes the lock to decide the kill. A tick in that
-// gap used to raise the pool off 0, and fallen() then dropped the kill; and a
-// life state read from the snapshot e could heal a character a kill had just
-// put in life state 2. So a character at HP 0 -- one being killed, or an
-// HP-cost caster left at 0 -- regenerates nothing (OURS: the engine has no
-// such window), and a dead one nothing (read: the life test comes first).
+// The pools are read and written under e's kill lock (killLock), with the life
+// state and the row read afresh there, because a blow and its death are not one
+// step here as they are in the engine (whose object queue runs both before
+// anything else): a blow writes HP 0 and only then takes the lock to decide the
+// kill. A tick in that gap used to raise the pool off 0, and fallen() then
+// dropped the kill; and a life state read from the snapshot e could heal a
+// character a kill had just put in life state 2. Now a tick that reads HP 0
+// restores no HP -- the character is being killed, or is an HP-cost caster
+// left at 0 -- though MP still comes back (OURS: the engine has no such
+// window), and a dead character gets nothing (read: the life test comes first).
+//
+// The window is NARROWED, NOT CLOSED: the blow's own write is not under the
+// lock, so a blow that lands between this tick's read and its Heal can still be
+// covered by the heal -- fallen() then finds her above 0 and the kill is not
+// taken, as with a potion step in the same gap (fallen's own note). She stays
+// killable by the next blow.
+//
+// The stats push -- a TCP write that can block -- goes out after the lock is
+// released.
 func regenOne(ctx context.Context, hub *world.Hub, e world.Entity, chars character.Store, deps RegenDeps, logger *slog.Logger, now time.Time) {
 	// `if (GetLifeState() != 1) return;` -- the first test.
 	if e.Life != world.LifeAlive {
 		return
 	}
+	c := regenApply(ctx, hub, e, chars, deps, logger, now)
+	if c == nil || e.Session == nil {
+		return
+	}
+	// Tell the client, or the bar only moves when something else happens to
+	// refresh it. The stats reply is what the HUD already listens to.
+	if result, err := buildCharacterStats(ctx, c, c.ID, deps.Equipment, deps.Items, deps.Skills, deps.Mana); err == nil {
+		_ = e.Session.Send(&proto.Packet{Opcode: OpCharacterStatsResult, Data: result.Encode()})
+	}
+}
+
+// regenApply is regenOne's work under the kill lock. It returns the character
+// with its new HP when a pool changed, nil when nothing did.
+func regenApply(ctx context.Context, hub *world.Hub, e world.Entity, chars character.Store, deps RegenDeps, logger *slog.Logger, now time.Time) *character.Character {
 	l := killLock(e.CharacterID)
 	l.Lock()
 	defer l.Unlock()
 	if hub != nil {
 		if cur, ok := hub.EntityByCharacterID(e.CharacterID); !ok || cur.Life != world.LifeAlive {
-			return
+			return nil
 		}
 	}
 	c, err := chars.GetByID(ctx, e.CharacterID)
-	if err != nil || c.HP <= 0 {
-		return
+	if err != nil {
+		return nil
 	}
 	maxHP, maxMP := c.MaxHP(), c.MaxMP()
 	curMP := maxMP
@@ -103,36 +127,37 @@ func regenOne(ctx context.Context, hub *world.Hub, e world.Entity, chars charact
 	}
 	// Both pools full: nothing to do.
 	if c.HP >= maxHP && curMP >= maxMP {
-		return
+		return nil
 	}
 	// Only STAND and SIT regenerate, at their own rate.
 	rate, ok := motions.regenRate(c.ID, now)
 	if !ok {
-		return
+		return nil
 	}
 	hp := mana.RegenPerTick(maxHP, rate)
 	mp := mana.RegenPerTick(maxMP, rate)
 	newHP, newMP := c.HP, curMP
-	if hp > 0 && c.HP < maxHP {
+	changed := false
+	// HP 0 while alive: no HP (see regenOne).
+	if hp > 0 && c.HP > 0 && c.HP < maxHP {
 		if newHP, err = chars.Heal(ctx, c.ID, hp, maxHP); err != nil {
 			if logger != nil {
 				logger.Warn("regen: healing failed", "character", c.ID, "err", err)
 			}
-			return
+			return nil
 		}
+		changed = true
 	}
 	if mp > 0 && curMP < maxMP && deps.Mana != nil {
 		newMP = deps.Mana.Restore(c.ID, maxMP, mp)
-	}
-	// Tell the client, or the bar only moves when something else happens to
-	// refresh it. The stats reply is what the HUD already listens to.
-	if e.Session != nil {
-		c.HP = newHP
-		if result, err := buildCharacterStats(ctx, c, c.ID, deps.Equipment, deps.Items, deps.Skills, deps.Mana); err == nil {
-			_ = e.Session.Send(&proto.Packet{Opcode: OpCharacterStatsResult, Data: result.Encode()})
-		}
+		changed = true
 	}
 	if logger != nil {
 		logger.Debug("regen", "character", c.ID, "rate", rate, "hp", newHP, "maxHP", maxHP, "mp", newMP, "maxMP", maxMP)
 	}
+	if !changed {
+		return nil
+	}
+	c.HP = newHP
+	return c
 }

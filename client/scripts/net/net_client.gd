@@ -28,7 +28,7 @@ signal entity_entered(snapshot: WorldNet.EntitySnapshot)
 signal entity_moved(moved: WorldNet.EntityMoved)
 signal entity_left(character_id: int)
 signal change_zone_result(result: WorldNet.ChangeZoneResult)
-## A character's state changed (WorldNet.OP_STATE_CHANGE, round 605): kind 1 is
+## A character's state changed (WorldNet.OP_STATE_CHANGE, round 607): kind 1 is
 ## the motion state -- someone sat down or stood up, this player included.
 signal state_changed(change: WorldNet.StateChange)
 

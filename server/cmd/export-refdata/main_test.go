@@ -813,7 +813,7 @@ func TestSkillRecordCarriesCooldownGroup(t *testing.T) {
 	}
 }
 
-// Round 605: the SitGate column, the skill-use gate's two motion-state
+// Round 607: the SitGate column, the skill-use gate's two motion-state
 // branches -- bit 1 for a skill carrying 'ao' or 'pw' (0x58e0ad/0x58e0b6), bit
 // 2 for 'msch' with value[0] == 1 (0x58de46). Synthetic rows; the values are
 // the Param block's own run lengths.

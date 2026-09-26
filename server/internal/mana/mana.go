@@ -29,7 +29,7 @@ import (
 	"time"
 )
 
-// PASSIVE REGENERATION, SETTLED IN ROUND 605 (N sits down). Everything below is
+// PASSIVE REGENERATION, SETTLED IN ROUND 607 (N sits down). Everything below is
 // READ from SR_GameServer.exe unless it says otherwise; the history of how this
 // note got here is at the end, because two earlier readings were wrong.
 //
@@ -144,7 +144,7 @@ func RegenPerTick(max int, ratePercent float32) int {
 // Tracker holds live MP per character. The zero value is not usable; call
 // NewTracker.
 //
-// It regenerates nothing by itself since round 605: passive recovery is the
+// It regenerates nothing by itself since round 607: passive recovery is the
 // engine's per-character tick (session.RunRegen), which needs the motion state
 // a lazy settlement here could not see.
 type Tracker struct {

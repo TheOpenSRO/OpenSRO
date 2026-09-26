@@ -45,7 +45,7 @@ holds `CGObjPC::vslot_362` — a percentage of the **current** pool, floored at 
 capped at half the current pool, on a **real** 4-second interval
 (`.rdata 0x00b45dc0` = 4.0, unit read in round 223).
 
-**Corrected round 605:** the pool is the **maximum** (vtable slot `0x110` in
+**Corrected round 607:** the pool is the **maximum** (vtable slot `0x110` in
 `CGObjPC` is `ftol(EvaluateParam(3))`), the rate is 0.8% standing still and 8%
 sitting (`SetMotionState` writes `hprg`/`mprg`), and nothing regenerates while
 moving. `docs/protocol/opcodes/motion.md`.
@@ -62,7 +62,7 @@ on 0, so regen cannot revive the dead.
 The percentage itself remains disclosed — `'mprg'` is 0 on every real row, and
 `mana.go` says so at the constant.
 
-> **Both paragraphs corrected in round 605.** The cap is half the MAXIMUM, so a character on 1
+> **Both paragraphs corrected in round 607.** The cap is half the MAXIMUM, so a character on 1
 > point does regenerate (1 a tick standing at MaxHP 200); the dead are kept at 0 by the life-state
 > test, and a character alive at 0 by srrevamp's kill lock. The percentage is read, not disclosed:
 > 0.8 standing, 8.0 sitting, written by `SetMotionState`.

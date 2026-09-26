@@ -684,7 +684,7 @@ func useSkillHandler(
 		// the rule the rest of the project follows -- shop.Price says it
 		// outright: "The real number is what a player pays, so it wins."
 		if ref, err := skillRef.GetSkill(ctx, req.SkillID); err == nil && ref != nil {
-			// The skill-use gate's motion-state refusals (round 605,
+			// The skill-use gate's motion-state refusals (round 607,
 			// motion.go): only a skill carrying 'ao'/'pw' or a kind-1 'msch'
 			// is refused to a seated caster -- 59 of the 33,660 rows,
 			// measured. Every other skill is cast from the seat, as the

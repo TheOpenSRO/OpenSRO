@@ -32,7 +32,7 @@ const OP_CHANGE_ZONE_RESULT := 0x0027  # server -> client
 const OP_REVIVE := 0x0028              # client -> server, empty
 const OP_REVIVE_RESULT := 0x0029       # server -> client
 
-## Sitting down and standing up (round 605), on the RETAIL opcodes: the payloads
+## Sitting down and standing up (round 607), on the RETAIL opcodes: the payloads
 ## are read from both binaries (docs/protocol/opcodes/motion.md), so they are not
 ## placeholders. The N key sends OP_MOTION_REQUEST with the one byte 4, as the
 ## client's 0x793b00 -> 0x81e750(4) does, and nothing animates until the server
@@ -121,6 +121,9 @@ class EnterWorldResult:
 	## EnterWorldResult.Restored -- so false from every server that did not
 	## restore and from every older one.
 	var restored: bool = false
+	## The ids among `others` who sit or are sitting down (round 607), from the
+	## tail after Restored; empty when nobody sits or from an older server.
+	var seated: Array[int] = []
 	var error: String # decode error, distinct from a well-formed "not ok" response
 
 ## Parses one EntitySnapshot from data starting at offset, returning it
@@ -255,7 +258,30 @@ static func decode_enter_world_result(data: PackedByteArray) -> EnterWorldResult
 	var after_frame: int = frame[2]
 	if result.error == "" and after_frame < data.size():
 		result.restored = data[after_frame] != 0
+		# Seated (round 607): after Restored, which the server then always
+		# writes.
+		var seated := _decode_seated(data, after_frame + 1)
+		result.seated = seated[0]
+		result.error = seated[1]
 	return result
+
+## Reads the Seated tail of an OpEnterWorldResult or OpChangeZoneResult (round
+## 607; server/internal/session/world.go's decodeSeated): a u16 count and an
+## s64 id per sitter, nothing when nobody sits. Returns [ids, error].
+static func _decode_seated(data: PackedByteArray, offset: int) -> Array:
+	var ids: Array[int] = []
+	if offset >= data.size():
+		return [ids, ""]
+	if offset + 2 > data.size():
+		return [ids, "truncated seated count"]
+	var n := data.decode_u16(offset)
+	offset += 2
+	for i in range(n):
+		if offset + 8 > data.size():
+			return [ids, "truncated seated %d" % i]
+		ids.append(data.decode_s64(offset))
+		offset += 8
+	return [ids, ""]
 
 ## Reads the FrameRegion that trails an OpEnterWorldResult or an
 ## OpChangeZoneResult (round 570; server/internal/session/world.go's
@@ -360,6 +386,8 @@ class ChangeZoneResult:
 	## The region x/y/z are relative to, "x/y" (round 570), as on
 	## EnterWorldResult; "" from an older server.
 	var frame: String = ""
+	## The ids among `others` who sit (round 607), as on EnterWorldResult.
+	var seated: Array[int] = []
 	var error: String # decode error, distinct from a well-formed "not ok" response
 
 ## Decodes an OpChangeZoneResult payload.
@@ -422,6 +450,10 @@ static func decode_change_zone_result(data: PackedByteArray) -> ChangeZoneResult
 	var frame := _decode_frame(data, offset)
 	result.frame = frame[0]
 	result.error = frame[1]
+	if result.error == "":
+		var seated := _decode_seated(data, frame[2])
+		result.seated = seated[0]
+		result.error = seated[1]
 	return result
 
 ## Encodes an OpRevive request: nothing. The server knows who asks from the

@@ -2689,7 +2689,7 @@ with its last stored position as the fallback.
   with (`ApplyHPMPDelta` is additive on both pools; no MP write was found in `GObjPC_OnDeath`
   `0x4e6980` or `FUN_004e67b0` -- one probe over their decompiles for the MP slots and the
   setters, not a proof); srrevamp SETS the tracker to `character.RespawnMP`. A stand-in.
-  [Corrected round 605: this used to add that `mana.Tracker` regenerates by wall clock while dead.
+  [Corrected round 607: this used to add that `mana.Tracker` regenerates by wall clock while dead.
   It no longer regenerates at all, and the regen tick's first test is the life state (read,
   `0x4e29a9`), so the MP a character died with is intact at the revive; SET instead of ADD is now
   the only difference, and it stays a stand-in.] The HP is exact:

@@ -893,7 +893,7 @@ func skillRecord(cols []string) ([]string, bool) {
 		healHP,                     // 43 SelfHealHP -- 'heal' value[0] a flat self-heal restores (round 503)
 		healMP,                     // 44 SelfHealMP -- 'heal' value[2], its MP half
 		cooldownGroup(cols),        // 45 CooldownGroup -- Overlap's high byte, CRefSkill+0x8f (round 504)
-		sitGate(cols),              // 46 SitGate -- the skill gate's motion-state refusals (round 605)
+		sitGate(cols),              // 46 SitGate -- the skill gate's motion-state refusals (round 607)
 	}, true
 }
 
@@ -917,7 +917,7 @@ func cooldownGroup(cols []string) string {
 
 // sitGate is the SitGate column: which of the skill-use gate's two
 // motion-state refusals (Skill_CheckUseConditions, answering 0x3009) apply to
-// the skill, as a bit mask (round 605, docs/protocol/opcodes/motion.md):
+// the skill, as a bit mask (round 607, docs/protocol/opcodes/motion.md):
 //
 //	1  the skill carries 'ao' (field 0x274) or 'pw' (0x2b4): a PC may not
 //	   cast it in SIT, CHANGEMOTION, KNOCKDOWN, SKILL_ACTIONOFF or

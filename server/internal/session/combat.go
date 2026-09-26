@@ -821,7 +821,7 @@ func combatHandler(
 			if deadBySession(hub, sess) {
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: deadRefusal}).Encode()})
 			}
-			// A seated character's swing is NOT refused (round 605,
+			// A seated character's swing is NOT refused (round 607,
 			// motion.go): the retail plain attack is the basic-attack skill
 			// (SKILL_CH_SWORD_BASE_01 and the like), and none of the 1,273
 			// *_BASE_* / PUNCH rows carries 'ao', 'pw' or 'msch' (measured),

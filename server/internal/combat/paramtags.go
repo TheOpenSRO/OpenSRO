@@ -179,7 +179,7 @@ var ParamFor = map[string]int{
 	"zb":             32,  // anti-zombie
 }
 
-// REGENERATION IS A BASELINE STAT THAT ITEMS ADD TO (corrected round 605).
+// REGENERATION IS A BASELINE STAT THAT ITEMS ADD TO (corrected round 607).
 // Params 25 and 26 are written by MATTR_REGENHPMP, MATTR_AVATAR_HPRG and
 // MATTR_AVATAR_MPRG -- and at baseline by SetMotionState (0x4a9d00), which sets
 // their slot 0 to 0.8 in every motion state but SIT and 8.0 in SIT. This note

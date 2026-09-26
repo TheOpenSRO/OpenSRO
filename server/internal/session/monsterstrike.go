@@ -181,7 +181,7 @@ type monsterStrikeOutcome struct {
 //
 // OWN DESIGN: the engine has no such lock -- its blows and revives run on one
 // game-object queue. Entries are never removed: one mutex per character ever
-// taken to 0 or regenerated (round 605: the regen tick takes it too) in the
+// taken to 0 or regenerated (round 607: the regen tick takes it too) in the
 // process's life, a few dozen bytes each.
 var killLocks sync.Map
 
@@ -340,7 +340,7 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	}
 	out.damage = incoming
 	// A blow that lands stands a sitter up (Combat_ApplyActionEffects'
-	// FUN_004b1480(0) at 0x593aec; round 605, motion.go).
+	// FUN_004b1480(0) at 0x593aec; round 607, motion.go).
 	standOnHit(deps.hub, characterID, incoming)
 	if hp > 0 || incoming == 0 {
 		// Health left; or a blow that landed nothing -- blocked, or a zero

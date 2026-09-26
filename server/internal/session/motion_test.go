@@ -210,8 +210,10 @@ func TestSeatedCastRefusedFollowsTheGate(t *testing.T) {
 	}
 }
 
-// A player who enters after Aria sat down is told so: the enter-world result
-// is followed by 0x30bf {Aria, 1, 4}, because the snapshot carries no motion.
+// A player who enters after Aria sat down, or changes zone into hers, is told
+// so IN the result that spawns her body (round 607's review: a separate 0x30bf
+// after the list reached the client before the world scene, or the new zone's
+// bodies, existed).
 func TestLateArrivalHearsWhoIsSeated(t *testing.T) {
 	f := startDeadWorldFixtureWith(t, func(chars character.Store, hub *world.Hub) gateway.Handler {
 		return MotionHandler(hub)
@@ -220,14 +222,57 @@ func TestLateArrivalHearsWhoIsSeated(t *testing.T) {
 	if _, ok := motions.request(f.aria, MotionSit, time.Now().Add(-10*time.Second)); !ok {
 		t.Fatal("could not sit Aria")
 	}
-	// Bram re-enters the world: his client is told of Aria afresh.
+	// Bram re-enters the world.
 	f.send(t, f.connB, OpEnterWorld, (&EnterWorldRequest{CharacterName: "Bram"}).Encode())
-	if p := f.read(t, f.connB, f.rB); p.Opcode != OpEnterWorldResult {
-		t.Fatalf("Bram got %#04x, want the enter-world result", p.Opcode)
-	}
 	p := f.read(t, f.connB, f.rB)
-	sc, ok := DecodeStateChange(p.Data)
-	if p.Opcode != OpStateChange || !ok || sc.ObjectID != uint32(f.aria) || sc.Value != MotionSit {
-		t.Fatalf("after the list Bram got %#04x %+v, want 0x30bf {Aria, 1, 4}", p.Opcode, sc)
+	ewr, err := DecodeEnterWorldResult(p.Data)
+	if p.Opcode != OpEnterWorldResult || err != nil || len(ewr.Seated) != 1 || ewr.Seated[0] != f.aria {
+		t.Fatalf("Bram's enter-world result: %#04x %+v (err %v), want Seated [Aria %d]", p.Opcode, ewr, err, f.aria)
+	}
+	if !f.nothing(t, f.connB, f.rB) {
+		t.Error("a separate packet followed the enter-world result; the seated state belongs in it")
+	}
+	// Bram leaves for another zone and comes back into Aria's.
+	if czr := changeZone(t, f, f.connB, f.rB, "donwhang"); !czr.OK || len(czr.Seated) != 0 {
+		t.Fatalf("change to donwhang: %+v, want OK with nobody seated", czr)
+	}
+	f.nothing(t, f.connA, f.rA) // drain Aria's notice of Bram leaving (not asserted)
+	czr := changeZone(t, f, f.connB, f.rB, "jangan")
+	if !czr.OK || len(czr.Seated) != 1 || czr.Seated[0] != f.aria {
+		t.Fatalf("change back to jangan: %+v, want Seated [Aria %d]", czr, f.aria)
+	}
+}
+
+// The Seated tail is sent only when someone sits, so every other payload is
+// byte for byte what it was; with it, Restored is written even when false,
+// and both round-trip.
+func TestSeatedTailIsASuffix(t *testing.T) {
+	base := EnterWorldResult{OK: true, Zone: "jangan", FrameRegion: "97/168"}
+	plain := base.Encode()
+	withSeated := base
+	withSeated.Seated = []int64{7, 9}
+	enc := withSeated.Encode()
+	if string(enc[:len(plain)]) != string(plain) {
+		t.Fatal("the seated tail changed the bytes before it")
+	}
+	if len(enc) != len(plain)+1+2+16 {
+		t.Fatalf("tail is %d bytes, want 1 (Restored) + 2 + 16", len(enc)-len(plain))
+	}
+	back, err := DecodeEnterWorldResult(enc)
+	if err != nil || back.Restored || len(back.Seated) != 2 || back.Seated[0] != 7 || back.Seated[1] != 9 {
+		t.Fatalf("round trip: %+v, %v", back, err)
+	}
+	if back, err = DecodeEnterWorldResult(plain); err != nil || back.Seated != nil {
+		t.Fatalf("a payload with no tail decoded Seated %v (err %v)", back.Seated, err)
+	}
+	cz := ChangeZoneResult{OK: true, Zone: "jangan", FrameRegion: "97/168"}
+	czPlain := cz.Encode()
+	cz.Seated = []int64{7}
+	czEnc := cz.Encode()
+	if string(czEnc[:len(czPlain)]) != string(czPlain) || len(czEnc) != len(czPlain)+2+8 {
+		t.Fatal("ChangeZoneResult's seated tail is not a suffix")
+	}
+	if b, err := DecodeChangeZoneResult(czEnc); err != nil || len(b.Seated) != 1 || b.Seated[0] != 7 {
+		t.Fatalf("ChangeZoneResult round trip: %+v, %v", b, err)
 	}
 }

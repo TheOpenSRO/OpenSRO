@@ -64,9 +64,20 @@ for f in teleportdata.txt teleportlink.txt teleportbuilding.txt; do
                      # a DIRECTORY of three CSVs: 222 points, 292 links, 77 buildings; the server reads it with -teleport-dir
 rm -f itemdata_* skilldata_* npcpos.txt teleport*.txt   # the extracted tables are game data; keep only the CSVs
 
-# The exporter grows a strict-suffix column now and then (latest: item columns 61-65 -- the three elixir reinforce-rate dwords and the cooltime group/ms, rounds 262-263, 2026-09-19; before that the six skill prerequisite columns, round 250 -- re-run the SKILLS export too);
-# an older items.csv still loads, but the new column reads as 0 until the export is re-run.
+# The exporter grows a strict-suffix column now and then (latest: skill columns 45 CooldownGroup, round 504,
+# and 46 SitGate, round 607 -- the skill-use gate's sitting refusals; before them item columns 61-65 -- the three
+# elixir reinforce-rate dwords and the cooltime group/ms, rounds 262-263, 2026-09-19; and the six skill
+# prerequisite columns, round 250);
+# an older CSV still loads, but the new column reads as 0 until the export is re-run.
 # Re-run steps 1-3 after pulling such a change.
+#
+# ROUND 607 (sitting) NEEDS THIS ON srrevamp-01: re-run `export-refdata -mode skills` with the NEW
+# binary (step 2), then the NEW `import-refdata` (step 3; its store adds the skills.sit_gate column),
+# then restart the server (`docker compose up -d` after the pull, which also applies the schema
+# change on boot). Until then every skill's SitGate is 0 and the gate FAILS OPEN: the 59 skills the
+# retail server refuses to a seated caster (the Cold/Fire walls, the fortress repair kits, the
+# monster transform) can be cast sitting. Check: `SELECT count(*) FROM skills WHERE sit_gate <> 0;`
+# answers 59 on a retail archive.
 
 # 3. On the server host (CSVs and import-refdata copied to ~/srrevamp-data; Postgres is pinned to
 #    127.0.0.1:5432 by docker-compose.override.yml):

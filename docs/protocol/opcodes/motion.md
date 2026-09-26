@@ -1,6 +1,6 @@
 # Sitting and standing: `0x704f` / `0x30bf`, and the regeneration they drive
 
-Recovered in round 605. Labels: **read** = from the binary at the cited address;
+Recovered in round 607. Labels: **read** = from the binary at the cited address;
 **measured** = counted in the archive or a dump; **inferred** = a conclusion from
 read or measured facts, with its basis; **ours** = srrevamp's own choice.
 
@@ -27,7 +27,7 @@ box in `/var/tmp/rkeymap/` (`30bf.asm`, `regen.asm`, `sit_bodies.txt`) and
   `0x4b23f0` (`jmp [eax+0x5f4]`) at `0xccf388` = index `0x04f`. `CGObjPC`'s vtable
   (`0x00af59fc`) holds `0x4b1450` at `+0x5f4`. **So `0x704f` → `0x4b1450`**,
   which reads one u8 (`0x404f80`) and calls `GObjPC::FUN_004b1480(value)`.
-  (Round-605 correction of the keymap research's "registration not traced".)
+  (Round-607 correction of the keymap research's "registration not traced".)
 
 ### `FUN_004b1480`, the motion request (read, `0x4b1480..0x4b1602`)
 
@@ -86,7 +86,7 @@ box in `/var/tmp/rkeymap/` (`30bf.asm`, `regen.asm`, `sit_bodies.txt`) and
 | `Combat_ApplyActionEffects` `0x593aec` | `FUN_004b1480(0)` on a target in SIT, when the per-target record's `+0x10` is 0 and status bit `0x40` is clear (neither read) |
 | `FleaMarket_HandleOpenStall` `0x51605b` | `FUN_004b1480(4)` while sitting, i.e. stand |
 
-### Moving while sitting (read, round 605)
+### Moving while sitting (read, round 607)
 
 The movement request `0x7021` is index `0x021`: the same registration stores the
 thunk `0x4b23e0` (`jmp [eax+0x5e4]`) at `0xccf218`, and `CGObjPC`'s `+0x5e4` is
@@ -95,7 +95,7 @@ thunk `0x4b23e0` (`jmp [eax+0x5e4]`) at `0xccf218`, and `CGObjPC`'s `+0x5e4` is
 handler sets WALK or RUN directly, with no transition and no `0x30bf`. A move in
 the 1.5 s transition is refused. The keymap research left this "not read".
 
-### Skills while seated (read; corrected in round 605's follow-up)
+### Skills while seated (read; corrected in round 607's follow-up)
 
 `FUN_0058d8f0`, the skill-use gate, answers `0x3009` for the caster's motion
 state in two branches, **each only for particular skills**:
@@ -149,7 +149,7 @@ re-arm it** (`SetMotionState` touches no timer).
 	mp: the same with this[0xa2c], MaxMP and EvaluateParam(26)          line 0xe02
 	ApplyHPMPDelta(hp, mp, 0x10);                                       0x4a86a0: x (1 - param143/100), x (1 - param144/100)
 
-### The pool is the maximum (read, round 605)
+### The pool is the maximum (read, round 607)
 
 The value multiplied is vtable slot `0x110` (`0x114` for MP). In `CGObjPC`'s
 vtable those hold **`0x4a6830` = `ftol(EvaluateParam(3))`** and `0x4a6850` =
@@ -213,9 +213,10 @@ every body.
   landed blow stands a sitter. A cast is refused to a seated caster only for the
   59 skills the gate names (`refdata.Skill.SitGate`, from the exporter's
   `SitGate` column); a plain swing, a duel swing and every other cast are not.
-  A player entering a zone is sent `0x30bf {id, 1, 4}` for each seated
-  character already there. The regen tick runs under the kill lock and skips a
-  character alive at HP 0.
+  An enter-world or zone-change result carries a `Seated` tail -- the ids
+  among its players who sit or are sitting down -- so the client draws them
+  seated as it spawns them. The regen tick runs under the kill lock and gives
+  a character alive at HP 0 no HP (MP still).
 - **Ours, disclosed:** the server has no WALK/RUN state (the client streams
   positions), so an accepted move less than 0.5 s old counts as walking; the
   0x30bf id is the character id in the u32; a dead character's request is
@@ -223,11 +224,10 @@ every body.
   are not modelled; "a blow that landed damage" stands in for the unread
   `+0x10` and status-`0x40` tests; a zone change stands the character
   (inferred from re-creation, not read); the refusal text for `0x3009`; the
-  `0x30bf` sent to a newcomer for each sitter (the retail spawn packet's
-  motion field was not read) and the client's 1 s window in which such a
-  sitter takes the loop without the sit-down clip; a character alive at HP 0
-  (being killed, or an HP-cost caster) regenerates nothing, because
-  srrevamp's blow and death are not one step as the engine's are; the gate's
+  results' `Seated` tail (the retail spawn packet's motion field was not
+  read); a character alive at HP 0 (being killed, or an HP-cost caster)
+  regenerates no HP -- MP still -- because srrevamp's blow and death are not
+  one step as the engine's are (the window is narrowed, not closed); the gate's
   KNOCKDOWN, SKILL_ACTIONOFF and SKILL_PROTECTIONWALL states do not exist here.
 - **Not modelled:** the PK-penalty drain, zombie, the timed-effect switch, skill
   buffs on params 25/26, params 143/144, the stall's stand-up (no stalls).
@@ -236,4 +236,12 @@ every body.
   `.bsr`, for this player and others; movement input is held for the
   transition; a move while seated sends the position at once so the server
   stands the character too; the own-id learning window closes when an
-  unanswered request expires.
+  unanswered request expires; the players a result's `Seated` tail names are
+  drawn in the sitting loop as they spawn (`_spawn_result_others`, both on
+  entry and on a zone change).
+- **Seated fighting (a consequence of the read gate, for the user to weigh).**
+  Because the server gate refuses only 59 skills and nothing in a cast or a
+  swing stands the caster, a seated character can fight from the seat and keep
+  regenerating at 8% of the maximum every 4 s. That is what the server binary
+  says. What the retail CLIENT does -- whether it lets a seated player attack
+  at all -- was not read, and would decide whether retail players could do it.

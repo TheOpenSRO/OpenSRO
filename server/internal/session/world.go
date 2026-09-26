@@ -240,6 +240,16 @@ type EnterWorldResult struct {
 	// Jangan entry on to its own landing spot as it always has
 	// (World3D._place_at_zone_spawn).
 	Restored bool
+	// Seated lists the characters in Others who are sitting or sitting down
+	// (round 607; docs/protocol/opcodes/motion.md), so the client draws them
+	// seated as it spawns them -- a separate 0x30bf after the list arrived
+	// before the world scene or the new zone's bodies existed and was lost.
+	// It trails Restored, which is then written even when false: one byte,
+	// a u16 count and an i64 id per sitter. Sent only when someone sits, so
+	// every other payload is byte for byte what it was, and an older client,
+	// which stops at Restored, reads the same. OURS: what the retail spawn
+	// packet carries for the motion state was not read.
+	Seated []int64
 }
 
 func (r *EnterWorldResult) Encode() []byte {
@@ -263,10 +273,49 @@ func (r *EnterWorldResult) Encode() []byte {
 		out = append(out, o.Encode()...)
 	}
 	out = append(out, encodeStrings(r.FrameRegion)...)
-	if r.Restored {
-		out = append(out, 1)
+	if r.Restored || len(r.Seated) > 0 {
+		b := byte(0)
+		if r.Restored {
+			b = 1
+		}
+		out = append(out, b)
+	}
+	return append(out, encodeSeated(r.Seated)...)
+}
+
+// encodeSeated is the Seated tail of EnterWorldResult and ChangeZoneResult:
+// nothing when nobody sits, else a u16 count and an i64 id per sitter.
+func encodeSeated(ids []int64) []byte {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := []byte{byte(len(ids)), byte(len(ids) >> 8)}
+	for _, id := range ids {
+		out = append(out, encodeInt64(id)...)
 	}
 	return out
+}
+
+// decodeSeated reads a Seated tail; empty input is no sitters.
+func decodeSeated(rest []byte) ([]int64, error) {
+	if len(rest) == 0 {
+		return nil, nil
+	}
+	if len(rest) < 2 {
+		return nil, errors.New("truncated seated count")
+	}
+	n := int(binary.LittleEndian.Uint16(rest))
+	rest = rest[2:]
+	ids := make([]int64, 0, n)
+	for i := 0; i < n; i++ {
+		id, after, err := decodeInt64(rest)
+		if err != nil {
+			return nil, fmt.Errorf("seated %d: %w", i, err)
+		}
+		ids = append(ids, id)
+		rest = after
+	}
+	return ids, nil
 }
 
 func DecodeEnterWorldResult(data []byte) (*EnterWorldResult, error) {
@@ -338,6 +387,11 @@ func DecodeEnterWorldResult(data []byte) (*EnterWorldResult, error) {
 	// Restored (round 573): one byte after the frame, absent -- false -- from
 	// a server that did not restore the position or predates the field.
 	r.Restored = len(rest) > 0 && rest[0] != 0
+	if len(rest) > 1 {
+		if r.Seated, err = decodeSeated(rest[1:]); err != nil {
+			return nil, fmt.Errorf("session: decoding EnterWorldResult: %w", err)
+		}
+	}
 	return r, nil
 }
 
@@ -547,6 +601,10 @@ type ChangeZoneResult struct {
 	X, Y, Z     float32
 	Others      []EntitySnapshot
 	FrameRegion string
+	// Seated is EnterWorldResult.Seated's twin (round 607), trailing
+	// FrameRegion: a u16 count and an i64 id per sitter, sent only when
+	// someone sits.
+	Seated []int64
 }
 
 func (r *ChangeZoneResult) Encode() []byte {
@@ -564,7 +622,8 @@ func (r *ChangeZoneResult) Encode() []byte {
 	for _, o := range r.Others {
 		out = append(out, o.Encode()...)
 	}
-	return append(out, encodeStrings(r.FrameRegion)...)
+	out = append(out, encodeStrings(r.FrameRegion)...)
+	return append(out, encodeSeated(r.Seated)...)
 }
 
 func DecodeChangeZoneResult(data []byte) (*ChangeZoneResult, error) {
@@ -613,7 +672,10 @@ func DecodeChangeZoneResult(data []byte) (*ChangeZoneResult, error) {
 		}
 		r.Others = append(r.Others, *snap)
 	}
-	if r.FrameRegion, _, err = decodeFrameRegion(rest); err != nil {
+	if r.FrameRegion, rest, err = decodeFrameRegion(rest); err != nil {
+		return nil, fmt.Errorf("session: decoding ChangeZoneResult: %w", err)
+	}
+	if r.Seated, err = decodeSeated(rest); err != nil {
 		return nil, fmt.Errorf("session: decoding ChangeZoneResult: %w", err)
 	}
 	return r, nil
@@ -764,7 +826,7 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	others := hub.Enter(sess, owned.ID, owned.Name, owned.Level, bucket, pos)
 	rememberPlace(sess, zone, frame, time.Now())
 	// Standing, with the regen timer at 0 elapsed: the engine's constructor
-	// registers the timer and calls SetMotionState(STAND) (round 605,
+	// registers the timer and calls SetMotionState(STAND) (round 607,
 	// motion.go).
 	motions.enter(owned.ID, time.Now())
 
@@ -781,12 +843,11 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		Others:      otherSnapshots,
 		FrameRegion: frame,
 		Restored:    restored,
+		Seated:      seatedAmong(others),
 	}
 	if err := sess.Send(&proto.Packet{Opcode: OpEnterWorldResult, Data: result.Encode()}); err != nil {
 		return err
 	}
-	// Who among them is seated (round 605): the snapshot carries no motion.
-	tellSeated(sess, others)
 
 	entered := &EntitySnapshot{
 		CharacterID: owned.ID, Name: owned.Name,
@@ -859,7 +920,7 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 		return false, sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "not in the world"}).Encode()})
 	}
 	keepUp.Cancel(old.CharacterID)
-	// A character arrives standing (round 605, motion.go; ours: the retail
+	// A character arrives standing (round 607, motion.go; ours: the retail
 	// object's re-creation is inferred). The client drops its own sit on the
 	// zone change too.
 	motions.stand(old.CharacterID, time.Now())
@@ -879,11 +940,11 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 		X: float32(pos.X), Y: float32(pos.Y), Z: float32(pos.Z),
 		Others:      otherSnapshots,
 		FrameRegion: frame,
+		Seated:      seatedAmong(othersNew),
 	}
 	if err := sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: result.Encode()}); err != nil {
 		return true, err
 	}
-	tellSeated(sess, othersNew)
 
 	leftMsg := &EntityLeft{CharacterID: old.CharacterID}
 	for _, other := range remainingOld {
@@ -919,7 +980,7 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 	// A move in the sit/stand transition is refused, as the retail movement
 	// handler refuses MOTIONSTATE_CHANGEMOTION (0x4b0f83); a move while
 	// sitting is accepted and stands the character at once, as its
-	// SetMotionState(WALK/RUN) does (round 605, motion.go). Neither the store
+	// SetMotionState(WALK/RUN) does (round 607, motion.go). Neither the store
 	// nor the zone hears a refused one, as for the dead.
 	if e, inWorld := hub.EntityBySession(sess.ID()); inWorld {
 		if accepted, _ := motions.moved(e.CharacterID, time.Now()); !accepted {

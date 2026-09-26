@@ -1,6 +1,6 @@
 package session
 
-// Sitting down and standing up (round 605): the N key's request, the 1.5 s
+// Sitting down and standing up (round 607): the N key's request, the 1.5 s
 // transition, the broadcast, and the motion state passive regeneration reads.
 //
 // READ from SR_GameServer.exe (docs/protocol/opcodes/motion.md has the
@@ -344,22 +344,18 @@ func standOnHit(hub *world.Hub, characterID int64, damage int) {
 	}
 }
 
-// tellSeated sends sess one 0x30bf {id, 1, 4} for every character in others
-// who is sitting or sitting down, right after the list that introduces them
-// (an enter-world or zone-change result): srrevamp's EntitySnapshot carries no
-// motion state, so a player arriving later would otherwise see a sitter
-// standing. OURS: what the retail spawn packet carries for this was not read.
-func tellSeated(sess *gateway.Session, others []world.Entity) {
-	if sess == nil {
-		return
-	}
+// seatedAmong lists the characters in others who are sitting or sitting down,
+// for the Seated tail of an enter-world or zone-change result (round 607):
+// the snapshot that spawns their bodies carries no motion state of its own.
+func seatedAmong(others []world.Entity) []int64 {
 	now := time.Now()
+	var ids []int64
 	for _, o := range others {
 		if motions.sittingOrSittingDown(o.CharacterID, now) {
-			msg := (&StateChange{ObjectID: uint32(o.CharacterID), Kind: StateKindMotion, Value: MotionSit}).Encode()
-			_ = sess.Send(&proto.Packet{Opcode: OpStateChange, Data: msg})
+			ids = append(ids, o.CharacterID)
 		}
 	}
+	return ids
 }
 
 // sittingOrSittingDown reports whether characterID is SIT or in the
