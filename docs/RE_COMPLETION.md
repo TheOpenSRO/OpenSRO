@@ -44185,3 +44185,71 @@ either review) the order and scroll checks FAIL, 5 lines:
 in the reply); objective lines (objective text); the time left; the quick list
 (`questminilist.2dt`) behind the check box; the windows behind 18 and 19; the scroll bar's art;
 the draw of an off-size static.
+
+## Windows draw and take clicks above the chat (round 602)
+
+Client only. World3D added HudPanels to its UI control (`World3D.gd`, the "Every floating game
+window" block) and HudChat after it, so the chat -- a MOUSE_FILTER_STOP rectangle of 399x398 at
+(2, 182) in the 1152x648 view, on the underbar -- drew over every game window it overlapped and
+took its clicks and the wheel there. At 1152x648 that is the quest window at (80, 140) (x 80..401,
+y 182..509) and the main popup at x 80, y 262. Godot draws a parent's children in order and
+hit-tests them in reverse, so the later child wins both.
+
+### Retail's order (not settled)
+
+- The quest window is loaded at game start (`0x786f30`, called from the state switch at
+  `0x84c2c0`), after CGInterface builds the registry windows from `ginterface.txt` (`push
+  0xdb97c4` at `0x78c9ce`). In `ginterface.txt` `GDR_MAINPOPUP` comes before `GDR_CHAT_BOARD`
+  (measured: lines 704 and 800 of the file's registry).
+- A child is appended with `0xb90a80` (push_back on +0x7c). ShowWindow (`0x46d760`) sets the
+  flag (`0xb8f500`) and walks a list of the singleton `0x115e9c8` marking entries dirty
+  (`0x48cf10` -> `0xb90bd0`); no move within the parent's list was found there. The mouse
+  dispatch (`0xb91750` / `0xb917f0`) walks +0x7c and recurses into each child whose +0x38 is non-zero (`0xb917f0` first tests the
+  window's own shown flag, `0xb8f530`); what it does with the hit child was not traced.
+- The draw loop and any bring-to-front on click were **not read**. With creation order alone the
+  quest window would sit above the chat and the main popup below it, so creation order does not
+  settle what the player sees. **The order here is ours.**
+
+### The fix (ours)
+
+`HudPanels.stack_over(chat)` moves the chat to directly below HudPanels in their shared parent,
+and World3D calls it right after adding the chat. HudPanels is a full-screen IGNORE container, so:
+- where a window lies over the chat, the window draws on top and takes the click and the wheel;
+- where no window lies, the chat takes its clicks as before, and its input line still focuses;
+- the chat moves only below HudPanels, so it draws above nothing it did not draw above before
+  (nothing is added to the UI control between the two).
+
+**The trade-off (measured in review, from the placements).** The main popup's left-hand tabs
+(character, academy) sit at (80, 240) at 1152x648, 388x408: its `wanted` y 262 is clamped to
+648 - 408 (`HudMainPopup.keep_on_screen`). That window now covers the chat's input line (40, 560,
+360x25) from x 80 to 400, so only x 40..80 of the line still takes a click while that tab is up,
+and it hides the scrollback beneath it. Before this round the chat won both. The quest window
+(bottom edge 509) leaves the input line free. Which one retail puts on top is the open question
+above: its draw order and any bring-to-front on click are not read.
+
+### Tests
+
+`client/scripts/ui/hud/hud_stack_test.gd` builds World3D's composition (an IGNORE full-screen
+control, HudPanels, then HudChat from a synthetic `ifchatviewer.txt` with its message box and
+input line, at (2, 182)), opens the quest window with twelve quests, and pushes real mouse events
+through the viewport (`Viewport.push_input`: motion, press, release). It checks that a click at
+(200, 300), over both, reaches the quest window and not the chat; that a wheel notch there
+scrolls the quest list; that a click at (30, 300), over the chat alone, reaches the chat; that
+clicking the chat's input line focuses it; and that World3D calls `stack_over` after adding the
+chat.
+
+NEGATIVE against round 601's scripts (879a818, this round's parent; the test copied into a
+checkout of that tree on the box):
+**6 FAIL lines**, no SCRIPT ERROR:
+- `FAIL HudPanels can put the chat below its windows (stack_over)`
+- `FAIL World3D stacks the windows over the chat after adding it`
+- `FAIL the chat sits directly below the windows (chat 1, panels 0): above nothing it was not above`
+- `FAIL a click where they overlap reaches the quest window, not the chat (window 0, chat 1)`
+- `FAIL the wheel where they overlap scrolls the quest list (position 0)`
+- `FAIL the windows draw after the chat`
+
+On this tree the suite prints ALL PASS.
+
+**Results** (this round's tree, a fresh copy on the box). `remote_godot.sh check`: 303 scripts and
+5 scenes, ALL LOAD. `remote_godot.sh tests`: 116 suites, 0 failing, 0 SCRIPT ERROR. `cd server &&
+go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok, 10 with no tests.

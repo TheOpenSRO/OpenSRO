@@ -527,6 +527,24 @@ func _guild_window() -> GuildWindow:
 	_windows[GUILD_WINDOW_KEY] = window
 	return window
 
+## Keeps every window this node holds drawn above the chat window, and hit
+## first where the two overlap, by putting `chat` directly below this node
+## in their shared parent (World3D adds the chat after this node, so the
+## chat drew over, and took the clicks and the wheel of, every window it
+## overlapped: at 1152x648 the quest window at (80, 140) and the main popup
+## at x 80). **Ours:** the retail order was not read -- the quest window
+## (0x786f30, game start) is created after the registry windows (0x78c9ce)
+## and GDR_MAINPOPUP comes before GDR_CHAT_BOARD in ginterface.txt, and the
+## draw loop and any bring-to-front on click were not read, so neither
+## order settles it. This node is a full-screen IGNORE container, so where
+## no window lies the chat takes its clicks as before, and the chat moves
+## only below this node: it is drawn above nothing it was not above before.
+func stack_over(chat: Control) -> void:
+	if chat == null or get_parent() == null or chat.get_parent() != get_parent():
+		return
+	if chat.get_index() > get_index():
+		get_parent().move_child(chat, get_index())
+
 const QUEST_ID := "quest"
 
 ## The quest window, built the first time it is wanted (the client builds it

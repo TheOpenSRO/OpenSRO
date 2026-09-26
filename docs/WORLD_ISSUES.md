@@ -7083,6 +7083,25 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-second round: windows draw and take clicks above the chat
+
+The full record is `docs/RE_COMPLETION.md`'s entry of the same name.
+
+- **The bug.** World3D added the chat after HudPanels, so the chat (STOP, 399x398 at (2, 182))
+  drew over and took the clicks and the wheel of every window it overlapped: the quest window at
+  (80, 140) and the main popup at x 80.
+- **Retail's order was not settled.** The quest window is created after the registry windows,
+  but GDR_MAINPOPUP precedes GDR_CHAT_BOARD in ginterface.txt, and the draw loop and any
+  bring-to-front on click were not read. The order here is ours.
+- **The fix.** `HudPanels.stack_over` puts the chat directly below the windows. Where no window
+  lies, the chat and its input line work as before; the chat draws above nothing new.
+- **Trade-off.** The main popup's left-hand tabs (character, academy) at (80, 240), 388x408, now
+  cover the chat's input line from x 80 to 400 (only x 40..80 still takes a click) and hide the
+  scrollback under them; before this round the chat won both. The quest window (bottom at 509)
+  leaves the input line free.
+- **Tests.** `hud_stack_test.gd` pushes real events through the viewport: 6 FAIL lines against
+  round 601's scripts, ALL PASS here. 116 suites, 0 failing; Go 59 ok.
+
 ## Six-hundred-and-first round: Q opens the client's own Quest window, with the player's quests on its rows
 
 The full record is `docs/RE_COMPLETION.md`'s entry of the same name.

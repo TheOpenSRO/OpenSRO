@@ -1658,6 +1658,10 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_chat.name = "HudChat"
 	ui_control.add_child(_hud_chat)
 	_hud_chat.setup()
+	# The game windows draw, and take clicks and the wheel, above the chat
+	# where they overlap (HudPanels.stack_over has why, and that the order
+	# is ours).
+	_hud_panels.stack_over(_hud_chat)
 	# Anchored to the bottom-left corner with explicit offsets, the same way
 	# the underbar is: setting `position` on an anchored Control places it
 	# relative to the *parent's* top-left, not the anchor, which put the

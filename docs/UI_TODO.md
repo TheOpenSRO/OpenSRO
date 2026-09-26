@@ -420,6 +420,11 @@ authored presentation instead:
 - **Quest** — *done for the rows the server can state* (round 601): the player's quests on the
   client's own rows. The count pair, level colour, objectives and time are open (see Done).
 
+- **Windows over the chat** (round 602, ours) -- the game windows draw and take clicks above
+  the chat window where they overlap (`HudPanels.stack_over`). Open: retail's draw order and
+  bring-to-front are not read; meanwhile the main popup's left-hand tabs at (80, 240) cover the
+  chat's input line from x 80 to 400 and the scrollback under them.
+
 ### 2. Vitals, and the rest of the live data
 `HudPlayerInfo.set_hp`/`set_mp` exist and are called with a placeholder 200/200, because the
 server does not report vitals to the client yet. Wire it once it does — and until then the
