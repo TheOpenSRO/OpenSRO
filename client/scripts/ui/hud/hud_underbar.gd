@@ -565,8 +565,9 @@ func _clamp_menu() -> void:
 ## popup's behaviour.
 ##
 ## Escape closes it too, before anything else takes the key (HudPanels would
-## otherwise open the system window). **Also this project's choice**: the
-## client's Escape handling for this menu was not read.
+## otherwise open the system window) -- unless a text line has the keyboard,
+## which takes that Escape first (round 606). **Also this project's choice**:
+## the client's Escape handling for this menu was not read.
 func _input(event: InputEvent) -> void:
 	if _menu == null or not _menu.visible:
 		return
@@ -582,6 +583,13 @@ func _input(event: InputEvent) -> void:
 	elif event is InputEventKey:
 		var key := event as InputEventKey
 		if key.pressed and not key.echo and key.keycode == KEY_ESCAPE:
+			# A text line with the keyboard -- the chat line, opened by Enter
+			# while the menu is up -- takes Escape first and ends its input
+			# (round 606); the next Escape closes the menu. Ours, like the
+			# rest of this Escape.
+			var focus := get_viewport().gui_get_focus_owner()
+			if (focus is LineEdit or focus is TextEdit) and focus.is_visible_in_tree():
+				return
 			hide_menu()
 			get_viewport().set_input_as_handled()
 

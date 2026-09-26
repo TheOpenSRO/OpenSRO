@@ -45146,7 +45146,8 @@ depends on keeping it.
   passed in a register the decompiler dropped; **inferred** from the pattern).
 - **Enter in the line.** `0x7ad400` is the viewer's key handler for its input box. The viewer
   calls it itself at `0x7af463` with `0x0d`, after setting the box's text through vslot `0xb4`
-  (`0x7af44c..0x7af45b`); it is also in the table at `0xd71880`. It handles:
+  (`0x7af44c..0x7af45b`). Its address is also stored by a static initialiser in `.text` at
+  `0xd71880` (`mov eax, 0x7ad400; mov [0xebeba0], eax`), into a table at `0xebeba0`. It handles:
   - Tab (`9`): ignored.
   - Escape (`0x1b`): `0x7a9a40` at `0x7ad4dd`.
   - Enter: the box's text is read. An empty text (`0x7ad544`, `je 0x7ad598`) goes to `0x7a9a40`
@@ -45164,15 +45165,38 @@ depends on keeping it.
 
 Implemented in HudChat:
 
-- `_unhandled_key_input`: Enter or keypad Enter, without modifiers, focuses the line (the
-  existing `focus_input`, which had no caller), unless the chat is hidden. An Enter that reaches
-  the unhandled stage was taken by neither a focused LineEdit (which submits) nor a focused button
-  (`ui_accept`).
-- `_on_submitted`: an empty line releases the focus. A line of spaces counts as empty; that is
-  ours, since the client's length test was not traced through whatever trims the text.
+- `_unhandled_key_input`: Enter or keypad Enter focuses the line (the existing `focus_input`,
+  which had no caller), unless the chat is hidden. A focused LineEdit keeps Enter (it submits on
+  the press). **A focused button does not** (corrected by the review, measured in Godot 4.2.2
+  with `push_input`): a FOCUS_ALL TextureButton in the default release action mode leaves
+  Enter's press unhandled and fires on the release. With HudChat the press moves the focus to the
+  chat line, and the button's `pressed` never fires. So after a click on a UiBuilder button (the
+  popup's panes, storage, exchange), Enter opens the chat where, before this round, it pressed
+  the button again. That is closer to the client, which has no keyboard focus on buttons and
+  opens the chat on Enter. It is kept, as **ours, measured**; the test's check (l) holds it.
+- **Ours:** Enter with Shift, Ctrl, Alt or Meta held does not open the line. `0x78b660` tests only
+  `param_2 == 0x0d`.
+- **Not built:** two gates come first in `0x78b660`. The interface's `+0x7ba == 1` drops every
+  key, and `+0x7ec != 0` hands the key to `0x78ae00`, which acts on Escape only. Neither state
+  was identified.
+- `_on_submitted`: an empty line releases the focus. **Traced: no trim.** The test at `0x7ad544`
+  compares the text's size with 0; vslot `0xb8` (`0x634da0`) returns the box's raw buffer, and
+  `0x46e3d0` is a wcslen and assign (the review's reading). A line of spaces is therefore not
+  empty: it takes the send path and the box keeps the focus. HudChat now sends the text exactly
+  as typed (it used to strip it, and dropped a line of spaces). Our server's say handler
+  (`session.handleChatSay`) relays any text, spaces included; the console strips a slash line
+  itself.
 - Escape in the line: Godot's LineEdit already releases the focus on `ui_cancel` and consumes the
-  key, so the System window does not open (the test's check (j), and the live run of round 605's
-  first session). This matches `0x7ad4dd`.
+  key. This matches `0x7ad4dd`. Check (j) holds it with the quest window open behind the line:
+  the window stays open, and the key never reaches the unhandled stage. The first version of
+  (j) asserted that "the System window does not open", which could not fail, because the
+  fixture has no System layout; (d)'s "opens nothing" had the same flaw. Both now assert that an
+  open window survives the Escape, and that the sink never sees KEY_ESCAPE.
+- **Escape with the bar's menu up.** HudUnderbar's `_input` took every Escape while its menu was
+  up (round 598, ours). So with the menu up, Enter opened the chat, and the next Escape closed the
+  menu while the line kept the keyboard. Now a focused text line takes that Escape first and ends
+  its input, and the next Escape closes the menu. The client's Escape for this menu was not read.
+  Check (m) holds it.
 
 This client builds no DAT_00eed374 window, so that branch is not implemented.
 
@@ -45188,6 +45212,38 @@ Live, d4d1303 + this round, 1280x720, `--server` (`SRREVAMP_QA_INPUT`):
 - Enter again gives `focus=null`.
 - I then opens `[inventory,equipment]`, I again closes it, and J reaches `World3D._unhandled_input`.
 
+### A fourth way the input ends: the flood block (read by the review, not implemented)
+
+`CIFChatViewer::vslot_005`, on its timer `0x52`, calls `0x7a9a40` at `0x7aa051`. The instructions
+before it (`0x7aa033..0x7aa04f`, checked here) set `+0x3f8` to 1 and clear the box through vslot
+`0xb4`. The review's reading of the rest, not re-derived here:
+
+- the send path at `0x7ad665` calls `0x7a9bb0(10)` when 4 lines fall inside `0xfa0` ms, or 6
+  inside `0x2710` ms;
+- that sets `+0x3f8` to 0 and starts a 1 s timer that runs 10 times, after which the code above
+  runs;
+- while blocked, Enter clears the box, shows message `0xdbc09c` and keeps the focus (`0x7ad43f`).
+
+This client does not build the block; our server does not rate-limit chat either.
+
+### CIFEdit's own mouse rule (a lead for round 605's unread rule)
+
+`0x637290` is CIFEdit's slot 17 (also CIFEInputChatBox's), a window-message handler:
+
+- **`0x201` (WM_LBUTTONDOWN):** a press outside the edit's rect (its `0xb8f420` rect, less 16 px
+  of width when `0x635170(0x40)`) ends the input, when `0xb9da40` is non-zero and two
+  `0xb8f4d0` results match. That is: SetFocus on the main window's HWND, then `0xb9d9f0` on
+  `0xb8f4f0` (`+0x30`). A press inside gives the edit the UI focus (`0xb9d9f0`).
+- **`0x202`, `0x204`, `0x205` (left up, right down, right up):** the same outside-the-rect test
+  and release, followed by `0xb9d890(param_2)`.
+- **`0x200` (mouse move):** also releases when `0xba6240(1)`; not read further.
+
+So the client's edit does end its input on a left press outside itself, as round 605's rule
+does. It also appears to do so on the right button and on releases, which ours does not; right
+presses orbit the camera here. What `0xb9da40` and the `0xb8f4d0` comparison select, and which
+messages the edit receives when the press lands on another window, were not read. This is
+recorded as a lead, not as a confirmation of round 605's rule.
+
 ### Negative
 
 `hud_keys_after_chat_test.gd` gains these checks, all through `push_input`:
@@ -45196,7 +45252,22 @@ Live, d4d1303 + this round, 1280x720, `--server` (`SRREVAMP_QA_INPUT`):
 - (h) a LineEdit inside the quest window under a STOP window, then a click and a K;
 - (i) the chat line's strip below the chat window, over the bar, keeps the focus;
 - (j) Enter, Enter with a line, Enter on the empty line, keypad Enter, Escape, and Enter with the
-  chat hidden.
+  chat hidden;
+- (k, the review) a line of spaces and a line with edge spaces are sent as typed, and the line
+  keeps the keyboard;
+- (l, the review) a focused FOCUS_ALL button: Enter opens the chat line and does not press it
+  again;
+- (m, the review) the bar's menu up, then Enter, Escape (the line only) and Escape (the menu);
+  Shift+Enter does not open the line.
+
+The review's checks against dec22f1's scripts: 4 FAIL, the rest pass.
+
+```
+FAIL a line of spaces is sent as typed (sent [])
+FAIL and the line keeps the keyboard (focus null)
+FAIL a line is sent untrimmed (sent [])
+FAIL Escape ends the line's input first and leaves the menu up (focus Input, menu false)
+```
 
 Against 3d08974's scripts (a copy with only the test replaced), 9 FAIL:
 
@@ -45225,6 +45296,5 @@ sync` adds and overwrites but never deletes, so the lane still held the scratch
 - The DAT_00eed374 window's Enter branch (which window, and whether this client will ever build
   it).
 - The length-1 branch at `0x7ad826`: which mode and which line leave the input there.
-- A focused FOCUS_ALL button (the ui_builder panes) still takes Enter as `ui_accept`, so Enter then
-  presses the button instead of opening the chat. The client has no such button focus, so this is
-  ours, and it was left unchanged.
+- The flood block (above).
+- What the CIFEdit `0x201` conditions (`0xb9da40`, the `0xb8f4d0` pair) select.

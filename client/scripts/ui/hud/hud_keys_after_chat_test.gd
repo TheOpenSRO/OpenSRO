@@ -242,16 +242,25 @@ func _run() -> void:
 	_key(KEY_ENTER)
 	await process_frame
 	_check(get_root().gui_get_focus_owner() == line, "the probe: the line has the keyboard again (focus %s)" % _focus_name())
+	# A window open behind the menu, so that "Escape closed only the menu"
+	# can fail: the fixture has no System layout, so "System did not open"
+	# could not.
+	panels.call("open", "quest")
+	await process_frame
 	_click(_centre(menu_btn))
 	await process_frame
 	_check(bar.is_menu_open(), "the bar's menu button opens its menu")
 	_check(get_root().gui_get_focus_owner() == null,
 		"a click on the bar's menu button takes the keyboard from the chat (focus %s)" % _focus_name())
-	# Escape still closes the menu first (round 598), and not the System window.
+	# Escape still closes the menu first (round 598), and only the menu.
+	_keys_seen.clear()
 	_key(KEY_ESCAPE)
 	await process_frame
-	_check(not bar.is_menu_open() and not panels.call("is_open", "system"),
-		"Escape closes the bar's menu and opens nothing")
+	_check(not bar.is_menu_open() and panels.call("is_open", "quest") and not _keys_seen.has(KEY_ESCAPE),
+		"Escape closes the bar's menu and nothing else (quest open %s, unhandled %s)" % [
+			panels.call("is_open", "quest"), _keys_seen])
+	panels.call("close", "quest")
+	await process_frame
 	_click(_centre(line))
 	await process_frame
 	_click(_centre(menu_btn))
@@ -408,14 +417,98 @@ func _run() -> void:
 	_key(KEY_KP_ENTER)
 	await process_frame
 	_check(get_root().gui_get_focus_owner() == line, "the keypad's Enter opens the line too (focus %s)" % _focus_name())
-	# Escape in the line ends the input (0x7ad4dd) and opens nothing.
+	# Escape in the line ends the input (0x7ad4dd) and does nothing else: a
+	# window open behind the line stays open, and the key is consumed.
+	panels.call("open", "quest")
+	await process_frame
+	_check(get_root().gui_get_focus_owner() == line, "the probe: the line still has the keyboard with the quest window open (focus %s)" % _focus_name())
+	_keys_seen.clear()
 	_key(KEY_ESCAPE)
 	await process_frame
-	_check(get_root().gui_get_focus_owner() == null and not panels.call("is_open", "system"),
-		"Escape in the line ends the input and does not open the System window (focus %s)" % _focus_name())
+	_check(get_root().gui_get_focus_owner() == null, "Escape in the line ends the input (focus %s)" % _focus_name())
+	_check(panels.call("is_open", "quest") and not _keys_seen.has(KEY_ESCAPE),
+		"and does nothing else: the quest window stays open (%s), the key is consumed (unhandled %s)" % [
+			panels.call("is_open", "quest"), _keys_seen])
+	panels.call("close", "quest")
+	await process_frame
 	# While the HUD is hidden, Enter does not open the line.
 	chat.visible = false
 	_key(KEY_ENTER)
 	await process_frame
 	_check(get_root().gui_get_focus_owner() == null, "with the chat hidden, Enter opens nothing (focus %s)" % _focus_name())
 	chat.visible = true
+
+	# (k) A line of spaces is not empty in the client (0x7ad544 tests the raw
+	# length; no trim): it is sent as typed and the line keeps the keyboard.
+	_key(KEY_ENTER)
+	await process_frame
+	_sent.clear()
+	_type("  ")
+	_key(KEY_ENTER)
+	await process_frame
+	_check(_sent == ["  "], "a line of spaces is sent as typed (sent %s)" % [_sent])
+	_check(get_root().gui_get_focus_owner() == line, "and the line keeps the keyboard (focus %s)" % _focus_name())
+	_sent.clear()
+	_type(" hi ")
+	_key(KEY_ENTER)
+	await process_frame
+	_check(_sent == [" hi "], "a line is sent untrimmed (sent %s)" % [_sent])
+	_key(KEY_ENTER)
+	await process_frame
+	_check(get_root().gui_get_focus_owner() == null, "the probe: the empty Enter ends the input (focus %s)" % _focus_name())
+
+	# (l) Ours, measured: a focused FOCUS_ALL button (a UiBuilder button) does
+	# not keep Enter. Its press is unhandled (the button fires on release), so
+	# Enter opens the chat line and the button never fires.
+	var btn := Button.new()
+	btn.text = "b"
+	btn.position = Vector2(700, 120)
+	btn.size = Vector2(80, 30)
+	btn.focus_mode = Control.FOCUS_ALL
+	ui.add_child(btn)
+	var fired := [0]
+	btn.pressed.connect(func() -> void: fired[0] += 1)
+	await process_frame
+	_click(_centre(btn))
+	await process_frame
+	_check(get_root().gui_get_focus_owner() == btn and fired[0] == 1,
+		"the probe: a click presses the button and gives it the focus (focus %s, fired %d)" % [_focus_name(), fired[0]])
+	_key(KEY_ENTER)
+	await process_frame
+	_check(get_root().gui_get_focus_owner() == line, "Enter on a focused button opens the chat line (focus %s)" % _focus_name())
+	_check(fired[0] == 1, "and does not press the button again (fired %d)" % fired[0])
+	_key(KEY_ESCAPE)
+	await process_frame
+	btn.queue_free()
+	await process_frame
+
+	# (m) The bar's menu up, then Enter: the chat line opens; Escape ends the
+	# line's input first and leaves the menu up; the next Escape closes the
+	# menu (round 606).
+	_click(_centre(menu_btn))
+	await process_frame
+	_check(bar.is_menu_open() and get_root().gui_get_focus_owner() == null,
+		"the probe: the bar's menu is up and nothing has the keyboard (focus %s)" % _focus_name())
+	_key(KEY_ENTER)
+	await process_frame
+	_check(get_root().gui_get_focus_owner() == line, "Enter with the menu up opens the chat line (focus %s)" % _focus_name())
+	_key(KEY_ESCAPE)
+	await process_frame
+	_check(get_root().gui_get_focus_owner() == null and bar.is_menu_open(),
+		"Escape ends the line's input first and leaves the menu up (focus %s, menu %s)" % [_focus_name(), bar.is_menu_open()])
+	_key(KEY_ESCAPE)
+	await process_frame
+	_check(not bar.is_menu_open(), "the next Escape closes the menu")
+	# Enter with a modifier does not open the line (ours).
+	_key(KEY_ENTER)
+	await process_frame
+	_key(KEY_ESCAPE)
+	await process_frame
+	var shifted := InputEventKey.new()
+	shifted.keycode = KEY_ENTER
+	shifted.physical_keycode = KEY_ENTER
+	shifted.shift_pressed = true
+	shifted.pressed = true
+	get_root().push_input(shifted)
+	await process_frame
+	_check(get_root().gui_get_focus_owner() == null, "Shift+Enter does not open the line (focus %s)" % _focus_name())

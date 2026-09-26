@@ -7105,9 +7105,20 @@ The full record is `docs/RE_COMPLETION.md`'s entry of the same name (round 606).
     missing a part, and a length-1 line in some modes).
   - Implemented in HudChat: Enter opens the line, an empty Enter closes it. Escape already did,
     through Godot's LineEdit.
+  - No trim (the review traced it): a line of spaces is not empty and is sent; HudChat now sends
+    what was typed, as typed.
+  - Ours: Shift/Ctrl/Alt/Meta+Enter does not open the line.
+  - Measured by the review: a focused button no longer keeps Enter; Enter opens the chat, and the
+    button does not fire again. Kept; the client has no button focus.
+  - With the bar's menu up, the chat line now takes Escape first, and the next Escape closes the
+    menu.
+  - Read, not built: the flood block (`0x7aa051`, 4 lines in 4 s or 6 in 10 s) and the gates
+    `+0x7ba` and `+0x7ec`.
+  - Lead for round 605: CIFEdit's `0x637290` ends the input on a left press outside its rect
+    (`0x201`), and on `0x202`/`0x204`/`0x205`.
 - **Measured live.** Enter, `hello`, Enter: sent, focus kept. Enter again: focus null. I then
   opens and closes the inventory.
-- **Negative.** 9 FAIL against 3d08974; ALL PASS here.
+- **Negative.** 9 FAIL against 3d08974; the review's added checks 4 FAIL against dec22f1; ALL PASS here.
 - **Correction.** Round 605's "307 scripts" counted a scratch tool that sync had left on the lane.
   A clean tree has 306.
 

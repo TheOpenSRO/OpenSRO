@@ -172,23 +172,25 @@ func _install_input(root: Control) -> void:
 ## and, when it is empty (the length test at 0x7ad544, `je 0x7ad598`), ends
 ## the input: 0x7a9a40 gives the Win32 focus back to the main window
 ## (SetFocus) and moves the UI focus to the viewer's +0x30 (0xb9d9f0; that
-## +0x30 is its parent is **inferred**). A line with text is sent. The
-## handler calls 0x7a9a40 at only three places (0x7ad4dd, 0x7ad59a,
-## 0x7ad7e4): Escape, the empty line, and, from 0x7ad7d3 and 0x7ad82e, a
-## mode-2 line missing one of the two parts 0x7ab230 parses out and a line of
-## length 1 in the modes that reach 0x7ad826 (what those modes and lines are
-## was not read). So after a line is sent the box keeps the focus, as this
-## LineEdit does. Escape in the box ends the input too (0x7ad4dd); Godot's
-## LineEdit already releases its focus on ui_cancel and consumes the key, so
-## the System window does not open. Here a line of only spaces counts as
-## empty (ours: the client's length test was not traced through its trim).
+## +0x30 is its parent is **inferred**). The test is on the raw text: vslot
+## 0xb8 (0x634da0) returns the box's buffer and 0x46e3d0 copies it by its
+## wcslen, with no trim (traced by round 606's review), so a line of spaces is
+## not empty -- it takes the send path like any other line, and is sent as
+## typed here too. A line with text is sent. In the handler 0x7a9a40 is
+## called at only three places (0x7ad4dd, 0x7ad59a, 0x7ad7e4): Escape, the
+## empty line, and, from 0x7ad7d3 and 0x7ad82e, a mode-2 line missing one of
+## the two parts 0x7ab230 parses out and a line of length 1 in the modes that
+## reach 0x7ad826 (what those modes and lines are was not read). So after a
+## line is sent the box keeps the focus, as this LineEdit does. Escape in the
+## box ends the input too (0x7ad4dd); Godot's LineEdit already releases its
+## focus on ui_cancel and consumes the key. The client's flood block (a
+## fourth way the input ends, docs/RE_COMPLETION.md round 606) is not built.
 func _on_submitted(text: String) -> void:
-	var trimmed := text.strip_edges()
 	_input.clear()
-	if trimmed == "":
+	if text == "":
 		_input.release_focus()
 		return
-	message_submitted.emit(trimmed)
+	message_submitted.emit(text)
 
 ## Adds one line. `speaker` empty makes it a system line.
 func add_message(speaker: String, text: String) -> void:
@@ -228,10 +230,21 @@ func focus_input() -> void:
 ## builds nothing for it), and otherwise fetches the interface's child 1,
 ## GDR_CHAT_BOARD (0x8b51f0 with 1), and gives the focus to its +0x4a0
 ## (0x7a9a70 -> 0xb9d9f0) -- GetChild(0x0b) in CIFChatViewer::Create
-## (0x7abc6f..0x7abc7a), ifchatviewer.txt's GDR_CHAT_INPUTBOX (id 11). An
-## Enter that reaches the unhandled stage was not taken by a focused text
-## line (LineEdit submits on it) nor by a focused button (ui_accept presses
-## it), so nothing else wants it. Not while the HUD is hidden.
+## (0x7abc6f..0x7abc7a), ifchatviewer.txt's GDR_CHAT_INPUTBOX (id 11). Two
+## gates come first in 0x78b660 and are not built here: the interface's
+## +0x7ba == 1 drops every key, and +0x7ec != 0 hands the key to 0x78ae00,
+## which acts on Escape only (neither state identified).
+##
+## **Ours:** an Enter with Shift, Ctrl, Alt or Meta held does not open the
+## line (the client tests only the key code, 0x0d). And a focused button does
+## not keep Enter: measured (round 606's review, Godot 4.2.2, push_input), a
+## FOCUS_ALL TextureButton in the default release action mode leaves Enter's
+## press unhandled and fires on its release, so this handler takes the press,
+## the focus moves to the line, and the button never fires -- after a click on
+## a UiBuilder button (the popup's panes, storage, exchange), Enter opens the
+## chat instead of pressing the button again, which is what the client does
+## (it has no keyboard focus on buttons). A focused text line does keep it
+## (LineEdit submits on the press). Not while the chat is hidden.
 func _unhandled_key_input(event: InputEvent) -> void:
 	var key := event as InputEventKey
 	if key == null or not key.pressed or key.echo or key.ctrl_pressed or key.alt_pressed \
