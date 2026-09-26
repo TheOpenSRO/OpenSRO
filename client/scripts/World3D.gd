@@ -1617,6 +1617,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.npc_service_selected.connect(_on_npc_service_selected)
 	_hud_panels.guild_create_requested.connect(_on_guild_create_requested)
 	_hud_panels.guild_leave_requested.connect(_on_guild_leave_requested)
+	# The teleport board's Move (round 578): sent with the gate it was opened at.
+	_hud_panels.teleport_requested.connect(_on_teleport_requested)
 	# The Revive button (round 548): the one click a dead player has.
 	_hud_panels.revive_requested.connect(_on_revive_requested)
 	# A server refusal the panels hear about (a mastery raise) goes to chat.
@@ -4297,6 +4299,14 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	_teleport_arrival_pending = false
 	if not result.ok:
 		return
+	# No gate UI survives a zone change (round 578): its gate is behind. The
+	# board goes, and so do the talk box it was opened from and the NPC it
+	# names -- HudPanels keeps the talk box up behind a service window, so a
+	# talk box left up here would reopen the old gate's board from the new
+	# zone (its teleport line reads _talk_npc_code), and Move would send the
+	# old gate's links from there; the server has no range test
+	# (session/teleport.go's header).
+	_close_gate_ui()
 	# A teleport shows the "NOW LOADING" screen (the playtester's call: the
 	# loading screen belongs on a teleport). Up before the zone assets load so
 	# even the synchronous centre-cell build is behind it; the queued
@@ -7844,6 +7854,11 @@ func _update_blob_shadow() -> void:
 ##                          (round 577) is the nearest teleport gate
 ##                          _bind_region_gates bound, aimed at the middle of
 ##                          its drawn box
+##   SRREVAMP_QA_TELEPORT=<dest id> (round 578; with SRREVAMP_QA_CLICK=gate
+##                          and a server) choose the gate's teleport line,
+##                          then press the board's Move for that teleportdata
+##                          id: `QA TELEPORT: requested <gate> -> <dest>`
+##                          (_qa_advance_teleport)
 ##   SRREVAMP_QA_EQUIP="s=id,.." dress the player from this loadout when no
 ##                          server is present: "slot=item_id" pairs (slots per
 ##                          EquipmentNet, e.g. "1=3637,4=3638,5=3639,6=3632"
@@ -8279,6 +8294,8 @@ func _qa_step() -> void:
 		_qa_mob_move()
 	if not _qa_click_queue.is_empty():
 		_qa_advance_click()
+	if _qa_teleport_stage < 2 and OS.get_environment("SRREVAMP_QA_TELEPORT") != "":
+		_qa_advance_teleport()
 
 	# Not before the entry has finished loading: see _initial_load_done.
 	if not _qa_shots.is_empty() and _initial_load_done:
@@ -9077,6 +9094,41 @@ func _qa_advance_click() -> void:
 	_qa_click_queue.pop_front()
 	_qa_click_stage = 0
 	_qa_click_wait = 30
+
+## SRREVAMP_QA_TELEPORT=<dest id> (round 578): once a gate's talk box is up
+## (SRREVAMP_QA_CLICK=gate), choose its 'Select teleport area' line through
+## the talk box's own handler, then press the board's Move for that
+## destination (HudPanels.qa_press_teleport_move) and print
+## `QA TELEPORT: requested <gate> -> <dest>`. Stage 0 waits for the talk box,
+## 1 for the board, 2 is done.
+var _qa_teleport_stage := 0
+var _qa_teleport_wait := 0
+
+func _qa_advance_teleport() -> void:
+	var want := OS.get_environment("SRREVAMP_QA_TELEPORT")
+	if not want.is_valid_int() or _hud_panels == null:
+		_qa_teleport_stage = 2
+		print("QA TELEPORT: '%s' is not a teleportdata id" % want)
+		return
+	if _qa_teleport_wait > 0:
+		_qa_teleport_wait -= 1
+		return
+	if _qa_teleport_stage == 0:
+		if _hud_panels.is_open("npctalk") and _teleport_reader != null \
+				and _teleport_reader.point_for_building(_talk_npc_code) != null:
+			print("QA TELEPORT: choosing the teleport line at %s" % _talk_npc_code)
+			_hud_panels._on_npc_talk_choice("teleport")
+			_qa_teleport_stage = 1
+			_qa_teleport_wait = 30
+		return
+	if not _hud_panels.is_open("teleport"):
+		return
+	var dest := int(want)
+	if _hud_panels.qa_press_teleport_move(dest):
+		print("QA TELEPORT: requested %d -> %d" % [_teleport_gate_point_id, dest])
+	else:
+		print("QA TELEPORT: the board lists no destination %d" % dest)
+	_qa_teleport_stage = 2
 
 ## The nearest target of a kind: {pos, half_height, name}, or {} if none.
 ## "ground" is a spot 30 units ahead of the player.
@@ -10470,10 +10522,16 @@ func _place_at_region_local(region_x: int, region_y: int, local_x: float, local_
 func _on_teleport_result(result: TeleportNet.Result) -> void:
 	if result == null:
 		return
+	_teleport_request_pending = false
 	if result.ok:
 		_teleport_arrival_pending = true
-		_log_system(TeleportNet.receipt_line(_teleport_place_name(result.destination), result.fee, _ui_text_table))
-		print("World3D: teleport accepted -- to %s, %d gold charged, waiver %d" % [result.destination, result.fee, result.waiver])
+		# The board goes on the server's yes (round 578); a refusal leaves it
+		# up to choose again.
+		if _hud_panels != null:
+			_hud_panels.close("teleport")
+		var receipt := TeleportNet.receipt_line(_teleport_place_name(result.destination), result.fee, _ui_text_table)
+		_log_system(receipt)
+		print("World3D: teleport accepted -- to %s, %d gold charged, waiver %d: %s" % [result.destination, result.fee, result.waiver, receipt])
 	else:
 		_log_system(ErrorText.teleport_line(result.code, _ui_text_table, result.reason))
 		print("World3D: teleport refused -- code 0x%x (%s)" % [result.code, result.reason])
@@ -11297,9 +11355,9 @@ func _npc_services(code: String) -> Array:
 	var out := NpcServiceReader.services_for(code, _npc_shop_set, _guild_id, _guild_master)
 	# A teleport gate (round 577, _bind_region_gates): its lines come from its
 	# teleportdata point -- the two registration columns and whether any link
-	# leaves it (NpcServiceReader.gate_services). "teleport" and the recall
-	# lines fall to _on_npc_service_selected's default until they have a
-	# window and a server.
+	# leaves it (NpcServiceReader.gate_services). "teleport" opens the board
+	# (_open_teleport_board, round 578); the recall lines fall to
+	# _on_npc_service_selected's default until they have a server.
 	if _teleport_reader != null:
 		var point := _teleport_reader.point_for_building(code)
 		if point != null:
@@ -11350,8 +11408,95 @@ func _on_npc_service_selected(key: String) -> void:
 				_hud_panels.open_guild_leave_prompt(_talk_npc_name)
 			else:
 				_log_system("Leaving a guild needs the server.")
+		"teleport":
+			# A Dimensional Gate's 'Select a teleport area:' (round 578).
+			_open_teleport_board()
 		_:
 			_log_system("%s is not available yet." % key.capitalize())
+
+## The gate the teleport board was last opened at (a teleportdata id), what
+## Move sends as the source (_on_teleport_requested); 0 before any.
+var _teleport_gate_point_id := 0
+## The character's level from the last stats packet (_on_world_stats), for
+## the board's display of the level waiver; 0 until one arrives.
+var _player_level := 0
+
+## Opens the teleport board at the gate being talked to (round 578): one row
+## per link leaving its teleportdata point, in the link table's file order --
+## the order the retail dialog lists them in (UI_TELEPORT::FUN_006fd3e0,
+## docs/protocol/teleport_network.md "The client's list, read") -- with the
+## link's fee (teleportlink column 3, the word GObjPC::HandleTeleportUse
+## charges). The place is the destination's zone name through textdata_object
+## (_teleport_place_name), else its teleportdata codename. `waived` shows the
+## engine's level waiver (fee zeroed unless the level is above 20,
+## `cmp al,0x14; ja` at 0x5136de); it reads the current level where the
+## engine reads GetMaxLevel, and the GM and testing waivers are the server's
+## to report in the receipt -- srrevamp's display, disclosed in TeleportBoard.
+func _open_teleport_board() -> void:
+	# No NPC being talked to (a zone change cleared it, _close_gate_ui): no
+	# gate to list, and nothing to say.
+	if _teleport_reader == null or _hud_panels == null or _talk_npc_code == "":
+		return
+	var point := _teleport_reader.point_for_building(_talk_npc_code)
+	if point == null:
+		_log_system("This gate has no teleport point.")
+		return
+	var entries: Array = []
+	var listed := PackedStringArray()
+	for link_v in _teleport_reader.links_from(point.id):
+		var link: TeleportReader.Link = link_v
+		var place := _teleport_place_name(_teleport_reader.place_token(link.to_id))
+		if place == "":
+			var dest := _teleport_reader.point_by_id(link.to_id)
+			place = dest.code if dest != null else str(link.to_id)
+		entries.append({"dest_id": link.to_id, "place": place, "fee": link.fee,
+			"waived": _player_level > 0 and _player_level <= 20})
+		listed.append("%d %s %d" % [link.to_id, place, link.fee])
+	_teleport_gate_point_id = point.id
+	_teleport_request_pending = false
+	print("World3D: teleport board at %s (point %d, level %d): %s" % [_talk_npc_code, point.id, _player_level, ", ".join(listed)])
+	_hud_panels.open_teleport_board(_talk_npc_name, entries)
+
+## Closes the gate's UI -- the teleport board and the talk box it was opened
+## from -- and forgets the NPC being talked to and the board's gate, so
+## nothing from a gate left behind can send its links (round 578's review).
+## Called on a zone change (_on_change_zone_result). Walking away from a gate
+## does NOT close them: the retail interaction range is unread (0x4a8e10), so
+## no distance is guessed here -- disclosed beside the server's missing range
+## test in docs/protocol/teleport_network.md.
+func _close_gate_ui() -> void:
+	if _hud_panels != null:
+		_hud_panels.close("teleport")
+		_hud_panels.close("npctalk")
+	_talk_npc_code = ""
+	_talk_npc_name = ""
+	_teleport_gate_point_id = 0
+	_teleport_request_pending = false
+
+## A Move on the teleport board (round 578): asks the server to travel from
+## the board's gate to dest_id (NetClient.teleport_use, round 576). The reply
+## is _on_teleport_result; the arrival _on_change_zone_result.
+##
+## One request at a time (round 578's review): a second Move pressed before
+## the reply would be a second OpTeleportUse, which the server -- with no
+## range test -- serves from wherever the first put the player, charging the
+## fee again. So Move is ignored while _teleport_request_pending; the reply
+## clears it, and so does reopening the board or a zone change (a reply lost
+## to a dropped connection cannot wedge it).
+func _on_teleport_requested(dest_id: int) -> void:
+	if _teleport_request_pending:
+		print("World3D: teleport Move ignored -- a request is already pending")
+		return
+	if not NetClient.is_connected_to_server():
+		_log_system("Teleporting needs the server.")
+		return
+	print("World3D: teleport requested %d -> %d" % [_teleport_gate_point_id, dest_id])
+	_teleport_request_pending = true
+	NetClient.teleport_use(_teleport_gate_point_id, dest_id)
+
+## An OpTeleportUse is out and its OpTeleportResult not yet back
+## (_on_teleport_requested).
+var _teleport_request_pending := false
 
 ## The talk box's guild name prompt was submitted (round 521).
 func _on_guild_create_requested(guild_name: String) -> void:
@@ -12932,6 +13077,7 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 		_last_enter_world_max_hp = stats.max_hp
 	if _hud_target != null:
 		_hud_target.set_player_level(stats.level)
+	_player_level = stats.level
 	if _hud_player_info != null:
 		_hud_player_info.set_character(NetClient.current_character_name, stats.level)
 		if stats.max_hp > 0:

@@ -525,7 +525,8 @@ behind its loading screen, as for any zone change. Every teleport is logged:
 
 It needs the teleport directory above (`-teleport-dir`). There is no flag for the teleport itself:
 the request is new, and a client release before round 576's client half never sends it, so pushing
-to `dev` changes nothing for tagged clients until the release that carries the gate and its board.
+to `dev` changes nothing for tagged clients until the release that carries the gate and its board
+(round 578: Talk -> 'Select teleport area' -> the Dimensional Teleporter -> Move).
 
 **Who pays.** Everyone pays the link's fee from the table (5,000 gold from Jangan to Donwhang),
 except:

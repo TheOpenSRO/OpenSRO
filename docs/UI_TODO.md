@@ -127,6 +127,15 @@ is presentation work on solved data; if you find yourself editing the protocol, 
   6-piece frames, text-table lookup, texture cache, and `window_def()` for the registry.
 - **Window interiors and item grids** (hundred-and-thirteenth round) — panels are no longer
   hollow and the inventory draws its real 4×8 grid of authored slots.
+- **The teleport board** (round 578) — the Dimensional Teleporter, `resinfo\ifteleportboard.txt`,
+  built by the recipe: `HudPanels.PANELS["teleport"]`, and its five `CIFTeleportAreaSlot` rows
+  (`GDR_TB_TASLOT1..5`) filled from `resinfo\ifteleportareaslot.txt`'s own section (place, price,
+  Move) the way CIFSkillBoard's rows are code-built (`TeleportBoard`), `GDR_TB_SPIN_PAGE` paging
+  five at a time. Opened by a gate's 'Select teleport area' line; the destinations and fees come
+  from the client's own teleportlink rows; the board and the talk box close on a zone change, not
+  on walking away (the interaction range is unread). Not wired, disclosed: the window art
+  (`tpt_window_zangan.ddj`, its use unread — the layout has no frame, so the board has no backdrop),
+  the slot icons, the Move button's art (its layout names none). `docs/RE_COMPLETION.md` round 578.
 
 ### Tools for this lane
 `client/tools/dump_layout.gd` prints one layout in declaration order with every rect, alignment

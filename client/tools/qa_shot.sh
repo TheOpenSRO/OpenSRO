@@ -35,6 +35,12 @@
 #                     at, and the server's coordinates are in the zone-centre
 #                     frame, so the default drew a Jangan monster on 98/168's
 #                     ground (round 557; _qa_columns_report says the same).
+#   --teleport <id>   (round 578; needs --server and SRREVAMP_QA_CLICK=gate)
+#                     once the gate's talk box is up, choose its teleport
+#                     line and press the board's Move for this teleportdata
+#                     id (2 = Donwhang from Jangan): the log carries
+#                     `QA TELEPORT: requested <gate> -> <id>`, the receipt,
+#                     and the arrival's second region grid
 #   --debug           open the debug panel (F3) once the first region loads
 #   --columns "x,z;.." report what the walkable graph knows at these columns
 #   --equip "s=id,.." dress the player (no server) from a "slot=item_id"
@@ -94,7 +100,7 @@ GODOT="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
 REGION='98\168.m'; FRAMES=120; SIZE=1280x720; OUT=""; SCENE="res://scenes/World3D.tscn"
 AT=""; YAW=""; PITCH=""; DIST=""; WALK=""; NOFOG=""; FREE=""; RADIUS=""; SHOTS=""
 PANELS=""; WORLDMAP=""; SAY=""; SERVER=""; GENDER=""; ATTACK=""; DEBUG=""; COLUMNS=""; EQUIP=""; SERVER_BIN="${SERVER_BIN:-/opt/srrevamp-server/srrevamp-server}"
-RECONNECT=""; RECONNECT_VIA_LOGIN=""
+RECONNECT=""; RECONNECT_VIA_LOGIN=""; TELEPORT=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -124,6 +130,7 @@ while [ $# -gt 0 ]; do
     --say)    SAY="$2";    shift 2 ;;
     --gender) GENDER="$2"; shift 2 ;;
     --attack) ATTACK=1;    shift ;;
+    --teleport) TELEPORT="$2"; shift 2 ;;
     --debug)  DEBUG=1;     shift ;;
     --columns) COLUMNS="$2"; shift 2 ;;
     --equip)  EQUIP="$2";  shift 2 ;;
@@ -253,6 +260,11 @@ fi
 [ -n "$DEBUG" ] && export SRREVAMP_QA_DEBUG=1
 [ -n "$COLUMNS" ] && export SRREVAMP_QA_COLUMNS="$COLUMNS"
 [ -n "$EQUIP" ] && export SRREVAMP_QA_EQUIP="$EQUIP"
+if [ -n "$TELEPORT" ]; then
+  export SRREVAMP_QA_TELEPORT="$TELEPORT"
+  [ -n "${SRREVAMP_QA_CLICK:-}" ] || echo "qa_shot: --teleport without SRREVAMP_QA_CLICK=gate -- nothing opens the gate's talk box, so no Move is pressed" >&2
+  [ -n "$SERVER" ] || echo "qa_shot: --teleport without --server -- the request has nobody to go to" >&2
+fi
 # --reconnect (round 558): both entries take the real loading-screen drain,
 # and the HUD is hidden -- see the option's note in the header.
 if [ -n "$RECONNECT" ]; then

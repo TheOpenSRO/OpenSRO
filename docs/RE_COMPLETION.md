@@ -39960,3 +39960,185 @@ point names, and put a stand-in collider at any such point with no placed object
 
 **Deploy note.** This change is client-only. It ships in the same release as map-teleport-board: a
 talk line that only says "not available yet" is not worth a tag on its own.
+
+## The authored teleport board (ifteleportboard + ifteleportareaslot): destinations with fees, five a page, MOVE sends the request, the receipt and the loading-screen arrival (round 578)
+
+The fourth round of the town-teleporter batch, and the one that makes a gate usable. Talk to a
+town's Dimensional Gate, choose 'Select teleport area', and the authored Dimensional Teleporter
+opens with the gate's destinations and their fees. Move asks the server (round 576's
+`OpTeleportUse`), which charges or waives the fee and moves the player to the destination gate's
+point behind the zone change's loading screen.
+
+**Grounding, re-read this round** (read-only on the render box):
+
+- **The layouts**, `/var/tmp/resinfo` (extracted from the player's Media.pk2, never committed).
+  `ifteleportboard.txt` (section Create): `GDR_TB_STATIC_TITLE` CIFStatic 13,17,393,21 with
+  `UIIT_PAG_TELEPORT`; `GDR_TB_BTN_CLOSE` CIFCloseButton 406,15,16,16; `GDR_TB_STATIC_NAME`
+  CIFStatic 8,65,432,21 with `UIIT_CTL_TELEPORT_TARGET`; `GDR_TB_SPIN_PAGE` CIFSpinButtonCtrl
+  181,520,80,24; `GDR_TB_TASLOT1..5` CIFTeleportAreaSlot 47,{105,185,265,345,425},357,76.
+  `ifteleportareaslot.txt`: `GDR_TAS_BTN_MOVE` CIFButton 252,20,92,36 with `UIIT_CTL_MOVE` and
+  DDJ ""; `GDR_TAS_STATIC_PRICE` 70,44,182,21; `GDR_TAS_STATIC_PLACE` 70,14,182,21;
+  `GDR_TAS_STATIC_ICON` 6,6,64,64. No control sits at the origin: the board has no frame.
+- **The texts**, `/var/tmp/tables/textuisystem.txt`. The 16-column rows: `UIIT_PAG_TELEPORT`
+  "Dimensional Teleporter", `UIIT_CTL_TELEPORT_TARGET` "Select a teleport area:",
+  `UIIT_CTL_TELEPORT_RESULT` "Teleport to [%s] for [%d] Gold.", `UIIT_CTL_TELEPORT_FREE_RESULT`
+  "Teleport to [%s] (no cost).", `UIIT_CTL_MOVE` "Move". The later 19-column rows, which
+  `UiTextTable` keeps: "Dimensional door", "Select teleport area", "Teleport to [%s]area. [%d]gold",
+  "Teleport to [%s]area.", "Move".
+- **The list** (docs/protocol/teleport_network.md, "The client's list, read"):
+  `UI_TELEPORT::FUN_006fd3e0` builds the destinations from the client's own link records in
+  order, and formats each with `UIIT_CTL_TELEPORT_FREE_RESULT` when the link's fee word is 0,
+  `UIIT_CTL_TELEPORT_RESULT` with the fee otherwise. Neither `tpt_window` nor
+  `ifteleportboard`/`CIFTeleportAreaSlot` appears in the client decompile
+  (`grep` over `/var/tmp/decomp_client/funcs_*.c`); `UIIT_CTL_TELEPORT_TARGET` does (funcs_007.c),
+  so the window art's use stays unread.
+- **The feasibility finding answered.** `HudWindow.build`'s empty title does NOT fall back to
+  `GDR_TB_STATIC_TITLE`: `_authored_title` reads only a frame at the origin, and this layout has
+  none, so the window's own title bar is left empty. The authored static is built by UiBuilder and
+  resolves `UIIT_PAG_TELEPORT` itself, so `PANELS["teleport"]` passes "" -- a title there would
+  draw a second caption over the authored one.
+
+**What was wired.**
+
+- `client/scripts/ui/hud/teleport_board.gd` (new, `TeleportBoard`). The pure helpers:
+  `page_count(n)` (ceil(n / 5), 0 for none), `page_rows(entries, page)` (at most five, empty past
+  the end or for a negative page) and `price_text(place, fee, waived, result_fmt, free_fmt)` (the
+  free format for a 0 fee or the waiver, the fee format otherwise, srrevamp's own "No cost" /
+  "<n> gold" when a format is not exactly those placeholders -- `TeleportNet._fits`). The node
+  work: `build_rows` builds ifteleportareaslot's section inside each CIFTeleportAreaSlot once and
+  connects its Move; `fill_rows` writes PLACE and PRICE (with the whole sentence as a tooltip)
+  and the row's destination onto Move, hiding slots past the page; `move_button_for`.
+- `HudPanels`: `PANELS["teleport"] = ["resinfo\\ifteleportboard.txt", "", 0]`, signal
+  `teleport_requested(dest_id)`, `open_teleport_board(gate_name, entries)` (rows built once, the
+  spinner's range set to the page count and reset to page 1, a line with the counts) and
+  `qa_press_teleport_move(dest_id)` (turns to the page, prints the page as drawn, emits that
+  row's own Move).
+- `World3D`: "teleport" in `_on_npc_service_selected` opens `_open_teleport_board` -- one entry
+  per `TeleportReader.links_from(point)` in file order: the destination id, the place
+  (`_teleport_place_name` of the point's zone token, else its teleportdata codename -- never the
+  SN_ token), the link's fee, and `waived` for a character of level 20 or below. Move ->
+  `_on_teleport_requested` -> `NetClient.teleport_use(gate point, dest)` ("Teleporting needs the
+  server." offline). `_on_teleport_result` closes the board on the server's yes and prints the
+  receipt it logs; `_on_change_zone_result` closes it and the gate's talk box on any successful
+  zone change (`_close_gate_ui`, the review fix below). `_player_level` comes
+  from `_on_world_stats`. `SRREVAMP_QA_TELEPORT=<id>` (`_qa_advance_teleport`): once a gate's
+  talk box is up, choose the line through the talk box's handler, then press Move.
+- `TeleportReader.point_by_id` (the codename fallback). `qa_shot.sh --teleport <id>`;
+  `client/tools/README.md` "A town teleport is a run too".
+
+**Disclosed stand-ins.** The slot icon stays empty (nothing attributes per-destination art). The
+board's window art (`interface\teleport\tpt_window_zangan.ddj`, 420,372 B; a
+`tpt_window_donhwang.ddj` of the same size exists) is not wired, since its use is unread -- the
+board has no backdrop. The Move button has no art (its DDJ is "" and the class's default is
+unread), so it is its label. What the retail slot writes into PLACE and PRICE is unread: PLACE
+gets the place and PRICE the retail list's sentence. The `"%d. %s"` numbering is not reproduced.
+The board's "(no cost)" for level 20 or below is srrevamp's display of the engine's waiver (the
+retail dialog formats on the fee word only), read from the current level where the engine reads
+`GetMaxLevel`; the GM and `-teleport-free` waivers show in the receipt, not on the board.
+
+**Tests.** `client/scripts/ui/hud/teleport_board_test.gd` (new):
+
+- `page_rows` on six entries: page 0 holds exactly the first five in order, page 1 the sixth, page
+  2 nothing; `page_count(6) == 2`, 5 -> 1, 10 -> 2, 0 -> 0. `price_text` fills the fee format with
+  5000 and takes the free format for fee 0 and for the waiver; a malformed format falls back.
+- A HudPanels over a UiBuilder whose layout cache holds synthetic layouts in the two files' shape
+  (the rects above; no archive) opens the board: the authored title static reads the table's
+  `UIIT_PAG_TELEPORT`, the window's own bar is empty, exactly five slot rows are built and shown,
+  slot 1's place and fee-format price, Move labelled `UIIT_CTL_MOVE`, Move on slots 1 and 3 emits
+  `teleport_requested` 2 then 176; the spinner ranges over two pages and page 1 shows one row
+  whose Move sends 25; `qa_press_teleport_move(175)` turns back and presses; NEGATIVE an unlisted
+  id presses nothing; a two-destination reopen shows two rows on one page.
+- World3D over synthetic teleport tables: the teleport line opens the board with the gate's six
+  links, the named and unnamed places, the gate point remembered; Move offline says it needs the
+  server; a 0x1c07 refusal leaves the board up, an accepted result closes it and marks the arrival.
+- Zone change (the review fix): with the talk box and the board up, a refused
+  `_on_change_zone_result` leaves both and the talk code; a successful one closes both, clears
+  `_talk_npc_code` and `_teleport_gate_point_id`, and the teleport line chosen afterwards opens no
+  board and logs nothing. NEGATIVE proven: against the first cut's World3D (only the board closed),
+  3 FAILURES -- `a zone change closes the gate's talk box`, `a zone change forgets the gate being
+  talked to (code 'STORE_CH_GATE', point 1)`, `the teleport line after a zone change opens no
+  board`; with the fix, ALL PASS.
+- NEGATIVE proven: with the production files reverted to BASE (hud_panels.gd, World3D.gd,
+  teleport_reader.gd stashed, teleport_board.gd moved aside), the suite prints 7 FAILURES --
+  among them `FAIL the teleport line no longer answers 'not available yet' (chat: * Teleport is
+  not available yet.)`, the pre-change behaviour measured headless. With `page_rows` mutated to
+  take six a page: `FAIL page 0 holds the first five, in order (got [2, 175, 176, 5, 20, 25])`.
+  Restored: ALL PASS.
+
+**Measured on the render box** (`GODOT_LOCK=/var/tmp/r578/lock`, the round-576 retail export of
+the teleport CSVs in `/var/tmp/r578/teleport` -- never committed, `SRREVAMP_TELEPORT_DIR`; this
+tree's server built for linux; `qa_shot.sh --out /var/tmp/r578/<run> --server --region
+'97\168.m' --radius 1 --at 1230,1380 --size 640x360`, `SRREVAMP_QA_CLICK=gate`; frames deleted):
+
+- **A, level 1, not a GM, `--teleport 2`.** The click hits `Obj_cj_portal_312`'s `CJ_por_fence`
+  body; NPCTALK lists "1. Designate as return/recall point / 2. Select teleport area / 3. End
+  conversation."; `World3D: teleport board at STORE_CH_GATE (point 1, level 1): 2 Donwhang 5000,
+  175 Alexandria (South) 40000, 176 Alexandria (North) 40000, 5 Hotan 5000, 20 Constantinople
+  5000, 25 Samarkand 5000`; `HudPanels: teleport board built 5 of 5 area slot(s)` and `-- 6
+  destination(s), 2 page(s)`; `QA TELEPORT: requested 1 -> 2`; `teleport accepted -- to
+  SN_ZONE_22002, 0 gold charged, waiver 1` (run A came from an earlier build of this change, whose
+  line had no `: <receipt>` suffix; run B's line is the committed one); `zone donwhang (102/153) is built in its own frame`;
+  `teleport arrival in RealTerrain_102_153 at local (957.0, 1508.0), height -7.64`; a second
+  `region grid loaded in 3333 ms ... at frame 199`; Donwhang's gate binds on arrival. Server:
+  `msg=teleport account=qa ... gate=STORE_CH_GATE from=GATE_CH dest=GATE_WC zone=donwhang
+  frame=102/153 x=-3 z=-548 fee=0 waiver=1 gm=false free_flag=false`. 0 SCRIPT ERROR.
+- **B, a GM at level 30** (`SRREVAMP_GM_ACCOUNTS=qa`, `SRREVAMP_QA_COMMANDS="/level 30"`,
+  `SRREVAMP_QA_FORCE_LOADING=1`). `GM REPLY: level 1 -> 30`; the page as drawn, `QA TELEPORT:
+  page 1 GDR_TB_TASLOT1: Donwhang | Teleport to [Donwhang]area. [5000]gold` through `TASLOT5:
+  Constantinople | ... [5000]gold` (Alexandria's two at 40000); `teleport accepted -- ... 0 gold
+  charged, waiver 2: Teleport to [Donwhang]area.`; `LoadingScreen: up at frame 200`; the same
+  arrival; server `fee=0 waiver=2 gm=true` -- no charge, so the gold is untouched (DeductGold runs
+  only for a fee above 0). 0 SCRIPT ERROR.
+- **C, NEGATIVE: a GM at level 111, `--teleport 5`** (Jangan -> Hotan's link has the level rule
+  1..110). `teleport refused -- code 0x1c15 (your level is outside the range this destination
+  allows)`; server `msg="teleport refused" ... code=0x1c15 ... dest=GATE_KT level=111`; one
+  `region grid loaded` only, no arrival line. 0 SCRIPT ERROR. (No log line of this run measures
+  that the board stayed up; that is the headless test's refusal check.)
+- **Not measured live: the paying run and the short-purse `0x1c07`.** The QA character is level
+  1, so the engine's waiver applies; only a GM can raise its level; and a GM is never charged.
+  Both are `server/internal/session/teleport_test.go`'s (round 576, over TCP: 5000 charged and the
+  move; 4000 gold -> `0x1c07`, nothing moved). The board's price for a paying character is the
+  run B page above.
+- **The zone label.** The run's zone is "donwhang", built in 102/153's frame (the server's
+  FrameRegion), so the label reads `Zone: donwhang`; the region pair is in the frame line.
+
+**Review follow-ups (folded into this round).**
+
+- *Blocking, fixed:* the gate's talk box and `_talk_npc_code` survived a zone change, so after run
+  A's arrival Jangan's talk box in Donwhang reopened Jangan's board and Move would have sent
+  Jangan's links from there (the server has no range test; `session/teleport.go`'s header leaned
+  on the client offering links only at the gate). `World3D._close_gate_ui` closes the board and the
+  talk box and forgets the NPC and gate point on every successful zone change;
+  `_open_teleport_board` does nothing with no NPC. Tested above.
+- *Disclosed, not fixed:* walking away from a gate inside a zone leaves the talk box and board
+  usable -- the interaction range (`0x4a8e10`) is unread, so no distance is guessed; recorded
+  beside the server's missing range test (`docs/protocol/teleport_network.md`,
+  `session/teleport.go`).
+- *Fixed, cheap:* several Move presses before the reply each sent an `OpTeleportUse`. Not
+  harmless: the server, with no range test, serves the second from where the first landed the
+  player and charges the fee again. `World3D._teleport_request_pending` now ignores Move while a
+  request is out; the reply, a reopened board and a zone change clear it. Tested (a pending Move
+  is ignored; the reply clears it); NEGATIVE proven with the guard removed: `FAIL a Move while a
+  request is pending is ignored (chat: * Teleporting needs the server.)`.
+- *Doc corrections:* `FUN_006fc910` is not "the thousands formatter" -- re-read in
+  `/var/tmp/decomp_client`, called as `FUN_006fc910(fee, 0, 1)` it returns a 64-bit `fee + share`,
+  the share from a short at `this+0x804` through `FUN_00b42d46`; the retail list prints that sum
+  with `%d`. srrevamp's board shows the raw link fee (equal while the short is 0; its meaning is
+  unread). `UIIT_CTL_TELEPORT_RESULT_IMPROVE` (`[%s]gold`) is in the archive but
+  `FUN_006fd3e0` never asks for it. `TeleportBoard.price_text`'s comment now quotes the 19-column
+  rows it actually uses.
+
+**Suites.** `go test -count=1 -p 1 ./...`: 59 ok, none failing (no Go change; the doc probes re-read after the doc edits). `remote_godot.sh tests`: `ran 100 suite(s), 0 failing`;
+`check`: `checked 278 scripts and 5 scenes`, ALL LOAD.
+
+**Docs.** `docs/protocol/teleport_network.md` gains "The teleport board (round 578)" and loses the
+"not available yet" note; `docs/SYSTEMS.md`'s Teleport network row (the board WIRED, the "Next:
+the board" dropped); `docs/UI_TODO.md`'s Done list; `docs/WORLD_ISSUES.md` round 578;
+`deploy/README.md`'s Town teleporters; `client/tools/README.md`.
+
+**Deploy note.** Client release: this is the tag testers need for teleporting (with round 577's
+gate and round 576's client half). The orchestrator tags. On srrevamp-01 the operator must have
+the teleport tables mounted and `-teleport-dir` / `SRREVAMP_TELEPORT_DIR` set (deploy/README.md,
+"Town teleporters"; without them every Move is refused with code 0, "teleporting is not available
+on this server"); `-teleport-free` is the user's
+decision. Tag order: the server is already on dev, then the client tag, then the flag.

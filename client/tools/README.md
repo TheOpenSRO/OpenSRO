@@ -76,6 +76,26 @@ qa_shot.sh --out /var/tmp/reconnect --server --region '97\168.m' --radius 1 --fr
   --reconnect 200 --shots "square@1002,1020:0,-25,700"
 ```
 
+**A town teleport is a run too** (round 578). `--teleport <id>` with `SRREVAMP_QA_CLICK=gate`
+exported clicks the nearest Dimensional Gate, chooses its 'Select teleport area' line through the
+talk box's own handler, and presses the board's Move for teleportdata id `<id>` (2 is Donwhang from
+Jangan), printing the page as drawn (`QA TELEPORT: page 1 GDR_TB_TASLOT1: Donwhang | ...`) and
+`QA TELEPORT: requested <gate> -> <id>`. The server needs the teleport tables
+(`SRREVAMP_TELEPORT_DIR`, or `$PK2_DIR/teleport`; `qa_shot.sh` passes `-teleport-dir` when the
+CSVs are there). Measure from the log: `World3D: teleport accepted -- ... waiver <w>: <receipt>`,
+a second `region grid loaded`, `World3D: teleport arrival in RealTerrain_<x>_<y> at local (x, z)`,
+and the server's `msg=teleport ... fee=<f> waiver=<w> gm=<b>`. A GM run exports
+`SRREVAMP_GM_ACCOUNTS=qa` and `SRREVAMP_QA_COMMANDS="/level 30"` (the QA character is level 1, so
+it is waived by level before the GM rule is reached); `SRREVAMP_QA_FORCE_LOADING=1` shows the zone
+change's loading screen (`LoadingScreen: up at frame ...`). The QA account cannot pay: only a GM
+can raise its level, and a GM is never charged -- the charge and the short-purse refusal are
+`server/internal/session/teleport_test.go`'s.
+
+```
+SRREVAMP_QA_CLICK=gate qa_shot.sh --out /var/tmp/teleport --server --region '97\168.m' --radius 1 \
+  --at 1230,1380 --frames 1100 --size 640x360 --teleport 2
+```
+
 ### Load benchmark
 
 Every map and loading change is measured on the two runs below, before and after, and on nothing

@@ -36,7 +36,9 @@ package session
 //   - The zone label the arrival is kept under (teleportZoneFor).
 //   - No interaction-range test (retail's GObjPC::IsWithinInteractionRange,
 //     0x4a8e10, was not read into a distance srrevamp could apply; the client
-//     only offers a gate's destinations after a click on the gate) and no
+//     only offers a gate's destinations after a click on the gate and drops
+//     the gate's board and talk box on a zone change, but not on walking
+//     away inside the zone -- a hand-built client can send any link) and no
 //     "already teleporting" state (0x1c14, IGObj::GetTeleportState: a
 //     srrevamp teleport completes inside one request, so there is no state
 //     to be in).

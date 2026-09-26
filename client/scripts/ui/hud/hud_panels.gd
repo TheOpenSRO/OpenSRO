@@ -51,6 +51,13 @@ const PANELS := {
 	# Opened from the talk box's Storage option (open_storage). The authored
 	# warehouse window: a 6x5 grid of the character's stored items.
 	"storage": ["resinfo\\ifstorageroom.txt", "Storage", 0],
+	# Opened from a Dimensional Gate's talk line 'Select a teleport area:'
+	# (open_teleport_board, round 578). The title is "": the layout has no
+	# frame at the origin, so HudWindow._authored_title finds nothing, and the
+	# layout's own GDR_TB_STATIC_TITLE (13,17,393,21, UIIT_PAG_TELEPORT)
+	# already draws the caption -- a title here would draw a second one over
+	# it. Its close button is the authored GDR_TB_BTN_CLOSE (406,15,16,16).
+	"teleport": ["resinfo\\ifteleportboard.txt", "", 0],
 }
 
 ## Panels whose layout is read with #ifdef branch selection, mapped to the
@@ -102,6 +109,10 @@ signal guild_leave_requested
 ## A line for the chat's system channel -- today a server refusal of a mastery
 ## raise, which used to be dropped silently. World3D logs it (_log_system).
 signal system_notice(text: String)
+## A Move button on the teleport board (open_teleport_board, round 578) was
+## pressed: `dest_id` is its row's destination, a teleportdata id. World3D
+## sends it with the gate the board was opened at (NetClient.teleport_use).
+signal teleport_requested(dest_id: int)
 
 ## Sections beyond "Create" that a panel's window builds.
 ##
@@ -619,6 +630,93 @@ func hide_revive_prompt() -> void:
 		return
 	remove_child(old)
 	old.queue_free()
+
+# --- The teleport board (round 578) -------------------------------------------
+#
+# The Dimensional Teleporter: the authored board (ifteleportboard) with its
+# five area slots filled from ifteleportareaslot (TeleportBoard), five
+# destinations a page, the page spinner stepping through the rest. Each row is
+# a destination of the gate the player talked to, in the link table's file
+# order, with its fee (World3D._open_teleport_board builds the entries from
+# TeleportReader.links_from). Move emits teleport_requested; the board closes
+# when the server accepts (World3D._on_teleport_result) and on any zone change.
+
+## The board's destinations, all pages: Dictionaries {dest_id, place, fee,
+## waived} (TeleportBoard.fill_rows), and the page shown.
+var _teleport_entries: Array = []
+var _teleport_page := 0
+
+## Opens the teleport board for the gate `gate_name` with its destinations.
+## Returns the window, or null when the archive has no board layout.
+func open_teleport_board(gate_name: String, entries: Array) -> HudWindow:
+	var window := open("teleport")
+	if window == null:
+		return null
+	_teleport_entries = entries.duplicate()
+	_teleport_page = 0
+	var spin := window.node(TeleportBoard.SPIN_NAME) as Control
+	if not window.has_meta("teleport_rows_built"):
+		window.set_meta("teleport_rows_built", true)
+		var slot_layout: UiLayoutParser.LayoutDef = _builder.load_layout(TeleportBoard.SLOT_LAYOUT) if _builder != null else null
+		var built := TeleportBoard.build_rows(window, _builder, slot_layout,
+			func(dest_id: int) -> void: teleport_requested.emit(dest_id))
+		print("HudPanels: teleport board built %d of %d area slot(s)%s" % [built, TeleportBoard.SLOT_NAMES.size(),
+			"" if slot_layout != null else " -- no %s in the archive, so no Move" % TeleportBoard.SLOT_LAYOUT])
+		if spin != null:
+			spin.connect("spin_changed", func(value: int) -> void:
+				_teleport_page = value
+				_fill_teleport_page())
+	if spin != null:
+		UiBuilder.set_spin_range(spin, 0, maxi(0, TeleportBoard.page_count(_teleport_entries.size()) - 1))
+		spin.set_meta("value", 0)
+		UiBuilder._spin_refresh(spin)
+	_fill_teleport_page()
+	print("HudPanels: teleport board for %s -- %d destination(s), %d page(s)" % [
+		gate_name, _teleport_entries.size(), TeleportBoard.page_count(_teleport_entries.size())])
+	return window
+
+func _fill_teleport_page() -> void:
+	var window: HudWindow = _windows.get("teleport")
+	if window == null:
+		return
+	TeleportBoard.fill_rows(window, TeleportBoard.page_rows(_teleport_entries, _teleport_page),
+		_resolve_ui(TeleportBoard.RESULT_TOKEN, ""), _resolve_ui(TeleportBoard.FREE_TOKEN, ""))
+
+## SRREVAMP_QA_TELEPORT (World3D): turns the board to the page holding
+## dest_id and presses that row's own Move button, so the request goes out
+## through the same connection a click takes. False when the board is not
+## open or does not list dest_id.
+func qa_press_teleport_move(dest_id: int) -> bool:
+	var window: HudWindow = _windows.get("teleport")
+	if window == null or not window.visible:
+		return false
+	var index := -1
+	for i in range(_teleport_entries.size()):
+		if int((_teleport_entries[i] as Dictionary).get("dest_id", 0)) == dest_id:
+			index = i
+			break
+	if index < 0:
+		return false
+	_teleport_page = floori(float(index) / TeleportBoard.PER_PAGE)
+	var spin := window.node(TeleportBoard.SPIN_NAME) as Control
+	if spin != null:
+		spin.set_meta("value", _teleport_page)
+		UiBuilder._spin_refresh(spin)
+	_fill_teleport_page()
+	# The page as drawn, so a run measures what the board showed.
+	for slot_name in TeleportBoard.SLOT_NAMES:
+		var slot := window.node(slot_name) as Control
+		if slot == null or not slot.visible:
+			continue
+		var place := slot.find_child(TeleportBoard.PLACE_NAME, true, false) as Label
+		var price := slot.find_child(TeleportBoard.PRICE_NAME, true, false) as Label
+		print("QA TELEPORT: page %d %s: %s | %s" % [_teleport_page + 1, slot_name,
+			place.text if place != null else "", price.text if price != null else ""])
+	var move := TeleportBoard.move_button_for(window, dest_id)
+	if move == null:
+		return false
+	move.pressed.emit()
+	return true
 
 # --- The NPC shop -----------------------------------------------------------
 #

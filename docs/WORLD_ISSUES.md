@@ -7075,6 +7075,55 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-seventy-eighth round: the teleport board -- the gate's destinations with their fees, five a page, and Move teleports behind the loading screen
+
+The fourth round of the town teleporters, and the one a player sees. The gate's 'Select teleport
+area' line opens the authored Dimensional Teleporter (`resinfo\ifteleportboard.txt`): its five
+`CIFTeleportAreaSlot` rows are filled from `resinfo\ifteleportareaslot.txt`'s own section (place,
+price, Move), one row per link leaving the gate's point in file order, with the link's fee in the
+archive's own list format; the spinner pages five at a time. Move sends `OpTeleportUse`; the board
+closes on the server's yes, and the board and the gate's talk box both close on any zone change.
+The full record is `docs/RE_COMPLETION.md`'s round 578.
+
+- **Measured end to end on the render box** (`qa_shot.sh --server --region '97\168.m' --radius 1
+  --at 1230,1380 --teleport 2`, `SRREVAMP_QA_CLICK=gate`, the retail export's teleport CSVs): the
+  click hits `Obj_cj_portal_312`, NPCTALK lists the three lines, the board lists `2 Donwhang 5000,
+  175 Alexandria (South) 40000, 176 Alexandria (North) 40000, 5 Hotan 5000, 20 Constantinople 5000,
+  25 Samarkand 5000` over two pages, Move sends `1 -> 2`, and the player lands in
+  `RealTerrain_102_153` at local (957.0, 1508.0) -- the destination's teleportdata point --
+  height -7.64 on the walkable graph, with a second `region grid loaded` and 0 `SCRIPT ERROR`.
+  The level-1 QA character paid nothing (`fee=0 waiver=1`); as a GM at level 30 the board shows
+  the fees, the server waives them (`fee=0 waiver=2 gm=true`) and the loading screen is up at the
+  zone change (`LoadingScreen: up at frame 200`, with `SRREVAMP_QA_FORCE_LOADING=1`).
+- **Negative, live.** At level 111 the same gate's Move to Hotan (`1 -> 5`, whose link's level rule
+  is 1..110) is refused `0x1c15`: one grid load, no arrival line. (That the board stays up on a
+  refusal is the headless test's check, not a log line of this run.)
+- **What the text says.** The archive's later 19-column rows win in `UiTextTable`, so the price
+  reads `Teleport to [Donwhang]area. [5000]gold` and the free receipt `Teleport to [Donwhang]area.`,
+  not the 16-column rows' "Teleport to [%s] for [%d] Gold." -- the same effect round 577 recorded
+  for the talk line.
+- **Not measured live: a paying run and the short-purse refusal.** The QA character is level 1
+  (waived by level), and only a GM can raise it, and a GM is never charged. The charge and
+  `0x1c07` are covered by `server/internal/session/teleport_test.go` over TCP (round 576).
+- **Review fix: no gate UI survives a zone change.** The first cut closed only the board. The talk
+  box stays up behind a service window (`HudPanels._on_npc_talk_choice`) and nothing closed it, so
+  after run A's Jangan -> Donwhang arrival Jangan's talk box was still up in Donwhang: its teleport
+  line reopened Jangan's board (`_talk_npc_code` still `STORE_CH_GATE`) and Move would have sent
+  Jangan's links, at Jangan's fees, from another town -- the server has no range test.
+  `World3D._close_gate_ui` now closes the board and the talk box and forgets the NPC and the gate
+  point on every successful zone change (a refused one leaves them). `teleport_board_test.gd`
+  proves it: against the first cut's World3D, 3 FAILURES (`a zone change closes the gate's talk
+  box`, `... forgets the gate being talked to (code 'STORE_CH_GATE', point 1)`, `the teleport line
+  after a zone change opens no board`); with the fix, ALL PASS. Walking away from a gate inside a
+  zone still leaves both usable: the retail interaction range (`0x4a8e10`) is unread, so no
+  distance is guessed (disclosed in `docs/protocol/teleport_network.md` beside the server's).
+- **Review fix: one request at a time.** A second Move before the reply was a second
+  `OpTeleportUse`, which the server would serve from the arrival point and charge again; Move is
+  now ignored while a request is pending (`_teleport_request_pending`, cleared by the reply).
+- **The retail list's number is not the raw fee.** `FUN_006fc910`, which the list passes the fee
+  through, is not a thousands formatter: it returns the fee plus a share computed from a short at
+  `this+0x804` (meaning unread). srrevamp shows the raw link fee -- equal while that short is 0.
+
 ## Five-hundred-and-seventy-seventh round: the Dimensional Gate is clickable -- the placed portal is bound as the gate and lists the client's own gate lines
 
 This is the third round of the town teleporters. A gate is not an NPC: no npcpos row names a

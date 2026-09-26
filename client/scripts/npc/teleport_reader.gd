@@ -193,6 +193,10 @@ func point_for_building(code: String) -> Point:
 func links_from(point_id: int) -> Array:
 	return (_links_by_from.get(point_id, []) as Array).duplicate()
 
+## The teleport point with teleportdata id `point_id`, or null.
+func point_by_id(point_id: int) -> Point:
+	return _points_by_id.get(point_id)
+
 ## A point's zone-name string id (SN_ZONE_22001 for GATE_CH), which
 ## textdata_object names; "" for an unknown point.
 func place_token(point_id: int) -> String:

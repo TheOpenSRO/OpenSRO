@@ -140,8 +140,18 @@ The earlier guess that the dialog's entries were "the server's list reply" was w
 current gate, `GlobalDataManager::FUN_00976a30(k)` selects link *k*, and for each it
 allocates a 0x18-byte list item, numbers it `"%d. %s"`, and formats the name with
 `UIIT_CTL_TELEPORT_FREE_RESULT` when the link record's word at `+0x10` is 0 and
-`UIIT_CTL_TELEPORT_RESULT` with that word (through the thousands formatter
-`FUN_006fc910`) otherwise. `+0x10` is the third direct field of `RefParse_teleportlink`
+`UIIT_CTL_TELEPORT_RESULT` with that word (through `FUN_006fc910`) otherwise.
+**`FUN_006fc910` is not a formatter** (round 578's review, re-read in
+`/var/tmp/decomp_client`): called as `FUN_006fc910(fee, 0, 1)`, it returns a 64-bit
+`fee + share`, the share computed through `FUN_00b42d46` from a short at
+`this+0x804` (added when `param_4` is 1, subtracted when 0); the sum is printed with
+`%d`. So the retail list shows the fee **plus a surcharge** from that short, whose
+meaning is unread (a fortress-tax-shaped rate is a guess, not a reading). srrevamp's
+board shows the raw link fee -- the same number while that short is 0, which is all
+srrevamp has (no fortresses). The dialog uses `UIIT_CTL_TELEPORT_RESULT` and
+`_FREE_RESULT` only; `UIIT_CTL_TELEPORT_RESULT_IMPROVE` (`[%s]gold`, a string
+argument) is in `textuisystem.txt` but `FUN_006fd3e0` never asks for it -- not a
+drop-in for the board's price line. `+0x10` is the third direct field of `RefParse_teleportlink`
 -- **column 3, the fee** -- so the client agrees with the server's use-site
 (`FUN_00513590` above): two binaries, neither consulted about the other.
 
@@ -287,7 +297,11 @@ default, no message), and the server's words for its own refusals (code 0).
 
 **Not modelled, disclosed:** the interaction-range test (retail's
 `GObjPC::IsWithinInteractionRange` `0x4a8e10` was not read into a distance; the
-client offers a gate's destinations only after a click on the gate), the
+client offers a gate's destinations only after a click on the gate, and closes
+the board and the gate's talk box on every zone change -- `World3D._close_gate_ui`,
+round 578's review -- so a gate's links are not offered from another zone. Walking
+away from a gate inside the same zone does **not** close them: that distance is the
+same unread `0x4a8e10`, so the client does not guess one either), the
 "already teleporting" state (`0x1c14`: a srrevamp teleport completes inside one
 request), the fortress tax (no fortresses), and the retail receipt line's source
 (the client shows `UIIT_CTL_TELEPORT_RESULT` / `_FREE_RESULT` from its own
@@ -385,11 +399,32 @@ textuisystem.txt resolves. `UiTextTable` keeps the later 19-column rows ("Design
 as return/recall point", "Select teleport area"), not the earlier 16-column rows'
 "Designate this region as your return & recall point!" / "Select a teleport area:".
 
-Choosing a line does not do anything yet. "teleport" opens the board once
-map-teleport-board lands, and until then it and the two recall lines say "... is
-not available yet" (`World3D._on_npc_service_selected`'s default). srrevamp models
-no return point. `SRREVAMP_QA_CLICK=gate` clicks the nearest bound gate through the
-real dispatcher.
+Since round 578 "teleport" opens the board ("The teleport board (round 578)"
+below). The two recall lines still say "... is not available yet"
+(`World3D._on_npc_service_selected`'s default): srrevamp models no return point.
+`SRREVAMP_QA_CLICK=gate` clicks the nearest bound gate through the real
+dispatcher.
+
+### The teleport board (round 578)
+
+The talk line opens the authored Dimensional Teleporter, `resinfo\ifteleportboard.txt`
+(`HudPanels.PANELS["teleport"]`, `TeleportBoard`). Its five `CIFTeleportAreaSlot` controls
+(`GDR_TB_TASLOT1..5`, `47,{105,185,265,345,425},357,76`) are each filled with
+`resinfo\ifteleportareaslot.txt`'s section: `GDR_TAS_STATIC_PLACE` (70,14,182,21),
+`GDR_TAS_STATIC_PRICE` (70,44,182,21), `GDR_TAS_BTN_MOVE` (252,20,92,36, `UIIT_CTL_MOVE`) and
+an empty `GDR_TAS_STATIC_ICON`. `GDR_TB_SPIN_PAGE` (181,520,80,24) pages five at a time. The
+rows are the gate point's links in file order -- the order `UI_TELEPORT::FUN_006fd3e0` numbers
+them in -- with the link's fee (column 3). PLACE is the destination's zone name through
+textdata_object (else its teleportdata codename); PRICE is the list format the retail dialog
+chooses, `UIIT_CTL_TELEPORT_RESULT` with the fee, or `UIIT_CTL_TELEPORT_FREE_RESULT` when the
+fee word is 0. srrevamp also shows the free format when the engine's level waiver applies (the
+character's current level is 20 or less; the engine reads `GetMaxLevel`), which the retail
+dialog does not -- own display, disclosed; the GM and testing waivers show only in the receipt.
+Move sends `OpTeleportUse` with the board's gate; the board closes on the server's yes and on
+any zone change, and stays up on a refusal. Not wired, disclosed: the board's window art
+(`interface\teleport\tpt_window_zangan.ddj`, its use unread -- the layout has no frame of its
+own), per-destination icons, the Move button's art (its layout names none), the `"%d. %s"`
+numbering, the gate cursor. Measured on the render box: `docs/RE_COMPLETION.md`, round 578.
 
 ### srrevamp wire: FrameRegion (round 570)
 
