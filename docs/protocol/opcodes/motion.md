@@ -216,7 +216,12 @@ every body.
   An enter-world or zone-change result carries a `Seated` tail -- the ids
   among its players who sit or are sitting down -- so the client draws them
   seated as it spawns them. The regen tick runs under the kill lock and gives
-  a character alive at HP 0 no HP (MP still).
+  a character alive at HP 0 no HP (MP still); its stats push is re-checked
+  (alive, same HP) right before the send and dropped otherwise.
+- **The Seated tail is a trap for the next field.** It is found by bytes left
+  over after `Restored` (enter-world) or the frame (zone change). Anything
+  appended later must make `Seated` always written -- a zero count -- as
+  `Seated` made `Restored` always written, or it decodes as a seated list.
 - **Ours, disclosed:** the server has no WALK/RUN state (the client streams
   positions), so an accepted move less than 0.5 s old counts as walking; the
   0x30bf id is the character id in the u32; a dead character's request is

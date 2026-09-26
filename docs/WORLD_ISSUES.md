@@ -7131,6 +7131,11 @@ is `docs/protocol/opcodes/motion.md`.
   works (until then it fails open). Regen's stats push leaves the lock first; alive at HP 0 still
   gets MP; the kill window is narrowed, not closed. Seated fighting at 8% is recorded as a
   consequence of the read server gate, the retail client's side unread.
+- **Third follow-up (fourth commit).** A regen stats push built outside the kill lock could land
+  after a lethal blow and draw a live HP bar on a dead character; the server now re-checks life
+  and HP right before the send, and the client ignores a stats HP while dead. The spawn test now
+  checks the loop clip each body plays, through the real `_on_change_zone_result`. The Seated tail
+  is found by leftover bytes, so a later field must make it always written.
 
 ## Six-hundred-and-sixth round: A window over a text line takes the keyboard, and Enter opens and closes the chat line as the client's does
 

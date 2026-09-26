@@ -13686,7 +13686,13 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 	if OS.get_environment("SRREVAMP_QA_STATS_LOG") != "":
 		print("QA STATS: t=%.2f tick=%d HP %d/%d MP %d/%d sitting=%s pelvis %s" % [_player_anim_time, _qa_tick,
 			stats.hp, stats.max_hp, stats.mp, stats.max_mp, str(_sit.sitting), _qa_pelvis_height()])
-	if stats.max_hp > 0:
+	# While dead the HP a stats reply carries is not taken (round 607's third
+	# review): a regen push built before a lethal blow can arrive after the
+	# blow's HP 0 and drew a live bar on a dead character. A dead character's
+	# HP is 0 until the revive (_leave_dead_state, on OpReviveResult, which
+	# the post-revive stats follow). The rest of the reply still applies.
+	var take_hp := stats.max_hp > 0 and not _player_dead
+	if take_hp:
 		_last_enter_world_hp = stats.hp
 		_last_enter_world_max_hp = stats.max_hp
 	if _hud_target != null:
@@ -13694,7 +13700,7 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 	_player_level = stats.level
 	if _hud_player_info != null:
 		_hud_player_info.set_character(NetClient.current_character_name, stats.level)
-		if stats.max_hp > 0:
+		if take_hp:
 			_hud_player_info.set_hp(stats.hp, stats.max_hp)
 		# The mana bar drew blank while the server had no mana to report.
 		# It does now -- the game's own base curve -- so show the real

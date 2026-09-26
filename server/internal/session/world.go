@@ -249,6 +249,12 @@ type EnterWorldResult struct {
 	// every other payload is byte for byte what it was, and an older client,
 	// which stops at Restored, reads the same. OURS: what the retail spawn
 	// packet carries for the motion state was not read.
+	//
+	// A TRAP FOR THE NEXT FIELD: the tail is found by bytes being left over
+	// after Restored (and after ChangeZoneResult's frame). A field appended
+	// after it must make Seated always written -- a zero count when nobody
+	// sits -- exactly as Seated made Restored always written, or a decoder
+	// reads the new field's bytes as a seated list.
 	Seated []int64
 }
 

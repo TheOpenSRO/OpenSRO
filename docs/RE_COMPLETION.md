@@ -45704,3 +45704,41 @@ The previous commit's own failure is the review's measurement (a `0x30bf` delive
 could take it); its test only checked the wire, which is why it stayed green. The send-after-unlock
 change has no test: a blocking write cannot be provoked through the test gateway without a
 connection that refuses to read.
+
+### Third review follow-up (round 607, fourth commit)
+
+The third review proved the Seated tail backward compatible (453 tags' decoders checked; none
+rejects trailing bytes; the new client reads an old server) and found one regression.
+
+**1. A regen push could land after the death (fixed, both sides).** The previous commit moved the
+stats push out of the kill lock; `buildCharacterStats` reads the stores in that gap, and a lethal
+blow could take the lock, kill her and send HP 0 before the regen packet -- the review showed it
+with a `SkillPoints` that blocks ("stats with HP 101/200 delivered after Aria was killed"), and the
+client's `_on_world_stats` drew that HP on a dead character. Now:
+- the server re-reads the life state and the stored HP right before the send and drops a push that
+  is no longer true (`regenPushStillTrue`), the send still outside the lock;
+- the client does not take a stats reply's HP while `_player_dead` (the rest of the reply still
+  applies); the revive result clears the dead state before the post-revive stats arrive.
+
+A blow in the instant between the server's check and the write is what the client side is for.
+
+**2. The spawn test now checks what a player sees.** `seated_spawn_test.gd` gives every other player a
+bare Skeleton3D body and one synthetic two-keyframe clip per action type, so the real
+`_spawn_or_update_other` registers a stand loop and the real seating swaps it; it checks the loop
+clip each body is driven by, on entry and through the real `_on_change_zone_result` (loading
+screen, zone build and placement stubbed). The source-text call-site checks are gone.
+
+**3. Records.** The Seated tail is found by leftover bytes, so any later field must make it always
+written (noted at the field in `world.go` and in `motion.md`). `deploy/README.md`: the import
+applies the schema; the restart is only for the new binary.
+
+**Negatives.**
+
+	server, 7c19536's regen.go:            FAIL TestRegenPushIsDroppedAfterADeath: unexpected packet 0x00ef / a regen stats push was delivered after Aria was killed
+	client, seating lines deleted:          FAIL Bram, in the enter-world result's Seated tail, loops the sitting clip (type 14) (got type0) / FAIL and his gait is marked sitting / FAIL Dara, ... loops the sitting clip (got type0)
+	client, zone change on its own loop:    FAIL Dara, in the zone-change result's Seated tail, loops the sitting clip (got type0)
+	client, 7c19536's stats handler:        FAIL a stats reply while dead does not raise the HP (got 101)
+
+The control `TestRegenPushGoesOutWhenNothingChanged` passes before and after. The client check
+reads `_last_enter_world_hp`, which the same `take_hp` flag guards as the HP bar's `set_hp` (the
+bar itself is not built in the bare world).

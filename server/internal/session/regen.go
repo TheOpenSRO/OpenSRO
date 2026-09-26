@@ -100,9 +100,34 @@ func regenOne(ctx context.Context, hub *world.Hub, e world.Entity, chars charact
 	}
 	// Tell the client, or the bar only moves when something else happens to
 	// refresh it. The stats reply is what the HUD already listens to.
-	if result, err := buildCharacterStats(ctx, c, c.ID, deps.Equipment, deps.Items, deps.Skills, deps.Mana); err == nil {
-		_ = e.Session.Send(&proto.Packet{Opcode: OpCharacterStatsResult, Data: result.Encode()})
+	result, err := buildCharacterStats(ctx, c, c.ID, deps.Equipment, deps.Items, deps.Skills, deps.Mana)
+	if err != nil {
+		return
 	}
+	// Building the reply reads the stores outside the lock, and a lethal blow
+	// can take the lock, kill her and push HP 0 in that time; a regen push
+	// landing after it drew a live bar on a dead character (round 607's third
+	// review). So the life state and the pool are read again right before the
+	// send, and a push whose HP is no longer hers is dropped -- whatever
+	// changed it sent its own. A blow in the instant between this check and
+	// the write is left to the client, which ignores a stats HP while dead
+	// (World3D._on_world_stats).
+	if !regenPushStillTrue(ctx, hub, chars, c.ID, int(result.HP)) {
+		return
+	}
+	_ = e.Session.Send(&proto.Packet{Opcode: OpCharacterStatsResult, Data: result.Encode()})
+}
+
+// regenPushStillTrue reports whether a regen stats push carrying hp may still
+// go out: the character is alive in the hub and her stored HP is still hp.
+func regenPushStillTrue(ctx context.Context, hub *world.Hub, chars character.Store, characterID int64, hp int) bool {
+	if hub != nil {
+		if cur, ok := hub.EntityByCharacterID(characterID); !ok || cur.Life != world.LifeAlive {
+			return false
+		}
+	}
+	now, err := chars.GetByID(ctx, characterID)
+	return err == nil && now.HP == hp
 }
 
 // regenApply is regenOne's work under the kill lock. It returns the character

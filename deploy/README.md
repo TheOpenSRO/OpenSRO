@@ -72,9 +72,10 @@ rm -f itemdata_* skilldata_* npcpos.txt teleport*.txt   # the extracted tables a
 # Re-run steps 1-3 after pulling such a change.
 #
 # ROUND 607 (sitting) NEEDS THIS ON srrevamp-01: re-run `export-refdata -mode skills` with the NEW
-# binary (step 2), then the NEW `import-refdata` (step 3; its store adds the skills.sit_gate column),
-# then restart the server (`docker compose up -d` after the pull, which also applies the schema
-# change on boot). Until then every skill's SitGate is 0 and the gate FAILS OPEN: the 59 skills the
+# binary (step 2), then the NEW `import-refdata` (step 3) -- the import is what applies the schema
+# change: its store adds the skills.sit_gate column before it writes the rows. The server restart
+# (`docker compose up -d` after the pull) is only to run the new server binary, which reads the
+# column. Until then every skill's SitGate is 0 and the gate FAILS OPEN: the 59 skills the
 # retail server refuses to a seated caster (the Cold/Fire walls, the fortress repair kits, the
 # monster transform) can be cast sitting. Check: `SELECT count(*) FROM skills WHERE sit_gate <> 0;`
 # answers 59 on a retail archive.

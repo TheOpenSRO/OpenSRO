@@ -8,6 +8,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
+	"github.com/OpenSRO/srrevamp/server/internal/skill"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
@@ -235,5 +236,65 @@ func TestRegenReadsTheLifeStateAfresh(t *testing.T) {
 	regenOne(ctx, hub, e, store, RegenDeps{}, nil, time.Now())
 	if after, _ := store.GetByID(ctx, c.ID); after.HP != before.HP {
 		t.Errorf("a stale 'alive' snapshot healed a dead character %d -> %d", before.HP, after.HP)
+	}
+}
+
+// blockingSkills is a skill.Store whose SkillPoints -- read while a stats reply
+// is built -- waits until released, so a test can land a blow in that gap.
+type blockingSkills struct {
+	skill.Store
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingSkills) SkillPoints(_ context.Context, _ int64) (int, error) {
+	b.entered <- struct{}{}
+	<-b.release
+	return 0, nil
+}
+
+// A regen push must not land after the death (round 607's third review): the
+// stats reply is built outside the kill lock, a lethal blow can take the lock,
+// kill her and push HP 0 meanwhile, and a regen packet arriving after it drew a
+// live bar on a dead character. The push is dropped when she is no longer
+// alive, or no longer at the HP it carries.
+func TestRegenPushIsDroppedAfterADeath(t *testing.T) {
+	f := startDeadWorldFixture(t)
+	ctx := context.Background()
+	t.Cleanup(func() { motions.clear(f.aria) })
+	c, _ := f.chars.GetByID(ctx, f.aria)
+	if _, _, err := f.chars.ApplyDamage(ctx, f.aria, c.MaxHP()/2); err != nil {
+		t.Fatal(err)
+	}
+	e, _ := f.hub.EntityByCharacterID(f.aria)
+	bs := &blockingSkills{entered: make(chan struct{}), release: make(chan struct{})}
+	done := make(chan struct{})
+	go func() {
+		regenOne(ctx, f.hub, e, f.chars, RegenDeps{Skills: bs}, nil, time.Now())
+		close(done)
+	}()
+	<-bs.entered // the pools are written and the reply is being built
+	f.kill(t, f.aria, time.Now())
+	close(bs.release)
+	<-done
+	if !f.nothing(t, f.connA, f.rA) {
+		t.Error("a regen stats push was delivered after Aria was killed")
+	}
+}
+
+// The control: with nobody killing her, the same push goes out.
+func TestRegenPushGoesOutWhenNothingChanged(t *testing.T) {
+	f := startDeadWorldFixture(t)
+	ctx := context.Background()
+	t.Cleanup(func() { motions.clear(f.aria) })
+	c, _ := f.chars.GetByID(ctx, f.aria)
+	if _, _, err := f.chars.ApplyDamage(ctx, f.aria, c.MaxHP()/2); err != nil {
+		t.Fatal(err)
+	}
+	e, _ := f.hub.EntityByCharacterID(f.aria)
+	regenOne(ctx, f.hub, e, f.chars, RegenDeps{}, nil, time.Now())
+	p := f.read(t, f.connA, f.rA)
+	if p.Opcode != OpCharacterStatsResult {
+		t.Fatalf("got %#04x, want the regen stats push", p.Opcode)
 	}
 }
