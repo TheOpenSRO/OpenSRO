@@ -7083,6 +7083,44 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-first round: Q opens the client's own Quest window, with the player's quests on its rows
+
+The full record is `docs/RE_COMPLETION.md`'s entry of the same name.
+
+- **The window.** Q (`0x7990e0`) toggles `CNIFQuest`, window 0x4c, loaded from
+  `res_ui\questlist.2dt` at game start (`0x786f30`). We built `ifquest.txt`, which is CIFQuest, a
+  main-popup pane nothing opens. `QuestWindow` now builds the `.2dt`: 624x369, CNIFMainFrame's
+  chrome, caption `UIIT_STT_QUEST_LIST`, ten `CNIFQuestSlot` rows.
+- **Placement (read).** OnCreate (`0x6e3ff0`) centres it and then sets x = 0x50: (80, 140) in the
+  1152x648 view. It is the only `0x798c50(0x4c)` call of the nine in the exe, and ShowWindow
+  (`0x6e12b0`) only refreshes, so the window stays where it is dragged. Clamped into the view
+  (ours).
+- **Rows (read).** Each row registers at the front of the window's list (`0x6e3700`) in reverse
+  file order, so row 0 is the top one. Rows start hidden; `0x6e03c0` fills one per quest from the
+  scroll position and hides the rest; the wheel moves the scroll one quest (`0x6dbe00`), and every
+  quest update starts from the top (`0x6e3810`). The time text 75 is hidden for a quest with no
+  time (`0x6e5a60`).
+- **Rows.** The client's list holds only live quests (read in review: finished ids go to +0x38,
+  0x30d5 cases 3 and 4 delete, the server sends case 3 for statuses 4..6), so rows are the quests
+  the player has accepted and not completed; that our `completed` is the delete is the one
+  inference. Sorted by quest id (ours): the server's reply comes from a Go map in no fixed order,
+  and two quests swapped rows. Reopening keeps the scroll, and so does a reply that draws the same
+  quests (ids and names; ours); a list with different quests starts from the top (retail's
+  change path resets too, so retail may reset on progress, which is not read).
+  Quests not yet taken are seen and accepted only in the dev Quests tab (Tab).
+- **Not drawn.**
+  The `(%d/%d)` after the name comes from a packet byte the server packs from two values not
+  established; our reply has neither, so the name is drawn alone. The level colour of button 19
+  needs a quest level our reply lacks. Objective lines need objective text, which our quests do
+  not have. The check box takes no click (its quick list is not built); 18 and 19 are inert.
+- **Carried over:** Q, the menu item, the request on open, redraw on every reply, Escape, the QA
+  panel hook. Changed: a refused reply keeps the last list, and a list that arrives before the
+  window exists is kept (NetClient too). Dropped: unaccepted and completed quests, and the
+  `ifquest.txt` build with its list overlay.
+- **Tests.** `quest_window_test.gd`: 42 FAIL lines against b79036a's scripts (the run reaches
+  its last check), and the reviews' five (order, scroll) against the unreviewed commit; ALL PASS
+  here. 115 suites, 0 failing; Go 59 ok.
+
 ## Six-hundredth round: Escape closes the world map, as the client's does
 
 A follow-up to round 599, from its review. The full record is `docs/RE_COMPLETION.md`'s entry of

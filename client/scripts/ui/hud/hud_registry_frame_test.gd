@@ -118,6 +118,7 @@ func _builder() -> UiBuilder:
 	cache["resinfo\\ifautopotion.txt"] = UiLayoutParser.parse(_autopotion())
 	cache["resinfo\\ifcommunity.txt"] = UiLayoutParser.parse(_community())
 	cache["resinfo\\ifquest.txt"] = UiLayoutParser.parse(_community())
+	cache["resinfo\\if_npctalk.txt"] = UiLayoutParser.parse(_community())
 	# The registry as the builder would have read it from the archive: parsed,
 	# and (for a lookup that selects #ifdef branches) its raw text.
 	builder.set("_window_registry", UiLayoutParser.parse(_registry()))
@@ -285,20 +286,24 @@ func _panel_checks(panels_script: GDScript) -> void:
 
 	# A self-framed window is unchanged: its layout's size, no registry
 	# frame, and ifalchemybox's chrome. (This was the community window until
-	# it was rebuilt from res_ui\guild.2dt (round 595). The action window
-	# is a tab of the main popup since round 587; the quest panel still has
-	# its own self-framed window until res_ui\questlist.2dt is built.)
-	var quest := panels.call("open", "quest") as Control
-	_check(quest != null, "the quest window builds from the fixture")
-	if quest != null:
+	# it was rebuilt from res_ui\guild.2dt (round 595), then the quest window
+	# until it was rebuilt from res_ui\questlist.2dt (round 601); the action
+	# window is a tab of the main popup since round 587. The NPC talk box
+	# has no registry frame of its own that is used, round 586.)
+	var talk := panels.call("open", "npctalk") as Control
+	_check(talk != null, "the talk box builds from the fixture")
+	if talk != null:
 		await process_frame
-		_check(quest.size == Vector2(464, 381), "quest: stays self-framed at its layout's 464x381 (got %s)" % quest.size)
-		_check(_frame_pieces(builder, quest).is_empty(), "quest: no registry frame")
-		var bar := quest.get_node_or_null("TitleBar") as Control
-		_check(bar != null and bar.position == Vector2(10, 18), "quest: its caption stays at (10, 18) (got %s)" % (bar.position if bar != null else null))
-		var close := quest.get_node_or_null("CloseButton") as Control
-		_check(close != null and close.position == Vector2(464 - 26, 12), "quest: its close button stays at (438, 12) (got %s)" % (close.position if close != null else null))
-		_check(_drags(quest, Vector2(5, 38)), "quest: its 42-pixel drag strip is unchanged")
+		_check(talk.size == Vector2(464, 381), "talk: stays self-framed at its layout's 464x381 (got %s)" % talk.size)
+		_check(_frame_pieces(builder, talk).is_empty(), "talk: no registry frame")
+		var bar := talk.get_node_or_null("TitleBar") as Control
+		_check(bar != null and bar.position == Vector2(10, 18), "talk: its caption stays at (10, 18) (got %s)" % (bar.position if bar != null else null))
+		var close := talk.get_node_or_null("CloseButton") as Control
+		_check(close != null and close.position == Vector2(464 - 26, 12), "talk: its close button stays at (438, 12) (got %s)" % (close.position if close != null else null))
+		_check(_drags(talk, Vector2(5, 38)), "talk: its 42-pixel drag strip is unchanged")
+	# The quest window is no longer built from ifquest.txt, CIFQuest's layout,
+	# which Q does not open: with no res_ui\questlist.2dt it does not open.
+	_check(panels.call("open", "quest") == null, "quest: not built from ifquest.txt")
 	# The community is no longer built from ifcommunity.txt, which the client
 	# never loads: with no res_ui\guild.2dt it does not open at all.
 	_check(panels.call("open", "community") == null, "community: not built from ifcommunity.txt")

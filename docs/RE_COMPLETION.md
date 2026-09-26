@@ -43894,3 +43894,294 @@ state across them. **Open.**
   - `FAIL and does not raise the System menu while the map was open`
   - `FAIL with both open, Escape closes the System window first (0x79d657)`
 - **This tree:** ALL PASS.
+## Q opens the client's own Quest window, with the player's quests on its rows (round 601)
+
+Client only. Nothing on the wire changes; NetClient now also keeps the last quest list. Q used to
+build `resinfo\ifquest.txt` as a window of its own and lay a plain list of every catalogue quest
+over it. That layout is `CIFQuest`, a pane of the main popup (`GDR_QUEST`) whose only opener is a
+tab button the popup hides (round 587). The window Q opens is `CNIFQuest`, from
+`res_ui\questlist.2dt`, and it is what `QuestWindow` now builds. Labels as before: **read** is out
+of the binary (asm checked for every address below that decides a value), **measured** is counted
+in the retail files, **inferred** is a conclusion with its basis, and **ours** is this client's
+choice.
+
+### Which window, and when it is built (read)
+
+- Q is slot 5 of the default key table (`0x7778be`) and reaches `0x7990e0`: if window 0x4c is
+  visible (`0xb8f530`) it gets ShowWindow(0), else ShowWindow(1). Nothing else happens on the key:
+  no centring, no reload.
+- 0x4c is loaded at game start by `0x786f30` (`0x787029..0x78703e`: if `0x469020(0x4c)` finds
+  nothing, `0x469140("res_ui\\questlist.2dt"` at `0xdb9144`, the interface`)`).
+- The class: descriptor `0xeeae74` (`CNIFQuest`, CreateObject `0x6e48a0`, base CNIFMainFrame,
+  size 0x808), vtable `0xda9d94`, GetMessageMap `0x6dbde0` -> `0xda9b1c`. Overridden slots:
+  0x14 `0x6e39d0` (the timer), 0x5c `0x6e12b0` (ShowWindow), 0x90 `0x6dbe00` (the wheel). Slot
+  0x28 is CNIFMainFrame's `0x479a50`, the chrome; slot 0xbc is the base `0x479e10`, which forwards
+  SetText to the caption (+0x78c). The map's entries: `0x102` -> `0x6dbe40` (key 0x1b hides the
+  window), `0x8065` -> `0x6e3ff0` (OnCreate), message 2 from id 6 -> `0x6e03c0` (the refresh).
+- The row class `CNIFQuestSlot`: descriptor `0xeeaed8` (base CNIFSlot, size 0x360), vtable
+  `0xdaa1b4`, map `0xdaa15c`: `0x8065` -> `0x6e5a10`, id 18 -> `0x6e51e0`, id 19 -> `0x6e5290`,
+  id 8 -> `0x6e55d0`. Slot 0x30 is `0x6e5a60` (the time text, below).
+
+### The file (measured)
+
+`questlist.2dt`: 84 records, root 76. Record 0 `CNIFQuest`, a MainFrame 624x369 on
+`mframe_wnd_`, text id `UIIT_STT_QUEST_LIST`; 1, a Frame (id 2) at (11, 38) 603x322 on
+`equip_window_`; 2, a NormalTile (id 3) at (38, 68) 547x284 on `com_bg_tile_a.ddj`; 3, a
+VerticalScroll (id 6) at (591, 60) 16x262; then ten `CNIFQuestSlot` rows (ids 5, 77, 85, 93, 101,
+109, 117, 125, 133, 141) at (16, 43 + 31i), 576x32 on `qst_sub_window.ddj`, each with a small box 7
+(`qst_small_sub_window.ddj`), a check box 8 (`com_checkbutton_on.ddj`), the name 16 (left-aligned),
+a world-map button 18 (`qst_world_button.ddj`), a content-view button 19
+(`qst_contentview_button.ddj`), a status 11 and a time 75. The sample texts (`진행중`, `00:10`, a
+Korean quest name) are the editor-only 0x300 field and are never drawn. Every texture the records
+name is in Media.pk2 (a texcheck over the file: frame 16/16, tile 1/1, buttons 20/20 with
+`_focus` and `_press` 20/20, check boxes 20/20, plain 20/20); `qst_world_button_disable` is
+absent, and no button here is disabled.
+
+### Create state (read)
+
+The OnCreates run last record first (round 595). Each row's (`0x6e5a10`): +0x354 = its child 8,
+SetCheck(0) (`0x482cb0`); `0x6e3700` on its parent, the window; `0x6e5830(0)`; ShowWindow(0).
+`0x6e3700` inserts the row at the FRONT of the window's list +0x7b8 (`0x6e3709..0x6e3739`:
+`0x6de4b0(first, first->prev, &row)`, then `first->prev = node`, `node->prev->next = node`) and
+rebuilds the vector +0x7a8 from the list. The rows register last first, so the vector ends in
+file order: **row 0 is id 5, at the top** (read; the order of the OnCreates is round 595's read).
+
+`0x6e5830(mode)` (asm `0x6e5864..0x6e5943`, ebx = 0): mode 0 -- the check box shown, 11 hidden,
+18, 19 and 7 shown, the row's art `interface\quest\qst_sub_window.ddj` (`0xdaa470`, 0x22 long, on
++0x84 vslot 0x34); mode 1 -- the check box hidden, 11 shown, 18, 19 and 7 hidden, the art ""
+(`0xe16204`). Mode 1 is an objective line (below).
+
+The window's own (`0x6e3ff0`): +0x7d4 = child 6, the scroll; `0x798c50(0x4c)` centres it (x =
+(screen width >> 1) - (width >> 1), y likewise, through vslot 0x9c); `0xb8f460` reads its
++0x40/+0x44 and vslot 0x98 moves it to (0x50, that y) (`0x6e403a push 0x50`); ShowWindow(0);
+`0x6e3810`. **This is the only centring**: of the nine calls to `0x798c50` in the exe, one passes 0x4c
+(`0x6e4012`; the others pass 0xd4, 0xb0, 0x62, 0x96, 0xbe, 0xc5 and 0x1c twice), and ShowWindow
+(`0x6e12b0`) is the base ShowWindow followed by `0x6e03c0(0, 0)`. So the window keeps where the player drags
+it. In the 1152x648 view it is built at (80, 324 - 184) = (80, 140); at UI scale 1.5 (768x432) at
+(80, 32). **Ours:** the result is clamped into the view (a smaller one, e.g. scale 2.0's 576x324,
+gives (0, 0)); the client builds it at game start, this client on the first Q.
+
+### Filling (read)
+
+- `0x6e3810`: the player's quests -- `[0xeef5ec]` `0x9d4c60` (+0x20d0), `0x8b5e00` (+0x28), a
+  list -- copied to the vector +0x7c4; quests whose +0xc is not -1 (timed) also go to the map
+  +0x7d8 and start timer 10 at 1000 ms (`0xb93320`); then the scroll's range 0..count-1 with step 1
+  (`0x478ab0(0, count-1, 1)`), its position 0 (`0x478960(0)`), and `0x6e03c0`. It runs at create
+  and from `0x778c70` / `0x778cb0` / `0x778d10`, which the quest packet handler `0x8812b0`
+  (opcode 0x30d5, `docs/protocol/message_handlers.tsv`) calls for an added, changed or removed
+  quest (`CQuestManager` `0x8ba1f0` pushes an added quest to the BACK of the list, so the list is
+  in arrival order).
+- `0x6e03c0`: for row i (the counter +0x7e4), quest = vector[scroll position (+0x380 of the
+  scroll) + i]; `0x6e5830(0)` then `0x6e5bf0(quest)` on the row. Rows past the list get
+  `0x6e5bf0(0)`: +0x348 = 0 and ShowWindow(0) (`0x6e5c35..0x6e5c3d`).
+- `0x6e5bf0(quest)`, in order:
+  - 19's art by the quest's byte +9 (its meaning not read): 1 `qst_colorbar_green`, 2 `_red`, 3 `_lightgreen`
+    (`0x6e5c5d..0x6e5cf4`); then `0x6e5760` sets 19's art again, unconditionally, by the player's
+    level (`[0xeef5ec]+0x868`, the byte round 205 reads as the player's level) less the quest's (RefQuest +0x20): above 9
+    `qst_contentviewblue_button`, below 0 `qst_contentviewred_button`, else
+    `qst_contentview_button`. So the level colour is what shows.
+  - 16: colour 0xffffffff (`0x475ce0(-1)` at `0x6e5d69`) and SetText of `%s (%d/%d)` (UTF-16 at
+    `0xd95a80`) with the quest's name (RefQuest +0x24 through the text table) and the low and
+    high nibbles of the quest's byte +8.
+  - 8: SetCheck(0), then SetCheck(1) if the quick list (window 0xad) holds the quest
+    (`0x5c7b90`).
+  - The quest's objectives (its list at +0x14): each fills the next row, while one remains
+    (`0x6dcd50`), through `0x6e0570`: `0x6e5830(1)` and `0x6e5480`, which puts
+    `UIIT_STT_QUEST_ING` in 0xffefdaa4 on 11 when the objective's byte +4 is 1, else
+    `UIIT_STT_QUEST_END` in 0xffff9c68, the objective's text on 16 in the same colour, and shows
+    the row. The text is the objective's text key, or that key formatted with the objective's
+    parameters (`0x6e8180`) when its +0x40 count is non-zero.
+  - ShowWindow(1) (`0x6e600d`).
+- 75: the row's slot 0x30 (`0x6e5a60`) hides it when the row has no quest, is an objective line,
+  or the quest's +0xc is -1 (`0x6e5bc1`); otherwise, once per 1000 ms of `[0x110f7f8]`
+  (accumulated at +0x35c), it shows the time left, `0xdaa4ac` formatted from +0xc's bit fields.
+  That slot 0x30 runs every frame is **inferred** from that accumulator.
+- The packet (`0x8b94d0`): byte +8, byte +9 (the state), byte +10 (flags); +0xc (4 bytes) when
+  flags & 4, and +0xc is also turned from -1 to 0 when the quest's RefQuest +0xb2 is non-zero
+  (so "timed only when flags bit 4" is incomplete); +0x10 when flags & 8; the objectives when
+  flags & 0x10. The server
+  (`SR_GameServer` `0x5703b0`, asm `0x57057b..0x5705e6`) sends byte +8 as `(quest object's vslot
+  0x28 << 4) | CGObjPC::GetQuestCounter` (`0x5713d0`, the PC's quest record +0x22). The client
+  prints low then high: "(counter/that value)". **What the two numbers are is not established.**
+
+### The wheel and the scroll (read)
+
+Slot 0x90 (`0x6dbe00`): a positive short argument calls `0x4794d0(0)` on the scroll, a negative
+one `0x4794f0(0)`. Those set the position to position -/+ step (+0x37c, 1 here) through
+`0x478960`, which clamps it into [+0x370, +0x374] (0..count-1) and notifies the parent
+(`0xb8f150`), whose map sends message 2 from id 6 to the refresh. That slot 0x90 is the wheel is
+**inferred** from the sign test on its argument. The scroll bar's own art is not read (type 13 is
+built without art, as in round 594).
+
+### What this client draws
+
+`QuestWindow` (`client/scripts/ui/hud/quest_window.gd`) builds the file with the round-594
+builder, moves record 0's text to CNIFMainFrame's caption (10, 12, 603, 12) and adds the chrome
+(close at (598, 10), drag strip (10, 0, 603, 34)), applies the create state above, and fills the
+rows from the server's quest list:
+
+- **Which quests are rows (read, one step inferred; firmed up in review).** The list at
+  +0x20d0 +0x28 holds only live quests. At login the finished ids go to +0x38 and the live
+  quests are pushed to the back of +0x28 (`0x8ba1f0`, through ICPlayer `0x9d9830`). The 0x30d5
+  handler `0x8812b0` adds on case 1 (`0x778c70`), changes on case 2 (`0x778cb0`), and deletes on
+  cases 3 and 4 (the jump table at `0x881440` sends both to `0x8813fa`: `0x778d10` ->
+  `0x8b91b0`, then the id goes to +0x38). The server (GObjPC `0x5709c0`) sends case 3 for
+  statuses 4, 5 and 6. Our reply is the whole catalogue with each character's progress folded
+  in (`accepted`, `completed`), so a row is drawn for a quest that is accepted and not
+  completed. **The one inference:** that our `completed` is the client's delete (our server pays
+  the reward at completion, OpQuestCompleted, so nothing is left to hand in). The old overlay
+  listed every catalogue quest.
+- **Order (ours).** The client keeps arrival order (`0x8ba1f0` pushes to the back). This
+  server's `handleQuestList` walks `quest.Catalog`, a Go map, and nothing sorts it, so the
+  reply's order changes between replies (measured in review: 1000 runs gave the two orders 880
+  and 120 times) and two accepted quests swapped rows on Q and on kills. The rows are sorted by
+  quest id. (The first version of this record said the server keeps catalogue order; it does
+  not.)
+- **The name** is drawn alone, in white. The `(%d/%d)` is left off: our reply carries no byte +8,
+  and what its two numbers mean is not established, so they are not filled with our kill count.
+- **19** keeps the record's `qst_contentview_button`: our reply carries no quest level, so the
+  level colour cannot be chosen. **Not the level colour.**
+- **Objective lines** are not drawn: this server's objectives are its own design and carry no
+  text key (`docs/GROUNDING_AUDIT.md`, the quest row: the client data has no objective table).
+- **75** is hidden (our quests are not timed); **11** is hidden (quest mode).
+- **The check box** is unchecked and takes no click (**ours**): it feeds the quick list
+  `questminilist.2dt` (`0x6e55d0`: at most three, else `UIIT_CTL_QUEST_HELPER_FULL`), which is not
+  built, and a box that ticked with nothing behind it would say otherwise.
+- **18 and 19 are inert** (built, drawn, hover and press art): 18's `0x6e51e0` opens the world
+  map guide through `0x79abe0` (the M toggle) and hands it the quest id (`0x6256e0`); 19's
+  `0x6e5290` calls `0x799390` and `0x6e4c00`, which captions a window with the quest's texts
+  (RefQuest +0x40, +0x5c) and a `UIIT_STT_QUEST_GIVEUP` / `UIIT_STT_QUEST_REWARD` button. Neither
+  window is built here.
+- **The wheel** scrolls one quest a step, clamped 0..count-1.
+- **The scroll across a refresh.** Read: ShowWindow (`0x6e12b0`) only refreshes, so a reopen
+  keeps the scroll; `0x6e3810` puts it back on the first quest, and it runs when the client's
+  list changes (an add, a change, a delete). **Ours:** this client asks for the whole list on
+  every open and after every kill (World3D, after an attack that kills), so a reply that draws the
+  same quests -- the same ids and names, what the rows show -- keeps the scroll, clamped to the
+  count, and one that draws different quests (a quest taken or finished) starts from the first
+  quest. A counted kill changes nothing drawn and keeps the scroll. Retail's change message
+  (`0x778cb0` -> `0x6e3810`) resets too, so retail may reset on progress; whether its server
+  sends a change per kill is not read.
+
+### Carried over from the old panel
+
+| behaviour | before | now | checked by |
+|---|---|---|---|
+| Q opens and closes it | toggle of the `ifquest.txt` window | toggle of `CNIFQuest` (`0x7990e0`) | test: Q, Q, Q |
+| The menu's quest item | `toggle("quest")` | the same, reaching the same window | test: `toggle("quest")` hides it |
+| Opening asks the server | `_populate("quest")` -> `NetClient.list_quests` | unchanged | test: `last_populated == "quest"` |
+| A list reply is drawn | `_fill_list` rows of every quest's name over the scroll manager | the player's quests on the client's rows, sorted by quest id | test: rows, filter, a shuffled reply gives the same rows |
+| A reply while open redraws | yes | yes | test: twelve quests while shown |
+| A refused reply | cleared the list (it drew the empty entries) | keeps the last list (**changed**, as round 597 did for the guild) | test |
+| Escape closes it | `close_topmost` | unchanged (it is in `_windows`); `0x6dbe40` does the same for 0x1b | code path unchanged |
+| `SRREVAMP_QA_PANELS=quest` | `open("quest")` | unchanged | the qa_shot below |
+| World3D's debug Quests tab (list, accept, kill refresh, completion message) | separate | untouched | not in this diff. **It is now the only place to see and accept a quest the character has not taken**: Tab (`toggle_panels`) shows it; no NPC dialog offers quests |
+| A reply before the window exists | lost (the overlay needed the window) | kept, in HudPanels and in NetClient (`last_quest_list`, cleared with the others) | test: early list; a second HudPanels built after the reply |
+
+**Dropped:** available (not accepted) and completed quests are no longer listed in the Q window
+(above); `ifquest.txt`'s build and the list overlay code (`_fill_list`, `_list_area`,
+`_row_pitch`, `_fill_list_overlay`, `_describe_named`), which only the quest panel used. Nothing
+else in the client references `ifquest.txt` except comments and a test fixture; the retail client
+still builds it as the hidden `GDR_QUEST` pane, which this client does not build
+(`HudMainPopup.UNHOSTED_PANES`). `hud_registry_frame_test.gd`'s self-framed check moved from the
+quest window to the NPC talk box (alchemy is due to become `nifenchantwnd.2dt`), and it now
+checks that quest is not built from `ifquest.txt`.
+
+### Audit (measured)
+
+The scratch audit tool (`zz_gui_audit.gd`, not committed; this round's copy also dumps the quest
+window a second time with two quests filled) ran headless with `--norender=1` against the real
+Media.pk2. BEFORE is b79036a's scripts, AFTER this tree. Neither printed a SCRIPT ERROR. (A GL
+run of the same tool was lost when another lane's qa_shot stopped every client on the box, so
+both sides were taken headless.)
+
+- **Nodes.** Before, quest was the 365x355 `ifquest.txt` window, 26 nodes: an `sframe_wnd_`
+  frame, eleven 2-pixel divider tiles and an empty scroll manager, captioned "Quest list" by this
+  client's own PANELS title. After, 624x369, 113 nodes (115 with two quests).
+- **Visible, empty (as built, no quests).** MainFrame76 and its eight `mframe_wnd_` pieces,
+  Frame2 (11,38,603,322) with its eight `equip_window_` pieces at their own sizes (12x12 corners,
+  12-high edges), Tile3 (38,68,547,284) `com_bg_tile_a`, VScroll6 (591,60,16,262, no art),
+  TitleBar (10,12,603) "Quest list" from `UIIT_STT_QUEST_LIST`, CloseButton (598,10,16,16). All ten
+  rows are hidden, and with them every placeholder the file carries: the check marks, the small
+  boxes, the buttons, 11 and 75.
+- **Visible, filled.** Rows 5 and 77 at (16,43) and (16,74): the row art, small box 7, check box 8
+  on its `off` piece with the mark hidden, the name 16 ("Audit Quest One", white, left), buttons
+  18 and 19. 11 and 75 stay hidden; rows 85..141 stay hidden. No sample text (`진행중`, `00:10`,
+  the Korean quest name) appears anywhere in the dump.
+- **Findings (an.py), before -> after:** quest 0 -> 0, quest-filled 0 (OUTSIDE 0, SAMERECT 0,
+  CHROME 0, OVERFLOW 0, SLICE_DISTORT 0, EDGE_TILED_OFF 0, NULLTEX 0).
+- **Measured, not acted on:** the row art `qst_sub_window.ddj` is 572x32 against a 576x32 row, and
+  `qst_small_sub_window.ddj` 480x48 against a 444x22 box; both are drawn scaled to the record's
+  rect. How the client draws a static whose art is not its size is not read (open since round
+  595).
+- **Tree diff**, auto-generated names normalised: **18 of 18 other widgets identical**.
+
+### Tests
+
+`client/scripts/ui/hud/quest_window_test.gd` builds HudPanels on synthetic `questlist.2dt`
+records (the file's ids, parents, rects and class names; no art, no text) plus the old
+`ifquest.txt` fixture, and checks: Q opens a 624x369 window built from the file; the caption; the
+chrome; (80, 140); no label over the window; the frame, tile and row rects; a list that came
+before the window (one accepted, one not accepted, one completed -> one row); a filled row's
+parts; the rows past the list hidden; twelve quests over ten rows; the wheel both ways and its
+clamp; a new list from the top; a refused list; Q toggling without moving it; the menu toggle;
+NetClient's kept list; and the placement at UI scale 1.5 and 2.0.
+
+NEGATIVE against b79036a's scripts (the test copied into a fresh checkout of that tree on the box): **42 FAIL lines**, no SCRIPT ERROR; the run reaches its last check. The lines that carry the change:
+- `FAIL it is built from res_ui\questlist.2dt (a quest_root)`
+- `FAIL it is questlist.2dt's CNIFQuest, 624x369 (got (365, 355))`
+- `FAIL its caption is record 0's UIIT_STT_QUEST_LIST (got 'Quest list')`
+- `FAIL it sits at (0x50, centred y) = (80, 140) in the 1152x648 view (got (394, 147))`
+- `FAIL the caption is at (10, 12), 603 wide (got [P: (10, 18), S: (345, 17)])`
+- `FAIL the close button is at (598, 10), 16x16 (got [P: (339, 12), S: (16, 16)])`
+- `FAIL record 0's text is the caption, not a label over the window`
+- `FAIL the list that came before the window was built is on row 5; a quest not accepted and a completed one are not rows (got ["", "", "", "", "", "", "", "", "", ""])`
+- `FAIL a filled row's small box 7 is shown (0x6e5830(0))`
+- `FAIL its time 75 is hidden for a quest with no time (0x6e5a60)`
+- `FAIL twelve quests fill the ten rows (got ["", "", "", "", "", "", "", "", "", ""])`
+- `FAIL the wheel down moves the list one quest (0x4794f0, got ["", "", "", "", "", "", "", "", "", ""])`
+- `FAIL the scroll stops at the last quest, 0..count-1 (0x478960, got ["", "", "", "", "", "", "", "", "", ""])`
+- `FAIL a shuffled reply of the same quests draws the same rows (got ["", "", "", "", "", "", "", "", "", ""])`
+- `FAIL a reply that only counts a kill keeps the scroll (got ["", "", "", "", "", "", "", "", "", ""])`
+- `FAIL a refused list keeps the last one (got ["", "", "", "", "", "", "", "", "", ""])`
+- `FAIL NetClient keeps the last quest list`
+- `FAIL at UI scale 1.5 (view (768, 432)) it is built at (80, 32) (got (202, 39))`
+- `FAIL at UI scale 2 (view (576, 324)) it is built at (0, 0) (got (106, -16))`
+
+The others are the rest of the chrome and rect checks, the filled row's parts, the other nine
+rows and the reply checks, all failing for the same reason. On this tree the suite prints ALL PASS
+(51 checks).
+
+**Results** (re-run after the second review, on this round's tree in a fresh copy on the box).
+`remote_godot.sh check`: 302 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`: 115 suites,
+0 failing, 0 SCRIPT ERROR. `cd server && go build ./... && go test -count=1 -p 1 ./...`: 59
+packages ok, 10 with no tests. (Before the reviews, a first full run failed
+`terrain_prepare_test.gd` with no FAIL line while another lane's qa_shot stopped every client on
+the box; it passed alone and in the rerun.)
+One qa_shot (`--server --panels quest --panels-in-place`, Jangan spawn) was taken for a human to
+look at and decided nothing; a fresh character has accepted no quest, so it shows the window with every row hidden.
+
+**API.** `QuestWindow` (new): `build_quest`, `fill_quests`, `refresh`, `rows`, `control`,
+`quest_count`, `scroll_position`, `set_scroll`, `place_on_create`. `HudPanels`:
+`_open_quest_window`, `_quest_window`, `_on_quest_list_result`, `QUEST_ID`; `PANELS["quest"]` now
+names `questlist.2dt`; `_fill_list` and its helpers are removed. `NetClient`: `last_quest_list`,
+`has_quest_list`.
+
+**Review fixes (folded in).** The row order (sorted by quest id; above), the scroll kept across
+a reply that draws the same quests, the membership labels (read, with the one inference), the Tab
+note, the `+0xb2` note, a stale `_fill_list` comment in `hud_panels.gd`, and the registry test
+moved to the talk box. A second review: a guard on `refresh` so the negative runs to the end
+(against b79036a it had stopped at a SCRIPT ERROR after 34 FAIL lines; the count here, 42, is
+re-measured), the scroll comparison narrowed to what is drawn and labelled ours, `flags & 4`, and
+fixture strings that carry no real text. Against the unreviewed commit's scripts (89aead3, before
+either review) the order and scroll checks FAIL, 5 lines:
+- `FAIL the same list again keeps the scroll where it was (got ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10"])`
+- `FAIL a shuffled reply of the same quests draws the same rows (got ["Q12", "Q11", "Q10", "Q8", "Q7", "Q6", "Q5", "Q4", "Q3", "Q9"])`
+- `FAIL the rows are in quest-id order whatever order the reply came in (got ["Q12", "Q11", "Q10", "Q8", "Q7", "Q6", "Q5", "Q4", "Q3", "Q9"])`
+- `FAIL a reply that only counts a kill keeps the scroll (got ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10"])`
+- `FAIL closed and reopened, with the same list sent again, the scroll is kept (got ["Q1", "Q2", "Q3", "Q4", "Q6", "Q7", "Q8", "Q9", "Q10", "Q11"])`
+
+**Open.** The `(%d/%d)` pair (what the server's two nibbles are); the level colour (a quest level
+in the reply); objective lines (objective text); the time left; the quick list
+(`questminilist.2dt`) behind the check box; the windows behind 18 and 19; the scroll bar's art;
+the draw of an off-size static.

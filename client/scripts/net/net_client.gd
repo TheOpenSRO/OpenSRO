@@ -331,11 +331,18 @@ var last_enter_world_result: WorldNet.EnterWorldResult
 var last_guild_result: GuildNet.Result = null
 var last_friend_list: Array = []
 var has_friend_list := false
+## The last quest list reply without an error, kept for the same reason:
+## World3D asks for it before the loading screen, and the quest window is
+## built after it. Cleared with the others.
+var last_quest_list: Array = []
+var has_quest_list := false
 
 func _forget_session_lists() -> void:
 	last_guild_result = null
 	last_friend_list = []
 	has_friend_list = false
+	last_quest_list = []
+	has_quest_list = false
 
 ## The current zone label, updated from last_enter_world_result.zone on
 ## entering the world and again from a successful change_zone_result --
@@ -775,6 +782,9 @@ func _dispatch(p: Packet) -> void:
 			chat_whisper_message.emit(ChatNet.decode_message(p.data))
 		QuestNet.OP_LIST_RESULT:
 			var r := QuestNet.decode_list_result(p.data)
+			if r.error == "":
+				last_quest_list = r.entries.duplicate()
+				has_quest_list = true
 			quest_list_result.emit(r.entries, r.error)
 		QuestNet.OP_ACCEPT_RESULT:
 			var r := Auth.decode_result(p.data)

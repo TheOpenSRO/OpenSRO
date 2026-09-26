@@ -21,6 +21,7 @@ const HudWindow = preload("res://scripts/ui/hud/hud_window.gd")
 const HudMainPopup = preload("res://scripts/ui/hud/hud_main_popup.gd")
 const ErrorText = preload("res://scripts/net/error_text.gd")
 const GuildWindow = preload("res://scripts/ui/hud/guild_window.gd")
+const QuestWindow = preload("res://scripts/ui/hud/quest_window.gd")
 
 ## key: the panel id used by the underbar's menu_action and by hotkeys.
 ## Each entry is [layout path, window title, hotkey action name or ""].
@@ -41,7 +42,10 @@ const PANELS := {
 	# exe never names ifplayerinfo.txt, in ASCII or UTF-16.
 	"character": ["resinfo\\ifplayerinfo_trijob2.txt", "Character", KEY_C],
 	"skill": ["resinfo\\ifskill.txt", "Skill", KEY_K],
-	"quest": ["resinfo\\ifquest.txt", "Quest list", KEY_Q],
+	# Q toggles CNIFQuest, window 0x4c, built from the client's own
+	# `res_ui\\questlist.2dt` (QuestWindow): 0x7990e0 (ShowWindow(0) if it is
+	# shown, else ShowWindow(1)). The retail binding is Q (slot 5 of 0x7778be).
+	"quest": [QuestWindow.QUESTLIST_2DT, "", KEY_Q],
 	"party": ["resinfo\\ifparty.txt", "Party", KEY_P],
 	# The guild and community are one window, CNIFGuildWnd, built from the
 	# client's `res_ui\*.2dt` files (GuildWindow); these two ids are its two
@@ -111,6 +115,10 @@ const GUILD_WINDOW_KEY := "guild"
 var _friends: Array = []
 ## The last guild reply without an error (null: none yet).
 var _guild_result: GuildNet.Result = null
+## The last quest list the server sent without an error, kept so the quest
+## window draws it when it is built after the reply (the client builds its
+## window at game start and fills it from the quests it already holds).
+var _quests: Array = []
 ## The last panel id _populate was asked for (a test hook).
 var last_populated := ""
 
@@ -370,6 +378,8 @@ func open(panel_id: String) -> HudWindow:
 		return _open_main_popup(panel_id)
 	if panel_id in GUILD_VIEWS:
 		return _open_guild_window(panel_id)
+	if panel_id == QUEST_ID:
+		return _open_quest_window()
 	if _unavailable.has(panel_id):
 		return null
 	var window: HudWindow = _windows.get(panel_id)
@@ -516,6 +526,50 @@ func _guild_window() -> GuildWindow:
 	window.view_changed.connect(func(view: String) -> void: _populate(view))
 	_windows[GUILD_WINDOW_KEY] = window
 	return window
+
+const QUEST_ID := "quest"
+
+## The quest window, built the first time it is wanted (the client builds it
+## at game start, hidden, 0x786f30, and Q only toggles it), then shown. It
+## places itself once, when built (QuestWindow.place_on_create); showing it
+## does not move it.
+func _open_quest_window() -> QuestWindow:
+	var window := _quest_window()
+	if window == null:
+		return null
+	window.show()
+	window.move_to_front()
+	_populate(QUEST_ID)
+	return window
+
+func _quest_window() -> QuestWindow:
+	var window := _windows.get(QUEST_ID) as QuestWindow
+	if window != null:
+		return window
+	if _unavailable.has(QUEST_ID):
+		return null
+	window = QuestWindow.new()
+	window.name = "Window_quest"
+	add_child(window)
+	if not window.build_quest(_builder):
+		print("HudPanels: quest unavailable (%s did not build)" % QuestWindow.QUESTLIST_2DT)
+		window.queue_free()
+		_unavailable[QUEST_ID] = true
+		return null
+	window.fill_quests(_quests)
+	_windows[QUEST_ID] = window
+	return window
+
+## A quest list from the server: kept, and drawn on the quest window's rows
+## if it is built. A reply with an error keeps the last list.
+func _on_quest_list_result(entries: Array, error: String) -> void:
+	if error != "":
+		push_warning("HudPanels: quest list: %s" % error)
+		return
+	_quests = entries.duplicate()
+	var window := _windows.get(QUEST_ID) as QuestWindow
+	if window != null:
+		window.fill_quests(_quests)
 
 ## Opens the NPC dialogue for an NPC of the given name: the authored paper
 ## window (if_npctalk) titled with the name, greeting and the choices the
@@ -3739,10 +3793,7 @@ func connect_net() -> void:
 	_net_connected = true
 	# The inventory's authored presentation is its lattice grid
 	# (GDR_INVENTORY_LATTICE), filled with item icons -- the same as the real
-	# client. It has no authored list area (no scroll manager in
-	# ifinventory.txt), so the old _fill_list fallback dropped a full-window
-	# ItemList of "slot_index=.., Item_id=.." debug text *over* the grid,
-	# hiding it. That debug overlay is gone: the grid is the window.
+	# client.
 	NetClient.inventory_list_result.connect(func(slots: Array, _e: String) -> void:
 		_fill_inventory_grid(slots))
 	# A drag's outcome comes back as the whole bag (see _drop_bag_item).
@@ -3760,8 +3811,9 @@ func connect_net() -> void:
 	# The skill window shows the masteries (client data, _fill_skill_masteries),
 	# not the server's small skill catalogue, so its list result is not drawn
 	# here -- it would overlap the mastery rows.
-	NetClient.quest_list_result.connect(func(entries: Array, _e: String) -> void:
-		_fill_list("quest", entries.map(_describe_named)))
+	# The quest list fills the quest window's rows (QuestWindow.fill_quests,
+	# the client's own row fill), as it filled the old window's list.
+	NetClient.quest_list_result.connect(_on_quest_list_result)
 	# The friend list fills the community view's friend rows (GuildWindow.
 	# fill_friends, the client's own row fill), as it filled the old
 	# window's list overlay.
@@ -3779,6 +3831,8 @@ func connect_net() -> void:
 		_on_guild_info_result(NetClient.last_guild_result)
 	if NetClient.has_friend_list:
 		_on_friend_list_result(NetClient.last_friend_list, "")
+	if NetClient.has_quest_list:
+		_on_quest_list_result(NetClient.last_quest_list, "")
 	NetClient.character_stats_result.connect(_apply_stats)
 	NetClient.skill_state_result.connect(_apply_skill_state)
 	NetClient.raise_mastery_result.connect(_on_raise_mastery_result)
@@ -4088,139 +4142,9 @@ func _populate(panel_id: String) -> void:
 			_fill_equipment_slots(_equipped_items)
 			NetClient.list_equipment(who)
 
-## Renders a list of strings into a panel, as a plain scrolling list laid
-## over the authored frame.
-##
-## This is deliberately not the authored presentation: the real windows put
-## items in a CIFLattice of icon slots, or in tabled rows with per-column
-## art, and wiring each one properly is per-panel work. A readable list in
-## the right window is the honest intermediate -- it shows real server data
-## in the real frame, and says plainly that the slot rendering is not done.
-## Lays a panel's entries out on the layout's own list geometry.
-##
-## This used to drop an `ItemList` over the window, sized by hand from the
-## title bar down. Every one of these windows already says where its list
-## goes and how tall a row is:
-##
-##   ifquest   GDR_QUEST_SCROLLMGR at 4,27,356,323, with eleven 2-pixel
-##             divider tiles at y = 52, 79, 106 ... 322 -- a 27-pixel pitch
-##
-## (The guild window was the other example; it is built from
-## res_ui\\guild.2dt now and fills its own rows, GuildWindow.)
-##
-## So the rows go inside the scroll manager, at the pitch its own dividers
-## give. A window with no scroll manager keeps the overlay, because there is
-## nothing authored to put the rows on.
-func _fill_list(panel_id: String, lines: Array) -> void:
-	var window: HudWindow = _windows.get(panel_id)
-	if window == null:
-		return
-	var area := _list_area(window)
-	if area == null:
-		_fill_list_overlay(panel_id, window, lines)
-		return
-
-	var host := area.get_node_or_null("Rows") as Control
-	if host == null:
-		host = Control.new()
-		host.name = "Rows"
-		host.set_anchors_preset(Control.PRESET_FULL_RECT)
-		host.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		area.add_child(host)
-	for child in host.get_children():
-		child.queue_free()
-
-	var pitch := _row_pitch(window, area)
-	var rows: int = maxi(1, int(area.size.y / pitch))
-	for i in range(mini(lines.size(), rows)):
-		var label := Label.new()
-		label.text = str(lines[i])
-		label.position = Vector2(ROW_TEXT_INSET, i * pitch)
-		label.size = Vector2(area.size.x - ROW_TEXT_INSET * 2.0, pitch)
-		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		label.clip_text = true
-		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		label.add_theme_color_override("font_color", ROW_TEXT_COLOUR)
-		if _builder != null:
-			var font := _builder.font_at(0)
-			if font != null:
-				label.add_theme_font_override("font", font)
-			label.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
-		host.add_child(label)
-
-## Text inset inside a row, and the colour of it. The inset matches the
-## authored dividers, which start 12 pixels inside their scroll manager
-## (ifquest's are at x=16 against a manager at x=4). The colour is the one
-## every other label in these windows already uses.
-const ROW_TEXT_INSET := 12.0
+## The colour of the text this client draws itself in these windows (the
+## talk box's body, the prompts' status lines, the stat labels).
 const ROW_TEXT_COLOUR := Color(0.92, 0.88, 0.76)
-
-## Fallback row height when a window declares no dividers to measure.
-const ROW_PITCH_FALLBACK := 18.0
-
-## The panel's authored list area: its scroll manager, by name.
-func _list_area(window: HudWindow) -> Control:
-	if window.panel_root == null:
-		return null
-	for node in _walk(window.panel_root):
-		if node is Control and node.name.to_upper().contains("SCROLLMGR"):
-			return node as Control
-	return null
-
-## The row pitch, taken from the spacing of the window's own divider tiles
-## where it has them.
-func _row_pitch(window: HudWindow, area: Control) -> float:
-	var ys: Array[float] = []
-	for node in _walk(window.panel_root):
-		if not (node is Control) or not node.name.to_upper().contains("BG_"):
-			continue
-		var c := node as Control
-		# Only the horizontal dividers: the vertical edge line in ifquest is
-		# 1x303 and would otherwise be counted as a row boundary.
-		if c.size.x > c.size.y and c.size.y <= DIVIDER_MAX_THICKNESS:
-			ys.append(c.position.y)
-	if ys.size() < 2:
-		return ROW_PITCH_FALLBACK
-	ys.sort()
-	var gaps: Array[float] = []
-	for i in range(1, ys.size()):
-		var gap := ys[i] - ys[i - 1]
-		if gap > 0.0:
-			gaps.append(gap)
-	if gaps.is_empty():
-		return ROW_PITCH_FALLBACK
-	gaps.sort()
-	return gaps[gaps.size() / 2]
-
-## How thin a control has to be to count as a divider rather than content.
-const DIVIDER_MAX_THICKNESS := 4.0
-
-func _walk(root: Node) -> Array[Node]:
-	var out: Array[Node] = []
-	for child in root.get_children():
-		out.append(child)
-		out.append_array(_walk(child))
-	return out
-
-## For a window with no authored list area. Kept because several panels do
-## not have one, and an unreadable list is worse than a plain one.
-func _fill_list_overlay(panel_id: String, window: HudWindow, lines: Array) -> void:
-	var list := window.get_node_or_null("ContentList") as ItemList
-	if list == null:
-		list = ItemList.new()
-		list.name = "ContentList"
-		list.position = Vector2(12, HudWindow.TITLE_BAR_HEIGHT + 8.0)
-		list.size = window.size - Vector2(24, HudWindow.TITLE_BAR_HEIGHT + 20.0)
-		list.add_theme_color_override("font_color", ROW_TEXT_COLOUR)
-		if _builder != null:
-			var font := _builder.font_at(0)
-			if font != null:
-				list.add_theme_font_override("font", font)
-			list.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
-		window.add_child(list)
-	list.clear()
-	for line in lines:
-		list.add_item(str(line))
 
 ## Names for the fields these snapshots actually use. `get("name")` was
 ## wrong: the net snapshots call it `item_name`, `skill_name` and so on, so
@@ -4257,10 +4181,6 @@ func _describe_item(slot: Variant) -> String:
 	if count != null and int(count) > 1:
 		return "%s x%d" % [item_name, int(count)]
 	return str(item_name)
-
-func _describe_named(entry: Variant) -> String:
-	var entry_name = _first_field(entry, NAME_FIELDS)
-	return str(entry_name) if entry_name != null else _describe_unknown(entry)
 
 ## A snapshot with no field this code knows about. Says so, rather than
 ## printing Godot's object description, which is meaningless to a player

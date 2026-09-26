@@ -72,9 +72,9 @@ const PANE_LAYOUTS := {
 ## GDR_QUEST is declared, built by the client and hidden with the rest, but
 ## nothing this client can reach shows it: its only opener is tab button 15,
 ## which Create hides, and the Q key goes elsewhere -- 0x7990e0 toggles
-## CGInterface's window 0x4c, a different window (the .2dt quest list,
-## docs/UI_TODO.md). Its layout is not built here; the `quest` panel keeps
-## building ifquest.txt as its own window until that item is done.
+## CGInterface's window 0x4c, a different window, CNIFQuest from
+## `res_ui\questlist.2dt` (QuestWindow). Its layout is not built here, and
+## nothing in this client builds it.
 const UNHOSTED_PANES := ["GDR_QUEST"]
 
 ## Controls CIFMainPopup::Create hides once it has built them (read above).

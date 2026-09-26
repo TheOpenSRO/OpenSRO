@@ -288,6 +288,36 @@ is presentation work on solved data; if you find yourself editing the protocol, 
   multi-letter window 900, 100, 200, 118, 119, 120 and 115.
   The command buttons 37..41 are disabled as the client disables them for a player with no
   guild.
+- **The Quest window is the client's own** (round 601) -- `CNIFQuest`, window 0x4c, built from
+  `res_ui\questlist.2dt` (`QuestWindow`): one 624x369 CNIFMainFrame with CNIFMainFrame's chrome
+  (`0x479a50`), caption record 0's `UIIT_STT_QUEST_LIST`, an inner `equip_window_` frame, a
+  `com_bg_tile_a` tile and ten `CNIFQuestSlot` rows (576x32, a 31-pixel pitch). **Q** toggles it
+  (`0x7990e0`, the retail default); so does the menu's quest item. It is placed once, when built:
+  centred, then x = 0x50 (`0x6e3ff0`) -- (80, 140) in the 1152x648 view, (80, 32) at UI scale 1.5
+  -- and showing it does not move it (`0x6e12b0`); kept inside the view (ours). Every row starts
+  hidden (the row's OnCreate, `0x6e5a10`); a row is filled and
+  shown for each quest the player has (the client's list holds only live quests, read; that our
+  `completed` is its delete is inferred), sorted by quest id (ours: the server's reply comes from a
+  Go map in no fixed order), the name in white (`0x475ce0(-1)`), the check box unchecked, the status 11 and time
+  75 hidden; rows past the list are hidden (`0x6e03c0`). The wheel scrolls it one quest at a time
+  (`0x6dbe00`, 0..count-1); reopening keeps the scroll (`0x6e12b0`); a reply that draws the same
+  quests keeps it too and one with different quests starts from the top (`0x6e3810`; the mapping
+  is ours). Quests not yet taken are shown and accepted only in the dev Quests tab (Tab); no
+  NPC dialog offers quests. A list that arrives
+  before the window is built is kept (NetClient.last_quest_list). The old `ifquest.txt` build
+  (CIFQuest, a main-popup pane nothing opens) and its plain list overlay are gone.
+  **Still open:** the `(%d/%d)` after the name (the packet's byte +8, whose two numbers are not
+  established; our reply has neither), the content-view button's level colour (our reply has no
+  quest level), objective lines under a quest (0x6e0570; our objectives have no text), the time
+  left (no timed quests), and the scroll bar (6, built without its class's art). **Buttons with
+  no behaviour yet** (built, drawn, inert): 18 `qst_world_button` (retail `0x6e51e0`: opens the
+  world map guide through `0x79abe0`, the M toggle, and hands it the quest id, `0x6256e0` --
+  what the map then shows is not read) and 19 `qst_contentview_button` (retail `0x6e5290`:
+  `0x799390`, then `0x6e4c00`, which captions a window with two of the quest's texts, RefQuest
+  +0x40 and +0x5c, and a button reading `UIIT_STT_QUEST_GIVEUP` or `UIIT_STT_QUEST_REWARD` by the
+  quest's state -- that window is not built); the check box 8 takes no click
+  (retail: the quick list `questminilist.2dt`, at most three, `0x6e55d0`, not built). Escape
+  closes it, as `0x6dbe40` does for key 0x1b (this client's Escape closes the topmost window).
 - **The teleport board** (round 578) — the Dimensional Teleporter, `resinfo\ifteleportboard.txt`,
   built by the recipe: `HudPanels.PANELS["teleport"]`, and its five `CIFTeleportAreaSlot` rows
   (`GDR_TB_TASLOT1..5`) filled from `resinfo\ifteleportareaslot.txt`'s own section (place, price,
@@ -324,8 +354,7 @@ like the guild window:
    a new character's default slots, drag-off and slot-to-slot moves, the mall / academy
    matching / collection / stall items (no windows here), the key for command 0x58.
    `docs/RE_COMPLETION.md` has the record.
-2. **Q -> `questlist.2dt`** (`CNIFQuest`, window 0x4c): Q reaches `0x7990e0`, which toggles it.
-   We build `ifquest.txt`, a live layout but not the window Q opens.
+2. ~~**Q -> `questlist.2dt`**~~ -- *done* (round 601, `QuestWindow`; see Done).
 3. ~~**M -> `worldmapguide.2dt`**~~ **Done (round 599).** Record 0 is `CNIFWorldMap`, id 28, the
    world map itself, 650x422; `CNIFWorldMapGuide` is its left pane (id 11), hidden at create and
    on every show. M and the minimap's button both reach `0x79abe0`. The older `CIFWorldMap`
@@ -388,7 +417,8 @@ authored presentation instead:
   shortcuts are dead ends — see the skilldata-columns memory). Minor polish: the mirage
   weapon-trail texture, cast-time effects, skill sounds, and grounding real per-mob SP/EXP.
   Ghidra decompile helpers are in `client/tools/ghidra/` (GhidraMCP is broken on Ghidra 12.1.3).
-- **Quest** — quest rows.
+- **Quest** — *done for the rows the server can state* (round 601): the player's quests on the
+  client's own rows. The count pair, level colour, objectives and time are open (see Done).
 
 ### 2. Vitals, and the rest of the live data
 `HudPlayerInfo.set_hp`/`set_mp` exist and are called with a placeholder 200/200, because the
