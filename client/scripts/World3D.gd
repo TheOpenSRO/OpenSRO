@@ -1722,7 +1722,9 @@ func _relay_middle_button_to_hotbar() -> void:
 func _on_underbar_menu_action(action_name: String) -> void:
 	if _hud_panels == null:
 		return
-	_hud_panels.toggle(action_name)
+	# HudPanels.menu_action: a toggle, except the alchemy item, which only
+	# opens (0x798e20(1)).
+	_hud_panels.menu_action(action_name)
 
 ## Hides the parts of the developer UI the authentic HUD now covers.
 ## Hidden rather than deleted: the scene still owns those nodes and

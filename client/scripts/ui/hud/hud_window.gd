@@ -1,14 +1,14 @@
 extends Control
 class_name HudWindow
 
-## One floating game window -- Quest, Guild, Alchemy, the NPC talk box and the
+## One floating game window -- Quest, Guild, the NPC talk box and the
 ## rest -- built from the client's own authored layout. The character,
 ## inventory, skill, action, party and academy windows are one of these too:
 ## the main popup, a registry-framed HudWindow whose panes HudMainPopup
 ## builds and switches.
 ##
 ## A self-framed window is one this client frames from its own layout, with
-## no registry entry used: quest, guild, community, alchemy, the NPC talk
+## no registry entry used: quest, guild, community, the NPC talk
 ## box and the store. Some of those classes do have an
 ## entry in resinfo\ginterface.txt (GDR_COMMUNITY, GDR_ALCHEMYBOX, GDR_STORE,
 ## GDR_NPCWINDOW) that is not used, each for the reason docs/RE_COMPLETION.md

@@ -22,6 +22,7 @@ const HudMainPopup = preload("res://scripts/ui/hud/hud_main_popup.gd")
 const ErrorText = preload("res://scripts/net/error_text.gd")
 const GuildWindow = preload("res://scripts/ui/hud/guild_window.gd")
 const QuestWindow = preload("res://scripts/ui/hud/quest_window.gd")
+const AlchemyWindow = preload("res://scripts/ui/hud/alchemy_window.gd")
 
 ## key: the panel id used by the underbar's menu_action and by hotkeys.
 ## Each entry is [layout path, window title, hotkey action name or ""].
@@ -59,7 +60,14 @@ const PANELS := {
 	"partymatch": ["resinfo\\ifpartymatch.txt", "Party Matching", KEY_E],
 	"academy": ["resinfo\\ifapprenticeship.txt", "Academy", KEY_L],
 	"autopotion": ["resinfo\\ifautopotion.txt", "Auto Potion", KEY_T],
-	"alchemy": ["resinfo\\ifalchemyprocess.txt", "Alchemy", KEY_Y],
+	# Y opens the client's alchemy window, CNIFEnchantWnd, built from
+	# `res_ui\nifenchantwnd.2dt` (AlchemyWindow): slot 24 of the default key
+	# table is 'Y', command 0x59, which 0x780610 sends to 0x780a65 and on to
+	# 0x798e20 -- destroy window 0xa8 if it exists, load the file if not. The
+	# window is built at every open and freed at every close (open_alchemy,
+	# close_alchemy). ifalchemyprocess.txt, the panel this id used to build,
+	# belongs to GDR_ALCHEMYBOX, which the client never shows.
+	"alchemy": [AlchemyWindow.ENCHANT_2DT, "", KEY_Y],
 	"exchange": ["resinfo\\ifexchange.txt", "Exchange", 0],
 	# Opened by Escape, not a hotkey (see _unhandled_key_input). The system
 	# menu the original raises over everything: Option, Help, Restart, Exit.
@@ -163,10 +171,9 @@ const PANEL_DEFINES := {
 ##   cannot settle -- 317 (neither, or RENEWAL_SHOP_SYSTEM alone), 360
 ##   (RESTORE_SOLDITEM_INSHOP) or 370 (both) -- and the layout read with
 ##   nothing defined puts its Repair buttons at y 332-356, below a 317 frame.
-## - **alchemy**: GDR_ALCHEMYBOX is a CIFAlchemyBox, a plain CIFWnd drawing
-##   alcm_window_1.ddj, not a CIFMainFrame; ifalchemyprocess.txt is loaded by
-##   CIFAlchemyProcess, a child the box's own layout (ifnewalchemybox.txt)
-##   places at 0,150. A different assembly, not this frame.
+## - **alchemy**: the retail window is CNIFEnchantWnd, built from
+##   `res_ui\nifenchantwnd.2dt` with CNIFMainFrame's chrome (AlchemyWindow).
+##   GDR_ALCHEMYBOX (CIFAlchemyBox) is created hidden and never shown.
 const REGISTRY_FRAMES := {
 	"storage": {"name": "GDR_STORAGEROOM"},
 	"exchange": {"name": "GDR_EXCHANGE",
@@ -188,13 +195,12 @@ const REGISTRY_FRAMES := {
 ##   ShowWindow(0)); it is shown only when a member's face is filled in
 ##   (0x6e9f31). GDR_APPRENTICESHIP_LEADER_STATUS (ID 46), at the same rect,
 ##   is never shown or hidden -- only its image changes -- so it stays.
-## - **alchemy**: CIFAlchemyProcess::vslot_023 (0x725740), the show handler,
-##   hides GDR_AB_MANUFACTURING_BUTTON_CANCEL (ID 35) every time the window
-##   is shown. FUN_00723bb0 swaps it with Process (ID 30) while a compound
-##   runs, which this client does not do, so Process is the one shown.
+##
+## (The alchemy entry went with the panel it hid a button of: that panel was
+## ifalchemyprocess.txt, CIFAlchemyProcess inside GDR_ALCHEMYBOX, which the
+## client never shows; Y opens CNIFEnchantWnd, AlchemyWindow.)
 const HIDDEN_AT_CREATE := {
 	"academy": ["GDR_APPRENTICESHIP_PICTURE"],
-	"alchemy": ["GDR_AB_MANUFACTURING_BUTTON_CANCEL"],
 }
 
 func _hide_at_create(panel_id: String, window: HudWindow) -> void:
@@ -375,9 +381,14 @@ func open(panel_id: String) -> HudWindow:
 		return _open_guild_window(panel_id)
 	if panel_id == QUEST_ID:
 		return _open_quest_window()
+	if panel_id == ALCHEMY_ID:
+		return open_alchemy()
 	if _unavailable.has(panel_id):
 		return null
 	var window: HudWindow = _windows.get(panel_id)
+	# Whether this open is a show (a window built now is visible at once,
+	# so its visibility cannot be read after the build).
+	var was_shown := window != null and window.visible
 	if window == null:
 		if not PANELS.has(panel_id):
 			push_warning("HudPanels: no panel named %s" % panel_id)
@@ -403,10 +414,83 @@ func open(panel_id: String) -> HudWindow:
 		if panel_id == "system":
 			_wire_system(window)
 		_populate(panel_id)
+	if panel_id == "exchange" and not was_shown:
+		# CIFExchange::vslot_023, showing: the alchemy window is destroyed if
+		# it exists (0x7b3a37..0x7b3a4d -> 0x798e20(0)). The first show of a
+		# session, when the window is built here, counts too.
+		close_alchemy()
 	window.show()
 	window.move_to_front()
 	_populate(panel_id)
 	return window
+
+## The alchemy window (AlchemyWindow), while it exists. The client builds it
+## at every open and destroys it at every close (0x798e20), so this is null
+## whenever it is closed.
+const ALCHEMY_ID := "alchemy"
+var _alchemy: AlchemyWindow = null
+
+## 0x798e20(1): Y from closed, and the underbar menu's alchemy item (114).
+## The gate 0x77c8e0(1) refuses when the window already exists (0x799580)
+## or GDR_EXCHANGE (0x1a) is up (0x77c941..0x77c95c); its other checks are on
+## windows and modes this client does not build (GDR_STALL 0x21, 0x8c,
+## the stall network 0x96, GDR_DELAY_GAUGE_BOARD's +0x36c, the open market
+## 0xbe, the interface's +0x504 and the list at 0xeec03c). Then the file is
+## loaded, and the window's own OnCreate places it and ends with 0x79af20,
+## which shows the main popup on its inventory tab (ShowWindow(1), then
+## 0x6a1f70(0x46) unless the inventory pane is already up, then 0x79a7e0:
+## the same steps as I, HudMainPopup.open). Returns the window, or null.
+func open_alchemy() -> AlchemyWindow:
+	if _alchemy != null and is_instance_valid(_alchemy):
+		return _alchemy
+	var exchange: HudWindow = _windows.get("exchange")
+	if exchange != null and exchange.visible:
+		return null
+	if _unavailable.has(ALCHEMY_ID):
+		return null
+	var window := AlchemyWindow.new(_builder)
+	window.name = "Window_alchemy"
+	add_child(window)
+	if not window.build_alchemy():
+		print("HudPanels: alchemy unavailable (%s did not build)" % AlchemyWindow.ENCHANT_2DT)
+		remove_child(window)
+		window.queue_free()
+		_unavailable[ALCHEMY_ID] = true
+		return null
+	window.place_initial()
+	window.closed.connect(close_alchemy)
+	_alchemy = window
+	window.show()
+	window.move_to_front()
+	# 0x79af20: the inventory.
+	open("inventory")
+	return window
+
+## 0x798e20(0): Y from open, the window's close button (CNIFEnchantWnd
+## vslot_043, 0x5942a0), Escape (0x79d97c..0x79d984) and the exchange
+## window's show. The window is destroyed, not hidden.
+func close_alchemy() -> void:
+	var window := _alchemy
+	_alchemy = null
+	if window == null or not is_instance_valid(window):
+		return
+	if window.get_parent() == self:
+		remove_child(window)
+	window.queue_free()
+
+## The alchemy window, or null when it is closed (tests, tools).
+func alchemy_window() -> AlchemyWindow:
+	return _alchemy if _alchemy != null and is_instance_valid(_alchemy) else null
+
+## The underbar's buttons and menu items (HudUnderbar.menu_action). Each
+## toggles its panel as its key does, except the alchemy item (114), which
+## calls 0x798e20(1) (0x60ce92..0x60ce9a): it opens the window, and does
+## nothing while the window exists.
+func menu_action(panel_id: String) -> void:
+	if panel_id == ALCHEMY_ID:
+		open_alchemy()
+		return
+	toggle(panel_id)
 
 ## Moves a window this client placed itself. The main popup keeps a wanted
 ## position that its clamp and every resize rebuild from
@@ -2141,6 +2225,9 @@ func close(panel_id: String) -> void:
 		return
 	if panel_id in GUILD_VIEWS:
 		panel_id = GUILD_WINDOW_KEY
+	if panel_id == ALCHEMY_ID:
+		close_alchemy()
+		return
 	var window: HudWindow = _windows.get(panel_id)
 	if window != null:
 		window.hide()
@@ -2155,6 +2242,8 @@ func is_open(panel_id: String) -> bool:
 		var guild := _windows.get(GUILD_WINDOW_KEY) as GuildWindow
 		return guild != null and guild.visible \
 			and guild.is_community_view() == (panel_id == "community")
+	if panel_id == ALCHEMY_ID:
+		return alchemy_window() != null
 	var window: HudWindow = _windows.get(panel_id)
 	return window != null and window.visible
 
@@ -2171,6 +2260,13 @@ func toggle(panel_id: String) -> void:
 	if panel_id in GUILD_VIEWS:
 		_toggle_guild_window(panel_id)
 		return
+	if panel_id == ALCHEMY_ID:
+		# Y (0x780a65): destroy window 0xa8 if it exists, else open it.
+		if alchemy_window() != null:
+			close_alchemy()
+		else:
+			open_alchemy()
+		return
 	var window: HudWindow = _windows.get(panel_id)
 	if window != null and window.visible:
 		window.hide()
@@ -2180,6 +2276,8 @@ func toggle(panel_id: String) -> void:
 ## True if any panel is currently on screen -- World3D uses this to decide
 ## whether Escape should close a window or fall through.
 func any_open() -> bool:
+	if alchemy_window() != null:
+		return true
 	for id in _windows:
 		if (_windows[id] as HudWindow).visible:
 			return true
@@ -2204,10 +2302,22 @@ func close_topmost() -> bool:
 ## a +0x748 list gated on the item mall (0xa7), an interface child with id 38
 ## (0x7993f0) and GDR_GAMEGUIDE (help, 0x79d744). This client builds none of
 ## those but the System window, and World3D's help window is not closed by
-## Escape here (open). Every other window comes after the map: the stall,
-## exchange and community windows (0x79d8f8..0x79d968), the alchemy window
-## (0x798e20(0)), the main popup (+0x728, 0x79d99b) and the rest. Among
-## those this client keeps its own rule, the topmost one closes (ours).
+## Escape here (open). After the map, the list goes on (read, 0x79d7d9..
+## 0x79d99b): GDR_SKILLWITHDRAWAL (0x2b) and the item mall (0xa7); then, when
+## the interface's +0x7b4 flag is set, GDR_STORAGEROOM (0x13) is closed with
+## 0x7058c0 run on GDR_NPCWINDOW (0x79d837..0x79d85d); the guild storage
+## (0x91); **GDR_NPCWINDOW** (+0x724, ID 30) if visible (0x79d89f); GDR_STALL
+## (0x21) and **GDR_EXCHANGE** (0x1a) if visible; GDR_COMMUNITY (0x17); then
+## **the alchemy window**, if it exists (0x79d97c -> 0x798e20(0)); then the
+## main popup (+0x728) and the rest. Of these this client builds the storage,
+## the NPC talk box, the exchange and the alchemy window, and closes them in
+## that order. The NPC talk box stands for GDR_NPCWINDOW: CIF_NPCWindow::
+## Create (0x704b40) loads if_npcwindow.txt, whose one control is
+## GDR_NW_NPCTALK:CIF_NPCTalk, the class that loads if_npctalk.txt (0x6fa124). That +0x7b4 is "an NPC conversation is open" is **inferred**:
+## the NPC window's open path 0x79dbd0 sets it (0x79dc25) and 0x79e350
+## clears it; here the storage is closed when it is up. Every other window
+## this client builds keeps its own rule after these: the topmost one
+## closes (ours).
 func _escape_close() -> bool:
 	var system: HudWindow = _windows.get("system")
 	if system != null and system.visible:
@@ -2215,6 +2325,14 @@ func _escape_close() -> bool:
 		return true
 	if world_map != null and is_instance_valid(world_map) and world_map.visible:
 		world_map.hide()
+		return true
+	for panel_id in ["storage", "npctalk", "exchange"]:
+		var window: HudWindow = _windows.get(panel_id)
+		if window != null and window.visible:
+			window.hide()
+			return true
+	if alchemy_window() != null:
+		close_alchemy()
 		return true
 	return close_topmost()
 

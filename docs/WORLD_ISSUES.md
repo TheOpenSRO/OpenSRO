@@ -7083,6 +7083,45 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-fourth round: Y opens the client's own alchemy window, CNIFEnchantWnd from nifenchantwnd.2dt
+
+The full record is `docs/RE_COMPLETION.md`'s entry of the same name (round 604).
+
+- **What Y opens (read).** Slot 24 'Y', command `0x59`, `0x780a65`: window `0xa8` destroyed if it
+  exists (`0x798e20(0)`), else `res_ui\nifenchantwnd.2dt` loaded (`0x798e20(1)`). Every open
+  builds it anew and every close frees it. The underbar's item 114 only opens it. Record 0 is
+  `CNIFEnchantWnd`, a 389x421 CNIFMainFrame with a side menu off its left edge, the
+  `CNIFAlchemyWnd` pane (four tabs over two sub-panes) and the hidden `CNIFSocketWnd` pane.
+- **The old panel is unreachable (read, three probes).** `ifalchemyprocess.txt` belongs to
+  `CIFAlchemyProcess` inside `GDR_ALCHEMYBOX` (ID 44, `Style=64`, hidden at creation). Its getter
+  has no reference in any encoding, and every other fetch of ID 44 only saves or restores its
+  position. It is removed.
+- **First state (read).**
+  - At (0x32, screen height − 0x261), kept on screen (ours).
+  - Captioned `UIIT_CTL_ALCHEMYBOX`.
+  - The tab from a process-wide byte that starts at 3: the reinforce tab and its pane. The byte
+    outlives the window.
+  - Button 22 disabled, with its mode's caption and hover string.
+  - The confirm box hidden.
+  - The inventory opened (`0x79af20`).
+- **Wired.** The tabs, the alchemy / socket side menu, the close button (destroys), Escape after
+  the NPC talk box, storage and exchange and before the main popup, the exchange window's gate
+  and close.
+- **Open.** The PML's `<sml2>` help text, the slots' own icons and tips, and everything that needs
+  an item placed or the server.
+- **Review fixes.** The first open of the exchange window in a session did not close the alchemy
+  window (the window `open` builds is already visible, so the show was not seen); `open` now reads
+  the visibility before the build. Escape's order is pinned by a test. Recorded: `0x79c060` (the
+  gacha toggle) closes the window too; `0x793b00`'s case `0x3f2` is fed by slots of type `0x4a`
+  (`0x60b850`); our NPC talk box is GDR_NPCWINDOW's child (`if_npcwindow.txt` holds
+  `GDR_NW_NPCTALK:CIF_NPCTalk`); at UI scale 1.5 the popup Y opens covers the window's right side
+  and the bottom of its close button until clicked; with the storage open, Y moves the bag off its
+  dock, as I does.
+- **Tests.** `alchemy_window_test.gd`: 12 FAIL against 840466a, and one FAIL for each of eight
+  mutations of this tree (the exchange bug, the review's Escape mutation, and every pair of
+  neighbours in the Escape order swapped); ALL PASS here. The audit with the other 17 widgets is
+  identical before (dev c19e6fc) and after.
+
 ## Six-hundred-and-third round: a Dimensional Gate lists its destinations in its own talk box, as the client does; the separate board is gone
 
 The full record is `docs/RE_COMPLETION.md`'s entry of the same name.

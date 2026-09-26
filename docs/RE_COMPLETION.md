@@ -44580,3 +44580,393 @@ live runs above measured, and the log lines they quote, are unchanged.
 - `remote_godot.sh check`: `checked 303 scripts and 5 scenes`, ALL LOAD;
 - `remote_godot.sh tests`: `ran 116 suite(s), 0 failing`, 0 SCRIPT ERROR;
 - `go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok, none failing, run after the doc edits.
+
+## Y opens the client's own alchemy window, CNIFEnchantWnd from res_ui\nifenchantwnd.2dt, with its tabs, side menu and socket pane where the client puts them (round 604)
+
+Client only. Nothing on the wire changes and the server is unchanged. Binary: `sro_client.exe`
+(md5 `2a5794b72c90908d945be8b3f3f2edd4`), the decompile in `/var/tmp/decomp_client` and the linear
+asm in `/var/tmp/sro_client.asm` on the RE box. Every fact is labelled **read** (from the asm or
+decompile at the address), **measured** (counted in the retail files or the audit's node dump),
+**inferred** (the basis is given) or **ours**. Nothing was decided from a picture.
+
+### Step 0: what the player sees after pressing Y
+
+**Y reaches `0x780a65` (read).** The default key table at `0x7778be` puts `0x59` in slot 24.
+`0x778310` returns command `0x59` for slot `0x18`. The dispatch `0x780610` sends a code above
+`0x5a` elsewhere and one in `0x52..0x59` through the jump table `0x780e90` (index code − `0x52`,
+`0x780999..0x7809a5`); entry `0x59` is `0x780a65` (the table dump, the `pe.py` loop, this round).
+`0x780a65` asks the `.2dt` window manager `0x115dd40` for window `0xa8` (`0x469020`). If it exists
+it calls `0x798e20(ebx)`, and `ebx` is 0 for the whole dispatcher (`xor ebx,ebx` at `0x780651`,
+no other write before `0x780a7b`; the `mov ebx` at `0x780e14` is the jump table disassembled as
+code). If not, `0x798e20(1)` (`0x780a85`).
+
+**`0x798e20` (read, asm `0x798e20..0x798ed5`).**
+- With 1: unless the gate `0x77c8e0(1)` returns nonzero, it loads `res_ui\nifenchantwnd.2dt`
+  (`0xdb9c90`) under the interface (`0x469140(path, this, 0)`). Nothing else: no ShowWindow, no
+  centring. A window is visible at creation (round 599).
+- With 0: if window `0xa8` exists, it cancels a running alchemy step on its pane `+0x798`
+  (`0x591520`, `0x59c5b0`, `0x59c640`) and resets its socket pane `+0x79c` (`0x592b70`,
+  `0x591a40`). Then `snd_window_close`, and **it destroys window `0xac`, then window `0xa8`**
+  (`0x468c50` at `0x798ec2`, then the tail jump at `0x798ed5` with `0xa8` stored over the argument).
+  So every close destroys the window and every open builds it again from the file.
+- **The gate `0x77c8e0(1)`** returns 1 (refuse) when: interface `+0x504` is nonzero; window `0xa8`
+  already exists (`0x799580`); GDR 0x21 (`GDR_STALL`, measured in ginterface.txt) exists and is
+  visible; GDR 0x8c exists; `.2dt` window `0x96` exists; GDR 0x28 (`GDR_DELAY_GAUGE_BOARD`) has
+  `+0x36c` set; GDR 0x1a (`GDR_EXCHANGE`) exists and is visible; `.2dt` window `0xbe` exists and is
+  visible; or its argument is set and the list at `0xeec03c` is not empty.
+
+**Every caller of `0x798e20` (read; the asm text, 12 sites):** the key (`0x780a7b` / `0x780a87`);
+the underbar menu's item 114 (`0x60ce9a`, **`push 1` only**: it opens and never closes);
+`GInterfaceSend::0x793b00`, case `0x3f2` of its third argument (`0x79410d` with 1 when window
+`0xa8` is absent, `0x794118` with `edi` when it exists). Its callers pass literal ids (`0x3e8`,
+`0x3eb`, `0x3f0`, `0x3f1`, `0x1388`) or a slot's stored id (`0x60baf1`, `0x68cddd`, `0x6820f2`),
+so `0x3f2` comes from a slot. `0x60b850` is one such feed: its case `0x4a` (a slot of type
+`0x4a`) calls `0x793b00(0x666750(...), 0x666730())` with the slot's own values (review of round
+604). Which slot carries `0x3f2` by default was not traced. The
+rest pass 0: Escape (`0x79d984`); the exchange window's show (`CIFExchange::vslot_023`,
+`0x7b3a4d`); the stall window's show (`CIFStall::vslot_023`, `0x6b9775`);
+`CNIFEnchantWnd::vslot_043` (`0x5942de`); `0x652c5d` and `0x77b55d`; and `0x79c07d`, which
+passes `ebx`, zeroed at `0x79c062` (review of round 604). `0x79c060` is the gacha window's
+toggle: with 1 it closes the alchemy window, then builds and shows GDR 0x8c from the `Ghacha`
+section (`0x79c071..0x79c07d`, then `0x8b5580`). No caller sits in an NPC or item-use handler
+(**inferred** from the functions they are in).
+
+**The older CIFAlchemyBox is never shown (read and measured, three probes with different failure
+modes).** `ifalchemyprocess.txt`, the panel this client built for Y until now, is loaded by
+`CIFAlchemyProcess::Create` (`0x724ac0`). The only layout that instantiates `CIFAlchemyProcess`
+is `ifnewalchemybox.txt` (`GDR_ALCHEMYBOX_ELEMENT_MANUFACTURING`), and the only one that
+instantiates `CIFAlchemyBox` is ginterface.txt's `GDR_ALCHEMYBOX`, ID 44, `Style=64` (measured: all
+248 `resinfo` files in Media.pk2 searched for `CIFAlchemy`). A style-`0x40` control is hidden at
+creation (`0x8b5710..0x8b5726`, round 600).
+- **Probe 1, the getter.** CGInterface's getter for ID 44 is `0x799590` (`push 1; push 0x2c; add
+  ecx,0x36c; call 0x8b51f0`). No `call` or `jmp` to it in the asm text; no `e8`/`e9` rel32 at any
+  byte of `.text` lands on it; its address is not in the file as a 32-bit value. The same scan
+  finds `0x79abe0`'s three callers as the control.
+- **Probe 2, every fetch of ID 44.** A scan for `push 0x2c` in the five instructions before each of
+  the 3070 `call 0x8b51f0` finds 17. On the interface (`ecx` = its child manager) they are the
+  getter, `0x79a9b0`, `0x79e620` and `0x79eb20`, which save, restore or reset the window's position
+  (`0x79a840`, `0x79a8d0`, vslot `0x98`) and never show it. The others fetch child 44 of other
+  windows: `CIFPlayerInfo::Create`, `CIFParty::Create`, `CIFApprenticeShip::vslot_010`,
+  `0x7a5610` (a window whose own `+0x36c` is a data field), the character-select screen
+  (`0x858950`, `CPSCharacterSelect::OnCreate`), `0x7c2a20` / `0x7e6970` (`+0x1bc` of other
+  windows) and the character-create screens.
+- **Probe 3, the classes.** `CIFAlchemyBox`'s descriptor `0xeeb5f0` and `CIFAlchemyProcess`'s
+  `0xeeb630` appear only in their own GetRuntimeClass (`0x722350`, `0x7267c0`), their registration
+  (`0xd6f67b`, `0xd6f7eb`) and one data slot each; their CreateObjects (`0x722440`, `0x7268c0`)
+  only in the registration. Nothing casts to them or creates them by address.
+
+**The window `0xa8` is the live one (read).** Its getter `0x799580` has 45 callers in the asm text
+(the packet handlers, the inventory, the gate above). **Removed:** the `ifalchemyprocess.txt`
+panel and its hidden-at-create entry; nothing reachable uses it.
+
+### The file (measured, p2dt.py on `/var/tmp/r2dt/files/nifenchantwnd.2dt`)
+
+72 records. Relative to record 0 (413, 82):
+- **0, id 168, `CNIFEnchantWnd`**, a CNIFMainFrame 389x421 on `mframe_wnd_`.
+- 2, a static `alcm_menu_bg.ddj` at (−16, 62) 24x288; buttons 4 (`alcm_menu_button1`, the
+  alchemy menu) at (−36, 79) and 3 (`alcm_menu_button2`, the socket menu) at (−36, 121), 40x40. The
+  side menu hangs off the window's left edge.
+- **5, `CNIFAlchemyWnd`**, a frame on `frameg01_wnd_` at (12, 64) 366x343, holding a tile (6), four
+  tabs 9, 10, 7, 8 at x 19, 69, 119, 169 (window coordinates), y 42, 48x24, group 10 (9 and 10 show
+  pane 28, 7 and 8 pane 12), the sub-panes **12 `CNIFAlchemySubWndType1`** and **28
+  `CNIFAlchemySubWndType2`**, and the action button 22 (`com_mid_button02`, 112x24 at (136, 366)).
+- Pane 12: a `com_blacksquare_` stretch and a `frameg_wnd_` frame over its top (347x151), the
+  description `CIFPMLEx` (18), the main slot 17 in `msgbox_itemwindow` (16), four slots 26, 27, 28,
+  29 in `alcm_slot_open` frames (30, 31, 24, 25), and a progress window 20 with gauge 21.
+- Pane 28: the same with a 120-high box, the slot 70 and eight slots 62..69 in eight
+  `alcm_slot_open` frames.
+- **72, `CNIFSocketWnd`**, a frame on `frameg01_wnd_` at (12, 41) 366x365, with the make (56) and
+  remove (57) buttons (`UIIT_CTL_SOCKET_BUTTON_MAKE` / `_REMOVE`), its item slot 70, a title static
+  68 (colour `ffffca2a`), a help static 354 (309x17), three `alcm_slot_open` frames, three
+  `skl_mastery_nothing` statics 73, 79, 80, three slots 83..85, and a progress window 210 / gauge
+  211.
+
+`nifenchantalchemymsgbox.2dt`: 10 records, record 0 `CNIFMiniConfirm`, id 172, a CNIFMainFrame
+454x212 with a tile, a stretch, a text box, two `com_button` buttons and a slot.
+
+### Which class owns which handler (read)
+
+Each class's runtime-class registration (`0xb9c9c0`, the descriptor in `ecx`) is followed at once
+by the static initialiser of its message map; the maps' handlers, messages and ids come from those
+initialisers (`msgmap.py`), the same pairing round 595 used:
+
+| class (descriptor) | 0x8065 (OnCreate) | other entries |
+|---|---|---|
+| CNIFEnchantWnd (`0xee82d4`) | `0x592540` | id 4 → `0x5942f0`, id 3 → `0x59e2d0` |
+| CNIFAlchemyWnd (`0xee82f4`) | `0x59d3a0` | id 9 → `0x59d980`, 10 → `0x59da30`, 7 → `0x59daf0`, 8 → `0x59dbb0`, 22 → `0x59f910`, message `0x8074` → `0x59ca70` |
+| CNIFAlchemySubWnd (`0xee84e8`) | `0x591670` | |
+| CNIFAlchemySubWndType1 (`0xee8508`) | `0x59cc80` (calls `0x591670` first) | |
+| CNIFAlchemySubWndType2 (`0xee8528`) | `0x59cda0` (calls `0x591670` first) | |
+| CNIFMiniConfirm (`0xee8548`) | `0x592840` | 3 → `0x591760`, 4 → `0x591780` |
+| CNIFSocketWnd (`0xee8588`) | `0x593760` | 56 → `0x592be0`, 57 → `0x592c30`, message `0x8077` → `0x5939c0` |
+| CIFPMLEx (`0xee7980`), CIFSlotWithHelpEx (`0xeea4d0`) | none: each initialiser (`0xd65b60`, `0xd6bdc0`) writes one end entry | |
+
+Their base CNIFWnd (`0x115dea0`) maps only `0x4001` and `0x4006` (`0xd64570`). None of the
+classes overrides ShowWindow: slot 23 is CNIFWnd's `0x46d760` in the vtables of CNIFEnchantWnd
+(`0xd8ed7c`), CNIFAlchemyWnd (`0xd907d4`) and both sub-panes (`0xd90d04`, `0xd90e1c`).
+
+### The window, as the OnCreates leave it (read)
+
+The OnCreates run last named record first (round 596). So: the slots and the PML (no handler), the
+socket pane, the two sub-panes, CNIFAlchemyWnd, and CNIFEnchantWnd last.
+- **CNIFSocketWnd `0x593760`.** It fetches 68 (+0x798) and 354 (+0x79c) and hands 354's own width
+  to its text object's +0x2c (`0x59378f..0x59379f`; that +0x2c is a wrap width is **inferred**).
+  It clears the slots, keeps the make and remove buttons (+0x7bc = 56, +0x7c0 = 57), zeroes its
+  mode, then runs its reset `0x593630`: the three slots cleared, the statics 73, 79, 80 shown
+  (`0x593705..0x59370f`), 68 set to `" "` (`0xe19330`), both buttons `0x471dc0(0)` (disabled: the
+  `_disable` piece drawn, round 596). Then `0x592a60(0)`: 354 gets
+  `UIIT_STT_SOCKET_HELP_SOCKET_DEFAULT` (`0xd8f5a0`; modes 1..3 give `_ADD`, `_MAKE`, `_REMOVE`).
+  It creates a 128x128 effect sprite (id `0x52`) and hides it, and gives 56 and 57 style `0x80` and
+  `UIIT_STT_SOCKET_BUTTON_SOCKET_MAKE` / `_REMOVE` (`0x59395e..0x5939a7`). The gauge 211's two
+  values are zeroed.
+- **The sub-panes `0x59cc80` / `0x59cda0`.** Each runs `0x591670` (the PML 18 at +0x34c, its inner
+  object at +0x348, the gauge 21 at +0x35c) and fills a slot table at +0x350 (Type1: 0 → 17, 1 → 26,
+  2 → 27, 3 → 28, 4 → 29) whose inner slots it configures. Nothing drawn changes.
+- **CNIFAlchemyWnd `0x59d3a0`.**
+  - It fetches 12 (+0x798), 28 (+0x79c) and 22 (+0x7a4); 22 gets
+    `UIIT_CTL_ALCHEMYBOX_BUTTON_DISJOINTING_ALLSLOT` and `0x471dc0(0)`.
+  - It hands every mode manager its pane's slot table, button 22, gauge and PML (`0x56ed10`,
+    `0x56ed20`, `0x56ed50`, `0x56ed60`): modes 0 and 1 get pane 28, modes 2 and 3 pane 12.
+  - Style `0x80` and the hover strings `UIIT_CTL_ALCHEMYBOX_TAP_DISJOINTING` (9),
+    `_DISMANTLING` (10), `_MANUFACTURING` (7), `_STRENGTHENING` (8) (`0x59d64a..0x59d709`).
+  - A 96x96 effect sprite (id `0x3ec`, `alcm_effect_prepare.ddj`) created and hidden.
+  - **`nifenchantalchemymsgbox.2dt` loaded under this pane** (`push 0; push esi; push 0xd908a0`,
+    `0x59d81e..0x59d82a`) and window `0xac` hidden (`0x59d850`). Its record 0 sits at its authored
+    rect relative to the pane (round 594's loader rule).
+  - **The tab byte.** `0xeb1428` picks the case (`0x59d852`, table `0x59d928`): 0 shows 28 and
+    hides 12 and checks tab 9; 1 the same with tab 10; 2 shows 12, hides 28, checks tab 7; 3 the
+    same with tab 8. The check is `0x47a950(1)`, the look alone (+0x160 = the `on` piece); the
+    panes are shown and hidden by hand. Every tab starts on its `off` piece (`0x47a4e0` ends with
+    +0x160 = +0x374). Then the byte's manager runs its activate (vslot `0xa8`, `0x59d8f8`) and the
+    help refresh `0x59c810`.
+  - **`0xeb1428` is initialised data, 3** (measured: `.data` at `0xeae000`, raw size `0x3a000`,
+    covers it; the byte is 3). It is written only by the four tab handlers (`0x59d9ae`,
+    `0x59da5d`, `0x59db1d`, `0x59dbdd`); the other 54 references read it or pass its address to
+    the map lookup `0x59c440`. So the first Y of a run opens on tab 8 with pane 12, and later ones
+    on the last tab clicked: the byte outlives the window.
+- **The mode managers (RTTI names, the constructor `0x59e390`).** 0 `CAlchemyMgrDecompAccessory`
+  (vtable `0xd8b904`), 1 `CAlchemyMgrDecompEquipment` (`0xd8bbc4`), 2 `CAlchemyMgrManufacturing`
+  (`0xd8bdc4`), 3 `CAlchemyMgrReinforce` (`0xd8bf7c`). Their activate (vslot `0xa8`: `0x57a6b0`,
+  `0x57a760`, `0x570800`, `0x5708f0`) runs the reset (vslot `0xa4`), sets button 22's caption
+  (`UIIT_CTL_ALCHEMYBOX_BUTTON_DISJOINTING_ALLSLOT`, `_DISMANTLING`, `_MANUFACTURING`,
+  `_STRENGTHENING`), disables it (`0x471dc0(0)`), gives it style `0x80` and
+  `UIIT_STT_ALCHEMYBOX_TIP_DISJOINTING_ALLSLOT_BUTTON` / `_DISMANTLING_BUTTON` /
+  `_MANUFACTURING_BUTTON` / `_STRENGTHENING_BUTTON`, and zeroes the gauge. The two decomposition
+  managers also walk the inventory (`0x579f70` / `0x57a180` through `0x570d20` / `0x570e40`; not
+  built).
+- **CNIFEnchantWnd `0x592540`**, last:
+  - +0x7a0 (the socket-view flag) = 0.
+  - **SetPos(0x32, height − 0x261)** (`0x59254d..0x592565`, vslot `0x98`). The height is the
+    display mode's +0x28 (`0x4f9cd0`); that it is the height is **inferred** from `0x798c50`,
+    which halves +0x24 for x and +0x28 for y.
+  - 5 shown (+0x798); caption `UIIT_CTL_ALCHEMYBOX` (`0xd8f100`); 72 hidden (+0x79c).
+  - Style `0x80` on 3 and 4, with `UIIT_STT_SOCKET_TAP` (3) and `SN_TAB_ALCHEMY` (4).
+  - **`0x79af20` on the interface**: the main popup ShowWindow(1), then `0x6a1f70(0x46)` unless its
+    inventory pane is visible, then `0x79a7e0`. That is I's sequence (round 587): opening the
+    alchemy window opens the inventory.
+
+### The controls (read)
+
+- **Tabs** (`0x59d980`, `0x59da30`, `0x59daf0`, `0x59dbb0`). The tab's own click (`0x47a240`) has
+  switched the look and the pane. The handler returns if the byte is already its mode; otherwise it
+  cancels a running step, sets the byte, runs the manager's activate and the help refresh, kills
+  timers 10 and 11 and hides the effect sprite.
+- **The alchemy menu button 4** (`0x5942f0`): the socket pane reset (`0x592b70`: mode 0 and
+  `0x592a60(0)`; `0x593630`), caption `UIIT_CTL_WK_ALCHEMY`, 5 shown, 72 hidden, +0x7a0 = 0.
+- **The socket menu button 3** (`0x59e2d0`): nothing if 72 is visible and +0x7a0 is 1
+  (`0x59e2d3..0x59e2e9`); else a running step cancelled, 5 hidden, the manager re-activated
+  (`0x59dc70`), `0x591550` on the pane, 72 shown and reset (`0x593630`, `0x592a60(0)`), caption
+  `UIIT_CTL_SOCKET_TAP_TITLE`, +0x7a0 = 1.
+- **Close.** CNIFMainFrame's map sends the close button (id `0xfffd`, message `0xc`, entry at
+  `0xee5ec0`) to `0x479e20`, which calls vslot `0xac`. CNIFEnchantWnd's is `vslot_043`
+  (`0x5942a0`, its vtable `0xd8ed7c` slot 43): it stops a socket step and calls `0x798e20(0)`.
+- **Button 22** (`0x59f910`) and the socket buttons act on placed items and send packets (for
+  example `SendSocketMsg_16a`); with no item placed they stay disabled.
+
+### Escape (read, `0x79d620`)
+
+After the world map the list checks GDR_SKILLWITHDRAWAL (0x2b) and the item mall (0xa7). Then,
+with the interface's +0x7b4 flag, it closes GDR_STORAGEROOM (0x13) after `0x7058c0` on
+GDR_NPCWINDOW (`0x79d837..0x79d85d`). Then the guild storage (0x91), GDR_NPCWINDOW (+0x724) if
+visible (`0x79d89f`), GDR_STALL and GDR_EXCHANGE if visible, GDR_COMMUNITY. **Then the alchemy
+window if it exists** (`0x79d97c..0x79d984`, `0x798e20(0)`), then the main popup (+0x728) and the
+rest. +0x7b4 is set by `0x79dbd0` (`0x79dc25`), the NPC window's open path, and cleared by
+`0x79e350`; that it means "an NPC conversation is open" is **inferred**.
+
+**Our NPC talk box is inside GDR_NPCWINDOW (read and measured).** `CIF_NPCWindow::Create`
+(`0x704b40`) loads `resinfo\if_npcwindow.txt` (`push 0xdaefbc` at `0x704b54`), whose only
+control is `GDR_NW_NPCTALK:CIF_NPCTalk` (measured). `CIF_NPCTalk::Create` (`0x6fa110`) loads
+`resinfo\if_npctalk.txt` (`push 0xdace30` at `0x6fa124`), the layout this client's `npctalk`
+panel builds. So closing GDR_NPCWINDOW (+0x724) closes the box this client draws, and `npctalk`
+takes the NPC window's place in the order.
+
+### What changed in this client
+
+- **`AlchemyWindow`** (new, `client/scripts/ui/hud/alchemy_window.gd`) builds `CNIFEnchantWnd` from
+  the file through TwoDtBuilder, with CNIFMainFrame's chrome, the confirm box hidden inside pane 5,
+  and the create state above in its order. It wires the four tabs, the side menu and the close
+  button. The tab byte is a static on the class (`tab_mode`), 3 at start.
+- **`HudPanels`**:
+  - `PANELS["alchemy"]` is `res_ui\nifenchantwnd.2dt` on Y.
+  - `open_alchemy` is `0x798e20(1)`: refused while the window exists or the exchange window is up.
+    It builds the window, places it and opens the inventory (`0x79af20`).
+  - `close_alchemy` is `0x798e20(0)`: the window is freed.
+  - `toggle("alchemy")` is Y. `menu_action` routes the underbar's items: a toggle each, as before,
+    except item 114, which only opens. World3D calls it.
+  - Showing the exchange window closes the alchemy window, the first show of a session included
+    (review of round 604: `open` read the exchange's visibility after building it, and a window
+    built there is already visible, so the first show left the alchemy window up; it now takes
+    `was_shown` before the build).
+  - Escape, after the System window and the map: the storage, the NPC talk box, the exchange, then
+    the alchemy window, then the topmost of the rest (ours).
+  - The alchemy entry of `HIDDEN_AT_CREATE` and the `ifalchemyprocess.txt` panel are gone.
+- **Ours, and labelled in the code:**
+  - the placement is kept inside the viewport, with the 36-pixel side menu counted (at 1152x648
+    and UI scale 1.5 the view is 768x432, and 432 − 609 is below zero);
+  - the storage closes before the NPC talk box on Escape whenever it is up (the client's condition
+    is the +0x7b4 flag);
+  - Escape closes the topmost of the windows whose place in `0x79d620`'s list was not traced.
+
+### Behaviours carried over, and how each was checked
+
+The old panel had four behaviours: Y toggled it, the underbar's item 114 toggled it, Escape closed
+it (topmost), and Process was shown with Cancel hidden (round 585). The server has no alchemy
+packets (`server/internal/session`: no handler) and no QA hook named it.
+- **Y**: kept, now `0x780a65`'s toggle (`alchemy_window_test.gd`).
+- **Item 114**: kept, now open-only as `0x60ce9a` reads (`alchemy_window_test.gd`; the underbar's
+  own map still names `alchemy`, `hud_underbar_test.gd`).
+- **Escape**: kept, now at its read place: before the main popup (`alchemy_window_test.gd`).
+- **Process shown, Cancel hidden**: dropped with the panel. `CIFAlchemyProcess` is never shown in
+  the client, so its button pair is not what the player sees. Its check in
+  `hud_alternates_test.gd` is removed.
+- **`SRREVAMP_QA_PANELS=alchemy`** still opens it (`HudPanels.open` returns the window).
+
+### Side effects of opening the inventory (measured, review of round 604)
+
+- At 1152x648 and UI scale 1.5 (a 768x432 view) the alchemy window sits at (50, 0), its close
+  button at (413, 10) 16x16, and the popup `0x79af20` opens lands at (300, 24) 388x408 on top of
+  it (the probe run's rects). The popup covers the window's right side from x 300 and the close
+  button's bottom rows (24..26) until the player clicks the alchemy window, which raises it.
+- With the storage open, the bag is docked beside it (`open_storage`). Y then moves the bag to the
+  inventory tab's own place (`HudMainPopup.select`: x = view width − width − 0x50), off the
+  dock, as I does. That is `0x79af20`'s sequence (I's, round 587), not a separate choice here.
+
+### Measurements
+
+The audit (`zz_gui_audit.gd --norender=1`, headless, `/var/tmp/rench/audit-*`) ran dev c19e6fc's
+scripts before and this tree after (rebased; the first pass of this round compared 840466a and
+got the same result for its 18 widgets). Every run printed 0 SCRIPT ERROR.
+- **Every other widget unchanged.** With the panel list less alchemy (17 widgets: the popup, quest,
+  guild, party match, auto potion, exchange, system, NPC talk, store, storage, the bar, minimap,
+  chat, player info, target, world map and help), the before and after trees are **identical**
+  (4242 lines each, auto-generated node names normalised). A full-list run is not a
+  comparison, and the first audit of round 604 missed why: with the exchange's show fixed (below),
+  the list opens exchange after alchemy and that show destroys the alchemy window. The unfixed
+  code left it up on the first show, because a window built by `open` is already visible.
+- **Alchemy alone** (`--panels=alchemy`): the bar, minimap, chat, player info, target, world map
+  and help are identical before and after. `alchemy` went from the 357x207 `ifalchemyprocess.txt`
+  panel (42 lines, 10 findings: an OUTSIDE edit box and 9 NULLTEX item icons) to the 389x421
+  `MainFrame168` (179 lines).
+- **Visible nodes after (63):**
+  - the 8 `mframe_wnd_` pieces;
+  - the menu strip `Static2` (−16, 62) and the buttons `Button4` (−36, 79), `Button3` (−36, 121);
+  - `Frame5` (12, 64) with its 8 `frameg01_wnd_` pieces and `Tile6`;
+  - the tabs 9, 10, 7 on their `off` pieces and 8 on `on`, at y 42;
+  - pane `Wnd12` with its stretch box, `frameg_wnd_` frame, main slot frame 16, four slot frames
+    and progress window 20 (gauge 21 at 0), and the empty slot and PML controls;
+  - `Button22` (136, 366) with `UIIT_CTL_ALCHEMYBOX_BUTTON_STRENGTHENING`'s text, disabled (a
+    disabled TextureButton draws its `com_mid_button02_disable` piece; the dump lists
+    `texture_normal`);
+  - `TitleBar` with `UIIT_CTL_ALCHEMYBOX`'s text (10, 12, 368 wide) and `CloseButton` (363, 10).
+
+  Hidden: pane 28, the socket pane 72 and everything under it, and the confirm box 172.
+- **Frame pieces:** `mframe_wnd_` corners 40x68 / 40x48 at their own size, the edges at their own
+  thickness across 40..349 and 68..373; `frameg01_wnd_` 16-pixel pieces; `frameg_wnd_` 24x16
+  corners. No SLICE_DISTORT.
+- **Findings (5):** 3 OUTSIDE, the side menu, which the file hangs off the left edge; 2
+  EDGE_TILED_OFF on the `com_blacksquare_` stretch's top and bottom, the builder's six-piece rule
+  (round 126 / 584), which the guild window's stretch shows too (2 in `community`).
+- The audit's headless viewport is small, so its placement is the clamp's (36, 0). `qa_shot.sh`
+  at 1152x648 printed `QA PANELS: alchemy opened 389x421 at (50, 39) (its own placement)`, on the
+  RX 5700 XT (GL Compatibility), 0 SCRIPT ERROR. The frame is for a human only.
+
+### Tests
+
+- **New `alchemy_window_test.gd`.** It uses synthetic records with the real files' ids, types,
+  parents, rects, class names and art paths, and "tt ..." texts. It checks:
+  - the PANELS entry;
+  - Y builds CNIFEnchantWnd, 389x421, at (50, 39) in a 1152x648 view;
+  - the caption and close;
+  - the side menu's rects and hover strings;
+  - the panes' visibility;
+  - tab 8 on and 7, 9, 10 off;
+  - the tab hover strings;
+  - button 22's rect, caption, hover string and disabled state;
+  - the confirm box hidden inside pane 5;
+  - the inventory opened;
+  - a tab click switching pane and mode;
+  - Y destroying the window, and the next Y rebuilding it on the same tab at (50, 39);
+  - the socket pane and back;
+  - the close button;
+  - item 114 open-only;
+  - Escape before the popup;
+  - the exchange gate, and the close on the first show of a real, freshly built exchange window
+    (a fixture layout and registry entry) and on a later one;
+  - Escape's whole order (below);
+  - (50, 0) at 768x432.
+
+  Each section runs on its own: one that needs the window FAILs once and the next runs.
+- **Escape's order.** System, the world map, the storage, the NPC talk box, the exchange and the
+  alchemy window are opened (stand-ins where the layout is not in the fixture) and stacked in the
+  reverse of `0x79d620`'s order, the popup on top, so the topmost rule alone would close them
+  backwards. Seven presses must close them one each, in the read order.
+- **NEGATIVE, run against 840466a's scripts** (`/opt/srrevamp-client-ench-base`, `hud_panels.gd`
+  md5-checked against `git show 840466a`): 12 FAIL lines, and the run reaches its last check.
+  - `FAIL PANELS["alchemy"] is res_ui\nifenchantwnd.2dt on Y (got ["resinfo\\ifalchemyprocess.txt", "Alchemy", 89])`
+  - `FAIL Y opens CNIFEnchantWnd from res_ui\nifenchantwnd.2dt (0x780a65 -> 0x798e20(1))`
+  - `FAIL opening it shows the main popup on its inventory tab (0x79af20)`
+  - `FAIL the first-state checks need the window (none was built)`
+  - `FAIL the tab checks need the window (none was built)`
+  - `FAIL the side-menu checks need the window (none was built)`
+  - `FAIL the close button destroys it (vslot_043 -> 0x798e20(0))`
+  - `FAIL the menu's alchemy item opens it, and a second press leaves it open (0x798e20(1))`
+  - `FAIL Y opens the window before the exchange is shown`
+  - `FAIL and opens once it is gone`
+  - `FAIL Escape closes System, the map, storage, NPC talk, exchange, alchemy, then the popup, one a press (got ["system", "worldmap", "inventory", "exchange", "npctalk", "storage", "[]"])`
+  - `FAIL at 768x432 it is kept at (50, 0) (got <null>)`
+
+  The three exchange checks that pass there pass because no alchemy window exists to close.
+- **Mutations of this tree** (a copy, `/opt/srrevamp-client-ench-mut`, one change each), each
+  1 FAIL:
+  - the review's bug, `not window.visible` read after the build:
+    `FAIL the FIRST exchange show destroys the alchemy window (0x7b3a4d)`;
+  - the review's Escape mutation (alchemy ahead of storage / NPC talk / exchange, storage and NPC
+    talk swapped): `got ["system", "worldmap", "alchemy", "npctalk", "storage", "exchange", "inventory"]`;
+  - each pair of neighbours swapped: System / map `got ["worldmap", "system", ...]`; map / storage
+    `["system", "storage", "worldmap", ...]`; storage / NPC talk `[..., "npctalk", "storage", ...]`;
+    NPC talk / exchange `[..., "exchange", "npctalk", ...]`; exchange / alchemy
+    `[..., "alchemy", "exchange", "inventory"]`; alchemy / the topmost rule
+    `[..., "exchange", "inventory", "alchemy"]`.
+- **This tree** (rebased on c19e6fc): ALL PASS. `remote_godot.sh check`, `remote_godot.sh tests`
+  and Go are in the round's commit message.
+
+### Open
+
+- **The help text.** Each manager's vslot `0xd4` returns a `UIIT_STT_ALCHEMYBOX_HELP_*` string
+  (reinforce: `_STRENGTHENING4` in all three of its cases, `0x575550`), which `0x59c810` hands the
+  PML (vslot `0xdc` → `0x570400` → the PML's vslot `0xb4`). The string is `<sml2>` markup
+  (`<left>`, `<font color=...>`, `<br>`). CIFPMLEx's renderer was not read, so the PML is empty.
+- **The slots' own icons and hover texts.** The resets put `skl_mastery_nothing.ddj` (32x32,
+  opaque dark grey, measured) on the inner slots and a tooltip on the main one
+  (`UIIT_STT_ALCHEMYBOX_TIP_STRENGTHENING_EQUIPMENT_SLOT`). The inner CIF slot at +0x348 of each
+  `CIFSlotWithHelpEx` and its flag +0x64 (`0xb9daf0`) were not read, so the slots are empty
+  controls.
+- **The confirm box's own OnCreate** (`0x592840`: button 4's caption, a text colour) is not run.
+  The box is hidden, and nothing here shows it.
+- **The effect sprites**, the gate's other windows and modes, and the decomposition managers'
+  inventory walk.
+- **Sounds.** `snd_window_close` on close; this client plays no UI sounds.
+- **Draw order against the chat log.** The first frame of this round showed the chat's lines over
+  the window's left side. Round 602's `HudPanels.stack_over` puts every HudPanels child, this
+  window included, above the chat; that it now draws above is **inferred** from that code and
+  was not re-shot.

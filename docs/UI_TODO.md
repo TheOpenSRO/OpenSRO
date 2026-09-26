@@ -26,7 +26,7 @@ Every window in the real client is authored data, and building one is now mechan
    of the same 76. `FontColor` is the one to honour.
 6. **Buttons come as `X.ddj` / `X_focus.ddj` / `X_press.ddj` / `X_disable.ddj`**, which maps
    straight onto `TextureButton`'s four texture slots.
-7. **Some panel windows are self-framed.** Quest, guild, community, alchemy, the NPC talk box and
+7. **Some panel windows are self-framed.** Quest, guild, community, the NPC talk box and
    the store are framed by this client from their own layout. That is not
    because the registry lacks them: GDR_COMMUNITY, GDR_ALCHEMYBOX, GDR_STORE and GDR_NPCWINDOW
    are in `ginterface.txt` and are not used, each for the reason round 586 records. Guild has no
@@ -231,11 +231,14 @@ is presentation work on solved data; if you find yourself editing the protocol, 
   - The store's registry height (317 / 360 / 370) turns on `RENEWAL_SHOP_SYSTEM` and
     `RESTORE_SOLDITEM_INSHOP`, which are unreadable. With our `[]` choice, Repair sits at y
     332-356, below a 317 frame.
-  - Alchemy is a `CIFAlchemyBox` (a `CIFWnd` on `alcm_window_1.ddj`, from
-    `ifnewalchemybox.txt`) holding `CIFAlchemyProcess` at 0,150. That assembly is not built.
-  - The NPC talk box (`CIF_NPCTalk : CIFFrame`) and `GDR_NPCWINDOW` (`CIF_NPCWindow :
-    CIFMainFrame`, 386x451, `if_npcwindow.txt`) are separate classes, and how they compose is
-    not read.
+  - Alchemy: `GDR_ALCHEMYBOX` (`CIFAlchemyBox` on `alcm_window_1.ddj`, from
+    `ifnewalchemybox.txt`, holding `CIFAlchemyProcess` at 0,150) is created hidden and never
+    shown. Y opens `CNIFEnchantWnd` from `nifenchantwnd.2dt` instead (round 604).
+  - The NPC talk box (`CIF_NPCTalk : CIFFrame`) is a child of `GDR_NPCWINDOW` (`CIF_NPCWindow :
+    CIFMainFrame`, 386x451): `CIF_NPCWindow::Create` (`0x704b40`) loads `if_npcwindow.txt`, whose
+    only control is `GDR_NW_NPCTALK:CIF_NPCTalk`, and `CIF_NPCTalk::Create` (`0x6fa110`) loads
+    `if_npctalk.txt` (round 604). This client builds the talk box alone, self-framed; the
+    NPC window's own frame and placement are not built.
   - Registry screen positions (GDR_SYSTEM 300,200, GDR_EXCHANGE 200,200, ...) are not used;
     windows are still centred.
 - **The Guild / Community window is the client's own** (round 595) -- `CNIFGuildWnd`, built from
@@ -365,8 +368,16 @@ like the guild window:
    area, corners, buttons, auto-move and both sizes read (`docs/RE_COMPLETION.md`, round 599).
    Escape closes it in the client's order (round 600). Still open: the guide's list, the floor
    spinner and the dungeon maps, the other signs, and the fortress caption's guild.
-4. **Y -> `nifenchantwnd.2dt`** (`CNIFEnchantWnd` / `CNIFAlchemyWnd`, id 168): Y reaches
-   `0x798e20`, which loads or destroys it. We build `ifalchemyprocess.txt`.
+4. ~~**Y -> `nifenchantwnd.2dt`**~~ **Done (round 604).** Y reaches `0x780a65`, which destroys
+   window 0xa8 if it exists and otherwise loads `res_ui\nifenchantwnd.2dt` (`0x798e20`); the
+   underbar menu's item 114 only opens it. Record 0 is `CNIFEnchantWnd`, a CNIFMainFrame 389x421
+   holding a side menu (alchemy / socket), the `CNIFAlchemyWnd` pane with four tabs over two
+   sub-panes, and the `CNIFSocketWnd` pane. Its OnCreate puts it at (0x32, screen height - 0x261)
+   and opens the inventory; the selected tab lives in a process-wide byte that starts at 3 (the
+   reinforce tab). The old `CIFAlchemyBox` (`GDR_ALCHEMYBOX`, holding `ifalchemyprocess.txt`) is
+   created hidden and never shown. `AlchemyWindow` builds it (`docs/RE_COMPLETION.md`, round
+   601). Still open: the help text in the PML (`<sml2>` markup), the slots' own icons and hover
+   texts, and everything that needs an item placed or the server.
 5. ~~**The teleport board's live source**~~ **Done (round 603).** There is no teleport window:
    the client lists a gate's destinations as lines of the NPC talk box itself
    (`UI_TELEPORT::FUN_006fd3e0`, called from the talk box's click handler at `0x702973`), and a

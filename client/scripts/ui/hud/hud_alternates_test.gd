@@ -10,7 +10,9 @@ extends SceneTree
 ##
 ## - academy: GDR_APPRENTICESHIP_PICTURE hidden at create, LEADER_STATUS kept
 ##   (CIFApprenticeShip 0x6e9848).
-## - alchemy: Process shown, Cancel hidden (CIFAlchemyProcess 0x725740).
+## (The alchemy check went with its panel: ifalchemyprocess.txt belongs to
+## GDR_ALCHEMYBOX, which the client never shows; Y opens CNIFEnchantWnd,
+## checked by alchemy_window_test.gd.)
 ## - the equipment pane beside the bag: the worn slots and the change-to-avatar
 ##   button shown; the avatar slots, change-to-equipment button and avatar
 ##   skill strip hidden; either button flips the two sets; hiding the window
@@ -52,14 +54,6 @@ func _academy() -> String:
 		+ _control("GDR_APPRENTICESHIP_PICTURE", "CIFStaticWithPictureClip", 41, "9,33,28,28")
 		+ _control("GDR_APPRENTICESHIP_FRAMEL", "CIFFrame", 1, "0,0,364,339"),
 		"Section = NotifySubBox,\"0,0,0,0\",\"0\"\n{\n}\nSection = NotifyContents,\"0,0,0,0\",\"0\"\n{\n}\n")
-
-## ifalchemyprocess.txt's buttons (the archive's are 0x0, sized by their art;
-## the fixture gives the art's 104x28 directly).
-func _alchemy() -> String:
-	return _layout(_control("GDR_AB_MANUFACTURING_BUTTON_ALL_PROCESS", "CIFButton", 31, "20,179,104,28")
-		+ _control("GDR_AB_MANUFACTURING_BUTTON_PROCESS", "CIFButton", 30, "253,179,104,28")
-		+ _control("GDR_AB_MANUFACTURING_BUTTON_CANCEL", "CIFButton", 35, "253,179,104,28")
-		+ _control("GDR_AB_FRAME", "CIFFrame", 1, "0,0,340,203"))
 
 func _inventory() -> String:
 	return _layout(_control("GDR_INVENTORY_FRAME", "CIFFrame", 1, "0,0,176,308"))
@@ -134,7 +128,6 @@ func _builder() -> UiBuilder:
 	var builder := UiBuilder.new(null, null)
 	var cache: Dictionary = builder.get("_layout_cache")
 	cache["resinfo\\ifapprenticeship.txt"] = UiLayoutParser.parse(_academy())
-	cache["resinfo\\ifalchemyprocess.txt"] = UiLayoutParser.parse(_alchemy())
 	cache["resinfo\\ifinventory.txt"] = UiLayoutParser.parse(_inventory())
 	cache["resinfo\\ifequipment.txt"] = UiLayoutParser.parse(_equipment())
 	# The builder has no archive to parse from, so the chat layout is cached
@@ -211,14 +204,6 @@ func _panel_checks(panels_script: GDScript) -> void:
 		var shown := _shown(_pane_groups(academy, ["GDR_APPRENTICESHIP"]))
 		_check(shown == [["GDR_APPRENTICESHIP_LEADER_STATUS"]],
 			"academy: one of PICTURE / LEADER_STATUS shown, LEADER_STATUS (got %s)" % [shown])
-
-	var alchemy: Node = panels.call("open", "alchemy")
-	_check(alchemy != null, "the alchemy window builds from the fixture")
-	if alchemy != null:
-		var shown := _shown(_same_rect_groups(alchemy))
-		_check(shown == [["GDR_AB_MANUFACTURING_BUTTON_PROCESS"]],
-			"alchemy: one of PROCESS / CANCEL shown, PROCESS (got %s)" % [shown])
-		_check(_visible(alchemy, "GDR_AB_MANUFACTURING_BUTTON_ALL_PROCESS"), "alchemy: All-compound stays shown")
 
 	var inv: Node = panels.call("open", "inventory")
 	_check(inv != null, "the main popup builds on its inventory tab, the bag and the equipment")
