@@ -4,7 +4,10 @@ extends SceneTree
 ## HUD (round 605; HudPanels.release_text_focus_on_press). The chat's line
 ## keeps the keyboard after Enter, and the rebuilt HUD's buttons are
 ## FOCUS_NONE, so on d4d1303 a click on the underbar's buttons, its menu or a
-## window left the focus in the chat and every key went into it.
+## window left the focus in the chat and every key went into it. Round 606:
+## a window drawn over a focused line takes the keyboard too (3d08974 kept
+## it), and Enter opens the chat line and, on an empty line, ends it, as the
+## client's key handlers do (HudChat).
 ##
 ## Builds the HUD in World3D's order -- the underbar, HudPanels, the chat
 ## (stack_over) in an IGNORE full-screen control -- and drives it with
@@ -300,3 +303,119 @@ func _run() -> void:
 	_click(_centre(other) + Vector2(20, 0))
 	await process_frame
 	_check(get_root().gui_get_focus_owner() == other, "a click on the focused line keeps it (focus %s)" % _focus_name())
+	other.queue_free()
+	await process_frame
+
+	# (g) Round 606, NEGATIVE (fails on 3d08974): a window drawn over the
+	# chat line takes the press on the covered part of the line, and the
+	# keyboard with it.
+	var line_spot := _centre(line)
+	_click(line_spot)
+	await process_frame
+	_key(KEY_Q, "q".unicode_at(0))
+	await process_frame
+	_check(get_root().gui_get_focus_owner() == line and not panels.call("is_open", "quest"),
+		"the probe: the chat line has the keyboard and the quest window is closed (focus %s)" % _focus_name())
+	line.clear()
+	panels.call("open", "quest")
+	await process_frame
+	quest = panels.find_child("Window_quest", false, false) as Control
+	if quest != null:
+		quest.position = line_spot - Vector2(40, 40)
+	await process_frame
+	_check(quest != null and quest.visible and quest.get_global_rect().has_point(line_spot)
+		and get_root().gui_get_focus_owner() == line,
+		"the probe: the quest window now covers the chat line at %s, and the line has the keyboard" % line_spot)
+	_click(line_spot)
+	await process_frame
+	_check(get_root().gui_get_focus_owner() == null,
+		"a click on a window over the chat line takes the keyboard from it (focus %s)" % _focus_name())
+	_key(KEY_Q, "q".unicode_at(0))
+	await process_frame
+	_check(not panels.call("is_open", "quest"), "then Q closes the window")
+
+	# (h) Round 606, NEGATIVE: a text line in one window, under another
+	# window (a party-match field under the popup, as measured).
+	panels.call("open", "quest")
+	await process_frame
+	var field := LineEdit.new()
+	field.position = Vector2(40, 60)
+	field.size = Vector2(200, 30)
+	quest.add_child(field)
+	await process_frame
+	var field_spot := _centre(field)
+	_click(field_spot)
+	await process_frame
+	_check(get_root().gui_get_focus_owner() == field, "the probe: a click on the window's line gives it the keyboard (focus %s)" % _focus_name())
+	var cover := Control.new()
+	cover.name = "Window_cover"
+	cover.mouse_filter = Control.MOUSE_FILTER_STOP
+	cover.position = field_spot - Vector2(30, 30)
+	cover.size = Vector2(120, 80)
+	panels.add_child(cover)
+	await process_frame
+	_click(field_spot)
+	await process_frame
+	_check(get_root().gui_get_focus_owner() == null,
+		"a click on a window over another window's line takes the keyboard from it (focus %s)" % _focus_name())
+	_type("k")
+	await process_frame
+	_check(field.text == "", "the key after it is not typed into the covered line (text '%s')" % field.text)
+	cover.queue_free()
+	field.queue_free()
+	panels.call("close", "quest")
+	await process_frame
+
+	# (i) The chat line's strip that hangs below the chat window keeps the
+	# keyboard: nothing is drawn over it but the bar, which comes earlier.
+	var chat_rect := chat.get_global_rect()
+	var line_rect := line.get_global_rect()
+	if line_rect.end.y > chat_rect.end.y + 2:
+		var strip := Vector2(line_rect.get_center().x, (chat_rect.end.y + line_rect.end.y) / 2.0)
+		_click(line_spot)
+		await process_frame
+		_click(strip)
+		await process_frame
+		_check(get_root().gui_get_focus_owner() == line,
+			"a click on the chat line below the chat window keeps it (focus %s at %s)" % [_focus_name(), strip])
+	else:
+		print("ok  (the chat line does not hang below the chat window here: %s in %s)" % [line_rect, chat_rect])
+	get_root().gui_release_focus()
+
+	# (j) Round 606, NEGATIVE (fails on 3d08974): Enter opens the chat line
+	# (0x78b660 -> 0x7a9a70), a line is sent and the line keeps the keyboard
+	# (0x7ad400's send path), an empty Enter ends the input (0x7ad598), and
+	# then the keys are shortcuts again.
+	_check(get_root().gui_get_focus_owner() == null, "the probe: nothing has the keyboard (focus %s)" % _focus_name())
+	_key(KEY_ENTER)
+	await process_frame
+	_check(get_root().gui_get_focus_owner() == line, "Enter opens the chat line (focus %s)" % _focus_name())
+	_sent.clear()
+	_type("yo")
+	_key(KEY_ENTER)
+	await process_frame
+	_check(_sent == ["yo"], "Enter sends it (sent %s)" % [_sent])
+	_check(get_root().gui_get_focus_owner() == line, "after a line is sent the line keeps the keyboard (focus %s)" % _focus_name())
+	_key(KEY_ENTER)
+	await process_frame
+	_check(get_root().gui_get_focus_owner() == null, "Enter on the empty line ends the input (focus %s)" % _focus_name())
+	_check(_sent == ["yo"], "and sends nothing (sent %s)" % [_sent])
+	_key(KEY_Q, "q".unicode_at(0))
+	await process_frame
+	_check(panels.call("is_open", "quest"), "then Q opens the quest window")
+	_key(KEY_Q, "q".unicode_at(0))
+	await process_frame
+	_key(KEY_KP_ENTER)
+	await process_frame
+	_check(get_root().gui_get_focus_owner() == line, "the keypad's Enter opens the line too (focus %s)" % _focus_name())
+	# Escape in the line ends the input (0x7ad4dd) and opens nothing.
+	_key(KEY_ESCAPE)
+	await process_frame
+	_check(get_root().gui_get_focus_owner() == null and not panels.call("is_open", "system"),
+		"Escape in the line ends the input and does not open the System window (focus %s)" % _focus_name())
+	# While the HUD is hidden, Enter does not open the line.
+	chat.visible = false
+	_key(KEY_ENTER)
+	await process_frame
+	_check(get_root().gui_get_focus_owner() == null, "with the chat hidden, Enter opens nothing (focus %s)" % _focus_name())
+	chat.visible = true

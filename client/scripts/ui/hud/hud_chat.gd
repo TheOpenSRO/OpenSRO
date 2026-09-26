@@ -166,10 +166,27 @@ func _install_input(root: Control) -> void:
 	_input.text_submitted.connect(_on_submitted)
 	box.add_child(_input)
 
+## Enter in the line (round 606). The client's key handler for its input box
+## (0x7ad400, CIFChatViewer's; the viewer's own caller at 0x7af463 feeds it
+## 0x0d after setting the box's text through vslot 0xb4) reads the box's text
+## and, when it is empty (the length test at 0x7ad544, `je 0x7ad598`), ends
+## the input: 0x7a9a40 gives the Win32 focus back to the main window
+## (SetFocus) and moves the UI focus to the viewer's +0x30 (0xb9d9f0; that
+## +0x30 is its parent is **inferred**). A line with text is sent. The
+## handler calls 0x7a9a40 at only three places (0x7ad4dd, 0x7ad59a,
+## 0x7ad7e4): Escape, the empty line, and, from 0x7ad7d3 and 0x7ad82e, a
+## mode-2 line missing one of the two parts 0x7ab230 parses out and a line of
+## length 1 in the modes that reach 0x7ad826 (what those modes and lines are
+## was not read). So after a line is sent the box keeps the focus, as this
+## LineEdit does. Escape in the box ends the input too (0x7ad4dd); Godot's
+## LineEdit already releases its focus on ui_cancel and consumes the key, so
+## the System window does not open. Here a line of only spaces counts as
+## empty (ours: the client's length test was not traced through its trim).
 func _on_submitted(text: String) -> void:
 	var trimmed := text.strip_edges()
 	_input.clear()
 	if trimmed == "":
+		_input.release_focus()
 		return
 	message_submitted.emit(trimmed)
 
@@ -202,3 +219,27 @@ func is_typing() -> bool:
 func focus_input() -> void:
 	if _input != null:
 		_input.grab_focus()
+
+## Enter with no text line holding the keyboard opens the chat line (round
+## 606), read from the client's in-game key handler 0x78b660: a key the key
+## table does not bind (0x778310 returns -1) that is 0x0d first offers the
+## focus to the window at DAT_00eed374 (0x537ce0: if it is shown, its +0x370
+## gets the focus; which window that is was not identified, and this client
+## builds nothing for it), and otherwise fetches the interface's child 1,
+## GDR_CHAT_BOARD (0x8b51f0 with 1), and gives the focus to its +0x4a0
+## (0x7a9a70 -> 0xb9d9f0) -- GetChild(0x0b) in CIFChatViewer::Create
+## (0x7abc6f..0x7abc7a), ifchatviewer.txt's GDR_CHAT_INPUTBOX (id 11). An
+## Enter that reaches the unhandled stage was not taken by a focused text
+## line (LineEdit submits on it) nor by a focused button (ui_accept presses
+## it), so nothing else wants it. Not while the HUD is hidden.
+func _unhandled_key_input(event: InputEvent) -> void:
+	var key := event as InputEventKey
+	if key == null or not key.pressed or key.echo or key.ctrl_pressed or key.alt_pressed \
+			or key.shift_pressed or key.meta_pressed:
+		return
+	if key.keycode != KEY_ENTER and key.keycode != KEY_KP_ENTER:
+		return
+	if _input == null or not _input.is_visible_in_tree():
+		return
+	focus_input()
+	get_viewport().set_input_as_handled()

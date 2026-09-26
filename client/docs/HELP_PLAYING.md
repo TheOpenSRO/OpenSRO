@@ -69,6 +69,12 @@ The chat line takes messages and slash commands. `/help` opens this help and
 lists the commands; `/w <name> <message>` whispers. See **Debug tools** for the
 full list of testing commands.
 
+**Enter** opens the chat line, and Enter sends what you typed. The line keeps
+the keyboard after a message, so you can type the next one; **Enter on an empty
+line** or **Escape** closes it, and so does a left click anywhere outside the chat
+window. While the line is open, the letter and number keys type into it
+instead of opening windows or casting.
+
 ## Developer and debug panels
 
 - **F1** — developer tools: zone travel and log out.

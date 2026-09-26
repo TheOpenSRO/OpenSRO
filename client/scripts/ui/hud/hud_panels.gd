@@ -803,12 +803,21 @@ func is_typing() -> bool:
 ## "The window it sits in" is the HUD surface -- a child of HudPanels (a
 ## window) or of the HUD container beside it (the chat, the bar, the
 ## minimap) -- that holds the line, and a press counts as on it when that
-## surface is the topmost one under the press: a window drawn over the chat
-## (stack_over) takes the press, and with it the keyboard, as the click is
-## the window's. A press on the chat's own scrollback or frame keeps the
-## line (round 522's review), and so does one on the line itself. A line
-## outside the HUD (the debug panel's fields) keeps the focus only for a
-## press on the line. Only the left button, as take_focus_back: a right drag
+## surface is the topmost one under the press (_surface_at). The line's own
+## rect counts as its surface's, but only where the walk reaches the surface:
+## a window drawn over the line -- over the chat (stack_over), or over a
+## party-match field -- takes the press, and with it the keyboard, even on
+## the covered part of the line (round 606; round 605 tested the line's rect
+## first, so a press on a window covering it kept the focus in a line the
+## player could not see). Where nothing covers it the line keeps the focus
+## for a press on itself, including the chat line's strip that hangs over
+## the bar (the chat comes after the bar in the tree, so the walk reaches it
+## first). A press on the chat's own scrollback or frame keeps the line
+## (round 522's review). A line outside the HUD -- the debug panel's
+## teleport field and font spin box, under World3D's $UI rather than the HUD
+## container -- keeps the focus only for a press on the line: _surface_at
+## cannot see that panel, nor the help window (its root is IGNORE), so a
+## press anywhere off such a line releases it. Only the left button, as take_focus_back: a right drag
 ## orbits the camera and the wheel zooms, and neither should end a message.
 ## The focus is released before the GUI sees the press, so a press on another
 ## text line hands the focus straight to it, and the press itself carries on
@@ -822,10 +831,11 @@ func release_text_focus_on_press(event: InputEvent) -> bool:
 	if not (focus is LineEdit or focus is TextEdit):
 		return false
 	var at := mb.position
-	if focus.get_global_rect().has_point(at):
-		return false
 	var host := _surface_of(focus)
-	if host != null and _surface_at(at) == host:
+	if host == null:
+		if focus.get_global_rect().has_point(at):
+			return false
+	elif _surface_at(at, host, focus) == host:
 		return false
 	focus.release_focus()
 	return true
@@ -845,8 +855,10 @@ func _surface_of(node: Node) -> Control:
 ## The topmost visible HUD surface whose rect holds `at`, in draw order: the
 ## container's later children first, and this node's windows where this node
 ## stands among them. Surfaces that ignore the mouse are passed over, as
-## Godot's own hit test passes them. Null over the open world.
-func _surface_at(at: Vector2) -> Control:
+## Godot's own hit test passes them. `host`, when given, also answers for
+## `line`'s rect (a line can hang outside its surface, as the chat's does
+## over the bar), at its own place in the order. Null over the open world.
+func _surface_at(at: Vector2, host: Control = null, line: Control = null) -> Control:
 	var container := get_parent()
 	if container == null:
 		return null
@@ -855,11 +867,15 @@ func _surface_at(at: Vector2) -> Control:
 		if child == self:
 			for j in range(get_child_count() - 1, -1, -1):
 				var window := get_child(j) as Control
-				if _takes_press(window, at):
+				if _takes_press(window, at) or _line_takes_press(window, host, line, at):
 					return window
-		elif _takes_press(child as Control, at):
+		elif _takes_press(child as Control, at) or _line_takes_press(child as Control, host, line, at):
 			return child as Control
 	return null
+
+static func _line_takes_press(c: Control, host: Control, line: Control, at: Vector2) -> bool:
+	return c != null and c == host and line != null and line.is_visible_in_tree() \
+		and line.get_global_rect().has_point(at)
 
 static func _takes_press(c: Control, at: Vector2) -> bool:
 	return c != null and c.is_visible_in_tree() and c.mouse_filter != Control.MOUSE_FILTER_IGNORE \

@@ -45040,7 +45040,9 @@ the rebuilt controls was not questioned.
 releases a focused LineEdit or TextEdit, unless the press is on the line itself, or on the HUD
 surface holding the line when that surface is the topmost one under the press. A surface is a
 window (a child of HudPanels) or a child of the HUD container (the chat, the bar, the minimap), and
-the topmost is found in draw order, so a window over the chat takes the press (`stack_over`). The
+the topmost is found in draw order, so a window over the chat takes the press (`stack_over`) --
+except, as shipped in 3d08974, on the line itself: the line's rect was tested first, so a press on
+a window drawn over the line kept the focus. Round 606 corrects it. The
 press is not consumed, so it goes on to what it landed on, and a press on another text line hands
 the focus to it. Kept:
 
@@ -45091,3 +45093,138 @@ closes it without opening System, and another text line takes the focus. ALL PAS
   `_skill_drag_input`) consume only mouse motion, release and Escape during a drag (read).
 - **Which keys the player pressed, and after what**, is still not known. The chat-then-HUD path is
   the one found that fails on d4d1303 and works on v0.1.450.
+
+## A window over a text line takes the keyboard, and Enter opens and closes the chat line as the client's does (round 606)
+
+A review of round 605 (3d08974) found one hole and asked for the chat's own Enter behaviour to be
+read.
+
+### A window over the line (measured by the review, fixed)
+
+`release_text_focus_on_press` tested `focus.get_global_rect().has_point(at)` before the
+topmost-surface walk. A press on a window covering the line therefore kept the focus in a line
+the player could not see. The review measured two cases:
+
+- the main popup moved to (220, 627), over the chat line: a click at (260, 647.5) left the focus on
+  `Input`, and K typed into the chat;
+- a party-match field under the popup: the keys typed "eikk" into it.
+
+This contradicted round 605's doc comment and record. Now the line's rect counts as its host
+surface's rect inside the walk (`_surface_at(at, host, line)`), at the host's own place in the
+draw order, so a window above the host is reached first and takes the press. The chat line's
+strip that hangs below the chat window over the bar (31 px against the authored 20) still keeps
+the focus, because the chat comes after the bar in the tree and the walk reaches it first. A line
+outside the HUD keeps its old rule: only a press on the line itself keeps the focus.
+
+**Not surfaces.** `_surface_at` sees only HudPanels' windows and its siblings in the HUD
+container, so two things fall outside it:
+
+- the debug panel (a child of World3D's `$UI`, not of `$UI/Control`);
+- the help window (under the container, but its root is IGNORE, so the walk passes over it; its
+  frame's own filters were not checked).
+
+Both of the debug panel's text inputs, the teleport field and the font SpinBox's inner line, now
+lose the focus on any left press off the line itself, including a press elsewhere on the debug
+panel. Round 522's spinner already hands the focus back once its value is set, so nothing there
+depends on keeping it.
+
+### Enter and the chat line (read)
+
+- **Enter with no text line focused opens the chat line.** The in-game key handler is
+  `0x78b660`. A key the key table does not bind (`0x778310` returns -1) that is `0x0d` does this:
+  - `ecx` = `DAT_00eed374` (`0x4f9d60`) and `0x537ce0`: if that window is shown (`+0x61`,
+    `0xb8f530`), its `+0x370` gets the UI focus (`0xb9d9f0`), and nothing else happens. Which
+    window that is was not identified, and this client builds nothing for it.
+  - Otherwise: `0x8b51f0(1, 1)` on the interface's child manager (`+0x36c`) fetches child 1,
+    GDR_CHAT_BOARD, and `0x7a9a70` gives the focus to its `+0x4a0`.
+  - `+0x4a0` is stored at `0x7abc7a` from `GetChild(0x0b)` in `CIFChatViewer::Create`, and id 11
+    in `ifchatviewer.txt` is `GDR_CHAT_INPUTBOX:CIFEInputChatBox` (dump_layout on the box's
+    Media.pk2).
+
+  `0xb9d9f0` is the UI focus setter: `DAT_0110f600` takes the window when its `+0x60` is set, and
+  `0xb9d8a0(0x4008, 1)` / `(0x4008, 0)` follow for the new and the old owner (their receiver is
+  passed in a register the decompiler dropped; **inferred** from the pattern).
+- **Enter in the line.** `0x7ad400` is the viewer's key handler for its input box. The viewer
+  calls it itself at `0x7af463` with `0x0d`, after setting the box's text through vslot `0xb4`
+  (`0x7af44c..0x7af45b`); it is also in the table at `0xd71880`. It handles:
+  - Tab (`9`): ignored.
+  - Escape (`0x1b`): `0x7a9a40` at `0x7ad4dd`.
+  - Enter: the box's text is read. An empty text (`0x7ad544`, `je 0x7ad598`) goes to `0x7a9a40`
+    at `0x7ad59a`.
+
+  `0x7a9a40` ends the input: `SetFocus` on the main window's HWND (`DAT_0110f7d0` → `0xba3ca0`),
+  then the UI focus to the viewer's `+0x30` (`0xb8f4f0`, `0xb9d9f0`); that `+0x30` is the
+  viewer's parent is **inferred**.
+- **Where input ends.** `0x7a9a40` is called at exactly three places in `0x7ad400`: Escape, the
+  empty line, and `0x7ad7e4`. The last is reached from `0x7ad7d3` (in mode 2, when the two parts
+  `0x7ab230` parses out are not both present; that mode 2 is the whisper is not established) and `0x7ad826` (a line of length 1 in the modes that reach it; what that
+  line is was not read). The send path has no other focus call, so **after a line is sent the
+  box keeps the focus**. This client already did that (LineEdit keeps it on `text_submitted`),
+  and it is unchanged.
+
+Implemented in HudChat:
+
+- `_unhandled_key_input`: Enter or keypad Enter, without modifiers, focuses the line (the
+  existing `focus_input`, which had no caller), unless the chat is hidden. An Enter that reaches
+  the unhandled stage was taken by neither a focused LineEdit (which submits) nor a focused button
+  (`ui_accept`).
+- `_on_submitted`: an empty line releases the focus. A line of spaces counts as empty; that is
+  ours, since the client's length test was not traced through whatever trims the text.
+- Escape in the line: Godot's LineEdit already releases the focus on `ui_cancel` and consumes the
+  key, so the System window does not open (the test's check (j), and the live run of round 605's
+  first session). This matches `0x7ad4dd`.
+
+This client builds no DAT_00eed374 window, so that branch is not implemented.
+
+**What the user may have hit.** A key pressed right after sending a line, with no click, is
+typed into the chat. That is what the retail client does too (read above), and it was the same on
+v0.1.450. What is new is that an empty Enter now ends the input, and Enter opens the line, so a
+keyboard player can close the line without the mouse.
+
+Live, d4d1303 + this round, 1280x720, `--server` (`SRREVAMP_QA_INPUT`):
+
+- Enter gives `focus=Input<LineEdit>`.
+- `hello`, then Enter: sent (the log carries it), and the focus stays on `Input`.
+- Enter again gives `focus=null`.
+- I then opens `[inventory,equipment]`, I again closes it, and J reaches `World3D._unhandled_input`.
+
+### Negative
+
+`hud_keys_after_chat_test.gd` gains these checks, all through `push_input`:
+
+- (g) the quest window moved over the chat line, then a click on the line's centre;
+- (h) a LineEdit inside the quest window under a STOP window, then a click and a K;
+- (i) the chat line's strip below the chat window, over the bar, keeps the focus;
+- (j) Enter, Enter with a line, Enter on the empty line, keypad Enter, Escape, and Enter with the
+  chat hidden.
+
+Against 3d08974's scripts (a copy with only the test replaced), 9 FAIL:
+
+```
+FAIL a click on a window over the chat line takes the keyboard from it (focus Input)
+FAIL then Q closes the window
+FAIL a click on a window over another window's line takes the keyboard from it (focus @LineEdit@9)
+FAIL the key after it is not typed into the covered line (text 'k')
+FAIL Enter opens the chat line (focus null)
+FAIL Enter sends it (sent [])
+FAIL after a line is sent the line keeps the keyboard (focus null)
+FAIL and sends nothing (sent [])
+FAIL the keypad's Enter opens the line too (focus null)
+```
+
+ALL PASS on this tree, with round 605's checks unchanged.
+
+### Correction to round 605
+
+Round 605's commit message says `check` loaded 307 scripts. A clean tree has 306. `remote_godot.sh
+sync` adds and overwrites but never deletes, so the lane still held the scratch
+`tools/probe_keys.gd` that round 605 deleted locally. It is now removed from the lane too.
+
+### Open
+
+- The DAT_00eed374 window's Enter branch (which window, and whether this client will ever build
+  it).
+- The length-1 branch at `0x7ad826`: which mode and which line leave the input there.
+- A focused FOCUS_ALL button (the ui_builder panes) still takes Enter as `ui_accept`, so Enter then
+  presses the button instead of opening the chat. The client has no such button focus, so this is
+  ours, and it was left unchanged.

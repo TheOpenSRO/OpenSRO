@@ -7083,6 +7083,34 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-sixth round: A window over a text line takes the keyboard, and Enter opens and closes the chat line as the client's does
+
+The full record is `docs/RE_COMPLETION.md`'s entry of the same name (round 606).
+
+- **A window over the line (review of round 605, fixed).** 3d08974 checked the focused line's rect
+  before the topmost-surface walk. A click on a window drawn over the line kept the focus, so K
+  typed into the chat under the moved popup, and "eikk" went into a party-match field under the
+  popup. The line's rect now counts as its host's inside the walk, at the host's place in the
+  draw order. The chat line's strip over the bar still keeps the focus, because the chat is
+  after the bar in the tree.
+- **Not surfaces.** The walk cannot see the debug panel (under `$UI`) or the help window (IGNORE
+  root). The debug panel's teleport field and font SpinBox now lose the focus on any left press
+  off the line.
+- **Enter (read).**
+  - `0x78b660`: an unbound `0x0d` focuses GDR_CHAT_INPUTBOX (id 11, the viewer's `+0x4a0`) through
+    `0x7a9a70`, unless the unidentified window at `DAT_00eed374` is shown.
+  - `0x7ad400`, the input box's handler: an empty line and Escape end the input (`0x7a9a40`:
+    SetFocus to the main window, the UI focus to the viewer's `+0x30`).
+  - After a line is sent the box keeps the focus; only two other branches end it (a mode-2 line
+    missing a part, and a length-1 line in some modes).
+  - Implemented in HudChat: Enter opens the line, an empty Enter closes it. Escape already did,
+    through Godot's LineEdit.
+- **Measured live.** Enter, `hello`, Enter: sent, focus kept. Enter again: focus null. I then
+  opens and closes the inventory.
+- **Negative.** 9 FAIL against 3d08974; ALL PASS here.
+- **Correction.** Round 605's "307 scripts" counted a scratch tool that sync had left on the lane.
+  A clean tree has 306.
+
 ## Six-hundred-and-fifth round: The keys work again after a line of chat, once the player clicks the HUD
 
 The full record is `docs/RE_COMPLETION.md`'s entry of the same name (round 605).
