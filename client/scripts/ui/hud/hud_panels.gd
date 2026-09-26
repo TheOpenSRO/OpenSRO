@@ -782,6 +782,89 @@ func is_typing() -> bool:
 		return false
 	return focus.is_visible_in_tree()
 
+## A left press anywhere but the window a text line sits in takes the
+## keyboard back from that line (round 605). The chat's line keeps the focus
+## after Enter (LineEdit does not release it on text_submitted), and until
+## rounds 595-604 almost every HUD button took it away on the next click: the
+## underbar and the windows were built by UiBuilder, whose TextureButtons
+## are FOCUS_ALL, so a click on one moved the focus to the button and the
+## panel keys reached _unhandled_key_input again. The rebuilt HUD's controls
+## -- the underbar and its menu, the guild, quest, alchemy and world map
+## windows (TwoDtBuilder) and every window's close button -- are FOCUS_NONE,
+## so after a line of chat the focus stayed in the chat through every click
+## on them, and I, C, K, Q, U, M, Y, the number keys and WASD all went into
+## the chat line until the player happened to click the open world
+## (World3D.take_focus_back). Measured in the world with SRREVAMP_QA_INPUT
+## (docs/RE_COMPLETION.md, round 605): on v0.1.450 a click on the bar's
+## community button left the focus on that button and K opened the skill
+## window; on d4d1303 a click on the bar's inventory button left it in the
+## chat and K and C opened nothing.
+##
+## "The window it sits in" is the HUD surface -- a child of HudPanels (a
+## window) or of the HUD container beside it (the chat, the bar, the
+## minimap) -- that holds the line, and a press counts as on it when that
+## surface is the topmost one under the press: a window drawn over the chat
+## (stack_over) takes the press, and with it the keyboard, as the click is
+## the window's. A press on the chat's own scrollback or frame keeps the
+## line (round 522's review), and so does one on the line itself. A line
+## outside the HUD (the debug panel's fields) keeps the focus only for a
+## press on the line. Only the left button, as take_focus_back: a right drag
+## orbits the camera and the wheel zooms, and neither should end a message.
+## The focus is released before the GUI sees the press, so a press on another
+## text line hands the focus straight to it, and the press itself carries on
+## to whatever it landed on. Our rule: whether the retail client ends chat
+## input on a click elsewhere was not read.
+func release_text_focus_on_press(event: InputEvent) -> bool:
+	var mb := event as InputEventMouseButton
+	if mb == null or not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT or not is_inside_tree():
+		return false
+	var focus := get_viewport().gui_get_focus_owner()
+	if not (focus is LineEdit or focus is TextEdit):
+		return false
+	var at := mb.position
+	if focus.get_global_rect().has_point(at):
+		return false
+	var host := _surface_of(focus)
+	if host != null and _surface_at(at) == host:
+		return false
+	focus.release_focus()
+	return true
+
+## The HUD surface a control belongs to: its ancestor (or itself) that is a
+## window of this node or a child of the HUD container this node sits in.
+## Null for a control outside both.
+func _surface_of(node: Node) -> Control:
+	var container := get_parent()
+	while node != null:
+		var parent := node.get_parent()
+		if parent == self or (parent == container and node != self):
+			return node as Control
+		node = parent
+	return null
+
+## The topmost visible HUD surface whose rect holds `at`, in draw order: the
+## container's later children first, and this node's windows where this node
+## stands among them. Surfaces that ignore the mouse are passed over, as
+## Godot's own hit test passes them. Null over the open world.
+func _surface_at(at: Vector2) -> Control:
+	var container := get_parent()
+	if container == null:
+		return null
+	for i in range(container.get_child_count() - 1, -1, -1):
+		var child := container.get_child(i)
+		if child == self:
+			for j in range(get_child_count() - 1, -1, -1):
+				var window := get_child(j) as Control
+				if _takes_press(window, at):
+					return window
+		elif _takes_press(child as Control, at):
+			return child as Control
+	return null
+
+static func _takes_press(c: Control, at: Vector2) -> bool:
+	return c != null and c.is_visible_in_tree() and c.mouse_filter != Control.MOUSE_FILTER_IGNORE \
+		and c.get_global_rect().has_point(at)
+
 ## The size the server accepts for a guild name, in bytes: guild.MaxNameLength
 ## (server/internal/guild/guild.go, 12). The engine's test is
 ## `if (len - 2u < 0xb)` in the create handler FUN_00514ce0
@@ -2729,6 +2812,8 @@ func _skill_drag_input(event: InputEvent) -> bool:
 	return false
 
 func _input(event: InputEvent) -> void:
+	# Before anything else, and without consuming the press (see the function).
+	release_text_focus_on_press(event)
 	if _skill_drag_input(event):
 		return
 	# A worn drag arms with a bag slot of -1 (it has none), so the guard has

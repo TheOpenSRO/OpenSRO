@@ -7083,6 +7083,39 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-fifth round: The keys work again after a line of chat, once the player clicks the HUD
+
+The full record is `docs/RE_COMPLETION.md`'s entry of the same name (round 605).
+
+- **Report.** v0.1.451: "the keyboard shortcuts stopped working"; v0.1.450 was fine. Which keys and
+  when were not said.
+- **The plain path works (measured).** A new hook, `SRREVAMP_QA_INPUT`, plays clicks and keys into
+  the real world through `push_input`, with keycode, physical keycode, label and character set.
+  Six live runs on d4d1303 at 1280x720 all toggled their windows. The runs covered: I C K U Q M Y P
+  A L, the number keys, F1/F2, Escape, and the same key again to close; clicks inside the popup,
+  guild, quest, map and alchemy windows; the bar's buttons and its menu; hovering for tooltips; the
+  talk box; `--server`; the real loading screen; a second entry through Login and CharacterSelect.
+  A headless sweep with the real Media.pk2 clicked every clickable control of every window, the
+  bar, the minimap and the player block, 363 in all. After each click an unbound key still reached
+  the unhandled stage, except while the party-match window's own search fields had the keyboard.
+- **What breaks them (measured).** A line of chat, then a click on the HUD. The chat line keeps the
+  keyboard after Enter. On d4d1303 a click on the bar's inventory button or its menu left the focus
+  in the chat, and K, C, I and Q were typed into it. On v0.1.450 (the same hook in a copy), a click
+  on the bar's community button moved the focus to the button, and K and C opened their windows.
+- **Why.** Until rounds 595-604 the bar and the windows were UiBuilder TextureButtons, which are
+  FOCUS_ALL, so any click on them took the keyboard from the chat. The rebuilt bar, its menu, the
+  guild, quest, map and alchemy windows (TwoDtBuilder) and every close button are FOCUS_NONE. Only
+  a click on the open world gave the keyboard back (`World3D.take_focus_back`).
+- **Fix.** `HudPanels.release_text_focus_on_press`, first in `HudPanels._input`: a left press
+  releases a focused text line unless it lands on the line itself or on the HUD surface that holds
+  it. That surface is a window, or a child of the HUD container such as the chat, and it must be
+  the topmost surface under the press. The press is not consumed. A window drawn over the chat
+  takes the keyboard. A click on the chat's scrollback, a right press or the wheel keeps it (round
+  522). That the retail client does the same was not read.
+- **Negative.** `hud_keys_after_chat_test.gd` drives the chat, the bar, its menu and the quest
+  window with `push_input` only. On d4d1303: 8 FAIL. Here: ALL PASS. Live on this tree, the same
+  chat-then-bar run opens skill with K and character with C.
+
 ## Six-hundred-and-fourth round: Y opens the client's own alchemy window, CNIFEnchantWnd from nifenchantwnd.2dt
 
 The full record is `docs/RE_COMPLETION.md`'s entry of the same name (round 604).

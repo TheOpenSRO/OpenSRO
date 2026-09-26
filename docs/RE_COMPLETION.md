@@ -44970,3 +44970,124 @@ got the same result for its 18 widgets). Every run printed 0 SCRIPT ERROR.
   the window's left side. Round 602's `HudPanels.stack_over` puts every HudPanels child, this
   window included, above the chat; that it now draws above is **inferred** from that code and
   was not re-shot.
+
+## The keys work again after a line of chat, once the player clicks the HUD (round 605)
+
+**Report** (v0.1.451, tag on d4d1303): "most GUI elements looked fixed. However, in the process the
+keyboard shortcuts stopped working." v0.1.450 (f2b00fa) was fine. The report named no keys and
+no moment.
+
+### What was ruled out (measured)
+
+- **`project.godot`** is byte-identical between v0.1.450 and d4d1303. No input map or `gui/`
+  setting changed.
+- **The plain key path.** `SRREVAMP_QA_INPUT` is new this round (World3D.gd's QA header,
+  `client/tools/README.md`). It pushes clicks, keys and hovers through `get_viewport().push_input`
+  and prints the open windows, the focus owner and the keys that reached
+  `World3D._unhandled_input`, which is the last stage. A key event carries keycode, physical
+  keycode, `key_label` and `unicode`, as an OS event does. Live runs on d4d1303 at 1280x720, all
+  with every window toggling:
+  - no server;
+  - `--server`;
+  - `--server` with `SRREVAMP_QA_FORCE_LOADING=1` (a real player's loading screen);
+  - `--server --reconnect 150 --reconnect-via-login` (the second entry comes through Login and
+    CharacterSelect; the HUD was kept on with a copy of qa_shot.sh without its NOUI export).
+
+  The keys: I C K U Q M Y P A L, 1, F1, F2, Escape, and the same key again to close. Before them the
+  runs clicked inside the popup, guild, quest, map and alchemy windows, the bar's buttons and menu,
+  and the minimap's map button. They also hovered the bar, the chat, the world and the minimap for
+  over a second (tooltips) and opened the talk box. The focus owner was null after each click
+  except the chat's line.
+- **Every clickable control.** A headless composition of World3D's HUD with the real Media.pk2
+  (minimap, world map, bar, player block, HudPanels, chat after `stack_over`) opened each window
+  by its key and clicked the centre of every visible control that takes the mouse. That was 363
+  clicks across the six popup tabs, guild, quest, map, alchemy, party match, auto potion, System
+  and the always-on HUD. After each click an unbound key (J, with its character) was pushed.
+  It reached the unhandled stage every time, except after the six clicks that put the
+  keyboard in party match's own three search fields, which are text lines. The ui_builder
+  TextureButtons (FOCUS_ALL) took the focus but did not accept letters. That matches Godot
+  4.2's routing: a focused control gets a key through `gui_input` and consumes it only by
+  accepting it; BaseButton accepts only `ui_accept`. The sweep was a scratch tool and is not kept.
+
+### What breaks them (measured)
+
+A line of chat, then a click anywhere on the HUD. The chat's LineEdit keeps the keyboard after
+Enter (`text_submitted` does not release it), which is unchanged. The runs, 1280x720, `--server`:
+
+- **d4d1303**: click the chat line, `hello`, Enter, then I: `focus=Input<LineEdit>`, nothing
+  opens. Next, a click on the bar's inventory button (946, 689) opens the popup but leaves
+  `focus=Input<LineEdit>`. Then K and C: `open=[inventory,equipment] focus=Input<LineEdit>`, both
+  typed into the chat. After a second line, the bar's menu (960, 665) and its quest item (965, 469)
+  open the quest window, with `focus=Input<LineEdit>`, and Q does not close it. Only a click on the
+  open world (640, 200) gave the keyboard back (`World3D.take_focus_back`).
+- **v0.1.450** (a copy with the same hook): the same line of chat, then a click on the bar's
+  `GDR_BTN_COMMUNITY` gives `focus=GDR_BTN_COMMUNITY<TextureButton>`. Then K gives
+  `open=[skill,community]` and C gives `open=[character,skill,community]`.
+
+**Why.** Until rounds 595-604 rebuilt them, the bar and those windows were UiBuilder TextureButtons, which have
+Godot's default FOCUS_ALL, so a click on any of them moved the focus off the chat line and the
+next key reached `HudPanels._unhandled_key_input`. The rebuilt bar and its menu (round 598), the
+guild (595), map (599), quest (601) and alchemy (604) windows are built by TwoDtBuilder, whose
+buttons, tabs and check boxes are FOCUS_NONE, and so is every HudWindow close button. A click on
+them leaves the focus where it was. A player who typed a line (or a GM command) and then used
+the HUD therefore had every panel key, the number keys and WASD going into the chat. The
+panel-pane buttons that UiBuilder still builds remain FOCUS_ALL. Whether FOCUS_NONE is right for
+the rebuilt controls was not questioned.
+
+### The fix
+
+`HudPanels.release_text_focus_on_press`, called first in `HudPanels._input`. On a left press it
+releases a focused LineEdit or TextEdit, unless the press is on the line itself, or on the HUD
+surface holding the line when that surface is the topmost one under the press. A surface is a
+window (a child of HudPanels) or a child of the HUD container (the chat, the bar, the minimap), and
+the topmost is found in draw order, so a window over the chat takes the press (`stack_over`). The
+press is not consumed, so it goes on to what it landed on, and a press on another text line hands
+the focus to it. Kept:
+
+- a press on the chat's scrollback or frame keeps the line (round 522's review);
+- a right press or the wheel keeps it (as `take_focus_back`);
+- the bar menu's outside-click and Escape close (round 598);
+- the Escape order (rounds 600 and 604);
+- windows above the chat (round 602);
+- the chat keeping the keyboard after Enter;
+- `World3D.take_focus_back`.
+
+A text line outside the HUD (the debug panel) keeps the focus only for a press on itself. **Our
+rule**: whether the retail client ends chat input on a click elsewhere was not read.
+
+Live on this tree, the same run gives these results. After the chat line, a click on the bar's
+inventory button gives `focus=null`. K then opens `[skill]` and C opens `[character]`. The menu
+click gives `focus=null`, and Q closes the quest window.
+
+### Negative
+
+`client/scripts/ui/hud/hud_keys_after_chat_test.gd` builds the bar (underbar_fixture), HudPanels and
+the chat (synthetic ifchatviewer layout) in World3D's order, plus questlist.2dt's synthetic
+fixture. It drives them with `push_input` only. Against d4d1303's scripts (a copy with only the
+test added), 8 FAIL:
+
+```
+FAIL a click on the bar's inventory button takes the keyboard from the chat (focus Input)
+FAIL after it Q opens the quest window
+FAIL after it an unbound key reaches the unhandled stage
+FAIL a click on the bar's menu button takes the keyboard from the chat (focus Input)
+FAIL after the menu the chat does not have the keyboard (focus Input)
+FAIL then Q closes the quest window
+FAIL a click on the quest window over the chat takes the keyboard from the chat (focus Input)
+FAIL then Q closes it
+```
+
+The kept behaviours pass on both trees: Enter sends, the line keeps the keyboard, Q typed while
+it does is text, the scrollback and a right press keep the line, the bar's menu opens and Escape
+closes it without opening System, and another text line takes the focus. ALL PASS on this tree.
+
+### Open
+
+- **The chat line is taller than its box.** The LineEdit's minimum height (31 px) exceeds the
+  authored 20. At 1280x720 it reaches 11 px below the chat window, over the top-left of the bar
+  (x 240-400, y 652-663). A click on that strip focuses the chat. v0.1.450's line was 381x31
+  and overlapped the bar too, so this is not a regression and was not changed.
+- **Dragging** an item or a skill was not driven live. The drag handlers (`HudPanels._input`,
+  `_skill_drag_input`) consume only mouse motion, release and Escape during a drag (read).
+- **Which keys the player pressed, and after what**, is still not known. The chat-then-HUD path is
+  the one found that fails on d4d1303 and works on v0.1.450.

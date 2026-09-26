@@ -7898,6 +7898,11 @@ func _update_blob_shadow() -> void:
 ##                          rounds 564 and 568, not measured; nothing was
 ##                          moved
 ##   SRREVAMP_QA_WORLDMAP=1 open the world map window over the world
+##   SRREVAMP_QA_INPUT="<tick>:<action>;..."  a player's clicks, keys and
+##                          hovers through push_input, each followed by a
+##                          `QA INPUT` line (open windows, focus, the keys
+##                          that reached _unhandled_input); _qa_input_step
+##                          has the actions (round 605)
 ##   SRREVAMP_QA_ATTACK_NAME=s  only monsters whose plate contains s (e.g. Mangyang)
 ##   SRREVAMP_QA_ATTACK_GOTO=1  stand next to the target first (QA teleport);
 ##                          without it the player walks into reach the way a
@@ -8099,6 +8104,164 @@ func _teleport_local(lx: float, lz: float) -> bool:
 	player.global_position = group.to_global(Vector3(lx, ly, lz))
 	player.velocity = Vector3.ZERO
 	return true
+
+# --- SRREVAMP_QA_INPUT --------------------------------------------------------
+#
+# SRREVAMP_QA_INPUT="<tick>:<action>[;<tick>:<action>...]" plays a player's
+# input into the real viewport (push_input), one action per tick, so Godot's
+# own hit-testing, focus and key routing decide who gets each event -- what
+# the one-key SRREVAMP_QA_HOTKEY cannot show, since a player clicks before
+# pressing keys. Actions:
+#   key:<name>          press and release a key, as the OS delivers it:
+#                       keycode, physical_keycode, key_label and (letters,
+#                       digits) unicode; `key:shift+q` holds Shift
+#   click:<x>,<y>       left press and release at a viewport point
+#   rclick:<x>,<y>      the same with the right button
+#   node:<name>         left click the centre of the first visible Control of
+#                       that name under the UI (find_child pattern)
+#   drag:<x>,<y>,<x2>,<y2>  left press, a motion in steps, release
+#   type:<text>         a key per character
+#   hover:<x>,<y>       move the mouse there (a tooltip shows after its delay)
+#   census              print every visible focusable Control that is not a
+#                       button (text lines, lists, spin boxes) and its rect
+#   talk                open the NPC talk box (as a click on an NPC does)
+# The tick after each action prints
+#   QA INPUT <n> <action>: open=[...] focus=<node> world_keys=[...]
+# -- the windows on screen, the keyboard focus, and the keys that reached
+# World3D._unhandled_input (the last stage: every HUD handler ran first).
+var _qa_input_steps: Dictionary = {}
+var _qa_input_armed := false
+var _qa_input_report := ""
+var _qa_input_seen: Array = []
+var _qa_input_count := 0
+
+func _qa_input_step() -> void:
+	var spec := OS.get_environment("SRREVAMP_QA_INPUT")
+	if spec == "":
+		return
+	if not _qa_input_armed:
+		_qa_input_armed = true
+		for part in spec.split(";", false):
+			var at := String(part).find(":")
+			if at > 0 and String(part).substr(0, at).is_valid_int():
+				_qa_input_steps[int(String(part).substr(0, at))] = String(part).substr(at + 1)
+	if _qa_input_report != "":
+		print("QA INPUT %d %s: open=[%s] focus=%s world_keys=[%s]" % [_qa_input_count, _qa_input_report,
+			_qa_open_windows(), _qa_focus_name(), ",".join(_qa_input_seen)])
+		_qa_input_report = ""
+	if not _qa_input_steps.has(_qa_tick):
+		return
+	var action: String = _qa_input_steps[_qa_tick]
+	_qa_input_seen.clear()
+	_qa_input_count += 1
+	_qa_input_report = action
+	var kind := action.get_slice(":", 0)
+	var arg := action.substr(kind.length() + 1)
+	match kind:
+		"key":
+			_qa_push_key(arg)
+		"type":
+			for i in arg.length():
+				_qa_push_key(arg[i])
+		"click", "rclick":
+			var xy := arg.split(",")
+			_qa_push_click(Vector2(float(xy[0]), float(xy[1])),
+				MOUSE_BUTTON_RIGHT if kind == "rclick" else MOUSE_BUTTON_LEFT)
+		"node":
+			var node := _qa_find_visible(ui_control, arg)
+			if node == null:
+				_qa_input_report = action + " (no such visible node)"
+			else:
+				var centre := node.get_global_rect().get_center()
+				_qa_input_report = "%s at %s (%s)" % [action, centre, node.get_path()]
+				_qa_push_click(centre, MOUSE_BUTTON_LEFT)
+		"drag":
+			var v := arg.split(",")
+			var from := Vector2(float(v[0]), float(v[1]))
+			var to := Vector2(float(v[2]), float(v[3]))
+			_qa_push_mouse(from, MOUSE_BUTTON_LEFT, true)
+			for i in range(1, 9):
+				var motion := InputEventMouseMotion.new()
+				motion.position = from.lerp(to, i / 8.0)
+				motion.global_position = motion.position
+				motion.button_mask = MOUSE_BUTTON_MASK_LEFT
+				get_viewport().push_input(motion)
+			_qa_push_mouse(to, MOUSE_BUTTON_LEFT, false)
+		"hover":
+			var hv := arg.split(",")
+			var motion := InputEventMouseMotion.new()
+			motion.position = Vector2(float(hv[0]), float(hv[1]))
+			motion.global_position = motion.position
+			get_viewport().push_input(motion)
+		"census":
+			for node in get_tree().root.find_children("*", "Control", true, false):
+				var c := node as Control
+				if c.focus_mode != Control.FOCUS_NONE and c.is_visible_in_tree() and not (c is BaseButton):
+					print("QA CENSUS %s<%s> rect=%s filter=%d focus_mode=%d" % [c.get_path(), c.get_class(),
+						c.get_global_rect(), c.mouse_filter, c.focus_mode])
+		"talk":
+			if _hud_panels != null:
+				_hud_panels.open_npc_talk("QA NPC", "Hello.", [])
+		_:
+			_qa_input_report = action + " (unknown action)"
+
+func _qa_push_key(name: String) -> void:
+	var shift := name.to_lower().begins_with("shift+")
+	var key_name := name.substr(6) if shift else name
+	var code := OS.find_keycode_from_string(key_name)
+	if code == KEY_NONE and key_name == " ":
+		code = KEY_SPACE
+	var uni := 0
+	if key_name.length() == 1:
+		uni = key_name.to_upper().unicode_at(0) if shift else key_name.to_lower().unicode_at(0)
+	for pressed in [true, false]:
+		var ev := InputEventKey.new()
+		ev.keycode = code
+		ev.physical_keycode = code
+		ev.key_label = code
+		ev.unicode = uni if pressed else 0
+		ev.shift_pressed = shift
+		ev.pressed = pressed
+		get_viewport().push_input(ev)
+
+func _qa_push_mouse(at: Vector2, button: MouseButton, pressed: bool) -> void:
+	var motion := InputEventMouseMotion.new()
+	motion.position = at
+	motion.global_position = at
+	get_viewport().push_input(motion)
+	var ev := InputEventMouseButton.new()
+	ev.button_index = button
+	ev.pressed = pressed
+	ev.position = at
+	ev.global_position = at
+	ev.button_mask = (MOUSE_BUTTON_MASK_LEFT if button == MOUSE_BUTTON_LEFT else MOUSE_BUTTON_MASK_RIGHT) if pressed else 0
+	get_viewport().push_input(ev)
+
+func _qa_push_click(at: Vector2, button: MouseButton) -> void:
+	_qa_push_mouse(at, button, true)
+	_qa_push_mouse(at, button, false)
+
+func _qa_find_visible(root: Node, pattern: String) -> Control:
+	for node in root.find_children(pattern, "Control", true, false):
+		if (node as Control).is_visible_in_tree():
+			return node as Control
+	return null
+
+func _qa_focus_name() -> String:
+	var focus := get_viewport().gui_get_focus_owner()
+	return "null" if focus == null else "%s<%s>" % [focus.name, focus.get_class()]
+
+func _qa_open_windows() -> String:
+	var out: Array = []
+	if _hud_panels != null:
+		for id in HudPanels.PANELS:
+			if _hud_panels.is_open(id):
+				out.append(id)
+	if _hud_worldmap != null and is_instance_valid(_hud_worldmap) and _hud_worldmap.visible:
+		out.append("worldmap")
+	if _hud_underbar != null and _hud_underbar.is_menu_open():
+		out.append("barmenu")
+	return ",".join(out)
 
 func _qa_step() -> void:
 	var pair := _nav_graph_for(player.global_position)
@@ -8317,6 +8480,10 @@ func _qa_step() -> void:
 					ev.physical_keycode = code
 					ev.pressed = pressed
 					get_viewport().push_input(ev)
+
+	# SRREVAMP_QA_INPUT: a player's clicks and keys, through push_input
+	# (_qa_input_step has the syntax).
+	_qa_input_step()
 
 	# SRREVAMP_QA_LEARN="<mastery>x<n>;<skill id>[;...]" raises a mastery n
 	# times and learns skills, one request after another, each waiting for
@@ -11221,6 +11388,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	# block, the minimap, the target window and the hotbar's body are STOP, so
 	# their clicks do not get here.
 	# The click itself carries on to the handlers below.
+	if _qa_input_armed and event is InputEventKey and (event as InputEventKey).pressed:
+		_qa_input_seen.append(OS.get_keycode_string((event as InputEventKey).keycode))
 	take_focus_back(get_viewport(), event)
 	# A direct keycode rather than an input action: this is a developer
 	# toggle, not a control anyone plays with, and adding it to

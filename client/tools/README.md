@@ -121,6 +121,22 @@ SRREVAMP_GM_ACCOUNTS=qa SRREVAMP_QA_COMMANDS="/level 20;/sp 100000" SRREVAMP_QA_
   SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames 620 --out /var/tmp/hotbar
 ```
 
+**So is a player's input** (round 605). `SRREVAMP_QA_INPUT="<tick>:<action>;..."` plays clicks
+(`click:x,y`, `rclick:x,y`, `node:<control name>`, `drag:x,y,x2,y2`), keys (`key:i`, `key:shift+q`,
+`type:hello`, with the keycode, physical keycode, label and character an OS key carries), hovers
+(`hover:x,y`), `talk` (the NPC talk box) and `census` (every visible focusable control that is not
+a button) into the viewport, one per tick. The tick after each prints `QA INPUT <n> <action>:
+open=[...] focus=<control> world_keys=[...]`: the windows on screen, who holds the keyboard, and
+the keys that got past every HUD handler to `World3D._unhandled_input`. A panel key that toggled
+its window is not in `world_keys` (HudPanels consumed it); an unbound one like `j` is, unless a
+text line has the keyboard. Round 605's runs (a line of chat, then the bar's buttons, then keys)
+are this, at 1280x720; `node:` finds a control by name, so it survives a layout that moves.
+
+```
+SRREVAMP_QA_INPUT="300:click:220,647;310:type:hello;320:key:enter;330:click:946,689;340:key:k" \
+  qa_shot.sh --server --region '97\168.m' --at 1002,1020 --radius 1 --frames 700 --out /var/tmp/input
+```
+
 ### Load benchmark
 
 Every map and loading change is measured on the two runs below, before and after, and on nothing
