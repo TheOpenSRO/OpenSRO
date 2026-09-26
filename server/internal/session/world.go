@@ -833,31 +833,44 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	if !oneWorld && req.Zone == current.Zone {
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "already in that zone"}).Encode()})
 	}
+	_, err = warpTo(ctx, sess, eq, chars, hub, req.Zone, bucket, pos, frame)
+	return err
+}
 
+// warpTo is a zone change's arrival, factored out of handleChangeZone in round
+// 576 so a gate teleport (teleport.go) lands the same way: the character in
+// the world on sess moves into hub bucket `bucket` at pos, under zone label
+// `zone` and FrameRegion `frame`; the mover gets its OpChangeZoneResult (so
+// its client reloads the zone behind the loading screen,
+// World3D._on_change_zone_result), everyone left behind its OpEntityLeft, and
+// everyone in the new bucket its OpEntityEntered at pos. moved is false when
+// the session is not in the world: the mover is then sent the "not in the
+// world" refusal, as handleChangeZone always did, and nothing moved.
+func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, chars character.Store, hub *world.Hub, zone, bucket string, pos world.Position, frame string) (moved bool, err error) {
 	old, remainingOld, othersNew, ok := hub.ChangeZone(sess, bucket, pos)
 	if !ok {
-		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "not in the world"}).Encode()})
+		return false, sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "not in the world"}).Encode()})
 	}
 	keepUp.Cancel(old.CharacterID)
 	// The new label and frame are what a later save writes under, and the
 	// arrival itself is saved at once under -persist-position (round 573).
-	rememberPlace(sess, req.Zone, frame, time.Now())
-	moved := old
-	moved.Zone, moved.Pos = bucket, pos
-	savePosition(chars, sess, moved)
+	rememberPlace(sess, zone, frame, time.Now())
+	arrived := old
+	arrived.Zone, arrived.Pos = bucket, pos
+	savePosition(chars, sess, arrived)
 
 	otherSnapshots := make([]EntitySnapshot, len(othersNew))
 	for i, o := range othersNew {
 		otherSnapshots[i] = entitySnapshotFromWorld(ctx, eq, chars, o)
 	}
 	result := &ChangeZoneResult{
-		OK: true, Zone: req.Zone,
+		OK: true, Zone: zone,
 		X: float32(pos.X), Y: float32(pos.Y), Z: float32(pos.Z),
 		Others:      otherSnapshots,
 		FrameRegion: frame,
 	}
 	if err := sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: result.Encode()}); err != nil {
-		return err
+		return true, err
 	}
 
 	leftMsg := &EntityLeft{CharacterID: old.CharacterID}
@@ -874,7 +887,7 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	for _, other := range othersNew {
 		other.Session.Send(&proto.Packet{Opcode: OpEntityEntered, Data: entered.Encode()})
 	}
-	return nil
+	return true, nil
 }
 
 func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars character.Store) error {

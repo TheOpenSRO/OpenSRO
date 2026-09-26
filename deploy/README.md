@@ -84,7 +84,7 @@ rm -f itemdata_* skilldata_* npcpos.txt teleport*.txt   # the extracted tables a
 #         - "-postgres-dsn=postgres://postgres:postgres@postgres:5432/srrevamp?sslmode=disable"
 #         - "-leveldata-csv=/data/leveldata.csv"
 #         - "-npcpos-csv=/data/npcpos.csv"       # real monster placements (round 253); omit for the town anchors
-#         - "-teleport-dir=/data/teleport"       # the teleport network (round 575): loaded and counted, not used yet
+#         - "-teleport-dir=/data/teleport"       # the teleport network (round 575); the town teleporters use it (round 576)
 docker compose up -d
 ```
 
@@ -104,11 +104,11 @@ same three CSVs from beside the pk2s (`PK2_DIR`), so keep a copy there too -- an
 directory as `PK2_DIR/teleport` (`qa_shot.sh` passes `-teleport-dir` when
 `teleport/teleportdata.csv` is there).
 
-The teleport directory (round 575) changes nothing a player sees yet: the boot log gains
-`msg="teleport network loaded" dir=... points=222 links=292 buildings=77`, and a directory that is configured
-but does not load (a missing file, a header that is not the exporter's, a link to a point the table
-lacks) stops the server at boot, as a bad `-npcpos-csv` does. The town teleporters that will use it
-arrive in later rounds, each behind its own note here.
+The teleport directory (round 575) is what the town teleporters charge and move by (round 576,
+"Town teleporters" below): the boot log gains `msg="teleport network loaded" dir=... points=222
+links=292 buildings=77`, and a directory that is configured but does not load (a missing file, a
+header that is not the exporter's, a link to a point the table lacks) stops the server at boot, as a
+bad `-npcpos-csv` does. Without the directory every teleport is refused.
 
 Reference data is otherwise not touched by the update loop.
 
@@ -509,3 +509,36 @@ where it last stood ...`.
 Every login is back at the spawn. The saved columns stay; nothing reads or writes them while the
 flag is off, so turning it on again restores each character to where it stood when the flag was
 last on.
+
+## Town teleporters
+
+The Dimensional Gate in each town moves a player to another town for the link's fee (round 576).
+The client sends `OpTeleportUse 0x00F3` with the gate and the destination (teleportdata ids); the
+server checks the link and its restrictions (a level range refuses `0x1c15`), charges the fee from
+the table (refusing `0x1c07`, with nothing charged or moved, when the gold is short), answers
+`OpTeleportResult 0x00F4` with the fee and the destination's name, and moves the player with an
+ordinary `OpChangeZoneResult` to the destination gate's own point -- the client reloads the zone
+behind its loading screen, as for any zone change. Every teleport is logged:
+`msg=teleport account=... character=... gate=STORE_CH_GATE from=GATE_CH dest=GATE_WC zone=donwhang
+... fee=5000 waiver=0`. What is grounded and what is a stand-in: `docs/RE_COMPLETION.md`, round
+576, and `docs/protocol/teleport_network.md`, "What srrevamp built".
+
+It needs the teleport directory above (`-teleport-dir`). There is no flag for the teleport itself:
+the request is new, and a client release before round 576's client half never sends it, so pushing
+to `dev` changes nothing for tagged clients until the release that carries the gate and its board.
+
+**Who pays.** Everyone pays the link's fee from the table (5,000 gold from Jangan to Donwhang),
+except:
+
+- characters below level 21 -- the engine's own waiver (`GObjPC::HandleTeleportUse`, `0x513590`);
+- GM accounts (`-gm-accounts` / `SRREVAMP_GM_ACCOUNTS`), always -- own design, the user's ask;
+- everyone, while `-teleport-free` (env `SRREVAMP_TELEPORT_FREE`) is on -- own design, the
+  free-while-testing switch. **The default is off**; after an update the boot log reads
+  `teleport free off (-teleport-free / SRREVAMP_TELEPORT_FREE): ...`.
+
+**Whether the public server runs `-teleport-free` on is the user's decision**, not the deploy
+loop's. To turn it on, add `SRREVAMP_TELEPORT_FREE: "1"` under the server's `environment:` in the
+untracked `docker-compose.override.yml` (or append `- "-teleport-free=true"` to the override's
+restated `command:` list), then run `docker compose up -d`; the boot log then reads `teleport free
+on: every gate teleport costs nothing ...`. Remove the line (or set it to `"0"`) and run
+`docker compose up -d` to charge fees again.

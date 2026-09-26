@@ -680,8 +680,8 @@ func main() {
 		"directory holding the game's teleport network as teleportdata.csv, teleportlink.csv and "+
 			"teleportbuilding.csv (from cmd/export-refdata -mode teleport on a client's own "+
 			"teleportdata.txt, teleportlink.txt and teleportbuilding.txt). Loaded, checked and counted "+
-			"at boot; nothing uses it yet (the town teleporters will). A configured directory that "+
-			"does not load is fatal.")
+			"at boot; the town teleporters' OpTeleportUse 0x00F3 charges and moves by it (round 576), "+
+			"and without it every teleport is refused. A configured directory that does not load is fatal.")
 	itemsCSV := flag.String("items-csv", os.Getenv("SRREVAMP_ITEMS_CSV"),
 		"path to an item-refdata CSV (from cmd/export-refdata -mode items); with -in-memory it "+
 			"feeds the shop catalogue and prices, item stat lookups and inventory stack limits. "+
@@ -752,6 +752,12 @@ func main() {
 			"builds a zone's grid inside the server's FrameRegion) and 571 (it finds the grid's corner "+
 			"when the centre region's terrain fails to load). See deploy/README.md, \"Single world "+
 			"frame (off by default)\".")
+	teleportFreeEnv, teleportFreeEnvErr := envBool("SRREVAMP_TELEPORT_FREE")
+	teleportFree := flag.Bool("teleport-free", teleportFreeEnv,
+		"every gate teleport costs nothing (env SRREVAMP_TELEPORT_FREE): the free-while-testing switch "+
+			"(own design, round 576). Default OFF: off, a teleport charges its link's fee from the table, "+
+			"waived below level 21 (the engine's rule) and for GM accounts (-gm-accounts, own design). "+
+			"See deploy/README.md, \"Town teleporters\".")
 	persistPositionEnv, persistPositionEnvErr := envBool("SRREVAMP_PERSIST_POSITION")
 	persistPosition := flag.Bool("persist-position", persistPositionEnv,
 		"a character logs back in where it left off (env SRREVAMP_PERSIST_POSITION): its zone label, "+
@@ -765,6 +771,10 @@ func main() {
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	if teleportFreeEnvErr != nil {
+		logger.Warn("SRREVAMP_TELEPORT_FREE is not a boolean; teleports stay charged unless -teleport-free is given",
+			"err", teleportFreeEnvErr)
+	}
 	if persistPositionEnvErr != nil {
 		logger.Warn("SRREVAMP_PERSIST_POSITION is not a boolean; the saved position stays off unless -persist-position is given",
 			"err", persistPositionEnvErr)
@@ -1141,15 +1151,23 @@ func main() {
 	}
 	// The game's teleport network, when the operator supplies it (round 575).
 	// Loaded and checked here so a bad export fails at boot, the npcpos rule;
-	// the teleport handler that will use it is the next item of the epic.
+	// session.TeleportHandler charges and moves by it (round 576), and refuses
+	// every request without it.
+	var teleportNetwork *teleport.Table
 	if *teleportDir != "" {
 		network, err := teleport.Load(*teleportDir)
 		if err != nil {
 			logger.Error("loading the teleport network", "dir", *teleportDir, "err", err)
 			os.Exit(1)
 		}
+		teleportNetwork = network
 		logger.Info("teleport network loaded", "dir", *teleportDir,
 			"points", len(network.Points), "links", len(network.Links), "buildings", len(network.Buildings))
+	}
+	if *teleportFree {
+		logger.Info("teleport free on: every gate teleport costs nothing (-teleport-free, own design, for testing)")
+	} else {
+		logger.Info("teleport free off (-teleport-free / SRREVAMP_TELEPORT_FREE): a teleport charges its link's fee, waived below level 21 and for GM accounts")
 	}
 	// The one world frame (round 571), behind its own flag. Set before the
 	// roster spawns and before gmSpecies: both read it for their monsters'
@@ -1313,6 +1331,10 @@ func main() {
 		session.CharacterStatsHandler(chars, eq, refItems, skills, manaTracker),
 		session.SpendStatPointsHandler(chars, eq, refItems, skills, manaTracker),
 		session.GMCommandHandler(chars, gmGate, gmDeps, hub, logger),
+		// The town teleporters (round 576): a gate's MOVE, charged and moved
+		// by the teleport network; GM accounts travel free (the same gate as
+		// the console), and everyone under -teleport-free.
+		session.TeleportHandler(chars, eq, hub, teleportNetwork, gmGate, *teleportFree, logger),
 		session.ShopHandler(chars, shopSvc, trades),
 		session.RepairHandler(chars, eq, refItems, trades),
 		session.StorageHandler(chars, storageSvc, trades),

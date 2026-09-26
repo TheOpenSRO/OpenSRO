@@ -1,10 +1,11 @@
 extends RefCounted
 
 ## A server refusal code in words: the game's own message where the client
-## has one, our own wording where it does not. Covers the three refusals this
+## has one, our own wording where it does not. Covers the four refusals this
 ## client shows today: a ground-item pick-up (World3D), an NPC repair
-## (hud_panels' store status line) and a guild level-up (World3D's Guild
-## tab, round 528). The shop and warehouse results carry a
+## (hud_panels' store status line), a guild level-up (World3D's Guild
+## tab, round 528) and a gate teleport (World3D, round 576). The shop and
+## warehouse results carry a
 ## reason string, not a code (server/internal/session/tradebusy.go,
 ## tradeBusyReason), so they do not come through here.
 ##
@@ -15,9 +16,9 @@ extends RefCounted
 ## archive through UiTextTable. Nothing from the archive is copied here.
 ##
 ## Every row is docs/protocol/error_codes.md's table (the rows for 0x1812,
-## 0x1839, 0x1c07, 0x1c0b, 0x1c11 and 0x1c12), which was reproduced 605 of 605
-## in round 323. For rounds 515 and 518 each row was also read through the
-## dispatcher's own jump tables in sro_client.exe:
+## 0x1839, 0x1c07, 0x1c0b, 0x1c10, 0x1c11, 0x1c12 and 0x1c15), which was
+## reproduced 605 of 605 in round 323. For rounds 515, 518 and 576 each row was
+## also read through the dispatcher's own jump tables in sro_client.exe:
 ##   category 1, the storage switch (code - 0x180b, index bytes at 0x7bb6d4,
 ##   targets at 0x7bb438):
 ##     0x1812 -> 0x7b8fca  push 0xdc72c0  UIIT_MSG_STRGERR_LOCKED_BY_OTHER_ONE
@@ -28,6 +29,13 @@ extends RefCounted
 ##               (entry 4 of the table; round 518)
 ##     0x1c11 -> 0x7ba0e1  push 0xdc2320  UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REPAIRED
 ##     0x1c12 -> 0x7ba0f9  push 0xdc22c8  UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REVIVED
+##   and, for the teleport's refusals (round 576; the table's raw words dumped
+##   with objdump -s at 0x7bbaac..0x7bbaf0, the pushed names read as UTF-16
+##   out of sro_client.exe):
+##     0x1c10 -> entry 9,  0x7bbad0: 0x7ba0a7  push 0xdc2458
+##               UIIT_MSG_INTERACTION_FAIL_CANT_USE_TELEPORT_WITH_TRADECART
+##     0x1c15 -> entry 14, 0x7bbae4: 0x7ba111  push 0xdc4e88
+##               UIIT_MSG_INTERACTION_FAIL_OUT_OF_REQUIRED_LEVEL_FOR_TELEPORT
 ##   category 0x10, the guild switch (category table 0x7bb378 entry 0x10 is
 ##   0x7ba32b; code - 0x4c06, index bytes at 0x7bbc80, targets at 0x7bbb78;
 ##   round 528):
@@ -42,6 +50,10 @@ extends RefCounted
 ## first argument (0x881c53 push 0x10), and FUN_00778190 tail-jumps to the
 ## dispatcher (0x7781a5), which reads that argument as its category
 ## (0x7b8b90 movzx eax,BYTE PTR [esp+0x468]).
+## For the teleport's codes the category is READ as well: the retail reply
+## 0xb05a's handler, FUN_008809d0 (registered for 0xb05a in FUN_0086fbb0),
+## reads a u8 result and, on 2, a u16 code, and calls FUN_00778190(0xd, code,
+## ...) -- category 0xd, the table above (teleport_line).
 ## Showing 0x1812 and 0x1839 assumes the pick-up reply is dispatched under
 ## category 1. The real reply's category was not read. Showing 0x1c07, 0x1c0b,
 ## 0x1c11 and 0x1c12 likewise assumes the repair reply is dispatched under
@@ -81,8 +93,10 @@ const UIIT_BY_CODE := {
 	0x1839: "UIIT_MSG_STRGERR_CANNOT_BE_PICKED",
 	0x1c07: "UIIT_MSG_INTERACTION_FAIL_NOT_ENOUGH_MONEY",
 	0x1c0b: "UIIT_MSG_INTERACTION_FAIL_IM_BUSY",
+	0x1c10: "UIIT_MSG_INTERACTION_FAIL_CANT_USE_TELEPORT_WITH_TRADECART",
 	0x1c11: "UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REPAIRED",
 	0x1c12: "UIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REVIVED",
+	0x1c15: "UIIT_MSG_INTERACTION_FAIL_OUT_OF_REQUIRED_LEVEL_FOR_TELEPORT",
 	0x4c07: "UIIT_MSG_GUILDERR_IM_DEAD",
 	0x4c1e: "UIIT_MSG_GUILDERR_PERMISSION_DENIED",
 	0x4c21: "UIIT_MSG_ERROR_GUILD_LEVEL_UP_FULL",
@@ -174,3 +188,29 @@ static func repair_line(code: int, table: UiTextTable) -> String:
 ## lacks, and for the server's own failures, which carry code 0.
 static func guild_level_up_line(code: int, table: UiTextTable, fallback: String) -> String:
 	return resolve(code, table, fallback)
+
+## A teleport refusal in words (round 576). The codes are the server's
+## (server/internal/session/teleport.go): the engine's 0x1c07 not enough gold
+## (GObjPC::HandleTeleportUse), 0x1c15 a level outside the link's range and
+## 0x1c10 a trade cart (FUN_00513a70's arms), each shown in the archive's own
+## words -- the reply's category, 0xd, is read (see UIIT_BY_CODE's header);
+## 2, the engine's "no such link", which category 0xd shows no message for --
+## its compare chain below 0x1c07 (0x7ba02e..0x7ba03e) tests 0x1c06, EBX
+## (zeroed at the dispatcher's entry, 0x7b8b7b, and not written again in it)
+## and 4, and sends 2 to the default, 0x7b913a -- so it keeps our own wording;
+## and the server's own refusals (code 0: dead, not in the world, no network)
+## and the codes UIIT_BY_CODE has no row for (0x1c19, 0x1c23, 0x1c24), which
+## show `reason`, the server's own words.
+static func teleport_line(code: int, table: UiTextTable, reason: String) -> String:
+	match code:
+		0x1c07:
+			return resolve(code, table, "Not enough gold.")
+		0x1c10:
+			return resolve(code, table, "You cannot teleport with a trade cart.")
+		0x1c15:
+			return resolve(code, table, "Your level does not allow that destination.")
+		2:
+			return "No such destination."
+	if reason != "":
+		return resolve(code, table, reason)
+	return resolve(code, table, "Teleport refused (code 0x%x)." % code)

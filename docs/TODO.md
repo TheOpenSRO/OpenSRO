@@ -241,7 +241,7 @@ In order. Each is checked off here when it ships in a release, with its round in
         (3) the flag's flip (`deploy/README.md`, "Player dead state (off by default)"). Stand-ins,
         each disclosed at its line: reviving in place above max level 10 (retail returns the
         character to `_CHAR.AppointedTeleport`, `CGObjPC::ResolveRevivePoint` -- srrevamp has no
-        appointed teleport and no gates), the empty request against retail 0x7053's u8
+        appointed teleport; its town gates, round 576, move a player but record no return point), the empty request against retail 0x7053's u8
         option, the fallback and its 30 s, the refusal wording, the pick-up / duel / zone-change / GM
         refusals (their retail handlers not read for a life-state test), the item kind usable while
         dead (`(tid & 0xf800) == 0x3000` in `Item_HandleUseItem`), the duel's own death path (still

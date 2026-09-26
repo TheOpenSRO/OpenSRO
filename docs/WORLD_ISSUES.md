@@ -7075,6 +7075,30 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-seventy-sixth round: a gate's MOVE is charged and moved -- OpTeleportUse / OpTeleportResult, the arrival through the zone change's own warp
+
+The second round of the town teleporters. The server answers `OpTeleportUse 0x00F3` (gate and
+destination, teleportdata ids): the link, its restrictions, the table's fee -- free below level 21
+(the engine), for GM accounts and under the new `-teleport-free` (default off; both own design) --
+then `OpTeleportResult 0x00F4` and an ordinary `OpChangeZoneResult` to the destination gate's
+point (`session.warpTo`, factored out of `handleChangeZone`). A short purse is refused `0x1c07`
+with nothing moved, as `GObjPC::HandleTeleportUse` refuses before it sets the teleport state. The
+client keeps the arrival point (no longer moved on to Jangan's square) and stands it on the
+walkable graph, holding the player while the point's region is still queued -- Samarkand's gate is
+in 106/108, beside its 106/107 centre, and arrives under "samarkand" in that frame. Nothing sends
+the request until the gate and its board land. The full record is `docs/RE_COMPLETION.md`'s round
+576.
+
+- **Two record corrections.** Code 2 is the engine's own "no such link" (`mov [esp+0x14],0x2` at
+  `0x513910`, both link checks jump there). And `FUN_008809d0` is the retail reply's handler, not
+  where `0xb05a` appears: `FUN_0086fbb0` registers it -- and it passes the code to the message
+  table under category `0xd`, so the teleport's refusal category is read, not assumed; `0x1c10` and
+  `0x1c15` have messages there (entries 9 and 14 of the table at `0x7bbaac`), 2 does not.
+- **Measured on the retail tables** (copied to scratch, exported, not committed): all 34 links of
+  the five town gates resolve to their towns' labels, and the built server moved a character 1 ->
+  2 -> 25 -> 1 over TCP to (-3, -548) in 102/153, (1230, -461) in 106/107 and (9, -409) in 97/168.
+  No live client run: another lane was rendering on the box, and `qa_shot.sh` kills every Godot.
+
 ## Five-hundred-and-seventy-fifth round: the server loads the teleport network, with the grounded fee, waiver and restriction rules
 
 The first round of the town teleporters. `cmd/export-refdata -mode teleport` turns the client's

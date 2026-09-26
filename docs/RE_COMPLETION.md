@@ -39532,3 +39532,198 @@ unchanged.
 the directory with `export-refdata -mode teleport` and mounts it (`deploy/README.md`); the QA
 harness wants a copy at `PK2_DIR/teleport` on the render box, which this round did not place (the
 box's pk2 directory is outside what this lane writes).
+
+## OpTeleportUse 0x00F3 / OpTeleportResult 0x00F4: the gate link is charged and the arrival reuses the zone-change warp and loading screen (round 576)
+
+The second round of the town-teleporter batch (the user, 2026-09-25: "there's crystals in each town
+... that teleport you between towns for gold (it should be free for gms or while testing)"). The
+server now answers a gate's MOVE: it checks the link, charges the table's fee (free below level 21
+as the engine does, always for GM accounts, and for everyone under a new default-OFF
+`-teleport-free`), and moves the player to the destination gate's point through the zone change's
+own arrival, so the client reloads behind its loading screen. The client half decodes the reply,
+prints the receipt or the refusal in the archive's words, and keeps the arrival point instead of
+moving a Jangan arrival on to the square. Nothing sends the request yet: the clickable gate and
+its board are the next items (map-teleport-gate-talk, map-teleport-board).
+
+**What was wired.**
+
+- `server/internal/session/teleport.go` (new): `OpTeleportUse 0x00F3` {u16 gate, u16 destination
+  -- teleportdata ids} and `OpTeleportResult 0x00F4` {u8 ok, u16 code, u8 waiver, u64 gold charged,
+  string destination `SN_ZONE_*` token, string reason}, srrevamp's own placeholders (free: the
+  highest op in `server/internal/session` and `client/scripts/net` was `0x00F2`, and no file under
+  `server/`, `client/scripts` or `docs/` named `0x00F3`/`0x00F4`, re-grepped this round).
+  `TeleportHandler(chars, eq, hub, network, gate, free, logger)`; `teleporter.use` runs, in order:
+  in the world, alive (handleChangeZone's own-design dead refusal), the gate point, which must
+  belong to a teleportbuilding row (`gateBuilding`, through `PointByBuildingCode`; a ferry point's
+  object is an NPC), the link (`LinkBetween`), a destination srrevamp can place (a dungeon point, a
+  negative region, is refused), `CheckRestrictions(link, level, teleport.PvPNeutral)` with the
+  stand-in disclosed at the call site, `QuoteFee(link, level, gate.Allows(username), free)`, the
+  charge (`DeductGold`; `ErrInsufficientGold` -> `0x1c07`, nothing moved), a log line, the receipt,
+  then `warpTo`. Refusals carry the engine's code (2, 0x1c07, 0x1c15, ...) or 0 for srrevamp's
+  own, and the server's wording as `Reason`, the client's fallback. A move that fails after the
+  charge (the session left the world in between) refunds it.
+- `session/world.go`: `warpTo(ctx, sess, eq, chars, hub, zone, bucket, pos, frame)` -- the tail of
+  `handleChangeZone` (hub move, keep-up cancel, `rememberPlace`, `savePosition`, the mover's
+  `OpChangeZoneResult`, `OpEntityLeft` to the old bucket, `OpEntityEntered` to the new), factored
+  out unchanged; `handleChangeZone` calls it. `0x0026`/`0x0027`'s layouts are untouched.
+- `cmd/server`: `-teleport-free` (env `SRREVAMP_TELEPORT_FREE`, `envBool`, a WARN on a bad value,
+  a boot line either way), the loaded network handed to `session.TeleportHandler` with the
+  `-gm-accounts` gate, registered after the GM console; `-teleport-dir`'s help says what uses it.
+- `internal/systems/orphans_test.go`: `PointByID`, `PointByBuildingCode`, `LinkBetween`, `QuoteFee`
+  and `CheckRestrictions` leave `knownOrphans`; `LinksFrom` stays, reworded -- the destination list
+  is the client's own (the retail dialog builds it from the client's link records,
+  `UI_TELEPORT::FUN_006fd3e0`), so no server message carries it.
+- Client: `client/scripts/net/teleport.gd` (`TeleportNet`: the opcodes, `encode_use`,
+  `decode_result` -- null on any truncation -- the waiver constants and `receipt_line`);
+  `NetClient.teleport_use` and `teleport_result`; `ErrorText` gains `0x1c10` and `0x1c15` and
+  `teleport_line`; `World3D._on_teleport_result` prints the receipt (`TeleportNet.receipt_line`,
+  the place through textdata_object, `_teleport_place_name`) or the refusal, and marks the next
+  `OpChangeZoneResult` as the teleport's arrival (`_teleport_arrival_pending`);
+  `_on_change_zone_result` then keeps the server's position -- not `_place_at_zone_spawn` -- and
+  stands it on the walkable graph (`_land_teleport_arrival`), holding the player at the point, no
+  walk, no fall, while its region is still queued (`_step_teleport_landing`, stepped from
+  `_physics_step`), released to the ordinary ground snap if the drain ends with no graph there.
+
+**Grounding, re-verified this round** (read-only: `getfn.sh` on `/var/tmp/decomp_server` and
+`/var/tmp/decomp_client` with zero-padded addresses, `srv.asm`, `sro_client.asm`, `objdump -s` on
+the box's `sro_client.exe`, the tables under `/var/tmp/tables`):
+
+- `GObjPC::HandleTeleportUse` (`getfn.sh 00513590`): `0x1c14` first (`GetTeleportState`), the range
+  test, then kind 2: `call 0x485d60` (the link); `test edi,edi; je 0x513910` and `cmp [edi],0; je
+  0x513910` -> `mov [esp+0x14],0x2` at `0x513910` -- **code 2 is the engine's "no such link"**; the
+  fee `mov esi,[edi+0x4]` (`0x5136d7`), `cmp al,0x14` (`0x5136de`), the gold compare refusing
+  `mov [esp+0x14],0x1c07` at `0x513749`, and only after it `CGObjPC::FUN_004e0a40` (the teleport
+  state). The gate lookup's miss (`FUN_00485d90` returning 0) is a bare `return`: no reply.
+- `FUN_00513a70` (`getfn.sh 00513a70`): the refusal codes `0x1c15`, `0x1c10`, `0x1c19`, `0x1c23`,
+  `0x1c24` (round 575's reading; its callers run it before the fee on `CMainProcess::FUN_004f2b50`'s
+  path).
+- The retail pair, for the record: `CIF_NPCTalk::FUN_0081ddf0` builds `0x705a` -- `"TELEPORTGATE ->
+  Type(%d), Target(%d)"`, then a u32 (the gate), the u8 kind and, for kind 2, a u32 target. The
+  reply `0xb05a`: **`FUN_008809d0` does not contain the constant** (the verifier was right; it is
+  76 bytes) -- `FUN_0086fbb0` registers it for `0xb05a` (`local_1c = 0xb05a; local_18 =
+  FUN_008809d0`), and it reads a u8 result and, on 2, a u16 code passed to `FUN_00778190(0xd, code,
+  0xffdbc99b, 0, 1)`. So the teleport reply's message category is READ: `0xd`, the interaction
+  table.
+- The category-`0xd` jump table (`objdump -s --start-address=0x7bbaac`, `code - 0x1c07`): entry 9
+  (`0x1c10`) `0x7ba0a7` pushes `0xdc2458` `UIIT_MSG_INTERACTION_FAIL_CANT_USE_TELEPORT_WITH_TRADECART`;
+  entry 14 (`0x1c15`) `0x7ba111` pushes `0xdc4e88`
+  `UIIT_MSG_INTERACTION_FAIL_OUT_OF_REQUIRED_LEVEL_FOR_TELEPORT` (the names read as UTF-16 out of the
+  exe); entry 0 is `0x1c07`'s `0x7ba085` as recorded. Code 2 has no message there: the chain below
+  `0x1c07` (`0x7ba02e..0x7ba03e`) tests `0x1c06`, EBX -- zeroed at the dispatcher's entry
+  (`0x7b8b7b`), with no other write to it in the function -- and 4, and sends the rest to the
+  default `0x7b913a`. Code 0 would be `UIIT_STT_ERR_COMMON_INVALID_TARGET` (`0x7ba04e`); srrevamp's
+  client does not route code 0 through the table.
+- textuisystem.txt (`/var/tmp/tables`): two rows each of `UIIT_CTL_TELEPORT_RESULT` ('Teleport to
+  [%s] for [%d] Gold.' and 'Teleport to [%s]area. [%d]gold') and `UIIT_CTL_TELEPORT_FREE_RESULT`;
+  `UiTextTable.parse` keeps the last, and `receipt_line` fills either shape. textdata_object:
+  `SN_ZONE_22001..22005` = Jangan, Donwhang, Hotan, Constantinople, Samarkand.
+- teleportdata / teleportlink / teleportbuilding rows used by the fixture, read this round: GATE_CH
+  1 (2094, 25000, 969/0/1369, radius 150), GATE_WC 2 (2095, 26265, 957/-80/1508, 200), GATE_CA 25
+  (19555, 27244, 270/180/1421, 120); links 1->2 5000 `(2,0,0)`, 1->25 5000 `(1,1,110)+(2,0,0)`, 2->1
+  5000 `(2,0,0)`; buildings 2094 (25000, 1254/-6/1374), 2095 (26521 = 103/153, 962/-35/8), 19555
+  (27499 = 107/107, 1917/250/108).
+
+**The orchestrator's notes, answered.**
+
+- *The destination label.* `teleportZoneFor`: the town whose `worldmap.ZoneCentre` IS the point's
+  region, else the town whose centre is one region away, else the region's "x/y". Jangan, Donwhang,
+  Hotan and Constantinople arrive under their own labels in their own frames; Samarkand's GATE_CA
+  (106/108) arrives under "samarkand" in 106/107's frame at `ToWorld(106, 108, 270, 1421, 106,
+  107)` -- one region over in world X (region y drives world X, region x drives world Z, Z
+  mirrored: AGENTS.md; every expected value in the tests is derived from `worldmap.ToWorld`, none
+  written from prose). `ZoneNames` is sorted, so Donwhang's 102/153 is "donwhang" (the roster's and
+  /goto's), not "dunhuang". Under `-single-frame` the label's frame is `WorldOrigin`'s and the bucket
+  the world's (`arrival`). The plan's '"102/153"' label is superseded as the note said.
+- *The arrival spot.* The server sends the destination's teleportdata point; the client keeps it.
+  Choice: the client remembers the receipt (the server sends `OpTeleportResult` first on the same
+  ordered stream, then the `OpChangeZoneResult`), rather than a trailing byte on `0x0027` -- the
+  item's step 1 forbids touching `0x0027`'s layout, and no older client ever sends the request, so
+  nothing older needs a flag. The Jangan override (`ZONE_SPAWN_LOCAL`, local 1002, 1020) no longer
+  applies to a teleport arrival: GATE_CH's point (969, 1369) is kept. The landing height is the
+  walkable graph's (`landing_height_at`), as a typed `@x,z` lands; no new straight-down ray was
+  added (the existing snap and the hold's release use `TerrainCollision.vertical_ray` already).
+- *Citations.* `FUN_008809d0` is the handler and `FUN_0086fbb0` the registrar (above); the
+  opcode census re-run.
+- *Free rules.* GM accounts always (`gm.Gate`, the console's gate, passed into the handler), everyone
+  under `-teleport-free` (default OFF), the engine's own waiver below 21 -- in `QuoteFee`'s order, so
+  a level-1 GM reports the engine's waiver (1), a level-30 GM the GM waiver (2). `server/README.md`
+  names the flag; `deploy/README.md`, "Town teleporters", says the public server's flip is the
+  user's call.
+- *The PvPNeutral call site.* `teleporter.use` passes `teleport.PvPNeutral` with the disclosure at
+  the call.
+- *The QA teleport CSVs.* Not placed on the box. The box was running another lane's renders
+  (`/opt/srrevamp-client-white`, `/var/tmp/rwhite`) throughout, and `qa_shot.sh` kills every Godot
+  on the box before it starts, so no live client run was made this round (the end-to-end run with
+  the gate click is map-teleport-board's acceptance). Instead the retail tables were copied into
+  this session's scratch (never committed), exported with `export-refdata -mode teleport` (222
+  points, 292 links, 77 buildings) and measured two ways, below.
+
+**Measured.** (1) Every link from the five town gates through the handler's own `teleportArrival`
+on the retail export (a throwaway test, not committed): all 34 resolve, Donwhang's four beyond
+the towns (Arabian coast and desert, Baghdad, the Togui trade route) to their own "x/y" labels;
+Jangan -> Donwhang `donwhang` 102/153 (-3, -548), -> Hotan `hotan` 92/135 (178, 807), -> Constantinople
+`constantinople` 105/79 (-10, -110), -> Samarkand `samarkand` 106/107 (1230, -461), -> Alexandria
+GATE_SD1 `90/48` (-297, 434) and GATE_SD2 `92/51` (-849, 436); every town gate lands in the same
+places (-> Jangan `jangan` 97/168 (9, -409)); 71 of the 222 points belong to a gate building. (2) The built server binary booted with the
+retail export (`msg="teleport network loaded" ... points=222 links=292 buildings=77`, then
+`msg="teleport free off (-teleport-free / SRREVAMP_TELEPORT_FREE): ..."`; with the flag,
+`teleport free on: ...`; `SRREVAMP_TELEPORT_FREE=maybe` WARNs and stays off), driven over TCP by a
+throwaway client: a level-1 character teleported 1 -> 2 -> 25 -> 1 (receipts waiver 1, fee 0;
+arrivals `donwhang` 102/153 (-3, 0, -548), `samarkand` 106/107 (1230, 0, -461), `jangan` 97/168 (9,
+0, -409)) and 1 -> 99 was refused code 2; a GM account after `/level 30` (with the exported level
+table) got waiver 2 both ways. The server logged each, e.g. `msg=teleport account=gmqa3
+character=Telegmqa3 gate=STORE_CH_GATE from=GATE_CH dest=GATE_WC zone=donwhang frame=102/153 x=-3
+z=-548 fee=0 waiver=2 gm=true free_flag=false`. The charged path is the unit tests' (no non-GM
+account can reach level 21 on a fresh in-memory server).
+
+**Tests.** `session/teleport_test.go`, in-memory stores and a synthetic table over the TCP harness:
+(a) level 30, 10,000 gold, 1 -> 2: receipt ok, fee 5000, no waiver, `SN_ZONE_22002`, then an
+`OpChangeZoneResult` "donwhang" in `FrameFor("donwhang")` at `ToWorld(102,153,957,1508,102,153)`
+within 0.01, gold 5000, the hub holding her there, and the character left in Jangan getting
+`OpEntityLeft`; (b) NEGATIVE, 4,000 gold: `0x1c07` with a reason, no further packet within 300 ms,
+the hub still at Jangan's spawn, gold 4000; (c) waivers: level 20 -> 1, a GM -> 2, `-teleport-free`
+-> 3, a GM list without the account -> charged; refusals: level 111 on `(1,1,110)` -> `0x1c15`, no
+link -> 2, no gate -> 2, a ferry point with a link -> 2, a dungeon destination -> 0, no network ->
+0, dead -> 0 -- each with nothing charged and nothing moved; Samarkand -> "samarkand" in 106/107 at
+the gate's point; Jangan -> GATE_CH's point, not the landing; `-single-frame` -> 97/168 and the
+world bucket; the wire shapes against hand-built bytes (the client's request, the result's
+layout, every truncation refused). `TestChangeZoneFlow` covers the refactored `handleChangeZone`.
+`client/scripts/net/teleport_test.gd`: the request's four bytes, the success fixture byte for byte
+as Go's `Encode` writes it, a refusal, NEGATIVE every truncation null, the receipt in both archive
+shapes and the own-wording fallbacks (no table, a template with an extra placeholder, no place --
+never the token), `teleport_line` for 0x1c15/0x1c10/0x1c07 from the table, 2's own wording and
+code 0's server words, and World3D's `_on_teleport_result` (a refusal is a chat line and marks no
+arrival; an acceptance marks one).
+
+**NEGATIVES, proven.** Server: production files reverted (`git stash push` of `world.go` and
+`main.go`, `teleport.go` moved aside) -> `FAIL ... [build failed]` (`undefined:
+DecodeTeleportResult`, `teleportNoLink`, `TeleportResult`); restored -> green. The handler mutated
+to move BEFORE charging -> (b) fails (`reply opcode 0x0027, want OpTeleportResult 0x00f4`);
+restored -> green. Client: `decode_result` mutated to return the half-filled result on a short
+string -> `FAIL every truncation of the result decodes to null (17 did not)`; restored -> `ALL
+PASS`.
+
+`cd server && go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok, before and after the
+doc edits. `client/tools/remote_godot.sh tests` (`GODOT_LOCK=/var/tmp/r576/lock`): `ran 98
+suite(s), 0 failing`.
+
+**Stand-ins, disclosed.** The arrival spot (the teleportdata point; the retail completion stage
+`CGObjPC::vslot_309` `0x4ef480` / `CMainProcess::FUN_004f2b50` is unread); the zone-label rule; no
+interaction-range test; no "already teleporting" state; code 2 for a gate point without a building
+(the engine answers nothing); the GM and flag waivers; the refusal wording and the code-0 refusals;
+the PvP state NEUTRAL; the refund after a failed move; the client's hold while a neighbour cell
+loads.
+
+**Records.** This entry; `docs/WORLD_ISSUES.md`'s five-hundred-and-seventy-sixth round;
+`docs/protocol/teleport_network.md` ("What srrevamp could build from this" is now "What srrevamp
+built", with the wire, the order and the arrival-spot inference); `docs/SYSTEMS.md`'s Teleport
+network row (anchor `TeleportHandler`); `server/README.md` (`-teleport-free`, `-teleport-dir`);
+`deploy/README.md` ("Town teleporters"; the compose comment); `docs/TODO.md` (the revive note's
+"no gates"). Beyond the item's file list, disclosed: `internal/systems/orphans_test.go`,
+`docs/SYSTEMS.md`, `docs/WORLD_ISSUES.md`, `docs/TODO.md`.
+
+**Deploy note.** Server half: auto-deploys on push and is inert for every tagged client (none sends
+`0x00F3`); with no `-teleport-dir` every request is refused. `-teleport-free` defaults OFF --
+whether srrevamp-01 runs it on is the user's decision (`deploy/README.md`). The operator must mount
+the teleport directory on srrevamp-01 for the teleporters to work at all. Client half: ships in the
+release with map-teleport-gate-talk and map-teleport-board; not tag-worthy alone.

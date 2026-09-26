@@ -155,6 +155,10 @@ signal use_item_result(result: UseItemNet.Result)
 ## The GM console's reply (GmNet.Result): whether this account is a GM, the
 ## text to print, and any place to move to / views to refresh.
 signal gm_command_result(result: GmNet.Result)
+## A gate teleport's receipt (TeleportNet.Result, round 576): the fee charged
+## and the destination, or the refusal. On success the server's
+## OpChangeZoneResult follows it (change_zone_result).
+signal teleport_result(result: TeleportNet.Result)
 
 var _tcp_peer: StreamPeerTCP  # the real socket, always present once connecting starts
 var _peer: StreamPeer         # what packets are actually read/written through -- _tcp_peer directly, or a StreamPeerTLS wrapping it once connected with use_tls
@@ -487,6 +491,12 @@ func whisper(target_name: String, message_text: String) -> void:
 func gm_command(char_name: String, line: String, selected_monster: int) -> void:
 	_send(GmNet.OP_COMMAND, GmNet.encode_command(char_name, line, selected_monster))
 
+## Asks to travel from the gate the player is at to one of its destinations,
+## both teleportdata ids (TeleportNet.OP_USE). The reply is teleport_result;
+## the move itself is change_zone_result.
+func teleport_use(gate_id: int, dest_id: int) -> void:
+	_send(TeleportNet.OP_USE, TeleportNet.encode_use(gate_id, dest_id))
+
 func list_quests(char_name: String) -> void:
 	_send(QuestNet.OP_LIST, QuestNet.encode_list_request(char_name))
 
@@ -810,6 +820,10 @@ func _dispatch(p: Packet) -> void:
 			var r := GmNet.decode_result(p.data)
 			if r != null:
 				gm_command_result.emit(r)
+		TeleportNet.OP_RESULT:
+			var r := TeleportNet.decode_result(p.data)
+			if r != null:
+				teleport_result.emit(r)
 		_:
 			if _should_warn_unhandled(p.opcode):
 				push_warning("NetClient: unhandled opcode 0x%04x (warned once per connection)" % p.opcode)

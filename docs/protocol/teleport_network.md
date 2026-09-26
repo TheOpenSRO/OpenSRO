@@ -1,7 +1,8 @@
 # The teleport network
 
 Three real tables describe every gate in the game and how they connect. srrevamp
-has no teleport system at all, and this is what one would be built from.
+builds its town teleporters from them (rounds 575 and 576, "What srrevamp built"
+below).
 
 **All three came out of `Media.pk2` this pass.** Only `teleportdata.txt` had been
 extracted before; `teleportlink.txt` and `teleportbuilding.txt` were in the
@@ -198,18 +199,94 @@ gate is an NPC you talk to.
 `refoptionalteleport.txt` (6,204 bytes) — the counterpart to the
 `_REFOPTIONALTELEPORT` table in the server's catalogue.
 
-## What srrevamp could build from this
+## What srrevamp built
 
-The points are grounded and positioned, the graph is real, and the gate NPCs
-join to the existing NPC machinery. A teleport system built on these three
-tables would be as grounded as the monster spawns are — the same shape of
-recovery, from the same kind of table.
+The points are grounded and positioned, the graph is real, and the cost and the
+level gate are read: the fee at its use-site (2026-09-19) and the restriction
+evaluator (round 575, below). srrevamp loads the three tables since round 575
+(`internal/teleport`, cmd/server's `-teleport-dir`), and since round 576 a gate's
+MOVE is charged and moved by them.
 
-What it could **not** yet claim was the cost and the level gate, until the
-`_REFTELELINK` consumer was read. Both are read now: the fee at its use-site
-(2026-09-19) and the restriction evaluator (round 575, below). srrevamp loads
-the three tables since round 575 (`internal/teleport`, cmd/server's
-`-teleport-dir`); the handler that charges and moves is the next item.
+### srrevamp wire: OpTeleportUse / OpTeleportResult (round 576)
+
+srrevamp's own placeholder pair (`docs/protocol/PROTOCOL_DECISION.md`), free on
+2026-09-26 (the highest op in `server/internal/session` and `client/scripts/net`
+was `0x00F2`, `OpGMCommandResult`):
+
+| op | direction | payload |
+|---|---|---|
+| `0x00F3` `OpTeleportUse` | client -> server | u16 gate, u16 destination -- both **teleportdata ids** |
+| `0x00F4` `OpTeleportResult` | server -> the requester | u8 ok, u16 code, u8 waiver, u64 gold charged, string destination (the point's `SN_ZONE_*` token), string reason |
+
+On success the server then sends an ordinary `OpChangeZoneResult` (0x0027, its
+layout untouched), and everyone left behind gets `OpEntityLeft` and everyone at
+the destination `OpEntityEntered` -- the zone change's own arrival, factored out
+of `handleChangeZone` as `session.warpTo`. The client marks the change-zone
+result that follows an accepted receipt as the teleport's arrival
+(`World3D._on_teleport_result`), so it reloads behind the loading screen as any
+zone change does, but keeps the server's position (below).
+
+**The order is the engine's where it has one** (`session.teleporter.use`): the
+character in the world and alive; the gate point, which must belong to a
+teleportbuilding row (a ferry's object is an NPC, so a ferry point is not a gate);
+the link (`teleport.Table.LinkBetween`) -- refused with the engine's own code `2`
+when there is none, `GObjPC::HandleTeleportUse`'s `uStack_2c = 2` at `0x513910`;
+the link's restrictions (`teleport.CheckRestrictions`, run before the fee as on
+`CMainProcess::FUN_004f2b50`'s path, call `0x4f2e24`) with the PvP state passed as
+NEUTRAL (srrevamp models none -- a stand-in; no retail link has a type-3 rule);
+the fee and its waiver (`teleport.QuoteFee`: below level 21 the engine's, then a
+GM account and `-teleport-free`, own design); the charge, refused `0x1c07` with
+nothing moved -- `HandleTeleportUse` refuses on the gold compare (`0x513749`)
+before it sets the teleport state; then the receipt and the move.
+
+**The arrival spot is an inference, disclosed.** A destination row carries one
+position, its teleportdata point (region + local x, y, z + radius), and srrevamp
+lands the player there: `worldmap.ToWorld(region, x, z, frame)` at height 0, which
+the client replaces with its walkable graph's landing height at that point
+(`World3D._land_teleport_arrival`). The retail completion stage
+(`CGObjPC::vslot_309` `0x4ef480`, `CMainProcess::FUN_004f2b50`) was not read, so
+whether retail lands on the point, scatters within its radius, or uses another
+position is not known. It is not the gate structure's point: in Jangan building
+2094's row puts `STORE_CH_GATE` at 97/168 local (1254, -6, 1374), 285 units east of
+GATE_CH's point (969, 0, 1369) (both rows read on the box, round 576). The portal
+model stands at the building's point -- `cj_portal.bsr` at (1257.14, -33.00,
+1375.71), 3.6 units from it in x/z (the heights differ by 27), with nothing placed
+within 60 units of GATE_CH's point -- by the item's verifier's `whatishere` run on
+2026-09-26, not re-run in round 576.
+
+**The zone label** is own design (`session.teleportZoneFor`): the town whose
+centre (`worldmap.ZoneCentre`) is the point's region -- Jangan, Donwhang, Hotan,
+Constantinople, whose gates stand in their centre regions since round 569 --
+else a town whose centre is one region away (Samarkand: GATE_CA is in 106/108,
+its centre 106/107; the client's radius-2 grid holds the neighbour cell), else
+the region's own "x/y". The position is named in that label's frame
+(`FrameRegion`), which is `worldmap.WorldOrigin`'s under `-single-frame`. A
+dungeon point (a negative region) is refused: worldmap has no frame for one.
+
+**The client keeps the point.** A Jangan arrival is not moved on to the town
+square (`ZONE_SPAWN_LOCAL`) as every other zone change is; the player is stood on
+the walkable graph at the point, and held there -- no walk, no fall -- while the
+point's region is still queued behind the loading screen (Samarkand), then
+released to the ordinary ground snap if no graph ever appears.
+
+**The retail pair, for the record, not copied.** The request is `0x705a`, written
+by `CIF_NPCTalk::FUN_0081ddf0`: `{u32 gate object, u8 kind, kind 2: u32 target}`
+(its log line `"TELEPORTGATE -> Type(%d), Target(%d)"`). The reply `0xb05a` is
+read by `FUN_008809d0`, which `FUN_0086fbb0` registers for `0xb05a`: a u8 result,
+and on 2 a u16 code passed to `FUN_00778190(0xd, code, ...)` -- category `0xd`,
+the interaction message table, where `0x1c07`, `0x1c10` and `0x1c15` have
+messages (`client/scripts/net/error_text.gd`). srrevamp's client shows those three
+in the archive's words, our own wording for `2` (category `0xd` sends it to the
+default, no message), and the server's words for its own refusals (code 0).
+
+**Not modelled, disclosed:** the interaction-range test (retail's
+`GObjPC::IsWithinInteractionRange` `0x4a8e10` was not read into a distance; the
+client offers a gate's destinations only after a click on the gate), the
+"already teleporting" state (`0x1c14`: a srrevamp teleport completes inside one
+request), the fortress tax (no fortresses), and the retail receipt line's source
+(the client shows `UIIT_CTL_TELEPORT_RESULT` / `_FREE_RESULT` from its own
+archive, choosing the free one when nothing was charged -- the retail dialog's
+own choice on a zero fee word, `UI_TELEPORT::FUN_006fd3e0`).
 
 ### srrevamp wire: FrameRegion (round 570)
 

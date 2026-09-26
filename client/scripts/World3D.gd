@@ -1218,6 +1218,7 @@ func _ready() -> void:
 	NetClient.entity_moved.connect(_on_entity_moved)
 	NetClient.entity_left.connect(_on_entity_left)
 	NetClient.change_zone_result.connect(_on_change_zone_result)
+	NetClient.teleport_result.connect(_on_teleport_result)
 	NetClient.chat_message.connect(_on_chat_message)
 	NetClient.chat_whisper_message.connect(_on_chat_whisper_message)
 	NetClient.disconnected.connect(_on_disconnected)
@@ -4288,6 +4289,12 @@ func _frame_anchor_height(frame_x: int, frame_y: int) -> float:
 ## request, already in that zone, ...) is left to whatever UI triggered it
 ## to report -- this scene doesn't render its own error text for that.
 func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
+	# A gate teleport's receipt came just before this result (round 576,
+	# _on_teleport_result): the position is the destination gate's point, to
+	# be kept -- consumed here whatever the result, so a refused change cannot
+	# leave it set for a later one.
+	var teleport_arrival := _teleport_arrival_pending
+	_teleport_arrival_pending = false
 	if not result.ok:
 		return
 	# A teleport shows the "NOW LOADING" screen (the playtester's call: the
@@ -4352,7 +4359,15 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	# Only now, with the new region's terrain and walkable graph actually
 	# built, can an `@x,z` from the zone box be honoured -- see
 	# _split_zone_target.
-	if _pending_zone_local != null:
+	if teleport_arrival:
+		# A gate teleport keeps the server's position -- the destination gate's
+		# point -- instead of the zone's landing spot (_place_at_zone_spawn
+		# would move a Jangan arrival to the square, ZONE_SPAWN_LOCAL), and
+		# stands it on the walkable graph there; held there until its region
+		# is built when that is a neighbour cell (_step_teleport_landing).
+		_teleport_landing = Vector2(result.x, result.z)
+		_step_teleport_landing()
+	elif _pending_zone_local != null:
 		var spot: Vector2 = _pending_zone_local
 		_pending_zone_local = null
 		var coords := _parse_region_coords(_resolve_zone_region(result.zone))
@@ -4375,6 +4390,16 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	# Pump the new zone's queued neighbour cells behind the loading screen (if
 	# one is up), then drop it -- the same drain the first entry uses.
 	await _drain_initial_load(zone_started_ms)
+	# A teleport point in a neighbour cell has its ground now; one that still
+	# has none (no walkable graph there at all) is let go to the ordinary
+	# ground snap rather than held for ever.
+	if _teleport_landing != null and is_inside_tree():
+		_step_teleport_landing()
+		if _teleport_landing != null:
+			var unlanded: Vector2 = _teleport_landing
+			print("World3D: no walkable graph under the teleport point (%.1f, %.1f) after the zone loaded -- released to the ground snap" % [
+				unlanded.x, unlanded.y])
+			_teleport_landing = null
 
 ## Everything in the world that plays an animation -- NPCs and monsters.
 ## Each entry is [Skeleton3D, ParsedAnimation, frame count, phase, loops,
@@ -9905,7 +9930,11 @@ func _physics_step(delta: float) -> void:
 	_follow_with_camera(delta)
 
 	_qa_step()
-	if not _move_on_nav_graph(delta):
+	if _teleport_landing != null:
+		# A teleport arrival still waiting for its region (round 576): held,
+		# neither walking nor falling, until _step_teleport_landing lands it.
+		_step_teleport_landing()
+	elif not _move_on_nav_graph(delta):
 		if not player.is_on_floor():
 			player.velocity.y -= GRAVITY * delta
 		else:
@@ -10243,6 +10272,75 @@ func _place_at_region_local(region_x: int, region_y: int, local_x: float, local_
 		Vector3(local_x, graph.landing_height_at(local_x, local_z), local_z))
 	player.velocity = Vector3.ZERO
 	_last_sent_pos = player.position
+	return true
+
+## A gate teleport's receipt (round 576, TeleportNet): on success the server's
+## OpChangeZoneResult follows at once, and it is marked here as this
+## teleport's arrival (_teleport_arrival_pending), whose position is kept. The
+## receipt is a chat line in the archive's own format
+## (TeleportNet.receipt_line), the place named through textdata_object; a
+## refusal is ErrorText.teleport_line's.
+func _on_teleport_result(result: TeleportNet.Result) -> void:
+	if result == null:
+		return
+	if result.ok:
+		_teleport_arrival_pending = true
+		_log_system(TeleportNet.receipt_line(_teleport_place_name(result.destination), result.fee, _ui_text_table))
+		print("World3D: teleport accepted -- to %s, %d gold charged, waiver %d" % [result.destination, result.fee, result.waiver])
+	else:
+		_log_system(ErrorText.teleport_line(result.code, _ui_text_table, result.reason))
+		print("World3D: teleport refused -- code 0x%x (%s)" % [result.code, result.reason])
+
+## The next OpChangeZoneResult is a gate teleport's arrival (round 576): set by
+## an accepted OpTeleportResult, which the server sends just before it, and
+## consumed by _on_change_zone_result.
+var _teleport_arrival_pending := false
+## A teleport arrival waiting to be stood on its ground, Vector2 world (x, z),
+## or null: set by _on_change_zone_result, cleared by _step_teleport_landing
+## once the point's region has a walkable graph, or after the zone's drain.
+var _teleport_landing: Variant = null
+
+## A destination's name for the receipt: its zone-name token (SN_ZONE_22002)
+## through textdata_object, as every SN_ name is (_object_names), or "" --
+## never the token itself.
+func _teleport_place_name(token: String) -> String:
+	var names := _object_names()
+	if token == "" or names == null or not names.has(token):
+		return ""
+	var text := names.get_text(token).strip_edges()
+	return "" if text == token else text
+
+## Lands a pending teleport arrival if its region is built, else holds the
+## player at the point: no walk, no fall (the region under it may be a
+## neighbour cell still queued behind the loading screen -- Samarkand's gate
+## stands in 106/108, beside its 106/107 centre).
+func _step_teleport_landing() -> void:
+	var spot: Vector2 = _teleport_landing
+	if _land_teleport_arrival(spot.x, spot.y):
+		_teleport_landing = null
+		return
+	player.position.x = spot.x
+	player.position.z = spot.y
+	player.velocity = Vector3.ZERO
+
+## Stands the player at a world (x, z) on the walkable graph of the region
+## under it, as _place_at_region_local stands a typed `@x,z` -- the height is
+## the graph's landing height, not the server's 0. False when no loaded region
+## holds the point. Prints the region-local spot, so a run measures where a
+## teleport landed rather than inferring it from a picture.
+func _land_teleport_arrival(x: float, z: float) -> bool:
+	var pair := _nav_graph_for(Vector3(x, player.global_position.y, z))
+	if pair.is_empty():
+		return false
+	var graph: NavGraph = pair[0]
+	var group: Node3D = pair[1]
+	var local := group.to_local(Vector3(x, 0.0, z))
+	player.global_position = group.to_global(Vector3(local.x, graph.landing_height_at(local.x, local.z), local.z))
+	player.velocity = Vector3.ZERO
+	_last_sent_pos = player.position
+	_refresh_zone_label_position()
+	print("World3D: teleport arrival in %s at local (%.1f, %.1f), height %.2f -- the destination gate's point, on the walkable graph" % [
+		group.name, local.x, local.z, player.global_position.y])
 	return true
 
 ## Moves the player to a zone's landing whatever the zone (round 573, for

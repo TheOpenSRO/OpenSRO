@@ -89,23 +89,16 @@ var knownOrphans = map[string]string{
 	"HomingScatterRange": "the closed R/3 .. R/3 + trunc(R/3) band of MoveHome (round 535); the tick " +
 		"draws with ai.HomeDestination, and the tests hold its destinations to this band. No item " +
 		"needs the band itself at run time: knowledge, not a gap.",
-	// internal/teleport, added in round 575: cmd/server's -teleport-dir loads
-	// and checks the network at boot (teleport.Load), and the handler that
-	// answers a gate's MOVE is the next item of the teleporter epic. Each line
-	// goes when that handler calls it.
-	"PointByID": "the teleport handler's destination lookup (a teleportdata id -> its region and " +
-		"position) -- wired by map-teleport-protocol.",
-	"PointByBuildingCode": "the gate a clicked building belongs to (STORE_CH_GATE -> GATE_CH) -- " +
-		"wired by map-teleport-protocol.",
-	"LinksFrom": "a gate's outgoing links in file order, the destination list -- wired by " +
-		"map-teleport-protocol.",
-	"LinkBetween": "the link a MOVE names (gate, destination) -- wired by map-teleport-protocol.",
-	"QuoteFee": "the fee and its waiver (link word 1; waived below level 21, GObjPC::HandleTeleportUse " +
-		"0x513590; the GM and testing waivers are own design) -- wired by map-teleport-protocol.",
-	"CheckRestrictions": "the link's restriction triples as FUN_00513a70 walks them (0x1c15 for a " +
-		"level outside the range; 0x1c19 when D1 has the bit for the character's PvP state, which " +
-		"the handler passes as PvPNeutral -- srrevamp models no PvP state, a disclosed stand-in) -- " +
-		"wired by map-teleport-protocol.",
+	// internal/teleport, added in round 575. Round 576's session.TeleportHandler
+	// calls the lookups and rules a gate's MOVE needs; what is left is the
+	// destination LIST, which the client builds from its own copy of the tables
+	// (UI_TELEPORT::FUN_006fd3e0 reads the client's link records,
+	// teleport_network.md "The client's list, read"), so no server message
+	// carries it yet.
+	"LinksFrom": "a gate's outgoing links in file order, the destination list the board shows. The " +
+		"client builds that list from its own teleportlink rows, as the retail dialog does " +
+		"(UI_TELEPORT::FUN_006fd3e0); the server answers only the MOVE (session.TeleportHandler, " +
+		"round 576). Knowledge until a server-side list message exists.",
 }
 
 // baseline is the set of orphans that existed when this detector was written.
