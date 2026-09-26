@@ -41926,3 +41926,159 @@ tests`: 111 suites, 0 failing (`SCRIPT ERROR` counts as failing). `cd server && 
   built. There is no siege here.
 - The special-mob window's level rows (`GDR_TWSM_LEVEL`, `GDR_TWSM_TEXT_LEV`) are not filled, as
   before. What 0x69b380 and 0x69b3c0 write was not read.
+
+## A monster's target window is the one the client picks for its rarity (round 589)
+
+Client only. Nothing on the wire changes and the server is unchanged. Round 588 found that
+HudTarget's rule (common-enemy window for rarity 0, special-mob otherwise) contradicts the asm,
+and it left the rule in place. Since that round, the rule also drew the 2009 common-enemy piece's
+236x36 art stretched into its 51-tall rect for every normal monster. This round makes the
+selection follow the client. Labels as before: **read**, **measured**, **inferred**.
+
+### The class branches of CIFTargetWindow's select function (0x699540, read in the asm)
+
+It hides every kind (0x699584..0x6995e2) and finds the object. If there is none, it stops. Then it
+shows the window (0x699607) and moves the close button to (x+0xb0, y+9). It then tests the object's
+class with IsKindOf (0xb94b90) against five runtime-class descriptors, in this order.
+**The descriptor names are read, not inferred:** each descriptor is built by a static initialiser
+that passes the class name. For CICMonster, 0xd76490..0xd764b0 pushes 0xde281c (`"CICMonster"`),
+then `mov ecx,0xef1a84`, then calls 0xb9c9c0.
+
+| Descriptor | Class (its init string) | Factory's TypeID test (0x9c1fa0) | What the select function shows |
+|---|---|---|---|
+| 0xef1a84 | CICMonster (0xde281c) | bionic, 1/2/1 | the rarity table below |
+| 0xeef6f0 | CICCos (0xde2234) | 1/2/3 (0x504f20) | **common enemy** (+0x374, ID 4), gem `tw_gem_animal.ddj` (0x699a55..0x699b6c) |
+| 0xef1ac4 | CICNPC (0xde2a18) | 1/2/2 (0x69a3f0) | fortress piece (ID 8) for TypeID 1/2/4 with TypeID4 4, 1 or 3 (0x564ad0, 0x564a90, 0x564b10) -- 1/2/4 is what the factory gives CICGuard (0xeef710, 0x564a60), so CICGuard reaches this IsKindOf test as a CICNPC (inferred); otherwise **common enemy**, gem `tw_gem_player.ddj` (0x699c8e..0x699d3a) |
+| 0xef1bc0 | CICUser (0xde305c) | bionic, 1/1 | player window (ID 0) if its slot 43 (`+0xac`) returns 4, else job player (ID 1) (0x699e0b..). What slot 43 returns was not read. |
+| 0xee774c | CICATStruct (0xd87088) | 1/2/5 (0x52dc00) | fortress piece for TypeID4 6 (0x564b50) or 1/2/4/3 (0x564b10); otherwise **common enemy**, gem `tw_gem_normal.ddj` (0x69a0df..) |
+
+The factory's other descriptors are not tested by name here: CICMonsterNPC 0xee77ac, CIItem
+0xef1c28, CITeleportGate 0xef1dac and CIEventRuntimeObj 0xee77d8. Whether any of them derives from
+a tested class (CICMonsterNPC from CICMonster, say) was not read. The TypeID reading of the factory's bit tests is **inferred**. The
+tests themselves are read, and the class names confirm them. The bits are bionic (bit 1),
+TypeID1 (bits 2-4), TypeID2 (bits 5-6), TypeID3 (bits 7-10) and TypeID4 (bits 11-15), the
+characterdata columns 8-12. A correction to round 588: the common-enemy window is shown at a
+**third** site, 0x69a0df (CICATStruct), as well as 0x699ad2 and 0x699c8e. The earlier grep had
+been cut off by `head`.
+
+### CICMonster: the rarity table (read)
+
+`movzx eax,[edi+0x7ac]` (the rarity, characterdata col 15), then `cmp eax,8; ja 0x6999c1`, then
+the table 0x69a2d0:
+
+| Rarity | Target | Window |
+|---|---|---|
+| 0 | 0x6998db (party flag +0x7ad == 1) or 0x699931 | special mob (+0x380) |
+| 1 | 0x699939 | special mob |
+| 2 | 0x6999c1 | **none** |
+| 3 | 0x699931 | special mob |
+| 4, 5, 6 | 0x699941, 0x69994c, 0x699957 | special mob |
+| 7 | 0x6997b9 | special mob (and a name prefixed with UIIT_STT_MOB_STRONG) |
+| 8 | 0x699931 | special mob |
+| > 8 | 0x6999c1 | **none** |
+
+The cases differ in the HP scale they pass to slot 39 (`+0x9c`), and every one that shows the
+window calls the rank function 0x69b4c0 on it. **Rarity 2 and anything above 8 show no piece.**
+The window is still shown (0x699607, and 0x69a28f at the end), with only its close button, and
+the buff viewer is shown (the flag at 0x6999ec). In this client that means the close button
+alone. **Measured:** in the 63 of 63 characterdata files the index lists (17,868 IDs), the
+CICMonster rows (TypeID 1/2/1, 7,604 of them, all Service 1) have rarity 0: 6,421, 1: 85,
+3: 812, 4: 2, 6: 111, 7: 91, 8: 82. **No monster has rarity 2** (or 5). So the "none" case is
+unreachable with this archive, and is implemented only because the table says so.
+
+### The special-mob window's rows (0x69b4c0, read)
+
+- Rank icon (ID 3) and rank text (+0x378, ID 2, `GDR_TWSM_TEXT_LEV`) per rarity, through the table
+  0x69baac:
+  - 0: `tw_icon_normal`, UIIT_CTL_WARENETWORK_DETAIL_NORMAL
+  - 1: `tw_icon_champion`, UIIT_STT_MOB_CHAMPION
+  - 3 and 8: `tw_icon_unique`, UIIT_STT_MOB_UNIQUE
+  - 4: `tw_icon_giant`, UIIT_STT_MOB_GIANT
+  - 5: `tw_icon_titan`, UIIT_STT_MOB_TITAN
+  - 6: `tw_icon_elite`, UIIT_STT_MOB_ELITE
+  - 7: `tw_icon_normal`, UIIT_STT_MOB_STRONG
+  - 2: the default, which sets nothing
+
+  The text colour is set with 0x8b2b70(0xffffffff). The archive's `textuisystem.txt` gives
+  these English texts (measured; each key has two rows, a Chinese-column and a Korean-column
+  one, and both agree):
+
+  | Key | English |
+  |---|---|
+  | UIIT_CTL_WARENETWORK_DETAIL_NORMAL (rarity 0) | General |
+  | UIIT_STT_MOB_CHAMPION (1) | Champion |
+  | UIIT_STT_MOB_UNIQUE (3, 8) | Unique |
+  | UIIT_STT_MOB_GIANT (4) | Giant |
+  | UIIT_STT_MOB_TITAN (5) | Titan |
+  | UIIT_STT_MOB_ELITE (6) | Elite |
+  | UIIT_STT_MOB_STRONG (7) | Elite (its Korean text, 강한, means "strong") |
+- A party monster (+0x7ad == 1) gets UIIT_STT_PARTYMOB_TARGET, "(Party)", appended (0x69b844).
+- **Level row:** `_swprintf_s(buf, 0x10, L"Lv %d", level)` (the format at 0xda58bc) is written
+  into ID 4, `GDR_TWSM_LEVEL`. The level is the object's reference data (GlobalDataManager
+  0x93f630), characterdata col 57.
+- The name (+0x370, ID 0) and the gem (ID 10) come from the level-difference classifier, as
+  HudTarget already did (0x69b380, 0x69b3c0).
+
+### What is built
+
+- `HudTarget._select` follows the CICMonster branch. Rarity 0, 1 and 3-8 show the special-mob
+  window. Any other value shows no piece: the window keeps only its close button and takes no
+  space of its own. `monster_window(rarity)` names the choice.
+- `show_target` fills `GDR_TWSM_LEVEL` with `"Lv %d"` and `GDR_TWSM_TEXT_LEV` with the rank text
+  (`RANK_TEXT_BY_RARITY`, resolved through the text table, white), as well as the icon, name, gem
+  and gauge it filled before.
+- The common-enemy, player and job-player windows stay built and hidden. Nothing in this client
+  targets a CICCos, CICNPC, CICUser or CICATStruct: `World3D._show_target` takes only a monster
+  id. Clicking an NPC opens its talk box (`_try_talk_to_npc`) and shows no target window. Other
+  players and pets are never targeted.
+
+### Before -> after (fd8df3a -> this tree)
+
+| Target | Retail (read) | fd8df3a | This round |
+|---|---|---|---|
+| Mangyang (rarity 0, measured in characterdata) | special mob, normal icon, "General", "Lv 1" | common enemy 236x51 with 236x36 art stretched, no rank or level row | special mob 236x78, normal icon, "General", "Lv 1" (live shot on the box) |
+| a champion (rarity 1) | special mob, champion icon, "Champion" | special mob with the champion icon, empty rank and level rows | special mob, champion icon, "Champion", "Lv N" (fixture test; none spawns here: every species in the server's list is rarity 0 in characterdata, measured) |
+| an NPC (CICNPC) | common enemy, player gem | no target window (the talk box opens) | unchanged: no target window |
+| a player (CICUser) | player or job-player window | never targeted | unchanged: never targeted |
+
+### Measured
+
+The audit (as in rounds 587-588, 0 `SCRIPT ERROR`): the target, shown as a rarity-0 "Test Mob",
+goes from 236x51 (the common-enemy piece) to **236x78** (the special mob) with its rank row
+"General" and level row "Lv 5". Every other widget's tree is identical. New finding: OUTSIDE
+`GDR_TWSM_TEXT_LEV` (85, 56, 168 wide, so it ends at 253 in the 236-wide piece). That rect is
+authored, like round 584's rule-13 text fields. SAMERECT: the gem label and its art, as before.
+
+### Tests
+
+`hud_target_layout_test.gd` now checks, per rarity 0, 1, 3, 7 and 8, that the special-mob window is
+the one piece shown at 236x78, with the rank icon, rank text and "Lv 9" the table gives (its text
+table carries the four keys with the archive's English texts above); and that
+rarity 2 and 9 show no piece with the close button still up. NEGATIVE, run on the box against
+fd8df3a's scripts: **14 FAIL lines**:
+
+- `FAIL rarity 0: the special-mob window, 236x78 (got ["GDR_TW_COMMONENEMY"], (236, 51))`
+- `FAIL rarity 0: the rank icon is tw_icon_normal`
+- `FAIL rarity 0: the rank row reads 'General' (got '')`
+- `FAIL rarity 0: the level row reads 'Lv 9' (got '')`
+- `FAIL rarity 1: the rank row reads 'Champion' (got '')`, `FAIL rarity 3: the rank row reads 'Unique' (got '')`,
+  `FAIL rarity 7: the rank row reads 'Elite' (got '')`, `FAIL rarity 8: the rank row reads 'Unique' (got '')`,
+  each with its `level row reads 'Lv 9' (got '')` (8 lines)
+- `FAIL rarity 2: no piece, only the close button (pieces shown true, size (236, 78))`
+- `FAIL rarity 9: no piece, only the close button (pieces shown true, size (236, 78))`
+
+On this tree: ALL PASS.
+
+**Verified.** `remote_godot.sh check`: 293 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`:
+111 suites, 0 failing (`SCRIPT ERROR` counts as failing). `cd server && go build ./... && go test
+-count=1 -p 1 ./...`: 59 packages ok, run after the doc edits.
+
+### Open
+
+- The party suffix: the server sends no party-monster flag.
+- **Placement, read and not applied:** after choosing, the select function moves the window to
+  ((screen width − the shown piece's width) / 2, 7) (0x69a161..0x69a180). World3D still places it
+  at the registry's 442,10 as an offset from the centre line.
+- Non-monster targets (NPC, player, pet, structure) are not targeted by this client. Their windows
+  are built but never selected.
+- What CICUser's slot 43 returns (player vs job-player window).

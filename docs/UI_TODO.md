@@ -207,10 +207,10 @@ is presentation work on solved data; if you find yourself editing the protocol, 
   - ~~HudTarget's `GDR_TW_CLOSE` is re-parented outside every settled root.~~ Settled since round
     588, which also builds the target window from `iftargetwindow.txt`, the layout
     `CIFTargetWindow::Create` loads (with UI_UPDATE_2009_FIRST: 236-wide pieces).
-  - **The target window's rarity rule is contradicted by the asm (round 588).** A monster shows the
-    special-mob window for every rarity but 2 (`0x699540`, class 0xef1a84, table 0x69a2d0); HudTarget
-    shows the common-enemy one for rarity 0, whose 2009 art (236x36) is stretched into its 51-tall
-    rect.
+  - ~~The target window's rarity rule is contradicted by the asm (round 588).~~ Fixed in round 589:
+    a monster (CICMonster) shows the special-mob window for rarity 0, 1 and 3-8 and no piece for 2,
+    with the rank row and `Lv %d` filled (0x69b4c0). Still open: the window's read placement
+    ((screen width − piece width) / 2, 7, at 0x69a161) is not applied, and the party suffix.
   - The store's registry height (317 / 360 / 370) turns on `RENEWAL_SHOP_SYSTEM` and
     `RESTORE_SOLDITEM_INSHOP`, which are unreadable. With our `[]` choice, Repair sits at y
     332-356, below a 317 frame.

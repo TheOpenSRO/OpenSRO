@@ -48,21 +48,38 @@ extends Control
 ##
 ## What the client binary says (sro_client.exe, Ghidra dump on the RE box):
 ##
-## - `CIFTargetWindow` (`0x00699540`) switches on the target's rarity: 0 is
-##   the common-enemy window, the others the special-mob one with the rank
-##   icon (`Client_TargetWindow_RankIcon`).
-##   **Contradicted by the asm, not changed here (round 588):** the select
-##   function's first class test (0x6996a0) is against the descriptor
-##   0xef1a84, which the object factory 0x9c1fa0 gives an object whose type
-##   bits are TypeID2 1, TypeID3 2, TypeID4 1 -- a monster. In that branch
-##   every case of the rarity table 0x69a2d0 (rarity byte +0x7ac) shows the
-##   special-mob window (+0x380, ID 2) and its rank icon, except 2, which
-##   shows none. The common-enemy window (+0x374, ID 4) is shown only in two
-##   other class branches (0x699ad2, 0x699c8e). So a normal monster shows
-##   the special-mob window with the normal rank icon, which is what
-##   rank_icon_path's rarity-0 entry is for. The rule above is kept as it
-##   was, because this round only switched the container; the next one
-##   should change it (docs/RE_COMPLETION.md, round 588).
+## - **Which window, read (round 589).** The select function 0x699540 hides
+##   every kind, then tests the target's class with IsKindOf (0xb94b90)
+##   against runtime-class descriptors whose names the binary carries (each
+##   descriptor is built by a static initialiser that passes its name, e.g.
+##   0xd764a6 -> "CICMonster"):
+##   - **CICMonster** (0xef1a84, tested first at 0x6996a0): the rarity byte
+##     +0x7ac (characterdata col 15) goes through the table 0x69a2d0. Rarity
+##     0, 1, 3, 4, 5, 6, 7 and 8 all show the **special-mob** window (+0x380,
+##     ID 2) and call the rank function 0x69b4c0 on it. Rarity 2, and any
+##     value above 8 (`cmp eax,8 / ja`), jump past every piece to 0x6999c1:
+##     the window is shown with **no piece** -- only its close button (moved
+##     to 176,9 before the switch) and the buff viewer. No monster in the
+##     archive has rarity 2 (measured: 0 of 7,604 CICMonster rows).
+##   - CICCos (0xeef6f0, pets, horses, transport): the **common-enemy** window,
+##     tw_gem_animal (0x699a55..).
+##   - CICNPC (0xef1ac4): guard types show the fortress piece; any other NPC
+##     the **common-enemy** window with tw_gem_player (0x699c8e..).
+##   - CICUser (0xef1bc0, players): the player window (ID 0) when its slot 43
+##     returns 4, otherwise the job-player window (ID 1) (0x699e0b..). What
+##     slot 43 returns was not read.
+##   - CICATStruct (0xee774c): the fortress piece, or the **common-enemy**
+##     window with tw_gem_normal (0x69a0df..).
+##   This window only ever shows monsters here (World3D._show_target takes a
+##   monster id; NPCs open the talk box, and players and pets are never
+##   targeted), so show_target follows the CICMonster branch.
+## - **The rank rows, read (0x69b4c0).** On the special-mob window it sets the
+##   rank icon (ID 3) and the rank text (+0x378, ID 2, `GDR_TWSM_TEXT_LEV`,
+##   colour 0xffffffff) per rarity through the table 0x69baac, and writes
+##   `swprintf_s(.., L"Lv %d", level)` into ID 4 (`GDR_TWSM_LEVEL`), the level
+##   from the object's reference data (GlobalDataManager 0x93f630).
+##   RANK_TEXT_BY_RARITY has the texts. A party monster (+0x7ad == 1) also
+##   gets UIIT_STT_PARTYMOB_TARGET appended; the server sends no such flag.
 ## - The gem and the name colour come together from one classifier,
 ##   `FUN_007780c0(targetLevel)`: `d = targetLevel - playerLevel`; d < -6 ->
 ##   `tw_gem_weak2` and 0x87d2ff, d < -3 -> `weak1` and 0xa5e0ce, d <= 0 ->
@@ -92,6 +109,19 @@ const CONTAINER_DEFINES := ["UI_UPDATE_2009_FIRST", "APPLY_SIEGE_FORTRESS_SYSTEM
 const KIND_DEFINES := ["UI_UPDATE_2009_FIRST"]
 const GEM_DIR := "interface\\targetwindow\\"
 
+## The special-mob window's rank text per rarity (0x69b4c0, its table
+## 0x69baac): 0 -> UIIT_CTL_WARENETWORK_DETAIL_NORMAL, 1 -> UIIT_STT_MOB_CHAMPION,
+## 3 and 8 -> UIIT_STT_MOB_UNIQUE, 4 -> UIIT_STT_MOB_GIANT, 5 ->
+## UIIT_STT_MOB_TITAN, 6 -> UIIT_STT_MOB_ELITE, 7 -> UIIT_STT_MOB_STRONG.
+## 2 falls to the default and sets nothing.
+const RANK_TEXT_BY_RARITY := {
+	0: "UIIT_CTL_WARENETWORK_DETAIL_NORMAL", 1: "UIIT_STT_MOB_CHAMPION",
+	3: "UIIT_STT_MOB_UNIQUE", 4: "UIIT_STT_MOB_GIANT", 5: "UIIT_STT_MOB_TITAN",
+	6: "UIIT_STT_MOB_ELITE", 7: "UIIT_STT_MOB_STRONG", 8: "UIIT_STT_MOB_UNIQUE",
+}
+## The level row's format, `L"Lv %d"` at 0xda58bc.
+const LEVEL_FORMAT := "Lv %d"
+
 ## Level-difference classes, from FUN_007780c0: gem art and name colour.
 ## Index = class 0..4 (weak2, weak1, normal, strong1, strong2).
 const GEM_BY_CLASS := ["tw_gem_weak2.ddj", "tw_gem_weak1.ddj", "tw_gem_normal.ddj",
@@ -119,6 +149,8 @@ var _gem: TextureRect = null
 var _gauge: TextureProgressBar = null
 var _name: Label = null
 var _icon: TextureRect = null
+var _level_row: Label = null
+var _rank_row: Label = null
 
 func _init(builder: UiBuilder = null) -> void:
 	_builder = builder
@@ -248,26 +280,41 @@ func _build_kind(piece: UiLayoutParser.ControlDef, layout_path: String,
 		inner.add_child(gem)
 	return win
 
-## Picks the window for a rarity and refreshes the control handles.
-## `CIFTargetWindow` shows the common-enemy window for rarity 0 and the
-## special-mob one otherwise.
+## The monster rarities the table 0x69a2d0 maps to the special-mob window;
+## any other value shows no piece (see the header).
+const MONSTER_RARITIES_WITH_WINDOW := [0, 1, 3, 4, 5, 6, 7, 8]
+
+## The kind a monster of this rarity shows: "special", or "" for none.
+static func monster_window(rarity: int) -> String:
+	return "special" if rarity in MONSTER_RARITIES_WITH_WINDOW else ""
+
+## Picks the piece for a monster's rarity, as CIFTargetWindow's CICMonster
+## branch does, and refreshes the control handles. With no piece the window
+## keeps only its close button, and takes no space of its own.
 func _select(rarity: int) -> void:
-	var want: Control = _special if (rarity != 0 and _special != null) else _common
-	if want == null:
-		want = _special
+	var want: Control = _special if monster_window(rarity) == "special" else null
 	for w in [_common, _special, _player, _job_player]:
 		if w != null:
 			w.visible = (w == want)
-	size = want.size
-	custom_minimum_size = want.size
+	var at := want.size if want != null else Vector2.ZERO
+	custom_minimum_size = at
+	size = at
 	if _close != null:
 		_close.move_to_front()
-	var common := (want == _common)
-	var prefix := "GDR_TWCE_" if common else "GDR_TWSM_"
-	_gem = want.find_child(prefix + "GEM_art", true, false) as TextureRect
-	_gauge = want.find_child(prefix + "GAUGE_HPGAUGE", true, false) as TextureProgressBar
-	_name = want.find_child(prefix + "TEXT_ID", true, false) as Label
-	_icon = null if common else want.find_child("GDR_TWSM_ICON", true, false) as TextureRect
+	_gem = null
+	_gauge = null
+	_name = null
+	_icon = null
+	_level_row = null
+	_rank_row = null
+	if want == null:
+		return
+	_gem = want.find_child("GDR_TWSM_GEM_art", true, false) as TextureRect
+	_gauge = want.find_child("GDR_TWSM_GAUGE_HPGAUGE", true, false) as TextureProgressBar
+	_name = want.find_child("GDR_TWSM_TEXT_ID", true, false) as Label
+	_icon = want.find_child("GDR_TWSM_ICON", true, false) as TextureRect
+	_level_row = want.find_child("GDR_TWSM_LEVEL", true, false) as Label
+	_rank_row = want.find_child("GDR_TWSM_TEXT_LEV", true, false) as Label
 
 ## The level-difference class (0..4) FUN_007780c0 computes, or 2 (normal)
 ## when the player's own level is not known yet.
@@ -292,6 +339,8 @@ func set_player_level(level: int) -> void:
 func show_target(target_name: String, level: int, rarity: int, hp: int, max_hp: int) -> void:
 	if _common == null and _special == null:
 		return
+	# Only CIFTargetWindow's CICMonster branch is followed: this window shows
+	# monsters and nothing else (see the header).
 	_select(rarity)
 	var cls := difficulty_class(level)
 	if _name != null:
@@ -303,8 +352,26 @@ func show_target(target_name: String, level: int, rarity: int, hp: int, max_hp: 
 		var icon_path := rank_icon_path(rarity)
 		_icon.texture = _builder.load_texture(icon_path) if (icon_path != "" and _builder != null) else null
 		_icon.visible = _icon.texture != null
+	if _level_row != null:
+		_level_row.text = LEVEL_FORMAT % level
+	if _rank_row != null:
+		_rank_row.text = rank_text(rarity)
+		_rank_row.add_theme_color_override("font_color", Color.WHITE)
 	set_hp(hp, max_hp)
 	visible = true
+
+## The rank row's text for a rarity, through the client's text table, or ""
+## where 0x69b4c0 sets none.
+func rank_text(rarity: int) -> String:
+	var key: String = RANK_TEXT_BY_RARITY.get(rarity, "")
+	if key == "":
+		return ""
+	var text := key
+	if _builder != null:
+		var resolved := _builder.resolve_text(key)
+		if resolved != "":
+			text = resolved
+	return text
 
 ## The gauge is the server's hp/max, nothing else. Logged during QA runs so
 ## a frame can be checked against the number it should show.

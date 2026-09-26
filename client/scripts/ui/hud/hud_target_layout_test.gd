@@ -8,6 +8,11 @@ extends SceneTree
 ## never real game data:
 ##   godot4 --headless --path client --script res://scripts/ui/hud/hud_target_layout_test.gd
 ##
+## Round 589 adds which window a monster gets: CIFTargetWindow's CICMonster
+## branch (0x6996a0, table 0x69a2d0) shows the special-mob window for rarity
+## 0, 1, 3-8 and no piece for 2 (or anything above 8), and 0x69b4c0 fills its
+## rank icon, rank text and "Lv %d" level row.
+##
 ## Also cached: iftargetwindowex.txt, the file the window used to read (in the
 ## archive, never loaded by the exe), so a tree that still reads it builds
 ## and fails on what it shows rather than on a missing file.
@@ -75,6 +80,8 @@ func _common() -> String:
 func _special() -> String:
 	return _layout(_control("GDR_TWSM_GEM", "CIFStatic", 10, "8,5,20,20")
 		+ _control("GDR_TWSM_LEVEL", "CIFStatic", 4, "10,56,30,16")
+		+ _control("GDR_TWSM_ICON", "CIFStatic", 3, "65,54,16,16", "interface\\targetwindow\\tw_icon_champion.ddj")
+		+ _control("GDR_TWSM_TEXT_LEV", "CIFStatic", 2, "85,56,168,12")
 		+ _control("GDR_TWSM_GAUGE_HPGAUGE", "CIFGauge", 1, "14,37,168,4", "interface\\targetwindow\\tw_hp.ddj")
 		+ _name_row("GDR_TWSM_TEXT_ID", 0, "34,10,137,12"))
 
@@ -90,8 +97,21 @@ func _job_player() -> String:
 func _ifdef_key(path: String, defines: Array) -> String:
 	return "%s%s%s" % [path, char(1), char(2).join(PackedStringArray(defines))]
 
+## The rank keys 0x69b4c0 uses, with the English text the archive's
+## textuisystem.txt gives each (measured; both of its rows per key agree).
+## UIIT_STT_MOB_STRONG reads "Elite" in English (its Korean text means
+## "strong").
+func _text_table() -> UiTextTable:
+	var rows := PackedStringArray()
+	for pair in [["UIIT_CTL_WARENETWORK_DETAIL_NORMAL", "General"], ["UIIT_STT_MOB_CHAMPION", "Champion"],
+			["UIIT_STT_MOB_STRONG", "Elite"], ["UIIT_STT_MOB_UNIQUE", "Unique"]]:
+		rows.append("1\t%s\t\t\t\t\t\t\t%s" % pair)
+	return UiTextTable.parse(("\n".join(rows)).to_utf16_buffer())
+
+const ICON_DIR := "interface\\targetwindow\\"
+
 func _builder() -> UiBuilder:
-	var builder := UiBuilder.new(null, null)
+	var builder := UiBuilder.new(null, _text_table())
 	var cache: Dictionary = builder.get("_layout_cache")
 	var both := PackedStringArray(["UI_UPDATE_2009_FIRST", "APPLY_SIEGE_FORTRESS_SYSTEM"])
 	var ui := PackedStringArray(["UI_UPDATE_2009_FIRST"])
@@ -105,6 +125,12 @@ func _builder() -> UiBuilder:
 	img.fill(Color(0.3, 0.3, 0.3, 1.0))
 	var textures: Dictionary = builder.get("_texture_cache")
 	textures[ATLAS.to_lower()] = ImageTexture.create_from_image(img)
+	# One small texture per rank icon, told apart by identity.
+	for icon in ["tw_icon_normal", "tw_icon_champion", "tw_icon_unique", "tw_icon_giant",
+			"tw_icon_titan", "tw_icon_elite"]:
+		var i := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+		i.fill(Color(0.8, 0.8, 0.2, 1.0))
+		textures[(ICON_DIR + icon + ".ddj").to_lower()] = ImageTexture.create_from_image(i)
 	return builder
 
 func _initialize() -> void:
@@ -136,22 +162,49 @@ func _checks(script: GDScript) -> void:
 		target.free()
 		return
 
-	# A monster of rarity 0 and one of rarity 1, as HudTarget selects today.
-	target.call("show_target", "Mangyang", 1, 0, 54, 54)
-	_check(target.size == Vector2(236, 51),
-		"a common enemy's window is UI_UPDATE_2009_FIRST's 236x51 piece (got %s)" % target.size)
+	# The pieces, built from the 2009 branch.
 	var common := target.get_node_or_null("GDR_TW_COMMONENEMY") as Control
 	var frame := common.get_node_or_null("Frame") as TextureRect if common != null else null
 	var region := (frame.texture as AtlasTexture).region if frame != null and frame.texture is AtlasTexture else Rect2()
 	_check(frame != null and frame.size == Vector2(236, 51) and is_equal_approx(region.size.x, 236.0),
-		"its frame is the atlas's 236-wide region (got %s, region %s)" % [frame.size if frame != null else null, region])
+		"the common-enemy piece is the 2009 236x51 one, on the atlas's 236-wide region (got %s, region %s)" % [frame.size if frame != null else null, region])
 	var name_label := target.find_child("GDR_TWCE_TEXT_ID", true, false) as Control
 	var name_rect: Rect2 = name_label.get_meta(UiBuilder.AUTHORED_RECT_META) if name_label != null else Rect2()
 	_check(name_rect == Rect2(34, 10, 170, 12),
 		"the name row is UI_UPDATE_2009_FIRST's 34,10,170,12 (got %s)" % name_rect)
-	target.call("show_target", "Tiger Woman", 30, 3, 100, 100)
-	_check(target.size == Vector2(236, 78),
-		"a special mob's window is the 236x78 piece (got %s)" % target.size)
+
+	# Which window a monster gets, per rarity (0x69a2d0), and its rank rows
+	# (0x69b4c0). [rarity, rank icon, rank text]; a Mangyang is rarity 0.
+	var textures: Dictionary = (target.get("_builder") as UiBuilder).get("_texture_cache")
+	for case in [[0, "tw_icon_normal", "General"], [1, "tw_icon_champion", "Champion"],
+			[3, "tw_icon_unique", "Unique"], [7, "tw_icon_normal", "Elite"], [8, "tw_icon_unique", "Unique"]]:
+		var rarity: int = case[0]
+		target.call("show_target", "Mangyang", 9, rarity, 54, 54)
+		var special := target.get_node_or_null("GDR_TW_SPECIALMOBWND") as CanvasItem
+		var shown := []
+		for kind in ["GDR_TW_COMMONENEMY", "GDR_TW_SPECIALMOBWND", "GDR_TW_PLAYERWND", "GDR_TW_JOB_PLAYERWND"]:
+			var k := target.get_node_or_null(kind) as CanvasItem
+			if k != null and k.visible:
+				shown.append(kind)
+		_check(shown == ["GDR_TW_SPECIALMOBWND"] and target.size == Vector2(236, 78) and target.visible,
+			"rarity %d: the special-mob window, 236x78 (got %s, %s)" % [rarity, shown, target.size])
+		var icon := target.find_child("GDR_TWSM_ICON", true, false) as TextureRect
+		var want_icon = textures.get((ICON_DIR + case[1] + ".ddj").to_lower())
+		_check(icon != null and icon.visible and icon.texture == want_icon,
+			"rarity %d: the rank icon is %s" % [rarity, case[1]])
+		var rank := target.find_child("GDR_TWSM_TEXT_LEV", true, false) as Label
+		var level := target.find_child("GDR_TWSM_LEVEL", true, false) as Label
+		_check(rank != null and rank.text == case[2], "rarity %d: the rank row reads '%s' (got '%s')" % [rarity, case[2], rank.text if rank != null else null])
+		_check(level != null and level.text == "Lv 9", "rarity %d: the level row reads 'Lv 9' (got '%s')" % [rarity, level.text if level != null else null])
+	for rarity in [2, 9]:
+		target.call("show_target", "Nothing", 9, rarity, 54, 54)
+		var any := false
+		for kind in ["GDR_TW_COMMONENEMY", "GDR_TW_SPECIALMOBWND", "GDR_TW_PLAYERWND", "GDR_TW_JOB_PLAYERWND"]:
+			var k := target.get_node_or_null(kind) as CanvasItem
+			any = any or (k != null and k.visible)
+		var close_shows := (target.find_child("GDR_TW_CLOSE", true, false) as CanvasItem).visible
+		_check(target.visible and not any and close_shows and target.size == Vector2.ZERO,
+			"rarity %d: no piece, only the close button (pieces shown %s, size %s)" % [rarity, any, target.size])
 
 	# The live player kinds are built and hidden, as Create leaves them.
 	var player := target.get_node_or_null("GDR_TW_PLAYERWND") as CanvasItem

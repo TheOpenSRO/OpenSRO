@@ -7083,6 +7083,25 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Round 589: a monster's target window is the one the client picks for its rarity
+
+The full record is `docs/RE_COMPLETION.md`'s entry of the same name.
+
+- **Read.** CIFTargetWindow's select function tests the target's class against descriptors whose
+  names the binary carries: CICMonster, CICCos, CICNPC, CICUser, CICATStruct. For a CICMonster the
+  rarity (characterdata col 15) goes through the table 0x69a2d0. 0, 1 and 3-8 all show the
+  special-mob window. 2 and anything above 8 show no piece, only the close button. The
+  common-enemy window is for pets, ordinary NPCs and non-fortress structures (0x699ad2, 0x699c8e,
+  0x69a0df).
+- **Measured.** No monster in the archive has rarity 2 (0 of 7,604). Every species our server
+  spawns is rarity 0.
+- **Built.** A rarity-0 Mangyang now gets the 236x78 special-mob window with the normal rank icon,
+  "General" and "Lv 1", as 0x69b4c0 fills them (`L"Lv %d"`, the rank table 0x69baac). The stretched
+  common-enemy art of round 588 is no longer shown for any monster. NPCs, players and pets are
+  still never targeted here.
+- **Open.** The party suffix. The window's read placement, ((W − w)/2, 7), is not yet applied.
+- `hud_target_layout_test.gd` fails 14 times against fd8df3a and passes here. 111 suites, 0 failing; Go: 59 packages ok.
+
 ## Round 588: the target window is built from iftargetwindow.txt, the layout the client loads
 
 The full record is `docs/RE_COMPLETION.md`'s entry of the same name.
