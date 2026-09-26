@@ -141,11 +141,65 @@ values at this offset, read as `float32`, fall in the real `[0, 2*pi]` range —
 reading of unrelated bytes. Implemented as `Entry2.Rotation` (Go) / `Entry.rotation` (GDScript),
 wired into `World3D.gd`'s real object placement the same way `.o`'s own rotation was.
 
+## Corrected (round 583): bytes 22-23, 27 and 28-29, read from the loader
+
+Read in the decompiled loader (`FUN_00a361b0`, `/var/tmp/decomp_client` on the render box,
+`/var/tmp/getfn.sh 00a361b0 /var/tmp/decomp_client`). Each record is read whole into one 30-byte
+buffer (`FUN_00410f90(local_1370, 0x1e)`), and the loader then takes three fields from that buffer.
+They are `uStack_135a` at +0x16, `bStack_1355` at +0x1b and `uStack_1354` at +0x1c:
+
+- **Bytes 22-23: the object's uid, and bytes 28-29: its owner region.** They are the low and
+  high halves of one 32-bit key, `CONCAT22(bytes 28-29, bytes 22-23)`. The loader looks the
+  object up by that key (`Map::FUN_00a1a1d0`, and `FUN_00a34c50` for the first list). Bytes
+  28-29 are the packed region id `(Y<<8)|X` of the region that owns the object, which is not
+  always the file's own. `86/90.o2`'s own records carry `5a 56` (0x565a, 86/90). One list-2
+  Halloween record in `98/169.o2` carries `a9 61` (0x61a9, 97/169). The other list-2 Halloween
+  records in that file carry `a9 62` (0x62a9, 98/169). This explains the "not constant within a
+  file, off by one in one byte" values `101/99.o2` showed above: a neighbour owns those entries.
+  The retraction above stands, and the field is now identified. The `.nvm` object record has the
+  same header shape, and `NvmReader` names the same two offsets `uid` and `region_id`. The
+  "1-based sequential index" at 22-23 is this uid. Its "scope" is the owner region: the key is
+  unique only together with bytes 28-29. **A lead:** Map.pk2's `layerobjectlist.ifo` starts
+  each row with a 32-bit id. 561 rows were matched by position to an `.o2` record in the same
+  region, with every axis within 0.05. In all 561, every matching record's
+  `CONCAT22(bytes 28-29, bytes 22-23)` equals the row's id. So the map's layer list names
+  objects by this same key. Nothing shows the client reading that file (see
+  `client/scripts/world/seasonal_objects.gd`).
+- **Byte 27, bit 0: the retail loader's skip bit.** In the second and third lists (MapO2Reader's
+  `lists[1]` and `lists[2]`; the reader's `lists[0]` is always empty, measured below), a record
+  with `(byte 27 & 1) != 0` is not built. The loader shrinks the sector's array by one
+  (`FUN_00a35040(size - 1)`) and moves on. The first list does not test the bit. Measured over
+  the 4,559 region `.o2` files in Map.pk2, the files under its numbered folders (round 583, a
+  throwaway Go scan over `mapo.Parse2`). The 15 `.o2` files at the archive's root, `50.o2` to
+  `64.o2`, were not scanned:
+  - `lists[0]` holds 0 of 234,602 entries.
+  - `lists[1]` holds 202,672 entries, and 760 of them have the bit set.
+  - `lists[2]` holds 31,930 entries, and 240 of them have the bit set. They are in 41 regions,
+    none of them Jangan's nine, and span 19 model paths:
+    - Baghdad's `bagh_masin_lightwall` (120).
+    - The guild `barricade_0x` pieces: 01 (2), 02 (10), 03 (18), 04 (14) and 07 (4), 48 in all.
+    - The `bagh_city\event\bagh_barricade0x` set: 01 (1), 02 (4), 03 (16), 04 (7), 05 (3),
+      06 (4), 07 (1), 08 (8) and 09 (2), 46 in all.
+    - Petra's `bagh_petra_fire_down` (9), `_mid` (9) and `_up` (6), 24 in all.
+    - `res\dun\jupiter\piety\piety_golddoor.bsr` (2).
+    - The paths sum to 240: 120 + 48 + 46 + 24 + 2.
+  
+  **This client does not test the bit yet.** `World3D` draws those 240 `lists[2]` records, and
+  retail does not build them from this file. Whatever puts them in the world (a siege, an event)
+  is not traced. It is an open item in `docs/TODO.md`. No seasonal record has the bit set. The
+  same scan finds 878 seasonal entries (686 in `lists[1]` and 192 in `lists[2]`; christmas 262,
+  halloween 156, obt 439, summer 21), and bytes 26-27 are zero in every one.
+- **The field read before the first list is a bare `uint16`.** The loader reads it and moves the
+  pointer past it (`puStack_1250 = puVar11 + 1`). No entry read follows it. So "count + that
+  many 30-byte entries, discard the result" (field 0 above) has matched the loader only because
+  the value has been 0. A non-zero value would make MapO2Reader and `mapo.Parse2` read entries
+  that the loader does not. This is recorded here and not acted on: every file parsed so far ends
+  exactly at EOF.
+
 ## What this still doesn't tell us
 
-- The exact meaning of the entry's `0xffff` sentinel, and the constant `0x6464` suffix. The
-  sequential index's real scope (per-list? per-sector? per-file?) — separately confirmed to sit at
-  relative offset 22-23, unaffected by the rotation-field correction above.
+- The exact meaning of the entry's `0xffff` sentinel. (The "`0x6464` suffix" is the owner region and
+  the "sequential index" the uid: see "Corrected (round 583)" above.)
 - What field 0's discarded count actually represents, and whether it's ever genuinely nonzero.
 - What (if anything) distinguishes fields 1, 2, and 3 — only one real sample has been checked, and
   it only ever populated field 2.

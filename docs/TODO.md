@@ -862,6 +862,27 @@ whose flip conditions these items feed).
       others' under the one frame, until the mover's own client lifts or drops it and sends an
       `OpMove`. Snapping another player's body the way a monster's is snapped would close it.
 
+### Seasonal event decorations — **hidden by default (round 583)**
+The user decided on 2026-09-26 that early testing gets no seasonal decorations. Christmas,
+Halloween, the China open-beta (OBT) event set and the summer festival set are left out of every
+region's objects before any model is read (`SeasonalObjects`; `World3D._objects_prepare`). Each set
+comes back on its own with `SRREVAMP_SEASONAL=christmas,halloween,obt,summer` (any subset), or with
+`seasonal="christmas,halloween"` under `[world]` in `user://settings.cfg`. The value must be
+quoted: unquoted, the whole file fails to parse, every setting reads as its default, and the next
+save keeps only the keys above the bad line. The two sources are added together. They are read
+once per world scene, when it builds its first region's objects, so a change shows after the
+next login or restart. The choice is ours: no switch was found in the client's `.o2` loader
+(`docs/RE_COMPLETION.md`, round 583, which also has the `UIIT_MSG_XMAS_EVENT_*` strings and the
+layer-key lead). Left open:
+- **No window writes the setting.** The authored Option window, when it replaces the F3 panel, is
+  the natural place for a toggle. The hidden set is built once per world, so a live toggle would
+  also need that set rebuilt and the loaded regions' objects reloaded.
+- **The other event pieces are drawn.** The user chose four sets. `layerobjdef.txt`'s layer 11,
+  구정 (Lunar New Year, `res\etc\newyearday\`), the season door (`res\etc\seasonevent_door.bsr`)
+  and `alex_burner` stay unless the user asks. `alex_burner` matches no layer row by position.
+- **The `.o2` skip bit** (below, "`.o2` list semantics"): 240 list-2 records that retail does not
+  build are drawn. None of them is seasonal.
+
 ## Parked, with the state written down
 
 ### Moat water
@@ -915,6 +936,17 @@ readers for the same shape found none, so this is the last of it for now.
 ### `.o2` list semantics
 List 2 is a region's own objects and the others are cross-references, measured at 91% against 46%
 on the sector check. What the three lists *are* is still unknown.
+
+Round 583 read three record fields in the loader (`FUN_00a361b0`;
+[protocol/MAPO2_FORMAT.md](protocol/MAPO2_FORMAT.md), "Corrected (round 583)"). Bytes 22-23 are
+the object's uid and bytes 28-29 its owner region, and together they are the key the loader files
+the object under. Byte 27 bit 0 is a skip bit: in `lists[1]` and `lists[2]` a record with the bit
+set is not built. **Open**: `World3D` does not test that bit, so it draws 240 `lists[2]` records
+(in 41 regions, none of them Jangan's) that retail does not build from the file. They are
+Baghdad's `bagh_masin_lightwall` (120), guild barricades (48), Baghdad's event barricades (46),
+Petra's fires (24) and `res\dun\jupiter\piety\piety_golddoor.bsr` (2). What does put
+them in the world (a siege, an event) is not traced. Next step: trace who creates an object
+filed with the bit set. Only after that, decide whether to skip the bit.
 
 ## Established, do not re-derive
 

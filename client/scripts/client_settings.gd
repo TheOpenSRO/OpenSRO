@@ -29,6 +29,20 @@ const KEY_NAME_PLATE_RANGE := "name_plate_range"
 ## default), "third_person" or "quarter" -- World3D.CAMERA_VIEW_*.
 const KEY_CAMERA_VIEW := "camera_view"
 
+const SECTION_WORLD := "world"
+## Which seasonal event decoration sets are drawn (round 583;
+## SeasonalObjects): a comma list of "christmas", "halloween", "obt" and
+## "summer". Empty, the default, hides all four. Read once per world scene,
+## when it builds its first region's objects, so a change shows after the
+## next login or restart; no window writes it yet -- a tester edits the
+## file, or sets SRREVAMP_SEASONAL, which adds to it. In the file the value
+## MUST be quoted: `seasonal="christmas,halloween"` under `[world]`. An
+## unquoted `seasonal=christmas,halloween` is a ConfigFile parse error
+## (ERR_PARSE_ERROR, measured on the box): get_value then returns every
+## setting's default, and the next set_value rewrites the file from only
+## the keys above the bad line plus its own, losing that line and the rest.
+const KEY_SEASONAL := "seasonal"
+
 static func get_value(section: String, key: String, default_val: Variant) -> Variant:
 	var file := ConfigFile.new()
 	if file.load(PATH) != OK:
@@ -61,6 +75,9 @@ static func name_plate_range(default_val: float) -> float:
 
 static func camera_view() -> String:
 	return str(get_value(SECTION_UI, KEY_CAMERA_VIEW, "free"))
+
+static func seasonal_shown() -> String:
+	return str(get_value(SECTION_WORLD, KEY_SEASONAL, ""))
 
 ## Applies the UI scale to the window that everything is drawn in. Works
 ## with the project's stretch mode left at "disabled": the window then

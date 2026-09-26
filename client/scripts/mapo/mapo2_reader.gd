@@ -54,8 +54,11 @@ class Entry:
 	## the game's matrix is the NEGATED yaw in Godot; use NavGraph.godot_yaw.
 	var rotation: float
 	## Real, confirmed 1-based sequential index (relative offset 22-23 in
-	## the raw record) -- scope (per-list? per-sector? per-file?) not yet
-	## confirmed, see MAPO2_FORMAT.md.
+	## the raw record). Round 583 read it in the loader: it is the object's
+	## uid, the low half of the key the loader files the object under, and
+	## raw[28:30] is the high half, the owner region `(Y<<8)|X`. raw[27]
+	## bit 0 is the loader's skip bit, which this reader does not act on
+	## (MAPO2_FORMAT.md, "Corrected (round 583)").
 	var index: int
 	## The full 30 raw bytes, including the fields already decoded above --
 	## kept so nothing is lost while the trailing bytes' full meaning is

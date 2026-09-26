@@ -541,6 +541,15 @@ the working copy first (`script` does not sync):
 `client/tools/remote_godot.sh sync && client/tools/remote_godot.sh script res://tools/probe_monster_front.gd -- --pk2=/opt/sro-files/client/Data.pk2 --media=/opt/sro-files/client/Media.pk2`.
 Written for round 533, where all seven roster models read -Z.
 
+`probe_seasonal.gd` counts what round 583's seasonal filter leaves out of real regions. It runs
+World3D's own `_objects_job` and `_objects_prepare` over each region (Jangan's nine by default,
+`--region=<y>/<x>` for others) and prints the hidden count per set. It also counts the seasonal
+object records in each region's `.nvm`. `--seasonal=<list>` stands in for `SRREVAMP_SEASONAL`,
+which the remote runner does not pass through. `--full=1` runs the prepare to the end, reading
+every model, and counts the seasonal pieces still among the placements (`DRAWN`). It is headless
+and takes seconds. Ship the working copy first:
+`client/tools/remote_godot.sh sync && client/tools/remote_godot.sh script res://tools/probe_seasonal.gd -- --map=/opt/sro-files/client/Map.pk2 --data=/opt/sro-files/client/Data.pk2`.
+
 `render_asset.gd` — loads a real mesh + real texture from a real pk2 archive through this
 project's own readers (`Pk2Reader`, `BmsReader`, `DdjReader`) and renders a screenshot to disk.
 

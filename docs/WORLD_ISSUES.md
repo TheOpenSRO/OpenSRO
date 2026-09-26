@@ -7083,6 +7083,49 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-eighty-third round: seasonal event decorations (Christmas, Halloween, the open-beta event, the summer festival) are hidden by default
+
+The user decided on 2026-09-26 that early testing gets no seasonal decorations, and chose four
+sets. `SeasonalObjects` names a placed piece's set by the folder in its Map.pk2 `object.ifo` path,
+never by id: id 3297 sits between two Halloween ids and is `arabia_fouad`. The rules are
+`\etc\x_mas\`, `res\etc\halloween\`, `res\etc\obt\obt_event` and `res\etc\summer_event\`.
+`World3D._objects_prepare` drops those placements after the de-duplication and before the ownership
+step and the model loop. Their models are never read, and their collision goes with them.
+`SRREVAMP_SEASONAL=christmas,...` or `seasonal="christmas,..."` under `[world]` in
+`settings.cfg` shows a set again. The value must be quoted, or the whole file fails to parse. No
+window writes that setting yet. No switch was found in the client's `.o2` loader, so this is our
+choice. The
+full record, with the layer tables that ground the folder-to-event mapping, is
+`docs/RE_COMPLETION.md`'s round 583.
+
+- **Measured on the box**, with World3D's own job and prepare over the real archive
+  (`client/tools/probe_seasonal.gd`). Hidden per region as christmas/halloween/obt/summer:
+  96/168 1/9/0/0, 97/167 5/12/5/5, 97/168 26/34/25/30, 97/169 6/15/5/5, 98/167 4/5/3/3 and
+  98/169 3/6/0/0. The other three of Jangan's nine have none. That is the investigation's
+  table, plus one record in 98/169: a list-2 Halloween piece owned by 97/169, which the filter
+  counts because it runs before the ownership step. After the prepare, no seasonal placement is
+  left in any of the nine. With `SRREVAMP_SEASONAL=christmas`, 97/168 gets back exactly its 26
+  Christmas pieces. No Jangan `.nvm` record is seasonal (0 of 600), so navigation is unchanged.
+- **Found in the loader** (`FUN_00a361b0`; `docs/protocol/MAPO2_FORMAT.md` is corrected). An
+  `.o2` record's bytes 22-23 are its uid and bytes 28-29 its owner region. Byte 27 bit 0 makes
+  retail skip the record. In the 4,559 region `.o2` files, 240 list-2 records set that bit, and
+  we draw them: `bagh_masin_lightwall` (120), guild barricades (48), Baghdad's event barricades
+  (46), Petra's fires (24) and `res\dun\jupiter\piety\piety_golddoor.bsr` (2). None is in
+  Jangan and none is seasonal. That is open in `docs/TODO.md`.
+- **Review corrections, folded into the records.**
+  - There are 878 seasonal `.o2` entries, not 868. The scan covers the region files only; the 15
+    root `.o2` files were not scanned.
+  - `sro_client.exe` does hold five `UIIT_MSG_XMAS_EVENT_*` UI strings. It has no folder or
+    layer-file string.
+  - The layer join is now stated with its method: by position, within 0.05 on every axis, one
+    count per distinct row, 929 rows. It gives layer 7 233 Christmas rows, 4-5 12 + 202
+    Halloween, 8-9 15 + 304 OBT and 1 91 summer. `alex_burner` matches no layer row.
+  - A lead: all 561 layer rows that matched an `.o2` record carry that record's loader key as
+    their id.
+- **Tests**: `seasonal_objects_test.gd`, with 7 FAILURES on round 582's tree. On this tree,
+  `remote_godot.sh check` loads 285 scripts and `tests` runs 105 suites with 0 failing, and the
+  Go packages pass.
+
 ## Five-hundred-and-eighty-second round: a second Move before the teleport's reply can no longer charge twice
 
 Round 578's review found a hole in the board's "one request at a time" guard.

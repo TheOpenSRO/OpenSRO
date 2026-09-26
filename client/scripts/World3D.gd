@@ -90,7 +90,10 @@ extends Node3D
 ## 567, kept for A/B) gives each region's terrain the trimesh collision it had
 ## until round 567 -- a ConcavePolygonShape3D of every triangle of the drawn
 ## mesh (MapmTerrainBuilder.surface_faces) -- instead of the heightfield
-## (TerrainCollision). Any variable left unset is skipped gracefully (a printed hint, not an error)
+## (TerrainCollision). SRREVAMP_SEASONAL (round 583) is a comma list of the
+## seasonal event decoration sets to draw -- christmas, halloween, obt,
+## summer -- which are otherwise left out of every region (SeasonalObjects;
+## the settings file's `[world]` `seasonal="..."`, quoted, adds to it). Any variable left unset is skipped gracefully (a printed hint, not an error)
 ## -- this scene works fine with none of them set, same as always.
 ##
 ## The server now has a real multi-zone concept: OpChangeZone/
@@ -2561,6 +2564,10 @@ static func _load_object_collision(
 ## Cached: every region load needs it, and it is a quarter-megabyte parse.
 var _object_index_cache: ObjidxReader.Table = null
 var _object_index_load_attempted := false
+## The seasonal event pieces this world leaves out (round 583): type id ->
+## set name, built once per object index by _seasonal_hidden_for.
+var _seasonal_hidden: Dictionary = {}
+var _seasonal_hidden_table: ObjidxReader.Table = null
 
 func _load_object_index() -> ObjidxReader.Table:
 	if _object_index_load_attempted:
@@ -7206,6 +7213,16 @@ static func _objects_prepare(job: Dictionary) -> void:
 	if dropped > 0:
 		(job["log"] as Array).append(["out", "World3D: %s -- dropped %d duplicate real placements (%d -> %d)" % [
 			mapo_path, dropped, placements.size(), deduped.size()]])
+	# Seasonal event decorations left out (round 583, SeasonalObjects): before
+	# the ownership filter and the model loop, so their models and textures
+	# are never even read. Each piece carries its own collision
+	# (_objects_commit), so not placing it removes that too; no region's
+	# `.nvm` references a seasonal id, so navigation is unchanged.
+	var seasonal := SeasonalObjects.filter(deduped, job.get("seasonal_hidden", {}))
+	deduped = seasonal["kept"]
+	job["seasonal_hid"] = seasonal["hid"]
+	if int(seasonal["total"]) > 0:
+		(job["log"] as Array).append(["out", SeasonalObjects.log_line(mapo_path, seasonal)])
 	job["objects_o"] = region.objects.size()
 	job["objects_o2"] = o2_count
 	sw = _job_lap(job, "parse", sw)
@@ -7286,6 +7303,7 @@ func _objects_job(mapo_path: String, world_offset: Vector3, node_suffix: String)
 		"map_pk2": _open_map_pk2_if_set(),
 		"data_pk2": _open_pk2_if_set(),
 		"object_index": table,
+		"seasonal_hidden": _seasonal_hidden_for(table),
 		"heightmaps": heightmaps,
 		"new_heightmaps": {},
 		"here": null,
@@ -7298,6 +7316,19 @@ func _objects_job(mapo_path: String, world_offset: Vector3, node_suffix: String)
 	}
 	_load_timings.lap("objects", "snapshot", sw)
 	return job
+
+## The seasonal event pieces to leave out of this world's regions (round
+## 583): type id -> set name over the object index's own paths
+## (SeasonalObjects.hidden_ids), minus the sets SRREVAMP_SEASONAL and the
+## settings file show again. Built once per index, on the main thread; the
+## jobs share the one Dictionary read-only.
+func _seasonal_hidden_for(table: ObjidxReader.Table) -> Dictionary:
+	if table == null:
+		return {}
+	if _seasonal_hidden_table != table:
+		_seasonal_hidden = SeasonalObjects.hidden_ids(table, SeasonalObjects.enabled_from_environment())
+		_seasonal_hidden_table = table
+	return _seasonal_hidden
 
 ## A streamed cell's whole prepare, on its WorkerThreadPool task (round 566):
 ## the terrain (_terrain_prepare), then the objects (_objects_prepare) over

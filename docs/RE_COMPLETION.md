@@ -40885,3 +40885,168 @@ linux).**
 
 **Deploy note.** It ships in the one client release with rounds 579-581, which the orchestrator
 tags.
+
+## Seasonal event decorations are hidden by default (round 583)
+
+Client only. Nothing on the wire changes, and the server is unchanged.
+
+**Why.** The user decided on 2026-09-26 that early testing gets no seasonal event decorations. The
+user chose four sets: Christmas, Halloween, the China open-beta (OBT) event set and the summer
+festival set. All four are hidden by default, and each can be shown again on its own. **The choice
+is ours, not the retail client's.** No switch for them was found in the client's `.o2` loader
+(`FUN_00a361b0`, `MapCallBack.cpp`). The loader builds every record in its second and third lists
+unless byte 27 bit 0 is set, and no seasonal record has that bit. A Go scan (`mapo.Parse2`) over
+the 4,559 region `.o2` files covered the files under Map.pk2's numbered folders; it did not cover
+the 15 root files, `50.o2` to `64.o2`. It finds 878 seasonal entries: 686 in `lists[1]` and 192
+in `lists[2]`; christmas 262, halloween 156, obt 439, summer 21. Bytes 26-27 are zero in all of
+them. The list totals match the skip-bit census below (202,672 and 31,930).
+
+What `sro_client.exe` holds (`strings -a`, ASCII and UTF-16LE, this round): no `x_mas`,
+`halloween`, `obt_event`, `summer_event` or `layerobj` string. It does hold five UTF-16 UI
+message ids, `UIIT_MSG_XMAS_EVENT_CHANGE`, `_COMPENSATION`, `_ERROR_INVENTORY`, `_ERROR_SOCKS`
+and `_SO-OK`. Those are messages for a Christmas event exchange, not a map switch as far as
+anything read shows. The decompilation (`/var/tmp/decomp_client`) names neither layer file.
+**Correction:** as first committed, this record said the investigation "found no seasonal
+string", and `seasonal_objects.gd` said the binary "carries no seasonal string". Both were
+wrong, and round 583's review found the five message ids.
+
+**What is seasonal.** A seasonal piece is identified by the folder in its model path, read from
+Map.pk2's own `object.ifo` (the table placements resolve against), lowercased. It is never
+identified by an id range: id 3297, between two Halloween ids, is `res\npc\npc\arabia_fouad.bsr`.
+
+| Set | Path rule | Map.pk2 `object.ifo` ids |
+|---|---|---|
+| christmas | `\etc\x_mas\` (covers `res\etc\x_mas\` and `compound\struct\etc\x_mas\`) | 3254-3266 (13) |
+| halloween | `res\etc\halloween\` | 3287-3296, 3298 (11) |
+| obt | `res\etc\obt\obt_event` | 3268-3283, 3285, 3286 (18) |
+| summer | `res\etc\summer_event\` | 2095-2109 (15) |
+
+The folder-to-event mapping comes from Map.pk2's `layerobjdef.txt`, read this round from the box's
+archive and decoded as cp949. Its layers are 1 `축제(DECO)` (festival), 4-5 `할로윈` (Halloween),
+6-7 `크리스마스` (Christmas), 8-9 `중국OBT` (China OBT), 10 `바그다드 남문 닫기` (Baghdad south gate
+closed) and 11 `구정(DECO)` (Lunar New Year).
+
+How `layerobjectlist.ifo`'s 3,334 rows were joined to placements: by position, to the `.o`
+records and every `.o2` list of the row's own region file (row columns 4 and 3 give the region),
+with every axis within 0.05. Each distinct row is counted once, so a record repeated across
+sectors does not add rows. A row matching records of two different type ids is counted as
+ambiguous. 929 rows match, 6 of them ambiguous. The unambiguous ones are all of their layer's
+own folder:
+
+| Layer | Pieces matched |
+|---|---|
+| 1 | 91 `summer_event` |
+| 4-5 | 12 + 202 `\halloween\` |
+| 7 | 233 `\x_mas\` |
+| 8-9 | 15 + 304 `obt_event` |
+| 2 | 65 guard-post and `bagh_mong_fort_bari` pieces |
+| 10 | 1 `bagh_city_gate_door_01` |
+
+The review's own join (tolerance 0.05, `.o` and all `.o2` lists) got the same 929 rows and 6
+ambiguous. Its layer 1 and layer 9 counts were 94 and 307, 3 more each than this join's. That difference
+was not traced.
+
+`alex_burner` (`res\bldg\north africa\alexandria\`) matches no row by position. A key-only
+join does pair it with rows on layers 1, 5, 7, 9 and 11, but every such pair is 0.40 to 1,889
+units apart. That is a key collision, not a listing, so the first commit's "layers 1 and 9 list
+alex_burner" is withdrawn. So is its 938 / 476 / 349 / 727 / 114 set of counts: that
+investigation join counted `.o` and `.o2` records per placement, sector repeats included, and
+could not be reproduced as stated. alex_burner is in none of the four folders and stays either
+way.
+
+The first column of `layerobjdef.txt` is 1 for BASIC and both guard-post layers and 0 for every
+event layer. What that column means is not established.
+
+**A lead, not followed:** every layer row that matched an `.o2` record by position (561 rows)
+carries, as its id, exactly the loader's object key `CONCAT22(bytes 28-29, bytes 22-23)` of
+every record it matched (561 of 561). The review measured 674 of 674 by its own method. So the
+map's layer list and the loader name objects the same way. Whether anything in the client or
+the server turns layers on and off by that key has not been searched beyond the string and
+decompilation checks above.
+
+**Change.**
+- `client/scripts/world/seasonal_objects.gd` (`SeasonalObjects`) holds the classifier, the id
+  -> set map over an object index, the enabled-list parser, the placement filter and the log line.
+- `World3D._objects_job`, on the main thread, builds the hidden id set once per object index
+  (`_seasonal_hidden_for`). It uses the four folder rules, minus the sets shown again.
+- `_objects_prepare` drops those placements after the `.o` + `.o2` list 2 de-duplication and
+  before `_placements_belonging_here` and the model loop, so their models and textures are never
+  read. It logs `World3D: <r>.o -- hid N seasonal placement(s) (christmas a, halloween b, obt c,
+  summer d)` when N > 0.
+- Each placed piece carries its own `StaticBody3D`, so leaving it out removes its collision too.
+- Navigation is unchanged. No `.nvm` object record uses a seasonal id: the investigation's census
+  of 6,279 `.nvm` files found 0 of 48,044 records, all four sets included. This round's probe
+  re-checked the nine Jangan regions through the client's own `NvmReader`: 0 of 600 records.
+- **Showing a set again:** set `SRREVAMP_SEASONAL` to a comma list, `christmas,halloween,obt,summer`
+  or any subset (case and spaces ignored, unknown names ignored). The same list can go in
+  `user://settings.cfg` under `[world]` as `seasonal="christmas,halloween"`
+  (`ClientSettings.seasonal_shown`). **The value must be quoted.** Measured on the box, an
+  unquoted `seasonal=christmas,halloween` makes `ConfigFile.load` fail with ERR_PARSE_ERROR
+  (43). `ClientSettings` then returns every setting's default, and the next setting it saves
+  rewrites the file from only the keys above the bad line plus its own. The two sources are
+  added together. Both are read once per world scene, when it builds its first objects job, so a
+  change shows after the next login or restart. **No window writes the setting.** A live toggle
+  would also have to rebuild the hidden set and reload the loaded regions' objects, and the debug
+  panel belongs to the UI lane. So the environment variable and the settings key are the whole
+  interface for now (`docs/TODO.md`).
+
+**Measured on the box's archive** (`client/tools/probe_seasonal.gd`, run headless with
+`remote_godot.sh script` in lane `/opt/srrevamp-client-r583`, `GODOT_LOCK=/var/tmp/rseason/lock`).
+The probe runs World3D's own `_objects_job` and `_objects_prepare` over the nine Jangan regions.
+It loaded `object.ifo` with 3,307 entries. The default hides 57 type ids (christmas 13, halloween
+11, obt 18, summer 15). Hidden per region, counted before the ownership step:
+
+| Region | christmas | halloween | obt | summer | total |
+|---|---|---|---|---|---|
+| 96/167 | 0 | 0 | 0 | 0 | 0 |
+| 96/168 | 1 | 9 | 0 | 0 | 10 |
+| 96/169 | 0 | 0 | 0 | 0 | 0 |
+| 97/167 | 5 | 12 | 5 | 5 | 27 |
+| 97/168 | 26 | 34 | 25 | 30 | 115 |
+| 97/169 | 6 | 15 | 5 | 5 | 31 |
+| 98/167 | 4 | 5 | 3 | 3 | 15 |
+| 98/168 | 0 | 0 | 0 | 0 | 0 |
+| 98/169 | 3 | 6 | 0 | 0 | 9 |
+
+- **This matches the investigation's per-region table**, which it computed from its own scan of
+  `.o` + `.o2` list 2 after de-duplication. There is one difference. 98/169's sixth Halloween
+  record is a list-2 `halloween_pu03` whose bytes 28-29 name 97/169 (0x61a9), not 98/169. The
+  investigation's table left that record out, and this filter counts it because the filter runs
+  before the ownership step.
+- **With the prepare run to the end (`--full=1`)**, the default leaves 0 seasonal placements in
+  what any of the nine regions hands the commit. With `SRREVAMP_SEASONAL=christmas`, only
+  Christmas pieces come back: 97/168 places 307 (281 + 26), with 26 Christmas and nothing else
+  seasonal; 96/168 places 1, 97/167 5, 97/169 6, 98/167 4 and 98/169 3.
+- With all four shown, the hidden set is empty and the filter passes everything through, as
+  before this round. 97/168 places 396, and 98/169 places 5 Halloween pieces, because the
+  ownership step drops the 97/169-owned one.
+
+**Recorded in passing** (`docs/protocol/MAPO2_FORMAT.md`, "Corrected (round 583)"; read in
+`/var/tmp/decomp_client` via `getfn.sh 00a361b0`):
+- Record bytes 22-23 are the object's uid and bytes 28-29 its owner region, `(Y<<8)|X`. Together
+  they are the key the loader files the object under. This settles the doc's "`0x6464` suffix,
+  genuinely unresolved".
+- Byte 27 bit 0 is the loader's skip bit. In the 4,559 region `.o2` files, 240 of the 31,930
+  `lists[2]` records set it, and `World3D` draws them. They span 19 model paths:
+  `bagh_masin_lightwall` (120), guild barricades (48), Baghdad's event barricades (46), Petra's
+  fires (24) and `res\dun\jupiter\piety\piety_golddoor.bsr` (2). None of them is seasonal or in
+  Jangan. The item is open in `docs/TODO.md`.
+- The field read before the first list is a bare `uint16`, and no entries follow it.
+
+**Tests.**
+- `client/scripts/world/seasonal_objects_test.gd` checks the classifier over the real path shapes.
+  Each of the four rules matches its own paths, in either case. `arabia_fouad`, `alex_burner`,
+  `alex_burner02`, the Jangan gate and `cj_s` wall, the new-year piece, the season door and the
+  `event_area_rockevent` do not match. The test checks the id map by path and the enabled-list
+  parser.
+- The same test runs World3D's prepare over a synthetic `97\168.o` holding a wall, a Christmas
+  tree (twice), a Halloween display and `arabia_fouad`. By default the prepare places the wall and
+  `arabia_fouad`. It never reads the hidden models, counts `{christmas: 1, halloween: 1}` and logs
+  the line. `SRREVAMP_SEASONAL=christmas` brings back only the tree, and all four shown places all
+  four with no line.
+- **NEGATIVE**, run on the box against round 582's tree (a detached worktree at `f2b00fa` with
+  only this test added): `FAILURES: 7`. The classifier is absent, the prepare places `[1, 2, 3,
+  4]`, the hidden models are read, and there is no count and no line.
+- `remote_godot.sh check`: 285 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`: ran 105
+  suites, 0 failing, and 0 `SCRIPT ERROR`.
+- `go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok.
