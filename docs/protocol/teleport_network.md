@@ -18,12 +18,13 @@ file had been extracted, and the file existed.
 | 0 | service | `1` |
 | 1 | teleport id | `1` |
 | 2 | codename | `GATE_CH`, `GATE_NPC_CH_FERRY`, `GATE_KT` |
-| 3 | **building object id** | `2094` — joins `teleportbuilding` |
+| 3 | **associated object id** | `2094` — joins `teleportbuilding` for a gate; an NPC for a ferry (`2011` `NPC_CH_FERRY`); `0` in 118 rows |
 | 4 | zone-name string id | `SN_ZONE_22001` |
 | 5 | **region id** | `25000` |
 | 6, 7, 8 | local x, y, z | `969, 0, 1369` |
 | 9 | radius | `70` (85 rows), `10`, `150`, `200`, `50`, `30` |
-| 10-12 | flags | |
+| 10, 11 | interaction flags | registrations of interaction ids 7 and 9 (round 454, below) |
+| 12 | a small integer | `1` ×153, up to `170`; the client's parser never reads it; unread |
 
 **The positions decode, and that is checked rather than assumed.** Using this
 project's own region transform — `regionId = (x << 8) | y`,
@@ -49,16 +50,20 @@ has region 0 and is a placeholder.
 | 1 | 169 | teleport ids | **source point** |
 | 2 | 157 | teleport ids | **destination point** |
 | 3 | 8 | `0` ×188, `5000` ×57, `500` ×31, `40000` | **fee** — use-site read 2026-09-19 (below) |
-| 7 | 4 | `2` ×174, `1` ×81, `0` ×36 | a kind |
-| 8, 9 | 10, 3 | `110`, `999`, `0` | **level range** — inferred |
-| 10 | 4 | `2` ×71, `1`, `0` | a flag |
+| 4, 5, 6 | 1 each | `0` in all 292 rows | unread |
+| 7 | 4 | `2` ×174, `1` ×81, `0` ×36, `4` ×1 | **restriction 1's type** — use-site read, round 575 |
+| 8, 9 | 10, 3 | `110`, `999`, `0` | **restriction 1's two data words** (type 1: a level range) |
+| 10..21 | | | restrictions 2-5, (type, data, data) each |
 
-**Cols 3, 8 and 9 are INFERRED, not proven.** The shapes are strongly
-suggestive — col 3 holds round gold amounts and teleporting costs gold; `110` is
-the level cap and `999` reads as "no limit" — but this project's rule is that a
-use-site settles meaning, and none has been read. *Next probe:* the consumer of
-`_REFTELELINK` in the server (loader at `0x0082d770`), which is what would turn
-these into grounded columns.
+**Cols 3 and 7-21 are READ (round 575); cols 8 and 9 are not a level range
+by themselves.** Col 3 is the fee (the use-site below). Cols 7-21 are five
+(type, data, data) restriction triples, and the server's evaluator
+`FUN_00513a70` walks them: type 1 compares the character's level with the two
+data words, so a `(1, 1, 110)` triple is a level range and a `(2, 0, 0)` one is
+a trade-cart rule -- "The restriction triples are enforced" below. (Until
+round 575 this paragraph called cols 3, 8 and 9 INFERRED and sent the next
+probe to the `_REFTELELINK` loader at `0x0082d770`; the consumer turned out
+to be the evaluator, found from its error code.)
 
 Cols 1 and 2 are safe: 169 sources and 157 destinations over a 222-point table
 is a graph, and nothing else fits.
@@ -90,17 +95,23 @@ row-to-runtime copy in `RefInstanceGenerator`, so the column number rests on
 the reader filling fields in text order plus this being the only gold-valued
 column; the fee's *meaning* is settled.
 
-**The other refusals on this path:** `0x1c14` is `GObjPC::FUN_004a8e10`, a
-per-kind interaction-range test (distance constants including the 10.0 at
-`0xb45b44`), i.e. too far from the gate; `0x1c0f` is `FUN_00486a40`, the
+**The other refusals on this path:** `0x1c14`
+(`UIIT_MSG_INTERACTION_FAIL_TELESCROLL_ALREADY_WORKING`) is the FIRST test:
+`IGObj::GetTeleportState` (vslot 72, `+0x120`, the call at `0x513634`) returning
+non-zero -- a teleport already under way. The interaction-range test is the
+next one, `GObjPC::IsWithinInteractionRange` (`0x4a8e10`; distance constants
+including the 10.0 at `0xb45b44`), and the handler refuses with ITS return
+value -- `4` beyond the distance, `0` or `3` on its early exits, `1` passing --
+not with `0x1c14`. (Until round 575 this said `0x1c14` was the range test;
+round 575 re-read `0x513590`: `mov eax,[edx+0x120]` then `0x1c14` at
+`0x513642`, before the range call.) `0x1c0f` is `FUN_00486a40`, the
 destination index outside the gate's 28-byte link list; `0x1c21` an empty
 selection; `0x1c31` a state-byte value of 30.
 
-**Columns 8/9 (the level range) stay inferred.** No comparison of the level
-against a link field appears on this path -- the only level rule here is the
-fee waiver below 21 -- so if the restriction columns are enforced, it is
-elsewhere (`FUN_00485d00`, which fails with code 3 before the switch, is the
-unread candidate) or client-side in the destination list.
+**No level test against a link field is on this path** -- the only level
+rule here is the fee waiver below 21. The restriction columns ARE enforced,
+on the other teleport path: see "The restriction triples are enforced" below
+(round 575; until then this paragraph left columns 8/9 inferred).
 
 ## The columns' structure, from the client's own parser (2026-09-19)
 
@@ -150,7 +161,9 @@ switch on `+0x2b4`), is formatted from the gate STRUCTURE's own object record
 (`GlobalDataManager::FUN_0093f5f0` -> `RefData_usableresobjiddata`), not from a
 teleport link.
 
-**Where that leaves columns 8/9:** no consumer in the server's use handler, none in
+**Superseded in round 575** -- the consumer is the server's evaluator
+`FUN_00513a70`, "The restriction triples are enforced" below. What this
+paragraph said then: **Where that leaves columns 8/9:** no consumer in the server's use handler, none in
 the client's dialog, none in the client's gate object. Either the restriction triples
 are applied when the server BINDS links at load (`RestrictBindMethod` would be the
 name for it, if the DB column names match the client parser's shape -- the server's
@@ -192,8 +205,11 @@ join to the existing NPC machinery. A teleport system built on these three
 tables would be as grounded as the monster spawns are — the same shape of
 recovery, from the same kind of table.
 
-What it could **not** yet claim is the cost and the level gate, until the
-`_REFTELELINK` consumer is read.
+What it could **not** yet claim was the cost and the level gate, until the
+`_REFTELELINK` consumer was read. Both are read now: the fee at its use-site
+(2026-09-19) and the restriction evaluator (round 575, below). srrevamp loads
+the three tables since round 575 (`internal/teleport`, cmd/server's
+`-teleport-dir`); the handler that charges and moves is the next item.
 
 ### srrevamp wire: FrameRegion (round 570)
 
@@ -290,3 +306,131 @@ offered services on the gate object.
 This is the first grounded example of **where interaction ids come from**: a
 refdata loader registers them on a ref object from boolean columns at table-load
 time.
+
+## The restriction triples are enforced (round 575)
+
+`FUN_00513a70` (`0x513a70`, 1,058 bytes; `error_emitters.tsv` lists it as the only
+emitter of `0x1c15`) takes a runtime link and walks the 12-byte records between
+`link+0x10` and `link+0x14` -- the (type, data, data) triples -- stopping at the
+first that fails. It returns `1` when every rule passes (and the post-pass below
+refuses nothing). The arms, with the IGObj
+slots from `igobj_vtable.md`:
+
+| type | test (0x513a70) | refusal |
+|---|---|---|
+| 1 | `IGObj::GetLevel` (vslot 73, `+0x124`) as a byte, **unsigned**: below data 1 (`jb` at `0x513b02`) or above data 2 (`jbe` at `0x513b07` skips the refusal) | `0x1c15` `..._OUT_OF_REQUIRED_LEVEL_FOR_TELEPORT` |
+| 2 | `IGObj::IHaveCart` (vslot 187, `+0x2ec`) returns 1 | `0x1c10` `..._CANT_USE_TELEPORT_WITH_TRADECART` |
+| 3 | data 1 has the bit for the character's **PvP state**: `mov eax,[ebx+0x30]` (EBX is the PC -- each caller does `mov ebx,ebp` just before the call -- and `+0x30` is its chardata pointer), `mov cl,[eax+0xc]` (chardata `+0xc` is `PvPSTATE`: 0 `NEUTRAL`, 1 `ASSAULTER`, 2 `MURDERER`, `character_state.md`), `mov edx,1; shl edx,cl; test [esi+0x4],edx` at `0x513b46`-`0x513b53`, and `je` at `0x513b56` skips the refusal. So data 1 is a mask of barred states (bit 0 neutral, bit 1 assaulter, bit 2 murderer) | `0x1c19` (no row in `error_codes.md`) |
+| 4 | data 1 != 0 and `CGStorage::FindItemHasSameRefObj(0xd, ...)` finds no item of ref object data 1 | `0x1c23` `UIIT_MSG_QUEST_ROC_CANNOT_ENTRANCE` |
+| 5 | as 4; a found item goes on to `FUN_004d9030` (unread) | `0x1c23` |
+| 6 | data 1 == data 2 == 0 and `IGObj::GetJobState` (vslot 71, `+0x11c`) != 4; other data asserts and passes | `0x1c24` (same token) |
+| 7 | `CGStorage::GetItem(8)` returns an item whose vslot `0x41c` answers 1, and `IHaveCart` returns 1 | `0x1c10` |
+| other, 0 included | no arm | passes |
+
+A byte at `link+8` is the walk's mode, tested at `0x513ccf` after each rule and
+at `0x513d35` after the last. At 0 the first failing rule returns its code. Any
+non-zero value walks every rule and drops their failures (`local_38` is reset to
+1 per rule); then 1 asserts (`call 0x964b60`) and returns `2` (`0x513d65`), and
+any other value ends the way a clean walk at 0 does: the post-pass below,
+returning `1` or `0x1c23`. The post-pass (`0x513d7d`) walks a byte vector the
+function owns (begin at `esp+0x28`, freed before each return) -- the one whose
+address the type-5 arm passes to `FUN_004d9030` in `eax` (`0x513c4b`), with the
+address of the slot byte `FindItemHasSameRefObj` filled in `edi` (`0x513c18`,
+`0x513c47`) -- and calls the character's vslot `0x230` per byte (`push 0 / 3 /
+&one / 1 / byte / 0`, `0x513dfe`-`0x513e0a`), refusing `0x1c23` when one answers
+0. What `FUN_004d9030` puts in the vector and what vslot `0x230` does are not
+read. The table's columns 4-6 are 0 in all 292 retail rows, and which value
+fills `+8` is not read: the `_REFTELELINK` table loads through a reflective
+descriptor (`FUN_0082d770` registers `"_REFTELELINK"` as `CRefTeleLink`, `0x30`
+bytes), not a column parser this project has read.
+
+**So whether the retail server enforces these rules at all turns on that
+byte.** At 0 a failing rule refuses; at any non-zero value other than 1 every
+failure is dropped (`0x513ccf`, `0x513d35`) and the walk ends like a clean one.
+srrevamp enforces them -- it models mode 0 -- and that is a **disclosed
+stand-in**, not a read value. It also refuses type 5 before any post-pass could
+run.
+
+**Where it runs.** Not on `GObjPC::HandleTeleportUse`'s kind-2 path (above), but
+on `CMainProcess::FUN_004f2b50`'s: `Gate_LinkForTeleportUse`, then the evaluator
+(call `0x4f2e24`), and only when it passes the fee -- `piStack_88[1]`, zeroed
+while `GetMaxLevel` (vslot 74) is below `0x15`, the fortress tax, and the 64-bit
+gold compare refusing `0x1c07`. The same path calls it again at `0x4f34a0`, and
+`CGObjPC::vslot_309` (`0x4ef480`) calls it at `0x4ef7b9`, on a branch taken
+when a string of its second argument compares equal to `"TELEPORT"`, for the
+link `GObjPC::FUN_004f88d0` returns. The three call sites were read in
+`srv.asm` (`e8 .. call 0x513a70`).
+
+**The triples' position is settled by the data.** The client's parser
+(`RefParse_teleportlink`, `0x976c80`, called at `0x954be4` after the loader's own
+service-column read at `0x954b9d`) reads five direct tokens and then the triples
+-- one leading token fewer than the file's six (source, destination, fee and
+columns 4-6), so by that parser alone the triples would start at column 6. They
+start at column 7: every one of the 1,125 type-0 slots carries blank or zero data
+words at 8-9, 11-12, ... (3 blank, all on link `1 -> 5`, and 1,122 zero); read
+from column 6 the types would include 999 (69 slots), 110 (14), 102 and two
+blanks, with every row's first type the always-0 column 6; and the one type-4
+slot (link `160 -> 162`,
+`GATE_RC_MOUNTAIN_GATE -> GATE_RC_ROC_GATE`) names `23973`, which itemdata calls
+`ITEM_QNO_RM_MEETROC_6_01` -- the item the type-4 arm looks up, refusing with the
+Roc-entrance code. Which token the client's parser drops is not read; nothing in
+the client reads the triples (above).
+
+In the retail table the non-zero types are 1 (84 slots: `(1, 1, 110)` ×12,
+`(1, 0, 999)` ×24, `(1, 110, 999)` ×21, and eight other ranges), 2 (245), 7 (3),
+and one each of 4, 5 and 6 -- all on the Roc link. **No slot has type 3**: 0 of
+the 1,460, so no retail link bars a PvP state and there are no type-3 data
+values to report (counted over `/var/tmp/tables/teleportlink.txt` with the BOM
+stripped, twice, by `awk` over an `iconv` copy and by Python decoding the raw
+UTF-16; no cell in columns 7-21 is `3` at all, so the column-6 reading has none
+either). At level 50, 245 links pass,
+46 refuse `0x1c15` and the Roc link refuses `0x1c23` (measured over the exported
+CSVs with `teleport.CheckRestrictions`, round 575).
+
+## The columns srrevamp reads (round 575)
+
+`cmd/export-refdata -mode teleport -out <dir>` writes `teleportdata.csv`,
+`teleportlink.csv` and `teleportbuilding.csv`; `internal/teleport` reads them
+(`teleport.Load`), and cmd/server's `-teleport-dir` loads the directory at boot.
+Columns are 0-based as everywhere on this page (column 0 is the service flag, `1`
+in every row; the client's loader reads it and skips a 0 before each parser --
+`0x954b1a` for teleportdata, `0x954b9d` for teleportlink, through `FUN_00b9cc80`,
+which returns the column's integer -- and the exporter skips those rows too;
+teleportbuilding's loader is elsewhere, its service handling is not read, and
+its column 0 is not filtered). Every column was
+checked against the retail rows on the render box (`/var/tmp/tables`, round 575):
+
+| file | column | CSV field | grounding |
+|---|---|---|---|
+| teleportdata | 1, 2, 3, 4 | ID, Code, ObjectID, ZoneName | the client's `RefParse_teleportdata` (`0x976840`) reads id, codename, associated object, zone name in this order |
+| teleportdata | 5, 6, 7, 8, 9 | Region, X, Y, Z, Radius | the same parser's next five tokens; the server's `RefTeleport_ExtractData` (`0x6a7be0`) reads them as five words (`wwwww`); 98 rows carry a negative (dungeon) region |
+| teleportdata | 10, 11 | Interaction7, Interaction9 | the two tokens the client throws away; the server's `bb`, registering interaction ids 7 and 9 (round 454 numbered them 9/10, as if the server's copy had no zone name; whether it lacks that column or skips it is not settled -- `RefTeleport_ExtractData` calls the column-skip helper `FUN_006b1a80` right after the associated-object dword -- and either way its two bytes follow its five words, so they are the two tokens after radius). 7 rows set the first, 1 row the second |
+| teleportlink | 1, 2, 3 | From, To, Fee | the fee's use-site (above) |
+| teleportlink | 7..21 | Rule1Type .. Rule5Data2 | the evaluator (above); a type-0 slot is empty and is not loaded as a rule |
+| teleportbuilding | 1, 2, 5 | ID, Code, NameStrID | the `_RefObjCommon` prefix: id, codename, name string (`SN_NPC_CH_GATE`) |
+| teleportbuilding | 41, 43, 44, 45 | Region, X, Y, Z | the prefix's RegionID and OffsetX/Y/Z (`refobj_binary_format.md`, "Fields 43-51 of the common prefix"; 42 is Dir) |
+| teleportbuilding | 55 | Fortress | a `FORTRESS_*` code on the five town gates, `xxx` (loaded as "") on the other 72; read from the values, no use-site |
+
+Joins, measured on the retail rows: every link's two ends are points (292 of 292;
+the loader refuses a link that does not join), no two points name one object, and
+no ids or building codes repeat. The five town gates are `GATE_CH` Jangan,
+`GATE_WC` Donwhang, `GATE_KT` Hotan, `GATE_EU` Constantinople and `GATE_CA`
+Samarkand (`SN_ZONE_22001..22005`); `GATE_SD1`/`GATE_SD2` are Alexandria (South)
+and (North), not Samarkand (`docs/RE_COMPLETION.md`, round 569). Jangan's links,
+in file order: to 2 `GATE_WC` 5000 `(2,0,0)`; to 175 `GATE_SD1` and 176 `GATE_SD2`
+40000 `(1,0,999)+(2,0,0)`; to 5 `GATE_KT`, 20 `GATE_EU` and 25 `GATE_CA` 5000
+`(1,1,110)+(2,0,0)`.
+
+The rules srrevamp applies (`internal/teleport/rules.go`): `QuoteFee` -- the
+link's fee, waived below level 21 (`cmp al,0x14; ja` at `0x5136de`), then two
+own-design waivers, GM accounts and a testing flag; `CheckRestrictions` -- the
+table above, with the arms that need state srrevamp does not model disclosed:
+types 2 and 7 pass (no trade carts); type 3 is evaluated against the PvP state
+the caller passes, and srrevamp, which models no PvP state (no PK system; the
+own-design duel sets none), passes `NEUTRAL` -- a disclosed stand-in; types 4
+and 5 refuse when their data 1 is non-zero and type 6 refuses on `(0, 0)` (the
+inventory and the job state are not consulted -- fail closed with the engine's
+code); and the rules are enforced as mode 0 enforces them, the mode byte's
+filler being unread (above). Level stands in for MaxLevel (equal unless a
+character lost levels, which srrevamp cannot do); no fortress tax (no
+fortresses).

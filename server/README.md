@@ -35,6 +35,7 @@ in `deploy/README.md` and `docs/HANDOFF_OPENSRO.md`.
 | `-skills-csv` | `SRREVAMP_SKILLS_CSV` | skill reference data (`export-refdata`), in-memory mode; PostgreSQL imports it instead |
 | `-items-csv` | `SRREVAMP_ITEMS_CSV` | item reference data (`export-refdata`), in-memory mode; PostgreSQL imports it instead |
 | `-npcpos-csv` | `SRREVAMP_NPCPOS_CSV` | the game's monster placements (`export-refdata -mode npcpos` on a client's `npcpos.txt`); every roster species with rows stands where the game puts it, otherwise at its own-design anchor near the town |
+| `-teleport-dir` | `SRREVAMP_TELEPORT_DIR` | the game's teleport network: a directory holding `teleportdata.csv`, `teleportlink.csv` and `teleportbuilding.csv` (`export-refdata -mode teleport` on a client's own `teleportdata.txt`, `teleportlink.txt` and `teleportbuilding.txt`). Loaded, joined and counted at boot (`level=INFO msg="teleport network loaded" dir=<dir> points=222 links=292 buildings=77` on a retail archive's export); a configured directory that does not load is fatal. Nothing uses it yet: the town teleporters' handler is the next item (round 575, `internal/teleport`) |
 | `-gm-accounts` | `SRREVAMP_GM_ACCOUNTS` | comma-separated account usernames allowed to run the in-game GM commands (`/tp`, `/give`, `/level`, ...); case as stored in `accounts.username`; default none. Every command is logged with the account. See `docs/DEBUG_TOOLS.md` |
 | `-monster-ai` | `SRREVAMP_MONSTER_AI` | **default off**, and the kill switch. On, the monster AI tick runs: monsters idle, wander at their walk speed, run home past a 200-unit roam radius (own design), and stand where a blow found them while any player in the zone has an auto-attack on them (round 539), each move pushed to the zone (`OpMonsterMoved`). Off, nothing moves and the wire is what it was. The env value is `strconv.ParseBool`'s (`1`, `true`, ...); anything else is off with a WARN. Needs a client of v0.1.435 or later. The boot log says which (`monster AI on: ...` / `monster AI off ...`). See `deploy/README.md`, "Monster AI (off by default)" |
 | `-monster-strike-push` | `SRREVAMP_MONSTER_STRIKE_PUSH` | **default off**. On, a monster's counterattack is also sent to its whole zone, the attacker included, as `OpMonsterAttacked 0x007D`, after the attacker's `OpAttackResult`, so every player there sees the blow (round 541). Off, nothing is sent and the wire is what it was. Independent of `-monster-ai`. The env value is parsed like `-monster-ai`'s; anything else is off with a WARN. Needs a client release that carries round 540: v0.1.436 (round 542) does, and its `Release client` run is green (`gh run list`, 2026-09-24); an older one ignores the push, warning "unhandled opcode" once per connection. Its render-box live check passed in round 543. The boot log says which (`monster strike push on: ...` / `monster strike push off ...`). See `deploy/README.md`, "Monster strike push (off by default)" |
@@ -63,7 +64,8 @@ their own `Media.pk2` and either passes them on the command line (in-memory) or
 imports them into PostgreSQL:
 
 - `cmd/export-refdata` — itemdata / skilldata text tables → `items.csv`, `skills.csv`
-  (read in the client's **index order**, not glob order: ids collide across parts).
+  (read in the client's **index order**, not glob order: ids collide across parts);
+  `-mode npcpos` → `npcpos.csv`; `-mode teleport -out <dir>` → the three teleport CSVs.
 - `cmd/export-leveldata` — `leveldata.txt` → `leveldata.csv` (the EXP curve).
 - `cmd/import-refdata` — loads items, skills and, when an operator has them, the
   drop tables (`-drops-csv`, `-drop-groups-csv`) into PostgreSQL. The drop tables
@@ -77,7 +79,7 @@ The full recipe, as actually run on the public server, is `deploy/README.md`.
 | tool | what |
 |---|---|
 | `server` | the game server |
-| `export-refdata` | itemdata/skilldata → CSV from the player's own archive |
+| `export-refdata` | itemdata/skilldata, npcpos and the teleport tables → CSV from the player's own archive |
 | `export-leveldata` | leveldata → CSV (the EXP curve) |
 | `import-refdata` | CSVs → PostgreSQL reference tables |
 | `pk2list` | list paths inside a pk2 archive; `-extract` one file |

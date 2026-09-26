@@ -38,6 +38,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
 	"github.com/OpenSRO/srrevamp/server/internal/spawn"
 	"github.com/OpenSRO/srrevamp/server/internal/storage"
+	"github.com/OpenSRO/srrevamp/server/internal/teleport"
 	"github.com/OpenSRO/srrevamp/server/internal/trade"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
@@ -675,6 +676,12 @@ func main() {
 		"path to the game's monster placements (from cmd/export-refdata -mode npcpos on a client's "+
 			"own npcpos.txt). Every roster species with rows in it stands where the game puts it; "+
 			"without the file the species keep their own-design anchors near the town.")
+	teleportDir := flag.String("teleport-dir", os.Getenv("SRREVAMP_TELEPORT_DIR"),
+		"directory holding the game's teleport network as teleportdata.csv, teleportlink.csv and "+
+			"teleportbuilding.csv (from cmd/export-refdata -mode teleport on a client's own "+
+			"teleportdata.txt, teleportlink.txt and teleportbuilding.txt). Loaded, checked and counted "+
+			"at boot; nothing uses it yet (the town teleporters will). A configured directory that "+
+			"does not load is fatal.")
 	itemsCSV := flag.String("items-csv", os.Getenv("SRREVAMP_ITEMS_CSV"),
 		"path to an item-refdata CSV (from cmd/export-refdata -mode items); with -in-memory it "+
 			"feeds the shop catalogue and prices, item stat lookups and inventory stack limits. "+
@@ -1131,6 +1138,18 @@ func main() {
 			applied++
 		}
 		logger.Info("npcpos placements loaded", "species_in_table", len(table), "roster_species_placed", applied)
+	}
+	// The game's teleport network, when the operator supplies it (round 575).
+	// Loaded and checked here so a bad export fails at boot, the npcpos rule;
+	// the teleport handler that will use it is the next item of the epic.
+	if *teleportDir != "" {
+		network, err := teleport.Load(*teleportDir)
+		if err != nil {
+			logger.Error("loading the teleport network", "dir", *teleportDir, "err", err)
+			os.Exit(1)
+		}
+		logger.Info("teleport network loaded", "dir", *teleportDir,
+			"points", len(network.Points), "links", len(network.Links), "buildings", len(network.Buildings))
 	}
 	// The one world frame (round 571), behind its own flag. Set before the
 	// roster spawns and before gmSpecies: both read it for their monsters'

@@ -41,12 +41,14 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"unicode/utf16"
 
 	"github.com/OpenSRO/srrevamp/server/internal/skillparam"
 	"github.com/OpenSRO/srrevamp/server/internal/spawn"
+	"github.com/OpenSRO/srrevamp/server/internal/teleport"
 )
 
 // Field indices into a tab-split itemdata row (0-indexed; field 0 is the
@@ -426,10 +428,11 @@ const (
 
 func main() {
 	out := flag.String("out", "-", "output CSV path, or - for stdout")
-	mode := flag.String("mode", "items", "which reference table the input files are: items, skills or npcpos")
+	mode := flag.String("mode", "items", "which reference table the input files are: items, skills, npcpos or teleport")
 	flag.Parse()
-	if flag.NArg() == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos") {
+	if flag.NArg() == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport") {
 		fmt.Fprintln(os.Stderr, "usage: export-refdata [-mode items|skills|npcpos] -out out.csv <data_*.txt> ...")
+		fmt.Fprintln(os.Stderr, "       export-refdata -mode teleport -out <dir> teleportdata.txt teleportlink.txt teleportbuilding.txt")
 		os.Exit(2)
 	}
 	record, noun := itemRecord, "item"
@@ -441,6 +444,14 @@ func main() {
 		// has dozens of them. Every row goes out, in file order, under the
 		// header spawn.NpcPosCSVColumns.
 		exportNpcPos(*out)
+		return
+	case "teleport":
+		// Three tables in, three CSVs out, into the directory -out names:
+		// what cmd/server's -teleport-dir loads (internal/teleport).
+		if err := exportTeleport(*out, flag.Args()); err != nil {
+			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -1465,4 +1476,187 @@ func exportNpcPos(out string) {
 	}
 	w.Flush()
 	fmt.Fprintf(os.Stderr, "export-refdata: wrote %d npcpos rows, skipped %d\n", written, skipped)
+}
+
+// The teleport tables' columns, 0-indexed like every table here: column 0 is
+// the Service flag, which the client's loader reads (skipping a 0) before
+// handing the row to its parser -- at 0x954b1a before
+// GlobalDataManager::RefParse_teleportdata (called at 0x954b61), at 0x954b9d
+// before RefParse_teleportlink (called at 0x954be4); the reader, FUN_00b9cc80,
+// returns the column's integer and the loader parses the row only when it is
+// non-zero. exportTeleport skips those rows the same way (all 222 teleportdata
+// and 292 teleportlink retail rows have service 1, so nothing is skipped
+// today). teleportbuilding.txt is loaded elsewhere (its path is formatted in
+// the client's Client_LoadAllRefData, 0x844cd0) and its service handling is
+// not read, so its column 0 is not filtered. Every column was checked against
+// the retail rows on the render box (round 575,
+// docs/protocol/teleport_network.md "The columns srrevamp reads").
+const (
+	// teleportdata.txt, 14 fields: GlobalDataManager::RefParse_teleportdata
+	// (client 0x976840) reads id, codename, associated object, zone name,
+	// region, x, y, z, radius, then two tokens it throws away -- the two flags
+	// the server's RefTeleport_ExtractData (0x6a7be0) registers as NPC
+	// interaction ids 7 and 9 (round 454, which numbered them 9/10 as if the
+	// server's copy had no zone name). Whether it lacks that column or skips
+	// it is not settled -- RefTeleport_ExtractData calls the column-skip helper
+	// FUN_006b1a80 right after the associated-object dword -- and it does not
+	// matter here: the server's two bytes follow its five words (region ..
+	// radius), so they are the two tokens after radius, columns 10/11.
+	tpID           = 1
+	tpCode         = 2
+	tpObject       = 3
+	tpZoneName     = 4
+	tpRegion       = 5
+	tpX            = 6
+	tpY            = 7
+	tpZ            = 8
+	tpRadius       = 9
+	tpInteraction7 = 10
+	tpInteraction9 = 11
+
+	// teleportlink.txt, 23 fields: source, destination, the fee (the word the
+	// server compares to gold, 0x513590, and the client's dialog shows,
+	// UI_TELEPORT::FUN_006fd3e0), three columns 0 in every retail row, then
+	// five (type, data, data) triples from column 7. The triples' position is
+	// settled by the data, not by the client's parser (which reads one fewer
+	// leading token -- teleport_network.md). Counted over the 292 retail rows
+	// (read-only, the render box's /var/tmp/tables, round 575): from column 7
+	// the types are 0 (1,125 slots of 1,460), 1, 2, 4, 5, 6 and 7, and every
+	// type-0 slot carries blank or zero data words (3 blank, all on link
+	// 1 -> 5, and 1,122 zero); from column 6 they would include 999 (69), 110
+	// (14), 102 and two blanks, and every row's first type would be the
+	// always-0 column 6. And the one type-4 slot names 23973,
+	// ITEM_QNO_RM_MEETROC_6_01, where the evaluator's type-4 arm looks an item
+	// up by that word and refuses with UIIT_MSG_QUEST_ROC_CANNOT_ENTRANCE.
+	tlFrom  = 1
+	tlTo    = 2
+	tlFee   = 3
+	tlRules = 7 // 7..21: five triples
+
+	// teleportbuilding.txt, 59 fields in the _RefObjCommon prefix's layout
+	// (refobj_binary_format.md): id, codename, the name string id (SN_NPC_*)
+	// at 5, RegionID at 41, OffsetX/Y/Z at 43..45 (42 is Dir). Column 55 is the
+	// FORTRESS_* code, read from the values only.
+	tbID       = 1
+	tbCode     = 2
+	tbName     = 5
+	tbRegion   = 41
+	tbX        = 43
+	tbY        = 44
+	tbZ        = 45
+	tbFortress = 55
+)
+
+// exportTeleport writes teleportdata.csv, teleportlink.csv and
+// teleportbuilding.csv into outDir from the three client tables named on the
+// command line (by file name, in any order). A row with fewer fields than the
+// columns read need is an ERROR, not a skip: the export stops and names the
+// file and row, because a truncated or mis-split table would otherwise lose
+// gates or links without a word (every retail row has the table's full width
+// -- 14, 23 and 59 fields -- and readTable already drops the blank lines and
+// the trailing //Copyright comment). Rows whose id is not a number are
+// skipped and counted, and so are teleportdata and teleportlink rows whose
+// service column is 0, which the client never parses (above). The CSVs keep
+// the tables' own values; checking them
+// (headers, joins, numbers) is internal/teleport.Read's job, so a table this
+// writes and the server cannot load fails at export time, not at boot: the
+// output is loaded back before this returns.
+func exportTeleport(outDir string, paths []string) error {
+	if outDir == "-" || outDir == "" {
+		return fmt.Errorf("-mode teleport writes three files: -out must name a directory")
+	}
+	inputs := map[string]string{}
+	for _, p := range paths {
+		inputs[strings.ToLower(filepath.Base(p))] = p
+	}
+	type table struct {
+		in, out string
+		header  []string
+		width   int  // fields a row must have to carry every column read
+		service bool // skip a row whose column 0 is 0, as the client's loader does (above)
+		record  func([]string) []string
+	}
+	tables := []table{
+		{"teleportdata.txt", teleport.PointsFile, teleport.PointCSVColumns, tpInteraction9 + 1, true, func(c []string) []string {
+			return []string{c[tpID], c[tpCode], c[tpObject], c[tpZoneName], c[tpRegion],
+				c[tpX], c[tpY], c[tpZ], c[tpRadius], c[tpInteraction7], c[tpInteraction9]}
+		}},
+		{"teleportlink.txt", teleport.LinksFile, teleport.LinkCSVColumns, tlRules + 15, true, func(c []string) []string {
+			rec := []string{c[tlFrom], c[tlTo], c[tlFee]}
+			return append(rec, c[tlRules:tlRules+15]...)
+		}},
+		{"teleportbuilding.txt", teleport.BuildingsFile, teleport.BuildingCSVColumns, tbFortress + 1, false, func(c []string) []string {
+			return []string{c[tbID], c[tbCode], c[tbName], c[tbRegion], c[tbX], c[tbY], c[tbZ], c[tbFortress]}
+		}},
+	}
+	for _, tb := range tables {
+		if _, ok := inputs[tb.in]; !ok {
+			return fmt.Errorf("-mode teleport needs %s among the inputs", tb.in)
+		}
+	}
+	// Every table is read and its rows' widths checked before anything is
+	// written, so a short row leaves no half-written directory behind.
+	tableRows := make([][][]string, len(tables))
+	for ti, tb := range tables {
+		rows, err := readTable(inputs[tb.in])
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", inputs[tb.in], err)
+		}
+		for i, cols := range rows {
+			if len(cols) < tb.width {
+				return fmt.Errorf("%s: row %d (not counting blank and // lines) has %d fields, fewer than the %d the export reads: %.60q",
+					inputs[tb.in], i+1, len(cols), tb.width, strings.Join(cols, "\t"))
+			}
+		}
+		tableRows[ti] = rows
+	}
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return err
+	}
+	for ti, tb := range tables {
+		f, err := os.Create(filepath.Join(outDir, tb.out))
+		if err != nil {
+			return err
+		}
+		w := csv.NewWriter(f)
+		if err := w.Write(tb.header); err != nil {
+			f.Close()
+			return err
+		}
+		written, skipped, unserviced := 0, 0, 0
+		for _, cols := range tableRows[ti] {
+			for i := range cols {
+				cols[i] = strings.TrimSpace(cols[i])
+			}
+			if n, err := strconv.Atoi(cols[0]); tb.service && err == nil && n == 0 {
+				unserviced++
+				continue
+			}
+			if _, err := strconv.Atoi(cols[1]); err != nil {
+				skipped++
+				continue
+			}
+			if err := w.Write(tb.record(cols)); err != nil {
+				f.Close()
+				return err
+			}
+			written++
+		}
+		w.Flush()
+		if err := w.Error(); err != nil {
+			f.Close()
+			return err
+		}
+		if err := f.Close(); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "export-refdata: wrote %d %s rows, skipped %d, %d with service 0\n", written, tb.out, skipped, unserviced)
+	}
+	t, err := teleport.Load(outDir)
+	if err != nil {
+		return fmt.Errorf("the exported tables do not load: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "export-refdata: teleport network loads back: %d points, %d links, %d buildings\n",
+		len(t.Points), len(t.Links), len(t.Buildings))
+	return nil
 }

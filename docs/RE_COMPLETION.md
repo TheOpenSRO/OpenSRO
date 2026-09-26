@@ -39313,3 +39313,222 @@ for zones, the world frame, saved positions or world loading, so it is unchanged
 
 **Deploy note.** Docs, comments, a usage string and tests; not tag-worthy, no release on its own.
 The server's `-single-frame` help text now names the client release with rounds 569 to 571.
+
+## Server-side teleport tables (teleportdata/teleportlink/teleportbuilding as CSVs like npcpos) and the grounded fee, waiver and restriction rules (round 575)
+
+The first round of the town-teleporter batch (the user, 2026-09-25: "there's crystals in each town
+... that teleport you between towns for gold (it should be free for gms or while testing)"). No
+behaviour change: a package, an exporter mode and a flag that loads the tables at boot. The
+handler that charges and moves is the next item (map-teleport-protocol).
+
+**What was wired.**
+
+- `cmd/export-refdata -mode teleport -out <dir> teleportdata.txt teleportlink.txt
+  teleportbuilding.txt` (`exportTeleport`): the three Media.pk2 tables (UTF-16LE, BOM on row 1, read
+  with the existing `readTable`) -> `teleportdata.csv`, `teleportlink.csv`, `teleportbuilding.csv`,
+  each with a header; the output is loaded back through `teleport.Load` before the tool returns,
+  so an export the server cannot load fails at export time. teleportdata and teleportlink rows
+  whose service column is 0 are skipped, as the client's loader skips them (`FUN_00b9cc80` returns
+  the column's integer; the loader parses the row only when it is non-zero, `0x954b1a` /
+  `0x954b9d`); every retail row has service 1, so nothing is skipped today. teleportbuilding's
+  loader is elsewhere (`Client_LoadAllRefData`, `0x844cd0`) and its service handling is not read,
+  so its column 0 is not filtered. A row with fewer fields than the columns read (14 / 23 / 59 in
+  every retail row) is an error, not a skip: every table's widths are checked before anything is
+  written, and the tool exits 1 naming the file and the row (`export-refdata: ...teleportlink.txt:
+  row 4 (not counting blank and // lines) has 4 fields, fewer than the 22 the export reads`), with
+  no output directory created.
+- `internal/teleport` (new): `Load(dir)` / `Read` -> `Table{Points, Links, Buildings}` in file
+  order; `PointByID`, `PointByBuildingCode` (STORE_CH_GATE -> GATE_CH through the building's id),
+  `LinksFrom` (file order), `LinkBetween`. `Read` refuses a missing or foreign header (checked
+  name by name -- the npcpos loader's rule, tightened), a short row, a non-numeric field, a fee
+  that is not a 32-bit unsigned word, duplicate ids, codes or links, and a link whose end is not a
+  point. `rules.go`: `QuoteFee(link, level, isGM, freeFlag) (fee, Waiver)` and
+  `CheckRestrictions(link, level, pvp) uint16`, with the refusal codes as constants carrying their UIIT
+  tokens.
+- `cmd/server -teleport-dir` (env `SRREVAMP_TELEPORT_DIR`): loads the directory after the npcpos
+  block and logs `level=INFO msg="teleport network loaded" dir=<dir> points=222 links=292
+  buildings=77` on a retail export (slog's text handler; `server/README.md` quotes it so); a configured directory that does not load is fatal (`os.Exit(1)`, as `-npcpos-csv`).
+- `client/tools/qa_shot.sh`: `-teleport-dir $PK2_DIR/teleport` (or `SRREVAMP_TELEPORT_DIR`) when
+  `teleportdata.csv` is there. `deploy/README.md`: the extract/export lines and the compose mount.
+
+**Grounding, re-verified this round** (dump `/var/tmp/decomp_server`, `srv.asm`, the client dump,
+the tables under `/var/tmp/tables`, all read-only):
+
+- The fee: `GObjPC::HandleTeleportUse` (`getfn.sh 00513590`): `uVar7 = piVar5[1]` (`mov
+  esi,[edi+0x4]` at `0x5136d7`), zeroed when `GetMaxLevel` (vslot 74, `+0x128`) is not above 20
+  (`cmp al,0x14; ja; xor esi,esi` at `0x5136de`; the second `cmp al,0xa` is redundant), the
+  fortress tax when the gate's vslot 276 says so, then the 64-bit gold compare -> `0x1c07` at
+  `0x513749`. `CMainProcess::FUN_004f2b50` has the same fee block after the evaluator.
+- The restrictions: `FUN_00513a70` (`getfn.sh 00513a70`, 1,058 bytes) walks the 12-byte triples
+  at `link+0x10..+0x14`; the arms (1 level via vslot 73 unsigned -> `0x1c15`; 2 and 7 `IHaveCart`
+  -> `0x1c10`; 3 the character's PvP state against a mask -> `0x1c19`; 4/5 a held item -> `0x1c23`; 6 `GetJobState`
+  != 4 -> `0x1c24`; anything else passes) and their instruction addresses are in
+  `docs/protocol/teleport_network.md`, "The restriction triples are enforced". Call sites in
+  `srv.asm`: `0x4ef7b9` (`CGObjPC::vslot_309`), `0x4f2e24` and `0x4f34a0`
+  (`CMainProcess::FUN_004f2b50`, the first before the fee). `error_emitters.tsv` lists it as the
+  only emitter of `0x1c15`.
+- The columns: the client's `RefParse_teleportdata` (`0x976840`) and `RefParse_teleportlink`
+  (`0x976c80`) after the loader's service-column reads (`0x954b1a`, `0x954b9d`); the server's
+  `RefTeleport_ExtractData` layout (`refdata_tables.md`); the `_RefObjCommon` prefix for the
+  building (`refobj_binary_format.md`). **One disagreement, recorded rather than resolved:** the
+  client's link parser reads five direct tokens before the triples, the file has six (columns
+  1-6), so by the parser alone the triples would start at column 6. The data puts them at 7: all
+  1,125 type-0 slots have blank or zero data words there (3 blank, all on link 1 -> 5, and 1,122
+  zero; read from column 6 the types would include 999 x69, 110 x14, 102 and two blanks, and every
+  row's first type would be the always-0 column 6), and the one type-4 slot (link 160 -> 162,
+  `GATE_RC_MOUNTAIN_GATE -> GATE_RC_ROC_GATE`) names 23973 = `ITEM_QNO_RM_MEETROC_6_01`, the item
+  the type-4 arm looks up before refusing with the Roc-entrance code.
+- Retail measurements (the three tables copied to the scratchpad, exported, loaded; never
+  committed): 222 / 292 / 77 rows, 0 skipped; every link joins; no duplicate ids, codes or
+  point-per-object; the five town gates resolve by building code (STORE_CH/WC/KT/EU/CA_GATE ->
+  points 1/2/5/20/25); Jangan's links in file order 2, 175, 176, 5, 20, 25; at level 50, 245 links
+  pass, 46 refuse `0x1c15`, the Roc link refuses `0x1c23`; 188 links are free.
+
+**Stand-ins, disclosed** (in `rules.go` and the teleport page): Level stands in for MaxLevel
+(equal unless a character lost levels, which srrevamp cannot do); no fortress tax (no fortresses);
+types 2 and 7 pass (no trade carts); type 3 tests the PvP state the caller passes, and the caller
+passes `PvPNeutral` because srrevamp models no PvP state (no PK system; `internal/duel`'s
+own-design duel sets none); types 4 and 5 refuse when their data 1 is non-zero and type 6 refuses
+on (0, 0) -- the inventory and the job state are not consulted, so the rule fails closed with the
+engine's code; the GM waiver and the testing-flag waiver are own design (the user's ask), reported
+after the engine's level waiver; `CheckRestrictions` returns 0 for a pass where the binary returns
+1. **Enforcing the rules at all is a stand-in**: the evaluator enforces them only when the mode
+byte at `link+8` is 0 -- after each rule (`0x513ccf`) and after the last (`0x513d35`), any non-zero
+mode other than 1 drops every rule failure and ends like a clean walk, and 1 asserts and returns 2
+-- and which value fills `+8` was not read: the `_REFTELELINK` table loads through a reflective
+descriptor (`FUN_0082d770` registers `"_REFTELELINK"` as `CRefTeleLink`, `0x30` bytes), and the
+three columns between the fee and the first triple are 0 in every retail row. srrevamp enforces
+them, as mode 0 does. `0x1c19` has no text (`error_codes.md` has no row). Teleportdata's columns
+10/11 are named by the interaction ids they register (7, 9), not by a service: which services
+those are is still open (round 454), so the plan's "recall designate / return" names were not
+used. The point's associated object is `ObjectID`, not "BuildingID": of the 222 retail points 71
+name a teleportbuilding, 32 a characterdata `NPC_*` row (GATE_NPC_CH_FERRY -> 2011 NPC_CH_FERRY),
+118 none (0), and one -- point 228 `GATE_JOBTEMPLE`, object 49143 -- names an object in no table
+under `/var/tmp/tables` (every table's id column searched, and a second probe grepping every
+decoded table for the number as a field finds it only in teleportdata). The first draft said "33
+retail points name an NPC", counting that one as an NPC.
+
+**Corrections to the record.**
+
+- `docs/protocol/teleport_network.md`: cols 3 and 7-21 are READ (the "INFERRED" paragraph, the
+  "stay inferred" paragraph and "Where that leaves columns 8/9" are marked superseded in place);
+  `0x1c14` is `GetTeleportState` (vslot 72, `0x513634`, `0x1c14` stored at `0x513642`) -- already
+  teleporting -- tested BEFORE the range, and `IsWithinInteractionRange` refuses with its own return
+  value (4 beyond the distance), not `0x1c14`; teleportdata col 3 is the associated object, cols
+  10/11 the interaction registrations, col 12 unread. Two new sections: "The restriction triples
+  are enforced (round 575)" and "The columns srrevamp reads (round 575)", the latter naming the
+  five town gates (GATE_CA is Samarkand's; GATE_SD1/SD2 are Alexandria's).
+- `docs/protocol/recovered_names.tsv`: rows `00513590` (0x1c14 is the teleport-state refusal; the
+  triples are not tested on that path) and `004a8e10` (returns 1/4/0/3; the handler refuses with
+  it; "returns 0/1/3" and "refuses 0x1c14 when it fails" were wrong).
+- `docs/SYSTEMS.md`'s Teleport network row: rewritten (fee and restrictions read, tables loaded,
+  anchors `QuoteFee`, `CheckRestrictions`, `PointByBuildingCode`), still PARTIAL: the handler, the
+  services behind interaction ids 7/9, the mode byte and `FUN_004d9030`'s role stay open.
+- `deploy/README.md`: the recipe's extract loop wrote `"server_dep\silkroad\textdata\$f"`, in
+  which bash's `\$` suppresses the expansion (`echo` gives `server_dep\silkroad\textdata$f`); both
+  loops now write `\\...\\$f`, checked the same way.
+
+**Review follow-ups, folded into this round's commit.** The first draft's code comments
+(`tables.go`'s `Link.Rules`, the exporter's `tlRules`) said every type-0 slot carries BLANK data
+words; recounted read-only over `/var/tmp/tables/teleportlink.txt`: 1,125 type-0 slots of 1,460,
+1,122 with the literal words `0`, 3 blank, all 3 on link 1 -> 5. The comments now say "blank or
+zero" with the counts (the docs already did). The mode byte at `link+8` was described as "every
+rule, then assert and return 2"; per `0x513a70` and `srv.asm` that is mode 1 only -- any other
+non-zero mode walks every rule, drops their failures and ends like a clean walk (the post-pass,
+`1` or `0x1c23`); `teleport_network.md` and `rules.go` now say so. Round 454's "the server's copy
+has no zone-name column" is softened: `RefTeleport_ExtractData` calls the column-skip helper
+`FUN_006b1a80` right after the associated-object dword, so whether the server's copy lacks the
+column or skips it is open; the Interaction7/9 columns are 10/11 either way. And the exporter now
+skips service-0 rows (above), which also gives the round-trip test a row that proves the BOM is
+stripped.
+
+**Re-review fix, folded in: rule type 3 is the character's PvP state.** The first draft read the
+type-3 arm as "a bit of a ref-object byte, not identified" and refused whenever D1 was non-zero.
+Re-read in `srv.asm`: `0x513b46 mov eax,[ebx+0x30]; 0x513b49 mov cl,[eax+0xc]; 0x513b4c mov
+edx,1; 0x513b51 shl edx,cl; 0x513b53 test [esi+0x4],edx; 0x513b56 je 0x513ccc` (pass), else
+`0x1c19` at `0x513b5c`. EBX is the PC -- all three callers do `mov ebx,ebp` right before the call
+(`0x4ef7b7`, `0x4f2e22`, `0x4f349e`), and in `CGObjPC::vslot_309` EBP is `this` (`mov ebp,ecx` at
+`0x4ef4cb`); every other arm reads the character through EBX too (its vtable for level, cart and
+job; its inventory at `+0x1c10`). `+0x30` is the chardata
+pointer and chardata `+0xc` is `PvPSTATE` -- 0 `NEUTRAL`, 1 `ASSAULTER`, 2 `MURDERER` -- which the
+state dump `FUN_00567190` indexes its `PTR_s_PvPSTATE_NEUTRAL_00c6404c` table by
+(`character_state.md`, "The chardata offsets, from the index expressions"; re-read with `getfn.sh
+00567190`). So **the engine refuses iff `D1 & (1 << pvpState)` is non-zero**: D1 is a mask of
+barred states, and `(3,2,0)` bars assaulters and lets a neutral character through, where the draft
+refused it. `CheckRestrictions` now takes the state (`PvPState`, `PvPNeutral` / `PvPAssaulter` /
+`PvPMurderer`) and the constant is `ErrPvPState`. srrevamp models no PvP state (a grep of
+`server/` for PvP / PK / assault / murder finds only the own-design duel, the PK columns
+`character/schema.go` lists as unmodelled, and the death-penalty branches that say there is no PK
+system), so the teleport handler will pass `PvPNeutral` -- a disclosed stand-in, recorded in
+`rules.go` and in `orphans_test.go`'s `CheckRestrictions` line until that call site exists. **No
+retail link uses type 3**: 0 of the 1,460 triple slots in `/var/tmp/tables/teleportlink.txt` (BOM
+stripped), counted twice with different decoders (`iconv` + `awk`, and Python over the raw
+UTF-16; the type tallies sum to 1,460: 1,125 type 0, 84 type 1, 245 type 2, 3 type 7, one each
+of 4, 5, 6), and no cell of columns 7-21 is `3` at all -- so there are no D1 values to report and
+the fix changes no retail link's outcome. The label is corrected in `rules.go`,
+`teleport_network.md` (the type-3 row and "The columns srrevamp reads"), `SYSTEMS.md`'s Teleport
+network row, this entry and the commit message.
+
+**Tests.** `internal/teleport/teleport_test.go` on a SYNTHETIC fixture (own ids, codes, regions,
+positions): all three tables parse (a negative dungeon region, the `xxx` fortress, type-0 slots
+skipped); `PointByBuildingCode`; `LinksFrom(1)` in file order `[3 2 4]` (unsorted on purpose);
+`QuoteFee`: 5000 at level 21, and the NEGATIVES level 20 -> 0 `WaiverLevel`, GM at 50 -> 0
+`WaiverGM`, flag -> 0 `WaiverFlag`, the waivers' order, a free link -> `WaiverNone`;
+`CheckRestrictions`: `(1,1,110)` at 111 -> `0x1c15` and at 110 -> 0, `(1,80,102)` at 79,
+`(2,0,0)` / `(7,0,0)` -> 0, `(4,23973,0)` / `(5,...)` -> `0x1c23`, `(4,0,0)` -> 0, `(6,0,0)` ->
+`0x1c24`, `(6,1,0)` -> 0, an unknown type, first failure wins; type 3 as a PvP-state mask
+(`TestCheckRestrictionsPvPStateMask`): `(3,1,0)` refuses a neutral character, `(3,2,0)` passes a
+neutral one and refuses an assaulter, `(3,1,0)` passes an assaulter, `(3,4,0)` refuses a murderer
+and `(3,3,0)` passes one, `(3,7,0)` refuses anyone, `(3,0,0)` passes; `Read` refuses
+each headerless file, an empty file, a dangling link, duplicate point and link, a negative fee, a
+typed rule with blank data, a short row; `Load` from a directory and without `teleportlink.csv`.
+`cmd/export-refdata/teleport_test.go`: synthetic UTF-16LE tables with a BOM, padded codenames,
+blank and zero data words, the comment line and a service-0 row in teleportdata and teleportlink
+(each repeating an id its file already has, so a row left in makes `teleport.Load` refuse the
+export) go through `exportTeleport` and back through `teleport.Load`; stdout and a missing table
+are refused; and `TestExportTeleportRefusesAShortRow` puts a row with too few fields into each
+table in turn and wants an error naming the file and no output directory. teleportdata's service-0 row is its first and carries the BOM, so it is skipped only
+if the BOM was stripped -- that row is what tests the BOM. The other two files' first rows come
+through whether or not it is stripped (the mark lands in column 0, which the exporter does not
+read for teleportbuilding and only tests for a 0 for teleportlink).
+
+**NEGATIVES, proven.** With the production files stashed (`tables.go`, `rules.go`, both
+`main.go`s), both packages fail to build (`undefined: Waiver ...`, `FAIL ... [build failed]`);
+restored, both pass. And against a naive implementation: `QuoteFee` without the level arm fails
+`level 20 is waived by the engine's rule: QuoteFee = 5000, 0; want 0, 1`, and `CheckRestrictions`
+without the type-1 comparison fails `(1,1,110) at 111 refuses: CheckRestrictions = 0x0, want
+0x1c15` and the `(1,80,102)` case; restored from a copy, green. The export's service skip,
+disabled, fails `the exported tables do not load: teleport: teleportdata.csv line 3: duplicate
+point id 1`; `decode` made to keep the BOM (its loop started at byte 0) fails the same way;
+restored from a copy, green. The first draft's type-3 rule ("refuse when D1 is non-zero") put back
+fails `D1 = 2 (assaulters only) passes a neutral character: CheckRestrictions((3,2,0), pvp 0) =
+0x1c19, want 0x0` and the `(3,1,0)`-assaulter and `(3,3,0)`-murderer cases; the first draft's
+short-row skip put back fails `teleportdata.txt: exportTeleport accepted a row with too few fields`
+for each of the three tables; both restored from a copy, green.
+
+`internal/systems`: the six lookups and rules have no caller until the handler lands, so each is
+in `orphans_test.go`'s `knownOrphans` "wired by map-teleport-protocol" (the round-537 precedent);
+`server/README.md` names `-teleport-dir` and the export mode. `cd server && go build ./... && go
+test -count=1 -p 1 ./...`: 59 packages ok, before and after the doc edits, and again after the
+re-review fix.
+`client/tools/remote_godot.sh tests` (`GODOT_LOCK=/var/tmp/r575/lock`; the only client change is
+`qa_shot.sh`): `ran 97 suite(s), 0 failing`. Booted locally
+(`-in-memory -teleport-dir` on the retail export): `level=INFO msg="teleport network loaded"
+dir=<dir> points=222 links=292 buildings=77`; on a missing directory: `level=ERROR msg="loading the
+teleport network" dir=<dir> err="open <dir>/teleportdata.csv: no such file or directory"`, exit 1.
+The export with a four-field row put into a copy of the retail teleportlink: `export-refdata:
+<path>/teleportlink.txt: row 4 (not counting blank and // lines) has 4 fields, fewer than the 22
+the export reads: "1\t9\t8\t100"`, exit 1, no output directory.
+
+**Records.** This entry; `docs/WORLD_ISSUES.md`'s five-hundred-and-seventy-fifth round;
+`docs/protocol/teleport_network.md`; `docs/SYSTEMS.md`; `docs/protocol/recovered_names.tsv`;
+`server/README.md`; `deploy/README.md`. Beyond the item's file list, disclosed:
+`cmd/export-refdata/teleport_test.go` (the exporter's round trip), `internal/systems/orphans_test.go`
+(the six `knownOrphans` lines), `WORLD_ISSUES.md` (AGENTS.md's per-round rule), `SYSTEMS.md` and
+`recovered_names.tsv` (the corrections above). `docs/TODO.md` has no teleporter item, so it is
+unchanged.
+
+**Deploy note.** Server-only, no wire change, not tag-worthy. Inert until an operator generates
+the directory with `export-refdata -mode teleport` and mounts it (`deploy/README.md`); the QA
+harness wants a copy at `PK2_DIR/teleport` on the render box, which this round did not place (the
+box's pk2 directory is outside what this lane writes).

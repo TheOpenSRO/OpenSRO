@@ -47,7 +47,7 @@ cd server && for t in pk2list export-refdata export-leveldata import-refdata; do
 #    index's order, not glob order (they differ: 1000,2000,... vs 1000,10000,11000,...).
 MEDIA=/path/to/Media.pk2; mkdir refsrc && cd refsrc
 for f in itemdata.txt skilldata.txt leveldata.txt; do
-  /tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\silkroad\textdata\$f" -out $f; done
+  /tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\\silkroad\\textdata\\$f" -out $f; done
 /tmp/pk2list -pk2 "$MEDIA" -filter 'textdata\' | awk '{print $2}' \
   | grep -iE 'textdata\\(itemdata|skilldata)_[0-9]+\.txt$' | while IFS= read -r p; do
     /tmp/pk2list -pk2 "$MEDIA" -extract "$p" -out "$(basename "$(echo "$p" | tr '\\' /)")"; done
@@ -58,7 +58,11 @@ order() { iconv -f UTF-16LE -t UTF-8 "$1" | tr -d '\r' | sed 's/^\xef\xbb\xbf//'
 /tmp/export-leveldata -out leveldata.csv leveldata.txt                      # 140 levels
 /tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\silkroad\textdata\npcpos.txt" -out npcpos.txt
 /tmp/export-refdata  -mode npcpos -out npcpos.csv npcpos.txt                # 12,367 placements; the server reads it with -npcpos-csv
-rm -f itemdata_* skilldata_* npcpos.txt   # the extracted tables are game data; keep only the CSVs
+for f in teleportdata.txt teleportlink.txt teleportbuilding.txt; do
+  /tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\\silkroad\\textdata\\$f" -out $f; done
+/tmp/export-refdata  -mode teleport -out teleport teleportdata.txt teleportlink.txt teleportbuilding.txt
+                     # a DIRECTORY of three CSVs: 222 points, 292 links, 77 buildings; the server reads it with -teleport-dir
+rm -f itemdata_* skilldata_* npcpos.txt teleport*.txt   # the extracted tables are game data; keep only the CSVs
 
 # The exporter grows a strict-suffix column now and then (latest: item columns 61-65 -- the three elixir reinforce-rate dwords and the cooltime group/ms, rounds 262-263, 2026-09-19; before that the six skill prerequisite columns, round 250 -- re-run the SKILLS export too);
 # an older items.csv still loads, but the new column reads as 0 until the export is re-run.
@@ -80,6 +84,7 @@ rm -f itemdata_* skilldata_* npcpos.txt   # the extracted tables are game data; 
 #         - "-postgres-dsn=postgres://postgres:postgres@postgres:5432/srrevamp?sslmode=disable"
 #         - "-leveldata-csv=/data/leveldata.csv"
 #         - "-npcpos-csv=/data/npcpos.csv"       # real monster placements (round 253); omit for the town anchors
+#         - "-teleport-dir=/data/teleport"       # the teleport network (round 575): loaded and counted, not used yet
 docker compose up -d
 ```
 
@@ -95,7 +100,15 @@ The exporter maps only the columns this project has measured (see its package do
 **This changes live gameplay**, so it is the operator's call to run, not something the deploy loop
 does. It is reversible: `TRUNCATE items, skills;` returns the server to the empty state, and
 removing the `-leveldata-csv` line stops levelling. The QA harness on the render box reads the
-same three CSVs from beside the pk2s (`PK2_DIR`), so keep a copy there too.
+same three CSVs from beside the pk2s (`PK2_DIR`), so keep a copy there too -- and the teleport
+directory as `PK2_DIR/teleport` (`qa_shot.sh` passes `-teleport-dir` when
+`teleport/teleportdata.csv` is there).
+
+The teleport directory (round 575) changes nothing a player sees yet: the boot log gains
+`msg="teleport network loaded" dir=... points=222 links=292 buildings=77`, and a directory that is configured
+but does not load (a missing file, a header that is not the exporter's, a link to a point the table
+lacks) stops the server at boot, as a bad `-npcpos-csv` does. The town teleporters that will use it
+arrive in later rounds, each behind its own note here.
 
 Reference data is otherwise not touched by the update loop.
 

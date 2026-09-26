@@ -7075,6 +7075,30 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-seventy-fifth round: the server loads the teleport network, with the grounded fee, waiver and restriction rules
+
+The first round of the town teleporters. `cmd/export-refdata -mode teleport` turns the client's
+`teleportdata.txt`, `teleportlink.txt` and `teleportbuilding.txt` into three CSVs in one directory;
+cmd/server's `-teleport-dir` loads and joins them at boot (`msg="teleport network loaded"
+dir=... points=222 links=292 buildings=77` on a retail export); `internal/teleport` holds the lookups and
+the rules the next item's handler will call. Nothing a player sees yet. The full record is
+`docs/RE_COMPLETION.md`'s round 575.
+
+- **The fee** is the link's second word, waived below level 21 (`cmp al,0x14` at `0x5136de`,
+  `GObjPC::HandleTeleportUse`); GM accounts and a testing flag are two more waivers, own design.
+- **The level gate is real, and it is not columns 8/9 alone.** Columns 7-21 are five (type, data,
+  data) triples, and the server's `FUN_00513a70` walks them before the fee on
+  `CMainProcess::FUN_004f2b50`'s teleport path: type 1 is a level range (`0x1c15`), 2 and 7 a trade
+  cart, 3 the character's PvP state against a mask of barred states (`0x1c19`; no retail link uses
+  it, and srrevamp, with no PvP state, passes NEUTRAL -- a stand-in), 4 and 5 a held item, 6 a job
+  state. The evaluator enforces them only when a mode byte on the link is 0, and what fills it was
+  not read; srrevamp enforces them (a stand-in). Jangan's links to Hotan, Constantinople and Samarkand
+  carry `(1, 1, 110)`, so a level-111 character is refused there.
+- **`0x1c14` is "already teleporting"** (`GetTeleportState`, tested first), not the range test the
+  record called it; the range test refuses with its own return value.
+- The client's link parser reads one leading column fewer than the file has; the data (the Roc
+  link's type-4 item, 23973 `ITEM_QNO_RM_MEETROC_6_01`) fixes where the triples start.
+
 ## Five-hundred-and-seventy-fourth round: batch-22 review follow-ups -- record wording, run counts, doc consistency; no behaviour change
 
 The review notes on rounds 568-573, each re-checked against the code, the logs under
