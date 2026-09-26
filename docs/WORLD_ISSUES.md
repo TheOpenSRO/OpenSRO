@@ -7083,7 +7083,7 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
-## Round 593: the bag stays beside a shop or storage through a window resize
+## Five-hundred-and-ninety-third round: the bag stays beside a shop or storage through a window resize
 
 This was a regression from round 592. The full record is `docs/RE_COMPLETION.md`'s entry of the
 same name. The shop and storage placed the bag by writing its position directly, and the popup
@@ -7093,7 +7093,7 @@ back to (1452, 112). The placements now go through `HudMainPopup.place_at`, via
 needs rarity ≠ 0 as well. The script count is 292: 293 counted a scratch tool in the lane. The rank
 text's authored 168 width, which overruns the 236 piece, is recorded as open.
 
-## Round 592: the target window's close button, health bar and rank row sit where the client puts them
+## Five-hundred-and-ninety-second round: the target window's close button, health bar and rank row sit where the client puts them
 
 The review of rounds 588-591 found three misreads, each re-verified in the asm. The full record is
 `docs/RE_COMPLETION.md`'s entry of the same name.
@@ -7110,7 +7110,7 @@ The review of rounds 588-591 found three misreads, each re-verified in the asm. 
   drag is kept.
 - The tests fail 8 times against 76d8d23.
 
-## Round 591: the main window stays on screen at every window size and UI scale
+## Five-hundred-and-ninety-first round: the main window stays on screen at every window size and UI scale
 
 The review findings for round 587. The full record is `docs/RE_COMPLETION.md`'s entry of the same
 name.
@@ -7129,7 +7129,7 @@ name.
 - The no-fallback risk is recorded. The `+0x728` list is completed, and 0x79ad70 has no data
   reference.
 
-## Round 590: the target window sits centred at the top of the screen, where the client puts it
+## Five-hundred-and-ninetieth round: the target window sits centred at the top of the screen, where the client puts it
 
 The full record is `docs/RE_COMPLETION.md`'s entry of the same name. **Read:** each time the
 client's target window shows a target, it moves itself to ((screen width − the shown piece's width)
@@ -7138,7 +7138,7 @@ placed it by, is not where it stays. **Built:** HudTarget places itself that way
 on every viewport resize, in the UI's own units. Measured: (458, 7) at 1152x648, (842, 7) at
 1920x1080, (337, 7) at 1366x768 with UI scale 1.5. The test fails 4 times against 5a5d896.
 
-## Round 589: a monster's target window is the one the client picks for its rarity
+## Five-hundred-and-eighty-ninth round: a monster's target window is the one the client picks for its rarity
 
 The full record is `docs/RE_COMPLETION.md`'s entry of the same name.
 
@@ -7157,7 +7157,7 @@ The full record is `docs/RE_COMPLETION.md`'s entry of the same name.
 - **Open.** The party suffix. The window's read placement, ((W − w)/2, 7), is not yet applied.
 - `hud_target_layout_test.gd` fails 14 times against fd8df3a and passes here. 111 suites, 0 failing; Go: 59 packages ok.
 
-## Round 588: the target window is built from iftargetwindow.txt, the layout the client loads
+## Five-hundred-and-eighty-eighth round: the target window is built from iftargetwindow.txt, the layout the client loads
 
 The full record is `docs/RE_COMPLETION.md`'s entry of the same name.
 
@@ -7178,7 +7178,7 @@ The full record is `docs/RE_COMPLETION.md`'s entry of the same name.
 - **Measured.** The target is 196x51 -> 236x51 (236x78 for a special mob), and nothing else in the
   audit's tree changed. `hud_target_layout_test.gd` fails 8 times against fcd0b08 and passes here. 111 suites, 0 failing; Go: 59 packages ok.
 
-## Round 587: the character, inventory, skill, action, party and academy windows are one framed window with a pane per tab, as the client builds them
+## Five-hundred-and-eighty-seventh round: the character, inventory, skill, action, party and academy windows are one framed window with a pane per tab, as the client builds them
 
 Items 2 and 3 of the GUI audit's open list: the self-framed windows' outer frame, and the
 inventory docking. The full record, with every address, is `docs/RE_COMPLETION.md`'s entry of
