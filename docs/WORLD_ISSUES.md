@@ -7075,6 +7075,40 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-seventy-seventh round: the Dimensional Gate is clickable -- the placed portal is bound as the gate and lists the client's own gate lines
+
+This is the third round of the town teleporters. A gate is not an NPC: no npcpos row names a
+teleportbuilding id. The thing you click is a placed map object. The client now reads the three
+teleport tables itself (`TeleportReader`). When a region's NPCs are placed, after its objects have
+committed, it tags the placed object nearest each TOWN gate's table point, within 10 units: a
+disclosed rule. Only points that register interaction id 7 (teleportdata column 10) are bound --
+in the retail tables exactly the 7 town gates (CH, WC, KT, EU, CA, SD1, SD2) of the 61 building rows
+a point names in a world region. The tag is `npc_name` "Dimensional Gate" plus `npc_code` and `gate_point_id`, and
+the talk layer goes on the piece bodies of the placed copy, never the template. The talk window
+lists the lines in the real client's order (`FUN_00700440`: ids 7, 9, 8; tokens read at
+`0x6fcf10`/`0x6fcf1a`/`0x6fcf24`). The full record is `docs/RE_COMPLETION.md`'s round 577.
+
+- **Measured in all five towns** (one `--radius 0` boot each, `SRREVAMP_QA_CLICK=gate`). Each
+  gate bound an object 0.7 to 3.6 units from its point: `cj_portal`, `w_cd_portal`,
+  `oas_hot_portal`, `euro_esteuro_fountain01` and `samarkand_center_01`. The talk ray hit the
+  object's piece body, which opened "1. Designate as return/recall point / 2. Select teleport area /
+  3. End conversation.". Only Jangan's (640, 405) and Donwhang's (640, 313) clicks were on-screen;
+  Samarkand's, Constantinople's and Hotan's aim points lay above the frame, so those three prove the
+  tag and the layer, not a click a player could make (the QA line now marks `OFF-SCREEN`). Constantinople's bound model is a fountain, which is not established as
+  retail's gate. With the talk layer mutated away, the same click in Jangan hit nothing on the NPC
+  layer and walked.
+- **Two corrections to the plan.** First, the line is "Select teleport area", not "Select a
+  teleport area:". `UiTextTable` keeps textuisystem's later 19-column row. Second, Godot 4.2.2's
+  `get_string_from_utf16` drops a leading BOM by itself (measured), so a reader without the
+  explicit strip does not lose row 1. The strip is kept as the other readers keep it.
+- **Review fix: no fortress gates, no stand-in walls.** The first cut bound every building row a
+  point names, and put a stand-in cylinder on the talk layer -- the navmesh-wall bit the player's
+  body masks -- at any point with no object near. Measured at 102/153 (621, 330): it printed
+  `teleport gate STORE_SURVIVAL_DW -- ... a stand-in collider was used (cylinder r=5 h=30 ...)`, an
+  invisible pillar in Donwhang. With the id-7 rule and the stand-in removed, the same run prints no
+  gate line, and Jangan still binds `Obj_cj_portal_312`. A new negative test (a fortress-gate row
+  with a link and no id 7) fails on the first cut and passes now.
+
 ## Five-hundred-and-seventy-sixth round: a gate's MOVE is charged and moved -- OpTeleportUse / OpTeleportResult, the arrival through the zone change's own warp
 
 The second round of the town teleporters. The server answers `OpTeleportUse 0x00F3` (gate and

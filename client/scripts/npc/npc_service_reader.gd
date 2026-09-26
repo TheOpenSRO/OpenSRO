@@ -483,6 +483,51 @@ const JOB_THIEF_PATTERNS := [
 	"NPC_SD_T_AREA_THIEF",
 ]
 
+## A teleport gate's lines (round 577), in the order the real client asks for
+## their interaction ids in FUN_00700440 (docs/protocol/character_state.md,
+## "Interaction id to menu item", rows 10-12, re-read in sro_client.asm):
+##   * id 7 (lookup `mov byte [esp+0x1c],0x7` at 0x700c57) -> 0x700c86-0x700c8d
+##     `push 0; push 9; push ebx; call 0x6fcd60`, item 9;
+##   * id 9 (0x700ca7) -> 0x700cda-0x700ce1 `push 0x10`, item 0x10;
+##   * id 8 (0x700cfb) -> after the desert-gate company lines, item 0xa.
+## In FUN_006fcd60's switch (index bytes at 0x6fd394, jump table at 0x6fd2d8)
+## item 9 takes index 8 -> 0x6fcf10 `push 0xdadc38`, item 0x10 index 0xd ->
+## 0x6fcf1a `push 0xdadbf0`, item 0xa index 9 -> 0x6fcf24 `push 0xdadbb8`;
+## those .rdata strings, read as UTF-16 out of the render box's
+## sro_client.exe, are the three tokens below.
+##
+## Which ids a gate has: 7 and 9 are registered from teleportdata columns 10
+## and 11 (`designate`, `recall`; the server's RefTeleport_ExtractData
+## 0x6a7be0, round 454 -- town gates carry (1, 0), GATE_TD (0, 1)). Id 8's
+## registrar (0x6a7f70) reads a table this project has not attributed
+## (character_state.md, "One discrepancy left open"), so `has_links` -- the
+## gate has outgoing teleportlink rows -- STANDS IN for it, disclosed. Whether
+## a gate also has id 2 ("Talk to this person.", item 4) is not read, and that
+## line is not offered.
+##
+## The fallback labels are the player's own textuisystem.txt text for the
+## three tokens from the later 19-column rows ([9]), which UiTextTable keeps
+## (/var/tmp/tables/textuisystem.txt on the render box); the earlier
+## 16-column rows say "Designate this region as your return & recall point!",
+## "Teleport to your return point." and "Select a teleport area:". The talk
+## window shows whichever the archive resolves, and these only when it has
+## no text.
+static func gate_services(has_links: bool, designate: bool, recall: bool) -> Array:
+	var out: Array = []
+	if designate:
+		out.append(Service.new("recall_designate", "Designate as return/recall point", RECALL_POSITION_STRID))
+	if recall:
+		out.append(Service.new("recall_return", "Teleport to return point.", TELEPORT_TO_RESURRECT_STRID))
+	if has_links:
+		out.append(Service.new("teleport", "Select teleport area", TELEPORT_TARGET_STRID))
+	return out
+
+## The gate lines' tokens (gate_services): items 9, 0x10 and 0xa of
+## FUN_006fcd60.
+const RECALL_POSITION_STRID := "UIIT_CTL_RECALL_POSITION"
+const TELEPORT_TO_RESURRECT_STRID := "UIIT_CTL_TELEPORT_TO_RESURRECT_POS"
+const TELEPORT_TARGET_STRID := "UIIT_CTL_TELEPORT_TARGET"
+
 ## The server's codename literals for one job kind (1 Trader, 2 Thief,
 ## 3 Hunter); empty for any other kind.
 static func _job_patterns(kind: int) -> Array:

@@ -4646,6 +4646,10 @@ var _npc_text_table: UiTextTable = null
 ## The shop tables (ShopReader), so the Buy option can open the NPC's real
 ## goods. Built lazily with the NPC tables.
 var _shop_reader: ShopReader = null
+## The teleport network's tables (TeleportReader, round 577): which gate
+## structures stand in a region (_bind_region_gates) and what a gate offers
+## (_npc_services). Built with the NPC tables.
+var _teleport_reader: TeleportReader = null
 var _npc_tables_loaded := false
 ## The NPC whose talk box is open, so a chosen service (Buy, ...) knows who it
 ## is for.
@@ -4743,8 +4747,20 @@ func _load_npc_tables() -> void:
 	_shop_reader = ShopReader.new().load(func(archive_path: String) -> PackedByteArray:
 		var e := ObjectLoader.find_file(_media_pk2, archive_path)
 		return _media_pk2.read_file(e) if e != null else PackedByteArray())
-	print("World3D: NPC tables -- %d spawn(s) across %d region(s), %d model(s), %d name(s), %d shop, %d greetings" % [
-		_npc_spawn_total(), _npc_spawns_by_region.size(), _npc_models.size(), _npc_names.size(), _npc_shop_set.size(), _npc_greetings.size()])
+	# The teleport network (round 577): a gate is not in npcpos -- the
+	# town's Dimensional Gate is a placed object, bound per region by
+	# _bind_region_gates from teleportbuilding's position.
+	_teleport_reader = TeleportReader.new().load(func(archive_path: String) -> PackedByteArray:
+		var e := ObjectLoader.find_file(_media_pk2, archive_path)
+		return _media_pk2.read_file(e) if e != null else PackedByteArray())
+	# The gate's name resolves through the same textdata_object table
+	# (_object_names); it was just parsed, so it is kept rather than parsed
+	# a second time on the first gate.
+	if _object_name_table == null and names != null:
+		_object_name_table = names
+	print("World3D: NPC tables -- %d spawn(s) across %d region(s), %d model(s), %d name(s), %d shop, %d greetings; %s" % [
+		_npc_spawn_total(), _npc_spawns_by_region.size(), _npc_models.size(), _npc_names.size(), _npc_shop_set.size(), _npc_greetings.size(),
+		_teleport_reader.summary()])
 
 ## A floating name over an NPC's head.
 ##
@@ -5148,6 +5164,12 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 	if group == null:
 		return
 	_grid.mark_npcs_done(region_x, region_y)
+	# The region's teleport gates, under the same mark (round 577): both
+	# callers have committed the region's objects just before this, so the
+	# placed portal is in the tree, and a region streamed out and back in is
+	# bound again with its fresh copies. Before the spawn list, which a
+	# region with a gate and no NPC would return on.
+	_bind_region_gates(region_x, region_y, group)
 	var region_pair := _grid.nav_graph_for_region(region_x, region_y)
 
 	var spawns: Array = _npc_spawns_by_region.get("%d_%d" % [region_x, region_y], [])
@@ -5237,6 +5259,114 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 		placed += 1
 	print("World3D: %d/%d NPC(s) placed in %d/%d (%d had no model, %d named, %d monster rows left to the server; %d faced toward open space in %.1f ms)" % [
 		placed, spawns.size(), region_x, region_y, skipped, named, monsters_skipped, faced, facing_usec / 1000.0])
+
+## How near a placed object has to stand to a gate building's table point to
+## be taken as the gate, in region-local x/z units (round 577). **A disclosed
+## stand-in, not recovered**: nothing read ties a teleportbuilding row to a
+## placed object. The rule rests on the placements: Jangan's cj_portal.bsr is
+## placed 3.6 units (x/z) from STORE_CH_GATE's point (97/168 local 1254,
+## 1374), with cj_portal_stone.bsr at 7.5; and the five town gates each bound
+## an object 0.7 to 3.6 units from their points in round 577's runs on the
+## render box (docs/protocol/teleport_network.md, "The clickable gate (round
+## 577)"; docs/RE_COMPLETION.md, round 577).
+const GATE_BIND_RADIUS := 10.0
+
+## Makes each town's Dimensional Gate standing in a region clickable (round
+## 577).
+##
+## A gate is not an NPC: no npcpos row names a teleportbuilding id (the
+## first-column join of the two is empty), so _try_spawn_region_npcs never
+## places one. The town's Dimensional Gate is a placed map object -- in
+## Jangan cj_portal.bsr -- and teleportbuilding gives the structure's
+## region-local position (columns 41, 43-45, TeleportReader).
+##
+## **Only a point that registers interaction id 7 is bound** (Point.interaction7,
+## teleportdata column 10 -- round 454, docs/protocol/teleport_network.md,
+## "The clickable gate (round 577)"). Joined against the retail tables, 61
+## teleportbuilding rows in a world region are named by a serviced point, and
+## exactly 7 of them register id 7: STORE_CH/WC/KT/EU/CA_GATE and Alexandria's
+## STORE_SD_GATE1/2 -- the town gates. The other 54 (the fortress, charge,
+## glory and revival gates, the tomb, desert and delta gates,
+## STORE_SURVIVAL_DW in Donwhang's 102/153) are left alone: nothing ties any
+## of them to a placed object, and binding them made arbitrary scenery a talk
+## target. That the flag picks the town gates is what the table shows; the
+## client's own reason for it (its designate line) is round 454's.
+##
+## So for each such building in the region, the nearest placed object
+## (the region's RealMapObjects container, whose children are positioned
+## region-local) within GATE_BIND_RADIUS is tagged the way an NPC holder is:
+## `npc_name` (the building's name string through textdata_object --
+## SN_NPC_CH_GATE is "Dimensional Gate"), `npc_code` (STORE_CH_GATE, which
+## _npc_services turns into the gate's lines) and `gate_point_id` (its
+## teleportdata id). The tags and the talk layer go on the placed COPY:
+## ObjectTemplateCache.instance returns a duplicate() of the world's
+## template, whose own nodes are never touched.
+##
+## _try_talk_to_npc's ray masks NPC_COLLISION_LAYER only and walks up from
+## the collider to the `npc_name` tag, and ObjectLoader gives each piece a
+## StaticBody3D on the default layer 1, so NPC_COLLISION_LAYER is OR-ed into
+## every one of them. The player already stops at layer 1 (its mask is 17,
+## both bits) and the camera arm masks layer 1 only, so nothing else about
+## the gate's collision changes.
+##
+## Nothing within GATE_BIND_RADIUS (a region without its .o, a gate whose
+## model is placed by the neighbouring region): the gate is left unbound --
+## not clickable -- and the log says so. No stand-in collider is added: the
+## talk layer is the navmesh-wall bit the player's body masks, so any body put
+## there is a wall where retail has none.
+func _bind_region_gates(region_x: int, region_y: int, group: Node3D) -> void:
+	if _teleport_reader == null:
+		return
+	var container := group.get_node_or_null("RealMapObjects_%d_%d" % [region_x, region_y]) as Node3D
+	for building_v in _teleport_reader.buildings_in_region(region_x, region_y):
+		var building: TeleportReader.Building = building_v
+		var point := _teleport_reader.point_for_building(building.code)
+		if point == null or not point.interaction7:
+			continue
+		var spot := Vector2(building.x, building.z)
+		var best: Node3D = null
+		var best_d := GATE_BIND_RADIUS
+		if container != null:
+			for child in container.get_children():
+				var node := child as Node3D
+				if node == null:
+					continue
+				var d := Vector2(node.position.x, node.position.z).distance_to(spot)
+				if d <= best_d:
+					best_d = d
+					best = node
+		var gate_name := _gate_display_name(building)
+		if best != null:
+			var bodies := _tag_gate(best, building.code, gate_name, point.id)
+			print("World3D: teleport gate %s bound to %s (%.1f units from the table's point; point %d, %d piece bod(ies) on the talk layer)" % [
+				building.code, best.name, best_d, point.id, bodies])
+		else:
+			print("World3D: teleport gate %s -- no placed object within %.0f units of the table's point (%.0f, %.0f) in %d/%d; left unbound (not clickable)" % [
+				building.code, GATE_BIND_RADIUS, building.x, building.z, region_x, region_y])
+
+## What a gate is called: its building's name string (SN_NPC_CH_GATE) through
+## textdata_object, as an NPC's is; "" when the row has none ("xxx") or the
+## table does not name it -- the talk window then shows "...".
+func _gate_display_name(building: TeleportReader.Building) -> String:
+	var names := _object_names()
+	if names == null or not names.has(building.name_strid):
+		return ""
+	var text := names.get_text(building.name_strid).strip_edges()
+	return "" if text == building.name_strid else text
+
+## Tags a node as a talkable gate (see _bind_region_gates) and puts every
+## StaticBody3D under it -- itself included -- on the talk layer as well as
+## its own. Returns how many bodies it changed.
+func _tag_gate(node: Node3D, code: String, gate_name: String, point_id: int) -> int:
+	node.set_meta("npc_name", gate_name)
+	node.set_meta("npc_code", code)
+	node.set_meta("gate_point_id", point_id)
+	var bodies: Array = node.find_children("*", "StaticBody3D", true, false)
+	if node is StaticBody3D:
+		bodies.append(node)
+	for body in bodies:
+		(body as StaticBody3D).collision_layer |= NPC_COLLISION_LAYER
+	return bodies.size()
 
 ## Loads real terrain from a real Map.pk2 region .m file via MapmReader +
 ## MapmTerrainBuilder, replacing both the placeholder ground's visual mesh
@@ -7710,7 +7840,10 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_CLICK="monster,npc,ground" (needs --server for monsters) left-click
 ##                          each through the real dispatcher after standing in
 ##                          front of it, logging what the NPC ray and the monster
-##                          ray hit and which path took the click
+##                          ray hit and which path took the click; "gate"
+##                          (round 577) is the nearest teleport gate
+##                          _bind_region_gates bound, aimed at the middle of
+##                          its drawn box
 ##   SRREVAMP_QA_EQUIP="s=id,.." dress the player from this loadout when no
 ##                          server is present: "slot=item_id" pairs (slots per
 ##                          EquipmentNet, e.g. "1=3637,4=3638,5=3639,6=3632"
@@ -8879,6 +9012,7 @@ func _qa_mob_strike(monster: int, result: CombatNet.AttackResult) -> void:
 ## log shows what the NPC ray and the monster ray each hit at that screen
 ## point and which path took the click. That is the measurement behind
 ## "clicking a monster opened the talk window": the node, not the impression.
+## "gate" (round 577) clicks the nearest bound teleport gate (_qa_gate_target).
 var _qa_click_queue: Array = []
 var _qa_click_stage := 0
 var _qa_click_wait := 0
@@ -8919,7 +9053,13 @@ func _qa_advance_click() -> void:
 		print("QA CLICK %s: target %s is behind the camera" % [kind, str(_qa_click_target["name"])])
 	else:
 		var screen := camera_3d.unproject_position(aim)
-		print("QA CLICK %s: '%s' at world %s -> screen %s" % [kind, str(_qa_click_target["name"]), str(aim.round()), str(screen.round())])
+		# Marked when the point is outside the viewport (round 577's review:
+		# three gate clicks were aimed off-screen and read as "clicked
+		# through"): such a click proves the tag and the layer, not a click a
+		# player could make.
+		var on_screen := get_viewport().get_visible_rect().has_point(screen)
+		print("QA CLICK %s: '%s' at world %s -> screen %s%s" % [kind, str(_qa_click_target["name"]), str(aim.round()), str(screen.round()),
+			"" if on_screen else " (OFF-SCREEN: not a click a player could make)"])
 		_probe_click_rays(screen)
 		_qa_click_logging = true
 		var took := _dispatch_left_click(screen)
@@ -8974,6 +9114,32 @@ func _qa_click_target_for(kind: String) -> Dictionary:
 				return {}
 			return {"pos": best_n.global_position, "half_height": _qa_click_half_height(best_n, "Body"),
 				"name": str(best_n.get_meta("npc_name"))}
+		"gate":
+			# A teleport gate bound by _bind_region_gates (round 577): a placed
+			# object in a region's RealMapObjects container (a child of the
+			# terrain group) -- the nearest whose npc_code is STORE_*_GATE.
+			var best_g: Node3D = null
+			var best_gd := INF
+			for group in get_children():
+				if not (group is Node3D) or not String(group.name).begins_with("RealTerrain_"):
+					continue
+				var candidates: Array = []
+				for child in group.get_children():
+					if String(child.name).begins_with("RealMapObjects"):
+						candidates.append_array(child.get_children())
+				for node in candidates:
+					if not (node is Node3D) or not node.has_meta("npc_code"):
+						continue
+					var gate_code := str(node.get_meta("npc_code"))
+					if not (gate_code.begins_with("STORE_") and gate_code.ends_with("_GATE")):
+						continue
+					var d := (node as Node3D).global_position.distance_to(player.global_position)
+					if d < best_gd:
+						best_gd = d
+						best_g = node
+			if best_g == null:
+				return {}
+			return _qa_gate_target(best_g)
 		"ground":
 			var spot := player.global_position + Vector3(0.0, 0.0, 30.0)
 			var pair := _nav_graph_for(spot)
@@ -9002,6 +9168,27 @@ func _qa_show_cursor_swatch(cursor_id: int, at: Vector2) -> void:
 	swatch.texture = tex
 	swatch.size = tex.get_size() * 2.0
 	swatch.position = at - Vector2(_cursor_hotspots[cursor_id]) * 2.0
+
+## The QA click's target for a bound gate (round 577): the middle of its
+## drawn meshes' world box -- "pos" the box's bottom centre, "half_height"
+## half its height -- or its own origin when it draws nothing. Named
+## "<gate name> (<node>)" so the log says which object took the click. The
+## box's middle can fall outside the frame for a tall composite (round 577's
+## Samarkand, Constantinople and Hotan clicks were aimed off-screen): such a
+## click proves the tag and the layer, not a click a player could make.
+func _qa_gate_target(gate: Node3D) -> Dictionary:
+	var label := "%s (%s)" % [str(gate.get_meta("npc_name")), gate.name]
+	var box := AABB()
+	var have := false
+	for node in gate.find_children("*", "MeshInstance3D", true, false):
+		var mi := node as MeshInstance3D
+		var b: AABB = mi.global_transform * mi.get_aabb()
+		box = b if not have else box.merge(b)
+		have = true
+	if not have:
+		return {"pos": gate.global_position, "half_height": 0.0, "name": label}
+	var centre := box.get_center()
+	return {"pos": Vector3(centre.x, box.position.y, centre.z), "half_height": box.size.y * 0.5, "name": label}
 
 ## Half the height of the click capsule under a body, so the QA click aims at
 ## the target's middle rather than its feet.
@@ -11107,7 +11294,18 @@ func _npc_greeting_text(code: String) -> String:
 func _npc_services(code: String) -> Array:
 	if code == "":
 		return []
-	return NpcServiceReader.services_for(code, _npc_shop_set, _guild_id, _guild_master)
+	var out := NpcServiceReader.services_for(code, _npc_shop_set, _guild_id, _guild_master)
+	# A teleport gate (round 577, _bind_region_gates): its lines come from its
+	# teleportdata point -- the two registration columns and whether any link
+	# leaves it (NpcServiceReader.gate_services). "teleport" and the recall
+	# lines fall to _on_npc_service_selected's default until they have a
+	# window and a server.
+	if _teleport_reader != null:
+		var point := _teleport_reader.point_for_building(code)
+		if point != null:
+			out.append_array(NpcServiceReader.gate_services(
+				not _teleport_reader.links_from(point.id).is_empty(), point.interaction7, point.interaction9))
+	return out
 
 ## Rebuilds the talk menu if it is still open, after the player's guild state
 ## changed (round 521): a guild NPC's lines depend on it. It rebuilds in place

@@ -528,6 +528,49 @@ func _init() -> void:
 		var no: bool = has_offers_repair and not bool(reader_script.call("offers_repair", code))
 		_check(no, "\"%s\" hides the store's repair buttons (no interaction 4)" % code)
 
+	# (q) Round 577: a teleport gate's lines. FUN_00700440 asks for id 7
+	# (0x700c57 -> item 9), id 9 (0x700ca7 -> item 0x10) and id 8 (0x700cfb
+	# -> item 0xa) in that order, and FUN_006fcd60 pushes
+	# UIIT_CTL_RECALL_POSITION (0x6fcf10), UIIT_CTL_TELEPORT_TO_RESURRECT_POS
+	# (0x6fcf1a) and UIIT_CTL_TELEPORT_TARGET (0x6fcf24) for them. Reached
+	# through the script object, so a reader without gate_services FAILS here
+	# rather than failing to parse (NEGATIVE: the pre-round tree).
+	var has_gate := false
+	for m in reader_script.get_script_method_list():
+		if str(m.get("name", "")) == "gate_services":
+			has_gate = true
+	_check(has_gate, "NpcServiceReader has gate_services")
+	var town_gate: Array = reader_script.call("gate_services", true, true, false) if has_gate else []
+	_check(_keys(town_gate) == ["recall_designate", "teleport"],
+		"a town gate (links, id 7, no id 9) offers the designate line then the teleport line (got %s)" % [_keys(town_gate)])
+	var gs_designate = _find(town_gate, "recall_designate")
+	var gs_teleport = _find(town_gate, "teleport")
+	_check(gs_designate != null and gs_designate.strid == "UIIT_CTL_RECALL_POSITION",
+		"the designate line is item 9's token, UIIT_CTL_RECALL_POSITION")
+	_check(gs_teleport != null and gs_teleport.strid == "UIIT_CTL_TELEPORT_TARGET",
+		"the teleport line is item 0xa's token, UIIT_CTL_TELEPORT_TARGET")
+	var every_gate: Array = reader_script.call("gate_services", true, true, true) if has_gate else []
+	_check(_keys(every_gate) == ["recall_designate", "recall_return", "teleport"],
+		"all three come in the client's order 7, 9, 8 (got %s)" % [_keys(every_gate)])
+	var gs_return = _find(every_gate, "recall_return")
+	_check(gs_return != null and gs_return.strid == "UIIT_CTL_TELEPORT_TO_RESURRECT_POS",
+		"the return line is item 0x10's token, UIIT_CTL_TELEPORT_TO_RESURRECT_POS")
+	_check(has_gate and (reader_script.call("gate_services", false, false, false) as Array).is_empty(),
+		"a gate with no link and no registration offers nothing")
+	# NEGATIVE: the gate's codename alone is no shop, warehouse, guild or job
+	# pattern -- its lines come only from gate_services.
+	_check(NpcServiceReader.services_for("STORE_CH_GATE", {}).is_empty(),
+		"services_for(\"STORE_CH_GATE\", {}) alone yields nothing")
+	if has_gate and has_composer:
+		var ui_q := {"UIIT_CTL_RECALL_POSITION": "DESIGNATE-TEXT", "UIIT_CTL_TELEPORT_TARGET": "SELECT-TEXT",
+			"UIIT_STT_NPC_CHATTING_WND_TALKEND": "END-TEXT"}
+		var resolve_q := func(token: String, fallback: String) -> String:
+			return str(ui_q.get(token, fallback)) if token != "" else fallback
+		var qmenu: PackedStringArray = reader_script.call("talk_menu_lines", "Dimensional Gate", town_gate, resolve_q)
+		_check(qmenu == PackedStringArray(["[url=recall_designate]1. DESIGNATE-TEXT[/url]",
+				"[url=teleport]2. SELECT-TEXT[/url]", "[url=end]3. END-TEXT[/url]"]),
+			"the town gate's menu is 1. designate text / 2. select text / 3. end text (got %s)" % [qmenu])
+
 	# (j) is in _initialize, below, which also reports the result.
 
 ## (j) Added after review: the rule reaches the store window's buttons.

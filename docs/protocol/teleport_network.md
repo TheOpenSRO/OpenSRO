@@ -1,7 +1,7 @@
 # The teleport network
 
 Three real tables describe every gate in the game and how they connect. srrevamp
-builds its town teleporters from them (rounds 575 and 576, "What srrevamp built"
+builds its town teleporters from them (rounds 575 to 577, "What srrevamp built"
 below).
 
 **All three came out of `Media.pk2` this pass.** Only `teleportdata.txt` had been
@@ -191,8 +191,12 @@ attributed to the namespace, not binders; the 0xe0-byte parser that carries a `T
 
 **The join is confirmed by a shared id**: `GATE_CH` in `teleportdata` carries
 building object `2094`, and `teleportbuilding`'s first row is id `2094`,
-`STORE_CH_GATE`. The `STORE_` prefix is the same family the shop chain uses, so a
-gate is an NPC you talk to.
+`STORE_CH_GATE`. The `STORE_` prefix is the same family the shop chain uses, and a
+gate is talked to the way an NPC is -- but it is **not an NPC**: no npcpos row
+names a teleportbuilding id (the join of npcpos's NPC ids with the building ids is
+empty), so nothing places a gate as a character. The structure the player clicks is
+a placed map object, and the building row's position finds it: "The clickable gate
+(round 577)" below.
 
 ## Also extracted, unread
 
@@ -205,7 +209,9 @@ The points are grounded and positioned, the graph is real, and the cost and the
 level gate are read: the fee at its use-site (2026-09-19) and the restriction
 evaluator (round 575, below). srrevamp loads the three tables since round 575
 (`internal/teleport`, cmd/server's `-teleport-dir`), and since round 576 a gate's
-MOVE is charged and moved by them.
+MOVE is charged and moved by them. Since round 577 the client reads them too
+(`TeleportReader`): each town's Dimensional Gate is clickable and lists its lines
+("The clickable gate (round 577)").
 
 ### srrevamp wire: OpTeleportUse / OpTeleportResult (round 576)
 
@@ -287,6 +293,103 @@ request), the fortress tax (no fortresses), and the retail receipt line's source
 (the client shows `UIIT_CTL_TELEPORT_RESULT` / `_FREE_RESULT` from its own
 archive, choosing the free one when nothing was charged -- the retail dialog's
 own choice on a zero fee word, `UI_TELEPORT::FUN_006fd3e0`).
+
+### The clickable gate (round 577)
+
+The client binds each gate structure to the object the player sees and gives it
+the gate's talk lines. `TeleportReader` (`client/scripts/npc/teleport_reader.gd`)
+reads the three tables out of the player's own Media.pk2 -- the columns in "The
+columns srrevamp reads" below, the same ones the server's exporter reads -- and
+`World3D._bind_region_gates` runs when a region's NPCs are placed, after its
+objects commit, and again when a streamed-out region comes back.
+
+**Only the town gates are bound: points that register interaction id 7.** A
+teleportbuilding row is bound only when the teleportdata point that names it has
+column 10 = 1 (id 7, the designate registration, round 454). This is a rule read
+off the table, not the client's own selection: joining the retail tables
+(teleportbuilding column 3 against teleportdata column 3, serviced points,
+region > 0) gives 61 building rows in a world region, and exactly 7 of them carry
+the id-7 flag -- `STORE_CH_GATE`, `STORE_WC_GATE`, `STORE_KT_GATE`,
+`STORE_EU_GATE`, `STORE_CA_GATE` and Alexandria's `STORE_SD_GATE1`/`STORE_SD_GATE2`.
+The other 54 are left alone: the fortress, charge, glory and revival gates
+(`STORE_JA/CH/BD/BJ/KT/HT_FORT_GATE*`, ...), the tomb, desert, delta and
+Tahomet/Roc gates, the rows named `STORE_SURVIVAL*`, `STORE_TOGUI_TRADEROUTE_*`,
+`STORE_ARABIAN_*`, `STORE_BAGHDAD`, `STORE_GARDEN_DUNGEON`, `STORE_PALACE` and
+`STORE_SOLO_STR` (`STORE_SURVIVAL_DW` stands in Donwhang's 102/153 at local
+(621, 320) with 14 outgoing links), and `STORE_TD_GATE` (id 9 only). Nothing ties any of those rows
+to a placed object, and binding them (the first cut of round 577) made whatever
+scenery stood within 10 units a talk target, or put a stand-in collider at the
+point.
+
+**The binding rule is a disclosed stand-in.** For each such row, the nearest
+placed object (x/z, region-local) within 10 units of the row's point is taken as
+the gate. Nothing read ties a building row to a placed object. The rule rests on
+the placements, measured by the client's own bind lines in one run per town on
+the render box (round 577; Alexandria's two gates were not run):
+
+| gate | region | bound object | x/z from the point |
+|---|---|---|---|
+| `STORE_CH_GATE` Jangan | 97/168 | `cj_portal` (`cj_portal_stone` at 7.5) | 3.6 |
+| `STORE_WC_GATE` Donwhang | 103/153 | `w_cd_portal` | 3.3 |
+| `STORE_KT_GATE` Hotan | 92/135 | `oas_hot_portal` | 0.7 |
+| `STORE_EU_GATE` Constantinople | 105/79 | `euro_esteuro_fountain01` | 2.6 |
+| `STORE_CA_GATE` Samarkand | 107/107 | `samarkand_center_01` (its piece `samarkand_potal_03` took the click) | 1.0 |
+
+Four of the five model names say portal. Constantinople's is a fountain, and
+whether retail's gate there is that model is **not established**: it is the object
+the rule picks, and a click on it opens the gate's talk window. The copy placed in the world gets the tags an NPC holder carries
+(`npc_name` from the building's name string through textdata_object --
+`SN_NPC_CH_GATE` is "Dimensional Gate" -- `npc_code` `STORE_CH_GATE`,
+`gate_point_id`), and the talk ray's layer is OR-ed into every piece body under it.
+The shared template in `ObjectTemplateCache` is never touched. When no object is
+within 10 units, the gate is **left unbound** -- not clickable -- and the log says
+so. There is no stand-in collider: the talk layer is the navmesh-wall bit
+(`NPC_COLLISION_LAYER`, 0b10000), which the player's body masks
+(`collision_mask = 17` in World3D.tscn), so any body put there is a wall where
+retail has none. Measured on the render box (radius 0, 102/153 at (621, 330),
+`SRREVAMP_QA_CLICK=gate`): the first cut printed `teleport gate STORE_SURVIVAL_DW
+-- no placed object within 10 units ... a stand-in collider was used (cylinder
+r=5 h=30 at local y -103.46)`; with the id-7 rule the region prints no gate line
+and the click finds no target. Jangan's gate still binds (`Obj_cj_portal_312`, 3.6
+units) and its on-screen click (640, 405) opens the three lines.
+
+**What the click runs measure.** Jangan's (640, 405) and Donwhang's (640, 313)
+clicks were on-screen. The QA click aims at the middle of the bound object's whole
+drawn box, and for Samarkand (640, -1013), Constantinople (640, -1838) and Hotan
+(640, -34) that point was outside the 1280x720 frame: those runs prove the tag,
+the layer and the talk path, **not a click a player could make there**. The QA log
+now marks such a point `OFF-SCREEN`.
+
+**Every piece of the bound object is talkable.** The layer goes on every piece
+body under the object, and the talk ray runs before the walk ray. Samarkand's bind
+covered all 10 piece bodies of `samarkand_center_01`, Constantinople's 7 of the
+fountain; if those composites hold walkable plaza, stair or wall pieces, a click
+meant to walk there opens the gate window instead. Not measured. The hover
+cursor over a gate is the talk cursor (`_hover_kind_at`), not `CursorSet.ID_GATE`;
+wiring the gate cursor is left to the board.
+
+**The lines follow the client's menu.** `FUN_00700440` asks for id 7 (`0x700c57`,
+item 9), then id 9 (`0x700ca7`, item 0x10), then id 8 (`0x700cfb`, the
+desert-gate company lines, then item 0xa). `FUN_006fcd60`'s switch pushes
+`UIIT_CTL_RECALL_POSITION` for item 9 (`0x6fcf10`), `UIIT_CTL_TELEPORT_TO_RESURRECT_POS`
+for 0x10 (`0x6fcf1a`) and `UIIT_CTL_TELEPORT_TARGET` for 0xa (`0x6fcf24`), all read
+as UTF-16 out of `sro_client.exe` (`NpcServiceReader.gate_services`). Ids 7 and 9
+come from teleportdata columns 10 and 11. **Id 8 does not have a table to read:**
+its registrar (`0x6a7f70`) reads a table this project has not attributed
+(`character_state.md`, "One discrepancy left open"), so "the gate's point has an
+outgoing link" stands in for it, disclosed. Whether a gate also offers id 2 ("Talk
+to this person.") is not read, and srrevamp does not offer it. A town gate
+(columns 10/11 = 1, 0, with links) therefore lists the designate line, the
+teleport line and the end line. The text is whatever the player's
+textuisystem.txt resolves. `UiTextTable` keeps the later 19-column rows ("Designate
+as return/recall point", "Select teleport area"), not the earlier 16-column rows'
+"Designate this region as your return & recall point!" / "Select a teleport area:".
+
+Choosing a line does not do anything yet. "teleport" opens the board once
+map-teleport-board lands, and until then it and the two recall lines say "... is
+not available yet" (`World3D._on_npc_service_selected`'s default). srrevamp models
+no return point. `SRREVAMP_QA_CLICK=gate` clicks the nearest bound gate through the
+real dispatcher.
 
 ### srrevamp wire: FrameRegion (round 570)
 
@@ -378,7 +481,13 @@ with `+0x30` holding the associated object and the insert going through the same
 guessed here: neither id has an explicit gate anywhere in the server, so both
 fall to the `default` arm of the `0x046` switch, and no reader distinguishes
 them. What is settled is that the columns are booleans controlling two distinct
-offered services on the gate object.
+offered services on the gate object. **The client names them** (round 577): its
+talk menu turns id 7 into item 9, `UIIT_CTL_RECALL_POSITION` ("Designate this
+region as your return & recall point!"), and id 9 into item 0x10,
+`UIIT_CTL_TELEPORT_TO_RESURRECT_POS` ("Teleport to your return point.") --
+`character_state.md`, "Interaction id to menu item", rows 10 and 11, and "The
+clickable gate (round 577)" below. What the server does when either is chosen is
+still unread.
 
 This is the first grounded example of **where interaction ids come from**: a
 refdata loader registers them on a ref object from boolean columns at table-load

@@ -39727,3 +39727,236 @@ network row (anchor `TeleportHandler`); `server/README.md` (`-teleport-free`, `-
 whether srrevamp-01 runs it on is the user's decision (`deploy/README.md`). The operator must mount
 the teleport directory on srrevamp-01 for the teleporters to work at all. Client half: ships in the
 release with map-teleport-gate-talk and map-teleport-board; not tag-worthy alone.
+
+## The Dimensional Gate is clickable: the placed portal object is bound as the gate NPC and its talk menu offers 'Select a teleport area:' (round 577)
+
+This is the third round of the town-teleporter batch. The user asked on 2026-09-25 for the town
+"crystals" that teleport you between towns for gold. Clicking a town's Dimensional Gate now opens
+the talk window. The window is titled with the gate's own name, "Dimensional Gate". It lists the
+client's own lines for a gate: the return-point designation, the teleport-area line and the end
+line. Choosing a line does nothing new yet. "teleport" and the recall lines answer "... is not
+available yet" until the board (map-teleport-board) and a return-point model exist.
+
+**Answer to the title.** The title's quote, 'Select a teleport area:', is the text of the EARLIER
+16-column row. The player's textuisystem.txt holds `UIIT_CTL_TELEPORT_TARGET` twice, and
+`UiTextTable` keeps the later 19-column row. So the line reads **"Select teleport area"**, and the
+designate line reads "Designate as return/recall point". The job-guild lines of round 526 work
+the same way.
+
+**What was wired.**
+
+- `client/scripts/npc/teleport_reader.gd` (new, `TeleportReader`). It parses the three Media.pk2
+  tables: `server_dep\silkroad\textdata\teleportdata.txt`, `teleportlink.txt` and
+  `teleportbuilding.txt`.
+  - It reads the 0-based columns that `server/cmd/export-refdata` reads (round 575). teleportdata:
+    id 1, code 2, object 3, zone 4, region 5, x/y/z 6-8, radius 9, interaction flags 10/11.
+    teleportlink: from 1, to 2, fee 3. teleportbuilding: id 1, code 2, name 5, region 41,
+    x/y/z 43-45.
+  - teleportdata and teleportlink rows are kept only when their service column is a non-zero
+    integer. The client's loader parses a row only when that column is non-zero (`0x954b1a`,
+    `0x954b9d`). teleportbuilding's column 0 is not filtered. A row whose id is not an integer is
+    skipped.
+  - The API: `buildings_in_region(rx, ry)`, `point_for_building(code)`, `links_from(point_id)`
+    (file order), `place_token(point_id)` and `summary()`. `point_for_building` joins teleportdata's
+    object column to the building's id. Region ids unpack as `(x << 8) | y`, as npcpos does. A
+    negative region (a dungeon) or region 0 belongs to no region.
+- `NpcServiceReader.gate_services(has_links, designate, recall)` returns the gate's lines in the
+  real client's order. `FUN_00700440` asks for id 7 at `0x700c57` (item 9), id 9 at `0x700ca7` (item
+  0x10) and id 8 at `0x700cfb` (item 0xa, after the desert-gate company lines).
+  - Each item's token was re-read this round in `/var/tmp/sro_client.asm` and in the exe's
+    `.rdata`, decoded as UTF-16. `FUN_006fcd60`'s index bytes are at `0x6fd394` and its jump table
+    at `0x6fd2d8`.
+  - Item 9 takes index 8 -> `0x6fcf10` `push 0xdadc38` = `UIIT_CTL_RECALL_POSITION`.
+  - Item 0x10 takes index 0xd -> `0x6fcf1a` `push 0xdadbf0` = `UIIT_CTL_TELEPORT_TO_RESURRECT_POS`.
+  - Item 0xa takes index 9 -> `0x6fcf24` `push 0xdadbb8` = `UIIT_CTL_TELEPORT_TARGET`.
+- `World3D`:
+  - `_load_npc_tables` loads the reader and keeps its textdata_object parse as
+    `_object_name_table`, so the table is not parsed twice. Its load line adds `222 teleport
+    point(s), 292 link(s), 77 gate building(s)`.
+  - `_try_spawn_region_npcs` calls `_bind_region_gates` right after the region's NPC mark. Both
+    callers, the grid centre and `_load_region_cell`, commit the region's objects just before, so
+    the portal is in the tree. The mark goes when a streamed-out region is unloaded (round 563), so
+    the fresh copies are bound again when the region comes back.
+  - `_bind_region_gates` handles each teleportbuilding row in the region whose point registers
+    interaction id 7 (teleportdata column 10 = 1) -- the town gates; see "Review fix" below. It
+    takes the nearest child of `RealMapObjects_<rx>_<ry>` (positions region-local) within
+    `GATE_BIND_RADIUS` (10) of the row's x/z. It tags that node `npc_name` (the name string through
+    textdata_object), `npc_code` and `gate_point_id`. It ORs `NPC_COLLISION_LAYER` into every
+    StaticBody3D under the node (`_tag_gate`).
+  - When no object is that near, the gate is left unbound (not clickable) and the log says so.
+    The first cut put a stand-in cylinder there; the review fix removed it (below).
+  - `_npc_services` appends `gate_services` when the code is a gate: the point's two flags, plus
+    whether `links_from` is empty.
+  - `_qa_click_target_for` has a new `"gate"` kind (`SRREVAMP_QA_CLICK=gate`). It picks the
+    nearest node under the terrain groups' `RealMapObjects_*` containers whose `npc_code` is
+    `STORE_*_GATE`. `_qa_gate_target` aims at the middle of its drawn world box, and the QA click
+    line marks a point outside the viewport `OFF-SCREEN`.
+
+**Grounding, checked this round.**
+
+- The building rows: 2094 `STORE_CH_GATE` `SN_NPC_CH_GATE` region 25000 (97/168) at (1254, -6,
+  1374), 2095 (26521 = 103/153), 2096 (23687 = 92/135), 19554 (26959 = 105/79) and 19555
+  (27499 = 107/107). Each joins its teleportdata point through column 3.
+  - These were read from this session's scratch copy of the three tables. Its md5s match
+    `/var/tmp/tables` on the box, and it is never committed.
+  - The town points carry flags (1, 0) and GATE_TD carries (0, 1).
+  - `SN_NPC_{CH,WC,KT,EU,CA}_GATE` are all "Dimensional Gate" in textdata_object.
+- `character_state.md`'s rows 10-12 were re-read in `sro_client.asm` (above). The three tokens'
+  texts come from `/var/tmp/tables/textuisystem.txt`, both layouts, 16 and 19 columns.
+- The id-8 registrar gap stands. `0x6a7f70`'s table is unattributed (`character_state.md`, "One
+  discrepancy left open"). So "the point has outgoing links" stands in for id 8, disclosed at
+  `gate_services`. Whether a gate offers id 2 is not read, and srrevamp does not offer it.
+- The talk path: `_try_talk_to_npc` masks `NPC_COLLISION_LAYER` (`0b10000`, the navmesh-wall bit)
+  and walks up to `npc_name`. ObjectLoader's piece bodies sit on layer 1 (`_commit_node`). The
+  player's mask is 17 and the camera arm's is 1, so on a piece body already on layer 1 the extra
+  bit changes nothing else about movement or the camera. It does make every piece of the bound
+  object a talk target (below).
+- The BOM, measured on the render box. Godot 4.2.2's `get_string_from_utf16` drops a leading FF FE
+  by itself: FF FE + "1\tx" decodes to 3 characters, the first "1", in a throwaway probe that was
+  not committed. The reader still strips the BOM, as the other readers do. With or without the
+  strip, row 1 is read. So the plan's claim that "a reader without the strip loses row 1" does not
+  hold on this engine: the mutation (strip removed) still printed ALL PASS. The test keeps "row 1 is
+  read with the BOM" as a guard, and the proven negative is the production revert below.
+
+**The orchestrator's notes, answered.**
+
+- *Bind on the committed duplicate.* `ObjectTemplateCache.instance` returns `template.duplicate()`,
+  and the tags and layer bits go on that copy. `teleport_reader_test.gd` builds the portal through a
+  real `ObjectTemplateCache` and checks that the template keeps layer 1 and has no tag.
+- *Bind after the commit; re-bind on stream-in.* This goes through `_try_spawn_region_npcs`'s mark,
+  as above.
+- *The 'gate' QA kind.* It scans the `RealMapObjects_*` containers under the terrain groups, not
+  the groups' direct children as "npc" does.
+- *The stand-in's height.* Moot: the review fix removed the stand-in.
+
+**Measured on the render box.** Each run used `qa_shot.sh --radius 0 ... --frames 300` (200 for
+the four other towns), with `SRREVAMP_QA_CLICK=gate` and `GODOT_LOCK=/var/tmp/r577/lock`. Hardware
+GL was on (VirtualGL, RX 5700 XT). No server was used.
+
+- Jangan, `--region '97\168.m' --at 1230,1380`. The run printed:
+  - `World3D: teleport gate STORE_CH_GATE bound to Obj_cj_portal_312 (3.6 units from the table's
+    point; point 1, 6 piece bod(ies) on the talk layer)`
+  - `QA CLICK npc ray: .../RealMapObjects_97_168/Obj_cj_portal_312/CJ_por_fence/_StaticBody3D_448
+    (layer 0b10001) -> npc_name=Dimensional Gate on Obj_cj_portal_312`
+  - `NPCTALK Dimensional Gate line 1: 1. Designate as return/recall point`, `line 2: 2. Select
+    teleport area`, `line 3: 3. End conversation.`
+  - `QA CLICK gate: dispatched -> talk`, and the cursor there is `kind=talk`.
+- **NEGATIVE, live.** `_tag_gate` was mutated to leave the layer untouched (the tags stay) and the
+  same run was repeated. The npc probe at the same screen point (640, 405) said `no hit`, the result
+  was `dispatched -> walk` with `kind=normal`, and no NPCTALK line appeared. This measures the
+  "before" state: without the talk layer, the portal cannot be clicked. The code was restored and
+  shipped again.
+- The four other towns, one boot each, all dispatched to the talk path with the same three lines.
+  **Only Donwhang's click (640, 313) was on-screen**, as was Jangan's (640, 405). Samarkand's aim
+  was screen (640, -1013), Constantinople's (640, -1838) and Hotan's (640, -34): the middle of the
+  whole object's box lies above the 1280x720 frame. Those three prove the tag, the layer and the talk
+  path, not a click a player could make there:
+
+| gate | run | bound to | x/z | the talk ray hit |
+|---|---|---|---|---|
+| Donwhang | `103\153.m` at 962,40 | `Obj_w_cd_portal_0` | 3.3 | `W_CD_portal_bell01_A` |
+| Hotan | `92\135.m` at 1131,520 | `Obj_oas_hot_portal_83` | 0.7 | `oas_hot_potal_chain_al` |
+| Constantinople | `105\79.m` at 700,920 | `Obj_euro_esteuro_fountain01_75` | 2.6 | `euro_esteuro_fountain02` |
+| Samarkand | `107\107.m` at 1880,108 | `Obj_samarkand_center_01_4` | 1.0 | `samarkand_potal_03` |
+
+  Constantinople's bound model is a fountain, and whether it is retail's gate there is not
+  established (`teleport_network.md`, "The clickable gate (round 577)"). No town fell back to the
+  stand-in. The frames were deleted after each run.
+- Samarkand's bind put all 10 piece bodies of `samarkand_center_01` on the talk layer, and
+  Constantinople's all 7 of the fountain. The talk ray runs before the walk ray, so if those
+  composites hold walkable plaza, stair or wall pieces, a click meant to walk there opens the gate
+  window. Not measured.
+- The hover cursor over a gate is `talk` (`_hover_kind_at`), not `CursorSet.ID_GATE`; left for the
+  board.
+
+**Tests.**
+
+- `client/scripts/npc/teleport_reader_test.gd` (new) runs on synthetic UTF-16LE rows with the BOM,
+  CRLF line ends and a trailing //Copyright line. In `_init` it checks:
+  - row 1 of each table (GATE_CH, link 1 -> 2, STORE_CH_GATE) is read with the BOM;
+  - a non-numeric id and a service-0 row are skipped;
+  - `links_from(1)` keeps file order (2, 175, 5) with the fees from column 3;
+  - regions unpack (25000 -> 97/168, 26521 -> 103/153), and a dungeon or region-0 row is in no
+    region;
+  - the joins hold, the no-BOM bytes read the same, and `load()` works through the path callback.
+- In `_initialize` it covers World3D:
+  - `_npc_services("STORE_CH_GATE")` gives [recall_designate, teleport], GATE_TD gives
+    [recall_return], and an NPC gets no gate line;
+  - `_bind_region_gates` tags the cache copy 3.6 units off, gives its body `0b10001`, leaves the
+    template and the objects at 7.5 and 40 alone, and the parent walk reaches the tag;
+  - NEGATIVE of the rule: an object 12 units off is not taken, and no stand-in body is added;
+  - NEGATIVE of the id-7 rule (review fix): a fortress-gate row in 97/168 (a point with a link,
+    column 10 = 0) with a placed object exactly on its point leaves that object untagged on layer 1
+    and adds no body, while the town gate in the same region still binds.
+- `npc_service_reader_test.gd` check (q):
+  - `gate_services` exists (reached through the script's method list, as (j) does);
+  - (true, true, false) gives the designate then the teleport line with their tokens;
+  - all three come in the order 7, 9, 8, with the return line's token;
+  - no links and no flags give nothing;
+  - NEGATIVE: `services_for("STORE_CH_GATE", {})` alone gives nothing;
+  - the composed menu is "1. designate / 2. select / 3. end".
+
+**NEGATIVES, proven.** `World3D.gd` and `npc_service_reader.gd` were stashed and
+`teleport_reader.gd` moved aside, then the working copy was shipped. `teleport_reader_test.gd` gave
+`FAIL TeleportReader loads and instantiates` (1 FAILURES, exit 1, no hang).
+`npc_service_reader_test.gd` gave `FAIL NpcServiceReader has gate_services` and six more (7
+FAILURES). After restoring the files, both printed ALL PASS. The live negative is above.
+
+**Results.** `client/tools/remote_godot.sh check` printed `ALL LOAD` (276 scripts).
+`remote_godot.sh tests` printed `ran 99 suite(s), 0 failing`. `cd server && go build ./... && go
+test -count=1 -p 1 ./...` gave 59 packages ok, before and after the doc edits.
+
+**Stand-ins, disclosed.**
+
+- The binding rule: the nearest placed object within 10 units.
+- Binding only id-7 points: read off the retail table (the 7 flagged rows are the town gates), not
+  the client's own selection rule.
+- "Has outgoing links" in place of id 8's registrar.
+- Id 2 is not offered.
+- The recall lines and the teleport line lead nowhere yet.
+
+**Records.**
+
+- This entry, and `docs/WORLD_ISSUES.md`'s five-hundred-and-seventy-seventh round.
+- `docs/protocol/teleport_network.md`:
+  - a gate is not an NPC;
+  - the client names ids 7 and 9;
+  - the new "The clickable gate (round 577)" section;
+  - the intro.
+- `docs/SYSTEMS.md`'s Teleport network row. Next is the board. The client now labels ids 7 and 9.
+
+**Review fix (same round).** The first cut bound every teleportbuilding row that some teleportdata
+point names, and put a stand-in collider at any such point with no placed object within 10 units.
+
+- **What that bound.** Joining the retail tables (teleportbuilding column 3 against teleportdata
+  column 3, serviced points, region > 0; scratch copy, never committed) gives 61 building rows in a
+  world region. Only 7 register id 7: `STORE_CH/WC/KT/EU/CA_GATE` and Alexandria's
+  `STORE_SD_GATE1/2`. The other 54 include the fortress, charge, glory and revival gates, the tomb,
+  desert, delta and Tahomet/Roc gates, and `STORE_SURVIVAL_DW` in Donwhang's 102/153 at local
+  (621, 320) with 14 outgoing links. For each, either the scenery within 10 units became a talk
+  target, or a stand-in went down.
+- **Why the stand-in was a wall.** It sat on `NPC_COLLISION_LAYER`, the navmesh-wall bit 0b10000.
+  The player's body masks that bit (`collision_mask = 17`) and moves with `move_and_slide`, so each
+  stand-in was an invisible 10-unit-wide pillar where retail has none.
+- **The fix.** `_bind_region_gates` binds only points with `interaction7` (teleportdata column 10),
+  and the stand-in is gone: an unmatched town gate is left unbound and logged. The QA click line
+  now marks an aim point outside the viewport `OFF-SCREEN`.
+- **Measured, before and after** (render box, `qa_shot.sh --region '102\153.m' --radius 0 --at
+  621,330 --frames 180`, `SRREVAMP_QA_CLICK=gate`, `GODOT_LOCK=/var/tmp/r577/lock`, frames
+  deleted). The committed first cut printed `World3D: teleport gate STORE_SURVIVAL_DW -- no placed
+  object within 10 units of the table's point (621, 320) in 102/153; a stand-in collider was used
+  (cylinder r=5 h=30 at local y -103.46)`. With the fix, the same run prints no gate line and
+  `QA CLICK gate: no such target in the world`. Jangan (`97\168.m` at 1230,1380) still prints
+  `teleport gate STORE_CH_GATE bound to Obj_cj_portal_312 (3.6 units ...; 6 piece bod(ies) ...)`,
+  its click at (640, 405) hits `CJ_por_fence` (layer 0b10001), and NPCTALK lists the same three
+  lines.
+- **Test.** `teleport_reader_test.gd`'s new check (d) is described under Tests. Against the first
+  cut's `World3D.gd` it FAILS twice: `FAIL and no stand-in collider is added anywhere (group
+  children 2, ...)` and `FAIL a fortress-gate row (links, no id 7) does not tag the object on its
+  point`. With the fix it prints ALL PASS, and `remote_godot.sh tests` gives `ran 99 suite(s), 0
+  failing`.
+- Alexandria's two gates were not run live. `STORE_TD_GATE` (id 9 only) is no longer bound;
+  `_npc_services` still gives it the return line if something tags it.
+
+**Deploy note.** This change is client-only. It ships in the same release as map-teleport-board: a
+talk line that only says "not available yet" is not worth a tag on its own.
