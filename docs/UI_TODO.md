@@ -24,8 +24,12 @@ Every window in the real client is authored data, and building one is now mechan
    of the same 76. `FontColor` is the one to honour.
 6. **Buttons come as `X.ddj` / `X_focus.ddj` / `X_press.ddj` / `X_disable.ddj`**, which maps
    straight onto `TextureButton`'s four texture slots.
-7. **Some panel windows are self-framed.** Quest, Guild, Alchemy and friends are *not* in the
-   registry; their own layout file carries a `CIFFrame` / `CIFStretchWnd` whose `ddj` is an
+7. **Some panel windows are self-framed.** Quest, guild, community, alchemy, the NPC talk box, the
+   store and the teleport board are framed by this client from their own layout. That is not
+   because the registry lacks them: GDR_COMMUNITY, GDR_ALCHEMYBOX, GDR_STORE and GDR_NPCWINDOW
+   are in `ginterface.txt` and are not used, each for the reason round 586 records. Guild and the
+   teleport board have no entry, and quest's class is a main-popup pane. Their own layout file
+   carries a `CIFFrame` / `CIFStretchWnd` whose `ddj` is an
    8-slice base ending in `_` (`interface\frame\mframe_wnd_`, `interface\messagebox\
    msgbox2_window_`), expanded as `_left_up`, `_mid_up`, `_right_up`, `_left_side`, `_right_side`,
    `_left_down`, `_mid_down`, `_right_down`. `UiBuilder._build_frame` already does this.
@@ -189,6 +193,9 @@ is presentation work on solved data; if you find yourself editing the protocol, 
      in the 9-pixel gap between them (`0x6a1f70`).
 
   Found on the way, not yet fixed:
+  - The main popup has no fallback: an archive without `ifmainpopup.txt` or GDR_MAINPOPUP leaves
+    all six of its panels unavailable (round 591). Its placement is clamped into the viewport, our
+    deviation (round 591).
   - The paper doll keeps its chosen rect (40, 46, 98, 236) in the equipment pane. The client's
     model viewport is read, (2, 15, 176, 318) in the pane (`CIFEquipment::vslot_013`), but its
     camera is not (round 587).

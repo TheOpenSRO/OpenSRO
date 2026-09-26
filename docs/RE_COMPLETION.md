@@ -41633,8 +41633,9 @@ layout sits at its pane's origin, and each pane at its ifmainpopup rect inside t
   (`push ebx`, ebx 0, 0x6a290b..0x6a295f) **and on ID 4**, the left decoration (0x6a2974).
 - Slot 20 (`+0x50`) on the inventory pane (0x6a297e). Not read.
 - **Never shown again (two probes).** Every `+0x7dc`..`+0x7f4` reference in 0x6a1000-0x6a3000 is in
-  Create. CGInterface's popup users (every `+0x728` reference: its creation at 0x78ca87..0x78cb7f and
-  the handlers 0x79ace0..0x79df53) touch the popup's children only through `0x6a1cf0` (fetch a pane, read its visibility byte
+  Create. CGInterface's popup users (every `+0x728` reference: the constructor's zeroing at 0x78d39b, its
+  creation at 0x78ca87..0x78cb7f, a ShowWindow(0) at 0x7992c0, and the handlers
+  0x79ace0..0x79df53; review of round 587) touch the popup's children only through `0x6a1cf0` (fetch a pane, read its visibility byte
   +0x61, 0xb8f530), the eight pane getters 0x6a1d20..0x6a1e70 (+0x7bc..+0x7d8, no button among
   them) and the tab selector. The click table the buttons would use is at 0xeb8058 (entries 0x28 apart: ID,
   ID, message 0xc, handler at +0x10, installed at 0xd6c370): 10 -> 0x6a24f0 (0x4b), 11 -> 0x6a2500
@@ -41688,8 +41689,9 @@ visible and its own pane is visible (0x6a1cf0), it hides the popup. Otherwise it
 (which re-selects the current tab), selects its own tab unless its pane is already showing
 (A selects unconditionally), and calls 0x79a7e0 on the popup (not read; we raise the window).
 P and L also call 0x8cbac0 with their code (not read). The equipment toggle 0x79ad70 checks the
-inventory pane and selects 0x46. No code reference to its address was found in the asm (it may be
-reached through data), and O is not a default binding. **Q is not a tab:** code 0x51 goes to 0x7990e0, which toggles CGInterface's window 0x4c,
+inventory pane and selects 0x46. No code reference to its address was found in the asm, and a
+whole-file search for the dword 0x0079ad70 finds none in the data either (review of round 587), and
+O is not a default binding. **Q is not a tab:** code 0x51 goes to 0x7990e0, which toggles CGInterface's window 0x4c,
 the window game start builds from `res_ui\questlist.2dt` if absent (0x787024 -> push 0xdb9144 ->
 0x469140). The popup's quest pane is reachable only through button 15, which Create hides.
 
@@ -41719,10 +41721,8 @@ equipment, which lands on the inventory tab.
 - **Character pane:** built from ifplayerinfo_trijob2.txt. Every control the stats wiring fills
   (level, current and next EXP, stat points, Str, Int, HP and MP with their gauges, the four
   attack and defence rows, the two "+" buttons) is in it at the same rect as in ifplayerinfo.txt
-  (measured by diffing the two dumps). The differences: trijob2 has `GDR_PI_JOB_*` rows instead of
-  the per-job trader/hunter/thief rows (never filled; the server has no job system), two
-  `CIFCheckBox`es (93434, 93435) beside the stat rows, and moved STR/INT/honour labels. No field
-  that was filled is dropped.
+  (measured by diffing the two dumps). The differences are listed in full in round 591 (this
+  list under-stated them); none touches a field that was filled, so no filled field is dropped.
 - `HudWindow.dock_companion` and `HudPanels.INVENTORY_CONTENT_WIDTH` are removed.
 - **Paper doll:** it keeps the rect it had inside the equipment layout, (40, 46, 98, 236), which
   was chosen, not read, and is now named `PAPER_DOLL_RECT` and says so. What the client does was
@@ -41788,8 +41788,12 @@ and looks for each same-rect group inside its pane.
   boxes are not drawn. What they do was not read.
 - Not read: slot 20 on the inventory pane and on the popup after each selection, `0x6a6e60(1)` on
   the skill pane, `0x655fa0(8)` on six buttons, `0x79a7e0`, and `0x8cbac0` after P and L.
-- The x placement is the client's formula. On a viewport narrower than 548 logical pixels it
-  puts the window partly off the left edge, as the client's would.
+- ~~The x placement is the client's formula. On a viewport narrower than 548 logical pixels it
+  puts the window partly off the left edge, as the client's would.~~ Wrong, and corrected in
+  round 591: x = W − 468 (right-hand tabs) goes negative only when W < 468, and x = 80 overflows
+  the right edge below the same 468. The vertical case was missed: at y 262 the 408-tall window
+  needs a logical height of 670. That overflows at the project's default 1152x648, at 1366x768
+  above UI scale ~1.15, and at 1920x1080 above ~1.61. Round 591 clamps it, as our deviation.
 - The quest pane is not built. Q stays on `ifquest.txt` as its own window until the questlist
   `.2dt` window is built.
 
@@ -42148,6 +42152,119 @@ reconciled): **4 FAIL lines**:
 On this tree: ALL PASS. The close-button settle check from round 588 was also moved into the
 settling pass's first frames. Placed after the new awaits, it ran once the three-frame pass was
 over and failed for that reason alone, which showed the check had depended on timing.
+
+**Verified.** `remote_godot.sh check`: 293 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`: 111
+suites, 0 failing. `cd server && go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok.
+
+## The main window stays on screen at every window size and UI scale (round 591)
+
+Client only. These are the review findings for round 587, fixed on top of rounds 588-590.
+
+### 1. The main popup is held inside the viewport (our deviation)
+
+Round 587 placed the popup the way the client's selector does, with nothing more: x at W − 468
+(right-hand tabs) or 80, and y fixed at the registry's 262. The client never runs at our logical
+sizes. The project sets no window size, so the default is 1152x648 (the reviewer measured
+`root.size` on the box), and the F3 UI scale (0.5–3.0) divides the window. At y 262 the 408-tall
+window needs a logical height of 670, so it overflowed at 1152x648 (by 22), at 1366x768 above
+scale ~1.15 and at 1920x1080 above ~1.61. Either x needs a width of 468. Before round 587 the
+windows were centred and always fitted.
+
+`HudMainPopup.keep_on_screen()` now clamps the window into the viewport, x and y, pulling it to
+the top or left edge when it cannot fit. It runs after every tab selection (so on every open and
+tab switch) and whenever the viewport resizes. **This is our deviation, labelled so in the code;
+the client does not do it.** A clamped y stays where it was put, the way the client keeps a y the
+player dragged to; the selector only ever sets x.
+
+The target window gets the same clamp (`HudTarget.place`). For it the clamp changes nothing unless
+the logical viewport is narrower than 236 or shorter than 85: the piece is centred, so it fits
+whenever it can. At 600x400 and scale 3.0 (200 logical) it was at x −18.
+
+Measured in the test: at 1152x648 the popup is at (684, 240) on the right-hand tabs and (80, 240)
+on character and academy. At 1366x768 with scale 1.5 (910x512 logical) it is at (442, 104) and
+(80, 104). Opened at 1920x1080 and resized to 1152x648, it is pulled in to (764, 104).
+
+### 2. UI_TODO item 7
+
+It said "Quest, Guild, Alchemy and friends are *not* in the registry". GDR_ALCHEMYBOX
+(CIFAlchemyBox) and GDR_COMMUNITY (CIFCommunity) are in `ginterface.txt`, and so are GDR_STORE and
+GDR_NPCWINDOW. The item now names the windows this client frames itself (quest, guild,
+community, alchemy, the NPC talk box, the store, the teleport board), says which of them have an
+entry we do not use (round 586 has why), and which have none (guild, the teleport board). The
+same correction is made in `hud_window.gd`'s header, which said panel windows have "no entry in
+ginterface.txt".
+
+### 3. ifplayerinfo.txt vs ifplayerinfo_trijob2.txt, in full
+
+Every property of every control was compared (measured):
+
+- **Only in ifplayerinfo.txt (24):** the trader, hunter and thief rows, seven controls each:
+  `_TITLE`, `_GRADE`, the name static, `_EXP`, the `GAUGE_*_EXP`, `_BOARD` (chr_stat_window02) and
+  `_ICON` (com_job_*). Also `GDR_PI_ARRANGE_DATA` (37,334,100,14), `GDR_PI_ARRANGE_ICON`
+  (17,331, tw_job_wanted_rank.ddj) and `GDR_PI_DECO_MID_DOWN` (16,320,332,36,
+  chr_window_mid_down.ddj).
+- **Only in ifplayerinfo_trijob2.txt (12):** `GDR_PI_JOB_ALIAS` (70), `_ICON` (71), `_TITLE` (72),
+  `_GRADE` (73), `_EXP_GAUGE` (74, chr_job.ddj, 204x8), `_EXP` (75), `GDR_PI_JOB_ALIAS_STA` /
+  `_GRADE_STA` / `_EXP_STA` (60-62), the two `CIFCheckBox`es `GDR_PI_BTN_SLOT_CHECKBOX` /
+  `CHECKBOXX` (93434, 93435, at 40,111 and 40,140), and `GDR_PI_DECO_JOB_AREA` (102, at 0,260 with
+  a zero size, so drawn at chr_job_window.ddj's 364x96).
+- **Changed:** the `GDR_PI_TEXT_STRENGTH` / `_INTELLIGENCE` label rects (x 17 -> 5), the
+  `GDR_PI_TEXT_HONOR_STATIC` rect (207,85,94,12 -> 170,85,80,12), the editor `Color` id of the
+  three tiles, the frame and the six decorations, and the decorations' `FontColor`
+  (255,226,123 -> white).
+
+None of this touches a field the stats fill.
+
+### 4. Gauges with no data draw empty
+
+`UiBuilder._build_gauge` set every gauge to 100, a number nobody sent. The character pane's job-EXP
+bar drew full; so did the guild's GP bar and the party rows' HP/MP bars. It now starts at 0. Every
+gauge user was checked:
+
+| Gauge | Setter | Effect |
+|---|---|---|
+| `GDR_PMI_GAUGE_HP/MP` (player block) | sets 100 itself at setup (`_set_gauge_fill`), then data | none |
+| `GDR_GAUGE_SP` (underbar) | `set_sp`, 0 without progress | none |
+| `GDR_PI_GAUGE_HPGAUGE/MPGAUGE` (character) | vitals and stats | empty until the first number |
+| `GDR_TWCE/TWSM_GAUGE_HPGAUGE` (target) | `set_hp` on every show | none |
+| `GDR_PI_JOB_EXP_GAUGE`, `GDR_GUILD_INFO_GP_GAUGE`, `GDR_PTY_GAUGE_*` | none | now empty |
+
+The audit's dump lists these seven gauge names and no other.
+
+### 5. Smaller corrections
+
+- `net/stats.gd`'s header named ifplayerinfo.txt. It now names trijob2, in the main popup.
+- Round 587's list of `+0x728` users missed the constructor's zeroing (0x78d39b) and a
+  ShowWindow(0) at 0x7992c0. Both are added, and so is a whole-file search for the dword
+  0x0079ad70, which finds no data reference to the equipment toggle.
+- `SRREVAMP_QA_PANELS` with several popup ids tiled the same window and reported "N of N opened".
+  It now reports a later id as a tab of the window already opened, and ends with "N of M ids opened,
+  in K window(s)". `SRREVAMP_QA_PANELS_IN_PLACE=1` (`qa_shot.sh --panels-in-place`) leaves every
+  window where it places itself, so a shot can show the real x.
+- **Risk, recorded:** the six panels have no fallback. If an archive lacks `ifmainpopup.txt` or
+  GDR_MAINPOPUP's registry entry, `HudPanels` marks the popup unavailable and none of the
+  character, inventory, equipment, skill, action, party or academy panels opens. Before round 587
+  each came from its own layout. Every archive this project has seen carries both files.
+
+### Tests
+
+- `hud_main_popup_test.gd`: every tab at 1152x648 and at 1366x768 with scale 1.5 must stay inside
+  the viewport, and a window opened at 1920x1080 must be pulled in after a resize to 1152x648. The
+  test now starts at 1920x1080, a screen the client's own placement fits on.
+- `hud_target_layout_test.gd`: at 600x400 and scale 3.0 the target is held at x 0.
+
+NEGATIVE, run on the box against 35f52ee's scripts: **13 FAIL lines** from the popup test, e.g.
+
+- `FAIL character at (1152, 648), UI scale 1: the window [P: (80, 262), S: (388, 408)] stays inside the viewport (1152, 648)`
+- `FAIL inventory at (1152, 648), UI scale 1: the window [P: (684, 262), S: (388, 408)] stays inside the viewport (1152, 648)`
+- `FAIL inventory at (1366, 768), UI scale 1.5: the window [P: (442, 262), S: (388, 408)] stays inside the viewport (910, 512)`
+- `FAIL opened at 1920x1080 and resized to 1152x648, the window [P: (1452, 262), S: (388, 408)] is pulled inside the viewport (1152, 648)`
+
+Plus 1 FAIL line from the target test:
+
+- `FAIL in a 200-wide viewport the 236-wide window is held at x 0 (got (-18, 7))`
+
+On this tree both print ALL PASS.
 
 **Verified.** `remote_godot.sh check`: 293 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`: 111
 suites, 0 failing. `cd server && go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok.

@@ -227,6 +227,10 @@ func _initialize() -> void:
 		quit(1)
 
 func _popup_checks(panels_script: GDScript) -> void:
+	# A screen the client's own placement fits on (x needs 468, y 670).
+	root.size = Vector2i(1920, 1080)
+	root.content_scale_factor = 1.0
+	await process_frame
 	var builder := _builder()
 	var panels: Control = panels_script.new(builder)
 	root.add_child(panels)
@@ -334,6 +338,31 @@ func _popup_checks(panels_script: GDScript) -> void:
 	_check(panels.call("_over_inventory_window", inside), "a point on the window counts as the bag on the inventory tab")
 	panels.call("open", "character")
 	_check(not panels.call("_over_inventory_window", inside), "the same point does not count as the bag on the character tab")
+
+	# Our deviation: the window stays inside the viewport at the project's
+	# default 1152x648 and at 1366x768 with UI scale 1.5, on open, on every tab
+	# switch, and after a resize (round 591).
+	for view in [[Vector2i(1152, 648), 1.0], [Vector2i(1366, 768), 1.5]]:
+		root.size = view[0]
+		root.content_scale_factor = view[1]
+		await process_frame
+		for tab in TABS:
+			panels.call("open", tab)
+			var vr := window.get_viewport_rect()
+			var r := Rect2(window.position, window.size)
+			_check(vr.encloses(r), "%s at %s, UI scale %s: the window %s stays inside the viewport %s" % [tab, view[0], view[1], r, vr.size])
+	root.size = Vector2i(1920, 1080)
+	root.content_scale_factor = 1.0
+	await process_frame
+	panels.call("open", "inventory")
+	root.size = Vector2i(1152, 648)
+	await process_frame
+	await process_frame
+	var after := Rect2(window.position, window.size)
+	_check(window.get_viewport_rect().encloses(after),
+		"opened at 1920x1080 and resized to 1152x648, the window %s is pulled inside the viewport %s" % [after, window.get_viewport_rect().size])
+	root.size = Vector2i(1920, 1080)
+	await process_frame
 
 	# The character pane's rows, filled from the server's stats.
 	var stats := StatsNet.Stats.new()

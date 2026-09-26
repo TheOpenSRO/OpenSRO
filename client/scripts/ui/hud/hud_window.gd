@@ -7,9 +7,13 @@ class_name HudWindow
 ## the main popup, a registry-framed HudWindow whose panes HudMainPopup
 ## builds and switches.
 ##
-## Panel windows are self-framed: unlike the underbar and minimap, they have
-## no entry in resinfo\ginterface.txt. Their own layout file carries a
-## CIFFrame (or CIFStretchWnd) at the origin whose `ddj` is an 8-slice base
+## A self-framed window is one this client frames from its own layout, with
+## no registry entry used: quest, guild, community, alchemy, the NPC talk
+## box, the store and the teleport board. Some of those classes do have an
+## entry in resinfo\ginterface.txt (GDR_COMMUNITY, GDR_ALCHEMYBOX, GDR_STORE,
+## GDR_NPCWINDOW) that is not used, each for the reason docs/RE_COMPLETION.md
+## gives (round 586); guild and the teleport board have none. The layout file
+## carries a CIFFrame (or CIFStretchWnd) at the origin whose `ddj` is an 8-slice base
 ## ending in an underscore, and whose rect is the window's size --
 ## ifinventory.txt's GDR_INVENTORY_FRAME is `0,0,176,308` with
 ## `interface\inventory\int_window_`. UiBuilder already expands that base

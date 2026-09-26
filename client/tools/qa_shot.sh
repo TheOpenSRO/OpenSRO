@@ -24,6 +24,8 @@
 #   --radius n        load an n-region radius instead of the default 2
 #   --shots "..."     visit several viewpoints in one run (see below)
 #   --panels "a,b,c"  open these HUD windows (ids from HudPanels.PANELS)
+#   --panels-in-place leave them where they place themselves (the main
+#                     popup's tab side) instead of centring/tiling them
 #   --worldmap [mode] open the world map window; mode "world" or "both"
 #   --gender g        the gender a character created for --server is given
 #                     (china_man or china_woman)
@@ -100,7 +102,7 @@ GODOT="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
 REGION='98\168.m'; FRAMES=120; SIZE=1280x720; OUT=""; SCENE="res://scenes/World3D.tscn"
 AT=""; YAW=""; PITCH=""; DIST=""; WALK=""; NOFOG=""; FREE=""; RADIUS=""; SHOTS=""
 PANELS=""; WORLDMAP=""; SAY=""; SERVER=""; GENDER=""; ATTACK=""; DEBUG=""; COLUMNS=""; EQUIP=""; SERVER_BIN="${SERVER_BIN:-/opt/srrevamp-server/srrevamp-server}"
-RECONNECT=""; RECONNECT_VIA_LOGIN=""; TELEPORT=""
+RECONNECT=""; RECONNECT_VIA_LOGIN=""; TELEPORT=""; PANELS_IN_PLACE=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -120,6 +122,7 @@ while [ $# -gt 0 ]; do
     --radius) RADIUS="$2"; shift 2 ;;
     --shots)  SHOTS="$2";  shift 2 ;;
     --panels) PANELS="$2"; shift 2 ;;
+    --panels-in-place) PANELS_IN_PLACE=1; shift ;;
     # bare: the map for wherever the player is; "world": the whole world;
     # "both": the city map, then the world part way through the run.
     --worldmap)
@@ -205,6 +208,7 @@ export SRREVAMP_MAPM_PATH="$REGION"
 [ -n "$RADIUS" ] && export SRREVAMP_QA_RADIUS="$RADIUS"
 [ -n "$SHOTS" ]  && export SRREVAMP_QA_SHOTS="$SHOTS"
 [ -n "$PANELS" ] && export SRREVAMP_QA_PANELS="$PANELS"
+[ -n "$PANELS_IN_PLACE" ] && export SRREVAMP_QA_PANELS_IN_PLACE=1
 [ -n "$WORLDMAP" ] && export SRREVAMP_QA_WORLDMAP="$WORLDMAP"
 
 # A render with a server behind it. Without one the client shows an

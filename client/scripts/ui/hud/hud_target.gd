@@ -176,8 +176,14 @@ const TOP_Y := 7.0
 func place() -> void:
 	if _shown == null or not is_inside_tree():
 		return
-	var view_w := get_viewport_rect().size.x
-	global_position = Vector2(floorf((view_w - size.x) / 2.0), TOP_Y)
+	var view := get_viewport_rect().size
+	var at := Vector2(floorf((view.x - size.x) / 2.0), TOP_Y)
+	# Our deviation, as the main popup's (HudMainPopup.keep_on_screen): held
+	# inside the viewport. It changes nothing unless the logical viewport is
+	# narrower than the piece (236) or shorter than 7 + its height.
+	at.x = clampf(at.x, 0.0, maxf(0.0, view.x - size.x))
+	at.y = clampf(at.y, 0.0, maxf(0.0, view.y - size.y))
+	global_position = at
 
 ## The piece _select showed, or null.
 var _shown: Control = null

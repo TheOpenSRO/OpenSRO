@@ -230,6 +230,14 @@ func _checks(script: GDScript) -> void:
 		var want := Vector2(floorf((logical_w - 236.0) / 2.0), 7.0)
 		_check(target.global_position == want,
 			"placed at ((%s - 236) >> 1, 7) = %s in a %s window at UI scale %s (got %s)" % [logical_w, want, view[0], view[1], target.global_position])
+	# Our deviation (round 591): narrower than the piece, it is held inside
+	# the viewport rather than hanging off the left edge.
+	root.size = Vector2i(600, 400)
+	root.content_scale_factor = 3.0
+	await process_frame
+	target.call("show_target", "Mangyang", 1, 0, 54, 54)
+	_check(target.global_position.x == 0.0,
+		"in a %s-wide viewport the 236-wide window is held at x 0 (got %s)" % [target.get_viewport_rect().size.x, target.global_position])
 	root.size = Vector2i(1600, 900)
 	root.content_scale_factor = 1.0
 	await process_frame

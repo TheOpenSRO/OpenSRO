@@ -195,7 +195,28 @@ func build(builder: UiBuilder, win: HudWindow, title: String,
 	if reg != null:
 		# The window's starting y is its registry rect's; x follows the tab.
 		win.position.y = reg.rect.position.y
+	var vp := win.get_viewport()
+	if vp != null:
+		vp.size_changed.connect(keep_on_screen)
 	return true
+
+## **Our deviation, not the client's.** The selector's placement (x at the
+## screen's right less 0x50 or at 0x50, y from the registry's 262) assumes
+## the client's own screen sizes. Here the logical viewport can be smaller:
+## the project's default window is 1152x648, and the F3 UI scale (0.5-3.0)
+## divides the window's size. At y 262 the 408-tall window needs a logical
+## height of 670, so it overflows at 1152x648, at 1366x768 above scale
+## ~1.15 and at 1920x1080 above ~1.61; either x needs a logical width of 468.
+## So after every placement, and whenever the viewport resizes, the window is
+## pulled back inside the viewport (to the top or left edge when it cannot
+## fit). The client does none of this.
+func keep_on_screen() -> void:
+	if window == null or not window.is_inside_tree():
+		return
+	var view := window.get_viewport_rect().size
+	window.position = Vector2(
+		clampf(window.position.x, 0.0, maxf(0.0, view.x - window.size.x)),
+		clampf(window.position.y, 0.0, maxf(0.0, view.y - window.size.y)))
 
 ## The pane control the layout declared under `pane_name`, or null.
 func pane_control(pane_name: String) -> Control:
@@ -249,6 +270,7 @@ func select(panel_id: String) -> void:
 		window.position.x = view_w - window.size.x - SIDE_MARGIN
 	else:
 		window.position.x = SIDE_MARGIN
+	keep_on_screen()
 
 ## Shows the window for `panel_id` the way the key handlers do (C 0x79ace0,
 ## I 0x79b020, S 0x79ae00, A 0x79d5b0, P 0x79ae90, L 0x79b0b0): ShowWindow(1)

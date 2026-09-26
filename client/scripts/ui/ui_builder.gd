@@ -492,7 +492,12 @@ func _build_gauge(def: UiLayoutParser.ControlDef) -> TextureProgressBar:
 	var gauge := TextureProgressBar.new()
 	gauge.min_value = 0
 	gauge.max_value = 100
-	gauge.value = 100
+	# Empty until a caller sets it: a full bar would state a value nobody
+	# sent (the character pane's job-EXP bar, the guild's GP bar and the
+	# party rows' HP/MP have no data here). Every caller that has a number
+	# sets it -- the player block, the character HP/MP, the SP bar, the
+	# target's HP -- so only bars without data change.
+	gauge.value = 0
 	gauge.nine_patch_stretch = true
 	gauge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 

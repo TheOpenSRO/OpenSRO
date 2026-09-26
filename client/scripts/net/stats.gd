@@ -4,8 +4,9 @@ class_name StatsNet
 ## Opcodes and payload encoding for a character's own stats, mirroring
 ## server/internal/session (stats.go). Requires a prior login.
 ##
-## Only what the server really computes is here. The character panel
-## (`resinfo\ifplayerinfo.txt`) shows the rows the server can state -- level,
+## Only what the server really computes is here. The character pane
+## (`resinfo\ifplayerinfo_trijob2.txt`, the layout CIFPlayerInfo loads, in
+## the main popup) shows the rows the server can state -- level,
 ## exp and exp-to-next, Str/Int and the unspent stat points, HP/MP, both
 ## attack ranges, both defence sums -- and leaves the rest as the layout drew
 ## them: the balance percentages (the client shows a stored byte whose source

@@ -7083,6 +7083,25 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Round 591: the main window stays on screen at every window size and UI scale
+
+The review findings for round 587. The full record is `docs/RE_COMPLETION.md`'s entry of the same
+name.
+
+- **Blocking.** At y 262 the 408-tall main popup needs a logical height of 670, so it hung off the
+  bottom at the default 1152x648. It did the same at 1366x768 above UI scale ~1.15 and at 1080p
+  above ~1.61. It is now clamped into the viewport on open, on every tab switch and on resize.
+  **This is our deviation**; the client runs at none of these logical sizes. The target window gets
+  the same clamp, which only matters below 236 logical pixels wide. The popup test fails 13 times
+  against 35f52ee, and the target test once.
+- UI_TODO item 7 no longer says alchemy and community are missing from the registry.
+- The trijob2 layout differences are now listed in full. They include the removed MID_DOWN and
+  ARRANGE controls and the added 364x96 job-area art.
+- Gauges with no data (job EXP, guild GP, party rows) now draw empty instead of full.
+- QA panels report popup tabs honestly, and `--panels-in-place` shows the real placement.
+- The no-fallback risk is recorded. The `+0x728` list is completed, and 0x79ad70 has no data
+  reference.
+
 ## Round 590: the target window sits centred at the top of the screen, where the client puts it
 
 The full record is `docs/RE_COMPLETION.md`'s entry of the same name. **Read:** each time the

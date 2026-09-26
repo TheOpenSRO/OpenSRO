@@ -2098,8 +2098,14 @@ func _qa_open_panels(spec: String) -> void:
 	if _hud_panels == null:
 		print("QA PANELS: no HUD (Media.pk2 not loaded)")
 		return
+	# SRREVAMP_QA_PANELS_IN_PLACE=1 leaves every window where it places
+	# itself (the main popup's tab side, clamped into the viewport) instead of
+	# centring or tiling it for the shot.
+	var in_place := OS.get_environment("SRREVAMP_QA_PANELS_IN_PLACE") != ""
+	var ids := spec.split(",", false)
 	var placed := 0
-	for raw in spec.split(","):
+	var windows: Array = []   # distinct windows opened, in order
+	for raw in ids:
 		var panel_id := raw.strip_edges()
 		if panel_id == "":
 			continue
@@ -2113,21 +2119,31 @@ func _qa_open_panels(spec: String) -> void:
 		if window == null:
 			print("QA PANELS: %s did not open" % panel_id)
 			continue
-		# A single panel centres for a clean shot, clear of the left-side chat
-		# log; several tile across the top.
-		if spec.split(",").size() == 1:
-			window.centre()
-		else:
-			var view := get_viewport().get_visible_rect().size
-			var column := placed % 3
-			var row: int = placed / 3
-			window.position = Vector2(
-				20.0 + column * (view.x - 40.0) / 3.0,
-				90.0 + row * 200.0)
-		print("QA PANELS: %s opened %dx%d at %s" % [
-			panel_id, int(window.size.x), int(window.size.y), window.position])
 		placed += 1
-	print("QA PANELS: %d of %d opened" % [placed, spec.split(",").size()])
+		# Several ids can be tabs of one window (the main popup): the later
+		# id switches its tab rather than opening a second window, and the
+		# report says so instead of counting it as another window.
+		if windows.has(window):
+			print("QA PANELS: %s is a tab of the window %s already opened; it is now showing, %dx%d at %s" % [
+				panel_id, window.name, int(window.size.x), int(window.size.y), window.position])
+			continue
+		windows.append(window)
+		if not in_place:
+			# A single window centres for a clean shot, clear of the left-side
+			# chat log; several tile across the top.
+			if ids.size() == 1:
+				window.centre()
+			else:
+				var view := get_viewport().get_visible_rect().size
+				var column := (windows.size() - 1) % 3
+				var row: int = (windows.size() - 1) / 3
+				window.position = Vector2(
+					20.0 + column * (view.x - 40.0) / 3.0,
+					90.0 + row * 200.0)
+		print("QA PANELS: %s opened %dx%d at %s%s" % [
+			panel_id, int(window.size.x), int(window.size.y), window.position,
+			" (its own placement)" if in_place else ""])
+	print("QA PANELS: %d of %d ids opened, in %d window(s)" % [placed, ids.size(), windows.size()])
 
 func _zone_label_position_suffix() -> String:
 	var pair := _nav_graph_for(player.global_position)

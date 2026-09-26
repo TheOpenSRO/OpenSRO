@@ -3716,9 +3716,16 @@ func connect_net() -> void:
 ## The character pane's own control names, from resinfo\\ifplayerinfo_trijob2.txt,
 ## the layout CIFPlayerInfo::Create (0x6b84ec) loads. Every name wired below is
 ## in it at the same rect as in the older ifplayerinfo.txt, which the exe
-## never loads; the two differ only in the job rows (trijob2's GDR_PI_JOB_*
-## replace the per-job trader/hunter/thief rows), the two stat-row check
-## boxes it adds, and a few label rects. Every value field is the `_DAT` -- or
+## never loads. The full difference (every property of every control
+## compared, docs/RE_COMPLETION.md round 591): trijob2 drops the trader,
+## hunter and thief rows (their _TITLE, _GRADE, name, _EXP, gauge, _BOARD and
+## _ICON, 21 controls), GDR_PI_ARRANGE_ICON / _DATA and GDR_PI_DECO_MID_DOWN
+## (16,320,332x36); it adds GDR_PI_JOB_ALIAS/_TITLE/_GRADE/_ICON/_EXP, their
+## three _STA labels, GDR_PI_JOB_EXP_GAUGE, GDR_PI_DECO_JOB_AREA (0,260, drawn
+## 364x96 from chr_job_window.ddj) and two CIFCheckBoxes (93434, 93435); it
+## moves the STR/INT labels (x 17 -> 5) and the honour label; and it changes
+## the editor Color ids of the tiles, frame and decorations and the
+## decorations' FontColor. Every value field is the `_DAT` -- or
 ## `2` -- sibling of its label: the label `GDR_PI_TEXT_CURXP` sits at (32, 41)
 ## and the VALUE `GDR_PI_TEXT_CURXP2` at (96, 41), likewise `NEXTXP`/`NEXTXP2`
 ## and `STAT`/`STAT2`. The "+" buttons beside Str and Int are named
