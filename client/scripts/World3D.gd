@@ -11519,7 +11519,10 @@ func _open_teleport_board() -> void:
 			"waived": _player_level > 0 and _player_level <= 20})
 		listed.append("%d %s %d" % [link.to_id, place, link.fee])
 	_teleport_gate_point_id = point.id
-	_teleport_request_pending = false
+	# _teleport_request_pending is NOT cleared here (round 582): the talk box
+	# stays up behind the board, so Move -> reopen the board from it -> Move
+	# again before the reply sent a second OpTeleportUse, and the server
+	# charged twice. A request out stays out until its reply or a zone change.
 	print("World3D: teleport board at %s (point %d, level %d): %s" % [_talk_npc_code, point.id, _player_level, ", ".join(listed)])
 	_hud_panels.open_teleport_board(_talk_npc_name, entries)
 
@@ -11547,8 +11550,11 @@ func _close_gate_ui() -> void:
 ## the reply would be a second OpTeleportUse, which the server -- with no
 ## range test -- serves from wherever the first put the player, charging the
 ## fee again. So Move is ignored while _teleport_request_pending; the reply
-## clears it, and so does reopening the board or a zone change (a reply lost
-## to a dropped connection cannot wedge it).
+## clears it, and so does a zone change (_close_gate_ui). Reopening the board
+## does NOT (round 582: until then it did, and Move -> reopen from the talk box
+## still up behind the board -> Move before the reply charged twice). A reply
+## lost to a dropped connection cannot wedge it: `disconnected` sends this
+## instance to Login (_on_disconnected), and the flag leaves the world with it.
 func _on_teleport_requested(dest_id: int) -> void:
 	if _teleport_request_pending:
 		print("World3D: teleport Move ignored -- a request is already pending")

@@ -7083,6 +7083,20 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-eighty-second round: a second Move before the teleport's reply can no longer charge twice
+
+Round 578's review found a hole in the board's "one request at a time" guard.
+`World3D._open_teleport_board` cleared `_teleport_request_pending` on every open, and the talk box
+stays up behind the board. So Move, then reopening the board from that talk box, then Move again
+before the reply sent two `OpTeleportUse`, and the server (no range test) charged twice. Reopening
+the board now leaves the flag alone. Only the reply, a zone change or leaving the world clears it.
+`teleport_board_test.gd` has a reopen-then-Move check, and it fails on round 578's code
+(2 FAILURES). The round 576 bullet below is corrected: 20 of the 34 links go to their towns'
+labels and 14 to their own "x/y" labels, which is what `docs/RE_COMPLETION.md`'s round 576 says;
+the count was re-taken over the retail export. The same record (round 582) has the combined
+release's verification. The box's plain launch reads `OpenGL ... - Compatibility`. The reconnect
+keeps entry 2's ground at entry 1's figures, and the teleport runs end to end.
+
 ## Five-hundred-and-eighty-first round: the client runs the Compatibility renderer it was meant to -- project.godot's `#` comments no longer swallow three settings
 
 The user decided on 2026-09-26 that players run GL Compatibility, which `client/project.godot` has
@@ -7259,7 +7273,10 @@ the request until the gate and its board land. The full record is `docs/RE_COMPL
   table under category `0xd`, so the teleport's refusal category is read, not assumed; `0x1c10` and
   `0x1c15` have messages there (entries 9 and 14 of the table at `0x7bbaac`), 2 does not.
 - **Measured on the retail tables** (copied to scratch, exported, not committed): all 34 links of
-  the five town gates resolve to their towns' labels, and the built server moved a character 1 ->
+  the five town gates resolve -- 20 to their towns' labels, 14 (Alexandria's two gates from every
+  town, and Donwhang's four beyond the towns) to their own "x/y" labels (corrected in round 582 to
+  what `docs/RE_COMPLETION.md`'s round 576 says; this bullet had read "all 34 ... to their towns'
+  labels") -- and the built server moved a character 1 ->
   2 -> 25 -> 1 over TCP to (-3, -548) in 102/153, (1230, -461) in 106/107 and (9, -409) in 97/168.
   No live client run: another lane was rendering on the box, and `qa_shot.sh` kills every Godot.
 

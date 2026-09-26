@@ -40117,7 +40117,8 @@ tree's server built for linux; `qa_shot.sh --out /var/tmp/r578/<run> --server --
 - *Fixed, cheap:* several Move presses before the reply each sent an `OpTeleportUse`. Not
   harmless: the server, with no range test, serves the second from where the first landed the
   player and charges the fee again. `World3D._teleport_request_pending` now ignores Move while a
-  request is out; the reply, a reopened board and a zone change clear it. Tested (a pending Move
+  request is out; the reply, a reopened board and a zone change clear it (round 582: a reopened
+  board no longer does -- it let Move -> reopen -> Move charge twice). Tested (a pending Move
   is ignored; the reply clears it); NEGATIVE proven with the guard removed: `FAIL a Move while a
   request is pending is ignored (chat: * Teleporting needs the server.)`.
 - *Doc corrections:* `FUN_006fc910` is not "the thousands formatter" -- re-read in
@@ -40811,3 +40812,76 @@ Moved to `_initialize`, it exits 1. Both new suites use `_initialize`.
 **Deploy note.** Tag-worthy. A release built from this tree is the first that runs the renderer
 players were meant to have. Tell testers that the renderer changed, that their log's banner now
 reads `OpenGL API ... - Compatibility`, and that a machine without OpenGL 3.3 will not start.
+
+## A second Move before the teleport's reply can no longer charge twice (round 582)
+
+Client only, a fix to round 578. Nothing on the wire changes, there is no flag, and the server is
+unchanged. It ships in the release with rounds 579-581.
+
+**Why.** Round 578's review found that `World3D._open_teleport_board` cleared
+`_teleport_request_pending` on every open. The talk box stays up behind the board
+(`HudPanels._on_npc_talk_choice`). So a player could press Move, reopen the board from the talk
+box's "Select teleport area" line, and press Move again before the reply. That sent two
+`OpTeleportUse`. The server has no range test (`session/teleport.go`'s header), so it served the
+second request from the first one's arrival point and charged the fee again.
+
+**Change.** `_open_teleport_board` no longer touches the flag. It is cleared only by the reply
+(`_on_teleport_result`) and by a zone change (`_close_gate_ui`, from `_on_change_zone_result`).
+Leaving the world takes the flag with it. The flag is instance state, and a dropped connection
+sends the instance to Login (`_on_disconnected`), so a reply lost that way still cannot wedge
+Move. A reply the server never sends on a live connection would wedge Move until the next zone
+change. The server answers every `OpTeleportUse` (round 576), so this is not guarded further.
+
+**Tests.** `teleport_board_test.gd`, in `_world_checks`: with a request pending, the talk box's
+teleport line reopens the board. The flag stays set, and a second Move is ignored (offline it
+does not reach the "needs the server" line). In `_zone_change_checks`: a request pending at an
+accepted zone change is cleared. NEGATIVE, run on the box with this test against round 578's
+`World3D.gd`: `FAIL reopening the board keeps the pending request` and `FAIL a Move after
+reopening the board, before the reply, is still ignored (chat: * Teleporting needs the server.)`,
+2 FAILURES. With the fix it gives ALL PASS.
+
+**Record correction.** `docs/WORLD_ISSUES.md`'s round 576 bullet said "all 34 links of the five
+town gates resolve to their towns' labels". The RE_COMPLETION round 576 entry above says the four
+beyond the towns and Alexandria's two go to their own "x/y" labels. It was re-counted for this
+round with a throwaway test (not committed) running `teleportArrival` over the round-576 retail
+export (`/var/tmp/r579/teleport` on the render box, never committed). Jangan, Hotan,
+Constantinople and Samarkand each have 6 links: 4 to town labels, plus `90/48` and `92/51`.
+Donwhang has 10: 4 to town labels and 6 to "x/y" (the Alexandria two, `80/95`, `81/79`, `88/90`
+and `126/228`). That makes 34 links: 20 to town labels and 14 to their own "x/y" labels. The
+bullet now says so. Round 578's review bullet above (a reopened board clears the flag) now notes
+this round.
+
+**Verified on the combined tree (rounds 579-582 on round 578; render box lane
+`/opt/srrevamp-client-r579`, `GODOT_LOCK=/var/tmp/r579/lock`, this tree's server built for
+linux).**
+
+- `go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok.
+- `remote_godot.sh check`: 282 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`: ran 104
+  suite(s), 0 failing, and 0 `SCRIPT ERROR` in the output.
+- A plain launch (`xvfb-run ... vglrun -d egl0 Godot --path . --quit-after 30`, no
+  `--rendering-driver`) printed `OpenGL API 4.6 (Core Profile) Mesa 25.0.7-2+deb13u1 -
+  Compatibility - Using Device: AMD - AMD Radeon RX 5700 XT`.
+- The white-ground reconnect (`qa_shot.sh --server --region '97\168.m' --radius 1 --at 80,1020
+  --yaw 270 --pitch -20 --dist 45 --reconnect 200 --reconnect-via-login --frames 500`,
+  `SRREVAMP_QA_COMMANDS=/groundprobe`). Both entries print `running=GL-Compatibility ...
+  project_method=gl_compatibility`. Entry 2's baseline is `0.032/36`, the same as entry 1's.
+  `tint`'s magenta is 0.000 in both entries. `unfix_inverted` gives 0.496/0.430/161 in entry 2
+  (box neutral 0.949, p50 161). `with the fix: 9 of 9 regions`. The inversion is still present:
+  8 of 9 regions, with 6 of 22 passes below the base in 97/168. The log has 0
+  `Cannot set material emission intensity` lines, and so do both `groundprobe-*.txt` files. It
+  also has 0 `SCRIPT ERROR`, 9 `ERROR` lines (archive models missing or not a character `.bsr`, and the exit leak report) and
+  0 empty frames of 502.
+- A teleport end to end (`SRREVAMP_QA_CLICK=gate qa_shot.sh --server --region '97\168.m' --radius
+  1 --at 1230,1380 --frames 1100 --size 640x360 --teleport 2`, `SRREVAMP_TELEPORT_DIR` set to the
+  lane's export). It printed `QA CLICK gate: 'Dimensional Gate (Obj_cj_portal_312)'`, then the
+  three NPCTALK lines, then `World3D: teleport board at STORE_CH_GATE (point 1, level 1): 2
+  Donwhang 5000, 175 Alexandria (South) 40000, ...`. Next came `QA TELEPORT: requested 1 -> 2`,
+  then `World3D: teleport accepted -- to SN_ZONE_22002, 0 gold charged, waiver 1: Teleport to
+  [Donwhang]area.`, then `teleport arrival in RealTerrain_102_153 at local (957.0, 1508.0)`.
+  Donwhang's gate bound, and a second `region grid loaded in 3298 ms ... at frame 199`. The
+  server logged `msg=teleport ... dest=GATE_WC zone=donwhang frame=102/153 x=-3 z=-548 fee=0
+  waiver=1 gm=false`. 0 `SCRIPT ERROR`. Frames were deleted after measuring; the logs are
+  `/var/tmp/r579/{wg1,tp1}.log`.
+
+**Deploy note.** It ships in the one client release with rounds 579-581, which the orchestrator
+tags.

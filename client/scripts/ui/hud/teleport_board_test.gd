@@ -313,6 +313,19 @@ func _world_checks(panels_script: GDScript) -> void:
 		chat.clear()
 		world.call("_on_teleport_requested", 2)
 		_check(chat.get_parsed_text().find("needs the server") < 0, "a Move while a request is pending is ignored (chat: %s)" % chat.get_parsed_text().strip_edges())
+		# Round 582: reopening the board -- its talk box's teleport line is
+		# still up behind it -- keeps the request pending, so a second Move
+		# before the reply is still ignored. NEGATIVE: round 578's
+		# _open_teleport_board cleared the flag, the second Move got through
+		# (offline: "needs the server"; online: a second OpTeleportUse, charged
+		# again), and both checks below fail.
+		panels.call("close", "teleport")
+		world.call("_on_npc_service_selected", "teleport")
+		_check(panels.call("is_open", "teleport"), "the talk box's teleport line reopens the board")
+		_check(world.get("_teleport_request_pending") == true, "reopening the board keeps the pending request")
+		chat.clear()
+		world.call("_on_teleport_requested", 2)
+		_check(chat.get_parsed_text().find("needs the server") < 0, "a Move after reopening the board, before the reply, is still ignored (chat: %s)" % chat.get_parsed_text().strip_edges())
 
 	# The server's refusal leaves the board up; its yes closes it.
 	var refused := TeleportNet.Result.new()
@@ -363,7 +376,11 @@ func _zone_change_checks(world: Node, panels: Node, chat: RichTextLabel) -> void
 	var arrived := WorldNet.ChangeZoneResult.new()
 	arrived.ok = true
 	arrived.zone = "102/153"
+	# A request still out when the zone changes is forgotten with the gate
+	# (round 582 keeps it across a reopen, so this is where it must go).
+	world.set("_teleport_request_pending", true)
 	world.call("_on_change_zone_result", arrived)
+	_check(world.get("_teleport_request_pending") == false, "a zone change clears a pending teleport request")
 	_check(not panels.call("is_open", "teleport"), "a zone change closes the board")
 	_check(not panels.call("is_open", "npctalk"), "a zone change closes the gate's talk box")
 	_check(world.get("_talk_npc_code") == "" and world.get("_teleport_gate_point_id") == 0,
