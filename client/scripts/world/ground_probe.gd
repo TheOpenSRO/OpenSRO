@@ -177,10 +177,11 @@ func is_running() -> bool:
 ## box), so the renderer actually running is read off the RenderingDevice --
 ## present under Forward+ / Mobile (Vulkan), absent under GL Compatibility --
 ## and the adapter's API string (a Vulkan version, a GL version, or ANGLE's).
-## `project_method` is the project's setting as the engine read it: this
-## project's project.godot has never set it (round 579: its `#` comment lines,
-## which Godot 4.2's ConfigFile parser does not treat as comments, fold into
-## the key), so it reads forward_plus and a plain launch runs Vulkan Forward+.
+## `project_method` is the project's setting as the engine read it: until
+## round 581 this project's project.godot never set it (round 579: its `#`
+## comment lines, which Godot 4.2's ConfigFile parser does not treat as
+## comments, folded into the key), so it read forward_plus and a plain launch
+## ran Vulkan Forward+; since round 581 it reads gl_compatibility.
 ##
 ## `driver_info` (OS.get_video_adapter_driver_info) only when asked -- the
 ## probe's `gpu` line, not the once-per-entry line: on Windows, Godot 4.2.2

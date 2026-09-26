@@ -30,6 +30,10 @@ Every tagged release publishes ready-to-run Windows and Linux client builds unde
    `host:port`, defaults to `127.0.0.1:15779`) into the "Server IP[:port]" field — useful for
    connecting to a friend's server on the same LAN instead of your own machine.
 
+The client draws with OpenGL 3.3 (Godot's Compatibility renderer). If the graphics driver cannot
+provide it, Godot stops at start-up with "Unable to initialize OpenGL video driver", which suggests
+updating the driver. Releases before round 581 ran Vulkan (Forward+) instead, by mistake.
+
 **Controls**: WASD/arrow keys walk directly, or left-click a spot on the ground to walk there.
 Right-click-drag orbits the camera around your character; the scroll wheel zooms. Press **F10** (or
 the "Hide UI" button, top-right) to hide the HUD for a clean view, **F1** for the developer chrome

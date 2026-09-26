@@ -40612,3 +40612,202 @@ launched only on an empty `pgrep`. A stale 22-hour-old `flock` pair from an olde
 
 **Deploy note.** Tag-worthy with round 579 (the probe), the renderer switch and the teleports (one
 release).
+
+## The client runs the Compatibility renderer it was meant to: project.godot's comments no longer swallow three settings (round 581)
+
+Client only, tag-worthy: it switches every player's renderer. The user decided on 2026-09-26 that
+players run GL Compatibility. `client/project.godot` has asked for that since 2026-08-26, and its
+own comment gives the reason: a playtest showed "missing HUD, flat/textureless ground, generally
+"not right" visuals", read as a Vulkan driver problem. The choice never took effect, and the
+quoted "not right" in that comment is what broke it. This round rewrites the comments so Godot
+reads the settings, and makes `ClientSettings` work with the oversampling setting that now
+applies too.
+
+**Grounding** (round 579's Finding 1 -- the `/groundprobe` round -- re-measured here on
+this branch's tree). Godot 4.2.2 reads `project.godot` with `VariantParser::parse_tag_assign_eof`
+(core/variant/variant_parser.cpp, 4.2.2-stable, re-read this round). Only `;` starts a comment.
+Every other printable character before `=` is appended to the key, and a `"` replaces the key read
+so far with the quoted string. So each of the file's three `#` blocks became part of the key
+after it. `ConfigFile` uses the same parser, and on the box it read the pre-change file as 18 keys,
+three of them `[debug] no logging to check(2026-08-26,seedocs/WORLD_ISSUES.md)#hadnothingtoattach
+...file_logging/enable_file_logging` (180 characters with its section), `[rendering] not
+rightvisuals--#allatonce,...renderer/rendering_method` (400) and `[gui] #Offsothewindow...fonts/
+dynamic_fonts/use_oversampling` (296). `ProjectSettings.get_property_list` listed the same three.
+The engine's own longest setting name is 81 characters
+(`rendering/lights_and_shadows/directional_shadow/soft_shadow_filter_quality.mobile`).
+
+**Change.**
+
+- `client/project.godot`: the three comment blocks now start with `;` instead of `#`. There is
+  also a header note that `#` is not a comment in this file, and a line in the rendering block
+  saying when the setting took effect. No key or value changed. What the engine read, before and
+  after (the box, headless; `ConfigFile` found 18 keys both times, and the other 15 are identical):
+
+| key | before | after |
+|---|---|---|
+| `rendering/renderer/rendering_method` | `forward_plus`, the engine default (the file's `gl_compatibility` sat under the 400-character key) | `gl_compatibility` |
+| `debug/file_logging/enable_file_logging` | `false`, the engine default (the file's `true` under the 180-character key); `.pc` override `true` | `true`; `.pc` `true` |
+| `gui/fonts/dynamic_fonts/use_oversampling` | `true`, the engine default (the file's `false` under the 296-character key) | `false` |
+| `rendering/renderer/rendering_method.mobile` | `gl_compatibility` (the line after the block parsed) | the same |
+| `debug/file_logging/log_path`, `max_log_files` | `user://logs/srrevamp.log`, `10` (they follow the swallowed key) | the same |
+
+- `client/scripts/client_settings.gd`: `apply_ui_scale` now sets the root window's
+  font-oversampling FLAG: on at a whole-number scale, off otherwise. It also sets the content
+  scale. The `size_changed` hook and `_apply_oversampling` are gone (why: below).
+
+**What applies now, setting by setting.**
+
+- **Renderer.** When no command-line flag names a renderer, `Main::setup` takes `rendering_method
+  = GLOBAL_GET("rendering/renderer/rendering_method")`, then the driver from
+  `rendering/gl_compatibility/driver` (main/main.cpp, 4.2.2). A plain launch of `Boot.tscn` on the
+  box, as ghidra under the lane lock, through `xvfb-run` and `vglrun -d egl0` with no
+  `--rendering-driver`:
+  - The pre-change tree printed `Vulkan API 1.4.305 - Forward+ - Using Vulkan Device #1: Unknown -
+    llvmpipe`.
+  - This tree printed `OpenGL API 4.6 (Core Profile) Mesa 25.0.7-2+deb13u1 - Compatibility - Using
+    Device: AMD - AMD Radeon RX 5700 XT`.
+
+  `GroundProbe` is not on this branch, so a script used the probe's own `running=` rule
+  (`RenderingServer.get_rendering_device()` present means Forward+/Mobile, none means
+  GL-Compatibility). The pre-change tree gave `running=RenderingDevice(Forward+/Mobile)` and this
+  tree `running=GL-Compatibility`. `remote_godot.sh check` on this tree also prints the engine's
+  own "Screen-space ambient occlusion (SSAO) can only be enabled when using the Forward+ rendering
+  backend" and "Glow is not supported when using the GL Compatibility backend yet" when it loads
+  `World3D.tscn`.
+- **File logging: on before, on after.** `GLOBAL_GET` is `get_setting_with_override`
+  (core/config/project_settings.h). `main.cpp` defines `debug/file_logging/enable_file_logging.pc
+  = true`, so on Windows and Linux the `.pc` value decides. Measured headless: before, the base key
+  was `false` and the override `true`; after, both are `true`. The path and the count applied both
+  times. A player on a desktop platform sees no change. Only a platform without the `pc` feature
+  would, and none is exported.
+- **Font oversampling: engine default `true` before, `false` now.** `Main::start` hands the value
+  to the root window (`set_use_font_oversampling`). On every viewport update (a resize, a
+  content-scale change), `Window::_update_viewport_size` then sets the text server's global
+  oversampling: to the content scale factor when the flag is on, to 1.0 when it is off
+  (scene/main/window.cpp, 4.2.2; the project's stretch mode is disabled). `size_changed` is
+  emitted INSIDE that update, from `Viewport::_set_size` (scene/main/viewport.cpp), before the
+  oversampling block. So the old `ClientSettings` hook on `size_changed` always lost to the
+  window's own value, although its comment said it re-applied the value "after every resize". The
+  text server's value after `apply_ui_scale` and after a resize was measured headless, and in an
+  Xvfb window on the box:
+  - **Before (as shipped):** at 2.35 the value was 1.000 after `apply_ui_scale` and 2.350 after a
+    resize. At 2.5 a resize left 2.500. The whole scales 2 and 3 held.
+  - **The fixed `project.godot` with the old `ClientSettings`:** fractional scales stayed at 1.000
+    after a resize. But whole scales 2.0 and 3.0 fell to 1.000 at the first resize, which would
+    have lost the crisp text that README promises at whole scales.
+  - **This tree:** 2.0 gave 2.000, 2.35 gave 1.000, 3.0 gave 3.000, 2.5 gave 1.000 and 1.0 gave
+    1.000, and each value was the same after a resize. The window now holds the value itself,
+    because the flag is what `ClientSettings` sets.
+  - **The glyph loss itself, rendered** (Xvfb with VirtualGL; pixels read back from the root
+    viewport; the default theme font, Open Sans). Two texts were drawn:
+    - A Label "Register" at 16. Its ink reached 62.80-63.20 units, against 57.00 for the advance
+      of "Registe" and 64.00 for "Register".
+    - The login screen's register link built as `Login.gd` builds it ("Register a new account",
+      flat, size 13, outline 3), but in the default font. Its ink spanned 142.98-144.00 units,
+      against 141.00 for "...accoun" and 146.00 for "...account".
+
+    Each was drawn at UI scales 2.0, 2.35, 2.5 and 3.0, with and without a resize, in three runs:
+    the pre-change tree under Forward+, the same tree with `--rendering-driver opengl3`, and this
+    tree. All 36 cases drew the last glyph, including those at oversampling 2.35 and 2.5. So the
+    2026-09-11 loss did not reproduce in this probe. The limits: `Login.gd` applies the client's
+    own font from `Media.pk2` (`FrontEndUi.apply_client_font`), which the probe did not load, and
+    the 2026-09-11 button is gone. The whole-number rule stays: README promises it, and it costs
+    nothing.
+
+**The export carries the same parse** (measured, not only read). `EditorExportPlatform::
+export_project_files` writes `project.binary` with `ProjectSettings::save_custom`, from the
+settings as parsed (editor/export/editor_export_platform.cpp, 4.2.2). An exported game reads
+`project.binary` before `project.godot` (`ProjectSettings::_load_settings_text_or_binary`).
+
+On the box, `--export-pack Linux` built a pack from each tree; a pack needs no export templates.
+`project.binary`, decoded from each `.pck`:
+
+- **Pre-change tree:** 17 settings. They include the three long keys and no `rendering_method`,
+  because a default is not written.
+- **This tree:** 17 settings, among them `rendering/renderer/rendering_method = "gl_compatibility"`,
+  `debug/file_logging/enable_file_logging = true` and `gui/fonts/dynamic_fonts/use_oversampling =
+  false`.
+
+The overrides were checked as well:
+
+- `export_presets.cfg` sets no renderer or driver key.
+- Its Windows `application/export_angle=0` (Auto) copies ANGLE's DLLs only when
+  `rendering/gl_compatibility/driver.windows` is `opengl3_angle`
+  (platform/windows/export/export_plugin.cpp). Ours is the default, `opengl3`.
+- `.github/workflows/release.yml` runs `godot --headless --path . --export-release ...` with no
+  renderer flag.
+
+The packs were deleted.
+
+**What players will see change** (read in 4.2.2-stable; nothing was rendered under Forward+ here).
+`World3D.tscn`'s Environment, plus what `World3D.gd` turns on:
+
+- `ssao_enabled = true`: **ignored.** `RasterizerSceneGLES3::environment_set_ssao_quality` is an
+  empty stub and drivers/gles3 has no SSAO pass. The engine's warning above says the same.
+- `glow_enabled` (intensity 0.8, bloom 0.2, HDR threshold 0.85): **ignored.** drivers/gles3 has no
+  glow pass (`effects/` holds only `copy_effects`), and the engine warns.
+- `tonemap_mode = 2` (Filmic): kept. `scene.glsl` applies exposure and `apply_tonemapping`
+  (`tonemap_inc.glsl`, `TONEMAPPER_FILMIC`) to every fragment, unshaded ones included, before
+  `linear_to_srgb`.
+- Fog (`fog_enabled`, density, `fog_sun_scatter` and `fog_aerial_perspective`, set by
+  `World3D.gd`): kept, in `scene.glsl`.
+- The procedural sky and the ambient colour: kept (`sky.glsl`).
+- The `DirectionalLight3D`'s shadows: kept (`RasterizerSceneGLES3::_render_shadow_pass`, with a
+  directional shadow atlas).
+
+Every box render so far was already Compatibility (`qa_shot.sh --rendering-driver opengl3`), so
+the look this project has verified is the one players now get. Every tester report to date,
+including the white ground after a reconnect, came from a Forward+ build. Round 579's
+(`/groundprobe`) Forward+ calculation (the grey base at about 217 on screen) no longer describes a new
+release; the box draws that base at 161.
+
+A Windows machine without OpenGL 3.3 gets "Unable to initialize OpenGL video driver"
+(display_server_windows.cpp, `create_func`). There is one exception: the engine switches to ANGLE
+first in a template built with ANGLE (`EGL_STATIC`, `angle_libs` in platform/windows/detect.py),
+and this round did not check whether the official 4.2.2 template is one.
+
+**Found in passing, not changed.** 70 of the 98 existing `*_test.gd` suites set their failure
+exit code during `_init`: 67 call `quit` there, and 3 call it through a `_finish` that `_init`
+calls. (One more ends with a plain `quit()`.) That exit code is lost. `_init` runs inside
+`Main::start`, and platform/linuxbsd/godot_linuxbsd.cpp then calls
+`os.set_exit_code(EXIT_SUCCESS)`. CI's GDScript loop in `.github/workflows/ci.yml` reads only exit
+codes, so it cannot see those suites' FAIL lines. `remote_godot.sh tests` greps for them and does see them. Measured this round: with its
+checks in `_init`, `project_settings_test.gd` printed `FAILURES 10` and exited 0 on the box.
+Moved to `_initialize`, it exits 1. Both new suites use `_initialize`.
+
+**Tests.**
+
+- `client/scripts/project_settings_test.gd` (new, headless, no renderer flag) reads what the
+  engine made of the file:
+  - `get_setting_with_override` of `rendering_method`, which is `Main::setup`'s own read, equals
+    `gl_compatibility`, and so does the `.mobile` value.
+  - The file-logging trio and `use_oversampling` equal what the file says, and the root window's
+    oversampling flag is off.
+  - No setting name is over 120 characters; every `ConfigFile` key in `project.godot` is a plain
+    name; the file sets the three keys itself; no line starts with `#`.
+- `client/scripts/client_settings_test.gd` (new, headless): for scales 2.0, 2.35, 3.0, 2.5 and
+  1.0, the text server's oversampling after `apply_ui_scale` and again after a resize, and the
+  content scale.
+- NEGATIVE, pre-change tree: `git archive HEAD`'s `client/` plus the two new suites, in
+  `/var/tmp/rrend/base`.
+  - `project_settings_test`: `FAILURES 11`, exit 1.
+  - `client_settings_test`: `FAILURES 2` (2.35 and 2.5 after a resize read 2.350 and 2.500), exit 1.
+- NEGATIVE, the fixed `project.godot` with the old `ClientSettings`: `project_settings_test` `ALL
+  PASS`; `client_settings_test` `FAILURES 2` (2.0 and 3.0 after a resize read 1.000), exit 1.
+- This tree: both suites `ALL PASS`, exit 0. On the box, lane
+  `RENDER_DIR=/opt/srrevamp-client-renderer`: `client/tools/remote_godot.sh check` gave `checked
+  275 scripts and 5 scenes`, `ALL LOAD`, and `tests` gave `ran 100 suite(s), 0 failing`. `cd
+  server && go build ./... && go test -count=1 -p 1 ./...` passed after the doc edits.
+
+**Records.**
+
+- This entry, and `docs/WORLD_ISSUES.md`'s round 581.
+- `docs/TODO.md`, "The renderer -- decided". Round 579's own TODO item "2. Decide the
+  renderer" is this round, and is marked done now that both have landed.
+- `client/tools/README.md` (the box and the players now run the same renderer) and `README.md`
+  (the OpenGL 3.3 note).
+- The comments in `project.godot` and `client_settings.gd`.
+
+**Deploy note.** Tag-worthy. A release built from this tree is the first that runs the renderer
+players were meant to have. Tell testers that the renderer changed, that their log's banner now
+reads `OpenGL API ... - Compatibility`, and that a machine without OpenGL 3.3 will not start.

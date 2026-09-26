@@ -7083,6 +7083,35 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-eighty-first round: the client runs the Compatibility renderer it was meant to -- project.godot's `#` comments no longer swallow three settings
+
+The user decided on 2026-09-26 that players run GL Compatibility, which `client/project.godot` has
+asked for since 2026-08-26. Round 579 (`/groundprobe`) had measured that the setting never applied.
+Godot 4.2 reads only `;` as a comment in that file. A `#` line is folded into the next key, and a
+quoted phrase in it restarts the key. So `rendering_method`, `enable_file_logging` and
+`use_oversampling` became keys of 400, 180 and 296 characters, and every release ran Forward+ on
+Vulkan. The comments now start with `;`. The full record is `docs/RE_COMPLETION.md`'s round 581.
+
+- **Measured on the box**, with a plain launch and no `--rendering-driver`. Before, the banner read
+  `Vulkan API 1.4.305 - Forward+`. Now it reads `OpenGL API 4.6 ... - Compatibility - ... RX 5700
+  XT`. An exported pack's `project.binary` now carries `rendering_method="gl_compatibility"`;
+  before, it held the three long keys and no renderer.
+- **What players see change** (read in the 4.2.2 source; the engine also warns): the world's SSAO
+  and glow stop. The sky, the Filmic tonemap, the fog and the sun's shadows stay. Every box render
+  was already Compatibility, so the look verified here is the one players now get. Every tester
+  report so far, the white ground included, came from Forward+.
+- **File logging** was on before and still is. On desktop the engine's `.pc` default decided,
+  and the swallowed key changed nothing.
+- **Font oversampling** now really is off in the project. Measured, headless and in a window:
+  `ClientSettings`' resize hook ran before the window's own reset, so a 2.35 scale went back to
+  2.35 oversampling after any resize. With the setting applied, a whole scale would instead have
+  dropped to 1.0. `apply_ui_scale` now sets the window's own oversampling flag (on at a whole
+  scale), and the value holds through resizes. The 2026-09-11 lost glyph did not reproduce in a
+  rendered probe, in the default font at 2.35 and 2.5; the rule stays.
+- **Found in passing:** 70 of the 98 older test suites set their exit code in `_init`, and Godot
+  resets it to 0 after start-up. CI reads only exit codes, so it cannot see their FAIL lines;
+  `remote_godot.sh tests` can.
+
 ## Five-hundred-and-eightieth round: the terrain's flat base is always drawn before its textured passes, so a reconnect no longer turns the ground flat
 
 Round 579 measured the mechanism: after a reconnect the new world's terrain materials take the

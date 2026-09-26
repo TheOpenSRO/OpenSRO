@@ -21,6 +21,14 @@ EGL on the render node instead, and says which path it took on stderr. If a log 
 "falling back to software GL", something about the render node changed — that is worth fixing
 before waiting on anything else.
 
+**It draws with the renderer players run.** `qa_shot.sh` passes `--rendering-driver opengl3`,
+which picks GL Compatibility, and since round 581 a release does too: `project.godot`'s
+`rendering_method="gl_compatibility"` finally applies (its `#` comment lines had been folded into
+the key; only `;` is a comment there). Until then every box render was Compatibility while players
+ran Forward+ on Vulkan -- keep that in mind when reading an older round's picture against a
+tester's. A plain launch without the flag now prints `OpenGL API ... - Compatibility` too, and
+`scripts/project_settings_test.gd` fails if the setting stops applying.
+
 **Startup dominates, so batch the pictures.** Loading the region grid costs roughly 65 seconds
 against 0.33 seconds a frame, so six pictures taken as six runs pays that cost six times. Use
 `--shots` to visit several viewpoints in one boot, and `--radius` to load fewer regions when the

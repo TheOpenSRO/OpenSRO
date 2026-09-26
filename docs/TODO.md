@@ -702,9 +702,10 @@ are textured. The tester plays a tagged Windows release; which tag is not known 
    `unfix_inverted` / `unfix_inverted_tint`, which undo the fix on purpose (bases at 0, each base's
    RID above its passes'): on the box they flatten the view (0.496/0.431/161, magenta 0.448), so a
    tester's file shows whether the mechanism flattens THEIR ground and that the fix holds there.
-2. **Decide the renderer.** Changing the `#` comments in `project.godot` to `;` switches every
-   player to GL Compatibility, what the 2026-08-26 decision meant; it also changes what they see.
-   The other two settings come with it.
+2. ~~**Decide the renderer.**~~ **Done (round 581, "The client runs the Compatibility renderer it
+   was meant to"):** the user decided on 2026-09-26 for GL Compatibility; the `#` comments in
+   `project.godot` now start with `;`, and the other two settings come with it ("The renderer",
+   below).
 3. **Ask the tester** (round 579 built the tools): the release tag (F3's first line); a log from a
    build with round 579 -- every world entry prints `World3D: entry <n> (...) -- running=...
    adapter=... api=...` (the driver version only in the probe's `gpu` line: on Windows it costs a
@@ -717,6 +718,23 @@ are textured. The tester plays a tagged Windows release; which tag is not known 
    the ProjectSettings class reference, "Overriding", 4.2.2-stable), so `[rendering]`
    `renderer/rendering_method="gl_compatibility"` there is a no-rebuild A/B of the renderer
    question, and `shader_compiler/shader_cache/enabled=false` one of the shader-cache hypothesis.
+
+### The renderer — **decided 2026-09-26: GL Compatibility, in effect from round 581**
+
+The user decided on 2026-09-26 that players run the Compatibility renderer, which `project.godot`
+had meant since 2026-08-26 but never got: its `#` comment lines were folded into the next key by
+Godot 4.2's parser (only `;` is a comment there), so `rendering_method`, `enable_file_logging` and
+`use_oversampling` did not apply and every release ran Forward+ on Vulkan (round 579, the
+`/groundprobe` round, measured it). Round 581 rewrote the comments; `client/scripts/project_settings_test.gd`
+fails if a setting stops applying, and an exported pack's `project.binary` now carries
+`rendering_method="gl_compatibility"` (measured before and after, `docs/RE_COMPLETION.md` round
+581). What a player sees change, read in the 4.2.2 source: the world's SSAO and glow stop (the
+Compatibility renderer has neither); sky, tonemap, fog and the sun's shadows stay. Every box render
+was already Compatibility, so the look this project has verified is the one players now get.
+Still open: a Windows GPU without OpenGL 3.3 gets Godot's "Unable to initialize OpenGL video
+driver" alert unless the export template carries ANGLE, which was not checked; and every tester
+report so far (the white ground included) came from a Forward+ build, so the first report from a
+Compatibility release is the one to read against the box.
 
 ### Loading freezes: what the off-thread rounds left (map/loading epic, 2026-09-25)
 

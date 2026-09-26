@@ -72,23 +72,31 @@ static func camera_view() -> String:
 ## box in a 1160x700 window (2026-09-11): at 2.0 "Register" draws whole, at
 ## 2.35 and 2.5 its last glyph is missing, and at 2.35 with oversampling off
 ## it draws whole again. So Godot 4.2 loses the last glyph of a string under
-## fractional oversampling; the project setting that lets the window drive
-## oversampling is off, and this sets it by hand -- the scale itself when it
-## is an integer, 1.0 (glyphs rasterised at their base size and scaled)
-## otherwise, and again after every resize, which resets it.
+## fractional oversampling. (Round 581's rendered probe -- a Label and the
+## current register link, in the default font -- did not reproduce it at
+## 2.35 or 2.5; the rule stays, and costs nothing.)
+##
+## The root window sets the text server's oversampling itself on every
+## viewport update -- a resize, a content-scale change: to its content scale
+## factor when its font-oversampling flag is on, to 1.0 when it is off
+## (scene/main/window.cpp, Window::_update_viewport_size, 4.2.2-stable; the
+## project's stretch mode is "disabled"). So this sets the FLAG -- on at a
+## whole-number scale, off otherwise -- and the window then holds the right
+## value through every later resize. The project setting
+## gui/fonts/dynamic_fonts/use_oversampling (false) is the flag at startup.
+##
+## Until round 581 this set the oversampling by hand and again from the
+## window's size_changed signal. That signal is emitted inside the viewport
+## update, before the window's own reset, so after a resize the window's
+## value won: 2.35 at a 2.35 scale while project.godot's `#` comment swallowed
+## the setting, and 1.0 at every scale once the setting applied (measured on
+## the render box, headless and in a window, round 581).
 static func apply_ui_scale(window: Window, scale: float) -> void:
 	if window == null:
 		return
 	var factor := clampf(scale, 0.5, 3.0)
+	# Only the main window drives the oversampling, and only it may set the
+	# flag once it is in the tree (Window::set_use_font_oversampling).
+	if window.is_inside_tree() and window == window.get_tree().root:
+		window.set_use_font_oversampling(is_equal_approx(factor, roundf(factor)))
 	window.content_scale_factor = factor
-	_apply_oversampling(factor)
-	if not window.has_meta("ui_scale_oversampling_hooked"):
-		window.set_meta("ui_scale_oversampling_hooked", true)
-		window.size_changed.connect(func() -> void: _apply_oversampling(window.content_scale_factor))
-
-static func _apply_oversampling(factor: float) -> void:
-	var text_server := TextServerManager.get_primary_interface()
-	if text_server == null:
-		return
-	var whole := is_equal_approx(factor, roundf(factor))
-	text_server.font_set_global_oversampling(roundf(factor) if whole else 1.0)

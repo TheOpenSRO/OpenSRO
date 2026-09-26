@@ -1,6 +1,10 @@
 ; Engine configuration file.
 ; It's best edited using the editor UI and not directly,
 ; since the parameters that go here are not all obvious.
+;
+; Comments here start with ';'. A '#' line is NOT a comment in this file:
+; Godot folds it into the next key, and that setting silently never applies
+; (round 581; scripts/project_settings_test.gd checks what the engine read).
 
 config_version=5
 
@@ -17,37 +21,39 @@ NetClient="*res://scripts/net/net_client.gd"
 
 [debug]
 
-# Always write a real log file next to nothing needing a console -- a real
-# downloaded-exe player (OpenSRO, OpenSRO) has no terminal by default, so a bug
-# report with "no logging to check" (2026-08-26, see docs/WORLD_ISSUES.md)
-# had nothing to attach. Boot.gd prints the resolved absolute path once at
-# startup so it's easy to find.
+; Always write a real log file next to nothing needing a console -- a real
+; downloaded-exe player (OpenSRO, OpenSRO) has no terminal by default, so a bug
+; report with "no logging to check" (2026-08-26, see docs/WORLD_ISSUES.md)
+; had nothing to attach. Boot.gd prints the resolved absolute path once at
+; startup so it's easy to find.
 file_logging/enable_file_logging=true
 file_logging/log_path="user://logs/srrevamp.log"
 file_logging/max_log_files=10
 
 [rendering]
 
-# Real, deliberate choice (2026-08-26, see docs/WORLD_ISSUES.md): default
-# to the Compatibility (OpenGL) renderer rather than Godot 4's Forward+
-# (Vulkan) default. A real playtest reported a cluster of symptoms --
-# missing HUD, flat/textureless ground, generally "not right" visuals --
-# all at once, which is consistent with a Vulkan driver/GPU incompatibility
-# on that specific machine (no hard crash, just broad rendering breakage)
-# rather than several unrelated content bugs. Compatibility mode runs on
-# far more real hardware (including older/integrated GPUs a real user is
-# likelier to have), which matters more for a downloadable hobby client
-# than Forward+'s extra rendering features.
+; Real, deliberate choice (2026-08-26, see docs/WORLD_ISSUES.md): default
+; to the Compatibility (OpenGL) renderer rather than Godot 4's Forward+
+; (Vulkan) default. A real playtest reported a cluster of symptoms --
+; missing HUD, flat/textureless ground, generally "not right" visuals --
+; all at once, which is consistent with a Vulkan driver/GPU incompatibility
+; on that specific machine (no hard crash, just broad rendering breakage)
+; rather than several unrelated content bugs. Compatibility mode runs on
+; far more real hardware (including older/integrated GPUs a real user is
+; likelier to have), which matters more for a downloadable hobby client
+; than Forward+'s extra rendering features.
+; It took effect only in round 581: until then these lines began with '#',
+; which swallowed the key below, and every player ran Forward+ on Vulkan.
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 
 [gui]
 
-# Off so the window does not tie font oversampling to its content scale
-# factor: Godot 4.2 loses a string's last glyph under fractional
-# oversampling (measured, docs/WORLD_ISSUES.md round 134's addendum).
-# ClientSettings.apply_ui_scale sets oversampling itself, at whole-number
-# UI scales only.
+; Off so the window does not tie font oversampling to its content scale
+; factor: Godot 4.2 loses a string's last glyph under fractional
+; oversampling (measured, docs/WORLD_ISSUES.md round 134's addendum).
+; ClientSettings.apply_ui_scale turns the window's oversampling back on at
+; whole-number UI scales only.
 fonts/dynamic_fonts/use_oversampling=false
 
 [input]
