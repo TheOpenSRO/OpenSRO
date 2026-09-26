@@ -86,12 +86,13 @@ const OBJECT_MATERIALS := 3
 ## the same as every opaque pass's. `unfix_inverted` draws the bases at it.
 const PRE_FIX_BASE_PRIORITY := 0
 ## The picture statistics' box, as fractions of the viewport: 35% to 80% of
-## the width and 62% to 92% of the height -- under the player at the default
-## camera, clear of the underbar (bottom 3%) and of the chat window, which
-## reached 11% of the width in the tester's 1280x675 screenshot and 32% in a
-## render box frame at its default UI scale. The probe's own choice, not a
-## measurement of anything.
-const FRAME_BOX := Rect2(0.35, 0.62, 0.45, 0.30)
+## the width and 60% to 84% of the height -- under the player at the default
+## camera, clear of the underbar and of the chat window. The underbar is 68
+## pixels tall (round 598): 10.5% of a 648-tall view, 15.7% at UI scale 1.5,
+## so the box ends above 84.3%. The chat reached 11% of the width in the
+## tester's 1280x675 screenshot and 32% in a render box frame at its default
+## UI scale. The probe's own choice, not a measurement of anything.
+const FRAME_BOX := Rect2(0.35, 0.60, 0.45, 0.24)
 ## Every FRAME_STRIDE-th pixel in x and y.
 const FRAME_STRIDE := 4
 ## A pixel is "neutral" when max(r,g,b) - min(r,g,b) <= NEUTRAL_SPREAD (0-255),

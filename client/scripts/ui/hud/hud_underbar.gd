@@ -159,8 +159,10 @@ const MAX_QUICKSLOT := 51
 ## The "m" slot. Quick slot 0 is what the middle button fires (WM_MBUTTONDOWN
 ## 0x207 -> `0x77c4cc` -> `0x60bb80(0)`), unless the interface's +0x4f9 flag
 ## is set, when the right button does instead (0x204 -> `0x77c73e`); the flag
-## is 0 when the interface is built (`0x78d383`) and set only from the option
-## code, which this client does not have. Command 0x58 also fires it
+## is 0 when the interface is built (`0x78d383`) and set through `0x778be0`
+## by the option code and by `0x77c190`, which loads the player's saved
+## options from Setting\SROptionSet.dat; this client has neither, so it stays
+## 0. Command 0x58 also fires it
 ## (0x780610's table at 0x780e90, entry 6); which key sends that command by
 ## default is not traced here.
 const MOUSE_SLOT := 0
@@ -237,10 +239,13 @@ func setup(file: Variant = null) -> void:
 	# The middle button fires the "m" slot wherever the cursor is; STOP keeps
 	# a press on the body from reaching World3D, so the body fires it here.
 	relay_middle_button(self)
-	if _ui_builder == null:
-		return
-	var twodt := _load(file)
+	var twodt := _load(file) if _ui_builder != null else null
 	if twodt == null or twodt.records.is_empty():
+		# No file, no bar: say so, and let clicks through rather than keep an
+		# empty 800x68 rectangle that swallows the world under it.
+		push_warning("HudUnderbar: %s is not in the archive -- no bottom bar" % UNDERBAR_2DT)
+		print("HudUnderbar: %s not found; the bar is empty and takes no clicks" % UNDERBAR_2DT)
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
 		return
 	_twodt = TwoDtBuilder.new(_ui_builder)
 	twodt = _fitted(twodt)
@@ -503,14 +508,82 @@ func _wire() -> void:
 func _on_command(id: int) -> void:
 	if MENU_ACTIONS.has(id):
 		menu_action.emit(String(MENU_ACTIONS[id]))
-	_set_shown(_menu, false)
+	hide_menu()
 
 func toggle_menu() -> void:
-	if _menu != null:
-		_menu.visible = not _menu.visible
+	if _menu == null:
+		return
+	if _menu.visible:
+		hide_menu()
+	else:
+		show_menu()
 
 func show_menu() -> void:
-	_set_shown(_menu, true)
+	if _menu == null:
+		return
+	_menu.visible = true
+	_clamp_menu()
+
+## The menu closes as the client closes it (see _input).
+func hide_menu() -> void:
+	if _menu != null and _menu.visible:
+		_menu.visible = false
+		if _menu.has_meta(UiBuilder.AUTHORED_RECT_META):
+			_menu.position = (_menu.get_meta(UiBuilder.AUTHORED_RECT_META) as Rect2).position
+
+## Keeps the open menu inside the view. **This project's own rule**, not the
+## client's: the client lays the UI out for its own resolution and was not
+## read clamping this menu, but here a UI scale of 1.5 on a 1152x648 window
+## put its top 30 pixels above the screen. It moves only as far as needed,
+## from its authored place, and goes back there when it closes.
+func _clamp_menu() -> void:
+	if _menu == null or not _menu.is_inside_tree():
+		return
+	if _menu.has_meta(UiBuilder.AUTHORED_RECT_META):
+		_menu.position = (_menu.get_meta(UiBuilder.AUTHORED_RECT_META) as Rect2).position
+	var view := get_viewport().get_visible_rect()
+	var r := _menu.get_global_rect()
+	var shift := Vector2.ZERO
+	if r.position.y < view.position.y:
+		shift.y = view.position.y - r.position.y
+	elif r.end.y > view.end.y:
+		shift.y = view.end.y - r.end.y
+	if r.position.x < view.position.x:
+		shift.x = view.position.x - r.position.x
+	elif r.end.x > view.end.x:
+		shift.x = view.end.x - r.end.x
+	_menu.position += shift
+
+## The client hides this menu on every left and right press its interface
+## handles: CGInterface::vslot_017 (0x77c260) runs, for WM_LBUTTONDOWN (0x201,
+## 0x77c44d..0x77c49f) and WM_RBUTTONDOWN (0x204, 0x77c67f..0x77c6d2),
+## `GetWindow(0xaf)` and `0x60a610`, a thunk that jumps to the menu's
+## (+0x3cc) ShowWindow with 0. **Whether that handler also sees a press that
+## lands on another window was not read**; here any left or right press that
+## is not on the menu itself or on its button (4, which toggles it) closes it,
+## over the world or over another window alike -- a choice, and the old Godot
+## popup's behaviour.
+##
+## Escape closes it too, before anything else takes the key (HudPanels would
+## otherwise open the system window). **Also this project's choice**: the
+## client's Escape handling for this menu was not read.
+func _input(event: InputEvent) -> void:
+	if _menu == null or not _menu.visible:
+		return
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if not mb.pressed or (mb.button_index != MOUSE_BUTTON_LEFT and mb.button_index != MOUSE_BUTTON_RIGHT):
+			return
+		var at := mb.position
+		var btn: Control = _nodes.get(ID_BTN_MENU)
+		if _menu.get_global_rect().has_point(at) or (btn != null and btn.get_global_rect().has_point(at)):
+			return
+		hide_menu()
+	elif event is InputEventKey:
+		var key := event as InputEventKey
+		if key.pressed and not key.echo and key.keycode == KEY_ESCAPE:
+			hide_menu()
+			get_viewport().set_input_as_handled()
 
 func is_menu_open() -> bool:
 	return _menu != null and _menu.visible

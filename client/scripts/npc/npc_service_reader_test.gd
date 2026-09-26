@@ -895,7 +895,7 @@ func _initialize() -> void:
 		"a click on the shown target window does not reach the world")
 
 	# The hotbar: CNIFUnderMenuBar from the synthetic nifundermenubar.2dt in
-	# underbar_fixture.gd (round 5xx). Its rect is the 800x68 body; quick slot
+	# underbar_fixture.gd (round 598). Its rect is the 800x68 body; quick slot
 	# 1 (40) and the menu button (4) sit inside it, the left decoration (2)
 	# hangs off its left end, and the menu (59) opens above it.
 	var Fixture = load("res://scripts/ui/hud/underbar_fixture.gd")

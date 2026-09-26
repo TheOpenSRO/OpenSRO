@@ -43249,7 +43249,9 @@ tenth to whole percents (the test caught 46.1 drawn as 46).
   - WM_RBUTTONDOWN (0x204 -> `0x77c73e`) when that byte is 1;
   - command 0x58 (0x780e90 entry 6).
   The byte is set to 0 when the interface is built (`0x78d383`, ebx zeroed at `0x78d082`). It is
-  changed only by `0x778be0`, whose callers are option code. So by default **the middle button
+  changed only through `0x778be0`, whose callers are the option code and `0x77c190`, which
+  loads the saved options from `Setting\SROptionSet.dat` (strings 0xd960c4 / 0xd960b4;
+  corrected in the review fix below). This client has neither, so it stays 0. So by default **the middle button
   fires the "m" slot**. Until now the middle button here fired page slot 1, the one the 1 key
   fires. The playtest's own words were "the first slot thats on the hotbar you press it with 1,
   thats not right it should be middle mouse button", and the first slot on the client's bar is
@@ -43361,7 +43363,8 @@ tree. Both were re-run after the rebase against b79036a, below. Neither printed 
   menu-to-panel check reads `HudUnderbar.MENU_ACTIONS`.
 
 **Verified**, on the tree rebased onto b79036a (rounds 587..597):
-- `remote_godot.sh check`: 300 scripts and 5 scenes, ALL LOAD.
+- `remote_godot.sh check`: 299 scripts and 5 scenes, ALL LOAD (300 was reported at first; the
+  extra one was the scratch audit script copied into the lane's directory, not the tree).
 - `remote_godot.sh tests`: 113 suites, 0 failing, 0 SCRIPT ERROR.
 - `cd server && go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok.
 - The negative against b79036a's scripts: the same 50 FAIL lines as against 8dad706.
@@ -43404,3 +43407,94 @@ the recipe.
 - The key that sends command 0x58 (the "m" slot) is not traced.
 - 59's +0x1c0 flag and the 0x6c0-byte helper at +0x4a0 are not read.
 - The pet bar 16 stays hidden. What shows it (a summoned pet) is not wired.
+
+## The bar's menu closes when the player clicks elsewhere (round 598, review fix)
+
+Client only. A review of the round above found two blocking problems and several smaller ones.
+Each is fixed here in a new commit on top of it. Every address is `sro_client.exe`'s, re-read
+in the asm.
+
+### The menu closes on a click elsewhere (read), and on Escape (this project's choice)
+
+- **Read.** `CGInterface::vslot_017` (`0x77c260`) switches on the mouse message at `0x77c424`
+  (table 0x77c8bc).
+  - WM_LBUTTONDOWN (0x201) runs `0x77c44d`. At `0x77c495..0x77c49f` it calls `GetWindow(0xaf)`
+    (`0x7994e0`) and then `0x60a610`.
+  - WM_RBUTTONDOWN (0x204) runs `0x77c67f` and does the same at `0x77c6c8..0x77c6d2`.
+  - `0x60a610` is `mov ecx,[ecx+0x3cc]; jmp [vtbl+0x5c]`: the menu's ShowWindow, with the 0
+    that was pushed (ebx, zeroed at `0x77c279`).
+  So the client hides the bar's menu on every left or right press its interface handles. Round
+  598 dropped that. Its open menu (170x403) kept swallowing world clicks until button 4 or an
+  item was pressed. HudPanels' old PopupMenu had closed on any outside click, so this was also a
+  regression against b79036a.
+- **Not read.** Whether that handler also runs for a press that lands on another window (the
+  GUI's dispatch order). Here `HudUnderbar._input` hides the menu on any left or right press
+  that is not on the menu or on its button 4, over the world or over another window alike. That
+  is **a choice**: a superset of what was read, and the old popup's behaviour. Button 4 is left
+  out because it toggles the menu itself; hiding the menu first would make that button reopen
+  it. `_input` does not consume the press, so it still does what it would have done.
+- **Escape** closes the menu before anything else takes the key. Before this, HudPanels'
+  `close_topmost` knew only HudWindows, so with just the menu open, Escape opened the system
+  window. **This is this project's choice**: the client's Escape handling for this menu was not
+  read.
+
+### No retail text in the fixtures
+
+`underbar_fixture.gd` carried retail text. 14 of its 22 text-table strings were the English
+column's words ("Party ( %s )" and the rest), and its records copied the file's sample strings.
+Every string is now made up and marked "tt" ("tt party %s", "SAMPLE-A".."SAMPLE-G"). The keys
+stay the client's. `hud_underbar_test`'s expectations follow them.
+
+Every string literal in the suites and fixtures this round or rounds 594-597 added was checked
+against the archive: the text table's value columns (13,543 strings) and the `.2dt` files'
+sample and comment fields (703). The hits:
+- **Fixed:** `twodt_reader_test.gd`'s "Invite" (round 594) is now "tt invite", and its
+  "Leader :" is now "tt leader :".
+- **Left as they are:**
+  - "F1", "F2" and "F4" are the output of the exe's own `F%d` (0xd98580), checked as output.
+  - "Create" is a section name and "Mark" a node name.
+  - `npc_service_reader_test.gd`'s talk-menu strings ("Buy", "Storage", "End conversation.",
+    "Create a new guild", "Leave guild." ...) date from round 513, outside this check's scope.
+    They are recorded here as open.
+
+### Smaller fixes
+
+- **The open menu stays in the view** (ours). At UI scale 1.5 on 1152x648 its top was at -30.
+  `show_menu` now moves it from its authored place only as far as the visible rect needs, and
+  `hide_menu` puts it back. The client was not read clamping it.
+- **No file, no bar.** When `res_ui\nifundermenubar.2dt` is missing, the bar says so (a warning
+  and a log line) and is IGNORE, so it does not leave an empty 800x68 rectangle swallowing
+  clicks. `hud_click_routing_test` now builds the bar from the fixture, as the other suites do.
+- **The ground probe's box** (`ground_probe.gd` `FRAME_BOX`) now spans 60%..84% of the height,
+  down from 62%..92%. The bar is 68 px: 10.5% of a 648-tall view, and 15.7% at UI scale 1.5.
+  The comment's "bottom 3%" was wrong before this round.
+- `0x778be0`'s second caller, `0x77c190` (the saved options), is recorded above, in the round's
+  own section F.
+- `npc_service_reader_test.gd`'s comment now says round 598.
+
+### Tests
+
+- `hud_underbar_test.gd` gained checks for everything in this entry:
+  - a left press in the world closes the menu;
+  - a right press in the world closes it;
+  - a press on the menu leaves it open;
+  - button 4 with the menu open closes it once;
+  - Escape closes it and goes no further; with the menu closed, Escape reaches the rest of the
+    HUD;
+  - the open menu stays in the view, and goes back to its place when closed;
+  - the bar without its file lets clicks through.
+- NEGATIVE, run on the box against e115a98's scripts (with this test and fixture copied in):
+  **6 FAIL lines**, no SCRIPT ERROR:
+  - `FAIL a left click in the world closes the menu (0x201 -> 0x60a610)`
+  - `FAIL a right click in the world closes the menu (0x204 -> 0x60a610)`
+  - `FAIL Escape closes the menu and goes no further (keys past it: 1)`
+  - `FAIL with the menu closed, Escape reaches the rest of the HUD again`
+  - `FAIL the open menu stays inside the view (top -94)`
+  - `FAIL without nifundermenubar.2dt the empty bar lets clicks through (filter 0; built bar 0)`
+- On this tree: ALL PASS.
+
+**Verified.**
+- `remote_godot.sh check`: 299 scripts and 5 scenes, ALL LOAD.
+- `remote_godot.sh tests`: 113 suites, 0 failing, 0 SCRIPT ERROR.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok.
+

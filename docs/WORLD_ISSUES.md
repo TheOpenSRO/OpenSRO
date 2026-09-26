@@ -7083,6 +7083,39 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-ninety-eighth round (review fix): the bar's menu closes when the player clicks elsewhere
+
+A review fix to the round below. The full record is `docs/RE_COMPLETION.md`'s entry of the
+same name.
+
+- **Read.** `CGInterface::vslot_017` (`0x77c260`) hides the bar's menu on every left press
+  (0x201, `0x77c495..0x77c49f`) and right press (0x204, `0x77c6c8..0x77c6d2`) it handles:
+  `GetWindow(0xaf)`, then `0x60a610`, which jumps to the menu's ShowWindow(0). The round below
+  had lost this, so the open menu swallowed world clicks. That was a regression against the old
+  Godot popup too.
+- **Ours.**
+  - Whether that handler also sees presses over other windows was not read. The menu now closes
+    on any left or right press off the menu and off its button 4.
+  - Escape closes the menu first; before, it opened the system window.
+  - The open menu is kept inside the view: its top was at -30 at UI scale 1.5.
+  - A missing nifundermenubar.2dt now logs, and leaves no click-eating rectangle.
+- **Fixtures.** `underbar_fixture.gd`'s text-table strings and sample strings were the
+  archive's own. They are now made up ("tt ..."). A check of every literal in the suites of
+  rounds 594-598 against the archive's text and samples found "Invite" / "Leader :" in
+  `twodt_reader_test.gd`, now replaced. `npc_service_reader_test.gd`'s round-513 talk strings
+  are left open.
+- **Also.** The ground probe's box is now 60..84% of the height, clear of the 68-px bar.
+  `0x778be0`'s second caller is `0x77c190`, which loads Setting\SROptionSet.dat; the default
+  stays 0. The round below's script count is 299, not 300: the 300 included a scratch tool in
+  the lane's directory.
+- **Tests.** Against e115a98, `hud_underbar_test.gd` fails 6 times:
+  - `FAIL a left click in the world closes the menu (0x201 -> 0x60a610)`
+  - `FAIL a right click in the world closes the menu (0x204 -> 0x60a610)`
+  - `FAIL Escape closes the menu and goes no further (keys past it: 1)`
+  - the Escape follow-up, the view clamp and the missing-file check
+  It passes here. `remote_godot.sh check`: 299 scripts and 5 scenes, ALL LOAD.
+  `remote_godot.sh tests`: 113 suites, 0 failing, 0 SCRIPT ERROR. Go: 59 packages ok.
+
 ## Five-hundred-and-ninety-eighth round: the bottom bar is the client's own menu bar: its level and ten-part EXP readout, the M slot on the middle button, and its own menu
 
 The underbar was built from `resinfo\ifunderbar.txt`, which the exe never names, inside
@@ -7132,7 +7165,7 @@ of the same name.
   against b79036a (and 50 against 8dad706), for example
   `FAIL the bar is the file's 800x68 (got (800, 52))` and
   `FAIL a middle press fires the "m" slot, quick slot 0 (got [])`. It passes here.
-  `remote_godot.sh check`: 300 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`: 113
+  `remote_godot.sh check`: 299 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`: 113
   suites, 0 failing, 0 SCRIPT ERROR. Go: 59 packages ok.
 - **Live.** `qa_shot.sh --server --attack`, on the RX 5700 XT, with this tree's server,
   measured from the log (`/var/tmp/rubar/live-598.log` on the box):

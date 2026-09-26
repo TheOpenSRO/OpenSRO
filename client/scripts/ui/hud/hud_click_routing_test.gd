@@ -147,7 +147,9 @@ func _test_middle_button(world: Node, recorder: Node) -> void:
 	_check(_click_reaches_world(recorder, Vector2(600, 300), MOUSE_BUTTON_MIDDLE),
 		"the probe: a middle press on no control reaches _unhandled_input")
 
-	var bar := HudUnderbar.new(UiBuilder.new(null, null), null, null)
+	# The bar from the synthetic nifundermenubar.2dt (round 598): without its
+	# file the bar is empty and takes no clicks.
+	var bar := HudUnderbar.new(load("res://scripts/ui/hud/underbar_fixture.gd").builder(), null, null)
 	bar.setup()
 	hud.add_child(bar)
 	bar.position = Vector2(100, 560)

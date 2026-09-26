@@ -99,7 +99,7 @@ func _sample() -> Array:
 
 func _text_table() -> UiTextTable:
 	var rows := PackedStringArray()
-	for pair in [["UIIT_T_LABEL", "Leader :"], ["UIIT_T_BUTTON", "Invite"]]:
+	for pair in [["UIIT_T_LABEL", "tt leader :"], ["UIIT_T_BUTTON", "tt invite"]]:
 		rows.append("1\t%s\t\t\t\t\t\t\t%s" % pair)
 	return UiTextTable.parse(("\n".join(rows)).to_utf16_buffer())
 
@@ -212,7 +212,7 @@ func _run() -> void:
 	_check(order == [42, 72, 73, 10, 20, 30, 31, 32, 34, 5], "children in file order, the tile backmost (got %s)" % [order])
 
 	# Text: the text id through the table; the sample text and comment never drawn.
-	_check(Builder.text_of(s5) == "Leader :", "the text id resolves through the text table (got '%s')" % Builder.text_of(s5))
+	_check(Builder.text_of(s5) == "tt leader :", "the text id resolves through the text table (got '%s')" % Builder.text_of(s5))
 	var label := s5.get_node_or_null("Text") as Label
 	_check(label != null and label.get_theme_color("font_color") == Color8(0xef, 0xda, 0xa4, 0xff),
 		"the record's colour is the text colour")
@@ -235,7 +235,7 @@ func _run() -> void:
 	var btn := Builder.child(root, 30) as TextureButton
 	_check(btn != null and btn.texture_normal == btn_n and btn.texture_hover == btn_f and btn.texture_pressed == btn_p and btn.texture_disabled == null,
 		"a button takes _focus / _press, and no _disable when the archive has none")
-	_check(Builder.text_of(btn) == "Invite", "a button's caption is its text id")
+	_check(Builder.text_of(btn) == "tt invite", "a button's caption is its text id")
 	var chk := Builder.find_path(root, [10, 33]) as TextureButton
 	var mark := chk.get_node_or_null("Mark") as TextureRect if chk != null else null
 	_check(chk != null and chk.texture_normal == chk_off and mark != null and mark.texture == chk_on and not mark.visible,

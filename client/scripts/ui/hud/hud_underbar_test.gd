@@ -74,12 +74,15 @@ func _run() -> void:
 	if Fixture == null or Bar == null:
 		return
 	var builder: UiBuilder = Fixture.builder()
+	# The client's default window (the headless root starts at 64x64).
+	get_root().size = Vector2i(1152, 648)
+	root.notification(Node.NOTIFICATION_VP_MOUSE_ENTER)
 	var hud := Control.new()
 	root.add_child(hud)
 	var bar: Control = Bar.new(builder, null, builder.text_table())
 	bar.call("setup")
 	hud.add_child(bar)
-	bar.position = Vector2(112, 700)
+	bar.position = Vector2(176, 560)
 	var fired: Array = []
 	bar.connect("quickslot_activated", func(idx: int) -> void: fired.append(idx))
 	var actions: Array = []
@@ -102,10 +105,10 @@ func _run() -> void:
 	_check(_at(broot, [103]) != null and not _at(broot, [103]).visible, "the slot arrow 103 starts hidden")
 	_check(_at(broot, [59, 120]) != null and not _at(broot, [59, 120]).visible, "the stall-network item 59 -> 120 is hidden")
 	_check(_at(broot, [104]) != null and _at(broot, [104]).visible, "the bar's own 104 is shown")
-	_check(_text(_at(broot, [14])) == "EXP (tt)", "14 is captioned UIO_CHARINFO_STT_EXP (got '%s')" % _text(_at(broot, [14])))
-	_check(_text(_at(broot, [11])) == "Skill Points (tt)", "11 keeps its record's text id (got '%s')" % _text(_at(broot, [11])))
+	_check(_text(_at(broot, [14])) == "tt exp", "14 is captioned UIO_CHARINFO_STT_EXP (got '%s')" % _text(_at(broot, [14])))
+	_check(_text(_at(broot, [11])) == "tt skill points", "11 keeps its record's text id (got '%s')" % _text(_at(broot, [11])))
 	for id in [10, 12, 13, 15, 17]:
-		_check(_text(_at(broot, [id])) != "SAMPLE" and not _text(_at(broot, [id])).contains("12345678"),
+		_check(not _text(_at(broot, [id])).contains("SAMPLE"),
 			"%d draws no sample text (got '%s')" % [id, _text(_at(broot, [id]))])
 
 	# --- quick slots: 0 the "m" slot, 1..10 the authored ten, 11..50 made ---
@@ -191,7 +194,7 @@ func _run() -> void:
 			_text(_at(broot, [15])), _text(_at(broot, [10])), _text(_at(broot, [17])), _gauge(_at(broot, [29]))])
 	if bar.has_method("set_level"):
 		bar.call("set_level", 7)
-	_check(_text(_at(broot, [13])) == "Lv (tt). 7", "13 is %%s. %%d of UIIT_STT_LEVEL_LV and the level (got '%s')" % _text(_at(broot, [13])))
+	_check(_text(_at(broot, [13])) == "tt lv. 7", "13 is %%s. %%d of UIIT_STT_LEVEL_LV and the level (got '%s')" % _text(_at(broot, [13])))
 	bar.call("set_sp", 500)
 	_check(_text(_at(broot, [12])) == "500" and _gauge(_at(broot, [5])) == 0.0,
 		"12 shows the SP total and the SP gauge 5 stays empty with no progress (got '%s', %s)" % [_text(_at(broot, [12])), _gauge(_at(broot, [5]))])
@@ -203,15 +206,15 @@ func _run() -> void:
 	if menu_btn != null:
 		menu_btn.pressed.emit()
 	_check(menu != null and menu.visible, "the menu button 4 shows the menu")
-	_check(_text(_at(broot, [59, 83, 200])) == "Party ( P )",
+	_check(_text(_at(broot, [59, 83, 200])) == "tt party P",
 		"83's caption is CONTENTS_MENU_PARTY with this client's key (got '%s')" % _text(_at(broot, [59, 83, 200])))
-	_check(_text(_at(broot, [59, 108, 200])) == "Community ( U )",
+	_check(_text(_at(broot, [59, 108, 200])) == "tt community U",
 		"108's caption names the guild's key, as the client's does (got '%s')" % _text(_at(broot, [59, 108, 200])))
-	_check(_text(_at(broot, [59, 102, 200])) == "Guardian (tt)",
+	_check(_text(_at(broot, [59, 102, 200])) == "tt camp match",
 		"102 keeps its record's caption (got '%s')" % _text(_at(broot, [59, 102, 200])))
 	var b6 := _at(broot, [6])
 	var b9 := _at(broot, [9])
-	_check(b6 != null and b6.tooltip_text == "Character ( C )" and b9 != null and b9.tooltip_text == "Item Mall(F10)",
+	_check(b6 != null and b6.tooltip_text == "tt character C" and b9 != null and b9.tooltip_text == "tt mall",
 		"6 and 9 carry their hover strings (got '%s', '%s')" % [b6.tooltip_text if b6 else "", b9.tooltip_text if b9 else ""])
 	# The fit: the widest caption's overrun past its 82-wide static, plus 10,
 	# widens the menu; the menu's right edge is the bar's.
@@ -251,6 +254,64 @@ func _run() -> void:
 			b.pressed.emit()
 		_check(actions == [pair[1]], "button %d opens %s (got %s)" % [pair[0], pair[1], actions])
 
+	# --- the menu closes when the player clicks elsewhere (CGInterface::
+	# vslot_017 0x77c260 -> 0x60a610 on 0x201 and 0x204), and on Escape
+	# (this project's choice) ---
+	var recorder_script := GDScript.new()
+	recorder_script.source_code = "extends Node\nvar keys := 0\nfunc _unhandled_key_input(_e: InputEvent) -> void:\n\tkeys += 1\n"
+	recorder_script.reload()
+	var recorder := Node.new()
+	recorder.set_script(recorder_script)
+	root.add_child(recorder)
+	var press := func(at: Vector2, button: MouseButton) -> void:
+		for is_down in [true, false]:
+			var ev := InputEventMouseButton.new()
+			ev.button_index = button
+			ev.pressed = is_down
+			ev.position = at
+			ev.global_position = at
+			root.push_input(ev, true)
+	var open_menu := func() -> void:
+		if bar.has_method("show_menu"):
+			bar.call("show_menu")
+		elif menu != null:
+			menu.visible = true
+	open_menu.call()
+	press.call(Vector2(600, 100), MOUSE_BUTTON_LEFT)
+	_check(menu != null and not menu.visible, "a left click in the world closes the menu (0x201 -> 0x60a610)")
+	open_menu.call()
+	press.call(Vector2(600, 100), MOUSE_BUTTON_RIGHT)
+	_check(menu != null and not menu.visible, "a right click in the world closes the menu (0x204 -> 0x60a610)")
+	open_menu.call()
+	press.call(menu.get_global_rect().position + Vector2(5, 5) if menu else Vector2.ZERO, MOUSE_BUTTON_LEFT)
+	_check(menu != null and menu.visible, "a click on the open menu itself leaves it open")
+	press.call(_at(broot, [4]).get_global_rect().get_center() if _at(broot, [4]) else Vector2.ZERO, MOUSE_BUTTON_LEFT)
+	_check(menu != null and not menu.visible, "a click on the menu button with the menu open closes it (once)")
+	open_menu.call()
+	recorder.set("keys", 0)
+	var esc := InputEventKey.new()
+	esc.keycode = KEY_ESCAPE
+	esc.pressed = true
+	root.push_input(esc, true)
+	_check(menu != null and not menu.visible and int(recorder.get("keys")) == 0,
+		"Escape closes the menu and goes no further (keys past it: %s)" % recorder.get("keys"))
+	root.push_input(esc, true)
+	_check(int(recorder.get("keys")) == 1, "with the menu closed, Escape reaches the rest of the HUD again")
+	recorder.queue_free()
+	# Ours: the open menu is kept inside the view (a UI scale of 1.5 put its
+	# top above the screen).
+	bar.position = Vector2(176, 300)
+	open_menu.call()
+	await process_frame
+	var view := root.get_visible_rect()
+	_check(menu != null and menu.get_global_rect().position.y >= view.position.y - 0.5
+		and menu.get_global_rect().end.y <= view.end.y + 0.5,
+		"the open menu stays inside the view (top %s)" % [menu.get_global_rect().position.y if menu else -1])
+	if bar.has_method("hide_menu"):
+		bar.call("hide_menu")
+	_check(menu != null and _local(bar, menu).y == 44 - 438, "closed, it is back at its place (got %s)" % [_local(bar, menu)])
+	bar.position = Vector2(176, 560)
+
 	# --- labels: centred and right-aligned text overrun its 4-pixel row the
 	# way the alignment says (the builder's grow direction) ---
 	await process_frame
@@ -264,6 +325,13 @@ func _run() -> void:
 	bar.call("setup")
 	_check(broot != null and broot.find_children("Wnd40", "", true, false).size() == copies and copies == 1,
 		"a second setup() builds nothing more")
+
+	# --- no file: an empty bar that takes no clicks ---
+	var bare: Control = Bar.new(UiBuilder.new(null, null), null, null)
+	bare.call("setup")
+	_check(bare.mouse_filter == Control.MOUSE_FILTER_IGNORE and bar.mouse_filter == Control.MOUSE_FILTER_STOP,
+		"without nifundermenubar.2dt the empty bar lets clicks through (filter %d; built bar %d)" % [bare.mouse_filter, bar.mouse_filter])
+	bare.free()
 
 	# --- item bindings (unchanged) ---
 	var bag := {3: 4001, 7: 4002, 9: 4001}

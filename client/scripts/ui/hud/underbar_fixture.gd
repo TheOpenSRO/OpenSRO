@@ -3,7 +3,8 @@ extends RefCounted
 ## A synthetic `res_ui\nifundermenubar.2dt` for the HUD suites: the ids,
 ## types, parents, rects, class names and text-table keys of the controls
 ## CNIFUnderMenuBar's code touches, copied from the real file's structure,
-## with no art and no text (docs/LEGAL.md). The suites put it in a UiBuilder's
+## with no art and no text of the archive's (docs/LEGAL.md): the sample
+## strings and the text-table rows below are made up here. The suites put it in a UiBuilder's
 ## `.2dt` cache, so the bar builds through the real reader and builder:
 ##
 ##   var builder := UnderbarFixture.builder()   # or install(builder)
@@ -30,30 +31,31 @@ const MENU_ITEMS := [[83, 60, "UIIT_STT_TOGGLE_PARTY"], [93, 85, "UIIT_STT_TOGGL
 	[104, 320, "UIIT_PAG_COLLECTION_WINDOW"], [117, 353, "UIIT_CTL_OPEN_STORE"],
 	[114, 270, "UIIT_STT_TOGGLE_ENCHANT"], [115, 295, "UIIT_STT_MK"]]
 
-## The text rows the suites resolve, with test strings.
+## The text rows the suites resolve. The keys are the client's; every
+## string is made up here (none is the archive's text), with "tt" marking it.
 const TEXT := [
-	["UIO_CHARINFO_STT_EXP", "EXP (tt)"],
-	["UIIT_STT_LEVEL_LV", "Lv (tt)"],
-	["UIIT_STT_SKILLPOINT", "Skill Points (tt)"],
-	["UIIT_STT_TOGGLE_CONTENTS_MENU_PARTY", "Party ( %s )"],
-	["UIIT_STT_TOGGLE_CONTENTS_MENU_PARTYMATCH", "Party Match ( %s )"],
-	["UIIT_STT_TOGGLE_CONTENTS_MENU_GUILD", "Guild ( %s )"],
-	["UIIT_STT_TOGGLE_CONTENTS_MENU_TRAININGCAMP", "Academy ( %s )"],
-	["UIIT_STT_TOGGLE_CONTENTS_MENU_ACTION", "Action ( %s )"],
-	["UIIT_STT_TOGGLE_CONTENTS_MENU_COMMUNITY", "Community ( %s )"],
-	["UIIT_STT_TOGGLE_CONTENTS_MENU_QUEST", "Quest ( %s )"],
-	["UIIT_STT_TOGGLE_CONTENTS_MENU_ENCHANT", "Alchemy ( %s )"],
-	["UIIT_STT_TOGGLE_CONTENTS_MENU_AUTOPOTION", "Auto Potion ( %s )"],
-	["UIIT_STT_TOGGLE_CONTENTS_MENU_CHARACTER", "Character ( %s )"],
-	["UIIT_STT_TOGGLE_CONTENTS_MENU_INVENTORY", "Inventory ( %s )"],
-	["UIIT_STT_TOGGLE_CONTENTS_MENU_SKILL", "Skill ( %s )"],
-	["UIIT_STT_SILKMALL_SHORT_KEY", "Item Mall(F10)"],
-	["UIIT_STT_TOGGLE_PARTY", "Party (record)"],
-	["UIIT_STT_TC_MACHING_TITLE", "Guardian (tt)"],
-	["UIIT_STT_TOGGLE_SYSTEM", "System ( Esc )"],
-	["UIIT_PAG_COLLECTION_WINDOW", "Collection (tt)"],
-	["UIIT_CTL_OPEN_STORE", "Stall (tt)"],
-	["UIIT_STT_MK", "Making (tt)"],
+	["UIO_CHARINFO_STT_EXP", "tt exp"],
+	["UIIT_STT_LEVEL_LV", "tt lv"],
+	["UIIT_STT_SKILLPOINT", "tt skill points"],
+	["UIIT_STT_TOGGLE_CONTENTS_MENU_PARTY", "tt party %s"],
+	["UIIT_STT_TOGGLE_CONTENTS_MENU_PARTYMATCH", "tt party match %s"],
+	["UIIT_STT_TOGGLE_CONTENTS_MENU_GUILD", "tt guild %s"],
+	["UIIT_STT_TOGGLE_CONTENTS_MENU_TRAININGCAMP", "tt camp %s"],
+	["UIIT_STT_TOGGLE_CONTENTS_MENU_ACTION", "tt action %s"],
+	["UIIT_STT_TOGGLE_CONTENTS_MENU_COMMUNITY", "tt community %s"],
+	["UIIT_STT_TOGGLE_CONTENTS_MENU_QUEST", "tt quest %s"],
+	["UIIT_STT_TOGGLE_CONTENTS_MENU_ENCHANT", "tt enchant %s"],
+	["UIIT_STT_TOGGLE_CONTENTS_MENU_AUTOPOTION", "tt potion %s"],
+	["UIIT_STT_TOGGLE_CONTENTS_MENU_CHARACTER", "tt character %s"],
+	["UIIT_STT_TOGGLE_CONTENTS_MENU_INVENTORY", "tt inventory %s"],
+	["UIIT_STT_TOGGLE_CONTENTS_MENU_SKILL", "tt skill %s"],
+	["UIIT_STT_SILKMALL_SHORT_KEY", "tt mall"],
+	["UIIT_STT_TOGGLE_PARTY", "tt party record"],
+	["UIIT_STT_TC_MACHING_TITLE", "tt camp match"],
+	["UIIT_STT_TOGGLE_SYSTEM", "tt system"],
+	["UIIT_PAG_COLLECTION_WINDOW", "tt collection"],
+	["UIIT_CTL_OPEN_STORE", "tt stall"],
+	["UIIT_STT_MK", "tt making"],
 ]
 
 static func _rec(f: Dictionary) -> PackedByteArray:
@@ -90,11 +92,11 @@ static func records() -> Array:
 		{"type": 4, "id": 7, "parent": 175, "rect": Rect2i(797, 459, 32, 32)},
 		{"type": 4, "id": 8, "parent": 175, "rect": Rect2i(828, 459, 32, 32)},
 		{"type": 4, "id": 9, "parent": 175, "rect": Rect2i(859, 459, 32, 32)},
-		{"type": 5, "id": 10, "parent": 175, "rect": Rect2i(109, 495, 14, 9), "sample": "10"},
+		{"type": 5, "id": 10, "parent": 175, "rect": Rect2i(109, 495, 14, 9), "sample": "SAMPLE-A"},
 		{"type": 5, "id": 11, "parent": 175, "rect": Rect2i(146, 454, 66, 4), "textid": "UIIT_STT_SKILLPOINT"},
-		{"type": 5, "id": 12, "parent": 175, "rect": Rect2i(230, 454, 66, 4), "h": 2, "sample": "12345678"},
-		{"type": 5, "id": 13, "parent": 175, "rect": Rect2i(124, 480, 66, 4), "h": 0, "sample": "Lv."},
-		{"type": 5, "id": 15, "parent": 175, "rect": Rect2i(250, 480, 43, 4), "h": 2, "sample": "23.45%"},
+		{"type": 5, "id": 12, "parent": 175, "rect": Rect2i(230, 454, 66, 4), "h": 2, "sample": "SAMPLE-B"},
+		{"type": 5, "id": 13, "parent": 175, "rect": Rect2i(124, 480, 66, 4), "h": 0, "sample": "SAMPLE-C"},
+		{"type": 5, "id": 15, "parent": 175, "rect": Rect2i(250, 480, 43, 4), "h": 2, "sample": "SAMPLE-D"},
 		{"type": 18, "id": 16, "parent": 175, "rect": Rect2i(601, 410, 192, 36)},
 		{"type": 18, "id": 51, "parent": 16, "gp": 175, "rect": Rect2i(606, 414, 26, 26)},
 		{"type": 4, "id": 18, "parent": 175, "rect": Rect2i(732, 478, 20, 12)},
@@ -102,14 +104,14 @@ static func records() -> Array:
 	]
 	for k in 10:
 		if k == 5:
-			recs.append({"type": 5, "id": 17, "parent": 175, "rect": Rect2i(492, 497, 43, 4), "sample": "80%"})
+			recs.append({"type": 5, "id": 17, "parent": 175, "rect": Rect2i(492, 497, 43, 4), "sample": "SAMPLE-E"})
 		recs.append({"type": 10, "id": 20 + k, "parent": 175, "rect": Rect2i(127 + 78 * k, 497, 76, 8)})
 	for s in PAGE_SLOTS:
 		recs.append({"type": 18, "id": s[0], "name": "CIFSlotWithHelpEx", "parent": 175, "rect": Rect2i(s[1], s[2], 32, 32)})
 	recs.append({"type": 18, "id": MOUSE_SLOT[0], "name": "CIFSlotWithHelpEx", "parent": 175,
 		"rect": Rect2i(MOUSE_SLOT[1], MOUSE_SLOT[2], 32, 32)})
-	recs.append({"type": 5, "id": 57, "parent": 175, "rect": Rect2i(730, 467, 22, 15), "sample": "F1"})
-	recs.append({"type": 5, "id": 14, "parent": 175, "rect": Rect2i(211, 480, 36, 4), "h": 2, "sample": "EXP"})
+	recs.append({"type": 5, "id": 57, "parent": 175, "rect": Rect2i(730, 467, 22, 15), "sample": "SAMPLE-F"})
+	recs.append({"type": 5, "id": 14, "parent": 175, "rect": Rect2i(211, 480, 36, 4), "h": 2, "sample": "SAMPLE-G"})
 	recs.append({"type": 1, "id": 59, "parent": 175, "rect": Rect2i(758, 44, 138, 403)})
 	recs.append({"type": 2, "id": 62, "parent": 59, "gp": 175, "rect": Rect2i(778, 64, 98, 363)})
 	for m in MENU_ITEMS:
