@@ -8,7 +8,21 @@ extends Control
 ## What the archive says (2026-09-19, dumped with tools/dump_layout.gd):
 ##
 ## - `resinfo\ginterface.txt` registers `GDR_TARGETWINDOW` (`CIFTargetWindow`)
-##   at (442, 10) with a 10x10 rect -- "use the art's own size".
+##   at (442, 10) with a 10x10 rect. The window does not stay there: see
+##   **Placement** below.
+## - **Placement, read (round 590).** After choosing a piece, the select
+##   function 0x699540 moves the window itself (slot 0x98 on esi, 0x69a180)
+##   to x = (screen width - w) >> 1, y = 7 (0x69a161..0x69a17e). `w` is the
+##   width of the piece it just showed: each branch reads that piece's own
+##   rect into the same stack slot ([esp+0x1c] = x, y, w, h via 0xb8f420 --
+##   the special mob at 0x6999b1, the common enemy at 0x699b51, the player
+##   pieces at 0x699e3e/0x699e64), and the formula reads its third field
+##   ([esp+0x24]); it is not the window's own 10x10. The screen width is the
+##   display mode's +0x24 (0x4f9cd0), read as the width because a centring
+##   routine halves it for x and +0x28 for y (inferred, round 587). When no
+##   piece is shown (a rarity-2 monster) nothing writes that slot before the
+##   formula reads it, so the client's x there is not defined by anything
+##   read; this window then stays where it was.
 ## - `resinfo\iftargetwindow.txt` is the container, and it is the one the
 ##   client loads: `CIFTargetWindow::Create` (0x699080) pushes it (0xda5170,
 ##   at 0x69908b) and builds it into the window itself. The file this window
@@ -97,7 +111,6 @@ extends Control
 
 signal closed
 
-const REGISTRY_NAME := "GDR_TARGETWINDOW"
 const CONTAINER_LAYOUT := "resinfo\\iftargetwindow.txt"
 const COMMON_LAYOUT := "resinfo\\iftw_commonenemy.txt"
 const SPECIAL_LAYOUT := "resinfo\\iftw_specialmob.txt"
@@ -151,6 +164,29 @@ var _name: Label = null
 var _icon: TextureRect = null
 var _level_row: Label = null
 var _rank_row: Label = null
+
+## The y the select function puts the window at (0x69a171, `push 7`).
+const TOP_Y := 7.0
+
+## Places the window as the select function does (see Placement): centred on
+## the screen's width by the shown piece's width, 7 down. In this client the
+## screen is the viewport, in the UI's own units -- which is what a UI scale
+## changes -- and the placement is redone when the viewport resizes, since the
+## client re-runs its formula on every selection and knows no resize of ours.
+func place() -> void:
+	if _shown == null or not is_inside_tree():
+		return
+	var view_w := get_viewport_rect().size.x
+	global_position = Vector2(floorf((view_w - size.x) / 2.0), TOP_Y)
+
+## The piece _select showed, or null.
+var _shown: Control = null
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_ENTER_TREE:
+		var vp := get_viewport()
+		if vp != null and not vp.size_changed.is_connected(place):
+			vp.size_changed.connect(place)
 
 func _init(builder: UiBuilder = null) -> void:
 	_builder = builder
@@ -293,6 +329,7 @@ static func monster_window(rarity: int) -> String:
 ## keeps only its close button, and takes no space of its own.
 func _select(rarity: int) -> void:
 	var want: Control = _special if monster_window(rarity) == "special" else null
+	_shown = want
 	for w in [_common, _special, _player, _job_player]:
 		if w != null:
 			w.visible = (w == want)
@@ -359,6 +396,7 @@ func show_target(target_name: String, level: int, rarity: int, hp: int, max_hp: 
 		_rank_row.add_theme_color_override("font_color", Color.WHITE)
 	set_hp(hp, max_hp)
 	visible = true
+	place()
 
 ## The rank row's text for a rarity, through the client's text table, or ""
 ## where 0x69b4c0 sets none.

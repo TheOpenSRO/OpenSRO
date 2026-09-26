@@ -162,6 +162,18 @@ func _checks(script: GDScript) -> void:
 		target.free()
 		return
 
+	# The close button at its authored 176,9 and held there by the settling
+	# pass, like every other built control: knock it off its rect while that
+	# pass runs (its first frames in the tree) and wait.
+	var close := target.find_child("GDR_TW_CLOSE", true, false) as Control
+	_check(close != null, "the container's close button is built")
+	if close != null:
+		close.position = Vector2(0, 0)
+		close.size = Vector2(40, 40)
+		for i in 5:
+			await process_frame
+		_check(close.position == Vector2(176, 9) and close.size == Vector2(16, 16),
+			"the close button settles back to its authored 176,9,16,16 (got %s)" % Rect2(close.position, close.size))
 	# The pieces, built from the 2009 branch.
 	var common := target.get_node_or_null("GDR_TW_COMMONENEMY") as Control
 	var frame := common.get_node_or_null("Frame") as TextureRect if common != null else null
@@ -206,6 +218,26 @@ func _checks(script: GDScript) -> void:
 		_check(target.visible and not any and close_shows and target.size == Vector2.ZERO,
 			"rarity %d: no piece, only the close button (pieces shown %s, size %s)" % [rarity, any, target.size])
 
+	# Placement (round 590, read at 0x69a161): the window moves itself to
+	# ((screen width - the shown piece's width) >> 1, 7), and this client
+	# redoes it when the viewport changes size or UI scale.
+	for view in [[Vector2i(1152, 648), 1.0], [Vector2i(1920, 1080), 1.0], [Vector2i(1366, 768), 1.5]]:
+		root.size = view[0]
+		root.content_scale_factor = view[1]
+		await process_frame
+		target.call("show_target", "Mangyang", 1, 0, 54, 54)
+		var logical_w := target.get_viewport_rect().size.x
+		var want := Vector2(floorf((logical_w - 236.0) / 2.0), 7.0)
+		_check(target.global_position == want,
+			"placed at ((%s - 236) >> 1, 7) = %s in a %s window at UI scale %s (got %s)" % [logical_w, want, view[0], view[1], target.global_position])
+	root.size = Vector2i(1600, 900)
+	root.content_scale_factor = 1.0
+	await process_frame
+	await process_frame
+	var after_w := target.get_viewport_rect().size.x
+	_check(target.global_position == Vector2(floorf((after_w - 236.0) / 2.0), 7.0),
+		"a resize to %s re-centres it without a new target (got %s)" % [target.get_viewport_rect().size, target.global_position])
+
 	# The live player kinds are built and hidden, as Create leaves them.
 	var player := target.get_node_or_null("GDR_TW_PLAYERWND") as CanvasItem
 	var job := target.get_node_or_null("GDR_TW_JOB_PLAYERWND") as CanvasItem
@@ -217,15 +249,4 @@ func _checks(script: GDScript) -> void:
 		or not (target.find_child("GDR_TW_FORTRESSSTRUCTER", true, false) as CanvasItem).is_visible_in_tree(),
 		"no fortress piece shows")
 
-	# The close button at its authored 176,9 and held there by the settling
-	# pass, like every other built control: knock it off its rect and wait.
-	var close := target.find_child("GDR_TW_CLOSE", true, false) as Control
-	_check(close != null, "the container's close button is built")
-	if close != null:
-		close.position = Vector2(0, 0)
-		close.size = Vector2(40, 40)
-		for i in 5:
-			await process_frame
-		_check(close.position == Vector2(176, 9) and close.size == Vector2(16, 16),
-			"the close button settles back to its authored 176,9,16,16 (got %s)" % Rect2(close.position, close.size))
 	target.free()

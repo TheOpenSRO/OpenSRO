@@ -7083,6 +7083,15 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Round 590: the target window sits centred at the top of the screen, where the client puts it
+
+The full record is `docs/RE_COMPLETION.md`'s entry of the same name. **Read:** each time the
+client's target window shows a target, it moves itself to ((screen width − the shown piece's width)
+>> 1, 7) (0x69a161). It uses the piece's width, not its own 10x10. The registry's 442,10, which we
+placed it by, is not where it stays. **Built:** HudTarget places itself that way on every target and
+on every viewport resize, in the UI's own units. Measured: (458, 7) at 1152x648, (842, 7) at
+1920x1080, (337, 7) at 1366x768 with UI scale 1.5. The test fails 4 times against 5a5d896.
+
 ## Round 589: a monster's target window is the one the client picks for its rarity
 
 The full record is `docs/RE_COMPLETION.md`'s entry of the same name.

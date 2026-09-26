@@ -42082,3 +42082,72 @@ On this tree: ALL PASS.
 - Non-monster targets (NPC, player, pet, structure) are not targeted by this client. Their windows
   are built but never selected.
 - What CICUser's slot 43 returns (player vs job-player window).
+
+## The target window sits centred at the top of the screen, where the client puts it (round 590)
+
+Client only. World3D placed the target window at the registry's (442, 10), kept as an offset from
+the centre line of a 1024-wide layout. The client does not leave it there.
+
+### Read (0x699540's tail, 0x69a161..0x69a180)
+
+```
+69a161: call 0x4f9cd0          ; the display mode
+69a166: mov  eax,[eax+0x24]    ; its width
+69a169: sub  eax,[esp+0x24]    ; minus w
+69a16f: sar  eax,1
+69a171: push 0x7               ; y
+69a177: push eax               ; x
+69a178: mov  eax,[edx+0x98]    ; slot 0x98 (move) on the window itself (ecx = esi)
+```
+
+- **The window moves itself**, to x = (W − w) >> 1, y = 7, every time the select function shows a
+  target. Read.
+- **`w` is the shown piece's width, not the window's own.** Each branch reads the piece it showed
+  into the same stack rect with 0xb8f420, which stores x, y, w, h: the special mob at 0x6999b1, the
+  common enemy at 0x699b51, and the player pieces at 0x699e3e and 0x699e64, all `lea …,[esp+0x1c]`.
+  `[esp+0x24]` is that rect's third field. The window's own rect is the registry's 10x10. Read.
+- `W` is the display mode's +0x24. That it is the screen width is **inferred**, as in round 587:
+  a centring routine halves +0x24 for x and +0x28 for y (0x4f8de3, 0x4f8dfc).
+- **A rarity-2 monster**, which shows no piece, reaches the formula without anything writing that
+  rect, so its x is not defined by anything read. This window then stays where it was. The archive
+  has no such monster (round 589).
+
+### What is built
+
+- `HudTarget.place()` puts the window at `(floor((W − w) / 2), 7)`. `W` is the viewport's width in
+  the UI's own units, which is what the F3 UI scale changes; `w` is the shown piece's width. It runs
+  on every `show_target` and whenever the viewport changes size. The client re-runs its formula on
+  every selection and has no resize of ours to follow.
+- World3D's registry-offset block is removed, and the window is no longer anchored at the centre
+  line. A grep found nothing else that read the target's position or `HudTarget.REGISTRY_NAME`,
+  so that constant is removed too. `hud_click_routing_test` and `npc_service_reader_test` give the
+  window their own rect.
+
+### At our sizes (measured in the test, headless, root window resized)
+
+| Window | UI scale | Logical width | Placed at |
+|---|---|---|---|
+| 1152x648 (the project's default) | 1.0 | 1152 | (458, 7) |
+| 1920x1080 | 1.0 | 1920 | (842, 7) |
+| 1366x768 | 1.5 | 910 | (337, 7) |
+| resized to 1600x900, no new target | 1.0 | 1600 | (682, 7) |
+
+The 236x78 piece fits in all of these. It would overflow only below a logical width of 236.
+
+### Tests
+
+`hud_target_layout_test.gd` places a rarity-0 target at each size above and resizes without a new
+target. NEGATIVE, run on the box against 5a5d896's scripts (round 589, the rank strings
+reconciled): **4 FAIL lines**:
+
+- `FAIL placed at ((1152 - 236) >> 1, 7) = (458, 7) in a (1152, 648) window at UI scale 1 (got (0, 0))`
+- `FAIL placed at ((1920 - 236) >> 1, 7) = (842, 7) in a (1920, 1080) window at UI scale 1 (got (0, 0))`
+- `FAIL placed at ((910 - 236) >> 1, 7) = (337, 7) in a (1366, 768) window at UI scale 1.5 (got (0, 0))`
+- `FAIL a resize to (1600, 900) re-centres it without a new target (got (0, 0))`
+
+On this tree: ALL PASS. The close-button settle check from round 588 was also moved into the
+settling pass's first frames. Placed after the new awaits, it ran once the three-frame pass was
+over and failed for that reason alone, which showed the check had depended on timing.
+
+**Verified.** `remote_godot.sh check`: 293 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`: 111
+suites, 0 failing. `cd server && go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok.

@@ -4913,8 +4913,8 @@ func _set_hp_bar(body: Node3D, hp: int, max_hp: int) -> void:
 
 ## The target window: whatever the player has clicked, at the top of the
 ## screen. Built by HudTarget from the client's own layouts
-## (iftargetwindow + iftw_commonenemy / iftw_specialmob) and placed where
-## ginterface.txt registers GDR_TARGETWINDOW; shown on click/attack, updated
+## (iftargetwindow + iftw_commonenemy / iftw_specialmob), placing itself
+## centred at the top as CIFTargetWindow does; shown on click/attack, updated
 ## on damage, hidden on death or when nothing is targeted. Everything it
 ## shows is the server's snapshot -- see hud_target.gd for the recovery.
 var _hud_target: HudTarget = null
@@ -4927,24 +4927,9 @@ func _build_target_window() -> void:
 		# null-safe through the wrappers below.
 		ui_control.add_child(_hud_target)
 		return
-	# The registry puts it at (442, 10) in the client's 1024-wide layout. That
-	# is not a centring number ((1024-196)/2 is 414), so it is kept as an
-	# offset from the layout's centre line (the window was 196 wide when this
-	# was written; it is 236 now, round 588): identical at 1024 wide, and the
-	# window stays near the top centre on wider screens. Whether the real
-	# client anchors it to the left edge or the centre is not recovered.
-	var reg := _ui_builder.window_def(HudTarget.REGISTRY_NAME) if _ui_builder != null else null
-	var authored_x := 442.0
-	var authored_y := 10.0
-	if reg != null:
-		authored_x = float(reg.rect.position.x)
-		authored_y = float(reg.rect.position.y)
-	_hud_target.anchor_left = 0.5
-	_hud_target.anchor_right = 0.5
-	_hud_target.offset_left = authored_x - 512.0
-	_hud_target.offset_right = authored_x - 512.0 + _hud_target.size.x
-	_hud_target.offset_top = authored_y
-	_hud_target.offset_bottom = authored_y + _hud_target.size.y
+	# Where it goes is the window's own business: CIFTargetWindow places
+	# itself, centred at the top, each time it shows a target (HudTarget.place,
+	# read at 0x69a161). The registry's 442,10 is not used.
 	_hud_target.closed.connect(func() -> void: _last_attack_target = -1)
 	ui_control.add_child(_hud_target)
 
