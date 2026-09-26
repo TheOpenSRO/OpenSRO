@@ -63,10 +63,6 @@ var _pan_from := Vector2.ZERO
 var _pinned_to_world := false
 var _player_world := Vector2.ZERO
 var _player_region := Vector2i(-1, -1)
-## The strip that drags the window: this frame's own top border rather than
-## HudWindow's 42, which is ifalchemybox's number for a different frame set.
-## `mframe_wnd_`'s corners are 68 tall.
-var _title_strip := 0.0
 
 func _init(builder: UiBuilder = null) -> void:
 	_builder = builder
@@ -90,15 +86,13 @@ func build_worldmap() -> bool:
 
 	# The frame, at the window's own origin rather than the registry's
 	# screen position -- `position` here is where the window sits, which is
-	# the caller's business.
-	var frame := _builder.build_control(def)
-	if frame != null:
-		frame.position = Vector2.ZERO
-		frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		add_child(frame)
+	# the caller's business. HudWindow's registry path, which every
+	# registry-framed window shares: it also gives the window CIFMainFrame's
+	# caption, drag strip and close button (CIFWorldMap is a CIFMainFrame, and
+	# its Create, 0x6964e0, calls that OnCreate first).
+	_add_registry_frame(def)
 
 	var insets := _frame_insets(def.ddj)
-	_title_strip = insets.position.y
 	_build_interior(insets)
 
 	# The three authored buttons go on top of everything.
@@ -508,21 +502,3 @@ func toggle() -> void:
 		hide()
 	else:
 		open()
-
-## Drag by this frame's own top border rather than HudWindow's 42-pixel
-## strip, which is a different frame set's number.
-func _gui_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		var mb := event as InputEventMouseButton
-		if mb.pressed:
-			move_to_front()
-			if mb.position.y <= _title_strip:
-				_dragging = true
-				_drag_offset = mb.position
-				accept_event()
-		else:
-			_dragging = false
-	elif event is InputEventMouseMotion and _dragging:
-		position += (event as InputEventMouseMotion).position - _drag_offset
-		_clamp_to_viewport()
-		accept_event()

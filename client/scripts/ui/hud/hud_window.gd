@@ -17,6 +17,13 @@ class_name HudWindow
 ## client's window base draws those itself over the frame's top edge. A few
 ## do, though, and those are what the chrome added here is measured from:
 ## see TITLE_BAR_HEIGHT.
+##
+## **Some windows are registry-framed instead.** Storage, exchange, system,
+## party match, auto potion, the game guide and the world map each have an
+## entry in resinfo\ginterface.txt, an `mframe_wnd_` frame with the window's
+## size and caption, and their layouts sit inside it without a frame of their
+## own at the origin. Those are built with `registry` (see build) and take
+## CIFMainFrame's chrome, read from the client (MAINFRAME_*).
 
 const UiBuilder = preload("res://scripts/ui/ui_builder.gd")
 const UiLayoutParser = preload("res://scripts/ui/ui_layout_parser.gd")
@@ -45,6 +52,45 @@ const CLOSE_BUTTON_SIZE := 16.0
 const CLOSE_BUTTON_Y := 12.0
 ## Distance from the window's right edge to the close button's left edge.
 const CLOSE_BUTTON_INSET := 26.0
+
+## A **registry-framed** window's chrome: CIFMainFrame's own, read from its
+## OnCreate, `CIFMainFrame::vslot_010` (0x816f80), not from a layout.
+##
+## Every registry entry this client frames is a CIFMainFrame subclass
+## (CIFStorageRoom, CIFSystemWnd, CIFExchange, CIFPartyMatch, CIFAutoPotion,
+## CIFGameGuide, CIFWorldMap -- their RTTI chains), and each class's Create
+## calls that OnCreate before it loads its own layout. It reads the window's
+## own rect (0xb8f420: x, y, width, height) and creates three children with
+## the window factory 0xba20b0, at rects relative to the window:
+##
+##   CIFStatic        (10, 12, width - 0x15, 12)   ID 0 -- the caption
+##   CIFDragableArea  (10,  0, width - 0x15, 0x22) ID 1 -- the drag strip
+##   CIFCloseButton   (width - 0x1a, 10, 16, 16)   ID 2
+##
+## (the class of each is what its vslot_000 returns: 0xee9720 is CIFStatic's,
+## 0xeea6bc CIFDragableArea's, 0xee9868 CIFCloseButton's). Each gets font
+## index 0 (0xba5460(0)), horizontal alignment 1 and vertical 0 -- the two
+## text-board slots, +0x14 and +0x18, that the layout builder 0x8b5580 feeds
+## from a control's HAlign and VAlign (the parser stores those at +0x88 and
+## +0x8a, 0x82c785 / 0x82c7a3, and the builder passes the same two fields to
+## the same two slots, 0x8b56a6 / 0x8b56b8). The registry entry's `Text` reaches the
+## caption through CIFMainFrame's slot 45 (0x817230), which forwards to the
+## caption static's SetText; the layout builder calls slot 45 with every
+## control's Text (0x8b5706). The resize slot 21 (0x817210) re-lays the three
+## the same way (0x817170).
+##
+## The caption's colour is not read: nothing in OnCreate sets it, and the
+## entry's FontColor goes to the frame's own text board (0x8b56d4), not the
+## caption's. It keeps the colour every window here uses (`_add_title_bar`).
+const MAINFRAME_CAPTION_X := 10.0
+const MAINFRAME_CAPTION_Y := 12.0
+const MAINFRAME_CAPTION_HEIGHT := 12.0
+## The caption and drag strip are the window's width less 0x15.
+const MAINFRAME_STRIP_WIDTH_LESS := 21.0
+const MAINFRAME_DRAG_HEIGHT := 34.0
+## The close button sits width - 0x1a across, 10 down.
+const MAINFRAME_CLOSE_INSET := 26.0
+const MAINFRAME_CLOSE_Y := 10.0
 
 var _builder: UiBuilder
 var _dragging := false
@@ -81,10 +127,22 @@ func _init() -> void:
 ## `m_bySkillWndType` in the client (type 1 loads Withdrawal, types 2 and 3
 ## load MainSkillWnd -- one function, one branch, confirmed in the binary),
 ## so building both would draw two layouts over each other.
+##
+## `registry` frames the window from resinfo\ginterface.txt instead of from
+## its layout, for a window the client registers there (see
+## HudPanels.REGISTRY_FRAMES): `{"name": "GDR_STORAGEROOM"}`, plus
+## `"defines"` to select the entry's `#ifdef` branches and `"caption": false`
+## when the entry's Text is not to be used. The window then takes the entry's
+## size, draws the entry's frame behind everything, and carries CIFMainFrame's
+## caption, drag strip and close button (MAINFRAME_*). The layout goes in at
+## the window's origin: its controls are the window's own children, created
+## with rects relative to it (see _add_registry_frame). An entry that is
+## missing, sized zero or not an 8-slice frame leaves the window self-framed,
+## as before.
 func build(builder: UiBuilder, layout_path: String, title: String,
 		extra_sections: PackedStringArray = PackedStringArray(),
 		defines: PackedStringArray = PackedStringArray(),
-		honor_ifdef: bool = false) -> bool:
+		honor_ifdef: bool = false, registry: Dictionary = {}) -> bool:
 	_builder = builder
 	if builder == null:
 		return false
@@ -95,7 +153,10 @@ func build(builder: UiBuilder, layout_path: String, title: String,
 	if sec == null or sec.controls.is_empty():
 		return false
 
+	var reg_def := _registry_entry(builder, registry)
 	var window_size := UiBuilder.section_size(sec, builder)
+	if reg_def != null:
+		window_size = Vector2(reg_def.rect.size)
 	if window_size == Vector2.ZERO:
 		return false
 	custom_minimum_size = window_size
@@ -123,6 +184,10 @@ func build(builder: UiBuilder, layout_path: String, title: String,
 	panel_root = builder.build_section(layout, "Create")
 	if panel_root == null:
 		return false
+	if reg_def != null:
+		# Added first, so it is behind the layout: the frame is the window
+		# itself, and every layout control is one of its children.
+		_add_registry_frame(reg_def)
 	# Sections are declared front-to-back like controls, and "Create" holds
 	# the frame, so the content sections go behind nothing and in front of
 	# it -- added after, which is on top.
@@ -137,9 +202,92 @@ func build(builder: UiBuilder, layout_path: String, title: String,
 	# already blocks, and the children keep their own filters.
 	add_child(panel_root)
 
-	_add_title_bar(_authored_title(builder, sec, title))
+	var caption := _authored_title(builder, sec, title)
+	if reg_def != null and registry.get("caption", true):
+		caption = _registry_caption(builder, reg_def, caption)
+	_add_title_bar(caption)
 	_settle()
 	return true
+
+## The registry entry `registry` names (see build), or null when there is
+## none to frame the window with.
+static func _registry_entry(builder: UiBuilder, registry: Dictionary) -> UiLayoutParser.ControlDef:
+	var reg_name: String = registry.get("name", "")
+	if reg_name == "":
+		return null
+	var honor := registry.has("defines")
+	var reg_defines := PackedStringArray(registry.get("defines", []))
+	var def := builder.window_def(reg_name, reg_defines, honor)
+	if def == null or def.rect.size.x <= 0 or def.rect.size.y <= 0 \
+			or not UiBuilder.is_slice_base(def.ddj):
+		push_warning("HudWindow: no framed registry entry %s; the window stays self-framed" % reg_name)
+		return null
+	return def
+
+## The registry entry's own caption, or `fallback` when its Text is empty or
+## does not resolve (GDR_STORE's is empty: the store's class sets its own).
+static func _registry_caption(builder: UiBuilder, def: UiLayoutParser.ControlDef,
+		fallback: String) -> String:
+	if def.text == "":
+		return fallback
+	var resolved := builder.resolve_text(def.text)
+	if resolved == "" or resolved == def.text:
+		return fallback
+	return resolved
+
+## The registry entry the window is framed by, or null for a self-framed one.
+var registry_def: UiLayoutParser.ControlDef
+## Its frame, the window's backmost child.
+var registry_frame: Control
+
+## Draws the registry entry's frame over the whole window, behind everything.
+##
+## **The layout's origin is the window's origin -- read, not fitted.** Each
+## class's Create (CIFStorageRoom 0x6cc780, CIFSystemWnd 0x6f6610,
+## CIFExchange 0x7b27d0, CIFPartyMatch 0x73ae90, CIFAutoPotion 0x741980,
+## CIFGameGuide 0x765920, CIFWorldMap 0x6964e0) loads its layout and builds
+## every section with the window itself as the parent (`push esi` / `push
+## ebp` before the builder 0x8b5580). The builder hands each control's Rect
+## unchanged to the factory 0xba20b0 (0x8b5639..0x8b564b), and the factory
+## stores the rect and then adds the parent's position to it (0xba223e:
+## `add [new+0x40], [parent+0x40]`, and the same for y). So a layout rect is
+## relative to the registry window's top-left, and the 9-17 pixel margins the
+## layouts leave are their own coordinates -- ifstorageroom's frame starts at
+## 9,38 in a 254x317 window.
+##
+## The frame is placed at the window's origin, not at the entry's rect (a
+## screen position -- GDR_SYSTEM's is 300,200), and its settling rect is the
+## local one, so no settling pass can move it there.
+func _add_registry_frame(def: UiLayoutParser.ControlDef) -> void:
+	registry_def = def
+	if registry_frame != null:
+		registry_frame.queue_free()
+		remove_child(registry_frame)
+	var local := def.with_rect(Rect2i(Vector2i.ZERO, Vector2i(size)))
+	registry_frame = _builder.build_control(local)
+	if registry_frame == null:
+		return
+	registry_frame.name = "RegistryFrame"
+	registry_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(registry_frame)
+	move_child(registry_frame, 0)
+
+## Resizes a registry-framed window the way CIFMainFrame's resize slot does
+## (0x817210): the frame is redrawn at the new size and the caption, drag
+## strip and close button re-laid (0x817170). For a class that sizes its
+## window in code after building it -- CIFSystemWnd.
+func set_registry_size(new_size: Vector2) -> void:
+	# The minimum first: a size below the old minimum is clamped back up to it.
+	custom_minimum_size = new_size
+	size = new_size
+	if registry_def != null:
+		_add_registry_frame(registry_def)
+	var bar := get_node_or_null("TitleBar") as Control
+	if bar != null:
+		_place_title_bar(bar)
+	var close := get_node_or_null("CloseButton") as Control
+	if close != null:
+		close.position = _close_position()
 
 ## Docks a second layout's "Create" section inside this window, to the right
 ## of the existing content, and re-spans the title bar and close button over
@@ -181,7 +329,7 @@ func dock_companion(builder: UiBuilder, layout_path: String, x_offset: float) ->
 		_place_title_bar(bar)
 	var close := get_node_or_null("CloseButton") as Control
 	if close != null:
-		close.position = Vector2(size.x - CLOSE_BUTTON_INSET, CLOSE_BUTTON_Y)
+		close.position = _close_position()
 	# Settle again, so the companion's authored rects and the widened title
 	# bar are re-applied once the tree has settled.
 	_settle()
@@ -219,10 +367,10 @@ const FRAME_TYPES := ["CIFFrame", "CIFSubFrame", "CIFStretchWnd"]
 ## few frames: UiBuilder.settle_authored_rects, the settling pass every built
 ## widget shares (its comment has why a rect applied at build time comes out
 ## inflated). It runs over the built layout and the title bar, which carries
-## its rect in the same meta, and over nothing else: a subclass can hang a
-## control built elsewhere on the window -- HudWorldmap's frame is the
-## registry's GDR_WORLDMAP, whose authored rect is a screen position (100,100)
-## the window deliberately moves to its own origin.
+## its rect in the same meta, and over nothing else: a window can hang a
+## control built elsewhere on itself -- a registry frame is built from an
+## entry whose rect is a screen position (GDR_WORLDMAP's 100,100), which the
+## window moves to its own origin (_add_registry_frame).
 func _settle() -> void:
 	if panel_root != null:
 		UiBuilder.settle_authored_rects(panel_root)
@@ -232,10 +380,14 @@ func _settle() -> void:
 
 ## The title bar's rect: the strip inset from both sides at the caption's
 ## authored row (TITLE_INSET, TITLE_TEXT_Y, TITLE_TEXT_HEIGHT), as wide as the
-## window now is. Stored where the settling pass reads it.
+## window now is -- or, on a registry-framed window, CIFMainFrame's caption
+## (10, 12, width - 21, 12). Stored where the settling pass reads it.
 func _place_title_bar(bar: Control) -> void:
 	var rect := Rect2(Vector2(TITLE_INSET, TITLE_TEXT_Y),
 		Vector2(size.x - TITLE_INSET * 2.0, TITLE_TEXT_HEIGHT))
+	if registry_def != null:
+		rect = Rect2(Vector2(MAINFRAME_CAPTION_X, MAINFRAME_CAPTION_Y),
+			Vector2(size.x - MAINFRAME_STRIP_WIDTH_LESS, MAINFRAME_CAPTION_HEIGHT))
 	bar.set_meta(UiBuilder.AUTHORED_RECT_META, rect)
 	bar.position = rect.position
 	bar.size = rect.size
@@ -245,7 +397,9 @@ func _add_title_bar(title: String) -> void:
 	bar.name = "TitleBar"
 	bar.text = title
 	bar.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	bar.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	# CIFMainFrame gives its caption vertical alignment 0, the top.
+	bar.vertical_alignment = VERTICAL_ALIGNMENT_TOP if registry_def != null \
+		else VERTICAL_ALIGNMENT_CENTER
 	_place_title_bar(bar)
 	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar.add_theme_color_override("font_color", Color(0.93, 0.87, 0.70))
@@ -270,7 +424,7 @@ func _add_title_bar(title: String) -> void:
 	close.name = "CloseButton"
 	close.ignore_texture_size = true
 	close.stretch_mode = TextureButton.STRETCH_SCALE
-	close.position = Vector2(size.x - CLOSE_BUTTON_INSET, CLOSE_BUTTON_Y)
+	close.position = _close_position()
 	close.size = Vector2(CLOSE_BUTTON_SIZE, CLOSE_BUTTON_SIZE)
 	close.focus_mode = Control.FOCUS_NONE
 	if _builder != null:
@@ -281,6 +435,22 @@ func _add_title_bar(title: String) -> void:
 			UiBuilder.CLOSE_BUTTON_DDJ.replace(".ddj", "_press.ddj"))
 	close.pressed.connect(_on_close_pressed)
 	add_child(close)
+
+## Where the close button goes: CIFMainFrame's (width - 26, 10) on a
+## registry-framed window, otherwise ifalchemybox's (width - 26, 12).
+func _close_position() -> Vector2:
+	if registry_def != null:
+		return Vector2(size.x - MAINFRAME_CLOSE_INSET, MAINFRAME_CLOSE_Y)
+	return Vector2(size.x - CLOSE_BUTTON_INSET, CLOSE_BUTTON_Y)
+
+## Whether a press at `local` starts a drag: CIFMainFrame's CIFDragableArea
+## (10, 0, width - 21, 34) on a registry-framed window, otherwise the top
+## TITLE_BAR_HEIGHT pixels.
+func in_drag_strip(local: Vector2) -> bool:
+	if registry_def != null:
+		return Rect2(MAINFRAME_CAPTION_X, 0.0, size.x - MAINFRAME_STRIP_WIDTH_LESS,
+			MAINFRAME_DRAG_HEIGHT).has_point(local)
+	return local.y <= TITLE_BAR_HEIGHT
 
 ## The close button the layout declared, if it declared one. Four of the six
 ## CIFCloseButtons in the archive name no artwork of their own, which is why
@@ -304,7 +474,7 @@ func _gui_input(event: InputEvent) -> void:
 		var mb := event as InputEventMouseButton
 		if mb.pressed:
 			move_to_front()
-			if mb.position.y <= TITLE_BAR_HEIGHT:
+			if in_drag_strip(mb.position):
 				_dragging = true
 				_drag_offset = mb.position
 				accept_event()

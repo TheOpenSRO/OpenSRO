@@ -63,6 +63,12 @@ Every window in the real client is authored data, and building one is now mechan
    42-pixel title strip inset 10 a side (`CIFDragableArea 10,0,355,42`), a centred 12-tall caption
    at y=18, and a 16×16 `CIFCloseButton` 26 in from the right edge. A `CIFCloseButton` with no
    artwork uses `interface\ifcommon\com_windowclose.ddj`, which the client hardcodes.
+   **Caveat (round 586):** the exe never loads `ifalchemybox.txt` (the string is in neither
+   encoding; its alchemy box reads `ifnewalchemybox.txt`), so these numbers stand only for the
+   self-framed windows, until item 2 of the audit list reads theirs. A **registry-framed** window
+   (a `CIFMainFrame` in `ginterface.txt`) takes CIFMainFrame's own chrome from `0x816f80`: caption
+   `(10, 12, width-21, 12)` top-aligned, drag `(10, 0, width-21, 34)`, close `(width-26, 10)`.
+   Its layout's origin is the window's (the factory adds the parent's position, `0xba223e`).
 13. **A window is its frame plus any artwork hanging off it**, not the bounding box of every
    control. ifinventory's gold row sits 25 pixels below the frame; ifplayerinfo's `TEXT_HP_DAT` is
    a text field that overruns the right edge by 17 and must not widen the window.
@@ -148,22 +154,33 @@ is presentation work on solved data; if you find yourself editing the protocol, 
   The equipment window opens on its worn slots, and its change buttons flip to the avatar slots.
   The academy's portrait, alchemy's Cancel and the chat's four other channel lists are hidden,
   and the chat reads `UI_UPDATE_2009_FIRST`. Every widget that builds a section settles through
-  `UiBuilder.settle_authored_rects`. The underbar and minimap build once. **Still open from the
-  same audit, in order:**
-  1. The outer registry frame. Exchange has no window frame of its own. Guild's 594-wide window
-     blocks clicks over a see-through area below its 588-wide header and right of the 440-wide
-     body (x 446 to 594, y 112 to 314).
-  2. Community and guild are not the client's windows. This client never loads
+  `UiBuilder.settle_authored_rects`. The underbar and minimap build once.
+- **Registry windows open inside their registry frame** (round 586) -- the audit's outer
+  registry frame, done. Storage (254x317), exchange (254x361), system (214x212), party match
+  (785x480), auto potion (394x520) and help (420x452) draw their `mframe_wnd_` entry from
+  `resinfo\ginterface.txt`, with the layout at the window's origin. Their caption, drag strip and
+  close button are CIFMainFrame's, read from `0x816f80`: caption `(10, 12, width-21, 12)`,
+  top-aligned; drag `(10, 0, width-21, 34)`; close `(width-26, 10)`. The world map shares the
+  path (`HudWindow._add_registry_frame`, `HudPanels.REGISTRY_FRAMES`). System is restacked the
+  way `CIFSystemWnd::Create` does it. Community, store and alchemy stay unframed, each for the
+  reason `docs/RE_COMPLETION.md` records. **Still open from the same audit, in order:**
+  1. Community and guild are not the client's windows. This client never loads
      `ifcommunity.txt` or `ifguild.txt` (neither name is in the exe, ASCII or UTF-16, nor in the
      decompile, and `CIFGuild` / `CIFGuildRelations` / `CIFWarState` / `CIFLetter` do not exist).
      The live windows are `CNIFCommunityWnd` / `CNIFGuildWnd`, built from `res_ui\*.2dt`. We
      still build `PANELS["community"]` (key U and the underbar button) and `PANELS["guild"]`
      (key G) from those dead layouts; community is seven empty framed panes stacked at
      13,61,451,320. The fix is to build both from the `.2dt` files, not to pick panes out of
-     the dead layouts; community has no `PANEL_DEFINES` entry for that reason.
-  3. The non-registry outer frame, from the binary. A lead is `CIFMainFrame::vslot_010`
-     (`0x816f80`): title at `{10, 12, width-0x15, 12}`, close at `{width-0x1a, 10, 16, 16}`.
-  4. Inventory docking.
+     the dead layouts; community has no `PANEL_DEFINES` or `REGISTRY_FRAMES` entry for that reason.
+  2. The non-registry outer frame, from the binary. The self-framed classes (CIFInventory,
+     CIFPlayerInfo, CIFSkill, CIFQuest, CIFParty, CIFAction, CIFApprenticeShip, CIFEquipment)
+     are plain `CIFWnd`s, not CIFMainFrames, so CIFMainFrame's chrome is not theirs by
+     inheritance. Their current chrome constants come from `ifalchemybox.txt`, which the exe never
+     loads (it reads `ifnewalchemybox.txt`). A lead: `GDR_MAINPOPUP`, a
+     `CIFMainPopup : CIFMainFrame` at 388x408 on `mframe_wnd_`. Guild's 594-wide window still
+     blocks clicks over a see-through area below its 588-wide header and right of the 440-wide
+     body (x 446 to 594, y 112 to 314).
+  3. Inventory docking.
 
   Found on the way, not yet fixed:
   - The storage and bag gold amounts go into the "Gold" unit labels (`STA_GOLD`), not
@@ -178,6 +195,16 @@ is presentation work on solved data; if you find yourself editing the protocol, 
     20, so it hangs past the chat's bottom (398). Predates round 585.
   - HudTarget's `GDR_TW_CLOSE` is re-parented outside every settled root. It is a TextureButton,
     so no inflation was measured, but it is not settled.
+  - The store's registry height (317 / 360 / 370) turns on `RENEWAL_SHOP_SYSTEM` and
+    `RESTORE_SOLDITEM_INSHOP`, which are unreadable. With our `[]` choice, Repair sits at y
+    332-356, below a 317 frame.
+  - Alchemy is a `CIFAlchemyBox` (a `CIFWnd` on `alcm_window_1.ddj`, from
+    `ifnewalchemybox.txt`) holding `CIFAlchemyProcess` at 0,150. That assembly is not built.
+  - The NPC talk box (`CIF_NPCTalk : CIFFrame`) and `GDR_NPCWINDOW` (`CIF_NPCWindow :
+    CIFMainFrame`, 386x451, `if_npcwindow.txt`) are separate classes, and how they compose is
+    not read.
+  - Registry screen positions (GDR_SYSTEM 300,200, GDR_EXCHANGE 200,200, ...) are not used;
+    windows are still centred.
 - **The teleport board** (round 578) — the Dimensional Teleporter, `resinfo\ifteleportboard.txt`,
   built by the recipe: `HudPanels.PANELS["teleport"]`, and its five `CIFTeleportAreaSlot` rows
   (`GDR_TB_TASLOT1..5`) filled from `resinfo\ifteleportareaslot.txt`'s own section (place, price,

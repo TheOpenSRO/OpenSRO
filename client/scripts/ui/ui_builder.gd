@@ -21,6 +21,11 @@ var _text_table: UiTextTable
 var _texture_cache: Dictionary = {} # String -> Texture2D
 var _window_registry: UiLayoutParser.LayoutDef = null
 var _window_registry_loaded: bool = false
+## The registry's raw text (bytes, or a String in a test), kept so an entry
+## can be read again with `#ifdef` branches selected; and those parses, by
+## their defines.
+var _window_registry_data: Variant = null
+var _window_registry_by_defines: Dictionary = {}
 var _layout_cache: Dictionary = {} # String -> UiLayoutParser.LayoutDef
 
 ## Loads and caches a layout file from Media.pk2 by its archive path
@@ -130,19 +135,47 @@ func _init(media_pk2: Pk2Reader = null, text_table: UiTextTable = null) -> void:
 ## (ub_window_01 800x52, ub_deco_left 64x52, ub_menu_button 60x56,
 ## ub_sp_bar 144x8, mm_window 140x184), which also shows the art is drawn
 ## 1:1 rather than stretched.
-func window_def(window_name: String) -> UiLayoutParser.ControlDef:
+##
+## **Every section is searched, "Create" first.** The client builds "Create"
+## once, in `CGInterface::Create` (0x78c910: `resinfo\ginterface.txt` pushed
+## at 0x78c9ce, the section built at 0x78c9ff), and the other sections by name
+## when a window is first wanted: "PartyMatch" at 0x79c1e5, "AutoPotion" at
+## 0x79c7a4 and "GameGuide" at 0x79b191, each built on the same layout
+## object and followed by a fetch of that entry's own ID (0x82, 0x87, 0x20 --
+## GDR_PARTY_MATCH's 130, GDR_AUTO_POTION's 135, GDR_GAMEGUIDE's 32). Looking
+## in "Create" alone found none of the three.
+##
+## `defines` selects the registry's `#ifdef` branches (UiLayoutParser.parse),
+## for an entry whose rect differs by branch -- GDR_EXCHANGE, GDR_STORE. With
+## none the parse reads every branch, and a property given in several
+## branches keeps the last one's value.
+func window_def(window_name: String, defines: PackedStringArray = PackedStringArray(),
+		honor_ifdef: bool = false) -> UiLayoutParser.ControlDef:
 	if not _window_registry_loaded:
 		_window_registry_loaded = true
 		if _media_pk2 != null:
 			var entry := ObjectLoader.find_file(_media_pk2, WINDOW_REGISTRY_PATH)
 			if entry != null:
-				_window_registry = UiLayoutParser.parse(_media_pk2.read_file(entry))
-	if _window_registry == null:
+				_window_registry_data = _media_pk2.read_file(entry)
+				_window_registry = UiLayoutParser.parse(_window_registry_data)
+	var registry := _window_registry
+	if honor_ifdef:
+		if _window_registry_data == null:
+			return null
+		var key := ",".join(defines)
+		if not _window_registry_by_defines.has(key):
+			_window_registry_by_defines[key] = UiLayoutParser.parse(_window_registry_data, true, defines)
+		registry = _window_registry_by_defines[key]
+	if registry == null:
 		return null
-	var sec := _window_registry.get_section("Create")
-	if sec == null:
-		return null
-	return sec.control_by_name.get(window_name)
+	var first := registry.sections.get("Create") as UiLayoutParser.SectionDef
+	if first != null and first.control_by_name.has(window_name):
+		return first.control_by_name[window_name]
+	for sec_name in registry.sections:
+		var sec: UiLayoutParser.SectionDef = registry.sections[sec_name]
+		if sec.control_by_name.has(window_name):
+			return sec.control_by_name[window_name]
+	return null
 
 ## Builds a Godot Control containing all controls defined in the specified section.
 func build_section(layout: UiLayoutParser.LayoutDef, section_name: String = "Create") -> Control:

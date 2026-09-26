@@ -72,6 +72,54 @@ const PANEL_DEFINES := {
 	"store": [],
 }
 
+## Panels the client frames from its window registry, resinfo\ginterface.txt,
+## rather than from their own layout (HudWindow.build's `registry`). Each is
+## a CIFMainFrame subclass whose Create builds CIFMainFrame's caption, drag
+## strip and close button and then its layout, with the window as the parent
+## (docs/RE_COMPLETION.md, round 586, has every address):
+##
+## - **storage**: GDR_STORAGEROOM (CIFStorageRoom, "Create" section), 254x317,
+##   UIIT_STT_STORAGEROOM. CIFStorageRoom::Create 0x6cc780 loads
+##   ifstorageroom.txt.
+## - **exchange**: GDR_EXCHANGE (CIFExchange), UIIT_STT_EXCHANGE. Its rect has
+##   three #ifdef branches: 254x361 with APPLY_EXCHANGE_UPDATE_1TH and
+##   UI_UPDATE_2009_FIRST, 363x363 with the first alone, 254x361 without it.
+##   Both are selected because CIFExchange::Create (0x7b27d0) uses controls
+##   only those branches declare with no null check (round 585, the
+##   alternates round). CIFExchange::Create loads ifexchange.txt.
+## - **system**: GDR_SYSTEM (CIFSystemWnd), UIIT_PAG_SYSTEM, 214 wide.
+##   CIFSystemWnd::Create 0x6f6610 then sizes the window in code
+##   (_layout_system_window).
+## - **partymatch**: GDR_PARTY_MATCH (CIFPartyMatch, the "PartyMatch"
+##   section), 785x480, UIIT_PAG_PARTYMATCH_PSEARCH. CIFPartyMatch::Create
+##   0x73ae90 builds Create, SearchInfo, SlotListButton and SlotList -- the
+##   EXTRA_SECTIONS below, now read rather than swept.
+## - **autopotion**: GDR_AUTO_POTION (CIFAutoPotion, the "AutoPotion"
+##   section), 394x520, UIIT_PAG_MACROPOTION_TITLE. CIFAutoPotion::Create
+##   0x741980 builds Create, AbnormalSlot and PotionDelaySlot.
+##
+## Not here, each for a stated reason:
+## - **community**: GDR_COMMUNITY exists, but this client never loads
+##   ifcommunity.txt, the layout that panel is built from (round 585, the
+##   alternates round); framing a layout the client does not put in that
+##   window would present a composition it never makes.
+## - **store**: GDR_STORE's height depends on two #ifdefs this build's data
+##   cannot settle -- 317 (neither, or RENEWAL_SHOP_SYSTEM alone), 360
+##   (RESTORE_SOLDITEM_INSHOP) or 370 (both) -- and the layout read with
+##   nothing defined puts its Repair buttons at y 332-356, below a 317 frame.
+## - **alchemy**: GDR_ALCHEMYBOX is a CIFAlchemyBox, a plain CIFWnd drawing
+##   alcm_window_1.ddj, not a CIFMainFrame; ifalchemyprocess.txt is loaded by
+##   CIFAlchemyProcess, a child the box's own layout (ifnewalchemybox.txt)
+##   places at 0,150. A different assembly, not this frame.
+const REGISTRY_FRAMES := {
+	"storage": {"name": "GDR_STORAGEROOM"},
+	"exchange": {"name": "GDR_EXCHANGE",
+		"defines": ["APPLY_EXCHANGE_UPDATE_1TH", "UI_UPDATE_2009_FIRST"]},
+	"system": {"name": "GDR_SYSTEM"},
+	"partymatch": {"name": "GDR_PARTY_MATCH"},
+	"autopotion": {"name": "GDR_AUTO_POTION"},
+}
+
 ## Controls a window's own class hides when it creates the window, so they
 ## are hidden here once, when the window is built. Each is one member of a
 ## group of controls authored at the same rect; the others stay as built.
@@ -356,12 +404,15 @@ func open(panel_id: String) -> HudWindow:
 		var extra := PackedStringArray(EXTRA_SECTIONS.get(panel_id, []))
 		var honor_ifdef: bool = PANEL_DEFINES.has(panel_id)
 		var defines := PackedStringArray(PANEL_DEFINES.get(panel_id, []))
-		if not window.build(_builder, spec[0], spec[1], extra, defines, honor_ifdef):
+		var registry: Dictionary = REGISTRY_FRAMES.get(panel_id, {})
+		if not window.build(_builder, spec[0], spec[1], extra, defines, honor_ifdef, registry):
 			print("HudPanels: %s unavailable (layout %s did not build)" % [panel_id, spec[0]])
 			window.queue_free()
 			_unavailable[panel_id] = true
 			return null
 		_hide_at_create(panel_id, window)
+		if panel_id == "system":
+			_layout_system_window(window)
 		if panel_id == "inventory":
 			# Dock the equipment paper doll flush to the right of the bag: the
 			# authored bag frame is INVENTORY_CONTENT_WIDTH wide, so the two
@@ -1828,6 +1879,102 @@ func _place_paper_doll_docked() -> void:
 		doll.size = Vector2(98, 236)
 		_inventory_eq_root.add_child(doll)
 	doll.texture = _paper_doll_texture
+
+## The System window as CIFSystemWnd::Create (0x6f6610) leaves it, which is
+## not ifsystemwnd.txt's geometry. After building the layout it:
+##
+## - hides Option, Help, Restart and Quit (IDs 10, 11, 13, 14; ShowWindow(0)
+##   at 0x6f66b6..0x6f66e3);
+## - fills a map from a row index to a button ID -- 0 -> 10, 1 -> 11,
+##   3 -> 13, 4 -> 14 (0x6f66f7..0x6f673e) -- and hands the Customer Center
+##   button (ID 12, GDR_SYSTEM_BTN_CAS_HELP) to 0xba0e40, which queues a
+##   window on the factory's deferred list (0x110f96c), whose consumer
+##   (0xba12b0 -> 0xba1190) destroys it: the client destroys the button, and
+##   hiding it here shows the same;
+## - for rows 0 to 4 in turn, takes each mapped button that exists, moves it
+##   to the window's x + 0x1f and y + 0x3a plus 0x22 for every button placed
+##   before it, and shows it (0x6f67d3..0x6f68a6);
+## - then sizes the background tile (ID 5, GDR_SYSTEM_BGTILE) to 0x1c per
+##   button, the inner frame (ID 6, GDR_SYSTEM_FRAME) to 15 + 0x22 per button
+##   and the window itself to 0x3c + 0x26 per button, each keeping its width
+##   (SetSize, slot 21, at 0x6f68bf / 0x6f68d4 / 0x6f68e7).
+##
+## With the four buttons that gives Option, Help, Restart and Quit at y 58,
+## 92, 126 and 160, a 180x151 frame, a 148x112 tile and a 214x212 window --
+## not the registry's 214x245. The button positions are relative to the
+## window, which is also the layout's origin (HudWindow._add_registry_frame).
+const SYSTEM_BUTTON_ROWS := ["GDR_SYSTEM_BTN_OPTION", "GDR_SYSTEM_BTN_HELP",
+	"GDR_SYSTEM_BTN_RESTART", "GDR_SYSTEM_BTN_QUIT"]
+const SYSTEM_DROPPED_BUTTON := "GDR_SYSTEM_BTN_CAS_HELP"
+const SYSTEM_BUTTON_ORIGIN := Vector2(31, 58)
+const SYSTEM_BUTTON_PITCH := 34.0
+const SYSTEM_TILE := "GDR_SYSTEM_BGTILE"
+const SYSTEM_TILE_PER_BUTTON := 28.0
+const SYSTEM_FRAME := "GDR_SYSTEM_FRAME"
+const SYSTEM_FRAME_BASE := 15.0
+const SYSTEM_FRAME_PER_BUTTON := 34.0
+const SYSTEM_WINDOW_BASE := 60.0
+const SYSTEM_WINDOW_PER_BUTTON := 38.0
+
+func _layout_system_window(window: HudWindow) -> void:
+	var dropped := window.node(SYSTEM_DROPPED_BUTTON) as CanvasItem
+	if dropped != null:
+		dropped.visible = false
+	var placed := 0
+	for control_name in SYSTEM_BUTTON_ROWS:
+		var button := window.node(control_name) as Control
+		if button == null:
+			continue
+		_move_authored(button, SYSTEM_BUTTON_ORIGIN + Vector2(0.0, SYSTEM_BUTTON_PITCH * placed))
+		button.visible = true
+		placed += 1
+	var tile := window.node(SYSTEM_TILE) as Control
+	if tile != null:
+		_resize_authored(tile, Vector2(tile.size.x, SYSTEM_TILE_PER_BUTTON * placed))
+	_rebuild_resized(window, PANELS["system"][0], SYSTEM_FRAME,
+		SYSTEM_FRAME_BASE + SYSTEM_FRAME_PER_BUTTON * placed)
+	window.set_registry_size(Vector2(window.size.x, SYSTEM_WINDOW_BASE + SYSTEM_WINDOW_PER_BUTTON * placed))
+
+## Moves a built control, and the rect the settling pass restores with it.
+static func _move_authored(node: Control, at: Vector2) -> void:
+	var rect := Rect2(at, node.size)
+	if node.has_meta(UiBuilder.AUTHORED_RECT_META):
+		rect = node.get_meta(UiBuilder.AUTHORED_RECT_META)
+		rect.position = at
+		node.set_meta(UiBuilder.AUTHORED_RECT_META, rect)
+	node.position = at
+
+## Resizes a built control, and the rect the settling pass restores with it.
+static func _resize_authored(node: Control, to: Vector2) -> void:
+	var rect := Rect2(node.position, to)
+	if node.has_meta(UiBuilder.AUTHORED_RECT_META):
+		rect = node.get_meta(UiBuilder.AUTHORED_RECT_META)
+		rect.size = to
+		node.set_meta(UiBuilder.AUTHORED_RECT_META, rect)
+	node.custom_minimum_size = Vector2.ZERO
+	node.size = to
+
+## Rebuilds a frame control at a new height: its eight pieces are laid out
+## for one size, so it is built again from its own def at the new rect and
+## put back at the same place in the draw order.
+func _rebuild_resized(window: HudWindow, layout_path: String, control_name: String,
+		height: float) -> void:
+	var old := window.node(control_name) as Control
+	var layout := _builder.load_layout(layout_path) if _builder != null else null
+	var sec := layout.get_section("Create") if layout != null else null
+	if old == null or sec == null or not sec.control_by_name.has(control_name):
+		return
+	var def: UiLayoutParser.ControlDef = sec.control_by_name[control_name]
+	var fresh := _builder.build_control(def.with_rect(
+		Rect2i(def.rect.position, Vector2i(def.rect.size.x, int(height)))))
+	if fresh == null:
+		return
+	var parent := old.get_parent()
+	var at := old.get_index()
+	parent.remove_child(old)
+	old.queue_free()
+	parent.add_child(fresh)
+	parent.move_child(fresh, at)
 
 ## Connects the System window's buttons to the signals World3D acts on.
 ## Each button is looked up by the name the authored layout gives it

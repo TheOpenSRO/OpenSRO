@@ -41336,3 +41336,256 @@ tests`: ran 107 suite(s), 0 failing, 0 SCRIPT ERROR. `cd server && go build ./..
 - CIFMainFrame's own title, drag and close geometry (`0x816f80`: title `{10, 12, width-0x15,
   12}`, close `{width-0x1a, 10, 16, 16}`) is a lead for the non-registry outer-frame item. The
   drag strip's width was not read directly.
+
+## Storage, exchange, system, party match, auto potion and help open inside their registry frame, with the caption, drag strip and close button where the client puts them (round 586)
+
+Client only. Nothing on the wire changes and the server is unchanged. This is cause 2 of the
+v0.1.450 GUI audit: `HudWindow.build` ignored `resinfo\ginterface.txt`, so the windows the client
+frames from that registry were sized to their layout alone, drew no outer frame, and carried
+ifalchemybox's caption row and a 42-pixel drag strip over empty space. Every value below was read
+from `sro_client.exe` (`/opt/sro-files/client/sro_client.exe`, the decompile in
+`/var/tmp/decomp_client`, and `objdump` of the PE where the decompile lost arguments) or measured
+in the audit's node dump. Nothing was decided from a picture.
+
+### Premise: the client reads ginterface.txt, and how it places a registry window
+
+**ginterface.txt is read.** Three probes with different failure modes:
+
+- ASCII: `resinfo\ginterface.txt` is at file offset 0x9b97c4 (VA 0xdb97c4). UTF-16: no copy
+  (`strings -el` finds nothing). The control probe answers as expected: `ifcommunity.txt` is in
+  neither encoding (round 585, the alternates round), and neither is `ifalchemybox.txt`.
+- Code: `CGInterface::Create` (0x78c910) pushes 0xdb97c4 at 0x78c9ce, loads it (0x8b50a0), and
+  builds its "Create" section (the string at 0xd82368) with the interface as parent (`push edi`
+  0x78c9da, builder call 0x78c9ff).
+- The other sections are built by name when a window is first wanted, on the same layout object:
+  "PartyMatch" (0xdb9ea8) at 0x79c1e5 on `esi+0x36c`, then a fetch of ID 0x82; "AutoPotion"
+  (0xdb9ef4) at 0x79c7a4, then ID 0x87; "GameGuide" (0xdb9d50) at 0x79b191, then ID 0x20. Those
+  IDs are GDR_PARTY_MATCH's 130, GDR_AUTO_POTION's 135 and GDR_GAMEGUIDE's 32. The review traced
+  the layout register for all three to the same `+0x36c` object: PartyMatch `lea edi,[esi+0x36c]`
+  at 0x79c1dd; AutoPotion `lea ebp,[esi+0x36c]` at 0x79c75b, then `mov ecx,ebp` at 0x79c7a2;
+  GameGuide `lea edi,[ebp+0x36c]` at 0x79b14b, then `mov ecx,edi` at 0x79b18f. Right after its
+  section is built, GameGuide is moved by slot 0x98 to (0xe6, 0x50) = (230, 80) (0x79b1a5..
+  0x79b1b4), a lead for the registry screen positions below.
+  `UiBuilder.window_def` looked only in "Create" and found none of the three. It now searches
+  "Create" first and then every section.
+
+**Every registry window framed here is a CIFMainFrame, and its Create builds CIFMainFrame's
+chrome before its layout.** The RTTI chains of CIFStorageRoom, CIFSystemWnd, CIFExchange,
+CIFStore, CIFStoreForPackage, CIFPartyMatch, CIFAutoPotion, CIFGameGuide, CIFWorldMap, CIFCommunity
+and CIFMainPopup all run through `CIFMainFrame : CIFFrame`. Each Create calls
+`CIFMainFrame::vslot_010` (0x816f80) first, then pushes its layout path and builds it:
+
+| Class | Create | calls 0x816f80 | layout pushed |
+|---|---|---|---|
+| CIFStorageRoom | 0x6cc780 | 0x6cc78b | `resinfo\ifstorageroom.txt` at 0x6cc796 |
+| CIFSystemWnd | 0x6f6610 | 0x6f661e | `resinfo\ifsystemwnd.txt` at 0x6f6629 |
+| CIFExchange | 0x7b27d0 | 0x7b27db | `resinfo\ifexchange.txt` at 0x7b27e6 |
+| CIFPartyMatch | 0x73ae90 | 0x73ae9e | `resinfo\ifpartymatch.txt` at 0x73aea9 |
+| CIFAutoPotion | 0x741980 | 0x74198a | `resinfo\ifautopotion.txt` at 0x741995 |
+| CIFGameGuide | 0x765920 | 0x76594e | `resinfo\ifgameguide.txt` at 0x765959 |
+| CIFWorldMap | 0x6964e0 | 0x6964e9 | `resinfo\ifworldmap.txt` at 0x6964f4 |
+
+**The chrome** (`CIFMainFrame::vslot_010`, 0x816f80, read in objdump). It reads the window's own
+rect with 0xb8f420, which returns {x, y, width, height}. The third field is the width: the
+relayout below adds it to x. It then creates three children with the window factory 0xba20b0, at
+rects relative to the window. The class of each child is what its `vslot_000` returns:
+
+- `CIFStatic` (0xee9720), rect (10, 12, width − 0x15, 12), ID 0. This is the caption.
+- `CIFDragableArea` (0xeea6bc), rect (10, 0, width − 0x15, 0x22), ID 1.
+- `CIFCloseButton` (0xee9868), rect (width − 0x1a, 10, 16, 16), ID 2.
+
+Each child gets a zero ClientRect (0x6527d0), font index 0 (`0xba5460(0)`), text-board slot 0x14
+set to 1 and slot 0x18 set to 0. The layout parser stores HAlign at +0x88 (0x82c785) and VAlign
+at +0x8a (0x82c7a3), and the layout builder passes those two fields to those two slots
+(0x8b56a6 / 0x8b56b8). So the caption is centred horizontally and top-aligned. The resize slot 21
+(0x817210) calls the base resize and then 0x817170, which re-lays the same three children: moves
+to (x + 10, y + 12), (x + 10, y) and (x + width − 26, y + 10), with the same sizes. Ghidra's C
+rendered the drag strip at x + 20 and the close button 12 lower and a pixel left; the asm
+does not. The caption
+text: the builder calls every control's slot 45 with its `Text` (0x8b5706). On a CIFMainFrame,
+slot 45 is 0x817230, which jumps to the caption static's slot 45. On CIFStatic that is 0x64d810,
+which stores the string (0x653ac0) and re-lays the text. **The caption's colour was not read.**
+Nothing in OnCreate sets it, and the entry's `FontColor` (+0x90, 0x82c7c1) goes to the frame's
+own text board (0x8b56d4), not to the caption. The caption keeps the colour it had.
+
+This also settles the lead round 2 left: the drag strip is width − 21 wide and 34 tall.
+
+**The layout's origin is the window's origin. This is read, not fitted.** Each Create passes the
+window itself as the parent to the builder 0x8b5580 (`push esi`, or `push ebp` in CIFPartyMatch;
+CIFPartyMatch's four builder calls, for Create and its three extra sections, at
+0x73aedd/0x73af03/0x73af29/0x73af4f, and CIFAutoPotion's three at 0x7419c8/0x7419f2/0x741a1c all
+pass the same parent). The builder hands the
+control's Rect (`[esi+0x48]`) to 0xba20b0 unchanged (0x8b5639..0x8b564b). The factory stores it
+at the new window's +0x40..+0x4c (0xba21f6..0xba2214) and then, when there is a parent, adds the
+parent's position: `add [new+0x40], [parent+0x40]` and the same for y (0xba223e..0xba2247). A
+layout rect is therefore relative to the registry window's top-left. The 9-17 pixel margins the
+table in the audit showed are the layouts' own coordinates. ifstorageroom's frame starts at 9,38
+in a 254x317 window, and ifsystemwnd's at 17,45 in a 214-wide one.
+
+### Per window: decision and evidence
+
+| Window | Entry | Decision | Size before -> after | Caption |
+|---|---|---|---|---|
+| storage | GDR_STORAGEROOM, Create section, `0,0,254,317` | **framed** | 245x307 -> **254x317** | UIIT_STT_STORAGEROOM = "Storage" |
+| exchange | GDR_EXCHANGE, `200,200,254,361` | **framed**, defines `APPLY_EXCHANGE_UPDATE_1TH` + `UI_UPDATE_2009_FIRST` | 245x352 -> **254x361** | UIIT_STT_EXCHANGE = "Exchange" |
+| system | GDR_SYSTEM, `300,200,214,245` | **framed, then sized in code** (below) | 197x230 -> **214x212** | UIIT_PAG_SYSTEM = "System" |
+| partymatch | GDR_PARTY_MATCH, "PartyMatch" section, `0,0,785,480` | **framed** | 774x470 -> **785x480** | UIIT_PAG_PARTYMATCH_PSEARCH = "Party Matching" |
+| autopotion | GDR_AUTO_POTION, "AutoPotion" section, `0,0,394,520` | **framed** | 381x507 -> **394x520** | UIIT_PAG_MACROPOTION_TITLE = "Auto potion" |
+| help | GDR_GAMEGUIDE, "GameGuide" section, `100,100,420,452` | **framed**, caption not used | 408x441 -> **420x452** | ours, "Help" (below) |
+| worldmap | GDR_WORLDMAP, `100,100,652,424` | already framed; now through the shared path, with CIFMainFrame's chrome | 652x424, unchanged | unchanged |
+| community | GDR_COMMUNITY | **open, not framed** | 464x381, unchanged | |
+| store | GDR_STORE | **open, not framed** | 245x356, unchanged | |
+| alchemy | GDR_ALCHEMYBOX | **open, not framed** | 357x207, unchanged | |
+
+Every caption shown is the archive's own text, resolved through `textuisystem.txt`. They matched
+the titles this client already hard-coded, except that auto potion's is "Auto potion".
+
+- **Exchange's defines.** The entry's Rect sits in three `#ifdef` branches: 254x361 with both
+  defines, 363x363 with `APPLY_EXCHANGE_UPDATE_1TH` alone, and 254x361 without it. Both defines
+  are selected. The evidence is round 2's: `CIFExchange::Create` uses controls declared only in
+  those branches (153, 156, 304) with no null check. Two of the three branches give 254x361
+  anyway.
+- **System is sized in code.** `CIFSystemWnd::Create` does not keep the layout's or the entry's
+  geometry. After the layout it:
+  - hides IDs 10, 11, 13 and 14 (0x6f66b6..0x6f66e3);
+  - maps rows to buttons: 0 -> 10, 1 -> 11, 3 -> 13 and 4 -> 14 (0x6f66f7..0x6f673e);
+  - hands ID 12 (`GDR_SYSTEM_BTN_CAS_HELP`) to 0xba0e40. That function clears the window's +0x38
+    and queues it on the factory's deferred list at 0x110f96c. The review traced the list: its
+    consumer 0xba12b0 calls 0xba1190 on each entry, which destroys the window's children
+    recursively and removes it from its parent. So the button is destroyed (deferred), not
+    hidden. Our port hides it, which shows the same; it stays wired to `system_help_requested`,
+    harmless while nothing shows it again;
+  - walks rows 0-4, and moves each mapped button to (window x + 0x1f, window y + 0x3a + 0x22 per
+    button already placed) with slot 39, then shows it (0x6f67d3..0x6f68a6);
+  - resizes, each keeping its width (slot 21 at 0x6f68bf / 0x6f68d4 / 0x6f68e7): the tile (ID 5)
+    to 0x1c per button, the inner frame (ID 6) to 15 + 0x22 per button, and the window to 0x3c +
+    0x26 per button.
+
+  The stack slots were followed through every push in objdump. With four buttons:
+  - Option, Help, Restart and Quit sit at y 58, 92, 126 and 160;
+  - the frame is 180x151 and the tile 148x112;
+  - the window is **214x212**, not the entry's 214x245.
+
+  `HudPanels._layout_system_window` does the same. The inner frame is rebuilt from its own def at
+  the new height (`ControlDef.with_rect`), and the window through `HudWindow.set_registry_size`,
+  which is the resize slot's relayout.
+- **Help's caption.** The entry's Text is `UIIT_STT_GAMEEVENTGUIDE` under `#ifdef
+  RENEWAL_NEWBIE_SUPPORT` and `UIIT_STT_HELP` otherwise. Both keys are in the exe, as UTF-16, and
+  which branch this build takes is not read. The window shows this project's own documents, so it
+  keeps "Help" (`HelpWindow.REGISTRY`, `"caption": false`). Its frame and size are unconditional.
+  The body placement is `help_window.gd`'s own code, as before, and it grows with the window.
+- **World map.** `HudWorldmap` built the registry frame itself. It now uses
+  `HudWindow._add_registry_frame`, the one path every registry window takes, and so gets
+  CIFMainFrame's caption (y 12, was 18), close (y 10, was 12) and drag strip. Its own
+  `_gui_input`, which dragged by `mframe_wnd_`'s 68-pixel top (a number chosen from the art), is
+  removed. CIFWorldMap is a CIFMainFrame whose Create calls 0x816f80 first (0x6964e9).
+- **Community: open.** GDR_COMMUNITY is built by `CGInterface`, but round 2 found this client
+  never loads `ifcommunity.txt`: its Create (0x707af0) loads no layout, and players see
+  `CNIFCommunityWnd`. Putting ifcommunity's panes inside GDR_COMMUNITY's frame would present a
+  composition the client never makes. This stays with the community item (the live `.2dt`
+  windows).
+- **Store: open.** GDR_STORE has four `#ifdef` variants, 254x317 / 317 / 360 / 370 by
+  `RENEWAL_SHOP_SYSTEM` and `RESTORE_SOLDITEM_INSHOP`, and the define set cannot be read (round 2:
+  the define table at 0xeed4e0 is never visibly filled). Neither store class fetches the buyback
+  controls: CIFStore 0x6cf5a0 and CIFStoreForPackage 0x6d2c70 fetch only 11, 12 and 14, and the
+  whole range 0x6ce000-0x6d6000 fetches only 0xb, 0xc, 0xe, 0x15, 0x16 and 0x31. So no class code
+  picks a branch. The one hint points the other way from our layout choice. The layout read with
+  nothing defined (the project's choice, `PANEL_DEFINES`) puts Repair / Repair all at y 332-356,
+  below a 317 frame. The review found those two are outside every `#ifdef` in `ifstore.txt`, so
+  every define set puts them there, not only ours. `UIIT_MSG_CANNOT_BUYBACK_ITEM_SELL` is in the exe (UTF-16, VA 0xda4018), and
+  `CIFStoreForPackage::vslot_028` (0x6d4d10) uses it at 0x6d4ec3, which suggests the buyback feature is built in.
+  That is not proof of the window's branch, so the store is not framed.
+- **Alchemy: open.** GDR_ALCHEMYBOX is a `CIFAlchemyBox`, a plain `CIFWnd` drawing
+  `alcm_window_1.ddj` (376x152), not a CIFMainFrame. Its Create (0x722770, the push at 0x7227aa) loads
+  `resinfo\ifnewalchemybox.txt` (0xdb2818), not ifalchemybox.txt, which is not in the exe.
+  That layout places `GDR_ALCHEMYBOX_ELEMENT_MANUFACTURING`, a `CIFAlchemyProcess` on
+  `alcm_window_experiment.ddj`, at 0,150,376,228. `CIFAlchemyProcess::Create` (0x724ac0) loads
+  ifalchemyprocess.txt, the layout our alchemy panel builds, into itself. Enchant and reinforce
+  windows sit at the same rect, with code-built tabs. It is a different assembly, and the
+  default tab was not read. `CNIFAlchemyWnd` also exists.
+
+### Found on the way, for later rounds
+
+- **HudWindow's self-framed chrome comes from a layout this client never loads.** TITLE_TEXT_Y 18,
+  the 42-pixel strip and the close at y 12 are ifalchemybox.txt's, and that string is in neither
+  encoding in the exe. The live alchemy box reads ifnewalchemybox.txt, whose caption is at y 20
+  and close at 350,15. The seven self-framed classes are plain `CIFWnd`s, not CIFMainFrames:
+  CIFInventory, CIFPlayerInfo, CIFSkill, CIFQuest, CIFParty, CIFAction and CIFApprenticeShip
+  (CIFEquipment too). So CIFMainFrame's chrome is not theirs by inheritance. A lead for the
+  non-registry outer-frame item: GDR_MAINPOPUP is a `CIFMainPopup : CIFMainFrame`, 388x408 at
+  595,262 on `mframe_wnd_`. It is 24 wider than the 364-wide panels and has no layout named here.
+  Whether it hosts them is not read.
+- The NPC talk box is a `CIF_NPCTalk : CIFFrame` (`if_npctalk.txt`, pushed at 0x6fa124). The
+  registry's `GDR_NPCWINDOW` is a `CIF_NPCWindow : CIFMainFrame`, 386x451, loading
+  `if_npcwindow.txt` (0x704b54). How the two compose is not read, so npctalk is unchanged.
+- `CNIFWorldMap` exists by RTTI beside CIFWorldMap. The only world-map `.2dt` string is
+  `res_ui\worldmapguide.2dt`. Which world map players see was not established. The frame
+  predates this round.
+- Registry rects carry screen positions: GDR_SYSTEM 300,200; GDR_EXCHANGE 200,200;
+  GDR_GAMEGUIDE and GDR_WORLDMAP 100,100; the rest 0,0. `HudPanels` still centres each window on
+  first open. That is unchanged. What the client does with these is not read, except that
+  GameGuide's Create path moves it to (230, 80) after building (above).
+
+### Measurements
+
+The audit tool (`zz_gui_audit.gd`, not committed) was run in the gui3 lane,
+`/opt/srrevamp-client-gui3`, with GL Compatibility on the RX 5700 XT. BEFORE is 8cabb5b's
+scripts and AFTER is this tree. Both runs printed 0 `SCRIPT ERROR`.
+
+- **Sizes**: the table above. Every other widget is unchanged: inventory 354x355, character
+  364x356, skill 364x333, quest 365x355, party and academy 364x363, community 464x381, guild
+  594x314, action 364x357, alchemy 357x207, npctalk 369x390, store 245x356, teleport 440x544.
+- **Frame pieces** (round 1's check: every corner at its own size, and every edge at its own
+  thickness spanning the gap between its corners): OK for all 8 new frames. These are the
+  registry frames of partymatch 785x480, autopotion 394x520, exchange 254x361, system 214x212,
+  storage 254x317, worldmap 652x424 and help 420x452, plus system's rebuilt inner
+  `GDR_SYSTEM_FRAME` 180x151 (`int_window_`).
+- **OUTSIDE / CHROME findings, before -> after**: storage 0/0 -> 0/0, system 0/0 -> 0/0,
+  partymatch 0/0 -> 0/0 and autopotion 0/0 -> 0/0. Exchange stays at 33 OUTSIDE, all of them the
+  parked x = 9999 controls. Help stays at 12 OUTSIDE: `GDR_GUIDE_MENU` and its side tab, which
+  the layout hangs at x -206..-221, left of the window, and our document list inside that menu.
+  The world map stays at 48 OUTSIDE, all tiles and labels inside its clipping viewport. Every
+  other finding type and window is identical in count.
+- **Tree diff** (auto-generated node names normalised): 18 of 25 widgets are identical. The other
+  seven change only as intended:
+  - storage, exchange, partymatch and autopotion: the window size, plus `RegistryFrame` and its
+    8 pieces, and TitleBar and CloseButton moving to (10, 12) and (width − 26, 10). No layout
+    node moved.
+  - help: the same, plus the body's two backgrounds, which follow the window's size.
+  - system: the same, plus the restack above. CAS_HELP is hidden, Restart and Quit move to 126
+    and 160, the frame is 180x151 and the tile 148x112.
+  - worldmap: the frame node is renamed from `GDR_WORLDMAP` to `RegistryFrame`, with its settling
+    rect now local (0,0 instead of 100,100). TitleBar moves 18 -> 12, now 631 wide, and
+    CloseButton moves 12 -> 10.
+
+**Tests.** `hud_registry_frame_test.gd` builds storage, exchange, party match, auto potion and
+system through `HudPanels.open`, from fixtures with the real control names, IDs and rects and
+synthetic textures at `mframe_wnd_`'s measured piece sizes. For each window it checks:
+
+- the registry size;
+- all eight frame pieces, each at its own size and spanning its gap;
+- that the frame sits behind the layout, at the layout's origin;
+- the caption at (10, 12, width − 21), top-aligned, reading the registry's text;
+- the close button at (width − 26, 10);
+- drag inside, left of and below the strip.
+
+It also checks system's restack, that community stays self-framed with its old chrome, and that
+`window_def` finds GDR_PARTY_MATCH outside "Create" and selects GDR_EXCHANGE's branches (363x363
+with `APPLY_EXCHANGE_UPDATE_1TH` alone).
+
+NEGATIVE, run on the box against 8cabb5b's scripts: **52 FAIL lines**. Examples:
+- `FAIL storage: the window is the registry's (254, 317) (got (245, 307))`
+- `FAIL storage: the registry's mframe_wnd_ frame is drawn, all eight pieces (got [])`
+- `FAIL storage: the caption is CIFMainFrame's (10, 12, 233 wide) (got [(10, 18), (225, 17)])`
+- `FAIL storage: the close button is at (228, 10), 16x16 (got [(219, 12), (16, 16)])`
+- `FAIL storage: a press below the 34-pixel drag strip does not drag`
+- `FAIL system: the window is the registry's (214, 212) (got (197, 230))`
+- `FAIL system: GDR_SYSTEM_BTN_QUIT is restacked to (31, 160) (got (31, 192))`
+- `FAIL window_def finds GDR_PARTY_MATCH in its own "PartyMatch" section (got <null>)`
+
+On this tree it prints ALL PASS.
+
+**Verified.** `remote_godot.sh check`: 286 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`:
+108 suites, 0 failing
+(`SCRIPT ERROR` counts as failing). `cd server && go build ./... && go test -count=1 -p 1 ./...`:
+59 packages ok.

@@ -17,6 +17,15 @@ class_name HelpWindow
 
 const AUTHORED_LAYOUT := "resinfo\\ifgameguide.txt"
 
+## The window's registry entry: GDR_GAMEGUIDE, a CIFGameGuide (a CIFMainFrame)
+## in ginterface.txt's "GameGuide" section, 420x452 on `mframe_wnd_`, which
+## CIFGameGuide::Create (0x765920) fills with ifgameguide.txt. Its caption is
+## not used: the entry's Text is UIIT_STT_GAMEEVENTGUIDE under
+## `#ifdef RENEWAL_NEWBIE_SUPPORT` and UIIT_STT_HELP otherwise, both keys are
+## in the client, and which one this build defines is not read. The window
+## shows this project's own documents, titled "Help".
+const REGISTRY := {"name": "GDR_GAMEGUIDE", "caption": false}
+
 ## Sentinels that fence the GM-only part of a bundled doc; stripped for a
 ## non-GM before the Markdown is converted.
 const GM_SECTION_OPEN := "<!-- gm-only -->"
@@ -40,7 +49,8 @@ func setup(builder: UiBuilder, docs: Array, is_gm: bool) -> bool:
 	_frame = HudWindow.new()
 	_frame.name = "HelpFrame"
 	add_child(_frame)
-	var framed := _frame.build(builder, AUTHORED_LAYOUT, "Help")
+	var framed := _frame.build(builder, AUTHORED_LAYOUT, "Help", PackedStringArray(),
+		PackedStringArray(), false, REGISTRY)
 	_authored = framed
 	if not framed:
 		# The authored layout did not build (an operator's archive may lack

@@ -7083,6 +7083,39 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-eighty-sixth round: storage, exchange, system, party match, auto potion and help open inside their registry frame, with the caption and close button where the client puts them
+
+Cause 2 of the GUI audit, after the alternates round below. The full record, with every address,
+is `docs/RE_COMPLETION.md`'s entry of the same name.
+
+- **Premise, checked first.** The client reads `resinfo\ginterface.txt`: the ASCII string is at
+  VA 0xdb97c4 (there is no UTF-16 copy), and `CGInterface::Create` pushes it at 0x78c9ce and
+  builds "Create". "PartyMatch", "AutoPotion" and "GameGuide" are built by name later, each
+  followed by a fetch of its own entry's ID. Every window framed here is a CIFMainFrame. Its
+  Create calls `CIFMainFrame::vslot_010` (0x816f80), then builds its layout with itself as the
+  parent. The factory adds the parent's position to each rect (0xba223e), so **the layout's
+  origin is the window's origin**. The 9-17 pixel margins are the layouts' own coordinates, not
+  an offset.
+- **Chrome, read from 0x816f80.** The caption is at (10, 12, width − 21, 12), font 0, centred and
+  top-aligned. The drag strip is (10, 0, width − 21, 34), and the close button is at
+  (width − 26, 10), 16x16.
+- **Sizes, before -> after.** Storage 245x307 -> 254x317, exchange 245x352 -> 254x361 (both of
+  the branch defines round 2 evidenced), party match 774x470 -> 785x480, auto potion 381x507 ->
+  394x520, and help 408x441 -> 420x452. **System 197x230 -> 214x212**, not the entry's 245:
+  `CIFSystemWnd::Create` destroys the Customer Center button (deferred; we hide it), restacks the other four at a 34-pixel
+  pitch, and sizes the window to 60 + 38 per button. The world map now takes the same shared
+  path and CIFMainFrame's chrome.
+- **Measured.** All eight new frames pass the frame-piece check. There are no new OUTSIDE or
+  CHROME findings. 18 of 25 widgets are identical in the tree diff, and the other seven change
+  only by frame, chrome and system's restack. `hud_registry_frame_test.gd` fails 52 times
+  against 8cabb5b and passes here. 108 suites, 0 failing. Go: 59 packages ok.
+- **Open, with reasons.** Community: its layout is never loaded by this client. Store: its
+  height turns on two unreadable `#ifdef`s, and our define choice puts Repair below a 317 frame.
+  Alchemy: a CIFWnd box with the process pane as a child at 0,150, a different assembly. Help's
+  caption: one of two keys by an unreadable define. The caption colour is not read. Found on the
+  way: HudWindow's self-framed chrome comes from ifalchemybox.txt, which the exe never loads, and
+  the self-framed classes are plain CIFWnds (GDR_MAINPOPUP is a lead).
+
 ## Five-hundred-and-eighty-fifth round: windows show one control of each authored alternate, the HUD's text sits on its authored rows, and the underbar and minimap are built once
 
 Three more defects from the read-only GUI audit, after the frame round below. The full record,

@@ -27,6 +27,20 @@ class ControlDef:
 	var uv_rb: Vector2 = Vector2(1, 1)
 	var raw_properties: Dictionary = {}
 
+	## A copy of this control at another rect, for a window whose class moves
+	## or resizes a control after building it (CIFSystemWnd restacks its
+	## buttons and shrinks its frame). The parsed def is shared through the
+	## layout cache, so it is copied rather than changed.
+	func with_rect(new_rect: Rect2i) -> ControlDef:
+		var copy := ControlDef.new()
+		for prop in ["name", "type", "id", "client_rect", "ddj", "text", "color",
+				"font_color", "font_index", "halign", "valign", "style", "stretch_type",
+				"uv_lt", "uv_rt", "uv_lb", "uv_rb"]:
+			copy.set(prop, get(prop))
+		copy.raw_properties = raw_properties.duplicate()
+		copy.rect = new_rect
+		return copy
+
 class SectionDef:
 	var name: String = ""
 	var rect: Rect2i = Rect2i()
