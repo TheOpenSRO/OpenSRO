@@ -20,6 +20,10 @@ const GUILD_TAB_OFF := "interface\\guild\\gil_info_tab_off.ddj"
 const LAMP_ON := "interface\\guild\\gil_contact_on.ddj"
 const LAMP_OFF := "interface\\guild\\gil_contact_off.ddj"
 const CLOSE := "interface\\ifcommon\\com_windowclose.ddj"
+const RACE := "interface\\ifcommon\\com_kindred_europe16.ddj"
+const CMD_BTN := "interface\\ifcommon\\com_mid_button02.ddj"
+const CMD_BTN_DISABLE := "interface\\ifcommon\\com_mid_button02_disable.ddj"
+const EDIT_BTN := "interface\\stall\\stl_edit_button.ddj"
 
 var _failures := 0
 
@@ -93,9 +97,15 @@ func _guild() -> Array:
 		recs.append({"type": 5, "id": pair[0], "parent": 28, "gp": 47, "rect": pair[1]})
 	var x := 129
 	for id in range(37, 42):
-		recs.append({"type": 4, "id": id, "parent": 47, "gp": 176, "rect": Rect2i(x, 465, 112, 24), "tex": "interface\\ifcommon\\com_mid_button02.ddj"})
+		recs.append({"type": 4, "id": id, "parent": 47, "gp": 176, "rect": Rect2i(x, 465, 112, 24), "tex": CMD_BTN})
 		x += 115
 	recs.append({"type": 5, "id": 115, "parent": 47, "gp": 176, "rect": Rect2i(625, 163, 69, 15)})
+	recs.append({"type": 5, "id": 66, "parent": 47, "gp": 176, "rect": Rect2i(357, 161, 198, 16)})
+	recs.append({"type": 5, "id": 150, "parent": 47, "gp": 176, "rect": Rect2i(241, 195, 16, 16), "tex": RACE})
+	recs.append({"type": 10, "id": 120, "parent": 47, "gp": 176, "rect": Rect2i(328, 222, 193, 8)})
+	recs.append({"type": 8, "id": 222, "name": "CNIFGuildNotifySlot", "parent": 47, "gp": 176, "rect": Rect2i(129, 257, 572, 28)})
+	recs.append({"type": 5, "id": 117, "parent": 222, "gp": 47, "rect": Rect2i(256, 263, 412, 15)})
+	recs.append({"type": 4, "id": 81, "parent": 222, "gp": 47, "rect": Rect2i(674, 258, 24, 24), "tex": EDIT_BTN})
 	recs.append({"type": 4, "id": 250, "parent": 47, "gp": 176, "rect": Rect2i(674, 218, 16, 16)})
 	recs.append({"type": 18, "id": 1000, "name": "CNIFGuildGrantPow", "parent": 47, "gp": 176, "rect": Rect2i(758, 96, 570, 205)})
 	recs.append({"type": 1, "id": 1200, "name": "CNIFGuildNotifyView", "parent": 47, "gp": 176, "rect": Rect2i(121, 285, 588, 213), "base": "interface\\inventory\\int_window_"})
@@ -127,13 +137,14 @@ func _friend() -> Array:
 		{"type": 16, "id": 73, "parent": 177, "group": 50, "pane": 59, "rect": Rect2i(390, 231, 72, 24)},
 		{"type": 16, "id": 74, "parent": 177, "group": 50, "pane": 700, "rect": Rect2i(466, 231, 72, 24)},
 		{"type": 1, "id": 646, "name": "CNIFFriendWnd", "parent": 177, "rect": Rect2i(301, 253, 601, 362), "base": "interface\\equipment\\equip_window_"},
+		{"type": 5, "id": 18, "parent": 646, "gp": 177, "rect": Rect2i(828, 266, 55, 15)},
 	]
 	var y := 309
 	for slot in [339, 52]:
 		recs.append({"type": 15, "id": slot, "name": "CNIFFriendSlot", "parent": 646, "gp": 177, "rect": Rect2i(319, y, 546, 24), "tex": "interface\\ifcommon\\com_bar01_left.ddj"})
 		recs.append({"type": 5, "id": 341, "parent": slot, "gp": 646, "rect": Rect2i(468, y + 5, 370, 15), "sample": "SAMPLE-NAME"})
 		recs.append({"type": 5, "id": 52, "parent": slot, "gp": 646, "rect": Rect2i(349, y + 5, 12, 16), "tex": LAMP_ON})
-		recs.append({"type": 5, "id": 51, "parent": slot, "gp": 646, "rect": Rect2i(426, y + 5, 16, 16), "tex": "interface\\ifcommon\\com_kindred_europe16.ddj"})
+		recs.append({"type": 5, "id": 51, "parent": slot, "gp": 646, "rect": Rect2i(426, y + 5, 16, 16), "tex": RACE})
 		y += 23
 	return recs
 
@@ -143,6 +154,7 @@ func _cut() -> Array:
 		{"type": 5, "id": 337, "parent": 59, "rect": Rect2i(566, 59, 16, 24)},
 		{"type": 15, "id": 398, "name": "CNIFBlockSlot", "parent": 59, "rect": Rect2i(18, 81, 548, 24)},
 		{"type": 5, "id": 46, "parent": 398, "gp": 59, "rect": Rect2i(48, 86, 12, 16), "tex": LAMP_ON},
+		{"type": 5, "id": 400, "parent": 398, "gp": 59, "rect": Rect2i(96, 87, 462, 15)},
 		{"type": 16, "id": 395, "parent": 59, "group": 0, "rect": Rect2i(16, 7, 76, 28), "tex": "interface\\guild\\gil_whisper_sub_tab_off.ddj"},
 		{"type": 16, "id": 396, "parent": 59, "group": 0, "rect": Rect2i(94, 7, 76, 28), "tex": "interface\\guild\\gil_totality_sub_tab_off.ddj"},
 	]
@@ -166,7 +178,8 @@ func _layout(frame: String, size: String) -> String:
 func _text_table() -> UiTextTable:
 	var rows := PackedStringArray()
 	for pair in [["UIIT_STT_GUILDVIEW", "Guild (text table)"], ["UIIT_STT_COMMUNITY", "Community (text table)"],
-			["UIIT_STT_GUILD_INFO", "Guild information"], ["UIIT_CTL_FRIEND", "Friends"]]:
+			["UIIT_STT_GUILD_INFO", "Guild information"], ["UIIT_CTL_FRIEND", "Friends"],
+			["UIIT_STT_NO_GUILD", "No guild (text table)"]]:
 		rows.append("1\t%s\t\t\t\t\t\t\t%s" % pair)
 	return UiTextTable.parse(("\n".join(rows)).to_utf16_buffer())
 
@@ -190,7 +203,7 @@ func _builder() -> UiBuilder:
 			"res_ui\\cumunity_cut.2dt": _cut(), "res_ui\\cumunity_note.2dt": _note()}
 		for path in files:
 			cache[path] = Reader.parse(_file(files[path]))
-	for p in [GUILD_TAB_ON, GUILD_TAB_OFF, LAMP_ON, LAMP_OFF, CLOSE]:
+	for p in [GUILD_TAB_ON, GUILD_TAB_OFF, LAMP_ON, LAMP_OFF, CLOSE, RACE, CMD_BTN, CMD_BTN_DISABLE, EDIT_BTN]:
 		_tex(builder, p, Vector2i(16, 16))
 	return builder
 
@@ -254,11 +267,23 @@ func _visible_window(panels: Node) -> Control:
 # --- the checks -------------------------------------------------------------
 
 func _run() -> void:
+	# The client's default window, 1152x648 (the headless root starts at
+	# 64x64 and takes a size only after its first frame).
+	await process_frame
+	get_root().size = Vector2i(1152, 648)
+	await process_frame
 	var script := load(PANELS_PATH) as GDScript
 	var builder := _builder()
 	var panels: Control = script.new(builder)
 	get_root().add_child(panels)
 	await process_frame
+	# A friend list that arrives before the window is built is kept and drawn
+	# when it is (the client fills its window from the data it holds).
+	var early := _Entry.new("Early", false)
+	if panels.has_method("_on_friend_list_result"):
+		panels.call("_on_friend_list_result", [early], "")
+	else:
+		print("(this tree has no _on_friend_list_result)")
 
 	# U: the retail key opens the guild view.
 	_press(panels, KEY_U)
@@ -285,6 +310,12 @@ func _run() -> void:
 	_check(tab72 != null and bool(tab72.get_meta("twodt_checked", false)), "the info tab is checked")
 	_check(tab72 != null and tab72.tooltip_text == "Guild information", "the info tab carries UIIT_STT_GUILD_INFO as its hover text")
 
+	# Centred on the screen on every show (0x798c50), kept inside the view.
+	var view := window.get_viewport_rect().size
+	var want := Vector2(maxi(0, int(view.x) / 2 - 310), maxi(0, int(view.y) / 2 - 217))
+	_check(view == Vector2(1152, 648) and want == Vector2(266, 107), "the view is the client's 1152x648, so the centre is (266, 107)")
+	_check(window.position == want, "the window is centred on the %s view at %s (got %s)" % [view, want, window.position])
+
 	# CNIFMainFrame's chrome (0x479a50).
 	var bar := window.get_node_or_null("TitleBar") as Control
 	_check(bar != null and bar.position == Vector2(10, 12) and bar.size.x == 600,
@@ -299,10 +330,21 @@ func _run() -> void:
 	# The OnCreates' own state.
 	for id in [64, 68, 69, 70, 71]:
 		_check(_hidden(_at(groot, [47, 28, id])), "guild user row: 28 -> %d hidden at create" % id)
-	_check(_shown(_at(groot, [47, 28, 231])), "guild user row: 28 -> 231 kept")
+	_check(_hidden(_at(groot, [47, 28, 231])), "guild user row: 28 -> 231 hidden on show, a row past the member list (0x5b6b40(0))")
 	for id in range(37, 42):
-		_check(_hidden(_at(groot, [47, id])),
-			"command button 47 -> %d hidden (0x5b5480(0) while the grant window was up)" % id)
+		var cmd := _at(groot, [47, id]) as TextureButton
+		_check(cmd != null and cmd.visible and cmd.disabled,
+			"command button 47 -> %d shown and disabled with no guild (0x5b51c8..0x5b51e2)" % id)
+	var cmd37 := _at(groot, [47, 37]) as TextureButton
+	_check(cmd37 != null and cmd37.texture_disabled == (builder.get("_texture_cache") as Dictionary)[CMD_BTN_DISABLE.to_lower()],
+		"a disabled command button draws its _disable piece")
+	var edit81 := _at(groot, [47, 222, 81]) as TextureButton
+	_check(edit81 != null and edit81.disabled, "the notice's edit button 47 -> 222 -> 81 is disabled (0x5b51f9)")
+	var l66 := _at(groot, [47, 66]).get_node_or_null("Text") as Label if _at(groot, [47, 66]) else null
+	_check(l66 != null and l66.text == "No guild (text table)", "with no guild 47 -> 66 reads UIIT_STT_NO_GUILD (got %s)" % (l66.text if l66 else null))
+	_check(_hidden(_at(groot, [47, 150])), "with no guild the race mark 47 -> 150 is hidden (0x5b6266)")
+	var gauge := _at(groot, [47, 120]) as Range
+	_check(gauge != null and gauge.value == 0, "the GP gauge is empty")
 	var grant := _at(groot, [47, 1000])
 	var anchor85 := _at(groot, [47, 85])
 	_check(grant != null and anchor85 != null and not grant.visible and grant.position == anchor85.position,
@@ -345,6 +387,16 @@ func _run() -> void:
 	_check(_hidden(_at(croot, [700, 800])) and _hidden(_at(croot, [700, 900])), "the letter pane's 800 and 900 are hidden")
 	for id in [75, 76, 341]:
 		_check(_hidden(_at(croot, [700, 900, 72, id])), "multi-letter row -> %d hidden at create" % id)
+	var name0e := _at(croot, [646, 339, 341])
+	var l0e := name0e.get_node_or_null("Text") as Label if name0e else null
+	_check(l0e != null and l0e.text == "Early" and _flag_on(name0e), "a friend list that came before the window was built is on row 1")
+	for id in [341, 52, 51]:
+		_check(_hidden(_at(croot, [646, 52, id])), "row 2, with no entry, hides %d from creation (0x5a85c0)" % id)
+	var count := _at(croot, [646, 18])
+	var lc := count.get_node_or_null("Text") as Label if count else null
+	_check(lc != null and lc.text == ": 1 / 20", "the friend count reads ': 1 / 20' (0x5a9985, got %s)" % (lc.text if lc else null))
+	for id in [46, 400]:
+		_check(_hidden(_at(croot, [59, 398, id])), "an empty block row hides %d (0x586130)" % id)
 	var lamp46 := _at(croot, [59, 398, 46]) as TextureRect
 	_check(lamp46 != null and lamp46.texture == (builder.get("_texture_cache") as Dictionary)[LAMP_OFF.to_lower()],
 		"a block row's lamp is set to gil_contact_off (0x588364)")
@@ -354,6 +406,8 @@ func _run() -> void:
 	if window.has_method("fill_friends"):
 		var entry := _Entry.new("Alice", true)
 		window.call("fill_friends", [entry])
+		var lc2 := _at(croot, [646, 18]).get_node_or_null("Text") as Label if _at(croot, [646, 18]) else null
+		_check(lc2 != null and lc2.text == ": 1 / 20", "the count follows the list")
 		var name0 := _at(croot, [646, 339, 341])
 		var l0 := name0.get_node_or_null("Text") as Label if name0 else null
 		_check(l0 != null and l0.text == "Alice" and _flag_on(name0), "row 1 shows the friend's name")
@@ -381,8 +435,10 @@ func _run() -> void:
 		return
 	(_at(groot, [73]) as BaseButton).pressed.emit()
 	_check(_shown(_at(groot, [164])) and _not_shown(_at(groot, [47])), "the relations tab shows pane 164 and hides 47")
+	panels.set("last_populated", "")
 	(_at(groot, [221]) as BaseButton).pressed.emit()
 	_check(_shown(croot) and _caption(window) == "Community (text table)", "the left-menu button 221 switches to the community view")
+	_check(str(panels.get("last_populated")) == "community", "and asks for the community's data (got '%s')" % panels.get("last_populated"))
 	(_at(groot, [220]) as BaseButton).pressed.emit()
 	_check(_not_shown(croot) and _shown(_at(groot, [47])) and _not_shown(_at(groot, [164])),
 		"220 switches back, and the guild's first tab is checked again")
@@ -392,6 +448,19 @@ func _run() -> void:
 	_press(panels, KEY_G)
 	await process_frame
 	_check(window.visible and _caption(window) == "Guild (text table)", "G opens the guild view (a project binding, not the retail one)")
+
+	# UI scale 1.5 on the client's default 1152x648: a 768x432 view, 2 short
+	# of the window's 434. Centring alone puts it at y = -1; it is kept at 0.
+	window.hide()
+	get_root().size = Vector2i(1152, 648)
+	get_root().content_scale_factor = 1.5
+	await process_frame
+	window.show()
+	await process_frame
+	var v15 := window.get_viewport_rect().size
+	_check(window.position.y >= 0 and window.position.x == float(maxi(0, int(v15.x) / 2 - 310)),
+		"at UI scale 1.5 (view %s) the window stays inside the view (got %s)" % [v15, window.position])
+	get_root().content_scale_factor = 1.0
 
 class _Entry:
 	var friend_name: String

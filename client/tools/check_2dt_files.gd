@@ -69,7 +69,7 @@ func _init() -> void:
 	names.sort()
 
 	var totals := {"files": 0, "records": 0, "bad_size": 0, "bad_root": 0, "unresolved": 0,
-		"ambiguous": 0, "non_ascii": 0, "req_present": 0, "req_missing": 0, "opt_present": 0,
+		"ambiguous": 0, "kept": 0, "non_ascii": 0, "req_present": 0, "req_missing": 0, "opt_present": 0,
 		"opt_missing": 0, "off_size": 0, "textured": 0, "tile_first": 0, "tile_after": 0}
 	var types := {}
 	var missing_required := PackedStringArray()
@@ -132,6 +132,7 @@ func _init() -> void:
 			totals["bad_root"] += 1
 		totals["unresolved"] += file.unresolved.size()
 		totals["ambiguous"] += file.ambiguous.size()
+		totals["kept"] += file.kept_under_root.size()
 		totals["non_ascii"] += non_ascii
 		totals["req_present"] += req[0]
 		totals["req_missing"] += req[1]
@@ -151,6 +152,7 @@ func _init() -> void:
 		print("UNRESOLVED %s" % u)
 	for m in missing_required:
 		print("MISSING %s" % m)
+	print("LINKER-GUARD records whose parent already had a child with their id (left under the root): %d" % totals["kept"])
 	print("TOTAL files=%d records=%d bad_size=%d bad_root=%d unresolved=%d ambiguous=%d non_ascii=%d required_pieces=%d/%d optional_pieces=%d/%d textured_off_size=%d/%d" % [
 		totals["files"], totals["records"], totals["bad_size"], totals["bad_root"],
 		totals["unresolved"], totals["ambiguous"], totals["non_ascii"], totals["req_present"],

@@ -7083,6 +7083,33 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-ninety-sixth round: the Guild window starts in the state the client leaves it in
+
+A review fix to the round below. Every finding was re-read in the asm first, and all six hold.
+The full record is `docs/RE_COMPLETION.md`'s entry of the same name.
+
+- **OnCreates run last record first.** The loader's `0x8065` queue is a push_front
+  (`0x48fc09..0x48fc2b`), and the send loop walks from the front (`0x48fc84`). So the guild
+  window's own handler runs after its children's, the grant window is already hidden when
+  `0x5b5150` runs, and the command buttons 37..41 are **shown and disabled**
+  (`0x5b51c8..0x5b51e2`), not hidden. The spec and the round below are corrected.
+- **Every show** (`0x5bb150`) hides the grant window and shows and disables the buttons. It
+  clears the empty member rows, including 231 (`0x5b6b40(0)`). With no guild it writes
+  `UIIT_STT_NO_GUILD` on 66, blanks the value fields, hides the race mark 150, and zeroes the GP
+  gauge (`0x5b5eb0`). Then it **centres the window on the screen** (`0x798c50`). The round
+  below claimed the client leaves the window at (104, 81); it does not. The window is kept inside
+  the view (ours): (74, 0) at UI scale 1.5 on 1152x648.
+- **Friends.** The pane's refresh runs at creation and on every show (`0x5a85c0` via
+  `0x5a97b0`), so empty rows no longer show eleven fake online friends. It prints ": n / 20" on
+  646->18. A friend list that arrives before the window exists is kept, and the window's own
+  community button now asks for the list.
+- **Block rows** with no name hide their lamp and name (`0x586130`).
+- **Also:** the linker's GetChild guard (`0x48cbe6`; 0 hits on the retail files), parent 0's
+  first branch (`0x48cc27`), the check mark drawn over its box, and corrected counts (46 FAIL
+  lines, 295 scripts, community EDGE_TILED_OFF 0 -> 2, style bits on 121, not 116).
+- **Tests.** Against 8dad706: 19 FAIL lines in `guild_window_test.gd` and 4 in
+  `twodt_reader_test.gd`; both pass here. 111 suites, 0 failing. Go: 59 packages ok.
+
 ## Five-hundred-and-ninety-fifth round: U opens the client's own Guild window, and its community view shows the friend, block and letter panes where the client puts them
 
 The guild and community were built from `ifguild.txt` and `ifcommunity.txt`, which this client
@@ -7101,8 +7128,8 @@ same name.
   keeps opening the guild view as a project binding**, not claimed as retail.
 - **State, read.** Each named class's OnCreate was found through its message map and applied:
   - the notice view is hidden;
-  - the five command buttons are hidden, because the grant window was still up when
-    `0x5b5150` ran;
+  - ~~the five command buttons are hidden~~ (wrong; they are shown and disabled -- the next
+    round);
   - the grant window is moved onto 47->85 and hidden;
   - every slot class's own hides;
   - the block rows' lamps are set to off, and the letter's 800 and 900 are hidden;
@@ -7116,10 +7143,11 @@ same name.
   info is still requested and still not drawn.
 - **Measured.** 31 of 31 frame groups pass the piece check. 23 of 23 other widgets are identical
   in the tree diff. The only new OUTSIDE findings are the authored left menu at x −16..−36.
-  `guild_window_test.gd` fails 47 times against fcd0b08 and passes here.
+  `guild_window_test.gd` fails 46 times against fcd0b08 and passes here.
 - **Open.** Guild members, notice, points, relations and war; the alliance and member-list
-  refreshes; the scroll, edit and check-box classes' own art; the style bits; centring instead
-  of the authored (104, 81).
+  refreshes; the scroll, edit and check-box classes' own art; the style bits. (This entry also
+  said the client leaves the window at its authored (104, 81); it centres it on every show --
+  the next round.)
 
 ## Five-hundred-and-ninety-fourth round: the client reads the retail .2dt window files
 

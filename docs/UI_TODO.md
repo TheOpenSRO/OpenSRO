@@ -245,8 +245,13 @@ is presentation work on solved data; if you find yourself editing the protocol, 
   underbar's community button the community view (`0x5b49c0`); both toggle. **G** keeps
   opening the guild view as this project's own binding (retail G reaches `0x793b00(0x64,
   0x3f0)`, not established). Tabs switch panes as `0x47a240` does, and the OnCreates' hides and
-  checks are applied (docs/RE_COMPLETION.md). The friend list fills the friend rows the way
-  `0x5a85c0` / `0x5a7990` do. The dead `ifcommunity.txt` / `ifguild.txt` builds are gone.
+  checks are applied **in the client's order, last record first** (docs/RE_COMPLETION.md). On
+  every show the window runs the client's show path (`0x5bb150`): the command buttons shown and
+  disabled, the empty member rows cleared, the no-guild information (`UIIT_STT_NO_GUILD`), and
+  the window centred on the screen (`0x798c50`; kept inside the view, ours). The friend list
+  fills the friend rows and the count (": n / 20") the way `0x5a85c0` / `0x5a97b0` do, from
+  creation on, and empty block rows are cleared (`0x586130`). The dead `ifcommunity.txt` /
+  `ifguild.txt` builds are gone.
   **Correction to round 585:** the community's show routine does not select its first tab --
   `0x58ec40` tells the *guild* window to show or hide its own panes, and only the guild's tabs
   are re-checked; the community's tabs are set once, in its OnCreate. And U is the guild, not
@@ -255,8 +260,17 @@ is presentation work on solved data; if you find yourself editing the protocol, 
   the alliance pane's own refresh `0x57c6f0` (about 40 show/hide calls on the player's
   alliance state) is not run; the scroll bars, the letter pane's edit boxes and the grant
   window's check boxes are built without their classes' own art or behaviour; the style bits
-  set on 66, 115, 116 and 400..403 are not applied; the draw loop, the alignment values and
-  how an off-size static is drawn are not read.
+  set on 66, 115, 121 and 400..403 are not applied; the draw loop, the alignment values and
+  how an off-size static is drawn are not read; a guild member's information, rights (which
+  command buttons the client enables) and member rows are not drawn. **Buttons with no
+  behaviour yet** (built, drawn, inert; named by their art or caption, what each does is not
+  read): guild view -- 86 (`gil_shape01`), 23 (`stl_condition`), 81 (`stl_edit_button`,
+  disabled as the client disables it), 400..403 (the column buttons captioned Member / Level /
+  Level / Donate GP), 250 (`com_donation_button`); community view -- 255
+  (`gil_subj_button05`), 39 / 40 / 41 (captioned Whisper / Add friend / Delete friend), 62
+  (captioned Friends list).
+  The command buttons 37..41 are disabled as the client disables them for a player with no
+  guild.
 - **The teleport board** (round 578) — the Dimensional Teleporter, `resinfo\ifteleportboard.txt`,
   built by the recipe: `HudPanels.PANELS["teleport"]`, and its five `CIFTeleportAreaSlot` rows
   (`GDR_TB_TASLOT1..5`) filled from `resinfo\ifteleportareaslot.txt`'s own section (place, price,

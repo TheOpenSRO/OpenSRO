@@ -92,6 +92,13 @@ const PROJECT_HOTKEYS := {
 ## window is kept under in _windows.
 const GUILD_VIEWS := ["guild", "community"]
 const GUILD_WINDOW_KEY := "guild"
+## The last friend list and guild state the server sent, kept so the guild
+## window draws them even when it is built after they arrive (the client
+## builds its window at game start and fills it from data it already holds).
+var _friends: Array = []
+var _has_guild := false
+## The last panel id _populate was asked for (a test hook).
+var last_populated := ""
 
 ## Panels whose layout is read with #ifdef branch selection, mapped to the
 ## symbols defined for them. ifstore's two slot sets are alternates behind
@@ -556,7 +563,13 @@ func _guild_window() -> GuildWindow:
 		_unavailable[GUILD_WINDOW_KEY] = true
 		return null
 	window.hide()
-	window.centre()
+	# Centred on every show by the window itself (GuildWindow.place_centred,
+	# 0x798c50), not once here.
+	window.set_has_guild(_has_guild)
+	window.fill_friends(_friends)
+	# The window's own left-menu buttons switch views; ask for that view's
+	# data as U and the community button do.
+	window.view_changed.connect(func(view: String) -> void: _populate(view))
 	_windows[GUILD_WINDOW_KEY] = window
 	return window
 
@@ -3782,10 +3795,8 @@ func connect_net() -> void:
 	# The friend list fills the community view's friend rows (GuildWindow.
 	# fill_friends, the client's own row fill), as it filled the old
 	# window's list overlay.
-	NetClient.friend_list_result.connect(func(friends: Array, _e: String) -> void:
-		var guild := _windows.get(GUILD_WINDOW_KEY) as GuildWindow
-		if guild != null:
-			guild.fill_friends(friends))
+	NetClient.friend_list_result.connect(_on_friend_list_result)
+	NetClient.guild_info_result.connect(_on_guild_info_result)
 	NetClient.character_stats_result.connect(_apply_stats)
 	NetClient.skill_state_result.connect(_apply_skill_state)
 	NetClient.raise_mastery_result.connect(_on_raise_mastery_result)
@@ -3802,6 +3813,28 @@ func connect_net() -> void:
 	NetClient.storage_deposit_result.connect(_on_storage_deposit_result)
 	NetClient.storage_withdraw_result.connect(_on_storage_withdraw_result)
 	NetClient.storage_gold_result.connect(_on_storage_gold_result)
+
+## A friend list from the server: kept, and drawn on the guild window's
+## friend rows if the window exists (it is drawn from the kept list when it
+## is built later). A refused list changes nothing.
+func _on_friend_list_result(friends: Array, error: String) -> void:
+	if error != "":
+		return
+	_friends = friends.duplicate()
+	var guild := _windows.get(GUILD_WINDOW_KEY) as GuildWindow
+	if guild != null:
+		guild.fill_friends(_friends)
+
+## A guild_info reply: whether the player is in a guild (guild id not 0),
+## which picks the guild window's information branch (0x5b5eb0). World3D
+## still handles the rest of the reply.
+func _on_guild_info_result(result: GuildNet.Result) -> void:
+	if result == null or result.error != "":
+		return
+	_has_guild = result.guild_id != 0
+	var guild := _windows.get(GUILD_WINDOW_KEY) as GuildWindow
+	if guild != null:
+		guild.set_has_guild(_has_guild)
 
 ## The character pane's own control names, from resinfo\\ifplayerinfo_trijob2.txt,
 ## the layout CIFPlayerInfo::Create (0x6b84ec) loads. Every name wired below is
@@ -4021,6 +4054,7 @@ static func _grouped(value: int) -> String:
 	return ("-" + out) if value < 0 else out
 
 func _populate(panel_id: String) -> void:
+	last_populated = panel_id
 	# Every one of these requests is addressed by character name, which is
 	# also what identifies the session server-side, so there is nothing to
 	# ask for before a character is chosen.
@@ -4070,7 +4104,9 @@ func _populate(panel_id: String) -> void:
 ##
 ##   ifquest   GDR_QUEST_SCROLLMGR at 4,27,356,323, with eleven 2-pixel
 ##             divider tiles at y = 52, 79, 106 ... 322 -- a 27-pixel pitch
-##   ifguild   GDR_GUILD_USERVIEW_SCROLLMGR at 17,163,328,139
+##
+## (The guild window was the other example; it is built from
+## res_ui\\guild.2dt now and fills its own rows, GuildWindow.)
 ##
 ## So the rows go inside the scroll manager, at the pitch its own dividers
 ## give. A window with no scroll manager keeps the overlay, because there is

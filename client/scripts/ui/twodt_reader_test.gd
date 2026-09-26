@@ -76,7 +76,8 @@ func _file(records: Array) -> PackedByteArray:
 ## A small window with the shapes the real files have: a root frame at a
 ## screen position, two panes whose children repeat ids (5 under both), a
 ## grandchild that only its grandparent id can place, a record with parent 0
-## and one naming a parent that does not exist.
+## one naming a parent that does not exist, and a second id 5 under pane 10,
+## which the linker's GetChild guard leaves under the root.
 func _sample() -> Array:
 	return [
 		{"type": 0, "id": 100, "rect": Rect2i(50, 60, 300, 200), "root": true, "name": "CNIFTestWnd"},
@@ -93,6 +94,7 @@ func _sample() -> Array:
 		{"type": 5, "id": 32, "parent": 999, "gp": 100, "rect": Rect2i(80, 250, 10, 10)},
 		{"type": 11, "id": 33, "parent": 10, "gp": 100, "tex": "t\\check_on.ddj", "rect": Rect2i(200, 110, 14, 14)},
 		{"type": 0, "id": 34, "parent": 100, "rect": Rect2i(60, 60, 200, 180)},
+		{"type": 5, "id": 5, "parent": 10, "gp": 100, "rect": Rect2i(70, 140, 20, 15)},
 	]
 
 func _text_table() -> UiTextTable:
@@ -118,9 +120,9 @@ func _run() -> void:
 
 	# --- the container -------------------------------------------------------
 	var bytes := _file(_sample())
-	_check(bytes.size() == 4 + 14 * 976, "the fixture is 4 + 14 * 976 bytes (got %d)" % bytes.size())
+	_check(bytes.size() == 4 + 15 * 976, "the fixture is 4 + 15 * 976 bytes (got %d)" % bytes.size())
 	var file = Reader.parse(bytes)
-	_check(file != null and file.records.size() == 14, "a well-formed file parses into its 14 records")
+	_check(file != null and file.records.size() == 15, "a well-formed file parses into its 15 records")
 	if file == null:
 		return
 	var long := bytes.duplicate()
@@ -129,7 +131,7 @@ func _run() -> void:
 	_check(Reader.parse(bytes.slice(0, bytes.size() - 1)) == null, "one missing byte is refused")
 	_check(Reader.parse(PackedByteArray([1, 0])) == null, "a file shorter than its count is refused")
 	var lying := bytes.duplicate()
-	lying.encode_u32(0, 15)
+	lying.encode_u32(0, 16)
 	_check(Reader.parse(lying) == null, "a count that disagrees with the size is refused")
 	var empty := PackedByteArray([0, 0, 0, 0])
 	var none = Reader.parse(empty)
@@ -160,6 +162,9 @@ func _run() -> void:
 	_check(file.records[10].parent_index == 0 and file.unresolved.has(10), "parent 0 stays under the root")
 	_check(file.records[11].parent_index == 0 and file.unresolved.has(11), "a parent that does not exist stays under the root")
 	_check(file.unresolved.size() == 2 and file.ambiguous.is_empty(), "two unresolved, none ambiguous")
+	var kept: Array = Array(file.get("kept_under_root")) if "kept_under_root" in file else []
+	_check(file.records[14].parent_index == 0 and kept == [14] and not (14 in file.records[4].children),
+		"a second id 5 under pane 10 is not re-linked (GetChild guard, 0x48cbf7): it stays under the root (got %s, parent %d)" % [kept, file.records[14].parent_index])
 	_check(Array(file.records[4].children) == [6, 12], "children are kept in file order (got %s)" % [file.records[4].children])
 	_check(file.local_rect(8) == Rect2i(5, 4, 40, 15),
 		"a record's rect is its root-relative rect less its parent's (got %s)" % file.local_rect(8))
@@ -204,7 +209,7 @@ func _run() -> void:
 
 	# Back to front, in file order: the tile first, the panes after it.
 	var order := root.get_children().filter(func(c): return c.has_meta("twodt_id")).map(func(c): return int(c.get_meta("twodt_id")))
-	_check(order == [42, 72, 73, 10, 20, 30, 31, 32, 34], "children in file order, the tile backmost (got %s)" % [order])
+	_check(order == [42, 72, 73, 10, 20, 30, 31, 32, 34, 5], "children in file order, the tile backmost (got %s)" % [order])
 
 	# Text: the text id through the table; the sample text and comment never drawn.
 	_check(Builder.text_of(s5) == "Leader :", "the text id resolves through the text table (got '%s')" % Builder.text_of(s5))
@@ -232,7 +237,12 @@ func _run() -> void:
 		"a button takes _focus / _press, and no _disable when the archive has none")
 	_check(Builder.text_of(btn) == "Invite", "a button's caption is its text id")
 	var chk := Builder.find_path(root, [10, 33]) as TextureButton
-	_check(chk != null and chk.texture_normal == chk_off and chk.texture_pressed == chk_on, "a check box: off is the box, on the mark")
+	var mark := chk.get_node_or_null("Mark") as TextureRect if chk != null else null
+	_check(chk != null and chk.texture_normal == chk_off and mark != null and mark.texture == chk_on and not mark.visible,
+		"a check box: off is the box, on the mark drawn over it, unchecked at first")
+	if chk != null and mark != null:
+		chk.button_pressed = true
+		_check(mark.visible and chk.texture_normal == chk_off, "checked, the mark shows over the box")
 	var mf34: Control = Builder.child(root, 34)
 	_check(mf34 != null and mf34.get_children().filter(func(c): return c is TextureRect).size() == 8,
 		"a nested MainFrame with an empty base takes mframe_wnd_ too")

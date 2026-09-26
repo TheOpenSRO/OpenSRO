@@ -109,11 +109,17 @@ the windows it has created (the list at loader+4, appended at creation by `0x48d
 `id == parent` whose own parent's id is the grandparent (`0x48cba3..0x48cbbc`), restricted to the
 same file's windows (+0x1f8 is the file's root window, set at `0x48fa9c` and compared at
 `0x48cbce`). A grandparent of 0 is the load parent. A pair that matches nothing leaves the window
-under the root, where it was created: `0x48cb00` returns 0 without moving it. Linking moves a
+under the root, where it was created: `0x48cb00` returns 0 without moving it. **Guard:** once the
+parent is found, `0x48cb00` asks it for a direct child with the record's own id (GetChild,
+`0x48cbe6..0x48cbf7`) and does not re-link when it already has one; the record stays under the
+root. **Parent 0:** the id is first compared with loader+0x3c (`0x48cb0f`), which is 0 (stored at
+`0x48999a`; its setter `0x48cd60` has no direct caller), so a parent id of 0 takes that first
+branch, finds loader+0x38 empty and returns at `0x48cc27` without a move. Linking moves a
 window between child lists (AddChild, vslot `0x1c`, a push_back) and does not move it on screen.
-Measured with the reader's rule (earlier records only): **2310 of 2312 records link, none
-ambiguously, and none needs a later record**; the other 2 have parent 0 (`cumunity_note` #111,
-id 58, and `nifstallnetworkmsgbox` #17, id 26) and stay under the root.
+Measured with the reader's rule (earlier records only, with the guard): **2310 of 2312 records
+link, none ambiguously, none needs a later record, and the guard leaves none behind**; the other
+2 have parent 0 (`cumunity_note` #111, id 58, and `nifstallnetworkmsgbox` #17, id 26) and stay
+under the root.
 
 **Order (measured, not read).** Records are created and appended in file order. The data says
 file order is **back to front**: in 690 of 694 overlapping sibling pairs of a NormalTile and a
@@ -126,10 +132,20 @@ the last entry. The render loop was not read.
 test that reads it. That this constructor runs for every CNIF window is inferred from their RTTI
 chains (`CNIFWnd : CGWnd : ...`). Windows start visible; OnCreate handlers hide what they hide.
 
-**OnCreate (read).** After the whole file is loaded, every record with a non-empty name gets
-message `0x8065` in file order (`0x48fca9`), which runs its class's handler from its message
-map. A handler can load further files (the guild window loads four), which queue and send their
-own.
+**OnCreate (read) -- in reverse file order.** After the whole file is loaded, every record with a
+non-empty name gets message `0x8065` (`0x48fca9`), which runs its class's handler from its message
+map. The queue is filled with a **push_front**: `0x48fc09..0x48fc2b` takes the list's first node
+(`edi = [head]`) and inserts a node before it (`0x46bf60` builds `{next = arg1, prev = arg2,
+value = *arg3}` with next = that first node, prev = its prev, the head), where the root list at
+`0x48fb1f` is a push_back (next = head, prev = head's prev). The send loop `0x48fc84..0x48fcbd`
+walks from the front. So **the last named record gets 0x8065 first and record 0 last**: a
+window's own handler runs after all of its named children's. A handler can load further files
+(the guild window loads four), which queue and send their own the same way when each load ends.
+Two consequences the guild window shows: a list class that its rows join in their OnCreates
+(each pushing itself to the front of the list, e.g. `0x5a92b0`) ends up with the rows in file
+order, and a window's OnCreate can rely on its children's (FriendWnd's +0x798, set in its own
+OnCreate at `0x5a9a28`, is read by the refresh a later SetCheck triggers). An earlier version of
+this document said "in file order"; that was wrong.
 
 ## Art per type
 
@@ -216,8 +232,9 @@ set here and is not read.
 - What the alignment values mean, beyond where they are stored.
 - How a textured static, slot or plain window is drawn when its rect is not its texture's size.
 - The style bytes 0x398..0x39a, 0x39c, 0x350 and 0x3a4..0x3cc (zero in all data).
-- The first branch of `0x48cb00` (a parent id equal to loader+0x3c), which re-links a pending list
-  to loader+0x38; not traced. The measured links do not need it.
+- What the first branch of `0x48cb00` does when loader+0x38 is set (it re-links a pending list to
+  it). Nothing sets loader+0x3c or +0x38 through a direct call, and parent-0 records return at
+  `0x48cc27`.
 - The classes' own art for types 6, 7, 12, 13, 14, 17 and 20 (the vertical scroll's
   `com_scroll_bar` / `chat_arrow_up` / `chat_arrow_down`, the page manager's
   `mall_page_next` / `mall_page_prev`) is not built.

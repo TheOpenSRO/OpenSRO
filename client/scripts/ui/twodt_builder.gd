@@ -34,7 +34,8 @@ class_name TwoDtBuilder
 ##     4      button: the texture plus `_focus` / `_press` / `_disable`
 ##            (0x4717b0), default `interface\ifcommon\com_button.ddj`
 ##     11     check box: the texture cut after its last `_`, plus `off` for
-##            the box (0x482ef2) and `on` for the mark (0x482f2c);
+##            the box (0x482ef2) and `on` for the mark, a child window drawn
+##            over it (0x482f2c -> 0x482bd0);
 ##            default `interface\ifcommon\com_checkbutton02_on.ddj`
 ##     5, 8, 10, 18, 19   the texture as it is (only when set; 10 and 19 have
 ##            defaults `interface\playerminiinfo\pmi_hp.ddj` and
@@ -75,6 +76,8 @@ const META_TEXT_STYLE := "twodt_text_style"
 const META_UNBUILT := "twodt_unbuilt"
 ## The name of the Label a record's text goes on.
 const TEXT_NODE := "Text"
+## The name of a check box's mark (its `on` piece).
+const MARK_NODE := "Mark"
 
 const DEFAULT_MAINFRAME := "interface\\frame\\mframe_wnd_"
 const DEFAULT_FRAME := "interface\\inventory\\int_window_"
@@ -248,9 +251,12 @@ func _tab(r: TwoDtReader.Record) -> TextureButton:
 	btn.pressed.connect(func() -> void: TwoDtBuilder.click_tab(btn))
 	return btn
 
-## A check box: the `off` piece is the box, the `on` piece the mark (read,
-## see the header). Its initial state is not read; every check box in the
-## guild and community files sits in a pane hidden when it is created.
+## A check box: the `off` piece is the box, and the `on` piece the mark, a
+## child window drawn over it (read, see the header): here a TextureRect
+## named MARK_NODE over the box, shown while the box is pressed. Its
+## initial state is not read; every check box in the guild and community
+## files sits in a pane hidden when it is created. That a click toggles it
+## is Godot's toggle button, not read.
 func _checkbox(texture: String) -> TextureButton:
 	var base := slice_base(texture)
 	var box := TextureButton.new()
@@ -259,7 +265,16 @@ func _checkbox(texture: String) -> TextureButton:
 	box.focus_mode = Control.FOCUS_NONE
 	box.toggle_mode = true
 	box.texture_normal = _ui.load_texture(base + "off.ddj")
-	box.texture_pressed = _ui.load_texture(base + "on.ddj")
+	var mark := TextureRect.new()
+	mark.name = MARK_NODE
+	mark.texture = _ui.load_texture(base + "on.ddj")
+	mark.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	mark.stretch_mode = TextureRect.STRETCH_SCALE
+	mark.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mark.visible = false
+	box.add_child(mark)
+	box.toggled.connect(func(on: bool) -> void: mark.visible = on)
 	return box
 
 ## A gauge's fill is data; with none it is drawn empty. The class's own

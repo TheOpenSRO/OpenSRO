@@ -42640,16 +42640,18 @@ here uses.
 
 ### The state the OnCreates leave (read)
 
-The records with a class name get `0x8065` in file order once their file is loaded
-(`0x48fca9`). The guild window's own handler runs first and loads the other files, whose
-handlers run at the end of each load.
+**Corrected by the next round** ("The Guild window starts in the state the client leaves it in"):
+the records with a class name get `0x8065` in **reverse** file order once their file is loaded
+(the queue is a push_front, `0x48fc09..0x48fc2b`), so the guild window's own handler runs
+**last** of guild.2dt's, and loads the other files, whose handlers run, last record first, at
+the end of each load. The row below on `0x5b5460(1)` is wrong as a result: see that round.
 
 | class (handler) | what it does |
 |---|---|
-| CNIFGuildWnd (`0x5b57c0`) | community hidden (`0x5b5866`); 47->1200 (CNIFGuildNotifyView) hidden (`0x5b588c`); 164->87 on, 164->88 off; tabs 72 on, 73 and 74 off; hover strings (below); `SetText(UIIT_STT_GUILDVIEW)`; colour `0xffffd953` on 47->115 (`0x475ce0`, the text-object colour words the record colour goes to); style bits on 66, 115, 116 and 400..403 (not applied, meaning unread); `0x5b5460(1)`; window hidden (`0x5b5d73`) |
-| (in it) `0x5b5460(1)` -> `0x5b5150` | 47->1000 is still visible at that point: windows start visible (`0xb9e284`) and its own OnCreate runs later. So `0x5b5480(0)` hides the five command buttons 47->37..41 (+0x7e8..0x7f8, bound at `0x5b5d20..0x5b5d3f`) |
+| CNIFGuildWnd (`0x5b57c0`) | community hidden (`0x5b5866`); 47->1200 (CNIFGuildNotifyView) hidden (`0x5b588c`); 164->87 on, 164->88 off; tabs 72 on, 73 and 74 off; hover strings (below); `SetText(UIIT_STT_GUILDVIEW)`; colour `0xffffd953` on 47->115 (`0x475ce0`, the text-object colour words the record colour goes to); style bits on 66, 115, 121 and 400..403 (not applied, meaning unread); `0x5b5460(1)`; window hidden (`0x5b5d73`) |
+| (in it) `0x5b5460(1)` -> `0x5b5150` | ~~47->1000 is still visible ... hides the five command buttons~~ Wrong (next round): 47->1000 is already hidden by its own OnCreate, so `0x5b5150` shows the five command buttons 47->37..41 and disables them |
 | CNIFGuildGrantPow (`0x5a9ae0`) | moved to 47->85's position (`0x5a9b01..0x5a9b2c`, vslot `0x98`) and hidden (`0x5a9b37`) |
-| CNIFGuildUserSlot (`0x5b9870`) | hides 64, 68, 69, 70, 71; keeps 231 |
+| CNIFGuildUserSlot (`0x5b9870`) | hides 64, 68, 69, 70, 71; keeps 231 (the member refresh on every show hides 231 too: next round) |
 | CNIFAllianceSlot (`0x57fdc0`), CNIFHostileSlot (`0x5be5f0`) | hide 127, 128, 131 |
 | CNIFContributionSlot (`0x5b2fe0`) | hides 503, 504, 505 |
 | CNIFGuildWarSlot (`0x5b2fa0`) | hides 518 |
@@ -42659,7 +42661,7 @@ handlers run at the end of each load.
 | CNIFLetter (`0x5c4a70`) | 800 hidden (`0x5c4abc`); `0x5bec70` hides 900 |
 | CNIFMultiLetter (`0x5c9080`) | hides itself (`0x5c90dc`) |
 | CNIFMultiLetterSlot (`0x5cc020`) | hides 75, 76, 341 |
-| CNIFGuildNotifySlot, CNIFGuildGrantPowSlot, CNIFFriendWnd, CNIFFriendSlot, CNIFLetterSlot, CNIFGuildNotifyView, CNIFHostileGuild, CNIFGuildWar | fetch and configure; no visibility change (read) |
+| CNIFGuildNotifySlot, CNIFGuildGrantPowSlot, CNIFFriendWnd, CNIFFriendSlot, CNIFLetterSlot, CNIFGuildNotifyView, CNIFHostileGuild, CNIFGuildWar | fetch and configure; no visibility change in the handler itself (read). Wrong for CNIFFriendWnd and CNIFBlockWnd, whose refreshes clear their empty rows: next round |
 
 The hover strings are attached with style bit `0x80` and `0x46d7d0`. Guild: 164->87
 `UIIT_STT_GUILD_RESPECT_ALLY`, 164->88 `..._WAR`, 72 `UIIT_STT_GUILD_INFO`, 73
@@ -42720,7 +42722,8 @@ BEFORE is fcd0b08's scripts and AFTER is this tree. Neither run printed a SCRIPT
     `com_blacksquare_` reuse, round 126). OUTSIDE 0 -> 5: the left menu the data hangs off the
     window's left edge at x −16..−36 (Static1300 `alcm_menu_bg`, 223, 224, Button220,
     Button221). That is authored, and the buttons still take clicks there.
-  - Community: SAMERECT 1 -> 0 on `GDR_` names. On the new names, the community's three tabs
+  - Community: EDGE_TILED_OFF 0 -> 2 (the same six-piece reuse; corrected next round, this
+    line was missing). SAMERECT 1 -> 0 on `GDR_` names. On the new names, the community's three tabs
     lie on the guild's three, rect for rect. That is the composition read above: the guild's
     tabs stay up under the community. Which draws on top is inferred from the append order.
 - **Tree diff**, auto-generated names normalised: **23 of 23 other widgets identical**.
@@ -42736,7 +42739,8 @@ U, G, the community button and the tabs, and checks:
 - the friend fill;
 - the toggles.
 
-NEGATIVE, run on the box against fcd0b08's scripts: **47 FAIL lines**, among them:
+NEGATIVE, run on the box against fcd0b08's scripts: **46 FAIL lines** (47 was the count of lines
+matching "FAIL", which included the FAILURES summary; corrected next round), among them:
 - `FAIL U's window is captioned from UIIT_STT_GUILDVIEW (got 'Community')`
 - `FAIL it is guild.2dt's CNIFGuildWnd, 621x434 (got (464, 381))`
 - `FAIL its tabs are at (23,41) (100,41) (176,41), 72x24 (got [[P: (0, 0), S: (0, 0)], ...])`
@@ -42748,7 +42752,8 @@ NEGATIVE, run on the box against fcd0b08's scripts: **47 FAIL lines**, among the
 
 On this tree: ALL PASS.
 
-**Verified.** `remote_godot.sh check`: 296 scripts and 5 scenes, ALL LOAD. `remote_godot.sh
+**Verified.** `remote_godot.sh check`: 295 scripts and 5 scenes, ALL LOAD (296 was counted
+with the scratch audit tool copied into the lane; corrected next round). `remote_godot.sh
 tests`: 111 suites, 0 failing. `cd server && go build ./... && go test -count=1 -p 1 ./...`: 59
 packages ok. The first full run also failed `load_timings_test.gd` while another lane was
 rendering on the box. That suite passed alone and in the full rerun, which is the one quoted.
@@ -42769,10 +42774,164 @@ unused ones.
   the player's guild state) and the alliance refresh (`0x57c6f0`).
 - The scroll bars, edit boxes, combo boxes and the grant window's check boxes are built without
   their classes' own art or behaviour.
-- The style bits set on 66, 115, 116 and 400..403, the draw loop, the alignment values, and how
+- The style bits set on 66, 115, 121 and 400..403, the draw loop, the alignment values, and how
   an off-size static is drawn (47->222 `gil_windo02_off.ddj` 504x28 in 572x28; guild_w #59
   `com_grayline.ddj` 256x4 in 338x4) are not read.
-- The window is centred on first open, as every window here is. The client leaves it at its
-  authored (104, 81).
+- ~~The window is centred on first open, as every window here is. The client leaves it at its
+  authored (104, 81).~~ Wrong: the client centres it on every show (`0x5bb150` calls
+  `0x798c50(0xb0)` at `0x5bb16c`). Corrected next round.
 - The letter alarm path (`0x58eec0(5)`) and CNIFGuildGrantPow's showing are not wired: nothing
   in this client raises them.
+
+## The Guild window starts in the state the client leaves it in (round 596)
+
+Client only. Nothing on the wire changes. This round fixes the previous round from a review. Each
+finding was re-read in `sro_client.exe`'s asm before anything changed, and I agree with all six.
+The earlier entries' wrong statements are marked in place.
+
+### 1. OnCreates run in reverse file order (read)
+
+`0x48fc09..0x48fc2b` queues each named record with a **push_front**. `edi = [head]` is the first
+node, and `0x46bf60` builds `{next = arg1, prev = arg2, value = *arg3}` (`0x46bfa3..0x46bfce`)
+with next = that first node and prev = its prev (the head). The root list at `0x48fb1f` is
+different: it is a push_back (next = head, prev = head's prev). The send loop
+`0x48fc84..0x48fcbd` walks from the front. So in each file the last named record gets `0x8065`
+first and record 0 last. The guild window's own OnCreate runs after every other guild.2dt
+class's, and the files it loads run their queues, last record first, at the end of each load.
+This also explains two things. The friend rows join their pane with a push_front of their own
+(`0x5a92b0`), so the pane's list ends in file order. And FriendWnd's +0x798, set in its own
+OnCreate (`0x5a9a28`), is ready when the community's SetCheck(72) shows the pane and its refresh
+reads it. `GuildWindow._apply_create_state` now follows this order, and
+`docs/protocol/2DT_FORMAT.md` is corrected.
+
+### 2. The command buttons are shown and disabled (read)
+
+CNIFGuildGrantPow (#87) hides itself (`0x5a9b37`) before the guild window's OnCreate runs. So
+when `0x5b5460(1)` sets +0x798 = 1 and calls `0x5b5150`, `0x5b518e` takes `0x5b51b4`, and the
+loop `0x5b51c8..0x5b51e2` does ShowWindow(1) and `0x471dc0(0)` on each of 47->37..41
+(+0x7e8..0x7f8). `0x471dc0(0)` clears +0x378 and puts +0x37c, the `_disable` piece, up as the
+drawn texture (`0x471dee..0x471e06`). `0x5b51f9` does the same to the notice's edit button
+47->222->81 (+0x7fc). For a player with no guild (`0x9870e0` false, `0x5b521d`), nothing is
+enabled again (`0x5b536e` -> `0x5b5433`). `com_mid_button02_disable.ddj` and
+`stl_edit_button_disable.ddj` both exist in the archive (listed). The disabled caption's text
+style (`0x475dd0(3)`) is not read and is not applied.
+
+### 3. The guild window's show path (read, `CNIFGuildWnd::vslot_023`, `0x5bb150`)
+
+On a show, the window runs `0x5bb0a0` and then `0x798c50(0xb0)` (`0x5bb16c`). `0x5bb0a0` does,
+in order:
+- hides the grant window (`0x5bb0bf`);
+- runs `0x5b5480(1)`, which shows the command buttons, then `0x5b5150`, which disables them;
+- runs the member refresh `0x5bab70` -> `0x5ba310` -> `0x5b8580`, where each row past the member
+  list gets `0x5b6b40(0)` and hides 64, 68, 69, 70, 71 **and 231** (`0x5b6b87..0x5b6bd9`);
+- runs the guild information `0x5b5eb0`;
+- runs the relations and war refreshes (not run here).
+
+`0x798c50` then moves the window through vslot `0x9c` to `(screen width >> 1) - (width >> 1)`,
+`(screen height >> 1) - (height >> 1)`, with integer halves from each `cdq / sub / sar 1`.
+
+The information for a player with no guild (`0x5b5ef2` -> `0x5b6223`):
+- 66 gets `UIIT_STT_NO_GUILD` (UTF-16 at `0xd92b3c`).
+- 115, 124, 126, 121 and 116 get "" (`0xe17460`).
+- The race mark 150 (+0x7c0) is hidden (`0x5b6266..0x5b6272`).
+- The GP gauge 120 is zeroed (+0x368 / +0x36c).
+- The notice line 222->117 gets "" (`0x5b54c0`).
+
+The bindings behind those offsets were read at `0x5b5b5b..0x5b5c33`: each result is stored
+after the next push, so 120 is +0x7b0, 130 +0x7b4, 66 +0x7b8, 115 +0x7bc, 150 +0x7c0, 124
++0x7c4, 126 +0x7c8, 121 +0x7cc and 116 +0x7d4. The style bits went on 66 and 115 (5,2) and on 121
+and 400..403 (5,1). The earlier "66, 115, 116" was wrong and has been corrected.
+
+`GuildWindow._on_shown` does all of this on each hidden-to-shown change. The in-guild branch is
+not drawn. A guild_info reply now tells the window whether the player is in a guild
+(`HudPanels._on_guild_info_result`, guild id not 0). Until one arrives it takes the no-guild
+branch; that the client's own record starts without its flag is inferred.
+
+### 4. Centring (read), kept inside the view (ours)
+
+The client centres the window on every show, so the previous round's "the client leaves it at
+its authored (104, 81)" was false. `GuildWindow.place_centred` does it on every show, in the UI's
+own units. What is ours: the result is kept inside the view's top-left, so the caption and close
+button stay reachable. At 1152x648 the window lands at (266, 107). At UI scale 1.5 the view is
+768x432, 2 pixels shorter than the window, and the window sits at (74, 0) instead of (74, -1).
+HudPanels no longer centres it once at build.
+
+### 5. Friend rows, count and data (read)
+
+CNIFFriendWnd's OnCreate (`0x5a9a00`) runs `0x5a97b0`, which calls `0x5a94f0` and then the
+rows' refresh `0x5a85c0` (called at `0x5a9777`). Every row with no entry is cleared
+(`0x5a7990(0)`: lamp, name and race hidden). The pane's ShowWindow (`0x5a9a40`) runs the same
+refresh (`0x5a9a4c`). `0x5a97b0` then prints 646->18 (+0x78c) with the format `": %d / %d"`
+(UTF-16 at `0xd8d998`), the list's size and the literal 20 (`push 0x14` at `0x5a9982`).
+
+`GuildWindow.refresh_friends` does this at creation, on every show of the friend pane, and on
+every new list. `HudPanels` keeps the last friend list (`_on_friend_list_result`), so a list
+that arrives before the window is built is drawn when it is; before, it was dropped. The
+window's own left-menu buttons 220 and 221 now emit `view_changed`, and HudPanels asks for that
+view's data. Before, U followed by 221 never requested the friend list. A refused list is
+ignored. The old handler drew even a refused one.
+
+### 6. Block rows (read)
+
+CNIFBlockWnd's OnCreate ends with `0x5877a0` (`0x587ade`), which jumps to `0x586aa0`; that calls
+`0x586130` for each row. A row with an empty name hides its lamp 46 (+0x4e4) and its name 400
+(+0x4e8) (`0x58614e..0x586172`). This client has no block list, so every row is cleared.
+
+### Also (from the review)
+
+- **Linker guard (read).** After finding the parent, `0x48cb00` asks it for a direct child with
+  the record's id (`0x48cbe6..0x48cbf7`, GetChild) and does not re-link when there is one.
+  `TwoDtReader` does the same and keeps such records in `kept_under_root`.
+  `check_2dt_files.gd` counts them: **0** on the retail files, as the reviewer's simulation
+  found.
+- **Parent 0 (read).** The id is compared with loader+0x3c first (`0x48cb0f`). That is 0,
+  stored at `0x48999a` (`0x115ea04` = the singleton `0x115e9c8` + 0x3c); its setter `0x48cd60`
+  has no direct caller. So parent 0 takes the first branch and returns at `0x48cc27` without a
+  move. The spec says so now.
+- **Counts corrected in the previous round's records.**
+  - The negative was 46 FAIL lines, not 47; 47 counted the FAILURES line.
+  - check covered 295 scripts, not 296; 296 counted the scratch audit tool copied into the
+    lane.
+  - Community EDGE_TILED_OFF went 0 -> 2.
+- **Check box.** The mark (`on`) is a TextureRect drawn over the box (`off`), shown while the box
+  is pressed, as the client's mark is a child window over the box (`0x482bd0`). It was the
+  button's pressed texture.
+- The stale ifguild example above `HudPanels._fill_list` is gone. UI_TODO lists the window's
+  inert buttons.
+
+### Builder and reader API changes (for callers such as the underbar round)
+
+All of these are backward-compatible.
+- `TwoDtReader.TwoDtFile.kept_under_root` is a new array. A record the guard keeps has
+  `parent_index` 0, as before for unresolved ones.
+- `TwoDtBuilder._checkbox` now returns the same TextureButton with a child `Mark`
+  (`TwoDtBuilder.MARK_NODE`). `texture_pressed` is no longer set.
+- `TwoDtBuilder.META_TEXT_STYLE` and `set_text` are unchanged since the previous commit.
+
+### Tests
+
+`guild_window_test.gd` and `twodt_reader_test.gd` gained checks for everything above. The guild
+test now runs on a 1152x648 root, because the headless root is 64x64 until its first frame.
+NEGATIVE, run on the box against 8dad706's scripts:
+- `guild_window_test.gd`: **19 FAIL lines**. Among them:
+  - `FAIL command button 47 -> 37 shown and disabled with no guild (0x5b51c8..0x5b51e2)`, and
+    the same for 38..41;
+  - `FAIL guild user row: 28 -> 231 hidden on show, a row past the member list (0x5b6b40(0))`;
+  - `FAIL the notice's edit button 47 -> 222 -> 81 is disabled (0x5b51f9)`;
+  - `FAIL with no guild 47 -> 66 reads UIIT_STT_NO_GUILD (got <null>)`;
+  - `FAIL with no guild the race mark 47 -> 150 is hidden (0x5b6266)`;
+  - `FAIL a friend list that came before the window was built is on row 1`;
+  - `FAIL row 2, with no entry, hides 341 from creation (0x5a85c0)`, and the same for 52 and
+    51;
+  - `FAIL the friend count reads ': 1 / 20' (0x5a9985, got <null>)`;
+  - `FAIL an empty block row hides 46 (0x586130)`, and the same for 400;
+  - `FAIL and asks for the community's data (got '<null>')`;
+  - `FAIL at UI scale 1.5 (view (768, 432)) the window stays inside the view (got (266, 107))`.
+- `twodt_reader_test.gd`: **4 FAIL lines**:
+  - `FAIL a second id 5 under pane 10 is not re-linked (GetChild guard, 0x48cbf7): it stays
+    under the root (got [], parent 4)`;
+  - the two order checks the kept record moves;
+  - `FAIL a check box: off is the box, on the mark drawn over it, unchecked at first`.
+
+Both print ALL PASS on this tree. `check_2dt_files.gd`: unchanged totals, and `LINKER-GUARD ...
+0`.

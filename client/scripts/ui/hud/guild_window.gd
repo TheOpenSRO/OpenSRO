@@ -111,7 +111,41 @@ const FRIEND_RACE := 51
 const FRIEND_LAMP_ON := "interface\\guild\\gil_contact_on.ddj"
 const FRIEND_LAMP_OFF := "interface\\guild\\gil_contact_off.ddj"
 ## CNIFBlockSlot's OnCreate sets its row's lamp (46) to this (0x588364).
+## 46 is the row's lamp (+0x4e4) and 400 its name (+0x4e8).
 const BLOCK_LAMP := 46
+const BLOCK_NAME := 400
+## The friend count beside the pane's "Friend" label: 646 -> 18 (FriendWnd
+## +0x78c), printed by the pane's refresh 0x5a97b0 with this format (UTF-16
+## at 0xd8d998) and the literal 20 (`push 0x14` at 0x5a9982) as the second
+## number.
+const FRIEND_COUNT := 18
+const FRIEND_COUNT_FORMAT := ": %d / %d"
+const FRIEND_COUNT_MAX := 20
+
+## The guild information fields CNIFGuildWnd binds in its OnCreate
+## (0x5b5b5b..0x5b5c33, 47 -> id stored at the offset) and its refresh
+## 0x5b5eb0 writes: 120 the GP gauge (+0x7b0), 66 the name line (+0x7b8),
+## 115 (+0x7bc), 150 the race mark (+0x7c0), 124 (+0x7c4), 126 (+0x7c8),
+## 121 (+0x7cc), 116 (+0x7d4).
+const INFO_GAUGE := 120
+const INFO_NAME := 66
+const INFO_RACE := 150
+const INFO_CLEARED := [115, 124, 126, 121, 116]
+## With no guild, 0x5b5eb0 (0x5b6223..) puts this on 66 (UTF-16 at 0xd92b3c).
+const NO_GUILD_TEXT := "UIIT_STT_NO_GUILD"
+## The five command buttons (47 -> 37..41, +0x7e8..+0x7f8) and the notice
+## slot's edit button (47 -> 222 -> 81, +0x7fc).
+const COMMAND_BUTTONS := [37, 38, 39, 40, 41]
+const NOTICE_EDIT := [ID_INFO, 222, 81]
+## The notice line inside the notice slot, cleared by 0x5b54c0 (222 -> 117).
+const NOTICE_TEXT := [ID_INFO, 222, 117]
+## A member row's parts that its fill 0x5b6b40 hides for a row past the list
+## (0x5b6b87..0x5b6bd9): 64, 68, 69, 70, 71 and 231.
+const MEMBER_ROW_PARTS := [64, 68, 69, 70, 71, 231]
+
+## Emitted when the window's own left-menu buttons (220 / 221) switch the
+## view, so the owner can ask for that view's data.
+signal view_changed(view: String)
 
 var _twodt: TwoDtBuilder
 ## The guild window's own node (176). panel_root is the same node.
@@ -119,6 +153,13 @@ var guild_root: Control
 ## The community window (177), a child of guild_root.
 var community_root: Control
 var _community_view := false
+## Whether the player is in a guild, as the last guild_info reply said.
+## Until one arrives the window takes 0x5b5eb0's no-guild branch; that the
+## client's own guild record starts without its flag is **inferred**.
+var _has_guild := false
+## The friend list the rows are drawn from (0x5a85c0 reads the pane's own
+## list; this is the last friend list this client received).
+var _friends: Array = []
 
 ## Builds the window from the archive's `.2dt` files, in the order the
 ## client's classes do, and leaves it in the state their OnCreates leave it.
@@ -186,42 +227,80 @@ static func _place(node: Control, at: Vector2) -> void:
 	node.position = at
 	node.set_meta(UiBuilder.AUTHORED_RECT_META, Rect2(at, node.size))
 
-## The state the OnCreates leave, in the order they run: each file's named
-## records get 0x8065 after that file loads, in file order (0x48fca9), and
-## the guild window's own handler runs first and loads the others.
+## The state the OnCreates leave. **They run in reverse file order.** The
+## loader queues each named record with a push_front (0x48fc09..0x48fc2b: a
+## node whose next is the list's first, 0x46bf60 {next, prev, value}) --
+## the root list beside it is a push_back (0x48fb1f) -- and the send loop
+## walks from the front (0x48fc84..0x48fcbd). So in each file the last named
+## record gets 0x8065 first and record 0, the window itself, last; the
+## guild window's own handler runs after every other guild.2dt class's, and
+## loads the other files from inside it, each of which runs its own queue
+## the same way when its load ends.
 func _apply_create_state() -> void:
-	# The slots' own hides (see SLOT_HIDDEN_AT_CREATE); a slot's children are
-	# its own, so its OnCreate running before or after its window's changes
-	# nothing here.
+	# guild.2dt's queue, last record first: CNIFGuildNotifyView (0x5a9d00,
+	# an edit box's settings only), the grant-power rows (fetch only), then
+	# CNIFGuildGrantPow (0x5a9ae0): moved onto 47 -> 85 (0x5a9b01..0x5a9b2c)
+	# and hidden (0x5a9b37).
+	var grant := _at([ID_INFO, 1000])
+	var anchor := _at([ID_INFO, 85])
+	if grant != null:
+		if anchor != null:
+			_place(grant, anchor.position)
+		grant.visible = false
+	# Then the member rows, the notice slot, and every slot class of the
+	# files the guild window loads: each hides its own children
+	# (SLOT_HIDDEN_AT_CREATE); a slot's children are its own, so where in
+	# the queue it runs changes nothing.
 	for node in _named(guild_root):
-		var hidden: Array = SLOT_HIDDEN_AT_CREATE.get(str(node.get_meta(TwoDtBuilder.META_CLASS)), [])
-		for id in hidden:
+		var cls := str(node.get_meta(TwoDtBuilder.META_CLASS))
+		for id in SLOT_HIDDEN_AT_CREATE.get(cls, []):
 			var c := TwoDtBuilder.child(node, int(id))
 			if c != null:
 				c.visible = false
-		if str(node.get_meta(TwoDtBuilder.META_CLASS)) == "CNIFBlockSlot":
+		if cls == "CNIFBlockSlot":
 			_set_texture(TwoDtBuilder.child(node, BLOCK_LAMP), FRIEND_LAMP_OFF)
 
+	# The guild window's OnCreate (0x5b57c0), last of its file. Inside it:
+	# guild_r and guild_w (their slots above; CNIFAllianceGuild's refresh
+	# 0x57c6f0 is not run -- see the record), then cumunity_friend, whose
+	# queue runs the friend rows (registering with the pane), CNIFFriendWnd
+	# and, last, CNIFCommunityWnd.
 	if community_root != null:
+		# CNIFFriendWnd 0x5a9a00: +0x78c = 18, +0x798 = the scroll, then
+		# 0x5a97b0 -> 0x5a94f0 -> the rows' refresh 0x5a85c0 (0x5a9777):
+		# with no list, every row cleared, and the count printed.
+		refresh_friends()
+		# CNIFCommunityWnd 0x58ec70: cumunity_cut, whose queue ends with
+		# CNIFBlockWnd 0x587a50 -- sub-tab 395 checked (0x587aad; no pane),
+		# then 0x5877a0 -> 0x586aa0, which fills or clears each row with
+		# 0x586130: a row with no name hides its lamp 46 and its name 400
+		# (0x58614e..0x586172). This client has no block list, so every row
+		# is cleared.
 		var block := TwoDtBuilder.child(community_root, ID_BLOCK)
 		if block != null:
-			# CNIFBlockWnd 0x587a50: its first sub-tab checked (0x587aad);
-			# the pair has no pane (0x390 = -1), so only the look changes.
 			TwoDtBuilder.set_tab_checked(TwoDtBuilder.child(block, 395), true)
+			for row in block.get_children():
+				if row is Control and str(row.get_meta(TwoDtBuilder.META_CLASS, "")) == "CNIFBlockSlot":
+					for id in [BLOCK_LAMP, BLOCK_NAME]:
+						var part := TwoDtBuilder.child(row, id)
+						if part != null:
+							part.visible = false
+		# cumunity_note, whose queue ends with CNIFLetter 0x5c4a70: 800
+		# hidden (0x5c4abc), and 0x5bec70 hides 900, CNIFMultiLetter, which
+		# its own OnCreate (0x5c9080) had hidden as well.
 		var letter := TwoDtBuilder.child(community_root, ID_LETTER)
 		if letter != null:
-			# CNIFLetter 0x5c4a70: the write frame 800 hidden (0x5c4abc), and
-			# 0x5bec70 hides 900, CNIFMultiLetter, whose own OnCreate
-			# (0x5c9080) hides it as well.
 			for id in [800, 900]:
 				var c := TwoDtBuilder.child(letter, id)
 				if c != null:
 					c.visible = false
-		# CNIFCommunityWnd 0x58ec70: friend tab on, the other two off.
+		# Back in 0x58ec70: friend tab on, the other two off. SetCheck(72)
+		# shows the friend pane, whose ShowWindow (0x5a9a40) refreshes it
+		# again (0x5a9a4c) -- the pane's visibility hook below.
 		_check_tabs(community_root, 0)
 		_tooltips(community_root, COMMUNITY_TOOLTIPS)
 
-	# CNIFGuildWnd 0x5b57c0.
+	# The rest of 0x5b57c0.
 	_set_community_shown(false)                        # 0x5b5866
 	_hide([ID_INFO, 1200])                             # 0x5b588c: CNIFGuildNotifyView
 	TwoDtBuilder.set_tab_checked(_at([ID_RELATIONS, 87]), true)    # 0x5b58a7
@@ -234,21 +313,102 @@ func _apply_create_state() -> void:
 	if c115 != null:
 		_twodt.set_text(c115, TwoDtBuilder.text_of(c115)).add_theme_color_override(
 			"font_color", TwoDtBuilder.argb(0xffffd953))
-	# 0x5b5460(1) -> 0x5b5150: CNIFGuildGrantPow (47 -> 1000) is still visible
-	# (windows start visible, 0xb9e284, and its own OnCreate runs later), so
-	# 0x5b5480(0) hides the five command buttons 47 -> 37..41 (+0x7e8..0x7f8,
-	# bound at 0x5b5d20..0x5b5d3f).
+	# 0x5b5460(1) sets +0x798 = 1 and calls 0x5b5150. The grant window is
+	# already hidden (its OnCreate ran first), so 0x5b518e takes 0x5b51b4:
+	# the command buttons are shown and disabled.
+	_command_buttons()
+
+## 0x5b5150 with +0x798 = 1 and the grant window hidden: each command
+## button 47 -> 37..41 shown (vslot 0x5c, 1) and disabled (0x471dc0(0),
+## 0x5b51c8..0x5b51e2), and the notice's edit button 47 -> 222 -> 81
+## disabled (0x5b51f9). With no guild (0x9870e0 false, 0x5b521d) nothing is
+## enabled again (0x5b536e -> 0x5b5433). A disabled button draws its
+## `_disable` piece (0x471dee..0x471e06: +0x160 = +0x37c).
+##
+## **Open:** for a guild member the client enables some of them by the
+## member's rights (0x5b531b..0x5b5433); this client does not carry the
+## rights, so they stay disabled for everyone.
+func _command_buttons() -> void:
+	for id in COMMAND_BUTTONS:
+		var b := _at([ID_INFO, id])
+		if b != null:
+			b.visible = true
+			if b is BaseButton:
+				(b as BaseButton).disabled = true
+	var edit := _at(NOTICE_EDIT) as BaseButton
+	if edit != null:
+		edit.disabled = true
+
+## The guild window's ShowWindow (CNIFGuildWnd::vslot_023, 0x5bb150), for
+## a show: 0x5bb0a0 first -- the grant window hidden (0x5bb0bf), the command
+## buttons shown through 0x5b5480(1) and 0x5b5150, the member list's
+## refresh (0x5bab70 -> 0x5ba310 -> 0x5b8580: a row past the list gets
+## 0x5b6b40(0), which hides MEMBER_ROW_PARTS), the guild information
+## (0x5b5eb0) and the relations and war refreshes -- then the window is
+## centred on the screen (0x798c50(0xb0) at 0x5bb16c).
+func _on_shown() -> void:
 	var grant := _at([ID_INFO, 1000])
-	if grant != null and grant.visible:
-		for id in range(37, 42):
-			_hide([ID_INFO, id])
-	# CNIFGuildGrantPow's OnCreate (0x5a9ae0), later in guild.2dt's queue:
-	# moved onto 47 -> 85 (0x5a9b01..0x5a9b2c) and hidden (0x5a9b37).
-	var anchor := _at([ID_INFO, 85])
 	if grant != null:
-		if anchor != null:
-			_place(grant, anchor.position)
 		grant.visible = false
+	_command_buttons()
+	for node in _named(guild_root):
+		if str(node.get_meta(TwoDtBuilder.META_CLASS)) != "CNIFGuildUserSlot":
+			continue
+		for id in MEMBER_ROW_PARTS:
+			var part := TwoDtBuilder.child(node, id)
+			if part != null:
+				part.visible = false
+	_guild_info()
+	place_centred()
+
+## 0x5b5eb0 for a player with no guild (0x9870d0's record, flag +4 clear:
+## 0x5b5ef2 -> 0x5b6223): 66 reads UIIT_STT_NO_GUILD, 115, 124, 126, 121
+## and 116 are set to "" (0xe17460), the race mark 150 is hidden
+## (0x5b6266..0x5b6272), the GP gauge 120 set to 0 (+0x368 / +0x36c), and
+## the notice line 222 -> 117 set to "" (0x5b54c0).
+##
+## **Open:** the in-guild branch (name, level, master, member count, GP,
+## race mark) is not drawn; a guild member sees the fields as built.
+func _guild_info() -> void:
+	if _has_guild:
+		return
+	var name_node := _at([ID_INFO, INFO_NAME])
+	if name_node != null:
+		_twodt.set_text(name_node, _builder.resolve_text(NO_GUILD_TEXT))
+	for id in INFO_CLEARED:
+		var c := _at([ID_INFO, id])
+		if c != null and (TwoDtBuilder.text_of(c) != "" or c.get_node_or_null(TwoDtBuilder.TEXT_NODE) != null):
+			_twodt.set_text(c, "")
+	var race := _at([ID_INFO, INFO_RACE])
+	if race != null:
+		race.visible = false
+	var gauge := _at([ID_INFO, INFO_GAUGE]) as Range
+	if gauge != null:
+		gauge.value = 0
+	var notice := _at(NOTICE_TEXT)
+	if notice != null and notice.get_node_or_null(TwoDtBuilder.TEXT_NODE) != null:
+		_twodt.set_text(notice, "")
+
+## Whether the player is in a guild (a guild_info reply: guild id not 0).
+func set_has_guild(in_guild: bool) -> void:
+	_has_guild = in_guild
+	if visible:
+		_guild_info()
+
+## 0x798c50: the window moved so that x = (screen width >> 1) - (width >> 1)
+## and y = (screen height >> 1) - (height >> 1) -- integer halves, read from
+## the `cdq / sub / sar 1` pairs -- through vslot 0x9c, on every show. The
+## screen here is the viewport in the UI's own units (what the UI scale
+## changes). **Ours:** the result is kept inside the viewport's top-left
+## corner, so the caption and close button stay reachable when the window is
+## larger than the view (621x434 in a 1152x648 view at UI scale 1.5, 768x432,
+## would start at y = -1).
+func place_centred() -> void:
+	var view := get_viewport_rect().size
+	var x := int(view.x) / 2 - int(size.x) / 2
+	var y := int(view.y) / 2 - int(size.y) / 2
+	position = Vector2(clampi(x, 0, maxi(0, int(view.x) - int(size.x))),
+		clampi(y, 0, maxi(0, int(view.y) - int(size.y))))
 
 ## Checks the tab at `index` of TABS under `root` and unchecks the others,
 ## each SetCheck showing or hiding its pane.
@@ -287,10 +447,26 @@ func _set_texture(node: Control, path: String) -> void:
 func _wire() -> void:
 	var to_guild := _at([ID_MENU_GUILD]) as BaseButton
 	if to_guild != null:
-		to_guild.pressed.connect(show_guild_view)
+		to_guild.pressed.connect(func() -> void:
+			show_guild_view()
+			view_changed.emit("guild"))
 	var to_community := _at([ID_MENU_COMMUNITY]) as BaseButton
 	if to_community != null:
-		to_community.pressed.connect(show_community_view)
+		to_community.pressed.connect(func() -> void:
+			show_community_view()
+			view_changed.emit("community"))
+	# The window's ShowWindow(1) (0x5bb150).
+	visibility_changed.connect(func() -> void:
+		if visible:
+			_on_shown())
+	if community_root != null:
+		# The friend pane's ShowWindow(1) refreshes its rows (0x5a9a40 ->
+		# 0x5a97b0, at 0x5a9a4c).
+		var friend := TwoDtBuilder.child(community_root, ID_FRIEND)
+		if friend != null:
+			friend.visibility_changed.connect(func() -> void:
+				if friend.visible:
+					refresh_friends())
 	if community_root != null:
 		# The community's message map sends the letter tab's click (id 74) to
 		# 0x58ef20, which clears the letter pane's +0x790 and hides 900 again
@@ -365,30 +541,41 @@ func friend_rows() -> Array[Control]:
 			out.append(c)
 	return out
 
-## Fills the friend rows the way the friend pane's refresh does (0x5a85c0):
+## Keeps the friend list and redraws the rows from it (refresh_friends).
+## Each entry is an object with `friend_name` and `online`
+## (FriendNet.FriendEntry).
+func fill_friends(friends: Array) -> void:
+	_friends = friends.duplicate()
+	refresh_friends()
+
+## The friend pane's refresh (0x5a85c0, reached from 0x5a97b0 -> 0x5a94f0):
 ## row i shows entry (scroll offset + i), and a row past the list is
 ## cleared. The scroll bar is not built, so the offset is 0 and a longer
-## list shows its first rows. Each entry is an object with `friend_name`
-## and `online` (FriendNet.FriendEntry).
+## list shows its first rows. The rows are in file order: each row's
+## OnCreate pushes it to the front of the pane's list (0x5a92b0), and the
+## OnCreates run last row first, so the list ends in file order.
 ##
 ## A filled row (0x5a7990): the lamp set on or off, the race icon set from
 ## the friend's character record, the name set, and all three shown. Our
 ## friend list carries no character record, so the race icon is set to
 ## nothing -- what the client sets when its lookup fails (0x5a7abe). A
 ## cleared row hides all three (0x5a79d3..0x5a79fb).
-func fill_friends(friends: Array) -> void:
+##
+## 0x5a97b0 then prints the count on 646 -> 18: FRIEND_COUNT_FORMAT with the
+## list's size and 20 (0x5a997a..0x5a9991).
+func refresh_friends() -> void:
 	var rows := friend_rows()
 	for i in rows.size():
 		var row := rows[i]
 		var lamp := TwoDtBuilder.child(row, FRIEND_LAMP)
 		var name_node := TwoDtBuilder.child(row, FRIEND_NAME)
 		var race := TwoDtBuilder.child(row, FRIEND_RACE)
-		if i >= friends.size():
+		if i >= _friends.size():
 			for part in [lamp, name_node, race]:
 				if part != null:
 					part.visible = false
 			continue
-		var entry: Variant = friends[i]
+		var entry: Variant = _friends[i]
 		var online := bool(entry.get("online")) if entry is Object and "online" in entry else false
 		var who := str(entry.get("friend_name")) if entry is Object and "friend_name" in entry else str(entry)
 		_set_texture(lamp, FRIEND_LAMP_ON if online else FRIEND_LAMP_OFF)
@@ -398,6 +585,9 @@ func fill_friends(friends: Array) -> void:
 		for part in [lamp, name_node, race]:
 			if part != null:
 				part.visible = true
+	var count := TwoDtBuilder.find_path(community_root, [ID_FRIEND, FRIEND_COUNT]) if community_root != null else null
+	if count != null:
+		_twodt.set_text(count, FRIEND_COUNT_FORMAT % [_friends.size(), FRIEND_COUNT_MAX])
 
 ## CNIFMainFrame's chrome (0x479a50): caption (10, 12, W-21, 12), drag area
 ## (10, 0, W-21, 34), close button (W-26, 10, 16, 16) on com_windowclose.ddj.

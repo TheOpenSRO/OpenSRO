@@ -30,6 +30,12 @@ class_name TwoDtReader
 ## means the load parent (0x48fb5a..0x48fb6d). The root record's parent is the
 ## load parent (0x48fb51). A record whose pair matches nothing stays under the
 ## root, where it was created (0x48cb00 returns 0 without re-parenting).
+## A parent id of 0 takes 0x48cb00's first branch (0x48cb0f: the id equals
+## loader+0x3c, which is 0 -- stored at 0x48999a; its setter 0x48cd60 has
+## no direct caller) and returns at 0x48cc27 without a move. And after
+## finding the parent, 0x48cb00 asks it for a direct child with the record's
+## own id (GetChild, 0x48cbe6..0x48cbf7) and does not re-link when it has
+## one: the record stays under the root (kept_under_root).
 
 const RECORD_SIZE := 0x3d0
 const HEADER_SIZE := 4
@@ -152,6 +158,9 @@ class TwoDtFile:
 	## Records whose pair matched more than one earlier window; the loader
 	## takes the first it walks to, and so does this.
 	var ambiguous: Array[int] = []
+	## Records whose parent already had a direct child with their id, which
+	## 0x48cb00 does not re-link (0x48cbf7): they stay under the root.
+	var kept_under_root: Array[int] = []
 
 	func root() -> Record:
 		return records[0] if not records.is_empty() else null
@@ -275,5 +284,9 @@ static func _link(file: TwoDtFile, load_parent_id: int) -> void:
 			continue
 		if matches > 1:
 			file.ambiguous.append(i)
+		if found != 0 and file.child_with_id(found, r.id) != null:
+			file.kept_under_root.append(i)
+			records[0].children.append(i)
+			continue
 		r.parent_index = found
 		records[found].children.append(i)
