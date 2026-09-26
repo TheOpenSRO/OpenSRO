@@ -1024,24 +1024,10 @@ var _player_one_shot_hold := false
 ## The chat line for a cast or an item tried while dead. This project's own
 ## wording (the server's refusal string is its own too).
 const DEAD_INPUT_LINE := "You are dead. Revive first."
-## Sitting (round 605; docs/protocol/opcodes/motion.md). Whether the server has
-## told this player it sits (OP_STATE_CHANGE kind 1, value 4) -- the stand/run
-## loop becomes the body's sitting loop (action type 14) while it holds.
-var _player_sitting := false
-## Until when (_player_anim_time) movement input is held: the server's 1.5 s
-## sit/stand transition, in which it refuses a move (the retail movement
-## handler refuses state 0x12), from the moment its answer arrives; and while
-## a request is on its way, from the key press.
-var _player_motion_lock_until := 0.0
-## When the last N went out (_player_anim_time), or -1: a request in flight.
-## Held for MOTION_REQUEST_WAIT at most -- a refused request has no answer.
-var _motion_request_sent_at := -1.0
-## The server's id for this player, learned from the first OP_STATE_CHANGE
-## that answers this client's own N (the enter-world result does not carry
-## it); -1 until then.
-var _player_own_id := -1
-## How long an unanswered N holds movement. Ours: a round trip, with room.
-const MOTION_REQUEST_WAIT := 1.0
+## Sitting (round 605; docs/protocol/opcodes/motion.md): what this client
+## believes about its own motion and when movement is held -- SitState holds
+## the rules, on _player_anim_time's clock.
+var _sit := SitState.new()
 ## The sit-down or stand-up clip playing as _player_one_shot, or null; a move
 ## cuts it short (_leave_sit_by_moving).
 var _player_sit_clip: BanReader.ParsedAnimation = null
@@ -1529,8 +1515,8 @@ func _try_initialize_pk2_ui() -> void:
 		if result != null and result.ok:
 			# A character enters standing, and may be another character
 			# than the last one this client played (round 605).
-			_player_own_id = -1
-			_reset_player_motion()
+			_sit.own_id = -1
+			_sit.reset()
 		if result != null and result.ok and result.max_hp > 0:
 			_last_enter_world_hp = result.hp
 			_last_enter_world_max_hp = result.max_hp
@@ -4382,7 +4368,7 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	_teleport_arrival_pending = false
 	if result != null and result.ok:
 		# The server stands a character that changes zone (round 605).
-		_reset_player_motion()
+		_sit.reset()
 	if not result.ok:
 		# An accepted teleport whose move failed (warpTo's "not in the world";
 		# the server refunds the fee): the request is over, so a destination
@@ -7030,7 +7016,7 @@ func _flush_position() -> void:
 		return
 	# Not while seated (round 605): the server would take it as walking off
 	# and stand the character, and a swing from the seat is refused anyway.
-	if _player_sitting or _motion_locked():
+	if _sit.sitting or _motion_locked():
 		return
 	NetClient.move_to(player.position.x, player.position.y, player.position.z)
 	_last_sent_pos = player.position
@@ -10542,7 +10528,7 @@ func _physics_step(delta: float) -> void:
 		player.velocity.z = 0.0
 
 	var is_moving := manual_input or _has_move_target or (_qa_walk != "" and not _player_dead)
-	if is_moving and (_player_sitting or (_player_sit_clip != null and _player_one_shot == _player_sit_clip)):
+	if is_moving and (_sit.sitting or (_player_sit_clip != null and _player_one_shot == _player_sit_clip)):
 		_leave_sit_by_moving()
 	# The camera keeps whatever orbit it was given (see CAMERA_VIEW_FREE).
 	# It used to swing back to the default yaw and pitch whenever the
@@ -10597,7 +10583,7 @@ func _physics_step(delta: float) -> void:
 	# character, and refuses one in its transition -- a settling body must not
 	# do either. A real move clears the sit above (_leave_sit_by_moving) first.
 	if _time_since_send >= MIN_SEND_INTERVAL and player.position.distance_to(_last_sent_pos) >= MIN_SEND_DISTANCE \
-			and not _player_sitting and not _motion_locked():
+			and not _sit.sitting and not _motion_locked():
 		NetClient.move_to(player.position.x, player.position.y, player.position.z)
 		_last_sent_pos = player.position
 		_time_since_send = 0.0
@@ -10683,7 +10669,7 @@ func _physics_step(delta: float) -> void:
 		var action: int
 		if is_moving:
 			action = BsrReader.AnimationEntry.TYPE_RUN
-		elif _player_sitting:
+		elif _sit.sitting:
 			# The sitting loop, under the sit-down one-shot while that runs.
 			action = BsrReader.AnimationEntry.TYPE_SITTING
 		elif _player_anim_time - _last_combat_time < COMBAT_STANCE_SECONDS:
@@ -10748,7 +10734,8 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 		# position update (see _set_other_gait). Without this they stood
 		# in the bind pose, arms out, which no character in the game does.
 		var group := _weapon_group_for(equipped)
-		_other_gaits[character_id] = {"skeleton": skeleton, "gender": gender, "group": group, "moving": false}
+		_other_gaits[character_id] = {"skeleton": skeleton, "gender": gender, "group": group, "moving": false,
+			"spawned_at": _idle_anim_time}
 		var idle := _body_animation_for(gender, BsrReader.AnimationEntry.TYPE_STAND, group)
 		var frames := _frame_count(idle)
 		if frames > 1:
@@ -13267,7 +13254,7 @@ func _enter_dead_state(exp_lost: int) -> void:
 	if _player_dead:
 		return
 	_player_dead = true
-	_player_sitting = false
+	_sit.reset()
 	_drop_pending_attack()
 	_has_move_target = false
 	_left_steering = false
@@ -13412,6 +13399,7 @@ func _play_other_hit(character_id: int) -> void:
 func _request_sit_toggle() -> void:
 	if _player_dead or _is_typing() or not NetClient.is_connected_to_server() or _motion_locked():
 		return
+	var was_sitting := _sit.sitting
 	_has_move_target = false
 	_left_steering = false
 	_drop_pending_attack()
@@ -13423,16 +13411,14 @@ func _request_sit_toggle() -> void:
 		NetClient.move_to(player.position.x, player.position.y, player.position.z)
 		_last_sent_pos = player.position
 		_time_since_send = 0.0
-	_motion_request_sent_at = _player_anim_time
-	print("SIT: N pressed -- sending 0x704f [04] (sitting=%s)" % str(_player_sitting))
+	_sit.press(_player_anim_time)
+	print("SIT: N pressed -- sending 0x704f [04] (sitting=%s)" % str(was_sitting))
 	NetClient.request_motion(WorldNet.MOTION_SIT)
 
 ## Whether movement input is held for the motion: a request in flight, or the
 ## server's transition after its answer.
 func _motion_locked() -> bool:
-	if _motion_request_sent_at >= 0.0 and _player_anim_time - _motion_request_sent_at < MOTION_REQUEST_WAIT:
-		return true
-	return _player_anim_time < _player_motion_lock_until
+	return _sit.locked(_player_anim_time)
 
 ## QA: how high the body's Bip01 Pelvis is above the player's feet, in world
 ## units -- a sitting pose measured rather than looked at. "-" without a body.
@@ -13445,39 +13431,28 @@ func _qa_pelvis_height() -> String:
 	var at := _player_skeleton.global_transform * _player_skeleton.get_bone_global_pose(bone)
 	return "%.2f" % (at.origin.y - player.global_position.y)
 
-## Back to standing with nothing pending: entering the world, a zone change.
-func _reset_player_motion() -> void:
-	_player_sitting = false
-	_player_motion_lock_until = 0.0
-	_motion_request_sent_at = -1.0
-
 ## OP_STATE_CHANGE: kind 1 is the motion state. This player's own id is not in
 ## the enter-world result, so the first answer to its own N teaches it; any
 ## other id is another player's body.
 func _on_state_changed(change: WorldNet.StateChange) -> void:
 	if change == null or change.kind != WorldNet.STATE_KIND_MOTION:
 		return
-	if _other_bodies.has(change.object_id):
-		_apply_other_motion(change.object_id, change.value)
-		return
-	if _player_own_id == -1 and _motion_request_sent_at >= 0.0:
-		_player_own_id = change.object_id
-	if change.object_id == _player_own_id:
-		_apply_player_motion(change.value)
-	else:
-		print("SIT: state change for unknown id %d (value %d) ignored" % [change.object_id, change.value])
+	match _sit.classify(change.object_id, _other_bodies.has(change.object_id), _player_anim_time):
+		"other":
+			_apply_other_motion(change.object_id, change.value)
+		"self":
+			_apply_player_motion(change.value)
+		_:
+			print("SIT: state change for unknown id %d (value %d) ignored" % [change.object_id, change.value])
 
 ## The server's answer for this player: sit (4) or stand (0), through the 1.5 s
 ## transition in which it refuses a move.
 func _apply_player_motion(value: int) -> void:
-	_motion_request_sent_at = -1.0
-	_player_motion_lock_until = _player_anim_time + WorldNet.MOTION_CHANGE_SECONDS
-	var from_standing := not _player_sitting
-	match value:
-		WorldNet.MOTION_SIT:
-			_player_sitting = true
+	var what := _sit.answer(value, _player_anim_time)
+	match what:
+		"sit_down", "sit":
 			var loop := _body_animation_path(_player_gender, BsrReader.AnimationEntry.TYPE_SITTING, _player_weapon_group)
-			if from_standing:
+			if what == "sit_down":
 				var down := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_SIT_DOWN, _player_weapon_group)
 				if _play_player_once(down) > 0.0:
 					_player_sit_clip = down
@@ -13485,9 +13460,8 @@ func _apply_player_motion(value: int) -> void:
 					_body_animation_path(_player_gender, BsrReader.AnimationEntry.TYPE_SIT_DOWN, _player_weapon_group), loop])
 			else:
 				print("SIT: player sits -- clip %s (type 14, loop)" % loop)
-		WorldNet.MOTION_STAND:
-			_player_sitting = false
-			if not from_standing:
+		"stand_up", "stand":
+			if what == "stand_up":
 				var up := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_STAND_UP, _player_weapon_group)
 				if _play_player_once(up) > 0.0:
 					_player_sit_clip = up
@@ -13501,13 +13475,23 @@ func _apply_player_motion(value: int) -> void:
 ## transition), so the sit ends here without the stand-up clip, and a sit-down
 ## or stand-up clip still running gives way to the run.
 func _leave_sit_by_moving() -> void:
-	var was_sitting := _player_sitting
-	_player_sitting = false
+	var was_sitting := _sit.leave_by_moving()
+	if was_sitting and NetClient.is_connected_to_server():
+		# The server stands a seated character on its first accepted move; a
+		# tap too short for the ordinary send gate must still reach it, or the
+		# server keeps her seated while this client draws her standing (round
+		# 605's review).
+		NetClient.move_to(player.position.x, player.position.y, player.position.z)
+		_last_sent_pos = player.position
+		_time_since_send = 0.0
 	if not _player_one_shot_hold and _player_sit_clip != null and _player_one_shot == _player_sit_clip:
 		_player_one_shot = null
 	_player_sit_clip = null
 	if was_sitting:
 		print("SIT: moved while seated -- standing at once, no clip (the server's move sets WALK/RUN)")
+
+## How soon after a body is drawn a sit counts as "already sitting" (ours).
+const OTHER_SEATED_ON_SPAWN_SECONDS := 1.0
 
 ## Another player's answer: the sitting loop under the sit-down clip, or the
 ## stand loop under the stand-up clip, from their own body's table.
@@ -13522,7 +13506,12 @@ func _apply_other_motion(character_id: int, value: int) -> void:
 		WorldNet.MOTION_SIT:
 			gait["sitting"] = true
 			loop_type = BsrReader.AnimationEntry.TYPE_SITTING
-			if not was_sitting:
+			# A body drawn a moment ago is being told it already sits (the
+			# server's tellSeated after the list that introduced it), so it
+			# takes the loop without sitting down. OURS: the window, and the
+			# retail spawn packet's motion field, which was not read.
+			var just_spawned := _idle_anim_time - float(gait.get("spawned_at", -1000.0)) < OTHER_SEATED_ON_SPAWN_SECONDS
+			if not was_sitting and not just_spawned:
 				once_type = BsrReader.AnimationEntry.TYPE_SIT_DOWN
 		WorldNet.MOTION_STAND:
 			gait["sitting"] = false
@@ -13674,7 +13663,7 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 		return
 	if OS.get_environment("SRREVAMP_QA_STATS_LOG") != "":
 		print("QA STATS: t=%.2f tick=%d HP %d/%d MP %d/%d sitting=%s pelvis %s" % [_player_anim_time, _qa_tick,
-			stats.hp, stats.max_hp, stats.mp, stats.max_mp, str(_player_sitting), _qa_pelvis_height()])
+			stats.hp, stats.max_hp, stats.mp, stats.max_mp, str(_sit.sitting), _qa_pelvis_height()])
 	if stats.max_hp > 0:
 		_last_enter_world_hp = stats.hp
 		_last_enter_world_max_hp = stats.max_hp

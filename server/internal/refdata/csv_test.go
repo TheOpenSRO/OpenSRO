@@ -538,8 +538,8 @@ func TestSkillCSVCooldownGroupIsAStrictSuffix(t *testing.T) {
 		t.Errorf("an export predating CooldownGroup loaded %d; want 0", sk.CooldownGroup)
 	}
 	withCol := append(append([]string{}, old...), "2")
-	if len(withCol) != len(skillCSVColumns) || skillCSVColumns[45] != "CooldownGroup" {
-		t.Fatalf("test premise: %d fields against %d columns, column 45 %q", len(withCol), len(skillCSVColumns), skillCSVColumns[len(skillCSVColumns)-1])
+	if len(withCol) != 46 || skillCSVColumns[45] != "CooldownGroup" {
+		t.Fatalf("test premise: %d fields, column 45 %q", len(withCol), skillCSVColumns[45])
 	}
 	sk, err = parseSkillRow(withCol)
 	if err != nil {
@@ -547,5 +547,26 @@ func TestSkillCSVCooldownGroupIsAStrictSuffix(t *testing.T) {
 	}
 	if sk.CooldownGroup != 2 {
 		t.Errorf("CooldownGroup = %d, want 2", sk.CooldownGroup)
+	}
+}
+
+// SitGate (round 605) is a strict suffix: an export predating it loads 0 -- no
+// motion-state refusal -- and the column, when present, is read.
+func TestSkillCSVSitGateIsAStrictSuffix(t *testing.T) {
+	old := make([]string, 46) // through CooldownGroup
+	for i := range old {
+		old[i] = "0"
+	}
+	old[2] = "SKILL_TEST"
+	sk, err := parseSkillRow(old)
+	if err != nil || sk.SitGate != 0 {
+		t.Fatalf("an export predating SitGate: %+v, %v; want SitGate 0", sk.SitGate, err)
+	}
+	withCol := append(append([]string{}, old...), "3")
+	if len(withCol) != len(skillCSVColumns) || skillCSVColumns[46] != "SitGate" {
+		t.Fatalf("test premise: %d fields against %d columns, last %q", len(withCol), len(skillCSVColumns), skillCSVColumns[len(skillCSVColumns)-1])
+	}
+	if sk, err = parseSkillRow(withCol); err != nil || sk.SitGate != 3 {
+		t.Errorf("SitGate = %d (err %v), want 3", sk.SitGate, err)
 	}
 }

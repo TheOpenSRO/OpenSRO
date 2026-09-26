@@ -63,19 +63,37 @@ func regenPass(ctx context.Context, hub *world.Hub, chars character.Store, deps 
 	}
 	for _, e := range hub.AllEntities() {
 		if all || motions.regenDue(e.CharacterID, now) {
-			regenOne(ctx, e, chars, deps, logger, now)
+			regenOne(ctx, hub, e, chars, deps, logger, now)
 		}
 	}
 }
 
 // regenOne is one firing of CGObjPC::vslot_362 for e.
-func regenOne(ctx context.Context, e world.Entity, chars character.Store, deps RegenDeps, logger *slog.Logger, now time.Time) {
+//
+// It runs under e's kill lock (killLock), reading the life state and the pool
+// afresh there, because a blow and its death are not one step here as they are
+// in the engine (whose object queue runs both before anything else): a blow
+// writes HP 0 and only then takes the lock to decide the kill. A tick in that
+// gap used to raise the pool off 0, and fallen() then dropped the kill; and a
+// life state read from the snapshot e could heal a character a kill had just
+// put in life state 2. So a character at HP 0 -- one being killed, or an
+// HP-cost caster left at 0 -- regenerates nothing (OURS: the engine has no
+// such window), and a dead one nothing (read: the life test comes first).
+func regenOne(ctx context.Context, hub *world.Hub, e world.Entity, chars character.Store, deps RegenDeps, logger *slog.Logger, now time.Time) {
 	// `if (GetLifeState() != 1) return;` -- the first test.
 	if e.Life != world.LifeAlive {
 		return
 	}
+	l := killLock(e.CharacterID)
+	l.Lock()
+	defer l.Unlock()
+	if hub != nil {
+		if cur, ok := hub.EntityByCharacterID(e.CharacterID); !ok || cur.Life != world.LifeAlive {
+			return
+		}
+	}
 	c, err := chars.GetByID(ctx, e.CharacterID)
-	if err != nil {
+	if err != nil || c.HP <= 0 {
 		return
 	}
 	maxHP, maxMP := c.MaxHP(), c.MaxMP()

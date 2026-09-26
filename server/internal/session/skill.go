@@ -613,11 +613,6 @@ func useSkillHandler(
 		if deadBySession(hub, sess) {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: deadRefusal}).Encode()})
 		}
-		// Nor does a seated one: the skill-use gate refuses SIT and
-		// CHANGEMOTION (0x58ded4, 0x58e0cb; round 605, motion.go).
-		if seated(characterID, time.Now()) {
-			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: seatedRefusal}).Encode()})
-		}
 
 		// Resolve the skill's cooldown and damage bonus. A real learned skill
 		// (refdata) uses its real ReuseDelay cooldown; its extra damage is a
@@ -689,6 +684,14 @@ func useSkillHandler(
 		// the rule the rest of the project follows -- shop.Price says it
 		// outright: "The real number is what a player pays, so it wins."
 		if ref, err := skillRef.GetSkill(ctx, req.SkillID); err == nil && ref != nil {
+			// The skill-use gate's motion-state refusals (round 605,
+			// motion.go): only a skill carrying 'ao'/'pw' or a kind-1 'msch'
+			// is refused to a seated caster -- 59 of the 33,660 rows,
+			// measured. Every other skill is cast from the seat, as the
+			// engine's gate lets it be.
+			if seatedCastRefused(ref.SitGate, characterID, time.Now()) {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: seatedRefusal}).Encode()})
+			}
 			castRow = ref
 			skillRange = ref.Range
 			cooldown = time.Duration(ref.ReuseDelayMs) * time.Millisecond
@@ -1039,7 +1042,7 @@ func useSkillHandler(
 		// The MP half reaches the pool (mana.Tracker) but not the client at
 		// once: AttackResult has no MP field, so the HUD's MP bar moves on the
 		// next OpCharacterStatsResult (a stats request, or the push regen.go
-		// sends when a regen tick restores HP).
+		// sends when a regen tick restores HP or MP).
 		//
 		// PlayerHP carries the caster's real HP on every such cast. It is what
 		// the client paints the health bar from, and it was left at its zero

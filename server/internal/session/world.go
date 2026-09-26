@@ -785,6 +785,8 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	if err := sess.Send(&proto.Packet{Opcode: OpEnterWorldResult, Data: result.Encode()}); err != nil {
 		return err
 	}
+	// Who among them is seated (round 605): the snapshot carries no motion.
+	tellSeated(sess, others)
 
 	entered := &EntitySnapshot{
 		CharacterID: owned.ID, Name: owned.Name,
@@ -881,6 +883,7 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 	if err := sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: result.Encode()}); err != nil {
 		return true, err
 	}
+	tellSeated(sess, othersNew)
 
 	leftMsg := &EntityLeft{CharacterID: old.CharacterID}
 	for _, other := range remainingOld {

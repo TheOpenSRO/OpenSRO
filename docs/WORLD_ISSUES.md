@@ -7098,7 +7098,9 @@ is `docs/protocol/opcodes/motion.md`.
 - **The request (read).** `0x704f` is handler `0x04f` -> `0x4b1450` -> `FUN_004b1480`: a toggle
   through 1.5 s of CHANGEMOTION, then `0x30bf {id, 1, value}`. `0x7021`'s handler refuses a move
   only in states 8, `0x10`, `0x12`, so **a move while seated is accepted and stands at once**; a
-  blow stands a sitter; the skill gate refuses a cast while seated.
+  blow stands a sitter; the skill gate refuses a seated cast only for the 59 skills carrying
+  `ao`/`pw` or a kind-1 `msch` (corrected in the follow-up below; the first commit refused every
+  swing and cast).
 - **The clips (measured).** Types 13/14/15 from the body's `.bsr`: `chinaman_a_sitground` /
   `_sitbreath` / `_sitstand` for the man, `chinawoman_a_*` for the woman.
 - **Live (measured, `/var/tmp/rsit/live4.log`).** MaxHP/MaxMP 568: standing **+4 HP, +4 MP** a
@@ -7110,6 +7112,16 @@ is `docs/protocol/opcodes/motion.md`.
 - **Open:** other players' sit was not seen live (tested over the wire); the retail client's
   handling of a click or swing while seated is unread; the Action window's Sit/Stand label has no
   window to go in here.
+- **Follow-up after review (second commit).** The seated-cast refusal is now the READ one: only
+  skills carrying `ao`/`pw` (58 rows: the Cold/Fire walls, the fortress repair kits) or a kind-1
+  `msch` (the monster transform) are refused, via the exporter's new `SitGate` column; a plain or
+  duel swing is not refused and the attacker stays seated. Regen runs under the kill lock and skips
+  HP 0 (a lethal blow's kill could be dropped); a move while seated is sent at once (a tap left
+  client and server disagreeing); newcomers are told who sits; the own-id window expires. Stale
+  records ("no passive regen", "an item stat", "1 point does not regenerate", the dead tracker)
+  corrected in place. Time to full from 50% at MaxHP 568: 76 s before, 284 s standing, 28 s
+  sitting; nothing regenerates while moving. Negatives against b62e19c in the RE_COMPLETION entry.
+
 ## Six-hundred-and-sixth round: A window over a text line takes the keyboard, and Enter opens and closes the chat line as the client's does
 
 The full record is `docs/RE_COMPLETION.md`'s entry of the same name (round 606).

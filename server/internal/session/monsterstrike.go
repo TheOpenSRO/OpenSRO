@@ -181,7 +181,8 @@ type monsterStrikeOutcome struct {
 //
 // OWN DESIGN: the engine has no such lock -- its blows and revives run on one
 // game-object queue. Entries are never removed: one mutex per character ever
-// taken to 0 in the process's life, a few dozen bytes each.
+// taken to 0 or regenerated (round 605: the regen tick takes it too) in the
+// process's life, a few dozen bytes each.
 var killLocks sync.Map
 
 // killLock is characterID's kill lock (killLocks).

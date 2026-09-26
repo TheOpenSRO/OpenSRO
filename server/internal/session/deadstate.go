@@ -117,12 +117,14 @@ import (
 //     CurLevel alone -- but nothing here reads it).
 //   - The revived MP. Retail ADDS trunc(0.4 x MaxMP) to the MP the character
 //     died with (ApplyHPMPDelta above); srrevamp SETS the tracker to
-//     character.RespawnMP, a stand-in: mana.Tracker regenerates by wall
-//     clock while dead (its own rule; whether retail's MP regen runs on a
-//     life state other than 1 was not read), so the additive base differs
-//     anyway. The HP is exact: a dead character's HP is 0 (potions land
-//     nothing, no passive regen), and reviveHPDelta adds the handler's sum
-//     through Store.Heal, the same add-and-clamp.
+//     character.RespawnMP, a stand-in. (Corrected round 605: this used to
+//     say mana.Tracker regenerates by wall clock while dead. It regenerates
+//     nothing now, and the regen tick's first test is the life state --
+//     read, 0x4e29a9 -- so the MP she died with is intact; SET for ADD is
+//     the whole difference.) The HP is exact: a dead character's HP is 0
+//     (potions land nothing, and the regen tick skips the dead), and
+//     reviveHPDelta adds the handler's sum through Store.Heal, the same
+//     add-and-clamp.
 //   - The flag-off instant respawn (monsterStrike's RespawnHP) keeps the
 //     load path's trunc(0.4 x MaxHP), not the handler's +1: that wire is
 //     what an older client's tests pin, and the compression of a death and

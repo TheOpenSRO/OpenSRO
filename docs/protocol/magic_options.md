@@ -169,6 +169,11 @@ walk and is listed, but it is in the same block and carries the same caveat.)
 regen, which was about what writes the pools by default — nothing does. These params are there for
 items to grant.
 
+> **Corrected in round 605.** There IS passive regeneration: the 4 s timer `CGObjPC::vslot_362`
+> writes the pools (found 2026-09-16), and `SetMotionState` (`0x4a9d00`) writes params 25/26 at
+> baseline -- 0.8 standing, 8.0 sitting -- so items add to a baseline rather than supplying the only
+> one. `docs/protocol/opcodes/motion.md`.
+
 ## The engine's own names for each tag, and the unit of each bonus
 
 Two server-side debug formatters print an item and its options in the game's own words:

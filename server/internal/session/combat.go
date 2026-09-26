@@ -821,11 +821,12 @@ func combatHandler(
 			if deadBySession(hub, sess) {
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: deadRefusal}).Encode()})
 			}
-			// Nor does a seated one: the skill-use gate refuses SIT and
-			// CHANGEMOTION (0x58ded4, 0x58e0cb; round 605, motion.go).
-			if seated(characterID, time.Now()) {
-				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: seatedRefusal}).Encode()})
-			}
+			// A seated character's swing is NOT refused (round 605,
+			// motion.go): the retail plain attack is the basic-attack skill
+			// (SKILL_CH_SWORD_BASE_01 and the like), and none of the 1,273
+			// *_BASE_* / PUNCH rows carries 'ao', 'pw' or 'msch' (measured),
+			// so the skill-use gate lets it through and nothing stands the
+			// attacker up. Read, not a choice.
 
 			// Reach first, THEN the cooldown -- the order is the engine's.
 			// Its phase 1 measures the approach band and only gates on the

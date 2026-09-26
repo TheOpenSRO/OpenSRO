@@ -179,12 +179,13 @@ var ParamFor = map[string]int{
 	"zb":             32,  // anti-zombie
 }
 
-// REGENERATION IS AN ITEM STAT, NOT A BASELINE ONE. Params 25 and 26 are
-// written by MATTR_REGENHPMP, MATTR_AVATAR_HPRG and MATTR_AVATAR_MPRG, so the
-// engine does have HP/MP regeneration parameters. That does not reopen the
-// earlier finding that there is no passive regen: that finding was about what
-// writes the pools by default, and nothing does. These params exist for items
-// to grant, which is a different claim and a compatible one.
+// REGENERATION IS A BASELINE STAT THAT ITEMS ADD TO (corrected round 605).
+// Params 25 and 26 are written by MATTR_REGENHPMP, MATTR_AVATAR_HPRG and
+// MATTR_AVATAR_MPRG -- and at baseline by SetMotionState (0x4a9d00), which sets
+// their slot 0 to 0.8 in every motion state but SIT and 8.0 in SIT. This note
+// used to say there is no passive regen and nothing writes the pools by
+// default; both are wrong: CGObjPC::vslot_362, a 4 s timer, restores
+// trunc(MaxHP x hprg / 100) (internal/mana, docs/protocol/opcodes/motion.md).
 
 // BonusUnit says whether a magic option's number is an absolute amount or a
 // percentage -- as the engine's own item dumper prints it.

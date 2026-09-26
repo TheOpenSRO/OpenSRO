@@ -893,6 +893,7 @@ func skillRecord(cols []string) ([]string, bool) {
 		healHP,                     // 43 SelfHealHP -- 'heal' value[0] a flat self-heal restores (round 503)
 		healMP,                     // 44 SelfHealMP -- 'heal' value[2], its MP half
 		cooldownGroup(cols),        // 45 CooldownGroup -- Overlap's high byte, CRefSkill+0x8f (round 504)
+		sitGate(cols),              // 46 SitGate -- the skill gate's motion-state refusals (round 605)
 	}, true
 }
 
@@ -912,6 +913,49 @@ func cooldownGroup(cols []string) string {
 		return "0"
 	}
 	return strconv.FormatUint(uint64(uint32(v)>>24), 10)
+}
+
+// sitGate is the SitGate column: which of the skill-use gate's two
+// motion-state refusals (Skill_CheckUseConditions, answering 0x3009) apply to
+// the skill, as a bit mask (round 605, docs/protocol/opcodes/motion.md):
+//
+//	1  the skill carries 'ao' (field 0x274) or 'pw' (0x2b4): a PC may not
+//	   cast it in SIT, CHANGEMOTION, KNOCKDOWN, SKILL_ACTIONOFF or
+//	   SKILL_PROTECTIONWALL (0x58e0ad..0x58e0ed)
+//	2  the skill carries 'msch' (0x4a4) with value[0] == 1: refused in SIT
+//	   (0x58de46..0x58ded4)
+//
+// A skill with neither is not refused for its caster's motion state at all.
+// A walk that does not finish decides a code absent only when its literal word
+// appears nowhere in the row; otherwise the bit is set (the refusal is kept).
+func sitGate(cols []string) string {
+	words, ok := paramWords(cols)
+	if !ok {
+		return "0"
+	}
+	entries, _, complete := skillparam.Walk(words)
+	gate := 0
+	seen := map[skillparam.Code]bool{}
+	for _, e := range entries {
+		seen[e.Code] = true
+		switch e.Code {
+		case "ao", "pw":
+			gate |= 1
+		case "msch":
+			if e.Index+1 < len(words) && words[e.Index+1] == 1 {
+				gate |= 2
+			}
+		}
+	}
+	if !complete {
+		if !seen["ao"] && !seen["pw"] && !literalAbsent(cols, []skillparam.Code{"ao", "pw"}) {
+			gate |= 1
+		}
+		if !seen["msch"] && !literalAbsent(cols, []skillparam.Code{"msch"}) {
+			gate |= 2
+		}
+	}
+	return strconv.Itoa(gate)
 }
 
 // selfHeal is the (HP, MP) a skill restores to its own caster, as the

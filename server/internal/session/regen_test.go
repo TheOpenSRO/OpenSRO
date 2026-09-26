@@ -98,13 +98,13 @@ func TestRegenFollowsTheMotionState(t *testing.T) {
 	// Walking: a move 100 ms ago.
 	motions.moved(c.ID, t0)
 	was := hp()
-	regenOne(ctx, e, store, RegenDeps{}, nil, t0.Add(100*time.Millisecond))
+	regenOne(ctx, hub, e, store, RegenDeps{}, nil, t0.Add(100*time.Millisecond))
 	if hp() != was {
 		t.Errorf("a walking character regenerated %d HP", hp()-was)
 	}
 	// Standing still again.
 	was = hp()
-	regenOne(ctx, e, store, RegenDeps{}, nil, t0.Add(time.Second))
+	regenOne(ctx, hub, e, store, RegenDeps{}, nil, t0.Add(time.Second))
 	if got, want := hp()-was, engineRegen(maxHP, 0.8); got != want {
 		t.Errorf("standing: +%d HP, want %d", got, want)
 	}
@@ -114,13 +114,13 @@ func TestRegenFollowsTheMotionState(t *testing.T) {
 		t.Fatalf("sit request: value %d ok %v", v, ok)
 	}
 	was = hp()
-	regenOne(ctx, e, store, RegenDeps{}, nil, sitAt.Add(1400*time.Millisecond))
+	regenOne(ctx, hub, e, store, RegenDeps{}, nil, sitAt.Add(1400*time.Millisecond))
 	if hp() != was {
 		t.Errorf("a character sitting down regenerated %d HP in the transition", hp()-was)
 	}
 	// Seated: 8%.
 	was = hp()
-	regenOne(ctx, e, store, RegenDeps{}, nil, sitAt.Add(MotionChangeDuration))
+	regenOne(ctx, hub, e, store, RegenDeps{}, nil, sitAt.Add(MotionChangeDuration))
 	if got, want := hp()-was, engineRegen(maxHP, 8.0); got != want {
 		t.Errorf("sitting: +%d HP, want %d (8%% of %d)", got, want, maxHP)
 	}
@@ -172,5 +172,60 @@ func TestRegenTickLeavesTheDeadAtZero(t *testing.T) {
 	}
 	if after, _ := store.GetByID(ctx, c.ID); after.HP != 0 {
 		t.Errorf("regen raised a dead character from 0 to %d", after.HP)
+	}
+}
+
+// A tick in the gap between a lethal blow's write and its kill decision must
+// not lift the pool off 0 (round 605's review): the blow's fallen() would then
+// find her alive above 0 and drop the kill. Alive at HP 0 -- the state that gap
+// leaves -- regenerates nothing, standing or sitting.
+func TestRegenLeavesAnAliveCharacterAtZero(t *testing.T) {
+	ctx := context.Background()
+	store := character.NewMemStore()
+	c, err := store.Create(ctx, 1, "Brink")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.ApplyDamage(ctx, c.ID, 1<<30); err != nil {
+		t.Fatal(err)
+	}
+	hub := world.NewHub()
+	hub.Enter(gateway.NewTestSession(605002), c.ID, "Brink", 1, "jangan", world.Position{})
+	t.Cleanup(func() { motions.clear(c.ID) })
+	e, _ := hub.EntityByCharacterID(c.ID)
+	e.Session = nil
+	t0 := time.Now()
+	motions.enter(c.ID, t0)
+	regenOne(ctx, hub, e, store, RegenDeps{}, nil, t0)
+	motions.request(c.ID, MotionSit, t0.Add(-2*MotionChangeDuration))
+	regenOne(ctx, hub, e, store, RegenDeps{}, nil, t0)
+	if after, _ := store.GetByID(ctx, c.ID); after.HP != 0 {
+		t.Errorf("a character alive at HP 0 regenerated to %d; the kill that is deciding her would be dropped", after.HP)
+	}
+}
+
+// The life state is read afresh under the kill lock, not from the pass's
+// snapshot: a kill that lands after the snapshot was taken must win.
+func TestRegenReadsTheLifeStateAfresh(t *testing.T) {
+	ctx := context.Background()
+	store := character.NewMemStore()
+	c, err := store.Create(ctx, 1, "Stale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.ApplyDamage(ctx, c.ID, c.MaxHP()/2); err != nil {
+		t.Fatal(err)
+	}
+	hub := world.NewHub()
+	hub.Enter(gateway.NewTestSession(605003), c.ID, "Stale", 1, "jangan", world.Position{})
+	t.Cleanup(func() { motions.clear(c.ID) })
+	e, _ := hub.EntityByCharacterID(c.ID) // alive in the snapshot
+	e.Session = nil
+	motions.enter(c.ID, time.Now())
+	hub.SetLifeState(c.ID, world.LifeAlive, world.LifeDead, time.Now())
+	before, _ := store.GetByID(ctx, c.ID)
+	regenOne(ctx, hub, e, store, RegenDeps{}, nil, time.Now())
+	if after, _ := store.GetByID(ctx, c.ID); after.HP != before.HP {
+		t.Errorf("a stale 'alive' snapshot healed a dead character %d -> %d", before.HP, after.HP)
 	}
 }

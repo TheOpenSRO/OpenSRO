@@ -26,8 +26,10 @@ package session
 //     at 0x4b11b6, with no transition and no 0x30bf.
 //   - A blow stands a sitter up: Combat_ApplyActionEffects calls
 //     FUN_004b1480(0) when the target's motion is SIT (0x593ae8).
-//   - The skill-use gate refuses a cast while SIT or CHANGEMOTION
-//     (0x58ded4 and 0x58e0cb, answering 0x3009).
+//   - The skill-use gate refuses a cast to a seated caster only for the skills
+//     that carry 'ao'/'pw' (SIT and CHANGEMOTION among other states, 0x58e0cb)
+//     or a kind-1 'msch' (SIT, 0x58ded4), answering 0x3009 -- 59 of the
+//     33,660 skill rows (measured). The plain attacks are not refused.
 //   - GObjPC::Revive sets STAND (0x4df427).
 //
 // OURS, disclosed:
@@ -56,6 +58,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
@@ -276,17 +279,38 @@ func (t *motionTracker) regenDue(characterID int64, now time.Time) bool {
 	return true
 }
 
-// seated reports whether characterID is sitting or getting up or down -- the
-// states the skill-use gate refuses a cast in.
-func seated(characterID int64, now time.Time) bool {
+// seatedCastRefused is the skill-use gate's motion-state test for a skill
+// whose SitGate is gate (refdata.Skill.SitGate), read in
+// Skill_CheckUseConditions (0x58d8f0):
+//
+//   - SitGateActionOff (the skill carries 'ao' at +0x274 or 'pw' at +0x2b4):
+//     for a PC, refused in SIT, CHANGEMOTION, KNOCKDOWN, SKILL_ACTIONOFF and
+//     SKILL_PROTECTIONWALL (0x58e0a0..0x58e0ed). srrevamp has only the first
+//     two.
+//   - SitGateTransform ('msch' value[0] == 1, +0x4a4): refused in SIT
+//     (0x58de46..0x58ded4); the same branch also refuses when vtable slot
+//     0x540 or the state changer's test 0x406750(1) answers non-zero, neither
+//     read nor modelled.
+//
+// Any other skill -- the plain attacks included -- is not refused for its
+// caster's motion state, and nothing in the cast stands the caster up (the only
+// callers of FUN_004b1480 are the 0x704f handler, the stall, the open market
+// and the blow on a target).
+func seatedCastRefused(gate int, characterID int64, now time.Time) bool {
+	if gate == 0 {
+		return false
+	}
 	s := motions.state(characterID, now)
-	return s == MotionSit || s == MotionChangeMotion
+	if gate&refdata.SitGateActionOff != 0 && (s == MotionSit || s == MotionChangeMotion) {
+		return true
+	}
+	return gate&refdata.SitGateTransform != 0 && s == MotionSit
 }
 
-// seatedRefusal is the AttackResult error for a swing or a cast while seated.
-// The engine answers 0x3009, whose client string was not identified; the
-// wording is ours.
-const seatedRefusal = "cannot attack while sitting"
+// seatedRefusal is the AttackResult error for a cast the gate refuses. The
+// engine answers 0x3009, whose client string was not identified; the wording
+// is ours.
+const seatedRefusal = "cannot use that skill while sitting"
 
 // broadcastMotion sends 0x30bf {id, kind 1, value} to everyone in the
 // character's zone, the character included -- the engine's broadcast reaches
@@ -318,6 +342,39 @@ func standOnHit(hub *world.Hub, characterID int64, damage int) {
 	if e, found := hub.EntityByCharacterID(characterID); found {
 		broadcastMotion(hub, e, value)
 	}
+}
+
+// tellSeated sends sess one 0x30bf {id, 1, 4} for every character in others
+// who is sitting or sitting down, right after the list that introduces them
+// (an enter-world or zone-change result): srrevamp's EntitySnapshot carries no
+// motion state, so a player arriving later would otherwise see a sitter
+// standing. OURS: what the retail spawn packet carries for this was not read.
+func tellSeated(sess *gateway.Session, others []world.Entity) {
+	if sess == nil {
+		return
+	}
+	now := time.Now()
+	for _, o := range others {
+		if motions.sittingOrSittingDown(o.CharacterID, now) {
+			msg := (&StateChange{ObjectID: uint32(o.CharacterID), Kind: StateKindMotion, Value: MotionSit}).Encode()
+			_ = sess.Send(&proto.Packet{Opcode: OpStateChange, Data: msg})
+		}
+	}
+}
+
+// sittingOrSittingDown reports whether characterID is SIT or in the
+// transition that lands on SIT.
+func (t *motionTracker) sittingOrSittingDown(characterID int64, now time.Time) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	e, ok := t.m[characterID]
+	if !ok {
+		return false
+	}
+	if e.state == MotionChangeMotion && !now.Before(e.until) {
+		e.state = e.target
+	}
+	return e.state == MotionSit || (e.state == MotionChangeMotion && e.target == MotionSit)
 }
 
 // MotionHandler answers OpMotionRequest: the N key.

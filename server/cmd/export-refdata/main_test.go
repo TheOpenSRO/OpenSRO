@@ -747,8 +747,8 @@ func TestSelfHealColumns(t *testing.T) {
 			if !ok {
 				t.Fatal("skillRecord rejected a valid row")
 			}
-			if len(rec) != 46 {
-				t.Fatalf("record has %d fields, want 46 (SelfHealHP at 43, SelfHealMP at 44, CooldownGroup at 45)", len(rec))
+			if len(rec) != 47 {
+				t.Fatalf("record has %d fields, want 47 (SelfHealHP at 43, SelfHealMP at 44, CooldownGroup at 45, SitGate at 46)", len(rec))
 			}
 			if rec[43] != tc.hp || rec[44] != tc.mp {
 				t.Errorf("record[43:45] = %v, want [%s %s]", rec[43:45], tc.hp, tc.mp)
@@ -810,5 +810,40 @@ func TestSkillRecordCarriesCooldownGroup(t *testing.T) {
 				t.Errorf("imported CooldownGroup = %s, want %s", got, tc.want)
 			}
 		})
+	}
+}
+
+// Round 605: the SitGate column, the skill-use gate's two motion-state
+// branches -- bit 1 for a skill carrying 'ao' or 'pw' (0x58e0ad/0x58e0b6), bit
+// 2 for 'msch' with value[0] == 1 (0x58de46). Synthetic rows; the values are
+// the Param block's own run lengths.
+func TestSitGateColumn(t *testing.T) {
+	ao, pw, msch := skillparam.WordOf("ao"), skillparam.WordOf("pw"), skillparam.WordOf("msch")
+	ssou := skillparam.WordOf("ssou")
+	for _, c := range []struct {
+		name string
+		row  []string
+		want string
+	}{
+		{"no gate parameter", skillRow(), "0"},
+		{"pw (a wall)", skillRow(pw, 7, 0, 0, 0), "1"},
+		{"ao", skillRow(ao), "1"},
+		{"msch kind 1 (the transform)", skillRow(msch, 1, 0), "2"},
+		{"msch kind 2 is the other branch", skillRow(msch, 2, 0), "0"},
+		{"pw and msch kind 1", skillRow(pw, 7, 0, 0, 0, msch, 1, 0), "3"},
+		{"pw past the terminator is never parsed", skillRow(ssou, 0, 0, 0, 0, pw, 7, 0, 0, 0), "0"},
+	} {
+		if got := sitGate(c.row); got != c.want {
+			t.Errorf("%s: sitGate = %s, want %s", c.name, got, c.want)
+		}
+		rec, ok := skillRecord(c.row)
+		if !ok || len(rec) != 47 || rec[46] != c.want {
+			t.Errorf("%s: record column 46 = %v (ok %v, %d fields), want %s", c.name, rec, ok, len(rec), c.want)
+			continue
+		}
+		skills, err := refdata.LoadSkillsCSV(strings.NewReader(strings.Join(rec, ",") + "\n"))
+		if err != nil || len(skills) != 1 || strconv.Itoa(skills[0].SitGate) != c.want {
+			t.Errorf("%s: the importer read SitGate %v (err %v), want %s", c.name, skills, err, c.want)
+		}
 	}
 }

@@ -428,6 +428,10 @@ var skillCSVColumns = []string{
 	// byte CRefSkill+0x8f). A strict suffix: an older export loads 0, which is
 	// no group -- each skill keeps its own timer, as before.
 	"CooldownGroup",
+	// Appended later (round 605): the skill gate's motion-state refusals, a
+	// bit mask (see Skill.SitGate). A strict suffix: an older export loads 0,
+	// no refusal, which is what the read gate does for most skills.
+	"SitGate",
 }
 
 // skillCSVRequiredColumns is the prefix every skill export must carry; the
@@ -594,6 +598,10 @@ func parseSkillRow(f []string) (Skill, error) {
 	// predating it leaves 0, no shared timer.
 	if len(f) > 45 {
 		sk.CooldownGroup = parseInt(f[45])
+	}
+	// The motion-state refusals (round 605), optional in the same way.
+	if len(f) > 46 {
+		sk.SitGate = parseInt(f[46])
 	}
 
 	if err != nil {

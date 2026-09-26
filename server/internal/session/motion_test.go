@@ -7,6 +7,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
@@ -128,8 +129,8 @@ func TestStandOnHit(t *testing.T) {
 	if s := motions.state(id, now); s != MotionChangeMotion {
 		t.Fatalf("a landed blow on a sitter left state %#x, want CHANGEMOTION", s)
 	}
-	if !seated(id, now) {
-		t.Error("seated() is false while getting up; the skill gate refuses CHANGEMOTION")
+	if !seatedCastRefused(refdata.SitGateActionOff, id, now) {
+		t.Error("an 'ao'/'pw' skill is allowed while getting up; the skill gate refuses CHANGEMOTION (0x58e0d3)")
 	}
 	if s := motions.state(id, now.Add(MotionChangeDuration)); s != MotionStand {
 		t.Errorf("1.5 s after the blow the state is %#x, want STAND", s)
@@ -172,5 +173,61 @@ func TestMotionRequestBroadcasts(t *testing.T) {
 	f.send(t, f.connB, OpMotionRequest, []byte{MotionSit})
 	if !f.nothing(t, f.connA, f.rA) {
 		t.Error("a dead character's N was broadcast")
+	}
+}
+
+// The skill-use gate's motion-state refusals, read: only a skill carrying
+// 'ao'/'pw' (SIT and CHANGEMOTION) or a kind-1 'msch' (SIT) is refused to a
+// seated caster; every other skill, the plain attacks among them, is not.
+func TestSeatedCastRefusedFollowsTheGate(t *testing.T) {
+	const id = 605014
+	t.Cleanup(func() { motions.clear(id) })
+	t0 := time.Now().Add(-10 * time.Second)
+	motions.enter(id, t0)
+	now := time.Now()
+	for _, gate := range []int{0, refdata.SitGateActionOff, refdata.SitGateTransform} {
+		if seatedCastRefused(gate, id, now) {
+			t.Errorf("gate %d refused a standing caster", gate)
+		}
+	}
+	motions.request(id, MotionSit, t0) // seated since t0 + 1.5 s
+	if seatedCastRefused(0, id, now) {
+		t.Error("a skill with no 'ao', 'pw' or kind-1 'msch' was refused to a seated caster; the gate lets it through")
+	}
+	if !seatedCastRefused(refdata.SitGateActionOff, id, now) {
+		t.Error("an 'ao'/'pw' skill was allowed to a seated caster (0x58e0cb)")
+	}
+	if !seatedCastRefused(refdata.SitGateTransform, id, now) {
+		t.Error("a kind-1 'msch' skill was allowed to a seated caster (0x58ded4)")
+	}
+	// Getting up: 'ao'/'pw' still refused, the kind-1 'msch' branch tests SIT only.
+	motions.request(id, MotionSit, now)
+	if !seatedCastRefused(refdata.SitGateActionOff, id, now) {
+		t.Error("an 'ao'/'pw' skill was allowed in CHANGEMOTION")
+	}
+	if seatedCastRefused(refdata.SitGateTransform, id, now) {
+		t.Error("a kind-1 'msch' skill was refused in CHANGEMOTION; its branch tests SIT only")
+	}
+}
+
+// A player who enters after Aria sat down is told so: the enter-world result
+// is followed by 0x30bf {Aria, 1, 4}, because the snapshot carries no motion.
+func TestLateArrivalHearsWhoIsSeated(t *testing.T) {
+	f := startDeadWorldFixtureWith(t, func(chars character.Store, hub *world.Hub) gateway.Handler {
+		return MotionHandler(hub)
+	})
+	t.Cleanup(func() { motions.clear(f.aria); motions.clear(f.bram) })
+	if _, ok := motions.request(f.aria, MotionSit, time.Now().Add(-10*time.Second)); !ok {
+		t.Fatal("could not sit Aria")
+	}
+	// Bram re-enters the world: his client is told of Aria afresh.
+	f.send(t, f.connB, OpEnterWorld, (&EnterWorldRequest{CharacterName: "Bram"}).Encode())
+	if p := f.read(t, f.connB, f.rB); p.Opcode != OpEnterWorldResult {
+		t.Fatalf("Bram got %#04x, want the enter-world result", p.Opcode)
+	}
+	p := f.read(t, f.connB, f.rB)
+	sc, ok := DecodeStateChange(p.Data)
+	if p.Opcode != OpStateChange || !ok || sc.ObjectID != uint32(f.aria) || sc.Value != MotionSit {
+		t.Fatalf("after the list Bram got %#04x %+v, want 0x30bf {Aria, 1, 4}", p.Opcode, sc)
 	}
 }

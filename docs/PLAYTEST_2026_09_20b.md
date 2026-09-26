@@ -62,6 +62,11 @@ on 0, so regen cannot revive the dead.
 The percentage itself remains disclosed — `'mprg'` is 0 on every real row, and
 `mana.go` says so at the constant.
 
+> **Both paragraphs corrected in round 605.** The cap is half the MAXIMUM, so a character on 1
+> point does regenerate (1 a tick standing at MaxHP 200); the dead are kept at 0 by the life-state
+> test, and a character alive at 0 by srrevamp's kill lock. The percentage is read, not disclosed:
+> 0.8 standing, 8.0 sitting, written by `SetMotionState`.
+
 ## 5, 6, 11 — unequip
 
 Two independent faults, which is why it looked total.

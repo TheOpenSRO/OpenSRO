@@ -95,10 +95,32 @@ thunk `0x4b23e0` (`jmp [eax+0x5e4]`) at `0xccf218`, and `CGObjPC`'s `+0x5e4` is
 handler sets WALK or RUN directly, with no transition and no `0x30bf`. A move in
 the 1.5 s transition is refused. The keymap research left this "not read".
 
-### Skills while seated (read)
+### Skills while seated (read; corrected in round 605's follow-up)
 
-`FUN_0058d8f0`, the skill-use gate, answers `0x3009` when the motion state is
-SIT (`0x58ded4`) and when it is SIT, `0x12`, 8, `0xf` or `0x11` (`0x58e0cb`).
+`FUN_0058d8f0`, the skill-use gate, answers `0x3009` for the caster's motion
+state in two branches, **each only for particular skills**:
+
+- `0x58de46..0x58ded4`: the skill's `msch` (`+0x4a4`) has value[0] == 1
+  (`mov ecx,[esi+0x4a4]; cmp [ecx],1; jne 0x58dee3`); then refused when slot
+  `0x540` answers non-zero, when `0x406750(1)` does (neither read), or in SIT.
+- `0x58e0a0..0x58e0ed`: the caster `IsPC` and the skill carries `ao` (`+0x274`)
+  or `pw` (`+0x2b4`) (`58e0ad` / `58e0b6`, `je 0x58e10d`); then refused in SIT,
+  `0x12`, 8, `0xf` or `0x11`.
+
+**Measured** over the 33,660 skill rows (`export-refdata -mode skills`, the new
+`SitGate` column): 58 carry `ao` or `pw` -- 28 `SKILL_CH_COLD_BINGBYEOK_*`, 27
+`SKILL_CH_FIRE_HWABYEOK_*` (the walls) and 3 `SKILL_FORT_REPAIR_KIT_*` -- and one
+has a kind-1 `msch`, `SKILL_ETC_TRANS_MONSTER_01`. **Every other skill is cast
+from the seat**, and nothing in a cast stands the caster up: the only callers of
+`FUN_004b1480` are `0x4b1468` (the `0x704f` handler), `0x51605f` (stall),
+`0x51b5a9` (open market) and `0x593af0` (a blow on a target).
+
+**The plain attack** is a skill in retail (`SKILL_PUNCH_01`,
+`SKILL_CH_SWORD_BASE_01`, ...): none of the 1,273 `*_BASE_*` / `PUNCH` rows
+carries `ao`, `pw` or `msch` (measured), so a seated swing is not refused and
+the attacker stays seated. What the retail CLIENT does when its seated player
+clicks a monster (whether it sends at all, what it plays) is not read.
+
 The client name of `0x3009` is not in `docs/protocol/error_codes.md`.
 
 ## The regeneration tick (read)
@@ -188,16 +210,30 @@ every body.
   resolved value is broadcast as `0x30bf {id, 1, value}` to the zone; the regen
   tick is the read formula on each character's own 4 s timer, from world entry.
   A move in the transition is dropped; a move while seated stands at once. A
-  landed blow stands a sitter. A swing or cast while seated is refused.
+  landed blow stands a sitter. A cast is refused to a seated caster only for the
+  59 skills the gate names (`refdata.Skill.SitGate`, from the exporter's
+  `SitGate` column); a plain swing, a duel swing and every other cast are not.
+  A player entering a zone is sent `0x30bf {id, 1, 4}` for each seated
+  character already there. The regen tick runs under the kill lock and skips a
+  character alive at HP 0.
 - **Ours, disclosed:** the server has no WALK/RUN state (the client streams
   positions), so an accepted move less than 0.5 s old counts as walking; the
   0x30bf id is the character id in the u32; a dead character's request is
   dropped; the unread request gates (slot `0x5a0`, `+0xc20`, `chardata+0xe`)
   are not modelled; "a blow that landed damage" stands in for the unread
   `+0x10` and status-`0x40` tests; a zone change stands the character
-  (inferred from re-creation, not read); the refusal text for `0x3009`.
+  (inferred from re-creation, not read); the refusal text for `0x3009`; the
+  `0x30bf` sent to a newcomer for each sitter (the retail spawn packet's
+  motion field was not read) and the client's 1 s window in which such a
+  sitter takes the loop without the sit-down clip; a character alive at HP 0
+  (being killed, or an HP-cost caster) regenerates nothing, because
+  srrevamp's blow and death are not one step as the engine's are; the gate's
+  KNOCKDOWN, SKILL_ACTIONOFF and SKILL_PROTECTIONWALL states do not exist here.
 - **Not modelled:** the PK-penalty drain, zombie, the timed-effect switch, skill
   buffs on params 25/26, params 143/144, the stall's stand-up (no stalls).
-- **Client** (`client/scripts/World3D.gd`): N sends `0x704f [04]`; `0x30bf` kind
-  1 plays 13 then 14, or 15, from the body's own `.bsr`, for this player and
-  others; movement input is held for the transition.
+- **Client** (`client/scripts/World3D.gd`, `world/sit_state.gd`): N sends
+  `0x704f [04]`; `0x30bf` kind 1 plays 13 then 14, or 15, from the body's own
+  `.bsr`, for this player and others; movement input is held for the
+  transition; a move while seated sends the position at once so the server
+  stands the character too; the own-id learning window closes when an
+  unanswered request expires.

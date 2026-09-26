@@ -254,6 +254,15 @@ type Skill struct {
 	// loads -- the per-skill timer srrevamp had before round 504.
 	CooldownGroup int
 
+	// SitGate is which of the skill-use gate's motion-state refusals apply
+	// (round 605; docs/protocol/opcodes/motion.md), a bit mask:
+	// SitGateActionOff (1) -- the skill carries 'ao' or 'pw', so a PC may not
+	// cast it sitting or getting up or down (0x58e0ad..0x58e0cd);
+	// SitGateTransform (2) -- 'msch' value[0] == 1, refused sitting
+	// (0x58de46..0x58ded4). Zero: the gate does not refuse the skill for its
+	// caster's motion state at all.
+	SitGate int
+
 	// The mastery this skill belongs to and the mastery level required to learn
 	// it (ReqCommon_Mastery1 / ReqCommon_MasteryLevel1). These are what the
 	// skill window gates a skill on -- a skill is learnable once the character's
@@ -282,3 +291,9 @@ func (s *Skill) HitsFor() int {
 	}
 	return s.HitCount
 }
+
+// The SitGate bits.
+const (
+	SitGateActionOff = 1
+	SitGateTransform = 2
+)

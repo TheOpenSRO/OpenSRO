@@ -3628,6 +3628,12 @@ gameplay numbers are a much shorter list, and `mana`'s comment pointed at a real
 gap — "the real game has an `'mprg'` parameter … but its value has not been
 recovered".
 
+> **Corrected in round 605** (`docs/protocol/opcodes/motion.md`; the round's entry at the end of this file). Params 25/26 ARE
+> written at baseline: `SetMotionState` (`0x4a9d00`) sets their slot 0 to 0.8 in every motion state
+> but SIT and 8.0 in SIT, and every PC passes through it at construction (`0x4a6fd3`). The three
+> publishers below write neither -- that part is true -- but they are not the only baseline writers,
+> and baseline regeneration IS param-driven: `CGObjPC::vslot_362` multiplies MaxHP by `hprg`.
+
 **Half of that is now settled, negatively.** Params 25/26 (`'hprg'`/`'mprg'`) are
 written by no baseline publisher — not `GObjPC_InitStats`, not
 `Char_PublishCombatStats`, not `GObjMob_PublishStats` — so they are zero without
@@ -3790,6 +3796,8 @@ rate for a gauge the game does not have — and the test deliberately pins only
   is DB-side here, the same finding this project already reached for starting
   Str/Int, so a new character's default slot count is a database default and not
   in this executable.
+- > **Corrected in round 605** (`docs/protocol/opcodes/motion.md`; the round's entry at the end of this file). The rate is read: `hprg`/`mprg` = 0.8, or 8.0 while
+  sitting, written by `SetMotionState`; "zero without a buff" below is wrong.
 - **`mana`'s regeneration rate**, half-settled. Its comment hoped for an
   `'mprg'` default; params 25 and 26 are written by no baseline publisher
   (`InitStats`, `Char_PublishCombatStats`, `GObjMob_PublishStats` write none of
@@ -4061,7 +4069,9 @@ restored, this time on data:
   non-premium character takes the full penalty. **Recovered, not chosen.**
 - `berserk`'s damage-completeness note — 128-131, 178, 180, 187, 188 and 259 all
   default to 0, so an unbuffed character's damage pipeline really is complete.
-- `mana` — `'hprg'`/`'mprg'` default to 0, so the engine's resting regeneration
+- `mana` — [**corrected in round 605**: the registry default is 0, but `SetMotionState`
+  writes 0.8 / 8.0 to slot 0 for every PC, so the resting rate is 0.8% of the maximum a tick, not
+  zero; `docs/protocol/opcodes/motion.md`] `'hprg'`/`'mprg'` default to 0, so the engine's resting regeneration
   rate is zero. That agrees with yesterday's independent result that no pool
   writer is timer-driven: both halves say the same thing.
 
@@ -14410,6 +14420,11 @@ absence so a later tick has to explain itself rather than quietly fill them in.
 
 ### A finding that refines rather than overturns
 
+> **Corrected in round 605** (`docs/protocol/opcodes/motion.md`; the round's entry at the end of this file). "Nothing does" below is wrong
+> twice over: the 4 s timer (`CGObjPC::vslot_362`, found 2026-09-16) writes the pools, and
+> `SetMotionState` writes params 25/26 at baseline (0.8 standing, 8.0 sitting). Items grant on top
+> of that baseline; regeneration is not only an item stat.
+
 Params 25 and 26 are written by `MATTR_REGENHPMP`, `MATTR_AVATAR_HPRG` and
 `MATTR_AVATAR_MPRG` — the engine has HP/MP regeneration parameters. This does
 NOT reopen the earlier "there is no passive regen" finding, which was about what
@@ -19157,6 +19172,13 @@ ran green locally before each — but **"tagged" has not meant "built" for 31
 hours**, and this loop had been treating the two as the same thing.
 
 ## The regen row's last open item, and a shipped test that was wrong (2026-09-17)
+
+> **Corrected in round 605** (`docs/protocol/opcodes/motion.md`; the round's entry at the end of this file). The comparison read here is right --
+> `min(amount, cap)` after the floor -- but the pool it caps is the **maximum**, not the current
+> one: the value in `EDI` is vtable slot `0x110`, which in `CGObjPC`'s vtable is `0x4a6830` =
+> `ftol(EvaluateParam(3))`. So `cap = trunc(MaxHP x 0.5)`, and "a character at 1 point does not
+> passively regenerate at all" is **wrong**: at 1 point of a pool of 200 she regains 1 a tick
+> standing and 16 sitting. The cap binds only on a pool whose MAXIMUM is 1.
 
 `docs/SYSTEMS.md` carried one caveat on the passive-regeneration row for as long
 as the row has existed: *"the curHP\*0.5 bound at 0x004e2c00 is read but its
@@ -45401,9 +45423,10 @@ Each is corrected in place (`mana.go`, `param_registry.md`, `absence_audit.md`,
 - **A blow stands a sitter (read):** `Combat_ApplyActionEffects` `0x593aec` calls
   `FUN_004b1480(0)` when the target is SIT, the per-target record's `+0x10` is 0 and status bit
   `0x40` is clear (the last two unread).
-- **Casting while seated is refused (read):** the skill-use gate answers `0x3009` for SIT
-  (`0x58ded4`) and for SIT, `0x12`, 8, `0xf`, `0x11` (`0x58e0cb`). The client name of `0x3009` is
-  not in `error_codes.md`.
+- ~~**Casting while seated is refused (read)**~~ **OVERSTATED -- corrected in the follow-up below.**
+  The skill-use gate answers `0x3009` for SIT (`0x58ded4`) and for SIT, `0x12`, 8, `0xf`, `0x11`
+  (`0x58e0cb`) -- but each branch runs only for particular skills (a kind-1 `msch`; `ao` or `pw`),
+  59 rows of 33,660. The client name of `0x3009` is not in `error_codes.md`.
 
 ### The clips (read, measured)
 
@@ -45421,8 +45444,9 @@ and the live log): `chinaman_fighter` -> `chinaman_a_sitground` / `_sitbreath` /
   included. `RunRegen` fires each character's own 4 s timer (from world entry) through the read
   formula for HP and MP; mana.Tracker no longer regenerates lazily (it could not see the motion
   state). A move in the transition is dropped (neither stored nor relayed); a move while seated
-  stands at once; a landed blow stands a sitter through the transition; a swing or cast while
-  seated is refused; revive and zone change stand the character; disconnect forgets it.
+  stands at once; a landed blow stands a sitter through the transition; ~~a swing or cast while
+  seated is refused~~ (corrected below: only the 59 gated skills); revive and zone change stand the
+  character; disconnect forgets it.
 - **Client** (`World3D.gd`, `net/world.gd`, `net_client.gd`, `bsr_reader.gd`): N (one marked
   `KEY_N` check in `_unhandled_input`, for the keymap round) sends `0x704f [04]` after stopping the
   body; `0x30bf` kind 1 plays 13 then 14, or 15, from the body's own `.bsr`, for this player and for
@@ -45490,10 +45514,125 @@ CHANGEMOTION is the inference. The server logs of runs 2 and 3 each carry one `o
 - **Other players' sit animation was not seen live** (one client per run); the broadcast is tested
   over the wire and the client path shares the loop/one-shot helpers the hit reaction uses.
 - **What the retail client does on a ground click or an attack while seated** was not read. Here a
-  click walks (the server stands the character), a swing in reach is refused by the server.
+  click walks (the server stands the character); a swing in reach is not refused (corrected below)
+  and the attacker stays seated, as the server's gate reads.
 - **The Action window's Sit/Stand label** (`IFAction::0x6a3fb0`, `UIIT_CTL_SIT` / `_STAND`) and the
   quick-slot bar's update (`0x60c600`): no action window exists here.
 - **The stand entry's state 8**, the `+0x10`/status-`0x40` conditions on stand-on-hit, slot `0x5a0`,
   the `+0xc20` action gate and `chardata+0xe` are unread. The client name of `0x3009` is unknown.
 - **The PK-penalty drain, zombie, timed-effect switch, skill buffs on 25/26 and params 143/144**
   are read and not modelled (no source here).
+
+### Follow-up after review (round 605, second commit)
+
+The review re-read the formula, rates, timer, toggle, broadcast, move rule, stand-on-hit and clips
+against the asm and confirmed them. Each item below was re-verified before it was changed.
+
+**1. The seated-cast refusal was overstated (read, now implemented as read).** Re-read at
+`0x58de40..0x58dee8` and `0x58e0a0..0x58e120`:
+- `0x58ded4` sits inside a branch entered only when the skill's `msch` (`+0x4a4`) has value[0] == 1
+  (`58de46: mov ecx,[esi+0x4a4]; mov eax,[ecx]; cmp eax,1; jne 0x58dee3`).
+- `0x58e0cb` is reached only when `IsPC()` and the skill has `ao` (`+0x274`) or `pw` (`+0x2b4`)
+  (`58e0ad` / `58e0b6`, both falling to `je 0x58e10d` when empty).
+- Nothing in a cast stands the caster: the only callers of `0x4b1480` are `0x4b1468`, `0x51605f`,
+  `0x51b5a9` and `0x593af0` (the review's census).
+
+The fields are Param-block codes, so the exporter now writes them: `export-refdata`'s new column 46
+**`SitGate`** (bit 1 `ao`/`pw`, bit 2 kind-1 `msch`), loaded into `refdata.Skill.SitGate`
+(CSV and SQL, a strict suffix defaulting to 0). **Measured** on the box's 33,660 rows
+(`/var/tmp/rsit/skills.csv`): 58 rows bit 1 (28 `SKILL_CH_COLD_BINGBYEOK_*`, 27
+`SKILL_CH_FIRE_HWABYEOK_*`, 3 `SKILL_FORT_REPAIR_KIT_*`), 1 row bit 2 (`SKILL_ETC_TRANS_MONSTER_01`),
+33,601 none. `session.seatedCastRefused` refuses bit 1 in SIT or CHANGEMOTION (the engine's other
+three states do not exist here) and bit 2 in SIT (its slot-`0x540` and `0x406750` tests unread, not
+modelled). **The plain swing** is retail's basic-attack skill; none of the 1,273 `*_BASE_*`/`PUNCH`
+rows has a gate bit (measured), so a seated swing is **not refused** and the attacker stays seated.
+The duel swing is the same swing and is not gated either. What the retail client does on a click
+while seated is unread. The box's deployed `skills.csv` predates the column, so until the export is
+re-run and re-imported every skill loads SitGate 0 -- no refusal -- which errs on the read side for
+all but those 59 skills.
+
+**2. Stale records, corrected in place with a banner:** RE_COMPLETION "Half of that is now settled,
+negatively" (the 2026-09-15 audit) and its "mana's regeneration rate, half-settled" line; the param
+registry's "resting regeneration rate is zero" bullet; "Regeneration is a stat items grant, not a
+baseline" (and the same paragraph in `magic_options.md`); "The regen row's last open item"
+(2026-09-17: the cap is half the MAXIMUM, so a character at 1 point does regenerate);
+`PLAYTEST_2026_09_20b.md`'s two paragraphs; `combat/paramtags.go`'s REGENERATION note;
+`session/deadstate.go` and `monster_ai.md`'s "mana.Tracker regenerates by wall clock while dead".
+
+**3. Regen against a lethal blow (ours, fixed).** A blow writes HP 0 and only then takes the kill
+lock; a tick in that gap raised the pool (the old current-pool cap made that 0), and `fallen()` then
+dropped the kill; a stale life state in the pass's snapshot could heal the dead. `regenOne` now runs
+under `killLock`, re-reads the life state from the hub and the row from the store there, and skips
+a character alive at HP 0. The engine has no such window (one object queue), so skipping HP 0 is
+ours.
+
+**4. Client/server drift on a tap (fixed).** The client ended its sit on any movement intent while
+the server heard of it only from an OpMove past the send distance. `SitState.leave_by_moving` now
+tells World3D to send the position at once, so the server's "a move while seated stands" fires too.
+
+**5. Late arrivals (ours, implemented).** The snapshot carries no motion state; the server now sends
+the newcomer `0x30bf {id, 1, 4}` for each character sitting or sitting down, right after the
+enter-world or zone-change list (`tellSeated`), and the client takes the loop without the sit-down
+clip for a body drawn under 1 s ago. The retail spawn packet's motion field was not read.
+
+**6. Own-id learning expires (fixed).** It learned from any `0x30bf` after an unanswered N, for ever;
+now only within `SitState.REQUEST_WAIT` (1 s, ours).
+
+**7. Wiring tests.** `motion_wiring_test.go` drives the real handlers: a seated cast of a bit-1 skill
+is refused and of an ungated skill is not; a seated swing is not refused; `monsterStrike` stands a
+sitter; `revivePlayer` stands the character. `motion_test.go` adds the late-arrival broadcast;
+`regen_test.go` the two race cases; `sit_state_test.gd` the client rules; the exporter and CSV tests
+the column.
+
+#### What the player sees: time to full HP, before and after (4 s ticks, no transitions counted)
+
+| MaxHP | from | before (4% of current) | now standing (0.8% of max) | now sitting (8% of max) |
+|---:|---:|---:|---:|---:|
+| 200 | 10% | 284 s | 720 s | 48 s |
+| 200 | 50% | 80 s | 400 s | 28 s |
+| 568 | 50% | 76 s | 284 s | 28 s |
+| 1000 | 50% | 72 s | 252 s | 28 s |
+| 1000 | 90% | 12 s | 52 s | 8 s |
+
+Standing still is now slower than srrevamp's old rule, and sitting much faster. **Nothing
+regenerates while moving** (walking, running, the 1.5 s transition), and **MP no longer regenerates
+while moving or chasing in combat**, as the old lazy tracker let it (it regenerated on wall-clock
+time whatever the character did). A character that fights without moving stays STAND here and keeps
+the standing rate: whether retail's own attack puts the caster in `MOTIONSTATE_SKILL` (1), which the
+tick skips, was not read. Computed from the two rules; the live runs agree (MaxHP 568: +4 and +45 a
+tick).
+
+#### Negatives
+
+Against **b62e19c** (a `git archive`, the new tests adapted to its names):
+
+	FAIL TestSeatedCastGateIsWired: a seated cast of a skill the gate does not name answered &{Error:cannot attack while sitting ...}, want no error
+	FAIL TestSeatedSwingIsNotRefused: a seated plain swing answered &{Error:cannot attack while sitting ...}, want no error
+	FAIL TestRegenLeavesAnAliveCharacterAtZero: a character alive at HP 0 regenerated to 17; the kill that is deciding her would be dropped
+	FAIL TestRegenReadsTheLifeStateAfresh: a stale 'alive' snapshot healed a dead character 100 -> 101
+	FAIL TestLateArrivalHearsWhoIsSeated: Read: read tcp ...: i/o timeout
+
+Mutations of this tree, each one change:
+
+	no cast gate:         FAIL TestSeatedCastGateIsWired: a seated cast of an 'ao'/'pw' skill answered &{Error: ...}
+	no standOnHit:        FAIL TestMonsterStrikeStandsASitter: after a landed blow the sitter's state is 0x4, want CHANGEMOTION
+	no stand on revive:   FAIL TestReviveStandsTheCharacter: revived at state 0x4, want STAND
+	no tellSeated:        FAIL TestLateArrivalHearsWhoIsSeated: Read: ... i/o timeout
+	no HP-0 skip:         FAIL TestRegenLeavesAnAliveCharacterAtZero: ... regenerated to 17
+	blanket swing refusal: FAIL TestSeatedSwingIsNotRefused: ... Error:cannot use that skill while sitting
+	client, b62e19c's id rule (no expiry): FAIL an unanswered request expires after REQUEST_WAIT / FAIL a 0x30bf after the request expired is not taken as this player's
+	client, b62e19c's tap (no send):       FAIL a move while seated must be sent at once
+
+#### Live, after the follow-up (`/var/tmp/rsit/live5.log`, the new server with the SitGate export)
+
+	QA STATS: t=9.63 tick=595 HP 255/568 MP 255/568 sitting=false pelvis 9.12
+	SIT: player sits -- clip chinaman_a_sitground.ban (action type 13), then chinaman_a_sitbreath.ban (type 14, loop)
+	QA STATS: t=10.40 tick=641 HP 300/568 MP 300/568 sitting=true pelvis 3.33
+	QA STATS: t=11.15 tick=686 HP 345/568 MP 345/568 sitting=true pelvis 0.93
+	QA STATS: t=11.92 tick=732 HP 390/568 MP 390/568 sitting=true pelvis 0.93
+	SIT: player stands -- clip chinaman_a_sitstand.ban (action type 15)
+	QA STATS: t=13.43 tick=823 HP 394/568 MP 394/568 sitting=false pelvis 3.90
+
+Standing +4 HP +4 MP a tick, sitting +45 HP +45 MP; the server loaded 33,660 skills with the column.
+No stats line between ticks 732 and 823 (measured), where one was due at ~777 (45-frame spacing):
+the tick fell in the stand-up transition (inferred from the timing).

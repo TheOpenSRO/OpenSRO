@@ -86,6 +86,11 @@ func (fakeSkillRef) GetSkill(_ context.Context, id int64) (*refdata.Skill, error
 	if id == 992 {
 		return &refdata.Skill{ID: 992, BasicLevel: 1, ReuseDelayMs: 0, NoCombatParam: true, ZeroDamage: true, SelfHealMP: 50}, nil
 	}
+	// 990 carries 'ao' or 'pw' -- a Cold/Fire Wall's shape (round 605): the
+	// skill-use gate refuses it to a seated caster. 996 above carries neither.
+	if id == 990 {
+		return &refdata.Skill{ID: 990, BasicLevel: 1, ReuseDelayMs: 0, NoCombatParam: true, SitGate: refdata.SitGateActionOff}, nil
+	}
 	return nil, errors.New("no such skill")
 }
 
