@@ -391,7 +391,10 @@ func _test_held_texture_decoded_again(w: Node, data_pk2: Pk2Reader, none: Dictio
 ## -- and _drop_cell_jobs waits for every task still preparing and forgets
 ## it. A subclass records _load_region_cell's calls instead of building, so
 ## the guard's own decision is what is held; a cell still wanted is its
-## control.
+## control. Round 574 (round 568's review, nonblocking): the window is left
+## along either axis (_outside_stream_window tests dx and dy), and until then
+## only a cell out along dx was fed to the guard -- one out along dy alone is
+## now too.
 func _test_stale_cells_are_not_committed() -> void:
 	var sub := GDScript.new()
 	sub.source_code = "\n".join(PackedStringArray([
@@ -407,7 +410,7 @@ func _test_stale_cells_are_not_committed() -> void:
 	w.set("_last_stream_cell", Vector2i(0, 0))
 	var far: int = int(w.call("_region_load_radius")) + 2
 	var grid = w.get("_grid")
-	for key in ["loaded", "far", "wanted"]:
+	for key in ["loaded", "far", "far_y", "wanted"]:
 		grid.queued_cells[key] = true
 	grid.loaded_cells["loaded"] = true
 	w.call("_finish_cell_job", {"cell": {"rx": 97, "ry": 169, "dx": 0, "dy": 1, "key": "loaded"}, "job": {}})
@@ -415,6 +418,10 @@ func _test_stale_cells_are_not_committed() -> void:
 	var built: Array = w.get("built")
 	_check(built.is_empty(), "a cell already loaded, and one %d cells from the player's (past the unload margin), are not committed (got %s)" % [far, str(built)])
 	_check(not grid.queued_cells.has("loaded") and not grid.queued_cells.has("far"), "and both leave the queued set")
+	w.call("_finish_cell_job", {"cell": {"rx": 97, "ry": 168 + far, "dx": 0, "dy": far, "key": "far_y"}, "job": {}})
+	built = w.get("built")
+	_check(built.is_empty() and not grid.queued_cells.has("far_y"),
+		"a cell %d cells from the player's along dy alone (dx 0) is not committed either, and leaves the queued set (got %s)" % [far, str(built)])
 	w.call("_finish_cell_job", {"cell": {"rx": 97, "ry": 167, "dx": 0, "dy": -1, "key": "wanted"}, "job": {}})
 	built = w.get("built")
 	_check(built == ["97/167"] and not grid.queued_cells.has("wanted"), "a cell still wanted is committed (the control; got %s)" % str(built))

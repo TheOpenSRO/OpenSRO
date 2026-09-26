@@ -20,7 +20,8 @@ extends SceneTree
 ## walkable graph) and that the same prepare on the main thread produces the
 ## same. And (round 568) that _terrain_commit wires the collision the prepare
 ## laid out: the heightfield at TerrainCollision.shape_transform(), or the
-## trimesh under the job's flag.
+## trimesh under the job's flag; and (round 574) that it places the terrain
+## group where TerrainCollision.place_group does.
 ##
 ## Two synthetic pk2 archives stand in for Map.pk2 (`97\168.m`, `97\168.t`,
 ## `Tile2D\t1.ddj`) and Data.pk2 (`navmesh\nv_61a8.nvm`); the tile table and
@@ -220,7 +221,26 @@ func _test_the_commit_wires_the_collision(S: GDScript, w: Node, job: Dictionary,
 	w.set("ground_mesh", stub_mesh)
 	w.set("ground_collision", stub_collision)
 
+	# Round 574 (round 572's review, nonblocking: no suite checked that
+	# _terrain_commit places the group through TerrainCollision.place_group;
+	# region_grid_state_test's ONE PLACEMENT holds place_group equal to
+	# _group_position, so a commit that placed the group with arithmetic of
+	# its own passed every suite). The job is committed as a neighbour cell
+	# is -- an offset of whole region spans (World3D._cell_offset) and a
+	# shared anchor -- so the offset, the anchor and the z mirror all move
+	# the group, and it must stand where place_group puts a node for the
+	# same offset and anchor.
+	job["world_offset"] = w.call("_cell_offset", 1, -2)
+	job["anchor"] = 12.5
 	w.call("_terrain_commit", job)
+	var group := w.get_node_or_null("RealTerrain_97_168") as Node3D
+	var probe := Node3D.new()
+	TerrainCollision.place_group(probe, job["world_offset"], 12.5)
+	_check(group != null and group.position.is_equal_approx(probe.position) and group.scale.is_equal_approx(probe.scale)
+			and probe.position.is_equal_approx(w.call("_group_position", job["world_offset"], 12.5)),
+		"the commit places the terrain group where TerrainCollision.place_group puts it for the job's offset and anchor, %s scale %s (got %s)" % [
+			str(probe.position), str(probe.scale), "nothing" if group == null else "%s scale %s" % [str(group.position), str(group.scale)]])
+	probe.free()
 	var shape_node := _terrain_shape_node(w, "RealTerrain_97_168")
 	_check(shape_node != null, "the commit built RealTerrain_97_168/SubPatch with a body and a collision shape")
 	if shape_node != null:

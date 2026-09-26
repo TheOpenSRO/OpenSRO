@@ -207,6 +207,12 @@ the same result. It follows the entity list, which is where a client before
 round 570 stops reading, so the result still decodes there. A payload that
 ends at the list, from a server before round 570, means "" (no frame named),
 and the client uses the zone's own centre, which is what the frame was.
+Since round 573 an `OpEnterWorldResult` -- not an `OpChangeZoneResult` -- may
+carry ONE more byte after the FrameRegion, **Restored** = 0x01, sent only
+when the server's `-persist-position` (default off) read X/Y/Z back from the
+character's row; a payload that ends at the FrameRegion means false, so every
+other entry ends there as above (`session.EnterWorldResult.Restored`,
+`docs/RE_COMPLETION.md` round 573; line added in round 574).
 
 - Value: `worldmap.FrameFor(zone)`. That is `worldmap.ZoneCentre` for a named
   zone, the region itself for an "x/y" label, and "" otherwise. For every

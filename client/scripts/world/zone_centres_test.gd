@@ -8,9 +8,10 @@ extends SceneTree
 ##   godot4 --headless --path client --script res://scripts/world/zone_centres_test.gd
 ##
 ## The rows are the game's own tables, measured on the render box on
-## 2026-09-25 from /var/tmp/tables (npcpos.txt joined to characterdata on the
-## first column, counted by the town's NPC code, against teleportdata.txt's
-## GATE_<code> row; docs/RE_COMPLETION.md, round 569):
+## 2026-09-25 from /var/tmp/tables (npcpos.txt's first column, the NPC's
+## id, joined to characterdata's second, its ID -- characterdata's first is
+## the Service flag -- counted by the town's NPC code, against
+## teleportdata.txt's GATE_<code> row; docs/RE_COMPLETION.md, round 569):
 ##   jangan 97/168          NPC_CH_ 18 of 67, GATE_CH 97/168
 ##   dunhuang, donwhang     NPC_WC_ 15 of 26, GATE_WC 102/153
 ##     102/153

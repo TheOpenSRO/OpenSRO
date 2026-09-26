@@ -741,8 +741,9 @@ func main() {
 			"town's landing named in that frame -- so a player who walks from Jangan toward Donwhang meets Donwhang's "+
 			"monsters and every other player. Default OFF, and the kill switch: off, every zone keeps "+
 			"its own frame and bucket and the wire is what it was. Needs a client release that carries "+
-			"round 570 (it builds a zone's grid inside the server's FrameRegion) and round 569 (the "+
-			"corrected town centres and the \"donwhang\" label). See deploy/README.md, \"Single world "+
+			"rounds 569 to 571: 569 (the corrected town centres and the \"donwhang\" label), 570 (it "+
+			"builds a zone's grid inside the server's FrameRegion) and 571 (it finds the grid's corner "+
+			"when the centre region's terrain fails to load). See deploy/README.md, \"Single world "+
 			"frame (off by default)\".")
 	persistPositionEnv, persistPositionEnvErr := envBool("SRREVAMP_PERSIST_POSITION")
 	persistPosition := flag.Bool("persist-position", persistPositionEnv,

@@ -113,8 +113,9 @@ func ToWorld(rx, ry int, localX, localZ float64, originX, originY int) (x, z flo
 //
 // The rule since round 569 (docs/RE_COMPLETION.md, round 569, has the table):
 // where a town's own NPC rows and its dimensional gate agree on a region,
-// that region is the centre, on both sides. The NPC rows are npcpos.txt
-// joined to characterdata on the first column, counted by the town's code
+// that region is the centre, on both sides. The NPC rows are npcpos.txt's
+// first column (the NPC's id) joined to characterdata's second (its ID;
+// characterdata's first is the Service flag), counted by the town's code
 // (NPC_CH_ Jangan, NPC_WC_ Donwhang, NPC_KT_ Hotan, NPC_EU_ Constantinople,
 // NPC_CA_ Samarkand); the gate is teleportdata.txt's GATE_<code> row
 // (SN_ZONE_22001..22005, whose names are the five towns):
@@ -256,6 +257,14 @@ func ZoneNames() []string {
 // coordinates of a named zone. ok is false for a zone whose centre region is
 // not known, in which case no conversion is possible and the caller must not
 // fall back to treating the local position as a world one.
+//
+// It takes ZoneCentre's named zones only, while FrameFor (round 570) also
+// names the region an "x/y" label spells: an npcpos row in an "x/y" zone is
+// refused here although the wire names a frame for that label. The two meet
+// only in cmd/server's realSpawnWorld, whose callers pass a roster species'
+// zone -- "jangan" or "donwhang" today -- so no row is refused for it; under
+// -single-frame realSpawnWorld goes through FrameFor instead. Recorded, not
+// changed (round 570's review; documented in round 574).
 func ToZoneWorld(zone string, rx, ry int, localX, localZ float64) (x, z float64, ok bool) {
 	centre, ok := ZoneCentre[zone]
 	if !ok {

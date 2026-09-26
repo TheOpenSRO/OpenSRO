@@ -581,7 +581,12 @@ func TestSingleFramePutsEveryTownInOneFrameAndOneBucket(t *testing.T) {
 	// centre it builds around), the frame is the one world's, and the position
 	// is Donwhang's landing named in it -- not (0, 0, 0), which in 97/168's
 	// frame is Jangan's middle, off the grid a Donwhang client builds.
-	donX, donZ := worldmap.ToWorld(102, 153, 960, 960, origin[0], origin[1])
+	// The centres are read from worldmap.ZoneCentre, not written as literals
+	// (round 571's review): this test holds the landing to whatever centre the
+	// server has; TestFrameForNamesEachZonesCentre's hard-coded rows are what
+	// catch a centre drifting away from the client's.
+	don := worldmap.ZoneCentre["donwhang"]
+	donX, donZ := worldmap.ToWorld(don[0], don[1], 960, 960, origin[0], origin[1])
 	czr := changeZone(t, f, connB, rB, "donwhang")
 	if !czr.OK || czr.Zone != "donwhang" || czr.FrameRegion != "97/168" || !near(czr.X, czr.Z, donX, donZ) || czr.Y != 0 {
 		t.Fatalf("Bram's change to donwhang: %+v, want ok donwhang in 97/168 at (%g, 0, %g)", czr, donX, donZ)
@@ -609,7 +614,8 @@ func TestSingleFramePutsEveryTownInOneFrameAndOneBucket(t *testing.T) {
 	// Bram warps on to Hotan. The same bucket is left and re-entered, so Aria
 	// hears him leave and then arrive at Hotan's landing: the Jangan player
 	// gets the other's OpEntityEntered too (the flicker the round records).
-	hotX, hotZ := worldmap.ToWorld(92, 135, 960, 960, origin[0], origin[1])
+	hot := worldmap.ZoneCentre["hotan"]
+	hotX, hotZ := worldmap.ToWorld(hot[0], hot[1], 960, 960, origin[0], origin[1])
 	czr = changeZone(t, f, connB, rB, "hotan")
 	if !czr.OK || czr.FrameRegion != "97/168" || !near(czr.X, czr.Z, hotX, hotZ) || len(czr.Others) != 1 || czr.Others[0].Name != "Aria" {
 		t.Fatalf("Bram's change to hotan: %+v, want ok in 97/168 at (%g, %g) with Aria in Others", czr, hotX, hotZ)

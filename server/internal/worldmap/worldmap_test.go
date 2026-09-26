@@ -114,8 +114,9 @@ func TestToZoneWorldRejectsAnUnknownZone(t *testing.T) {
 // in, and the same region the client's World3D.gd builds for the label
 // (_resolve_zone_region; client/scripts/world/zone_centres_test.gd pins the
 // client side to these same rows). Measured on the render box on 2026-09-25
-// (round 569) from /var/tmp/tables: npcpos.txt joined to characterdata on the
-// first column, counted by the town's NPC code, against teleportdata.txt's
+// (round 569) from /var/tmp/tables: npcpos.txt's first column (the NPC's id)
+// joined to characterdata's second (its ID; characterdata's first is the
+// Service flag), counted by the town's NPC code, against teleportdata.txt's
 // GATE_<code> row:
 //
 //	NPC_CH_ 97/168 18 of 67, GATE_CH (SN_ZONE_22001 "Jangan")         97/168
@@ -217,6 +218,15 @@ func TestParseRegionLabel(t *testing.T) {
 // coordinates were already in, so naming it changes nothing. A label with
 // neither (a capitalised town, a typo) has no frame: the client then keeps its
 // own case-insensitive reading of the label, which lands on the same centre.
+//
+// The named-zone loop holds FrameFor to its construction (it returns
+// ZoneCentre's entry), so it only guards against FrameFor stopping to read
+// ZoneCentre; the "x/y" and no-frame rows are the discriminating ones. The
+// cross-side guard -- the server's frame for each label equal to the grid the
+// client builds -- is the six hard-coded rows on each side: session's
+// TestFrameForNamesEachZonesCentre and region_grid_state_test.gd's
+// server_frames, checked against World3D._resolve_zone_region (round 570's
+// review; said here since round 574).
 func TestFrameForIsEveryZonesOwnCentre(t *testing.T) {
 	for _, zone := range ZoneNames() {
 		rx, ry, ok := FrameFor(zone)

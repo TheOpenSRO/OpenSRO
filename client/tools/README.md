@@ -382,7 +382,10 @@ BASE ran `git archive f25ab65`; the 567 and TRI runs ran round 567's code before
 (round 567 says so; its ray runs, `rays3_*`, ran the committed code). The entry's p95 950 -> 914
 ms is inside run-to-run spread (TRI, the old collision on the same code, read 957); the frames over
 100 ms (9 -> 5, TRI 9) and the per-cell `collision` lap are the numbers that moved (round 567's
-review):
+review). A crossing's own entry drain (its `region grid loaded` line) is (a)'s command plus
+`--at 120,1020`, so it is compared with (b)'s drain below, not (a)'s: round 572 compared its
+crossing's 17754 ms with (a)'s 17299, and the review caught it. (b)'s drains were read off
+`/var/tmp/r567/{base,after,tri}_cross.log` in round 574; no record had quoted them:
 
 ```
 (a) BASE   cell 97/168 built in 5035 ms at frame 14 (terrain 1563 [.. faces 7 .. collision 27 ..])
@@ -404,6 +407,8 @@ review):
     567    97,96,98,95,99/165: 29, 21, 60, 23, 22 ms at frames 162-166 (collision 0 each)
            longest work frame 86 ms at frame 164 (cell 98/165) over 569 frames; 0 over 100 ms
            29 streamed cells: built in 1868 ms; terrain commit 584, collision 0
+           its own entry drain: region grid loaded in 17395 ms at frame 30; p95 930 ms;
+               5 over 100 ms (BASE 18401 ms, p95 954, 8; TRI 18544 ms, p95 967, 8)
     TRI    97,96,98,95,99/165: 49, 45, 85, 48, 49 ms (collision 24-27); longest work frame 113 ms at
                frame 163 (cell 98/165); 1 over 100 ms
 ```

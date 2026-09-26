@@ -105,13 +105,17 @@ extends Node3D
 ## convention SRREVAMP_MAPM_PATH/SRREVAMP_MAPO_PATH's doc comments above
 ## already describe. The server's own default spawn zone, "jangan", is a
 ## special case resolved by _resolve_zone_region to the real region this
-## project found Jangan actually lives in (JANGAN_ZONE_REGION, "98/168" as
-## of **2026-09-01** -- see that constant's own doc comment for the real
-## back-and-forth: an earlier, higher-*keyword-density* match ("89/182")
-## turned out to be a real, confirmed isolated pocket surrounded by void,
-## which dropped the player through an unbounded fall when walked into;
-## "98/168" sits inside the same real, single, fully contiguous landmass as
-## the already-verified Dunhuang region) rather than falling through to
+## project found Jangan actually lives in (JANGAN_ZONE_REGION: "97/168", the
+## town, since 2026-09-07; this header said "98/168" -- the palace north of
+## it, the pick as of **2026-09-01** -- until round 574. See that constant's
+## own doc comment for the real back-and-forth: an earlier, higher-*keyword-
+## density* match ("89/182") turned out to be a real, confirmed isolated
+## pocket surrounded by void, which dropped the player through an unbounded
+## fall when walked into; "98/168" sits inside the same real, single, fully
+## contiguous landmass as 98/157, which this header called "the
+## already-verified Dunhuang region" until round 574 -- textzonename.txt
+## names 98/157 "Donwhang Ferry", and Donwhang itself is 102/153 since round
+## 569, DUNHUANG_ZONE_REGION) rather than falling through to
 ## "nothing to load" the way it used to before Jangan was found at all. Any
 ## other zone not shaped like a real region still clears back to
 ## the placeholder ground with nothing loaded -- honest "nothing to load",
@@ -3154,7 +3158,9 @@ static func _read_terrain_lightmap(mapm_path: String, archive: Pk2Reader) -> Map
 ## landmass of 500+ populated regions (y=145-175 x=85-108 all real terrain,
 ## confirmed via the same archive listing) that already includes the
 ## already-verified real Dunhuang region ("98/157", 11 rows away, no gaps
-## between them) plus real "greenfield" (open fields/lake gardens),
+## between them -- dated: textzonename.txt names 98/157 "Donwhang Ferry",
+## and Donwhang itself is 102/153 since round 569, DUNHUANG_ZONE_REGION;
+## noted here in round 574) plus real "greenfield" (open fields/lake gardens),
 ## "jangan04" (military camp), "jangan05" (temple), and "jangan02/03"
 ## (pub/market/palace-substructure) districts -- exactly the open,
 ## walkable, populated-but-not-just-palace world this project was missing.
@@ -3206,13 +3212,18 @@ const ZONE_SPAWN_LOCAL := {
 ## worldmap_test.go's TestZoneCentresAreTheTownsOwnRegions pin both sides).
 ##
 ## **Corrected 2026-09-25 (round 569)** from the game's own tables, where a
-## town's NPC rows and its dimensional gate agree on a region: npcpos.txt
-## joined to characterdata on the first column and counted by the town's
+## town's NPC rows and its dimensional gate agree on a region: npcpos.txt's
+## first column (the NPC's id) joined to characterdata's second (its ID;
+## characterdata's first is the Service flag) and counted by the town's
 ## code, against teleportdata.txt's GATE_<code> row (SN_ZONE_22001..22005,
 ## named Jangan, Donwhang, Hotan, Constantinople, Samarkand). Until then
-## these were the densest cluster of each town's architecture
-## (server/cmd/scanlandmarks, findregionassets; docs/PROGRESS.md 2026-08-24),
-## which picked a neighbour of the town twice:
+## these were the densest cluster of each town's architecture -- Dunhuang's
+## by server/cmd/scanlandmarks (2026-08-26), the other three by
+## findregionassets (docs/PROGRESS.md 2026-08-24) -- which missed the town
+## twice: Constantinople's 104/80 is its diagonal neighbour, and Dunhuang's
+## 98/157 lies 4 regions off on both axes. (Until round 574 this said "a
+## neighbour of the town twice", dated both picks 2026-08-24 and said "the
+## first column" for both tables.)
 ##
 ##   Donwhang 98/157 -> 102/153: NPC_WC_ 15 of 26 rows (6 more in 103/153)
 ##     and GATE_WC are in 102/153; textzonename.txt names 98/157 "Donwhang
@@ -3861,14 +3872,22 @@ func _finish_cell_job(flight: Dictionary) -> void:
 ## whose key is NOT in that snapshot was decoded because the world had not
 ## uploaded it when the job was built, and counts if it is uploaded now. One
 ## whose key IS in the snapshot was decoded AGAIN by _alpha_stat, for a
-## statistic the snapshot lacked; it counts only if a statistic it measured
+## statistic the snapshot lacked; it counts if ANY statistic it measured
 ## that the snapshot lacked is in the world's entry now -- a commit after
 ## the snapshot carried it in (ObjectLoader.commit_textures merges a
-## prepare's statistics into a texture already cached), so a snapshot taken
-## after that commit would have spared the decode. Until round 568 the
-## counter skipped every snapshot-held key, and this comment said no later
-## commit could have spared such a decode -- wrong, by commit_textures
-## (round 566's second review, re-read in round 568). The change can only
+## prepare's statistics into a texture already cached). A snapshot taken
+## after that commit would have spared the decode only if EVERY such
+## statistic had been carried in. The two differ only when one job measures
+## two statistics on one held texture, which needs SRREVAMP_QA_MATS:
+## ObjectLoader._prepare_material then also measures `fraction` beside a
+## DXT3/DXT5 layer's `variance` or an uncompressed one's `binary_cutout`;
+## without it each fourCC needs exactly one. So under QA_MATS this count can
+## run over by such a texture -- a log line, QA runs only (round 568's
+## review; this said the any-rule spared the decode until round 574).
+## Until round 568 the counter skipped every snapshot-held key, and this
+## comment said no later commit could have spared such a decode -- wrong,
+## by commit_textures (round 566's second review, re-read in round 568).
+## The change can only
 ## ADD a texture the old rule skipped, and only after a re-decode: the load
 ## benchmark's command (a) consults no alpha probe at all (0 in round 566's
 ## alpha_after.log), so its recorded counts cannot move; the crossing, (b),

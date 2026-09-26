@@ -399,6 +399,19 @@ log reads `single frame off (-single-frame / SRREVAMP_SINGLE_FRAME)`.
      stand up to 116.78 above or 124.44 below its ground until that list (round 571's heights).
    - The far towns sit up to 170,880 units from the origin, where a float32 position steps by 1/64
      of a unit (Constantinople) -- recorded, not rebased.
+   - A player who warps to a far town is drawn by the others at the server's y 0: the client places
+     another player's body at the snapshot's height with no snap to the ground
+     (`World3D._spawn_or_update_other`), and the landings' ground draws 104.07 below that point
+     (Donwhang) to 86.23, 182.49 and 246.32 above it (Constantinople, Samarkand, Hotan) under the
+     one frame (round 571's heights). It rights itself when the mover's own client lifts it onto the
+     ground or lets it fall, a move past `MIN_SEND_DISTANCE` that sends an `OpMove` -- read from the
+     code, not measured (round 571's review, recorded in round 574).
+   - Two regions near Samarkand come out of the +-1000 / -500 height envelope under the one frame
+     and not without it: the peaks of 108/105 and 108/106 draw at 1052.1 and 1108.7 (869.6 and
+     926.2 under Samarkand's own anchor). Nothing is placed there at y 0 today; round 571 gated no
+     town on the envelope, because Jangan's own 99/170 already breaks it with the flag off
+     (1075.41), and checked the places the client puts something at a server-given height instead
+     (`docs/RE_COMPLETION.md`, round 571, "Heights under ONE frame").
 3. You accept the monster list's size. It is one packet, capped at 32,767 payload bytes (`sizeMask`,
    `internal/proto/packet.go`), and each monster costs 40 bytes plus its name and code name
    (`MonsterSnapshot.Encode`). With `-npcpos-csv` Jangan's 348 roster monsters are 23,769 bytes
@@ -407,7 +420,10 @@ log reads `single frame off (-single-frame / SRREVAMP_SINGLE_FRAME)`.
    `combat.Hub` drops only when they die) push it over the cap: every list request then fails in
    `proto.Write` (`payload ... too large for a single frame`) and the gateway closes that player's
    session (`handler error, closing session`). With the flag off it takes 141 in Jangan's bucket
-   alone; with it on, 72 anywhere, and every player's list fails.
+   alone; with it on, 72 anywhere, and every player's list fails -- so under the flag one GM's
+   four `/spawn 20`s close every player's session on their next list. No hard guard (a cap, or a
+   list split over several packets in `handleMonsterList`) is built; it is a `docs/TODO.md` item to
+   close before the flip (round 571's review).
 
 **On.** Add `SRREVAMP_SINGLE_FRAME: "1"` under the server's `environment:` in the untracked
 `docker-compose.override.yml`, the same way as `SRREVAMP_MONSTER_AI` above, then run
@@ -451,6 +467,11 @@ What changes for players with it on:
   from Jangan toward Donwhang under `-single-frame`, where the label stays "jangan" -- is outside
   the grid the entry builds around the label's centre; the stream then builds around the player,
   as after a GM `/tp` far away. Not measured.
+- With `-player-dead-state` on as well, a character that logs out dead is saved where it fell and
+  re-enters there -- possibly beside the monster that killed it -- revived to 40 % by the entry
+  rule that applies whatever the flags say (`handleEnterWorld`'s revive of a stored HP 0,
+  `character.RespawnFraction`). That is the in-place revive stand-in `-player-dead-state` already
+  uses (`deadstate.go`), now across a logout (round 573's review, recorded in round 574).
 
 It is behind the `-persist-position` flag (env `SRREVAMP_PERSIST_POSITION`), and **the default is
 off**: off, nothing is saved or read, every entry lands at the zone spawn, and the wire is what it

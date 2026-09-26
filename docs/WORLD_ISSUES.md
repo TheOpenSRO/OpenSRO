@@ -7075,6 +7075,46 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-seventy-fourth round: batch-22 review follow-ups -- record wording, run counts, doc consistency; no behaviour change
+
+The review notes on rounds 568-573, each re-checked against the code, the logs under
+`/var/tmp/r567`, `/var/tmp/r572` and `/var/tmp/r573`, the box's tables and (read-only) the public
+server before it was landed; the full list, note by note, is `docs/RE_COMPLETION.md`'s round 574.
+Nothing a player sees; what changed, anchored by function:
+
+- **The town-centre join was mis-described.** npcpos's first column (the NPC's id) joins
+  characterdata's SECOND (its ID); characterdata's first is the Service flag. Every place that said
+  "on the first column" says so now; the measurement stands. And the density picks "missed the
+  town twice", not "picked a neighbour twice": Constantinople's 104/80 is the town's diagonal
+  neighbour, Dunhuang's 98/157 is 4 regions off on both axes (a 2026-08-26 `scanlandmarks` pick).
+  `World3D.gd`'s header and `JANGAN_ZONE_REGION` comment, which still called Jangan "98/168" and
+  98/157 "the already-verified Dunhuang region", are dated in place.
+- **The public server does run `-npcpos-csv`**: srrevamp-01's override passes it and the running
+  container carries it, so its Earth Ghosts stand on their 65 real rows.
+- **Round 572's crossing drain was compared with the wrong run.** Its 17754 ms was set against
+  round 567's command (a) (17299); round 567's own crossing drained in 17395 ms (p95 930, 5 over
+  100 ms), a log no record had quoted. The README's AFTER-567 block now carries (b)'s drains.
+- **Round 570's 87/118 anchor** (2497.52), from an uncommitted report, re-read with `heightat`.
+- `-single-frame`'s flip condition says a client with rounds 569 to 571 everywhere (the server
+  README and the flag's help said 569 and 570). Its limits gain a far warper drawn at the
+  server's y 0 by the others (104.07 above Donwhang's drawn landing, 86.23-246.32 below the
+  others') and Samarkand's two newly high peaks; the monster list's one-packet cap under one bucket
+  is now a TODO item to guard before the flip, beside the height gate's missing acceptance.
+- `_prepared_again`'s comment says ANY re-measured statistic counts, and that only
+  `SRREVAMP_QA_MATS` makes it differ from EVERY; `ToZoneWorld`'s comment says it refuses the "x/y"
+  labels `FrameFor` names; the teleport page says an `OpEnterWorldResult` may end with the
+  `Restored` byte.
+- Measured, not changed: `objects_prepare_test`'s 8 dummy-renderer `ERROR` lines are there at round
+  567 too, at the same place.
+- Tests for what had none: `_finish_cell_job`'s guard on a cell out of the window along dy alone,
+  and `_terrain_commit` placing the terrain group where `TerrainCollision.place_group` does -- each
+  shown failing on a mutation of the code it guards (the new checks pass on BASE's code, which
+  already behaves).
+- Recorded, not fixed (`docs/TODO.md`): the position save before the leave/move broadcast, a ghost
+  entity's save winning, `/unstuck` after a restored entry keying on the zone label, two drains'
+  likelier failure (the second `queue_free` on a nulled screen), the monster-list guard, the
+  height-gate acceptance, another player drawn at y 0 after a far warp.
+
 ## Five-hundred-and-seventy-third round: a character logs back in where it left off, behind `-persist-position`, and the client keeps a restored position
 
 The server saves a character's zone label, frame region and position on its row -- on a
@@ -7286,8 +7326,9 @@ The frame-on-the-wire item aborted because the server's `worldmap.ZoneCentre` an
 104/80), hotan (87/118, 92/135) and samarkand (88/130, 106/107). This round makes them agree, and
 the full table, evidence and tests are `docs/RE_COMPLETION.md`'s round 569.
 
-**The rule.** A town's centre is the region where its own NPC rows (npcpos joined to characterdata
-on the first column, counted by the town's code: CH, WC, KT, EU, CA) and its dimensional gate
+**The rule.** A town's centre is the region where its own NPC rows (npcpos's first column, the
+NPC's id, joined to characterdata's second, its ID -- "on the first column" until round 574;
+counted by the town's code: CH, WC, KT, EU, CA) and its dimensional gate
 (`teleportdata.txt`'s `GATE_<code>`, `SN_ZONE_22001..22005`) agree. Where they disagree, the
 server takes the client's constant and the disagreement stays open.
 
@@ -7415,10 +7456,11 @@ anchored by function:
   in the frame origin's region slot: 6,909 of that slot's 9,409 vertices; on Jangan's real ground,
   the plain ray missed at 7 of the 9 monsters standing on 97/168's grid vertices, and the trimesh
   answered at all 23 monster columns, 19 of them on grid lines), so "every vertical ray hits" held
-  only off the lines; round 572's `TerrainCollision.vertical_ray` steps every vertical terrain ray off them;
-  slanted rays agree within 0.004 (the same 4 missing on both); the camera arm's sphere
-  swept down stops at the same travel on 1,594 and within 0.352 on the rest; the snap's ray at the
-  server's spawn lands at -54.394 on both; the crossing walk's lines are identical tick for tick.
+  only off the lines; round 572's `TerrainCollision.vertical_ray` steps every vertical terrain
+  ray off them; slanted rays agree within 0.004 (the same 4 missing on both); the camera arm's
+  sphere swept down stops at the same travel on 1,594 and within 0.352 on the rest; the snap's ray
+  at the server's spawn lands at -54.394 on both; the crossing walk's lines are identical tick for
+  tick.
 - **One behaviour did change, and it was a latent bug.** The player's own body moved down with
   `body_test_motion` -- move_and_slide's query -- touched the heightfield at 1,600 of 1,600 columns
   and the old trimesh at **0**. The trimesh was one-sided under the world's mirror, the trap the

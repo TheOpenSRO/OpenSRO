@@ -708,10 +708,16 @@ commit them on the main thread, and round 567 makes the terrain's collision a he
       over them.
 - [ ] **Two entry drains at once** (round 565's review; predates round 565, found by reading, not
       reproduced). A zone change that starts a second `_drain_initial_load` while the first is
-      still suspended leaves both pumping the one queue; whichever finishes first sets
-      `_drain_pumping` false -- letting `_process_stream_queue` pump beside the other -- and frees
-      and nulls the loading screen the other still sets the progress of. A drain generation (or
-      one drain at a time) would close it; a scripted double zone change is the test.
+      still suspended leaves both pumping the one queue; the second reuses the first's loading
+      screen (`_show_loading_screen` makes none while one is up). Both test the same queue as they
+      resume, so they usually leave the pump loop in the SAME frame, and the likelier failure is
+      then that whichever resumes second after their last awaited frame calls
+      `_loading_screen.queue_free()` on the screen the other has just freed and nulled -- a
+      `SCRIPT ERROR` on null (round 568's review, re-read in round 574). Only when the first
+      leaves the loop a frame earlier does `_drain_pumping` go false while the other still pumps,
+      letting `_process_stream_queue` pump beside it, and the other then calls `set_progress` on
+      the nulled screen. A drain generation (or one drain at a time) would close both; a scripted
+      double zone change is the test.
 - [ ] **The `prepared again` line prints for every committed streamed cell in a player's build**
       (round 566's follow-up). A playtest diagnostic; it could sit behind a QA variable like the
       rest of the load instrumentation.
@@ -730,7 +736,50 @@ position (off by default)").
       and the void recovery returns it to its last grounded position. Building the entry's grid
       around the region the restored point lies in (inside the server's frame, round 570's
       `_load_region_neighborhood` already takes a centre and a frame apart) would close it; a
-      `--region ''` reconnect run after a long `--walk` is the check.
+      `--region ''` reconnect run after a long `--walk` is the check. `/unstuck` has the same
+      edge (round 573's review, read): after a restored entry `World3D._unstuck_player` takes
+      the landing of `NetClient.current_zone`, which under `-single-frame` is still "jangan" after
+      a walk to Donwhang, so it sends the player to Jangan's landing -- and if 97/168's walkable
+      graph has streamed out, `_place_at_zone_landing` fails and it falls back to the restored
+      entry point, which may be as far away.
+- [ ] **The position save runs before the broadcast** (round 573's review, read). In
+      `WorldDisconnectHandler` the save (`savePosition`, a synchronous write bounded by
+      `positionSaveTimeout`, 5 s) runs before the others in the zone are sent `OpEntityLeft`, and
+      `handleMove`'s save every 30 s (`savePositionEvery`) before `OpEntityMoved` is relayed: a
+      stalled store delays those notices by up to 5 s. With a healthy database nothing changes.
+      Saving after the broadcast, or off the handler goroutine, would close it.
+- [ ] **A duplicate entity's save can win** (round 573's review, read). `SaveAllPositions` walks
+      `hub.AllEntities()`, a map, so when one character is in the hub twice -- a ghost session
+      from a reconnect whose old socket's close has not been noticed -- whichever entity comes
+      last is saved, possibly the ghost's older point; and a ghost's late `OnDisconnect` save can
+      overwrite a newer periodic one. Only the stop window and the fast-reconnect race (disclosed
+      in round 573) reach it, and the duplicate entity predates round 573.
+
+### One world frame (map/travel epic, round 571)
+
+`-single-frame` (default off) puts every town in Jangan's frame and one bucket
+(`docs/RE_COMPLETION.md`, round 571; `deploy/README.md`, "Single world frame (off by default)",
+whose flip conditions these items feed).
+
+- [ ] **A hard guard on the monster list before the flip** (round 571's review). The list is one
+      packet, capped at 32,767 payload bytes; under the flag the one bucket's 413 roster monsters
+      are 28,189 bytes, so 72 more Mangyang-sized GM spawns (four `/spawn 20`s) push it over, and
+      then EVERY player's list fails in `proto.Write` and the gateway closes each session on its
+      next request. A cap, or a split over several packets in `handleMonsterList`, closes it; a
+      test that lists more monsters than one packet holds is the check.
+- [ ] **Round 571's height gate, to be accepted explicitly before the flip** (round 571's review).
+      The item asked for every town whose radius-2 regions leave +-1000 / -500 under the one frame
+      to be gated; round 571 gated none, because Jangan's own 99/170 (1075.41) breaks that
+      envelope with the flag off, and checked instead where the client places something at a
+      server-given height. The review re-measured the numbers and found the reasoning sound, and
+      asked for the decision to be accepted, not just recorded; no note of rounds 571-573 records
+      that. Samarkand's 108/105 and 108/106 (1052.1 and 1108.7) are the only regions the flag
+      newly takes out of the envelope.
+- [ ] **Another player who warps to a far town is drawn at the server's y 0** (round 571's review,
+      read). `World3D._spawn_or_update_other` places the body at the snapshot's height with no
+      snap to the ground, 104.07 above Donwhang's drawn landing and 86.23 to 246.32 below the
+      others' under the one frame, until the mover's own client lifts or drops it and sends an
+      `OpMove`. Snapping another player's body the way a monster's is snapped would close it.
 
 ## Parked, with the state written down
 

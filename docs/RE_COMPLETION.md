@@ -37754,9 +37754,12 @@ packet layout and no flag changes.
   records what its own-design anchor means under the new centre (below).
 
 **1. The measurement** (render box, 2026-09-25, read-only, `/var/tmp/tables`; each table's UTF-16
-BOM stripped before the join). `npcpos.txt` (12,367 rows) was joined to `characterdata_*.txt` on
-the FIRST column (id), never by grepping an id; 1,710 rows did not join (ids 38148-38257, beyond
-the six characterdata parts on the box; none of them sits in any region of the table below). The
+BOM stripped before the join). `npcpos.txt`'s first column (12,367 rows; the NPC's id) was joined
+to `characterdata_*.txt`'s SECOND (its ID -- characterdata's first column is the Service flag;
+"on the FIRST column (id)" until round 574, which re-read both tables' rows: npcpos `2023` is
+characterdata `1, 2023, NPC_CH_PRIEST`), never by grepping an id; 1,710 rows did not join (ids
+38148-38257, beyond the six characterdata parts on the box; none of them sits in any region of the
+table below). The
 town codes are the game's own: `teleportdata.txt`'s five `GATE_<code>` rows name
 `SN_ZONE_22001..22005`, which
 `textdata_object.txt` resolves to Jangan (CH), Donwhang (WC), Hotan (KT), Constantinople (EU) and
@@ -37774,8 +37777,11 @@ column 42), and `textzonename.txt` names each region by id:
 The server's three disagreeing values arrived in `edc6fea` (the Mangyang transform round) with no
 recorded source (`git log -S` on `worldmap.go` finds that commit only, and neither its message nor
 any doc names them); by the game's own region names none of them is its town. The client's picks
-were densest-architecture scans (`cmd/scanlandmarks`, `cmd/findregionassets`; `docs/PROGRESS.md`,
-2026-08-24), which chose a neighbour of the town twice.
+were densest-architecture scans (Dunhuang's by `cmd/scanlandmarks`, 2026-08-26; the other three by
+`cmd/findregionassets`, `docs/PROGRESS.md` 2026-08-24), which missed the town twice:
+Constantinople's 104/80 is its diagonal neighbour, and Dunhuang's 98/157 lies 4 regions off on
+both axes. (Until round 574 this said they "chose a neighbour of the town twice" and cited only
+the 2026-08-24 entry.)
 
 **A correction to the plan's measurement.** The plan (from its verifier) read Samarkand's NPCs as
 `NPC_SD_*` in 91/48-94/48 and its gate as "GATE_SD 106/108". `SD` is Alexandria:
@@ -37869,7 +37875,9 @@ world Z, Z mirrored, as `TestToWorldMatchesTheMeasuredColumns` measured them). D
 is relative to the centre and so now in the middle of the town's region instead of the ferry's (the
 Donwhang QA run below: `monster Earth Ghost ... at -60,-7,-50 (78 from the player)`). Monster AI and
 aggro are off by default, so it does not attack; the public server's `-npcpos-csv` replaces the
-anchor with the 65 real rows.
+anchor with the 65 real rows (checked in round 574, read-only: srrevamp-01's untracked
+`docker-compose.override.yml` passes `-npcpos-csv=/data/npcpos.csv`, and the running server
+container's arguments carry it).
 
 **8. Tagged clients after the server change (auto-deploys).** Nothing a tagged client shows changes:
 the server uses a zone's centre only to convert real placements into it (`realSpawnWorld`) and for
@@ -38107,7 +38115,11 @@ give these town centres:
 Every one lies inside `_snap_player_onto_terrain`'s +-1000 ray and above `WORLD_FLOOR_Y` (-500).
 That is the reason one Jangan-anchored frame is acceptable for the centres. The radius-2
 neighbours were NOT measured and are that item's to check. The aborted attempt's 87/118 (2497.52)
-is why the check matters: it is no longer any zone's centre or frame.
+is why the check matters: it is no longer any zone's centre or frame. (That value came from the
+aborted attempt's own report, which is not committed, and round 569's list of its readings left
+87/118 out; round 574 re-read it with the same read-only `heightat -region 87/118 -at 160,0` on
+the render box: `raw heightmap at local (160, 0) = 2497.52`. The table's 97/168 minimum, -58.37,
+subtracts the rounded -60.86 and -2.49; round 569's -58.36 subtracted before rounding.)
 
 **Tests.**
 
@@ -38917,8 +38929,11 @@ anchor_height)` and `scale.z = -1`, and in the two records' append points.
   - The column, in commit order 97, 96, 98, 95, 99/165: 25, 21, 60, 22, 22 ms at frames 161-165,
     with `collision` 0 on each. Round 567 read 29, 21, 60, 23, 22.
   - The crossing's own entry drain: `region grid loaded in 17754 ms ... at frame 30`, p95 900 ms,
-    5 frames over 100 ms. Round 567 recorded a drain for run (a) only: 17299 ms at frame 29, p95
-    914, 5 over 100.
+    5 frames over 100 ms. This compared it with round 567's recorded drain for run (a) (17299 ms at
+    frame 29, p95 914, 5 over 100) -- another command, so not like for like (round 572's review).
+    The like-for-like drain is round 567's own crossing run, `/var/tmp/r567/after_cross.log`, which
+    no record had quoted: 17395 ms at frame 30, p95 930 ms, 5 over 100 (read in round 574). This
+    code's acceptance run, a third command, drained in 16519 ms (`/var/tmp/r572/accept.log`).
   - Its entry placed the same 23 bodies pending and resolved all 23. 0 `SCRIPT ERROR`.
   - So rounds 565-567's walking frames did not regress: one run each, inside run-to-run spread.
 
@@ -39136,3 +39151,165 @@ character position persistence.
 **Deploy note.** Server: auto-deploys OFF; the character store adds five columns on first start,
 flag or no flag. Client: needs a tag. Flip `-persist-position` on srrevamp-01 only after the client
 tag that carries this round is published (`deploy/README.md`).
+
+## Batch-22 review follow-ups (rounds 568-573): record wording, run counts, doc consistency -- no behaviour change (round 574)
+
+The nonblocking review notes on rounds 568-573 and the orchestrator's settled facts, each re-checked
+before it was landed -- against this checkout, the logs under `/var/tmp/r567`, `/var/tmp/r572` and
+`/var/tmp/r573` on the render box, the box's `/var/tmp/tables`, its read-only
+`/opt/srrevamp-server/heightat`, and (read-only) srrevamp-01. Nothing a player sees changes:
+comments, records, a usage string and three test changes. Nothing on the wire, no flag, no server or
+client behaviour. No Godot benchmark was re-run for a wording fix; the client suites and `check` ran
+on the final tree, plus the negatives below. Lane lock `/var/tmp/r574/lock`; no render, no frames.
+
+**1. Round 568's notes.** (a) `World3D._prepared_again`'s doc comment justified the held-texture
+rule ("counts if a statistic it measured ... is in the world's entry now") with "a snapshot taken
+after that commit would have spared the decode", which holds only if EVERY re-measured statistic was
+carried in. Read in `ObjectLoader._prepare_material`: without `SRREVAMP_QA_MATS` each fourCC needs
+exactly one statistic (DXT1 `fraction`, DXT3/DXT5 `variance`, uncompressed `binary_cutout`, none for
+a flagged layer); `SRREVAMP_QA_MATS` adds `fraction` beside the other two, so only there can one job
+measure two on one held texture. **Reworded, not re-coded** (this item changes no behaviour): the
+comment now says ANY, says when ANY and EVERY differ, and that the count can run over by such a
+texture in QA runs only. (b) Round 568's log-counter change under a "no behaviour change" title:
+disclosed there already; recorded. (c) `_test_stale_cells_are_not_committed` fed the guard a cell
+out of the window along dx only: closed by a test (below). (d) `docs/TODO.md`'s "Two entry drains at
+once": re-read in `_drain_initial_load` and `_show_loading_screen` -- the second drain reuses the
+first's screen; both test the one queue as they resume, so they usually leave the pump loop in the
+same frame, and whichever resumes second after their last awaited frame then calls `queue_free()` on
+the `_loading_screen` the other has nulled; the `_drain_pumping` gap needs them to leave it in
+different frames. The item says both, by reading. (e) The 8 `ERROR: Parameter "m" is null.` lines in
+`objects_prepare_test` (`mesh_get_surface_count`, the dummy renderer): **they predate round 568**.
+The suite at round 567's `66f71b2`, run from a worktree in a scratch copy on the box
+(`RENDER_DIR=/var/tmp/r574/old`, deleted after), prints the same 8 at the same place -- after the
+`_prepared_again` block's last check, before the pump test -- as HEAD does. Not failures under round
+556's policy.
+
+**2. Round 569's notes.** (a) "which picked a neighbour of the town twice" (`World3D.gd`'s
+`*_ZONE_REGION` comment, this file's round 569): Constantinople's 104/80 is the town's diagonal
+neighbour, but Dunhuang's 98/157 is 4 regions from 102/153 on both axes; and the Dunhuang pick was
+`cmd/scanlandmarks`' of 2026-08-26 (the removed comment in `d572a61`'s diff), not the 2026-08-24
+`findregionassets` entry. Both places now say "missed the town twice", with both dates, marked in
+place. (b) "npcpos.txt joined to characterdata on the first column": re-read on the box -- npcpos's
+first column is the NPC's id (`2023`, its first row), characterdata's first is the Service flag and
+its second the ID (`1, 2023, NPC_CH_PRIEST`). Reworded to "npcpos's first column joined to
+characterdata's second" in `worldmap.go` (`ZoneCentre`), `worldmap_test.go`, `zone_centres_test.gd`,
+`World3D.gd`, `GROUNDING_AUDIT.md`, `WORLD_ISSUES.md`'s round 569 and this file's round 569 (which
+said "the FIRST column (id)"); the measurement stands. (c) and the orchestrator's settled note:
+checked read-only on srrevamp-01 -- the untracked `docker-compose.override.yml` passes
+`-npcpos-csv=/data/npcpos.csv` in its restated `command:`, and the running `srrevamp-server-1`
+container's arguments carry it. Recorded in round 569's section 7. (d) The plan's `NPC_SD_*`
+Samarkand grounding: round 569's own entry already corrects it (SD is Alexandria); a grep of the
+committed code and docs finds no text reading SD as Samarkand. Recorded for future plans. (e)
+`TestEarthGhostConvertsInDonwhangsTownFrame` calls `realSpawnWorld` rather than `main`'s loop: both
+go through that one helper; recorded. (f) `World3D.gd`'s file header still said Jangan was "98/168"
+(as of 2026-09-01) and called 98/157 "the already-verified Dunhuang region", and
+`JANGAN_ZONE_REGION`'s comment likewise: both dated in place (97/168 since 2026-09-07; 98/157 is
+"Donwhang Ferry", Donwhang 102/153 since round 569).
+
+**3. Round 570's notes.** (a) The trailing `FrameRegion` against the layout rule: backward
+compatible and asked for; recorded. (b) The grid corner when the centre fails to load: closed by
+round 571 (`World3D._frame_corner`, `grid_origin_test.gd`). (c) The "intuitive axes" negative checks
+a helper inside the test; the placement rows through `_group_position` are the discriminating ones:
+recorded. (d) `TestFrameForIsEveryZonesOwnCentre`'s named-zone loop is tautological: its comment now
+says so and names the cross-side guards (session's `TestFrameForNamesEachZonesCentre`,
+`region_grid_state_test.gd`'s `server_frames`). (e) `worldmap.ToZoneWorld` refuses "x/y" labels that
+`FrameFor` names: documented at `ToZoneWorld`, not routed through `FrameFor` -- that would change
+which rows convert, and its only caller, `cmd/server`'s `realSpawnWorld`, is passed roster zones
+("jangan", "donwhang"); under `-single-frame` it already goes through `FrameFor`. (f) Round 570's
+"87/118 (2497.52)" came from the aborted attempt's uncommitted report: re-read with the same
+read-only `heightat -region 87/118 -at 160,0` -- `raw heightmap at local (160, 0) = 2497.52` (and
+97/168 -2.49) -- and noted in place, with why its table's -58.37 differs from round 569's -58.36
+(rounded against unrounded subtraction). (g) The stricter decoders: recorded.
+
+**4. Round 571's notes.** (a) The flip condition: `server/README.md`'s `-single-frame` row and the
+flag's usage string in `main.go` said rounds 569 and 570; both now say 569 to 571, as
+`deploy/README.md` and round 571's entry did. (b) The height gate: round 571 gated no town and the
+review asked for an explicit acceptance; no note of this batch records one, so it is a
+`docs/TODO.md` item to settle before the flip, and `deploy/README.md`'s condition 2 now lists
+Samarkand's two newly out-of-envelope peaks (108/105, 108/106: 1052.1, 1108.7). (c) The stale
+implementer report: the commit and the record were right; nothing. (d) The monster list under one
+bucket (28,189 of 32,767 bytes; 72 GM spawns close every session): `deploy/README.md`'s condition 3
+now says so outright and that no guard is built; a `docs/TODO.md` item for the cap or split in
+`handleMonsterList`. (e) A far warper drawn at the server's y 0 by the others: read in
+`World3D._spawn_or_update_other` (`body.position = pos`, no snap). The review's "104 to 246 units"
+is corrected from round 571's landing column: the point is 104.07 above Donwhang's drawn landing and
+86.23, 182.49, 246.32 below Constantinople's, Samarkand's and Hotan's. Added to `deploy/README.md`'s
+condition 2 and `docs/TODO.md`. (f) `TestSingleFramePutsEveryTownInOneFrameAndOneBucket` wrote
+Donwhang's and Hotan's centres as literals: it reads `worldmap.ZoneCentre` now (below).
+
+**5. Round 572's notes.** (a) Nothing checked that `_terrain_commit` places the group through
+`TerrainCollision.place_group`: closed by a test (below). (b) The mutation results: recorded. (c)
+The far-corner probe cell has 0 plain misses, so the 1/64 rounding path never meets a real on-line
+miss: already disclosed; recorded. (d) The crossing's entry drain (17754 ms) was compared with round
+567's run (a) (17299), another command: the like-for-like drain exists --
+`/var/tmp/r567/after_cross.log`, 17395 ms at frame 30, p95 930, 5 over 100 -- and no record had
+quoted it. Round 572's entry now does, marked in place, and the README's AFTER-567 block gains (b)'s
+three drains (BASE 18401, 567 17395, TRI 18544) and a line saying which drain a crossing is compared
+with. (e) The round-572 "synthetic height field" bullet at ~140 columns: already wrapped in the
+landed commit (no line of that round's entry exceeds 99). (f) "0 empty frames": the frames are gone,
+but both logs end `Done recording movie` and have 0 `falling back` lines. (g) The round-567 bullet's
+108-column line: rewrapped.
+
+**6. Round 573's notes.** (a) `docs/protocol/teleport_network.md`'s FrameRegion section now says an
+`OpEnterWorldResult` (never an `OpChangeZoneResult`) may end with one more byte, `Restored` = 0x01,
+sent only when `-persist-position` restored the position (`EnterWorldResult.Encode`). (b) The save
+before the `OpEntityLeft` / `OpEntityMoved` broadcast (`WorldDisconnectHandler`, `handleMove`,
+bounded by `positionSaveTimeout`, 5 s): a `docs/TODO.md` item. (c) `SaveAllPositions` over
+`hub.AllEntities()` (keyed by session, map order) and a ghost's late save: a `docs/TODO.md` item.
+(d) `-player-dead-state` with `-persist-position`: a character logged out dead re-enters at its
+death spot, revived to 40 % by the flag-independent entry rule (`character.RespawnFraction`) -- now
+in `deploy/README.md`'s "What changes for players". (e) `/unstuck` after a restored entry keys on
+`NetClient.current_zone` (`World3D._unstuck_player`), still "jangan" after a walk under
+`-single-frame`: added to the far-restore `docs/TODO.md` item. (f) `/var/tmp/r573` on the box still
+holds `on/f.wav` (5.8 MB), `oldclient/f.wav` (4.5 MB), `oldclient/server.log` and the 15.9 MB server
+binary; `/var/tmp/r572` holds its 15.8 MB binary. Left in place: this item's rules keep it from
+deleting on the box beyond its own lane's files, so their removal is reported, not done. (g) The
+trailing `Restored` byte against the layout rule: sent only when true, asked for; recorded.
+
+**Tests.** (1) `world/objects_prepare_test.gd`, `_test_stale_cells_are_not_committed`: a cell
+`_region_load_radius() + 2` cells from the player's along dy alone (dx 0) is not committed and
+leaves the queued set -- the guard's dy clause, which the dx-only case could not see. (2)
+`world/terrain_prepare_test.gd`, `_test_the_commit_wires_the_collision`: the prepared job is
+committed as a neighbour is -- `World3D._cell_offset(1, -2)` and a shared anchor 12.5 -- and the
+`RealTerrain` group must stand where `TerrainCollision.place_group` puts a node for the same offset
+and anchor, which is `_group_position`'s point: `(-4800, -12.5, -960)`, scale `(1, 1, -1)`. Sign
+rule: that expected value is computed by `place_group`, not written; checked by hand against
+`worldmap.ToWorld` (region y -> world X, region x -> world Z, Z mirrored), whose local (0, 0) of the
+region one up in x and two down in y is `x = -2*1920 - 960 = -4800`, `z = -1920 + 960 = -960`. (3)
+`session/world_test.go`, `TestSingleFramePutsEveryTownInOneFrameAndOneBucket`: Donwhang's and
+Hotan's landings from `worldmap.ZoneCentre` (Donwhang's = `ToWorld(102, 153, 960, 960, 97, 168)` =
+(-28800, -9600)). Comment-only changes: `worldmap_test.go`, `zone_centres_test.gd`.
+
+**NEGATIVES, proven.** With `World3D.gd` (the only client production file, comments only) stashed,
+both new client checks PASS -- they guard behaviour BASE already has -- so each was proven by
+mutating the code it guards, in one shipped tree (3 `MUTATION` marks): `_outside_stream_window`
+without its dy clause gives `objects_prepare_test` `FAIL a cell 4 cells from the player's along dy
+alone (dx 0) is not committed either, and leaves the queued set (got ["97/172"])` and the two checks
+after it (`FAILURES: 3`), while the old dx-only check still passes (the gap); `_terrain_commit`
+placing the group with inline arithmetic that drops the z negation gives `terrain_prepare_test`
+`FAIL the commit places the terrain group where TerrainCollision.place_group puts it ... (got
+(-4800, -12.5, 960) scale (1, 1, -1))` (`FAILURES: 1`). Restored from a copy (md5 as before, 0
+marks). Go: `worldmap.Landing` mutated to the frame's middle fails the refactored test (`Bram's
+change to donwhang: ... X:0 Y:0 Z:0 ... want ok donwhang in 97/168 at (-28800, 0, -9600)`);
+restored, it passes. The wording notes have no negative (prose cannot fail a test).
+`client/tools/remote_godot.sh tests` (`GODOT_LOCK=/var/tmp/r574/lock`): `ran 97 suite(s), 0 failing`
+(no new suite; the new cases run inside two existing ones); `check`: `checked 272 scripts and 5
+scenes`, `ALL LOAD`; `cd server && go build ./... && go test -count=1 -p 1 ./...`: 58 packages ok,
+before and after the doc edits.
+
+**Records.** This entry; `docs/WORLD_ISSUES.md`'s five-hundred-and-seventy-fourth round, its round
+569 (the join) and round 567 (the rewrap) edited in place; this file's rounds 569, 570 and 572, each
+marked in place; `docs/TODO.md` (the two-drains item; the far-restore item's `/unstuck`; two
+saved-position items; a new "One world frame" section with three); `docs/GROUNDING_AUDIT.md` (the
+named-zone row's join); `deploy/README.md` (two limits and the monster-list guard under "Single
+world frame", a bullet under "Saved position"); `server/README.md` and `main.go`'s usage string (569
+to 571); `client/tools/README.md` ("Load benchmark", the AFTER-567 block's crossing drains);
+`worldmap.go` (`ZoneCentre`'s join, `ToZoneWorld`'s difference from `FrameFor`); `World3D.gd` (the
+file header, `JANGAN_ZONE_REGION`, the `*_ZONE_REGION` comment, `_prepared_again`). Beyond the
+item's file list, disclosed: `docs/protocol/teleport_network.md` (6(a)), `session/world_test.go`
+(4(f)), `worldmap_test.go` (3(d), 2(b)), `client/scripts/world/zone_centres_test.gd` (2(b)),
+`objects_prepare_test.gd` and `terrain_prepare_test.gd` (the tests). `docs/SYSTEMS.md` has no row
+for zones, the world frame, saved positions or world loading, so it is unchanged.
+
+**Deploy note.** Docs, comments, a usage string and tests; not tag-worthy, no release on its own.
+The server's `-single-frame` help text now names the client release with rounds 569 to 571.
