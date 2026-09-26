@@ -657,7 +657,7 @@ line, any `pk2: could not open`, any `SCRIPT ERROR`, and whether buildings and w
 now carried by the next section: the tester reported it again on 2026-09-26 with a screenshot, and
 round 579 reproduced the mechanism on the box and gave them `/groundprobe`.
 
-### White ground after a reconnect — **a mechanism measured on the box; fix not written; the tester's `/groundprobe` file to say whether it is theirs** (round 579)
+### White ground after a reconnect — **the mechanism measured on the box is fixed (round 580: bases drawn first by render priority); the tester's `/groundprobe` file to say whether it was theirs**
 
 **The report.** 2026-09-25 and again 2026-09-26, with a screenshot: after a disconnect and a
 reconnect without closing the client, the terrain draws near-white with soft green/brown gradients
@@ -692,14 +692,16 @@ are textured. The tester plays a tagged Windows release; which tag is not known 
 
 **Next, in order.**
 
-1. **The fix** (not written in round 579): make the base independent of RID order -- e.g. its
-   material at `render_priority` -1 in `MapmTerrainBuilder._surface_material` (what `base_first`
-   measured), or no base under quads an opaque pass covers. Verify with the same Login-route
-   reconnect run (`qa_shot.sh --server --region '97\168.m' --radius 1 --at 80,1020 --yaw 270
-   --pitch -20 --dist 45 --reconnect 200 --reconnect-via-login` with
-   `SRREVAMP_QA_COMMANDS=/groundprobe`): entry 2's baseline must lose its flat 161 grey and its
-   `fresh_materials` must stop turning the view flat grey, while `order` may stay inverted without
-   effect.
+1. ~~**The fix**~~ **Done (round 580, "The terrain's flat base is always drawn before its
+   textured passes").** `MapmTerrainBuilder` gives every base material `render_priority` -1
+   (`BASE_RENDER_PRIORITY`) against the passes' 0; priority is the most significant field of
+   Godot 4.2.2's opaque sort key in GL Compatibility and (by reading) Forward+, so the RID order no
+   longer matters. Measured on the same Login-route reconnect run: entry 2's whole-frame baseline
+   0.032/36 (pre-fix 0.079/161), `tint` magenta 0.000 (0.049), `fresh_materials` 0.002/0.032/36
+   (0.416/0.430/161) with the inversion still present (8 of 9 regions). `/groundprobe` now has
+   `unfix_inverted` / `unfix_inverted_tint`, which undo the fix on purpose (bases at 0, each base's
+   RID above its passes'): on the box they flatten the view (0.496/0.431/161, magenta 0.448), so a
+   tester's file shows whether the mechanism flattens THEIR ground and that the fix holds there.
 2. **Decide the renderer.** Changing the `#` comments in `project.godot` to `;` switches every
    player to GL Compatibility, what the 2026-08-26 decision meant; it also changes what they see.
    The other two settings come with it.

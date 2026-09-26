@@ -74,6 +74,7 @@ func _initialize() -> void:
 	_test_the_full_sequence_puts_everything_back(P)
 	_test_a_stop_half_way_puts_the_step_back(P)
 	_test_fresh_textures_skips_a_pass_cleared_meanwhile(P)
+	_test_sorted_by_rid(P)
 	for path in _files:
 		if FileAccess.file_exists(path):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
@@ -91,7 +92,7 @@ func _test_the_full_sequence_puts_everything_back(P: GDScript) -> void:
 	_check(probe.call("is_running"), "a full run in the tree arms the A/B steps")
 	var names := _step_names(probe)
 	_check(names == ["after_readback", "sun_off", "tint", "base_first", "opaque_as_alpha", "fresh_materials",
-			"duplicates_hidden", "fresh_textures", "retex", "remesh", "final"],
+			"unfix_inverted", "unfix_inverted_tint", "duplicates_hidden", "fresh_textures", "retex", "remesh", "final"],
 		"the steps, duplicates_hidden included when two groups cover the spot (got %s)" % str(names))
 	_check(chat.size() == 2 and chat[1].contains("until the 'done' line") and not chat[1].contains("second"),
 		"the chat asks the player to hold still until the done line, with no time promised (got %s)" % str(chat))
@@ -120,6 +121,47 @@ func _test_the_full_sequence_puts_everything_back(P: GDScript) -> void:
 	_check(_step_to(probe, "fresh_materials", "measure") and patch_a.get_surface_override_material(0) != null
 			and patch_a.get_surface_override_material(1) != null and patch_a.get_surface_override_material(2) == null,
 		"fresh_materials puts copies on the base and the opaque pass as surface overrides, not on the overlay")
+	var fresh_note := String((probe.get("_saved") as Dictionary).get("note", ""))
+	_check(fresh_note.begins_with("with the fix: 2 of 2 regions draw their base first by render priority")
+			and (patch_a.get_surface_override_material(0) as Material).render_priority == -1,
+		"on the fixed build fresh_materials says it runs with the fix, and the base's copy keeps priority -1 (note: %s)" % fresh_note)
+	# The fix undone on purpose: copies on every base and opaque pass, the
+	# base's at the pre-fix priority 0, the passes' at theirs, the overlay
+	# and the originals untouched. (The headless renderer allocates no
+	# material RIDs, so the inverted RID order is held by sorted_by_rid's
+	# own check below and measured live, not here.)
+	var unfix_ok := _step_to(probe, "unfix_inverted", "measure")
+	var wrong := PackedStringArray()
+	for patch in [patch_a, patch_b]:
+		var mesh: Mesh = patch.mesh
+		var ob := mesh.surface_get_material(0) as BaseMaterial3D
+		var oo := mesh.surface_get_material(1) as BaseMaterial3D
+		var cb := patch.get_surface_override_material(0) as BaseMaterial3D
+		var co := patch.get_surface_override_material(1) as BaseMaterial3D
+		if cb == null or co == null or cb == ob or co == oo:
+			wrong.append("%s: no copies" % patch.get_parent().name)
+			continue
+		if cb.render_priority != 0 or co.render_priority != 0:
+			wrong.append("priorities %d/%d" % [cb.render_priority, co.render_priority])
+		if co.albedo_texture != tex7 or cb.albedo_texture != null:
+			wrong.append("textures")
+		if cb.shading_mode != ob.shading_mode or cb.ao_texture != ob.ao_texture or cb.vertex_color_use_as_albedo != ob.vertex_color_use_as_albedo:
+			wrong.append("base settings")
+		if int(cb.get_meta("terrain_texture_key", -2)) != -1 or int(co.get_meta("terrain_texture_key", -2)) != 7:
+			wrong.append("metadata %s/%s" % [str(cb.get_meta("terrain_texture_key", -2)), str(co.get_meta("terrain_texture_key", -2))])
+		if patch.get_surface_override_material(2) != null:
+			wrong.append("overlay overridden")
+	var copies_ok := wrong.is_empty()
+	var unfix_note := String((probe.get("_saved") as Dictionary).get("note", ""))
+	_check(unfix_ok and copies_ok and base.render_priority == -1 and unfix_note.begins_with("with the fix: 2 of 2"),
+		"unfix_inverted draws every base and opaque pass from a copy, the base's at the pre-fix priority 0, and leaves the originals and the overlay alone (wrong: %s; base %d; note: %s)" % [", ".join(wrong), base.render_priority, unfix_note])
+	var tint_ok := _step_to(probe, "unfix_inverted_tint", "measure")
+	var cbt := patch_b.get_surface_override_material(0) as BaseMaterial3D
+	var cot := patch_b.get_surface_override_material(1) as BaseMaterial3D
+	_check(tint_ok and cbt != null and cot != null and cbt.albedo_color == Color(1, 0, 1, 1) and cbt.render_priority == 0
+			and cot.albedo_color == Color(1, 0, 0, 1) and (b[2] as BaseMaterial3D).albedo_color.b == 1.0
+			and (b[2] as BaseMaterial3D).albedo_color.r == 0.0 and opaque.albedo_color != Color(1, 0, 0, 1),
+		"unfix_inverted_tint tints the copies (base magenta, pass red) and the overlays blue, not the originals")
 	_check(_step_to(probe, "duplicates_hidden", "measure") and groups[0].visible and not groups[1].visible,
 		"duplicates_hidden hides the second group covering the spot")
 	_check(_step_to(probe, "fresh_textures", "measure") and opaque.albedo_texture != null and opaque.albedo_texture != tex7
@@ -146,13 +188,20 @@ func _test_the_full_sequence_puts_everything_back(P: GDScript) -> void:
 ## and the run stops with a line saying where.
 func _test_a_stop_half_way_puts_the_step_back(P: GDScript) -> void:
 	for cut in [["sun_off", "measure"], ["tint", "measure"], ["base_first", "measure"], ["opaque_as_alpha", "measure"],
-			["fresh_materials", "measure"], ["duplicates_hidden", "measure"], ["fresh_textures", "measure"],
+			["fresh_materials", "measure"], ["unfix_inverted", "measure"], ["unfix_inverted_tint", "measure"],
+			["duplicates_hidden", "measure"], ["fresh_textures", "measure"],
 			["retex", "mid"], ["remesh", "mid"]]:
 		var w := _make_world()
 		var groups := _groups(w)
+		var name: String = cut[0]
+		if name == "base_first":
+			# The fixed builder's bases are at -1 already, where base_first
+			# puts them; as a pre-fix build's (0) the step changes them, and
+			# its restore is what is tested.
+			for group in groups:
+				(_passes(group)[0] as Material).render_priority = 0
 		var before := _snapshot(w, groups)
 		var probe := _start(P, w)
-		var name: String = cut[0]
 		var reached := _step_to(probe, name, cut[1])
 		_check(reached and not _diff(before, _snapshot(w, groups)).is_empty(),
 			"stop test: `%s` is in effect when the terrain leaves" % name)
@@ -166,6 +215,15 @@ func _test_a_stop_half_way_puts_the_step_back(P: GDScript) -> void:
 		_files.append(String(probe.get("_file_path")))
 		(groups[0] as Node).free()
 		w.free()
+
+## unfix_inverted gives each region's base the blank with the HIGHEST RID
+## index and its passes the lower ones, whatever order the allocator handed
+## them out in: sorted_by_rid, fed indices out of order (the headless
+## renderer's materials have no RIDs to read).
+func _test_sorted_by_rid(P: GDScript) -> void:
+	var idx := {"a": 79, "b": 14, "c": 147, "d": 15}
+	var out: Array = P.call("sorted_by_rid", ["a", "b", "c", "d"], func(k) -> int: return int(idx[k]))
+	_check(out == ["b", "d", "a", "c"], "sorted_by_rid orders by RID index, lowest first, so the last (the base's) is the highest (got %s)" % str(out))
 
 ## A pass whose texture something else cleared after the probe listed it is
 ## skipped by fresh_textures (no error), and left cleared by its restore.

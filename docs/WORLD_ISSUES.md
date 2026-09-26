@@ -7083,6 +7083,26 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-eightieth round: the terrain's flat base is always drawn before its textured passes, so a reconnect no longer turns the ground flat
+
+Round 579 measured the mechanism: after a reconnect the new world's terrain materials take the
+freed RID slots last-freed-first, and in Godot 4.2.2 the material RID's index decides the draw
+order of the coplanar base and passes. So the flat base-grey base could land above its textured
+passes. `MapmTerrainBuilder` now gives every region's base material `render_priority` -1
+(`BASE_RENDER_PRIORITY`) against the passes' 0. Priority is the most significant field of the
+opaque sort key: read in GLES3 and in Forward+, and run only under GL Compatibility. So the base
+draws first whatever the RID order. The transparent overlays are unchanged. The full record is
+`docs/RE_COMPLETION.md`'s round 580.
+
+- **Measured on the box**, on round 579's Login-route reconnect at 97/168 local (80, 1020). Entry
+  2's baseline reads 0.032/36, where it read 0.079/161 before the fix. `tint` turns 0.000 magenta,
+  against 0.049 before. `fresh_materials` reads 0.002/0.032/36, against 0.416/0.430/161, with the
+  RID inversion still present in 8 of 9 regions.
+- `/groundprobe` reports the fix and can undo it on purpose. `unfix_inverted` and
+  `unfix_inverted_tint` redraw every region with the base after its passes at the old priority, and
+  then put everything back. On the box they flatten the view (0.496/0.431/161), so a tester's file
+  shows whether the mechanism flattens their ground and whether the fix holds there.
+
 ## Five-hundred-and-seventy-ninth round: a player-runnable `/groundprobe` for the white ground after a reconnect -- two measured findings, no fix
 
 The tester saw the white ground after a disconnect and reconnect in one process again on

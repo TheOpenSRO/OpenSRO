@@ -219,6 +219,53 @@ func _test_surfaces_path() -> void:
 	_check(MapmTerrainBuilder.build_full_region_arrays(MapmReader.ParsedRegion.new()).is_empty(),
 		"build_full_region_arrays rejects a region without a real 6x6 block grid")
 
+## Round 580, the white ground after a reconnect: the flat base and the
+## textured opaque passes are coplanar, and Godot's opaque sort puts a lower
+## render priority first before it looks at the material's RID index
+## (MapmTerrainBuilder.BASE_RENDER_PRIORITY's comment has the 4.2.2 source).
+## So in every mesh the builder makes, the base's priority must be strictly
+## below every opaque pass's -- the textured ones and the flat -1 fallback
+## pass -- and the overlays keep the default. Before the fix every material
+## was at 0 and this failed. Read off the materials the builder makes: the
+## headless renderer is RasterizerDummy, which keeps no render list to sort
+## (its material storage allocates no RIDs), so the order itself is measured
+## live (/groundprobe's unfix_inverted), not here.
+func _test_base_drawn_first() -> void:
+	var region := _fixture_region()
+	var cases := _fixture_cases()
+	for n in range(cases.size()):
+		var c: Array = cases[n]
+		var mesh := MapmTerrainBuilder.build_full_region_mesh_textured(region, c[0], c[1], c[2], c[3], c[4])
+		var surfaces := MapmTerrainBuilder.build_full_region_surfaces_textured(region, c[0], c[2], c[3], c[4])
+		var from_data := MapmTerrainBuilder.surfaces_to_mesh(surfaces, c[0], c[1])
+		for pair in [["build_full_region_mesh_textured", mesh], ["surfaces_to_mesh", from_data]]:
+			var m: ArrayMesh = pair[1]
+			var base := m.surface_get_material(0) as StandardMaterial3D
+			var passes := 0
+			var overlays := 0
+			var lowest_pass := 1000
+			var overlay_default := true
+			for i in range(1, m.get_surface_count()):
+				var mat := m.surface_get_material(i) as StandardMaterial3D
+				if mat.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+					overlays += 1
+					overlay_default = overlay_default and mat.render_priority == 0
+				else:
+					passes += 1
+					lowest_pass = mini(lowest_pass, mat.render_priority)
+			_check(base != null and base.albedo_texture == null and passes > 0 and base.render_priority < lowest_pass,
+				"case %d, %s: the base's render priority (%d) is below every one of its %d opaque passes' (lowest %d)" % [
+					n, pair[0], base.render_priority if base != null else 999, passes, lowest_pass])
+			_check(overlays == 0 or overlay_default,
+				"case %d, %s: the %d overlays keep the default render priority 0" % [n, pair[0], overlays])
+	# The data carries which surface is the base: only surface 0.
+	var marked: Array[int] = []
+	var surfaces := MapmTerrainBuilder.build_full_region_surfaces_textured(region, cases[0][0])
+	for i in range(surfaces.size()):
+		if surfaces[i].get("base", false):
+			marked.append(i)
+	_check(marked == [0], "only surface 0 is marked as the base (got %s)" % str(marked))
+
 func _init() -> void:
 	# build_mesh: a single real block.
 	var region1 := MapmReader.ParsedRegion.new()
@@ -430,6 +477,7 @@ func _init() -> void:
 	_check(MapmTerrainBuilder.build_full_region_water_mesh(MapmReader.ParsedRegion.new(), tile_table) == null, "rejects a region without a real 6x6 block grid")
 
 	_test_surfaces_path()
+	_test_base_drawn_first()
 
 	if _failures == 0:
 		print("ALL PASS")

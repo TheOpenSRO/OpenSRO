@@ -40448,3 +40448,167 @@ the renderer.
 
 **Deploy note.** Tag-worthy: the tester needs a release with `/groundprobe` (and its entry line) to
 send the file. The fix for finding 2 and the decision on finding 1 are the next round's.
+
+## The terrain's flat base is always drawn before its textured passes, so a reconnect no longer turns the ground flat (round 580)
+
+Client only, tag-worthy (the user asked for one release carrying the probe, this fix, the renderer
+switch and the teleports). Nothing on the wire, no flag, no server change. What a player sees
+changes only where a re-entered world had drawn a region's flat base over its textured passes:
+that ground is textured again. Round 579's (/groundprobe) finding 2 (above) is the grounding; this
+round re-verified it and fixed it.
+
+**Why the order depended on RID indices, and why priority fixes it (read, Godot 4.2.2-stable
+source).**
+
+- GL Compatibility: `RasterizerSceneGLES3::render_scene` fills the opaque list, sorts it with
+  `sort_by_key`, and draws it with `glDepthFunc(GL_LEQUAL)` (also in the depth prepass), so of two
+  coplanar opaque surfaces the one drawn LAST shows (drivers/gles3/rasterizer_scene_gles3.cpp).
+  The key is `GeometryInstanceSurface::sort` (drivers/gles3/rasterizer_scene_gles3.h): two 64-bit
+  words, `sort_key1` = lod_index 8, surface_index 8, geometry_id 32, material_id_low 16 and
+  `sort_key2` = material_id_hi 16, shader_id 32, four flag bits, depth_layer 4, **priority 8**,
+  from the low bit up; `SortByKey` compares `sort_key2` first. So **priority is the most
+  significant field of the whole key**, above the shader id and every part of the material id.
+  `_geometry_instance_add_surface_with_material_chain` passes `p_mat_src.get_local_index()` as the
+  material id and `material_get_shader_id` as the shader id; `SceneMaterialData::set_render_priority`
+  stores `p_priority - RS::MATERIAL_RENDER_PRIORITY_MIN` (MIN = -128, servers/rendering_server.h),
+  so -1 is 127 and 0 is 128 in those 8 bits (drivers/gles3/storage/material_storage.cpp).
+- The base and the textured passes share one shader: BaseMaterial3D's `MaterialKey` (the key its
+  generated shaders are cached by, scene/resources/material.h) has no bit for whether a texture is
+  set, and the base and the passes differed only in the albedo texture. Their order was therefore
+  decided by the material RID's local index -- which RID_Alloc hands out last-freed-first after a
+  world is freed (core/templates/rid_owner.h; finding 2).
+- Forward+ (read, not run): the same union with the same field order and widths
+  (servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.h, `sort`), the same
+  `SortByKey` on `sort_key2` first, `sort_by_key` on the opaque list
+  (render_forward_clustered.cpp), the same `p_mat_src.get_local_index()` and
+  `sdcache->sort.priority = p_material->priority` (`_geometry_instance_add_surface_with_material`),
+  and the same `- RS::MATERIAL_RENDER_PRIORITY_MIN` offset
+  (scene_shader_forward_clustered.cpp, `MaterialData::set_render_priority`). The colour pass there
+  compares depth `LESS_OR_EQUAL`, or `EQUAL` after the depth prepass (scene_shader_forward_clustered.cpp),
+  so coplanar surfaces again resolve by draw order. **The fix holds under Forward+ by reading**;
+  nothing here ran Forward+.
+- The alpha overlays are transparent: they go to the alpha list, sorted by
+  `sort_by_reverse_depth_and_priority`, apart from the opaque list. They are untouched.
+
+**Change.**
+
+- `MapmTerrainBuilder`: `BASE_RENDER_PRIORITY` (-1) and `PASS_RENDER_PRIORITY` (0) with the
+  reading above. The base surface's data carries `"base": true` (surface 0 only);
+  `_surface_material` gives that material `render_priority` -1 and every other surface 0 (the
+  default), so every region's base sorts before every one of its opaque passes -- textured and the
+  flat `-1` fallback pass alike -- whatever the RID indices. The untextured fallback
+  (`arrays_to_mesh`, one surface) has no passes to order and is unchanged.
+- `GroundProbe` (the fix is reported and can be undone on demand):
+  - `unfix_inverted` (new A/B step): per loaded region, one blank material per base and opaque
+    pass is created FIRST, the blanks are sorted by RID index (`sorted_by_rid`), the passes take
+    the lowest and the base the highest, each blank becomes a copy of its surface's material
+    (`copy_material`) set as the surface override, and the base's copy is put back at the pre-fix
+    priority 0 (`PRE_FIX_BASE_PRIORITY`). Deterministic, unlike `fresh_materials`, whose
+    duplicates get whatever order the allocator's free list gives (0 of 197 passes below the base
+    in a first entry). Held 4 frames, measured, overrides put back; the originals are never touched.
+  - `unfix_inverted_tint`: the same, with the copies tinted as `tint` does (passes red, bases
+    magenta) and the overlays blue, so the file carries the magenta fraction with the fix undone.
+  - `fresh_materials`' description and note say whether the build runs with the fix (the
+    duplicates keep the bases' priority), `base_first` notes how many bases were at -1 already,
+    `order` and `regions` print the priorities and `base_first_by_priority`, and `summary` ends
+    with the tinted steps' whole-frame magenta and `with the fix: <n> of <m> regions draw their
+    base first by render priority`.
+  - `copy_material` copies every property, not only the `PROPERTY_USAGE_STORAGE` ones:
+    measured headless on the box, `duplicate()` of an unshaded StandardMaterial3D with
+    `ao_enabled` and an `ao_texture` returns one with neither (their usage is 0 on an unshaded
+    material). So `fresh_materials`' duplicates (unchanged, `duplicate()`) drop the terrain's
+    lightmap AO, which the unshaded terrain does not draw anyway; `unfix_inverted`'s copies keep
+    it, so they match the originals.
+  - The chat line and `docs/DEBUG_TOOLS.md` (both copies) now say the ground may flash "red,
+    magenta, blue or flat grey": `unfix_inverted` shows the flat grey on purpose.
+
+**Tests.**
+
+- `mapm_terrain_builder_test.gd` `_test_base_drawn_first` (headless): on both fixture cases, through
+  `build_full_region_mesh_textured` and `surfaces_to_mesh`, the base's priority is below every
+  opaque pass's and the overlays keep 0; only surface 0 is marked as the base. A sort-order check
+  through the engine is not possible headless: the headless renderer is the dummy one, whose
+  material storage allocates no RIDs (`material_allocate` returns `RID()`,
+  servers/rendering/dummy/storage/material_storage.h) and keeps no render list -- the order is
+  measured live (below).
+- `ground_probe_ab_test.gd`: the two new steps are armed in order; while `unfix_inverted` is held
+  every base and opaque pass in both regions draws a copy (base at priority 0, pass at 0, the
+  pass's texture, the base's shading, AO texture and tile-ID metadata copied), the overlay has no
+  override, the original base stays at -1 and the note says `with the fix: 2 of 2`; while
+  `unfix_inverted_tint` is held the copies are magenta/red and the overlays blue, the originals
+  not; `fresh_materials`' note begins `with the fix` and its base copy keeps -1; the full run and
+  the stop path (the terrain leaving the tree at each of the two new steps, as at the others) put
+  every material, override, colour and priority back; `sorted_by_rid` orders synthetic indices
+  (79, 14, 147, 15) lowest first. The `base_first` stop case now starts from bases at 0 (a
+  pre-fix mesh), since on the fixed builder the step changes nothing.
+- NEGATIVES (box, lane directories): the two suites against the pre-fix tree (2a3662e's `client/`
+  from `git archive`, only the two test files copied in): `mapm_terrain_builder_test` 5 FAILURES
+  (the four "base below every pass" checks, base 0 against lowest 0, and the base mark);
+  `ground_probe_ab_test` 12 FAILURES and a SCRIPT ERROR (`sorted_by_rid` absent). The A/B suite
+  against a leaking mutant (this tree with `_ab_unfix_restore` a no-op): 7 FAILURES -- the full
+  run's overrides and overlay colours, and the stop cases.
+- `remote_godot.sh check` in the lane: `checked 274 scripts and 5 scenes`, `ALL LOAD`; `tests`:
+  `ran 99 suite(s), 0 failing`. `cd server && go build ./... && go test -count=1 -p 1 ./...`: 58
+  packages ok.
+
+**Live (render box, GL Compatibility through VirtualGL; `qa_shot.sh --server --region '97\168.m'
+--radius 1 --at 80,1020 --yaw 270 --pitch -20 --dist 45 --reconnect 200 --reconnect-via-login`,
+`SRREVAMP_QA_COMMANDS=/groundprobe`; the reconnect left entry 1 at frame 215 in both runs).**
+
+| | pre-fix (2a3662e, run pf1) | fixed (this tree, run fx1) |
+|---|---|---|
+| entry 1 baseline, whole frame neutral / p50 | 0.032 / 36 | 0.032 / 36 |
+| entry 2 baseline, whole frame neutral / p50 | **0.079 / 161** | **0.032 / 36** |
+| entry 2 `order` (97/168) | base 79, 6 of 22 passes below it | base 79, 6 of 22 below it, `base_priority=-1 opaque_priorities=0..0 base_first_by_priority=true` |
+| entry 2 `tint`, whole-frame magenta | **0.049** | **0.000** |
+| entry 2 `fresh_materials` (changed / neutral / p50; box neutral, p50) | 0.416 / 0.430 / 161; box 0.949, 161 ("184 of 197" below the new base) | **0.002 / 0.032 / 36**; box 0.010, 66 ("159 of 197" below the new base, `with the fix: 9 of 9`) |
+| `unfix_inverted` entry 1 / entry 2 | (no such step) | **0.496 / 0.431 / 161** in both; box neutral 0.949, p50 161, bright_neutral 0.000; "RID index above all its passes' in 9 of 9 regions" |
+| `unfix_inverted_tint` magenta, entry 1 / entry 2 | (no such step) | 0.448 / 0.448 (box 0.981) |
+
+The fixed build's summary lines, as printed:
+
+    GROUNDPROBE 1.1 summary: whole frame, changed-vs-baseline/neutral/neutral_p50 per step: baseline neutral/p50=0.032/36 after_readback=0.000/0.032/36 sun_off=0.022/0.032/36 tint=0.539/0.032/36 base_first=0.002/0.032/36 opaque_as_alpha=0.002/0.032/36 fresh_materials=0.002/0.032/36 unfix_inverted=0.496/0.431/161 unfix_inverted_tint=0.541/0.032/36 fresh_textures=0.002/0.032/36 retex=0.002/0.032/36 remesh=0.002/0.032/36 final=0.002/0.032/36 | magenta: tint=0.000 unfix_inverted_tint=0.448 | with the fix: 9 of 9 regions draw their base first by render priority
+    GROUNDPROBE 2.2 summary: whole frame, changed-vs-baseline/neutral/neutral_p50 per step: baseline neutral/p50=0.032/36 after_readback=0.000/0.032/36 sun_off=0.022/0.032/36 tint=0.539/0.032/36 base_first=0.002/0.032/36 opaque_as_alpha=0.002/0.032/36 fresh_materials=0.002/0.032/36 unfix_inverted=0.496/0.431/161 unfix_inverted_tint=0.541/0.032/36 fresh_textures=0.002/0.032/36 retex=0.002/0.032/36 remesh=0.002/0.032/36 final=0.002/0.032/36 | magenta: tint=0.000 unfix_inverted_tint=0.448 | with the fix: 9 of 9 regions draw their base first by render priority
+
+The pre-fix build's:
+
+    GROUNDPROBE 1.1 summary: whole frame, changed-vs-baseline/neutral/neutral_p50 per step: baseline neutral/p50=0.032/36 after_readback=0.000/0.032/36 sun_off=0.022/0.032/36 tint=0.539/0.032/36 base_first=0.002/0.032/36 opaque_as_alpha=0.002/0.032/36 fresh_materials=0.002/0.032/36 fresh_textures=0.002/0.032/36 retex=0.003/0.032/36 remesh=0.003/0.032/36 final=0.003/0.032/36
+    GROUNDPROBE 2.2 summary: whole frame, changed-vs-baseline/neutral/neutral_p50 per step: baseline neutral/p50=0.079/161 after_readback=0.000/0.079/161 sun_off=0.022/0.078/161 tint=0.539/0.032/36 base_first=0.082/0.032/36 opaque_as_alpha=0.082/0.032/36 fresh_materials=0.416/0.430/161 fresh_textures=0.003/0.079/161 retex=0.003/0.079/161 remesh=0.003/0.078/161 final=0.003/0.079/161
+
+So on the fixed build the RID inversion is still there after the reconnect (entry 2: 8 of 9 regions,
+6 of 22 passes in 97/168 below the base) and no longer shows; new materials in the inverted order
+(`fresh_materials`, 159 of 197) leave the ground textured; and the fix undone on purpose
+(`unfix_inverted`) turns the box the same flat base grey the pre-fix `fresh_materials` did (box
+neutral 0.949, p50 161), in the first entry too, since it inverts the order itself. Both runs: 0
+`SCRIPT ERROR`, 0 empty frames (462 and 442 files). But fx1 had 833 engine `ERROR` lines against
+pf1's 9: 824 were `Cannot set material emission intensity when Physical Light Units disabled.`,
+206 copies (197 passes + 9 bases) x 2 steps x 2 entries, from `GroundProbe.copy_material` setting
+every property of a blank StandardMaterial3D (the review of this round found it). copy_material
+now sets only the properties whose value differs from the blank's, so a probe run no longer fills
+a tester's log and `/errors` with that line (re-checked headless after the change: the A/B suite's
+60 such lines are gone). The frames were deleted, the logs are
+`/var/tmp/rwhite/fx1.log` and `pf1.log`. The pre-fix run used the negatives' pre-fix tree, the
+committed round 579 plus the two test files, which the run does not load. fx1 ran this tree
+before the chat line's "flat grey" wording (the only change after it; the suites and `check` above
+ran on the final tree).
+
+**What a tester's `/groundprobe` on this build now says.** `summary` ends with `with the fix: n of
+m regions ...`; `unfix_inverted` shows whether the mechanism flattens the ground on their machine
+(flat, neutral at their renderer's base value, and magenta in `unfix_inverted_tint`) while
+`fresh_materials` shows the fix holding there. If their white is still there with `tint` turning it
+red, not magenta, it is not this mechanism (the H-white-sampler row of the table above).
+
+**Not done here.** The renderer switch (finding 1) is a separate commit. Whether the tester's white
+is this mechanism is still theirs to show. The brightness question (161 under GL Compatibility on
+the box against their 205-227) is unchanged.
+
+**Box note.** The first live run (fx1) was launched in the same ssh command as the idle check,
+which showed another lane's headless suite (`/opt/srrevamp-client-renderer`,
+`world3d_reentry_test.gd`) running; this run's `qa_shot.sh` `pkill` will have stopped that suite,
+and another lane's render (`/var/tmp/r577`) started beside it and ran alongside. The second run was
+launched only on an empty `pgrep`. A stale 22-hour-old `flock` pair from an older lane (pids
+1203110/1203113, `/var/tmp/r558/run.sh` wrapped in the default `godot-lock` flock, which
+`qa_shot.sh` then takes again) is deadlocked on the default lock and holds it; it was left alone.
+
+**Deploy note.** Tag-worthy with round 579 (the probe), the renderer switch and the teleports (one
+release).

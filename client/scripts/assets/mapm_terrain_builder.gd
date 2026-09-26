@@ -75,6 +75,38 @@ const TILE_SIZE := 20.0
 ## real ground variety.
 const UNKNOWN_TILE_COLOR := Color(0.5, 0.5, 0.5)
 
+## The flat base surface's render priority, and every opaque pass's (round
+## 580, the white ground after a reconnect). The base and the textured
+## opaque passes above it are coplanar and drawn at equal depth under
+## GL_LEQUAL (drivers/gles3/rasterizer_scene_gles3.cpp, render_scene's
+## opaque pass; 4.2.2-stable), so whichever the opaque list draws LAST is
+## what shows. Godot 4.2.2 sorts that list with sort_by_key on a two-word
+## key whose most significant field is the material's priority and whose
+## least significant material field is the material RID's local index
+## (drivers/gles3/rasterizer_scene_gles3.h, GeometryInstanceSurface::sort:
+## key2 = material_id_hi | shader_id | flags | depth_layer | priority from
+## the low bit up, key1's top 16 bits material_id_low; SortByKey compares
+## key2 first; _geometry_instance_add_surface_with_material fills it from
+## p_mat_src.get_local_index()) -- and the base and the passes share one
+## shader, since BaseMaterial3D's shader key has no bit for a texture being
+## set (scene/resources/material.h, MaterialKey). Left at the same priority,
+## the RID indices decide, and after a world is freed RID_Alloc hands its
+## free slots back last-freed-first (core/templates/rid_owner.h), which put
+## some regions' base after their passes: the flat grey ground measured on
+## the render box after a reconnect (docs/RE_COMPLETION.md, the /groundprobe
+## round). A lower priority puts every base before every pass whatever the
+## RID indices are. SceneMaterialData::set_render_priority stores
+## `priority - RS::MATERIAL_RENDER_PRIORITY_MIN` (-128) in the key's 8 bits
+## (drivers/gles3/storage/material_storage.cpp), so -1 sorts below 0.
+## Forward+ has the same key layout and the same offset
+## (servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.h,
+## the `sort` union; scene_shader_forward_clustered.cpp,
+## MaterialData::set_render_priority) -- read, not run. The alpha overlays
+## are in the transparent list, sorted by depth and priority apart from the
+## opaque one; they keep the default.
+const BASE_RENDER_PRIORITY := -1
+const PASS_RENDER_PRIORITY := 0
+
 ## Fallback vertex color -- see this file's top comment. This only matters
 ## when the real per-quad texture (resolved by the caller via a real
 ## Tile2D\*.ddj lookup -- see build_full_region_mesh_textured) isn't
@@ -167,7 +199,9 @@ static func build_full_region_mesh_textured(region: MapmReader.ParsedRegion, tex
 ##                 -1 for none (the flat base, and the pass of quads whose
 ##                 dominant ID did not resolve);
 ##   "blend"       whether the pass is an alpha-blended overlay;
-##   "unshaded"    whether the real lighting is baked into the vertex colour.
+##   "unshaded"    whether the real lighting is baked into the vertex colour;
+##   "base"        true on the flat base surface only (absent elsewhere),
+##                 whose material is drawn first (BASE_RENDER_PRIORITY).
 ## Only Arrays, packed arrays and Dictionaries -- no Mesh, Material or
 ## Texture, each of which owns a RenderingServer RID -- so World3D's
 ## WorkerThreadPool task (_terrain_prepare) builds it off the main thread and
@@ -188,7 +222,8 @@ static func build_full_region_surfaces_textured(region: MapmReader.ParsedRegion,
 ## The ArrayMesh of `surfaces` (build_full_region_surfaces_textured's
 ## output), one mesh surface per entry in order, each with the material
 ## the textured builder has always given it: the pass's texture
-## from texture_lookup (none for key -1), the vertex colour as albedo,
+## from texture_lookup (none for key -1), the base's lower render priority
+## (BASE_RENDER_PRIORITY, round 580), the vertex colour as albedo,
 ## unshaded when the light is baked, alpha-blended without depth writes for
 ## an overlay, and ao_texture (the real .t lightmap) on UV2 when there is
 ## one. Main thread only: the mesh and every material own RIDs.
@@ -217,6 +252,10 @@ static func _surface_material(surface: Dictionary, texture_lookup: Dictionary, a
 		else:
 			push_error("MapmTerrainBuilder: surface texture %d is not in the lookup" % key)
 	mat.vertex_color_use_as_albedo = true
+	# The base under every opaque pass in the opaque sort, whatever the
+	# materials' RID indices (BASE_RENDER_PRIORITY). The overlays are
+	# transparent and sorted apart; they keep the default, as do the passes.
+	mat.render_priority = BASE_RENDER_PRIORITY if surface.get("base", false) else PASS_RENDER_PRIORITY
 	if surface["unshaded"]:
 		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	if surface["blend"]:
@@ -682,7 +721,8 @@ static func _textured_surfaces_from_cells(cells: Array, row_count: int, col_coun
 	# The base's material: the vertex colour as albedo, and -- real lighting
 	# being already in the vertex colour, so the engine must not light it a
 	# second time -- unshaded when baked (_surface_material).
-	surfaces.append({"arrays": base_arrays, "texture_key": -1, "blend": false, "unshaded": bake_light})
+	# "base" marks it for its render priority (BASE_RENDER_PRIORITY).
+	surfaces.append({"arrays": base_arrays, "texture_key": -1, "blend": false, "unshaded": bake_light, "base": true})
 
 	# `buffers` holds each quad's own dominant real texture, drawn fully
 	# opaque so the ground is never see-through; `blend_buffers` holds every

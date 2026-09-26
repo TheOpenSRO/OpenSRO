@@ -45,6 +45,14 @@ class_name GroundProbe
 ##   the white is what tells the hypotheses apart (docs/RE_COMPLETION.md, the
 ##   round's table). The last two are not undone: they put back what was
 ##   there.
+## - since the fix (MapmTerrainBuilder.BASE_RENDER_PRIORITY, round 580: every
+##   base drawn before its passes by priority, not RID order), two more steps
+##   undo it on purpose -- `unfix_inverted` and `unfix_inverted_tint` redraw
+##   the terrain with new materials whose RID indices put each base AFTER its
+##   passes, the base at the pre-fix priority -- so a run on the fixed build
+##   still shows whether the mechanism flattens the ground on the player's
+##   own machine, while `fresh_materials` (the copies keep the fix) shows
+##   that the fix holds there.
 ##
 ## Every value is read from the running client; nothing here is a constant
 ## of the original game. FRAME_BOX and the pixel classes below are this
@@ -74,6 +82,9 @@ const REGION_SPAN := 1920.0
 const SETTLE_FRAMES := 4
 const RESTORE_FRAMES := 2
 const OBJECT_MATERIALS := 3
+## The base's render priority before round 580's fix: the Material default,
+## the same as every opaque pass's. `unfix_inverted` draws the bases at it.
+const PRE_FIX_BASE_PRIORITY := 0
 ## The picture statistics' box, as fractions of the viewport: 35% to 80% of
 ## the width and 62% to 92% of the height -- under the player at the default
 ## camera, clear of the underbar (bottom 3%) and of the chat window, which
@@ -485,7 +496,7 @@ func start(world: Node, entry: int, mode: String, focus: Vector3, context: Dicti
 		# Not a time: every step reads the whole frame back and walks it in
 		# GDScript, which grows with the screen (about 88k samples a step at
 		# 720p, 9x that at 4K), so the chat's "done" line is the signal.
-		chat.append("Running %d quick checks -- hold still until the 'done' line; the ground may flash red, magenta or blue." % _steps.size())
+		chat.append("Running %d quick checks -- hold still until the 'done' line; the ground may flash red, magenta, blue or flat grey." % _steps.size())
 	else:
 		chat.append("Saved to %s -- please send that file (or the log)." % ProjectSettings.globalize_path(_file_path))
 		_finish_quietly()
@@ -754,10 +765,14 @@ static func _vertex_fields(mesh: Mesh, i: int) -> String:
 ## the sort key, 4.2.2-stable, as the investigators read it); coplanar
 ## surfaces then resolve under GL_LEQUAL by draw order. So the base's index
 ## against the opaque passes' is printed, with no claim about the shader ids,
-## which a script cannot read.
+## which a script cannot read -- and, since round 580's fix, the priorities,
+## which come first: `base_first_by_priority=true` (the base's priority
+## below every opaque pass's) makes the RID order moot.
 func _probe_order() -> void:
 	var base := -1
+	var base_priority := 0
 	var opaque: Array[int] = []
+	var opaque_priorities: Array[int] = []
 	var overlay: Array[int] = []
 	for s in _surfaces:
 		var mat: Material = s["mat"]
@@ -767,18 +782,25 @@ func _probe_order() -> void:
 		match String(s["kind"]):
 			"base":
 				base = idx
+				base_priority = mat.render_priority
 			"opaque":
 				opaque.append(idx)
+				opaque_priorities.append(mat.render_priority)
+			"opaque_flat":
+				opaque_priorities.append(mat.render_priority)
 			"overlay":
 				overlay.append(idx)
 	var before := 0
 	for idx in opaque:
 		if base >= 0 and idx < base:
 			before += 1
-	_emit("order", "base_rid=%d opaque_rids=%s..%s overlay_rids=%s..%s opaque_below_base=%d of %d base_after_all_opaque=%s" % [
+	var by_priority: bool = base >= 0 and not opaque_priorities.is_empty() and base_priority < int(opaque_priorities.min())
+	_emit("order", "base_rid=%d opaque_rids=%s..%s overlay_rids=%s..%s opaque_below_base=%d of %d base_after_all_opaque=%s base_priority=%d opaque_priorities=%s..%s base_first_by_priority=%s" % [
 		base, str(opaque.min()) if not opaque.is_empty() else "-", str(opaque.max()) if not opaque.is_empty() else "-",
 		str(overlay.min()) if not overlay.is_empty() else "-", str(overlay.max()) if not overlay.is_empty() else "-",
-		before, opaque.size(), str(not opaque.is_empty() and before == opaque.size())])
+		before, opaque.size(), str(not opaque.is_empty() and before == opaque.size()), base_priority,
+		str(opaque_priorities.min()) if not opaque_priorities.is_empty() else "-",
+		str(opaque_priorities.max()) if not opaque_priorities.is_empty() else "-", str(by_priority)])
 
 ## One compact line per loaded region, no read-backs: whether the state the
 ## region under the player is in is everyone's.
@@ -794,6 +816,8 @@ func _probe_regions() -> void:
 		var zero_gl := 0
 		var base := -1
 		var below := 0
+		var base_priority := 0
+		var pass_priority := 128
 		var opaque_rids: Array[int] = []
 		for i in range(patch.mesh.get_surface_count()):
 			var mat := patch.mesh.surface_get_material(i) as BaseMaterial3D
@@ -804,8 +828,12 @@ func _probe_regions() -> void:
 			elif mat.albedo_texture != null:
 				opaque += 1
 				opaque_rids.append(_rid_index(mat.get_rid()))
+				pass_priority = mini(pass_priority, mat.render_priority)
 			elif i == 0:
 				base = _rid_index(mat.get_rid())
+				base_priority = mat.render_priority
+			else:
+				pass_priority = mini(pass_priority, mat.render_priority)
 			if mat.albedo_texture != null:
 				if _param_matches(mat):
 					matched += 1
@@ -815,9 +843,10 @@ func _probe_regions() -> void:
 			if base >= 0 and idx < base:
 				below += 1
 		var meta: Dictionary = group.get_meta("ground_probe", {})
-		_emit("regions", "%s: here=%s surfaces=%d opaque=%d overlays=%d param_match=%d/%d gl_zero=%d opaque_below_base=%d baked=%s commit=%s at_frame=%s resolved=%s/%s" % [
+		_emit("regions", "%s: here=%s surfaces=%d opaque=%d overlays=%d param_match=%d/%d gl_zero=%d opaque_below_base=%d base_first_by_priority=%s baked=%s commit=%s at_frame=%s resolved=%s/%s" % [
 			group.name, str(_covering.has(group)), patch.mesh.get_surface_count(), opaque, overlays, matched,
-			opaque + overlays, zero_gl, below, str(meta.get("baked", "?")), str(meta.get("commit", "?")),
+			opaque + overlays, zero_gl, below, str(base >= 0 and pass_priority < 128 and base_priority < pass_priority),
+			str(meta.get("baked", "?")), str(meta.get("commit", "?")),
 			str(meta.get("frame", "?")), str(meta.get("resolved", "?")), str(meta.get("ids", "?"))])
 
 ## The nearest OBJECT_MATERIALS scenery materials to the player, for contrast:
@@ -1077,12 +1106,16 @@ func _arm_steps() -> void:
 			"apply": _ab_sun_off, "restore": _ab_sun_restore},
 		{"name": "tint", "what": "every loaded region's terrain albedo_color: opaque textured passes red, bases magenta, overlays blue (white staying white = those surfaces ignore their material; magenta = a base drawn over the passes)",
 			"apply": _ab_tint, "restore": _ab_tint_restore},
-		{"name": "base_first", "what": "every region's base surface at render_priority -1, so it sorts before its opaque passes",
+		{"name": "base_first", "what": "every region's base surface at render_priority -1, so it sorts before its opaque passes (on a build with the fix they are there already)",
 			"apply": _ab_priority, "restore": _ab_priority_restore},
 		{"name": "opaque_as_alpha", "what": "every opaque textured pass switched to TRANSPARENCY_ALPHA (drawn in the alpha pass)",
 			"apply": _ab_alpha, "restore": _ab_alpha_restore},
-		{"name": "fresh_materials", "what": "every region's base and opaque passes drawn with duplicate StandardMaterial3Ds (surface overrides): new RenderingServer materials, new RID indices",
+		{"name": "fresh_materials", "what": "every region's base and opaque passes drawn with duplicate StandardMaterial3Ds (surface overrides): new RenderingServer materials, new RID indices; the copies keep the bases' render priority, so on a build with the fix this is the fix holding under new RID order",
 			"apply": _ab_newmat, "restore": _ab_newmat_restore},
+		{"name": "unfix_inverted", "what": "the fix undone on purpose: every region's base and opaque passes drawn with new materials whose RID indices put each base AFTER its passes, the base at the pre-fix render_priority %d (the mechanism on demand; flat ground here and not in fresh_materials = the fix is what keeps it textured)" % PRE_FIX_BASE_PRIORITY,
+			"apply": _ab_unfix, "restore": _ab_unfix_restore},
+		{"name": "unfix_inverted_tint", "what": "unfix_inverted again, tinted as `tint` does (opaque passes red, bases magenta, overlays blue): magenta = the base drawn over the passes",
+			"apply": _ab_unfix_tint, "restore": _ab_unfix_restore},
 	]
 	if _covering.size() > 1:
 		_steps.append({"name": "duplicates_hidden", "what": "every other terrain group covering this spot hidden",
@@ -1171,7 +1204,15 @@ func _finish() -> void:
 	if _baseline.get("ok", false):
 		var bfull: Dictionary = _baseline["full"]
 		base_text = "%.3f/%d" % [float(bfull["neutral"]), int(bfull["p50"])]
-	_emit("summary", "whole frame, changed-vs-baseline/neutral/neutral_p50 per step: baseline neutral/p50=%s %s" % [base_text, " ".join(parts)])
+	# The tinted steps' magenta (the bases' tint) over the whole frame: a base
+	# drawn over the passes shows as magenta there.
+	var magenta := PackedStringArray()
+	for r in _results:
+		var m: Dictionary = r[1]
+		if String(r[0]).contains("tint") and m.get("ok", false):
+			magenta.append("%s=%.3f" % [r[0], float((m["full"] as Dictionary)["magenta"])])
+	_emit("summary", "whole frame, changed-vs-baseline/neutral/neutral_p50 per step: baseline neutral/p50=%s %s | magenta: %s | %s" % [
+		base_text, " ".join(parts), " ".join(magenta) if not magenta.is_empty() else "-", _fix_state()])
 	_write_file()
 	var text := "Ground probe %d.%d done -- saved to %s. Please send that file (or /log opens the folder)." % [
 		_entry, _run, ProjectSettings.globalize_path(_file_path)]
@@ -1236,11 +1277,42 @@ func _ab_tint_restore() -> void:
 
 func _ab_priority() -> String:
 	var n := 0
+	var already := 0
 	for t in _materials_of(["base"]):
 		t["priority"] = (t["mat"] as Material).render_priority
+		if int(t["priority"]) == -1:
+			already += 1
 		(t["mat"] as Material).render_priority = -1
 		n += 1
-	return "%d bases" % n
+	return "%d bases, %d of them at -1 already" % [n, already]
+
+## Whether this build draws its bases first by priority (round 580's fix):
+## per loaded region, the base's render priority against its opaque
+## passes' (textured or flat). "with the fix" when every region's base is
+## below all of its passes, "WITHOUT the fix" when none is.
+func _fix_state() -> String:
+	var base := {}
+	var lowest := {}
+	for t in _targets:
+		if not is_instance_valid(t["patch"]):
+			continue
+		var key: int = (t["patch"] as Node).get_instance_id()
+		var p := (t["mat"] as Material).render_priority
+		match String(t["kind"]):
+			"base":
+				base[key] = p
+			"opaque", "opaque_flat":
+				lowest[key] = mini(int(lowest.get(key, p)), p)
+	var fixed := 0
+	var regions := 0
+	for key in base:
+		if not lowest.has(key):
+			continue
+		regions += 1
+		if int(base[key]) < int(lowest[key]):
+			fixed += 1
+	var verdict := "with the fix" if regions > 0 and fixed == regions else ("WITHOUT the fix" if fixed == 0 else "partly fixed")
+	return "%s: %d of %d regions draw their base first by render priority" % [verdict, fixed, regions]
 
 func _ab_priority_restore() -> void:
 	for t in _targets:
@@ -1289,7 +1361,117 @@ func _ab_newmat() -> String:
 			total += 1
 			if base_rid.has(key) and int(idx) < int(base_rid[key]):
 				below += 1
-	return "new materials: %d of %d opaque passes got an RID index below their region's new base" % [below, total]
+	return "%s; new materials: %d of %d opaque passes got an RID index below their region's new base" % [_fix_state(), below, total]
+
+## `mats` sorted by their RID's local index, lowest first (`index_of` maps a
+## material to its index; the default reads the RID). The order the opaque
+## sort draws same-priority, same-shader materials in.
+static func sorted_by_rid(mats: Array, index_of: Callable = Callable()) -> Array:
+	var f := index_of
+	if not f.is_valid():
+		f = func(m) -> int:
+			return _rid_index((m as Material).get_rid())
+	var out := mats.duplicate()
+	out.sort_custom(func(a, b) -> bool: return int(f.call(a)) < int(f.call(b)))
+	return out
+
+## Every property and metadata entry of `src` copied onto `dst`, a material
+## that already has its RID. Not only the PROPERTY_USAGE_STORAGE ones that
+## Resource.duplicate copies: on an unshaded StandardMaterial3D the ao_*
+## properties are listed with usage 0, and duplicate() drops the terrain's
+## lightmap AO (measured headless on the box: a duplicate of an unshaded
+## material with ao_enabled and an ao_texture has neither) -- which would
+## also give the copy a different shader from the original's.
+static func copy_material(src: Material, dst: Material) -> void:
+	var skip := PROPERTY_USAGE_CATEGORY | PROPERTY_USAGE_GROUP | PROPERTY_USAGE_SUBGROUP
+	for p in src.get_property_list():
+		if (int(p["usage"]) & skip) != 0:
+			continue
+		var name: String = p["name"]
+		if name == "script" or name == "resource_path":
+			continue
+		# Only what differs from the blank: setting a property to the value
+		# it already has is not free -- BaseMaterial3D rejects
+		# emission_intensity with an engine ERROR whenever physical light
+		# units are off (scene/resources/material.cpp, 4.2.2-stable), which
+		# put ~412 identical ERROR lines into every /groundprobe log and
+		# pushed real errors out of /errors and /copy.
+		var value = src.get(name)
+		if typeof(value) == typeof(dst.get(name)) and value == dst.get(name):
+			continue
+		dst.set(name, value)
+	for m in src.get_meta_list():
+		dst.set_meta(m, src.get_meta(m))
+
+## The fix undone, on purpose and deterministically: per region, one blank
+## material per base and opaque pass is created FIRST, the blanks sorted by
+## RID index, and each pass takes one of the lowest while the base takes the
+## highest -- so the base sorts after every pass whatever the allocator's
+## free list held (fresh_materials' duplicates get whatever order the free
+## list gives). Each blank becomes a copy of its surface's material, set as
+## the surface override; the base's copy is put back at the pre-fix
+## priority. The originals are not touched. `tinted` colours the copies as
+## `tint` does, and the overlays (originals, restored by _ab_tint_restore).
+func _ab_unfix_apply(tinted: bool) -> String:
+	var by_patch := {}
+	for t in _materials_of(["base", "opaque", "opaque_flat"]):
+		var key: int = (t["patch"] as Node).get_instance_id()
+		if not by_patch.has(key):
+			by_patch[key] = []
+		(by_patch[key] as Array).append(t)
+	var regions := 0
+	var inverted := 0
+	var passes := 0
+	for key in by_patch:
+		var rows: Array = by_patch[key]
+		var ordered: Array = []
+		var base_row = null
+		for t in rows:
+			if t["kind"] == "base":
+				base_row = t
+			else:
+				ordered.append(t)
+		if base_row != null:
+			ordered.append(base_row)
+		var blanks: Array = []
+		for t in ordered:
+			blanks.append(ClassDB.instantiate((t["mat"] as Material).get_class()))
+		blanks = sorted_by_rid(blanks)
+		var top_pass := -1
+		for n in range(ordered.size()):
+			var t: Dictionary = ordered[n]
+			var copy: Material = blanks[n]
+			copy_material(t["mat"], copy)
+			if t["kind"] == "base":
+				copy.render_priority = PRE_FIX_BASE_PRIORITY
+			else:
+				passes += 1
+				top_pass = maxi(top_pass, _rid_index(copy.get_rid()))
+			if tinted:
+				(copy as BaseMaterial3D).albedo_color = Color(1.0, 0.0, 0.0, 1.0) if t["kind"] == "opaque" else Color(1.0, 0.0, 1.0, 1.0)
+			var patch: MeshInstance3D = t["patch"]
+			t["override"] = patch.get_surface_override_material(t["i"])
+			patch.set_surface_override_material(t["i"], copy)
+		regions += 1
+		if base_row != null and _rid_index((base_row["patch"] as MeshInstance3D).get_surface_override_material(base_row["i"]).get_rid()) > top_pass:
+			inverted += 1
+	if tinted:
+		for t in _materials_of(["overlay"]):
+			var mat: BaseMaterial3D = t["mat"]
+			t["tint"] = mat.albedo_color
+			mat.albedo_color = Color(0.0, 0.0, 1.0, mat.albedo_color.a)
+	return "%s (the originals); these copies: %d passes in %d regions, the base's copy at render_priority %d with an RID index above all its passes' in %d of %d regions" % [
+		_fix_state(), passes, regions, PRE_FIX_BASE_PRIORITY, inverted, regions]
+
+func _ab_unfix() -> String:
+	return _ab_unfix_apply(false)
+
+func _ab_unfix_tint() -> String:
+	return _ab_unfix_apply(true)
+
+func _ab_unfix_restore() -> void:
+	_ab_newmat_restore()
+	_ab_tint_restore()
 
 func _ab_newmat_restore() -> void:
 	for t in _targets:

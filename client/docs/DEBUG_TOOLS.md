@@ -29,7 +29,7 @@ command always answers with the help line — it never stays silent.
 | `/cam free` / `/cam orbit` | Switches the camera between free-look and orbit. |
 | `/errors` | The last 20 script errors this session (also in `/copy` and the log). |
 | `/unstuck` | Returns you to the zone's entry point if you wedge into geometry. |
-| `/groundprobe` | If the ground looks **white** (or wrong in any other way), type this while you can see it and hold still until chat says it is done (a few seconds; longer on a large screen). It records how the ground is being drawn — your graphics card and driver, the ground textures and materials under you, and a few quick checks during which the ground may flash red, magenta or blue — and saves it all to a `groundprobe-….txt` file in the log folder (`/log` opens it). Send us that file. `/groundprobe quick` skips the checks. The F3 panel's **Ground probe** button does the same. |
+| `/groundprobe` | If the ground looks **white** (or wrong in any other way), type this while you can see it and hold still until chat says it is done (a few seconds; longer on a large screen). It records how the ground is being drawn — your graphics card and driver, the ground textures and materials under you, and a few quick checks during which the ground may flash red, magenta, blue or flat grey — and saves it all to a `groundprobe-….txt` file in the log folder (`/log` opens it). Send us that file. `/groundprobe quick` skips the checks. The F3 panel's **Ground probe** button does the same. |
 | `/w <name> <message>` | Whispers another player. |
 
 ## Sending a report
