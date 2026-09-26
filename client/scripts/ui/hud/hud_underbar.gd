@@ -124,9 +124,9 @@ const MENU_ACTIONS := {
 ## slot 4 'P', party match slot 23 'E', guild slot 6 'U', academy slot 30
 ## 'L', action slot 3 'A', **community slot 6 'U'** -- the guild's key --,
 ## quest slot 5 'Q', alchemy slot 24 'Y', auto potion slot 21 'T'). Here the
-## key is **this client's binding for the same window** (HudPanels.PANELS),
-## so the caption names the key that really opens it; the value is the panel
-## whose key it names. Items not listed keep their record's own text id.
+## key is read from this client's copy of that table (KeyMap.SLOTS), so the
+## caption names the key that really opens it; the value is the panel whose
+## key it names. Items not listed keep their record's own text id.
 const MENU_CAPTIONS := {
 	83: ["UIIT_STT_TOGGLE_CONTENTS_MENU_PARTY", "party"],
 	93: ["UIIT_STT_TOGGLE_CONTENTS_MENU_PARTYMATCH", "partymatch"],
@@ -163,8 +163,8 @@ const MAX_QUICKSLOT := 51
 ## by the option code and by `0x77c190`, which loads the player's saved
 ## options from Setting\SROptionSet.dat; this client has neither, so it stays
 ## 0. Command 0x58 also fires it
-## (0x780610's table at 0x780e90, entry 6); which key sends that command by
-## default is not traced here.
+## (0x780610's table at 0x780e90, entry 6); it is slot 11's command, and
+## slot 11's default key is X (KeyMap, round 608).
 const MOUSE_SLOT := 0
 const SLOTS_PER_PAGE := 10
 ## Pages 0..3 (`0x60a730` keeps its page in 0..3, wrapping), F1..F4 select
@@ -386,18 +386,15 @@ static func _with_key(format: String, panel_id: String) -> String:
 		return format
 	return format.replace("%s", key_name(panel_id))
 
-## The key this client binds to a panel, by name, from HudPanels.PANELS. The
-## script is loaded by path at call time: naming the class from here would
-## compile it (and its NetClient autoload reference) whenever this one is.
+## The key this client binds to a panel, by name, from the key table
+## (KeyMap's "panel:<id>" slot, round 608); "" for a panel with no key.
 static func key_name(panel_id: String) -> String:
-	var script := load("res://scripts/ui/hud/hud_panels.gd") as GDScript
-	if panel_id == "" or script == null:
+	if panel_id == "":
 		return ""
-	var panels: Dictionary = script.get_script_constant_map().get("PANELS", {})
-	var spec: Array = panels.get(panel_id, [])
-	if spec.size() < 3 or int(spec[2]) == 0:
+	var key := KeyMap.key_for("panel:" + panel_id)
+	if key == KEY_NONE:
 		return ""
-	return OS.get_keycode_string(int(spec[2]))
+	return OS.get_keycode_string(key)
 
 ## The file with the menu fitted to its captions, the way `0x60afe0` does it
 ## after the captions are set: the widest caption's overrun past its child
@@ -747,6 +744,12 @@ func activate_key(k: int) -> void:
 ## The middle button's slot, the "m" slot (0x60bb80(0) -> 0x60b850(0)).
 func activate_mouse_slot() -> void:
 	quickslot_activated.emit(MOUSE_SLOT)
+
+## Fires a quick slot by its index, 0..50 (0x60bb80 with k >= 11 takes k as
+## it is: Space+digit's 41..50, which no page shows).
+func activate_slot(slot_index: int) -> void:
+	if slot_index >= 0 and slot_index < MAX_QUICKSLOT:
+		quickslot_activated.emit(slot_index)
 
 ## How a quick slot is named to the player: "M" for the "m" slot, else its
 ## number key on its page (1..9, 10).

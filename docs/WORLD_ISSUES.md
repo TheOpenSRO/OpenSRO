@@ -7083,6 +7083,40 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-eighth round: the keyboard is the retail client's own key table -- G picks up, V hides, Z names the drops, Tab goes berserk, and no key walks
+
+The full record is `docs/RE_COMPLETION.md`'s entry of the same name (round 608).
+
+- **One table (read).** `client/scripts/ui/keymap.gd` is the retail default table, slot for slot
+  (`0x7778be`, 33 slots, each slot's command from `0x778310`, row labels from `0x5fb9e0`), plus the
+  keys `0x780610` answers outside it. `KeyInput` runs it; `HudPanels` opens the windows from it;
+  `HudUnderbar` names keys from it. World3D reads no key; `project.godot` has no `[input]`.
+- **The user's choices.** No keyboard movement (WASD and the arrows gone; S skill, A action, W pet
+  switch); Tab berserk, R whisper reply; F10 stays Hide UI (ours; retail's is the item mall); item
+  names hidden unless hovered or Z is held. K, O and G-as-guild removed; the debug tabs moved from
+  Tab to Ctrl+F2 (retail answers no Ctrl+F key).
+- **G (read):** the nearest CIItem strictly inside 50.0 (`0x9e18f0`, `.rdata 0xd851a0`), then this
+  client's pick path (a walk into the server's 10, then its request; retail's 0x7074 leaves the
+  approach to its server, inferred). **Z (read):** names within 300.0 (`0x9e15b0`, `0xd85224`).
+  **V (read):** `0x9d0560` hides other players, monsters, rides and all but the ridden COS; here the
+  other players and monsters; a hidden monster is not hovered or clicked (inferred from vslot 20).
+- **Also:** F9 cycles the camera views with the client's own lines (`0x780590`, `0x780420`);
+  Space+digit fires quick slots 41-50 (`0x780c11`, `0x60bb80`); X the "m" slot; H this client's Help
+  window in the `GDR_GAMEGUIDE` frame; PrintScreen on its release saves
+  `user://screenshots/SRO[date time]_NN.jpg` (name and `rand()%100` read at `0xba7240`, the folder
+  ours). Pets (Ins Home PgUp Del End PgDn W) and Ctrl+1..8 are bound, logged no-ops.
+- **Typing.** Nothing runs while a text line has the keyboard; V, Z and Space let go on release,
+  on a line taking the keyboard, and on focus loss. Keys are read before the GUI: a focused button
+  was measured to swallow Tab.
+- **Tests.** `keymap_test.gd` drives every binding through push_input (64 FAIL lines against
+  7c19536). Live (`/var/tmp/rkeymap2/live1-3.log`): Tab at 1 orb was "not full", and at a
+  seeded full gauge activated berserk; V hid 23 of 23 monsters and the nearest hovered as 'normal' (released: 'attack'); Z
+  showed 2 of 2 and 5 of 5 names, 0 after release; G picked four items in a row (3.9-8.1 away);
+  R opened `/w ttFriend `; F9 cycled; the screenshot is a 640x360 JPEG.
+- **Open:** a rebinding window (UI_TODO item 7), pets, the item mall, player targets (Ctrl+1..8),
+  retail's arrow walk (0x7023/0x7024, not in this server), G's client-side refusals, V and the
+  minimap, H's second step, R's retail line (`L"$"` joined by `0x5412c0`, unread).
+
 ## Six-hundred-and-seventh round: N sits down and stands up, and sitting regenerates HP and MP at the client's rate
 
 The full record is `docs/RE_COMPLETION.md`'s entry of the same name (round 607); the protocol page

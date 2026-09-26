@@ -618,6 +618,27 @@ the next cohesive piece after that.
 Panels, the window recipe, and the reference screenshots. The item below is the part of it that
 touches this file.
 
+### The keyboard — **the retail key table since round 608; what it cannot do yet**
+Every key is `client/scripts/ui/keymap.gd` (`KeyMap.SLOTS`, the 33 retail slots, plus
+`OTHER_KEYS`), run by `KeyInput` and, for the windows, `HudPanels`. No key walks the character
+(the user's choice of "original only": WASD is gone; S, A and W are skill, action and pet switch).
+Bound but doing nothing yet, each logging a `KEYMAP ... no-op` line:
+- **Pets and COS**: Ins (info), Home (ride), PgUp (unsummon), Del (follow), End (attack), PgDn
+  (AI), W (switch). Nothing in this client draws or commands a pet.
+- **Ctrl+1 / Ctrl+2..8**: select yourself / a party member (`0x77f230`). The target window shows
+  monsters only; no player can be targeted.
+- **Retail's arrow-key walk** (Up, and Left/Right with an unread turn-or-strafe) sends
+  `0x7023/0x7024/0x70c5` requests this server does not have; not bound.
+
+Also open: **F10 is ours** (Hide UI; retail's F10 is the item mall, which does not exist here);
+**the item mall** itself; the **rebinding window** ([UI_TODO.md](UI_TODO.md) item 7); **G's
+client-side refusals** that retail makes before sending (`+0x258 == -1`, client state 10, a UI
+lock) — the server makes the owner one; **V and the minimap** (whether retail's minimap hides
+what V hides was not read; ours keeps the dots); **H** toggles this client's Help window inside
+the authored `GDR_GAMEGUIDE` frame, but retail's second step (focusing the system window `0x62`
+when it hides the guide) is not built; **R**'s retail line is built from `L"$"` and the name by
+`0x5412c0`, whose join was not read, so ours opens the chat line with `/w <name> `.
+
 ### Retire the debug UI now the real HUD is in — **nearly done**
 Gone: the ten-tab `ActionTabs`, the corner labels, and (hundred-and-sixteenth round) the chat
 panel, which `HudChat` replaces with `ifchatviewer.txt`'s own window. Thirteen authored panels

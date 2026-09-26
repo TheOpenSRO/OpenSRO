@@ -333,8 +333,13 @@ func _run() -> void:
 ## Y from closed, and the window as its OnCreates leave it.
 func _check_first_state(panels: Control, panels_script: GDScript) -> void:
 	var spec: Array = (panels_script.get_script_constant_map().get("PANELS", {}) as Dictionary).get("alchemy", [])
-	_check(spec.size() == 3 and spec[0] == "res_ui\\nifenchantwnd.2dt" and spec[2] == KEY_Y,
-		"PANELS[\"alchemy\"] is res_ui\\nifenchantwnd.2dt on Y (got %s)" % [spec])
+	_check(spec.size() == 2 and spec[0] == "res_ui\\nifenchantwnd.2dt",
+		"PANELS[\"alchemy\"] is res_ui\\nifenchantwnd.2dt (got %s)" % [spec])
+	# The key is the key table's (KeyMap, round 608): slot 24, Y.
+	var keymap := load("res://scripts/ui/keymap.gd") as GDScript
+	var slot = keymap.call("slot_for_action", "panel:alchemy") if keymap != null else null
+	_check(slot != null and int(slot["slot"]) == 24 and int(slot["key"]) == KEY_Y,
+		"the key table's slot 24 opens the alchemy window on Y (got %s)" % [slot])
 	_key(panels, KEY_Y)
 	await process_frame
 	var window := _window(panels)

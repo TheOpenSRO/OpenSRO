@@ -136,8 +136,9 @@ func _initialize() -> void:
 	_check(not panels.is_empty() and not menu_actions.is_empty(),
 		"HudPanels.PANELS and HudUnderbar.MENU_ACTIONS are non-empty constants (got %d and %d)" % [panels.size(), menu_actions.size()])
 
-	# Every panel HudPanels offers must have a layout path, a title and a
-	# hotkey slot, or open() will fail on a malformed entry at runtime. The
+	# Every panel HudPanels offers must have a layout path and a title, or
+	# open() will fail on a malformed entry at runtime. (The keys left the
+	# spec for the key table in round 608; checked against it below.) The
 	# path is a `resinfo\*.txt` layout, or a `res_ui\*.2dt` window file for
 	# the windows built from those (the guild window's two views, GuildWindow).
 	# The `all N` summaries are gated: an empty map (the script did not
@@ -150,11 +151,28 @@ func _initialize() -> void:
 		var path := str(spec[0]) if spec.size() > 0 else ""
 		var layout_ok := path.begins_with("resinfo\\") and path.ends_with(".txt")
 		var twodt_ok := path.begins_with("res_ui\\") and path.ends_with(".2dt")
-		if spec.size() != 3 or not (layout_ok or twodt_ok):
+		if spec.size() != 2 or not (layout_ok or twodt_ok):
 			_check(false, "panel %s has a malformed spec" % panel_id)
 			bad_specs += 1
 	if not panels.is_empty() and bad_specs == 0:
 		_check(true, "all %d panel specs are well formed" % panels.size())
+
+	# Every window key in the key table (KeyMap's "panel:<id>" slots) must
+	# open a panel HudPanels has, or the key opens nothing.
+	var keymap := load("res://scripts/ui/keymap.gd") as GDScript
+	var slots: Array = keymap.get_script_constant_map().get("SLOTS", []) if keymap else []
+	var bad_keys := 0
+	var window_keys := 0
+	for slot in slots:
+		var action := str((slot as Dictionary).get("action", ""))
+		if action.begins_with("panel:"):
+			window_keys += 1
+			if not panels.has(action.substr(6)):
+				_check(false, "key slot %s opens %s, which is not a known panel" % [slot.get("slot"), action])
+				bad_keys += 1
+	_check(window_keys > 0, "the key table has window keys (got %d)" % window_keys)
+	if window_keys > 0 and bad_keys == 0:
+		_check(true, "all %d window keys open real panels" % window_keys)
 
 	# Every panel the underbar's buttons and menu items open must exist, or
 	# the bar has an entry that can never open anything.

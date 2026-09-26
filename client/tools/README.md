@@ -132,6 +132,13 @@ its window is not in `world_keys` (HudPanels consumed it); an unbound one like `
 text line has the keyboard. Round 605's runs (a line of chat, then the bar's buttons, then keys)
 are this, at 1280x720; `node:` finds a control by name, so it survives a layout that moves.
 
+Round 608 added `key:ctrl+1` (Ctrl held), `down:<key>` / `up:<key>` (hold V, Z or Space across
+ticks) and `whisper_from:<name>` (a whisper arrives, for R's reply), and a `keymap=[...]` field:
+what the key table ran (`KEYMAP <key> -> <action> <arg>: <result>`, also printed as it happens).
+With held V the log prints `QA KEYS: V held -- <n> of <m> monster bodies drawn; the nearest ...
+hovers as '<kind>'`. `SRREVAMP_QA_BERSERK=tab` presses Tab through the viewport once the gauge is
+full, instead of sending the request itself.
+
 ```
 SRREVAMP_QA_INPUT="300:click:220,647;310:type:hello;320:key:enter;330:click:946,689;340:key:k" \
   qa_shot.sh --server --region '97\168.m' --at 1002,1020 --radius 1 --frames 700 --out /var/tmp/input

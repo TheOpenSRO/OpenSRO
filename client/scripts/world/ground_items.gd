@@ -4,7 +4,8 @@ class_name GroundItems
 ## The items lying on the ground in the player's zone, as the server
 ## reports them (GroundItemsNet): one node per dropped stack, drawn with the
 ## item's own drop model out of Data.pk2 (itemdata's drop `.bsr`, the same
-## art the original shows on the ground), a name plate, and a click collider
+## art the original shows on the ground), a name plate that shows only on
+## hover or while Z is held (update_labels), and a click collider
 ## on GROUND_ITEM_COLLISION_LAYER so a left click can pick it out. Nothing
 ## here decides anything: what lies where, who may take it and whether a pick
 ## succeeded are all the server's answers; this only draws them.
@@ -68,6 +69,42 @@ func snapshot(ground_id: int) -> GroundItemsNet.Snapshot:
 func position_of(ground_id: int) -> Vector3:
 	var node: Node3D = _nodes.get(ground_id)
 	return node.global_position if node != null else Vector3.INF
+
+## The id of the item nearest to pos strictly closer than `radius`, in 3-D,
+## or -1: G's search (0x9e18f0 keeps an item when `50 > dist` and the
+## running minimum makes the nearest win, read; World3D passes the 50.0).
+func nearest_within(pos: Vector3, radius: float) -> int:
+	var best := -1
+	var best_d := radius
+	for id in _nodes:
+		var d: float = (_nodes[id] as Node3D).global_position.distance_to(pos)
+		if d < best_d:
+			best_d = d
+			best = id
+	return best
+
+## Which name plates show (round 608), and how many do. The retail client
+## draws a dropped item's name only in two cases (CIItem::vslot_010,
+## 0x9e15b0, read): the item's +0xf0 is set -- hovered or selected, inferred
+## -- or Z is held and the item is strictly closer than 300.0 to the player
+## (`+0x24c < 300.0`, the 3-D distance CICPlayer::vslot_005 writes every
+## frame). `near_radius` is that radius while Z is held, else negative;
+## `hovered` is the item under the mouse, or -1. Every other name is hidden:
+## until round 608 they all showed, always.
+func update_labels(player_pos: Vector3, near_radius: float, hovered: int) -> int:
+	var shown := 0
+	for id in _nodes:
+		var body := _nodes[id] as Node3D
+		var label := body.get_node_or_null("Label") as Node3D
+		if label == null:
+			continue
+		var on := int(id) == hovered \
+			or (near_radius > 0.0 and body.global_position.distance_to(player_pos) < near_radius)
+		if label.visible != on:
+			label.visible = on
+		if on:
+			shown += 1
+	return shown
 
 ## The id of the item nearest to pos, or -1.
 func nearest_id(pos: Vector3) -> int:
@@ -140,6 +177,8 @@ func spawn(snap: GroundItemsNet.Snapshot) -> void:
 	if _plate_for.is_valid() and text != "":
 		var label: Label3D = _plate_for.call(text, top)
 		label.name = "Label"
+		# Hidden until hovered or Z is held (update_labels).
+		label.visible = false
 		body.add_child(label)
 
 	var shape := BoxShape3D.new()

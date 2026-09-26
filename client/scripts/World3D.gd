@@ -277,10 +277,8 @@ const STEP_HEIGHT_FRACTION := 0.22
 
 ## Real Silkroad-style mouse controls: right-drag orbits the camera around
 ## the player (independent of the player's own facing), left-click on the
-## ground walks the player there, and the scroll wheel zooms. WASD/arrow
-## keys (the original, still-supported controls) immediately cancel any
-## active click-to-move target, matching the normal MMO convention that
-## manual movement input always overrides a pending destination.
+## ground walks the player there, and the scroll wheel zooms. No key moves
+## the character (round 608: the retail defaults walk by clicking; KeyMap).
 const CAMERA_ORBIT_SENSITIVITY := 0.3 # degrees of camera rotation per pixel of mouse drag
 ## Real, empirically-confirmed sign convention (2026-08-26, see
 ## docs/WORLD_ISSUES.md): SpringArm3D pushes its child to local *+Z*, not
@@ -1060,7 +1058,7 @@ var _bc_radius_by_code: Dictionary = {}
 var _pending_attack: Dictionary = {}
 ## The attack the approach walk last released, kept until its result: a
 ## refusal as too far away sends it walking again (_rewalk_after_refusal).
-## Emptied by anything the player does next -- another attack, a walk, WASD,
+## Emptied by anything the player does next -- another attack, a walk,
 ## typing, a zone change -- and by the result itself.
 var _released_attack: Dictionary = {}
 ## The animation-clock time of the player's last combat action (attack or cast).
@@ -1244,6 +1242,8 @@ func _ready() -> void:
 	send_button.pressed.connect(_on_send_pressed)
 	chat_input.text_submitted.connect(func(_text: String): _on_send_pressed())
 	hide_ui_button.pressed.connect(_toggle_ui_visibility)
+	# The keyboard: the retail key table (KeyMap) run by KeyInput (round 608).
+	_setup_keys()
 
 	NetClient.monster_list_result.connect(_on_monster_list_result)
 	NetClient.monster_moved.connect(_on_monster_moved)
@@ -1572,12 +1572,21 @@ func _try_initialize_pk2_ui() -> void:
 				_request_world_stats()
 			# QA: auto-activate berserk once the gauge fills, so a render shows
 			# the orbs light and the berserk glow. Never fires in real play.
+			# SRREVAMP_QA_BERSERK=tab presses Tab instead, through the viewport
+			# (push_input), so the run measures the key (round 608).
 			if OS.get_environment("SRREVAMP_QA_BERSERK") != "" and result.berserk_gauge >= 100 and not result.berserk_active \
 					and NetClient.current_character_name != "":
-				NetClient.berserk(NetClient.current_character_name))
+				if OS.get_environment("SRREVAMP_QA_BERSERK") == "tab":
+					if not _qa_berserk_tab_sent:
+						_qa_berserk_tab_sent = true
+						print("QA BERSERK: gauge %d -- pressing Tab" % result.berserk_gauge)
+						_qa_push_key("Tab")
+				else:
+					NetClient.berserk(NetClient.current_character_name))
 	# Berserk: the orbs fill on attack (above); an activation result updates
 	# them and, when it started a berserk, announces it.
 	NetClient.berserk_result.connect(func(activated: bool, gauge: int, active: bool) -> void:
+		print("World3D: berserk result: activated %s, gauge %d, active %s" % [str(activated), gauge, str(active)])
 		if _hud_player_info != null:
 			_hud_player_info.set_berserk(gauge, active)
 		if activated:
@@ -1645,7 +1654,7 @@ func _try_initialize_pk2_ui() -> void:
 		if _help_window != null:
 			_help_window.open()
 		else:
-			_log_system("Controls: click to move, drag to turn the camera, mouse wheel to zoom. Ctrl+F1 dev tools, Ctrl+F3 debug panel, I inventory, K skill, M map. Type /help for commands."))
+			_log_system("Controls: click to move, drag to turn the camera, mouse wheel to zoom. I inventory, S skill, M map, G pick up, hold V to hide others, hold Z for item names. Ctrl+F1 dev tools, Ctrl+F3 debug panel. Type /help for commands."))
 	_hud_panels.skill_assign_requested.connect(_on_skill_assign_requested)
 	_hud_panels.skill_drop_requested.connect(_on_skill_drop_requested)
 	_hud_panels.item_drop_requested.connect(_on_item_drop_requested)
@@ -1660,7 +1669,8 @@ func _try_initialize_pk2_ui() -> void:
 	# A server refusal the panels hear about (a mastery raise) goes to chat.
 	_hud_panels.system_notice.connect(_log_system)
 	# M: the world map's toggle, the same one the minimap's map button calls
-	# (HudPanels.WORLD_MAP_KEY has the retail binding's addresses).
+	# (KeyMap's slot 7 and HudPanels' world_map_toggle_requested have the
+	# retail binding's addresses).
 	_hud_panels.world_map_toggle_requested.connect(func() -> void:
 		if _hud_worldmap != null and is_instance_valid(_hud_worldmap):
 			_hud_worldmap.toggle())
@@ -2002,11 +2012,13 @@ func _minimap_npc_positions() -> Array:
 
 ## World positions of the live bodies in an id -> Node3D map (monsters,
 ## other players), skipping ones that are gone or hidden (a dead monster).
+## A body held V hides still counts: whether the retail minimap reads V's
+## flag was not read, so the minimap is left as it was.
 func _minimap_body_positions(bodies: Dictionary) -> Array:
 	var out: Array = []
 	for id in bodies:
 		var body: Node3D = bodies[id] as Node3D
-		if body != null and is_instance_valid(body) and body.visible:
+		if body != null and is_instance_valid(body) and (body.visible or _objects_hidden):
 			out.append(body.global_position)
 	return out
 
@@ -6672,23 +6684,6 @@ func _on_quickslot_activated(slot_index: int) -> void:
 	if item != null and NetClient.current_character_name != "":
 		NetClient.use_item(NetClient.current_character_name, int(item["slot"]))
 
-## The number keys 1..9 and 0 are the current page's ten quickslots, as in the
-## original. Only reached when no text field has focus (a focused LineEdit
-## consumes the key before it becomes unhandled input).
-func _quickslot_hotkey(event: InputEvent) -> bool:
-	if not (event is InputEventKey) or _hud_underbar == null:
-		return false
-	var key := event as InputEventKey
-	if not key.pressed or key.echo or key.ctrl_pressed or key.alt_pressed:
-		return false
-	if key.keycode >= KEY_1 and key.keycode <= KEY_9:
-		_hud_underbar.activate_key(key.keycode - KEY_1)
-		return true
-	if key.keycode == KEY_0:
-		_hud_underbar.activate_key(9)
-		return true
-	return false
-
 ## A bag item was dragged onto the quickslot bar: remember which bag slot it
 ## came from and show its icon there. Activating that quickslot uses the item.
 ##
@@ -6747,20 +6742,6 @@ func _qa_learn(spec: String) -> void:
 	NetClient.skill_state(who)
 	await NetClient.skill_state_result
 	print("QA LEARN: skill state re-read (skill 3 known: %s)" % str(_hud_panels != null and _hud_panels.is_skill_known(3)))
-
-## F1..F4 select quickslot pages 1..4. Plain presses only -- Ctrl+F1 and
-## Ctrl+F3 are the developer toggles, and an echo (key held) must not flip
-## pages repeatedly.
-func _hotbar_page_hotkey(event: InputEvent) -> bool:
-	if not (event is InputEventKey) or _hud_underbar == null:
-		return false
-	var key := event as InputEventKey
-	if not key.pressed or key.echo or key.ctrl_pressed or key.alt_pressed or key.shift_pressed:
-		return false
-	if key.keycode >= KEY_F1 and key.keycode <= KEY_F4:
-		_hud_underbar.set_page(key.keycode - KEY_F1 + 1)
-		return true
-	return false
 
 ## Casts a skill at the current target: for a skill that needs a target, walks
 ## into its reach first when the target is out of it (_attack_monster; a
@@ -8148,7 +8129,12 @@ func _teleport_local(lx: float, lz: float) -> bool:
 # pressing keys. Actions:
 #   key:<name>          press and release a key, as the OS delivers it:
 #                       keycode, physical_keycode, key_label and (letters,
-#                       digits) unicode; `key:shift+q` holds Shift
+#                       digits) unicode; `key:shift+q` holds Shift,
+#                       `key:ctrl+1` Ctrl
+#   down:<name>         press a key and keep it down (V, Z, Space; round 608)
+#   up:<name>           release it
+#   whisper_from:<name> a whisper from <name> arrives, as the server's would
+#                       (R's reply; the text is a synthetic "tt" line)
 #   click:<x>,<y>       left press and release at a viewport point
 #   rclick:<x>,<y>      the same with the right button
 #   node:<name>         left click the centre of the first visible Control of
@@ -8160,14 +8146,19 @@ func _teleport_local(lx: float, lz: float) -> bool:
 #                       button (text lines, lists, spin boxes) and its rect
 #   talk                open the NPC talk box (as a click on an NPC does)
 # The tick after each action prints
-#   QA INPUT <n> <action>: open=[...] focus=<node> world_keys=[...]
-# -- the windows on screen, the keyboard focus, and the keys that reached
-# World3D._unhandled_input (the last stage: every HUD handler ran first).
+#   QA INPUT <n> <action>: open=[...] focus=<node> world_keys=[...] keymap=[...]
+# -- the windows on screen, the keyboard focus, the keys that reached
+# World3D._unhandled_input (the last stage: every HUD handler ran first),
+# and what the key table ran (KeyInput.dispatched, since the action).
 var _qa_input_steps: Dictionary = {}
 var _qa_input_armed := false
 var _qa_input_report := ""
 var _qa_input_seen: Array = []
 var _qa_input_count := 0
+## SRREVAMP_QA_BERSERK=tab: Tab pushed once the gauge filled.
+var _qa_berserk_tab_sent := false
+## Where KeyInput.dispatched stood when the current action was pushed.
+var _qa_input_keymap_mark := 0
 
 func _qa_input_step() -> void:
 	var spec := OS.get_environment("SRREVAMP_QA_INPUT")
@@ -8180,13 +8171,15 @@ func _qa_input_step() -> void:
 			if at > 0 and String(part).substr(0, at).is_valid_int():
 				_qa_input_steps[int(String(part).substr(0, at))] = String(part).substr(at + 1)
 	if _qa_input_report != "":
-		print("QA INPUT %d %s: open=[%s] focus=%s world_keys=[%s]" % [_qa_input_count, _qa_input_report,
-			_qa_open_windows(), _qa_focus_name(), ",".join(_qa_input_seen)])
+		var ran: Array = _key_input.dispatched.slice(_qa_input_keymap_mark) if _key_input != null else []
+		print("QA INPUT %d %s: open=[%s] focus=%s world_keys=[%s] keymap=[%s]" % [_qa_input_count, _qa_input_report,
+			_qa_open_windows(), _qa_focus_name(), ",".join(_qa_input_seen), " | ".join(ran)])
 		_qa_input_report = ""
 	if not _qa_input_steps.has(_qa_tick):
 		return
 	var action: String = _qa_input_steps[_qa_tick]
 	_qa_input_seen.clear()
+	_qa_input_keymap_mark = _key_input.dispatched.size() if _key_input != null else 0
 	_qa_input_count += 1
 	_qa_input_report = action
 	var kind := action.get_slice(":", 0)
@@ -8194,6 +8187,15 @@ func _qa_input_step() -> void:
 	match kind:
 		"key":
 			_qa_push_key(arg)
+		"down":
+			_qa_push_key(arg, [true])
+		"up":
+			_qa_push_key(arg, [false])
+		"whisper_from":
+			var heard := ChatNet.Message.new()
+			heard.sender_name = arg
+			heard.message_text = "tt whisper"
+			_on_chat_whisper_message(heard)
 		"type":
 			for i in arg.length():
 				_qa_push_key(arg[i])
@@ -8239,22 +8241,26 @@ func _qa_input_step() -> void:
 		_:
 			_qa_input_report = action + " (unknown action)"
 
-func _qa_push_key(name: String) -> void:
+func _qa_push_key(name: String, phases: Array = [true, false]) -> void:
 	var shift := name.to_lower().begins_with("shift+")
-	var key_name := name.substr(6) if shift else name
+	var ctrl := name.to_lower().begins_with("ctrl+")
+	var key_name := name.substr(6) if shift else name.substr(5) if ctrl else name
 	var code := OS.find_keycode_from_string(key_name)
 	if code == KEY_NONE and key_name == " ":
 		code = KEY_SPACE
 	var uni := 0
 	if key_name.length() == 1:
 		uni = key_name.to_upper().unicode_at(0) if shift else key_name.to_lower().unicode_at(0)
-	for pressed in [true, false]:
+	if ctrl:
+		uni = 0
+	for pressed in phases:
 		var ev := InputEventKey.new()
 		ev.keycode = code
 		ev.physical_keycode = code
 		ev.key_label = code
 		ev.unicode = uni if pressed else 0
 		ev.shift_pressed = shift
+		ev.ctrl_pressed = ctrl
 		ev.pressed = pressed
 		get_viewport().push_input(ev)
 
@@ -8497,7 +8503,7 @@ func _qa_step() -> void:
 	# SRREVAMP_QA_HOTKEY="<tick>:<key>[,<tick>:<key>...]" presses a key at
 	# each tick through the viewport's real input path (push_input), as a
 	# player's key press arrives -- the number keys reach the underbar's quick
-	# slots through World3D._unhandled_input. Each press and each quick slot
+	# slots through KeyInput (the key table, KeyMap). Each press and each quick slot
 	# it fires is printed (_on_quickslot_activated), so a run measures the
 	# key -> quick slot -> cast chain from its log. QA only.
 	var qa_hotkey := OS.get_environment("SRREVAMP_QA_HOTKEY")
@@ -10390,10 +10396,11 @@ func _try_step_up(delta: float) -> void:
 		return # still blocked a step up -- a real wall, not a step
 	player.global_position += step
 
-## Whether the keys are going into a text line rather than to movement: the
+## Whether the keys are going into a text line rather than to the game: the
 ## chat's input, or any other focused LineEdit or TextEdit in the viewport
 ## (HudPanels.is_typing) -- the guild name prompt of round 521, the warehouse
-## gold dialog's amount. _physics_process skips the move keys while it holds.
+## gold dialog's amount. KeyInput runs no key while it holds, and
+## _physics_process stops a click walk.
 func _is_typing() -> bool:
 	if _hud_chat != null and _hud_chat.is_typing():
 		return true
@@ -10432,26 +10439,19 @@ func _physics_step(delta: float) -> void:
 	# ground items still waiting for ground share the frame's height budget
 	# with them (_step_heights).
 	_step_heights(delta)
+	# V and Z, while held (round 608).
+	_apply_key_holds()
 
-	var input_dir := Vector3.ZERO
-	# Real, dedicated move_* actions (WASD + arrow keys both bound, see
-	# project.godot) -- previously used Godot's built-in ui_left/ui_right/
-	# ui_up/ui_down actions, which only bind arrow keys by default. That
-	# silently left WASD non-functional in every real exported build (a
-	# real playtest bug, 2026-08-26 -- see docs/WORLD_ISSUES.md) despite
-	# every prior headless verification pass looking correct, since none
-	# of those ever pressed a real W/A/S/D key.
-	#
-	# Not read at all while the player is typing: `Input.get_axis` polls the
-	# raw key state, which a focused LineEdit does not affect, so every "w"
-	# in a chat message also walked the character. Only the input is
-	# suppressed -- gravity, region streaming and the position updates below
-	# all still run, which an early return here would have skipped. Typing
-	# is any focused text line, not only the chat's (_is_typing): the guild
-	# name prompt (round 521) walked the character on S, W and D until it
-	# was counted too.
+	# No key moves the character (round 608): the player walks by clicking,
+	# as the retail defaults have it. The WASD keys this client used to read
+	# (Input.get_axis on move_* actions) went with the retail key table,
+	# where S, A and W are the skill, action and pet-switch keys; retail's
+	# own arrow-key walk (KeyMap.NOT_BOUND) sends move packets this server
+	# does not have. The typing test below still stops a click walk, as it
+	# stopped the keys: a focused text line is the player typing (_is_typing;
+	# the guild name prompt of round 521).
 	var typing := _is_typing()
-	# Dead (round 548): no key, click or QA walk moves the body and no attack
+	# Dead (round 548): no click or QA walk moves the body and no attack
 	# walks into reach, as when typing -- the server neither stores nor relays
 	# a dead player's OpMove (the dead state's server half; retail's
 	# `GetLifeState() != 1` guards). Gravity, streaming and the position send
@@ -10464,30 +10464,11 @@ func _physics_step(delta: float) -> void:
 		_has_move_target = false
 		_pending_attack = {}
 		_released_attack = {}
-	else:
-		input_dir.x = Input.get_axis("move_left", "move_right")
-		input_dir.z = Input.get_axis("move_forward", "move_back")
-	var manual_input := input_dir.length() > 0.0
 	# Holding the left button walks the character toward the cursor, refreshed
-	# every frame so it follows the pointer while held. WASD still overrides.
-	if _left_steering and not locked and not manual_input:
+	# every frame so it follows the pointer while held.
+	if _left_steering and not locked:
 		_try_set_move_target(get_viewport().get_mouse_position())
-	if manual_input:
-		input_dir = input_dir.normalized()
-		_has_move_target = false # manual movement always cancels a pending click-to-move
-		_pending_pickup_id = -1
-		_pending_attack = {} # ...and an attack still walking into reach
-		_released_attack = {} # ...or one that would walk again on a refusal
-		# Relative to the camera, as in the original: W walks away from the
-		# camera whichever way it has been orbited, not along a world axis.
-		var yaw := deg_to_rad(camera_arm.rotation_degrees.y)
-		var forward := Vector3(0.0, 0.0, 1.0).rotated(Vector3.UP, yaw)
-		var right := forward.cross(Vector3.UP)
-		var dir := (forward * -input_dir.z + right * input_dir.x).normalized()
-		player.velocity.x = dir.x * _move_speed
-		player.velocity.z = dir.z * _move_speed
-		player.rotation.y = atan2(dir.x, dir.z)
-	elif _has_move_target:
+	if _has_move_target:
 		# An attack walking into reach: Tick_Attack's phase 1 tests the reach
 		# on every tick of the walk, so this does too, and the blow goes out
 		# on the first frame in reach -- stopped, the position flushed, the
@@ -10522,8 +10503,9 @@ func _physics_step(delta: float) -> void:
 			player.velocity.z = dir.z * _move_speed
 			player.rotation.y = atan2(dir.x, dir.z)
 	elif _qa_walk != "" and not _player_dead:
-		# SRREVAMP_QA_WALK: walk on a fixed world heading, as a held key
-		# would, so a render shows the run and the log the path.
+		# SRREVAMP_QA_WALK: walk on a fixed world heading (its own path; no
+		# key moves the character since round 608), so a render shows the
+		# run and the log the path.
 		var ang := deg_to_rad(float(_qa_walk))
 		player.velocity.x = sin(ang) * _move_speed
 		player.velocity.z = cos(ang) * _move_speed
@@ -10532,7 +10514,7 @@ func _physics_step(delta: float) -> void:
 		player.velocity.x = 0.0
 		player.velocity.z = 0.0
 
-	var is_moving := manual_input or _has_move_target or (_qa_walk != "" and not _player_dead)
+	var is_moving := _has_move_target or (_qa_walk != "" and not _player_dead)
 	if is_moving and (_sit.sitting or (_player_sit_clip != null and _player_one_shot == _player_sit_clip)):
 		_leave_sit_by_moving()
 	# The camera keeps whatever orbit it was given (see CAMERA_VIEW_FREE).
@@ -11035,6 +11017,8 @@ func _on_chat_message(message: ChatNet.Message) -> void:
 func _on_chat_whisper_message(message: ChatNet.Message) -> void:
 	if message == null:
 		return
+	# R replies to this name (KeyMap slot 20; _key_whisper_reply).
+	_last_whisperer = message.sender_name
 	if _hud_chat != null:
 		_hud_chat.add_whisper(message.sender_name, message.message_text)
 	chat_log.add_text("[%s whispers]: %s\n" % [message.sender_name, message.message_text])
@@ -11357,8 +11341,8 @@ func _place_player_at_world(x: float, z: float) -> void:
 	NetClient.move_to(player.position.x, player.position.y, player.position.z)
 
 ## The developer chrome that has no authored equivalent yet: the zone travel
-## box, Log Out, and the Hide UI button. Shown with Ctrl+F1 (_unhandled_input;
-## F1..F4 are the quickslot pages).
+## box, Log Out, and the Hide UI button. Shown with Ctrl+F1 (KeyMap, run by
+## KeyInput; F1..F4 are the quickslot pages).
 const DEV_UI_NODES := ["ZoneInput", "ChangeZoneButton", "DisconnectButton"]
 var _dev_ui_visible := true
 ## The Ctrl+F3 panel: build, server, position, entities, loading failures,
@@ -11379,8 +11363,8 @@ func _toggle_dev_ui() -> void:
 	_log_system("Developer tools %s" % ("shown" if _dev_ui_visible else "hidden"))
 
 ## Toggles the whole hideable UI panel (character/zone labels, chat, action
-## tabs, etc.) -- see HideUIButton's own doc-free scene node and the
-## "toggle_ui" (F10) input action wired in _unhandled_input. HideUIButton
+## tabs, etc.) -- see HideUIButton's own doc-free scene node and F10
+## (KeyMap's "hide_ui", ours: retail's F10 is the item mall). HideUIButton
 ## itself lives outside ui_control (a sibling under the UI CanvasLayer, not
 ## a child of Control) specifically so it stays clickable to toggle the UI
 ## back on even while everything else is hidden.
@@ -11399,7 +11383,8 @@ func _toggle_ui_visibility() -> void:
 	hide_ui_button.text = "Show UI" if not ui_control.visible else "Hide UI"
 
 ## Toggles the tabbed panel holding inventory, equipment, skills, shop, party
-## and the rest.
+## and the rest -- the developer's debug tabs, on Ctrl+F2 since round 608
+## (they were on Tab, which is retail's berserk key; KeyMap).
 ##
 ## It used to be a permanently visible strip spanning the full window width and
 ## 220 pixels tall, sitting directly above an equally full-width chat panel. A
@@ -11436,8 +11421,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	# still holds it. Godot does not release focus on a click on empty space,
 	# and since round 521 any focused line counts as typing (_is_typing), which
 	# stops movement; without this, a line left focused -- the chat's line,
-	# the debug panel's teleport field after Enter -- kept WASD and
-	# click-to-move dead until the line lost focus some other way.
+	# the debug panel's teleport field after Enter -- kept click-to-move (and,
+	# before round 608, the WASD keys) dead until the line lost focus some
+	# other way.
 	# The windows, the chat, the hotbar slots and (round 529) the player-info
 	# block, the minimap, the target window and the hotbar's body are STOP, so
 	# their clicks do not get here.
@@ -11445,29 +11431,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	if _qa_input_armed and event is InputEventKey and (event as InputEventKey).pressed:
 		_qa_input_seen.append(OS.get_keycode_string((event as InputEventKey).keycode))
 	take_focus_back(get_viewport(), event)
-	# A direct keycode rather than an input action: this is a developer
-	# toggle, not a control anyone plays with, and adding it to
-	# project.godot would put it in the exported key list.
-	# F1..F4 belong to the QUICKSLOT PAGES, as in the original -- the player
-	# asked for them by name (playtest 2026-09-20). The two developer toggles
-	# that used to sit on F1 and F3 have moved to Ctrl+F1 and Ctrl+F3; the
-	# debug panel in particular is how visual bugs get reported (Ctrl+F3 -> Copy),
-	# so it keeps a binding rather than losing one.
-	if event is InputEventKey and (event as InputEventKey).pressed \
-			and (event as InputEventKey).ctrl_pressed \
-			and (event as InputEventKey).keycode == KEY_F1:
-		_toggle_dev_ui()
-		get_viewport().set_input_as_handled()
-		return
-	if event is InputEventKey and (event as InputEventKey).pressed \
-			and (event as InputEventKey).ctrl_pressed \
-			and (event as InputEventKey).keycode == KEY_F3 and _debug_panel != null:
-		_debug_panel.toggle()
-		get_viewport().set_input_as_handled()
-		return
-	if _hotbar_page_hotkey(event):
-		get_viewport().set_input_as_handled()
-		return
+	# Keys are not read here: every key the game answers is in the key
+	# table (KeyMap, round 608) and is run by KeyInput, or by HudPanels for
+	# the windows' keys -- F1..F4, the number keys, Tab, N, F10 and the
+	# developer toggles all moved there.
 	# The middle mouse button fires the bar's "m" slot, the first slot on the
 	# hotbar: "the first slot thats on the hotbar you press it with 1, thats
 	# not right it should be middle mouse button" (playtest 2026-09-20). The
@@ -11487,34 +11454,6 @@ func _unhandled_input(event: InputEvent) -> void:
 		_hud_underbar.activate_mouse_slot()
 		get_viewport().set_input_as_handled()
 		return
-	# 1..9 and 0: the current page's quickslots.
-	if _quickslot_hotkey(event):
-		get_viewport().set_input_as_handled()
-		return
-	# R goes berserk: the server activates it only if the five-orb gauge is
-	# full (see the berserk_result handler), so a press when it isn't is a
-	# no-op with a note rather than an error.
-	if event is InputEventKey and (event as InputEventKey).pressed \
-			and (event as InputEventKey).keycode == KEY_R \
-			and NetClient.current_character_name != "" and NetClient.is_connected_to_server():
-		NetClient.berserk(NetClient.current_character_name)
-		get_viewport().set_input_as_handled()
-		return
-	# N sits down or stands up (round 607): the retail client's N slot, command
-	# 0x4e (docs/protocol/opcodes/motion.md). KEYMAP: a direct keycode, in this
-	# one place, for the keymap round to fold into its table.
-	if event is InputEventKey and (event as InputEventKey).pressed \
-			and not (event as InputEventKey).echo \
-			and (event as InputEventKey).keycode == KEY_N:
-		_request_sit_toggle()
-		get_viewport().set_input_as_handled()
-		return
-	if event.is_action_pressed("toggle_ui"):
-		_toggle_ui_visibility()
-
-	if event.is_action_pressed("toggle_panels"):
-		_toggle_action_panels()
-
 	# Motion that gets this far was not consumed by a window -- see _input.
 	if event is InputEventMouseMotion:
 		_hover_reached_world = true
@@ -11579,7 +11518,7 @@ static func orbit_motion_applies(event: InputEvent, orbiting: bool, camera_view:
 ## collision -- both now real, solid bodies, see ObjectLoader's own real
 ## collision fix) and, on a hit, sets that as the player's real destination
 ## for _physics_process to walk toward every subsequent frame until reached
-## or cancelled by manual WASD/arrow input.
+## or cancelled by another click, typing or death.
 ## A click on an NPC opens the authored talk window titled with its name,
 ## the way the original does. Ray-tests the NPC layer only (the colliders
 ## _npc_collider puts on NAVMESH_WALL_COLLISION_LAYER); returns true when it
@@ -11640,20 +11579,30 @@ func _input(event: InputEvent) -> void:
 
 func _settle_hover_cursor() -> void:
 	_hover_settle_queued = false
-	if _cursor_textures.is_empty():
-		return
 	var now := Time.get_ticks_msec()
 	if now - _cursor_last_check_ms < CURSOR_HOVER_INTERVAL_MS:
 		return
 	_cursor_last_check_ms = now
-	_apply_cursor(_hover_kind_at(_hover_pos) if _hover_reached_world else "normal")
+	# Also when the game's cursors are not there: the item under the mouse
+	# shows its name (_hovered_ground_item).
+	var kind := _hover_kind_at(_hover_pos) if _hover_reached_world else "normal"
+	if kind != "pickup":
+		_hovered_ground_item = -1
+	if not _cursor_textures.is_empty():
+		_apply_cursor(kind)
 
-## What the cursor should be over this screen point in the world: the same
-## two rays the click uses, in the same order -- a monster's click capsule
-## means attack, an NPC's means talk, anything else the arrow. Ground items
-## and gates plug in here when the world has them.
+## What the cursor should be over this screen point in the world: the rays
+## the click uses, in the same order -- a dropped item means pick up (and
+## notes the item, whose name then shows: _hovered_ground_item), a monster's
+## click capsule attack, an NPC's talk, anything else the arrow. Gates plug
+## in here when the world has them. A monster hidden by held V is passed
+## over, as its click is (inferred; _apply_key_holds).
 func _hover_kind_at(screen_pos: Vector2) -> String:
-	if _ray_hit_tagged(screen_pos, MONSTER_COLLISION_LAYER, "monster_id") != null:
+	var item := _ray_hit_tagged(screen_pos, GroundItems.GROUND_ITEM_COLLISION_LAYER, "ground_item_id")
+	if item != null:
+		_hovered_ground_item = int(item.get_meta("ground_item_id"))
+		return "pickup"
+	if not _objects_hidden and _ray_hit_tagged(screen_pos, MONSTER_COLLISION_LAYER, "monster_id") != null:
 		return "attack"
 	if _ray_hit_tagged(screen_pos, NPC_COLLISION_LAYER, "npc_name") != null:
 		return "talk"
@@ -12350,6 +12299,10 @@ func _monster_collider(height: float) -> StaticBody3D:
 func _try_attack_monster(screen_pos: Vector2) -> bool:
 	if not NetClient.is_connected_to_server():
 		return false
+	# Held V hides the monsters, and a hidden object is not picked
+	# (inferred; _apply_key_holds has the reading).
+	if _objects_hidden:
+		return false
 	var from := camera_3d.project_ray_origin(screen_pos)
 	var dir := camera_3d.project_ray_normal(screen_pos)
 	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 2000.0)
@@ -12559,7 +12512,14 @@ func _try_pick_up_item(screen_pos: Vector2) -> bool:
 		node = node.get_parent()
 	if node == null:
 		return false
-	var ground_id := int(node.get_meta("ground_item_id"))
+	_pick_up_ground_item(int(node.get_meta("ground_item_id")))
+	return true
+
+## Picks up a ground item: a click on it, or G (_key_pick_up_nearest). Asks
+## the server, which judges the 10-unit range and the ownership, and, so the
+## player ends up in reach if they were not, walks toward the item; the
+## arrival branch asks again.
+func _pick_up_ground_item(ground_id: int) -> void:
 	_pending_pickup_id = ground_id
 	# Only WALK if the drop is actually out of reach. Setting a move target
 	# unconditionally is what made a pick-up report its own success as a
@@ -12580,8 +12540,8 @@ func _try_pick_up_item(screen_pos: Vector2) -> bool:
 		# reach ends here, with its walk.
 		_drop_pending_attack()
 	_pickup_inflight = true
+	_pickup_inflight_since_ms = Time.get_ticks_msec()
 	NetClient.pick_up(NetClient.current_character_name, ground_id)
-	return true
 
 ## Reconciles _monster_bodies against live, the authoritative full monster
 ## list for the player's current zone (see _on_monster_list_result) --
@@ -13401,9 +13361,10 @@ func _play_other_hit(character_id: int) -> void:
 ## already out or the server is still in its transition (it would refuse), and
 ## not without a server. The body stops first: the server sits a walker down by
 ## stopping it (slot 0x4b0), and this server cannot stop the client.
-func _request_sit_toggle() -> void:
+func _request_sit_toggle() -> String:
 	if _player_dead or _is_typing() or not NetClient.is_connected_to_server() or _motion_locked():
-		return
+		return "not sent (%s)" % ("dead" if _player_dead else "typing" if _is_typing()
+			else "not connected" if not NetClient.is_connected_to_server() else "a motion change is in flight")
 	var was_sitting := _sit.sitting
 	_has_move_target = false
 	_left_steering = false
@@ -13419,11 +13380,275 @@ func _request_sit_toggle() -> void:
 	_sit.press(_player_anim_time)
 	print("SIT: N pressed -- sending 0x704f [04] (sitting=%s)" % str(was_sitting))
 	NetClient.request_motion(WorldNet.MOTION_SIT)
+	return "0x704f [04] sent (%s)" % ("standing up" if was_sitting else "sitting down")
 
 ## Whether movement input is held for the motion: a request in flight, or the
 ## server's transition after its answer.
 func _motion_locked() -> bool:
 	return _sit.locked(_player_anim_time)
+
+# --- The keyboard (round 608) ---------------------------------------------------
+#
+# KeyMap is the retail client's key table and KeyInput runs it; this is what
+# each action does in this world. The windows' keys are HudPanels'.
+
+## Runs the key table against this world (_setup_keys).
+var _key_input: KeyInput = null
+## The last player who whispered this one, for R's reply (KeyMap slot 20).
+var _last_whisperer := ""
+## Whether V's hide is on the bodies now (_apply_key_holds).
+var _objects_hidden := false
+## The ground item under the mouse, or -1. Its name shows: CIItem::vslot_010
+## (0x9e15b0) draws the name when the item's +0xf0 is set (read); that +0xf0
+## is "hovered or selected" is inferred.
+var _hovered_ground_item := -1
+## When G's pick went out (-1: never), for the pending gate in
+## _key_pick_up_nearest.
+var _pickup_inflight_since_ms := -1
+## 0x77c9b0 reports an action pending until the flag +0x4f8 is 20000 ms old
+## (0x77c9ce, read); G gives up while one is.
+const PICKUP_PENDING_MS := 20000
+## G takes the nearest CIItem strictly closer than this, in 3-D (0x9e18f0,
+## .rdata 0xd851a0 = 50.0, read).
+const PICKUP_SEARCH_RADIUS := 50.0
+## Z shows the names of dropped items strictly closer than this (0x9e15b0,
+## `+0x24c < 300.0`, .rdata 0xd85224, read).
+const ITEM_NAME_RADIUS := 300.0
+
+func _setup_keys() -> void:
+	if _key_input != null:
+		return
+	_key_input = KeyInput.new({
+		"is_typing": Callable(self, "_is_typing"),
+		"run": Callable(self, "_run_key_action"),
+		"held": Callable(self, "_on_key_held"),
+	})
+	_key_input.name = "KeyInput"
+	add_child(_key_input)
+
+## One key action (KeyMap), and a line for the log saying what it did.
+## The windows' keys never get here (HudPanels runs them).
+func _run_key_action(action: String, arg: int) -> String:
+	match action:
+		"berserk":
+			if NetClient.current_character_name == "" or not NetClient.is_connected_to_server():
+				return "not connected"
+			# The server judges the five-orb gauge (the berserk_result
+			# handler says "not full yet"); the retail client tests +0x886 >= 5
+			# itself first (0x778ac0, read).
+			NetClient.berserk(NetClient.current_character_name)
+			return "berserk requested"
+		"help":
+			if _help_window == null:
+				return "no help window"
+			if _help_window.visible:
+				_help_window.hide()
+				return "help closed"
+			_help_window.open()
+			return "help opened"
+		"mouse_slot":
+			if _hud_underbar == null:
+				return "no hotbar"
+			_hud_underbar.activate_mouse_slot()
+			return "quick slot 0 (m)"
+		"sit":
+			return _request_sit_toggle()
+		"pickup":
+			return _key_pick_up_nearest()
+		"whisper_reply":
+			return _key_whisper_reply()
+		"page":
+			if _hud_underbar == null:
+				return "no hotbar"
+			_hud_underbar.set_page(arg)
+			return "page F%d" % _hud_underbar.current_page()
+		"quickslot_key":
+			if _hud_underbar == null:
+				return "no hotbar"
+			_hud_underbar.activate_key(arg - 1)
+			return "quick slot %d" % _hud_underbar.slot_for_key(arg - 1)
+		"quickslot":
+			if _hud_underbar == null:
+				return "no hotbar"
+			_hud_underbar.activate_slot(arg)
+			return "quick slot %d" % arg
+		"camera_cycle":
+			return _key_cycle_camera()
+		"hide_ui":
+			_toggle_ui_visibility()
+			return "UI %s" % ("shown" if ui_control.visible else "hidden")
+		"screenshot":
+			return _save_screenshot()
+		"dev_tools":
+			_toggle_dev_ui()
+			return "developer tools %s" % ("shown" if _dev_ui_visible else "hidden")
+		"debug_tabs":
+			_toggle_action_panels()
+			return "debug tabs %s" % ("shown" if action_tabs.visible else "hidden")
+		"debug_panel":
+			if _debug_panel == null:
+				return "no debug panel"
+			_debug_panel.toggle()
+			return "debug panel %s" % ("shown" if _debug_panel.visible else "hidden")
+		"select_self":
+			# 0x77f230 -> 0x78f5f0(player+0xf8) (read). This client's target
+			# window shows monsters only.
+			return "no-op: selecting yourself is not built (the target window shows monsters only)"
+		"select_party":
+			# 0x77f230 -> the quick party window's member n-2 (read). No player
+			# can be targeted in this client.
+			return "no-op: selecting party member %d is not built (no player targets)" % arg
+		"pet_info", "pet_ride", "pet_unsummon", "pet_follow", "pet_attack", "pet_ai", "pet_switch":
+			return "no-op: no pet or COS in this client"
+	return "no-op: %s is not built" % action
+
+## A held key went down or up (V, Z): applied at once, and every frame after
+## (_apply_key_holds).
+func _on_key_held(_action: String, _down: bool) -> void:
+	_apply_key_holds()
+
+## V and Z, while held. V hides what KeyMap.hides_under_v names -- here the
+## other players and the monsters, the only such objects this client draws;
+## NPCs, the player and the dropped items stay. A hidden object also cannot
+## be clicked or hovered (_try_attack_monster, _hover_kind_at): 0x9d11c0,
+## vtable slot 20, returns 0 for it, and 0x9c7620 tests slot 20 before its
+## ray test (read), so that the pick skips it is **inferred**. The minimap
+## still shows them (whether retail's minimap reads the flag was not read).
+## Z shows the dropped items' names within ITEM_NAME_RADIUS; otherwise a
+## name shows only while the mouse is on the item (GroundItems.update_labels).
+func _apply_key_holds() -> void:
+	var hiding := _key_input != null and _key_input.is_held("hide_objects")
+	if hiding or hiding != _objects_hidden:
+		var players := _show_bodies(_other_bodies, not (hiding and KeyMap.hides_under_v("other_player")))
+		var monsters := _show_bodies(_monster_bodies, not (hiding and KeyMap.hides_under_v("monster")))
+		if hiding != _objects_hidden:
+			print("KEYS: V %s -- %d other player(s) and %d monster(s) %s; NPCs and dropped items kept" % [
+				"held" if hiding else "released", players, monsters, "hidden" if hiding else "shown"])
+	var changed := hiding != _objects_hidden
+	_objects_hidden = hiding
+	if changed and _qa_input_armed:
+		_qa_probe_hidden_pick()
+	if _ground_items != null and player != null:
+		var near := _key_input != null and _key_input.is_held("item_names")
+		var shown := _ground_items.update_labels(player.global_position,
+			ITEM_NAME_RADIUS if near else -1.0, _hovered_ground_item)
+		if near != _item_names_near:
+			_item_names_near = near
+			print("KEYS: Z %s -- %d of %d dropped item name(s) shown" % [
+				"held" if near else "released", shown, _ground_items.count()])
+
+var _item_names_near := false
+
+## QA (SRREVAMP_QA_INPUT): at each V change, what the hover ray makes of the
+## nearest monster's click capsule, and how many monster bodies are drawn --
+## the measurement that a hidden monster is neither drawn nor picked.
+func _qa_probe_hidden_pick() -> void:
+	var best: Node3D = null
+	var best_d := INF
+	for id in _monster_bodies:
+		var body := _monster_bodies[id] as Node3D
+		if body == null or not is_instance_valid(body):
+			continue
+		var d := body.global_position.distance_to(player.global_position)
+		if d < best_d:
+			best_d = d
+			best = body
+	var drawn := 0
+	for id in _monster_bodies:
+		var b := _monster_bodies[id] as Node3D
+		if b != null and is_instance_valid(b) and b.is_visible_in_tree():
+			drawn += 1
+	if best == null or camera_3d == null:
+		print("QA KEYS: V %s -- no monster to probe (%d drawn)" % ["held" if _objects_hidden else "released", drawn])
+		return
+	var shape := best.get_node_or_null("ClickBody/CollisionShape3D") as Node3D
+	var at := shape.global_position if shape != null else best.global_position
+	var kind := "behind the camera"
+	var screen := Vector2(-1, -1)
+	if not camera_3d.is_position_behind(at):
+		screen = camera_3d.unproject_position(at)
+		kind = _hover_kind_at(screen)
+	print("QA KEYS: V %s -- %d of %d monster bodies drawn; the nearest (#%s, %.1f away) at screen %s hovers as '%s'" % [
+		"held" if _objects_hidden else "released", drawn, _monster_bodies.size(),
+		str(best.get_meta("monster_id", "?")), best_d, screen, kind])
+
+## Shows or hides every body in an id -> Node3D map; returns how many there are.
+func _show_bodies(bodies: Dictionary, shown: bool) -> int:
+	var n := 0
+	for id in bodies:
+		var body := bodies[id] as Node3D
+		if body != null and is_instance_valid(body):
+			n += 1
+			if body.visible != shown:
+				body.visible = shown
+	return n
+
+## G: the nearest ground item strictly within PICKUP_SEARCH_RADIUS of the
+## player, in 3-D, as 0x9e18f0 searches (read); then this client's pick path
+## (_pick_up_ground_item): a walk into the server's 10-unit reach and its
+## pick request. Retail sends 0x7074 [01 02 01 <uid>] and leaves the approach
+## to its server (inferred: the G path has no movement code); this server
+## does not walk players. Retail's own refusals before sending (the item
+## already taken, +0x258 == -1; client state 10; a UI lock; an owner that is
+## neither the player nor a party member, 0x1812) are not all made here: the
+## server makes the owner one and answers with the same 0x1812 line.
+func _key_pick_up_nearest() -> String:
+	if _player_dead:
+		return "dead: nothing picked"
+	if _ground_items == null or not NetClient.is_connected_to_server():
+		return "no ground items"
+	if _pickup_inflight and _pickup_inflight_since_ms >= 0 \
+			and Time.get_ticks_msec() - _pickup_inflight_since_ms < PICKUP_PENDING_MS:
+		return "a pick is still pending"
+	var ground_id := _ground_items.nearest_within(player.global_position, PICKUP_SEARCH_RADIUS)
+	if ground_id < 0:
+		return "no item within %.0f" % PICKUP_SEARCH_RADIUS
+	var dist := _ground_items.position_of(ground_id).distance_to(player.global_position)
+	_pick_up_ground_item(ground_id)
+	return "ground item %d at %.1f: %s" % [ground_id, dist,
+		"walking to it" if _has_move_target else "picking it up"]
+
+## R: the chat line opened with a whisper to the last player who whispered
+## (KeyMap.reply_line has what was read). The line takes the keyboard so the
+## player can type (ours: whether 0x7ab470 moves the focus was not read).
+func _key_whisper_reply() -> String:
+	var line := KeyMap.reply_line(_last_whisperer, NetClient.current_character_name)
+	if line == "":
+		return "no whisper to reply to"
+	if _hud_chat == null or not _hud_chat.open_with(line):
+		return "no chat line"
+	return "chat line opened with '%s'" % line
+
+## F9: the next camera view (KeyMap.next_camera_view), announced with the
+## client's own line for it (0x780420 shows it through 0x7781b0(0, text);
+## that this is the chat's system line is inferred).
+func _key_cycle_camera() -> String:
+	var current := maxi(CAMERA_VIEWS.find(_camera_view), 0)
+	var next := KeyMap.next_camera_view(current)
+	set_camera_view(CAMERA_VIEWS[next])
+	var line := _ui_text_table.get_text(KeyMap.camera_view_string(next), "") if _ui_text_table != null else ""
+	if line != "":
+		_log_system(line)
+	return "camera view %s, announced '%s'" % [_camera_view, line]
+
+## PrintScreen: the frame as a JPEG in user://screenshots/ -- beside
+## user://logs/, under the file name and quality 0xba7240 uses (KeyMap).
+## Retail writes `ScreenShot\` in its install folder; this client writes into
+## its user folder, where the logs are (ours). The chat line is ours.
+func _save_screenshot() -> String:
+	var tex := get_viewport().get_texture()
+	var img: Image = tex.get_image() if tex != null else null
+	if img == null or img.is_empty():
+		return "no frame to save"
+	var dir := "user://screenshots"
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir))
+	var path := "%s/%s" % [dir, KeyMap.screenshot_name(Time.get_datetime_dict_from_system(), randi())]
+	var err := img.save_jpg(path, KeyMap.SCREENSHOT_JPEG_QUALITY / 100.0)
+	if err != OK:
+		return "screenshot not saved (error %d)" % err
+	var full := ProjectSettings.globalize_path(path)
+	_log_system("Screenshot saved: %s" % full)
+	return "saved %s" % full
 
 ## QA: how high the body's Bip01 Pelvis is above the player's feet, in world
 ## units -- a sitting pose measured rather than looked at. "-" without a body.

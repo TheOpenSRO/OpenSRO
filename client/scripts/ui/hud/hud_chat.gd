@@ -222,6 +222,17 @@ func focus_input() -> void:
 	if _input != null:
 		_input.grab_focus()
 
+## R's reply (round 608, KeyMap.reply_line): the input line opened with
+## `text` in it and the caret after it. False when there is no line to open
+## (not built, or the chat hidden), as Enter opens nothing then.
+func open_with(text: String) -> bool:
+	if _input == null or not _input.is_visible_in_tree():
+		return false
+	_input.text = text
+	_input.grab_focus()
+	_input.caret_column = text.length()
+	return true
+
 ## Enter with no text line holding the keyboard opens the chat line (round
 ## 606), read from the client's in-game key handler 0x78b660: a key the key
 ## table does not bind (0x778310 returns -1) that is 0x0d first offers the

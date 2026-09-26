@@ -24,42 +24,46 @@ const GuildWindow = preload("res://scripts/ui/hud/guild_window.gd")
 const QuestWindow = preload("res://scripts/ui/hud/quest_window.gd")
 const AlchemyWindow = preload("res://scripts/ui/hud/alchemy_window.gd")
 
-## key: the panel id used by the underbar's menu_action and by hotkeys.
-## Each entry is [layout path, window title, hotkey action name or ""].
+## key: the panel id used by the underbar's menu_action and by the keys.
+## Each entry is [layout path, window title].
+##
+## **The keys are not here**: they are the retail client's key table,
+## KeyMap.SLOTS (round 608), whose "panel:<id>" slots name these ids --
+## C character, I inventory, S skill, A action, P party, Q quest, U guild,
+## T auto potion, E party matching, Y alchemy, L academy. Equipment has no
+## key, as in retail (it is the pane beside the bag); nor do the windows an
+## NPC or Escape opens.
 ##
 ## **Inventory, equipment, character, skill, party, action and academy are
 ## not windows of their own**: they are panes of the client's main popup
 ## (HudMainPopup, `resinfo\\ifmainpopup.txt` in the registry's GDR_MAINPOPUP
 ## frame), and their keys select its tabs. Their layout paths here are the
-## panes' own layouts, which HudMainPopup.PANE_LAYOUTS builds. The keys are
-## this client's: the retail defaults (read from 0x7778be and dispatched in
-## 0x780610) are C, I, S, A, P and L for the same six tabs, with no key for
-## equipment; skill is K here because S walks backwards.
+## panes' own layouts, which HudMainPopup.PANE_LAYOUTS builds.
 const PANELS := {
-	"inventory": ["resinfo\\ifinventory.txt", "Inventory", KEY_I],
+	"inventory": ["resinfo\\ifinventory.txt", "Inventory"],
 	# The equipment pane, beside the bag on the popup's inventory tab.
-	"equipment": ["resinfo\\ifequipment.txt", "Equipment", KEY_O],
+	"equipment": ["resinfo\\ifequipment.txt", "Equipment"],
 	# CIFPlayerInfo::Create (0x6b84ec) loads ifplayerinfo_trijob2.txt; the
 	# exe never names ifplayerinfo.txt, in ASCII or UTF-16.
-	"character": ["resinfo\\ifplayerinfo_trijob2.txt", "Character", KEY_C],
-	"skill": ["resinfo\\ifskill.txt", "Skill", KEY_K],
+	"character": ["resinfo\\ifplayerinfo_trijob2.txt", "Character"],
+	"skill": ["resinfo\\ifskill.txt", "Skill"],
 	# Q toggles CNIFQuest, window 0x4c, built from the client's own
 	# `res_ui\\questlist.2dt` (QuestWindow): 0x7990e0 (ShowWindow(0) if it is
 	# shown, else ShowWindow(1)). The retail binding is Q (slot 5 of 0x7778be).
-	"quest": [QuestWindow.QUESTLIST_2DT, "", KEY_Q],
-	"party": ["resinfo\\ifparty.txt", "Party", KEY_P],
+	"quest": [QuestWindow.QUESTLIST_2DT, ""],
+	"party": ["resinfo\\ifparty.txt", "Party"],
 	# The guild and community are one window, CNIFGuildWnd, built from the
 	# client's `res_ui\*.2dt` files (GuildWindow); these two ids are its two
 	# views. U is the retail binding and opens the guild view: the default
 	# key table at 0x7778be puts 'U' in slot 6, which reaches the guild
 	# window's toggle 0x5b4980. No default key opens the community view; the
 	# underbar menu's community item (108, 0x60ce67 -> 0x5b49c0) does.
-	"community": [GuildWindow.GUILD_2DT, "", 0],
-	"guild": [GuildWindow.GUILD_2DT, "", KEY_U],
-	"action": ["resinfo\\ifaction.txt", "Action", KEY_A],
-	"partymatch": ["resinfo\\ifpartymatch.txt", "Party Matching", KEY_E],
-	"academy": ["resinfo\\ifapprenticeship.txt", "Academy", KEY_L],
-	"autopotion": ["resinfo\\ifautopotion.txt", "Auto Potion", KEY_T],
+	"community": [GuildWindow.GUILD_2DT, ""],
+	"guild": [GuildWindow.GUILD_2DT, ""],
+	"action": ["resinfo\\ifaction.txt", "Action"],
+	"partymatch": ["resinfo\\ifpartymatch.txt", "Party Matching"],
+	"academy": ["resinfo\\ifapprenticeship.txt", "Academy"],
+	"autopotion": ["resinfo\\ifautopotion.txt", "Auto Potion"],
 	# Y opens the client's alchemy window, CNIFEnchantWnd, built from
 	# `res_ui\nifenchantwnd.2dt` (AlchemyWindow): slot 24 of the default key
 	# table is 'Y', command 0x59, which 0x780610 sends to 0x780a65 and on to
@@ -67,33 +71,23 @@ const PANELS := {
 	# window is built at every open and freed at every close (open_alchemy,
 	# close_alchemy). ifalchemyprocess.txt, the panel this id used to build,
 	# belongs to GDR_ALCHEMYBOX, which the client never shows.
-	"alchemy": [AlchemyWindow.ENCHANT_2DT, "", KEY_Y],
-	"exchange": ["resinfo\\ifexchange.txt", "Exchange", 0],
+	"alchemy": [AlchemyWindow.ENCHANT_2DT, ""],
+	"exchange": ["resinfo\\ifexchange.txt", "Exchange"],
 	# Opened by Escape, not a hotkey (see _unhandled_key_input). The system
 	# menu the original raises over everything: Option, Help, Restart, Exit.
-	"system": ["resinfo\\ifsystemwnd.txt", "System", 0],
+	"system": ["resinfo\\ifsystemwnd.txt", "System"],
 	# Opened by clicking an NPC (World3D._try_talk_to_npc), titled with the
 	# NPC's name. The authored paper dialogue the original raises. A
 	# Dimensional Gate's destinations are this box's own lines
 	# (open_teleport_list, round 603): the client has no teleport window.
-	"npctalk": ["resinfo\\if_npctalk.txt", "", 0],
+	"npctalk": ["resinfo\\if_npctalk.txt", ""],
 	# Opened from the talk box's Buy option (open_shop), titled with the NPC's
 	# name. The authored store window: a 6x5 goods grid, a page spinner, and
 	# repair. Built with #ifdef selection (see PANEL_DEFINES).
-	"store": ["resinfo\\ifstore.txt", "Store", 0],
+	"store": ["resinfo\\ifstore.txt", "Store"],
 	# Opened from the talk box's Storage option (open_storage). The authored
 	# warehouse window: a 6x5 grid of the character's stored items.
-	"storage": ["resinfo\\ifstorageroom.txt", "Storage", 0],
-}
-
-## Keys this project binds that are not the retail client's, each to a panel
-## id. **G is ours**: in the retail table G is slot 13, which reaches
-## 0x780895 and calls 0x793b00(0x64, 0x3f0) -- not the guild window, and what
-## it is was not established. G opened the guild window here before the
-## guild window was rebuilt, and nothing else in this client binds it, so it
-## keeps opening the guild view as a convenience.
-const PROJECT_HOTKEYS := {
-	KEY_G: "guild",
+	"storage": ["resinfo\\ifstorageroom.txt", "Storage"],
 }
 
 ## M opens the world map, the retail binding (read): the default key table
@@ -101,8 +95,7 @@ const PROJECT_HOTKEYS := {
 ## and 0x780610 sends 0x4d (jump table 0x780e48 / 0x780e00) to 0x78087d,
 ## which calls 0x79abe0 -- CNIFWorldMap's toggle, the same function the
 ## minimap's map button reaches. The window is World3D's (HudWorldmap, beside
-## the minimap), so this only asks for it.
-const WORLD_MAP_KEY := KEY_M
+## the minimap), so this only asks for it. The key is KeyMap's slot 7.
 signal world_map_toggle_requested
 ## The world map window (World3D's HudWorldmap), set by World3D so Escape can
 ## close it (_escape_close).
@@ -759,20 +752,21 @@ func _on_npc_talk_choice(meta: Variant) -> void:
 
 ## Whether a text line has the keyboard: the focus owner of this viewport is
 ## a LineEdit or TextEdit -- the guild name prompt (round 521), the warehouse
-## gold dialog's amount, the chat's own line, or any other. World3D reads
-## movement from the raw key state (Input.get_axis), which a focused line
-## does not consume, so without this every "w" typed into the guild name
-## prompt walked the character, as it once did in chat (World3D._is_typing).
+## gold dialog's amount, the chat's own line, or any other. Until round 608
+## World3D read movement from the raw key state (Input.get_axis), which a
+## focused line does not consume, so without this every "w" typed into the
+## guild name prompt walked the character, as it once did in chat
+## (World3D._is_typing). Now KeyInput runs no key while it holds.
 ##
 ## A line left focused -- the debug panel's teleport field after Enter, the
 ## options panel's chat-font spinner after a click on its arrows (its inner
-## LineEdit takes the focus) -- stopped WASD, click-to-move and the attack walk
+## LineEdit takes the focus) -- stopped the keys, click-to-move and the attack walk
 ## until it lost the focus some other way (round 521's review). World3D now
 ## takes the focus back on a left click on the world (take_focus_back), and
 ## the spinner hands it back once its value is set (debug_panel.gd). A
 ## SpinBox's line still counts while it has the focus: the keys typed there go
-## into it, not to quickslots or berserk, so letting W also walk would split
-## one key press two ways. A line not visible in the tree does not count
+## into it, not to quickslots or berserk, so letting a key also act would
+## split one key press two ways. A line not visible in the tree does not count
 ## (Godot already releases a hidden control's focus; this is only a guard).
 func is_typing() -> bool:
 	if not is_inside_tree():
@@ -2448,17 +2442,18 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			open("system")
 		get_viewport().set_input_as_handled()
 		return
-	for panel_id in PANELS:
-		var spec: Array = PANELS[panel_id]
-		if spec[2] != 0 and key.keycode == spec[2]:
-			toggle(panel_id)
-			get_viewport().set_input_as_handled()
-			return
-	if PROJECT_HOTKEYS.has(key.keycode):
-		toggle(PROJECT_HOTKEYS[key.keycode])
+	# The windows' keys, from the one key table (KeyMap, round 608). A text
+	# line with the keyboard keeps them: a focused LineEdit consumes a letter
+	# before it gets here, and this makes that a rule rather than a side
+	# effect (a SpinBox's line, a key a line lets through).
+	if is_typing():
+		return
+	var panel_id := KeyMap.panel_for_key(key.keycode)
+	if panel_id != "":
+		toggle(panel_id)
 		get_viewport().set_input_as_handled()
 		return
-	if key.keycode == WORLD_MAP_KEY:
+	if key.keycode == KeyMap.key_for("worldmap"):
 		world_map_toggle_requested.emit()
 		get_viewport().set_input_as_handled()
 

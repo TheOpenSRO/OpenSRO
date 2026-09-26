@@ -45742,3 +45742,199 @@ applies the schema; the restart is only for the new binary.
 The control `TestRegenPushGoesOutWhenNothingChanged` passes before and after. The client check
 reads `_last_enter_world_hp`, which the same `take_hp` flag guards as the HP bar's `set_hp` (the
 bar itself is not built in the bare world).
+
+## The keyboard is the retail client's own key table: G picks up, V hides, Z names the drops, Tab goes berserk, and no key walks (round 608)
+
+Client only. Binary: `sro_client.exe` (md5 `2a5794b72c90908d945be8b3f3f2edd4`; decompile
+`/var/tmp/decomp_client`, asm `/var/tmp/sro_client.asm`, the keymap research's evidence in
+`/var/tmp/rkeymap/`). Every fact is labelled **read**, **measured**, **inferred** (basis given) or
+**ours**. The user asked for the shortcuts "close to the original as much as possible" and chose,
+when asked: movement **original only** (no WASD), Tab and R **as the original**, F10 **kept as Hide
+UI**, dropped-item names **as the original**.
+
+### One table (read, and where it lives)
+
+`client/scripts/ui/keymap.gd` (`KeyMap`) is the one place a key is bound. `SLOTS` is the retail
+default table slot for slot -- the 33 dwords `0x7778b0(buf, 0x21)` writes (`0x7778be..0x777991`),
+each with the fixed command `0x778310` gives the slot (the slot's default VK), the option window's
+row label for it (`0x5fb9e0`; `0x5f68e0` makes row i slot i) and this client's action.
+`OTHER_KEYS` lists what `0x780610` answers outside the table; `NOT_BOUND` what it answers that this
+client does not. `KeyInput` (`client/scripts/ui/key_input.gd`) runs every action but the windows'
+(the "panel:" slots and M), which `HudPanels._unhandled_key_input` takes from the same table;
+`HudUnderbar.key_name` names the keys in the bar's captions from it. `HudPanels.PANELS` lost its
+key column and `PROJECT_HOTKEYS`; World3D no longer reads a key. A rebinding window would change a
+slot's `key` only (the retail command does not follow the key). `project.godot` has no `[input]`
+section any more (`move_*`, `toggle_panels`, `toggle_ui` removed).
+
+| Slot | Key | Action here | Retail handler | State |
+|---:|---|---|---|---|
+| 0-7 | C I S A P Q U M | character, inventory, skill, action, party, quest, guild, world map | `0x79ace0` `0x79b020` `0x79ae00` `0x79d5b0` `0x79ae90` `0x7990e0` `0x799120->0x5b4980` `0x79abe0` | works |
+| 8 | Tab | berserk request (server judges the gauge) | `0x778ac0` (+0x886 >= 5 -> `0x81e690(1)`, 0x70a7) | works |
+| 9 | H | toggles this client's Help window (the authored `GDR_GAMEGUIDE` frame, our documents) | `0x79f690` toggles child 0x20 | works; the second step (`0x79a7e0` on window 0x62 when hiding) not built |
+| 10 | Z (held) | dropped-item names within 300 | `DAT_00eef5f5`, `0x9e15b0` | works |
+| 11 | X | the "m" slot | `0x7994e0->0x60bb80(0)` | works |
+| 12 | N | sit / stand (round 607) | `0x793b00(0x64,1000)` | works |
+| 13 | G | nearest item within 50, then this client's pick path | `0x9e18f0`, 0x7074 [01 02 01 uid] | works (see below) |
+| 14-19 | Ins Home PgUp Del End PgDn | COS info, ride, unsummon, follow, attack, AI | `0x7a0980(n)` | no-op: no pets |
+| 20 | R | chat line opened with `/w <last whisperer> ` | chat child 1 -> `0x7aa2b0` -> `0x777d10` -> `0x7ab470` | works (line ours) |
+| 21, 23, 24 | T E Y | auto potion, party matching, alchemy | `0x79c750`, `0x79c170`, `0x798e20` | works |
+| 22 | W | switch COS | `0x811200` | no-op: no pets |
+| 25-28, 31, 32 | none | enemy select, last target, assist, face target, hide allies, hide enemies | `0x77c9f0`, +0x630, 0x30c4, `0x77b7d0`, `eef5f6/f7` | unbound in retail too |
+| 29 | V (held) | hides other players and monsters | `DAT_00eef5f4`, `0x9d0560` | works |
+| 30 | L | academy | `0x79b0b0` | works |
+
+Outside the table: F1-F4 pages (`0x60a730(0..3)`); 1-9, 0 the page's slots (`0x60bb80(1..10)`);
+**Space held + 1-0 quick slots 41-50** (`GetKeyState(VK_SPACE)` at `0x780c11` sets edi = 0x28;
+`0x60bb80` takes k >= 11 as it is -- read, `0x60bb80`: `if (param_2 < 0xb) param_2 += page*10`);
+**Ctrl+1 select self, Ctrl+2..8 party member n-1** (`0x77f230`: `0x78f5f0(player+0xf8)`, else
+`IFQuickPartyWnd 0x6da850(n-2)` by name, read) -- both logged no-ops, since no player can be a target
+here; Ctrl+9/0 nothing (`key-0x31 < 8`); **F9 the next camera view** (`0x780590(-1)`: +1, past 2
+back to 0, then `0x780420` shows `UIIT_STT_CHANGED_SIGHT_FREE/THIRD_PERSON/QUARTER_VIEW_DESC`
+through `0x7781b0(0, text)`, read; that this lands in the chat's system line is inferred);
+**PrintScreen on its release** (`0xba7240`: message 0x101 with wParam 0x2c, `CreateDirectoryA
+("ScreenShot")`, `"%s%s\\SRO[%04d-%02d-%02d %02d-%02d-%02d]_%02d.jpg"`, the last value `rand() %
+100` -- `idiv 0x64` at `0xba731d`, the remainder pushed last -- and `DAT_00ed7de0` = 80 passed to
+the writer `0xbaabf0`, read; that 80 is the JPEG quality is inferred); F10 hide UI (**ours**: retail's
+F10 is the item mall `0x7995e0`); Ctrl+F1 / **Ctrl+F2** / Ctrl+F3 developer toggles (**ours**; the
+debug tabs moved from Tab to Ctrl+F2 -- retail's F1-F4 cases do not test Ctrl, and Ctrl reaches only
+the digit path at `0x780c21`, read); Enter (HudChat) and Escape (HudPanels) as rounds 605-606 left
+them. The screenshot goes to `user://screenshots/` beside `user://logs/` (**ours**; retail writes
+`ScreenShot\` in its install folder), and the chat says the full path.
+
+**Removed:** WASD and the arrow keys (the user's "original only"; `Input.get_axis` on `move_*` in
+`_physics_step` is gone, the left-button steer and click walk stay); K (skill) and O (equipment),
+this client's own; G as the guild window (U is retail's guild key); R as berserk; Tab as the debug
+tabs. **Retail's arrow walk is not bound** (read, and why): Up is `0x9ebf40(1)` after `0x78f7c0`
+cancels an action with 0x7074 [02]; Left/Right are `0x9ebf40(0x10 / 0x20)`, which set bits in
++0x88 and send through `0x9eb470` / `0x9eb6e0` -- requests 0x7023/0x7024 (or 0x70c5 when riding),
+which this server does not have; whether Left/Right turn or strafe was not read; Down has no
+key-down case (index 3 of `0x780da8` is the default).
+
+### G (read; the walk is ours)
+
+`0x9e18f0`: from the player's +0x90..+0x98, best = 50.0 (`.rdata 0xd851a0`, read with `rd.py`:
+`0xd851a0 float 50.0`), over the object list `0xec4ae4`, `IsKindOf(CIItem)`, skipping +0x28c, 3-D
+`sqrt` distance, kept when `50 > dist` -- the nearest strictly inside 50. Here
+`GroundItems.nearest_within(pos, 50.0)` and `World3D._key_pick_up_nearest`, then
+`_pick_up_ground_item` (the click path, split out): a walk into the server's 10-unit reach
+(`GroundItemsNet.PICK_RANGE`, `GObjPC::CheckCanPickUp`) and this server's pick request. Retail's G
+path has no movement code, so its approach is the server's (inferred); this server walks nobody.
+Retail's refusals before sending: +0x258 == -1, client state 10, a UI lock (`0x77c8e0`), an owner
+that is neither you nor a party member (0x1812), an action pending (`0x77c9b0`, +0x4f8 expiring after
+20000 ms at `0x77c9ce`). Built: the pending gate (20 s) and death; the owner refusal is the
+server's, with the same 0x1812 line; the rest are open.
+
+### Z and hover (read; hover's meaning inferred)
+
+`CIItem::vslot_010` (`0x9e15b0`) draws the name when +0xf0 is set, or when `DAT_00eef5f5` is set
+and `+0x24c < 300.0` (`.rdata 0xd85224` = 300.0). So names are **hidden by default** now
+(`GroundItems.spawn` makes the plate invisible) and `GroundItems.update_labels` shows them while
+Z is held within 300 (strict), or for the item under the mouse -- +0xf0 as hover or selection is
+inferred. The hover ray (`_hover_kind_at`) now tests the ground-item layer first, as the click
+does, and reports "pickup" (cursor `0x99`, CursorSet's reading); it runs with or without the
+game's cursors.
+
+### V (read; the pick is inferred)
+
+`0x9d0560`: exactly `CICUser` hidden; not a `CICNonuser` kept (`CICPlayer`, script objects);
+`CICCos` kept only when it is the player's +0x2ac (ridden, inferred); `CICATStruct` and `CICNPC`
+(guards too) kept; every other `CICNonuser` hidden (monsters, `CICMonsterNPC`, `CICRide`); items
+never read the flag; `0x9dd350` skips the stall booth (+0x78c). `KeyMap.hides_under_v` has the
+rule by this client's kinds; `World3D._apply_key_holds` hides `_other_bodies` and
+`_monster_bodies` (the only such bodies drawn here) every frame while V is held. `0x9d11c0` (vslot
+20) returns 0 for a hidden object and `0x9c7620` tests slot 20 before its ray (read), so a hidden
+object is **inferred** not pickable: `_try_attack_monster` and the hover skip monsters while V is
+held. The minimap keeps its dots (**ours**: whether retail's minimap reads the flag was not read).
+
+### Typing, and the held keys (read where marked; the rest ours)
+
+`KeyInput` reads keys in `_input`, before the GUI. Measured on the box (Godot 4.2.2, push_input,
+a scratch probe): with a `FOCUS_ALL` TextureButton focused, Tab never reached
+`_unhandled_key_input` (the focus did not move), and Space pressed the button and reached it too.
+Nothing runs while a text line has the keyboard (`HudPanels.is_typing`; HudPanels now tests it
+too) -- stricter than retail, whose F-key cases do not test +0x3ce (read at `0x78075f..0x7807a8`),
+by rounds 605-606's rule. V and Z (and Space) go down on the press and up on the release (the
+flags `0x7809c4`/`0x780a91` set, `0x77d8d0` clears, read), and also when the window loses the focus
+(`CGInterface::vslot_012` `0x77b140` clears both when `0xb9da80(1)` returns 0; that this is the
+focus test is inferred) and when a text line takes the keyboard (ours).
+
+### Tests
+
+`client/scripts/ui/keymap_test.gd` drives every binding through `Viewport.push_input` into a
+HudPanels whose `toggle` is recorded and a KeyInput whose host records: the 33 slots against the
+retail keys and commands, each window key, each world key, K/O/D/J/arrows/F5/F12 doing nothing,
+F1-F4, 1-0, Space+1-0 (41-50), Ctrl+1..8, Ctrl+9/0, F9, F10, PrintScreen (release only),
+Ctrl+F1/F2/F3, Alt+G; V/Z down, repeat, up, and let go on typing and on focus loss; every key
+silent with a line focused (the letters typed into it); Tab with a focused button; no `move_*`
+action; and the pure parts (G strictly inside 50, Z strictly inside 300, names hidden by default,
+hover, what V hides, F9's cycle, the screenshot name, R's line, the bar's key names).
+**Negative, against 7c19536's scripts** (`/var/tmp/rkeymap2/neg_keymap.log`), 64 FAIL lines,
+among them:
+
+	FAIL the key table exists (res://scripts/ui/keymap.gd)
+	FAIL S opens the skill window and runs nothing else (toggled [], ran [])
+	FAIL K does nothing (retail has no K; toggled ["skill"], ran [])
+	FAIL O does nothing (retail has no O; toggled ["equipment"], ran [])
+	FAIL G does not open the guild window (toggled ["guild"])
+	FAIL Tab runs berserk (slot 8) (ran [], toggled [])
+	FAIL Space+1 fires quick slot 41 (ran [])
+	FAIL Tab with a button focused is berserk -- the GUI would consume it (ran [], focus @Button@4:<Button#58166609355>)
+	FAIL project.godot binds no move or panel action (still there: ["move_forward", "move_back", "move_left", "move_right", "toggle_panels", "toggle_ui"])
+	FAIL GroundItems has G's search and Z's names
+
+Updated, not weakened: `guild_window_test` (G no longer opens the guild; U does),
+`alchemy_window_test` (the alchemy key is the table's slot 24, Y), `hud_window_test` (two-column
+specs, and every window key in the table opens a real panel).
+
+### Live (measured, `qa_shot.sh --server`, 640x360, `/var/tmp/rkeymap2/live1.log`)
+
+A level-1 QA character, six GM-spawned Mangyangs killed, then `SRREVAMP_QA_INPUT` presses:
+
+	KEYMAP Tab -> berserk 8: berserk requested
+	World3D: berserk result: activated false, gauge 20, active false
+	KEYS: V held -- 0 other player(s) and 23 monster(s) hidden; NPCs and dropped items kept
+	QA KEYS: V held -- 0 of 23 monster bodies drawn; the nearest (#10, 8.0 away) at screen (354.3071, 226.2049) hovers as 'normal'
+	QA KEYS: V released -- 23 of 23 monster bodies drawn; the nearest (#10, 8.0 away) at screen (354.3071, 226.2049) hovers as 'attack'
+	KEYMAP R -> whisper_reply 20: chat line opened with '/w ttFriend '
+	QA INPUT 9 key:r: open=[] focus=Input<LineEdit> ...
+	QA INPUT 10 key:g: open=[] focus=Input<LineEdit> world_keys=[] keymap=[]
+	KEYMAP F9 -> camera_cycle 0: camera view third_person
+	KEYMAP F9 -> camera_cycle 0: camera view quarter
+	KEYMAP F9 -> camera_cycle 0: camera view free
+	KEYMAP X -> mouse_slot 11: quick slot 0 (m)
+	KEYMAP W -> pet_switch 22: no-op: no pet or COS in this client
+	KEYMAP Ctrl+1 -> select_self 0: no-op: selecting yourself is not built (the target window shows monsters only)
+	KEYMAP 1 -> quickslot 41: quick slot 41            (Space held)
+	KEYMAP H -> help 9: help opened / help closed
+	KEYMAP Print -> screenshot 0: saved /home/ghidra/.local/share/godot/app_userdata/SRRevamp/screenshots/SRO[2026-09-26 21-08-26]_35.jpg
+	QA INPUT 24 key:k: open=[] ... keymap=[]
+	QA INPUT 25 key:s: open=[skill] ...
+
+The screenshot measured: a 65,012-byte baseline JFIF, SOF 640x360 (the render size). Other players
+are counted 0 because the run has one client; their hiding is the same loop over `_other_bodies`.
+
+**G and Z** (`/var/tmp/rkeymap2/live2.log`, 320x180: 60 GM-spawned Mangyangs killed; the items of
+the first run had expired -- the server's lifetime runs on its own clock while a render crawls):
+
+	KEYS: Z held -- 2 of 2 dropped item name(s) shown
+	KEYS: Z released -- 0 of 4 dropped item name(s) shown
+	KEYMAP G -> pickup 13: ground item 4 at 8.1: picking it up
+	World3D: picked up 1x HP Recovery Herb (ground item 4, item 4)
+	KEYMAP G -> pickup 13: ground item 5 at 3.9: picking it up
+	World3D: picked up 44 gold (ground item 5, item 3)
+	KEYMAP G -> pickup 13: ground item 6 at 3.9: picking it up
+	KEYMAP G -> pickup 13: ground item 7 at 7.3: picking it up
+	World3D: picked up 43 gold (ground item 7, item 3)
+	KEYS: Z held -- 5 of 5 dropped item name(s) shown
+	KEYS: Z released -- 0 of 5 dropped item name(s) shown
+
+Every item was already inside the server's 10, so G's walk (an item 10-50 away) was not seen live;
+it is the click path's walk, unchanged. The gauge never filled in 39 kills (the orbs are earned per
+kill at 8 %, `berserk.GainChance`), so **Tab at a full gauge** was measured on a PostgreSQL-backed
+server whose character row was set to `hwan_count = 5` before the press (a scratch database,
+dropped after; `/var/tmp/rkeymap2/live3.log`):
+
+	KEYMAP Tab -> berserk 8: berserk requested
+	World3D: berserk result: activated true, gauge 0, active true
+	KEYMAP Tab -> berserk 8: berserk requested
+	World3D: berserk result: activated false, gauge 0, active true

@@ -444,11 +444,15 @@ func _run() -> void:
 	_check(_not_shown(croot) and _shown(_at(groot, [47])) and _not_shown(_at(groot, [164])),
 		"220 switches back, and the guild's first tab is checked again")
 
-	# G is this project's own binding for the guild view.
+	# G no longer opens the guild (round 608): in the retail key table G is
+	# slot 13, pick up (0x9e18f0), and U, slot 6, is the guild's key.
 	window.hide()
 	_press(panels, KEY_G)
 	await process_frame
-	_check(window.visible and _caption(window) == "Guild (text table)", "G opens the guild view (a project binding, not the retail one)")
+	_check(not window.visible, "G does not open the guild window (retail slot 13 is pick up)")
+	_press(panels, KEY_U)
+	await process_frame
+	_check(window.visible and _caption(window) == "Guild (text table)", "U opens the guild view (retail slot 6)")
 
 	await _guild_member_checks(panels, window, groot)
 	await _move_checks(panels, window)

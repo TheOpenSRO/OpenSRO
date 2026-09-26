@@ -22,19 +22,19 @@ command always answers with the help line — it never stays silent.
 | `/help` | Opens the Help window and prints the one-line command list in chat. |
 | `/where` | Zone, region y/x, your local and world coordinates, and the walkable height under you. |
 | `/log` | Prints the log file's path; on desktop, opens the folder holding it. |
-| `/copy` | Copies the full debug report (the F3 panel's payload, plus the last log lines and script errors) to the clipboard, ready to paste into a report. |
+| `/copy` | Copies the full debug report (the Ctrl+F3 panel's payload, plus the last log lines and script errors) to the clipboard, ready to paste into a report. |
 | `/fps` | The current frame rate. |
 | `/entities` | Counts of the monsters, NPCs, other players and ground items currently in view. |
 | `/wire on` / `/wire off` | Starts or stops logging every network packet's opcode and size to the log — for chasing a desync or a crash. |
 | `/cam free` / `/cam orbit` | Switches the camera between free-look and orbit. |
 | `/errors` | The last 20 script errors this session (also in `/copy` and the log). |
 | `/unstuck` | Returns you to the zone's entry point if you wedge into geometry. |
-| `/groundprobe` | If the ground looks **white** (or wrong in any other way), type this while you can see it and hold still until chat says it is done (a few seconds; longer on a large screen). It records how the ground is being drawn — your graphics card and driver, the ground textures and materials under you, and a few quick checks during which the ground may flash red, magenta, blue or flat grey — and saves it all to a `groundprobe-….txt` file in the log folder (`/log` opens it). Send us that file. `/groundprobe quick` skips the checks. The F3 panel's **Ground probe** button does the same. |
+| `/groundprobe` | If the ground looks **white** (or wrong in any other way), type this while you can see it and hold still until chat says it is done (a few seconds; longer on a large screen). It records how the ground is being drawn — your graphics card and driver, the ground textures and materials under you, and a few quick checks during which the ground may flash red, magenta, blue or flat grey — and saves it all to a `groundprobe-….txt` file in the log folder (`/log` opens it). Send us that file. `/groundprobe quick` skips the checks. The Ctrl+F3 panel's **Ground probe** button does the same. |
 | `/w <name> <message>` | Whispers another player. |
 
 ## Sending a report
 
-1. If it is a visual problem, press **F3**, then **Copy** (or type `/copy`).
+1. If it is a visual problem, press **Ctrl+F3**, then **Copy** (or type `/copy`).
 2. Paste that into your report. It carries the build, your position, what is
    loaded, the entities around you, and the last log lines and script errors.
 3. Attach the log file if you can — `/log` prints where it is
