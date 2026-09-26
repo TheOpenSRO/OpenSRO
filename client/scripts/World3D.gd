@@ -10404,7 +10404,14 @@ func _try_step_up(delta: float) -> void:
 func _is_typing() -> bool:
 	if _hud_chat != null and _hud_chat.is_typing():
 		return true
-	return _hud_panels != null and _hud_panels.is_typing()
+	if _hud_panels != null:
+		return _hud_panels.is_typing()
+	# No HUD (no Media.pk2): the scene's fallback chat line and the debug
+	# panel's fields are LineEdits too.
+	if not is_inside_tree():
+		return false
+	var focus := get_viewport().gui_get_focus_owner()
+	return (focus is LineEdit or focus is TextEdit) and focus.is_visible_in_tree()
 
 ## The per-frame work clock (round 561). The whole step is timed and noted
 ## against the drawn frame, less the cells _process_stream_queue built inside
@@ -13504,8 +13511,14 @@ func _run_key_action(action: String, arg: int) -> String:
 
 ## A held key went down or up (V, Z): applied at once, and every frame after
 ## (_apply_key_holds).
-func _on_key_held(_action: String, _down: bool) -> void:
+func _on_key_held(action: String, _down: bool) -> void:
 	_apply_key_holds()
+	# The cursor and the hovered item's name follow V at once, not on the
+	# next mouse motion: a monster under the mouse stops (or starts) being
+	# an attack target with the press.
+	if action == "hide_objects":
+		_cursor_last_check_ms = 0
+		_settle_hover_cursor()
 
 ## V and Z, while held. V hides what KeyMap.hides_under_v names -- here the
 ## other players and the monsters, the only such objects this client draws;
@@ -13626,6 +13639,10 @@ func _key_cycle_camera() -> String:
 	var current := maxi(CAMERA_VIEWS.find(_camera_view), 0)
 	var next := KeyMap.next_camera_view(current)
 	set_camera_view(CAMERA_VIEWS[next])
+	# Kept, as the debug panel's selector keeps it, and shown there.
+	ClientSettings.set_value(ClientSettings.SECTION_UI, ClientSettings.KEY_CAMERA_VIEW, _camera_view)
+	if _debug_panel != null:
+		_debug_panel.sync_view()
 	var line := _ui_text_table.get_text(KeyMap.camera_view_string(next), "") if _ui_text_table != null else ""
 	if line != "":
 		_log_system(line)

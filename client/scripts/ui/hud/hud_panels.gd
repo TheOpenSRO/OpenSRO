@@ -2433,9 +2433,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if not (event is InputEventKey):
 		return
 	var key := event as InputEventKey
-	if not key.pressed or key.echo or key.ctrl_pressed or key.alt_pressed:
+	if not key.pressed or key.echo:
 		return
 	if key.keycode == KEY_ESCAPE:
+		if key.ctrl_pressed or key.alt_pressed:
+			return
 		# Escape closes one window (_escape_close); with nothing open it
 		# raises the System menu, the way the original does.
 		if not _escape_close():
@@ -2448,12 +2450,16 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	# effect (a SpinBox's line, a key a line lets through).
 	if is_typing():
 		return
-	var panel_id := KeyMap.panel_for_key(key.keycode)
-	if panel_id != "":
-		toggle(panel_id)
-		get_viewport().set_input_as_handled()
+	# With Ctrl, Shift or Alt too: retail tests no modifier for a table key
+	# (KeyMap.resolve has the reading).
+	var hit := KeyMap.resolve(key.keycode, key.ctrl_pressed, key.alt_pressed, key.meta_pressed, false)
+	if hit.is_empty():
 		return
-	if key.keycode == KeyMap.key_for("worldmap"):
+	var action := String(hit[0])
+	if action.begins_with("panel:"):
+		toggle(action.substr(6))
+		get_viewport().set_input_as_handled()
+	elif action == "worldmap":
 		world_map_toggle_requested.emit()
 		get_viewport().set_input_as_handled()
 

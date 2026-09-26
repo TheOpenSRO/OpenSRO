@@ -455,6 +455,15 @@ func _on_chat_font_changed(value: float) -> void:
 		chat.remove_theme_font_size_override("normal_font_size")
 	ClientSettings.set_value(ClientSettings.SECTION_UI, ClientSettings.KEY_CHAT_FONT_SIZE, size)
 
+## Shows the world's camera view in the selector (after F9 changed it).
+## select() does not emit item_selected, so nothing loops.
+func sync_view() -> void:
+	if _view_mode == null:
+		return
+	for i in CAMERA_VIEWS.size():
+		if CAMERA_VIEWS[i][1] == _world._camera_view:
+			_view_mode.select(i)
+
 func _on_view_selected(index: int) -> void:
 	var view: String = CAMERA_VIEWS[index][1]
 	_world.set_camera_view(view)

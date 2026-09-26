@@ -7113,6 +7113,14 @@ The full record is `docs/RE_COMPLETION.md`'s entry of the same name (round 608).
   seeded full gauge activated berserk; V hid 23 of 23 monsters and the nearest hovered as 'normal' (released: 'attack'); Z
   showed 2 of 2 and 5 of 5 names, 0 after release; G picked four items in a row (3.9-8.1 away);
   R opened `/w ttFriend `; F9 cycled; the screenshot is a 640x360 JPEG.
+- **Review follow-up.** The first commit let no key run while a text line had the keyboard, and
+  the chat line stays focused after a message, so Ctrl+F3, F10, F1-F4, F9 and PrintScreen were
+  dead after any line of chat; they run while typing again (a line never takes them). Table keys
+  fire with Ctrl, Shift or Alt, as retail's `0x778310`/`0x780610` test no modifier (Ctrl+1..8 and
+  Space+digit unchanged, Ctrl+F1-F3 ours). Corrected: `+0x3ce` kills the letter scan codes only,
+  not the digits, and its meaning is unknown; HelpWindow is in the GDR_GAMEGUIDE frame. Also the
+  no-HUD typing fallback, F9 saved and shown in the debug panel, Space not pressing a focused
+  button, and the cursor refreshed on V.
 - **Open:** a rebinding window (UI_TODO item 7), pets, the item mall, player targets (Ctrl+1..8),
   retail's arrow walk (0x7023/0x7024, not in this server), G's client-side refusals, V and the
   minimap, H's second step, R's retail line (`L"$"` joined by `0x5412c0`, unread).

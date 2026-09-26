@@ -9,8 +9,8 @@ not work, that is a bug worth reporting (see **Debug tools**, or press Ctrl+F3
 - **Click** the ground to walk there, or hold the left button to steer.
   There is no keyboard walking: the keys are the original game's, where
   W, A and S are the pet-switch, action and skill keys.
-- **Drag** with the right mouse button to turn the camera; the **mouse
-  wheel** zooms.
+- **Drag** with the right mouse button to turn the camera (not in the Third
+  Person view, which stays behind you); the **mouse wheel** zooms.
 - Wedged in scenery? Type `/unstuck` to return to the zone's entry point.
 
 ## The camera
@@ -67,8 +67,12 @@ do nothing for now. A window to change the keys is not built yet.
 An item's name shows while the mouse is on it, or while you hold **Z**; it is
 hidden otherwise, as in the original.
 
-While the chat line (or any other text box) is open, no key does anything
-but type.
+While the chat line (or any other text box) is open, the letter and number
+keys type into it; the F keys, Ctrl+F1 to F3 and Print Screen still work.
+
+As in the original, Ctrl, Shift and Alt do not change a key: Ctrl+S opens
+Skills like S. The exceptions are Ctrl+1 to 8 (select) and Ctrl+F1 to F3
+(developer panels).
 
 Click an NPC to talk, buy, or use storage. **Click a monster once to attack
 it**: as in the original, your character keeps swinging at the weapon's own

@@ -45851,9 +45851,11 @@ held. The minimap keeps its dots (**ours**: whether retail's minimap reads the f
 `KeyInput` reads keys in `_input`, before the GUI. Measured on the box (Godot 4.2.2, push_input,
 a scratch probe): with a `FOCUS_ALL` TextureButton focused, Tab never reached
 `_unhandled_key_input` (the focus did not move), and Space pressed the button and reached it too.
-Nothing runs while a text line has the keyboard (`HudPanels.is_typing`; HudPanels now tests it
-too) -- stricter than retail, whose F-key cases do not test +0x3ce (read at `0x78075f..0x7807a8`),
-by rounds 605-606's rule. V and Z (and Space) go down on the press and up on the release (the
+While a text line has the keyboard (`HudPanels.is_typing`; HudPanels now tests it too) only the
+keys a line never takes run -- F1-F12, Ctrl+F1-F3 and PrintScreen (`KeyMap.runs_while_typing`,
+the review follow-up below); letters, digits, Tab, Space and the editing keys go to the line
+(ours). Retail's `+0x3ce` makes `0x778310` return -1 for letter scan codes only; what it means is
+not known (below). V and Z (and Space) go down on the press and up on the release (the
 flags `0x7809c4`/`0x780a91` set, `0x77d8d0` clears, read), and also when the window loses the focus
 (`CGInterface::vslot_012` `0x77b140` clears both when `0xb9da80(1)` returns 0; that this is the
 focus test is inferred) and when a text line takes the keyboard (ours).
@@ -45864,8 +45866,8 @@ focus test is inferred) and when a text line takes the keyboard (ours).
 HudPanels whose `toggle` is recorded and a KeyInput whose host records: the 33 slots against the
 retail keys and commands, each window key, each world key, K/O/D/J/arrows/F5/F12 doing nothing,
 F1-F4, 1-0, Space+1-0 (41-50), Ctrl+1..8, Ctrl+9/0, F9, F10, PrintScreen (release only),
-Ctrl+F1/F2/F3, Alt+G; V/Z down, repeat, up, and let go on typing and on focus loss; every key
-silent with a line focused (the letters typed into it); Tab with a focused button; no `move_*`
+Ctrl+F1/F2/F3; V/Z down, repeat, up, and let go on typing and on focus loss; every letter and
+digit key silent with a line focused (the letters typed into it); Tab with a focused button; no `move_*`
 action; and the pure parts (G strictly inside 50, Z strictly inside 300, names hidden by default,
 hover, what V hides, F9's cycle, the screenshot name, R's line, the bar's key names).
 **Negative, against 7c19536's scripts** (`/var/tmp/rkeymap2/neg_keymap.log`), 64 FAIL lines,
@@ -45938,3 +45940,52 @@ dropped after; `/var/tmp/rkeymap2/live3.log`):
 	World3D: berserk result: activated true, gauge 0, active true
 	KEYMAP Tab -> berserk 8: berserk requested
 	World3D: berserk result: activated false, gauge 0, active true
+
+### Review follow-up (read where marked)
+
+1. **The F-keys work while typing again (a regression, fixed).** The first commit let nothing run
+   while a text line had the keyboard, and round 606 keeps the chat line focused after every
+   message, so Ctrl+F3 (the bug-report path), F10, F1-F4, F9 and PrintScreen were dead after any
+   line of chat until a click or Escape (the review measured `key:F10 ... keymap=[]` and
+   `key:Print ... keymap=[]` with the chat focused); before round 608 they lived in
+   `_unhandled_input` with no typing test. `KeyMap.runs_while_typing` lets F1-F12 (with or without
+   Ctrl) and PrintScreen through; a line never takes them.
+2. **The "stricter than retail" reading was wrong twice.** `0x778310` returns -1 while
+   `+0x3ce == 1` for the **letter** scan codes only -- 0x10-0x19, 0x1e-0x26, 0x2c-0x32, the byte
+   table at `0x77856c` (read: `ecx = sc - 0x10`, `ja` past 0x22) -- and the digits, 0x02-0x0b, fall
+   through. And what `+0x3ce` means is not known: `0x77d8d0` also branches on it to change a speed
+   value on numpad 1-4 and to Beep and dump the camera on F8, which looks like a developer camera
+   mode. The typing rule is ours (rounds 605-606). `keymap_spec.md`'s section 1 is corrected.
+3. **Modifiers as retail reads them.** Neither `0x778310` nor `0x780610` tests a modifier for a
+   table key or an F-key, so Ctrl+S opens skills and Ctrl+G picks up in retail. The only modifiers
+   read are Space and Ctrl in the unbound-key path (`0x780c11`, `0x780c21`): the digits. So table
+   keys and F-keys now fire with Ctrl, Shift or Alt (HudPanels no longer drops Ctrl and Alt), Ctrl+
+   '1'..'8' still select and Ctrl+'9'/'0' do nothing, and Ctrl+F1-F3 stay ours (Ctrl+F4 is page
+   4). Meta does nothing (ours). **Alt, unsettled:** the message map at `0xd71100` registers
+   WM_CHAR, WM_KEYDOWN, WM_KEYUP and 0x8077 only (entries at `0xebe280`, stride 0x28, read), and
+   Win32 sends Alt+key and F10 as WM_SYSKEYDOWN, yet `0x780610` has an F10 case; how system keys
+   reach it was not read. Alt is treated as Ctrl and Shift are. **Collisions:** Alt+F4 also selects
+   page 4 as the OS closes the window; Alt+Tab would go berserk if the OS let Tab through (not
+   measured); Alt+Space opens the window menu on Windows and starts a Space chord here.
+4. **H's comment.** KeyMap said this client has no `GDR_GAMEGUIDE`; HelpWindow is built in that
+   very registry frame (`REGISTRY = {"name": "GDR_GAMEGUIDE"}`). Only its contents are ours.
+5. **Also:** without Media.pk2 (no HUD) `_is_typing` falls back to the viewport's focus owner, so
+   the fallback chat line keeps its keys; F9 saves the view in ClientSettings (`ui/camera_view`,
+   as the debug panel's selector does) and refreshes that selector (`DebugPanel.sync_view`); the
+   help says a drag does not turn the Third Person view; Space is taken when a button holds the
+   focus, so Space+digit no longer also presses it (measured before: Space presses a focused
+   button); the cursor and the hovered item's name refresh on V's press and release, not on the
+   next mouse motion.
+
+`keymap_test.gd` now checks F1, F4, F9, F10, Ctrl+F1-F3 and PrintScreen running with a line
+focused (and the focus staying), Ctrl/Shift/Alt+S, +G, +F9, Shift/Alt+1 and +F1, Ctrl+F4, Meta+G
+and Meta+S, and Space+1 with a button focused.
+**Negative, the same suite against 30527e0's scripts** (`/var/tmp/rkeymap2/neg_review.log`), 12
+FAIL lines, among them:
+
+	FAIL ctrl+S opens the skill window (toggled [])
+	FAIL alt+G picks up (ran [])
+	FAIL Ctrl+F4 selects page 4 (only Ctrl+F1-F3 are ours; ran [])
+	FAIL Meta+G and Meta+S do nothing (ran [], toggled ["skill"])
+	FAIL with a text line focused F1-F4, F9, F10, Ctrl+F1-F3 and PrintScreen still run, and the line keeps the focus (["F1 ran []", "F4 ran []", "F9 ran []", "F10 ran []", "Ctrl+F1 ran []", "Ctrl+F2 ran []", "Ctrl+F3 ran []", "PrintScreen ran []"])
+	FAIL Space+1 with a button focused fires slot 41 and does not press the button (ran [["quickslot", 41]], pressed 1)

@@ -51,10 +51,12 @@ const SLOTS: Array = [
 	# 0x81e690(1), which sends 0x70a7 (read). Here the server judges the
 	# gauge and answers "not full yet" (World3D's berserk_result handler).
 	{"slot": 8, "key": KEY_TAB, "cmd": 0x09, "row": "UIIT_STT_HWANMODE", "action": "berserk", "state": "works"},
-	# 0x79f690 toggles child 0x20, GDR_GAMEGUIDE, the client's help window,
-	# then raises the system window 0x62 (read). This client has no
-	# GDR_GAMEGUIDE; H toggles its own Help window (HelpWindow, the documents
-	# /help opens) in its place -- ours, not the game guide.
+	# 0x79f690 toggles child 0x20, GDR_GAMEGUIDE, the client's help window:
+	# shown, then raised with 0x79a7e0; or hidden, and 0x79a7e0 run on the
+	# system window 0x62 (read). H toggles HelpWindow, which is built in
+	# GDR_GAMEGUIDE's own registry frame (help_window.gd's REGISTRY); what it
+	# shows inside is this project's documents (ours), and the second step on
+	# window 0x62 is not built.
 	{"slot": 9, "key": KEY_H, "cmd": 0x48, "row": "UIIT_STT_HELP", "action": "help", "state": "works"},
 	# Held: key-down sets DAT_00eef5f5 (0x780a91), key-up clears it
 	# (0x77d8d0). While it is set, CIItem::vslot_010 (0x9e15b0) draws a
@@ -223,13 +225,26 @@ static func is_hold(action: String) -> bool:
 ## What a key press does: [action, arg], or [] when nothing.
 ##
 ## `space_held`: whether Space is down (the Space+digit quick slots).
-## Ctrl is tested before the plain keys, as 0x780610 tests it before the
-## digit path; with Alt or Meta held nothing resolves (ours: retail's own
-## handling of Alt was not found in 0x780610 or 0x78b660). Shift is ignored,
-## as this client ignored it before (retail's handling of it was not read).
-## PrintScreen resolves on its release only (resolve_release).
+##
+## **Modifiers, as retail reads them.** Neither 0x778310 nor 0x780610 tests
+## a modifier for a table key or an F-key (read), so Ctrl, Shift and Alt
+## change nothing there: Ctrl+S opens the skill window, Ctrl+G picks up.
+## The only modifier retail reads is in the path for keys the table does
+## not bind (0x778310 returned -1): GetKeyState(VK_SPACE) at 0x780c11 and
+## GetKeyState(VK_CONTROL) at 0x780c21, where Ctrl+'1'..'8' selects and
+## Ctrl+'9'/'0' does nothing; the digits are that path. Ours on top: Ctrl+F1,
+## Ctrl+F2 and Ctrl+F3 are the developer toggles (in retail they are F1-F3,
+## the pages), and a key with Meta (the Windows key) does nothing -- the OS
+## owns those. Alt: the retail message map (0xd71100) registers WM_CHAR,
+## WM_KEYDOWN and WM_KEYUP only, and Win32 sends a key with Alt held (and F10)
+## as WM_SYSKEYDOWN; since 0x780610 does have an F10 case, how system keys
+## reach it was not read. Alt is treated like Ctrl and Shift here (the
+## user's "as the original"); Alt+F4 selects page 4 as the OS closes the
+## window, and Alt+Tab would go berserk if the OS let the Tab through
+## (not measured). PrintScreen resolves on its release only
+## (resolve_release).
 static func resolve(keycode: int, ctrl: bool, alt: bool, meta: bool, space_held: bool) -> Array:
-	if alt or meta:
+	if meta:
 		return []
 	if ctrl:
 		match keycode:
@@ -239,11 +254,13 @@ static func resolve(keycode: int, ctrl: bool, alt: bool, meta: bool, space_held:
 				return ["debug_tabs", 0]
 			KEY_F3:
 				return ["debug_panel", 0]
-			KEY_1:
-				return ["select_self", 0]
-		if keycode >= KEY_2 and keycode <= KEY_8:
-			return ["select_party", keycode - KEY_1]
-		return []
+		var d := _digit(keycode)
+		if d == 1:
+			return ["select_self", 0]
+		if d >= 2 and d <= 8:
+			return ["select_party", d - 1]
+		if d >= 0:
+			return []
 	if keycode >= KEY_F1 and keycode <= KEY_F4:
 		return ["page", keycode - KEY_F1 + 1]
 	var digit := _digit(keycode)
@@ -260,6 +277,17 @@ static func resolve(keycode: int, ctrl: bool, alt: bool, meta: bool, space_held:
 	if slot == null:
 		return []
 	return [String(slot["action"]), int(slot["slot"])]
+
+## Whether a key still runs while a text line has the keyboard: the keys a
+## line never takes -- F1-F12 (with or without Ctrl) and PrintScreen. Letters,
+## digits, Tab, Space and the editing keys go to the line. Ours: retail's
+## +0x3ce flag, which makes 0x778310 return -1 for the letter scan codes
+## (0x10-0x19, 0x1e-0x26, 0x2c-0x32; the table at 0x77856c, read) and lets
+## the digits through, is not known to mean "typing" -- the key-up handler
+## 0x77d8d0 also branches on it to change a speed value on numpad 1-4 and to
+## Beep and dump the camera on F8, which looks like a developer camera mode.
+static func runs_while_typing(keycode: int) -> bool:
+	return (keycode >= KEY_F1 and keycode <= KEY_F12) or keycode == KEY_PRINT
 
 ## What a key release does: PrintScreen saves a screenshot on WM_KEYUP
 ## (0xba7240 tests message 0x101 with wParam 0x2c, read).

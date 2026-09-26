@@ -15,12 +15,14 @@ class_name KeyInput
 ## as well as reaching the unhandled stage, measured the same way; Space is
 ## only tracked here, not consumed.) An action taken marks the event handled.
 ##
-## **Nothing fires while a text line has the keyboard** (`is_typing`, the
-## rule of rounds 521, 605 and 606): the keys go into the line. The retail
-## client kills only its letter and digit keys that way (0x778310 returns -1
-## while CGInterface +0x3ce is 1; that the flag means typing is inferred) --
-## its F-key cases do not test the flag -- so this is stricter than retail,
-## by the rounds' rule (ours).
+## **While a text line has the keyboard** (`is_typing`, the rule of rounds
+## 521, 605 and 606) only the keys a line never takes run: F1-F12, Ctrl+F1-F3
+## and PrintScreen (KeyMap.runs_while_typing), so after a line of chat --
+## which keeps the focus -- Ctrl+F3, F10, the pages, F9 and PrintScreen still
+## work. Everything else goes into the line. Ours: retail's CGInterface +0x3ce
+## makes 0x778310 return -1 for the letter scan codes only (digits pass,
+## read at 0x778356..0x77837a), but what +0x3ce means is not known
+## (KeyMap.runs_while_typing has why).
 ##
 ## **Held keys** (V, Z; KeyMap.is_hold): down on the press, up on the
 ## release, as 0x780610 sets and 0x77d8d0 clears DAT_00eef5f4/f5 (read). Also
@@ -97,11 +99,16 @@ func _input(event: InputEvent) -> void:
 		_on_release(key)
 		return
 	if key.keycode == KEY_SPACE:
-		# Not consumed: Space itself does nothing here.
 		if not _typing():
 			_space_held = true
+			# Space presses a focused button (ui_accept, measured), which the
+			# client does not do -- it has no keyboard focus on buttons -- and
+			# which would also fire with every Space+digit chord. Taken here
+			# when a button holds the focus; otherwise left alone (ours).
+			if get_viewport().gui_get_focus_owner() is BaseButton:
+				get_viewport().set_input_as_handled()
 		return
-	if _typing():
+	if _typing() and not KeyMap.runs_while_typing(key.keycode):
 		return
 	var hit := KeyMap.resolve(key.keycode, key.ctrl_pressed, key.alt_pressed, key.meta_pressed, _space_held)
 	if hit.is_empty():
@@ -132,7 +139,7 @@ func _on_release(key: InputEventKey) -> void:
 		if int(_held[action]) == key.keycode:
 			_let_go(action)
 	var hit := KeyMap.resolve_release(key.keycode)
-	if hit.is_empty() or _typing():
+	if hit.is_empty():
 		return
 	get_viewport().set_input_as_handled()
 	_run(OS.get_keycode_string(key.keycode), String(hit[0]), int(hit[1]))
