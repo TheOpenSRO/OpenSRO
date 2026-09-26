@@ -126,11 +126,15 @@ func _initialize() -> void:
 	_check(compiled, "HudPanels compiles in _initialize, once the NetClient autoload is registered")
 	var consts: Dictionary = panels_script.get_script_constant_map() if compiled else {}
 	var panels: Dictionary = consts.get("PANELS", {})
-	var menu_items: Array = consts.get("MENU_ITEMS", [])
+	# The underbar's buttons and menu items name panels here (its
+	# menu_action); the map is HudUnderbar's since the bar is the client's
+	# own CNIFUnderMenuBar (round 598), and HudPanels has no menu of its own.
+	var bar_script := load("res://scripts/ui/hud/hud_underbar.gd") as GDScript
+	var menu_actions: Dictionary = bar_script.get_script_constant_map().get("MENU_ACTIONS", {}) if bar_script else {}
 	# Read by name off the constant map, so a renamed constant fails here
 	# rather than letting the two loops below pass over nothing.
-	_check(not panels.is_empty() and not menu_items.is_empty(),
-		"HudPanels.PANELS and MENU_ITEMS are non-empty constants (got %d and %d)" % [panels.size(), menu_items.size()])
+	_check(not panels.is_empty() and not menu_actions.is_empty(),
+		"HudPanels.PANELS and HudUnderbar.MENU_ACTIONS are non-empty constants (got %d and %d)" % [panels.size(), menu_actions.size()])
 
 	# Every panel HudPanels offers must have a layout path, a title and a
 	# hotkey slot, or open() will fail on a malformed entry at runtime. The
@@ -152,15 +156,15 @@ func _initialize() -> void:
 	if not panels.is_empty() and bad_specs == 0:
 		_check(true, "all %d panel specs are well formed" % panels.size())
 
-	# Every id the MENU offers must be a panel that exists, or the menu has
-	# an entry that can never open anything.
+	# Every panel the underbar's buttons and menu items open must exist, or
+	# the bar has an entry that can never open anything.
 	var bad_items := 0
-	for item in menu_items:
-		if not panels.has(item[0]):
-			_check(false, "MENU item %s is not a known panel" % item[0])
+	for id in menu_actions:
+		if not panels.has(menu_actions[id]):
+			_check(false, "underbar item %s opens %s, which is not a known panel" % [id, menu_actions[id]])
 			bad_items += 1
-	if not menu_items.is_empty() and bad_items == 0:
-		_check(true, "all %d MENU items map to real panels" % menu_items.size())
+	if not menu_actions.is_empty() and bad_items == 0:
+		_check(true, "all %d underbar buttons and menu items map to real panels" % menu_actions.size())
 
 	_finish()
 

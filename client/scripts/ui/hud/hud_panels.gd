@@ -2,7 +2,8 @@ extends Control
 class_name HudPanels
 
 ## Owns every floating game window: creates them on first use, toggles them
-## by hotkey or from the underbar's MENU, and fills them from NetClient.
+## by hotkey or from the underbar's buttons and menu (HudUnderbar, whose
+## menu_action names a panel here), and fills them from NetClient.
 ##
 ## The panels themselves are authored data (see docs/UI_TODO.md): one
 ## `resinfo\if*.txt` per window, built by HudWindow. What lives here is the
@@ -47,7 +48,7 @@ const PANELS := {
 	# views. U is the retail binding and opens the guild view: the default
 	# key table at 0x7778be puts 'U' in slot 6, which reaches the guild
 	# window's toggle 0x5b4980. No default key opens the community view; the
-	# underbar's community button does (_open_guild_window).
+	# underbar menu's community item (108, 0x60ce67 -> 0x5b49c0) does.
 	"community": [GuildWindow.GUILD_2DT, "", 0],
 	"guild": [GuildWindow.GUILD_2DT, "", KEY_U],
 	"action": ["resinfo\\ifaction.txt", "Action", KEY_A],
@@ -334,31 +335,9 @@ const EXTRA_SECTIONS := {
 	"autopotion": ["AbnormalSlot", "PotionDelaySlot"],
 }
 
-## Order, labels and the client's own menu icon for each MENU popup item,
-## mirroring the reference's list. The icon is one of interface\underbar's
-## own `ub_new_icon_*` (20x20); the three panels that are underbar buttons in
-## this archive (inventory/character/skill) have no such icon here, so they
-## show text-only rather than a mismatched one.
-const MENU_ITEMS := [
-	["party", "Party (P)", "ub_new_icon_pt"],
-	["partymatch", "Party Match (E)", "ub_new_icon_ptm"],
-	["guild", "Guild (U)", "ub_new_icon_guild"],
-	["academy", "Academy (L)", "ub_new_icon_apprenticeship"],
-	["action", "Action (A)", "ub_new_icon_action"],
-	["community", "Community", "ub_new_icon_commu"],
-	["quest", "Quest (Q)", "ub_new_icon_quest"],
-	["alchemy", "Alchemy (Y)", "ub_new_icon_alchemy"],
-	["inventory", "Inventory (I)", ""],
-	["character", "Character (C)", ""],
-	["skill", "Skill (K)", ""],
-	["autopotion", "Auto Potion (T)", "ub_new_icon_recovery"],
-]
-
 var _builder: UiBuilder
 var _windows: Dictionary = {} # panel id -> HudWindow
 var _unavailable: Dictionary = {} # panel id -> true, for layouts that failed
-var _menu: PopupMenu
-var _menu_ids: Array[String] = []
 
 func _init(builder: UiBuilder = null) -> void:
 	_builder = builder
@@ -367,54 +346,6 @@ func _ready() -> void:
 	# A transparent full-screen container: it must not eat world clicks.
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_build_menu()
-
-func _build_menu() -> void:
-	_menu = PopupMenu.new()
-	_menu.name = "Menu"
-	_style_menu(_menu)
-	for i in range(MENU_ITEMS.size()):
-		var item: Array = MENU_ITEMS[i]
-		var icon: Texture2D = null
-		if item.size() > 2 and item[2] != "" and _builder != null:
-			icon = _builder.load_texture("interface\\underbar\\%s.ddj" % item[2])
-		if icon != null:
-			_menu.add_icon_item(icon, item[1], i)
-		else:
-			_menu.add_item(item[1], i)
-		_menu_ids.append(item[0])
-	_menu.id_pressed.connect(func(id: int) -> void:
-		if id >= 0 and id < _menu_ids.size():
-			toggle(_menu_ids[id]))
-	add_child(_menu)
-
-## Dark, gold-edged styling so the menu reads as the game's rather than a grey
-## system popup. A disclosed choice; the ornate authored frame is a later
-## polish. The icon size is bumped so the 20x20 art is legible.
-func _style_menu(menu: PopupMenu) -> void:
-	var panel := StyleBoxFlat.new()
-	panel.bg_color = Color(0.06, 0.06, 0.07, 0.97)
-	panel.border_color = Color(0.55, 0.45, 0.22)
-	panel.set_border_width_all(2)
-	panel.set_corner_radius_all(4)
-	panel.set_content_margin_all(6)
-	menu.add_theme_stylebox_override("panel", panel)
-	var hover := StyleBoxFlat.new()
-	hover.bg_color = Color(0.20, 0.17, 0.09, 0.98)
-	hover.set_corner_radius_all(3)
-	menu.add_theme_stylebox_override("hover", hover)
-	menu.add_theme_color_override("font_color", Color(0.90, 0.84, 0.60))
-	menu.add_theme_color_override("font_hover_color", Color(1.0, 0.96, 0.74))
-	menu.add_theme_constant_override("icon_max_width", 22)
-	menu.add_theme_constant_override("v_separation", 6)
-
-## Opens the MENU popup above the underbar, where the reference puts it.
-func show_menu(near: Vector2) -> void:
-	if _menu == null:
-		return
-	var wanted := Vector2(near.x, near.y - _menu.get_contents_minimum_size().y)
-	_menu.position = Vector2i(get_screen_transform() * wanted)
-	_menu.popup()
 
 ## Shows a panel, building it the first time it is asked for. Does nothing
 ## if its authored layout isn't in the archive -- a missing panel is a real
@@ -535,8 +466,8 @@ func _open_guild_window(view: String) -> GuildWindow:
 	_populate(view)
 	return window
 
-## U (0x5b4980) and the underbar's community button (the retail menu's
-## community item, 0x5b49c0): set the view, then toggle the window.
+## U (0x5b4980) and the underbar menu's community item (108, 0x5b49c0):
+## set the view, then toggle the window.
 func _toggle_guild_window(view: String) -> void:
 	var window := _guild_window()
 	if window == null:

@@ -104,6 +104,22 @@ SRREVAMP_QA_CLICK=gate qa_shot.sh --out /var/tmp/teleport --server --region '97\
   --at 1230,1380 --frames 1100 --size 640x360 --teleport 2
 ```
 
+**A hotbar key is a run too** (round 598). `SRREVAMP_QA_HOTKEY="<tick>:<key>,..."` pushes
+real key presses through the viewport at those ticks, so a number key reaches the underbar the way
+a player's does; it prints `QA HOTKEY`, then `QA QUICKSLOT <index> (<label>): skill <id>, target
+<monster>`, `QA CAST: use_skill ...`, and each attack result's `QA BERSERK: gauge <g> ... <n> of 5
+orbs lit` as drawn (or `QA ATTACK RESULT: refused (...)`). The QA character knows no skill, so a
+run learns one first: `SRREVAMP_GM_ACCOUNTS=qa`, `SRREVAMP_QA_COMMANDS="/level 20;/sp 100000"`
+(tick 60), `SRREVAMP_QA_LEARN="257x5;3"` (tick 90: raise Bicheon five times, learn skill 3, each
+reply printed as `QA LEARN`), then `SRREVAMP_QA_HOTBAR=<tick>` assigns it through the same path a
+window click takes.
+
+```
+SRREVAMP_GM_ACCOUNTS=qa SRREVAMP_QA_COMMANDS="/level 20;/sp 100000" SRREVAMP_QA_LEARN="257x5;3" \
+  SRREVAMP_QA_HOTBAR=200 SRREVAMP_QA_HOTKEY="300:1,420:1,540:1" SRREVAMP_QA_ATTACK_FAST=1 \
+  SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames 620 --out /var/tmp/hotbar
+```
+
 ### Load benchmark
 
 Every map and loading change is measured on the two runs below, before and after, and on nothing

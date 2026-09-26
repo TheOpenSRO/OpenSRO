@@ -1173,11 +1173,12 @@ var _gm_greeted := false
 ## Packet wire logging (/wire): when on, NetClient prints every opcode+size.
 var _wire_logging := false
 
-## Where the chat window sits relative to the bottom-left corner. The
-## registry gives its size (399x398) and its corner; clearing the underbar
-## is this project's own choice, as the underbar's own vertical anchor is.
-const CHAT_MARGIN_X := 8.0
-const CHAT_MARGIN_Y := 6.0
+## Where the chat window sits: 2 pixels in from the left, directly on top of
+## the underbar. Read from the game-state enter 0x786f30, which places the
+## bar and then the chat (GDR_CHAT_BOARD, GetChild(1)) at
+## `SetPos(2, screen_h - bar_h - chat_h)` (0x78722d..0x78726e, GetSize
+## 0xb8f480 of each).
+const CHAT_LEFT := 2.0
 
 func _ready() -> void:
 	# Every entry names itself and the renderer in the log (round 579), so a
@@ -1457,32 +1458,25 @@ func _try_initialize_pk2_ui() -> void:
 		_hud_worldmap.queue_free()
 		_hud_worldmap = null
 
-	# Setup authentic Underbar (bottom bar)
+	# Setup authentic Underbar (bottom bar): CNIFUnderMenuBar, built from
+	# res_ui\nifundermenubar.2dt (HudUnderbar has the reading).
 	_hud_underbar = HudUnderbar.new(_ui_builder, _media_pk2, _ui_text_table)
 	_hud_underbar.name = "HudUnderbar"
 	ui_control.add_child(_hud_underbar)
-	# 800x52, centred horizontally and sitting on the bottom edge. The size
-	# is the bar body's authored rect (GDR_UNDERBAR in ginterface.txt), and
-	# the artwork is exactly that size, so it must not be stretched.
-	# Horizontal centring is authored too: the registry places the bar at
-	# x=112 in the client's 1024-wide default layout, and (1024-800)/2 is
-	# 112 exactly.
-	#
-	# The vertical anchor is a choice, not a recovered fact. The registry's
-	# y=684 would leave a 32px gap under the bar at 768 tall, but the same
-	# file places GDR_CHAT_BOARD's bottom at 944, past the bottom of a
-	# 768-tall screen -- so those defaults are not all screen-relative and
-	# can't be read as anchoring rules. Flush to the bottom is what the game
-	# looks like.
+	# Centred and flush to the bottom, as the client puts it: 0x786f30 calls
+	# the bar's SetPos((screen_w - 800) / 2, screen_h - 0x44) right after
+	# loading it (0x7871dc..0x787210). The size is the file's root rect,
+	# 800x68.
+	var bar_size := _hud_underbar.size
 	_hud_underbar.anchor_left = 0.5
 	_hud_underbar.anchor_right = 0.5
 	_hud_underbar.anchor_top = 1.0
 	_hud_underbar.anchor_bottom = 1.0
 	_hud_underbar.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	_hud_underbar.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	_hud_underbar.offset_left = -HudUnderbar.BODY_WIDTH / 2.0
-	_hud_underbar.offset_right = HudUnderbar.BODY_WIDTH / 2.0
-	_hud_underbar.offset_top = -float(HudUnderbar.BODY_HEIGHT)
+	_hud_underbar.offset_left = -bar_size.x / 2.0
+	_hud_underbar.offset_right = bar_size.x / 2.0
+	_hud_underbar.offset_top = -bar_size.y
 	_hud_underbar.offset_bottom = 0.0
 	# Built by add_child above (HudUnderbar._ready runs setup(), which builds
 	# once); a second setup() here used to stack a second bar on the first.
@@ -1537,10 +1531,21 @@ func _try_initialize_pk2_ui() -> void:
 			# all, so "no distance checking" and "nothing happened" looked the
 			# same from the outside.
 			_log_system(result.error)
+			if OS.get_environment("SRREVAMP_QA_HOTKEY") != "":
+				print("QA ATTACK RESULT: refused (%s)" % result.error)
 		if result != null and result.error == "" and _last_enter_world_max_hp > 0:
 			if _hud_player_info != null:
 				_hud_player_info.set_hp(result.player_hp, _last_enter_world_max_hp)
 				_hud_player_info.set_berserk(result.berserk_gauge, result.berserk_active)
+				if OS.get_environment("SRREVAMP_QA_HOTKEY") != "":
+					# The orbs as drawn: a lit orb is at full alpha.
+					var lit := 0
+					var orbs: Array = _hud_player_info.get("_berserk_orbs")
+					for orb in orbs:
+						if orb is CanvasItem and (orb as CanvasItem).modulate.a >= 1.0:
+							lit += 1
+					print("QA BERSERK: gauge %d active %s, %d of %d orbs lit (monster %d, damage %d)" % [
+						result.berserk_gauge, str(result.berserk_active), lit, orbs.size(), result.monster_id, result.monster_damage])
 			if _hud_panels != null:
 				_hud_panels.set_character_vitals(result.player_hp, _last_enter_world_max_hp, 1)
 			# A kill changes exp (and maybe level/HP-max), so refresh the gauges.
@@ -1652,10 +1657,10 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_chat.anchor_bottom = 1.0
 	_hud_chat.grow_horizontal = Control.GROW_DIRECTION_END
 	_hud_chat.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	_hud_chat.offset_left = CHAT_MARGIN_X
-	_hud_chat.offset_right = CHAT_MARGIN_X + _hud_chat.size.x
-	# Clear of the underbar, which is flush to the bottom edge.
-	_hud_chat.offset_bottom = -float(HudUnderbar.BODY_HEIGHT) - CHAT_MARGIN_Y
+	_hud_chat.offset_left = CHAT_LEFT
+	_hud_chat.offset_right = CHAT_LEFT + _hud_chat.size.x
+	# Directly on top of the underbar, which is flush to the bottom edge.
+	_hud_chat.offset_bottom = -_hud_underbar.size.y
 	_hud_chat.offset_top = _hud_chat.offset_bottom - _hud_chat.size.y
 	_hud_chat.message_submitted.connect(_on_chat_submitted)
 	_setup_console_and_help()
@@ -1680,7 +1685,7 @@ func _try_initialize_pk2_ui() -> void:
 	print("World3D: authentic Silkroad UI initialized from Media.pk2 (minimap, underbar, player info, %d panels)" % HudPanels.PANELS.size())
 
 ## The middle button over the minimap, the player-info block and the target
-## window (round 531). It fires the current page's first quickslot wherever
+## window (round 531). It fires the underbar's "m" slot (quick slot 0) wherever
 ## the cursor is (_unhandled_input, playtest 2026-09-20), but round 529 made
 ## these three STOP, so a middle press on them is consumed by the GUI and
 ## never reaches _unhandled_input. Each is handed to the hotbar's one relay
@@ -1695,15 +1700,11 @@ func _relay_middle_button_to_hotbar() -> void:
 		if is_instance_valid(surface) and surface is Control:
 			_hud_underbar.relay_middle_button(surface as Control)
 
-## Routes the underbar's buttons to the panels. "menu" opens the popup list
-## above the bar, where the reference puts it.
+## Routes the underbar's buttons and its menu's items to the panels. The bar
+## opens and closes its own menu (CNIFUnderMenuBar's popup 59); every action
+## it emits names a panel (HudUnderbar.MENU_ACTIONS).
 func _on_underbar_menu_action(action_name: String) -> void:
 	if _hud_panels == null:
-		return
-	if action_name == "menu":
-		_hud_panels.show_menu(_hud_underbar.global_position + Vector2(_hud_underbar.size.x * 0.86, 0.0))
-		return
-	if action_name == "option":
 		return
 	_hud_panels.toggle(action_name)
 
@@ -2109,10 +2110,10 @@ func _qa_open_panels(spec: String) -> void:
 		var panel_id := raw.strip_edges()
 		if panel_id == "":
 			continue
-		# The MENU popup is not a panel -- open it where the underbar would.
+		# The MENU is not a panel: it is the underbar's own popup (59).
 		if panel_id == "menu":
-			var view2 := get_viewport().get_visible_rect().size
-			_hud_panels.show_menu(Vector2(view2.x * 0.62, view2.y - 40.0))
+			if _hud_underbar != null:
+				_hud_underbar.show_menu()
 			placed += 1
 			continue
 		var window := _hud_panels.open(panel_id)
@@ -6563,11 +6564,12 @@ func _play_weapon_swing_anim() -> float:
 func _on_skill_assign_requested(skill_id: int, basic_code: String, icon: Texture2D) -> void:
 	if not _skill_is_assignable(skill_id):
 		return
-	for slot in range(HudUnderbar.SLOTS_PER_PAGE):
-		if not _quickslot_skills.has(slot):
+	for k in range(HudUnderbar.SLOTS_PER_PAGE):
+		var slot := HudUnderbar.slot_index(1, k)
+		if not _quickslot_skills.has(slot) and not _quickslot_items.has(slot):
 			_quickslot_skills[slot] = {"id": skill_id, "code": basic_code}
 			_hud_underbar.set_slot_item(slot, icon)
-			_log_system("Assigned skill to quickslot %d -- click it (or its key) to cast." % (slot + 1))
+			_log_system("Assigned skill to quickslot %s -- click it (or its key) to cast." % HudUnderbar.slot_label(slot))
 			return
 	_log_system("Quickslots are full.")
 
@@ -6580,9 +6582,10 @@ func _on_skill_drop_requested(at: Vector2, skill_id: int, basic_code: String, ic
 	var slot := _hud_underbar.slot_index_at(at)
 	if slot < 0:
 		return
+	_quickslot_items.erase(slot)
 	_quickslot_skills[slot] = {"id": skill_id, "code": basic_code}
 	_hud_underbar.set_slot_item(slot, icon)
-	_log_system("Assigned skill to quickslot %d." % (slot % HudUnderbar.SLOTS_PER_PAGE + 1))
+	_log_system("Assigned skill to quickslot %s." % HudUnderbar.slot_label(slot))
 
 ## Whether a skill may go on the hotbar: the server has to have said the
 ## character knows it.
@@ -6608,6 +6611,10 @@ func _on_quickslot_activated(slot_index: int) -> void:
 		_log_system(DEAD_INPUT_LINE)
 		return
 	var entry = _quickslot_skills.get(slot_index)
+	if OS.get_environment("SRREVAMP_QA_HOTKEY") != "":
+		print("QA QUICKSLOT %d (%s): %s, target %d" % [slot_index, HudUnderbar.slot_label(slot_index),
+			("skill %d" % int(entry["id"])) if entry != null else ("item" if _quickslot_items.has(slot_index) else "empty"),
+			_last_attack_target])
 	if entry != null:
 		_cast_skill(int(entry["id"]), String(entry["code"]))
 		return
@@ -6651,7 +6658,7 @@ func _on_item_drop_requested(at: Vector2, item_id: int, inventory_slot: int, ico
 	_quickslot_skills.erase(slot)
 	_quickslot_items[slot] = {"item": item_id, "slot": inventory_slot}
 	_hud_underbar.set_slot_item(slot, icon)
-	_log_system("Put the item on quickslot %d." % (slot + 1))
+	_log_system("Put the item on quickslot %s." % HudUnderbar.slot_label(slot))
 
 ## Keeps the bar's item slots pointing at the right bag slots, and clears any
 ## whose item is gone (spent, sold, moved). Called whenever the bag is redrawn.
@@ -6671,6 +6678,29 @@ func _resync_quickslot_items(slots: Array) -> void:
 		else:
 			_quickslot_items.erase(qs)
 			_hud_underbar.set_slot_item(qs, null)
+
+## SRREVAMP_QA_LEARN's steps (see the hook in _qa_step): "<mastery>x<n>"
+## raises that mastery n times, "<id>" learns that skill; each waits for its
+## reply and prints it, and the skill state is re-read at the end so the
+## hotbar's known-skill gate sees the result.
+func _qa_learn(spec: String) -> void:
+	var who := NetClient.current_character_name
+	for raw in spec.split(";", false):
+		var step := String(raw).strip_edges()
+		if step.contains("x"):
+			var parts := step.split("x")
+			for i in int(parts[1]):
+				NetClient.raise_mastery(who, int(parts[0]))
+				var r = await NetClient.raise_mastery_result
+				print("QA LEARN: mastery %s raise %d -> level %d, sp %d (%s)" % [parts[0], i + 1,
+					r.new_level if r != null else -1, r.skill_points if r != null else -1, r.error if r != null else "no reply"])
+		elif step.is_valid_int():
+			NetClient.learn_skill(who, int(step))
+			var answer: Array = await NetClient.learn_skill_result
+			print("QA LEARN: skill %s -> ok %s (%s)" % [step, str(answer[0]), str(answer[1])])
+	NetClient.skill_state(who)
+	await NetClient.skill_state_result
+	print("QA LEARN: skill state re-read (skill 3 known: %s)" % str(_hud_panels != null and _hud_panels.is_skill_known(3)))
 
 ## F1..F4 select quickslot pages 1..4. Plain presses only -- Ctrl+F1 and
 ## Ctrl+F3 are the developer toggles, and an echo (key held) must not flip
@@ -6969,6 +6999,8 @@ func _send_attack(monster_id: int, skill_id: int, basic_code: String) -> void:
 	_last_combat_time = _player_anim_time
 	_play_skill_cast_anim(anim_base)
 	_pending_skill_hit_code = basic_code
+	if OS.get_environment("SRREVAMP_QA_HOTKEY") != "":
+		print("QA CAST: use_skill %d (%s) on monster %d" % [skill_id, basic_code, monster_id])
 	NetClient.use_skill(NetClient.current_character_name, skill_id, monster_id)
 
 ## The group entry behind _body_animation_for, for its events.
@@ -8229,11 +8261,47 @@ func _qa_step() -> void:
 
 	# SRREVAMP_QA_HOTBAR=1 assigns two real skills to the hotbar (the same path a
 	# window click takes) so a render can show their icons in the quickslots.
-	if OS.get_environment("SRREVAMP_QA_HOTBAR") != "" and _qa_tick == 60 and _ui_builder != null:
+	# A value above 1 is the tick to do it at (default 60), for a run that
+	# learns the skill first (SRREVAMP_QA_LEARN). The path refuses a skill the
+	# server has not said the character knows.
+	var qa_hotbar := OS.get_environment("SRREVAMP_QA_HOTBAR")
+	var qa_hotbar_tick := int(qa_hotbar) if qa_hotbar.is_valid_int() and int(qa_hotbar) > 1 else 60
+	if qa_hotbar != "" and _qa_tick == qa_hotbar_tick and _ui_builder != null:
+		print("QA HOTBAR: assigning at tick %d (skill 3 known: %s)" % [_qa_tick,
+			str(_hud_panels != null and _hud_panels.is_skill_known(3))])
 		_on_skill_assign_requested(3, "SKILL_CH_SWORD_SMASH_A_01",
 			_ui_builder.load_texture("icon\\skill\\china\\sword_smash_a.ddj"))
 		_on_skill_assign_requested(177, "SKILL_CH_SWORD_CHAIN_A_01",
 			_ui_builder.load_texture("icon\\skill\\china\\sword_chain_a.ddj"))
+
+	# SRREVAMP_QA_HOTKEY="<tick>:<key>[,<tick>:<key>...]" presses a key at
+	# each tick through the viewport's real input path (push_input), as a
+	# player's key press arrives -- the number keys reach the underbar's quick
+	# slots through World3D._unhandled_input. Each press and each quick slot
+	# it fires is printed (_on_quickslot_activated), so a run measures the
+	# key -> quick slot -> cast chain from its log. QA only.
+	var qa_hotkey := OS.get_environment("SRREVAMP_QA_HOTKEY")
+	if qa_hotkey != "":
+		for part in qa_hotkey.split(",", false):
+			var key_at := String(part).split(":")
+			if key_at.size() == 2 and key_at[0].is_valid_int() and int(key_at[0]) == _qa_tick:
+				var code := OS.find_keycode_from_string(key_at[1])
+				print("QA HOTKEY: pressing %s (keycode %d) at tick %d, page F%d" % [key_at[1], code, _qa_tick,
+					_hud_underbar.current_page() if _hud_underbar != null else 0])
+				for pressed in [true, false]:
+					var ev := InputEventKey.new()
+					ev.keycode = code
+					ev.physical_keycode = code
+					ev.pressed = pressed
+					get_viewport().push_input(ev)
+
+	# SRREVAMP_QA_LEARN="<mastery>x<n>;<skill id>[;...]" raises a mastery n
+	# times and learns skills, one request after another, each waiting for
+	# its reply, starting at tick 90 (after SRREVAMP_QA_COMMANDS, which can
+	# give the skill points with a GM account). Each reply is printed. QA only.
+	var qa_learn := OS.get_environment("SRREVAMP_QA_LEARN")
+	if qa_learn != "" and _qa_tick == 90 and NetClient.is_connected_to_server():
+		_qa_learn(qa_learn)
 
 	# SRREVAMP_QA_FAKEITEMS fills the bag with sample items (real IDs) a little
 	# after it opens -- past the server's empty-inventory reply -- so a render
@@ -10754,9 +10822,9 @@ func _setup_console_and_help() -> void:
 	# string for this).
 	_refresh_command_tooltip()
 	if _hud_underbar != null:
-		var menu_btn := _hud_underbar.find_child("GDR_BTN_MENU", true, false)
-		if menu_btn is Control:
-			(menu_btn as Control).tooltip_text = _command_tooltip()
+		var menu_btn := _hud_underbar.menu_button()
+		if menu_btn != null:
+			menu_btn.tooltip_text = _command_tooltip()
 
 	# The QA hooks (SRREVAMP_QA_COMMANDS, SRREVAMP_QA_HELP) fire from the
 	# frame-tick block in the QA process function, like every other hook.
@@ -11148,23 +11216,23 @@ func _unhandled_input(event: InputEvent) -> void:
 	if _hotbar_page_hotkey(event):
 		get_viewport().set_input_as_handled()
 		return
-	# The middle mouse button fires the current page's FIRST quickslot, which
-	# is how the original reaches it: "the first slot thats on the hotbar you
-	# press it with 1, thats not right it should be middle mouse button"
-	# (playtest 2026-09-20). The 1 key still works -- it addresses the same
-	# slot -- so this adds a binding rather than taking one away. This is the
-	# press over the world; a press over a STOP HUD surface never gets here,
-	# and the hotbar fires it for them (_relay_middle_button_to_hotbar).
+	# The middle mouse button fires the bar's "m" slot, the first slot on the
+	# hotbar: "the first slot thats on the hotbar you press it with 1, thats
+	# not right it should be middle mouse button" (playtest 2026-09-20). The
+	# client's own bar has that slot (quick slot 0, labelled ub_number_m), and
+	# its mouse handler fires it on WM_MBUTTONDOWN (0x77c4cc -> 0x60bb80(0);
+	# HudUnderbar.MOUSE_SLOT has the reading). Until the real bar was built it
+	# fired page slot 1, the one the 1 key fires. This is the press over the
+	# world; a press over a STOP HUD surface never gets here, and the hotbar
+	# fires it for them (_relay_middle_button_to_hotbar).
 	#
-	# NOT YET REBINDABLE. The same report asks for that, and it needs a
-	# key-bindings section in the options window that does not exist yet; a
-	# hardcoded second binding is the honest half of the request, and the
-	# other half is recorded in docs/PLAYTEST_2026_09_20b.md rather than
-	# quietly dropped.
+	# NOT YET REBINDABLE. The client moves it to the right button when its
+	# interface flag +0x4f9 is set from the options; this client has no such
+	# option (docs/PLAYTEST_2026_09_20b.md records the request).
 	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed \
 			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_MIDDLE \
 			and _hud_underbar != null:
-		_hud_underbar.activate_key(0)
+		_hud_underbar.activate_mouse_slot()
 		get_viewport().set_input_as_handled()
 		return
 	# 1..9 and 0: the current page's quickslots.
@@ -13196,6 +13264,7 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 		if stats.max_mp > 0:
 			_hud_player_info.set_mp(stats.mp, stats.max_mp)
 	if _hud_underbar != null:
+		_hud_underbar.set_level(stats.level)
 		_hud_underbar.set_exp(stats.exp_percent())
 		# A plain total: SP is not out of anything, and passing a maximum drew
 		# the authored SP bar permanently full (playtest 2026-09-20, items 10

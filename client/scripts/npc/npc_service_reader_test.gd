@@ -828,8 +828,8 @@ func _initialize() -> void:
 	# orbit keeps turning over a STOP control. Real events go through the live
 	# viewport, and a recorder node stands in for World3D's two handlers, so
 	# "reaches the world" is measured here, not read off a filter value. Each
-	# surface is built without an archive; the hotbar from a synthetic layout
-	# shaped like ifunderbar.txt's controls (never real game data). Not driven:
+	# surface is built without an archive; the hotbar from a synthetic
+	# nifundermenubar.2dt (never real game data). Not driven:
 	# a real click in a running client, and the surfaces built from Media.pk2.
 	var recorder_script := GDScript.new()
 	recorder_script.source_code = "\n".join([
@@ -894,70 +894,50 @@ func _initialize() -> void:
 	_check(not _click_reaches_world(recorder, target_centre),
 		"a click on the shown target window does not reach the world")
 
-	# The hotbar. Its rect is the 800x52 body; a slot, a CIFWnd (built PASS,
-	# as GDR_QS_INIDCTION is) inside the body, a button above the body and a
-	# decoration beside it, at their ifunderbar.txt places.
-	var bar_layout := """
-Interface Text
-
-Section = Create,"0,0,0,0","0"
-{
-	GDR_TMPQS_0:CIFSlotWithHelp
-	{
-		Rect=RECT,"238,11,32,32"
-	}
-	GDR_QS_INIDCTION:CIFWnd
-	{
-		Rect=RECT,"285,8,40,40"
-	}
-	GDR_BTN_MENU:CIFButton
-	{
-		Rect=RECT,"688,-17,60,56"
-	}
-	GDR_DECORATE_1:CIFStatic
-	{
-		Rect=RECT,"-64,0,64,52"
-		DDJ=STRING,"interface\\underbar\\ub_deco_left.ddj"
-	}
-}
-"""
-	var bar := HudUnderbar.new(UiBuilder.new(null, null), null, null)
-	bar.setup(bar_layout)
+	# The hotbar: CNIFUnderMenuBar from the synthetic nifundermenubar.2dt in
+	# underbar_fixture.gd (round 5xx). Its rect is the 800x68 body; quick slot
+	# 1 (40) and the menu button (4) sit inside it, the left decoration (2)
+	# hangs off its left end, and the menu (59) opens above it.
+	var Fixture = load("res://scripts/ui/hud/underbar_fixture.gd")
+	var bar := HudUnderbar.new(Fixture.builder(), null, null)
+	bar.setup()
 	hud.add_child(bar)
 	var bar_at := Vector2(100, 400)
 	bar.position = bar_at
 	var fired: Array = []
 	bar.quickslot_activated.connect(func(idx: int) -> void: fired.append(idx))
-	var menus: Array = []
-	bar.menu_action.connect(func(action: String) -> void: menus.append(action))
-	_check(bar.size == Vector2(HudUnderbar.BODY_WIDTH, HudUnderbar.BODY_HEIGHT),
-		"the probe: the hotbar's rect is its body (%s)" % [bar.size])
+	_check(bar.size == Vector2(HudUnderbar.BODY_WIDTH, HudUnderbar.BODY_HEIGHT) and bar.size == Vector2(800, 68),
+		"the probe: the hotbar's rect is its 800x68 body (%s)" % [bar.size])
 	# NEGATIVE (fails before round 529: IGNORE).
 	_check(bar.mouse_filter == Control.MOUSE_FILTER_STOP, "the hotbar's body is STOP (filter %d)" % bar.mouse_filter)
-	_check(not _click_reaches_world(recorder, bar_at + Vector2(100, 26)),
+	_check(not _click_reaches_world(recorder, bar_at + Vector2(100, 30)),
 		"a click on the hotbar's body away from its slots does not reach the world")
-	_check(not _click_reaches_world(recorder, bar_at + Vector2(300, 26)),
-		"a click on a PASS control inside the body stops at the body")
+	_check(not _click_reaches_world(recorder, bar_at + Vector2(600, 50)),
+		"a click on the bar's own art (a PASS control) stops at the body")
 	_check(fired.is_empty(), "a left click on the body fires no quickslot (got %s)" % [fired])
 	# The children keep their clicks.
-	_check(not _click_reaches_world(recorder, bar_at + Vector2(254, 27)) and fired == [0],
-		"a click on a slot fires it and does not reach the world (fired %s)" % [fired])
-	_check(not _click_reaches_world(recorder, bar_at + Vector2(718, -5)) and menus == ["menu"],
-		"the menu button above the bar still takes its click (got %s)" % [menus])
-	# Nothing is swallowed outside the body: the space above it and the
-	# decoration beside it still pass a click to the world.
+	_check(not _click_reaches_world(recorder, bar_at + Vector2(277, 34)) and fired == [1],
+		"a click on quick slot 1 fires it and does not reach the world (fired %s)" % [fired])
+	_check(not _click_reaches_world(recorder, bar_at + Vector2(720, 13)) and bar.is_menu_open(),
+		"the menu button takes its click and opens the menu")
+	var menu := bar.control([59])
+	_check(menu != null and not _click_reaches_world(recorder, menu.get_global_rect().position + Vector2(20, 100)),
+		"a click on the open menu does not reach the world")
+	bar.toggle_menu()
+	# Nothing is swallowed outside the body: the space above it (the menu
+	# closed) and the decoration beside it still pass a click to the world.
 	_check(_click_reaches_world(recorder, bar_at + Vector2(100, -20)),
 		"a click in the empty space above the bar reaches the world")
-	_check(_click_reaches_world(recorder, bar_at + Vector2(-30, 26)),
+	_check(_click_reaches_world(recorder, bar_at + Vector2(-30, 30)),
 		"a click on the decoration beside the bar reaches the world")
-	# The middle button still fires the page's first quickslot over the body
-	# (it reached World3D before) and over a slot, once each.
+	# The middle button fires the "m" slot, quick slot 0, over the body (it
+	# reached World3D before) and over a slot, once each.
 	fired.clear()
-	_check(not _click_reaches_world(recorder, bar_at + Vector2(100, 26), MOUSE_BUTTON_MIDDLE) and fired == [0],
-		"a middle press on the body fires the first quickslot (fired %s)" % [fired])
+	_check(not _click_reaches_world(recorder, bar_at + Vector2(100, 30), MOUSE_BUTTON_MIDDLE) and fired == [0],
+		"a middle press on the body fires the \"m\" slot (fired %s)" % [fired])
 	fired.clear()
-	_check(not _click_reaches_world(recorder, bar_at + Vector2(254, 27), MOUSE_BUTTON_MIDDLE) and fired == [0],
-		"a middle press on a slot fires it once (fired %s)" % [fired])
+	_check(not _click_reaches_world(recorder, bar_at + Vector2(277, 34), MOUSE_BUTTON_MIDDLE) and fired == [0],
+		"a middle press on a slot fires the \"m\" slot once (fired %s)" % [fired])
 
 	# The orbit. First the routing it rests on, measured with a plain STOP
 	# control (every HudWindow is one): a right press on no control leaves no

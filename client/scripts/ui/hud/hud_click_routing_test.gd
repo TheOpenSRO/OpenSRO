@@ -191,7 +191,7 @@ func _test_middle_button(world: Node, recorder: Node) -> void:
 		fired.clear()
 		var reached := _click_reaches_world(recorder, centre, MOUSE_BUTTON_MIDDLE)
 		# NEGATIVE (fails before round 531: the STOP surface swallowed it).
-		_check(fired == [0], "a middle press on the %s fires the first quickslot once (fired %s)" % [label, fired])
+		_check(fired == [0], "a middle press on the %s fires the \"m\" slot, quick slot 0, once (fired %s)" % [label, fired])
 		_check(not reached, "a middle press on the %s does not also reach the world" % label)
 		fired.clear()
 		_click_reaches_world(recorder, centre, MOUSE_BUTTON_LEFT)
@@ -207,7 +207,7 @@ func _test_middle_button(world: Node, recorder: Node) -> void:
 	fired.clear()
 	var body_reached := _click_reaches_world(recorder, bar.get_global_rect().get_center(), MOUSE_BUTTON_MIDDLE)
 	_check(fired == [0] and not body_reached,
-		"a middle press on the hotbar's body fires the first quickslot once (fired %s)" % [fired])
+		"a middle press on the hotbar's body fires the \"m\" slot once (fired %s)" % [fired])
 	# A hidden target window takes nothing: the press goes to the world,
 	# where World3D fires it (not here).
 	target.visible = false

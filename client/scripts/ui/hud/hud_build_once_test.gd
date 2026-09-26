@@ -5,10 +5,12 @@ extends SceneTree
 ## which built a second copy of every control stacked exactly on the first.
 ## Here each widget is set up, put in the tree and set up again, as World3D
 ## did; there must be one copy of each authored control. The layouts are
-## synthetic, with real control names and rects (never real game data):
+## synthetic, with real control names and rects (never real game data); the
+## underbar's is the synthetic nifundermenubar.2dt in underbar_fixture.gd:
 ##   godot4 --headless --path client --script res://scripts/ui/hud/hud_build_once_test.gd
 
 const WORLD_PATH := "res://scripts/World3D.gd"
+const UnderbarFixture = preload("res://scripts/ui/hud/underbar_fixture.gd")
 
 var _failures := 0
 
@@ -24,11 +26,6 @@ func _control(control_name: String, type: String, rect: String) -> String:
 
 func _layout(body: String) -> String:
 	return "Interface Text\n\nSection = Create,\"0,0,0,0\",\"0\"\n{\n" + body + "}\n"
-
-func _underbar() -> String:
-	return _layout(_control("GDR_BTN_MENU", "CIFButton", "688,-17,60,56")
-		+ _control("GDR_STATIC_EXP", "CIFStatic", "18,31,198,12")
-		+ _control("GDR_TMPQS_0", "CIFSlotWithHelp", "238,11,32,32"))
 
 func _minimap() -> String:
 	return _layout(_control("GDR_MINIMAP_ZOOMIN", "CIFButton", "107,136,20,20")
@@ -46,24 +43,26 @@ func _initialize() -> void:
 	var hud := Control.new()
 	root.add_child(hud)
 
-	var bar := HudUnderbar.new(UiBuilder.new(null, null), null, null)
-	bar.setup(_underbar())
+	# Button4 is the menu button, Static14 the EXP caption, Wnd40 quick slot 1.
+	var ub_builder := UnderbarFixture.builder()
+	var bar := HudUnderbar.new(ub_builder, null, null)
+	bar.setup()
 	hud.add_child(bar)
 	var bar_children := bar.get_child_count()
-	bar.setup(_underbar())
-	for n in ["GDR_BTN_MENU", "GDR_STATIC_EXP", "GDR_TMPQS_0"]:
+	bar.setup()
+	for n in ["Button4", "Static14", "Wnd40"]:
 		_check(_copies(bar, n) == 1, "underbar: one %s after a second setup() (got %d)" % [n, _copies(bar, n)])
 	_check(bar.get_child_count() == bar_children, "underbar: a second setup() adds no children (%d -> %d)" % [bar_children, bar.get_child_count()])
 	# The slot handlers are the first build's: a click fires once.
 	var fired: Array = []
 	bar.quickslot_activated.connect(func(idx: int) -> void: fired.append(idx))
-	var slot := bar.find_child("GDR_TMPQS_0", true, false) as Control
+	var slot := bar.find_child("Wnd40", true, false) as Control
 	if slot != null:
 		var press := InputEventMouseButton.new()
 		press.button_index = MOUSE_BUTTON_LEFT
 		press.pressed = true
 		slot.gui_input.emit(press)
-	_check(fired == [0], "underbar: a click on quickslot 0 fires it once (got %s)" % [fired])
+	_check(fired == [1], "underbar: a click on quick slot 1 fires it once (got %s)" % [fired])
 
 	var minimap := HudMinimap.new(UiBuilder.new(null, null), null, null)
 	minimap.setup(_minimap())

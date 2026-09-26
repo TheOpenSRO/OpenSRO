@@ -43032,3 +43032,375 @@ NEGATIVE against 3dd65be's scripts: **8 FAIL lines**:
 Against 8dad706's scripts, the centring negative fails:
 `FAIL closed after a drag and reopened, the window is centred again at (266, 107) (got (166, 167))`.
 On this tree the suite prints ALL PASS.
+
+## The bottom bar is the client's own menu bar: its level and ten-part EXP readout, the M slot on the middle button, and its own menu (round 598)
+
+Client only. Nothing on the wire changes and the server is unchanged. The bottom bar was built
+from `resinfo\ifunderbar.txt` inside `GDR_UNDERBAR`'s registry art (`ub_window_01.ddj`,
+800x52). The exe names neither for a bar that draws. The bar players see is `CNIFUnderMenuBar`,
+built from `res_ui\nifundermenubar.2dt`, and `HudUnderbar` now builds that
+(`client/scripts/ui/hud/hud_underbar.gd`) with the `.2dt` reader and builder. Every address is
+`sro_client.exe`'s (md5 `2a5794b72c90908d945be8b3f3f2edd4`), read in the decompile
+`/var/tmp/decomp_client` and checked in the asm `/var/tmp/sro_client.asm`. Every fact below is
+labelled read, measured or inferred. Nothing was decided from a picture.
+
+### A. One bar, not two: CIFUnderBar is created but draws nothing (read)
+
+- `GDR_UNDERBAR:CIFUnderBar` is in `resinfo\ginterface.txt`'s Create section with no `#ifdef`
+  around it (measured). The interface builds that section: `0x78c9ce` pushes
+  `resinfo\ginterface.txt` (0xdb97c4) into `0x8b50a0` on the interface's +0x36c, then
+  `0x8b5580` builds the section named at 0xd82368, "Create". So a CIFUnderBar exists.
+- It holds and draws nothing. Its vtable is 0xda4da4. Slot 10, Create (`0x68d540`), calls only
+  `0xba0e40` (a registration into the map at 0x110f96c) and returns 1. No layout is loaded and no
+  child is made. Slot 13, the render slot, is a bare `ret` (`0x68d980`). For comparison,
+  CIFWnd's slot 13 `0x6550c0` draws the window's texture object (+0x84, vslot 2) and CNIFWnd's
+  `0x46cda0` does the same, so its registry art `ub_window_01.ddj` is never drawn. Slot 23,
+  ShowWindow, is `ret 4` (`0x68c850`), so it cannot be shown or hidden. Slot 12, the update, is
+  `ret` (`0x68c5f0`).
+- Its quick-slot code is dead. `0x68c740` (load the server's quick slots), `0x68d3a0` and
+  `0x68d990` (re-bind moved items) are the routines that fill or use its 51-slot array at +0x3b4.
+  Two probes with different failure modes find no reach into them:
+  - the asm has no call to `0x68d3a0` or `0x68d990`, and the one call to `0x68c740` is from
+    `0x68d190`, which nothing calls;
+  - none of the four addresses occurs as a dword anywhere in the file, so there is no pointer
+    to them.
+  The live copies are CNIFUnderMenuBar's: `0x60b260` consumes the same server data
+  (0xef1b68 / 0xef1b6c), and `0x60c430` / `0x60bea0` re-bind and save (packet 0x7158).
+- The live bar: the game-state enter `0x786f30` loads `res_ui\nifundermenubar.2dt`
+  unconditionally (the research pass's loader table) and places it (section C).
+
+**So the HUD is one bar, and CIFUnderBar is not built here.** `ifunderbar.txt` is named nowhere
+in the exe (round 594, the reader). The build from it is removed. Nothing references it any more:
+the four suites that built the bar from an ifunderbar-shaped layout now use a synthetic `.2dt`.
+One thing is not read: whether CIFUnderBar's empty rect, (112, 684, 800, 52) in the registry,
+takes mouse input in retail.
+
+### B. The file (measured, `/var/tmp/r2dt/files/nifundermenubar.2dt`, 111 records)
+
+- Root 175, `CNIFUnderMenuBar`, a CNIFWnd at 800x68 on `interface\underbar\ub_new_mainbar2.ddj`.
+  The texture is 800x68 (the audit's tree), so it is drawn 1:1.
+- Two end decorations, 2 and 3, `ub_new_deco_left/right` at 76x64, hang off the bar at x -76
+  and x 800.
+- The SP gauge 5 (`ub_new_sp_bar`, 176x8) and ten EXP gauges 20..29 (`ub_new_exp_bar`, 76x8 each,
+  y 59).
+- Text rows 10..15 and 17, each 4 to 9 tall.
+- Buttons: 4 (`ub_new_menu`, 78x24, the menu); 6 / 7 / 8 / 9 (character, inventory, skill,
+  mall, 32x32); 18 / 19 (page down / up).
+- Quick slots 40..49 and 50, `CIFSlotWithHelpEx`, 32x32. Their number art 92..101 reads
+  `ub_number_1`..`_0`, and 102 reads `ub_number_m` beside slot 50.
+- The page label 57, the pet bar 16 (192x36, six slots 51..56), and the slot arrow 103 (40x40).
+- The menu 59: a CNIFFrame on `interface\frame\ub_new_wnd_`, 138x403, 20x20 pieces. It holds
+  the tile 62 and fifteen `CNIFMenuButton`s (97x20 on `ub_new_menu_button`, which is 124x20).
+  Each button has an icon 100 and a caption 200. Lines 70 / 79 / 98 divide them.
+
+### C. Placement (read)
+
+`0x7871dc..0x787210`: `GetWindow(0xaf)` then `SetPos((W - 0x320) / 2, H - 0x44)`. That is
+centred and flush to the bottom, and `HudUnderbar` is anchored so. W and H are +0x24 / +0x28 of
+the record `0x4f9cd0` returns (a table row indexed by a byte, 0x2c bytes a row). That they are
+the screen size is **inferred**.
+
+The same block then places the chat (`GetChild(1)`, `GDR_CHAT_BOARD`) at
+`SetPos(2, H - bar_h - chat_h)` (`0x78722d..0x78726e`; GetSize `0xb8f480` returns +0x48 / +0x4c).
+World3D now does exactly that. `CHAT_LEFT` is 2, and the chat's bottom is the bar's top. The
+old 8 / 6 margins were this project's own choice.
+
+### D. Order and state after creation (read)
+
+**Order.** The loader queues each named record with a push_front and then walks the list from
+its front. The node constructor is `0x46bf60(next, prev, &val)`. It is inserted before the first
+node: `0x48fc09..0x48fc2b`. The send loop is `0x48fc84..0x48fcbd`. So the `0x8065` OnCreates run
+in **reverse** file order. This is the review's finding for the guild window, confirmed here.
+For this file:
+
+1. The fifteen CNIFMenuButtons run first. Their handler `0x60ac20` stores child 200 at +0x3bc.
+   Their SetText, vtable slot 47 `0x60ac40`, forwards there.
+2. `CIFSlotWithHelpEx`'s map (0xda49c4 -> 0xeea4f0) has no entry written, so it has no OnCreate.
+3. The bar's own handler `0x60df30` runs last. It is the map's `0x8065` entry, written at
+   0xeb5038 by `0xd69d61`.
+
+So when the bar captions its menu, each caption reaches its 200. The same order is why the
+captions exist at all. `HudUnderbar` applies the net state in that order.
+
+`0x60df30`, in order:
+- 14 is captioned `UIO_CHARINFO_STT_EXP`.
+- It fetches 5, 12, 10, 15, 20..29, 17 and 13 (the readouts, section E).
+- It hides 59 (the menu) and fetches 57 (the page label).
+- 50 becomes quick slot 0. Its slot object (+0x348) gets index 0 and type 0xc (`0x6667d0`,
+  `0x6666f0`).
+- 40..49 become quick slots 1..10 and are hidden.
+- It creates quick slots 11..50. Each is a `CIFSlotWithHelpEx` (descriptor 0xeea4d0), made with
+  `0xba20b0` at (0, 0, 32, 32) and id index + 999. Each is moved (`SetPos`, vslot 0x98) to
+  quick slot ((index - 1) % 10) + 1's position, the counter cycling 1..10 at
+  `0x60e15e..0x60e166`, and hidden.
+- A 0x6c0-byte helper is made at +0x4a0 (`0x673c80`).
+- It hides 103 (the slot arrow).
+- It fetches the fourteen menu items from 59: 83, 93, 96, 99, 102, 105, 108, 111, 114, 104, 117,
+  120, 123 and 126, into +0x394..+0x3c8. It hides 120.
+- It shows 104 (the bar's own empty 773x6 static) and sets 59's +0x1c0 = 0 (meaning not read).
+- It hides 16 (the pet bar).
+- It selects page 0 (`0x60a730`).
+- It sets hover strings (`0x60a620`), captions (`0x60d5f0`) and the menu fit (`0x60afe0`),
+  sections E and F.
+
+Placeholder art the file carries and the code clears or hides:
+- the pet bar and its six slots are hidden;
+- the slot arrow is hidden;
+- quick slots 1..10 are hidden until the page shows them;
+- every text row's sample string (`10`, `12345678`, `Lv.`, `23.45%`, `80%`, `F1`, `EXP`) is
+  never drawn (the reader round) and is replaced by the update.
+
+The gauges start empty here. The update refills them every frame while the bar is visible, so
+retail never shows an authored fill. None was read, and there is no show-time refresh: the bar's
+ShowWindow is CNIFWnd's own (`0x46d760`), not overridden. Menu item 115 ("making") is neither
+fetched nor hidden and has no map entry. It is shown and does nothing, as in retail.
+
+### E. The readouts: CNIFUnderMenuBar::vslot_012 `0x60b440` (read)
+
+This runs every frame while the bar is visible (`0xb8f530`). Here each value is set when the
+stats packet arrives.
+
+- **EXP percent.** p = exp (int64, char+0x870) x 100.0 (0xe1b7d8) / the level's requirement (the
+  leveldata row from `0x937f20`, +8). If p >= 99.99 (`fcom` 0xd986f8, then 0xd986f0 loaded;
+  `test ah,5 / jnp` falls through on >=), p = 99.99.
+  - 15 shows `%.2f %%` of p (0xd986a0).
+  - 10 shows `%d` of tens = ftol(p) / 10 (magic 0x66666667, `sar 2`).
+  - x = p - tens x 10 + 0.005 (0xd986e8).
+  - 17 shows `%d%%` of ftol(x x 10.0) (0xe1b840): the progress through the current tenth.
+  - Gauges 20..29 are 1.0 below ftol(x), 0 above, and gauge ftol(x) gets x - ftol(x), written
+    to both +0x368 and +0x36c.
+  - When ftol(x) is 10, retail writes the fraction to +0x394, one past the gauge array, which is
+    the first menu item's pointer. Here it is dropped.
+- **Level.** 13 shows `%s. %d` (0xd986b0) of `UIIT_STT_LEVEL_LV` and the level (char+0x868),
+  "Lv. 7".
+- **Skill points.** 12 shows `%d` of char+0x880. Gauge 5 is (uint) char+0x878 / 400.0 (0xd878a8),
+  the SP experience toward the next point. **This server sends no SP experience**, so the gauge
+  stays empty unless a caller passes progress, as before.
+
+`HudUnderbar.set_exp` / `set_level` / `set_sp` do this. World3D now also calls `set_level` from
+the stats packet. The gauges' Range step is 0, because Godot's default step 1 would round a
+tenth to whole percents (the test caught 46.1 drawn as 46).
+
+### F. Buttons, menu and keys (read)
+
+- **Message map** (0xeb5018.., handlers written by `0xd69d61`):
+  - 4 -> `0x60a700`, which toggles 59's visibility;
+  - 19 -> `0x60a7e0`, page + 1;
+  - 18 -> `0x60a800`, page - 1;
+  - 6, 7, 8, 9 and the fourteen items -> one handler `0x60cd10`, a switch on the id.
+- **What each does**, cross-checked against the key dispatcher `0x780610`'s tables, where the
+  same targets are reached from keys:
+  - 6 `0x79ace0` (C) and 7 `0x79b020` (I);
+  - 8 `0x79ae00` (S; this client binds the skill window to K);
+  - 83 `0x79ae90` (P), 93 `0x79c170(1)` (E, table 0x780e00 entry 9), 99 `0x79b0b0` (L,
+    entry 13);
+  - 96 `0x5b4980` and 108 `0x5b49c0`, the guild and community views (the guild round);
+  - 105 `0x79d5b0` (A), 111 `0x7990e0` (Q), 114 `0x798e20(1)` (Y), 123 `0x79c750(1)`;
+  - 126 GetChild(0x62), the system window, is shown and raised.
+  After any of them, 59 is hidden (`0x60cf2b..0x60cf3a`).
+  - Items with no window in this client: 9, the item mall (`0x6ec5d0`); 102, academy matching
+    (`0x79c420(1)`); 104, the collection book (window 0xd2); 117, open a stall
+    (`0x793b00(100, 0x3f1)`). They close the menu and emit nothing.
+  - Every other item emits its panel id, and `HudPanels.toggle` opens it.
+  - `hud_window_test` checks every emitted id is a real panel.
+- **Captions** (`0x60d5f0`). The key table is copied from `0x778c00` to [esp+0x14]. Each item's
+  caption is `swprintf(UIIT_STT_TOGGLE_CONTENTS_MENU_<X>, key name)` via `0x60d020`. The slot each
+  loads, read off its `mov`:
+  - party slot 4 'P', party match 23 'E', guild 6 'U', academy 30 'L', action 3 'A';
+  - **community 6 'U'**, the guild's key;
+  - quest 5 'Q', alchemy 24 'Y', auto potion 21 'T'.
+  - The hover strings on 6 / 7 / 8 use slots 0 / 1 / 2.
+  Here the name is **this client's key for the same window** (`HudPanels.PANELS`, via Godot's key
+  name), so the caption names a key that really opens it: skill reads "( K )". `0x60d020`'s own
+  naming is not read. The other items keep their record's text id: 102
+  `UIIT_STT_TC_MACHING_TITLE`, 104 `UIIT_PAG_COLLECTION_WINDOW`, 117 `UIIT_CTL_OPEN_STORE`, 126
+  `UIIT_STT_TOGGLE_SYSTEM`, and 115 `UIIT_STT_MK`.
+- **Hover strings** (`0x60a620`). Style 0x80 is set on 6..9, then TOGGLE_CHARACTER / _INVENTORY /
+  _SKILL / `UIIT_STT_SILKMALL_SHORT_KEY`. `0x60d5f0` replaces the first three with the
+  CONTENTS_MENU forms. That they show on hover is **inferred**, as for the guild window. They
+  become Godot tooltips.
+- **The menu fits its captions** (`0x60afe0`):
+  1. It takes the widest overrun of a caption past its 200 static. `0x60ac70` gives the text
+     extent `0x477740` less the static's width, or 0.
+  2. If that is above 0, it adds 10 + overrun to the width of 59, 62, the fourteen items and the
+     lines 70 / 79 / 98.
+  3. It **always** moves 59 to `x = bar.x + bar.w - 59.w`, keeping its y. GetRect `0xb8f420`
+     returns +0x40..+0x4c = x, y, w, h.
+  Here the widths are this client's font's: the mechanism is read, the metrics are ours. The
+  menu's children move with it (`SetPos` `0xb90cf0`). That they follow is **inferred**, as in
+  the guild round. Measured with the archive: the widest caption is "Guardian Matching",
+  104 px in an 82 static, so the menu is 138 + 32 = 170 wide at (630, -394). The items are
+  129 wide over a 124-wide texture. **Item 115 is not among the fourteen, so it stays 97**, as
+  in retail.
+- **Pages** (`0x60a730`). The page is kept in 0..3: below 0 becomes 3, above 3 becomes 0. The
+  page label is `F%d` (the wide string at 0xd98580) of page + 1. Quick slots 1..41 are hidden
+  (0x29 of them from +0x3d8), then page x 10 + 1 .. + 10 are shown. Quick slots 41..50 exist
+  but no page shows them. F1..F4 select pages 0..3: the raw-key table at 0x780da8 / 0x780d78
+  maps VK_F1..VK_F4 to `0x60a730(0..3)`. That is this client's F1..F4, unchanged.
+- **Number keys.** Command '1'..'9' goes to `0x60bb80(1..9)` and '0' to `0x60bb80(10)`
+  (0x780c47's table 0x780eb0). `0x60bb80(k)`, for 1 <= k <= 10, uses quick slot k + page x 10
+  (`0x60b850`). It also shows the slot arrow 103 at the slot's position - (4, 3) and fades it
+  (`0x60a820`, `0x46ca80(0xff, 0, 4.0, ...)`). **The arrow is not built here**: the unit of the
+  4.0 and how the arrow is put away are not read.
+- **The "m" slot.** k = 0 uses quick slot 0, the slot labelled `ub_number_m` (id 50) that sits
+  left of slot 1. Three things fire it:
+  - the mouse handler on **WM_MBUTTONDOWN** (0x207 -> `0x77c4cc`), when the interface's +0x4f9
+    byte is 0 (`0x778b60`);
+  - WM_RBUTTONDOWN (0x204 -> `0x77c73e`) when that byte is 1;
+  - command 0x58 (0x780e90 entry 6).
+  The byte is set to 0 when the interface is built (`0x78d383`, ebx zeroed at `0x78d082`). It is
+  changed only by `0x778be0`, whose callers are option code. So by default **the middle button
+  fires the "m" slot**. Until now the middle button here fired page slot 1, the one the 1 key
+  fires. The playtest's own words were "the first slot thats on the hotbar you press it with 1,
+  thats not right it should be middle mouse button", and the first slot on the client's bar is
+  the "m" slot. Which key sends command 0x58 by default is not traced (0x778310's translation),
+  so no key is bound to it here.
+
+### G. Carried over, and how each was checked
+
+| Behaviour | Now | Checked by |
+|---|---|---|
+| Quick slots, drag-and-drop onto them (skill window, bag) | `slot_index_at` over the visible slots, including the "m" slot | `hud_underbar_test`; `npc_service_reader_test` (o) (a click on a slot fires it and does not reach the world) |
+| Number keys 1..9, 0 | quick slot page x 10 + k + 1, read | `hud_underbar_test` (F1: 1..10, F4: 31..40); live, below |
+| F1..F4 and the arrows | `set_page` / 18 / 19, wrapping as `0x60a730` does | `hud_underbar_test` |
+| Middle button: over the world, the bar's body, a slot, and the relayed minimap / player info / target | the "m" slot (quick slot 0) | `hud_click_routing_test`, `npc_service_reader_test` (o), `hud_underbar_test` |
+| Left click on a slot fires it | kept; not re-read from the client | `hud_underbar_test`, `hud_build_once_test` |
+| Item quick slots re-resolve to their bag slot | `resolve_item_binding` unchanged | `hud_underbar_test` |
+| Skill points (a plain total, the gauge empty without progress) | 12 and 5 | `hud_underbar_test` |
+| EXP | 15, 10, 17 and the ten gauges, as read | `hud_underbar_test` (23.456 % and the 99.99 cap) |
+| Level | 13 (new) | `hud_underbar_test` |
+| HP / MP / berserk orbs, R to berserk | `HudPlayerInfo`, untouched (they are not on this bar) | live, below |
+| Every window the bar opened (menu, community, and the popup's list) | the bar's own buttons and menu, as read | `hud_underbar_test`, `hud_window_test` |
+| Body STOP, decorations and the space above pass clicks (rounds 522, 529, 531) | kept; the menu, when open, takes its clicks | `npc_service_reader_test` (o) |
+| Built once (round 585) and the authored-rect settle | `_built`; `UiBuilder.settle_authored_rects(bar_root)` | `hud_build_once_test`, `hud_settle_test` (every one of the bar's controls at its authored rect) |
+| QA hooks: `SRREVAMP_QA_HOTBAR`, `SRREVAMP_QA_PANELS=menu`, the command tooltip on the menu button | the hotbar hook takes an optional tick; `menu` opens the bar's own menu; the tooltip goes on button 4 (`menu_button()`) | live, below |
+
+Cooldown overlays: the old bar had none (a search of this client's scripts for a cooldown on a
+quick slot finds nothing; the only cooldowns are the skill window's tooltip and the debug
+panel's list), so there was nothing to carry over.
+
+**Changed on purpose.** The middle button now fires the "m" slot, not page slot 1 (F). The bar
+is 68 tall, not 52, and the chat sits on it at x 2 (C). `HudPanels`' Godot `PopupMenu`
+(MENU_ITEMS, `show_menu`) is removed. It was "a disclosed choice ... the ornate authored frame
+is a later polish", and the bar's own menu 59 replaces it.
+
+**Two fixes found on the way** (World3D):
+- A skill dropped on a slot that held an item left the item's binding behind. The next bag
+  refresh then cleared the slot's icon under the skill. It now erases the binding, as an item
+  dropped on a skill slot already erased the skill.
+- Assigning a skill by click skipped only skill slots, and could land on an item slot. It now
+  skips both.
+
+**Dropped, with what retail uses instead.**
+- `GDR_BTN_OPTION` (the old bar's option button) did nothing here. Retail's bar has no option
+  button: options live in the system window (126).
+- `GDR_BTN_COMMUNITY` is now menu item 108.
+- The old 800x52 background `ub_window_01` and decorations `ub_deco_left/right`,
+  `ub_window_02` are not drawn by any live class (A).
+
+### H. Builder fix (`twodt_builder.gd`), for reconciliation with the review
+
+`set_text`'s label now grows in the direction its alignment implies: centred both ways, right
+or bottom toward the left or top. Before, it grew only right and down, Godot's default. A Label
+is never smaller than its text, and the client draws text unclipped, so a text taller or wider
+than its rect overruns it. The underbar's rows are 4 px tall and centred (`halign`/`valign`
+1,1), and were drawn 5 px low; its right-aligned numbers started at the rect's left edge. The
+alignment meaning stays the inferred 0/1/2 of the reader round. The only effect elsewhere,
+measured in the tree diff: the guild war pane's two centred captions "Request to start the war"
+(128 px) and "Request to end the war" (126 px) in 112-wide buttons now overrun both sides
+evenly, 8 and 7 px further left than before. Both are in a hidden pane.
+
+### Measurements
+
+The audit tool (`zz_gui_audit.gd`, scratch, not committed; the 2dt variant plus a dump of the
+bar with its menu open) ran in the ubar lanes on the RX 5700 XT, GL Compatibility,
+`--norender=1`, against the retail Media.pk2. BEFORE is 8dad706's scripts and AFTER is this
+tree. Both were re-run after the rebase against b79036a, below. Neither printed a SCRIPT ERROR.
+
+- **Underbar.** Before: 800x52, the `ifunderbar.txt` controls. After: 800x68, `Wnd175` on
+  `ub_new_mainbar2.ddj (800x68)`.
+  - Quick slot 1 is at (261, 18) and the "m" slot at (209, 17).
+  - The buttons are at 6 (659, 21), 7 (690, 21), 8 (721, 21), 9 (752, 21), 18 (625, 40),
+    19 (625, 16) and 4 (681, 1).
+  - The gauges are 5 (15, 26, 176, 8) and 20..29 (20 + 78k, 59, 76, 8).
+  - The page label reads "F1" and the EXP caption "EXP". The level, SP and EXP rows are empty
+    until the stats packet arrives.
+  - Pieces: `ub_new_wnd_` is eight pieces of 20x20. Each corner is drawn at 20x20, and each edge
+    at its 20-px thickness across the gap: top and bottom 130 wide, sides 363 tall. The tile is
+    130x363. There are no SLICE_DISTORT or EDGE_TILED_OFF findings.
+- **Findings, before -> after.**
+  - OUTSIDE: 6 -> 2. Before: the old decorations 1 / 2 / 3, the menu, community and option
+    buttons. After: the two authored decorations at x -76 and 800. With the menu open, it adds
+    the menu's own pieces above the bar at y -394..9, which is authored.
+  - SAMERECT: 0 -> 0. Items 117 and 120 share a rect, and 120 is hidden.
+  - NULLTEX: 10 -> 11. These are the empty slot icons, now including the "m" slot.
+- **Tree diff**, auto-generated names normalised: **22 of 24 other widgets identical**. The
+  other two are the guild window's two views, which differ only in the two captions of H.
+
+### Tests
+
+- `client/scripts/ui/hud/hud_underbar_test.gd` is rewritten. It builds the bar from
+  `underbar_fixture.gd`, a synthetic nifundermenubar.2dt: the real file's ids, parents, rects,
+  class names and text-table keys, with no art and no text. Everything goes through `load()` /
+  `call()`. It checks the file and size, the OnCreate state, all 51 quick slots, pages, keys, the
+  mouse, the readouts, the menu and captions, the fit, every button's action, the labels'
+  alignment, build-once and item bindings.
+  - NEGATIVE, run on the box against 8dad706's scripts (the test and the fixture copied in):
+    **50 FAIL lines** and no SCRIPT ERROR. Among them:
+    - `FAIL the bar is nifundermenubar.2dt's CNIFUnderMenuBar (got <null>)`
+    - `FAIL the bar is the file's 800x68 (got (800, 52))`
+    - `FAIL quick slot 0 is the "m" slot 50, shown`
+    - `FAIL on F4 the keys 1..0 are quick slots 31..40 (got 0, 9)`
+    - `FAIL a middle press fires the "m" slot, quick slot 0 (got [])`
+    - `FAIL the ten gauges: three full, the fourth 46.1, the rest empty (got [-1, ...])`
+    - `FAIL 83's caption is CONTENTS_MENU_PARTY with this client's key (got '<none>')`
+    - `FAIL item 96 opens guild and closes the menu (got [])`
+  - On this tree: ALL PASS.
+- `hud_build_once_test`, `hud_settle_test` and `npc_service_reader_test` (o) build the bar from
+  the fixture. `hud_click_routing_test`'s messages name the "m" slot. `hud_window_test`'s
+  menu-to-panel check reads `HudUnderbar.MENU_ACTIONS`.
+
+**Verified**, on the tree rebased onto b79036a (rounds 587..597):
+- `remote_godot.sh check`: 300 scripts and 5 scenes, ALL LOAD.
+- `remote_godot.sh tests`: 113 suites, 0 failing, 0 SCRIPT ERROR.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok.
+- The negative against b79036a's scripts: the same 50 FAIL lines as against 8dad706.
+- The audit against b79036a: 17 of 19 other widgets identical. The two guild views differ only
+  in the two captions of H. The underbar trees are unchanged from the 8dad706 run.
+- The underbar's menu items go through `HudPanels.toggle`. That routes character, inventory,
+  skill, action, party and academy to the main popup's tabs (`HudMainPopup.hosts`), and guild and
+  community to the guild window's views.
+
+**Live** (`qa_shot.sh --server --attack`, this tree's server, measured from the log):
+- The QA account was made a GM. `/level 20` and `/sp 100000` were applied.
+- `SRREVAMP_QA_LEARN="257x5;3"` raised Bicheon 1..5 and learned skill 3 (`ok true`).
+- `SRREVAMP_QA_HOTBAR=500` put it on quick slot 1.
+- Four presses of `1` (ticks 700..1300, `SRREVAMP_QA_HOTKEY`, through the viewport's input
+  path) each logged `QA QUICKSLOT 1 (1): skill 3`. The first three then logged
+  `QA CAST: use_skill 3 (SKILL_CH_SWORD_SMASH_A_01)`. The fourth logged no use_skill before the
+  run ended 200 frames later; that was not investigated. After the tick-900 cast the result hit
+  for 70; plain swings in the same run hit 32..34, or 51 on a crit.
+- The berserk gauge went 0 -> 20 -> 40 over 149 results. 0 / 1 / 2 of five orbs were drawn lit
+  each time, matching it; the server earns a charge on a kill (`berserk.EarnOnKill`).
+- A frame of the bar in the world, with "Lv. 20", HP/MP and the skill on slot 1, was kept for a
+  human only. Nothing was decided from it.
+
+New QA hooks: `SRREVAMP_QA_HOTKEY` pushes key presses at given ticks and prints the chain.
+`SRREVAMP_QA_LEARN` raises masteries and learns skills, printing each reply.
+`SRREVAMP_QA_HOTBAR=<tick>` sets when the hotbar hook assigns. The hotbar hook's old skills
+were refused on a fresh character since the known-skill gate. `client/tools/README.md` has
+the recipe.
+
+### Open
+
+- The slot arrow's flash (`0x60a820`): its fade's unit and how it is put away are not read.
+- The server's quick-slot save (0x7158) and restore (0xef1b68): quick slots are client-side here,
+  as before.
+- A new character's default slots (`0x786f30`'s loop over 0xebe249 when char+0x20d9 is set) are
+  not applied.
+- Dragging a slot off the bar to clear it (vslot 26 `0x60c1b0`) and slot-to-slot moves (vslot 28
+  `0x60e950`) are not wired, as before.
+- The mall, academy matching, collection and stall items have no window here.
+- The key that sends command 0x58 (the "m" slot) is not traced.
+- 59's +0x1c0 flag and the 0x6c0-byte helper at +0x4a0 are not read.
+- The pet bar 16 stays hidden. What shows it (a summoned pet) is not wired.

@@ -12,7 +12,9 @@ Every window in the real client is authored data, and building one is now mechan
 
 1. **`resinfo\ginterface.txt` is the top-level window registry.** For a *HUD-anchored* window it
    gives the background artwork and the screen rect — `GDR_UNDERBAR` → `ub_window_01.ddj`,
-   `112,684,800,52`; `GDR_MINIMAP` → `mm_window.ddj`, `892,6,140,184`; `GDR_PLAYER_MINI_INFO` →
+   `112,684,800,52` (but its class `CIFUnderBar` draws nothing: the bar players see is the `.2dt`
+   `CNIFUnderMenuBar`, round 598 -- check the class renders before building a registry entry);
+   `GDR_MINIMAP` → `mm_window.ddj`, `892,6,140,184`; `GDR_PLAYER_MINI_INFO` →
    `ifcommon\window_all.ddj`, `4,7,212,70`.
 2. **`resinfo\if<name>.txt` gives that window's children.** One file per panel, 248 in total.
 3. **`Rect` is `x, y, width, height`**, and the art is authored **1:1** — confirmed by every
@@ -155,8 +157,8 @@ is presentation work on solved data; if you find yourself editing the protocol, 
 - **Player mini info** — name, level, HP and MP bars, top-left at the registry's own `4,7`.
 - **The debug UI it replaces is hidden** — the ten-tab panel, the character and help labels, and
   the zone label (the minimap carries the zone name and X/Y now).
-- **Underbar** — full 800×52 background, SP gauge, numbered quickslots, page arrows, menu
-  medallion, both end decorations. Verified in a render.
+- **Underbar** — *superseded (round 598, below)*: the 800×52 `ifunderbar.txt` bar is gone; the
+  bar is the client's own `CNIFUnderMenuBar` from `nifundermenubar.2dt`.
 - **Minimap** — region art clipped to the frame's circular aperture with the client's own
   `mm_alpha.ddj` mask, compass frame, player heading arrow. Verified in a render.
 - **`UiBuilder`** — buttons, statics, gauges, slots, tiles, lattices, close buttons, 8-slice and
@@ -309,10 +311,19 @@ the lattice pitch, the close-button convention and the tile fill were each settl
 The reader and builder exist (rule 21); each of these is now a build from the client's own data,
 like the guild window:
 
-1. **The underbar**: `nifundermenubar.2dt` (`CNIFUnderMenuBar`, 800x68, `ub_new_mainbar2.ddj`),
-   loaded unconditionally at game start by `0x786f30`. We build `ifunderbar.txt`, which the exe
-   never names. Its popup (59) carries the guild (96) and community (108) items. Whether the
-   older `CIFUnderBar` (`GDR_UNDERBAR`) still draws beside it is not established.
+1. ~~**The underbar**~~ **Done (round 598).** `HudUnderbar` builds `CNIFUnderMenuBar` from
+   `res_ui\nifundermenubar.2dt` (800x68, bottom-centred and flush, `0x7871dc`), with its
+   OnCreate state (`0x60df30`, run after the menu buttons' own: OnCreates go in reverse file
+   order), its readouts (`0x60b440`: level, EXP in tenths across ten gauges, SP), 51 quick slots
+   (the "m" slot 0 on the middle button, four pages of ten on F1..F4 and the number keys), and
+   its own menu 59 (items to panels as `0x60cd10` routes them, key-filled captions `0x60d5f0`,
+   fitted and right-aligned `0x60afe0`). **One bar**: `CIFUnderBar` is still created from
+   ginterface.txt but its Create loads nothing and its render and ShowWindow are empty
+   (`0x68d980`, `0x68c850`); the `ifunderbar.txt` build is removed. The chat now sits on the bar
+   at x 2 (`0x78726e`). Open: the slot arrow's flash, the server-side quick-slot save / restore,
+   a new character's default slots, drag-off and slot-to-slot moves, the mall / academy
+   matching / collection / stall items (no windows here), the key for command 0x58.
+   `docs/RE_COMPLETION.md` has the record.
 2. **Q -> `questlist.2dt`** (`CNIFQuest`, window 0x4c): Q reaches `0x7990e0`, which toggles it.
    We build `ifquest.txt`, a live layout but not the window Q opens.
 3. **M -> `worldmapguide.2dt`** (`CNIFWorldMapGuide`, id 28): M reaches `0x79abe0`, which loads
@@ -444,11 +455,9 @@ where a position lands on it, is now recovered** — see the end of this file an
 
 ## Unknowns, flagged rather than guessed
 
-- **Which authored coordinate belongs at the screen centre vertically.** The underbar sits flush
-  to the bottom by choice, not by recovery: `GDR_UNDERBAR`'s `y=684` implies a 32px gap at 768
-  tall, but the same file puts `GDR_CHAT_BOARD`'s bottom at 944 — past the bottom of a 768-tall
-  screen — so those defaults are not all screen-relative. Horizontal centring *is* authored
-  (`112 = (1024-800)/2`).
+- ~~**Which authored coordinate belongs at the screen centre vertically.**~~ Read (round 598):
+  the bar is placed at `((W - 800) / 2, H - 68)` by `0x786f30`, and the chat at
+  `(2, H - 68 - chat_h)`.
 - **The registry-to-layout-file mapping** (see item 2).
 - **`FontIndex`** — an index into something not yet found.
 - **`UV_LT`/`UV_RT`/`UV_LB`/`UV_RB`** on every control. Parsed, unused; presumably atlas

@@ -337,9 +337,28 @@ func set_text(node: Control, text: String, r: TwoDtReader.Record = null) -> Labe
 		label.add_theme_color_override("font_color", argb(int(style[0])))
 		label.horizontal_alignment = _ui._map_halign(int(style[1]))
 		label.vertical_alignment = _ui._map_valign(int(style[2]))
+		# A Label is never smaller than its text (Godot's minimum size), and
+		# the client draws text unclipped (round 584), so text larger than
+		# its rect overruns it. Which way is the alignment's: centred text
+		# overruns both sides evenly and stays centred on the rect, right- or
+		# bottom-aligned text overruns to the left or top. Growing only right
+		# and down (Godot's default) drew the underbar's centred text on its
+		# 4-pixel rows 5 pixels low, and right-aligned numbers from the rect's
+		# left edge.
+		label.grow_horizontal = _grow_for(int(style[1]))
+		label.grow_vertical = _grow_for(int(style[2]))
 		node.add_child(label)
 	label.text = text
 	return label
+
+## The grow direction that keeps an overrunning text aligned the way its
+## record says (0 left / top, 1 centre, 2 right / bottom -- the inferred
+## mapping in the header).
+static func _grow_for(align: int) -> Control.GrowDirection:
+	match align:
+		1: return Control.GROW_DIRECTION_BOTH
+		2: return Control.GROW_DIRECTION_BEGIN
+		_: return Control.GROW_DIRECTION_END
 
 ## The text a control shows, or "".
 static func text_of(node: Node) -> String:

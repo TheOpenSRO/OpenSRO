@@ -7083,6 +7083,78 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-ninety-eighth round: the bottom bar is the client's own menu bar: its level and ten-part EXP readout, the M slot on the middle button, and its own menu
+
+The underbar was built from `resinfo\ifunderbar.txt`, which the exe never names, inside
+`GDR_UNDERBAR`'s registry art. It is now `CNIFUnderMenuBar`, built from
+`res_ui\nifundermenubar.2dt` (`HudUnderbar`). The full record is `docs/RE_COMPLETION.md`'s entry
+of the same name.
+
+- **One bar, read.** `CIFUnderBar` is still created from ginterface.txt's Create section
+  (`0x78c9ce`). But its Create `0x68d540` loads nothing, its render slot 13 is `ret`
+  (`0x68d980`), its ShowWindow is `ret 4` (`0x68c850`), and its quick-slot routines have no
+  caller and no pointer anywhere in the file (two probes). The `ifunderbar.txt` build is removed.
+- **Placement, read.** `SetPos((W - 800) / 2, H - 0x44)` (`0x7871dc`): 800x68, centred, flush.
+  The chat is then placed at `(2, H - 68 - chat_h)`, and World3D does the same.
+- **Order, read.** OnCreates run in reverse file order (push_front at `0x48fc09`). The menu
+  buttons' `0x60ac20` runs before the bar's `0x60df30`, which is why the captions land on each
+  button's 200.
+- **State, read.** The menu, the pet bar and the slot arrow are hidden, and so is the
+  stall-network item. The "m" slot 50 is quick slot 0, 40..49 are 1..10, and 11..50 are made
+  at their places. F1 is selected. 14 reads EXP.
+- **Readouts, read** (`0x60b440`):
+  - 15 is the EXP percent, capped at 99.99;
+  - 10 is its whole tens;
+  - 17 is the progress through the tenth;
+  - ten gauges show that tenth's progress;
+  - 13 is "Lv. N";
+  - 12 is the SP total. The SP gauge is SP-experience / 400, which this server does not send.
+- **Buttons and keys, read.** 4 toggles the menu. 6 / 7 / 8 are character, inventory and skill;
+  9 (mall) has no window here. The items route as `0x60cd10` does and close the menu. Captions
+  fill the key-table slot the code loads (community takes the guild's key) with this client's
+  key. The menu fits its widest caption plus 10 and sits at the bar's right edge (`0x60afe0`).
+  F1..F4 and 18 / 19 select pages 0..3, wrapping. Number keys use page x 10 + k.
+- **The middle button fires the "m" slot**: WM_MBUTTONDOWN -> `0x60bb80(0)`, while the
+  interface's +0x4f9 flag is 0, as it is when the interface is built. It fired page slot 1
+  before.
+- **Measured** (audit, `--norender=1`, retail Media.pk2, b79036a -> this tree):
+  - underbar 800x52 -> 800x68;
+  - OUTSIDE 6 -> 2 (the authored end decorations);
+  - SAMERECT 0 -> 0;
+  - `ub_new_wnd_`'s eight 20x20 pieces pass the piece check;
+  - the menu is 170 wide at (630, -394);
+  - 17 of 19 other widgets are identical (b79036a). The two guild views differ only in two
+    hidden centred captions, now centred on their buttons (the builder fix below).
+- **Builder fix** (`twodt_builder.gd`, for the review). A text label grows the way its
+  alignment says. Centred rows 4 px tall were drawn 5 px low, and right-aligned numbers started
+  at the rect's left edge.
+- **Tests.** `hud_underbar_test.gd`, on a synthetic nifundermenubar.2dt, fails 50 times
+  against b79036a (and 50 against 8dad706), for example
+  `FAIL the bar is the file's 800x68 (got (800, 52))` and
+  `FAIL a middle press fires the "m" slot, quick slot 0 (got [])`. It passes here.
+  `remote_godot.sh check`: 300 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`: 113
+  suites, 0 failing, 0 SCRIPT ERROR. Go: 59 packages ok.
+- **Live.** `qa_shot.sh --server --attack`, on the RX 5700 XT, with this tree's server,
+  measured from the log (`/var/tmp/rubar/live-598.log` on the box):
+  - The QA account was made a GM. `/level 20` and `/sp 100000` were applied.
+  - `SRREVAMP_QA_LEARN` raised Bicheon to level 5 and learned skill 3 (`ok true`).
+  - `SRREVAMP_QA_HOTBAR` put it on quick slot 1 (`skill 3 known: true`).
+  - Each of the four `1` presses (ticks 700, 900, 1100, 1300, pushed through the viewport)
+    logged `QA QUICKSLOT 1 (1): skill 3` on the current target. The first three logged
+    `QA CAST: use_skill 3 (SKILL_CH_SWORD_SMASH_A_01)`. The fourth logged no use_skill before
+    the run ended 200 frames later; that was not investigated. After the tick-900 cast the result hit for 70; plain swings in the
+    same run hit 32..34, or 51 on a crit.
+  - The berserk gauge rose from 0 to 20 to 40 over 149 attack results, with 0, 1 and 2 of the
+    five orbs drawn lit, matching the gauge each time. (The server earns charges on kills; an
+    earlier run that killed nothing stayed at 0.)
+  - One 960x540 frame was kept for a human: the bar with "Lv. 20", HP/MP 568/568 in the player
+    block, and skill 3's icon on slot 1. Nothing was decided from it, and the frames were
+    deleted.
+- **Open.** The slot arrow's flash, the server-side quick-slot save / restore, a new character's
+  default slots, drag-off and slot-to-slot moves, the windows for mall / academy matching /
+  collection / stall, the key for command 0x58, and whether CIFUnderBar's empty rect takes
+  input.
+
 ## Five-hundred-and-ninety-seventh round: a guild member's Guild window leaves the no-guild state
 
 A re-review fix to the round below. The full record is `docs/RE_COMPLETION.md`'s entry of the

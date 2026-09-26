@@ -11,6 +11,8 @@ extends SceneTree
 ## height and the label's own font minimum:
 ##   godot4 --headless --path client --script res://scripts/ui/hud/hud_settle_test.gd
 
+const UnderbarFixture = preload("res://scripts/ui/hud/underbar_fixture.gd")
+
 var _failures := 0
 
 func _check(cond: bool, msg: String) -> void:
@@ -25,12 +27,6 @@ func _control(control_name: String, type: String, rect: String, ddj: String = ""
 
 func _layout(body: String) -> String:
 	return "Interface Text\n\nSection = Create,\"0,0,0,0\",\"0\"\n{\n" + body + "}\n"
-
-## ifunderbar.txt's three text rows.
-func _underbar() -> String:
-	return _layout(_control("GDR_STATIC_QUICKSLOT", "CIFStatic", "653,22,17,11")
-		+ _control("GDR_STATIC_SP", "CIFStatic", "167,9,48,12")
-		+ _control("GDR_STATIC_EXP", "CIFStatic", "18,31,198,12"))
 
 ## ifminimap.txt's text rows.
 func _minimap() -> String:
@@ -84,6 +80,24 @@ func _labels(root: Node) -> Array:
 		out.append([String(l.name), l.size, ar.size, l.get_minimum_size().y])
 	return out
 
+## A `.2dt` widget's controls carry the authored-rect meta themselves (the
+## builder puts their text on an anchored child Label): every one must be
+## back at its authored rect after the settling pass.
+func _settled_2dt(widget: String, root: Node) -> void:
+	var nodes := root.find_children("*", "Control", true, false)
+	var authored := 0
+	var off := []
+	for n in nodes:
+		var c := n as Control
+		if not c.has_meta(UiBuilder.AUTHORED_RECT_META):
+			continue
+		authored += 1
+		var ar: Rect2 = c.get_meta(UiBuilder.AUTHORED_RECT_META)
+		if c.position != ar.position or c.size != ar.size:
+			off.append("%s %s != %s" % [c.name, Rect2(c.position, c.size), ar])
+	_check(authored > 50, "%s: its controls carry authored rects (%d)" % [widget, authored])
+	_check(off.is_empty(), "%s: every control is at its authored rect (off: %s)" % [widget, off])
+
 func _settled(widget: String, root: Node, want: int) -> void:
 	var labels := _labels(root)
 	_check(labels.size() == want, "%s: %d authored labels built (got %d)" % [widget, want, labels.size()])
@@ -103,8 +117,8 @@ func _initialize() -> void:
 	var hud := Control.new()
 	root.add_child(hud)
 
-	var bar := HudUnderbar.new(UiBuilder.new(null, null), null, null)
-	bar.setup(_underbar())
+	var bar := HudUnderbar.new(UnderbarFixture.builder(), null, null)
+	bar.setup()
 	hud.add_child(bar)
 	var minimap := HudMinimap.new(UiBuilder.new(null, null), null, null)
 	minimap.setup(_minimap())
@@ -123,7 +137,7 @@ func _initialize() -> void:
 	for i in 8:
 		await process_frame
 
-	_settled("underbar", bar, 3)
+	_settled_2dt("underbar", bar)
 	_settled("minimap", minimap, 3)
 	_settled("player info", pmi, 3)
 	_check(target_built, "the target window builds from the fixture")
