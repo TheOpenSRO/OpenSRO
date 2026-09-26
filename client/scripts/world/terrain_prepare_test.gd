@@ -241,6 +241,23 @@ func _test_the_commit_wires_the_collision(S: GDScript, w: Node, job: Dictionary,
 		"the commit places the terrain group where TerrainCollision.place_group puts it for the job's offset and anchor, %s scale %s (got %s)" % [
 			str(probe.position), str(probe.scale), "nothing" if group == null else "%s scale %s" % [str(group.position), str(group.scale)]])
 	probe.free()
+	# Round 579: what /groundprobe reads back about a region -- the prepare's
+	# ground counts (ID 1 resolved, ID 2's file missing), the baked light (none
+	# on a bare world: no environment applied), the commit's number -- rides
+	# the group as meta, and each terrain material names its tile ID.
+	var meta: Dictionary = group.get_meta("ground_probe", {}) if group != null else {}
+	_check(meta.get("mapm_path") == "97\\168.m" and meta.get("commit") == 1 and meta.get("ids") == 2 and meta.get("resolved") == 1
+			and meta.get("unreadable") == 1 and meta.get("uploaded") == 1 and meta.get("lightmap") == true
+			and meta.get("textured") == true and meta.get("baked") == false,
+		"the commit leaves the probe's record on the group (got %s)" % str(meta))
+	var keys: Array = []
+	var patch_mesh: Mesh = (w.get_node_or_null("RealTerrain_97_168/SubPatch") as MeshInstance3D).mesh if group != null else null
+	if patch_mesh != null:
+		for i in range(patch_mesh.get_surface_count()):
+			var smat := patch_mesh.surface_get_material(i)
+			keys.append(smat.get_meta("terrain_texture_key", "none") if smat != null else "no material")
+	_check(keys.size() >= 3 and str(keys[0]) == "-1" and keys.has(1),
+		"every terrain material names its tile ID, -1 for the base (got %s)" % str(keys))
 	var shape_node := _terrain_shape_node(w, "RealTerrain_97_168")
 	_check(shape_node != null, "the commit built RealTerrain_97_168/SubPatch with a body and a collision shape")
 	if shape_node != null:
@@ -263,6 +280,10 @@ func _test_the_commit_wires_the_collision(S: GDScript, w: Node, job: Dictionary,
 
 	job_tri["node_suffix"] = "_97_168_tri"
 	w.call("_terrain_commit", job_tri)
+	var tri_group := w.get_node_or_null("RealTerrain_97_168_tri")
+	_check(tri_group != null and (tri_group.get_meta("ground_probe", {}) as Dictionary).get("commit") == 2
+			and (w.get("_terrain_commits") as Dictionary).get("97\\168.m") == 2,
+		"a second commit of the same .m in one world is counted as the second (a duplicate terrain would show)")
 	var tri_node := _terrain_shape_node(w, "RealTerrain_97_168_tri")
 	var tri: ConcavePolygonShape3D = null
 	if tri_node != null:

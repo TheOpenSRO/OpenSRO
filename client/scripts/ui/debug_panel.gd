@@ -91,6 +91,9 @@ func _build_button_row() -> HBoxContainer:
 	row.add_child(_button("Copy", _copy))
 	row.add_child(_button("Save", _save))
 	row.add_child(_button("Log folder", _open_log_folder))
+	# /groundprobe's button (round 579): the white ground's rendering state,
+	# to a file the tester sends.
+	row.add_child(_button("Ground probe", _ground_probe))
 	row.add_child(_button("Attack nearest", func(): _world._qa_attack_nearest()))
 	row.add_child(_button("Hide UI", func(): _world._toggle_ui_visibility()))
 	row.add_child(_button("Close", func(): visible = false))
@@ -411,6 +414,18 @@ func _save() -> void:
 	file.store_string(diagnostics() + "\n")
 	file.close()
 	_world._log_system("Diagnostics saved to %s" % path)
+
+## The panel covers the left of the screen, part of the picture the probe
+## measures, so it closes first and the probe runs a quarter second later (a
+## timer: its callback is dropped if the panel is freed meanwhile).
+func _ground_probe() -> void:
+	visible = false
+	_world._log_system("Ground probe in a moment -- hold still.")
+	get_tree().create_timer(0.25).timeout.connect(_run_ground_probe)
+
+func _run_ground_probe() -> void:
+	for line in _world._run_ground_probe("full"):
+		_world._log_system(line)
 
 func _open_log_folder() -> void:
 	OS.shell_open(ProjectSettings.globalize_path("user://logs"))

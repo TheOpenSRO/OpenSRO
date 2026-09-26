@@ -1177,6 +1177,12 @@ const CHAT_MARGIN_X := 8.0
 const CHAT_MARGIN_Y := 6.0
 
 func _ready() -> void:
+	# Every entry names itself and the renderer in the log (round 579), so a
+	# player's log carries the GPU and how many times this process has
+	# entered the world without anyone typing /groundprobe. Counted in the
+	# process environment (SRREVAMP_WORLD_ENTRY), never a static.
+	_world_entry = GroundProbe.next_entry()
+	print(GroundProbe.entry_line(_world_entry, get_instance_id()))
 	# SRREVAMP_QA_RECONNECT (round 558): number this process's world entries
 	# through the environment -- never a static, statics are what a reconnect
 	# run measures. The count arms the QA ENTRY / QA TEXPROBE prints and is
@@ -2272,7 +2278,11 @@ static func _prepare_ground_textures(job: Dictionary, region: MapmReader.ParsedR
 	# on a second login every region's first textures are decoded again
 	# (round 560), which is the price of nothing outliving the instance.
 	# Since round 565 the time is the decode alone, off the main thread for a
-	# streamed cell; the upload is the commit's `images` lap.
+	# streamed cell; the upload is the commit's `images` lap. The same counts
+	# ride the job to the commit, which leaves them on the terrain group for
+	# /groundprobe (round 579).
+	job["ground_counts"] = {"ids": ids.size(), "resolved": files.size(), "decoded": decoded,
+		"no_entry": no_entry, "unreadable": unreadable}
 	(job["log"] as Array).append(["out", "World3D: ground textures for %s -- %d ids, %d resolved, %d decoded now in %d ms, %d without a tile2d.ifo entry, %d files missing or undecodable%s" % [
 		job["mapm_path"], ids.size(), files.size(), decoded, Time.get_ticks_msec() - started_ms, no_entry, unreadable,
 		"" if not files.is_empty() else " -- NOTHING resolved, the region draws the flat fallback"]])
@@ -3417,6 +3427,7 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 	# _reload_zone_assets has already dropped them, and the first entry has
 	# none.
 	_drop_cell_jobs("a new region grid")
+	_grid_builds += 1
 	var frame_x: int = frame.get("x", center_x)
 	var frame_y: int = frame.get("y", center_y)
 	# The centre's cell in the frame: (0, 0) whenever the frame is the centre.
@@ -4498,6 +4509,9 @@ func _exit_tree() -> void:
 	# job for its grid: waited for and dropped before anything here is freed
 	# (round 565), so a reconnect cannot commit into a freed world.
 	_drop_cell_jobs("the world left the tree")
+	# How this entry ended and its textures' GL names, for the next entry's
+	# /groundprobe (round 579) -- before the caches below are cleared.
+	GroundProbe.record_exit(self, NetClient.is_connected_to_server())
 	var scenery_freed := 0
 	if _object_templates != null:
 		scenery_freed = _object_templates.free_all()
@@ -5771,6 +5785,25 @@ func _terrain_commit(job: Dictionary) -> float:
 
 	var terrain_group := Node3D.new()
 	terrain_group.name = "RealTerrain" + String(job["node_suffix"])
+	# What /groundprobe (round 579) reads back about this region: the ground
+	# counts the prepare logged, how many of its tiles have a texture, the
+	# light the mesh was baked with (a zero direction: shaded, not baked), and
+	# which commit of this .m in this world it is -- a second while the first
+	# is still loaded would be a duplicate terrain, one of the white ground's
+	# hypotheses (docs/RE_COMPLETION.md, round 579).
+	var commits := int(_terrain_commits.get(mapm_path, 0)) + 1
+	_terrain_commits[mapm_path] = commits
+	var ground_counts: Dictionary = job.get("ground_counts", {})
+	var light_dir: Vector3 = job.get("light_dir", Vector3.ZERO)
+	terrain_group.set_meta("ground_probe", {
+		"mapm_path": mapm_path, "commit": commits, "textured": job["textured"],
+		"baked": light_dir.length_squared() > 0.0, "light_dir": light_dir,
+		"light_diffuse": job.get("light_diffuse", Color.WHITE), "light_ambient": job.get("light_ambient", Color.BLACK),
+		"ids": ground_counts.get("ids", -1), "resolved": ground_counts.get("resolved", -1),
+		"decoded": ground_counts.get("decoded", -1), "no_entry": ground_counts.get("no_entry", -1),
+		"unreadable": ground_counts.get("unreadable", -1), "uploaded": ground_textures.size(),
+		"lightmap": lightmap != null, "frame": Engine.get_frames_drawn(), "threaded": job["threaded"],
+	})
 
 	# Real per-quad textures (see above) already carry their own
 	# per-surface materials (including the real .t lightmap) from
@@ -10728,8 +10761,41 @@ func _console_host() -> Dictionary:
 		"set_camera_mode": Callable(self, "_console_set_camera"),
 		"whisper": func(n: String, m: String) -> void: NetClient.whisper(n, m),
 		"unstuck": func() -> void: _unstuck_player(),
+		"ground_probe": Callable(self, "_run_ground_probe"),
 		"forward_gm": func(line: String) -> void: NetClient.gm_command(NetClient.current_character_name, line, _last_attack_target if _last_attack_target > 0 else 0),
 	}
+
+## This World3D's entry number in the process: 1 on a fresh launch, 2 after
+## the first reconnect or return from character select (GroundProbe.next_entry
+## -- the SRREVAMP_WORLD_ENTRY environment variable, never a static: what
+## outlives an instance is what the white ground after a reconnect is
+## suspected of). Round 579.
+var _world_entry := 0
+## Region grids this instance has built: 1 for the entry, one more per zone
+## change (_load_region_neighborhood).
+var _grid_builds := 0
+## Terrain commits per .m path in this world (_terrain_commit).
+var _terrain_commits := {}
+## The /groundprobe run still stepping through its A/B checks, if any.
+var _ground_probe: GroundProbe = null
+
+## /groundprobe [quick] and the F3 panel's Ground probe button (round 579):
+## GroundProbe, run on the region under the player. Returns the chat lines;
+## the probe's own lines go to the log and user://logs/groundprobe-*.txt.
+## "quick" skips the A/B checks. Any player can run it: nothing reaches the
+## server.
+func _run_ground_probe(mode: String = "full") -> PackedStringArray:
+	if _ground_probe != null and is_instance_valid(_ground_probe) and _ground_probe.is_running():
+		return PackedStringArray(["A ground probe is still running -- wait for its 'done' line."])
+	var probe := GroundProbe.new()
+	probe.name = "GroundProbe"
+	add_child(probe)
+	_ground_probe = probe
+	var focus: Vector3 = player.position if player != null else Vector3.ZERO
+	return probe.start(self, _world_entry, mode, focus, {
+		"connected": NetClient.is_connected_to_server(),
+		"zone": _current_zone_name,
+	})
 
 ## /where: zone, region y/x, local and world coordinates, walkable height.
 func _where_report() -> PackedStringArray:

@@ -207,6 +207,10 @@ static func surfaces_to_mesh(surfaces: Array, texture_lookup: Dictionary, ao_tex
 static func _surface_material(surface: Dictionary, texture_lookup: Dictionary, ao_texture: Texture2D) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	var key: int = surface["texture_key"]
+	# The pass's tile ID, for /groundprobe (GroundProbe, round 579): a pass
+	# whose ID missed the lookup and one drawn with no ID at all both have no
+	# albedo texture; only the key tells them apart. Metadata only.
+	mat.set_meta("terrain_texture_key", key)
 	if key != -1:
 		if texture_lookup.has(key):
 			mat.albedo_texture = texture_lookup[key]

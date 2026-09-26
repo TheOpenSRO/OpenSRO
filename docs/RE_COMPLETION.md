@@ -40142,3 +40142,309 @@ the teleport tables mounted and `-teleport-dir` / `SRREVAMP_TELEPORT_DIR` set (d
 "Town teleporters"; without them every Move is refused with code 0, "teleporting is not available
 on this server"); `-teleport-free` is the user's
 decision. Tag order: the server is already on dev, then the client tag, then the flag.
+
+## A player-runnable /groundprobe for the white ground after reconnect (round 579)
+
+Client only, tag-worthy: the tester needs a release that carries it. A chat command and an F3
+button any player can use, one renderer line per world entry, and metadata on the terrain; nothing
+on the wire, no flag, no server change. Nothing a player sees changes unless they run `/groundprobe`,
+whose checks flash the ground until its chat line says it is done and put everything back (a few
+seconds is a guess, not a measurement on a player's machine: every step reads the frame back and
+walks it in GDScript, about 88k samples a step at 720p and 9x that at 4K). **Building it turned
+up two measured findings that change what the tester's file will be read against** (below: the
+project's renderer setting never takes effect, so a plain launch runs Forward+ on Vulkan; and the
+box DOES draw flat, untextured terrain after a reconnect -- the base surface drawn over the
+textured passes when recycled material RIDs invert their draw order). No fix is in this round.
+
+**Why.** The tester reported the white ground after a disconnect + reconnect in one process again
+on 2026-09-26, with a screenshot: buildings, walls, trees, bushes, sky and HUD textured; the terrain
+near-white with soft green/brown gradients that follow the mesh's quads. Rounds 558-560 never
+reproduced it on the render box, and a Windows release cannot set `SRREVAMP_QA_*`.
+
+**Change.**
+
+- `client/scripts/world/ground_probe.gd` (new, `GroundProbe`): the probe. `start` runs the read-only
+  half at once and, in full mode inside the tree, arms the A/B steps it walks in `_process` (a
+  frame-counted state machine, no `await`, so a world that leaves the tree just frees it). No
+  static state: the entry count, the previous entry's exit record and GL names, and the run count
+  live in the process environment (`SRREVAMP_WORLD_ENTRY`, `SRREVAMP_WORLD_LAST_EXIT`,
+  `SRREVAMP_GROUNDPROBE_PREV_GL`, `SRREVAMP_GROUNDPROBE_RUNS`), as round 558's `SRREVAMP_QA_ENTRY`
+  does.
+- `World3D._ready` prints, for every player at every entry, `World3D: entry <n> (instance <id>,
+  <first entry | re-entered after: ...>) -- running=... adapter=... api=...` plus the renderer
+  settings (`GroundProbe.entry_line`), so any log carries the GPU without the command. It does NOT
+  ask for the driver version (`driver_info=(not queried at entry ...)`; the probe's `gpu` line
+  does): on Windows, Godot 4.2.2 answers `OS.get_video_adapter_driver_info` with a synchronous WMI
+  query, `SELECT * FROM Win32_PnPSignedDriver WHERE DeviceName = ...`, waiting up to 5 s in
+  `IEnumWbemClassObject::Next`, on the main thread, cached only once it returns
+  (platform/windows/os_windows.cpp, `OS_Windows::get_video_adapter_driver_info`, 4.2.2-stable) --
+  read from source, not measured on Windows, and not a cost a world entry should carry while the
+  loading freezes are open.
+- `World3D._run_ground_probe` (console host `ground_probe`), `_world_entry`, `_grid_builds`
+  (`_load_region_neighborhood`), `_terrain_commits`; `_terrain_commit` leaves a `ground_probe` meta
+  on each terrain group (the prepare's ground counts -- `_prepare_ground_textures` now also puts them
+  in the job --, tiles uploaded, lightmap, the baked light, the commit's number for that `.m`);
+  `_exit_tree` calls `GroundProbe.record_exit` before it clears the caches.
+- `MapmTerrainBuilder._surface_material` tags each terrain material with its tile ID (meta
+  `terrain_texture_key`), so a pass whose ID missed the lookup is told from one drawn with none.
+- `Console`: `/groundprobe [quick]` (client-side, any player; "quick" skips the A/B steps), in the
+  help line. `DebugPanel`: a **Ground probe** button; the panel closes first and the probe runs a
+  quarter second later, because the panel covers the left of the picture the probe measures.
+- `docs/DEBUG_TOOLS.md` (and its bundled copy): the command, and step 4 of "Sending a report".
+- The chat line and the docs ask the player to hold still until the probe's "done" line, not for
+  a time; `fresh_textures` skips a pass whose texture something else cleared after the probe
+  listed it (it would otherwise raise a SCRIPT ERROR on `get_rid` of null).
+
+**What `/groundprobe` records** (`GROUNDPROBE <entry>.<run> <section>: key=value ...`, to the log,
+to `user://logs/groundprobe-e<entry>-r<run>-<time>.txt`, and a two-line summary in chat):
+
+- `frame baseline` FIRST, before anything binds a texture: over a box of the picture (35-80% of the
+  width, 62-92% of the height -- our choice, printed) and over the whole frame, the mean, the
+  neutral-pixel fraction (max-min <= 6) with its p5/p50/p95, the bright-neutral fraction (>= 180, a
+  cut between the tester's flats as the investigators measured them, 205-227, and the base grey
+  the box draws under GL Compatibility, 161 -- a GL-only cut: under Forward+ the base computes to
+  ~217, finding 2's last bullet, above it), red/magenta/blue fractions (a
+  channel 60 over the others), and for every later step the fraction `changed` against this
+  baseline (|dr|+|dg|+|db| > 24). All cuts are ours and printed with the numbers.
+- `build`, `gpu` (`running=RenderingDevice(Forward+/Mobile)|GL-Compatibility` from
+  `RenderingServer.get_rendering_device()`, adapter, vendor, API string, driver info, the project's
+  rendering method, GL driver, ANGLE fallback, depth prepass and its vendor list, shader cache,
+  thread model, `--verbose`), `entry` (entry number, how it was reached, grid builds, zone,
+  connected, cells queued), `viewport` (debug_draw, MSAA, scaling, mipmap bias), `render`
+  (`RenderingServer.get_rendering_info` texture/buffer/video memory and the frame's draw calls,
+  objects, primitives; Performance object/node/orphan/resource counts, static memory), `env` (the
+  baked-light terms, the sun, tonemap, ambient, fog, glow), `caches`.
+- `region` (the region UNDER THE PLAYER, not the grid centre, and how many terrain groups cover
+  the spot), `commit` (its meta), one `surface <i>` line per terrain material -- kind
+  (base / opaque / opaque_flat / overlay), tile ID, class, **the material's RID index**, shading,
+  transparency, depth draw, cull, priority, vertex colour as albedo, albedo, filter, repeat, UV1
+  scale, AO; for a textured pass the file, the texture's RID index and validity, its GL name
+  (`RenderingServer.texture_get_native_handle`), the RenderingServer format, **whether the
+  RenderingServer material's own `texture_albedo` is that texture's RID** (`material_get_param`),
+  size, and a read-back's format, mip count and 64-texel mean (labelled: `texture_2d_get` binds the
+  GL name and reads the object's content, drivers/gles3/storage/texture_storage.cpp,
+  TextureStorage::texture_2d_get, 4.2.2-stable -- it says nothing of what a draw binds); the vertex
+  colours' min/mean luma and alpha.
+- `order`: the base's RID index against the opaque and overlay passes', and how many opaque passes
+  sit below the base. `regions`: the same counts, param matches and zero GL names for every loaded
+  region. `object 0..2`: the three nearest scenery materials, for contrast. `water`: the region's
+  AnimatedTexture. `glnames`: every ground, lightmap and water GL name, any shared by two live RIDs,
+  any 0, and how many the previous entry held, with `handle_kind` -- under Forward+ / Mobile
+  `texture_get_native_handle` returns the texture's VkImage handle, not a GL name
+  (drivers/vulkan/rendering_device_vulkan.cpp, `RenderingDeviceVulkan::texture_get_native_handle`,
+  4.2.2-stable), and the same holds for every `gl=` field. `shadercache`: files under
+  `user://shader_cache`, how many this process wrote, and how many it wrote before the first probe
+  A/B steps of the process (`written_before_probe_checks`, `probe_checks_from_unix`): the steps can
+  compile shaders of their own -- `opaque_as_alpha` gives the passes a different
+  StandardMaterial3D shader -- and GLES3 saves a version it did not find in that cache
+  (drivers/gles3/shader_gles3.cpp, `ShaderGLES3::_initialize_version`, 4.2.2-stable), so a second
+  `/groundprobe` in one process would otherwise count the first one's writes as H5's signal (on the
+  box the cache was already warm: r6's entry-2 line reads `written_by_this_process=0` after entry
+  1's steps). `logscan`: counts, in this entry and the whole log, of the lines the hypotheses
+  predict (not in the lookup, Invalid image, Expected Image data size, NOTHING resolved,
+  `Parameter "shader" is null`, Failed to load cached shader, shader failed to compile, SHADER ERROR,
+  compilation failed, unable to bind shader, uninitialized RID, previously freed,
+  texture_allocs_cache, GL ERROR, SCRIPT ERROR, pk2: could not open, terrain loads, world exits),
+  up to four examples, and the region's own `ground textures for` line.
+- The A/B steps, on EVERY loaded region's terrain, each held 4 frames, measured and put back:
+  `after_readback`, `sun_off`, `tint` (opaque passes red, bases magenta, overlays blue),
+  `base_first` (bases at `render_priority` -1), `opaque_as_alpha`, `fresh_materials` (duplicate
+  StandardMaterial3Ds as surface overrides: new RenderingServer materials; the note says how many
+  opaque passes got an RID index below their region's new base), `duplicates_hidden` (only if two
+  groups cover the spot), `fresh_textures` (tiles decoded again from the `.ddj`), `retex`
+  (albedo_texture null, then back), `remesh` (mesh null, then back), `final`; then a `summary` of
+  changed/neutral/neutral-p50 per step.
+
+**Finding 1, measured: the project's renderer setting never takes effect; a plain launch runs
+Forward+ on Vulkan.**
+
+- `client/project.godot` puts `#` comment lines before `renderer/rendering_method="gl_compatibility"`
+  (and before `file_logging/enable_file_logging` and `fonts/dynamic_fonts/use_oversampling`), since
+  the commit that added the setting (8fb499c, 2026-08-25): every revision of the file since
+  (8fb499c, 977f89f, 97e44fe; `git show <rev>:client/project.godot`) has the same ten `#` lines
+  above that key.
+  Godot 4.2.2 reads project settings with `VariantParser::parse_tag_assign_eof`
+  (core/variant/variant_parser.cpp, 4.2.2-stable): only `;` starts a comment; every other printable
+  character before `=` is appended to the key, and a `"` reads a quoted string that replaces the
+  key so far.
+- On the render box, with this project's own `project.godot` (`ProjectSettings.get_property_list`,
+  a headless script): `rendering/renderer/rendering_method = forward_plus` (the engine default);
+  the `gl_compatibility` value sits under a 400-character key that begins
+  `rendering/not rightvisuals--#allatonce,whichisconsistentwithaVulkandriver/GPUincompatibility`;
+  `debug/file_logging/enable_file_logging = false` with its `.pc` default `true` (so desktop logging
+  is on) and the project's `true` under a 180-character key; the `use_oversampling=false` under a
+  296-character `gui/#Offsothewindow...` key, so the engine default applies.
+- A plain launch of this project on the box (no `--rendering-driver`) printed `Vulkan API
+  1.4.305 - Forward+ - Using Vulkan Device #1: Unknown - llvmpipe`. `qa_shot.sh` passes
+  `--rendering-driver opengl3`, which picks gl_compatibility (main/main.cpp, `Main::setup`: a driver
+  with no method named takes the method matching the driver), so every box render has been GL
+  Compatibility while a release launched normally is Forward+ on Vulkan. The release workflow
+  exports with no override (`export_presets.cfg`, `release.yml`); that an export carries the same
+  parse is read, not measured on an exported build. It matches the tester's own banner, `Vulkan API
+  1.4.349 - Forward+`, which `docs/WORLD_ISSUES.md`'s 2026-08-26 second round read as a stale build:
+  that banner is what every build since 8fb499c prints on a plain launch, so it is no evidence of a
+  stale build. Whether the exe tested that day was stale is still not known (the same round also
+  found it loading a Data.pk2 from another folder).
+- What it means here: the investigators' GLES3 code paths may not be the tester's; `gpu:
+  running=` in their file settles it. The mechanism of finding 2 exists in Forward+ as well by
+  source reading -- RenderForwardClustered sorts its opaque list with `sort_by_key`, whose key
+  holds the material's RID local index (servers/rendering/renderer_rd/forward_clustered/
+  render_forward_clustered.h, the `sort` union; render_forward_clustered.cpp,
+  `_geometry_instance_add_surface`, `p_mat_src.get_local_index()`, 4.2.2-stable) -- not run under
+  Forward+ here.
+- Not changed: fixing the comments switches every player's renderer, a decision for the project
+  (docs/TODO.md).
+
+**Finding 2, measured on the box: after a reconnect the base surface is drawn over textured
+passes.** Viewpoint: 97/168 local (80, 1020), yaw 270, pitch -20, distance 45 -- open grass inside
+Jangan's west wall (a first run at round 558's square viewpoint showed `tint` turning none of the
+box red: it framed the square's paving objects, not terrain). Route Login -> CharacterSelect ->
+World3D (`qa_shot.sh --reconnect 200 --reconnect-via-login`, `--server`, radius 1), runs r1 and r3:
+
+- **RID order.** Entry 1: every region's base has a lower material RID index than all its opaque
+  passes (97/168: base 148, opaque 149..170, `opaque_below_base=0 of 22`). Entry 2: 97/168 base 79,
+  opaque 14..147, **4 of 22 below the base** (7 in r1, 6 in r4); 97/167 25/25, 98/168 22/22, 97/169
+  22/22, 96/167 18/18, 98/167 25/25, 96/169 16/16, 98/169 26/26, 96/168 0/21. The world's
+  materials were freed and the new ones took the freed slots: RID_Alloc keeps its free slots as a
+  stack -- `free` writes the freed index at the top, `_allocate_rid` takes the top one
+  (core/templates/rid_owner.h, 4.2.2-stable, read for this round) -- so a world allocating after a
+  mass free gets indices in the reverse of the order they were freed in.
+- **The picture.** Entry 2's baseline has a flat neutral area entry 1 does not: whole-frame
+  neutral fraction 0.078 with p50/p95 161/161 (entry 1: 0.032, 36/89); the movie frame's crop at
+  (1050, 280, 200x100) is (157.2, 157.4, 156.2) with pixels at exactly (161, 161, 162), where entry 1
+  drew sand at (128.6, 123.8, 100.1). r1's frames differ in 46,953 pixels (5.1%, ImageMagick
+  `compare -fuzz 2%`), that area.
+- **The A/B steps say which surface it is.** `tint`: 4.9% of entry 2's frame turns magenta -- the
+  bases' tint -- and 0.0% of entry 1's (the box, on textured grass, turns red, 0.802, in both).
+  `base_first`: changes 5.2% of the frame and puts it back to entry 1's figures (neutral 0.032,
+  p50 36; the crop reads (128.6, 123.8, 100.1) again). `opaque_as_alpha` does the same.
+  `fresh_materials`: entry 1, "0 of 197 opaque passes got an RID index below their region's new
+  base", changed 0.2%; entry 2, **"184 of 197"**, and the whole box goes flat base grey (neutral
+  0.949, p50 161, bright_neutral 0.000 -- below the probe's own 180 cut for "white"; 44.6% of the
+  frame changed) with the overlays' soft green gradients over it: the tester's pattern, not their
+  brightness (205-227, the last bullet); their `/groundprobe` decides whether it is their white.
+  What RID order alone does here is measured; that it is what the tester sees is not.
+  `fresh_textures`, `retex`, `remesh`:
+  <= 0.3% changed in both entries; `after_readback` 0.0%; `sun_off` 0.1% of the box (the terrain is
+  baked and unshaded), 2.2% of the frame (shaded objects). Every surface `rid_valid=true`,
+  `param_match=true` (48/48 in 97/168), texel means equal to entry 1's, `glnames` 82 audited, 0
+  zero, 0 shared; `logscan` 0 of every error pattern.
+- Direct route (r2, World3D -> World3D): the same inversion in five regions (97/167 25/25, 96/168
+  15/21, 98/168 22/22, 96/167 18/18, 96/169 16/16) but not in 97/168 (0 of 22), 97/169, 98/167 or
+  98/169, and this viewpoint's frame equals entry 1's; `fresh_materials` turns the box the same flat
+  base grey in entry 2 (neutral 0.949, p50 161, bright_neutral 0.000). Which regions invert
+  depends on the order the previous world freed and this one allocates.
+- Brightness, not settled: the box draws the base at 161 (GL Compatibility, Mesa); the
+  investigators measured the tester's flats at 205-227 on their JPEG. A calculation, not a
+  measurement: Godot 4.2's Forward+ Filmic curve (servers/rendering/renderer_rd/shaders/effects/
+  tonemap.glsl, `tonemap_filmic`, 4.2.2-stable; the environment's tonemap 2, exposure 1, white 1
+  from the probe's `env` line) takes the base's linear 0.498 to 0.692, sRGB 0.850, **217** -- inside
+  the tester's range, if they run Forward+ (finding 1) and glow and fog add nothing there.
+
+**The hypotheses (the investigators', as hypotheses) and what each shows in the probe.**
+
+| Hypothesis | Mechanism (short) | What the tester's file would show |
+|---|---|---|
+| H-base (CODE H3) | coplanar opaque passes drawn in material-RID order; after the free, the base gets a higher index than passes and covers them | `order`/`regions` `opaque_below_base` > 0 on entry 2 only; `tint` magenta where white was; `base_first` and `opaque_as_alpha` restore it (`changed` ~ the white area, neutral back to entry 1's); `fresh_materials` turns more of the ground flat (neutral up, at the base's grey) when its note says the new bases landed above. **The mechanism is measured on the box (finding 2), as flat grey at 161 under GL Compatibility; whether it is the tester's white is what their file decides.** |
+| H-white-sampler (WEB H1 / CODE H2) | opaque passes sample GLES3's default white texture (stale texture cache or skipped bind) | surfaces `tex=true rid_valid=true param_match=true`, texel means intact; `tint` turns the white RED; `retex` (or `fresh_textures`) restores it; `sun_off` changes nothing |
+| H-default-material (CODE H1 / WEB H3) | opaque passes fall back to the renderer's default material (no valid shader data) | `tint` leaves the white white while overlays turn blue; `sun_off` darkens it (the default material is shaded); `fresh_materials` may restore it; `logscan shader_param_null` > 0 |
+| H-GL-name (WEB H2) | a deleted or aliased GL texture name; binds fail and units keep stale textures | GL Compatibility only (`glnames handle_kind=GL-name`; under Forward+ the handles are VkImages and this row's "recycled/shared GL name" reading means nothing): `glnames shared_by_two_rids` > 0 or `gl_zero` > 0; read-backs wrong or `no-image`; `fresh_textures` restores, `retex` does not; `GL ERROR` lines under `--verbose` |
+| H-per-texture / duplicate (CODE H4 / WEB H4) | a tile resolved but not uploaded, or a second terrain for the region | `commit` `uploaded` < `resolved`; an `opaque_flat` pass with a key != -1; `logscan not_in_lookup` / `invalid_image` > 0; `groups_covering_here` > 1 or a commit number > 1; `duplicates_hidden` restores |
+| H-shader-cache (WEB H5 / CODE H5) | program binaries re-exported in-process and misread by the driver | `shadercache written_before_probe_checks` > 0 on entry 2 (not `written_by_this_process`, which also counts an earlier probe's own steps); `logscan cached_shader_failed`; the tester's override.cfg with the cache off stops it |
+| H-water (WEB H6, Godot #79070) | AnimatedTexture frames white after a scene change | `water` line; cannot whiten land |
+| H-trigger (WEB H7) | region/environment, not the reconnect | `region`, `commit` (baked, light), `env` differ from Jangan's; the same after a zone change |
+| Excluded (CODE H6) | viewport debug_draw, RenderingServer globals, NetClient, Pk2 handles | `viewport debug_draw=0`, `env light_ready=true` as entry 1 |
+
+Reading notes, by renderer (the file's `gpu running=` says which):
+
+- **`bright_neutral` separates H-base from H-white-sampler under GL Compatibility only.** Its 180
+  cut sits between the box's GL base (161) and the tester's flats (205-227); under Forward+ the base
+  computes to ~217 (finding 2), above the cut, so there a base drawn over the passes and a pass
+  sampling white both read bright. `tint` separates them on either renderer (magenta where the
+  flat area was = a base; red = an opaque pass), and `neutral_p50` does when read against that
+  renderer's own base value.
+- **`gl=`, `ao_gl=`, `glnames` and the H-GL-name row mean GL names under GL Compatibility only**;
+  under Forward+ they are VkImage handles (`handle_kind`).
+- **H5 reads `written_before_probe_checks`**, not the total, on any run after the first probe's
+  A/B steps.
+
+**Tests.**
+
+- `client/scripts/world/ground_probe_test.gd` (new, headless): the console routes `/groundprobe`
+  and `/groundprobe quick` to the host and refuses other modes, the non-GM help lists it; the frame
+  statistics on synthetic pictures (a grey box under a blue sky: box bright-neutral 1.0, median 219,
+  sky outside the box; `changed` against a reference: none of the box, about half the frame);
+  `next_entry`, `record_exit` and `reached_text` through the environment; World3D's console host has
+  `ground_probe`; the probe on a bare World3D holding a synthetic RealTerrain_97_168 (base, one
+  opaque pass, one overlay, built by `MapmTerrainBuilder._textured_surfaces_from_cells` from 3x3
+  synthetic cells) and one object prints every section and 36 named keys, the surfaces' kinds, tile
+  IDs and files, the region's compact line, the object's material, a two-line chat summary, and the
+  saved file (deleted after).
+- `client/scripts/world/terrain_prepare_test.gd`: the commit leaves the `ground_probe` meta (ids 2,
+  resolved 1, unreadable 1, uploaded 1, lightmap, not baked on a bare world), every terrain
+  material names its tile ID (-1 for the base), and a second commit of the same `.m` counts as the
+  second.
+- `client/scripts/world/ground_probe_ab_test.gd` (new, headless): the A/B state machine, with the
+  probe IN the tree beside a stand-in world (a Node3D carrying the sun, the ground-tile cache, a
+  `.ddj` decode and the chat log; two synthetic terrain groups covering the player's spot) and
+  `_process` called by hand after one frame for the tree to go live. The 11 steps are armed
+  (`duplicates_hidden` included); each step's change is in effect while it is held (the sun hidden;
+  opaque red, bases magenta, overlays blue in both regions; bases at priority -1; opaque passes
+  alpha; overrides on the base and the opaque pass, not the overlay; the second group hidden; the
+  tile decoded once; textures null; both meshes null); and after `final` every material, surface
+  override, colour, priority, transparency, texture, mesh, group visibility and the sun equal what
+  they were before. The stop path: the terrain under the player leaves the tree at each of nine
+  points (seven steps while measured, `retex` and `remesh` between apply and mid), and every one is
+  put back, with `stopped at step <name>` printed. `fresh_textures` skips a pass whose texture was
+  cleared after the probe listed it, and its restore leaves that pass alone. The chat line promises
+  no time; arming sets `SRREVAMP_GROUNDPROBE_CHECKS_FROM`. 69 checks. `ground_probe_test.gd` also
+  wants the entry line to say the driver version was not queried.
+- NEGATIVE: the two suites against BASE (98c52ff's `client/` from `git archive`, with only the two
+  test files copied in, shipped to its own box directory): `ground_probe_test` FAILURES 5 (the
+  console's four, `ground_probe.gd` absent); `terrain_prepare_test` FAILURES 3 (the meta, the tile
+  IDs, the second commit). The A/B suite against a mutant `ground_probe.gd` (the tint's restore a
+  no-op, the stop path's restore call removed; its own box directory): FAILURES 10 -- the full
+  run's colours, and all nine stop cases (the sun, a priority, a transparency, the overrides, a
+  group's visibility, a texture, and the tint's colours in each).
+- `client/tools/remote_godot.sh check`: `checked 274 scripts and 5 scenes`, `ALL LOAD`; `tests`:
+  `ran 99 suite(s), 0 failing` (both on the committed tree; the lane's own `RENDER_DIR`,
+  `GODOT_LOCK` and a symlinked Godot path, because another lane's qa_shot.sh `pkill`s every
+  `godot-bin/Godot_v4.2.2` on the box, headless suites included -- it killed this lane's first
+  run). `cd server && go build ./... && go test -count=1 -p 1 ./...`: 58 packages ok before the
+  review follow-ups; after them 56 ok and `internal/refdata` and `internal/session` failing on
+  PostgreSQL's `No space left on device` (the developer machine's disk full, 27 MB free) -- the
+  follow-ups change no Go code, and the docs-reading `internal/systems` passed.
+
+**Live (render box, GL Compatibility through VirtualGL, `--server` with this tree's server binary,
+radius 1, `SRREVAMP_QA_COMMANDS=/groundprobe`, which fires 60 ticks after the region is in).**
+
+| run | route | viewpoint | what it showed |
+|---|---|---|---|
+| p1 | one entry | round 558's `square@1002,1020:0,-25,700` | `tint` turned none of the (then 20-80% wide) box red: the square's paving objects, no terrain |
+| p2 | one entry | grass, 97/168 (80, 1020) | `tint` 78.6% of the box red; every other step left it as it was |
+| r1 | Login | grass | the first version of the probe: entry 2's 97/168 7 of 22 passes below the base; the frames differ in 5.1% (the flat area) |
+| r2 | direct | grass | 97/168 0 of 22, five other regions inverted; this view equals entry 1's; `fresh_materials` turns the box flat base grey in entry 2 (p50 161, bright_neutral 0.000) |
+| r3 | Login | grass | the numbers in finding 2 |
+| r4 | Login | grass | the final code but for the exit record's GL names (see below): 6 of 22, the same summary |
+| r5 | Login | grass | with the exit record fixed: `glnames previous_entry_names=82`, `recycled_from_previous={ "water": 7 }`; otherwise r4's figures (6 of 22; summary `baseline neutral/p50=0.078/161 ... tint=0.539/0.032/36 base_first=0.052/0.032/36 opaque_as_alpha=0.052/0.032/36 fresh_materials=0.446/0.430/161 fresh_textures=0.002/0.079/161 retex=0.003/0.079/161 remesh=0.003/0.079/161`) |
+| r6 | Login | grass | the committed code (the log scan's tail cap added after r5): entry 2's 97/168 4 of 22 below the base -- the `c_marble_jang_02`, `_07`, `_09` passes at RID 14-16 and `rok_stone_02` at RID 17, under a base at 79 (`/var/tmp/rwhite/r6.log`, surfaces 13, 16, 17 and 22); summary `baseline neutral/p50=0.078/161 after_readback=0.000/0.078/161 sun_off=0.022/0.077/161 tint=0.539/0.032/36 base_first=0.080/0.032/36 opaque_as_alpha=0.080/0.032/36 fresh_materials=0.417/0.431/161 fresh_textures=0.002/0.078/161 retex=0.003/0.078/161 remesh=0.003/0.078/161` (entry 1: every step <= 0.003 but `sun_off` 0.022 and `tint` 0.539, neutral 0.032/36 throughout); `tint` magenta 0.048; `previous_entry_names=82`, 7 water names recycled; 420 frames, 0 empty, 0 `SCRIPT ERROR` |
+| r7 | Login | grass | after the review follow-ups: both entry lines read `driver_info="(not queried at entry ...)"`, the probes' `gpu` lines query it; `glnames handle_kind=GL-name`, entry 2 `previous_entry_names=82`, `recycled_from_previous={ "water": 7, "ground": 1, "lightmap": 1 }`; `shadercache` entry 1 `written_before_probe_checks=0 probe_checks_from_unix=none-yet`, entry 2 `probe_checks_from_unix=1790391073` (entry 1's steps), 0 written (the box's cache warm); entry 2's 97/168 6 of 22 below the base; summary `baseline neutral/p50=0.078/161 ... tint=0.539/0.032/36 base_first=0.082/0.032/36 opaque_as_alpha=0.082/0.032/36 fresh_materials=0.416/0.430/161 ... final=0.003/0.079/161` (entry 1: `baseline 0.032/36`, every step <= 0.003 but `sun_off` 0.022 and `tint` 0.539); `tint` magenta 0.049 (entry 1 0.000); chat "Running 10 quick checks -- hold still until the 'done' line"; 422 frames, 0 empty, 0 `SCRIPT ERROR` |
+
+r4 showed `previous_entry_names=0` on entry 2: `record_exit` appended to a PackedStringArray read
+out of a Dictionary, which is a copy, so the record stayed empty; fixed (Arrays) and the suite's
+check tightened to want a name per texture. r4's entry-2 `logscan` read a 36-line log: another
+lane's headless Godot, the same user and project, had started and rotated `user://logs/
+srrevamp.log` under it -- a shared-box artifact, not the probe's. Logs and run scripts stay under
+`/var/tmp/rwhite/`; the frames were deleted. The plain launch for finding 1 left RenderingDevice
+shader-cache folders under ghidra's `user://shader_cache` (they do not touch GL runs).
+
+**Records.** This entry; `docs/TODO.md` ("White ground after a reconnect", and the tester-tools
+item's reconnect note); `docs/DEBUG_TOOLS.md` and `client/docs/DEBUG_TOOLS.md`;
+`docs/WORLD_ISSUES.md`'s 2026-08-26 second round, annotated in place: the Forward+ banner it read
+as a stale build is what every build since 8fb499c prints (finding 1), so it is no evidence of
+one; whether that exe was stale stays unknown. `project.godot` itself is untouched: a `#` line
+added there would fold into the next key too. `docs/SYSTEMS.md` has no row for world loading or
+the renderer.
+
+**Deploy note.** Tag-worthy: the tester needs a release with `/groundprobe` (and its entry line) to
+send the file. The fix for finding 2 and the decision on finding 1 are the next round's.

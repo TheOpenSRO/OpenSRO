@@ -114,7 +114,15 @@ run turned up a strong signal that it exercised the **old** build, not the fixed
   first entry explicitly switches `project.godot` to the Compatibility (OpenGL) renderer — a build
   that actually included that change should show "Compatibility" here, not "Forward+". This is
   strong, direct evidence the tested `.exe` predates that fix (most likely the very first
-  `workflow_dispatch` build, downloaded before the fixed one existed).
+  `workflow_dispatch` build, downloaded before the fixed one existed). **Round 579
+  (docs/RE_COMPLETION.md): the Forward+ banner is not evidence of a stale build.** The fix never
+  took effect: Godot 4.2 reads only `;` as a comment in `project.godot`, so the `#` lines above
+  `renderer/rendering_method` fold into its key and the setting stays `forward_plus`. Every
+  revision of `client/project.godot` since the commit that added the setting (8fb499c, then
+  977f89f, 97e44fe) has the same ten `#` lines above it, and a plain launch of the round-579 tree
+  prints `Vulkan API ... - Forward+` (measured on the render box; an exported build is read, not
+  measured, to parse the same) -- so a fixed build would have printed that banner too. Whether the
+  exe tested that day was stale is still not known.
 - **It loaded pk2 data from `C:\Users\opensro\Downloads\VSRO_Client\VSRO_Client\Data.pk2` instead of
   the local `pk2\` folder** next to the tested exe. `Pk2Config` checks an env var before the local
   folder by design (existing dev/testing convenience) — this means a persistent
@@ -7074,6 +7082,30 @@ happens -- position, camera, and what the graph says underfoot -- is
 the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
+
+## Five-hundred-and-seventy-ninth round: a player-runnable `/groundprobe` for the white ground after a reconnect -- two measured findings, no fix
+
+The tester saw the white ground after a disconnect and reconnect in one process again on
+2026-09-26. Rounds 558-560 never reproduced it on the render box, and a Windows release cannot set
+`SRREVAMP_QA_*`. So any player can now run `/groundprobe [quick]` in chat, or press the F3 panel's
+**Ground probe** button. It records the ground's rendering state for the region under the player:
+the renderer and GPU, the entry number and how it was reached, and every terrain surface's material
+and texture state. That includes each surface's material RID index, GL name and RenderingServer
+albedo param. It also records texel read-backs, the RID order per region, the nearest object
+materials, the water, a GL-name audit against the previous entry, the shader cache and a log scan.
+The full mode then runs A/B steps and measures each against the baseline picture. Every world entry
+now prints a `World3D: entry <n> ... running=...` renderer line. The full record is
+`docs/RE_COMPLETION.md`'s round 579.
+
+- **Finding 1, measured:** `client/project.godot`'s renderer setting never took effect. Godot 4.2
+  reads only `;` as a comment there, and the `#` lines fold into the next key, so a plain launch ran
+  Forward+ on Vulkan (the correction is on the 2026-08-26 bullet above).
+- **Finding 2, measured on the box:** after a reconnect, 97/168 local (80, 1020), the box draws
+  flat base grey (161) terrain. The new world's materials take the freed RID slots in reverse
+  order, and RID order is draw order, so 4 of 97/168's 22 opaque passes sit below its base.
+  `base_first` puts the picture back to entry 1's figures, and `fresh_materials` reproduces the flat
+  grey on demand (184 of 197 passes below their base). That the tester's white is this is not
+  measured: the box draws the base at 161, and the tester's flats read 205-227. No fix in this round.
 
 ## Five-hundred-and-seventy-eighth round: the teleport board -- the gate's destinations with their fees, five a page, and Move teleports behind the loading screen
 

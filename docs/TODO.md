@@ -653,7 +653,68 @@ settle**: the tester's white ground after a reconnect was not reproduced on the 
 and both timings); the tester's `user://logs/srrevamp.log` from a reconnect — the second
 `character/item/NPC tables loaded` block's `ground textures for 97\168.m -- N ids, N resolved`
 line, any `pk2: could not open`, any `SCRIPT ERROR`, and whether buildings and water were white too
-— decides it. `qa_shot.sh --reconnect <tick|drain>` is the run to re-measure with.
+— decides it. `qa_shot.sh --reconnect <tick|drain>` is the run to re-measure with. Still open, and
+now carried by the next section: the tester reported it again on 2026-09-26 with a screenshot, and
+round 579 reproduced the mechanism on the box and gave them `/groundprobe`.
+
+### White ground after a reconnect — **a mechanism measured on the box; fix not written; the tester's `/groundprobe` file to say whether it is theirs** (round 579)
+
+**The report.** 2026-09-25 and again 2026-09-26, with a screenshot: after a disconnect and a
+reconnect without closing the client, the terrain draws near-white with soft green/brown gradients
+that follow the terrain mesh's quads, while buildings, walls, trees, bushes, the sky and the HUD
+are textured. The tester plays a tagged Windows release; which tag is not known yet.
+
+**What round 579 measured** (`docs/RE_COMPLETION.md`, round 579, has the numbers):
+
+- **The base surface is drawn over textured passes after a reconnect.** Each region's terrain is a
+  flat base (`UNKNOWN_TILE_COLOR` 0.5 grey times the baked light) plus one opaque pass per tile ID,
+  coplanar, drawn in material-RID order. On a second world in one process the new materials take
+  the freed RID slots, and the base lands ABOVE some or all of its opaque passes (entry 2, Login
+  route: 8 of 9 regions inverted, 4-7 of 22 passes in 97/168; entry 1: none). The box then draws
+  those quads flat grey (161, 161, 162) with the overlays' gradients on top; the probe's `tint`
+  shows the bases (magenta) there, and `base_first` (base `render_priority` -1) and
+  `opaque_as_alpha` put the ground back. `fresh_materials` in entry 2 turns the whole view that
+  flat base grey on demand (neutral p50 161, bright_neutral 0.000 -- below the probe's own 180
+  "white" cut). That is the tester's pattern, flat quads under the overlays' gradients, not their
+  brightness (205-227); their `/groundprobe` decides whether it is their white. At round 558's
+  square viewpoint the probe's `tint` turned none of its box red: that view
+  frames the square's paving objects, so its frame measurement could not see this.
+- **A plain launch runs Forward+ (Vulkan), not GL Compatibility** -- and so, read but not
+  measured on an export, does a release. `client/project.godot`'s `#` comment lines are not
+  comments to Godot 4.2's parser (only `;` is): `rendering_method`, `enable_file_logging` and
+  `use_oversampling` never took effect. A plain launch prints `Vulkan API ... - Forward+`; every
+  box render passes `--rendering-driver opengl3`. The RID-ordered opaque sort exists in Forward+
+  too (source reading). A Forward+ calculation puts the grey base at about 217 on screen, inside
+  the 205-227 the investigators measured on the tester's JPEG (a calculation, not a measurement)
+  -- so on a Forward+ file the probe's `bright_neutral` (cut 180, set for GL) cannot tell the base
+  from a white sampler, while `tint` can; and its `gl=` / `glnames` values are VkImage handles
+  there, not GL names (`handle_kind`).
+
+**Next, in order.**
+
+1. **The fix** (not written in round 579): make the base independent of RID order -- e.g. its
+   material at `render_priority` -1 in `MapmTerrainBuilder._surface_material` (what `base_first`
+   measured), or no base under quads an opaque pass covers. Verify with the same Login-route
+   reconnect run (`qa_shot.sh --server --region '97\168.m' --radius 1 --at 80,1020 --yaw 270
+   --pitch -20 --dist 45 --reconnect 200 --reconnect-via-login` with
+   `SRREVAMP_QA_COMMANDS=/groundprobe`): entry 2's baseline must lose its flat 161 grey and its
+   `fresh_materials` must stop turning the view flat grey, while `order` may stay inverted without
+   effect.
+2. **Decide the renderer.** Changing the `#` comments in `project.godot` to `;` switches every
+   player to GL Compatibility, what the 2026-08-26 decision meant; it also changes what they see.
+   The other two settings come with it.
+3. **Ask the tester** (round 579 built the tools): the release tag (F3's first line); a log from a
+   build with round 579 -- every world entry prints `World3D: entry <n> (...) -- running=...
+   adapter=... api=...` (the driver version only in the probe's `gpu` line: on Windows it costs a
+   WMI query on the main thread); and, when the ground is white, **`/groundprobe`** (or F3 ->
+   **Ground probe**), holding still until chat says it is done, then the
+   `groundprobe-e<entry>-r<run>-<time>.txt` it saves beside the log (`/log` opens the folder). If
+   they can: whether water is white too, and one launch with `--verbose` (GLES3 then logs `GL
+   ERROR:` lines, drivers/gles3/rasterizer_gles3.cpp, 4.2.2-stable). An `override.cfg` beside the
+   exe is read by an exported build (core/config/project_settings.cpp, `ProjectSettings::_setup`;
+   the ProjectSettings class reference, "Overriding", 4.2.2-stable), so `[rendering]`
+   `renderer/rendering_method="gl_compatibility"` there is a no-rebuild A/B of the renderer
+   question, and `shader_compiler/shader_cache/enabled=false` one of the shader-cache hypothesis.
 
 ### Loading freezes: what the off-thread rounds left (map/loading epic, 2026-09-25)
 

@@ -29,6 +29,7 @@ command always answers with the help line — it never stays silent.
 | `/cam free` / `/cam orbit` | Switches the camera between free-look and orbit. |
 | `/errors` | The last 20 script errors this session (also in `/copy` and the log). |
 | `/unstuck` | Returns you to the zone's entry point if you wedge into geometry. |
+| `/groundprobe` | If the ground looks **white** (or wrong in any other way), type this while you can see it and hold still until chat says it is done (a few seconds; longer on a large screen). It records how the ground is being drawn — your graphics card and driver, the ground textures and materials under you, and a few quick checks during which the ground may flash red, magenta or blue — and saves it all to a `groundprobe-….txt` file in the log folder (`/log` opens it). Send us that file. `/groundprobe quick` skips the checks. The F3 panel's **Ground probe** button does the same. |
 | `/w <name> <message>` | Whispers another player. |
 
 ## Sending a report
@@ -38,6 +39,9 @@ command always answers with the help line — it never stays silent.
    loaded, the entities around you, and the last log lines and script errors.
 3. Attach the log file if you can — `/log` prints where it is
    (`user://logs/srrevamp.log`; the desktop build opens the folder).
+4. If the ground is white, type `/groundprobe` while you can see it, hold
+   still until chat says it is done, and attach the `groundprobe-….txt` file
+   it names (it sits beside the log).
 
 <!-- gm-only -->
 ## GM commands
