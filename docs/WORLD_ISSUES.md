@@ -7083,6 +7083,28 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundredth round: Escape closes the world map, as the client's does
+
+A follow-up to round 599, from its review. The full record is `docs/RE_COMPLETION.md`'s entry of
+the same name.
+
+- **Escape (read).** VK_ESCAPE (`0x78b6c7`) calls `0x79d620`, which closes the first open window
+  of a fixed list. The System window comes before the world map, and the world map comes before
+  every other window this client builds. Our Escape never closed the world map; it now does, in
+  that order. The windows after the map keep closing topmost first (ours).
+- **Matched.** `0x616870` clears the stale auto-move flag only when it turns auto-move off, and
+  only outside the +0x9990 mode.
+- **Records corrected.**
+  - `0x79ab80` tests the interface's visibility first, not the window's.
+  - The OnCreate itself sets auto-move (`0x620fab`).
+  - The id-28 census adds `0x79f030`, the window-position reset.
+  - GDR_WORLDMAP starts hidden (`Style=64`; `0x8b5710`).
+  - The check count is 299 scripts, not 300.
+- **Open.** Whether retail turns auto-move back on after every loading screen (`0x786f30` from
+  CPSMission's step). The chain is recorded, but the message that sets the flag was not tied to
+  teleports.
+- **Tests.** `worldmap_window_test.gd`: 3 FAIL against 3f7646e (Escape), ALL PASS here.
+
 ## Five-hundred-and-ninety-ninth round: M opens the client's own world map, CNIFWorldMap from worldmapguide.2dt
 
 The full record is `docs/RE_COMPLETION.md`'s entry of the same name.

@@ -328,7 +328,7 @@ const FRAME_TYPES := ["CIFFrame", "CIFSubFrame", "CIFStretchWnd"]
 ## inflated). It runs over the built layout and the title bar, which carries
 ## its rect in the same meta, and over nothing else: a window can hang a
 ## control built elsewhere on itself -- a registry frame is built from an
-## entry whose rect is a screen position (GDR_WORLDMAP's 100,100), which the
+## entry whose rect is a screen position (GDR_GAMEGUIDE's 100,100), which the
 ## window moves to its own origin (_add_registry_frame).
 func _settle() -> void:
 	if panel_root != null:

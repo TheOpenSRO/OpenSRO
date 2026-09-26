@@ -16,7 +16,8 @@ class_name HudWorldmap
 ## 0x79abe0. 0x79abe0 asks the `.2dt` window manager 0x115dd40 for window 28;
 ## the first time it loads `res_ui\worldmapguide.2dt` (0x469140), otherwise it
 ## toggles the window's visibility (0x46d740) and calls 0x79ab80; either way it
-## then centres window 28 on the screen (0x798c50). Record 0 of that file is
+## then centres window 28 on the screen (0x798c50). Escape hides it too
+## (0x78b6c7 -> 0x79d620, at 0x79d785..0x79d7c2; HudPanels._escape_close). Record 0 of that file is
 ## `CNIFWorldMap`, a CNIFMainFrame 650x422, id 28 (measured); its runtime class
 ## (descriptor 0xee933c, size 0x229ec) is the NIFWorldMap.cpp world map.
 ##
@@ -25,8 +26,11 @@ class_name HudWorldmap
 ## is created with ginterface.txt's Create section, but the only getters for it
 ## -- 0x799740 and 0x79db90 -- have no caller: no call or jump to either in the
 ## disassembly, and neither address appears anywhere in the exe's bytes. The
-## only other code that fetches id 28 from that layout saves and restores its
-## position (0x79a9b0, 0x79e620, 0x79eb20). Nothing shows it.
+## only other code that fetches id 28 from that layout saves, restores or
+## resets its position (0x79a9b0, 0x79e620, 0x79eb20, and 0x79f030, which
+## centres a child with id 28 through 0x79ac50 and moves GDR_WORLDMAP by
+## (0, -60) with 0xb90db0). Nothing shows it; ginterface.txt gives it Style 64,
+## and the layout builder hides a style-0x40 control (0x8b5710..0x8b5726).
 ##
 ## **The window as the client leaves it** (every item read):
 ##
@@ -36,8 +40,9 @@ class_name HudWorldmap
 ##   4x4 `wmap_window_edge_N` pieces at its corners (0x60f350 lays the quads,
 ##   0x61c4e0 draws them: edge_1 top-left, edge_2 top-right, edge_4
 ##   bottom-right, edge_3 bottom-left, each texture whole and unflipped).
-## - OnCreate (0x620f70): the auto-move button 20 shown, the floor spinner 4
-##   hidden, the guide 11 hidden, the check box 31 unchecked, the bottom
+## - OnCreate (0x620f70): auto-move on (+0x7b1 = 1, 0x620fab), the auto-move
+##   button 20 shown (its authored manual art stays: OnCreate does not call
+##   0x616870), the floor spinner 4 hidden, the guide 11 hidden, the check box 31 unchecked, the bottom
 ##   frame 26 and the side tab 13 given +0x1c0 = 1 (the flag CNIFWnd's mouse
 ##   handler 0x46c8e0 returns as "handled", so they eat clicks -- the meaning
 ##   is inferred), and the world button 6 given UIIT_PAG_WORLDMAP as its hover
@@ -45,7 +50,11 @@ class_name HudWorldmap
 ##   as for the guild window).
 ## - At game entry 0x786f30 calls 0x616b80(1) on it (0x78780b): auto-move on,
 ##   and 0x616870 gives button 20 `wmap_button_automatic.ddj` and the hover
-##   text UIIT_STT_WORLDMAP_AUTO_MOVE.
+##   text UIIT_STT_WORLDMAP_AUTO_MOVE. 0x786f30 is reached from CPSMission's
+##   per-frame step (0x84c300 -> 0x84c060) once a load is flagged; whether
+##   that happens after every teleport, turning auto-move back on each time,
+##   is **not established**. This client does it once, when it builds the
+##   window.
 ## - Six records are authored 0x0 (26, both 30s, 31, 13 and 15; measured, and
 ##   no other `.2dt` file has any). A static's quad is its rect times a scale
 ##   that starts at 1.0 (0x46cff0, 0x46c4f6), the factory passes the record's
@@ -175,6 +184,10 @@ var _auto := true
 ## without button 20's look being updated; the next press of 20 then settles
 ## on manual (0x616870, 0x61688d..0x6168a7).
 var _auto_art_stale := false
+## +0x9990: the teleport-selection mode (0x622dd0, entered from the optional
+## teleport path). 0x616870 checks the stale flag only when it is 0. This
+## client never enters that mode, so it stays false.
+var _teleport_select := false
 ## +0x97cc: 0 big, 1 small.
 var _small := false
 ## +0x7b0: the first ShowWindow(1) centres the map (0x6246c8).
@@ -316,7 +329,9 @@ func _apply_create_state() -> void:
 	var world := _at(ID_WORLD)
 	if world != null:
 		world.tooltip_text = _builder.resolve_text(WORLD_TIP)      # 0x621059..0x621074
-	# Game entry (0x78780b): 0x616b80(1).
+	# 0x620fab: auto-move on. Then game entry (0x78780b): 0x616b80(1), which
+	# sets it again and updates button 20 (0x616870).
+	_auto = true
 	set_auto_move(true)
 
 ## 0x616b80: auto-move set, then button 20 updated (0x616870).
@@ -327,16 +342,18 @@ func set_auto_move(on: bool) -> void:
 func is_auto_move() -> bool:
 	return _auto
 
-## 0x616870. The spinner is hidden first; a stale flag with auto-move on
-## turns it off (the press that set it is taken back); then button 20 gets
+## 0x616870. The spinner is hidden first; outside the teleport-selection mode
+## (+0x9990 == 0), a stale flag with auto-move on turns auto-move off and
+## clears the flag (the press that set it is taken back), and with auto-move
+## already off the flag is left set (0x61689b jumps past the clear); then
+## button 20 gets
 ## the look and hover text of the state. In manual on a local map the world
 ## button is shown, and on a fortress map it is hidden. (Its dungeon branches
 ## are not built: this client draws no dungeon floor.)
 func _refresh_auto_button() -> void:
 	_set_visible(ID_FLOOR, false)
-	if _auto_art_stale:
-		if _auto:
-			_auto = false
+	if not _teleport_select and _auto_art_stale and _auto:
+		_auto = false
 		_auto_art_stale = false
 	var btn := _at(ID_AUTO)
 	if btn != null:
@@ -833,11 +850,12 @@ func _mouse_turns_auto_off() -> void:
 		_auto = false
 
 ## M and the minimap's map button (0x79abe0): the window's visibility
-## toggled (0x46d740), then 0x79ab80 -- which, for a show, calls the window's
-## vslot 0x50 (bringing it to the front is **inferred**) and plays
-## snd_window_open, or snd_window_close for a hide; this client plays no UI
-## sounds -- and then the window centred on the screen (0x798c50), on a hide
-## as well.
+## toggled (0x46d740), then 0x79ab80 -- which, when the interface itself is
+## visible (its first 0xb8f530 is on `this`, the interface), calls the
+## window's vslot 0x50 (bringing it to the front is **inferred**), 0x79a620
+## and snd_window_open if the window is now shown, or snd_window_close if
+## not; this client plays no UI sounds -- and then the window centred on the
+## screen (0x798c50), on a hide as well.
 func toggle() -> void:
 	if visible:
 		hide()

@@ -331,8 +331,8 @@ like the guild window:
    on every show. M and the minimap's button both reach `0x79abe0`. The older `CIFWorldMap`
    (`ifworldmap.txt`) is never shown. `HudWorldmap` is built from the `.2dt` now, with the map
    area, corners, buttons, auto-move and both sizes read (`docs/RE_COMPLETION.md`, round 599).
-   Still open: the guide's list, the floor spinner and the dungeon maps, the other signs, and
-   the fortress caption's guild.
+   Escape closes it in the client's order (round 600). Still open: the guide's list, the floor
+   spinner and the dungeon maps, the other signs, and the fortress caption's guild.
 4. **Y -> `nifenchantwnd.2dt`** (`CNIFEnchantWnd` / `CNIFAlchemyWnd`, id 168): Y reaches
    `0x798e20`, which loads or destroys it. We build `ifalchemyprocess.txt`.
 5. **The teleport board's live source**: `ifteleportboard.txt` and `ifteleportareaslot.txt` are

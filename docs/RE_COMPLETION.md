@@ -43526,9 +43526,10 @@ for window 28 (`0x799920` -> `0x469020(0x1c)`).
 - If there is none, it loads `res_ui\worldmapguide.2dt` (`0xdb8d48`) under the interface
   (`0x469140`).
 - Otherwise it toggles the window: `0x46d740` calls vslot `0x5c` with 0 if `0xb8f530` says it is
-  visible, and with 1 if not. It then calls `0x79ab80`. For a show, that calls the window's vslot
-  `0x50` and `0x79a620` and plays `snd_window_open`. Otherwise it plays `snd_window_close`
-  (UTF-16 at `0xd9b1b0` / `0xd9b18c`).
+  visible, and with 1 if not. It then calls `0x79ab80`. Its first visibility test
+  (`0xb8f530` at `0x79ab83`) is on `this`, the interface, not the window (corrected in round
+  600). With the interface visible, a shown window gets its vslot `0x50` and `0x79a620` and
+  `snd_window_open`, and a hidden one `snd_window_close` (UTF-16 at `0xd9b1b0` / `0xd9b18c`).
 - Either way it centres window 28 (`0x798c50`, read: x = screen `+0x24` >> 1 less width >> 1,
   y likewise, through vslot `0x9c`).
 
@@ -43572,7 +43573,14 @@ A scan of the asm for a `push 0x1c` in the four instructions before each of the 
 `call 0x8b51f0` found the other fetches of id 28.
 `0x65f800`, `0x65f870` and `0x74c100` read other layouts (check boxes 25..28, a job-guild
 window). `0x79a9b0`, `0x79e620` and `0x79eb20` save or restore window 28's position to the
-settings file (`0xb468f9` / `0xb46c32`, then vslot `0x98`). None of them shows it.
+settings file (`0xb468f9` / `0xb46c32`, then vslot `0x98`). **The census missed one** (its
+output was cut at 60 lines; found in review, round 600): `0x79f030`, the window-position reset
+(called from `CGInterface::Create` at `0x78cf13` and from the jumps at `0x5fddab` / `0x6f43b1`).
+It centres the interface's child with id 28 (`0x79ac50(0x1c, 0)`: `0xb90b00`, vslot `0x9c`,
+then `0x79a840`) and moves GDR_WORLDMAP by (0, −60) (`0xb90db0` at `0x79f585`). None of them
+shows it. The old window also starts hidden: ginterface.txt gives GDR_WORLDMAP `Style=64`, and
+the layout builder `0x8b5580` calls ShowWindow(0) on a control with style bit `0x40`
+(`0x8b5710..0x8b5726`; round 600).
 `CIFWorldMap::Create` (`0x6964e0`) is a structural twin of `CNIFWorldMap`'s OnCreate
 (`0x620f70`). Both fetch 7, 6 and 20 into consecutive members, show 20, and start the same
 `0xb93320(10, 500)` timer. That the `.2dt` class is the newer port is **inferred** from this.
@@ -43582,8 +43590,8 @@ settings file (`0xb468f9` / `0xb46c32`, then vslot `0x98`). None of them shows i
 object (`0xeef5ec`) and the window is not loaded yet, it loads the file, takes window 28 and
 toggles it with `0x46d740`. A window is visible at creation (`0xb9e284`, docs/protocol/
 2DT_FORMAT.md), so the toggle hides it. Then `0x610980(0)` places the player on it. Game entry
-`0x786f30` calls `0x616b80(1)` on window 28 (`0x787800..0x78780b`). That sets auto-move and
-updates button 20. The call has no null check, so the window exists by then (**inferred**). So
+`0x786f30` calls `0x616b80(1)` on window 28 (`0x787800..0x78780b`). That sets auto-move again
+(the OnCreate already set +0x7b1 = 1 at `0x620fab`) and updates button 20. The call has no null check, so the window exists by then (**inferred**). So
 the first M is a real ShowWindow(1) on a window already built.
 
 ### The window, as the code leaves it (read)
@@ -43605,7 +43613,8 @@ the first M is a real ShowWindow(1) on a window already built.
 - **OnCreate** (`0x620f70`). The queue runs last record first. Record 14's class has no `0x8065`
   entry in its map, and the guide's OnCreate (record 7, `0x6290d0`) builds a list window under
   the guide (`0xba20b0` at (10, 32, 280, 258), id 0x16) and fills it. Then the window's own:
-  - button 20 shown (`0x620fa7`);
+  - button 20 shown (`0x620fa7`), and auto-move on, +0x7b1 = 1 (`0x620fab`). Button 20 keeps
+    its authored passivity art until `0x616870` runs;
   - the spinner 4 set up by `0x60f210` and hidden (`0x620fef`);
   - the guide 11 hidden (`0x621025`);
   - the check box 31 unchecked (`0x482cb0(0)`, `0x621013`);
@@ -43620,8 +43629,12 @@ the first M is a real ShowWindow(1) on a window already built.
 - **Game entry** (`0x616b80(1)` -> `0x616870`). Auto-move (+0x7b1) on, and button 20 gets
   `wmap_button_automatic.ddj` (`0xd998f8`) and `UIIT_STT_WORLDMAP_AUTO_MOVE` (`0xd99928`). Off,
   it gets `wmap_button_passivity.ddj` (`0xd9988c`) and `UIIT_STT_WORLDMAP_MANUAL_MOVE`
-  (`0xd998bc`). `0x616870` first honours a stale flag, +0x229ac (`0x61688d..0x6168a7`): with the
-  flag set and auto-move on, auto-move goes off and the flag clears.
+  (`0xd998bc`). `0x616870` first honours a stale flag, +0x229ac (`0x61688d..0x6168a7`), but
+  only when +0x9990 is 0 (`0x616885`; +0x9990 is a mode the show path hands to `0x622dd0`,
+  which the review reads as the optional-teleport selection; this client never enters it). With
+  the flag set and auto-move on, auto-move goes off and the flag clears. With auto-move already
+  off, `0x61689b` jumps past the clear and the flag stays set (round 600; the round-599 code
+  cleared it either way).
 - **Six records are 0x0 (measured), and they draw nothing (read).** The six are 26, both 30s,
   31, 13 and 15. No other `.2dt` file has a 0x0 record (measured over all 42).
   - The loader passes the rect unchanged (`0x48f9c9..0x48fa93`).
@@ -43776,7 +43789,8 @@ b79036a's scripts before and this tree after. Both runs printed 0 SCRIPT ERROR.
   against `git show b79036a`): 2 FAIL lines, and the suite stops there.
   - `FAIL M asks for the world map (HudPanels.world_map_toggle_requested; got 0)`
   - `FAIL the world map builds from res_ui\worldmapguide.2dt and the map table`
-- **This tree:** ALL PASS. `remote_godot.sh check`: 300 scripts, ALL LOAD.
+- **This tree:** ALL PASS. `remote_godot.sh check`: 300 scripts, ALL LOAD. (299 in the
+  repository: the box's copy also held the uncommitted audit tool. Corrected in round 600.)
   `remote_godot.sh tests`: 114 suites, 0 failing. Go: build and `go test -count=1 -p 1 ./...`
   green.
 
@@ -43795,3 +43809,88 @@ b79036a's scripts before and this tree after. Both runs printed 0 SCRIPT ERROR.
   **`0x777a70`'s `0x610980` call**.
 - **Sounds.** This client plays no UI sounds: `snd_window_open` / `snd_window_close`.
 - **Whether vslot `0x50` is "bring to front".** `move_to_front` is used, **inferred**.
+
+## Escape closes the world map, as the client's does (round 600)
+
+Client only. A follow-up to round 599, from its review, which refuted nothing. Every fact is
+labelled read, measured, inferred or ours, as there.
+
+### Escape (read)
+
+- The interface's key handler (`0x78b660`) tries the command table first (`0x778310`). For a key
+  with no command, VK_RETURN (`0xd`) goes to the chat line and VK_ESCAPE (`0x1b`, `0x78b6c7`)
+  calls **`0x79d620`**.
+- `0x79d620` closes the first open window of a fixed list and returns. In order:
+  1. an interface mode (+0x50c >= 0 -> `0x777e70(-1)`);
+  2. **GDR_SYSTEM** (ID `0x62`, ShowWindow(0) at `0x79d688`, then `0x79a7e0`);
+  3. the object at interface+0x748 (`0x778b90`, tested by `0x6ec400`, closed by `0x6ec7f0`),
+     when there is no item mall window (`0x7995e0`, GDR `0xa7`);
+  4. the interface child with id 38 (`0x7993f0`, `0x6e4a60`);
+  5. GDR_GAMEGUIDE (ID `0x20`, vslot `0xac`);
+  6. **the world map**: window 28 of the `.2dt` manager, if visible, gets ShowWindow(0)
+     (`0x79d7b1`) and `0x79ab80` (`0x79d7c2`). There is no centring here, unlike M;
+  7. then everything else: `0x799570` (GDR 0x2b), the item mall, `0x7992e0`, `0x799640`,
+     +0x724, the stall (`0x21`), exchange (`0x1a`) and community (`0x17`) windows, the alchemy
+     window (`0x798e20(0)`), the main popup (+0x728), and more after `0x79d9c5`.
+- Before this round our Escape closed the topmost HudPanels window or raised System. It never
+  closed the world map, which lives in World3D. That gap predates round 599.
+
+**What this client does now.** `HudPanels._escape_close`:
+- the System window if it is open (step 2);
+- else the world map if it is open (step 6; `HudPanels.world_map`, set by World3D, is hidden);
+- else the topmost other window, this client's own rule for the windows after step 6 (**ours**).
+
+With nothing open, System is raised, as before. Of steps 1 and 3 to 5, this client builds only
+the help window, and Escape does not close it (open, as before).
+
+### Records corrected (from the review; round 599's text is fixed in place)
+
+- `0x79ab80`'s first visibility test is on the interface, not the window.
+- The OnCreate sets +0x7b1 = 1 itself (`0x620fab`); game entry's `0x616b80(1)` sets it again and
+  gives button 20 its automatic art.
+- `0x616870`'s stale-flag check runs only when +0x9990 == 0, and with auto-move already off it
+  leaves the flag set (`0x61689b`). **Code matched:** `HudWorldmap._refresh_auto_button` now
+  clears the flag only when it turns auto-move off, behind a `_teleport_select` flag that stays
+  false (this client never enters that mode).
+- The id-28 census missed `0x79f030`, the window-position reset. It never shows the window.
+- GDR_WORLDMAP starts hidden: `Style=64`, and `0x8b5580` hides a style-`0x40` control
+  (`0x8b5710..0x8b5726`).
+- The check count is 299 scripts in the repository; the 300 included the uncommitted audit tool.
+
+### Auto-move after a loading screen (not established)
+
+`0x786f30` is called at `0x84c2c0`, after the switch at `0x84c129` inside `0x84c060`. Cases 0-4
+start at `0x84c130` and case 5 at `0x84c140`; the switch only picks a string, and every path runs
+on to that call (the decompile of `0x84c060`). `0x84c060` runs from
+`CPSMission::vslot_012` (`0x84c300`) while +0xe4 is set, and reaches `0x786f30` only when +0xe5
+is set too.
+- +0xe4 is set by `0x84b6e0` (`0x84be08`), called from `CPSMission::OnCreate` (`0x84c9df`) and
+  from `0x86dab0`.
+- +0xe5 is set by `0x84ab50`, called from `0x84b280` and from `0x8ab0e0`. That is a message
+  handler that reads the player's own data (**inferred** from what it reads), and it also calls
+  `0x8aaaf0`.
+
+Whether that message arrives after every teleport, so that retail turns auto-move back on after
+each loading screen, was not established: that would need the handler's opcode and the server's
+teleport sequence. This client's teleports stay in the scene, so HudWorldmap keeps its auto-move
+state across them. **Open.**
+
+### Stale comments
+
+- World3D's fallback comment: "No registry entry" became "no `res_ui\worldmapguide.2dt`".
+- `HudWindow._settle`'s example of a registry rect at a screen position is GDR_GAMEGUIDE's
+  100,100, not GDR_WORLDMAP's, a window this client no longer builds.
+
+### Tests
+
+- **`worldmap_window_test.gd`** gains an Escape section. It uses a stand-in System window, so it
+  needs no archive layout, and checks three things:
+  - Escape closes the open map without raising System;
+  - with both open, System closes first;
+  - the next Escape closes the map.
+- **NEGATIVE, run against 3f7646e's scripts** (`/opt/srrevamp-client-wmap-base2`, md5-checked
+  against `git show 3f7646e`): 3 FAIL lines.
+  - `FAIL Escape closes the world map (0x79d785..0x79d7c2)`
+  - `FAIL and does not raise the System menu while the map was open`
+  - `FAIL with both open, Escape closes the System window first (0x79d657)`
+- **This tree:** ALL PASS.

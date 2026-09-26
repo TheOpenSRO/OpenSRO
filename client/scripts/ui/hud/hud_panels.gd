@@ -97,6 +97,9 @@ const PROJECT_HOTKEYS := {
 ## the minimap), so this only asks for it.
 const WORLD_MAP_KEY := KEY_M
 signal world_map_toggle_requested
+## The world map window (World3D's HudWorldmap), set by World3D so Escape can
+## close it (_escape_close).
+var world_map: Control
 
 ## The two views of the guild window (GuildWindow), and the key its one
 ## window is kept under in _windows.
@@ -2142,6 +2145,28 @@ func close_topmost() -> bool:
 	best.hide()
 	return true
 
+## One Escape press. The client's VK_ESCAPE (0x78b6c7) calls 0x79d620, which
+## closes the first open window of a fixed list and returns (read). Ahead of
+## the world map (window 28 of the `.2dt` manager, hidden at
+## 0x79d785..0x79d7c2 and then 0x79ab80) the list has an interface mode
+## (+0x50c, 0x777e70), **GDR_SYSTEM** (ID 0x62, hidden at 0x79d657..0x79d698),
+## a +0x748 list gated on the item mall (0xa7), an interface child with id 38
+## (0x7993f0) and GDR_GAMEGUIDE (help, 0x79d744). This client builds none of
+## those but the System window, and World3D's help window is not closed by
+## Escape here (open). Every other window comes after the map: the stall,
+## exchange and community windows (0x79d8f8..0x79d968), the alchemy window
+## (0x798e20(0)), the main popup (+0x728, 0x79d99b) and the rest. Among
+## those this client keeps its own rule, the topmost one closes (ours).
+func _escape_close() -> bool:
+	var system: HudWindow = _windows.get("system")
+	if system != null and system.visible:
+		system.hide()
+		return true
+	if world_map != null and is_instance_valid(world_map) and world_map.visible:
+		world_map.hide()
+		return true
+	return close_topmost()
+
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not (event is InputEventKey):
 		return
@@ -2149,9 +2174,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if not key.pressed or key.echo or key.ctrl_pressed or key.alt_pressed:
 		return
 	if key.keycode == KEY_ESCAPE:
-		# Escape closes the topmost open window; with nothing open it raises
-		# the System menu, the way the original does.
-		if not close_topmost():
+		# Escape closes one window (_escape_close); with nothing open it
+		# raises the System menu, the way the original does.
+		if not _escape_close():
 			open("system")
 		get_viewport().set_input_as_handled()
 		return

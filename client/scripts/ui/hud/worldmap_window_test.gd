@@ -208,7 +208,6 @@ func _run() -> void:
 	ev.pressed = true
 	panels.call("_unhandled_key_input", ev)
 	_check(asked[0] == 1, "M asks for the world map (HudPanels.world_map_toggle_requested; got %d)" % asked[0])
-	panels.queue_free()
 
 	# --- the window as built -------------------------------------------------
 	var script := load(WORLDMAP_PATH) as GDScript
@@ -341,4 +340,30 @@ func _run() -> void:
 	await process_frame
 	window.call("toggle")
 	_check(window.position == Vector2(59, 5), "at 768x432 it is centred at (59, 5) (got %s)" % window.position)
+
+	# --- Escape (0x78b6c7 -> 0x79d620) ---------------------------------------
+	# A stand-in System window, so this runs without the archive's layout.
+	var system := HudWindow.new()
+	system.name = "Window_system"
+	panels.add_child(system)
+	var windows = panels.get("_windows")
+	if windows is Dictionary:
+		(windows as Dictionary)["system"] = system
+	system.hide()
+	panels.set("world_map", window)
+	var esc := InputEventKey.new()
+	esc.keycode = KEY_ESCAPE
+	esc.pressed = true
+	_check(window.visible, "the map is open before Escape")
+	panels.call("_unhandled_key_input", esc)
+	_check(not window.visible, "Escape closes the world map (0x79d785..0x79d7c2)")
+	_check(not system.visible, "and does not raise the System menu while the map was open")
+	# The System window comes first in 0x79d620's list, then the map.
+	window.call("toggle")
+	system.show()
+	panels.call("_unhandled_key_input", esc)
+	_check(not system.visible and window.visible, "with both open, Escape closes the System window first (0x79d657)")
+	panels.call("_unhandled_key_input", esc)
+	_check(not window.visible, "and the next Escape the world map")
 	window.queue_free()
+	panels.queue_free()

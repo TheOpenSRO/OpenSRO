@@ -1457,7 +1457,8 @@ func _try_initialize_pk2_ui() -> void:
 		_hud_worldmap.hide()
 		_hud_minimap.world_map_requested.connect(_hud_worldmap.toggle)
 	else:
-		# No registry entry or no map table -- this archive cannot show one.
+		# No res_ui\worldmapguide.2dt or no map table -- this archive cannot
+		# show one.
 		_hud_worldmap.queue_free()
 		_hud_worldmap = null
 
@@ -1647,6 +1648,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.world_map_toggle_requested.connect(func() -> void:
 		if _hud_worldmap != null and is_instance_valid(_hud_worldmap):
 			_hud_worldmap.toggle())
+	# Escape closes it too (HudPanels._escape_close has the client's order).
+	_hud_panels.world_map = _hud_worldmap
 
 	# The chat window, bottom-left where its registry entry puts it. This
 	# retires the developer chat box: the authored window is the same two
