@@ -1443,9 +1443,12 @@ func _try_initialize_pk2_ui() -> void:
 	ui_control.add_child(_hud_minimap)
 	place_minimap(_hud_minimap)
 
-	# The world map, opened from the minimap's own map button. It is built
-	# once and kept hidden: the frame and the map table are read at build
-	# time, the 363 tiles only as they come into view.
+	# The world map (CNIFWorldMap, res_ui\worldmapguide.2dt), opened by M and
+	# by the minimap's own map button -- both reach the client's 0x79abe0. It
+	# is built once and kept hidden, as the client loads it at game start and
+	# hides it at once (0x777a70, called from CGInterface::Create at 0x78cf64
+	# once there is a player object): the window and the map table
+	# are read at build time, the 363 tiles only as they come into view.
 	_hud_worldmap = HudWorldmap.new(_ui_builder)
 	_hud_worldmap.name = "HudWorldmap"
 	ui_control.add_child(_hud_worldmap)
@@ -1639,6 +1642,11 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.revive_requested.connect(_on_revive_requested)
 	# A server refusal the panels hear about (a mastery raise) goes to chat.
 	_hud_panels.system_notice.connect(_log_system)
+	# M: the world map's toggle, the same one the minimap's map button calls
+	# (HudPanels.WORLD_MAP_KEY has the retail binding's addresses).
+	_hud_panels.world_map_toggle_requested.connect(func() -> void:
+		if _hud_worldmap != null and is_instance_valid(_hud_worldmap):
+			_hud_worldmap.toggle())
 
 	# The chat window, bottom-left where its registry entry puts it. This
 	# retires the developer chat box: the authored window is the same two

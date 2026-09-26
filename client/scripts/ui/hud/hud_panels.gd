@@ -89,6 +89,15 @@ const PROJECT_HOTKEYS := {
 	KEY_G: "guild",
 }
 
+## M opens the world map, the retail binding (read): the default key table
+## at 0x7778be puts 'M' in slot 7, 0x778310 turns slot 7 into command 0x4d,
+## and 0x780610 sends 0x4d (jump table 0x780e48 / 0x780e00) to 0x78087d,
+## which calls 0x79abe0 -- CNIFWorldMap's toggle, the same function the
+## minimap's map button reaches. The window is World3D's (HudWorldmap, beside
+## the minimap), so this only asks for it.
+const WORLD_MAP_KEY := KEY_M
+signal world_map_toggle_requested
+
 ## The two views of the guild window (GuildWindow), and the key its one
 ## window is kept under in _windows.
 const GUILD_VIEWS := ["guild", "community"]
@@ -2154,6 +2163,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			return
 	if PROJECT_HOTKEYS.has(key.keycode):
 		toggle(PROJECT_HOTKEYS[key.keycode])
+		get_viewport().set_input_as_handled()
+		return
+	if key.keycode == WORLD_MAP_KEY:
+		world_map_toggle_requested.emit()
 		get_viewport().set_input_as_handled()
 
 # --- Filling panels from the server -------------------------------------

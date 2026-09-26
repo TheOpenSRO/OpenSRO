@@ -7083,6 +7083,35 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-ninety-ninth round: M opens the client's own world map, CNIFWorldMap from worldmapguide.2dt
+
+The full record is `docs/RE_COMPLETION.md`'s entry of the same name.
+
+- **Step 0.** M reaches `0x79abe0` (slot 7 -> command `0x4d` -> `0x78087d`), and so does the
+  minimap's map button (`0x6606a0`). That function toggles window 28 of `res_ui\worldmapguide.2dt`
+  and centres it. Record 0 of that file is **`CNIFWorldMap`**, 650x422: the world map itself.
+  `CNIFWorldMapGuide` is its left pane (id 11), hidden at create and on every show. The older
+  `CIFWorldMap` (`ifworldmap.txt`, the window built until now) is created at start but never
+  shown. Its two getters have no caller by asm text, by a byte-level rel32 scan of `.text`, or
+  by an absolute-pointer scan.
+- **What was read:**
+  - the map area (6, 34) 640x384 (`0x60f4d0`), with 4x4 `wmap_window_edge` corners (settling
+    "corners or edges");
+  - the OnCreate state (`0x620f70`), the show path (`0x624550`) and the auto-move follow;
+  - the world, auto-move and size buttons, with the size button's second size, 268x296, and its
+    control positions (`0x61ca20`);
+  - the captions and the world button's visibility (`0x612fd0`).
+
+  Six records are 0x0 and draw nothing (`0x46cff0` scales the rect); among them is the side
+  button, so the guide cannot in practice be opened (inferred).
+- **Fixed.** M was bound to nothing in this client; it now toggles the window. HudWorldmap is
+  rebuilt from the `.2dt` with all of the above. Tiles, marker, plates, pan and the QA hooks
+  carry over.
+- **Measured.** The audit's tree diff: 18 of 19 widgets identical; only the world map differs.
+  Its findings go 48 -> 62, all OUTSIDE (tiles and plates in the clipping viewport, and the
+  file's own label at 32767).
+- **Tests.** `worldmap_window_test.gd`: 2 FAIL against b79036a (M, the build); ALL PASS here.
+
 ## Five-hundred-and-ninety-eighth round (review fix): the bar's menu closes when the player clicks elsewhere
 
 A review fix to the round below. The full record is `docs/RE_COMPLETION.md`'s entry of the

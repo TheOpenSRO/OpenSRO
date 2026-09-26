@@ -326,8 +326,13 @@ like the guild window:
    `docs/RE_COMPLETION.md` has the record.
 2. **Q -> `questlist.2dt`** (`CNIFQuest`, window 0x4c): Q reaches `0x7990e0`, which toggles it.
    We build `ifquest.txt`, a live layout but not the window Q opens.
-3. **M -> `worldmapguide.2dt`** (`CNIFWorldMapGuide`, id 28): M reaches `0x79abe0`, which loads
-   and centres it (`0x798c50`). We build `ifworldmap.txt`.
+3. ~~**M -> `worldmapguide.2dt`**~~ **Done (round 599).** Record 0 is `CNIFWorldMap`, id 28, the
+   world map itself, 650x422; `CNIFWorldMapGuide` is its left pane (id 11), hidden at create and
+   on every show. M and the minimap's button both reach `0x79abe0`. The older `CIFWorldMap`
+   (`ifworldmap.txt`) is never shown. `HudWorldmap` is built from the `.2dt` now, with the map
+   area, corners, buttons, auto-move and both sizes read (`docs/RE_COMPLETION.md`, round 599).
+   Still open: the guide's list, the floor spinner and the dungeon maps, the other signs, and
+   the fortress caption's guild.
 4. **Y -> `nifenchantwnd.2dt`** (`CNIFEnchantWnd` / `CNIFAlchemyWnd`, id 168): Y reaches
    `0x798e20`, which loads or destroys it. We build `ifalchemyprocess.txt`.
 5. **The teleport board's live source**: `ifteleportboard.txt` and `ifteleportareaslot.txt` are
@@ -420,7 +425,8 @@ the arrow / frame marker (see the UI rounds). Still open: `mm_sign_questnpc` and
 arrows. Zoom in/out buttons are wired but untested.
 
 ### 6. World map
-`GDR_WORLDMAP`, `ifworldmap.txt`, 652×424. The reference shows both a regional view with named
+**`CNIFWorldMap`, `res_ui\worldmapguide.2dt`, 650×422** (round 599; the `GDR_WORLDMAP` /
+`ifworldmap.txt` window this section first described is never shown). The reference shows both a regional view with named
 landmark icons and a continent view. `interface\worldmap\` holds **5,320** tiles — by far the
 largest interface directory — so the art is all there. Landmark names come from
 `textzonename.txt`, already parsed for the city coordinate work. **Which tile goes where, and
@@ -463,7 +469,14 @@ where a position lands on it, is now recovered** — see the end of this file an
 - **`UV_LT`/`UV_RT`/`UV_LB`/`UV_RB`** on every control. Parsed, unused; presumably atlas
   sub-rects, all `0,0`–`1,1` in the files read so far.
 
-### The world map — the table is decoded, the window is not built
+### The world map — the table is decoded, the window is built from `worldmapguide.2dt`
+**Round 599 replaced the window below.** M and the minimap's button open `CNIFWorldMap`, built
+from `res_ui\worldmapguide.2dt`. The `GDR_WORLDMAP` / `ifworldmap.txt` window this section first
+described is created by the client but never shown. The map area is (6, 34) 640x384 (small
+256x256), with the four 4x4 `wmap_window_edge` pieces at its corners. The size button toggles
+650x422 / 268x296. Button 20 is auto-move (follow the player), not a path to a point. All of it
+is read; the record is `docs/RE_COMPLETION.md`, round 599. What follows is the earlier history.
+
 `GDR_WORLDMAP` is a `CIFWorldMap` at `100,100,652,424` on `mframe_wnd_`, and `ifworldmap.txt`
 carries only three buttons: the map itself is the control's own drawing.
 
@@ -488,17 +501,19 @@ wherever the player is standing and switches to the whole world on the layout's 
 the seven textures the client's own world map loads. Tiles are built only as they come into view.
 `client/tools/qa_shot.sh --worldmap [world|both]` renders it.
 
-**Still to do on it**:
+**Still to do on it** (as of round 599):
 
-- `GDR_WM_BTN_WNDSIZE`, left inert. The archive has a 268-wide and a 652-wide window bottom
-  (`wmap_window_small_bottom` / `wmap_window_big_bottom`), so it plainly toggles two widths, but
-  nothing authored says the small window's height or which controls move.
-- `GDR_WM_BTN_AUTO_MOVE`, left inert: it needs a path to an arbitrary world point.
+- ~~`GDR_WM_BTN_WNDSIZE`~~ **Done**: `CNIFWorldMap`'s size button 7, 650x422 <-> 268x296, read at
+  `0x61ca20`.
+- ~~`GDR_WM_BTN_AUTO_MOVE`~~ **Done**: `CNIFWorldMap`'s button 20 is auto-move, which makes the
+  map follow the player (`0x616870`, `0x6243f8`). There is no path to a point.
+- The **guide** (`CNIFWorldMapGuide`, `0x6290d0`'s list) and the **floor spinner** with the
+  dungeon maps: not built.
 - The **other signs**. The client's world map loads `wmap_sign_party`,
   `wmap_sign_apprenticeship`, `wmap_sign_questnpc` and `wmap_sign_huntingpoint` beside the
   player marker, and each wants a list the client already receives.
-- The four `wmap_window_edge_N` pieces, 4x4 apiece, which the client loads for the map area.
-  Whether they are four corners or four tiled edges is **not established**, so they are not drawn.
+- ~~The four `wmap_window_edge_N` pieces~~ **Done**: four corners of the map area, 4x4 each
+  (`0x60f350`, `0x61c4e0`).
 - `wmap_sign_location.ddj` (432x36) and the `city_*.ddj` plates. The window draws its own town
   labels now -- one per local map, on the client's `wmap_name_side` + `wmap_name_middle`
   three-slice (8x24 caps, a 4x24 tiling middle), at the middle of the box that map's row gives,

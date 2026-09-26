@@ -3,15 +3,14 @@ extends SceneTree
 ## Exercises the world map window's geometry, run headless:
 ##   godot4 --headless --path client --script res://scripts/ui/hud/hud_worldmap_test.gd
 ##
-## The window itself needs a real archive -- its frame comes from
-## resinfo\ginterface.txt and its tiles from Media.pk2 -- so what is checked
-## here is the arithmetic that decides *which* tiles are built and where the
-## map may be dragged to. That is the part that would be wrong silently:
-## an off-by-one in the tile range leaves a blank column at one edge of the
+## The window itself is worldmap_window_test.gd's; what is checked here is
+## the arithmetic that decides *which* tiles are built and where the map may
+## be dragged to. That is the part that would be wrong silently: an
+## off-by-one in the tile range leaves a blank column at one edge of the
 ## window, which looks like missing artwork rather than a bug.
 ##
 ## The numbers are the real world map's: 33 x 11 tiles of 128 pixels drawn
-## at 4224 x 1408, inside a 652 x 424 window whose frame leaves 572 x 308.
+## at 4224 x 1408, inside CNIFWorldMap's 640 x 384 map area (0x60f4d0).
 
 const HudWorldmap = preload("res://scripts/ui/hud/hud_worldmap.gd")
 
@@ -19,8 +18,8 @@ const TILE := Vector2(128, 128)
 const ACROSS := 33
 const DOWN := 11
 const CANVAS := Vector2(4224, 1408)
-## 652 - 40 - 40 by 424 - 68 - 48, the mframe_wnd_ pieces' own sizes.
-const VIEWPORT := Vector2(572, 308)
+## CNIFWorldMap's map area in the big size (0x60f4d0: 0x280 x 0x180).
+const VIEWPORT := Vector2(640, 384)
 
 var _failures := 0
 
@@ -36,14 +35,16 @@ func _range(canvas_pos: Vector2, margin := 0.0) -> Rect2i:
 
 func _init() -> void:
 	# At the top-left corner with no margin, the viewport shows columns
-	# 0..4 (572 / 128 = 4.47) and rows 0..2 (308 / 128 = 2.4).
+	# 0..4 and rows 0..2 (640 / 128 = 5, 384 / 128 = 3); the range is
+	# inclusive at its far edge, so the column and row the edge touches are
+	# built too (ours: one spare column and row, never a missing one).
 	var span := _range(Vector2.ZERO)
-	_check(span == Rect2i(0, 0, 5, 3),
-		"the top-left corner shows 5 x 3 tiles (got %s)" % str(span))
+	_check(span == Rect2i(0, 0, 6, 4),
+		"the top-left corner builds 6 x 4 tiles (got %s)" % str(span))
 
 	# The margin adds a ring, but never past the map's own edges.
 	span = _range(Vector2.ZERO, HudWorldmap.TILE_MARGIN)
-	_check(span == Rect2i(0, 0, 6, 4),
+	_check(span == Rect2i(0, 0, 7, 5),
 		"a tile of margin adds one column and one row, and no negative index (got %s)"
 			% str(span))
 

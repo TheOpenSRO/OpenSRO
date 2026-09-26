@@ -43498,3 +43498,300 @@ sample and comment fields (703). The hits:
 - `remote_godot.sh tests`: 113 suites, 0 failing, 0 SCRIPT ERROR.
 - `cd server && go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok.
 
+## M opens the client's own world map, CNIFWorldMap from res_ui\worldmapguide.2dt, with its map area, buttons and auto-move where the client puts them (round 599)
+
+Client only. Nothing on the wire changes and the server is unchanged. Binary: `sro_client.exe`
+(md5 `2a5794b72c90908d945be8b3f3f2edd4`), the decompile in `/var/tmp/decomp_client` and the linear
+asm in `/var/tmp/sro_client.asm` on the RE box. Every fact is labelled **read** (from the asm or
+decompile at the address), **measured** (counted in the retail files or the audit's node dump),
+**inferred** (the basis is given) or **ours**. Nothing was decided from a picture.
+
+### Step 0: what the player sees after pressing M
+
+**M reaches `0x79abe0` (read).** The default key table at `0x7778be` puts `0x4D` in slot 7.
+`0x778310` returns command `0x4d` for slot 7 (its `case 7: return 0x4d`). The dispatch `0x780610`
+sends a command through the byte table `0x780e48` and the jump table `0x780e00`. Code `0x4d` is
+index 14 there, which is `0x78087d`, and that is `call 0x79abe0` (`0x78087f`). The table dump over
+every code from 9 to `0x50` is on the box (the `pe.py` loop, this round). The minimap's map button
+reaches the same function. `0x6606a0` is `mov ecx,[0x110f80c]; jmp 0x79abe0`, and it is the click
+handler for id 8 in the message map at `0xeb77c8` (read). That map's other two entries are ids 5
+and 6 (`0x660620` / `0x660660`, which step the float at +0x400). Those are ifminimap's
+`GDR_MINIMAP_ZOOMIN` 5, `GDR_MINIMAP_ZOOMOUT` 6 and `GDR_MINIMAP_BTN_TOG_MAP` 8 (measured).
+That the map is CIFMinimap's is **inferred** from that match and from the neighbouring
+`CIFMinimap::vslot_003` (`0x660610`). The third call, at `0x6e5244`, is inside `0x6e51e0`, the
+click handler for id 18 in the message map at `0xeb98f0`. That path is not built here.
+
+**`0x79abe0` (read, asm `0x79abe0..0x79ac44`).** It asks the `.2dt` window manager `0x115dd40`
+for window 28 (`0x799920` -> `0x469020(0x1c)`).
+- If there is none, it loads `res_ui\worldmapguide.2dt` (`0xdb8d48`) under the interface
+  (`0x469140`).
+- Otherwise it toggles the window: `0x46d740` calls vslot `0x5c` with 0 if `0xb8f530` says it is
+  visible, and with 1 if not. It then calls `0x79ab80`. For a show, that calls the window's vslot
+  `0x50` and `0x79a620` and plays `snd_window_open`. Otherwise it plays `snd_window_close`
+  (UTF-16 at `0xd9b1b0` / `0xd9b18c`).
+- Either way it centres window 28 (`0x798c50`, read: x = screen `+0x24` >> 1 less width >> 1,
+  y likewise, through vslot `0x9c`).
+
+**The file (measured, p2dt.py on `/var/tmp/r2dt/files/worldmapguide.2dt`).** Record 0 is
+**`CNIFWorldMap`**, a CNIFMainFrame 650x422 on `mframe_wnd_`, id 28. So the window M opens is
+the world map itself. It is not a guide beside a map. `CNIFWorldMapGuide` is record 7, id 11: a
+298x296 `int_window_` frame hanging off the map's left side, (198..496) against the map's 496.
+The research spec and UI_TODO called the file "CNIFWorldMapGuide, id 28", which confused the
+two. The 18 records are:
+- the window (28);
+- a bottom-frame static (26);
+- two statics with id 30: a text static `UIIT_STT_WORLDMAP_LEVEL_MONSTER_LIST` at
+  32767,32767, and a corner static `wmap_wnd_corner_02`;
+- a check box (31);
+- the world button (6, `wmap_big_button_world` 36x36);
+- the auto-move button (20, authored `wmap_button_passivity` 36x36);
+- the size button (7, 16x16);
+- the guide (11) with its three backgrounds (12, 16, 21);
+- the guide's side tab (13, `gd_side_tab`) and side button (15, `com_side02_button`);
+- the floor spinner (4, `CNIFVerticalSpinButtonCtrl`) with up (22), down (24) and a floor
+  label (27).
+
+The runtime class `CNIFWorldMap` has descriptor `0xee933c`, CreateObject `0x621e60`, size
+`0x229ec` and base CNIFMainFrame (read). Its code is `NIFWorldMap.cpp` (the asserts at
+`0x6217e0` / `0x622b60`, `docs/protocol/source_files.tsv`).
+
+**The older CIFWorldMap is never shown. Three probes with different failure modes.**
+`GDR_WORLDMAP` (CIFWorldMap, `ifworldmap.txt`, ID 28, the window this client built until now) is
+created with ginterface.txt's Create section. The CGInterface getters for it are `0x799740` (`push
+1; push 0x1c; add ecx,0x36c; call 0x8b51f0`) and `0x79db90`.
+- **Probe 1, asm text:** no `call` or `jmp` to either address.
+- **Probe 2, raw bytes, relative:** every `e8` / `e9` byte at every offset of `.text` was decoded
+  as a rel32 call or jump, instruction boundaries or not. None lands on either getter. The same
+  scan finds the known callers as controls: `0x79abe0`'s three and `0x777a70`'s seven.
+- **Probe 3, raw bytes, absolute:** neither address appears anywhere in the exe as a 32-bit
+  little-endian value, so there is no pointer to either in any vtable or table. The same byte probe does find
+  the pointers that exist: `0x6964e0` (`CIFWorldMap::Create`) at `0xda4f5c` in `.rdata`, its
+  vtable slot, and `0x60f5f0` at `0xd6a174`, the immediate of a message-map initializer.
+
+A scan of the asm for a `push 0x1c` in the four instructions before each of the 3070
+`call 0x8b51f0` found the other fetches of id 28.
+`0x65f800`, `0x65f870` and `0x74c100` read other layouts (check boxes 25..28, a job-guild
+window). `0x79a9b0`, `0x79e620` and `0x79eb20` save or restore window 28's position to the
+settings file (`0xb468f9` / `0xb46c32`, then vslot `0x98`). None of them shows it.
+`CIFWorldMap::Create` (`0x6964e0`) is a structural twin of `CNIFWorldMap`'s OnCreate
+(`0x620f70`). Both fetch 7, 6 and 20 into consecutive members, show 20, and start the same
+`0xb93320(10, 500)` timer. That the `.2dt` class is the newer port is **inferred** from this.
+
+**Loaded at game start, hidden (read).** `CGInterface::Create` calls `0x777a70(1, 1)`
+(`0x78cf64`). The CICPlayer vslots `0x9d49db` / `0x9d5a5f` call it too. When there is a player
+object (`0xeef5ec`) and the window is not loaded yet, it loads the file, takes window 28 and
+toggles it with `0x46d740`. A window is visible at creation (`0xb9e284`, docs/protocol/
+2DT_FORMAT.md), so the toggle hides it. Then `0x610980(0)` places the player on it. Game entry
+`0x786f30` calls `0x616b80(1)` on window 28 (`0x787800..0x78780b`). That sets auto-move and
+updates button 20. The call has no null check, so the window exists by then (**inferred**). So
+the first M is a real ShowWindow(1) on a window already built.
+
+### The window, as the code leaves it (read)
+
+- **The map area.** CNIFWorldMap::vslot_051 (`0x60f4d0`, vslot `0xcc`, called by the SetPos
+  override `0x620550`) sets +0x97d8 from the window's rect: x + 6, y + `0x22`, and `0x280` x
+  `0x180` when +0x97cc is 0 (big) or `0x100` x `0x100` when it is 1 (small). That is (6, 34)
+  640x384 in the 650x422 window. The render (vslot_013, `0x624380`) draws:
+  - the frame (`0x4736a0`);
+  - then the map;
+  - then `0x61c4e0`, which draws the four corner quads that `0x60f350` lays out: 4x4 at the
+    area's top-left, top-right, bottom-right and bottom-left.
+
+  The textures come from `0x6160d0`, which loads `wmap_window_edge_1`, `_2`, `_4`, `_3` into
+  +0x7d8..+0x7e4. `0x61c4e0` pairs them with the quads in that order. The UVs set in the loop at
+  `0x61613c` are (0,0) (1,0) (1,1) (0,1), so each texture is drawn whole and unflipped. Every
+  edge piece is 4x4 (measured). This settles the open item "four corners or four tiled edges":
+  they are corners. The window's own children draw after it.
+- **OnCreate** (`0x620f70`). The queue runs last record first. Record 14's class has no `0x8065`
+  entry in its map, and the guide's OnCreate (record 7, `0x6290d0`) builds a list window under
+  the guide (`0xba20b0` at (10, 32, 280, 258), id 0x16) and fills it. Then the window's own:
+  - button 20 shown (`0x620fa7`);
+  - the spinner 4 set up by `0x60f210` and hidden (`0x620fef`);
+  - the guide 11 hidden (`0x621025`);
+  - the check box 31 unchecked (`0x482cb0(0)`, `0x621013`);
+  - `+0x1c0 = 1` on 26 and on 13 (`0x621034`, `0x621043`);
+  - the world button 6 given the hover string `UIIT_PAG_WORLDMAP` (`0xd99c64`, UTF-16) with
+    style 0x80 (`0x46d7d0` / `0x46d880`).
+
+  +0x1c0 is what CNIFWnd's mouse handler `0x46c8e0` returns as "handled" (`0x46c9c2`), and
+  CNIFStatic's constructor clears it (`0x481f6a`). So those two statics eat clicks (the meaning is
+  **inferred**). That style 0x80 plus the string is a hover tooltip is **inferred**, as in the
+  guild window.
+- **Game entry** (`0x616b80(1)` -> `0x616870`). Auto-move (+0x7b1) on, and button 20 gets
+  `wmap_button_automatic.ddj` (`0xd998f8`) and `UIIT_STT_WORLDMAP_AUTO_MOVE` (`0xd99928`). Off,
+  it gets `wmap_button_passivity.ddj` (`0xd9988c`) and `UIIT_STT_WORLDMAP_MANUAL_MOVE`
+  (`0xd998bc`). `0x616870` first honours a stale flag, +0x229ac (`0x61688d..0x6168a7`): with the
+  flag set and auto-move on, auto-move goes off and the flag clears.
+- **Six records are 0x0 (measured), and they draw nothing (read).** The six are 26, both 30s,
+  31, 13 and 15. No other `.2dt` file has a 0x0 record (measured over all 42).
+  - The loader passes the rect unchanged (`0x48f9c9..0x48fa93`).
+  - The static case (`0x489eec`) sets the texture and then vslot `0xa4`.
+  - `0x46cff0` builds the quad from the rect's width and height times the scale at +0x1cc /
+    +0x1d0. The constructor sets that scale to 1.0 (`fld1` at `0x46c4f6`). It is vslot `0xa4`
+    of CNIFStatic (vtable `0xe18574`), CNIFButton (`0xe1751c`, whose render thunks to the
+    static's `0x482020`) and CNIFCheckBox (`0xe18874`) alike.
+  - Nothing in NIFWorldMap.cpp resizes a child. Its only vslot `0x54` calls resize the window
+    itself (`0x61ca40`, `0x61cb23`), and it never calls `0xb91b00` or `0xb90cf0`.
+
+  The hit test `0x46cb40` is inclusive, so a 0x0 control is a single pixel. That the side button
+  15, and so the guide, cannot in practice be opened with the mouse is **inferred** from this.
+- **ShowWindow(1)** (vslot_023, `0x624550`):
+  - It finds the player's map (`0x610d30` / `0x614170` / `0x614280`).
+  - If that map or the mode differs from the one shown, it clears +0x798 and calls `0x623060`.
+    That function switches maps only with auto-move on (`0x623177`). With auto-move on, it then
+    centres the view on the player (`0x61cc30`).
+  - The first show (+0x7b0) centres the view too (`0x6246c8`).
+  - Then `0x616a20`, the guide's `0x628ec0`, and `0x616ba0(0)` (`0x624864`).
+  - It hides `GDR_HELPBUBBLEWND` (CGInterface+0x730, which `0x78cebf` fills from ID `0x61`).
+  - Last, the base ShowWindow.
+- **`0x616ba0(open)`.** It shows or hides the guide. The side tab 13 moves to x − `0x13d` or
+  x − `0x13`, at y. The side button 15 moves to x − `0x139` or x − `0xf`, at y + `0x60`. The
+  button's art becomes `com_side_button.ddj` (`0xd9998c`) or `com_side02_button.ddj`
+  (`0xd99960`). Closed, that is tab (−19, 0) and button (−15, 96), a pixel from their authored
+  (−18, 1) and (−12, 97).
+- **The auto-move step of the render** (`0x6243f8..0x62452a`). With +0x7b1 set, every frame
+  switches to the player's map if it changed and centres on the player (`0x61cc30`). That
+  function scrolls through `0x61c5a0` to the map area's half-size less the player's pixel.
+- **Mouse** (vslot_017, `0x623220`; jump table `0x624340`).
+  - WM_LBUTTONDOWN (`0x201`) in the map area (`0x60f530`: the inclusive test against +0x97d8)
+    starts a drag (+0x79c..+0x7a8, capture `0x46e030(1)`).
+  - Then, anywhere on the window, it turns auto-move off and sets the stale flag
+    (`0x6235ad..0x6235bd`).
+  - WM_MOUSEMOVE (`0x200`) scrolls (`0x61c5a0` at `0x623c45`).
+- **Buttons** (message map `0xeb5528..0xeb5640`):
+  - 7 -> `0x61ee80` -> `0x61ca20`, the size toggle.
+  - 6 -> `0x6231e0`. With auto-move on, it turns auto-move off and sets the stale flag. Then it
+    switches to the world map (`0x622b60(0,0)`), centres on the player and hides the spinner.
+  - 15 -> `0x617ed0`: `0x616ba0(!guide visible)`.
+  - 20 -> `0x617eb0`: it flips +0x7b1, then `0x616870`.
+  - 31 -> `0x6255c0`, a guide refresh.
+  - Message `0x807a` -> `0x60f5f0`.
+- **The size toggle** (`0x61ca20`).
+  - Small: SetSize `0x10c` x `0x128` = 268x296; 7 at (+0xe0, +10), 6 at (+0xb9, +0x27), 20 at
+    (+0xe0, +0x27), 4 at (+0xe5, +0x59); 31, 30 (GetChild(`0x1e`) is record 2) and 26 hidden.
+  - Big: 650x422; 7 at (606, 10), 6 at (567, 39), 20 at (605, 39), 4 at (611, 89), which are the
+    authored positions; the three shown.
+  - Then `0x616a20`. CNIFMainFrame's resize (vslot `0x54`, `0x479dd0` -> `0x479d20`) re-lays the
+    caption (x+10, y+12, W−21 x 12), the drag area (x+10, y, W−21 x 34) and the close button
+    (x+W−26, y+10).
+- **The caption and the world button** (`0x612fd0(mode, id)`, SetText vslot `0xbc`).
+  - World map (mode 0): the world button is hidden and the caption is the map's name.
+  - Local map (mode 1): `UIIT_PAG_LOCALMAP` (`0xd9911c`) + `" - "` (`0xd99114`) + the name.
+    For an id in 1001..1999 (`id − 1001 <= 998`), the caption goes on to `"    "`,
+    `UIIT_STT_FORT_OFFICAL_OCCUPYGUILD`, `" - "`, and the guild or `UIIT_STT_NONE`, and the world
+    button is hidden. Otherwise the world button is shown. The table's own comment says fortress
+    map ids start at 1001 (measured).
+  - The name is read from the map record: `0x937550(id)` -> `0x96f4e0`, then +0x94. The column
+    behind +0x94 was not traced.
+
+### What changed in this client
+
+- **M** (`HudPanels.WORLD_MAP_KEY`) emits `world_map_toggle_requested`. World3D connects it to
+  `HudWorldmap.toggle`, the same toggle the minimap's button calls. Before this round nothing in
+  the client bound M.
+- **`HudWorldmap` is rebuilt as CNIFWorldMap** from `worldmapguide.2dt` through TwoDtBuilder:
+  - 650x422, CNIFMainFrame's chrome;
+  - the map in (6, 34) 640x384, with the four corner pieces;
+  - the file's controls at their authored rects, with the 0x0 records left 0x0;
+  - the create state above;
+  - auto-move on with its art and hover text.
+  - `toggle()` is `0x79abe0`: show or hide, the show running vslot_023's steps, then the centring.
+  - The world, auto-move, size and side buttons are wired as read.
+  - Auto-move follows the player: `update_player` switches maps and centres. A left press in the
+    map, on a plate or on the window's body turns it off.
+
+  The older `GDR_WORLDMAP` frame, the `ifworldmap.txt` buttons and the `_pinned_to_world` flag
+  are gone.
+- **Ours, and labelled in the code:**
+  - the clamp into the viewport on centring;
+  - the map's name, taken from worldmap_mapinfo's name column through the text table (the client
+    reads +0x94 of its map record);
+  - the plates at each local map's box middle, and their click;
+  - `clamp_scroll`;
+  - the tile margin.
+
+### Behaviours carried over, and how each was checked
+
+- **Tiles, marker, plates and pan:** unchanged code. `hud_worldmap_test.gd` checks the tile range
+  and the clamp. Its viewport is now the read 640x384, and the top-left builds 6x4 tiles (the
+  range is inclusive at its far edge). The audit dump after the change shows the tiles in
+  `MapViewport` (6,34,640,384) and the marker node. The world plates are there when opened
+  without a player.
+- **Map switching:** it is now driven by auto-move, not `_pinned_to_world`.
+  `worldmap_window_test.gd` checks each step: the town map on its region, the world button
+  switching to the world with auto-move off, manual not following, auto-move back on, and a
+  fortress map hiding the world button.
+- **Closing:** CNIFMainFrame's close at (W−26, 10), and M again. Both are checked.
+- **QA hooks:** `SRREVAMP_QA_WORLDMAP` still calls `open()` and `show_world()`, which keep their
+  names. `qa_shot.sh --worldmap` rendered the window in Jangan on the RX 5700 XT (GL
+  Compatibility), for a human only. No SCRIPT ERROR was logged.
+- **The GUI audit's use** (`HudWorldmap.new(builder)`, `build_worldmap()`, `open()`) is
+  unchanged.
+
+### Measurements
+
+The audit (`zz_gui_audit.gd --norender=1`, headless, `/var/tmp/rwmap/audit-{before,after}`) ran
+b79036a's scripts before and this tree after. Both runs printed 0 SCRIPT ERROR.
+- **Tree diff**, auto-generated node names normalised: 18 of 19 widgets are identical. Only
+  `worldmap` differs: 652x424 `RegistryFrame` + `Create` (the three `GDR_WM_*` buttons) became
+  650x422 `MainFrame28` with the 18 records' nodes, `MapViewport`, `MapEdge1..4`, `TitleBar` and
+  `CloseButton`.
+- **Visible nodes after:**
+  - the 8 frame pieces;
+  - `MapViewport` (6,34,640,384) and its tiles;
+  - `MapEdge1..4` at (6,34), (642,34), (642,414) and (6,414), 4x4, with edge_1, _2, _4 and _3;
+  - `Button20` (605,39,36,36) on `wmap_button_automatic`;
+  - `Button7` (606,10,16,16);
+  - `TitleBar` (10,12, 629 wide);
+  - `CloseButton` (624,10).
+
+  `Button6` is hidden: the audit opens the world map. The 0x0 nodes (Static26, Check31, the
+  corner static, Static13 at (−19,0), Button15 at (−15,96)) are flagged visible and draw nothing.
+  The frame 11, the spinner 4 and the check box's mark are hidden.
+- **Frame pieces:** the corners are at their own sizes (40x68, 40x48) and the edges are at their
+  own thickness across the gaps (40..610, 68..374). There is no SLICE_DISTORT or EDGE_TILED_OFF
+  finding.
+- **Findings:** worldmap 48 -> 62, all OUTSIDE. 61 are tiles and plates inside the clipping
+  viewport; the larger area builds more of them. One is record 2's label at (32271, 32652), which
+  the file itself puts at 32767,32767. Every other widget's count is unchanged.
+
+### Tests
+
+- **New `worldmap_window_test.gd`.** It uses synthetic records with the real file's ids, types,
+  parents, rects and class names, and a synthetic three-row map table. It checks:
+  - M's signal;
+  - the build;
+  - 650x422;
+  - the centring at 1152x648 to (251, 113), and at 768x432 to (59, 5);
+  - the map area and corners;
+  - the button rects;
+  - the create state;
+  - the 0x0 records;
+  - the side tab and button after a show;
+  - the chrome;
+  - captions and world-button visibility;
+  - auto-move, the stale flag and the fortress case;
+  - both sizes.
+- **NEGATIVE, run against b79036a's scripts** (`/opt/srrevamp-client-wmap-base`, md5-checked
+  against `git show b79036a`): 2 FAIL lines, and the suite stops there.
+  - `FAIL M asks for the world map (HudPanels.world_map_toggle_requested; got 0)`
+  - `FAIL the world map builds from res_ui\worldmapguide.2dt and the map table`
+- **This tree:** ALL PASS. `remote_godot.sh check`: 300 scripts, ALL LOAD.
+  `remote_godot.sh tests`: 114 suites, 0 failing. Go: build and `go test -count=1 -p 1 ./...`
+  green.
+
+### Open
+
+- **The guide's contents.** `0x6290d0`'s list (`0x627ec0`, `0x628e10`, `0x6279a0`) is not built.
+  The guide frame is built and hidden, and in the client it is hidden at create and at every show
+  and its button is 0x0.
+- **The floor spinner** and the dungeon branches (mode 2, `0x6217e0`, `0x6145e0`) are not built.
+  This client draws no dungeon floor.
+- **The other signs** (party, academy, quest NPC, hunting point) and `icon\strut_effect.ddj`,
+  which `0x6160d0` also loads.
+- **The fortress caption's occupying-guild part.** This client does not know the fortress owner.
+- **The map name's source column** (+0x94).
+- **Message `0x807a`** (`0x60f5f0`), **the quest window's id-18 path** (`0x6e51e0`) and
+  **`0x777a70`'s `0x610980` call**.
+- **Sounds.** This client plays no UI sounds: `snd_window_open` / `snd_window_close`.
+- **Whether vslot `0x50` is "bring to front".** `move_to_front` is used, **inferred**.

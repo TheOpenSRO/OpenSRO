@@ -187,7 +187,13 @@ archive (frames, stretch sets, tiles, lattices, buttons, bars, tabs' on / off, c
 on / off, plain textures). Optional pieces (buttons' `_focus` / `_press` / `_disable`, tabs'
 `disable`): 604 of 698. 80 of the 283 textured statics, slots and plain windows are authored at a
 rect other than their texture's size; how the client draws those (stretched, tiled or at size) is
-**not read**, and this project stretches them.
+**not read**, and this project stretches them. A rect of **0x0** draws nothing. The quad is the
+rect's width and height times a scale that starts at 1.0 (`0x46cff0`; `fld1` at `0x46c4f6`), which
+is vslot `0xa4` of CNIFStatic, CNIFButton and CNIFCheckBox alike (vtables `0xe18574`, `0xe1751c`,
+`0xe18874`).
+Nothing sizes a control from its texture: the static case `0x489eec` sets the texture and then
+vslot `0xa4`, and the loader passes the rect unchanged. Only `worldmapguide.2dt` has 0x0 records,
+six of them (measured); round 599 has them.
 
 ## Text
 

@@ -223,5 +223,7 @@ So the region and `pos_` columns are the ones to use. `WorldmapGuideReader` keep
 - **Three rows are type 0**, not one: the main world plus `map_jupiter_a` and `map_jupiter1_1`,
   which are worlds of their own you switch to. Type alone does not identify the world map; the
   main one is the only type-0 row drawn from a grid.
-- **The window is built** — `client/scripts/ui/hud/hud_worldmap.gd`. What is left on it is in
-  `docs/UI_TODO.md`.
+- **The window is built** — `client/scripts/ui/hud/hud_worldmap.gd`, the client's
+  `CNIFWorldMap` from `res_ui\worldmapguide.2dt` since round 599 (`docs/RE_COMPLETION.md`).
+  The caption's name comes from the client's map record, +0x94 (`0x612fd0`); which column fills
+  it was not traced. What is left on the window is in `docs/UI_TODO.md`.
