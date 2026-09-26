@@ -19,6 +19,7 @@ const UiBuilder = preload("res://scripts/ui/ui_builder.gd")
 const HudWindow = preload("res://scripts/ui/hud/hud_window.gd")
 const HudMainPopup = preload("res://scripts/ui/hud/hud_main_popup.gd")
 const ErrorText = preload("res://scripts/net/error_text.gd")
+const GuildWindow = preload("res://scripts/ui/hud/guild_window.gd")
 
 ## key: the panel id used by the underbar's menu_action and by hotkeys.
 ## Each entry is [layout path, window title, hotkey action name or ""].
@@ -41,8 +42,14 @@ const PANELS := {
 	"skill": ["resinfo\\ifskill.txt", "Skill", KEY_K],
 	"quest": ["resinfo\\ifquest.txt", "Quest list", KEY_Q],
 	"party": ["resinfo\\ifparty.txt", "Party", KEY_P],
-	"community": ["resinfo\\ifcommunity.txt", "Community", KEY_U],
-	"guild": ["resinfo\\ifguild.txt", "Guild", KEY_G],
+	# The guild and community are one window, CNIFGuildWnd, built from the
+	# client's `res_ui\*.2dt` files (GuildWindow); these two ids are its two
+	# views. U is the retail binding and opens the guild view: the default
+	# key table at 0x7778be puts 'U' in slot 6, which reaches the guild
+	# window's toggle 0x5b4980. No default key opens the community view; the
+	# underbar's community button does (_open_guild_window).
+	"community": [GuildWindow.GUILD_2DT, "", 0],
+	"guild": [GuildWindow.GUILD_2DT, "", KEY_U],
 	"action": ["resinfo\\ifaction.txt", "Action", KEY_A],
 	"partymatch": ["resinfo\\ifpartymatch.txt", "Party Matching", KEY_E],
 	"academy": ["resinfo\\ifapprenticeship.txt", "Academy", KEY_L],
@@ -70,6 +77,21 @@ const PANELS := {
 	# it. Its close button is the authored GDR_TB_BTN_CLOSE (406,15,16,16).
 	"teleport": ["resinfo\\ifteleportboard.txt", "", 0],
 }
+
+## Keys this project binds that are not the retail client's, each to a panel
+## id. **G is ours**: in the retail table G is slot 13, which reaches
+## 0x780895 and calls 0x793b00(0x64, 0x3f0) -- not the guild window, and what
+## it is was not established. G opened the guild window here before the
+## guild window was rebuilt, and nothing else in this client binds it, so it
+## keeps opening the guild view as a convenience.
+const PROJECT_HOTKEYS := {
+	KEY_G: "guild",
+}
+
+## The two views of the guild window (GuildWindow), and the key its one
+## window is kept under in _windows.
+const GUILD_VIEWS := ["guild", "community"]
+const GUILD_WINDOW_KEY := "guild"
 
 ## Panels whose layout is read with #ifdef branch selection, mapped to the
 ## symbols defined for them. ifstore's two slot sets are alternates behind
@@ -110,10 +132,9 @@ const PANEL_DEFINES := {
 ##   0x741980 builds Create, AbnormalSlot and PotionDelaySlot.
 ##
 ## Not here, each for a stated reason:
-## - **community**: GDR_COMMUNITY exists, but this client never loads
-##   ifcommunity.txt, the layout that panel is built from (round 585, the
-##   alternates round); framing a layout the client does not put in that
-##   window would present a composition it never makes.
+## - **community / guild**: the retail windows are CNIFGuildWnd and its child
+##   CNIFCommunityWnd, built from `res_ui\*.2dt` (GuildWindow), with
+##   CNIFMainFrame's chrome; GDR_COMMUNITY's layout is never loaded.
 ## - **store**: GDR_STORE's height depends on two #ifdefs this build's data
 ##   cannot settle -- 317 (neither, or RENEWAL_SHOP_SYSTEM alone), 360
 ##   (RESTORE_SOLDITEM_INSHOP) or 370 (both) -- and the layout read with
@@ -285,21 +306,11 @@ signal teleport_requested(dest_id: int)
 ##   one function with type 1 loading Withdrawal and types 2 and 3 loading
 ##   MainSkillWnd -- so the normal window is Create plus MainSkillWnd.
 ##
-## - **guild**: ifguild has nine extra sections and the client binary this
-##   project reverse-engineers has no string for any of them, so the answer
-##   came from the authored geometry instead. `sweep_section_overlap.gd`
-##   measures how much of each section's control area sits under every
-##   other's, and GuildInfo, NotifySubBox, SortBtn, MemberView and Command
-##   are **pairwise 0%** -- they tile the window, the guild header at the
-##   top, the notice under it, the column headers, the member list, and the
-##   buttons down the right. NotifyContents covers 85% of MemberView (and
-##   MemberView 100% of it), GrantPower covers 95% of it, and GuildPointUp
-##   and PositionGrant overlap each other 79%: those four are the same box
-##   shown one at a time, and dialogs over the window.
-##
-## The same tool run on ifskill puts MainSkillWnd and Withdrawal at 100%,
-## which is the answer the binary gives independently -- which is what makes
-## the measurement worth trusting on ifguild, where the binary is silent.
+## - The guild window used to be built from ifguild's sections here, chosen
+##   by `sweep_section_overlap.gd`'s geometry. The client never loads
+##   ifguild.txt; the guild window is `res_ui\guild.2dt` (GuildWindow).
+##   The tool's check on ifskill -- MainSkillWnd and Withdrawal at 100%,
+##   the answer the binary gives -- still stands.
 ## - **partymatch, academy, autopotion**: the same measurement. Party
 ##   matching composes SearchInfo, SlotListButton and SlotList -- the search
 ##   bar, the column headers and the list -- leaving JoinProgress,
@@ -310,7 +321,6 @@ signal teleport_requested(dest_id: int)
 ## is a dialog (`CItemMallConfirmBuy`), so it is not listed here.
 const EXTRA_SECTIONS := {
 	"skill": ["MainSkillWnd"],
-	"guild": ["GuildInfo", "NotifySubBox", "SortBtn", "MemberView", "Command"],
 	"partymatch": ["SearchInfo", "SlotListButton", "SlotList"],
 	"academy": ["NotifySubBox", "NotifyContents"],
 	"autopotion": ["AbnormalSlot", "PotionDelaySlot"],
@@ -324,10 +334,10 @@ const EXTRA_SECTIONS := {
 const MENU_ITEMS := [
 	["party", "Party (P)", "ub_new_icon_pt"],
 	["partymatch", "Party Match (E)", "ub_new_icon_ptm"],
-	["guild", "Guild (G)", "ub_new_icon_guild"],
+	["guild", "Guild (U)", "ub_new_icon_guild"],
 	["academy", "Academy (L)", "ub_new_icon_apprenticeship"],
 	["action", "Action (A)", "ub_new_icon_action"],
-	["community", "Community (U)", "ub_new_icon_commu"],
+	["community", "Community", "ub_new_icon_commu"],
 	["quest", "Quest (Q)", "ub_new_icon_quest"],
 	["alchemy", "Alchemy (Y)", "ub_new_icon_alchemy"],
 	["inventory", "Inventory (I)", ""],
@@ -407,6 +417,8 @@ func open(panel_id: String) -> HudWindow:
 	# are panes of the main popup: one window, a tab each.
 	if HudMainPopup.hosts(panel_id):
 		return _open_main_popup(panel_id)
+	if panel_id in GUILD_VIEWS:
+		return _open_guild_window(panel_id)
 	if _unavailable.has(panel_id):
 		return null
 	var window: HudWindow = _windows.get(panel_id)
@@ -498,6 +510,55 @@ func _open_main_popup(panel_id: String) -> HudWindow:
 	return _popup.window
 
 var _skill_board_filled := false
+
+## The guild window in one of its two views, built the first time it is
+## wanted (the client builds it at game start, hidden, 0x786f30, and U only
+## toggles it). `open` shows it in the view asked for.
+func _open_guild_window(view: String) -> GuildWindow:
+	var window := _guild_window()
+	if window == null:
+		return null
+	if view == "community":
+		window.show_community_view()
+	else:
+		window.show_guild_view()
+	window.show()
+	window.move_to_front()
+	_populate(view)
+	return window
+
+## U (0x5b4980) and the underbar's community button (the retail menu's
+## community item, 0x5b49c0): set the view, then toggle the window.
+func _toggle_guild_window(view: String) -> void:
+	var window := _guild_window()
+	if window == null:
+		return
+	if view == "community":
+		window.toggle_community_view()
+	else:
+		window.toggle_guild_view()
+	if window.visible:
+		window.move_to_front()
+		_populate(view)
+
+func _guild_window() -> GuildWindow:
+	var window := _windows.get(GUILD_WINDOW_KEY) as GuildWindow
+	if window != null:
+		return window
+	if _unavailable.has(GUILD_WINDOW_KEY):
+		return null
+	window = GuildWindow.new()
+	window.name = "Window_guild"
+	add_child(window)
+	if not window.build_guild(_builder):
+		print("HudPanels: guild unavailable (%s did not build)" % GuildWindow.GUILD_2DT)
+		window.queue_free()
+		_unavailable[GUILD_WINDOW_KEY] = true
+		return null
+	window.hide()
+	window.centre()
+	_windows[GUILD_WINDOW_KEY] = window
+	return window
 
 ## Opens the NPC dialogue for an NPC of the given name: the authored paper
 ## window (if_npctalk) titled with the name, greeting and the choices the
@@ -2070,6 +2131,8 @@ func close(panel_id: String) -> void:
 		if is_open(panel_id):
 			_popup.window.hide()
 		return
+	if panel_id in GUILD_VIEWS:
+		panel_id = GUILD_WINDOW_KEY
 	var window: HudWindow = _windows.get(panel_id)
 	if window != null:
 		window.hide()
@@ -2080,6 +2143,10 @@ func close(panel_id: String) -> void:
 func is_open(panel_id: String) -> bool:
 	if HudMainPopup.hosts(panel_id):
 		return _popup != null and _popup.is_open(panel_id)
+	if panel_id in GUILD_VIEWS:
+		var guild := _windows.get(GUILD_WINDOW_KEY) as GuildWindow
+		return guild != null and guild.visible \
+			and guild.is_community_view() == (panel_id == "community")
 	var window: HudWindow = _windows.get(panel_id)
 	return window != null and window.visible
 
@@ -2092,6 +2159,9 @@ func toggle(panel_id: String) -> void:
 			_popup.window.hide()
 		else:
 			open(panel_id)
+		return
+	if panel_id in GUILD_VIEWS:
+		_toggle_guild_window(panel_id)
 		return
 	var window: HudWindow = _windows.get(panel_id)
 	if window != null and window.visible:
@@ -2137,6 +2207,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			toggle(panel_id)
 			get_viewport().set_input_as_handled()
 			return
+	if PROJECT_HOTKEYS.has(key.keycode):
+		toggle(PROJECT_HOTKEYS[key.keycode])
+		get_viewport().set_input_as_handled()
 
 # --- Filling panels from the server -------------------------------------
 #
@@ -3706,8 +3779,13 @@ func connect_net() -> void:
 	# here -- it would overlap the mastery rows.
 	NetClient.quest_list_result.connect(func(entries: Array, _e: String) -> void:
 		_fill_list("quest", entries.map(_describe_named)))
+	# The friend list fills the community view's friend rows (GuildWindow.
+	# fill_friends, the client's own row fill), as it filled the old
+	# window's list overlay.
 	NetClient.friend_list_result.connect(func(friends: Array, _e: String) -> void:
-		_fill_list("community", friends.map(_describe_named)))
+		var guild := _windows.get(GUILD_WINDOW_KEY) as GuildWindow
+		if guild != null:
+			guild.fill_friends(friends))
 	NetClient.character_stats_result.connect(_apply_stats)
 	NetClient.skill_state_result.connect(_apply_skill_state)
 	NetClient.raise_mastery_result.connect(_on_raise_mastery_result)

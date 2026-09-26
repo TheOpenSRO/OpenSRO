@@ -68,6 +68,9 @@ const META_TAB_PANE := "twodt_tab_pane"
 const META_CHECKED := "twodt_checked"
 const META_TAB_ON := "twodt_tab_on"
 const META_TAB_OFF := "twodt_tab_off"
+## The record's text colour, alignment and font index, kept on every node so
+## text set later (a friend's name, say) is drawn the way the record says.
+const META_TEXT_STYLE := "twodt_text_style"
 ## A control whose class draws art this builder does not know (see the header).
 const META_UNBUILT := "twodt_unbuilt"
 ## The name of the Label a record's text goes on.
@@ -120,6 +123,7 @@ func build_record(file: TwoDtReader.TwoDtFile, i: int) -> Control:
 	node.set_meta(META_INDEX, r.index)
 	node.set_meta(META_TYPE, r.type)
 	node.set_meta(META_CLASS, r.name)
+	node.set_meta(META_TEXT_STYLE, [r.color, r.halign, r.valign, r.font_index])
 	node.position = Vector2(local.position)
 	node.size = Vector2(local.size)
 	node.set_meta(UiBuilder.AUTHORED_RECT_META, Rect2(Vector2(local.position), Vector2(local.size)))
@@ -229,10 +233,16 @@ func _tab(r: TwoDtReader.Record) -> TextureButton:
 	btn.set_meta(META_CHECKED, false)
 	if r.texture != "":
 		var base := slice_base(r.texture)
-		btn.set_meta(META_TAB_ON, _ui.load_texture(base + "on.ddj"))
-		btn.set_meta(META_TAB_OFF, _ui.load_texture(base + "off.ddj"))
+		# (A null meta value would remove the key, so only textures found
+		# are kept.)
+		var on := _ui.load_texture(base + "on.ddj")
+		var off := _ui.load_texture(base + "off.ddj")
+		if on != null:
+			btn.set_meta(META_TAB_ON, on)
+		if off != null:
+			btn.set_meta(META_TAB_OFF, off)
 		btn.texture_disabled = _ui.load_texture(base + "disable.ddj")
-		btn.texture_normal = btn.get_meta(META_TAB_OFF)
+		btn.texture_normal = off
 	# Through the class, not this builder: a builder is a RefCounted the
 	# caller may drop once the tree is built, and the tab outlives it.
 	btn.pressed.connect(func() -> void: TwoDtBuilder.click_tab(btn))
@@ -286,29 +296,32 @@ static func argb(value: int) -> Color:
 	return Color8((value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff, (value >> 24) & 0xff)
 
 ## Puts `text` on `node`'s text label, creating it the first time: a Label
-## over the whole control, in the record's colour, font and alignment. The
-## same call fills a control at runtime (a friend's name, say). With no
-## record, the label keeps what it had or takes white, index 0, left / top.
+## over the whole control, in the record's colour, font and alignment (from
+## `r`, or else the style the node was built with). The same call fills a
+## control at runtime (a friend's name, say).
 func set_text(node: Control, text: String, r: TwoDtReader.Record = null) -> Label:
 	if node is LineEdit:
 		(node as LineEdit).text = text
 		return null
 	var label := node.get_node_or_null(TEXT_NODE) as Label
 	if label == null:
+		var style: Array = [0xffffffff, 0, 0, 0]
+		if r != null:
+			style = [r.color, r.halign, r.valign, r.font_index]
+		elif node.has_meta(META_TEXT_STYLE):
+			style = node.get_meta(META_TEXT_STYLE)
 		label = Label.new()
 		label.name = TEXT_NODE
 		label.set_anchors_preset(Control.PRESET_FULL_RECT)
 		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		label.clip_text = false
-		var index := r.font_index if r != null else 0
-		var font := _ui.font_at(index)
+		var font := _ui.font_at(int(style[3]))
 		if font != null:
 			label.add_theme_font_override("font", font)
-		label.add_theme_font_size_override("font_size", _font_size(index))
-		label.add_theme_color_override("font_color", argb(r.color if r != null else 0xffffffff))
-		if r != null:
-			label.horizontal_alignment = _ui._map_halign(r.halign)
-			label.vertical_alignment = _ui._map_valign(r.valign)
+		label.add_theme_font_size_override("font_size", _font_size(int(style[3])))
+		label.add_theme_color_override("font_color", argb(int(style[0])))
+		label.horizontal_alignment = _ui._map_halign(int(style[1]))
+		label.vertical_alignment = _ui._map_valign(int(style[2]))
 		node.add_child(label)
 	label.text = text
 	return label
@@ -354,10 +367,9 @@ static func set_tab_checked(tab: Control, checked: bool) -> void:
 		return
 	tab.set_meta(META_CHECKED, checked)
 	var btn := tab as TextureButton
-	if btn != null:
-		var art: Texture2D = tab.get_meta(META_TAB_ON if checked else META_TAB_OFF, null)
-		if art != null:
-			btn.texture_normal = art
+	var art_key := META_TAB_ON if checked else META_TAB_OFF
+	if btn != null and tab.has_meta(art_key):
+		btn.texture_normal = tab.get_meta(art_key)
 	var pane_id := int(tab.get_meta(META_TAB_PANE, TwoDtReader.NO_PANE))
 	if pane_id == TwoDtReader.NO_PANE:
 		return

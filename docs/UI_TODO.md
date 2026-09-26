@@ -95,11 +95,11 @@ Every window in the real client is authored data, and building one is now mechan
    ifguild has ten. Which compose is per window: the skill window's `MainSkillWnd` and
    `Withdrawal` are **alternates**, picked by `m_bySkillWndType` in the client (type 1 loads
    Withdrawal, types 2 and 3 load MainSkillWnd -- one function, one branch). `HudPanels`'
-   `EXTRA_SECTIONS` lists only the ones that have been established. When the binary is silent --
-   it has no string for any of ifguild's -- `sweep_section_overlap.gd` settles it from the
-   geometry: sections that compose have controls that are **pairwise 0%** overlapping, and a
-   section covering another's controls is an alternate. Validated against ifskill, where the
-   binary gives the answer independently.
+   `EXTRA_SECTIONS` lists only the ones that have been established. When the binary is silent,
+   `sweep_section_overlap.gd` settles it from the geometry: sections that compose have controls
+   that are **pairwise 0%** overlapping, and a section covering another's controls is an
+   alternate. Validated against ifskill, where the binary gives the answer independently.
+   (ifguild, the example this rule was found on, turned out never to be loaded: see rule 21.)
 16. **`resinfo\base.txt` is a designer's prototype, not a runtime file.** It holds five window
    recipes (Type1..Type5) -- a `CIFFrame` plus a `CIFNormalTile` inset exactly 16 pixels inside
    it, optionally with `com_blacksquare_` panels over a `com_bg_tile_e` backing -- and it looks
@@ -127,6 +127,17 @@ Every window in the real client is authored data, and building one is now mechan
    section calls `UiBuilder.settle_authored_rects(root)`**, which re-applies the rects for the
    first few frames in the tree (round 585). The HUD widgets that did not are why their labels
    stayed 23 tall. A Label still stops at its own font's line height.
+
+21. **The newer windows are not `.txt` layouts at all.** 42 `res_ui\*.2dt` files in Media.pk2 build
+   the client's `CNIF*` windows -- guild and community, quest list, enchant, world-map guide,
+   option, the menu bar, open market, stall network. `TwoDtReader` / `TwoDtBuilder` read and build
+   them (`docs/protocol/2DT_FORMAT.md`). Three differences from the `.txt` recipe matter:
+   **children are added in file order** (back to front, the opposite of rule 9), **ids repeat
+   within a file** so a control is found by its parent path (GetChild searches direct children
+   only), and **the sample text in each record is never drawn**. Before building a window from a
+   `.txt` layout, check the exe names that layout: `ifcommunity.txt`, `ifguild.txt`,
+   `ifplayerinfo.txt` (the live one is `ifplayerinfo_trijob2.txt`), `ifteleportboard.txt`,
+   `ifteleportareaslot.txt`, `ifunderbar.txt` and `iftargetwindowex.txt` are not in it.
 
 The network layer behind all of this is already implemented and unit-tested — `client/scripts/net/`
 has `party`, `guild`, `quest`, `inventory`, `skill`, `shop`, `trade`, `friend`, `chat`, `combat`,
@@ -172,14 +183,7 @@ is presentation work on solved data; if you find yourself editing the protocol, 
   path (`HudWindow._add_registry_frame`, `HudPanels.REGISTRY_FRAMES`). System is restacked the
   way `CIFSystemWnd::Create` does it. Community, store and alchemy stay unframed, each for the
   reason `docs/RE_COMPLETION.md` records. **Still open from the same audit, in order:**
-  1. Community and guild are not the client's windows. This client never loads
-     `ifcommunity.txt` or `ifguild.txt` (neither name is in the exe, ASCII or UTF-16, nor in the
-     decompile, and `CIFGuild` / `CIFGuildRelations` / `CIFWarState` / `CIFLetter` do not exist).
-     The live windows are `CNIFCommunityWnd` / `CNIFGuildWnd`, built from `res_ui\*.2dt`. We
-     still build `PANELS["community"]` (key U and the underbar button) and `PANELS["guild"]`
-     (key G) from those dead layouts; community is seven empty framed panes stacked at
-     13,61,451,320. The fix is to build both from the `.2dt` files, not to pick panes out of
-     the dead layouts; community has no `PANEL_DEFINES` or `REGISTRY_FRAMES` entry for that reason.
+  1. ~~Community and guild are not the client's windows.~~ **Done (round 595, below).**
   2. The non-registry outer frame -- **done for seven of the eight classes (round 587).**
      CIFInventory, CIFEquipment, CIFPlayerInfo, CIFSkill, CIFAction, CIFParty and
      CIFApprenticeShip are panes of `GDR_MAINPOPUP` and now open inside it, with CIFMainFrame's
@@ -187,7 +191,7 @@ is presentation work on solved data; if you find yourself editing the protocol, 
      create, and Q opens the `res_ui\questlist.2dt` window), so the quest panel keeps the
      `ifalchemybox.txt` chrome until that window is built. Still open from this item: guild's
      594-wide window blocks clicks over a see-through area below its 588-wide header and right of
-     the 440-wide body (x 446 to 594, y 112 to 314); its layout is dead anyway (item 1).
+     the 440-wide body (x 446 to 594, y 112 to 314) -- gone with that layout (round 595).
   3. Inventory docking -- **done (round 587).** `dock_companion` is gone. The bag and the
      equipment are the popup's inventory tab, at (13, 63) and (198, 41), with the popup's tile
      in the 9-pixel gap between them (`0x6a1f70`).
@@ -231,6 +235,28 @@ is presentation work on solved data; if you find yourself editing the protocol, 
     not read.
   - Registry screen positions (GDR_SYSTEM 300,200, GDR_EXCHANGE 200,200, ...) are not used;
     windows are still centred.
+- **The Guild / Community window is the client's own** (round 595) -- `CNIFGuildWnd`, built from
+  `res_ui\guild.2dt`, `guild_r.2dt`, `guild_w.2dt`, `cumunity_friend.2dt`, `cumunity_cut.2dt`
+  and `cumunity_note.2dt` the way `0x5b57c0` and `0x58ec70` assemble them (`GuildWindow`): one
+  621x434 CNIFMainFrame with CNIFMainFrame's chrome (`0x479a50`), the relations and war panes
+  on the info pane at (11, 63), and the community window laid over the guild window, its tabs
+  on the guild's (23/100/176, 41, 72x24). Caption `UIIT_STT_GUILDVIEW` / `UIIT_STT_COMMUNITY`.
+  **U** opens the guild view (the retail default, `0x7778be` slot 6 -> `0x5b4980`); the
+  underbar's community button the community view (`0x5b49c0`); both toggle. **G** keeps
+  opening the guild view as this project's own binding (retail G reaches `0x793b00(0x64,
+  0x3f0)`, not established). Tabs switch panes as `0x47a240` does, and the OnCreates' hides and
+  checks are applied (docs/RE_COMPLETION.md). The friend list fills the friend rows the way
+  `0x5a85c0` / `0x5a7990` do. The dead `ifcommunity.txt` / `ifguild.txt` builds are gone.
+  **Correction to round 585:** the community's show routine does not select its first tab --
+  `0x58ec40` tells the *guild* window to show or hide its own panes, and only the guild's tabs
+  are re-checked; the community's tabs are set once, in its OnCreate. And U is the guild, not
+  the community. Still open on this window: guild members, notice, points and the relations /
+  war lists are not filled (guild_info is still requested on open and handled by World3D);
+  the alliance pane's own refresh `0x57c6f0` (about 40 show/hide calls on the player's
+  alliance state) is not run; the scroll bars, the letter pane's edit boxes and the grant
+  window's check boxes are built without their classes' own art or behaviour; the style bits
+  set on 66, 115, 116 and 400..403 are not applied; the draw loop, the alignment values and
+  how an off-size static is drawn are not read.
 - **The teleport board** (round 578) — the Dimensional Teleporter, `resinfo\ifteleportboard.txt`,
   built by the recipe: `HudPanels.PANELS["teleport"]`, and its five `CIFTeleportAreaSlot` rows
   (`GDR_TB_TASLOT1..5`) filled from `resinfo\ifteleportareaslot.txt`'s own section (place, price,
@@ -249,6 +275,23 @@ with their rects, textures and minimum sizes — use it instead of squinting at 
 the lattice pitch, the close-button convention and the tile fill were each settled.
 
 ## Next up
+
+### 0. The other `.2dt` windows, in order
+The reader and builder exist (rule 21); each of these is now a build from the client's own data,
+like the guild window:
+
+1. **The underbar**: `nifundermenubar.2dt` (`CNIFUnderMenuBar`, 800x68, `ub_new_mainbar2.ddj`),
+   loaded unconditionally at game start by `0x786f30`. We build `ifunderbar.txt`, which the exe
+   never names. Its popup (59) carries the guild (96) and community (108) items. Whether the
+   older `CIFUnderBar` (`GDR_UNDERBAR`) still draws beside it is not established.
+2. **Q -> `questlist.2dt`** (`CNIFQuest`, window 0x4c): Q reaches `0x7990e0`, which toggles it.
+   We build `ifquest.txt`, a live layout but not the window Q opens.
+3. **M -> `worldmapguide.2dt`** (`CNIFWorldMapGuide`, id 28): M reaches `0x79abe0`, which loads
+   and centres it (`0x798c50`). We build `ifworldmap.txt`.
+4. **Y -> `nifenchantwnd.2dt`** (`CNIFEnchantWnd` / `CNIFAlchemyWnd`, id 168): Y reaches
+   `0x798e20`, which loads or destroys it. We build `ifalchemyprocess.txt`.
+5. **The teleport board's live source**: `ifteleportboard.txt` and `ifteleportareaslot.txt` are
+   not in the exe, and which window the client shows is **not established**.
 
 ### 1. Fill the panels with their authored presentation
 The windows are real; their *contents* are a plain list laid over the frame. Each one wants its

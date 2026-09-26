@@ -42573,3 +42573,206 @@ NEGATIVE, run on the box against fcd0b08's scripts: `FAIL the .2dt reader exists
 **Verified.** `remote_godot.sh check`: 293 scripts and 5 scenes, ALL LOAD. `remote_godot.sh
 tests`: 110 suites, 0 failing. `cd server && go build ./... && go test -count=1 -p 1 ./...`: 59
 packages ok.
+
+## U opens the client's own Guild window, and its community view shows the friend, block and letter panes where the client puts them (round 595)
+
+Client only. Nothing on the wire changes and the server is unchanged. The guild and community
+windows were built from `ifguild.txt` and `ifcommunity.txt`, layouts this client never loads
+(round 585). Community was seven empty framed panes stacked on each other, and U opened it
+instead of the guild. They are now one window, `CNIFGuildWnd`, built from the client's own
+`res_ui\*.2dt` files by the previous round's reader and builder (`GuildWindow`,
+`client/scripts/ui/hud/guild_window.gd`). Every value below was read out of `sro_client.exe` or
+measured, unless it says inferred. Nothing was decided from a picture.
+
+### Composition (read)
+
+| step | code | effect |
+|---|---|---|
+| guild.2dt | loaded at game start by `0x786f30` | `CNIFGuildWnd` (id 176), a CNIFMainFrame 621x434 |
+| guild_r.2dt, guild_w.2dt | its OnCreate `0x5b57c0` (pushes at `0x5b57d5`, `0x5b57f1`) | loaded under the guild window, then moved onto its info pane 47 (`0x5b5804..0x5b5843`): (11, 63), 601x362 |
+| cumunity_friend.2dt | `0x5b5848` | `CNIFCommunityWnd` (177) loaded under the guild window |
+| cumunity_cut.2dt, cumunity_note.2dt | the community's OnCreate `0x58ec70` (`0x58ec7b`, `0x58ec8d`) | loaded under the community and moved onto its friend pane 646 (`0x58eca0..0x58ece2`): (11, 63) |
+| the community | `0x58ee2f..0x58ee5b` | moved to the guild window's own position; its children go with it (inferred, `SetPos` moves them by the same delta; the authored offsets agree: its tabs land exactly on the guild's) |
+
+The handlers were found through each class's message map: vslot 3 returns the map, whose
+`0x8065` entry is the OnCreate. For example, CNIFGuildWnd's map is at `0xd92350`, with entries at
+`0xeb2648` and the handler written by the static initializer.
+
+### Keys and switching (read)
+
+- **U is the guild view.** The default key table (`0x7778be`) puts `0x55` in slot 6. The
+  command dispatcher `0x780610` takes `U - 0x52 = 3` through its table at `0x780e90` to
+  `0x7809b8`, which calls `0x799120`: `GetWindow(0xb0)` then `jmp 0x5b4980`. That toggle sets
+  the guild view (`0x5b48e0`: the community hidden, `SetText(UIIT_STT_GUILDVIEW)`), then hides
+  the window if it is visible (`0xb8f530` reads +0x61) and shows it if not.
+- **The community view** is `0x5b4930` (the community shown, `UIIT_STT_COMMUNITY`). Its toggle
+  `0x5b49c0` has the same shape as U's (re-read). A search of the whole asm finds exactly two
+  direct calls to it: `0x60ce78` (the underbar menu's item 108) and `0x711956` (the letter
+  alarm). Neither is the key dispatcher, so no default key reaches it. A call through a pointer
+  would not show in that search. The underbar's community button runs the toggle here.
+- **G is not the guild in retail.** Slot 13 (`0x47`) goes through the byte table at `0x780e48`
+  to `0x780895`, which calls `0x793b00(0x64, 0x3f0)`. What that does is not established.
+  **G is kept as this project's own binding for the guild view** (`HudPanels.PROJECT_HOTKEYS`):
+  it opened the guild window before, and nothing else here binds G. It is not claimed as
+  retail.
+- The window's left-menu buttons 220 and 221 switch views (message map `0xeb2690` -> `0x5b48e0`,
+  `0xeb26b8` -> `0x5b4930`).
+- The community's ShowWindow (`CNIFCommunityWnd::vslot_023`, `0x58ec40`) first calls the guild
+  window's `0x5b3ba0` with the opposite flag. That routine shows or hides 164, 548 and 47. When
+  it shows them it SetChecks tab 72 on and 73 and 74 off (`0x5b3be9..0x5b3c18`), which leaves
+  only 47 up.
+- Tabs follow SetCheck `0x47a200` and the click `0x47a240`: the builder's behaviour, previous
+  round. The letter tab's click also runs `0x58ef20` -> `0x5bed20(0)`, which hides 900 again.
+
+**Correction to round 585.** That round wrote "On show (`0x58ec40` -> `0x5b3ba0`) it selects the
+first of three tab buttons". That is wrong. `0x58ec40` calls `0x5b3ba0` **on the guild window**.
+It shows or hides the guild's own panes, and it re-checks the guild's tabs, not the
+community's. The community's tabs are set once, in its OnCreate (`0x58ece4..0x58ed15`), and a
+later show does not reset them. U is the guild, not the community.
+
+### Chrome (read, `0x479a50`)
+
+The caption is (10, 12, W-21, 12), with text-object slot 5 = 1 and 6 = 0. The drag area is
+(10, 0, W-21, 34). The close button is (W-26, 10, 16, 16) on `com_windowclose.ddj`. For W = 621:
+(10, 12, 600), (10, 0, 600, 34), (595, 10). `GuildWindow` overrides HudWindow's caption, close
+and drag placement with these. The caption colour is not read and keeps the one every window
+here uses.
+
+### The state the OnCreates leave (read)
+
+The records with a class name get `0x8065` in file order once their file is loaded
+(`0x48fca9`). The guild window's own handler runs first and loads the other files, whose
+handlers run at the end of each load.
+
+| class (handler) | what it does |
+|---|---|
+| CNIFGuildWnd (`0x5b57c0`) | community hidden (`0x5b5866`); 47->1200 (CNIFGuildNotifyView) hidden (`0x5b588c`); 164->87 on, 164->88 off; tabs 72 on, 73 and 74 off; hover strings (below); `SetText(UIIT_STT_GUILDVIEW)`; colour `0xffffd953` on 47->115 (`0x475ce0`, the text-object colour words the record colour goes to); style bits on 66, 115, 116 and 400..403 (not applied, meaning unread); `0x5b5460(1)`; window hidden (`0x5b5d73`) |
+| (in it) `0x5b5460(1)` -> `0x5b5150` | 47->1000 is still visible at that point: windows start visible (`0xb9e284`) and its own OnCreate runs later. So `0x5b5480(0)` hides the five command buttons 47->37..41 (+0x7e8..0x7f8, bound at `0x5b5d20..0x5b5d3f`) |
+| CNIFGuildGrantPow (`0x5a9ae0`) | moved to 47->85's position (`0x5a9b01..0x5a9b2c`, vslot `0x98`) and hidden (`0x5a9b37`) |
+| CNIFGuildUserSlot (`0x5b9870`) | hides 64, 68, 69, 70, 71; keeps 231 |
+| CNIFAllianceSlot (`0x57fdc0`), CNIFHostileSlot (`0x5be5f0`) | hide 127, 128, 131 |
+| CNIFContributionSlot (`0x5b2fe0`) | hides 503, 504, 505 |
+| CNIFGuildWarSlot (`0x5b2fa0`) | hides 518 |
+| CNIFCommunityWnd (`0x58ec70`) | tabs 72 on (friend pane), 73 and 74 off; hover strings; moved to the guild's origin |
+| CNIFBlockWnd (`0x587a50`) | sub-tab 395 checked (`0x587aad`; no pane); hover string on 337 |
+| CNIFBlockSlot (`0x588320`) | its lamp 46 set to `interface\guild\gil_contact_off.ddj` (`0x588364`) |
+| CNIFLetter (`0x5c4a70`) | 800 hidden (`0x5c4abc`); `0x5bec70` hides 900 |
+| CNIFMultiLetter (`0x5c9080`) | hides itself (`0x5c90dc`) |
+| CNIFMultiLetterSlot (`0x5cc020`) | hides 75, 76, 341 |
+| CNIFGuildNotifySlot, CNIFGuildGrantPowSlot, CNIFFriendWnd, CNIFFriendSlot, CNIFLetterSlot, CNIFGuildNotifyView, CNIFHostileGuild, CNIFGuildWar | fetch and configure; no visibility change (read) |
+
+The hover strings are attached with style bit `0x80` and `0x46d7d0`. Guild: 164->87
+`UIIT_STT_GUILD_RESPECT_ALLY`, 164->88 `..._WAR`, 72 `UIIT_STT_GUILD_INFO`, 73
+`UIIT_CTL_GUILD_RESPECT`, 74 `UIIT_CTL_WARSIT_WARSITUATION`, 548->87 `UIIT_CTL_WARSIT_GUILDWAR`,
+220 `UIIT_CTL_WK_GUILD`, 221 `UIIT_STT_SILKMALL_COMMUNITY`, 47->250
+`UIIT_MSG_GUILD_SP_GP_TOOLTIP`. Community: 72 `UIIT_CTL_FRIEND`, 73 `UIIT_STT_BLOCKMAN_BLOCK`, 74
+`UIIT_CTL_LETTER`, 59->395 `UIIT_STT_CHATING_SHUT_SAVE_SERVER`, 59->396 `..._PC`, and 59->337
+`..._SERVER_HELP`. The strings are UTF-16 in the exe and were read there. **That they show on hover
+is inferred** (`0x46d7d0` stores the string and calls vslot `0xb0` only when bit 7 is set). They
+become Godot tooltips.
+
+Two things are left as built because their code is not traced here. CNIFMultiLetter's own move
+(`0x5c90d1`, vslot `0x9c`, the letter pane's position + (0x11, 0x20)) is not applied, since what
+vslot `0x9c` does was not read and the window is hidden. CNIFAllianceGuild's refresh `0x57c6f0`
+is not run: it shows or hides about 40 controls on the player's alliance state (`0x988a50`).
+
+### Data (kept, and moved onto the new controls)
+
+- **Friends.** `NetClient.friend_list_result` filled a list overlay on the old window. It now
+  fills the friend rows (`GuildWindow.fill_friends`) the way the pane's refresh `0x5a85c0`
+  does. Row *i* takes entry (scroll offset + *i*), and a row past the list is cleared. The
+  scroll bar is not built, so the offset is 0. A filled row (`0x5a7990`) sets its lamp, race
+  icon and name (341, SetText at `0x5a7b5c`) and shows all three. A cleared row hides them
+  (`0x5a79d3..0x5a79fb`). The lamp is `gil_contact_on` for state 0 and `gil_contact_off` for
+  state 1 (`0x5a7a44..0x5a7a6e`). **Mapping our `online` to those states is inferred** from
+  the names. Our friend packet carries no character record, so the race icon is set to
+  nothing, which is what the client sets when its own lookup fails (`0x5a7abe`). Rows keep
+  the state they were created in until the first friend list arrives, as in the client.
+- **Guild.** Opening the guild view still asks `NetClient.guild_info`. As before, the reply is
+  handled by World3D's debug tabs, and nothing in the window is filled from it: members,
+  notice, points, relations and war stay empty. That is open (below), not a regression. The
+  old guild panel drew no server data either.
+- **Removed.** `PANELS["community"]` / `["guild"]` no longer name `ifcommunity.txt` /
+  `ifguild.txt`, and `EXTRA_SECTIONS["guild"]` is gone. Nothing else references those builds.
+  `hud_registry_frame_test`'s self-framed check moves to the action window, and it checks that
+  community is not built from ifcommunity.txt.
+
+### Measurements
+
+The audit tool (`zz_gui_audit.gd`, scratch, not committed) was extended to dump the guild window
+in both views. It ran in the 2dtb lanes on the RX 5700 XT, GL Compatibility, `--norender=1`.
+BEFORE is fcd0b08's scripts and AFTER is this tree. Neither run printed a SCRIPT ERROR.
+
+- **Nodes.** Before, guild was 594x314 with 72 nodes and community 464x381 with 67. After, one
+  621x434 window of 1261 nodes serves both views.
+- **Visible at the top level.** Guild view: MainFrame176, Tab72/73/74 at (23,41) (100,41)
+  (176,41) 72x24, Tile42 (33,83,556,320), the left menu (Static1300, 223, 224, Button220/221),
+  Frame47 (11,63,601,362) shown, Frame164 and Frame548 hidden, Wnd177 hidden. TitleBar is at
+  (10,12,600) and CloseButton at (595,10,16,16). Community view: the same, with Frame47 hidden
+  and Wnd177 shown.
+- **Visible text.** Guild view: Notice, Member, Level, Level, Donate GP, Number, Guild point
+  (GP), Guild master. Community view: Friend, Whisper, Add friend, Delete friend, Friends list.
+  All come from the archive's text table. No sample text and no raw key is drawn.
+- **Frame pieces** (each corner at its own size, each edge at its own thickness spanning its
+  gap): 31 of 31 frame groups OK in the new window. Before: guild 2/2, community 7/7.
+- **Audit findings, before -> after.**
+  - Guild: CHROME 2 -> 0, SAMERECT 1 -> 0, EDGE_TILED_OFF 2 -> 2 (the six-piece
+    `com_blacksquare_` reuse, round 126). OUTSIDE 0 -> 5: the left menu the data hangs off the
+    window's left edge at x −16..−36 (Static1300 `alcm_menu_bg`, 223, 224, Button220,
+    Button221). That is authored, and the buttons still take clicks there.
+  - Community: SAMERECT 1 -> 0 on `GDR_` names. On the new names, the community's three tabs
+    lie on the guild's three, rect for rect. That is the composition read above: the guild's
+    tabs stay up under the community. Which draws on top is inferred from the append order.
+- **Tree diff**, auto-generated names normalised: **23 of 23 other widgets identical**.
+
+**Tests.** `client/scripts/ui/hud/guild_window_test.gd` builds HudPanels on synthetic `.2dt`
+records: the six files' ids, parents, rects, tab groups and class names, with no art and no
+text. It also has the old `.txt` fixtures, so an older tree opens its own windows. It presses
+U, G, the community button and the tabs, and checks:
+- the caption, the size and the tab rects;
+- which panes are up in each view;
+- the chrome;
+- every OnCreate state in the table;
+- the friend fill;
+- the toggles.
+
+NEGATIVE, run on the box against fcd0b08's scripts: **47 FAIL lines**, among them:
+- `FAIL U's window is captioned from UIIT_STT_GUILDVIEW (got 'Community')`
+- `FAIL it is guild.2dt's CNIFGuildWnd, 621x434 (got (464, 381))`
+- `FAIL its tabs are at (23,41) (100,41) (176,41), 72x24 (got [[P: (0, 0), S: (0, 0)], ...])`
+- `FAIL the notice view 47 -> 1200 is hidden`
+- `FAIL the caption is at (10, 12), 600 wide (got [P: (10, 18), S: (444, 17)])`
+- `FAIL the close button is at (595, 10), 16x16 (got [P: (438, 12), S: (16, 16)])`
+- `FAIL command button 47 -> 37 hidden (0x5b5480(0) while the grant window was up)`
+- `FAIL the window fills friend rows`
+
+On this tree: ALL PASS.
+
+**Verified.** `remote_godot.sh check`: 296 scripts and 5 scenes, ALL LOAD. `remote_godot.sh
+tests`: 111 suites, 0 failing. `cd server && go build ./... && go test -count=1 -p 1 ./...`: 59
+packages ok. The first full run also failed `load_timings_test.gd` while another lane was
+rendering on the box. That suite passed alone and in the full rerun, which is the one quoted.
+A qa_shot of each view was taken for a human to look at and was not used to decide anything. The
+community shot was taken with no server, so every friend row still shows its authored lamp
+and race icon: that is the state rows are created in, and the first friend list clears the
+unused ones.
+
+**Builder fixes found on the way** (`twodt_builder.gd`):
+- A tab whose `on` or `off` piece is missing no longer errors. Godot drops a meta set to null,
+  so only textures that were found are kept.
+- Every node keeps its record's colour, alignment and font index, so text set later (a
+  friend's name, 47->115's colour) is drawn the way the record says.
+
+**Open, with reasons:**
+- Guild data (members, notice, points, relations, war) is not drawn, and neither are the
+  member-list refresh (`0x5b5150`'s other branch, which shows or hides and enables controls by
+  the player's guild state) and the alliance refresh (`0x57c6f0`).
+- The scroll bars, edit boxes, combo boxes and the grant window's check boxes are built without
+  their classes' own art or behaviour.
+- The style bits set on 66, 115, 116 and 400..403, the draw loop, the alignment values, and how
+  an off-size static is drawn (47->222 `gil_windo02_off.ddj` 504x28 in 572x28; guild_w #59
+  `com_grayline.ddj` 256x4 in 338x4) are not read.
+- The window is centred on first open, as every window here is. The client leaves it at its
+  authored (104, 81).
+- The letter alarm path (`0x58eec0(5)`) and CNIFGuildGrantPow's showing are not wired: nothing
+  in this client raises them.

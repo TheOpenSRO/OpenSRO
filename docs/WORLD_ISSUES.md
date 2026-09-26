@@ -7083,6 +7083,44 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Five-hundred-and-ninety-fifth round: U opens the client's own Guild window, and its community view shows the friend, block and letter panes where the client puts them
+
+The guild and community were built from `ifguild.txt` and `ifcommunity.txt`, which this client
+never loads. They are now one window, `CNIFGuildWnd`, built from the six `res_ui\*.2dt` files by
+the reader round below (`GuildWindow`). The full record is `docs/RE_COMPLETION.md`'s entry of the
+same name.
+
+- **Composition, read.** guild.2dt is a 621x434 CNIFMainFrame. Its OnCreate `0x5b57c0` puts
+  guild_r and guild_w on the info pane at (11, 63) and loads the community under itself. The
+  community's OnCreate `0x58ec70` puts the block and letter panes on its friend pane at
+  (11, 63) and moves itself to the guild's origin, so its tabs lie on the guild's
+  (23/100/176, 41, 72x24).
+- **Keys, read.** U is the guild view: `0x7778be` slot 6 -> `0x7809b8` -> `0x799120` ->
+  `0x5b4980`, which sets the view and toggles the window. The underbar's community button runs
+  the community toggle `0x5b49c0`. Retail G goes to `0x793b00(0x64, 0x3f0)`, not the guild. **G
+  keeps opening the guild view as a project binding**, not claimed as retail.
+- **State, read.** Each named class's OnCreate was found through its message map and applied:
+  - the notice view is hidden;
+  - the five command buttons are hidden, because the grant window was still up when
+    `0x5b5150` ran;
+  - the grant window is moved onto 47->85 and hidden;
+  - every slot class's own hides;
+  - the block rows' lamps are set to off, and the letter's 800 and 900 are hidden;
+  - the three tab sets are checked, and the hover strings are attached (hover display
+    inferred).
+- **Correction to round 585.** The community's show routine does not select the community's
+  first tab. `0x58ec40` tells the guild window to show or hide *its* panes, and re-checks the
+  guild's first tab. And U is the guild, not the community.
+- **Data.** The friend list fills the friend rows as `0x5a85c0` / `0x5a7990` do. Rows past the
+  list are cleared. Online maps to `gil_contact_on`, which is inferred from the names. Guild
+  info is still requested and still not drawn.
+- **Measured.** 31 of 31 frame groups pass the piece check. 23 of 23 other widgets are identical
+  in the tree diff. The only new OUTSIDE findings are the authored left menu at x −16..−36.
+  `guild_window_test.gd` fails 47 times against fcd0b08 and passes here.
+- **Open.** Guild members, notice, points, relations and war; the alliance and member-list
+  refreshes; the scroll, edit and check-box classes' own art; the style bits; centring instead
+  of the authored (104, 81).
+
 ## Five-hundred-and-ninety-fourth round: the client reads the retail .2dt window files
 
 The newer windows of the retail client (guild and community, quest list, enchant, world-map

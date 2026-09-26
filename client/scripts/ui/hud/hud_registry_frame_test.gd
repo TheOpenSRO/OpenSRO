@@ -117,6 +117,7 @@ func _builder() -> UiBuilder:
 	cache["resinfo\\ifpartymatch.txt"] = UiLayoutParser.parse(_partymatch())
 	cache["resinfo\\ifautopotion.txt"] = UiLayoutParser.parse(_autopotion())
 	cache["resinfo\\ifcommunity.txt"] = UiLayoutParser.parse(_community())
+	cache["resinfo\\ifquest.txt"] = UiLayoutParser.parse(_community())
 	# The registry as the builder would have read it from the archive: parsed,
 	# and (for a lookup that selects #ifdef branches) its raw text.
 	builder.set("_window_registry", UiLayoutParser.parse(_registry()))
@@ -283,18 +284,24 @@ func _panel_checks(panels_script: GDScript) -> void:
 			"system: its tile is 148x112 at 33,82 (got %s)" % _node_at(system, "GDR_SYSTEM_BGTILE"))
 
 	# A self-framed window is unchanged: its layout's size, no registry
-	# frame, and ifalchemybox's chrome.
-	var community := panels.call("open", "community") as Control
-	_check(community != null, "the community window builds from the fixture")
-	if community != null:
+	# frame, and ifalchemybox's chrome. (This was the community window until
+	# it was rebuilt from res_ui\guild.2dt (round 595). The action window
+	# is a tab of the main popup since round 587; the quest panel still has
+	# its own self-framed window until res_ui\questlist.2dt is built.)
+	var quest := panels.call("open", "quest") as Control
+	_check(quest != null, "the quest window builds from the fixture")
+	if quest != null:
 		await process_frame
-		_check(community.size == Vector2(464, 381), "community: stays self-framed at its layout's 464x381 (got %s)" % community.size)
-		_check(_frame_pieces(builder, community).is_empty(), "community: no registry frame")
-		var bar := community.get_node_or_null("TitleBar") as Control
-		_check(bar != null and bar.position == Vector2(10, 18), "community: its caption stays at (10, 18) (got %s)" % (bar.position if bar != null else null))
-		var close := community.get_node_or_null("CloseButton") as Control
-		_check(close != null and close.position == Vector2(464 - 26, 12), "community: its close button stays at (438, 12) (got %s)" % (close.position if close != null else null))
-		_check(_drags(community, Vector2(5, 38)), "community: its 42-pixel drag strip is unchanged")
+		_check(quest.size == Vector2(464, 381), "quest: stays self-framed at its layout's 464x381 (got %s)" % quest.size)
+		_check(_frame_pieces(builder, quest).is_empty(), "quest: no registry frame")
+		var bar := quest.get_node_or_null("TitleBar") as Control
+		_check(bar != null and bar.position == Vector2(10, 18), "quest: its caption stays at (10, 18) (got %s)" % (bar.position if bar != null else null))
+		var close := quest.get_node_or_null("CloseButton") as Control
+		_check(close != null and close.position == Vector2(464 - 26, 12), "quest: its close button stays at (438, 12) (got %s)" % (close.position if close != null else null))
+		_check(_drags(quest, Vector2(5, 38)), "quest: its 42-pixel drag strip is unchanged")
+	# The community is no longer built from ifcommunity.txt, which the client
+	# never loads: with no res_ui\guild.2dt it does not open at all.
+	_check(panels.call("open", "community") == null, "community: not built from ifcommunity.txt")
 	panels.free()
 
 ## UiBuilder.window_def finds entries outside "Create" and selects #ifdef

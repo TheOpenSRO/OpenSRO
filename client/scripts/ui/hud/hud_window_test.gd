@@ -133,7 +133,9 @@ func _initialize() -> void:
 		"HudPanels.PANELS and MENU_ITEMS are non-empty constants (got %d and %d)" % [panels.size(), menu_items.size()])
 
 	# Every panel HudPanels offers must have a layout path, a title and a
-	# hotkey slot, or open() will fail on a malformed entry at runtime.
+	# hotkey slot, or open() will fail on a malformed entry at runtime. The
+	# path is a `resinfo\*.txt` layout, or a `res_ui\*.2dt` window file for
+	# the windows built from those (the guild window's two views, GuildWindow).
 	# The `all N` summaries are gated: an empty map (the script did not
 	# compile, or a constant was renamed) already FAILs above and must not
 	# also print `ok  all 0 ...`, nor may a malformed entry be followed by
@@ -141,7 +143,10 @@ func _initialize() -> void:
 	var bad_specs := 0
 	for panel_id in panels:
 		var spec: Array = panels[panel_id]
-		if spec.size() != 3 or not (spec[0] as String).begins_with("resinfo\\"):
+		var path := str(spec[0]) if spec.size() > 0 else ""
+		var layout_ok := path.begins_with("resinfo\\") and path.ends_with(".txt")
+		var twodt_ok := path.begins_with("res_ui\\") and path.ends_with(".2dt")
+		if spec.size() != 3 or not (layout_ok or twodt_ok):
 			_check(false, "panel %s has a malformed spec" % panel_id)
 			bad_specs += 1
 	if not panels.is_empty() and bad_specs == 0:
