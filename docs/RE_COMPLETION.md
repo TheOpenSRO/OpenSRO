@@ -46049,3 +46049,184 @@ PASS. **Live**, real X keys through Login -> Character Select -> world: `KEY I .
 open`, `C ... character open`, `S ... skill open`, `Q ... quest open`, `U ... guild open`,
 `M ... world map toggled`, Tab berserk, G, N, X. `remote_godot.sh check`: 313 scripts ALL LOAD;
 `tests`: 122 suites, 0 failing.
+
+## Ground textures repeat every 80 units and the region lightmap shades them, as retail draws the ground (round 610)
+
+Client only. **Playtest report** (Jangan, HUD X:6431 Y:978): the dirt field "has an extreme tile
+look", and four textures show on a path that should be dirt. The user then compared a retail
+screenshot of the same spot (X:6433 Y:976) and withdrew the path report ("I was incorrect on the
+texture placement"); the repeat grid stands. Everything below is read from `sro_client.exe` (the
+decompile in `/var/tmp/decomp_client` and `objdump` of `/opt/sro-files/client/sro_client.exe` on
+the render box) and measured on the real archives; the pictures only show a human the result.
+
+### How retail draws a terrain block (read)
+
+**Fixed function, not the shader.** `Map::FUN_00a18740` (called at the start of the block loop in
+`Map::FUN_00a1fdb0`) sets `SetFVF(0)`, `SetVertexDeclaration(world+0x6730)`, `D3DRS_LIGHTING` on
+and `SetLight(0, world+0x677a)`; no function in the map engine (`0x9d0000..0xa50000`) calls
+`SetVertexShader` (`+0x170`); `CObjRendererVS` resets it to 0 after every object. The declaration
+(`SWorld::vslot_035`, `0x009efc60`, asm `0x9efd4f..0x9efe62`): stream 0 = POSITION float3 + NORMAL
+float3 (stride 0x18); stream 1 = TEXCOORD0 float2 at 0 and TEXCOORD1 float2 at 8 (stride 0x10).
+`Shader\vertexshader0splatting.c` (RE_MAP_ENGINE.md) is therefore not what draws this build's
+terrain; its `oT1 = v4.zw` is the same TEXCOORD1 without the texture matrix below.
+
+**One pass per TextureInfo of a block** (`Map::FUN_00a1fdb0`): per pass the stage-1 texture is
+`world+0x6918 + (texinfo & 0x3ff)*4` (the tile), stream 1 is the pass's texcoord buffer, and
+
+```
+puVar8 = (uint)(*puVar14 >> 0xd);                      // texinfo's top three bits
+SetTransform(D3DTS_TEXTURE1 /*0x11*/, world + 0x2c50 + puVar8 * 0x40);
+DrawIndexedPrimitive(TRIANGLELIST, 0, 0, 0x121, start, count);
+```
+
+with `D3DTSS_TEXTURETRANSFORMFLAGS` = 2 (COUNT2) on stage 1. Stage states (`FUN_00a18740`):
+stage 0 COLOROP SELECTARG1(CURRENT = the lit vertex colour), ALPHAOP SELECTARG1(TEXTURE = the pass's
+blend mask); stage 1 COLOROP **MODULATE2X**(TEXTURE, CURRENT); SRCBLEND SRCALPHA, DESTBLEND
+INVSRCALPHA.
+
+**The tile UV** (`0x009efc60`, asm `0x9f03d0..0x9f0560`): for block vertex (row, col),
+`fld QWORD PTR ds:0xd83070` (double **0.25**) then `[vertex+8] = col * 0.25`, `[vertex+0xc] = row *
+0.25` -- one repeat per **4 quads = 80 world units**.
+
+**The eight texture matrices** (`0x00a2f370`, asm `0xa2fc29..0xa2fca2`): `_memset(world+0x2c50, 0,
+0x200)` (ebx is `xor ebx,ebx` at the function top; `0xb43600` is `_memset`), then only `_11` and
+`_22` of the first five are written: **1.0** (`fld1`), **0.5** (`0xe1b7e0`), **0.25** (`0xd9a2b8`),
+**2.0** (`0xd86ecc`), **4.0** (`0xd8ada8`). Indices 5-7 stay zero. So the tile UV is
+`(col, row) * 0.25 * {1, 0.5, 0.25, 2, 4, 0, 0, 0}[texinfo >> 13]`.
+
+**What the TextureInfo bits are.** `Map::FUN_00a27880` builds a block's pass list: it keys a set by
+`(t >> 13) | (t << 6)` truncated to 16 bits -- ID in bits 6-15, the top three bits in 0-2, bits
+10-12 dropped -- and turns a key back into a TextureInfo as `key << 13 | key >> 6`. The ID is the
+low 10 bits (RE_MAP_ENGINE.md's reading stands); the old note that `FUN_00a27880` "derives an ID as
+`(raw >> 6) & 0x3ff` from a different structure" was that inverse, on the set key. The "6-bit
+Scale" is a 3-bit texture-matrix index in bits 13-15; bits 10-12 are never used by the renderer
+and are **0 at every vertex** of every region measured below.
+
+**The lightmap pass.** After the tile passes, when `world+0x2f30` != 0 (`mov [esi+0x2f30],ebp` in
+`0x00a2f370` with `mov ebp,0x1` above it; option slot 56 of the `world+0x2e50` table, setter
+`funcs_014` line 81025), `FUN_00a1fdb0` draws every block again with `Map::FUN_00a18d10`'s states:
+SRCBLEND **ZERO**, DESTBLEND **SRCCOLOR** (framebuffer *= colour), stage 0 COLOROP **ADD**(TEXTURE =
+the region's `.t` lightmap, TFACTOR). TEXCOORD0 of that pass (`0x009efc60`, the `+0x2f6c` buffers,
+stride 8) is `i * 0.25 * 0.0416667 * 0.998046875 + 0.0009765625` for region vertex index i (doubles
+`0xd83070`, `0xde48c0`, `0xde48b8`, `0xde48b0`): i / 96 inset to the 512-texel map's first and
+last texel centres. TFACTOR is `world+0x6883`, which `Map::FUN_00a1baf0` fills from the environment
+record's graph at `+0x1c0`; `Map::FUN_00a1b650` (asm `0xa1b86e..`) reads the record's graphs in
+file order into `+0x88, +0xbc, +0xf0, +0x124, +0x158, +0x18c, +0x1c0` (colour channels 0-6), then
+`+0x25c, +0x288` (7, 8), `+0x2b4` (9), `+0x2e8, +0x314, +0x340` (10-12); so `+0x1c0` is channel 6,
+**TerrainShadowColor**, and `+0x18c` (channel 5, TerrainAmbientColor) is the light's Ambient
+(`world+0x679e = world+0x686b` in `FUN_00a18740`) -- round 71's reading, now read. The multiplier
+is `min(255, lightmap + round(shadow*255))` per channel.
+
+**The blend masks** (`FUN_00a27880`, recorded, not applied -- see "Not changed"): per pass an
+A1R5G5B5 atlas cell (`FUN_00b8bcf0(..., 0x19, ...)`) with one texel per vertex, `0xffff` where the
+vertex's TextureInfo equals the pass's, 0 elsewhere, sampled through TEXCOORD0 with half-texel
+insets (`0x009efc60`, `0.5 / width`). Passes run in ascending key order, and the **first** pass
+that touches a quad claims it (a per-block 256-byte table, zeroed once per block, not per pass)
+and sets all four of the quad's corners to `0xffff` in its own mask; that pass also draws the
+claimed quad's eight neighbours. Quads are split on alternating diagonals (`(row + col)` parity,
+the `uVar23 == uVar25` branch).
+
+### Measured at the spot (`client/tools/measure_ground_tiling.gd`, real archives)
+
+HUD X:6431 Y:978 -> region_y 168 (`6431 = 33*192 + 95`), region_x 97 (`978 = 5*192 + 18`) by
+`hud_minimap.gd`'s formula, local x 950-959, z 180-189: `97\168.m` cell (col 47, row 9).
+
+- The 8x8 vertices around it: 63 x ID 11 `c_dust_hmfld_03.ddj`, 1 x ID 1 `c_dust_fld_02.ddj`, all
+  top bits 0, bits 10-12 0. tile2d.ifo gives neither a grass-scatter field. So the spot is one dirt
+  texture and **retail repeats it every 80 units; we repeated it every 20** -- the grid.
+- Region-wide TextureInfo top bits: 97/168 `{0: 9407, 2: 2}`; 96/168 `{0: 9050, 1: 121, 3: 238}`;
+  100/100 `{0: 6803, 2: 2606}`; 98/168 `{0: 9409}`. Bits 10-12 set at 0 of 9409 vertices in each.
+  48 quads of 96/168 hold one ID at two scales; 0 elsewhere.
+- Lightmap: every one of the four regions has a 512x512 `.t` lightmap. TerrainShadowColor at the
+  reference time: 97/168 and 98/168 (env 15) (0.0001, 0, 0.0011); 96/168 (env 0) 0.07; 100/100
+  (env 39) (0.024, 0.024, 0.047). The multiplier darkens 44.0% of 97/168's texels (mean 0.849),
+  64.8% of 98/168's (0.765), 21.2% of 96/168's (0.938), 16.7% of 100/100's (0.956).
+- Orientation: correlation of the multiplier's luminance with the region's own minimap (96x96,
+  minimap rows flipped as audit_terrain_fidelity.gd does), as read / rows reversed / columns
+  reversed / transposed: 96/168 -0.612 / 0.104 / -0.596 / -0.006; 98/168 -0.432 / -0.037 / -0.380 /
+  -0.109; 97/168 -0.086 / -0.115 / -0.108 / -0.047; 100/100 0.102 / 0.021 / -0.075 / 0.026. Where
+  the signal is strong, rows as read (the retail rule) win and reversed rows lose it; the sign says
+  only that the art is not painted from the lightmap. Laid beside 96/168's minimap, its dark band is
+  the city wall. **Columns are only weakly measured** (review): reversed columns score almost the
+  same as read (96/168 -0.596 vs -0.612, 98/168 -0.380 vs -0.432) and higher in 97/168. The column
+  direction rests on the read rule -- retail's lightmap u and tile u are the same inner counter
+  through the same index table (asm 0x9f08b1..0x9f0ac0), and the builder uses u = c for both -- not
+  on this correlation.
+- Our per-cell ground colour against the authored minimap (mean |ours - minimap| per channel;
+  tile colours are each texture's mean; "after" multiplies by the lightmap term; the blend is
+  unchanged): 97/168 spot (16x16 cells) 0.1130 -> 0.1244, region 0.1347 -> 0.1317; 96/168 region
+  0.0880 -> 0.0943; 100/100 region 0.0969 -> 0.0913; 98/168 region 0.1200 -> 0.1359. Mixed, as
+  expected of stylised art without baked shadows; it is recorded, not used to decide anything.
+
+### The change
+
+- `MapmTerrainBuilder.TEXCOORD_PER_VERTEX` (0.25) and `TEXTURE_MATRIX_SCALES`
+  (`[1, 0.5, 0.25, 2, 4, 0, 0, 0]`) replace round 69's `BASE_TILE_REPEAT := 1.0`; each vertex's
+  repeat is `_resolve_texture_repeat` of its TextureInfo. `_quad_uv_corners` still lays the UV from
+  the region grid; a block is 16 quads and `16 * 0.25 * s` is whole for every s, so this is the
+  per-block UV modulo one repeat. The unused `_resolve_texture_scale` (the `2 ^ (scale >> 3)`
+  reading) is deleted.
+- `lightmap_coord(i)` is UV2 (retail's inset), and `lightmap_term(image, shadow)` makes the
+  multiplier as an RGB8 Image (a per-channel byte LUT). `_surface_material` puts it on every
+  terrain pass as a **MUL detail layer on UV2** (`lerp(a*L, b*L, t) = L*lerp(a, b, t)`, so a
+  per-pass multiply equals retail's final multiply). The AO texture it replaces is a lighting input
+  that an unshaded (baked) material never evaluates -- Godot 4.2.2's own
+  `scene/resources/material.cpp` (`BaseMaterial3D::_validate_property`) hides `ao_texture` on an
+  unshaded material for that reason, and round 579 measured its usage as 0 on the unshaded
+  terrain -- so the `.t` lightmap has not shown on baked terrain since round 71. The detail layer
+  is applied to ALBEDO before lighting (`material.cpp`, `FEATURE_DETAIL`), shaded or not. Both
+  textures are `source_color`, so the multiply happens on linearised values; for the sRGB curve
+  that is within rounding of the byte-space multiply retail does (not measured).
+- `World3D`: `_env_terrain_shadow` (channel 6) beside the diffuse and ambient; `_terrain_light_into`
+  hands it to the job; `_terrain_prepare_build` makes the term on the prepare (the worker task for
+  a streamed cell). Before an environment is applied there is no shadow colour and no lightmap.
+- `ground_probe.gd`: the GL audit and the material line read the detail lightmap.
+- The flat base's `BASE_RENDER_PRIORITY` (round 580) is untouched and its test passes.
+
+**Negative** (`client/scripts/assets/mapm_terrain_builder_test.gd`, `_test_retail_texcoords`,
+`_test_retail_lightmap`; the round-565 goldens' UV columns scaled by the read rule): against
+e39e00b's builder it prints
+
+```
+FAIL case 0: build_full_region_mesh_textured still builds the pre-split mesh (got [... 1572864000, 16384000 ...])
+FAIL case 0: the surfaces as data carry the pre-split surfaces, in order, with their materials (...)
+FAIL case 1: build_full_region_mesh_textured still builds the pre-split mesh (...)
+FAIL case 1: the surfaces as data carry the pre-split surfaces, in order, with their materials (...)
+FAIL the tile texcoord step per vertex is retail's 0.25 (got <null>)
+FAIL the eight stage-1 texture matrices scale by 1, 0.5, 0.25, 2, 4, 0, 0, 0 (got <null>)
+FAIL every opaque-pass vertex carries the read UV (col, row) * 0.25 * scale[top bits] (30719 of 36864 wrong; first: vertex (r 0, c 1) has (1, 0), want (0.25, 0))
+FAIL the builder has the retail lightmap term and coordinate
+8 FAILURES
+```
+
+On this tree ALL PASS; `terrain_prepare_test.gd` holds the job's lightmap to
+`lightmap_term(.t, TerrainShadowColor)`.
+
+**Load benchmark** (a), entry, 5x5 grid, before -> after: grid loaded 16,976 -> 17,078 ms; terrain
+on the main thread 2,048 -> 2,113 ms; terrain off the main thread 5,847 -> 6,651 ms (the term,
+~33 ms a region: the `lightmap` lap 1-2 -> 34-38 ms); longest work frame 4,371 -> 4,477 ms (the
+centre cell, whose prepare is on the main thread); p95 900 -> 889 ms.
+
+### Not changed, and open
+
+- **Texture choice and blending are unchanged** (the user's retail screenshot settled the path).
+  Retail's blend differs from ours as read above: retail's opaque base of a quad is its
+  lowest-key (ID, then top bits) corner, not the most-used one, and the claiming pass also lights
+  the quad's corners in its mask, so its texture bleeds into the eight neighbours. Ours: the
+  most-used corner opaque, others at their own vertices. Not measured against the retail picture
+  and not applied; open.
+- Retail splits quads on alternating diagonals; ours (and the heightfield collision, round 567)
+  use one diagonal. Open.
+- Retail lights terrain through fixed-function lighting (light 0 plus the material, which was not
+  read) and **MODULATE2X**es the tile by it -- twice our baked `tex * (N.L*diffuse + ambient)`
+  before the material. The material and the D3DRS_AMBIENT value were not read; not applied.
+- Retail draws LOD 1-3 blocks (`+0xa23`, by distance) with coarser masks; ours has no LOD.
+- The blend mask is bilinear over a per-vertex texel grid; ours interpolates vertex alpha over
+  triangles. Not changed.
+- The lightmap term has no mipmaps (the uploaded `.t` never had); whether retail's lightmap texture
+  does was not read.
+- The grass scatter from tile2d.ifo's `{object, percent}` (`FUN_00a27880`, `rand() % 100`) is not
+  drawn; neither tile at this spot has one.
+- The gate wall: from the user's framing our wall showed no arch tops. At the same spot facing the
+  wall (qa_shot `user@955,185:180,-38,330`) ours draws the same three archways retail shows, so it
+  is the framing, not a missing object -- a picture, not a measurement.

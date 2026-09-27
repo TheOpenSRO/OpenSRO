@@ -653,7 +653,9 @@ This independently confirms `World3D.REGION_SPAN = 1920.0` and `MapmTerrainBuild
 20.0`, which until now rested on the mesh footprint matching and on neighbouring regions'
 heightmap edges lining up exactly. Both were right.
 
-**Still not recovered:** how the client fills a terrain vertex's texture coordinates. The real
-terrain vertex shader takes them straight from the vertex buffer (`mov oT0.xy, v1` in
-`Shader\scattervsdetail10.vsh`, with the world-position projection alternative commented out), so
-the repeat rate is decided in client code that has not been located yet.
+**Recovered in round 610** (`docs/RE_COMPLETION.md`): how the client fills a terrain vertex's
+texture coordinates. The terrain is drawn fixed-function; the tile texcoord is `(col, row) * 0.25`
+per block vertex (`SWorld::vslot_035`, `0x009efc60`), and a stage-1 texture matrix picked by the
+`TextureInfo`'s **top three bits** (bits 13-15) scales it by 1, 0.5, 0.25, 2 or 4 (indices 5-7 are
+the zero matrix). So the "6-bit Scale" is a 3-bit texture-matrix index; bits 10-12 are unused by the
+renderer and 0 at every vertex of the four regions measured.

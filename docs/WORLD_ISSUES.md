@@ -2945,6 +2945,10 @@ hard-edged squares looks like.
 
 ### The change
 
+(Round 610 read retail's rule, recorded in `docs/RE_COMPLETION.md` and not applied: the quad's
+opaque base is its lowest (ID, top bits) corner, whose pass also lights all four of the quad's
+corners, and passes draw in ascending key order.)
+
 Per quad now: its **dominant** real texture — the one most of its four corners use —
 is drawn fully opaque, so ground is never see-through; then every *other* texture its
 corners use is drawn over it with each vertex's alpha 1 where that vertex really uses
@@ -3076,7 +3080,8 @@ is now positively verified across the whole world, not just where a playtest wen
 
 That is worth stating plainly because it narrows what is left: the ground not looking
 right is a **rendering** problem, not a data one, and the one number still not recovered
-from the real client is how many times a real ground texture repeats across a real quad.
+from the real client is how many times a real ground texture repeats across a real quad. (Recovered
+in round 610: a quarter of a repeat per quad, scaled by the TextureInfo's top three bits.)
 That lives in client code (see the vertex shader finding above), not in the shaders or
 the map files.
 
@@ -3123,6 +3128,12 @@ invented reading that demonstrably produces an artifact.
 
 One repeat per quad is independently confirmed by the artwork: `c_marble_jang_07` is a 4×4
 grid of paving slabs, so at one repeat per 20-unit quad each slab is 5 units ≈ 0.6m.
+
+**Corrected in round 610: the rate was wrong.** Retail's own texcoord build is `(col, row) * 0.25`
+per vertex -- one repeat per **four** quads, 80 units -- and the `Scale` field's top three bits
+pick one of five texture-matrix scales (1, 0.5, 0.25, 2, 4), so 16 (index 2) makes a texture
+*larger*. The slab-size argument above was a plausibility check, not a reading; the reading is in
+`docs/RE_COMPLETION.md`, round 610. Disabling the `2 ^ (scale >> 3)` term was right.
 
 ## Seventieth round: environment channels were wired to the wrong lights
 
@@ -7082,6 +7093,52 @@ happens -- position, camera, and what the graph says underfoot -- is
 the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
+
+## Six-hundred-and-tenth round: open ground repeats every 80 units and the region lightmap shades it, so dirt no longer reads as a grid
+
+**Report** (Jangan, HUD X:6431 Y:978): the dirt "has an extreme tile look" and four textures show
+on a path that should be dirt. A retail screenshot of the same spot then settled the path: the
+user withdrew it; the textures there are right and were not changed.
+
+**Read from the retail client** (addresses and assembly in `docs/RE_COMPLETION.md`, round 610):
+retail draws the ground fixed-function, one pass per TextureInfo of a block. The tile's texcoord
+is `(col, row) * 0.25` per block vertex (`SWorld::vslot_035`, `0x9f03f0`, the double 0.25) --
+**one repeat per 80 world units** -- then a stage-1 texture matrix picked by the TextureInfo's top
+three bits scales it by 1, 0.5, 0.25, 2 or 4 (5-7: zero), built in `0x00a2f370`. After the tile
+passes every block is drawn again multiplying the framebuffer by `min(1, lightmap +
+TerrainShadowColor)`, the region's `.t` lightmap on its own inset UV (`Map::FUN_00a18d10`,
+ZERO/SRCCOLOR, stage 0 ADD of texture and TFACTOR; the TFACTOR is environment channel 6, placed by
+`Map::FUN_00a1b650`'s read order).
+
+**Measured** (`client/tools/measure_ground_tiling.gd`): the spot is `97\168.m` cell (col 47,
+row 9); 63 of its 64 surrounding vertices are ID 11 `c_dust_hmfld_03`, top bits 0. **We repeated
+that texture every 20 units, four times retail's rate.** Bits 10-12 of the TextureInfo are 0 at
+every vertex of 97/168, 96/168, 98/168 and 100/100. And the `.t` lightmap, applied as an AO texture
+since 2026-08-23, has not shown on the baked (unshaded) terrain since round 71: AO is a lighting
+input, and Godot hides `ao_texture` on an unshaded material. The multiplier darkens 44% of 97/168's texels.
+
+**Fix**: `MapmTerrainBuilder.TEXCOORD_PER_VERTEX` 0.25 and `TEXTURE_MATRIX_SCALES` replace round
+69's one-repeat-per-quad; the lightmap term (`lightmap_term`, with `_env_terrain_shadow` from
+World3D) is each terrain material's MUL detail layer on retail's UV2 (`lightmap_coord`). The flat
+base's render priority (round 580) is untouched.
+
+**Negative**: `mapm_terrain_builder_test.gd` against e39e00b -- 8 failures, among them
+`FAIL every opaque-pass vertex carries the read UV (col, row) * 0.25 * scale[top bits] (30719 of
+36864 wrong; first: vertex (r 0, c 1) has (1, 0), want (0.25, 0))` and `FAIL the builder has the
+retail lightmap term and coordinate`; ALL PASS here. `remote_godot.sh check` 314 scripts ALL LOAD;
+`tests` 122 suites, 0 failing; Go build and `go test -count=1 -p 1 ./...` green. Entry benchmark:
+grid 16,976 -> 17,078 ms, off-thread terrain +33 ms a region (the lightmap term).
+
+**Not changed, open**: retail's blend (the lowest-key corner claims a quad opaque and bleeds into
+its neighbours; ours takes the most-used corner), its alternating quad diagonals, its
+MODULATE2X fixed-function lighting (material not read), LOD masks and the tile2d grass scatter --
+all recorded in RE_COMPLETION.md. The gate "solid wall" in the report is framing: facing the wall
+from the same spot ours draws the same three archways (a picture, not a measurement).
+
+**Corrected in place**: round 69's "one repeat per quad is confirmed by the artwork", round 66's
+blend description, round 68's "not recovered" number, RE_MAP_ENGINE.md's open items and ID-packing
+note, MAPM_FORMAT.md's "Still not recovered", MAPT_FORMAT.md's and NEXT_STEPS_RENDERING.md's
+lightmap-as-AO lines, and a GROUNDING_AUDIT.md row.
 
 ## Six-hundred-and-ninth round: the window keys are read before the interface can take them, and every key press is logged
 

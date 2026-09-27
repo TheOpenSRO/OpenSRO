@@ -64,6 +64,13 @@ an unobstructed top-down debug camera against a real Shape B region**: a soft, p
 subtle shadow-patch pattern visible on the terrain — categorically different from (and a real
 improvement over) the earlier, reverted direct-color-overlay attempt's jarring glitch static.
 
+**Corrected in round 610.** AO is a lighting input: once terrain lighting was baked and the
+terrain made unshaded (WORLD_ISSUES.md round 71) the AO texture had no effect at all (Godot hides
+`ao_texture` on an unshaded material). Retail's use was read instead (`docs/RE_COMPLETION.md`,
+round 610): a second pass multiplies the drawn ground by `min(1, lightmap + TerrainShadowColor)`,
+sampled at `i / 96 * 0.998046875 + 1/1024` per region vertex index. The terrain now applies exactly
+that as a MUL detail layer (`MapmTerrainBuilder.lightmap_term`, `lightmap_coord`).
+
 ## History: the earlier same-day investigation (kept in full, corrected rather than deleted)
 
 This section is the real, honest record of how this format was investigated *before* the public

@@ -1910,6 +1910,10 @@ var _tile_index_cache: TileIndexReader.Table
 ## region's environment is applied so the terrain mesh can bake them in.
 var _env_light_diffuse := Color.WHITE
 var _env_terrain_ambient := Color.BLACK
+## The environment's TerrainShadowColor (channel 6), which retail adds to the
+## region's `.t` lightmap before multiplying the ground by it
+## (MapmTerrainBuilder.lightmap_term, round 610).
+var _env_terrain_shadow := Color.BLACK
 var _env_light_ready := false
 
 var _tile_index_load_attempted := false
@@ -3065,6 +3069,7 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	# lets both be honoured where one global ambient cannot.
 	_env_light_diffuse = diffuse_color
 	_env_terrain_ambient = EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_TERRAIN_AMBIENT_COLOR, ENVIRONMENT_REFERENCE_TIME)
+	_env_terrain_shadow = EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_TERRAIN_SHADOW_COLOR, ENVIRONMENT_REFERENCE_TIME)
 	_env_light_ready = true
 
 	# Real per-zone aerial-perspective haze (2026-09-03). The real client's
@@ -5625,10 +5630,14 @@ static func _terrain_prepare_build(job: Dictionary) -> void:
 	# ShadowMap plus a properly-headered embedded DDS -- was found via public
 	# documentation) and applied the result as direct detail-albedo color,
 	# which looked like broken color-noise static and was reverted. The real
-	# embedded texture is a genuine grayscale shadow map (white = fully lit),
-	# which Godot's ao_texture consumes directly with no custom shader needed.
+	# embedded texture is a genuine grayscale shadow map (white = fully lit).
 	var lightmap := _read_terrain_lightmap(mapm_path, job["map_pk2"])
-	job["lightmap"] = lightmap.image if lightmap != null else null
+	# Round 610: what retail multiplies the ground by is the lightmap plus the
+	# environment's TerrainShadowColor, saturated (MapmTerrainBuilder.
+	# lightmap_term has the assembly); the commit uploads that Image.
+	job["lightmap"] = null
+	if lightmap != null and lightmap.image != null and job.get("light_shadow_ready", false):
+		job["lightmap"] = MapmTerrainBuilder.lightmap_term(lightmap.image, job["light_shadow"])
 	job["shadow_map"] = lightmap.shadow_map if lightmap != null else PackedByteArray()
 	sw = _job_lap(job, "lightmap", sw)
 
@@ -5773,6 +5782,10 @@ func _terrain_light_into(job: Dictionary) -> void:
 	job["light_dir"] = light_dir
 	job["light_diffuse"] = _env_light_diffuse
 	job["light_ambient"] = _env_terrain_ambient
+	# The lightmap term needs the environment's TerrainShadowColor; before a
+	# region's environment is applied there is none, and no lightmap is drawn.
+	job["light_shadow"] = _env_terrain_shadow
+	job["light_shadow_ready"] = _env_light_ready
 
 ## Hands a job's prepare laps to _load_timings: main-thread phases for a job
 ## prepared on this thread, off-thread ones for a task's (LoadTimings.offthread

@@ -98,6 +98,13 @@ func _test_prepare_off_the_main_thread(S: GDScript) -> void:
 	w._object_index_cache = ObjidxReader.Table.new() # lists nothing: the navmesh's object stays unresolved
 	w._object_index_load_attempted = true
 
+	# Round 610: the lightmap drawn is the .t lightmap plus the environment's
+	# TerrainShadowColor (MapmTerrainBuilder.lightmap_term), so the job needs
+	# an environment applied; the bare world has no directional light, so the
+	# terrain is still not baked.
+	w._env_light_ready = true
+	w._env_terrain_shadow = Color(0.2, 0.3, 0.4)
+
 	# The job, built on the main thread.
 	var job: Dictionary = w.call("_terrain_job", "97\\168.m", "", Vector3.ZERO, "_97_168", false, NAN, false)
 	var bad := _forbidden(job)
@@ -122,6 +129,10 @@ func _test_prepare_off_the_main_thread(S: GDScript) -> void:
 	_check(heights == TerrainCollision.heights_from_region(job.get("region")),
 		"the height grid is TerrainCollision.heights_from_region of the job's own parse")
 	_check(job.get("lightmap") is Image, "the .t lightmap as an Image, not a texture")
+	var lm_term: Image = job.get("lightmap")
+	var lm_raw := MapTReader.parse(_build_mapt(8, 8), false).image
+	_check(lm_term != null and lm_raw != null and lm_term.get_data() == MapmTerrainBuilder.lightmap_term(lm_raw, Color(0.2, 0.3, 0.4)).get_data(),
+		"the lightmap in the job is the .t lightmap plus the environment's TerrainShadowColor (round 610)")
 	var files: Dictionary = job.get("texture_files", {})
 	var new_images: Dictionary = job.get("new_images", {})
 	_check(files == {1: "t1.ddj"}, "ID 1 resolves to t1.ddj; ID 2's file is missing (got %s)" % str(files))

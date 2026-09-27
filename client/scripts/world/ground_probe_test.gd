@@ -212,8 +212,10 @@ func _test_probe_on_a_synthetic_world(P: GDScript, S: GDScript) -> void:
 		"surface 1 is ID 7's opaque pass, its file named from the world's cache (%s)" % _line(lines, tag + "surface 1:"))
 	_check(_line(lines, tag + "surface 2:").contains("kind=overlay key=9") and _line(lines, tag + "surface 2:").contains("file=t9.ddj"),
 		"surface 2 is ID 9's overlay")
-	_check(_line(lines, tag + "surface 1:").contains("shading=0") and _line(lines, tag + "surface 1:").contains("ao=true"),
-		"the baked pass is unshaded and carries the lightmap")
+	# Round 610: the lightmap is a MUL detail layer now (an AO texture is a
+	# lighting input an unshaded pass never reads).
+	_check(_line(lines, tag + "surface 1:").contains("shading=0") and _line(lines, tag + "surface 1:").contains("lightmap_detail_gl="),
+		"the baked pass is unshaded and carries the lightmap (%s)" % _line(lines, tag + "surface 1:"))
 	_check(_line(lines, tag + "object 0:").contains("wall") and _line(lines, tag + "object 0:").contains("file=t9.ddj"),
 		"the nearest object's material is reported for contrast")
 	_check(_line(lines, tag + "regions:").contains("RealTerrain_97_168: here=true surfaces=3 opaque=1 overlays=1"),

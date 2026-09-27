@@ -108,9 +108,12 @@ static func _arrays_fingerprint(a: Array) -> Array:
 		roundi(su * 1000.0), roundi(su2 * 1000.0)]
 
 ## A material reduced to its flags: textured, transparency, shading mode,
-## depth draw mode, ao.
+## depth draw mode, then whether a lightmap is drawn and whether it is on UV2
+## (the AO texture's flags until round 610, the MUL detail layer's since --
+## the same two answers for the same fixture).
 static func _material_fingerprint(mat: StandardMaterial3D) -> Array:
-	return [mat.albedo_texture != null, mat.transparency, mat.shading_mode, mat.depth_draw_mode, mat.ao_enabled, mat.ao_on_uv2]
+	return [mat.albedo_texture != null, mat.transparency, mat.shading_mode, mat.depth_draw_mode, mat.detail_enabled,
+		mat.detail_enabled and mat.detail_uv_layer == BaseMaterial3D.DETAIL_UV_2 and mat.detail_blend_mode == BaseMaterial3D.BLEND_MODE_MUL]
 
 static func _mesh_fingerprint(mesh: ArrayMesh) -> Array:
 	var out := []
@@ -128,15 +131,21 @@ static func _mesh_fingerprint(mesh: ArrayMesh) -> Array:
 ## textured, transparency, shading mode, depth draw mode, ao, ao on UV2.
 ## Case A: base, the -1 fallback pass, opaque 1, opaque 2, blend 2. Case B:
 ## base, the -1 pass, opaque 1 -- ID 2 unresolved, so no overlay.
+## **Round 610 changed two columns on purpose**, by the texture rules read out
+## of the retail client (MapmTerrainBuilder.TEXTURE_MATRIX_SCALES and
+## lightmap_coord): every UV sum is the round-565 one times 0.25 (the fixture's
+## TextureInfo top bits are 0, scale 1.0), and every UV2 sum is the round-565
+## one times 0.998046875 plus 2 * 0.0009765625 per vertex. Everything else is
+## the round-565 run's.
 const PRE_SPLIT_FINGERPRINTS := [
 	[[9409, 55296, 260112384, 9032640000, 1671038683, 9032640000, 0, 9409000, false, 0, 1, 0, false, false],
-		[12288, 18432, 113233920, 11796480000, 3200778612, 19660800000, 1572864000, 16384000, false, 0, 1, 0, false, false],
-		[12288, 18432, 113233920, 5898240000, 1345782128, 7864320000, 688128000, 7168000, true, 0, 1, 0, false, false],
-		[12288, 18432, 113233920, 17694720000, 2000486768, 7864320000, 1277952000, 13312000, true, 0, 1, 0, false, false],
-		[256, 384, 48896, 243200000, 34714888, 163840000, 20352000, 212000, true, 1, 1, 2, false, false]],
+		[12288, 18432, 113233920, 11796480000, 3200778612, 19660800000, 393216000, 16376000, false, 0, 1, 0, false, false],
+		[12288, 18432, 113233920, 5898240000, 1345782128, 7864320000, 172032000, 7178000, true, 0, 1, 0, false, false],
+		[12288, 18432, 113233920, 17694720000, 2000486768, 7864320000, 319488000, 13310000, true, 0, 1, 0, false, false],
+		[256, 384, 48896, 243200000, 34714888, 163840000, 5088000, 212086, true, 1, 1, 2, false, false]],
 	[[9409, 55296, 260112384, 9032640000, 1671038683, 9032640000, 0, 9409000, false, 0, 0, 0, true, true],
-		[24576, 36864, 452960256, 29491200000, 5201265380, 27525120000, 2850816000, 29696000, false, 0, 0, 0, true, true],
-		[12288, 18432, 113233920, 5898240000, 1345782128, 7864320000, 688128000, 7168000, true, 0, 0, 0, true, true]],
+		[24576, 36864, 452960256, 29491200000, 5201265380, 27525120000, 712704000, 29686000, false, 0, 0, 0, true, true],
+		[12288, 18432, 113233920, 5898240000, 1345782128, 7864320000, 172032000, 7178000, true, 0, 0, 0, true, true]],
 ]
 ## The untextured fallback's one surface on the pre-split builder
 ## (build_full_region_mesh), the same run.
@@ -266,6 +275,102 @@ func _test_base_drawn_first() -> void:
 			marked.append(i)
 	_check(marked == [0], "only surface 0 is marked as the base (got %s)" % str(marked))
 
+static func _builder_script() -> Object:
+	return load("res://scripts/assets/mapm_terrain_builder.gd")
+
+## Round 610, the negative for the ground's repeat grid. The retail client
+## lays a tile texture at (col, row) * 0.25 per block vertex and scales it by
+## the matrix its TextureInfo's top three bits pick -- 1, 0.5, 0.25, 2, 4, and
+## zero for 5-7 (MapmTerrainBuilder.TEXTURE_MATRIX_SCALES has the addresses).
+## Six block columns carry top bits 0..5, one tile ID throughout; every
+## vertex of the opaque pass must carry exactly the UV the read rule gives.
+## Before round 610 the builder gave every vertex (col, row) * 1.0 -- four
+## times retail's repeat everywhere -- and ignored the top bits.
+func _test_retail_texcoords() -> void:
+	var consts: Dictionary = (MapmTerrainBuilder as Script).get_script_constant_map()
+	_check(consts.get("TEXCOORD_PER_VERTEX") == 0.25,
+		"the tile texcoord step per vertex is retail's 0.25 (got %s)" % str(consts.get("TEXCOORD_PER_VERTEX")))
+	var want_scales := [1.0, 0.5, 0.25, 2.0, 4.0, 0.0, 0.0, 0.0]
+	_check(str(consts.get("TEXTURE_MATRIX_SCALES")) == str(want_scales),
+		"the eight stage-1 texture matrices scale by 1, 0.5, 0.25, 2, 4, 0, 0, 0 (got %s)" % str(consts.get("TEXTURE_MATRIX_SCALES")))
+	var lookup := {5: ImageTexture.create_from_image(Image.create(2, 2, false, Image.FORMAT_RGBA8))}
+	var region := _make_region(func(_band_row, band_col):
+		return _make_block(func(r, c): return 0.0, 5 | (band_col << 13)))
+	var surfaces := MapmTerrainBuilder.build_full_region_surfaces_textured(region, lookup)
+	var opaque: Dictionary = {}
+	for surface in surfaces:
+		if surface["texture_key"] == 5 and not surface["blend"]:
+			opaque = surface
+	_check(not opaque.is_empty(), "ID 5 has an opaque pass")
+	if opaque.is_empty():
+		return
+	var pos: PackedVector3Array = opaque["arrays"][Mesh.ARRAY_VERTEX]
+	var uvs: PackedVector2Array = opaque["arrays"][Mesh.ARRAY_TEX_UV]
+	var wrong := 0
+	var first_wrong := ""
+	for i in range(pos.size()):
+		# The quad's own corner sits at (c, r); its UV is scaled by the matrix of
+		# the TextureInfo of the corner the pass took its repeat from -- here
+		# every corner of a quad shares its block column's top bits, except on
+		# a block's east edge, where the east block's vertex wins the stitch.
+		var c := roundi(pos[i].x / MapmTerrainBuilder.TILE_SIZE)
+		var r := roundi(pos[i].z / MapmTerrainBuilder.TILE_SIZE)
+		var quad_c := c if i % 4 == 0 or i % 4 == 3 else c - 1
+		var scale: float = want_scales[mini(quad_c / 16, 5)]
+		var want := Vector2(c, r) * 0.25 * scale
+		if not uvs[i].is_equal_approx(want):
+			wrong += 1
+			if first_wrong == "":
+				first_wrong = "vertex (r %d, c %d) has %s, want %s" % [r, c, str(uvs[i]), str(want)]
+	_check(wrong == 0,
+		"every opaque-pass vertex carries the read UV (col, row) * 0.25 * scale[top bits] (%d of %d wrong; first: %s)" % [wrong, pos.size(), first_wrong])
+	# 80 world units per repeat at scale 1: one texture spans four 20-unit quads.
+	var q := MapmTerrainBuilder._quad_uv_corners(3, 5, 0.25)
+	_check(is_equal_approx(q[1].x - q[0].x, 0.25),
+		"at scale 1 a quad spans a quarter of the texture: one repeat per 80 world units")
+
+## Round 610: the lightmap retail multiplies the ground by is the `.t`
+## lightmap plus TerrainShadowColor, added in bytes and saturated, sampled at
+## col / 96 * 0.998046875 + 1/1024 (MapmTerrainBuilder.lightmap_term and
+## lightmap_coord have the addresses), and it reaches the terrain as a MUL
+## detail layer on UV2. Before round 610 the lightmap went on as an AO texture,
+## which an unshaded (baked) terrain material never evaluates.
+func _test_retail_lightmap() -> void:
+	# Called by name on the script, so this file still parses against a
+	# builder without them -- which is what lets it FAIL, not error, there.
+	var methods := []
+	for m in (MapmTerrainBuilder as Script).get_script_method_list():
+		methods.append(String(m["name"]))
+	_check(methods.has("lightmap_term") and methods.has("lightmap_coord"),
+		"the builder has the retail lightmap term and coordinate")
+	if not (methods.has("lightmap_term") and methods.has("lightmap_coord")):
+		return
+	var lm := Image.create(2, 1, false, Image.FORMAT_RGBA8)
+	lm.set_pixel(0, 0, Color8(100, 200, 250))
+	lm.set_pixel(1, 0, Color8(0, 0, 255))
+	var term: Image = _builder_script().call("lightmap_term", lm, Color8(40, 40, 10))
+	_check(term != null and term.get_data() == PackedByteArray([140, 240, 255, 40, 40, 255]),
+		"the term is min(255, lightmap + shadow colour) per channel byte (got %s)" % (str(term.get_data()) if term != null else "null"))
+	_check(is_equal_approx(_builder_script().call("lightmap_coord", 0), 0.0009765625)
+			and is_equal_approx(_builder_script().call("lightmap_coord", 96), 0.9990234375),
+		"the region spans the lightmap from the first texel's centre to the last's")
+	var region := _make_region(func(_band_row, _band_col):
+		return _make_block(func(r, c): return 0.0, 5))
+	var lightmap := ImageTexture.create_from_image(Image.create(2, 2, false, Image.FORMAT_RGB8))
+	var lookup := {5: ImageTexture.create_from_image(Image.create(2, 2, false, Image.FORMAT_RGBA8))}
+	var surfaces := MapmTerrainBuilder.build_full_region_surfaces_textured(region, lookup, Vector3(0.3, 0.8, -0.5), Color.WHITE, Color.BLACK)
+	var mesh := MapmTerrainBuilder.surfaces_to_mesh(surfaces, lookup, lightmap)
+	var all_mul := mesh.get_surface_count() > 0
+	for i in range(mesh.get_surface_count()):
+		var mat := mesh.surface_get_material(i) as StandardMaterial3D
+		if not (mat.detail_enabled and mat.detail_albedo == lightmap and mat.detail_blend_mode == BaseMaterial3D.BLEND_MODE_MUL
+				and mat.detail_uv_layer == BaseMaterial3D.DETAIL_UV_2):
+			all_mul = false
+	_check(all_mul, "every terrain surface multiplies by the lightmap on UV2, baked (unshaded) or not")
+	var uv2: PackedVector2Array = surfaces[0]["arrays"][Mesh.ARRAY_TEX_UV2]
+	_check(uv2[97 * 3 + 7].is_equal_approx(Vector2(7.0 / 96.0 * 0.998046875 + 0.0009765625, 3.0 / 96.0 * 0.998046875 + 0.0009765625)),
+		"UV2 at grid (row 3, col 7) is retail's lightmap coordinate (got %s)" % str(uv2[97 * 3 + 7]))
+
 func _init() -> void:
 	# build_mesh: a single real block.
 	var region1 := MapmReader.ParsedRegion.new()
@@ -378,7 +483,7 @@ func _init() -> void:
 	# A larger real repeat tiles the texture more times across the same quad.
 	var uv_rep2 := MapmTerrainBuilder._quad_uv_corners(3, 5, 2.0)
 	_check(absf((uv_rep2[1].x - uv_rep2[0].x) - 2.0) < 0.001,
-		"the real per-vertex Scale drives how many times a texture repeats per quad")
+		"the repeat argument scales the quad's UV span")
 
 	# build_full_region_mesh_textured: half the region's vertices carry
 	# TextureInfo ID 1 (resolved via texture_lookup to a real texture), the
@@ -478,6 +583,8 @@ func _init() -> void:
 
 	_test_surfaces_path()
 	_test_base_drawn_first()
+	_test_retail_texcoords()
+	_test_retail_lightmap()
 
 	if _failures == 0:
 		print("ALL PASS")

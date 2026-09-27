@@ -78,20 +78,26 @@ mesh footprints and heightmap edges matching.
 confirming the tile ID is the **low 10 bits** — this project's existing reading. (A
 different site, `FUN_00a27880`, derives an ID as `(raw >> 6) & 0x3ff`, but that operates
 on a different structure; tested against real data, the low-10-bit reading is the one
-that yields thematically correct textures.)
+that yields thematically correct textures.) **Corrected in round 610:** it is the same field.
+`FUN_00a27880` keys a per-block set by `(t >> 13) | (t << 6)` (ID in bits 6-15, the top three
+bits in 0-2) and turns a key back with `key << 13 | key >> 6`; the `>> 6` is that inverse.
 
 Other constants seen while reading: `_DAT_00e1b7d0` = `0.5`, `_DAT_00e1b8d8` = `0.0174532925`
 (π/180).
 
 ## Still open
 
-- **How a terrain vertex's texture coordinates are filled.** The real terrain vertex
+- ~~**How a terrain vertex's texture coordinates are filled.**~~ **Recovered in round 610**
+  (`docs/RE_COMPLETION.md`): fixed-function, TEXCOORD1 = `(col, row) * 0.25` per block vertex,
+  times a stage-1 texture matrix (1, 0.5, 0.25, 2, 4, 0, 0, 0) picked by the TextureInfo's top
+  three bits. What follows is the earlier state. The real terrain vertex
   shader takes them straight from the vertex buffer (`mov oT0.xy, v1` in
   `Shader\scattervsdetail10.vsh`; the world-position projection alternative,
   `mad oT0.xy, VPOSITION.xz, c[CV_BASE_TEX_PROJECTION]…`, is commented out). So the
   repeat rate is client code. Not yet located — `Map.cpp`'s block/vertex construction is
   the place to look, reachable from `m_BlockCache`.
-- **The `.m` per-vertex `Scale` field's real meaning.** Currently unused, after this
+- ~~**The `.m` per-vertex `Scale` field's real meaning.**~~ **Recovered in round 610**: its top
+  three bits index the texture matrices above; bits 10-12 are unused. Earlier: currently unused, after this
   project's own `2 ^ (scale >> 3)` reading was found to cause a visible lattice.
 - **Fog / scattering.** `environment.ifo` is loaded by `FUN_00a291a0` into a list, but
   the code that turns its `FogNearPlane`/`FogFarPlane` into real distances, and that sets
@@ -186,6 +192,13 @@ mad oD0, r1.x, c[VSC_DLIGHT_DIFFUSE], r6  ; vertex colour = N.L * diffuse + ambi
 mov oT0.xy, v4.xy
 mov oT1.xy, v4.zw
 ```
+
+**Round 610:** this build's map engine does not draw terrain with this shader. `Map::FUN_00a18740`
+sets a vertex declaration (stream 0 position + normal, stream 1 two float2 texcoords) and FF
+lighting, and nothing in the map engine calls `SetVertexShader`; the texture matrices only a
+fixed-function pass applies are set per pass (`Map::FUN_00a1fdb0`). The stage setup there is
+stage 0 = lit vertex colour with the pass's blend mask as alpha, stage 1 = tile MODULATE2X
+current. See `docs/RE_COMPLETION.md`, round 610.
 
 Three facts follow, all of which matter for rendering terrain faithfully:
 

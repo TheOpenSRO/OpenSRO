@@ -174,22 +174,20 @@ static func build_full_region_arrays(region: MapmReader.ParsedRegion) -> Array:
 ## color on its own separate surface, so a region with only partial real
 ## texture coverage still renders every quad, just with mixed fidelity.
 ##
-## Each quad gets its own local 0..1 UV (ARRAY_TEX_UV) so its real texture
-## isn't stretched across the whole region -- one real texture tile per
-## real quad, matching the real per-vertex granularity the format actually
-## encodes. ao_texture (the real .t lightmap, shared for the whole region)
-## is sampled from a second, whole-region-spanning UV channel
-## (ARRAY_TEX_UV2) instead, since it needs the opposite: one continuous
-## real shadow map stretched over the entire mesh, not repeated per quad.
+## The tile UV (ARRAY_TEX_UV) is retail's: a texture repeats every four
+## quads, scaled by the TextureInfo's top three bits (TEXTURE_MATRIX_SCALES,
+## round 610). `lightmap` is the region's lightmap multiplier
+## (lightmap_term's Image, uploaded), sampled from the whole-region UV2
+## (lightmap_coord) as each material's detail layer.
 ## `light_dir`, `light_diffuse` and `light_ambient` bake the real client's own
 ## terrain lighting into vertex colour (see _textured_surfaces_from_cells).
 ## Leave `light_dir` at Vector3.ZERO to skip it and let the engine light the
 ## terrain instead, which is what every caller did before 2026-09-07.
-static func build_full_region_mesh_textured(region: MapmReader.ParsedRegion, texture_lookup: Dictionary, ao_texture: Texture2D = null, light_dir: Vector3 = Vector3.ZERO, light_diffuse: Color = Color.WHITE, light_ambient: Color = Color.BLACK, shadow_map: PackedByteArray = PackedByteArray()) -> ArrayMesh:
+static func build_full_region_mesh_textured(region: MapmReader.ParsedRegion, texture_lookup: Dictionary, lightmap: Texture2D = null, light_dir: Vector3 = Vector3.ZERO, light_diffuse: Color = Color.WHITE, light_ambient: Color = Color.BLACK, shadow_map: PackedByteArray = PackedByteArray()) -> ArrayMesh:
 	var surfaces := build_full_region_surfaces_textured(region, texture_lookup, light_dir, light_diffuse, light_ambient, shadow_map)
 	if surfaces.is_empty():
 		return null
-	return surfaces_to_mesh(surfaces, texture_lookup, ao_texture)
+	return surfaces_to_mesh(surfaces, texture_lookup, lightmap)
 
 ## build_full_region_mesh_textured's surfaces as plain data (round 565), in
 ## the mesh's own surface order -- one Dictionary per surface:
@@ -225,21 +223,22 @@ static func build_full_region_surfaces_textured(region: MapmReader.ParsedRegion,
 ## from texture_lookup (none for key -1), the base's lower render priority
 ## (BASE_RENDER_PRIORITY, round 580), the vertex colour as albedo,
 ## unshaded when the light is baked, alpha-blended without depth writes for
-## an overlay, and ao_texture (the real .t lightmap) on UV2 when there is
-## one. Main thread only: the mesh and every material own RIDs.
-static func surfaces_to_mesh(surfaces: Array, texture_lookup: Dictionary, ao_texture: Texture2D = null) -> ArrayMesh:
+## an overlay, and `lightmap` (lightmap_term's multiplier, round 610) as a
+## MUL detail layer on UV2 when there is one. Main thread only: the mesh and
+## every material own RIDs.
+static func surfaces_to_mesh(surfaces: Array, texture_lookup: Dictionary, lightmap: Texture2D = null) -> ArrayMesh:
 	var array_mesh := ArrayMesh.new()
 	for surface in surfaces:
 		array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, surface["arrays"])
 		array_mesh.surface_set_material(array_mesh.get_surface_count() - 1,
-			_surface_material(surface, texture_lookup, ao_texture))
+			_surface_material(surface, texture_lookup, lightmap))
 	return array_mesh
 
 ## One pass's material -- see surfaces_to_mesh. A key the lookup does not
 ## hold is an error, not a silent untextured pass: an unset sampler draws
 ## white under GLES3, which is the "white ground" symptom (round 558), and
 ## the key set came from this same lookup, so a miss means a caller bug.
-static func _surface_material(surface: Dictionary, texture_lookup: Dictionary, ao_texture: Texture2D) -> StandardMaterial3D:
+static func _surface_material(surface: Dictionary, texture_lookup: Dictionary, lightmap: Texture2D) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	var key: int = surface["texture_key"]
 	# The pass's tile ID, for /groundprobe (GroundProbe, round 579): a pass
@@ -265,11 +264,17 @@ static func _surface_material(surface: Dictionary, texture_lookup: Dictionary, a
 		# opaque pass they sit exactly on top of.
 		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
-	if ao_texture != null:
-		mat.ao_enabled = true
-		mat.ao_texture = ao_texture
-		mat.ao_light_affect = 1.0
-		mat.ao_on_uv2 = true
+	if lightmap != null:
+		# Retail's lightmap pass multiplies the drawn ground by the
+		# lightmap term (lightmap_term). A detail layer in MUL mode multiplies
+		# ALBEDO before any lighting, so it applies whether the light is baked
+		# (unshaded) or not -- the AO texture this used before round 610 is a
+		# lighting input, which an unshaded material never evaluates, so the
+		# `.t` lightmap had no effect on baked terrain at all.
+		mat.detail_enabled = true
+		mat.detail_blend_mode = BaseMaterial3D.BLEND_MODE_MUL
+		mat.detail_uv_layer = BaseMaterial3D.DETAIL_UV_2
+		mat.detail_albedo = lightmap
 	return mat
 
 ## The collision faces of the mesh built from `surfaces` (round 565), as
@@ -417,51 +422,108 @@ static func _resolve_texture_id(extra: PackedByteArray, texture_lookup: Dictiona
 		return id
 	return -1
 
-## The real, confirmed-present 6-bit "Scale" field packed into the same
-## TextureInfo u16 as the texture ID (see docs/protocol/MAPM_FORMAT.md and
-## the public JellyBitz/srodevs-docs jmxvmapm.md ImHex pattern, which names
-## this exact field "Scale" at bits 10-15). This project doesn't have an
-## independently-confirmed formula for what a given real Scale value means
-## in world units, but real sampled data (2026-09-02, server/cmd's ad hoc
-## scaleprobe_scratch, deleted after use) found every real value observed
-## across several real regions is an exact multiple of 8 (0, 8, 16, 24, 32)
-## -- never an arbitrary 0-63 value -- strongly suggesting only the top 3
-## bits actually vary and the field is a discrete tiling *level*, not a raw
-## multiplier. Interpreted here as a real per-quad texture-repeat doubling:
-## level = scale >> 3, repeat multiplier = 2^level. A quad with scale=0
-## (repeat x1) therefore tiles its real texture exactly once across the
-## quad, which is what real textures appear to be authored for -- see
-## BASE_TILE_REPEAT's own comment.
-static func _resolve_texture_scale(extra: PackedByteArray) -> int:
-	if extra.size() < 2:
-		return 0
-	return extra.decode_u16(0) >> 10
+## How a ground texture is laid across the terrain, **read from the retail
+## client** (round 610; docs/RE_COMPLETION.md has the addresses and the
+## assembly). Retail draws the ground with the fixed-function pipeline
+## (`Map::FUN_00a18740` sets the vertex declaration and no vertex shader), one
+## pass per TextureInfo a block uses (`Map::FUN_00a1fdb0`):
+##
+##   * the tile texture sits on texture stage 1 and reads TEXCOORD1, which
+##     `SWorld::vslot_035` (`0x009efc60`) fills per block vertex as
+##     `(col * 0.25, row * 0.25)` -- `fld QWORD PTR ds:0xd83070` (the double
+##     0.25) at `0x9f03f0`, stored to the vertex's `+8`/`+0xc`. So a texture
+##     repeats once every **4 quads, 80 world units**, not once per quad;
+##   * each pass then sets `SetTransform(D3DTS_TEXTURE1, ...)` to one of eight
+##     matrices picked by the TextureInfo's **top three bits**
+##     (`*puVar14 >> 0xd`, `0xa1fdb0`), with D3DTTFF_COUNT2 on stage 1. The
+##     eight are built in `0x00a2f370` (`0xa2fc34`..`0xa2fca2`): the array is
+##     zeroed (`_memset(+0x2c50, 0, 0x200)`) and only `_11`/`_22` of the first
+##     five are set, to 1.0, 0.5 (`0xe1b7e0`), 0.25 (`0xd9a2b8`), 2.0
+##     (`0xd86ecc`) and 4.0 (`0xd8ada8`). Indices 5-7 stay the zero matrix.
+##
+## So the tile UV of the vertex at region grid (row, col) is
+## `(col, row) * TEXCOORD_PER_VERTEX * TEXTURE_MATRIX_SCALES[texinfo >> 13]`.
+## A block is 16 quads, and 16 * 0.25 * scale is a whole number for every
+## scale, so laying the UV from the region grid (as _quad_uv_corners does)
+## gives exactly the per-block UV modulo one repeat.
+##
+## This replaces round 69's `BASE_TILE_REPEAT := 1.0` (one repeat per quad,
+## justified from `c_marble_jang_07`'s slab size), which repeated every ground
+## texture four times as often as retail and is what made open dirt read as a
+## grid (the round-610 report). Round 69 was right that `2 ^ (scale >> 3)`
+## was wrong: the field is an index into the table below, and 16 (index 2)
+## makes a texture *larger*, not smaller.
+const TEXCOORD_PER_VERTEX := 0.25
+const TEXTURE_MATRIX_SCALES: Array[float] = [1.0, 0.5, 0.25, 2.0, 4.0, 0.0, 0.0, 0.0]
 
-## How many times a real ground texture repeats across one real quad.
+## The tile-UV step per vertex for a vertex's TextureInfo (see
+## TEXTURE_MATRIX_SCALES). A vertex with no TextureInfo gets the unscaled
+## step.
+static func _resolve_texture_repeat(extra: PackedByteArray) -> float:
+	if extra.size() < 2:
+		return TEXCOORD_PER_VERTEX
+	return TEXCOORD_PER_VERTEX * TEXTURE_MATRIX_SCALES[(extra.decode_u16(0) >> 13) & 7]
+
+## The region lightmap's texture coordinate for region grid index `i`
+## (0..96), read from the same function: the second texcoord buffer
+## (`+0x2f6c`, stride 8) holds `i * 0.25 * (1/24) * 0.998046875 + 0.0009765625`
+## (the doubles at `0xd83070`, `0xde48c0`, `0xde48b8`, `0xde48b0`), i.e. the
+## region spans the 512-texel lightmap from the first texel's centre to the
+## last's.
+static func lightmap_coord(i: int) -> float:
+	return float(i) / 96.0 * 0.998046875 + 0.0009765625
+
+## The retail terrain's lightmap pass, as the multiplier it applies.
 ##
-## **One repeat per quad, confirmed from the real artwork** (2026-09-06). A
-## real `Tile2D\` texture is 512x512, and `c_marble_jang_07` depicts a 4x4
-## grid of paving slabs. At one repeat per 20-unit quad each slab is 5 world
-## units, and with the real player capsule at 14.34 units for roughly 1.7m
-## that is about 0.6m per slab -- a real paving stone. Any other rate makes
-## that artwork the wrong size for the world it is laid on.
+## After the tile passes, `Map::FUN_00a1fdb0` draws every block once more
+## when the world's `+0x2f30` switch is on (it is initialised to 1 in
+## `0x00a2f370`, `mov [esi+0x2f30],ebp` with ebp = 1, and is option slot 56 of
+## the `+0x2e50` table), with `Map::FUN_00a18d10`'s states: alpha blending with
+## SRCBLEND = ZERO and DESTBLEND = SRCCOLOR -- the framebuffer multiplied by the
+## pass's colour -- and stage 0 COLOROP = ADD of the region's `.t` lightmap
+## (TEXCOORD0 = lightmap_coord) and D3DRS_TEXTUREFACTOR. The texture factor is
+## the world's `+0x6883` colour, which `Map::FUN_00a1baf0` takes from the
+## environment record's graph at `+0x1c0`; `Map::FUN_00a1b650` reads the
+## record's graphs in file order into `+0x88, +0xbc, +0xf0, +0x124, +0x158,
+## +0x18c, +0x1c0` (channels 0-6), so `+0x1c0` is channel 6,
+## **TerrainShadowColor**. Fixed-function arithmetic is in bytes and ADD
+## saturates, so the multiplier is `min(255, lightmap + round(shadow * 255))`
+## per channel.
 ##
-## **The real per-vertex `Scale` field no longer drives this** (see
-## docs/WORLD_ISSUES.md's sixty-ninth round). It used to, as
-## `2 ^ (scale >> 3)`, which was this project's own reading of a field whose
-## real meaning has never been recovered. Real region 100/100 carries
-## `scale = 16`, which that reading turned into **four** repeats per quad --
-## a texture repeating every 5 units -- and it rendered as a regular diagonal
-## lattice across the whole region, which is exactly what a real playtest
-## reported there. Real Jangan carries only `scale = 0`, which is why the
-## same artifact never appeared there and why two earlier rounds looked in
-## the wrong place for it.
-##
-## Disabling the scale term removes the lattice and leaves soft, organic
-## ground. So the field is left unused until its real meaning is actually
-## recovered from the real client, rather than kept as an invented reading
-## that is known to produce a real artifact.
-const BASE_TILE_REPEAT := 1.0
+## Multiplying after the blend equals multiplying every pass by it
+## (`lerp(a*L, b*L, t) = L*lerp(a, b, t)`), so the builder applies it as each
+## terrain material's detail layer in MUL mode on UV2 (_surface_material).
+## Returns an RGB8 Image, or null for no lightmap.
+static func lightmap_term(lightmap: Image, shadow: Color) -> Image:
+	if lightmap == null or lightmap.is_empty():
+		return null
+	var img := lightmap.duplicate() as Image
+	if img.is_compressed():
+		img.decompress()
+	img.convert(Image.FORMAT_RGB8)
+	var add := PackedInt32Array([
+		clampi(roundi(shadow.r * 255.0), 0, 255),
+		clampi(roundi(shadow.g * 255.0), 0, 255),
+		clampi(roundi(shadow.b * 255.0), 0, 255)])
+	var luts: Array[PackedByteArray] = []
+	for ch in range(3):
+		var lut := PackedByteArray()
+		lut.resize(256)
+		for v in range(256):
+			lut[v] = mini(v + add[ch], 255)
+		luts.append(lut)
+	var lr := luts[0]
+	var lg := luts[1]
+	var lb := luts[2]
+	var data := img.get_data()
+	var n := data.size()
+	var i := 0
+	while i < n:
+		data[i] = lr[data[i]]
+		data[i + 1] = lg[data[i + 1]]
+		data[i + 2] = lb[data[i + 2]]
+		i += 3
+	return Image.create_from_data(img.get_width(), img.get_height(), false, Image.FORMAT_RGB8, data)
 
 
 
@@ -634,14 +696,13 @@ static func _textured_surfaces_from_cells(cells: Array, row_count: int, col_coun
 		for c in range(col_count):
 			normals[r * col_count + c] = _estimate_normal(cells, row_count, col_count, r, c)
 
-	# uv2 is the same whole-region 0..1 span build_full_region_mesh's UV
-	# uses -- kept only for ao_texture, which needs one continuous real
-	# shadow map, not a per-quad repeat.
+	# uv2 is the region lightmap's coordinate, retail's own (lightmap_coord,
+	# round 610): one continuous map over the whole region.
 	var uv2s := PackedVector2Array()
 	uv2s.resize(positions.size())
 	for r in range(row_count):
 		for c in range(col_count):
-			uv2s[r * col_count + c] = Vector2(float(c) / (col_count - 1), float(r) / (row_count - 1))
+			uv2s[r * col_count + c] = Vector2(lightmap_coord(c), lightmap_coord(r))
 
 	# First pass: resolve every quad's real texture key and fallback tone
 	# up front (rather than inline in the buffer-building loop below) so
@@ -676,10 +737,9 @@ static func _textured_surfaces_from_cells(cells: Array, row_count: int, col_coun
 		for c in range(col_count):
 			var vextra: PackedByteArray = cells[r][c][1]
 			vertex_keys[r][c] = _resolve_texture_id(vextra, texture_lookup)
-			# The real Scale field is deliberately not applied -- see
-			# BASE_TILE_REPEAT's own comment for the real artifact its
-			# previous, invented reading produced.
-			vertex_repeats[r][c] = BASE_TILE_REPEAT
+			# The tile-UV step retail's texture matrix gives this vertex's
+			# TextureInfo (TEXTURE_MATRIX_SCALES, round 610).
+			vertex_repeats[r][c] = _resolve_texture_repeat(vextra)
 
 	# Real per-vertex terrain lighting (see _lit_vertex_color). With no real
 	# light direction supplied this stays white, i.e. the engine lights the
@@ -779,7 +839,7 @@ static func _textured_surfaces_from_cells(cells: Array, row_count: int, col_coun
 					best = int(counts[k])
 					dominant = k
 
-			var dom_repeat := BASE_TILE_REPEAT
+			var dom_repeat := TEXCOORD_PER_VERTEX
 			for i in range(4):
 				if vertex_keys[corner_r[i]][corner_c[i]] == dominant:
 					dom_repeat = vertex_repeats[corner_r[i]][corner_c[i]]
@@ -798,7 +858,7 @@ static func _textured_surfaces_from_cells(cells: Array, row_count: int, col_coun
 				if k == dominant or k == -1:
 					continue
 				var alphas := PackedFloat32Array([0.0, 0.0, 0.0, 0.0])
-				var repeat := BASE_TILE_REPEAT
+				var repeat := TEXCOORD_PER_VERTEX
 				for i in range(4):
 					if vertex_keys[corner_r[i]][corner_c[i]] == k:
 						alphas[i] = 1.0

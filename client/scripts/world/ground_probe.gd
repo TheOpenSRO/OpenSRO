@@ -257,7 +257,8 @@ static func record_exit(world: Node, connected: bool) -> void:
 
 ## Every ground, lightmap and water-frame texture this world holds, as
 ## [kind, name, RID, GL name]: the ground-tile cache, each loaded region's
-## lightmap (its terrain materials' ao_texture) and the water frames. Kinds
+## lightmap (its terrain materials' detail_albedo since round 610, their
+## ao_texture before) and the water frames. Kinds
 ## "ground", "lightmap", "water". The GL name is
 ## RenderingServer.texture_get_native_handle -- the GLES3 Texture's tex_id
 ## (drivers/gles3/storage/texture_storage.cpp, TextureStorage::
@@ -282,7 +283,9 @@ static func gl_audit(world: Node) -> Array:
 			continue
 		for i in range(patch.mesh.get_surface_count()):
 			var mat := patch.mesh.surface_get_material(i) as BaseMaterial3D
-			if mat != null and mat.ao_texture != null:
+			if mat != null and mat.detail_albedo != null:
+				_audit_row(rows, seen, "lightmap", String(group.name), mat.detail_albedo)
+			elif mat != null and mat.ao_texture != null:
 				_audit_row(rows, seen, "lightmap", String(group.name), mat.ao_texture)
 	var frames = _member(world, "_water_frames_cache", [])
 	if frames is Array:
@@ -712,6 +715,8 @@ static func material_fields(mat: Material, files: Dictionary, texels: Dictionary
 		str(bm.uv1_scale), str(bm.ao_enabled)]
 	if bm.ao_enabled and bm.ao_texture != null:
 		line += " ao_gl=%d" % RenderingServer.texture_get_native_handle(bm.ao_texture.get_rid())
+	if bm.detail_enabled and bm.detail_albedo != null:
+		line += " lightmap_detail_gl=%d" % RenderingServer.texture_get_native_handle(bm.detail_albedo.get_rid())
 	var param = RenderingServer.material_get_param(bm.get_rid(), "texture_albedo")
 	var tex := bm.albedo_texture
 	if tex == null:

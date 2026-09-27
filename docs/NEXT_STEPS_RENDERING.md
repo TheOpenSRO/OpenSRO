@@ -34,13 +34,16 @@ speculation, it's a consolidation of gaps already found and flagged as open.
   quad — a real, previously-unused `Scale` field from `MAPM_FORMAT.md`'s `TextureInfo` drives part of
   the repeat rate, plus a disclosed baseline repeat constant. Real before/after render confirmed
   visible texture detail and softer transitions replacing the hard checkerboard look.
+  **Superseded (round 610):** the repeat rate is now retail's, read from the client -- one repeat
+  per four quads (80 units), scaled by a texture matrix the `Scale` field's top three bits pick
+  (1, 0.5, 0.25, 2, 4). Both the baseline constant and the `2^level` reading were wrong.
 - ~~Ground-texture completeness audit~~ — done 2026-08-28: both real zones this project renders
   (Jangan `89/182`, Dunhuang `98/157`) resolve **100%** of their real per-vertex texture IDs to a
   real `Tile2D\` file. The flat-color fallback path is correct to keep but isn't currently firing
   anywhere real. Not a rendering gap after all.
-- **The `.t` lightmap is wired in as ambient occlusion**, which is directionally correct but is a
-  real engineering approximation, not a faithful reproduction of how the original client uses it —
-  worth a side-by-side comparison against a real client screenshot once one is available.
+- ~~The `.t` lightmap is wired in as ambient occlusion~~ — **replaced in round 610** by retail's
+  own rule, read from the client: the ground multiplied by `min(1, lightmap + TerrainShadowColor)`.
+  The AO wiring had had no effect since terrain was made unshaded (round 71).
 - **Terrain seam blending exists (2026-08-24) but hasn't been re-verified since the scale fix** —
   the blend radius/strength was tuned against the old world scale.
 - ~~Cross-region height mismatch~~ — **SOLVED 2026-09-02** (see `docs/WORLD_ISSUES.md`'s forty-sixth
