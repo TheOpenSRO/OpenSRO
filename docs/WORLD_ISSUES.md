@@ -7094,6 +7094,117 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twenty-third round: a buff's aura stays on for the whole buff -- Grass Walk's ring and an imbue's hand glow no longer blink out every second or so
+
+The user's report on v0.1.457: "It appears the persistent skills visually appear and disappear
+every few seconds. That behavior is incorrect." In retail, a kept aura stays on while its buff
+runs.
+
+**MEASURED, the cause** (new `client/scripts/efp/efp_aura_census.gd` on the box: every .efp that
+skilleffect.txt's skilleffectset names with a kept ActType, run through a real `EfpEffect` for 30 s
+of 50 ms frames, counting the particles on drawn nodes every frame):
+- On dev b22edf5, **2 of the 315 ACT_L kept files** never draw an empty frame. The other 313 go
+  blank once a cycle. READY kept loops: 0 of 30. WAIT: 0 of 20.
+- `lightning_gyeonggong_keep_a` (Grass Walk), per frame: 19 frames with 7–8 drawn particles, 10
+  frames with 1, 1 frame with 0, then it starts again: a 30-frame (1.5 s) blink. The file is a
+  20-frame RenderNone root that emits once, six 20-frame drawn children that each keep one
+  particle for 20 frames, and one that adds a second particle at frame 10. The imbues
+  (`cold_`/`fire_`/`lightning_gigongta_keep_a`) have the same shape.
+- So the aura's rings lived 20 frames, the root died with them, and round 620's `EfpEffect` waited
+  for the last straggler to die, then restarted the whole file from nothing.
+
+**READ, what retail does** (sro_client.exe; `docs/protocol/EFP_FORMAT.md`, "Ending a kept effect"
+and "A particle's life", has it all):
+- **A kept effect never lets its root particles die.** `CEFEffect::vslot_000` (`0x00caf550`)
+  calls `FUN_00ca9ee0`, which runs the root node's update and returns 0 once every root emitter
+  is done and empty. With the keep flag +0x49 set, `0x00caf5ec`–`0x00caf622` walks the root
+  updater's death queue (effect +0x254, head +0xa0, next at +0x90), clears each particle's dying
+  flag +0x30, sets its age +0x54 to 0 and empties the queue. The particle lives on, and its child
+  emitters read its age.
+- **An emitter's "done" is recomputed every frame** (`0x00c84e70`: `CEFGroup::vslot_003(1)` when
+  `t ≥ duration` at `0x00c84e9c`, `vslot_003(0)` otherwise at `0x00c84ea5`). So the children emit
+  again from t = 0 when their owner's age goes back to 0, while the last cycle's particles play
+  out. Round 620 latched it and dropped the emitter.
+- **A death is queued, not immediate.** The extinct executors call the particle's slot 3
+  (`FUN_00c87ae0`, vtable `0x00e0ebfc`), which sets +0x30 and appends it to its node updater's
+  death queue (`FUN_00c87360`). The particle stays in its node's list, and the draw does not test
+  +0x30, so it is drawn at its last frame. The queue is flushed at the start of the node's next
+  update (`CEFUpdater::vslot_002`, `0x00c85f28`–`0x00c85f5a`), which refunds the emitter and kills
+  the particle's child emitters (`CEFElement::vslot_001`). Round 620 removed a particle before the
+  draw, so every particle was drawn one frame short and an emitter's replacement came one frame
+  late: the one-frame hole at each cycle boundary.
+- **The node's lifetime executor runs last** in its update (node +0x12c, after the child updaters,
+  `0x00c86311`). The emission (+0xb4 list) and the program (+0x130) run before them. So a child
+  emitter reads its owner's age before the owner ages.
+- **A kept effect that finishes is released, not restarted.** `CRTModParticle::FUN_00c80ff0`
+  drops the effect when `vslot_000` returns 0, keep flag or not. Round 620's "slot 4 with 1 ...
+  vslot_000 restarts a finished effect (resets the ages)" read the revival as a restart.
+
+**What changed** (client/scripts/efp, client/scripts/effects):
+1. `EfpSim.keep` is the keep flag. A root-node particle whose life ends is revived at age 0 in a
+   kept effect (`revived` counts it); every other death is queued (`Particle.dying`), drawn once
+   more, and flushed at the next step's start (`_flush_deaths`), which also drops the dead
+   particles' emitters.
+2. An emitter's `done` is recomputed every frame. An emitter goes only with its owner, which is
+   now READ (it was OURS).
+3. `EfpEffect.loop` sets `sim.keep`. A finished effect ends, kept or not; the restart is gone.
+4. `SkillEffects` and `EfpEffect` headers corrected. `SRREVAMP_QA_FXLOG=1` prints each effect's
+   particle and drawn counts after every simulation frame.
+
+**MEASURED after** (the same census, same archive):
+
+| kept files | b22edf5 | round 623 |
+|---|---|---|
+| ACT_L (the buff auras), 315 | 2 never blank | **306** |
+| READY loops, 30 | 0 | 28 |
+| WAIT loops, 20 | 0 | 20 |
+
+- At their fewest, `cold_gigongta_keep_a` draws 7 particles, `fire_gigongta_keep_a` 8,
+  `lightning_gigongta_keep_a` 3 and `lightning_gyeonggong_keep_a` (Grass Walk) 7.
+- The 9 ACT_L files still blank are gaps in their own timing under the READ rules:
+  - `status_bad_bleeding` / `_burn` / `_disease` / `_frostbite`: a 100-frame root with 25-frame
+    children, blank 66–75 frames of each 100;
+  - `bard_melody_circle_a` / `_c`, `cleric_holy_circle_a`: a 50-frame root whose children end by
+    frame 40;
+  - `skill_jupiter_devildog_amb`: a 30-frame root, children of at most 29 frames, 1 blank frame;
+  - `keep_uneg_mouth`: children delayed 10–60 frames.
+  - READY: `skill_bonemage_thunder_shot_b` and `bard_dance_mana_apply_a`, likewise.
+  Whether retail really shows these gaps is INFERRED from the READ rules, not seen on a retail
+  client.
+- **One-shots** (the regression check, `--oneshot`): all 147 ACT_S and 735 of 736 SHOT files still
+  end by themselves, as before. Each lasts **exactly one frame longer** (147 of 147, 735 of 735),
+  the retail last-frame draw. `mad_general_at03` never ends, before and after.
+- **The render** (`qa_shot` at the Jangan spawn, 300 frames, Grass Walk and the cold imbue on the
+  standing player, `SRREVAMP_QA_FXLOG=1`): 93 simulation frames each, drawn counts 7→8 and 5→33
+  while warming, then **8 and 33 on every frame**, over four and a half 20-frame cycles, on the RX
+  5700 XT (GL Compatibility, GPU).
+
+**Tests:**
+- New `client/scripts/efp/efp_keep_test.gd`, synthetic trees shaped like the retail auras (no game
+  data). It uses only fields that existed before this round, so it runs against the old code.
+- `efp_sim_test.gd` and `efp_links_test.gd`: the expectations that encoded the early death (a
+  4-frame particle drawn 3 times; a looping effect that restarts) now encode the READ rules.
+- **Negative, the new suite against dev b22edf5:**
+  ```
+  FAIL a kept aura draws something on every one of 600 frames (blank frames: [29, 59, 89, 119, 149, 179, 209, 239])
+  FAIL ... every drawn child keeps a particle across the cycle boundary (fewest drawn 0, want 4)
+  FAIL ... its root particle is revived at age 0, never replaced (READ, CEFEffect::vslot_000)
+  FAIL ... the children re-emit every 20-frame cycle: 119 spawns in 600 frames (want 150)
+  FAIL a one-shot draws its 20-frame children for 20 frames (19)
+  FAIL a child emitter of a looping parent emits again at each wrap: frames [0, 1] (want [0, 1, 10, 11, 20, 21, 30, 31])
+  FAIL an emitter replaces its dying particle with no empty frame: [1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0]
+  FAIL a kept effect that emits nothing ends instead of restarting
+  FAILURES: 8
+  ```
+  The blank frames 29, 59, 89… are the 30-frame blink the census measured on the real file.
+- The box: `remote_godot.sh check` (ALL LOAD) and `tests` (every suite passing).
+
+**OURS / OPEN:**
+- The whole-effect passes (flush all queued deaths, then motion, commands, emission, ages) are
+  OURS; retail runs them node by node, and the flush and the late aging are READ.
+- `SkillEffects.act(..., with_aura)`, one cycle of ACT_L when no buff token will come, is OURS.
+- Whether retail shows the 9 + 2 authored gaps above is not seen on a retail client (OPEN).
+
 ## Six-hundred-and-twenty-second round, review follow-up: a healer can select themselves, a recast on an ally replaces the old buff, and only casts that happened are shown
 
 The review found that round 622's READ claims hold, including the 369 HP heal, which was checked by

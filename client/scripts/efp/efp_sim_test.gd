@@ -152,7 +152,10 @@ func _lifetimes() -> void:
 	for _f in range(6):
 		once.step()
 		alive.append(once.particles.size())
-	_check(alive == [1, 1, 1, 0, 0, 0], "NormalTimeExtinct: a 4-frame particle is drawn for frames 0-3 then dies: %s" % str(alive))
+	# Round 623: the death is queued and flushed at the next frame's start
+	# (READ, CEFUpdater::vslot_002), so the particle is drawn at its last
+	# frame too -- 4 frames, not 3.
+	_check(alive == [1, 1, 1, 1, 0, 0], "NormalTimeExtinct: a 4-frame particle is drawn for frames 0-3 then dies: %s" % str(alive))
 	_check(once.finished(), "... and the effect is finished (once)")
 	var loop = _sim(_node(4, "NormalTimeLoop", _emit(0, 1, 1, 1, 1.0)))
 	var ages: Array = []
@@ -221,9 +224,11 @@ func _commands() -> void:
 			seen_s.append(g.particles[0].scale.x)
 			seen_c.append(g.particles[0].color)
 			seen_u.append(g.particles[0].uv)
-	_check(seen_s == [1.0, 2.0, 3.0], "SetGraphScale: after frame f the particle holds key f (frame 0 ran at spawn): %s" % str(seen_s))
-	_check(seen_c == [0xFF000000, 0x80FF0000, 0x4000FF00], "SetGraphDiffuse: the colour key of each frame")
-	_check(seen_u == [slides[0], slides[1], slides[2]], "TextureSlide: the UV rectangle key of each frame")
+	# Round 623: a 4-frame particle is drawn at all 4 frames (its death is
+	# queued and flushed at the next frame's start), so key 3 is seen too.
+	_check(seen_s == [1.0, 2.0, 3.0, 4.0], "SetGraphScale: after frame f the particle holds key f (frame 0 ran at spawn): %s" % str(seen_s))
+	_check(seen_c == [0xFF000000, 0x80FF0000, 0x4000FF00, 0x100000FF], "SetGraphDiffuse: the colour key of each frame")
+	_check(seen_u == [slides[0], slides[1], slides[2], slides[3]], "TextureSlide: the UV rectangle key of each frame")
 	var col: Color = S.color_of(0x80FF0000)
 	_check(is_equal_approx(col.r, 1.0) and is_equal_approx(col.a, 128.0 / 255.0), "a colour is D3DCOLOR 0xAARRGGBB")
 	# Step 2: keys at frames 0, 2.
@@ -279,7 +284,10 @@ func _review_rules() -> void:
 	# NeverExtinct with N == 0 kills the particle (FUN_00c84d80).
 	var n0 = _sim(_node(0, "NeverExtinct", _emit(0, 1, 1, 1, 1.0)))
 	n0.step()
-	_check(n0.particles.is_empty() and n0.spawned == 1, "NeverExtinct with N == 0 kills the particle")
+	var drawn_once: bool = n0.particles.size() == 1
+	n0.step()
+	_check(drawn_once and n0.particles.is_empty() and n0.spawned == 1,
+		"NeverExtinct with N == 0 kills the particle: queued at its first frame, drawn once, gone at the next (round 623)")
 	# Scheduling is a float32 running sum of the step, truncated.
 	var c := _cmd("SetGraphScale", {"type": "FrameScale", "frames": PackedVector3Array()}, 0, 0, 0.0, 0.3, 2.0)
 	var fr: Array = S.key_frames(c, 10)
@@ -376,14 +384,19 @@ func _effect_nodes() -> void:
 	var looping = E.from_template(S.compile(_node(3, "NormalTimeExtinct", _emit(0, 1, 1, 1, 1.0), "RenderPlate")), load_tex, load_mesh, 3)
 	looping.loop = true
 	host.add_child(looping)
-	var restarted := false
+	var first_root = null
+	var same_root := true
 	for _i in range(20):
-		var before: int = looping.sim.spawned
 		looping._process(0.05)
-		if looping.sim.spawned > 0 and looping.sim.spawned < before + 1 and looping.sim.age == 1 and _i > 3:
-			restarted = true
-	_check(not looping.is_queued_for_deletion(), "a looping (AT_LOOP) effect does not end")
-	_check(restarted or looping.sim.age < 20, "... it restarts when its particles run out (age %d)" % looping.sim.age)
+		if looping.sim.particles.size() != 1:
+			same_root = false
+		elif first_root == null:
+			first_root = looping.sim.particles[0]
+		elif looping.sim.particles[0] != first_root:
+			same_root = false
+	_check(not looping.is_queued_for_deletion(), "a kept (AT_LOOP) effect does not end")
+	_check(same_root and looping.sim.spawned == 1,
+		"... its root particle is revived, never replaced: one spawn, always drawn (round 623, READ CEFEffect::vslot_000)")
 	var live_before: int = S.live_total
 	var held: int = looping.sim.particles.size()
 	looping.stop()

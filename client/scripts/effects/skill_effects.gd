@@ -55,9 +55,11 @@ class_name SkillEffects
 ##   created with its keep flag 0 and handed to the one-shot list,
 ##   FUN_00a4ddc0).
 ## - AT_LOOP and AT_STOP are created with the keep flag 1 (READ), which sets
-##   the effect's restart flag (+0x49, CEFEffect::vslot_004): it restarts
-##   whenever its particles run out, until its owner ends it (EfpEffect.stop,
-##   which drops every particle at once, READ).
+##   the effect's keep flag (+0x49, CEFEffect::vslot_004): its root
+##   particles are revived at age 0 instead of dying (CEFEffect::vslot_000,
+##   READ in round 623), so the children cycle on and the aura never blinks
+##   out, until its owner ends it (EfpEffect.stop, which drops every particle
+##   at once, READ). EfpEffect.loop is that flag.
 ## - AT_TARGET, AT_TARGET_F and AT_DMG_POS play on the target (INFERRED from
 ##   the names); everything else on the caster.
 ## - AT_MOV_* (projectiles) play at the caster without the flight (OURS; the

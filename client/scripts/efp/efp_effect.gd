@@ -64,12 +64,21 @@ class_name EfpEffect
 ## freed at once) or slot 4 with 0 (vslot_004: the keep/loop flag +0x49 is
 ## cleared and the effect released when its keep count reaches 0). Both drop
 ## every particle immediately, so stop() here frees the effect at once --
-## loop and never-extinct particles included.
+## loop and never-extinct particles included. While the flag is set the
+## effect is kept by reviving its root particles (`loop`, round 623).
 
 signal effect_finished
 
-## AT_LOOP: start over whenever the effect ends, until stopped.
-var loop := false
+## AT_LOOP / AT_STOP: the effect is KEPT (retail's keep flag +0x49): its
+## root particles are revived at age 0 instead of dying, so their child
+## emitters cycle on while the older particles finish -- one continuous
+## effect, never a restart (READ, round 623; EfpSim "Dying, and the kept
+## effect"). It lasts until stop().
+var loop := false:
+	set(v):
+		loop = v
+		if sim != null:
+			sim.keep = v
 ## Free the node when the effect ends (and loop is off).
 var auto_free := true
 var path := ""
@@ -189,6 +198,7 @@ static func from_template(t: EfpSim.Template, load_texture: Callable, load_mesh:
 	var fx := EfpEffect.new()
 	fx.name = "EfpEffect"
 	fx.sim = EfpSim.new(t, seed_value)
+	fx.sim.keep = fx.loop
 	for u in t.unsupported:
 		fx.skipped.append("command " + u)
 	for tp in t.tpls:
@@ -518,12 +528,14 @@ func _process(delta: float) -> void:
 		return
 	var moved := _place()
 	var stepped := sim.advance(delta)
+	# Finished -- nothing alive, no emitter spawning -- ends the effect, kept
+	# or not (READ: CRTModParticle::FUN_00c80ff0 releases the effect when
+	# CEFEffect::vslot_000 returns 0; round 620's restart of a finished kept
+	# effect blinked every aura out once a cycle, round 623). A kept effect
+	# does not finish: its root particles never die.
 	if sim.finished():
-		if loop:
-			sim.restart()
-		else:
-			_end()
-			return
+		_end()
+		return
 	# The MultiMeshes change only when the simulation stepped -- or, for a
 	# billboarded node, when the camera turned (else it would lag the view).
 	# (Round 621: also when the host moved the effect, whose followers the
@@ -534,6 +546,29 @@ func _process(delta: float) -> void:
 	# effect moved for a screen-space pipe (round 621's review follow-up).
 	if not _links.is_empty() and (stepped > 0 or moved or (_has_pipe and _link_camera_moved())):
 		_update_links()
+	if stepped > 0 and _qa_log():
+		print("QA FXLOG %s frame %d particles %d drawn %d" % [path, sim.age, sim.particles.size(), drawn_particles()])
+
+## SRREVAMP_QA_FXLOG=1 (round 623): every effect prints its particle and
+## drawn counts after each simulation frame, so a render's frames can be
+## matched to what was drawn.
+static var _qa_log_state := -1
+static func _qa_log() -> bool:
+	if _qa_log_state < 0:
+		_qa_log_state = 1 if OS.get_environment("SRREVAMP_QA_FXLOG") != "" else 0
+	return _qa_log_state == 1
+
+## The particles this effect draws now: its drawn nodes' MultiMesh instances
+## plus the live particles of its Link nodes.
+func drawn_particles() -> int:
+	var n := 0
+	for d in _draws:
+		n += (d[1] as MultiMeshInstance3D).multimesh.visible_instance_count
+	if not _links.is_empty():
+		for p in sim.particles:
+			if _link_tpls.has(p.tpl):
+				n += 1
+	return n
 
 func _exit_tree() -> void:
 	if sim != null:

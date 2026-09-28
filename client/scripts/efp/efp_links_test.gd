@@ -243,10 +243,14 @@ func _chain() -> void:
 		"one chain per emitter, oldest first")
 	for _i in range(3):
 		sim.step()
-	_check(sim.particles.size() == 4 and sim.particles[0].link == null and sim.particles[1].link == sim.particles[0],
+	# Round 623: after 6 frames the frame-0 particle has been flushed and the
+	# frame-1 one is queued to die -- still in the list and drawn at its last
+	# frame (READ: unlinked only when the queue is flushed) -- so 5 remain.
+	_check(sim.particles.size() == 5 and sim.particles[0] == b and sim.particles[0].link == null
+		and sim.particles[1].link == sim.particles[0],
 		"a death unlinks: the oldest live particle heads the chain")
 	var after: Dictionary = E.link_chains(sim)
-	_check(after.has(0) and (after[0][0] as Array).size() == 4, "a dead head does not blank the strip: the rest still chain")
+	_check(after.has(0) and (after[0][0] as Array).size() == 5, "a dead head does not blank the strip: the rest still chain")
 	# A spawn the cap refuses is never linked (review follow-up).
 	var saved: int = S.live_total
 	S.live_total = 1000000

@@ -250,7 +250,12 @@ do the same.
 The 20 bytes are delay, duration, interval, max_live and per_trigger. Each emitter keeps a float
 accumulator at emitter +0x60, which starts at 0. The client runs this each frame, with
 `t = age − delay` (age at emitter +0x28 → +0x54):
-1. When `t ≥ duration`, the emitter is finished and does nothing more.
+1. When `t ≥ duration`, the emitter's done flag (+0x10) is set through `CEFGroup::vslot_003(1)` and
+   the emitter does nothing this frame; otherwise the flag is cleared (`vslot_003(0)`,
+   `0x00c84e9c` / `0x00c84ea5`). The flag is recomputed every frame, not latched: when the owner's
+   age goes back below `delay + duration` (a NormalTimeLoop owner wrapping, or a kept effect's
+   revived root particle, see "Ending a kept effect"), the emitter emits again, its accumulator
+   as it was (round 623).
 2. It skips the frame unless `interval > 0` and `t ≥ 0`.
 3. If the global `DAT_01114d54 > 1`, the interval is multiplied by it, unless the product reaches
    `duration`.
@@ -353,6 +358,25 @@ How the client plays a decoded tree. `client/scripts/efp/efp_sim.gd` (`EfpSim`) 
 | NormalTimeExtinct | `FUN_00c84e20` | age += frames; at age ≥ N, it is clamped to N − 1 and the particle is killed |
 | NormalTimeLoop | `FUN_00c84dd0` | age += frames; age %= N |
 | NeverExtinct | `FUN_00c84d80` | `if age != 1: age += frames`, so the age sticks at 1; a node with N = 0 kills the particle |
+
+**A death is queued** (READ, round 623). "Kills" above is the particle's vtable slot 3
+(`FUN_00c87ae0`, vtable `0x00e0ebfc`): it sets the dying flag +0x30 and appends the particle to its
+node updater's death queue (the list at updater +0x78: count +0x9c, head +0xa0, tail +0xa4,
+`FUN_00c87360`). The particle stays in the node's particle list, and the draw walks that list with
+no test of +0x30, so it is drawn once more at its clamped last frame. The queue is flushed at the
+start of the node's next update (`CEFUpdater::vslot_002`, `0x00c85f28`–`0x00c85f5a`): each
+particle's slot 1 (`CEFElement::vslot_001`, `0x00c87a20`) takes 1.0 off its emitter's accumulator,
+unlinks it, and kills its child emitters (`CEFGroup::vslot_001`), which then go when their last
+particle does. So a particle of N frames is drawn N times, and an emitter can replace it in the
+update that removes it.
+
+**The order within a node's update** (READ, `CEFUpdater::vslot_002`): flush the death queue; the
+executor lists at node +0x90, then +0xb4 (the emission, `0x00c84e70`, registered at `0x00c93184`),
+then +0xd8; each particle's motion and follows; the list at +0x130 (the per-particle program,
+`0x00c84f90`, registered at `0x00c92184`); every child node's update; and last the node's lifetime
+executor at +0x12c (one of `0x00c84d80` / `…dd0` / `…e20`, registered at `0x00c92124`–`0x00c92164`;
+each executor object's slot 4 calls the function at its +0xc with the updater, `0x00c90b80`). So a
+child emitter reads its owner's age before the owner's age advances in the same update.
 
 ### The per-particle program (READ, `EFEffect::FUN_00c893f0`)
 
@@ -471,14 +495,31 @@ Every retail view and render command has space 0 (MEASURED).
 
 ### Ending a kept effect (READ, the IEasyFxEffect vtable at `0x00e0f594`)
 
+**Keeping** (READ, round 623; this corrects round 620's "restarts a finished effect"). Each update,
+`CEFEffect::vslot_000` (`0x00caf550`) calls `FUN_00ca9ee0`, which advances the effect's age, runs
+the root node's update and returns 0 once every root emitter is done and has no particle. Then:
+- On 0, `vslot_000` returns 0 and `CRTModParticle::FUN_00c80ff0` drops the effect. A kept effect
+  that finishes is released like any other; nothing restarts it.
+- Otherwise, with the keep flag +0x49 set (`0x00caf5ec`–`0x00caf622`), it walks the ROOT node
+  updater's death queue (effect +0x254, head +0xa0, next at +0x90), clears each queued particle's
+  dying flag (+0x30), sets its age (+0x54) to 0, and empties the queue.
+
+So in a kept effect **the root node's particles never die**: each one that reaches the end of its
+life starts it again at age 0, with its position, velocity and colour as they were. Its child
+emitters read that age, so they start their cycle again (their done flag is not latched, see
+"Emission") while the particles of the last cycle play out. Only the root node's queue is revived;
+every other particle dies as usual. The retail auras rely on it: `cold_gigongta_keep_a` and
+`lightning_gyeonggong_keep_a` have a 20-frame root that emits once and 20-frame children that emit
+for 20 frames, so each child particle is replaced in the update its predecessor is flushed and the
+aura never blinks.
+
 The owner ends an effect through one of two slots:
 - **Slot 2** (`CEFEffect::vslot_002`) frees its particles (`EFEffect::FUN_00c85ea0`) and releases
   it at once.
 - **Slot 4 with 0** (`vslot_004`) clears the restart flag (+0x49). It releases the effect when its
   keep count reaches 0.
 
-Slot 4 with 1 sets the flag. `vslot_000` then restarts a finished effect (it zeroes the particle
-ages). That is AT_LOOP.
+Slot 4 with 1 sets the flag. That is AT_LOOP and AT_STOP: the effect is kept as above.
 
 `EfpEffect.stop()` therefore drops every particle at once. This covers loop and never-extinct
 particles, which the review found in 18 files that never end by themselves.
@@ -502,9 +543,12 @@ SetBANPos and SetBANRot keys, which are implemented.
 
 **OURS:**
 - A particle follows only its parent's translation.
-- The order within a frame is: motion, the particle's commands, emission (new particles run their
-  frame-0 commands at once), then ages.
-- The emitters of a dead particle stop.
+- The order within a frame is: last frame's queued deaths flushed, motion, the particle's commands,
+  emission (new particles run their frame-0 commands at once), then ages and new deaths queued (a
+  kept effect reviving its root particles). Retail runs this node by node (see "The order within
+  a node's update"); the flush and the late aging are READ, the whole-effect passes are OURS.
+- ~~The emitters of a dead particle stop.~~ Now READ (round 623): the death kills its child
+  emitters (`CEFElement::vslot_001`).
 - There is a cap of 300 particles per effect and 2,000 in all. 600 of the 2,000 are reserved for
   the local player's own effects: its casts, hits and level-up.
   - GDScript costs about 7 µs a particle-frame (MEASURED), so the cap bounds a 50 ms frame at

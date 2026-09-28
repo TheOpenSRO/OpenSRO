@@ -1032,6 +1032,16 @@ draw at least one node, and **4,013 (96.2 %) draw every node they mean to draw**
 in round 620). Round 621 draws the three Link modes (`EfpLinks`) and the D3DFMT_A16B16G16R16F
 textures.
 
+**Kept auras: DONE (round 623).** A kept (AT_LOOP / AT_STOP) effect revives its root particles at
+age 0 instead of dying, as retail's `CEFEffect::vslot_000` does, so Grass Walk's ring and the
+imbues' hand glow stay on for the whole buff. Aura census (`scripts/efp/efp_aura_census.gd`, every
+kept ACT_L file, 30 s): 306 of 315 never draw an empty frame (2 before); READY loops 28 of 30 (0),
+WAIT loops 20 of 20 (0). The rest are gaps in the files' own timing under the READ rules (a
+100-frame status root with a 25-frame child, a 50-frame circle root with 20-frame children).
+Still open there: whether retail's draw really shows those gaps (the READ rules say so; not seen
+on a retail client), and the ACT_L played once when no buff token will come (`SkillEffects.act`
+with `with_aura`), which is OURS.
+
 Still open, by the files each would add:
 - **Nodes with no texture** (75 files; EFP_FORMAT.md "Assets that do not load"). Retail binds a
   NULL texture and draws them. 20 texture paths are absent from every archive, 4 more exist only

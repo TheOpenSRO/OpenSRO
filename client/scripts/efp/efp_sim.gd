@@ -46,6 +46,38 @@ class_name EfpSim
 ## 1 and then stays (`if age != 1: age += frames`), and a node whose N is 0
 ## kills the particle (the executor's `[def+0x7c] == 0` branch).
 ##
+## == Dying, and the kept effect (READ, round 623) ==
+## A death is QUEUED, not immediate: the executor clamps the age to N-1 and
+## calls the particle's slot 3 (FUN_00c87ae0), which sets its dying flag
+## (+0x30) and appends it to its node updater's death queue (updater +0x78,
+## head +0xa0, FUN_00c87360). The particle stays in its node's list, so the
+## draw after that update still draws it; the queue is flushed at the START
+## of the node's next update (CEFUpdater::vslot_002, 0x00c85f28-0x00c85f5a:
+## each queued particle's slot 1, CEFElement::vslot_001, refunds its
+## emitter's 1.0, unlinks it and kills its child emitters). So a particle of
+## N frames is drawn N times, and its emitter can replace it in the same
+## update that removes it.
+## The extinct executor is the node's +0x12c object, run LAST in the node's
+## update, after its child updaters (0x00c86311); the emission (+0xb4 list,
+## 0x00c84e70) and the program (+0x130 list, 0x00c84f90) run before them.
+## A KEPT effect (the keep flag +0x49, set by IEasyFxEffect slot 4 with 1:
+## AT_LOOP and AT_STOP) never lets its ROOT node's particles die: after each
+## update, CEFEffect::vslot_000 (0x00caf5ec-0x00caf622) walks the ROOT
+## updater's death queue only, clears each particle's dying flag, sets its
+## age to 0 and empties the queue. The particle lives on; its child
+## emitters, which read its age, start their cycle again (below). A kept
+## effect whose update finds no emitter able to spawn and no particle alive
+## (FUN_00ca9ee0 returns 0) is released like any other (CRTModParticle::
+## FUN_00c80ff0) -- the flag does not restart a finished effect.
+##
+## == An emitter's life (READ, 0x00c84e70 and CEFElement::vslot_001) ==
+## Every frame the emission recomputes the emitter's "done" flag (+0x10,
+## CEFGroup::vslot_003) from t = owner age - delay: 1 when t >= duration,
+## else 0. It is not latched: an emitter whose owner's age goes back to 0
+## (a kept root particle, or a NormalTimeLoop owner) emits again, with its
+## accumulator as it was. An emitter goes only when its owner dies (the
+## death kills the owner's child emitters, CEFElement::vslot_001).
+##
 ## == The per-particle program (READ, EFEffect::FUN_00c893f0) ==
 ## Scheduling (READ, the loop at 0x00ca9276-0x00ca9354): a command's key i
 ## runs at frame ftol(f_i), where f_0 = start and f_{i+1} = f32(f_i + step),
@@ -153,9 +185,12 @@ class_name EfpSim
 ## the step's follows, so it does not (OURS, same result).
 ##
 ## == Order within a frame (OURS where retail's order was not read) ==
-## 1 motion, 2 each particle's commands for its age, 3 emission (new
-## particles run their frame-0 commands at once, so none is drawn at its
-## parent's origin first), 4 ages advance.
+## 0 the deaths queued last frame are flushed (READ, see "Dying"), 1 motion,
+## 2 each particle's commands for its age, 3 emission (new particles run
+## their frame-0 commands at once, so none is drawn at its parent's origin
+## first), 4 ages advance and deaths are queued (READ: last, after every
+## node's emission and program), and a kept effect revives its root
+## particles.
 ##
 ## == Caps (OURS) ==
 ## MAX_PARTICLES per effect. Across all live effects, MAX_TOTAL - RESERVE
@@ -243,6 +278,8 @@ class Particle:
 	var parent: Particle ## null for the effect's own root holder
 	var age: int = 0
 	var alive := true
+	## Queued to die (+0x30): still drawn, flushed at the next step's start.
+	var dying := false
 	var pos := Vector3.ZERO
 	var vel := Vector3.ZERO
 	var rot := Basis.IDENTITY
@@ -273,6 +310,8 @@ class Emitter:
 	var tpl: int
 	var owner: Particle
 	var acc := 0.0
+	## This frame's "done" (+0x10): recomputed every frame (READ, 0x00c84e70),
+	## latched only for a node with no StaticEmit.
 	var done := false
 	## The newest live particle of this emitter (the list's tail).
 	var tail: Particle = null
@@ -285,6 +324,11 @@ var dropped := 0 ## spawns refused by a cap
 var spawned := 0
 ## The local player's own effect: may use the RESERVE share of MAX_TOTAL.
 var reserved := false
+## The kept flag (+0x49; AT_LOOP / AT_STOP): the root node's particles are
+## revived at age 0 instead of dying (READ, see "Dying, and the kept effect").
+var keep := false
+## How many times a kept effect revived a root particle (tests, census).
+var revived := 0
 var _root := Particle.new() ## the effect's origin: owner of the root emitter
 var _acc := 0.0
 var _rng := RandomNumberGenerator.new()
@@ -468,7 +512,9 @@ func clear() -> void:
 	particles.clear()
 	emitters.clear()
 
-## True once nothing is alive and no emitter can spawn again.
+## True once nothing is alive (a particle queued to die still counts) and
+## no emitter spawns this frame -- FUN_00ca9ee0's test: every root emitter
+## done and no particle left.
 func finished() -> bool:
 	if not particles.is_empty():
 		return false
@@ -495,6 +541,9 @@ func step() -> void:
 	if template == null:
 		return
 	var tpls := template.tpls
+	# 0 last frame's queued deaths go now (READ: the updater flushes its
+	# death queue first), and the emitters of the dead with them.
+	_flush_deaths()
 	_place_root()
 	# 1-2 each particle moves and follows, runs its commands, then notes this
 	# frame's turn -- in spawn order, so every ancestor (spawned earlier)
@@ -543,15 +592,18 @@ func step() -> void:
 	while i < emitters.size():
 		_emit(emitters[i])
 		i += 1
-	# 4 ages advance (newborns included: their frame 0 has run)
-	var keep: Array[Particle] = []
+	# 4 ages advance (newborns included: their frame 0 has run); a particle
+	# whose life is over is queued to die (READ, see "Dying"): it is still
+	# drawn this frame and goes at the next step's start.
 	for p in particles:
 		var tp: Tpl = tpls[p.tpl]
+		var dies := false
 		match tp.life:
 			LIFE_EXTINCT:
 				p.age += 1
 				if p.age >= tp.frames:
-					p.alive = false
+					p.age = maxi(tp.frames - 1, 0)
+					dies = true
 			LIFE_LOOP:
 				p.age += 1
 				if tp.frames > 0:
@@ -560,20 +612,42 @@ func step() -> void:
 				if p.age != 1:
 					p.age += 1
 				if tp.frames == 0:
-					p.alive = false
-		if p.alive:
-			keep.append(p)
+					dies = true
+		if not dies:
+			continue
+		if keep and p.parent == _root:
+			# READ, CEFEffect::vslot_000: a kept effect's root particle is
+			# revived -- dying flag cleared, age 0 -- so it never dies.
+			p.age = 0
+			revived += 1
 		else:
+			p.dying = true
+	age += 1
+
+## Removes the particles queued to die last frame (READ: the start of
+## CEFUpdater::vslot_002) and the emitters their deaths kill (READ:
+## CEFElement::vslot_001 kills the particle's child emitters).
+func _flush_deaths() -> void:
+	var any := false
+	for p in particles:
+		if p.dying:
+			any = true
+			break
+	if not any:
+		return
+	var kept: Array[Particle] = []
+	for p in particles:
+		if p.dying:
+			p.alive = false
 			_on_death(p)
-	particles = keep
-	# emitters whose owner died stop (OURS); finished ones are dropped, so a
-	# frame walks only the emitters that can still spawn
+		else:
+			kept.append(p)
+	particles = kept
 	var live_emitters: Array[Emitter] = []
 	for e in emitters:
-		if not e.done and (e.owner == _root or e.owner.alive):
+		if e.owner == _root or e.owner.alive:
 			live_emitters.append(e)
 	emitters = live_emitters
-	age += 1
 
 ## The frame's start for the effect (_root): it holds still during a step
 ## (old = current, not changed), so a u6 follow adds nothing there -- the
@@ -687,16 +761,15 @@ func _owner_age(e: Emitter) -> int:
 	return age if e.owner == _root else e.owner.age
 
 func _emit(e: Emitter) -> void:
-	if e.done:
-		return
 	var tp: Tpl = template.tpls[e.tpl]
 	if tp.emit == null:
 		e.done = true
 		return
 	var r := EfpReader.emit_tick(tp.emit, _owner_age(e), e.acc, interval_mul, threshold)
 	e.acc = float(r["acc"])
-	if bool(r["stopped"]):
-		e.done = true
+	# READ, 0x00c84e9c / 0x00c84ea5: done is set or cleared every frame.
+	e.done = bool(r["stopped"])
+	if e.done:
 		return
 	for _k in range(maxi(int(r["spawn"]), 0)):
 		_spawn(e.tpl, e.owner, e)
