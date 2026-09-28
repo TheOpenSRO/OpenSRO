@@ -13318,7 +13318,8 @@ func _draw_counter_from_result(monster: int, result: CombatNet.AttackResult) -> 
 		# when the monster's blow would land.
 		var block_after := _monster_strike_seconds(monster) if monster != -1 else 0.0
 		_after(block_after, func() -> void:
-			_audio_block(player, result.monster_critical, "monster %d's counter, from the result" % monster))
+			_audio_block(player, result.monster_critical, "monster %d's counter, from the result" % monster)
+			_audio_monster_blow(monster, result.monster_critical, "blocked counter on the player, from the result"))
 	if result.player_damage_taken <= 0 or _player_skeleton == null:
 		return
 	var strike_after := 0.0
@@ -13560,7 +13561,9 @@ func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool) ->
 			var blocker = player if on_self else _other_bodies.get(target_id)
 			if blocker != null and is_instance_valid(blocker):
 				_audio_block(blocker, attacked.critical, "monster %d's blow on %s" % [
-					monster, "the player" if on_self else "character %d" % target_id]))
+					monster, "the player" if on_self else "character %d" % target_id])
+				_audio_monster_blow(monster, attacked.critical, "blocked blow on %s" % [
+					"the player" if on_self else "character %d" % target_id]))
 	if target == null or attacked.blocked:
 		return
 	_after(strike_after, func() -> void:
@@ -13644,16 +13647,19 @@ func _audio_cast_start(skill_id: int) -> void:
 
 ## The player's blow lands on `monster`: the hit sound at the player (the
 ## attacker, CombatAudio's header), and for a cast its second SHOT rows, its
-## activation (snd_activate) and its ACT_S / ACT_L rows. No hit sound for a
-## blow that dealt nothing: retail's hit sound starts with the damage
-## decoration (CIDecoDamageEffect), which a blow without damage does not get
-## (INFERRED).
+## activation (snd_activate) and its ACT_S / ACT_L rows.
+## Retail makes the damage decoration, and so the hit sound, for EVERY damage
+## record whose caster and target resolve -- no damage or kind check
+## (IDecoSkill::FUN_00a4bdd0 / FUN_00a4f720, READ; review of round 614) -- so
+## a plain swing sounds whatever it dealt, 0 included. A CAST that dealt 0 is
+## silent here (OURS): OpAttackResult cannot tell a zero-damage blow from a
+## cast that made no damage record at all (a self-heal, a buff).
 func _audio_blow_lands(blow: Dictionary, dealt: int, monster: int) -> void:
 	var skill := int(blow["skill"])
 	var ctx := SkillAudio.context_for(skill)
 	var what := "%s on monster %d, %d damage" % [
 		"skill %d" % skill if bool(blow["cast"]) else "plain swing (skill %d)" % skill, monster, dealt]
-	if dealt > 0:
+	if dealt > 0 or not bool(blow["cast"]):
 		CombatAudio.play_hit(bool(blow["critical"]), CombatAudio.PLAYER, bool(blow["hwan"]),
 			String(ctx["group"]), String(ctx["code"]), _player_weapon_token(), player, what)
 	if not bool(blow["cast"]):
@@ -13677,7 +13683,16 @@ func _audio_monster_blow(monster: int, critical: bool, what: String) -> void:
 	CombatAudio.play_hit(critical, obj, false, CombatAudio.NONE, CombatAudio.NONE, "", body,
 		"monster %d (%s) %s" % [monster, obj if obj != "" else "no sound object", what])
 
-## A shield block on a player character, at the blocker.
+## A shield block on a player character, at the blocker. The blocked record
+## still gets its damage decoration, so the attacker's snd_dmg / snd_cridmg
+## plays beside it (FUN_00a49780 has no block check, READ): the callers pair
+## this with _audio_monster_blow.
+## Not implemented: retail's gate on the call that plays it -- FUN_00a49290
+## reaches FUN_00a47bf0 only when the struck object's +0x65c & 1 is set, its
+## +0xbc byte is non-zero, its +0x24c distance is under the constant at
+## 0xe1b8b8 or param_3 is the local player (DAT_00eef5ec), and the global flag
+## DAT_00ec4b58 is set (READ, 0xa49290's tail) -- none of which is modelled:
+## every block the client learns of sounds.
 func _audio_block(blocker: Node3D, critical: bool, what: String) -> void:
 	CombatAudio.play_block(CombatAudio.PLAYER, critical, blocker, what)
 

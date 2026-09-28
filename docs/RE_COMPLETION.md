@@ -46635,9 +46635,50 @@ unreachable: silent`, `FAIL the block key finds its row`.
 `remote_godot.sh check` ALL LOAD (334 scripts); `tests` 130 suites, 0 failing, 0 SCRIPT ERROR;
 Go build and `go test -count=1 -p 1 ./...` green.
 
+### Review follow-up (round 614)
+
+Review approved 4e084fa and corrected five points; the follow-up commit applies them.
+
+- **SndEnd is READ, not open.** `IDecoSkill::FUN_00a4fe70` plays +0x98 (SndBegin) and then +0x9c
+  (SndEnd) in the same call at the caster when row +0x10 is 0, and queues both when it is not. So
+  every fired row now plays its SndEnd after its SndBegin, and a row whose SndBegin is `none` but
+  whose SndEnd names a file is kept (150 such rows of 187 with a SndEnd, MEASURED; e.g. the SHOT
+  rows of `SKILL_CH_COLD_GIGONGSUL_B/D`, `SKILL_CH_FIRE_GIGONGSUL_G`). All 20 distinct SndEnd
+  values exist under `prim\snd\` (MEASURED).
+- **`FUN_00a65180` on a dangling or negative link returns `-`**, not the unlinked record's own
+  names; `SkillAudio.root_id` now walks as retail does (410 of 23,935 skills affected, none the
+  server sends today, per review). A cycle, which would never end in retail, gives `-` (OURS).
+- **"No damage, no hit sound" was wrong.** `IDecoSkill::FUN_00a4bdd0` / `FUN_00a4f720` make the
+  damage decoration for every record whose caster and target resolve, and `FUN_00a49780` has no
+  block check. A plain swing now sounds at 0 damage too, and a blocked monster blow plays the
+  monster's hit chain beside `snd_blocking`. A CAST that dealt 0 stays silent, labelled OURS:
+  OpAttackResult cannot tell a zero-damage blow from a cast with no damage record.
+- **Upgraded to READ:** hits play at the attacker (`FUN_00a4bdd0` passes the skill decoration's
+  +0x170 -- from deco+0x58, the skill's owner -- in `FUN_00a49290`'s attacker slot, pushes from
+  0xa4bebd); the block's CRITYCAL (`mov [ebp+0x441], dl` at 0xa4935d, dl = the damage record's
+  flags byte +10). The ~100 ms decoration delay is not modelled (OURS).
+- **Counts and gaps recorded:** 212 non-player *objects* have snd_dmg rows (845 rows under 817
+  keys, re-counted). Retail gates the call to `FUN_00a47bf0` (struck object +0x65c & 1, +0xbc,
+  distance under 0xe1b8b8's constant or the local player, DAT_00ec4b58) -- not implemented.
+  `snd_blocking` is also a `.bsr` track name (round 613's path): whoever wires the block animation
+  decides whether both may sound.
+
+Negatives, the new checks against 4e084fa's scripts:
+
+```
+FAIL World3D calls _audio_monster_blow(monster, result.monster_critical, "blocked counter
+FAIL World3D calls if dealt > 0 or not bool(blow["cast"]):
+FAIL a Basic_Original cycle stops, as '-'
+FAIL a dangling Basic_Original keys as '-' ({ "id": 501, "code": "TEST_DANGLING_01", "group": "TEST_DANGLING" })
+FAIL a negative Basic_Original keys as '-' ({ "id": 601, "code": "TEST_NEG_01", "group": "TEST_NEG" })
+FAIL six sound rows for the skill: a row with SndEnd alone is kept; none/none, an unknown AniType and other sections are dropped (5)
+FAIL SHOT rows split by StartEvent; each row's SndBegin then its SndEnd, a SndEnd-only row too (prim\snd\test\shot1.wav)
+FAIL StartEvent -1 takes every SHOT row's sounds
+```
+
 ### Open
 
 Monster hit sounds (the server names no monster attack skill); `snd_ddmg` (no absorbing skill);
 a cast's result is paired by order, not by id (OpAttackResult carries no skill); WAIT, SHOT past
-StartEvent 1, ACT_OS/OL/OE, DEACT, S_RETURN and every SndEnd; the +0x10 moving-row queue; a live
-block (needs a shield on the QA character).
+StartEvent 1, ACT_OS/OL/OE, DEACT, S_RETURN; the +0x10 moving-row queue; the ~100 ms decoration
+delay; retail's block-sound gate; a live block (needs a shield on the QA character).

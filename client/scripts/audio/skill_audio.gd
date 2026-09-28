@@ -40,17 +40,20 @@ class_name SkillAudio
 ##    The AniType names are the table at 0xec7158 (READ):
 ##      READY 0, WAIT 1, SHOT 2, ACT_OS 3, ACT_OL 4, ACT_OE 5, ACT_S 6,
 ##      ACT_L 7, DEACT 8, S_RETURN 9.
-##    IDecoSkill::FUN_00a4fe70 plays a triggered row's +0x98 and +0x9c paths
-##    through the sound manager's play-a-file slot (+0x30) at the caster
-##    (+0x58 -> +0x90) at volume 1.0 (0x3f800000) -- READ. That +0x98/+0x9c
-##    are SndBegin/SndEnd is INFERRED (they are the last two dwords of the
-##    0xa0-byte row the loader fills in column order, and the last two columns
-##    are the two sound names). A row whose ushort +0x10 is non-zero is queued
-##    on the decoration's moving-object list with the caster's position
-##    instead of played at once (READ); which column +0x10 is was not read,
-##    and this client plays every row at once (OURS).
-##    The path is "prim\snd\" + SndBegin: MEASURED, all 179 distinct SndBegin
-##    values exist under Data.pk2 Prim\Snd\, none elsewhere.
+##    IDecoSkill::FUN_00a4fe70 plays a triggered row's +0x98 and then its
+##    +0x9c path, in the same call, through the sound manager's play-a-file
+##    slot (+0x30) at the caster (+0x58 -> +0x90) at volume 1.0 (0x3f800000)
+##    when the row's ushort +0x10 is 0, and queues both on the decoration's
+##    moving-object list with the caster's position when it is not -- READ.
+##    +0x98/+0x9c are SndBegin/SndEnd (the last two dwords of the 0xa0-byte
+##    row the loader fills in column order; review of round 614). So SndEnd is
+##    NOT an "end of phase" sound: it plays with SndBegin, at the same moment.
+##    Which column +0x10 is was not read; this client plays every row at once
+##    (OURS).
+##    A row counts when EITHER column names a file: 991 rows carry a
+##    SndBegin, 187 a SndEnd, 150 of them with SndBegin "none" (MEASURED, rows
+##    of a named AniType). Every one of the 179 distinct SndBegin and 20
+##    distinct SndEnd values exists as Data.pk2 "prim\snd\" + the value.
 ##    WHICH SKILL A ROW BELONGS TO: the SkillEffectID is a skill's Basic_Group
 ##    for 249 of the 287 SKILL_CH_ ids and its Basic_Code for 4 (the _BASE_01
 ##    attacks); the rest name skills outside the six tables read (MEASURED).
@@ -71,8 +74,8 @@ class_name SkillAudio
 ##          rows of those four types, MEASURED)
 ##      left out, OPEN: WAIT (a charge phase), SHOT of StartEvent >= 2 (later
 ##          clip events, whose times this client does not know; no China
-##          skill has one, MEASURED), ACT_OS/ACT_OL/ACT_OE, DEACT, S_RETURN,
-##          and every SndEnd (when retail fires it is not read).
+##          skill has one, MEASURED), ACT_OS/ACT_OL/ACT_OE, DEACT, S_RETURN.
+##      A fired row plays its SndBegin and then its SndEnd (READ, above).
 
 const SKILLEFFECT_PATH := "server_dep\\silkroad\\textdata\\skilleffect.txt"
 const EFFECT_SECTION := "skilleffectset"
@@ -106,6 +109,7 @@ const E_ID := 1
 const E_ANI_TYPE := 2
 const E_START_EVENT := 3
 const E_SND_BEGIN := 26
+const E_SND_END := 27
 
 # The tables, loaded once on first use from Media.pk2 (set_tables in tests).
 static var _skills: Dictionary = {}          # id -> PackedStringArray [code, group, original]
@@ -132,12 +136,13 @@ static func parse_skills(bytes: PackedByteArray, into: Dictionary = {}) -> Dicti
 	return into
 
 ## skilleffect.txt bytes -> SkillEffectID -> Array of [ani_type, start_event,
-## "prim\snd\..." path], only rows of `#section skilleffectset` whose SndBegin
-## names a file.
+## SndBegin path, SndEnd path] ("prim\snd\..." lowercased, "" for none), only
+## rows of `#section skilleffectset` where either column names a file.
 static func parse_effect_sounds(bytes: PackedByteArray) -> Dictionary:
 	var out: Dictionary = {}
 	var in_section := false
-	var snd_col := E_SND_BEGIN
+	var begin_col := E_SND_BEGIN
+	var end_col := E_SND_END
 	for raw in _utf16_lines(bytes):
 		var line: String = raw
 		if line.begins_with("#section"):
@@ -150,22 +155,32 @@ static func parse_effect_sounds(bytes: PackedByteArray) -> Dictionary:
 			var header := line.substr(2).split("\t")
 			var at := header.find("SndBegin")
 			if at >= 0:
-				snd_col = at
+				begin_col = at
+				var at_end := header.find("SndEnd")
+				end_col = at_end if at_end >= 0 else at + 1
 			continue
 		var cols := line.split("\t")
-		if cols.size() <= snd_col:
+		if cols.size() <= begin_col:
 			continue
 		var id := cols[E_ID].strip_edges()
 		var ani := cols[E_ANI_TYPE].strip_edges()
-		var snd := cols[snd_col].strip_edges()
-		if id == "" or not ANI_TYPES.has(ani) or snd == "" or snd.to_lower() == "none":
+		var begin := _sound_path(cols[begin_col])
+		var end := _sound_path(cols[end_col]) if cols.size() > end_col else ""
+		if id == "" or not ANI_TYPES.has(ani) or (begin == "" and end == ""):
 			continue
 		var start_text := cols[E_START_EVENT].strip_edges()
 		var start_event := int(start_text) if start_text.is_valid_int() else 0
 		if not out.has(id):
 			out[id] = []
-		(out[id] as Array).append([int(ANI_TYPES[ani]), start_event, (SOUND_PREFIX + snd).to_lower()])
+		(out[id] as Array).append([int(ANI_TYPES[ani]), start_event, begin, end])
 	return out
+
+## A sound column as a Data.pk2 path, or "" for an empty or "none" cell.
+static func _sound_path(cell: String) -> String:
+	var v := cell.strip_edges()
+	if v == "" or v.to_lower() == "none":
+		return ""
+	return (SOUND_PREFIX + v).to_lower()
 
 static func _utf16_lines(bytes: PackedByteArray) -> PackedStringArray:
 	if bytes.is_empty():
@@ -178,19 +193,23 @@ static func _utf16_lines(bytes: PackedByteArray) -> PackedStringArray:
 
 # --- lookups (pure, against given tables) -----------------------------------
 
-## The record FUN_00a65180 ends on: follow Basic_Original while it names a
-## known skill (a loop guard stops a cycle). -1 when `id` is unknown.
+## The record FUN_00a65180 ends on, as it walks (READ): while the id is not
+## negative and names a record, take that record's link; a link of 0 ends
+## the walk on that record. An id that is negative or names no record --
+## the start or any link on the way -- ends it with L"-", here -1. So a
+## skill whose Basic_Original dangles keys as "-", not by its own names.
+## A cycle would never end in retail; the guard here gives -1 (OURS).
 static func root_id(skills: Dictionary, id: int) -> int:
-	if not skills.has(id):
-		return -1
 	var at := id
 	for _i in range(16):
+		if at < 0 or not skills.has(at):
+			return -1
 		var link_text: String = (skills[at] as PackedStringArray)[2]
 		var link := int(link_text) if link_text.is_valid_int() else 0
-		if link == 0 or not skills.has(link):
+		if link == 0:
 			return at
 		at = link
-	return at
+	return -1
 
 ## {"id", "code", "group"} for a skill id against `skills`; "-" for unknown.
 static func context_in(skills: Dictionary, skill_id: int) -> Dictionary:
@@ -201,17 +220,19 @@ static func context_in(skills: Dictionary, skill_id: int) -> Dictionary:
 	return {"id": skill_id, "code": row[0] if row[0] != "" else NONE,
 		"group": row[1] if row[1] != "" else NONE}
 
-## The SndBegin paths of `skill_id`'s rows of one phase (and StartEvent, or
-## any with -1), in file order.
+## The paths of `skill_id`'s rows of one phase (and StartEvent, or any with
+## -1): each row's SndBegin, then its SndEnd, in file order.
 static func sounds_in(skills: Dictionary, effects: Dictionary, skill_id: int, ani_type: int,
 		start_event: int = -1) -> PackedStringArray:
 	var out := PackedStringArray()
 	for row in effect_rows_in(skills, effects, skill_id):
 		if int(row[0]) == ani_type and (start_event < 0 or int(row[1]) == start_event):
-			out.append(String(row[2]))
+			for i in [2, 3]:
+				if String(row[i]) != "":
+					out.append(String(row[i]))
 	return out
 
-## All SndBegin rows for a skill: by its group, else its code, after one
+## All sound rows (SndBegin and/or SndEnd) for a skill: by its group, else its code, after one
 ## Basic_Original step (FUN_00a95dc0).
 static func effect_rows_in(skills: Dictionary, effects: Dictionary, skill_id: int) -> Array:
 	if not skills.has(skill_id):
@@ -245,7 +266,7 @@ static func warm() -> void:
 	var rows := 0
 	for k in _effects:
 		rows += (_effects[k] as Array).size()
-	print("AUDIO skills: %d skill rows, %d SndBegin rows under %d effect ids (%d ms)" % [
+	print("AUDIO skills: %d skill rows, %d sound rows (SndBegin/SndEnd) under %d effect ids (%d ms)" % [
 		_skills.size(), rows, _effects.size(), Time.get_ticks_msec() - t0])
 
 ## Test seam: use these tables instead of the archive's.
@@ -284,7 +305,7 @@ static func context_of(obj: Object) -> Dictionary:
 
 # --- firing ------------------------------------------------------------------
 
-## Plays the SndBegin of `skill_id`'s rows of one phase at `caster`, each as
+## Plays the SndBegin, then the SndEnd, of `skill_id`'s rows of one phase at `caster`, each as
 ## a file at volume 1.0, and logs each. `start_event` -1 = every StartEvent.
 ## Returns the paths played.
 static func play_phase(skill_id: int, ani_type: int, start_event: int, caster: Node3D,
@@ -306,7 +327,11 @@ static func unplayed_rows(skill_id: int) -> Array:
 		var ani := int(row[0])
 		var fired := ani == READY or ani == ACT_S or ani == ACT_L or (ani == SHOT and int(row[1]) <= 1)
 		if not fired:
-			out.append("%s/%d %s" % [_phase_name(ani), int(row[1]), String(row[2])])
+			var paths := PackedStringArray()
+			for i in [2, 3]:
+				if String(row[i]) != "":
+					paths.append(String(row[i]))
+			out.append("%s/%d %s" % [_phase_name(ani), int(row[1]), " + ".join(paths)])
 	return out
 
 static func _phase_name(ani_type: int) -> String:

@@ -251,8 +251,18 @@ plays at **its object's own position** (`FUN_00a64900(out, obj+0x90, ...)`).
 | a blocked blow (damage record byte +9 == 2) | `FUN_00a47bf0` | `snd_blocking` | the struck object, skill 0 |
 | a skill decoration activates | `FUN_00a53850` | `snd_activate` | the caster, its skill |
 
-deco+0x70 is the **attacker** (INFERRED: all 212 non-player `snd_dmg` rows are keyed by that
-monster's own attack skill, MEASURED), so a hit sounds **at the attacker**.
+deco+0x70 is the **attacker** (READ, review of round 614: `IDecoSkill::FUN_00a4bdd0` passes the
+skill decoration's +0x170 in `FUN_00a49290`'s attacker slot, the pushes from 0xa4bebd to the call
+at 0xa4bec1, and +0x170 comes from deco+0x58, the skill's owner). The rows agree: the **212
+non-player objects** with `snd_dmg` rows (845 rows under 817 keys, MEASURED) key them by their own
+attack skill. So a hit sounds **at the attacker**. The damage decoration starts about 100 ms after
+it is made (review of round 614; the constant not re-read here); this client plays the hit at the
+blow's landing with no such delay (OURS).
+
+`CIDecoDamageEffect` is made (`IDecoSkill::FUN_00a4bdd0` / `FUN_00a4f720`) for **every** damage
+record whose caster and target resolve, with no damage or kind check, and `FUN_00a49780` has no
+block check: a zero-damage blow and a blocked blow both play the attacker's hit sound (READ,
+review of round 614).
 
 | Handle | Player character (`PLAYER`) | Anything else (`<obj>` = obj+0x664) |
 |---|---|---|
@@ -262,7 +272,10 @@ monster's own attack skill, MEASURED), so a hit sounds **at the attacker**.
 | `snd_activate` (0xa71c10) | `PLAYER:snd_activate:<group>:-:-:-` | nothing |
 
 - `<group>` / `<code>`: the skill's Basic_Group / Basic_Code after following the +0x5c link to 0
-  (`GEffSound::FUN_00a65180`), `-` (DAT_00d81ea0) with no skill. The link is skilldata's
+  (`GEffSound::FUN_00a65180`); `-` (DAT_00d81ea0) with no skill, and also when the start id or
+  any link on the way is negative or names no record -- a dangling Basic_Original keys as `-`,
+  not by the skill's own names (READ; 410 of the 23,935 skills, none the server sends today,
+  review of round 614). The link is skilldata's
   Basic_Original, column 6 0-based (INFERRED: `GSKILL_CH_SWORD_BASE_00n` carry 2, the id of
   `SKILL_CH_SWORD_BASE_01`; every China mastery skill 0).
 - "Missing" is exact: `FUN_00a6f7f0` returns 0 only for a key not in the table; a culled or
@@ -276,8 +289,18 @@ monster's own attack skill, MEASURED), so a hit sounds **at the attacker**.
   finds a row**; nor do the `- HWAN <weapon> -` rows against `PLAYER:snd_dmg:-:HWAN:-:-`.
   (audio_spec 5 and sec_B wrote the weapon key with six tokens; the asm has five.) INFERRED: in
   retail every blow carries a skill, so the group key is what sounds.
-- CRITYCAL on a block is `obj+0x441 & 2` (`FUN_00a63560`); that it is the blow's critical flag is
-  INFERRED (bit 2 is the critical in the damage record's flags too).
+- CRITYCAL on a block is `obj+0x441 & 2` (`FUN_00a63560`), and `FUN_00a49290` stores the damage
+  record's flags byte +10 there first (`mov [ebp+0x441], dl` at 0xa4935d): CRITYCAL is the
+  blocked blow's critical (READ, review of round 614).
+- **The block sound's gate (READ, not implemented):** `FUN_00a49290` calls `FUN_00a47bf0` only when
+  the struck object's +0x65c & 1 is set, its +0xbc byte is non-zero, its +0x24c distance is under
+  the constant at 0xe1b8b8 or param_3 is the local player (DAT_00eef5ec), and the global flag
+  DAT_00ec4b58 is set. This client sounds every block it learns of.
+- **A decision for whoever wires the block animation:** `snd_blocking` is also one of the 52
+  handler names a `.bsr` sound track can fire (round 613's animation-fired path). If a block clip's
+  track names it, the block would sound twice -- once from this code path, once from the track.
+  Which one retail relies on for a given clip is not read; decide when the block animation is
+  built.
 
 ### What this client feeds them
 
@@ -287,19 +310,21 @@ monster's own attack skill, MEASURED), so a hit sounds **at the attacker**.
   (`SkillBook::DefaultAttackSkillIDForWeaponTID`, 0x0059e650; `combat.BaseAttackSkillFor`, READ in
   round 256), mirrored as `CombatAudio.BASE_ATTACK_SKILL`: the server resolves a swing to it and
   retail's decoration carries it, while srrevamp's OpAttackResult names no skill. Critical is
-  `AttackResult.player_critical`, berserk `berserk_active`. No hit sound for a blow that dealt
-  nothing (INFERRED: no damage decoration). A sword swing therefore plays
+  `AttackResult.player_critical`, berserk `berserk_active`. A plain swing sounds whatever it
+  dealt, 0 included (as retail, above); a **cast** that dealt 0 is silent (OURS: OpAttackResult
+  cannot tell a zero-damage blow from a cast with no damage record, a self-heal or a buff). A sword swing therefore plays
   `PLAYER:snd_dmg:SKILL_CH_SWORD_BASE:-:-:-` (the six `batSwordHit*` files, MEASURED), a Smash
   `PLAYER:snd_dmg:SKILL_CH_SWORD_SMASH_A:-:-:-`. A bare hand's group is `SKILL_PUNCH`, while the
   table's punch rows say `SKILL_PUNCH_BASE` (MEASURED): **a bare-handed hit is silent**, as the
   keys say it is in retail.
-- **A monster's blow on a character** (`_audio_monster_blow`, when its strike lands): the
+- **A monster's blow on a character** (`_audio_monster_blow`, when its strike lands, blocked or
+  not): the
   monster's sound object (`SoundTable.sound_object`) at the monster, with skill `-`, because the
   server names no monster attack skill. Every monster hit row names one (MEASURED), so this is
   **silent and logged** until the server sends the skill (OPEN).
 - **A block** (`_audio_block`): the player's shield stopped the counter (`player_blocked`, or
   OpMonsterAttacked's blocked flag for any character), at the blocker, when the monster's blow
-  would land; CRITYCAL from the blow's critical flag (INFERRED, above).
+  would land; CRITYCAL from the blow's critical flag (READ, above).
 - **`snd_ddmg`**: no caller. srrevamp has no absorbing skill (ice wall, screens), so the client
   never learns of such a blow (OPEN). `CombatAudio.play_ddmg` is ready.
 - **`snd_activate`**: when the server accepts a cast (INFERRED for the moment, below). Its only
@@ -308,18 +333,21 @@ monster's own attack skill, MEASURED), so a hit sounds **at the attacker**.
 ### skilleffect.txt `#section skilleffectset` (READ; loader `GlobalEffectManager::FUN_00a9d0f0`)
 
 UTF-16. The file's own header names the columns; 0-based: 1 SkillEffectID, 2 AniType,
-3 StartEvent, 26 SndBegin, 27 SndEnd (SkillAudio reads SndBegin's index off the header). The
+3 StartEvent, 26 SndBegin, 27 SndEnd (SkillAudio reads both indexes off the header). The
 loader files a row under its skill at +0xbc + AniType*4 (`SETOE.m_byAniType <
 MAX_SKILL_EFF_TABLE`, 10), then by StartEvent. AniType names, the table at 0xec7158: **READY 0,
 WAIT 1, SHOT 2, ACT_OS 3, ACT_OL 4, ACT_OE 5, ACT_S 6, ACT_L 7, DEACT 8, S_RETURN 9**.
 
-- `IDecoSkill::FUN_00a4fe70` plays a triggered row's +0x98 and +0x9c paths through the sound
-  manager's play-a-file slot (+0x30) at the caster, volume 1.0. That they are SndBegin/SndEnd is
-  INFERRED (the last two dwords of the 0xa0-byte row filled in column order). A row whose ushort
-  +0x10 is non-zero is queued on a moving-object list instead (READ; its column not read; played
-  at once here, OURS).
-- Path = `prim\snd\` + SndBegin: MEASURED, all 179 distinct values exist under Data.pk2
-  `Prim\Snd\`.
+- `IDecoSkill::FUN_00a4fe70` plays a triggered row's +0x98 (SndBegin) and then its +0x9c (SndEnd)
+  **in the same call**, through the sound manager's play-a-file slot (+0x30) at the caster, volume
+  1.0, when the row's ushort +0x10 is 0, and queues both on a moving-object list when it is not
+  (READ, review of round 614). **SndEnd is not an end-of-phase sound: it plays with SndBegin.**
+  +0x10's column is not read; every row is played at once here (OURS).
+- A row counts when either column names a file: SndBegin on 991 rows, SndEnd on 187, 150 of those
+  with SndBegin `none` (MEASURED; e.g. the SHOT rows of `SKILL_CH_COLD_GIGONGSUL_B/D` and
+  `SKILL_CH_FIRE_GIGONGSUL_G`, and several EU rows).
+- Path = `prim\snd\` + the value: MEASURED, all 179 distinct SndBegin and 20 distinct SndEnd
+  values exist under Data.pk2 `Prim\Snd\`.
 - A skill's rows: SkillEffectID = its Basic_Group for 249 of 287 `SKILL_CH_` ids, its Basic_Code
   for 4 (the `_BASE_01` attacks), the rest outside the six tables read (MEASURED); looked up by
   group, then code, after one Basic_Original step (`FUN_00a95dc0`).
@@ -336,7 +364,9 @@ skill-action messages and the clip's events, which srrevamp does not have):
 | the cast starts (clip starts, OpUseSkill sent) | READY; SHOT with StartEvent 0 |
 | the blow lands | SHOT with StartEvent 1 |
 | the server accepts the cast (same moment) | `snd_activate`, ACT_S, ACT_L (the s = 3 path; ACT_S/ACT_L are 1,418 of 1,452 rows of the four types) |
-| never (OPEN) | WAIT, SHOT StartEvent >= 2 (no China skill has one), ACT_OS/OL/OE, DEACT, S_RETURN, every SndEnd |
+| never (OPEN) | WAIT, SHOT StartEvent >= 2 (no China skill has one), ACT_OS/OL/OE, DEACT, S_RETURN |
+
+Every fired row plays its SndBegin and then its SndEnd (READ, above).
 
 A cast logs the rows it leaves out once (`AUDIO cast: skill <id> rows this client does not fire`).
 

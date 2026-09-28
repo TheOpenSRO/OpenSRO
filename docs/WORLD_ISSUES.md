@@ -7125,6 +7125,11 @@ shows it.
 planted bugs (a six-token weapon key, a block without CRITYCAL) FAIL four named checks. 130
 suites, 0 failing.
 
+**Review follow-up:** SndEnd is read -- it plays with SndBegin, in the same call -- and rows with
+only a SndEnd are kept; a dangling Basic_Original keys as `-`, as retail's walk does; a plain swing
+sounds at 0 damage and a blocked blow plays the attacker's hit too (retail makes the damage
+decoration for every record); the attacker side and the block's CRITYCAL are now READ.
+
 ## Six-hundred-and-thirteenth round: footsteps sound by the ground underfoot, and swings, hurt and death voices play on the animation that makes them
 
 - **What:** each character `.bsr`'s sound tracks (the mod-data section at header 0x24, now parsed:

@@ -22,15 +22,20 @@ class_name CombatAudio
 ## - FUN_00a53850 -- the skill decoration's activation (the same function
 ##   triggers the skilleffectset ACT_S/ACT_L rows): `snd_activate` on the
 ##   caster with the skill.
-## WHICH SIDE deco+0x70 is: INFERRED the ATTACKER. The monster rows under
-## snd_dmg are keyed by that monster's OWN attack skill
-## (`MOB_MANGNYANG SND_DMG MSKILL_CH_MANGNYANG_ATTACK01`, MEASURED: all 212
-## non-player snd_dmg rows carry a skill), and the player rows by the weapon
-## and the skill group -- the striker's, not the struck's.
+## WHICH SIDE deco+0x70 is: the ATTACKER (READ, review of round 614).
+## IDecoSkill::FUN_00a4bdd0 calls FUN_00a49290 with the skill decoration's
+## +0x170 in the attacker's slot (the pushes before the call at 0xa4bec1,
+## 0xa4bebd onward), and +0x170 is filled from deco+0x58, the skill's owner
+## (the caster). The rows agree: the 212 non-player objects with snd_dmg rows
+## (845 rows under 817 keys, MEASURED) key them by the object's OWN attack
+## skill (`MOB_MANGNYANG SND_DMG MSKILL_CH_MANGNYANG_ATTACK01`).
 ## WHERE IT PLAYS (READ): every one of these handlers plays at its object's
 ## own position (`FUN_00a64900(out, obj+0x90, ...)` in 0xa708f0, 0xa70410,
-## 0xa70280, 0xa71c10). So a hit sounds at the ATTACKER (the inferred side
-## above), a block at the blocker, an activation at the caster.
+## 0xa70280, 0xa71c10). So a hit sounds at the ATTACKER, a block at the
+## blocker, an activation at the caster.
+## WHEN: the damage decoration starts about 100 ms after it is made (review
+## of round 614; the delay's constant is not re-read here); this client plays
+## the hit when its blow lands, with no such delay (OURS).
 ##
 ## THE KEYS (READ; handlers 0xa70410, 0xa708f0, 0xa70f30, 0xa70280, 0xa71c10):
 ## "PLAYER" is the object for a character whose refobj TypeID is a player
@@ -68,10 +73,11 @@ class_name CombatAudio
 ## in equipment slot 6 through FUN_00a64560 on its TypeID4, `PUNCH` with the
 ## slot empty (FUN_00a648d0) -- WEAPON_TOKENS below, READ; a TypeID4 the
 ## switch does not name gives "" (DAT_00e17460, READ).
-## CRITYCAL on a block is chosen by `obj+0x441 & 2` (FUN_00a63560, READ);
-## that this bit is the blocked blow's critical flag is INFERRED (the damage
-## record's critical is the same bit 2 of its flags, CIDecoDamageEffect
-## +0x78 and FUN_00a49290's camera shake).
+## CRITYCAL on a block is chosen by `obj+0x441 & 2` (FUN_00a63560), and
+## FUN_00a49290 stores the damage record's flags byte (+10) there first:
+## `mov [ebp+0x441], dl` at 0xa4935d, dl = the record's +10 (READ, review of
+## round 614). Bit 2 of that byte is the critical, the same bit the damage
+## decoration tests at +0x78 -- so CRITYCAL is the blocked blow's critical.
 
 const PLAYER := "PLAYER"
 const NONE := "-"

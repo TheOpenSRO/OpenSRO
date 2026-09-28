@@ -26,12 +26,13 @@ func _skill_row(id: int, code: String, group: String, original: int) -> String:
 	return "1\t%d\t%d\t%s\tname\t%s\t%d\t1\t0\t0\t0\r\n" % [id, id, code, group, original]
 
 ## One skilleffectset-shaped row with SndBegin at `snd_col` (0-based).
-func _effect_row(label: String, id: String, ani: String, start_event: int, snd: String, snd_col: int = 26) -> String:
+func _effect_row(label: String, id: String, ani: String, start_event: int, snd: String,
+		snd_end: String = "none", snd_col: int = 26) -> String:
 	var cols: Array = [label, id, ani, str(start_event)]
 	while cols.size() < snd_col:
 		cols.append("x")
 	cols.append(snd)
-	cols.append("none")
+	cols.append(snd_end)
 	return "\t".join(PackedStringArray(cols)) + "\r\n"
 
 func _initialize() -> void:
@@ -53,8 +54,10 @@ func _initialize() -> void:
 	sd += _skill_row(301, "TEST_BASE_01", "TEST_BASE", 0)
 	sd += _skill_row(401, "TEST_LOOP_01", "TEST_LOOP", 402)
 	sd += _skill_row(402, "TEST_LOOP_02", "TEST_LOOP", 401)
+	sd += _skill_row(501, "TEST_DANGLING_01", "TEST_DANGLING", 999)
+	sd += _skill_row(601, "TEST_NEG_01", "TEST_NEG", -5)
 	var skills: Dictionary = sa.parse_skills(_utf16(sd))
-	_check(skills.size() == 6, "six skill rows parse, the comment does not (%d)" % skills.size())
+	_check(skills.size() == 8, "eight skill rows parse, the comment does not (%d)" % skills.size())
 	var c102: Dictionary = sa.context_in(skills, 102)
 	_check(c102["code"] == "TEST_SKILL_A_02" and c102["group"] == "TEST_SKILL_A", "a skill's own code and group")
 	var c201: Dictionary = sa.context_in(skills, 201)
@@ -63,7 +66,14 @@ func _initialize() -> void:
 	var c0: Dictionary = sa.context_in(skills, 0)
 	var c999: Dictionary = sa.context_in(skills, 999)
 	_check(c0["code"] == "-" and c0["group"] == "-" and c999["group"] == "-", "no skill or an unknown one is '-'")
-	_check(sa.root_id(skills, 401) >= 0, "a Basic_Original cycle stops")
+	_check(sa.root_id(skills, 401) == -1, "a Basic_Original cycle stops, as '-'")
+	# FUN_00a65180: a link that names no record, or a negative one, ends the
+	# walk with L"-" -- not with the unlinked record's own names.
+	var c501: Dictionary = sa.context_in(skills, 501)
+	_check(c501["code"] == "-" and c501["group"] == "-", "a dangling Basic_Original keys as '-' (%s)" % str(c501))
+	var c601: Dictionary = sa.context_in(skills, 601)
+	_check(c601["code"] == "-" and c601["group"] == "-", "a negative Basic_Original keys as '-' (%s)" % str(c601))
+	_check(sa.context_in(skills, -3)["group"] == "-", "a negative skill id keys as '-'")
 
 	# skilleffectset: only its own section, only rows with a SndBegin.
 	var se := "#section\tcharacterInfo\t\r\n"
@@ -77,7 +87,8 @@ func _initialize() -> void:
 	se += "\t".join(PackedStringArray(header)) + "\r\n"
 	se += _effect_row("label", "TEST_SKILL_A", "READY", 0, "test\\Ready.WAV")
 	se += _effect_row("-", "TEST_SKILL_A", "SHOT", 0, "test\\shot0.wav")
-	se += _effect_row("-", "TEST_SKILL_A", "SHOT", 1, "test\\shot1.wav")
+	se += _effect_row("-", "TEST_SKILL_A", "SHOT", 1, "test\\shot1.wav", "test\\Shot1_End.wav")
+	se += _effect_row("-", "TEST_SKILL_A", "SHOT", 1, "none", "test\\end_only.wav")
 	se += _effect_row("-", "TEST_SKILL_A", "SHOT", 2, "test\\shot2.wav")
 	se += _effect_row("-", "TEST_SKILL_A", "ACT_S", 0, "none")
 	se += _effect_row("-", "TEST_SKILL_A", "WAIT", 0, "test\\wait.wav")
@@ -87,13 +98,15 @@ func _initialize() -> void:
 	se += _effect_row("-", "TEST_SKILL_A", "SHOT", 1, "test\\after.wav")
 	var effects: Dictionary = sa.parse_effect_sounds(_utf16(se))
 	var rows: Array = effects.get("TEST_SKILL_A", [])
-	_check(rows.size() == 5, "five SndBegin rows for the skill: none, an unknown AniType and other sections are dropped (%d)" % rows.size())
+	_check(rows.size() == 6, "six sound rows for the skill: a row with SndEnd alone is kept; none/none, an unknown AniType and other sections are dropped (%d)" % rows.size())
 	var ready: PackedStringArray = sa.sounds_in(skills, effects, 102, sa.READY)
 	_check(ready.size() == 1 and ready[0] == "prim\\snd\\test\\ready.wav",
 		"READY's SndBegin, as prim\\snd\\ + the column, lowercased (%s)" % ",".join(ready))
 	var shot1: PackedStringArray = sa.sounds_in(skills, effects, 101, sa.SHOT, 1)
-	_check(shot1.size() == 1 and shot1[0] == "prim\\snd\\test\\shot1.wav", "SHOT rows split by StartEvent (%s)" % ",".join(shot1))
-	_check(sa.sounds_in(skills, effects, 101, sa.SHOT).size() == 3, "StartEvent -1 takes every SHOT row")
+	_check(shot1.size() == 3 and shot1[0] == "prim\\snd\\test\\shot1.wav" and shot1[1] == "prim\\snd\\test\\shot1_end.wav"
+		and shot1[2] == "prim\\snd\\test\\end_only.wav",
+		"SHOT rows split by StartEvent; each row's SndBegin then its SndEnd, a SndEnd-only row too (%s)" % ",".join(shot1))
+	_check(sa.sounds_in(skills, effects, 101, sa.SHOT).size() == 5, "StartEvent -1 takes every SHOT row's sounds")
 	_check(sa.sounds_in(skills, effects, 201, sa.SHOT, 0).size() == 1, "an aliased skill finds its original's rows")
 	var base: PackedStringArray = sa.sounds_in(skills, effects, 301, sa.SHOT, 1)
 	_check(base.size() == 1 and base[0] == "prim\\snd\\test\\base.wav", "a row keyed by Basic_Code is found when the group has none")
@@ -101,10 +114,11 @@ func _initialize() -> void:
 
 	# A header that puts SndBegin elsewhere moves the column.
 	var se2 := "#section\tskilleffectset\r\n//a\tSkillEffectID\tAniType\tStartEvent\tSndBegin\tSndEnd\r\n"
-	se2 += "l\tTEST_SKILL_A\tREADY\t0\ttest\\moved.wav\tnone\r\n"
+	se2 += "l\tTEST_SKILL_A\tREADY\t0\ttest\\moved.wav\ttest\\moved_end.wav\r\n"
 	var moved: Dictionary = sa.parse_effect_sounds(_utf16(se2))
-	_check(moved.has("TEST_SKILL_A") and String((moved["TEST_SKILL_A"] as Array)[0][2]) == "prim\\snd\\test\\moved.wav",
-		"SndBegin is found by the header's own column name")
+	_check(moved.has("TEST_SKILL_A") and String((moved["TEST_SKILL_A"] as Array)[0][2]) == "prim\\snd\\test\\moved.wav"
+		and String((moved["TEST_SKILL_A"] as Array)[0][3]) == "prim\\snd\\test\\moved_end.wav",
+		"SndBegin and SndEnd are found by the header's own column names")
 
 	# The loaded-table API the animation sounds use.
 	sa.set_tables(skills, effects)
