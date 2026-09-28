@@ -101,6 +101,9 @@ var _anchor := Transform3D()
 ## OURS: how far (native units) the host may move from the anchor before
 ## the simulation space re-centres on it.
 const ANCHOR_RECENTRE := 60.0
+## OURS: a placement this far (native units) from the anchor in one frame is
+## a jump (teleport, world re-base), not motion: the effect moves with it.
+const ANCHOR_JUMP := 400.0
 
 # Shared caches: one decode and one compiled template per file, one texture
 # and mesh per asset path, one material per (texture, state). Bounded by
@@ -442,39 +445,69 @@ func _skeleton() -> Skeleton3D:
 		_follow_bone = _follow_skel.find_bone(b)
 	return _follow_skel
 
-func _place() -> void:
+## Places the effect on its host and hands the placement to the
+## simulation (round 621, follow levels). Returns whether anything moved,
+## so the caller redraws.
+##
+## The effect simulates in a space that does NOT move with its host -- as
+## retail's does, in world units over the effect's scale (READ: the world
+## matrix FUN_00cabda0 sets is scale only) -- and the host's motion reaches
+## the simulation as the effect's placement (EfpSim.set_origin), which each
+## node follows or not by its levels. This node is pinned (top_level) at an
+## anchor whose basis is the host's SCALE only (its handedness kept, its
+## facing not), so space-0 commands point along world axes and the facing
+## arrives as the effect's rotation, as retail's SetMatrix hands it
+## (CEFEffect::vslot_007). The anchor re-centres (EfpSim.shift) once the
+## host is ANCHOR_RECENTRE away; a jump past ANCHOR_JUMP in one frame (a
+## teleport, or the world re-based on a zone change) carries the whole
+## effect along instead (OURS both).
+func _place() -> bool:
 	if _follow_host == null or not is_instance_valid(_follow_host):
-		return
+		return false
+	if not is_inside_tree():
+		return false
 	var skel := _skeleton()
-	if skel == null or not skel.is_inside_tree() or not is_inside_tree():
-		position = _follow_offset
-		basis = Basis.IDENTITY
-		return
-	var at := _follow_offset
-	if _follow_bone >= 0:
-		at += skel.get_bone_global_pose(_follow_bone).origin
-	var placed := skel.global_transform * Transform3D(Basis.IDENTITY, at)
+	var placed: Transform3D
+	if skel != null and skel.is_inside_tree():
+		var at := _follow_offset
+		if _follow_bone >= 0:
+			at += skel.get_bone_global_pose(_follow_bone).origin
+		placed = skel.global_transform * Transform3D(Basis.IDENTITY, at)
+	elif _follow_host.is_inside_tree():
+		# No skeleton yet: the host's own frame, never a bare world position
+		# (review: this node is top_level once anchored).
+		placed = _follow_host.global_transform * Transform3D(Basis.IDENTITY, _follow_offset)
+	else:
+		return false
 	_placed = placed
-	# Round 621 (follow levels): the effect simulates in a space that does
-	# NOT move with its host -- as retail's does, in world units over the
-	# effect's scale -- and the host's motion reaches the simulation as the
-	# effect's placement (EfpSim.set_origin), which particles follow or not
-	# by their node's levels. This node is pinned (top_level) at an anchor
-	# taken from the first placement, carrying the host's scale and turn at
-	# that moment; the anchor re-centres (EfpSim.shift) once the host is
-	# ANCHOR_RECENTRE native units away, so the draw bounds stay near.
+	var redraw := false
 	if not _anchored:
 		_anchored = true
-		_anchor = placed
+		_anchor = Transform3D(scale_basis(placed.basis), placed.origin)
 		top_level = true
 	var e := _anchor.affine_inverse() * placed
-	if e.origin.length() > ANCHOR_RECENTRE and sim != null:
+	if e.origin.length() > ANCHOR_JUMP and sim != null:
+		sim.shift(sim.origin())
+		_anchor.origin = placed.origin
+		e = _anchor.affine_inverse() * placed
+		redraw = true
+	elif e.origin.length() > ANCHOR_RECENTRE and sim != null:
 		sim.shift(e.origin)
 		_anchor.origin = placed.origin
 		e = _anchor.affine_inverse() * placed
+		redraw = true
 	global_transform = _anchor
-	if sim != null:
-		sim.set_origin(e.origin, e.basis.orthonormalized())
+	if sim == null:
+		return redraw
+	return sim.set_origin(e.origin, e.basis.orthonormalized()) or redraw
+
+## A basis's scale alone, its handedness kept (a mirrored basis keeps a
+## negative Z), its rotation dropped.
+static func scale_basis(b: Basis) -> Basis:
+	var sc := Vector3(b.x.length(), b.y.length(), b.z.length())
+	if b.determinant() < 0.0:
+		sc.z = -sc.z
+	return Basis.from_scale(sc)
 
 func _process(delta: float) -> void:
 	if sim == null:
@@ -483,7 +516,7 @@ func _process(delta: float) -> void:
 	if max_life > 0.0 and _life >= max_life and loop:
 		stop()
 		return
-	_place()
+	var moved := _place()
 	var stepped := sim.advance(delta)
 	if sim.finished():
 		if loop:
@@ -493,11 +526,13 @@ func _process(delta: float) -> void:
 			return
 	# The MultiMeshes change only when the simulation stepped -- or, for a
 	# billboarded node, when the camera turned (else it would lag the view).
-	if stepped > 0 or (_has_billboard and _camera_turned()):
+	# (Round 621: also when the host moved the effect, whose followers the
+	# placement pass moved this frame, or the space re-centred.)
+	if stepped > 0 or moved or (_has_billboard and _camera_turned()):
 		_update_draws()
 	# The Link strips likewise: after a step, or when the camera or the
 	# effect moved for a screen-space pipe (round 621's review follow-up).
-	if not _links.is_empty() and (stepped > 0 or (_has_pipe and _link_camera_moved())):
+	if not _links.is_empty() and (stepped > 0 or moved or (_has_pipe and _link_camera_moved())):
 		_update_links()
 
 func _exit_tree() -> void:

@@ -74,8 +74,10 @@ func _initialize() -> void:
 	_rotation()
 	_levels()
 	_trail()
+	_signed()
 	await process_frame # the root is in the tree from the first frame on
 	_host()
+	_render_frames()
 	_finish()
 
 ## The host moves +2 in x a frame. A root node following the effect (u6 = 1)
@@ -203,6 +205,88 @@ func _host() -> void:
 		"far from the anchor it re-centres, shifting the simulation with it")
 	fx.sim.clear()
 	host.free()
+
+## The levels are compared signed (READ, CEFGroup::vslot_004); the reader
+## hands them over as u32, so retail's u3 = -1 arrives as 4294967295.
+func _signed() -> void:
+	var turn := Basis(Vector3.UP, PI / 2)
+	var root := _node(30, {"u6": 1, "b0": 1, "b1": 1})
+	root.emit.clear()
+	root.emit.append(_cmd("StaticEmit", {"type": "SEFStaticEmit", "delay": 0, "duration": 1,
+		"interval": 1, "max_live": 1, "per_trigger": 1.0}))
+	root.commands.append(_cmd("SetRotationMat", {"matrix": PackedFloat32Array([0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1])}))
+	var kid := _node(30, {"u3": 4294967295, "u6": 4294967295})
+	root.children.append(kid)
+	var sim = S.new(S.compile(root), 3)
+	sim.step()
+	var k = null
+	var r = null
+	for q in sim.particles:
+		if q.tpl == 1:
+			k = q
+		else:
+			r = q
+	_check(k != null and r != null and not r.rot.is_equal_approx(Basis.IDENTITY) and k.rot.is_equal_approx(Basis.IDENTITY),
+		"u3 = -1 (read 4294967295): the child's inherited rotation is reset to identity")
+	_check(k != null and k.f_rot == null and k.f_move == r, "u3 = -1 names no ancestor; u6 = -1 names the owner")
+	sim.clear()
+	_check(S.has_method("signed32") and S.signed32(4294967295) == -1 and S.signed32(5) == 5,
+		"signed32 reads a u32 as the client's int")
+	var _t := turn
+
+## Every render frame, not only on steps (review of the follow levels).
+func _render_frames() -> void:
+	var host := Node3D.new()
+	var skel := Skeleton3D.new()
+	host.add_child(skel)
+	host.rotation.y = PI / 2
+	get_root().add_child(host)
+	var fx = E.from_template(S.compile(_node(30, {"u6": 1, "b1": 1})), func(_p): return PlaceholderTexture2D.new(),
+		func(_p): return null, 5)
+	host.add_child(fx)
+	fx.follow_host(host, "", Vector3.ZERO)
+	_check(fx.global_transform.basis.is_equal_approx(Basis.IDENTITY),
+		"the anchor keeps only the host's scale, not its facing (world axes)")
+	fx._process(0.05)
+	_check(fx.sim._root.rot.is_equal_approx(host.global_transform.basis.orthonormalized()),
+		"the host's facing reaches the simulation as the effect's rotation")
+	_check(not fx.sim.set_origin(fx.sim.origin(), fx.sim._root.rot), "an unchanged placement is not a change")
+	var q = fx.sim.particles[0]
+	var draws0: int = fx.draw_updates
+	host.position = Vector3(0, 0, 3)
+	fx._process(0.001) # no 50 ms step this frame
+	_check(q.pos.is_equal_approx(fx.sim.origin()) and fx.sim.origin().is_equal_approx(Vector3(0, 0, 3)),
+		"a particle following the effect moves with the host on a frame without a step")
+	_check(fx.draw_updates == draws0 + 1, "... and the draw is refreshed that frame")
+	# A re-centre on a frame without a step: the world stays put and redraws.
+	var world_before: Vector3 = fx.global_transform * q.pos
+	var draws1: int = fx.draw_updates
+	host.position = Vector3(0, 0, 3 + 70)
+	fx._process(0.001)
+	var world_after: Vector3 = fx.global_transform * q.pos
+	_check(fx.draw_updates == draws1 + 1 and fx.global_transform.origin.is_equal_approx(Vector3(0, 0, 73)),
+		"a re-centre redraws on its frame, step or not")
+	_check(world_after.is_equal_approx(Vector3(0, 0, 73)) and not world_before.is_equal_approx(world_after),
+		"after the re-centre the follower is drawn at the host (%s)" % str(world_after))
+	# A jump carries the whole effect along.
+	host.position = Vector3(5000, 0, 0)
+	fx._process(0.001)
+	_check((fx.global_transform * q.pos).is_equal_approx(Vector3(5000, 0, 0)), "a jump carries the effect with it")
+	fx.sim.clear()
+	host.free()
+	# No skeleton: the host's own frame, not a bare world position.
+	var bare := Node3D.new()
+	bare.position = Vector3(10, 0, 0)
+	get_root().add_child(bare)
+	var fx2 = E.from_template(S.compile(_node(30, {"u6": 1})), func(_p): return PlaceholderTexture2D.new(),
+		func(_p): return null, 5)
+	bare.add_child(fx2)
+	fx2.follow_host(bare, "", Vector3(0, 2, 0))
+	fx2._process(0.05)
+	_check(fx2.placed_at().is_equal_approx(Vector3(10, 2, 0)) and fx2.global_transform.origin.is_equal_approx(Vector3(10, 2, 0)),
+		"without a skeleton the effect sits at the host plus offset (%s)" % str(fx2.placed_at()))
+	fx2.sim.clear()
+	bare.free()
 
 func _finish() -> void:
 	if _failures == 0:

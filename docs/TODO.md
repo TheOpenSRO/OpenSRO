@@ -949,8 +949,7 @@ Still open, by the files each would add:
   from every archive.
 - **Follow levels: DONE (round 621).** The effect now simulates in world space over its host, as
   retail does, and 924 of the 975 Link files make a trail on a moving host (781 on a still one).
-  - Still OURS: one follow pass instead of retail's separate draw-time pass for the effect, and
-    the effect turning with the body, not with its bone.
+  - Still OURS: the effect turning with the body, not with its bone.
   - Checked only on renders, not against retail.
 - **Link details**: the LinkMode controller (none of the three Link routines reads it), and
   whether the reversed-winding inference that decides which face of a Link strip is culled

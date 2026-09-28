@@ -7094,6 +7094,89 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twenty-first round, follow levels, review follow-up: auras move with the body every frame, the −1 rotation reset works, and "world space" points along the world
+
+The review of aa7a800 confirmed every READ claim, the u2 orbit included, and found these defects.
+All are fixed here.
+
+- **The levels are signed.**
+  - The reader hands the 20-byte block's levels over as u32, so retail's u3 = −1 arrived as
+    4294967295 and never reset the inherited rotation. `CEFGroup::vslot_004` compares signed
+    (READ: `1 < level`, u3 `< 1` and `< 0`).
+  - `EfpSim.signed32` converts all four; the reader keeps the raw u32, so its dump still matches
+    the Go reader's.
+  - A negative u3 names no ancestor and resets the rotation. A negative u2, u4 or u6 names the
+    owner (READ); none occur in retail.
+  - MEASURED, read signed over the 95,801 nodes: no level is above depth + 1, and the only
+    negative value is u3 = −1, in 135 nodes of 101 files (for example `cos\pet2_hwan_keep_p`,
+    `dun\pha_blue_eye_02`). aa7a800's "no level goes higher" had been measured on u2 alone.
+- **The effect's followers move every render frame.**
+  - Retail runs the follow pass `FUN_00c863a0` from the draw (`FUN_00cabda0`) whenever the effect
+    was placed. `EfpSim.set_origin` now runs that pass at once: old state, the gated u2/u3/u4, and
+    u6, with no velocity, rotation velocity or commands.
+  - During a 50 ms step the effect now holds still.
+  - `EfpEffect` redraws on any frame the placement moved something. Auras no longer lag the body
+    at 20 Hz.
+- **A re-centre redraws on its frame.** Before, a re-centre on a frame without a step drew every
+  particle about 60 units off for a frame or two.
+- **The anchor is scale only**, with its handedness kept. So a space-0 command and the identity
+  reset point along world axes, as retail's scale-only world matrix does. The host's facing
+  arrives as the effect's rotation, which is what `CEFEffect::vslot_007` hands the effect.
+- **Docs.** `vslot_008` (position) flags only +0x28b; `vslot_007` (matrix) flags +0x60 and +0x28b.
+- **Cheaper when still.** The effect is "changed" only when its placement moved or turned. A
+  node naming no ancestor skips the follows.
+  - The per-frame pass costs 0.116 ms for a moving `cold_ganggi_keep_f` (183 particles),
+    0.035 ms for `skill_dowb_ac3_fire_hand` (33), and 0.0005 ms on a still host.
+  - A moving effect is also redrawn every frame, not at 20 Hz, as retail's is.
+- **Jumps and bare hosts.**
+  - A placement more than 400 native units from the anchor in one frame (a teleport, or the world
+    re-based by a zone change) carries the whole effect along instead of leaving world-space
+    particles at stale coordinates (OURS).
+  - A host without a skeleton places the effect at the host plus offset, never at a bare world
+    position on the top_level node.
+
+**Bench** (the reviewer's, ms per call, aa7a800 → now):
+- `_update_links` is unchanged: 0.59 → 0.57, 4.96 → 4.64, 1.50 → 1.48.
+- `sim.step` moved within noise (0.95 → 0.86, 7.72 → 7.56, 2.39 → 1.92).
+
+**Census:** unchanged: 781 of the 975 Link files make a triangle on a still host, 924 on a moving one; 4,013 (96.2 %) draw every node; 0 script errors.
+
+**Tests.** `efp_follow_test.gd` grew to 26 checks. The new ones cover:
+- u3 = −1 read as 4294967295 resets the rotation and names no ancestor;
+- u6 = −1 names the owner;
+- the anchor is scale only, and the facing reaches the sim;
+- an unchanged placement is no change;
+- a follower moves with the host on a frame without a step, and that frame redraws;
+- a re-centre redraws, and the follower is drawn at the host;
+- a jump carries the effect;
+- without a skeleton, the effect sits at the host plus its offset.
+
+Results:
+- `remote_godot.sh check`: ALL LOAD.
+- `remote_godot.sh tests`: 137 suites, 0 failing.
+- `go test -count=1 -p 1 ./...`: ok.
+
+Against aa7a800:
+
+```
+FAIL u3 = -1 (read 4294967295): the child's inherited rotation is reset to identity
+FAIL u3 = -1 names no ancestor; u6 = -1 names the owner
+FAIL signed32 reads a u32 as the client's int
+FAIL the anchor keeps only the host's scale, not its facing (world axes)
+FAIL the host's facing reaches the simulation as the effect's rotation
+FAIL a particle following the effect moves with the host on a frame without a step
+FAIL ... and the draw is refreshed that frame
+FAIL a re-centre redraws on its frame, step or not
+FAIL after the re-centre the follower is drawn at the host ((0, 0, 0))
+FAIL a jump carries the effect with it
+FAILURES: 10
+```
+
+**OPEN:**
+- the effect turns with the body, not its bone;
+- whether game +z is Godot −z for effect space, as it is for the terrain, was not checked; the
+  anchor keeps the skeleton's handedness.
+
 ## Six-hundred-and-twenty-first round, follow levels: the effects simulate where the game's do, so a walking caster, a swung hand or a flapping wing leaves its trail behind
 
 The review follow-up found why 510 of the 975 files with a Link node drew nothing: their

@@ -585,10 +585,21 @@ emitter's owner, N − 1 more times up.
 **The top.** The effect itself is a particle-like element (`CEFEffect` shares `CEFElement`'s
 layout; the particle init is slot 4 of both vtables). It owns the root node's emitter, so for a
 node at depth d, level d + 1 is the effect.
-- MEASURED: no retail level goes past d + 1.
-- The effect's position and matrix come from its host: `CEFEffect::vslot_008` (position) and
-  `vslot_007` (matrix, with its translation moved to the position). Both store the position
-  divided by the effect's scale and flag the effect changed (+0x60, +0x28b).
+- **The levels are signed.** The walk compares `1 < level`, and u3 is tested `< 1` and `< 0`.
+  - MEASURED over the 95,801 nodes, read signed: no u2, u3, u4 or u6 is above d + 1.
+  - The only negative value is u3 = −1, in 135 nodes of 101 files (for example
+    `cos\pet2_hwan_keep_p`, `dun\pha_blue_eye_02`).
+  - A negative u3 names no ancestor and resets the inherited rotation. A negative u2, u4 or u6
+    would name the owner (none in retail).
+  - The reader keeps the raw u32 (its dump matches the Go reader's). `EfpSim.signed32`
+    converts it. The review found aa7a800 comparing the raw u32, so u3 = −1 never reset.
+- The effect's position and matrix come from its host.
+  - `CEFEffect::vslot_008` (position) stores the position divided by the effect's scale and
+    flags +0x28b.
+  - `vslot_007` (matrix, with its translation moved to the position) does the same and also
+    flags +0x60.
+  - Whenever either flag is set, the draw (`FUN_00cabda0`) runs the follow pass over the tree
+    with the effect's turn, then stores the placement as old.
 - The draw's world matrix is only that scale (`FUN_00cabda0`). So **retail simulates in world
   space over the effect's scale**, and only what follows the effect moves with the host.
 
@@ -635,15 +646,27 @@ scale change `vslot_010` uses it.
 **This client** (`EfpSim`, `EfpEffect`):
 - all four levels, the ancestor walk to the effect, the changed gate, b0/b1/b5/b7, and the spawn
   rules above (READ);
-- the effect is the sim's root particle, placed by `EfpSim.set_origin` and changed when placed;
-- `EfpEffect` pins itself (top_level) at an anchor taken from its first placement on its host.
-  It feeds the host's motion in as the placement, and re-centres (`EfpSim.shift`, like
-  `FUN_00c865a0`) past 60 native units (OURS). So a u6 = 0 particle stays where it was born while
-  the caster moves: the trails.
+- **The effect is the sim's root particle.** `EfpSim.set_origin` places it and, when it moved or
+  turned, runs the draw's follow pass at once.
+  - Every render frame: each particle keeps its old state, clears changed, and takes u2/u3/u4
+    (gated) and u6. There is no velocity, rotation velocity or command in this pass.
+  - So the effect's followers move with the host every frame, and during a 50 ms step the effect
+    holds still.
+- **`EfpEffect` pins itself** (top_level) at an anchor whose basis is the host's scale only, with
+  its handedness kept. So space-0 commands point along world axes, and the host's facing arrives
+  as the effect's rotation, as `vslot_007` hands it.
+  - It re-centres (`EfpSim.shift`, like `FUN_00c865a0`) past 60 native units, and redraws on that
+    frame.
+  - A jump past 400 in one frame (a teleport, or the world re-based on a zone change) carries the
+    whole effect along (OURS both).
+  - Without a skeleton, it sits at the host plus its offset.
+- So a u6 = 0 particle stays where it was born while the caster moves: the trails.
 
 **OURS:**
-- the effect's follow runs in the step, not in a separate draw-time pass;
-- no spawn offset, since this client spawns after the step's follows;
+- the effect is changed only when the placement moved or turned (retail flags every placement;
+  same result);
+- no spawn offset: a particle spawned in a step is placed after that frame's effect follow, as
+  retail's offset intends;
 - particles are processed in spawn order, which finishes every ancestor before its followers as
   retail's node order does;
 - a dead ancestor is no longer followed;
