@@ -212,6 +212,13 @@ static func build_skin(skeleton: Skeleton3D, bone_names: PackedStringArray, obje
 ## The bone build_skin adds for vertices on the client's palette entry 0.
 const OBJECT_SPACE_BONE := "__srrevamp_object_space__"
 
+## False for the OBJECT_SPACE_BONE build_skin adds: a bone of the model's
+## own, not of its skeleton, sitting at the origin -- a loop measuring a
+## body by its bones (the paper doll's framing, the QA feet report, a
+## label's height) must skip it or it reads the origin as a foot.
+static func is_skeleton_bone(skeleton: Skeleton3D, bone: int) -> bool:
+	return skeleton.get_bone_name(bone) != OBJECT_SPACE_BONE
+
 static func apply_ban_pose(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, frame_idx: int) -> void:
 	for track in anim.bones:
 		if track.keyframes.is_empty():

@@ -532,14 +532,15 @@ const FOLIAGE_ALPHA_SCISSOR := float(ALPHA_TEST_REF) / 255.0
 ##   back faces first, then front faces (READ, CObjRendererVS FUN_00bf5780).
 ## Returns {"alpha_ref": 0 for no test or the byte a texel must reach
 ## (with "alpha_func", a D3DCMPFUNC), "two_sided", "two_pass", "blend": ""
-## for none or "mix" / "add" / "add_one" / "mul" / "other" (the
+## for none or "mix" / "add" / "add_one" / "mul" / "d3d_<src>_<dest>" (the
 ## D3DBLEND pair's Godot counterpart), "zwrite", "color_op", "color_arg1",
 ## "color_arg2", "alpha_op", "alpha_arg1", "alpha_arg2" (D3DTOP / D3DTA;
 ## 0 when the default modulate applies)}.
 static func layer_draw_rule(flags: int, env_map: int = -1, mtrl: Dictionary = {}, two_pass: bool = false) -> Dictionary:
 	var rule := {"alpha_ref": 0, "alpha_func": D3DCMP_GREATEREQUAL, "two_sided": false, "two_pass": two_pass,
 		"blend": "", "zwrite": true, "color_op": 0, "color_arg1": 0, "color_arg2": 0,
-		"alpha_op": 0, "alpha_arg1": 0, "alpha_arg2": 0}
+		"alpha_op": 0, "alpha_arg1": 0, "alpha_arg2": 0, "mtrl": not mtrl.is_empty(), "stage_ops": false,
+		"src_blend": 0, "dest_blend": 0}
 	if not mtrl.is_empty():
 		if mtrl.get("alpha_test", false):
 			rule["alpha_ref"] = int(mtrl["alpha_ref"])
@@ -548,6 +549,12 @@ static func layer_draw_rule(flags: int, env_map: int = -1, mtrl: Dictionary = {}
 		rule["zwrite"] = not mtrl.get("zwrite_off", false)
 		if mtrl.get("blend", false):
 			rule["blend"] = blend_mode(int(mtrl["src_blend"]), int(mtrl["dest_blend"]))
+			rule["src_blend"] = int(mtrl["src_blend"])
+			rule["dest_blend"] = int(mtrl["dest_blend"])
+			# All six stage bytes, zeros included: 0 is D3DTA_DIFFUSE, not
+			# "unset" (READ: CRTModMtrl::vslot_004 sets the six stage-0
+			# states from bytes +0x62..+0x67 only when it blends).
+			rule["stage_ops"] = true
 			for k in ["color_op", "color_arg1", "color_arg2", "alpha_op", "alpha_arg1", "alpha_arg2"]:
 				rule[k] = int(mtrl[k])
 	else:
@@ -557,24 +564,92 @@ static func layer_draw_rule(flags: int, env_map: int = -1, mtrl: Dictionary = {}
 			rule["alpha_ref"] = ENV_MAP_ALPHA_REF if env_map & ENV_MAP_FLAG_ALPHA_TEST != 0 else 0
 		rule["two_sided"] = flags & LAYER_FLAG_TWO_SIDED != 0
 	# A test that keeps everything is no test: ALWAYS, or GREATEREQUAL 0.
-	if rule["alpha_func"] == D3DCMP_ALWAYS:
+	if rule["alpha_func"] == D3DCMP_ALWAYS or (rule["alpha_func"] == D3DCMP_GREATEREQUAL and int(rule["alpha_ref"]) == 0):
 		rule["alpha_ref"] = 0
+		rule["alpha_func"] = D3DCMP_GREATEREQUAL
 	if two_pass:
 		# CW then CCW: both faces, whatever the layer says (READ).
 		rule["two_sided"] = true
 	return rule
 
-## D3DCMPFUNC values the rule meets (d3d9types.h).
+## D3DCMPFUNC (d3d9types.h). An MTRL mod names any of them (census: 258
+## GREATEREQUAL, 32 ALWAYS, 10 GREATER, 5 NOTEQUAL, 1 LESSEQUAL); the mod
+## shader compares the alpha byte against the ref exactly as named.
+const D3DCMP_NEVER := 1
+const D3DCMP_LESS := 2
+const D3DCMP_EQUAL := 3
+const D3DCMP_LESSEQUAL := 4
 const D3DCMP_GREATER := 5
+const D3DCMP_NOTEQUAL := 6
 const D3DCMP_GREATEREQUAL := 7
 const D3DCMP_ALWAYS := 8
 
-## The Godot blend for a D3DBLEND source/destination pair (d3d9types.h:
-## 1 ZERO, 2 ONE, 3 SRCCOLOR, 5 SRCALPHA, 6 INVSRCALPHA, 9 DESTCOLOR).
-## SRCALPHA/INVSRCALPHA is Godot's mix; SRCALPHA/ONE its add (src*alpha +
-## dst); ONE/ONE add with alpha 1; DESTCOLOR/ZERO and ZERO/SRCCOLOR its
-## multiply. Anything else is drawn as mix and named "other" -- OURS, an
-## approximation, so the census can count it.
+## D3DBLEND (d3d9types.h).
+const D3DBLEND_ZERO := 1
+const D3DBLEND_ONE := 2
+const D3DBLEND_SRCCOLOR := 3
+const D3DBLEND_INVSRCCOLOR := 4
+const D3DBLEND_SRCALPHA := 5
+const D3DBLEND_INVSRCALPHA := 6
+const D3DBLEND_DESTALPHA := 7
+const D3DBLEND_DESTCOLOR := 9
+const D3DBLEND_INVDESTCOLOR := 10
+const D3DBLEND_SRCALPHASAT := 11
+const D3DBLEND_BOTHSRCALPHA := 12
+const D3DBLEND_BOTHINVSRCALPHA := 13
+const D3DBLEND_BLENDFACTOR := 14
+const D3DBLEND_INVBLENDFACTOR := 15
+
+## How each D3DBLEND pair an MTRL mod uses (all 18 in the census) is drawn
+## with Godot 4.2's fixed blends -- GL Compatibility's, read from its
+## source (rasterizer_scene_gles3.cpp): "mix" = SRC_ALPHA / ONE_MINUS_
+## SRC_ALPHA, "add" = SRC_ALPHA / ONE (in the transparent pass), "mul" =
+## DST_COLOR / ZERO -- by choosing what the shader writes as colour and
+## alpha. `color`: 0 the stage colour, 1 the stage colour times itself
+## (a SRCCOLOR source factor), 2 zero; `alpha`: 0 the stage alpha, 1 one,
+## 2 one minus the stage alpha, 3 the stage alpha with the colour divided by
+## it (so mix's C*a gives C). `kind`: "exact" (the same equation), "given"
+## (exact under a stated render state: D3DRS_BLENDFACTOR = white, its D3D
+## default -- the client sets it only in Map::FUN_00a1d790, a map pass,
+## and whether that value is live when objects draw is OPEN; or destination
+## alpha = 1, a back buffer without alpha -- INFERRED, the format was not
+## traced), or "ours" (the nearest the three blends reach; the dropped term
+## is named). Counts are the review's mtrl.tsv census of blended mods.
+const BLEND_EMULATION := {
+	"5/6": {"godot": "mix", "color": 0, "alpha": 0, "kind": "exact", "note": "SRCALPHA/INVSRCALPHA (348: leaves, water)"},
+	"5/2": {"godot": "add", "color": 0, "alpha": 0, "kind": "exact", "note": "SRCALPHA/ONE (259)"},
+	"2/2": {"godot": "add", "color": 0, "alpha": 1, "kind": "exact", "note": "ONE/ONE"},
+	"9/1": {"godot": "mul", "color": 0, "alpha": 1, "kind": "exact", "note": "DESTCOLOR/ZERO"},
+	"1/3": {"godot": "mul", "color": 0, "alpha": 1, "kind": "exact", "note": "ZERO/SRCCOLOR"},
+	"12/2": {"godot": "mix", "color": 0, "alpha": 0, "kind": "exact", "note": "BOTHSRCALPHA: As / 1-As, the destination overridden (2)"},
+	"13/6": {"godot": "mix", "color": 0, "alpha": 2, "kind": "exact", "note": "BOTHINVSRCALPHA: 1-As / As, the destination overridden (2)"},
+	"3/6": {"godot": "mix", "color": 1, "alpha": 3, "kind": "exact", "note": "SRCCOLOR/INVSRCALPHA: src*src + dst*(1-As) (8); colour clamps where src*src/As > 1"},
+	"5/14": {"godot": "add", "color": 0, "alpha": 0, "kind": "given", "note": "SRCALPHA/BLENDFACTOR, factor white (6)"},
+	"3/14": {"godot": "add", "color": 1, "alpha": 1, "kind": "given", "note": "SRCCOLOR/BLENDFACTOR, factor white: src*src + dst (10 cobwebs)"},
+	"15/15": {"godot": "mul", "color": 2, "alpha": 1, "kind": "given", "note": "INVBLENDFACTOR both, factor white: 0 (1, samarkand_potion_etc01)"},
+	"5/7": {"godot": "add", "color": 0, "alpha": 0, "kind": "given", "note": "SRCALPHA/DESTALPHA, destination alpha 1 (11 pha_maze)"},
+	"2/11": {"godot": "mix", "color": 0, "alpha": 1, "kind": "given", "note": "ONE/SRCALPHASAT: min(As, 1-Ad) = 0 at destination alpha 1 (1)"},
+	"5/13": {"godot": "mix", "color": 0, "alpha": 0, "kind": "ours", "note": "SRCALPHA/BOTHINVSRCALPHA: D3D defines BOTHINVSRCALPHA only as a source factor; drawn as mix (50 shadows)"},
+	"3/3": {"godot": "mul", "color": 0, "alpha": 1, "kind": "ours", "note": "SRCCOLOR/SRCCOLOR: src*src + dst*src, drawn dst*src -- the src*src term dropped (21 jinsi floors)"},
+	"2/4": {"godot": "add", "color": 0, "alpha": 1, "kind": "ours", "note": "ONE/INVSRCCOLOR: src + dst*(1-src), drawn src + dst (5)"},
+	"5/5": {"godot": "add", "color": 0, "alpha": 0, "kind": "ours", "note": "SRCALPHA/SRCALPHA: dst*As drawn as dst (3)"},
+	"5/4": {"godot": "add", "color": 0, "alpha": 0, "kind": "ours", "note": "SRCALPHA/INVSRCCOLOR: dst*(1-src) drawn as dst (2)"},
+	"2/3": {"godot": "add", "color": 0, "alpha": 1, "kind": "ours", "note": "ONE/SRCCOLOR: dst*src drawn as dst (1)"},
+	"10/2": {"godot": "add", "color": 0, "alpha": 1, "kind": "ours", "note": "INVDESTCOLOR/ONE: src*(1-dst) drawn as src (1)"},
+	"2/9": {"godot": "add", "color": 0, "alpha": 1, "kind": "ours", "note": "ONE/DESTCOLOR: dst*dst drawn as dst (1)"},
+}
+
+## The emulation for a D3DBLEND pair (BLEND_EMULATION); a pair outside the
+## census falls back to mix, "ours".
+static func blend_emulation(src: int, dest: int) -> Dictionary:
+	var key := "%d/%d" % [src, dest]
+	if BLEND_EMULATION.has(key):
+		return BLEND_EMULATION[key]
+	return {"godot": "mix", "color": 0, "alpha": 0, "kind": "ours", "note": "unmapped pair %s drawn as mix" % key}
+
+## A name for the blend, for the rule and the census: the Godot blend it is
+## drawn with for the common exact pairs ("mix", "add", "add_one", "mul"),
+## "d3d_<src>_<dest>" for every other pair.
 static func blend_mode(src: int, dest: int) -> String:
 	if src == 5 and dest == 6:
 		return "mix"
@@ -584,95 +659,207 @@ static func blend_mode(src: int, dest: int) -> String:
 		return "add_one"
 	if (src == 9 and dest == 1) or (src == 1 and dest == 3):
 		return "mul"
-	return "other"
+	return "d3d_%d_%d" % [src, dest]
 
-## The blended material an MTRL mod asks for: a shader built for its cull,
-## blend and depth-write (compile-time render modes, so one per
-## combination, cached), with the stage-0 ops as uniforms. `cull`: "back",
-## "front" or "disabled". Z-write on is depth_draw_always: a Godot
+## The material an MTRL mod asks for: a shader built for its cull, Godot
+## blend ("opaque" for a mod that tests but does not blend) and depth-write
+## (compile-time render modes, so one per combination, cached), with the
+## stage-0 ops, the alpha test and the blend emulation as uniforms. `cull`:
+## "back", "front" or "disabled". Z-write on is depth_draw_always: a Godot
 ## transparent draw writes no depth otherwise, and D3D's ZWRITEENABLE does
-## (72 tree models blend their leaves this way with the write on -- an
-## MTRL mod testing at 128 or 137 AND blending SRCALPHA/INVSRCALPHA).
+## (72 tree models blend their leaves with the write on).
+##
+## Stage 0, READ vs OURS:
+## - The six stage bytes are applied as the client sets them (READ,
+##   CRTModMtrl::vslot_004): D3DTOP 2 SELECTARG1, 3 SELECTARG2, 4 MODULATE,
+##   5 MODULATE2X, 6 MODULATE4X, 7 ADD, 8 ADDSIGNED, 10 SUBTRACT; D3DTA 0
+##   DIFFUSE, 1 CURRENT (= DIFFUSE at stage 0), 2 TEXTURE, 3 TFACTOR, 4
+##   SPECULAR. A mod that does not blend sets none of them, so the object
+##   renderer's own stage 0 applies: MODULATE2X of TEXTURE and DIFFUSE (READ:
+##   CObjRendererVS::vslot_024 / vslot_038 seed flag 0x1000, which
+##   FUN_00c42a60 turns into COLOROP 5).
+## - DIFFUSE is the lit vertex colour (READ, Shader\vertexshader0.c:
+##   saturate(N.L) * c11 + c10). Its alpha is 1: c10.w and c11.w are 1.0 in
+##   the renderer's uploads and oD0 saturates (READ). Its colour is not
+##   computed in the shader: the stage result is split into the part that
+##   multiplies DIFFUSE (drawn as ALBEDO, lit by Godot's lights like every
+##   other material) and the part that does not (drawn as EMISSION, unlit,
+##   as a SELECTARG1 TEXTURE draw is). OURS: DIFFUSE times DIFFUSE is drawn
+##   as DIFFUSE; TFACTOR is white (the mod's own colour is not passed yet).
+## - Brightness is anchored to the flag-word path (OURS): that path draws
+##   ALBEDO = layer ambient x texture for what the client draws as
+##   MODULATE2X(TEXTURE, DIFFUSE), so a lit coefficient L is drawn as
+##   ALBEDO = L x ambient / 2 -- MODULATE2X here is exactly the flag-word
+##   path, MODULATE half of it. Whether the flag-word path's own brightness
+##   matches the client's is a separate, global question (docs/
+##   WORLD_ISSUES.md, round 625-626 material review follow-up).
+## - The alpha test reads full-resolution alpha (mip 0), as
+##   foliage.gdshaderinc does and for the same reason: a leaf card's
+##   mipmapped alpha falls with distance and the canopy disappears (OURS,
+##   the client tests the filtered alpha). The blend still uses the
+##   filtered alpha.
 static var _mod_shaders := {}
 
-static func _mod_shader(cull: String, blend: String, zwrite: bool) -> Shader:
-	var godot_blend: String = {"mix": "blend_mix", "add": "blend_add", "add_one": "blend_add", "mul": "blend_mul"}.get(blend, "blend_mix")
+static func _mod_shader(cull: String, godot_blend: String, zwrite: bool) -> Shader:
 	var key := "%s/%s/%s" % [cull, godot_blend, zwrite]
 	if _mod_shaders.has(key):
 		return _mod_shaders[key]
+	var opaque := godot_blend == "opaque"
+	var modes := ["cull_" + cull]
+	if not opaque:
+		modes.append("blend_" + godot_blend)
+		modes.append("depth_draw_always" if zwrite else "depth_draw_never")
 	var shader := Shader.new()
 	shader.code = """shader_type spatial;
-render_mode cull_%s, %s, %s;
-// An MTRL mod's blended draw (ObjectLoader.layer_draw_rule, READ from
-// CRTModMtrl::vslot_004). Built by ObjectLoader._mod_shader.
+render_mode %s;
+// An MTRL mod's draw (ObjectLoader._mod_shader; READ from
+// CRTModMtrl::vslot_004, OURS where ObjectLoader says so).
 uniform vec4 albedo : source_color = vec4(1.0);
 uniform sampler2D albedo_texture : source_color, filter_linear_mipmap, repeat_enable;
+// The alpha test: the ref byte / 255 and its D3DCMPFUNC (0 = no test).
 uniform float alpha_scissor = 0.0;
-// D3DTOP: 2 SELECTARG1, 3 SELECTARG2, 4 MODULATE, 5 MODULATE2X,
-// 6 MODULATE4X; D3DTA: 0 DIFFUSE, 2 TEXTURE. 0 = the default modulate.
-uniform int color_op = 4;
+uniform int alpha_func = 0;
+uniform int color_op = 5;
 uniform int color_arg1 = 2;
 uniform int color_arg2 = 0;
 uniform int alpha_op = 2;
 uniform int alpha_arg1 = 2;
 uniform int alpha_arg2 = 0;
-uniform bool alpha_one = false;
+// The blend emulation (ObjectLoader.BLEND_EMULATION).
+uniform int blend_color = 0;
+uniform int blend_alpha = 0;
 
-vec4 arg(int which, vec4 tex) {
-	return which == 2 ? tex : vec4(1.0);
+// A stage value split into the part that multiplies DIFFUSE (lit) and the
+// part that does not (unlit): value = lit * DIFFUSE + unlit.
+struct Split { vec3 lit; vec3 unlit; };
+
+Split carg(int which, vec4 tex) {
+	int base = which & 15;
+	if (base == 0 || base == 1) return Split(vec3(1.0), vec3(0.0));
+	if (base == 2) return Split(vec3(0.0), tex.rgb);
+	if (base == 3) return Split(vec3(0.0), vec3(1.0));
+	return Split(vec3(0.0), vec3(0.0));
 }
 
-vec4 op(int o, vec4 a, vec4 b) {
+Split cop(int o, Split a, Split b) {
+	if (o == 2) return a;
+	if (o == 3) return b;
+	if (o == 7) return Split(a.lit + b.lit, a.unlit + b.unlit);
+	if (o == 8) return Split(a.lit + b.lit, a.unlit + b.unlit - vec3(0.5));
+	if (o == 10) return Split(a.lit - b.lit, a.unlit - b.unlit);
+	float k = o == 5 ? 2.0 : (o == 6 ? 4.0 : 1.0);
+	return Split((a.lit * b.unlit + a.unlit * b.lit + a.lit * b.lit) * k, a.unlit * b.unlit * k);
+}
+
+float aarg(int which, vec4 tex) {
+	int base = which & 15;
+	if (base == 2) return tex.a;
+	if (base == 4) return 0.0;
+	return 1.0;
+}
+
+float aop(int o, float a, float b) {
 	if (o == 2) return a;
 	if (o == 3) return b;
 	if (o == 5) return a * b * 2.0;
 	if (o == 6) return a * b * 4.0;
+	if (o == 7) return a + b;
+	if (o == 8) return a + b - 0.5;
+	if (o == 10) return a - b;
 	return a * b;
+}
+
+bool keep(float a) {
+	if (alpha_func == 0) return true;
+	float v = round(clamp(a, 0.0, 1.0) * 255.0);
+	float r = round(alpha_scissor * 255.0);
+	if (alpha_func == 1) return false;
+	if (alpha_func == 2) return v < r;
+	if (alpha_func == 3) return v == r;
+	if (alpha_func == 4) return v <= r;
+	if (alpha_func == 5) return v > r;
+	if (alpha_func == 6) return v != r;
+	if (alpha_func == 7) return v >= r;
+	return true;
 }
 
 void fragment() {
 	vec4 tex = texture(albedo_texture, UV);
-	vec3 c = op(color_op, arg(color_arg1, tex), arg(color_arg2, tex)).rgb;
-	float a = op(alpha_op, arg(alpha_arg1, tex), arg(alpha_arg2, tex)).a;
-	if (alpha_scissor > 0.0 && a < alpha_scissor) {
+	vec4 tex0 = textureLod(albedo_texture, UV, 0.0);
+	if (!keep(clamp(aop(alpha_op, aarg(alpha_arg1, tex0), aarg(alpha_arg2, tex0)), 0.0, 1.0))) {
 		discard;
 	}
-	ALBEDO = albedo.rgb * c;
-	ALPHA = alpha_one ? 1.0 : clamp(a, 0.0, 1.0);
+	Split c = cop(color_op, carg(color_arg1, tex), carg(color_arg2, tex));
+	float a = clamp(aop(alpha_op, aarg(alpha_arg1, tex), aarg(alpha_arg2, tex)), 0.0, 1.0);
+	vec3 lit = c.lit * albedo.rgb * 0.5;
+	vec3 unlit = c.unlit;
+	if (blend_color == 1) {
+		vec3 s = clamp(lit + unlit, vec3(0.0), vec3(1.0));
+		lit *= s;
+		unlit *= s;
+	} else if (blend_color == 2) {
+		lit = vec3(0.0);
+		unlit = vec3(0.0);
+	}
+	float out_a = a;
+	if (blend_alpha == 1) out_a = 1.0;
+	else if (blend_alpha == 2) out_a = 1.0 - a;
+	else if (blend_alpha == 3) {
+		float d = max(a, 1.0 / 255.0);
+		lit /= d;
+		unlit /= d;
+	}
+	ALBEDO = lit;
+	EMISSION = unlit;
+	%s
 	if (!FRONT_FACING) {
 		NORMAL = -NORMAL;
 	}
 }
-""" % [cull, godot_blend, "depth_draw_always" if zwrite else "depth_draw_never"]
+""" % [", ".join(modes), "" if opaque else "ALPHA = clamp(out_a, 0.0, 1.0);"]
 	_mod_shaders[key] = shader
 	return shader
 
-## The material for a blended rule, and its second pass when the object
-## draws back faces then front (two_pass).
+## The material for an MTRL mod's rule, and its second pass when the object
+## draws back faces then front (two_pass). READ, CObjRendererVS::
+## FUN_00bf5780: CULLMODE CW (back faces) for every material, then CCW.
+## Godot 4.2 does not keep a material's next_pass after it in a
+## transparent sort (rasterizer_scene_gles3.h: the sort is not stable), so
+## the front pass is given a higher render_priority, which the transparent
+## sort orders first: back faces are always drawn before front faces.
 static func _build_mod_material(layer: BmtReader.Layer, tex: Texture2D, rule: Dictionary) -> ShaderMaterial:
 	var cull := "disabled" if rule["two_sided"] and not rule["two_pass"] else "back"
 	if rule["two_pass"]:
 		cull = "front"
 	var mat := _mod_pass(layer, tex, rule, cull)
 	if rule["two_pass"]:
-		mat.next_pass = _mod_pass(layer, tex, rule, "back")
+		var front := _mod_pass(layer, tex, rule, "back")
+		front.render_priority = mat.render_priority + 1
+		mat.next_pass = front
 	return mat
 
 static func _mod_pass(layer: BmtReader.Layer, tex: Texture2D, rule: Dictionary, cull: String) -> ShaderMaterial:
+	var emu := {"godot": "opaque", "color": 0, "alpha": 0}
+	if rule["blend"] != "":
+		emu = blend_emulation(int(rule["src_blend"]), int(rule["dest_blend"]))
 	var mat := ShaderMaterial.new()
 	mat.resource_name = layer.layer_name
-	mat.shader = _mod_shader(cull, rule["blend"], rule["zwrite"])
+	mat.shader = _mod_shader(cull, emu["godot"], rule["zwrite"])
 	mat.set_shader_parameter("albedo", layer.ambient)
 	mat.set_shader_parameter("albedo_texture", tex)
 	var ref := int(rule["alpha_ref"])
-	# GREATER keeps a texel above the ref, GREATEREQUAL at or above it.
-	if rule["alpha_func"] == D3DCMP_GREATER and ref > 0:
-		ref += 1
 	mat.set_shader_parameter("alpha_scissor", float(ref) / 255.0)
-	for k in ["color_op", "color_arg1", "color_arg2", "alpha_op", "alpha_arg1", "alpha_arg2"]:
-		if int(rule[k]) != 0:
+	var func_id := int(rule["alpha_func"])
+	var tested := ref > 0 or (func_id != D3DCMP_GREATEREQUAL and func_id != D3DCMP_ALWAYS)
+	mat.set_shader_parameter("alpha_func", func_id if tested else 0)
+	# Every stage byte when the mod sets them, zeros included (0 is
+	# D3DTA_DIFFUSE); the object renderer's MODULATE2X(TEXTURE, DIFFUSE)
+	# otherwise (the shader's defaults).
+	if rule.get("stage_ops", false):
+		for k in ["color_op", "color_arg1", "color_arg2", "alpha_op", "alpha_arg1", "alpha_arg2"]:
 			mat.set_shader_parameter(k, int(rule[k]))
-	mat.set_shader_parameter("alpha_one", rule["blend"] == "add_one")
+	mat.set_shader_parameter("blend_color", int(emu["color"]))
+	mat.set_shader_parameter("blend_alpha", int(emu["alpha"]))
 	return mat
 
 ## The material for a layer the rule draws alpha-tested or two-sided.
@@ -807,9 +994,11 @@ static func _commit_material(plan: Dictionary, texture_cache: Dictionary) -> Mat
 	mat.albedo_texture = godot_tex
 	var alpha_ref := int(plan.get("alpha_ref", 0))
 	var rule: Dictionary = plan.get("rule", {})
-	if rule.get("blend", "") != "":
-		# An MTRL mod's blend (READ): the only per-material blending the
-		# client has -- the flag word never blends.
+	if rule.get("mtrl", false) and (rule.get("blend", "") != "" or int(rule.get("alpha_ref", 0)) > 0
+			or int(rule.get("alpha_func", D3DCMP_GREATEREQUAL)) not in [D3DCMP_GREATEREQUAL, D3DCMP_ALWAYS]):
+		# An MTRL mod's blend or test (READ): its own blend -- the only
+		# per-material blending the client has; the flag word never blends
+		# -- and its own alpha func, which may be any D3DCMPFUNC.
 		return _build_mod_material(layer, godot_tex, rule)
 	if alpha_ref > 0 or plan.get("two_sided", false):
 		# Not a StandardMaterial3D: a real double-sided card has to keep

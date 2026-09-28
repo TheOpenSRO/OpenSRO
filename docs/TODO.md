@@ -614,6 +614,12 @@ are not drawn.
 - **Object-space skin entry.** An empty skin slot lands on the client's palette entry 0, drawn
   here in the model's own space (BMS_FORMAT.md). That entry 0 is the object transform is
   INFERRED, not read from the vertex shader's constant upload.
+- **Object brightness against the client** (material review follow-up). The client draws
+  texture × lit diffuse × 2. Our flag-word path is tuned by eye (light energy 0.3, round 43).
+  Before any global change, read c10's upload, the env record → D3DLIGHT9 mapping and the object
+  colour, then compare numerically in Jangan. The decision is the user's.
+- **MTRL blend pairs drawn OURS** (BMT_FORMAT.md): 7 pairs drop a term. BLENDFACTOR's live
+  value for objects is OPEN. TFACTOR is drawn white, although the mod's own colour is available.
 - **The 355 bit-9 item layers with no ENVMAP mod** are cut at 128 by the READ rule. That is right
   for the 1-bit hats. `light_02_ha` (91% graded alpha) is cut the same way; a render of it
   against the original would confirm it.

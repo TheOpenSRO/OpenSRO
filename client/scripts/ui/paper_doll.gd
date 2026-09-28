@@ -74,6 +74,8 @@ func _frame(skeleton: Node3D) -> void:
 	if skeleton is Skeleton3D:
 		var skel := skeleton as Skeleton3D
 		for i in range(skel.get_bone_count()):
+			if not Skeleton3DBuilder.is_skeleton_bone(skel, i):
+				continue
 			var p: Vector3 = skel.get_bone_global_pose(i).origin
 			lo = Vector3(minf(lo.x, p.x), minf(lo.y, p.y), minf(lo.z, p.z))
 			hi = Vector3(maxf(hi.x, p.x), maxf(hi.y, p.y), maxf(hi.z, p.z))

@@ -184,9 +184,56 @@ The reader and the render path are both in `sro_client.exe`:
 - `0x200` → the foliage shader's scissor at 128/255;
 - `0x1` → two-sided;
 - the object's env-map mod → its own reference (1/255 or none) on every material;
-- an MTRL mod → its own test, blend (mix, add, add with alpha 1, or multiply; any other D3DBLEND
-  pair is drawn as mix, OURS), z-write, cull and stage-0 ops, in a shader built per combination;
-- two-pass → back faces then front faces (a `next_pass`) when blended, and two-sided otherwise.
+- an MTRL mod → its own test (any D3DCMPFUNC, compared exactly on the mip-0 alpha byte), blend,
+  z-write, cull and stage-0 ops, in a shader built per combination (see "The MTRL mod shader"
+  below);
+- two-pass → back faces then front faces when blended, and two-sided otherwise. The front pass is
+  a `next_pass` with a higher `render_priority`: Godot 4.2's transparent sort is not stable
+  (`rasterizer_scene_gles3.h`), so a `next_pass` alone is not guaranteed to draw after its
+  material.
+
+### The MTRL mod shader (round 625-626 material review follow-up)
+
+- **Stage 0.** When the mod blends, all six stage bytes are applied as the client sets them
+  (READ, `CRTModMtrl::vslot_004`); 0 is `D3DTA_DIFFUSE`, not "unset". A mod that only tests
+  leaves the renderer's own stage 0 in place: MODULATE2X of TEXTURE and DIFFUSE (READ: the
+  renderer seeds flag `0x1000`, which `FUN_00c42a60` makes COLOROP 5).
+- **DIFFUSE is the lit vertex colour** (READ, `Shader\vertexshader0.c`):
+  `oD0 = saturate(N.L) * c11 + c10`. The registers are:
+  - `c11` (`VSC_DLIGHT_DIFFUSE`) = the material's D3DMATERIAL9 Diffuse × the light's Diffuse
+    (READ: `CObjRendererVS::FUN_00bf0e20` and siblings upload material+0x10.. ×
+    `DAT_01112e18..20`, w = 1.0). `DAT_01112e18..` is the D3DLIGHT9 Diffuse and `..e28..` its
+    Ambient, copied by `CObjRendererVS::vslot_025` beside `SetLight(0)`.
+  - `c10` (`VSC_DLIGHT_AMBIENT`): its product is built in `vslot_024` from the object's own
+    colour × the light's Ambient, w = 1.0. Which stack block is the upload was not resolved
+    (INFERRED).
+
+  The diffuse alpha is 1 (READ: w = 1.0, and oD0 saturates). The shader does not recompute the
+  colour. It splits the stage result into the part that multiplies DIFFUSE (ALBEDO, lit by the
+  scene's lights like every other material) and the part that does not (EMISSION, unlit, as a
+  SELECTARG1 TEXTURE draw is).
+- **Brightness is anchored to the flag-word path** (OURS). The flag-word path draws ALBEDO =
+  layer ambient × texture for what the client draws as MODULATE2X(TEXTURE, DIFFUSE), so the MTRL
+  shader draws a lit coefficient L as L × ambient / 2. Whether the flag-word path itself matches
+  the client is OPEN (docs/WORLD_ISSUES.md, the material review follow-up).
+- **The alpha test** compares the alpha byte with the ref byte by the mod's own D3DCMPFUNC
+  (NEVER, LESS, EQUAL, LESSEQUAL, GREATER, NOTEQUAL, GREATEREQUAL). It reads mip 0, as the
+  foliage shader does (OURS: the client tests filtered alpha, and mipmapped alpha dissolves a
+  canopy with distance); the blend uses the filtered alpha.
+- **The blend pairs.** Godot 4.2's GL Compatibility blends are mix (SRC_ALPHA / 1−SRC_ALPHA), add
+  (SRC_ALPHA / ONE) and mul (DST_COLOR / ZERO) (`rasterizer_scene_gles3.cpp`). Every one of the
+  18 D3DBLEND pairs in the census is drawn through them by choosing the colour and alpha the
+  shader writes (`ObjectLoader.BLEND_EMULATION`). Each is labelled:
+  - **exact**: 5/6, 5/2, 2/2, 9/1, 1/3, 12/2, 13/6, 3/6;
+  - **given**: exact under `D3DRS_BLENDFACTOR` = white, its D3D default, for 5/14, 3/14 and
+    15/15. The client sets it only in `Map::FUN_00a1d790`, and whether that value is live for
+    objects is OPEN. Destination alpha = 1 (a back buffer without alpha, INFERRED) makes 5/7
+    and 2/11 given too;
+  - **ours**, with the dropped term named:
+    - 5/13: BOTHINVSRCALPHA as a destination factor, which D3D leaves undefined;
+    - 3/3: `src·src` dropped;
+    - 2/4, 5/5, 5/4, 2/3, 10/2, 2/9: a destination- or colour-weighted term drawn as plain
+      add.
 
 Items take no rule of their own: their own ENVMAP mods spare their graded alpha (round 626, READ).
 

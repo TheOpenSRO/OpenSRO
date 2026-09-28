@@ -4,7 +4,8 @@ extends SceneTree
 ## word of its ENVMAP mod (BsrReader.ParsedObject.env_map_flags; -1 none) and,
 ## for every alpha-test (0x200) layer of its material, whether that mod
 ## overrides it -- no test (flag word without bit 1), a test at ALPHAREF 1
-## (with bit 1), or none (the layer's own 0x80 test stands). Prints each
+## (with bit 1), or none (the layer's own 0x80 test stands); a layer an MTRL
+## mod governs is counted apart (bit9_mtrl). Prints each
 ## layer left to its own test as NOENV <bmt> <layer>, then the totals.
 ## Headless; ~10 minutes (it reads every item .bsr and .bmt):
 ##   godot4 --headless --path client --script res://tools/census_item_envmap.gd
@@ -22,7 +23,7 @@ func _initialize() -> void:
 	var two_pass_items := 0
 	var env_shapes := {}
 	var hist := {}
-	var layers := {"bit9_env_none": 0, "bit9_env_test": 0, "bit9_env_notest": 0}
+	var layers := {"bit9_env_none": 0, "bit9_env_test": 0, "bit9_env_notest": 0, "bit9_mtrl": 0}
 	for id in items:
 		for m in items[id].model_paths:
 			var p := String(m).to_lower()
@@ -51,8 +52,14 @@ func _initialize() -> void:
 			var mat := ObjectLoader.load_material(data, o.material_path) if o.material_path != "" else null
 			if mat == null:
 				continue
-			for l in mat.layers:
+			for li in range(mat.layers.size()):
+				var l: BmtReader.Layer = mat.layers[li]
 				if l.unknown & 0x200 == 0:
+					continue
+				# A layer an MTRL mod governs takes the mod's states, not the
+				# flag word's or the env map's (ObjectLoader.layer_draw_rule).
+				if not o.mtrl_mod_for(li).is_empty():
+					layers["bit9_mtrl"] += 1
 					continue
 				var k := "bit9_env_none" if f < 0 else ("bit9_env_test" if f & 2 != 0 else "bit9_env_notest")
 				layers[k] += 1

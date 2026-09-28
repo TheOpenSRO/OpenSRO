@@ -7094,6 +7094,102 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twenty-fifth and -sixth rounds, material review follow-up: blended canopies keep their leaves at distance, and the MTRL shader draws what the mod says
+
+The combined review of c1bc28a confirmed every READ claim. Performance was flat: 864 materials,
+8 shaders, the same draw calls. It found real bugs in the MTRL mod shader, fixed here.
+
+**1. Blended canopies vanished at distance.** The mod shader discarded on mipmapped alpha, so the
+72 tree models that blend their leaves lost them as they receded. The test now reads mip 0
+(`textureLod(albedo_texture, UV, 0.0)`), as `foliage.gdshaderinc` does; the blend still uses the
+filtered alpha.
+
+MEASURED with the new `tools/render_material_distance.gd` (non-background pixels, dev c1bc28a →
+now):
+
+| Model | 1× | 8× | 16× |
+|---|---|---|---|
+| `tre_bamboo01` | 2234 → 2273 | 20 → 48 | **0 → 11** |
+| `tre_maple01` | 5781 → 5781 | 89 → 89 | 26 → 26 |
+
+The maple's leaves are not an MTRL layer, so it is unchanged. Renders:
+`equip_shots/material/bamboo01_cmp.png`, `bamboo01_far_zoom.png`, `maple01_cmp.png` and
+`maple01_far_zoom.png`; the top row is dev.
+
+**2. The stage bytes.** `_mod_pass` skipped zero values, so D3DTA_DIFFUSE (0) never reached the
+shader, and MODULATE(DIFFUSE, TEXTURE) computed texture × texture. All six bytes are now sent
+whenever the mod blends.
+
+DIFFUSE is the lit vertex colour. READ from `Shader\vertexshader0.c`:
+`oD0 = saturate(N.L) · c11 + c10`, where c11 = material Diffuse × the D3DLIGHT9 Diffuse (READ:
+`FUN_00bf0e20` and siblings, from the globals `CObjRendererVS::vslot_025` copies from the light
+it passes to `SetLight(0)`). Its alpha is 1, because both registers' w is 1.0 and oD0 saturates.
+
+The shader splits the stage result:
+- the part that multiplies DIFFUSE is drawn as ALBEDO, lit by the scene like every other
+  material;
+- the part that does not is drawn as EMISSION, unlit, as a SELECTARG1 TEXTURE draw is.
+
+OURS: DIFFUSE × DIFFUSE is drawn as DIFFUSE, and TFACTOR is white.
+
+**3. MODULATE2X.** READ: the renderer seeds flag 0x1000 on every object draw (`vslot_024`,
+`vslot_038`), and `FUN_00c42a60` turns it into stage-0 COLOROP MODULATE2X, so the client's
+object colour is texture × lit diffuse × 2. Both paths now agree with each other:
+- the flag-word path draws ALBEDO = layer ambient × texture for that MODULATE2X;
+- the MTRL shader draws a lit coefficient L as L × ambient / 2 (OURS: the anchor), so its
+  MODULATE2X equals the flag-word path and its MODULATE is half of it.
+
+A mod that only tests keeps the renderer's MODULATE2X. Whether the flag-word path matches the
+client is **not changed and not settled**:
+- Its brightness was tuned by eye: `light_energy` 0.3 against a Dunhuang wash (round 43), with
+  ambient energy 1.
+- The client's formula is read only in part. c11 is READ. c10's product (the object's own colour
+  × the light's Ambient, built in `vslot_024`) is INFERRED. The env record → D3DLIGHT9 mapping
+  was not traced.
+- A measured comparison needs those values. No global change was made.
+
+Jangan before and after (`jangan_cmp.png`): 2–3% of pixels differ by more than 12/255, and the
+means move by under 1/255. Those pixels are the MTRL-drawn pieces.
+
+**4. Pass order.** Godot 4.2 does not keep a `next_pass` after its material in the transparent
+sort. A two-pass object's front-face pass now has a higher `render_priority`, so the back faces
+draw first.
+
+**5. Alpha funcs.** Every D3DCMPFUNC is compared exactly, on the alpha byte against the ref
+byte. The census has 5 NOTEQUAL (for example `khotanshop_designer`, `arabia_malak` and
+`rocmountainquest_youngwoman2`, at 128) and 1 LESSEQUAL (`samarkand_potion_etc01`, 148). An
+MTRL mod that tests without blending now draws through the mod shader in opaque mode, with its
+own func.
+
+**6. Blend pairs.** The census has 18 D3DBLEND pairs, not one unmapped pair. Godot 4.2's GL
+Compatibility has mix, add and mul (`rasterizer_scene_gles3.cpp`). Each pair is drawn through
+them by what the shader writes as colour and alpha, and labelled (`ObjectLoader.BLEND_EMULATION`,
+BMT_FORMAT.md):
+- 8 are exact;
+- 5 are exact given BLENDFACTOR white or a destination alpha of 1. The client sets BLENDFACTOR
+  only in `Map::FUN_00a1d790`, and whether that is live for objects is OPEN;
+- 7 are OURS, with the dropped term named.
+
+The dungeon water is unchanged in shape (`water_cmp.png`, frames 20/48/76): 0.4–1.1% of pixels
+differ by more than 12/255.
+
+**7. Minor.**
+- A new `Skeleton3DBuilder.is_skeleton_bone` excludes `OBJECT_SPACE_BONE` from the loops that
+  measure a body by its bones: the paper doll's framing, the QA feet report, the NPC bounds
+  fallback and the monster label height.
+- `census_item_envmap.gd` counts MTRL-governed layers apart.
+
+**Tests** (`object_loader_test.gd`, "review 1–6"):
+- the mod shader tests mip 0;
+- a DIFFUSE byte of 0 reaches the material;
+- lit is ALBEDO and unlit is EMISSION, anchored to the flag-word brightness;
+- the front pass has the higher `render_priority`;
+- each of the six funcs is kept exactly on an unblended mod;
+- all 18 pairs are labelled.
+
+The distance behaviour is measured by the render tool above; the headless test runner cannot
+rasterize.
+
 ## Six-hundred-and-twenty-sixth round, review follow-up: hats and fringes are cut again, armour stays whole, and the reason is READ
 
 The review confirmed round 626's chest and legs fix and the comma split. It also found a
@@ -7391,7 +7487,9 @@ Implemented:
   `depth_draw_always`, and the stage-0 ops are uniforms.
 - The blend pairs: SRCALPHA/INVSRCALPHA is mix, SRCALPHA/ONE add, ONE/ONE add with alpha 1, and
   the DESTCOLOR pairs multiply. OURS: any other pair is drawn as mix; the one seen is
-  `alex_potion_potion1`'s SRCALPHA/BOTHINVSRCALPHA.
+  `alex_potion_potion1`'s SRCALPHA/BOTHINVSRCALPHA. **Corrected by the material review
+  follow-up:** the census has 18 pairs, not one unmapped; each now has its own labelled
+  emulation (`ObjectLoader.BLEND_EMULATION`).
 
 MEASURED with `foliage_census.gd` (`MTRL(...)` per piece):
 - **Every water object the review named carries a live MTRL mod** and now blends instead of
@@ -7413,6 +7511,8 @@ MEASURED with `foliage_census.gd` (`MTRL(...)` per piece):
 **4. Two passes (READ).** When `.bsr` header 0x2C has bit 1, `CObjRendererVS::vslot_038` draws
 with `FUN_00bf5780`: each material with CULLMODE CW, then CCW, i.e. back faces then front. An
 unblended layer is then two-sided. A blended one gets a `next_pass`: cull front, then back.
+(**Corrected by the material review follow-up:** Godot 4.2 does not keep a `next_pass` after
+its material in the transparent sort; the front pass now carries a higher `render_priority`.)
 MEASURED: `euro_esteuro_fountain01` (its MTRL mod is object-wide) and all 23 pieces of
 `alex_potion`.
 

@@ -670,11 +670,65 @@ func _test_round_625_mods(OL, archive: Pk2Reader, layer_for: Callable) -> void:
 	_check(ws != null and ws.shader.code.contains("blend_mix") and ws.shader.code.contains("depth_draw_always")
 			and is_equal_approx(float(ws.get_shader_parameter("alpha_scissor")), 137.0 / 255.0),
 		"r625 review: a tree's leaf mod (test 137, SRCALPHA/INVSRCALPHA, z-write on) blends, writes depth and cuts at 137 (got %s)" % written)
+	_test_material_review(OL, archive, layer_for, mtrl)
 	var solid_two: Dictionary = OL.layer_draw_rule(0x340, -1, {}, true)
 	_check(solid_two["two_sided"] == true and solid_two["alpha_ref"] == 128,
 		"r625 review: an unblended two-pass layer is two-sided and keeps its test (got %s)" % str(solid_two))
 	var env_all: Dictionary = OL.layer_draw_rule(0x341, 0x1, {}, false)
 	_check(env_all["alpha_ref"] == 0, "r625 review: an env-map mod with no test of its own drops the 0x200 test (got %s)" % str(env_all))
+
+## Round 625-626 material review follow-up:
+## 1. the MTRL shader's alpha test reads mip 0, not the mipmapped alpha
+##    that makes a blended canopy vanish at distance (tre_bamboo01: 0 pixels
+##    at 16x);
+## 2. all six stage bytes reach the shader, D3DTA_DIFFUSE (0) included, and
+##    DIFFUSE is the lit colour (ALBEDO) while TEXTURE-only results are
+##    unlit (EMISSION);
+## 3. MODULATE2X of TEXTURE and DIFFUSE draws exactly the flag-word path's
+##    brightness (ALBEDO = ambient x texture);
+## 4. a two-pass object's front faces carry a higher render_priority, so the
+##    back faces draw first whatever the transparent sort does;
+## 5. every D3DCMPFUNC is compared exactly;
+## 6. every census blend pair has an emulation, labelled.
+func _test_material_review(OL, archive: Pk2Reader, layer_for: Callable, base_mod: Dictionary) -> void:
+	var leaf := base_mod.duplicate()
+	leaf.merge({"zwrite_off": false, "alpha_test": true, "alpha_ref": 128, "alpha_func": 7,
+		"src_blend": 5, "dest_blend": 6, "color_op": 5, "color_arg1": 0, "color_arg2": 2,
+		"alpha_op": 3, "alpha_arg1": 0, "alpha_arg2": 2}, true)
+	var m := OL.build_godot_material(archive, "", layer_for.call(0x341), {}, -1, leaf, false) as ShaderMaterial
+	_check(m != null and m.shader.code.contains("textureLod(albedo_texture, UV, 0.0)")
+			and m.shader.code.contains("keep(") and m.shader.code.contains("tex0"),
+		"review 1: the MTRL test reads full-resolution alpha (mip 0), so a leaf card keeps its shape at distance")
+	_check(m != null and int(m.get_shader_parameter("color_arg1")) == 0 and int(m.get_shader_parameter("alpha_arg1")) == 0,
+		"review 2: D3DTA_DIFFUSE (0) is sent, not skipped (got color_arg1 %s alpha_arg1 %s)" % [
+			m.get_shader_parameter("color_arg1") if m != null else "-", m.get_shader_parameter("alpha_arg1") if m != null else "-"])
+	_check(m != null and m.shader.code.contains("ALBEDO = lit;") and m.shader.code.contains("EMISSION = unlit;")
+			and m.shader.code.contains("albedo.rgb * 0.5"),
+		"review 2-3: DIFFUSE is the lit term (ALBEDO, lit by the scene), TEXTURE alone unlit (EMISSION), MODULATE2X = the flag-word brightness")
+	var two := OL.build_godot_material(archive, "", layer_for.call(0x340), {}, -1, leaf, true) as ShaderMaterial
+	_check(two != null and two.next_pass is ShaderMaterial and two.shader.code.contains("cull_front")
+			and (two.next_pass as ShaderMaterial).render_priority > two.render_priority,
+		"review 4: the front-face pass has the higher render_priority (back faces first)")
+	# 5: every func survives into the material exactly.
+	for f in [1, 2, 3, 4, 5, 6]:
+		var t := base_mod.duplicate()
+		t.merge({"alpha_test": true, "alpha_ref": 128 if f != 4 else 148, "alpha_func": f, "blend": false}, true)
+		var tm := OL.build_godot_material(archive, "", layer_for.call(0x140), {}, -1, t, false) as ShaderMaterial
+		_check(tm != null and int(tm.get_shader_parameter("alpha_func")) == f and not tm.shader.code.contains("ALPHA =")
+				and is_equal_approx(float(tm.get_shader_parameter("alpha_scissor")), float(t["alpha_ref"]) / 255.0),
+			"review 5: an unblended MTRL test with D3DCMPFUNC %d draws opaque with that exact func (got %s)" % [f, tm])
+	# 6: every census pair is mapped, and each is labelled.
+	var pairs := [[5, 6], [5, 2], [5, 13], [3, 3], [5, 7], [3, 14], [3, 6], [5, 14], [2, 4], [5, 5],
+		[5, 4], [12, 2], [13, 6], [15, 15], [2, 3], [2, 11], [10, 2], [2, 9]]
+	var all_mapped := true
+	for p in pairs:
+		var e: Dictionary = OL.blend_emulation(p[0], p[1])
+		if not OL.BLEND_EMULATION.has("%d/%d" % p) or not (e["kind"] in ["exact", "given", "ours"]) or String(e["note"]) == "":
+			all_mapped = false
+	_check(all_mapped, "review 6: all 18 census D3DBLEND pairs have a labelled emulation")
+	var inv: Dictionary = OL.blend_emulation(13, 6)
+	_check(inv["godot"] == "mix" and inv["alpha"] == 2 and inv["kind"] == "exact",
+		"review 6: BOTHINVSRCALPHA is mix at 1-As, exactly (got %s)" % str(inv))
 
 func _test_round_566() -> void:
 	var OL = load("res://scripts/assets/object_loader.gd")
