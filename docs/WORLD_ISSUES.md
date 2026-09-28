@@ -7294,14 +7294,15 @@ fails with either guard removed ("cancelled the live auto-attack", "cleared the 
   is `CRegionManagerBody::vslot_012` (0x98b300, table 0xb431fc slot 12). It writes the
   destination, and FUN_005862e0 builds the move record from what it wrote. It walks the navmesh
   with the same terrain walk the client has (0x9a0710 in the server, 0x4047a0 in the client) and
-  stops at the first blocked edge, nudged back 0.01 by FUN_009c1050, with no slide. A blocked
+  stops at the first blocked edge, with no slide (the stop itself is corrected in the review
+  follow-up below: 0.2 toward the cell centre, not 0.01 back). A blocked
   path is **not refused**; the caster stops at the obstacle. Only bit 0x10000000 refuses the cast.
   The clamp is 3-D (`x²+y²+z²`), as the server's already was.
 
   The client now does the same before it sends (`GhostWalk.resolve`, scripts/world/ghost_walk.gd):
   - it clamps to `tele` value[1] (the buff catalog now keeps `tele`);
   - it walks the NavGraph toward the clamped point with `step_tracked(..., slide=false)`, in 1-unit
-    pieces (OURS);
+    pieces (OURS; one step per region since the review follow-up);
   - it sends the stop point at the cell's height.
 
   On `OpSkillMove` the footing is settled at once (`_settle_skill_move_footing`). The server's
@@ -7356,6 +7357,67 @@ int/skills 544a7a7 (16 FAILED):
 	FAIL Grass Walk (all none) plays no body animation and no swing (clips ["skill_ch_lightning_gyeonggong_a"], swings 0)
 	FAIL Ghost Walk plays its WAIT, action type 32 (types [], clips ["skill_ch_lightning_gyeonggong_b"])
 	FAIL in the row's AniGroup, default, not the held sword's group (groups [])
+
+**Integration follow-up, the review of ff459f0.**
+- **A wrong value was labelled READ, and is corrected.** FUN_009c1050 does not step 0.01 back along
+  the move. It moves the crossing toward the mover's cell centre by **at most 0.2**:
+  - the constant is the double at 0xb45de8 (0.2), read at 0x9c1092/0x9c10ac; the client's twin
+    FUN_004472d0 uses 0xe1b850 (0.2);
+  - the centre is `+0x20/+0x24`, `(min+max)×0.5`, set by CRTNavCellQuad::vslot_010 (client
+    0x4476c0, server 0x9c1210, 0.5 at 0xe1b7d0/0xb45c50);
+  - 0.01 (0xe1b820) belongs to the object entry test.
+
+  The block branch (0x9a0c7e..0x9a0cf8) then calls FUN_009a05a0. That runs the object entry test
+  (FUN_009a0030) from the walk's source point to the stop against every object the cell lists; if
+  any is met, the walk goes back to the source. `NavGraph.step_tracked(..., false)` does both now,
+  for terrain walls (`TERRAIN_BLOCK_NUDGE`, `cancelled`); object walls keep the 0.01. What "met"
+  means (outline edges not marked 0x10) is INFERRED. The docs and the test that hard-coded 0.01
+  are fixed.
+- **Main-thread stall.** GhostWalk now takes one step per region and cuts only at region borders.
+  MEASURED on real 97/168 (576 landings, 4 starts, every 5°, reach 100 and 215): median ~2 ms,
+  max 6.7 ms, where the review measured 120–136 ms. There are no landings over reach in 3-D and
+  none under a higher surface. A reach that is not known yet refuses the cast (OURS).
+- **Coordinate truncation (READ).** The move record keeps x, y and z through `_ftol2` (asm
+  0x5866ca..ea). EngageSkill `fild`s them back and slot 305 (CGObjPC::vslot_305 →
+  GObjPC::FUN_0048b920 → slot 0x39c) puts the character there, so the server's position is the
+  integer point. Which packet tells the clients was not read.
+
+  The client mirrors it: `sent` is truncated in the region's coordinates, and the player stands at
+  the cell's height there. The exception is when truncating would carry the point over the edge the
+  walk stopped at. MEASURED at Jangan's pit railing, 953.46 → 953, which would land the player at
+  terrain -54.39 in the pit. There the walked stop is kept (OURS: what retail does then was not
+  read, OPEN). Live: `(42, -29.51, -37)` was sent, which is local z 997 and local y trunc(-32.609)
+  = -32, and the player stood at -30.1.
+- **First-cast hitch.** skilleffect.txt is parsed once (`SkillEffectReader.parse_all`) on a
+  WorkerThreadPool task started at world entry, and both readings share it. Live: "321 skill hit
+  effects, 978 skillaniset rows (parsed in 93 ms off the main thread; waited 0 ms)".
+- **The server's re-clamp.** `sent` is kept within reach in 3-D, y included. It is walked again,
+  shorter along the same line by the overshoot plus √2, so the server's clamp is a no-op and the
+  matched settle branch applies.
+- **Region hand-over** is tested (a border crossing, and a deck straddling the border, each
+  region placing its own copy); it needed no change.
+- **The aniset.** READ: in skillaniset2 the loader reads col 0 first and skips the row when it is 0
+  (the manager's +0x10 flag, 1 for that section). A repeated SkillID reuses its record: the lists
+  append and the scalars are overwritten. Both are modelled.
+- **Server.** A stale session's disconnect no longer saves its position or sends OpEntityLeft
+  while the character is live on another session (world.go, `stillLive`).
+  `TestStaleSessionDisconnectSavesNothingAndAnnouncesNothing` fails without the guard: "the stale
+  session's disconnect saved its position: zone "jangan" at (100, 0, -200)".
+
+Tests: `ghost_walk_review_test.gd` (new) and `ghost_walk_test.gd`, `self_cast_test.gd` (it now
+gives the cast a reach) pass. So do all 136 suites, `check`, and the Go suite (`go test -count=1
+-p 1 ./...`). The live run (`/var/tmp/e2e/run4.sh`) had 0 SCRIPT ERRORs. The skills CSV under
+/var/tmp/e2e/data had gone and was re-exported from the 47 plain shards. NEGATIVE of the new suite
+at ff459f0 (13 FAILED, and 2 SCRIPT ERRORs where the old Landing has no `sent`):
+
+	FAIL a terrain wall stops the no-slide walk at the crossing moved 0.2 toward the cell centre, (99.98687, 200.1996) (got (99.99001, 10.5, 200))
+	FAIL a stop whose move toward the centre meets one of the cell's objects is cancelled
+	FAIL a skillaniset2 row with col 0 = 0 is skipped, as the loader skips it
+	FAIL a repeated SkillID appends its lists (got { "group": "sword", "ready": [41], "wait": [27], "shot": [] })
+	FAIL the sent landing is truncated like retail's record: (50.7, 10.5, 120.6) -> (50, 10, 120) (sent [(50.7, 10.5, 120.6005)])
+	FAIL the sent landing is within reach in 3-D, y included (101.572 from the caster, sent [(138.6935, 60, 600)])
+	FAIL with the reach not known (the index not loaded) the cast is refused, nothing sent (sent [(50, 10.5, 150)])
+	FAIL World3D preloads skilleffect.txt at world entry
 
 ## Six-hundred-and-seventeenth round: Grass Walk and the self-buffs cast with nothing selected, and Ghost Walk casts at a point picked on the ground
 

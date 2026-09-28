@@ -314,6 +314,13 @@ func _make_world() -> Node:
 		3: {"range": 6, "approach": true, "target_required": 1, "target_land": 0},
 	})
 	world.set("_hud_panels", panels)
+	# Ghost Walk's reach (tele value[1]): a ground cast is refused while it is
+	# not known (the 616-618 integration review). Synthetic and wide, so the
+	# 3-D clamp leaves the clicked point as it is -- no navmesh here, so the
+	# point goes out unchecked, which is what this suite reads.
+	var cat := SkillBuffCatalog.new(null)
+	cat.set_row({"id": 114, "tele": [500, 100000]})
+	world.set("_hud_buff_board", (load("res://scripts/ui/hud/hud_buff_board.gd") as GDScript).new(null, cat))
 	_net.set("current_character_name", "Aria")
 	return world
 

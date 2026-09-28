@@ -180,14 +180,17 @@ func _init() -> void:
 			if w.x < 0.0 or w.z < 0.0 or w.x > 1920.0 or w.z > 1920.0:
 				return []
 			return [graph, group]
+		var t0 := Time.get_ticks_usec()
 		var landing := GhostWalk.resolve(start, pick, reach, -2, null, lookup)
+		var took := Time.get_ticks_usec() - t0
 		print("ghost from %.1f, %.1f (y %.2f, on %s) toward %.1f, %.1f (y %.2f) reach %.0f" % [
 			start.x, start.z, start.y, _name(names, graph.surface_at(start.x, start.z, start.y).object_index),
 			pick.x, pick.z, pick.y, reach])
 		print("   clamped %.2f, %.2f, %.2f" % [landing.clamped.x, landing.clamped.y, landing.clamped.z])
-		print("   landing %.2f, %.2f, %.2f on %s%s, %.2f from the start" % [
+		print("   landing %.2f, %.2f, %.2f on %s%s, %.2f from the start; sent %.2f, %.2f, %.2f; %d us" % [
 			landing.position.x, landing.position.y, landing.position.z, _name(names, landing.footing),
-			" (stopped at a wall)" if landing.blocked else "", start.distance_to(landing.position)])
+			(" (stopped at a wall%s)" % (", sent back by the cell's objects" if landing.cancelled else "")) if landing.blocked else "",
+			start.distance_to(landing.position), landing.sent.x, landing.sent.y, landing.sent.z, took])
 
 	var from := _vec2(_arg("--from", ""))
 	if from != Vector2.INF:

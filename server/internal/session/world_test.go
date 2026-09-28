@@ -1700,3 +1700,41 @@ func TestSaveAllPositionsSavesEveryoneStillInTheWorld(t *testing.T) {
 		}
 	}
 }
+
+// A stale session's disconnect (a second session entered the same character
+// before the first one's disconnect was seen) saves nothing and tells nobody
+// the character left: the live session's entity is still in the world (the
+// 616-618 integration review). NEGATIVE at ff459f0: the stale position
+// (100, 0, -200) is saved and the live session is sent OpEntityLeft for its
+// own character.
+func TestStaleSessionDisconnectSavesNothingAndAnnouncesNothing(t *testing.T) {
+	SetPersistPosition(true)
+	t.Cleanup(func() { SetPersistPosition(false) })
+	w := startPositionWorld(t)
+
+	stale, _, _ := w.enter(t)
+	w.moveTo(t, stale, 100, 0, -200)
+	live, liveR, _ := w.enter(t)
+	stale.Close()
+	select {
+	case <-w.left:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the stale session's disconnect")
+	}
+	if _, ok := w.hub.EntityByCharacterID(w.aria); !ok {
+		t.Fatal("the live session's Aria left the hub with the stale one")
+	}
+	if c := w.saved(t); c.PosX == 100 && c.PosZ == -200 {
+		t.Fatalf("the stale session's disconnect saved its position: zone %q at (%g, %g, %g)", c.Zone, c.PosX, c.PosY, c.PosZ)
+	}
+	live.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+	for {
+		p, err := proto.Read(liveR, nil, nil)
+		if err != nil {
+			break
+		}
+		if p.Opcode == OpEntityLeft {
+			t.Fatalf("the live session was told its own character left: % x", p.Data)
+		}
+	}
+}

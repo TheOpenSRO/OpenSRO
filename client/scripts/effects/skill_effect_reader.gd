@@ -19,30 +19,48 @@ const E_HIT_EFP := 14
 
 ## Parses the table into Basic_Code (upper-cased) -> hit `.efp` path.
 static func parse(data: PackedByteArray) -> Dictionary:
-	var out: Dictionary = {}
+	return parse_all(data)["hit"]
+
+## Both readings of the table in ONE pass over one decode (the 616-618
+## integration review: the 4.5 MB file was decoded twice, on the first cast):
+## {"hit": parse's map, "aniset": parse_aniset's}. Pure data -- World3D runs
+## it on a WorkerThreadPool task at world entry.
+static func parse_all(data: PackedByteArray) -> Dictionary:
+	var hit: Dictionary = {}
+	var sets: Dictionary = {}
+	var section := ""
 	for line in _lines(data):
-		if not line.contains("SKILL_"):
+		if line.begins_with("#section"):
+			var parts := line.split("\t", false)
+			section = parts[1].strip_edges() if parts.size() > 1 else ""
+			continue
+		if not line.contains("SKILL_") and not line.contains("SYSTEM_"):
 			continue
 		var cols := line.split("\t")
-		if cols.size() <= E_CODE:
-			continue
-		var code := cols[E_CODE].strip_edges()
-		if not code.begins_with("SKILL_"):
-			continue
-		var efp := ""
-		if cols.size() > E_HIT_EFP:
-			efp = cols[E_HIT_EFP].strip_edges()
-		# Guard the fixed column: if it isn't a .efp, scan the row for one.
-		if not efp.to_lower().ends_with(".efp"):
-			efp = ""
-			for c in cols:
-				var cl := c.strip_edges()
-				if cl.to_lower().ends_with(".efp"):
-					efp = cl
-					break
-		if efp != "" and efp.to_lower() != "none":
-			out[code.to_upper()] = efp
-	return out
+		_hit_row(cols, hit)
+		if section in ANIM_SECTIONS and not line.strip_edges().begins_with("//"):
+			_aniset_row(cols, section, sets)
+	return {"hit": hit, "aniset": sets}
+
+static func _hit_row(cols: PackedStringArray, out: Dictionary) -> void:
+	if cols.size() <= E_CODE:
+		return
+	var code := cols[E_CODE].strip_edges()
+	if not code.begins_with("SKILL_"):
+		return
+	var efp := ""
+	if cols.size() > E_HIT_EFP:
+		efp = cols[E_HIT_EFP].strip_edges()
+	# Guard the fixed column: if it isn't a .efp, scan the row for one.
+	if not efp.to_lower().ends_with(".efp"):
+		efp = ""
+		for c in cols:
+			var cl := c.strip_edges()
+			if cl.to_lower().ends_with(".efp"):
+				efp = cl
+				break
+	if efp != "" and efp.to_lower() != "none":
+		out[code.to_upper()] = efp
 
 ## The hit `.efp` for a Basic_Code, tolerating the level suffix (the table keys
 ## without it, e.g. SKILL_CH_SWORD_SMASH_A for ..._SMASH_A_01). "" if unknown.
@@ -138,28 +156,33 @@ const ANI_TYPES := {
 ## AniGroup column lower-cased, "ready", "wait", "shot": Array of action
 ## types}. Rows in other sections are ignored.
 static func parse_aniset(data: PackedByteArray) -> Dictionary:
-	var out: Dictionary = {}
-	var section := ""
-	for line in _lines(data):
-		if line.begins_with("#section"):
-			var parts := line.split("\t", false)
-			section = parts[1].strip_edges() if parts.size() > 1 else ""
-			continue
-		if not section in ANIM_SECTIONS or line.begins_with("/") or line.strip_edges().begins_with("//"):
-			continue
-		var cols := line.split("\t")
-		if cols.size() <= A_SHOT:
-			continue
-		var code := cols[E_CODE].strip_edges().to_upper()
-		if not code.begins_with("SKILL_") and not code.begins_with("SYSTEM_"):
-			continue
-		out[code] = {
-			"group": cols[A_GROUP].strip_edges().to_lower(),
-			"ready": _ani_list(cols[A_READY]),
-			"wait": _ani_list(cols[A_WAIT]),
-			"shot": _ani_list(cols[A_SHOT]),
-		}
-	return out
+	return parse_all(data)["aniset"]
+
+## One aniset row into `sets`, as FUN_00a9c470 files it (READ):
+## - in `skillaniset2` the loader's flag (+0x10 of the manager, set to 1 for
+##   that section and 0 for `skillaniset` by FUN_00a9eb60) makes it read a
+##   leading int first, and a 0 there skips the row (FUN_00a997e0); a plain
+##   `skillaniset` row has no such column, so its fields sit one column left;
+## - a SkillID seen before is the SAME record: the scalars (AniGroup here)
+##   are overwritten and each list's names are APPENDED after the ones it
+##   already holds (the per-list count is not reset).
+static func _aniset_row(cols: PackedStringArray, section: String, sets: Dictionary) -> void:
+	var shift := 0 if section == "skillaniset2" else -1
+	if cols.size() <= A_SHOT + shift:
+		return
+	if shift == 0:
+		var service := cols[0].strip_edges()
+		if not service.is_valid_int() or int(service) == 0:
+			return
+	var code := cols[E_CODE + shift].strip_edges().to_upper()
+	if not code.begins_with("SKILL_") and not code.begins_with("SYSTEM_"):
+		return
+	var row: Dictionary = sets.get(code, {"group": "", "ready": [], "wait": [], "shot": []})
+	row["group"] = cols[A_GROUP + shift].strip_edges().to_lower()
+	(row["ready"] as Array).append_array(_ani_list(cols[A_READY + shift]))
+	(row["wait"] as Array).append_array(_ani_list(cols[A_WAIT + shift]))
+	(row["shot"] as Array).append_array(_ani_list(cols[A_SHOT + shift]))
+	sets[code] = row
 
 ## One list column: its comma-separated names, each through ANI_TYPES; a name
 ## the map lacks ("none") is dropped, as the loader drops a -1.

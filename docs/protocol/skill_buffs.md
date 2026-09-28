@@ -269,13 +269,30 @@ caster)` and **writes the destination struct** `{cell, mesh, u16 region, f32 x, 
 record is filled from that struct after the call (asm 0x5866c1..0x5866ea). vslot_012 walks the
 navmesh through each mesh's slot 2 (terrain: `CRTNavMeshTerrain::vslot_002` 0x9a0710, the same
 library function as the client's 0x4047a0 that `NavGraph` models) and breaks out on the walk's
-blocked bit (`(r & 0x10000001) != 0`); on a blocked edge the terrain walk leaves the destination at
-the crossing, nudged back toward the mover by `RTNavMeshTerrain::FUN_009c1050` — no slide. So **a
-blocked path is not refused: the caster stops at the obstacle.** Refusals (0x10000000): a
+blocked bit (`(r & 0x10000001) != 0`), with no slide. **Corrected by the review:** on a blocked
+terrain edge (0x9a0c7e..0x9a0cf8) the walk takes the crossing point and moves it toward the centre
+of the mover's cell (`+0x20/+0x24`, `(min + max) × 0.5`, set by `CRTNavCellQuad::vslot_010`
+0x9c1210) by **at most 0.2** (`RTNavMeshTerrain::FUN_009c1050`, the double 0xb45de8 = 0.2 at
+0x9c1092/0x9c10ac; the client's twin `FUN_004472d0` uses 0xe1b850 = 0.2) — not 0.01 back along
+the move (0.01, 0xe1b820, is the object entry test's). It then calls `FUN_009a05a0`, which runs
+the object entry test (`FUN_009a0030`) from the walk's source point (where the walk entered that
+cell) to that stop against every object the cell lists; when any is met, the destination is reset
+to the source point and the walk returns 1 (the client's `0x4047a0` does the same through
+`FUN_004045f0`). So **a blocked path is not refused: the caster stops at the obstacle** (or,
+rarely, where it entered the obstacle's cell). Refusals (0x10000000): a
 destination more than a region span away, more than six mesh hand-overs, a landing outside
 `[0, 1920)` of its region or on no cell, and a failed cell check (`FUN_009a05a0`) when `flag`'s bit
 0 is set — `flag` is 1 when the caster's vslot 0x1c or 0x2c answers non-zero (what those mean is
 OPEN).
+
+**The landing is kept as integers (READ).** FUN_005862e0 stores the destination in the move record
+as `u16 region` at `+6` and x, y, z through `_ftol2` (0x9fbb40, truncation toward zero) at
+`+8/+0xc/+0x10` (asm 0x5866c1..0x5866ea). EngageSkill (0x593540) loads them back with `fild`
+(0x5935e6..0x59361b), turns them into the offset from the caster (`FUN_00430ba0`) and passes it to
+slot 305: `CGObjPC::vslot_305` (0x4ef300) → `GObjPC::FUN_0048b920`, which sets the position
+(slot 0x39c) to the current one plus that offset. So the character is put at the truncated point,
+in its region's own coordinates, and that is the position the server then has. Which packet
+tells the clients was not read.
 
 srrevamp: `session.ghostWalkDestination` is the clamp; `moveBySkill` stores the point through
 `world.Hub.Move`, saves the position the way `handleMove` does (`savePositionEvery`), stands a
@@ -284,8 +301,13 @@ seated caster (`motions.moved`), cancels the keep-up, and sends `OpSkillMove` to
 **The navmesh test runs on the client** (round 616-618 integration): srrevamp's server has no
 navmesh, so the client resolves the landing before it sends the cast (`GhostWalk.resolve`,
 `client/scripts/world/ghost_walk.gd`): the 3-D clamp to `tele` value[1] (the catalog's
-`tele_reach`), then a walk on its `NavGraph` from the player toward it with sliding off, stopped at
-the first wall, at the cell's height. The server's own clamp stays the authority on distance, and
-the client settles its footing at once on `OpSkillMove`. The refusal cases above are not modelled
-(the client stops where its graph ends instead). `tele` value[0] (500 on every
+`tele_reach`), then a walk on its `NavGraph` from the player toward it with sliding off
+(`step_tracked(..., false)`, which now makes the 0.2 move and the cell check above), one step per
+region; the landing truncated as the record keeps it (x and z in the region's coordinates, the
+player then stood at the cell's height; the sent y truncated too), except when truncating would
+cross the edge the walk stopped at (then the walked stop is kept, OURS); and the sent point kept
+within reach in 3-D so the server's own clamp -- still the authority on distance -- leaves it. A
+reach not yet known (the skill index loading) refuses the cast (OURS). The client settles its
+footing at once on `OpSkillMove`. The refusal cases above are not modelled (the client stops where
+its graph ends instead). `tele` value[0] (500 on every
 Ghost Walk row) is not read there — **OPEN** (a delay or a duration in ms, perhaps).

@@ -145,6 +145,15 @@ const MAX_SUBSTEPS := 8
 ## `standing_on` value for the terrain.
 const ON_TERRAIN := -1
 
+## How far a terrain-wall stop is moved toward the centre of the cell the
+## mover is in, at most: the double 0xb45de8 = 0.2 in the server's
+## RTNavMeshTerrain::FUN_009c1050 (asm 0x9c1092 / 0x9c10ac) and 0xe1b850 = 0.2
+## in the client's twin FUN_004472d0 (READ). The cell centre is the cell's
+## +0x20/+0x24, (min + max) * 0.5, set by CRTNavCellQuad::vslot_010 (client
+## 0x4476c0, server 0x9c1210; 0.5 at 0xe1b7d0 / 0xb45c50, READ). Used only by
+## the no-slide walk (`step_tracked(..., false)`).
+const TERRAIN_BLOCK_NUDGE := 0.2
+
 ## One real placed object's navigation mesh, already transformed into the
 ## region's own coordinate space so nothing downstream repeats the work.
 class PlacedObject:
@@ -192,6 +201,9 @@ class StepResult:
 	var entered: int = -1
 	var exited: int = -1
 	var blocked: bool = false
+	## A no-slide walk's terrain-wall stop was refused by the cell's objects
+	## and the mover put back at the walk's source point (see step_tracked).
+	var cancelled: bool = false
 
 var region: NvmReader.ParsedRegion
 
@@ -522,12 +534,26 @@ func step(from: Vector3, motion: Vector2) -> Vector3:
 ## what the character stands on now, ON_TERRAIN or an object index, as the
 ## previous step reported it (or `surface_at` settled it after a teleport).
 ##
-## `slide` false stops the move at the first blocking edge, CONTACT_PUSH short
-## of it, instead of sliding along it: the server's navmesh walk for a skill's
-## move (Ghost Walk's FUN_005862e0 -> CRegionManagerBody::vslot_012 0x98b300,
-## whose loop breaks on the walk's blocked bit, with the terrain walk
-## 0x9a0710 leaving the destination at the contact nudged by
-## RTNavMeshTerrain::FUN_009c1050, READ; round 616-618 integration).
+## `slide` false stops the move at the first blocking edge instead of sliding
+## along it: the server's navmesh walk for a skill's move (Ghost Walk's
+## FUN_005862e0 -> CRegionManagerBody::vslot_012 0x98b300, whose loop breaks
+## on the walk's blocked bit; round 616-618 integration and its review). What
+## the stop is depends on the wall, READ in the terrain walk's block branch
+## (server 0x9a0c7e..0x9a0cf8, client 0x4047a0 with FUN_004472d0 and
+## FUN_004045f0):
+## - a TERRAIN wall: the crossing point, moved toward the centre of the cell
+##   the mover is in by at most TERRAIN_BLOCK_NUDGE (FUN_009c1050). Then
+##   FUN_009a05a0 tests the move from where the walk entered that cell (the
+##   walk's source point: its start, the last cell boundary it crossed, or
+##   the last object it stepped on or off -- vslot_012 starts a new walk
+##   there) to that stop against every object the cell lists (FUN_009a0030,
+##   the object entry test); if any is met, the destination is the source
+##   point -- no move in that cell. That "met" means crossing an outline edge
+##   not marked 0x10, as the terrain mover's entry test here reads it, is
+##   INFERRED.
+## - an OBJECT wall: CONTACT_PUSH short along the move, as before (the object
+##   walks were not re-read for this).
+## `StepResult.cancelled` says the terrain check sent the mover back.
 func step_tracked(from: Vector3, motion: Vector2, standing_on: int, slide: bool = true) -> StepResult:
 	var result := StepResult.new()
 	var pos := from
@@ -538,6 +564,9 @@ func step_tracked(from: Vector3, motion: Vector2, standing_on: int, slide: bool 
 	if on != ON_TERRAIN and (not objects.has(on) or is_nan(_surface_near(objects[on], pos.x, pos.z, pos.y))):
 		on = ON_TERRAIN
 	var remaining := motion
+	# Where the current walk began, for the no-slide terrain-wall rule: the
+	# start, then each object entered or left.
+	var source := Vector2(pos.x, pos.z)
 	for _sub in range(MAX_SUBSTEPS):
 		if remaining.length_squared() <= 1.0e-10:
 			break
@@ -569,6 +598,7 @@ func step_tracked(from: Vector3, motion: Vector2, standing_on: int, slide: bool 
 				pos.y = h
 				on = oi
 				result.entered = oi
+				source = landed
 				remaining = _onward(to2 - landed, dir)
 			"exit":
 				var left: int = on
@@ -590,6 +620,7 @@ func step_tracked(from: Vector3, motion: Vector2, standing_on: int, slide: bool 
 					pos.y = _surface_near(objects[reach], pos.x, pos.z, pos.y)
 				else:
 					pos.y = NvmCollision.sample_height(region, pos.x, pos.z)
+				source = landed
 				remaining = _onward(to2 - landed, dir)
 			"block":
 				result.blocked = true
@@ -598,6 +629,11 @@ func step_tracked(from: Vector3, motion: Vector2, standing_on: int, slide: bool 
 				pos.x = stopped.x
 				pos.z = stopped.y
 				if not slide:
+					if int(hit["object"]) == ON_TERRAIN and on == ON_TERRAIN:
+						var stop: Array = _terrain_block_stop(source, contact, dir)
+						pos.x = (stop[0] as Vector2).x
+						pos.z = (stop[0] as Vector2).y
+						result.cancelled = bool(stop[1])
 					remaining = Vector2.ZERO
 					break
 				# Slide: what is left of the move, projected along the wall,
@@ -622,6 +658,63 @@ func step_tracked(from: Vector3, motion: Vector2, standing_on: int, slide: bool 
 	result.position = pos
 	result.standing_on = on
 	return result
+
+## The no-slide stop at a terrain wall met at `contact` by a walk from
+## `source` along `dir` (see step_tracked): the contact moved toward the cell
+## centre by at most TERRAIN_BLOCK_NUDGE, or the point the walk entered the
+## cell when the move there meets one of the cell's objects. Returns
+## [stop: Vector2, cancelled: bool].
+func _terrain_block_stop(source: Vector2, contact: Vector2, dir: Vector2) -> Array:
+	var k := cell_index_at(contact.x - dir.x * 0.001, contact.y - dir.y * 0.001)
+	if k < 0 or k >= region.cells.size():
+		return [contact - dir * CONTACT_PUSH, false]
+	var cell: NvmReader.Cell = region.cells[k]
+	var toward := (cell.rect_min + cell.rect_max) * 0.5 - contact
+	var stop := contact + (toward if toward.length() <= TERRAIN_BLOCK_NUDGE else toward.normalized() * TERRAIN_BLOCK_NUDGE)
+	var entry := _terrain_block_source(source, contact, dir)
+	for oi in cell.object_indices:
+		if _meets_outline(oi, entry, stop):
+			return [entry, true]
+	return [stop, false]
+
+## Where a walk from `source` to `contact` entered the terrain cell holding
+## the point just before `contact`: `source` itself when it is in that cell,
+## else the crossing of the cell's rectangle on the way.
+func _terrain_block_source(source: Vector2, contact: Vector2, dir: Vector2) -> Vector2:
+	var k := cell_index_at(contact.x - dir.x * 0.001, contact.y - dir.y * 0.001)
+	if k < 0 or k >= region.cells.size():
+		return source
+	var cell: NvmReader.Cell = region.cells[k]
+	var lo := cell.rect_min
+	var hi := cell.rect_max
+	if source.x >= lo.x and source.x <= hi.x and source.y >= lo.y and source.y <= hi.y:
+		return source
+	# The largest entering parameter over the two slabs.
+	var d := contact - source
+	var t_in := 0.0
+	for axis in 2:
+		var s0: float = source[axis]
+		var dd: float = d[axis]
+		if absf(dd) < 1.0e-9:
+			continue
+		var t1: float = (lo[axis] - s0) / dd
+		var t2: float = (hi[axis] - s0) / dd
+		t_in = maxf(t_in, minf(t1, t2))
+	return source + d * clampf(t_in, 0.0, 1.0)
+
+## Does the segment a -> b cross an outline edge of object `oi` that the
+## terrain mover's entry test would meet (not marked to be passed beneath)?
+func _meets_outline(oi: int, a: Vector2, b: Vector2) -> bool:
+	if not objects.has(oi):
+		return false
+	var placed: PlacedObject = objects[oi]
+	var e := 0
+	while e < placed.edge_flags.size():
+		if placed.edge_outline[e] != 0 and (placed.edge_flags[e] & EDGE_IGNORED_FROM_OUTSIDE) == 0:
+			if _segment_hit(a, b, placed.edges[e * 2], placed.edges[e * 2 + 1]) != null:
+				return true
+		e += 1
+	return false
 
 ## Does moving from `from` to `to` (both region-local X/Z) run into a wall?
 ## `standing_on` is what the mover stands on, as `step_tracked` reports it.

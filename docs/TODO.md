@@ -983,9 +983,12 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
 - [x] **The Ghost Walk navmesh test** (round 616-618 integration): read (`CRegionManagerBody::vslot_012`
       0x98b300: a blocked path stops at the obstacle, it is not refused) and run on the client
       (`GhostWalk.resolve`: 3-D clamp, NavGraph walk without slide, ground height; footing settled on
-      `OpSkillMove`). Still open: the refusal cases (region span, six hand-overs, cell check) are not
-      modelled; the server trusts the client's walked point within its clamp; `tele` value[0] (500)
-      is unread; the move's duration (a snap).
+      `OpSkillMove`). The review follow-up read the terrain-wall stop (0.2 toward the cell centre,
+      the cell's objects check) and the record's integer landing, both mirrored. Still open: the
+      refusal cases (region span, six hand-overs, cell check) are not modelled; the server trusts the
+      client's walked point within its clamp; what retail does when truncation carries the landing
+      over the edge it stopped at (ours keeps the walked stop); which packet tells the clients of the
+      move; `tele` value[0] (500) is unread; the move's duration (a snap).
 - [ ] **Skill body animations from skillaniset2 for targeted casts** (round 616-618 integration found
       the link, `docs/protocol/BSR_FORMAT.md`): self/ground casts use it; targeted casts still use the
       clip-name route and the swing. Needs the READY/SHOT phase timing (`FUN_00a54f00`'s later

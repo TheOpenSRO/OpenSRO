@@ -1459,6 +1459,7 @@ func _try_initialize_pk2_ui() -> void:
 	if _media_pk2 == null:
 		print("World3D: Media.pk2 not found (path='%s') -- authentic UI skipped" % Pk2Config.media_path())
 		return
+	_preload_skill_effect_table()
 
 	# Load UI localization strings from Media.pk2
 	var text_entry := ObjectLoader.find_file(_media_pk2, "server_dep\\silkroad\\textdata\\textuisystem.txt")
@@ -4699,6 +4700,11 @@ func _load_object_template(model_path: String) -> Node3D:
 func _exit_tree() -> void:
 	SoundTable.set_listener(null)
 	_leave_ground_pick("the world left the tree")
+	# The skilleffect.txt parse (_preload_skill_effect_table) is not left
+	# running behind a world that is gone.
+	if _skill_table_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_skill_table_task)
+		_skill_table_task = -1
 	var exit_music := _audio_music()
 	if exit_music != null:
 		exit_music.leave_world()
@@ -6843,16 +6849,12 @@ func _play_self_cast_anim(basic_code: String, anim_base: String) -> float:
 			return _play_player_once(anim)
 	return _play_skill_cast_anim(anim_base)
 
-## skilleffect.txt's skillaniset rows, parsed once (SkillEffectReader.parse_aniset).
+## skilleffect.txt's skillaniset rows, from the one shared parse.
 func _skill_anisets() -> Dictionary:
 	if _skill_anisets_loaded:
 		return _skill_anisets_cache
 	_skill_anisets_loaded = true
-	if _media_pk2 != null:
-		var bytes := AssetSource.read_bytes(SkillEffectReader.TABLE, _media_pk2)
-		if not bytes.is_empty():
-			_skill_anisets_cache = SkillEffectReader.parse_aniset(bytes)
-			print("World3D: skilleffect.txt -> %d skillaniset rows" % _skill_anisets_cache.size())
+	_skill_anisets_cache = _skill_effect_tables()["aniset"]
 	return _skill_anisets_cache
 
 var _skill_anisets_cache: Dictionary = {}
@@ -7156,35 +7158,44 @@ func _ground_pick_click(screen_pos: Vector2) -> String:
 	print("GROUND PICK: skill %d at (%.1f, %.1f, %.1f), %.1f from the player" % [
 		int(pick["id"]), at.x, at.y, at.z, Vector2(at.x, at.z).distance_to(Vector2(player.position.x, player.position.z))])
 	var landing := _resolve_ground_landing(int(pick["id"]), at)
-	_send_self_cast(int(pick["id"]), String(pick["code"]), SkillNet.TARGET_GROUND, landing.position)
+	if landing.refused:
+		_log_system("The skill's data is still loading -- try again in a moment.")
+		return "ground_pick_refused"
+	_send_self_cast(int(pick["id"]), String(pick["code"]), SkillNet.TARGET_GROUND, landing.sent)
 	return "ground_pick"
 
 ## The landing a ground cast from here to `point` sends (GhostWalk, round
-## 616-618 integration): clamped to the row's tele value[1] in 3-D, as the
-## retail server clamps, then walked on the navmesh toward it and stopped at
-## the first wall, at the ground's height. Kept in _ground_landing so the
-## OpSkillMove that answers it can take the landing's footing.
+## 616-618 integration and its review): clamped to the row's tele value[1] in
+## 3-D, as the retail server clamps, walked on the navmesh and stopped where
+## retail's walk stops, truncated as retail's move record is, and kept in
+## reach so the server's clamp leaves it. A reach not yet known (the skill
+## index still loading) refuses the cast (OURS). Kept in _ground_landing so
+## the OpSkillMove that answers it can take the landing's footing.
 func _resolve_ground_landing(skill_id: int, point: Vector3) -> GhostWalk.Landing:
 	var reach := 0.0
 	if _hud_buff_board != null and _hud_buff_board.catalog != null:
 		reach = _hud_buff_board.catalog.tele_reach(skill_id)
 	if reach <= 0.0:
-		print("GROUND PICK: skill %d's tele reach is not known here (index not ready, or no 'tele') -- the walk goes to the picked point and the server clamps" % skill_id)
+		print("GROUND PICK: skill %d's tele reach is not known here (index not ready, or no 'tele') -- refused, nothing sent" % skill_id)
 	var footing := _nav_footing
 	var footing_graph := _nav_footing_graph
 	if player.global_position.distance_to(_nav_footing_pos) > NAV_FOOTING_RESETTLE_DISTANCE:
 		footing = -2
 	var landing := GhostWalk.resolve(player.global_position, point, reach, footing, footing_graph,
 		Callable(self, "_nav_graph_for"))
-	var p := landing.position
+	var p := landing.sent
 	var c := landing.clamped
+	if landing.refused:
+		_ground_landing = null
+		return landing
 	if landing.unchecked:
 		print("GROUND LANDING: skill %d -- no navmesh under the player, sending the clamped point (%.1f, %.1f, %.1f) unchecked" % [
 			skill_id, c.x, c.y, c.z])
 	else:
-		print("GROUND LANDING: skill %d reach %.0f: clamped (%.1f, %.1f, %.1f) -> walked to (%.1f, %.1f, %.1f) on %s%s, %.1f from the player" % [
+		print("GROUND LANDING: skill %d reach %.0f: clamped (%.1f, %.1f, %.1f) -> walked to (%.2f, %.2f, %.2f) on %s%s, %.2f from the player" % [
 			skill_id, reach, c.x, c.y, c.z, p.x, p.y, p.z, _nav_footing_name(landing.graph, landing.footing),
-			" -- stopped at a wall" if landing.blocked else "", player.global_position.distance_to(p)])
+			(" -- stopped at a wall" + (", sent back by the cell's objects" if landing.cancelled else "")) if landing.blocked else "",
+			player.global_position.distance_to(p)])
 	_ground_landing = landing
 	return landing
 
@@ -14445,7 +14456,7 @@ func _settle_skill_move_footing(to: Vector3) -> Dictionary:
 	var graph: NavGraph = pair[0]
 	var group: Node3D = pair[1]
 	if landing != null and not landing.unchecked and landing.graph == graph \
-			and Vector2(landing.position.x, landing.position.z).distance_to(Vector2(to.x, to.z)) < 0.01:
+			and Vector2(landing.sent.x, landing.sent.z).distance_to(Vector2(to.x, to.z)) < 0.01:
 		_nav_footing = landing.footing
 		to.y = landing.position.y
 	else:
@@ -14779,17 +14790,56 @@ func _play_skill_hit_effect_on(body: Node3D, world_height: float, basic_code: St
 	fx.position = Vector3(0, world_height * 0.5, 0)
 	body.add_child(fx)
 
-## skilleffect.txt parsed once (from the player's own Media.pk2): Basic_Code ->
-## hit `.efp`. Empty when the archive has no table.
+## skilleffect.txt, read at world entry and parsed ONCE on a WorkerThreadPool
+## task into both of its readings (SkillEffectReader.parse_all): the hit
+## `.efp` map and the skillaniset rows (the 616-618 integration review -- the
+## 4.5 MB table was parsed twice, ~120 ms each, on the first cast). A cast
+## that comes before the task is done waits for it (it started at entry); a
+## world that never preloaded parses it there, once.
+func _preload_skill_effect_table() -> void:
+	if _skill_table_task >= 0 or _skill_table_loaded or _media_pk2 == null:
+		return
+	var bytes := AssetSource.read_bytes(SkillEffectReader.TABLE, _media_pk2)
+	if bytes.is_empty():
+		_skill_table_loaded = true
+		return
+	var result := _skill_table_result
+	_skill_table_task = WorkerThreadPool.add_task(func() -> void:
+		var t := Time.get_ticks_msec()
+		result["tables"] = SkillEffectReader.parse_all(bytes)
+		result["ms"] = Time.get_ticks_msec() - t)
+
+## Both readings, collected from the task (or parsed here when none ran).
+func _skill_effect_tables() -> Dictionary:
+	if _skill_table_loaded:
+		return _skill_table_cache
+	if _skill_table_task < 0:
+		_preload_skill_effect_table()
+	if _skill_table_task >= 0:
+		var waited := Time.get_ticks_msec()
+		WorkerThreadPool.wait_for_task_completion(_skill_table_task)
+		_skill_table_task = -1
+		_skill_table_cache = _skill_table_result.get("tables", {"hit": {}, "aniset": {}})
+		print("World3D: skilleffect.txt -> %d skill hit effects, %d skillaniset rows (parsed in %d ms off the main thread; waited %d ms)" % [
+			(_skill_table_cache["hit"] as Dictionary).size(), (_skill_table_cache["aniset"] as Dictionary).size(),
+			int(_skill_table_result.get("ms", 0)), Time.get_ticks_msec() - waited])
+		_skill_table_result.clear()
+	_skill_table_loaded = true
+	if _skill_table_cache.is_empty():
+		_skill_table_cache = {"hit": {}, "aniset": {}}
+	return _skill_table_cache
+
+var _skill_table_task := -1
+var _skill_table_result: Dictionary = {}
+var _skill_table_cache: Dictionary = {}
+var _skill_table_loaded := false
+
+## Basic_Code -> hit `.efp` (skilleffect.txt). Empty when the archive has no table.
 func _skill_effects() -> Dictionary:
 	if _skill_hit_efp_loaded:
 		return _skill_hit_efp
 	_skill_hit_efp_loaded = true
-	if _media_pk2 != null:
-		var bytes := AssetSource.read_bytes(SkillEffectReader.TABLE, _media_pk2)
-		if not bytes.is_empty():
-			_skill_hit_efp = SkillEffectReader.parse(bytes)
-			print("World3D: skilleffect.txt -> %d skill hit effects" % _skill_hit_efp.size())
+	_skill_hit_efp = _skill_effect_tables()["hit"]
 	return _skill_hit_efp
 
 ## The player's rendered height in world units -- measured from the assembled

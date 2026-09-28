@@ -765,6 +765,13 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 		if !stillLive {
 			buffBooks.EndAll(left.CharacterID)
 		}
+		// Nor may it save where the stale session last stood, or tell the
+		// zone the character left: the live session's entity is still there,
+		// and its own disconnect saves and announces it (the 616-618
+		// integration review).
+		if stillLive {
+			return
+		}
 		savePosition(chars, sess, left)
 		msg := &EntityLeft{CharacterID: left.CharacterID}
 		for _, other := range remaining {

@@ -472,7 +472,10 @@ body at once as vslot 0xb4(group, type, 200) where **the group is the row's AniG
 `+4`, interned by `FUN_00a9a6f0`), not the held weapon's; it keeps READY and SHOT for later
 phases, and **when all three are empty plays nothing** (it ends the deco and returns). Type 32 in
 the man body is `skill_china_lightning_bobeop` in `default` but `skill_ch_sword_downattack_a` in
-`sword` (MEASURED, `probe_skill_action_types.gd`), so the group matters. MEASURED over the box's 1,044
+`sword` (MEASURED, `probe_skill_action_types.gd`), so the group matters. In `skillaniset2` the
+loader reads col 0 first and skips the row when it is 0 (the manager's `+0x10` flag, set to 1 for
+that section by `FUN_00a9eb60`); a SkillID met again reuses its record, appending to each list and
+overwriting the scalars (READ in `FUN_00a9c470`; the 616-618 integration review). MEASURED over the box's 1,044
 skillaniset2 skill rows: 52 distinct names resolve; `ANI_SHOT` (47 cells) and `DOWN_UP` (2) are in
 no registration. Wired so far only for self and ground casts (`World3D._play_self_cast_anim`):
 Grass Walk and the lightning imbues name no list and play nothing; Ghost Walk's WAIT is

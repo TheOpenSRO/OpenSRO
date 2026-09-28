@@ -16,7 +16,8 @@ extends SceneTree
 ## against the base, which lacks it, the suite runs and FAILs check by check.
 ##
 ## NEGATIVE (int/skills 544a7a7, before this change): see the round 618
-## Integration note in docs/WORLD_ISSUES.md for the FAIL lines.
+## Integration note in docs/WORLD_ISSUES.md for the FAIL lines. The review
+## follow-up's own cases are ghost_walk_review_test.gd.
 
 var _failures := 0
 var _net: Node
@@ -82,21 +83,22 @@ func _test_clamp() -> void:
 	var c: Vector3 = gw.call("clamp_to_reach", from, Vector3(0, 100, 100), REACH)
 	_check(absf(c.z - 70.7107) < 0.01 and absf(c.y - 70.7107) < 0.01,
 		"the clamp is 3-D: (0, 100, 100) with reach 100 lands at (0, 70.7, 70.7) (got %s)" % str(c))
-	_check(gw.call("clamp_to_reach", from, Vector3(500, 0, 0), 0.0) == Vector3(500, 0, 0),
-		"no reach known leaves the point to the server's clamp")
 
-## A flat region with one blocking terrain edge.
+## A flat region with one blocking terrain edge between its two cells, as
+## real terrain walls lie on cell boundaries: cell 0 is x 0..100, cell 1 the
+## rest (the review follow-up; a wall inside one cell has no real analogue).
 func _region() -> NvmReader.ParsedRegion:
 	var r := NvmReader.ParsedRegion.new()
 	r.heights.resize(NvmReader.HEIGHT_COUNT)
 	r.heights.fill(TERRAIN_Y)
-	var cell := NvmReader.Cell.new()
-	cell.rect_min = Vector2.ZERO
-	cell.rect_max = Vector2(1920.0, 1920.0)
-	r.cells.append(cell)
-	for _i in range(NvmReader.TILE_COUNT):
+	for rect in [[Vector2.ZERO, Vector2(WALL_X, 1920.0)], [Vector2(WALL_X, 0.0), Vector2(1920.0, 1920.0)]]:
+		var cell := NvmReader.Cell.new()
+		cell.rect_min = rect[0]
+		cell.rect_max = rect[1]
+		r.cells.append(cell)
+	for i in range(NvmReader.TILE_COUNT):
 		var t := NvmReader.Tile.new()
-		t.cell_index = 0
+		t.cell_index = 0 if (i % NvmReader.TILE_MAP_SIDE) * NavGraph.TILE_SIZE < WALL_X else 1
 		r.tiles.append(t)
 	var e := NvmReader.Edge.new()
 	e.flags = 2
@@ -111,12 +113,15 @@ func _graph() -> NavGraph:
 func _test_no_slide() -> void:
 	var g := _graph()
 	# A move at 45 degrees into the wall: sliding runs on along it; the skill
-	# move stops where the line meets it.
+	# move stops where the line meets it, moved toward the centre of the
+	# mover's cell (50, 960) by 0.2 (FUN_009c1050, the review follow-up).
 	var slid = g.callv("step_tracked", [Vector3(50, TERRAIN_Y, 200), Vector2(100, 100), NavGraph.ON_TERRAIN])
 	var stopped = g.callv("step_tracked", [Vector3(50, TERRAIN_Y, 200), Vector2(100, 100), NavGraph.ON_TERRAIN, false])
 	_check(slid != null and slid.position.z > 290.0, "a walk into the wall slides along it (z %s)" % (str(slid.position.z) if slid != null else "-"))
-	_check(stopped != null and stopped.blocked and absf(stopped.position.z - 250.0) < 0.05 and absf(stopped.position.x - WALL_X) < 0.05,
-		"step_tracked(..., slide false) stops on the line at the wall, (100, 250) (got %s)" % (str(stopped.position) if stopped != null else "no such argument"))
+	var want := Vector2(100, 250) + (Vector2(50, 960) - Vector2(100, 250)).normalized() * 0.2
+	_check(stopped != null and stopped.blocked and Vector2(stopped.position.x, stopped.position.z).distance_to(want) < 0.001,
+		"step_tracked(..., slide false) stops at the wall's crossing moved 0.2 toward the cell centre, %s (got %s)" % [
+			str(want), str(stopped.position) if stopped != null else "no such argument"])
 
 func _test_catalog_tele() -> void:
 	var cols := PackedStringArray()
@@ -290,8 +295,8 @@ func _test_world_landing(world: Node) -> void:
 	# Through the wall: 130 across and 30 up (133.4 away) is clamped to 100
 	# along the line, then walked -- the wall at x 100 stops it, on the ground.
 	var sent = _ghost_cast(world, from, Vector3(180, 40, 200))
-	_check(sent != null and sent.x > WALL_X - 0.1 and sent.x < WALL_X and absf(sent.z - 200.0) < 0.001,
-		"a pick behind a wall lands at the wall, x just short of 100 (sent %s)" % str(sent))
+	_check(sent != null and sent.x == WALL_X - 1.0 and sent.z == 200.0,
+		"a pick behind a wall lands at the wall, truncated to (99, 200) (sent %s)" % str(sent))
 	_check(sent != null and is_equal_approx(sent.y, TERRAIN_Y), "at the ground's height, 10 (sent y %s)" % (str(sent.y) if sent != null else "-"))
 	# Open ground, within reach: the point itself, on the ground (not the 40
 	# the pick came back with).
@@ -300,8 +305,8 @@ func _test_world_landing(world: Node) -> void:
 		"an open pick in reach lands at the point, on the ground (sent %s)" % str(sent))
 	# Out of reach in 3-D but not flat: the clamp is retail's 3-D one.
 	sent = _ghost_cast(world, from, Vector3(50, 110, 300))
-	_check(sent != null and absf(sent.z - (200.0 + 70.7107)) < 0.05 and is_equal_approx(sent.y, TERRAIN_Y),
-		"(0, 100, 100) away is clamped in 3-D to 70.7 across and put on the ground (sent %s)" % str(sent))
+	_check(sent != null and sent.z == 270.0 and is_equal_approx(sent.y, TERRAIN_Y),
+		"(0, 100, 100) away is clamped in 3-D to 70.7 across, truncated to 270, on the ground (sent %s)" % str(sent))
 
 func _move_bytes(character: int, skill: int, p: Vector3) -> PackedByteArray:
 	var out := PackedByteArray()
