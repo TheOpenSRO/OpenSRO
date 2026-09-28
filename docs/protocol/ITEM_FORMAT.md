@@ -474,7 +474,53 @@ skip 113).
 `CooltimeMs`; `refdata.Item`), and `UseItemHandler` refuses a use inside the
 group's timer with "wait for the reuse delay" and arms it on success
 (`session/itemcooldown.go`, in memory; the 300 s persistence is not built --
-disclosed). Nothing usable today carries a cooltime -- the handler still only
-consumes restore items -- so the rule is live but idle. Potions are paced by
-slot 308's per-kind lock instead (round 508), which the same handler checks
-right after this one.
+disclosed). Potions are paced by slot 308's per-kind lock instead (round
+508), which the same handler checks right after this one. Since round 632 the
+rule is live: the berserk potions (TypeID 3/3/1/8) are usable, and two of
+them carry a descriptor -- `ITEM_ETC_SECOND_HWAN` (23937, "Hwan regeneration
+fill") `COOLTIME:0x000000C9` with 1,200,000 ms (20 minutes) and
+`ITEM_ETC_GNGWC_WHAN` (22936) `COOLTIME:0x00000000` with 180,000 ms. A GM
+account's berserk potion skips the delay (OURS, the user's request).
+
+## Berserk potions and Energy of life (round 632)
+
+Read from Media.pk2's itemdata and textdata_object and from SR_GameServer.exe.
+
+| id | code | TID | name (textdata_object) | Param1 | COOLTIME |
+|---|---|---|---|---|---|
+| 23937 | `ITEM_ETC_SECOND_HWAN` | 3/3/1/8 | Hwan regeneration fill | 5 | group 0xC9, 1,200,000 ms |
+| 22936 | `ITEM_ETC_GNGWC_WHAN` | 3/3/1/8 | Berserk Regeneration Potion | 5 | group 0x00, 180,000 ms |
+| 24331 | `ITEM_ETC_E080723_HWAN_POTION` | 3/3/1/8 | Berserker Regeneration Potion | 5 | none |
+| 24993 | `ITEM_EVENT_HWAN_POTION` | 3/3/1/8 | Berserker Regeneration Potion | 5 | none |
+| 33884 | `ITEM_EVENT_RENT_HWAN_POTION` | 3/3/1/8 | Berserker Regeneration Potion | 5 | none |
+| 5921, 10491 | quest items | 3/3/1/8 | Spirit Fragment, Memory of Red Hair | 5 | none |
+| 23944-23947 | `ITEM_ETC_SECOND_HWAN_SCROLL_01..04` | 3/3/13/14 | Energy of life 1st-4th degree | 3600 | group 0xC9, 1 ms |
+| 23938-23941 | `ITEM_ETC_INCREASE_HWAN_TIME_01..04` | 3/3/3/10 | (the scroll's buff) | 3600; then "ParamKeeper FourCC" 7366772 (`0x706874`) = 5/8/11/14 | none |
+
+**The bag path** -- `CGItemExpendable` slot 308 (`0x0049b710`), TypeID3 1 /
+TypeID4 8 (`0x49b9a4..0x49b9e9`): `GetBodyMode()` (vtable `+0x100`) == 1
+answers `0x18ce` and the potion is kept; otherwise `AddHwanCount` with a
+literal `mov esi,0x5` and the answer is 1. It neither asks the per-kind lock
+nor reads the orb count, so at five orbs the potion is still spent.
+`Item_HandleUseItem` (`0x00510980`) checks and arms the COOLTIME around it,
+as for every item. `0x18ce` has no case in the client's error switch; the
+tooltip's "Cannot be used during berserk mode" is the wording srrevamp uses.
+
+**The Energy of life scroll** (3/3/13/14) is a COMPOSITE item, not a potion.
+Its Param2 descriptor reads `[UIL1:ITEM_ETC_SECOND_HWAN,A,3600,1],[UIU1:
+ITEM_ETC_INCREASE_HWAN_TIME_0n]`: `UseByKind` (`0x0049c2b0`) case `0xe` ->
+`GObjPC::FUN_0049f590` walks those FourCC entries (`'UIL1'` = `0x55494c31`,
+`'UIU1'` = `0x55495531`) and queues timed jobs -- a one-use, 3600 s
+used-item-limit on the fill, and the berserk-time buff: a "ParamKeeper
+FourCC" `0x706874` worth 5/8/11/14, which the Vietnamese tooltip calls
+seconds of berserk time. Which param that FourCC reaches is not traced --
+it is not one of the 53 tags in `param_tags.md` (OPEN).
+The fill is then spent through `CUsedItemLimit::vslot_007` (`0x00654080`),
+which asks `FUN_004a05b0` first (dead `0x1889`, berserk `0x18ce`, **five
+orbs already `0x183e`** -- a refusal the bag path does not have), arms the
+fill's COOLTIME (`0xC9`, 20 minutes, which then blocks the scroll too: it
+carries the same group), and calls `FUN_004a0600`, whose `AddHwanCount`
+takes Param1's byte (5). The tooltip says it: "During the Effect, 100% gauge
+charge can be used once. (After use of 100% Gauge charge, extend time will be
+removed and unable to use Energy of life for 20 Mins)". srrevamp does not
+model the composite: the scroll is still refused (OPEN, docs/TODO.md).

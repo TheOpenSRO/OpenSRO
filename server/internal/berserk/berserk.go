@@ -403,6 +403,37 @@ func (t *Tracker) Gauge(characterID int64) int {
 	return t.Charges(characterID) * (Max / Orbs)
 }
 
+// PotionCharges is what a berserk potion adds: the literal 5 CGItemExpendable
+// slot 308 hands AddHwanCount for TypeID 3/3/1/8 (0x0049b9d1 `mov esi,0x5`,
+// then 0x49b9d6 `call 0x4e4d00`), READ from srv.asm (round 632). It is not
+// the row's Param1, although every 3/3/1/8 row in Media.pk2's itemdata
+// carries 5 there too; the composite-item path (CUsedItemLimit::FUN_004a0600,
+// 0x4a062b `movzx esi,BYTE [esp+0x14]`) is the one that reads Param1.
+const PotionCharges = 5
+
+// Add is GObjPC::AddHwanCount (0x004e4d00): delta orbs, refused outright when
+// positive while berserk is active (the GetBodyMode()==1 test at its head),
+// the result clamped to [0, Orbs]. It returns the orbs actually added.
+func (t *Tracker) Add(characterID int64, delta int) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if delta == 0 {
+		return 0
+	}
+	if delta > 0 && time.Now().Before(t.activeUntil[characterID]) {
+		return 0
+	}
+	before := t.charges[characterID]
+	after := before + delta
+	if after < 0 {
+		after = 0
+	} else if after > Orbs {
+		after = Orbs
+	}
+	t.charges[characterID] = after
+	return after - before
+}
+
 // Activate goes berserk if all Orbs charges are held, spending all of them
 // (the handler's FUN_004e4d00(-5)) and returning true. Fewer charges leave
 // the count untouched and return false (the handler's error 1).

@@ -67,6 +67,13 @@ and changes nothing.
 `/goto` and `/spawn` with no valid name list the zones and monster code names
 they accept. `/give` takes the item's numeric id; the client resolves an item
 code to its id when you hover it in a window.
+
+**Testing berserk:** `/give 23937` puts a *Hwan regeneration fill* in your bag
+(the gauge fill an Energy of life scroll grants; `/give 24331 10` gives ten
+*Berserker Regeneration Potions*). Right-click it to fill all five orbs, then
+press Tab. It cannot be used while berserk is on. For a normal player the fill
+has the game's own 20-minute reuse delay; **a GM account skips it** -- that is
+this server's own rule, not the game's.
 <!-- /gm-only -->
 
 ## For operators: enabling GM accounts

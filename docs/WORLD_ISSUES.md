@@ -7094,6 +7094,102 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-thirty-second round: a berserk potion fills the five orbs, so a GM can test berserk with `/give 23937`
+
+The request: "allow me to use energy of life potions so I can test berserk. I think it usually has
+a 30 minute cooldown on that but remove that limit for GMs." Before this round every berserk
+potion was refused as "that cannot be used" (round 491 listed it as a disclosed gap).
+
+**Which item (READ, Media.pk2 `textdata_object.txt` and `itemdata_*.txt`).** "Energy of life" is
+`SN_ITEM_ETC_SECOND_HWAN_SCROLL_01..06` -> `ITEM_ETC_SECOND_HWAN_SCROLL_01..04` (ids 23944-23947,
+TypeID 3/3/13/14; 05 and 06 have names but no rows). The scroll is not what fills the gauge. Its
+Param2 descriptor is `[UIL1:ITEM_ETC_SECOND_HWAN,A,3600,1],[UIU1:ITEM_ETC_INCREASE_HWAN_TIME_0n]`,
+and its tooltip reads "Option : During the Effect, 100% gauge charge can be used once. (After use
+of 100% Gauge charge, extend time will be removed and unable to use Energy of life for 20 Mins)".
+The fill it grants is `ITEM_ETC_SECOND_HWAN`, **id 23937, TypeID 3/3/1/8, "Hwan regeneration
+fill"**: Param1 5 ("? ???"), then Param2 **1,200,000** with `COOLTIME:0x000000C9`. The scrolls
+carry `COOLTIME:0x000000C9` too (1 ms). So **the retail delay is 20 minutes, not 30** -- the data
+and the tooltip agree. The other 3/3/1/8 rows are the Berserker Regeneration Potions 24331, 24993,
+33884 (no COOLTIME; tooltip "Fills berserk gage to 100%. Cannot be used during berserk mode."),
+22936 Berserk Regeneration Potion (`COOLTIME:0x00000000`, 180,000 ms) and the quest items 5921
+and 10491. Full table: `docs/protocol/ITEM_FORMAT.md`, "Berserk potions and Energy of life".
+
+**What using one does (READ, SR_GameServer.exe).** `CGItemExpendable` slot 308 (`0x0049b710`),
+TypeID3 1, TypeID4 8, in srv.asm `0x49b9a4..0x49b9e9`: `GetBodyMode()` (vtable `+0x100`) == 1
+writes `0x18ce` and returns (DoJob keeps the item); otherwise `push 0; mov esi,0x5; call
+0x4e4d00` -- `GObjPC::AddHwanCount(+5)`, which clamps at 5 -- and the answer is 1. It skips the
+per-kind potion lock (`FUN_004eb410` is asked only on the other kinds) and never reads the orb
+count, so a potion at five orbs is spent for nothing. The delay is the generic COOLTIME:
+`Item_HandleUseItem` (`0x00510980`) asks `ItemCooldowns::IsReady` before DoJob (`0x185b`) and
+calls `ItemCooldowns::Arm` after a success, for any item whose ref `+0x524` is non-zero.
+
+The scroll's own path was read and is **not** built: `UseByKind` (`0x0049c2b0`) case `0xe` ->
+`GObjPC::FUN_0049f590` walks the FourCC list (`'UIL1'` `0x55494c31`, `'UIU1'` `0x55495531`) and
+queues timed jobs; the fill is then spent through `CUsedItemLimit::vslot_007` (`0x00654080`),
+which additionally refuses five orbs (`FUN_004a05b0`, `0x183e`), arms group 0xC9, and adds the
+row's Param1 byte (`FUN_004a0600`, `0x4a062b movzx esi,BYTE [esp+0x14]`). INFERRED: because the
+scroll carries group 0xC9, the fill's 20 minutes also block the next scroll -- the tooltip's
+"unable to use Energy of life for 20 Mins".
+
+**Built.**
+- `berserk.Tracker.Add` is `AddHwanCount`: clamp [0, 5], no gain while berserk.
+  `berserk.PotionCharges = 5` is slot 308's literal.
+- `session.useBerserkPotion` (`server/internal/session/berserkpotion.go`) runs the engine's order:
+  COOLTIME gate, `0x18ce` while berserk (item kept), spend, +5 orbs persisted through
+  `SetHwanCount`, arm COOLTIME. `UseItemHandler` takes the berserk tracker and the GM gate.
+- **OURS, the user's request:** a GM account's berserk potion neither checks nor arms its
+  COOLTIME. It is scoped to TypeID 3/3/1/8; every other cooltime item keeps its delay for a GM.
+- `UseItemResult` gains an appended `HasBerserk`/`BerserkGauge`/`BerserkActive` tail (6 bytes
+  after the 28). The client's `UseItemNet.decode_result` reads it when present, and
+  `World3D._on_use_item_result` drives `set_berserk` with it. The refusal text "that cannot be
+  used during berserk mode" is OURS: `0x18ce` has no case in the client's error switch, so it is
+  taken from the tooltip.
+
+**Tests.**
+- Go (`server/internal/session/berserkpotion_test.go`, synthetic rows shaped like 23937/24331):
+  - the gauge fills to 100 and persists 5;
+  - a potion at full orbs is still spent;
+  - Tab's `Activate` then works;
+  - a potion during berserk is refused and kept;
+  - a normal player's second fill 19:59 later is refused and kept, and at 20:00 it is used;
+  - a GM's second fill goes through at once;
+  - `Tracker.Add` clamps and refuses while berserk.
+- Client (`client/scripts/net/useitem_test.gd`): the old 28-byte reply decodes without berserk
+  state, and the tail round-trips.
+- **Negative against dev cfddf39** (the gauge test cut to the old seven-argument handler, in a
+  detached worktree):
+
+      --- FAIL: TestBerserkPotionFillsTheGauge (0.10s)
+          berserkpotion_neg_test.go:48: the berserk potion was refused: "that cannot be used"
+
+  The test file verbatim does not compile there (`too many arguments in call to
+  UseItemHandler`, `res.HasBerserk undefined`).
+
+**Real input on the box (MEASURED from the logs).** Xvfb `:93`, the lane's own server build with
+`-gm-accounts qa` and an items CSV exported from the box's Media.pk2 (deleted afterwards).
+Signed in through `Login.tscn` (`SRREVAMP_QA_RECONNECT_VIA_LOGIN=1`). Then, with xdotool:
+typed `/give 23937` in the chat, pressed `i`, right-clicked the bag cell, and pressed Tab.
+
+    GM REPLY: gave 1 x item 23937
+    World3D: berserk potion: gauge 100, active false
+    GM REPLY: gave 1 x item 23937
+    KEYMAP Tab -> berserk 8: berserk requested
+    World3D: berserk result: activated true, gauge 0, active true
+      (right-click during berserk: the chat line "that cannot be used during berserk mode" and
+       the fill still in its cell -- read off a screenshot, since _log_system does not print)
+    World3D: berserk potion: gauge 100, active false      <- 65 s later, same GM, inside the 20 min
+    KEYMAP Tab -> berserk 8: berserk requested
+    World3D: berserk result: activated true, gauge 0, active true
+
+The orbs' drawing is round 629's lane. This round only checks the value in the log.
+
+**OPEN.**
+- The Energy of life scroll (3/3/13/14) and its UIL1/UIU1 composite are still refused.
+- The berserk-time FourCC `0x706874` on `ITEM_ETC_INCREASE_HWAN_TIME_0n` (5/8/11/14) is not in
+  `param_tags.md`; which param it reaches is untraced.
+- The 20-minute delay is in memory only. The engine persists delays of 300 s or more across a
+  relog; srrevamp does not yet (round 263's gap).
+
 ## Six-hundred-and-twenty-eighth round, review follow-up: the reflection is as bright as the game's, clips at the water, leaves out characters, and the sky is the game's cloud layer
 
 The review confirmed the mirror's geometry: its marker's reflection lands where predicted, within

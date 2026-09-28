@@ -9,10 +9,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/OpenSRO/srrevamp/server/internal/berserk"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/gm"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
@@ -78,6 +80,13 @@ type UseItemResult struct {
 	RestoredHP int32
 	RestoredMP int32
 	Remaining  int32 // how many of the stack are left
+	// HasBerserk marks a berserk potion's reply (round 632): BerserkGauge
+	// (0..berserk.Max, the orbs x 20 the HUD lights) and BerserkActive are
+	// the berserk state after the use. Appended after Remaining, so a
+	// decoder that stops at 28 bytes still reads the rest.
+	HasBerserk    bool
+	BerserkGauge  int32
+	BerserkActive bool
 }
 
 func (r *UseItemResult) Encode() []byte {
@@ -90,7 +99,16 @@ func (r *UseItemResult) Encode() []byte {
 	binary.LittleEndian.PutUint32(buf[16:20], uint32(r.RestoredHP))
 	binary.LittleEndian.PutUint32(buf[20:24], uint32(r.RestoredMP))
 	binary.LittleEndian.PutUint32(buf[24:28], uint32(r.Remaining))
-	return append(out, buf...)
+	out = append(out, buf...)
+	zerk := make([]byte, 6)
+	if r.HasBerserk {
+		zerk[0] = 1
+	}
+	binary.LittleEndian.PutUint32(zerk[1:5], uint32(r.BerserkGauge))
+	if r.BerserkActive {
+		zerk[5] = 1
+	}
+	return append(out, zerk...)
 }
 
 func DecodeUseItemResult(data []byte) (*UseItemResult, error) {
@@ -107,6 +125,11 @@ func DecodeUseItemResult(data []byte) (*UseItemResult, error) {
 		r.RestoredHP = int32(binary.LittleEndian.Uint32(rest[16:20]))
 		r.RestoredMP = int32(binary.LittleEndian.Uint32(rest[20:24]))
 		r.Remaining = int32(binary.LittleEndian.Uint32(rest[24:28]))
+	}
+	if len(rest) >= 34 {
+		r.HasBerserk = rest[28] != 0
+		r.BerserkGauge = int32(binary.LittleEndian.Uint32(rest[29:33]))
+		r.BerserkActive = rest[33] != 0
 	}
 	return r, nil
 }
@@ -915,10 +938,11 @@ func potionQueueTick(ctx context.Context, hub *world.Hub, chars character.Store,
 // bag is full of equipment and quest items that have no use yet, and quietly
 // destroying one would be the worst possible answer. That includes every
 // CanUse item that is not a recovery kind (round 491): a return scroll, a cure
-// pill, a pet potion, a berserk potion, a resurrection scroll. The engine USES
-// those -- each has its own DoJob branch -- and srrevamp models none of their
-// effects, so it refuses them with the restores-nothing reason and keeps the
-// item. That refusal is srrevamp's DISCLOSED GAP, not an engine refusal.
+// pill, a pet potion, a resurrection scroll. The engine USES those -- each has
+// its own DoJob branch -- and srrevamp models none of their effects, so it
+// refuses them with the restores-nothing reason and keeps the item. That
+// refusal is srrevamp's DISCLOSED GAP, not an engine refusal. The berserk
+// potion is modelled since round 632 (useBerserkPotion).
 //
 // The one non-recovery kind srrevamp does model is the container expansion
 // (round 498, useExpansion): the warehouse item grows the account's
@@ -928,7 +952,12 @@ func potionQueueTick(ctx context.Context, hub *world.Hub, chars character.Store,
 // it, a dead character's use is refused as Item_HandleUseItem refuses it
 // (0x1889). A nil hub refuses nothing on that ground, which is what every
 // caller before that round had.
-func UseItemHandler(chars character.Store, inv inventory.Store, items combat.ItemLookup, mp *mana.Tracker, warehouse *storage.Service, potions *PotionQueue, hub *world.Hub) gateway.Handler {
+//
+// zerk is the berserk tracker a berserk potion (TypeID 3/3/1/8, round 632)
+// fills; nil refuses such a potion as before. gate names the GM accounts,
+// whose berserk potions skip the reuse delay -- srrevamp's own rule, OURS, at
+// the user's request (see useBerserkPotion); nil makes nobody a GM.
+func UseItemHandler(chars character.Store, inv inventory.Store, items combat.ItemLookup, mp *mana.Tracker, warehouse *storage.Service, potions *PotionQueue, hub *world.Hub, zerk *berserk.Tracker, gate *gm.Gate) gateway.Handler {
 	// The per-kind potion locks (round 508), keyed by character and
 	// potionReuseBit. The handler is built once per server (cmd/server), so
 	// this is process-wide there, as the item cooldowns are.
@@ -1003,6 +1032,12 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// and a container, never a restore amount.
 		if container, n, ok := it.ContainerExpansion(); ok {
 			return useExpansion(ctx, sess, fail, inv, warehouse, characterID, held, have, container, n)
+		}
+		// A berserk potion (round 632): slot 308's TypeID4 8 branch, which
+		// fills the orbs instead of the pools.
+		if isBerserkPotion(it) {
+			username, _ := AuthenticatedUsername(sess)
+			return useBerserkPotion(ctx, sess, fail, chars, inv, zerk, gate.Allows(username), characterID, it, held, have)
 		}
 		// Only a recovery kind's Param block is a restore amount (round 491,
 		// restoresUserPool); any other kind's effect is not modelled.

@@ -1059,6 +1059,22 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       buffs restored at login (ctx+0xc bits 4|8), the `skc` category ends (`FUN_005a16c0`), and
       whether retail re-sends buffs on entering view (ours: yes).
 
+### Berserk potions (round 632) -- **the bag potion works; the Energy of life scroll does not yet**
+
+Done: every TypeID 3/3/1/8 item (the "Hwan regeneration fill" 23937, the Berserker Regeneration
+Potions 24331/24993/33884, 22936) fills the five orbs on right-click, refused while berserk,
+with its own COOLTIME (23937: 20 minutes, group 0xC9). A GM account skips that delay (OURS, the
+user's request). GMs test with `/give 23937`. Left:
+
+- **The Energy of life scroll itself** (23944-23947, 3/3/13/14) is still refused. It is a composite
+  item (`UseByKind` case 0xe -> `GObjPC::FUN_0049f590`): a one-hour, one-use used-item-limit
+  (`UIL1`) on the fill plus a timed berserk-time buff (`UIU1` -> `ITEM_ETC_INCREASE_HWAN_TIME_0n`).
+  Next step: the timed-job records `FUN_0049a390` queues, and how the client is told about a
+  UIL1 fill it can click (the fill is not a bag item in retail).
+- **The berserk-time FourCC** `0x706874` on `ITEM_ETC_INCREASE_HWAN_TIME_0n` (5/8/11/14): which
+  param it reaches is not traced.
+- **`0x18ce`** has no message in the client's error switch; our wording comes from the tooltip.
+
 ### Particle effects (`.efp`): **decoder done (round 619), renderer and skill effects (round 620), Link modes (round 621)**
 Both readers decode 4,103 of the 4,170 files in the retail Particles.pk2
 (`docs/protocol/EFP_FORMAT.md`). Round 620 plays them:

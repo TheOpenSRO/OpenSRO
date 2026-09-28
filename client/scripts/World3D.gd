@@ -16461,6 +16461,11 @@ func _on_use_item_result(result) -> void:
 		parts.append("%d MP" % result.restored_mp)
 	if not parts.is_empty():
 		_log_system("Recovered %s." % " and ".join(parts))
+	# A berserk potion (round 632) fills the orbs instead of the bars.
+	if result.has_berserk:
+		print("World3D: berserk potion: gauge %d, active %s" % [result.berserk_gauge, str(result.berserk_active)])
+		if _hud_player_info != null:
+			_hud_player_info.set_berserk(result.berserk_gauge, result.berserk_active)
 	# The stack shrank, so redraw the bag.
 	if NetClient.current_character_name != "":
 		NetClient.list_inventory(NetClient.current_character_name)
