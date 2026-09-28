@@ -980,8 +980,16 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       the Warlock DOTs): not started; they keep the old path. Monsters would need books.
 - [ ] **Whom a friendly TR-1 buff lands on** with nothing friendly selected (spec §6 item 3), and
       party/ally targets at all. Today: the caster.
-- [ ] **The Ghost Walk navmesh test** (`DAT_00cc387c` vtable `+0x30`): the server has no navmesh;
-      the landing point is the clamped point. `tele` value[0] (500) is unread.
+- [x] **The Ghost Walk navmesh test** (round 616-618 integration): read (`CRegionManagerBody::vslot_012`
+      0x98b300: a blocked path stops at the obstacle, it is not refused) and run on the client
+      (`GhostWalk.resolve`: 3-D clamp, NavGraph walk without slide, ground height; footing settled on
+      `OpSkillMove`). Still open: the refusal cases (region span, six hand-overs, cell check) are not
+      modelled; the server trusts the client's walked point within its clamp; `tele` value[0] (500)
+      is unread; the move's duration (a snap).
+- [ ] **Skill body animations from skillaniset2 for targeted casts** (round 616-618 integration found
+      the link, `docs/protocol/BSR_FORMAT.md`): self/ground casts use it; targeted casts still use the
+      clip-name route and the swing. Needs the READY/SHOT phase timing (`FUN_00a54f00`'s later
+      phases) and the per-deco pick among several entries (`+0xe4` byte).
 - [ ] **The recast rule's other branches**: `dttp` groups (36 rows), the `+0x290` field and the
       Action_Overlap/`ovl2` tail (`FUN_0059db10`) of FUN_0059d870; the `lnks` path
       (`FUN_0059dc80`, attached-object records); any limit on Target_Required 1 recasts.

@@ -6808,6 +6808,56 @@ func _play_skill_cast_anim(anim_base: String) -> float:
 		return _play_weapon_swing_anim()
 	return _play_player_once(anim)
 
+## The body animation of a self or ground cast (round 616-618 integration):
+## what the skill's skilleffect.txt skillaniset2 row says retail's deco start
+## plays (SkillEffectReader.cast_body_anim, READ at FUN_00a54f00):
+## - READY, WAIT and SHOT all "none" (Grass Walk, the imbues): nothing -- the
+##   weapon swing stand-in is NOT played;
+## - a WAIT (Ghost Walk: ANI_SKILL_7, action type 32): that entry of the body
+##   .bsr in the ROW's AniGroup (DEFAULT for Ghost Walk: the default group's
+##   skill_china_lightning_bobeop, not the sword group's downattack), played
+##   once (whether retail loops it for the move is OPEN). The AniGroup name is
+##   matched to the body's group name lower-cased (INFERRED); a row without one
+##   uses the held weapon's group;
+## - otherwise (no row, or only READY/SHOT, whose timing is unread): the path
+##   targeted casts take, _play_skill_cast_anim. Returns the clip's length.
+func _play_self_cast_anim(basic_code: String, anim_base: String) -> float:
+	var row := SkillEffectReader.aniset_for(_skill_anisets(), basic_code)
+	var plan := SkillEffectReader.cast_body_anim(row)
+	match String(plan["kind"]):
+		"none":
+			print("CAST ANIM: %s -- skillaniset2 names no READY, WAIT or SHOT: no body animation (retail ends the deco, FUN_00a54f00)" % basic_code)
+			return 0.0
+		"wait":
+			var t: int = int(plan["type"])
+			var group: String = String(plan.get("group", ""))
+			if group == "":
+				group = _player_weapon_group
+			var anim := _body_animation_for(_player_gender, t, group)
+			if anim == null:
+				print("CAST ANIM: %s -- WAIT action type %d has no entry in the body for group '%s': nothing played" % [
+					basic_code, t, group])
+				return 0.0
+			print("CAST ANIM: %s -- WAIT action type %d, group %s (%s)" % [basic_code, t, group,
+				_body_animation_path(_player_gender, t, group)])
+			return _play_player_once(anim)
+	return _play_skill_cast_anim(anim_base)
+
+## skilleffect.txt's skillaniset rows, parsed once (SkillEffectReader.parse_aniset).
+func _skill_anisets() -> Dictionary:
+	if _skill_anisets_loaded:
+		return _skill_anisets_cache
+	_skill_anisets_loaded = true
+	if _media_pk2 != null:
+		var bytes := AssetSource.read_bytes(SkillEffectReader.TABLE, _media_pk2)
+		if not bytes.is_empty():
+			_skill_anisets_cache = SkillEffectReader.parse_aniset(bytes)
+			print("World3D: skilleffect.txt -> %d skillaniset rows" % _skill_anisets_cache.size())
+	return _skill_anisets_cache
+
+var _skill_anisets_cache: Dictionary = {}
+var _skill_anisets_loaded := false
+
 ## The weapon's ordinary attack clip, played when a skill has no cast clip of
 ## its own.
 ##
@@ -7040,7 +7090,7 @@ func _send_self_cast(skill_id: int, basic_code: String, target_type: int, point:
 	if us > 0 and anim_base.substr(us + 1).is_valid_int():
 		anim_base = anim_base.substr(0, us)
 	_last_combat_time = _player_anim_time
-	_play_skill_cast_anim(anim_base)
+	_play_self_cast_anim(basic_code, anim_base)
 	_audio_cast_start(skill_id)
 	_self_cast.note_cast(skill_id, Time.get_ticks_msec())
 	var monster_field := 0
@@ -7105,8 +7155,42 @@ func _ground_pick_click(screen_pos: Vector2) -> String:
 	var at: Vector3 = point
 	print("GROUND PICK: skill %d at (%.1f, %.1f, %.1f), %.1f from the player" % [
 		int(pick["id"]), at.x, at.y, at.z, Vector2(at.x, at.z).distance_to(Vector2(player.position.x, player.position.z))])
-	_send_self_cast(int(pick["id"]), String(pick["code"]), SkillNet.TARGET_GROUND, at)
+	var landing := _resolve_ground_landing(int(pick["id"]), at)
+	_send_self_cast(int(pick["id"]), String(pick["code"]), SkillNet.TARGET_GROUND, landing.position)
 	return "ground_pick"
+
+## The landing a ground cast from here to `point` sends (GhostWalk, round
+## 616-618 integration): clamped to the row's tele value[1] in 3-D, as the
+## retail server clamps, then walked on the navmesh toward it and stopped at
+## the first wall, at the ground's height. Kept in _ground_landing so the
+## OpSkillMove that answers it can take the landing's footing.
+func _resolve_ground_landing(skill_id: int, point: Vector3) -> GhostWalk.Landing:
+	var reach := 0.0
+	if _hud_buff_board != null and _hud_buff_board.catalog != null:
+		reach = _hud_buff_board.catalog.tele_reach(skill_id)
+	if reach <= 0.0:
+		print("GROUND PICK: skill %d's tele reach is not known here (index not ready, or no 'tele') -- the walk goes to the picked point and the server clamps" % skill_id)
+	var footing := _nav_footing
+	var footing_graph := _nav_footing_graph
+	if player.global_position.distance_to(_nav_footing_pos) > NAV_FOOTING_RESETTLE_DISTANCE:
+		footing = -2
+	var landing := GhostWalk.resolve(player.global_position, point, reach, footing, footing_graph,
+		Callable(self, "_nav_graph_for"))
+	var p := landing.position
+	var c := landing.clamped
+	if landing.unchecked:
+		print("GROUND LANDING: skill %d -- no navmesh under the player, sending the clamped point (%.1f, %.1f, %.1f) unchecked" % [
+			skill_id, c.x, c.y, c.z])
+	else:
+		print("GROUND LANDING: skill %d reach %.0f: clamped (%.1f, %.1f, %.1f) -> walked to (%.1f, %.1f, %.1f) on %s%s, %.1f from the player" % [
+			skill_id, reach, c.x, c.y, c.z, p.x, p.y, p.z, _nav_footing_name(landing.graph, landing.footing),
+			" -- stopped at a wall" if landing.blocked else "", player.global_position.distance_to(p)])
+	_ground_landing = landing
+	return landing
+
+## The last ground-cast landing sent (_resolve_ground_landing), for the
+## OpSkillMove that answers it; null when none is outstanding.
+var _ground_landing: GhostWalk.Landing = null
 
 ## Attacks a monster -- a plain swing, or a cast when skill_id is not 0 --
 ## after walking into reach if it is out of it.
@@ -14334,12 +14418,44 @@ func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
 	_drop_pending_attack()
 	_has_move_target = false
 	player.velocity = Vector3.ZERO
+	var settled := _settle_skill_move_footing(to)
+	to = settled["to"]
+	var footing: String = settled["footing"]
 	player.position = to
 	# The server already has the player there; do not send it back.
 	_last_sent_pos = to
 	_time_since_send = 0.0
-	print("SKILL move handled: this player snapped (duration OPEN) from (%.1f, %.1f, %.1f) to (%.1f, %.1f, %.1f), %.1f units, by skill %d" % [
-		from.x, from.y, from.z, to.x, to.y, to.z, from.distance_to(to), moved.skill_id])
+	print("SKILL move handled: this player snapped (duration OPEN) from (%.1f, %.1f, %.1f) to (%.1f, %.1f, %.1f), %.1f units, by skill %d, footing %s" % [
+		from.x, from.y, from.z, to.x, to.y, to.z, from.distance_to(to), moved.skill_id, footing])
+
+## Puts the walk's footing (_nav_footing) at a skill-move landing at once, so
+## the player stands on the graph there rather than at the packet's height
+## until the next step (round 616-618 integration). The landing this client
+## resolved and sent (_ground_landing) gives the footing and height when the
+## server moved the player to that very point; any other point -- the server
+## clamped it again, or no landing was resolved -- is settled from the graph
+## under it (surface_at, reference the packet's height). Returns {"to": the
+## point on the ground, "footing": the footing's name for the log}.
+func _settle_skill_move_footing(to: Vector3) -> Dictionary:
+	var landing := _ground_landing
+	_ground_landing = null
+	var pair := _nav_graph_for(to)
+	if pair.is_empty():
+		return {"to": to, "footing": "unsettled (no navmesh under the landing)"}
+	var graph: NavGraph = pair[0]
+	var group: Node3D = pair[1]
+	if landing != null and not landing.unchecked and landing.graph == graph \
+			and Vector2(landing.position.x, landing.position.z).distance_to(Vector2(to.x, to.z)) < 0.01:
+		_nav_footing = landing.footing
+		to.y = landing.position.y
+	else:
+		var local := group.to_local(to)
+		var surface := graph.surface_at(local.x, local.z, local.y)
+		_nav_footing = surface.object_index
+		to.y = group.to_global(Vector3(local.x, surface.height, local.z)).y
+	_nav_footing_graph = graph
+	_nav_footing_pos = to
+	return {"to": to, "footing": _nav_footing_name(graph, _nav_footing)}
 
 ## OP_STATE_CHANGE: kind 1 is the motion state. This player's own id is
 ## OpSelfId's when the server sent one (round 617's review, _sync_own_id);

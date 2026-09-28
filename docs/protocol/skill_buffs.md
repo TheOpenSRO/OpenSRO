@@ -262,11 +262,30 @@ the book today.
   maximum the point is the destination, beyond it the destination is `caster + unit(offset) × D`;
 - then a navmesh test (`DAT_00cc387c` vtable `+0x30`; bit `0x10000000` refuses the cast).
 
+**The navmesh test, read (round 616-618 integration).** `DAT_00cc387c` is `CRegionManagerBody`
+(`FUN_0098a110` points it at 0xd67c80; the constructor's vtable is 0xb431fc), slot 12 is
+`CRegionManagerBody::vslot_012` (0x98b300). It is called as `(flag, 1, &casterPos, &dest, 0,
+caster)` and **writes the destination struct** `{cell, mesh, u16 region, f32 x, y, z}`; the move
+record is filled from that struct after the call (asm 0x5866c1..0x5866ea). vslot_012 walks the
+navmesh through each mesh's slot 2 (terrain: `CRTNavMeshTerrain::vslot_002` 0x9a0710, the same
+library function as the client's 0x4047a0 that `NavGraph` models) and breaks out on the walk's
+blocked bit (`(r & 0x10000001) != 0`); on a blocked edge the terrain walk leaves the destination at
+the crossing, nudged back toward the mover by `RTNavMeshTerrain::FUN_009c1050` — no slide. So **a
+blocked path is not refused: the caster stops at the obstacle.** Refusals (0x10000000): a
+destination more than a region span away, more than six mesh hand-overs, a landing outside
+`[0, 1920)` of its region or on no cell, and a failed cell check (`FUN_009a05a0`) when `flag`'s bit
+0 is set — `flag` is 1 when the caster's vslot 0x1c or 0x2c answers non-zero (what those mean is
+OPEN).
+
 srrevamp: `session.ghostWalkDestination` is the clamp; `moveBySkill` stores the point through
 `world.Hub.Move`, saves the position the way `handleMove` does (`savePositionEvery`), stands a
 seated caster (`motions.moved`), cancels the keep-up, and sends `OpSkillMove` to the zone.
 
-**The navmesh test is NOT modelled**: srrevamp's server has no navmesh and no reachability check
-for movement — `handleMove` stores whatever the client sends. The client stands the player on its
-own walkable graph at the landing point, as it does for every move. `tele` value[0] (500 on every
+**The navmesh test runs on the client** (round 616-618 integration): srrevamp's server has no
+navmesh, so the client resolves the landing before it sends the cast (`GhostWalk.resolve`,
+`client/scripts/world/ghost_walk.gd`): the 3-D clamp to `tele` value[1] (the catalog's
+`tele_reach`), then a walk on its `NavGraph` from the player toward it with sliding off, stopped at
+the first wall, at the cell's height. The server's own clamp stays the authority on distance, and
+the client settles its footing at once on `OpSkillMove`. The refusal cases above are not modelled
+(the client stops where its graph ends instead). `tele` value[0] (500 on every
 Ghost Walk row) is not read there — **OPEN** (a delay or a duration in ms, perhaps).

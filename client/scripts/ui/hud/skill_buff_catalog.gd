@@ -137,8 +137,11 @@ static func code_of(word: int) -> String:
 ## Walks a Param block. Returns {"codes": PackedStringArray of the codes the
 ## walk passed, in order, "complete": false when a word was no code the
 ## client's parser knows (the walk learned nothing past it)}.
+## The walk also returns "values": code -> PackedInt64Array of the run's
+## values (the words after the code word), first occurrence kept.
 static func walk(words: PackedInt64Array) -> Dictionary:
 	var codes := PackedStringArray()
+	var values := {}
 	var i := 0
 	while i < words.size() and i < PARAM_BLOCK_MAX_WORDS:
 		if words[i] == 0:
@@ -147,12 +150,14 @@ static func walk(words: PackedInt64Array) -> Dictionary:
 		var c := code_of(words[i])
 		var run: int = int(RUN.get(c, 0))
 		if run < 1:
-			return {"codes": codes, "complete": false, "stopped": c}
+			return {"codes": codes, "values": values, "complete": false, "stopped": c}
 		codes.append(c)
+		if not values.has(c):
+			values[c] = words.slice(i + 1, mini(i + run, words.size()))
 		if c in TERMINATORS:
-			return {"codes": codes, "complete": true}
+			return {"codes": codes, "values": values, "complete": true}
 		i += run
-	return {"codes": codes, "complete": true}
+	return {"codes": codes, "values": values, "complete": true}
 
 ## One skilldata row, split on tabs, as the buff bar uses it; {} when the row
 ## carries no id.
@@ -178,6 +183,11 @@ static func parse_row(cols: PackedStringArray) -> Dictionary:
 	}
 	for tag in BUFF_TAGS:
 		info[tag] = codes.has(tag)
+	# 'tele' value[0] and value[1] (round 616-618 integration): value[1] is
+	# the ground-cast move's reach, D in the server's FUN_005862e0 (READ);
+	# value[0] is not read there (OPEN). [] when the row has no 'tele'.
+	var tele: PackedInt64Array = w["values"].get("tele", PackedInt64Array())
+	info["tele"] = [int(tele[0]), int(tele[1])] if tele.size() >= 2 else []
 	return info
 
 ## The shard file names a list names, in its order: "SkillData_1000ENC.txt"
@@ -275,6 +285,12 @@ func set_row(info: Dictionary) -> void:
 ## is not ready -- ask is_ready() first).
 func info(skill_id: int) -> Dictionary:
 	return _rows.get(skill_id, {})
+
+## A ground-cast move's reach, 'tele' value[1], in world units; 0 when the
+## row has none or the index does not know the id (yet).
+func tele_reach(skill_id: int) -> float:
+	var tele: Array = info(skill_id).get("tele", [])
+	return float(tele[1]) if tele.size() >= 2 else 0.0
 
 ## The skill-name table: the provider's (HudPanels'), else read here.
 func names() -> UiTextTable:

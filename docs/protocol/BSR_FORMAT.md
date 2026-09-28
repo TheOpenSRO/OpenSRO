@@ -457,6 +457,29 @@ in the client's code or in a table not yet identified. Three independent routes
 are now exhausted, which is why the client's weapon-swing fallback stays and is
 labelled disclosed rather than treated as a temporary patch.
 
+**Found (round 616-618 integration): the link is skilleffect.txt's `#section skillaniset2`.**
+READ in sro_client.exe: the loader `FUN_00a9eb60` hands `skillaniset`/`skillaniset2` rows to
+`FUN_00a9c470`, keyed by the SkillID column (col 2, the Basic_Code without its level). After
+Priority, AniTRUE, Hide Weapon and AniGroup (cols 3-6) it reads six comma-separated lists of up to
+nine `ANI_` names (cols 7-12: AniReady, AniWait, AniShot, Ani play Timing, Act W, Act S), each
+name through the ANI_ name map (`FUN_00a94f50`, -1 and dropped when absent), stored as action
+types at record `+0xe`/`+0x20`/`+0x32`... with counts at `+8`.. . `FUN_009e5240` registers the
+map: `ANI_SKILL_1` 0x1a (26) .. `ANI_SKILL_10` 0x23, `ANI_SKILL_11` 0x44 .., `ANI_READY01` 0x28 ..,
+`ANI_WAIT01` 0x5b .., and the early names agree with the action types read off real bodies (STAND1
+0, WALK 1, ATTACK1 2, ATTREADY 6, RUN 7, SIT_DOWN 13, SIT 14, STAND_UP 15, WALK_BACK 23) --
+`SkillEffectReader.ANI_TYPES` holds the table. The deco start `FUN_00a54f00` plays WAIT on the
+body at once as vslot 0xb4(group, type, 200) where **the group is the row's AniGroup** (record
+`+4`, interned by `FUN_00a9a6f0`), not the held weapon's; it keeps READY and SHOT for later
+phases, and **when all three are empty plays nothing** (it ends the deco and returns). Type 32 in
+the man body is `skill_china_lightning_bobeop` in `default` but `skill_ch_sword_downattack_a` in
+`sword` (MEASURED, `probe_skill_action_types.gd`), so the group matters. MEASURED over the box's 1,044
+skillaniset2 skill rows: 52 distinct names resolve; `ANI_SHOT` (47 cells) and `DOWN_UP` (2) are in
+no registration. Wired so far only for self and ground casts (`World3D._play_self_cast_anim`):
+Grass Walk and the lightning imbues name no list and play nothing; Ghost Walk's WAIT is
+`ANI_SKILL_7`, action type 32, in group DEFAULT (the AniGroup name matched to the body's group
+name lower-cased: INFERRED). Targeted casts still take the name route and the swing (OPEN: the
+READY/SHOT phase timing, the per-deco pick among several entries).
+
 
 ## How the group is chosen, from the client's own code (round 318)
 

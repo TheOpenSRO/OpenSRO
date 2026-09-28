@@ -15,6 +15,10 @@ extends SceneTree
 ##     --pk2=<Data.pk2> --map-pk2=<Map.pk2> --region=97/168 \
 ##     [--from=x,z --heading=deg [--steps=n] [--step=len]]   walk from a local point
 ##     [--edges=<model substring> [--near=x,z] [--radius=r]]  list an object's outline edges
+##     [--column=x,z[+x,z...]]   every surface over a column (terrain first) and
+##                               which object each belongs to
+##     [--ghost=fx,fz:tx,tz:D]   resolve a ground-cast landing (GhostWalk) from
+##                               one point toward another with reach D
 ##
 ## Coordinates are the region's own local ones (0..1920), the same as QA_AT.
 
@@ -148,6 +152,42 @@ func _init() -> void:
 					print("   edge %3d flags 0x%02x  %.1f,%.1f (y %.1f) -> %.1f,%.1f (y %.1f)" % [
 						e, p.edge_flags[e], a.x, a.y, ya, b.x, b.y, yb])
 				e += 1
+
+	var columns := _arg("--column")
+	if columns != "":
+		for spec in columns.split("+", false):
+			var c := _vec2(spec)
+			print("column %.1f, %.1f: terrain %.3f" % [c.x, c.y, NvmCollision.sample_height(region, c.x, c.y)])
+			for oi in graph.objects_at(c.x, c.y):
+				var p: NavGraph.PlacedObject = graph.objects[oi]
+				var h := NavGraph.surface_height_of(p, c.x, c.y)
+				if not is_nan(h):
+					print("   %s[%d] surface %.3f" % [names.get(oi, "?"), oi, h])
+			print("   landing height %.3f" % graph.landing_height_at(c.x, c.y))
+
+	var ghost := _arg("--ghost")
+	if ghost != "":
+		var parts := ghost.split(":")
+		var gf := _vec2(parts[0])
+		var gt := _vec2(parts[1])
+		var reach := float(parts[2]) if parts.size() > 2 else 0.0
+		# Region-local space is the world here: an identity group.
+		var group := Node3D.new()
+		get_root().add_child(group)
+		var start := Vector3(gf.x, graph.landing_height_at(gf.x, gf.y), gf.y)
+		var pick := Vector3(gt.x, graph.landing_height_at(gt.x, gt.y), gt.y)
+		var lookup := func(w: Vector3) -> Array:
+			if w.x < 0.0 or w.z < 0.0 or w.x > 1920.0 or w.z > 1920.0:
+				return []
+			return [graph, group]
+		var landing := GhostWalk.resolve(start, pick, reach, -2, null, lookup)
+		print("ghost from %.1f, %.1f (y %.2f, on %s) toward %.1f, %.1f (y %.2f) reach %.0f" % [
+			start.x, start.z, start.y, _name(names, graph.surface_at(start.x, start.z, start.y).object_index),
+			pick.x, pick.z, pick.y, reach])
+		print("   clamped %.2f, %.2f, %.2f" % [landing.clamped.x, landing.clamped.y, landing.clamped.z])
+		print("   landing %.2f, %.2f, %.2f on %s%s, %.2f from the start" % [
+			landing.position.x, landing.position.y, landing.position.z, _name(names, landing.footing),
+			" (stopped at a wall)" if landing.blocked else "", start.distance_to(landing.position)])
 
 	var from := _vec2(_arg("--from", ""))
 	if from != Vector2.INF:

@@ -521,7 +521,14 @@ func step(from: Vector3, motion: Vector2) -> Vector3:
 ## displacement, already scaled by the frame's own delta; `standing_on` is
 ## what the character stands on now, ON_TERRAIN or an object index, as the
 ## previous step reported it (or `surface_at` settled it after a teleport).
-func step_tracked(from: Vector3, motion: Vector2, standing_on: int) -> StepResult:
+##
+## `slide` false stops the move at the first blocking edge, CONTACT_PUSH short
+## of it, instead of sliding along it: the server's navmesh walk for a skill's
+## move (Ghost Walk's FUN_005862e0 -> CRegionManagerBody::vslot_012 0x98b300,
+## whose loop breaks on the walk's blocked bit, with the terrain walk
+## 0x9a0710 leaving the destination at the contact nudged by
+## RTNavMeshTerrain::FUN_009c1050, READ; round 616-618 integration).
+func step_tracked(from: Vector3, motion: Vector2, standing_on: int, slide: bool = true) -> StepResult:
 	var result := StepResult.new()
 	var pos := from
 	var on := standing_on
@@ -590,6 +597,9 @@ func step_tracked(from: Vector3, motion: Vector2, standing_on: int) -> StepResul
 				var stopped := from2 + dir * short
 				pos.x = stopped.x
 				pos.z = stopped.y
+				if not slide:
+					remaining = Vector2.ZERO
+					break
 				# Slide: what is left of the move, projected along the wall,
 				# so a wall is followed rather than becoming flypaper.
 				var a: Vector2 = hit["a"]

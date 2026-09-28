@@ -7278,7 +7278,7 @@ skill frame with the server's own decoders. MEASURED, from the client log and th
   remainingMs 350406, the board replaced it in place (one icon, still draining in Donwhang).
 - 0 SCRIPT ERRORs in six client logs.
 
-Seen and not changed: a cast of a row with no cast clip plays the weapon swing (the disclosed
+Seen and not changed at the time (each fixed or settled in the follow-up below): a cast of a row with no cast clip plays the weapon swing (the disclosed
 stand-in of `_play_weapon_swing_anim`; Grass Walk, Ghost Walk and the imbue have none), which reads as a swing when
 Grass Walk is cast; Ghost Walk's 3-D clamp can land the caster off the ground or inside the fenced
 dragon enclosure in Jangan, since the server has no navmesh test (OPEN in round 616); the client
@@ -7288,6 +7288,74 @@ Fixed here, the 616 review's leftover: a stale session's disconnect also cancell
 session's auto-attack (`keepUp.Cancel`) and cleared its motion state (`motions.clear`) by character
 id. They now take the book's still-live check; `TestStaleSessionDisconnectKeepsTheLiveKeepUpAndMotion`
 fails with either guard removed ("cancelled the live auto-attack", "cleared the live motion").
+
+**Integration follow-up: the live run's four leftovers.**
+- **Ghost Walk now stops at walls and lands on the ground.** READ: the retail server's path check
+  is `CRegionManagerBody::vslot_012` (0x98b300, table 0xb431fc slot 12). It writes the
+  destination, and FUN_005862e0 builds the move record from what it wrote. It walks the navmesh
+  with the same terrain walk the client has (0x9a0710 in the server, 0x4047a0 in the client) and
+  stops at the first blocked edge, nudged back 0.01 by FUN_009c1050, with no slide. A blocked
+  path is **not refused**; the caster stops at the obstacle. Only bit 0x10000000 refuses the cast.
+  The clamp is 3-D (`x²+y²+z²`), as the server's already was.
+
+  The client now does the same before it sends (`GhostWalk.resolve`, scripts/world/ghost_walk.gd):
+  - it clamps to `tele` value[1] (the buff catalog now keeps `tele`);
+  - it walks the NavGraph toward the clamped point with `step_tracked(..., slide=false)`, in 1-unit
+    pieces (OURS);
+  - it sends the stop point at the cell's height.
+
+  On `OpSkillMove` the footing is settled at once (`_settle_skill_move_footing`). The server's
+  clamp stays the authority on distance. MEASURED with `walk_probe.gd --ghost` on real 97/168,
+  from the spawn (1002, 1020) toward the dragon pit (1002, 933.5) with reach 100: it stops at
+  (1002, 953.46) on `cj_jang_gate` at -32.61, at the railing. Run 2 put the player inside the pit.
+  Open ground lands on the point. From (960, 1800) toward (960, 1418) it lands at terrain -1.36,
+  where the 3-D line put it at -13.73.
+
+  Live (`/var/tmp/e2e/run4.sh`: real keys and clicks, the branch's server, the wire tap; frames in
+  the scratchpad's e2e_r4/): the same four clicks as run 2 sent (42, -30.1, -37.2), then
+  (42, -30.1, 6.5) "stopped at a wall". The two clicks aimed past the railing moved 0.0, and
+  `OpSkillMove` echoed each point. The QA position line read `local 1002, -32, 953 on object
+  cj_jang_gate`. 0 SCRIPT ERRORs.
+- **The picks' y of -30.116636 is real, not a fallback.** MEASURED (`walk_probe.gd --column`):
+  `cj_jang_gate`'s walkable surface is flat at local -32.609 over the plaza (1002, 997/974) and
+  over the south apron where run 3's field picks landed (960, 1418/1373). -30.116636 is that
+  floor plus the grid's 2.49 offset (the player at local -32.6 read world -30.1). The one field
+  pick on terrain (960, 1599) came back 3.46, against a surface of 0.90 + 2.49. The ray's mask is
+  the terrain layer plus layer 1. The Ground box is disabled once terrain loads. Nothing to fix;
+  click-to-move is unchanged.
+- **Self casts play what retail plays.** The skill-to-animation link that rounds 315-318 could not
+  find is skilleffect.txt's `#section skillaniset2`. READ (the loader 0xa9c470, the deco start
+  0xa54f00, the ANI_ map registrations in 0x9e5240):
+  - cols 7-9 (AniReady, AniWait and AniShot) are lists of `ANI_` names that map to action types;
+  - WAIT plays at once in the row's AniGroup;
+  - when all three are empty, the deco ends and the body plays **nothing**.
+
+  Grass Walk and the lightning imbues are all "none", so no swing plays now. Ghost Walk's WAIT is
+  `ANI_SKILL_7` = type 32, in group DEFAULT. In the man body, type 32 is
+  `skill_china_lightning_bobeop.ban` in `default` but `skill_ch_sword_downattack_a` in `sword`
+  (MEASURED). The live log reads `WAIT action type 32, group default
+  (skill_china_lightning_bobeop.ban)`. OPEN: whether WAIT loops for the move, READY and SHOT
+  timing, and targeted casts, which keep the old path (docs/TODO.md).
+- **The full gauge's 18 px is retail's too.** MEASURED: `s_stateodd_time_gauge.ddj` is opaque
+  only in columns 0-17 and rows 0-1. READ: CIFGauge (0x6387d0 → 0x653140) scales x and u
+  together, so a full value draws the whole texture. Not changed (magic_state_board.md).
+
+Tests: `client/scripts/world/ghost_walk_test.gd` (synthetic region and rows: the clamp, no-slide,
+the landing through World3D's own pick path, the footing, `tele`, the skillaniset parse and the
+cast animation) passes, as do all 135 suites and `remote_godot.sh check`. The server's
+`go build ./... && go test -count=1 -p 1 ./...` is green, with no server change. NEGATIVE at
+int/skills 544a7a7 (16 FAILED):
+
+	FAIL GhostWalk (scripts/world/ghost_walk.gd) exists
+	FAIL step_tracked(..., slide false) stops on the line at the wall, (100, 250) (got no such argument)
+	FAIL the catalog keeps 'tele' value[0] and value[1] (got <null>)
+	FAIL a pick behind a wall lands at the wall, x just short of 100 (sent (180, 40, 200))
+	FAIL at the ground's height, 10 (sent y 40)
+	FAIL (0, 100, 100) away is clamped in 3-D to 70.7 across and put on the ground (sent (50, 110, 300))
+	FAIL an OpSkillMove off the ground puts the player on it at once (got (60, 25, 200))
+	FAIL Grass Walk (all none) plays no body animation and no swing (clips ["skill_ch_lightning_gyeonggong_a"], swings 0)
+	FAIL Ghost Walk plays its WAIT, action type 32 (types [], clips ["skill_ch_lightning_gyeonggong_b"])
+	FAIL in the row's AniGroup, default, not the held sword's group (groups [])
 
 ## Six-hundred-and-seventeenth round: Grass Walk and the self-buffs cast with nothing selected, and Ghost Walk casts at a point picked on the ground
 

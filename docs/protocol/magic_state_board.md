@@ -51,6 +51,7 @@ The labels are:
 - Each frame: `elapsed += frame ms`, clamped at total.
 - The value is `(total − elapsed) / total`, written to both the value (`+0x380`) and the target (`+0x384`). The easing in 0x638310 therefore has nothing to ease.
 - 0x653140 scales the right edge's x and its u by the value, which is a crop from the left. That it is a crop is INFERRED from the two products.
+- **A full gauge shows 18 coloured pixels, not 20, in retail too** (round 616-618 integration). The fill texture `s_stateodd_time_gauge.ddj` is opaque only in its first 18 columns and first 2 rows (`83e6ff` over `00cdff`); columns 18-19 and rows 2-3 are alpha 0 (MEASURED, every texel dumped). The back `s_stateodd_time.ddj` is black and opaque in rows 0-2, transparent in row 3. Since 0x653140 moves x and u together, value 1.0 draws the whole texture and the last two columns show the back. The live frames' 18 is therefore right, not a bug.
 - There is no blink, threshold or colour change.
 - For a normal buff the client never removes the icon by itself. When the time runs out it waits for the server's end, 0xB072 in retail and `OpBuffEnd` here. Only the special skill id `0xc0000000` removes itself.
 
