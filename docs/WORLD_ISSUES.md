@@ -7094,6 +7094,59 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twenty-fourth round, review follow-up: the point filter is read for the game's own window order, and all 622 skill icons decode
+
+The review confirmed round 624's reading and settled its OPEN item. It also found four errors.
+
+**READ (the review; magic_state_board.md, "The draw order before the board" and "Every filter
+setter", has the table):**
+- The board draws immediately after `GDR_PLAYER_MINI_INFO`'s subtree.
+  - A window's children draw in list order (0xba0300).
+  - `ginterface.txt`'s windows are prepended as they are parsed (0xb3e4d0), then appended in that
+    order (0xb90a80). That reverses file order: the mini info is line 457, the board line 438.
+- The mini info's `TXT_ID`, `LEVEL`, `HP` and `MP` labels draw through 0x8b48b0 → 0x8b2290 at
+  text scale 1.0, written by 0x8b46d0. That leaves stage-0 MIN and MAG at POINT (0x8b2447), and
+  nothing before the icon changes them.
+- So the POINT filter is **READ for retail's default window order**, no longer INFERRED. Four
+  assumptions remain: (a) no bring-to-front reorder; (b) no other text-scale writer; (c) state
+  blocks and D3DX effects were not audited; (d) the labels have on-screen text.
+
+**Corrected:**
+1. **"FourCC 21" was wrong.** The four A8R8G8B8 icons with mips (`bow_balance_a`, `light_holy`,
+   `spear_balance_a`, `sword_balance_a`) have pixel-format flags 0x41. Their FourCC slot holds a
+   stray 21, which the DDS format says to ignore when the FourCC flag is clear.
+   - `DdjReader` takes the mask path for them, so all 622 icons decode.
+   - Round 624's TODO item ("do not decode anywhere") is removed. The census is 441 + 4 A8R8G8B8,
+     4 X8R8G8B8, 159 A1R5G5B5, 2 A4R4G4B4 and 12 DXT3.
+   - Round 624 tested nothing to support that claim. It came from reading the header field
+     without checking the flag.
+2. **The 3D preview widgets restore POINT, not LINEAR** (0x4fffe7, 0x560de1, 0x6adb68, 0x7c02cd,
+   0x7eea84). The paths that leave LINEAR are 0x819d80 and 0x8b4d90 (reached from 0x819040 and
+   0x62f910), with 0x4771a0 and 0x49a7d0's tail. The CNIF text twin 0x493460 behaves like
+   0x8b2290.
+3. **The UV citation.** The 0..1 UVs are set by the base window constructor (0x654661..0x6546bf).
+   0x653060 only copies them into the vertices. The UV call at 0x807036 is the `lnks` frame's
+   (`+0x37c`), not the icon's.
+4. **A test leak.** `_test_constant` now frees its board.
+
+**What changed:**
+- `HudBuffBoard.AUTHENTIC_ICONS` is a `static var`, so a future setting can flip it. The two modes
+  cache their textures separately.
+- `hud_buff_icon_test.gd` gained five checks:
+  - the switch is a static var;
+  - the false path makes no resample and inherits the linear filter;
+  - `UiBuilder.load_image` reads synthetic DDJs from a stub archive: A1R5G5B5; A8R8G8B8 with 6 mips
+    and the icons' own 0x41 flags plus stray 21; and DXT3 with 6 mips;
+  - each of those comes out of `retail_icon_image` as its 20 × 20 point sample, top level only;
+  - a missing file is null.
+- All the images are built in the test; no archive is used.
+
+**Runs:**
+- `remote_godot.sh check`: ALL LOAD.
+- `hud_buff_icon_test.gd`: all passed (25 checks).
+- `remote_godot.sh tests`: 144 suites, 0 failing.
+- `go test -count=1 -p 1 ./...`: rc 0.
+
 ## Six-hundred-and-twenty-fourth round: the buff icons by the HP bar are drawn at the game's own 20×20 resolution, pixel for pixel
 
 The user reported on v0.1.457: "the icons at the top left for the skills seem to work great but in
@@ -7110,8 +7163,10 @@ every address):
   round 618 loaded. There is no small or state variant for skill buffs.
 
 **MEASURED: the files** (DDS headers of all 622 `icon\skill\` files in the box's Media.pk2):
-- Every one is 32 × 32: 441 A8R8G8B8, 4 X8R8G8B8, 159 A1R5G5B5, 2 A4R4G4B4, 12 DXT3 with 6 mips,
-  and 4 FourCC 21 with 6 mips.
+- Every one is 32 × 32: 441 A8R8G8B8, 4 more A8R8G8B8 with 6 mips, 4 X8R8G8B8, 159 A1R5G5B5,
+  2 A4R4G4B4, and 12 DXT3 with 6 mips. All decode.
+  - The four with mips have pixel-format flags 0x41 and a stray 21 in the FourCC slot.
+  - This line first read them as "FourCC 21". The review corrected that; see its follow-up above.
 - No `icon\small\` or `_s` twin exists, and no other archive holds an icon `.ddj`.
 - `icon\stateodd\`'s only 20 × 20 files are `s_goldtime_icon`, `s_silvertime_icon` and the two
   admittance sprites.
@@ -7192,7 +7247,8 @@ unchanged, since the evidence shows no difference to make.
   unchanged from round 618.
 - The runs:
   - `remote_godot.sh check`: ALL LOAD, 364 scripts.
-  - `remote_godot.sh tests`: 144 suites, 0 failing. That includes `hud_buff_board_test.gd`,
+  - `remote_godot.sh tests`: 144 suites, 0 failing.
+- `go test -count=1 -p 1 ./...`: rc 0. That includes `hud_buff_board_test.gd`,
     which is unchanged and ALL PASS.
   - `go build ./... && go test -count=1 -p 1 ./...`: 60 packages ok, rc 0.
 

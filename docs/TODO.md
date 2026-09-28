@@ -944,18 +944,14 @@ burst and sound, right-click cancel and the tooltip. The record is in
 - [x] **Authentic icons** -- round 624: the skill window's own 32x32 file, point-sampled to 20x20
       once and drawn nearest (`HudBuffBoard.AUTHENTIC_ICONS`; the magic_state_board.md section
       "The icon's texture and sampling" has the reading). Left open:
-  - [ ] **The board's draw predecessor.** The sprite path sets no filter, so the icon inherits the
-        last one set. That this is POINT on the HUD is INFERRED from every label's text draw
-        leaving POINT; which window draws just before the board (0xba0300's child walk, the
-        root's list order and any bring-to-front) was not read. A D3D9 frame capture of retail
-        would settle it in one look.
-  - [ ] **Four skill icons do not decode anywhere.** `bow_balance_a`, `light_holy`,
-        `spear_balance_a` and `sword_balance_a` (`icon\skill\china\`) store D3DFMT_A8R8G8B8 as
-        the numeric FourCC 21, with 6 mips (MEASURED). `DdjReader.to_image` has no case for it
-        ("unhandled compression format"), so the skill window, the hotbar and the buff bar all
-        draw them blank. The fix belongs in `client/scripts/ddj/`, beside round 621's FourCC 113.
-  - [ ] **A "high-res icons" option.** The user may want one later: flip `AUTHENTIC_ICONS` from a
-        setting. No UI was added.
+  - [x] **The board's draw predecessor** -- READ in the review: the board draws right after
+        `GDR_PLAYER_MINI_INFO`'s subtree, whose labels leave POINT. Four assumptions stay open:
+        no bring-to-front reorder, no other text-scale writer, state blocks and D3DX effects not
+        audited, and the labels having on-screen text. A D3D9 frame capture of retail would close
+        them.
+  - [ ] **A "high-res icons" option.** The user may want one later. `AUTHENTIC_ICONS` is a
+        static var, so a setting can flip it; icons already on the board keep their look until
+        rebuilt. No UI was added.
 
 ### Seasonal event decorations — **hidden by default (round 583)**
 The user decided on 2026-09-26 that early testing gets no seasonal decorations. Christmas,

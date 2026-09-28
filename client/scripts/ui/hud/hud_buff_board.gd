@@ -85,33 +85,34 @@ const ICON_SIZE := Vector2(20, 20)
 ## 0x6809a0 load; this slot's is set by 0x7ff240 -> 0x8068a0), point-sampled
 ## down to 20x20 once, then drawn with nearest filtering at any UI scale.
 ## false draws the 32x32 file scaled with the canvas's linear filter, which is
-## what rounds 618-623 did (a future "high-res icons" toggle flips this).
+## what rounds 618-623 did. A static var, so a future "high-res icons" setting
+## can flip it; icons already built keep their look until rebuilt.
 ##
-## READ, the file: every one of Media.pk2's 622 `icon\skill\` files is 32x32
-## (MEASURED, DDS headers: 441 A8R8G8B8 + 4 X8R8G8B8, 159 A1R5G5B5 + 2
-## A4R4G4B4, all without mips; 12 DXT3 and 4 FourCC 21 with 6 mips). There is
-## no small or `_s` twin; `icon\stateodd\` holds only the gauges, 24
-## abnormal-state icons (32x32) and four 20x20 sprites.
-## READ, the draw: the icon is a CIFStatic (class 0xee9720) 20x20 child; CIFWnd's
-## sprite draw (0x655d50 -> 0x654c30) sets FVF 0x104 and the texture and
-## draws a fan, setting NO sampler state. Its quad is the window rect minus
-## 0.5 on each edge (0x6529d0, the double 0.5 at 0xe1b7d0), with UVs 0..1, so
-## pixel k of 20 samples u = (k + 0.5) / 20 -- texel floor((2k+1)*32/40).
-## The UI pass sets MIPFILTER NONE and CLAMP (0x8408c0), and the DDJ loader
-## keeps the file's own mip count (0xb87f20), so mips never apply.
-## READ, the filter the sprite inherits: every CIFStatic label draws its text
-## through 0x8b48b0 -> 0x8b2290, which sets MIN and MAG to POINT when the
-## text's scale is within 0.1 of 1.0 (the doubles at 0xe1b7f0 / 0xe1b8c0)
-## and does not put them back (0x8b48b0's tail restores only texture-stage
-## states). Only the wrapped text paths (0x8b4d90, 0x4771a0, 0x49a7d0),
-## the 3D preview widgets and scaled text set LINEAR again, and the board's
-## own draws (slot, CIFGauge 0x6387d0, the icon) set nothing.
-## INFERRED: so on the HUD, after the labels drawn before the board, the
-## icon is point-sampled. The sibling draw order (0xba0300 walks a window's
-## child list) was not read to the board's exact predecessor -- OPEN.
+## MEASURED, the file: every one of Media.pk2's 622 `icon\skill\` files is
+## 32x32 -- 441 A8R8G8B8 and 4 more A8R8G8B8 carrying 6 mips (pixel-format
+## flags 0x41, masks, not a FourCC), 4 X8R8G8B8, 159 A1R5G5B5, 2 A4R4G4B4,
+## 12 DXT3 with 6 mips; all decode. There is no small or `_s` twin;
+## `icon\stateodd\` holds only the gauges, 24 abnormal-state icons (32x32)
+## and four 20x20 sprites.
+## READ, the draw: the icon is a CIFStatic (class 0xee9720) 20x20 child;
+## CIFWnd's sprite draw (0x655d50 -> 0x654c30) sets FVF 0x104 and the
+## texture and draws a fan, setting NO sampler state. Its quad is the window
+## rect minus 0.5 on each edge (0x6529d0, the double 0.5 at 0xe1b7d0), with
+## UVs 0..1 (the base window ctor, 0x654661..0x6546bf), so pixel k of 20
+## samples u = (k + 0.5) / 20 -- texel floor((2k+1)*32/40). The UI pass sets
+## MIPFILTER NONE and CLAMP (0x8408c0), and the DDJ loader keeps the file's
+## own mip count (0xb87f20), so mips never apply.
+## READ, the filter the sprite inherits (round 624's review): the board draws
+## right after GDR_PLAYER_MINI_INFO's subtree (a window's children draw in
+## reverse file order: 0xb3e4d0 prepends, 0xb90a80 appends), whose TXT_ID /
+## LEVEL / HP / MP labels draw through 0x8b48b0 -> 0x8b2290. That sets MIN
+## and MAG to POINT at text scale 1.0 (0x8b46d0 writes 1.0; |s - 1| <= 0.1
+## at 0x8b2447) and nothing puts them back before the icon. The full
+## setter table and the four residual assumptions are in
+## docs/protocol/magic_state_board.md.
 ## OURS: nearest filtering of the 20x20 result when the UI scale is not 1
 ## (retail draws its UI 1:1 and has no scale).
-const AUTHENTIC_ICONS := true
+static var AUTHENTIC_ICONS := true
 
 const GAUGE_RECT := Rect2(0, 20, 20, 4)
 ## The slot window: the icon plus the gauge under it (0x806d50's vslot 0x54
@@ -239,6 +240,7 @@ var _burst_tex: Texture2D = null
 var _textures_loaded := false
 var _icon_cache: Dictionary = {}
 var _icon_image_cache: Dictionary = {}
+var _icon_authentic_cache: Dictionary = {}
 
 func _init(builder: UiBuilder = null, skill_catalog: SkillBuffCatalog = null) -> void:
 	_builder = builder
@@ -714,10 +716,10 @@ func _icon_texture(path: String) -> Texture2D:
 	if full == "":
 		return null
 	if AUTHENTIC_ICONS:
-		if not _icon_cache.has(full):
+		if not _icon_authentic_cache.has(full):
 			var img := icon_image(path)
-			_icon_cache[full] = ImageTexture.create_from_image(img) if img != null else null
-		return _icon_cache[full]
+			_icon_authentic_cache[full] = ImageTexture.create_from_image(img) if img != null else null
+		return _icon_authentic_cache[full]
 	if _builder == null:
 		return null
 	if not _icon_cache.has(full):

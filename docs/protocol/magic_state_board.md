@@ -68,11 +68,18 @@ The labels are:
 | Size | Format | Mips | Count |
 |---|---|---|---|
 | 32 × 32 | A8R8G8B8 | none | 441 |
+| 32 × 32 | A8R8G8B8 | 6 | 4 |
 | 32 × 32 | X8R8G8B8 (alpha mask 0) | none | 4 |
 | 32 × 32 | A1R5G5B5 | none | 159 |
 | 32 × 32 | A4R4G4B4 | none | 2 |
 | 32 × 32 | DXT3 | 6 | 12 |
-| 32 × 32 | FourCC 21 (A8R8G8B8) | 6 | 4 |
+
+- The four A8R8G8B8 files with mips are `bow_balance_a`, `light_holy`, `spear_balance_a` and
+  `sword_balance_a`. Their pixel-format flags are 0x41 (RGB | ALPHAPIXELS), with masks. The FourCC
+  slot holds a stray 21, which is ignored because the FourCC flag is clear. Round 624 first read
+  that 21 as the format, which was wrong (corrected in the review follow-up).
+- `DdjReader` takes the mask path for them, as it does for every uncompressed file, so all 622
+  decode.
 
 - Every skill icon is 32 × 32. No `icon\small\`, `_s` or low-resolution twin exists. Data.pk2's
   41 paths containing `icon\` are sounds, and Map, Particles and Music have none.
@@ -86,33 +93,62 @@ The labels are:
   vslot 2, 0x655d50 → vslot 11, 0x654c30. That draw sets FVF 0x104 (XYZRHW | TEX1) and the
   texture, then draws a two-triangle fan. **It sets no sampler state.**
 - The quad's edges are the window's rect, each minus 0.5 (0x6529d0: `fsub` of the double 0.5 at
-  0xe1b7d0; the far edges are `round(x + scale × w) − 0.5`). Its UVs are 0..1 (0x653060). So
+  0xe1b7d0; the far edges are `round(x + scale × w) − 0.5`). Its UVs are 0..1, set by the base window's constructor (0x654661..0x6546bf, before 0x653060 copies them into the vertices; 0x806d50's own UV call at 0x807036 is the `lnks` frame's, `+0x37c`). So
   screen pixel k of 20 samples u = (k + 0.5) / 20: D3D9's texel-to-pixel correction, which puts
   pixel k on texel coordinate (2k + 1) × 32 / 40.
 - The UI pass (0x8408c0) sets ADDRESSU/V to CLAMP and MIPFILTER to NONE. The DDJ loader (0xb87f20)
   keeps the file's own mip count. So even the 16 files that carry mips draw from level 0.
 - Stage-0 MIN and MAG are left as the previous draw set them. The sampler cache is 0x4784b0
   (`this` 0x1112428, cache at `+0x828 + (stage × 13 + state) × 4`: MAG 0x1112c64, MIN 0x1112c68).
-  - **Every CIFStatic label's text sets POINT.** 0x64d940 draws a static's text through 0x8b48b0
-    → 0x8b2290. That function sets MIN and MAG to POINT when |text scale − 1.0| ≤ 0.1 (the doubles
-    at 0xe1b7f0 and 0xe1b8c0; `fcomp; test ah,0x41` at 0x8b2447), and LINEAR otherwise.
-    0x8b48b0's tail (0x8b4d0b..0x8b4d77) restores only texture-stage states, not the filters.
-  - The wrapped text paths restore LINEAR afterwards: 0x8b4d90, 0x4771a0 and 0x49a7d0's tail.
-    The 3D preview widgets (`CIFRenderStatic`, `CIFEquipment`, `CIFItemMall`,
-    `CIFChangePlayerModel`) and the initial state (`CGame::vslot_015`, stages 0–2) also set LINEAR.
-  - The board's own draws set nothing: the board and slot (0x6550c0, `CIFStateSlot::vslot_015`
-    0x8071c0), the CIFGauge (0x6387d0, textless) and the icon.
-- **INFERRED:** on the HUD the icon is point-sampled, since the labels drawn before the board leave
-  POINT. **OPEN:** which window draws immediately before the board. 0xba0300 draws a window's
-  children in list order, but the root's order and any bring-to-front were not read.
+  Some paths write that cache and the device inline.
+
+**The draw order before the board** (READ, round 624's review):
+- A window's children draw in list order (0xba0300).
+- The interface file's windows reach the list in reverse file order: 0xb3e4d0 prepends each entry
+  as it parses `ginterface.txt`, and 0xb90a80 then appends them in that order.
+- `GDR_MAGICSTATEBOARD` is line 438 and `GDR_PLAYER_MINI_INFO` is line 457. So the board draws
+  immediately after the whole `GDR_PLAYER_MINI_INFO` subtree.
+- That subtree's labels are `TXT_ID`, `LEVEL`, `HP` and `MP`. Each is a CIFStatic, drawn by
+  0x64d940, whose text goes through 0x8b48b0 → 0x8b2290.
+- 0x8b46d0 sets a text board's scale (`+0x3c`) to 1.0. At |scale − 1.0| ≤ 0.1, 0x8b2290 sets MIN
+  and MAG to **POINT** (`fcomp` against the double 0.1 at 0xe1b8c0, `test ah,0x41` at 0x8b2447).
+- 0x8b48b0's tail (0x8b4d0b..0x8b4d77) restores the texture-stage states, not the filters.
+- Nothing between that label and the icon sets a filter: the board and its slots (0x6550c0,
+  `CIFStateSlot::vslot_015` 0x8071c0), the CIFGauge (0x6387d0, textless) and the icon's sprite draw.
+- **So the icon is point-sampled (READ, for retail's default window order).**
+
+**Every filter setter** (stage-0 MIN/MAG):
+
+| Where | Leaves | What |
+|---|---|---|
+| 0x8b2290 (via 0x8b48b0) | POINT at scale 1.0, else LINEAR | CIFStatic label text; not restored |
+| 0x493460 (via 0x476c80) | POINT at scale 1.0, else LINEAR | the CNIF text twin; not restored by its bare callers |
+| 0x8b4d90 | LINEAR | wraps 0x8b48b0 and restores LINEAR; reached from 0x819040 and 0x62f910, among others |
+| 0x4771a0 | LINEAR | wraps 0x476c80 and restores LINEAR |
+| 0x49a7d0 | LINEAR at its tail | `CNIFStretchWnd` frames: POINT for its own draw, then LINEAR |
+| 0x819d80 | LINEAR | a UI_SILKMALL draw |
+| 0x4ffc50, 0x560c30/0x560db0, 0x6ad860, 0x7bff70, 0x7ee800 | **POINT** | the five 3D preview widgets (`CIFRenderStatic`, `CIFEquipment`, `CIFItemMall`, `CIFChangePlayerModel`, and 0x4ffc50). Each sets LINEAR for its model and **restores POINT** after it (0x4fffe7, 0x560de1, 0x6adb68, 0x7c02cd, 0x7eea84) |
+| `CGame::vslot_015` | LINEAR | stages 0–2, the device's initial state |
+
+The world passes (`SWorld`, `Map`, `CObjRendererVS`) set their own filters before the UI pass.
+
+**Four assumptions remain:**
+- (a) **No bring-to-front reorder.** The order above is the default, from the file. A window
+  brought to the front, for example by a click, moves in the list. That is not modelled.
+- (b) **No other text-scale writer.** Only 0x8b46d0's 1.0 was found for the HUD labels.
+- (c) **State blocks and D3DX effects were not audited.** A stateblock `Apply` or an effect's
+  `Begin`/`End` could set sampler state without going through the calls above.
+- (d) **The labels have on-screen text.** A label with no text, or text clipped off-screen, draws
+  no glyphs and sets nothing. The HUD's name, level, HP and MP always have text in game.
+
 - The effect is that retail shows 20 of the 32 columns and rows, texels 0 2 4 5 7 8 10 12 13 15 16
   18 20 21 23 24 26 28 29 31, with no blending. That is the "lower resolution" look.
 
-**srrevamp** (`HudBuffBoard.AUTHENTIC_ICONS`, on):
+**srrevamp** (`HudBuffBoard.AUTHENTIC_ICONS`, a static var, on):
 - The icon's Image is read with `UiBuilder.load_image`. `HudBuffBoard.retail_icon_image` samples it
   once, in integer arithmetic, to those 20 × 20 texels, and the result is drawn with
   `TEXTURE_FILTER_NEAREST`.
-- At UI scale 1 this is retail's picture, pixel for pixel, given POINT. At other scales it is those
+- At UI scale 1 this is retail's picture, pixel for pixel. At other scales it is those
   20 × 20 pixels enlarged. That choice is OURS: retail draws its UI 1:1 and has no scale.
 - The four texels on an exact boundary (k = 2, 7, 12, 17) resolve by floor. That the GPU's float
   interpolation lands the same way is INFERRED.
