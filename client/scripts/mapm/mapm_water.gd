@@ -183,6 +183,9 @@ class Built:
 	var deep_blocks := 0
 	## Distinct plane heights drawn, for the log.
 	var heights := {}
+	## Every drawn block as (local x0, local z0, PlaneHeight), for the
+	## reflection's choice of plane (WaterReflection).
+	var drawn := PackedFloat32Array()
 
 ## Builds a region's water in region-local space (the terrain mesh's: block
 ## column -> X, block row -> Z, 20 units a tile, heights raw), wound so
@@ -211,6 +214,7 @@ static func build(region: MapmReader.ParsedRegion) -> Built:
 				PLANE_WATER:
 					out.water_blocks += 1
 					out.heights[block.plane_height] = true
+					out.drawn.append_array(PackedFloat32Array([x0, z0, block.plane_height]))
 					var base := w_pos.size()
 					if all_deep(block):
 						# Every vertex is nibble 15, so the alpha is 1 all over
@@ -246,6 +250,7 @@ static func build(region: MapmReader.ParsedRegion) -> Built:
 				PLANE_STILL:
 					out.still_blocks += 1
 					out.heights[block.plane_height] = true
+					out.drawn.append_array(PackedFloat32Array([x0, z0, block.plane_height]))
 					var base := s_pos.size()
 					var h := block.plane_height
 					s_pos.append_array(PackedVector3Array([

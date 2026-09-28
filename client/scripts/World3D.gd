@@ -1218,6 +1218,13 @@ func _ready() -> void:
 	# process environment (SRREVAMP_WORLD_ENTRY), never a static.
 	_world_entry = GroundProbe.next_entry()
 	print(GroundProbe.entry_line(_world_entry, get_instance_id()))
+	# The Water Reflection option (round 628): the node always exists, so
+	# SRREVAMP_QA_WATER_TIMING can time a run with the option off too.
+	_water_reflection_on = WaterReflection.enabled()
+	_water_reflection = WaterReflection.new()
+	_water_reflection.name = "WaterReflection"
+	add_child(_water_reflection)
+	print("World3D: water reflection %s" % ("on (retail's Water Reflection option, the shipped default)" if _water_reflection_on else "off"))
 	# Sound (round 611): distances are measured from the player, left and
 	# right from the camera -- AudioService's header says why (ours).
 	SoundTable.set_listener(player, camera_3d)
@@ -2577,6 +2584,36 @@ func _load_still_water_texture(archive: Pk2Reader) -> Texture2D:
 ## sets one world-wide texture factor. MapmWater builds them and holds the
 ## READ render state they follow.
 var _water_material: StandardMaterial3D = null
+## Round 628: the Water Reflection option, its node, and its two materials.
+var _water_reflection_on := true
+var _water_reflection: WaterReflection = null
+var _water_reflect_material: ShaderMaterial = null
+var _water_reflect_still_material: ShaderMaterial = null
+var _water_bump_texture: Texture2D = null
+var _water_bump_attempted := false
+
+## waterbump3.ddj turned into the bump stage's du/dv (READ, FUN_009f2050).
+func _load_water_bump(archive: Pk2Reader) -> Texture2D:
+	if not _water_bump_attempted:
+		_water_bump_attempted = true
+		var started := Time.get_ticks_msec()
+		var bytes := AssetSource.read_bytes("SkyBox\\waterbump3.ddj", archive)
+		var parsed := DdjReader.parse(bytes) if not bytes.is_empty() else null
+		var img := DdjReader.to_image(parsed) if parsed != null else null
+		var bump := WaterReflection.bump_image(img)
+		if bump != null:
+			_water_bump_texture = ImageTexture.create_from_image(bump)
+			print("World3D: water bump from SkyBox\\waterbump3.ddj, %dx%d, in %d ms" % [bump.get_width(), bump.get_height(), Time.get_ticks_msec() - started])
+		else:
+			print("World3D: no SkyBox\\waterbump3.ddj -- the reflection is drawn without its bump")
+	return _water_bump_texture
+
+## Writes the water colour into whichever water materials exist.
+func _set_water_color(c: Color) -> void:
+	if _water_material != null:
+		MapmWater.set_water_color(_water_material, c)
+	if _water_reflection != null:
+		_water_reflection.set_water_color(c)
 var _water_still_material: StandardMaterial3D = null
 ## The EnvironmentID the water's colour was last taken from (-1 none).
 var _water_env_id := -1
@@ -2586,7 +2623,7 @@ var _water_env_id := -1
 ## whole world. Checked on the zone label's throttle; a change re-samples
 ## channel 14 into the shared material.
 func _water_env_tick() -> void:
-	if _water_material == null or _environment_table == null:
+	if (_water_material == null and _water_reflect_material == null) or _environment_table == null:
 		return
 	var cam := get_viewport().get_camera_3d() if get_viewport() != null else null
 	if cam == null:
@@ -2605,7 +2642,7 @@ func _water_env_tick() -> void:
 		if rec.key == env_id:
 			_water_env_id = env_id
 			_env_water_color = EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_WATER_COLOR, ENVIRONMENT_REFERENCE_TIME)
-			MapmWater.set_water_color(_water_material, _env_water_color)
+			_set_water_color(_env_water_color)
 			print("World3D: water colour follows the camera's block, environment %d: %s" % [env_id, str(_env_water_color)])
 			return
 
@@ -2957,22 +2994,41 @@ func _try_add_real_water(terrain_group: Node3D, region: MapmReader.ParsedRegion,
 	var facing := MapmWater.facing_counts(built.water) + MapmWater.facing_counts(built.still)
 	print("World3D: %s -- water: %d animated block(s) (%d fully deep, one quad each), %d still, %d dry skipped, plane height(s) %s, triangles %d up / %d down" % [
 		mapm_path, built.water_blocks, built.deep_blocks, built.still_blocks, built.dry_blocks, str(heights), facing.x, facing.y])
+	if _water_reflection_on and _water_reflection != null:
+		# Round 628: retail's reflection pass (WaterReflection). The frames
+		# are not used there (READ); water201 still is, for PlaneType 1.
+		var bump := _load_water_bump(archive)
+		var still_tex := _load_still_water_texture(archive) if built.still != null else _water_still_texture
+		if _water_reflect_material == null:
+			_water_reflect_material = _water_reflection.make_material(false, bump, still_tex, _env_water_color)
+		if built.still != null and _water_reflect_still_material == null:
+			_water_reflect_still_material = _water_reflection.make_material(true, bump, still_tex, _env_water_color)
+		_water_reflection.register_region(terrain_group, built.drawn)
+		if built.water != null:
+			_add_water_instance(terrain_group, "Water", built.water, _water_reflect_material)
+		if built.still != null:
+			_add_water_instance(terrain_group, "WaterStill", built.still, _water_reflect_still_material)
+		return
 	if built.water != null:
 		var anim := _load_real_water_animation(archive)
 		if anim != null:
-			var water_instance := MeshInstance3D.new()
-			water_instance.name = "Water"
-			water_instance.mesh = built.water
-			water_instance.material_override = _water_surface_material(anim)
-			terrain_group.add_child(water_instance)
+			_add_water_instance(terrain_group, "Water", built.water, _water_surface_material(anim))
 	if built.still != null:
 		var tex := _load_still_water_texture(archive)
 		if tex != null:
-			var still_instance := MeshInstance3D.new()
-			still_instance.name = "WaterStill"
-			still_instance.mesh = built.still
-			still_instance.material_override = _water_still_surface_material(tex)
-			terrain_group.add_child(still_instance)
+			_add_water_instance(terrain_group, "WaterStill", built.still, _water_still_surface_material(tex))
+
+## One water surface: on WaterReflection's layer, so the mirror camera leaves
+## water out of its image as retail's reflection pass does (READ; the layer is
+## OURS).
+func _add_water_instance(terrain_group: Node3D, node_name: String, mesh: ArrayMesh, mat: Material) -> void:
+	var inst := MeshInstance3D.new()
+	inst.name = node_name
+	inst.mesh = mesh
+	inst.material_override = mat
+	inst.layers = WaterReflection.WATER_LAYER_BIT
+	inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	terrain_group.add_child(inst)
 
 ## Real sky assets found under Map.pk2's own SkyBox\ folder (2026-08-28,
 ## see docs/WORLD_ISSUES.md and docs/NEXT_STEPS_RENDERING.md's "Terrain"
@@ -3247,8 +3303,7 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	# follows the camera's block, as retail does.
 	_env_water_color = EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_WATER_COLOR, ENVIRONMENT_REFERENCE_TIME)
 	_water_env_id = env_id
-	if _water_material != null:
-		MapmWater.set_water_color(_water_material, _env_water_color)
+	_set_water_color(_env_water_color)
 	print("World3D: environment %d water colour (channel 14) %s" % [env_id, str(_env_water_color)])
 
 	# Real per-zone aerial-perspective haze (2026-09-03). The real client's
@@ -4818,6 +4873,10 @@ func _exit_tree() -> void:
 	_water_still_texture = null
 	_water_still_load_attempted = false
 	_water_material = null
+	_water_reflect_material = null
+	_water_reflect_still_material = null
+	_water_bump_texture = null
+	_water_bump_attempted = false
 	_water_still_material = null
 	_env_water_color = Color(1, 1, 1)
 	_water_env_id = -1

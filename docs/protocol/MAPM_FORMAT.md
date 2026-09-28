@@ -129,6 +129,12 @@ stand-in:
 - it marks 3,846 blocks as water where the `.m` has -1;
 - it misses 6,259 drawn type-0 blocks.
 
+With the Water Reflection option on (world option 6, the shipped default), the client draws water
+through `Map::FUN_00a2df70` instead. It uses the same block fields and shoreline alpha, but the
+colour is a mirrored render of the landscape, bumped by `waterbump3.ddj` and tinted by WaterColor.
+The water frames are not used. See WORLD_ISSUES.md's six-hundred-and-twenty-eighth round and
+`client/scripts/mapm/water_reflection.gd`.
+
 OPEN: a region-level flag at region+0x2475 makes the loader force -1 on every block; it is set in
 `FUN_00a361b0` from a per-region object list that has not been identified.
 

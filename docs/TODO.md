@@ -1093,20 +1093,18 @@ Retail draws water from each `.m` block's PlaneType/PlaneHeight, not from the `.
 - **The shoreline alpha format.** `DAT_0110f728 < 3` picks A8R8G8B8, where deep water's alpha is at
   most 240/255; the other branch is A4R4G4B4, where it is 1.0. This build uses the second. What
   sets the value is not found.
-- **The reflection path `FUN_00a2df70` is not implemented; that waits on the user's decision.**
-  - READ: world+0x2e68 is world option 6 = the **Water Reflection** video option. The chain:
-    - `CIFOption_Video::Create` labels control 4 `UIIT_STT_WATER_REFLECTION`;
-    - `FUN_006f4210` stores control *i* at record byte 4 + *i*, so byte 8;
-    - `CGame::FUN_00835000` passes record byte 8 to `SWorld::vslot_043(6, v)`;
-    - its case 6 builds the render target (`FUN_009f2050(0x3c)`) plus two 512x512 textures, and
-      `vslot_037` passes `param_1[0xb9a]` = +0x2e68.
-  - It is stored in `<client>\Setting\SROptionSet.dat`: a u32 13, then tagged fields.
-    - Tag 9999 is one byte, the record selector.
-    - Tag 5 is two bytes: record 0's byte 8 and byte 0x18. Tag 105 is the same for record 1.
-  - The shipped file on the box (identical in `/opt/sro-files/client/setting` and the pserver
-    client) has selector 0 and tag 5 = 01, so **reflection ON**. Record 1 has it at 00.
-  - The client's own default with no file is not found. `CGInterface::FUN_0077c190` leaves the
-    struct as it was when the load fails, and the launcher may write the file.
+- **The Water Reflection option (world option 6) is drawn since round 628** (`WaterReflection`,
+  default ON as the shipped SROptionSet.dat has it). What is left of it:
+  - **No user clip plane.** Godot 4.2 has none, so a two-sided prop under the water can show in
+    the mirror.
+  - **The target is screen-aspect**, not retail's stretched 512x512.
+  - **Characters in the reflection:** whether retail's reflection render draws them
+    (`CIFCharacterWnd::FUN_0080beb0` after the landscape pass) is not traced.
+  - **Retail's bump time base** `*(float*)(DAT_0110f7d0 + 0xa0)` is assumed to be seconds.
+  - **The option's default with no file** is still not found.
+  - **The saved file:** the option is SROptionSet.dat tag 5 in retail, and a player sets it here in
+    `user://settings.cfg` `[world] water_reflection`.
+- **`wave1..3.ddj`** are used by neither water pass; only `SWorld::vslot_027` hands them out.
 - **The per-object water branch** (`+0x237e & 0x8000`, dungeon region ids) is mirrored by skipping
   block water there. No `.m` region has that bit, since x tops out at 127. The dungeon object water
   itself (a `.dof` world) and the `wave1..3.ddj` textures are not traced.

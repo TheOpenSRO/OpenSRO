@@ -7094,6 +7094,160 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twenty-eighth round: water reflects the sky, the banks and the trees, as the game's own Water Reflection option draws it
+
+The shipped `Setting\SROptionSet.dat` has Water Reflection ON (round 627's follow-up), and the user
+wants the authentic look. This round implements retail's reflection pass, `Map::FUN_00a2df70`, and
+makes it the default. The plain animated water of round 627 stays behind the same option.
+
+**Labels.** READ means recovered from `sro_client.exe` (decompile, asm, constants read out of the
+exe). MEASURED means counted on the box. INFERRED follows from what was read but was not itself
+read. OURS is this project's choice.
+
+### What FUN_00a2df70 does (READ)
+
+- **When it runs.** `FUN_00a2b370` sets the reflection plane (world+0x26c4) to the PlaneHeight of
+  the first drawn-list block that has water: PlaneType != -1 and state != 0. The list is ordered
+  by block distance from the camera's block.
+  - world+0x26bf ("reflect this frame") is set when option 6 (world+0x2e68) is on and such a plane
+    exists.
+  - world+0x26bb ("underwater") is set when also `eye.y - 0.5 < plane` and the camera's own block
+    has water. 0.5 is `_DAT_00e1b7d0`.
+  - With 0x26bf clear, the function draws nothing.
+- **The reflection render, `FUN_00a2dc20`.**
+  - Target and depth: the 512x512 target world+0x27bb, with its own 512x512 D16 depth buffer
+    +0x27bf. Both are created by option case 6. Only depth is cleared (Clear flags 2).
+  - The camera: above water, the eye's y becomes `2h - y` and the look vector's y is negated
+    (world+0x221a and +0x223a). Underwater, the camera is left as it is.
+  - Clipping: a user clip plane is enabled (SetClipPlane, D3DRS_CLIPPLANEENABLE 0x98). It is built
+    by `FUN_0045e0d0` with normal y = -1 above water (`_DAT_00e1b878`) and +1 underwater.
+  - What is drawn: the landscape pass `FUN_00a26f60`, the same routine as the main view (sky,
+    terrain, objects), over the block list the mirrored camera sees (world+0x2793). World+0x26c3
+    is set during the render; the water pass's caller skips water when it is set.
+- **The bump map** (world+0x68df, `FUN_009f2050(0x3c)`): `skybox\waterbump3.ddj` converted to
+  D3DFMT_V8U8. du = (left - right) / 2 and dv = (row above - row below) / 2 on byte 0 (blue),
+  wrapping at the edges, C division.
+- **Stage setup, above water, PlaneType 0 (pass A).**
+  - Stage 0: COLOROP BUMPENVMAPLUMINANCE, ARG1 TEXTURE (the bump). BUMPENVMAT00/01/10/11 are
+    world+0x2c10/0x2c14/0x2c20/0x2c24, LSCALE 1, LOFFSET 0.
+  - The bump matrix is `[[0.04 cos, -0.04 sin], [0.04 sin, 0.04 cos]]` of `t * 0.5 * 9`. 0.04 is
+    `_DAT_00de4f70` as a double, and t is `*(float*)(DAT_0110f7d0 + 0xa0)` (`SWorld::vslot_004`, 0x00a2cf60).
+  - Stage 1: MODULATE(TEXTURE = the reflection target, TFACTOR). Its texture coordinates are
+    TCI_CAMERASPACEPOSITION with TTFF COUNT3 | PROJECTED, through the texture matrix
+    `u = 0.65 x/z + 0.5`, `v = 0.8 y/z - 0.52`, sampled WRAP. So v is 0.48 + 0.8 y/z: the screen
+    position, flipped, 0.02 off.
+  - The texture factor is `0x8C | WaterColor x 255`. Its alpha 0x8C is read by no stage.
+  - Stage 2: colour SELECTARG1 CURRENT, alpha SELECTARG1 TEXTURE (the block's 17x17 shoreline
+    alpha, texcoord set 1).
+  - Result: colour = reflection x WaterColor, alpha = shoreline. **The water1NN frames are not
+    used** in this path.
+- **PlaneType 1 above water (pass B).**
+  - The texture factor is `0xC8000000`. Stage 0 is SELECTARG1 TEXTURE (water201), with alpha
+    SELECTARG1 TFACTOR.
+  - Stage 1 is BLENDCURRENTALPHA(CURRENT, reflection). Stage 2 was disabled after pass A.
+  - Result: colour = 0.784 water201 + 0.216 reflection, alpha 0.784, no bump.
+- **Underwater (world+0x26bb).**
+  - Texture matrix `u = 0.65 x/z + 0.5`, `v = -0.8 y/z + 0.52`, which is not flipped.
+  - Texture factor `0xC8 | WaterColor x 128` (`_DAT_00d8e480` = 128.0). Alpha is SELECTARG1
+    TFACTOR = 200/255.
+  - Drawn over every block with PlaneType != -1 and state != 0.
+- **Render state:** cull NONE, SRCALPHA/INVSRCALPHA, ZWRITE 0 during the pass (set back to 1
+  after it). The stage-0 to stage-2 samplers are LINEAR.
+- **Water Reflection is option 6.** Video control 4, `UIIT_STT_WATER_REFLECTION`, stored as
+  SROptionSet.dat tag 5. The shipped file has it at 1 (the round 627 follow-up).
+- **`wave1..3.ddj`** are not used by either water pass. They are loaded to world+0x295b and handed
+  out only through `SWorld::vslot_027`, whose callers were not traced.
+
+### What changed
+
+- **`client/scripts/mapm/water_reflection.gd` (new, class `WaterReflection`).** It holds the rules
+  above.
+  - A SubViewport and a Camera3D render the mirrored view; the camera is `mirror_transform`, with
+    the up axis negated so the camera stays a rotation.
+  - `pick_plane` chooses the nearest water block's plane; `is_underwater` is world+0x26bb.
+  - `bump_image` and `bump_matrix` build the bump.
+  - The target updates only while a plane exists; with no water loaded it is `UPDATE_DISABLED`.
+- **`water_reflection.gdshader` (new).** It samples the target at the flipped screen position
+  (plain underwater) plus the bump offset, with the v bias of 0.02. It draws the three cases above.
+- **`World3D`.** It reads the option once per world scene:
+  - `ClientSettings` `[world] water_reflection`, default **true**;
+  - `SRREVAMP_WATER_REFLECTION=0/1` overrides it for a run.
+  - With the option on, each region's water gets the reflection materials and registers its drawn
+    blocks for the plane choice.
+  - Water meshes sit on visual layer 20, which the mirror camera leaves out. Off draws round 627's
+    animated water, unchanged.
+- **`MapmWater.Built.drawn`** lists each drawn block's (x0, z0, plane).
+- **`SRREVAMP_QA_WATER_TIMING`** prints the main viewport's and the target's measured render time
+  (CPU + GPU) every 10 frames.
+
+### What is OURS or INFERRED
+
+- **No user clip plane (OURS).** Godot 4.2 has none. Geometry under the plane stays out of the
+  mirror only when it is back-face culled; the terrain is, a two-sided prop is not.
+- **The target's width (OURS).** It is 512 rows by `512 x aspect` (910 at 16:9), not a stretched
+  512x512. A Godot camera cannot stretch its frustum into a square target, so the same projection
+  needs the screen's aspect.
+- **Sampling (INFERRED).** Sampling at SCREEN_UV assumes retail's texture matrix is its main
+  projection. 0.65 and 0.8 fit a 4:3 frustum, but this was not checked against the camera
+  setup.
+- **The bump (OURS / INFERRED).** V8U8 is read as `s / 128`. The bump time is Godot's seconds, and
+  that retail's t is seconds is INFERRED.
+- **BUMPENVMAPLUMINANCE (INFERRED).** Its luminance term is left out, because V8U8 has no L
+  channel and stage 1 never reads stage 0's colour.
+- **The plane choice (OURS).** It ignores retail's view test and picks among the loaded water
+  blocks.
+
+### Measured
+
+- **Tests:**
+  - `water_reflection_test.gd`: 22 ok, ALL PASS. It covers the option, bump derivation and
+    wrapping, C division, the bump matrix at 0 and a quarter turn, the mirrored camera (eye,
+    determinant, look direction, straight down), the plane choice, underwater, and the shader and
+    material.
+  - `remote_godot.sh check`: ALL LOAD.
+  - `remote_godot.sh tests`: 145 suites, 0 failing.
+  - Go tests: green.
+- **Negative:** the same test file on a68a03a:
+
+```
+note: res://scripts/mapm/water_reflection.gd is missing -- checking what the tree draws instead
+FAIL a Water Reflection option exists and is ON by default, as the shipped SROptionSet.dat has it
+FAIL the default water surface samples a reflection (got StandardMaterial3D)
+2 FAILURES
+```
+
+- **Pictures** (`water_shots/r628_{before,after}_{lake,moat}_{above,shallow}.png`; before is the
+  option off, which is round 627's water). Numbers are the mean colour of the band under the HUD
+  (800x250 at 420,320).
+  - **Lake 98/159, from above:** before (0.30, 0.38, 0.25), after (0.43, 0.58, 0.44). That is the
+    sky mirrored and tinted by environment 1's tan WaterColor.
+  - **Lake, shallow angle:** before (0.41, 0.38, 0.15), after (0.67, 0.60, 0.25). The far bank's
+    poplars now stand upside down in the water. The strip under the bank has a standard deviation
+    of 0.093, against 0.041 without the reflection.
+  - **Moat 96/168, looking along it:** the water strip goes from (0.23, 0.37, 0.33) to (0.24, 0.45,
+    0.45), the sky reflected in Jangan's teal.
+- **Cost:** the average of 15 ten-frame windows at the held viewpoint, frames 59-199, in the
+  box's GL Compatibility on its RX 5700 XT. Numbers are main + target, in ms per frame.
+
+| Spot | Option off | Option on |
+|---|---|---|
+| lake, shallow | 3.33 | 2.67 + 2.64 = **5.31** (+2.0) |
+| moat, along the moat | 6.49 | 4.91 + 6.05 = **10.96** (+4.5) |
+| moat, first viewpoint (wall and field) | 4.15 | 3.43 + 3.35 = **6.78** (+2.6) |
+
+  The reflection roughly doubles the scene's render cost, as retail's does, because it draws the
+  landscape twice. One moat run beside the wall measured 12.7 off against 25.7 on.
+
+### Still OPEN
+
+- The clip plane: an oblique projection would need Godot 4.3's `Camera3D` projection override, or
+  a shader discard.
+- Whether `FUN_00a26f60` in the reflection render draws characters. `CIFCharacterWnd::FUN_0080beb0`
+  runs after it, which was not traced.
+- The option's default when SROptionSet.dat is absent.
+- Retail's time base t.
+- The `wave1..3.ddj` callers.
+
 ## Six-hundred-and-twenty-seventh round, review follow-up: the shoreline truncates, a deep block is one quad, and the water's colour follows the camera's block
 
 The review confirmed that the olive lake is authentic for the path without reflection. 98/159 is
