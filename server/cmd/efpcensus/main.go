@@ -8,9 +8,11 @@
 //
 //	go run ./cmd/efpcensus -pk2 /opt/sro-files/client/Particles.pk2
 //	go run ./cmd/efpcensus -pk2 Particles.pk2 -show "skill\china\water_hide_keep_a.efp"
+//	go run ./cmd/efpcensus -pk2 Particles.pk2 -dump   # one md5 per file, for efp_dump_diff.sh
 package main
 
 import (
+	"crypto/md5"
 	"flag"
 	"fmt"
 	"os"
@@ -23,6 +25,8 @@ import (
 func main() {
 	pk2Path := flag.String("pk2", "", "path to Particles.pk2 (required)")
 	show := flag.String("show", "", "print the decoded node tree of this one .efp instead of the census")
+	dump := flag.Bool("dump", false, "print '<md5 of the canonical dump> <path>' for every decoded file (compare with client/tools/efp_dump.gd)")
+	dumpOne := flag.String("dumpone", "", "print the full canonical dump of this one .efp")
 	flag.Parse()
 	if *pk2Path == "" {
 		fmt.Fprintln(os.Stderr, "usage: efpcensus -pk2 <Particles.pk2> [-show <path>]")
@@ -65,6 +69,9 @@ func main() {
 			if *show != "" && !strings.EqualFold(p, *show) {
 				continue
 			}
+			if *dumpOne != "" && !strings.EqualFold(p, *dumpOne) {
+				continue
+			}
 			data, err := a.ReadFile(e)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "reading %s: %v\n", p, err)
@@ -74,11 +81,23 @@ func main() {
 				printTree(p, data)
 				continue
 			}
+			if *dump || *dumpOne != "" {
+				f, err := efp.Decode(data)
+				if err != nil {
+					continue
+				}
+				if *dumpOne != "" {
+					fmt.Print(efp.Dump(f))
+				} else {
+					fmt.Printf("%x %s\n", md5.Sum([]byte(efp.Dump(f))), p)
+				}
+				continue
+			}
 			c.Add(p, data)
 		}
 	}
 	walk(root, "")
-	if *show == "" {
+	if *show == "" && !*dump && *dumpOne == "" {
 		c.Report(os.Stdout)
 	}
 }
@@ -93,13 +112,27 @@ func printTree(path string, data []byte) {
 	var show func(n *efp.Node, depth int)
 	show = func(n *efp.Node, depth int) {
 		ind := strings.Repeat("  ", depth)
-		fmt.Printf("%snode %q id=%d frames=%d view=%s render=%s src/dest=%d/%d\n",
-			ind, n.Name, n.ID, n.Frames, n.ViewMode(), n.RenderMode(), n.State.SrcBlend, n.State.DestBlend)
+		fmt.Printf("%snode %q headlen=%d frames=%d view=%s render=%s src/dest=%d/%d\n",
+			ind, n.Name, n.HeadLen, n.Frames, n.ViewMode(), n.RenderMode(), n.State.SrcBlend, n.State.DestBlend)
 		if n.Extinct != nil {
 			fmt.Printf("%s  life: %s\n", ind, n.Extinct.Name)
 		}
 		if e := n.Emission(); e != nil {
-			fmt.Printf("%s  emit: %+v\n", ind, *e)
+			// Run the emitter over the node's frames at full quality with
+			// no deaths: what the first life spawns, frame by frame.
+			var acc float32
+			var spawns []int
+			for age := 0; age < int(n.Frames); age++ {
+				k, next, stopped := e.Tick(age, acc, efp.DefaultEmitGlobals)
+				acc = next
+				if stopped {
+					break
+				}
+				if k != 0 {
+					spawns = append(spawns, age, k)
+				}
+			}
+			fmt.Printf("%s  emit: %+v; spawns (frame, count) with no deaths: %v\n", ind, *e, spawns)
 		}
 		for _, m := range n.Meshes {
 			fmt.Printf("%s  mesh %q textures %q\n", ind, m.Mesh, m.Textures)

@@ -213,7 +213,12 @@ go run ./cmd/efpcensus -pk2 /opt/sro-files/client/Particles.pk2 -show 'battle\de
 SRREVAMP_PARTICLES_PK2=/opt/sro-files/client/Particles.pk2 go test -count=1 -run TestRetailCensus -v ./internal/efp
 # GDScript twin (22 s), after a sync
 client/tools/remote_godot.sh script res://tools/efp_census.gd -- --pk2=/opt/sro-files/client/Particles.pk2
+# the two readers value for value: one md5 of a canonical dump per file, diffed (prints IDENTICAL)
+RENDER_DIR=... GODOT_LOCK=... client/tools/efp_dump_diff.sh
 ```
+
+`TestRetailCensus` fails if any of the measured results regresses: decoded files, exact decodes,
+HeadLen matches or Frame* key counts.
 
 ### Load benchmark
 

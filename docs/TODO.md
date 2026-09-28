@@ -938,8 +938,12 @@ Still open, in the order a renderer will meet them:
   at def +0x208; mapping those to Plate, Mesh and the Link modes needs `FUN_00c8c210`, `…bf50`,
   `…de80`, `…e020` and `…c3a0`.
 - **What a command's `space` byte means.** It is 0-7 per command (SetPosition 7, SetRotation 2,
-  SetSpherePos 1). Also open: which Vec3 of AngleVector1 is the axis, FrameTextureSlide's head,
-  BlendScaleGraphPointer, and StaticEmit's `quality`.
+  SetSpherePos 1). Also open: which Vec3 of AngleVector1 is the axis, FrameTextureSlide's head
+  (three floats, most often (3,2,1); INFERRED an atlas grid and rate), the FrameBAN heads (f32),
+  and BlendScaleGraphPointer.
+- **Which option sets the emitter globals** (`DAT_01114d54` interval multiplier,
+  `DAT_01114d58` threshold; routine at `0x005474b1`), and that option's retail default. The
+  readers assume full quality, (0, 0), the globals' `.bss` start value.
 - **What the graph a/b floats, LinkMode, the node's 20-byte block and the header f32/u32s mean.**
 - **The 58 `F8FILE` containers** (`system\arksolid_*`). The bytes after the magic look encrypted
   or compressed.

@@ -14,14 +14,14 @@ import (
 	"strings"
 )
 
-// Header reads just the magic, the version header and the root node's id and
+// Header reads just the magic, the version header and the root node's HeadLen and
 // name: the part of a file the census calls "header parsed".
 func Header(data []byte) (version, name string, err error) {
 	if len(data) < magicLen+1+versionLen {
 		return "", "", errors.New("efp: file too small to contain a header")
 	}
-	if string(data[:magicLen]) != magic {
-		return "", "", fmt.Errorf("efp: bad magic %q, want %q", data[:magicLen], magic)
+	if string(data[:magicLen+1]) != magic+" " {
+		return "", "", fmt.Errorf("efp: bad magic %q, want %q", data[:magicLen+1], magic+" ")
 	}
 	version = string(data[magicLen+1 : magicLen+1+versionLen])
 	hs, err := headerSize(version)
@@ -53,13 +53,20 @@ type Census struct {
 	// "blend:additive|alpha|other", "extinct:<name>".
 	Features map[string]int
 	Nodes    int
+	// HeadLenMismatch counts nodes whose opening u32 is not the byte length
+	// of their name and controllers (Node.HeadLen).
+	HeadLenMismatch int
+	// Values counts occurrences (not files) of measured value facts: every
+	// FrameTextureSlide head, FrameBAN* heads that are not 0, and commands
+	// using each End mode.
+	Values map[string]int
 }
 
 // NewCensus returns an empty census.
 func NewCensus() *Census {
 	return &Census{
 		Versions: map[string]int{}, HeaderFail: map[string]int{}, DecodeFail: map[string]int{},
-		Examples: map[string]string{}, Features: map[string]int{},
+		Examples: map[string]string{}, Features: map[string]int{}, Values: map[string]int{},
 	}
 }
 
@@ -124,12 +131,56 @@ func (c *Census) Add(path string, data []byte) {
 		for _, cm := range list {
 			mark("cmd:" + cm.Name)
 			if cm.Value != nil {
+				c.Values[fmt.Sprintf("end mode %d: %s", (cm.TimeFlags>>2)%5, cm.Name)]++
+			}
+			switch v := cm.Value.(type) {
+			case FrameTextureSlide:
+				c.Values[fmt.Sprintf("FrameTextureSlide head (%g, %g, %g)", v.Head[0], v.Head[1], v.Head[2])]++
+			case FrameBANRotation:
+				if v.Head != 0 {
+					c.Values["FrameBANRotation head not 0"]++
+				}
+			case FrameBANPosition:
+				if v.Head != 0 {
+					c.Values["FrameBANPosition head not 0"]++
+				}
+			}
+			if cm.Value != nil {
 				mark("type:" + cm.Value.TypeName())
 			}
 		}
 	}
 	f.Root.Walk(func(n *Node) {
 		c.Nodes++
+		if !n.HeadLenMatches() {
+			c.HeadLenMismatch++
+		}
+		// A Frame* parameter's length against the key count FUN_00ca0f40
+		// computes for its command over this node's frames.
+		for i := range n.Commands {
+			cm := &n.Commands[i]
+			l := -1
+			switch v := cm.Value.(type) {
+			case FrameScale:
+				l = len(v)
+			case FrameDiffuse:
+				l = len(v)
+			case FrameTextureSlide:
+				l = len(v.Keys)
+			case FrameBANPosition:
+				l = len(v.Positions)
+			case FrameBANRotation:
+				l = len(v.Matrices)
+			}
+			if l < 0 {
+				continue
+			}
+			if l == cm.Keys(int(n.Frames)) {
+				c.Values["Frame* values == Keys"]++
+			} else {
+				c.Values["Frame* values != Keys"]++
+			}
+		}
 		for _, ct := range n.Controllers {
 			mark("ctl:" + ct.Key)
 			cmds(ct.Program)
@@ -193,6 +244,7 @@ func (c *Census) Report(w io.Writer) {
 	fmt.Fprintf(w, "  other bytes after:   %d\n", c.TrailingData)
 	fmt.Fprintf(w, "failed:               %d\n", c.Failed)
 	fmt.Fprintf(w, "nodes decoded:        %d\n", c.Nodes)
+	fmt.Fprintf(w, "node HeadLen != name+controllers: %d\n", c.HeadLenMismatch)
 	section := func(title string, m map[string]int) {
 		fmt.Fprintf(w, "\n%s\n", title)
 		keys := make([]string, 0, len(m))
@@ -223,4 +275,5 @@ func (c *Census) Report(w io.Writer) {
 		fmt.Fprintf(w, "trailing data e.g. %s\n", e)
 	}
 	section("features (files using each, among decoded files)", c.Features)
+	section("values (occurrences)", c.Values)
 }

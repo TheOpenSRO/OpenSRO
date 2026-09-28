@@ -84,8 +84,11 @@ func typed_commands() -> void:
 	command("TextureSlide", 0, 8, 0, 1, 4); vec3(Vector3(1, 4, 0.25)); u32(1); f32(0); f32(0); f32(1); f32(0.25)
 	command("Force", 2, 0, 0, 1, 0); vec3(Vector3(0, -9.5, 0))
 
+## The opening u32 is patched to the byte length of name + controllers,
+## as retail files carry (EfpNode.head_len).
 func node(id: int, node_name: String, full: bool, kids: int) -> void:
-	u32(id)
+	var head_at := b.size()
+	u32(0)
 	text(node_name)
 	if full:
 		u32(9)
@@ -105,6 +108,7 @@ func node(id: int, node_name: String, full: bool, kids: int) -> void:
 		f32(0); f32(1); u32(1); f32(0); u32(0xff00ff00)
 	else:
 		u32(0)
+	b.encode_u32(head_at, b.size() - head_at - 4)
 	u32(10) # frames
 	if full:
 		u32(3)
@@ -156,7 +160,8 @@ func _init() -> void:
 		if version == "0013":
 			_check(f.header_0012 == 0.5 and f.header_0013[2] == 3, "0013 header fields")
 		var n := f.root
-		_check(n.id == 101 and n.name == "root fx" and n.frames == 10, "%s root id/name/frames" % version)
+		_check(n.head_len_matches() and n.name == "root fx" and n.frames == 10, "%s root head_len/name/frames" % version)
+		_check(n.children.size() == 1 and n.children[0].head_len_matches(), "%s child head_len" % version)
 		_check(n.controllers.size() == 9, "%s 9 controllers" % version)
 		var shape: EfpReader.EfpController = null
 		for c in n.controllers:
@@ -191,7 +196,7 @@ func _init() -> void:
 		_check(ts != null and ts.value["head"] == Vector3(1, 4, 0.25) and ts.value["keys"][0] == Vector4(0, 0, 1, 0.25),
 			"%s FrameTextureSlide" % version)
 		var em = n.emission()
-		_check(em != null and em["count"] == 10 and em["interval"] == 3 and em["duration"] == 30, "%s emission" % version)
+		_check(em != null and em["max_live"] == 10 and em["interval"] == 3 and em["duration"] == 30, "%s emission" % version)
 		_check(n.loops() and not n.never_extinct(), "%s NormalTimeLoop" % version)
 		_check(n.view_mode() == "ViewBillboard" and n.render_mode() == "RenderPlate", "%s view/render" % version)
 		_check(n.state.src_blend == 5 and n.state.is_additive(), "%s additive blend state" % version)
@@ -255,6 +260,56 @@ func _init() -> void:
 		var c := EfpReader.EfpCommand.new()
 		c.time_flags = kc[0]; c.start = kc[1]; c.step = kc[2]; c.end = kc[3]
 		_check(c.frame_range(30)["keys"] == kc[4], "keys flags %d end %s -> %d" % [kc[0], kc[3], kc[4]])
+
+	# End mode 3: the divisor is -100.0 (0x00db9a38): start + int(End/100)*N.
+	var m3 := EfpReader.EfpCommand.new()
+	m3.time_flags = 12; m3.start = 2.0; m3.step = 1.0; m3.end = 100.0
+	var fr3 := m3.frame_range(30)
+	_check(fr3["start"] == 2 and fr3["end"] == 29 and fr3["ok"], "end mode 3 End 100 -> 2..29 (%s)" % fr3)
+	m3.end = 50.0
+	fr3 = m3.frame_range(30)
+	_check(fr3["end"] == 2 and fr3["ok"], "end mode 3 End 50 -> 2..2")
+	# The client's _ftol: 0x80000000 outside int32; garbage never gives huge counts.
+	_check(EfpReader.ftol(3e9) == -2147483648 and EfpReader.ftol(NAN) == -2147483648
+		and EfpReader.ftol(-2.9) == -2, "ftol truncates, overflow gives 0x80000000")
+	var g := EfpReader.EfpCommand.new()
+	g.time_flags = 0; g.start = 0.0; g.step = 1.0; g.end = 1e20
+	_check(g.frame_range(30)["keys"] == 0, "garbage End gives 0 keys")
+	_check(EfpReader.f32(0.1) != 0.1 and EfpReader.f32(0.5) == 0.5, "f32 rounds to single precision")
+
+	# emit_tick follows FUN_00c84e70 (same trace as Go's TestStaticEmitTick).
+	var em2 := {"delay": 2, "duration": 10, "interval": 2, "max_live": 3, "per_trigger": 1.5}
+	var acc := 0.0
+	var spawns := []
+	for age in range(14):
+		var tk := EfpReader.emit_tick(em2, age, acc)
+		acc = tk["acc"]
+		spawns.append(tk["spawn"])
+	_check(spawns == [0, 0, 1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0], "emit_tick spawns %s" % [spawns])
+	var tk2 := EfpReader.emit_tick(em2, 6, acc - 1.0)
+	_check(tk2["spawn"] == 1 and tk2["acc"] == 3.0, "a death frees one slot under max_live")
+	_check(EfpReader.emit_tick(em2, 4, 0.0, 2, 10)["spawn"] == 0, "interval_mul 2 skips age 4")
+	var big := {"delay": 0, "duration": 10, "interval": 1, "max_live": 9, "per_trigger": 20.0}
+	_check(EfpReader.emit_tick(big, 0, 0.0, 2, 10)["spawn"] == 4, "threshold halves max_live")
+	_check(EfpReader.emit_tick(big, 0, 0.0)["spawn"] == 9, "full quality keeps max_live")
+
+	# Graph keys are a map by time: sorted, last write wins.
+	b = PackedByteArray()
+	f32(0); f32(1); u32(4)
+	f32(1.0); u32(0x10); f32(0.0); u32(0x20); f32(0.5); u32(0x30); f32(0.0); u32(0x40)
+	var cur := EfpReader._Cur.new(b, 0)
+	var dg := EfpReader._diffuse_graph(cur)
+	_check(dg["times"] == PackedFloat32Array([0.0, 0.5, 1.0]) and dg["colors"] == PackedInt64Array([0x40, 0x30, 0x10]),
+		"diffuse graph keys sorted, duplicate time keeps the last (%s)" % dg)
+
+	# Strings: cut at NUL, high bytes kept as their code points.
+	_check(EfpReader.latin1(PackedByteArray([0x61, 0x62, 0, 0x63])) == "ab", "string cut at NUL")
+	_check(EfpReader.latin1(PackedByteArray([0xb7, 0xb9])) == String.chr(0xb7) + String.chr(0xb9), "high bytes as Latin-1")
+
+	# The full 8-byte magic, space included.
+	var nomagic := build("0011")
+	nomagic[7] = 0x5f
+	_check(EfpReader.decode(nomagic) == null, "rejects a magic without its space")
 
 	_check(EfpReader.COMMAND_TYPES.size() == 37 and EfpReader.VALUE_TYPES.size() == 16
 		and EfpReader.CONTROLLERS.size() == 10, "registry sizes 37 / 16 / 10")

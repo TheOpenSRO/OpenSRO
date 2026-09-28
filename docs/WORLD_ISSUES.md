@@ -7094,6 +7094,89 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-nineteenth round, review follow-up: four field meanings corrected, and the Go and GDScript readers proven identical value for value
+
+The review of round 619 found the byte layouts right but four field **meanings** wrong, and places
+where the two readers could disagree. All of it was re-read from the asm, and every correction is
+now checked against the whole archive.
+
+**Corrections (READ):**
+- **SEFStaticEmit** (`FUN_00c84e70` c84f25–c84f68, particle death `FUN_00c87a20`).
+  - The fourth field is **max_live**, the cap on live particles. The f32 is **per_trigger**,
+    added to an accumulator at emitter +0x60 on each trigger. `ftol(new) − ftol(old)` particles
+    spawn, and each death subtracts 1.0.
+  - Two globals scale it. `DAT_01114d54` multiplies the interval. `DAT_01114d58`, when it is below
+    per_trigger, halves the cap (×0.5 at 0xe1b7e0, floor 1).
+  - One routine at 0x005474b1 sets both from an option read with atoi: 0 gives (0,0), 1 gives
+    (2,10), anything else (5,10). Both start at 0 in `.bss`, which is full quality; the readers
+    default to that, and the option's retail default is OPEN.
+  - Round 619 had these as "count per burst" and "quality".
+- **End mode 3** divides by the double **−100.0** at 0x00db9a38. So end = start − ftol(End/−100)·N,
+  which is start + int(End/100)·N. Retail uses it (MEASURED): 9 Force commands in
+  `skill_cast_foot_*.efp`, 12 SetShapeRot in `dun\bagh_masin_bronze_light.efp`, and 1,803
+  StaticEmit headers. Round 619 had called it unused and guessed +100.
+- **Node.ID is HeadLen.** It is the byte length of the node's name and controller block
+  (MEASURED 95,801 of 95,801); the loader's cache mode seeks past that span.
+  - Renamed `Node.HeadLen` / `EfpNode.head_len`, with `HeadLenMatches()` / `head_len_matches()`.
+    The census counts mismatches: 0.
+- **FrameBANRotation/FrameBANPosition head is an f32** (fld/fstp). It is not zero in 174 and 20
+  retail commands. Round 619 had it as u32 and "0 everywhere".
+- **FrameTextureSlide head** is three floats: (3,2,1) 5,378, (3,2,2) 2,646, (3,3,0.25) 990,
+  (8,8,0.9) 346 occurrences. INFERRED: atlas columns, rows and a rate. The consumer was not
+  traced (OPEN).
+
+**Reader agreement (OURS where marked):**
+- Timing now runs in single precision, with 32-bit integer products and the client's `_ftol`
+  (0x80000000 out of range), in both readers.
+  - With it, **132,666 of the 132,668 retail Frame\* parameters hold exactly their command's
+    Keys**. Round 619 had 25 misses. The 2 left are `map\euro_constan_center.efp`'s TextureSlide
+    (End 63 % of 40 frames = 1 key, but 26 values stored; INFERRED stale editor data).
+  - Garbage headers can no longer produce huge ranges. A negative count reads as 0 (OURS).
+- Strings are cut at the first NUL, like `c_str`. Bytes above 0x7f map to the same code points
+  (Latin-1) in both readers; EUC-KR is not decoded (OURS).
+- Graph keys are stored the client's way, as a map by time: sorted, and the last write wins.
+- The magic is checked on all 8 bytes.
+
+**New tools and gates:**
+- `client/tools/efp_dump_diff.sh` diffs a canonical dump of every decoded file from each reader:
+  every field, floats as bits, and each command's range and Keys. The result is **IDENTICAL**
+  for all 4,103 files.
+  - The first run found 10 differing files. Each was a signalling NaN in a garbage header field,
+    quieted by GDScript's double; dumps now print any NaN as `nan`.
+- `TestRetailCensus` now enforces:
+  - at least 4,103 decoded and at least 4,096 exact;
+  - zero HeadLen mismatches;
+  - at most the 2 measured Frame\* key-count mismatches.
+
+**MEASURED, the census after the follow-up:** 4,170 files; 4,103 headers parsed and 4,103
+decoded; 4,096 to the exact byte; 6 zero-padded; 1 with other trailing bytes; 95,801 nodes.
+
+**API changes that affect round 620:**
+
+| before | after |
+|---|---|
+| `StaticEmit.Count` / `"count"` | `MaxLive` / `"max_live"` |
+| `StaticEmit.Quality` / `"quality"` | `PerTrigger` / `"per_trigger"` |
+| `Node.ID` / `EfpNode.id` | `HeadLen` / `head_len` |
+| FrameBAN* `Head` / `"head"`: u32 | f32 |
+
+New: `StaticEmit.Tick`, `EmitGlobals`, `DefaultEmitGlobals` in Go; `EfpReader.emit_tick`,
+`EfpReader.ftol`, `EfpReader.f32`, `EfpReader.i32` and `EfpReader.latin1` in GDScript; and
+`frame_range()["keys"]`.
+
+**Negative.** The new tests fail against round 619's commit 0157df4:
+
+```
+--- FAIL: TestFrameRangeMode3
+    followup_neg_test.go:17: End 100: got 2..-28 ok false, want 2..29 (start + N, clamped to N-1)
+--- FAIL: TestGraphKeysAreAMap
+    followup_neg_test.go:43: keys [{1 16} {0 32} {0.5 48} {0 64}], want [{0 64} {0.5 48} {1 16}]
+--- FAIL: TestStringNULAndHighBytes
+    followup_neg_test.go:60: got "abc\x00def" "\xb7\xb9" tail 7
+--- FAIL: TestDecodeChecksFullMagic
+    followup_neg_test.go:69: magic without its space: want an error
+```
+
 ## Six-hundred-and-nineteenth round: 4,103 of the 4,170 particle effects now read completely, every value typed, ready for the effects renderer
 
 The skills epic asked for "most of the particles loaded". Before this round, both `.efp` readers
@@ -7106,8 +7189,8 @@ identifier. This round reads the client's own loader and implements it in both r
 **READ (sro_client.exe, `/var/tmp/decomp_client` and `/var/tmp/sro_client.asm`):**
 - **Header, `FUN_00cb8d70`.** The version is compared as a big-endian number. An f32 follows the
   magic from `0012`, and three u32 more from `0013`. Then comes the root node. So the old "u32
-  before the name" was the root node's id, and `0010` is laid out like `0011`.
-- **Node, `FUN_00cc3a40`.** A node is: u32 id, name, controllers (key + data), body, children.
+  before the name" was the root node's id (corrected in the follow-up above: it is HeadLen), and `0010` is laid out like `0011`.
+- **Node, `FUN_00cc3a40`.** A node is: u32 id (HeadLen, per the follow-up), name, controllers (key + data), body, children.
 - **Body, `FUN_00cc3500`.** A program (`u32 N` frames plus typed variables), six command lists,
   three single commands, a 20-byte block and a render block.
 - **Commands, `FUN_00ca5460`.** Each is: u8 present, name, u8 space, u8 time flags, start, step,
@@ -7119,7 +7202,7 @@ identifier. This round reads the client's own loader and implements it in both r
 - **Controllers.** The ten controllers' readers, from their classes' slot 3.
 - **Timing, `FUN_00ca0f40`.** How a command's time flags turn start, step and end into a frame
   range over N.
-- **Emission, `FUN_00c84e70`.** SEFStaticEmit is delay, duration, interval, count, quality.
+- **Emission, `FUN_00c84e70`.** SEFStaticEmit is delay, duration, interval, count, quality (the last two corrected in the follow-up above: max_live and per_trigger).
 - **Blending, `EFEffect::FUN_00cabda0`.** The node's 36-byte block is handed verbatim to Direct3D:
   cull, SRCBLEND, DESTBLEND, then colour and alpha arg1, arg2 and op on stage 0. This settles the
   spec's open blending question: blending is per node, not per texture name.

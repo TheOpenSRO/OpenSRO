@@ -26,7 +26,10 @@ box). No game data is stored in this repo; the tests use synthetic buffers.
 - Integers and floats are little-endian; `f32` is IEEE single.
 - **String**: `u32 length` + that many bytes, with no terminator and any byte values
   (`Map::FUN_00a09210`). Retail names include `11111`, `-…`, names with spaces, and EUC-KR
-  Korean (the root of `system\system_levelup.efp` and its three copies).
+  Korean (the root of `system\system_levelup.efp` and its three copies). The readers consume the
+  whole length but cut the value at the first NUL, as the client's `c_str()` users see it, and
+  keep each byte above 0x7f as the code point of the same value (Latin-1), so Go and GDScript
+  produce identical strings; EUC-KR is not decoded (OURS).
 - **Vec3**: 3 × f32.
 - **Mat4**: 16 × f32, 64 bytes, as stored. INFERRED: row-major in D3D's row-vector convention.
   The readers do not transpose.
@@ -37,7 +40,7 @@ box). No game data is stored in this repo; the tests use synthetic buffers.
 
 | field | bytes | notes |
 |---|---|---|
-| magic | 12 | `"JMXVEFF "` + a 4-character version. The client checks bytes 4-7 = `"EFF "`, then compares the version **as a big-endian number** |
+| magic | 12 | `"JMXVEFF "` + a 4-character version. The client checks bytes 4-7 = `"EFF "`, then compares the version **as a big-endian number**. The readers check all 8 bytes `"JMXVEFF "` (OURS, stricter) |
 | header f32 | 4 | present when version ≥ `"0012"`; stored at client +0x264. Meaning OPEN (MEASURED 0.4 … 1.0) |
 | header u32 × 3 | 12 | present when version ≥ `"0013"`; stored at +0x268, +0x26c, +0x270. Meaning OPEN |
 | root node | … | see Node |
@@ -54,9 +57,9 @@ What each version adds before the root node:
 
 This corrects two earlier readings.
 - The "unconfirmed u32" that the old notes placed before the effect name in `0011`/`0013` is the
-  **root node's id**.
+  root node's **HeadLen** (see Node).
 - The `0013` "f32 + 12 reserved + u32" is the header f32, the three header u32s, and then the root
-  id.
+  node's HeadLen.
 
 Files that do not decode (MEASURED):
 - **58 `F8FILE` containers**, all `system\arksolid_*`. They do not begin with `JMXVEFF`; the bytes
@@ -72,7 +75,7 @@ Files that do not decode (MEASURED):
 
 | field | notes |
 |---|---|
-| u32 id | per-node id (the root's is `0x65` in `battle\deco_charge_light_a.efp`). The loader has a second mode, flag `DAT_01119eac == 0`, in which this id seeks into a cache instead; files are read in the normal mode |
+| u32 HeadLen | the byte length of the node's name (with its length prefix) and its whole controller block: everything up to the body. MEASURED: equal in 95,801 of 95,801 retail nodes (the census checks it). The loader's cache mode (`DAT_01119eac == 0`) seeks past that span instead of reading it; files are read in the normal mode. Round 619 first misread it as a node id; the field is now `Node.HeadLen` / `EfpNode.head_len` |
 | string name | the node's name: `counterattack`, `NONAME`, `EFFECT`, author labels |
 | u32 controller count | the client shows an error box above 1000 |
 | controllers | each is a string key followed by that controller's data (`FUN_00cc2f30` → the controller's vtable slot 3). See Controllers |
@@ -142,37 +145,45 @@ the file. Both readers fail instead, and no retail file contains one.
 
 ### Timing (`FUN_00ca0f40`)
 
-The command's frame range is computed over the owning program's N frames. The float-to-int
-conversions truncate (`_ftol`, `FUN_00b42d10`).
+The command's frame range is computed over the owning program's N frames.
+- The float-to-int conversions are the client's `_ftol` (`FUN_00b42d10`): truncation, and the
+  x87 "integer indefinite" `0x80000000` for NaN or anything outside int32. Products and sums are
+  32-bit. This matters because the header floats of commands without a parameter are
+  uninitialised stack bytes.
+- The float arithmetic is single precision. INFERRED: Direct3D 9 puts the x87 in single-precision
+  mode unless the device is created with FPU_PRESERVE. The counts below confirm it. Round 619's
+  first reader used double precision and read end mode 3 with +100, and its key counts disagreed
+  with the stored values in 25 of 129,438 commands. With single precision and −100, only 2 do, and those 2 are the data's own (see below).
 
-- **Start.** Flag bit 0 clear: `start = int(Start)`. Bit 0 set: `start = int(Start/100) × N`.
+The rules:
+- **Start.** Flag bit 0 clear: `start = ftol(Start)`. Bit 0 set: `start = ftol(Start/100) × N`.
 - **Step.** Flag bit 1 clear: `step = Step`. Bit 1 set: `step = N × Step / 100`.
 - **End**, chosen by `(flags >> 2) % 5`:
-  - 0: `int(End)`;
-  - 1: `int(End/100) × N`;
-  - 2: `start + int(End)`;
-  - 3: `start − int(End/K) × N`, where K is the double at `0x00db9a38`. INFERRED to be 100 like
-    its neighbours; no retail command uses this mode;
-  - 4: `start + int(End × step)`. The command is skipped when End < 1.
+  - 0: `ftol(End)`;
+  - 1: `ftol(End/100) × N`;
+  - 2: `start + ftol(End)`;
+  - 3: `start − ftol(End/−100) × N`, which is `start + int(End/100) × N`. The divisor is the
+    double **−100.0** at `0x00db9a38` (READ). Retail uses this mode (MEASURED): the Force commands
+    of 9 `skill_cast_foot_*.efp`, 12 SetShapeRot in `dun\bagh_masin_bronze_light.efp`, and 1,803
+    StaticEmit command headers;
+  - 4: `start + ftol(End × step)`. The command is skipped when End < 1 (a NaN End is not skipped:
+    the x87 compare is unordered).
 - **Checks.** End is clamped to N − 1. The command runs only when `end ≤ N`, `start ≤ end` and
   `step ≥ 1e-6`.
+- **Keys.** The function returns `ftol((end − start)/step) + 1`, the number of keys in the range.
+  A negative (overflowed) count is reported as 0 by the readers (OURS).
 
 MEASURED:
 - SetGraphScale and SetGraphDiffuse use flags 4 or 5 with Step 1 and End 100, which is every
   frame of the life.
-- FUN_00ca0f40 returns `int((end − start)/step) + 1`, the number of keys in the range. A Frame*
-  parameter holds **exactly that many values** in 129,413 of 129,438 retail commands:
-
-  | command | values = keys |
-  |---|---|
-  | SetGraphDiffuse | 61,551 of 61,565 |
-  | SetGraphScale | 57,847 of 57,855 |
-  | SetBANPos | 3,230 of 3,230 |
-  | TextureSlide | 6,785 of 6,788 |
-
-  So these are **baked per-key values**: value i belongs to frame `start + i × step`. This
-  measurement is also the check that the timing rules above were read correctly. In the readers,
-  `Command.Keys(n)` (Go) and `frame_range(n)["keys"]` (GDScript) give the count.
+- A Frame* parameter (FrameScale, FrameDiffuse, FrameTextureSlide, FrameBANPosition,
+  FrameBANRotation) holds **exactly Keys values in 132,666 of 132,668 retail per-particle commands**.
+  The two exceptions are the TextureSlide commands of `map\euro_constan_center.efp`: End 63 % of
+  40 frames gives 1 key, but 26 values are stored. INFERRED: stale values the editor kept
+  after End changed. The census gate allows those 2 and fails on any more.
+- So these are **baked per-key values**: value i belongs to frame `start + i × step`.
+- This measurement is also the check that the timing rules above were read correctly. In the
+  readers, `Command.Keys(n)` (Go) and `frame_range(n)["keys"]` (GDScript) give the count.
 
 **The frame's duration in seconds is OPEN.** The emitter age (`FUN_00c84e70` reads it at emitter
 +0x28 → +0x54) is the lead.
@@ -210,7 +221,7 @@ binary's own RTTI.
 | float | `0x00c91f30` | `0xe0ed3c` | `0x00c92350` | f32 | 4 |
 | Vector | `0x00c91f50` | `0xe0ed58` | `0x00c90960` | Vec3 | 12 |
 | Matrix | `0x00c93090` | `0xe0ee98` | `0x00c923b0` | Mat4 | 64 |
-| SEFStaticEmit | `0x00c90800` | `0xe0ecb0` | `0x00c923d0` | u32 delay, u32 duration, u32 interval, u32 count, f32 quality | 20 |
+| SEFStaticEmit | `0x00c90800` | `0xe0ecb0` | `0x00c923d0` | u32 delay, u32 duration, u32 interval, u32 max live, f32 per trigger (see Emission) | 20 |
 | AxisVector4 | `0x00c930d0` | `0xe0eeb4` | `0x00c92510` | 4 × f32, then Mat4. INFERRED: axis and angle, plus the matrix baked from them | 80 |
 | RotVector | `0x00c93120` | `0xe0eed0` | `0x00c92650` | Vec3, then Mat4 | 76 |
 | AngleVector1 | `0x00c920f0` | `0xe0ed74` | `0x00c90ab0` | Vec3 a, Vec3 b; which is the axis is OPEN | 24 |
@@ -219,26 +230,56 @@ binary's own RTTI.
 | BlendScaleGraphPointer | `0x00c90890` | `0xe0ece4` | `0x00c926a0` | u32. INFERRED: an index into a scale graph. OPEN | 4 |
 | FrameDiffuse | `0x00c9bc60` | `0xe0f01c` | `0x00c9b050` → `FUN_00c9af90` | `u32 n` + n × u32 colour (one per frame). INFERRED: D3DCOLOR `0xAARRGGBB` | 4+4n |
 | BlendDiffuseGraph | `0x00c9f560` | `0xe0f094` | `0x00c9e3a0` → `FUN_00c9e2b0` | f32 a, f32 b, `u32 n`, n × (f32 time, u32 colour) | 12+8n |
-| FrameBANRotation | `0x00c9d180` | `0xe0f054` | `0x00c9d330` → `FUN_00c9c380` | u32 head (0 in every retail file), `u32 n`, n × Mat4 | 8+64n |
-| FrameBANPosition | `0x00c9bf60` | `0xe0f038` | `0x00c9b140` → `FUN_00c9aba0` | u32 head, `u32 n`, n × Vec3 | 8+12n |
+| FrameBANRotation | `0x00c9d180` | `0xe0f054` | `0x00c9d330` → `FUN_00c9c380` | f32 head (loaded with fld/fstp; mostly 0, non-zero in 174 retail commands, e.g. 0.3; meaning OPEN), `u32 n`, n × Mat4 | 8+64n |
+| FrameBANPosition | `0x00c9bf60` | `0xe0f038` | `0x00c9b140` → `FUN_00c9aba0` | f32 head (non-zero in 20 retail commands), `u32 n`, n × Vec3 | 8+12n |
 | BSAnimation | `0x00c9bcd0` | `0xe0efe4` | `0x00c9c230` → `FUN_00c9b5f0` | `u32 n` + n strings. `FUN_00c9a580` loads each `.ban` by name (`FUN_00cb8810`) | 4+… |
 | FrameTextureSlide | `0x00c9d1f0` | `0xe0f070` | `0x00c9d3a0` → `FUN_00c9c610` | Vec3 head, `u32 n`, n × 4 f32 | 16+16n |
 
-FrameTextureSlide's head is MEASURED as small integers first: (1, 4, …), (1, 9, …). INFERRED: an
-atlas layout, with one UV rectangle per frame. OPEN.
+FrameTextureSlide's head is three floats. MEASURED, the most common (occurrences, counting
+controller copies too): (3, 2, 1) 5,378; (3, 2, 2) 2,646; (3, 3, 0.25) 990; (3, 3, 0.5) 476;
+(8, 8, 0.9) 346. INFERRED: an atlas grid (columns, rows) and a rate, with one 4-float rectangle
+per key. OPEN: the command's runtime object (vtable `0xe0ef7c`) only stores the value at a
+particle offset, and the code that reads it there was not traced.
 
-## Emission (`SEFStaticEmit`, read by `FUN_00c84e70`)
+Graph keys (BlendScaleGraph, BlendDiffuseGraph and the two controller graphs) are inserted with
+`map[time] = value` (READ: `FUN_00c9f420`, `FUN_00c9e2b0`, `FUN_00cbf880`, `FUN_00cbf970`). So
+the client holds them sorted by time, and a repeated time keeps the value read last. The readers
+do the same.
 
-With `t` = emitter age − delay:
-- the emitter stops once `t ≥ duration`;
-- while `t ≥ 0` and `interval > 0`, it emits `count` particles whenever `t % interval == 0`.
+## Emission (`SEFStaticEmit`, READ from `FUN_00c84e70`, and `FUN_00c87a20` for deaths)
 
-The client scales `count` down (minimum 1) under a reduced-quality global setting
-(`DAT_01114d58`, compared with `quality`). `quality`'s exact role is OPEN.
+The 20 bytes are delay, duration, interval, max_live and per_trigger. Each emitter keeps a float
+accumulator at emitter +0x60, which starts at 0. The client runs this each frame, with
+`t = age − delay` (age at emitter +0x28 → +0x54):
+1. When `t ≥ duration`, the emitter is finished and does nothing more.
+2. It skips the frame unless `interval > 0` and `t ≥ 0`.
+3. If the global `DAT_01114d54 > 1`, the interval is multiplied by it, unless the product reaches
+   `duration`.
+4. It skips the frame unless `t % interval == 0`.
+5. `cap = max_live`. If the global `DAT_01114d58 > 0` and is below `per_trigger`, the cap is
+   halved (the float 0.5 at `0xe1b7e0`), with a floor of 1.
+6. `acc = min(acc + per_trigger, cap)`, and `ftol(acc_new) − ftol(acc_old)` particles spawn. The
+   fractions carry to the next trigger.
+7. Each particle that dies subtracts 1.0 from the accumulator (`FUN_00c87a20`, the double 1.0
+   at `0xe1b7f0`).
+
+So **max_live caps the live particle count**, and **per_trigger is how many particles a trigger
+adds**, fractions included.
+
+The two globals are set together by one routine (`0x005474b1`–`0x005474fc`) from an option string
+read with `atoi`:
+- option 0 gives (0, 0);
+- option 1 gives `DAT_01114d54 = 2`, `DAT_01114d58 = 10`;
+- anything else gives 5 and 10.
+
+Both globals are in `.bss`, so they start at 0, which is full quality. The readers default to that
+(`DefaultEmitGlobals`; `emit_tick`'s default arguments); which option this is, and its retail
+default, are OPEN. Go's `StaticEmit.Tick` and GDScript's `EfpReader.emit_tick` run step by step
+exactly this.
 
 MEASURED, the most common emitters:
 - (0, 1, 1, 1, 1.0) in 47,594 nodes: one particle at once;
-- (0, 30, 3, 10, 1.0): 10 particles every 3 frames for 30 frames.
+- (0, 30, 3, 10, 1.0): a particle every 3 frames for 30 frames, at most 10 alive.
 
 ## Render state and blending (READ, `EFEffect::FUN_00cabda0`)
 
@@ -297,8 +338,23 @@ implementations:
 | … other bytes after the root | 1 | |
 | not decoded: F8FILE / `0000` / empty | 58 / 7 / 2 | |
 
-Every file whose header parses decodes. The Go and GDScript readers agree on every count (4,103
-decoded, 4,096 exact, 95,801 nodes).
+Every file whose header parses decodes. Every node's HeadLen matches its name and controllers,
+and every Frame* parameter but 2 holds exactly its command's Keys.
+
+`TestRetailCensus` **gates** these results, and fails on a regression. It requires:
+- at least 4,103 files decoded;
+- at least 4,096 of them to the exact byte;
+- zero HeadLen mismatches;
+- at most the 2 measured Frame* count mismatches.
+
+**The two readers agree value for value.** `client/tools/efp_dump_diff.sh` has each reader write
+a canonical dump of every decoded file: `efpcensus -dump` for Go, `tools/efp_dump.gd` for
+GDScript. Each dump holds every field, floats as bit patterns, and every command's frame range
+and Keys. The script compares one md5 per file. Round 619's review follow-up: all 4,103 dumps
+are **identical**.
+
+That run needed one choice to compare at all: a NaN prints as `nan`. GDScript widens floats to
+doubles, which quiets the signalling NaNs that some garbage header fields hold.
 
 **The census catches a wrong layout.** As a mutation check, AxisVector4 was read without its
 64-byte matrix. Decoded files dropped from 4,103 to 784: exactly the files that use no

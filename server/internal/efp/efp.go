@@ -63,12 +63,12 @@ type Effect struct {
 //
 // The header is the client's own (FUN_00cb8d70, round 619): after the
 // 12-byte magic, versions "0012" and up carry a float32, "0013" and up three
-// uint32 more (headerSize). Then comes the root node's uint32 id — the
-// "unconfirmed u32" of the 0011/0013 layouts described before round 619 —
-// and its name. The name may be any length-prefixed string without control
+// uint32 more (headerSize). Then comes the root node's uint32 HeadLen, the
+// byte length of its name and controllers (the "unconfirmed u32" of the
+// 0011/0013 layouts described before round 619), and its name. The name may be any length-prefixed string without control
 // characters (retail has "11111", names with spaces or a leading '-', and
-// EUC-KR Korean); only the flat walk's entry names keep the strict
-// identifier rule.
+// EUC-KR Korean, returned byte for byte as Latin-1 code points); only the
+// flat walk's entry names keep the strict identifier rule.
 //
 // Both continue identically from there: the uint32 controller count, then a
 // flat sequence of Entry records until the boundary-finding scan can't locate
@@ -77,8 +77,8 @@ func Parse(data []byte) (*Effect, error) {
 	if len(data) < magicLen+1+versionLen {
 		return nil, errors.New("efp: file too small to contain a header")
 	}
-	if string(data[0:magicLen]) != magic {
-		return nil, fmt.Errorf("efp: bad magic %q, want %q", data[0:magicLen], magic)
+	if string(data[0:magicLen+1]) != magic+" " {
+		return nil, fmt.Errorf("efp: bad magic %q, want %q", data[0:magicLen+1], magic+" ")
 	}
 
 	e := &Effect{Version: string(data[magicLen+1 : magicLen+1+versionLen])}
@@ -87,7 +87,7 @@ func Parse(data []byte) (*Effect, error) {
 	if err != nil {
 		return nil, err
 	}
-	off := magicLen + 1 + versionLen + hs + 4 // version header, then the root node's id
+	off := magicLen + 1 + versionLen + hs + 4 // version header, then the root node's HeadLen
 
 	name, off, err := readEffectName(data, off)
 	if err != nil {
@@ -158,7 +158,7 @@ func readEffectName(data []byte, off int) (string, int, error) {
 			return "", off, fmt.Errorf("implausible name byte %q", c)
 		}
 	}
-	return string(data[off : off+n]), off + n, nil
+	return latin1(data[off : off+n]), off + n, nil
 }
 
 // readName reads a uint32-length-prefixed name at off: 1-40 ASCII

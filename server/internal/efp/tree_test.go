@@ -1,6 +1,8 @@
 package efp
 
 import (
+	"encoding/binary"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -65,8 +67,8 @@ func (e *enc) value(v Value) {
 		e.u32(x.Delay)
 		e.u32(x.Duration)
 		e.u32(x.Interval)
-		e.u32(x.Count)
-		e.f32(x.Quality)
+		e.u32(x.MaxLive)
+		e.f32(x.PerTrigger)
 	case FrameScale:
 		e.u32(uint32(len(x)))
 		for _, s := range x {
@@ -78,13 +80,13 @@ func (e *enc) value(v Value) {
 			e.u32(c)
 		}
 	case FrameBANRotation:
-		e.u32(x.Head)
+		e.f32(x.Head)
 		e.u32(uint32(len(x.Matrices)))
 		for _, m := range x.Matrices {
 			e.mat4(m)
 		}
 	case FrameBANPosition:
-		e.u32(x.Head)
+		e.f32(x.Head)
 		e.u32(uint32(len(x.Positions)))
 		for _, p := range x.Positions {
 			e.vec3(p)
@@ -138,11 +140,11 @@ func sampleValues() []struct {
 		{AxisVector4{Axis: [4]float32{0, 1, 0, 0.5}, Matrix: seqMat(10)}, 80},
 		{RotVector{Rot: Vec3{0.1, 0.2, 0.3}, Matrix: seqMat(20)}, 76},
 		{AngleVector1{A: Vec3{0, 1, 0}, B: Vec3{30, 45, 0}}, 24},
-		{StaticEmit{Delay: 2, Duration: 30, Interval: 3, Count: 10, Quality: 1}, 20},
+		{StaticEmit{Delay: 2, Duration: 30, Interval: 3, MaxLive: 10, PerTrigger: 1}, 20},
 		{FrameScale{{1, 1, 1}, {2, 2, 2}}, 4 + 24},
 		{FrameDiffuse{0xff102030, 0x80ffffff, 0}, 4 + 12},
-		{FrameBANRotation{Head: 0, Matrices: []Mat4{seqMat(3), seqMat(4)}}, 8 + 128},
-		{FrameBANPosition{Head: 0, Positions: []Vec3{{1, 0, 0}}}, 8 + 12},
+		{FrameBANRotation{Head: 0.3, Matrices: []Mat4{seqMat(3), seqMat(4)}}, 8 + 128},
+		{FrameBANPosition{Head: 0.25, Positions: []Vec3{{1, 0, 0}}}, 8 + 12},
 		{BSAnimation{"ani\\a.ban", "b"}, 4 + 4 + 9 + 4 + 1},
 		{FrameTextureSlide{Head: Vec3{1, 4, 0.35}, Keys: [][4]float32{{0, 0, 0.25, 1}, {0.25, 0, 0.5, 1}}}, 12 + 4 + 32},
 		{BlendScaleGraph{A: 0, B: 1, Keys: []ScaleKey{{0, Vec3{1, 1, 1}}, {1, Vec3{2, 3, 4}}}}, 12 + 32},
@@ -231,14 +233,18 @@ var plateState = RenderState{Cull: 1, SrcBlend: 5, DestBlend: 2, ColorArg1: 2, C
 
 // node writes a node with every controller kind (when full) and the given
 // per-particle commands.
-func (e *enc) node(id uint32, name string, full bool, cmds []Command, kids int, kid func(*enc)) {
-	e.u32(id)
+//
+// The node's opening u32 is patched to the byte length of its name and
+// controllers, as retail files carry (Node.HeadLen).
+func (e *enc) node(name string, full bool, cmds []Command, kids int, kid func(*enc)) {
+	headAt := len(e.b)
+	e.u32(0)
 	e.str(name)
 	if full {
 		e.u32(9)
 		e.str("NormalTimeLife")
 		e.str("StaticEmit")
-		e.value(StaticEmit{Delay: 0, Duration: 1, Interval: 1, Count: 1, Quality: 1})
+		e.value(StaticEmit{Delay: 0, Duration: 1, Interval: 1, MaxLive: 1, PerTrigger: 1})
 		e.str("LinkMode")
 		e.u32(1)
 		e.u32(1)
@@ -278,6 +284,7 @@ func (e *enc) node(id uint32, name string, full bool, cmds []Command, kids int, 
 	} else {
 		e.u32(0)
 	}
+	binary.LittleEndian.PutUint32(e.b[headAt:], uint32(len(e.b)-headAt-4))
 	// Body.
 	e.u32(10) // frames
 	if full {
@@ -292,7 +299,7 @@ func (e *enc) node(id uint32, name string, full bool, cmds []Command, kids int, 
 		e.u32(0)
 	}
 	e.commandList(nil)
-	e.commandList([]Command{{Name: "StaticEmit", Value: StaticEmit{Duration: 30, Interval: 3, Count: 10, Quality: 1}}})
+	e.commandList([]Command{{Name: "StaticEmit", Value: StaticEmit{Duration: 30, Interval: 3, MaxLive: 10, PerTrigger: 1}}})
 	e.commandList(nil)
 	e.command(Command{Name: "NormalTimeLoop"})
 	e.commandList([]Command{{Name: "ProgramUpdate"}})
@@ -342,8 +349,8 @@ func buildTree(version string) []byte {
 		e.u32(2)
 		e.u32(3)
 	}
-	e.node(101, "root fx", true, everyTypedCommand(), 1, func(k *enc) {
-		k.node(102, "NONAME", false, []Command{{Name: "SetSpherePos", Space: 1, Step: 1, Value: Vector{0.5, 0.5, 0.5}}}, 0, nil)
+	e.node("root fx", true, everyTypedCommand(), 1, func(k *enc) {
+		k.node("NONAME", false, []Command{{Name: "SetSpherePos", Space: 1, Step: 1, Value: Vector{0.5, 0.5, 0.5}}}, 0, nil)
 	})
 	return e.b
 }
@@ -365,8 +372,8 @@ func TestDecodeTree(t *testing.T) {
 			t.Errorf("0012 header: %v", f.Header0012)
 		}
 		n := f.Root
-		if n.ID != 101 || n.Name != "root fx" || n.Frames != 10 {
-			t.Fatalf("%s: root %d %q frames %d", version, n.ID, n.Name, n.Frames)
+		if !n.HeadLenMatches() || n.Name != "root fx" || n.Frames != 10 {
+			t.Fatalf("%s: root headlen %d %q frames %d", version, n.HeadLen, n.Name, n.Frames)
 		}
 		if len(n.Controllers) != 9 {
 			t.Fatalf("%s: %d controllers, want 9", version, len(n.Controllers))
@@ -386,7 +393,7 @@ func TestDecodeTree(t *testing.T) {
 		if len(n.Vars) != 3 || n.Vars[2].Type != "BSAnimation" {
 			t.Errorf("%s: vars %+v", version, n.Vars)
 		}
-		if em := n.Emission(); em == nil || em.Count != 10 || em.Interval != 3 || em.Duration != 30 {
+		if em := n.Emission(); em == nil || em.MaxLive != 10 || em.Interval != 3 || em.Duration != 30 {
 			t.Errorf("%s: emission %+v", version, em)
 		}
 		if !n.Loops() || n.NeverExtinct() {
@@ -403,6 +410,9 @@ func TestDecodeTree(t *testing.T) {
 		}
 		if c := n.Command("SetGraphDiffuse"); c == nil || c.Value.(FrameDiffuse)[0] != 0xffffffff {
 			t.Errorf("%s: SetGraphDiffuse %+v", version, c)
+		}
+		if len(n.Children) == 1 && !n.Children[0].HeadLenMatches() {
+			t.Errorf("%s: child HeadLen %d does not match its name+controllers", version, n.Children[0].HeadLen)
 		}
 		if len(n.Children) != 1 || n.Children[0].Name != "NONAME" || len(n.Children[0].Commands) != 1 {
 			t.Fatalf("%s: children %+v", version, n.Children)
@@ -447,7 +457,7 @@ func TestDecodeRejects(t *testing.T) {
 	// An unknown command name would desynchronise every later value.
 	var e enc
 	e.b = append(e.b, []byte(magic+" 0011")...)
-	e.node(1, "x", false, []Command{{Name: "SetWobble", Step: 1}}, 0, nil)
+	e.node("x", false, []Command{{Name: "SetWobble", Step: 1}}, 0, nil)
 	if _, err := Decode(e.b); err == nil || !strings.Contains(err.Error(), "unknown command") {
 		t.Errorf("unknown command: got %v", err)
 	}
@@ -520,5 +530,143 @@ func TestCommandRegistryTypes(t *testing.T) {
 	}
 	if len(ValueTypes) != 16 || len(Controllers) != 10 {
 		t.Errorf("%d value types, %d controllers; the registry has 16 and 10", len(ValueTypes), len(Controllers))
+	}
+}
+
+// End mode 3 divides by the double -100.0 at 0x00db9a38 and subtracts:
+// end = start - ftol(End/-100)*N, i.e. start + int(End/100)*N.
+func TestFrameRangeMode3(t *testing.T) {
+	c := Command{TimeFlags: 12, Start: 2, Step: 1, End: 100} // (12>>2)%5 == 3
+	s, e, _, ok := c.FrameRange(30)
+	if s != 2 || e != 29 || !ok {
+		t.Errorf("End 100: got %d..%d ok %v, want 2..29 (start + N, clamped to N-1)", s, e, ok)
+	}
+	c.End = 50 // int(0.5) == 0
+	if s, e, _, ok := c.FrameRange(30); s != 2 || e != 2 || !ok {
+		t.Errorf("End 50: got %d..%d ok %v, want 2..2", s, e, ok)
+	}
+}
+
+// Garbage header floats (the editor left no-parameter commands uninitialised)
+// go through the client's _ftol: out of range is 0x80000000, never a huge
+// positive frame or key count.
+func TestFrameRangeGarbage(t *testing.T) {
+	if got := ftol(3e9); got != math.MinInt32 {
+		t.Errorf("ftol(3e9) = %d, want MinInt32", got)
+	}
+	if got := ftol(float32(math.NaN())); got != math.MinInt32 {
+		t.Errorf("ftol(NaN) = %d, want MinInt32", got)
+	}
+	if got := ftol(-2.9); got != -2 {
+		t.Errorf("ftol(-2.9) = %d, want -2 (truncation)", got)
+	}
+	cases := []Command{
+		{TimeFlags: 0, Start: 0, Step: 1, End: 1e20},     // end -> MinInt32 < start
+		{TimeFlags: 0, Start: 3e9, Step: 1, End: 5},      // start -> MinInt32, end 5
+		{TimeFlags: 8, Start: 0, Step: 1, End: 1e30},     // start + MinInt32
+		{TimeFlags: 0, Start: 0, Step: 1e-30, End: 20},   // step below 1e-6
+		{TimeFlags: 16, Start: 0, Step: 1e10, End: 1e10}, // End*Step overflows
+	}
+	for _, c := range cases {
+		k := c.Keys(30)
+		if k < 0 || k > 30*2 {
+			// A range can only span start..N-1; with start at MinInt32 the
+			// client's own count overflows, and Keys reports 0.
+			if k != 0 {
+				t.Errorf("%+v: %d keys", c, k)
+			}
+		}
+		if k > 0 {
+			s, e, st, _ := c.FrameRange(30)
+			if s < -1<<31 || e > 29 || st < 1e-6 {
+				t.Errorf("%+v: range %d..%d step %g", c, s, e, st)
+			}
+		}
+	}
+}
+
+// Tick follows FUN_00c84e70: MaxLive caps the live accumulator, PerTrigger
+// fractions carry, and the two globals scale interval and cap.
+func TestStaticEmitTick(t *testing.T) {
+	e := StaticEmit{Delay: 2, Duration: 10, Interval: 2, MaxLive: 3, PerTrigger: 1.5}
+	var acc float32
+	var got []int
+	for age := 0; age < 14; age++ {
+		n, next, stopped := e.Tick(age, acc, DefaultEmitGlobals)
+		acc = next
+		if stopped && age < 12 {
+			t.Fatalf("stopped at age %d, want at 12 (Delay+Duration)", age)
+		}
+		got = append(got, n)
+	}
+	// Triggers at ages 2, 4, 6, 8, 10 (t = 0, 2, 4, 6, 8): acc 1.5, 3 (cap),
+	// then stays at the cap because nothing died.
+	want := []int{0, 0, 1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("spawns %v, want %v", got, want)
+	}
+	// A death subtracts 1.0; the next trigger refills to the cap.
+	acc -= 1
+	if n, next, _ := e.Tick(6, acc, DefaultEmitGlobals); n != 1 || next != 3 {
+		t.Errorf("after a death: spawn %d acc %g, want 1 and 3", n, next)
+	}
+	// Reduced quality: the interval doubles (4 < Duration 10), so age 4
+	// (t = 2) does not trigger; and MaxLive halves only when PerTrigger
+	// exceeds the threshold.
+	low := EmitGlobals{IntervalMul: 2, Threshold: 10}
+	if n, _, _ := e.Tick(4, 0, low); n != 0 {
+		t.Errorf("interval x2: age 4 spawned %d", n)
+	}
+	big := StaticEmit{Duration: 10, Interval: 1, MaxLive: 9, PerTrigger: 20}
+	if n, next, _ := big.Tick(0, 0, low); n != 4 || next != 4 {
+		t.Errorf("halved cap: spawn %d acc %g, want 4 (int(9*0.5))", n, next)
+	}
+	if n, _, _ := big.Tick(0, 0, DefaultEmitGlobals); n != 9 {
+		t.Errorf("full quality cap: spawn %d, want 9", n)
+	}
+}
+
+// Graph keys land in a std::map keyed by time: sorted, last write wins.
+func TestGraphKeysAreAMap(t *testing.T) {
+	var e enc
+	e.f32(0)
+	e.f32(1)
+	e.u32(4)
+	for _, k := range []ColorKey{{1, 0x10}, {0, 0x20}, {0.5, 0x30}, {0, 0x40}} {
+		e.f32(k.Time)
+		e.u32(k.Color)
+	}
+	r := &reader{b: e.b}
+	g, err := r.diffuseGraph()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ColorKey{{0, 0x40}, {0.5, 0x30}, {1, 0x10}}
+	if !reflect.DeepEqual(g.Keys, want) {
+		t.Errorf("keys %v, want %v", g.Keys, want)
+	}
+}
+
+// Strings are cut at the first NUL (the client's c_str) after consuming the
+// full length, and high bytes keep their values as code points.
+func TestStringNULAndHighBytes(t *testing.T) {
+	var e enc
+	e.str("abc\x00def")
+	e.str("\xb7\xb9")
+	e.u32(7)
+	r := &reader{b: e.b}
+	a, _ := r.str()
+	b, _ := r.str()
+	tail, _ := r.u32()
+	if a != "abc" || b != "\u00b7\u00b9" || tail != 7 {
+		t.Errorf("got %q %q tail %d", a, b, tail)
+	}
+}
+
+func TestDecodeChecksFullMagic(t *testing.T) {
+	data := buildTree("0011")
+	data[7] = '_'
+	if _, err := Decode(data); err == nil {
+		t.Error("magic without its space: want an error")
 	}
 }

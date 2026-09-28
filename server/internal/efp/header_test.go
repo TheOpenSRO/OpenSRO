@@ -7,11 +7,11 @@ import (
 
 // Header variants (round 619), on synthetic buffers only. The client's loader
 // FUN_00cb8d70 reads an f32 after the magic when the version is >= "0012" and
-// three u32 more when it is >= "0013"; then the root node's u32 id and name.
+// three u32 more when it is >= "0013"; then the root node's u32 HeadLen and name.
 
 func appendF32(b []byte, v float32) []byte { return appendU32(b, math.Float32bits(v)) }
 
-// headerFor builds magic + version + the version's header + root id + name +
+// headerFor builds magic + version + the version's header + root HeadLen + name +
 // controller count 1 + one "NormalTimeLife" controller (which carries no
 // data), the smallest root the flat walk accepts.
 func headerFor(version, name string) []byte {
@@ -61,7 +61,7 @@ func TestParseRelaxedEffectName(t *testing.T) {
 			t.Errorf("name %q: Parse: %v", name, err)
 			continue
 		}
-		if e.Name != name {
+		if e.Name != latin1([]byte(name)) {
 			t.Errorf("name %q: got %q", name, e.Name)
 		}
 	}

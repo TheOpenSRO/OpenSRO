@@ -68,4 +68,22 @@ func TestRetailCensus(t *testing.T) {
 	if c.Decoded() != c.HeaderOK {
 		t.Errorf("%d files parse their header but only %d decode", c.HeaderOK, c.Decoded())
 	}
+	// The measured retail counts (round 619) are a floor: a layout change
+	// that loses a single exact decode fails here.
+	const measuredDecoded, measuredExact = 4103, 4096
+	if c.Decoded() < measuredDecoded {
+		t.Errorf("decoded %d, below the measured %d", c.Decoded(), measuredDecoded)
+	}
+	if c.Exact < measuredExact {
+		t.Errorf("exact (zero bytes left) %d, below the measured %d", c.Exact, measuredExact)
+	}
+	// 2 retail commands disagree: map\euro_constan_center.efp's TextureSlide
+	// stores 26 values for a 1-key range (stale editor data, INFERRED).
+	const measuredKeyMismatches = 2
+	if n := c.Values["Frame* values != Keys"]; n > measuredKeyMismatches {
+		t.Errorf("%d Frame* parameters hold a different number of values than their command's Keys (measured %d)", n, measuredKeyMismatches)
+	}
+	if c.HeadLenMismatch != 0 {
+		t.Errorf("%d nodes' HeadLen is not the length of their name and controllers", c.HeadLenMismatch)
+	}
 }

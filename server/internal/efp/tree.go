@@ -9,15 +9,17 @@ package efp
 //
 // A file is: the 12-byte "JMXVEFF nnnn" magic, a version-dependent header, one
 // root node, and (in 7 of 4,170 retail files) trailing bytes the client never
-// reads. A node is: u32 id, name, a list of named controllers (the editor's
+// reads. A node is: u32 HeadLen, name, a list of named controllers (the editor's
 // source blocks), the node's compiled body (program, command lists, render
 // state) and its child nodes, recursively.
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 )
 
 // Limits that stop a corrupt buffer from allocating unbounded slices. The
@@ -72,20 +74,21 @@ type (
 	AngleVector1 struct{ A, B Vec3 }
 	// StaticEmit: 20 bytes. `SEFStaticEmit`, vtable 0xe0ecb0, reader
 	// 0x00c923d0 (a flat 0x14-byte copy). Field meanings READ from the
-	// emitter update FUN_00c84e70.
+	// emitter update FUN_00c84e70 and the particle death FUN_00c87a20; see
+	// Tick for the exact rule.
 	StaticEmit struct {
 		// Delay: frames after the node starts before emission begins.
 		Delay uint32
-		// Duration: frames (after Delay) during which it emits.
+		// Duration: frames (after Delay) during which it triggers.
 		Duration uint32
-		// Interval: emit every Interval frames; 0 or less emits nothing.
+		// Interval: trigger every Interval frames; 0 triggers nothing.
 		Interval uint32
-		// Count: particles per burst (the client lowers it, min 1, under
-		// a reduced-quality global, DAT_01114d58).
-		Count uint32
-		// Quality: compared against that global quality value
-		// (DAT_01114d58); its exact effect is OPEN.
-		Quality float32
+		// MaxLive: the cap on the emitter's live-particle count (the
+		// accumulator at emitter +0x60 is clamped to it).
+		MaxLive uint32
+		// PerTrigger: particles each trigger adds to the accumulator;
+		// fractions carry over to the next trigger.
+		PerTrigger float32
 	}
 	// FrameScale: u32 n then n Vec3 — one scale per key of the command's
 	// frame range (MEASURED: n == Command.Keys in 57,847 of 57,855 retail
@@ -97,17 +100,18 @@ type (
 	// `FrameDiffuse`, reader 0x00c9b050 -> FUN_00c9af90. INFERRED: D3DCOLOR
 	// (0xAARRGGBB).
 	FrameDiffuse []uint32
-	// FrameBANRotation: u32 then u32 n then n matrices. `FrameBANRotation`,
-	// reader 0x00c9d330 -> FUN_00c9c380. The leading u32 is 0 in every
-	// retail file (MEASURED); meaning OPEN.
+	// FrameBANRotation: f32 then u32 n then n matrices. `FrameBANRotation`,
+	// reader 0x00c9d330 -> FUN_00c9c380. The leading value is loaded and
+	// stored as a float (fld/fstp); it is mostly 0 but not always
+	// (MEASURED: e.g. 0.3). Meaning OPEN.
 	FrameBANRotation struct {
-		Head     uint32
+		Head     float32
 		Matrices []Mat4
 	}
-	// FrameBANPosition: u32 then u32 n then n Vec3. `FrameBANPosition`,
-	// reader 0x00c9b140 -> FUN_00c9aba0. Leading u32 as above.
+	// FrameBANPosition: f32 then u32 n then n Vec3. `FrameBANPosition`,
+	// reader 0x00c9b140 -> FUN_00c9aba0. Leading f32 as above.
 	FrameBANPosition struct {
-		Head      uint32
+		Head      float32
 		Positions []Vec3
 	}
 	// BSAnimation: u32 n then n strings (.ban paths). `BSAnimation`,
@@ -115,9 +119,12 @@ type (
 	// client loads the animation by that name, FUN_00cb8810).
 	BSAnimation []string
 	// FrameTextureSlide: a Vec3 then u32 n then n [4]float32.
-	// `FrameTextureSlide`, reader 0x00c9d3a0 -> FUN_00c9c610. MEASURED: the
-	// head's first two values are small integers (1,4 / 1,9 …); INFERRED:
-	// an atlas layout, with one [4]float32 UV rectangle per frame. OPEN.
+	// `FrameTextureSlide`, reader 0x00c9d3a0 -> FUN_00c9c610. The head is
+	// three floats; MEASURED most often (3,2,1), then (3,2,2) and
+	// (3,3,0.25) (the census prints the full table). INFERRED: an atlas
+	// grid (columns, rows) and a rate, with one [4]float32 per key. The
+	// meanings are OPEN: the command's runtime (vtable 0xe0ef7c) only stores
+	// the value into the particle, and its consumer was not traced.
 	FrameTextureSlide struct {
 		Head Vec3
 		Keys [][4]float32
@@ -246,8 +253,9 @@ type Command struct {
 	// into a frame range over the program's N frames. bit0: Start is a frame
 	// number (0) or a percentage of N (1); bit1: Step is frames (0) or a
 	// percentage of N (1); (TimeFlags>>2)%5 picks how End is read: 0 frame,
-	// 1 percentage of N, 2 Start+End, 3 Start-End% of N, 4 Start+End*Step
-	// (only when End >= 1). End is clamped to N-1. See FrameRange.
+	// 1 percentage of N, 2 Start+End, 3 Start-int(End/-100)*N, 4
+	// Start+End*Step (only when End >= 1). End is clamped to N-1. See
+	// FrameRange.
 	TimeFlags uint8
 	Start     float32
 	Step      float32
@@ -256,56 +264,82 @@ type Command struct {
 	Value Value
 }
 
+// ftol is the client's float-to-int conversion (_ftol, FUN_00b42d10): it
+// truncates toward zero, and a value outside the int32 range, or NaN, gives
+// the x87 "integer indefinite" 0x80000000. Mirroring that keeps garbage
+// header fields (stack bytes, see Command) from producing huge ranges.
+func ftol(x float32) int32 {
+	if x != x || x >= 2147483648 || x < -2147483648 {
+		return math.MinInt32
+	}
+	return int32(x)
+}
+
 // FrameRange evaluates the command's frame range against a program of n
 // frames, exactly as FUN_00ca0f40 does, returning the first and last frame,
-// the step, and ok=false where the client skips the command. The float to int
-// conversions truncate toward zero (the client's _ftol, FUN_00b42d10).
+// the step, and ok=false where the client skips the command.
+//
+// The arithmetic is single precision, as the client's x87 runs under
+// Direct3D 9's default FPU mode (INFERRED from D3D9 behaviour; it is also
+// what makes the key counts match the stored values, see Keys), with 32-bit
+// integer products and ftol conversions. Every intermediate is converted to
+// float32 explicitly: the Go spec lets an implementation fuse or keep float
+// operations wider otherwise, and only a conversion forces the rounding.
 func (c *Command) FrameRange(n int) (start, end int, step float32, ok bool) {
+	N := int32(n)
+	var s, e int32
 	if c.TimeFlags&1 == 0 {
-		start = int(c.Start)
+		s = ftol(c.Start)
 	} else {
-		start = int(c.Start/100) * n
+		s = ftol(float32(c.Start/100)) * N
 	}
 	if c.TimeFlags&2 == 0 {
 		step = c.Step
 	} else {
-		step = float32(n) * c.Step / 100
+		step = float32(float32(float32(N)*c.Step) / 100)
 	}
 	switch (c.TimeFlags >> 2) % 5 {
 	case 0:
-		end = int(c.End)
+		e = ftol(c.End)
 	case 1:
-		end = int(c.End/100) * n
+		e = ftol(float32(c.End/100)) * N
 	case 2:
-		end = start + int(c.End)
+		e = s + ftol(c.End)
 	case 3:
-		// The divisor is the double at 0x00db9a38; INFERRED 100.0 like
-		// its neighbours (OPEN; no retail command uses this mode).
-		end = start - int(c.End/100)*n
+		// The divisor is the double -100.0 at 0x00db9a38 (READ), and the
+		// product is subtracted, so this is Start + int(End/100)*N. Retail
+		// uses it (MEASURED: Force in skill_cast_foot_*.efp, SetShapeRot in
+		// dun\bagh_masin_bronze_light.efp, many StaticEmit headers).
+		e = s - ftol(float32(c.End/-100))*N
 	case 4:
 		if c.End < 1 {
 			return 0, 0, 0, false
 		}
-		end = start + int(c.End*step)
+		e = s + ftol(float32(c.End*step))
 	}
-	if end >= n {
-		end = n - 1
+	if e >= N {
+		e = N - 1
 	}
-	ok = end <= n && start <= end && step >= 1e-6
-	return
+	ok = e <= N && s <= e && step >= 1e-6
+	return int(s), int(e), step, ok
 }
 
 // Keys is the number of keys the command spans over a program of n frames,
-// FUN_00ca0f40's return value: int((end-start)/step)+1, or 0 when the client
+// FUN_00ca0f40's return value: ftol((end-start)/step)+1, or 0 when the client
 // skips the command. MEASURED: a Frame* parameter holds exactly this many
-// values in 129,413 of 129,438 retail commands (SetGraphDiffuse, SetGraphScale,
-// SetBANPos, TextureSlide), so a value's index is its key.
+// values in 132,666 of 132,668 retail Frame* commands (SetGraphDiffuse, SetGraphScale,
+// SetBANPos, SetBANRot, TextureSlide), so a value's index is its key. Where ftol
+// overflows the client's count would be negative; Keys returns 0 (OURS).
 func (c *Command) Keys(n int) int {
 	s, e, st, ok := c.FrameRange(n)
 	if !ok {
 		return 0
 	}
-	return int(float64(e-s)/float64(st)) + 1
+	k := ftol(float32(float32(e-s)/st)) + 1
+	if k < 0 {
+		return 0
+	}
+	return int(k)
 }
 
 // RenderState is the 36-byte block the client hands straight to Direct3D 9
@@ -412,8 +446,16 @@ type NodeFlags struct {
 
 // Node is one effect node (FUN_00cc3a40 reads it; FUN_00cc3500 its body).
 type Node struct {
-	ID   uint32
-	Name string
+	// HeadLen is the u32 that opens a node: the byte length of the node's
+	// name (with its length prefix) plus its controller block, i.e. of
+	// everything up to the body (MEASURED: equal in 95,801 of 95,801 retail
+	// nodes). The loader's cache mode (DAT_01119eac == 0, FUN_00cc3a40)
+	// seeks past that span instead of reading it. Before round 619's review
+	// this was misread as a node id (Node.ID).
+	HeadLen uint32
+	// headSpan is the span the reader actually consumed for it.
+	headSpan int
+	Name     string
 	// Controllers in file order.
 	Controllers []Controller
 	// Frames is the program length N, in frames: the unit every command's
@@ -465,6 +507,69 @@ func (n *Node) Loops() bool { return n.Extinct != nil && n.Extinct.Name == "Norm
 
 // NeverExtinct reports whether the node has no end.
 func (n *Node) NeverExtinct() bool { return n.Extinct != nil && n.Extinct.Name == "NeverExtinct" }
+
+// HeadLenMatches reports whether HeadLen equals the bytes the reader consumed
+// for the name and controllers; the census counts any node where it does not.
+func (n *Node) HeadLenMatches() bool { return int(n.HeadLen) == n.headSpan }
+
+// EmitGlobals are the two client globals the emitter update reads (READ).
+// One routine (0x005474b1-0x005474fc) sets both from an option string read
+// with atoi: option 0 gives {0, 0}; option 1 gives {2, 10}; any other value
+// gives {5, 10}. Which option this is, and its retail default, are OPEN.
+type EmitGlobals struct {
+	// IntervalMul is DAT_01114d54: when above 1, the trigger interval is
+	// multiplied by it, unless that reaches the emitter's duration.
+	IntervalMul int32
+	// Threshold is DAT_01114d58: when above 0 and below an emitter's
+	// PerTrigger, that emitter's MaxLive is halved (the float 0.5 at
+	// 0xe1b7e0), with a floor of 1.
+	Threshold int32
+}
+
+// DefaultEmitGlobals is full quality, {0, 0}: both globals live in .bss
+// with no static initialiser, so they start at 0 until the option routine
+// runs (READ). Chosen as the default because the retail default of the
+// option is OPEN (OURS).
+var DefaultEmitGlobals = EmitGlobals{}
+
+// Tick runs one frame of an emitter exactly as FUN_00c84e70 does. age is
+// the emitter's age in frames (emitter +0x54) and acc its live-particle
+// accumulator (emitter +0x60, starting at 0). It returns how many particles
+// to spawn this frame, the new accumulator, and stopped=true once the
+// emitter is past Delay+Duration. The caller must subtract 1.0 from the
+// accumulator for every particle that dies (READ, FUN_00c87a20), which is
+// what lets MaxLive cap the live count.
+func (e StaticEmit) Tick(age int, acc float32, g EmitGlobals) (spawn int, next float32, stopped bool) {
+	t := int32(age) - int32(e.Delay)
+	if t >= int32(e.Duration) {
+		return 0, acc, true
+	}
+	interval := int32(e.Interval)
+	if interval <= 0 || t < 0 {
+		return 0, acc, false
+	}
+	if g.IntervalMul > 1 {
+		if m := interval * g.IntervalMul; m < int32(e.Duration) {
+			interval = m
+		}
+	}
+	if t%interval != 0 {
+		return 0, acc, false
+	}
+	capacity := int32(e.MaxLive)
+	if g.Threshold > 0 && float32(g.Threshold) < e.PerTrigger && capacity > 0 {
+		capacity = ftol(float32(float32(capacity) * 0.5))
+		if capacity < 1 {
+			capacity = 1
+		}
+	}
+	old := ftol(acc)
+	next = float32(e.PerTrigger + acc)
+	if c := float32(capacity); c < next {
+		next = c
+	}
+	return int(ftol(next) - old), next, false
+}
 
 // Emission returns the node's StaticEmit parameter, or nil.
 func (n *Node) Emission() *StaticEmit {
@@ -561,7 +666,12 @@ func (r *reader) count(limit uint32) (int, error) {
 }
 
 // str reads a u32-length-prefixed byte string (Map::FUN_00a09210). Any bytes
-// are allowed; retail names include "11111" and author labels with spaces.
+// are allowed; retail names include "11111", author labels with spaces and
+// EUC-KR Korean. The whole length is consumed, but the value is cut at the
+// first NUL, as the client's c_str() users see it, and bytes above 0x7f
+// become the Unicode code points of the same value (Latin-1), so the Go and
+// GDScript readers produce identical strings (OURS: EUC-KR is not decoded;
+// the raw byte values are kept).
 func (r *reader) str() (string, error) {
 	at := r.off
 	n, err := r.u32()
@@ -574,9 +684,32 @@ func (r *reader) str() (string, error) {
 	if err := r.need(int(n)); err != nil {
 		return "", err
 	}
-	s := string(r.b[r.off : r.off+int(n)])
+	s := latin1(r.b[r.off : r.off+int(n)])
 	r.off += int(n)
 	return s, nil
+}
+
+// latin1 cuts b at its first NUL and maps each byte to the code point of the
+// same value.
+func latin1(b []byte) string {
+	if i := bytes.IndexByte(b, 0); i >= 0 {
+		b = b[:i]
+	}
+	ascii := true
+	for _, c := range b {
+		if c >= 0x80 {
+			ascii = false
+			break
+		}
+	}
+	if ascii {
+		return string(b)
+	}
+	rs := make([]rune, len(b))
+	for i, c := range b {
+		rs[i] = rune(c)
+	}
+	return string(rs)
 }
 
 func (r *reader) vec3() (v Vec3, err error) {
@@ -661,8 +794,8 @@ func (r *reader) readValue(typ string) (Value, error) {
 		v.Delay, _ = r.u32()
 		v.Duration, _ = r.u32()
 		v.Interval, _ = r.u32()
-		v.Count, _ = r.u32()
-		v.Quality, _ = r.f32()
+		v.MaxLive, _ = r.u32()
+		v.PerTrigger, _ = r.f32()
 		return v, nil
 	case "FrameScale":
 		n, err := r.count(maxListLen)
@@ -693,7 +826,7 @@ func (r *reader) readValue(typ string) (Value, error) {
 	case "FrameBANRotation":
 		var v FrameBANRotation
 		var err error
-		if v.Head, err = r.u32(); err != nil {
+		if v.Head, err = r.f32(); err != nil {
 			return nil, err
 		}
 		n, err := r.count(maxListLen)
@@ -711,7 +844,7 @@ func (r *reader) readValue(typ string) (Value, error) {
 	case "FrameBANPosition":
 		var v FrameBANPosition
 		var err error
-		if v.Head, err = r.u32(); err != nil {
+		if v.Head, err = r.f32(); err != nil {
 			return nil, err
 		}
 		n, err := r.count(maxListLen)
@@ -768,6 +901,7 @@ func (r *reader) readValue(typ string) (Value, error) {
 			v.Keys[i].Time, _ = r.f32()
 			v.Keys[i].Scale, _ = r.vec3()
 		}
+		v.Keys = mapKeys(v.Keys, func(k ScaleKey) float32 { return k.Time })
 		return v, nil
 	case "BlendScaleGraphPointer":
 		v, err := r.u32()
@@ -798,6 +932,7 @@ func (r *reader) diffuseGraph() (BlendDiffuseGraph, error) {
 		v.Keys[i].Time, _ = r.f32()
 		v.Keys[i].Color, _ = r.u32()
 	}
+	v.Keys = mapKeys(v.Keys, func(k ColorKey) float32 { return k.Time })
 	return v, nil
 }
 
@@ -913,6 +1048,7 @@ func (r *reader) scalarGraph() (ScalarGraph, error) {
 		g.Keys[i].Time, _ = r.f32()
 		g.Keys[i].Value, _ = r.f32()
 	}
+	g.Keys = mapKeys(g.Keys, func(k ScalarKey) float32 { return k.Time })
 	return g, nil
 }
 
@@ -935,6 +1071,7 @@ func (r *reader) byteGraph() (ByteGraph, error) {
 		g.Keys[i].Time, _ = r.f32()
 		g.Keys[i].Value, _ = r.u8()
 	}
+	g.Keys = mapKeys(g.Keys, func(k ByteKey) float32 { return k.Time })
 	return g, nil
 }
 
@@ -995,9 +1132,10 @@ func (r *reader) node(depth int) (*Node, error) {
 	}
 	n := &Node{}
 	var err error
-	if n.ID, err = r.u32(); err != nil {
+	if n.HeadLen, err = r.u32(); err != nil {
 		return nil, err
 	}
+	headStart := r.off
 	if n.Name, err = r.str(); err != nil {
 		return nil, err
 	}
@@ -1016,6 +1154,7 @@ func (r *reader) node(depth int) (*Node, error) {
 		}
 		n.Controllers = append(n.Controllers, c)
 	}
+	n.headSpan = r.off - headStart
 	// The body, FUN_00cc3500, field by field.
 	if n.Frames, err = r.u32(); err != nil {
 		return nil, err
@@ -1126,8 +1265,8 @@ func Decode(data []byte) (*File, error) {
 	if len(data) < magicLen+1+versionLen {
 		return nil, errors.New("efp: file too small to contain a header")
 	}
-	if string(data[:magicLen]) != magic {
-		return nil, fmt.Errorf("efp: bad magic %q, want %q", data[:magicLen], magic)
+	if string(data[:magicLen+1]) != magic+" " {
+		return nil, fmt.Errorf("efp: bad magic %q, want %q", data[:magicLen+1], magic+" ")
 	}
 	f := &File{Version: string(data[magicLen+1 : magicLen+1+versionLen])}
 	hs, err := headerSize(f.Version)
@@ -1151,4 +1290,20 @@ func Decode(data []byte) (*File, error) {
 	}
 	f.Trailing = len(data) - r.off
 	return f, nil
+}
+
+// mapKeys orders graph keys the way the client stores them: in a std::map
+// keyed by time (READ: FUN_00c9f420, FUN_00c9e2b0, FUN_00cbf880 and
+// FUN_00cbf970 insert each key with map[time] = value). So the keys come out
+// ascending by time and a repeated time keeps the value read last.
+func mapKeys[K any](ks []K, time func(K) float32) []K {
+	sort.SliceStable(ks, func(i, j int) bool { return time(ks[i]) < time(ks[j]) })
+	out := ks[:0]
+	for i, k := range ks {
+		if i+1 < len(ks) && time(ks[i+1]) == time(k) {
+			continue // a later key with the same time overwrites this one
+		}
+		out = append(out, k)
+	}
+	return out
 }

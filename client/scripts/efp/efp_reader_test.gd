@@ -38,7 +38,7 @@ func _append_zeros(buf: PackedByteArray, n: int) -> PackedByteArray:
 	out.append_array(pad)
 	return out
 
-## magic + version header + root id + name + one controller, the smallest
+## magic + version header + root head length + name + one controller, the smallest
 ## root the flat walk accepts (mirrors header_test.go's headerFor).
 func _build_header(version: String, root_name: String) -> PackedByteArray:
 	var buf := PackedByteArray()
@@ -125,7 +125,7 @@ func _init() -> void:
 	_check(EfpReader.parse(truncated) == null, "rejects truncated buffer")
 
 	# Round 619: the client's header variants (FUN_00cb8d70) -- an f32 after
-	# the magic from "0012", three u32 more from "0013" -- then the root id.
+	# the magic from "0012", three u32 more from "0013" -- then the root node's head length.
 	for v in ["0010", "0011", "0012", "0013"]:
 		var ev := EfpReader.parse(_build_header(v, "fx"))
 		_check(ev != null and ev.version == v and ev.effect_name == "fx" and ev.count == 1,
