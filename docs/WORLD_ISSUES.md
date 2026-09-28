@@ -7094,6 +7094,187 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twenty-first round: the particle trails draw -- ribbons, lightning and streamers -- and 96 % of the effects now draw every node they mean to
+
+The user asked for "most of the particles loaded". After round 620, 3,062 of 4,170 effect files
+(73.4 %) drew every node they meant to draw. The gaps were:
+- the three Link render modes: RenderLinkPipe (864 files), RenderLinkObj (128) and
+  RenderLinkDPipe (70);
+- textures that do not load (68);
+- meshes that do not load (16).
+
+This round reads the three Link routines and draws them. It also reads the particle "link"
+that round 620 took to be the parent, decodes the DDJ "q" format, and establishes why every
+remaining asset fails. `docs/protocol/EFP_FORMAT.md` "Link render modes" and "Assets that do not
+load" carry the addresses.
+
+**READ** (sro_client.exe, `/var/tmp/decomp_client` and `/var/tmp/sro_client.asm` on the box):
+- **The link is the emitter's previous live particle, not the parent.**
+  - The emitter constructor `FUN_00c88320` puts a particle list at emitter +0x30, with prev
+    offset 0x34 and next offset 0x38.
+  - The particle init `FUN_00c88490` (particle vtable 0x00e0ebfc, slot 4) appends each new
+    particle at the tail (the call at 0x00c88769). A death (`FUN_00c87a20`) unlinks it
+    (`FUN_00c873a0`).
+  - So particle +0x34 is the particle the same emitter spawned before it that is still alive.
+  - Every link variant of the per-particle program tests +0x34 first and does nothing without
+    one: cases 0x03, 0x08, 0x0d, 0x12, 0x15, 0x18, 0x1b–0x1e, 0x21, 0x28, 0x2d, 0x36, 0x39,
+    0x3d, 0x41, 0x45, 0x49 and 0x4b.
+  - `EfpSim` now keeps that list (`Particle.link`, `next_link`) and skips those variants
+    (`EfpSim.names_link`).
+- **One strip per emitter.** Each Link routine returns unless +0x34 is 0. The oldest live particle
+  walks the list to the newest.
+  - A point is (position, colour, scale.x as the width).
+  - A point closer than 1e-6 on every axis (`0x00e1b848`) to the last one taken replaces it.
+- **LinkDPipe** (`FUN_00c8de80`) passes the points straight to the ribbon. Retail's lightning
+  files place those particles with SetSpherePos, so the line is jagged.
+- **LinkPipe** (`FUN_00c8e020`) runs a uniform cubic B-spline through the points, with both ends
+  doubled.
+  - It takes 3 samples per segment at t = 0, 1/3, 2/3. The weights come from the doubles 3, 6, 4
+    and 1 at `0x00e1b808`, `0x00d99a68`, `0x00e1b860` and `0x00e1b7f0`.
+  - Colour is lerped byte by byte and rounded; the width steps linearly.
+  - So m points give 3(m − 1) + 1.
+- **The ribbon** (`FUN_00c8d0e0`):
+  - Each point is projected to NDC. The call has the shape of `D3DXVec3Project(out, v, NULL,
+    proj 0x00edbea8, view 0x00edbe68, NULL)` (INFERRED).
+  - The screen direction is taken by central difference; the ends use their one neighbour.
+  - (d.y, −d.x, 0) is turned by the billboard matrix `0x00edbde8` and normalised.
+  - The vertices are P ± n·width, with v = 0 and 1, and u = i/(N − 1).
+  - It is drawn as D3DPT_TRIANGLESTRIP (5, pushed at 0x00c8d0c1) and flushed per strip.
+- **LinkObj** (`FUN_00c8c3a0`):
+  - Its edges are pos ± scale.x × the particle's own rotation Y row (+0xc0).
+  - The same B-spline runs over the pairs with the first pair doubled. Only k − 2 segments are
+    sampled, so the newest particle is a control point only.
+  - u runs from 1 to 0 in steps of 2.0 (`0x00e1b898`) over the sample-vertex count.
+- **Texture.** `CEFCShape::FUN_00c883d0` gives each particle its node's first mesh entry and
+  that entry's first texture. `FUN_00cabda0` binds it for every render mode, Links included.
+  This makes round 620's OURS "first mesh entry, first texture" a READ.
+- **The DDJ loader** (`FUN_00b8eb60`) checks "JMXV", skips 20 bytes, and hands the DDS to the
+  statically linked D3DX (`D3DXGetImageInfoFromFileInMemory`, then
+  `D3DXCreateTextureFromFileInMemoryEx`). It applies no path rewrite.
+- **`JMXVBMS 0109` is refused by the retail client too.**
+  - Both .bms header checks accept only `0110`: `Prim::FUN_00bc5690` (case 1, Prim.cpp line
+    0xd9) and `PrimGeometry::FUN_00c121f0` (PrimGeometry.cpp line 0x152). A mismatch asserts,
+    then the load returns 0.
+  - The binary's only 0109 branch (`ResObject::FUN_00bce3b0`) is the `.bsr` header.
+  - So there is no 0109 mesh layout to add to the .bms reader, and none was added.
+
+**MEASURED** (the box's retail archives):
+- **The "q" textures are D3DFMT_A16B16G16R16F.** The DDS FourCC slot holds `71 00 00 00`,
+  D3DFORMAT 113.
+  - The four files (`textures\ques1_monster_paper_q_2..5.ddj`) are 128×128 with 8 mips, and
+    every channel is in 0..1.
+  - Each payload is twice its 174,760-byte chain. Only the top level is read.
+  - `DdjReader` now decodes them.
+- **Every remaining asset failure**, from the new `efp_census.gd --build --assets`, which checks
+  Particles.pk2, Media.pk2 and Data.pk2, other extensions, and the basename in any folder:
+  - 20 texture paths are absent everywhere.
+  - 4 exist only at another path: `water_offset_01.ddj` only as Data.pk2
+    `Prim\Mtrl\etc\...`, which the loader cannot reach, and `eu_harp_13`, `eu_shield_13` and
+    `eu_sword_13` only as meshes.
+  - In 36 files a drawn node has no texture entry, and in 10 an empty texture name.
+  - Meshes: the two 0109 files above, and 4 paths absent everywhere.
+  - The 4 q-texture files also name an absent `-glow` texture, so decoding them changes no
+    file-level count.
+- **Link chains are the size of their effects.** In `cold_ganggi_keep_f`, twelve LinkPipe nodes
+  make 6–7-particle chains 5–12 units long and 0.2–0.6 wide. The seven lightning DPipe chains of
+  `lightning_storm_shoot_c` hold up to 13 points over about 10 units.
+- **The build census**, `efp_census.gd --build`, 88 s:
+
+  | | round 620 | round 621 |
+  |---|---|---|
+  | draw every node they mean to draw | 3,062 (73.4 %) | **4,013 (96.2 %)** |
+  | draw at least one node | 3,985 (95.6 %) | 4,100 (98.3 %) |
+  | files skipping a node for a texture | 68 | 75 |
+  | files skipping a node for a mesh | 16 | 16 |
+  | Link nodes skipped | 1,062 files | 0 |
+
+  - The census now also builds each Link strip at frame 40: 27,212 triangles across the archive,
+    with 0 script errors.
+  - Files skipping a node for a texture rose from 68 to 75 because Link nodes now reach their
+    texture check. The 7 new ones are Link nodes with an empty texture name (3 files),
+    `crash_glow.ddj` (3) and `oura_0555.ddj` (1), all absent.
+
+**INFERRED:**
+- that `thunk_FUN_00aa30f0` is D3DXVec3Project, from its six-argument shape through D3DX's
+  dispatch table at `0x00ec7758`;
+- that `0x00edbde8` holds the camera's right and up rows (round 620's billboard inference, used
+  the same way here);
+- that D3DX ignores the surplus q payload;
+- that a node whose mesh fails to load draws nothing in retail.
+
+**OURS:**
+- Link strips are drawn two-sided, as triangle lists.
+- Without a camera, the projection is orthographic down −Z of the effect's axes.
+- The q textures are converted to RGBA8, top level only.
+- Nodes with no texture stay undrawn (see OPEN).
+
+**Tests.**
+- **`efp_links_test.gd`** (new, synthetic, 52 checks). It covers:
+  - the B-spline weights;
+  - fistp rounding and the per-byte colour lerp;
+  - the 1e-6 dedupe;
+  - strip-to-triangle winding;
+  - DPipe ribbon offsets, UVs and colours on a line seen head-on;
+  - LinkPipe sample counts, the first sample, width steps, the colour at t = 1/3, and a straight
+    chain staying straight;
+  - LinkObj's 2-particle no-draw, 8-vertex strip, closing pair, u from 1 to 0, and the width
+    following the particle's own Y axis;
+  - the emitter chain, including unlinking on death;
+  - SetPosition space 2 with and without a link;
+  - EfpEffect drawing each Link mode into one ImmediateMesh surface of whole triangles;
+  - a Link node without a texture being reported.
+- **`ddj_reader_test.gd`** gains a synthetic A16B16G16R16F texture, its channel order, and a
+  refused short payload.
+- **`efp_sim_test.gd`**: round 620's "the link pipe is skipped" expectation now reads "a plate, a
+  mesh and a link pipe draw".
+- **Results:**
+  - `remote_godot.sh check`: ALL LOAD.
+  - `remote_godot.sh tests`: 136 suites, 0 failing.
+  - `go test -count=1 -p 1 ./...`: ok. The server is unchanged.
+
+Against the base feat/efprender (41163cb), the new tests fail:
+
+```
+FAIL scripts/efp/efp_links.gd exists (EfpLinks, the Link geometry)
+FAIL a particle carries its link (+0x34)
+FAIL EfpSim.names_link exists
+FAIL RenderLinkDPipe is drawn, not skipped
+FAIL RenderLinkPipe is drawn, not skipped
+FAIL RenderLinkObj is drawn, not skipped
+FAIL a Link node without a texture entry is reported, not drawn
+FAILURES: 7
+FAIL decodes D3DFMT_A16B16G16R16F        (ddj_reader_test.gd)
+```
+
+**Renders** (`efp_link_shots/` in the lane's scratch; these SHOW, they do not prove). All ran on
+the RX 5700 XT via VirtualGL, at Jangan 97/168 local (1002, 1020), with SRREVAMP_QA_EFFECT and
+the lane's copy of `qa_shot.sh` without its box-wide `pkill`.
+- `A_grid.png` shows six Link-heavy skill files side by side at 230 units:
+  - `cold_ganggi_keep_f` and `help_ganggi_keep_a` (LinkPipe, 44 nodes each);
+  - `lightning_gwantong_effect_c` and `lightning_storm_shoot_c` (LinkDPipe);
+  - `cleric_resurrection_monser_keep_b` and `bard_battle_boom_c` (LinkObj).
+  - Every node was drawn, with nothing skipped (the QA log's `skipped []`).
+- `D_grid.png` shows four of them at 85 units.
+  - The large blue ring that sweeps the square is `bard_battle_boom_c` node 42, a **RenderPlate**
+    (`bas_circle_pt02.ddj`, particles out to 115 units, MEASURED). It is round 620's plate path,
+    not a Link strip.
+- `E_grid.png` is a close-up at 40 units of `lightning_storm_shoot_c`,
+  `cleric_resurrection_monser_keep_b` and `help_ganggi_keep_a`.
+  - Dark violet streamers rise over the middle one: its four LinkObj nodes
+    (`cho-wind-02-iver.ddj`).
+  - Blue flares sit at the feet.
+  - Whether retail's streamers are that dark was not checked.
+
+Nothing here was compared with the retail client.
+
+**OPEN** (also in `docs/TODO.md`):
+- what D3D9's fixed-function stage returns for D3DTA_TEXTURE with no texture bound. That decides
+  the 75 files' untextured nodes, which retail draws with a NULL texture;
+- bit 0 of emitter +0x74, which resets the inherited rotation in the particle init;
+- the LinkMode controller and the node's 20-byte block, which none of the Link routines reads;
+- which face of a Link strip D3D culls;
+- which side of a pipe gets v = 0 after the handedness mirror.
+
 ## Six-hundred-and-twentieth round: skills play their own particle effects -- the cast glow, the imbue's hand aura, the heal's burst -- drawn from the game's own .efp files
 
 The user asked for skill visual effects on activation, and for "most of the particles loaded in".

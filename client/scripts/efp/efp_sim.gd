@@ -78,7 +78,14 @@ class_name EfpSim
 ##     the node's BlendScaleGraph at a random time (FUN_00c89140: first key
 ##     before a, last after b, linear between; which var the pointer names is
 ##     INFERRED to be the node's first BlendScaleGraph).
-##   The link object (+0x34) was not identified: OURS, it is the parent.
+##   The link (+0x34) is the particle the same emitter spawned before this
+##     one that is still alive (READ, round 621: the emitter's particle list
+##     at emitter+0x30 has prev offset 0x34 and next offset 0x38,
+##     FUN_00c88320; the particle init FUN_00c88490 appends at the tail;
+##     a death unlinks). Every variant that names the link does nothing
+##     when the particle has none -- the oldest live one of its emitter
+##     (READ: cases 0x03, 0x15, 0x18, 0x1b-0x1e, 0x39, 0x3d, 0x41, 0x45,
+##     0x49, 0x4b test +0x34 first). See EfpLinks for the chain's drawing.
 ##   ConeForce's case 0x46 falls through into 0x47 in the decompile; this
 ##   client does not reproduce that (OPEN whether it is real).
 ##
@@ -160,12 +167,17 @@ class Particle:
 	var scale := Vector3.ONE
 	var color := 0xFFFFFFFF
 	var uv := Vector4(0, 0, 1, 1)
+	## The emitter's previous live particle (+0x34) and next one (+0x38).
+	var link: Particle = null
+	var next_link: Particle = null
 
 class Emitter:
 	var tpl: int
 	var owner: Particle
 	var acc := 0.0
 	var done := false
+	## The newest live particle of this emitter (the list's tail).
+	var tail: Particle = null
 
 var template: Template
 var particles: Array[Particle] = []
@@ -352,6 +364,27 @@ func _on_death(p: Particle) -> void:
 	live_total -= 1
 	if p.emitter != null:
 		p.emitter.acc = maxf(p.emitter.acc - 1.0, 0.0)
+	_unlink(p)
+
+## The emitter's particle list (READ, see the header): append at the tail.
+static func _link_in(p: Particle, e: Emitter) -> void:
+	if e == null:
+		return
+	p.link = e.tail
+	if e.tail != null:
+		e.tail.next_link = p
+	e.tail = p
+
+## ... and unlink on death (CEFElement::FUN_00c873a0).
+static func _unlink(p: Particle) -> void:
+	if p.next_link != null:
+		p.next_link.link = p.link
+	if p.link != null:
+		p.link.next_link = p.next_link
+	if p.emitter != null and p.emitter.tail == p:
+		p.emitter.tail = p.link
+	p.link = null
+	p.next_link = null
 
 func _spawn(tpl_index: int, owner: Particle, from: Emitter = null) -> void:
 	if particles.size() >= MAX_PARTICLES or live_total >= MAX_TOTAL:
@@ -368,6 +401,7 @@ func _spawn(tpl_index: int, owner: Particle, from: Emitter = null) -> void:
 	p.prev_pos = owner.pos
 	p.vel = owner.vel
 	p.rot = owner.rot
+	_link_in(p, from)
 	particles.append(p)
 	live_total += 1
 	spawned += 1
@@ -392,14 +426,33 @@ static func basis_of(m) -> Basis:
 func _parent_of(p: Particle) -> Particle:
 	return p.parent if p.parent != null else _root
 
-## The rotation a space selector names: 0 none, 1 own, 2 parent, 3 link (OURS: the parent).
+## The rotation a space selector names: 0 none, 1 own, 2 parent, 3 link
+## (READ; a link variant is skipped before this when there is no link).
 func _frame(p: Particle, sel: int) -> Basis:
 	match sel:
 		1:
 			return p.rot
-		2, 3:
+		2:
 			return _parent_of(p).rot
+		3:
+			return p.link.rot if p.link != null else Basis.IDENTITY
 	return Basis.IDENTITY
+
+## True when command `name` with this space byte names the link (+0x34):
+## the variants the interpreter runs only when the particle has one (READ,
+## see the header).
+static func names_link(name: String, space: int) -> bool:
+	match name:
+		"SetPosition", "SetConePos", "SetBANPos":
+			return space % 3 == 2 or space / 3 == 3
+		"SetSpherePos":
+			return space == 2
+		"SetVelocity", "SetConeVel", "Force", "ConeForce", \
+				"SetRotationMat", "SetRotation", "SetRotationAxis", "SetBANRot":
+			return space == 3
+		"Attraction":
+			return space == 1
+	return false
 
 func _rand() -> float:
 	return _rng.randf()
@@ -424,13 +477,17 @@ func _ball() -> Vector3:
 func _set_pos(p: Particle, space: int, v: Vector3) -> void:
 	var o := space % 3
 	var r := space / 3
-	if o != 0:
+	if o == 1:
 		p.pos = _parent_of(p).pos
+	elif o == 2:
+		p.pos = p.link.pos
 	p.pos += _frame(p, r) * v
 
 func _run(p: Particle, tp: Tpl, c: EfpReader.EfpCommand, key: int) -> void:
 	var val = c.value
 	var s: int = c.space
+	if p.link == null and names_link(c.name, s):
+		return
 	match c.name:
 		"SetPosition":
 			if val is Dictionary:
@@ -446,8 +503,10 @@ func _run(p: Particle, tp: Tpl, c: EfpReader.EfpCommand, key: int) -> void:
 		"SetSpherePos":
 			if val is Dictionary:
 				var off := _ball() * (val.get("value", Vector3.ZERO) as Vector3)
-				if s != 0:
+				if s == 1:
 					p.pos = _parent_of(p).pos
+				elif s == 2:
+					p.pos = p.link.pos
 				p.pos += off
 		"SetVelocity":
 			if val is Dictionary:
@@ -463,7 +522,7 @@ func _run(p: Particle, tp: Tpl, c: EfpReader.EfpCommand, key: int) -> void:
 				p.vel += _frame(p, s) * _cone(val)
 		"Attraction":
 			if val is Dictionary:
-				var d := p.pos - _parent_of(p).pos
+				var d := p.pos - (p.link.pos if s == 1 else _parent_of(p).pos)
 				if d.length_squared() > 0.0:
 					p.vel += d.normalized() * float(val.get("value", 0.0))
 		"SetRotationMat", "SetRotation", "SetRotationAxis":

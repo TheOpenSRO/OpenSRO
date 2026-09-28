@@ -179,6 +179,36 @@ func _init() -> void:
 			_check(img.get_pixel(1, 1).a == 0.0,
 				"ARGB1555: the 1-bit alpha reads as transparent (got a=%f)" % img.get_pixel(1, 1).a)
 
+	# Round 621: the D3DFORMAT 113 (D3DFMT_A16B16G16R16F) that retail
+	# Particles.pk2 stores in the FourCC slot as the bytes 71 00 00 00 ('q').
+	# Four half floats a pixel, R first. The header is the DXT5 fixture's with
+	# the FourCC and the payload replaced.
+	var base := _build_ddj(2, 2, "DXT5")
+	var q := base.slice(0, DdjReader.WRAPPER_SIZE + 4 + DdjReader.DDS_HEADER_SIZE)
+	var cc_off := DdjReader.WRAPPER_SIZE + 4 + 72 + 8
+	q[cc_off] = 0x71
+	q[cc_off + 1] = 0
+	q[cc_off + 2] = 0
+	q[cc_off + 3] = 0
+	var px := PackedByteArray()
+	px.resize(2 * 2 * 8)
+	var texels := [[1.0, 0.0, 0.0, 1.0], [0.0, 1.0, 0.0, 0.5], [0.0, 0.0, 1.0, 0.0], [1.0, 1.0, 1.0, 1.0]]
+	for i in range(4):
+		for c in range(4):
+			px.encode_half(i * 8 + c * 2, texels[i][c])
+	q.append_array(px)
+	var qt := DdjReader.parse(q)
+	_check(qt != null and qt.four_cc == "q", "parses a texture whose FourCC slot holds D3DFORMAT 113 ('q')")
+	if qt != null:
+		var qi := DdjReader.to_image(qt)
+		_check(qi != null, "decodes D3DFMT_A16B16G16R16F")
+		if qi != null:
+			_check(qi.get_pixel(0, 0) == Color8(255, 0, 0, 255) and qi.get_pixel(1, 0).g8 == 255
+				and absf(qi.get_pixel(1, 0).a - 0.5) < 0.01 and qi.get_pixel(0, 1) == Color8(0, 0, 255, 0),
+				"A16B16G16R16F: R, G, B, A in memory order (got %s %s %s)" % [qi.get_pixel(0, 0), qi.get_pixel(1, 0), qi.get_pixel(0, 1)])
+		var short := q.slice(0, q.size() - 8)
+		_check(DdjReader.to_image(DdjReader.parse(short)) == null, "a short A16B16G16R16F payload is refused")
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

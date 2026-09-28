@@ -26,12 +26,18 @@ class_name EfpEffect
 ##   texture ops), ZWRITE off, lighting and fog off. See blend_class and the
 ##   shader below for the mapping to Godot.
 ##
-## Not drawn (OPEN; counted as `skipped` by the census): RenderLinkPipe,
-## RenderLinkDPipe and RenderLinkObj (the trails; their routines were not
-## read), and a node whose mesh or texture does not load. (BSAnimation needs
+## The Link modes (RenderLinkDPipe, RenderLinkPipe, RenderLinkObj; round 621)
+## draw one strip per emitter through its chain of live particles, rebuilt
+## every frame into an ImmediateMesh: EfpLinks has the geometry, READ from
+## FUN_00c8de80, FUN_00c8e020, FUN_00c8c3a0 and FUN_00c8d0e0.
+##
+## Not drawn (OPEN; counted as `skipped` by the census): a node whose mesh or
+## texture does not load. (BSAnimation needs
 ## no drawing: all 3,230 nodes carrying one are RenderNone, MEASURED; their
 ## motion reaches particles as the baked SetBANPos/SetBANRot keys.)
-## Only the first mesh entry and its first texture are drawn (OURS).
+## Only the first mesh entry and its first texture are drawn: READ, round 621 --
+## CEFCShape::FUN_00c883d0 gives a particle its node's first mesh entry and
+## that entry's first texture.
 ##
 ## The effect is simulated in its own local space and moves with its parent
 ## node (OURS). It is authored in the game's native units, so it belongs
@@ -49,6 +55,7 @@ var skipped: PackedStringArray = PackedStringArray()
 ## Seconds after which a looping effect stops by itself (0 = never; OURS guard).
 var max_life := 0.0
 var _draws: Array = [] # of [tpl index, MultiMeshInstance3D, view mode]
+var _links: Array = [] # of [tpl index, MeshInstance3D (ImmediateMesh), render mode]
 var _stopping := false
 var _life := 0.0
 var _follow_skel: Skeleton3D = null
@@ -66,6 +73,7 @@ static var last_error := ""
 
 const PLATE := "RenderPlate"
 const MESH := "RenderMesh"
+const LINK_MODES := ["RenderLinkDPipe", "RenderLinkPipe", "RenderLinkObj"]
 ## OURS: particles move; a fixed box keeps a MultiMesh from being culled.
 const DRAW_AABB := AABB(Vector3(-200, -200, -200), Vector3(400, 400, 400))
 
@@ -116,6 +124,9 @@ static func from_template(t: EfpSim.Template, load_texture: Callable, load_mesh:
 		var mode := n.render_mode()
 		if mode == "" or mode == "RenderNone":
 			continue
+		if LINK_MODES.has(mode):
+			_add_link(fx, tp, mode, load_texture)
+			continue
 		if mode != PLATE and mode != MESH:
 			fx.skipped.append("%s (%s)" % [mode, n.name])
 			continue
@@ -164,7 +175,113 @@ static func from_template(t: EfpSim.Template, load_texture: Callable, load_mesh:
 
 ## How many nodes draw.
 func draw_count() -> int:
-	return _draws.size()
+	return _draws.size() + _links.size()
+
+## A Link node's draw: a MeshInstance3D whose ImmediateMesh _update_links
+## refills each frame. Its texture is the node's first mesh entry's first
+## texture, as for a plate (the draw setup, FUN_00cabda0, binds +0x1d8 for
+## every render mode).
+static func _add_link(fx: EfpEffect, tp: EfpSim.Tpl, mode: String, load_texture: Callable) -> void:
+	var n: EfpReader.EfpNode = tp.node
+	var tex: Texture2D = null
+	var tname := "(none)"
+	if not n.meshes.is_empty():
+		var ref: EfpReader.EfpMeshRef = n.meshes[0]
+		if not ref.textures.is_empty():
+			tname = ref.textures[0]
+			tex = load_texture.call(tname)
+	if tex == null:
+		fx.skipped.append("texture %s" % tname)
+		return
+	var mi := MeshInstance3D.new()
+	mi.mesh = ImmediateMesh.new()
+	mi.material_override = link_material_for(tex, n.state)
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mi.custom_aabb = DRAW_AABB
+	mi.name = "link_%d" % tp.index
+	fx.add_child(mi)
+	fx._links.append([tp.index, mi, mode])
+
+## The camera as the pipe ribbon needs it, in this effect's space: a
+## Callable taking a local point to normalised device coordinates, and the
+## camera's right and up axes. Without a camera (headless), an orthographic
+## view down -Z of the effect's own axes.
+func _link_view() -> Array:
+	var cam := get_viewport().get_camera_3d() if is_inside_tree() else null
+	if cam == null:
+		return [func(v: Vector3) -> Vector2: return Vector2(v.x, v.y), Vector3.RIGHT, Vector3.UP]
+	var gt := global_transform
+	var inv := gt.basis.inverse()
+	var vp := cam.get_camera_projection() * Projection(cam.get_camera_transform().affine_inverse())
+	var cb := cam.global_transform.basis.orthonormalized()
+	var to_ndc := func(v: Vector3) -> Vector2:
+		var w := gt * v
+		var c: Vector4 = vp * Vector4(w.x, w.y, w.z, 1.0)
+		if absf(c.w) < 1e-9:
+			return Vector2(c.x, c.y)
+		return Vector2(c.x / c.w, c.y / c.w)
+	return [to_ndc, inv * cb.x, inv * cb.y]
+
+## Every Link node's strips for this frame (see EfpLinks).
+func _update_links() -> void:
+	if _links.is_empty():
+		return
+	var view := _link_view()
+	var chains := link_chains(sim)
+	for d in _links:
+		var mi: MeshInstance3D = d[1]
+		var im: ImmediateMesh = mi.mesh
+		im.clear_surfaces()
+		var strips: Array = []
+		for chain in chains.get(int(d[0]), []):
+			var st := link_strip(chain, String(d[2]), view[0], view[1], view[2])
+			if st.size() >= 3:
+				strips.append(st)
+		if strips.is_empty():
+			continue
+		im.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
+		for st in strips:
+			var s: EfpLinks.Strip = st
+			for i in EfpLinks.strip_triangles(s.size()):
+				im.surface_set_color(EfpSim.color_of(s.colors[i]))
+				im.surface_set_uv(s.uvs[i])
+				im.surface_add_vertex(s.verts[i])
+		im.surface_end()
+
+## The live particles of every emitter, oldest first, by node: each emitter's
+## list from its head (link == null) along next_link (READ order, see
+## EfpLinks). tpl index -> Array of Array[EfpSim.Particle].
+static func link_chains(s: EfpSim) -> Dictionary:
+	var out := {}
+	for p in s.particles:
+		if p.link != null:
+			continue
+		var chain: Array = []
+		var q: EfpSim.Particle = p
+		while q != null:
+			chain.append(q)
+			q = q.next_link
+		if not out.has(p.tpl):
+			out[p.tpl] = []
+		(out[p.tpl] as Array).append(chain)
+	return out
+
+## One chain's strip in the given Link mode. `to_ndc`, `right`, `up`: see
+## _link_view.
+static func link_strip(chain: Array, mode: String, to_ndc: Callable, right: Vector3, up: Vector3) -> EfpLinks.Strip:
+	var pts: Array = []
+	var ys: Array = []
+	for q in chain:
+		var p: EfpSim.Particle = q
+		pts.append(EfpLinks.Pt.new(p.pos, p.color, p.scale.x))
+		ys.append(p.rot.y)
+	if mode == "RenderLinkObj":
+		return EfpLinks.obj_ribbon(pts, ys)
+	var line: Array = EfpLinks.pipe_points(pts) if mode == "RenderLinkPipe" else EfpLinks.dpipe_points(pts)
+	var ndc := PackedVector2Array()
+	for q in line:
+		ndc.append(to_ndc.call((q as EfpLinks.Pt).pos))
+	return EfpLinks.pipe_ribbon(line, ndc, right, up)
 
 ## Lets a looping effect finish its current cycle and end.
 func stop() -> void:
@@ -201,6 +318,7 @@ func _process(delta: float) -> void:
 			set_process(false)
 			return
 	_update_draws()
+	_update_links()
 
 func _exit_tree() -> void:
 	if sim != null:
@@ -312,6 +430,36 @@ static func material_for(tex: Texture2D, st: EfpReader.EfpRenderState) -> Shader
 		return _materials[key]
 	var m := ShaderMaterial.new()
 	m.shader = _shader(cls, no_cull)
+	m.set_shader_parameter("tex", tex)
+	m.set_shader_parameter("c_op", st.color_op if st else 4)
+	m.set_shader_parameter("c_a1", st.color_arg1 if st else 2)
+	m.set_shader_parameter("c_a2", st.color_arg2 if st else 0)
+	m.set_shader_parameter("a_op", st.alpha_op if st else 4)
+	m.set_shader_parameter("a_a1", st.alpha_arg1 if st else 2)
+	m.set_shader_parameter("a_a2", st.alpha_arg2 if st else 0)
+	_materials[key] = m
+	return m
+
+## A Link strip's material: the node's blend and texture ops as for a plate,
+## with the strip's own UVs (the Link routines write u, v directly and do not
+## apply the UV rectangle, READ) and both faces drawn (OURS, see EfpLinks).
+static func link_material_for(tex: Texture2D, st: EfpReader.EfpRenderState) -> ShaderMaterial:
+	var src := st.src_blend if st != null else 5
+	var dest := st.dest_blend if st != null else 2
+	var cls := blend_class(src, dest)
+	var key := "link|%d|%s|%d,%d,%d,%d,%d,%d" % [tex.get_instance_id() if tex != null else 0, cls,
+		st.color_op if st else 4, st.color_arg1 if st else 2, st.color_arg2 if st else 0,
+		st.alpha_op if st else 4, st.alpha_arg1 if st else 2, st.alpha_arg2 if st else 0]
+	if _materials.has(key):
+		return _materials[key]
+	var skey := "link|" + cls
+	if not _shaders.has(skey):
+		var base := _shader(cls, true)
+		var sh := Shader.new()
+		sh.code = base.code.replace("UV = INSTANCE_CUSTOM.xy + UV * INSTANCE_CUSTOM.zw;", "")
+		_shaders[skey] = sh
+	var m := ShaderMaterial.new()
+	m.shader = _shaders[skey]
 	m.set_shader_parameter("tex", tex)
 	m.set_shader_parameter("c_op", st.color_op if st else 4)
 	m.set_shader_parameter("c_a1", st.color_arg1 if st else 2)

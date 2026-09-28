@@ -41,3 +41,17 @@ image/texture library can load `data[20:]` directly once the wrapper is stripped
   wired into the client. Godot 4 doesn't import raw DDS out of the box; actually displaying these
   textures will need either a small custom DXT/RGB decoder into a Godot `Image`, or converting
   `.ddj` → `.png`/`.ktx` offline as part of an asset pipeline — not yet decided.
+
+## FourCC 113 ('q'): D3DFMT_A16B16G16R16F (round 621)
+
+The client hands the DDS after the 20-byte wrapper to the statically linked D3DX loader (READ,
+`FUN_00b8eb60`: it checks "JMXV", skips five u32, then calls D3DXGetImageInfoFromFileInMemory and
+D3DXCreateTextureFromFileInMemoryEx). D3DX accepts a numeric D3DFORMAT in the FourCC slot. Four
+retail files store 113 there, the bytes `71 00 00 00`: D3DFMT_A16B16G16R16F, four 16-bit floats
+a pixel with R first in memory (MEASURED: `textures\ques1_monster_paper_q_2..5.ddj` in
+Particles.pk2, 128×128 with 8 mips, every channel in 0..1).
+
+- Each payload is twice the size of its declared 8-level chain. The surplus is not read; that
+  D3DX ignores it too is INFERRED.
+- `DdjReader.to_image` reads the top level and converts it to RGBA8 (OURS: Godot builds the
+  mipmaps).

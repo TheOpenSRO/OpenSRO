@@ -15,6 +15,13 @@ extends SceneTree
 ## its simulation, and reports how many build, how many draw every node they
 ## mean to draw, and the reasons nodes were skipped (render modes not drawn,
 ## assets missing, commands no rule covers).
+##
+## `--assets` (round 621, with --build) lists every texture and mesh that did
+## not load, one line each, with the number of files naming it and why it
+## failed: absent from Particles.pk2 (and whether Media.pk2 or Data.pk2 beside
+## it, another extension, or another folder of Particles.pk2 has it), or
+## present but refused by DdjReader / BmsReader (with the DDS FourCC or the
+## JMXVBMS version).
 
 var _files := 0
 var _header_ok := 0
@@ -33,6 +40,10 @@ var _build_failed := 0
 var _skips := {}
 var _skip_files := {}
 var _spawned := 0
+var _assets := false
+var _link_tris := 0
+var _bad_assets := {} # "texture|path" or "mesh|path" -> files naming it
+var _pk2_dir := ""
 
 func _init() -> void:
 	var path := OS.get_environment("SRREVAMP_PARTICLES_PK2")
@@ -41,6 +52,8 @@ func _init() -> void:
 			path = a.substr(6)
 		if a == "--build":
 			_build = true
+		if a == "--assets":
+			_assets = true
 	if path == "":
 		print("usage: efp_census.gd -- --pk2=<Particles.pk2>")
 		quit(2)
@@ -52,7 +65,10 @@ func _init() -> void:
 		return
 	var t0 := Time.get_ticks_msec()
 	_pk2 = pk2
+	_pk2_dir = path.get_base_dir()
 	_walk(pk2, pk2.read_dir(), "")
+	if _assets:
+		_report_assets()
 	pk2.close()
 	var decoded := _exact + _trailing
 	print("efp files:            %d" % _files)
@@ -70,6 +86,7 @@ func _init() -> void:
 		print("  drawing every node they draw: %d (%.1f%% of all files)" % [_built_full, 100.0 * _built_full / maxi(_files, 1)])
 		print("  drawing at least one node:    %d (%.1f%% of all files)" % [_built_drawing, 100.0 * _built_drawing / maxi(_files, 1)])
 		print("  particles spawned in 40 frames, all files: %d" % _spawned)
+		print("  Link strip triangles at frame 40, all files: %d" % _link_tris)
 		print("skipped (files, reason):")
 		var keys := _skip_files.keys()
 		keys.sort_custom(func(a, b): return int(_skip_files[a]) > int(_skip_files[b]))
@@ -124,12 +141,21 @@ func _build_one(p: String, f: EfpReader.EfpFile) -> void:
 	for _i in range(40):
 		fx.sim.step()
 	_spawned += fx.sim.spawned
+	# Round 621: build this frame's Link strips too (headless view), so a
+	# script error in the strip code shows up across the whole archive.
+	fx._update_links()
+	for d in fx._links:
+		var im: ImmediateMesh = (d[1] as MeshInstance3D).mesh
+		if im.get_surface_count() > 0:
+			_link_tris += (im.surface_get_arrays(0)[Mesh.ARRAY_VERTEX] as PackedVector3Array).size() / 3
 	var kinds := {}
 	for r in fx.skipped:
 		var k := String(r)
 		if k.begins_with("texture "):
+			_note_asset("texture|" + k.substr(8))
 			k = "texture did not load"
 		elif k.begins_with("mesh "):
+			_note_asset("mesh|" + k.substr(5))
 			k = "mesh did not load"
 		elif k.begins_with("BSAnimation"):
 			k = "BSAnimation (mesh drawn unanimated)"
@@ -155,3 +181,84 @@ func _count(n: EfpReader.EfpNode) -> void:
 		for c in l:
 			if c.value != null:
 				_typed_values += 1
+
+func _note_asset(k: String) -> void:
+	_bad_assets[k] = int(_bad_assets.get(k, 0)) + 1
+
+## One line per asset that did not load, with the reason (see the header).
+func _report_assets() -> void:
+	var others := {}
+	for n in ["Media.pk2", "Data.pk2"]:
+		var o := Pk2Reader.open(_pk2_dir.path_join(n))
+		if o != null:
+			others[n] = o
+	var by_base := {}
+	_index_names(_pk2, _pk2.read_dir(), "", by_base)
+	var other_base := {}
+	for n in others:
+		var ob := {}
+		_index_names(others[n], (others[n] as Pk2Reader).read_dir(), "", ob)
+		other_base[n] = ob
+	var keys := _bad_assets.keys()
+	keys.sort()
+	var reasons := {}
+	print("assets that did not load (kind, files, path, reason):")
+	for k in keys:
+		var kind: String = String(k).split("|")[0]
+		var p: String = String(k).split("|")[1]
+		var why := _why(kind, p, others, by_base, other_base)
+		var bucket := why.split(":")[0]
+		reasons[kind + ": " + bucket] = int(reasons.get(kind + ": " + bucket, 0)) + 1
+		print("  %-7s %4d  %s  -- %s" % [kind, _bad_assets[k], p, why])
+	print("asset failures by reason (distinct assets):")
+	for r in reasons:
+		print("  %4d  %s" % [reasons[r], r])
+	for n in others:
+		(others[n] as Pk2Reader).close()
+
+func _index_names(pk2: Pk2Reader, entries: Array, prefix: String, out: Dictionary) -> void:
+	for e in entries:
+		if e.name == "." or e.name == "..":
+			continue
+		var p: String = e.name if prefix == "" else prefix + "\\" + e.name
+		if e.is_dir:
+			_index_names(pk2, pk2.read_dir_at(e), p, out)
+		else:
+			var b := String(e.name).to_lower().get_basename()
+			if not out.has(b):
+				out[b] = []
+			(out[b] as Array).append(p)
+
+func _why(kind: String, p: String, others: Dictionary, by_base: Dictionary, other_base: Dictionary) -> String:
+	var bytes := AssetSource.read_bytes(p, _pk2)
+	if not bytes.is_empty():
+		var magic := bytes.slice(0, 12).get_string_from_ascii()
+		if kind == "texture":
+			var t := DdjReader.parse(bytes)
+			if t == null:
+				return "refused by DdjReader: magic %s" % magic
+			return "refused by DdjReader.to_texture: fourcc '%s' (%s) bpp %d" % [
+				t.four_cc, _hex4(bytes, 20 + 4 + 72 + 8), t.rgb_bit_count]
+		return "refused by BmsReader: magic %s, %d bytes" % [magic, bytes.size()]
+	var alt := []
+	for n in others:
+		if ObjectLoader.find_file(others[n], p) != null:
+			alt.append("in " + n)
+	var stem := p.get_basename()
+	for ext in ["ddj", "dds", "tga", "bms", "bmt"]:
+		if ext != p.get_extension().to_lower() and ObjectLoader.find_file(_pk2, stem + "." + ext) != null:
+			alt.append("as ." + ext)
+	var b := p.get_file().to_lower().get_basename()
+	if b != "" and by_base.has(b):
+		alt.append("same name at " + ", ".join(PackedStringArray((by_base[b] as Array).slice(0, 3))))
+	for n in other_base:
+		if b != "" and (other_base[n] as Dictionary).has(b):
+			alt.append("same name in %s at %s" % [n, ", ".join(PackedStringArray((other_base[n][b] as Array).slice(0, 3)))])
+	if alt.is_empty():
+		return "absent: not in Particles.pk2, Media.pk2 or Data.pk2 under any folder or extension"
+	return "absent here, but: " + "; ".join(PackedStringArray(alt))
+
+static func _hex4(b: PackedByteArray, o: int) -> String:
+	if b.size() < o + 4:
+		return "?"
+	return "%02x %02x %02x %02x" % [b[o], b[o + 1], b[o + 2], b[o + 3]]

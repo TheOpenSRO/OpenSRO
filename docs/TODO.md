@@ -925,7 +925,7 @@ layer-key lead). Left open:
 - **The `.o2` skip bit** (below, "`.o2` list semantics"): 240 list-2 records that retail does not
   build are drawn. None of them is seasonal.
 
-### Particle effects (`.efp`): **decoder done (round 619), renderer and skill effects (round 620)**
+### Particle effects (`.efp`): **decoder done (round 619), renderer and skill effects (round 620), Link modes (round 621)**
 Both readers decode 4,103 of the 4,170 files in the retail Particles.pk2
 (`docs/protocol/EFP_FORMAT.md`). Round 620 plays them:
 - `EfpSim` runs the client's particle rules;
@@ -933,17 +933,23 @@ Both readers decode 4,103 of the 4,170 files in the retail Particles.pk2
 - `SkillEffects` plays each skilleffectset row's effect at the moments SkillAudio plays its sound,
   and keeps ACT_L auras by buff token.
 
-The `--build` census (MEASURED, round 620): all 4,103 decoded files build into an effect; 3,985
-draw at least one node, and 3,062 draw every node they mean to draw.
+The `--build` census (MEASURED, round 621): all 4,103 decoded files build into an effect; 4,100
+draw at least one node, and **4,013 (96.2 %) draw every node they mean to draw** (3,062, 73.4 %,
+in round 620). Round 621 draws the three Link modes (`EfpLinks`) and the D3DFMT_A16B16G16R16F
+textures.
 
 Still open, by the files each would add:
-- **The link render modes.** RenderLinkPipe (864 files), RenderLinkObj (128) and RenderLinkDPipe
-  (70) are not drawn. Their routines are `FUN_00c8e020`, `FUN_00c8c3a0` and `FUN_00c8de80`; the
-  LinkMode controller and the node's 20-byte block feed them.
-- **Assets that do not load.**
-  - 68 files have a texture that does not load: 4 DDJ textures are in the unhandled "q" format,
-    and the rest are missing from the archive.
-  - 16 files have a mesh that does not load, including `JMXVBMS 0109` meshes.
+- **Nodes with no texture** (75 files; EFP_FORMAT.md "Assets that do not load"). Retail binds a
+  NULL texture and draws them. 20 texture paths are absent from every archive, 4 more exist only
+  elsewhere, and in 46 files a node names no texture. What D3D9's fixed-function stage gives for
+  D3DTA_TEXTURE with nothing bound was not established. Next: read what the driver/D3D9 runtime
+  returns, or find a retail capture of one of these nodes.
+- **Meshes** (16 files). Not a gap: `hwan01/02.bms` are `JMXVBMS 0109`, which the retail client
+  refuses too (READ, Prim.cpp and PrimGeometry.cpp accept only 0110), and 4 mesh paths are absent
+  from every archive.
+- **Link details**: bit 0 of emitter +0x74 (resets the inherited rotation in the particle init),
+  the LinkMode controller and the node's 20-byte block (none of the three Link routines reads
+  them), and which face of a Link strip D3D culls (drawn two-sided here).
 - **The flight of AT_MOV_\* rows** (projectiles). They play at the caster for now. MovType and
   the Act Option columns are unread.
 - **Where the hit effect sits.** characterInfo's DamageBone and DamagePos place it in retail; the
@@ -951,7 +957,6 @@ Still open, by the files each would add:
 - **Unread details:**
   - which option sets the emitter globals (`DAT_01114d54`, `DAT_01114d58`) and its retail
     default; the renderer assumes full quality;
-  - the "link" object (particle +0x34), which is taken to be the parent;
   - the parent-rotation part of "follow the parent";
   - ConeForce's 0x46 → 0x47 fall-through;
   - which BlendScaleGraph SetGraphRandomScale names;

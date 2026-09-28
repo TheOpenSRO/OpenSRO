@@ -199,6 +199,24 @@ static func to_image(tex: ParsedTexture) -> Image:
 				rgba[d + 2] = _scale_channel(px & b_mask, b_shift, b_max)
 				rgba[d + 3] = _scale_channel(px & a_mask, a_shift, a_max) if a_mask != 0 else 255
 			image = Image.create_from_data(tex.width, tex.height, false, Image.FORMAT_RGBA8, rgba)
+		"q":
+			# Round 621. The DDS "FourCC" here is not text: it is the D3DFORMAT
+			# number 113 (0x71, 'q'), D3DFMT_A16B16G16R16F -- four 16-bit
+			# floats a pixel, R first in memory (the DXGI R16G16B16A16_FLOAT
+			# layout). The client hands the DDS after the 20-byte wrapper to
+			# the static D3DX loader (READ: FUN_00b8eb60 skips 5 u32 after
+			# the "JMXV" check and calls D3DXGetImageInfoFromFileInMemory,
+			# then D3DXCreateTextureFromFileInMemoryEx), which takes a
+			# numeric D3DFORMAT in the FourCC slot. 4 retail files use it
+			# (textures\ques1_monster_paper_q_2..5.ddj in Particles.pk2,
+			# MEASURED round 621). Only the top level is read and converted
+			# to RGBA8, clamped to 0..1 (OURS: Godot then builds mipmaps).
+			var need: int = tex.width * tex.height * 8
+			if pixels.size() < need:
+				push_error("ddj: A16B16G16R16F payload is %d bytes, need %d" % [pixels.size(), need])
+				return null
+			image = Image.create_from_data(tex.width, tex.height, false, Image.FORMAT_RGBAH, pixels.slice(0, need))
+			image.convert(Image.FORMAT_RGBA8)
 		_:
 			push_error("ddj: unhandled compression format %s" % tex.four_cc)
 			return null
