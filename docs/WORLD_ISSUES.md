@@ -7245,6 +7245,50 @@ Measured after the follow-up:
   - the burst;
   - 0 SCRIPT ERRORs.
 
+**Integration (rounds 616-618 together, branch `int/skills`).** The three rounds were checked
+end to end on the box: the real client on the Login -> CharacterSelect route, driven by real X
+events (`xdotool` on Xvfb), against the server built from this branch in memory, fed a skills CSV
+exported by this branch's `export-refdata -mode skills` from the box's Media.pk2 (62 columns;
+Grass Walk A lv1 kind 3, dura 355462, `hste:20`). A scratch TCP tap between them decoded every
+skill frame with the server's own decoders. MEASURED, from the client log and the tap:
+- **Grass Walk, nothing selected, key 1**: `OpUseSkill` targetType 0, monster 0; `OpBuffStart`
+  owner 1 kind 0 (OpSelfID said 1) token 1, 355462 ms, runSpeed 60; `SPEED: run speed 50 -> 60`;
+  the icon lands after the skill index (`waits for the skill index`, then `main list`). The gauge
+  drains: its fill, counted in the frames' texels on row 31, reads 18, 18, 17, 16, 15 px at 4, 32,
+  62, 66 and 79 s, and 13 px at 136 s in another run -- 20 x (total - elapsed) / total within a
+  pixel, capped at 18 when full; the hover tooltip read "Remaining time 4Minute 33Second" at 83 s.
+  MP 1059 -> 961 (the row's 98).
+- **Right-click on the icon**: `right-click on buff 1 (skill 113) -> cancel`, `OpBuffCancel` skill
+  113 token 1, `OpBuffEnd` tokens [1] runSpeed 50, `SPEED: run speed 60 -> 50`, the burst in the
+  frame, and no icon texels 3 s later.
+- **Natural expiry**: the lv5 Lightning imbue (id 107, 15000 ms) ended by the server 15.02 s
+  after its start, `buff 2 ended -- burst`, gone 2 s later.
+- **Ghost Walk, key 2 then a left click**: `GROUND PICK` -> `OpUseSkill` targetType 2 with the
+  point -> `OpSkillMove` -> `SKILL move handled: this player snapped`; MP 225 a cast; a second cast
+  2.2 s later answered `skill on cooldown` and cost nothing. In open field, picks 201.0, 281.9 and
+  227.5 units away each landed **100.0** units along the line (tele[1] = 100).
+- **Mid-fight** (a level-12 character auto-attacking, three Grass Walk casts at the selection):
+  each reply is `OpAttackResult` echoed targetType 0, monster 19/10, damage 0, logged `CAST reply:
+  self/ground cast (targetType 0, echoed) accepted` and **not** `attack hit` / `attack result ...
+  animating`; the next real blow drew normally. A same-level recast sends `OpBuffEnd` [n] then
+  `OpBuffStart` n+1, both runSpeed 0 (speed stays 60); the old icon bursts, the new one lands.
+- **Relog** (Escape -> the System window's Restart, real clicks): a new session, the board empty,
+  and no buff re-sent -- the logout cleared the book (round 616, OURS; restoring buffs at login is
+  OPEN). **Zone change** (`/goto donwhang` typed in chat): the server re-sent token 4 with
+  remainingMs 350406, the board replaced it in place (one icon, still draining in Donwhang).
+- 0 SCRIPT ERRORs in six client logs.
+
+Seen and not changed: a cast of a row with no cast clip plays the weapon swing (the disclosed
+stand-in of `_play_weapon_swing_anim`; Grass Walk, Ghost Walk and the imbue have none), which reads as a swing when
+Grass Walk is cast; Ghost Walk's 3-D clamp can land the caster off the ground or inside the fenced
+dragon enclosure in Jangan, since the server has no navmesh test (OPEN in round 616); the client
+re-settles its footing on the next step.
+
+Fixed here, the 616 review's leftover: a stale session's disconnect also cancelled the live
+session's auto-attack (`keepUp.Cancel`) and cleared its motion state (`motions.clear`) by character
+id. They now take the book's still-live check; `TestStaleSessionDisconnectKeepsTheLiveKeepUpAndMotion`
+fails with either guard removed ("cancelled the live auto-attack", "cleared the live motion").
+
 ## Six-hundred-and-seventeenth round: Grass Walk and the self-buffs cast with nothing selected, and Ghost Walk casts at a point picked on the ground
 
 "Some skills don't require you attack a monster like grass walk, ghost walk, and a bunch of
