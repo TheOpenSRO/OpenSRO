@@ -574,7 +574,7 @@ const TWO_SIDED_EXPECTED := {"bin": true, "graded": false, "dxt1cut": false, "dx
 ## comment above layer_draw_rule): flag 0x200 is the alpha test at
 ## ALPHAREF 0x80 / GREATEREQUAL, flag 0x1 is cull none, and the two are
 ## independent; an ENVMAP mod replaces the test with its own (ref 1, or
-## none); an item draws untested (INFERRED). The texture is the same DXT3
+## none) -- for every material of the object (round 626, READ). The texture is the same DXT3
 ## leaf with real transparency in every case -- only the flag word differs.
 ## NEGATIVE: before this round bit 0 was the "alpha" bit, so a 0x340 needle
 ## card (alpha test, one-sided) drew as a solid StandardMaterial3D.
@@ -607,36 +607,36 @@ func _test_round_625() -> void:
 		archive.close()
 		DirAccess.remove_absolute(path)
 		return
+	# The item column is gone (round 626): an item is drawn by the same rule
+	# as anything else; what spares armour is its ENVMAP mod (the env column).
 	var cases := [
-		# flags, env map, item, expected alpha ref, expected two-sided
-		[0x341, -1, false, 128, true],
-		[0x340, -1, false, 128, false],
-		[0x141, -1, false, 0, true],
-		[0x140, -1, false, 0, false],
-		[0x040, -1, false, 0, false],
-		[0x2345, -1, false, 128, true],
-		[0x341, 0x1, false, 0, true],
-		[0x340, 0x3, false, 1, false],
-		[0x341, -1, true, 0, true],
-		[0x340, 0x3, true, 1, false],
+		# flags, env map, expected alpha ref, expected two-sided
+		[0x341, -1, 128, true],
+		[0x340, -1, 128, false],
+		[0x141, -1, 0, true],
+		[0x140, -1, 0, false],
+		[0x040, -1, 0, false],
+		[0x2345, -1, 128, true],
+		[0x341, 0x1, 0, true],
+		[0x340, 0x3, 1, false],
 	]
 	for c in cases:
-		var rule: Dictionary = OL.layer_draw_rule(c[0], c[1], c[2])
-		_check(rule == {"alpha_ref": c[3], "two_sided": c[4]},
-			"r625: flags 0x%x env %d item %s -> ref %d two-sided %s (got %s)" % [c[0], c[1], c[2], c[3], c[4], rule])
-		var mat: Material = OL.build_godot_material(archive, "", layer_for.call(c[0]), {}, c[1], c[2])
-		if c[3] > 0 or c[4]:
+		var rule: Dictionary = OL.layer_draw_rule(c[0], c[1])
+		_check(rule == {"alpha_ref": c[2], "two_sided": c[3]},
+			"r625: flags 0x%x env %d -> ref %d two-sided %s (got %s)" % [c[0], c[1], c[2], c[3], rule])
+		var mat: Material = OL.build_godot_material(archive, "", layer_for.call(c[0]), {}, c[1])
+		if c[2] > 0 or c[3]:
 			var shader := mat as ShaderMaterial
 			_check(shader != null
-					and shader.shader == (ObjectLoader.FOLIAGE_SHADER if c[4] else _ol_const("FOLIAGE_SHADER_ONE_SIDED"))
-					and is_equal_approx(float(shader.get_shader_parameter("alpha_scissor")), float(c[3]) / 255.0),
-				"r625: flags 0x%x env %d item %s builds the %s foliage shader at %d/255 (got %s)" % [c[0], c[1], c[2],
-					"two-sided" if c[4] else "one-sided", c[3], mat])
+					and shader.shader == (ObjectLoader.FOLIAGE_SHADER if c[3] else _ol_const("FOLIAGE_SHADER_ONE_SIDED"))
+					and is_equal_approx(float(shader.get_shader_parameter("alpha_scissor")), float(c[2]) / 255.0),
+				"r625: flags 0x%x env %d builds the %s foliage shader at %d/255 (got %s)" % [c[0], c[1],
+					"two-sided" if c[3] else "one-sided", c[2], mat])
 		else:
 			_check(mat is StandardMaterial3D and (mat as StandardMaterial3D).cull_mode == BaseMaterial3D.CULL_BACK
 					and (mat as StandardMaterial3D).transparency == BaseMaterial3D.TRANSPARENCY_DISABLED,
-				"r625: flags 0x%x env %d item %s is solid and one-sided whatever the texture's alpha (got %s)" % [
-					c[0], c[1], c[2], mat])
+				"r625: flags 0x%x env %d is solid and one-sided whatever the texture's alpha (got %s)" % [
+					c[0], c[1], mat])
 	archive.close()
 	DirAccess.remove_absolute(path)
 

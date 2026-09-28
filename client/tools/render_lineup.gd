@@ -58,7 +58,9 @@ func _initialize() -> void:
 	for spec in chars_arg.split(";", false):
 		var parts: PackedStringArray = String(spec).strip_edges().split("|")
 		var code: String = parts[0].strip_edges()
-		var body_path: String = bodies.get(code, "")
+		# A `.bsr` path stands for itself: an NPC or monster by its model
+		# file, for bodies no player code names (round 626).
+		var body_path: String = code if code.to_lower().ends_with(".bsr") else bodies.get(code, "")
 		if body_path == "":
 			printerr("no body row for code ", code)
 			continue

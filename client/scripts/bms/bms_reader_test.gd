@@ -39,7 +39,7 @@ func _append_len_prefixed(buf: PackedByteArray, s: String) -> PackedByteArray:
 	out.append_array(lp)
 	return out
 
-func _build_synthetic_mesh(rec_size: int = 44, skinned: bool = false, motion: bool = false, empty_first_slot: bool = false) -> PackedByteArray:
+func _build_synthetic_mesh(rec_size: int = 44, skinned: bool = false, motion: bool = false, empty_first_slot: bool = false, both_empty: bool = false) -> PackedByteArray:
 	var buf := PackedByteArray()
 	buf.resize(BmsReader.PREAMBLE_END)
 	var magic := BmsReader.MAGIC.to_ascii_buffer()
@@ -119,6 +119,14 @@ func _build_synthetic_mesh(rec_size: int = 44, skinned: bool = false, motion: bo
 			skin[15] = 1
 			skin[16] = 0xFF
 			skin[17] = 0xFF
+		if both_empty:
+			# v2 with NEITHER slot used, as heavy_15_ba writes 14 vertices.
+			skin[12] = BmsReader.NO_BONE
+			skin[13] = 0
+			skin[14] = 0
+			skin[15] = BmsReader.NO_BONE
+			skin[16] = 0
+			skin[17] = 0
 		buf.append_array(skin)
 
 	var index_off := buf.size()
@@ -288,6 +296,30 @@ func _init() -> void:
 		var ew: PackedFloat32Array = ea[Mesh.ARRAY_WEIGHTS]
 		_check(eb[8] == 1 and is_equal_approx(ew[8], 1.0) and is_equal_approx(ew[9], 0.0),
 			"the ArrayMesh binds that vertex to bone 1 alone (got bone %d weights %f/%f)" % [eb[8], ew[8], ew[9]])
+
+	# Round 626 follow-up: both slots empty is palette entry 0 in the
+	# client's builder (ResObject::FUN_00be2f80) -- no bone -- drawn here in
+	# the model's own space: to_arrays binds it one past the palette, where
+	# Skeleton3DBuilder.build_skin puts a bone that never moves.
+	var both := BmsReader.parse(_build_synthetic_mesh(44, true, false, false, true))
+	_check(both != null and both.is_skinned(), "a vertex with both slots empty keeps the mesh skinned")
+	if both != null and both.is_skinned():
+		var vb: BmsReader.Vertex = both.vertices[2]
+		_check(vb.bone0 == BmsReader.OBJECT_SPACE and is_equal_approx(vb.weight0, 1.0) and vb.bone1 == -1,
+			"both slots empty is the object-space entry at full weight (got %d/%f/%d)" % [vb.bone0, vb.weight0, vb.bone1])
+		_check(both.object_space_vertices == 1, "the mesh counts one object-space vertex (got %d)" % both.object_space_vertices)
+		var ba := BmsReader.to_array_mesh(both).surface_get_arrays(0)
+		var bb: PackedInt32Array = ba[Mesh.ARRAY_BONES]
+		_check(bb[8] == both.bone_names.size(), "to_arrays puts it one past the palette (got %d)" % bb[8])
+		var sk := Skeleton3D.new()
+		sk.add_bone("Bip01 Spine")
+		sk.add_bone("Bip01 L Hand")
+		var skin := Skeleton3DBuilder.build_skin(sk, both.bone_names, true)
+		_check(skin != null and skin.get_bind_count() == 3
+				and sk.get_bone_name(skin.get_bind_bone(2)) == Skeleton3DBuilder.OBJECT_SPACE_BONE
+				and skin.get_bind_pose(2) == Transform3D.IDENTITY,
+			"build_skin binds that index to a still bone with an identity bind")
+		sk.free()
 
 	# And a mesh with no skin section stays unskinned rather than inventing
 	# one -- scenery is the common case.

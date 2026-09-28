@@ -548,6 +548,12 @@ func _test_round_625() -> void:
 	var env = obj.get("env_map_materials")
 	_check(env is Dictionary and (env as Dictionary) == {1: 0x3},
 		"r625: the ENVMAP mod on material 1 with flag word 0x3 is read (got %s)" % str(env))
+	# Round 626: the mod's flag word governs EVERY material of the object --
+	# CRTModEnvMap::vslot_004 sets the alpha state before it compares its
+	# material index -- so it is also read object-wide.
+	var env_flags = obj.get("env_map_flags")
+	_check(env_flags is int and env_flags == 0x3,
+		"r626: the object's ENVMAP flag word is 0x3, whatever material it names (got %s)" % str(env_flags))
 	# Without the flag word the same bytes are a list whose entries abut, so
 	# the extra words break the chain: the flag, not a guess, decides.
 	var unflagged := tree.duplicate()

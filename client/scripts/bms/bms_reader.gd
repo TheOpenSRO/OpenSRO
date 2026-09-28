@@ -114,6 +114,12 @@ const WEIGHT_FULL_SCALE := 65535.0
 ## Sentinel in a bone slot meaning "no influence here" -- usually the second
 ## slot, but real Degree-11 armour writes it in the first (see _parse_skin).
 const NO_BONE := 255
+## A Vertex bone index meaning "palette entry 0" in the client's skinned
+## vertex buffer -- the entry no bone was given, which this project draws as
+## the model's own space (see _parse_skin). to_arrays maps it one past the
+## palette, and Skeleton3DBuilder.build_skin binds that index to a bone
+## that never moves (OBJECT_SPACE_BONE).
+const OBJECT_SPACE := -2
 ## Size of one per-vertex skin record: u8 bone0, u16 weight0, u8 bone1,
 ## u16 weight1.
 const SKIN_REC_SIZE := 6
@@ -145,6 +151,8 @@ class ParsedMesh:
 	## True when every vertex carries a usable bone weight.
 	func is_skinned() -> bool:
 		return not bone_names.is_empty()
+	## Vertices with an influence on OBJECT_SPACE (see _parse_skin).
+	var object_space_vertices: int = 0
 	var vertices: Array[Vertex] = []
 	## Flat triangle list; size is always a multiple of 3.
 	var indices: PackedInt32Array = PackedInt32Array()
@@ -408,51 +416,62 @@ static func _parse_skin(
 		var w0 := float(data[rec + 1] | (data[rec + 2] << 8))
 		var b1 := data[rec + 3]
 		var w1 := float(data[rec + 4] | (data[rec + 5] << 8))
-		# 0xFF is "no bone" in EITHER slot, and a slot holding it is skipped
-		# -- READ in the client's skinned vertex-buffer builders
-		# (ResObject::FUN_00be28d0 and FUN_00be2f80: `if (index != 0xff)`
-		# around each of the two influences, and the second is still read
-		# when the first is empty). Degree-11 armour writes a few vertices
-		# that way, (0xFF, 0, bone, 0xFFFF): 3 of heavy_11_la.bms's 876, 1 of
-		# heavy_11_ba.bms's 530 (round 626, MEASURED). Treating a 0xFF first
-		# slot as a bad palette threw the whole mesh's skin away, and an item
-		# whose mesh is not weighted onto the body is not drawn at all -- the
-		# chest and legs that were missing from a full Degree-11 set.
-		# Any other first index past the palette is still refused (the
-		# client range-checks it, FUN_00b4dd85); a second one past it is
-		# dropped as before rather than refusing the mesh.
+		# The client's rule, READ in the builder a worn item's and a
+		# character's skinned vertices go through (round 626 follow-up):
+		# `CompoundObj::FUN_00be7640` passes 1 for object types 0, 1 and 5
+		# (bodies, characters, items) down `FUN_00be3940` -> `FUN_00be37e0`
+		# -> `ResObject::FUN_00be3540`, which then builds with
+		# `ResObject::FUN_00be2f80`. Per vertex it starts from palette
+		# entries 0/0 and blend weight 0, and for each of the two slots:
+		#   - index 0xFF: the slot is skipped (NOT the end of the list); its
+		#     entry stays 0;
+		#   - otherwise: weight 0xFFFF reads 1.0, any other w / full scale;
+		#     the bone is looked up (entry = its matrix + 1; entry 0 is not
+		#     a bone) and the weight added to the sum.
+		# The blend weight is slot 0's own weight over that sum (0 when the
+		# sum is 0), and D3D gives entry 1 the rest. So a slot that is
+		# empty, or a vertex whose weights sum to 0, lands on entry 0 --
+		# which this reader models as OBJECT_SPACE: the vertex keeps its
+		# bind position in the model's own space (INFERRED: entry 0 is the
+		# slot no bone was given). Degree-11 armour writes a few vertices
+		# with an empty first slot, (0xFF, 0, bone, 0xFFFF): 3 of
+		# heavy_11_la.bms's 876, 1 of heavy_11_ba.bms's 530 (MEASURED).
+		# Taking a 0xFF first slot for a misread palette threw the whole
+		# mesh's skin away, and an item whose mesh is not weighted onto the
+		# body is not drawn -- the missing chest and legs. Both slots empty
+		# also occurs (heavy_15_ba 14 vertices, sd_t_area_smith_part1 7,
+		# avatar_m_headknightshigher_* 2; the round-626 review). Any other
+		# index past the palette is refused: the client range-checks it
+		# (FUN_00b4dd85), so it is not a file it draws.
+		# (`ResObject::FUN_00be28d0`, the builder for other object types,
+		# differs in one way: its entries are NOT reset per vertex, so an
+		# empty slot keeps the previous vertex's entry.)
 		var s0 := b0 != NO_BONE
-		var s1 := b1 != NO_BONE and b1 < names.size()
-		if s0 and b0 >= names.size():
+		var s1 := b1 != NO_BONE
+		if (s0 and b0 >= names.size()) or (s1 and b1 >= names.size()):
 			return # a bad index means this isn't the palette we think it is
 		var v: Vertex = mesh.vertices[i]
-		if not s0 and s1:
-			# Only the second slot is used: it is this vertex's one influence
-			# (the client's blend weight is slot 0's, 0, so all of it goes to
-			# the second index). Stored as the first so a consumer that reads
-			# bone0 first -- to_arrays -- binds it to that bone.
-			b0 = b1
-			w0 = w1
-			s0 = true
-			s1 = false
-		v.bone0 = b0 if s0 else -1
-		v.bone1 = b1 if s1 else -1
-		# Normalised rather than trusted: most vertices sum to full scale
-		# exactly, but a few percent of a real file's do not (measured: 8 of
-		# 280 in chinaquest_priest_part1, worst 33% off), and an
-		# unnormalised weight stretches the vertex it belongs to. The client
-		# normalises the same way: blend weight = slot 0 / (slot 0 + slot 1).
-		var total := (w0 if v.bone0 != -1 else 0.0) + (w1 if v.bone1 != -1 else 0.0)
-		if total <= 0.0:
-			# Both slots empty, or both weightless. OPEN what the client
-			# draws for it (its builder packs indices 0/0, weight 0 -- palette
-			# entry 0, which is not a bone of the mesh); to_arrays pins such a
-			# vertex to the first palette bone. None measured in real armour.
-			v.bone0 = -1
-			v.bone1 = -1
-			continue
-		v.weight0 = w0 / total
-		v.weight1 = (w1 / total) if v.bone1 != -1 else 0.0
+		var f0 := 1.0 if w0 == WEIGHT_FULL_SCALE else w0 / WEIGHT_FULL_SCALE
+		var f1 := 1.0 if w1 == WEIGHT_FULL_SCALE else w1 / WEIGHT_FULL_SCALE
+		var total := (f0 if s0 else 0.0) + (f1 if s1 else 0.0)
+		# Normalised, as the client does: an unnormalised weight stretches
+		# the vertex (8 of 280 in chinaquest_priest_part1 miss full scale).
+		var blend := f0 / total if total != 0.0 else 0.0
+		var e0 := b0 if s0 else OBJECT_SPACE
+		var e1 := b1 if s1 else OBJECT_SPACE
+		if blend >= 1.0 or e0 == e1:
+			v.bone0 = e0 if blend >= 1.0 else e1
+			v.weight0 = 1.0
+		elif blend <= 0.0:
+			v.bone0 = e1
+			v.weight0 = 1.0
+		else:
+			v.bone0 = e0
+			v.weight0 = blend
+			v.bone1 = e1
+			v.weight1 = 1.0 - blend
+		if v.bone0 == OBJECT_SPACE or v.bone1 == OBJECT_SPACE:
+			mesh.object_space_vertices += 1
 	mesh.bone_names = names
 
 ## Parses the real object navigation/collision mesh a .bms may carry (see
@@ -653,13 +672,13 @@ static func to_arrays(mesh: ParsedMesh) -> Array:
 		for i in range(mesh.vertices.size()):
 			var v: Vertex = mesh.vertices[i]
 			var base := i * 4
-			# A vertex the skin parser rejected falls back to the first
-			# palette bone at full weight: better a piece that follows one
-			# bone than one that collapses to the origin.
-			bones[base] = maxi(v.bone0, 0)
-			weights[base] = v.weight0 if v.bone0 >= 0 else 1.0
-			bones[base + 1] = maxi(v.bone1, 0)
-			weights[base + 1] = v.weight1 if v.bone1 >= 0 else 0.0
+			# OBJECT_SPACE is the index one past the palette, which
+			# Skeleton3DBuilder.build_skin binds to a bone that never moves.
+			var object_index := mesh.bone_names.size()
+			bones[base] = object_index if v.bone0 == OBJECT_SPACE else maxi(v.bone0, 0)
+			weights[base] = v.weight0 if v.bone0 != -1 else 1.0
+			bones[base + 1] = object_index if v.bone1 == OBJECT_SPACE else maxi(v.bone1, 0)
+			weights[base + 1] = v.weight1 if v.bone1 != -1 else 0.0
 			bones[base + 2] = 0
 			weights[base + 2] = 0.0
 			bones[base + 3] = 0

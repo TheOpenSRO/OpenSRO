@@ -184,7 +184,7 @@ static func apply_ban_keyframe(skeleton: Skeleton3D, track: BanReader.Bone, fram
 ## Returns null if any palette bone is missing from the skeleton: a skin
 ## with a wrong binding silently drags geometry to the origin, which is far
 ## harder to diagnose than a mesh that declines to attach.
-static func build_skin(skeleton: Skeleton3D, bone_names: PackedStringArray) -> Skin:
+static func build_skin(skeleton: Skeleton3D, bone_names: PackedStringArray, object_space: bool = false) -> Skin:
 	if skeleton == null or bone_names.is_empty():
 		return null
 	var skin := Skin.new()
@@ -194,7 +194,23 @@ static func build_skin(skeleton: Skeleton3D, bone_names: PackedStringArray) -> S
 			push_warning("Skeleton3DBuilder: skeleton has no bone named %s" % bone_names[i])
 			return null
 		skin.add_bind(bone_idx, skeleton.get_bone_global_rest(bone_idx).affine_inverse())
+	if object_space:
+		# One more bind, at the index BmsReader.to_arrays gives OBJECT_SPACE
+		# (one past the palette): a parentless bone at the skeleton's
+		# origin that nothing animates, so its skin matrix stays identity
+		# and the vertex keeps its bind position in the model's own space --
+		# the client's palette entry 0 (BmsReader._parse_skin, round 626).
+		var obj := skeleton.find_bone(OBJECT_SPACE_BONE)
+		if obj == -1:
+			obj = skeleton.get_bone_count()
+			skeleton.add_bone(OBJECT_SPACE_BONE)
+			skeleton.set_bone_rest(obj, Transform3D.IDENTITY)
+			skeleton.reset_bone_pose(obj)
+		skin.add_bind(obj, Transform3D.IDENTITY)
 	return skin
+
+## The bone build_skin adds for vertices on the client's palette entry 0.
+const OBJECT_SPACE_BONE := "__srrevamp_object_space__"
 
 static func apply_ban_pose(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, frame_idx: int) -> void:
 	for track in anim.bones:

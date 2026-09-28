@@ -264,10 +264,10 @@ static func _prepare_node(archive: Pk2Reader, path: String, known: Dictionary, p
 			var layer_idx := _find_layer_by_name(material.layers, mesh.material_name)
 			if layer_idx == -1:
 				layer_idx = i if material.layers.size() == mesh_paths.size() else 0
-			# The draw rule's two inputs from the object (round 625): an
-			# env-map mod on this material index, and whether it is an item.
+			# The draw rule's input from the object (rounds 625, 626): its
+			# env-map mod, which overrides every material's alpha test.
 			piece["material"] = _prepare_material(archive, obj.material_path, material.layers[layer_idx], known, prepared,
-				int(obj.env_map_materials.get(layer_idx, -1)), obj.is_item())
+				obj.env_map_flags)
 
 		(node["pieces"] as Array).append(piece)
 		loaded_count += 1
@@ -478,24 +478,26 @@ static func _read_material(archive: Pk2Reader, bmt_path: String, missing: Array)
 ##   a two-sided solid one. Until this round bit 0 was read as "alpha" --
 ##   a correlation that held for the willows and broke on 44 tree models
 ##   whose 0x340 needle cards drew as solid slabs.
-## - An environment-map mod on the material (BsrReader.ParsedObject.
-##   env_map_materials, READ from `CRTModEnvMap::vslot_004`) ORs 0x60000000
-##   into the flags -- the 0x20000000 that switches the material's own test
-##   off -- and turns on its own test, ALPHAREF 1 / GREATEREQUAL, only when
-##   its flag word has ENV_MAP_FLAG_ALPHA_TEST. The texture's alpha is then
-##   the reflection mask, not a cutout.
-## - EQUIPMENT (a type-5 item's pieces, SkinnedBsrAssembler) is drawn with
-##   NO material alpha test. INFERRED, not read: the flag word says 0x200 on
-##   most weapon, shield and armour layers, yet measured under each piece's
-##   own UV triangles 3 of 4 such layers have more than 30% of their surface
-##   below alpha 128 (median 75% for armour, 52% for weapons, 64% shields;
-##   `tools/foliage_census.gd --under=res/item`), where monsters, NPCs and
-##   characters sit at a median of 0-4%. A test at 128 would leave a spear
-##   15% of a spear -- the shredded spear and see-through shield of the
-##   round-625 report. The client has the mechanism: `CRTModProgEquipPow::
-##   vslot_004` ORs 0xe21f0000 into an equipped item's flags (0x20000000
-##   and 0x10000000: no material state at all) and attaches through
-##   `CCompChar::FUN_00c350a0`; WHEN it is attached is OPEN.
+## - An environment-map mod on the object (BsrReader.ParsedObject.
+##   env_map_flags, READ from `CRTModEnvMap::vslot_004`, round 626) ORs
+##   0x60000000 into the flags -- the 0x20000000 that switches the
+##   material's own test off -- and turns on its own test, ALPHAREF 1 /
+##   GREATEREQUAL, only when its flag word has ENV_MAP_FLAG_ALPHA_TEST. It
+##   does so for EVERY material of the part: the mod's material index is
+##   compared only afterwards, to bind the reflection texture. The
+##   texture's alpha is then the reflection mask, not a cutout.
+## - That is how retail spares equipment (round 626, READ; the round-625
+##   "items draw untested" rule was an inference and is gone): 5 of every
+##   shape of worn item checked carries an ENVMAP mod in its "ambient" set --
+##   `sword_01`/`spear_11` flag word 1 (no test: solid), `heavy_11_la` and
+##   `heavy_01_ha` flag word 3 (test at 1: only alpha-0 texels cut) -- while
+##   a cloth hat like `clothes_04_ha` has none, so its own 0x200 cuts its
+##   1-bit DXT1 alpha at 128. Stage-0 alpha IS the texture's (READ,
+##   `FUN_00c42860` sets D3DTSS_ALPHAARG1 = D3DTA_TEXTURE). Two other
+##   overrides exist and are not modelled: `CRTModProgEquipPow` (a +N
+##   item's glow, attached by `CObjCharacter::FUN_00a5f3e0` only for a
+##   non-zero plus level with a row in its table) ORs 0xe21f0000 and tests
+##   at 1 or not at all; and material flag 0x10000 makes the env mod skip.
 const LAYER_FLAG_TWO_SIDED := 0x1
 const LAYER_FLAG_ALPHA_TEST := 0x200
 ## D3DRS_ALPHAREF 0x80 against D3DCMP_GREATEREQUAL: a texel is kept when its
@@ -519,16 +521,14 @@ const FOLIAGE_SHADER_ONE_SIDED := preload("res://scripts/assets/foliage_one_side
 const FOLIAGE_ALPHA_SCISSOR := float(ALPHA_TEST_REF) / 255.0
 
 ## How a layer is drawn, from its flag word and what the object says about
-## it -- THE MATERIAL RULE above. `env_map`: the flag word of an
-## environment-map mod on this layer's material index, -1 for none. `item`:
-## the layer belongs to a type-5 item. Returns {"alpha_ref": 0 for no test
+## it -- THE MATERIAL RULE above. `env_map`: the flag word of the object's
+## environment-map mod (BsrReader.ParsedObject.env_map_flags), -1 for none.
+## Returns {"alpha_ref": 0 for no test
 ## or the byte a texel must reach, "two_sided": bool}.
-static func layer_draw_rule(flags: int, env_map: int = -1, item: bool = false) -> Dictionary:
+static func layer_draw_rule(flags: int, env_map: int = -1) -> Dictionary:
 	var alpha_ref := ALPHA_TEST_REF if flags & LAYER_FLAG_ALPHA_TEST != 0 else 0
 	if env_map >= 0:
 		alpha_ref = ENV_MAP_ALPHA_REF if env_map & ENV_MAP_FLAG_ALPHA_TEST != 0 else 0
-	elif item:
-		alpha_ref = 0
 	return {"alpha_ref": alpha_ref, "two_sided": flags & LAYER_FLAG_TWO_SIDED != 0}
 
 ## The material for a layer the rule draws alpha-tested or two-sided.
@@ -552,10 +552,10 @@ static func _build_foliage_material(layer: BmtReader.Layer, tex: Texture2D, alph
 ## caller's thread -- SkinnedBsrAssembler builds its NPC and item pieces'
 ## materials through here: _prepare_material decodes the texture to an Image,
 ## _commit_material builds the material from the uploaded texture.
-## `env_map` / `item`: see layer_draw_rule (round 625).
-static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: BmtReader.Layer, texture_cache: Dictionary = {}, env_map: int = -1, item: bool = false) -> Material:
+## `env_map`: see layer_draw_rule (rounds 625, 626).
+static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: BmtReader.Layer, texture_cache: Dictionary = {}, env_map: int = -1) -> Material:
 	var prepared := {"textures": {}, "missing": [], "log": []}
-	var plan := _prepare_material(archive, bmt_path, layer, snapshot_textures(texture_cache), prepared, env_map, item)
+	var plan := _prepare_material(archive, bmt_path, layer, snapshot_textures(texture_cache), prepared, env_map)
 	for what in prepared["missing"]:
 		_missing(what)
 	for line in prepared["log"]:
@@ -570,8 +570,8 @@ static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: Bm
 ## `{"layer", "texture_key", "alpha_ref", "two_sided", "cutout"}` --
 ## `cutout` is alpha_ref > 0 -- the key "" for a layer drawn without a
 ## texture (none named, not found, not decodable).
-static func _prepare_material(archive: Pk2Reader, bmt_path: String, layer: BmtReader.Layer, known: Dictionary, prepared: Dictionary, env_map: int = -1, item: bool = false) -> Dictionary:
-	var rule := layer_draw_rule(layer.unknown, env_map, item)
+static func _prepare_material(archive: Pk2Reader, bmt_path: String, layer: BmtReader.Layer, known: Dictionary, prepared: Dictionary, env_map: int = -1) -> Dictionary:
+	var rule := layer_draw_rule(layer.unknown, env_map)
 	var plan := {"layer": layer, "texture_key": "", "alpha_ref": rule["alpha_ref"],
 		"two_sided": rule["two_sided"], "cutout": int(rule["alpha_ref"]) > 0}
 	if layer.texture_path == "":
@@ -625,7 +625,7 @@ static func _prepare_material(archive: Pk2Reader, bmt_path: String, layer: BmtRe
 			(prepared["log"] as Array).append("QA MAT: %s (%s, %s) is %.1f%% non-opaque, flags 0x%04x, no alpha test%s" % [
 				layer.layer_name, tex_path.get_file(), four_cc,
 				fraction * 100.0, layer.unknown,
-				" (env map 0x%x)" % env_map if env_map >= 0 else (" (item)" if item else "")])
+				" (env map 0x%x)" % env_map if env_map >= 0 else ""])
 	return plan
 
 ## The commit half of a layer's material, on the main thread: the

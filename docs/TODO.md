@@ -607,13 +607,16 @@ are not drawn.
   whole refsetitemgroup set is worn, and plays `ITEM_SETITEM_ACTIVE` (ITEM_FORMAT.md has the
   addresses). We draw the first always. Building it needs the item's set id (record+0x1d4) and
   refsetitemgroup's slot count; the full-set layers (`heavy_11_set_b_fly` 59.6% transparent,
-  `*_ef_alpha`) are authored translucent, so their draw state has to be read first -- the item
-  path now draws every layer solid.
-- **Which draw path renders a worn item, and what stage-0 alpha it feeds the alpha test.** Bit 9
-  turns the test on (BMT_FORMAT.md), yet 79-89% of a Degree-11 piece's surface samples alpha
-  below the reference, so items are drawn solid; tracing the path would say why.
-- **A skin record with both slots 0xFF** (BMS_FORMAT.md): what the client draws is not read;
-  none was found in the armour measured.
+  `*_ef_alpha`) are authored translucent, so their draw state (any MTRL mod in the fullset
+  `.bsr`) has to be read first.
+- **Enhanced-gear glow.** `CRTModProgEquipPow` (BMT_FORMAT.md) is attached only to a +N item
+  with a matching glow row; it overrides the material state entirely. Not modelled.
+- **Object-space skin entry.** An empty skin slot lands on the client's palette entry 0, drawn
+  here in the model's own space (BMS_FORMAT.md). That entry 0 is the object transform is
+  INFERRED, not read from the vertex shader's constant upload.
+- **The 355 bit-9 item layers with no ENVMAP mod** are cut at 128 by the READ rule. That is right
+  for the 1-bit hats. `light_02_ha` (91% graded alpha) is cut the same way; a render of it
+  against the original would confirm it.
 - **The body under armour.** The body's own pieces are still drawn beneath every worn piece.
   Whether the client hides any body piece under armour was not looked at.
 - **The faint translucent shape beside the tester's character** (v0.1.457 screenshot) is not

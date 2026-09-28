@@ -58,9 +58,11 @@ func _initialize() -> void:
 			continue
 		if ids.is_empty() and (needle == "" or not String(item.code_name).to_lower().contains(needle)):
 			continue
-		print("== item %d %s tids=%s model=%s" % [id, item.code_name, str(item.type_ids), item.model_path])
-		for model in String(item.model_path).split(",", false):
-			_probe_model(data, body_bsr, model.strip_edges())
+		print("== item %d %s tids=%s models=%s" % [id, item.code_name, str(item.type_ids), str(item.model_paths)])
+		# Every model the row lists: the first is the one worn, a second the
+		# full-set model (ItemTableReader.Item.model_paths).
+		for model in item.model_paths:
+			_probe_model(data, body_bsr, model)
 	quit(0)
 
 func _probe_model(data: Pk2Reader, body_bsr: String, model: String) -> void:
@@ -73,8 +75,8 @@ func _probe_model(data: Pk2Reader, body_bsr: String, model: String) -> void:
 	if parsed == null:
 		print("  bsr %s: does not parse" % model)
 		return
-	print("  bsr %s: type %d item=%s skeleton='%s' attach='%s'" % [
-		model, parsed.object_type, str(parsed.is_item()), parsed.skeleton_path, parsed.attach_bone])
+	print("  bsr %s: type %d item=%s skeleton='%s' attach='%s' envmap=%d" % [
+		model, parsed.object_type, str(parsed.is_item()), parsed.skeleton_path, parsed.attach_bone, parsed.env_map_flags])
 	if sections != null:
 		print("    materials %s" % str(sections["materials"]))
 		print("    mesh groups %s" % str(sections["mesh_groups"]))
@@ -128,7 +130,8 @@ func _probe_model(data: Pk2Reader, body_bsr: String, model: String) -> void:
 				var mat := mi.material_override
 				var kind := "none"
 				if mat is ShaderMaterial:
-					kind = "cutout(shader %s)" % (mat as ShaderMaterial).shader.resource_path.get_file()
+					kind = "shader %s scissor %.4f" % [(mat as ShaderMaterial).shader.resource_path.get_file(),
+						float((mat as ShaderMaterial).get_shader_parameter("alpha_scissor"))]
 				elif mat is StandardMaterial3D:
 					kind = "standard transparency=%d cull=%d tex=%s" % [
 						(mat as StandardMaterial3D).transparency, (mat as StandardMaterial3D).cull_mode,
@@ -169,7 +172,7 @@ func _alpha_histogram(data: Pk2Reader, bmt_path: String, tex: String) -> String:
 	var i := 3
 	while i < bytes.size():
 		var a := bytes[i]
-		if a < SkinnedBsrAssembler.ALPHA_TEST_REF:
+		if a < ObjectLoader.ALPHA_TEST_REF:
 			below_ref += 1
 		if a <= 5:
 			t += 1
@@ -213,7 +216,7 @@ func _surface_alpha(data: Pk2Reader, bmt_path: String, tex: String, mesh: BmsRea
 		var x := posmod(int(floor(uv.x * w)), w)
 		var y := posmod(int(floor(uv.y * h)), h)
 		var a := int(round(image.get_pixel(x, y).a * 255.0))
-		if a < SkinnedBsrAssembler.ALPHA_TEST_REF:
+		if a < ObjectLoader.ALPHA_TEST_REF:
 			below += 1
 		if a <= 5:
 			zero += 1

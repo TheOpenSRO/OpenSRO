@@ -157,12 +157,12 @@ static func assemble_from_archive(
 			var layer_idx := ObjectLoader._find_layer_by_name(material.layers, mesh.material_name)
 			if layer_idx == -1:
 				layer_idx = i if material.layers.size() == mesh_paths.size() else 0
-			# The draw rule's object inputs (ObjectLoader.layer_draw_rule,
-			# round 625): an env-map mod on the material index, and whether
-			# this is an item.
+			# The draw rule's object input (ObjectLoader.layer_draw_rule,
+			# rounds 625, 626): the object's env-map mod, which overrides
+			# every material's alpha test.
 			godot_material = ObjectLoader.build_godot_material(
 				archive, parsed.material_path, material.layers[layer_idx], {},
-				int(parsed.env_map_materials.get(layer_idx, -1)), parsed.is_item()
+				parsed.env_map_flags
 			)
 
 		# Real skinning when the mesh carries weights, rigid attachment when
@@ -175,7 +175,7 @@ static func assemble_from_archive(
 		# properly and can be animated; without it, every piece hangs
 		# rigidly off one bone and animating tears the model apart.
 		if mesh.is_skinned():
-			var skin := Skeleton3DBuilder.build_skin(skeleton, mesh.bone_names)
+			var skin := Skeleton3DBuilder.build_skin(skeleton, mesh.bone_names, mesh.object_space_vertices > 0)
 			if skin != null:
 				var mi := MeshInstance3D.new()
 				mi.mesh = BmsReader.to_array_mesh(mesh)
@@ -303,12 +303,12 @@ static func attach_item_from_archive(
 			var layer_idx := ObjectLoader._find_layer_by_name(material.layers, mesh.material_name)
 			if layer_idx == -1:
 				layer_idx = i if material.layers.size() == mesh_paths.size() else 0
-			# The draw rule's object inputs (ObjectLoader.layer_draw_rule,
-			# round 625): an env-map mod on the material index, and whether
-			# this is an item.
+			# The draw rule's object input (ObjectLoader.layer_draw_rule,
+			# rounds 625, 626): the object's env-map mod, which overrides
+			# every material's alpha test.
 			godot_material = ObjectLoader.build_godot_material(
 				archive, parsed.material_path, material.layers[layer_idx], {},
-				int(parsed.env_map_materials.get(layer_idx, -1)), parsed.is_item()
+				parsed.env_map_flags
 			)
 		meshes.append([mesh, godot_material])
 	if meshes.is_empty():
@@ -401,73 +401,6 @@ static func attach_item_from_archive(
 	result.skinned = true
 	return result
 
-## The render states a .bmt layer's flag word selects, READ in the client's
-## per-material state setter `CObjRendererVS::FUN_00c42a60` (and its undo,
-## FUN_00c42b40), which every object draw path calls with the layer's flag
-## word (runtime material + 0x70, which is the file layer's + 0x60 behind a
-## 0x10 header: the D3DMATERIAL9 at + 0x10 goes to SetMaterial) OR'd with the
-## object's own flags. Round 626:
-##
-## - bit 0 (0x001): D3DRS_CULLMODE = NONE -- the layer is two-sided. Undone to
-##   CCW (back-face culling). Two of the seven draw paths clear this bit
-##   before the call (FUN_00bf0890, FUN_00bf2360); which path draws a worn
-##   item is not traced -- OPEN.
-## - bit 9 (0x200), unless the object sets 0x20000000: D3DRS_ALPHATESTENABLE
-##   on with D3DRS_ALPHAREF 0x80; the compare is D3DRS_ALPHAFUNC 7,
-##   GREATEREQUAL (FUN_00c42860). This is the alpha-test bit. Nothing in the
-##   setter reads bit 0 as alpha.
-## - bit 2 (0x004): D3DRS_SPECULARENABLE on; bit 12 (0x1000): stage-0 colour
-##   op MODULATE2X; bit 3 (0x008), when an option is on: lighting off. Not
-##   applied here.
-## No material bit turns alpha BLENDING on: FUN_00c428c0 blends
-## (SRCALPHA/INVSRCALPHA) only for an object-level fade colour, and returns at
-## once for an opaque 0xff000000.
-const LAYER_FLAG_TWO_SIDED := 0x1
-const LAYER_FLAG_ALPHA_TEST := 0x200
-## D3DRS_ALPHAREF as FUN_00c42a60 writes it, on the 0..255 scale.
-const ALPHA_TEST_REF := 0x80
-
-## An equippable item's material: its texture drawn SOLID, back faces culled
-## unless bit 0 makes the layer two-sided -- in place of ObjectLoader's
-## scenery rule, which reads bit 0 as "alpha cutout" (the correlation
-## BMT_FORMAT.md recorded before the setter above was read). Round 626.
-##
-## Why solid, even for a bit-9 layer:
-## - bit 0 is not an alpha bit (READ, FUN_00c42a60). `spear_11` is 0x0141,
-##   bit 0 without bit 9, so the client never alpha-tests it; the old rule cut
-##   it at 0.5 through the foliage shader -- MEASURED, 49.1% of its triangles
-##   sample alpha below 0x80: the see-through, washed-out spear of the report.
-## - bit 9 does turn the alpha test on in the setter, but an item's texture
-##   alpha cannot be what that test sees on a worn item: MEASURED at every
-##   triangle's UV centroid, the share of the surface below ALPHAREF 0x80 is
-##   81.4% for the starting sword `sword_01` (0x0340), 89.1% for
-##   `heavy_11_la` (0x0341), 82.5% for `heavy_11_ha` (0x0340) -- an alpha
-##   test on it would erase the item. The alpha is a graded gloss mask
-##   (BMT_FORMAT.md's `blade_14`). Which texture-stage alpha the item draw
-##   path feeds the test is OPEN (the object renderer's default is
-##   SELECTARG1 on stage 0, FUN_00c429f0, but the path that draws a worn item
-##   was not traced), so no alpha test is applied here; a bit-9 item layer
-##   that really is a cutout would show solid, and none is known.
-##
-## `built` is what ObjectLoader.build_godot_material made of the layer; only
-## its texture is kept. The albedo colour is the layer's ambient, as
-## ObjectLoader sets it. Kept to items so the scenery rule stays the foliage
-## lane's (round 625) to change.
-static func equipment_material(layer: BmtReader.Layer, built: Material) -> Material:
-	if layer == null or built == null:
-		return built
-	var tex: Texture2D = null
-	if built is StandardMaterial3D:
-		tex = (built as StandardMaterial3D).albedo_texture
-	elif built is ShaderMaterial:
-		tex = (built as ShaderMaterial).get_shader_parameter("albedo_texture")
-	var mat := StandardMaterial3D.new()
-	mat.resource_name = layer.layer_name
-	mat.albedo_color = layer.ambient
-	mat.albedo_texture = tex
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED if layer.unknown & LAYER_FLAG_TWO_SIDED != 0 else BaseMaterial3D.CULL_BACK
-	return mat
-
 ## A MeshInstance3D skinned to skeleton by the mesh's own bone palette, or
 ## null when the mesh carries no weights or names a bone the skeleton
 ## does not have.
@@ -476,7 +409,7 @@ static func _skinned_instance(
 ) -> MeshInstance3D:
 	if not mesh.is_skinned():
 		return null
-	var skin := Skeleton3DBuilder.build_skin(skeleton, mesh.bone_names)
+	var skin := Skeleton3DBuilder.build_skin(skeleton, mesh.bone_names, mesh.object_space_vertices > 0)
 	if skin == null:
 		return null
 	var mi := MeshInstance3D.new()

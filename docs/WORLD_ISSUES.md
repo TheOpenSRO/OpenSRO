@@ -7094,7 +7094,111 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twenty-sixth round, review follow-up: hats and fringes are cut again, armour stays whole, and the reason is READ
+
+The review confirmed round 626's chest and legs fix and the comma split. It also found a
+regression: "draw every item layer solid" drew 95 DXT1 hat and flag layers as opaque black
+cards, and 590 formerly cut layers solid (`rv626_shots/hats_zoom.png`). Round 625 had made the
+same inference the other way, "items draw untested", and drew 91 avatar cutouts solid. This
+follow-up merges feat/foliage (4f65715) and replaces both guesses with the client's rule.
+`ObjectLoader.layer_draw_rule` is now the only material rule; round 626's `equipment_material`
+is removed.
+
+**How retail spares armour (READ).** The mechanism is the item's own **ENVMAP mod**.
+
+- `CRTModEnvMap::vslot_004` (0x00c83690) ORs `0x60000000` into the draw flags, which switches
+  off the material's own `0x200` test. It then sets its own test from the mod's flag word:
+  ALPHAREF 1 / GREATEREQUAL when bit 1 is set, no test otherwise.
+- It does this before it compares its material index, so it covers every material. The index
+  only decides where the reflection texture is bound. Round 625 read the index as the scope.
+- Items write index `0xFFFFFFFF` and header word 1 = 1. `CObjRendererVS::vslot_038` runs
+  word-1 = 1 mods once per part, before any material, through `FUN_00c45110` → `FUN_00c7b4e0`
+  with index −1.
+- Per-material mods (word 1 = 2) run through `FUN_00c451e0` → `FUN_00c7b540` in every draw
+  path, also before `FUN_00c42a60`.
+- `CRTModBumpEnv` sets no alpha state.
+- `CRTModProgEquipPow` (the `0xe21f0000` override) is the +N glow. It is attached only through
+  `CObjCharacter::FUN_00a5f3e0`, for a non-zero per-slot byte with a matching row, so it does
+  not explain plain gear.
+- MTRL mods (kind 0) appear on no item checked.
+- Stage-0 alpha is the texture's (`FUN_00c42860` sets `ALPHAARG1` = TEXTURE). So without the
+  mod, the gloss alpha really would be cut.
+
+**MEASURED** with `tools/census_item_envmap.gd`, over all 1,421 item `.bsr` files the table
+names:
+
+| ENVMAP flag word | Item `.bsr` files |
+|---|---|
+| 1 | 602 |
+| 3 | 465 |
+| 0 or 2 | 3 |
+| none | 351 |
+
+Of the 2,890 bit-9 layers on item models:
+- 1,315 are under a no-test mod;
+- 1,220 are under a ref-1 mod;
+- 355 keep their own 0x80 test.
+
+Those 355 are the 1-bit hats, Santa hats, mittens and flags. Joined with the review's
+`itemalpha.tsv`, only 2 of the 85 that join have mostly graded alpha: `light_02_ha` and an
+`_ef` layer (OPEN in TODO).
+
+Examples:
+
+| Item | Layer flags | ENVMAP word | Drawn as |
+|---|---|---|---|
+| `sword_01` | 0x0340 | 1 | solid |
+| `spear_11` | 0x0141 | 1 | solid, two-sided |
+| `heavy_11_la` | 0x0341 | 3 | cut at alpha 0 only |
+| `clothes_04_ha` | 0x0341 | none | cut at 128 |
+
+The code change is `BsrReader.ParsedObject.env_map_flags`, the object's last ENVMAP flag word.
+`layer_draw_rule(flags, env_map)` applies it to every layer, and the `item` argument is gone.
+
+**The skin rule, finished (READ).** The review traced the path: `CompoundObj::FUN_00be7640`
+passes 1 for object types 0, 1 and 5, which reaches `ResObject::FUN_00be3540`, which builds
+with `FUN_00be2f80`. That builder resets the palette entries to 0/0 per vertex, skips a 0xFF
+slot, and blends slot 0's weight over the sum; a zero sum gives blend 0.
+
+So an empty slot, or a weightless vertex, lands on entry 0, which is not a bone. Both slots
+empty occurs: `heavy_15_ba` 14 vertices, `sd_t_area_smith_part1` 7. The reader now mirrors
+this. Entry 0 becomes `BmsReader.OBJECT_SPACE`: `to_arrays` puts it one past the palette, and
+`Skeleton3DBuilder.build_skin` binds that index to a parentless bone that never moves. That
+entry 0 is the object's own transform is INFERRED. `FUN_00be28d0`, used for other object types,
+keeps the previous vertex's entry instead; that difference is recorded in BMS_FORMAT.md.
+
+The review's sweep counts **158 meshes** made skinned by the 0xFF change: NPCs, monsters, pets
+and carts, not only armour. MEASURED with `tools/probe_skinning.gd` at the idle's 0.5 s, dev →
+now:
+
+| Model | Skinned pieces | Pieces that were missing their skin on dev |
+|---|---|---|
+| NPC `sd_t_area_smith` | 3 → 4 | `sd_t_area_smith_part1`, 717 vertices: the whole lower body, posed y 0.02..13.51, feet on the ground |
+| monster `immotal` | 5 → 7 | two parts |
+
+The unchanged pieces pose identically. Renders are in `equip_shots/followup/`
+(`npcs_cmp.png`, `gear_cmp.png`, `gear_zoom_3.png`, `hats_zoom_3.png`; rows are dev b22edf5,
+round 626 d345414, now):
+- the hats' spikes and fringe are cut again, as on dev, where round 626 drew their cards solid;
+- the Degree-11 set is whole, with its cloak cut only at alpha 0;
+- `spear_11` is solid.
+
+**Tests.**
+- `skinned_bsr_assembler_test.gd` is rewritten on `layer_draw_rule`, using the measured flag
+  words, and the foliage shader at scissor 0 or 1/255.
+- `bms_reader_test.gd`: both slots empty → OBJECT_SPACE, one past the palette, bound to a still
+  bone.
+- `bsr_reader_test.gd`: `env_map_flags` is object-wide.
+- `object_loader_test.gd`: round 625's cases without the item column.
+
+`probe_equipment.gd` now walks `Item.model_paths` instead of re-splitting `model_path`, which
+had become dead code. `render_lineup.gd` takes a `.bsr` path as a body.
+
 ## Six-hundred-and-twenty-sixth round: a full Degree-11 set is worn whole -- chest and legs drawn, and the spear solid
+
+> **Corrected by the review follow-up above.** The chest/legs fix and the comma split stand. "Draw
+> every item layer solid" and the INFERRED "the test cannot see texture alpha" were wrong: retail
+> spares armour with the item's ENVMAP mod and cuts the hats; the both-0xFF records exist.
 
 The v0.1.457 report: "some armor pieces don't fully render in and some weapons or shields look
 like they are extra transparent when they shouldn't be." In the screenshot a Chinese man wears a
@@ -7217,7 +7321,6 @@ SCRIPT ERROR: Parse Error: Static function "equipment_material()" not found in b
 worn piece reaches there, and the only translucent-authored item mesh found (`heavy_11_set_b_fly`)
 is in a `_fullset` model v0.1.457 could never load. It is probably a buff effect; unmeasured.
 docs/TODO.md lists what is still OPEN.
-
 ## Six-hundred-and-twenty-fifth round: trees have their leaves again, needle cards stop drawing as slabs, and a spear is no longer cut to ribbons
 
 A player reported on v0.1.457 that "trees and assets around the map aren't fully visible or are

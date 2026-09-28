@@ -257,6 +257,21 @@ class ParsedObject:
 	## alpha on such a material is the reflection mask, not a cutout. Read
 	## for every object whose section table parses; empty otherwise.
 	var env_map_materials: Dictionary = {}
+	## The flag word of the object's ENVMAP mod, -1 when it has none. This,
+	## not the material index, is what switches the alpha test (round 626,
+	## READ): `CRTModEnvMap::vslot_004` ORs 0x60000000 into the draw's flags
+	## and sets its own test (ALPHAREF 1, GREATEREQUAL, when the word has
+	## bit 1; none otherwise) BEFORE it compares its material index -- the
+	## index gates only binding the reflection texture. Item mods write
+	## index 0xFFFFFFFF with header word 1 = 1, which `FUN_00c7b4e0` runs
+	## once for the whole part (as vslot_004(-1, ..., &object flags) from
+	## `CObjRendererVS::FUN_00c45110`), so every material of the part is
+	## drawn under it; a word-1 = 2 mod runs per material
+	## (`FUN_00c451e0` -> `FUN_00c7b540`) and overrides each one alike.
+	## BUMPENV (`CRTModBumpEnv::vslot_004`) touches no alpha state and is
+	## not counted. With several ENVMAP mods the last applied wins; the
+	## last in file order is kept (INFERRED: mods run in list order).
+	var env_map_flags: int = -1
 
 	func is_item() -> bool:
 		return object_type == TYPE_ITEM
@@ -376,6 +391,7 @@ static func parse(data: PackedByteArray) -> ParsedObject:
 			if built.is_character:
 				_attach_sound_sets(built, data)
 			built.env_map_materials = env_map_materials(data)
+			built.env_map_flags = env_map_flags(data)
 			return built
 
 	# The exact byte layout between the name and the mesh/material paths
@@ -750,6 +766,21 @@ static func env_map_materials(data: PackedByteArray) -> Dictionary:
 	for header in section["env_maps"]:
 		out[int(header["material"])] = int(header["flags"])
 	return out
+
+## The flag word of the last ENVMAP (not BUMPENV) mod of the mod section,
+## -1 when there is none or the section does not parse (see
+## ParsedObject.env_map_flags).
+static func env_map_flags(data: PackedByteArray) -> int:
+	if data.size() < PREAMBLE_END:
+		return -1
+	var section = parse_sound_section(data, _le_u32(data, OFF_PTR_SOUND))
+	if section == null:
+		return -1
+	var flags := -1
+	for header in section["env_maps"]:
+		if int(header["kind"]) == MOD_ENVMAP:
+			flags = int(header["flags"])
+	return flags
 
 ## What follows the sound section in a character file: the attachment block
 ## `CResAttachable::vslot_007` reads after the object itself -- three
