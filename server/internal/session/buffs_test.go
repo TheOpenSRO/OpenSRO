@@ -740,3 +740,62 @@ func TestRefundSkillCosts(t *testing.T) {
 		t.Fatalf("HP %d after the refund, want %d", got.HP, got.MaxHP())
 	}
 }
+
+// Round 616-618 integration: the stale session's disconnect also leaves the
+// live session's auto-attack run and motion state alone -- both are keyed by
+// character id, as the book is -- and the live session's own disconnect
+// still clears them.
+func TestStaleSessionDisconnectKeepsTheLiveKeepUpAndMotion(t *testing.T) {
+	w := startBuffWorld(t)
+	conn2 := dialTestServer(t, w.addr)
+	t.Cleanup(func() { conn2.Close() })
+	w2 := &buffWorld{addr: w.addr, hub: w.hub, aria: w.aria, conn: conn2, r: bufio.NewReader(conn2)}
+	w2.write(t, OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	w2.expect(t, OpLoginResult)
+	w2.write(t, OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode())
+	w2.expect(t, OpEnterWorldResult)
+
+	// The live session is auto-attacking monster 777 and sitting down.
+	keepUp.Arm(w.aria, 777, time.Hour, func() (time.Duration, bool) { return time.Hour, true })
+	t.Cleanup(func() { keepUp.Cancel(w.aria) })
+	if _, ok := motions.request(w.aria, MotionSit, time.Now()); !ok {
+		t.Fatalf("the sit request was refused")
+	}
+
+	w.conn.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		n := 0
+		for _, e := range w.hub.AllEntities() {
+			if e.CharacterID == w.aria {
+				n++
+			}
+		}
+		if n == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if target, ok := keepUp.Target(w.aria); !ok || target != 777 {
+		t.Fatalf("the stale session's disconnect cancelled the live auto-attack: target %d, %v", target, ok)
+	}
+	if st := motions.state(w.aria, time.Now()); st == MotionStand {
+		t.Fatalf("the stale session's disconnect cleared the live motion: state %d, want sitting or getting down", st)
+	}
+
+	conn2.Close()
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := keepUp.Target(w.aria); !ok {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, ok := keepUp.Target(w.aria); ok {
+		t.Fatalf("the live session's disconnect left the auto-attack running")
+	}
+	if st := motions.state(w.aria, time.Now()); st != MotionStand {
+		t.Fatalf("the live session's disconnect left motion state %d", st)
+	}
+}

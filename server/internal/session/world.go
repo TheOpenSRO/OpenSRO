@@ -747,10 +747,14 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 		// A character may be in the world on a second session (a reconnect
 		// before the old one's disconnect was seen): its state belongs to the
 		// live session then, and this stale one's leaving must not clear it
-		// (round 616's review, for the book).
+		// (round 616's review, for the book; the 616-618 integration, for the
+		// auto-attack run and the motion state, which are keyed by character
+		// id the same way).
 		_, stillLive := hub.EntityByCharacterID(left.CharacterID)
-		keepUp.Cancel(left.CharacterID)
-		motions.clear(left.CharacterID)
+		if !stillLive {
+			keepUp.Cancel(left.CharacterID)
+			motions.clear(left.CharacterID)
+		}
 		// The book goes with the character (round 616): the object's
 		// teardown clears its active-effect book (CGObjChar::vslot_214,
 		// 0x4a72e0 -> FUN_0059c820(pc+0xa30), READ; that it runs on logout is
