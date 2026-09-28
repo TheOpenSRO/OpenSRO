@@ -7094,6 +7094,565 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twenty-first round, follow levels, review follow-up: auras move with the body every frame, the −1 rotation reset works, and "world space" points along the world
+
+The review of aa7a800 confirmed every READ claim, the u2 orbit included, and found these defects.
+All are fixed here.
+
+- **The levels are signed.**
+  - The reader hands the 20-byte block's levels over as u32, so retail's u3 = −1 arrived as
+    4294967295 and never reset the inherited rotation. `CEFGroup::vslot_004` compares signed
+    (READ: `1 < level`, u3 `< 1` and `< 0`).
+  - `EfpSim.signed32` converts all four; the reader keeps the raw u32, so its dump still matches
+    the Go reader's.
+  - A negative u3 names no ancestor and resets the rotation. A negative u2, u4 or u6 names the
+    owner (READ); none occur in retail.
+  - MEASURED, read signed over the 95,801 nodes: no level is above depth + 1, and the only
+    negative value is u3 = −1, in 135 nodes of 101 files (for example `cos\pet2_hwan_keep_p`,
+    `dun\pha_blue_eye_02`). aa7a800's "no level goes higher" had been measured on u2 alone.
+- **The effect's followers move every render frame.**
+  - Retail runs the follow pass `FUN_00c863a0` from the draw (`FUN_00cabda0`) whenever the effect
+    was placed. `EfpSim.set_origin` now runs that pass at once: old state, the gated u2/u3/u4, and
+    u6, with no velocity, rotation velocity or commands.
+  - During a 50 ms step the effect now holds still.
+  - `EfpEffect` redraws on any frame the placement moved something. Auras no longer lag the body
+    at 20 Hz.
+- **A re-centre redraws on its frame.** Before, a re-centre on a frame without a step drew every
+  particle about 60 units off for a frame or two.
+- **The anchor is scale only**, with its handedness kept. So a space-0 command and the identity
+  reset point along world axes, as retail's scale-only world matrix does. The host's facing
+  arrives as the effect's rotation, which is what `CEFEffect::vslot_007` hands the effect.
+- **Docs.** `vslot_008` (position) flags only +0x28b; `vslot_007` (matrix) flags +0x60 and +0x28b.
+- **Cheaper when still.** The effect is "changed" only when its placement moved or turned. A
+  node naming no ancestor skips the follows.
+  - The per-frame pass costs 0.116 ms for a moving `cold_ganggi_keep_f` (183 particles),
+    0.035 ms for `skill_dowb_ac3_fire_hand` (33), and 0.0005 ms on a still host.
+  - A moving effect is also redrawn every frame, not at 20 Hz, as retail's is.
+- **Jumps and bare hosts.**
+  - A placement more than 400 native units from the anchor in one frame (a teleport, or the world
+    re-based by a zone change) carries the whole effect along instead of leaving world-space
+    particles at stale coordinates (OURS).
+  - A host without a skeleton places the effect at the host plus offset, never at a bare world
+    position on the top_level node.
+
+**Bench** (the reviewer's, ms per call, aa7a800 → now):
+- `_update_links` is unchanged: 0.59 → 0.57, 4.96 → 4.64, 1.50 → 1.48.
+- `sim.step` moved within noise (0.95 → 0.86, 7.72 → 7.56, 2.39 → 1.92).
+
+**Census:** unchanged: 781 of the 975 Link files make a triangle on a still host, 924 on a moving one; 4,013 (96.2 %) draw every node; 0 script errors.
+
+**Tests.** `efp_follow_test.gd` grew to 26 checks. The new ones cover:
+- u3 = −1 read as 4294967295 resets the rotation and names no ancestor;
+- u6 = −1 names the owner;
+- the anchor is scale only, and the facing reaches the sim;
+- an unchanged placement is no change;
+- a follower moves with the host on a frame without a step, and that frame redraws;
+- a re-centre redraws, and the follower is drawn at the host;
+- a jump carries the effect;
+- without a skeleton, the effect sits at the host plus its offset.
+
+Results:
+- `remote_godot.sh check`: ALL LOAD.
+- `remote_godot.sh tests`: 137 suites, 0 failing.
+- `go test -count=1 -p 1 ./...`: ok.
+
+Against aa7a800:
+
+```
+FAIL u3 = -1 (read 4294967295): the child's inherited rotation is reset to identity
+FAIL u3 = -1 names no ancestor; u6 = -1 names the owner
+FAIL signed32 reads a u32 as the client's int
+FAIL the anchor keeps only the host's scale, not its facing (world axes)
+FAIL the host's facing reaches the simulation as the effect's rotation
+FAIL a particle following the effect moves with the host on a frame without a step
+FAIL ... and the draw is refreshed that frame
+FAIL a re-centre redraws on its frame, step or not
+FAIL after the re-centre the follower is drawn at the host ((0, 0, 0))
+FAIL a jump carries the effect with it
+FAILURES: 10
+```
+
+**OPEN:**
+- the effect turns with the body, not its bone;
+- whether game +z is Godot −z for effect space, as it is for the terrain, was not checked; the
+  anchor keeps the skeleton's handedness.
+
+## Six-hundred-and-twenty-first round, follow levels: the effects simulate where the game's do, so a walking caster, a swung hand or a flapping wing leaves its trail behind
+
+The review follow-up found why 510 of the 975 files with a Link node drew nothing: their
+particles follow nothing, and this client simulated every effect in its own moving space. This
+commit reads how the game places an effect and what its particles follow, and implements it.
+`docs/protocol/EFP_FORMAT.md` "Follow levels" has the addresses.
+
+**READ** (sro_client.exe, `/var/tmp/decomp_client` and `/var/tmp/sro_client.asm`):
+- **Retail simulates in world space.**
+  - `CEFEffect::vslot_008` (position) and `vslot_007` (matrix) store the host's placement as the
+    effect's position, divided by the effect's scale, and flag it changed (+0x60, +0x28b).
+  - The draw's world matrix is only that scale (`FUN_00cabda0`).
+  - So only what follows the effect moves with the host.
+- **The effect is the top of the follow chain.** `CEFEffect` shares `CEFElement`'s layout: the
+  particle init is slot 4 of both vtables. It owns the root node's emitter, so for a node at
+  depth d, level d + 1 is the effect. MEASURED: no retail level goes higher.
+- **The follow levels.**
+  - The 20-byte block at node +0x154..+0x16c holds the flags b0, b1, b5 and b7 and four levels:
+    u2 orbit (the position turns with the ancestor), u3 rotation, u4 velocity and u6
+    translation. The review follow-up had u2 as "the position follow".
+  - `CEFGroup::vslot_004` walks each level up the owner chain.
+  - `CEFUpdater::vslot_002` does the frame, per particle:
+    - with b0 / b1, it keeps the old rotation / old position;
+    - it clears the changed flag;
+    - the u2, u3 and u4 follows apply **only when that ancestor changed**;
+    - with b5, the rotation velocity applies, and this particle is changed;
+    - the u6 translation, position += A.position − A.old position, applies every frame;
+    - then position += velocity, and with b7 the shape turns.
+  - The node's commands run after. Every rotation command sets changed (cases 0x00–0x03,
+    0x05–0x08, 0x0a–0x0d, 0x0f–0x12). With b0, the turn is inverse(old) × new.
+- **At spawn** (`FUN_00c88490`): the owner's position; the owner's velocity minus the u6
+  ancestor's; the owner's rotation, or identity with a negative u3.
+- `CEFEffect::FUN_00c865a0` shifts every particle's position and old position by one vector.
+  This client re-centres its simulation space the same way.
+
+**MEASURED** (95,801 retail nodes):
+- **The old state is kept wherever it is read.** An ancestor followed through u2 or u6 keeps its
+  old position (b1) in 149,167 of 149,233 cases; one followed through u3 or u4 keeps its old
+  rotation (b0) in all 77,375.
+- **b5 and b7 mark the velocity commands.** b5 is set on exactly the 423 nodes with a
+  SetRVelocity command, and b7 on exactly the 31,138 with SetShapeRotVel.
+- **u6 levels:**
+  - 0 (stay in the world): 12,360;
+  - a particle ancestor: 79,538;
+  - the effect: 3,903.
+- **No drift.** The farthest particle in 40 frames, over all 4,103 files, has median 11.0, 90th
+  percentile 91.1 and 99th percentile 654.6 native units. The review follow-up had 11.2, 103.6
+  and 736.6.
+- **The census** (`efp_census.gd --build`; the new `--moving` moves the host 2 native units a
+  frame, an OURS speed):
+
+  | Link files making a triangle (of 975) | files |
+  |---|---|
+  | review follow-up, local space | 417 |
+  | follow levels, still host | 781 |
+  | follow levels, moving host | **924** |
+
+  - "Draw every node" is unchanged at 4,013 (96.2 %), with 0 script errors.
+  - The biggest gains on a moving host are monster, pet and projectile effects, for example
+    `monster\eu\dust\dust_peryton_ac3_foot`, `cos\pet2_bird_wings`,
+    `skill\europe\skill_fire_bolt_a_shot` and `monster\eu\skill\skill_dowb_ac3_fire_hand`.
+
+**This client:**
+- **`EfpSim`**:
+  - all four levels, the ancestor walk to the effect, the changed gate, b0/b1/b5/b7 and the spawn
+    rules;
+  - the effect is the root particle, placed by the new `set_origin(pos, rot)`;
+  - the old position and rotation are kept only where a follower reads them (OURS, same result).
+- **`EfpEffect.follow_host`** keeps its signature.
+  - The node pins itself (top_level) at an anchor taken from its first placement.
+  - It hands the host's motion to the simulation as the effect's placement.
+  - It re-centres (`EfpSim.shift`) past 60 native units (OURS), so the draw bounds stay near.
+  - An effect without a host is unchanged.
+- **OURS:**
+  - the effect's follow runs in the step, not in retail's separate draw-time pass;
+  - no spawn offset, since this client spawns after the step's follows;
+  - particles go in spawn order, which finishes every ancestor before its followers as retail's
+    node order does;
+  - a dead ancestor is not followed;
+  - a synthetic node without the block keeps round 620's parent-translation follow;
+  - the effect turns with the body, not its bone.
+- **QA:** `SRREVAMP_QA_EFFECT_BONE` attaches the QA effects at a bone.
+
+**Performance** (the reviewer's bench, same copy as the review follow-up; ms per call):
+
+| effect × n | `_update_links` before → after | `sim.step` before → after |
+|---|---|---|
+| cold_ganggi_keep_f × 1 | 0.58 → 0.59 | 0.79 → 0.95 |
+| cold_ganggi_keep_f × 10 | 4.50 → 4.96 | 6.88 → 7.72 |
+| lightning_storm_shoot_c × 10 | 1.51 → 1.50 | 1.91 → 2.39 |
+| cleric_resurrection_monser_keep_b × 10 | 2.02 → 2.26 | 2.05 → 2.22 |
+| help_ganggi_keep_a × 10 | 4.55 → 4.58 | 6.89 → 8.16 |
+
+- The Link build is unchanged within the bench's run-to-run noise: the same code measured 4.4
+  and 5.1 ms on two runs.
+- `sim.step` is 8–25 % slower. That is the price of the rotation and velocity follows and the
+  per-particle old state, which the model needs.
+- A first version that bucketed particles by node cost more. The flat spawn-order loop and
+  keeping old state only where it is read won some of it back.
+
+**Tests.**
+- **`efp_follow_test.gd`** (new, synthetic, 14 checks). It covers:
+  - on a moving effect, u6 = 1 particles ride it while u6 = 0 ones stay where they were born;
+  - on a turning effect, u3 turns the rotation and u2 swings the position round it;
+  - a turn applies once, on its frame;
+  - level d + 1 is the effect, and nothing is above it;
+  - a Link chain on a moving effect trails and draws with u6 = 0, and collapses with u6 = 1;
+  - EfpEffect on a host pins itself, feeds the host's motion in, and re-centres far away.
+- **`efp_links_test.gd`**'s follow checks use u6.
+- **`skill_effects_test.gd`** reads the new `EfpEffect.placed_at()` for where an effect sits. With
+  a host, the node stays at its anchor, so `global_position` no longer moves with the bone.
+- **Results:**
+  - `remote_godot.sh check`: ALL LOAD.
+  - `remote_godot.sh tests`: 137 suites, 0 failing.
+  - `go test -count=1 -p 1 ./...`: ok.
+
+Against the review follow-up (515e05b), the new tests fail:
+
+```
+FAIL EfpSim.set_origin exists (the effect placed by its host)
+FAILURES: 1
+FAIL u6 = 0: the children stay where they were born, so the chain trails (spread 0.00)
+FAILURES: 1
+```
+
+**Renders** (`efp_link_shots/W1_*`, `W2_*`; these SHOW, they do not prove). The player walks
+heading 180 from Jangan 97/168 (1002, 1020), on the RX 5700 XT via VirtualGL.
+- **`W1_grid.png`**: `monster\eu\skill\skill_dowb_ac3_fire_hand` at `Bip01 R Hand`, via the
+  new `SRREVAMP_QA_EFFECT_BONE`.
+  - At frame 80 a fire streak runs back from the hand along the path.
+  - At frame 120 a burst is left behind where it was emitted while the runner goes on.
+  - Later frames are between cycles: headless, the file emits for about 58 frames and restarts,
+    MEASURED.
+- **`W2_grid.png`**: `monster\eu\dust\dust_peryton_ac3_foot` and `cos\pet2_bird_wings` at the
+  feet. The foot effect's red ground patch stays on the ground where it was emitted as the
+  character runs off, and the small wing streaks follow the feet.
+- What retail shows for these on a player was not compared.
+
+**OPEN:**
+- retail's separate draw-time pass for the effect, and its spawn offset;
+- the bone's own rotation;
+- which host speed the census should use.
+
+## Six-hundred-and-twenty-first round, review follow-up: the trails rebuild about five times faster, only when something moved, and draw one-sided where their node says so; the texture and dedupe readings corrected
+
+This merges round 620's review follow-up (2246d91), then fixes what the review of round 621 found.
+
+**Merged.** Round 620's API changes are adopted:
+- the link variants are skipped by command family (`EfpSim.kind_names_link`) in the compiled
+  `[kind, space, payload]` schedule;
+- the link origin is honoured in its new `_set_pos`, SetSpherePos and Attraction;
+- a refused spawn under the new caps (`can_spawn`) is never linked, and every death still
+  unlinks through `_on_death`.
+- `clear()` now also breaks every link/next_link pair and emitter tail. Particle is RefCounted,
+  so a chain left linked would have kept itself alive.
+
+**Corrections (READ):**
+- **The dedupe.**
+  - LinkDPipe (0x00c8df3f–0x00c8dfdd) and LinkPipe write each particle into the next free slot
+    and advance only when it is taken. So a near-duplicate is **dropped** and the older point
+    kept.
+  - Only LinkObj advances first and overwrites the last pair, and it keeps comparing against the
+    position it took (local_48).
+  - Round 621 had "overwrites" for all three.
+  - The retail quirk is noted: LinkPipe compares its first particle against uninitialised
+    local_58, because its counter starts at 1. This client takes the first particle (OURS).
+- **The DDJ loader.** The runtime path is `FUN_00b88420` → `FUN_00b87f20` ("DDJCreateTextureHForMThread
+  Error - %s").
+  - It opens exactly the path it is handed through the archive object's vtable +0x2c, checks
+    "JMXV", and passes the buffer from offset 20 (size field − 8) to D3DX with the file's own
+    MipLevels.
+  - Round 621 cited `FUN_00b8eb60`, a converter path the game does not run.
+  - "No path rewrite", and so `water_offset_01`'s unreachability, are re-derived from
+    `FUN_00b88420`. That the archive handed in is Particles.pk2's is INFERRED.
+- **The billboard matrix.** `0x00edbde8` is now READ as the inverse view's right, up and look
+  rows (round 620's follow-up, `CEFSystem::FUN_00cb0ee0`). The pipe's side is right·d.y − up·d.x.
+- **The +0x34 case list is complete.** There are 28 cases, all listed from the decompile:
+  0x03, 0x08, 0x0d, 0x12, 0x15, 0x18, 0x1b–0x1e, 0x21, 0x24, 0x27–0x2a, 0x2d, 0x30,
+  0x33–0x36, 0x39, 0x3d, 0x41, 0x45, 0x49, 0x4b. They are exactly `names_link`'s set.
+- **Follow** (new; EFP_FORMAT.md "Follow"):
+  - The body's 20-byte block lands at node +0x154..+0x16c (`FUN_00cc3500`).
+  - `CEFGroup::vslot_004` turns its u32s into ancestors, N levels up: u2 position, u3 rotation
+    (a negative value sets emitter +0x74), u4 velocity, u6 spawn-relative.
+  - `CEFUpdater::vslot_002` applies a follow only on a frame when that ancestor's +0x60
+    "transform changed" flag is set.
+  - This client now lets a node with u2 = 0 not follow its parent (READ). Every other node keeps
+    round 620's parent-translation follow (OURS).
+
+**MEASURED:**
+- **The q textures.** Only the top level is clean. Level 1 of `_q_2` holds 15 non-zero values down
+  to −512, and every other stored mip of all four files is zero. Round 621's "every channel in
+  0..1" held for the top level only.
+  - This client keeps clean Godot-built mips (OURS, not retail's look when minified).
+  - It now rounds f16 to 8 bits: 0.5 gives 128, where round 621 truncated to 127.
+- **The follow levels over the 95,801 retail nodes:**
+  - u2 = 0: 22,762;
+  - 1 ≤ u2 ≤ depth: 69,695;
+  - u2 = depth + 1: 3,344.
+- **The census** now builds the Link strips at all 40 frames and keeps each file's peak
+  one-frame triangle count. Round 621 summed one frame.
+  - 975 files draw a Link node. **417** of them make a Link triangle at some frame.
+  - Per effect, the one-frame peak has median 141, 90th percentile 492, max 1,392.
+  - "Draw every node" is unchanged at **4,013 (96.2 %)**, and there are 0 script errors.
+- **Why 510 Link files make no strip** (INFERRED cause):
+  - Every chain sits at one point through 40 frames. The examples (`battle\hwan_g/_v/_y`,
+    `battle\deco_wind_jumpkick_a`, `cos\p2skill_ass_dinosaur_attack5`) are u2 = 0 Link nodes
+    with no position command, under a still root.
+  - Their trail can only come from the effect moving through the world, and this client
+    simulates in the effect's local space (round 620, OURS).
+  - This is the next lever (OPEN, in TODO.md).
+
+**Performance** (the reviewer's bench `rv621r/link_bench.gd`, headless on the box, raw
+`_update_links` cost per call):
+- Two changes to run it:
+  - the triangle count reads the strip, since the mesh is no longer an ImmediateMesh;
+  - each call refills the new per-frame budget, since the bench rebuilds hundreds of times in
+    one frame.
+- The copy is `efplink_bench.gd` in the lane's scratch.
+
+| effect × instances | round 621 | follow-up | faster |
+|---|---|---|---|
+| cold_ganggi_keep_f × 1 | 3.18 ms | 0.58 ms | 5.5× |
+| cold_ganggi_keep_f × 10 | 21.44 | 4.50 | 4.8× |
+| help_ganggi_keep_a × 1 | 3.05 | 0.58 | 5.3× |
+| help_ganggi_keep_a × 10 | 21.55 | 4.55 | 4.7× |
+| cleric_resurrection_monser_keep_b × 1 | 1.00 | 0.20 | 5.0× |
+| cleric_resurrection_monser_keep_b × 10 | 10.11 | 2.02 | 5.0× |
+| cleric_resurrection_monser_keep_b × 40 | 18.49 | 4.38 | 4.2× |
+| lightning_storm_shoot_c × 1 | 0.61 | 0.15 | 4.1× |
+| lightning_storm_shoot_c × 10 | 6.69 | 1.51 | 4.4× |
+| lightning_storm_shoot_c × 40 | 12.64 | 4.41 | 2.9× |
+
+- The raw build is 2.9–5.5× faster: the 5× target is met on the single-aura rows and missed on
+  the crowded ones.
+- On top of that, a strip is now rebuilt only after a simulation step (20 Hz), or, for a pipe,
+  when the camera or the effect moved. Round 621 rebuilt it every rendered frame. So on a still
+  camera at 60 fps, a `cold_ganggi_keep_f` aura costs about 12 ms a second instead of 191.
+- The rows for 40 ganggi auras show 0 triangles in both columns: the particle cap leaves them
+  none. They measure overhead only.
+
+What changed (OURS):
+- The geometry is built in reused packed buffers (`EfpLinks.Buf`, `Out`), with no per-point
+  objects and no per-sample arrays. Each chain is walked from its head along next_link while
+  gathering.
+- Each node's chains are stitched into one PRIMITIVE_TRIANGLE_STRIP ArrayMesh with degenerate
+  joins and no index buffer.
+- The colour lerp is inlined with the same fistp rounding.
+- A budget, `LINK_TRIS_PER_FRAME` = 20,000 triangles per rendered frame across all effects, caps
+  the rebuild. A node past it keeps last frame's strips.
+
+**Other fixes:**
+- **The Link shader** is a real template variant: `{UVMAP}` holds the instance UV line for plates
+  and meshes and nothing for strips. Round 621 used a string replace.
+- **Cull.** A Link strip takes its node's cull (+0x1a4). The reviewer measured 17 LinkObj and 4
+  LinkPipe nodes with cull 3.
+  - The triangles are emitted with the orientation reversed against D3D's, the BmsReader
+    convention (INFERRED).
+  - Each stitched chain starts at an odd strip position so its triangles keep that orientation.
+
+**Tests.**
+- **`efp_links_test.gd`** was reworked for the packed API and grew. It now also covers:
+  - drop versus overwrite in the dedupe;
+  - D3D's strip triangles, each reversed;
+  - two chains in one strip that are never joined by a drawn triangle and keep one orientation;
+  - chains staying consistent past a refused spawn and a dead head;
+  - `clear()` breaking the link pairs;
+  - u2 = 0 against u2 = 1 follow;
+  - the Link shader without, and the plate shader with, the INSTANCE_CUSTOM line;
+  - the cull honoured;
+  - no rebuild without a step;
+  - the budget keeping last frame's strips.
+- **`ddj_reader_test.gd`**: 0.5 rounds to 128.
+- **Results:**
+  - `remote_godot.sh check`: ALL LOAD.
+  - `remote_godot.sh tests`: 136 suites, 0 failing.
+  - `go test -count=1 -p 1 ./...`: ok.
+
+Against round 621's merge (a648c36), the new tests fail:
+
+```
+SCRIPT ERROR: Invalid get index 'Buf' (on base: 'GDScript').
+SCRIPT ERROR: Invalid get index 'Out' (on base: 'GDScript').
+FAIL clear() breaks every link pair (no RefCounted cycle is left)
+SCRIPT ERROR: Invalid call. Nonexistent function 'surface_get_primitive_type' in base 'ImmediateMesh'.
+FAILURES: 1
+FAIL A16B16G16R16F: 0.5 rounds to 128, not 127 (got 127)
+```
+
+**OPEN** (also in `docs/TODO.md`):
+- world-space simulation for u2 = 0 nodes (510 Link files);
+- the ancestor-level follow and its +0x60 gate;
+- the rotation and velocity follows;
+- whether the reversed-winding inference matches retail's culled face;
+- untextured nodes (unchanged).
+
+## Six-hundred-and-twenty-first round: the particle trails draw -- ribbons, lightning and streamers -- and 96 % of the effects now draw every node they mean to
+
+The user asked for "most of the particles loaded". After round 620, 3,062 of 4,170 effect files
+(73.4 %) drew every node they meant to draw. The gaps were:
+- the three Link render modes: RenderLinkPipe (864 files), RenderLinkObj (128) and
+  RenderLinkDPipe (70);
+- textures that do not load (68);
+- meshes that do not load (16).
+
+This round reads the three Link routines and draws them. It also reads the particle "link"
+that round 620 took to be the parent, decodes the DDJ "q" format, and establishes why every
+remaining asset fails. `docs/protocol/EFP_FORMAT.md` "Link render modes" and "Assets that do not
+load" carry the addresses.
+
+**READ** (sro_client.exe, `/var/tmp/decomp_client` and `/var/tmp/sro_client.asm` on the box):
+- **The link is the emitter's previous live particle, not the parent.**
+  - The emitter constructor `FUN_00c88320` puts a particle list at emitter +0x30, with prev
+    offset 0x34 and next offset 0x38.
+  - The particle init `FUN_00c88490` (particle vtable 0x00e0ebfc, slot 4) appends each new
+    particle at the tail (the call at 0x00c88769). A death (`FUN_00c87a20`) unlinks it
+    (`FUN_00c873a0`).
+  - So particle +0x34 is the particle the same emitter spawned before it that is still alive.
+  - Every link variant of the per-particle program tests +0x34 first and does nothing without
+    one: cases 0x03, 0x08, 0x0d, 0x12, 0x15, 0x18, 0x1b–0x1e, 0x21, 0x28, 0x2d, 0x36, 0x39,
+    0x3d, 0x41, 0x45, 0x49 and 0x4b.
+  - `EfpSim` now keeps that list (`Particle.link`, `next_link`) and skips those variants
+    (`EfpSim.names_link`).
+- **One strip per emitter.** Each Link routine returns unless +0x34 is 0. The oldest live particle
+  walks the list to the newest.
+  - A point is (position, colour, scale.x as the width).
+  - A point closer than 1e-6 on every axis (`0x00e1b848`) to the last one taken replaces it.
+- **LinkDPipe** (`FUN_00c8de80`) passes the points straight to the ribbon. Retail's lightning
+  files place those particles with SetSpherePos, so the line is jagged.
+- **LinkPipe** (`FUN_00c8e020`) runs a uniform cubic B-spline through the points, with both ends
+  doubled.
+  - It takes 3 samples per segment at t = 0, 1/3, 2/3. The weights come from the doubles 3, 6, 4
+    and 1 at `0x00e1b808`, `0x00d99a68`, `0x00e1b860` and `0x00e1b7f0`.
+  - Colour is lerped byte by byte and rounded; the width steps linearly.
+  - So m points give 3(m − 1) + 1.
+- **The ribbon** (`FUN_00c8d0e0`):
+  - Each point is projected to NDC. The call has the shape of `D3DXVec3Project(out, v, NULL,
+    proj 0x00edbea8, view 0x00edbe68, NULL)` (INFERRED).
+  - The screen direction is taken by central difference; the ends use their one neighbour.
+  - (d.y, −d.x, 0) is turned by the billboard matrix `0x00edbde8` and normalised.
+  - The vertices are P ± n·width, with v = 0 and 1, and u = i/(N − 1).
+  - It is drawn as D3DPT_TRIANGLESTRIP (5, pushed at 0x00c8d0c1) and flushed per strip.
+- **LinkObj** (`FUN_00c8c3a0`):
+  - Its edges are pos ± scale.x × the particle's own rotation Y row (+0xc0).
+  - The same B-spline runs over the pairs with the first pair doubled. Only k − 2 segments are
+    sampled, so the newest particle is a control point only.
+  - u runs from 1 to 0 in steps of 2.0 (`0x00e1b898`) over the sample-vertex count.
+- **Texture.** `CEFCShape::FUN_00c883d0` gives each particle its node's first mesh entry and
+  that entry's first texture. `FUN_00cabda0` binds it for every render mode, Links included.
+  This makes round 620's OURS "first mesh entry, first texture" a READ.
+- **The DDJ loader** (`FUN_00b8eb60`) checks "JMXV", skips 20 bytes, and hands the DDS to the
+  statically linked D3DX (`D3DXGetImageInfoFromFileInMemory`, then
+  `D3DXCreateTextureFromFileInMemoryEx`). It applies no path rewrite.
+- **`JMXVBMS 0109` is refused by the retail client too.**
+  - Both .bms header checks accept only `0110`: `Prim::FUN_00bc5690` (case 1, Prim.cpp line
+    0xd9) and `PrimGeometry::FUN_00c121f0` (PrimGeometry.cpp line 0x152). A mismatch asserts,
+    then the load returns 0.
+  - The binary's only 0109 branch (`ResObject::FUN_00bce3b0`) is the `.bsr` header.
+  - So there is no 0109 mesh layout to add to the .bms reader, and none was added.
+
+**MEASURED** (the box's retail archives):
+- **The "q" textures are D3DFMT_A16B16G16R16F.** The DDS FourCC slot holds `71 00 00 00`,
+  D3DFORMAT 113.
+  - The four files (`textures\ques1_monster_paper_q_2..5.ddj`) are 128×128 with 8 mips, and
+    every channel is in 0..1.
+  - Each payload is twice its 174,760-byte chain. Only the top level is read.
+  - `DdjReader` now decodes them.
+- **Every remaining asset failure**, from the new `efp_census.gd --build --assets`, which checks
+  Particles.pk2, Media.pk2 and Data.pk2, other extensions, and the basename in any folder:
+  - 20 texture paths are absent everywhere.
+  - 4 exist only at another path: `water_offset_01.ddj` only as Data.pk2
+    `Prim\Mtrl\etc\...`, which the loader cannot reach, and `eu_harp_13`, `eu_shield_13` and
+    `eu_sword_13` only as meshes.
+  - In 36 files a drawn node has no texture entry, and in 10 an empty texture name.
+  - Meshes: the two 0109 files above, and 4 paths absent everywhere.
+  - The 4 q-texture files also name an absent `-glow` texture, so decoding them changes no
+    file-level count.
+- **Link chains are the size of their effects.** In `cold_ganggi_keep_f`, twelve LinkPipe nodes
+  make 6–7-particle chains 5–12 units long and 0.2–0.6 wide. The seven lightning DPipe chains of
+  `lightning_storm_shoot_c` hold up to 13 points over about 10 units.
+- **The build census**, `efp_census.gd --build`, 88 s:
+
+  | | round 620 | round 621 |
+  |---|---|---|
+  | draw every node they mean to draw | 3,062 (73.4 %) | **4,013 (96.2 %)** |
+  | draw at least one node | 3,985 (95.6 %) | 4,100 (98.3 %) |
+  | files skipping a node for a texture | 68 | 75 |
+  | files skipping a node for a mesh | 16 | 16 |
+  | Link nodes skipped | 1,062 files | 0 |
+
+  - The census now also builds each Link strip at frame 40: 27,212 triangles across the archive,
+    with 0 script errors.
+  - Files skipping a node for a texture rose from 68 to 75 because Link nodes now reach their
+    texture check. The 7 new ones are Link nodes with an empty texture name (3 files),
+    `crash_glow.ddj` (3) and `oura_0555.ddj` (1), all absent.
+
+**INFERRED:**
+- that `thunk_FUN_00aa30f0` is D3DXVec3Project, from its six-argument shape through D3DX's
+  dispatch table at `0x00ec7758`;
+- that `0x00edbde8` holds the camera's right and up rows (round 620's billboard inference, used
+  the same way here);
+- that D3DX ignores the surplus q payload;
+- that a node whose mesh fails to load draws nothing in retail.
+
+**OURS:**
+- Link strips are drawn two-sided, as triangle lists.
+- Without a camera, the projection is orthographic down −Z of the effect's axes.
+- The q textures are converted to RGBA8, top level only.
+- Nodes with no texture stay undrawn (see OPEN).
+
+**Tests.**
+- **`efp_links_test.gd`** (new, synthetic, 52 checks). It covers:
+  - the B-spline weights;
+  - fistp rounding and the per-byte colour lerp;
+  - the 1e-6 dedupe;
+  - strip-to-triangle winding;
+  - DPipe ribbon offsets, UVs and colours on a line seen head-on;
+  - LinkPipe sample counts, the first sample, width steps, the colour at t = 1/3, and a straight
+    chain staying straight;
+  - LinkObj's 2-particle no-draw, 8-vertex strip, closing pair, u from 1 to 0, and the width
+    following the particle's own Y axis;
+  - the emitter chain, including unlinking on death;
+  - SetPosition space 2 with and without a link;
+  - EfpEffect drawing each Link mode into one ImmediateMesh surface of whole triangles;
+  - a Link node without a texture being reported.
+- **`ddj_reader_test.gd`** gains a synthetic A16B16G16R16F texture, its channel order, and a
+  refused short payload.
+- **`efp_sim_test.gd`**: round 620's "the link pipe is skipped" expectation now reads "a plate, a
+  mesh and a link pipe draw".
+- **Results:**
+  - `remote_godot.sh check`: ALL LOAD.
+  - `remote_godot.sh tests`: 136 suites, 0 failing.
+  - `go test -count=1 -p 1 ./...`: ok. The server is unchanged.
+
+Against the base feat/efprender (41163cb), the new tests fail:
+
+```
+FAIL scripts/efp/efp_links.gd exists (EfpLinks, the Link geometry)
+FAIL a particle carries its link (+0x34)
+FAIL EfpSim.names_link exists
+FAIL RenderLinkDPipe is drawn, not skipped
+FAIL RenderLinkPipe is drawn, not skipped
+FAIL RenderLinkObj is drawn, not skipped
+FAIL a Link node without a texture entry is reported, not drawn
+FAILURES: 7
+FAIL decodes D3DFMT_A16B16G16R16F        (ddj_reader_test.gd)
+```
+
+**Renders** (`efp_link_shots/` in the lane's scratch; these SHOW, they do not prove). All ran on
+the RX 5700 XT via VirtualGL, at Jangan 97/168 local (1002, 1020), with SRREVAMP_QA_EFFECT and
+the lane's copy of `qa_shot.sh` without its box-wide `pkill`.
+- `A_grid.png` shows six Link-heavy skill files side by side at 230 units:
+  - `cold_ganggi_keep_f` and `help_ganggi_keep_a` (LinkPipe, 44 nodes each);
+  - `lightning_gwantong_effect_c` and `lightning_storm_shoot_c` (LinkDPipe);
+  - `cleric_resurrection_monser_keep_b` and `bard_battle_boom_c` (LinkObj).
+  - Every node was drawn, with nothing skipped (the QA log's `skipped []`).
+- `D_grid.png` shows four of them at 85 units.
+  - The large blue ring that sweeps the square is `bard_battle_boom_c` node 42, a **RenderPlate**
+    (`bas_circle_pt02.ddj`, particles out to 115 units, MEASURED). It is round 620's plate path,
+    not a Link strip.
+- `E_grid.png` is a close-up at 40 units of `lightning_storm_shoot_c`,
+  `cleric_resurrection_monser_keep_b` and `help_ganggi_keep_a`.
+  - Dark violet streamers rise over the middle one: its four LinkObj nodes
+    (`cho-wind-02-iver.ddj`).
+  - Blue flares sit at the feet.
+  - Whether retail's streamers are that dark was not checked.
+
+Nothing here was compared with the retail client.
+
+**OPEN** (also in `docs/TODO.md`):
+- what D3D9's fixed-function stage returns for D3DTA_TEXTURE with no texture bound. That decides
+  the 75 files' untextured nodes, which retail draws with a NULL texture;
+- bit 0 of emitter +0x74, which resets the inherited rotation in the particle init;
+- the LinkMode controller and the node's 20-byte block, which none of the Link routines reads;
+- which face of a Link strip D3D culls;
+- which side of a pipe gets v = 0 after the handedness mirror.
+
 ## Six-hundred-and-twentieth round, review follow-up: effects follow the game's own cast phases, end when their buff or cast ends, and survive an equipment change
 
 The review of round 620 checked its READ claims against the asm and found real defects. This follow-up fixes them.

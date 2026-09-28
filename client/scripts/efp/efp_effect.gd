@@ -34,15 +34,27 @@ class_name EfpEffect
 ##   texture ops), ZWRITE off, lighting and fog off. See blend_class and the
 ##   shader below for the mapping to Godot.
 ##
-## Not drawn (OPEN; counted as `skipped` by the census): RenderLinkPipe,
-## RenderLinkDPipe and RenderLinkObj (the trails; their routines were not
-## read), and a node whose mesh or texture does not load. (BSAnimation needs
+## The Link modes (RenderLinkDPipe, RenderLinkPipe, RenderLinkObj; round 621)
+## draw one strip per emitter through its chain of live particles, all of a
+## node's chains stitched into one ArrayMesh triangle strip, rebuilt after a
+## step (or a camera move, for a pipe) within a per-frame budget (OURS):
+## EfpLinks has the geometry, READ from
+## FUN_00c8de80, FUN_00c8e020, FUN_00c8c3a0 and FUN_00c8d0e0.
+##
+## Not drawn (OPEN; counted as `skipped` by the census): a node whose mesh or
+## texture does not load. (BSAnimation needs
 ## no drawing: all 3,230 nodes carrying one are RenderNone, MEASURED; their
 ## motion reaches particles as the baked SetBANPos/SetBANRot keys.)
-## Only the first mesh entry and its first texture are drawn (OURS).
+## Only the first mesh entry and its first texture are drawn: READ, round 621 --
+## CEFCShape::FUN_00c883d0 gives a particle its node's first mesh entry and
+## that entry's first texture.
 ##
-## The effect is simulated in its own local space and moves with its parent
-## node (OURS). It is authored in the game's native units. Attached to a body
+## On a host (follow_host), the effect is simulated in a space that does not
+## move with the host -- retail simulates in world space over the effect's
+## scale (READ, round 621: CEFEffect::vslot_007/008, FUN_00cabda0) -- and the
+## host's motion reaches the simulation as the effect's placement, which each
+## node follows or not by its follow levels (EfpSim, "Motion per frame and
+## the follow levels"). Without a host it is simulated in this node's space. It is authored in the game's native units. Attached to a body
 ## (follow_host), it places itself each frame in the frame of the body's
 ## current skeleton at a bone, so a skeleton rebuilt by an equipment change
 ## does not take the effect with it.
@@ -76,12 +88,22 @@ var draw_updates := 0
 var _has_billboard := false
 var _last_cam := Basis()
 var _draws: Array = [] # of [tpl index, MultiMeshInstance3D, view mode]
+var _links: Array = [] # of [tpl index, MeshInstance3D (ArrayMesh), render mode, EfpLinks.Out, EfpLinks.Buf, EfpLinks.Buf, kind 0 DPipe / 1 Pipe / 2 Obj]
 var _life := 0.0
 var _follow_host: Node3D = null
 var _follow_bone_name := ""
 var _follow_offset := Vector3.ZERO
 var _follow_skel: Skeleton3D = null
 var _follow_bone := -1
+var _anchored := false
+var _placed := Transform3D()
+var _anchor := Transform3D()
+## OURS: how far (native units) the host may move from the anchor before
+## the simulation space re-centres on it.
+const ANCHOR_RECENTRE := 60.0
+## OURS: a placement this far (native units) from the anchor in one frame is
+## a jump (teleport, world re-base), not motion: the effect moves with it.
+const ANCHOR_JUMP := 400.0
 
 # Shared caches: one decode and one compiled template per file, one texture
 # and mesh per asset path, one material per (texture, state). Bounded by
@@ -106,6 +128,7 @@ const CACHE_MESHES := 256 ## OURS
 
 const PLATE := "RenderPlate"
 const MESH := "RenderMesh"
+const LINK_MODES := ["RenderLinkDPipe", "RenderLinkPipe", "RenderLinkObj"]
 ## OURS: particles move; a fixed box keeps a MultiMesh from being culled.
 const DRAW_AABB := AABB(Vector3(-200, -200, -200), Vector3(400, 400, 400))
 
@@ -173,6 +196,9 @@ static func from_template(t: EfpSim.Template, load_texture: Callable, load_mesh:
 		var mode := n.render_mode()
 		if mode == "" or mode == "RenderNone":
 			continue
+		if LINK_MODES.has(mode):
+			_add_link(fx, tp, mode, load_texture)
+			continue
 		if mode != PLATE and mode != MESH:
 			fx.skipped.append("%s (%s)" % [mode, n.name])
 			continue
@@ -225,7 +251,153 @@ static func from_template(t: EfpSim.Template, load_texture: Callable, load_mesh:
 
 ## How many nodes draw.
 func draw_count() -> int:
-	return _draws.size()
+	return _draws.size() + _links.size()
+
+## A Link node's draw: a MeshInstance3D whose ArrayMesh _update_links
+## rebuilds from EfpLinks' packed buffers (one Out and two Bufs per node,
+## reused every frame). Its texture is the node's first mesh entry's first
+## texture (READ, CEFCShape::FUN_00c883d0), bound for every render mode
+## (FUN_00cabda0).
+static func _add_link(fx: EfpEffect, tp: EfpSim.Tpl, mode: String, load_texture: Callable) -> void:
+	var n: EfpReader.EfpNode = tp.node
+	var tex: Texture2D = null
+	var tname := "(none)"
+	if not n.meshes.is_empty():
+		var ref: EfpReader.EfpMeshRef = n.meshes[0]
+		if not ref.textures.is_empty():
+			tname = ref.textures[0]
+			tex = load_texture.call(tname)
+	if tex == null:
+		fx.skipped.append("texture %s" % tname)
+		return
+	var mi := MeshInstance3D.new()
+	mi.mesh = ArrayMesh.new()
+	mi.material_override = link_material_for(tex, n.state)
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mi.custom_aabb = DRAW_AABB
+	mi.name = "link_%d" % tp.index
+	fx.add_child(mi)
+	var kind := 2 if mode == "RenderLinkObj" else (1 if mode == "RenderLinkPipe" else 0)
+	fx._link_tpls[tp.index] = fx._links.size()
+	fx._links.append([tp.index, mi, mode, EfpLinks.Out.new(), EfpLinks.Buf.new(), EfpLinks.Buf.new(), kind])
+	if mode != "RenderLinkObj":
+		fx._has_pipe = true
+
+## OURS: at most this many Link triangles are rebuilt per rendered frame
+## across every effect; a node past the budget keeps last frame's strips.
+const LINK_TRIS_PER_FRAME := 20000
+static var _link_budget_frame := -1
+static var _link_budget_left := 0
+var _link_tpls: Dictionary = {} # tpl index -> index into _links
+var _has_pipe := false
+var _link_cam := Transform3D()
+var _link_self := Transform3D()
+var _link_proj := Projection()
+## How many times the Link strips were rebuilt (tests).
+var link_updates := 0
+
+## Refills the per-frame Link budget now (benches and tests that rebuild
+## many times within one frame).
+static func reset_link_budget() -> void:
+	_link_budget_frame = -1
+
+## True when a screen-space strip would change without a step: the camera
+## or this effect moved, or the projection changed.
+func _link_camera_moved() -> bool:
+	var cam := get_viewport().get_camera_3d() if is_inside_tree() else null
+	if cam == null:
+		return false
+	var ct := cam.global_transform
+	var st := global_transform
+	var pr := cam.get_camera_projection()
+	if ct.is_equal_approx(_link_cam) and st.is_equal_approx(_link_self) and pr == _link_proj:
+		return false
+	return true
+
+## The pipe view in this effect's space: [clip Projection, right, up].
+## Without a camera (headless), an orthographic view down -Z of the effect's
+## own axes (OURS).
+func _link_view() -> Array:
+	var cam := get_viewport().get_camera_3d() if is_inside_tree() else null
+	if cam == null:
+		return [Projection.IDENTITY, Vector3.RIGHT, Vector3.UP]
+	var gt := global_transform
+	_link_cam = cam.global_transform
+	_link_self = gt
+	_link_proj = cam.get_camera_projection()
+	var vp := _link_proj * Projection(cam.get_camera_transform().affine_inverse() * gt)
+	var inv := gt.basis.inverse()
+	var cb := cam.global_transform.basis.orthonormalized()
+	return [vp, inv * cb.x, inv * cb.y]
+
+## Every Link node's strips for this frame (see EfpLinks): one pass over
+## the particles finds each emitter's oldest live one (link == null) and
+## walks its chain; each node's chains go into one stitched strip.
+func _update_links() -> void:
+	if _links.is_empty():
+		return
+	link_updates += 1
+	var frame := Engine.get_process_frames()
+	if frame != _link_budget_frame:
+		_link_budget_frame = frame
+		_link_budget_left = LINK_TRIS_PER_FRAME
+	if _link_budget_left <= 0:
+		return
+	var view := _link_view() if _has_pipe else [Projection.IDENTITY, Vector3.RIGHT, Vector3.UP]
+	var vp: Projection = view[0]
+	var right: Vector3 = view[1]
+	var up: Vector3 = view[2]
+	for d in _links:
+		(d[3] as EfpLinks.Out).clear()
+	for p in sim.particles:
+		if p.link != null:
+			continue
+		var di: int = _link_tpls.get(p.tpl, -1)
+		if di < 0:
+			continue
+		var d: Array = _links[di]
+		var out: EfpLinks.Out = d[3]
+		var a: EfpLinks.Buf = d[4]
+		match int(d[6]):
+			2:
+				EfpLinks.gather_from(p, true, a)
+				EfpLinks.obj_ribbon(a, out)
+			1:
+				EfpLinks.gather_from(p, false, a)
+				var b: EfpLinks.Buf = d[5]
+				EfpLinks.spline(a, b)
+				EfpLinks.pipe_ribbon(b, vp, right, up, out)
+			_:
+				EfpLinks.gather_from(p, false, a)
+				EfpLinks.pipe_ribbon(a, vp, right, up, out)
+	for d in _links:
+		if _link_budget_left <= 0:
+			return
+		var out: EfpLinks.Out = d[3]
+		var am: ArrayMesh = (d[1] as MeshInstance3D).mesh
+		am.clear_surfaces()
+		if out.nv >= 3:
+			am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLE_STRIP, out.arrays())
+		_link_budget_left -= out.triangles()
+
+## Each Link node's live particles, one list per emitter, oldest first:
+## the chains _update_links draws (each emitter's list from its head,
+## link == null, along next_link; READ, see EfpLinks). `only` limits it to
+## those tpl indices. tpl index -> Array of Array[EfpSim.Particle].
+static func link_chains(s: EfpSim, only: Dictionary = {}) -> Dictionary:
+	var out := {}
+	for p in s.particles:
+		if p.link != null or (not only.is_empty() and not only.has(p.tpl)):
+			continue
+		var chain: Array = []
+		var q: EfpSim.Particle = p
+		while q != null:
+			chain.append(q)
+			q = q.next_link
+		if not out.has(p.tpl):
+			out[p.tpl] = []
+		(out[p.tpl] as Array).append(chain)
+	return out
 
 ## Ends the effect now: every particle goes, and the node frees itself
 ## (READ: the interface's release, see the header).
@@ -248,6 +420,12 @@ func _end() -> void:
 ## skeleton's origin) plus `offset`; without a skeleton, the host's origin
 ## plus `offset`. Its rotation is the skeleton's (OURS, see SkillEffects).
 ## The effect should be a child of `host`.
+## Where the effect is placed in the world: its host's bone plus offset, as
+## last placed (round 621: with a host the node itself stays at its anchor,
+## so this, not global_position, is where the effect is).
+func placed_at() -> Vector3:
+	return _placed.origin if _anchored else global_position
+
 func follow_host(host: Node3D, bone: String, offset: Vector3) -> void:
 	_follow_host = host
 	_follow_bone_name = bone
@@ -267,18 +445,69 @@ func _skeleton() -> Skeleton3D:
 		_follow_bone = _follow_skel.find_bone(b)
 	return _follow_skel
 
-func _place() -> void:
+## Places the effect on its host and hands the placement to the
+## simulation (round 621, follow levels). Returns whether anything moved,
+## so the caller redraws.
+##
+## The effect simulates in a space that does NOT move with its host -- as
+## retail's does, in world units over the effect's scale (READ: the world
+## matrix FUN_00cabda0 sets is scale only) -- and the host's motion reaches
+## the simulation as the effect's placement (EfpSim.set_origin), which each
+## node follows or not by its levels. This node is pinned (top_level) at an
+## anchor whose basis is the host's SCALE only (its handedness kept, its
+## facing not), so space-0 commands point along world axes and the facing
+## arrives as the effect's rotation, as retail's SetMatrix hands it
+## (CEFEffect::vslot_007). The anchor re-centres (EfpSim.shift) once the
+## host is ANCHOR_RECENTRE away; a jump past ANCHOR_JUMP in one frame (a
+## teleport, or the world re-based on a zone change) carries the whole
+## effect along instead (OURS both).
+func _place() -> bool:
 	if _follow_host == null or not is_instance_valid(_follow_host):
-		return
+		return false
+	if not is_inside_tree():
+		return false
 	var skel := _skeleton()
-	if skel == null or not skel.is_inside_tree() or not is_inside_tree():
-		position = _follow_offset
-		basis = Basis.IDENTITY
-		return
-	var at := _follow_offset
-	if _follow_bone >= 0:
-		at += skel.get_bone_global_pose(_follow_bone).origin
-	global_transform = skel.global_transform * Transform3D(Basis.IDENTITY, at)
+	var placed: Transform3D
+	if skel != null and skel.is_inside_tree():
+		var at := _follow_offset
+		if _follow_bone >= 0:
+			at += skel.get_bone_global_pose(_follow_bone).origin
+		placed = skel.global_transform * Transform3D(Basis.IDENTITY, at)
+	elif _follow_host.is_inside_tree():
+		# No skeleton yet: the host's own frame, never a bare world position
+		# (review: this node is top_level once anchored).
+		placed = _follow_host.global_transform * Transform3D(Basis.IDENTITY, _follow_offset)
+	else:
+		return false
+	_placed = placed
+	var redraw := false
+	if not _anchored:
+		_anchored = true
+		_anchor = Transform3D(scale_basis(placed.basis), placed.origin)
+		top_level = true
+	var e := _anchor.affine_inverse() * placed
+	if e.origin.length() > ANCHOR_JUMP and sim != null:
+		sim.shift(sim.origin())
+		_anchor.origin = placed.origin
+		e = _anchor.affine_inverse() * placed
+		redraw = true
+	elif e.origin.length() > ANCHOR_RECENTRE and sim != null:
+		sim.shift(e.origin)
+		_anchor.origin = placed.origin
+		e = _anchor.affine_inverse() * placed
+		redraw = true
+	global_transform = _anchor
+	if sim == null:
+		return redraw
+	return sim.set_origin(e.origin, e.basis.orthonormalized()) or redraw
+
+## A basis's scale alone, its handedness kept (a mirrored basis keeps a
+## negative Z), its rotation dropped.
+static func scale_basis(b: Basis) -> Basis:
+	var sc := Vector3(b.x.length(), b.y.length(), b.z.length())
+	if b.determinant() < 0.0:
+		sc.z = -sc.z
+	return Basis.from_scale(sc)
 
 func _process(delta: float) -> void:
 	if sim == null:
@@ -287,7 +516,7 @@ func _process(delta: float) -> void:
 	if max_life > 0.0 and _life >= max_life and loop:
 		stop()
 		return
-	_place()
+	var moved := _place()
 	var stepped := sim.advance(delta)
 	if sim.finished():
 		if loop:
@@ -297,8 +526,14 @@ func _process(delta: float) -> void:
 			return
 	# The MultiMeshes change only when the simulation stepped -- or, for a
 	# billboarded node, when the camera turned (else it would lag the view).
-	if stepped > 0 or (_has_billboard and _camera_turned()):
+	# (Round 621: also when the host moved the effect, whose followers the
+	# placement pass moved this frame, or the space re-centred.)
+	if stepped > 0 or moved or (_has_billboard and _camera_turned()):
 		_update_draws()
+	# The Link strips likewise: after a step, or when the camera or the
+	# effect moved for a screen-space pipe (round 621's review follow-up).
+	if not _links.is_empty() and (stepped > 0 or moved or (_has_pipe and _link_camera_moved())):
+		_update_links()
 
 func _exit_tree() -> void:
 	if sim != null:
@@ -429,8 +664,37 @@ static func material_for(tex: Texture2D, st: EfpReader.EfpRenderState, billboard
 	_materials[key] = m
 	return m
 
-static func _shader(cls: String, no_cull: bool) -> Shader:
-	var key := "%s|%s" % [cls, str(no_cull)]
+## A Link strip's material: the node's blend, texture ops and cull as for a
+## plate (the node's cull, render block +0x1a4, applies to its strips; see
+## EfpLinks for the winding), with the strip's own UVs.
+static func link_material_for(tex: Texture2D, st: EfpReader.EfpRenderState) -> ShaderMaterial:
+	var src := st.src_blend if st != null else 5
+	var dest := st.dest_blend if st != null else 2
+	var cls := blend_class(src, dest)
+	var no_cull := cull_disabled(st.cull if st != null else 1)
+	var key := "link|%d|%s|%s|%d,%d,%d,%d,%d,%d" % [tex.get_instance_id() if tex != null else 0, cls, str(no_cull),
+		st.color_op if st else 4, st.color_arg1 if st else 2, st.color_arg2 if st else 0,
+		st.alpha_op if st else 4, st.alpha_arg1 if st else 2, st.alpha_arg2 if st else 0]
+	if _materials.has(key):
+		return _materials[key]
+	var m := ShaderMaterial.new()
+	m.shader = _shader(cls, no_cull, true)
+	m.set_shader_parameter("tex", tex)
+	m.set_shader_parameter("c_op", st.color_op if st else 4)
+	m.set_shader_parameter("c_a1", st.color_arg1 if st else 2)
+	m.set_shader_parameter("c_a2", st.color_arg2 if st else 0)
+	m.set_shader_parameter("a_op", st.alpha_op if st else 4)
+	m.set_shader_parameter("a_a1", st.alpha_arg1 if st else 2)
+	m.set_shader_parameter("a_a2", st.alpha_arg2 if st else 0)
+	_materials[key] = m
+	return m
+
+## The instance UV rectangle a plate or mesh applies (the draw routines' u0 +
+## u*du, READ); a Link strip writes its own u, v and applies none (READ).
+const UVMAP_INSTANCE := "UV = INSTANCE_CUSTOM.xy + UV * INSTANCE_CUSTOM.zw;"
+
+static func _shader(cls: String, no_cull: bool, link: bool = false) -> Shader:
+	var key := "%s|%s|%s" % [cls, str(no_cull), "link" if link else "inst"]
 	if _shaders.has(key):
 		return _shaders[key]
 	var blend := "blend_mix"
@@ -441,7 +705,8 @@ static func _shader(cls: String, no_cull: bool) -> Shader:
 	sh.code = SHADER_TEMPLATE.replace("{BLEND}", blend) \
 		.replace("{CULL}", "cull_disabled" if no_cull else "cull_back") \
 		.replace("{FORCE_ALPHA_ONE}", "true" if cls == "add_one" else "false") \
-		.replace("{DARKEN}", "true" if cls == "darken" else "false")
+		.replace("{DARKEN}", "true" if cls == "darken" else "false") \
+		.replace("{UVMAP}", "" if link else UVMAP_INSTANCE)
 	_shaders[key] = sh
 	return sh
 
@@ -473,7 +738,7 @@ vec4 op(int o, vec4 a, vec4 b) {
 }
 
 void vertex() {
-	UV = INSTANCE_CUSTOM.xy + UV * INSTANCE_CUSTOM.zw;
+	{UVMAP}
 }
 
 void fragment() {

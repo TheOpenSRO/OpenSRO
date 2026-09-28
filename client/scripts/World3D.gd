@@ -14095,7 +14095,10 @@ func _qa_play_effects(spec: String) -> void:
 			continue
 		fx.loop = true
 		var x := (float(i) - float(paths.size() - 1) * 0.5) * spacing
-		SkillEffects.attach(fx, player, "none", Vector3(x, 0, 0))
+		# SRREVAMP_QA_EFFECT_BONE (round 621) attaches them at that bone
+		# instead ("Bip01 R Hand" shows a trail behind a swinging hand).
+		var bone := OS.get_environment("SRREVAMP_QA_EFFECT_BONE")
+		SkillEffects.attach(fx, player, bone if bone != "" else "none", Vector3(x, 0, 0))
 		print("QA EFFECT %s at x %.0f: %d node(s) drawn, skipped %s" % [path, x, fx.draw_count(), str(fx.skipped)])
 
 ## SRREVAMP_QA_CAST's schedule (see the hook).

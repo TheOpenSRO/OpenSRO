@@ -295,6 +295,12 @@ in order, does it land exactly on the file's end?
 - The independent GDScript implementation agrees with the analysis exactly (465/465 real
   `"0110"` meshes in a 4,000-file sample; the one file it declines is a real older
   `"JMXVBMS 0109"`, whose layout is not verified).
+- **The retail client refuses `0109` too** (READ, round 621). Both of its .bms header checks,
+  `Prim::FUN_00bc5690` (case 1, Prim.cpp line 0xd9) and `PrimGeometry::FUN_00c121f0`
+  (PrimGeometry.cpp line 0x152), accept only `"0110"`; a mismatch asserts and the load returns 0.
+  The binary's one `0109` branch (`ResObject::FUN_00bce3b0`) is the `.bsr` header. So there is no
+  0109 mesh layout to recover. MEASURED: the two retail 0109 files an effect names are
+  `meshes\hwan01.bms` and `hwan02.bms` in Particles.pk2.
 
 ### Edge semantics
 

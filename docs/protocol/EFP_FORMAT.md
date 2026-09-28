@@ -95,7 +95,7 @@ In file order:
 | 4 | command list | `FUN_00ca7280` | always empty |
 | 5 | one command | `FUN_00ca57e0` | `NormalTimeExtinct` (95,139 nodes), `NormalTimeLoop` (263) or `NeverExtinct` (190) |
 | 6 | command list | `FUN_00ca7280` | `ProgramUpdate` |
-| 7 | 20-byte block | inline | u8, u8, u32, u32, u32, u8, u32, u8. Meaning OPEN; the u32s track the LinkMode controller's values |
+| 7 | 20-byte block | inline | u8, u8, u32, u32, u32, u8, u32, u8, stored at node +0x154..+0x16c (READ, `FUN_00cc3500`): b0 keep old rotation, b1 keep old position, u2/u3/u4 orbit/rotation/velocity follow levels, b5 apply rotation velocity, u6 translation follow level, b7 apply shape velocity. See "Follow levels" |
 | 8 | one command | `FUN_00ca57e0` | the **view mode**: `ViewNone`, `ViewBillboard`, `ViewYBillboard` or `ViewVBillboard` |
 | 9 | render block | `FUN_00cc3400` | a 36-byte RenderState, then `u32 n` and n × (string mesh, `u32 m`, m × string texture) (`FUN_00cc32b0`). The mesh is `""` for a plate. The loader rewrites cull 2 to 3 |
 | 10 | one command | `FUN_00ca57e0` | the **render mode**: `RenderNone`, `RenderPlate`, `RenderMesh`, `RenderLinkPipe`, `RenderLinkDPipe` or `RenderLinkObj` |
@@ -388,7 +388,8 @@ Every retail view and render command has space 0 (MEASURED).
 **What the space selects.**
 - **Position commands** (SetPosition, SetConePos, SetBANPos) use 12 variants, `space = r×3 + o`.
   - `o = 0` adds to the current position; 1 starts from the parent particle's position; 2 starts
-    from the "link" object's (+0x34).
+    from the "link" particle's (+0x34): the previous live particle of the same emitter (round 621,
+    see "The link" below).
   - `r` rotates the value by: 0 nothing, 1 the particle's own rotation (+0xb0), 2 the parent's,
     3 the link's (`FUN_00410c30` is `v × M`).
   - MEASURED: SetPosition space 7 in 24,220 commands, i.e. parent position plus the value in the
@@ -492,7 +493,7 @@ D3D's fixed pipeline, and nothing is converted.
 ### What this client does not do yet (OPEN), and its own choices (OURS)
 
 **Not drawn:**
-- RenderLinkPipe, RenderLinkDPipe and RenderLinkObj (routines not read);
+- a node whose texture or mesh does not load (see "Assets that do not load");
 - the flight of AT_MOV_* rows.
 
 BSAnimation needs no drawing. Every one of the 3,230 nodes that carries a BSAnimation variable
@@ -500,7 +501,6 @@ BSAnimation needs no drawing. Every one of the 3,230 nodes that carries a BSAnim
 SetBANPos and SetBANRot keys, which are implemented.
 
 **OURS:**
-- The link object is taken to be the parent.
 - A particle follows only its parent's translation.
 - The order within a frame is: motion, the particle's commands, emission (new particles run their
   frame-0 commands at once), then ages.
@@ -525,6 +525,339 @@ SetBANPos and SetBANRot keys, which are implemented.
 | anything else | MIX | OURS, approximate |
 
 The texture-stage colour and alpha ops (SELECTARG1/2, MODULATE, 2X, 4X, ADD) run in the shader.
+
+## Link render modes (round 621)
+
+`client/scripts/efp/efp_links.gd` (`EfpLinks`) implements the geometry and `EfpEffect` draws it:
+one ArrayMesh triangle strip per Link node (every chain stitched in), rebuilt after a simulation
+step or a camera move (see "This client's choices" below).
+
+### The link (READ)
+
+- **Every emitter keeps its live particles in an intrusive list.** The emitter constructor
+  `FUN_00c88320` sets the list object at emitter +0x30 with the prev offset 0x34 (at +0x38) and
+  the next offset 0x38 (at +0x48). The list's count is at emitter +0x54.
+- **The list class** (`FUN_00c87360` append, `CEFElement::FUN_00c873a0` remove): +8 prev offset,
+  +0x18 next offset, +0x24 count, +0x28 head, +0x2c tail. Append sets the item's prev to the tail
+  and its next to 0.
+- **The particle init** `FUN_00c88490` (the particle vtable 0x00e0ebfc, slot 4) appends the new
+  particle to its emitter's list (the call at 0x00c88769 on emitter +0x30). A death,
+  `CEFElement::vslot_001` (`FUN_00c87a20`), unlinks it.
+- **So particle +0x34 is the particle the same emitter spawned before this one that is still
+  alive**, and +0x38 the one after. The oldest live particle has +0x34 = 0.
+- Round 620 took the link to be the parent (OURS). That is corrected: `EfpSim.Particle.link` /
+  `next_link`.
+- **A variant that names the link does nothing without one.** The interpreter tests +0x34 first in
+  every link case. There are 28 (review follow-up: every case of `FUN_00c893f0` that reads
+  +0x34, listed from the decompile):
+
+  | command | cases |
+  |---|---|
+  | SetRotationMat, SetRotation, SetRotationAxis, SetBANRot (space 3) | 0x03, 0x08, 0x0d, 0x12 |
+  | SetPosition (origin link, or rotated by the link) | 0x15, 0x18, 0x1b, 0x1c, 0x1d, 0x1e |
+  | SetConePos | 0x21, 0x24, 0x27, 0x28, 0x29, 0x2a |
+  | SetBANPos | 0x2d, 0x30, 0x33, 0x34, 0x35, 0x36 |
+  | SetSpherePos (space 2) | 0x39 |
+  | SetVelocity, SetConeVel, Force, ConeForce (space 3) | 0x3d, 0x41, 0x45, 0x49 |
+  | Attraction (space 1) | 0x4b |
+
+  For the position commands (space = r·3 + o) these are exactly o = 2 or r = 3.
+  `EfpSim.names_link` / `kind_names_link` encode the same set.
+- The particle init also copies the owner's rotation and a second matrix (+0x64), and resets both
+  to identity when bit 0 of emitter +0x74 is set. That bit's source was not traced (OPEN).
+
+### Follow levels (READ; round 621's review follow-up and its "follow levels" commit)
+
+**The block.** The body's 20-byte block lands at node +0x154..+0x16c (`FUN_00cc3500`): b0 +0x154,
+b1 +0x155, u2 +0x158, u3 +0x15c, u4 +0x160, b5 +0x164, u6 +0x168, b7 +0x16c.
+
+**The levels.** The emitter init (`CEFGroup::vslot_004`, emitter vtable 0x00e0ec4c slot 4) turns
+each u32 into an ancestor. 0 means none; N ≥ 1 means the emitter's owner, then that owner's own
+emitter's owner, N − 1 more times up.
+
+| field | stored at | follow |
+|---|---|---|
+| u2 | emitter +0x68 | orbit: the position turns with the ancestor |
+| u3 | emitter +0x6c | rotation. A negative u3 sets emitter +0x74, and the particle init then resets the inherited rotation to identity |
+| u4 | emitter +0x70 | velocity |
+| u6 | emitter +0x64 | translation |
+
+**The top.** The effect itself is a particle-like element (`CEFEffect` shares `CEFElement`'s
+layout; the particle init is slot 4 of both vtables). It owns the root node's emitter, so for a
+node at depth d, level d + 1 is the effect.
+- **The levels are signed.** The walk compares `1 < level`, and u3 is tested `< 1` and `< 0`.
+  - MEASURED over the 95,801 nodes, read signed: no u2, u3, u4 or u6 is above d + 1.
+  - The only negative value is u3 = −1, in 135 nodes of 101 files (for example
+    `cos\pet2_hwan_keep_p`, `dun\pha_blue_eye_02`).
+  - A negative u3 names no ancestor and resets the inherited rotation. A negative u2, u4 or u6
+    would name the owner (none in retail).
+  - The reader keeps the raw u32 (its dump matches the Go reader's). `EfpSim.signed32`
+    converts it. The review found aa7a800 comparing the raw u32, so u3 = −1 never reset.
+- The effect's position and matrix come from its host.
+  - `CEFEffect::vslot_008` (position) stores the position divided by the effect's scale and
+    flags +0x28b.
+  - `vslot_007` (matrix, with its translation moved to the position) does the same and also
+    flags +0x60.
+  - Whenever either flag is set, the draw (`FUN_00cabda0`) runs the follow pass over the tree
+    with the effect's turn, then stores the placement as old.
+- The draw's world matrix is only that scale (`FUN_00cabda0`). So **retail simulates in world
+  space over the effect's scale**, and only what follows the effect moves with the host.
+
+**Each frame, per particle** (`CEFUpdater::vslot_002`):
+1. with b0, keep the rotation as the old rotation (+0x64); with b1, keep the position as the old
+   position (+0xa4); clear the changed flag (+0x60);
+2. u2 ancestor F, **if F changed**: position = (position − F.old position) × F.turn + F.old
+   position;
+3. u3 ancestor, if changed: rotation = rotation × its turn, and this particle is changed;
+4. u4 ancestor, if changed: velocity = velocity × its turn;
+5. with b5: rotation = rotation × rotation velocity, and this particle is changed;
+6. u6 ancestor A, **every frame**: position += A.position − A.old position;
+7. position += velocity; with b7, the shape turns by the shape velocity.
+
+Then the node's commands run; a rotation command also sets changed (every SetRotation* and
+SetBANRot case: 0x00–0x03, 0x05–0x08, 0x0a–0x0d, 0x0f–0x12). With b0,
+each particle's turn becomes inverse(old rotation) × rotation, the delta at +0x64. Child nodes are
+updated after their parent's.
+
+**At the effect.** When the effect changed, the draw (`FUN_00cabda0`) runs the same pass,
+`FUN_00c863a0`, over the whole tree with the effect's turn, then stores its placement as old.
+`CEFEffect::FUN_00c865a0` shifts every particle's position and old position by one vector: the
+scale change `vslot_010` uses it.
+
+**At spawn** (`FUN_00c88490`):
+- the position is the owner's;
+- the velocity is the owner's minus the u6 ancestor's;
+- the rotation is the owner's, or identity with a negative u3;
+- the position is also offset by (A.old − A.position) for the pass that follows its spawn.
+
+**MEASURED over the 95,801 retail nodes:**
+- **The followed ancestors keep their old state.** An ancestor followed through u2 or u6 has b1 in
+  149,167 of 149,233 cases; through u3 or u4 it has b0 in all 77,375.
+- **b5 and b7 mark the velocity commands.** b5 is set on exactly the 423 nodes with a
+  SetRVelocity command, and b7 on exactly the 31,138 with SetShapeRotVel.
+- **Levels:**
+
+  | level | u2 | u6 |
+  |---|---|---|
+  | 0 (follow nothing) | 22,762 | 12,360 |
+  | a particle ancestor | 69,695 | 79,538 |
+  | the effect | 3,344 | 3,903 |
+
+**This client** (`EfpSim`, `EfpEffect`):
+- all four levels, the ancestor walk to the effect, the changed gate, b0/b1/b5/b7, and the spawn
+  rules above (READ);
+- **The effect is the sim's root particle.** `EfpSim.set_origin` places it and, when it moved or
+  turned, runs the draw's follow pass at once.
+  - Every render frame: each particle keeps its old state, clears changed, and takes u2/u3/u4
+    (gated) and u6. There is no velocity, rotation velocity or command in this pass.
+  - So the effect's followers move with the host every frame, and during a 50 ms step the effect
+    holds still.
+- **`EfpEffect` pins itself** (top_level) at an anchor whose basis is the host's scale only, with
+  its handedness kept. So space-0 commands point along world axes, and the host's facing arrives
+  as the effect's rotation, as `vslot_007` hands it.
+  - It re-centres (`EfpSim.shift`, like `FUN_00c865a0`) past 60 native units, and redraws on that
+    frame.
+  - A jump past 400 in one frame (a teleport, or the world re-based on a zone change) carries the
+    whole effect along (OURS both).
+  - Without a skeleton, it sits at the host plus its offset.
+- So a u6 = 0 particle stays where it was born while the caster moves: the trails.
+
+**OURS:**
+- the effect is changed only when the placement moved or turned (retail flags every placement;
+  same result);
+- no spawn offset: a particle spawned in a step is placed after that frame's effect follow, as
+  retail's offset intends;
+- particles are processed in spawn order, which finishes every ancestor before its followers as
+  retail's node order does;
+- a dead ancestor is no longer followed;
+- a synthetic node without the block follows its parent's translation (u6 = 1, b1), round 620's
+  behaviour.
+- The host's turn reaches the effect as its rotation. The bone's own rotation is not used (the
+  effect "turns with the body", round 620).
+
+**Link files that make a triangle** (`efp_census.gd --build`, peak of 40 frames, 975 files with a
+drawn Link node):
+
+| | files |
+|---|---|
+| round 621 review follow-up (local space) | 417 |
+| follow levels, still host | 781 |
+| follow levels, host moving 2 native units a frame (`--moving`, OURS speed) | **924** |
+
+### Which particle draws (READ)
+
+The draw setup `EFEffect::FUN_00cabda0` calls the node's routine for every particle. Each Link
+routine returns at once unless +0x34 is 0. So only the oldest live particle of each emitter draws,
+and it walks the list through +0x38 to the newest. That makes one strip per emitter, oldest first.
+A child node has one emitter per parent particle, so it has one strip per parent particle.
+
+### Points (READ, all three routines)
+
+- A point is (position +0x1b0, colour +0x228, width = scale.x +0x1c8).
+- A particle closer than 1e-6 on every axis (the float at `0x00e1b848`) to the last TAKEN
+  position is a near-duplicate. What happens to it depends on the routine (review follow-up;
+  round 621 had "overwrites" for all three):
+  - **LinkDPipe and LinkPipe drop it and keep the older point.** Each writes the particle into
+    the next free slot and advances only when it is taken (LinkDPipe 0x00c8df3f–0x00c8dfdd, and
+    the same loop in `FUN_00c8e020`), so a near-duplicate is overwritten by the next particle.
+  - **LinkObj overwrites the last taken pair with it.** It advances first and writes after
+    (0x00c8c433–0x00c8c4c7). The comparison stays against the position that was taken, because
+    local_48 changes only when a particle is taken, not against the one that overwrote it.
+- **A retail quirk.** LinkPipe's counter starts at 1, so its "first point" test never fires and
+  its first particle is compared against local_58 before anything was stored there
+  (uninitialised stack). This client always takes the first particle (OURS).
+
+### LinkDPipe (`EFEffect::FUN_00c8de80`, READ)
+
+The taken points as they are, handed to the pipe ribbon. It needs 2 points. MEASURED: the retail
+LinkDPipe nodes seen (the lightning files) place each particle with SetSpherePos, so the line is
+jagged.
+
+### LinkPipe (`EFEffect::FUN_00c8e020`, READ)
+
+- The taken points P1..Pm get P0 = P1 and P(m+1) = Pm added.
+- **A uniform cubic B-spline.** Each segment i = 0..m−2 over P(i)..P(i+3) is sampled 3 times (the
+  loop count is literal) at t = 0, 1/3, 2/3. The step is the double 0.3333333432674408 at
+  `0x00e0ec60`.
+- The weights are (1−t)³/6, (3t³ − 6t² + 4)/6, (−3t³ + 3t² + 3t + 1)/6 and t³/6. The doubles are
+  3.0 at `0x00e1b808`, 6.0 at `0x00d99a68`, 4.0 at `0x00e1b860` and 1.0 at `0x00e1b7f0`.
+- The colour runs from P(i+1)'s to P(i+2)'s: each byte is lerped by t and rounded (`fistp`, half
+  to even under the default control word).
+- The width is P(i+1)'s plus k·(P(i+2) − P(i+1))/3 for sample k.
+- Pm is appended last. So m points give 3(m − 1) + 1. It needs m ≥ 2.
+
+### The pipe ribbon (`EFEffect::FUN_00c8d0e0`, READ except where marked)
+
+- Each of the N ≥ 2 points is projected by `thunk_FUN_00aa30f0(out, in, NULL, 0x00edbea8,
+  0x00edbe68, NULL)`. INFERRED: that is `D3DXVec3Project(out, v, viewport, projection, view,
+  world)` from the statically linked D3DX (its CPU dispatch table at `0x00ec7758`), by its
+  argument shape. With no viewport, the result is in normalised device coordinates.
+- At point i the screen direction is d = C(i−1) − C(i+1). The first point uses C0 − C1, and the
+  last uses C(N−2) − C(N−1).
+- (d.y, −d.x, 0) is transformed by the matrix at `0x00edbde8` (`FUN_00854e30`, a row-vector
+  transform with its translation row) and normalised (`FUN_00410cd0`, which leaves a zero vector
+  at zero). That gives a world direction across the line on screen. `0x00edbde8` is the billboard
+  matrix, whose rows are the inverse view's right, up and look (READ in round 620's review
+  follow-up, `CEFSystem::FUN_00cb0ee0`). So the side is right·d.y − up·d.x.
+- The two vertices are P + n·w (v = 0) and P − n·w (v = 1), so the ribbon is 2w wide. Both take
+  the point's colour.
+- u is 0 at the first point, i/(N−1) between, and 1 at the last. The UV rectangle
+  (TextureSlide) is not applied.
+- The vertex format is 0x18 bytes: position, colour, u, v. The primitive is
+  D3DPT_TRIANGLESTRIP (the 5 pushed at `0x00c8d0c1`). `FUN_00cafbc0` batches it and
+  `FUN_00cafa70` flushes it at once, so strips never join.
+
+### LinkObj (`EFEffect::FUN_00c8c3a0`, READ)
+
+- Each taken particle gives two edge points, pos + s·Y and pos − s·Y. Y is the second row of its
+  rotation (+0xc0, +0xc4, +0xc8) and s its scale.x. The dedupe is on the position.
+- The pairs are A1..Ak, with A0 = A1 and A(k+1) = Ak (the copies at 0x00c8c6e5–0x00c8c735).
+- **Segments j = 0..k−3**, k − 2 of them, so Ak is only a control point. Each is sampled while
+  t < 1.0 (t = 0, 1/3, 2/3) with the same B-spline, each edge on its own. The colour is A(j+1)'s
+  to A(j+2)'s, lerped by byte.
+- A(k−1) closes the strip.
+- u starts at 1.0 and falls by 2.0 (the double at `0x00e1b898`) over the number of sample
+  vertices, so it is 0 at the closing pair. v is 0 on the + edge and 1 on the − edge.
+- It needs k ≥ 3 for a triangle; k = 2 gives a 2-vertex strip.
+- The width follows the particle's own rotation, not the camera.
+
+### Culling and winding
+
+A Link strip takes its node's cull (render block +0x1a4: 1 none, 3 CCW, as for any node). MEASURED
+by the reviewer: 17 LinkObj and 4 LinkPipe nodes have cull 3. Round 621 drew every strip
+two-sided; the follow-up honours the cull.
+
+Every strip triangle is emitted with its orientation reversed against D3D's. That is the
+convention BmsReader uses for .bms triangles so that Godot's front face is D3D's (INFERRED from
+that fix, the same inference the plate and mesh nodes rest on). Not checked against a retail
+render.
+
+### Texture (READ, `CEFCShape::FUN_00c883d0`)
+
+A particle's shape (+0x1d4) is its node's first mesh entry, and its texture (+0x1d8) is that
+entry's first texture. A RenderNone node has neither. `FUN_00cabda0` binds +0x1d8 with SetTexture
+for every render mode, the Link modes included. This settles round 620's OURS "only the first
+mesh entry and its first texture": that is what the client does.
+
+### This client's choices (OURS)
+
+- **One strip per node.** All of a node's chains go into one PRIMITIVE_TRIANGLE_STRIP ArrayMesh.
+  Consecutive chains are stitched with repeated vertices, so the triangles between them have zero
+  area and are never drawn. Each chain starts at an odd position of the joined strip, which gives
+  its triangles the reversed orientation above.
+- **Packed buffers.** The geometry is built in reused packed arrays (`EfpLinks.Buf`, `Out`): no
+  per-point objects and no per-sample arrays.
+- **When it rebuilds.** The strips are rebuilt only after a simulation step, or, for a
+  screen-space pipe, when the camera, its projection or the effect moved.
+- **A budget.** At most `EfpEffect.LINK_TRIS_PER_FRAME` = 20,000 Link triangles are rebuilt per
+  rendered frame across all effects. A node past the budget keeps last frame's strips.
+- Without a camera (headless tests and the census), the projection is orthographic down −Z of the
+  effect's own axes.
+- Which side gets v = 0 may be mirrored against retail by the handedness change (not checked).
+
+## Assets that do not load (round 621, MEASURED with `efp_census.gd --build --assets`)
+
+The census lists every texture and mesh that fails, with the reason. It checks Particles.pk2,
+Media.pk2 and Data.pk2 beside it, other extensions, and the same basename in any folder of all
+three.
+
+**Textures** (75 files skip a node for one):
+- **4 load now**: `textures\ques1_monster_paper_q_2..5.ddj`. Their DDS FourCC slot holds the
+  bytes 71 00 00 00: D3DFORMAT 113, D3DFMT_A16B16G16R16F.
+  - **The runtime loader** is `FUN_00b88420` → `FUN_00b87f20` (READ; its error string is
+    "DDJCreateTextureHForMThread Error - %s"). It opens the path it is handed through the archive
+    object's vtable +0x2c and reads 12 bytes, checking "JMXV". It then reads the u32 size field
+    and the rest, and passes the buffer from file offset 20 to the statically linked
+    D3DXGetImageInfoFromFileInMemory and D3DXCreateTextureFromFileInMemoryEx. The size passed is
+    the size field minus 8, and the texture is created with the file's own MipLevels.
+  - D3DX accepts a numeric D3DFORMAT in the FourCC slot.
+  - Round 621 cited `FUN_00b8eb60`. That is a converter path the game does not run; its reading
+    happened to agree.
+  - **MEASURED:** all four are 128×128 with 8 declared mips.
+    - **Only the top level is clean**, with every channel in 0..1.
+    - Level 1 of `_q_2` holds 15 non-zero values, down to −512, and every other stored mip of
+      all four is zero. Round 621's "every channel in 0..1" held for the top level only.
+    - So retail, loading the declared mips, minifies these to black or garbage.
+  - **This client takes the top level and lets Godot build clean mips** (OURS, not retail's look
+    when minified). It rounds each clamped channel to 8 bits; round 621 truncated, biasing every
+    channel by up to −1/255.
+  - Each payload is twice the declared chain, and the size field is 256 bytes larger than the
+    file (the `shield_90` pattern in DDJ_FORMAT.md).
+  - Those 4 files each also name a `-glow` texture that is absent, so no file-level count
+    changes.
+- **20 texture paths are absent** from all three archives, under any folder or extension:
+  `4ur_`, `aur_`, `bur_` and `cur_eplan03_rotation`, `bas_smoke_inver_h`, `beam_r`,
+  `crash_glow`, `dark_ourp`, `daro_oura`, `eu_harp_14_l`, `explosion`, `n-light-reo`,
+  `n-light01-z`, `oura_0555`, `ques1_monster2..5-glow`, `thunder4x4_02` and `water_80_glow`.
+- **4 more are absent at their path**, with the same name elsewhere:
+  - `water_offset_01.ddj` exists only in Data.pk2 as `Prim\Mtrl\etc\water_offset_01.ddj`.
+    `FUN_00b88420` opens exactly the path it is handed, through the archive object it is given,
+    with no rewrite (READ). So the effect's `textures\water_offset_01.ddj` cannot reach a file
+    at `Prim\Mtrl\etc\` in another archive. Which archive object the effect loader hands in
+    was not traced; that it is Particles.pk2's is INFERRED from every other effect texture
+    resolving there.
+  - `eu_harp_13`, `eu_shield_13` and `eu_sword_13` exist only as `.bms` meshes.
+- **Nodes that name no texture at all**: in 36 files a drawn node has no texture entry, and in 10
+  its texture is an empty string.
+
+For both kinds, retail binds a NULL texture and draws (READ: `FUN_00cabda0` does not skip a
+particle for it). What Direct3D 9's fixed-function stage returns for D3DTA_TEXTURE with no texture
+bound was not established. The D3DTEXTURESTAGESTATETYPE page says only that "the default argument"
+is D3DTA_DIFFUSE when no texture is set. **OPEN**: those nodes stay undrawn here rather than
+drawn with a guessed colour.
+
+**Meshes** (16 files):
+- **`meshes\hwan01.bms` and `hwan02.bms` are `JMXVBMS 0109`, and the retail client refuses them
+  too.**
+  - Both .bms header checks accept only `0110`: `Prim::FUN_00bc5690` (case 1, "BMS ", assert at
+    Prim.cpp line 0xd9) and `PrimGeometry::FUN_00c121f0` (PrimGeometry.cpp line 0x152).
+  - A mismatch asserts and clears the success flag, so the load returns 0 (READ).
+  - The only `0109` branch in the binary, `ResObject::FUN_00bce3b0`, is the `.bsr` "RES "
+    header.
+  - So there is no 0109 BMS layout to implement, and those nodes draw nothing in retail either
+    (INFERRED: a shape with no geometry draws nothing).
+- **4 mesh paths are absent** from all three archives: `cang001-one`, `nachal_size_test`,
+  `season_circle` and `tahomet size test`.
 
 ## Census (MEASURED, round 619)
 

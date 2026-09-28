@@ -356,8 +356,9 @@ func _effect_nodes() -> void:
 	root.children.append(_node(4, "NormalTimeExtinct", _emit(0, 1, 1, 1, 1.0), "RenderLinkPipe"))
 	root.children.append(_node(4, "NormalTimeExtinct", _emit(0, 1, 1, 1, 1.0), "RenderPlate", [], "missing.ddj"))
 	var fx = E.from_template(S.compile(root), load_tex, load_mesh, 3)
-	_check(fx.draw_count() == 2, "a plate and a mesh draw (%d)" % fx.draw_count())
-	_check(fx.skipped.size() == 2, "the link pipe and the missing texture are skipped and listed: %s" % str(fx.skipped))
+	# Round 621: the Link modes draw (efp_links_test.gd covers them).
+	_check(fx.draw_count() == 3, "a plate, a mesh and a link pipe draw (%d)" % fx.draw_count())
+	_check(fx.skipped.size() == 1, "the missing texture is skipped and listed: %s" % str(fx.skipped))
 	var host := Node3D.new()
 	get_root().add_child(host)
 	host.add_child(fx)
