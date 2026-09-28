@@ -7094,6 +7094,179 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twenty-seventh round: water is seen from above, drawn where and how the game draws it
+
+**The report (v0.1.457).** "Water has mostly been working but you can't see it from above, only
+from underneath." The tester's screenshot reads X 4680, which is region y 159, local x 720. From
+the lake bed, a teal sheet hangs overhead and the banks sit below it. From above, there is no
+water.
+
+**Labels.** READ means recovered from `sro_client.exe` (decompile at `/var/tmp/decomp_client`,
+constants read out of the exe). MEASURED means counted on the box's real archives or a real run.
+INFERRED follows from what was read but was not itself read. OURS is this project's choice.
+
+### Why it was invisible from above (MEASURED)
+
+`NvmWater.build_water_mesh` wound every quad `base, base+2, base+1`. By Godot's own front-face rule,
+`Plane(a, b, c)`, all 512 triangles of a flooded block face **down**. The terrain is wound
+`i00, i10, i11`, and its triangles face up. The material culled back faces, which is the default.
+
+The world group's `scale.z = -1` mirror does not change which side is the front. Godot flips its
+cull test for a negative-determinant transform, and the terrain proves it: the terrain has the
+opposite winding to the water and renders from above. So a player saw the water only from below.
+This is the negative:
+
+```
+FAIL every drawn water triangle faces up, the side a player above sees (got 0 up, 512 down)
+FAIL every vertex carries the shoreline alpha
+FAIL the frame repeats 4 times across a block, 0..4 (READ _DAT_00e1b860; got max (1, 1))
+FAIL MapmWater exists (the rest of this suite needs it)
+4 FAILURES
+```
+
+This is `mapm_water_test.gd` run on dev b22edf5, with only the test file copied in. There, the
+"drawn water" checks fall back to NvmWater, the builder World3D drew with. The same file passes
+all 34 checks on this branch.
+
+### The height was right (MEASURED)
+
+`waterat -region 98/159` gives the height for all 36 blocks of the reported region: PlaneType 0,
+PlaneHeight **50**. The `.nvm` plane map carries the same 50. At local (720, 500) the ground is
+-22.80, so the water there is 72.8 deep. At (720, 640) it is 53.5 deep.
+
+The tester was standing on a lake bed about 70 units down, under a correctly placed surface. The
+banks sit below the plane only as seen from under it. Walking on the bed is authentic, per the
+user, and this round leaves movement alone.
+
+### How retail draws water (READ)
+
+- **Where the fields live.** `FUN_00a35c50`, the block loader, seeks to `index * 0xa0f + 0xc` and
+  reads the block's 0xa0f bytes straight into its record. So PlaneType is at block+0x7ed, WaveID at
+  +0x7ee and PlaneHeight at +0x7ef. That is +6 for Flag and EnvironmentID, then 289 7-byte
+  vertices.
+- **The block's layout.** Block index = col + row*6. The block's origin is (col*320, row*320), with
+  `_DAT_00e1b908` = 320.0.
+- **A region flag.** The same loader forces PlaneType to -1 on every block when a region flag at
+  +0x2475 is set. `FUN_00a361b0` sets that flag from the first byte of a per-region object list.
+  What that list is remains OPEN.
+- **The shoreline.** `Map::FUN_009fb280` handles PlaneType 0 only; it returns early for any other
+  type. For each of the 17x17 vertices it computes
+  `nibble = clamp(ROUND((PlaneHeight - height) * 0.5), 0, 15)`, with `_DAT_00e1b7d0` = 0.5 and
+  `_DAT_00d878a0` = 15.0. `FUN_009f6ef0` is only the plane height here, because all four corners
+  are set to it. The nibble goes into a 17x17 texture: A8R8G8B8 `n << 28` when
+  `DAT_0110f728 < 3`, otherwise A4R4G4B4 `n << 12`.
+- **The block state.** The same function overwrites +0x7ee with the block's state:
+  - 0: every vertex is dry; the block is not drawn.
+  - 1: no vertex is dry.
+  - 2: some vertices are dry and some partial.
+  - 3: some vertices are dry and some fully deep.
+- **The draw** (`Map::FUN_00a220b0`, the path without reflection; `FUN_00a2df70` is the other path):
+  - Geometry: ONE flat quad over the whole block, drawn as a triangle fan at PlaneHeight.
+  - Stage 0 is the alpha texture: colour SELECTARG1 CURRENT, alpha SELECTARG1 TEXTURE.
+  - Stage 1 is the frame `water\water1NN.ddj`, index `(GetTickCount() / 100) % 30`, so **10 fps**.
+    Colour is MODULATE(TEXTURE, TFACTOR) and the alpha op is disabled.
+  - The texture factor is `0xB4RRGGBB`. Its RGB is world+0x688f/93/97 x 255.
+  - Stage-1 UV runs 0..4 across the block (`_DAT_00e1b860` = 4.0), so one frame repeats every 80
+    units. Stage-0 UV runs 1/32..31/32.
+  - Render states: ALPHABLENDENABLE 1, SRCBLEND SRCALPHA, DESTBLEND INVSRCALPHA, **CULLMODE 1
+    (NONE)**. CULLMODE goes back to 3 and ZWRITE back to 1 after the pass.
+- **PlaneType 1 blocks** are drawn only when their own WaveID byte is non-zero. They use
+  `water\water201.ddj` for colour, SELECTARG1 TFACTOR for alpha (0xB4), the same UVs, and no
+  culling.
+- **The water colour.** world+0x688f is environment channel **14** (WaterColor).
+  - The record reader `FUN_00a1b650` reads channels 0-6, 7, 8, 9, 10, 11, 12 and then, for version
+    >= 1002, the ColorGraphs at record+0x1f4 and +0x228 and the FloatGraph at +0x36c. So +0x228 is
+    channel 14.
+  - `Map::FUN_00a1baf0` evaluates +0x228 into world+0x688f..0x6897 and clamps it to [0, 1].
+
+### How often each case occurs (MEASURED; `waterat -census`, 4,704 regions, 169,344 blocks)
+
+- **PlaneType:** -1 on 128,879 blocks, 0 on 39,510, 1 on 955. The type-1 blocks sit at plane 800,
+  filling whole regions around 88-92/124-129.
+- **Shoreline state:** the state recomputed from the heights matches the file's own WaveID on
+  39,486 of the 39,510 type-0 blocks. The tool that authored the maps ran the same rule, which
+  checks the reading of FUN_009fb280.
+- **The navmesh plane map disagrees with the `.m`:**
+  - It marks 3,846 blocks as water where the `.m` has -1.
+  - It marks 6,259 drawn type-0 blocks as not water.
+  - The two sources disagree on plane height 217 times.
+- **Frame alpha:** `water101.ddj` and `water115.ddj` are 64x64 A8R8G8B8 with every alpha 255.
+  `water201.ddj` is 512x512 DXT1.
+
+### What changed
+
+- **`client/scripts/mapm/mapm_water.gd` (new):** builds water from the `.m` blocks by the rules
+  above.
+  - Each drawn type-0 block is its 17x17 vertices at PlaneHeight. Each vertex's alpha is its
+    nibble / 15. OURS: this is the A4R4G4B4 branch; which branch a machine takes is OPEN, and the
+    other gives at most 240/255.
+  - The mesh is wound so the front faces up, and the material draws both sides anyway, as retail
+    does.
+  - `ROUND` is round-half-to-even. INFERRED: this is the x87 default.
+  - The per-vertex alpha stands in for the 17x17 texture (OURS). The two agree at every vertex.
+- **The materials** (`MapmWater.water_material` / `still_material`) are unshaded: stage 1 never
+  reads the diffuse, so lighting cannot reach the water. They are alpha-blended with
+  `CULL_DISABLED`.
+  - The animated material's albedo is WaterColor, sampled at `ENVIRONMENT_REFERENCE_TIME`. Its
+    alpha comes from the vertex colour.
+  - The still material is water201 at alpha 0xB4.
+  - World3D keeps one of each per world. The player's environment writes WaterColor into the shared
+    material, as retail writes one texture factor.
+- **The frame rate** is 10 fps (READ), replacing the 8 fps guess. The frame repeats 4 times a block
+  (READ), replacing a repeat every 5 units.
+- **Logging:** World3D logs, per region, the drawn and skipped blocks, the plane heights, and the
+  triangles facing up and down. It also logs the environment's water colour.
+- **`server/cmd/waterat` (new):** per-block fields and shoreline state, the `.nvm` comparison,
+  `-census`, `-column`, and a `-dump` of one Map.pk2 file.
+
+### Verified
+
+- **Tests:**
+  - `mapm_water_test.gd`: 34 ok, ALL PASS.
+  - `remote_godot.sh check`: 365 scripts, ALL LOAD.
+  - `remote_godot.sh tests`: 144 suites, 0 failing.
+  - `go build ./... && go test -count=1 -p 1 ./...`: green, after adding `waterat` to
+    server/README.md's tools table (the README probe caught it).
+- **Runs** (lane box copies, `--shots`, radius 1; the frames are in the session's
+  `water_shots/`):
+  - **98/159 at the reported spot (720, 500), X 4680 in the HUD:**
+    - The log reads `98\159.m -- water: 36 animated block(s), 0 still, 0 dry skipped, plane
+      height(s) [50], triangles 18432 up / 0 down`. Environment 1's water colour is (0.64, 0.56,
+      0.38).
+    - From above, frame 41, the band under the HUD averages (0.26, 0.28, 0.13), which is the lake
+      bed, before the fix. After the fix it averages (0.30, 0.37, 0.24), which is the water.
+    - The shallow-angle shots show a lake surface to the far bank.
+    - From under the water, the view is unchanged, as the report described.
+  - **97/168 with the farmland moat in 96/168 (640, -380 from 97/168):**
+    - Before the fix, `96\168.m -- no real water surface built (30 real water plane cell(s))`: the
+      navmesh tiles carry no water texture, so the moat was dry.
+    - After the fix, `96\168.m -- water: 6 animated block(s) ... [-20], triangles 3072 up / 0
+      down`. The moat's pixels go from (0.32, 0.29, 0.26), which is stone, to (0.22, 0.39, 0.35),
+      which is teal water. Jangan's environment 15 water colour is (0.36, 0.69, 0.62).
+  - **The Jangan square:** the pool quad at -33 lies under the plaza. The fountain's own water is
+    the fountain model's, and the frame is identical before and after.
+- **The parked "Moat water" item is resolved by the `.m` (MEASURED).** In 96/168, only block row
+  4, which is the moat band, is PlaneType 0 at -20.
+  - Rows 0-3 are the farmland at -43 to -80 that the plane level would have flooded. The `.m` marks
+    them -1, although the `.nvm` marks them type 1.
+  - Row 4's blocks are state 2: dry and partial.
+
+### Still OPEN
+
+- **The region flag at +0x2475**, which hides every block's water. Its source list is not
+  identified.
+- **Which alpha-texture format a machine gets:** `DAT_0110f728`.
+- **The reflection path:** `FUN_00a2df70`, taken when option +0x2e68 and +0x68df are set.
+- **The per-object water branch:** when `+0x237e & 0x8000`, lists of water quads come per object,
+  with their own fog.
+- **The `wave1..3.ddj` textures** are loaded to world+0x295b, but their draw was not traced.
+- **The two environment special modes** (+0x2eb4 == 1, +0x2e5c == 2/3) that replace or damp the
+  colours.
+- **Time of day:** WaterColor is sampled at the fixed reference time, like the sky.
+- **Depth writes:** whether retail writes depth during the water pass is INFERRED. ZWRITE is set
+  back to 1 after the pass, so it was presumably off. Godot's alpha pass does not write depth
+  either.
+
 ## Six-hundred-and-twenty-second round, review follow-up: a healer can select themselves, a recast on an ally replaces the old buff, and only casts that happened are shown
 
 The review found that round 622's READ claims hold, including the 369 HP heal, which was checked by

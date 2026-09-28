@@ -1075,16 +1075,26 @@ Still open, by the files each would add:
 
 ## Parked, with the state written down
 
-### Moat water
-The moat is real, located exactly (96/168 local 1490, 1470 — the ninety-seventh round), and the
-terrain carries its trench: **-40.00** in a narrow band against **+0.65** either side, with the
-plane cell over it at level **-20**, which would fill the trench and nothing else.
+### Moat water — **resolved by the `.m` (round 627)**
+Retail draws water from each `.m` block's PlaneType/PlaneHeight, not from the `.nvm` plane map. In
+96/168, only block row 4, the moat band, is PlaneType 0 at -20. Rows 0-3, the farmland at -43 to
+-80, are -1, so they stay dry, although the `.nvm` marks them water. The moat draws since round
+627.
 
-**Why it is parked**: the same region sits at about **-45 across its southern third**, which that
-same level would flood, and the art there is farmland. Neither the plane map (30 of 36 cells are
-type 1) nor the tile map (no water tiles anywhere in the region) can separate the two.
-**Cheapest next step**: a reference screenshot standing in that southern area — if it is dry in
-the real game, the plane level alone cannot be the rule, and that halves the search.
+### Water — what round 627 left (WORLD_ISSUES.md's six-hundred-and-twenty-seventh round)
+- **The region flag at region+0x2475.** `FUN_00a35c50` forces PlaneType -1 on a whole region when
+  it is set. `FUN_00a361b0` sets it from the first byte of a per-region object list that has not
+  been identified. Until it is, a region the client keeps dry this way draws water here.
+- **The shoreline alpha format.** `DAT_0110f728 < 3` picks A8R8G8B8, where deep water's alpha is at
+  most 240/255; the other branch is A4R4G4B4, where it is 1.0. This build uses the second. What
+  sets the value is not found.
+- **The reflection path `FUN_00a2df70`**, taken with option +0x2e68 and +0x68df, is not traced.
+- **The per-object water branch** (`+0x237e & 0x8000`) and the `wave1..3.ddj` textures are not
+  traced.
+- **WaterColor's timing.** It is sampled at the fixed environment reference time, and the special
+  modes (+0x2eb4, +0x2e5c) are not applied.
+- **Walking under water is authentic** (the user, 2026-09-28): it happens in the original game too.
+  Leave movement alone.
 
 ### Scenery still off the ground
 83 objects fell to 60 once each `.o2` entry was assigned to the region whose heightmap explains
@@ -1150,4 +1160,5 @@ before contradicting one.
 - `.bmt` layer flag **bit 0** marks an alpha layer.
 - A `.ban` keyframe **replaces** a bone's local transform; it is not a delta.
 - Navmesh plane **type 1 is not water** — it covers a quarter to all of every region.
+- Water is the `.m` block's **PlaneType 0** at its PlaneHeight, shoreline alpha `clamp(round((plane - h) * 0.5), 0, 15) / 15`, drawn two-sided at 10 fps (round 627).
 - A bind pose is a poor test of a rig: both character bugs this project had were invisible at rest.

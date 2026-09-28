@@ -2513,12 +2513,11 @@ var _water_frames_load_attempted := false
 ## (Water\water101.ddj..water130.ddj -- a real numbered-frame sequence, not
 ## a shader effect) into an AnimatedTexture, or null if none of the 30 real
 ## frames were found (e.g. SRREVAMP_MAP_PK2_PATH unset, or a real archive
-## that doesn't ship this folder). Frame duration is an honest guess (not
-## reverse-engineered from any real client timing data) picked to read as
-## a gentle, plausible water ripple rather than a claim about the real
-## client's own exact animation speed.
-const WATER_FRAME_COUNT := 30
-const WATER_FRAME_FPS := 8.0
+## that doesn't ship this folder). Frame timing READ (round 627): the client
+## picks frame (GetTickCount() / 100) % 30 in `Map::FUN_00a220b0`, so 100 ms
+## a frame -- 10 fps, not the 8 fps this used to guess.
+const WATER_FRAME_COUNT := MapmWater.FRAME_COUNT
+const WATER_FRAME_FPS := 1000.0 / float(MapmWater.FRAME_MS)
 
 func _load_real_water_animation(archive: Pk2Reader) -> AnimatedTexture:
 	if not _water_frames_load_attempted:
@@ -2553,12 +2552,46 @@ func _load_real_water_animation(archive: Pk2Reader) -> AnimatedTexture:
 		anim.set_frame_duration(i, 1.0 / WATER_FRAME_FPS)
 	return anim
 
-## Builds and attaches a real animated water surface (see
-## MapmTerrainBuilder.build_full_region_water_mesh) to terrain_group, if
-## this region has any real WATER/DEEP_WATER tiles at all -- a no-op
-## (nothing added) otherwise, or if SRREVAMP_MAP_PK2_PATH isn't set / the
-## real water frames can't be found, so a region with no real water (most
-## of them) or a caller with no archive access isn't penalized.
+## The still surface a PlaneType-1 block draws: `water\water201.ddj`
+## (READ, the texture the client loads into world+0x28a7 and binds for those
+## blocks). Loaded once per world; null when the archive lacks it.
+var _water_still_texture: Texture2D = null
+var _water_still_load_attempted := false
+
+func _load_still_water_texture(archive: Pk2Reader) -> Texture2D:
+	if not _water_still_load_attempted:
+		_water_still_load_attempted = true
+		var bytes := AssetSource.read_bytes("Water\\water201.ddj", archive)
+		var parsed := DdjReader.parse(bytes) if not bytes.is_empty() else null
+		if parsed != null:
+			_water_still_texture = DdjReader.to_texture(parsed)
+		if _water_still_texture == null:
+			print("World3D: no Water\\water201.ddj -- PlaneType-1 still surfaces are not drawn")
+	return _water_still_texture
+
+## The two water materials, one per world like the client's own render
+## state: every region's water shares them, and the environment's WaterColor
+## (channel 14) is written into the animated one whenever the player's
+## environment is applied (_apply_real_environment_lighting), as the client
+## sets one world-wide texture factor. MapmWater builds them and holds the
+## READ render state they follow.
+var _water_material: StandardMaterial3D = null
+var _water_still_material: StandardMaterial3D = null
+## The environment's WaterColor (MapmWater.set_water_color clamps it). White
+## until an environment is applied -- the neutral fallback
+## sample_color_channel already uses, not a colour anyone read.
+var _env_water_color := Color(1, 1, 1)
+
+func _water_surface_material(anim: AnimatedTexture) -> StandardMaterial3D:
+	if _water_material == null:
+		_water_material = MapmWater.water_material(anim, _env_water_color)
+	return _water_material
+
+func _water_still_surface_material(tex: Texture2D) -> StandardMaterial3D:
+	if _water_still_material == null:
+		_water_still_material = MapmWater.still_material(tex)
+	return _water_still_material
+
 ## Adds this region's real navmesh walls: every real blocking edge in its
 ## `.nvm` cell/edge graph, extruded into a vertical quad by NvmCollision.
 ##
@@ -2876,62 +2909,47 @@ func _add_navmesh_wall_debug_mesh(terrain_group: Node3D, faces: PackedVector3Arr
 	print("World3D: navmesh wall debug mesh local aabb %s .. %s, global origin %s" % [
 		local_aabb.position, local_aabb.end, debug_mesh.to_global(local_aabb.position)])
 
-## **Rebuilt 2026-09-05** (see docs/WORLD_ISSUES.md): real water used to be
-## classified per *terrain tile* and each quad placed at that tile's own
-## terrain height, because this project had no real reference height for a
-## body of water. It therefore followed the ground instead of lying flat,
-## and real ponds rendered as jagged tile-shaped sheets cutting through the
-## terrain -- reported from a real playtest of the real Jangan temple
-## garden.
-##
-## The real `.nvm`'s own 6x6 `PlaneTypeMap`/`PlaneHeightMap` is that missing
-## reference: where the real plane type is water, the real plane height is
-## that body of water's own flat surface level. See NvmWater, which measured
-## the type across 264 real files rather than assuming it.
-##
-## No artificial vertical lift is applied any more either. The old one
-## existed because water shared the ground's exact vertices; a real water
-## plane sits at its own real level and is simply occluded by whatever
-## terrain stands above it, which is what makes a real shoreline.
-func _try_add_real_water(terrain_group: Node3D, mapm_path: String) -> void:
-	var region := _load_region_navmesh(mapm_path)
-	if region == null:
+## A region's water, from its own `.m` blocks (round 627; MapmWater has the
+## rules and their labels). Until round 627 it came from the `.nvm` plane
+## map, with each quad's shape taken from the navmesh tiles' texture type,
+## and its triangles faced down under a material that culled back faces, so
+## a lake was a sheet seen only from underneath (the v0.1.457 report at
+## 98/159, plane 50 over a bed at -30). The `.nvm` plane map also marks water
+## in 3,846 blocks the `.m` says have none, and leaves out 6,259 the client
+## draws (MEASURED, waterat -census) -- the `.m` is what the client reads.
+func _try_add_real_water(terrain_group: Node3D, region: MapmReader.ParsedRegion, mapm_path: String) -> void:
+	var built := MapmWater.build(region)
+	if built.water == null and built.still == null:
+		if built.dry_blocks > 0:
+			print("World3D: %s -- no water drawn (%d PlaneType-0 block(s), every vertex dry)" % [mapm_path, built.dry_blocks])
 		return
-	# The real per-tile water flags decide the water's shape and the real
-	# plane map its level -- see NvmWater's own "Why both sources" comment.
-	var tile_table := _load_tile_index()
-	if tile_table == null:
-		print("World3D: no real tile2d.ifo -- real water shape can't be resolved, skipping water")
-		return
-	var water_mesh := NvmWater.build_water_mesh(region, tile_table)
-	if water_mesh == null:
-		# Says so, because "this region has no water" and "this region's
-		# water failed to build" look identical in a screenshot -- a real
-		# playtest found a willow pond with a stone bridge over dry ground
-		# and there was nothing in the log either way.
-		print("World3D: %s -- no real water surface built (%d real water plane cell(s) in its navmesh)" % [
-			mapm_path, NvmWater.water_plane_cell_count(region)])
-		return
-	print("World3D: %s -- built real water from %d real quad(s)" % [
-		mapm_path, water_mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size() / 4])
 	var archive := _open_map_pk2_if_set()
 	if archive == null:
 		return
-	var anim := _load_real_water_animation(archive)
-	if anim == null:
-		return
-
-	var mat := StandardMaterial3D.new()
-	mat.albedo_texture = anim
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.albedo_color = Color(1, 1, 1, 0.85)
-	mat.uv1_scale = Vector3(4.0, 4.0, 1.0) # real per-quad UV already 0..1; repeats the real frame texture a few times per quad instead of stretching one tile over it, same rationale as the ground-texture uv1_scale nearby
-
-	var water_instance := MeshInstance3D.new()
-	water_instance.name = "Water"
-	water_instance.mesh = water_mesh
-	water_instance.material_override = mat
-	terrain_group.add_child(water_instance)
+	var heights: Array = built.heights.keys()
+	heights.sort()
+	# The facing is Godot's own front-face rule on the built triangles (the
+	# group's z mirror does not change it: Godot flips its cull test for a
+	# negative determinant), printed so a run measures it instead of a picture.
+	var facing := MapmWater.facing_counts(built.water) + MapmWater.facing_counts(built.still)
+	print("World3D: %s -- water: %d animated block(s), %d still, %d dry skipped, plane height(s) %s, triangles %d up / %d down" % [
+		mapm_path, built.water_blocks, built.still_blocks, built.dry_blocks, str(heights), facing.x, facing.y])
+	if built.water != null:
+		var anim := _load_real_water_animation(archive)
+		if anim != null:
+			var water_instance := MeshInstance3D.new()
+			water_instance.name = "Water"
+			water_instance.mesh = built.water
+			water_instance.material_override = _water_surface_material(anim)
+			terrain_group.add_child(water_instance)
+	if built.still != null:
+		var tex := _load_still_water_texture(archive)
+		if tex != null:
+			var still_instance := MeshInstance3D.new()
+			still_instance.name = "WaterStill"
+			still_instance.mesh = built.still
+			still_instance.material_override = _water_still_surface_material(tex)
+			terrain_group.add_child(still_instance)
 
 ## Real sky assets found under Map.pk2's own SkyBox\ folder (2026-08-28,
 ## see docs/WORLD_ISSUES.md and docs/NEXT_STEPS_RENDERING.md's "Terrain"
@@ -3199,6 +3217,13 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	_env_terrain_ambient = EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_TERRAIN_AMBIENT_COLOR, ENVIRONMENT_REFERENCE_TIME)
 	_env_terrain_shadow = EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_TERRAIN_SHADOW_COLOR, ENVIRONMENT_REFERENCE_TIME)
 	_env_light_ready = true
+	# The water's tint: channel 14 (READ: the record reader stores it at
+	# record+0x228, and `Map::FUN_00a1baf0` evaluates that graph into
+	# world+0x688f, the texture factor FUN_00a220b0 draws water with).
+	_env_water_color = EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_WATER_COLOR, ENVIRONMENT_REFERENCE_TIME)
+	if _water_material != null:
+		MapmWater.set_water_color(_water_material, _env_water_color)
+	print("World3D: environment %d water colour (channel 14) %s" % [env_id, str(_env_water_color)])
 
 	# Real per-zone aerial-perspective haze (2026-09-03). The real client's
 	# own terrain shaders were found shipped as readable source inside
@@ -4764,6 +4789,11 @@ func _exit_tree() -> void:
 	_ground_texture_cache.clear()
 	_water_frames_cache.clear()
 	_water_frames_load_attempted = false
+	_water_still_texture = null
+	_water_still_load_attempted = false
+	_water_material = null
+	_water_still_material = null
+	_env_water_color = Color(1, 1, 1)
 	_environment_table = null
 	_environment_load_attempted = false
 	if _loading_screen != null:
@@ -6226,7 +6256,7 @@ func _terrain_commit(job: Dictionary) -> float:
 
 	_add_navmesh_walls(terrain_group, job)
 	sw = _load_timings.lap("terrain", "wallshape", sw)
-	_try_add_real_water(terrain_group, mapm_path)
+	_try_add_real_water(terrain_group, job["region"], mapm_path)
 	sw = _load_timings.lap("terrain", "water", sw)
 	var graph: NavGraph = job.get("nav_graph")
 	if graph != null:

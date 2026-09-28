@@ -104,7 +104,7 @@ decompiled from a binary in this repo's own history), documents this exact forma
 11 FOG FAR PLANE,  as a fraction of the view distance (read from the client, below)
 12 (unnamed -- "Graph12", added v1001)
 13 SkyBottomColor        (4-float ColorGraph, added v1002)
-14 WaterColor            (4-float ColorGraph, added v1002)
+14 WaterColor            (4-float ColorGraph, added v1002)  -- READ round 627: the water texture factor, see below
 15 (unnamed -- "Graph15", added v1002)
 ```
 
@@ -236,3 +236,17 @@ above) via public documentation whose structure independently matches this proje
 decompiled channel-size sequence exactly. Renderer wiring using `SkyTopColor`/`SkyBottomColor`/
 `FogColor` is now real, justified work (not a guess) — see `docs/WORLD_ISSUES.md`'s next round for
 whether/how it was implemented.
+
+## WaterColor is the water's tint (read 2026-09-28, round 627)
+
+The record reader `Map::FUN_00a1b650` reads the ColorGraphs for channels 13 and 14 into
+record+0x1f4 and record+0x228. It reads them after channel 12, and only for version >= 1002. Its
+channel order is 0-6 at +0x88..+0x1c0; 7 and 8 at +0x25c and +0x288; 9 at +0x2b4; 10-12 at
++0x2e8..+0x340; 13 and 14 at +0x1f4 and +0x228; 15 at +0x36c.
+
+`Map::FUN_00a1baf0` evaluates +0x228 into world+0x688f..0x6897 and clamps it to [0, 1].
+`Map::FUN_00a220b0` then sets that colour, times 255, as the D3D texture factor's RGB. The alpha
+byte is 0xB4. The water's frame texture is modulated by it. MEASURED values at the reference time:
+- environment 1 (the 98/159 lake): (0.64, 0.56, 0.38);
+- environment 15 (Jangan): (0.36, 0.69, 0.62).
+
