@@ -7094,6 +7094,34 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-eleventh round: the audio core -- the retail sounds load, the effect table plays by key under retail's volume law, and three buses carry the option sliders
+
+**Asked:** the original game's audio -- zone music, footsteps, interface swooshes, skills. This
+round is the foundation the rest stands on (`docs/RE_COMPLETION.md`, round 611; the contract is
+`docs/protocol/SOUND_FORMAT.md`).
+
+**Built:** `client/scripts/audio/` -- `AudioBank.stream(path)` loads a `Data.pk2 prim\snd` WAV or
+a `Music.pk2` Ogg once and caches it (8-bit flipped to signed, 24-bit cut to 16, the data chunk
+found by walking the chunks); `SoundTable.play_key(key, pos, obj)` plays an `effectsound.txt` key
+with retail's pick, blank counter, 600-unit cull and 100/300 volume law; `AudioOptions` is the
+three sliders and mutes (dB = v/5 - 20; defaults BGM 30, Effect 50, Env 50) on the "BGM",
+"Effect" and "Env" buses, saved in `settings.cfg [audio]`; the autoload `Audio` holds it all.
+
+**Measured** on the box's archives (`client/tools/probe_audio.gd`): 6,004 effect rows under 5,428
+keys; 1,447 characterInfo codes; every sample kind decodes (8-, 16-, 24-bit, stereo, two oggs) at
+the lengths the headers give. Under the headless driver the players report `playing` and the
+law's volumes (`audio_service_test.gd`).
+
+**Ours, labelled:** the listener is the player for distance and the camera for left and right;
+four voices per sound; Godot's panner fed retail's pan number.
+
+**Negatives:** on a9ab6e7 the four suites FAIL on the missing scripts and autoload; planted bugs
+(no XOR, the counter off by one, the cull after the pick) each FAIL a named check. `check` 323
+scripts ALL LOAD; `tests` 126 suites, 0 failing; Go build and tests green.
+
+**Not heard yet:** nothing in the game triggers a key -- footsteps, combat and interface sounds
+are the next rounds. Music is round 612.
+
 ## Six-hundred-and-tenth round: open ground repeats every 80 units and the region lightmap shades it, so dirt no longer reads as a grid
 
 **Report** (Jangan, HUD X:6431 Y:978): the dirt "has an extreme tile look" and four textures show

@@ -144,6 +144,36 @@ SRREVAMP_QA_INPUT="300:click:220,647;310:type:hello;320:key:enter;330:click:946,
   qa_shot.sh --server --region '97\168.m' --at 1002,1020 --radius 1 --frames 700 --out /var/tmp/input
 ```
 
+### Sound
+
+The client plays the retail sounds from the player's own archives (round 611;
+`docs/protocol/SOUND_FORMAT.md` is the contract): effects and ambient from `Data.pk2`
+(`SRREVAMP_PK2_PATH`), the tables from `Media.pk2` (`SRREVAMP_MEDIA_PK2_PATH`), and the music from
+**`Music.pk2`, which `qa_shot.sh` exports as `SRREVAMP_MUSIC_PK2_PATH="$PK2_DIR/Music.pk2"`**
+(a downloaded build finds it in the `pk2` folder like the others). A missing archive, file or key
+is silent, with one line each:
+
+```
+AUDIO: Music.pk2 not found (SRREVAMP_MUSIC_PK2_PATH or the pk2 folder) -- its sounds are silent
+AUDIO: no prim\snd\env\kk_day.wav in Data.pk2 -- that sound is silent
+AUDIO: no effect row for PLAYER:snd_walk1:-:-:-:- -- silent
+AUDIO: effect table 6004 rows under 5428 keys
+AUDIO options: BGM 30, Effect 50, Env 50
+```
+
+The box's Godot mixes through the dummy driver, so a run is measured, not heard: players report
+`playing` and advance their playback position (the `audio_*_test.gd` suites check that), and the
+log lines above say what was loaded. `probe_audio.gd` measures the code against the real archives
+-- rows and keys parsed, characterInfo codes, and the format and length of sample sounds (one of
+each 8-, 16- and 24-bit kind, and two music files):
+
+```
+client/tools/remote_godot.sh sync
+ssh root@192.168.5.78 'su - ghidra -c "cd /opt/srrevamp-client && P=/opt/sro-files/client; \
+  SRREVAMP_PK2_PATH=\$P/Data.pk2 SRREVAMP_MEDIA_PK2_PATH=\$P/Media.pk2 SRREVAMP_MUSIC_PK2_PATH=\$P/Music.pk2 \
+  /opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64 --headless --path . --script res://tools/probe_audio.gd"'
+```
+
 ### Load benchmark
 
 Every map and loading change is measured on the two runs below, before and after, and on nothing

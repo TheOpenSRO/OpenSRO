@@ -1195,6 +1195,9 @@ func _ready() -> void:
 	# process environment (SRREVAMP_WORLD_ENTRY), never a static.
 	_world_entry = GroundProbe.next_entry()
 	print(GroundProbe.entry_line(_world_entry, get_instance_id()))
+	# Sound (round 611): distances are measured from the player, left and
+	# right from the camera -- AudioService's header says why (ours).
+	SoundTable.set_listener(player, camera_3d)
 	# SRREVAMP_QA_RECONNECT (round 558): number this process's world entries
 	# through the environment -- never a static, statics are what a reconnect
 	# run measures. The count arms the QA ENTRY / QA TEXPROBE prints and is
@@ -4590,6 +4593,7 @@ func _load_object_template(model_path: String) -> Node3D:
 ##   the next one entered in the same process.
 ## Also called on quit, where all of it is harmless.
 func _exit_tree() -> void:
+	SoundTable.set_listener(null)
 	# A task still preparing a cell holds this node's static function and a
 	# job for its grid: waited for and dropped before anything here is freed
 	# (round 565), so a reconnect cannot commit into a freed world.

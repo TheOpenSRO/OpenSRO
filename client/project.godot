@@ -18,6 +18,9 @@ config/features=PackedStringArray("4.2")
 [autoload]
 
 NetClient="*res://scripts/net/net_client.gd"
+; The client's sound (round 611): buses, options, the effect table, the
+; music and ambient. docs/protocol/SOUND_FORMAT.md holds the contract.
+Audio="*res://scripts/audio/audio_service.gd"
 
 [debug]
 

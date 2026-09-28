@@ -46230,3 +46230,94 @@ centre cell, whose prepare is on the main thread); p95 900 -> 889 ms.
 - The gate wall: from the user's framing our wall showed no arch tops. At the same spot facing the
   wall (qa_shot `user@955,185:180,-38,330`) ours draws the same three archways retail shows, so it
   is the framing, not a missing object -- a picture, not a measurement.
+
+## The audio core: the retail sound files load, the effect table plays by key under retail's volume law, and three option buses carry BGM 30 / Effect 50 / Env 50 (round 611)
+
+Client only. The client played no audio. This round builds round 1 of the audio plan (the research
+round's `audio_spec.md` section 10): loading, the effect table, the volume law, the options and
+the buses -- the **contract** the music, footstep, combat and interface rounds code against. It
+is written out, with every label, in `docs/protocol/SOUND_FORMAT.md`; the code is
+`client/scripts/audio/`.
+
+### The contract
+
+```
+AudioBank.stream(path: String) -> AudioStream          # "prim\snd\...wav" (Data.pk2) or "x.ogg" (Music.pk2 root), cached
+SoundTable.play_key(key: String, pos = null, obj = null) -> void   # effectsound key: random pick, blank counter, cull, falloff
+SoundTable.play_file(path: String, pos = null) -> void
+SoundTable.set_listener(node: Node3D, facing: Node3D = null) -> void
+AudioOptions { bgm, effect, env: int 0..100; bgm_muted, effect_muted, env_muted: bool } -> bus volumes
+Buses: "BGM", "Effect", "Env" under Master
+```
+
+`AudioBank` (`audio_bank.gd`), `SoundTable` (`sound_table.gd`) and `AudioOptions`
+(`audio_options.gd`) are static classes; the calls reach the autoload node **`Audio`**
+(`AudioService`, `audio_service.gd`, registered in `project.godot`), which owns the voices, the
+table and the listener. World3D sets the listener in `_ready` and clears it in `_exit_tree`.
+
+### What is read, measured, inferred and ours
+
+- **READ** (sro_client.exe, addresses in `audio_spec.md` and SOUND_FORMAT.md): the effectsound
+  columns, key shape (handle lowercased, skill uppercased, `-` literal), multimap with
+  `rand() % n`, the `blank` skip counter, volume `clamp(col,0,100)/100`, the path
+  `prim\snd\ + folder + filename` lowercased; the order cull -> lookup -> pick -> counter ->
+  volume; the 600-unit cull; near 100 / far 300, floor -3000 / ceiling 0 and the law
+  `vol = F + int((distMB - F) * optFrac * rowVol)`, played only above F; pan
+  `lateral/300*10000`; voice reuse (first idle, else a random busy one); the three sliders
+  0..100, `20v - 2000` mB, mute = silence, defaults 30/50/50; no master volume.
+- **MEASURED** (`client/tools/probe_audio.gd` on the box's archives): 6,004 effectsound rows under
+  5,428 keys (136 ms); characterInfo UTF-16 with BOM, 1,484 rows, 1,447 codes,
+  `MOB_CH_MANGNYANG -> MOB_MANGNYANG`; `UI:snd_window_open` -> `uiwinopen.wav` @0.80,
+  `UI:snd_button_click` -> `uibutton_a/b` @0.80, `PLAYER:snd_walk1:-:FIELD:DIRT:-` ->
+  `mvwalkground.wav` @0.80; every decode kind loads: `uiwinopen` 16-bit 0.300 s, `questopen`
+  8-bit 1.250 s, `day_bird01` 8-bit 0.664 s, `winter_princess_kiss` 8-bit 11,025 Hz 0.879 s,
+  `hellfire` 16-bit stereo 60.000 s, `winter_snow_die` 24-bit -> 16-bit 1.335 s,
+  `jangan_town.ogg` 63.97 s, `Maintheme_Cut.ogg` 120.19 s (Music.pk2's `maintheme_cut.ogg`,
+  found case-blind).
+- **INFERRED**: Godot's 8-bit WAV is signed (hence XOR 0x80; from its mixer, not listened to);
+  `prim+0x80` is the row volume and `prim+0x7c` is 1.0; a 2-D sound takes distMB 0; the one
+  nine-token row could never play.
+- **OURS**: the listener is the player for distances and the camera for left/right (retail's is
+  OPEN -- the player keeps a character's own sounds inside the 100-unit radius at any camera
+  distance); `VOICES_PER_SOUND = 4` (retail's N not read); the pan number is retail's but Godot's
+  3-D panner applies its own gain law (the voice is placed on the unit circle around the camera
+  at `sin = pan/10000`, Godot's attenuation off); the Effect bus carries the slider and each voice
+  plays `vol/100 - bus dB`; Godot's `randi()` for the pick; the settings live in
+  `user://settings.cfg [audio]` (ints and bools, no strings to quote); the one duplicate
+  characterInfo code takes its later row; buses are made at run time.
+
+### Tests and negatives
+
+`audio_bank_test.gd` (8-bit flip, 24->16, stereo, a data chunk behind an odd-sized LIST chunk,
+refusals, paths, cache, the looping copy), `sound_table_test.gd` (Latin-1 bytes, parse, keys,
+multimap, `/* */`, short rows, the pick and blank counter, the volume law's points, cull, pan,
+characterInfo), `audio_options_test.gd` (mapping, defaults, the saved text parses back, buses)
+and `audio_service_test.gd` (the autoload's real players under the dummy driver: 2-D at -4 dB on
+a -10 dB bus = the law's -14; 250 units -> -16; straight ahead and 150 units right placed at
+sine 0 and 0.5; 350 units silent; a 700-unit cull spends no counter; four voices per sound; mute).
+Synthetic data only.
+
+**Negatives on a9ab6e7's scripts** (the four suites copied onto the base checkout on the box):
+
+```
+FAIL scripts/audio/audio_bank.gd exists (AudioBank, the contract's stream(path))
+FAIL scripts/audio/audio_options.gd exists (AudioOptions)
+FAIL scripts/audio/sound_table.gd exists (SoundTable, the contract's play_key)
+FAIL an 'Audio' autoload with play_key runs (project.godot)
+```
+
+The base has no audio at all, so those are absence. **Planted bugs** show the checks bite: with
+the XOR removed, `FAIL 8-bit samples are flipped from unsigned to signed (XOR 0x80): silence 0x80
+-> 0x00, got 0080ff7f81`; with the counter test `> 0`, `FAIL a blank-2 row plays on the 1st
+trigger, then every 3rd: 1010101`; with the cull moved after the pick, `FAIL a blank-2 row culled
+at 700 units still plays on its next (near) trigger: the cull spends no counter`.
+
+`remote_godot.sh check`: 323 scripts ALL LOAD. `tests`: 126 suites, 0 failing. `go build ./...`
+and `go test -count=1 -p 1 ./...`: 59 packages ok.
+
+### Open
+
+The listener identity, N voices, `prim+0x7c`, whether `prim+0x80` is exactly the row volume, and
+retail's handling of the nine-token row. Nothing in the game calls `play_key` yet: footsteps and
+animation sounds are round 3's, hits and skills round 4's, interface sounds and the option window
+round 5's.
