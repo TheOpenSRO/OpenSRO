@@ -266,18 +266,21 @@ func _chain() -> void:
 			cleared = false
 	_check(cleared, "clear() breaks every link pair (no RefCounted cycle is left)")
 
-## A node whose position-follow level (u2) is 0 does not follow its parent
-## (READ, CEFGroup::vslot_004 / CEFUpdater::vslot_002): its chain can trail.
+## A child node that follows its parent's translation (u6 = 1) moves with
+## it; one that follows nothing (u6 = 0) stays where it was born (READ,
+## CEFGroup::vslot_004 / CEFUpdater::vslot_002; efp_follow_test.gd has the
+## rest).
 func _follow() -> void:
-	for u2 in [1, 0]:
+	for u6 in [1, 0]:
 		var root := _node(40, "RenderNone", [_cmd("SetVelocity", {"value": Vector3(1, 0, 0)})])
 		root.emit.clear()
 		root.emit.append(_cmd("StaticEmit", {"type": "SEFStaticEmit", "delay": 0, "duration": 1,
 			"interval": 1, "max_live": 1, "per_trigger": 1.0}))
+		root.flags = {"u6": 1, "b1": 1}
 		# The children stand still on their own (a new particle inherits its
-		# parent's velocity), so only the follow can move them.
+		# parent's velocity minus the followed one's), so only a follow moves them.
 		var kid := _node(10, "RenderLinkDPipe", [_cmd("SetVelocity", {"value": Vector3.ZERO})])
-		kid.flags = {"u2": u2}
+		kid.flags = {"u6": u6}
 		root.children.append(kid)
 		var sim = S.new(S.compile(root), 4)
 		for _i in range(6):
@@ -287,10 +290,10 @@ func _follow() -> void:
 			if q.tpl == 1:
 				xs.append(snappedf(q.pos.x, 0.001))
 		var spread: float = (xs.max() - xs.min()) if not xs.is_empty() else 0.0
-		if u2 == 1:
-			_check(xs.size() >= 3 and spread == 0.0, "u2 = 1: the children move with their parent (spread %.2f)" % spread)
+		if u6 == 1:
+			_check(xs.size() >= 3 and spread == 0.0, "u6 = 1: the children move with their parent (spread %.2f)" % spread)
 		else:
-			_check(xs.size() >= 3 and spread >= 2.0, "u2 = 0: the children stay where they were born, so the chain trails (spread %.2f)" % spread)
+			_check(xs.size() >= 3 and spread >= 2.0, "u6 = 0: the children stay where they were born, so the chain trails (spread %.2f)" % spread)
 		sim.clear()
 
 func _link_commands() -> void:

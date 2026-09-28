@@ -7094,6 +7094,149 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twenty-first round, follow levels: the effects simulate where the game's do, so a walking caster, a swung hand or a flapping wing leaves its trail behind
+
+The review follow-up found why 510 of the 975 files with a Link node drew nothing: their
+particles follow nothing, and this client simulated every effect in its own moving space. This
+commit reads how the game places an effect and what its particles follow, and implements it.
+`docs/protocol/EFP_FORMAT.md` "Follow levels" has the addresses.
+
+**READ** (sro_client.exe, `/var/tmp/decomp_client` and `/var/tmp/sro_client.asm`):
+- **Retail simulates in world space.**
+  - `CEFEffect::vslot_008` (position) and `vslot_007` (matrix) store the host's placement as the
+    effect's position, divided by the effect's scale, and flag it changed (+0x60, +0x28b).
+  - The draw's world matrix is only that scale (`FUN_00cabda0`).
+  - So only what follows the effect moves with the host.
+- **The effect is the top of the follow chain.** `CEFEffect` shares `CEFElement`'s layout: the
+  particle init is slot 4 of both vtables. It owns the root node's emitter, so for a node at
+  depth d, level d + 1 is the effect. MEASURED: no retail level goes higher.
+- **The follow levels.**
+  - The 20-byte block at node +0x154..+0x16c holds the flags b0, b1, b5 and b7 and four levels:
+    u2 orbit (the position turns with the ancestor), u3 rotation, u4 velocity and u6
+    translation. The review follow-up had u2 as "the position follow".
+  - `CEFGroup::vslot_004` walks each level up the owner chain.
+  - `CEFUpdater::vslot_002` does the frame, per particle:
+    - with b0 / b1, it keeps the old rotation / old position;
+    - it clears the changed flag;
+    - the u2, u3 and u4 follows apply **only when that ancestor changed**;
+    - with b5, the rotation velocity applies, and this particle is changed;
+    - the u6 translation, position += A.position − A.old position, applies every frame;
+    - then position += velocity, and with b7 the shape turns.
+  - The node's commands run after. Every rotation command sets changed (cases 0x00–0x03,
+    0x05–0x08, 0x0a–0x0d, 0x0f–0x12). With b0, the turn is inverse(old) × new.
+- **At spawn** (`FUN_00c88490`): the owner's position; the owner's velocity minus the u6
+  ancestor's; the owner's rotation, or identity with a negative u3.
+- `CEFEffect::FUN_00c865a0` shifts every particle's position and old position by one vector.
+  This client re-centres its simulation space the same way.
+
+**MEASURED** (95,801 retail nodes):
+- **The old state is kept wherever it is read.** An ancestor followed through u2 or u6 keeps its
+  old position (b1) in 149,167 of 149,233 cases; one followed through u3 or u4 keeps its old
+  rotation (b0) in all 77,375.
+- **b5 and b7 mark the velocity commands.** b5 is set on exactly the 423 nodes with a
+  SetRVelocity command, and b7 on exactly the 31,138 with SetShapeRotVel.
+- **u6 levels:**
+  - 0 (stay in the world): 12,360;
+  - a particle ancestor: 79,538;
+  - the effect: 3,903.
+- **No drift.** The farthest particle in 40 frames, over all 4,103 files, has median 11.0, 90th
+  percentile 91.1 and 99th percentile 654.6 native units. The review follow-up had 11.2, 103.6
+  and 736.6.
+- **The census** (`efp_census.gd --build`; the new `--moving` moves the host 2 native units a
+  frame, an OURS speed):
+
+  | Link files making a triangle (of 975) | files |
+  |---|---|
+  | review follow-up, local space | 417 |
+  | follow levels, still host | 781 |
+  | follow levels, moving host | **924** |
+
+  - "Draw every node" is unchanged at 4,013 (96.2 %), with 0 script errors.
+  - The biggest gains on a moving host are monster, pet and projectile effects, for example
+    `monster\eu\dust\dust_peryton_ac3_foot`, `cos\pet2_bird_wings`,
+    `skill\europe\skill_fire_bolt_a_shot` and `monster\eu\skill\skill_dowb_ac3_fire_hand`.
+
+**This client:**
+- **`EfpSim`**:
+  - all four levels, the ancestor walk to the effect, the changed gate, b0/b1/b5/b7 and the spawn
+    rules;
+  - the effect is the root particle, placed by the new `set_origin(pos, rot)`;
+  - the old position and rotation are kept only where a follower reads them (OURS, same result).
+- **`EfpEffect.follow_host`** keeps its signature.
+  - The node pins itself (top_level) at an anchor taken from its first placement.
+  - It hands the host's motion to the simulation as the effect's placement.
+  - It re-centres (`EfpSim.shift`) past 60 native units (OURS), so the draw bounds stay near.
+  - An effect without a host is unchanged.
+- **OURS:**
+  - the effect's follow runs in the step, not in retail's separate draw-time pass;
+  - no spawn offset, since this client spawns after the step's follows;
+  - particles go in spawn order, which finishes every ancestor before its followers as retail's
+    node order does;
+  - a dead ancestor is not followed;
+  - a synthetic node without the block keeps round 620's parent-translation follow;
+  - the effect turns with the body, not its bone.
+- **QA:** `SRREVAMP_QA_EFFECT_BONE` attaches the QA effects at a bone.
+
+**Performance** (the reviewer's bench, same copy as the review follow-up; ms per call):
+
+| effect × n | `_update_links` before → after | `sim.step` before → after |
+|---|---|---|
+| cold_ganggi_keep_f × 1 | 0.58 → 0.59 | 0.79 → 0.95 |
+| cold_ganggi_keep_f × 10 | 4.50 → 4.96 | 6.88 → 7.72 |
+| lightning_storm_shoot_c × 10 | 1.51 → 1.50 | 1.91 → 2.39 |
+| cleric_resurrection_monser_keep_b × 10 | 2.02 → 2.26 | 2.05 → 2.22 |
+| help_ganggi_keep_a × 10 | 4.55 → 4.58 | 6.89 → 8.16 |
+
+- The Link build is unchanged within the bench's run-to-run noise: the same code measured 4.4
+  and 5.1 ms on two runs.
+- `sim.step` is 8–25 % slower. That is the price of the rotation and velocity follows and the
+  per-particle old state, which the model needs.
+- A first version that bucketed particles by node cost more. The flat spawn-order loop and
+  keeping old state only where it is read won some of it back.
+
+**Tests.**
+- **`efp_follow_test.gd`** (new, synthetic, 14 checks). It covers:
+  - on a moving effect, u6 = 1 particles ride it while u6 = 0 ones stay where they were born;
+  - on a turning effect, u3 turns the rotation and u2 swings the position round it;
+  - a turn applies once, on its frame;
+  - level d + 1 is the effect, and nothing is above it;
+  - a Link chain on a moving effect trails and draws with u6 = 0, and collapses with u6 = 1;
+  - EfpEffect on a host pins itself, feeds the host's motion in, and re-centres far away.
+- **`efp_links_test.gd`**'s follow checks use u6.
+- **`skill_effects_test.gd`** reads the new `EfpEffect.placed_at()` for where an effect sits. With
+  a host, the node stays at its anchor, so `global_position` no longer moves with the bone.
+- **Results:**
+  - `remote_godot.sh check`: ALL LOAD.
+  - `remote_godot.sh tests`: 137 suites, 0 failing.
+  - `go test -count=1 -p 1 ./...`: ok.
+
+Against the review follow-up (515e05b), the new tests fail:
+
+```
+FAIL EfpSim.set_origin exists (the effect placed by its host)
+FAILURES: 1
+FAIL u6 = 0: the children stay where they were born, so the chain trails (spread 0.00)
+FAILURES: 1
+```
+
+**Renders** (`efp_link_shots/W1_*`, `W2_*`; these SHOW, they do not prove). The player walks
+heading 180 from Jangan 97/168 (1002, 1020), on the RX 5700 XT via VirtualGL.
+- **`W1_grid.png`**: `monster\eu\skill\skill_dowb_ac3_fire_hand` at `Bip01 R Hand`, via the
+  new `SRREVAMP_QA_EFFECT_BONE`.
+  - At frame 80 a fire streak runs back from the hand along the path.
+  - At frame 120 a burst is left behind where it was emitted while the runner goes on.
+  - Later frames are between cycles: headless, the file emits for about 58 frames and restarts,
+    MEASURED.
+- **`W2_grid.png`**: `monster\eu\dust\dust_peryton_ac3_foot` and `cos\pet2_bird_wings` at the
+  feet. The foot effect's red ground patch stays on the ground where it was emitted as the
+  character runs off, and the small wing streaks follow the feet.
+- What retail shows for these on a player was not compared.
+
+**OPEN:**
+- retail's separate draw-time pass for the effect, and its spawn offset;
+- the bone's own rotation;
+- which host speed the census should use.
+
 ## Six-hundred-and-twenty-first round, review follow-up: the trails rebuild about five times faster, only when something moved, and draw one-sided where their node says so; the texture and dedupe readings corrected
 
 This merges round 620's review follow-up (2246d91), then fixes what the review of round 621 found.

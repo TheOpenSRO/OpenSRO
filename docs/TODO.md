@@ -947,14 +947,11 @@ Still open, by the files each would add:
 - **Meshes** (16 files). Not a gap: `hwan01/02.bms` are `JMXVBMS 0109`, which the retail client
   refuses too (READ, Prim.cpp and PrimGeometry.cpp accept only 0110), and 4 mesh paths are absent
   from every archive.
-- **World-space trails (510 files; EFP_FORMAT.md "Follow").**
-  - In 510 of the 975 files with a Link node, every chain collapses to one point on a still
-    caster. Their u2 = 0 Link nodes follow nothing in retail, so the trail comes from the effect
-    moving through the world.
-  - This client simulates an effect in local space. Next: simulate u2 = 0 nodes in world space
-    (feed the effect's world motion to the sim's root).
-  - The ancestor-level follow (u2/u3/u4/u6), its +0x60 gate, and the rotation and velocity
-    follows are unimplemented.
+- **Follow levels: DONE (round 621).** The effect now simulates in world space over its host, as
+  retail does, and 924 of the 975 Link files make a trail on a moving host (781 on a still one).
+  - Still OURS: one follow pass instead of retail's separate draw-time pass for the effect, and
+    the effect turning with the body, not with its bone.
+  - Checked only on renders, not against retail.
 - **Link details**: the LinkMode controller (none of the three Link routines reads it), and
   whether the reversed-winding inference that decides which face of a Link strip is culled
   (cull 3: 17 LinkObj and 4 LinkPipe nodes) matches a retail render.

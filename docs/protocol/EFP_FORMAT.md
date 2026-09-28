@@ -95,7 +95,7 @@ In file order:
 | 4 | command list | `FUN_00ca7280` | always empty |
 | 5 | one command | `FUN_00ca57e0` | `NormalTimeExtinct` (95,139 nodes), `NormalTimeLoop` (263) or `NeverExtinct` (190) |
 | 6 | command list | `FUN_00ca7280` | `ProgramUpdate` |
-| 7 | 20-byte block | inline | u8, u8, u32, u32, u32, u8, u32, u8, stored at node +0x154..+0x16c (READ, `FUN_00cc3500`). The u32s are follow levels, see "Follow" under Link render modes; the u8s are partly OPEN |
+| 7 | 20-byte block | inline | u8, u8, u32, u32, u32, u8, u32, u8, stored at node +0x154..+0x16c (READ, `FUN_00cc3500`): b0 keep old rotation, b1 keep old position, u2/u3/u4 orbit/rotation/velocity follow levels, b5 apply rotation velocity, u6 translation follow level, b7 apply shape velocity. See "Follow levels" |
 | 8 | one command | `FUN_00ca57e0` | the **view mode**: `ViewNone`, `ViewBillboard`, `ViewYBillboard` or `ViewVBillboard` |
 | 9 | render block | `FUN_00cc3400` | a 36-byte RenderState, then `u32 n` and n × (string mesh, `u32 m`, m × string texture) (`FUN_00cc32b0`). The mesh is `""` for a plate. The loader rewrites cull 2 to 3 |
 | 10 | one command | `FUN_00ca57e0` | the **render mode**: `RenderNone`, `RenderPlate`, `RenderMesh`, `RenderLinkPipe`, `RenderLinkDPipe` or `RenderLinkObj` |
@@ -566,51 +566,100 @@ step or a camera move (see "This client's choices" below).
 - The particle init also copies the owner's rotation and a second matrix (+0x64), and resets both
   to identity when bit 0 of emitter +0x74 is set. That bit's source was not traced (OPEN).
 
-### Follow (READ, round 621's review follow-up)
+### Follow levels (READ; round 621's review follow-up and its "follow levels" commit)
 
-The body's 20-byte block lands at node +0x154..+0x16c (`FUN_00cc3500`): b0 +0x154, b1 +0x155,
-u2 +0x158, u3 +0x15c, u4 +0x160, b5 +0x164, u6 +0x168, b7 +0x16c.
+**The block.** The body's 20-byte block lands at node +0x154..+0x16c (`FUN_00cc3500`): b0 +0x154,
+b1 +0x155, u2 +0x158, u3 +0x15c, u4 +0x160, b5 +0x164, u6 +0x168, b7 +0x16c.
 
-**The emitter init** (`CEFGroup::vslot_004`, emitter vtable 0x00e0ec4c slot 4) turns each u32
-into an ancestor: 0 means none, and N ≥ 1 means the particle N levels up (owner, then the
-owner's emitter's owner, and so on).
-- u2 → emitter +0x68: position follow.
-- u3 → emitter +0x6c: rotation follow. A negative u3 sets emitter +0x74, which makes the particle
-  init reset the inherited rotation to identity.
-- u4 → emitter +0x70: velocity follow.
-- u6 → emitter +0x64: used by the particle init to start the particle relative to that ancestor.
+**The levels.** The emitter init (`CEFGroup::vslot_004`, emitter vtable 0x00e0ec4c slot 4) turns
+each u32 into an ancestor. 0 means none; N ≥ 1 means the emitter's owner, then that owner's own
+emitter's owner, N − 1 more times up.
 
-**The updater** (`CEFUpdater::vslot_002`), for each particle:
-- if b0, it saves its rotation to +0x64; if b1, its position to +0xa4;
-- it clears its +0x60 flag;
-- it transforms by an ancestor only when that ancestor's +0x60 flag is set. For position, that is
-  (pos − F.+0xa4) × F.+0x64 + F.+0xa4.
-- The rotation commands and an applied rotation follow set +0x60. So a follow happens on a frame
-  when the ancestor's transform changed, not on every frame.
+| field | stored at | follow |
+|---|---|---|
+| u2 | emitter +0x68 | orbit: the position turns with the ancestor |
+| u3 | emitter +0x6c | rotation. A negative u3 sets emitter +0x74, and the particle init then resets the inherited rotation to identity |
+| u4 | emitter +0x70 | velocity |
+| u6 | emitter +0x64 | translation |
+
+**The top.** The effect itself is a particle-like element (`CEFEffect` shares `CEFElement`'s
+layout; the particle init is slot 4 of both vtables). It owns the root node's emitter, so for a
+node at depth d, level d + 1 is the effect.
+- MEASURED: no retail level goes past d + 1.
+- The effect's position and matrix come from its host: `CEFEffect::vslot_008` (position) and
+  `vslot_007` (matrix, with its translation moved to the position). Both store the position
+  divided by the effect's scale and flag the effect changed (+0x60, +0x28b).
+- The draw's world matrix is only that scale (`FUN_00cabda0`). So **retail simulates in world
+  space over the effect's scale**, and only what follows the effect moves with the host.
+
+**Each frame, per particle** (`CEFUpdater::vslot_002`):
+1. with b0, keep the rotation as the old rotation (+0x64); with b1, keep the position as the old
+   position (+0xa4); clear the changed flag (+0x60);
+2. u2 ancestor F, **if F changed**: position = (position − F.old position) × F.turn + F.old
+   position;
+3. u3 ancestor, if changed: rotation = rotation × its turn, and this particle is changed;
+4. u4 ancestor, if changed: velocity = velocity × its turn;
+5. with b5: rotation = rotation × rotation velocity, and this particle is changed;
+6. u6 ancestor A, **every frame**: position += A.position − A.old position;
+7. position += velocity; with b7, the shape turns by the shape velocity.
+
+Then the node's commands run; a rotation command also sets changed (every SetRotation* and
+SetBANRot case: 0x00–0x03, 0x05–0x08, 0x0a–0x0d, 0x0f–0x12). With b0,
+each particle's turn becomes inverse(old rotation) × rotation, the delta at +0x64. Child nodes are
+updated after their parent's.
+
+**At the effect.** When the effect changed, the draw (`FUN_00cabda0`) runs the same pass,
+`FUN_00c863a0`, over the whole tree with the effect's turn, then stores its placement as old.
+`CEFEffect::FUN_00c865a0` shifts every particle's position and old position by one vector: the
+scale change `vslot_010` uses it.
+
+**At spawn** (`FUN_00c88490`):
+- the position is the owner's;
+- the velocity is the owner's minus the u6 ancestor's;
+- the rotation is the owner's, or identity with a negative u3;
+- the position is also offset by (A.old − A.position) for the pass that follows its spawn.
 
 **MEASURED over the 95,801 retail nodes:**
+- **The followed ancestors keep their old state.** An ancestor followed through u2 or u6 has b1 in
+  149,167 of 149,233 cases; through u3 or u4 it has b0 in all 77,375.
+- **b5 and b7 mark the velocity commands.** b5 is set on exactly the 423 nodes with a
+  SetRVelocity command, and b7 on exactly the 31,138 with SetShapeRotVel.
+- **Levels:**
 
-| u2 | nodes |
+  | level | u2 | u6 |
+  |---|---|---|
+  | 0 (follow nothing) | 22,762 | 12,360 |
+  | a particle ancestor | 69,695 | 79,538 |
+  | the effect | 3,344 | 3,903 |
+
+**This client** (`EfpSim`, `EfpEffect`):
+- all four levels, the ancestor walk to the effect, the changed gate, b0/b1/b5/b7, and the spawn
+  rules above (READ);
+- the effect is the sim's root particle, placed by `EfpSim.set_origin` and changed when placed;
+- `EfpEffect` pins itself (top_level) at an anchor taken from its first placement on its host.
+  It feeds the host's motion in as the placement, and re-centres (`EfpSim.shift`, like
+  `FUN_00c865a0`) past 60 native units (OURS). So a u6 = 0 particle stays where it was born while
+  the caster moves: the trails.
+
+**OURS:**
+- the effect's follow runs in the step, not in a separate draw-time pass;
+- no spawn offset, since this client spawns after the step's follows;
+- particles are processed in spawn order, which finishes every ancestor before its followers as
+  retail's node order does;
+- a dead ancestor is no longer followed;
+- a synthetic node without the block follows its parent's translation (u6 = 1, b1), round 620's
+  behaviour.
+- The host's turn reaches the effect as its rotation. The bone's own rotation is not used (the
+  effect "turns with the body", round 620).
+
+**Link files that make a triangle** (`efp_census.gd --build`, peak of 40 frames, 975 files with a
+drawn Link node):
+
+| | files |
 |---|---|
-| 0 | 22,762 |
-| 1 ≤ u2 ≤ depth | 69,695 |
-| u2 = depth + 1 (past the root particles, to the effect) | 3,344 |
-
-**This client:**
-- A node with u2 = 0 does not follow its parent (READ).
-- Otherwise it keeps round 620's rule: every frame, it follows its parent's translation (OURS).
-  The ancestor level, the +0x60 gate and the rotation and velocity follows are OPEN.
-
-**Why 510 Link files draw no strip here (MEASURED, INFERRED cause).** In 510 of the 975 files
-with a drawn Link node, every particle of every chain sits at one position through 40 frames.
-- The examples inspected (`battle\deco_wind_jumpkick_a`, `battle\hwan_g/_v/_y`,
-  `cos\p2skill_ass_dinosaur_attack5`) are Link nodes with u2 = 0 and no position command,
-  under a root node that does not move.
-- Their trail can only come from the effect itself moving through the world, for example on a
-  swung weapon's bone. That is INFERRED from u2 = 0 meaning "follow nothing".
-- This client simulates an effect in its own local space and moves it as a node (round 620,
-  OURS), so such particles move with the effect and never trail.
-- **OPEN:** simulating u2 = 0 nodes in world space is the lever for those 510 files.
+| round 621 review follow-up (local space) | 417 |
+| follow levels, still host | 781 |
+| follow levels, host moving 2 native units a frame (`--moving`, OURS speed) | **924** |
 
 ### Which particle draws (READ)
 

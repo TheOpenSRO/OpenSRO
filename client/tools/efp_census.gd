@@ -16,6 +16,11 @@ extends SceneTree
 ## mean to draw, and the reasons nodes were skipped (render modes not drawn,
 ## assets missing, commands no rule covers).
 ##
+## `--moving` (round 621, with --build) moves each effect's host along +x
+## at MOVE_PER_FRAME a frame while it runs, so the particles that follow
+## nothing (their node's u6 = 0) are left behind as a moving caster leaves
+## them, and the Link counts report the trails that makes.
+##
 ## `--assets` (round 621, with --build) lists every texture and mesh that did
 ## not load, one line each, with the number of files naming it and why it
 ## failed: absent from Particles.pk2 (and whether Media.pk2 or Data.pk2 beside
@@ -41,6 +46,9 @@ var _skips := {}
 var _skip_files := {}
 var _spawned := 0
 var _assets := false
+var _moving := false
+## OURS: the moving-host mode's speed, native units per 50 ms frame, along +x.
+const MOVE_PER_FRAME := 2.0
 var _link_files := 0 # files with a drawn Link node
 var _link_drawing := 0 # ... whose strips drew a triangle at some sampled frame
 var _link_peaks := PackedInt32Array() # per such file: its largest one-frame triangle count
@@ -56,6 +64,8 @@ func _init() -> void:
 			_build = true
 		if a == "--assets":
 			_assets = true
+		if a == "--moving":
+			_moving = true
 	if path == "":
 		print("usage: efp_census.gd -- --pk2=<Particles.pk2>")
 		quit(2)
@@ -153,6 +163,8 @@ func _build_one(p: String, f: EfpReader.EfpFile) -> void:
 	# frame 40 alone missed effects that are over by then).
 	var peak := 0
 	for _i in range(40):
+		if _moving:
+			fx.sim.set_origin(Vector3(MOVE_PER_FRAME * _i, 0, 0))
 		fx.sim.step()
 		if not fx._links.is_empty():
 			fx.reset_link_budget()

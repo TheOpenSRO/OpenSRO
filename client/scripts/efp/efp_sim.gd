@@ -101,20 +101,50 @@ class_name EfpSim
 ##     full list is names_link below and EFP_FORMAT.md "The link"). See
 ##     EfpLinks for the chain's drawing.
 ##
-## == Motion per frame (READ, CEFUpdater::vslot_002) ==
-## A particle follows its parent's movement (OURS: translation only; retail
-## also applies the parent's rotation change) -- but only when its node
-## follows at all: a node whose position-follow level (the body's 20-byte
-## block u2, node +0x158) is 0 never follows (READ, round 621's review
-## follow-up: CEFGroup::vslot_004 then leaves emitter +0x68 null and
-## CEFUpdater::vslot_002 skips it). For u2 >= 1 retail follows the ancestor
-## u2 levels up, and only on a frame that ancestor's transform changed
-## (its +0x60 flag); this client keeps round 620's parent translation there
-## (OURS). Then position += velocity,
-## rotation = rotation * rotation velocity, shape = shape * shape velocity.
-## A new particle starts at its parent's position with its parent's velocity
-## and rotation, scale 1, colour 0xFFFFFFFF, UV rectangle (0, 0, 1, 1) (READ,
-## the particle init in EFEffect, funcs_020 near 0x00c87360's callers).
+## == Motion per frame and the follow levels (READ, round 621: CEFUpdater::
+## vslot_002, CEFGroup::vslot_004, the particle init FUN_00c88490) ==
+## The node's 20-byte block (node +0x154..+0x16c) holds flags b0 b1 b5 b7
+## and four follow LEVELS: u2 position (orbit), u3 rotation, u4 velocity,
+## u6 translation. The emitter init turns a level N into an ancestor: 0 none,
+## 1 the emitter's owner, N the owner N-1 more times up; the effect itself
+## sits above the root node's particles, so level depth+1 is the effect
+## (MEASURED: no retail level goes higher). A negative u3 resets the
+## inherited rotation at spawn (emitter +0x74). Each frame, per particle, in
+## node order (a node's particles, its commands, then its child nodes):
+##   b0: old rotation (+0x64) = rotation; b1: old position (+0xa4) = position;
+##   the "changed" flag (+0x60) clears;
+##   u2 ancestor F, if F changed: position = (position - F.old) * F.delta + F.old;
+##   u3 ancestor, if changed: rotation = rotation * its delta; changed = true;
+##   u4 ancestor, if changed: velocity = velocity * its delta;
+##   b5: rotation = rotation * rotation velocity; changed = true;
+##   u6 ancestor A (every frame, no gate): position += A.position - A.old;
+##   position += velocity; b7: shape = shape * shape velocity;
+## then the node's commands run (every rotation command sets "changed",
+## cases 0x00-0x03, 0x05-0x08, 0x0a-0x0d, 0x0f-0x12), and
+## with b0 each particle's delta = inverse(old rotation) * rotation.
+## MEASURED over the 95,801 retail nodes: an ancestor followed through u2 or
+## u6 has b1 (so its old position is fresh) in 149,167 of 149,233 cases, and
+## through u3/u4 has b0 in all 77,375; b5 is set exactly on the 423 nodes
+## with a SetRVelocity command and b7 on the 31,138 with SetShapeRotVel.
+## The effect (_root) is placed by set_origin(): its old position and
+## rotation are last placement's, it is "changed" when the placement moved
+## or turned, and its delta is that turn (READ: CEFEffect::vslot_007/008 set
+## the effect's position -- divided by its scale -- and matrix and flag it
+## changed; the draw's FUN_00cabda0 then runs the follow pass FUN_00c863a0
+## and stores the new placement as old). Retail applies an effect follow in
+## that separate pass; this client applies it in the step (OURS: one pass).
+## Retail updates node by node (a node's particles move, then its commands
+## run, then its child nodes); this client runs each particle's motion,
+## commands and turn in spawn order, which also finishes every ancestor
+## before its followers (OURS order, same dependencies).
+## So a particle whose node follows nothing (u6 = 0) stays where it was
+## born in the effect's space while the effect moves: the trails.
+## At spawn (READ, FUN_00c88490): position = the owner's position, velocity
+## = the owner's velocity minus the u6 ancestor's, rotation = the owner's
+## (identity with a negative u3), scale 1, colour 0xFFFFFFFF, UV rectangle
+## (0, 0, 1, 1). Retail also offsets the position by (A.old - A.position)
+## for the follow pass that runs after its spawn; this client spawns after
+## the step's follows, so it does not (OURS, same result).
 ##
 ## == Order within a frame (OURS where retail's order was not read) ==
 ## 1 motion, 2 each particle's commands for its age, 3 emission (new
@@ -184,7 +214,15 @@ class Tpl:
 	var emit = null ## {delay, duration, interval, max_live, per_trigger} or null
 	var schedule: Array = [] ## frame -> Array of [kind, space, payload] (see _payload)
 	var scale_graph = null ## the node's first BlendScaleGraph var, or null
-	var follows := true ## false when the node's position-follow level u2 is 0 (READ, see the header)
+	## The follow levels and flags of the node's 20-byte block (READ, see the header).
+	var lv_orbit := 0 ## u2
+	var lv_rot := 0 ## u3 (negative: reset the inherited rotation)
+	var lv_vel := 0 ## u4
+	var lv_move := 0 ## u6
+	var keep_rot := false ## b0
+	var keep_pos := false ## b1
+	var pos_read := false ## a follower reads this node's old position (u2/u6)
+	var rot_read := false ## ... or its turn (u2/u3/u4)
 	var unsupported: PackedStringArray = PackedStringArray()
 
 ## A compiled effect: the node templates in preorder (parents first).
@@ -199,7 +237,6 @@ class Particle:
 	var age: int = 0
 	var alive := true
 	var pos := Vector3.ZERO
-	var prev_pos := Vector3.ZERO
 	var vel := Vector3.ZERO
 	var rot := Basis.IDENTITY
 	var rvel := Basis.IDENTITY
@@ -213,6 +250,17 @@ class Particle:
 	## The emitter's previous live particle (+0x34) and next one (+0x38).
 	var link: Particle = null
 	var next_link: Particle = null
+	## The follow state (READ, see the header): old position (+0xa4), old
+	## rotation / this frame's turn (+0x64), changed (+0x60), and the
+	## ancestors the node's levels name.
+	var old_pos := Vector3.ZERO
+	var old_rot := Basis.IDENTITY
+	var delta := Basis.IDENTITY
+	var changed := false
+	var f_orbit: Particle = null
+	var f_rot: Particle = null
+	var f_vel: Particle = null
+	var f_move: Particle = null
 
 class Emitter:
 	var tpl: int
@@ -234,6 +282,9 @@ var _root := Particle.new() ## the effect's origin: owner of the root emitter
 var _acc := 0.0
 var _rng := RandomNumberGenerator.new()
 var _scratch := Vector3.ZERO ## the interpreter's stack vector (see SetSpherePos)
+var _pending_pos := Vector3.ZERO
+var _pending_rot := Basis.IDENTITY
+var _has_pending := false
 
 ## Compiles a decoded file (or its root node) into a template. Unsupported
 ## command names are listed, not fatal.
@@ -242,7 +293,33 @@ static func compile(root: EfpReader.EfpNode) -> Template:
 	if root == null:
 		return t
 	_compile_node(t, root, -1)
+	# Which nodes a follower reads (OURS, a saving with the same result):
+	# only those need their old position / rotation kept and their turn
+	# computed each frame.
+	for tp in t.tpls:
+		for pair in [[tp.lv_orbit, 3], [tp.lv_move, 1], [tp.lv_rot, 2], [tp.lv_vel, 2]]:
+			var a := _tpl_ancestor(t, tp.index, int(pair[0]))
+			if a >= 0:
+				var k: int = pair[1]
+				if k & 1:
+					t.tpls[a].pos_read = true
+				if k & 2:
+					t.tpls[a].rot_read = true
+	for tp in t.tpls:
+		tp.keep_pos = tp.keep_pos and tp.pos_read
+		tp.keep_rot = tp.keep_rot and tp.rot_read
 	return t
+
+## The node `level` levels above node `i` (-1: none, or the effect).
+static func _tpl_ancestor(t: Template, i: int, level: int) -> int:
+	if level <= 0:
+		return -1
+	var a := t.tpls[i].parent
+	var k := level - 1
+	while k > 0 and a >= 0:
+		a = t.tpls[a].parent
+		k -= 1
+	return a
 
 static func _compile_node(t: Template, n: EfpReader.EfpNode, parent: int) -> void:
 	var tp := Tpl.new()
@@ -252,7 +329,15 @@ static func _compile_node(t: Template, n: EfpReader.EfpNode, parent: int) -> voi
 	tp.frames = maxi(n.frames, 0)
 	tp.life = LIFE_LOOP if n.loops() else (LIFE_NEVER if n.never_extinct() else LIFE_EXTINCT)
 	tp.emit = n.emission()
-	tp.follows = int(n.flags.get("u2", 1)) != 0
+	# A node without the block (synthetic trees) follows its parent's
+	# translation, round 620's behaviour (OURS default); retail always has it.
+	var fl: Dictionary = n.flags
+	tp.lv_orbit = int(fl.get("u2", 0))
+	tp.lv_rot = int(fl.get("u3", 0))
+	tp.lv_vel = int(fl.get("u4", 0))
+	tp.lv_move = int(fl.get("u6", 1 if fl.is_empty() else 0))
+	tp.keep_rot = int(fl.get("b0", 0)) != 0
+	tp.keep_pos = int(fl.get("b1", 0)) != 0 or fl.is_empty()
 	for v in n.vars:
 		if v is Dictionary and String(v.get("type", "")) == "BlendScaleGraph" and tp.scale_graph == null:
 			tp.scale_graph = v.get("value")
@@ -400,25 +485,44 @@ func step() -> void:
 	if template == null:
 		return
 	var tpls := template.tpls
-	# 1 motion
+	_place_root()
+	# 1-2 each particle moves and follows, runs its commands, then notes this
+	# frame's turn -- in spawn order, so every ancestor (spawned earlier)
+	# has finished its frame before a particle follows it, as retail's
+	# node-by-node order guarantees (READ order, see the header).
 	for p in particles:
-		p.prev_pos = p.pos
-	for p in particles:
-		var par := p.parent
-		if par != null and par != _root and par.alive and tpls[p.tpl].follows:
-			p.pos += par.pos - par.prev_pos
-		p.pos += p.vel
+		var tp: Tpl = tpls[p.tpl]
+		if tp.keep_rot:
+			p.old_rot = p.rot
+		if tp.keep_pos:
+			p.old_pos = p.pos
+		p.changed = false
+		var f := p.f_orbit
+		if f != null and f.changed and f.alive:
+			p.pos = f.delta * (p.pos - f.old_pos) + f.old_pos
+		f = p.f_rot
+		if f != null and f.changed and f.alive:
+			p.rot = f.delta * p.rot
+			p.changed = true
+		f = p.f_vel
+		if f != null and f.changed and f.alive:
+			p.vel = f.delta * p.vel
 		if p.has_rvel:
 			p.rot = p.rvel * p.rot
+			p.changed = true
+		f = p.f_move
+		if f != null and f.alive:
+			p.pos += f.pos - f.old_pos
+		p.pos += p.vel
 		if p.has_shape_vel:
 			p.shape = p.shape_vel * p.shape
-	# 2 commands for each particle's age
-	for p in particles:
-		var sched: Array = tpls[p.tpl].schedule
+		var sched: Array = tp.schedule
 		if p.age >= 0 and p.age < sched.size():
-			var list: Array = sched[p.age]
-			if not list.is_empty():
-				_run_list(p, tpls[p.tpl], list)
+			var cmds: Array = sched[p.age]
+			if not cmds.is_empty():
+				_run_list(p, tp, cmds)
+		if tp.keep_rot and p.changed:
+			p.delta = p.rot * p.old_rot.inverse()
 	# 3 emission (the list grows as particles spawn child emitters)
 	var i := 0
 	while i < emitters.size():
@@ -455,7 +559,59 @@ func step() -> void:
 			live_emitters.append(e)
 	emitters = live_emitters
 	age += 1
-	_root.prev_pos = _root.pos
+
+## Places the effect (the _root particle) for the frame about to run: a
+## placement handed to set_origin since the last frame makes it "changed",
+## with its old position and rotation the last placement's and its delta
+## the turn between (READ semantics, see the header); otherwise it holds
+## still (old = current, so a u6 follow adds nothing).
+func _place_root() -> void:
+	_root.old_pos = _root.pos
+	_root.old_rot = _root.rot
+	_root.changed = false
+	if _has_pending:
+		_has_pending = false
+		_root.pos = _pending_pos
+		_root.rot = _pending_rot
+		_root.changed = true
+		_root.delta = _root.rot * _root.old_rot.inverse()
+
+## The effect's placement in its own simulation space: where its host (or
+## bone) is now, and how it is turned. Takes effect at the next frame.
+func set_origin(pos: Vector3, rot: Basis = Basis.IDENTITY) -> void:
+	_pending_pos = pos
+	_pending_rot = rot
+	_has_pending = true
+
+## Moves everything by -v: every particle's position and old position, and
+## the effect's own placement, so the simulation space can be re-centred
+## without anything moving in the world (the same shift as retail's
+## CEFEffect::FUN_00c865a0, which adds one vector to every particle's
+## position and old position).
+func shift(v: Vector3) -> void:
+	for p in particles:
+		p.pos -= v
+		p.old_pos -= v
+	_root.pos -= v
+	_root.old_pos -= v
+	_pending_pos -= v
+
+## Where the effect is placed (tests).
+func origin() -> Vector3:
+	return _root.pos
+
+## The ancestor `level` owners up from a new particle (READ: CEFGroup::
+## vslot_004): 0 none, 1 its owner, and so on; the effect (_root) is above
+## the root node's particles and nothing is above it.
+static func _ancestor(p: Particle, level: int) -> Particle:
+	if level <= 0:
+		return null
+	var a := p.parent
+	var k := level - 1
+	while k > 0 and a != null:
+		a = a.parent
+		k -= 1
+	return a
 
 func _owner_age(e: Emitter) -> int:
 	return age if e.owner == _root else e.owner.age
@@ -522,9 +678,16 @@ func _spawn(tpl_index: int, owner: Particle, from: Emitter = null) -> void:
 	p.emitter = from
 	p.parent = owner
 	p.pos = owner.pos
-	p.prev_pos = owner.pos
+	p.old_pos = owner.pos
 	p.vel = owner.vel
-	p.rot = owner.rot
+	p.rot = Basis.IDENTITY if tp.lv_rot < 0 else owner.rot
+	p.old_rot = p.rot
+	p.f_orbit = _ancestor(p, tp.lv_orbit)
+	p.f_rot = _ancestor(p, tp.lv_rot)
+	p.f_vel = _ancestor(p, tp.lv_vel)
+	p.f_move = _ancestor(p, tp.lv_move)
+	if p.f_move != null:
+		p.vel -= p.f_move.vel # READ: the velocity is relative to the followed ancestor
 	_link_in(p, from)
 	particles.append(p)
 	live_total += 1
@@ -680,6 +843,7 @@ func _run(p: Particle, tp: Tpl, kind: int, s: int, v) -> void:
 
 ## M, then the frame's rotation (row vectors: M * F) as Godot bases: F * M.
 func _set_rot(p: Particle, s: int, m: Basis) -> void:
+	p.changed = true # READ: the rotation commands set +0x60
 	match s:
 		0:
 			p.rot = m

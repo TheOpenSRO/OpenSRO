@@ -49,8 +49,12 @@ class_name EfpEffect
 ## CEFCShape::FUN_00c883d0 gives a particle its node's first mesh entry and
 ## that entry's first texture.
 ##
-## The effect is simulated in its own local space and moves with its parent
-## node (OURS). It is authored in the game's native units. Attached to a body
+## On a host (follow_host), the effect is simulated in a space that does not
+## move with the host -- retail simulates in world space over the effect's
+## scale (READ, round 621: CEFEffect::vslot_007/008, FUN_00cabda0) -- and the
+## host's motion reaches the simulation as the effect's placement, which each
+## node follows or not by its follow levels (EfpSim, "Motion per frame and
+## the follow levels"). Without a host it is simulated in this node's space. It is authored in the game's native units. Attached to a body
 ## (follow_host), it places itself each frame in the frame of the body's
 ## current skeleton at a bone, so a skeleton rebuilt by an equipment change
 ## does not take the effect with it.
@@ -91,6 +95,12 @@ var _follow_bone_name := ""
 var _follow_offset := Vector3.ZERO
 var _follow_skel: Skeleton3D = null
 var _follow_bone := -1
+var _anchored := false
+var _placed := Transform3D()
+var _anchor := Transform3D()
+## OURS: how far (native units) the host may move from the anchor before
+## the simulation space re-centres on it.
+const ANCHOR_RECENTRE := 60.0
 
 # Shared caches: one decode and one compiled template per file, one texture
 # and mesh per asset path, one material per (texture, state). Bounded by
@@ -407,6 +417,12 @@ func _end() -> void:
 ## skeleton's origin) plus `offset`; without a skeleton, the host's origin
 ## plus `offset`. Its rotation is the skeleton's (OURS, see SkillEffects).
 ## The effect should be a child of `host`.
+## Where the effect is placed in the world: its host's bone plus offset, as
+## last placed (round 621: with a host the node itself stays at its anchor,
+## so this, not global_position, is where the effect is).
+func placed_at() -> Vector3:
+	return _placed.origin if _anchored else global_position
+
 func follow_host(host: Node3D, bone: String, offset: Vector3) -> void:
 	_follow_host = host
 	_follow_bone_name = bone
@@ -437,7 +453,28 @@ func _place() -> void:
 	var at := _follow_offset
 	if _follow_bone >= 0:
 		at += skel.get_bone_global_pose(_follow_bone).origin
-	global_transform = skel.global_transform * Transform3D(Basis.IDENTITY, at)
+	var placed := skel.global_transform * Transform3D(Basis.IDENTITY, at)
+	_placed = placed
+	# Round 621 (follow levels): the effect simulates in a space that does
+	# NOT move with its host -- as retail's does, in world units over the
+	# effect's scale -- and the host's motion reaches the simulation as the
+	# effect's placement (EfpSim.set_origin), which particles follow or not
+	# by their node's levels. This node is pinned (top_level) at an anchor
+	# taken from the first placement, carrying the host's scale and turn at
+	# that moment; the anchor re-centres (EfpSim.shift) once the host is
+	# ANCHOR_RECENTRE native units away, so the draw bounds stay near.
+	if not _anchored:
+		_anchored = true
+		_anchor = placed
+		top_level = true
+	var e := _anchor.affine_inverse() * placed
+	if e.origin.length() > ANCHOR_RECENTRE and sim != null:
+		sim.shift(e.origin)
+		_anchor.origin = placed.origin
+		e = _anchor.affine_inverse() * placed
+	global_transform = _anchor
+	if sim != null:
+		sim.set_origin(e.origin, e.basis.orthonormalized())
 
 func _process(delta: float) -> void:
 	if sim == null:

@@ -119,8 +119,8 @@ func _run() -> void:
 	se.effect_factory = _effect
 	var fx: Array = se.play_phase(90, SkillAudio.ACT_S, -1, caster, caster, "test")
 	_check(fx.size() == 1 and (fx[0] as Node).get_parent() == caster, "the effect is a child of the body, not of its skeleton")
-	_check(fx.size() == 1 and (fx[0] as Node3D).global_position.is_equal_approx(Vector3(3, 4, 5)),
-		"... placed at the StartBone (%s)" % (str((fx[0] as Node3D).global_position) if fx.size() == 1 else "none"))
+	_check(fx.size() == 1 and (fx[0] as EfpEffect).placed_at().is_equal_approx(Vector3(3, 4, 5)),
+		"... placed at the StartBone (%s)" % (str((fx[0] as EfpEffect).placed_at()) if fx.size() == 1 else "none"))
 	_check(fx.size() == 1 and not (fx[0] as EfpEffect).loop, "AT_ONE_FOLLOW plays once")
 
 	# An equipment change frees the skeleton: the aura stays and moves to the new one.
@@ -129,7 +129,9 @@ func _run() -> void:
 	var skel2 := _skeleton(Vector3(7, 1, 2))
 	caster.add_child(skel2)
 	(aura0[0] as EfpEffect)._process(0.0)
-	_check(is_instance_valid(aura0[0]) and (aura0[0] as Node3D).global_position.is_equal_approx(Vector3(7, 1, 2)),
+	# Round 621 (follow levels): the effect node stays at its anchor and its
+	# placement carries the host, so the placement is what moved.
+	_check(is_instance_valid(aura0[0]) and (aura0[0] as EfpEffect).placed_at().is_equal_approx(Vector3(7, 1, 2)),
 		"a rebuilt skeleton keeps the aura, now at the new skeleton's bone")
 	var dying := _skeleton(Vector3(9, 9, 9))
 	skel2.add_sibling(dying)
@@ -143,7 +145,7 @@ func _run() -> void:
 	var early: Array = se.attach_aura("character:2", 1, 90, bare)
 	bare.add_child(_skeleton(Vector3(0, 6, 0)))
 	(early[0] as EfpEffect)._process(0.0)
-	_check((early[0] as Node3D).global_position.is_equal_approx(Vector3(0, 6, 0)), "an aura attached before the skeleton finds its bone later")
+	_check((early[0] as EfpEffect).placed_at().is_equal_approx(Vector3(0, 6, 0)), "an aura attached before the skeleton finds its bone later")
 	se.detach_aura("character:2", 1)
 
 	# The cast sequencer: READY now, WAIT after prep, SHOT at the server's answer.
