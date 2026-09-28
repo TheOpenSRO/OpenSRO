@@ -459,7 +459,10 @@ func show_target(target_name: String, level: int, rarity: int, hp: int, max_hp: 
 ## (iftw_player.txt, CIFTargetWindow's CICUser branch -- its "player window"
 ## kind, ID 0; the job-player kind needs a job state srrevamp does not send)
 ## with the name in GDR_TWP_TEXT_NAME. The kindred mark (GDR_TW_KINDRED_MARK)
-## is left empty: what fills it was not read (OPEN).
+## is left empty: what fills it was not read (OPEN). The piece has those two
+## controls and nothing else (MEASURED, iftw_player.txt): no HP gauge, for
+## another player or for oneself (round 622's review asked for HP; the
+## layout has no place for it, so none is drawn).
 func show_player(target_name: String) -> void:
 	if _player == null:
 		return

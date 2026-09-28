@@ -31,6 +31,7 @@ import (
 const (
 	skPartyBuff = 8101 // SYNTHETIC id; the MEASURED shape of 20 retail rows: kind 3, TR 1, Party only (no Self, no Ally)
 	skAllyBuff  = 8102 // SYNTHETIC id; the MEASURED shape of 72 retail rows: kind 3, TR 1, Ally + Party (no Self)
+	skAllyBuff2 = 8103 // SYNTHETIC: skAllyBuff's level 2, the same group
 )
 
 type friendSkillRef struct{}
@@ -44,8 +45,12 @@ func (friendSkillRef) GetSkill(ctx context.Context, id int64) (*refdata.Skill, e
 	case skPartyBuff:
 		return &refdata.Skill{ID: id, GroupID: 8101, BasicLevel: 1, ActionKind: 3, TargetRequired: true,
 			TargetParty: true, DuraMs: 60000, NoCombatParam: true, ZeroDamage: true}, nil
-	case skAllyBuff:
-		return &refdata.Skill{ID: id, GroupID: 8102, BasicLevel: 1, ActionKind: 3, TargetRequired: true,
+	case skAllyBuff, skAllyBuff2:
+		lv := 1
+		if id == skAllyBuff2 {
+			lv = 2
+		}
+		return &refdata.Skill{ID: id, GroupID: 8102, BasicLevel: lv, ActionKind: 3, TargetRequired: true,
 			TargetAlly: true, TargetParty: true, DuraMs: 60000, NoCombatParam: true, ZeroDamage: true}, nil
 	}
 	return buffSkillRef{}.GetSkill(ctx, id)
@@ -72,9 +77,8 @@ func startFriendWorld(t *testing.T) *friendWorld {
 	ctx := context.Background()
 	// The act is announced after the row's prep + cast; the tests take it at
 	// once.
-	prev := castAfter
-	castAfter = func(_ time.Duration, f func()) { f() }
-	t.Cleanup(func() { castAfter = prev })
+	prev := swapCastAfter(func(_ time.Duration, f func()) { f() })
+	t.Cleanup(func() { swapCastAfter(prev) })
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")
 	accounts.Add("bob", "hunter3")
@@ -91,7 +95,7 @@ func startFriendWorld(t *testing.T) *friendWorld {
 	inv := inventory.NewMemStore(items)
 	eq := equipment.NewMemStore(inv)
 	skills := skill.NewMemStore()
-	for _, id := range []int64{skHealA1, skPartyBuff, skAllyBuff, skGrassWalkA1, skSmashA1} {
+	for _, id := range []int64{skHealA1, skPartyBuff, skAllyBuff, skAllyBuff2, skGrassWalkA1, skSmashA1} {
 		if err := skills.Learn(ctx, aria.ID, id); err != nil {
 			t.Fatal(err)
 		}
@@ -409,3 +413,73 @@ func TestCastActDelay(t *testing.T) {
 }
 
 var _ = errors.New
+
+// Round 622's review: the recast rule on the TARGET's book (FUN_0058cc70 ->
+// FUN_0059d870(target+0xa30), 0x58d2ca..0x58d2d3). Three casts of the same
+// level on one ally leave one record; a lower level over a higher one is
+// refused 0x300c before anything is spent.
+func TestFriendlyBuffRecastOnTheTarget(t *testing.T) {
+	w := startFriendWorld(t)
+	on := func(skillID int64) *AttackResult {
+		return w.cast(t, &UseSkillRequest{SkillID: skillID, TargetMonsterID: w.bram.id, TargetType: TargetCharacter, HasTargetType: true})
+	}
+	for i := 0; i < 3; i++ {
+		if ar := on(skAllyBuff2); ar.Error != "" {
+			t.Fatalf("cast %d of the ally buff refused: %q", i+1, ar.Error)
+		}
+	}
+	if recs := buffBooks.Active(w.bram.id); len(recs) != 1 {
+		t.Fatalf("three casts on one ally left %d records, want 1", len(recs))
+	}
+	if ar := on(skAllyBuff); ar.Error != overlapRefusal {
+		t.Fatalf("a lower level over a higher one answered %q, want %q (0x300c)", ar.Error, overlapRefusal)
+	}
+	if recs := buffBooks.Active(w.bram.id); len(recs) != 1 || recs[0].SkillID != skAllyBuff2 {
+		t.Fatalf("after the refused lower level Bram's book is %+v", recs)
+	}
+}
+
+// Round 622's review: a cast performAttack refuses after its costs (the
+// monster is gone) is not announced.
+func TestCastRefusedInsidePerformAttackIsNotAnnounced(t *testing.T) {
+	w := startFriendWorld(t)
+	ar := w.cast(t, &UseSkillRequest{SkillID: skSmashA1, TargetMonsterID: 987654, TargetType: TargetEntity, HasTargetType: true})
+	if ar.Error != "target not found" {
+		t.Fatalf("Smash at no monster answered %q, want \"target not found\"", ar.Error)
+	}
+	w.bram.expectNone(t, OpSkillCast, 300*time.Millisecond)
+}
+
+// Round 622's review: a delayed act is dropped when the caster arrived anew
+// (a teleport, even into the same bucket) between the start and the act.
+func TestDelayedActDroppedAfterATeleport(t *testing.T) {
+	w := startFriendWorld(t)
+	pending := make(chan func(), 4)
+	swapCastAfter(func(_ time.Duration, f func()) { pending <- f })
+	if ar := w.cast(t, &UseSkillRequest{SkillID: skHealA1, TargetMonsterID: w.bram.id, TargetType: TargetCharacter, HasTargetType: true}); ar.Error != "" {
+		t.Fatalf("Heal refused: %q", ar.Error)
+	}
+	w.expectCast(t, w.bram, CastPhaseStart)
+	var act func()
+	select {
+	case act = <-pending:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no delayed act was scheduled (Heal's prep + cast)")
+	}
+	e, _ := w.hub.EntityByCharacterID(w.aria.id)
+	if _, _, _, ok := w.hub.ChangeZone(e.Session, e.Zone, world.Position{X: e.Pos.X + 500, Y: e.Pos.Y, Z: e.Pos.Z}); !ok {
+		t.Fatal("teleport failed")
+	}
+	act()
+	w.bram.expectNone(t, OpSkillCast, 300*time.Millisecond)
+}
+
+// swapCastAfter replaces the delayed-act hook under its lock and returns the
+// one it replaced.
+func swapCastAfter(h func(time.Duration, func())) func(time.Duration, func()) {
+	castAfterMu.Lock()
+	defer castAfterMu.Unlock()
+	prev := castAfterHook
+	castAfterHook = h
+	return prev
+}

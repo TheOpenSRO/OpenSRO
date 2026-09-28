@@ -398,7 +398,7 @@ func armKeepUp(
 		// AutoAttackType-1 cast, so those swings are the base skill's too.
 		// masteryPercent stays 0 -- see performAttack.
 		sw := plainSwingOf(ctx, characterID, deps.eq, deps.items)
-		if err := performAttack(ctx, sess, deps.chars, deps.eq, deps.items, deps.hub, deps.monsters, deps.quests, deps.inv, deps.skills, deps.zerk, deps.mp, deps.parties, deps.ground, deps.dropSrc, deps.potions, characterID, target, sw.flat, sw.percent, 0, sw.hits, sw.atk); err != nil {
+		if err := performAttack(ctx, sess, deps.chars, deps.eq, deps.items, deps.hub, deps.monsters, deps.quests, deps.inv, deps.skills, deps.zerk, deps.mp, deps.parties, deps.ground, deps.dropSrc, deps.potions, characterID, target, sw.flat, sw.percent, 0, sw.hits, sw.atk, nil); err != nil {
 			return 0, false
 		}
 		if m, ok := deps.monsters.Get(target); !ok || m.HP <= 0 {

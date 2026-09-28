@@ -11,6 +11,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -160,9 +161,20 @@ func othersInZone(hub *world.Hub, characterID int64) []world.Entity {
 	return out
 }
 
-// castAfter runs f after d (a time.AfterFunc; a variable so a test can run it
-// at once).
-var castAfter = func(d time.Duration, f func()) { time.AfterFunc(d, f) }
+// castAfterHook runs f after d: a time.AfterFunc, replaceable by a test
+// under castAfterMu, since the handlers read it on their own
+// goroutines.
+var (
+	castAfterMu   sync.Mutex
+	castAfterHook = func(d time.Duration, f func()) { time.AfterFunc(d, f) }
+)
+
+func castAfter(d time.Duration, f func()) {
+	castAfterMu.Lock()
+	h := castAfterHook
+	castAfterMu.Unlock()
+	h(d, f)
+}
 
 // announceCast tells the caster's zone, the caster excepted, that a cast of
 // ref started, and then that it acted after castActDelay. Called once the
@@ -181,10 +193,25 @@ func announceCast(hub *world.Hub, casterID int64, req *UseSkillRequest, ref *ref
 	case TargetGround:
 		msg.X, msg.Y, msg.Z = req.X, req.Y, req.Z
 	}
+	started, inWorld := hub.EntityByCharacterID(casterID)
+	if !inWorld {
+		return
+	}
 	sendToAll(othersInZone(hub, casterID), OpSkillCast, msg.Encode())
 	act := msg
 	act.Phase = CastPhaseAct
-	send := func() { sendToAll(othersInZone(hub, casterID), OpSkillCast, act.Encode()) }
+	send := func() {
+		// Round 622's review: the act is dropped when the caster died, left
+		// or arrived anew (a zone change or a teleport, world.Entity.Arrival)
+		// since the start -- its cast did not run to its action there. The
+		// start's own audience keeps the READY effects until their guard
+		// (SkillEffects.READY_LOOP_MAX); OURS.
+		now, ok := hub.EntityByCharacterID(casterID)
+		if !ok || now.Life != world.LifeAlive || now.Arrival != started.Arrival || now.Zone != started.Zone {
+			return
+		}
+		sendToAll(othersInZone(hub, casterID), OpSkillCast, act.Encode())
+	}
 	if d := castActDelay(ref); d > 0 {
 		castAfter(d, send)
 		return
@@ -358,6 +385,11 @@ func healCharacter(ctx context.Context, hub *world.Hub, chars character.Store, e
 // Target_Required 0 rows without 'lnks'; skill_buffs.md, "The recast rule"),
 // so buff.Books.Start is asked for none. The caller holds ownerID's buff lock.
 func startBuffOnLocked(hub *world.Hub, ref *refdata.Skill, casterID, ownerID int64, now time.Time) bool {
+	// The target is looked at again under its buff lock (round 622's
+	// review): one that died or left since the target test gets no record.
+	if e, ok := hub.EntityByCharacterID(ownerID); !ok || e.Life != world.LifeAlive {
+		return false
+	}
 	zone := zoneOf(hub, ownerID)
 	if zone == nil {
 		return false

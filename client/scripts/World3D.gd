@@ -192,6 +192,10 @@ const MONSTER_COLLISION_LAYER := 0b100000 # layer 6 only
 ## ground items'), so a click can select that player -- the target a heal or
 ## a party buff is cast at -- without blocking movement or any other ray.
 const OTHER_PLAYER_COLLISION_LAYER := 0b10000000 # layer 8 only
+## The player's OWN click body (round 622's review), on its own layer (9), so
+## only a pick that includes the player -- Shift held, retail's include-self
+## flag -- ever hits it.
+const SELF_CLICK_COLLISION_LAYER := 0b100000000 # layer 9 only
 
 ## Smallest capsule an NPC gets, in world units, so a model whose bones all
 ## sit near the origin still stops someone.
@@ -1555,6 +1559,7 @@ func _try_initialize_pk2_ui() -> void:
 	ui_control.add_child(_hud_player_info)
 	_hud_player_info.position = Vector2(4, 7)
 	_hud_player_info.setup()
+	_hud_player_info.self_pressed.connect(_select_self)
 	_hud_player_info.set_character(NetClient.current_character_name, 1)
 
 	# The active-buff icons right of the player block (round 618): retail's
@@ -7078,7 +7083,8 @@ func _qa_learn(spec: String) -> void:
 ## The server applies the skill's real cooldown and damage.
 func _cast_skill(skill_id: int, basic_code: String) -> void:
 	var reach: Dictionary = _hud_panels.skill_reach(skill_id) if _hud_panels != null else {}
-	var character_selected := _selected_character != -1 and _other_bodies.has(_selected_character)
+	var character_selected := _selected_character != -1 and (_other_bodies.has(_selected_character)
+		or _selected_character == _own_id())
 	var how := SelfCast.plan(reach, _last_attack_target != -1 and not character_selected, character_selected)
 	# Any cast replaces a ground pick still waiting for its click.
 	if how != SelfCast.PLAN_GROUND and _self_cast.cancel_pick():
@@ -7117,10 +7123,14 @@ func _cast_skill(skill_id: int, basic_code: String) -> void:
 			print("World3D: skill %d: nothing selected -- refused as the retail client refuses it (0x3011)" % skill_id)
 			_log_system(SelfCast.NO_TARGET_TEXT)
 		SelfCast.PLAN_HOSTILE_AT_CHARACTER:
-			# OURS: a hostile cast at a player is player-versus-player, not modelled.
-			print("World3D: skill %d at player %d: a hostile row at a player -- not modelled, refused" % [
+			# READ (round 622's review): retail's client drops an offensive
+			# row at a player SILENTLY when the player is not attackable (its
+			# vslot 0xa8 false, 0x81bc93..0x81bcaf: `je 0x81c577`, no message),
+			# and shows 0x3022 CANT_ATTACK_PARTY_MEMBER only for an attackable
+			# party member. srrevamp has no player-versus-player, so no player
+			# is attackable: nothing is sent and nothing is said.
+			print("World3D: skill %d at player %d: an offensive row at a player who is not attackable -- dropped silently, as retail drops it" % [
 				skill_id, _selected_character])
-			_log_system(SelfCast.INVALID_TARGET_TEXT)
 		_:
 			# Nothing selected: the original refuses too ("no target"), and a
 			# swing at nothing only looked like a cast that did nothing.
@@ -7189,20 +7199,91 @@ func _other_player_collider(height: float) -> StaticBody3D:
 	sb.add_child(cs)
 	return sb
 
-## A left click on another player selects them (round 622): the one selected
-## id (retail's 0x110f80c+0x628, set by FUN_00778650 from the clicked object)
-## becomes that player, the monster selection ends, and the target window
-## shows the player's piece. Nothing is sent: a selection is the client's.
-func _try_select_player(screen_pos: Vector2) -> bool:
-	if _objects_hidden:
-		return false
-	var node := _ray_hit_tagged(screen_pos, OTHER_PLAYER_COLLISION_LAYER, "character_id")
-	if _qa_click_logging:
-		print("QA CLICK   player ray: %s" % ("player %s" % str(node.get_meta("character_id")) if node != null else "no hit"))
+## A left click on a monster or a player (round 622's review): the NEAREST
+## character under the cursor wins, whatever its kind, as retail's pick
+## FUN_0078ee20 keeps the closest hit across every character object
+## (`fVar1 < local_f4`) rather than trying monsters first. A monster is
+## attacked (the click's old path), another player selected. The player's own
+## body is in the pick only with Shift held: retail's click (0x793570) passes
+## `(player+0x65c & 1) == 0 | (GetKeyState(VK_SHIFT) & 0x8000)` as the pick's
+## include-self flag, and a pick with it tests the local player too, which
+## FUN_00778650 then selects. +0x65c bit 0 is body state 0 (READ: the 0x30bf
+## life-state handler FUN_008a80a0 sets state 0 on a revive to life state 1,
+## and state 1, set for life state 2, clears it through its mask 0xffcf in
+## the state table 0xec5fb8): INFERRED "alive" -- so a plain click includes
+## oneself only while dead, when this client takes no world clicks at all
+## (the dead state's rule, round 548). Returns the dispatch's word, or "".
+func _pick_character(screen_pos: Vector2) -> String:
+	if not NetClient.is_connected_to_server() or _objects_hidden:
+		return ""
+	var include_self := Input.is_key_pressed(KEY_SHIFT)
+	var mask := MONSTER_COLLISION_LAYER | OTHER_PLAYER_COLLISION_LAYER
+	# The self body exists before any Shift-click needs it: a body added in
+	# this frame is not in the physics space for this frame's ray.
+	_ensure_self_click_body()
+	if include_self:
+		mask |= SELF_CLICK_COLLISION_LAYER
+	var from := camera_3d.project_ray_origin(screen_pos)
+	var dir := camera_3d.project_ray_normal(screen_pos)
+	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 2000.0)
+	query.exclude = [player.get_rid()]
+	query.collision_mask = mask
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	print("PICK: click at %s, Shift %s (self %s): %s" % [str(screen_pos), str(include_self),
+		"in the pick" if include_self else "not in the pick", _describe_click_hit(hit, "monster_id")])
+	if hit.is_empty():
+		return ""
+	var node := hit["collider"] as Node
+	while node != null and not (node.has_meta("monster_id") or node.has_meta("character_id") or node.has_meta("self_click")):
+		node = node.get_parent()
 	if node == null:
-		return false
-	_select_character(int(node.get_meta("character_id")), String(node.get_meta("character_name", "")))
-	return true
+		return ""
+	if node.has_meta("self_click"):
+		_select_self()
+		return "select_self"
+	if node.has_meta("character_id"):
+		_select_character(int(node.get_meta("character_id")), String(node.get_meta("character_name", "")))
+		return "select_player"
+	_last_attack_target = int(node.get_meta("monster_id"))
+	_show_target(_last_attack_target)
+	_attack_monster(_last_attack_target)
+	return "attack"
+
+## The player's own click body (layer 9), made on first need: a capsule the
+## body's height, a child of the player so it follows.
+func _ensure_self_click_body() -> void:
+	if player == null or player.get_node_or_null("SelfClickBody") != null:
+		return
+	var height := _skeleton_top(_player_skeleton) if _player_skeleton != null else 1.8 * PLAYER_SCALE_RATIO
+	var sb := _other_player_collider(height)
+	sb.name = "SelfClickBody"
+	sb.collision_layer = SELF_CLICK_COLLISION_LAYER
+	sb.set_meta("self_click", true)
+	player.add_child(sb)
+	print("PICK: this player's click body, height %.2f (%s)" % [height,
+		"the skeleton's top" if _player_skeleton != null else "no skeleton yet: the capsule's"])
+
+## This player's own id: OpSelfId's, else the sit answer's; -1 when neither
+## has come.
+func _own_id() -> int:
+	var told := int(NetClient.own_character_id)
+	if told >= 0:
+		return told
+	return int(_sit.own_id) if _sit != null else -1
+
+## Selects this player (round 622's review): retail's two ways, a left press
+## on the HUD's player block (CIFPlayerMiniInfo::vslot_030, WM_LBUTTONDOWN's
+## slot in the window dispatcher 0x46c8e0 -> FUN_00780ee0(own id), which
+## writes the selected id +0x628) and a Shift-click on the body. The target
+## window shows the player piece with this player's name.
+func _select_self() -> void:
+	_sync_own_id()
+	var own := _own_id()
+	_last_attack_target = -1
+	_selected_character = own
+	if _hud_target != null:
+		_hud_target.show_player(NetClient.current_character_name)
+	print("World3D: selected this player (%d, %s)" % [own, NetClient.current_character_name])
 
 func _select_character(character_id: int, char_name: String) -> void:
 	_last_attack_target = -1
@@ -7242,6 +7323,11 @@ func _cast_on_character(skill_id: int, basic_code: String, character_id: int) ->
 		print("World3D: skill %d at player %d while dead -- not sent" % [skill_id, character_id])
 		return
 	_drop_pending_attack()
+	if character_id == _own_id() and character_id >= 0:
+		# Oneself (round 622's review): no walk, cast where the player stands.
+		_flush_position()
+		_send_character_cast(skill_id, basic_code, character_id)
+		return
 	if not _other_bodies.has(character_id):
 		_log_system(SelfCast.INVALID_TARGET_TEXT)
 		return
@@ -7325,9 +7411,6 @@ func _send_character_cast(skill_id: int, basic_code: String, character_id: int) 
 	_self_cast.note_cast(skill_id, Time.get_ticks_msec())
 	NetClient.use_skill(NetClient.current_character_name, skill_id, character_id, SkillNet.TARGET_CHARACTER)
 
-## Casts by others in the zone (OpSkillCast, round 622): cast id -> {body,
-## target, skill}, from the start to the act.
-var _other_casts: Dictionary = {}
 ## "<owner key>|<skill>" -> when its OpBuffStart arrived: an act of a cast
 ## whose buff already started plays no ACT_L cycle (the token holds the aura).
 var _recent_buff_starts: Dictionary = {}
@@ -7345,16 +7428,27 @@ const RECENT_BUFF_START_MS := 8000
 func _on_skill_cast(sc: SkillNet.SkillCast) -> void:
 	_sync_own_id()
 	var body := _fx_owner_body(sc.caster_id, sc.caster_kind)
-	if body == null or body == player:
-		print("SKILL cast handled: caster %s is %s -- nothing drawn" % [_fx_owner_key(sc.caster_id, sc.caster_kind),
-			"this player" if body == player else "not in view"])
-		return
 	var target: Node3D = null
 	match sc.target_type:
 		SkillNet.TARGET_ENTITY:
 			target = _fx_monster_body(sc.target_id)
 		SkillNet.TARGET_CHARACTER:
 			target = _fx_owner_body(sc.target_id, SkillNet.OWNER_CHARACTER)
+	if body == player:
+		print("SKILL cast handled: caster %s is this player -- its own client drew it" % _fx_owner_key(sc.caster_id, sc.caster_kind))
+		return
+	if body == null:
+		# A caster out of view (round 622's review): its act still lands on a
+		# body this client draws -- a heal on this player plays SHOT/1 and
+		# ACT_S here.
+		if sc.phase == SkillNet.CAST_ACT and target != null:
+			SkillEffects.hit(null, target, sc.skill_id)
+			var n0 := SkillEffects.act(sc.skill_id, target, target, false).size()
+			print("SKILL cast handled: %s (not in view) of skill %d acts on %s (%d ACT effect(s))" % [
+				_fx_owner_key(sc.caster_id, sc.caster_kind), sc.skill_id, _describe_fx_target(sc), n0])
+		else:
+			print("SKILL cast handled: caster %s is not in view -- nothing drawn" % _fx_owner_key(sc.caster_id, sc.caster_kind))
+		return
 	var what := "%s's cast" % _fx_owner_key(sc.caster_id, sc.caster_kind)
 	if sc.phase == SkillNet.CAST_START:
 		if target != null and target != body:
@@ -7367,11 +7461,9 @@ func _on_skill_cast(sc: SkillNet.SkillCast) -> void:
 		SkillAudio.play_phase(sc.skill_id, SkillAudio.READY, -1, body, what)
 		SkillAudio.play_phase(sc.skill_id, SkillAudio.SHOT, 0, body, what)
 		var n := SkillEffects.cast(sc.skill_id, body, target).size()
-		_other_casts[sc.cast_id] = {"body": body, "target": target, "skill": sc.skill_id}
 		print("SKILL cast handled: %s of skill %d started on its body (clip %.2fs, %d READY effect(s)), target %s" % [
 			what, sc.skill_id, clip, n, _describe_fx_target(sc)])
 		return
-	_other_casts.erase(sc.cast_id)
 	var on: Node3D = target if target != null else body
 	# The owner its buff (if it is one) went to: the named character or
 	# monster, else the caster.
@@ -11296,6 +11388,7 @@ func _physics_step(delta: float) -> void:
 		_has_move_target = false
 		_pending_attack = {}
 		_released_attack = {}
+		_pending_friend_cast = {}
 	# Holding the left button walks the character toward the cursor, refreshed
 	# every frame so it follows the pointer while held.
 	if _left_steering and not locked:
@@ -12538,10 +12631,9 @@ func _dispatch_left_click(screen_pos: Vector2) -> String:
 	# The item ray runs on the ground-item layer alone (see GroundItems).
 	if _try_pick_up_item(screen_pos):
 		return "pickup"
-	if _try_attack_monster(screen_pos):
-		return "attack"
-	if _try_select_player(screen_pos):
-		return "select_player"
+	var picked := _pick_character(screen_pos)
+	if picked != "":
+		return picked
 	if _try_talk_to_npc(screen_pos):
 		return "talk"
 	_try_set_move_target(screen_pos)
@@ -12794,9 +12886,11 @@ func _try_set_move_target(screen_pos: Vector2) -> void:
 		return
 	_move_target = point
 	_has_move_target = true
-	# A walk somewhere else supersedes an attack that was walking into reach.
+	# A walk somewhere else supersedes an attack that was walking into reach,
+	# and a friendly cast walking to its player (round 622's review).
 	_pending_attack = {}
 	_released_attack = {}
+	_pending_friend_cast = {}
 
 ## The point on the ground or a placed object under a screen point, or null:
 ## the click-to-move ray, shared with the ground-pick cast (round 617).
@@ -14363,7 +14457,11 @@ static func _fx_owner_key(owner_id: int, owner_kind: int) -> String:
 func _fx_on_buff_started(start: SkillNet.BuffStart) -> void:
 	var kind := start.owner_kind
 	var owner_id := start.owner_id
-	_recent_buff_starts["%s|%d" % [_fx_owner_key(owner_id, kind), start.skill_id]] = Time.get_ticks_msec()
+	var now_ms := Time.get_ticks_msec()
+	for k in _recent_buff_starts.keys():
+		if now_ms - int(_recent_buff_starts[k]) >= RECENT_BUFF_START_MS:
+			_recent_buff_starts.erase(k)
+	_recent_buff_starts["%s|%d" % [_fx_owner_key(owner_id, kind), start.skill_id]] = now_ms
 	var body := _fx_owner_body(owner_id, kind)
 	if body == null:
 		print("EFFECTS aura: buff token %d skill %d on %s, not in view -- no aura" % [

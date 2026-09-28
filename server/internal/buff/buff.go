@@ -258,9 +258,22 @@ const (
 	RefusedOverlap
 )
 
-// overlapLocked is FUN_0059d870's GroupID branch, reached from gate row 16
-// only for a row with no 'lnks' and Target_Required 0. It returns the index
-// of the active record the cast would end (-1 for none) and a refusal.
+// overlapLocked is FUN_0059d870's GroupID branch. It is reached two ways:
+//
+//   - gate row 16 (0x58e2fd), on the CASTER's book, for a row with no 'lnks'
+//     and Target_Required 0;
+//   - the target test FUN_0058cc70, on each TARGET's book (0x58d2ca..0x58d2d3,
+//     `push caster; push skill; lea ecx,[target+0xa30]; call 0x59d870`, a 0
+//     answer refusing 0x300c) -- every Target_Required 1 row, 'lnks' or not
+//     (an 'lnks' row first runs FUN_0059dc80 on the caster's book at
+//     0x58d294, not modelled). The one skip (0x58d2ac..0x58d2c8): the target
+//     is the caster and the caster's running action (+0xc08 -> +0x18 -> +8)
+//     is this very skill; srrevamp keeps no running action, so it never
+//     applies (round 622's review; until then a Target_Required 1 row got no
+//     check here at all).
+//
+// It returns the index of the active record the cast would end (-1 for none)
+// and a refusal.
 //
 // Per active record, in book order (the retail list's order is INFERRED to
 // be the same), skipping a record whose skill carries 'cbuf' (+0x358):
@@ -281,7 +294,7 @@ const (
 // Action_Overlap bytes (+0x8c) and 'ovl2' (+0x37c) against the character's
 // state bits and running action (FUN_0059db10) -- NOT modelled (OPEN).
 func overlapLocked(bk *book, spec Spec) (int, Refusal) {
-	if bk == nil || spec.Lnks || spec.TargetRequired {
+	if bk == nil || (spec.Lnks && !spec.TargetRequired) {
 		return -1, NotRefused
 	}
 	for i, r := range bk.records {

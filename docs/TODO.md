@@ -984,8 +984,8 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       cast there (targetType 3). The buff starts on the target's book; Heal A/B/C restore their
       `heal` value[0] (columns 62/63). A cast is announced to the zone (OpSkillCast 0x00FA, start
       and act). Still open:
-      - selecting one's own body with a click (whether retail can was not read), so a TR-1 heal
-        reaches the caster only by a request naming it;
+      - selecting oneself: done in the review (the player block's left press, Shift-click on the
+        body); still open, the type-3 box FUN_00780ee0 opens when a dead player selects itself;
       - the client's CICUser checks (PK/job flags, the guild compare, vslot 0xa8): no states here;
       - resurrections (SelectDeadBody, `resu`) and the other 249 `heal` rows (heal.md);
       - monster casts in OpSkillCast (casterKind 1 is carried; the monster AI's strikes do not
@@ -1010,7 +1010,9 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       phases) and the per-deco pick among several entries (`+0xe4` byte).
 - [ ] **The recast rule's other branches**: `dttp` groups (36 rows), the `+0x290` field and the
       Action_Overlap/`ovl2` tail (`FUN_0059db10`) of FUN_0059d870; the `lnks` path
-      (`FUN_0059dc80`, attached-object records); any limit on Target_Required 1 recasts.
+      (`FUN_0059dc80`, attached-object records). (Target_Required 1 recasts: READ and applied on the
+      target's book in round 622's review; the caster-is-target running-action skip has no
+      running action here.)
 - [ ] **The duration extension** (`ctx+0x24`): `RPBU`/`STDU`/`DTDR` through `FUN_005a0330`'s map at
       book `+0x244` -- needs whatever files entries there (passive skills, INFERRED).
 - [ ] **Retail's death and teleport rules for buffs** (ours: a death clears, a zone change keeps),

@@ -881,7 +881,7 @@ func combatHandler(
 			// so its damage is that row's `att` share, hit count and mask --
 			// see plainSwingOf. masteryPercent stays 0: see performAttack.
 			sw := plainSwingOf(ctx, characterID, eq, items)
-			if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, dropSrc, potions, characterID, req.TargetMonsterID, sw.flat, sw.percent, 0, sw.hits, sw.atk); err != nil {
+			if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, dropSrc, potions, characterID, req.TargetMonsterID, sw.flat, sw.percent, 0, sw.hits, sw.atk, nil); err != nil {
 				return err
 			}
 			// One click is the whole fight: the server repeats the swing on
@@ -1081,6 +1081,10 @@ func performAttack(
 	// combat.AttackPhysical with no base row (plainSwingOf). See
 	// combat.AttackType.
 	attackType combat.AttackType,
+	// landed, when not nil, is set true once the blow is applied to the
+	// monster (round 622's review): a cast refused here after its costs
+	// ("target not found", a damage failure) is not announced to the zone.
+	landed *bool,
 ) error {
 	monster, ok := monsters.Get(targetMonsterID)
 	if !ok {
@@ -1222,6 +1226,9 @@ func performAttack(
 	updated, monsterDied, ok := monsters.ApplyDamage(targetMonsterID, net)
 	if !ok {
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found", MonsterID: targetMonsterID}).Encode()})
+	}
+	if landed != nil {
+		*landed = true
 	}
 	// The monster AI's struck event (round 537, monsterai.go): a surviving
 	// monster is attacked (CAIState::OnAttacked 0x558ea0) and stopped at the

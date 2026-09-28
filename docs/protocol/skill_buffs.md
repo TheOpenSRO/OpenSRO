@@ -147,9 +147,15 @@ buff starts. `deploy/README.md` has the steps and a check query.
   compares `lnks` values, skill ids, `lks2` and the attached object's id (answers `0x300c`,
   `0x3029`, `0x3037`). srrevamp keeps no attached objects, so **an `lnks` row gets no overlap check
   (OPEN)**;
-- a Target_Required 1 row without `lnks` gets **no check at all** at this gate, and srrevamp gives it
-  none: a recast adds a second record rather than ending the first (the review withdrew round 616's
-  OURS extension of the rule to these rows). Whether retail limits them elsewhere is OPEN.
+- a Target_Required 1 row gets no check at this gate, **but the target test runs the same
+  function on each target's book** (READ in round 622's review): `FUN_0058cc70`, for each target,
+  calls `FUN_0059d870(target+0xa30, skill, caster)` (0x58d2ca..0x58d2d3) and refuses `0x300c` on a 0
+  answer -- `lnks` rows included, after their `FUN_0059dc80` on the caster's book (0x58d294). The
+  one skip (0x58d2ac..0x58d2c8): the target is the caster and the caster's running action
+  (`+0xc08` -> `+0x18` -> `+8`) is this same skill; srrevamp keeps no running action, so it never
+  skips. srrevamp applies the GroupID branch on the target's book (`buff.Books.CheckOverlap` /
+  `Start` for the owner the cast names): a lower level is refused, an equal or higher one replaces
+  the record. Until the review a Target_Required 1 recast added a second record.
 
 `FUN_0059d870`, for an action-kind-3 skill (not a kind-1 `msch`), walks the book's active records
 and, for each whose skill is kind 3 (`+0x168 == 3`) without `cbuf` (`+0x358 == 0`), in order:
@@ -382,13 +388,19 @@ Enemy_P. So a monster fails every friendly row, and a character passes step 7.
     alive, is not the caster unless the row has Self, and for a Party-only row shares the caster's
     party;
   - a **hostile** row at a character: `"Invalid target"` (OURS: player-versus-player is not
-    modelled).
+    modelled). The client never sends one: retail's client drops an offensive row at a player
+    who is not attackable **silently** (0x81bc93..0x81bcaf: vslot 0xa8 false -> `je 0x81c577`, no
+    message), and shows 0x3022 CANT_ATTACK_PARTY_MEMBER only for an attackable party member; no
+    player is attackable here, so the client says nothing (round 622's review).
 - **Reach.** The skill tick's band, with both BCRadius the player body's (`characterInReach`). Out
   of reach: `"too far away"`, before anything is spent. Retail walks the caster (phase 1); the
   client walks first, as round 534 arranged for monsters.
 - **A friendly buff** (kind 3) starts on the **target's** book, cast by the caster. The target's
-  zone hears `OpBuffStart`/`OpBuffEnd` with the target as ownerId. A Target_Required 1 row gets no
-  recast check: row 16 tests only Target_Required 0 rows without `lnks`. If the row has `nbuf`, its
+  zone hears `OpBuffStart`/`OpBuffEnd` with the target as ownerId. The recast rule runs on the
+  **target's** book (the target test's `FUN_0059d870` call, "The recast rule" above): a lower level
+  of an active group is refused 0x300c before anything is spent, an equal or higher one replaces
+  it; the target is looked up again under its buff lock before the record starts, and a dead or
+  departed target gets none. If the row has `nbuf`, its
   owner cannot cancel it, because the record's caster is not its owner (READ, `FUN_0059eff0`).
 - **A heal** (kind 0, columns 62/63) restores `TargetHealHP`/`MP` to the named living character,
   capped at its maximum. This is Skill_ApplyEffectsAndNotify's target branch (`0x59461b`). It runs
@@ -397,10 +409,29 @@ Enemy_P. So a monster fails every friendly row, and a character passes step 7.
   grants `rhru` here), so the amount is exactly `v0`/`v2`.
 - **Parties** use srrevamp's `party.Hub` (step 8). Server-side, retail's **Ally** means only "a PC".
   The client's PK/job checks are not modelled: there are no states to test.
+- **Selecting oneself** (READ in round 622's review; implemented):
+  - a **left press on the HUD's player block**: `CIFPlayerMiniInfo::vslot_030` is the
+    WM_LBUTTONDOWN slot (the window dispatcher 0x46c8e0 sends 0x201 to vtable `+0x78`) and calls
+    `FUN_00780ee0(own id)`, which writes the selected id `+0x628`;
+  - a **Shift-click on one's own body**: the world click 0x793570 passes `((player+0x65c) & 1) == 0
+    | (GetKeyState(VK_SHIFT) & 0x8000)` as the pick's include-self flag (`FUN_0078ee20`, param 3);
+    with it the pick does not skip the local player, and `FUN_00778650` selects what it returns;
+  - `+0x65c` is a 16-bit body-state mask indexed by the state table at `0xec5fb8` (0x28-byte
+    records; setter `FUN_009c9920`, which ORs `1 << state` after clearing the record's `+0x24`
+    mask; clearer `FUN_009c8810`). **Bit 0 is state 0**: the 0x30bf life-state handler
+    (`FUN_008a80a0`) sets it on a revive to life state 1, and state 1, set for life state 2, clears
+    it through its mask 0xffcf (the table bytes, MEASURED in the exe's `.data`). INFERRED: bit 0
+    is "alive", so a plain click includes oneself only while dead -- when this client takes no
+    world clicks at all (round 548). `FUN_00780ee0` also opens a type-3 box when one selects
+    oneself with bit 0 clear (dead): what the box is was not read (OPEN);
+  - the pick keeps the **nearest** hit across every character object (`fVar1 < local_f4`, nine
+    rays around the cursor), not monsters first: the client's click now tests monsters and
+    players (and, with Shift, oneself) in one ray and takes the first hit;
+  - with oneself selected, a friendly cast sends targetType 3 with one's own id, from where one
+    stands; the target window shows the player piece with one's own name. That piece has two
+    controls, the kindred mark and the name (MEASURED, `iftw_player.txt`), and no HP gauge, so no
+    HP is drawn for any selected player.
 - **Not modelled (OPEN):**
-  - selecting one's own body in the world: whether retail's click can pick the player's own
-    character was not read, so here a Target_Required 1 heal reaches oneself only through a request
-    naming oneself;
   - resurrections (SelectDeadBody, `resu`);
   - the percent, bonus, weapon-term and `HLRU` heal shapes (heal.md);
   - the PK/job-flag and guild checks of the client's CICUser branch.

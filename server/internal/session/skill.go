@@ -1308,12 +1308,17 @@ func useSkillHandler(
 		// (Action_Range, refdata.Skill.Range). Nothing there is new
 		// arithmetic; the skill path simply never called it.
 
-		if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, dropSrc, potions, characterID, req.TargetMonsterID, damageBonus, damagePercent, masteryPercent, hits, attackType); err != nil {
+		landed := false
+		if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, dropSrc, potions, characterID, req.TargetMonsterID, damageBonus, damagePercent, masteryPercent, hits, attackType, &landed); err != nil {
 			return err
 		}
-		// The costs are paid, so the cast happened: the zone sees it (round
-		// 622, OpSkillCast).
-		announceCast(hub, characterID, req, castRow)
+		// The zone sees the cast (round 622, OpSkillCast) -- only when its
+		// blow landed (round 622's review): a cast performAttack refused
+		// after the costs ("target not found") is the requester's refusal
+		// alone, as retail's 0xB070 result 2 is.
+		if landed {
+			announceCast(hub, characterID, req, castRow)
+		}
 		// The skill tick's hand-off (round 256, keepup.go): a row with
 		// AutoAttackType 1 and no Basic_ChainCode leaves a plain attack
 		// running against the same target once its PreparingTime +

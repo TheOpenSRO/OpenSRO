@@ -81,6 +81,7 @@ func _initialize() -> void:
 			await _test_heal_on_player(world)
 			_test_heal_at_monster(world)
 			_test_others_cast(world)
+			_test_review(world)
 			for sig in connected:
 				_net.disconnect(sig, Callable(world, handlers[sig]))
 			SkillEffects.reset()
@@ -280,6 +281,8 @@ func _make_world() -> Node:
 		"func _play_self_cast_anim(basic_code: String, _anim_base: String) -> float:",
 		"\tbody_clips.append(basic_code)",
 		"\treturn 0.0",
+		"func _ground_point_at(_screen_pos: Vector2) -> Variant:",
+		"\treturn Vector3(1, 0, 1)",
 		""]))
 	_check(sub.reload() == OK and sub.can_instantiate(), "a subclass of World3D.gd compiles")
 	var scene := load("res://scenes/World3D.tscn") as PackedScene
@@ -405,10 +408,14 @@ func _test_heal_on_player(world: Node) -> void:
 	_reply("too far away", 3)
 	_check(_made_named("heal_burst.efp").is_empty() and SkillEffects.cast_phase(world.get("player")) == -1,
 		"a refused Heal at a player acts nowhere and its cast ends")
-	# A hostile row at the player: nothing sent.
+	# A hostile row at the player: nothing sent, and nothing said (retail
+	# drops it silently when the player is not attackable).
 	var b2 := _fresh_socket()
+	var said := _chat_count(world)
+	_check(said >= 0, "the world's chat log is there to read")
 	world.call("_cast_skill", SMASH, "TEST_SMASH_A_01")
 	_check(_uses(b2).is_empty(), "Smash at a selected player sends nothing")
+	_check(_chat_count(world) == said, "and says nothing (0x81bc93..0x81bcaf: a non-attackable player is a silent no-op)")
 
 func _test_heal_at_monster(world: Node) -> void:
 	world.call("_show_target", MONSTER)
@@ -448,3 +455,54 @@ func _test_others_cast(world: Node) -> void:
 	_made.clear()
 	_skill_cast(999, HEAL, 43, 0, 0, 0)
 	_check(_made.is_empty(), "a caster not in view draws nothing")
+
+## How much the world's chat log holds (World3D._log_system writes every
+## system line there), to tell whether a step said anything.
+func _chat_count(world: Node) -> int:
+	var cl = world.get("chat_log")
+	if cl != null and cl is RichTextLabel:
+		return (cl as RichTextLabel).get_parsed_text().length()
+	return -1
+
+# --- round 622's review ------------------------------------------------------------
+
+func _test_review(world: Node) -> void:
+	var player: Node3D = world.get("player")
+	# Selecting oneself: the portrait block's left press, and the cast at oneself.
+	_check(world.has_method("_select_self"), "World3D can select this player (_select_self)")
+	if world.has_method("_select_self"):
+		_test_self_select(world, player)
+	# A walk supersedes a friendly cast walking to its player.
+	world.set("_pending_friend_cast", {"character": BRAM, "skill": HEAL, "code": "TEST_HEAL_A_01", "stop": 1.0, "reach": 2.0})
+	world.call("_try_set_move_target", Vector2.ZERO)
+	_check((world.get("_pending_friend_cast") as Dictionary).is_empty(), "a click-to-walk drops a pending friendly cast")
+	# A heal on this player from a caster not in view still plays its act here.
+	_made.clear()
+	_skill_cast(999, HEAL, 60, 1, 3, OWN)
+	var seen := _made_named("heal_burst.efp")
+	_check(seen.size() == 1 and seen[0].get_parent() == player,
+		"a heal on this player from a caster out of view plays ACT_S on this player (got %d)" % seen.size())
+	_check(not ("_other_casts" in world), "the unused cast map is gone")
+
+func _test_self_select(world: Node, player: Node3D) -> void:
+	var info_script: GDScript = load("res://scripts/ui/hud/hud_player_info.gd")
+	var info: Control = info_script.new(null)
+	_check(info.has_signal("self_pressed"), "the player block has self_pressed (CIFPlayerMiniInfo::vslot_030)")
+	if info.has_signal("self_pressed"):
+		info.connect("self_pressed", Callable(world, "_select_self"))
+		world.set("_selected_character", -1)
+		var press := InputEventMouseButton.new()
+		press.button_index = MOUSE_BUTTON_LEFT
+		press.pressed = true
+		info.call("_gui_input", press)
+		_check(int(world.get("_selected_character")) == OWN, "a left press on the player block selects this player (got %d)" % int(world.get("_selected_character")))
+	info.free()
+	var buf := _fresh_socket()
+	_made.clear()
+	world.call("_cast_skill", HEAL, "TEST_HEAL_A_01")
+	var uses := _uses(buf)
+	_check(uses.size() == 1 and uses[0] == _use_bytes("Aria", HEAL, OWN, 3),
+		"Heal with oneself selected sends targetType 3 naming this player (got %s)" % str(uses))
+	_reply("", 3)
+	var burst := _made_named("heal_burst.efp")
+	_check(burst.size() == 1 and burst[0].get_parent() == player, "and its ACT_S plays on this player")
