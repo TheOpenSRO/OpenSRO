@@ -38,6 +38,24 @@ func _append_zeros(buf: PackedByteArray, n: int) -> PackedByteArray:
 	out.append_array(pad)
 	return out
 
+## magic + version header + root head length + name + one controller, the smallest
+## root the flat walk accepts (mirrors header_test.go's headerFor).
+func _build_header(version: String, root_name: String) -> PackedByteArray:
+	var buf := PackedByteArray()
+	buf.append_array((EfpReader.MAGIC + " " + version).to_ascii_buffer())
+	if version == "0012":
+		buf = _append_u32(buf, 0x3ecccccd) # 0.4
+	elif version == "0013":
+		buf = _append_u32(buf, 0x3f000000) # 0.5
+		buf = _append_zeros(buf, 12)
+	buf = _append_u32(buf, 101) # root node id
+	buf = _append_len_prefixed(buf, root_name)
+	buf = _append_u32(buf, 1)
+	buf = _append_len_prefixed(buf, "NormalTimeLife")
+	buf = _append_len_prefixed(buf, "StaticEmit")
+	buf = _append_zeros(buf, 20)
+	return buf
+
 func _build_0011() -> PackedByteArray:
 	var buf := PackedByteArray()
 	buf.append_array(EfpReader.MAGIC.to_ascii_buffer())
@@ -105,6 +123,24 @@ func _init() -> void:
 
 	var truncated := data.slice(0, 20)
 	_check(EfpReader.parse(truncated) == null, "rejects truncated buffer")
+
+	# Round 619: the client's header variants (FUN_00cb8d70) -- an f32 after
+	# the magic from "0012", three u32 more from "0013" -- then the root node's head length.
+	for v in ["0010", "0011", "0012", "0013"]:
+		var ev := EfpReader.parse(_build_header(v, "fx"))
+		_check(ev != null and ev.version == v and ev.effect_name == "fx" and ev.count == 1,
+			"header variant %s parses" % v)
+	# The root name is any printable string (retail has "11111", "-...").
+	for nm in ["11111", "-fire", "big wave,2"]:
+		var en := EfpReader.parse(_build_header("0011", nm))
+		_check(en != null and en.effect_name == nm, "relaxed root name %s" % nm)
+	# EUC-KR bytes, as system_levelup.efp's root name is (name bytes at 20..25).
+	var kr := _build_header("0011", "KKKKKK")
+	var kr_bytes := [0xb7, 0xb9, 0xba, 0xa7, 0xbe, 0xf7]
+	for i in range(6):
+		kr[20 + i] = kr_bytes[i]
+	_check(EfpReader.parse(kr) != null, "root name in EUC-KR bytes parses")
+	_check(EfpReader.parse(_build_header("0000", "fx")) == null, "rejects version 0000 (not the node format)")
 
 	if _failures == 0:
 		print("ALL PASS")

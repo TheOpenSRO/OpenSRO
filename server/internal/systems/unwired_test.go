@@ -48,7 +48,7 @@ var parked = map[string]string{
 
 	// File-format readers kept for tooling and documentation, not used by the
 	// running server.
-	"efp":         "parses .efp particle definitions; the client renders effects, the server has no use for them",
+	// (efp left this list in round 619: cmd/efpcensus imports it.)
 	"environment": "parses environment.ifo; lighting is a client concern, kept here with the other format readers",
 
 	// Recovered rule sets with no system in srrevamp to attach to. Each one

@@ -1,27 +1,21 @@
-// Package efp parses .efp (JMXVEFF) particle-effect definition files —
-// found in Particles.pk2's battle/ and other folders. Unlike every other
-// format in this project, this isn't a fixed-layout record structure: it's
-// a self-describing, nested, tagged property system (named string keys
-// like "NormalTimeLife", "StaticEmit", "LinkMode", "Program", ... each
-// followed by parameter data whose length isn't declared anywhere) —
-// closer to a small serialization/reflection system than a flat struct.
-// See docs/protocol/EFP_FORMAT.md for the full derivation, including why
-// this reader only recovers a *flat* sequence of (name, raw value bytes)
-// pairs rather than the true nested tree.
+// Package efp reads .efp (JMXVEFF) particle-effect definition files, the
+// format of Particles.pk2. It is a self-describing tree: nodes carrying named
+// controllers and commands, each followed by a value whose layout depends on
+// its registered type.
 //
-// No decompiled loader was fully traced for this format (a real loader
-// function was located in sro_client.exe but is too obfuscated by
-// stack/register reuse to read field types off directly — see
-// EFP_FORMAT.md). Confirmed empirically instead, the same brute-force
-// byte-analysis approach used for .bsk/.mapo/.mapm: scanning 30 real files
-// for every valid length-prefixed identifier-shaped string, then measuring
-// how far a value-boundary-agnostic "read a name, then scan forward for
-// the next one" walk gets — which turned out to be 94-100% of every real
-// file checked, with no schema table needed at all.
+// Two readers live here:
+//   - Decode (tree.go, round 619) reads the real typed tree, following the
+//     client's own loader field by field (addresses in
+//     docs/protocol/EFP_FORMAT.md). Over the retail archive it consumes
+//     4,096 of 4,170 files to the exact byte.
+//   - Parse is the older flat walk: it recovers (name, raw bytes) pairs by
+//     scanning for the next identifier-shaped string. It needs no schema and
+//     is kept for callers that only want names; since round 619 it shares
+//     Decode's header handling.
 //
 // This package never writes .efp files; it only parses ones a caller
 // already has (typically extracted from Particles.pk2 via
-// server/internal/pk2).
+// server/internal/pk2). No game data is stored in the repo.
 package efp
 
 import (
@@ -53,52 +47,49 @@ type Entry struct {
 
 // Effect is a parsed .efp file.
 type Effect struct {
-	// Version is the 4-byte tag after the magic, e.g. "0011" or "0013" —
-	// both confirmed real, with different fixed header shapes before the
-	// effect name (see Parse).
+	// Version is the 4-byte tag after the magic: "0010", "0011", "0012"
+	// or "0013" (see headerSize for the bytes each adds).
 	Version string
 	Name    string
-	// Count is a uint32 read right after Name, plausibly a top-level
-	// section count — not cross-checked against len(Entries) (Entries is
-	// a flat walk of every nesting level, not just top-level sections, so
-	// they aren't expected to match).
+	// Count is the uint32 read right after Name: the root node's
+	// controller count (READ, FUN_00cc3a40; round 619).
 	Count   uint32
 	Entries []Entry
 }
 
-// Parse parses a .efp file's raw bytes.
+// Parse parses a .efp file's raw bytes into the flat (name, raw value bytes)
+// walk. It is kept for callers that only want the names; Decode reads the
+// real typed tree.
 //
-// The header differs by version:
-//   - "0011": magic(7) + " "(1) + version(4) + a uint32 (unconfirmed) +
-//     the effect name.
-//   - "0013": magic(7) + " "(1) + version(4) + a float32 (unconfirmed) +
-//     12 reserved bytes (observed all-zero) + a uint32 (unconfirmed) +
-//     the effect name.
+// The header is the client's own (FUN_00cb8d70, round 619): after the
+// 12-byte magic, versions "0012" and up carry a float32, "0013" and up three
+// uint32 more (headerSize). Then comes the root node's uint32 HeadLen, the
+// byte length of its name and controllers (the "unconfirmed u32" of the
+// 0011/0013 layouts described before round 619), and its name. The name may be any length-prefixed string without control
+// characters (retail has "11111", names with spaces or a leading '-', and
+// EUC-KR Korean, returned byte for byte as Latin-1 code points); only the
+// flat walk's entry names keep the strict identifier rule.
 //
-// Both continue identically from there: a uint32 count, then a flat
-// sequence of Entry records until the boundary-finding scan can't locate
+// Both continue identically from there: the uint32 controller count, then a
+// flat sequence of Entry records until the boundary-finding scan can't locate
 // another valid name (the real file's small trailer, or truncation).
 func Parse(data []byte) (*Effect, error) {
 	if len(data) < magicLen+1+versionLen {
 		return nil, errors.New("efp: file too small to contain a header")
 	}
-	if string(data[0:magicLen]) != magic {
-		return nil, fmt.Errorf("efp: bad magic %q, want %q", data[0:magicLen], magic)
+	if string(data[0:magicLen+1]) != magic+" " {
+		return nil, fmt.Errorf("efp: bad magic %q, want %q", data[0:magicLen+1], magic+" ")
 	}
 
 	e := &Effect{Version: string(data[magicLen+1 : magicLen+1+versionLen])}
 
-	off := magicLen + 1 + versionLen
-	switch e.Version {
-	case "0011":
-		off += 4 // unconfirmed u32
-	case "0013":
-		off += 4 + 12 + 4 // unconfirmed float32, 12 reserved bytes, unconfirmed u32
-	default:
-		return nil, fmt.Errorf("efp: unrecognized version %q", e.Version)
+	hs, err := headerSize(e.Version)
+	if err != nil {
+		return nil, err
 	}
+	off := magicLen + 1 + versionLen + hs + 4 // version header, then the root node's HeadLen
 
-	name, off, err := readName(data, off)
+	name, off, err := readEffectName(data, off)
 	if err != nil {
 		return nil, fmt.Errorf("efp: reading effect name: %w", err)
 	}
@@ -148,6 +139,26 @@ func findNextName(data []byte, off int) int {
 		}
 	}
 	return -1
+}
+
+// readEffectName reads the root node's name: any uint32-length-prefixed run
+// of 1-255 bytes without control characters. Bytes above 0x7f are allowed:
+// system\system_levelup.efp and its three copies name their root in EUC-KR.
+func readEffectName(data []byte, off int) (string, int, error) {
+	if off+4 > len(data) {
+		return "", off, errors.New("truncated before name length")
+	}
+	n := int(binary.LittleEndian.Uint32(data[off:]))
+	off += 4
+	if n <= 0 || n > 255 || off+n > len(data) {
+		return "", off, fmt.Errorf("name length %d out of range", n)
+	}
+	for _, c := range data[off : off+n] {
+		if c < 0x20 || c == 0x7f {
+			return "", off, fmt.Errorf("implausible name byte %q", c)
+		}
+	}
+	return latin1(data[off : off+n]), off + n, nil
 }
 
 // readName reads a uint32-length-prefixed name at off: 1-40 ASCII

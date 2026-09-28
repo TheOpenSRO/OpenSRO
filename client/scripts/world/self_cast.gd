@@ -61,6 +61,33 @@ static func is_self_reply(target_type: int, echoed: bool, monster_damage: int, m
 		return false
 	return echoed or error == ""
 
+## The phase timing SkillEffects.cast gets for a self or ground cast, so the
+## effects' phases agree with the body clip World3D._play_self_cast_anim
+## plays for the same skillaniset2 row (round 616-620 integration):
+## - READY, WAIT and SHOT all "none" (Grass Walk, the imbues): no body clip,
+##   and a phase with no clip of its own advances at once (READ,
+##   IDecoSkill FUN_00a53480: the per-phase clip count at +8 + phase), so
+##   prep 0 and cast 0 -- READY's rows at the send, then WAIT, then SHOT.
+## - a WAIT clip (Ghost Walk): the body plays it at once, so READY spans 0
+##   (a READY clip retail would play first is not played here, OPEN) and the
+##   WAIT loop holds -- READ, until the server's skill-action message forces
+##   SHOT (FUN_00a56680 -> FUN_00a53090), which is World3D's
+##   SkillEffects.shot on OpSkillMove or cancel_cast on a refusal. cast_ms is
+##   only the fallback end if no answer comes: the WAIT clip's length
+##   (`clip_seconds`, OURS), or SkillEffects.READY_LOOP_MAX without a clip.
+## - otherwise (no row, or only READY/SHOT, whose timing is unread): {} --
+##   SkillEffects times the phases from skilldata (its header, INFERRED).
+static func effect_timings(aniset_row: Dictionary, clip_seconds: float) -> Dictionary:
+	var plan := SkillEffectReader.cast_body_anim(aniset_row)
+	match String(plan["kind"]):
+		"none":
+			return {"prep_ms": 0, "cast_ms": 0}
+		"wait":
+			var hold := int(round(clip_seconds * 1000.0)) if clip_seconds > 0.0 \
+				else int(SkillEffects.READY_LOOP_MAX * 1000.0)
+			return {"prep_ms": 0, "cast_ms": hold}
+	return {}
+
 # --- Ground-pick mode (Ghost Walk) --------------------------------------------
 
 ## The skill waiting for a ground click; 0 when the mode is off.

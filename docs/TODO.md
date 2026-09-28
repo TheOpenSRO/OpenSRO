@@ -1002,6 +1002,51 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       buffs restored at login (ctx+0xc bits 4|8), the `skc` category ends (`FUN_005a16c0`), and
       whether retail re-sends buffs on entering view (ours: yes).
 
+### Particle effects (`.efp`): **decoder done (round 619), renderer and skill effects (round 620)**
+Both readers decode 4,103 of the 4,170 files in the retail Particles.pk2
+(`docs/protocol/EFP_FORMAT.md`). Round 620 plays them:
+- `EfpSim` runs the client's particle rules;
+- `EfpEffect` draws them;
+- `SkillEffects` plays each skilleffectset row's effect at the moments SkillAudio plays its sound,
+  and keeps ACT_L auras by buff token.
+
+The `--build` census (MEASURED, round 620): all 4,103 decoded files build into an effect; 3,985
+draw at least one node, and 3,062 draw every node they mean to draw.
+
+Still open, by the files each would add:
+- **The link render modes.** RenderLinkPipe (864 files), RenderLinkObj (128) and RenderLinkDPipe
+  (70) are not drawn. Their routines are `FUN_00c8e020`, `FUN_00c8c3a0` and `FUN_00c8de80`; the
+  LinkMode controller and the node's 20-byte block feed them.
+- **Assets that do not load.**
+  - 68 files have a texture that does not load: 4 DDJ textures are in the unhandled "q" format,
+    and the rest are missing from the archive.
+  - 16 files have a mesh that does not load, including `JMXVBMS 0109` meshes.
+- **The flight of AT_MOV_\* rows** (projectiles). They play at the caster for now. MovType and
+  the Act Option columns are unread.
+- **The skill phase clips.** Retail advances READY → WAIT → SHOT on each phase clip's end, and
+  fires StartEvent ≥ 1 on the clip's animation events (IDecoSkill `FUN_00a534d0` and
+  `FUN_00a59970`). The client has no per-phase clips. `SkillEffects.cast` times the phases from
+  skilldata's Action_PreparingTime and Action_CastingTime (INFERRED) for targeted casts. Self and
+  ground casts (616-620 integration) take their timing from the skillaniset2 body plan instead
+  (`SelfCast.effect_timings`): no body clip advances at once (READ), and Ghost Walk's WAIT holds
+  for OpSkillMove, with the WAIT clip's length as the fallback end (OURS). Still open: a READY
+  clip's length where a skillaniset2 row names one, and the per-phase clip events.
+- **What another player's cast shows.** Only its buff aura (OpBuffStart) reaches this client; its
+  READY/SHOT/ACT_S effects need the server to tell the zone about the cast, which it does not.
+- **Where the hit effect sits.** characterInfo's DamageBone and DamagePos place it in retail; the
+  client uses mid-height.
+- **Unread details:**
+  - which option sets the emitter globals (`DAT_01114d54`, `DAT_01114d58`) and its retail
+    default; the renderer assumes full quality;
+  - the "link" object (particle +0x34), which is taken to be the parent;
+  - the parent-rotation part of "follow the parent";
+  - what SetSpherePos space 0's stack vector holds when no earlier command set it (zero here);
+  - which BlendScaleGraph SetGraphRandomScale names;
+  - FrameTextureSlide's head;
+  - `StartBone` `*` and `#…`;
+  - the effect's alpha byte `DAT_00edbd40`.
+- **The 58 `F8FILE` containers** (`system\arksolid_*`) and **the 7 `0000` files**.
+
 ## Parked, with the state written down
 
 ### Moat water

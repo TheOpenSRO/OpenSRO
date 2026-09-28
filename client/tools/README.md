@@ -195,6 +195,66 @@ ssh root@192.168.5.78 'su - ghidra -c "cd /opt/srrevamp-client && P=/opt/sro-fil
   /opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64 --headless --path . --script res://tools/probe_audio.gd"'
 ```
 
+### Particle effects: the `.efp` census
+
+`EfpReader.decode` (and its Go twin `efp.Decode`) reads the typed tree of every particle
+effect (round 619; `docs/protocol/EFP_FORMAT.md` is the contract). The census measures
+what fraction of the player's own `Particles.pk2` it reads: headers parsed, trees decoded
+to the exact byte, failures by reason, and the files using each feature. It prints only
+counts and paths. There are three ways to run it, and all should agree (round 619:
+4,170 files, 4,103 decoded, 4,096 to the exact byte, 95,801 nodes):
+
+```
+# Go, on the box (0.8 s): the full report, with the feature table
+cd server && go run ./cmd/efpcensus -pk2 /opt/sro-files/client/Particles.pk2
+# one file's decoded tree
+go run ./cmd/efpcensus -pk2 /opt/sro-files/client/Particles.pk2 -show 'battle\deco_charge_light_a.efp'
+# the same census as a Go test; it is skipped where the variable is unset, which includes CI
+SRREVAMP_PARTICLES_PK2=/opt/sro-files/client/Particles.pk2 go test -count=1 -run TestRetailCensus -v ./internal/efp
+# GDScript twin (22 s), after a sync
+client/tools/remote_godot.sh script res://tools/efp_census.gd -- --pk2=/opt/sro-files/client/Particles.pk2
+# the two readers value for value: one md5 of a canonical dump per file, diffed (prints IDENTICAL)
+RENDER_DIR=... GODOT_LOCK=... client/tools/efp_dump_diff.sh
+```
+
+`TestRetailCensus` fails if any of the measured results regresses: decoded files, exact decodes,
+HeadLen matches or Frame* key counts.
+
+**Building every file into an effect** (round 620). `--build` also builds each decoded file into
+an `EfpEffect` with its real meshes and textures, and runs 40 frames (2 s) of its simulation. It
+then reports:
+- how many files build;
+- how many draw every node they mean to draw;
+- how many draw at least one node;
+- the skip reasons, bucketed. These are render modes not drawn yet, assets that did not load, and
+  commands no rule covers.
+
+It takes 86 s:
+
+```
+client/tools/remote_godot.sh script res://tools/efp_census.gd -- --pk2=/opt/sro-files/client/Particles.pk2 --build
+```
+
+**Seeing effects play** (round 620). There are two hooks. The frames show what the renderer did;
+they prove nothing about retail.
+- `SRREVAMP_QA_EFFECT="<efp>[;<efp>...]"` plays those files on the player at tick 20, looping.
+  They are spaced `SRREVAMP_QA_EFFECT_SPACING` native units apart (default 40). Each file prints
+  `QA EFFECT <path> at x <x>: <n> node(s) drawn, skipped [...]`.
+- `SRREVAMP_QA_CAST="<skill id>[,...]"` runs each skill's effect phases on the player in turn,
+  every `SRREVAMP_QA_CAST_PERIOD` ticks (default 160):
+  - `SkillEffects.cast` at +0: READY now, then WAIT and SHOT by the skill's timing columns;
+  - `shot` and `hit` (SHOT/1) at +30;
+  - `act` (ACT_S) at +40;
+  - the ACT_L aura (token 1) from +41 until the next skill starts.
+
+  Each step prints a `QA CAST tick <t> ...` line, and each effect an `EFFECTS skill ...` line
+  giving its ActType, bone and nodes drawn.
+
+```
+SRREVAMP_QA_NOUI=1 SRREVAMP_QA_CAST=90,113,114,149,3 qa_shot.sh --out /var/tmp/cast --region '97\168.m' \
+  --radius 1 --at 1002,1020 --yaw 30 --pitch -12 --dist 70 --frames 860
+```
+
 ### Load benchmark
 
 Every map and loading change is measured on the two runs below, before and after, and on nothing

@@ -330,7 +330,7 @@ func _make_world() -> Node:
 		"\treturn 1.0",
 		"func _body_animation_for(_gender: String, _t: int, _group: String = \"default\") -> BanReader.ParsedAnimation:",
 		"\treturn null",
-		"func _audio_cast_start(_skill_id: int) -> void:",
+		"func _audio_cast_start(_skill_id: int, _monster_id: int = -1, _fx_timings: Dictionary = {}) -> void:",
 		"\tpass",
 		"func _ground_point_at(_screen_pos: Vector2) -> Variant:",
 		"\treturn ground_point",

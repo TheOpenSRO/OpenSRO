@@ -7094,6 +7094,676 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twentieth round, review follow-up: effects follow the game's own cast phases, end when their buff or cast ends, and survive an equipment change
+
+The review of round 620 checked its READ claims against the asm and found real defects. This follow-up fixes them.
+
+**READ** (sro_client.exe, box decompile and asm):
+- **The cast's phase machine** (IDecoSkill, funcs_015):
+  - A cast (`GlobalDataManager::FUN_00a53610`) enters phase 0 through `FUN_00a534d0`.
+  - Each phase plays its clip, advances +0xbe, and fires its StartEvent 0 rows at once
+    (`FUN_00a53480` → `FUN_00a52fe0`).
+  - Each animation event of the current clip fires the next StartEvent (`FUN_00a59970`, type 1).
+    The clip's end (type 100) moves on: READY → WAIT → SHOT.
+  - A phase with no clip of its own advances at once. This is the skill record's per-phase clip
+    count at +8 + phase.
+  - WAIT holds only while the skill has WAIT clips, until the server's skill-action message
+    (`FUN_00a56680` kind 1 → `FUN_00a53090`) forces SHOT.
+  - ACT_S and ACT_L fire when the skill acts (`FUN_00a53850`).
+- **Ending a kept effect.** It ends through the interface's slot 2 (`CEFEffect::vslot_002`), which
+  frees its particles at once, or through slot 4 with 0 (`vslot_004`), which clears the restart
+  flag +0x49 and releases the effect at keep count 0.
+  - Slot 4 with 1 is AT_LOOP's restart (`vslot_000` resets the ages).
+  - So `EfpEffect.stop()` now drops every particle at once. Round 620 let a looping effect finish
+    its cycle, which never ended the 18 loop and never-extinct files the review found (among them
+    `status_bad_temptation` and `pet2_dragon_j`).
+- **Frame scheduling** is a single-precision running sum of the step, truncated. Key i runs at
+  `ftol(f_i)`, where `f_{i+1} = f32(f_i + step)`, while `f_i ≤ end` (the loop at `0x00ca9276`, the
+  fldcw at `0x00ca92b0`).
+- **NeverExtinct with N = 0** kills the particle (`FUN_00c84d80`).
+- **SetSpherePos space 0** (`0x00c8a4c5`):
+  - The ball point is written straight into the position.
+  - Then `position += value × V`. V is a stack vector the case never sets. It holds what an earlier
+    command of the same frame's run left there: the o = 0 cone positions, ConeForce, Attraction or
+    SetSpherePos itself.
+  - With nothing earlier, V is uninitialised. EfpSim keeps V per particle run and starts it at zero,
+    which is OURS for that case. 66 retail commands use space 0.
+- **ConeForce space 0** falls through into 0x47 (`0x00c8ac1d` → `0x00c8ac23`), so it adds a second
+  cone rotated by the particle's own rotation (121 commands).
+- **Round 620's INFERRED claims the review confirmed:**
+  - Force adds to the velocity (`0x00c8aae8`).
+  - TextureSlide stores the UV rectangle (`0x00c8af77`).
+  - The billboard matrices come from `CEFSystem::FUN_00cb0ee0`, as the inverse view with its
+    translation zeroed. YBillboard has only its row 1 forced to (0, 1, 0), and its rows 0 and 2 are
+    kept. Round 620 rebuilt YBillboard as an orthonormal upright basis, which was wrong.
+
+**INFERRED:**
+- **Billboard look direction.** The inverse view's rows are right, up and look. The client keeps
+  the game's coordinates unconverted, so look is Godot's −camera.z. Round 620 used +camera.z, which
+  put a billboarded mesh's depth backwards.
+- **Phase timing.** With no per-phase clips, the phases are timed from skilldata: READY spans
+  Action_PreparingTime (col 11) and WAIT spans Action_CastingTime (col 12).
+
+**MEASURED:**
+- **Colour.** A white texture under a 0x80 particle colour, a 0x80 texture under a white colour, and
+  an unshaded StandardMaterial3D with albedo 0x80 all render 128 on the box's GL Compatibility
+  renderer. The colours match D3D's fixed pipeline, so the suspected sRGB defect is not one.
+- **The simulation costs about 7 µs a particle-frame in GDScript.** `water_assist_motion_wait`
+  took 466 µs for 64 particles. The review's bench (20 copies of each file):
+
+  | file | before | after |
+  |---|---|---|
+  | `cos\p2skill_critical_defense.efp` | 12 ms for 2,092 particles | 10.4 ms for 1,292 (capped) |
+  | `cold_gigongta_keep_a.efp` | | 3.5 ms for 160 |
+
+  Precompiling each command's key value out of the per-particle loop and dropping finished emitters
+  gained about 5–10 %. The rest is GDScript per-particle work.
+
+**What changed:**
+1. **Phase timing.** `SkillEffects.cast(skill, caster, target, timings)` is the cast sequencer:
+   - READY at once;
+   - WAIT at prep;
+   - SHOT at once when the skill has no WAIT row, else at `shot(caster)` (the server's answer) or
+     at prep + cast (the OURS fallback);
+   - the cast's READY/WAIT loops end when SHOT starts;
+   - `hit(caster, target, skill)` fires SHOT/1 and later, and `act(skill, caster, target,
+     with_aura)` fires ACT_S (plus one ACT_L cycle);
+   - `cancel_cast(caster)` ends a refused or interrupted cast.
+
+   `play_phase` no longer stops READY loops on any later phase. World3D's monster cast now uses the
+   sequencer: `cast` at the request, `hit` and `act` when the blow lands, and `cancel_cast` on a
+   refusal. The target is the monster the request names, where round 620 used the stale
+   `_last_attack_target`. The self-cast wiring is left to the int/skills merge.
+2. **Ending effects.** `stop()` ends at once. An aura also ends by itself `AURA_GRACE_MS` (2 s,
+   OURS) after its buff's remaining time, in case OpBuffEnd never arrives.
+3. **Equipment changes.** An effect is now a child of the body, not of its skeleton. Each frame it
+   takes the frame of the body's current skeleton at its bone (`EfpEffect.follow_host`).
+   - An equipment change no longer frees the auras.
+   - An aura attached before the skeleton exists finds it when the skeleton arrives.
+   - `skeleton_of` skips skeletons queued for deletion.
+4. **Cap priority** (OURS):
+   - 2,000 particles in all, of which 600 are reserved for the local player's own effects
+     (`reserved`: its casts, hits and level-up); everyone else's stop at 1,400;
+   - a MultiMesh is rewritten only after a simulation frame, or when the camera turns for a
+     billboarded node.
+5. **Hitches and caches.**
+   - A skill's effect files decode on a WorkerThreadPool task when the skill state arrives (known
+     skills) and on a hotbar assignment (`SkillEffects.preload_skill`, `EfpEffect.preload_paths`).
+     The task produces plain data, and the resources are made on first use.
+   - The caches are bounded by least-recent use, OURS: templates 256, textures 384, meshes 256. An
+     evicted texture takes its materials with it.
+6. **Smaller fixes.**
+   - Casts and auras of freed bodies are pruned in `process()`.
+   - The world's `_exit_tree` clears every live effect and the own-body reference (`clear_live`),
+     which covers leave and relog.
+   - An effect that draws nothing is freed rather than orphaned, in `play_phase`, `attach_aura`,
+     the hit and the level-up.
+   - The QA cast hook drives the sequencer.
+
+**API changes** (for round 621's merge):
+- *Behaviour:*
+  - `EfpEffect.stop()` now ends at once;
+  - `SkillEffects.play_phase` no longer stops phase loops;
+  - `SkillEffects.attach` parents to the body and uses `follow_host`.
+- *Removed:* `EfpEffect.follow(skel, bone, offset)`, replaced by `follow_host(host, bone_name,
+  offset)`; `SkillEffects.stop_phase_loops`.
+- *New in SkillEffects:* `cast`, `shot`, `hit`, `act`, `cancel_cast`, `cast_phase`, `process`, `tick`,
+  `preload_skill`, `preload_skills`, `paths_for`, `parse_timings`, `clear_live`, `tracked_count`
+  and `own_body`.
+- *Extended in SkillEffects:* `attach_aura(..., remaining_ms, now_ms)` and
+  `set_rows(rows, timings)`.
+- *New in EfpEffect:* `reserved`, `draw_updates`, `preload_paths`, `wait_preloads`, `cache_sizes`
+  and `CACHE_*`.
+- *New in EfpSim:* `reserved`, `RESERVE`, `key_frames`, `can_spawn`; `MAX_TOTAL` is now 2000.
+- *World3D:* `_audio_cast_start(skill_id, monster_id)`. `combat_audio_test.gd`'s source probe
+  follows it.
+
+**Tests.**
+- **`efp_sim_test.gd`** adds:
+  - the immediate stop of loop and never-extinct effects;
+  - draws rewritten only on a stepped frame;
+  - the billboard rows, and YBillboard's forced row 1;
+  - NeverExtinct N = 0;
+  - the float32 schedule (step 0.3 → frames 0,0,0,0,1,1,1);
+  - SetSpherePos space 0, with and without a preceding cone;
+  - ConeForce space 0 adding twice;
+  - the reserved share.
+- **`skill_effects_test.gd`** (now run on the first frame, so the tree is live) adds:
+  - an effect as the body's child at the bone;
+  - a skeleton rebuilt under an aura, and a queued skeleton being skipped;
+  - an aura attached before the skeleton exists;
+  - the sequencer: READY holding for prep, WAIT holding, `shot`, the prep + cast fallback, prep 0
+    with no WAIT, and `hit` on the struck body;
+  - `cancel_cast`, and `act` with and without the aura cycle;
+  - a nothing-drawing effect freed;
+  - aura replacement, detach and detach_owner;
+  - the aura's grace expiry, freed-body pruning, and the bounded template cache.
+- **Results.**
+  - `remote_godot.sh check`: ALL LOAD.
+  - `remote_godot.sh tests`: 135 suites, 0 failing.
+  - `go test -count=1 -p 1 ./...`: ok. The server is unchanged.
+- Against round 620 (41163cb), the new checks fail: see below.
+
+The new checks fail against 41163cb (the same test files, run on round 620's code):
+
+```
+== efp_sim_test.gd
+SCRIPT ERROR: Invalid get index 'RESERVE' (on base: 'GDScript').
+FAIL NeverExtinct with N == 0 kills the particle
+SCRIPT ERROR: Invalid call. Nonexistent function 'key_frames' in base 'GDScript'.
+FAIL the plate node's particle is in its MultiMesh
+FAIL stop() ends a looping effect at once: every particle goes, the node frees (READ: the interface's release)
+FAIL a never-extinct effect lives on by itself
+SCRIPT ERROR: Invalid get index 'draw_updates' (on base: 'Node3D (EfpEffect)').
+FAILURES: 4
+== skill_effects_test.gd
+SCRIPT ERROR: Parse Error: Static function "cache_sizes()" not found in base "EfpEffect".
+SCRIPT ERROR: Parse Error: Cannot find member "CACHE_TEMPLATES" in base "EfpEffect".
+```
+
+**Render** (`efp_shots/F_grid.png`; it shows, it does not prove). `SRREVAMP_QA_CAST=149,90` through
+the sequencer:
+- the Heal's READY column (skilldata prep 1000 ms) is up through its preparing time;
+- it is gone at the `shot`;
+- ACT_S's swirl follows;
+- the imbue's ACT_S burst and its hand aura follow.
+
+The first try used the wall clock, and the READY phase ended within three movie frames: a movie
+render runs slower than real time. The sequencer now runs on scene time (`SkillEffects.tick(delta)`
+from `_physics_process`), the same clock the effects simulate in.
+
+**Integration (rounds 616-620 together, branch `int/skills`).** feat/efprender (rounds 619 and
+620 with their follow-ups) was merged into int/skills. The conflicts were World3D's `_exit_tree`
+(both the ground-pick/skill-table teardown and `SkillEffects.clear_live` kept), docs/TODO.md (both
+sections kept) and this file (620, 619, then 618-616). Then the self-cast path was wired into
+SkillEffects, the step round 620 left for this merge:
+- **Self casts** (`_send_self_cast`, Target_Required 0): `cast` at the send; SHOT, SHOT/1 and ACT_S
+  on the player when the server answers (`_fx_self_cast_acts`): on the cast's own OpBuffStart for
+  a buff, on the accepted reply otherwise (with ACT_L one cycle, since no token will hold it);
+  `cancel_cast` on a refusal. ACT fires once per cast: the accepted reply that follows a buff's
+  start adds nothing.
+- **Ghost Walk**: `cast` at the ground click, so the WAIT row (`lightning_bobeop_move_a.efp`)
+  plays; `shot`/`act` on OpSkillMove, `cancel_cast` on a refusal.
+- **Phase timing agrees with the body clip** (`SelfCast.effect_timings`, from the same
+  skillaniset2 row `_play_self_cast_anim` plays). With no body clip (Grass Walk, the imbues), the
+  phases advance at once: prep 0, cast 0. That is READ: a phase with no clip of its own advances at
+  once (`FUN_00a53480`). With a WAIT clip (Ghost Walk), READY spans 0 because the body plays the
+  WAIT clip at once. WAIT then holds until the server's answer (READ: `FUN_00a56680` ->
+  `FUN_00a53090`). Its fallback end is the WAIT clip's length (OURS; 666 ms for
+  `skill_china_lightning_bobeop.ban`, MEASURED in the live log). Without the hold, Ghost Walk's
+  skilldata prep + cast of 0 ended the WAIT loop in the same frame.
+- **Auras go on the right body.** The owner check is now the buff board's own
+  (`_buff_owner_is_self`: ownerKind 0 and the id `_sync_own_id` settles on). Round 620 compared
+  `NetClient.own_character_id` alone, which missed the sit answer's id. Other characters resolve to
+  `_other_bodies` and ownerKind 1 to `_monster_bodies`, even when the monster's id equals this
+  player's. The handlers now run from `_on_buff_started` / `_on_buff_ended` after the owner is
+  settled, not from a second `has_signal` connection. `_audio_blow_lands` no longer plays an
+  ACT_L cycle, since the signal is always there.
+- **Preload** was already in place: the skill-state answer runs `preload_skills` on the known
+  skills, and a hotbar assignment runs `preload_skill`.
+
+**Tests.** The new `client/scripts/world/self_cast_fx_test.gd` drives the real NetClient with real
+OpBuffStart/End, OpSkillMove and OpAttackResult bytes. It covers:
+- a self-cast buff running READY -> ACT_S -> ACT_L, with the aura attached on its BuffStart and gone
+  on its BuffEnd;
+- a non-buff self cast acting on its reply;
+- Ghost Walk's WAIT held past its skilldata time, then stopped by OpSkillMove, by a refusal, and by
+  the clip-length fallback;
+- another player's aura on that player's body, a monster's on the monster, and this player
+  recognised by the sit id.
+
+Three suites' `_audio_cast_start` stubs follow the new signature.
+
+Results: `remote_godot.sh check`: ALL LOAD. `tests`: 140 suites, 0 failing.
+`go test -count=1 -p 1 ./...`: ok.
+
+The negative ran against the merge without this wiring. Its aura checks fail there partly because
+round 620 connected the aura handlers in `_ready`, which the suite stubs:
+
+```
+FAIL SelfCast.effect_timings exists
+FAIL its own OpBuffStart plays ACT_S on the player (got 0)
+FAIL READY -> ACT_S -> ACT_L, in that order (got ["charge.efp"])
+FAIL it acts (ACT_S) on its accepted reply
+FAIL the cast is in WAIT (got -1)
+FAIL 1 s on (skilldata's prep + cast is 0) it still holds
+FAIL with no answer it holds through the WAIT clip
+FAIL with only the sit answer's id, this player's buff aura is on the player (the board's check)
+13 FAILURES
+```
+
+**Live** (run 5: real X input on the Login -> CharacterSelect route against the merged server,
+Jangan spawn, then the field for Heal). The client logs held 0 SCRIPT ERRORs.
+- Grass Walk's ACT_S (`lightning_gyeonggong_keep_a.efp`, 7 nodes drawn) played on its OpBuffStart,
+  and its aura stayed on the player.
+- Ice River Force's ACT_S (`cold_gigongta_motion_a.efp` at `Bip01 R Finger2`) played, and its hand
+  aura held until OpBuffEnd at 15 s.
+- Ghost Walk's WAIT loop started at the click and ended on OpSkillMove.
+- Heal cast at a monster played its READY loops (`water_assist_motion_wait.efp`, and
+  `water_motion_keep.efp` on both hands with its RenderLinkPipe node skipped) and its ACT_S burst.
+
+After load, the longest work frame was 24 ms (p95 7 ms, none over 100 ms) and the longest wall gap
+was 96 ms.
+
+The screenshots show these effects but prove nothing. The Ghost Walk WAIT loop lives only for the
+local round trip, a few milliseconds, so no screenshot caught it; the log lines are the evidence.
+
+## Six-hundred-and-twentieth round: skills play their own particle effects -- the cast glow, the imbue's hand aura, the heal's burst -- drawn from the game's own .efp files
+
+The user asked for skill visual effects on activation, and for "most of the particles loaded in".
+Round 619 decoded the files. This round plays them:
+- `EfpSim` (`client/scripts/efp/efp_sim.gd`) runs the client's own particle rules over the decoded
+  tree.
+- `EfpEffect` (`efp_effect.gd`) draws them as one MultiMesh per node, under the Compatibility
+  renderer.
+- `SkillEffects` (`client/scripts/effects/skill_effects.gd`) plays each skilleffectset row's
+  `.efp` at the moments SkillAudio plays the same row's sound. It keeps the ACT_L auras per buff
+  token.
+
+The rules are written down, with addresses, in `docs/protocol/EFP_FORMAT.md` "Playback".
+
+**READ** (sro_client.exe, `/var/tmp/decomp_client` and `/var/tmp/sro_client.asm` on the box):
+- **A frame is 50 ms.** `UI_ALCHEMYBOX::FUN_00bc1490` accumulates the game's millisecond delta
+  (`DAT_0110f7f8`) and hands `ftol(acc / 50.0)` frames to every effect. The double 50.0 is at
+  `0x00d8f0b0`.
+  - The frames travel `CRTModParticle::FUN_00c80ff0` → `CEFEffect::vslot_000` → interface +0x4c,
+    which is effect +0x28c. The extinct executors add that to each particle's age.
+  - INFERRED: the delta is in milliseconds. The game loop caps it at 3000, beside a float twin
+    capped at 3.0.
+  - This closes round 619's first OPEN.
+- **Spawning makes emitters.** `FUN_00c86cd0` gives each new particle one emitter per child node.
+  A child node therefore emits relative to each of its parent's particles, on the parent's age.
+- **The three lifetimes:**
+  - NormalTimeExtinct (`FUN_00c84e20`) dies after frame N−1;
+  - NormalTimeLoop (`…dd0`) wraps the age modulo N;
+  - NeverExtinct (`…d80`) holds the age at 1.
+- **The per-particle program is an opcode interpreter** (`EFEffect::FUN_00c893f0`, a
+  0x52-case switch). Each command's factory stores `base + space`, so the `space` byte round 619
+  left OPEN selects a variant:
+  - for positions, `space = r×3 + o`: `o` is the origin (none, parent, link) and `r` the frame the
+    value is rotated by (none, own, parent, link);
+  - for velocities and forces, the rotation frame.
+  - The table of bases, and every variant, is in EFP_FORMAT.md.
+- **Cone vectors.** The vector is `(0, lerp(min, max, r), 0)`, turned `r·angle` about Z
+  (`IDecoSkill::FUN_00a4d820`: `FUN_00b44b40` is fsin, `FUN_00b44a10` fcos), then `r·2π` about Y.
+  - The sphere position is a rejection-sampled unit-ball point times the value.
+  - Attraction adds the normalised offset from the parent, times the value.
+- **Motion and defaults** (`CEFUpdater::vslot_002` and the particle init):
+  - each frame, `pos += vel`, and the rotation and shape rotations step;
+  - a new particle takes its parent's position, velocity and rotation, with scale 1, colour
+    0xFFFFFFFF and UV rectangle (0,0,1,1).
+- **The draw routines.** The render command's factories store `space + 1..5`, and every retail
+  render command has space 0 (MEASURED). So:
+
+  | value | mode | routine |
+  |---|---|---|
+  | 1 | Plate | `FUN_00c8c210` |
+  | 2 | Mesh | `FUN_00c8bf50` |
+  | 3 | LinkDPipe | `FUN_00c8de80` |
+  | 4 | LinkPipe | `FUN_00c8e020` |
+  | 5 | LinkObj | `FUN_00c8c3a0` |
+
+  - A plate is the unit quad at `0x00edb070`, scaled per axis.
+  - Every vertex takes the particle's colour, and UVs map as `u0 + u·du`.
+  - This closes round 619's second OPEN.
+- **The view modes** (`FUN_00cabda0`, the switch at `0xcabf1b`):
+  - ViewNone uses the particle's rotation;
+  - Billboard and YBillboard use the camera matrices at `0x00edbde8` and `0x00edbe28`. That
+    these are the camera-facing and upright-facing billboards is INFERRED from the names;
+  - VBillboard builds a basis with Y along the velocity.
+- **ActType** (`IDecoSkill::FUN_00a51bc0`, the row's +0xe byte):
+  - AT_ONE_FOLLOW (0) is created with its keep flag 0 and goes to the one-shot list;
+  - AT_LOOP and AT_STOP (1, 2) are created with the keep flag 1.
+
+**MEASURED** (the box's retail archives):
+- **The skilleffectset header** names ActType, Obj Path, ObjName, StartBone and StartOffset at
+  0-based 13 and 17–20. The imbue's rows are `ACT_S AT_ONE_FOLLOW cold_gigongta_motion_a.efp` and
+  `ACT_L AT_LOOP cold_gigongta_keep_a.efp`, both at `Bip01 R Finger2`.
+- **The "keep" auras are short one-shots.** `cold_gigongta_keep_a` is a 20-frame (1 s) root
+  particle whose children emit for 20 frames, all NormalTimeExtinct. So AT_LOOP has to restart
+  the file for the aura to last.
+- **BSAnimation needs no drawing.** All 3,230 nodes that carry a BSAnimation variable or a BAN
+  controller are RenderNone. Their motion reaches particles as the baked SetBANPos and SetBANRot
+  keys.
+- **AngleVector1's b.z** is a.z in radians in every retail value.
+- **The build census**, new `--build` mode of `client/tools/efp_census.gd`, 86 s. It builds every
+  decoded file into an EfpEffect with its real meshes and textures, and runs 2 s of it:
+
+  | | files | % of 4,170 |
+  |---|---|---|
+  | built without error | 4,103 of 4,103 decoded | 98.4 |
+  | draw at least one node | 3,985 | 95.6 |
+  | draw every node they mean to draw | 3,062 | 73.4 |
+
+  The skipped nodes, by files:
+
+  | skipped | files |
+  |---|---|
+  | RenderLinkPipe | 864 |
+  | RenderLinkObj | 128 |
+  | RenderLinkDPipe | 70 |
+  | a texture that does not load (4 DDJ in the unhandled "q" format, the rest missing) | 68 |
+  | a mesh that does not load (2 are `JMXVBMS 0109`) | 16 |
+
+  The 2 s of simulation spawned 279,962 particles across the archive, without a script error.
+
+**INFERRED:**
+- the cone's angle is `b.z`;
+- TextureSlide's key is the UV rectangle (the decompile loses the store; the draw routines' UV
+  mapping is READ);
+- Force's add targets the velocity;
+- SetGraphRandomScale samples the node's first BlendScaleGraph, linearly;
+- a Frame* value i belongs to frame `start + i·step`.
+
+**OURS** (listed in the code and in EFP_FORMAT.md):
+- the particle "link" (+0x34) is taken to be the parent;
+- following the parent is translation only;
+- the order within a frame is motion, commands, emission, ages;
+- the emitters of a dead particle stop;
+- there is a cap of 300 particles per effect and 3,000 in all, and a refused spawn gives its 1.0
+  back;
+- the emission globals are at full quality;
+- the Godot blend mapping:
+  - SRCALPHA/ONE → ADD;
+  - ONE/ONE → ADD with alpha 1;
+  - SRCALPHA/INVSRCALPHA and BOTHSRCALPHA → MIX;
+  - ZERO/INVSRCALPHA → MIX with black;
+  - anything else → MIX, approximate. Godot 4.2's spatial shaders have no premultiplied blend.
+- cull NONE draws both faces and anything else culls back faces (BmsReader's reversed winding);
+- a bone-attached effect follows the bone's position but turns with the body;
+- `none`, `*` and `#…` StartBones use the skeleton origin;
+- AT_MOV_* rows play at the caster, without their flight;
+- a READY/WAIT loop ends at the caster's next phase, or after 4 s;
+- without the buff signals, ACT_L plays one cycle;
+- the hit effect sits at mid-height.
+
+**Wiring.**
+- SkillEffects plays at every point SkillAudio does in World3D:
+  - READY and SHOT/0 at cast start;
+  - SHOT/1 on the struck monster, and ACT_S, when the blow lands.
+- **Buff auras.** `NetClient.buff_started` / `buff_ended` (rounds 616–618, on `int/skills`) attach
+  and detach the ACT_L auras by `(owner kind:id, token)`.
+  - They are connected only when `NetClient.has_signal(...)`, with untyped handlers, so this
+    branch runs on its base.
+  - The aura goes live after the merge. Until then ACT_L plays one cycle where its sound plays.
+  - Auras are detached when their owner's body leaves.
+- **The skill hit** (skillaniset2's DamageEfp) and **the level-up burst** now draw their decoded
+  `.efp` when it builds and draws. HitEffect and LevelUpEffect remain the fallback
+  (`USE_EFP_HITS`, `USE_EFP_LEVELUP`).
+- **QA hooks:**
+  - `SRREVAMP_QA_EFFECT="<efp>;..."` loops those files on the player;
+  - `SRREVAMP_QA_CAST="<id>,..."` runs each skill's phases in turn.
+
+**Renders** (`efp_shots/` in the lane's scratch; these SHOW, they do not prove):
+
+Five runs, all on the RX 5700 XT via VirtualGL, at Jangan (97/168 local 1002, 1020). Each run used
+the lane's copy of `qa_shot.sh` without its box-wide `pkill`, so another lane's run was not killed.
+
+- **The imbue (skill 90)** (`D_grid.png`, `A_imbue_*.png`):
+  - ACT_S, `cold_gigongta_motion_a`, is an 8-node white-blue starburst at the right hand.
+  - The ACT_L aura, `cold_gigongta_keep_a`, is a blue glow that stays at `Bip01 R Finger2` and
+    follows it for as long as the token is held.
+  - The aura's ice-cylinder meshes read small at this distance.
+- **Grass Walk (113)** (`A_grid.png`, top row): yellow-green rings at the feet with a rising
+  shimmer. `lightning_gyeonggong_keep_a` has 7 nodes drawn and no bone.
+- **Ghost Walk (114)** (`D_grid.png`, last two frames): its only effect row, WAIT/AT_LOOP
+  `lightning_bobeop_move_a`, draws 1 node: yellow-green streaks around the body.
+  - In play, World3D fires no WAIT phase, and Ghost Walk's movement is round (b)'s work.
+- **Heal (149)** (`A_grid.png`, middle row):
+  - READY loops `water_assist_motion_wait` (8 nodes, a blue column with wind sheets) and
+    `water_motion_keep` at both hands (3 nodes each; its RenderLinkPipe is skipped).
+  - ACT_S, `water_hpheal_effect_a` at `Bip01`, adds a yellow swirl.
+  - The READY loop's wind meshes live 100 frames (5 s), so a stopped loop lingers that long while
+    it finishes its cycle (`A_grid2.png`). That is the file's own lifetime under this client's
+    "finish the cycle" stop (OURS).
+- **Power Strike (3)** (`A_grid.png`, bottom row): SHOT/1 `hit_1_cut_smash` (2 nodes) and
+  `hit_1_cut_critical` (1 node) are white crescent slashes with a purple arc.
+- **The level-up and a skill hit** (`C_grid.png`), through the new `USE_EFP_*` path:
+  - `system_levelup.efp` draws 15 nodes: a golden ground ring, a white rising burst and a gold
+    halo;
+  - the skill-hit sparks fire every 15 ticks from `SRREVAMP_QA_HITFX`.
+  - Both read as sane, so the decoded path is on and HitEffect / LevelUpEffect stay as the
+    fallbacks.
+- **Seven random files** (`E_grid.png`) all build and play:
+  - `skill_ar_karkadann_attack03_shot`: 27 nodes, fire;
+  - `freebattle_yellow`: 12;
+  - `hit_4_lightning_attack_b`: 9, lightning sparks;
+  - `avatar_m_monstershiko_ua_l`: 4, its Link nodes skipped;
+  - `hit_3_normal`: 5;
+  - `map\light`: 2, faint;
+  - `keep_sealstone_die_bomb`: 26, a tall light shaft.
+
+What looks wrong, or cannot be judged:
+- Nothing here was compared with the retail client, so none of it is known to match.
+- The imbue aura's meshes are hard to see at 32 units.
+- The Link trails are missing wherever a file has them.
+
+**Tests.**
+- **`efp_sim_test.gd`** (synthetic trees). It covers:
+  - the 50 ms clock and its catch-up cap;
+  - emission: per-trigger spawns, fractions, max_live as a live cap refunded by deaths, delay,
+    interval 0, and (0,1,1,1,0.0) emitting nothing;
+  - the three lifetimes, restart, and child emitters per parent particle;
+  - SetVelocity, SetPosition space 1, the Frame* keys (scale, colour, UV, step 2), cones and the
+    BlendScaleGraph;
+  - the per-effect and global caps;
+  - the blend mapping and cull;
+  - EfpEffect's draw and skip lists, once vs loop, stop(), and the three view bases.
+- **`skill_effects_test.gd`** (synthetic tables). It covers the column parse by header, the phase
+  and StartEvent filters, hosts by ActType, the StartBone attachment and offset, a READY loop
+  stopping at the next phase, and the aura attach, replace, detach and detach_owner by token.
+- **Results.**
+  - `remote_godot.sh check`: ALL LOAD.
+  - `remote_godot.sh tests`: 135 suites, 0 failing.
+  - `go test -count=1 -p 1 ./...`: ok. The server is unchanged in this round.
+
+Against the base feat/efpdec (bcea4e0), the new suites fail:
+
+```
+FAIL scripts/efp/efp_sim.gd exists (EfpSim, the particle rules)
+FAIL scripts/efp/efp_effect.gd exists (EfpEffect, the renderer)
+FAILURES: 2
+SCRIPT ERROR: Parse Error: Could not find type "EfpEffect" in the current scope.   (skill_effects_test.gd)
+```
+
+**OPEN** (also in `docs/TODO.md`):
+- the Link render modes (1,062 files);
+- the textures and meshes that do not load;
+- the AT_MOV_* flight;
+- characterInfo's DamageBone/DamagePos for the hit;
+- the emitter-quality option and its default;
+- the link object;
+- the parent-rotation follow;
+- ConeForce's fall-through;
+- the BlendScaleGraphPointer target;
+- FrameTextureSlide's head;
+- `*` and `#…` bones;
+- F8FILE and `0000`.
+
+## Six-hundred-and-nineteenth round, review follow-up: four field meanings corrected, and the Go and GDScript readers proven identical value for value
+
+The review of round 619 found the byte layouts right but four field **meanings** wrong, and places
+where the two readers could disagree. All of it was re-read from the asm, and every correction is
+now checked against the whole archive.
+
+**Corrections (READ):**
+- **SEFStaticEmit** (`FUN_00c84e70` c84f25–c84f68, particle death `FUN_00c87a20`).
+  - The fourth field is **max_live**, the cap on live particles. The f32 is **per_trigger**,
+    added to an accumulator at emitter +0x60 on each trigger. `ftol(new) − ftol(old)` particles
+    spawn, and each death subtracts 1.0.
+  - Two globals scale it. `DAT_01114d54` multiplies the interval. `DAT_01114d58`, when it is below
+    per_trigger, halves the cap (×0.5 at 0xe1b7e0, floor 1).
+  - One routine at 0x005474b1 sets both from an option read with atoi: 0 gives (0,0), 1 gives
+    (2,10), anything else (5,10). Both start at 0 in `.bss`, which is full quality; the readers
+    default to that, and the option's retail default is OPEN.
+  - Round 619 had these as "count per burst" and "quality".
+- **End mode 3** divides by the double **−100.0** at 0x00db9a38. So end = start − ftol(End/−100)·N,
+  which is start + int(End/100)·N. Retail uses it (MEASURED): 9 Force commands in
+  `skill_cast_foot_*.efp`, 12 SetShapeRot in `dun\bagh_masin_bronze_light.efp`, and 1,803
+  StaticEmit headers. Round 619 had called it unused and guessed +100.
+- **Node.ID is HeadLen.** It is the byte length of the node's name and controller block
+  (MEASURED 95,801 of 95,801); the loader's cache mode seeks past that span.
+  - Renamed `Node.HeadLen` / `EfpNode.head_len`, with `HeadLenMatches()` / `head_len_matches()`.
+    The census counts mismatches: 0.
+- **FrameBANRotation/FrameBANPosition head is an f32** (fld/fstp). It is not zero in 174 and 20
+  retail commands. Round 619 had it as u32 and "0 everywhere".
+- **FrameTextureSlide head** is three floats: (3,2,1) 5,378, (3,2,2) 2,646, (3,3,0.25) 990,
+  (8,8,0.9) 346 occurrences. INFERRED: atlas columns, rows and a rate. The consumer was not
+  traced (OPEN).
+
+**Reader agreement (OURS where marked):**
+- Timing now runs in single precision, with 32-bit integer products and the client's `_ftol`
+  (0x80000000 out of range), in both readers.
+  - With it, **132,666 of the 132,668 retail Frame\* parameters hold exactly their command's
+    Keys**. Round 619 had 25 misses. The 2 left are `map\euro_constan_center.efp`'s TextureSlide
+    (End 63 % of 40 frames = 1 key, but 26 values stored; INFERRED stale editor data).
+  - Garbage headers can no longer produce huge ranges. A negative count reads as 0 (OURS).
+- Strings are cut at the first NUL, like `c_str`. Bytes above 0x7f map to the same code points
+  (Latin-1) in both readers; EUC-KR is not decoded (OURS).
+- Graph keys are stored the client's way, as a map by time: sorted, and the last write wins.
+- The magic is checked on all 8 bytes.
+
+**New tools and gates:**
+- `client/tools/efp_dump_diff.sh` diffs a canonical dump of every decoded file from each reader:
+  every field, floats as bits, and each command's range and Keys. The result is **IDENTICAL**
+  for all 4,103 files.
+  - The first run found 10 differing files. Each was a signalling NaN in a garbage header field,
+    quieted by GDScript's double; dumps now print any NaN as `nan`.
+- `TestRetailCensus` now enforces:
+  - at least 4,103 decoded and at least 4,096 exact;
+  - zero HeadLen mismatches;
+  - at most the 2 measured Frame\* key-count mismatches.
+
+**MEASURED, the census after the follow-up:** 4,170 files; 4,103 headers parsed and 4,103
+decoded; 4,096 to the exact byte; 6 zero-padded; 1 with other trailing bytes; 95,801 nodes.
+
+**API changes that affect round 620:**
+
+| before | after |
+|---|---|
+| `StaticEmit.Count` / `"count"` | `MaxLive` / `"max_live"` |
+| `StaticEmit.Quality` / `"quality"` | `PerTrigger` / `"per_trigger"` |
+| `Node.ID` / `EfpNode.id` | `HeadLen` / `head_len` |
+| FrameBAN* `Head` / `"head"`: u32 | f32 |
+
+New: `StaticEmit.Tick`, `EmitGlobals`, `DefaultEmitGlobals` in Go; `EfpReader.emit_tick`,
+`EfpReader.ftol`, `EfpReader.f32`, `EfpReader.i32` and `EfpReader.latin1` in GDScript; and
+`frame_range()["keys"]`.
+
+**Negative.** The new tests fail against round 619's commit 0157df4:
+
+```
+--- FAIL: TestFrameRangeMode3
+    followup_neg_test.go:17: End 100: got 2..-28 ok false, want 2..29 (start + N, clamped to N-1)
+--- FAIL: TestGraphKeysAreAMap
+    followup_neg_test.go:43: keys [{1 16} {0 32} {0.5 48} {0 64}], want [{0 64} {0.5 48} {1 16}]
+--- FAIL: TestStringNULAndHighBytes
+    followup_neg_test.go:60: got "abc\x00def" "\xb7\xb9" tail 7
+--- FAIL: TestDecodeChecksFullMagic
+    followup_neg_test.go:69: magic without its space: want an error
+```
+
+## Six-hundred-and-nineteenth round: 4,103 of the 4,170 particle effects now read completely, every value typed, ready for the effects renderer
+
+The skills epic asked for "most of the particles loaded". Before this round, both `.efp` readers
+walked a file as flat `(name, raw bytes)` pairs and decoded no values at all. They failed the
+header of 854 files: 621 of those were version `0012`, and 165 had a root name that was not an
+identifier. This round reads the client's own loader and implements it in both readers:
+`server/internal/efp` `Decode` (Go) and `EfpReader.decode` (GDScript).
+`docs/protocol/EFP_FORMAT.md` carries every layout with its address.
+
+**READ (sro_client.exe, `/var/tmp/decomp_client` and `/var/tmp/sro_client.asm`):**
+- **Header, `FUN_00cb8d70`.** The version is compared as a big-endian number. An f32 follows the
+  magic from `0012`, and three u32 more from `0013`. Then comes the root node. So the old "u32
+  before the name" was the root node's id (corrected in the follow-up above: it is HeadLen), and `0010` is laid out like `0011`.
+- **Node, `FUN_00cc3a40`.** A node is: u32 id (HeadLen, per the follow-up), name, controllers (key + data), body, children.
+- **Body, `FUN_00cc3500`.** A program (`u32 N` frames plus typed variables), six command lists,
+  three single commands, a 20-byte block and a render block.
+- **Commands, `FUN_00ca5460`.** Each is: u8 present, name, u8 space, u8 time flags, start, step,
+  end, then the parameter when the registry gives the command a type.
+- **Value types.** Each of the 16 types the registry `CGame::FUN_00ca0500` registers was
+  followed from its factory to its vtable, and then to slot 5, the read. That gives each type's
+  exact size, e.g. AxisVector4 16+64, RotVector 12+64, AngleVector1 24, the Frame* and Blend*
+  graphs with their counts, and BSAnimation as `.ban` names.
+- **Controllers.** The ten controllers' readers, from their classes' slot 3.
+- **Timing, `FUN_00ca0f40`.** How a command's time flags turn start, step and end into a frame
+  range over N.
+- **Emission, `FUN_00c84e70`.** SEFStaticEmit is delay, duration, interval, count, quality (the last two corrected in the follow-up above: max_live and per_trigger).
+- **Blending, `EFEffect::FUN_00cabda0`.** The node's 36-byte block is handed verbatim to Direct3D:
+  cull, SRCBLEND, DESTBLEND, then colour and alpha arg1, arg2 and op on stage 0. This settles the
+  spec's open blending question: blending is per node, not per texture name.
+
+**MEASURED.** The census covers the retail `Particles.pk2` on the box, through `cmd/efpcensus`
+and, identically, `client/tools/efp_census.gd`:
+
+| | files |
+|---|---|
+| total | 4,170 |
+| headers parsed | 4,103 (98.4 %) |
+| tree decoded | 4,103 (98.4 %) |
+| … to the exact byte | 4,096 |
+| … zero padding after the root | 6 |
+| … non-zero bytes after the root (`water_resurrection_effect_d`) | 1 |
+| not decoded: `F8FILE` containers / `0000` files / empty files | 58 / 7 / 2 |
+
+- **Every file whose header parses decodes, and the two readers agree.** Go and GDScript both
+  count 4,103 decoded, 4,096 exact and 95,801 nodes.
+- **The timing read is confirmed by the data.** A Frame* parameter holds exactly the number of keys
+  FUN_00ca0f40 computes in 129,413 of 129,438 commands. The values are baked, one per key.
+- **Blending.** Nodes blend additively (SRCALPHA/ONE) in 3,879 files and by alpha
+  (SRCALPHA/INVSRCALPHA) in 2,007; 30 files use other pairs.
+- **The census catches a wrong layout.** As a mutation check, AxisVector4 was read without its
+  matrix, and decoded files fell from 4,103 to 784: exactly the files with no AxisVector4.
+- **The `0000` files are not the node format.** The 7 of them fail with a string length of 5,385
+  or more, and no skilleffect row names any. The readers reject them.
+
+**OURS.** These choices are ours, not the client's:
+- The readers reject versions outside the retail set, including `0000`. The client would read
+  anything above `0013` as `0013`.
+- An unknown command name fails. The client would skip its parameter and desynchronise.
+- The allocation limits.
+- The typed-tree API for round 620, documented at the top of `efp_reader.gd`. Per node it gives:
+  frames, `loops()` / `never_extinct()`, `emission()`, `commands` / `command(name)` with
+  `frame_range(n)`, `view_mode()`, `render_mode()`, `meshes`, the render `state` with
+  `is_additive()`, and `vars`.
+
+The existing callers are unaffected. `hit_effect.gd` and `level_up_effect.gd` scan the raw bytes
+themselves, and `EfpReader.parse` keeps its API. The flat `parse` gained the header fixes and a
+root-name rule that allows any bytes but control characters. It now accepts 4,103 files where the
+base reader accepted 3,316 (MEASURED, both run over the same archive). Among the gains are
+`system\system_levelup.efp` and its three copies, whose root name is EUC-KR Korean.
+
+**Tests.**
+- `efp_tree_test.gd` (101 checks) and the synthetic Go tests round-trip each of the 16 value
+  types, a whole tree in every header version, every truncation and the frame-range rules.
+- `TestRetailCensus` runs the census when `SRREVAMP_PARTICLES_PK2` is set; CI skips it.
+
+Against the base b50a7b9, the new header tests fail:
+
+```
+--- FAIL: TestParseHeaderVariants
+    header_test.go:42: version 0010: Parse: efp: unrecognized version "0010"
+    header_test.go:42: version 0012: Parse: efp: unrecognized version "0012"
+--- FAIL: TestParseRelaxedEffectName
+    header_test.go:60: name "11111": Parse: efp: reading effect name: name "11111" doesn't start with a letter
+FAIL header variant 0010 parses
+FAIL header variant 0012 parses
+FAIL relaxed root name 11111
+```
+
+At the base, `tree_test.go` does not build (`undefined: Vec3`), and `efp_tree_test.gd` fails to
+parse (`Static function "decode()" not found in base "EfpReader"`).
+
+**OPEN** (also in `docs/TODO.md`):
+- the frame's duration in seconds;
+- which draw routine each render mode takes (def +0x208, cases 1-5);
+- what the command `space` byte, the graphs' a/b, LinkMode, the node's 20-byte block and the
+  header f32/u32s mean;
+- the `F8FILE` container;
+- what wrote the `0000` files.
+
+Round 620 renders from this tree.
+
 ## Six-hundred-and-eighteenth round: active buffs show by the HP bar, drain a time bar as they run out, burst when they end, and cancel on a right-click
 
 The user asked for the skill icons that are active at the top left by the health bar. They wanted
@@ -7722,7 +8392,6 @@ Negatives (each fix removed on the new tree):
 	(stale disconnect clears)  buffs_test.go:666: the stale session's disconnect left 0 records, want the live one's 1
 	(no identity check)        buffs_test.go:637: a cast naming Bria answered &{Error: ... PlayerHP:200 ...}
 	(zone change sends 0)      buffs_test.go:691: after the zone change: &{... RunSpeed:0 ...}, want token 1 at run speed 60
-
 
 ## Six-hundred-and-fifteenth round: windows swoosh where the original's do, the item and level-up sounds play, and the Option window's Audio page sets the three volumes
 
