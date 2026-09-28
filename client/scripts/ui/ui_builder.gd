@@ -998,6 +998,23 @@ func load_texture(ddj_path: String) -> Texture2D:
 		_texture_cache[key] = tex
 	return tex
 
+## A .ddj's top-level Image, decoded on the CPU and not cached, for a caller
+## that resamples the art itself (HudBuffBoard's authentic 20x20 icons, round
+## 624). Null where load_texture would be null.
+func load_image(ddj_path: String) -> Image:
+	if ddj_path.is_empty() or _media_pk2 == null:
+		return null
+	var entry := ObjectLoader.find_file(_media_pk2, ddj_path.to_lower().replace("/", "\\"))
+	if entry == null:
+		return null
+	var data := _media_pk2.read_file(entry)
+	if data.is_empty():
+		return null
+	var parsed := DdjReader.parse(data)
+	if parsed == null:
+		return null
+	return DdjReader.to_image(parsed)
+
 ## Loads a texture, cropped to the sub-rect a control's UV fields name.
 ##
 ## Several interface textures are **atlases**, not single images:

@@ -7094,6 +7094,108 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twenty-fourth round: the buff icons by the HP bar are drawn at the game's own 20×20 resolution, pixel for pixel
+
+The user reported on v0.1.457: "the icons at the top left for the skills seem to work great but in
+the original game I believe they used lower resolution icons … let's be authentic for now." The
+buff bar's icons are now point-sampled from 32 × 32 down to 20 × 20, as retail samples them.
+
+**READ: the file** (`sro_client.exe`; magic_state_board.md, "The icon's texture and sampling", has
+every address):
+- The slot's icon path is picked by 0x7ff240. For a skill buff it is the skill row's string at
+  `+0x108`. It reaches the icon child through 0x8068a0 → the `+0x84` object's 0x655680 → 0x5008f0.
+- The skill window (`IFSkillSlot` 0x6a15f0) and the quick slot (`IFSlotWithHelp` 0x6809a0) load the
+  same string the same way.
+- So the buff bar uses the skill window's own file, skilldata col 61 under `icon\`, which is what
+  round 618 loaded. There is no small or state variant for skill buffs.
+
+**MEASURED: the files** (DDS headers of all 622 `icon\skill\` files in the box's Media.pk2):
+- Every one is 32 × 32: 441 A8R8G8B8, 4 X8R8G8B8, 159 A1R5G5B5, 2 A4R4G4B4, 12 DXT3 with 6 mips,
+  and 4 FourCC 21 with 6 mips.
+- No `icon\small\` or `_s` twin exists, and no other archive holds an icon `.ddj`.
+- `icon\stateodd\`'s only 20 × 20 files are `s_goldtime_icon`, `s_silvertime_icon` and the two
+  admittance sprites.
+- So "lower resolution icons" are not separate files. The low resolution comes from how retail
+  draws the 32 × 32 file into a 20 × 20 slot.
+
+**READ: the draw.**
+- The icon is a CIFStatic (class 0xee9720). Its sprite draw, 0x655d50 → 0x654c30, sets the FVF and
+  the texture and draws a fan. **It sets no sampler state.**
+- The quad's edges are the rect minus 0.5 (0x6529d0, the double 0.5 at 0xe1b7d0), with UVs 0..1.
+  So screen pixel k samples texel coordinate (2k + 1) × 32 / 40.
+- The UI pass sets CLAMP and MIPFILTER NONE (0x8408c0). The DDJ loader keeps the file's mip count.
+  So mips never apply.
+- Stage-0 MIN and MAG are inherited from the previous draw:
+  - Every CIFStatic label draws its text through 0x8b48b0 → 0x8b2290. That function sets both to
+    **POINT** when the text scale is within 0.1 of 1.0 (`fcomp` against the double at 0xe1b8c0,
+    0x8b2447). 0x8b48b0's tail restores the texture-stage states and not the filters
+    (0x8b4d0b..0x8b4d77).
+  - Only the wrapped text paths (0x8b4d90, 0x4771a0, 0x49a7d0), the 3D preview widgets and
+    scaled text set LINEAR.
+  - The board, its slots, the CIFGauge (0x6387d0) and the icon set nothing.
+
+**INFERRED:** on the HUD the icons are point-sampled: 20 of the 32 texel columns and rows, texels
+0 2 4 5 7 8 10 12 13 15 16 18 20 21 23 24 26 28 29 31, with no blending. That is the "lower
+resolution" the user remembers.
+
+**OPEN:** which window draws immediately before the board (0xba0300 walks the child list; the
+root's order and bring-to-front were not read). A retail D3D9 frame capture would settle it.
+
+**What changed** (`client/scripts/ui/hud/hud_buff_board.gd`, `client/scripts/ui/ui_builder.gd`):
+- `HudBuffBoard.AUTHENTIC_ICONS := true` is the one switch, and no UI was added. A future
+  high-res toggle flips it.
+- When on:
+  - `UiBuilder.load_image` reads the file's Image.
+  - `HudBuffBoard.retail_icon_image` point-samples it once, in integer arithmetic, to 20 × 20.
+  - The icon's TextureRect draws that Image with `TEXTURE_FILTER_NEAREST`.
+- When off, the board draws the 32 × 32 file with the canvas's linear filter, as before.
+- OURS: at a UI scale other than 1 the 20 × 20 result is enlarged by nearest filtering (retail has
+  no UI scale).
+- INFERRED: the four exact-boundary texels (k = 2, 7, 12, 17) resolve by floor on retail's GPU
+  as they do here.
+
+**Measured before and after** (the box, VirtualGL, `SRREVAMP_QA_BUFFS` with eight buffs at Jangan's
+spawn, 1280 × 720, frame 299; crops in the round's scratch `icon_shots/`):
+- Grass Walk's icon (id 113, `lightning_gyeonggong_a.ddj`, A1R5G5B5) sits at (220, 10). It was
+  compared with a Python point sample of the same file, decoded independently on the box.
+- Base (dev b22edf5): 0 of 400 pixels equal the point sample, and 30 are within 2. **342 of 400
+  match no texel of the file at all**: they are linear blends, the soft look.
+- This round: 396 of 400 are within 2 of the point sample (152 are exact; the rest differ by the
+  5-to-8-bit expansion's rounding), and 4 of 400 match no texel. Those 4 are exactly the four
+  corner samples, whose texels are the file's only transparent ones (1020 of 1024 are opaque), so
+  the scene shows through.
+
+**The skill window and the hotbar** (READ): they use the same file and the same sprite path, drawn
+32 × 32 into 32 × 32 slots. Every pixel lands on a texel centre, so POINT and LINEAR draw the same
+picture. srrevamp already draws them 1:1 (`SKILL_CELL` 32; the underbar's 32 × 32). They are
+unchanged, since the evidence shows no difference to make.
+
+**Tests:**
+- `hud_buff_icon_test.gd`, new: the switch, the 20 × 20 size, the sampled texels, the absence of
+  blending, the 1:1 case, the path asked for, the slot texture's size, nearest filtering, and the
+  cache.
+- **Negative**, the same test on dev b22edf5 (a detached worktree with only the test file copied
+  in):
+  ```
+  FAIL HudBuffBoard.AUTHENTIC_ICONS exists (one switch for a future toggle)
+  FAIL AUTHENTIC_ICONS is on
+  FAIL HudBuffBoard.retail_icon_image exists
+  FAIL 32x32 -> 20x20 point samples at floor((2k+1)*32/40)
+  FAIL the file read is col 61 under icon\ -- the skill window's own (asked [])
+  FAIL the slot's icon texture is 20x20 (was the 32x32 file)
+  FAIL the icon is filtered nearest (texture_filter 0; the base left 0, inherit -> the canvas linear)
+  FAIL a second icon of the same skill reuses the cached image
+  hud_buff_icon_test: 8 FAILED
+  ```
+  The one base `ok` is "drawn in a 20x20 rect", which round 618 already did. Base asked for no
+  path because it has no image source, so its path line fails on the hook. The path itself is
+  unchanged from round 618.
+- The runs:
+  - `remote_godot.sh check`: ALL LOAD, 364 scripts.
+  - `remote_godot.sh tests`: 144 suites, 0 failing. That includes `hud_buff_board_test.gd`,
+    which is unchanged and ALL PASS.
+  - `go build ./... && go test -count=1 -p 1 ./...`: 60 packages ok, rc 0.
+
 ## Six-hundred-and-twenty-second round, review follow-up: a healer can select themselves, a recast on an ally replaces the old buff, and only casts that happened are shown
 
 The review found that round 622's READ claims hold, including the 369 HP heal, which was checked by
