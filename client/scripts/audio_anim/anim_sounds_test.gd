@@ -270,6 +270,8 @@ func _init() -> void:
 	mob.label = "monster 1"
 	mob.token = "MOB_MANGNYANG"
 	mob.parsed = obj
+	var mob_cell := [0]
+	mob.material = func() -> int: return mob_cell[0]
 	sounds.register(mob_skel, mob)
 	stub.calls.clear()
 	sounds.advance(mob_skel, run_anim, 0.0, 280.0, true)
@@ -282,6 +284,43 @@ func _init() -> void:
 	_check(stub.keys() == ["MOB_MANGNYANG:snd_run1:-:-:-:-", "MOB_MANGNYANG:voc_death:-:-:-:-", "MOB_MANGNYANG:snd_death:-:-:-:-"],
 		"monster: material-less footstep, no swing (no skill code), voc_death at 0, snd_death at 1500 (%s)" % str(stub.keys()))
 	_check(AnimSoundsScript.key_for(mob, "snd_swing1")["key"] == "", "a monster's swing is not keyed without its skill")
+	# No navmesh cell under the monster: no footstep (0xa6ffc0 returns early
+	# for every object when obj+0x74 is null).
+	mob_cell[0] = -1
+	before = stub.keys().size()
+	sounds.advance(mob_skel, run_anim, 0.0, 280.0, true)
+	sounds.advance(mob_skel, run_anim, 0.0, 300.0, true)
+	_check(stub.keys().size() == before, "a monster standing on no navmesh cell makes no footstep")
+	var no_cell = AnimSoundsScript.Owner.new()
+	no_cell.token = "MOB_MANGNYANG"
+	_check(AnimSoundsScript.key_for(no_cell, "snd_walk1")["key"] == "", "a body with no cell source counts as having no cell")
+	mob_cell[0] = 0
+
+	# Track-fired pick-up and blocking (retail's own tracks: 66 and 67 of them).
+	var pickup = BsrReaderScript.SoundTrack.new()
+	pickup.name = "snd_pickup"
+	pickup.key_ms = 400
+	var block = BsrReaderScript.SoundTrack.new()
+	block.name = "snd_blocking"
+	block.key_ms = 100
+	var node_owner = AnimSoundsScript.Owner.new()
+	node_owner.label = "player"
+	node_owner.is_pc = true
+	node_owner.token = "PCM_FIGHTER"
+	node_owner.node = skel
+	stub.calls.clear()
+	sounds.dispatch(node_owner, pickup, "38:default")
+	_check(stub.calls.size() == 1 and stub.calls[0][1] == "ITEM:snd_pickup:-:-:-:-" and stub.calls[0][2] == null and stub.calls[0][3] == null,
+		"snd_pickup plays ITEM:snd_pickup:-:-:-:- with no position (%s)" % str(stub.calls))
+	sounds.dispatch(node_owner, block, "22:default")
+	_check(stub.calls.size() == 2 and stub.calls[1][1] == "PLAYER:snd_blocking:-:-:NORMAL:-" and stub.calls[1][3] == skel,
+		"snd_blocking plays PLAYER:snd_blocking:-:-:NORMAL:- at the body (%s)" % str(stub.calls))
+	node_owner.critical = true
+	sounds.dispatch(node_owner, block, "22:default")
+	_check(stub.calls[-1][1] == "PLAYER:snd_blocking:-:-:CRITYCAL:-", "a critical block is CRITYCAL")
+	before = stub.calls.size()
+	sounds.dispatch(mob, block, "22:default")
+	_check(stub.calls.size() == before, "a monster's snd_blocking is silent (the handler is PC-only)")
 
 	# --- the idle and the blank counter ----------------------------------------
 	var rows_stub = StubScript.new()

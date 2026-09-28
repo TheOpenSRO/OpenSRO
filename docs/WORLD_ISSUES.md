@@ -7106,6 +7106,10 @@ placed object more than 12 off its region's ground on the box's archive.
   `tt.bsr`), `anim_sounds_test.gd` (synthetic bytes; fails its load checks on a9ab6e7), and a
   live run logging DIRT/GRASS/STONE footsteps, SWORD swings, moans and a monster's
   `voc_death`/`snd_death`. Full record: `docs/RE_COMPLETION.md`, same title.
+- **Review follow-up:** snd_pickup (`ITEM:snd_pickup:-:-:-:-`, no position) and snd_blocking
+  (PC only, `PLAYER:snd_blocking:-:-:<NORMAL|CRITYCAL>:-`) are dispatched from their tracks, as
+  retail's data fires them; every body, monsters and other players included, makes no footstep
+  without a navmesh cell under it.
 - **Open:** key-time scaling with playback speed; the set lookup (inferred); skill swings and
   shouts; monster swings (need the skill's Basic_Code).
 

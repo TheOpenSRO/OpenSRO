@@ -12476,6 +12476,9 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 		sound_owner.token = _sound_object_for(monster.code_name)
 		sound_owner.parsed = (_monster_assembled[monster.monster_id] as SkinnedBsrAssembler.AssembledCharacter).parsed
 		sound_owner.node = body
+		# Only whether it stands on a navmesh cell matters for a monster's
+		# footstep (0xa6ffc0 returns early without one); its key has no material.
+		sound_owner.material = func() -> int: return _audio_material_at(body.global_position, -2) if is_instance_valid(body) else -1
 		_anim_sounds.register(monster_skeleton, sound_owner)
 
 ## A click-target collider for a monster: a capsule as tall as the model,

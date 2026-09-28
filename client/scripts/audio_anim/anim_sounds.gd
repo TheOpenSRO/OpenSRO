@@ -36,9 +36,15 @@ const SWING := "swing"          ## 0xa71510
 const SIMPLE := "simple"        ## <obj>:<name>:-:-:-:- -- 0xa70740, 0xa71350, 0xa71da0, 0xa71f30
 const MOAN := "moan"            ## 0xa720b0
 const NOOP := "noop"            ## `mov eax,1; ret 0xc`: silent in retail
+const PICKUP := "pickup"        ## 0xa6fec0: `ITEM:<name>:-:-:-:-`, no position
+const BLOCK := "block"          ## 0xa70280: PC only, `PLAYER:<name>:-:-:<NORMAL|CRITYCAL>:-`
 ## Handlers in the table that this round does not build: they need a skill's
 ## Basic_Code or Basic_Group (swing_s, shout), are fired by code rather than
-## by an animation (hits, blocking, items, UI), or were not traced (struct).
+## by an animation (hits, items, UI), or were not traced (struct).
+## snd_pickup and snd_blocking are fired by animation tracks in retail (66
+## and 67 type-keyed tracks in the archive's character files), so they are
+## built here; code may fire snd_blocking too, but the track path is the
+## one the client's own data drives.
 const SKILL := "skill"
 const CODE := "code"
 const STRUCT := "struct"
@@ -47,11 +53,11 @@ const HANDLERS := {
 	"snd_hyan": CODE, "snd_dropitem": CODE, "snd_levup": CODE, "snd_cos_summon": CODE,
 	"snd_walk1": FOOT, "snd_walk2": FOOT, "snd_walk3": FOOT,
 	"snd_run1": FOOT, "snd_run2": FOOT, "snd_run3": FOOT,
-	"snd_blocking": CODE, "snd_cridmg": CODE, "snd_cridmg_obj": CODE,
+	"snd_blocking": BLOCK, "snd_cridmg": CODE, "snd_cridmg_obj": CODE,
 	"snd_death": SIMPLE, "snd_death1": SIMPLE, "snd_death2": SIMPLE,
 	"snd_dmg": CODE, "snd_dmg_obj": CODE, "snd_ddmg": CODE,
 	"snd_down": NOOP,
-	"snd_equip": CODE, "snd_drop": CODE, "snd_dropfly": CODE, "snd_pickup": CODE,
+	"snd_equip": CODE, "snd_drop": CODE, "snd_dropfly": CODE, "snd_pickup": PICKUP,
 	"snd_help": NOOP, "snd_hwancridmg": NOOP, "snd_hwandmg": NOOP, "snd_hwanswing": NOOP,
 	"snd_stand": SIMPLE, "snd_stand1": SIMPLE, "snd_stand2": SIMPLE, "snd_stand3": SIMPLE, "snd_stand4": SIMPLE,
 	"snd_swing1": SWING, "snd_swing2": SWING, "snd_swing3": SWING, "snd_swing4": SWING,
@@ -111,6 +117,8 @@ class Owner:
 	var critical: bool = false
 	## () -> int: the material id under the body, or -1 when it stands on no
 	## navmesh cell (the client plays no footstep then: obj+0x74 is null).
+	## A monster's is asked too, only for whether it has a cell; with no
+	## callable the body counts as having none.
 	var material: Callable = Callable()
 
 var _owners: Dictionary = {}   # skeleton instance id -> [skeleton, Owner]
@@ -220,11 +228,14 @@ func dispatch(owner: Owner, track: BsrReader.SoundTrack, clip: String = "") -> v
 			track.name, built["why"], owner.label, clip, track.key_ms])
 		return
 	var pos = null
-	if owner.node != null and is_instance_valid(owner.node) and owner.node.is_inside_tree():
-		pos = owner.node.global_position
+	var node = null
+	if bool(built.get("positional", true)) and owner.node != null and is_instance_valid(owner.node):
+		node = owner.node
+		if owner.node.is_inside_tree():
+			pos = owner.node.global_position
 	if fired.size() < 1000:
 		fired.append([key, track.key_ms, owner.label])
-	AnimSoundSeam.play_key(key, pos, owner.node)
+	AnimSoundSeam.play_key(key, pos, node)
 	_log(key, "AUDIO %s t=%dms clip %s %s%s" % [key, track.key_ms, clip, owner.label,
 		"" if pos == null else " at %.0f,%.0f,%.0f" % [pos.x, pos.y, pos.z]])
 
@@ -240,12 +251,14 @@ static func key_for(owner: Owner, handle: String) -> Dictionary:
 		NOOP:
 			return {"key": "", "why": "no-op handler"}
 		FOOT:
+			# No cell under the body (obj+0x74 null): the handler returns at
+			# once, for every object, monsters included (READ, 0xa6ffc0).
+			var mat := -1
+			if owner.material.is_valid():
+				mat = int(owner.material.call())
+			if mat < 0 or mat >= MATERIALS.size():
+				return {"key": "", "why": "no navmesh cell"}
 			if owner.is_pc:
-				var mat := -1
-				if owner.material.is_valid():
-					mat = int(owner.material.call())
-				if mat < 0 or mat >= MATERIALS.size():
-					return {"key": "", "why": "no navmesh cell"}
 				return {"key": SoundTable.make_key("PLAYER", handle, "-", "FIELD", MATERIALS[mat]), "why": ""}
 			if owner.token == "":
 				return {"key": "", "why": "no sound object"}
@@ -259,6 +272,14 @@ static func key_for(owner: Owner, handle: String) -> Dictionary:
 			if owner.hwan:
 				return {"key": SoundTable.make_key("PLAYER", "snd_swing3", "-", "HWAN", weapon), "why": ""}
 			return {"key": SoundTable.make_key("PLAYER", handle, "-", weapon), "why": ""}
+		PICKUP:
+			# `ITEM:` + name + `:-:-:-:-`, played with no position (the
+			# play-by-key call passes 0).
+			return {"key": SoundTable.make_key("ITEM", handle), "why": "", "positional": false}
+		BLOCK:
+			if not owner.is_pc:
+				return {"key": "", "why": "the blocking handler plays for a player character only"}
+			return {"key": SoundTable.make_key("PLAYER", handle, "-", "-", "CRITYCAL" if owner.critical else "NORMAL"), "why": ""}
 		MOAN:
 			if owner.token == "":
 				return {"key": "", "why": "no sound object"}

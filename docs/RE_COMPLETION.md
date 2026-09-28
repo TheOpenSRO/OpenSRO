@@ -46486,16 +46486,18 @@ the clip and 39 past its end: the millisecond reading (INFERRED).
 ### The dispatch (read)
 
 `CGEffSoundBody::vslot_009` (0x00a72a70) looks the event name up in 52 records at 0x00ec6660;
-the four `0x0` entries of the first dump are `a708d0`/`a708e0` (snd_death1/2), `a714f0`
+the five `0x0` entries of the first dump are `a708d0`/`a708e0` (snd_death1/2), `a714f0`
 (snd_stand3), `a720b0` (voc_moan), `a748b0` (snd_struct2), and every short one is a `jmp` to its
 family's handler. Keys built here:
 
 | Handler | Key |
 |---|---|
-| snd_walk1-3, snd_run1-3 (0xa6ffc0) | PC: `PLAYER:<h>:-:FIELD:<MAT>:-`; else `<obj>:<h>:-:-:-:-`; nothing when the body has no cell (obj+0x74) |
+| snd_walk1-3, snd_run1-3 (0xa6ffc0) | PC: `PLAYER:<h>:-:FIELD:<MAT>:-`; else `<obj>:<h>:-:-:-:-`; nothing when the body has no cell (obj+0x74) -- for every object, monsters and other players included (review follow-up) |
 | snd_swing1-4 (0xa71510) | PC: `PLAYER:<h>:-:<WEAPON>:-:-`, berserk `PLAYER:snd_swing3:-:HWAN:<WEAPON>:-`; else `<obj>:<h>:<Basic_Code>:-:-:-` (not built: no skill id is sent for a monster) |
 | voc_moan (0xa720b0) | `<obj>:voc_moan:-:<NORMAL|CRITYCAL>:-:-` (FUN_00a63560, obj+0x441 & 2) |
 | snd_death*, snd_stand*, voc_avoid, voc_death | `<obj>:<h>:-:-:-:-` |
+| snd_pickup (0xa6fec0) | `ITEM:snd_pickup:-:-:-:-`, played with no position (review follow-up) |
+| snd_blocking (0xa70280) | PC only: `PLAYER:snd_blocking:-:-:<NORMAL|CRITYCAL>:-` (FUN_00a63560), at the body (review follow-up) |
 | snd_down, snd_help, snd_hwan*, snd_deactivate, snd_throw, voc_emo | no-op: silent |
 
 `<MAT>` is the table at 0x00ec6608 by the cell's material: an object cell is 0, DIRT
@@ -46515,7 +46517,9 @@ twice takes its later row there, the core's choice; which one retail keeps is no
   written past the clip's end still plays while the body lies there). Another player's cell is
   found from the height; berserk is not known for another player.
 - **Not built:** snd_swing_s*, voc_shout* (need a skill's Basic_Code/Group), the code-fired
-  handlers (hits, blocking, pick-up, UI) -- they log `AUDIO skip`; NPCs are not registered
+  handlers (hits, UI) -- they log `AUDIO skip`. snd_pickup and snd_blocking are **track-fired in
+  retail** (66 and 67 type-keyed tracks) and are built on the track path; if code also fires
+  snd_blocking (round 614's branch may), the track path is the one retail's data drives; NPCs are not registered
   (their object is PLAYER and no material-less PLAYER footstep row exists).
 
 ### Measured live (box, --server)
