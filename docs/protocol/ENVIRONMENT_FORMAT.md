@@ -261,3 +261,16 @@ MEASURED at the reference time 0.5:
 - environment 15 (Jangan): colour (1.00, 1.00, 1.00), alpha 0.755;
 - environment 1: colour (0.91, 0.99, 0.99), alpha 0.743.
 
+
+## The fog colour is the square root of channel 9 (read 2026-09-28, rounds 623-628 integration review)
+
+`Map::FUN_00a1baf0` clamps channel 9 (record+0x2b4) into world+0x68a3..0x68ab, each to [0, 1]. It
+then stores the square root of each (`FUN_00b42de0` is the CRT `sqrt`, with `fsqrt` at 0xb42e1c;
+the calls are at 0xa1d164, 0xa1d17b and 0xa1d192) into world+0x68b7, 0x68bb and 0x68bf.
+`Map::FUN_00a26f60` packs those × 255 into world+0x67e6 and sets it as `D3DRS_FOGCOLOR` (0x22)
+before the landscape draws. So a channel value of 0.25 fogs to 0.5
+(`EnvironmentReader.render_fog_color`). The unrooted channel also goes into world+0x67e2, whose
+use was not followed.
+
+MEASURED, Jangan (environment 15) at the reference time 0.5: channel 9 is (0.357, 0.580, 0.677)
+and the rendered fog is (0.598, 0.762, 0.823).

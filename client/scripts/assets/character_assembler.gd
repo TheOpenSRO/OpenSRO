@@ -201,6 +201,8 @@ static func attach_rigid(skeleton: Skeleton3D, array_mesh: ArrayMesh, bone_name:
 	# once a real animation drives the pose away from rest.
 	mesh_instance.transform = skeleton.get_bone_global_rest(bone_idx).affine_inverse()
 	attachment.add_child(mesh_instance)
+	# A two-pass MTRL material's front faces (ObjectLoader.add_front_pass).
+	ObjectLoader.add_front_pass(mesh_instance)
 
 ## Assembles every part in parts (body-part-name -> ParsedMesh, e.g. from
 ## BmsReader.parse() on "man_thigh.bms" keyed by "thigh") onto skeleton,

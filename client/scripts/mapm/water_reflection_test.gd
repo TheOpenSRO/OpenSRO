@@ -132,6 +132,31 @@ func _initialize() -> void:
 	node.set_water_color(Color(2, 0.5, -1))
 	var wc: Vector3 = mat.get_shader_parameter("water_color")
 	_check(wc.is_equal_approx(Vector3(1, 0.5, 0)), "WaterColor is clamped into the material (got %s)" % wc)
+
+	# --- Integration review: the mirror terrain's materials are not cached
+	# (a cache keyed by per-region materials held every region's textures).
+	var std := StandardMaterial3D.new()
+	std.albedo_texture = tex2
+	var c1: Material = node.clip_material(std)
+	var c2: Material = node.clip_material(std)
+	_check(c1 != c2 and c1 is ShaderMaterial and not ("_clip_cache" in node),
+		"each mirror terrain gets its own clip material; nothing holds it past its node")
+	var wr: WeakRef = weakref(c1)
+	c1 = null
+	c2 = null
+	_check(wr.get_ref() == null, "a clip material is freed once its user lets it go (no cache keeps it)")
+	var fallback := StandardMaterial3D.new()
+	fallback.ao_enabled = true
+	fallback.ao_texture = tex2
+	fallback.ao_light_affect = 1.0
+	var cf: ShaderMaterial = node.clip_material(fallback)
+	_check(bool(cf.get_shader_parameter("use_ao")) and cf.get_shader_parameter("ao_tex") == tex2
+			and cf.shader.code.contains("AO_LIGHT_AFFECT = ao_light_affect"),
+		"the untextured fallback's AO lightmap reaches the mirror copy")
+	_check(not R.terrain_clip_code(true, false).contains("AO ="),
+		"(negative) an unshaded copy evaluates no AO, as StandardMaterial3D does not")
+	_check(R.terrain_clip_code(false, false).contains("mix(c.rgb, c.rgb * d.rgb, d.a)"),
+		"the MUL detail layer is blended by the detail texel's alpha, as BaseMaterial3D does")
 	node.queue_free()
 	await process_frame
 	_finish()

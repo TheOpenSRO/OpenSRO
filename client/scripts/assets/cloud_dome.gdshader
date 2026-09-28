@@ -10,12 +10,17 @@
 //   COUNT2);
 // - colour = texture x TFACTOR RGB (environment channel 4), alpha = texture
 //   alpha x TFACTOR alpha (world+0x68c7 = (channel 12 + 1) / 2);
-// - linear fog from 90,000 to 200,000 (D3DRS_FOGSTART / FOGEND), with the
-//   world's fog colour;
-// - Z off, drawn before the terrain. Here the layer is pinned to the far
-//   plane with its depth test on, which draws it behind everything the same
-//   way (OURS: a transparent material cannot be ordered before the opaque
-//   pass in Godot).
+// - linear fog from 90,000 to 200,000 (D3DRS_FOGSTART / FOGEND) in view
+//   depth, not distance (D3DRS_RANGEFOGENABLE is set 0 in FUN_00a26f60),
+//   with the world's fog colour (D3DRS_FOGCOLOR = sqrt of channel 9,
+//   EnvironmentReader.render_fog_color);
+// - Z off, drawn before the terrain. Here the layer is pinned to depth 1.0
+//   (z = w, the far plane itself) with its depth test on, which draws it
+//   behind everything the same way (OURS: a transparent material cannot be
+//   ordered before the opaque pass in Godot). Until the rounds 623-628
+//   integration review it sat at z = 0.99999 w, which with a 0.05 near and
+//   11,520 far is a view depth of about 5,400: opaque geometry beyond that
+//   was painted over by the clouds (MEASURED).
 shader_type spatial;
 render_mode unshaded, cull_disabled, blend_mix, depth_draw_never, fog_disabled, skip_vertex_transform;
 
@@ -27,23 +32,26 @@ uniform vec3 fog_color = vec3(1.0);
 uniform float fog_start = 90000.0;
 uniform float fog_end = 200000.0;
 
-varying float eye_dist;
+varying float view_depth;
 
 void vertex() {
 	// VERTEX is the offset from the eye (the mesh sits at the origin). Rotate
 	// it into view space without the camera's translation.
 	vec3 v = (VIEW_MATRIX * vec4(VERTEX, 0.0)).xyz;
 	VERTEX = v;
-	eye_dist = length(v);
+	// View depth (view space looks down -z); affine in the vertex, so it
+	// interpolates exactly.
+	view_depth = -v.z;
 	vec4 p = PROJECTION_MATRIX * vec4(v, 1.0);
-	// At the far plane: behind every surface, never clipped by it.
-	p.z = p.w * 0.99999;
+	// Depth 1.0: behind every surface the camera can draw, and on (not past)
+	// the far clip plane, so never clipped by it.
+	p.z = p.w;
 	POSITION = p;
 }
 
 void fragment() {
 	vec4 tex = texture(cloud_tex, UV + uv_offset);
-	float f = clamp((fog_end - eye_dist) / (fog_end - fog_start), 0.0, 1.0);
+	float f = clamp((fog_end - max(view_depth, 0.0)) / (fog_end - fog_start), 0.0, 1.0);
 	ALBEDO = mix(fog_color, tex.rgb * cloud_color, f);
 	ALPHA = tex.a * cloud_alpha;
 }

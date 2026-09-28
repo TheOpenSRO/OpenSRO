@@ -63,6 +63,14 @@ func _test_fog_channels_and_float_sampling() -> void:
 		"fog planes are channels 10/11, the pair the client scales by its view distance")
 	_check(EnvironmentReader.CHANNEL_GROUP_FLOATS[10] == 2 and EnvironmentReader.CHANNEL_GROUP_FLOATS[11] == 2,
 		"channels 10/11 are 2-float graphs")
+	# The rendered fog colour is sqrt of the clamped channel 9 (READ, rounds
+	# 623-628 integration review), not the raw channel.
+	var fc := EnvironmentReader.render_fog_color(Color(0.25, 0.64, 1.5, 1.0))
+	_check(fc.is_equal_approx(Color(0.5, 0.8, 1.0, 1.0)), "the fog renders as sqrt(clamp(channel 9)) (got %s)" % fc)
+	_check(not EnvironmentReader.render_fog_color(Color(0.25, 0.25, 0.25)).is_equal_approx(Color(0.25, 0.25, 0.25)),
+		"(negative) the raw channel is not what is rendered")
+	_check(EnvironmentReader.render_fog_color(Color(-0.2, 0.0, 1.0)).is_equal_approx(Color(0.0, 0.0, 1.0)),
+		"a negative channel clamps to 0 before the root, never NaN")
 	var rec := EnvironmentReader.Record.new()
 	rec.channels.resize(16)
 	for i in range(16):

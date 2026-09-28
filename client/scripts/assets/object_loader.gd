@@ -334,6 +334,7 @@ static func _commit_node(node: Dictionary, texture_cache: Dictionary) -> Node3D:
 			if godot_material != null:
 				mesh_instance.material_override = godot_material
 		root.add_child(mesh_instance)
+		add_front_pass(mesh_instance)
 	return root
 
 ## The piece's trimesh from the prepared faces -- `create_trimesh_shape()`'s
@@ -609,7 +610,8 @@ const D3DBLEND_INVBLENDFACTOR := 15
 ## (a SRCCOLOR source factor), 2 zero; `alpha`: 0 the stage alpha, 1 one,
 ## 2 one minus the stage alpha, 3 the stage alpha with the colour divided by
 ## it (so mix's C*a gives C). `kind`: "exact" (the same equation), "given"
-## (exact under a stated render state: D3DRS_BLENDFACTOR = white, its D3D
+## (exact under a stated condition: an unlit stage result for the SRCCOLOR
+## sources; D3DRS_BLENDFACTOR = white, its D3D
 ## default -- the client sets it only in Map::FUN_00a1d790, a map pass,
 ## and whether that value is live when objects draw is OPEN; or destination
 ## alpha = 1, a back buffer without alpha -- INFERRED, the format was not
@@ -623,9 +625,9 @@ const BLEND_EMULATION := {
 	"1/3": {"godot": "mul", "color": 0, "alpha": 1, "kind": "exact", "note": "ZERO/SRCCOLOR"},
 	"12/2": {"godot": "mix", "color": 0, "alpha": 0, "kind": "exact", "note": "BOTHSRCALPHA: As / 1-As, the destination overridden (2)"},
 	"13/6": {"godot": "mix", "color": 0, "alpha": 2, "kind": "exact", "note": "BOTHINVSRCALPHA: 1-As / As, the destination overridden (2)"},
-	"3/6": {"godot": "mix", "color": 1, "alpha": 3, "kind": "exact", "note": "SRCCOLOR/INVSRCALPHA: src*src + dst*(1-As) (8); colour clamps where src*src/As > 1"},
+	"3/6": {"godot": "mix", "color": 1, "alpha": 3, "kind": "given", "note": "SRCCOLOR/INVSRCALPHA: src*src + dst*(1-As) (8), exact only for an unlit stage result: a lit one (a DIFFUSE term) is squared before Godot's light, so it is drawn light*L*L, not (light*L)^2; colour clamps where src*src/As > 1"},
 	"5/14": {"godot": "add", "color": 0, "alpha": 0, "kind": "given", "note": "SRCALPHA/BLENDFACTOR, factor white (6)"},
-	"3/14": {"godot": "add", "color": 1, "alpha": 1, "kind": "given", "note": "SRCCOLOR/BLENDFACTOR, factor white: src*src + dst (10 cobwebs)"},
+	"3/14": {"godot": "add", "color": 1, "alpha": 1, "kind": "given", "note": "SRCCOLOR/BLENDFACTOR, factor white: src*src + dst (10 cobwebs), and exact only for an unlit stage result: cobweb_b's MODULATE2X(DIFFUSE, TEXTURE) is lit, squared before Godot's light (light*L*L, not (light*L)^2)"},
 	"15/15": {"godot": "mul", "color": 2, "alpha": 1, "kind": "given", "note": "INVBLENDFACTOR both, factor white: 0 (1, samarkand_potion_etc01)"},
 	"5/7": {"godot": "add", "color": 0, "alpha": 0, "kind": "given", "note": "SRCALPHA/DESTALPHA, destination alpha 1 (11 pha_maze)"},
 	"2/11": {"godot": "mix", "color": 0, "alpha": 1, "kind": "given", "note": "ONE/SRCALPHASAT: min(As, 1-Ad) = 0 at destination alpha 1 (1)"},
@@ -671,10 +673,15 @@ static func blend_mode(src: int, dest: int) -> String:
 ##
 ## Stage 0, READ vs OURS:
 ## - The six stage bytes are applied as the client sets them (READ,
-##   CRTModMtrl::vslot_004): D3DTOP 2 SELECTARG1, 3 SELECTARG2, 4 MODULATE,
-##   5 MODULATE2X, 6 MODULATE4X, 7 ADD, 8 ADDSIGNED, 10 SUBTRACT; D3DTA 0
-##   DIFFUSE, 1 CURRENT (= DIFFUSE at stage 0), 2 TEXTURE, 3 TFACTOR, 4
-##   SPECULAR. A mod that does not blend sets none of them, so the object
+##   CRTModMtrl::vslot_004), evaluated as d3d9 defines them (d3d9types.h):
+##   D3DTOP 2 SELECTARG1, 3 SELECTARG2, 4 MODULATE, 5 MODULATE2X, 6
+##   MODULATE4X, 7 ADD, 8 ADDSIGNED, 9 ADDSIGNED2X, 10 SUBTRACT, 20
+##   MODULATEINVALPHA_ADDCOLOR (colour), 15 BLENDTEXTUREALPHAPM (alpha) --
+##   every op the census's mods use (HANDLED_COLOR_OPS / HANDLED_ALPHA_OPS);
+##   any other op is drawn as MODULATE, OURS, and stage_ops_handled says so.
+##   D3DTA 0 DIFFUSE, 1 CURRENT (= DIFFUSE at stage 0), 2 TEXTURE, 3 TFACTOR,
+##   4 SPECULAR, 5 TEMP, with the 0x20 ALPHAREPLICATE and 0x10 COMPLEMENT
+##   modifiers (no census mod sets either). A mod that does not blend sets none of them, so the object
 ##   renderer's own stage 0 applies: MODULATE2X of TEXTURE and DIFFUSE (READ:
 ##   CObjRendererVS::vslot_024 / vslot_038 seed flag 0x1000, which
 ##   FUN_00c42a60 turns into COLOROP 5).
@@ -699,6 +706,18 @@ static func blend_mode(src: int, dest: int) -> String:
 ##   the client tests the filtered alpha). The blend still uses the
 ##   filtered alpha.
 static var _mod_shaders := {}
+
+## The D3DTOPs the mod shader evaluates exactly (see above); the census's
+## mods use colour ops 2, 4, 5, 6, 7, 8, 9, 20 and alpha ops 2-7, 15.
+const HANDLED_COLOR_OPS := [2, 3, 4, 5, 6, 7, 8, 9, 10, 20]
+const HANDLED_ALPHA_OPS := [2, 3, 4, 5, 6, 7, 8, 9, 10, 15]
+
+## Whether a rule's stage-0 ops are all evaluated as d3d9 defines them;
+## false means one is drawn as MODULATE (OURS).
+static func stage_ops_handled(rule: Dictionary) -> bool:
+	if not rule.get("stage_ops", false):
+		return true
+	return int(rule["color_op"]) in HANDLED_COLOR_OPS and int(rule["alpha_op"]) in HANDLED_ALPHA_OPS
 
 static func _mod_shader(cull: String, godot_blend: String, zwrite: bool) -> Shader:
 	var key := "%s/%s/%s" % [cull, godot_blend, zwrite]
@@ -733,39 +752,62 @@ uniform int blend_alpha = 0;
 // part that does not (unlit): value = lit * DIFFUSE + unlit.
 struct Split { vec3 lit; vec3 unlit; };
 
-Split carg(int which, vec4 tex) {
+float aarg(int which, vec4 tex) {
 	int base = which & 15;
-	if (base == 0 || base == 1) return Split(vec3(1.0), vec3(0.0));
-	if (base == 2) return Split(vec3(0.0), tex.rgb);
-	if (base == 3) return Split(vec3(0.0), vec3(1.0));
-	return Split(vec3(0.0), vec3(0.0));
+	float v = 1.0;
+	if (base == 2) v = tex.a;
+	else if (base == 4 || base == 5) v = 0.0;
+	return (which & 16) != 0 ? 1.0 - v : v;
 }
 
-Split cop(int o, Split a, Split b) {
+// D3DTA: the register in the low 4 bits, then the modifiers -- 0x20
+// ALPHAREPLICATE (the register's alpha in all three channels), then 0x10
+// COMPLEMENT (one minus it). DIFFUSE's and TFACTOR's alpha are 1; TEMP
+// reads 0 (d3d9 default); SPECULAR is 0 (the object shader writes no oD1).
+Split carg(int which, vec4 tex) {
+	int base = which & 15;
+	Split s = Split(vec3(0.0), vec3(0.0));
+	if ((which & 32) != 0) {
+		s = Split(vec3(0.0), vec3(aarg(which & 15, tex)));
+	} else if (base == 0 || base == 1) {
+		s = Split(vec3(1.0), vec3(0.0));
+	} else if (base == 2) {
+		s = Split(vec3(0.0), tex.rgb);
+	} else if (base == 3) {
+		s = Split(vec3(0.0), vec3(1.0));
+	}
+	if ((which & 16) != 0) {
+		s = Split(-s.lit, vec3(1.0) - s.unlit);
+	}
+	return s;
+}
+
+Split cop(int o, Split a, Split b, float a1_alpha) {
 	if (o == 2) return a;
 	if (o == 3) return b;
 	if (o == 7) return Split(a.lit + b.lit, a.unlit + b.unlit);
 	if (o == 8) return Split(a.lit + b.lit, a.unlit + b.unlit - vec3(0.5));
+	if (o == 9) return Split((a.lit + b.lit) * 2.0, (a.unlit + b.unlit - vec3(0.5)) * 2.0);
 	if (o == 10) return Split(a.lit - b.lit, a.unlit - b.unlit);
+	// MODULATEINVALPHA_ADDCOLOR: arg1 + (1 - arg1.a) * arg2, with arg1.a
+	// passed in (the census's one mod has arg1 = CURRENT, alpha 1).
+	if (o == 20) return Split(a.lit + b.lit * (1.0 - a1_alpha), a.unlit + b.unlit * (1.0 - a1_alpha));
 	float k = o == 5 ? 2.0 : (o == 6 ? 4.0 : 1.0);
 	return Split((a.lit * b.unlit + a.unlit * b.lit + a.lit * b.lit) * k, a.unlit * b.unlit * k);
 }
 
-float aarg(int which, vec4 tex) {
-	int base = which & 15;
-	if (base == 2) return tex.a;
-	if (base == 4) return 0.0;
-	return 1.0;
-}
 
-float aop(int o, float a, float b) {
+float aop(int o, float a, float b, float tex_a) {
 	if (o == 2) return a;
 	if (o == 3) return b;
 	if (o == 5) return a * b * 2.0;
 	if (o == 6) return a * b * 4.0;
 	if (o == 7) return a + b;
 	if (o == 8) return a + b - 0.5;
+	if (o == 9) return (a + b - 0.5) * 2.0;
 	if (o == 10) return a - b;
+	// BLENDTEXTUREALPHAPM: arg1 + arg2 * (1 - texture alpha).
+	if (o == 15) return a + b * (1.0 - tex_a);
 	return a * b;
 }
 
@@ -786,11 +828,11 @@ bool keep(float a) {
 void fragment() {
 	vec4 tex = texture(albedo_texture, UV);
 	vec4 tex0 = textureLod(albedo_texture, UV, 0.0);
-	if (!keep(clamp(aop(alpha_op, aarg(alpha_arg1, tex0), aarg(alpha_arg2, tex0)), 0.0, 1.0))) {
+	if (!keep(clamp(aop(alpha_op, aarg(alpha_arg1, tex0), aarg(alpha_arg2, tex0), tex0.a), 0.0, 1.0))) {
 		discard;
 	}
-	Split c = cop(color_op, carg(color_arg1, tex), carg(color_arg2, tex));
-	float a = clamp(aop(alpha_op, aarg(alpha_arg1, tex), aarg(alpha_arg2, tex)), 0.0, 1.0);
+	Split c = cop(color_op, carg(color_arg1, tex), carg(color_arg2, tex), aarg(color_arg1, tex));
+	float a = clamp(aop(alpha_op, aarg(alpha_arg1, tex), aarg(alpha_arg2, tex), tex.a), 0.0, 1.0);
 	vec3 lit = c.lit * albedo.rgb * 0.5;
 	vec3 unlit = c.unlit;
 	if (blend_color == 1) {
@@ -823,20 +865,54 @@ void fragment() {
 ## The material for an MTRL mod's rule, and its second pass when the object
 ## draws back faces then front (two_pass). READ, CObjRendererVS::
 ## FUN_00bf5780: CULLMODE CW (back faces) for every material, then CCW.
+##
 ## Godot 4.2 does not keep a material's next_pass after it in a
-## transparent sort (rasterizer_scene_gles3.h: the sort is not stable), so
-## the front pass is given a higher render_priority, which the transparent
-## sort orders first: back faces are always drawn before front faces.
+## transparent sort (rasterizer_scene_gles3.h: the sort is not stable), and
+## a render_priority on the front pass (the material review follow-up) is
+## global: every priority-1 pass drew after every priority-0 transparent
+## surface in the scene, over a nearer aura or water (MEASURED, rounds
+## 623-628 integration). So the front pass is not attached here: it rides
+## on the back pass as metadata (FRONT_PASS_META), and add_front_pass puts
+## it on a twin MeshInstance3D with a small sorting_offset, priority 0 --
+## ordered after its own back pass by depth, and by depth against the rest.
+const FRONT_PASS_META := "srrevamp_front_pass"
+## Enough to order the twin after its back pass (the same AABB, so the same
+## sort depth) and far below any real depth difference. OURS.
+const FRONT_PASS_SORTING_OFFSET := 0.01
+
 static func _build_mod_material(layer: BmtReader.Layer, tex: Texture2D, rule: Dictionary) -> ShaderMaterial:
 	var cull := "disabled" if rule["two_sided"] and not rule["two_pass"] else "back"
 	if rule["two_pass"]:
 		cull = "front"
 	var mat := _mod_pass(layer, tex, rule, cull)
 	if rule["two_pass"]:
-		var front := _mod_pass(layer, tex, rule, "back")
-		front.render_priority = mat.render_priority + 1
-		mat.next_pass = front
+		mat.set_meta(FRONT_PASS_META, _mod_pass(layer, tex, rule, "back"))
 	return mat
+
+## The front-face twin of `mi` when its material carries a two-pass front
+## pass (FRONT_PASS_META): the same mesh, skin and transform, a sibling
+## under the same parent, drawn with the front pass at priority 0 and
+## FRONT_PASS_SORTING_OFFSET. Call once `mi` has its parent (and, when
+## skinned, its skeleton path). Returns the twin, or null.
+static func add_front_pass(mi: MeshInstance3D) -> MeshInstance3D:
+	var mat := mi.material_override
+	if mat == null or not mat.has_meta(FRONT_PASS_META) or mi.get_parent() == null:
+		return null
+	var twin := MeshInstance3D.new()
+	twin.name = String(mi.name) + "_front"
+	twin.mesh = mi.mesh
+	twin.transform = mi.transform
+	twin.layers = mi.layers
+	twin.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	twin.material_override = mat.get_meta(FRONT_PASS_META)
+	twin.sorting_offset = mi.sorting_offset + FRONT_PASS_SORTING_OFFSET
+	mi.get_parent().add_child(twin)
+	if mi.skin != null:
+		twin.skin = mi.skin
+		var skeleton := mi.get_node_or_null(mi.skeleton)
+		if skeleton != null:
+			twin.skeleton = twin.get_path_to(skeleton)
+	return twin
 
 static func _mod_pass(layer: BmtReader.Layer, tex: Texture2D, rule: Dictionary, cull: String) -> ShaderMaterial:
 	var emu := {"godot": "opaque", "color": 0, "alpha": 0}

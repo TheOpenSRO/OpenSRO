@@ -7234,6 +7234,91 @@ v mapping is squeezed (0.8 against 0.866). The round's text is corrected in plac
 - The identity of the two skipped callbacks' objects.
 - The cloud layer's draw order against Godot's opaque pass.
 
+### Rounds 623-628 integration review (int/visual): seven fixes, each measured
+
+The final review of int/visual merged rounds 623 to 628 and found seven problems. All are fixed.
+Before is b50a400.
+
+**1. Video memory leaked with Water Reflection on.** `WaterReflection.clip_material` cached
+the mirror terrain's materials by the source material's id. Every region commit makes new
+terrain materials, so the cache only grew. It held every streamed region's lightmap and ground
+textures.
+- MEASURED: the same tour, 8 regions west and back (about 230 cell builds), then texture memory
+  back at home:
+  - before: 322.7 and 325.6 MB with the reflection on, against 111.3 MB with it off;
+  - after: **112.7 MB on**, 111.3 MB off.
+- The cache is gone. Each copy lives and dies with its MirrorTerrain node, and the four shader
+  variants are still shared.
+- Load cost of the copies: main-thread terrain for the first 25 cells is 2225 ms on against
+  1967 ms off (+13%).
+
+**2. Two-pass MTRL front faces drew over nearer transparents.** The material review follow-up
+gave the front pass a higher `render_priority`. Priority is global, so every such pass drew
+after every priority-0 transparent in the scene.
+- MEASURED with a GPU probe: a two-pass object 20 units behind a nearer blue transparent quad
+  painted over it. The single-pass control did not.
+- The front pass is now a twin MeshInstance3D (`ObjectLoader.add_front_pass`). The twin has the
+  same mesh, skin and transform, priority 0, and `sorting_offset` 0.01 (OURS). This is wired at
+  every build site: `_commit_node`, `attach_rigid`, and the skinned body and item pieces.
+- After: the nearer quad stays on top.
+- A two-pass box with depth writes off draws its front faces (green) over its back faces (red).
+- Negative: the twin at -0.01 turns the box centre red, so the probe can see a wrong order.
+
+**3. The cloud layer covered distant geometry.** At `z = 0.99999 w`, with a 0.05 near and an
+11,520 far, the clouds sat at a view depth of about 5,400.
+- MEASURED: opaque quads at 6,000, 8,000 and 11,000 units were painted over.
+- They now sit at `z = w` (depth 1.0).
+- After: quads at all eight distances (1,000 to 11,000) keep their colour, and the open sky is
+  still cloud.
+- Retail draws the layer first with Z off (READ). This gives the same result.
+
+**4. The fog colour is the square root of channel 9 (READ).**
+- The chain: `FUN_00a1baf0` clamps channel 9 into world+0x68a3..ab, then stores
+  `sqrt` of each into world+0x68b7..bf. `FUN_00b42de0` is the CRT sqrt, with `fsqrt` at
+  0xb42e1c; the calls are at 0xa1d164, 0xa1d17b and 0xa1d192. `FUN_00a26f60` then sets those
+  as D3DRS_FOGCOLOR before the landscape draws.
+- Both the cloud layer's fog and the main Godot fog now use `EnvironmentReader.render_fog_color`.
+  `SRREVAMP_QA_FOG_RAW=1` restores the old colour, for comparison.
+- Jangan: channel 9 is (0.357, 0.580, 0.677), which now renders as (0.598, 0.762, 0.823).
+- Size of the main-view change, MEASURED on one build with and without the hook, over the world
+  area of the frame (the HUD excluded), at four spawn viewpoints:
+  - mean |Δ| 2.0 to 6.4 /255;
+  - 4.7% to 20.8% of pixels change by more than 12/255, most on the distant wall and hills;
+  - the largest change is 54/255.
+  - For example, looking at the south gate the mean goes from (116, 128, 126) to (123, 135, 132).
+- The fog's density (a disclosed choice) is unchanged.
+
+**5. The cloud fog is measured in view depth.** Range fog is off in the sky step (READ,
+render state 0x30 = 0), so the fog runs on view depth, not radial distance.
+
+**6. MTRL stage coverage.** The mod shader now evaluates:
+- ADDSIGNED2X (9);
+- MODULATEINVALPHA_ADDCOLOR (20, colour);
+- BLENDTEXTUREALPHAPM (15, alpha);
+- TEMP as 0;
+- the D3DTA ALPHAREPLICATE and COMPLEMENT modifiers.
+
+That covers every op in the census. Any other op is drawn as MODULATE, and
+`stage_ops_handled` reports it. The SRCCOLOR pairs 3/6 and 3/14 are relabelled "given": they
+are exact only for an unlit stage result, since a lit one is drawn light × L², not
+(light × L)².
+
+**7. Mirror terrain shader and stale comment.**
+- The mirror terrain shader now blends its detail layer by the detail texel's alpha, as
+  BaseMaterial3D does.
+- It carries the untextured fallback's AO lightmap. The lightmaps are RGB8, so the alpha is 1
+  and the picture does not change.
+- The stale dome comment in `_try_add_real_sky` is replaced.
+
+**Tests:**
+- object_loader_test: the twin and priority 0, with a negative for a single-pass material; the
+  ops, with a negative for op 12; the modifiers; the relabels.
+- water_reflection_test: no cache, the material freed, AO present, the unshaded negative, and
+  the detail alpha.
+- environment_reader_test: the square root, the raw-channel negative, and the clamp before the
+  root.
+- `check` and `tests` pass, and the Go suite is green (see the commit).
+
 ## Six-hundred-and-twenty-eighth round: water reflects the sky, the banks and the trees, as the game's own Water Reflection option draws it
 
 The shipped `Setting\SROptionSet.dat` has Water Reflection ON (round 627's follow-up), and the user

@@ -660,8 +660,8 @@ func _test_round_625_mods(OL, archive: Pk2Reader, layer_for: Callable) -> void:
 		"r625 review: it builds an additive, depth-write-off, two-sided shader with the mod's stage ops (got %s)" % mat)
 	var two: Material = OL.build_godot_material(archive, "", layer_for.call(0x340), {}, -1, mtrl, true)
 	var first := two as ShaderMaterial
-	_check(first != null and first.shader.code.contains("cull_front") and first.next_pass is ShaderMaterial
-			and (first.next_pass as ShaderMaterial).shader.code.contains("cull_back"),
+	_check(first != null and first.shader.code.contains("cull_front") and first.has_meta(OL.FRONT_PASS_META)
+			and (first.get_meta(OL.FRONT_PASS_META) as ShaderMaterial).shader.code.contains("cull_back"),
 		"r625 review: a two-pass blended object draws back faces, then front faces (got %s)" % two)
 	var leaf_mod := mtrl.duplicate()
 	leaf_mod.merge({"zwrite_off": false, "alpha_test": true, "alpha_ref": 137, "src_blend": 5, "dest_blend": 6}, true)
@@ -706,9 +706,42 @@ func _test_material_review(OL, archive: Pk2Reader, layer_for: Callable, base_mod
 			and m.shader.code.contains("albedo.rgb * 0.5"),
 		"review 2-3: DIFFUSE is the lit term (ALBEDO, lit by the scene), TEXTURE alone unlit (EMISSION), MODULATE2X = the flag-word brightness")
 	var two := OL.build_godot_material(archive, "", layer_for.call(0x340), {}, -1, leaf, true) as ShaderMaterial
-	_check(two != null and two.next_pass is ShaderMaterial and two.shader.code.contains("cull_front")
-			and (two.next_pass as ShaderMaterial).render_priority > two.render_priority,
-		"review 4: the front-face pass has the higher render_priority (back faces first)")
+	# Integration review: the front pass is not a next_pass at a higher
+	# render_priority (global: it drew over every nearer transparent) but a
+	# twin instance at priority 0 with a small sorting_offset.
+	var front: ShaderMaterial = two.get_meta(OL.FRONT_PASS_META, null) if two != null else null
+	_check(two != null and two.next_pass == null and front != null and front.render_priority == 0
+			and two.render_priority == 0 and front.shader.code.contains("cull_back"),
+		"integration: the two-pass front pass rides as metadata at priority 0, not a next_pass above everything")
+	var parent := Node3D.new()
+	var back_mi := MeshInstance3D.new()
+	back_mi.mesh = QuadMesh.new()
+	back_mi.material_override = two
+	parent.add_child(back_mi)
+	var twin: MeshInstance3D = OL.add_front_pass(back_mi)
+	_check(twin != null and twin.get_parent() == parent and twin.mesh == back_mi.mesh and twin.material_override == front
+			and twin.sorting_offset > back_mi.sorting_offset and twin.sorting_offset < 0.1,
+		"integration: add_front_pass puts the front faces on a sibling twin, sorted just after the back pass")
+	var single_mi := MeshInstance3D.new()
+	single_mi.material_override = m
+	parent.add_child(single_mi)
+	_check(OL.add_front_pass(single_mi) == null and parent.get_child_count() == 3,
+		"integration (negative): a single-pass material gets no twin")
+	parent.free()
+	# Integration review: the stage ops the census uses are all evaluated,
+	# and an op outside them is reported as drawn MODULATE.
+	for ops in [[9, 2], [20, 15], [5, 5], [2, 2]]:
+		_check(OL.stage_ops_handled({"stage_ops": true, "color_op": ops[0], "alpha_op": ops[1]}),
+			"integration: colour op %d / alpha op %d are evaluated as d3d9 defines them" % ops)
+	_check(not OL.stage_ops_handled({"stage_ops": true, "color_op": 12, "alpha_op": 2}),
+		"integration (negative): BLENDDIFFUSEALPHA (12) is not claimed as handled")
+	_check(m != null and m.shader.code.contains("(which & 16) != 0") and m.shader.code.contains("(which & 32) != 0")
+			and m.shader.code.contains("if (o == 9)") and m.shader.code.contains("if (o == 20)") and m.shader.code.contains("if (o == 15)"),
+		"integration: the mod shader honours COMPLEMENT and ALPHAREPLICATE and has ADDSIGNED2X, op 20 and op 15")
+	for k in ["3/6", "3/14"]:
+		var e: Dictionary = OL.BLEND_EMULATION[k]
+		_check(e["kind"] == "given" and String(e["note"]).contains("unlit"),
+			"integration: SRCCOLOR pair %s is labelled exact only for an unlit result (got %s)" % [k, e["kind"]])
 	# 5: every func survives into the material exactly.
 	for f in [1, 2, 3, 4, 5, 6]:
 		var t := base_mod.duplicate()

@@ -201,18 +201,22 @@ static func mark_reflected(root: Node) -> void:
 		(n as VisualInstance3D).layers |= REFLECTED_BIT
 
 ## The mirror-only copy of a terrain surface material: the same texture,
-## vertex colour, shading, blending, detail (lightmap) layer and render
-## priority, plus the clip against CLIP_GLOBAL. Cached per source material.
-var _clip_cache := {}
+## vertex colour, shading, blending, detail (lightmap) layer, the untextured
+## fallback's AO lightmap and render priority, plus the clip against
+## CLIP_GLOBAL.
+##
+## Not cached (rounds 623-628 integration review): the terrain's materials
+## are new per region, so a cache keyed by them only grew -- it held every
+## streamed region's lightmap and ground textures for ever (MEASURED: 323
+## MB of texture memory against 111 MB with the reflection off after one
+## tour). Each copy now lives and dies with its MirrorTerrain node. The
+## shaders (four variants) are shared.
 var _clip_shaders := {}
 
 func clip_material(src: Material) -> Material:
 	var std := src as StandardMaterial3D
 	if std == null:
 		return src
-	var key := std.get_instance_id()
-	if _clip_cache.has(key):
-		return _clip_cache[key]
 	var unshaded := std.shading_mode == BaseMaterial3D.SHADING_MODE_UNSHADED
 	var blend := std.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED
 	var variant := "%d%d" % [int(unshaded), int(blend)]
@@ -230,12 +234,18 @@ func clip_material(src: Material) -> Material:
 	m.set_shader_parameter("uv1_scale", Vector2(std.uv1_scale.x, std.uv1_scale.y))
 	m.set_shader_parameter("detail_tex", std.detail_albedo if std.detail_enabled else null)
 	m.set_shader_parameter("use_detail", std.detail_enabled and std.detail_albedo != null)
-	_clip_cache[key] = m
+	var ao := std.ao_enabled and std.ao_texture != null
+	m.set_shader_parameter("ao_tex", std.ao_texture if ao else null)
+	m.set_shader_parameter("use_ao", ao)
+	m.set_shader_parameter("ao_light_affect", std.ao_light_affect)
 	return m
 
-## The mirror terrain's shader: StandardMaterial3D's defaults for what the
-## terrain uses (albedo texture on UV, vertex colour, a MUL detail layer on
-## UV2, default lighting), and a discard below the clip plane.
+## The mirror terrain's shader: StandardMaterial3D's own code for what the
+## terrain uses (Godot 4.2 BaseMaterial3D: albedo texture on UV, vertex
+## colour, a MUL detail layer on UV2 blended by the detail texel's alpha --
+## `mix(albedo, albedo * detail, detail.a)`, the mask unset (white) -- the
+## red channel of an AO texture on UV with its light affect, default
+## lighting), and a discard below the clip plane.
 static func terrain_clip_code(unshaded: bool, blend: bool) -> String:
 	var modes := ["cull_back"]
 	if unshaded:
@@ -243,14 +253,22 @@ static func terrain_clip_code(unshaded: bool, blend: bool) -> String:
 	if blend:
 		modes.append("blend_mix")
 		modes.append("depth_draw_never")
+	var ao_lines := "" if unshaded else """	if (use_ao) {
+		AO = texture(ao_tex, UV * uv1_scale).r;
+		AO_LIGHT_AFFECT = ao_light_affect;
+	}
+"""
 	return """shader_type spatial;
 render_mode %s;
 global uniform vec4 water_clip_plane;
 uniform sampler2D albedo_tex : source_color, filter_linear_mipmap, repeat_enable;
 uniform sampler2D detail_tex : source_color, filter_linear_mipmap, repeat_enable;
+uniform sampler2D ao_tex : hint_default_white, filter_linear_mipmap, repeat_enable;
 uniform bool use_albedo_tex = false;
 uniform bool use_vertex_color = true;
 uniform bool use_detail = false;
+uniform bool use_ao = false;
+uniform float ao_light_affect = 0.0;
 uniform vec4 albedo_color : source_color = vec4(1.0);
 uniform vec2 uv1_scale = vec2(1.0);
 varying vec3 world_pos;
@@ -269,11 +287,12 @@ void fragment() {
 		c *= COLOR;
 	}
 	if (use_detail) {
-		c.rgb *= texture(detail_tex, UV2).rgb;
+		vec4 d = texture(detail_tex, UV2);
+		c.rgb = mix(c.rgb, c.rgb * d.rgb, d.a);
 	}
 	ALBEDO = c.rgb;
-%s}
-""" % [", ".join(modes), "\tALPHA = c.a;\n" if blend else ""]
+%s%s}
+""" % [", ".join(modes), ao_lines, "\tALPHA = c.a;\n" if blend else ""]
 
 func _ready() -> void:
 	ensure_globals()

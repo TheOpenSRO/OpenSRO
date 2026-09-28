@@ -3148,14 +3148,10 @@ func _try_add_real_sky() -> void:
 	world_environment.environment.background_mode = Environment.BG_SKY
 	_sky_material = sky_material
 
-	# **Re-enabled 2026-09-02** (see docs/WORLD_ISSUES.md's forty-second
-	# round) -- was disabled 2026-09-01 after a real sunburst/fan artifact
-	# was confirmed at the dome's pole (SphereMesh's polar UV projection
-	# compresses a whole ring of the mesh to one point there). Rather than
-	# fix the projection itself (no real per-pixel dome UV data to build a
-	# better one from), cloud_dome.gdshader fades the real cloud texture's
-	# alpha to zero before the singularity comes into view, so the
-	# compressed pixels never render -- see that shader file's own comment.
+	# The cloud layer, as the client draws it (READ, round 628 review:
+	# _build_cloud_dome, cloud_layer_mesh, cloud_dome.gdshader) -- a flat
+	# grid 20000 above the eye. It replaced the finite hemisphere dome whose
+	# polar-UV fade this comment used to describe (rounds 42 and 51).
 	var cloud_bytes := AssetSource.read_bytes("SkyBox\\cloud1.ddj", archive)
 	if not cloud_bytes.is_empty():
 		var parsed := DdjReader.parse(cloud_bytes)
@@ -3365,7 +3361,14 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	# real planes cannot be applied without a shader pass; until that exists
 	# they are computed, logged and shown by QA_LOOK, and the density stays
 	# the bounded choice described at FOG_DENSITY.
-	var fog_color := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_FOG_COLOR, ENVIRONMENT_REFERENCE_TIME)
+	var fog_channel := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_FOG_COLOR, ENVIRONMENT_REFERENCE_TIME)
+	# What the client fogs with is the square root of the clamped channel
+	# (READ, rounds 623-628 integration review: EnvironmentReader.
+	# render_fog_color). Until then the raw channel was used, darker.
+	var fog_color := EnvironmentReader.render_fog_color(fog_channel)
+	if OS.get_environment("SRREVAMP_QA_FOG_RAW") != "":
+		# QA only: the pre-review colour, for a before/after on one build.
+		fog_color = fog_channel
 	# The cloud layer's texture factor (READ, round 628 review): RGB is
 	# channel 4 (FUN_00a3eb40's param_6 = world+0x685f, evaluated from
 	# record+0x158), alpha is world+0x68c7 = (channel 12 + 1) / 2. Its fog is
@@ -3397,7 +3400,7 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	if _sun_glow != null:
 		_sun_glow.modulate = Color(sun_color.r, sun_color.g, sun_color.b, _sun_glow.modulate.a)
 
-	print("World3D: applied real environment.ifo lighting (%s, EnvironmentID=%d) -- sky_top=%s sky_bottom=%s sun_disc=%s light_diffuse=%s ambient=%s fog=%s" % [record.name1, env_id, top, bottom, sun_color, diffuse_color, ambient_color, fog_color])
+	print("World3D: applied real environment.ifo lighting (%s, EnvironmentID=%d) -- sky_top=%s sky_bottom=%s sun_disc=%s light_diffuse=%s ambient=%s fog=%s (channel 9 %s)" % [record.name1, env_id, top, bottom, sun_color, diffuse_color, ambient_color, fog_color, fog_channel])
 
 ## Opens the real Map.pk2 -- SRREVAMP_MAP_PK2_PATH if set, else a real
 ## "pk2/Map.pk2" next to the running executable (see Pk2Config) -- or

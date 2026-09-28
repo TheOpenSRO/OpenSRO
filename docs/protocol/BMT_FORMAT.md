@@ -187,15 +187,20 @@ The reader and the render path are both in `sro_client.exe`:
 - an MTRL mod → its own test (any D3DCMPFUNC, compared exactly on the mip-0 alpha byte), blend,
   z-write, cull and stage-0 ops, in a shader built per combination (see "The MTRL mod shader"
   below);
-- two-pass → back faces then front faces when blended, and two-sided otherwise. The front pass is
-  a `next_pass` with a higher `render_priority`: Godot 4.2's transparent sort is not stable
-  (`rasterizer_scene_gles3.h`), so a `next_pass` alone is not guaranteed to draw after its
-  material.
+- two-pass → back faces then front faces when blended, and two-sided otherwise. The front pass
+  is drawn by a twin MeshInstance3D (`ObjectLoader.add_front_pass`) at priority 0 with a
+  `sorting_offset` of 0.01. A `next_pass` alone is not ordered (Godot 4.2's transparent sort is
+  not stable), and a higher `render_priority` is global: it drew the front faces over every
+  nearer transparent surface (MEASURED, rounds 623-628 integration review).
 
 ### The MTRL mod shader (round 625-626 material review follow-up)
 
 - **Stage 0.** When the mod blends, all six stage bytes are applied as the client sets them
-  (READ, `CRTModMtrl::vslot_004`); 0 is `D3DTA_DIFFUSE`, not "unset". A mod that only tests
+  (READ, `CRTModMtrl::vslot_004`); 0 is `D3DTA_DIFFUSE`, not "unset". The ops the census uses
+  are all evaluated as d3d9 defines them: colour 2, 4, 5, 6, 7, 8, 9 (ADDSIGNED2X) and 20
+  (MODULATEINVALPHA_ADDCOLOR), alpha 2-7 and 15 (BLENDTEXTUREALPHAPM). Any other op is drawn as
+  MODULATE (OURS; `ObjectLoader.stage_ops_handled` reports it). The D3DTA modifiers 0x20
+  ALPHAREPLICATE and 0x10 COMPLEMENT are applied, though no census mod sets either. A mod that only tests
   leaves the renderer's own stage 0 in place: MODULATE2X of TEXTURE and DIFFUSE (READ: the
   renderer seeds flag `0x1000`, which `FUN_00c42a60` makes COLOROP 5).
 - **DIFFUSE is the lit vertex colour** (READ, `Shader\vertexshader0.c`):
@@ -224,8 +229,10 @@ The reader and the render path are both in `sro_client.exe`:
   (SRC_ALPHA / ONE) and mul (DST_COLOR / ZERO) (`rasterizer_scene_gles3.cpp`). Every one of the
   18 D3DBLEND pairs in the census is drawn through them by choosing the colour and alpha the
   shader writes (`ObjectLoader.BLEND_EMULATION`). Each is labelled:
-  - **exact**: 5/6, 5/2, 2/2, 9/1, 1/3, 12/2, 13/6, 3/6;
-  - **given**: exact under `D3DRS_BLENDFACTOR` = white, its D3D default, for 5/14, 3/14 and
+  - **exact**: 5/6, 5/2, 2/2, 9/1, 1/3, 12/2, 13/6;
+  - **given**: 3/6 and 3/14 (the SRCCOLOR sources) are exact only for an unlit stage result: a
+    lit one is squared before Godot's light, so it is drawn light × L², not (light × L)².
+    `D3DRS_BLENDFACTOR` = white, its D3D default, is also needed for 5/14, 3/14 and
     15/15. The client sets it only in `Map::FUN_00a1d790`, and whether that value is live for
     objects is OPEN. Destination alpha = 1 (a back buffer without alpha, INFERRED) makes 5/7
     and 2/11 given too;

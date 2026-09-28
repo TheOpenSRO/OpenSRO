@@ -63,6 +63,18 @@ const CHANNEL_TERRAIN_SHADOW_COLOR := 6
 const CHANNEL_FOG_NEAR_PLANE := 10
 const CHANNEL_FOG_FAR_PLANE := 11
 const CHANNEL_FOG_COLOR := 9
+
+## The fog colour the client renders with, from channel 9's sampled colour
+## (READ, rounds 623-628 integration review): `Map::FUN_00a1baf0` clamps
+## channel 9 into world+0x68a3..0x68ab (each to [0, 1]), then stores the
+## square root of each (`FUN_00a1baf0` 0xa1d164/0xa1d17b/0xa1d192 call
+## FUN_00b42de0, the CRT sqrt -- `fsqrt` at 0xb42e1c) into world+0x68b7,
+## 0x68bb, 0x68bf; `FUN_00a26f60` packs those x 255 into world+0x67e6 and
+## sets it as D3DRS_FOGCOLOR (0x22) before the landscape draws. So a
+## channel value of 0.25 fogs to 0.5. Alpha is kept.
+static func render_fog_color(channel_9: Color) -> Color:
+	return Color(sqrt(clampf(channel_9.r, 0.0, 1.0)), sqrt(clampf(channel_9.g, 0.0, 1.0)),
+		sqrt(clampf(channel_9.b, 0.0, 1.0)), channel_9.a)
 ## The client's view distance the fog fractions scale by: the initial value of
 ## the global at 0xec54b0 (`.data`, so a setting may change it at runtime).
 const VIEW_DISTANCE_DEFAULT := 2500.0

@@ -184,6 +184,7 @@ static func assemble_from_archive(
 				skeleton.add_child(mi)
 				mi.skin = skin
 				mi.skeleton = mi.get_path_to(skeleton)
+				ObjectLoader.add_front_pass(mi)
 				result.skinned_pieces += 1
 				attached += 1
 				continue
@@ -330,6 +331,7 @@ static func attach_item_from_archive(
 				continue
 			holder.add_child(mi)
 			mi.skeleton = mi.get_path_to(skeleton)
+			ObjectLoader.add_front_pass(mi)
 			any_skinned = true
 		if not any_skinned:
 			holder.free()
@@ -392,6 +394,7 @@ static func attach_item_from_archive(
 		else:
 			item_skeleton.add_child(mi)
 			mi.skeleton = mi.get_path_to(item_skeleton)
+		ObjectLoader.add_front_pass(mi)
 		any_attached = true
 	if not any_attached:
 		attachment.free()
