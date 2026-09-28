@@ -62,7 +62,37 @@ func _initialize() -> void:
 				path, _file_bits(path), w.format, str(w.stereo), w.mix_rate, w.get_length(), Time.get_ticks_msec() - t0])
 		else:
 			print("PROBE sound %s: %s %.2f s, %d ms" % [path, s.get_class(), s.get_length(), Time.get_ticks_msec() - t0])
+	_probe_zones()
 	quit(0)
+
+## Round 612: the zone music tables against each other and a few places.
+func _probe_zones() -> void:
+	var env := EnvSoundTable.parse(AudioBank.read_table("media", EnvSoundTable.PATH))
+	var ri := RegioninfoReader.parse(AudioBank.read_table("data", RegioninfoReader.ENGLISH_PATH))
+	var names := {}
+	if ri != null:
+		for z in ri.zones:
+			names[z.name_bytes.get_string_from_ascii()] = true
+	var missing := []
+	var entries := 0
+	var beds := 0
+	for zn in env:
+		if not names.has(zn):
+			missing.append(zn)
+		for list in [env[zn].day, env[zn].night]:
+			for e in list:
+				entries += 1
+				if e.a == 0:
+					beds += 1
+	print("PROBE effectenvsnd: %d zones, %d entries (%d beds); regioninfo.txt %d sections, %d names; env zones missing from it: %s" % [
+		env.size(), entries, beds, ri.zones.size() if ri != null else -1, names.size(), str(missing)])
+	for zn in ["Jangan", "Bandit_Fortress", "Jangan_Field", "Donwhang", "Asia_Minor"]:
+		var z = env.get(zn)
+		print("PROBE zone %s: %s" % [zn, ("bgm %s, day %d, night %d" % [z.bgm, z.day.size(), z.night.size()]) if z != null else "none"])
+	if ri != null:
+		for spot in [[97, 168, 1002.0, 1020.0], [98, 168, 960.0, 830.0], [96, 168, 960.0, 960.0]]:
+			print("PROBE region %d/%d local %d,%d -> %s" % [spot[0], spot[1], spot[2], spot[3], ri.zone_name_for_position(spot[0], spot[1], spot[2], spot[3])])
+	print("PROBE option.txt IntroBGM: %s" % EnvSoundTable.parse_intro_bgm(AudioBank.read_table("media", EnvSoundTable.OPTION_PATH)))
 
 ## The bits-per-sample the file's own fmt chunk states.
 func _file_bits(path: String) -> int:

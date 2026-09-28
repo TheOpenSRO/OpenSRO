@@ -12,6 +12,17 @@ class_name RegioninfoReader
 ## raw bytes plus a stable lowercase-hex `name_key`, and turning that key
 ## into something displayable is RegioninfoNames' job, not this reader's.
 
+## The two copies of the table (round 612). SHADER_PATH is the 15-zone
+## Korean table the zone label reads (see the top comment). ENGLISH_PATH is
+## Data.pk2's ROOT `regioninfo.txt`, 65 sections with ASCII English names
+## (MEASURED: md5-identical to Media.pk2 server_dep\silkroad\textdata\
+## regioninfo.txt; same `#TOWN name` / `y x ALL|RECT` layout, a third
+## group-name column this parser ignores) -- the names effectenvsnd.txt keys
+## the zone music by, and what the client's own zone lookup
+## (CRegionManagerBody::vslot_024, 0x414600) returns. Both parse here.
+const SHADER_PATH := "Shader\\regioninfo.txt"
+const ENGLISH_PATH := "regioninfo.txt"
+
 const KIND_TOWN := "TOWN"
 const KIND_FIELD := "FIELD"
 
@@ -99,6 +110,14 @@ class ParsedTable:
 			if claim.contains(local_x, local_z):
 				return claim.zone_index
 		return default_zone_for(region_x, region_y)
+
+	## The zone at a position as its name read as ASCII -- the English
+	## table's names -- or "" when nothing claims the position.
+	func zone_name_for_position(region_x: int, region_y: int, local_x: float, local_z: float) -> String:
+		var index := zone_for_position(region_x, region_y, local_x, local_z)
+		if index < 0 or index >= zones.size():
+			return ""
+		return zones[index].name_bytes.get_string_from_ascii()
 
 	## The single zone that owns this whole real region, or -1.
 	##

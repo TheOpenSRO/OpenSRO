@@ -129,3 +129,105 @@ Mute sends -10000 (silence; BGM stops and restarts from the top on un-mute). Def
 OURS: saved in `user://settings.cfg` under `[audio]` (`bgm`, `effect`, `env`, `bgm_muted`,
 `effect_muted`, `env_muted`), not retail's `Setting\SROptionSet.dat` (layout not read). The
 values are ints and bools; a string there would have to be quoted (round 583).
+
+## Zone music and ambient (round 612)
+
+`client/scripts/audio/`: `EnvSoundTable` (the parse), `ZoneMusic` (the music state machine),
+`AmbientBeds` (the ambient tick), `MusicDirector` (the node, child `Music` of the `Audio`
+autoload: `Audio.music`). World3D calls `Audio.music.set_area_at(region_x, region_y, local_x,
+local_z)` every tenth tick and `enter_loading(reason)` on world entry and on a zone change;
+Login calls `play_intro()`.
+
+### effectenvsnd.txt (READ; second half of `CGEffSoundBody::vslot_008`, 0xa75020)
+
+`Media.pk2 server_dep\silkroad\textdata\effectenvsnd.txt`, 24,458 bytes, CP949, CRLF.
+
+```
+<1>	Jangan
+//	"halloween_bgm.ogg"
+	"Jangan_Town.ogg"
+	<2>	낮                        (CP949 B3 B7: the day list)
+			<3>	"day_wind.wav"	0~0
+			<3>	"day_bird01.wav"	15~30
+	<2>	밤                        (CP949 B9 E3: the night list)
+			<3>	"night_wind.wav"	0~0
+```
+
+- `<1> name` opens a zone; the **next non-comment line**'s quoted name is its music, optionally
+  followed by a repeat count (0 or absent: -1, loop for ever; no line sets one). A later
+  duplicate zone replaces the earlier (`Asia_Minor` appears twice; the second wins).
+- `<2>` picks the day or night list by the CP949 label bytes; `<3> "file.wav" a~b` is an entry
+  under `prim\snd\env\`. Tokens split on `=` `"` `,` space and tab; `//` and `/* */` are comments.
+  OURS: a quoted name is kept whole (`ENV\bell towel 3.wav` has spaces), and an unknown label
+  logs and skips where retail asserts.
+- MEASURED (`probe_audio.gd`): **59 zones, 561 live entries, 117 beds** (the research counted
+  569 entries over all 60 blocks; the replaced first `Asia_Minor` block holds the other 8).
+  Every zone name exists in the English regioninfo.txt. Jangan and Bandit_Fortress both play
+  `Jangan_Town.ogg`. 11 referenced music files and 5 `kk_*` wavs are not in the archives; they
+  are silent, as in retail.
+- `Media.pk2 config\option.txt`: `IntroBGM = "maintheme_cut.ogg"` (READ; parsed at 0x84762d).
+
+### Which zone (READ; `CRegionManagerBody::vslot_024`, 0x414600)
+
+The region's first `RECT` claim containing the region-local position (inclusive), else its
+`ALL` zone -- `RegioninfoReader.zone_for_position`. The names are the **English** table's:
+`Data.pk2` root `regioninfo.txt` (65 sections, 61 names; md5-identical to Media.pk2's
+`server_dep\silkroad\textdata\regioninfo.txt`), `RegioninfoReader.ENGLISH_PATH`, read by
+`ParsedTable.zone_name_for_position`. The zone label keeps reading `Shader\regioninfo.txt`
+(`SHADER_PATH`). MEASURED: Jangan's spawn (97/168, local 1002, 1020) is `Jangan`; 96/168 is
+`Jangan_Field`.
+
+### Music (READ unless marked; `ZoneMusic`)
+
+- SetArea (vslot_026, 0xa732d0) does nothing for an unchanged area. On a change it stops the
+  ambient; an **unknown zone leaves the music playing**; a known one calls PlayBGM, which
+  **does nothing for the track already current** (FUN_00a67d70).
+- A change while music plays **fades out in 10 steps**, linear in hundredths of a dB from the
+  BGM volume to -30 dB (FUN_00bb6640), then **hard-starts** the new track at full volume: no
+  crossfade, no fade-in. From silence it starts at once. The step pacing is one quarter of the
+  1 s stream buffer, about **2.5 s** in all (INFERRED; `FADE_STEP_SECONDS = 0.25`).
+- Four override levels (PushBGM +0x54 / PopBGM +0x5c): 0 the title's IntroBGM
+  (`CPSTitle::OnCreate`, 0x86be78), 1 `fortress_war.ogg` (siege), 2 a record's BGM (table not
+  read), 3 a script's `S_SetBGM`. `Audio.music.push_bgm(name, level)` / `pop_bgm(all, level)`
+  are the hooks; only level 0 is used yet. Server, character select and create touch nothing,
+  so the title music keeps playing through them (INFERRED).
+- The loading screen (FUN_0084ab20) stops music and ambient, clears the area and pops every
+  level: **silent**, and the first world frame starts the zone's music from the top.
+- BGM mute stops the track; un-mute restarts it from the top.
+- OURS: tracks loop seamlessly (retail replays on its end-of-track message after a zero tail,
+  a 0.25-0.5 s gap INFERRED); a level keeps one entry per name; World3D asks every tenth tick,
+  not every frame; the area is not resolved while the loading screen is up.
+
+### Ambient (READ unless marked; `AmbientBeds`)
+
+- On an area change the zone's day or night list starts: `0~0` entries loop (beds); every other
+  entry is a one-shot with a countdown from `a`. Every **2 s** tick (timer id 1 / 2000 ms; that
+  it drives vslot_005 is INFERRED) a countdown below 3 plays once and resets to
+  `rand() % (b - a) + a`, otherwise loses 2: `a~b` is seconds.
+- Everything is 2-D at the one Env volume; no per-entry volume. Day is game hour 4..20
+  (`h < 4 || h > 20` is night, FUN_0084ac90), chosen only at an area change.
+- **The clock:** this client has no game clock (the server's 0x34be time sync is neither sent
+  nor handled; `docs/protocol/game_clock.md`), so **the day list always plays** and the log
+  says so once. `Audio.music.set_game_hour(h)` is the hook for a clock.
+- OURS: the tick's phase restarts at each zone entry; Env un-mute restarts the beds (retail
+  leaves them silent until the next area change, a bug read at 0xa6e36c and not copied).
+
+### Log lines
+
+As printed by the box's live runs (round 612; `docs/RE_COMPLETION.md` has the runs):
+
+```
+AUDIO bgm: title -> maintheme_cut.ogg
+AUDIO bgm: maintheme_cut.ogg playing=true at 0.99 s of 120.19 s (player volume 0.0 dB on the BGM bus)
+AUDIO bgm: Jangan -> Jangan_Town.ogg (start)
+AUDIO clock: this client has no game clock -- the day ambient list plays (retail: night is hour < 4 or > 20)
+AUDIO ambient: Jangan day: beds ["day_wind.wav"], 6 one-shots
+AUDIO bgm: Jangan_Field -> Jangan_Field.ogg (fade out Jangan_Town.ogg over 2.5 s, then start)
+AUDIO bgm: loading (zone change) -- Jangan_Town.ogg stops, the loading screen is silent
+AUDIO bgm: Donwhang -> Donwhang_Town.ogg (start)
+AUDIO ambient: Donwhang one-shot donhwang_wind04.wav first play, next in 14 s
+```
+
+and, from the code, for the other outcomes: `AUDIO area: <from> -> <to>: same track <file> keeps
+playing`, `AUDIO area: <zone> has no sound record -- the music keeps playing (<file>)`,
+`AUDIO bgm: <file> is not in Music.pk2 -- silence ...`.

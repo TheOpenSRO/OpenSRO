@@ -46321,3 +46321,134 @@ The listener identity, N voices, `prim+0x7c`, whether `prim+0x80` is exactly the
 retail's handling of the nine-token row. Nothing in the game calls `play_key` yet: footsteps and
 animation sounds are round 3's, hits and skills round 4's, interface sounds and the option window
 round 5's.
+
+## Each zone plays its own music and ambience: zone changes fade out and hard-start, shared tracks keep playing, the title theme spans the front end, and loading is silent (round 612)
+
+Client only; round 2 of the audio plan, on round 611's contract. Everything is written out, with
+labels, in `docs/protocol/SOUND_FORMAT.md` ("Zone music and ambient"). The code is
+`client/scripts/audio/`: `EnvSoundTable` (effectenvsnd.txt and option.txt), `ZoneMusic` (the
+music state machine, no nodes), `AmbientBeds` (the 2 s tick, no nodes) and `MusicDirector` (the
+node, `Audio.music`). `RegioninfoReader` gains `ENGLISH_PATH` (Data.pk2's root `regioninfo.txt`),
+`SHADER_PATH` and `ParsedTable.zone_name_for_position`; its current users still read
+`Shader\regioninfo.txt`. World3D calls `enter_loading` on world entry and on a zone change,
+`set_area_at(region, local)` every tenth tick (not while the loading screen is up) and
+`leave_world` on exit; Login calls `play_intro`.
+
+### Read, measured, inferred, ours
+
+- **READ** (addresses in SOUND_FORMAT.md and the research's sec_A): the effectenvsnd grammar
+  (next non-comment line is the music, CP949 `B3 B7`/`B9 E3` day/night labels, a later
+  duplicate replaces); SetArea does nothing for the same area, stops the ambient, leaves the
+  music for an unknown zone; PlayBGM does nothing for the current track; the 10-step fade linear
+  in mB to -30 dB, then a hard start at full volume, no fade-in, and an immediate start from
+  silence; four override levels (title 0, siege 1, record 2, script 3); the loading screen stops
+  everything and pops every level; BGM mute stops, un-mute restarts from the top; the ambient
+  beds (`a == 0`) and the one-shot countdown (`< 3` plays, reset `rand() % (b - a) + a`, else -2)
+  on a 2 s tick; day is hour 4..20, picked at the area change; everything 2-D at the one Env
+  volume; the title pushes option.txt's IntroBGM.
+- **MEASURED** (`probe_audio.gd` on the box's archives): 59 env zones, 561 live entries, 117
+  beds (the research's 569 counted the replaced first Asia_Minor block's 8); the English
+  regioninfo.txt has 65 sections and 61 names, and **every** env zone name is among them;
+  Jangan's spawn (97/168 at 1002, 1020) resolves to `Jangan`, 98/168 at (960, 830) to `Jangan`,
+  96/168 to `Jangan_Field`; IntroBGM is `maintheme_cut.ogg`; Jangan and Bandit_Fortress both
+  play `Jangan_Town.ogg`.
+- **INFERRED**: the fade takes about 2.5 s (a step per quarter-buffer notify; our
+  `FADE_STEP_SECONDS = 0.25`); the title music carries through server/character select and
+  create (no other caller); that the 2 s timer drives the one-shot tick.
+- **OURS**: tracks loop seamlessly (retail's zero-tail gap is inferred at 0.25-0.5 s); a level
+  holds one entry per name; the area is asked every tenth tick; the ambient tick restarts at
+  each zone entry; Env un-mute restarts the beds (retail's un-mute bug not copied); the world's
+  exit forgets the area and leaves the music to the title screen's push.
+- **The clock:** this client has **no game clock** (0x34be is neither sent nor handled;
+  `docs/protocol/game_clock.md`), so the **day list always plays**; the log says so once and
+  `Audio.music.set_game_hour(h)` is the hook.
+- **Hooks, unused yet:** `Audio.music.push_bgm(name, ZoneMusic.LEVEL_SIEGE)` for fortress war's
+  `fortress_war.ogg`, `LEVEL_SCRIPT` for a scene's `S_SetBGM`, `pop_bgm(all, level)`. The
+  level-2 source table is not read.
+
+### Live runs on the box (logs under `/var/tmp/raudio1/`; frames deleted)
+
+**Jangan, then `/goto donwhang`** (`SRREVAMP_GM_ACCOUNTS=qa SRREVAMP_QA_COMMANDS="/goto donwhang"
+qa_shot.sh --server --region '97\168.m' --at 1002,1020 --radius 1 --frames 1500`, the server
+built from this tree):
+
+```
+AUDIO: regioninfo.txt 65 zones
+AUDIO: effectenvsnd 59 zones
+AUDIO bgm: Jangan -> Jangan_Town.ogg (start)
+AUDIO clock: this client has no game clock -- the day ambient list plays (retail: night is hour < 4 or > 20)
+AUDIO ambient: Jangan day: beds ["day_wind.wav"], 6 one-shots
+QA COMMAND: /goto donwhang
+GM REPLY: travelling to donwhang
+AUDIO bgm: loading (zone change) -- Jangan_Town.ogg stops, the loading screen is silent
+AUDIO bgm: Donwhang -> Donwhang_Town.ogg (start)
+AUDIO ambient: Donwhang day: beds ["night_wind.wav"], 5 one-shots
+AUDIO bgm: Donwhang_Town.ogg playing=true at 0.98 s of 51.90 s (player volume 0.0 dB on the BGM bus)
+AUDIO ambient: Donwhang one-shot donhwang_wind04.wav first play, next in 14 s
+```
+
+(Donwhang's DAY list really opens with `night_wind.wav` as its bed -- that is the table.)
+
+**Town to field without loading** (`--shots "town@1002,1020:...;edge@-30,1020:...;..."`, no
+server): the second viewpoint hops one region over into Jangan_Field:
+
+```
+AUDIO bgm: Jangan -> Jangan_Town.ogg (start)
+QA SHOT edge frame 41
+AUDIO bgm: Jangan_Field -> Jangan_Field.ogg (fade out Jangan_Town.ogg over 2.5 s, then start)
+AUDIO bgm: Jangan_Town.ogg playing=true at 0.98 s of 63.97 s (player volume -0.0 dB on the BGM bus)
+AUDIO bgm: Jangan_Field.ogg playing=true at 0.98 s of 61.38 s (player volume 0.0 dB on the BGM bus)
+AUDIO ambient: Jangan_Field one-shot day_bird02.wav first play, next in 15 s
+```
+
+The movie writer's mix (`f.wav`, RMS per 0.25 s, dBFS) around it: -49.7 at 2.50 s, -51.4,
+-52.6, -53.0, -52.5 at 3.50 s, then **-35.0 at 3.75 s** -- the level sinks through the last
+second of the fade and jumps when the new track hard-starts. That is the whole mix (music plus
+the wind bed), so it shows the shape, not the fade curve alone.
+
+**The title** (`qa_shot.sh --scene res://scenes/Login.tscn --frames 150`):
+
+```
+AUDIO bgm: title -> maintheme_cut.ogg
+AUDIO bgm: maintheme_cut.ogg playing=true at 0.99 s of 120.19 s (player volume 0.0 dB on the BGM bus)
+```
+
+and its 2.5 s mix is -40.5 dBFS RMS: not silence.
+
+### Tests and negatives
+
+`zone_music_test.gd` (the state machine: immediate start from silence, same track keeps, unknown
+keeps, 10 x 0.25 s linear fade to -30 dB then a hard start, mid-fade retarget, playlist push/pop,
+loading, mute; the ambient tick's countdown and reset, the 2 s period, day 4..20; the
+effectenvsnd parse incl. CP949 labels, comment lines, `/* */`, duplicates, repeat counts, a
+quoted name with a space; IntroBGM), `music_director_test.gd` (real players under the dummy
+driver through a synthetic region and env table: RECT and ALL zones, the same stream kept, the
+unknown zone keeps playing, the fade's -8 dB halfway and the hard start at 2.5 s, the bed, the
+one-shot, loading silence) and `regioninfo_reader_test.gd` (the English table). Synthetic data
+only.
+
+**Negatives on a9ab6e7's scripts:**
+
+```
+FAIL scripts/audio/zone_music.gd exists (ZoneMusic)
+FAIL scripts/audio/ambient_beds.gd exists (AmbientBeds)
+FAIL scripts/audio/env_sound_table.gd exists (EnvSoundTable)
+FAIL the 'Audio' autoload has a music director (Audio.music)
+FAIL the reader names the English table's path (regioninfo.txt at Data.pk2's root)
+FAIL and still the Shader\ copy the zone label reads
+FAIL a table answers zone_name_for_position
+```
+
+**Planted bugs** (an unknown zone stopping the music, a one-step fade): `FAIL and the music keeps
+playing`, `FAIL a different track fades the current one first`, `FAIL the tenth step (2.5 s)
+hard-starts the new track` (8 in all), and in the director `FAIL a zone with no sound record: the
+music keeps playing`, `FAIL a new track does not cut in at once`, `FAIL halfway through the fade
+the old track is quieter (0.0 dB)`.
+
+`remote_godot.sh check` ALL LOAD; `tests` 128 suites, 0 failing; Go build and
+`go test -count=1 -p 1 ./...` green.
+
+### Open
+
+The level-2 BGM source table; the exact fade wall time; a game clock (night lists); the
+fortress-war and script callers; retail's loop gap.

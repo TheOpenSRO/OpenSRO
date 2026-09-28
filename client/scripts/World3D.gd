@@ -1198,6 +1198,12 @@ func _ready() -> void:
 	# Sound (round 611): distances are measured from the player, left and
 	# right from the camera -- AudioService's header says why (ours).
 	SoundTable.set_listener(player, camera_3d)
+	# Entering the world is a loading screen, shown or not (round 612): the
+	# title music and any old zone's stop here, and the first region under
+	# the player starts its zone's music from the top (FUN_0084ab20, READ).
+	var entry_music := _audio_music()
+	if entry_music != null:
+		entry_music.enter_loading("world entry")
 	# SRREVAMP_QA_RECONNECT (round 558): number this process's world entries
 	# through the environment -- never a static, statics are what a reconnect
 	# run measures. The count arms the QA ENTRY / QA TEXPROBE prints and is
@@ -1979,12 +1985,40 @@ func _load_regioninfo() -> RegioninfoReader.ParsedTable:
 var _current_zone_name := "-"
 var _zone_label_tick := 0
 
+## The "Audio" autoload's music half, or null (round 612).
+func _audio_music() -> MusicDirector:
+	var svc := AudioService.instance()
+	return svc.music if svc != null else null
+
+## Tells the music which zone the player stands in (round 612): the region
+## and region-local position, resolved by the English regioninfo.txt in
+## MusicDirector. Not while the loading screen is up -- it is silent, and the
+## first world frame starts the music (READ). Retail asks every frame and does
+## nothing when the name is unchanged; this asks with the zone label, every
+## tenth tick (ours).
+func _audio_area_tick() -> void:
+	if _loading_screen != null or player == null:
+		return
+	var music := _audio_music()
+	if music == null:
+		return
+	var pair := _nav_graph_for(player.global_position)
+	if pair.is_empty():
+		return
+	var group: Node3D = pair[1]
+	var parts := String(group.name).trim_prefix("RealTerrain_").split("_")
+	if parts.size() < 2:
+		return
+	var local := group.to_local(player.global_position)
+	music.set_area_at(parts[0].to_int(), parts[1].to_int(), local.x, local.z)
+
 ## Refreshes the position shown in the zone label as the player moves.
 ## Throttled: the text only has to be readable, not per-frame accurate.
 func _refresh_zone_label_position() -> void:
 	_zone_label_tick += 1
 	if _zone_label_tick % 10 != 0:
 		return
+	_audio_area_tick()
 	if zone_label != null:
 		zone_label.text = "Zone: %s%s" % [_current_zone_name, _zone_label_position_suffix()]
 
@@ -4406,6 +4440,11 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	# would send the old gate's links from there; the server has no range test
 	# (session/teleport.go's header).
 	_close_gate_ui()
+	# A zone change is a loading screen: music and ambient stop, the area is
+	# cleared (round 612, FUN_0084ab20), whether or not the screen is shown.
+	var zone_music := _audio_music()
+	if zone_music != null:
+		zone_music.enter_loading("zone change")
 	# A teleport shows the "NOW LOADING" screen (the playtester's call: the
 	# loading screen belongs on a teleport). Up before the zone assets load so
 	# even the synchronous centre-cell build is behind it; the queued
@@ -4594,6 +4633,9 @@ func _load_object_template(model_path: String) -> Node3D:
 ## Also called on quit, where all of it is harmless.
 func _exit_tree() -> void:
 	SoundTable.set_listener(null)
+	var exit_music := _audio_music()
+	if exit_music != null:
+		exit_music.leave_world()
 	# A task still preparing a cell holds this node's static function and a
 	# job for its grid: waited for and dropped before anything here is freed
 	# (round 565), so a reconnect cannot commit into a freed world.

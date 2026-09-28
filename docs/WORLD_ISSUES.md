@@ -7094,6 +7094,31 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twelfth round: each town and area plays its own music and ambience; a zone change fades out and hard-starts, shared tracks keep playing, and the title theme spans the front end
+
+**Built** (`docs/RE_COMPLETION.md`, round 612; `docs/protocol/SOUND_FORMAT.md`): the zone under
+the player is named from Data.pk2's English `regioninfo.txt` (RECT first, then ALL) and looked up
+in `effectenvsnd.txt`; its track plays from `Music.pk2`, looping. A different track fades the
+old one out over about 2.5 s to -30 dB and hard-starts; a zone sharing the track keeps it; a zone
+with no record keeps whatever plays. Each zone's looping ambient beds and timed one-shots
+(`a~b` seconds on a 2 s tick) play on the Env bus. The login, character select and create
+screens play `maintheme_cut.ogg` (option.txt's IntroBGM); world entry and zone changes are
+silent until the first world frame.
+
+**Measured live** on the box: `AUDIO bgm: Jangan -> Jangan_Town.ogg (start)`, then after
+`/goto donwhang` `AUDIO bgm: loading (zone change) -- Jangan_Town.ogg stops` and `AUDIO bgm:
+Donwhang -> Donwhang_Town.ogg (start)`, `playing=true at 0.98 s of 51.90 s`; walking town to
+field, `AUDIO bgm: Jangan_Field -> Jangan_Field.ogg (fade out Jangan_Town.ogg over 2.5 s, then
+start)`; on the title, `AUDIO bgm: title -> maintheme_cut.ogg`. The movie writer's recorded mix
+is not silent, and jumps 17 dB when the field track starts.
+
+**Recorded, not guessed:** there is no game clock in this client, so the day ambient list always
+plays. Fortress war (level 1) and script music (level 3) are hooks with no caller yet.
+
+**Negatives:** on a9ab6e7 the suites FAIL on the missing scripts, the missing `Audio.music` and
+the reader's missing English path; planted bugs (an unknown zone stopping the music, a one-step
+fade) FAIL named checks. 128 suites, 0 failing.
+
 ## Six-hundred-and-eleventh round: the audio core -- the retail sounds load, the effect table plays by key under retail's volume law, and three buses carry the option sliders
 
 **Asked:** the original game's audio -- zone music, footsteps, interface swooshes, skills. This

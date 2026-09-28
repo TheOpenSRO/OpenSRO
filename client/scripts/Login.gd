@@ -51,6 +51,12 @@ var _pending_action := "" # "login" or "register", sent once connected
 
 func _ready() -> void:
 	_build_ui()
+	# The title music, option.txt's IntroBGM, pushed at playlist level 0 as
+	# CPSTitle::OnCreate does (round 612, READ); character select and create
+	# touch nothing, so it keeps playing through them (INFERRED).
+	var svc := AudioService.instance()
+	if svc != null and svc.music != null:
+		svc.music.play_intro()
 	NetClient.connected.connect(_on_connected)
 	NetClient.connection_failed.connect(_on_connection_failed)
 	NetClient.login_result.connect(_on_login_result)

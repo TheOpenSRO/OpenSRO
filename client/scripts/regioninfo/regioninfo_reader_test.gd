@@ -174,6 +174,27 @@ func _initialize() -> void:
 
 	_check(RegioninfoNames.DEFAULT_NAMES.size() == 15, "ships a name for each of the 15 real zones (got %d)" % RegioninfoNames.DEFAULT_NAMES.size())
 
+	# The English table (Data.pk2's root regioninfo.txt, round 612): ASCII
+	# names and a third group column; the zone music is keyed by these names.
+	# Reached through the script's constant map and has_method so a reader
+	# without them FAILS here rather than failing to parse.
+	var consts := (RegioninfoReader as Script).get_script_constant_map()
+	_check(consts.get("ENGLISH_PATH", "") == "regioninfo.txt", "the reader names the English table's path (regioninfo.txt at Data.pk2's root)")
+	_check(consts.get("SHADER_PATH", "") == "Shader\\regioninfo.txt", "and still the Shader\\ copy the zone label reads")
+	var english := PackedByteArray()
+	english.append_array(_line(["#TOWN", "TestTown", "", "", ""]))
+	english.append_array(_line(["10", "20", "ALL", "", "", ""]))
+	english.append_array(_line(["#FIELD", "TestField", "testgroup", "", ""]))
+	english.append_array(_line(["10", "20", "RECT", "0", "0", "100", "1920"]))
+	english.append_array(_line(["11", "20", "ALL"]))
+	var en_table := RegioninfoReader.parse(english)
+	_check(en_table != null and en_table.has_method("zone_name_for_position"), "a table answers zone_name_for_position")
+	if en_table != null and en_table.has_method("zone_name_for_position"):
+		_check(en_table.call("zone_name_for_position", 20, 10, 50.0, 900.0) == "TestField", "a RECT claim names its zone in English")
+		_check(en_table.call("zone_name_for_position", 20, 10, 500.0, 900.0) == "TestTown", "outside it the region's ALL zone")
+		_check(en_table.call("zone_name_for_position", 20, 11, 5.0, 5.0) == "TestField", "a section with a group column still claims its regions")
+		_check(en_table.call("zone_name_for_position", 1, 1, 5.0, 5.0) == "", "an unclaimed region has no name")
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

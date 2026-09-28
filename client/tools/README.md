@@ -161,6 +161,15 @@ AUDIO: effect table 6004 rows under 5428 keys
 AUDIO options: BGM 30, Effect 50, Env 50
 ```
 
+The music and ambient (round 612) log one line per change -- `AUDIO bgm: title ->
+maintheme_cut.ogg`, `AUDIO bgm: Jangan -> Jangan_Town.ogg (start)`, `AUDIO bgm: Jangan_Field ->
+Jangan_Field.ogg (fade out Jangan_Town.ogg over 2.5 s, then start)`, `AUDIO bgm: loading (zone
+change) -- ... the loading screen is silent`, `AUDIO ambient: Jangan day: beds [...], 6 one-shots`
+-- and one `AUDIO bgm: <file> playing=true at 0.98 s of <length> s` a second after each start. A
+`--write-movie` run (every `qa_shot.sh` run) also writes the mix as `f.wav` beside the frames;
+its level per quarter second is a measurement of what played. The full list is in
+`docs/protocol/SOUND_FORMAT.md`.
+
 The box's Godot mixes through the dummy driver, so a run is measured, not heard: players report
 `playing` and advance their playback position (the `audio_*_test.gd` suites check that), and the
 log lines above say what was loaded. `probe_audio.gd` measures the code against the real archives

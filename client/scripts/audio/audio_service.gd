@@ -29,6 +29,8 @@ class_name AudioService
 const VOICES_PER_SOUND := SoundTable.VOICES_PER_SOUND
 
 var options: AudioOptions
+## The zone music and ambient (round 612): MusicDirector, child "Music".
+var music: MusicDirector
 
 var _effect_table: Dictionary = {}
 var _effect_table_loaded := false
@@ -56,6 +58,10 @@ func _ready() -> void:
 	AudioOptions.ensure_buses()
 	options = AudioOptions.load_saved()
 	options.apply_to_buses()
+	music = MusicDirector.new()
+	music.name = "Music"
+	add_child(music)
+	music.apply_mutes(options)
 
 ## Applies new option values: bus volumes and mutes, then saves them.
 func set_options(new_options: AudioOptions, persist: bool = true) -> void:
@@ -63,6 +69,8 @@ func set_options(new_options: AudioOptions, persist: bool = true) -> void:
 	options.apply_to_buses()
 	if persist:
 		options.save()
+	if music != null:
+		music.apply_mutes(options)
 	print("AUDIO options: %s" % options.describe())
 
 # --- effects ---------------------------------------------------------------

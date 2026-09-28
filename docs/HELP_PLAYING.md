@@ -119,6 +119,22 @@ itself, or on the part of the line that overlaps the bottom bar, keeps it
 open. While the line is open, the letter and number keys type into it instead
 of opening windows or casting.
 
+## Sound
+
+Sound is on. Each town and area plays its own music from your `Music.pk2`, and
+its own wind, birds and other ambience from `Data.pk2`; the login, character
+select and character create screens play the title theme. Changing area
+fades the old music out over about two and a half seconds and starts the new
+one; areas that share a track keep it playing. The loading screen is silent.
+Footsteps, combat and interface sounds are not in yet.
+
+The volumes are the original's three: **Music 30, Effects 50, Environment 50**
+out of 100 (0 is -20 dB, 100 is full). There is no options page for them yet;
+to change one, edit the `[audio]` section of `settings.cfg` (next to the log)
+-- `bgm=30`, `effect=50`, `env=50`, and `bgm_muted=true` to silence the music
+-- and restart. Without `Music.pk2` in your `pk2` folder the world is silent
+and the log says so.
+
 ## Developer and debug panels
 
 - **Ctrl+F1** — developer tools: zone travel and log out.
