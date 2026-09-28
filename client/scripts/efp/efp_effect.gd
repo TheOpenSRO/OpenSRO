@@ -35,8 +35,10 @@ class_name EfpEffect
 ##   shader below for the mapping to Godot.
 ##
 ## The Link modes (RenderLinkDPipe, RenderLinkPipe, RenderLinkObj; round 621)
-## draw one strip per emitter through its chain of live particles, rebuilt
-## every frame into an ImmediateMesh: EfpLinks has the geometry, READ from
+## draw one strip per emitter through its chain of live particles, all of a
+## node's chains stitched into one ArrayMesh triangle strip, rebuilt after a
+## step (or a camera move, for a pipe) within a per-frame budget (OURS):
+## EfpLinks has the geometry, READ from
 ## FUN_00c8de80, FUN_00c8e020, FUN_00c8c3a0 and FUN_00c8d0e0.
 ##
 ## Not drawn (OPEN; counted as `skipped` by the census): a node whose mesh or
@@ -82,7 +84,7 @@ var draw_updates := 0
 var _has_billboard := false
 var _last_cam := Basis()
 var _draws: Array = [] # of [tpl index, MultiMeshInstance3D, view mode]
-var _links: Array = [] # of [tpl index, MeshInstance3D (ImmediateMesh), render mode]
+var _links: Array = [] # of [tpl index, MeshInstance3D (ArrayMesh), render mode, EfpLinks.Out, EfpLinks.Buf, EfpLinks.Buf, kind 0 DPipe / 1 Pipe / 2 Obj]
 var _life := 0.0
 var _follow_host: Node3D = null
 var _follow_bone_name := ""
@@ -238,10 +240,11 @@ static func from_template(t: EfpSim.Template, load_texture: Callable, load_mesh:
 func draw_count() -> int:
 	return _draws.size() + _links.size()
 
-## A Link node's draw: a MeshInstance3D whose ImmediateMesh _update_links
-## refills each frame. Its texture is the node's first mesh entry's first
-## texture, as for a plate (the draw setup, FUN_00cabda0, binds +0x1d8 for
-## every render mode).
+## A Link node's draw: a MeshInstance3D whose ArrayMesh _update_links
+## rebuilds from EfpLinks' packed buffers (one Out and two Bufs per node,
+## reused every frame). Its texture is the node's first mesh entry's first
+## texture (READ, CEFCShape::FUN_00c883d0), bound for every render mode
+## (FUN_00cabda0).
 static func _add_link(fx: EfpEffect, tp: EfpSim.Tpl, mode: String, load_texture: Callable) -> void:
 	var n: EfpReader.EfpNode = tp.node
 	var tex: Texture2D = null
@@ -255,67 +258,123 @@ static func _add_link(fx: EfpEffect, tp: EfpSim.Tpl, mode: String, load_texture:
 		fx.skipped.append("texture %s" % tname)
 		return
 	var mi := MeshInstance3D.new()
-	mi.mesh = ImmediateMesh.new()
+	mi.mesh = ArrayMesh.new()
 	mi.material_override = link_material_for(tex, n.state)
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mi.custom_aabb = DRAW_AABB
 	mi.name = "link_%d" % tp.index
 	fx.add_child(mi)
-	fx._links.append([tp.index, mi, mode])
+	var kind := 2 if mode == "RenderLinkObj" else (1 if mode == "RenderLinkPipe" else 0)
+	fx._link_tpls[tp.index] = fx._links.size()
+	fx._links.append([tp.index, mi, mode, EfpLinks.Out.new(), EfpLinks.Buf.new(), EfpLinks.Buf.new(), kind])
+	if mode != "RenderLinkObj":
+		fx._has_pipe = true
 
-## The camera as the pipe ribbon needs it, in this effect's space: a
-## Callable taking a local point to normalised device coordinates, and the
-## camera's right and up axes. Without a camera (headless), an orthographic
-## view down -Z of the effect's own axes.
+## OURS: at most this many Link triangles are rebuilt per rendered frame
+## across every effect; a node past the budget keeps last frame's strips.
+const LINK_TRIS_PER_FRAME := 20000
+static var _link_budget_frame := -1
+static var _link_budget_left := 0
+var _link_tpls: Dictionary = {} # tpl index -> index into _links
+var _has_pipe := false
+var _link_cam := Transform3D()
+var _link_self := Transform3D()
+var _link_proj := Projection()
+## How many times the Link strips were rebuilt (tests).
+var link_updates := 0
+
+## Refills the per-frame Link budget now (benches and tests that rebuild
+## many times within one frame).
+static func reset_link_budget() -> void:
+	_link_budget_frame = -1
+
+## True when a screen-space strip would change without a step: the camera
+## or this effect moved, or the projection changed.
+func _link_camera_moved() -> bool:
+	var cam := get_viewport().get_camera_3d() if is_inside_tree() else null
+	if cam == null:
+		return false
+	var ct := cam.global_transform
+	var st := global_transform
+	var pr := cam.get_camera_projection()
+	if ct.is_equal_approx(_link_cam) and st.is_equal_approx(_link_self) and pr == _link_proj:
+		return false
+	return true
+
+## The pipe view in this effect's space: [clip Projection, right, up].
+## Without a camera (headless), an orthographic view down -Z of the effect's
+## own axes (OURS).
 func _link_view() -> Array:
 	var cam := get_viewport().get_camera_3d() if is_inside_tree() else null
 	if cam == null:
-		return [func(v: Vector3) -> Vector2: return Vector2(v.x, v.y), Vector3.RIGHT, Vector3.UP]
+		return [Projection.IDENTITY, Vector3.RIGHT, Vector3.UP]
 	var gt := global_transform
+	_link_cam = cam.global_transform
+	_link_self = gt
+	_link_proj = cam.get_camera_projection()
+	var vp := _link_proj * Projection(cam.get_camera_transform().affine_inverse() * gt)
 	var inv := gt.basis.inverse()
-	var vp := cam.get_camera_projection() * Projection(cam.get_camera_transform().affine_inverse())
 	var cb := cam.global_transform.basis.orthonormalized()
-	var to_ndc := func(v: Vector3) -> Vector2:
-		var w := gt * v
-		var c: Vector4 = vp * Vector4(w.x, w.y, w.z, 1.0)
-		if absf(c.w) < 1e-9:
-			return Vector2(c.x, c.y)
-		return Vector2(c.x / c.w, c.y / c.w)
-	return [to_ndc, inv * cb.x, inv * cb.y]
+	return [vp, inv * cb.x, inv * cb.y]
 
-## Every Link node's strips for this frame (see EfpLinks).
+## Every Link node's strips for this frame (see EfpLinks): one pass over
+## the particles finds each emitter's oldest live one (link == null) and
+## walks its chain; each node's chains go into one stitched strip.
 func _update_links() -> void:
 	if _links.is_empty():
 		return
-	var view := _link_view()
-	var chains := link_chains(sim)
+	link_updates += 1
+	var frame := Engine.get_process_frames()
+	if frame != _link_budget_frame:
+		_link_budget_frame = frame
+		_link_budget_left = LINK_TRIS_PER_FRAME
+	if _link_budget_left <= 0:
+		return
+	var view := _link_view() if _has_pipe else [Projection.IDENTITY, Vector3.RIGHT, Vector3.UP]
+	var vp: Projection = view[0]
+	var right: Vector3 = view[1]
+	var up: Vector3 = view[2]
 	for d in _links:
-		var mi: MeshInstance3D = d[1]
-		var im: ImmediateMesh = mi.mesh
-		im.clear_surfaces()
-		var strips: Array = []
-		for chain in chains.get(int(d[0]), []):
-			var st := link_strip(chain, String(d[2]), view[0], view[1], view[2])
-			if st.size() >= 3:
-				strips.append(st)
-		if strips.is_empty():
+		(d[3] as EfpLinks.Out).clear()
+	for p in sim.particles:
+		if p.link != null:
 			continue
-		im.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
-		for st in strips:
-			var s: EfpLinks.Strip = st
-			for i in EfpLinks.strip_triangles(s.size()):
-				im.surface_set_color(EfpSim.color_of(s.colors[i]))
-				im.surface_set_uv(s.uvs[i])
-				im.surface_add_vertex(s.verts[i])
-		im.surface_end()
+		var di: int = _link_tpls.get(p.tpl, -1)
+		if di < 0:
+			continue
+		var d: Array = _links[di]
+		var out: EfpLinks.Out = d[3]
+		var a: EfpLinks.Buf = d[4]
+		match int(d[6]):
+			2:
+				EfpLinks.gather_from(p, true, a)
+				EfpLinks.obj_ribbon(a, out)
+			1:
+				EfpLinks.gather_from(p, false, a)
+				var b: EfpLinks.Buf = d[5]
+				EfpLinks.spline(a, b)
+				EfpLinks.pipe_ribbon(b, vp, right, up, out)
+			_:
+				EfpLinks.gather_from(p, false, a)
+				EfpLinks.pipe_ribbon(a, vp, right, up, out)
+	for d in _links:
+		if _link_budget_left <= 0:
+			return
+		var out: EfpLinks.Out = d[3]
+		var am: ArrayMesh = (d[1] as MeshInstance3D).mesh
+		am.clear_surfaces()
+		if out.nv >= 3:
+			am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLE_STRIP, out.arrays())
+		_link_budget_left -= out.triangles()
 
-## The live particles of every emitter, oldest first, by node: each emitter's
-## list from its head (link == null) along next_link (READ order, see
-## EfpLinks). tpl index -> Array of Array[EfpSim.Particle].
-static func link_chains(s: EfpSim) -> Dictionary:
+## Each Link node's live particles, one list per emitter, oldest first:
+## the chains _update_links draws (each emitter's list from its head,
+## link == null, along next_link; READ, see EfpLinks). `only` limits it to
+## those tpl indices. tpl index -> Array of Array[EfpSim.Particle].
+static func link_chains(s: EfpSim, only: Dictionary = {}) -> Dictionary:
 	var out := {}
 	for p in s.particles:
-		if p.link != null:
+		if p.link != null or (not only.is_empty() and not only.has(p.tpl)):
 			continue
 		var chain: Array = []
 		var q: EfpSim.Particle = p
@@ -326,23 +385,6 @@ static func link_chains(s: EfpSim) -> Dictionary:
 			out[p.tpl] = []
 		(out[p.tpl] as Array).append(chain)
 	return out
-
-## One chain's strip in the given Link mode. `to_ndc`, `right`, `up`: see
-## _link_view.
-static func link_strip(chain: Array, mode: String, to_ndc: Callable, right: Vector3, up: Vector3) -> EfpLinks.Strip:
-	var pts: Array = []
-	var ys: Array = []
-	for q in chain:
-		var p: EfpSim.Particle = q
-		pts.append(EfpLinks.Pt.new(p.pos, p.color, p.scale.x))
-		ys.append(p.rot.y)
-	if mode == "RenderLinkObj":
-		return EfpLinks.obj_ribbon(pts, ys)
-	var line: Array = EfpLinks.pipe_points(pts) if mode == "RenderLinkPipe" else EfpLinks.dpipe_points(pts)
-	var ndc := PackedVector2Array()
-	for q in line:
-		ndc.append(to_ndc.call((q as EfpLinks.Pt).pos))
-	return EfpLinks.pipe_ribbon(line, ndc, right, up)
 
 ## Ends the effect now: every particle goes, and the node frees itself
 ## (READ: the interface's release, see the header).
@@ -416,7 +458,9 @@ func _process(delta: float) -> void:
 	# billboarded node, when the camera turned (else it would lag the view).
 	if stepped > 0 or (_has_billboard and _camera_turned()):
 		_update_draws()
-	if stepped > 0:
+	# The Link strips likewise: after a step, or when the camera or the
+	# effect moved for a screen-space pipe (round 621's review follow-up).
+	if not _links.is_empty() and (stepped > 0 or (_has_pipe and _link_camera_moved())):
 		_update_links()
 
 func _exit_tree() -> void:
@@ -548,26 +592,21 @@ static func material_for(tex: Texture2D, st: EfpReader.EfpRenderState, billboard
 	_materials[key] = m
 	return m
 
-## A Link strip's material: the node's blend and texture ops as for a plate,
-## with the strip's own UVs (the Link routines write u, v directly and do not
-## apply the UV rectangle, READ) and both faces drawn (OURS, see EfpLinks).
+## A Link strip's material: the node's blend, texture ops and cull as for a
+## plate (the node's cull, render block +0x1a4, applies to its strips; see
+## EfpLinks for the winding), with the strip's own UVs.
 static func link_material_for(tex: Texture2D, st: EfpReader.EfpRenderState) -> ShaderMaterial:
 	var src := st.src_blend if st != null else 5
 	var dest := st.dest_blend if st != null else 2
 	var cls := blend_class(src, dest)
-	var key := "link|%d|%s|%d,%d,%d,%d,%d,%d" % [tex.get_instance_id() if tex != null else 0, cls,
+	var no_cull := cull_disabled(st.cull if st != null else 1)
+	var key := "link|%d|%s|%s|%d,%d,%d,%d,%d,%d" % [tex.get_instance_id() if tex != null else 0, cls, str(no_cull),
 		st.color_op if st else 4, st.color_arg1 if st else 2, st.color_arg2 if st else 0,
 		st.alpha_op if st else 4, st.alpha_arg1 if st else 2, st.alpha_arg2 if st else 0]
 	if _materials.has(key):
 		return _materials[key]
-	var skey := "link|" + cls
-	if not _shaders.has(skey):
-		var base := _shader(cls, true)
-		var sh := Shader.new()
-		sh.code = base.code.replace("UV = INSTANCE_CUSTOM.xy + UV * INSTANCE_CUSTOM.zw;", "")
-		_shaders[skey] = sh
 	var m := ShaderMaterial.new()
-	m.shader = _shaders[skey]
+	m.shader = _shader(cls, no_cull, true)
 	m.set_shader_parameter("tex", tex)
 	m.set_shader_parameter("c_op", st.color_op if st else 4)
 	m.set_shader_parameter("c_a1", st.color_arg1 if st else 2)
@@ -578,8 +617,12 @@ static func link_material_for(tex: Texture2D, st: EfpReader.EfpRenderState) -> S
 	_materials[key] = m
 	return m
 
-static func _shader(cls: String, no_cull: bool) -> Shader:
-	var key := "%s|%s" % [cls, str(no_cull)]
+## The instance UV rectangle a plate or mesh applies (the draw routines' u0 +
+## u*du, READ); a Link strip writes its own u, v and applies none (READ).
+const UVMAP_INSTANCE := "UV = INSTANCE_CUSTOM.xy + UV * INSTANCE_CUSTOM.zw;"
+
+static func _shader(cls: String, no_cull: bool, link: bool = false) -> Shader:
+	var key := "%s|%s|%s" % [cls, str(no_cull), "link" if link else "inst"]
 	if _shaders.has(key):
 		return _shaders[key]
 	var blend := "blend_mix"
@@ -590,7 +633,8 @@ static func _shader(cls: String, no_cull: bool) -> Shader:
 	sh.code = SHADER_TEMPLATE.replace("{BLEND}", blend) \
 		.replace("{CULL}", "cull_disabled" if no_cull else "cull_back") \
 		.replace("{FORCE_ALPHA_ONE}", "true" if cls == "add_one" else "false") \
-		.replace("{DARKEN}", "true" if cls == "darken" else "false")
+		.replace("{DARKEN}", "true" if cls == "darken" else "false") \
+		.replace("{UVMAP}", "" if link else UVMAP_INSTANCE)
 	_shaders[key] = sh
 	return sh
 
@@ -622,7 +666,7 @@ vec4 op(int o, vec4 a, vec4 b) {
 }
 
 void vertex() {
-	UV = INSTANCE_CUSTOM.xy + UV * INSTANCE_CUSTOM.zw;
+	{UVMAP}
 }
 
 void fragment() {

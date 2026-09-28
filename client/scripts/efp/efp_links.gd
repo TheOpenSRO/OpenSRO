@@ -3,9 +3,11 @@ class_name EfpLinks
 
 ## The three "Link" render modes of a .efp node (round 621): RenderLinkDPipe,
 ## RenderLinkPipe and RenderLinkObj. Each draws ONE triangle strip through a
-## chain of particles. Pure geometry -- no nodes -- so the headless tests
-## drive it with synthetic chains. EfpEffect feeds it and draws the result.
-## docs/protocol/EFP_FORMAT.md "Link render modes" has the addresses.
+## chain of particles. Pure geometry over packed buffers -- no nodes, no
+## per-point objects -- so the headless tests drive it with synthetic chains
+## and a frame's strips cost no allocations beyond the buffers' growth.
+## EfpEffect feeds it and draws the result. docs/protocol/EFP_FORMAT.md
+## "Link render modes" has the addresses.
 ##
 ## == The chain (READ) ==
 ## Every emitter keeps its particles in an intrusive list: the emitter
@@ -18,11 +20,23 @@ class_name EfpLinks
 ## so only the oldest live particle draws, and it walks the list through
 ## +0x38 to the newest: one strip per emitter, oldest first.
 ##
-## == Points (READ, all three routines) ==
+## == Points and the dedupe (READ) ==
 ## A point is (position +0x1b0, colour +0x228, width = scale.x +0x1c8). A
-## particle is taken only if it is the first, or if its position differs
-## from the last TAKEN one by more than 1e-6 (the float at 0x00e1b848) on
-## some axis; a particle within that of the last taken one replaces it.
+## particle closer than 1e-6 (the float at 0x00e1b848) on every axis to the
+## last TAKEN position is a near-duplicate:
+## - LinkDPipe and LinkPipe (0x00c8df3f-0x00c8dfdd, and the same loop in
+##   FUN_00c8e020) write each particle into the next free slot and advance
+##   only when it is taken, so a near-duplicate is DROPPED and the older
+##   point kept.
+## - LinkObj (0x00c8c433-0x00c8c4c7) advances first and writes after, so a
+##   near-duplicate OVERWRITES the last taken pair; the comparison stays
+##   against the position that was taken (local_48 is updated only when a
+##   particle is taken), not the one that overwrote it.
+## - LinkPipe's first particle is compared against local_58 before anything
+##   was stored in it (its counter starts at 1, so the "first point" test
+##   never fires): retail reads uninitialised stack there. This client takes
+##   the first particle always (OURS; a match within 1e-6 of stack garbage
+##   is not reproducible).
 ##
 ## == LinkDPipe (READ, EFEffect::FUN_00c8de80) ==
 ## The points as they are, into the pipe ribbon below. Needs 2 points.
@@ -46,77 +60,56 @@ class_name EfpLinks
 ## screen direction is d = C(i-1) - C(i+1) (C0 - C1 at the first point,
 ## C(N-2) - C(N-1) at the last); (d.y, -d.x, 0) is turned by the matrix at
 ## 0x00edbde8 (FUN_00854e30, a row-vector transform) and normalised
-## (FUN_00410cd0): a world direction across the screen-space line, INFERRED
-## from that matrix being the camera-facing billboard (round 620). The two
+## (FUN_00410cd0). 0x00edbde8 is the billboard matrix, whose rows are the
+## inverse view's right, up and look (READ, round 620's review follow-up:
+## CEFSystem::FUN_00cb0ee0), so the side is right*d.y - up*d.x. The two
 ## vertices are P + n*w (v = 0) and P - n*w (v = 1), both with the point's
 ## colour; u is 0 at the first point, i/(N-1) between, 1 at the last. The
-## strip is drawn as D3DPT_TRIANGLESTRIP (5, pushed at 0x00c8d0c1) and
-## flushed at once (FUN_00cafa70), so strips never join.
+## strip is D3DPT_TRIANGLESTRIP (5, pushed at 0x00c8d0c1), flushed at once
+## (FUN_00cafa70), so strips never join.
 ##
 ## == LinkObj (READ, EFEffect::FUN_00c8c3a0) ==
 ## Each taken particle gives two edge points, pos + s*Y and pos - s*Y, where
 ## Y is the second row of its rotation (+0xc0, +0xc4, +0xc8) and s its
-## scale.x; the dedupe is on the position. The pairs are A1..Ak, with
-## A0 = A1 and A(k+1) = Ak (the copies at 0x00c8c6e5..0x00c8c735). Segments
-## j = 0..k-3 -- k-2 of them, so the last pair is only a control point --
-## are sampled at t = 0, 1/3, 2/3 (the loop runs while t < 1.0) with the same
-## B-spline, each edge on its own; the colour is A(j+1)'s to A(j+2)'s, lerped
-## by byte. A(k-1) closes the strip. u runs from 1.0 at the first pair down by
-## 2.0 (the double at 0x00e1b898) over the sample-vertex count, so it is 0 at
-## the closing pair; v is 0 on the + edge and 1 on the - edge. Needs k >= 3
-## to make a triangle (k = 2 gives a 2-vertex strip).
+## scale.x. The pairs are A1..Ak, with A0 = A1 and A(k+1) = Ak (the copies at
+## 0x00c8c6e5..0x00c8c735). Segments j = 0..k-3 -- k-2 of them, so the last
+## pair is only a control point -- are sampled at t = 0, 1/3, 2/3 (the loop
+## runs while t < 1.0) with the same B-spline, each edge on its own; the
+## colour is A(j+1)'s to A(j+2)'s, lerped by byte. A(k-1) closes the strip.
+## u runs from 1.0 at the first pair down by 2.0 (the double at 0x00e1b898)
+## over the sample-vertex count, so it is 0 at the closing pair; v is 0 on the
+## + edge and 1 on the - edge. Needs k >= 3 to make a triangle.
 ##
-## == Drawing (OURS) ==
-## A strip becomes a triangle list, winding alternated as a strip's is. Both
-## faces are drawn: the game's handedness is mirrored on the way into Godot,
-## and which face of a generated ribbon D3D would cull was not checked.
+## == Drawing ==
+## Every triangle of a chain's strip is drawn with its orientation REVERSED
+## against D3D's -- the convention BmsReader uses for .bms triangles so that
+## Godot's front face is D3D's (INFERRED from that fix, as for the plate and
+## mesh nodes). The node's cull (render block +0x1a4: 1 none, 3 ccw) then
+## applies as for any node. All of a node's chains go into one strip (Out).
 
 const EPS := 1e-6 ## READ: the float at 0x00e1b848
 const T_STEP := 0.3333333432674408 ## READ: the double at 0x00e0ec60
 const SAMPLES := 3 ## READ: the pipe's literal loop count
 
-## A point of a chain: position, D3DCOLOR and width.
-class Pt:
-	var pos: Vector3
-	var color: int
-	var width: float
-	func _init(p: Vector3 = Vector3.ZERO, c: int = 0xFFFFFFFF, w: float = 1.0) -> void:
-		pos = p
-		color = c
-		width = w
+## The B-spline weights at the three sample times (t = 0, T_STEP, 2*T_STEP),
+## four each, precomputed once.
+static var _w: PackedFloat64Array = _weights()
 
-## A strip ready to draw: two vertices per step, in strip order.
-class Strip:
-	var verts := PackedVector3Array()
-	var colors := PackedInt64Array()
-	var uvs := PackedVector2Array()
-	func size() -> int:
-		return verts.size()
-
-## The dedupe every Link routine applies: a point is taken when it is the
-## first or differs from the last taken one by more than EPS on an axis;
-## otherwise it replaces the last taken one (READ).
-static func take(pts: Array) -> Array:
-	var out: Array = []
-	for p in pts:
-		if out.is_empty():
-			out.append(p)
-			continue
-		var last: Pt = out[out.size() - 1]
-		var d: Vector3 = (p as Pt).pos - last.pos
-		if absf(d.x) > EPS or absf(d.y) > EPS or absf(d.z) > EPS:
-			out.append(p)
-		else:
-			out[out.size() - 1] = p
+static func _weights() -> PackedFloat64Array:
+	var out := PackedFloat64Array()
+	var t := 0.0
+	for _k in range(SAMPLES):
+		out.append_array(bspline(t))
+		t += T_STEP
 	return out
 
 ## The uniform cubic B-spline weights at t (READ constants, see the header).
-static func bspline(t: float) -> Array:
+static func bspline(t: float) -> PackedFloat64Array:
 	var t2 := t * t
 	var t3 := t2 * t
 	var u := 1.0 - t
-	return [u * u * u / 6.0, (3.0 * t3 - 6.0 * t2 + 4.0) / 6.0,
-		(-3.0 * t3 + 3.0 * t2 + 3.0 * t + 1.0) / 6.0, t3 / 6.0]
+	return PackedFloat64Array([u * u * u / 6.0, (3.0 * t3 - 6.0 * t2 + 4.0) / 6.0,
+		(-3.0 * t3 + 3.0 * t2 + 3.0 * t + 1.0) / 6.0, t3 / 6.0])
 
 ## Round half to even, as fistp does under the default FPU control word.
 static func fround(x: float) -> int:
@@ -130,141 +123,413 @@ static func fround(x: float) -> int:
 
 ## A D3DCOLOR lerped byte by byte and rounded (READ, both spline routines).
 static func lerp_color(a: int, b: int, t: float) -> int:
+	if a == b:
+		return a
+	var s := 1.0 - t
 	var out := 0
-	for sh in [0, 8, 16, 24]:
+	var sh := 0
+	while sh < 32:
 		var ca: int = (a >> sh) & 0xFF
 		var cb: int = (b >> sh) & 0xFF
-		out |= (clampi(fround((1.0 - t) * ca + t * cb), 0, 255) & 0xFF) << sh
+		out |= (clampi(fround(s * ca + t * cb), 0, 255) & 0xFF) << sh
+		sh += 8
 	return out
 
-## LinkDPipe's points: the taken points, as they are.
-static func dpipe_points(pts: Array) -> Array:
-	return take(pts)
+## A chain's points: packed and reused. `y` is only filled for LinkObj.
+class Buf:
+	var pos := PackedVector3Array()
+	var col := PackedInt64Array()
+	var w := PackedFloat32Array()
+	var y := PackedVector3Array()
+	var n := 0
 
-## LinkPipe's points: the B-spline through the taken points (see the header).
-static func pipe_points(pts: Array) -> Array:
-	var p := take(pts)
-	var m := p.size()
-	if m < 2:
-		return []
-	var c: Array = [p[0]]
-	c.append_array(p)
-	c.append(p[m - 1])
-	var out: Array = []
-	for i in range(m - 1):
-		var a: Pt = c[i + 1]
-		var b: Pt = c[i + 2]
-		var dw := (b.width - a.width) / 3.0
-		var t := 0.0
-		for k in range(SAMPLES):
-			var w := bspline(t)
-			var pos: Vector3 = (c[i] as Pt).pos * w[0] + a.pos * w[1] + b.pos * w[2] + (c[i + 3] as Pt).pos * w[3]
-			out.append(Pt.new(pos, lerp_color(a.color, b.color, t), a.width + dw * k))
-			t += T_STEP
-	out.append(p[m - 1])
-	return out
+	func reserve(k: int) -> void:
+		if pos.size() < k:
+			var c := maxi(k, pos.size() * 2)
+			pos.resize(c)
+			col.resize(c)
+			w.resize(c)
+			y.resize(c)
 
-## The pipe ribbon through N points (see the header). `ndc` holds each point
-## projected to normalised device coordinates; `right` and `up` are the
-## camera's axes in the points' space. Empty below 2 points.
-static func pipe_ribbon(pts: Array, ndc: PackedVector2Array, right: Vector3, up: Vector3) -> Strip:
-	var s := Strip.new()
-	var n := pts.size()
-	if n < 2 or ndc.size() < n:
-		return s
-	for i in range(n):
-		var d: Vector2
-		if i == 0:
-			d = ndc[0] - ndc[1]
-		elif i == n - 1:
-			d = ndc[n - 2] - ndc[n - 1]
-		else:
-			d = ndc[i - 1] - ndc[i + 1]
-		var side := right * d.y + up * (-d.x)
-		if side.length_squared() > 0.0:
-			side = side.normalized()
-		else:
-			side = Vector3.ZERO # FUN_00410cd0 leaves a zero vector at zero
-		var p: Pt = pts[i]
-		var u := 0.0 if i == 0 else (1.0 if i == n - 1 else float(i) / float(n - 1))
-		s.verts.append(p.pos + side * p.width)
-		s.verts.append(p.pos - side * p.width)
-		s.colors.append(p.color)
-		s.colors.append(p.color)
-		s.uvs.append(Vector2(u, 0.0))
-		s.uvs.append(Vector2(u, 1.0))
-	return s
+	## Appends a point (the tests' way in).
+	func add(p: Vector3, c: int = 0xFFFFFFFF, width: float = 1.0, yaxis: Vector3 = Vector3.UP) -> void:
+		reserve(n + 1)
+		pos[n] = p
+		col[n] = c
+		w[n] = width
+		y[n] = yaxis
+		n += 1
 
-## LinkObj's strip from a chain of (position, colour, scale.x, rotation Y
-## axis) given as Pt plus a parallel array of Y axes.
-static func obj_ribbon(pts: Array, yaxes: Array) -> Strip:
-	var s := Strip.new()
-	# Dedupe on the position, keeping each taken particle's own axis.
-	var tp: Array = []
-	var ty: Array = []
-	for i in range(pts.size()):
-		var p: Pt = pts[i]
-		if not tp.is_empty():
-			var d: Vector3 = p.pos - (tp[tp.size() - 1] as Pt).pos
-			if not (absf(d.x) > EPS or absf(d.y) > EPS or absf(d.z) > EPS):
-				tp[tp.size() - 1] = p
-				ty[ty.size() - 1] = yaxes[i]
+## The vertices one node draws this frame, as ONE triangle strip: packed and
+## reused. Each chain's strip is stitched to the previous one with repeated
+## vertices, so every triangle between strips is degenerate (zero area,
+## never drawn) and a node is one draw of PRIMITIVE_TRIANGLE_STRIP with no
+## index buffer. Each chain's first vertex is placed at an ODD position of
+## the joined strip, so its triangles take the strip's reversed orientation
+## -- the reversal described in the header (OURS: the stitching).
+class Out:
+	var verts := PackedVector3Array()
+	var colors := PackedColorArray()
+	var uvs := PackedVector2Array()
+	var nv := 0
+	var _pre := 0
+	var _prefix := 0
+	var _stitch := false
+
+	func clear() -> void:
+		nv = 0
+
+	func reserve(v: int) -> void:
+		if verts.size() < nv + v:
+			var c := maxi(nv + v, verts.size() * 2)
+			verts.resize(c)
+			colors.resize(c)
+			uvs.resize(c)
+
+	## Upper bound of the triangles drawn (degenerate ones included).
+	func triangles() -> int:
+		return maxi(nv - 2, 0)
+
+	## Opens a chain's strip of `count` vertices: leaves room for the
+	## stitching vertices, filled by end_strip.
+	func begin_strip(count: int) -> void:
+		_stitch = nv > 0
+		_prefix = (1 if _stitch else 0) + 1
+		if (nv + _prefix) % 2 == 0:
+			_prefix += 1
+		reserve(_prefix + count)
+		_pre = nv
+		nv += _prefix
+
+	## Fills the stitching vertices: the previous strip's last vertex once,
+	## then this strip's first vertex until the strip starts.
+	func end_strip() -> void:
+		var at := _pre
+		if _stitch:
+			verts[at] = verts[at - 1]
+			colors[at] = colors[at - 1]
+			uvs[at] = uvs[at - 1]
+			at += 1
+		var first := _pre + _prefix
+		while at < first:
+			verts[at] = verts[first]
+			colors[at] = colors[first]
+			uvs[at] = uvs[first]
+			at += 1
+
+	## Two vertices of a strip step.
+	func pair(a: Vector3, b: Vector3, c: int, u: float) -> void:
+		var col := Color(((c >> 16) & 0xFF) / 255.0, ((c >> 8) & 0xFF) / 255.0, (c & 0xFF) / 255.0,
+			((c >> 24) & 0xFF) / 255.0)
+		verts[nv] = a
+		verts[nv + 1] = b
+		colors[nv] = col
+		colors[nv + 1] = col
+		uvs[nv] = Vector2(u, 0.0)
+		uvs[nv + 1] = Vector2(u, 1.0)
+		nv += 2
+
+	## The drawn triangles as index triples in their rendered orientation
+	## (strip triangle t is (t, t+1, t+2) for even t, (t+1, t, t+2) for odd
+	## t), degenerate ones left out (tests).
+	func expand() -> Array:
+		var out: Array = []
+		for t in range(nv - 2):
+			var a := t
+			var b := t + 1
+			if t % 2 == 1:
+				a = t + 1
+				b = t
+			var c := t + 2
+			if verts[a] == verts[b] or verts[b] == verts[c] or verts[a] == verts[c]:
 				continue
-		tp.append(p)
-		ty.append(yaxes[i])
-	var k := tp.size()
-	if k < 2:
-		return s
-	# Pairs A0..A(k+1): A0 = A1, A(k+1) = Ak.
-	var ea: Array = [] # + edge
-	var eb: Array = [] # - edge
-	var col: Array = []
-	for i in range(k):
-		var p: Pt = tp[i]
-		var off: Vector3 = (ty[i] as Vector3) * p.width
-		ea.append(p.pos + off)
-		eb.append(p.pos - off)
-		col.append(p.color)
-	ea.push_front(ea[0])
-	eb.push_front(eb[0])
-	col.push_front(col[0])
-	ea.append(ea[ea.size() - 1])
-	eb.append(eb[eb.size() - 1])
-	col.append(col[col.size() - 1])
-	var sa := PackedVector3Array()
-	var sb := PackedVector3Array()
-	var sc := PackedInt64Array()
-	for j in range(k - 2):
-		var t := 0.0
-		while t < 1.0:
-			var w := bspline(t)
-			sa.append((ea[j] as Vector3) * w[0] + (ea[j + 1] as Vector3) * w[1] + (ea[j + 2] as Vector3) * w[2] + (ea[j + 3] as Vector3) * w[3])
-			sb.append((eb[j] as Vector3) * w[0] + (eb[j + 1] as Vector3) * w[1] + (eb[j + 2] as Vector3) * w[2] + (eb[j + 3] as Vector3) * w[3])
-			sc.append(lerp_color(int(col[j + 1]), int(col[j + 2]), t))
-			t += T_STEP
-	var sample_verts := sa.size() * 2
-	sa.append(ea[k - 1])
-	sb.append(eb[k - 1])
-	sc.append(int(col[k - 1]))
-	var u := 1.0
-	var du := 2.0 / float(sample_verts) if sample_verts > 0 else 0.0
-	for i in range(sa.size()):
-		s.verts.append(sa[i])
-		s.verts.append(sb[i])
-		s.colors.append(sc[i])
-		s.colors.append(sc[i])
-		s.uvs.append(Vector2(u, 0.0))
-		s.uvs.append(Vector2(u, 1.0))
-		u -= du
-	return s
+			out.append([a, b, c])
+		return out
 
-## The triangles a strip of `n` vertices draws, as index triples in a list
-## (strip winding: even triangles i, i+1, i+2; odd ones i+1, i, i+2).
-static func strip_triangles(n: int) -> PackedInt32Array:
-	var out := PackedInt32Array()
-	for i in range(maxi(n - 2, 0)):
-		if i % 2 == 0:
-			out.append_array([i, i + 1, i + 2])
+	## The finished arrays for a strip surface (sliced to the used length).
+	func arrays() -> Array:
+		var a := []
+		a.resize(Mesh.ARRAY_MAX)
+		a[Mesh.ARRAY_VERTEX] = verts.slice(0, nv)
+		a[Mesh.ARRAY_COLOR] = colors.slice(0, nv)
+		a[Mesh.ARRAY_TEX_UV] = uvs.slice(0, nv)
+		return a
+
+## A chain's particles from its head along next_link into `b`, with the
+## mode's dedupe (see the header). `head` is the emitter's oldest live
+## particle (link == null).
+static func gather_from(head: EfpSim.Particle, obj: bool, b: Buf) -> void:
+	b.n = 0
+	var pos := b.pos
+	var col := b.col
+	var w := b.w
+	var y := b.y
+	b.pos = PackedVector3Array()
+	b.col = PackedInt64Array()
+	b.w = PackedFloat32Array()
+	b.y = PackedVector3Array()
+	var n := 0
+	var cap := pos.size()
+	var last := Vector3.ZERO
+	var p := head
+	while p != null:
+		var at := p.pos
+		if n > 0:
+			var d := at - last
+			if absf(d.x) <= EPS and absf(d.y) <= EPS and absf(d.z) <= EPS:
+				if obj:
+					pos[n - 1] = at
+					col[n - 1] = p.color
+					w[n - 1] = p.scale.x
+					y[n - 1] = p.rot.y
+				p = p.next_link
+				continue
+		if n >= cap:
+			cap = maxi(16, cap * 2)
+			pos.resize(cap)
+			col.resize(cap)
+			w.resize(cap)
+			y.resize(cap)
+		pos[n] = at
+		col[n] = p.color
+		w[n] = p.scale.x
+		if obj:
+			y[n] = p.rot.y
+		n += 1
+		last = at
+		p = p.next_link
+	b.pos = pos
+	b.col = col
+	b.w = w
+	b.y = y
+	b.n = n
+
+## The same dedupe over points already in `src` (the tests' way in).
+static func dedupe(src: Buf, obj: bool, dst: Buf) -> void:
+	dst.n = 0
+	dst.reserve(src.n)
+	var last := Vector3.ZERO
+	for i in range(src.n):
+		if dst.n > 0:
+			var d := src.pos[i] - last
+			if absf(d.x) <= EPS and absf(d.y) <= EPS and absf(d.z) <= EPS:
+				if obj:
+					var k := dst.n - 1
+					dst.pos[k] = src.pos[i]
+					dst.col[k] = src.col[i]
+					dst.w[k] = src.w[i]
+					dst.y[k] = src.y[i]
+				continue
+		dst.pos[dst.n] = src.pos[i]
+		dst.col[dst.n] = src.col[i]
+		dst.w[dst.n] = src.w[i]
+		dst.y[dst.n] = src.y[i]
+		dst.n += 1
+		last = src.pos[i]
+
+## One byte of a lerped colour: (1-t)*a + t*b rounded half to even (fistp),
+## the inline form of lerp_color used by the builders below.
+static func _lerp_byte(a: int, b: int, s: float, t: float) -> int:
+	var x := s * a + t * b
+	var r := int(x + 0.5)
+	if r & 1 and float(r) - x == 0.5:
+		r -= 1
+	return r
+
+## LinkPipe's B-spline through the points in `src`, into `dst`. Empty below
+## 2 points.
+static func spline(src: Buf, dst: Buf) -> void:
+	var m := src.n
+	dst.n = 0
+	if m < 2:
+		return
+	dst.reserve(3 * (m - 1) + 1)
+	# Take the buffers out of `dst` while writing, so no copy-on-write.
+	var op := dst.pos
+	var oc := dst.col
+	var ow := dst.w
+	dst.pos = PackedVector3Array()
+	dst.col = PackedInt64Array()
+	dst.w = PackedFloat32Array()
+	var sp := src.pos
+	var sc := src.col
+	var sw := src.w
+	var w := _w
+	var w00 := w[0]; var w01 := w[1]; var w02 := w[2]; var w03 := w[3]
+	var w10 := w[4]; var w11 := w[5]; var w12 := w[6]; var w13 := w[7]
+	var w20 := w[8]; var w21 := w[9]; var w22 := w[10]; var w23 := w[11]
+	var t1 := T_STEP
+	var t2 := T_STEP + T_STEP
+	var n := 0
+	for i in range(m - 1):
+		# Control points P(i)..P(i+3) of the padded list P0 = P1, P(m+1) = Pm.
+		var p0: Vector3 = sp[i - 1 if i > 0 else 0]
+		var p1: Vector3 = sp[i]
+		var p2: Vector3 = sp[i + 1]
+		var p3: Vector3 = sp[i + 2 if i + 2 < m else m - 1]
+		op[n] = p0 * w00 + p1 * w01 + p2 * w02 + p3 * w03
+		op[n + 1] = p0 * w10 + p1 * w11 + p2 * w12 + p3 * w13
+		op[n + 2] = p0 * w20 + p1 * w21 + p2 * w22 + p3 * w23
+		var ca: int = sc[i]
+		var cb: int = sc[i + 1]
+		oc[n] = ca
+		if ca == cb:
+			oc[n + 1] = ca
+			oc[n + 2] = ca
 		else:
-			out.append_array([i + 1, i, i + 2])
-	return out
+			oc[n + 1] = _lerp4(ca, cb, t1)
+			oc[n + 2] = _lerp4(ca, cb, t2)
+		var wa: float = sw[i]
+		var dw: float = (sw[i + 1] - wa) / 3.0
+		ow[n] = wa
+		ow[n + 1] = wa + dw
+		ow[n + 2] = wa + dw * 2.0
+		n += 3
+	op[n] = sp[m - 1]
+	oc[n] = sc[m - 1]
+	ow[n] = sw[m - 1]
+	n += 1
+	dst.pos = op
+	dst.col = oc
+	dst.w = ow
+	dst.n = n
+
+## lerp_color unrolled (the same READ rounding, no inner loop).
+static func _lerp4(a: int, b: int, t: float) -> int:
+	var s := 1.0 - t
+	var out := 0
+	var x := s * (a & 0xFF) + t * (b & 0xFF)
+	var r := int(x + 0.5)
+	if r & 1 and float(r) - x == 0.5:
+		r -= 1
+	out = r
+	x = s * ((a >> 8) & 0xFF) + t * ((b >> 8) & 0xFF)
+	r = int(x + 0.5)
+	if r & 1 and float(r) - x == 0.5:
+		r -= 1
+	out |= r << 8
+	x = s * ((a >> 16) & 0xFF) + t * ((b >> 16) & 0xFF)
+	r = int(x + 0.5)
+	if r & 1 and float(r) - x == 0.5:
+		r -= 1
+	out |= r << 16
+	x = s * ((a >> 24) & 0xFF) + t * ((b >> 24) & 0xFF)
+	r = int(x + 0.5)
+	if r & 1 and float(r) - x == 0.5:
+		r -= 1
+	return out | (r << 24)
+
+## A D3DCOLOR as a Godot colour (EfpReader.d3dcolor, inline).
+static func _color(c: int) -> Color:
+	return Color(((c >> 16) & 0xFF) / 255.0, ((c >> 8) & 0xFF) / 255.0, (c & 0xFF) / 255.0,
+		((c >> 24) & 0xFF) / 255.0)
+
+## The pipe ribbon through the points in `b`, appended to `out`. `vp` maps a
+## point to clip space (the camera's projection * view * the effect's
+## transform); an identity Projection gives the headless orthographic view.
+## `right` and `up` are the camera's axes in the points' space.
+static func pipe_ribbon(b: Buf, vp: Projection, right: Vector3, up: Vector3, out: Out) -> void:
+	var n := b.n
+	if n < 2:
+		return
+	out.begin_strip(2 * n)
+	var bp := b.pos
+	var bc := b.col
+	var bw := b.w
+	# Clip-space rows 0, 1 and 3 of vp: x, y and w of a point.
+	var cxx := vp.x.x; var cxy := vp.y.x; var cxz := vp.z.x; var cxw := vp.w.x
+	var cyx := vp.x.y; var cyy := vp.y.y; var cyz := vp.z.y; var cyw := vp.w.y
+	var cwx := vp.x.w; var cwy := vp.y.w; var cwz := vp.z.w; var cww := vp.w.w
+	var ndc := _ndc
+	_ndc = PackedVector2Array()
+	if ndc.size() < n:
+		ndc.resize(maxi(n, ndc.size() * 2))
+	for i in range(n):
+		var p := bp[i]
+		var hx := cxx * p.x + cxy * p.y + cxz * p.z + cxw
+		var hy := cyx * p.x + cyy * p.y + cyz * p.z + cyw
+		var hw := cwx * p.x + cwy * p.y + cwz * p.z + cww
+		if absf(hw) > 1e-12:
+			ndc[i] = Vector2(hx / hw, hy / hw)
+		else:
+			ndc[i] = Vector2(hx, hy)
+	var verts := out.verts
+	var cols := out.colors
+	var uvs := out.uvs
+	out.verts = PackedVector3Array()
+	out.colors = PackedColorArray()
+	out.uvs = PackedVector2Array()
+	var v := out.nv
+	var inv := 1.0 / float(n - 1)
+	var last_c := -1
+	var col := Color()
+	var last := n - 1
+	for i in range(n):
+		var d: Vector2 = ndc[i - 1 if i > 0 else 0] - ndc[i + 1 if i < last else last]
+		var side := right * d.y - up * d.x
+		var l2 := side.length_squared()
+		if l2 > 0.0:
+			side *= bw[i] / sqrt(l2)
+		var p := bp[i]
+		var c: int = bc[i]
+		if c != last_c:
+			last_c = c
+			col = Color(((c >> 16) & 0xFF) / 255.0, ((c >> 8) & 0xFF) / 255.0, (c & 0xFF) / 255.0,
+				((c >> 24) & 0xFF) / 255.0)
+		var u := 0.0 if i == 0 else (1.0 if i == last else float(i) * inv)
+		verts[v] = p + side
+		verts[v + 1] = p - side
+		cols[v] = col
+		cols[v + 1] = col
+		uvs[v] = Vector2(u, 0.0)
+		uvs[v + 1] = Vector2(u, 1.0)
+		v += 2
+	_ndc = ndc
+	out.verts = verts
+	out.colors = cols
+	out.uvs = uvs
+	out.nv = v
+	out.end_strip()
+
+## The projected points' scratch (reused, see pipe_ribbon).
+static var _ndc := PackedVector2Array()
+
+## LinkObj's strip from the taken particles in `b` (with their Y axes),
+## appended to `out`.
+static func obj_ribbon(b: Buf, out: Out) -> void:
+	var k := b.n
+	if k < 2:
+		return
+	var samples := 3 * (k - 2)
+	out.begin_strip(2 * (samples + 1))
+	var w := _w
+	var ea := PackedVector3Array()
+	var eb := PackedVector3Array()
+	ea.resize(k)
+	eb.resize(k)
+	for i in range(k):
+		var off := b.y[i] * b.w[i]
+		ea[i] = b.pos[i] + off
+		eb[i] = b.pos[i] - off
+	var u := 1.0
+	var du := 2.0 / float(samples * 2) if samples > 0 else 0.0
+	for j in range(k - 2):
+		# Pairs A(j)..A(j+3) of the padded list A0 = A1 (A(k+1) = Ak is never
+		# reached: j + 3 <= k).
+		var i0 := j - 1 if j > 0 else 0
+		var a0 := ea[i0]; var a1 := ea[j]; var a2 := ea[j + 1]; var a3 := ea[j + 2]
+		var e0 := eb[i0]; var e1 := eb[j]; var e2 := eb[j + 1]; var e3 := eb[j + 2]
+		var ca: int = b.col[j]
+		var cb: int = b.col[j + 1]
+		var t := 0.0
+		for s in range(SAMPLES):
+			var o := s * 4
+			var c := ca if (s == 0 or ca == cb) else _lerp4(ca, cb, t)
+			out.pair(a0 * w[o] + a1 * w[o + 1] + a2 * w[o + 2] + a3 * w[o + 3],
+				e0 * w[o] + e1 * w[o + 1] + e2 * w[o + 2] + e3 * w[o + 3], c, u)
+			u -= du
+			t += T_STEP
+	# The closing pair is A(k-1), the particle before the newest.
+	var c2 := k - 2
+	out.pair(ea[c2], eb[c2], b.col[c2], u)
+	out.end_strip()

@@ -206,6 +206,8 @@ func _init() -> void:
 			_check(qi.get_pixel(0, 0) == Color8(255, 0, 0, 255) and qi.get_pixel(1, 0).g8 == 255
 				and absf(qi.get_pixel(1, 0).a - 0.5) < 0.01 and qi.get_pixel(0, 1) == Color8(0, 0, 255, 0),
 				"A16B16G16R16F: R, G, B, A in memory order (got %s %s %s)" % [qi.get_pixel(0, 0), qi.get_pixel(1, 0), qi.get_pixel(0, 1)])
+			# 0.5 rounds to 128; a truncating convert gives 127 (review follow-up).
+			_check(qi.get_pixel(1, 0).a8 == 128, "A16B16G16R16F: 0.5 rounds to 128, not 127 (got %d)" % qi.get_pixel(1, 0).a8)
 		var short := q.slice(0, q.size() - 8)
 		_check(DdjReader.to_image(DdjReader.parse(short)) == null, "a short A16B16G16R16F payload is refused")
 

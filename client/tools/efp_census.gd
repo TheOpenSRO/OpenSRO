@@ -41,7 +41,9 @@ var _skips := {}
 var _skip_files := {}
 var _spawned := 0
 var _assets := false
-var _link_tris := 0
+var _link_files := 0 # files with a drawn Link node
+var _link_drawing := 0 # ... whose strips drew a triangle at some sampled frame
+var _link_peaks := PackedInt32Array() # per such file: its largest one-frame triangle count
 var _bad_assets := {} # "texture|path" or "mesh|path" -> files naming it
 var _pk2_dir := ""
 
@@ -86,7 +88,14 @@ func _init() -> void:
 		print("  drawing every node they draw: %d (%.1f%% of all files)" % [_built_full, 100.0 * _built_full / maxi(_files, 1)])
 		print("  drawing at least one node:    %d (%.1f%% of all files)" % [_built_drawing, 100.0 * _built_drawing / maxi(_files, 1)])
 		print("  particles spawned in 40 frames, all files: %d" % _spawned)
-		print("  Link strip triangles at frame 40, all files: %d" % _link_tris)
+		if _link_files > 0:
+			var pk := _link_peaks.duplicate()
+			pk.sort()
+			var nz := pk.size()
+			print("  files drawing a Link node: %d; with a Link triangle at some sampled frame: %d" % [_link_files, _link_drawing])
+			if nz > 0:
+				print("  one effect's peak Link triangles in one frame (frames 1..40 sampled): median %d, 90th pct %d, max %d" % [
+					pk[nz / 2], pk[mini(nz - 1, nz * 9 / 10)], pk[nz - 1]])
 		print("skipped (files, reason):")
 		var keys := _skip_files.keys()
 		keys.sort_custom(func(a, b): return int(_skip_files[a]) > int(_skip_files[b]))
@@ -138,16 +147,26 @@ func _build_one(p: String, f: EfpReader.EfpFile) -> void:
 		_build_failed += 1
 		return
 	_built += 1
+	# Round 621: the Link strips are built at every frame (headless view),
+	# so a script error in the strip code shows up across the archive, and
+	# each file's peak one-frame triangle count is kept (review follow-up:
+	# frame 40 alone missed effects that are over by then).
+	var peak := 0
 	for _i in range(40):
 		fx.sim.step()
+		if not fx._links.is_empty():
+			fx.reset_link_budget()
+			fx._update_links()
+			var tris := 0
+			for d in fx._links:
+				tris += (d[3] as EfpLinks.Out).expand().size()
+			peak = maxi(peak, tris)
 	_spawned += fx.sim.spawned
-	# Round 621: build this frame's Link strips too (headless view), so a
-	# script error in the strip code shows up across the whole archive.
-	fx._update_links()
-	for d in fx._links:
-		var im: ImmediateMesh = (d[1] as MeshInstance3D).mesh
-		if im.get_surface_count() > 0:
-			_link_tris += (im.surface_get_arrays(0)[Mesh.ARRAY_VERTEX] as PackedVector3Array).size() / 3
+	if not fx._links.is_empty():
+		_link_files += 1
+		if peak > 0:
+			_link_drawing += 1
+			_link_peaks.append(peak)
 	var kinds := {}
 	for r in fx.skipped:
 		var k := String(r)

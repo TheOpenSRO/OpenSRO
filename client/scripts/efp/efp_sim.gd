@@ -103,7 +103,14 @@ class_name EfpSim
 ##
 ## == Motion per frame (READ, CEFUpdater::vslot_002) ==
 ## A particle follows its parent's movement (OURS: translation only; retail
-## also applies the parent's rotation change), then position += velocity,
+## also applies the parent's rotation change) -- but only when its node
+## follows at all: a node whose position-follow level (the body's 20-byte
+## block u2, node +0x158) is 0 never follows (READ, round 621's review
+## follow-up: CEFGroup::vslot_004 then leaves emitter +0x68 null and
+## CEFUpdater::vslot_002 skips it). For u2 >= 1 retail follows the ancestor
+## u2 levels up, and only on a frame that ancestor's transform changed
+## (its +0x60 flag); this client keeps round 620's parent translation there
+## (OURS). Then position += velocity,
 ## rotation = rotation * rotation velocity, shape = shape * shape velocity.
 ## A new particle starts at its parent's position with its parent's velocity
 ## and rotation, scale 1, colour 0xFFFFFFFF, UV rectangle (0, 0, 1, 1) (READ,
@@ -177,6 +184,7 @@ class Tpl:
 	var emit = null ## {delay, duration, interval, max_live, per_trigger} or null
 	var schedule: Array = [] ## frame -> Array of [kind, space, payload] (see _payload)
 	var scale_graph = null ## the node's first BlendScaleGraph var, or null
+	var follows := true ## false when the node's position-follow level u2 is 0 (READ, see the header)
 	var unsupported: PackedStringArray = PackedStringArray()
 
 ## A compiled effect: the node templates in preorder (parents first).
@@ -244,6 +252,7 @@ static func _compile_node(t: Template, n: EfpReader.EfpNode, parent: int) -> voi
 	tp.frames = maxi(n.frames, 0)
 	tp.life = LIFE_LOOP if n.loops() else (LIFE_NEVER if n.never_extinct() else LIFE_EXTINCT)
 	tp.emit = n.emission()
+	tp.follows = int(n.flags.get("u2", 1)) != 0
 	for v in n.vars:
 		if v is Dictionary and String(v.get("type", "")) == "BlendScaleGraph" and tp.scale_graph == null:
 			tp.scale_graph = v.get("value")
@@ -353,6 +362,14 @@ func clear() -> void:
 		if p.alive:
 			live_total -= 1
 			p.alive = false
+		# Break the link/next_link pairs: Particle is RefCounted, so a
+		# chain left linked would keep itself alive (round 621).
+		p.link = null
+		p.next_link = null
+		if p.emitter != null:
+			p.emitter.tail = null
+	for e in emitters:
+		e.tail = null
 	particles.clear()
 	emitters.clear()
 
@@ -388,7 +405,7 @@ func step() -> void:
 		p.prev_pos = p.pos
 	for p in particles:
 		var par := p.parent
-		if par != null and par != _root and par.alive:
+		if par != null and par != _root and par.alive and tpls[p.tpl].follows:
 			p.pos += par.pos - par.prev_pos
 		p.pos += p.vel
 		if p.has_rvel:

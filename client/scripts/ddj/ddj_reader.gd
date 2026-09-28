@@ -203,20 +203,30 @@ static func to_image(tex: ParsedTexture) -> Image:
 			# Round 621. The DDS "FourCC" here is not text: it is the D3DFORMAT
 			# number 113 (0x71, 'q'), D3DFMT_A16B16G16R16F -- four 16-bit
 			# floats a pixel, R first in memory (the DXGI R16G16B16A16_FLOAT
-			# layout). The client hands the DDS after the 20-byte wrapper to
-			# the static D3DX loader (READ: FUN_00b8eb60 skips 5 u32 after
-			# the "JMXV" check and calls D3DXGetImageInfoFromFileInMemory,
-			# then D3DXCreateTextureFromFileInMemoryEx), which takes a
-			# numeric D3DFORMAT in the FourCC slot. 4 retail files use it
-			# (textures\ques1_monster_paper_q_2..5.ddj in Particles.pk2,
-			# MEASURED round 621). Only the top level is read and converted
-			# to RGBA8, clamped to 0..1 (OURS: Godot then builds mipmaps).
+			# layout). The client's runtime loader (READ, FUN_00b88420 ->
+			# FUN_00b87f20) checks "JMXV" and hands the buffer from offset 20
+			# to the statically linked D3DXCreateTextureFromFileInMemoryEx with
+			# the file's own MipLevels, and D3DX takes a numeric D3DFORMAT in
+			# the FourCC slot. 4 retail files use it (MEASURED, round 621:
+			# textures\ques1_monster_paper_q_2..5.ddj in Particles.pk2,
+			# 128x128, 8 declared mips). Their top level is a clean image in
+			# 0..1; their stored mips are not: level 1 of _q_2 holds 15 values
+			# down to -512 and every other stored mip of all four is zero
+			# (MEASURED, review follow-up). So retail minifies them to black
+			# or garbage. This reader takes the top level only and lets Godot
+			# build clean mipmaps (OURS: not retail's look when minified).
+			# Each channel is clamped to 0..1 and ROUNDED to 8 bits (OURS; a
+			# truncating convert biased every channel by up to -1/255).
 			var need: int = tex.width * tex.height * 8
 			if pixels.size() < need:
 				push_error("ddj: A16B16G16R16F payload is %d bytes, need %d" % [pixels.size(), need])
 				return null
-			image = Image.create_from_data(tex.width, tex.height, false, Image.FORMAT_RGBAH, pixels.slice(0, need))
-			image.convert(Image.FORMAT_RGBA8)
+			var n: int = tex.width * tex.height * 4
+			var rgba8 := PackedByteArray()
+			rgba8.resize(n)
+			for k in range(n):
+				rgba8[k] = clampi(roundi(clampf(pixels.decode_half(k * 2), 0.0, 1.0) * 255.0), 0, 255)
+			image = Image.create_from_data(tex.width, tex.height, false, Image.FORMAT_RGBA8, rgba8)
 		_:
 			push_error("ddj: unhandled compression format %s" % tex.four_cc)
 			return null

@@ -947,9 +947,17 @@ Still open, by the files each would add:
 - **Meshes** (16 files). Not a gap: `hwan01/02.bms` are `JMXVBMS 0109`, which the retail client
   refuses too (READ, Prim.cpp and PrimGeometry.cpp accept only 0110), and 4 mesh paths are absent
   from every archive.
-- **Link details**: bit 0 of emitter +0x74 (resets the inherited rotation in the particle init),
-  the LinkMode controller and the node's 20-byte block (none of the three Link routines reads
-  them), and which face of a Link strip D3D culls (drawn two-sided here).
+- **World-space trails (510 files; EFP_FORMAT.md "Follow").**
+  - In 510 of the 975 files with a Link node, every chain collapses to one point on a still
+    caster. Their u2 = 0 Link nodes follow nothing in retail, so the trail comes from the effect
+    moving through the world.
+  - This client simulates an effect in local space. Next: simulate u2 = 0 nodes in world space
+    (feed the effect's world motion to the sim's root).
+  - The ancestor-level follow (u2/u3/u4/u6), its +0x60 gate, and the rotation and velocity
+    follows are unimplemented.
+- **Link details**: the LinkMode controller (none of the three Link routines reads it), and
+  whether the reversed-winding inference that decides which face of a Link strip is culled
+  (cull 3: 17 LinkObj and 4 LinkPipe nodes) matches a retail render.
 - **The flight of AT_MOV_\* rows** (projectiles). They play at the caster for now. MovType and
   the Act Option columns are unread.
 - **The skill phase clips.** Retail advances READY → WAIT → SHOT on each phase clip's end, and
