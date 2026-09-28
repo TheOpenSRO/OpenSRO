@@ -220,6 +220,41 @@ RENDER_DIR=... GODOT_LOCK=... client/tools/efp_dump_diff.sh
 `TestRetailCensus` fails if any of the measured results regresses: decoded files, exact decodes,
 HeadLen matches or Frame* key counts.
 
+**Building every file into an effect** (round 620). `--build` also builds each decoded file into
+an `EfpEffect` with its real meshes and textures, and runs 40 frames (2 s) of its simulation. It
+then reports:
+- how many files build;
+- how many draw every node they mean to draw;
+- how many draw at least one node;
+- the skip reasons, bucketed. These are render modes not drawn yet, assets that did not load, and
+  commands no rule covers.
+
+It takes 86 s:
+
+```
+client/tools/remote_godot.sh script res://tools/efp_census.gd -- --pk2=/opt/sro-files/client/Particles.pk2 --build
+```
+
+**Seeing effects play** (round 620). There are two hooks. The frames show what the renderer did;
+they prove nothing about retail.
+- `SRREVAMP_QA_EFFECT="<efp>[;<efp>...]"` plays those files on the player at tick 20, looping.
+  They are spaced `SRREVAMP_QA_EFFECT_SPACING` native units apart (default 40). Each file prints
+  `QA EFFECT <path> at x <x>: <n> node(s) drawn, skipped [...]`.
+- `SRREVAMP_QA_CAST="<skill id>[,...]"` runs each skill's effect phases on the player in turn,
+  every `SRREVAMP_QA_CAST_PERIOD` ticks (default 160):
+  - READY at +0;
+  - WAIT, SHOT/0 and SHOT/1 at +30;
+  - ACT_S at +40;
+  - the ACT_L aura (token 1) from +41 until the next skill starts.
+
+  Each step prints a `QA CAST tick <t> ...` line, and each effect an `EFFECTS skill ...` line
+  giving its ActType, bone and nodes drawn.
+
+```
+SRREVAMP_QA_NOUI=1 SRREVAMP_QA_CAST=90,113,114,149,3 qa_shot.sh --out /var/tmp/cast --region '97\168.m' \
+  --radius 1 --at 1002,1020 --yaw 30 --pitch -12 --dist 70 --frames 860
+```
+
 ### Load benchmark
 
 Every map and loading change is measured on the two runs below, before and after, and on nothing

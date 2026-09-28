@@ -185,8 +185,7 @@ MEASURED:
 - This measurement is also the check that the timing rules above were read correctly. In the
   readers, `Command.Keys(n)` (Go) and `frame_range(n)["keys"]` (GDScript) give the count.
 
-**The frame's duration in seconds is OPEN.** The emitter age (`FUN_00c84e70` reads it at emitter
-+0x28 → +0x54) is the lead.
+**A frame is 50 ms** (READ, round 620). See "Playback" below.
 
 ### Command registry
 
@@ -305,9 +304,9 @@ Before drawing, the same function sets:
 - LIGHTING 0;
 - FOGENABLE 0.
 
-It then switches on a render-type value 1-5 at def +0x208 to pick the draw routine
-(`FUN_00c8c210`, `…bf50`, `…de80`, `…e020`, `…c3a0`). Which render mode each value is remains
-OPEN.
+It then switches on a render-type value 1-5 at def +0x208 to pick the draw routine. Which mode
+each value is was read in round 620 (see "Playback"): 1 Plate `FUN_00c8c210`, 2 Mesh
+`FUN_00c8bf50`, 3 LinkDPipe `FUN_00c8de80`, 4 LinkPipe `FUN_00c8e020`, 5 LinkObj `FUN_00c8c3a0`.
 
 **Blending is per node, in this block.** This settles the spec's OPEN question: it is not carried
 by the texture name. MEASURED, files using each state among rendered nodes:
@@ -319,6 +318,174 @@ by the texture name. MEASURED, files using each state among rendered nodes:
 
 Colour op MODULATE (4) is the most common, then MODULATE2X (5) and MODULATE4X (6). The arguments
 are TEXTURE (2) and DIFFUSE (0).
+
+## Playback (round 620)
+
+How the client plays a decoded tree. `client/scripts/efp/efp_sim.gd` (`EfpSim`) implements it and
+`efp_effect.gd` (`EfpEffect`) draws it. Labels are as above; OURS marks this client's choices.
+
+### Time (READ)
+
+- **A frame is 50 ms.** The effect clock is `UI_ALCHEMYBOX::FUN_00bc1490`, reached through the thunk
+  at `0x00bbda80` from the game loop. It adds the frame's millisecond delta (`DAT_0110f7f8`) to an
+  accumulator at +0x168. Once that reaches 50, it stores `ftol(acc / 50.0)` frames at +0x16c (the
+  double 50.0 is at `0x00d8f0b0`) and keeps the remainder.
+- **The frames reach the particles.** `CRTModParticle::FUN_00c80ff0` passes +0x16c to the effect's
+  `CEFEffect::vslot_000`. That stores the value at interface +0x4c, which is effect +0x28c (the
+  interface sits at +0x240). The extinct executors (`FUN_00c84d80`, `…dd0`, `…e20`) then add +0x28c
+  to every particle's age.
+- **The delta is in milliseconds** (INFERRED). The game loop (funcs_017, near `0x00ba4106`) caps it
+  at 3000, beside a float twin capped at 3.0.
+- At 20 fps or more, each update advances one frame.
+
+### Structure (READ, `FUN_00c86cd0`)
+
+- **A node is a particle system.** Spawning a particle also creates an emitter for each child node.
+  That emitter is owned by the new particle, so its age (emitter +0x28 → +0x54) is the particle's
+  age.
+- The root node's emitter is owned by the effect, whose age `CEFEffect::FUN_00ca9ee0` advances by
+  1 per update.
+
+### A particle's life (READ, the extinct executors)
+
+| command | executor | rule |
+|---|---|---|
+| NormalTimeExtinct | `FUN_00c84e20` | age += frames; at age ≥ N, it is clamped to N − 1 and the particle is killed |
+| NormalTimeLoop | `FUN_00c84dd0` | age += frames; age %= N |
+| NeverExtinct | `FUN_00c84d80` | `if age != 1: age += frames`, so the age sticks at 1 |
+
+### The per-particle program (READ, `EFEffect::FUN_00c893f0`)
+
+**Scheduling.**
+- The executor calls this program with the particle's age. The program runs that age's command
+  list (`FUN_00c84f90` indexes a per-frame list by the age).
+- A Frame* parameter's value i belongs to frame `start + i × step` (INFERRED from the MEASURED key
+  counts).
+
+**Opcodes.**
+- Each command's factory (the `FUN_00ca8140` registrations) stores `opcode = base + space`. That is
+  what the `space` byte is. The interpreter switches on the opcode (`0x00`–`0x51`).
+
+| base | command | base | command |
+|---|---|---|---|
+| 0x00 | SetRotationMat | 0x3a | SetVelocity |
+| 0x04 | SetRVelocityMat | 0x3e | SetConeVel |
+| 0x05 | SetRotation | 0x42 | Force |
+| 0x09 | SetRVelocity | 0x46 | ConeForce |
+| 0x0a | SetRotationAxis | 0x4a | Attraction |
+| 0x0e | SetRVelocityAxis | 0x4c | TextureSlide |
+| 0x0f | SetBANRot | 0x4d | SetGraphScale |
+| 0x13 | SetPosition | 0x4e | SetGraphRandomScale |
+| 0x1f | SetConePos | 0x4f | SetGraphDiffuse |
+| 0x2b | SetBANPos | 0x50 | SetShapeRot |
+| 0x37 | SetSpherePos | 0x51 | SetShapeRotVel |
+
+View and render commands are data-only objects that store `space + k`. View: None 0, Billboard 1,
+YBillboard 2, VBillboard 3. Render: None 0, Plate 1, Mesh 2, LinkDPipe 3, LinkPipe 4, LinkObj 5.
+Every retail view and render command has space 0 (MEASURED).
+
+**What the space selects.**
+- **Position commands** (SetPosition, SetConePos, SetBANPos) use 12 variants, `space = r×3 + o`.
+  - `o = 0` adds to the current position; 1 starts from the parent particle's position; 2 starts
+    from the "link" object's (+0x34).
+  - `r` rotates the value by: 0 nothing, 1 the particle's own rotation (+0xb0), 2 the parent's,
+    3 the link's (`FUN_00410c30` is `v × M`).
+  - MEASURED: SetPosition space 7 in 24,220 commands, i.e. parent position plus the value in the
+    parent's frame.
+- **SetSpherePos.** A uniform point in the unit ball, times the value, added to: 0 the position,
+  1 the parent's position, 2 the link's.
+  - The point comes from rejection sampling of `(r − 0.5) × 2`. `r` is drawn from a 5000-entry
+    table at `0x01114ff0` through `FUN_00c877c0`.
+- **SetVelocity / SetConeVel** set the velocity (+0x1bc) to the value. **Force / ConeForce** add it
+  (INFERRED: the decompile leaves the add's target implied).
+  - Each rotates by: 0 nothing, 1 own, 2 parent, 3 link.
+- **Attraction.** `velocity += normalize(pos − parent pos) × value`, or relative to the link for
+  space 1.
+- **Cone** (an AngleVector1 value):
+  - The vector is `(0, lerp(b.x, b.y, r1), 0)`.
+  - It is turned `r2 × b.z` about Z. `IDecoSkill::FUN_00a4d820` builds that rotation from
+    `FUN_00b44b40` (fsin) and `FUN_00b44a10` (fcos).
+  - It is then turned `r3 × 2π` about Y (`FUN_0043cda0`, the double 2π at `0x00d81930`).
+  - b.z equals a.z in radians in every retail value (MEASURED). That the trig takes `b` is
+    INFERRED.
+- **SetRotation\*, SetBANRot.** The rotation is M (space 0), or M followed by own, parent or link
+  (1–3).
+- **SetRVelocity\*.** The per-frame rotation.
+- **SetShapeRot / SetShapeRotVel.** The shape's rotation (+0x130) and its per-frame step (+0x170).
+- **SetGraphScale.** The scale (+0x1c8) is the key's Vector3.
+- **SetGraphDiffuse.** The colour (+0x228) is the key's u32.
+  - When the effect's alpha byte `DAT_00edbd40` is not 0xFF, it scales the key's alpha.
+- **TextureSlide.** The key's 4 floats are INFERRED to be the UV rectangle (u0, v0, du, dv) at
+  +0x22c; the decompile loses the store's target.
+  - The draw routines apply that rectangle as `u0 + u × du` (READ).
+  - The head is not used; its meaning stays OPEN.
+- **SetGraphRandomScale.** The scale is a BlendScaleGraph sampled at a random time
+  (`FUN_00c89140`): the first key before `a`, the last after `b`, linear between. Which variable the
+  pointer names is INFERRED: the node's first BlendScaleGraph.
+- **The ConeForce oddity.** Case 0x46 falls through into 0x47 in the decompile. Whether that is
+  real is OPEN.
+
+### Motion and defaults (READ)
+
+**Each frame** (`CEFUpdater::vslot_002`):
+- a particle follows its parent's movement (the translation, and the rotation change);
+- then `pos += vel`;
+- the rotation is multiplied by the rotation velocity;
+- the shape by the shape velocity.
+
+**A new particle** (the EFEffect particle init):
+- starts at its parent's position, with the parent's velocity and rotation;
+- has identity rotation velocity, shape and shape velocity;
+- has scale 1, colour `0xFFFFFFFF`, UV rectangle (0, 0, 1, 1) and age 0.
+
+### Drawing (READ, `EFEffect::FUN_00cabda0` and the draw routines)
+
+- **The world matrix** is the shape rotation, then the view matrix, then the position (row
+  vectors).
+- **The view matrix**:
+  - ViewNone: the particle's rotation.
+  - ViewBillboard: the matrix at `0x00edbde8`.
+  - ViewYBillboard: the matrix at `0x00edbe28`.
+    - INFERRED from the names: the camera-facing and the upright camera-facing billboards.
+  - ViewVBillboard: a basis whose Y is the normalised velocity and whose Z is `velocity × up`
+    (the identity when the velocity is 0 or straight up).
+- **Plate** (`FUN_00c8c210`). The unit quad at `0x00edb070`: x and y ±0.5, z 0, with UV (0,0) at
+  (−0.5, +0.5). It is scaled per axis by the particle's scale and transformed.
+  - Every vertex takes the particle's colour.
+  - The UV corners come from the UV rectangle.
+- **Mesh** (`FUN_00c8bf50`). The `.bms` vertices, scaled and transformed the same way. The
+  particle's colour replaces each vertex colour, and the UVs map through the rectangle.
+
+### What this client does not do yet (OPEN), and its own choices (OURS)
+
+**Not drawn:**
+- RenderLinkPipe, RenderLinkDPipe and RenderLinkObj (routines not read);
+- the flight of AT_MOV_* rows.
+
+BSAnimation needs no drawing. Every one of the 3,230 nodes that carries a BSAnimation variable
+(or a BAN controller) is RenderNone (MEASURED). Its motion reaches the particles as the baked
+SetBANPos and SetBANRot keys, which are implemented.
+
+**OURS:**
+- The link object is taken to be the parent.
+- A particle follows only its parent's translation.
+- The order within a frame is: motion, the particle's commands, emission (new particles run their
+  frame-0 commands at once), then ages.
+- The emitters of a dead particle stop.
+- There is a cap of 300 particles per effect and 3,000 in all.
+- The emission globals are at full quality (0, 0).
+
+**The blend mapping to Godot** (`EfpEffect.blend_class`):
+
+| D3D src / dest | Godot | exact? |
+|---|---|---|
+| SRCALPHA / ONE | BLEND_MODE_ADD | exact |
+| ONE / ONE | BLEND_MODE_ADD with alpha 1 | exact |
+| SRCALPHA / INVSRCALPHA, BOTHSRCALPHA | BLEND_MODE_MIX | exact |
+| ZERO / INVSRCALPHA | MIX with black | exact |
+| anything else | MIX | OURS, approximate |
+
+The texture-stage colour and alpha ops (SELECTARG1/2, MODULATE, 2X, 4X, ADD) run in the shader.
 
 ## Census (MEASURED, round 619)
 

@@ -925,29 +925,40 @@ layer-key lead). Left open:
 - **The `.o2` skip bit** (below, "`.o2` list semantics"): 240 list-2 records that retail does not
   build are drawn. None of them is seasonal.
 
-### Particle effects (`.efp`): **decoder done (round 619); the renderer is round 620**
-Both readers (`server/internal/efp` `Decode`, `client/scripts/efp/efp_reader.gd` `EfpReader.decode`)
-read the client's own layout. They decode 4,103 of the 4,170 files in the retail Particles.pk2, 4,096
-of them to the exact byte (`docs/protocol/EFP_FORMAT.md`; census commands in `client/tools/README.md`).
-The typed-tree API for the renderer is documented at the top of `efp_reader.gd`.
+### Particle effects (`.efp`): **decoder done (round 619), renderer and skill effects (round 620)**
+Both readers decode 4,103 of the 4,170 files in the retail Particles.pk2
+(`docs/protocol/EFP_FORMAT.md`). Round 620 plays them:
+- `EfpSim` runs the client's particle rules;
+- `EfpEffect` draws them;
+- `SkillEffects` plays each skilleffectset row's effect at the moments SkillAudio plays its sound,
+  and keeps ACT_L auras by buff token.
 
-Still open, in the order a renderer will meet them:
-- **The frame's duration in seconds.** Every lifetime, emission rate and Frame* value counts in
-  program frames (N). The lead is the emitter age at `FUN_00c84e70` (emitter +0x28 → +0x54).
-- **Which draw routine each render mode uses.** `EFEffect::FUN_00cabda0` switches on a value 1-5
-  at def +0x208; mapping those to Plate, Mesh and the Link modes needs `FUN_00c8c210`, `…bf50`,
-  `…de80`, `…e020` and `…c3a0`.
-- **What a command's `space` byte means.** It is 0-7 per command (SetPosition 7, SetRotation 2,
-  SetSpherePos 1). Also open: which Vec3 of AngleVector1 is the axis, FrameTextureSlide's head
-  (three floats, most often (3,2,1); INFERRED an atlas grid and rate), the FrameBAN heads (f32),
-  and BlendScaleGraphPointer.
-- **Which option sets the emitter globals** (`DAT_01114d54` interval multiplier,
-  `DAT_01114d58` threshold; routine at `0x005474b1`), and that option's retail default. The
-  readers assume full quality, (0, 0), the globals' `.bss` start value.
-- **What the graph a/b floats, LinkMode, the node's 20-byte block and the header f32/u32s mean.**
-- **The 58 `F8FILE` containers** (`system\arksolid_*`). The bytes after the magic look encrypted
-  or compressed.
-- **The 7 `0000` files.** They are not the node format, and no skilleffect row names them.
+The `--build` census (MEASURED, round 620): all 4,103 decoded files build into an effect; 3,985
+draw at least one node, and 3,062 draw every node they mean to draw.
+
+Still open, by the files each would add:
+- **The link render modes.** RenderLinkPipe (864 files), RenderLinkObj (128) and RenderLinkDPipe
+  (70) are not drawn. Their routines are `FUN_00c8e020`, `FUN_00c8c3a0` and `FUN_00c8de80`; the
+  LinkMode controller and the node's 20-byte block feed them.
+- **Assets that do not load.**
+  - 68 files have a texture that does not load: 4 DDJ textures are in the unhandled "q" format,
+    and the rest are missing from the archive.
+  - 16 files have a mesh that does not load, including `JMXVBMS 0109` meshes.
+- **The flight of AT_MOV_\* rows** (projectiles). They play at the caster for now. MovType and
+  the Act Option columns are unread.
+- **Where the hit effect sits.** characterInfo's DamageBone and DamagePos place it in retail; the
+  client uses mid-height.
+- **Unread details:**
+  - which option sets the emitter globals (`DAT_01114d54`, `DAT_01114d58`) and its retail
+    default; the renderer assumes full quality;
+  - the "link" object (particle +0x34), which is taken to be the parent;
+  - the parent-rotation part of "follow the parent";
+  - ConeForce's 0x46 → 0x47 fall-through;
+  - which BlendScaleGraph SetGraphRandomScale names;
+  - FrameTextureSlide's head;
+  - `StartBone` `*` and `#…`;
+  - the effect's alpha byte `DAT_00edbd40`.
+- **The 58 `F8FILE` containers** (`system\arksolid_*`) and **the 7 `0000` files**.
 
 ## Parked, with the state written down
 

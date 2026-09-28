@@ -7094,6 +7094,238 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twentieth round: skills play their own particle effects -- the cast glow, the imbue's hand aura, the heal's burst -- drawn from the game's own .efp files
+
+The user asked for skill visual effects on activation, and for "most of the particles loaded in".
+Round 619 decoded the files. This round plays them:
+- `EfpSim` (`client/scripts/efp/efp_sim.gd`) runs the client's own particle rules over the decoded
+  tree.
+- `EfpEffect` (`efp_effect.gd`) draws them as one MultiMesh per node, under the Compatibility
+  renderer.
+- `SkillEffects` (`client/scripts/effects/skill_effects.gd`) plays each skilleffectset row's
+  `.efp` at the moments SkillAudio plays the same row's sound. It keeps the ACT_L auras per buff
+  token.
+
+The rules are written down, with addresses, in `docs/protocol/EFP_FORMAT.md` "Playback".
+
+**READ** (sro_client.exe, `/var/tmp/decomp_client` and `/var/tmp/sro_client.asm` on the box):
+- **A frame is 50 ms.** `UI_ALCHEMYBOX::FUN_00bc1490` accumulates the game's millisecond delta
+  (`DAT_0110f7f8`) and hands `ftol(acc / 50.0)` frames to every effect. The double 50.0 is at
+  `0x00d8f0b0`.
+  - The frames travel `CRTModParticle::FUN_00c80ff0` → `CEFEffect::vslot_000` → interface +0x4c,
+    which is effect +0x28c. The extinct executors add that to each particle's age.
+  - INFERRED: the delta is in milliseconds. The game loop caps it at 3000, beside a float twin
+    capped at 3.0.
+  - This closes round 619's first OPEN.
+- **Spawning makes emitters.** `FUN_00c86cd0` gives each new particle one emitter per child node.
+  A child node therefore emits relative to each of its parent's particles, on the parent's age.
+- **The three lifetimes:**
+  - NormalTimeExtinct (`FUN_00c84e20`) dies after frame N−1;
+  - NormalTimeLoop (`…dd0`) wraps the age modulo N;
+  - NeverExtinct (`…d80`) holds the age at 1.
+- **The per-particle program is an opcode interpreter** (`EFEffect::FUN_00c893f0`, a
+  0x52-case switch). Each command's factory stores `base + space`, so the `space` byte round 619
+  left OPEN selects a variant:
+  - for positions, `space = r×3 + o`: `o` is the origin (none, parent, link) and `r` the frame the
+    value is rotated by (none, own, parent, link);
+  - for velocities and forces, the rotation frame.
+  - The table of bases, and every variant, is in EFP_FORMAT.md.
+- **Cone vectors.** The vector is `(0, lerp(min, max, r), 0)`, turned `r·angle` about Z
+  (`IDecoSkill::FUN_00a4d820`: `FUN_00b44b40` is fsin, `FUN_00b44a10` fcos), then `r·2π` about Y.
+  - The sphere position is a rejection-sampled unit-ball point times the value.
+  - Attraction adds the normalised offset from the parent, times the value.
+- **Motion and defaults** (`CEFUpdater::vslot_002` and the particle init):
+  - each frame, `pos += vel`, and the rotation and shape rotations step;
+  - a new particle takes its parent's position, velocity and rotation, with scale 1, colour
+    0xFFFFFFFF and UV rectangle (0,0,1,1).
+- **The draw routines.** The render command's factories store `space + 1..5`, and every retail
+  render command has space 0 (MEASURED). So:
+
+  | value | mode | routine |
+  |---|---|---|
+  | 1 | Plate | `FUN_00c8c210` |
+  | 2 | Mesh | `FUN_00c8bf50` |
+  | 3 | LinkDPipe | `FUN_00c8de80` |
+  | 4 | LinkPipe | `FUN_00c8e020` |
+  | 5 | LinkObj | `FUN_00c8c3a0` |
+
+  - A plate is the unit quad at `0x00edb070`, scaled per axis.
+  - Every vertex takes the particle's colour, and UVs map as `u0 + u·du`.
+  - This closes round 619's second OPEN.
+- **The view modes** (`FUN_00cabda0`, the switch at `0xcabf1b`):
+  - ViewNone uses the particle's rotation;
+  - Billboard and YBillboard use the camera matrices at `0x00edbde8` and `0x00edbe28`. That
+    these are the camera-facing and upright-facing billboards is INFERRED from the names;
+  - VBillboard builds a basis with Y along the velocity.
+- **ActType** (`IDecoSkill::FUN_00a51bc0`, the row's +0xe byte):
+  - AT_ONE_FOLLOW (0) is created with its keep flag 0 and goes to the one-shot list;
+  - AT_LOOP and AT_STOP (1, 2) are created with the keep flag 1.
+
+**MEASURED** (the box's retail archives):
+- **The skilleffectset header** names ActType, Obj Path, ObjName, StartBone and StartOffset at
+  0-based 13 and 17–20. The imbue's rows are `ACT_S AT_ONE_FOLLOW cold_gigongta_motion_a.efp` and
+  `ACT_L AT_LOOP cold_gigongta_keep_a.efp`, both at `Bip01 R Finger2`.
+- **The "keep" auras are short one-shots.** `cold_gigongta_keep_a` is a 20-frame (1 s) root
+  particle whose children emit for 20 frames, all NormalTimeExtinct. So AT_LOOP has to restart
+  the file for the aura to last.
+- **BSAnimation needs no drawing.** All 3,230 nodes that carry a BSAnimation variable or a BAN
+  controller are RenderNone. Their motion reaches particles as the baked SetBANPos and SetBANRot
+  keys.
+- **AngleVector1's b.z** is a.z in radians in every retail value.
+- **The build census**, new `--build` mode of `client/tools/efp_census.gd`, 86 s. It builds every
+  decoded file into an EfpEffect with its real meshes and textures, and runs 2 s of it:
+
+  | | files | % of 4,170 |
+  |---|---|---|
+  | built without error | 4,103 of 4,103 decoded | 98.4 |
+  | draw at least one node | 3,985 | 95.6 |
+  | draw every node they mean to draw | 3,062 | 73.4 |
+
+  The skipped nodes, by files:
+
+  | skipped | files |
+  |---|---|
+  | RenderLinkPipe | 864 |
+  | RenderLinkObj | 128 |
+  | RenderLinkDPipe | 70 |
+  | a texture that does not load (4 DDJ in the unhandled "q" format, the rest missing) | 68 |
+  | a mesh that does not load (2 are `JMXVBMS 0109`) | 16 |
+
+  The 2 s of simulation spawned 279,962 particles across the archive, without a script error.
+
+**INFERRED:**
+- the cone's angle is `b.z`;
+- TextureSlide's key is the UV rectangle (the decompile loses the store; the draw routines' UV
+  mapping is READ);
+- Force's add targets the velocity;
+- SetGraphRandomScale samples the node's first BlendScaleGraph, linearly;
+- a Frame* value i belongs to frame `start + i·step`.
+
+**OURS** (listed in the code and in EFP_FORMAT.md):
+- the particle "link" (+0x34) is taken to be the parent;
+- following the parent is translation only;
+- the order within a frame is motion, commands, emission, ages;
+- the emitters of a dead particle stop;
+- there is a cap of 300 particles per effect and 3,000 in all, and a refused spawn gives its 1.0
+  back;
+- the emission globals are at full quality;
+- the Godot blend mapping:
+  - SRCALPHA/ONE → ADD;
+  - ONE/ONE → ADD with alpha 1;
+  - SRCALPHA/INVSRCALPHA and BOTHSRCALPHA → MIX;
+  - ZERO/INVSRCALPHA → MIX with black;
+  - anything else → MIX, approximate. Godot 4.2's spatial shaders have no premultiplied blend.
+- cull NONE draws both faces and anything else culls back faces (BmsReader's reversed winding);
+- a bone-attached effect follows the bone's position but turns with the body;
+- `none`, `*` and `#…` StartBones use the skeleton origin;
+- AT_MOV_* rows play at the caster, without their flight;
+- a READY/WAIT loop ends at the caster's next phase, or after 4 s;
+- without the buff signals, ACT_L plays one cycle;
+- the hit effect sits at mid-height.
+
+**Wiring.**
+- SkillEffects plays at every point SkillAudio does in World3D:
+  - READY and SHOT/0 at cast start;
+  - SHOT/1 on the struck monster, and ACT_S, when the blow lands.
+- **Buff auras.** `NetClient.buff_started` / `buff_ended` (rounds 616–618, on `int/skills`) attach
+  and detach the ACT_L auras by `(owner kind:id, token)`.
+  - They are connected only when `NetClient.has_signal(...)`, with untyped handlers, so this
+    branch runs on its base.
+  - The aura goes live after the merge. Until then ACT_L plays one cycle where its sound plays.
+  - Auras are detached when their owner's body leaves.
+- **The skill hit** (skillaniset2's DamageEfp) and **the level-up burst** now draw their decoded
+  `.efp` when it builds and draws. HitEffect and LevelUpEffect remain the fallback
+  (`USE_EFP_HITS`, `USE_EFP_LEVELUP`).
+- **QA hooks:**
+  - `SRREVAMP_QA_EFFECT="<efp>;..."` loops those files on the player;
+  - `SRREVAMP_QA_CAST="<id>,..."` runs each skill's phases in turn.
+
+**Renders** (`efp_shots/` in the lane's scratch; these SHOW, they do not prove):
+
+Five runs, all on the RX 5700 XT via VirtualGL, at Jangan (97/168 local 1002, 1020). Each run used
+the lane's copy of `qa_shot.sh` without its box-wide `pkill`, so another lane's run was not killed.
+
+- **The imbue (skill 90)** (`D_grid.png`, `A_imbue_*.png`):
+  - ACT_S, `cold_gigongta_motion_a`, is an 8-node white-blue starburst at the right hand.
+  - The ACT_L aura, `cold_gigongta_keep_a`, is a blue glow that stays at `Bip01 R Finger2` and
+    follows it for as long as the token is held.
+  - The aura's ice-cylinder meshes read small at this distance.
+- **Grass Walk (113)** (`A_grid.png`, top row): yellow-green rings at the feet with a rising
+  shimmer. `lightning_gyeonggong_keep_a` has 7 nodes drawn and no bone.
+- **Ghost Walk (114)** (`D_grid.png`, last two frames): its only effect row, WAIT/AT_LOOP
+  `lightning_bobeop_move_a`, draws 1 node: yellow-green streaks around the body.
+  - In play, World3D fires no WAIT phase, and Ghost Walk's movement is round (b)'s work.
+- **Heal (149)** (`A_grid.png`, middle row):
+  - READY loops `water_assist_motion_wait` (8 nodes, a blue column with wind sheets) and
+    `water_motion_keep` at both hands (3 nodes each; its RenderLinkPipe is skipped).
+  - ACT_S, `water_hpheal_effect_a` at `Bip01`, adds a yellow swirl.
+  - The READY loop's wind meshes live 100 frames (5 s), so a stopped loop lingers that long while
+    it finishes its cycle (`A_grid2.png`). That is the file's own lifetime under this client's
+    "finish the cycle" stop (OURS).
+- **Power Strike (3)** (`A_grid.png`, bottom row): SHOT/1 `hit_1_cut_smash` (2 nodes) and
+  `hit_1_cut_critical` (1 node) are white crescent slashes with a purple arc.
+- **The level-up and a skill hit** (`C_grid.png`), through the new `USE_EFP_*` path:
+  - `system_levelup.efp` draws 15 nodes: a golden ground ring, a white rising burst and a gold
+    halo;
+  - the skill-hit sparks fire every 15 ticks from `SRREVAMP_QA_HITFX`.
+  - Both read as sane, so the decoded path is on and HitEffect / LevelUpEffect stay as the
+    fallbacks.
+- **Seven random files** (`E_grid.png`) all build and play:
+  - `skill_ar_karkadann_attack03_shot`: 27 nodes, fire;
+  - `freebattle_yellow`: 12;
+  - `hit_4_lightning_attack_b`: 9, lightning sparks;
+  - `avatar_m_monstershiko_ua_l`: 4, its Link nodes skipped;
+  - `hit_3_normal`: 5;
+  - `map\light`: 2, faint;
+  - `keep_sealstone_die_bomb`: 26, a tall light shaft.
+
+What looks wrong, or cannot be judged:
+- Nothing here was compared with the retail client, so none of it is known to match.
+- The imbue aura's meshes are hard to see at 32 units.
+- The Link trails are missing wherever a file has them.
+
+**Tests.**
+- **`efp_sim_test.gd`** (synthetic trees). It covers:
+  - the 50 ms clock and its catch-up cap;
+  - emission: per-trigger spawns, fractions, max_live as a live cap refunded by deaths, delay,
+    interval 0, and (0,1,1,1,0.0) emitting nothing;
+  - the three lifetimes, restart, and child emitters per parent particle;
+  - SetVelocity, SetPosition space 1, the Frame* keys (scale, colour, UV, step 2), cones and the
+    BlendScaleGraph;
+  - the per-effect and global caps;
+  - the blend mapping and cull;
+  - EfpEffect's draw and skip lists, once vs loop, stop(), and the three view bases.
+- **`skill_effects_test.gd`** (synthetic tables). It covers the column parse by header, the phase
+  and StartEvent filters, hosts by ActType, the StartBone attachment and offset, a READY loop
+  stopping at the next phase, and the aura attach, replace, detach and detach_owner by token.
+- **Results.**
+  - `remote_godot.sh check`: ALL LOAD.
+  - `remote_godot.sh tests`: 135 suites, 0 failing.
+  - `go test -count=1 -p 1 ./...`: ok. The server is unchanged in this round.
+
+Against the base feat/efpdec (bcea4e0), the new suites fail:
+
+```
+FAIL scripts/efp/efp_sim.gd exists (EfpSim, the particle rules)
+FAIL scripts/efp/efp_effect.gd exists (EfpEffect, the renderer)
+FAILURES: 2
+SCRIPT ERROR: Parse Error: Could not find type "EfpEffect" in the current scope.   (skill_effects_test.gd)
+```
+
+**OPEN** (also in `docs/TODO.md`):
+- the Link render modes (1,062 files);
+- the textures and meshes that do not load;
+- the AT_MOV_* flight;
+- characterInfo's DamageBone/DamagePos for the hit;
+- the emitter-quality option and its default;
+- the link object;
+- the parent-rotation follow;
+- ConeForce's fall-through;
+- the BlendScaleGraphPointer target;
+- FrameTextureSlide's head;
+- `*` and `#…` bones;
+- F8FILE and `0000`.
+
 ## Six-hundred-and-nineteenth round, review follow-up: four field meanings corrected, and the Go and GDScript readers proven identical value for value
 
 The review of round 619 found the byte layouts right but four field **meanings** wrong, and places
