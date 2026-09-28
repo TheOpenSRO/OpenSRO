@@ -917,6 +917,27 @@ whose flip conditions these items feed).
       others' under the one frame, until the mover's own client lifts or drops it and sends an
       `OpMove`. Snapping another player's body the way a monster's is snapped would close it.
 
+### The buff bar — **built (round 618); these are left**
+`HudBuffBoard` is retail's `CIFMagicStateBoard`. It has the icons, the draining time bar, the end
+burst and sound, right-click cancel and the tooltip. The record is in
+`docs/protocol/magic_state_board.md`. Left open:
+- [ ] **The client's own id.** `OpBuffStart` names an ownerId, but the client is never told its
+      own. `World3D._buff_owner_is_self` takes the sit-learned id, and failing that, anything
+      that is neither another player's body nor a monster (OURS). An own-id in EnterWorldResult
+      would make the test exact.
+- [ ] **Round 617's signals.** The board connects `buff_started` / `buff_ended` and calls
+      `send_buff_cancel` only when NetClient has them. Once round 617 merges, check the World3D
+      log line "NetClient has no buff_started signal" is gone.
+- [ ] **The `cbuf` box's text** (retail passes an empty string) and what its OK does (INFERRED:
+      the cancel). The box is this client's own confirm style.
+- [ ] **Not drawn:**
+  - the `lnks` frame (window_all.ddj UVs at 0xdd07a0..0xdd07b0, corner order unread);
+  - the red "Not affected" line (slot `+0x36c`, its setter unread);
+  - the "Target :" line;
+  - kind 2 abnormal states (`s_*_icon.ddj`, a 1000 ms refresh);
+  - kind 3 item-time entries and their second gauge.
+- [ ] **0x93f5d0**, the lookup a right-click also requires, is unread and not modelled.
+
 ### Seasonal event decorations — **hidden by default (round 583)**
 The user decided on 2026-09-26 that early testing gets no seasonal decorations. Christmas,
 Halloween, the China open-beta (OBT) event set and the summer festival set are left out of every

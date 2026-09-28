@@ -1529,6 +1529,10 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_player_info.setup()
 	_hud_player_info.set_character(NetClient.current_character_name, 1)
 
+	# The active-buff icons right of the player block (round 618): retail's
+	# CIFMagicStateBoard, placed by its own GDR_MAGICSTATEBOARD rect.
+	_build_buff_board()
+
 	# Real vitals. The server reports them twice: once on entering the world
 	# (EnterWorldResult carries HP and MaxHP) and again on every attack
 	# (AttackResult's player_hp), so the bar is right on login and stays
@@ -1754,6 +1758,34 @@ func _try_initialize_pk2_ui() -> void:
 	_relay_middle_button_to_hotbar()
 
 	print("World3D: authentic Silkroad UI initialized from Media.pk2 (minimap, underbar, player info, %d panels)" % HudPanels.PANELS.size())
+
+## The buff bar (HudBuffBoard, round 618): built, told who this player is,
+## and fed by NetClient's buff_started / buff_ended when this build has them
+## (round 617 adds them; without them only SRREVAMP_QA_BUFFS feeds it).
+var _hud_buff_board: HudBuffBoard = null
+
+func _build_buff_board() -> void:
+	_hud_buff_board = HudBuffBoard.new(_ui_builder)
+	_hud_buff_board.name = "HudBuffBoard"
+	ui_control.add_child(_hud_buff_board)
+	_hud_buff_board.setup()
+	_hud_buff_board.is_self = _buff_owner_is_self
+	if not _hud_buff_board.connect_net(NetClient):
+		print("World3D: NetClient has no buff_started signal in this build -- the buff bar is fed by SRREVAMP_QA_BUFFS only")
+	var qa := OS.get_environment("SRREVAMP_QA_BUFFS")
+	if qa != "":
+		_hud_buff_board.qa_inject(qa, OS.get_environment("SRREVAMP_QA_BUFFS_END"))
+
+## Whether a buff's owner is this client's player. The client is never told
+## its own id (EnterWorldResult carries none), so -- OURS -- it is the id the
+## sit answer taught (SitState.own_id) when there is one, and otherwise any
+## owner that is neither another player's body nor a monster this client
+## draws. OPEN: the contract (OpBuffStart's ownerId) needs the client's own
+## id to decide this exactly.
+func _buff_owner_is_self(owner_id: int) -> bool:
+	if _sit.own_id != -1:
+		return owner_id == _sit.own_id
+	return not _other_bodies.has(owner_id) and not _monster_snapshots.has(owner_id)
 
 ## The middle button over the minimap, the player-info block and the target
 ## window (round 531). It fires the underbar's "m" slot (quick slot 0) wherever
@@ -8222,6 +8254,12 @@ func _update_blob_shadow() -> void:
 ##                          rounds 564 and 568, not measured; nothing was
 ##                          moved
 ##   SRREVAMP_QA_WORLDMAP=1 open the world map window over the world
+##   SRREVAMP_QA_BUFFS="<skill>:<ms>[:<left>],..."  put these buffs on the
+##                          buff bar as if the server had started them
+##                          (duration ms, -1 for none; ms left), tokens
+##                          900001 up, so it renders without the server
+##                          round; SRREVAMP_QA_BUFFS_END="<i>@<ms>,..." ends
+##                          the i-th (0-based) that many ms after (round 618)
 ##   SRREVAMP_QA_INPUT="<tick>:<action>;..."  a player's clicks, keys and
 ##                          hovers through push_input, each followed by a
 ##                          `QA INPUT` line (open windows, focus, the keys

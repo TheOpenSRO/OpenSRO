@@ -7094,6 +7094,83 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-eighteenth round: active buffs show by the HP bar, drain a time bar as they run out, burst when they end, and cancel on a right-click
+
+The user asked for the skill icons that are active at the top left by the health bar. They wanted
+a right-click to cancel one, and a way to see a buff about to expire, "check how the game
+originally does that." The bar is now built: `client/scripts/ui/hud/hud_buff_board.gd`, placed at
+`GDR_MAGICSTATEBOARD`'s own 220,10. It reads a skill's row through `skill_buff_catalog.gd`. The
+full record, with every address, is `docs/protocol/magic_state_board.md`.
+
+**How retail shows expiry** (READ, 0x8056a0): a 20 × 4 time bar under each icon drains from full
+to empty. The fill is `s_stateodd_time_gauge.ddj` over the back `s_stateodd_time.ddj`, both 20 × 4
+(MEASURED), at (total − elapsed) / total every frame. There is no blink. When a buff ends, a
+9-frame `buf_effect.ddj` burst plays at 100 ms a tick, the icon fades by 0x55 a tick after tick 3,
+`buf_disappear.wav` sounds, and the icon is removed at 900 ms. Right-click follows `vslot_033`:
+- only the main list takes it;
+- an icon that is already ending ignores it;
+- `nbuf` without `lnks` does nothing;
+- `cbuf` opens a 308 × 148 confirmation box;
+- anything else calls `NetClient.send_buff_cancel`.
+
+The tooltip is 0x800a10's format: "name Lv n", the description, and "Remaining time 45Second" /
+"… 2Minute 5Second" / "Remaining time: 1Day 1Hour 1Minute", in the client's own words.
+
+**Three things re-reading the decompile changed** from the spec, each READ:
+- **An untimed buff shows no bar at all.** The spec said "full". The layout shows the gauge only
+  when total ≠ −1 (asm 0x7ffd35..0x7ffd51). The per-frame update writes 1.0 into a hidden gauge.
+- **A second-list (`bbuf`) buff that ends vanishes at once**, with no burst and no sound
+  (0x804c60). The 0xB0BD handler always routes `bbuf` to that list: it passes param_4 = 0, asm
+  0x8a5cbc.
+- **A zero `dura` gets no icon** (0x7fda20). The add also takes the time left, so a buff joined
+  midway starts part-drained (0x8048c0).
+
+**The flags are the client's own data** (MEASURED). `skilldata.txt` lists 47 shards of 1000 ids
+each, and the bar loads the one a buff's id falls in. The Param block is walked with the server's
+run table, copied into the client and guarded by a Go test. All 33,698 rows walk to completion.
+The tags count: `cbuf` 473 (the spec's number), `nbuf` 285, `lnks` 308, `bbuf` 226. Grass Walk A
+lv1 is id 113 and carries none of them.
+
+**OURS / OPEN:**
+- The client is never told its own id, so the World3D hookup takes a buff as the player's when its
+  owner is the sit-learned id, or failing that, neither another player's body nor a monster (OURS).
+  The contract needs an own-id for this to be exact (OPEN).
+- The confirm box's text is OPEN, because retail passes an empty string. The box has the client's
+  `UIIT_STT_CONFIRM_BOX` title and an empty body, in this client's confirm style (OURS). That its
+  OK sends the cancel is INFERRED.
+- The `lnks` frame, the red "Not affected" line and the "Target" line are not drawn (OPEN).
+- The base's NetClient has no `buff_started`, `buff_ended` or `send_buff_cancel`; round 617 adds
+  them. The board connects through `has_signal` / `has_method`, so until round 617 merges, only the
+  new `SRREVAMP_QA_BUFFS` hook feeds it and a cancel logs "not sent".
+
+**Measured.**
+- `hud_buff_board_test.gd` passes: 68 checks over layout, gauge, routing (including a right press
+  and release through the live viewport), end timing, tooltip, the walk and the QA hook. It covers
+  every check the brief asked for.
+- Against base b50a7b9 the suite cannot compile:
+  - `SCRIPT ERROR: Parse Error: Identifier "SkillBuffCatalog" not declared in the current scope.`
+  - `SCRIPT ERROR: Parse Error: Identifier "HudBuffBoard" not declared in the current scope.`
+- With three rules mutated (the untimed gauge shown, `nbuf` ignoring `lnks`, the second list
+  clickable) it fails as below. A fourth mutation, a plain `max(0, a − 0x55)` fade, behaves the
+  same from 255 and fails nothing.
+  - `FAIL untimed: the gauge is hidden (ShowWindow(total != -1))`
+  - `FAIL nbuf with lnks -> cancel`
+  - `FAIL second (bbuf) list -> nothing`
+  - `FAIL nbuf and second-list clicks send nothing`
+  - `FAIL plain click sends cancel(skill 1, token 21)`
+- The Go drift test fails when one run length is changed:
+  `client RUN["lnks"] = 4, Run = 5`.
+- A live run on the box went through Login and CharSelect against an in-memory server. It had ten
+  injected buffs, and `xdotool` sent real X right-clicks. The log shows:
+  - the plain icon routed to `cancel` ("not sent", the base has no sender);
+  - the `nbuf` icon and the `bbuf` icon to `none`;
+  - the `cbuf` icon to `confirm`;
+  - `0` SCRIPT ERRORs.
+
+  The frames show the bar, the tooltip ("Grass Walk - Flow Lv 1 / Increases the character's … /
+  Remaining time 41Second"), the confirmation box and a burst mid-play. They show; they do not
+  prove.
+
 ## Six-hundred-and-seventeenth round: Grass Walk and the self-buffs cast with nothing selected, and Ghost Walk casts at a point picked on the ground
 
 "Some skills don't require you attack a monster like grass walk, ghost walk, and a bunch of
