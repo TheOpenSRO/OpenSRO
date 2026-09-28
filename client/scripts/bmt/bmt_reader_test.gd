@@ -64,6 +64,36 @@ func _check_uncompressed_variant() -> void:
 			_check(m.layers[0].layer_name == "chinaman_body", "uncompressed variant: layer name (got %s)" % m.layers[0].layer_name)
 			_check(m.layers[0].texture_path == "chinaman_warrior_body.ddj", "uncompressed variant: texture (got %s)" % m.layers[0].texture_path)
 
+## Round 625: a layer ends with SEVEN bytes after its texture path -- a
+## uint32 and three bytes, READ from CPrimMtrl FUN_00bf91b0 -- so the next
+## layer's name starts right there. The trailer here is a uint32 of 3 and the
+## bytes "xyz", which is also a plausible length-prefixed name: the forward
+## scan the reader used before this round stops on it and reads a layer
+## called "xyz", whose flag word and texture are garbage.
+func _check_layer_trailer() -> void:
+	var dec := PackedByteArray()
+	dec.append_array("JMXVBMT 0102".to_ascii_buffer())
+	_append_u32(dec, 2)
+	for layer in [["tre_leaf", 0x341, "tre_leaf.ddj"], ["tre_bark", 0x140, "tre_bark.ddj"]]:
+		_append_len_prefixed(dec, layer[0])
+		for i in range(16): _append_f32(dec, 1.0)
+		_append_f32(dec, 0.0) # power
+		_append_u32(dec, layer[1]) # the flag word
+		_append_len_prefixed(dec, layer[2])
+		_append_u32(dec, 3) # the trailer's uint32
+		dec.append_array("xyz".to_ascii_buffer()) # ... and its three bytes
+	var m := BmtReader.parse(dec)
+	_check(m != null and m.layers.size() == 2, "r625: two layers with their trailers (got %s)" % (m.layers.size() if m != null else "null"))
+	if m == null or m.layers.size() != 2:
+		return
+	_check(m.layers[1].layer_name == "tre_bark" and m.layers[1].unknown == 0x140 and m.layers[1].texture_path == "tre_bark.ddj",
+		"r625: the second layer is read at the end of the first's trailer, not at a name the scan finds in it (got '%s', 0x%x, '%s')" % [
+			m.layers[1].layer_name, m.layers[1].unknown, m.layers[1].texture_path])
+	var word = m.layers[0].get("texture_word")
+	var bytes = m.layers[0].get("texture_bytes")
+	_check(word == 3 and bytes is PackedByteArray and (bytes as PackedByteArray).get_string_from_ascii() == "xyz",
+		"r625: the trailer is kept -- word 3, bytes 'xyz' (got %s, %s)" % [word, bytes])
+
 func _init() -> void:
 	var data := FIXTURE_HEX.hex_decode()
 
@@ -84,6 +114,7 @@ func _init() -> void:
 	_check(BmtReader.parse(bad) == null, "rejects non-zlib data")
 
 	_check_uncompressed_variant()
+	_check_layer_trailer()
 
 	if _failures == 0:
 		print("ALL PASS")

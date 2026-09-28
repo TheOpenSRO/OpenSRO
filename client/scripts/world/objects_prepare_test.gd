@@ -346,10 +346,11 @@ func _test_prepared_again(S: GDScript, map_pk2: Pk2Reader, data_pk2: Pk2Reader) 
 ## taken after that commit would have spared it. With nothing carried in,
 ## the decode was needed and does not count.
 ##
-## The layer here has no flag word (LAYER_FLAG_MASK clear), so the pixels
-## decide, and the texture is the uncompressed scenery.ddj (fourCC ""), whose
-## statistic is `binary_cutout`; the world's entry for it holds no statistic
-## (the synthetic material's flag word 0x40 decided every layer so far).
+## Since round 625 the material rule reads only the layer's flag word, so the
+## one statistic left is `fraction`, measured under SRREVAMP_QA_MATS for a
+## layer drawn without an alpha test (flag word 0x40 here). The texture is
+## the uncompressed scenery.ddj (fourCC ""); the world's entry for it holds
+## no statistic (QA_MATS was off while the world loaded).
 ## World3D.gd as first committed in round 566 skipped every snapshot-held key,
 ## so the last check FAILS there.
 func _test_held_texture_decoded_again(w: Node, data_pk2: Pk2Reader, none: Dictionary) -> void:
@@ -362,14 +363,15 @@ func _test_held_texture_decoded_again(w: Node, data_pk2: Pk2Reader, none: Dictio
 	var pixels := BmtReader.Layer.new()
 	pixels.layer_name = "pixels"
 	pixels.texture_path = "scenery.ddj"
-	pixels.unknown = 0
+	pixels.unknown = 0x40
+	OS.set_environment("SRREVAMP_QA_MATS", "1")
 	var snapshot := ObjectLoader.snapshot_textures(world_textures)
 	var fifth := {"textures": {}, "missing": [], "log": []}
 	ObjectLoader._prepare_material(data_pk2, "prim\\scenery.bmt", pixels, snapshot, fifth)
 	var redecoded: Dictionary = (fifth["textures"] as Dictionary).get(key, {})
 	_check(snapshot.has(key) and redecoded.get("image") is Image
-			and (redecoded.get("alpha", {}) as Dictionary).has("binary_cutout"),
-		"a layer the pixels decide decodes the held texture again for the statistic its snapshot lacked (got %s)" % str(redecoded))
+			and (redecoded.get("alpha", {}) as Dictionary).has("fraction"),
+		"a QA_MATS layer decodes the held texture again for the statistic its snapshot lacked (got %s)" % str(redecoded))
 	var job := {"objects": {"known_textures": snapshot, "textures": fifth["textures"]}}
 	var got: Dictionary = w.call("_prepared_again", job)
 	_check(got == none, "with no statistic carried in since the snapshot, that decode was needed and is not counted (got %s)" % str(got))
@@ -377,7 +379,8 @@ func _test_held_texture_decoded_again(w: Node, data_pk2: Pk2Reader, none: Dictio
 	var sixth := {"textures": {}, "missing": [], "log": []}
 	ObjectLoader._prepare_material(data_pk2, "prim\\scenery.bmt", pixels, ObjectLoader.snapshot_textures(world_textures), sixth)
 	ObjectLoader.commit_textures(sixth["textures"], world_textures)
-	_check((world_textures[key]["alpha"] as Dictionary).has("binary_cutout"),
+	OS.set_environment("SRREVAMP_QA_MATS", "")
+	_check((world_textures[key]["alpha"] as Dictionary).has("fraction"),
 		"that commit merged the statistic into the uploaded texture's entry (ObjectLoader.commit_textures)")
 	got = w.call("_prepared_again", job)
 	_check(got == {"tiles": 0, "navmesh": 0, "collisions": 0, "heightmaps": 0, "models": 0, "textures": 1},

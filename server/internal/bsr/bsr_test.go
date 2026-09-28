@@ -421,3 +421,55 @@ func TestParseCharacterFallsBackWhenSectionsDontChain(t *testing.T) {
 		t.Errorf("SkeletonPath = %q, want empty -- no path should be invented", obj.SkeletonPath)
 	}
 }
+
+// TestParseMeshEntryWord is round 625's: with bit 0 of the header's flag word
+// at 0x2C set, every mesh entry is its path and one more uint32 (READ:
+// ResObject::FUN_00be41d0 hands the bit to CPrimMesh slot 4, FUN_00c12510,
+// which then reads it). The swaying trees are laid out that way; before this
+// round their section table did not chain, they fell back to the scan, and
+// the scan returns a nature file's first mesh only — the trunk, not the
+// leaves.
+func TestParseMeshEntryWord(t *testing.T) {
+	buf := make([]byte, preambleEnd)
+	copy(buf, magic)
+	binary.LittleEndian.PutUint32(buf[offType:], (2<<16)|TypeNature)
+	binary.LittleEndian.PutUint32(buf[0x2C:], 1)
+	lp := func(b []byte, s string) []byte {
+		b = binary.LittleEndian.AppendUint32(b, uint32(len(s)))
+		return append(b, s...)
+	}
+	buf = lp(buf, "tre_synth")
+	buf = append(buf, make([]byte, 112)...)
+	binary.LittleEndian.PutUint32(buf[offPtrMaterial:], uint32(len(buf)))
+	buf = binary.LittleEndian.AppendUint32(buf, 1)
+	buf = binary.LittleEndian.AppendUint32(buf, 0)
+	buf = lp(buf, `prim\mtrl\tre_synth.bmt`)
+	binary.LittleEndian.PutUint32(buf[offPtrMesh:], uint32(len(buf)))
+	buf = binary.LittleEndian.AppendUint32(buf, 2)
+	buf = lp(buf, `prim\mesh\tre_synth_brn.bms`)
+	buf = binary.LittleEndian.AppendUint32(buf, 1)
+	buf = lp(buf, `prim\mesh\tre_synth_leaf.bms`)
+	buf = binary.LittleEndian.AppendUint32(buf, 0)
+	binary.LittleEndian.PutUint32(buf[offPtrAnimation:], uint32(len(buf)))
+	buf = binary.LittleEndian.AppendUint32(buf, 4096)
+	buf = binary.LittleEndian.AppendUint32(buf, 0)
+	buf = binary.LittleEndian.AppendUint32(buf, 1)
+	buf = lp(buf, `prim\ani\tre_synth.ban`)
+	binary.LittleEndian.PutUint32(buf[offPtrSkeleton:], uint32(len(buf)))
+	buf = binary.LittleEndian.AppendUint32(buf, 1)
+	buf = lp(buf, `prim\skel\tre_synth.bsk`)
+	buf = binary.LittleEndian.AppendUint32(buf, 0)
+
+	obj, err := Parse(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obj.MeshPath != `prim\mesh\tre_synth_brn.bms` || len(obj.SubMeshPaths) != 1 || obj.SubMeshPaths[0] != `prim\mesh\tre_synth_leaf.bms` {
+		t.Errorf("meshes = %q + %q, want the trunk and the leaves", obj.MeshPath, obj.SubMeshPaths)
+	}
+	// Without the flag the same bytes must not chain.
+	binary.LittleEndian.PutUint32(buf[0x2C:], 0)
+	if _, ok := parseSections(buf); ok {
+		t.Error("with bit 0 of 0x2C clear the per-mesh words chained")
+	}
+}

@@ -28,6 +28,22 @@ const OFF_PTR_MESH_GROUP := 0x1C
 const OFF_PTR_ANIMATION_GROUP := 0x20
 const OFF_PTR_SOUND := 0x24
 
+## The header word at 0x2C: the object's flag word (round 625). READ in
+## sro_client.exe: `CResObject::Load` (`ResObject::FUN_00be41d0`) copies it
+## to the object (`param_1[1] = *(header + 0x2c)`) and, for every entry of
+## the mesh list, loads the mesh by path and then calls the mesh's
+## `CPrimMesh` slot 4 (`FUN_00c12510`) with `flags & 1`; when that bit is set
+## the slot reads ONE MORE uint32 from the stream after the path, into
+## mesh+0x1f8 (and Load sets a flag on the object when any is non-zero). So
+## with bit 0 set every mesh entry is `path, uint32`, and without it the
+## paths abut. MEASURED: the swaying trees (`tre_maple01`, `tre_tree01`,
+## `tre_bank02`, the willows ...) carry 1 here and fail the chaining check
+## without the extra word -- they fell back to the forward scan, which
+## returns only the FIRST mesh of a nature file: the trunk, never the
+## leaves (docs/WORLD_ISSUES.md, round 625).
+const OFF_FLAGS := 0x2C
+const FLAG_MESH_EXTRA_WORD := 0x1
+
 ## Object type, the low uint16 of the word at 0x40. Authored in the file --
 ## this is the game's own classification, not a guess from the path or from
 ## which order the fields happen to appear in.
@@ -229,6 +245,18 @@ class ParsedObject:
 	## did not parse (parse_sound_section).
 	var sound_sets_by_type: Dictionary = {}
 	var sound_sets_by_clip: Dictionary = {}
+	## The environment-map mods of the same section (round 625): material
+	## index -> the mod's flag word, one entry per ENVMAP / BUMPENV mod
+	## whose header names that index (header word 3, IModData +0x14). READ:
+	## `CRTModEnvMap::vslot_004` (0x00c83690) applies to the material whose
+	## index equals that word, ORs 0x60000000 into the draw's flags -- which
+	## turns off the material's own alpha test (`CObjRendererVS::
+	## FUN_00c42a60` skips it under 0x20000000) -- and then enables an alpha
+	## test of its own, ALPHAREF 1 / GREATEREQUAL, only when bit 1 of the
+	## flag word (header word 5, IModData +0x1c) is set. So the texture's
+	## alpha on such a material is the reflection mask, not a cutout. Read
+	## for every object whose section table parses; empty otherwise.
+	var env_map_materials: Dictionary = {}
 
 	func is_item() -> bool:
 		return object_type == TYPE_ITEM
@@ -347,6 +375,7 @@ static func parse(data: PackedByteArray) -> ParsedObject:
 			built.is_character = is_character_type and built.skeleton_path != ""
 			if built.is_character:
 				_attach_sound_sets(built, data)
+			built.env_map_materials = env_map_materials(data)
 			return built
 
 	# The exact byte layout between the name and the mesh/material paths
@@ -501,7 +530,9 @@ static func parse_sections(data: PackedByteArray):
 	var materials = _read_string_list(data, ptr_material, ".bmt", 4)
 	if materials == null or materials[1] != ptr_mesh:
 		return null
-	var meshes = _read_string_list(data, ptr_mesh, ".bms", 0)
+	# Meshes: a count, then the paths -- each followed by one uint32 when the
+	# header's flag word has bit 0 set (OFF_FLAGS, READ from CPrimMesh slot 4).
+	var meshes = _read_string_list(data, ptr_mesh, ".bms", 0, mesh_trail_bytes(data))
 	if meshes == null or meshes[1] != ptr_animation:
 		return null
 
@@ -685,6 +716,8 @@ static func parse_sound_section(data: PackedByteArray, off: int):
 		return null
 	var cursor := [off]
 	var mods := {}
+	var env_maps: Array = []
+	mods[_ENV_MAPS_KEY] = env_maps
 	var lists: Array = []
 	for list_index in range(2):
 		var count = _take_i32(data, cursor)
@@ -697,7 +730,26 @@ static func parse_sound_section(data: PackedByteArray, off: int):
 				return null
 			sets.append(sset)
 		lists.append(sets)
-	return {"by_clip": lists[0], "by_type": lists[1], "end": cursor[0], "mods": mods}
+	mods.erase(_ENV_MAPS_KEY)
+	return {"by_clip": lists[0], "by_type": lists[1], "end": cursor[0], "mods": mods, "env_maps": env_maps}
+
+## Where _read_mod_set leaves the ENVMAP / BUMPENV headers it passes, inside
+## the `mods` dictionary it already threads (a key no u32 kind can equal).
+const _ENV_MAPS_KEY := "env_maps"
+
+## The IModData header words of the mods parse_sound_section passed of kind
+## ENVMAP or BUMPENV, as material index -> flag word (see
+## ParsedObject.env_map_materials). Empty when the section does not parse.
+static func env_map_materials(data: PackedByteArray) -> Dictionary:
+	var out := {}
+	if data.size() < PREAMBLE_END:
+		return out
+	var section = parse_sound_section(data, _le_u32(data, OFF_PTR_SOUND))
+	if section == null:
+		return out
+	for header in section["env_maps"]:
+		out[int(header["material"])] = int(header["flags"])
+	return out
 
 ## What follows the sound section in a character file: the attachment block
 ## `CResAttachable::vslot_007` reads after the object itself -- three
@@ -742,6 +794,14 @@ static func _read_mod_set(data: PackedByteArray, cursor: Array, mods: Dictionary
 			return null
 		mod_kind = mod_kind & 0xFFFFFFFF
 		mods[mod_kind] = int(mods.get(mod_kind, 0)) + 1
+		if (mod_kind == MOD_ENVMAP or mod_kind == MOD_BUMPENV) and mods.has(_ENV_MAPS_KEY) \
+				and cursor[0] + MOD_HEADER_BYTES <= data.size():
+			# The IModData header (FUN_00c5c2a0): six words -- into +0x08,
+			# +0x0c, +0x10, +0x14, +0x18, +0x1c -- and four bytes. Word 3
+			# (+0x14) is the material index, word 5 (+0x1c) the flag word.
+			(mods[_ENV_MAPS_KEY] as Array).append({"kind": mod_kind,
+				"material": data.decode_u32(cursor[0] + 12),
+				"flags": data.decode_u32(cursor[0] + 20)})
 		if mod_kind == MOD_SOUND:
 			if not _read_sound_mod(data, cursor, sset):
 				return null
@@ -919,8 +979,9 @@ static func _parse_character(data: PackedByteArray, name: String) -> ParsedObjec
 	if materials[1] != ptr_mesh:
 		return null
 
-	# Meshes: a count, then the paths back to back with no per-entry field.
-	var meshes = _read_string_list(data, ptr_mesh, ".bms", 0)
+	# Meshes: a count, then the paths, each with the extra word OFF_FLAGS
+	# asks for.
+	var meshes = _read_string_list(data, ptr_mesh, ".bms", 0, mesh_trail_bytes(data))
 	if meshes == null or meshes[0].is_empty():
 		return null
 	if meshes[1] != ptr_animation:
@@ -1011,8 +1072,15 @@ static func _read_skeleton_list(data: PackedByteArray, off: int):
 ## end with suffix, which is what turns "these bytes parsed" into "these
 ## bytes are the list the header promised". Returns [paths, end_offset], or
 ## null if the list doesn't parse or a path fails the suffix check.
+## Bytes that follow each mesh path in the mesh section: 4 when the header's
+## flag word (OFF_FLAGS) has FLAG_MESH_EXTRA_WORD set, else 0.
+static func mesh_trail_bytes(data: PackedByteArray) -> int:
+	if data.size() < OFF_FLAGS + 4:
+		return 0
+	return 4 if (_le_u32(data, OFF_FLAGS) & FLAG_MESH_EXTRA_WORD) != 0 else 0
+
 static func _read_string_list(
-	data: PackedByteArray, off: int, suffix: String, lead_bytes: int
+	data: PackedByteArray, off: int, suffix: String, lead_bytes: int, trail_bytes: int = 0
 ):
 	if off + 4 > data.size():
 		return null
@@ -1030,7 +1098,9 @@ static func _read_string_list(
 		if not (_is_plausible_path(path.to_ascii_buffer()) and path.to_lower().ends_with(suffix)):
 			return null
 		paths.append(path)
-		off = result[1]
+		off = result[1] + trail_bytes
+		if off > data.size():
+			return null
 	return [paths, off]
 
 ## Looks for the next plausible length-prefixed path string starting at or

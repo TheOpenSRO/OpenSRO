@@ -7218,6 +7218,179 @@ worn piece reaches there, and the only translucent-authored item mesh found (`he
 is in a `_fullset` model v0.1.457 could never load. It is probably a buff effect; unmeasured.
 docs/TODO.md lists what is still OPEN.
 
+## Six-hundred-and-twenty-fifth round: trees have their leaves again, needle cards stop drawing as slabs, and a spear is no longer cut to ribbons
+
+A player reported on v0.1.457 that "trees and assets around the map aren't fully visible or are
+missing their leaves". Their screenshot was of Jangan's grass strip by the plaza: four bare dark
+trunks. The round measured first, read the client second, and fixed what the reading grounds.
+A second report came in the same session: a spear draws full of holes, and a shield is nearly
+invisible. That falls under the same material rule.
+
+### 1. The leaves were never loaded (MEASURED, then READ)
+
+`client/tools/foliage_census.gd` (new) reads every tree and foliage model named by Map.pk2's
+`object.ifo` the way `ObjectLoader` does. For each mesh piece it prints the vertex and triangle
+counts, the skin, the layer and flag word, the texture's fourCC, and its alpha statistics.
+
+- **Before:** 326 models, 309 parsed, **580 pieces**. 149 of the 309 had `type=-1`, meaning the
+  `.bsr` section table did not chain and the file fell back to the forward scan. For a nature file
+  that scan returns **only the first mesh**, which is the trunk.
+  - Jangan's `tre_maple01`/`02`/`03`, `tre_tree01`, `tre_smalltree01`, `tre_bank01`/`02`,
+    `tre_frie01`, the willows and `tre_pine01`..`04` all loaded one piece.
+  - `tre_maple03` is placed three times at the grass strip by the plaza (97/168, local 563,443 /
+    635,436 / 568,517): the user's bare trees. Their trunk (`tre_maple03_brn`) was drawn and
+    `tre_maple03_leaf` was never read.
+- **Why (READ):** `ResObject::FUN_00be41d0`, `CResObject::Load`, copies the header word at
+  **0x2C** to the object. Then, for each mesh entry, it calls the mesh's `CPrimMesh` slot 4
+  (`FUN_00c12510`) with `flags & 1`. That slot reads **one more `uint32` after the path** when the
+  bit is set. The swaying trees carry 1 there. The old doc said "those files fail the chaining
+  check and fall back to the forward scan, which is why no special case is needed". That note was
+  where the leaves were lost.
+- **After:** the two readers (`BsrReader`, `server/internal/bsr`) step over the word when the flag
+  asks for it.
+  - Census: **0 fallbacks and 779 pieces** loaded.
+  - Archive-wide `tools/sweep_bsr.gd --verify` over Data.pk2's 8,539 files: header table
+    failures went from **491 to 41**, and unresolved paths stayed at **27 before and after**, so
+    no invented paths. The 450 files the table now reads include buildings (`w_cd_inn`,
+    `cj_adult_brg`, ...). In the 97/167 "grove" frame a gateway roof that the scan had dropped now
+    stands.
+- **The shadow:** in the user's picture a canopy-shaped shadow lay under the bare trunks. It was
+  not our leaf geometry. The census shows no leaf mesh was loaded at all on the base, so the
+  shadow has another source. INFERRED, not measured: most likely the terrain's own baked
+  shadowing.
+
+### 2. The material rule, READ
+
+The loader used to decide a cutout from the `.bmt` flag word's bit 0 (a correlation), and fell back
+to pixel heuristics when bit 6 was clear. The client's own rule is now read:
+
+- **The reader.** `CPrimMtrl::FUN_00bf9270` reads the flag word into the runtime material's +0x70.
+- **The draw paths.** Every `CObjRendererVS` draw path passes `material+0x70 | renderer flags` to
+  `FUN_00c42a60`:
+  - **`0x200` → `ALPHATESTENABLE`, `ALPHAREF 0x80`**, unless `0x20000000` is set;
+  - **`0x1` → `CULLMODE NONE`**;
+  - `0x4` → specular;
+  - `0x8` → lighting off.
+- **The alpha function.** The renderer's begin (`FUN_00c42860`) sets **`ALPHAFUNC GREATEREQUAL`**.
+- **No blending.** No per-material blend exists; `ALPHABLENDENABLE` belongs to the whole-object
+  fade (`FUN_00c428c0`).
+- **Env-map mods override the test.** `CRTModEnvMap::vslot_004` ORs `0x60000000` (so the material
+  test is off) and sets its own test at `ALPHAREF 1` when its mod flag word has bit 1. The mod is
+  matched by material index: IModData header word 3 is the index, word 5 the flags
+  (`FUN_00c5c2a0`).
+- **What was wrong before.** Bit 0 is cull, and the test is bit 9. The census (after the reader
+  fix):
+  - **69 pieces in 44 tree models disagreed**. Mostly `0x340`, alpha-tested **one-sided**: the
+    pine and bamboo needle cards and `oas_kk_tree06_al01`. They drew as solid slabs, with
+    51–69 % of their texels below alpha 128.
+  - The 15 `0x141` pieces (two-sided, untested) were already opaque DXT1, so the READ rule agrees
+    with their pixels everywhere.
+  - **After:** 0 disagree. 392 pieces are alpha-tested, 54 of them one-sided.
+- **Implemented** in `ObjectLoader.layer_draw_rule`:
+  - scissor at **128/255** (READ; the old 0.5 cut the same texels);
+  - `foliage.gdshader` two-sided or `foliage_one_sided.gdshader`, sharing `foliage.gdshaderinc`;
+  - a two-sided untested layer gets the shader with a scissor of 0;
+  - no pixel statistic decides anything any more. `_alpha_is_binary_cutout`,
+    `_has_real_alpha_variance`, `_ALPHA_FOURCCS` and the DXT1 fraction are gone;
+    `SRREVAMP_QA_MATS` still reports.
+- **OURS:** the test reads mip 0's alpha. Retail tests the filtered alpha; mip 0 is round 83's
+  answer to canopies dissolving with distance.
+- **The `.bmt` layer trailer (READ,** `CPrimMtrl::FUN_00bf91b0`**).** It is a `uint32` and three
+  bytes after the texture path; the third byte is the full-path flag. Both readers now step exactly
+  seven bytes and scan only when that misses. The scan could stop inside the trailer and read a
+  phantom layer.
+
+### 3. Equipment (INFERRED, stated as such)
+
+The flag word asks for `0x200` on most weapon, shield and armour layers. Measured under each
+piece's own UV triangles (the census's `uv_alpha<128`), the share of alpha-tested layers with more
+than 30 % of their surface below 128 is:
+
+| Group | Layers | Over 30 % below 128 | Median surface below 128 |
+|---|---|---|---|
+| armour (`res\item`) | 700 | 602 | 75 % |
+| weapons | 369 | 242 | 52 % |
+| shields | 25 | 14 | 64 % |
+| avatars | 1,328 | 951 | 72 % |
+| monsters (`res\mob`), `0x200` layers | 756 + 1,050 | — | 0 % / 2 % |
+| NPCs | 313 + 374 | — | 0 % / 4 % |
+| player bodies (`res\char`) | 435 + 58 | — | 0 % / 9 % |
+
+Sampled examples:
+
+| Layer | Flags | Surface below 128 |
+|---|---|---|
+| `spear_1_5` | `0x341` | 49–89 % across `spear_01`..`07` |
+| `shield_02_2` | `0x341` | 97.6 % |
+| `sword1_2_3` | `0x340` | 73 % |
+
+The item textures' alpha is a graded mask, not a cutout. A test at 128 leaves a spear at a sixth
+of a spear, which is the reported "see-through holes", and the old bit-0 rule did exactly that to
+every `0x341` item. The client has an override: `CRTModProgEquipPow::vslot_004` ORs `0xe21f0000`
+(`0x10000000`, no material state at all). It is attached by `CCompChar::FUN_00c350a0` through the
+compound's slot 50. **When it is attached is OPEN**, so items (type 5) are drawn with **no
+material alpha test** (INFERRED). Items keep their `.bsr`'s own env-map mods (READ); only
+`blade_14` and `tblade_14` carry one among the China weapons and shields sampled. Round 626 owns
+the equipment rendering; this is the rule it builds on.
+
+### Pictures (for a human; the numbers above are the measurement)
+
+`qa_shot --shots` ran base (dev b22edf5) and this branch. Run A was 97/168 at `--radius 1` with 7
+viewpoints including a hop into farmland 96/168. Run B was the 97/167 grove with 3 viewpoints.
+Frames and side-by-sides are in the session scratchpad under `foliage_shots/`. GL was the RX 5700
+XT through VirtualGL on every run, with 0 `SCRIPT ERROR`s.
+
+- **`maple`** (the report's spot): bare trunks become full maples, and pine needles and blossom
+  appear. Changed pixels: **74,261**. Green pixels in the upper frame: **14,673 → 23,102**.
+- **`plaza` / `plazaw`:** 12,417 → 14,608 and 9,308 → 10,090 green.
+- **`grove`:** 251,090 changed. The restored gateway roof covers part of the view, so green fell
+  15,432 → 9,596.
+- **`farm` and `tree02b`:** about 1,800 changed each, which is time-of-day noise only. The one tree
+  there (`tre_tree08`, `0x141`, opaque) was already right.
+
+### Tests
+
+- New:
+  - `bsr_reader_test` `_test_round_625`: the per-mesh word, and env-map headers;
+  - `bmt_reader_test` `_check_layer_trailer`;
+  - `object_loader_test` `_test_round_625`: the rule table, and the materials over one DXT3 leaf
+    for ten flag, env and item cases;
+  - Go `TestParseMeshEntryWord` and `TestParseLayerTrailer`.
+- Updated for the new rule:
+  - `object_loader_test`'s round-566 alpha case now uses flag words and asserts that no pixel is
+    consulted;
+  - its fingerprints: scissor 0.5020, and the shader names its cull;
+  - `objects_prepare_test`'s held-texture case uses `fraction` under `SRREVAMP_QA_MATS`.
+- Box: `remote_godot.sh check` gives ALL LOAD (364 scripts), and `tests` ran **143 suites, 0
+  failing**. Go: `go test -count=1 -p 1 ./...` is green.
+
+**NEGATIVE: the same three suites against dev b22edf5** (copied into the base client on the box):
+
+```
+FAIL r625: the section table chains with the per-mesh word, so the header is trusted -- type 4 (got -1)
+FAIL r625: both meshes, the trunk AND the leaves (got prim\mesh\tre_synth_brn.bms + [])
+FAIL r625: its skeleton and sway animation are read too (got '', 0)
+FAIL r625: the ENVMAP mod on material 1 with flag word 0x3 is read (got <null>)
+FAIL r625: 4 trailing bytes per mesh only under the flag
+FAIL r625: two layers with their trailers (got 1)
+FAIL load_object: flags 0x340 make dxt1cut alpha-tested at 128, one-sided (got <StandardMaterial3D#...>)
+FAIL load_object: flags 0x141 make dxt1solid untested, two-sided (got <ShaderMaterial#...>)
+FAIL r625: a 0x340 layer is alpha-tested at 128/255 and ONE-sided (got <StandardMaterial3D#...>)
+FAIL r625: ObjectLoader.layer_draw_rule exists
+```
+
+Go against base: `--- FAIL: TestParseMeshEntryWord ... meshes = "prim\\mesh\\tre_synth_brn.bms" + [], want the trunk and the leaves`.
+
+### Open
+
+- **Tree sway.** The trees now read their `.bsk` and `.ban`, but pieces are placed rigid, and the
+  skinned leaf meshes draw in bind pose.
+- **When ProgEquipPow is attached.** It decides whether items are ever tested.
+- **Flag bits `0x40`, `0x100`, `0x2000`** are not tested in `FUN_00c42a60`, and their meaning is
+  not read. Bits `0x4` (specular) and `0x8` (lighting off) are read but not drawn.
+- **17 foliage models in `object.ifo` are missing from Data.pk2** (`st_tree_hamada_*`,
+  `tre_palm03_copy`, ...). They are absent from the archive and have nothing to load.
+
 ## Six-hundred-and-twenty-second round, review follow-up: a healer can select themselves, a recast on an ally replaces the old buff, and only casts that happened are shown
 
 The review found that round 622's READ claims hold, including the 369 HP heal, which was checked by

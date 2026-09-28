@@ -157,8 +157,12 @@ static func assemble_from_archive(
 			var layer_idx := ObjectLoader._find_layer_by_name(material.layers, mesh.material_name)
 			if layer_idx == -1:
 				layer_idx = i if material.layers.size() == mesh_paths.size() else 0
+			# The draw rule's object inputs (ObjectLoader.layer_draw_rule,
+			# round 625): an env-map mod on the material index, and whether
+			# this is an item.
 			godot_material = ObjectLoader.build_godot_material(
-				archive, parsed.material_path, material.layers[layer_idx]
+				archive, parsed.material_path, material.layers[layer_idx], {},
+				int(parsed.env_map_materials.get(layer_idx, -1)), parsed.is_item()
 			)
 
 		# Real skinning when the mesh carries weights, rigid attachment when
@@ -299,9 +303,13 @@ static func attach_item_from_archive(
 			var layer_idx := ObjectLoader._find_layer_by_name(material.layers, mesh.material_name)
 			if layer_idx == -1:
 				layer_idx = i if material.layers.size() == mesh_paths.size() else 0
-			godot_material = equipment_material(material.layers[layer_idx], ObjectLoader.build_godot_material(
-				archive, parsed.material_path, material.layers[layer_idx]
-			))
+			# The draw rule's object inputs (ObjectLoader.layer_draw_rule,
+			# round 625): an env-map mod on the material index, and whether
+			# this is an item.
+			godot_material = ObjectLoader.build_godot_material(
+				archive, parsed.material_path, material.layers[layer_idx], {},
+				int(parsed.env_map_materials.get(layer_idx, -1)), parsed.is_item()
+			)
 		meshes.append([mesh, godot_material])
 	if meshes.is_empty():
 		push_error("SkinnedBsrAssembler: %s: none of its %d mesh piece(s) loaded" % [bsr_path, mesh_paths.size()])

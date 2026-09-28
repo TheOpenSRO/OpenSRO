@@ -46,7 +46,9 @@ bytes ahead of the bounding-box floats.
 | 0x20 | 4 | Offset of the **animation group** section (2026-09-10; see below) |
 | 0x24 | 4 | Offset of the **mod-data** section, which carries the per-animation **sound tracks** (and material, particle and dynamics mods): see "Sound tracks" below |
 | 0x28 | 4 | Offset of the bounding-box block; equals `name_end + 48` in every file checked |
-| 0x2C-0x3C | 16 | Reserved (observed 0) |
+| 0x2C | 4 | **Flag word** (round 625, READ): `CResObject::Load` (`ResObject::FUN_00be41d0`) copies it to the object (`param_1[1]`); **bit 0 set means every mesh entry carries one more `uint32` after its path** (see "Mesh entries" below). 1 on the swaying trees, 0 in the files checked before |
+| 0x30 | 4 | Copied beside it (`param_1[2]`); meaning not read |
+| 0x34-0x3C | 12 | Reserved (observed 0) |
 | 0x40 | 2 | **Object type** — eight values across the archive; `1` is character (see below) |
 | 0x42 | 2 | Observed `2` in every file checked |
 | 0x44 | 4 | Name length (`uint32`) |
@@ -214,10 +216,38 @@ not placed as rigid scenery. Both readers therefore refuse to report a character
 path, falling back to the scan instead of returning something that would render as disconnected
 limbs at the origin.
 
-Nature files (type 4) also carry a skeleton and animations — that is how trees sway — but their
-mesh entries appear to carry a trailing `uint32` per piece that type 1 and type 2 do not
-(`tre_bank02`: mesh 1 ends 0x15A, a `0` word, mesh 2 begins 0x15E). Those files simply fail the
-chaining check and fall back to the forward scan, which is why no special case is needed for them.
+### Mesh entries (round 625, READ)
+
+Nature files (type 4) also carry a skeleton and animations — that is how trees sway — and their
+mesh entries carry a trailing `uint32` per piece that type 1 and type 2 do not (`tre_bank02`: mesh 1
+ends 0x15A, a `0` word, mesh 2 begins 0x15E). **The client says when:** `ResObject::FUN_00be41d0`
+reads each mesh entry's path, loads the mesh, and calls its `CPrimMesh` slot 4
+(`FUN_00c12510`) with `flags & 1` — the header word at 0x2C — and that slot reads **one more
+`uint32` into mesh +0x1f8 when the bit is set**. Load then marks the object (`param_1[0xc4] = 1`)
+when any of those words is non-zero. So:
+
+```
+mesh section:  u32 count, then per mesh:  lp path  [u32 word, only when header 0x2C & 1]
+```
+
+**This used to read: "Those files simply fail the chaining check and fall back to the forward
+scan, which is why no special case is needed for them." It was wrong, and it cost the leaves.**
+The forward scan's nature-file branch returns the FIRST mesh only (`BsrReader.parse`, "nothing
+past the mesh path is understood for this layout"), which is the trunk. MEASURED (round 625,
+`client/tools/foliage_census.gd`): **149 of the 309 tree and foliage models Map.pk2's `object.ifo`
+names fell back that way, 580 of 779 pieces loaded; with the word read, 0 fall back and all 779
+load.** Every swaying tree in Jangan — `tre_maple01`/`02`/`03`, `tre_tree01`, `tre_smalltree01`,
+`tre_bank01`/`02`, `tre_frie01`, the willows, `tre_pine01`..`04` — drew its trunk alone.
+
+### Environment-map mods (round 625, READ)
+
+The mod-data section below carries `ENVMAP` (0x40000) and `BUMPENV` (0x40001) mods whose
+`IModData` header (`FUN_00c5c2a0`: six words into +0x08..+0x1c, four bytes) names the material they
+apply to — **word 3, +0x14**, compared with the draw's material index by `CRTModEnvMap::vslot_004`
+— and a flag word, **word 5, +0x1c**: bit 1 turns on an alpha test of the mod's own at ALPHAREF 1,
+and the mod always switches the material's test off (BMT_FORMAT.md, "The flag word, READ").
+`BsrReader.ParsedObject.env_map_materials` holds material index → flag word. Among the China
+weapons and shields sampled only `blade_14` and `tblade_14` carry one in their own file.
 
 ## Every type is read through the table
 

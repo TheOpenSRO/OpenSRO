@@ -1093,6 +1093,16 @@ Still open, by the files each would add:
   - the effect's alpha byte `DAT_00edbd40`.
 - **The 58 `F8FILE` containers** (`system\arksolid_*`) and **the 7 `0000` files**.
 
+### Trees and materials (round 625) — **leaves load, the material rule is the client's; these are left**
+
+- **Tree sway:** swaying trees now expose their `.bsk`/`.ban` (the `.bsr` mesh-entry word, READ);
+  pieces are still placed rigid and skinned leaves draw in bind pose.
+- **Equipment alpha:** items draw with no material alpha test (INFERRED from the UV census, WORLD_ISSUES
+  round 625). Read when `CCompChar::FUN_00c350a0` attaches `CRTModProgEquipPow` (slot 50 callers) to
+  settle it.
+- **Unread flag bits:** `0x40`, `0x100`, `0x2000`; `0x4` (specular) and `0x8` (lighting off) are read
+  but not drawn.
+
 ## Parked, with the state written down
 
 ### Moat water
