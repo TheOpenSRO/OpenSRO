@@ -49,12 +49,16 @@ class_name HudBuffBoard
 ## render object); the burst is a child window with its own and is not faded.
 ##
 ## RIGHT-CLICK (READ, CIFMagicStateBoard::vslot_033 0x800820, the button-up):
-## only the main list is hit-tested; a slot already ending does nothing; a
-## skill with `nbuf` and no `lnks` does nothing; with `cbuf` a 308x148
-## confirmation box opens instead (0x6ec5d0, box type 0x20); otherwise the
-## cancel is sent (0x81c5b0; here NetClient.send_buff_cancel, the contract's
-## OpBuffCancel 0x00F7). Retail also requires 0x93f5d0(skill) to be non-null
-## and not 0xc0000000 -- what that lookup is, is OPEN, and it is not modelled.
+## at the RELEASE point, the main list's slots are hit-tested (0xb8f3d0 per
+## slot) -- a slot is 20x24, the icon and its gauge (0x806d50 sizes it
+## w x (20 + 4)); the second list is not tested; a slot already ending does
+## nothing; a skill with `nbuf` and no `lnks` does nothing; with `cbuf` a
+## 308x148 confirmation box opens instead (0x6ec5d0, box type 0x20);
+## otherwise the cancel is sent (0x81c5b0; here NetClient.send_buff_cancel,
+## the contract's OpBuffCancel 0x00F7). Retail also requires 0x93f5d0(skill)
+## to be non-null on both paths, and, on the SEND path only, its first dword
+## not to be 0xc0000000 -- what that lookup is, is OPEN, and it is not
+## modelled.
 ##
 ## THE TOOLTIP (READ, 0x800a10, kind 1): "%s %s %d" -- the skill's name,
 ## UIIT_STT_LEVEL_LV, its level; the description; and, for a timed buff,
@@ -63,8 +67,10 @@ class_name HudBuffBoard
 ## seconds PARAM_SECOND), otherwise "%s: %d%s %d%s %d%s" (days PARAM_DAY,
 ## hours PARAM_HOUR, minutes PARAM_MINUTE). Every word is the client's own
 ## textuisystem.txt text. The red "(UIIT_TOOLTIP_OPERATION_STOP)" line (slot
-## +0x36c) and the "UIIT_STT_TARGETTING : %s" line are not drawn: what sets
-## either is OPEN.
+## +0x36c), the admittance sprites that go with it (icon\stateodd\
+## s_admittance_back.ddj / s_admittance_icon.ddj, loaded for a skill slot by
+## 0x806d50 and drawn by 0x8071c0 while +0x36c is set) and the
+## "UIIT_STT_TARGETTING : %s" line are not drawn: what sets either is OPEN.
 
 const REGISTRY_NAME := "GDR_MAGICSTATEBOARD"
 ## GDR_MAGICSTATEBOARD's own rect origin (MEASURED), used only when the
@@ -73,6 +79,9 @@ const FALLBACK_POSITION := Vector2(220, 10)
 
 const ICON_SIZE := Vector2(20, 20)
 const GAUGE_RECT := Rect2(0, 20, 20, 4)
+## The slot window: the icon plus the gauge under it (0x806d50's vslot 0x54
+## call, w x (h + gauge h)) -- the right-click hit rect.
+const SLOT_SIZE := Vector2(20, 24)
 const COLUMNS := 8
 const COLUMN_PITCH := 23
 const ROW_PITCH := 27
@@ -100,10 +109,8 @@ const ACTION_NONE := "none"
 const ACTION_CONFIRM := "confirm"
 const ACTION_CANCEL := "cancel"
 
-## Retail's name-only tooltip titles (0x800a10 compares the name code with
-## these before printing "%s %s %d"). INFERRED: compared here for equality;
-## the binary's comparisons are a mix of length-bounded compares whose exact
-## prefix semantics were not read.
+## Retail's name-only tooltip titles (READ, 0x800a10: the name code is
+## compared with each of these, full length, before "%s %s %d" is printed).
 const NAME_ONLY_CODES := [
 	"SN_SKILL_MALL_PRE_APRU_4W", "SN_SKILL_ASSAULTING_SOILDER",
 	"SN_SKILL_ELITE_ASSAULTING_SOILDER", "SN_SKILL_CENTURION",
@@ -158,9 +165,12 @@ class BuffSlot extends Control:
 			var mb := event as InputEventMouseButton
 			if mb.button_index == MOUSE_BUTTON_RIGHT:
 				accept_event()
-				# WM_RBUTTONUP: vslot_033 is the button-up (0x46c8e0's 0x205 case).
+				# WM_RBUTTONUP: vslot_033 is the button-up (0x46c8e0's 0x205
+				# case), and it hit-tests where the button came UP. Godot
+				# hands the release to the slot the press was on, wherever
+				# the cursor is now, so the board tests the point.
 				if not mb.pressed and board != null:
-					board.on_slot_right_click(token)
+					board.on_right_release(get_global_transform() * mb.position)
 
 	func _get_tooltip(_at_position: Vector2) -> String:
 		return board.tooltip_for(token) if board != null else ""
@@ -171,9 +181,16 @@ var catalog: SkillBuffCatalog = null
 var _main: Array = []
 var _second: Array = []
 var _by_token: Dictionary = {}
-## Whether an owner id is this client's player (World3D supplies it; the
-## client has no own-id of its own -- see World3D._buff_owner_is_self).
-var is_self: Callable = func(_owner_id: int) -> bool: return true
+## Buffs that arrived before the catalog's index was ready, oldest first:
+## [owner_id, skill_id, token, duration_ms, remaining_ms, waited_ms].
+var _pending: Array = []
+## Whether (owner_id, owner_kind) is this client's player; World3D supplies
+## it (World3D._buff_owner_is_self: a character whose id is the one OpSelfId
+## gave). Default: nobody, so an unwired board shows nothing it was not told.
+var is_self: Callable = func(_owner_id: int, _owner_kind: int) -> bool: return false
+## The node connect_net wired (NetClient), whose send_buff_cancel the
+## default sender calls.
+var _net: Object = null
 ## Sends a cancel; tests replace it. Default: NetClient.send_buff_cancel.
 var cancel_sender: Callable = Callable()
 ## Plays the end sound; tests replace it. Default: SoundTable.play_file.
@@ -211,6 +228,7 @@ func setup() -> void:
 func connect_net(net: Object) -> bool:
 	if net == null:
 		return false
+	_net = net
 	var wired := false
 	if net.has_signal("buff_started"):
 		net.connect("buff_started", on_buff_started)
@@ -219,16 +237,49 @@ func connect_net(net: Object) -> bool:
 		net.connect("buff_ended", on_buff_ended)
 	return wired
 
-func on_buff_started(owner_id: int, skill_id: int, token: int, duration_ms: int, remaining_ms: int, _run_speed: int = 0) -> void:
-	if not bool(is_self.call(owner_id)):
-		return
-	add_buff(owner_id, skill_id, token, duration_ms, remaining_ms)
+## Builds the catalog's index now (World3D calls it as the world is built),
+## so no buff arrival parses a shard.
+func preload_catalog() -> void:
+	if catalog != null:
+		catalog.preload_index()
 
-func on_buff_ended(owner_id: int, tokens: Array, _run_speed: int = 0) -> void:
-	if not bool(is_self.call(owner_id)):
+## OpBuffStart (round 617's SkillNet.BuffStart): shown when it is this
+## player's -- a character (owner_kind 0) whose id is this player's.
+func on_buff_started(start: SkillNet.BuffStart) -> void:
+	if start == null or not bool(is_self.call(start.owner_id, start.owner_kind)):
 		return
-	for t in tokens:
+	add_buff(start.owner_id, start.skill_id, start.token, start.duration_ms, start.remaining_ms)
+
+## OpBuffEnd: matched by token alone -- a token is unique on the server, and
+## only this player's tokens are on the board.
+func on_buff_ended(ended: SkillNet.BuffEnd) -> void:
+	if ended == null:
+		return
+	for t in ended.tokens:
 		end_buff(int(t))
+
+## World re-entry or a character switch: everything goes at once, no burst,
+## no sound -- the buffs belonged to the entry that ended.
+func clear() -> void:
+	for list in [_main, _second]:
+		for entry in list:
+			var b: Buff = entry
+			if b.slot != null and is_instance_valid(b.slot):
+				remove_child(b.slot)
+				b.slot.queue_free()
+			b.slot = null
+	_main.clear()
+	_second.clear()
+	_by_token.clear()
+	_pending.clear()
+	_qa_ends.clear()
+	var host: Node = get_parent()
+	if host != null:
+		var box := host.get_node_or_null(CONFIRM_NAME)
+		if box != null:
+			host.remove_child(box)
+			box.queue_free()
+	_layout()
 
 ## Adds a buff's icon. A zero duration adds none (0x7fda20: a `dura` of 0
 ## gets no icon -- INFERRED that our durationMs 0 is that case). A token
@@ -237,6 +288,15 @@ func on_buff_ended(owner_id: int, tokens: Array, _run_speed: int = 0) -> void:
 ## re-send).
 func add_buff(owner_id: int, skill_id: int, token: int, duration_ms: int, remaining_ms: int) -> Buff:
 	if duration_ms == 0 or token == 0:
+		return null
+	if catalog != null and not catalog.is_ready():
+		# OURS: the icon waits for the index (a second or two after world
+		# entry at most); the wait is taken off the time left when it lands.
+		for p in _pending:
+			if int(p[2]) == token:
+				return null
+		_pending.append([owner_id, skill_id, token, duration_ms, remaining_ms, 0.0])
+		print("HudBuffBoard: buff %d (skill %d) waits for the skill index" % [token, skill_id])
 		return null
 	var info: Dictionary = catalog.info(skill_id) if catalog != null else {}
 	var b: Buff = _by_token.get(token)
@@ -272,6 +332,10 @@ func add_buff(owner_id: int, skill_id: int, token: int, duration_ms: int, remain
 ## Ends a buff: the burst and the sound for a main-list one, straight
 ## removal for a second-list one (0x804b30).
 func end_buff(token: int) -> void:
+	for i in _pending.size():
+		if int(_pending[i][2]) == token:
+			_pending.remove_at(i)
+			return
 	var b: Buff = _by_token.get(token)
 	if b == null or b.ending:
 		return
@@ -294,27 +358,49 @@ func _process(delta: float) -> void:
 ## (0x806790), `ms` long. Public so a test steps time exactly.
 func advance(ms: float) -> void:
 	_qa_clock_ms += ms
-	for pending in _qa_ends.duplicate():
-		if _qa_clock_ms >= float(pending[1]):
-			_qa_ends.erase(pending)
-			end_buff(int(pending[0]))
-	var done: Array = []
-	for list in [_main, _second]:
-		for entry in list:
-			var b: Buff = entry
-			if b.total_ms > 0:
-				b.elapsed_ms = minf(b.elapsed_ms + ms, float(b.total_ms))
-			if b.slot != null and b.slot.gauge != null:
-				b.slot.gauge.value = b.gauge_value()
-			if b.ending:
-				b.tick_accum_ms += ms
-				while b.tick_accum_ms >= BURST_TICK_MS and b.tick < BURST_TICKS:
-					b.tick_accum_ms -= BURST_TICK_MS
-					_burst_tick(b)
-				if b.tick >= BURST_TICKS:
-					done.append(b)
-	for b in done:
-		_remove(b)
+	if not _qa_ends.is_empty():
+		var i := 0
+		while i < _qa_ends.size():
+			if _qa_clock_ms >= float(_qa_ends[i][1]):
+				var token := int(_qa_ends[i][0])
+				_qa_ends.remove_at(i)
+				end_buff(token)
+			else:
+				i += 1
+	_advance_list(_main, ms)
+	_advance_list(_second, ms)
+	# Buffs held for the index land after the lists' frame, their whole wait
+	# (this frame's included) taken off the time left.
+	if not _pending.is_empty():
+		for p in _pending:
+			p[5] = float(p[5]) + ms
+		if catalog == null or catalog.poll():
+			var waiting := _pending
+			_pending = []
+			for p in waiting:
+				var left := int(p[4])
+				if int(p[3]) > 0 and left >= 0:
+					left = maxi(0, left - int(p[5]))
+				add_buff(int(p[0]), int(p[1]), int(p[2]), int(p[3]), left)
+
+## One list's frame; a slot whose end finished is removed in the pass.
+func _advance_list(list: Array, ms: float) -> void:
+	var i := 0
+	while i < list.size():
+		var b: Buff = list[i]
+		if b.total_ms > 0:
+			b.elapsed_ms = minf(b.elapsed_ms + ms, float(b.total_ms))
+		if b.slot != null and b.slot.gauge != null:
+			b.slot.gauge.value = b.gauge_value()
+		if b.ending:
+			b.tick_accum_ms += ms
+			while b.tick_accum_ms >= BURST_TICK_MS and b.tick < BURST_TICKS:
+				b.tick_accum_ms -= BURST_TICK_MS
+				_burst_tick(b)
+			if b.tick >= BURST_TICKS:
+				_remove(b)
+				continue
+		i += 1
 
 ## One 100 ms tick of CIFStateSlot::vslot_005.
 func _burst_tick(b: Buff) -> void:
@@ -352,6 +438,17 @@ func right_click_action(token: int) -> String:
 		return ACTION_CONFIRM
 	return ACTION_CANCEL
 
+## A right button-up at `at` (viewport coordinates): the main-list slot whose
+## 20x24 rect holds the point takes it, as vslot_033 hit-tests at the
+## release; none -- the button came up off every icon -- does nothing.
+func on_right_release(at: Vector2) -> void:
+	for entry in _main:
+		var b: Buff = entry
+		if b.slot != null and b.slot.get_global_rect().has_point(at):
+			on_slot_right_click(b.token)
+			return
+	print("HudBuffBoard: right button up at %s, off every icon -- nothing" % str(at))
+
 func on_slot_right_click(token: int) -> void:
 	var action := right_click_action(token)
 	var b: Buff = _by_token.get(token)
@@ -367,7 +464,7 @@ func _send_cancel(skill_id: int, token: int) -> void:
 	if cancel_sender.is_valid():
 		cancel_sender.call(skill_id, token)
 		return
-	var net := _net_client()
+	var net: Object = _net if _net != null else _net_client()
 	if net != null and net.has_method("send_buff_cancel"):
 		net.call("send_buff_cancel", skill_id, token)
 		print("HudBuffBoard: cancel sent for buff %d (skill %d)" % [token, skill_id])
@@ -540,8 +637,8 @@ func _make_slot(b: Buff) -> BuffSlot:
 	slot.name = "Buff%d" % b.token
 	slot.board = self
 	slot.token = b.token
-	slot.size = ICON_SIZE
-	slot.custom_minimum_size = ICON_SIZE
+	slot.size = SLOT_SIZE
+	slot.custom_minimum_size = SLOT_SIZE
 	slot.mouse_filter = Control.MOUSE_FILTER_STOP
 	var icon := TextureRect.new()
 	icon.name = "Icon"

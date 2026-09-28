@@ -83,7 +83,8 @@ func _test_layout() -> void:
 		"second list starts below the main list's 2 rows plus 2 px (y 56)")
 	_check(board.size == Vector2(184, 3 * 27), "board 184 x (2 + 1) * 27")
 	var slot := board.buff(1000).slot
-	_check(slot.size == Vector2(20, 20) and slot.icon.size == Vector2(20, 20), "icon 20 x 20")
+	_check(slot.icon.size == Vector2(20, 20), "icon 20 x 20")
+	_check(slot.size == Vector2(20, 24), "the slot (the hit rect) is 20 x 24, icon and gauge (0x806d50)")
 	_check(slot.gauge.position == Vector2(0, 20) and slot.gauge.size == Vector2(20, 4), "gauge 20 x 4 at (0, 20)")
 	_check(board.add_buff(-1, 100, 2000, 0, 0) == null and board.buff_count(true) == 10,
 		"a zero duration adds no icon (0x7fda20)")
@@ -109,6 +110,14 @@ func _test_gauge() -> void:
 	board.add_buff(-1, 1, 13, 10000, 4000)
 	_check(is_equal_approx(board.buff(13).gauge_value(), 0.4), "joined with 4 s of 10 left: 0.4")
 	board.free()
+
+func _push_right(at: Vector2, pressed: bool) -> void:
+	var ev := InputEventMouseButton.new()
+	ev.button_index = MOUSE_BUTTON_RIGHT
+	ev.pressed = pressed
+	ev.position = at
+	ev.global_position = at
+	root.push_input(ev, true)
 
 func _test_right_click() -> void:
 	var made := _board([_row(1), _row(2, ["nbuf"]), _row(3, ["nbuf", "lnks"]), _row(4, ["cbuf"]), _row(5, ["bbuf"])])
@@ -159,6 +168,19 @@ func _test_right_click() -> void:
 	ev2.global_position = ev2.position
 	root.push_input(ev2, true)
 	_check(sent.is_empty(), "the same on the nbuf icon sends nothing")
+	# Retail hit-tests where the button comes UP (review follow-up).
+	var slot21 := board.buff(21).slot
+	_push_right(slot21.global_position + Vector2(10, 10), true)
+	_push_right(slot21.global_position + Vector2(10, 200), false)
+	_check(sent.is_empty(), "pressed on the icon, released off every icon: nothing")
+	_push_right(slot21.global_position + Vector2(10, 10), true)
+	_push_right(board.buff(23).slot.global_position + Vector2(5, 5), false)
+	_check(sent == [[3, 23]], "pressed on one icon, released on another: that other one is cancelled")
+	sent.clear()
+	_push_right(slot21.global_position + Vector2(10, 22), true)
+	_push_right(slot21.global_position + Vector2(10, 22), false)
+	_check(sent == [[1, 21]], "a click on the gauge strip (y 22 of 24) is on the slot")
+	sent.clear()
 
 	board.end_buff(21)
 	board.on_slot_right_click(21)
@@ -202,17 +224,37 @@ func _test_end() -> void:
 	sounds.clear()
 	board.end_buff(32)
 	_check(board.buff(32) == null and sounds.is_empty(), "a second-list end removes at once, silently")
-	# Through the signal handlers, with the owner test.
-	board.is_self = func(owner_id: int) -> bool: return owner_id == 7
-	board.on_buff_started(8, 1, 41, 5000, 5000, 0)
-	_check(board.buff(41) == null, "another owner's buff is not shown")
-	board.on_buff_started(7, 1, 42, 5000, 5000, 0)
+	# Through the signal handlers, with round 617's real SkillNet objects.
+	board.is_self = func(owner_id: int, owner_kind: int) -> bool:
+		return owner_kind == SkillNet.OWNER_CHARACTER and owner_id == 7
+	board.on_buff_started(_start(8, 1, 41))
+	_check(board.buff(41) == null, "another character's buff is not shown")
+	board.on_buff_started(_start(7, 1, 43, SkillNet.OWNER_MONSTER))
+	_check(board.buff(43) == null, "a monster whose id is this player's is not this player")
+	board.on_buff_started(_start(7, 1, 42))
 	_check(board.buff(42) != null, "this player's buff is shown")
-	board.on_buff_ended(8, [42], 0)
-	_check(board.buff(42) != null and not board.buff(42).ending, "another owner's end does not touch it")
-	board.on_buff_ended(7, [42], 0)
-	_check(board.buff(42).ending, "this player's end starts the burst")
+	board.on_buff_ended(_end(8, [42]))
+	_check(board.buff(42).ending, "an end is matched by token alone")
 	board.free()
+
+func _start(owner_id: int, skill_id: int, token: int, kind: int = SkillNet.OWNER_CHARACTER) -> SkillNet.BuffStart:
+	var s := SkillNet.BuffStart.new()
+	s.owner_id = owner_id
+	s.skill_id = skill_id
+	s.token = token
+	s.duration_ms = 5000
+	s.remaining_ms = 5000
+	s.owner_kind = kind
+	s.owner_kind_sent = true
+	return s
+
+func _end(owner_id: int, tokens: Array) -> SkillNet.BuffEnd:
+	var e := SkillNet.BuffEnd.new()
+	e.owner_id = owner_id
+	for t in tokens:
+		e.tokens.append(int(t))
+	e.owner_kind_sent = true
+	return e
 
 func _test_tooltip() -> void:
 	var t := {"remain": "Remaining time", "day": "Day", "hour": "Hour", "minute": "Minute", "second": "Second"}
@@ -239,6 +281,17 @@ func _test_catalog() -> void:
 	var w := SkillBuffCatalog.walk(words)
 	_check(w["complete"] and Array(w["codes"]) == ["att", "dura", "cbuf", "lnks", "ssou"],
 		"walk: runs, padding, markers, stop at ssou (nbuf past it is not read)")
+	# The client parser's own lengths (0x9bbca0): bldr is 5 words (the
+	# server's 4), fitp 2 (the server's 1), sstt ends the block too.
+	var cw := SkillBuffCatalog.walk(PackedInt64Array([_word("bldr"), 1, 2, 3, 4, _word("cbuf"),
+		_word("fitp"), 9, _word("nbuf"), _word("sstt"), _word("bbuf")]))
+	_check(cw["complete"] and Array(cw["codes"]) == ["bldr", "cbuf", "fitp", "nbuf", "sstt"],
+		"walk: bldr 5 and fitp 2 (the client's lengths), sstt ends it")
+	var long := PackedInt64Array()
+	for i in 49:
+		long.append(0)
+	long.append(_word("cbuf"))
+	_check(not Array(SkillBuffCatalog.walk(long)["codes"]).has("cbuf"), "the walk stops after 49 words (index 1..0x31)")
 	var bad := SkillBuffCatalog.walk(PackedInt64Array([_word("dura"), 5, 12345]))
 	_check(not bad["complete"], "a word that is no code ends the walk incomplete")
 	# A synthetic row: 69 leading columns, then the block.
@@ -256,12 +309,126 @@ func _test_catalog() -> void:
 	var row := SkillBuffCatalog.parse_row(cols)
 	_check(row["id"] == 7001 and row["level"] == 4 and row["icon"] == "skill\\china\\y.ddj", "row: id, level, icon")
 	_check(row["bbuf"] and row["nbuf"] and not row["cbuf"] and not row["lnks"], "row: bbuf and nbuf set, cbuf and lnks not")
-	_check(SkillBuffCatalog.shard_path(999).ends_with("skilldata_1000.txt"), "id 999 -> skilldata_1000")
-	_check(SkillBuffCatalog.shard_path(1000).ends_with("skilldata_2000.txt"), "id 1000 -> skilldata_2000")
-	_check(SkillBuffCatalog.shard_path(30897).ends_with("skilldata_31000.txt"), "id 30897 -> skilldata_31000")
-	# The run table is the server's (169 codes; the Go test compares them all).
-	_check(SkillBuffCatalog.RUN.size() == 169 and SkillBuffCatalog.RUN["lnks"] == 5 and SkillBuffCatalog.RUN["cbuf"] == 1,
-		"the run table: 169 codes, lnks 5, cbuf 1")
+	# The client parser's table (188 codes; the Go test compares them all).
+	_check(SkillBuffCatalog.RUN.size() == 188 and SkillBuffCatalog.RUN["lnks"] == 5 and SkillBuffCatalog.RUN["bldr"] == 5,
+		"the run table is the client's: 188 codes, lnks 5, bldr 5")
+	# The shard list and the index (review follow-up): retail's list names
+	# the ENC files in order; the shards overlap; the first file in list
+	# order holding an id wins.
+	var list := "SkillData_1000ENC.txt\r\nSkillData_5000ENC.txt\r\nSkillData_35000ENC.txt\r\nSkillData_36000ENC.txt\r\n".to_utf16_buffer()
+	var names := SkillBuffCatalog.shard_names(list)
+	_check(Array(names) == ["skilldata_1000.txt", "skilldata_5000.txt", "skilldata_35000.txt", "skilldata_36000.txt"],
+		"the list's ENC names map to the plain twins, in order")
+	var shards := [
+		["skilldata_1000.txt", _shard([_line(5, [])])],
+		["skilldata_5000.txt", _shard([_line(5, ["cbuf"]), _line(4500, ["nbuf"])])],
+		["skilldata_35000.txt", _shard([_line(35958, []), _line(40000, ["lnks"])])],
+		["skilldata_36000.txt", _shard([_line(35958, ["nbuf", "bbuf"])])],
+	]
+	var index := SkillBuffCatalog.build_index(shards)
+	_check(not index[5]["cbuf"], "an id in two shards takes the first in list order (1000 over 5000)")
+	_check(index[4500]["nbuf"], "an id only a wide shard holds is found (4500 in 5000)")
+	_check(index.has(40000) and index[40000]["lnks"], "id 40000 is found in the 35000 shard (its 1000-wide shard is empty)")
+	_check(not index[35958]["nbuf"] and not index[35958]["bbuf"], "35958: shard 35000's row, which is retail's ENC row")
+	# Not ready yet: a buff waits and lands once the index is in, its wait
+	# taken off the time left.
+	var cat := SkillBuffCatalog.new(null)
+	cat.set_row(_row(1))
+	cat.mark_loading()
+	var board := HudBuffBoard.new(null, cat)
+	board.setup()
+	_check(board.add_buff(-1, 1, 61, 10000, 10000) == null and board.buff(61) == null,
+		"while the index loads, a buff waits (no shard parse in the handler)")
+	board.advance(600.0)
+	_check(board.buff(61) == null, "still waiting while the index is not ready")
+	cat.finish_loading()
+	board.advance(400.0)
+	_check(board.buff(61) != null and is_equal_approx(board.buff(61).gauge_value(), 0.9),
+		"it lands when the index is ready, the 1 s wait off its 10 s (0.9)")
+	board.free()
+	# The tooltip reads the shared skill-name table (HudPanels'), not its own.
+	var shared := UiTextTable.new()
+	var asked := [0]
+	var c2 := SkillBuffCatalog.new(null)
+	c2.names_provider = func() -> UiTextTable:
+		asked[0] += 1
+		return shared
+	_check(c2.names() == shared and c2.names() == shared and asked[0] == 1, "names come from the provider, asked once")
+
+## One synthetic skilldata line: id, level 1, an icon and names, and a
+## Param block holding `tags`.
+static func _line(id: int, tags: Array) -> String:
+	var cols := PackedStringArray()
+	cols.resize(69)
+	for i in 69:
+		cols[i] = "0"
+	cols[1] = str(id)
+	cols[7] = "1"
+	cols[61] = "skill\\china\\z.ddj"
+	cols[62] = "SN_Z"
+	cols[64] = "SN_Z_TT_DESC"
+	cols.append(str(_word("dura")))
+	cols.append("30000")
+	for t in tags:
+		if t == "lnks":
+			for v in [_word("lnks"), 1, 2, 3, 4]:
+				cols.append(str(v))
+		else:
+			cols.append(str(_word(t)))
+	return "\t".join(cols)
+
+static func _shard(lines: Array) -> PackedByteArray:
+	return "\r\n".join(PackedStringArray(lines)).to_utf16_buffer()
+
+func _test_clear() -> void:
+	var made := _board([_row(1), _row(2, ["bbuf"])])
+	var board: HudBuffBoard = made[0]
+	var sounds: Array = made[2]
+	root.add_child(board)
+	board.add_buff(-1, 1, 71, 30000, 30000)
+	board.add_buff(-1, 2, 72, 30000, 30000)
+	board.end_buff(71)
+	sounds.clear()
+	board.clear()
+	_check(board.buff_count(true) == 0 and board.buff_count(false) == 0 and board.get_child_count() == 0,
+		"clear: every icon gone at once, ending ones too")
+	board.advance(1000.0)
+	_check(sounds.is_empty(), "clear plays no burst sound")
+	_check(board.size == Vector2(184, 54), "clear lays the board out empty")
+	root.remove_child(board)
+	board.free()
+
+## World3D's owner test with the real World3D and NetClient (round 617's
+## own_character_id): a character whose id OpSelfId gave; no id, nobody.
+func _test_world_owner() -> void:
+	var net := root.get_node_or_null("NetClient")
+	var scene := load("res://scenes/World3D.tscn") as PackedScene
+	var world: Node = scene.instantiate() if scene != null else null
+	_check(net != null and world != null, "the NetClient autoload and World3D are there")
+	if net == null or world == null:
+		return
+	var was: int = int(net.get("own_character_id"))
+	net.set("own_character_id", -1)
+	_check(not world.call("_buff_owner_is_self", 42, SkillNet.OWNER_CHARACTER), "no own id yet: no buff is this player's")
+	net.set("own_character_id", 42)
+	_check(world.call("_buff_owner_is_self", 42, SkillNet.OWNER_CHARACTER), "OpSelfId 42: character 42 is this player")
+	_check(not world.call("_buff_owner_is_self", 42, SkillNet.OWNER_MONSTER), "monster 42 is not")
+	_check(not world.call("_buff_owner_is_self", 43, SkillNet.OWNER_CHARACTER), "character 43 is not")
+	net.set("own_character_id", was)
+	world.free()
+
+## The index is built on a WorkerThreadPool task and collected by poll()
+## (review follow-up: no shard parse in a signal handler).
+func _test_threaded_index() -> void:
+	var cat := SkillBuffCatalog.new(null)
+	cat.start_index([["skilldata_1000.txt", _shard([_line(113, []), _line(93, ["cbuf"])])]])
+	_check(not cat.is_ready(), "the threaded index is not ready at once")
+	var frames := 0
+	while not cat.poll() and frames < 600:
+		await process_frame
+		frames += 1
+	_check(cat.is_ready() and cat.info(93).get("cbuf", false) and cat.info(113).get("id", 0) == 113,
+		"the worker's index lands through poll(): ids 113 and 93, 93 with cbuf")
 
 func _test_qa_and_net() -> void:
 	var made := _board([_row(1), _row(2)])
@@ -272,15 +439,16 @@ func _test_qa_and_net() -> void:
 	_check(is_equal_approx(board.buff(HudBuffBoard.QA_FIRST_TOKEN).gauge_value(), 0.75), "15 s of 20 left: 0.75")
 	board.advance(500.0)
 	_check(board.buff(HudBuffBoard.QA_FIRST_TOKEN).ending, "SRREVAMP_QA_BUFFS_END ends the first at 500 ms")
-	var fake := GDScript.new()
-	fake.source_code = "extends Node\nsignal buff_started(owner_id, skill_id, token, duration_ms, remaining_ms, run_speed)\nsignal buff_ended(owner_id, tokens, run_speed)\n"
-	fake.reload()
-	var net := Node.new()
-	net.set_script(fake)
-	_check(board.connect_net(net), "connects when the node has buff_started")
-	net.emit_signal("buff_started", 5, 2, 77, 9000, 9000, 0)
-	_check(board.buff(77) != null, "a buff_started signal adds the icon")
-	_check(not board.connect_net(Node.new()), "a node without the signals: not connected (the base's NetClient)")
+	# The real NetClient class, its real signals.
+	var net: Node = (load("res://scripts/net/net_client.gd") as GDScript).new()
+	board.is_self = func(owner_id: int, owner_kind: int) -> bool:
+		return owner_kind == SkillNet.OWNER_CHARACTER and owner_id == 5
+	_check(board.connect_net(net), "connects to NetClient's buff_started / buff_ended")
+	net.buff_started.emit(_start(5, 2, 77))
+	_check(board.buff(77) != null, "NetClient.buff_started(SkillNet.BuffStart) adds the icon")
+	net.buff_ended.emit(_end(5, [77]))
+	_check(board.buff(77).ending, "NetClient.buff_ended(SkillNet.BuffEnd) ends it")
+	_check(net.has_method("send_buff_cancel"), "NetClient has send_buff_cancel")
 	net.free()
 	board.free()
 
@@ -296,6 +464,9 @@ func _initialize() -> void:
 	_test_end()
 	_test_tooltip()
 	_test_catalog()
+	_test_clear()
+	_test_world_owner()
+	await _test_threaded_index()
 	_test_qa_and_net()
 	if _failures == 0:
 		print("ALL PASS")

@@ -7125,16 +7125,17 @@ The tooltip is 0x800a10's format: "name Lv n", the description, and "Remaining t
 - **A zero `dura` gets no icon** (0x7fda20). The add also takes the time left, so a buff joined
   midway starts part-drained (0x8048c0).
 
-**The flags are the client's own data** (MEASURED). `skilldata.txt` lists 47 shards of 1000 ids
-each, and the bar loads the one a buff's id falls in. The Param block is walked with the server's
-run table, copied into the client and guarded by a Go test. All 33,698 rows walk to completion.
-The tags count: `cbuf` 473 (the spec's number), `nbuf` 285, `lnks` 308, `bbuf` 226. Grass Walk A
-lv1 is id 113 and carries none of them.
+**The flags are the client's own data** (MEASURED). *Superseded by the review follow-up below:
+the shard mapping, the run table and these counts were wrong.* `skilldata.txt` lists 47 shards
+of 1000 ids each, and the bar loads the one a buff's id falls in. The Param block is walked with
+the server's run table, copied into the client and guarded by a Go test. All 33,698 rows walk to
+completion. The tags count: `cbuf` 473 (the spec's number), `nbuf` 285, `lnks` 308, `bbuf` 226.
+Grass Walk A lv1 is id 113 and carries none of them.
 
 **OURS / OPEN:**
-- The client is never told its own id, so the World3D hookup takes a buff as the player's when its
-  owner is the sit-learned id, or failing that, neither another player's body nor a monster (OURS).
-  The contract needs an own-id for this to be exact (OPEN).
+- *(Superseded, see the review follow-up.)* The client is never told its own id, so the World3D
+  hookup takes a buff as the player's when its owner is the sit-learned id, or failing that,
+  neither another player's body nor a monster (OURS).
 - The confirm box's text is OPEN, because retail passes an empty string. The box has the client's
   `UIIT_STT_CONFIRM_BOX` title and an empty body, in this client's confirm style (OURS). That its
   OK sends the cancel is INFERRED.
@@ -7170,6 +7171,79 @@ lv1 is id 113 and carries none of them.
   The frames show the bar, the tooltip ("Grass Walk - Flow Lv 1 / Increases the character's … /
   Remaining time 41Second"), the confirmation box and a burst mid-play. They show; they do not
   prove.
+
+**Review follow-up.** The branch was merged with round 617 (feat/selfcast) and adapted to it. Each
+fix below has its own test.
+- **Right-click is hit-tested at the release** (READ, vslot_033 tests where the button comes up).
+  The slot's rect is 20 × 24, the icon plus its gauge (0x806d50 sizes it). A press on one icon and
+  a release on another cancels the other; a release off every icon does nothing.
+- **The board is cleared** on every successful `enter_world_result`, which covers re-entry and a
+  character switch. Nothing bursts or sounds.
+- **Whose buff it is** now uses round 617's real signals:
+  - `buff_started(SkillNet.BuffStart)` and `buff_ended(SkillNet.BuffEnd)`;
+  - a start is this player's when its ownerKind is 0 and its owner id is `_sync_own_id`'s
+    (OpSelfId, else the sit answer). With no id, nothing is shown;
+  - an end is matched by token alone;
+  - a cancel goes to `NetClient.send_buff_cancel`.
+- **The skill rows come from retail's list.** `Client_LoadAllRefData` (0x844cd0) loads
+  `skilldataenc.txt`, which names `SkillData_1000ENC` … `47000ENC`. The files overlap:
+  - the 5000-wide ones repeat the 1000-wide ones below them;
+  - `35000` holds 30000–46422;
+  - 38000–43000 are empty.
+
+  So the first build's mapping missed every id only a wide file holds, among them every id from
+  37000 to 44147. The ENC files are encrypted: a `"\r\n//encrypt"` trailer, and 0x4f5140 adds
+  `T2[k % 0xa7] − T1[k % 0x1ef]` to each byte, k = 0x8c1f + file offset. The key tables live in
+  the executable at 0xeae758 / 0xeae948 and are not copied into the repo. Decrypted on the box,
+  the ENC set is 33,632 ids, and its 27,714 duplicated ids all agree.
+
+  The catalog now indexes the plain twins in list order, with a duplicate going to its first
+  file. Checked by the catalog itself against every decrypted ENC row: 0 missing and 0 differences
+  in tags, level, icon, name or description. The plain files' one disagreeing duplicate, 35958,
+  agrees with ENC under first-wins.
+- **The run table is the client's**, from its own parser 0x9bbca0: 188 codes. `bldr` is 5 (the
+  server's 4), `fitp` 2 (not 1), there are 19 codes the server lacks, `sstt` ends the block as
+  `ssou` does, and the walk is capped at 49 words. The corrected census matches the spec: `cbuf`
+  473, `nbuf` 284, `bbuf` 225, `lnks` 294. `lnks` is a run of 5, not a marker. The Go test now
+  guards this table and its documented differences from `skillparam.Run`.
+- **No shard is parsed in a signal handler.** The index is built at world entry. The 47 shards are
+  read on the main thread (23 ms), then parsed on a WorkerThreadPool task (2.1 s; longest frame
+  meanwhile 7 ms, measured on the box). A buff that arrives first waits, and lands with its wait
+  taken off its time left (OURS).
+  - That path had a bug which only the live check found: a bare static call from the task lambda
+    resolved against a null base. `_test_threaded_index` now covers it.
+  - The tooltip reads HudPanels' skill-name table (`HudPanels.skill_names_table`) instead of a
+    second parse.
+  - The per-frame loop no longer allocates.
+- **Docs:**
+  - the `0xc0000000` test is on the send path only;
+  - the name-only tooltip compares are READ;
+  - the admittance sprites (`s_admittance_back/icon.ddj`, drawn by 0x8071c0 while slot `+0x36c`
+    is set) are OPEN.
+
+Measured after the follow-up:
+- `hud_buff_board_test.gd` passes 91 checks.
+- The suite has 134 suites with 0 failing, `check` loads all 349 scripts, and
+  `go test -count=1 -p 1 ./...` is green.
+- With each fix mutated back it fails 16 checks, among them:
+  - `FAIL pressed on one icon, released on another: that other one is cancelled`
+  - `FAIL a click on the gauge strip (y 22 of 24) is on the slot`
+  - `FAIL clear: every icon gone at once, ending ones too`
+  - `FAIL an id in two shards takes the first in list order (1000 over 5000)`
+  - `FAIL walk: bldr 5 and fitp 2 (the client's lengths), sstt ends it`
+  - `FAIL while the index loads, a buff waits (no shard parse in the handler)`
+  - `FAIL names come from the provider, asked once`
+  - `FAIL no own id yet: no buff is this player's`
+  - `FAIL the worker's index lands through poll(): ids 113 and 93, 93 with cbuf`
+- The Go test fails on a drifted length: `the .gd RUN["bldr"] = 4, the client parser's = 5`.
+- The live Login-route run with real X right-clicks, the same one as before, logged:
+  - the ten buffs waiting for the index, then landing 2.7 s later;
+  - `BUFF cancel send: skill 113 token 900001` from NetClient's own sender;
+  - `none` for the `nbuf` icon;
+  - "off every icon" for the second-list icon;
+  - `confirm` for the `cbuf` icon;
+  - the burst;
+  - 0 SCRIPT ERRORs.
 
 ## Six-hundred-and-seventeenth round: Grass Walk and the self-buffs cast with nothing selected, and Ghost Walk casts at a point picked on the ground
 

@@ -3453,6 +3453,25 @@ var _skill_names: UiTextTable = null
 func _skill_text_table() -> UiTextTable:
 	return _skill_names if _skill_names != null else _text_table()
 
+## The skill-name table (textdata_equip&skill.txt), read once and shared: the
+## skill window and the buff bar's tooltip (round 618) both resolve through
+## it. Null without an archive or the file.
+var _skill_names_loaded := false
+func skill_names_table() -> UiTextTable:
+	if _skill_names_loaded:
+		return _skill_names
+	_skill_names_loaded = true
+	var archive := _builder.media_archive() if _builder != null else null
+	if archive == null:
+		return null
+	var names_entry := ObjectLoader.find_file(archive, SKILL_NAME_TABLE_PATH)
+	if names_entry != null:
+		_skill_names = UiTextTable.parse(archive.read_file(names_entry))
+		print("HudPanels: skill names read from %s" % SKILL_NAME_TABLE_PATH.get_file())
+	else:
+		print("HudPanels: no %s -- skill names show their SN_ ids" % SKILL_NAME_TABLE_PATH.get_file())
+	return _skill_names
+
 func _load_skill_catalog() -> void:
 	if _skill_catalog_loaded:
 		return
@@ -3462,12 +3481,7 @@ func _load_skill_catalog() -> void:
 	var archive := _builder.media_archive()
 	if archive == null:
 		return
-	var names_entry := ObjectLoader.find_file(archive, SKILL_NAME_TABLE_PATH)
-	if names_entry != null:
-		_skill_names = UiTextTable.parse(archive.read_file(names_entry))
-		print("HudPanels: skill names read from %s" % SKILL_NAME_TABLE_PATH.get_file())
-	else:
-		print("HudPanels: no %s -- skill names show their SN_ ids" % SKILL_NAME_TABLE_PATH.get_file())
+	skill_names_table()
 	var gentry := ObjectLoader.find_file(archive, SkillDataReader.GROUP_TABLE)
 	if gentry != null:
 		_skill_groups = SkillDataReader.parse_groups(archive.read_file(gentry))

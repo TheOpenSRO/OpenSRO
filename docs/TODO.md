@@ -921,18 +921,22 @@ whose flip conditions these items feed).
 `HudBuffBoard` is retail's `CIFMagicStateBoard`. It has the icons, the draining time bar, the end
 burst and sound, right-click cancel and the tooltip. The record is in
 `docs/protocol/magic_state_board.md`. Left open:
-- [ ] **The client's own id.** `OpBuffStart` names an ownerId, but the client is never told its
-      own. `World3D._buff_owner_is_self` takes the sit-learned id, and failing that, anything
-      that is neither another player's body nor a monster (OURS). An own-id in EnterWorldResult
-      would make the test exact.
-- [ ] **Round 617's signals.** The board connects `buff_started` / `buff_ended` and calls
-      `send_buff_cancel` only when NetClient has them. Once round 617 merges, check the World3D
-      log line "NetClient has no buff_started signal" is gone.
+- [x] **The client's own id** -- done in round 618's review: OpSelfId (round 617), so a buff is
+      this player's when its ownerKind is 0 and its owner id is `World3D._sync_own_id`'s. No id
+      means no buff is shown.
+- [x] **Round 617's signals** -- wired to `buff_started(SkillNet.BuffStart)` /
+      `buff_ended(SkillNet.BuffEnd)` and `send_buff_cancel`.
+- [ ] **The plain skilldata twins.** The catalog reads `skilldata_<n>.txt`, not the ENC files retail
+      loads. It matches the decrypted ENC set on every id retail knows (measured on the box's
+      archive). An archive whose plain twins are stale would need the ENC files decrypted, and
+      that needs the key tables from the player's own `sro_client.exe` (0xeae758 / 0xeae948). The
+      scheme is in the protocol doc.
 - [ ] **The `cbuf` box's text** (retail passes an empty string) and what its OK does (INFERRED:
       the cancel). The box is this client's own confirm style.
 - [ ] **Not drawn:**
   - the `lnks` frame (window_all.ddj UVs at 0xdd07a0..0xdd07b0, corner order unread);
-  - the red "Not affected" line (slot `+0x36c`, its setter unread);
+  - the red "Not affected" line and the admittance sprites (`s_admittance_back.ddj` /
+    `s_admittance_icon.ddj`) that go with it (slot `+0x36c`, its setter unread);
   - the "Target :" line;
   - kind 2 abnormal states (`s_*_icon.ddj`, a 1000 ms refresh);
   - kind 3 item-time entries and their second gauge.

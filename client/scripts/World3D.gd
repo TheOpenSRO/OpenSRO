@@ -1550,6 +1550,10 @@ func _try_initialize_pk2_ui() -> void:
 			# when it has come, is taken again by _sync_own_id.
 			_self_cast.forget_owner()
 			_sync_own_id()
+			# The buff bar starts empty for this entry (round 618's review):
+			# its icons were the last entry's, or another character's.
+			if _hud_buff_board != null:
+				_hud_buff_board.clear()
 		if result != null and result.ok and result.max_hp > 0:
 			_last_enter_world_hp = result.hp
 			_last_enter_world_max_hp = result.max_hp
@@ -1760,8 +1764,9 @@ func _try_initialize_pk2_ui() -> void:
 	print("World3D: authentic Silkroad UI initialized from Media.pk2 (minimap, underbar, player info, %d panels)" % HudPanels.PANELS.size())
 
 ## The buff bar (HudBuffBoard, round 618): built, told who this player is,
-## and fed by NetClient's buff_started / buff_ended when this build has them
-## (round 617 adds them; without them only SRREVAMP_QA_BUFFS feeds it).
+## fed by NetClient's buff_started / buff_ended (round 617), its skill index
+## built now, off the main thread, and its tooltip names read through
+## HudPanels' skill-name table rather than a second parse of it.
 var _hud_buff_board: HudBuffBoard = null
 
 func _build_buff_board() -> void:
@@ -1770,22 +1775,22 @@ func _build_buff_board() -> void:
 	ui_control.add_child(_hud_buff_board)
 	_hud_buff_board.setup()
 	_hud_buff_board.is_self = _buff_owner_is_self
+	_hud_buff_board.catalog.names_provider = func() -> UiTextTable:
+		return _hud_panels.skill_names_table() if _hud_panels != null else null
+	_hud_buff_board.preload_catalog()
 	if not _hud_buff_board.connect_net(NetClient):
-		print("World3D: NetClient has no buff_started signal in this build -- the buff bar is fed by SRREVAMP_QA_BUFFS only")
+		print("World3D: NetClient has no buff_started signal -- the buff bar is fed by SRREVAMP_QA_BUFFS only")
 	var qa := OS.get_environment("SRREVAMP_QA_BUFFS")
 	if qa != "":
 		_hud_buff_board.qa_inject(qa, OS.get_environment("SRREVAMP_QA_BUFFS_END"))
 
-## Whether a buff's owner is this client's player. The client is never told
-## its own id (EnterWorldResult carries none), so -- OURS -- it is the id the
-## sit answer taught (SitState.own_id) when there is one, and otherwise any
-## owner that is neither another player's body nor a monster this client
-## draws. OPEN: the contract (OpBuffStart's ownerId) needs the client's own
-## id to decide this exactly.
-func _buff_owner_is_self(owner_id: int) -> bool:
-	if _sit.own_id != -1:
-		return owner_id == _sit.own_id
-	return not _other_bodies.has(owner_id) and not _monster_snapshots.has(owner_id)
+## Whether a buff's owner is this client's player (round 618's review): a
+## character (ownerKind 0) whose id is this player's -- the one _sync_own_id
+## settles on, OpSelfId's when the server sent it, else the sit answer's.
+## No id yet: nobody's buff is shown.
+func _buff_owner_is_self(owner_id: int, owner_kind: int) -> bool:
+	_sync_own_id()
+	return owner_kind == SkillNet.OWNER_CHARACTER and _sit.own_id >= 0 and owner_id == _sit.own_id
 
 ## The middle button over the minimap, the player-info block and the target
 ## window (round 531). It fires the underbar's "m" slot (quick slot 0) wherever
