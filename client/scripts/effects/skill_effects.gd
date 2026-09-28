@@ -15,44 +15,84 @@ class_name SkillEffects
 ## spec's 0-based 13, 17, 18, 19, 20 as the fallback. The effect is Obj Path +
 ## ObjName (READ, spec §1.1); "none" names no effect.
 ##
-## WHEN A PHASE FIRES -- exactly where SkillAudio.play_phase is called
-## (World3D): READY and SHOT/0 at cast start, SHOT/1 when the blow lands, and
-## ACT_S and ACT_L when the server accepts the cast (INFERRED timing, see
-## SkillAudio's header).
+## WHEN A PHASE FIRES (round 620 review follow-up) -- the client's own phase
+## machine, READ in IDecoSkill (funcs_015):
+## - A cast starts (GlobalDataManager::FUN_00a53610) at phase 0 and runs
+##   FUN_00a534d0, which plays the phase's clip, moves +0xbe to the next
+##   phase and (FUN_00a53480) fires that phase's StartEvent 0 rows at once
+##   (FUN_00a52fe0: the row list at +0xbc + AniType*4, next event counter).
+## - Each animation event of the clip (FUN_00a59970, event type 1 on the
+##   current clip) fires the phase's next StartEvent; the clip's end (event
+##   100) runs FUN_00a534d0 again: READY -> WAIT -> SHOT.
+## - A phase with no clip of its own advances at once (FUN_00a53480: the
+##   skill record's per-phase clip count at +8 + phase). WAIT plays no clip
+##   and holds only while the skill has WAIT clips, until the server's
+##   skill-action message (FUN_00a56680 kind 1 -> FUN_00a53090) forces SHOT.
+## - ACT_S / ACT_L fire when the skill acts on its object (FUN_00a53850,
+##   from the server's result; round 614).
+## This client has no per-phase clips or clip events, so SkillEffects.cast
+## schedules the phases from the skilldata timing columns (INFERRED: the
+## READY clip spans Action_PreparingTime, col 11; the WAIT charge spans
+## Action_CastingTime, col 12):
+##   t0            READY rows (every StartEvent: the clip events' times are
+##                 unknown here, OURS)
+##   t0 + prep     WAIT rows; then SHOT at once when the skill has no WAIT
+##                 row, else at shot(caster) -- the server's answer -- or
+##                 t0 + prep + cast, whichever comes first (OURS fallback)
+##   SHOT start    SHOT/0 rows; the cast's READY/WAIT loops end here
+##                 (INFERRED: a kept phase effect belongs to its phase)
+##   hit(caster)   SHOT/1 and later -- the blow's animation event, which the
+##                 caller knows (World3D: the blow lands)
+##   act(...)      ACT_S (and ACT_L one cycle when no buff token will come)
+## cancel_cast(caster) ends a cast that was refused or interrupted: nothing
+## more fires and its loops end.
+## The sequencer runs on scene time: World3D calls tick(delta) every physics
+## frame (a movie render runs slower than the wall clock).
 ##
 ## ON WHOM (ActType, the row's +0xe byte, READ in IDecoSkill::FUN_00a51bc0:
 ## 0 AT_ONE_FOLLOW, 1 AT_LOOP, 2 AT_STOP are the vocabulary's first three):
 ## - AT_ONE_FOLLOW plays once and follows the body (READ: the decoration is
 ##   created with its keep flag 0 and handed to the one-shot list,
 ##   FUN_00a4ddc0).
-## - AT_LOOP and AT_STOP are created with the keep flag 1 (READ); AT_LOOP here
-##   restarts whenever its file's particles run out (INFERRED from the flag:
-##   the "keep" efps are 20-frame one-shots, MEASURED), until detached.
+## - AT_LOOP and AT_STOP are created with the keep flag 1 (READ), which sets
+##   the effect's restart flag (+0x49, CEFEffect::vslot_004): it restarts
+##   whenever its particles run out, until its owner ends it (EfpEffect.stop,
+##   which drops every particle at once, READ).
 ## - AT_TARGET, AT_TARGET_F and AT_DMG_POS play on the target (INFERRED from
 ##   the names); everything else on the caster.
 ## - AT_MOV_* (projectiles) play at the caster without the flight (OURS; the
 ##   flight is OPEN).
-## For ACT_S and ACT_L the World3D caller passes the object the skill acts on
-## as both caster and target when it is the caster's own buff.
 ##
 ## HOW LONG:
 ## - ACT_L / AT_LOOP is the buff's aura: attach_aura keeps it per (owner,
 ##   token) until detach_aura -- World3D drives these from NetClient's
-##   buff_started / buff_ended (rounds 616-618), behind has_signal so a build
-##   without them plays ACT_L once (OURS) through play_phase instead.
-## - READY / WAIT AT_LOOP (the charge glow) loops until the same caster's next
-##   phase fires, or READY_LOOP_MAX seconds (OURS).
+##   buff_started / buff_ended (rounds 616-618). With the buff's remaining
+##   time it also ends by itself AURA_GRACE_MS after that time runs out, in
+##   case the end never arrives (OURS).
+## - READY / WAIT AT_LOOP: until the cast's SHOT starts, cancel_cast, or
+##   READY_LOOP_MAX (OURS guard).
 ##
-## WHERE (StartBone, StartOffset): at the named bone of the body's skeleton,
-## following its position, turned with the body (OURS: the bone's own
-## rotation is not applied); "none", "*" and "#..." (OPEN) and a missing bone
-## put it at the skeleton's origin. StartOffset is added in the body's own
-## native units (INFERRED). The effect sits under the skeleton, whose units
-## are the effect's.
+## WHERE (StartBone, StartOffset): at the named bone of the body's current
+## skeleton, turned with the body (OURS: the bone's own rotation is not
+## applied); "none", "*" and "#..." (OPEN) and a missing bone put it at the
+## skeleton's origin. StartOffset is added in the body's native units
+## (INFERRED). The effect is a child of the body and re-finds its skeleton
+## each frame (EfpEffect.follow_host), so a skeleton rebuilt by an equipment
+## change keeps its auras, and an aura attached before the skeleton exists
+## finds it when it comes.
+##
+## BUDGET (OURS): effects on or cast by `own_body` (the local player) are
+## `reserved` and may use EfpSim's reserved particle share.
+## PRELOAD: preload_skill decodes a skill's effect files on a worker thread
+## (World3D: known skills at the skill-state answer, and a hotbar assignment),
+## so the first cast does not decode on the main thread.
 
 const SKILLEFFECT_PATH := "server_dep\\silkroad\\textdata\\skilleffect.txt"
 const SECTION := "skilleffectset"
 const READY_LOOP_MAX := 4.0 ## OURS: seconds a READY/WAIT loop may run unattended
+const AURA_GRACE_MS := 2000 ## OURS: an aura outlives its buff's time by this much at most
+const C_PREP := 11 ## skilldata Action_PreparingTime (ms)
+const C_CAST := 12 ## skilldata Action_CastingTime (ms)
 
 ## ActType vocabulary (the client's own UTF-16 strings, spec §1.1).
 const ACT_TYPES := ["AT_ONE_FOLLOW", "AT_LOOP", "AT_STOP", "AT_TARGET", "AT_TARGET_F",
@@ -79,10 +119,8 @@ const C_OFFSET := 20
 static var _rows: Dictionary = {}
 static var _loaded := false
 static var _particles: Pk2Reader = null
-## (owner key|token) -> Array of EfpEffect: the live buff auras.
+## (owner key|token) -> {fx: Array of EfpEffect, expires: ms or -1}: the live buff auras.
 static var _auras: Dictionary = {}
-## caster instance id -> Array of EfpEffect: READY/WAIT loops.
-static var _phase_loops: Dictionary = {}
 ## Test seam: Callable(path: String) -> EfpEffect (or null). Defaults to
 ## EfpEffect.create against the archive given to set_archive.
 static var effect_factory: Callable = Callable()
@@ -167,6 +205,28 @@ static func host_for(act: int, caster: Node3D, target: Node3D) -> Node3D:
 
 # --- the loaded tables ---------------------------------------------------------
 
+## skill id -> [prep_ms, cast_ms] (skilldata cols 11, 12).
+static var _timings: Dictionary = {}
+## The local player's body: effects on it or cast by it are reserved.
+static var own_body: Node3D = null
+## caster instance id -> the running cast {skill, caster, target, t0, prep,
+## cast, phase, shot_at, loops}.
+static var _casts: Dictionary = {}
+
+## skilldata bytes -> id -> [prep_ms, cast_ms].
+static func parse_timings(bytes: PackedByteArray, into: Dictionary = {}) -> Dictionary:
+	for line in SkillAudio._utf16_lines(bytes):
+		if line.begins_with("//"):
+			continue
+		var cols := line.split("\t", true, C_CAST + 1)
+		if cols.size() <= C_CAST or not cols[SkillAudio.S_ID].strip_edges().is_valid_int():
+			continue
+		var prep := cols[C_PREP].strip_edges()
+		var cast := cols[C_CAST].strip_edges()
+		into[int(cols[SkillAudio.S_ID].strip_edges())] = [int(prep) if prep.is_valid_int() else 0,
+			int(cast) if cast.is_valid_int() else 0]
+	return into
+
 ## The archive effects load from; tables load from Media.pk2 on first use.
 static func set_archive(particles: Pk2Reader) -> void:
 	_particles = particles
@@ -178,59 +238,79 @@ static func warm() -> void:
 	SkillAudio.warm()
 	var t0 := Time.get_ticks_msec()
 	_rows = parse_rows(AudioBank.read_table("media", SKILLEFFECT_PATH))
+	for path in SkillDataReader.SKILL_TABLES:
+		parse_timings(AudioBank.read_table("media", path), _timings)
 	var n := 0
 	for k in _rows:
 		n += (_rows[k] as Array).size()
-	print("EFFECTS skills: %d effect rows under %d effect ids (%d ms)" % [n, _rows.size(),
-		Time.get_ticks_msec() - t0])
+	print("EFFECTS skills: %d effect rows under %d effect ids, %d skill timings (%d ms)" % [n,
+		_rows.size(), _timings.size(), Time.get_ticks_msec() - t0])
 
-## Test seam: these rows instead of the archive's (SkillAudio.set_tables sets
-## the skill table).
-static func set_rows(rows: Dictionary) -> void:
+## Test seam: these rows (and timings) instead of the archive's
+## (SkillAudio.set_tables sets the skill table).
+static func set_rows(rows: Dictionary, timings: Dictionary = {}) -> void:
 	_rows = rows
+	_timings = timings
 	_loaded = true
 
 static func rows_for(skill_id: int, ani_type: int, start_event: int = -1) -> Array:
 	warm()
 	return rows_in(SkillAudio._skills, _rows, skill_id, ani_type, start_event)
 
+## Every .efp path a skill's rows name.
+static func paths_for(skill_id: int) -> PackedStringArray:
+	warm()
+	var out := PackedStringArray()
+	for r in SkillAudio.effect_rows_in(SkillAudio._skills, _rows, skill_id):
+		if not out.has(String(r["path"])):
+			out.append(String(r["path"]))
+	return out
+
+## Decodes a skill's effect files off the main thread (see the header).
+static func preload_skill(skill_id: int) -> int:
+	return EfpEffect.preload_paths(paths_for(skill_id), _particles)
+
+static func preload_skills(ids: Array) -> void:
+	var all := PackedStringArray()
+	for id in ids:
+		for p in paths_for(int(id)):
+			if not all.has(p):
+				all.append(p)
+	EfpEffect.preload_paths(all, _particles)
+
 # --- playing -------------------------------------------------------------------
 
 static func _valid(n) -> bool:
-	return n != null and is_instance_valid(n) and n is Node3D
+	return n != null and is_instance_valid(n) and n is Node3D and not (n as Node).is_queued_for_deletion()
 
 static func _make(path: String) -> EfpEffect:
 	if effect_factory.is_valid():
 		return effect_factory.call(path)
 	return EfpEffect.create(path, _particles)
 
-## The first Skeleton3D under a body, or null.
+## The first Skeleton3D under a body that is not on its way out, or null.
 static func skeleton_of(host: Node) -> Skeleton3D:
-	if host == null:
+	if host == null or not is_instance_valid(host):
 		return null
-	if host is Skeleton3D:
+	if host is Skeleton3D and not host.is_queued_for_deletion():
 		return host
-	var found := host.find_children("*", "Skeleton3D", true, false)
-	return found[0] as Skeleton3D if not found.is_empty() else null
+	for n in host.find_children("*", "Skeleton3D", true, false):
+		if is_instance_valid(n) and not (n as Node).is_queued_for_deletion():
+			return n as Skeleton3D
+	return null
 
-## Puts `fx` on `host` at `bone` + `offset` (see the header).
+## Puts `fx` on `host` at `bone` + `offset` (see the header): a child of the
+## body, placed each frame in its current skeleton's frame.
 static func attach(fx: EfpEffect, host: Node3D, bone: String, offset: Vector3) -> void:
-	var skel := skeleton_of(host)
-	var parent: Node3D = skel if skel != null else host
-	parent.add_child(fx)
-	fx.position = offset
-	var b := bone.strip_edges()
-	if skel != null and b != "" and b.to_lower() != "none" and b != "*" and not b.begins_with("#"):
-		var idx := skel.find_bone(b)
-		if idx >= 0:
-			fx.follow(skel, idx, offset)
+	host.add_child(fx)
+	fx.follow_host(host, bone, offset)
 
-## Plays `skill_id`'s effects of one phase. Returns the effects started.
+## Plays `skill_id`'s effects of one phase now. Returns the effects started.
+## (Round 620's play_phase stopped the caster's READY loops on any later
+## phase; the cast sequencer does that at SHOT's start instead.)
 static func play_phase(skill_id: int, ani_type: int, start_event: int, caster: Node3D,
 		target: Node3D = null, what: String = "") -> Array:
 	var started: Array = []
-	if ani_type != SkillAudio.READY and ani_type != SkillAudio.WAIT and caster != null:
-		stop_phase_loops(caster)
 	for r in rows_for(skill_id, ani_type, start_event):
 		var act := int(r["act"])
 		var host := host_for(act, caster, target)
@@ -241,14 +321,19 @@ static func play_phase(skill_id: int, ani_type: int, start_event: int, caster: N
 			print("EFFECTS skill %d %s/%d: %s did not load (%s)" % [skill_id,
 				SkillAudio._phase_name(ani_type), start_event, r["path"], EfpEffect.last_error])
 			continue
+		if fx.draw_count() == 0 and fx.sim != null and fx.sim.template != null \
+				and _draws_nothing(fx):
+			print("EFFECTS skill %d %s/%d: %s draws nothing (skipped: %s)" % [skill_id,
+				SkillAudio._phase_name(ani_type), start_event, r["path"], ", ".join(fx.skipped)])
+			fx.free()
+			continue
+		fx.reserved = own_body != null and (host == own_body or caster == own_body)
 		var looping := act == AT_LOOP or act == AT_STOP
 		if looping and (ani_type == SkillAudio.READY or ani_type == SkillAudio.WAIT):
 			fx.loop = true
 			fx.max_life = READY_LOOP_MAX
-			var key := caster.get_instance_id() if caster != null else 0
-			if not _phase_loops.has(key):
-				_phase_loops[key] = []
-			(_phase_loops[key] as Array).append(fx)
+			if caster != null and _casts.has(caster.get_instance_id()):
+				(_casts[caster.get_instance_id()]["loops"] as Array).append(fx)
 		attach(fx, host, String(r["bone"]), r["offset"])
 		started.append(fx)
 		print("EFFECTS skill %d %s/%d: %s %s at %s (%d nodes drawn%s) %s" % [skill_id,
@@ -257,21 +342,167 @@ static func play_phase(skill_id: int, ani_type: int, start_event: int, caster: N
 			", skipped: " + ", ".join(fx.skipped) if not fx.skipped.is_empty() else "", what])
 	return started
 
-## Stops the READY/WAIT loops running on `caster` (they finish their cycle).
-static func stop_phase_loops(caster: Node3D) -> void:
+## An effect with no drawn node is still worth running only if a child file
+## could draw -- never, here: every node is either drawn or skipped.
+static func _draws_nothing(fx: EfpEffect) -> bool:
+	return fx.draw_count() == 0
+
+# --- the cast sequencer ----------------------------------------------------------
+
+## The sequencer's clock: scene time, the same time the effects simulate in
+## (a movie render runs slower than the wall clock; so may a hitch).
+static var _clock_ms := 0.0
+
+static func _now() -> int:
+	return int(_clock_ms)
+
+## Advances the clock by a frame's `delta` seconds and runs `process`.
+## World3D calls it every physics frame.
+static func tick(delta: float) -> void:
+	_clock_ms += maxf(delta, 0.0) * 1000.0
+	process()
+
+## Starts a cast's effect phases (see the header). `timings` may carry
+## "prep_ms" and "cast_ms" (default: the skilldata columns) and "now_ms" (the
+## clock, for tests). A cast already running on the caster is cancelled.
+## Returns the READY effects started.
+static func cast(skill_id: int, caster: Node3D, target: Node3D = null, timings: Dictionary = {}) -> Array:
+	if caster == null:
+		return []
+	warm()
+	cancel_cast(caster)
+	var t: Array = _timings.get(skill_id, [0, 0])
+	var now := int(timings.get("now_ms", _now()))
+	var c := {"skill": skill_id, "caster": caster, "target": target, "t0": now,
+		"prep": maxi(int(timings.get("prep_ms", t[0])), 0),
+		"cast": maxi(int(timings.get("cast_ms", t[1])), 0),
+		"phase": SkillAudio.READY, "shot_at": -1, "loops": []}
+	_casts[caster.get_instance_id()] = c
+	var fx := play_phase(skill_id, SkillAudio.READY, -1, caster, target, "cast")
+	process(now)
+	return fx
+
+## The server answered: a cast held in WAIT goes to SHOT now.
+static func shot(caster: Node3D, now_ms: int = -1) -> void:
+	if caster == null or not _casts.has(caster.get_instance_id()):
+		return
+	var c: Dictionary = _casts[caster.get_instance_id()]
+	c["shot_at"] = now_ms if now_ms >= 0 else _now()
+	process(int(c["shot_at"]))
+
+## The blow's hit event: SHOT/1 and later rows, now (SHOT starts first if it
+## has not). Without a running cast, `skill_id` names the skill.
+static func hit(caster: Node3D, target: Node3D = null, skill_id: int = 0, now_ms: int = -1) -> Array:
+	if caster != null and _casts.has(caster.get_instance_id()):
+		var c: Dictionary = _casts[caster.get_instance_id()]
+		if int(c["phase"]) < SkillAudio.SHOT:
+			_start_shot(c)
+		skill_id = int(c["skill"])
+		if target == null:
+			target = c["target"]
+	if skill_id == 0:
+		return []
+	var out: Array = []
+	for ev in _events_from(skill_id, SkillAudio.SHOT, 1):
+		out.append_array(play_phase(skill_id, SkillAudio.SHOT, ev, caster, target, "hit"))
+	return out
+
+## The skill acts on `target` (for a buff: it is applied): ACT_S now, and
+## ACT_L one cycle when `with_aura` (no buff token will hold it).
+static func act(skill_id: int, caster: Node3D, target: Node3D, with_aura: bool = false) -> Array:
+	var out := play_phase(skill_id, SkillAudio.ACT_S, -1, caster, target, "act")
+	if with_aura:
+		out.append_array(play_phase(skill_id, SkillAudio.ACT_L, -1, caster, target, "act"))
+	return out
+
+## Ends the caster's running cast: nothing more fires; its loops end.
+static func cancel_cast(caster: Node3D) -> void:
+	if caster == null:
+		return
 	var key := caster.get_instance_id()
-	for fx in _phase_loops.get(key, []):
+	if not _casts.has(key):
+		return
+	_stop_all(_casts[key]["loops"])
+	_casts.erase(key)
+
+## The phase the caster's cast is in (-1: none). Tests and logs.
+static func cast_phase(caster: Node3D) -> int:
+	if caster == null or not _casts.has(caster.get_instance_id()):
+		return -1
+	return int(_casts[caster.get_instance_id()]["phase"])
+
+static func _events_from(skill_id: int, ani: int, first: int) -> Array:
+	var evs: Array = []
+	for r in rows_for(skill_id, ani, -1):
+		var ev := int(r["event"])
+		if ev >= first and not evs.has(ev):
+			evs.append(ev)
+	evs.sort()
+	return evs
+
+static func _start_shot(c: Dictionary) -> void:
+	_stop_all(c["loops"])
+	c["loops"] = []
+	c["phase"] = SkillAudio.SHOT
+	var caster = c["caster"]
+	if _valid(caster):
+		play_phase(int(c["skill"]), SkillAudio.SHOT, 0, caster, c["target"] if _valid(c["target"]) else null, "shot")
+
+static func _stop_all(fxs: Array) -> void:
+	for fx in fxs:
 		if is_instance_valid(fx):
 			(fx as EfpEffect).stop()
-	_phase_loops.erase(key)
+
+## Runs the due phases of every cast, ends expired auras, and forgets freed
+## bodies. World3D calls it every frame.
+static func process(now_ms: int = -1) -> void:
+	var now := now_ms if now_ms >= 0 else _now()
+	for key in _casts.keys():
+		var c: Dictionary = _casts[key]
+		if not _valid(c["caster"]):
+			_stop_all(c["loops"])
+			_casts.erase(key)
+			continue
+		var skill := int(c["skill"])
+		var t_wait := int(c["t0"]) + int(c["prep"])
+		if int(c["phase"]) == SkillAudio.READY and now >= t_wait:
+			c["phase"] = SkillAudio.WAIT
+			var started := play_phase(skill, SkillAudio.WAIT, -1, c["caster"], c["target"] if _valid(c["target"]) else null, "wait")
+			if rows_for(skill, SkillAudio.WAIT).is_empty():
+				_start_shot(c)
+			else:
+				var _unused := started
+		if int(c["phase"]) == SkillAudio.WAIT:
+			var due := t_wait + int(c["cast"])
+			if (int(c["shot_at"]) >= 0 and now >= int(c["shot_at"])) or now >= due:
+				_start_shot(c)
+		if int(c["phase"]) >= SkillAudio.SHOT:
+			# The cast's own phases are done; hit/act come from the caller.
+			_casts.erase(key)
+	for key in _auras.keys():
+		var a: Dictionary = _auras[key]
+		var alive: Array = []
+		for fx in a["fx"]:
+			if is_instance_valid(fx) and not (fx as Node).is_queued_for_deletion():
+				alive.append(fx)
+		if alive.is_empty():
+			_auras.erase(key)
+		elif int(a["expires"]) >= 0 and now >= int(a["expires"]):
+			print("EFFECTS aura %s: no end arrived %d ms after its time -- ending it" % [key, AURA_GRACE_MS])
+			_stop_all(alive)
+			_auras.erase(key)
+		else:
+			a["fx"] = alive
 
 static func _aura_key(owner_key: String, token: int) -> String:
 	return "%s|%d" % [owner_key, token]
 
 ## Starts `skill_id`'s ACT_L AT_LOOP effects on `host` as the aura of buff
-## `token`, kept until detach_aura. A second start for the same token
-## replaces the first. Returns the effects started.
-static func attach_aura(owner_key: String, token: int, skill_id: int, host: Node3D) -> Array:
+## `token`, kept until detach_aura -- or, given the buff's `remaining_ms`
+## (> 0), until AURA_GRACE_MS past it (OURS). A second start for the same
+## token replaces the first. Returns the effects started.
+static func attach_aura(owner_key: String, token: int, skill_id: int, host: Node3D,
+		remaining_ms: int = -1, now_ms: int = -1) -> Array:
 	detach_aura(owner_key, token)
 	var started: Array = []
 	if not _valid(host):
@@ -280,23 +511,29 @@ static func attach_aura(owner_key: String, token: int, skill_id: int, host: Node
 		var fx := _make(String(r["path"]))
 		if fx == null:
 			continue
+		if fx.draw_count() == 0 and _draws_nothing(fx):
+			fx.free()
+			continue
 		fx.loop = int(r["act"]) == AT_LOOP or int(r["act"]) == AT_STOP
+		fx.reserved = own_body != null and host == own_body
 		attach(fx, host, String(r["bone"]), r["offset"])
 		started.append(fx)
 	if not started.is_empty():
-		_auras[_aura_key(owner_key, token)] = started
+		var now := now_ms if now_ms >= 0 else _now()
+		_auras[_aura_key(owner_key, token)] = {"fx": started,
+			"expires": now + remaining_ms + AURA_GRACE_MS if remaining_ms > 0 else -1}
 		print("EFFECTS aura on %s token %d: skill %d, %d effect(s)" % [owner_key, token, skill_id, started.size()])
 	return started
 
-## Ends the aura of buff `token` (each effect finishes its cycle and frees).
-## Returns how many effects it stopped.
+## Ends the aura of buff `token` at once. Returns how many effects it stopped.
 static func detach_aura(owner_key: String, token: int) -> int:
 	var key := _aura_key(owner_key, token)
 	var n := 0
-	for fx in _auras.get(key, []):
-		if is_instance_valid(fx):
-			(fx as EfpEffect).stop()
-			n += 1
+	if _auras.has(key):
+		for fx in _auras[key]["fx"]:
+			if is_instance_valid(fx):
+				(fx as EfpEffect).stop()
+				n += 1
 	_auras.erase(key)
 	return n
 
@@ -312,10 +549,25 @@ static func detach_owner(owner_key: String) -> int:
 static func aura_count() -> int:
 	return _auras.size()
 
+## How many casts and phase loops are tracked (tests: pruning).
+static func tracked_count() -> int:
+	return _casts.size() + _auras.size()
+
+## Ends every live effect this class tracks and forgets every body (a world
+## teardown or relog); the tables stay loaded.
+static func clear_live() -> void:
+	for key in _auras.keys():
+		_stop_all(_auras[key]["fx"])
+	_auras.clear()
+	for key in _casts.keys():
+		_stop_all(_casts[key]["loops"])
+	_casts.clear()
+	own_body = null
+
 ## Clears every table and live reference (tests, a world reload).
 static func reset() -> void:
+	clear_live()
 	_rows = {}
+	_timings = {}
 	_loaded = false
-	_auras.clear()
-	_phase_loops.clear()
 	effect_factory = Callable()

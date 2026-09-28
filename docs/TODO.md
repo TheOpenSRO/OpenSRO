@@ -946,6 +946,11 @@ Still open, by the files each would add:
   - 16 files have a mesh that does not load, including `JMXVBMS 0109` meshes.
 - **The flight of AT_MOV_\* rows** (projectiles). They play at the caster for now. MovType and
   the Act Option columns are unread.
+- **The skill phase clips.** Retail advances READY → WAIT → SHOT on each phase clip's end, and
+  fires StartEvent ≥ 1 on the clip's animation events (IDecoSkill `FUN_00a534d0` and
+  `FUN_00a59970`). The client has no per-phase clips. `SkillEffects.cast` times the phases from
+  skilldata's Action_PreparingTime and Action_CastingTime (INFERRED). The self-cast wiring (`cast`,
+  `shot`, `act`, `cancel_cast`) goes in with int/skills.
 - **Where the hit effect sits.** characterInfo's DamageBone and DamagePos place it in retail; the
   client uses mid-height.
 - **Unread details:**
@@ -953,7 +958,7 @@ Still open, by the files each would add:
     default; the renderer assumes full quality;
   - the "link" object (particle +0x34), which is taken to be the parent;
   - the parent-rotation part of "follow the parent";
-  - ConeForce's 0x46 → 0x47 fall-through;
+  - what SetSpherePos space 0's stack vector holds when no earlier command set it (zero here);
   - which BlendScaleGraph SetGraphRandomScale names;
   - FrameTextureSlide's head;
   - `StartBone` `*` and `#…`;

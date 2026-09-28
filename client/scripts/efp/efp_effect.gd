@@ -17,11 +17,19 @@ class_name EfpEffect
 ##   colour (it replaces the vertex colour) and the UV rectangle maps the
 ##   texture coordinates: u' = u0 + u*du, v' = v0 + v*dv.
 ## - The world matrix is shape rotation, then the view matrix, then the
-##   position (row vectors): ViewNone uses the particle's rotation,
-##   ViewBillboard and ViewYBillboard the camera matrices at 0x00edbde8 and
-##   0x00edbe28 (INFERRED: the camera-facing and the upright-camera-facing
-##   billboard, by name), ViewVBillboard a basis whose Y axis is the
-##   particle's velocity and whose Z is velocity x up (the case-3 branch).
+##   position (row vectors): ViewNone uses the particle's rotation;
+##   ViewBillboard the matrix at 0x00edbde8 and ViewYBillboard the one at
+##   0x00edbe28, both built by CEFSystem::FUN_00cb0ee0 as the inverse of the
+##   view matrix with its translation zeroed -- YBillboard's row 1 then forced
+##   to (0, 1, 0), its rows 0 and 2 left as they are (READ); ViewVBillboard a
+##   basis whose Y axis is the particle's velocity and whose Z is velocity x
+##   up (the case-3 branch).
+##   The inverse view's rows are the camera's right, up and LOOK directions.
+##   This client keeps the game's coordinates unconverted (a mirrored world,
+##   BmsReader reverses winding for it), so the look direction is Godot's
+##   -camera.z: the billboard basis is (right, up, -back), a reflection
+##   (INFERRED from that convention). Billboarded nodes therefore draw both
+##   faces (OURS), as the mirrored winding would cull the wrong one.
 ## - The blend: the node's 36-byte D3D state (src/dest blend, colour and alpha
 ##   texture ops), ZWRITE off, lighting and fog off. See blend_class and the
 ##   shader below for the mapping to Godot.
@@ -34,8 +42,17 @@ class_name EfpEffect
 ## Only the first mesh entry and its first texture are drawn (OURS).
 ##
 ## The effect is simulated in its own local space and moves with its parent
-## node (OURS). It is authored in the game's native units, so it belongs
-## under the character's skeleton, which carries the native-to-world scale.
+## node (OURS). It is authored in the game's native units. Attached to a body
+## (follow_host), it places itself each frame in the frame of the body's
+## current skeleton at a bone, so a skeleton rebuilt by an equipment change
+## does not take the effect with it.
+##
+## Ending (READ, the IEasyFxEffect interface at 0x00e0f594): the owner ends
+## a kept effect through slot 2 (CEFEffect::vslot_002: its particles are
+## freed at once) or slot 4 with 0 (vslot_004: the keep/loop flag +0x49 is
+## cleared and the effect released when its keep count reaches 0). Both drop
+## every particle immediately, so stop() here frees the effect at once --
+## loop and never-extinct particles included.
 
 signal effect_finished
 
@@ -48,21 +65,44 @@ var sim: EfpSim
 var skipped: PackedStringArray = PackedStringArray()
 ## Seconds after which a looping effect stops by itself (0 = never; OURS guard).
 var max_life := 0.0
+## The local player's own effect: may use EfpSim's reserved particle share.
+var reserved := false:
+	set(v):
+		reserved = v
+		if sim != null:
+			sim.reserved = v
+## How many times the MultiMeshes were rewritten (tests: only after a step).
+var draw_updates := 0
+var _has_billboard := false
+var _last_cam := Basis()
 var _draws: Array = [] # of [tpl index, MultiMeshInstance3D, view mode]
-var _stopping := false
 var _life := 0.0
+var _follow_host: Node3D = null
+var _follow_bone_name := ""
+var _follow_offset := Vector3.ZERO
 var _follow_skel: Skeleton3D = null
 var _follow_bone := -1
-var _follow_offset := Vector3.ZERO
 
 # Shared caches: one decode and one compiled template per file, one texture
-# and mesh per asset path, one material per (texture, state).
+# and mesh per asset path, one material per (texture, state). Bounded by
+# least-recent use (OURS: CACHE_* below). _images / _mesh_arrays hold what a
+# preload task decoded off the main thread, turned into resources on first use.
 static var _templates: Dictionary = {} # path -> EfpSim.Template, or null when it failed
 static var _textures: Dictionary = {} # path -> Texture2D or null
 static var _meshes: Dictionary = {} # path -> ArrayMesh or null
 static var _materials: Dictionary = {} # key -> ShaderMaterial
 static var _shaders: Dictionary = {} # key -> Shader
+static var _images: Dictionary = {} # path -> Image or null (preloaded)
+static var _mesh_arrays: Dictionary = {} # path -> Array or null (preloaded)
+static var _used: Dictionary = {} # "kind|path" -> use stamp (LRU)
+static var _stamp := 0
+static var _mutex := Mutex.new()
+static var _preloads: Array = [] # WorkerThreadPool task ids still running
 static var last_error := ""
+
+const CACHE_TEMPLATES := 256 ## OURS
+const CACHE_TEXTURES := 384 ## OURS
+const CACHE_MESHES := 256 ## OURS
 
 const PLATE := "RenderPlate"
 const MESH := "RenderMesh"
@@ -72,20 +112,37 @@ const DRAW_AABB := AABB(Vector3(-200, -200, -200), Vector3(400, 400, 400))
 ## The compiled template of a file in Particles.pk2, decoded once.
 static func template_for(efp_path: String, particles: Pk2Reader) -> EfpSim.Template:
 	var key := efp_path.to_lower()
-	if _templates.has(key):
-		return _templates[key]
-	var t: EfpSim.Template = null
+	_mutex.lock()
+	var have := _templates.has(key)
+	var cached: EfpSim.Template = _templates.get(key)
+	_mutex.unlock()
+	if have:
+		_touch("t", key)
+		if cached == null:
+			last_error = "did not decode"
+		return cached
+	var err := []
+	var t := _decode_template(efp_path, particles, err)
+	if t == null:
+		last_error = String(err[0]) if not err.is_empty() else "did not decode"
+	_mutex.lock()
+	_templates[key] = t
+	_mutex.unlock()
+	_touch("t", key)
+	_evict()
+	return t
+
+## Reads and compiles one file (plain data: safe on a worker thread).
+static func _decode_template(efp_path: String, particles: Pk2Reader, err: Array) -> EfpSim.Template:
 	var data := AssetSource.read_bytes(efp_path, particles)
 	if data.is_empty():
-		last_error = "not found"
-	else:
-		var f := EfpReader.decode(data)
-		if f == null:
-			last_error = EfpReader.last_error
-		else:
-			t = EfpSim.compile(f.root)
-	_templates[key] = t
-	return t
+		err.append("not found")
+		return null
+	var f := EfpReader.decode(data)
+	if f == null:
+		err.append(EfpReader.last_error)
+		return null
+	return EfpSim.compile(f.root)
 
 ## Builds a playing effect for a file in the player's Particles.pk2, or null
 ## when it is missing or does not decode.
@@ -146,6 +203,8 @@ static func from_template(t: EfpSim.Template, load_texture: Callable, load_mesh:
 			if v is Dictionary and String(v.get("type", "")) == "BSAnimation":
 				fx.skipped.append("BSAnimation (%s, drawn unanimated)" % n.name)
 				break
+		var view := n.view_mode()
+		var billboard := view == "ViewBillboard" or view == "ViewYBillboard"
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
 		mm.use_colors = true
@@ -154,34 +213,72 @@ static func from_template(t: EfpSim.Template, load_texture: Callable, load_mesh:
 		mm.instance_count = 0
 		var mmi := MultiMeshInstance3D.new()
 		mmi.multimesh = mm
-		mmi.material_override = material_for(tex, n.state)
+		mmi.material_override = material_for(tex, n.state, billboard)
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		mmi.custom_aabb = DRAW_AABB
 		mmi.name = "node_%d" % tp.index
 		fx.add_child(mmi)
-		fx._draws.append([tp.index, mmi, n.view_mode()])
+		fx._draws.append([tp.index, mmi, view])
+		if billboard:
+			fx._has_billboard = true
 	return fx
 
 ## How many nodes draw.
 func draw_count() -> int:
 	return _draws.size()
 
-## Lets a looping effect finish its current cycle and end.
+## Ends the effect now: every particle goes, and the node frees itself
+## (READ: the interface's release, see the header).
 func stop() -> void:
 	loop = false
-	_stopping = true
+	if sim != null:
+		sim.clear()
+	_end()
 
-## Keeps the effect at a bone's position (plus `offset`) of the skeleton it
-## is a child of; its rotation stays the skeleton's (OURS, see SkillEffects).
-func follow(skel: Skeleton3D, bone: int, offset: Vector3) -> void:
-	_follow_skel = skel
-	_follow_bone = bone
+func _end() -> void:
+	if is_queued_for_deletion():
+		return
+	set_process(false)
+	effect_finished.emit()
+	if auto_free:
+		queue_free()
+
+## Keeps the effect on `host` (a body): each frame it takes the frame of the
+## host's current skeleton, at `bone`'s position (none / unknown: the
+## skeleton's origin) plus `offset`; without a skeleton, the host's origin
+## plus `offset`. Its rotation is the skeleton's (OURS, see SkillEffects).
+## The effect should be a child of `host`.
+func follow_host(host: Node3D, bone: String, offset: Vector3) -> void:
+	_follow_host = host
+	_follow_bone_name = bone
 	_follow_offset = offset
+	_follow_skel = null
 	_place()
 
+## The skeleton now carrying the host, re-found when the old one goes.
+func _skeleton() -> Skeleton3D:
+	if _follow_skel != null and is_instance_valid(_follow_skel) and not _follow_skel.is_queued_for_deletion() \
+			and _follow_skel.is_inside_tree():
+		return _follow_skel
+	_follow_skel = SkillEffects.skeleton_of(_follow_host)
+	_follow_bone = -1
+	var b := _follow_bone_name.strip_edges()
+	if _follow_skel != null and b != "" and b.to_lower() != "none" and b != "*" and not b.begins_with("#"):
+		_follow_bone = _follow_skel.find_bone(b)
+	return _follow_skel
+
 func _place() -> void:
-	if _follow_skel != null and is_instance_valid(_follow_skel) and _follow_bone >= 0:
-		position = _follow_skel.get_bone_global_pose(_follow_bone).origin + _follow_offset
+	if _follow_host == null or not is_instance_valid(_follow_host):
+		return
+	var skel := _skeleton()
+	if skel == null or not skel.is_inside_tree() or not is_inside_tree():
+		position = _follow_offset
+		basis = Basis.IDENTITY
+		return
+	var at := _follow_offset
+	if _follow_bone >= 0:
+		at += skel.get_bone_global_pose(_follow_bone).origin
+	global_transform = skel.global_transform * Transform3D(Basis.IDENTITY, at)
 
 func _process(delta: float) -> void:
 	if sim == null:
@@ -189,25 +286,37 @@ func _process(delta: float) -> void:
 	_life += delta
 	if max_life > 0.0 and _life >= max_life and loop:
 		stop()
+		return
 	_place()
-	sim.advance(delta)
+	var stepped := sim.advance(delta)
 	if sim.finished():
-		if loop and not _stopping:
+		if loop:
 			sim.restart()
 		else:
-			effect_finished.emit()
-			if auto_free:
-				queue_free()
-			set_process(false)
+			_end()
 			return
-	_update_draws()
+	# The MultiMeshes change only when the simulation stepped -- or, for a
+	# billboarded node, when the camera turned (else it would lag the view).
+	if stepped > 0 or (_has_billboard and _camera_turned()):
+		_update_draws()
 
 func _exit_tree() -> void:
 	if sim != null:
 		sim.clear()
 
+func _camera_turned() -> bool:
+	var cam := get_viewport().get_camera_3d() if is_inside_tree() else null
+	if cam == null:
+		return false
+	var b := cam.global_transform.basis
+	if b.is_equal_approx(_last_cam):
+		return false
+	_last_cam = b
+	return true
+
 ## Writes every drawn node's particles into its MultiMesh.
 func _update_draws() -> void:
+	draw_updates += 1
 	if _draws.is_empty():
 		return
 	var cam_rot := Basis.IDENTITY
@@ -238,17 +347,15 @@ static func particle_transform(p: EfpSim.Particle, view: String, cam_rot: Basis)
 	var v := view_basis(p, view, cam_rot)
 	return Transform3D(v * p.shape * Basis.from_scale(p.scale), p.pos)
 
+## `cam_rot` is the camera's rotation in the effect's space. The billboard
+## bases are the inverse view's rows as columns: right, up, look (= -back);
+## YBillboard with its up forced to (0, 1, 0) (READ, CEFSystem::FUN_00cb0ee0).
 static func view_basis(p: EfpSim.Particle, view: String, cam_rot: Basis) -> Basis:
 	match view:
 		"ViewBillboard":
-			return cam_rot
+			return Basis(cam_rot.x, cam_rot.y, -cam_rot.z)
 		"ViewYBillboard":
-			var z := cam_rot.z
-			z.y = 0.0
-			if z.length_squared() < 1e-8:
-				return Basis.IDENTITY
-			z = z.normalized()
-			return Basis(Vector3.UP.cross(z), Vector3.UP, z)
+			return Basis(cam_rot.x, Vector3.UP, -cam_rot.z)
 		"ViewVBillboard":
 			if p.vel.length_squared() < 1e-12:
 				return Basis.IDENTITY
@@ -299,11 +406,11 @@ static func godot_blend(cls: String) -> int:
 static func cull_disabled(cull: int) -> bool:
 	return cull <= 1
 
-static func material_for(tex: Texture2D, st: EfpReader.EfpRenderState) -> ShaderMaterial:
+static func material_for(tex: Texture2D, st: EfpReader.EfpRenderState, billboard: bool = false) -> ShaderMaterial:
 	var src := st.src_blend if st != null else 5
 	var dest := st.dest_blend if st != null else 2
 	var cls := blend_class(src, dest)
-	var no_cull := cull_disabled(st.cull if st != null else 1)
+	var no_cull := billboard or cull_disabled(st.cull if st != null else 1)
 	var skey := "%s|%s" % [cls, str(no_cull)]
 	var key := "%d|%s|%d,%d,%d,%d,%d,%d" % [tex.get_instance_id() if tex != null else 0, skey,
 		st.color_op if st else 4, st.color_arg1 if st else 2, st.color_arg2 if st else 0,
@@ -386,33 +493,167 @@ void fragment() {
 static func _texture(p: String, particles: Pk2Reader) -> Texture2D:
 	var key := p.to_lower()
 	if _textures.has(key):
+		_touch("x", key)
 		return _textures[key]
-	var tex: Texture2D = null
-	var bytes := AssetSource.read_bytes(p, particles)
-	if not bytes.is_empty():
-		var parsed := DdjReader.parse(bytes)
-		if parsed != null:
-			tex = DdjReader.to_texture(parsed)
+	var img: Image = null
+	_mutex.lock()
+	var pre := _images.has(key)
+	if pre:
+		img = _images[key]
+		_images.erase(key)
+	_mutex.unlock()
+	if not pre:
+		img = _decode_image(p, particles)
+	var tex: Texture2D = ImageTexture.create_from_image(img) if img != null else null
 	_textures[key] = tex
+	_touch("x", key)
+	_evict()
 	return tex
+
+static func _decode_image(p: String, particles: Pk2Reader) -> Image:
+	var bytes := AssetSource.read_bytes(p, particles)
+	if bytes.is_empty():
+		return null
+	var parsed := DdjReader.parse(bytes)
+	return DdjReader.to_image(parsed) if parsed != null else null
 
 static func _mesh(p: String, particles: Pk2Reader) -> ArrayMesh:
 	var key := p.to_lower()
 	if _meshes.has(key):
+		_touch("m", key)
 		return _meshes[key]
-	var mesh: ArrayMesh = null
-	var bytes := AssetSource.read_bytes(p, particles)
-	if not bytes.is_empty():
-		var parsed := BmsReader.parse(bytes)
-		if parsed != null and not parsed.vertices.is_empty():
-			mesh = BmsReader.to_array_mesh(parsed)
+	var arrays = null
+	_mutex.lock()
+	var pre := _mesh_arrays.has(key)
+	if pre:
+		arrays = _mesh_arrays[key]
+		_mesh_arrays.erase(key)
+	_mutex.unlock()
+	if not pre:
+		arrays = _decode_mesh(p, particles)
+	var mesh: ArrayMesh = BmsReader.mesh_from_arrays(arrays) if arrays is Array else null
 	_meshes[key] = mesh
+	_touch("m", key)
+	_evict()
 	return mesh
+
+static func _decode_mesh(p: String, particles: Pk2Reader):
+	var bytes := AssetSource.read_bytes(p, particles)
+	if bytes.is_empty():
+		return null
+	var parsed := BmsReader.parse(bytes)
+	if parsed == null or parsed.vertices.is_empty():
+		return null
+	return BmsReader.to_arrays(parsed)
+
+## Decodes these .efp files and their meshes and textures on a
+## WorkerThreadPool task, so their first create() on a cast does not decode
+## on the main thread (the review measured 661 ms for the worst cold file).
+## The task only produces plain data (templates, Images, mesh arrays); the
+## resources are made on first use. Returns the task id, or -1 with nothing
+## to do.
+static func preload_paths(paths: PackedStringArray, particles: Pk2Reader) -> int:
+	if particles == null:
+		return -1
+	var todo := PackedStringArray()
+	_mutex.lock()
+	for p in paths:
+		if not _templates.has(p.to_lower()) and not todo.has(p):
+			todo.append(p)
+	_mutex.unlock()
+	if todo.is_empty():
+		return -1
+	var id := WorkerThreadPool.add_task(_preload_task.bind(todo, particles), false, "efp preload")
+	_preloads.append(id)
+	return id
+
+static func _preload_task(paths: PackedStringArray, particles: Pk2Reader) -> void:
+	for p in paths:
+		var err := []
+		var t := _decode_template(p, particles, err)
+		_mutex.lock()
+		if not _templates.has(p.to_lower()):
+			_templates[p.to_lower()] = t
+		_mutex.unlock()
+		if t == null:
+			continue
+		for tp in t.tpls:
+			var n: EfpReader.EfpNode = tp.node
+			var mode := n.render_mode()
+			if (mode != PLATE and mode != MESH) or n.meshes.is_empty():
+				continue
+			var ref: EfpReader.EfpMeshRef = n.meshes[0]
+			if not ref.textures.is_empty():
+				var tk := ref.textures[0].to_lower()
+				_mutex.lock()
+				var need := not _textures.has(tk) and not _images.has(tk)
+				_mutex.unlock()
+				if need:
+					var img := _decode_image(ref.textures[0], particles)
+					_mutex.lock()
+					_images[tk] = img
+					_mutex.unlock()
+			if mode == MESH and ref.mesh != "":
+				var mk := ref.mesh.to_lower()
+				_mutex.lock()
+				var needm := not _meshes.has(mk) and not _mesh_arrays.has(mk)
+				_mutex.unlock()
+				if needm:
+					var arr = _decode_mesh(ref.mesh, particles)
+					_mutex.lock()
+					_mesh_arrays[mk] = arr
+					_mutex.unlock()
+
+## Waits for every preload task (tests; a world teardown).
+static func wait_preloads() -> void:
+	for id in _preloads:
+		WorkerThreadPool.wait_for_task_completion(id)
+	_preloads.clear()
+
+static func _touch(kind: String, key: String) -> void:
+	_stamp += 1
+	_used[kind + "|" + key] = _stamp
+
+## Drops the least recently used entries past each bound (OURS). A texture
+## that goes takes the materials made with it.
+static func _evict() -> void:
+	_evict_kind("t", _templates, CACHE_TEMPLATES)
+	_evict_kind("x", _textures, CACHE_TEXTURES)
+	_evict_kind("m", _meshes, CACHE_MESHES)
+
+static func _evict_kind(kind: String, cache: Dictionary, bound: int) -> void:
+	if cache.size() <= bound:
+		return
+	var keys := cache.keys()
+	keys.sort_custom(func(a, b): return int(_used.get(kind + "|" + String(a), 0)) < int(_used.get(kind + "|" + String(b), 0)))
+	var n := cache.size() - bound
+	_mutex.lock()
+	for i in range(n):
+		var k = keys[i]
+		if kind == "x" and cache[k] != null:
+			var prefix := "%d|" % (cache[k] as Texture2D).get_instance_id()
+			for mk in _materials.keys():
+				if String(mk).begins_with(prefix):
+					_materials.erase(mk)
+		cache.erase(k)
+		_used.erase(kind + "|" + String(k))
+	_mutex.unlock()
+
+## How many entries each cache holds (tests, logs).
+static func cache_sizes() -> Dictionary:
+	return {"templates": _templates.size(), "textures": _textures.size(), "meshes": _meshes.size(),
+		"materials": _materials.size()}
 
 ## Empties the shared caches (tests, and a world reload).
 static func clear_caches() -> void:
+	wait_preloads()
+	_mutex.lock()
 	_templates.clear()
 	_textures.clear()
 	_meshes.clear()
 	_materials.clear()
 	_shaders.clear()
+	_images.clear()
+	_mesh_arrays.clear()
+	_used.clear()
+	_mutex.unlock()

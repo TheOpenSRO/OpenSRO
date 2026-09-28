@@ -242,9 +242,9 @@ they prove nothing about retail.
   `QA EFFECT <path> at x <x>: <n> node(s) drawn, skipped [...]`.
 - `SRREVAMP_QA_CAST="<skill id>[,...]"` runs each skill's effect phases on the player in turn,
   every `SRREVAMP_QA_CAST_PERIOD` ticks (default 160):
-  - READY at +0;
-  - WAIT, SHOT/0 and SHOT/1 at +30;
-  - ACT_S at +40;
+  - `SkillEffects.cast` at +0: READY now, then WAIT and SHOT by the skill's timing columns;
+  - `shot` and `hit` (SHOT/1) at +30;
+  - `act` (ACT_S) at +40;
   - the ACT_L aura (token 1) from +41 until the next skill starts.
 
   Each step prints a `QA CAST tick <t> ...` line, and each effect an `EFFECTS skill ...` line

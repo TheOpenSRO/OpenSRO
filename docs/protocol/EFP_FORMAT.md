@@ -352,15 +352,16 @@ How the client plays a decoded tree. `client/scripts/efp/efp_sim.gd` (`EfpSim`) 
 |---|---|---|
 | NormalTimeExtinct | `FUN_00c84e20` | age += frames; at age ≥ N, it is clamped to N − 1 and the particle is killed |
 | NormalTimeLoop | `FUN_00c84dd0` | age += frames; age %= N |
-| NeverExtinct | `FUN_00c84d80` | `if age != 1: age += frames`, so the age sticks at 1 |
+| NeverExtinct | `FUN_00c84d80` | `if age != 1: age += frames`, so the age sticks at 1; a node with N = 0 kills the particle |
 
 ### The per-particle program (READ, `EFEffect::FUN_00c893f0`)
 
 **Scheduling.**
 - The executor calls this program with the particle's age. The program runs that age's command
   list (`FUN_00c84f90` indexes a per-frame list by the age).
-- A Frame* parameter's value i belongs to frame `start + i × step` (INFERRED from the MEASURED key
-  counts).
+- Key i runs at frame `ftol(f_i)`, where `f_0 = start`, `f_{i+1} = f32(f_i + step)`, and the loop
+  runs while `f_i ≤ end` (READ, the loop at `0x00ca9276`–`0x00ca9354`, truncating under the fldcw at
+  `0x00ca92b0`). A Frame* parameter's value i is key i.
 
 **Opcodes.**
 - Each command's factory (the `FUN_00ca8140` registrations) stores `opcode = base + space`. That is
@@ -392,12 +393,19 @@ Every retail view and render command has space 0 (MEASURED).
     3 the link's (`FUN_00410c30` is `v × M`).
   - MEASURED: SetPosition space 7 in 24,220 commands, i.e. parent position plus the value in the
     parent's frame.
-- **SetSpherePos.** A uniform point in the unit ball, times the value, added to: 0 the position,
-  1 the parent's position, 2 the link's.
-  - The point comes from rejection sampling of `(r − 0.5) × 2`. `r` is drawn from a 5000-entry
-    table at `0x01114ff0` through `FUN_00c877c0`.
+- **SetSpherePos.** A point in the unit ball, from rejection sampling of `(r − 0.5) × 2`. `r` is
+  drawn from a 5000-entry table at `0x01114ff0` through `FUN_00c877c0`.
+  - Space 1 / 2: the point times the value, plus the parent's / link's position.
+  - Space 0 (`0x00c8a4c5`–`0x00c8a5d4`): the point is written straight INTO the position. Then
+    `position += value × V`, where V is a stack vector (`[esp+0x14..0x1c]`) that this case never
+    sets. V holds what an earlier command of the same frame's run left there: the o = 0 cone
+    positions, ConeForce, Attraction or SetSpherePos itself. It is uninitialised when none ran.
+    `EfpSim` keeps V per particle run and starts it at zero (OURS for that case; 66 retail commands
+    use space 0).
 - **SetVelocity / SetConeVel** set the velocity (+0x1bc) to the value. **Force / ConeForce** add it
-  (INFERRED: the decompile leaves the add's target implied).
+  to the velocity (READ, the add at `0x00c8aae8`).
+  - **ConeForce space 0** (case 0x46) falls through into case 0x47 (READ, `0x00c8ac1d` →
+    `0x00c8ac23`), so it adds a second cone rotated by the particle's own rotation.
   - Each rotates by: 0 nothing, 1 own, 2 parent, 3 link.
 - **Attraction.** `velocity += normalize(pos − parent pos) × value`, or relative to the link for
   space 1.
@@ -415,15 +423,13 @@ Every retail view and render command has space 0 (MEASURED).
 - **SetGraphScale.** The scale (+0x1c8) is the key's Vector3.
 - **SetGraphDiffuse.** The colour (+0x228) is the key's u32.
   - When the effect's alpha byte `DAT_00edbd40` is not 0xFF, it scales the key's alpha.
-- **TextureSlide.** The key's 4 floats are INFERRED to be the UV rectangle (u0, v0, du, dv) at
-  +0x22c; the decompile loses the store's target.
+- **TextureSlide.** The key's 4 floats are the UV rectangle (u0, v0, du, dv) at +0x22c (READ, the
+  store at `0x00c8af77`).
   - The draw routines apply that rectangle as `u0 + u × du` (READ).
   - The head is not used; its meaning stays OPEN.
 - **SetGraphRandomScale.** The scale is a BlendScaleGraph sampled at a random time
   (`FUN_00c89140`): the first key before `a`, the last after `b`, linear between. Which variable the
   pointer names is INFERRED: the node's first BlendScaleGraph.
-- **The ConeForce oddity.** Case 0x46 falls through into 0x47 in the decompile. Whether that is
-  real is OPEN.
 
 ### Motion and defaults (READ)
 
@@ -446,7 +452,13 @@ Every retail view and render command has space 0 (MEASURED).
   - ViewNone: the particle's rotation.
   - ViewBillboard: the matrix at `0x00edbde8`.
   - ViewYBillboard: the matrix at `0x00edbe28`.
-    - INFERRED from the names: the camera-facing and the upright camera-facing billboards.
+  - `CEFSystem::FUN_00cb0ee0` builds both (READ). Each is the inverse of the view matrix
+    (`0x00edbe68`) with its translation row zeroed. YBillboard then has row 1 forced to (0, 1, 0);
+    rows 0 and 2 stay as they are, not re-orthogonalised.
+  - The inverse view's rows are the camera's right, up and look directions. The client keeps the
+    game's coordinates unconverted (a mirrored world; BmsReader reverses the winding), so look is
+    Godot's −camera.z. `EfpEffect` builds the billboard as (right, up, −back), a reflection
+    (INFERRED from that convention), and billboarded nodes draw both faces (OURS).
   - ViewVBillboard: a basis whose Y is the normalised velocity and whose Z is `velocity × up`
     (the identity when the velocity is 0 or straight up).
 - **Plate** (`FUN_00c8c210`). The unit quad at `0x00edb070`: x and y ±0.5, z 0, with UV (0,0) at
@@ -455,6 +467,27 @@ Every retail view and render command has space 0 (MEASURED).
   - The UV corners come from the UV rectangle.
 - **Mesh** (`FUN_00c8bf50`). The `.bms` vertices, scaled and transformed the same way. The
   particle's colour replaces each vertex colour, and the UVs map through the rectangle.
+
+### Ending a kept effect (READ, the IEasyFxEffect vtable at `0x00e0f594`)
+
+The owner ends an effect through one of two slots:
+- **Slot 2** (`CEFEffect::vslot_002`) frees its particles (`EFEffect::FUN_00c85ea0`) and releases
+  it at once.
+- **Slot 4 with 0** (`vslot_004`) clears the restart flag (+0x49). It releases the effect when its
+  keep count reaches 0.
+
+Slot 4 with 1 sets the flag. `vslot_000` then restarts a finished effect (it zeroes the particle
+ages). That is AT_LOOP.
+
+`EfpEffect.stop()` therefore drops every particle at once. This covers loop and never-extinct
+particles, which the review found in 18 files that never end by themselves.
+
+### Colour (MEASURED, round 620 review)
+
+Instance colours are not converted from sRGB. The Compatibility renderer draws in sRGB space. A
+white texture under a 0x80 particle colour, and a 0x80 texture under a white particle colour, both
+come out 128, the same as an unshaded StandardMaterial3D with albedo 0x80. So the colour matches
+D3D's fixed pipeline, and nothing is converted.
 
 ### What this client does not do yet (OPEN), and its own choices (OURS)
 
@@ -472,7 +505,13 @@ SetBANPos and SetBANRot keys, which are implemented.
 - The order within a frame is: motion, the particle's commands, emission (new particles run their
   frame-0 commands at once), then ages.
 - The emitters of a dead particle stop.
-- There is a cap of 300 particles per effect and 3,000 in all.
+- There is a cap of 300 particles per effect and 2,000 in all. 600 of the 2,000 are reserved for
+  the local player's own effects: its casts, hits and level-up.
+  - GDScript costs about 7 µs a particle-frame (MEASURED), so the cap bounds a 50 ms frame at
+    about 14 ms.
+- Decoded templates, textures and meshes are kept by least-recent use: 256, 384 and 256 entries.
+- A skill's files decode on a worker thread when the skill is known or put on the hotbar
+  (`EfpEffect.preload_paths`).
 - The emission globals are at full quality (0, 0).
 
 **The blend mapping to Godot** (`EfpEffect.blend_class`):
