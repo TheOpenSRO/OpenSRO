@@ -310,6 +310,14 @@ type Skill struct {
 	// recast rule (FUN_0059d870) skips its GroupID branch for a row that
 	// carries it. A suffix after BuffParams; an older export loads false.
 	Lks2 bool
+	// TargetHealHP and TargetHealMP are what one cast restores to EACH
+	// character it names (round 622; skillparam.TargetHealAmounts): a
+	// Target_Required 1 row's flat 'heal', the branch of
+	// Skill_ApplyEffectsAndNotify (0x593f50) that heals every living target
+	// in the use context's vector (0x59461b). Heal A lv1 (id 149): 369 HP.
+	// A suffix after Lks2; an older export loads 0, no heal on a target.
+	TargetHealHP int
+	TargetHealMP int
 
 	// The mastery this skill belongs to and the mastery level required to learn
 	// it (ReqCommon_Mastery1 / ReqCommon_MasteryLevel1). These are what the

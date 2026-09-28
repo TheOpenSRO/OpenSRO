@@ -342,8 +342,8 @@ In order. Each is checked off here when it ships in a release, with its round in
       buff's `runSpeed` sets the run speed and OpSkillMove snaps the player. Still open:
       the server half (round 616) was not live-tested with it; the Ghost Walk move is a snap
       (duration OPEN, `tele` value[0] = 500 unread); retail's ground-pick cursor and decal (the
-      cross is ours); the retail fallback for a Target_Required 1 heal with nothing selected
-      (refused, as before); the targetType echo, ownerKind and OpSelfId 0x00F9 (review
+      cross is ours); the retail answer for a Target_Required 1 heal with nothing selected
+      (READ in round 622: refused, 0x3011); the targetType echo, ownerKind and OpSelfId 0x00F9 (review
       follow-up) need round 616's server to send them -- until then the client falls back to the
       request queue and learns its own id from its own casts' answers;
       an old server's keep-up ends on any cast, a self-cast included (`keepUp.Cancel` in
@@ -978,8 +978,23 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       Today they run until cancelled, a death or a logout.
 - [ ] **Debuffs on a hostile target** (Target_Required 1 with only enemy groups -- Water Cancel,
       the Warlock DOTs): not started; they keep the old path. Monsters would need books.
-- [ ] **Whom a friendly TR-1 buff lands on** with nothing friendly selected (spec §6 item 3), and
-      party/ally targets at all. Today: the caster.
+- [x] **Whom a friendly TR-1 buff or heal lands on -- round 622.** READ: with nothing selected the
+      retail client refuses it itself (0x3011 "The target is not selected.", `FUN_0081ba10`); at a
+      monster the server refuses it (0x3006 "Invalid target", `FUN_0058d7a0`); at a player it is
+      cast there (targetType 3). The buff starts on the target's book; Heal A/B/C restore their
+      `heal` value[0] (columns 62/63). A cast is announced to the zone (OpSkillCast 0x00FA, start
+      and act). Still open:
+      - selecting oneself: done in the review (the player block's left press, Shift-click on the
+        body); still open, the type-3 box FUN_00780ee0 opens when a dead player selects itself;
+      - the client's CICUser checks (PK/job flags, the guild compare, vslot 0xa8): no states here;
+      - resurrections (SelectDeadBody, `resu`) and the other 249 `heal` rows (heal.md);
+      - monster casts in OpSkillCast (casterKind 1 is carried; the monster AI's strikes do not
+        announce a skill);
+      - the retail 0xB070/0xB071 payload past their headers (the target/damage block
+        `FUN_00a54be0`), and the act's timing for a chain or a multi-hit skill (ours: prep + cast
+        once);
+      - another player's cast clip is picked as the player's own, and their body is turned toward
+        the target at the start (OURS; retail's turn not read).
 - [x] **The Ghost Walk navmesh test** (round 616-618 integration): read (`CRegionManagerBody::vslot_012`
       0x98b300: a blocked path stops at the obstacle, it is not refused) and run on the client
       (`GhostWalk.resolve`: 3-D clamp, NavGraph walk without slide, ground height; footing settled on
@@ -995,7 +1010,9 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       phases) and the per-deco pick among several entries (`+0xe4` byte).
 - [ ] **The recast rule's other branches**: `dttp` groups (36 rows), the `+0x290` field and the
       Action_Overlap/`ovl2` tail (`FUN_0059db10`) of FUN_0059d870; the `lnks` path
-      (`FUN_0059dc80`, attached-object records); any limit on Target_Required 1 recasts.
+      (`FUN_0059dc80`, attached-object records). (Target_Required 1 recasts: READ and applied on the
+      target's book in round 622's review; the caster-is-target running-action skip has no
+      running action here.)
 - [ ] **The duration extension** (`ctx+0x24`): `RPBU`/`STDU`/`DTDR` through `FUN_005a0330`'s map at
       book `+0x244` -- needs whatever files entries there (passive skills, INFERRED).
 - [ ] **Retail's death and teleport rules for buffs** (ours: a death clears, a zone change keeps),

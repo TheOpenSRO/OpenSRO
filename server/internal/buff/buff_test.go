@@ -144,7 +144,7 @@ func TestRecastRefreshesAndLowerLevelIsRefused(t *testing.T) {
 }
 
 // The gate's conditions around the GroupID branch (0x58e2fd, FUN_0059d870):
-// no check at all for a row with 'lnks' or Target_Required 1; none for a new
+// no check for an 'lnks' row with Target_Required 0; none for a new
 // row with 'lks2'; an active 'lnks' record the owner cast on itself is
 // skipped; GroupID 0 never matches; a 'cbuf' record is skipped. SYNTHETIC
 // rows, each a lower level of an active group, which the rule would refuse.
@@ -158,8 +158,9 @@ func TestRecastRuleConditions(t *testing.T) {
 		wantRefuse bool
 	}{
 		{"the plain rule refuses", func(s Spec) Spec { return s }, func(s Spec) Spec { return s }, true},
-		{"a Target_Required 1 row is not checked", func(s Spec) Spec { return s }, func(s Spec) Spec { s.TargetRequired = true; return s }, false},
-		{"an 'lnks' row is not checked", func(s Spec) Spec { return s }, func(s Spec) Spec { s.Lnks = true; return s }, false},
+		{"a Target_Required 1 row is checked on its target's book (FUN_0058cc70, round 622's review)", func(s Spec) Spec { return s }, func(s Spec) Spec { s.TargetRequired = true; return s }, true},
+		{"an 'lnks' row with Target_Required 0 is not checked", func(s Spec) Spec { return s }, func(s Spec) Spec { s.Lnks = true; return s }, false},
+		{"an 'lnks' row with Target_Required 1 is (0x58d2ca runs after 0x58d294)", func(s Spec) Spec { return s }, func(s Spec) Spec { s.Lnks = true; s.TargetRequired = true; return s }, true},
 		{"an 'lks2' row skips the GroupID branch", func(s Spec) Spec { return s }, func(s Spec) Spec { s.Lks2 = true; return s }, false},
 		{"a self-cast 'lnks' record is skipped", func(s Spec) Spec { s.Lnks = true; return s }, func(s Spec) Spec { return s }, false},
 		{"another caster's 'lnks' record is not", func(s Spec) Spec { s.Lnks = true; s.CasterID = 2; return s }, func(s Spec) Spec { return s }, true},
@@ -173,14 +174,14 @@ func TestRecastRuleConditions(t *testing.T) {
 			t.Errorf("%s: refused %v, ended %d; want refused %v and nothing ended", c.name, r, len(ended), c.wantRefuse)
 		}
 	}
-	// Unchecked, a Target_Required 1 recast stacks: both records stay.
+	// A Target_Required 1 recast of the same level replaces the record.
 	b := NewBooks(50)
 	tr := high
 	tr.TargetRequired = true
 	b.Start(1, tr, t0)
 	b.Start(1, tr, t0)
-	if n := len(b.Active(1)); n != 2 {
-		t.Fatalf("a Target_Required 1 recast left %d records, want 2", n)
+	if n := len(b.Active(1)); n != 1 {
+		t.Fatalf("a Target_Required 1 recast left %d records, want 1", n)
 	}
 }
 

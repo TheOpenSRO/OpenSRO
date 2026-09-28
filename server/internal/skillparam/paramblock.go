@@ -894,6 +894,45 @@ func SelfHealAmounts(actionKind int32, targetRequired bool, words []int32) (hp, 
 	if actionKind != ActionKindInstant || targetRequired {
 		return 0, 0
 	}
+	return flatHealAmounts(words)
+}
+
+// TargetHealAmounts is the HP and MP a Target_Required 1 skill's 'heal' run
+// restores to EACH LIVING TARGET in its use context's vector (round 622): the
+// other branch of Skill_ApplyEffectsAndNotify (0x593f50) --
+//
+//	594293  the target vector is NOT empty, and
+//	5942fd  the row carries no 'efr' field 1 (+0x28c) and no 'resu' (+0x330):
+//	59461b    Skill_ApplyHealToObject(v0..v3) on each living target (59463c)
+//
+// -- with the same formula and the same exact shape as SelfHealAmounts
+// (action kind 0, one flat 'heal', none of 'nmh'/'mwhh'/'mwmh'/'efr'/getv
+// 'HLRU', no combat parameter, v1 == 0 for HP and v3 == 0 for MP). 'resu'
+// (the resurrections) is refused here too: its branch is not the heal's.
+// (0, 0) for a Target_Required 0 row -- SelfHealAmounts answers those.
+//
+// MEASURED on the retail skilldata: SKILL_CH_WATER_HEAL_A_01 (id 149) is
+// kind 0, Target_Required 1, TargetGroup Self/Ally/Party, (heal, 369, 0, 0,
+// 0) -- 369 HP to the healed character.
+func TargetHealAmounts(actionKind int32, targetRequired bool, words []int32) (hp, mp int) {
+	if actionKind != ActionKindInstant || !targetRequired {
+		return 0, 0
+	}
+	entries, _, complete := Walk(words)
+	if !complete {
+		return 0, 0
+	}
+	for _, e := range entries {
+		if e.Code == "resu" {
+			return 0, 0
+		}
+	}
+	return flatHealAmounts(words)
+}
+
+// flatHealAmounts is the shape test SelfHealAmounts and TargetHealAmounts
+// share (their doc comments give the reasons, clause by clause).
+func flatHealAmounts(words []int32) (hp, mp int) {
 	entries, _, complete := Walk(words)
 	if !complete {
 		return 0, 0

@@ -76,6 +76,12 @@ type Entity struct {
 	// no CurLevel; session/monsterstrike.go) and a stat-point spend keeps it
 	// (session/stats.go) -- so the two writers are the whole set.
 	Level int
+	// Arrival numbers the entity's arrivals in the world: a fresh value from
+	// the hub on every Enter and ChangeZone (a teleport included, whatever
+	// bucket it lands in), never reused. Round 622's review: a cast's
+	// delayed act is dropped when its caster has arrived anew since the
+	// cast started (session.announceCast).
+	Arrival uint64
 }
 
 // Hub tracks all entities currently in the world, grouped by zone. Safe for
@@ -84,6 +90,7 @@ type Hub struct {
 	mu        sync.RWMutex
 	byZone    map[string]map[uint64]*Entity // zone -> session ID -> entity
 	bySession map[uint64]*Entity
+	arrivals  uint64
 }
 
 // NewHub returns an empty Hub.
@@ -106,7 +113,8 @@ func (h *Hub) Enter(sess *gateway.Session, characterID int64, name string, level
 
 	h.removeLocked(sess.ID())
 
-	e := &Entity{Session: sess, CharacterID: characterID, Name: name, Zone: zone, Pos: pos, Life: LifeAlive, Level: level}
+	h.arrivals++
+	e := &Entity{Session: sess, CharacterID: characterID, Name: name, Zone: zone, Pos: pos, Life: LifeAlive, Level: level, Arrival: h.arrivals}
 	h.bySession[sess.ID()] = e
 	if h.byZone[zone] == nil {
 		h.byZone[zone] = make(map[uint64]*Entity)
@@ -174,7 +182,8 @@ func (h *Hub) ChangeZone(sess *gateway.Session, newZone string, pos Position) (o
 	// The life state and the level travel with the character: a zone change
 	// is refused while dead (session.handleChangeZone), so this carries
 	// LifeAlive in practice, but a state is never reset by a move.
-	next := &Entity{Session: sess, CharacterID: old.CharacterID, Name: old.Name, Zone: newZone, Pos: pos, Life: old.Life, DiedAt: old.DiedAt, Level: old.Level}
+	h.arrivals++
+	next := &Entity{Session: sess, CharacterID: old.CharacterID, Name: old.Name, Zone: newZone, Pos: pos, Life: old.Life, DiedAt: old.DiedAt, Level: old.Level, Arrival: h.arrivals}
 	h.bySession[sess.ID()] = next
 	if h.byZone[newZone] == nil {
 		h.byZone[newZone] = make(map[uint64]*Entity)

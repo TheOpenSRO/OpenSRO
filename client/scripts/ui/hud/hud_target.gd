@@ -455,6 +455,37 @@ func show_target(target_name: String, level: int, rarity: int, hp: int, max_hp: 
 	visible = true
 	place()
 
+## Shows the window for a selected PLAYER (round 622): the player piece
+## (iftw_player.txt, CIFTargetWindow's CICUser branch -- its "player window"
+## kind, ID 0; the job-player kind needs a job state srrevamp does not send)
+## with the name in GDR_TWP_TEXT_NAME. The kindred mark (GDR_TW_KINDRED_MARK)
+## is left empty: what fills it was not read (OPEN). The piece has those two
+## controls and nothing else (MEASURED, iftw_player.txt): no HP gauge, for
+## another player or for oneself (round 622's review asked for HP; the
+## layout has no place for it, so none is drawn).
+func show_player(target_name: String) -> void:
+	if _player == null:
+		return
+	_shown = _player
+	for w in [_common, _special, _player, _job_player]:
+		if w != null:
+			w.visible = (w == _player)
+	custom_minimum_size = _player.size
+	size = _player.size
+	if _close != null:
+		_close.move_to_front()
+	_gem = null
+	_gauge = null
+	_icon = null
+	_level_row = null
+	_rank_row = null
+	_name = _player.find_child("GDR_TWP_TEXT_NAME", true, false) as Label
+	if _name != null:
+		_name.text = target_name
+		_name.remove_theme_color_override("font_color")
+	visible = true
+	place()
+
 ## The name the window shows: rarity 7 prefixes it with UIIT_STT_MOB_STRONG's
 ## text and a space (read, STRONG_NAME_KEY). If the text table cannot resolve
 ## the key, the plain name is shown (our fallback).

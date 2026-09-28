@@ -440,6 +440,10 @@ var skillCSVColumns = []string{
 	"DuraMs", "Cbuf", "Nbuf", "Bbuf", "Lnks", "Tele0", "Tele1", "BuffParams",
 	// Appended in round 616's review: the 'lks2' marker the recast rule tests.
 	"Lks2",
+	// Appended in round 622: what a Target_Required 1 heal restores to each
+	// character it names (skillparam.TargetHealAmounts). A strict suffix: an
+	// older export loads 0, which is no heal on a target.
+	"TargetHealHP", "TargetHealMP",
 }
 
 // skillCSVRequiredColumns is the prefix every skill export must carry; the
@@ -641,6 +645,8 @@ func parseSkillRow(f []string) (Skill, error) {
 		sk.BuffParams = strings.TrimSpace(f[60])
 	}
 	boolAt(61, &sk.Lks2)
+	intAt(62, &sk.TargetHealHP)
+	intAt(63, &sk.TargetHealMP)
 
 	if err != nil {
 		return Skill{}, err

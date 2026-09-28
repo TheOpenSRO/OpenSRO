@@ -609,3 +609,30 @@ func TestSelfHealAmounts(t *testing.T) {
 		}
 	}
 }
+
+// Round 622: the targeted branch of Skill_ApplyEffectsAndNotify (0x59461b):
+// a Target_Required 1 row's flat 'heal' goes to each named target.
+func TestTargetHealAmounts(t *testing.T) {
+	heal, efr, resu, att := WordOf("heal"), WordOf("efr"), WordOf("resu"), WordOf("att")
+	for _, c := range []struct {
+		name           string
+		kind           int32
+		targetRequired bool
+		words          []int32
+		hp, mp         int
+	}{
+		// SKILL_CH_WATER_HEAL_A_01 (id 149), MEASURED.
+		{"Heal A lv1", ActionKindInstant, true, []int32{heal, 369, 0, 0, 0}, 369, 0},
+		{"no target: the self-heal's", ActionKindInstant, false, []int32{heal, 369, 0, 0, 0}, 0, 0},
+		{"a buff kind", ActionKindBuff, true, []int32{heal, 369, 0, 0, 0}, 0, 0},
+		{"efr collects its own targets", ActionKindInstant, true, []int32{heal, 369, 0, 0, 0, efr, 1, 1, 300, 8, 0, 5}, 0, 0},
+		{"resu is not the heal branch", ActionKindInstant, true, []int32{heal, 369, 0, 0, 0, resu, 1, 2}, 0, 0},
+		{"a blow too", ActionKindInstant, true, []int32{heal, 369, 0, 0, 0, att, 5, 100, 1, 2, 0}, 0, 0},
+		{"a bonus percent is not carried", ActionKindInstant, true, []int32{heal, 369, 10, 50, 0}, 0, 50},
+	} {
+		hp, mp := TargetHealAmounts(c.kind, c.targetRequired, c.words)
+		if hp != c.hp || mp != c.mp {
+			t.Errorf("%s: (%d, %d), want (%d, %d)", c.name, hp, mp, c.hp, c.mp)
+		}
+	}
+}

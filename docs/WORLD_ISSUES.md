@@ -7094,6 +7094,311 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twenty-second round, review follow-up: a healer can select themselves, a recast on an ally replaces the old buff, and only casts that happened are shown
+
+The review found that round 622's READ claims hold, including the 369 HP heal, which was checked by
+hand. It also found seven defects. This follow-up fixes them.
+
+**READ** (sro_client.exe and SR_GameServer.exe; skill_buffs.md, "Friendly targets" and "The recast
+rule", have the addresses):
+- **Selecting oneself.**
+  - The window dispatcher 0x46c8e0 sends WM_LBUTTONDOWN (0x201) to vtable `+0x78`.
+    `CIFPlayerMiniInfo::vslot_030` is that slot. It calls `FUN_00780ee0(own id)`, which writes the
+    selected id `+0x628`.
+  - The world click 0x793570 passes `((player+0x65c) & 1) == 0 | VK_SHIFT` as the include-self
+    flag of the pick `FUN_0078ee20`. With the flag set, the pick does not skip the local player.
+- **The pick** keeps the nearest hit across every character object: nine rays around the cursor,
+  `fVar1 < local_f4`.
+- **`+0x65c` is a 16-bit body-state mask.**
+  - The table is at 0xec5fb8, with 0x28-byte records. The setter `FUN_009c9920` ORs
+    `1 << state` after clearing the record's `+0x24` mask; the clearer is `FUN_009c8810`.
+  - Bit 0 is state 0. The 0x30bf life-state handler `FUN_008a80a0` sets it on a revive.
+  - State 1, set for life state 2, clears it through mask 0xffcf. That mask was MEASURED in the
+    exe's `.data`: the section is at VA 0xeae000, file offset 0xaae000.
+- **Recasts on a target.** `FUN_0058cc70` calls `FUN_0059d870(target+0xa30, skill, caster)` for
+  each target (0x58d2ca..0x58d2d3) and refuses 0x300c on a 0 answer. An `lnks` row runs
+  `FUN_0059dc80` first (0x58d294). The only skip is a caster that is its own target with the same
+  running skill (0x58d2ac..0x58d2c8).
+- **An offensive row at a player.** For a player who is not attackable (vslot 0xa8 false) the
+  client drops the cast **silently**: `je 0x81c577`, no message (0x81bc93..0x81bcaf). It shows
+  0x3022 only for an attackable party member.
+
+**INFERRED:** bit 0 of `+0x65c` means "alive". So a plain click includes oneself only while dead, and
+this client takes no world clicks while dead (round 548). When a dead player selects itself,
+`FUN_00780ee0` opens a type-3 box. What that box is was not read (OPEN).
+
+**MEASURED:** `iftw_player.txt` has two controls, `GDR_TW_KINDRED_MARK` and `GDR_TWP_TEXT_NAME`, and
+no HP gauge. So the target window shows a selected player's name and no HP, whether that player is
+oneself or someone else. The review asked for HP; the retail layout has no place for it.
+
+**What changed:**
+1. **Selecting oneself.**
+   - A left press on the HUD player block selects the player (`HudPlayerInfo.self_pressed` ->
+     `World3D._select_self`).
+   - A Shift-click on one's own body selects the player. The body is a capsule on its own
+     collision layer 9, in the pick only while Shift is held.
+   - A friendly cast with oneself selected sends targetType 3 with one's own id, from where one
+     stands.
+2. **Walking cancels a pending friendly cast.** `_try_set_move_target` and the locked branch clear
+   `_pending_friend_cast`.
+3. **Recasts on a target.** `overlapLocked` no longer skips Target_Required 1 rows; it still skips
+   `lnks` only for Target_Required 0 rows. On the target's book, a lower level is refused 0x300c
+   before anything is spent, and an equal or higher level replaces the old buff.
+4. **Only landed casts are announced.** `performAttack` reports whether its blow landed (a
+   `landed *bool`). A cast it refuses after the costs are paid is not announced.
+5. **An offensive skill at a player** is silent, as in retail.
+6. **Smaller fixes:**
+   - `_other_casts` is removed;
+   - `_recent_buff_starts` is pruned;
+   - a cast from a caster not in view still plays its SHOT/1 and ACT_S on a visible target: a heal
+     on this player plays on this player.
+7. **Cheaper safety fixes:**
+   - the target is checked again under its buff lock (alive, still in the world);
+   - the delayed act is dropped if the caster died, left, or arrived anew. `world.Entity.Arrival`
+     is a fresh number on each Enter and ChangeZone, which covers a teleport into the same bucket;
+   - the click takes the nearest hit across monsters and players in one ray. Before, monsters
+     were tried first.
+   - The act's timer hook (`castAfterHook`) sits under a mutex. `-race` found the test's
+     unguarded swap.
+
+**Tests:**
+- Go:
+  - `TestFriendlyBuffRecastOnTheTarget`: three casts on one ally leave one record, and a lower
+    level is refused 0x300c;
+  - `TestCastRefusedInsidePerformAttackIsNotAnnounced`;
+  - `TestDelayedActDroppedAfterATeleport`;
+  - `TestRecastRuleConditions`, updated with the Target_Required 1 cases.
+- `friend_cast_test.gd`:
+  - a press on the player block selects the player;
+  - Heal with oneself selected sends `{name, 149, own id, 3}` and plays ACT_S on the player;
+  - a click-to-walk drops a pending friendly cast;
+  - Smash at a player says nothing (read from the world's chat log);
+  - a heal on this player from a caster not in view plays on this player;
+  - `_other_casts` is gone.
+
+Results:
+- `go test -count=1 -p 1 ./...`: ok.
+- `go test -race ./internal/session/`: ok.
+- `remote_godot.sh check`: ALL LOAD.
+- `tests`: 141 suites, 0 failing.
+
+**Negative.** The new tests were run against round 622 (cdc5ae9).
+
+Go:
+
+```
+--- FAIL: TestFriendlyBuffRecastOnTheTarget (0.23s)
+    friendlycast_test.go:433: three casts on one ally left 3 records, want 1
+--- FAIL: TestCastRefusedInsidePerformAttackIsNotAnnounced (0.18s)
+    friendlycast_test.go:451: an unexpected 0x00FA: 01 00 00 00 00 00 00 00 00 03 00 ...
+--- FAIL: TestDelayedActDroppedAfterATeleport (0.18s)
+    friendlycast_test.go:472: an unexpected 0x00FA: 01 00 00 00 00 00 00 00 00 95 00 ...
+```
+
+Client (`friend_cast_test.gd`, its own render dir):
+
+```
+FAIL and says nothing (0x81bc93..0x81bcaf: a non-attackable player is a silent no-op)
+FAIL World3D can select this player (_select_self)
+FAIL a click-to-walk drops a pending friendly cast
+FAIL a heal on this player from a caster out of view plays ACT_S on this player (got 0)
+FAIL the unused cast map is gone
+5 FAILURES
+```
+
+**Live** (r7: the same two-client harness, the branch's server, real xdotool input):
+- **Setup.** Clicking A's Str + button ten times raised A's maximum HP to 1494, which left room
+  for a heal.
+- **Portrait.** A left click on A's player block (40, 40) logged
+  `World3D: selected this player (1, QaTester)`. The target window showed "QaTester".
+- **Heal on oneself.** Key 2 logged `CAST send: skill 149 targetType 3 (character 1)`. The
+  accepted reply carried HP 1494/1494, up from 1331. MP went from 1277 to 1213 (74 spent, then
+  regenerated). `water_hpheal_effect_a.efp` played on A after 2,000 ms.
+- **Shift-click on one's own body.**
+  - Sent with `xdotool keydown shift` as XTEST events, it logged `PICK: click at (640, 380),
+    Shift true (self in the pick): /root/World3D/Player/SelfClickBody (layer 0b100000000)`, then
+    `selected this player`, and the Heal that followed went out as targetType 3 with A's id.
+  - A plain click on the same spot logged `Shift false (self not in the pick): no hit`, and A
+    walked.
+  - The first two tries sent Shift with `xdotool keydown --window`, as synthetic events. Godot's
+    key state never saw Shift down (`Shift false` in the log), so those tries picked nothing.
+    Real input needs the XTEST form.
+- 0 SCRIPT ERRORs in A.log and B.log. Screenshots are `castbc_shots/r7_*.png`; they show, they do
+  not prove.
+
+## Six-hundred-and-twenty-second round: a heal lands on the player you select, and everyone in the zone sees another player's cast
+
+The user asked for skills that "don't require you attack a monster" and for skills' visual effects
+on activation. After rounds 616-620, two gaps were left:
+- A friendly Target_Required 1 skill (Heal, the party buffs) was refused with nothing selected, and
+  the live run cast Heal at a monster.
+- Another player's casts could not be seen: the server told the zone nothing when someone cast, so
+  only the buff auras showed.
+
+**READ** (both binaries on the RE box; skill_buffs.md "Friendly targets" and "The cast broadcast"
+have every address):
+- **The retail client's skill use** (`sro_client.exe` `FUN_0081ba10`). The row is
+  `FUN_0093f250(id) + 0x774`, with Target_Required at `+0x98` and the flags that follow it.
+  - The selected id (`0x110f80c+0x628`) is 0 when nothing is selected. With that, and with
+    Target_Required, Animal, no Land and no Building, the client shows `0x3011`
+    `UIIT_SKILL_USE_FAIL_NONESELECTETARGET` and sends nothing (0x81be5e..0x81be99). **Retail does
+    not cast Heal on the caster when nothing is selected.**
+  - With a monster selected, a non-offensive row (Heal: `FUN_0095f510` false) is sent.
+  - With another player (`CICUser`) selected, the row is sent at them after the PK/job-flag and
+    party checks.
+- **The server's target test**, run in the skill tick's phase 0 (`PrepareAction` case 4 ->
+  `FUN_0058cc70` -> `FUN_0058d7a0`) before the walk and before any cost:
+  - Ally or Party with a target that is not a PC fails. So does no Self with the caster as the
+    target, and no Enemy_M with a monster target.
+  - A Party-only row needs both players in the same party.
+  - Every failure is `0x3006` WRONGTARGET. **Heal at a monster is refused.**
+- **The heal on a target.** Skill_ApplyEffectsAndNotify's non-empty-vector branch (`0x59461b`)
+  heals each living target with the same formula as the self-heal (heal.md).
+- **The cast messages.** `0xB070` result 1 (`FUN_008a5fd0`) builds the caster's `IDecoSkill` for
+  any caster in view. `0xB071` (`FUN_008a4960` -> `FUN_00a56680`) kind 1 forces the cast's SHOT.
+- `FUN_00778650` sets the selected id from a clicked object.
+
+**MEASURED:**
+- **The two texts** (textuisystem.txt, English column): 0x3011 is "The target is not selected."
+  and 0x3006 is "Invalid target".
+- **Skilldata** (`/var/tmp/allskills.txt`):
+  - All 412 Service-1 Target_Required 1 rows with a friendly group carry Animal 1, Land 0 and
+    Building 0. The two Self-only rows carry no Enemy_M, and no friendly row carries Enemy_M
+    without Enemy_P.
+  - Heal A lv1 is `heal 369, 0, 0, 0`.
+- **The re-export** (33,698 rows): 27 rows get a target heal (`SKILL_CH_WATER_HEAL_A/B/C_01..09`).
+
+**INFERRED:**
+- The client row's Target_Required/Animal/Land/Building/groups offsets are the server's plus 4.
+  The evidence is three uses (skill_buffs.md).
+- ACT_S plays on the body the skill acts on (skills_spec §1.2). So a heal's ACT_S at `Bip01` goes
+  on the healed player: `SkillEffects.act` is given that body as host.
+
+**OURS:**
+- OpUseSkill **targetType 3**: the id field names a character. Monster and character ids overlap.
+- **OpSkillCast 0x00FA**, 43 bytes, to the caster's zone without the caster. 0x00FA was free by the
+  rounds-616/617 grep.
+- The act is announced after the row's PreparingTime + CastingTime, bounded at 5 s. Retail's 0xB071
+  waits for the context builder's CastingTime. srrevamp resolves the cast itself at once.
+- A hostile row at a player is refused "Invalid target", because PvP is not modelled.
+- The player click body (layer 8) is sized like a monster's.
+
+**What changed:**
+1. **Server** (`session/friendlycast.go`):
+   - A friendly row is refused, before anything is spent, in three cases: with nothing named ("The
+     target is not selected."), at a monster ("Invalid target"), and at a character that fails the
+     target test ("Invalid target").
+   - Out of reach it is refused "too far away" (the skill tick's band, both BCRadius 4).
+   - A friendly buff starts on the target's book, and the target's zone is told.
+   - A heal restores the new CSV columns 62/63 (`TargetHealHP/MP`, `skillparam.TargetHealAmounts`)
+     to the target under its kill lock. The target is pushed its stats.
+   - Every accepted cast is announced (`announceCast`).
+   - The exporter, the CSV loader and the SQL store carry the two columns (deploy/README.md: the
+     same re-export and re-import as round 616).
+2. **Client:**
+   - A left click on another player selects them. The target window shows the player piece
+     (`iftw_player.txt`, `GDR_TWP_TEXT_NAME`).
+   - `SelfCast.plan` has the friendly rules. The skill reader carries Animal/Building/Self/Ally/Party.
+   - A friendly cast at a player walks into reach, sends targetType 3, and acts on the target's body.
+     It acts on its own OpBuffStart, or after prep + cast from the send.
+   - At a monster it is sent at once with no cast drawn.
+   - With nothing selected it is refused with the retail text. The same text now answers any
+     Target_Required 1 Animal row, Smash included, where it used to say "Select a target first".
+   - `_on_skill_cast` plays another player's cast:
+     - the start plays the body clip, READY sounds and `SkillEffects.cast`;
+     - the act plays SHOT, SHOT/1 and ACT_S on the body acted on;
+     - an ACT_L cycle plays unless that owner's buff of the skill already started.
+
+**Tests:**
+- `server/internal/session/friendlycast_test.go` (two players on one server):
+  - Heal on another player: HP +369 capped, the stats push, OpSkillCast start and act to him, none
+    to the caster;
+  - Heal on oneself by id;
+  - out of reach;
+  - a Party-only buff: refused until both are in a party, then on the target's book cast by the
+    caster;
+  - an Ally buff without Self refusing the caster;
+  - a hostile skill at a character;
+  - Grass Walk announced;
+  - a refused cast not announced;
+  - the layout and the act delay.
+- `friendlycast_base_test.go`: Heal with nothing selected and at a monster are refused and cost
+  nothing.
+- The exporter's columns 62/63; `TestTargetHealAmounts`.
+- `client/scripts/world/friend_cast_test.gd`:
+  - the plans and the texts;
+  - the codec;
+  - Heal: sends nothing unselected, sends type 3 at a selected player and bursts on his body,
+    waits for prep, ends on a refusal, and goes out as a plain request at a monster with no cast
+    drawn;
+  - another player's heal on this player plays READY on him and ACT_S on this player, and a buff's
+    act adds no ACT_L.
+
+Results:
+- `go test -count=1 -p 1 ./...`: ok.
+- `remote_godot.sh check`: ALL LOAD, 360 scripts.
+- `tests`: 141 suites, 0 failing.
+
+**Negative.** The new server tests were run against int/skills 6339b5b in a detached worktree:
+
+```
+--- FAIL: TestHealWithNothingSelectedIsRefused (0.09s)
+    friendlycast_base_test.go:158: Heal refused with "", want "The target is not selected." (READ: the retail client and server refuse it)
+    friendlycast_base_test.go:158: MP 126 after the refusal, want 1000: a refused cast spends nothing
+    friendlycast_base_test.go:158: the refused Heal was recorded as used (its cooldown runs)
+--- FAIL: TestHealAtAMonsterIsRefused (0.10s)
+    friendlycast_base_test.go:167: Heal refused with "", want "Invalid target" (READ: the retail client and server refuse it)
+```
+
+`friend_cast_test.gd` on that base (its own render dir), 19 failures, among them:
+
+```
+FAIL Heal with nothing selected: refused as the retail client refuses it (0x3011), not cast on the player (got (no 3-argument plan))
+FAIL OP_SKILL_CAST is 0x00FA
+FAIL NetClient has skill_cast and World3D _on_skill_cast (got ["buff_started", "buff_ended", "attack_result"])
+FAIL World3D can select a player (_select_character)
+FAIL its act plays ACT_S on this player, the one healed (got 0)
+```
+
+**Live** (`/var/tmp/castbc/e2e/run6.sh`, r6).
+- **Setup:**
+  - two clients on one Xvfb, side by side, against the branch's in-memory server with the
+    re-exported skills CSV;
+  - the Login -> CharacterSelect route, driven by real xdotool input;
+  - QaTester (A, level 40, Grass Walk and Heal on keys 1/2) and QaFriend (B, level 5) at the
+    Jangan spawn.
+  - B's HP was brought under its maximum by spending its 12 stat points on Str (the + button,
+    clicked).
+- **Log evidence** (A.log, B.log, server.log):
+  - A key 2 with nothing selected: `World3D: skill 149: nothing selected -- refused as the retail
+    client refuses it (0x3011)`, and the chat line "The target is not selected." Nothing was sent.
+  - A key 1, Grass Walk. B.log: `SKILL cast: character 1 skill 113 cast 1 start`, then `act`, then
+    `EFFECTS skill 113 ACT_S/-1: AT_ONE_FOLLOW skill\china\lightning_gyeonggong_keep_a.efp ... (7
+    nodes drawn)` on A's body, `its aura held by the buff's token`.
+  - A's left click at QaFriend: `World3D: selected player 2 (QaFriend)`, and the target window
+    showed "QaFriend".
+  - A key 2, Heal:
+    - A.log: `CAST send: skill 149 targetType 3 (character 2)`, then the accepted reply, then
+      `water_hpheal_effect_a.efp at Bip01 (6 nodes drawn)` on player 2, 2,000 ms after the send.
+    - B.log: the cast start with its three READY effects (`water_assist_motion_wait.efp`, and
+      `water_motion_keep.efp` on both hands) on A's body.
+    - B.log, at the act: `csk_heal_jehwang.wav` and `water_hpheal_effect_a.efp ... acts on this
+      player`, and B's stats went **HP 337/390 -> 390/390**.
+  - 0 SCRIPT ERRORs in either log. B's longest work frame was 20 ms, and none was over 100 ms.
+- **Screenshots**: `castbc_shots/` in the session scratchpad. They show, they do not prove.
+- **Not run live:** Heal at a monster (no monster stood in view at the spawn). The suites cover it.
+- The wire tap's own decoder predates targetType 3 and logged the request as undecodable. It
+  forwarded it unchanged, and the server healed.
+
+**Still OPEN** (docs/TODO.md):
+- selecting one's own body;
+- the client's PK/job/guild checks;
+- resurrections and the other 249 `heal` rows;
+- monster casts in OpSkillCast;
+- the 0xB070/0xB071 bodies past their headers;
+- the act's timing for chains and multi-hit skills;
+- whether another player turns toward the target.
+
 ## Six-hundred-and-twenty-first round, follow levels, review follow-up: auras move with the body every frame, the −1 rotation reset works, and "world space" points along the world
 
 The review of aa7a800 confirmed every READ claim, the u2 orbit included, and found these defects.
@@ -7652,6 +7957,7 @@ Nothing here was compared with the retail client.
 - the LinkMode controller and the node's 20-byte block, which none of the Link routines reads;
 - which face of a Link strip D3D culls;
 - which side of a pipe gets v = 0 after the handedness mirror.
+
 
 ## Six-hundred-and-twentieth round, review follow-up: effects follow the game's own cast phases, end when their buff or cast ends, and survive an equipment change
 

@@ -3513,6 +3513,9 @@ func _load_skill_catalog() -> void:
 						# and puts a land row into ground-pick mode.
 						"target_required": int(bs.level_target_required[i]),
 						"target_land": int(bs.level_target_land[i]),
+						# Round 622: the target groups (SkillDataReader.TARGET_BIT_*),
+						# for SelfCast.plan's friendly-target rules.
+						"target_groups": int(bs.level_target_groups[i]) if i < bs.level_target_groups.size() else 0,
 					}
 	print("HudPanels: skill catalog -- %d masteries with groups, %d group-rows of skills"
 		% [_skill_groups.size(), _skill_grid.size()])

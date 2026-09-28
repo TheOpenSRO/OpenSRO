@@ -135,9 +135,20 @@ cast's reply (`AttackResult`) has no MP field. The HUD's MP bar moves on the nex
 `OpCharacterStatsResult`: a stats request, or the push `session/regen.go` sends when a regen
 tick restores HP.
 
+**Heals on a named character (round 622).** The engine's other branch -- a non-empty target
+vector, no `'efr'` field 1 and no `'resu'` (`0x5942fd` -> `0x59461b`) -- heals each living target
+with the same `v0..v3`. `skillparam.TargetHealAmounts` passes a Target_Required 1, action kind 0
+row of the same exact shape as `SelfHealAmounts` (and no `'resu'`); the exporter writes it as skill
+CSV columns 62/63 (`TargetHealHP`, `TargetHealMP`). MEASURED on the box's export: **27 rows**, the
+`SKILL_CH_WATER_HEAL_A/B/C_01..09` Heals; Heal A lv1 (id 149) restores 369 HP. The cast handler
+heals the character the request names (OpUseSkill targetType 3; its target test is
+`skill_buffs.md`, "Friendly targets"), capped at its maximum, only while it lives, and pushes it
+`OpCharacterStatsResult`. The other 249 `'heal'` rows (333 less the 57 self-heals and these 27: percent, bonus, weapon-term, `'HLRU'`,
+`'efr'`, the resurrections) still heal nobody.
+
 **Not modelled, disclosed:**
 
-- heals on other characters, and the percent, bonus, weapon-term and `'HLRU'` shapes;
+- the percent, bonus, weapon-term and `'HLRU'` shapes, on the caster or on a target;
 - p170/p171 above 0;
 - the panic/combustion scaling inside `ApplyHPMPDelta`;
 - the `'resu'` and `'efr'` branches.

@@ -308,7 +308,7 @@ func DecodeUseSkillRequest(data []byte) (*UseSkillRequest, error) {
 	req.TargetType, req.HasTargetType = rest[0], true
 	rest = rest[1:]
 	switch req.TargetType {
-	case TargetNone, TargetEntity:
+	case TargetNone, TargetEntity, TargetCharacter:
 	case TargetGround:
 		for _, dst := range []*float32{&req.X, &req.Y, &req.Z} {
 			if *dst, rest, err = decodeFloat32(rest); err != nil {
@@ -1008,7 +1008,36 @@ func useSkillHandler(
 		// radius 80, five targets -- MEASURED) resolve no blow here. A
 		// Target_Required 1 row with no friendly group needs its target and
 		// is refused before anything is spent (OURS text); a friendly one
-		// lands on the caster, as the buffs do.
+		// was, until round 622, put on the caster; it is now refused below
+		// (friendlyTargetRefusal), as the retail client refuses it.
+		//
+		// FRIENDLY TARGETS (round 622, friendlycast.go). A Target_Required 1
+		// row with a friendly group (Heal, the party buffs) names a
+		// CHARACTER (targetType 3). With nothing selected it is refused with
+		// the retail client's own 0x3011 text; at a monster with the server's
+		// 0x3006 (FUN_0058d7a0 steps 4 and 7) -- both before anything is
+		// spent, as the retail skill tick refuses in phase 0 (PrepareAction
+		// case 4 -> FUN_0058cc70) before its approach walk. A character
+		// target passes the rest of FUN_0058d7a0 (Self for oneself, the same
+		// party for a Party-only row) or is refused 0x3006. A hostile row
+		// named at a character would be player-versus-player, which srrevamp
+		// does not model: refused with the same text (OURS).
+		friendly := friendlyTargeted(castRow)
+		var friendTarget world.Entity
+		if req.Target() == TargetCharacter && !friendly {
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: invalidTargetRefusal}).Encode()})
+		}
+		if friendly {
+			caster, inWorld := sessionEntity(hub, sess)
+			if !inWorld {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: notInWorldRefusal}).Encode()})
+			}
+			t, refusal := friendlyTargetRefusal(hub, parties, castRow, caster, req.Target(), req.TargetMonsterID)
+			if refusal != "" {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: refusal}).Encode()})
+			}
+			friendTarget = t
+		}
 		selfTarget := req.Target() == TargetNone && !isBuff && !isGround
 		if selfTarget && castRow != nil && castRow.TargetRequired &&
 			!castRow.TargetSelf && !castRow.TargetAlly && !castRow.TargetParty {
@@ -1018,19 +1047,33 @@ func useSkillHandler(
 		// cast that passes the check starts (round 616's review): nothing
 		// else can add a record in between, and the costs below are never
 		// taken for a buff that is then refused.
+		// A friendly buff's book is its target's (round 622).
+		buffOwner := characterID
+		if friendly {
+			buffOwner = friendTarget.CharacterID
+		}
 		if isBuff {
-			l := buffLock(characterID)
+			l := buffLock(buffOwner)
 			l.Lock()
 			defer l.Unlock()
 		}
-		if isBuff && buffBooks.CheckOverlap(characterID, buffSpec(castRow, characterID)) != buff.NotRefused {
+		if isBuff && buffBooks.CheckOverlap(buffOwner, buffSpec(castRow, characterID)) != buff.NotRefused {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: overlapRefusal}).Encode()})
 		}
 
 		if refusal := skillCostRefusal(ctx, chars, mp, characterID, hpCost, mpCost); refusal != "" {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: refusal}).Encode()})
 		}
-		if !isBuff && !isGround && !selfTarget && !noCombat && !zeroDmg && !skillInReach(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID, skillRange) {
+		// A character target is measured as a monster one is (round 622,
+		// characterInReach), before the costs.
+		if friendly {
+			caster, _ := sessionEntity(hub, sess)
+			if !characterInReach(ctx, eq, items, caster, friendTarget, skillRange) {
+				keepUp.Cancel(characterID)
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "too far away"}).Encode()})
+			}
+		}
+		if !isBuff && !isGround && !selfTarget && !friendly && !noCombat && !zeroDmg && !skillInReach(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID, skillRange) {
 			keepUp.Cancel(characterID)
 			res := echoed(req, &AttackResult{MonsterID: req.TargetMonsterID, Error: "too far away"})
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: res.Encode()})
@@ -1194,10 +1237,15 @@ func useSkillHandler(
 		// their damage columns say: SkillAction_Buff resolves no blow when it
 		// engages (an imbue's 'att' acts on the caster's later blows, which is
 		// not modelled -- OPEN), and Ghost Walk is a move.
-		if isBuff || isGround || selfTarget || noCombat || zeroDmg {
+		//
+		// A FRIENDLY cast (round 622) ends here too: its target is a
+		// character, never a monster to strike. Its buff starts on the target
+		// (startBuffOnLocked) and its heal lands on the target
+		// (healCharacter, the TargetHealHP/MP columns).
+		if isBuff || isGround || selfTarget || friendly || noCombat || zeroDmg {
 			res := echoed(req, &AttackResult{MonsterID: req.TargetMonsterID})
-			if selfTarget {
-				res.MonsterID = 0 // the monster field is ignored for a targetType 0 cast
+			if selfTarget || friendly {
+				res.MonsterID = 0 // no monster: the field is ignored for a targetType 0 cast and names a character for type 3
 			}
 			if owned, err := chars.GetByID(ctx, characterID); err == nil && owned != nil {
 				res.PlayerHP = int32(owned.HP)
@@ -1221,7 +1269,9 @@ func useSkillHandler(
 			// can hand back what the cast took (round 616's review; the
 			// re-use timer is not re-armed, disclosed) and answer a refusal.
 			done := true
-			if isBuff {
+			if isBuff && friendly {
+				done = startBuffOnLocked(hub, castRow, characterID, friendTarget.CharacterID, now)
+			} else if isBuff {
 				e, _ := hub.EntityBySession(sess.ID())
 				done = startCasterBuffLocked(hub.EntitiesInZone(e.Zone), castRow, characterID, now)
 			}
@@ -1232,9 +1282,16 @@ func useSkillHandler(
 				refundSkillCosts(ctx, chars, mp, characterID, hpCost, mpCost)
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: castFailedRefusal}).Encode()})
 			}
+			if friendly && (castRow.TargetHealHP > 0 || castRow.TargetHealMP > 0) {
+				if hp := healCharacter(ctx, hub, chars, eq, items, skills, mp, friendTarget, castRow.TargetHealHP, castRow.TargetHealMP); hp >= 0 && friendTarget.CharacterID == characterID {
+					res.PlayerHP = int32(hp)
+				}
+			}
 			if err := sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: res.Encode()}); err != nil {
 				return err
 			}
+			// The zone sees the cast (round 622, OpSkillCast).
+			announceCast(hub, characterID, req, castRow)
 			return nil
 		}
 
@@ -1251,8 +1308,16 @@ func useSkillHandler(
 		// (Action_Range, refdata.Skill.Range). Nothing there is new
 		// arithmetic; the skill path simply never called it.
 
-		if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, dropSrc, potions, characterID, req.TargetMonsterID, damageBonus, damagePercent, masteryPercent, hits, attackType); err != nil {
+		landed := false
+		if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, dropSrc, potions, characterID, req.TargetMonsterID, damageBonus, damagePercent, masteryPercent, hits, attackType, &landed); err != nil {
 			return err
+		}
+		// The zone sees the cast (round 622, OpSkillCast) -- only when its
+		// blow landed (round 622's review): a cast performAttack refused
+		// after the costs ("target not found") is the requester's refusal
+		// alone, as retail's 0xB070 result 2 is.
+		if landed {
+			announceCast(hub, characterID, req, castRow)
 		}
 		// The skill tick's hand-off (round 256, keepup.go): a row with
 		// AutoAttackType 1 and no Basic_ChainCode leaves a plain attack

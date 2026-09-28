@@ -748,8 +748,8 @@ func TestSelfHealColumns(t *testing.T) {
 			if !ok {
 				t.Fatal("skillRecord rejected a valid row")
 			}
-			if len(rec) != 62 {
-				t.Fatalf("record has %d fields, want 62 (SelfHealHP at 43, SelfHealMP at 44, CooldownGroup at 45, SitGate at 46, the buff columns 47-61)", len(rec))
+			if len(rec) != 64 {
+				t.Fatalf("record has %d fields, want 64 (SelfHealHP at 43, SelfHealMP at 44, CooldownGroup at 45, SitGate at 46, the buff columns 47-61, TargetHealHP/MP at 62/63)", len(rec))
 			}
 			if rec[43] != tc.hp || rec[44] != tc.mp {
 				t.Errorf("record[43:45] = %v, want [%s %s]", rec[43:45], tc.hp, tc.mp)
@@ -838,7 +838,7 @@ func TestSitGateColumn(t *testing.T) {
 			t.Errorf("%s: sitGate = %s, want %s", c.name, got, c.want)
 		}
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 62 || rec[46] != c.want {
+		if !ok || len(rec) != 64 || rec[46] != c.want {
 			t.Errorf("%s: record column 46 = %v (ok %v, %d fields), want %s", c.name, rec, ok, len(rec), c.want)
 			continue
 		}
@@ -862,7 +862,7 @@ func TestBuffColumns(t *testing.T) {
 	grass[skActionKind] = "3"
 	ghost := skillRow(tele, 500, 100)
 	ghost[skTargetRequired], ghost[skTargetLand] = "1", "1"
-	heal := skillRow()
+	heal := skillRow(skillparam.WordOf("heal"), 369, 0, 0, 0)
 	heal[skTargetRequired], heal[skTargetSelf], heal[skTargetAlly], heal[skTargetParty] = "1", "1", "1", "1"
 	lks2 := skillparam.WordOf("lks2")
 	// SYNTHETIC: the markers, 'lks2' and a two-value publishing run.
@@ -879,10 +879,10 @@ func TestBuffColumns(t *testing.T) {
 		{"nbuf, lnks, defr and lks2", marked, []string{"3", "0", "0", "0", "0", "0", "0", "0", "1", "0", "1", "0", "0", "defr:10,12", "1"}},
 	} {
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 62 {
+		if !ok || len(rec) != 64 {
 			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
 		}
-		if got := strings.Join(rec[47:], "|"); got != strings.Join(c.want, "|") {
+		if got := strings.Join(rec[47:62], "|"); got != strings.Join(c.want, "|") {
 			t.Errorf("%s: columns 47..61 = %s, want %s", c.name, got, strings.Join(c.want, "|"))
 		}
 		var buf strings.Builder
@@ -897,6 +897,44 @@ func TestBuffColumns(t *testing.T) {
 		if strconv.Itoa(sk.ActionKind) != c.want[0] || strconv.Itoa(sk.DuraMs) != c.want[6] ||
 			strconv.Itoa(sk.Tele1) != c.want[12] || sk.BuffParams != c.want[13] || sk.Nbuf != (c.want[8] == "1") || sk.Lks2 != (c.want[14] == "1") {
 			t.Errorf("%s: imported %+v", c.name, sk)
+		}
+	}
+}
+
+// Round 622: columns 62/63, TargetHealHP/MP -- Heal A lv1's shape (MEASURED:
+// kind 0, Target_Required 1, Self/Ally/Party, 'heal' 369, 0, 0, 0) restores
+// 369 to the character it names; the same run on a Target_Required 0 row is
+// the self-heal columns' and not these; a resurrection ('resu') is not a heal.
+func TestTargetHealColumns(t *testing.T) {
+	heal, resu := skillparam.WordOf("heal"), skillparam.WordOf("resu")
+	friend := skillRow(heal, 369, 0, 0, 0)
+	friend[skTargetRequired], friend[skTargetSelf], friend[skTargetAlly], friend[skTargetParty] = "1", "1", "1", "1"
+	self := skillRow(heal, 369, 0, 0, 0)
+	res := skillRow(heal, 369, 0, 0, 0, resu, 1, 2)
+	res[skTargetRequired] = "1"
+	for _, c := range []struct {
+		name         string
+		row          []string
+		self, target string
+	}{
+		{"Heal A lv1", friend, "0", "369"},
+		{"a self-heal", self, "369", "0"},
+		{"a resurrection", res, "0", "0"},
+	} {
+		rec, ok := skillRecord(c.row)
+		if !ok || len(rec) != 64 {
+			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
+		}
+		if rec[43] != c.self || rec[62] != c.target || rec[63] != "0" {
+			t.Errorf("%s: SelfHealHP %s TargetHealHP %s TargetHealMP %s, want %s %s 0", c.name, rec[43], rec[62], rec[63], c.self, c.target)
+		}
+		var buf strings.Builder
+		w := csv.NewWriter(&buf)
+		w.Write(rec)
+		w.Flush()
+		skills, err := refdata.LoadSkillsCSV(strings.NewReader(buf.String()))
+		if err != nil || len(skills) != 1 || strconv.Itoa(skills[0].TargetHealHP) != c.target {
+			t.Fatalf("%s: imported %+v, %v", c.name, skills, err)
 		}
 	}
 }

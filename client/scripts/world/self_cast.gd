@@ -18,26 +18,86 @@ class_name SelfCast
 ##   point (PLAN_GROUND). Retail's ground-cast sender is 0x9ec080 (READ); its
 ##   cursor and ground decal are not read (OPEN), so the mode's cursor is
 ##   OURS.
+## - **Target_Required 1 aimed at a friend** (TargetGroup_Self, _Ally or
+##   _Party set: Heal, the party buffs; round 622), as the retail client's
+##   skill use FUN_0081ba10 decides it (READ):
+##   - with **nothing selected** the client refuses it itself: the selected
+##     id (0x110f80c+0x628) is 0 and the row has Target_Required, Animal, no
+##     Land and no Building, so it shows 0x3011
+##     UIIT_SKILL_USE_FAIL_NONESELECTETARGET, "The target is not selected."
+##     (0x81be5e..0x81be99) and sends nothing (PLAN_NO_TARGET). It does NOT
+##     fall back to the caster;
+##   - at a **monster** the client sends it (a non-offensive row --
+##     FUN_0095f510 false -- passes the CICMonsterNPC branch), and the
+##     server's target test refuses it 0x3006 "Invalid target" in the skill
+##     tick's phase 0, before any walk (FUN_0058d7a0; PLAN_FRIEND_AT_MONSTER:
+##     sent at once, no walk);
+##   - at **another player** (CICUser) it is cast at that player
+##     (PLAN_FRIEND), after the client's own PK-state checks, which srrevamp
+##     has nothing to feed (no murder or job states).
 ## - **Every other row** needs a monster (PLAN_TARGET), or is refused with
-##   nothing selected (PLAN_NEED_TARGET). Whether retail falls back to the
-##   caster for a Target_Required 1 heal with nothing selected is OPEN
-##   (skills_spec §2.2); it is refused here, as before.
+##   nothing selected (PLAN_NEED_TARGET; PLAN_NO_TARGET with the retail text
+##   when the 0x3011 test above holds). At a selected player it is refused
+##   (PLAN_HOSTILE_AT_CHARACTER): a hostile cast at a player is
+##   player-versus-player, which srrevamp does not model (OURS).
 
 const PLAN_SELF := "self"
 const PLAN_GROUND := "ground"
 const PLAN_TARGET := "target"
 const PLAN_NEED_TARGET := "need_target"
+const PLAN_NO_TARGET := "no_target"
+const PLAN_FRIEND := "friend"
+const PLAN_FRIEND_AT_MONSTER := "friend_at_monster"
+const PLAN_HOSTILE_AT_CHARACTER := "hostile_at_character"
+
+## The retail client's own refusal texts (MEASURED, textuisystem.txt's
+## English column): 0x3011 UIIT_SKILL_USE_FAIL_NONESELECTETARGET and 0x3006
+## UIIT_SKILL_USE_FAIL_WRONGTARGET. The server answers with the same strings.
+const NO_TARGET_TEXT := "The target is not selected."
+const INVALID_TARGET_TEXT := "Invalid target"
+
+## A row's target-group bits (SkillDataReader.TARGET_BIT_*), from its reach.
+static func _groups(reach: Dictionary) -> int:
+	return int(reach.get("target_groups", 0))
+
+## Whether a skill's row is a Target_Required 1 row aimed at a friend:
+## Self, Ally or Party, and no land target.
+static func is_friendly(reach: Dictionary) -> bool:
+	if int(reach.get("target_required", 0)) != 1 or int(reach.get("target_land", 0)) != 0:
+		return false
+	return (_groups(reach) & (SkillDataReader.TARGET_BIT_SELF | SkillDataReader.TARGET_BIT_ALLY
+		| SkillDataReader.TARGET_BIT_PARTY)) != 0
+
+## The retail client's 0x3011 test with nothing selected: Target_Required,
+## TargetType_Animal, no Land, no Building.
+static func refuses_unselected(reach: Dictionary) -> bool:
+	return int(reach.get("target_required", 0)) == 1 and int(reach.get("target_land", 0)) == 0 \
+		and (_groups(reach) & SkillDataReader.TARGET_BIT_ANIMAL) != 0 \
+		and (_groups(reach) & SkillDataReader.TARGET_BIT_BUILDING) == 0
 
 ## How a skill is cast. `reach` is HudPanels.skill_reach(skill_id) -- empty
 ## for a skill the catalog does not know, which keeps the old rule: cast at
-## the target, or refuse with none.
-static func plan(reach: Dictionary, has_target: bool) -> String:
+## the target, or refuse with none. `has_target` is a selected MONSTER;
+## `character_selected` a selected player (round 622).
+static func plan(reach: Dictionary, has_target: bool, character_selected: bool = false) -> String:
 	if not reach.is_empty() and reach.has("target_required"):
 		var tr := int(reach["target_required"])
 		if tr == 0:
 			return PLAN_SELF
 		if tr == 1 and int(reach.get("target_land", 0)) == 1:
 			return PLAN_GROUND
+		if is_friendly(reach):
+			if character_selected:
+				return PLAN_FRIEND
+			if has_target:
+				return PLAN_FRIEND_AT_MONSTER
+			return PLAN_NO_TARGET if refuses_unselected(reach) else PLAN_NEED_TARGET
+		if character_selected:
+			return PLAN_HOSTILE_AT_CHARACTER
+		if not has_target and refuses_unselected(reach):
+			return PLAN_NO_TARGET
+	elif character_selected:
+		return PLAN_HOSTILE_AT_CHARACTER
 	return PLAN_TARGET if has_target else PLAN_NEED_TARGET
 
 ## Whether an attack result answers a self or ground cast rather than a blow
@@ -57,6 +117,8 @@ static func is_self_reply(target_type: int, echoed: bool, monster_damage: int, m
 		player_died: bool, error: String) -> bool:
 	if target_type == SkillNet.TARGET_ENTITY:
 		return false
+	# A character-target cast's reply (round 622) is its own, like a self
+	# cast's: no blow on a monster to draw.
 	if monster_damage > 0 or monster_died or player_died:
 		return false
 	return echoed or error == ""

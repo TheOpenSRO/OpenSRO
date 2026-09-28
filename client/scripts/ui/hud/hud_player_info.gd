@@ -52,6 +52,13 @@ const SHOWN_CONTROLS := [
 ## The five berserk orbs (GDR_PMI_CIRCLE0..4), lit as the gauge fills.
 var _berserk_orbs: Array = []
 
+## A left press on the block (round 622's review): retail's
+## CIFPlayerMiniInfo::vslot_030 -- the WM_LBUTTONDOWN slot of the window
+## dispatcher (0x46c8e0, message 0x201 -> vtable +0x78) -- calls
+## FUN_00780ee0(own id), which selects the player itself. World3D selects
+## this player on it.
+signal self_pressed
+
 var _builder: UiBuilder
 var _name_label: Label
 var _level_label: Label
@@ -62,6 +69,11 @@ var _mp_text: Label
 
 func _init(builder: UiBuilder = null) -> void:
 	_builder = builder
+
+func _gui_input(event: InputEvent) -> void:
+	var mb := event as InputEventMouseButton
+	if mb != null and mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+		self_pressed.emit()
 
 func setup() -> void:
 	var panel_size := Vector2(SIZE_WIDTH, SIZE_HEIGHT)
