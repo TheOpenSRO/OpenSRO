@@ -158,6 +158,21 @@ Immediately after it, one 6-byte record per vertex, running up to the index sect
 
 Two influences per vertex, maximum.
 
+**`0xFF` can be in EITHER slot (round 626, READ and MEASURED).** A bone index of `0xFF` means
+"no influence in this slot", and the client skips the slot and still reads the next: its skinned
+vertex-buffer builders `ResObject::FUN_00be28d0` and `FUN_00be2f80` test `index != 0xff` around
+each of the two influences, sum only the used weights, and store slot 0's weight divided by that
+sum as the blend weight (so a record `(0xFF, 0, b, 0xFFFF)` puts the whole vertex on bone `b`).
+A weight of `0xFFFF` is read as exactly 1.0. The client's other reader of the records,
+`PrimGeometry::FUN_00c1b1c0`, `break`s at a `0xFF` instead of skipping; which of the two a worn
+item's draw uses was not traced, and the builders' skip is what the data needs. Degree-11 armour
+writes a few vertices that way — **3 of `heavy_11_la.bms`'s 876, 1 of `heavy_11_ba.bms`'s 530, 6
+of `heavy_11_set_b_la.bms`'s 638** — and a reader that took a `0xFF` first slot for a misread
+palette dropped the whole mesh's skin, so the item was not drawn (`client/tools/probe_equipment.gd`
+measures it). A record with both slots empty (the builders pack indices 0/0, weight 0: palette
+entry 0, not a bone) is OPEN; none was found in the armour measured. Any other index past the
+palette is refused — the client range-checks it (`FUN_00b4dd85`).
+
 ### How it was confirmed
 
 Not by pattern-matching a plausible layout — by measuring every byte position across a real file's

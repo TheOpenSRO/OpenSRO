@@ -7094,6 +7094,130 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twenty-sixth round: a full Degree-11 set is worn whole -- chest and legs drawn, and the spear solid
+
+The v0.1.457 report: "some armor pieces don't fully render in and some weapons or shields look
+like they are extra transparent when they shouldn't be." In the screenshot a Chinese man wears a
+dark red and black spiked set. The helm, shoulders, gauntlets and boots draw. The chest and legs are
+missing (bare torso, underwear), and the spear is see-through and washed out. (There is no shield:
+a spear is two-handed.)
+
+**Which items (MEASURED).** No tester log names the ids. A new tool, `client/tools/probe_equipment.gd`,
+walks each item the way the world does: model column -> `.bsr` -> meshes -> `.bmt` layer -> `.ddj`.
+It attaches the item to a body with `SkinnedBsrAssembler.attach_item_from_archive` and counts what
+was drawn. For the plain Degree-11 heavy set (`ITEM_CH_M_HEAVY_11_*_A`, ids 317/389/425/461/497/533)
+the result matches the report exactly. HA 324 vertices, SA 458, AA 482 and FA 376 drew. **BA and LA
+drew nothing.** `heavy_11_ba.bms` and `heavy_11_la.bms` parsed with `skinned=false`, and an item with
+no skeleton of its own whose mesh is not weighted onto the body is refused:
+`names no skeleton and its mesh is not weighted onto the body`. The in-world run of that loadout
+logged `china_man wears 5/7 item(s)` on dev and `7/7` after the fix.
+
+**Cause 1: a 0xFF first bone slot (READ + MEASURED).** Both meshes' skin sections fit exactly: the
+palette plus `vertex_count * 6` bytes up to `hdr[1]`. A few records are `(0xFF, 0, bone, 0xFFFF)`,
+with the first slot empty and the second at full weight:
+
+| Mesh | Records with an empty first slot |
+|---|---|
+| `heavy_11_la` | 3 of 876 |
+| `heavy_11_ba` | 1 of 530 |
+| `heavy_11_set_b_la` | 6 of 638 |
+
+`BmsReader._parse_skin` read `b0 >= palette size` as a misread palette and dropped the whole skin.
+The client's skinned vertex-buffer builders do not. `ResObject::FUN_00be28d0` and `FUN_00be2f80`
+test `index != 0xff` around each influence, skip an empty slot and still read the next, and store
+slot 0's weight over the used sum. So that vertex goes wholly to the second bone.
+`PrimGeometry::FUN_00c1b1c0` `break`s instead. Which reader a worn item's draw uses was not traced.
+The reader now skips an empty slot in either position. A first index that is neither 0xFF nor in
+the palette is still refused.
+
+**Cause 2: a comma in the model column (READ by a subagent, addresses in ITEM_FORMAT.md).** 88
+Degree-11 SET_A/SET_B rows name two models, for example
+`heavy_11_set_b_ba.bsr,heavy_11_set_b_ba_fullset.bsr`. The whole string was taken as one path,
+which names no file, so the set chest drew nothing. The client splits the column on `","`
+(`GlobalDataManager::FUN_00972910`) and draws element [0]. It switches to element [1] only while
+the whole set is worn (`FUN_00a60c60`, `ItemSet_IsComplete` 0xa60220). `ItemTableReader` now keeps
+the list and draws [0]. The switch is OPEN.
+
+**The transparency (READ).** `CObjRendererVS::FUN_00c42a60` is the per-layer render-state setter.
+Every object draw path calls it with the layer's flag word (`material + 0x70` = the file layer's
+`+0x60`). It reads the bits like this:
+
+| Bit | Effect |
+|---|---|
+| bit 0 | `CULLMODE` NONE (two-sided) |
+| bit 9 (`0x200`) | `ALPHATESTENABLE` with `ALPHAREF 0x80`, GREATEREQUAL (`FUN_00c42860`) |
+| bit 2 | specular |
+| bit 12 | MODULATE2X |
+
+No material bit enables blending. So **bit 0 is not an alpha bit**, which corrects BMT_FORMAT.md's
+2026-09-08 correlation. Every alpha layer it listed is `0x341`, which also has bit 9. `spear_11`
+(MEASURED `0x0141`: bit 0, no bit 9) is never alpha-tested by the client. `object_loader.gd`'s rule
+made it a 0.5 cutout through the foliage shader: holes, and the foliage shader's light.
+
+An item's texture alpha is a graded gloss mask. MEASURED at every triangle's UV centroid, the share
+of the surface below `0x80` is:
+
+| Item | Layer flags | Surface below 0x80 |
+|---|---|---|
+| `spear_11` | `0x0141` | 49.1% |
+| `sword_01` | `0x0340` | 81.4% |
+| `heavy_11_la` | `0x0341` | 89.1% |
+| `heavy_11_ha` | `0x0340` | 82.5% |
+
+An alpha test on that alpha would erase a bit-9 item. So on worn items the test cannot see texture
+alpha (INFERRED). What the item path feeds it is OPEN.
+
+**OURS:** `SkinnedBsrAssembler.equipment_material` draws item layers solid, two-sided when bit 0 is
+set, keeping the loader's texture and the layer's ambient as albedo. `object_loader.gd` is not
+touched: its scenery alpha rule is round 625's. The READ bit table is in BMT_FORMAT.md for that
+lane.
+
+**Also READ/MEASURED:** a `.bmt` layer ends with a fixed 7-byte tail after its texture path
+(`CPrimMtrl::FUN_00bf91b0`): a `uint32`, then three bytes, the third being the "full path" flag
+(`FUN_00bf9090`). On `heavy_11.bmt` the tails land exactly on the file's end (694 bytes); the
+`uint32` is 1.0f on all six layers. This is the "gap" BMT_FORMAT.md could not size.
+
+**Verified.** Renders are in scratchpad `equip_shots/`:
+
+| File | What it shows |
+|---|---|
+| `crop_f30.png`, `crop_f58.png`, `crop_f86.png` | Jangan spawn (1002, 1020), front, back and side, dev on the left and this round on the right |
+| `lineup_cmp.png` | D11 + spear_11, SET_B + set spear, newbie heavy + spear_01; dev on top |
+
+On dev, the in-world character is the report's: bare torso and a see-through spear. After, the
+chest, the long leg armour and a solid spear are drawn. The measurement behind the pictures is the
+probe's per-part vertex counts, dev -> after:
+
+| Part | Dev | After |
+|---|---|---|
+| BA | 0 | 530 |
+| LA | 0 | 876 |
+| set_b BA | 0 (comma) | 826 |
+| set_b LA | 0 | 638 |
+| set_b FA | 0 | 462 |
+
+`spear_11` went from `cutout(shader foliage.gdshader)` to `standard transparency=0 cull=2`.
+
+**Tests.** The new tests are:
+- `bms_reader_test.gd`: an empty first slot keeps the mesh skinned and binds the vertex to bone 1
+  alone.
+- `item_table_reader_test.gd`: a two-model column draws [0] and keeps both.
+- `skinned_bsr_assembler_test.gd`, new: flags `0x0141` / `0x0341` / `0x0140` / `0x0340` give a solid
+  material, with cull set by bit 0.
+
+The negative ran against dev b22edf5 with the new tests copied in:
+```
+FAIL a skin record with an empty (0xFF) first slot keeps the mesh skinned
+FAIL a two-model column draws its first model (got item\common\man_item\heavy_11_set_b_ba.bsr,item\common\man_item\heavy_11_set_b_ba_fullset.bsr)
+SCRIPT ERROR: Invalid get index 'model_paths' (on base: 'RefCounted (Item)').
+SCRIPT ERROR: Parse Error: Static function "equipment_material()" not found in base "SkinnedBsrAssembler".
+```
+
+**Not from the equipment chain:** the faint translucent shape beside the tester's character. No
+worn piece reaches there, and the only translucent-authored item mesh found (`heavy_11_set_b_fly`)
+is in a `_fullset` model v0.1.457 could never load. It is probably a buff effect; unmeasured.
+docs/TODO.md lists what is still OPEN.
+
 ## Six-hundred-and-twenty-second round, review follow-up: a healer can select themselves, a recast on an ally replaces the old buff, and only casts that happened are shown
 
 The review found that round 622's READ claims hold, including the 369 HP heal, which was checked by

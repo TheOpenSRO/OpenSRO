@@ -111,7 +111,8 @@ const NO_CELL := 0xFFFF
 ## Full weight in the on-disk 16-bit weight fields. A vertex bound entirely
 ## to one bone reads 65535; a 50/50 blend reads 32765 twice.
 const WEIGHT_FULL_SCALE := 65535.0
-## Sentinel in the second bone slot meaning "only one influence".
+## Sentinel in a bone slot meaning "no influence here" -- usually the second
+## slot, but real Degree-11 armour writes it in the first (see _parse_skin).
 const NO_BONE := 255
 ## Size of one per-vertex skin record: u8 bone0, u16 weight0, u8 bone1,
 ## u16 weight1.
@@ -407,17 +408,46 @@ static func _parse_skin(
 		var w0 := float(data[rec + 1] | (data[rec + 2] << 8))
 		var b1 := data[rec + 3]
 		var w1 := float(data[rec + 4] | (data[rec + 5] << 8))
-		if b0 >= names.size():
+		# 0xFF is "no bone" in EITHER slot, and a slot holding it is skipped
+		# -- READ in the client's skinned vertex-buffer builders
+		# (ResObject::FUN_00be28d0 and FUN_00be2f80: `if (index != 0xff)`
+		# around each of the two influences, and the second is still read
+		# when the first is empty). Degree-11 armour writes a few vertices
+		# that way, (0xFF, 0, bone, 0xFFFF): 3 of heavy_11_la.bms's 876, 1 of
+		# heavy_11_ba.bms's 530 (round 626, MEASURED). Treating a 0xFF first
+		# slot as a bad palette threw the whole mesh's skin away, and an item
+		# whose mesh is not weighted onto the body is not drawn at all -- the
+		# chest and legs that were missing from a full Degree-11 set.
+		# Any other first index past the palette is still refused (the
+		# client range-checks it, FUN_00b4dd85); a second one past it is
+		# dropped as before rather than refusing the mesh.
+		var s0 := b0 != NO_BONE
+		var s1 := b1 != NO_BONE and b1 < names.size()
+		if s0 and b0 >= names.size():
 			return # a bad index means this isn't the palette we think it is
 		var v: Vertex = mesh.vertices[i]
-		v.bone0 = b0
-		v.bone1 = b1 if b1 != NO_BONE and b1 < names.size() else -1
+		if not s0 and s1:
+			# Only the second slot is used: it is this vertex's one influence
+			# (the client's blend weight is slot 0's, 0, so all of it goes to
+			# the second index). Stored as the first so a consumer that reads
+			# bone0 first -- to_arrays -- binds it to that bone.
+			b0 = b1
+			w0 = w1
+			s0 = true
+			s1 = false
+		v.bone0 = b0 if s0 else -1
+		v.bone1 = b1 if s1 else -1
 		# Normalised rather than trusted: most vertices sum to full scale
 		# exactly, but a few percent of a real file's do not (measured: 8 of
 		# 280 in chinaquest_priest_part1, worst 33% off), and an
-		# unnormalised weight stretches the vertex it belongs to.
-		var total := w0 + (w1 if v.bone1 != -1 else 0.0)
+		# unnormalised weight stretches the vertex it belongs to. The client
+		# normalises the same way: blend weight = slot 0 / (slot 0 + slot 1).
+		var total := (w0 if v.bone0 != -1 else 0.0) + (w1 if v.bone1 != -1 else 0.0)
 		if total <= 0.0:
+			# Both slots empty, or both weightless. OPEN what the client
+			# draws for it (its builder packs indices 0/0, weight 0 -- palette
+			# entry 0, which is not a bone of the mesh); to_arrays pins such a
+			# vertex to the first palette bone. None measured in real armour.
 			v.bone0 = -1
 			v.bone1 = -1
 			continue

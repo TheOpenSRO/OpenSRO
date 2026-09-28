@@ -37,6 +37,27 @@ Data.pk2 (`res\item\china\man_item\clothes_01_ba.bsr`; the tables omit the `res\
 same accommodation `object.ifo` needs). A row with no worn model writes `xxx` there — the Cotton
 Hood, a consumable, a quest item.
 
+**Column 52 can name two models (round 626, READ).** 88 rows — every Degree-11 `SET_A`/`SET_B`
+helm, shoulder or chest — write two, comma-separated:
+`item\common\man_item\heavy_11_set_b_ba.bsr,item\common\man_item\heavy_11_set_b_ba_fullset.bsr`.
+The `_fullset.bsr` lists the same mesh plus one more (`heavy_11_set_b_fly.bms`). The client:
+
+- **splits the column on `","`** into a list kept on the item's record (+0x1b0), each token taking
+  the `res\` prefix, `xxx` becoming empty (row parser `GlobalDataManager::FUN_00972910`, the
+  delimiter `L","` at 0xd8c364, the prefix rule `FUN_0097f860`), and makes **element [0]** the
+  record's drawn model (+0x124); the worn-item visual reads only +0x124
+  (`CharacterVisualChange::CObjItem::vslot_002`, 0x4ea960);
+- **switches to element [1] only while the whole set is worn**: `CObjCharacter::InstallEquipVisual`
+  (0xa61010) asks `ItemSet_IsComplete` (0xa60220: the worn count of the set id at record+0x1d4
+  against refsetitemgroup's slot count), and `FUN_00a60c60` then rewrites +0x124 to element [1] for
+  every worn item in visual slots 0..5 with more than one model, detaches the old mesh, and the
+  equip handler (`FUN_008a9260`) plays `ITEM_SETITEM_ACTIVE` / `snd_setitem_active`; taking any
+  set piece off resets them all to element [0].
+
+Taken as one path, the whole string named no file, so a set chest drew nothing.
+`ItemTableReader.Item.model_paths` holds the list and `model_path` element [0]; the full-set switch
+is not built (OPEN, docs/TODO.md).
+
 ### The code name is a summary of the row
 
 `ITEM_CH_M_CLOTHES_01_BA_A_RARE` is race, gender, family, degree, piece, variant, rarity — and

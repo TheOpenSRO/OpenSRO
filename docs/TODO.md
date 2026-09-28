@@ -601,6 +601,26 @@ tracks them); characters have a level but no way to gain one; accessories (slots
 modelled; the item `.bsr`'s effect attachments (`.efp` on `Bone04`/`Bone06` of a shoulder piece)
 are not drawn.
 
+**Round 626 (a full Degree-11 set drew bare-chested with a see-through spear) left these open:**
+- **The full-set model switch.** 88 Degree-11 SET_A/SET_B rows list two models; the client draws
+  the second (`*_fullset.bsr`, the same mesh plus e.g. `heavy_11_set_b_fly.bms`) only while the
+  whole refsetitemgroup set is worn, and plays `ITEM_SETITEM_ACTIVE` (ITEM_FORMAT.md has the
+  addresses). We draw the first always. Building it needs the item's set id (record+0x1d4) and
+  refsetitemgroup's slot count; the full-set layers (`heavy_11_set_b_fly` 59.6% transparent,
+  `*_ef_alpha`) are authored translucent, so their draw state has to be read first -- the item
+  path now draws every layer solid.
+- **Which draw path renders a worn item, and what stage-0 alpha it feeds the alpha test.** Bit 9
+  turns the test on (BMT_FORMAT.md), yet 79-89% of a Degree-11 piece's surface samples alpha
+  below the reference, so items are drawn solid; tracing the path would say why.
+- **A skin record with both slots 0xFF** (BMS_FORMAT.md): what the client draws is not read;
+  none was found in the armour measured.
+- **The body under armour.** The body's own pieces are still drawn beneath every worn piece.
+  Whether the client hides any body piece under armour was not looked at.
+- **The faint translucent shape beside the tester's character** (v0.1.457 screenshot) is not
+  from the equipment chain: no worn piece's mesh reaches there, and the one translucent-authored
+  item mesh found (`heavy_11_set_b_fly`) belongs to a `_fullset` model v0.1.457 could not load.
+  Likely a buff's effect (the efp lane); unmeasured.
+
 ### Rendering against a real server
 `qa_shot.sh --server` starts the server in memory on a spare port and signs the client in
 (`SRREVAMP_QA_SERVER`, `--say` to send a chat message). Every render before this was of a client

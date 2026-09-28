@@ -102,7 +102,64 @@ can't — a caller can compare the parsed layer count against the file's declare
   name match (not an index-based guess) to resolve each assembled body part's own real texture.
   See `docs/PROGRESS.md` for the real screenshot this produced.
 
+## The flag word, READ in the client (round 626)
+
+> **Corrects "Bit 0: the alpha layer flag" below.** The client's per-material state setter was
+> found, and it does not read bit 0 as alpha. The correlation below was real but pointed at the
+> wrong bit: every alpha layer it lists is `0x341`, which has bit 9 set as well as bit 0.
+
+`CObjRendererVS::FUN_00c42a60(flags)` sets a layer's render states before its triangles are drawn,
+and `FUN_00c42b40(flags)` undoes them after. Every object draw path in `CObjRendererVS`
+(`FUN_00bf0890`, `FUN_00bf0e20`, `FUN_00bf1250`, `FUN_00bf1840`, `FUN_00bf29a0`, `FUN_00bf2360`,
+`FUN_00bf3e00`) passes it the layer's flag word — `*(material + 0x70)`: the runtime material holds
+the layer at `+0x10` (its `D3DMATERIAL9` goes to `SetMaterial`, device vtable `+0xc4`), so `+0x70`
+is the layer's `+0x60`, the word `PrimMtrlSet::WriteLayer` saves — OR'd with the object's own
+flags (`0x1000` by default, set in `CObjRendererVS::vslot_024`). What it does, bit by bit:
+
+| Bit | Mask | Render state (FUN_00c42a60) | Undone to (FUN_00c42b40) |
+|---|---|---|---|
+| 0 | `0x001` | `D3DRS_CULLMODE` = NONE — **two-sided** | CCW (back faces culled) |
+| 2 | `0x004` | `D3DRS_SPECULARENABLE` = TRUE | FALSE |
+| 3 | `0x008` | when `FUN_00bc0fd0()`: `D3DRS_LIGHTING` = FALSE, stage-0 `COLOROP` = MODULATE | TRUE, MODULATE2X |
+| 9 | `0x200` | unless the object sets `0x20000000`: `D3DRS_ALPHATESTENABLE` = TRUE, `D3DRS_ALPHAREF` = `0x80` | FALSE, `0x80` |
+| 12 | `0x1000` | stage-0 `COLOROP` = MODULATE2X | — |
+| 28 | `0x10000000` | (caller) skip the setter and `SetMaterial` entirely | |
+
+The compare is `D3DRS_ALPHAFUNC` = 7, GREATEREQUAL (`FUN_00c42860`). **No material bit turns
+alpha blending on**: `FUN_00c428c0` enables SRCALPHA/INVSRCALPHA blending only for an object-level
+fade colour, and returns at once for an opaque `0xff000000`. Bits 6 and 8 (set in most real words)
+are not read by the setter. Two of the seven draw paths (`FUN_00bf0890`, `FUN_00bf2360`) clear bit
+0 before the call; which path draws a worn item was not traced. This is the rule `object_loader.gd`'s
+scenery materials should move to (the foliage lane, round 625, owns that file's alpha rules).
+
+**Items are the case that separates the bits.** `spear_11` is `0x0141` — bit 0 without bit 9 — so
+the client never alpha-tests it, while the old rule cut it at 0.5 into the see-through spear of the
+v0.1.457 report. And an item's texture alpha is a graded gloss mask, not a cutout (`blade_14` below):
+MEASURED at every triangle's UV centroid (`client/tools/probe_equipment.gd`), the share of the
+surface whose alpha is below `0x80` is **81.4%** for the starting sword `sword_01` (`sword1_2_3`,
+`0x0340`), **89.1%** for `heavy_11_la` (`0x0341`), **82.5%** for `heavy_11_ha` (`0x0340`) — an
+alpha test on that alpha would erase the item. So on a worn item the test cannot be seeing texture
+alpha (INFERRED); which stage-0 alpha the item path feeds it is OPEN (the renderer's default,
+restored by `FUN_00c429f0`, is `ALPHAOP` SELECTARG1). `SkinnedBsrAssembler.equipment_material`
+therefore draws an item layer solid, two-sided when bit 0 is set.
+
+### The seven bytes after the texture path (round 626, READ and MEASURED)
+
+The "gap between one layer's texture filename and the next layer's name" below is a fixed tail:
+`CPrimMtrl::FUN_00bf9270` reads the layer (colours into `D3DMATERIAL9` order — the file's first
+colour block becomes Ambient, its second Diffuse — then power, the flag word at `+0x60`), and
+`FUN_00bf91b0` reads the texture record: the path, then a `uint32` (`+0x1c`) and three bytes
+(`+0x20`, `+0x21`, `+0x22`). The third byte is the "path is already a full path" flag:
+`CPrimMtrl::FUN_00bf9090` joins the path to the `.bmt`'s own directory only when it is 0. MEASURED
+on `heavy_11.bmt`: six layers, each followed by exactly 7 bytes, landing exactly on the file's end
+(694); the `uint32` is `1.0f` in all six, the bytes `[32, 8, 0]` on the four layers with bit 9 and
+`[24, 0, 0]` on the two without; the third is 0 on all six bare filenames. The first two bytes'
+meaning is not read.
+
 ## Bit 0: the alpha layer flag
+
+> **Superseded by "The flag word, READ in the client" above**: bit 0 is two-sided culling, bit 9
+> is the alpha test. Kept as the record of the correlation.
 
 **Bit 0 of a layer's flag word means the layer's texture alpha is a cutout mask to be honoured.**
 
