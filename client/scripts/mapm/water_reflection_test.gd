@@ -78,7 +78,7 @@ func _initialize() -> void:
 	_check((-mdown.basis.z).is_equal_approx(Vector3(0, 1, 0)), "straight down mirrors to straight up, no degenerate basis")
 
 	# --- The plane: the water block nearest the camera's block.
-	var blocks := [[5, 5, 30.0], [2, 2, 50.0], [3, 4, -20.0]]
+	var blocks := [[5, 5, 30.0, Vector3.ZERO], [2, 2, 50.0, Vector3.ZERO], [3, 4, -20.0, Vector3.ZERO]]
 	_check(R.pick_plane(blocks, 3, 3) == -20.0, "the nearest block's plane wins (got %s)" % R.pick_plane(blocks, 3, 3))
 	_check(R.pick_plane(blocks, 2, 2) == 50.0, "the camera's own block is nearest")
 	_check(is_nan(R.pick_plane([], 0, 0)), "no water, no plane")
@@ -87,6 +87,39 @@ func _initialize() -> void:
 	_check(R.is_underwater(49.6, 50.0, true), "an eye at 49.6 under a 50 plane is under water")
 	_check(not R.is_underwater(50.6, 50.0, true), "at 50.6 it is not")
 	_check(not R.is_underwater(10.0, 50.0, false), "not over a water block, never")
+
+	# --- The clip plane (READ, round 628 review): above keep y >= h, under
+	# keep y <= h.
+	var above_clip: Vector4 = R.clip_plane(50.0, false)
+	var under_clip: Vector4 = R.clip_plane(50.0, true)
+	var keep := func(c: Vector4, y: float) -> bool: return c.y * y + c.w >= 0.0
+	_check(keep.call(above_clip, 60.0) and not keep.call(above_clip, 40.0), "above water the mirror keeps y >= h and drops the lake bed")
+	_check(keep.call(under_clip, 40.0) and not keep.call(under_clip, 60.0), "under water it keeps y <= h")
+	var code: String = R.terrain_clip_code(true, false)
+	_check(code.contains("global uniform vec4 water_clip_plane") and code.contains("discard") and code.contains("unshaded"),
+		"the mirror terrain's shader clips against the global plane")
+	_check(R.terrain_clip_code(false, true).contains("blend_mix") and R.terrain_clip_code(false, true).contains("ALPHA"),
+		"a blended terrain pass keeps its blending")
+
+	# --- What the mirror draws: sky, terrain (its clipped copy), scenery.
+	var tree := Node3D.new()
+	var mi := MeshInstance3D.new()
+	tree.add_child(mi)
+	R.mark_reflected(tree)
+	_check(mi.layers & R.REFLECTED_BIT != 0 and mi.layers & 1 != 0, "scenery marked for the mirror stays on the main layer too")
+	tree.free()
+	var mirror_mask: int = R.MIRROR_TERRAIN_BIT | R.REFLECTED_BIT
+	_check(mirror_mask & 1 == 0 and mirror_mask & R.WATER_LAYER_BIT == 0,
+		"the mirror leaves out layer 1 (characters, effects, the unclipped terrain) and the water")
+
+	# --- The cloud layer's mesh (READ, FUN_00a3de90).
+	var W3D: GDScript = load("res://scripts/World3D.gd")
+	var cm: ArrayMesh = W3D.cloud_layer_mesh()
+	var cv: PackedVector3Array = cm.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+	var cuv: PackedVector2Array = cm.surface_get_arrays(0)[Mesh.ARRAY_TEX_UV]
+	_check(cv.size() == 25 and cv[0].is_equal_approx(Vector3(-4000000, 20000, -4000000)) and cv[24].is_equal_approx(Vector3(4000000, 20000, 4000000)),
+		"the cloud layer is a flat 5x5 grid 20000 above the eye, +-4,000,000 wide")
+	_check(cuv[0].is_equal_approx(Vector2(-32, -32)) and cuv[24].is_equal_approx(Vector2(32, 32)), "its UVs run -32..32")
 
 	# --- The shader compiles, and a material carries the reflection.
 	var node: Node = R.new()

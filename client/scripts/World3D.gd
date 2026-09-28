@@ -1221,6 +1221,9 @@ func _ready() -> void:
 	# The Water Reflection option (round 628): the node always exists, so
 	# SRREVAMP_QA_WATER_TIMING can time a run with the option off too.
 	_water_reflection_on = WaterReflection.enabled()
+	WaterReflection.ensure_globals()
+	# The mirror-only terrain copies are the reflection's, never the screen's.
+	camera_3d.cull_mask &= ~WaterReflection.MIRROR_TERRAIN_BIT
 	_water_reflection = WaterReflection.new()
 	_water_reflection.name = "WaterReflection"
 	add_child(_water_reflection)
@@ -1920,8 +1923,8 @@ func _hide_debug_ui_replaced_by_hud() -> void:
 ##
 ## Derived from the same real constants that decide how much world is
 ## loaded, so it stays correct if the streaming radius or region size ever
-## change, with margin to also clear the real sky dome (which sits
-## SKY_DOME_HEIGHT_ABOVE_PLAYER up with SKY_DOME_RADIUS reach).
+## change. (The cloud layer no longer needs it: it is pinned to the far
+## plane by its own shader since round 628's review.)
 func _apply_camera_far_plane() -> void:
 	camera_3d.far = REGION_SPAN * (_region_load_radius() + 1) * 2.0
 
@@ -3018,6 +3021,25 @@ func _try_add_real_water(terrain_group: Node3D, region: MapmReader.ParsedRegion,
 		if tex != null:
 			_add_water_instance(terrain_group, "WaterStill", built.still, _water_still_surface_material(tex))
 
+## The water reflection's copy of a region's terrain (round 628 review): the
+## same mesh on the mirror-only layer, each surface's material swapped for
+## WaterReflection.clip_material's, which discards below (or above) the
+## water plane as retail's user clip plane does. The main view's terrain is
+## untouched.
+func _add_mirror_terrain(terrain_group: Node3D, patch: MeshInstance3D) -> void:
+	if not _water_reflection_on or _water_reflection == null or patch.mesh == null:
+		return
+	var mirror := MeshInstance3D.new()
+	mirror.name = "MirrorTerrain"
+	mirror.mesh = patch.mesh
+	mirror.layers = WaterReflection.MIRROR_TERRAIN_BIT
+	mirror.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	for i in range(patch.mesh.get_surface_count()):
+		var src: Material = patch.material_override if patch.material_override != null else patch.mesh.surface_get_material(i)
+		if src != null:
+			mirror.set_surface_override_material(i, _water_reflection.clip_material(src))
+	terrain_group.add_child(mirror)
+
 ## One water surface: on WaterReflection's layer, so the mirror camera leaves
 ## water out of its image as retail's reflection pass does (READ; the layer is
 ## OURS).
@@ -3047,32 +3069,23 @@ func _add_water_instance(terrain_group: Node3D, node_name: String, mesh: ArrayMe
 ## from data alone without further client-side RE (a real, flagged gap, see
 ## docs/NEXT_STEPS_RENDERING.md).
 ##
-## What's implemented here is therefore an honest engineering approximation
-## using the *real* cloud/glow textures (not fabricated ones), not a claim
-## about reproducing the original algorithm: a large inverted-hemisphere
-## dome around the player textured with the real cloud1.ddj (its own real
-## alpha channel gives real soft cloud edges), slowly drifting, plus a
-## simple additive glow billboard aimed at the DirectionalLight's real
-## direction as a stand-in sun. cloud99/shadowsphere/waterbump3 are left
-## unused -- their real purpose within the sky system is still unconfirmed
-## (shadowsphere's tiny 64x64 size in particular reads more like a
-## soft ambient-shadow blob than a sky-color asset, but that's not
-## confirmed either).
-const SKY_DOME_RADIUS := 3000.0
-## How far above the player the real cloud dome's centre is placed.
-##
-## **Added 2026-09-02** (see docs/WORLD_ISSUES.md's fifty-first round): the
-## dome is a hemisphere, so centring it exactly on the player put its base
-## plane at the player's own feet, where it sliced straight through real
-## terrain. That intersection rendered as translucent shards fanning across
-## the ground away from the player -- a real, confirmed artifact (disabling
-## the sky removed it completely and left clean ground, while everything
-## else was unchanged). Lifting the centre well above head height keeps the
-## whole dome above real terrain, which is also where a real cloud layer
-## belongs. Chosen relative to the dome's own radius rather than as a loose
-## constant so the two stay in proportion if the radius is ever retuned.
-const SKY_DOME_HEIGHT_ABOVE_PLAYER := SKY_DOME_RADIUS * 0.5
-const CLOUD_DRIFT_UV_PER_SECOND := 0.008
+## **Superseded for the clouds in round 628's review follow-up**: the client
+## is decompiled now, and its cloud layer is read (cloud_dome.gdshader,
+## cloud_layer_mesh): a flat textured grid 20000 above the eye, drawn with
+## the eye at the origin, so it has no rim and no parallax. The finite
+## 3000-unit hemisphere that stood in for it showed its rim as an arc across
+## the sky and in the water's reflection. The sun glow billboard below is
+## still this project's stand-in.
+## The cloud layer (READ, Map::FUN_00a3de90 / FUN_00a3f570; round 628 review):
+## its height above the eye, its grid step and UV step, and the u scroll
+## period -- frac(GetTickCount() / 500000).
+const CLOUD_LAYER_HEIGHT := 20000.0
+const CLOUD_LAYER_STEP := 2000000.0
+const CLOUD_LAYER_UV_STEP := 16.0
+const CLOUD_SCROLL_MS := 500000.0
+## environment.ifo channels the cloud layer reads (READ, round 628 review).
+const CHANNEL_CLOUD_COLOR := 4
+const CHANNEL_CLOUD_ALPHA := 12
 const SUN_GLOW_DISTANCE := 2800.0
 const SUN_GLOW_SIZE := 500.0
 
@@ -3170,26 +3183,48 @@ func _try_add_real_sky() -> void:
 				_build_sun_glow(glow_tex)
 
 func _build_cloud_dome(cloud_tex: Texture2D) -> void:
-	var dome := SphereMesh.new()
-	dome.radius = SKY_DOME_RADIUS
-	dome.height = SKY_DOME_RADIUS
-	dome.is_hemisphere = true
-	dome.radial_segments = 32
-	dome.rings = 16
-
-	# ShaderMaterial, not StandardMaterial3D -- see cloud_dome.gdshader's own
-	# comment for why a custom shader is needed (fading the real texture out
-	# before the dome's real polar-UV singularity comes into view).
 	_sky_dome_material = ShaderMaterial.new()
 	_sky_dome_material.shader = _cloud_dome_shader
 	_sky_dome_material.set_shader_parameter("cloud_tex", cloud_tex)
 	_sky_dome_material.set_shader_parameter("uv_offset", Vector2.ZERO)
-
+	# Drawn behind everything else transparent (cloud_dome.gdshader).
+	_sky_dome_material.render_priority = -128
 	_sky_dome = MeshInstance3D.new()
 	_sky_dome.name = "CloudDome"
-	_sky_dome.mesh = dome
+	_sky_dome.mesh = cloud_layer_mesh()
 	_sky_dome.material_override = _sky_dome_material
+	_sky_dome.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# The shader places it relative to the eye, so the node's own bounds mean
+	# nothing: never cull it.
+	_sky_dome.custom_aabb = AABB(Vector3(-1.0e7, -1.0e7, -1.0e7), Vector3(2.0e7, 2.0e7, 2.0e7))
+	# Retail's reflection pass draws the sky too (round 628 review).
+	_sky_dome.layers = 1 | WaterReflection.REFLECTED_BIT
 	add_child(_sky_dome)
+
+## The cloud layer's mesh (READ, Map::FUN_00a3de90): a flat 5x5-vertex grid,
+## 20000 above the eye, x and z from -4,000,000 to 4,000,000 in 2,000,000
+## steps, u and v from -32 to 32 in 16s; four triangles' worth of quads a
+## side. Positions are offsets from the eye (cloud_dome.gdshader).
+static func cloud_layer_mesh() -> ArrayMesh:
+	var pos := PackedVector3Array()
+	var uv := PackedVector2Array()
+	for zi in range(5):
+		for xi in range(5):
+			pos.append(Vector3((xi - 2) * CLOUD_LAYER_STEP, CLOUD_LAYER_HEIGHT, (zi - 2) * CLOUD_LAYER_STEP))
+			uv.append(Vector2((xi - 2) * CLOUD_LAYER_UV_STEP, (zi - 2) * CLOUD_LAYER_UV_STEP))
+	var idx := PackedInt32Array()
+	for r in range(4):
+		for c in range(4):
+			var i := r * 5 + c
+			idx.append_array(PackedInt32Array([i, i + 1, i + 6, i, i + 6, i + 5]))
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = pos
+	arrays[Mesh.ARRAY_TEX_UV] = uv
+	arrays[Mesh.ARRAY_INDEX] = idx
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
 
 func _build_sun_glow(glow_tex: Texture2D) -> void:
 	# Real DirectionalLight3D direction (see World3D.tscn) -- the sun's
@@ -3331,6 +3366,17 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	# they are computed, logged and shown by QA_LOOK, and the density stays
 	# the bounded choice described at FOG_DENSITY.
 	var fog_color := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_FOG_COLOR, ENVIRONMENT_REFERENCE_TIME)
+	# The cloud layer's texture factor (READ, round 628 review): RGB is
+	# channel 4 (FUN_00a3eb40's param_6 = world+0x685f, evaluated from
+	# record+0x158), alpha is world+0x68c7 = (channel 12 + 1) / 2. Its fog is
+	# the world's fog colour between 90,000 and 200,000.
+	if _sky_dome_material != null:
+		var cc := EnvironmentReader.sample_color_channel(record, CHANNEL_CLOUD_COLOR, ENVIRONMENT_REFERENCE_TIME)
+		var ca := clampf((EnvironmentReader.sample_float_channel(record, CHANNEL_CLOUD_ALPHA, ENVIRONMENT_REFERENCE_TIME) + 1.0) * 0.5, 0.0, 1.0)
+		_sky_dome_material.set_shader_parameter("cloud_color", Vector3(clampf(cc.r, 0, 1), clampf(cc.g, 0, 1), clampf(cc.b, 0, 1)))
+		_sky_dome_material.set_shader_parameter("cloud_alpha", ca)
+		_sky_dome_material.set_shader_parameter("fog_color", Vector3(fog_color.r, fog_color.g, fog_color.b))
+		print("World3D: cloud layer colour (channel 4) %s, alpha (channel 12) %.3f" % [str(cc), ca])
 	_fog_near_real = EnvironmentReader.sample_float_channel(record, EnvironmentReader.CHANNEL_FOG_NEAR_PLANE, ENVIRONMENT_REFERENCE_TIME) * EnvironmentReader.VIEW_DISTANCE_DEFAULT
 	_fog_far_real = EnvironmentReader.sample_float_channel(record, EnvironmentReader.CHANNEL_FOG_FAR_PLANE, ENVIRONMENT_REFERENCE_TIME) * EnvironmentReader.VIEW_DISTANCE_DEFAULT
 	print("World3D: environment fog planes (real, channels 10/11 x view distance %.0f): near %.0f, far %.0f -- drawn with Godot density %.5f (disclosed)" % [
@@ -6339,6 +6385,7 @@ func _terrain_commit(job: Dictionary) -> float:
 	single_patch.material_override = mat
 	single_patch.add_child(patch_body)
 	terrain_group.add_child(single_patch)
+	_add_mirror_terrain(terrain_group, single_patch)
 
 	_add_navmesh_walls(terrain_group, job)
 	sw = _load_timings.lap("terrain", "wallshape", sw)
@@ -8534,6 +8581,9 @@ func _objects_commit(job: Dictionary) -> void:
 		container.add_child(node)
 		loaded += 1
 	_prepared_models = {}
+	# Retail's reflection draws the scenery too (round 628 review).
+	if _water_reflection_on:
+		WaterReflection.mark_reflected(container)
 
 	_load_timings.phase("objects", "place",
 		Time.get_ticks_usec() - sw - (_load_timings.phase_usec("objects", "templates") - templates_before))
@@ -9390,11 +9440,12 @@ func _qa_step() -> void:
 				env.fog_aerial_perspective = 0.0
 				env.fog_density = 0.0
 			camera_3d.far = 40000.0
-			# So is the cloud layer, and for a more interesting reason: the
-			# dome is a hemisphere of SKY_DOME_RADIUS centred
-			# SKY_DOME_HEIGHT_ABOVE_PLAYER overhead, so a camera far enough
-			# up to frame a region ends up *above* the clouds looking down
-			# through them. That is the pale veil over the city in every
+			# So is the cloud layer, and for a more interesting reason: until
+			# round 628's review it was a finite dome over the player, so a
+			# camera far enough up to frame a region ended up *above* the
+			# clouds looking down through them. (Retail's layer is 20000
+			# above the eye wherever the eye is; hidden here all the same, so
+			# overview shots stay comparable.) That is the pale veil over the city in every
 			# overview shot this project has taken -- correct rendering of
 			# a real cloud layer, mistaken for a defect in the world for
 			# long enough to be written up as one.
@@ -11468,8 +11519,9 @@ func _physics_process(delta: float) -> void:
 ## input and walk, the QA hooks, region streaming and the position send.
 func _physics_step(delta: float) -> void:
 	if _sky_dome != null:
-		_sky_dome.global_position = player.global_position + Vector3(0.0, SKY_DOME_HEIGHT_ABOVE_PLAYER, 0.0)
-		_cloud_uv_offset.x += CLOUD_DRIFT_UV_PER_SECOND * delta
+		# READ: u += frac(GetTickCount() / 500000); the layer itself follows
+		# the eye in its shader.
+		_cloud_uv_offset.x = fposmod(Time.get_ticks_msec() / CLOUD_SCROLL_MS, 1.0)
 		_sky_dome_material.set_shader_parameter("uv_offset", _cloud_uv_offset)
 	if _sun_glow != null:
 		_sun_glow.global_position = player.global_position + _sun_glow_offset

@@ -1095,11 +1095,12 @@ Retail draws water from each `.m` block's PlaneType/PlaneHeight, not from the `.
   sets the value is not found.
 - **The Water Reflection option (world option 6) is drawn since round 628** (`WaterReflection`,
   default ON as the shipped SROptionSet.dat has it). What is left of it:
-  - **No user clip plane.** Godot 4.2 has none, so a two-sided prop under the water can show in
-    the mirror.
+  - **The scenery objects in the mirror are unclipped.** The terrain clips (a mirror-only
+    `MirrorTerrain` copy with `WaterReflection.clip_material`, round 628 review). The objects'
+    materials are ObjectLoader's.
   - **The target is screen-aspect**, not retail's stretched 512x512.
-  - **Characters in the reflection:** whether retail's reflection render draws them
-    (`CIFCharacterWnd::FUN_0080beb0` after the landscape pass) is not traced.
+  - **The callbacks the reflection skips** (`LAB_0084c700` stages 1 and 2) are INFERRED to be
+    the characters and the effects. The mirror leaves them out.
   - **Retail's bump time base** `*(float*)(DAT_0110f7d0 + 0xa0)` is assumed to be seconds.
   - **The option's default with no file** is still not found.
   - **The saved file:** the option is SROptionSet.dat tag 5 in retail, and a player sets it here in

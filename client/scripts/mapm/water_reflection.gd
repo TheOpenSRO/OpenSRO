@@ -56,6 +56,12 @@ const UNDERWATER_MARGIN := 0.5
 ## Visual layer the water meshes are on, so the mirror camera leaves them out
 ## (OURS: layer 20; READ that retail does not draw water into the target).
 const WATER_LAYER_BIT := 1 << 19
+## Layer 19: drawn by the main camera AND the mirror (the sky's cloud layer,
+## the scenery objects).
+const REFLECTED_BIT := 1 << 18
+## Layer 18: the mirror-only copies of the terrain with the clip; the main
+## camera leaves this layer out.
+const MIRROR_TERRAIN_BIT := 1 << 17
 
 const SHADER := preload("res://scripts/mapm/water_reflection.gdshader")
 
@@ -68,6 +74,12 @@ var plane_height := NAN
 var underwater := false
 var active := false
 var _qa_timing := false
+## SRREVAMP_QA_WATER_DUMP=<dir>:<frame> saves the target and the screen at
+## that process frame; SRREVAMP_QA_WATER_NOBUMP=1 zeroes the bump, for a
+## pixel fit.
+var _qa_dump_dir := ""
+var _qa_dump_frame := 0
+var _qa_nobump := false
 var _qa_frames := 0
 var _qa_main_ms := 0.0
 var _qa_refl_ms := 0.0
@@ -155,7 +167,116 @@ static func pick_plane(blocks: Array, cam_col: int, cam_row: int) -> float:
 static func is_underwater(eye_y: float, plane: float, camera_block_has_water: bool) -> bool:
 	return camera_block_has_water and eye_y - UNDERWATER_MARGIN < plane
 
+## The mirror's clip plane (READ: FUN_00a2dc20 builds it with the
+## three-point `FUN_0045e0d0`, the points' order swapped between the two
+## cases): above water keep y >= h, underwater keep y <= h. As a vec4 (n, d)
+## with a point kept when dot(n, p) + d >= 0.
+static func clip_plane(h: float, under: bool) -> Vector4:
+	return Vector4(0.0, -1.0, 0.0, h) if under else Vector4(0.0, 1.0, 0.0, -h)
+
+## No clipping.
+const CLIP_NONE := Vector4(0.0, 1.0, 0.0, 1.0e9)
+
+## The global uniform every mirror-only material clips against. Added at run
+## time, before any shader that names it compiles.
+const CLIP_GLOBAL := "water_clip_plane"
+
+static var _globals_added := false
+
+## Once per process (the list/get calls that could ask are editor-only).
+static func ensure_globals() -> void:
+	if _globals_added:
+		return
+	_globals_added = true
+	RenderingServer.global_shader_parameter_add(CLIP_GLOBAL, RenderingServer.GLOBAL_VAR_TYPE_VEC4, CLIP_NONE)
+
+## Marks every visual under `root` as drawn into the reflection too
+## (REFLECTED_BIT) -- the scenery objects, which retail's reflection render
+## keeps (the landscape pass), unclipped here (OPEN: their materials are
+## ObjectLoader's).
+static func mark_reflected(root: Node) -> void:
+	if root == null:
+		return
+	for n in root.find_children("*", "VisualInstance3D", true, false):
+		(n as VisualInstance3D).layers |= REFLECTED_BIT
+
+## The mirror-only copy of a terrain surface material: the same texture,
+## vertex colour, shading, blending, detail (lightmap) layer and render
+## priority, plus the clip against CLIP_GLOBAL. Cached per source material.
+var _clip_cache := {}
+var _clip_shaders := {}
+
+func clip_material(src: Material) -> Material:
+	var std := src as StandardMaterial3D
+	if std == null:
+		return src
+	var key := std.get_instance_id()
+	if _clip_cache.has(key):
+		return _clip_cache[key]
+	var unshaded := std.shading_mode == BaseMaterial3D.SHADING_MODE_UNSHADED
+	var blend := std.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED
+	var variant := "%d%d" % [int(unshaded), int(blend)]
+	if not _clip_shaders.has(variant):
+		var sh := Shader.new()
+		sh.code = terrain_clip_code(unshaded, blend)
+		_clip_shaders[variant] = sh
+	var m := ShaderMaterial.new()
+	m.shader = _clip_shaders[variant]
+	m.render_priority = std.render_priority
+	m.set_shader_parameter("albedo_tex", std.albedo_texture)
+	m.set_shader_parameter("use_albedo_tex", std.albedo_texture != null)
+	m.set_shader_parameter("use_vertex_color", std.vertex_color_use_as_albedo)
+	m.set_shader_parameter("albedo_color", std.albedo_color)
+	m.set_shader_parameter("uv1_scale", Vector2(std.uv1_scale.x, std.uv1_scale.y))
+	m.set_shader_parameter("detail_tex", std.detail_albedo if std.detail_enabled else null)
+	m.set_shader_parameter("use_detail", std.detail_enabled and std.detail_albedo != null)
+	_clip_cache[key] = m
+	return m
+
+## The mirror terrain's shader: StandardMaterial3D's defaults for what the
+## terrain uses (albedo texture on UV, vertex colour, a MUL detail layer on
+## UV2, default lighting), and a discard below the clip plane.
+static func terrain_clip_code(unshaded: bool, blend: bool) -> String:
+	var modes := ["cull_back"]
+	if unshaded:
+		modes.append("unshaded")
+	if blend:
+		modes.append("blend_mix")
+		modes.append("depth_draw_never")
+	return """shader_type spatial;
+render_mode %s;
+global uniform vec4 water_clip_plane;
+uniform sampler2D albedo_tex : source_color, filter_linear_mipmap, repeat_enable;
+uniform sampler2D detail_tex : source_color, filter_linear_mipmap, repeat_enable;
+uniform bool use_albedo_tex = false;
+uniform bool use_vertex_color = true;
+uniform bool use_detail = false;
+uniform vec4 albedo_color : source_color = vec4(1.0);
+uniform vec2 uv1_scale = vec2(1.0);
+varying vec3 world_pos;
+void vertex() {
+	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+}
+void fragment() {
+	if (dot(world_pos, water_clip_plane.xyz) + water_clip_plane.w < 0.0) {
+		discard;
+	}
+	vec4 c = albedo_color;
+	if (use_albedo_tex) {
+		c *= texture(albedo_tex, UV * uv1_scale);
+	}
+	if (use_vertex_color) {
+		c *= COLOR;
+	}
+	if (use_detail) {
+		c.rgb *= texture(detail_tex, UV2).rgb;
+	}
+	ALBEDO = c.rgb;
+%s}
+""" % [", ".join(modes), "\tALPHA = c.a;\n" if blend else ""]
+
 func _ready() -> void:
+	ensure_globals()
 	_viewport = SubViewport.new()
 	_viewport.name = "WaterReflectionTarget"
 	_viewport.size = Vector2i(TARGET_ROWS, TARGET_ROWS)
@@ -164,9 +285,19 @@ func _ready() -> void:
 	_viewport.gui_disable_input = true
 	add_child(_viewport)
 	_camera = Camera3D.new()
-	_camera.cull_mask = 0xFFFFF & ~WATER_LAYER_BIT
+	# READ (round 628 review): while world+0x26c3 is set the reflection
+	# render skips the game's draw callbacks (LAB_0084c700: stage 1 draws the
+	# object at [0xeecea4]+0x120, stage 2 two world managers -- INFERRED the
+	# characters and the effects), so the mirror keeps the landscape pass:
+	# sky, terrain, scenery.
+	_camera.cull_mask = MIRROR_TERRAIN_BIT | REFLECTED_BIT
 	_viewport.add_child(_camera)
 	_qa_timing = OS.get_environment("SRREVAMP_QA_WATER_TIMING") != ""
+	_qa_nobump = OS.get_environment("SRREVAMP_QA_WATER_NOBUMP") != ""
+	var dump := OS.get_environment("SRREVAMP_QA_WATER_DUMP")
+	if dump.contains(":"):
+		_qa_dump_dir = dump.get_slice(":", 0)
+		_qa_dump_frame = dump.get_slice(":", 1).to_int()
 	if _qa_timing:
 		RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
 		RenderingServer.viewport_set_measure_render_time(_viewport.get_viewport_rid(), true)
@@ -180,6 +311,7 @@ func make_material(still: bool, bump: Texture2D, still_tex: Texture2D, water_col
 	m.set_shader_parameter("still_tex", still_tex)
 	m.set_shader_parameter("reflection_tex", _viewport.get_texture())
 	m.set_shader_parameter("water_color", Vector3(water_color.r, water_color.g, water_color.b))
+	m.set_shader_parameter("qa_output_mode", OS.get_environment("SRREVAMP_QA_WATER_OUTMODE").to_int())
 	materials.append(m)
 	return m
 
@@ -189,32 +321,60 @@ func set_water_color(c: Color) -> void:
 
 ## A region's drawn water blocks, for choosing the plane.
 func register_region(group: Node3D, blocks: PackedFloat32Array) -> void:
-	_regions.append([weakref(group), blocks])
+	_regions.append([weakref(group), blocks, Transform3D()])
+	_cache_dirty = true
 
-## The drawn water blocks around, as world (col, row, plane_y) triples, and
-## whether the camera's own block is one of them.
-func _world_blocks(cam_pos: Vector3) -> Array:
-	var out: Array = []
-	var cam_col := int(floorf(cam_pos.x / MapmWater.BLOCK_SPAN))
-	var cam_row := int(floorf(cam_pos.z / MapmWater.BLOCK_SPAN))
-	var own := false
+var _cache_dirty := true
+## [col, row, centre] per drawn water block in world space, rebuilt only
+## when a region registers, leaves or moves.
+var _cache: Array = []
+var _cache_cells := {}
+
+func _refresh_cache() -> void:
 	var keep: Array = []
 	for entry in _regions:
 		var g = (entry[0] as WeakRef).get_ref()
 		if g == null or not is_instance_valid(g) or not (g as Node3D).is_inside_tree():
+			_cache_dirty = true
 			continue
+		var gt := (g as Node3D).global_transform
+		if gt != entry[2]:
+			entry[2] = gt
+			_cache_dirty = true
 		keep.append(entry)
-		var group := g as Node3D
+	_regions = keep
+	if not _cache_dirty:
+		return
+	_cache_dirty = false
+	_cache = []
+	_cache_cells = {}
+	for entry in _regions:
+		var group := (entry[0] as WeakRef).get_ref() as Node3D
 		var list: PackedFloat32Array = entry[1]
 		for i in range(0, list.size(), 3):
 			var centre := group.to_global(Vector3(list[i] + MapmWater.BLOCK_SPAN * 0.5, list[i + 2], list[i + 1] + MapmWater.BLOCK_SPAN * 0.5))
-			var col := int(floorf(centre.x / MapmWater.BLOCK_SPAN))
-			var row := int(floorf(centre.z / MapmWater.BLOCK_SPAN))
-			out.append([col, row, centre.y])
-			if col == cam_col and row == cam_row:
-				own = true
-	_regions = keep
-	return [out, cam_col, cam_row, own]
+			var cell := Vector2i(int(floorf(centre.x / MapmWater.BLOCK_SPAN)), int(floorf(centre.z / MapmWater.BLOCK_SPAN)))
+			_cache.append([cell.x, cell.y, centre.y, centre])
+			_cache_cells[cell] = true
+
+## Half a block's diagonal: a block's bounding sphere at its plane.
+const BLOCK_RADIUS := 226.3
+
+## The drawn water blocks in the camera's view (READ: the drawn-block list is
+## view-tested), as (col, row, plane) triples. OURS: a bounding sphere per
+## block against the frustum's planes.
+func _visible_blocks(frustum: Array) -> Array:
+	var out: Array = []
+	for b in _cache:
+		var c: Vector3 = b[3]
+		var inside := true
+		for pl in frustum:
+			if (pl as Plane).distance_to(c) > BLOCK_RADIUS:
+				inside = false
+				break
+		if inside:
+			out.append(b)
+	return out
 
 func _process(_delta: float) -> void:
 	if _qa_timing:
@@ -223,14 +383,18 @@ func _process(_delta: float) -> void:
 	if main == null or materials.is_empty():
 		_set_active(false)
 		return
+	_refresh_cache()
 	var eye := main.global_position
-	var found: Array = _world_blocks(eye)
-	plane_height = pick_plane(found[0], found[1], found[2])
+	var cam_col := int(floorf(eye.x / MapmWater.BLOCK_SPAN))
+	var cam_row := int(floorf(eye.z / MapmWater.BLOCK_SPAN))
+	plane_height = pick_plane(_visible_blocks(main.get_frustum()), cam_col, cam_row)
 	if is_nan(plane_height):
 		_set_active(false)
+		RenderingServer.global_shader_parameter_set(CLIP_GLOBAL, CLIP_NONE)
 		return
 	_set_active(true)
-	underwater = is_underwater(eye.y, plane_height, found[3])
+	underwater = is_underwater(eye.y, plane_height, _cache_cells.has(Vector2i(cam_col, cam_row)))
+	RenderingServer.global_shader_parameter_set(CLIP_GLOBAL, clip_plane(plane_height, underwater))
 	var aspect := 1.0
 	var vs := get_viewport().get_visible_rect().size
 	if vs.y > 0:
@@ -244,10 +408,21 @@ func _process(_delta: float) -> void:
 	_camera.keep_aspect = main.keep_aspect
 	_camera.environment = main.environment
 	_camera.global_transform = main.global_transform if underwater else mirror_transform(main.global_transform, plane_height)
+	var env: Environment = main.environment if main.environment != null else main.get_world_3d().environment
+	var exposure := env.tonemap_exposure if env != null else 1.0
+	var white := env.tonemap_white if env != null else 1.0
+	var filmic := env != null and env.tonemap_mode == Environment.TONE_MAPPER_FILMIC
 	var bm := bump_matrix(Time.get_ticks_msec() / 1000.0)
+	if _qa_nobump:
+		bm = Vector4.ZERO
 	for m in materials:
 		m.set_shader_parameter("underwater", underwater)
 		m.set_shader_parameter("bump_mat", bm)
+		m.set_shader_parameter("tonemap_exposure", exposure)
+		m.set_shader_parameter("tonemap_white", white)
+		m.set_shader_parameter("tonemap_filmic", filmic)
+	if _qa_dump_frame > 0 and Engine.get_process_frames() == _qa_dump_frame:
+		_qa_dump(main)
 
 ## SRREVAMP_QA_WATER_TIMING: every QA_WINDOW frames, the main viewport's and the
 ## reflection target's measured render time (CPU + GPU), averaged.
@@ -266,3 +441,13 @@ func _set_active(on: bool) -> void:
 		return
 	active = on
 	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS if on else SubViewport.UPDATE_DISABLED
+
+## SRREVAMP_QA_WATER_DUMP: the target and the screen as PNGs, and what a
+## pixel fit needs to map one onto the other.
+func _qa_dump(main: Camera3D) -> void:
+	_viewport.get_texture().get_image().save_png("%s/refl.png" % _qa_dump_dir)
+	get_viewport().get_texture().get_image().save_png("%s/main.png" % _qa_dump_dir)
+	var wc: Vector3 = materials[0].get_shader_parameter("water_color")
+	print("QA WATER DUMP %s" % JSON.stringify({"plane": plane_height, "underwater": underwater,
+		"wc": [wc.x, wc.y, wc.z], "fov": main.fov, "refl_size": [_viewport.size.x, _viewport.size.y],
+		"main_size": [get_viewport().get_visible_rect().size.x, get_viewport().get_visible_rect().size.y]}))

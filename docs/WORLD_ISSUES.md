@@ -7094,6 +7094,146 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twenty-eighth round, review follow-up: the reflection is as bright as the game's, clips at the water, leaves out characters, and the sky is the game's cloud layer
+
+The review confirmed the mirror's geometry: its marker's reflection lands where predicted, within
+retail's own 14 px bias. It found six problems, and this follow-up fixes them. Labels are as in
+the round.
+
+### 1. The reflection was tone-mapped twice
+
+The target holds what the screen shows, already tone-mapped. The water pass sent it through the
+tone map again, so a reflecting lake came out about 1.27x too bright.
+
+**How the output is transformed (MEASURED).** A grey ramp written as an unshaded ALBEDO was read
+back from the screen.
+- This renderer shows `srgb(T(lin(a) * exposure))`, where T is Godot 4.2's filmic curve (A 0.88,
+  B 0.6, C 0.1, D 0.2, E 0.01, F 0.3). The fit is 1.7/255 rms over 19 steps.
+- The candidates without the sRGB legs fit at 7.5/255 or worse.
+
+**The fix.** The shader now samples the target raw and writes `srgb(T^-1(lin(s x WaterColor)) /
+exposure)`. The screen therefore shows s x WaterColor: retail's MODULATE of displayed values,
+with WaterColor as the gamma-space texture factor.
+
+**The deep-water pixel fit** (lake, from above, no fog, bump zeroed; screen against the target at
+retail's mapping):
+
+| Output | rms against s x WaterColor | Ratio of screen to s x WaterColor (R, G, B) |
+|---|---|---|
+| The displayed value written straight, the double tone map | 23.7/255 | 1.23, 1.28, 1.28 |
+| After the fix | **0.7/255** | 0.98, 1.00, 1.00 |
+
+Hooks: `SRREVAMP_QA_WATER_DUMP=<dir>:<frame>` saves the target and the screen, and
+`SRREVAMP_QA_WATER_NOBUMP=1` zeroes the bump. `SRREVAMP_QA_WATER_OUTMODE` = 1 writes the
+displayed value straight and 2 writes the ramp.
+
+### 2. The sky is the game's cloud layer
+
+The curved band was our CloudDome, a finite 3000-unit hemisphere over the player, showing its rim
+in the sky and in the water.
+
+**What retail draws (READ).**
+- **The sky step** (`FUN_00a26f60`) zeroes the camera's position, sets the far plane to
+  5,000,000, and turns Z and lighting off before drawing. The cloud layer is drawn by
+  `FUN_00a19330` -> `FUN_00a3f570`.
+- **The mesh:** the vertex buffer built in `FUN_00a3de90` is a flat 5x5-vertex grid at y = 20000.
+  x and z run from -4,000,000 to 4,000,000 in 2,000,000 steps, and u and v from -32 to 32 in steps
+  of 16. That is one `cloud1.ddj` repeat per 125,000 units.
+- **Scrolling:** u scrolls by `frac(GetTickCount() / 500000)` (texture matrix _31, TTFF COUNT2).
+- **Colour and alpha:** colour is MODULATE(texture, TFACTOR), whose RGB is environment channel 4
+  (`FUN_00a3eb40`'s sixth argument, world+0x685f from record+0x158). Alpha is MODULATE(texture,
+  TFACTOR alpha), where TFACTOR alpha is world+0x68c7 = (channel 12 + 1) / 2.
+- **Fog:** linear from 90,000 to 200,000.
+
+**What changed.**
+- `cloud_dome.gdshader` places the layer relative to the eye (view rotation only) and pins it to
+  the far plane with the depth test on.
+  - That draws it behind everything. OURS: a transparent material cannot be ordered before
+    Godot's opaque pass.
+  - It is drawn in both the main view and the mirror.
+- `World3D.cloud_layer_mesh` builds the grid.
+- The scroll is READ; the old 0.008 UV/s drift is gone.
+- The colour and alpha come from channels 4 and 12, sampled at the reference time. Jangan
+  measured colour (1.00, 1.00, 1.00) and alpha 0.755; environment 1 measured (0.91, 0.99, 0.99)
+  and alpha 0.743.
+- Pictures (`water_shots/r628rv_{before,after}_jangan_main.png`): the arc is gone, and clouds
+  cover the sky.
+- The sun glow billboard is still OURS.
+
+### 3. The clip plane
+
+`FUN_0045e0d0` builds a plane through three points, with the points' order swapped between the
+two cases: above water it keeps y >= h, underwater y <= h. The round's text is corrected.
+
+Godot 4.2 has no user clip planes, no custom projection, and no public way to get a
+StandardMaterial3D's generated shader (`get_shader_rid` is absent, MEASURED on the box). So:
+- **Terrain:** each region's terrain gets a mirror-only copy, `MirrorTerrain`. It is the same
+  mesh on layer 18, which the main camera now excludes.
+  - Its surfaces use `WaterReflection.clip_material`: a shader that reproduces what the terrain's
+    StandardMaterial3D uses (albedo texture, vertex colour, the MUL lightmap detail layer on UV2,
+    shaded or unshaded, blend, render priority).
+  - It discards fragments on the wrong side of `global uniform vec4 water_clip_plane`, which is
+    set each frame.
+  - The main view's terrain is untouched.
+- **Scenery objects** are drawn into the mirror unclipped (OPEN): their materials are
+  ObjectLoader's.
+- **Measured**, at the reviewer's view (lake, yaw 90, pitch -45, distance 300, no fog): non-sky
+  pixels in the top 85% of the target went from **2.01%** (the lake-bed strips and the player
+  under the water) to **0.31%**. What is left is the far bank's poplars, which stand above the
+  water.
+- **The WRAP strip.** With retail's squeezed mapping, `v = 0.48 + 0.8 y/z` stays inside
+  [0.018, 0.942] across the screen, so only the bump (at most +-0.057) can reach past an edge. That
+  wrap is retail's own (stage 1 is WRAP, READ).
+
+### 4. What the reflection draws, and when
+
+**READ.** While world+0x26c3 is set, the reflection render skips the game's draw callback
+`DAT_01101920`, which is `LAB_0084c700`. It is registered through `SWorld::vslot_040` (0x009f7040, which stores it) from the client's startup, `Client_LoadAllRefData` at 0x00844cd0.
+- Stage 1 of that callback calls vtable +0x28 of the object at `[0xeecea4]+0x120`.
+- Stage 2 calls the world's vtable +0x60 and +0x30 with 0xec24c0 and 0xec24e4.
+- Which objects these are is INFERRED: the characters and the effects. The landscape pass keeps
+  the sky, the terrain and the scenery.
+
+**What changed.**
+- The mirror's `cull_mask` is `MIRROR_TERRAIN_BIT | REFLECTED_BIT`.
+- The cloud layer and the scenery containers (`mark_reflected`) are on REFLECTED_BIT.
+- Characters, NPCs, monsters and effects stay on layer 1, which the mirror leaves out.
+- The plane is now chosen, and the target enabled, only among water blocks **in the camera's
+  frustum**: a bounding sphere per block, against `Camera3D.get_frustum()`. This matches retail's
+  view-tested list. With none in view, the target is `UPDATE_DISABLED`.
+- The block list is cached and rebuilt only when a region registers, leaves or moves; it was
+  rebuilt every frame.
+- The bump sampler CLAMPs, as retail's stage 0 does (sampler state (0, 1/2, 3), READ).
+
+**Frame times.** Averages of 15 ten-frame windows (frames 59-199), main + target in ms per frame,
+reflection on in both. Before is 1b2d317.
+
+| Spot | Before | After |
+|---|---|---|
+| Lake, shallow | 2.80 + 2.52 = 5.31 | 3.35 + 1.73 = **5.09** |
+| Moat, along it | 4.56 + 5.36 = 9.93 | 6.04 + 3.52 = **9.56** |
+| Jangan square | 5.88 + 7.67 = 13.55 | 7.30 + 5.64 = **12.94** |
+
+The target's share falls by about 30% without the characters and effects. Jangan's square keeps
+the reflection on because the plaza pool (plane -33, under the paving) and the moat are in the
+frustum. Retail's list is view-tested, not occlusion-tested, so it would keep it on too.
+
+### 5. Doc fixes
+
+The mirror fields are the orbit camera's look-at y (0x221a) and orbit angle (0x223a), and the
+v mapping is squeezed (0.8 against 0.866). The round's text is corrected in place.
+
+**Tests:**
+- `water_reflection_test.gd`: 30 ok, ALL PASS. New checks cover the clip plane both ways, the
+  clip shader's code, the mirror's layers, and the cloud mesh.
+- `remote_godot.sh check`: ALL LOAD.
+- `remote_godot.sh tests`: 145 suites, 0 failing. Go tests: green.
+
+**Still OPEN:**
+- Clipping the scenery objects in the mirror.
+- The identity of the two skipped callbacks' objects.
+- The cloud layer's draw order against Godot's opaque pass.
+
 ## Six-hundred-and-twenty-eighth round: water reflects the sky, the banks and the trees, as the game's own Water Reflection option draws it
 
 The shipped `Setting\SROptionSet.dat` has Water Reflection ON (round 627's follow-up), and the user
@@ -7117,10 +7257,14 @@ read. OURS is this project's choice.
 - **The reflection render, `FUN_00a2dc20`.**
   - Target and depth: the 512x512 target world+0x27bb, with its own 512x512 D16 depth buffer
     +0x27bf. Both are created by option case 6. Only depth is cleared (Clear flags 2).
-  - The camera: above water, the eye's y becomes `2h - y` and the look vector's y is negated
-    (world+0x221a and +0x223a). Underwater, the camera is left as it is.
+  - The camera: above water, the orbit camera's look-at y (world+0x221a) becomes `2h - y` and its
+    orbit angle (world+0x223a) is negated, which mirrors the camera in the plane (corrected in the
+    review follow-up; this first said "eye y" and "look vector"). Underwater, the camera is left as
+    it is.
   - Clipping: a user clip plane is enabled (SetClipPlane, D3DRS_CLIPPLANEENABLE 0x98). It is built
-    by `FUN_0045e0d0` with normal y = -1 above water (`_DAT_00e1b878`) and +1 underwater.
+    by `FUN_0045e0d0`, a plane through three points, with the points' order swapped between the two
+    cases: above water it keeps y >= h, underwater y <= h. (Corrected in the review follow-up: this
+    first read `_DAT_00e1b878` = -1 as the normal's y.)
   - What is drawn: the landscape pass `FUN_00a26f60`, the same routine as the main view (sky,
     terrain, objects), over the block list the mirrored camera sees (world+0x2793). World+0x26c3
     is set during the render; the water pass's caller skips water when it is set.
@@ -7187,9 +7331,10 @@ read. OURS is this project's choice.
 - **The target's width (OURS).** It is 512 rows by `512 x aspect` (910 at 16:9), not a stretched
   512x512. A Godot camera cannot stretch its frustum into a square target, so the same projection
   needs the screen's aspect.
-- **Sampling (INFERRED).** Sampling at SCREEN_UV assumes retail's texture matrix is its main
-  projection. 0.65 and 0.8 fit a 4:3 frustum, but this was not checked against the camera
-  setup.
+- **Sampling (corrected in the review follow-up).** Retail's fovy is 60 degrees, so its
+  projection's P22 / 2 is 0.866, not 0.8. The texture matrix's 0.65 is exact for u at 4:3, but its
+  0.8 squeezes the reflection vertically to 0.924 and shifts it 0.02. That misregistration is now
+  reproduced. This first sampled the exact flipped screen position.
 - **The bump (OURS / INFERRED).** V8U8 is read as `s / 128`. The bump time is Godot's seconds, and
   that retail's t is seconds is INFERRED.
 - **BUMPENVMAPLUMINANCE (INFERRED).** Its luminance term is left out, because V8U8 has no L
