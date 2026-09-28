@@ -515,6 +515,10 @@ func close_option() -> void:
 	_option = null
 	if window == null or not is_instance_valid(window):
 		return
+	# Every way out puts the saved volumes back unless Confirm/Apply stored
+	# the edit (then saved == edit): the Option button pressed again, Cancel,
+	# the close button, Escape (ours; OptionWindow's header).
+	window.restore_saved()
 	if window.get_parent() == self:
 		remove_child(window)
 	window.queue_free()
@@ -1416,6 +1420,9 @@ func _show_repair_buttons(window: HudWindow, npc_code: String) -> void:
 func _on_repair_all_pressed() -> void:
 	var who := NetClient.current_character_name
 	if who != "":
+		# The worn durability as it stands now, so the repair's sounds compare
+		# against today's wear (UiSounds.worn_durability).
+		NetClient.list_equipment(who)
 		NetClient.repair(who, EquipmentNet.REPAIR_ALL)
 
 func _on_repair_one_pressed() -> void:
@@ -1424,6 +1431,7 @@ func _on_repair_one_pressed() -> void:
 		return
 	# Without a selected slot, "Repair" behaves like "Repair All" rather than
 	# doing nothing -- a repair NPC never leaves a broken item unrepairable.
+	NetClient.list_equipment(who)
 	NetClient.repair(who, _repair_selected_slot if _repair_selected_slot >= 0 else EquipmentNet.REPAIR_ALL)
 
 ## A repair's outcome in the store's status line. A refusal shows the game's
@@ -1438,8 +1446,7 @@ func _on_repair_result(code: int, gold_spent: int, durabilities: Array) -> void:
 	if code == 0:
 		# Per worn slot whose durability rose: snd_revive from 0, else
 		# snd_repair (0x3052's handler 0x8adf50, read).
-		UiSounds.durability_changed(_durability_by_slot(NetClient.last_equipment_durabilities),
-			_durability_by_slot(durabilities), "repair reply")
+		UiSounds.worn_repaired(_durability_by_slot(durabilities), "repair reply")
 		print("HudPanels: repaired for %d gold" % gold_spent)
 		_set_shop_status("Repaired for %s gold." % _grouped(gold_spent))
 		if who != "":
@@ -2662,13 +2669,16 @@ func _load_items() -> void:
 ## interface is up (its ShowWindow, 0x63b630, read). **Inferred:** that
 ## retail raises a message box at these four points is not read; these boxes
 ## stand in for it. A box freed with the whole HUD (a scene change) is
-## silent.
+## silent: the close is decided a frame later, by whether the box's window
+## is still there (UiSounds.message_box_left).
 func _message_box_sounds(box: Control) -> void:
 	UiSounds.window_toggled(true, _interface_shown(), "message box %s shown (0x63b630)" % box.name)
-	var what := String(box.name)
+	var what := "message box %s hidden (0x63b630)" % box.name
+	var window_ref: WeakRef = weakref(box.get_parent())
+	var tree := get_tree()
 	box.tree_exiting.connect(func() -> void:
-		if is_inside_tree() and not is_queued_for_deletion() and is_visible_in_tree():
-			UiSounds.window_toggled(false, true, "message box %s hidden (0x63b630)" % what))
+		if tree != null:
+			tree.process_frame.connect(UiSounds.message_box_left.bind(window_ref, what), CONNECT_ONE_SHOT))
 
 ## An item's TypeID1..4 (itemdata), or empty when the item is not known.
 func item_types(item_id: int) -> PackedInt32Array:
@@ -4223,6 +4233,10 @@ func connect_net() -> void:
 			print("HudPanels: equipment refused: %s" % error)
 			return
 		_equipped_items = items
+		# A list (not an equip/unequip ack, which carries no items and no
+		# durability) is the worn durability as it stands.
+		if not items.is_empty() or not NetClient.last_equipment_durabilities.is_empty():
+			UiSounds.note_worn_list(_durability_by_slot(NetClient.last_equipment_durabilities))
 		_fill_equipment_slots(items))
 	# The skill window shows the masteries (client data, _fill_skill_masteries),
 	# not the server's small skill catalogue, so its list result is not drawn

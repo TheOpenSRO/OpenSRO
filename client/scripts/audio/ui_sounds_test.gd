@@ -314,6 +314,49 @@ func _run() -> void:
 	await _frames(1)
 	_check(_playing("UI:snd_levup:-:CHINESS:-:-") == 1, "the level-up plays UI:snd_levup:-:CHINESS:-:-")
 
+	# (6b) The same keys through KeyInput (round 609's path, before the GUI,
+	# as World3D wires it): one sound per key press, not one per handler.
+	var KeyInputScript: GDScript = load("res://scripts/ui/key_input.gd")
+	var key_input: Node = KeyInputScript.new({
+		"is_typing": func() -> bool: return false,
+		"run": func(_a: String, _n: int) -> String: return "",
+		"panel": func(action: String) -> String:
+			if action.begins_with("panel:"):
+				panels.call("toggle", action.substr(6))
+			return "toggled",
+	})
+	root.add_child(key_input)
+	await _frames()
+	_stop_all()
+	_key(KEY_I, "i".unicode_at(0))
+	await _frames()
+	_check(panels.call("is_open", "inventory") and _playing("UI:snd_window_open:-:-:-:-") == 1 and _playing("UI:snd_window_close:-:-:-:-") == 0,
+		"I through KeyInput opens the popup with exactly one snd_window_open (open %d, close %d)" % [_playing("UI:snd_window_open:-:-:-:-"), _playing("UI:snd_window_close:-:-:-:-")])
+	_stop_all()
+	_key(KEY_I, "i".unicode_at(0))
+	await _frames()
+	_check(not panels.call("is_open", "inventory") and _playing("UI:snd_window_close:-:-:-:-") == 1 and _playing("UI:snd_window_open:-:-:-:-") == 0,
+		"I again through KeyInput closes it with exactly one snd_window_close (open %d, close %d)" % [_playing("UI:snd_window_open:-:-:-:-"), _playing("UI:snd_window_close:-:-:-:-")])
+	key_input.queue_free()
+	await _frames()
+
+	# (6c) A confirm box's close: a box freed by itself sounds the close a
+	# frame later; a box freed with its scene (change_scene) does not.
+	await _message_box_checks(panels)
+
+	# (6d) The repair's "before": the latest equipment list, then the reply.
+	if US != null:
+		_stop_all()
+		US.call("note_worn_list", {1: 50, 6: 0})
+		var r0: int = US.call("count", "UI:snd_repair:-:-:-:-")
+		var v0: int = US.call("count", "UI:snd_revive:-:-:-:-")
+		US.call("worn_repaired", {1: 80, 6: 80}, "test repair")
+		_check(US.call("count", "UI:snd_repair:-:-:-:-") == r0 + 1 and US.call("count", "UI:snd_revive:-:-:-:-") == v0 + 1,
+			"a repair after the latest list: slot 1 worn (one snd_repair), slot 6 broken (one snd_revive)")
+		var before_count: int = US.call("count", "UI:snd_repair:-:-:-:-") + US.call("count", "UI:snd_revive:-:-:-:-")
+		US.call("worn_repaired", {1: 80, 6: 80}, "test repair again")
+		_check(US.call("count", "UI:snd_repair:-:-:-:-") + US.call("count", "UI:snd_revive:-:-:-:-") == before_count, "a second repair with nothing worn since is silent (the reply updated the latest state)")
+
 	# (7) The item rules on synthetic type ids.
 	if US != null:
 		_check(US.call("equip_token", PackedInt32Array([3, 1, 6, 2])) == "SWORD", "a TypeID 3/1/6/2 weapon moves as SWORD")
@@ -372,6 +415,20 @@ func _run() -> void:
 	_click(_centre(opt.call("control", [5])))
 	await _frames()
 	_check(is_equal_approx(AudioServer.get_bus_volume_db(bgm_idx), -10.0) and not AudioServer.is_bus_mute(eff_idx), "Default: every slider 50 (-10 dB), mutes off")
+	# The Option button again (0x6f5190's destroy path) also puts the saved
+	# values back: move BGM, then toggle the window shut.
+	_click(at)
+	await _frames()
+	_check(is_equal_approx(AudioServer.get_bus_volume_db(bgm_idx), -4.0), "the probe: BGM moved to 80 again")
+	panels.call("toggle_option")
+	await _frames()
+	_check(panels.call("option_window") == null and is_equal_approx(AudioServer.get_bus_volume_db(bgm_idx), AudioOptions.slider_db(o.bgm)),
+		"closing by the Option button (toggle_option) puts the saved BGM volume back (got %s)" % AudioServer.get_bus_volume_db(bgm_idx))
+	await _persistence_checks(panels, o)
+	opt = panels.call("toggle_option")
+	await _frames(2)
+	_click(_centre(opt.call("control", [14])))
+	await _frames()
 	# Cancel: the saved values back, the window gone, no window sound.
 	_stop_all()
 	_click(_centre(opt.call("control", [8])))
@@ -380,6 +437,93 @@ func _run() -> void:
 	_check(panels.call("option_window") == null, "Cancel closes the Option window")
 	_check(_any_playing() == 0, "the Option window closes silently (0x6f5100 has no sound)")
 	_restore(saved_options)
+
+## Apply and Confirm store the values in ClientSettings' file. The file is
+## put back as it was afterwards (or removed if there was none).
+func _persistence_checks(panels: Control, o) -> void:
+	var path: String = ClientSettings.PATH
+	var had := FileAccess.file_exists(path)
+	var original := FileAccess.get_file_as_bytes(path) if had else PackedByteArray()
+	var opt = panels.call("toggle_option")
+	await _frames(2)
+	_click(_centre(opt.call("control", [14])))
+	await _frames()
+	var bgm_slider: Control = opt.call("slider", 0)
+	var thumb: Control = opt.call("thumb", 0)
+	var x0: float = thumb.position.x - float(opt.call("thumb_offset", int(o.bgm)))
+	_click(bgm_slider.get_global_transform() * Vector2(x0 + float(opt.call("thumb_offset", 70)) + thumb.size.x * 0.5, 12))
+	await _frames()
+	_click(_centre(opt.call("control", [9])))   # Apply
+	await _frames()
+	var cfg := ConfigFile.new()
+	cfg.load(path)
+	_check(int(cfg.get_value("audio", "bgm", -1)) == 70, "Apply saves BGM 70 in %s (got %s)" % [path, cfg.get_value("audio", "bgm", "none")])
+	_check(panels.call("option_window") != null, "Apply leaves the window open")
+	var env_box: BaseButton = opt.call("mute_box", 2)
+	_click(_centre(env_box))
+	await _frames()
+	_click(_centre(opt.call("control", [6])))   # Confirm
+	await _frames()
+	cfg = ConfigFile.new()
+	cfg.load(path)
+	_check(bool(cfg.get_value("audio", "env_muted", false)) and int(cfg.get_value("audio", "bgm", -1)) == 70, "Confirm saves the Env mute (and keeps BGM 70)")
+	_check(panels.call("option_window") == null, "Confirm closes the window")
+	_check(AudioServer.is_bus_mute(AudioServer.get_bus_index("Env")), "after Confirm the saved values stay on the buses (Env muted)")
+	# Back as it was: the file, and the service's options.
+	if had:
+		var f := FileAccess.open(path, FileAccess.WRITE)
+		f.store_buffer(original)
+		f.close()
+	else:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	_svc.set_options(o, false)
+
+func _message_box_checks(panels: Control) -> void:
+	# Freed by itself (a Cancel): the close, once.
+	var win := Control.new()
+	win.name = "BoxHost"
+	panels.add_child(win)
+	var box := Control.new()
+	box.name = "TestBox"
+	win.add_child(box)
+	_stop_all()
+	panels.call("_message_box_sounds", box)
+	await _frames()
+	_check(_playing("UI:snd_window_open:-:-:-:-") == 1, "a confirm box shown sounds snd_window_open")
+	_stop_all()
+	box.free()
+	await _frames(3)
+	_check(_playing("UI:snd_window_close:-:-:-:-") == 1, "a confirm box freed by itself sounds snd_window_close once (%d)" % _playing("UI:snd_window_close:-:-:-:-"))
+	win.free()
+	# Freed with its scene: a real change_scene_to_packed.
+	var scene := Node.new()
+	scene.name = "OldScene"
+	root.add_child(scene)
+	current_scene = scene
+	var ui2 := Control.new()
+	scene.add_child(ui2)
+	var panels2: Control = load(PANELS_PATH).new(null)
+	ui2.add_child(panels2)
+	var win2 := Control.new()
+	panels2.add_child(win2)
+	var box2 := Control.new()
+	box2.name = "SceneBox"
+	win2.add_child(box2)
+	panels2.call("_message_box_sounds", box2)
+	await _frames()
+	_stop_all()
+	var next := PackedScene.new()
+	var blank := Node.new()
+	blank.name = "NextScene"
+	next.pack(blank)
+	blank.free()
+	var err := change_scene_to_packed(next)
+	await _frames(4)
+	_check(err == OK and not is_instance_valid(scene), "the probe: change_scene_to_packed freed the old scene")
+	_check(_playing("UI:snd_window_close:-:-:-:-") == 0, "a confirm box freed by a scene change is silent (%d)" % _playing("UI:snd_window_close:-:-:-:-"))
+	if current_scene != null:
+		current_scene.queue_free()
+	await _frames()
 
 func _restore(saved_options) -> void:
 	_stop_all()

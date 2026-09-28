@@ -439,7 +439,7 @@ windows, each checked against its routine:
 | the NPC store / storage opened from the talk box | 0x79dbd0 -> helper on the store (0x79dcfe) / storage (0x79dd8f) | open |
 | the NPC talk box opening | nothing that shows GDR_NPCWINDOW (+0x724) calls the helper | silent |
 | the talk box's end line | **inferred** to be its close (CIF_NPCWindow vslot_043 -> 0x652c00) | close |
-| message box | CIFMessageBox::vslot_023 (0x63b630): show -> open, hide -> close | this client's buy / sell / quantity / gold boxes stand in (**inferred**) |
+| message box | CIFMessageBox::vslot_023 (0x63b630): show -> open, hide -> close | this client's buy / sell / quantity / gold boxes stand in (**inferred**); the close is decided a frame after the box leaves, and only if its window is still up, so a box freed by a scene change is silent (ours) |
 | System -> Option | 0x6f5190 -> 0x6f5100 | silent |
 
 ### Items and events (READ unless marked)
@@ -465,6 +465,11 @@ windows, each checked against its routine:
   `snd_revive`, rose otherwise -> `snd_repair` (three random rows); on a worn item a fall to 0 ->
   `snd_eqbreak`, to exactly 6 -> `snd_eqdanger` (not played: this client learns of no wear).
   **snd_revive is an item's, not the player's resurrection** (0xddefc0 has no other reference).
+  The "before" state is the latest known worn durability (`UiSounds.worn_durability`: each
+  equipment list replaces it, each repair reply updates it). The server wears items without
+  telling the client, so a repair is preceded by an equipment list request, which the one
+  connection answers first (ours). Bag slots (retail's 0xd..0x6f) never rise here: this server
+  repairs worn items only and its reply carries only worn slots.
 - **Pick-up**: `snd_pickup` is named by no code, only by the handler table (0xec6940); the
   character `.bsr` files carry it on their pick-up animation (MEASURED: `pk2grep` finds
   "snd_pickup" in `Res\Char\China\*.bsr`). It belongs to the animation-sound round, not here.
@@ -502,5 +507,6 @@ CNIFSliderCtrl 258 (`opt_volume2.ddj`) and check box 254.
 - Default on the audio tab (0x5fda90 -> 0x5f6660): **50/50/50**, boxes cleared.
   Confirm / Apply store the values (0x5f6750); saved in `settings.cfg` (ours).
 - **Ours:** a click or drag on the track sets the value under the pointer; prev/next step 1;
-  closing without Confirm/Apply (Cancel, the close button, Escape) puts the saved values back;
+  closing without Confirm/Apply (Cancel, the close button, Escape, the Option button again) puts
+  the saved values back;
   the video, input and game panes are drawn but not wired.

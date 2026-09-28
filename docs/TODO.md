@@ -25,9 +25,10 @@ In order. Each is checked off here when it ships in a release, with its round in
 - [x] **Monsters out of town** (v0.1.92). Mangyang and the Weasel moved from the fountain (62/44,
       -55/58) to measured flat farmland at world (0,-840) and (340,-340), south of the walls.
 - [x] **ESC -> System window** (`ifsystemwnd`: Option / Help / Restart / Exit) -- round 138.
-      Restart = login screen, Exit = quit, Option = the F3 settings panel. Still open: the
-      **authored Option window** (`ifoption` + `ifoption_video`, its View radios and our UI scale /
-      chat font / name range as its Setting tab) in place of the F3 panel.
+      Restart = login screen, Exit = quit. Option opens the retail Option window since round 615
+      (CNIFOption from `res_ui\optionwnd.2dt`, the window the button really opens -- not the
+      `ifoption*.txt` family); its Audio tab works. Still open: its Video, Input and Game tabs
+      (our UI scale / chat font / name range / camera views stay on the Ctrl+F3 debug panel).
 - [x] **NPC talk.** A click on an NPC opens `if_npctalk` titled with its name -- round 139. The
       greeting's service lines are now clickable; Buy opens the shop and the storage line the
       warehouse (both below). The guild NPC's lines follow the player's guild (round 521): a

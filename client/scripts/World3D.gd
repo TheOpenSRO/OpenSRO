@@ -1646,11 +1646,9 @@ func _try_initialize_pk2_ui() -> void:
 	# log shows a drag landing server-side -- see HudPanels.qa_move_sequence.
 	if OS.get_environment("SRREVAMP_QA_MOVE") != "" and NetClient.is_connected_to_server():
 		_hud_panels.qa_move_sequence(OS.get_environment("SRREVAMP_QA_MOVE"))
-	# The Escape / System menu (see HudPanels): its Option button opens the
-	# settings panel (the same Ctrl+F3 debug panel that carries the working UI
-	# scale, chat font, name range and camera view), Restart returns to the
-	# login screen, Exit quits, and Help prints where to look.
-	# Round 615: the Option button is the retail one -- id 10 -> 0x6f5190,
+	# The Escape / System menu (see HudPanels): Restart returns to the login
+	# screen, Exit quits, and Help opens the help window. The Option button
+	# is the retail one -- id 10 -> 0x6f5190,
 	# which toggles CNIFOption from res_ui\optionwnd.2dt and hides the System
 	# window, silently (HudPanels.toggle_option). The debug panel stays on
 	# Ctrl+F3.

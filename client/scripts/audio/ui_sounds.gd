@@ -22,8 +22,9 @@ class_name UiSounds
 ## toggle helper runs AFTER a toggle routine has shown or hidden a window:
 ## nothing when the interface itself is hidden (its first 0xb8f530 is on the
 ## interface, +0x61); otherwise snd_window_open if the window is shown now
-## (window+0x61), else snd_window_close. It has 78 call sites (the spec's 75
-## plus three jumps), all in window toggle routines. `window_toggled` is that
+## (window+0x61), else snd_window_close. 78 sites reach it: 72 calls and 3
+## tail jumps to 0x79a7e0, and 3 calls to its twin 0x79ab80, all in window
+## toggle routines. `window_toggled` is that
 ## rule. Which of this client's windows reach it is decided in HudPanels,
 ## window by window, each with its routine's address.
 ##
@@ -108,6 +109,19 @@ static func window_closed(what: String) -> void:
 ## A routine that plays snd_window_open itself (the message box's show).
 static func window_opened(what: String) -> void:
 	play(KEY_WINDOW_OPEN, what)
+
+## A message box's close, checked a frame after the box left the tree: it
+## sounds only if the window it sat in is still alive and shown. A box freed
+## with its whole scene (a change_scene) is gone with its window by then, so
+## it is silent (ours: the retail box's hide sounds, its scene teardown does
+## not reach ShowWindow).
+static func message_box_left(window_ref: WeakRef, what: String) -> void:
+	var w = window_ref.get_ref()
+	if w == null or not (w is CanvasItem) or not (w as CanvasItem).is_inside_tree():
+		return
+	if (w as Node).is_queued_for_deletion() or not (w as CanvasItem).is_visible_in_tree():
+		return
+	play(KEY_WINDOW_CLOSE, what)
 
 # --- items ---------------------------------------------------------------------
 
@@ -231,6 +245,14 @@ static func item_used(type_ids: PackedInt32Array, what: String) -> void:
 ## on a worn item plays snd_eqbreak / snd_eqdanger; this client learns of no
 ## wear, so those are not played.) `before` and `after` map slot ->
 ## current durability.
+##
+## The `before` state is the latest this client knows (`worn_durability`):
+## every equipment list replaces it and every repair reply updates it. The
+## server wears items in combat without telling the client, so HudPanels asks
+## for the equipment list just before it sends a repair; the one connection
+## delivers that list first (ours). Retail sounds bag slots 0xd..0x6f too;
+## this server repairs worn items only and its repair reply carries only
+## worn slots, so no bag durability ever rises here.
 static func durability_keys(before: Dictionary, after: Dictionary) -> Array:
 	var keys: Array = []
 	var slots := after.keys()
@@ -247,6 +269,21 @@ static func durability_keys(before: Dictionary, after: Dictionary) -> Array:
 static func durability_changed(before: Dictionary, after: Dictionary, what: String) -> void:
 	for key in durability_keys(before, after):
 		play(key, what)
+
+## Worn slot -> the latest current durability this client has heard of.
+static var worn_durability: Dictionary = {}
+
+## An equipment list's durability block (slot -> current): the whole worn
+## set as it stands, so it replaces what was known.
+static func note_worn_list(by_slot: Dictionary) -> void:
+	worn_durability = by_slot.duplicate()
+
+## A repair reply: sounds each rise against the latest known state, then
+## keeps the reply's values.
+static func worn_repaired(after: Dictionary, what: String) -> void:
+	durability_changed(worn_durability, after, what)
+	for slot in after:
+		worn_durability[slot] = after[slot]
 
 ## 0x3054 (FUN_008a7020): the player's level-up plays snd_levup through the
 ## name dispatcher, whose handler 0xa72580 plays KEY_LEVEL_UP with no
