@@ -7094,6 +7094,111 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-sixteenth round: the server starts buffs -- Grass Walk runs at 60 instead of 50 until it runs out or is cancelled -- and Ghost Walk moves the caster to the ground point
+
+"Some skills don't require you attack a monster like grass walk, ghost walk, and a bunch of
+buffs." The server half (the client's cast is round 617, the buff bar 618, the effects 619). The
+whole record, with the wire contract, is `docs/protocol/skill_buffs.md`.
+
+**Before**: a non-damaging cast paid its MP and cooldown and did nothing (a flat self-heal
+excepted); an imbue (kind 3 with `att`) was resolved as an ATTACK on the selected monster and
+refused "too far away"; there were no buff records, durations, cancel or ground move.
+
+**Now**: an action-kind-3 cast (Target_Required 0, or 1 with a friendly group -- OPEN whom retail
+picks, the caster here) starts a record in a per-character book (`internal/buff`), with a
+server-unique u32 token, and the zone hears `OpBuffStart 0x00F5`; the ticker ends it at its time
+with `OpBuffEnd 0x00F6`; `OpBuffCancel 0x00F7` ends it; a `tele` row cast with the new
+targetType 2 moves the caster and the zone hears `OpSkillMove 0x00F8`. OpUseSkill's suffix
+`u8 targetType [f32 x,y,z]` is optional; an old client decodes as an entity target.
+`OpSelfID 0x00F9 {i64 characterId}` (added to the contract mid-round at the coordinator's
+request, 0x00F9 free by the same grep) tells the entering client its own id -- the ownerId of its
+buffs -- after `OpEnterWorldResult`, on every entry. The session test harness's `dialTestServer`
+now drops OpSelfID frames, because 100 older tests read the packet after entry as the answer to
+their next request (they all failed before the filter); `dialTestServerRaw` sees it.
+
+Also added mid-round for round 617's review, all trailing and optional to a decoder:
+`OpAttackResult` ends with a `u8 targetType` (a skill reply echoes the request's; a swing, a
+keep-up repeat and a monster's result carry 1); `OpBuffStart`/`OpBuffEnd` end with a `u8
+ownerKind` (0 character, 1 monster -- the two id spaces overlap); and a targetType 0 cast applies
+to its caster and ignores the monster field -- a TR-0 row carrying `att` (the EU Bard's Explosion,
+'efr' kind 1 around the caster, MEASURED) resolves no blow because srrevamp builds no 'efr'
+collector (OPEN), a hostile TR-1 row is refused before any cost (OURS text), and an imbue is a
+caster buff whatever it is sent with (its 'att' on later blows OPEN).
+
+A cast still ends a running auto-attack, self-casts included -- READ, not a default kept: retail
+Pushes every 0x7074 kind-4 cast (0x4ad630) behind a phase-3 keep-up, which ends itself at queue
+depth 2 (auto_command.md); and no kind-3 TR-0 class row carries the AutoAttackType 1 that would
+hand the swings back (987 carry 0, 72 carry 2 -- MEASURED).
+
+READ (SR_GameServer.exe, addresses in the protocol doc):
+- the end rule `elapsed > dura[0] + ctx+0x24`, strict (SkillAction_Buff 0x5830b0);
+- the recast rule (gate row 16, 0x58e2fd -> FUN_0059d870): same GroupID, not `cbuf` -- a lower
+  Basic_Level is refused 0x300c, an equal or higher ends the old record. The `dttp` and `+0x290`
+  branches are OPEN;
+- the dispel (0x4ae520 -> 0x59ef90 / 0x59eff0): token 0 matches any record; `nbuf` refuses a
+  record whose ctx+0x20 != 1 (1 = cast on oneself, INFERRED from SkillAction_Buff's stores);
+- the run speed: `hste` value[0] into params 23/24 slot 2 only while the speed holder pc+0xc24 is
+  empty (0x594ac0), the holder emptied when an `hste` record ends (0x5829d0, `book[0x7d]` with the
+  book at pc+0xa30); slot 2 = product of (1 + e/100) (FUN_004b2e60);
+- Ghost Walk's clamp (FUN_005862e0): three-component distance, `caster + unit(offset) x tele[1]`.
+
+MEASURED (retail archives on the RE box): the player base run speed is 50 on all 52 player rows of
+characterdata (walk 16); the exporter's new columns give Grass Walk A lv1 kind 3 / dura 355462 /
+`hste:20`, Ghost Walk B lv1 TR 1 / Land 1 / tele 500,100, Heal A lv1 Self/Ally/Party -- matching
+the spec's reading of the raw rows; 2,348 kind-3 rows, 19 `tele` rows (all Ghost Walks), `nbuf`
+on 285; the OVERLAP refusal text is `textuisystem.txt`'s own.
+
+INFERRED: Grass Walk A lv1's 50 -> 60 (the two READ facts and the MEASURED base).
+
+OURS: the opcodes and payloads (the §4.0 contract); the token counter; the 100 ms ticker poll;
+re-sending active buffs to a character entering a zone; clearing the book on DEATH (the retail
+death path was not traced to a book clear) and on logout (the teardown CGObjChar::vslot_214 clears
+it -- READ -- that logout runs it is INFERRED); keeping the book across a zone change; rounding
+the run speed on the wire.
+
+Not modelled, OPEN: the navmesh test of the Ghost Walk point (srrevamp's server has no navmesh;
+movement is client-authoritative); `tele` value[0]; toggles' MP drain and summons' lifetime (kind 3
+without `dura` runs until cancelled); the imbue's `att` on later blows; debuffs on a hostile target
+(TR 1 with only enemy groups keeps its old path); every publishing param except `hste`/`hst3` --
+damage, defence and HP/MP have no ParamKeeper slots in srrevamp to take them; buffs restored at
+login; the `skc` category ends.
+
+**srrevamp-01**: re-export the skills CSV and re-import it (deploy/README.md, "ROUND 616") --
+until then every skill loads kind 0 and no buff starts.
+
+Tests: `internal/buff` (expiry exactly at BuffEndsAt, contributions removed on end, 50 -> 60,
+nbuf cancel refusal, recast rule, speed holder, tokens), `session/buffs_test.go` (Grass Walk
+through the handler: OpBuffStart run speed 60, cancel -> OpBuffEnd run speed 50; the ticker; the
+recast refusal; the imbue far from its target; the nbuf refusal over the wire; Ghost Walk 150 ->
+100 and 80 -> 80 along the line and stored in the hub; death; the OpUseSkill suffix), and the
+exporter and CSV suffix tests.
+
+Negative, the new tests against the base b50a7b9 (copied into a detached worktree): nothing
+compiles --
+
+	internal/buff/buff_test.go:13:32: undefined: Spec
+	FAIL	github.com/OpenSRO/srrevamp/server/internal/buff [build failed]
+	FAIL	github.com/OpenSRO/srrevamp/server/internal/session [build failed]
+	cmd/export-refdata/main_test.go:864:33: undefined: skTargetLand
+	internal/refdata/csv_test.go:585:22: sk.ActionKind undefined (type Skill has no field or method ActionKind)
+
+so each behaviour was also mutated away on this tree, and its test fails:
+
+	(no startCasterBuff call)  --- FAIL: TestGrassWalkStartsABuffAndMovesRunSpeed50To60
+	                           buffs_test.go:179: waiting for 0x00F5: ... i/o timeout
+	(`>=` for the end test)    --- FAIL: TestBuffExpiresExactlyAtBuffEndsAt
+	                           buff_test.go:32: at BuffEndsAt the buff ended: ...
+	(no nbuf test)             --- FAIL: TestCancelRefusedForNbufFromAnotherCaster
+	                           buff_test.go:76: cancel of another's nbuf buff: 0, want CancelRefusedNbuf
+	(no clamp)                 --- FAIL: TestGhostWalkClampsToTele1/150_away_clamps_to_100
+	                           buffs_test.go:304: landed 150 from the start (...), want 100
+	(slot 2 as a raw factor)   --- FAIL: TestGrassWalkRunSpeedAndContributionsRemovedOnEnd
+	                           buff_test.go:55: with Grass Walk A lv1 the run speed is 1000, want 60
+	(echo dropped)             --- FAIL: TestAttackResultEchoesTargetType
+	                           buffs_test.go:493: Grass Walk's result echoes 1, want 0
+	(no OpSelfID send)         --- FAIL: TestSelfIDIsSentOnEntry
+	                           buffs_test.go:455: attempt 0: no OpSelfID: ... i/o timeout
+
 ## Six-hundred-and-fifteenth round: windows swoosh where the original's do, the item and level-up sounds play, and the Option window's Audio page sets the three volumes
 
 "Some interface elements when opened make a swoosh sound." They are `uiwinopen.wav` /

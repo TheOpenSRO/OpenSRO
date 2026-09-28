@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/csv"
 	"strings"
 	"testing"
 
@@ -747,8 +748,8 @@ func TestSelfHealColumns(t *testing.T) {
 			if !ok {
 				t.Fatal("skillRecord rejected a valid row")
 			}
-			if len(rec) != 47 {
-				t.Fatalf("record has %d fields, want 47 (SelfHealHP at 43, SelfHealMP at 44, CooldownGroup at 45, SitGate at 46)", len(rec))
+			if len(rec) != 61 {
+				t.Fatalf("record has %d fields, want 61 (SelfHealHP at 43, SelfHealMP at 44, CooldownGroup at 45, SitGate at 46, the buff columns 47-60)", len(rec))
 			}
 			if rec[43] != tc.hp || rec[44] != tc.mp {
 				t.Errorf("record[43:45] = %v, want [%s %s]", rec[43:45], tc.hp, tc.mp)
@@ -837,13 +838,63 @@ func TestSitGateColumn(t *testing.T) {
 			t.Errorf("%s: sitGate = %s, want %s", c.name, got, c.want)
 		}
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 47 || rec[46] != c.want {
+		if !ok || len(rec) != 61 || rec[46] != c.want {
 			t.Errorf("%s: record column 46 = %v (ok %v, %d fields), want %s", c.name, rec, ok, len(rec), c.want)
 			continue
 		}
 		skills, err := refdata.LoadSkillsCSV(strings.NewReader(strings.Join(rec, ",") + "\n"))
 		if err != nil || len(skills) != 1 || strconv.Itoa(skills[0].SitGate) != c.want {
 			t.Errorf("%s: the importer read SitGate %v (err %v), want %s", c.name, skills, err, c.want)
+		}
+	}
+}
+
+// Round 616: the buff and self-cast columns 47..60, from synthetic rows with
+// Grass Walk A lv1's and Ghost Walk B lv1's shapes (the retail values the
+// spec MEASURED: kind 3, 'dura' 355462, 'hste' 20; kind 0, Target_Required
+// and TargetType_Land 1, 'tele' 500, 100), through the exporter and back
+// through the importer's own parser with a real CSV writer (BuffParams
+// carries commas).
+func TestBuffColumns(t *testing.T) {
+	dura, hste, tele := skillparam.WordOf("dura"), skillparam.WordOf("hste"), skillparam.WordOf("tele")
+	nbuf, lnks, defr := skillparam.WordOf("nbuf"), skillparam.WordOf("lnks"), skillparam.WordOf("defr")
+	grass := skillRow(dura, 355462, hste, 20)
+	grass[skActionKind] = "3"
+	ghost := skillRow(tele, 500, 100)
+	ghost[skTargetRequired], ghost[skTargetLand] = "1", "1"
+	heal := skillRow()
+	heal[skTargetRequired], heal[skTargetSelf], heal[skTargetAlly], heal[skTargetParty] = "1", "1", "1", "1"
+	marked := skillRow(nbuf, lnks, 1, 2, 3, 4, defr, 10, 12)
+	marked[skActionKind] = "3"
+	for _, c := range []struct {
+		name string
+		row  []string
+		want []string
+	}{
+		{"Grass Walk", grass, []string{"3", "0", "0", "0", "0", "0", "355462", "0", "0", "0", "0", "0", "0", "hste:20"}},
+		{"Ghost Walk", ghost, []string{"0", "1", "1", "0", "0", "0", "0", "0", "0", "0", "0", "500", "100", ""}},
+		{"a friendly heal", heal, []string{"0", "1", "0", "1", "1", "1", "0", "0", "0", "0", "0", "0", "0", ""}},
+		{"nbuf, lnks and defr", marked, []string{"3", "0", "0", "0", "0", "0", "0", "0", "1", "0", "1", "0", "0", "defr:10,12"}},
+	} {
+		rec, ok := skillRecord(c.row)
+		if !ok || len(rec) != 61 {
+			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
+		}
+		if got := strings.Join(rec[47:], "|"); got != strings.Join(c.want, "|") {
+			t.Errorf("%s: columns 47..60 = %s, want %s", c.name, got, strings.Join(c.want, "|"))
+		}
+		var buf strings.Builder
+		w := csv.NewWriter(&buf)
+		w.Write(rec)
+		w.Flush()
+		skills, err := refdata.LoadSkillsCSV(strings.NewReader(buf.String()))
+		if err != nil || len(skills) != 1 {
+			t.Fatalf("%s: the importer rejected the export: %v", c.name, err)
+		}
+		sk := skills[0]
+		if strconv.Itoa(sk.ActionKind) != c.want[0] || strconv.Itoa(sk.DuraMs) != c.want[6] ||
+			strconv.Itoa(sk.Tele1) != c.want[12] || sk.BuffParams != c.want[13] || sk.Nbuf != (c.want[8] == "1") {
+			t.Errorf("%s: imported %+v", c.name, sk)
 		}
 	}
 }

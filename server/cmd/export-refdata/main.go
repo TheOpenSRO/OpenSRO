@@ -392,6 +392,16 @@ const (
 	// 'heal', 18 'heal' with 'efr'). The 9 SKILL_EU_BARD_RECOVERA_ABNORMAL_A
 	// rows are 1 too, but they are cures ('curt'/'curl', no 'heal'), not heals.
 	skTargetRequired = 22
+	// The targeting bytes after it, in CopyFixedColumns' order
+	// (docs/protocol/skill_fields.md): TargetType_Land +0x96 (column 24),
+	// TargetGroup_Self/Ally/Party +0x98/+0x99/+0x9a (columns 26-28).
+	// MEASURED on SKILL_CH_LIGHTNING_GYEONGGONG_B_01 (Ghost Walk, id 114):
+	// columns 22 and 24 are 1; on SKILL_CH_WATER_HEAL_A_01 (id 149) 22 and
+	// 26-28 are 1 (docs/protocol/skill_buffs.md).
+	skTargetLand  = 24
+	skTargetSelf  = 26
+	skTargetAlly  = 27
+	skTargetParty = 28
 	// skActionKind is the skill's ACTION KIND, the first raw Param word at
 	// CRefSkill+0x168 -- the column before the code runs start
 	// (skillparam.ParamBlockColumn, +0x16c; docs/protocol/skill_params.md,
@@ -815,7 +825,7 @@ func cooltimeOf(cols []string) (group, ms string) {
 	return group, ms
 }
 
-// skillRecord maps one tab-split skilldata row to the 46-column skill CSV
+// skillRecord maps one tab-split skilldata row to the 61-column skill CSV
 // (refdata.skillCSVColumns order) import-refdata expects, or (nil, false) if
 // the row is not a real skill. The learn-gating fields and the cast timing /
 // range / resource cost are mapped from verified real columns (see the
@@ -845,7 +855,7 @@ func skillRecord(cols []string) ([]string, bool) {
 	atkType, pct, dmgMin, dmgMax := attackParam(cols)
 	hits := hitCountParam(cols)
 	healHP, healMP := selfHeal(cols)
-	return []string{
+	return append([]string{
 		get(skID),             // 0  ID
 		get(skGroupID),        // 1  GroupID
 		get(skBasicCode),      // 2  Basic_Code
@@ -894,7 +904,107 @@ func skillRecord(cols []string) ([]string, bool) {
 		healMP,                     // 44 SelfHealMP -- 'heal' value[2], its MP half
 		cooldownGroup(cols),        // 45 CooldownGroup -- Overlap's high byte, CRefSkill+0x8f (round 504)
 		sitGate(cols),              // 46 SitGate -- the skill gate's motion-state refusals (round 607)
-	}, true
+		// 47..60: the buff and self-cast columns (round 616, buffColumns).
+	}, buffColumns(cols)...), true
+}
+
+// buffColumns are skill CSV columns 47..60 (round 616,
+// docs/protocol/skill_buffs.md), in refdata.skillCSVColumns order:
+//
+//	47 ActionKind      the first raw Param word, CRefSkill+0x168 (skActionKind)
+//	48 TargetRequired  +0x94, column 22
+//	49 TargetLand      +0x96, column 24
+//	50-52 TargetSelf/Ally/Party  +0x98..+0x9a, columns 26-28
+//	53 DuraMs          'dura' value[0] (+0x280), 0 without one
+//	54-57 Cbuf/Nbuf/Bbuf/Lnks  the marker and 'lnks' runs, 1 when present
+//	58-59 Tele0/Tele1  'tele' value[0] and value[1] (+0x2ec), 0 without one
+//	60 BuffParams      every publishing run (skillparam.Contributions) as
+//	                   code:v0,v1;...
+//
+// The Param block is WALKED (skillparam.Walk), never scanned. A walk that
+// does not finish -- none does on the 33,632 retail rows (skill_params.md) --
+// decides a code absent only when its literal word is nowhere in the row;
+// otherwise a flag is set (the refusal it drives is kept) and a value is 0.
+func buffColumns(cols []string) []string {
+	get := func(i int) string {
+		if i >= len(cols) {
+			return "0"
+		}
+		s := strings.TrimSpace(cols[i])
+		if s == "" {
+			return "0"
+		}
+		if _, err := strconv.Atoi(s); err != nil {
+			return "0"
+		}
+		return s
+	}
+	flag01 := func(i int) string {
+		if get(i) != "0" {
+			return "1"
+		}
+		return "0"
+	}
+	out := []string{
+		get(skActionKind),
+		flag01(skTargetRequired),
+		flag01(skTargetLand),
+		flag01(skTargetSelf),
+		flag01(skTargetAlly),
+		flag01(skTargetParty),
+	}
+	words, ok := paramWords(cols)
+	if !ok {
+		return append(out, "0", "0", "0", "0", "0", "0", "0", "")
+	}
+	entries, _, complete := skillparam.Walk(words)
+	find := func(c skillparam.Code) (skillparam.Entry, bool) {
+		for _, e := range entries {
+			if e.Code == c {
+				return e, true
+			}
+		}
+		return skillparam.Entry{}, false
+	}
+	value := func(e skillparam.Entry, k int) string {
+		if e.Index+1+k >= len(words) || k+1 >= e.Run {
+			return "0"
+		}
+		return strconv.Itoa(int(words[e.Index+1+k]))
+	}
+	dura := "0"
+	if e, ok := find("dura"); ok {
+		dura = value(e, 0)
+	}
+	out = append(out, dura)
+	for _, c := range []skillparam.Code{"cbuf", "nbuf", "bbuf", "lnks"} {
+		_, ok := find(c)
+		if !ok && !complete && !literalAbsent(cols, []skillparam.Code{c}) {
+			ok = true
+		}
+		if ok {
+			out = append(out, "1")
+		} else {
+			out = append(out, "0")
+		}
+	}
+	tele0, tele1 := "0", "0"
+	if e, ok := find("tele"); ok {
+		tele0, tele1 = value(e, 0), value(e, 1)
+	}
+	out = append(out, tele0, tele1)
+	var runs []string
+	for _, e := range entries {
+		if _, publishes := skillparam.Contributions[e.Code]; !publishes {
+			continue
+		}
+		vals := make([]string, 0, e.Run-1)
+		for k := 0; k+1 < e.Run; k++ {
+			vals = append(vals, value(e, k))
+		}
+		runs = append(runs, string(e.Code)+":"+strings.Join(vals, ","))
+	}
+	return append(out, strings.Join(runs, ";"))
 }
 
 // cooldownGroup is the skill's cooldown group as the CooldownGroup column:

@@ -1064,6 +1064,9 @@ func main() {
 	go session.RunRegen(ctx, hub, chars, session.RegenDeps{
 		Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker,
 	}, logger)
+	// Timed buffs end at their end time (round 616): the book's expiry
+	// pass, broadcasting OpBuffEnd and the owner's new run speed.
+	go session.RunBuffTicker(ctx, hub, logger)
 	// The potion queue (round 509): an absolute HP/MP potion lands in five
 	// steps of amount/5, the first at once and the rest one per second
 	// (FUN_0049a5b0 / FUN_0049a510 from CGObjPC::PeriodicUpdate), each step
@@ -1342,6 +1345,8 @@ func main() {
 		session.GroundItemHandler(chars, hub, ground, inv, parties),
 		session.LearnSkillHandler(chars, skills, refItems),
 		session.UseSkillHandlerWithDrops(chars, eq, refItems, gpSkills, hub, monsters, quests, inv, refItems, zerkTracker, manaTracker, parties, ground, dropSrc, potions),
+		// OpBuffCancel (round 616): the right-click cancel of a buff.
+		session.BuffHandler(chars, hub),
 		// OpRevive (round 549): answered whatever the flag says -- with it off
 		// nobody is ever dead and the reply is "not dead", which no client
 		// asks for since none is dead.

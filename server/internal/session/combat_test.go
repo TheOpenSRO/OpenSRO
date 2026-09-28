@@ -61,8 +61,9 @@ func TestAttackResultCarriesMonsterID(t *testing.T) {
 	if *got != *want {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
-	// An older server's payload: cut the trailing id off.
-	old, err := DecodeAttackResult(enc[:len(enc)-8])
+	// An older server's payload: cut the trailing id (and round 616's
+	// targetType byte after it) off.
+	old, err := DecodeAttackResult(enc[:len(enc)-9])
 	if err != nil {
 		t.Fatalf("DecodeAttackResult(old): %v", err)
 	}

@@ -301,6 +301,24 @@ type AttackResult struct {
 	// so a client that stops at 34 bytes still decodes; 0 means unknown (an
 	// old server, or a refusal before the target was resolved).
 	MonsterID int64
+
+	// TargetType echoes the OpUseSkill request's targetType (round 616,
+	// docs/protocol/skill_buffs.md), a trailing u8 after MonsterID, so the
+	// client can tell which request a result answers: a keep-up repeat, a
+	// plain swing and a monster-initiated result carry TargetEntity (1).
+	// Only a skill reply echoing TargetNone (0) or TargetGround (2) sets
+	// HasTargetType; the zero value encodes 1, and a decoded 1 leaves both
+	// fields zero. Read it through EchoedTargetType.
+	TargetType    uint8
+	HasTargetType bool
+}
+
+// EchoedTargetType is the targetType the result carries on the wire.
+func (r *AttackResult) EchoedTargetType() uint8 {
+	if r.HasTargetType {
+		return r.TargetType
+	}
+	return TargetEntity
 }
 
 func (r *AttackResult) Encode() []byte {
@@ -332,6 +350,8 @@ func (r *AttackResult) Encode() []byte {
 	}
 	// Trailing, additive: see MonsterID's doc comment.
 	buf = append(buf, encodeInt64(r.MonsterID)...)
+	// Trailing again (round 616): the echoed targetType.
+	buf = append(buf, r.EchoedTargetType())
 	return append(out, buf...)
 }
 
@@ -371,6 +391,9 @@ func DecodeAttackResult(data []byte) (*AttackResult, error) {
 	}
 	if len(rest) >= 42 {
 		r.MonsterID = int64(binary.LittleEndian.Uint64(rest[34:42]))
+	}
+	if len(rest) >= 43 && rest[42] != TargetEntity {
+		r.TargetType, r.HasTargetType = rest[42], true
 	}
 	return r, nil
 }

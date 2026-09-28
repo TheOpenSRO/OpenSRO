@@ -275,6 +275,14 @@ func markDead(deps strikeDeps, characterID int64, now time.Time) bool {
 		deps.potions.drop(characterID)
 	}
 	keepUp.Cancel(characterID)
+	// A death ends every buff (round 616). OURS, disclosed: the retail
+	// death path was not traced to a book clear -- GObjPC_OnDeath (0x4e6980)
+	// holds none, and CGObjChar::SetLifeState (0x4a9c80) on state 2 calls an
+	// unidentified +0x188 member's slot 4 -- so this is the observable rule
+	// chosen, not a read one (docs/protocol/skill_buffs.md, OPEN).
+	if changed {
+		endBuffsOf(deps.hub, characterID)
+	}
 	return changed
 }
 

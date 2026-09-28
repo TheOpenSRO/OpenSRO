@@ -1333,6 +1333,14 @@ srrevamp does"), which uses `ActionKindInstant` as its first gate. What a build 
 (`ApplySkillParamsToChar`, 43 fields -> ~60 ParamKeeper ids), the duration, the end path and both
 packets (`0xB0BD` start, `0xB072` end).
 
+**WIRED, round 616** (`internal/buff`, `session/buffs.go`; the full record is `skill_buffs.md`):
+a kind-3 cast starts a record, `BuffEndsAt` ends it (strictly after, as `elapsed > dura` reads),
+and `hste`/`hst3` move the run speed. Read on the way: `hste` writes 23/24 at slot 2 only while
+the speed holder `pc+0xc24` is empty, and `SkillAction_BuffEnd` empties it (`book[0x7d]`, the book
+being `pc+0xa30`); the recast rule in `FUN_0059d870` (same GroupID: a lower Basic_Level is refused
+0x300c, else the old record ends); the dispel's `nbuf` refusal (`FUN_0059eff0`) applies to a record
+whose `ctx+0x20 != 1`, i.e. one another caster put on you.
+
 ## The 20 "variable-length" codes: 19 markers and 1 terminator (2026-09-18)
 
 The section above and the table below call 20 codes "variable-length" and say a walk cannot pass

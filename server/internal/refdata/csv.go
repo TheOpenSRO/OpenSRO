@@ -432,6 +432,12 @@ var skillCSVColumns = []string{
 	// bit mask (see Skill.SitGate). A strict suffix: an older export loads 0,
 	// no refusal, which is what the read gate does for most skills.
 	"SitGate",
+	// Appended later (round 616): the buff and self-cast columns (see
+	// Skill.ActionKind and what follows it). A strict suffix: an older export
+	// loads zero for all of them -- an instant action with no buff, no ground
+	// cast and no marker, which is what every skill was before.
+	"ActionKind", "TargetRequired", "TargetLand", "TargetSelf", "TargetAlly", "TargetParty",
+	"DuraMs", "Cbuf", "Nbuf", "Bbuf", "Lnks", "Tele0", "Tele1", "BuffParams",
 }
 
 // skillCSVRequiredColumns is the prefix every skill export must carry; the
@@ -602,6 +608,35 @@ func parseSkillRow(f []string) (Skill, error) {
 	// The motion-state refusals (round 607), optional in the same way.
 	if len(f) > 46 {
 		sk.SitGate = parseInt(f[46])
+	}
+	// The buff and self-cast columns (round 616), optional in the same way:
+	// each is read only when present, so an export cut anywhere in the run
+	// still loads.
+	intAt := func(i int, dst *int) {
+		if len(f) > i {
+			*dst = parseInt(f[i])
+		}
+	}
+	boolAt := func(i int, dst *bool) {
+		if len(f) > i {
+			*dst = parseInt(f[i]) != 0
+		}
+	}
+	intAt(47, &sk.ActionKind)
+	boolAt(48, &sk.TargetRequired)
+	boolAt(49, &sk.TargetLand)
+	boolAt(50, &sk.TargetSelf)
+	boolAt(51, &sk.TargetAlly)
+	boolAt(52, &sk.TargetParty)
+	intAt(53, &sk.DuraMs)
+	boolAt(54, &sk.Cbuf)
+	boolAt(55, &sk.Nbuf)
+	boolAt(56, &sk.Bbuf)
+	boolAt(57, &sk.Lnks)
+	intAt(58, &sk.Tele0)
+	intAt(59, &sk.Tele1)
+	if len(f) > 60 {
+		sk.BuffParams = strings.TrimSpace(f[60])
 	}
 
 	if err != nil {

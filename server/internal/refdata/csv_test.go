@@ -563,10 +563,51 @@ func TestSkillCSVSitGateIsAStrictSuffix(t *testing.T) {
 		t.Fatalf("an export predating SitGate: %+v, %v; want SitGate 0", sk.SitGate, err)
 	}
 	withCol := append(append([]string{}, old...), "3")
-	if len(withCol) != len(skillCSVColumns) || skillCSVColumns[46] != "SitGate" {
-		t.Fatalf("test premise: %d fields against %d columns, last %q", len(withCol), len(skillCSVColumns), skillCSVColumns[len(skillCSVColumns)-1])
+	if len(withCol) != 47 || skillCSVColumns[46] != "SitGate" {
+		t.Fatalf("test premise: %d fields, column 46 %q", len(withCol), skillCSVColumns[46])
 	}
 	if sk, err = parseSkillRow(withCol); err != nil || sk.SitGate != 3 {
 		t.Errorf("SitGate = %d (err %v), want 3", sk.SitGate, err)
+	}
+}
+
+// The buff and self-cast columns (round 616) are a strict suffix: an export
+// predating them loads an instant action with nothing set, and the columns,
+// when present, are read in their order -- Ghost Walk B lv1's and Grass Walk A
+// lv1's values (MEASURED on the retail rows, typed here as test data).
+func TestSkillCSVBuffColumnsAreAStrictSuffix(t *testing.T) {
+	old := make([]string, 47) // through SitGate
+	for i := range old {
+		old[i] = "0"
+	}
+	old[2] = "SKILL_TEST"
+	sk, err := parseSkillRow(old)
+	if err != nil || sk.ActionKind != 0 || sk.TargetLand || sk.DuraMs != 0 || sk.HasTele() || sk.BuffParams != "" {
+		t.Fatalf("an export predating the buff columns: %+v, %v", sk, err)
+	}
+	if skillCSVColumns[47] != "ActionKind" || skillCSVColumns[60] != "BuffParams" || len(skillCSVColumns) != 61 {
+		t.Fatalf("test premise: columns %q..%q, %d in all", skillCSVColumns[47], skillCSVColumns[len(skillCSVColumns)-1], len(skillCSVColumns))
+	}
+	ghost := append(append([]string{}, old...), "0", "1", "1", "0", "0", "0", "0", "0", "0", "0", "0", "500", "100", "")
+	if sk, err = parseSkillRow(ghost); err != nil || !sk.TargetRequired || !sk.TargetLand || sk.Tele0 != 500 || sk.Tele1 != 100 || !sk.HasTele() {
+		t.Fatalf("Ghost Walk's columns: %+v, %v", sk, err)
+	}
+	grass := append(append([]string{}, old...), "3", "0", "0", "0", "0", "0", "355462", "0", "1", "0", "1", "0", "0", "hste:20;defr:5,6")
+	sk, err = parseSkillRow(grass)
+	if err != nil || sk.ActionKind != 3 || sk.DuraMs != 355462 || !sk.Nbuf || !sk.Lnks || sk.Cbuf || sk.Bbuf || sk.HasTele() {
+		t.Fatalf("Grass Walk's columns: %+v, %v", sk, err)
+	}
+	if v, ok := sk.BuffParam("hste"); !ok || len(v) != 1 || v[0] != 20 {
+		t.Errorf("BuffParam(hste) = %v, %v", v, ok)
+	}
+	if v, ok := sk.BuffParam("defr"); !ok || len(v) != 2 || v[1] != 6 {
+		t.Errorf("BuffParam(defr) = %v, %v", v, ok)
+	}
+	if _, ok := sk.BuffParam("apau"); ok {
+		t.Error("BuffParam found a run the row does not carry")
+	}
+	// Cut part-way through the run: what is there is read.
+	if sk, err = parseSkillRow(grass[:54]); err != nil || sk.ActionKind != 3 || sk.DuraMs != 355462 || sk.Nbuf {
+		t.Fatalf("a cut export: %+v, %v", sk, err)
 	}
 }

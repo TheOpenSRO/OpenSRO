@@ -925,6 +925,30 @@ layer-key lead). Left open:
 - **The `.o2` skip bit** (below, "`.o2` list semantics"): 240 list-2 records that retail does not
   build are drawn. None of them is seasonal.
 
+### Buffs on the server (skills epic, round 616) — **started: the book, Grass Walk's speed, cancel, Ghost Walk**
+The server starts an action-kind-3 cast as a record in the caster's book, ends it at its time or
+on cancel, and moves the caster for a Ghost Walk; the wire and every rule's source are in
+`docs/protocol/skill_buffs.md`. srrevamp-01 needs the skills CSV re-exported and re-imported
+(`deploy/README.md`, "ROUND 616"). Left open, each with what is already read:
+- [ ] **The other publishing params.** Only `hste`/`hst3` (run speed) reach anything. `defr`,
+      `defp`, `apau`/`apru`, `hpi`/`mpi`, `irgc`, `er`/`terd`/`thrd` are read in `0x594ac0` (the
+      protocol doc lists their param/slot writes) but damage, defence and HP/MP are computed
+      without ParamKeeper slots, so each needs its own hook into `combat`/`stats.go`.
+- [ ] **The imbues' `att`** on the caster's later blows (Ice River Force & co.): the buff starts,
+      the extra damage is not dealt.
+- [ ] **Toggles and summons** (kind 3 without `dura`): `onff`'s MP drain and end, `summ`'s lifetime.
+      Today they run until cancelled, a death or a logout.
+- [ ] **Debuffs on a hostile target** (Target_Required 1 with only enemy groups -- Water Cancel,
+      the Warlock DOTs): not started; they keep the old path. Monsters would need books.
+- [ ] **Whom a friendly TR-1 buff lands on** with nothing friendly selected (spec §6 item 3), and
+      party/ally targets at all. Today: the caster.
+- [ ] **The Ghost Walk navmesh test** (`DAT_00cc387c` vtable `+0x30`): the server has no navmesh;
+      the landing point is the clamped point. `tele` value[0] (500) is unread.
+- [ ] **The recast rule's other branches**: `dttp` groups and the `+0x290` field (FUN_0059d870).
+- [ ] **Retail's death and teleport rules for buffs** (ours: a death clears, a zone change keeps),
+      buffs restored at login (ctx+0xc bits 4|8), the `skc` category ends (`FUN_005a16c0`), and
+      whether retail re-sends buffs on entering view (ours: yes).
+
 ## Parked, with the state written down
 
 ### Moat water

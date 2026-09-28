@@ -124,7 +124,6 @@ var baseline = map[string]string{
 	"ArmorClassOf":        "internal/equipment/defaultwear.go",
 	"ArmourLossSlot":      "internal/durability/durability.go",
 	"BonusTier":           "internal/equipment/itemset.go",
-	"BuffEndsAt":          "internal/skillparam/paramblock.go",
 	"CanCreate":           "internal/party/party.go",
 	"CanDeclareWar":       "internal/guild/war.go",
 	"CanRequestAlliance":  "internal/guild/alliance.go",

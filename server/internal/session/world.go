@@ -746,6 +746,14 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 		}
 		keepUp.Cancel(left.CharacterID)
 		motions.clear(left.CharacterID)
+		// The book goes with the character (round 616): the object's
+		// teardown clears its active-effect book (CGObjChar::vslot_214,
+		// 0x4a72e0 -> FUN_0059c820(pc+0xa30), READ; that it runs on logout is
+		// INFERRED). Retail restores some buffs on the next login (a record
+		// with ctx+0xc bits 4 and 8 ends on its saved remaining time,
+		// skill_params.md) -- not modelled, OPEN. Everyone left gets
+		// OpEntityLeft below, which takes the owner's buffs with it.
+		buffBooks.EndAll(left.CharacterID)
 		savePosition(chars, sess, left)
 		msg := &EntityLeft{CharacterID: left.CharacterID}
 		for _, other := range remaining {
@@ -864,6 +872,16 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	for _, other := range others {
 		other.Session.Send(&proto.Packet{Opcode: OpEntityEntered, Data: entered.Encode()})
 	}
+	// The client's own character id (round 616, OpSelfID), after the
+	// world-entry messages and before any buff that may name it.
+	if err := sess.Send(&proto.Packet{Opcode: OpSelfID, Data: (&SelfID{CharacterID: owned.ID}).Encode()}); err != nil {
+		return err
+	}
+	// The zone's active buffs, after the snapshots that name their owners
+	// (round 616, buffs.go; OURS).
+	if e, inWorld := hub.EntityBySession(sess.ID()); inWorld {
+		sendBuffsInView(hub, e, time.Now())
+	}
 	return nil
 }
 
@@ -966,6 +984,11 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 	for _, other := range othersNew {
 		other.Session.Send(&proto.Packet{Opcode: OpEntityEntered, Data: entered.Encode()})
 	}
+	// A zone change keeps the book (OURS: whether retail's teleport keeps
+	// buffs was not read); the new zone learns them, and the mover learns its
+	// new neighbours' (round 616, buffs.go).
+	arrived.Session = sess
+	sendBuffsInView(hub, arrived, time.Now())
 	return true, nil
 }
 

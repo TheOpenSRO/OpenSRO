@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/berserk"
+	"github.com/OpenSRO/srrevamp/server/internal/buff"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/durability"
@@ -246,16 +247,44 @@ func DecodeLearnSkillResult(data []byte) (*LearnSkillResult, error) {
 }
 
 // UseSkillRequest is the OpUseSkill payload.
+//
+// TargetType and the ground point are a strict suffix (round 616,
+// docs/protocol/skill_buffs.md): u8 targetType -- TargetNone (0, none or
+// self), TargetEntity (1) or TargetGround (2) -- and, for TargetGround only,
+// the point as three f32 in the frame OpMove uses. HasTargetType says the
+// suffix is there; a request without it, from any client before round 617,
+// is an entity target with the target in TargetMonsterID, exactly what it
+// meant before. Read the effective value through Target.
 type UseSkillRequest struct {
 	CharacterName   string
 	SkillID         int64
 	TargetMonsterID int64
+	TargetType      uint8
+	HasTargetType   bool
+	X, Y, Z         float32
+}
+
+// Target is the request's targetType: TargetEntity without the suffix.
+func (r *UseSkillRequest) Target() uint8 {
+	if r.HasTargetType {
+		return r.TargetType
+	}
+	return TargetEntity
 }
 
 func (r *UseSkillRequest) Encode() []byte {
 	out := encodeStrings(r.CharacterName)
 	out = append(out, encodeInt64(r.SkillID)...)
 	out = append(out, encodeInt64(r.TargetMonsterID)...)
+	if !r.HasTargetType {
+		return out
+	}
+	out = append(out, r.TargetType)
+	if r.TargetType == TargetGround {
+		out = append(out, encodeFloat32(r.X)...)
+		out = append(out, encodeFloat32(r.Y)...)
+		out = append(out, encodeFloat32(r.Z)...)
+	}
 	return out
 }
 
@@ -268,11 +297,28 @@ func DecodeUseSkillRequest(data []byte) (*UseSkillRequest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding UseSkillRequest: skill id: %w", err)
 	}
-	targetID, _, err := decodeInt64(rest)
+	targetID, rest, err := decodeInt64(rest)
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding UseSkillRequest: target id: %w", err)
 	}
-	return &UseSkillRequest{CharacterName: fields[0], SkillID: skillID, TargetMonsterID: targetID}, nil
+	req := &UseSkillRequest{CharacterName: fields[0], SkillID: skillID, TargetMonsterID: targetID}
+	if len(rest) == 0 {
+		return req, nil // an older client: an entity target
+	}
+	req.TargetType, req.HasTargetType = rest[0], true
+	rest = rest[1:]
+	switch req.TargetType {
+	case TargetNone, TargetEntity:
+	case TargetGround:
+		for _, dst := range []*float32{&req.X, &req.Y, &req.Z} {
+			if *dst, rest, err = decodeFloat32(rest); err != nil {
+				return nil, fmt.Errorf("session: decoding UseSkillRequest: ground point: %w", err)
+			}
+		}
+	default:
+		return nil, fmt.Errorf("session: decoding UseSkillRequest: unknown target type %d", req.TargetType)
+	}
+	return req, nil
 }
 
 // SkillRefStore looks up a real skill's learn requirements -- the mastery it
@@ -604,14 +650,14 @@ func useSkillHandler(
 
 		characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
 		if errStr != "" {
-			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: errStr}).Encode()})
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: errStr}).Encode()})
 		}
 		// A dead character casts nothing (round 549, deadstate.go): the
 		// engine's skill tick runs on a living PC, and even the self-heal
 		// below lands only on a living caster (0x5942c0, GetLifeState == 1).
 		// Before the cooldown and the costs, so a dead cast pays nothing.
 		if deadBySession(hub, sess) {
-			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: deadRefusal}).Encode()})
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: deadRefusal}).Encode()})
 		}
 
 		// Resolve the skill's cooldown and damage bonus. A real learned skill
@@ -690,7 +736,7 @@ func useSkillHandler(
 			// measured. Every other skill is cast from the seat, as the
 			// engine's gate lets it be.
 			if seatedCastRefused(ref.SitGate, characterID, time.Now()) {
-				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: seatedRefusal}).Encode()})
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: seatedRefusal}).Encode()})
 			}
 			castRow = ref
 			skillRange = ref.Range
@@ -725,15 +771,15 @@ func useSkillHandler(
 			cooldown = time.Duration(sk.CooldownSeconds) * time.Second
 			damageBonus = int(sk.DamageBonus)
 		} else {
-			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "no such skill"}).Encode()})
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "no such skill"}).Encode()})
 		}
 
 		knows, err := skills.Knows(ctx, characterID, req.SkillID)
 		if err != nil {
-			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "lookup failed"}).Encode()})
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "lookup failed"}).Encode()})
 		}
 		if !knows {
-			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "skill not known"}).Encode()})
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "skill not known"}).Encode()})
 		}
 
 		// THE WEAPON GATE, recovered from FUN_0058d480: a skill names up to two
@@ -772,7 +818,7 @@ func useSkillHandler(
 			if reqWeapon1 != 0 || reqWeapon2 != 0 {
 				t3, t4, known := equippedWeaponType(ctx, characterID, eq, items)
 				if known && !combat.SkillAllowsWeapon(reqWeapon1, reqWeapon2, t3, t4) {
-					return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "wrong weapon for this skill"}).Encode()})
+					return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "wrong weapon for this skill"}).Encode()})
 				}
 				// SERVICEABILITY, the other half of the cast requirement
 				// (2026-09-21). A cast requirement wants the item present AND
@@ -811,7 +857,7 @@ func useSkillHandler(
 				// A lookup failure permits the cast, the same choice every
 				// other gate here makes.
 				if broken, ok := weaponIsBroken(ctx, characterID, eq); ok && broken {
-					return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "your weapon is broken"}).Encode()})
+					return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "your weapon is broken"}).Encode()})
 				}
 			}
 		} else if len(reqCastReqs) > 0 {
@@ -828,19 +874,19 @@ func useSkillHandler(
 			// equippedTypes), so it never reaches the serviceability calls.
 			worn, known := equippedTypes(ctx, characterID, eq, items)
 			if known && !combat.SkillAllowsEquipment(reqCastReqs, reqCastAll, worn) {
-				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "wrong equipment for this skill"}).Encode()})
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "wrong equipment for this skill"}).Encode()})
 			}
 		}
 
 		lastUsed, everUsed, err := skills.LastUsed(ctx, characterID, req.SkillID)
 		if err != nil {
-			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "lookup failed"}).Encode()})
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "lookup failed"}).Encode()})
 		}
 		now := time.Now()
 		if everUsed && cooldown > 0 {
 			readyAt := lastUsed.Add(cooldown)
 			if now.Before(readyAt) {
-				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "skill on cooldown"}).Encode()})
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "skill on cooldown"}).Encode()})
 			}
 		}
 		// THE SHARED TIMER (round 504). A row with a cooldown group waits on
@@ -852,7 +898,7 @@ func useSkillHandler(
 		// runs before the HP/MP costs, as the per-id check does, so a refused
 		// cast costs nothing. See skillCooldownGroup for the rows it covers.
 		if g := skillCooldownGroup(castRow); g != 0 && !skillGroupCooldowns.Ready(characterID, g, now) {
-			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "skill on cooldown"}).Encode()})
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "skill on cooldown"}).Encode()})
 		}
 
 		// NOT MODELLED, disclosed: AMMUNITION. A skill carrying the `cnsm`
@@ -907,12 +953,65 @@ func useSkillHandler(
 		// Push, so an out-of-reach cast is queued and the keep-up ends itself
 		// when it sees a second action (docs/protocol/auto_command.md, "How an
 		// action arrives" and "The attack tick" phase 3).
-		if refusal := skillCostRefusal(ctx, chars, mp, characterID, hpCost, mpCost); refusal != "" {
-			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: refusal}).Encode()})
+		// THE BUFF AND THE GROUND CAST (round 616, buffs.go and
+		// docs/protocol/skill_buffs.md), decided here, before anything is
+		// spent, because both of their refusals are the engine's gate or
+		// context builder, which run before EngageSkill takes the costs:
+		//
+		//   - A caster buff (startsCasterBuff: action kind 3, Target_Required
+		//     0 or a friendly target group) is refused 0x300c OVERLAP when a
+		//     higher level of the same skill group is already active
+		//     (Skill_CheckUseConditions row 16, 0x58e2fd -> FUN_0059d870).
+		//   - A row carrying 'tele' moves its caster to a point on the ground
+		//     (FUN_005862e0, from the context builders 0x5857b0/0x586700). It
+		//     needs the point -- with none the builder aborts -- and the
+		//     point is the request's ground target; anything else asking for
+		//     a ground cast has no ground move here and is refused.
+		isBuff := startsCasterBuff(castRow)
+		isGround := req.Target() == TargetGround || castRow.HasTele()
+		var groundDest world.Position
+		if isGround {
+			if req.Target() != TargetGround || !castRow.HasTele() || !castRow.TargetLand {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: groundRefusal}).Encode()})
+			}
+			e, inWorld := hub.EntityBySession(sess.ID())
+			if !inWorld {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "not in world"}).Encode()})
+			}
+			// A move in the sit/stand transition is refused, as handleMove
+			// refuses it (the move itself, moveBySkill, stands a seated one).
+			if motions.state(characterID, now) == MotionChangeMotion {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: seatedRefusal}).Encode()})
+			}
+			groundDest = ghostWalkDestination(e.Pos,
+				world.Position{X: float64(req.X), Y: float64(req.Y), Z: float64(req.Z)}, float64(castRow.Tele1))
 		}
-		if !noCombat && !zeroDmg && !skillInReach(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID, skillRange) {
+		// A TARGETTYPE 0 CAST (round 616) applies to its caster, and the
+		// monster field is ignored. Retail's skill tick clears the action
+		// context's target vector for a Target_Required 0 row (0x4ae6f0,
+		// auto_command.md) and the targets then come from the row's 'efr'
+		// collector around the caster -- which srrevamp does not build
+		// (skillparam.EfrKind*; OPEN): the 23 class rows of that shape that
+		// carry 'att' (SKILL_EU_BARD_BATTLAA_EXPLOSION_A/B, 'efr' kind 1,
+		// radius 80, five targets -- MEASURED) resolve no blow here. A
+		// Target_Required 1 row with no friendly group needs its target and
+		// is refused before anything is spent (OURS text); a friendly one
+		// lands on the caster, as the buffs do.
+		selfTarget := req.Target() == TargetNone && !isBuff && !isGround
+		if selfTarget && castRow != nil && castRow.TargetRequired &&
+			!castRow.TargetSelf && !castRow.TargetAlly && !castRow.TargetParty {
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: targetRefusal}).Encode()})
+		}
+		if isBuff && buffBooks.CheckOverlap(characterID, buffSpec(castRow, characterID)) != buff.NotRefused {
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: overlapRefusal}).Encode()})
+		}
+
+		if refusal := skillCostRefusal(ctx, chars, mp, characterID, hpCost, mpCost); refusal != "" {
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: refusal}).Encode()})
+		}
+		if !isBuff && !isGround && !selfTarget && !noCombat && !zeroDmg && !skillInReach(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID, skillRange) {
 			keepUp.Cancel(characterID)
-			res := &AttackResult{MonsterID: req.TargetMonsterID, Error: "too far away"}
+			res := echoed(req, &AttackResult{MonsterID: req.TargetMonsterID, Error: "too far away"})
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: res.Encode()})
 		}
 
@@ -937,13 +1036,13 @@ func useSkillHandler(
 		if hpCost > 0 {
 			hp, _, err := chars.ApplyDamage(ctx, characterID, 0)
 			if err != nil {
-				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "lookup failed"}).Encode()})
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "lookup failed"}).Encode()})
 			}
 			if !combat.CanPaySkillHealth(hp, hpCost) {
-				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "not enough health"}).Encode()})
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "not enough health"}).Encode()})
 			}
 			if _, _, err := chars.ApplyDamage(ctx, characterID, hpCost); err != nil {
-				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "spending health failed"}).Encode()})
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "spending health failed"}).Encode()})
 			}
 		}
 
@@ -953,16 +1052,16 @@ func useSkillHandler(
 		if mp != nil && mpCost > 0 {
 			owned, err := chars.GetByID(ctx, characterID)
 			if err != nil {
-				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "lookup failed"}).Encode()})
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "lookup failed"}).Encode()})
 			}
 			maxMP := owned.MaxMP()
 			if _, ok := mp.Spend(characterID, maxMP, mpCost); !ok {
-				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "not enough mana"}).Encode()})
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "not enough mana"}).Encode()})
 			}
 		}
 
 		if err := skills.RecordUse(ctx, characterID, req.SkillID, now); err != nil {
-			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "recording use failed"}).Encode()})
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "recording use failed"}).Encode()})
 		}
 		// Arm the group with this row's ReuseDelay, as FUN_0064c700 files the
 		// new timer under the +0x8f byte. The engine's delay is ReuseDelay
@@ -981,6 +1080,16 @@ func useSkillHandler(
 		// stops here (the actor's queue rule -- a second action ends the
 		// keep-up), and the plain swings resume only through the hand-off at
 		// the end.
+		//
+		// SELF-CASTS TOO (round 616, a question asked of this line): retail
+		// sends every skill cast -- a buff, Ghost Walk -- as a 0x7074 kind-4
+		// action, and its handler (0x4acc40) Pushes it (0x4ad630) behind a
+		// keep-up in phase 3, which ends itself when it sees the queue at
+		// depth 2 (auto_command.md, READ). No self-buff resumes the swings:
+		// the kind-3 Target_Required-0 class rows carry AutoAttackType 0
+		// (987) or 2 (72), never the 1 the hand-off tests (MEASURED on the
+		// retail skilldata). Whether the retail CLIENT re-sends an attack
+		// after such a cast is its own business (round 617).
 		keepUp.Cancel(characterID)
 
 		// NO DAMAGE, and this is the engine's own answer rather than a choice.
@@ -1059,8 +1168,16 @@ func useSkillHandler(
 		// comment). On the real rows it affects the five type-1, no-chain,
 		// ZeroDamage rows SKILL_EU_WARRIOR_DUALA_STUN_A_01..05 (ids
 		// 9245-9249): retail hands off after them, and srrevamp does not.
-		if noCombat || zeroDmg {
-			res := &AttackResult{MonsterID: req.TargetMonsterID}
+		//
+		// A CASTER BUFF and a GROUND CAST (round 616) end here too, whatever
+		// their damage columns say: SkillAction_Buff resolves no blow when it
+		// engages (an imbue's 'att' acts on the caster's later blows, which is
+		// not modelled -- OPEN), and Ghost Walk is a move.
+		if isBuff || isGround || selfTarget || noCombat || zeroDmg {
+			res := echoed(req, &AttackResult{MonsterID: req.TargetMonsterID})
+			if selfTarget {
+				res.MonsterID = 0 // the monster field is ignored for a targetType 0 cast
+			}
 			if owned, err := chars.GetByID(ctx, characterID); err == nil && owned != nil {
 				res.PlayerHP = int32(owned.HP)
 				if castRow != nil && owned.HP > 0 {
@@ -1078,7 +1195,17 @@ func useSkillHandler(
 				res.BerserkGauge = int32(zerk.Gauge(characterID))
 				res.BerserkActive = zerk.Active(characterID)
 			}
-			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: res.Encode()})
+			if err := sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: res.Encode()}); err != nil {
+				return err
+			}
+			// The cast is answered first; then the zone hears what it did.
+			if isBuff {
+				startCasterBuff(hub, castRow, characterID, now)
+			}
+			if isGround {
+				moveBySkill(sess, hub, chars, req.SkillID, groundDest, now)
+			}
+			return nil
 		}
 
 		// THE SKILL'S OWN REACH was tested above, before the costs (round
@@ -1111,6 +1238,15 @@ func useSkillHandler(
 		}
 		return nil
 	}
+}
+
+// echoed marks res as answering req: it carries req's targetType (round 616;
+// AttackResult.TargetType).
+func echoed(req *UseSkillRequest, res *AttackResult) *AttackResult {
+	if req != nil && req.Target() != TargetEntity {
+		res.TargetType, res.HasTargetType = req.Target(), true
+	}
+	return res
 }
 
 // skillCooldownGroup is the cooldown group whose shared timer a cast of ref

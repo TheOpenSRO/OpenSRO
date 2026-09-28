@@ -1,14 +1,20 @@
 package refdata
 
+import (
+	"strconv"
+	"strings"
+)
+
 // Skill is this project's own, deliberately curated subset of the real
 // _RefSkill table's 118 columns (all confirmed as of 2026-08-22, see
 // docs/protocol/refdata_schema.md) -- this keeps only the ones with
 // reasonably confirmed semantics, the same curation approach refdata.Item
 // already uses (it drops _RefObjItem columns like ER_*/PAR_*/BR_* whose
 // exact meaning isn't decoded either). Real column groups not represented
-// here at all: the full targeting-rule bitset (Target_*/TargetGroup_*),
-// weapon-cast requirements, and the 50 generic Param slots -- real, but not
-// curated in yet.
+// here at all: most of the targeting-rule bitset (Target_Required,
+// TargetType_Land and TargetGroup_Self/Ally/Party are curated since round
+// 616; the rest are not), and the 50 generic Param slots beyond the runs the
+// columns below extract -- real, but not curated in yet.
 //
 // CORRECTED 2026-09-18. This note used to say that no column encodes what a
 // skill does in combat, and that the data "plausibly lives in a separate,
@@ -263,6 +269,44 @@ type Skill struct {
 	// caster's motion state at all.
 	SitGate int
 
+	// The buff and self-cast columns (round 616, docs/protocol/skill_buffs.md),
+	// a strict suffix: an export predating them loads every one as zero, which
+	// is exactly the behaviour srrevamp had before -- no buff, no ground cast,
+	// every cast resolved as an instant action.
+	//
+	// ActionKind is the first raw Param word, CRefSkill+0x168, the index
+	// SkillActionHandler (0x589b50) dispatches on: 0 instant, 1 projectile,
+	// 3 a timed buff (SkillAction_Buff 0x5830b0), 4 a stance
+	// (skillparam.ActionKind*).
+	ActionKind int
+	// TargetRequired (+0x94, skilldata column 22), TargetLand (+0x96,
+	// column 24) and TargetSelf/Ally/Party (+0x98/+0x99/+0x9a, columns
+	// 26-28), docs/protocol/skill_fields.md.
+	TargetRequired bool
+	TargetLand     bool
+	TargetSelf     bool
+	TargetAlly     bool
+	TargetParty    bool
+	// DuraMs is 'dura' value[0] (+0x280), the buff's duration in ms:
+	// SkillAction_Buff ends the record when elapsed > dura[0] + the cast
+	// context's extension (skillparam.BuffEndsAt). Zero: the row has no
+	// 'dura'.
+	DuraMs int
+	// The four marker codes the buff paths test (docs/protocol/skill_params.md,
+	// the marker section): 'cbuf' (+0x358), 'nbuf' (+0x35c) -- the dispel
+	// FUN_0059eff0 refuses a record of such a skill that the owner did not
+	// cast itself -- 'bbuf' (+0x360) and 'lnks' (+0x370).
+	Cbuf, Nbuf, Bbuf, Lnks bool
+	// Tele0 and Tele1 are 'tele' (+0x2ec) value[0] and value[1]. FUN_005862e0
+	// clamps a ground cast's destination to Tele1 world units from the caster
+	// (Ghost Walk B lv1: 500, 100). Tele0 is not read there (OPEN). Both
+	// zero: the row has no 'tele'.
+	Tele0, Tele1 int
+	// BuffParams is every run of the row whose code publishes a ParamKeeper
+	// param (skillparam.Contributions), as `code:v0,v1,...;code:...` -- the
+	// values after the code word, in order. See Skill.BuffParam.
+	BuffParams string
+
 	// The mastery this skill belongs to and the mastery level required to learn
 	// it (ReqCommon_Mastery1 / ReqCommon_MasteryLevel1). These are what the
 	// skill window gates a skill on -- a skill is learnable once the character's
@@ -291,6 +335,33 @@ func (s *Skill) HitsFor() int {
 	}
 	return s.HitCount
 }
+
+// BuffParam returns the values of the row's publishing param run code (see
+// BuffParams), and whether the row carries it.
+func (s *Skill) BuffParam(code string) ([]int, bool) {
+	if s == nil || s.BuffParams == "" {
+		return nil, false
+	}
+	for _, run := range strings.Split(s.BuffParams, ";") {
+		c, vals, ok := strings.Cut(run, ":")
+		if !ok || c != code {
+			continue
+		}
+		var out []int
+		for _, v := range strings.Split(vals, ",") {
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil {
+				return nil, false
+			}
+			out = append(out, n)
+		}
+		return out, true
+	}
+	return nil, false
+}
+
+// HasTele reports whether the row carries 'tele', the ground-cast move.
+func (s *Skill) HasTele() bool { return s != nil && (s.Tele0 != 0 || s.Tele1 != 0) }
 
 // The SitGate bits.
 const (

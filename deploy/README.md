@@ -64,7 +64,8 @@ for f in teleportdata.txt teleportlink.txt teleportbuilding.txt; do
                      # a DIRECTORY of three CSVs: 222 points, 292 links, 77 buildings; the server reads it with -teleport-dir
 rm -f itemdata_* skilldata_* npcpos.txt teleport*.txt   # the extracted tables are game data; keep only the CSVs
 
-# The exporter grows a strict-suffix column now and then (latest: skill columns 45 CooldownGroup, round 504,
+# The exporter grows a strict-suffix column now and then (latest: skill columns 47-60, round 616 -- the buff
+# and self-cast columns; before them 45 CooldownGroup, round 504,
 # and 46 SitGate, round 607 -- the skill-use gate's sitting refusals; before them item columns 61-65 -- the three
 # elixir reinforce-rate dwords and the cooltime group/ms, rounds 262-263, 2026-09-19; and the six skill
 # prerequisite columns, round 250);
@@ -79,6 +80,16 @@ rm -f itemdata_* skilldata_* npcpos.txt teleport*.txt   # the extracted tables a
 # retail server refuses to a seated caster (the Cold/Fire walls, the fortress repair kits, the
 # monster transform) can be cast sitting. Check: `SELECT count(*) FROM skills WHERE sit_gate <> 0;`
 # answers 59 on a retail archive.
+#
+# ROUND 616 (buffs, Grass Walk, Ghost Walk) NEEDS THE SAME ON srrevamp-01: re-run `export-refdata
+# -mode skills` with the NEW binary (step 2; the CSV grows to 61 columns), then the NEW
+# `import-refdata` (step 3) -- its store adds the fourteen columns (skills.action_kind,
+# target_required, target_land, target_self/ally/party, dura_ms, cbuf, nbuf, bbuf, lnks, tele0,
+# tele1, buff_params) before it writes the rows -- then restart the server. Until then every
+# skill loads action kind 0 with no 'tele': no buff starts (Grass Walk and the imbues cast as
+# before and do nothing) and Ghost Walk is refused for want of a ground move. Check:
+# `SELECT count(*) FROM skills WHERE action_kind = 3;` answers 2348, and
+# `SELECT count(*) FROM skills WHERE tele1 <> 0;` answers 19, on a retail archive.
 
 # 3. On the server host (CSVs and import-refdata copied to ~/srrevamp-data; Postgres is pinned to
 #    127.0.0.1:5432 by docker-compose.override.yml):
