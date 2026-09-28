@@ -306,6 +306,10 @@ type Skill struct {
 	// param (skillparam.Contributions), as `code:v0,v1,...;code:...` -- the
 	// values after the code word, in order. See Skill.BuffParam.
 	BuffParams string
+	// Lks2 is the row's 'lks2' marker (+0x374, round 616's review): the
+	// recast rule (FUN_0059d870) skips its GroupID branch for a row that
+	// carries it. A suffix after BuffParams; an older export loads false.
+	Lks2 bool
 
 	// The mastery this skill belongs to and the mastery level required to learn
 	// it (ReqCommon_Mastery1 / ReqCommon_MasteryLevel1). These are what the

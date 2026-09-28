@@ -438,6 +438,8 @@ var skillCSVColumns = []string{
 	// cast and no marker, which is what every skill was before.
 	"ActionKind", "TargetRequired", "TargetLand", "TargetSelf", "TargetAlly", "TargetParty",
 	"DuraMs", "Cbuf", "Nbuf", "Bbuf", "Lnks", "Tele0", "Tele1", "BuffParams",
+	// Appended in round 616's review: the 'lks2' marker the recast rule tests.
+	"Lks2",
 }
 
 // skillCSVRequiredColumns is the prefix every skill export must carry; the
@@ -638,6 +640,7 @@ func parseSkillRow(f []string) (Skill, error) {
 	if len(f) > 60 {
 		sk.BuffParams = strings.TrimSpace(f[60])
 	}
+	boolAt(61, &sk.Lks2)
 
 	if err != nil {
 		return Skill{}, err

@@ -944,7 +944,11 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       party/ally targets at all. Today: the caster.
 - [ ] **The Ghost Walk navmesh test** (`DAT_00cc387c` vtable `+0x30`): the server has no navmesh;
       the landing point is the clamped point. `tele` value[0] (500) is unread.
-- [ ] **The recast rule's other branches**: `dttp` groups and the `+0x290` field (FUN_0059d870).
+- [ ] **The recast rule's other branches**: `dttp` groups (36 rows), the `+0x290` field and the
+      Action_Overlap/`ovl2` tail (`FUN_0059db10`) of FUN_0059d870; the `lnks` path
+      (`FUN_0059dc80`, attached-object records); any limit on Target_Required 1 recasts.
+- [ ] **The duration extension** (`ctx+0x24`): `RPBU`/`STDU`/`DTDR` through `FUN_005a0330`'s map at
+      book `+0x244` -- needs whatever files entries there (passive skills, INFERRED).
 - [ ] **Retail's death and teleport rules for buffs** (ours: a death clears, a zone change keeps),
       buffs restored at login (ctx+0xc bits 4|8), the `skc` category ends (`FUN_005a16c0`), and
       whether retail re-sends buffs on entering view (ours: yes).

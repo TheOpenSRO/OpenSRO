@@ -652,6 +652,13 @@ func useSkillHandler(
 		if errStr != "" {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: errStr}).Encode()})
 		}
+		// The character the cast charges is the one it acts on (round 616's
+		// review): the named character must be the one this session has in
+		// the world, or the costs would land on one character and the buff or
+		// the move on another.
+		if e, inWorld := hub.EntityBySession(sess.ID()); !inWorld || e.CharacterID != characterID {
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: notInWorldRefusal}).Encode()})
+		}
 		// A dead character casts nothing (round 549, deadstate.go): the
 		// engine's skill tick runs on a living PC, and even the self-heal
 		// below lands only on a living caster (0x5942c0, GetLifeState == 1).
@@ -976,7 +983,12 @@ func useSkillHandler(
 			}
 			e, inWorld := hub.EntityBySession(sess.ID())
 			if !inWorld {
-				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "not in world"}).Encode()})
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: notInWorldRefusal}).Encode()})
+			}
+			// A NaN or an infinity is no place (round 616's review), refused
+			// before anything is spent.
+			if !finitePosition(req.X, req.Y, req.Z) {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: groundRefusal}).Encode()})
 			}
 			// A move in the sit/stand transition is refused, as handleMove
 			// refuses it (the move itself, moveBySkill, stands a seated one).
@@ -1001,6 +1013,15 @@ func useSkillHandler(
 		if selfTarget && castRow != nil && castRow.TargetRequired &&
 			!castRow.TargetSelf && !castRow.TargetAlly && !castRow.TargetParty {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: targetRefusal}).Encode()})
+		}
+		// The caster's book is held from the recast check to the start, so a
+		// cast that passes the check starts (round 616's review): nothing
+		// else can add a record in between, and the costs below are never
+		// taken for a buff that is then refused.
+		if isBuff {
+			l := buffLock(characterID)
+			l.Lock()
+			defer l.Unlock()
 		}
 		if isBuff && buffBooks.CheckOverlap(characterID, buffSpec(castRow, characterID)) != buff.NotRefused {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: overlapRefusal}).Encode()})
@@ -1195,15 +1216,24 @@ func useSkillHandler(
 				res.BerserkGauge = int32(zerk.Gauge(characterID))
 				res.BerserkActive = zerk.Active(characterID)
 			}
+			// The buff or the move happens before the answer, so a failure
+			// -- the session left the world between the checks and here --
+			// can hand back what the cast took (round 616's review; the
+			// re-use timer is not re-armed, disclosed) and answer a refusal.
+			done := true
+			if isBuff {
+				e, _ := hub.EntityBySession(sess.ID())
+				done = startCasterBuffLocked(hub.EntitiesInZone(e.Zone), castRow, characterID, now)
+			}
+			if isGround && done {
+				done = moveBySkill(sess, hub, chars, req.SkillID, groundDest, now)
+			}
+			if !done {
+				refundSkillCosts(ctx, chars, mp, characterID, hpCost, mpCost)
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: castFailedRefusal}).Encode()})
+			}
 			if err := sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: res.Encode()}); err != nil {
 				return err
-			}
-			// The cast is answered first; then the zone hears what it did.
-			if isBuff {
-				startCasterBuff(hub, castRow, characterID, now)
-			}
-			if isGround {
-				moveBySkill(sess, hub, chars, req.SkillID, groundDest, now)
 			}
 			return nil
 		}
@@ -1237,6 +1267,21 @@ func useSkillHandler(
 			}
 		}
 		return nil
+	}
+}
+
+// refundSkillCosts gives back the HP and MP a cast took when what it was to
+// do could not be done after the costs were paid (round 616's review).
+func refundSkillCosts(ctx context.Context, chars character.Store, mp *mana.Tracker, characterID int64, hpCost, mpCost int) {
+	owned, err := chars.GetByID(ctx, characterID)
+	if err != nil || owned == nil {
+		return
+	}
+	if hpCost > 0 {
+		chars.Heal(ctx, characterID, hpCost, owned.MaxHP())
+	}
+	if mpCost > 0 && mp != nil {
+		mp.Restore(characterID, owned.MaxMP(), mpCost)
 	}
 }
 

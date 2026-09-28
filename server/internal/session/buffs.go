@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/buff"
@@ -65,7 +66,19 @@ const (
 const PlayerRunSpeed = 50
 
 // buffBooks is every character's book of active buffs.
-var buffBooks = buff.NewBooks()
+var buffBooks = buff.NewBooks(PlayerRunSpeed)
+
+// buffLocks serialise, per owner, a book operation and the packets it sends
+// (round 616's review): the speed a packet carries is the one the operation
+// computed under the book's lock, and a later operation's packets cannot
+// overtake an earlier one's. Per owner, so one slow client stalls only its
+// own buffs.
+var buffLocks sync.Map // int64 -> *sync.Mutex
+
+func buffLock(ownerID int64) *sync.Mutex {
+	l, _ := buffLocks.LoadOrStore(ownerID, &sync.Mutex{})
+	return l.(*sync.Mutex)
+}
 
 // overlapRefusal is 0x300c UIIT_SKILL_USE_FAIL_OVERLAP's text, MEASURED in
 // the retail textuisystem.txt.
@@ -76,6 +89,14 @@ const overlapRefusal = "The selected item cannot be used together or the skill i
 // context's position list is empty, and the context builder aborts (READ).
 // The text is OURS.
 const groundRefusal = "select a location on the ground"
+
+// notInWorldRefusal answers a cast whose named character is not the one the
+// session has in the world; castFailedRefusal one whose buff or move could
+// not be done after the costs (they are refunded). Texts OURS.
+const (
+	notInWorldRefusal = "not in world"
+	castFailedRefusal = "the skill could not be used"
+)
 
 // targetRefusal answers a targetType 0 cast of a skill that needs a hostile
 // target. The text is OURS.
@@ -245,15 +266,16 @@ func buffSpec(ref *refdata.Skill, casterID int64) buff.Spec {
 	s := buff.Spec{
 		SkillID: ref.ID, GroupID: ref.GroupID, Level: ref.BasicLevel, CasterID: casterID,
 		DuraMs: ref.DuraMs, Cbuf: ref.Cbuf, Nbuf: ref.Nbuf,
+		Lnks: ref.Lnks, Lks2: ref.Lks2, TargetRequired: ref.TargetRequired,
 	}
 	if v, ok := ref.BuffParam("hste"); ok && len(v) > 0 {
 		s.HasHste, s.Hste = true, v[0]
 	}
+	if v, ok := ref.BuffParam("hst2"); ok && len(v) > 0 {
+		s.HasHst2, s.Hst2 = true, v[0]
+	}
 	if v, ok := ref.BuffParam("hst3"); ok && len(v) > 0 {
 		s.HasHst3, s.Hst3 = true, v[0]
-	}
-	if _, ok := ref.BuffParam("hst2"); ok {
-		s.HasHst2 = true
 	}
 	return s
 }
@@ -305,18 +327,20 @@ func buffStartPacket(rec buff.Record, now time.Time, runSpeed uint32) []byte {
 	return msg.Encode()
 }
 
-// broadcastBuffEnd sends one OpBuffEnd for ended (all of one owner, already
-// out of its book) to the owner's zone. runSpeed is the owner's new run speed
-// when one of the ended records had written to it, 0 (unchanged) otherwise.
-func broadcastBuffEnd(hub *world.Hub, ownerID int64, ended []buff.Record) {
-	if len(ended) == 0 {
-		return
+// speedField is what a packet's runSpeed carries: the new speed when the
+// operation changed it, 0 (unchanged) otherwise.
+func speedField(sp buff.Speed) uint32 {
+	if sp.Changed {
+		return sp.RunSpeed
 	}
-	speed := uint32(0)
-	if buff.Contributes(ended...) {
-		speed = buffBooks.RunSpeed(ownerID, PlayerRunSpeed)
-	}
-	to := zoneOf(hub, ownerID)
+	return 0
+}
+
+// broadcastBuffEnd sends OpBuffEnd for ended (all of one owner, already out
+// of its book) to the owner's zone, with the speed the ending operation
+// computed. The caller holds buffLock(ownerID).
+func broadcastBuffEnd(to []world.Entity, ownerID int64, ended []buff.Record, sp buff.Speed) {
+	speed := speedField(sp)
 	// The count is a byte on the wire; a book this large does not occur,
 	// but a split keeps the packet honest if it ever does.
 	for len(ended) > 0 {
@@ -333,35 +357,40 @@ func broadcastBuffEnd(hub *world.Hub, ownerID int64, ended []buff.Record) {
 	}
 }
 
-// startCasterBuff applies ref to casterID at now and tells the zone: an
-// OpBuffEnd for the records the recast rule ended, then the OpBuffStart,
-// whose runSpeed is the caster's new run speed when the new record wrote to
-// it (0 otherwise). The refusal was checked before the costs
-// (buffBooks.CheckOverlap); a refusal here -- a race between two casts --
-// starts nothing.
-func startCasterBuff(hub *world.Hub, ref *refdata.Skill, casterID int64, now time.Time) (buff.Record, bool) {
-	rec, ended, refused := buffBooks.Start(casterID, buffSpec(ref, casterID), now)
+// startCasterBuffLocked applies ref to casterID at now and tells zone: an
+// OpBuffEnd for the record the recast rule ended, then the OpBuffStart. The
+// caller holds buffLock(casterID) from its own buffBooks.CheckOverlap to
+// here, so the refusal cannot change in between; false is returned only if
+// it did anyway.
+func startCasterBuffLocked(zone []world.Entity, ref *refdata.Skill, casterID int64, now time.Time) bool {
+	rec, ended, refused, sp := buffBooks.Start(casterID, buffSpec(ref, casterID), now)
 	if refused != buff.NotRefused {
-		return buff.Record{}, false
+		return false
 	}
-	broadcastBuffEnd(hub, casterID, ended)
-	speed := uint32(0)
-	if buff.Contributes(rec) {
-		speed = buffBooks.RunSpeed(casterID, PlayerRunSpeed)
-	}
-	sendToAll(zoneOf(hub, casterID), OpBuffStart, buffStartPacket(rec, now, speed))
-	return rec, true
+	// Both packets carry the speed the one operation left: the end's and the
+	// start's agree, whichever the client applies last.
+	broadcastBuffEnd(zone, casterID, ended, sp)
+	sendToAll(zone, OpBuffStart, buffStartPacket(rec, now, speedField(sp)))
+	return true
 }
 
 // endBuffsOf clears ownerID's whole book and tells its zone (a death).
 func endBuffsOf(hub *world.Hub, ownerID int64) {
-	broadcastBuffEnd(hub, ownerID, buffBooks.EndAll(ownerID))
+	l := buffLock(ownerID)
+	l.Lock()
+	defer l.Unlock()
+	ended, sp := buffBooks.EndAll(ownerID)
+	broadcastBuffEnd(zoneOf(hub, ownerID), ownerID, ended, sp)
 }
 
 // expireBuffs is one pass of the ticker: every record past its end ends.
 func expireBuffs(hub *world.Hub, now time.Time) {
-	for owner, ended := range buffBooks.Expire(now) {
-		broadcastBuffEnd(hub, owner, ended)
+	for _, owner := range buffBooks.DueOwners(now) {
+		l := buffLock(owner)
+		l.Lock()
+		ended, sp := buffBooks.ExpireOwner(owner, now)
+		broadcastBuffEnd(zoneOf(hub, owner), owner, ended, sp)
+		l.Unlock()
 	}
 }
 
@@ -395,12 +424,31 @@ func sendBuffsInView(hub *world.Hub, arriving world.Entity, now time.Time) {
 	if hub == nil {
 		return
 	}
+	// A record that writes the run speed carries its owner's current one
+	// (round 616's review), so a client arriving -- or the owner's own, after
+	// a zone change -- learns the speed along with the buff.
+	packets := func(owner int64) [][]byte {
+		recs := buffBooks.Active(owner)
+		if len(recs) == 0 {
+			return nil
+		}
+		speed := buffBooks.RunSpeed(owner)
+		var out [][]byte
+		for _, rec := range recs {
+			s := uint32(0)
+			if buff.Contributes(rec) {
+				s = speed
+			}
+			out = append(out, buffStartPacket(rec, now, s))
+		}
+		return out
+	}
 	for _, other := range hub.EntitiesInZone(arriving.Zone) {
-		for _, rec := range buffBooks.Active(other.CharacterID) {
-			arriving.Session.Send(&proto.Packet{Opcode: OpBuffStart, Data: buffStartPacket(rec, now, 0)})
+		for _, data := range packets(other.CharacterID) {
+			arriving.Session.Send(&proto.Packet{Opcode: OpBuffStart, Data: data})
 		}
 	}
-	mine := buffBooks.Active(arriving.CharacterID)
+	mine := packets(arriving.CharacterID)
 	if len(mine) == 0 {
 		return
 	}
@@ -408,8 +456,8 @@ func sendBuffsInView(hub *world.Hub, arriving world.Entity, now time.Time) {
 		if other.CharacterID == arriving.CharacterID || other.Session == nil {
 			continue
 		}
-		for _, rec := range mine {
-			other.Session.Send(&proto.Packet{Opcode: OpBuffStart, Data: buffStartPacket(rec, now, 0)})
+		for _, data := range mine {
+			other.Session.Send(&proto.Packet{Opcode: OpBuffStart, Data: data})
 		}
 	}
 }
@@ -432,11 +480,20 @@ func BuffHandler(chars character.Store, hub *world.Hub) gateway.Handler {
 		if errStr != "" {
 			return nil
 		}
-		rec, res := buffBooks.Cancel(characterID, req.SkillID, req.Token)
+		// The named character must be the one this session has in the
+		// world (round 616's review), as for a cast.
+		e, inWorld := hub.EntityBySession(sess.ID())
+		if !inWorld || e.CharacterID != characterID {
+			return nil
+		}
+		l := buffLock(characterID)
+		l.Lock()
+		defer l.Unlock()
+		rec, res, sp := buffBooks.Cancel(characterID, req.SkillID, req.Token)
 		if res != buff.Cancelled {
 			return nil
 		}
-		broadcastBuffEnd(hub, characterID, []buff.Record{rec})
+		broadcastBuffEnd(hub.EntitiesInZone(e.Zone), characterID, []buff.Record{rec}, sp)
 		return nil
 	}
 }
@@ -453,6 +510,20 @@ func ghostWalkDestination(from, to world.Position, d float64) world.Position {
 	}
 	k := d / dist
 	return world.Position{X: from.X + dx*k, Y: from.Y + dy*k, Z: from.Z + dz*k}
+}
+
+// finitePosition reports whether all three coordinates are finite numbers:
+// a NaN or an infinity from the wire is refused before anything is spent
+// (round 616's review) -- the clamp's arithmetic would carry it into the
+// stored position.
+func finitePosition(x, y, z float32) bool {
+	for _, v := range []float32{x, y, z} {
+		f := float64(v)
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return false
+		}
+	}
+	return true
 }
 
 // moveBySkill puts the session's character at pos the way a move does

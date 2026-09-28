@@ -7199,6 +7199,56 @@ so each behaviour was also mutated away on this tree, and its test fails:
 	(no OpSelfID send)         --- FAIL: TestSelfIDIsSentOnEntry
 	                           buffs_test.go:455: attempt 0: no OpSelfID: ... i/o timeout
 
+### Round 616, review follow-up
+
+The review's confirmed findings, each fixed with a test that fails without it:
+
+- **The recast rule, as the gate reads it** (reviewer's `rv616_58d8f0.c` / `rv616_59d870.c`, and
+  `FUN_0059dc80` read this time): `FUN_0059d870` runs only for a row with no `lnks` and
+  Target_Required 0. The `lnks` path is `FUN_0059dc80`, reached only with `efr` (`+0x294`), and it
+  compares attached-object records srrevamp does not keep -- so an `lnks` row now gets no overlap
+  check (OPEN), and a Target_Required 1 row gets none either (round 616 had extended the rule to
+  them, OURS; withdrawn). The GroupID branch gained its three missing conditions: the new row's
+  `lks2` is 0 (a new CSV column 61, 160 retail rows), an `lnks` record the owner cast on itself is
+  skipped, and GroupID 0 never matches. The `dttp` (36 rows), `+0x290` and `FUN_0059db10`
+  (Action_Overlap / `ovl2`) parts stay OPEN. That the old record ends before the new one engages
+  is INFERRED.
+- **The fixtures**: `csv_test.go`'s Grass Walk row claimed MEASURED with invented markers and a
+  `defr` run; it is now the real row (id 113: no markers, `hste:20`), with the markers on a row
+  labelled SYNTHETIC. The session fixtures now carry their retail ids and groups (Grass Walk A lv2
+  id 1276, the imbue group 237, the Bard's Explosion id 11265 group 726, Smash A attack type 5) or
+  say SYNTHETIC.
+- **Non-finite coordinates**: a Ghost Walk point or an `OpMove` with a NaN or an infinity is
+  refused (before any cost) or dropped.
+- **A stale session's disconnect** no longer clears the book while the character is still in the
+  world on a live session.
+- **The charged character is the moved one**: a cast or a cancel must name the character this
+  session has in the world.
+- **`hst2`**, from `0x594ac0` and `0x5829d0`: it removes the holder's speed writes
+  (`Param_RefreshContributions` erases the holder-keyed entries), writes its own, holds when none
+  held, and at its end writes the holder's `hste` back. `SKILL_EU_ROG_DAGGERA_SPEED_A_01` (id
+  9834, hst2 48, MEASURED) over Grass Walk A lv1 runs at 74; at its end Grass Walk's 60 returns.
+
+And the plausible ones: book operations and their packets run under a per-owner lock with the
+speed each operation computed under the book's lock (a recast's end and start agree); a zone
+change resends the owner's own speed-writing records with the real speed; a buff or move that
+cannot be done after the costs refunds HP and MP (the re-use timer stays armed, disclosed) -- the
+broadcasts now precede the `OpAttackResult`; the duration-extension setter in `0x5830b0`
+(`RPBU`/`STDU`/`DTDR` through `FUN_005a0330`'s map at book `+0x244`) is cited, with its row
+counts, and left OPEN because srrevamp keeps no passive records.
+
+Negatives (each fix removed on the new tree):
+
+	(gate conditions dropped)  buff_test.go:173: a Target_Required 1 row is not checked: refused 1, ended 0; ...
+	(lks2/lnks/group 0)        buff_test.go:173: an 'lks2' row skips the GroupID branch: refused 1, ended 0; ...
+	(hst2 keeps the holder)    buff_test.go:210: with the dagger speed over Grass Walk: {RunSpeed:89 Changed:true}, want 74 ...
+	(hst2 end, no restore)     buff_test.go:214: the dagger speed's end: 1 ended, {RunSpeed:50 Changed:true}; want Grass Walk's 60 back
+	(no NaN guard, cast)       buffs_test.go:609: Ghost Walk to [NaN 0 0] answered ""
+	(no NaN guard, OpMove)     buffs_test.go:620: a non-finite point moved Aria from {X:0 Y:0 Z:0} to {X:0 Y:+Inf Z:0}
+	(stale disconnect clears)  buffs_test.go:666: the stale session's disconnect left 0 records, want the live one's 1
+	(no identity check)        buffs_test.go:637: a cast naming Bria answered &{Error: ... PlayerHP:200 ...}
+	(zone change sends 0)      buffs_test.go:691: after the zone change: &{... RunSpeed:0 ...}, want token 1 at run speed 60
+
 ## Six-hundred-and-fifteenth round: windows swoosh where the original's do, the item and level-up sounds play, and the Option window's Audio page sets the three volumes
 
 "Some interface elements when opened make a swoosh sound." They are `uiwinopen.wav` /

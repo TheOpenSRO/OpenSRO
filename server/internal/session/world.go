@@ -744,6 +744,11 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 		if !ok {
 			return
 		}
+		// A character may be in the world on a second session (a reconnect
+		// before the old one's disconnect was seen): its state belongs to the
+		// live session then, and this stale one's leaving must not clear it
+		// (round 616's review, for the book).
+		_, stillLive := hub.EntityByCharacterID(left.CharacterID)
 		keepUp.Cancel(left.CharacterID)
 		motions.clear(left.CharacterID)
 		// The book goes with the character (round 616): the object's
@@ -753,7 +758,9 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 		// with ctx+0xc bits 4 and 8 ends on its saved remaining time,
 		// skill_params.md) -- not modelled, OPEN. Everyone left gets
 		// OpEntityLeft below, which takes the owner's buffs with it.
-		buffBooks.EndAll(left.CharacterID)
+		if !stillLive {
+			buffBooks.EndAll(left.CharacterID)
+		}
 		savePosition(chars, sess, left)
 		msg := &EntityLeft{CharacterID: left.CharacterID}
 		for _, other := range remaining {
@@ -1015,6 +1022,11 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 		if accepted, _ := motions.moved(e.CharacterID, time.Now()); !accepted {
 			return nil
 		}
+	}
+	// A NaN or an infinity is no place (round 616's review): dropped, like a
+	// malformed move.
+	if !finitePosition(req.X, req.Y, req.Z) {
+		return nil
 	}
 	pos := world.Position{X: float64(req.X), Y: float64(req.Y), Z: float64(req.Z)}
 	entity, others, ok := hub.Move(sess, pos)

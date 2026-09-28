@@ -825,7 +825,7 @@ func cooltimeOf(cols []string) (group, ms string) {
 	return group, ms
 }
 
-// skillRecord maps one tab-split skilldata row to the 61-column skill CSV
+// skillRecord maps one tab-split skilldata row to the 62-column skill CSV
 // (refdata.skillCSVColumns order) import-refdata expects, or (nil, false) if
 // the row is not a real skill. The learn-gating fields and the cast timing /
 // range / resource cost are mapped from verified real columns (see the
@@ -904,11 +904,11 @@ func skillRecord(cols []string) ([]string, bool) {
 		healMP,                     // 44 SelfHealMP -- 'heal' value[2], its MP half
 		cooldownGroup(cols),        // 45 CooldownGroup -- Overlap's high byte, CRefSkill+0x8f (round 504)
 		sitGate(cols),              // 46 SitGate -- the skill gate's motion-state refusals (round 607)
-		// 47..60: the buff and self-cast columns (round 616, buffColumns).
+		// 47..61: the buff and self-cast columns (round 616, buffColumns).
 	}, buffColumns(cols)...), true
 }
 
-// buffColumns are skill CSV columns 47..60 (round 616,
+// buffColumns are skill CSV columns 47..61 (round 616,
 // docs/protocol/skill_buffs.md), in refdata.skillCSVColumns order:
 //
 //	47 ActionKind      the first raw Param word, CRefSkill+0x168 (skActionKind)
@@ -920,6 +920,7 @@ func skillRecord(cols []string) ([]string, bool) {
 //	58-59 Tele0/Tele1  'tele' value[0] and value[1] (+0x2ec), 0 without one
 //	60 BuffParams      every publishing run (skillparam.Contributions) as
 //	                   code:v0,v1;...
+//	61 Lks2            the 'lks2' marker (+0x374), 1 when present
 //
 // The Param block is WALKED (skillparam.Walk), never scanned. A walk that
 // does not finish -- none does on the 33,632 retail rows (skill_params.md) --
@@ -955,7 +956,7 @@ func buffColumns(cols []string) []string {
 	}
 	words, ok := paramWords(cols)
 	if !ok {
-		return append(out, "0", "0", "0", "0", "0", "0", "0", "")
+		return append(out, "0", "0", "0", "0", "0", "0", "0", "", "0")
 	}
 	entries, _, complete := skillparam.Walk(words)
 	find := func(c skillparam.Code) (skillparam.Entry, bool) {
@@ -1004,7 +1005,17 @@ func buffColumns(cols []string) []string {
 		}
 		runs = append(runs, string(e.Code)+":"+strings.Join(vals, ","))
 	}
-	return append(out, strings.Join(runs, ";"))
+	out = append(out, strings.Join(runs, ";"))
+	// 61 Lks2 (round 616's review): the 'lks2' marker, decided like the four
+	// above.
+	_, lks2 := find("lks2")
+	if !lks2 && !complete && !literalAbsent(cols, []skillparam.Code{"lks2"}) {
+		lks2 = true
+	}
+	if lks2 {
+		return append(out, "1")
+	}
+	return append(out, "0")
 }
 
 // cooldownGroup is the skill's cooldown group as the CooldownGroup column:

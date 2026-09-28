@@ -34,15 +34,33 @@ seeing the queue at depth 2 (`auto_command.md`). No self-buff hands the swings b
 Target_Required-0 class rows carry AutoAttackType 0 (987) or 2 (72), never 1 (MEASURED). A client keys icons and auras by
 `(ownerId, token)`.
 
-Order on a cast: the `OpAttackResult` answering `OpUseSkill` goes first, then the broadcasts
-(`OpBuffEnd` for any record the recast rule ended, then `OpBuffStart`; or `OpSkillMove`). OURS.
+Order on a cast (revised in the review): the broadcasts go first -- `OpBuffEnd` for a record the
+recast rule ended, then `OpBuffStart`; or `OpSkillMove` -- and then the `OpAttackResult`
+answering `OpUseSkill`, so a buff or move that cannot be done after the costs were taken (the
+session left the world in between) hands the HP and MP back and answers `"the skill could not be
+used"` instead (the re-use timer stays armed; disclosed). OURS.
+
+**Consistency (review).** Every book operation and the packets it sends run under a per-owner
+lock (`session.buffLock`), and each packet's `runSpeed` is the speed that one operation left,
+computed under the book's own lock (`buff.Speed`): the owner's speed when the operation changed
+it, else 0. A recast's `OpBuffEnd` and `OpBuffStart` carry the same value, so neither can undo
+the other. A cast holds the owner's lock from the recast check to the start, so a check that
+passes cannot be overturned after the costs.
+
+**Identity (review).** A cast or a cancel must name the character this session has in the world;
+otherwise it is refused (`"not in world"`) before anything is spent -- the costs and the buff or
+move land on one character.
+
+**Coordinates (review).** A ground point, or an `OpMove`, with a NaN or an infinity in it is
+refused (the cast, before any cost) or dropped (the move).
 
 **Entering view** (OURS; whether retail re-sends is OPEN): after `OpEnterWorldResult` and after a
-zone change, the arriving session is sent an `OpBuffStart` (runSpeed 0) for every active buff of
-everyone in its zone, its own included, and everyone already there is sent the arriving
-character's. A logout sends nothing extra: `OpEntityLeft` takes the owner's buffs with it.
+zone change, the arriving session is sent an `OpBuffStart` for every active buff of everyone in
+its zone, its own included, and everyone already there is sent the arriving character's. A record
+that writes the run speed carries its owner's current speed; the others carry 0. A logout sends
+nothing extra: `OpEntityLeft` takes the owner's buffs with it.
 
-## The data: skill CSV columns 47..60
+## The data: skill CSV columns 47..61
 
 `cmd/export-refdata -mode skills` appends, a strict suffix (an older CSV loads every one as 0 --
 an instant action, no buff, no ground move, no marker):
@@ -57,6 +75,7 @@ an instant action, no buff, no ground move, no marker):
 | 54-57 | Cbuf / Nbuf / Bbuf / Lnks | the runs `cbuf` `+0x358`, `nbuf` `+0x35c`, `bbuf` `+0x360`, `lnks` `+0x370` present |
 | 58-59 | Tele0 / Tele1 | `tele` value[0], value[1] (`+0x2ec`) |
 | 60 | BuffParams | every run whose code publishes a ParamKeeper param (`skillparam.Contributions`), `code:v0,v1;...` |
+| 61 | Lks2 | the `lks2` marker (`+0x374`) present -- added in the review, for the recast rule; 160 retail rows, all kind 3 |
 
 The Param block is walked (`skillparam.Walk`), never scanned.
 
@@ -73,7 +92,7 @@ The Param block is walked (`skillparam.Walk`), never scanned.
   91, `reat` 70, `hpi` 69, `apau` 64, `hste` 60, `hide` 48, ... `hst3` 29, `hst2` 11.
 
 **srrevamp-01**: the VM's `skills` table is imported from this CSV. Re-run `export-refdata -mode
-skills` with the new binary, then the new `import-refdata` (its store adds the fourteen columns
+skills` with the new binary, then the new `import-refdata` (its store adds the fifteen columns
 before it writes the rows), then restart the server. Until then every skill loads kind 0 and no
 buff starts. `deploy/README.md` has the steps and a check query.
 
@@ -114,34 +133,63 @@ buff starts. `deploy/README.md` has the steps and a check query.
    - a seated character in the sit/stand transition is refused, as a move is;
    - after the costs the caster moves (below).
 
-### The recast rule (READ)
+### The recast rule (READ; corrected in the review)
 
-`Skill_CheckUseConditions` (`0x58d8f0`) row 16 (`0x58e2fd`): for a skill with no `lnks` and TR 0 it
-calls `FUN_0059d870(book, skill, caster)`, and a 0 answer is `0x300c`. For an action-kind-3 skill
-(and not a kind-1 `msch`) that function walks the caster's active records; for each whose skill is
-kind 3 (`+0x168 == 3`) without `cbuf` (`+0x358 == 0`):
+`Skill_CheckUseConditions` (`0x58d8f0`) row 16 (`0x58e2fd`), under mask bit 2:
 
-- if both skills carry `dttp` (`+0x424`) with the same value[0]: the same caster may stack; otherwise
-  a lower value[1] is refused and a higher one ends the old record — **not modelled (OPEN)**;
-- a field at `+0x290` (no code maps to it) opens another branch — **not modelled (OPEN)**;
-- otherwise, when the new skill has no `lks2` (`+0x374`) and **the GroupIDs (`+0x8`) are equal**:
-  `new.Basic_Level (+0x64) < old.Basic_Level` refuses; else the old record's `+0x10` is cleared —
-  it ends on the next book update — and the cast proceeds.
+- a row with **no `lnks`** (`+0x370 == 0`) and **Target_Required 0** calls
+  `FUN_0059d870(book, skill, caster)`; a 0 answer is `0x300c`;
+- a row **with `lnks`** instead calls `FUN_0059dc80(0)` -- only when it also carries `efr`
+  (`+0x294`) -- which walks the self-cast records carrying an attached object (`ctx+0x68`) and
+  compares `lnks` values, skill ids, `lks2` and the attached object's id (answers `0x300c`,
+  `0x3029`, `0x3037`). srrevamp keeps no attached objects, so **an `lnks` row gets no overlap check
+  (OPEN)**;
+- a Target_Required 1 row without `lnks` gets **no check at all** at this gate, and srrevamp gives it
+  none: a recast adds a second record rather than ending the first (the review withdrew round 616's
+  OURS extension of the rule to these rows). Whether retail limits them elsewhere is OPEN.
 
-srrevamp models the third branch (`buff.Books.CheckOverlap` / `Start`): same GroupID, not `cbuf`,
-lower level refused, equal or higher ends the old and starts the new (Grass Walk recast refreshes
-it). It applies the rule to the TR-1 friendly buffs it lands on the caster too — OURS, since the
-gate runs it for TR 0 only.
+`FUN_0059d870`, for an action-kind-3 skill (not a kind-1 `msch`), walks the book's active records
+and, for each whose skill is kind 3 (`+0x168 == 3`) without `cbuf` (`+0x358 == 0`), in order:
+
+- if both skills carry `dttp` (`+0x424`) with the same value[0]: the same caster may stack; a
+  record the owner cast on itself is passed over; otherwise a lower value[1] is refused and a
+  higher one ends the old record -- **not modelled (OPEN)**: srrevamp does not export `dttp`, and
+  for its 36 retail rows (`SKILL_CH_FIRE_DESCRY_*`) applies the GroupID branch instead;
+- a field at `+0x290` (no code maps to it) opens another branch -- **not modelled (OPEN)**;
+- the GroupID branch, **modelled**: the new row carries no `lks2` (`+0x374`), the active record is
+  not an `lnks` record its owner cast on itself (`old+0x370 == 0 || ctx+0x20 != 1`), the new GroupID
+  (`+0x8`) is non-zero and equal to the active one's. Then `new.Basic_Level (+0x64) <
+  old.Basic_Level` refuses; otherwise the old record's `+0x10` is cleared -- it ends on the next
+  book update -- and the cast proceeds. The first matching record decides.
+
+Falling off the list, the function tests the row's Action_Overlap bytes (`+0x8c`) and `ovl2`
+(`+0x37c`) against the character's state bits and its running action (`FUN_0059db10`) -- **not
+modelled (OPEN)**.
+
+srrevamp: `buff.Books.CheckOverlap` / `Start` (`overlapLocked`). A Grass Walk recast refreshes it.
+That the old record leaves before the new one engages, and that `OpBuffEnd` precedes
+`OpBuffStart`, is **INFERRED** (retail clears the old record's flag at the gate and its book update
+ends it; the relative order of that and the new record's engage was not read). The book is walked
+in insertion order, INFERRED to be retail's list order.
 
 ### The run speed (READ, and one MEASURED base)
 
-- `ApplySkillParamsToChar` (`0x594ac0`): with `hste` (`+0x2b8`) set, **if the speed holder
-  `pc+0xc24` (`param_1[0x309]`) is empty** it writes `hste` value[0] into params 23 and 24 at slot 2
-  keyed by the record; either way the record becomes the holder. `hst3` (`+0x2c0`) writes value[0]
-  into 23/24 at slot 2 only when the row carries neither `hste` nor `hst2` (`+0x2bc`, whose own
-  holder-transfer branch is **not modelled**).
-- `SkillAction_BuffEnd` (`0x5829d0`): for an `hste` row, `book[0x7d] = 0` — the book is
-  `pc+0xa30` (int index `0x28c`), so that is `pc+0xc24`: the holder empties.
+- `ApplySkillParamsToChar` (`0x594ac0`), the speed holder `pc+0xc24` (`param_1[0x309]`):
+  - `hste` (`+0x2b8`): **if the holder is empty** it writes value[0] into params 23 and 24 at slot 2
+    keyed by the record; either way the record becomes the holder;
+  - `hst2` (`+0x2bc`), on a row without `hste` (implemented in the review): the holder's own 23/24
+    contributions are removed (`Param_RefreshContributions` `0x4b3570` -> `FUN_004b31a0` ->
+    `FUN_004b2e00`, which erases the entry keyed by the holder), value[0] is written into 23 and 24
+    at slot 2, and the record becomes the holder only if there was none;
+  - `hst3` (`+0x2c0`), on a row with neither: value[0] into 23 and 24 at slot 2, no holder.
+- `SkillAction_BuffEnd` (`0x5829d0`): an `hste` row's end runs `book[0x7d] = 0` -- the book is
+  `pc+0xa30` (int index `0x28c`), so that is `pc+0xc24`: the holder empties. An `hst2` row's end
+  empties the holder when the record IS the holder, and otherwise writes the holder's `hste`
+  value[0] back into 23 and 24 (a holder without `hste` is retail's `"HST2 Changed param skill
+  error"` log line, and nothing is written).
+- MEASURED: `SKILL_EU_ROG_DAGGERA_SPEED_A_01` (id 9834, group 628) is kind 3, dura 15000, `hst2`
+  48. Over Grass Walk A lv1 it runs the character at `50 × 1.48 = 74` (Grass Walk's 20 removed),
+  and at its end Grass Walk's 60 comes back (tested).
 - Slot 2 reduces as the product of `(1 + e/100)` (`GParamKeeper FUN_004b2e60`, the `== 2` arm).
 - So Grass Walk A lv1 (`hste` 20) gives run speed `50 × 1.20 = 60`. The base 50 is **MEASURED**:
   all 52 player rows of `characterdata` (`CHAR_CH_MAN_*` .. `CHAR_EU_WOMAN_*`) carry walk 16, run
@@ -166,7 +214,15 @@ the book today.
 
 - **Expiry**: SkillAction_Buff sub-state 2 ends the record when `GetTickCount() - record+8 >
   dura[0] + ctx+0x24` — strictly greater; `skillparam.BuffEndsAt` is the end, and the record is still
-  running AT it. The extension `ctx+0x24` is 0 here (what sets it in retail: OPEN).
+  running AT it. The extension `ctx+0x24` is 0 here. Its setter is READ in `SkillAction_Buff`
+  (`0x5830b0`): when the row carries `RPBU` (`+0x508`) or `STDU` (`+0x518`), the extension grows
+  by the `+4` word of the entry `FUN_005a0330` finds for that code; otherwise, with `DTDR`
+  (`+0x52c`), it is `round(dura[0] × entry+4 / 100)`. `FUN_005a0330` is a lookup in the book's map
+  at `+0x244` keyed by the code; what files entries there was not read (the `P`-named passives
+  `SKILL_EU_ROG_STEALTHP_TIME_*` and `SKILL_EU_WARLOCK_MINDP_MAINTAIN_*` carry the codes too, which
+  suggests passive skills -- INFERRED only). Rows naming a code
+  (MEASURED, a literal scan): `DTDR` 142 kind-3 / 4 kind-4, `RPBU` 10 / 6, `STDU` 9 / 9. srrevamp
+  keeps no passive records, so the extension stays 0 -- **OPEN, not modelled**.
   `session.RunBuffTicker` polls every 100 ms (OURS, as regen's poll is; retail's book update runs
   per server frame, period OPEN); the test itself is exact to the millisecond.
 - **Toggles and summons** (kind 3 without `dura`: `onff` drains MP every onff[0] ms and ends when MP
@@ -184,7 +240,9 @@ the book today.
 - **Death**: srrevamp ends every buff (`markDead` → OpBuffEnd). **OURS**: `GObjPC_OnDeath`
   (`0x4e6980`) clears no book, and `CGObjChar::SetLifeState` (`0x4a9c80`) on state 2 calls slot 4
   of an unidentified member at `+0x188`; the retail death rule was not traced.
-- **Logout**: the book is dropped on disconnect. `CGObjChar::vslot_214` (`0x4a72e0`), a teardown,
+- **Logout**: the book is dropped on disconnect -- unless the character is still in the world on
+  another session (a reconnect before the old session's disconnect was seen): the stale
+  session's leaving then leaves the live one's book alone (review). `CGObjChar::vslot_214` (`0x4a72e0`), a teardown,
   calls `FUN_0059c820(pc+0xa30)` on the book (READ); that it runs on logout is INFERRED. Retail
   restores some buffs at the next login (a record with `ctx+0xc` bits 4 and 8 ends on a saved
   remaining time, skill_params.md) — **OPEN, not modelled**.

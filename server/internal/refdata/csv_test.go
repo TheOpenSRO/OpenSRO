@@ -573,8 +573,10 @@ func TestSkillCSVSitGateIsAStrictSuffix(t *testing.T) {
 
 // The buff and self-cast columns (round 616) are a strict suffix: an export
 // predating them loads an instant action with nothing set, and the columns,
-// when present, are read in their order -- Ghost Walk B lv1's and Grass Walk A
-// lv1's values (MEASURED on the retail rows, typed here as test data).
+// when present, are read in their order. The Ghost Walk B lv1 and Grass Walk
+// A lv1 rows carry their MEASURED retail values (id 114: TR 1, Land 1, tele
+// 500,100; id 113: kind 3, dura 355462, no markers, hste 20); the third row is
+// SYNTHETIC, there to exercise the marker and multi-value columns.
 func TestSkillCSVBuffColumnsAreAStrictSuffix(t *testing.T) {
 	old := make([]string, 47) // through SitGate
 	for i := range old {
@@ -582,32 +584,40 @@ func TestSkillCSVBuffColumnsAreAStrictSuffix(t *testing.T) {
 	}
 	old[2] = "SKILL_TEST"
 	sk, err := parseSkillRow(old)
-	if err != nil || sk.ActionKind != 0 || sk.TargetLand || sk.DuraMs != 0 || sk.HasTele() || sk.BuffParams != "" {
+	if err != nil || sk.ActionKind != 0 || sk.TargetLand || sk.DuraMs != 0 || sk.HasTele() || sk.BuffParams != "" || sk.Lks2 {
 		t.Fatalf("an export predating the buff columns: %+v, %v", sk, err)
 	}
-	if skillCSVColumns[47] != "ActionKind" || skillCSVColumns[60] != "BuffParams" || len(skillCSVColumns) != 61 {
+	if skillCSVColumns[47] != "ActionKind" || skillCSVColumns[60] != "BuffParams" || skillCSVColumns[61] != "Lks2" || len(skillCSVColumns) != 62 {
 		t.Fatalf("test premise: columns %q..%q, %d in all", skillCSVColumns[47], skillCSVColumns[len(skillCSVColumns)-1], len(skillCSVColumns))
 	}
-	ghost := append(append([]string{}, old...), "0", "1", "1", "0", "0", "0", "0", "0", "0", "0", "0", "500", "100", "")
+	ghost := append(append([]string{}, old...), "0", "1", "1", "0", "0", "0", "0", "0", "0", "0", "0", "500", "100", "", "0")
 	if sk, err = parseSkillRow(ghost); err != nil || !sk.TargetRequired || !sk.TargetLand || sk.Tele0 != 500 || sk.Tele1 != 100 || !sk.HasTele() {
 		t.Fatalf("Ghost Walk's columns: %+v, %v", sk, err)
 	}
-	grass := append(append([]string{}, old...), "3", "0", "0", "0", "0", "0", "355462", "0", "1", "0", "1", "0", "0", "hste:20;defr:5,6")
+	grass := append(append([]string{}, old...), "3", "0", "0", "0", "0", "0", "355462", "0", "0", "0", "0", "0", "0", "hste:20", "0")
 	sk, err = parseSkillRow(grass)
-	if err != nil || sk.ActionKind != 3 || sk.DuraMs != 355462 || !sk.Nbuf || !sk.Lnks || sk.Cbuf || sk.Bbuf || sk.HasTele() {
+	if err != nil || sk.ActionKind != 3 || sk.DuraMs != 355462 || sk.Nbuf || sk.Lnks || sk.Cbuf || sk.Bbuf || sk.Lks2 || sk.HasTele() {
 		t.Fatalf("Grass Walk's columns: %+v, %v", sk, err)
 	}
 	if v, ok := sk.BuffParam("hste"); !ok || len(v) != 1 || v[0] != 20 {
 		t.Errorf("BuffParam(hste) = %v, %v", v, ok)
 	}
-	if v, ok := sk.BuffParam("defr"); !ok || len(v) != 2 || v[1] != 6 {
-		t.Errorf("BuffParam(defr) = %v, %v", v, ok)
-	}
 	if _, ok := sk.BuffParam("apau"); ok {
 		t.Error("BuffParam found a run the row does not carry")
 	}
+	synthetic := append(append([]string{}, old...), "3", "0", "0", "0", "0", "0", "60000", "1", "1", "1", "1", "0", "0", "hst2:48;defr:5,6", "1")
+	sk, err = parseSkillRow(synthetic)
+	if err != nil || !sk.Cbuf || !sk.Nbuf || !sk.Bbuf || !sk.Lnks || !sk.Lks2 {
+		t.Fatalf("the synthetic row's markers: %+v, %v", sk, err)
+	}
+	if v, ok := sk.BuffParam("defr"); !ok || len(v) != 2 || v[1] != 6 {
+		t.Errorf("BuffParam(defr) = %v, %v", v, ok)
+	}
+	if v, ok := sk.BuffParam("hst2"); !ok || v[0] != 48 {
+		t.Errorf("BuffParam(hst2) = %v, %v", v, ok)
+	}
 	// Cut part-way through the run: what is there is read.
-	if sk, err = parseSkillRow(grass[:54]); err != nil || sk.ActionKind != 3 || sk.DuraMs != 355462 || sk.Nbuf {
+	if sk, err = parseSkillRow(synthetic[:54]); err != nil || sk.ActionKind != 3 || sk.DuraMs != 60000 || sk.Nbuf {
 		t.Fatalf("a cut export: %+v, %v", sk, err)
 	}
 }

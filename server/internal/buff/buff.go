@@ -8,38 +8,43 @@
 //
 //   - The END rule: SkillAction_Buff (0x5830b0) sub-state 2 ends the record
 //     when `GetTickCount() - record+8 > dura[0] + ctx+0x24` -- strictly
-//     greater (skillparam.BuffEndsAt). The extension ctx+0x24 is 0 here
-//     (nothing srrevamp builds sets it; OPEN what does in retail).
+//     greater (skillparam.BuffEndsAt). The extension ctx+0x24 is 0 here: its
+//     setter in 0x5830b0 adds a value found by FUN_005a0330 (a lookup in the
+//     book's map at +0x244, keyed by the row's 'RPBU'/'STDU'/'DTDR' word) --
+//     the caster's passive records, which srrevamp does not keep (OPEN).
 //   - The END effects: SkillBook::Update (0x59bb80) erases the record,
 //     removes its contributions (ParamKeeper_RemoveContributionsOf, 0x4b3660,
 //     keyed by the record) and queues its token for 0xB072.
-//   - The RECAST rule, Skill_CheckUseConditions (0x58d8f0) row 16 at 0x58e2fd
-//     -> FUN_0059d870, for an action-kind-3 skill: for each active record whose
-//     skill is kind 3 without 'cbuf' (+0x358), a record of the SAME GroupID
-//     (+0x8) refuses the cast with 0x300c SKILL_USE_FAIL_OVERLAP when the new
-//     row's Basic_Level (+0x64) is LOWER than the active one's; otherwise the
-//     active record's end flag (+0x10) is cleared -- it ends -- and the cast
-//     goes ahead. See Book.Start.
+//   - The RECAST rule: Skill_CheckUseConditions (0x58d8f0) row 16 calls
+//     FUN_0059d870 only for a row with no 'lnks' (+0x370) and Target_Required
+//     (+0x94) 0; see CheckOverlap for the branch srrevamp models and the ones
+//     it does not.
 //   - The DISPEL, 0x4ae520 -> FUN_0059ef90 / FUN_0059eff0: the record of that
 //     skill id (in sub-state 1 or 2), matching the token when one is given
 //     (token 0 matches any); a skill carrying 'nbuf' (+0x35c) whose record's
-//     ctx+0x20 is not 1 is refused silently. ctx+0x20 is 1 when the record's
-//     target is its own caster (SkillAction_Buff writes 1 at 0x5830b0's
-//     `puVar8 == param_2` store and 2 for another target) -- so an 'nbuf'
-//     buff someone else cast on you cannot be cancelled. See Book.Cancel.
-//   - The run-speed writes: ApplySkillParamsToChar (0x594ac0) writes 'hste'
-//     value[0] into params 23 and 24 at slot 2 ONLY while the character's
-//     speed holder (pc+0xc24) is empty, and then makes this record the holder
-//     either way; SkillAction_BuffEnd (0x5829d0) empties the holder when an
-//     'hste' record ends (its `book[0x7d] = 0`, book = pc+0xa30, so pc+0xc24).
-//     'hst3' is written, value[0] into 23 and 24 at slot 2, only by a row that
-//     carries neither 'hste' nor 'hst2'. Slot 2 reduces as the product of
-//     (1 + e/100) (GParamKeeper FUN_004b2e60).
+//     ctx+0x20 is not 1 is refused silently. SkillAction_Buff stores 1 there
+//     when the target object is the caster and 2 on a record built for
+//     another target (READ stores; "1 = cast on oneself" INFERRED from them).
+//   - The run-speed writes, ApplySkillParamsToChar (0x594ac0), with the speed
+//     holder pc+0xc24:
+//     'hste' (+0x2b8): value[0] into params 23 and 24 at slot 2 only while
+//     the holder is empty; the record becomes the holder either way.
+//     'hst2' (+0x2bc), on a row without 'hste': the holder's own 23/24
+//     contributions are removed (Param_RefreshContributions 0x4b3570 ->
+//     FUN_004b31a0 -> FUN_004b2e00, which erases the entry keyed by the
+//     holder), value[0] is written into 23 and 24 at slot 2, and the record
+//     becomes the holder only when there was none.
+//     'hst3' (+0x2c0), on a row with neither: value[0] into 23 and 24.
+//     SkillAction_BuffEnd (0x5829d0): an 'hste' record's end empties the
+//     holder (`book[0x7d] = 0`, the book at pc+0xa30); an 'hst2' record's end
+//     empties it when the record IS the holder, and otherwise writes the
+//     holder's 'hste' value[0] back into 23 and 24.
+//     Slot 2 reduces as the product of (1 + e/100) (GParamKeeper FUN_004b2e60).
 //
 // OURS, disclosed: the record's shape, the token allocator (a server-wide
-// counter), and that only 'hste' and 'hst3' contributions are recorded --
-// they are the only ones something in srrevamp consumes (the run speed). The
-// other publishing codes are listed OPEN in docs/protocol/skill_buffs.md.
+// counter), and that only the run-speed contributions are recorded -- they
+// are the only ones something in srrevamp consumes. The other publishing
+// codes are listed OPEN in docs/protocol/skill_buffs.md.
 package buff
 
 import (
@@ -52,7 +57,8 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/skillparam"
 )
 
-// The run-speed params, 'hste'/'hst3' publish both (skillparam.Contributions).
+// The run-speed params, 'hste'/'hst2'/'hst3' publish both
+// (skillparam.Contributions).
 const (
 	ParamWalkSpeed = 23
 	ParamRunSpeed  = 24
@@ -77,10 +83,14 @@ type Spec struct {
 	DuraMs int
 	Cbuf   bool
 	Nbuf   bool
-	// Hste and Hst3 are the rows' 'hste'/'hst3' value[0], with HasHste /
-	// HasHst3 / HasHst2 saying whether the row carries each run at all.
-	Hste, Hst3                int
-	HasHste, HasHst3, HasHst2 bool
+	// Lnks and Lks2 are the row's 'lnks' (+0x370) and 'lks2' (+0x374);
+	// TargetRequired is +0x94. All three steer the recast rule.
+	Lnks, Lks2     bool
+	TargetRequired bool
+	// Hste, Hst2 and Hst3 are the rows' 'hste'/'hst2'/'hst3' value[0], with
+	// the Has* flags saying whether the row carries each run at all.
+	Hste, Hst2, Hst3          int
+	HasHste, HasHst2, HasHst3 bool
 }
 
 // Record is one active buff.
@@ -96,8 +106,11 @@ type Record struct {
 	Dura time.Duration
 	Cbuf bool
 	Nbuf bool
-	// HasHste marks a record whose end empties the speed holder.
+	Lnks bool
+	// HasHste / Hste and HasHst2 drive the speed holder at the record's end.
 	HasHste       bool
+	Hste          int
+	HasHst2       bool
 	Contributions []Contribution
 }
 
@@ -132,22 +145,67 @@ func (r Record) Remaining(now time.Time) time.Duration {
 // SelfCast is the record's ctx+0x20 == 1: its target is its own caster.
 func (r Record) SelfCast() bool { return r.CasterID == r.OwnerID }
 
-// SpeedFactor is the slot-2 product the record contributes to param p.
-func (r Record) speedFactor(p int) float64 {
+func speedPair(v int) []Contribution {
+	return []Contribution{
+		{ParamWalkSpeed, skillparam.SlotMult, float64(v)},
+		{ParamRunSpeed, skillparam.SlotMult, float64(v)},
+	}
+}
+
+func withoutSpeed(cs []Contribution) []Contribution {
+	var out []Contribution
+	for _, c := range cs {
+		if c.Param != ParamWalkSpeed && c.Param != ParamRunSpeed {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+type book struct {
+	records []Record
+	// speedHolder is pc+0xc24, the token of the record holding the speed
+	// writes; 0 when empty.
+	speedHolder uint32
+}
+
+func (bk *book) index(token uint32) int {
+	for i, r := range bk.records {
+		if r.Token == token {
+			return i
+		}
+	}
+	return -1
+}
+
+func (bk *book) factor(p int) float64 {
 	f := 1.0
-	for _, c := range r.Contributions {
-		if c.Param == p && c.Slot == skillparam.SlotMult {
-			f *= 1 + c.Value/100
+	for _, r := range bk.records {
+		for _, c := range r.Contributions {
+			if c.Param == p && c.Slot == skillparam.SlotMult {
+				f *= 1 + c.Value/100
+			}
 		}
 	}
 	return f
 }
 
-type book struct {
-	records []Record
-	// speedHolder is pc+0xc24, the token of the 'hste' record that holds the
-	// speed writes; 0 when empty.
-	speedHolder uint32
+// endLocked is SkillAction_BuffEnd's speed-holder step for r, which has
+// already left bk.records.
+func (bk *book) endLocked(r Record) {
+	switch {
+	case r.HasHste:
+		bk.speedHolder = 0
+	case r.HasHst2:
+		if bk.speedHolder == r.Token {
+			bk.speedHolder = 0
+		} else if i := bk.index(bk.speedHolder); i >= 0 && bk.records[i].HasHste {
+			h := &bk.records[i]
+			h.Contributions = append(withoutSpeed(h.Contributions), speedPair(h.Hste)...)
+		}
+		// A holder without 'hste' is retail's "HST2 Changed param skill
+		// error" log line: nothing is written.
+	}
 }
 
 // Books holds every character's book.
@@ -155,10 +213,15 @@ type Books struct {
 	mu    sync.Mutex
 	next  atomic.Uint32
 	books map[int64]*book
+	// base is the owners' base run speed (param 24's base), for the speed
+	// each operation reports.
+	base float64
 }
 
-// NewBooks returns an empty set of books.
-func NewBooks() *Books { return &Books{books: map[int64]*book{}} }
+// NewBooks returns an empty set of books whose owners run at baseRunSpeed.
+func NewBooks(baseRunSpeed float64) *Books {
+	return &Books{books: map[int64]*book{}, base: baseRunSpeed}
+}
 
 // NextToken allocates a server-unique token, never 0 (0 means "any" in a
 // cancel). OURS.
@@ -170,16 +233,70 @@ func (b *Books) NextToken() uint32 {
 	}
 }
 
+// Speed is an owner's run speed after an operation and whether the
+// operation changed it, both read under the lock that made the change.
+type Speed struct {
+	RunSpeed uint32
+	Changed  bool
+}
+
+func (b *Books) speedLocked(bk *book) uint32 {
+	f := 1.0
+	if bk != nil {
+		f = bk.factor(ParamRunSpeed)
+	}
+	return uint32(math.Round(b.base * f))
+}
+
 // Refusal is why Start refused.
 type Refusal int
 
 const (
 	// NotRefused: the buff started.
 	NotRefused Refusal = iota
-	// RefusedOverlap is 0x300c SKILL_USE_FAIL_OVERLAP: an active record of
-	// the same GroupID is of a higher level.
+	// RefusedOverlap is 0x300c SKILL_USE_FAIL_OVERLAP.
 	RefusedOverlap
 )
+
+// overlapLocked is FUN_0059d870's GroupID branch, reached from gate row 16
+// only for a row with no 'lnks' and Target_Required 0. It returns the index
+// of the active record the cast would end (-1 for none) and a refusal.
+//
+// Per active record, in book order (the retail list's order is INFERRED to
+// be the same), skipping a record whose skill carries 'cbuf' (+0x358):
+//
+//   - the 'dttp' (+0x424) branch -- both rows carry 'dttp' with one value[0]
+//     -- is NOT modelled: srrevamp does not export 'dttp' (36 retail rows,
+//     SKILL_CH_FIRE_DESCRY_*), and for them this applies the GroupID branch
+//     where retail applies its own (OPEN);
+//   - the '+0x290' branch (no code maps to that field) is NOT modelled (OPEN);
+//   - the GroupID branch, modelled: the new row carries no 'lks2' (+0x374),
+//     the active record is not an 'lnks' record the owner cast on itself
+//     (`piVar4[0xdc] == 0 || ctx+0x20 != 1`), the new GroupID (+0x8) is not 0
+//     and equals the active one's -> refused when the new Basic_Level (+0x64)
+//     is lower, otherwise that record's end flag is cleared (it ends) and the
+//     cast goes ahead. The first match decides.
+//
+// Falling off the end of the list, FUN_0059d870 then tests the row's
+// Action_Overlap bytes (+0x8c) and 'ovl2' (+0x37c) against the character's
+// state bits and running action (FUN_0059db10) -- NOT modelled (OPEN).
+func overlapLocked(bk *book, spec Spec) (int, Refusal) {
+	if bk == nil || spec.Lnks || spec.TargetRequired {
+		return -1, NotRefused
+	}
+	for i, r := range bk.records {
+		if r.Cbuf {
+			continue
+		}
+		if !spec.Lks2 && !(r.Lnks && r.SelfCast()) && spec.GroupID != 0 && spec.GroupID == r.GroupID {
+			if spec.Level < r.Level {
+				return -1, RefusedOverlap
+			}
+			return i, NotRefused
+		}
+	}
+	return -1, NotRefused
+}
 
 // CheckOverlap is the gate's half of the recast rule, run BEFORE anything is
 // spent (the gate precedes EngageSkill): whether a cast of spec on owner
@@ -187,23 +304,17 @@ const (
 func (b *Books) CheckOverlap(ownerID int64, spec Spec) Refusal {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	bk := b.books[ownerID]
-	if bk == nil {
-		return NotRefused
-	}
-	for _, r := range bk.records {
-		if !r.Cbuf && r.GroupID == spec.GroupID && spec.Level < r.Level {
-			return RefusedOverlap
-		}
-	}
-	return NotRefused
+	_, r := overlapLocked(b.books[ownerID], spec)
+	return r
 }
 
 // Start applies spec to ownerID at now. It returns the new record, the
-// records the recast rule ended (same GroupID, not 'cbuf', level not above
-// the new one's), and a refusal when an active record of the same GroupID is
-// of a higher level -- nothing changes then.
-func (b *Books) Start(ownerID int64, spec Spec, now time.Time) (rec Record, ended []Record, refused Refusal) {
+// record the recast rule ended (if any), a refusal (nothing changes then),
+// and the owner's run speed afterwards. The ended record goes out of the book
+// before the new one engages: in retail its end flag is cleared at the gate
+// and the book update ends it, while the new record engages from the cast --
+// the relative order of the two is INFERRED.
+func (b *Books) Start(ownerID int64, spec Spec, now time.Time) (rec Record, ended []Record, refused Refusal, sp Speed) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	bk := b.books[ownerID]
@@ -211,21 +322,17 @@ func (b *Books) Start(ownerID int64, spec Spec, now time.Time) (rec Record, ende
 		bk = &book{}
 		b.books[ownerID] = bk
 	}
-	for _, r := range bk.records {
-		if !r.Cbuf && r.GroupID == spec.GroupID && spec.Level < r.Level {
-			return Record{}, nil, RefusedOverlap
-		}
+	before := b.speedLocked(bk)
+	i, refused := overlapLocked(bk, spec)
+	if refused != NotRefused {
+		return Record{}, nil, refused, Speed{RunSpeed: before}
 	}
-	kept := bk.records[:0]
-	for _, r := range bk.records {
-		if !r.Cbuf && r.GroupID == spec.GroupID {
-			bk.endLocked(r)
-			ended = append(ended, r)
-			continue
-		}
-		kept = append(kept, r)
+	if i >= 0 {
+		old := bk.records[i]
+		bk.records = append(bk.records[:i], bk.records[i+1:]...)
+		bk.endLocked(old)
+		ended = append(ended, old)
 	}
-	bk.records = kept
 
 	rec = Record{
 		Token:    b.NextToken(),
@@ -237,7 +344,10 @@ func (b *Books) Start(ownerID int64, spec Spec, now time.Time) (rec Record, ende
 		Start:    now,
 		Cbuf:     spec.Cbuf,
 		Nbuf:     spec.Nbuf,
+		Lnks:     spec.Lnks,
 		HasHste:  spec.HasHste,
+		Hste:     spec.Hste,
+		HasHst2:  spec.HasHst2 && !spec.HasHste,
 	}
 	if spec.DuraMs > 0 {
 		rec.Dura = time.Duration(spec.DuraMs) * time.Millisecond
@@ -245,53 +355,85 @@ func (b *Books) Start(ownerID int64, spec Spec, now time.Time) (rec Record, ende
 	switch {
 	case spec.HasHste:
 		if bk.speedHolder == 0 {
-			v := float64(spec.Hste)
-			rec.Contributions = append(rec.Contributions,
-				Contribution{ParamWalkSpeed, skillparam.SlotMult, v},
-				Contribution{ParamRunSpeed, skillparam.SlotMult, v})
+			rec.Contributions = append(rec.Contributions, speedPair(spec.Hste)...)
 		}
 		bk.speedHolder = rec.Token
-	case !spec.HasHst2 && spec.HasHst3:
-		v := float64(spec.Hst3)
-		rec.Contributions = append(rec.Contributions,
-			Contribution{ParamWalkSpeed, skillparam.SlotMult, v},
-			Contribution{ParamRunSpeed, skillparam.SlotMult, v})
+	case spec.HasHst2:
+		if j := bk.index(bk.speedHolder); j >= 0 {
+			h := &bk.records[j]
+			h.Contributions = withoutSpeed(h.Contributions)
+		}
+		rec.Contributions = append(rec.Contributions, speedPair(spec.Hst2)...)
+		if bk.speedHolder == 0 {
+			bk.speedHolder = rec.Token
+		}
+	case spec.HasHst3:
+		rec.Contributions = append(rec.Contributions, speedPair(spec.Hst3)...)
 	}
 	bk.records = append(bk.records, rec)
-	return rec, ended, NotRefused
+	after := b.speedLocked(bk)
+	return rec, ended, NotRefused, Speed{RunSpeed: after, Changed: after != before}
 }
 
-// endLocked is SkillAction_BuffEnd's speed-holder step for r.
-func (bk *book) endLocked(r Record) {
-	if r.HasHste {
-		bk.speedHolder = 0
+// DueOwners returns the owners with a record past its end at now.
+func (b *Books) DueOwners(now time.Time) []int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var out []int64
+	for owner, bk := range b.books {
+		for _, r := range bk.records {
+			if r.Expired(now) {
+				out = append(out, owner)
+				break
+			}
+		}
 	}
+	return out
+}
+
+// ExpireOwner ends every record of ownerID past its end at now.
+func (b *Books) ExpireOwner(ownerID int64, now time.Time) ([]Record, Speed) {
+	return b.endWhere(ownerID, func(r Record) bool { return r.Expired(now) })
 }
 
 // Expire ends every record past its end at now, by owner.
 func (b *Books) Expire(now time.Time) map[int64][]Record {
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	var out map[int64][]Record
-	for owner, bk := range b.books {
-		kept := bk.records[:0]
-		for _, r := range bk.records {
-			if r.Expired(now) {
-				bk.endLocked(r)
-				if out == nil {
-					out = map[int64][]Record{}
-				}
-				out[owner] = append(out[owner], r)
-				continue
+	for _, owner := range b.DueOwners(now) {
+		if ended, _ := b.ExpireOwner(owner, now); len(ended) > 0 {
+			if out == nil {
+				out = map[int64][]Record{}
 			}
-			kept = append(kept, r)
-		}
-		bk.records = kept
-		if len(bk.records) == 0 && bk.speedHolder == 0 {
-			delete(b.books, owner)
+			out[owner] = ended
 		}
 	}
 	return out
+}
+
+// endWhere ends ownerID's records matching end, in book order.
+func (b *Books) endWhere(ownerID int64, end func(Record) bool) ([]Record, Speed) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	bk := b.books[ownerID]
+	if bk == nil {
+		return nil, Speed{RunSpeed: b.speedLocked(nil)}
+	}
+	before := b.speedLocked(bk)
+	var ended []Record
+	for i := 0; i < len(bk.records); {
+		if r := bk.records[i]; end(r) {
+			bk.records = append(bk.records[:i], bk.records[i+1:]...)
+			bk.endLocked(r)
+			ended = append(ended, r)
+			continue
+		}
+		i++
+	}
+	after := b.speedLocked(bk)
+	if len(bk.records) == 0 && bk.speedHolder == 0 {
+		delete(b.books, ownerID)
+	}
+	return ended, Speed{RunSpeed: after, Changed: after != before}
 }
 
 // CancelResult is what Cancel did.
@@ -309,37 +451,46 @@ const (
 
 // Cancel is the dispel: the first active record of skillID on ownerID
 // (matching token unless it is 0) ends, unless the 'nbuf' rule refuses.
-func (b *Books) Cancel(ownerID, skillID int64, token uint32) (Record, CancelResult) {
+func (b *Books) Cancel(ownerID, skillID int64, token uint32) (Record, CancelResult, Speed) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	bk := b.books[ownerID]
-	if bk == nil {
-		return Record{}, CancelNotFound
-	}
-	for i, r := range bk.records {
-		if r.SkillID != skillID || (token != 0 && r.Token != token) {
-			continue
+	var found *Record
+	if bk != nil {
+		for i := range bk.records {
+			r := bk.records[i]
+			if r.SkillID == skillID && (token == 0 || r.Token == token) {
+				found = &r
+				break
+			}
 		}
-		if r.Nbuf && !r.SelfCast() {
-			return r, CancelRefusedNbuf
-		}
-		bk.endLocked(r)
-		bk.records = append(bk.records[:i], bk.records[i+1:]...)
-		return r, Cancelled
 	}
-	return Record{}, CancelNotFound
+	b.mu.Unlock()
+	if found == nil {
+		return Record{}, CancelNotFound, Speed{}
+	}
+	if found.Nbuf && !found.SelfCast() {
+		return *found, CancelRefusedNbuf, Speed{}
+	}
+	tok := found.Token
+	ended, sp := b.endWhere(ownerID, func(r Record) bool { return r.Token == tok })
+	if len(ended) != 1 {
+		return Record{}, CancelNotFound, Speed{}
+	}
+	return ended[0], Cancelled, sp
 }
 
 // EndAll ends every record of ownerID and forgets its book.
-func (b *Books) EndAll(ownerID int64) []Record {
+func (b *Books) EndAll(ownerID int64) ([]Record, Speed) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	bk := b.books[ownerID]
 	if bk == nil {
-		return nil
+		return nil, Speed{RunSpeed: b.speedLocked(nil)}
 	}
+	before := b.speedLocked(bk)
 	delete(b.books, ownerID)
-	return append([]Record(nil), bk.records...)
+	after := b.speedLocked(nil)
+	return append([]Record(nil), bk.records...), Speed{RunSpeed: after, Changed: after != before}
 }
 
 // Active returns ownerID's records, oldest first.
@@ -355,28 +506,13 @@ func (b *Books) Active(ownerID int64) []Record {
 	return out
 }
 
-// Factor is the slot-2 product of every active contribution to param p on
-// ownerID: param = base x Factor (slots 0, 1 and 3 carry nothing from a buff
-// srrevamp records).
-func (b *Books) Factor(ownerID int64, p int) float64 {
+// RunSpeed is ownerID's run speed through its active contributions to param
+// 24, rounded to the nearest unit for the wire (OURS: the engine keeps a
+// float).
+func (b *Books) RunSpeed(ownerID int64) uint32 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	bk := b.books[ownerID]
-	f := 1.0
-	if bk == nil {
-		return f
-	}
-	for _, r := range bk.records {
-		f *= r.speedFactor(p)
-	}
-	return f
-}
-
-// RunSpeed is ownerID's run speed from base (characterdata Speed2) through
-// its active contributions to param 24, rounded to the nearest unit for the
-// wire (OURS: the engine keeps a float).
-func (b *Books) RunSpeed(ownerID int64, base float64) uint32 {
-	return uint32(math.Round(base * b.Factor(ownerID, ParamRunSpeed)))
+	return b.speedLocked(b.books[ownerID])
 }
 
 // Contributes reports whether any of recs wrote a run-speed contribution.
