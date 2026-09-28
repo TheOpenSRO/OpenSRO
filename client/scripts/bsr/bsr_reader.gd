@@ -43,6 +43,9 @@ const OFF_PTR_SOUND := 0x24
 ## leaves (docs/WORLD_ISSUES.md, round 625).
 const OFF_FLAGS := 0x2C
 const FLAG_MESH_EXTRA_WORD := 0x1
+## Header flag bit 1: two passes, back faces then front (ParsedObject.
+## two_pass, READ from CObjRendererVS::vslot_038 / FUN_00bf5780).
+const FLAG_TWO_PASS := 0x2
 
 ## Object type, the low uint16 of the word at 0x40. Authored in the file --
 ## this is the game's own classification, not a guess from the path or from
@@ -245,18 +248,64 @@ class ParsedObject:
 	## did not parse (parse_sound_section).
 	var sound_sets_by_type: Dictionary = {}
 	var sound_sets_by_clip: Dictionary = {}
-	## The environment-map mods of the same section (round 625): material
-	## index -> the mod's flag word, one entry per ENVMAP / BUMPENV mod
-	## whose header names that index (header word 3, IModData +0x14). READ:
-	## `CRTModEnvMap::vslot_004` (0x00c83690) applies to the material whose
-	## index equals that word, ORs 0x60000000 into the draw's flags -- which
-	## turns off the material's own alpha test (`CObjRendererVS::
-	## FUN_00c42a60` skips it under 0x20000000) -- and then enables an alpha
-	## test of its own, ALPHAREF 1 / GREATEREQUAL, only when bit 1 of the
-	## flag word (header word 5, IModData +0x1c) is set. So the texture's
-	## alpha on such a material is the reflection mask, not a cutout. Read
-	## for every object whose section table parses; empty otherwise.
+	## The header's flag word at OFF_FLAGS (round 625): bit 0 adds a word to
+	## each mesh entry; bit 1 draws the object in two passes (two_pass()).
+	var header_flags: int = 0
+	## The material-state mods of the mod section (round 625 review
+	## follow-up), each `{"kind", "set_kind", "w1", "material", "flags"}`
+	## from its IModData header (FUN_00c5c2a0: words 1, 3 and 5 at +0x0c,
+	## +0x14, +0x1c) -- plus, for an MTRL mod, the state its body sets
+	## (_read_mtrl_state). ENVMAP (0x40000) and MTRL (0) only: BUMPENV's
+	## runtime (`CRTModBumpEnv::vslot_004`, 0x00c83c30) sets texture stages
+	## and never the flags or the alpha test. See env_map_flags and
+	## mtrl_mod_for() for which of them are live, READ from the client.
+	var material_mods: Array = []
+
+	## The flag word of the environment-map mod that governs this object's
+	## alpha test, or -1 for none (round 626's name and shape; this round's
+	## review read the same). READ, `CRTModEnvMap::vslot_004` (0x00c83690):
+	## it ORs 0x60000000 into the draw's flags -- 0x20000000 switches the
+	## material's own 0x200 test off -- and sets ALPHATEST to (flags & 2),
+	## with ALPHAFUNC GREATEREQUAL and ALPHAREF 1 when on, BEFORE it compares
+	## the material index (asm 0xc836a5, compare at 0xc83715). So the mod
+	## governs EVERY material of the object, not only the one its header
+	## names. It runs for a header word 1 of 2 through FUN_00c7b540 on each
+	## material's draw, and for word 1 of 1 through FUN_00c7b4e0 once per
+	## object, from vslot_038 with the renderer's own flag word
+	## (FUN_00c45110); other word-1 values are dispatched by neither and are
+	## not counted. Only the always-on `ambient` set (set kind 2) is taken:
+	## the other sets play with an animation clip (INFERRED). BUMPENV is not
+	## an env map for this (its runtime sets no alpha state). The last one
+	## wins, as the last apply would (INFERRED: mods run in list order).
+	var env_map_flags: int = -1
+
+	## Per material index, the flag word of each ENVMAP / BUMPENV mod whose
+	## header names it (round 625). NOT the scope of the mod -- see
+	## env_map_flags; kept for the census.
 	var env_map_materials: Dictionary = {}
+
+	## The MTRL mod that sets material `index`'s draw states, or {} for
+	## none. READ, `CRTModMtrl::vslot_004` (0x00c821f0): applied when its
+	## header material equals the index being drawn -- word 1 of 2, per
+	## material (FUN_00c7b540); word 1 of 1 is applied once per object with
+	## index -1 (FUN_00c7b4e0), matching a header material of 0xFFFFFFFF, and
+	## the states it sets and the 0x10000000 it ORs into the renderer's flag
+	## word then hold for every material the object draws. Ambient set only,
+	## as env_map_flags.
+	func mtrl_mod_for(index: int) -> Dictionary:
+		var out := {}
+		for m in material_mods:
+			if m["kind"] != MOD_MTRL or m["set_kind"] != 2 or not m.has("state"):
+				continue
+			if (m["w1"] == 2 and int(m["material"]) == index) or (m["w1"] == 1 and int(m["material"]) == 0xFFFFFFFF):
+				out = m["state"]
+		return out
+
+	## Header flag bit 1: `CObjRendererVS::vslot_038` draws the object with
+	## FUN_00bf5780 instead of FUN_00bf5700 -- every material twice, first
+	## with D3DRS_CULLMODE = CW (back faces), then CCW (front faces). READ.
+	func two_pass() -> bool:
+		return header_flags & FLAG_TWO_PASS != 0
 
 	func is_item() -> bool:
 		return object_type == TYPE_ITEM
@@ -312,6 +361,20 @@ class ParsedObject:
 ## failure -- including the known edge case of a file with an empty mesh
 ## path (see docs/protocol/BSR_FORMAT.md).
 static func parse(data: PackedByteArray) -> ParsedObject:
+	var obj := _parse(data)
+	if obj != null and obj.object_type == -1 and data.size() >= PREAMBLE_END:
+		# A file read by the forward scan still has its header's flag word
+		# and mod section, which the header pointer at OFF_PTR_SOUND reaches
+		# whatever its mesh layout (round 625 review: dun_cen_water03 is type
+		# 0 with no skeleton, so it takes the scan, and its MTRL mod -- the
+		# water's blend -- was lost with the table).
+		obj.header_flags = _le_u32(data, OFF_FLAGS)
+		obj.material_mods = material_mods(data)
+		obj.env_map_materials = env_map_materials(data)
+		obj.env_map_flags = env_map_flags(data)
+	return obj
+
+static func _parse(data: PackedByteArray) -> ParsedObject:
 	if data.size() < PREAMBLE_END:
 		push_error("bsr: file too small to contain a header")
 		return null
@@ -375,7 +438,10 @@ static func parse(data: PackedByteArray) -> ParsedObject:
 			built.is_character = is_character_type and built.skeleton_path != ""
 			if built.is_character:
 				_attach_sound_sets(built, data)
+			built.header_flags = _le_u32(data, OFF_FLAGS)
+			built.material_mods = material_mods(data)
 			built.env_map_materials = env_map_materials(data)
+			built.env_map_flags = env_map_flags(data)
 			return built
 
 	# The exact byte layout between the name and the mesh/material paths
@@ -716,6 +782,8 @@ static func parse_sound_section(data: PackedByteArray, off: int):
 		return null
 	var cursor := [off]
 	var mods := {}
+	var captured: Array = []
+	mods[_MODS_KEY] = captured
 	var env_maps: Array = []
 	mods[_ENV_MAPS_KEY] = env_maps
 	var lists: Array = []
@@ -730,16 +798,22 @@ static func parse_sound_section(data: PackedByteArray, off: int):
 				return null
 			sets.append(sset)
 		lists.append(sets)
+	mods.erase(_MODS_KEY)
 	mods.erase(_ENV_MAPS_KEY)
-	return {"by_clip": lists[0], "by_type": lists[1], "end": cursor[0], "mods": mods, "env_maps": env_maps}
+	return {"by_clip": lists[0], "by_type": lists[1], "end": cursor[0], "mods": mods,
+		"material_mods": captured, "env_maps": env_maps}
 
-## Where _read_mod_set leaves the ENVMAP / BUMPENV headers it passes, inside
+## Where _read_mod_set leaves the ENVMAP and MTRL mods it passes, inside
 ## the `mods` dictionary it already threads (a key no u32 kind can equal).
+const _MODS_KEY := "material_mods"
+
+## ParsedObject.material_mods for a file, or [] when its mod section does
+## not parse.
+## Where _read_mod_set leaves the ENVMAP / BUMPENV headers (round 625).
 const _ENV_MAPS_KEY := "env_maps"
 
-## The IModData header words of the mods parse_sound_section passed of kind
-## ENVMAP or BUMPENV, as material index -> flag word (see
-## ParsedObject.env_map_materials). Empty when the section does not parse.
+## Material index -> flag word of each ENVMAP / BUMPENV mod
+## (ParsedObject.env_map_materials).
 static func env_map_materials(data: PackedByteArray) -> Dictionary:
 	var out := {}
 	if data.size() < PREAMBLE_END:
@@ -750,6 +824,52 @@ static func env_map_materials(data: PackedByteArray) -> Dictionary:
 	for header in section["env_maps"]:
 		out[int(header["material"])] = int(header["flags"])
 	return out
+
+## ParsedObject.env_map_flags for a file: the flag word of the last live
+## ENVMAP mod (ambient set, header word 1 of 1 or 2), -1 for none.
+static func env_map_flags(data: PackedByteArray) -> int:
+	var flags := -1
+	for m in material_mods(data):
+		if m["kind"] == MOD_ENVMAP and m["set_kind"] == 2 and (m["w1"] == 1 or m["w1"] == 2):
+			flags = int(m["flags"])
+	return flags
+
+static func material_mods(data: PackedByteArray) -> Array:
+	if data.size() < PREAMBLE_END:
+		return []
+	var section = parse_sound_section(data, _le_u32(data, OFF_PTR_SOUND))
+	if section == null:
+		return []
+	return section["material_mods"]
+
+## The last 36 bytes of an MTRL mod's body, READ from its reader
+## `ModDataMtrl::vslot_004` (0x00c626c0) and what `CRTModMtrl::vslot_004`
+## does with each (0x00c821f0):
+##   +0x50 u32  alpha test on   -> ALPHATESTENABLE, ALPHAREF = byte +0x68,
+##                                 ALPHAFUNC = byte +0x69
+##   +0x54 u32  blend on        -> ALPHABLENDENABLE, SRCBLEND = byte +0x60,
+##                                 DESTBLEND = byte +0x61, stage 0
+##                                 COLOROP/ARG1/ARG2/ALPHAOP/ARG1/ARG2 =
+##                                 bytes +0x62..+0x67
+##   +0x58 u32  z-write off     -> ZWRITEENABLE = FALSE
+##   +0x5c u32  texture factor  -> TEXTUREFACTOR = the mod's colour (with blend)
+##   +0x60      16 bytes: the eight state bytes above, ref, func, 2 unread,
+##              a u32 unread
+##   +0x70 u32  1 -> CULLMODE NONE
+## and it ORs 0x10000000 into the flags: the flag word's own states
+## (FUN_00c42a60) are then not set at all.
+static func _read_mtrl_state(data: PackedByteArray, at: int) -> Dictionary:
+	return {
+		"alpha_test": data.decode_u32(at) != 0,
+		"blend": data.decode_u32(at + 4) != 0,
+		"zwrite_off": data.decode_u32(at + 8) != 0,
+		"tfactor": data.decode_u32(at + 12) != 0,
+		"src_blend": data[at + 16], "dest_blend": data[at + 17],
+		"color_op": data[at + 18], "color_arg1": data[at + 19], "color_arg2": data[at + 20],
+		"alpha_op": data[at + 21], "alpha_arg1": data[at + 22], "alpha_arg2": data[at + 23],
+		"alpha_ref": data[at + 24], "alpha_func": data[at + 25],
+		"cull_none": data.decode_u32(at + 32) == 1,
+	}
 
 ## What follows the sound section in a character file: the attachment block
 ## `CResAttachable::vslot_007` reads after the object itself -- three
@@ -794,19 +914,26 @@ static func _read_mod_set(data: PackedByteArray, cursor: Array, mods: Dictionary
 			return null
 		mod_kind = mod_kind & 0xFFFFFFFF
 		mods[mod_kind] = int(mods.get(mod_kind, 0)) + 1
-		if (mod_kind == MOD_ENVMAP or mod_kind == MOD_BUMPENV) and mods.has(_ENV_MAPS_KEY) \
-				and cursor[0] + MOD_HEADER_BYTES <= data.size():
-			# The IModData header (FUN_00c5c2a0): six words -- into +0x08,
-			# +0x0c, +0x10, +0x14, +0x18, +0x1c -- and four bytes. Word 3
-			# (+0x14) is the material index, word 5 (+0x1c) the flag word.
-			(mods[_ENV_MAPS_KEY] as Array).append({"kind": mod_kind,
-				"material": data.decode_u32(cursor[0] + 12),
-				"flags": data.decode_u32(cursor[0] + 20)})
+		var header_at: int = cursor[0]
 		if mod_kind == MOD_SOUND:
 			if not _read_sound_mod(data, cursor, sset):
 				return null
 		elif not _skip_mod_body(data, cursor, mod_kind):
 			return null
+		if (mod_kind == MOD_ENVMAP or mod_kind == MOD_MTRL) and mods.has(_MODS_KEY):
+			# The IModData header (FUN_00c5c2a0): six words -- into +0x08,
+			# +0x0c, +0x10, +0x14, +0x18, +0x1c -- and four bytes. Word 1
+			# (+0x0c) is the dispatch (FUN_00c7b540 wants 2, FUN_00c7b4e0
+			# 1), word 3 (+0x14) the material index, word 5 (+0x1c) the
+			# flag word.
+			var m := {"kind": mod_kind, "set_kind": kind, "w1": data.decode_u32(header_at + 4),
+				"material": data.decode_u32(header_at + 12), "flags": data.decode_u32(header_at + 20)}
+			if mod_kind == MOD_MTRL:
+				m["state"] = _read_mtrl_state(data, cursor[0] - 36)
+			(mods[_MODS_KEY] as Array).append(m)
+		if (mod_kind == MOD_ENVMAP or mod_kind == MOD_BUMPENV) and mods.has(_ENV_MAPS_KEY):
+			(mods[_ENV_MAPS_KEY] as Array).append({"kind": mod_kind,
+				"material": data.decode_u32(header_at + 12), "flags": data.decode_u32(header_at + 20)})
 	return sset
 
 ## ModDataSound::vslot_004 (0x00c63f30): the IModData header, a count, and

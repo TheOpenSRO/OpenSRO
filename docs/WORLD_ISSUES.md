@@ -7094,6 +7094,115 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twenty-fifth round, review follow-up: water that had vanished blends again, env maps govern the whole object, and some objects draw in two passes
+
+The review confirmed the leaf fix. The 450 newly chained files are exactly those with flag bit 0.
+Every mesh list is a strict superset of the old one, with no duplicates and no LODs, and Jangan's
+`cj_pub01` tavern went from 2 pieces to 7. The review also found four gaps in the material rule;
+all four are READ in `sro_client.exe` and implemented here.
+
+**1. An env-map mod governs every material of its object (READ).** `CRTModEnvMap::vslot_004` ORs
+`0x60000000` and sets its own alpha test before it compares the material index (asm 0xc836a5,
+compare at 0xc83715).
+- It runs per material when header word 1 is 2 (`FUN_00c451e0` → `FUN_00c7b540`).
+- It runs once per object, with index −1 and the renderer's flag word, when word 1 is 1
+  (`vslot_038` → `FUN_00c45110` → `FUN_00c7b4e0`).
+- Round 625 had applied it to the named index only. `BsrReader.ParsedObject.env_map_flags` is now
+  the object's word, with the ambient set and a word 1 of 1 or 2. The field is round 626's shape,
+  and 626 read the same rule for items.
+- MEASURED: `bagh_masin_lf`'s ENVMAP (flags 3) names material 2. Its 0x341 layers `_03`/`_04`,
+  with 88 % and 68 % of their UV surface below alpha 128, were cut at 128. They are now tested
+  at 1.
+
+**2. BUMPENV is not an env map (READ).** `CRTModBumpEnv::vslot_004` (0x00c83c30) sets texture
+stages only, so it no longer counts.
+
+**3. The MTRL mod (READ).** `CRTModMtrl::vslot_004` (0x00c821f0) sets, for its material:
+- its own alpha test (ref and func);
+- ALPHABLENDENABLE, with its own blend factors and stage-0 ops;
+- z-write off and cull none;
+- and ORs `0x10000000`, so the flag word sets nothing.
+
+The body is `ModDataMtrl::vslot_004` (0xc626c0); its last 36 bytes are tabled in BMT_FORMAT.md.
+Implemented:
+- `BsrReader._read_mtrl_state` and `ParsedObject.mtrl_mod_for`.
+- `ObjectLoader.layer_draw_rule(flags, env_map, mtrl, two_pass)`.
+- One shader per cull, blend and depth combination (`_mod_shader`): D3D z-write maps to
+  `depth_draw_always`, and the stage-0 ops are uniforms.
+- The blend pairs: SRCALPHA/INVSRCALPHA is mix, SRCALPHA/ONE add, ONE/ONE add with alpha 1, and
+  the DESTCOLOR pairs multiply. OURS: any other pair is drawn as mix; the one seen is
+  `alex_potion_potion1`'s SRCALPHA/BOTHINVSRCALPHA.
+
+MEASURED with `foliage_census.gd` (`MTRL(...)` per piece):
+- **Every water object the review named carries a live MTRL mod** and now blends instead of
+  vanishing under the 0x340 test:
+  - `dun_cen_water01`..`06` (SRCALPHA/ONE);
+  - `air_garden8_water01/02`;
+  - `air_garden40_water_ani01/02` and their `gngwc_` copies;
+  - the nine `waterfall-turtle*` (mix or add, z-write off);
+  - `dun_waterfall_*`, `cj_waterfall02_*`, `oa_ho_waterfall01_*`, `waterline01`.
+- `dun_cen_water03` is type 0 with no skeleton, so it takes the forward scan. Its mod was lost with
+  the table. `BsrReader.parse` now reads the header's flag word and mod section for scan-path files
+  too, since the pointer at 0x24 reaches them whatever the mesh layout.
+- **72 of the map's tree models blend their leaves in retail:**
+  - `tre_bamboo01` has test 128 with SRCALPHA/INVSRCALPHA, z-write on and cull none, object-wide;
+  - `tre_maple01` has test 137 on its leaf material.
+  - Before this follow-up they were cut hard; now they are cut at the mod's ref and blended.
+    `plan_disagrees_with_0x200` counts 45 pieces where the mod's test differs from the flag word's.
+
+**4. Two passes (READ).** When `.bsr` header 0x2C has bit 1, `CObjRendererVS::vslot_038` draws
+with `FUN_00bf5780`: each material with CULLMODE CW, then CCW, i.e. back faces then front. An
+unblended layer is then two-sided. A blended one gets a `next_pass`: cull front, then back.
+MEASURED: `euro_esteuro_fountain01` (its MTRL mod is object-wide) and all 23 pieces of
+`alex_potion`.
+
+**Doc fixes:**
+- The layer trailer's uint32 is the runtime material's +0x90, not +0x80.
+- 12 China weapon and shield files carry a live ENVMAP of their own, not two.
+- ProgEquipPow is attached only for enhanced gear (`FUN_00a5f3e0` → slot 50, gated on a per-slot
+  byte).
+- The "gateway roof" in 97/167 is `cj_pub01_roof`.
+
+**Tests and pictures:**
+- Box: `check` is ALL LOAD, `tests` ran 143 suites with 0 failing, and Go is green.
+- Pictures: the 97/168 and 97/167 viewpoints were re-rendered on the GPU path with 0
+  `SCRIPT ERROR`s, into `foliage_shots/*_review.png`. They show the plaza and grove trees still in
+  leaf under the blended leaf mods; that is a picture, not a measurement. The `maple` viewpoint
+  came back with the player at another spot (minimap Y 985 against 1125), so no before/after is
+  claimed there.
+
+**The item branch is gone.** Round 626 read that items spare their armour through their own
+ENVMAP mods (602 item files with flag word 1, 465 with 3), which rule 1 above now applies. So
+`layer_draw_rule` takes round 626's `(flags, env_map)` shape, extended by `mtrl` and `two_pass`.
+
+**Functions changed**, for round 626's merge:
+- `BsrReader.parse`: now a wrapper over `_parse`.
+- `ParsedObject`:
+  - new: `env_map_flags` (var), `header_flags`, `material_mods`, `mtrl_mod_for`, `two_pass`;
+  - kept: `env_map_materials`.
+- `parse_sound_section`: returns `material_mods` beside `env_maps`.
+- `_read_mod_set`, plus the new `material_mods`, `env_map_flags(data)` and `_read_mtrl_state`.
+- `ObjectLoader`:
+  - `layer_draw_rule(flags, env_map, mtrl, two_pass)`;
+  - new: `blend_mode`, `_mod_shader`, `_build_mod_material`, `_mod_pass`;
+  - `build_godot_material` and `_prepare_material` take `(…, env_map, mtrl, two_pass)`;
+  - `_commit_material`, and the `_prepare_node` call site;
+  - `SkinnedBsrAssembler`: its two `build_godot_material` calls.
+
+**Tests:**
+- `bsr_reader_test` `_test_round_625_mods`: MTRL tail fields, per-material vs object-wide
+  dispatch, the two-pass flag, and ambient-set env maps.
+- `object_loader_test` `_test_round_625_mods`: MTRL replaces the flag word; the additive
+  depth-off two-sided shader; the leaf mod's `depth_draw_always` at 137; two-pass `next_pass`
+  ordering; and an env map dropping 0x200.
+- The item cases are removed from the round-625 table.
+
+**Open:**
+- The MTRL mod's animated colour (its keys) and the texture-factor argument.
+- Its flag bit 2 (specular).
+- Env-map reflection itself.
+- Which non-ambient sets play when.
+
 ## Six-hundred-and-twenty-fifth round: trees have their leaves again, needle cards stop drawing as slabs, and a spear is no longer cut to ribbons
 
 A player reported on v0.1.457 that "trees and assets around the map aren't fully visible or are
@@ -7128,8 +7237,9 @@ counts, the skin, the layer and flag word, the texture's fourCC, and its alpha s
   - Archive-wide `tools/sweep_bsr.gd --verify` over Data.pk2's 8,539 files: header table
     failures went from **491 to 41**, and unresolved paths stayed at **27 before and after**, so
     no invented paths. The 450 files the table now reads include buildings (`w_cd_inn`,
-    `cj_adult_brg`, ...). In the 97/167 "grove" frame a gateway roof that the scan had dropped now
-    stands.
+    `cj_adult_brg`, ...). In the 97/167 "grove" frame the tavern's roof, `cj_pub01_roof` of
+    `cj_pub01` at local (739.6, 429.8), which the scan had dropped, now stands (the review:
+    `cj_pub01` went from 2 pieces to 7).
 - **The shadow:** in the user's picture a canopy-shaped shadow lay under the bare trunks. It was
   not our leaf geometry. The census shows no leaf mesh was loaded at all on the base, so the
   shadow has another source. INFERRED, not measured: most likely the terrain's own baked
@@ -7148,8 +7258,9 @@ to pixel heuristics when bit 6 was clear. The client's own rule is now read:
   - `0x4` → specular;
   - `0x8` → lighting off.
 - **The alpha function.** The renderer's begin (`FUN_00c42860`) sets **`ALPHAFUNC GREATEREQUAL`**.
-- **No blending.** No per-material blend exists; `ALPHABLENDENABLE` belongs to the whole-object
-  fade (`FUN_00c428c0`).
+- **No blending from the flag word.** `ALPHABLENDENABLE` comes from an MTRL mod or the whole-object
+  fade (`FUN_00c428c0`). This entry first said "no per-material blend exists"; the review follow-up
+  corrects that.
 - **Env-map mods override the test.** `CRTModEnvMap::vslot_004` ORs `0x60000000` (so the material
   test is off) and sets its own test at `ALPHAREF 1` when its mod flag word has bit 1. The mod is
   matched by material index: IModData header word 3 is the index, word 5 the flags
@@ -7177,6 +7288,10 @@ to pixel heuristics when bit 6 was clear. The client's own rule is now read:
   phantom layer.
 
 ### 3. Equipment (INFERRED, stated as such)
+
+**Superseded in the review follow-up above.** Items take no rule of their own: round 626 READ that
+their own ENVMAP mods spare the graded alpha, and ProgEquipPow is for enhanced gear only. The
+measurement below stands.
 
 The flag word asks for `0x200` on most weapon, shield and armour layers. Measured under each
 piece's own UV triangles (the census's `uv_alpha<128`), the share of alpha-tested layers with more
@@ -7219,7 +7334,7 @@ XT through VirtualGL on every run, with 0 `SCRIPT ERROR`s.
 - **`maple`** (the report's spot): bare trunks become full maples, and pine needles and blossom
   appear. Changed pixels: **74,261**. Green pixels in the upper frame: **14,673 → 23,102**.
 - **`plaza` / `plazaw`:** 12,417 → 14,608 and 9,308 → 10,090 green.
-- **`grove`:** 251,090 changed. The restored gateway roof covers part of the view, so green fell
+- **`grove`:** 251,090 changed. The restored tavern roof (`cj_pub01_roof`) covers part of the view, so green fell
   15,432 → 9,596.
 - **`farm` and `tree02b`:** about 1,800 changed each, which is time-of-day noise only. The one tree
   there (`tre_tree08`, `0x141`, opaque) was already right.

@@ -264,10 +264,11 @@ static func _prepare_node(archive: Pk2Reader, path: String, known: Dictionary, p
 			var layer_idx := _find_layer_by_name(material.layers, mesh.material_name)
 			if layer_idx == -1:
 				layer_idx = i if material.layers.size() == mesh_paths.size() else 0
-			# The draw rule's two inputs from the object (round 625): an
-			# env-map mod on this material index, and whether it is an item.
+			# The draw rule's inputs from the object (round 625 and its
+			# review): the env-map mod governing all its materials, this
+			# material's MTRL mod, and the two-pass flag.
 			piece["material"] = _prepare_material(archive, obj.material_path, material.layers[layer_idx], known, prepared,
-				int(obj.env_map_materials.get(layer_idx, -1)), obj.is_item())
+				obj.env_map_flags, obj.mtrl_mod_for(layer_idx), obj.two_pass())
 
 		(node["pieces"] as Array).append(piece)
 		loaded_count += 1
@@ -468,34 +469,34 @@ static func _read_material(archive: Pk2Reader, bmt_path: String, missing: Array)
 ##     flags & 0x200  -> D3DRS_ALPHATESTENABLE = TRUE, D3DRS_ALPHAREF = 0x80,
 ##                       unless flags & 0x20000000
 ##   and the renderer's begin (`FUN_00c42860`, CObjRendererVS slot 3) sets
-##   D3DRS_ALPHAFUNC = D3DCMP_GREATEREQUAL. No per-material blend is set
-##   there: a layer without 0x200 is drawn opaque whatever its texture's
-##   alpha holds (ALPHABLENDENABLE is only turned on by the object-fade
-##   path, FUN_00c428c0, for a whole object fading in or out).
+##   D3DRS_ALPHAFUNC = D3DCMP_GREATEREQUAL. The FLAG WORD never blends: a
+##   layer without 0x200 and without an MTRL mod is drawn opaque whatever
+##   its texture's alpha holds. Blending comes from an MTRL mod (below) or
+##   the object-fade path (FUN_00c428c0, a whole object fading).
 ## - So: LAYER_FLAG_ALPHA_TEST cuts the texture at alpha >= 128/255, and
 ##   LAYER_FLAG_TWO_SIDED draws both faces. The two are independent: 0x340
 ##   is an alpha-tested ONE-sided card (pine needles, bamboo leaves), 0x141
 ##   a two-sided solid one. Until this round bit 0 was read as "alpha" --
 ##   a correlation that held for the willows and broke on 44 tree models
 ##   whose 0x340 needle cards drew as solid slabs.
-## - An environment-map mod on the material (BsrReader.ParsedObject.
-##   env_map_materials, READ from `CRTModEnvMap::vslot_004`) ORs 0x60000000
+## - An environment-map mod on the object (BsrReader.ParsedObject.
+##   env_map_flags, READ from `CRTModEnvMap::vslot_004`) ORs 0x60000000
 ##   into the flags -- the 0x20000000 that switches the material's own test
 ##   off -- and turns on its own test, ALPHAREF 1 / GREATEREQUAL, only when
-##   its flag word has ENV_MAP_FLAG_ALPHA_TEST. The texture's alpha is then
-##   the reflection mask, not a cutout.
-## - EQUIPMENT (a type-5 item's pieces, SkinnedBsrAssembler) is drawn with
-##   NO material alpha test. INFERRED, not read: the flag word says 0x200 on
-##   most weapon, shield and armour layers, yet measured under each piece's
-##   own UV triangles 3 of 4 such layers have more than 30% of their surface
-##   below alpha 128 (median 75% for armour, 52% for weapons, 64% shields;
-##   `tools/foliage_census.gd --under=res/item`), where monsters, NPCs and
-##   characters sit at a median of 0-4%. A test at 128 would leave a spear
-##   15% of a spear -- the shredded spear and see-through shield of the
-##   round-625 report. The client has the mechanism: `CRTModProgEquipPow::
-##   vslot_004` ORs 0xe21f0000 into an equipped item's flags (0x20000000
-##   and 0x10000000: no material state at all) and attaches through
-##   `CCompChar::FUN_00c350a0`; WHEN it is attached is OPEN.
+##   its flag word has ENV_MAP_FLAG_ALPHA_TEST. Both happen before the
+##   mod's material-index compare, so they govern EVERY material of the
+##   object (round 625 review).
+## - An MTRL mod on a material (mtrl_mod_for, READ from `CRTModMtrl::
+##   vslot_004`) sets that material's own alpha test, blend, z-write and
+##   cull, and ORs 0x10000000 so the flag word sets nothing.
+## - Header flag bit 1 (two_pass) draws every material back faces then
+##   front faces.
+## - EQUIPMENT gets no rule of its own (review follow-up; round 626 read
+##   it): items carry their own ENVMAP mods, word 1 of 1 at index
+##   0xFFFFFFFF, and the object-wide env-map rule above spares their graded
+##   gloss alpha from the 0x200 test (602 item files with flag word 1, no
+##   test; 465 with 3, a test at 1). ProgEquipPow's override exists too, but
+##   only for enhanced gear (FUN_00a5f3e0 -> slot 50, gated per slot).
 const LAYER_FLAG_TWO_SIDED := 0x1
 const LAYER_FLAG_ALPHA_TEST := 0x200
 ## D3DRS_ALPHAREF 0x80 against D3DCMP_GREATEREQUAL: a texel is kept when its
@@ -519,17 +520,160 @@ const FOLIAGE_SHADER_ONE_SIDED := preload("res://scripts/assets/foliage_one_side
 const FOLIAGE_ALPHA_SCISSOR := float(ALPHA_TEST_REF) / 255.0
 
 ## How a layer is drawn, from its flag word and what the object says about
-## it -- THE MATERIAL RULE above. `env_map`: the flag word of an
-## environment-map mod on this layer's material index, -1 for none. `item`:
-## the layer belongs to a type-5 item. Returns {"alpha_ref": 0 for no test
-## or the byte a texel must reach, "two_sided": bool}.
-static func layer_draw_rule(flags: int, env_map: int = -1, item: bool = false) -> Dictionary:
-	var alpha_ref := ALPHA_TEST_REF if flags & LAYER_FLAG_ALPHA_TEST != 0 else 0
-	if env_map >= 0:
-		alpha_ref = ENV_MAP_ALPHA_REF if env_map & ENV_MAP_FLAG_ALPHA_TEST != 0 else 0
-	elif item:
-		alpha_ref = 0
-	return {"alpha_ref": alpha_ref, "two_sided": flags & LAYER_FLAG_TWO_SIDED != 0}
+## it -- THE MATERIAL RULE above.
+## - `env_map`: the object's env_map_flags (BsrReader.ParsedObject), -1
+##   for none. An env-map mod governs EVERY material of its object (READ,
+##   round 625 review: the OR and the test precede the index compare).
+## - `mtrl`: the MTRL mod for this material (mtrl_mod_for), {} for none.
+##   READ, CRTModMtrl::vslot_004: its own alpha test (ref and func), its
+##   own blend (factors and stage-0 ops), z-write off, cull none -- and it
+##   ORs 0x10000000, so the flag word's own states are not set at all.
+## - `two_pass`: the object's header flag bit 1 -- every material drawn
+##   back faces first, then front faces (READ, CObjRendererVS FUN_00bf5780).
+## Returns {"alpha_ref": 0 for no test or the byte a texel must reach
+## (with "alpha_func", a D3DCMPFUNC), "two_sided", "two_pass", "blend": ""
+## for none or "mix" / "add" / "add_one" / "mul" / "other" (the
+## D3DBLEND pair's Godot counterpart), "zwrite", "color_op", "color_arg1",
+## "color_arg2", "alpha_op", "alpha_arg1", "alpha_arg2" (D3DTOP / D3DTA;
+## 0 when the default modulate applies)}.
+static func layer_draw_rule(flags: int, env_map: int = -1, mtrl: Dictionary = {}, two_pass: bool = false) -> Dictionary:
+	var rule := {"alpha_ref": 0, "alpha_func": D3DCMP_GREATEREQUAL, "two_sided": false, "two_pass": two_pass,
+		"blend": "", "zwrite": true, "color_op": 0, "color_arg1": 0, "color_arg2": 0,
+		"alpha_op": 0, "alpha_arg1": 0, "alpha_arg2": 0}
+	if not mtrl.is_empty():
+		if mtrl.get("alpha_test", false):
+			rule["alpha_ref"] = int(mtrl["alpha_ref"])
+			rule["alpha_func"] = int(mtrl["alpha_func"])
+		rule["two_sided"] = mtrl.get("cull_none", false)
+		rule["zwrite"] = not mtrl.get("zwrite_off", false)
+		if mtrl.get("blend", false):
+			rule["blend"] = blend_mode(int(mtrl["src_blend"]), int(mtrl["dest_blend"]))
+			for k in ["color_op", "color_arg1", "color_arg2", "alpha_op", "alpha_arg1", "alpha_arg2"]:
+				rule[k] = int(mtrl[k])
+	else:
+		if flags & LAYER_FLAG_ALPHA_TEST != 0:
+			rule["alpha_ref"] = ALPHA_TEST_REF
+		if env_map >= 0:
+			rule["alpha_ref"] = ENV_MAP_ALPHA_REF if env_map & ENV_MAP_FLAG_ALPHA_TEST != 0 else 0
+		rule["two_sided"] = flags & LAYER_FLAG_TWO_SIDED != 0
+	# A test that keeps everything is no test: ALWAYS, or GREATEREQUAL 0.
+	if rule["alpha_func"] == D3DCMP_ALWAYS:
+		rule["alpha_ref"] = 0
+	if two_pass:
+		# CW then CCW: both faces, whatever the layer says (READ).
+		rule["two_sided"] = true
+	return rule
+
+## D3DCMPFUNC values the rule meets (d3d9types.h).
+const D3DCMP_GREATER := 5
+const D3DCMP_GREATEREQUAL := 7
+const D3DCMP_ALWAYS := 8
+
+## The Godot blend for a D3DBLEND source/destination pair (d3d9types.h:
+## 1 ZERO, 2 ONE, 3 SRCCOLOR, 5 SRCALPHA, 6 INVSRCALPHA, 9 DESTCOLOR).
+## SRCALPHA/INVSRCALPHA is Godot's mix; SRCALPHA/ONE its add (src*alpha +
+## dst); ONE/ONE add with alpha 1; DESTCOLOR/ZERO and ZERO/SRCCOLOR its
+## multiply. Anything else is drawn as mix and named "other" -- OURS, an
+## approximation, so the census can count it.
+static func blend_mode(src: int, dest: int) -> String:
+	if src == 5 and dest == 6:
+		return "mix"
+	if src == 5 and dest == 2:
+		return "add"
+	if src == 2 and dest == 2:
+		return "add_one"
+	if (src == 9 and dest == 1) or (src == 1 and dest == 3):
+		return "mul"
+	return "other"
+
+## The blended material an MTRL mod asks for: a shader built for its cull,
+## blend and depth-write (compile-time render modes, so one per
+## combination, cached), with the stage-0 ops as uniforms. `cull`: "back",
+## "front" or "disabled". Z-write on is depth_draw_always: a Godot
+## transparent draw writes no depth otherwise, and D3D's ZWRITEENABLE does
+## (72 tree models blend their leaves this way with the write on -- an
+## MTRL mod testing at 128 or 137 AND blending SRCALPHA/INVSRCALPHA).
+static var _mod_shaders := {}
+
+static func _mod_shader(cull: String, blend: String, zwrite: bool) -> Shader:
+	var godot_blend: String = {"mix": "blend_mix", "add": "blend_add", "add_one": "blend_add", "mul": "blend_mul"}.get(blend, "blend_mix")
+	var key := "%s/%s/%s" % [cull, godot_blend, zwrite]
+	if _mod_shaders.has(key):
+		return _mod_shaders[key]
+	var shader := Shader.new()
+	shader.code = """shader_type spatial;
+render_mode cull_%s, %s, %s;
+// An MTRL mod's blended draw (ObjectLoader.layer_draw_rule, READ from
+// CRTModMtrl::vslot_004). Built by ObjectLoader._mod_shader.
+uniform vec4 albedo : source_color = vec4(1.0);
+uniform sampler2D albedo_texture : source_color, filter_linear_mipmap, repeat_enable;
+uniform float alpha_scissor = 0.0;
+// D3DTOP: 2 SELECTARG1, 3 SELECTARG2, 4 MODULATE, 5 MODULATE2X,
+// 6 MODULATE4X; D3DTA: 0 DIFFUSE, 2 TEXTURE. 0 = the default modulate.
+uniform int color_op = 4;
+uniform int color_arg1 = 2;
+uniform int color_arg2 = 0;
+uniform int alpha_op = 2;
+uniform int alpha_arg1 = 2;
+uniform int alpha_arg2 = 0;
+uniform bool alpha_one = false;
+
+vec4 arg(int which, vec4 tex) {
+	return which == 2 ? tex : vec4(1.0);
+}
+
+vec4 op(int o, vec4 a, vec4 b) {
+	if (o == 2) return a;
+	if (o == 3) return b;
+	if (o == 5) return a * b * 2.0;
+	if (o == 6) return a * b * 4.0;
+	return a * b;
+}
+
+void fragment() {
+	vec4 tex = texture(albedo_texture, UV);
+	vec3 c = op(color_op, arg(color_arg1, tex), arg(color_arg2, tex)).rgb;
+	float a = op(alpha_op, arg(alpha_arg1, tex), arg(alpha_arg2, tex)).a;
+	if (alpha_scissor > 0.0 && a < alpha_scissor) {
+		discard;
+	}
+	ALBEDO = albedo.rgb * c;
+	ALPHA = alpha_one ? 1.0 : clamp(a, 0.0, 1.0);
+	if (!FRONT_FACING) {
+		NORMAL = -NORMAL;
+	}
+}
+""" % [cull, godot_blend, "depth_draw_always" if zwrite else "depth_draw_never"]
+	_mod_shaders[key] = shader
+	return shader
+
+## The material for a blended rule, and its second pass when the object
+## draws back faces then front (two_pass).
+static func _build_mod_material(layer: BmtReader.Layer, tex: Texture2D, rule: Dictionary) -> ShaderMaterial:
+	var cull := "disabled" if rule["two_sided"] and not rule["two_pass"] else "back"
+	if rule["two_pass"]:
+		cull = "front"
+	var mat := _mod_pass(layer, tex, rule, cull)
+	if rule["two_pass"]:
+		mat.next_pass = _mod_pass(layer, tex, rule, "back")
+	return mat
+
+static func _mod_pass(layer: BmtReader.Layer, tex: Texture2D, rule: Dictionary, cull: String) -> ShaderMaterial:
+	var mat := ShaderMaterial.new()
+	mat.resource_name = layer.layer_name
+	mat.shader = _mod_shader(cull, rule["blend"], rule["zwrite"])
+	mat.set_shader_parameter("albedo", layer.ambient)
+	mat.set_shader_parameter("albedo_texture", tex)
+	var ref := int(rule["alpha_ref"])
+	# GREATER keeps a texel above the ref, GREATEREQUAL at or above it.
+	if rule["alpha_func"] == D3DCMP_GREATER and ref > 0:
+		ref += 1
+	mat.set_shader_parameter("alpha_scissor", float(ref) / 255.0)
+	for k in ["color_op", "color_arg1", "color_arg2", "alpha_op", "alpha_arg1", "alpha_arg2"]:
+		if int(rule[k]) != 0:
+			mat.set_shader_parameter(k, int(rule[k]))
+	mat.set_shader_parameter("alpha_one", rule["blend"] == "add_one")
+	return mat
 
 ## The material for a layer the rule draws alpha-tested or two-sided.
 static func _build_foliage_material(layer: BmtReader.Layer, tex: Texture2D, alpha_ref: int, two_sided: bool) -> ShaderMaterial:
@@ -552,10 +696,11 @@ static func _build_foliage_material(layer: BmtReader.Layer, tex: Texture2D, alph
 ## caller's thread -- SkinnedBsrAssembler builds its NPC and item pieces'
 ## materials through here: _prepare_material decodes the texture to an Image,
 ## _commit_material builds the material from the uploaded texture.
-## `env_map` / `item`: see layer_draw_rule (round 625).
-static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: BmtReader.Layer, texture_cache: Dictionary = {}, env_map: int = -1, item: bool = false) -> Material:
+## `env_map`, `mtrl`, `two_pass`: see layer_draw_rule (round 625 and its
+## review).
+static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: BmtReader.Layer, texture_cache: Dictionary = {}, env_map: int = -1, mtrl: Dictionary = {}, two_pass: bool = false) -> Material:
 	var prepared := {"textures": {}, "missing": [], "log": []}
-	var plan := _prepare_material(archive, bmt_path, layer, snapshot_textures(texture_cache), prepared, env_map, item)
+	var plan := _prepare_material(archive, bmt_path, layer, snapshot_textures(texture_cache), prepared, env_map, mtrl, two_pass)
 	for what in prepared["missing"]:
 		_missing(what)
 	for line in prepared["log"]:
@@ -570,10 +715,10 @@ static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: Bm
 ## `{"layer", "texture_key", "alpha_ref", "two_sided", "cutout"}` --
 ## `cutout` is alpha_ref > 0 -- the key "" for a layer drawn without a
 ## texture (none named, not found, not decodable).
-static func _prepare_material(archive: Pk2Reader, bmt_path: String, layer: BmtReader.Layer, known: Dictionary, prepared: Dictionary, env_map: int = -1, item: bool = false) -> Dictionary:
-	var rule := layer_draw_rule(layer.unknown, env_map, item)
+static func _prepare_material(archive: Pk2Reader, bmt_path: String, layer: BmtReader.Layer, known: Dictionary, prepared: Dictionary, env_map: int = -1, mtrl: Dictionary = {}, two_pass: bool = false) -> Dictionary:
+	var rule := layer_draw_rule(layer.unknown, env_map, mtrl, two_pass)
 	var plan := {"layer": layer, "texture_key": "", "alpha_ref": rule["alpha_ref"],
-		"two_sided": rule["two_sided"], "cutout": int(rule["alpha_ref"]) > 0}
+		"two_sided": rule["two_sided"], "cutout": int(rule["alpha_ref"]) > 0, "rule": rule}
 	if layer.texture_path == "":
 		return plan
 
@@ -625,7 +770,7 @@ static func _prepare_material(archive: Pk2Reader, bmt_path: String, layer: BmtRe
 			(prepared["log"] as Array).append("QA MAT: %s (%s, %s) is %.1f%% non-opaque, flags 0x%04x, no alpha test%s" % [
 				layer.layer_name, tex_path.get_file(), four_cc,
 				fraction * 100.0, layer.unknown,
-				" (env map 0x%x)" % env_map if env_map >= 0 else (" (item)" if item else "")])
+				" (env map 0x%x)" % env_map if env_map >= 0 else ""])
 	return plan
 
 ## The commit half of a layer's material, on the main thread: the
@@ -661,6 +806,11 @@ static func _commit_material(plan: Dictionary, texture_cache: Dictionary) -> Mat
 		return mat
 	mat.albedo_texture = godot_tex
 	var alpha_ref := int(plan.get("alpha_ref", 0))
+	var rule: Dictionary = plan.get("rule", {})
+	if rule.get("blend", "") != "":
+		# An MTRL mod's blend (READ): the only per-material blending the
+		# client has -- the flag word never blends.
+		return _build_mod_material(layer, godot_tex, rule)
 	if alpha_ref > 0 or plan.get("two_sided", false):
 		# Not a StandardMaterial3D: a real double-sided card has to keep
 		# its authored normal on both faces to light the way the real
