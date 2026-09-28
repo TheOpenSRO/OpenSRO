@@ -7094,6 +7094,37 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-fourteenth round: a blow sounds when it lands -- the sword's own hit, a critical's crack, a block's clang -- and a skill plays its own cast sounds
+
+**Built** (`docs/RE_COMPLETION.md`, round 614; `docs/protocol/SOUND_FORMAT.md`, "Combat and
+skill sounds"): the code-fired half of the combat audio. When the player's blow lands, retail's
+key for it plays at the player (the attacker): `PLAYER:snd_cridmg:-:-:-:-` for a critical, else
+`PLAYER:snd_dmg:<skill group>:-:-:-` -- a plain swing carries the weapon's base attack
+(`SKILL_CH_SWORD_BASE`), a Smash its own group. A blocked counter plays
+`PLAYER:snd_blocking:-:-:NORMAL|CRITYCAL:-` at the blocker. A cast plays its skilleffectset
+SndBegin files at the caster: READY and the first SHOT rows as it starts, the second SHOT rows as
+the blow lands, `snd_activate` and the ACT_S / ACT_L rows when the server accepts it.
+`SkillAudio.set_current` / `context_of` give the animation-fired swings and voices the player's
+current skill.
+
+**Found, not guessed:** the weapon fallback key is built with five tokens
+(`PLAYER:snd_dmg:SWORD:-:NORMAL`, asm 0xa70b10-0xa70b43), so it never matches the table's
+six-token weapon rows; the research had written six. In retail every blow carries a skill, so the
+group key is what sounds -- and a bare hand (group `SKILL_PUNCH` against rows keyed
+`SKILL_PUNCH_BASE`) is silent. Monster hits are keyed by the monster's attack skill, which
+srrevamp's server does not send: logged and silent.
+
+**Measured live** on the box: `AUDIO hit: PLAYER:snd_dmg:SKILL_CH_SWORD_BASE:-:-:-`, `AUDIO crit:
+PLAYER:snd_cridmg:-:-:-:-`, `AUDIO hit: PLAYER:snd_dmg:SKILL_CH_SWORD_SMASH_A:-:-:- ... (skill 3 on
+monster 15, 36 damage)`, `AUDIO cast READY/-1: prim\snd\skill\csk_heal_ready.wav` and `AUDIO cast
+ACT_S/-1: prim\snd\skill\csk_heal_nega.wav` for the water self-heal. A cast is paired with the
+first result after it, so a fast-loop swing already in flight took one Smash's keys; the log
+shows it.
+
+**Negatives:** on 23baaf0 both suites FAIL on the missing scripts and World3D's missing hooks;
+planted bugs (a six-token weapon key, a block without CRITYCAL) FAIL four named checks. 130
+suites, 0 failing.
+
 ## Six-hundred-and-thirteenth round: footsteps sound by the ground underfoot, and swings, hurt and death voices play on the animation that makes them
 
 - **What:** each character `.bsr`'s sound tracks (the mod-data section at header 0x24, now parsed:

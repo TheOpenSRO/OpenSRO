@@ -113,7 +113,10 @@ orbs lit` as drawn (or `QA ATTACK RESULT: refused (...)`). The QA character know
 run learns one first: `SRREVAMP_GM_ACCOUNTS=qa`, `SRREVAMP_QA_COMMANDS="/level 20;/sp 100000"`
 (tick 60), `SRREVAMP_QA_LEARN="257x5;3"` (tick 90: raise Bicheon five times, learn skill 3, each
 reply printed as `QA LEARN`), then `SRREVAMP_QA_HOTBAR=<tick>` assigns it through the same path a
-window click takes.
+window click takes. `SRREVAMP_QA_HOTBAR_SKILLS="3,143"` (round 614) assigns those skill ids
+instead, in order, with the Basic_Code their skilldata row names -- e.g. Smash and the water
+self-heal (`SRREVAMP_QA_LEARN="257x5;276x5;3;143"`), whose cast sounds then print as `AUDIO cast
+READY/...` and `AUDIO cast ACT_S/...` (docs/protocol/SOUND_FORMAT.md, "Combat and skill sounds").
 
 ```
 SRREVAMP_GM_ACCOUNTS=qa SRREVAMP_QA_COMMANDS="/level 20;/sp 100000" SRREVAMP_QA_LEARN="257x5;3" \

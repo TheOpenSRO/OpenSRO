@@ -1043,6 +1043,9 @@ var _quickslot_items := {}
 ## attack result so that skill's own hit effect plays on the target (a plain
 ## attack does not). Set on cast, cleared when the blow lands.
 var _pending_skill_hit_code := ""
+## The skill id of that cast (0 = none), consumed with it: the result's
+## sounds key by it (round 614, CombatAudio / SkillAudio).
+var _pending_skill_id := 0
 ## characterdata code name -> BCRadius (NpcTableReader.COL_BC_RADIUS, world
 ## units), for every row: the player's body (GENDER_BODY_CODE) and each
 ## monster's species (MonsterSnapshot.code_name) are the two halves of the
@@ -1198,6 +1201,9 @@ func _ready() -> void:
 	# Sound (round 611): distances are measured from the player, left and
 	# right from the camera -- AudioService's header says why (ours).
 	SoundTable.set_listener(player, camera_3d)
+	# The skill tables the combat sounds key by (round 614), read while the
+	# world loads rather than on the first blow.
+	SkillAudio.warm()
 	# Entering the world is a loading screen, shown or not (round 612): the
 	# title music and any old zone's stop here, and the first region under
 	# the player starts its zone's music from the top (FUN_0084ab20, READ).
@@ -7206,6 +7212,8 @@ func _send_attack(monster_id: int, skill_id: int, basic_code: String) -> void:
 	_last_combat_time = _player_anim_time
 	_play_skill_cast_anim(anim_base)
 	_pending_skill_hit_code = basic_code
+	_pending_skill_id = skill_id
+	_audio_cast_start(skill_id)
 	if OS.get_environment("SRREVAMP_QA_HOTKEY") != "":
 		print("QA CAST: use_skill %d (%s) on monster %d" % [skill_id, basic_code, monster_id])
 	NetClient.use_skill(NetClient.current_character_name, skill_id, monster_id)
@@ -8669,10 +8677,23 @@ func _qa_step() -> void:
 	if qa_hotbar != "" and _qa_tick == qa_hotbar_tick and _ui_builder != null:
 		print("QA HOTBAR: assigning at tick %d (skill 3 known: %s)" % [_qa_tick,
 			str(_hud_panels != null and _hud_panels.is_skill_known(3))])
-		_on_skill_assign_requested(3, "SKILL_CH_SWORD_SMASH_A_01",
-			_ui_builder.load_texture("icon\\skill\\china\\sword_smash_a.ddj"))
-		_on_skill_assign_requested(177, "SKILL_CH_SWORD_CHAIN_A_01",
-			_ui_builder.load_texture("icon\\skill\\china\\sword_chain_a.ddj"))
+		# SRREVAMP_QA_HOTBAR_SKILLS="<id>,<id>..." (round 614) assigns those
+		# skills instead, in order, each with the Basic_Code its skilldata row
+		# names and no icon -- a run can cast a skill with cast sounds.
+		var qa_ids := OS.get_environment("SRREVAMP_QA_HOTBAR_SKILLS")
+		if qa_ids != "":
+			for part in qa_ids.split(",", false):
+				if String(part).strip_edges().is_valid_int():
+					var sid := int(String(part).strip_edges())
+					var scode := String(SkillAudio.context_for(sid)["code"])
+					print("QA HOTBAR: skill %d (%s), known: %s" % [sid, scode,
+						str(_hud_panels != null and _hud_panels.is_skill_known(sid))])
+					_on_skill_assign_requested(sid, scode, null)
+		else:
+			_on_skill_assign_requested(3, "SKILL_CH_SWORD_SMASH_A_01",
+				_ui_builder.load_texture("icon\\skill\\china\\sword_smash_a.ddj"))
+			_on_skill_assign_requested(177, "SKILL_CH_SWORD_CHAIN_A_01",
+				_ui_builder.load_texture("icon\\skill\\china\\sword_chain_a.ddj"))
 
 	# SRREVAMP_QA_HOTKEY="<tick>:<key>[,<tick>:<key>...]" presses a key at
 	# each tick through the viewport's real input path (push_input), as a
@@ -13125,6 +13146,17 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	# inherit it.
 	var skill_hit_code := _pending_skill_hit_code
 	_pending_skill_hit_code = ""
+	var cast_skill := _pending_skill_id
+	_pending_skill_id = 0
+	# The skill this blow carries, for its sounds: the cast's, or the weapon's
+	# base attack for a plain swing (CombatAudio.base_attack_skill), recorded
+	# as the player's current skill for the animation-fired sounds.
+	var blow_skill := cast_skill if cast_skill != 0 else \
+		CombatAudio.base_attack_skill(maxi(_player_weapon_type_id4(), 0))
+	if cast_skill == 0:
+		SkillAudio.set_current(player, blow_skill)
+	var blow_audio := {"skill": blow_skill, "cast": cast_skill != 0,
+		"critical": result.player_critical, "hwan": result.berserk_active}
 	if monster != -1:
 		var dealt := result.monster_damage
 		var died := result.monster_died
@@ -13160,6 +13192,7 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 				if hit_assembled != null:
 					_audio_mark_hit(hit_assembled.skeleton, result.player_critical)
 				_play_monster_action(monster, BsrReader.AnimationEntry.TYPE_HIT)
+			_audio_blow_lands(blow_audio, dealt, monster)
 			var hit_body = _monster_bodies.get(monster)
 			if hit_body != null and is_instance_valid(hit_body):
 				_floating_damage(hit_body, _monster_text_height(monster), dealt, DAMAGE_DEALT_COLOUR)
@@ -13280,6 +13313,12 @@ func _settle_counter(monster: int, result: CombatNet.AttackResult, wait: Diction
 ## blow that dealt damage is drawn, and only on an assembled body -- as before
 ## round 540.
 func _draw_counter_from_result(monster: int, result: CombatNet.AttackResult) -> void:
+	if result.player_blocked:
+		# Nothing is drawn for a blocked counter; its sound is (round 614),
+		# when the monster's blow would land.
+		var block_after := _monster_strike_seconds(monster) if monster != -1 else 0.0
+		_after(block_after, func() -> void:
+			_audio_block(player, result.monster_critical, "monster %d's counter, from the result" % monster))
 	if result.player_damage_taken <= 0 or _player_skeleton == null:
 		return
 	var strike_after := 0.0
@@ -13294,6 +13333,7 @@ func _draw_counter_from_result(monster: int, result: CombatNet.AttackResult) -> 
 		# player dead (round 548).
 		_audio_mark_hit(_player_skeleton, result.monster_critical)
 		_play_player_struck()
+		_audio_monster_blow(monster, result.monster_critical, "counter on the player, from the result")
 		# The damage the player took, over the player's own head (human
 		# head height from the same PLAYER_SCALE_RATIO calibration the
 		# monster fallback uses), timed to when the counter-blow lands.
@@ -13514,6 +13554,13 @@ func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool) ->
 			_face_monster_toward(monster, Vector2(target.position.x, target.position.z))
 		_play_monster_action(monster, BsrReader.AnimationEntry.TYPE_ATTACK)
 		strike_after = _monster_strike_seconds(monster)
+	if target != null and attacked.blocked:
+		# The block's sound at the blocker, a player character (round 614).
+		_after(strike_after, func() -> void:
+			var blocker = player if on_self else _other_bodies.get(target_id)
+			if blocker != null and is_instance_valid(blocker):
+				_audio_block(blocker, attacked.critical, "monster %d's blow on %s" % [
+					monster, "the player" if on_self else "character %d" % target_id]))
 	if target == null or attacked.blocked:
 		return
 	_after(strike_after, func() -> void:
@@ -13529,6 +13576,8 @@ func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool) ->
 		else:
 			_audio_mark_hit(_other_gaits.get(target_id, {}).get("skeleton"), attacked.critical)
 			_play_other_hit(target_id)
+		_audio_monster_blow(monster, attacked.critical, "blow on %s" % [
+			"the player" if on_self else "character %d" % target_id])
 		# Over the head, at the height the player's own number uses.
 		_floating_damage(anchor, 2.0 * PLAYER_SCALE_RATIO, attacked.damage, DAMAGE_TAKEN_COLOUR))
 
@@ -13558,6 +13607,79 @@ func _play_other_hit(character_id: int) -> void:
 	var hit := _body_animation_for(gait["gender"], BsrReader.AnimationEntry.TYPE_HIT, gait["group"])
 	if hit != null:
 		_play_once(gait["skeleton"], hit)
+
+# --- Combat and skill sounds (round 614) ---------------------------------------
+#
+# The code-fired half of the combat audio: CombatAudio builds retail's keys
+# (its header has every READ / INFERRED / OURS label) and SkillAudio holds the
+# skill tables and the skilleffectset cast sounds. The animation-fired half
+# (swings, voices, footsteps) is the .bsr sound tracks'; it reads the player's
+# current skill through SkillAudio.set_current / context_of.
+
+## The TypeID4 of the weapon in hand: 0 with the slot empty, -1 for an item
+## the item table does not name as a weapon.
+func _player_weapon_type_id4() -> int:
+	var weapon_id := int(_player_equipped_last.get(EquipmentNet.SLOT_WEAPON, 0))
+	if weapon_id == 0:
+		return 0
+	return int(_item_kinds.get(weapon_id, -1))
+
+## The weapon token FUN_00a648d0 would give for the weapon in hand.
+func _player_weapon_token() -> String:
+	var tid4 := _player_weapon_type_id4()
+	return CombatAudio.weapon_token(tid4, tid4 != 0)
+
+## A cast starts (its clip starts and OpUseSkill goes out): the skill becomes
+## the player's current one, and its READY and first SHOT rows sound
+## (SkillAudio's header: the phase timing is INFERRED).
+func _audio_cast_start(skill_id: int) -> void:
+	SkillAudio.set_current(player, skill_id)
+	var what := "cast start"
+	SkillAudio.play_phase(skill_id, SkillAudio.READY, -1, player, what)
+	SkillAudio.play_phase(skill_id, SkillAudio.SHOT, 0, player, what)
+	var left := SkillAudio.unplayed_rows(skill_id)
+	if not left.is_empty():
+		AudioLog.line("cast-unplayed:%d" % skill_id, "AUDIO cast: skill %d rows this client does not fire: %s" % [
+			skill_id, ", ".join(PackedStringArray(left))])
+
+## The player's blow lands on `monster`: the hit sound at the player (the
+## attacker, CombatAudio's header), and for a cast its second SHOT rows, its
+## activation (snd_activate) and its ACT_S / ACT_L rows. No hit sound for a
+## blow that dealt nothing: retail's hit sound starts with the damage
+## decoration (CIDecoDamageEffect), which a blow without damage does not get
+## (INFERRED).
+func _audio_blow_lands(blow: Dictionary, dealt: int, monster: int) -> void:
+	var skill := int(blow["skill"])
+	var ctx := SkillAudio.context_for(skill)
+	var what := "%s on monster %d, %d damage" % [
+		"skill %d" % skill if bool(blow["cast"]) else "plain swing (skill %d)" % skill, monster, dealt]
+	if dealt > 0:
+		CombatAudio.play_hit(bool(blow["critical"]), CombatAudio.PLAYER, bool(blow["hwan"]),
+			String(ctx["group"]), String(ctx["code"]), _player_weapon_token(), player, what)
+	if not bool(blow["cast"]):
+		return
+	SkillAudio.play_phase(skill, SkillAudio.SHOT, 1, player, what)
+	CombatAudio.play_activate(CombatAudio.PLAYER, String(ctx["group"]), player, what)
+	SkillAudio.play_phase(skill, SkillAudio.ACT_S, -1, player, what)
+	SkillAudio.play_phase(skill, SkillAudio.ACT_L, -1, player, what)
+
+## A monster's blow lands on a character: its hit sound at the monster (the
+## attacker), keyed by its sound object and its attack skill. srrevamp's
+## server names no monster skill, so the skill token is "-" -- and every
+## monster row names one (MEASURED), so this is logged and silent until the
+## server sends the skill (OPEN).
+func _audio_monster_blow(monster: int, critical: bool, what: String) -> void:
+	var body = _monster_bodies.get(monster)
+	var snap = _monster_snapshots.get(monster)
+	var obj := SoundTable.sound_object(String(snap.code_name)) if snap != null else ""
+	if body == null or not is_instance_valid(body):
+		body = null
+	CombatAudio.play_hit(critical, obj, false, CombatAudio.NONE, CombatAudio.NONE, "", body,
+		"monster %d (%s) %s" % [monster, obj if obj != "" else "no sound object", what])
+
+## A shield block on a player character, at the blocker.
+func _audio_block(blocker: Node3D, critical: bool, what: String) -> void:
+	CombatAudio.play_block(CombatAudio.PLAYER, critical, blocker, what)
 
 # --- Sitting down and standing up (round 607) ----------------------------------
 #

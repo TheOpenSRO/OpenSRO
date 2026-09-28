@@ -46530,3 +46530,114 @@ on the gate object, then `GRASS` and `STONE` on terrain tiles, `DIRT` again on `
 `PLAYER:snd_swing1/2:-:SWORD:-:-` at 185/559 (type 2), 213/565 (5), 257/564 (16), 183/560 (17);
 `PCM_FIGHTER:voc_moan:-:NORMAL|CRITYCAL:-:-` and `MOB_YEOHA:voc_moan:...`;
 `MOB_GYO:voc_death` at 0 and `MOB_GYO:snd_death:-:-:-:-` at 1754 ms of its die clip.
+
+## A blow sounds when it lands -- the sword's own hit, a critical's crack, a block's clang, and a skill's own cast sounds (round 614)
+
+Client only; round 4 of the audio plan, on round 611's contract. Written out, with labels, in
+`docs/protocol/SOUND_FORMAT.md` ("Combat and skill sounds"). New in `client/scripts/audio/`:
+`CombatAudio` (retail's keys for `snd_dmg`, `snd_cridmg`, `snd_ddmg`, `snd_blocking`,
+`snd_activate`; pure, plus `play_*`), `SkillAudio` (skilldata's Basic_Code / Basic_Group /
+Basic_Original, the skilleffectset SndBegin rows, the per-object current skill), `AudioLog` (one
+rate-limited `AUDIO ...` line per fired sound). World3D: `SkillAudio.warm()` at `_ready`;
+`_audio_cast_start` in `_send_attack` (a cast); `_audio_blow_lands` in `_on_attack_result`'s
+landing closure; `_audio_block` and `_audio_monster_blow` in `_draw_counter_from_result` and
+`_draw_monster_strike`; `_pending_skill_id` beside `_pending_skill_hit_code`.
+`SRREVAMP_QA_HOTBAR_SKILLS` (client/tools/README.md) puts chosen skills on the bar.
+
+### Read, measured, inferred, ours
+
+- **READ** (sro_client.exe; decompile `/var/tmp/decomp_client`, asm `/var/tmp/sro_client.asm`):
+  the callers `CIDecoDamageEffect::FUN_00a49780` (cridmg, falling back to dmg when it returns 0;
+  ddmg on +100), `FUN_00a47bf0` (blocking when the record's byte +9 is 2), `FUN_00a53850`
+  (activate after the ACT rows); every handler's key shape and that each plays at its own
+  object's position; `FUN_00a6f7f0` returns 0 only for a missing key; the weapon switch
+  `FUN_00a64560` (BOW at 0xde63a0, `""` for an unnamed type); `FUN_00a65180`'s link walk and its
+  `-` default (0xd81ea0); the AniType name table at 0xec7158 (READY 0 .. S_RETURN 9); the
+  loader's `m_byAniType < MAX_SKILL_EFF_TABLE`; `IDecoSkill::FUN_00a4fe70` playing +0x98/+0x9c
+  as files at the caster, volume 1.0. **Correction to the research:** the weapon fallback key is
+  built with five tokens, `PLAYER:snd_dmg:SWORD:-:NORMAL` (asm 0xa70b10-0xa70b43, literal
+  `:-:NORMAL` at 0xde6534), not audio_spec's six; it never matches the table's
+  `PLAYER:snd_dmg:-:SWORD:-:NORMAL`.
+- **MEASURED** (the box's Media.pk2 / Data.pk2 listing, extracts under `/var/tmp/raudio4`): all
+  212 non-player `snd_dmg` rows carry a skill; the base-skill rows (`SKILL_CH_SWORD_BASE` etc.) hold
+  the same files as the weapon rows (checked for SWORD and PUNCH); `SKILL_PUNCH_01`'s group is `SKILL_PUNCH` against the
+  table's `SKILL_PUNCH_BASE`; all 179 SndBegin values exist as `prim\snd\<value>`;
+  SkillEffectID = Basic_Group for 249 of 287 `SKILL_CH_` ids, Basic_Code for 4; SndBegin by phase
+  (SHOT 402 of which StartEvent 0: 88, 1: 269, 2+: 45; ACT_S 310; READY 190; ...); no China skill
+  has a SHOT sound past StartEvent 1; the loaded tables: 23,936 skill rows, 991 SndBegin rows
+  under 632 ids, in 291 ms.
+- **INFERRED**: deco+0x70 is the attacker (so a hit sounds at the attacker); +0x98/+0x9c are
+  SndBegin/SndEnd; Basic_Original is the +0x5c link; CRITYCAL on a block is the blow's critical;
+  no damage, no hit sound; the phase moments (cast start: READY + SHOT/0; the blow: SHOT/1; the
+  accepted cast: snd_activate + ACT_S + ACT_L); that a self-cast takes the ACT_S/ACT_L path.
+- **OURS**: a plain swing keys by the weapon's base attack skill, the retail server's table
+  (`combat.BaseAttackSkillFor`, READ round 256) mirrored client-side because OpAttackResult names
+  no skill; rows queued on +0x10 are played at once; the log's one-second rate limit; a cast's
+  result is the first OpAttackResult after its OpUseSkill (the rule the skill hit effect already
+  used).
+
+### Live run on the box (`/var/tmp/raudio4/live_audio.txt`; frames deleted)
+
+`SRREVAMP_GM_ACCOUNTS=qa SRREVAMP_QA_COMMANDS="/level 20;/sp 100000"
+SRREVAMP_QA_LEARN="257x5;276x5;3;143" SRREVAMP_QA_HOTBAR=260 SRREVAMP_QA_HOTBAR_SKILLS="3,143"
+SRREVAMP_QA_HOTKEY="340:1,460:2,580:1,700:2" SRREVAMP_QA_ATTACK_FAST=1 SRREVAMP_QA_ATTACK_GOTO=1
+qa_shot.sh --server --attack --frames 820 --size 640x360`, the server built from this tree:
+
+```
+AUDIO skills: 23936 skill rows, 991 SndBegin rows under 632 effect ids (291 ms)
+AUDIO hit: PLAYER:snd_dmg:SKILL_CH_SWORD_BASE:-:-:- at (78, 41, -220) (plain swing (skill 2) on monster 15, 2 damage)
+AUDIO crit: PLAYER:snd_cridmg:-:-:-:- at (78, 41, -220) (plain swing (skill 2) on monster 15, 9 damage)
+AUDIO hit: none of [MOB_YEOHA:snd_dmg:-:-:-:-] in the table -- silent (monster 15 (MOB_YEOHA) counter on the player, from the result)
+AUDIO crit: none of [MOB_YEOHA:snd_cridmg:-:-:-:-, MOB_YEOHA:snd_dmg:-:-:-:-] in the table -- silent (monster 15 (MOB_YEOHA) counter on the player, from the result)
+AUDIO cast READY/-1: prim\snd\skill\csk_heal_ready.wav for skill 143 SKILL_CH_WATER_SELFHEAL_A (cast start)
+QA CAST: use_skill 143 (SKILL_CH_WATER_SELFHEAL_A_01) on monster 12
+AUDIO activate: none of [PLAYER:snd_activate:SKILL_CH_WATER_SELFHEAL_A:-:-:-] in the table -- silent (skill 143 on monster 12, 0 damage)
+AUDIO cast ACT_S/-1: prim\snd\skill\csk_heal_nega.wav for skill 143 SKILL_CH_WATER_SELFHEAL_A (skill 143 on monster 12, 0 damage)
+World3D: attack hit for 36 (0 left, died), took 0 (HP 97) t=9.40
+AUDIO hit: PLAYER:snd_dmg:SKILL_CH_SWORD_SMASH_A:-:-:- at (208, 41, -220) (skill 3 on monster 15, 36 damage)
+AUDIO activate: none of [PLAYER:snd_activate:SKILL_CH_SWORD_SMASH_A:-:-:-] in the table -- silent (skill 3 on monster 15, 36 damage)
+```
+
+The run also shows the pairing's limit: the first Smash was sent while a fast-loop swing was in
+flight, so that swing's 6-damage result took the cast's keys (`skill 3 on monster 15, 6 damage`)
+and the Smash's 37 landed as a plain swing; the first self-heal likewise
+(`none of [PLAYER:snd_dmg:SKILL_CH_WATER_SELFHEAL_A:-:-:-, PLAYER:snd_dmg:SWORD:-:NORMAL]`, which
+also shows the five-token weapon key missing). No block: the QA character carries no shield.
+74 AUDIO combat lines, 0 SCRIPT ERROR.
+
+### Tests and negatives
+
+`combat_audio_test.gd` (the weapon tokens and base attacks; the hit, critical, berserk, monster,
+block, activation and ddmg keys; which key plays against a table loaded by `SoundTable.parse`
+from synthetic rows, including the unreachable six-token weapon row; that World3D calls the
+hooks) and `skill_audio_test.gd` (the AniType numbers; skilldata parse, the Basic_Original walk
+and its cycle guard; skilleffectset parse by section and header, SndBegin by phase and
+StartEvent, group-then-code lookup, an alias's rows; `set_current` / `context_of`; the rows left
+unfired). Synthetic data only.
+
+**Negatives on 23baaf0's scripts:**
+
+```
+FAIL scripts/audio/combat_audio.gd exists (CombatAudio, the code-fired combat keys)
+FAIL World3D calls SkillAudio.warm()
+FAIL World3D calls _audio_cast_start(skill_id)
+FAIL World3D calls _audio_blow_lands(blow_audio, dealt, monster)
+FAIL World3D calls _audio_block(player, result.monster_critical
+FAIL World3D calls _audio_monster_blow(monster, attacked.critical
+FAIL scripts/audio/skill_audio.gd exists (SkillAudio, the skill context and cast sounds)
+```
+
+**Planted bugs** (the research's six-token weapon key; a block that ignores the critical):
+`FAIL then the weapon key, five tokens as the asm builds it (PLAYER:snd_dmg:-:TESTWPN:-:NORMAL)`,
+`FAIL a critical block uses the table's CRITYCAL`, `FAIL with no skill the weapon row is
+unreachable: silent`, `FAIL the block key finds its row`.
+
+`remote_godot.sh check` ALL LOAD (334 scripts); `tests` 130 suites, 0 failing, 0 SCRIPT ERROR;
+Go build and `go test -count=1 -p 1 ./...` green.
+
+### Open
+
+Monster hit sounds (the server names no monster attack skill); `snd_ddmg` (no absorbing skill);
+a cast's result is paired by order, not by id (OpAttackResult carries no skill); WAIT, SHOT past
+StartEvent 1, ACT_OS/OL/OE, DEACT, S_RETURN and every SndEnd; the +0x10 moving-row queue; a live
+block (needs a shield on the QA character).
