@@ -925,6 +925,26 @@ layer-key lead). Left open:
 - **The `.o2` skip bit** (below, "`.o2` list semantics"): 240 list-2 records that retail does not
   build are drawn. None of them is seasonal.
 
+### Particle effects (`.efp`): **decoder done (round 619); the renderer is round 620**
+Both readers (`server/internal/efp` `Decode`, `client/scripts/efp/efp_reader.gd` `EfpReader.decode`)
+read the client's own layout. They decode 4,103 of the 4,170 files in the retail Particles.pk2, 4,096
+of them to the exact byte (`docs/protocol/EFP_FORMAT.md`; census commands in `client/tools/README.md`).
+The typed-tree API for the renderer is documented at the top of `efp_reader.gd`.
+
+Still open, in the order a renderer will meet them:
+- **The frame's duration in seconds.** Every lifetime, emission rate and Frame* value counts in
+  program frames (N). The lead is the emitter age at `FUN_00c84e70` (emitter +0x28 → +0x54).
+- **Which draw routine each render mode uses.** `EFEffect::FUN_00cabda0` switches on a value 1-5
+  at def +0x208; mapping those to Plate, Mesh and the Link modes needs `FUN_00c8c210`, `…bf50`,
+  `…de80`, `…e020` and `…c3a0`.
+- **What a command's `space` byte means.** It is 0-7 per command (SetPosition 7, SetRotation 2,
+  SetSpherePos 1). Also open: which Vec3 of AngleVector1 is the axis, FrameTextureSlide's head,
+  BlendScaleGraphPointer, and StaticEmit's `quality`.
+- **What the graph a/b floats, LinkMode, the node's 20-byte block and the header f32/u32s mean.**
+- **The 58 `F8FILE` containers** (`system\arksolid_*`). The bytes after the magic look encrypted
+  or compressed.
+- **The 7 `0000` files.** They are not the node format, and no skilleffect row names them.
+
 ## Parked, with the state written down
 
 ### Moat water

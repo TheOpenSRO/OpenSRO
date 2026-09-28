@@ -195,6 +195,26 @@ ssh root@192.168.5.78 'su - ghidra -c "cd /opt/srrevamp-client && P=/opt/sro-fil
   /opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64 --headless --path . --script res://tools/probe_audio.gd"'
 ```
 
+### Particle effects: the `.efp` census
+
+`EfpReader.decode` (and its Go twin `efp.Decode`) reads the typed tree of every particle
+effect (round 619; `docs/protocol/EFP_FORMAT.md` is the contract). The census measures
+what fraction of the player's own `Particles.pk2` it reads: headers parsed, trees decoded
+to the exact byte, failures by reason, and the files using each feature. It prints only
+counts and paths. There are three ways to run it, and all should agree (round 619:
+4,170 files, 4,103 decoded, 4,096 to the exact byte, 95,801 nodes):
+
+```
+# Go, on the box (0.8 s): the full report, with the feature table
+cd server && go run ./cmd/efpcensus -pk2 /opt/sro-files/client/Particles.pk2
+# one file's decoded tree
+go run ./cmd/efpcensus -pk2 /opt/sro-files/client/Particles.pk2 -show 'battle\deco_charge_light_a.efp'
+# the same census as a Go test; it is skipped where the variable is unset, which includes CI
+SRREVAMP_PARTICLES_PK2=/opt/sro-files/client/Particles.pk2 go test -count=1 -run TestRetailCensus -v ./internal/efp
+# GDScript twin (22 s), after a sync
+client/tools/remote_godot.sh script res://tools/efp_census.gd -- --pk2=/opt/sro-files/client/Particles.pk2
+```
+
 ### Load benchmark
 
 Every map and loading change is measured on the two runs below, before and after, and on nothing

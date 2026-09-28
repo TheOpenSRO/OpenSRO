@@ -7094,6 +7094,107 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-nineteenth round: 4,103 of the 4,170 particle effects now read completely, every value typed, ready for the effects renderer
+
+The skills epic asked for "most of the particles loaded". Before this round, both `.efp` readers
+walked a file as flat `(name, raw bytes)` pairs and decoded no values at all. They failed the
+header of 854 files: 621 of those were version `0012`, and 165 had a root name that was not an
+identifier. This round reads the client's own loader and implements it in both readers:
+`server/internal/efp` `Decode` (Go) and `EfpReader.decode` (GDScript).
+`docs/protocol/EFP_FORMAT.md` carries every layout with its address.
+
+**READ (sro_client.exe, `/var/tmp/decomp_client` and `/var/tmp/sro_client.asm`):**
+- **Header, `FUN_00cb8d70`.** The version is compared as a big-endian number. An f32 follows the
+  magic from `0012`, and three u32 more from `0013`. Then comes the root node. So the old "u32
+  before the name" was the root node's id, and `0010` is laid out like `0011`.
+- **Node, `FUN_00cc3a40`.** A node is: u32 id, name, controllers (key + data), body, children.
+- **Body, `FUN_00cc3500`.** A program (`u32 N` frames plus typed variables), six command lists,
+  three single commands, a 20-byte block and a render block.
+- **Commands, `FUN_00ca5460`.** Each is: u8 present, name, u8 space, u8 time flags, start, step,
+  end, then the parameter when the registry gives the command a type.
+- **Value types.** Each of the 16 types the registry `CGame::FUN_00ca0500` registers was
+  followed from its factory to its vtable, and then to slot 5, the read. That gives each type's
+  exact size, e.g. AxisVector4 16+64, RotVector 12+64, AngleVector1 24, the Frame* and Blend*
+  graphs with their counts, and BSAnimation as `.ban` names.
+- **Controllers.** The ten controllers' readers, from their classes' slot 3.
+- **Timing, `FUN_00ca0f40`.** How a command's time flags turn start, step and end into a frame
+  range over N.
+- **Emission, `FUN_00c84e70`.** SEFStaticEmit is delay, duration, interval, count, quality.
+- **Blending, `EFEffect::FUN_00cabda0`.** The node's 36-byte block is handed verbatim to Direct3D:
+  cull, SRCBLEND, DESTBLEND, then colour and alpha arg1, arg2 and op on stage 0. This settles the
+  spec's open blending question: blending is per node, not per texture name.
+
+**MEASURED.** The census covers the retail `Particles.pk2` on the box, through `cmd/efpcensus`
+and, identically, `client/tools/efp_census.gd`:
+
+| | files |
+|---|---|
+| total | 4,170 |
+| headers parsed | 4,103 (98.4 %) |
+| tree decoded | 4,103 (98.4 %) |
+| … to the exact byte | 4,096 |
+| … zero padding after the root | 6 |
+| … non-zero bytes after the root (`water_resurrection_effect_d`) | 1 |
+| not decoded: `F8FILE` containers / `0000` files / empty files | 58 / 7 / 2 |
+
+- **Every file whose header parses decodes, and the two readers agree.** Go and GDScript both
+  count 4,103 decoded, 4,096 exact and 95,801 nodes.
+- **The timing read is confirmed by the data.** A Frame* parameter holds exactly the number of keys
+  FUN_00ca0f40 computes in 129,413 of 129,438 commands. The values are baked, one per key.
+- **Blending.** Nodes blend additively (SRCALPHA/ONE) in 3,879 files and by alpha
+  (SRCALPHA/INVSRCALPHA) in 2,007; 30 files use other pairs.
+- **The census catches a wrong layout.** As a mutation check, AxisVector4 was read without its
+  matrix, and decoded files fell from 4,103 to 784: exactly the files with no AxisVector4.
+- **The `0000` files are not the node format.** The 7 of them fail with a string length of 5,385
+  or more, and no skilleffect row names any. The readers reject them.
+
+**OURS.** These choices are ours, not the client's:
+- The readers reject versions outside the retail set, including `0000`. The client would read
+  anything above `0013` as `0013`.
+- An unknown command name fails. The client would skip its parameter and desynchronise.
+- The allocation limits.
+- The typed-tree API for round 620, documented at the top of `efp_reader.gd`. Per node it gives:
+  frames, `loops()` / `never_extinct()`, `emission()`, `commands` / `command(name)` with
+  `frame_range(n)`, `view_mode()`, `render_mode()`, `meshes`, the render `state` with
+  `is_additive()`, and `vars`.
+
+The existing callers are unaffected. `hit_effect.gd` and `level_up_effect.gd` scan the raw bytes
+themselves, and `EfpReader.parse` keeps its API. The flat `parse` gained the header fixes and a
+root-name rule that allows any bytes but control characters. It now accepts 4,103 files where the
+base reader accepted 3,316 (MEASURED, both run over the same archive). Among the gains are
+`system\system_levelup.efp` and its three copies, whose root name is EUC-KR Korean.
+
+**Tests.**
+- `efp_tree_test.gd` (101 checks) and the synthetic Go tests round-trip each of the 16 value
+  types, a whole tree in every header version, every truncation and the frame-range rules.
+- `TestRetailCensus` runs the census when `SRREVAMP_PARTICLES_PK2` is set; CI skips it.
+
+Against the base b50a7b9, the new header tests fail:
+
+```
+--- FAIL: TestParseHeaderVariants
+    header_test.go:42: version 0010: Parse: efp: unrecognized version "0010"
+    header_test.go:42: version 0012: Parse: efp: unrecognized version "0012"
+--- FAIL: TestParseRelaxedEffectName
+    header_test.go:60: name "11111": Parse: efp: reading effect name: name "11111" doesn't start with a letter
+FAIL header variant 0010 parses
+FAIL header variant 0012 parses
+FAIL relaxed root name 11111
+```
+
+At the base, `tree_test.go` does not build (`undefined: Vec3`), and `efp_tree_test.gd` fails to
+parse (`Static function "decode()" not found in base "EfpReader"`).
+
+**OPEN** (also in `docs/TODO.md`):
+- the frame's duration in seconds;
+- which draw routine each render mode takes (def +0x208, cases 1-5);
+- what the command `space` byte, the graphs' a/b, LinkMode, the node's 20-byte block and the
+  header f32/u32s mean;
+- the `F8FILE` container;
+- what wrote the `0000` files.
+
+Round 620 renders from this tree.
+
 ## Six-hundred-and-fifteenth round: windows swoosh where the original's do, the item and level-up sounds play, and the Option window's Audio page sets the three volumes
 
 "Some interface elements when opened make a swoosh sound." They are `uiwinopen.wav` /
