@@ -7094,6 +7094,164 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twenty-fourth round, review follow-up: the point filter is read for the game's own window order, and all 622 skill icons decode
+
+The review confirmed round 624's reading and settled its OPEN item. It also found four errors.
+
+**READ (the review; magic_state_board.md, "The draw order before the board" and "Every filter
+setter", has the table):**
+- The board draws immediately after `GDR_PLAYER_MINI_INFO`'s subtree.
+  - A window's children draw in list order (0xba0300).
+  - `ginterface.txt`'s windows are prepended as they are parsed (0xb3e4d0), then appended in that
+    order (0xb90a80). That reverses file order: the mini info is line 457, the board line 438.
+- The mini info's `TXT_ID`, `LEVEL`, `HP` and `MP` labels draw through 0x8b48b0 → 0x8b2290 at
+  text scale 1.0, written by 0x8b46d0. That leaves stage-0 MIN and MAG at POINT (0x8b2447), and
+  nothing before the icon changes them.
+- So the POINT filter is **READ for retail's default window order**, no longer INFERRED. Four
+  assumptions remain: (a) no bring-to-front reorder; (b) no other text-scale writer; (c) state
+  blocks and D3DX effects were not audited; (d) the labels have on-screen text.
+
+**Corrected:**
+1. **"FourCC 21" was wrong.** The four A8R8G8B8 icons with mips (`bow_balance_a`, `light_holy`,
+   `spear_balance_a`, `sword_balance_a`) have pixel-format flags 0x41. Their FourCC slot holds a
+   stray 21, which the DDS format says to ignore when the FourCC flag is clear.
+   - `DdjReader` takes the mask path for them, so all 622 icons decode.
+   - Round 624's TODO item ("do not decode anywhere") is removed. The census is 441 + 4 A8R8G8B8,
+     4 X8R8G8B8, 159 A1R5G5B5, 2 A4R4G4B4 and 12 DXT3.
+   - Round 624 tested nothing to support that claim. It came from reading the header field
+     without checking the flag.
+2. **The 3D preview widgets restore POINT, not LINEAR** (0x4fffe7, 0x560de1, 0x6adb68, 0x7c02cd,
+   0x7eea84). The paths that leave LINEAR are 0x819d80 and 0x8b4d90 (reached from 0x819040 and
+   0x62f910), with 0x4771a0 and 0x49a7d0's tail. The CNIF text twin 0x493460 behaves like
+   0x8b2290.
+3. **The UV citation.** The 0..1 UVs are set by the base window constructor (0x654661..0x6546bf).
+   0x653060 only copies them into the vertices. The UV call at 0x807036 is the `lnks` frame's
+   (`+0x37c`), not the icon's.
+4. **A test leak.** `_test_constant` now frees its board.
+
+**What changed:**
+- `HudBuffBoard.AUTHENTIC_ICONS` is a `static var`, so a future setting can flip it. The two modes
+  cache their textures separately.
+- `hud_buff_icon_test.gd` gained five checks:
+  - the switch is a static var;
+  - the false path makes no resample and inherits the linear filter;
+  - `UiBuilder.load_image` reads synthetic DDJs from a stub archive: A1R5G5B5; A8R8G8B8 with 6 mips
+    and the icons' own 0x41 flags plus stray 21; and DXT3 with 6 mips;
+  - each of those comes out of `retail_icon_image` as its 20 × 20 point sample, top level only;
+  - a missing file is null.
+- All the images are built in the test; no archive is used.
+
+**Runs:**
+- `remote_godot.sh check`: ALL LOAD.
+- `hud_buff_icon_test.gd`: all passed (25 checks).
+- `remote_godot.sh tests`: 144 suites, 0 failing.
+- `go test -count=1 -p 1 ./...`: rc 0.
+
+## Six-hundred-and-twenty-fourth round: the buff icons by the HP bar are drawn at the game's own 20×20 resolution, pixel for pixel
+
+The user reported on v0.1.457: "the icons at the top left for the skills seem to work great but in
+the original game I believe they used lower resolution icons … let's be authentic for now." The
+buff bar's icons are now point-sampled from 32 × 32 down to 20 × 20, as retail samples them.
+
+**READ: the file** (`sro_client.exe`; magic_state_board.md, "The icon's texture and sampling", has
+every address):
+- The slot's icon path is picked by 0x7ff240. For a skill buff it is the skill row's string at
+  `+0x108`. It reaches the icon child through 0x8068a0 → the `+0x84` object's 0x655680 → 0x5008f0.
+- The skill window (`IFSkillSlot` 0x6a15f0) and the quick slot (`IFSlotWithHelp` 0x6809a0) load the
+  same string the same way.
+- So the buff bar uses the skill window's own file, skilldata col 61 under `icon\`, which is what
+  round 618 loaded. There is no small or state variant for skill buffs.
+
+**MEASURED: the files** (DDS headers of all 622 `icon\skill\` files in the box's Media.pk2):
+- Every one is 32 × 32: 441 A8R8G8B8, 4 more A8R8G8B8 with 6 mips, 4 X8R8G8B8, 159 A1R5G5B5,
+  2 A4R4G4B4, and 12 DXT3 with 6 mips. All decode.
+  - The four with mips have pixel-format flags 0x41 and a stray 21 in the FourCC slot.
+  - This line first read them as "FourCC 21". The review corrected that; see its follow-up above.
+- No `icon\small\` or `_s` twin exists, and no other archive holds an icon `.ddj`.
+- `icon\stateodd\`'s only 20 × 20 files are `s_goldtime_icon`, `s_silvertime_icon` and the two
+  admittance sprites.
+- So "lower resolution icons" are not separate files. The low resolution comes from how retail
+  draws the 32 × 32 file into a 20 × 20 slot.
+
+**READ: the draw.**
+- The icon is a CIFStatic (class 0xee9720). Its sprite draw, 0x655d50 → 0x654c30, sets the FVF and
+  the texture and draws a fan. **It sets no sampler state.**
+- The quad's edges are the rect minus 0.5 (0x6529d0, the double 0.5 at 0xe1b7d0), with UVs 0..1.
+  So screen pixel k samples texel coordinate (2k + 1) × 32 / 40.
+- The UI pass sets CLAMP and MIPFILTER NONE (0x8408c0). The DDJ loader keeps the file's mip count.
+  So mips never apply.
+- Stage-0 MIN and MAG are inherited from the previous draw:
+  - Every CIFStatic label draws its text through 0x8b48b0 → 0x8b2290. That function sets both to
+    **POINT** when the text scale is within 0.1 of 1.0 (`fcomp` against the double at 0xe1b8c0,
+    0x8b2447). 0x8b48b0's tail restores the texture-stage states and not the filters
+    (0x8b4d0b..0x8b4d77).
+  - Only the wrapped text paths (0x8b4d90, 0x4771a0, 0x49a7d0), the 3D preview widgets and
+    scaled text set LINEAR.
+  - The board, its slots, the CIFGauge (0x6387d0) and the icon set nothing.
+
+**INFERRED:** on the HUD the icons are point-sampled: 20 of the 32 texel columns and rows, texels
+0 2 4 5 7 8 10 12 13 15 16 18 20 21 23 24 26 28 29 31, with no blending. That is the "lower
+resolution" the user remembers.
+
+**OPEN:** which window draws immediately before the board (0xba0300 walks the child list; the
+root's order and bring-to-front were not read). A retail D3D9 frame capture would settle it.
+
+**What changed** (`client/scripts/ui/hud/hud_buff_board.gd`, `client/scripts/ui/ui_builder.gd`):
+- `HudBuffBoard.AUTHENTIC_ICONS := true` is the one switch, and no UI was added. A future
+  high-res toggle flips it.
+- When on:
+  - `UiBuilder.load_image` reads the file's Image.
+  - `HudBuffBoard.retail_icon_image` point-samples it once, in integer arithmetic, to 20 × 20.
+  - The icon's TextureRect draws that Image with `TEXTURE_FILTER_NEAREST`.
+- When off, the board draws the 32 × 32 file with the canvas's linear filter, as before.
+- OURS: at a UI scale other than 1 the 20 × 20 result is enlarged by nearest filtering (retail has
+  no UI scale).
+- INFERRED: the four exact-boundary texels (k = 2, 7, 12, 17) resolve by floor on retail's GPU
+  as they do here.
+
+**Measured before and after** (the box, VirtualGL, `SRREVAMP_QA_BUFFS` with eight buffs at Jangan's
+spawn, 1280 × 720, frame 299; crops in the round's scratch `icon_shots/`):
+- Grass Walk's icon (id 113, `lightning_gyeonggong_a.ddj`, A1R5G5B5) sits at (220, 10). It was
+  compared with a Python point sample of the same file, decoded independently on the box.
+- Base (dev b22edf5): 0 of 400 pixels equal the point sample, and 30 are within 2. **342 of 400
+  match no texel of the file at all**: they are linear blends, the soft look.
+- This round: 396 of 400 are within 2 of the point sample (152 are exact; the rest differ by the
+  5-to-8-bit expansion's rounding), and 4 of 400 match no texel. Those 4 are exactly the four
+  corner samples, whose texels are the file's only transparent ones (1020 of 1024 are opaque), so
+  the scene shows through.
+
+**The skill window and the hotbar** (READ): they use the same file and the same sprite path, drawn
+32 × 32 into 32 × 32 slots. Every pixel lands on a texel centre, so POINT and LINEAR draw the same
+picture. srrevamp already draws them 1:1 (`SKILL_CELL` 32; the underbar's 32 × 32). They are
+unchanged, since the evidence shows no difference to make.
+
+**Tests:**
+- `hud_buff_icon_test.gd`, new: the switch, the 20 × 20 size, the sampled texels, the absence of
+  blending, the 1:1 case, the path asked for, the slot texture's size, nearest filtering, and the
+  cache.
+- **Negative**, the same test on dev b22edf5 (a detached worktree with only the test file copied
+  in):
+  ```
+  FAIL HudBuffBoard.AUTHENTIC_ICONS exists (one switch for a future toggle)
+  FAIL AUTHENTIC_ICONS is on
+  FAIL HudBuffBoard.retail_icon_image exists
+  FAIL 32x32 -> 20x20 point samples at floor((2k+1)*32/40)
+  FAIL the file read is col 61 under icon\ -- the skill window's own (asked [])
+  FAIL the slot's icon texture is 20x20 (was the 32x32 file)
+  FAIL the icon is filtered nearest (texture_filter 0; the base left 0, inherit -> the canvas linear)
+  FAIL a second icon of the same skill reuses the cached image
+  hud_buff_icon_test: 8 FAILED
+  ```
+  The one base `ok` is "drawn in a 20x20 rect", which round 618 already did. Base asked for no
+  path because it has no image source, so its path line fails on the hook. The path itself is
+  unchanged from round 618.
+- The runs:
+  - `remote_godot.sh check`: ALL LOAD, 364 scripts.
+  - `remote_godot.sh tests`: 144 suites, 0 failing.
+- `go test -count=1 -p 1 ./...`: rc 0. That includes `hud_buff_board_test.gd`,
+    which is unchanged and ALL PASS.
+  - `go build ./... && go test -count=1 -p 1 ./...`: 60 packages ok, rc 0.
+
 ## Six-hundred-and-twenty-third round, review follow-up: a kept aura refused by the particle budget comes back, a one-shot that never ends is ended, and the emitters cost less
 
 The review upheld every READ claim of round 623 and found that the 9 ACT_L files still blank are
@@ -7259,6 +7417,7 @@ and "A particle's life", has it all):
   OURS; retail runs them node by node, and the flush and the late aging are READ.
 - `SkillEffects.act(..., with_aura)`, one cycle of ACT_L when no buff token will come, is OURS.
 - Whether retail shows the 9 + 2 authored gaps above is not seen on a retail client (OPEN).
+
 
 ## Six-hundred-and-twenty-second round, review follow-up: a healer can select themselves, a recast on an ally replaces the old buff, and only casts that happened are shown
 

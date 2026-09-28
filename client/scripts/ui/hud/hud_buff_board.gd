@@ -78,6 +78,42 @@ const REGISTRY_NAME := "GDR_MAGICSTATEBOARD"
 const FALLBACK_POSITION := Vector2(220, 10)
 
 const ICON_SIZE := Vector2(20, 20)
+
+## AUTHENTIC ICONS (round 624): the icon as retail's screen shows it -- the
+## skill window's own 32x32 file (skilldata col 61 under `icon\`, the same
+## skill-row string +0x108 that IFSkillSlot 0x6a15f0 and the quick slot
+## 0x6809a0 load; this slot's is set by 0x7ff240 -> 0x8068a0), point-sampled
+## down to 20x20 once, then drawn with nearest filtering at any UI scale.
+## false draws the 32x32 file scaled with the canvas's linear filter, which is
+## what rounds 618-623 did. A static var, so a future "high-res icons" setting
+## can flip it; icons already built keep their look until rebuilt.
+##
+## MEASURED, the file: every one of Media.pk2's 622 `icon\skill\` files is
+## 32x32 -- 441 A8R8G8B8 and 4 more A8R8G8B8 carrying 6 mips (pixel-format
+## flags 0x41, masks, not a FourCC), 4 X8R8G8B8, 159 A1R5G5B5, 2 A4R4G4B4,
+## 12 DXT3 with 6 mips; all decode. There is no small or `_s` twin;
+## `icon\stateodd\` holds only the gauges, 24 abnormal-state icons (32x32)
+## and four 20x20 sprites.
+## READ, the draw: the icon is a CIFStatic (class 0xee9720) 20x20 child;
+## CIFWnd's sprite draw (0x655d50 -> 0x654c30) sets FVF 0x104 and the
+## texture and draws a fan, setting NO sampler state. Its quad is the window
+## rect minus 0.5 on each edge (0x6529d0, the double 0.5 at 0xe1b7d0), with
+## UVs 0..1 (the base window ctor, 0x654661..0x6546bf), so pixel k of 20
+## samples u = (k + 0.5) / 20 -- texel floor((2k+1)*32/40). The UI pass sets
+## MIPFILTER NONE and CLAMP (0x8408c0), and the DDJ loader keeps the file's
+## own mip count (0xb87f20), so mips never apply.
+## READ, the filter the sprite inherits (round 624's review): the board draws
+## right after GDR_PLAYER_MINI_INFO's subtree (a window's children draw in
+## reverse file order: 0xb3e4d0 prepends, 0xb90a80 appends), whose TXT_ID /
+## LEVEL / HP / MP labels draw through 0x8b48b0 -> 0x8b2290. That sets MIN
+## and MAG to POINT at text scale 1.0 (0x8b46d0 writes 1.0; |s - 1| <= 0.1
+## at 0x8b2447) and nothing puts them back before the icon. The full
+## setter table and the four residual assumptions are in
+## docs/protocol/magic_state_board.md.
+## OURS: nearest filtering of the 20x20 result when the UI scale is not 1
+## (retail draws its UI 1:1 and has no scale).
+static var AUTHENTIC_ICONS := true
+
 const GAUGE_RECT := Rect2(0, 20, 20, 4)
 ## The slot window: the icon plus the gauge under it (0x806d50's vslot 0x54
 ## call, w x (h + gauge h)) -- the right-click hit rect.
@@ -203,6 +239,8 @@ var _gauge_back_tex: Texture2D = null
 var _burst_tex: Texture2D = null
 var _textures_loaded := false
 var _icon_cache: Dictionary = {}
+var _icon_image_cache: Dictionary = {}
+var _icon_authentic_cache: Dictionary = {}
 
 func _init(builder: UiBuilder = null, skill_catalog: SkillBuffCatalog = null) -> void:
 	_builder = builder
@@ -623,10 +661,67 @@ func _load_textures() -> void:
 	_gauge_back_tex = _builder.load_texture(GAUGE_BACK)
 	_burst_tex = _builder.load_texture(BURST_TEXTURE)
 
-func _icon_texture(path: String) -> Texture2D:
-	if _builder == null or path == "":
+## The archive path a skill row's icon is read from: col 61 under `icon\`,
+## as HudPanels._load_skill_icon builds it for the skill window.
+static func icon_path(path: String) -> String:
+	if path == "":
+		return ""
+	return path if path.to_lower().begins_with("icon\\") else "icon\\" + path
+
+## Retail's 20x20 view of an icon (AUTHENTIC_ICONS): point samples at the
+## pixel centres the quad's -0.5 edges put them on (0x6529d0), texel
+## floor((2k+1) * src / (2 * 20)) in each axis, CLAMP addressing (0x8408c0).
+## Integer arithmetic, so the texels on an exact boundary (k = 2, 7, 12, 17
+## of a 32-texel side) resolve the way floor does -- INFERRED for the GPU's
+## own float interpolation there.
+static func retail_icon_image(src: Image, w: int = int(ICON_SIZE.x), h: int = int(ICON_SIZE.y)) -> Image:
+	if src == null or src.is_empty():
 		return null
-	var full := path if path.to_lower().begins_with("icon\\") else "icon\\" + path
+	var img := src.duplicate() as Image
+	if img.is_compressed():
+		img.decompress()
+	if img.has_mipmaps():
+		img.clear_mipmaps()
+	img.convert(Image.FORMAT_RGBA8)
+	var sw := img.get_width()
+	var sh := img.get_height()
+	var out := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	for y in h:
+		var sy: int = mini(((2 * y + 1) * sh) / (2 * h), sh - 1)
+		for x in w:
+			var sx: int = mini(((2 * x + 1) * sw) / (2 * w), sw - 1)
+			out.set_pixel(x, y, img.get_pixel(sx, sy))
+	return out
+
+## Where the authentic path reads an icon's full-size Image; tests replace it.
+## Default: UiBuilder.load_image.
+var icon_image_source: Callable = Callable()
+
+## The 20x20 Image an icon is drawn from (AUTHENTIC_ICONS), cached per path.
+func icon_image(path: String) -> Image:
+	var full := icon_path(path)
+	if full == "":
+		return null
+	if not _icon_image_cache.has(full):
+		var src: Image = null
+		if icon_image_source.is_valid():
+			src = icon_image_source.call(full)
+		elif _builder != null:
+			src = _builder.load_image(full)
+		_icon_image_cache[full] = retail_icon_image(src)
+	return _icon_image_cache[full]
+
+func _icon_texture(path: String) -> Texture2D:
+	var full := icon_path(path)
+	if full == "":
+		return null
+	if AUTHENTIC_ICONS:
+		if not _icon_authentic_cache.has(full):
+			var img := icon_image(path)
+			_icon_authentic_cache[full] = ImageTexture.create_from_image(img) if img != null else null
+		return _icon_authentic_cache[full]
+	if _builder == null:
+		return null
 	if not _icon_cache.has(full):
 		_icon_cache[full] = _builder.load_texture(full)
 	return _icon_cache[full]
@@ -646,6 +741,8 @@ func _make_slot(b: Buff) -> BuffSlot:
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_SCALE
 	icon.size = ICON_SIZE
+	if AUTHENTIC_ICONS:
+		icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	slot.add_child(icon)
 	slot.icon = icon

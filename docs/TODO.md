@@ -941,6 +941,17 @@ burst and sound, right-click cancel and the tooltip. The record is in
   - kind 2 abnormal states (`s_*_icon.ddj`, a 1000 ms refresh);
   - kind 3 item-time entries and their second gauge.
 - [ ] **0x93f5d0**, the lookup a right-click also requires, is unread and not modelled.
+- [x] **Authentic icons** -- round 624: the skill window's own 32x32 file, point-sampled to 20x20
+      once and drawn nearest (`HudBuffBoard.AUTHENTIC_ICONS`; the magic_state_board.md section
+      "The icon's texture and sampling" has the reading). Left open:
+  - [x] **The board's draw predecessor** -- READ in the review: the board draws right after
+        `GDR_PLAYER_MINI_INFO`'s subtree, whose labels leave POINT. Four assumptions stay open:
+        no bring-to-front reorder, no other text-scale writer, state blocks and D3DX effects not
+        audited, and the labels having on-screen text. A D3D9 frame capture of retail would close
+        them.
+  - [ ] **A "high-res icons" option.** The user may want one later. `AUTHENTIC_ICONS` is a
+        static var, so a setting can flip it; icons already on the board keep their look until
+        rebuilt. No UI was added.
 
 ### Seasonal event decorations — **hidden by default (round 583)**
 The user decided on 2026-09-26 that early testing gets no seasonal decorations. Christmas,

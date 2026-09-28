@@ -46,6 +46,122 @@ The labels are:
 - A skill with `lnks` gets a frame cut from `interface\ifcommon\window_all.ddj` at `{-2, -2, w+4, h+4+gauge}`, using the UV constants at 0xdd07a0..0xdd07b0. This is not drawn here: which constant is which corner is OPEN.
 - A kind-1 slot also loads `icon\stateodd\s_admittance_back.ddj` (string at 0xdd077c) and `icon\stateodd\s_admittance_icon.ddj` (0xdd0758) into `+0x390` and `+0x394`. CIFStateSlot's vslot_015 (0x8071c0) draws the two only while the slot's `+0x36c` is set. This is the same flag as the tooltip's red line. What sets it is OPEN, so neither sprite is drawn here.
 
+## The icon's texture and sampling (round 624)
+
+**Which file** (READ):
+- 0x803cd0 builds the slot, then 0x7ff240 picks the icon's path by entry kind. For kind 1, a skill
+  buff, it is the skill row's string at `+0x108` (0x93f250 → 0x95f4d0 = row + 0x774, + 0x108).
+- 0x8068a0 hands the path to the icon child (`+0x378`, a 20 × 20 window at (0, 0), built in
+  0x806d50) through its `+0x84` object's vslot `+0x34`. That is 0x655680, which loads the texture
+  through 0x5008f0 → 0x500670.
+- The skill window's slot (`IFSkillSlot` 0x6a15f0), the quick slot (`IFSlotWithHelp` 0x6809a0),
+  0x66c3c0 and the practice box (`CIFSkillPracticeBox::vslot_052` 0x7063d0) load the same `+0x108`
+  string the same way. So the buff icon is the skill window's file, skilldata col 61 under
+  `icon\`. There is no separate state-icon table for skill buffs.
+- The other kinds are these: kind 2 (abnormal states) `UI_PARAM::AbnormalState_IconAndLabelForMask`;
+  kinds 6/7/8/9/11/12 fixed files (`icon\etc\icon_trade_timer.ddj`,
+  `icon\skill\etc\tc_reserve_buff.ddj`, `vietnam_condition_*.ddj`, …); kinds 3/4/5 an item's
+  `+0x15c` with `_off.ddj`; kinds 10/13/14 item or table strings. None of these is built here.
+
+**The files** (MEASURED, Media.pk2 on the box; the DDS headers of all 622 `icon\skill\` files):
+
+| Size | Format | Mips | Count |
+|---|---|---|---|
+| 32 × 32 | A8R8G8B8 | none | 441 |
+| 32 × 32 | A8R8G8B8 | 6 | 4 |
+| 32 × 32 | X8R8G8B8 (alpha mask 0) | none | 4 |
+| 32 × 32 | A1R5G5B5 | none | 159 |
+| 32 × 32 | A4R4G4B4 | none | 2 |
+| 32 × 32 | DXT3 | 6 | 12 |
+
+- The four A8R8G8B8 files with mips are `bow_balance_a`, `light_holy`, `spear_balance_a` and
+  `sword_balance_a`. Their pixel-format flags are 0x41 (RGB | ALPHAPIXELS), with masks. The FourCC
+  slot holds a stray 21, which is ignored because the FourCC flag is clear. Round 624 first read
+  that 21 as the format, which was wrong (corrected in the review follow-up).
+- `DdjReader` takes the mask path for them, as it does for every uncompressed file, so all 622
+  decode.
+
+- Every skill icon is 32 × 32. No `icon\small\`, `_s` or low-resolution twin exists. Data.pk2's
+  41 paths containing `icon\` are sounds, and Map, Particles and Music have none.
+- `icon\stateodd\` holds the four gauge strips (20 × 4), 24 abnormal-state icons (32 × 32 by their
+  2196-byte size; `s_stun_icon`'s header was read),
+  `s_goldtime_icon` and `s_silvertime_icon` (20 × 20, A1R5G5B5), and the two admittance sprites
+  (20 × 20, A8R8G8B8).
+
+**How a 32 × 32 file becomes 20 × 20 pixels** (READ):
+- The icon child is a CIFStatic. Its draw is 0x64d940 → CIFWnd's 0x6550c0 → the `+0x84` object's
+  vslot 2, 0x655d50 → vslot 11, 0x654c30. That draw sets FVF 0x104 (XYZRHW | TEX1) and the
+  texture, then draws a two-triangle fan. **It sets no sampler state.**
+- The quad's edges are the window's rect, each minus 0.5 (0x6529d0: `fsub` of the double 0.5 at
+  0xe1b7d0; the far edges are `round(x + scale × w) − 0.5`). Its UVs are 0..1, set by the base window's constructor (0x654661..0x6546bf, before 0x653060 copies them into the vertices; 0x806d50's own UV call at 0x807036 is the `lnks` frame's, `+0x37c`). So
+  screen pixel k of 20 samples u = (k + 0.5) / 20: D3D9's texel-to-pixel correction, which puts
+  pixel k on texel coordinate (2k + 1) × 32 / 40.
+- The UI pass (0x8408c0) sets ADDRESSU/V to CLAMP and MIPFILTER to NONE. The DDJ loader (0xb87f20)
+  keeps the file's own mip count. So even the 16 files that carry mips draw from level 0.
+- Stage-0 MIN and MAG are left as the previous draw set them. The sampler cache is 0x4784b0
+  (`this` 0x1112428, cache at `+0x828 + (stage × 13 + state) × 4`: MAG 0x1112c64, MIN 0x1112c68).
+  Some paths write that cache and the device inline.
+
+**The draw order before the board** (READ, round 624's review):
+- A window's children draw in list order (0xba0300).
+- The interface file's windows reach the list in reverse file order: 0xb3e4d0 prepends each entry
+  as it parses `ginterface.txt`, and 0xb90a80 then appends them in that order.
+- `GDR_MAGICSTATEBOARD` is line 438 and `GDR_PLAYER_MINI_INFO` is line 457. So the board draws
+  immediately after the whole `GDR_PLAYER_MINI_INFO` subtree.
+- That subtree's labels are `TXT_ID`, `LEVEL`, `HP` and `MP`. Each is a CIFStatic, drawn by
+  0x64d940, whose text goes through 0x8b48b0 → 0x8b2290.
+- 0x8b46d0 sets a text board's scale (`+0x3c`) to 1.0. At |scale − 1.0| ≤ 0.1, 0x8b2290 sets MIN
+  and MAG to **POINT** (`fcomp` against the double 0.1 at 0xe1b8c0, `test ah,0x41` at 0x8b2447).
+- 0x8b48b0's tail (0x8b4d0b..0x8b4d77) restores the texture-stage states, not the filters.
+- Nothing between that label and the icon sets a filter: the board and its slots (0x6550c0,
+  `CIFStateSlot::vslot_015` 0x8071c0), the CIFGauge (0x6387d0, textless) and the icon's sprite draw.
+- **So the icon is point-sampled (READ, for retail's default window order).**
+
+**Every filter setter** (stage-0 MIN/MAG):
+
+| Where | Leaves | What |
+|---|---|---|
+| 0x8b2290 (via 0x8b48b0) | POINT at scale 1.0, else LINEAR | CIFStatic label text; not restored |
+| 0x493460 (via 0x476c80) | POINT at scale 1.0, else LINEAR | the CNIF text twin; not restored by its bare callers |
+| 0x8b4d90 | LINEAR | wraps 0x8b48b0 and restores LINEAR; reached from 0x819040 and 0x62f910, among others |
+| 0x4771a0 | LINEAR | wraps 0x476c80 and restores LINEAR |
+| 0x49a7d0 | LINEAR at its tail | `CNIFStretchWnd` frames: POINT for its own draw, then LINEAR |
+| 0x819d80 | LINEAR | a UI_SILKMALL draw |
+| 0x4ffc50, 0x560c30/0x560db0, 0x6ad860, 0x7bff70, 0x7ee800 | **POINT** | the five 3D preview widgets (`CIFRenderStatic`, `CIFEquipment`, `CIFItemMall`, `CIFChangePlayerModel`, and 0x4ffc50). Each sets LINEAR for its model and **restores POINT** after it (0x4fffe7, 0x560de1, 0x6adb68, 0x7c02cd, 0x7eea84) |
+| `CGame::vslot_015` | LINEAR | stages 0–2, the device's initial state |
+
+The world passes (`SWorld`, `Map`, `CObjRendererVS`) set their own filters before the UI pass.
+
+**Four assumptions remain:**
+- (a) **No bring-to-front reorder.** The order above is the default, from the file. A window
+  brought to the front, for example by a click, moves in the list. That is not modelled.
+- (b) **No other text-scale writer.** Only 0x8b46d0's 1.0 was found for the HUD labels.
+- (c) **State blocks and D3DX effects were not audited.** A stateblock `Apply` or an effect's
+  `Begin`/`End` could set sampler state without going through the calls above.
+- (d) **The labels have on-screen text.** A label with no text, or text clipped off-screen, draws
+  no glyphs and sets nothing. The HUD's name, level, HP and MP always have text in game.
+
+- The effect is that retail shows 20 of the 32 columns and rows, texels 0 2 4 5 7 8 10 12 13 15 16
+  18 20 21 23 24 26 28 29 31, with no blending. That is the "lower resolution" look.
+
+**srrevamp** (`HudBuffBoard.AUTHENTIC_ICONS`, a static var, on):
+- The icon's Image is read with `UiBuilder.load_image`. `HudBuffBoard.retail_icon_image` samples it
+  once, in integer arithmetic, to those 20 × 20 texels, and the result is drawn with
+  `TEXTURE_FILTER_NEAREST`.
+- At UI scale 1 this is retail's picture, pixel for pixel. At other scales it is those
+  20 × 20 pixels enlarged. That choice is OURS: retail draws its UI 1:1 and has no scale.
+- The four texels on an exact boundary (k = 2, 7, 12, 17) resolve by floor. That the GPU's float
+  interpolation lands the same way is INFERRED.
+- With `AUTHENTIC_ICONS` false, the board draws the 32 × 32 file with the canvas's default linear
+  filter and no mipmaps, as rounds 618–623 did.
+- The gauge (20 × 4) and the burst (a 50 × 52 cut) are drawn at their native size and are
+  unchanged.
+
+**The skill window and the hotbar** (READ): they draw the same 32 × 32 files through the same sprite
+path, into 32 × 32 slots. So each pixel lands on a texel centre, and POINT and LINEAR give the same
+picture. srrevamp's `hud_panels.gd` (`SKILL_CELL` 32) and `hud_underbar.gd` (32 × 32) already draw
+them 1:1 with the canvas's linear filter, which matches at UI scale 1. They are unchanged.
+
 ## The gauge (0x8056a0 per frame; 0x638310 and 0x6387d0)
 
 - Each frame: `elapsed += frame ms`, clamped at total.
