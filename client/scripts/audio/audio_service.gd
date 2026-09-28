@@ -27,6 +27,11 @@ class_name AudioService
 
 ## Players per loaded effect sound; SoundTable.VOICES_PER_SOUND says why.
 const VOICES_PER_SOUND := SoundTable.VOICES_PER_SOUND
+## OURS (review follow-up): at most this many effect players of each kind
+## (2-D, positioned) exist at once. Past it an idle player of another sound
+## is taken over, or a busy one restarted -- so the pools no longer grow by
+## four players for every sound ever played.
+const MAX_EFFECT_VOICES := 32
 
 var options: AudioOptions
 ## The zone music and ambient (round 612): MusicDirector, child "Music".
@@ -88,6 +93,20 @@ func effect_table() -> Dictionary:
 				rows += (_effect_table[k] as Array).size()
 			print("AUDIO: effect table %d rows under %d keys" % [rows, _effect_table.size()])
 	return _effect_table
+
+## Reads the effect table and characterInfo now, if not yet: MusicDirector
+## calls it behind the loading screen. Returns "<name> <ms> ms" parts.
+func preload_tables() -> Array:
+	var parts: Array = []
+	if not _effect_table_loaded:
+		var t := Time.get_ticks_usec()
+		effect_table()
+		parts.append("effect table %d ms" % ((Time.get_ticks_usec() - t) / 1000))
+	if not _character_info_loaded:
+		var t2 := Time.get_ticks_usec()
+		sound_object("")
+		parts.append("characterInfo %d ms" % ((Time.get_ticks_usec() - t2) / 1000))
+	return parts
 
 ## Test seam: use this table instead of the archive's.
 func set_effect_table(table: Dictionary) -> void:
@@ -172,8 +191,13 @@ func _play(path: String, row_volume: float, where) -> void:
 		voice2.volume_db = db
 		voice2.play()
 
-## Where Godot's panner must hear the sound so its pan is retail's number:
-## on the unit circle around the camera, at sin = pan / 10000 to the right.
+## Where the sound is put for Godot's panner: on the unit circle around the
+## camera, at sin = pan / 10000 to the right. That feeds Godot retail's pan
+## NUMBER only. What Godot does with it is its own: its 3-D panner is not
+## DirectSound's dB pan law, and it scales the pan by the project setting
+## audio/general/3d_panning_strength (default 0.5, left at the default here)
+## times the player's panning_strength (1.0) -- so a source retail puts fully
+## to one side is not fully one-sided here. Ours, not a match.
 func _pan_point(where: Vector3, camera: Camera3D) -> Vector3:
 	var origin := _listener.global_position
 	var right := _flat(_facing.global_transform.basis.x if _facing != null else camera.global_transform.basis.x)
@@ -193,6 +217,15 @@ func _voice(pool: Dictionary, path: String, positioned: bool) -> Node:
 	for v in voices:
 		if not (v as Node).get("playing"):
 			return v
+	if voices.size() < VOICES_PER_SOUND and _voice_count(pool) >= MAX_EFFECT_VOICES:
+		var spare := _take_idle_voice(pool)
+		if spare != null:
+			voices.append(spare)
+			pool[path] = voices
+			return spare
+		if voices.is_empty():
+			return _steal_busy_voice(pool, path)
+		return voices[_rng.randi() % voices.size()]
 	if voices.size() < VOICES_PER_SOUND:
 		var voice: Node
 		if positioned:
@@ -213,6 +246,30 @@ func _voice(pool: Dictionary, path: String, positioned: bool) -> Node:
 		pool[path] = voices
 		return voice
 	return voices[_rng.randi() % voices.size()]
+
+func _voice_count(pool: Dictionary) -> int:
+	var n := 0
+	for k in pool:
+		n += (pool[k] as Array).size()
+	return n
+
+## An idle player of another sound, removed from that sound's list.
+func _take_idle_voice(pool: Dictionary) -> Node:
+	for k in pool:
+		var list: Array = pool[k]
+		for v in list:
+			if not (v as Node).get("playing"):
+				list.erase(v)
+				return v
+	return null
+
+## Every player busy and this sound has none: restart another sound's.
+func _steal_busy_voice(pool: Dictionary, path: String) -> Node:
+	var keys := pool.keys().filter(func(k): return not (pool[k] as Array).is_empty())
+	var from: Array = pool[keys[_rng.randi() % keys.size()]]
+	var v: Node = from.pop_back()
+	pool[path] = [v]
+	return v
 
 func _position_of(pos, obj):
 	if pos is Vector3:

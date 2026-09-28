@@ -55,6 +55,18 @@ var _intro_loaded := false
 var _clock_logged := false
 ## Seconds until the one-line playing report after a start (-1 = none due).
 var _report_in := -1.0
+## Decodes running on a WorkerThreadPool task (review follow-up): each
+## {id, label, t0}. A zone's track, beds and one-shots decode there, so no
+## large file decodes on a gameplay frame; what waits for them is below.
+var _tasks: Array = []
+var _dirs_warmed := false
+## Data.pk2 folders the first effect sounds come from (effectsound's folders,
+## MEASURED: player, monster, ui and env hold most rows).
+const WARM_DIRS := ["ui", "player", "monster", "env", "skill", "common"]
+## A track whose start order came before its decode finished.
+var _waiting_track := ""
+## The current list's beds wait for their decode.
+var _beds_waiting := false
 
 func _ready() -> void:
 	_rng.randomize()
@@ -64,6 +76,7 @@ func _ready() -> void:
 	add_child(_bgm_player)
 
 func _process(delta: float) -> void:
+	_poll_tasks()
 	music.advance(delta)
 	_drain_commands()
 	var options := _options()
@@ -106,6 +119,9 @@ func set_area(zone_name: String) -> void:
 	area = zone_name
 	_stop_ambient()
 	var zone: EnvSoundTable.Zone = env_table().get(zone_name) if zone_name != "" else null
+	var night := AmbientBeds.is_night(game_hour)
+	if zone != null:
+		_prefetch_zone(zone, night)
 	var track_before := music.track
 	var outcome := music.enter_area(zone != null, zone.bgm if zone != null else "")
 	_drain_commands()
@@ -125,14 +141,17 @@ func set_area(zone_name: String) -> void:
 		_clock_logged = true
 		if game_hour < 0.0:
 			print("AUDIO clock: this client has no game clock -- the day ambient list plays (retail: night is hour < 4 or > 20)")
-	var night := AmbientBeds.is_night(game_hour)
 	var beds := ambient.start(zone.list_for(night))
-	print("AUDIO ambient: %s %s: beds %s, %d one-shots" % [zone_name, "night" if night else "day", str(Array(beds)), ambient.shots.size()])
-	_start_beds()
+	print("AUDIO ambient: %s %s: beds %s, %d one-shots%s" % [zone_name, "night" if night else "day", str(Array(beds)),
+		ambient.shots.size(), " (decoding)" if _beds_waiting else ""])
+	if not _beds_waiting:
+		_start_beds()
 
 ## The loading screen (FUN_0084ab20, READ): music and ambient stop, the area
 ## is cleared, every override level is popped.
 func enter_loading(reason: String = "") -> void:
+	_preload_tables()
+	_waiting_track = ""
 	var was := music.sounding
 	music.enter_loading()
 	_stop_ambient()
@@ -240,6 +259,16 @@ func _drain_commands() -> void:
 			_bgm_player.stream = null
 			_report_in = -1.0
 		else:
+			if not AudioBank.is_cached(cmd[1], true):
+				# Not decoded yet: stop the old track (its fade is over) and
+				# start this one when its worker decode finishes.
+				_bgm_player.stop()
+				_bgm_player.stream = null
+				_waiting_track = cmd[1]
+				if _tasks.is_empty(): # else _poll_tasks queues it if a running task lacks it
+					_add_task(AudioBank.prefetch([cmd[1]], []), cmd[1])
+				continue
+			_waiting_track = ""
 			var stream := AudioBank.looping(cmd[1])
 			if stream == null:
 				print("AUDIO bgm: %s is not in Music.pk2 -- silence (retail's streamer goes idle the same way)" % cmd[1])
@@ -291,6 +320,7 @@ func _play_shot(file: String) -> void:
 
 func _stop_ambient() -> void:
 	ambient.stop()
+	_beds_waiting = false
 	_stop_env_players()
 
 func _stop_env_players() -> void:
@@ -298,9 +328,91 @@ func _stop_env_players() -> void:
 		(p as AudioStreamPlayer).stop()
 		(p as Node).queue_free()
 	_bed_players.clear()
+	# One-shot players go with their zone (review follow-up: they were kept
+	# for ever, one set per file ever played).
 	for path in _shot_players:
 		for p in _shot_players[path]:
 			(p as AudioStreamPlayer).stop()
+			(p as Node).queue_free()
+	_shot_players.clear()
+
+## A zone's track, beds and one-shots, decoded on a worker (review
+## follow-up). Before it, the first zone decoded them on the frame that
+## entered it (50 ms measured at Jangan on the box).
+func _prefetch_zone(zone: EnvSoundTable.Zone, night: bool) -> void:
+	var looped: Array = [zone.bgm]
+	var plain: Array = []
+	for e in zone.list_for(night):
+		var path: String = EnvSoundTable.ENV_PREFIX + e.file
+		if e.a == 0:
+			looped.append(path)
+		else:
+			plain.append(path)
+	var id := AudioBank.prefetch(looped, plain)
+	if id >= 0:
+		_beds_waiting = true
+		_add_task(id, zone.name)
+
+func _add_task(id: int, label: String) -> void:
+	if id >= 0:
+		_tasks.append({"id": id, "label": label, "t0": Time.get_ticks_usec()})
+
+## Finishes decodes that are done, then starts what waited for them.
+func _poll_tasks() -> void:
+	if _tasks.is_empty():
+		return
+	var done := false
+	for t in _tasks.duplicate():
+		if WorkerThreadPool.is_task_completed(t["id"]):
+			WorkerThreadPool.wait_for_task_completion(t["id"])
+			_tasks.erase(t)
+			done = true
+			print("AUDIO worker: %s ready in %d ms; cache %s" % [
+				t["label"], (Time.get_ticks_usec() - int(t["t0"])) / 1000, AudioBank.cache_summary()])
+	if not done or not _tasks.is_empty():
+		return
+	if _waiting_track != "" and not AudioBank.is_cached(_waiting_track, true):
+		_add_task(AudioBank.prefetch([_waiting_track], []), _waiting_track)
+		return
+	if _waiting_track != "" and _waiting_track == music.sounding:
+		music.commands.append(["start", _waiting_track])
+		_drain_commands()
+	_waiting_track = ""
+	if _beds_waiting:
+		_beds_waiting = false
+		_start_beds()
+
+## Blocks until every running decode is done (tests and the timing probe).
+func wait_decodes() -> void:
+	while not _tasks.is_empty():
+		_poll_tasks()
+		OS.delay_msec(1)
+
+## The tables, read behind the loading screen (review follow-up): before, the
+## first effect key paid for the effect table (140 ms on the box), the first
+## sound object for characterInfo and the first zone for effectenvsnd and
+## regioninfo.txt, each on a gameplay frame. Each loads once.
+func _preload_tables() -> void:
+	var parts: Array = []
+	var t := Time.get_ticks_usec()
+	var svc := get_parent() as AudioService
+	if svc != null:
+		parts.append_array(svc.preload_tables())
+	if not _env_loaded:
+		t = Time.get_ticks_usec()
+		env_table()
+		parts.append("effectenvsnd %d ms" % ((Time.get_ticks_usec() - t) / 1000))
+	if not _regioninfo_loaded:
+		t = Time.get_ticks_usec()
+		_region_table()
+		parts.append("regioninfo.txt %d ms" % ((Time.get_ticks_usec() - t) / 1000))
+	if not _dirs_warmed:
+		# Data.pk2's folder listings (185 ms measured) on a worker: the first
+		# sound of a folder then does not read them on a gameplay frame.
+		_dirs_warmed = true
+		_add_task(WorkerThreadPool.add_task(AudioBank.warm_directories.bind(WARM_DIRS), true, "audio folders"), "Data.pk2 prim\\snd folders")
+	if not parts.is_empty():
+		print("AUDIO tables read behind the loading screen: %s" % ", ".join(parts))
 
 func _options() -> AudioOptions:
 	var svc := get_parent() as AudioService

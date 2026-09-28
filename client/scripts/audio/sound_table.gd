@@ -32,9 +32,12 @@ class_name SoundTable
 ##
 ## THE TABLE (READ): Media.pk2 server_dep\silkroad\textdata\effectsound.txt,
 ## CP949 (the file was checked: plain bytes, CRLF, Korean only in comments
-## and the description column, so the parse works on bytes). Space and tab
-## both separate; `//` comments run to the end of the line; `/* */` blocks
-## are skipped (the tokenizer, 0x401b80). Columns:
+## and the description column, so the parse works on bytes). `//` comments
+## run to the end of the line; `/* */` blocks are skipped (the tokenizer,
+## 0x401b80). Retail's tokenizer splits on space and tab AND on `"`, `,` and
+## `=`; this parse splits on space and tab only, which reads the shipped
+## table the same because no live row has `"`, `,` or `=` in its first ten
+## columns (MEASURED: 0 of 6,004). Columns:
 ##   object handle skill_ID event1 event2 event3 blank folder filename volume description
 ## - key = the first six joined with ':'; handle lowercased, skill uppercased.
 ## - several rows may share a key (a multimap); a trigger picks one with
@@ -66,13 +69,20 @@ class_name SoundTable
 ## OURS, labelled:
 ## - Godot turns that pan into left/right gains with its own 3-D panner
 ##   (the sound is placed on the unit circle around the camera at the
-##   retail pan's sine), not DirectSound's dB pan law.
+##   retail pan's sine), not DirectSound's dB pan law, and scaled by
+##   audio/general/3d_panning_strength (default 0.5) -- the NUMBER is
+##   retail's, the resulting stereo image is not (AudioService._pan_point).
 ## - The Effect bus carries the slider (AudioOptions); each voice plays at
 ##   vol/100 dB MINUS the bus's dB, so voice + bus = retail's number.
 ## - Voices: retail duplicates each loaded sound into N buffers, takes the
 ##   first idle one, and restarts a random one when all N are busy
 ##   (FUN_00c1db70, READ); N is not read. We use VOICES_PER_SOUND = 4.
 ## - The random pick uses Godot's randi(), not MSVC's rand().
+## OPEN, not in the contract: FUN_00a6f7f0 takes a third float argument `f`;
+## when it is non-zero the source is moved to listener + dir * (40.0 / f)
+## (the 40.0 at 0xe1b8f8, READ). Footstep, swing and damage calls pass 0;
+## which callers pass another value was not traced, so play_key has no such
+## parameter yet.
 
 const EFFECTSOUND_PATH := "server_dep\\silkroad\\textdata\\effectsound.txt"
 const SKILLEFFECT_PATH := "server_dep\\silkroad\\textdata\\skilleffect.txt"

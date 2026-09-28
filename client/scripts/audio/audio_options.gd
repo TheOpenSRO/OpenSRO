@@ -84,12 +84,19 @@ func write_to(file: ConfigFile) -> void:
 	file.set_value(SECTION, KEY_ENV_MUTED, env_muted)
 
 ## Writes all six values into ClientSettings' file, keeping everything else
-## it holds. False when the file could not be written.
-func save() -> bool:
+## it holds. False when the file could not be written -- or could not be
+## READ: a settings.cfg that exists but does not parse (round 583's unquoted
+## string) is left alone rather than rewritten with only [audio] in it, which
+## would lose every other setting (review follow-up). ClientSettings.set_value
+## still rewrites such a file; that is recorded here, not changed.
+func save(path: String = ClientSettings.PATH) -> bool:
 	var file := ConfigFile.new()
-	file.load(ClientSettings.PATH)
+	var err := file.load(path)
+	if err != OK and err != ERR_FILE_NOT_FOUND:
+		print("AUDIO options: %s does not parse (error %d) -- not saved, so its other settings are not lost" % [path, err])
+		return false
 	write_to(file)
-	return file.save(ClientSettings.PATH) == OK
+	return file.save(path) == OK
 
 func duplicate_options() -> AudioOptions:
 	var o := AudioOptions.new()

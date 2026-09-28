@@ -116,6 +116,26 @@ func _initialize() -> void:
 		"looping() is a separate looping copy spanning all 3 frames")
 	_check(base.loop_mode == AudioStreamWAV.LOOP_DISABLED, "the one-shot original is left not looping")
 	bank.clear()
+
+	# Review follow-up: a bed decodes once, as a looping stream, and is held
+	# once (it was the one-shot plus a duplicate, two copies of the samples).
+	var bed_bytes := _wav(1, 1, 22050, 16, PackedByteArray([1, 0, 2, 0, 3, 0, 4, 0]))
+	bank.inject_bytes_for_test("prim\\snd\\env\\bed.wav", bed_bytes)
+	var bed = bank.looping("prim\\snd\\env\\bed.wav")
+	_check(bed is AudioStreamWAV and bed.loop_mode == AudioStreamWAV.LOOP_FORWARD and bed.loop_end == 4, "looping() decodes a bed straight to a looping stream")
+	_check(not bank.is_cached("prim\\snd\\env\\bed.wav", false) and bank.is_cached("prim\\snd\\env\\bed.wav", true),
+		"and caches only the looping variant, no one-shot copy")
+	_check(bank.cache_summary() == "1 sounds, 0.0 MB", "the cache counts it once: %s" % bank.cache_summary())
+	# Worker decode: prefetch returns a task, and after it the sounds are cached.
+	bank.inject_bytes_for_test("prim\\snd\\env\\shot.wav", bed_bytes)
+	var id: int = bank.prefetch(["prim\\snd\\env\\bed.wav"], ["prim\\snd\\env\\shot.wav"])
+	_check(id >= 0, "prefetch starts a worker task for what is not cached")
+	if id >= 0:
+		WorkerThreadPool.wait_for_task_completion(id)
+	_check(bank.is_cached("prim\\snd\\env\\shot.wav", false) and bank.stream("prim\\snd\\env\\shot.wav") is AudioStreamWAV,
+		"the worker decoded the one-shot into the cache")
+	_check(bank.prefetch(["prim\\snd\\env\\bed.wav"], ["prim\\snd\\env\\shot.wav"]) == -1, "nothing left to decode: no task")
+	bank.clear()
 	_finish()
 
 func _finish() -> void:

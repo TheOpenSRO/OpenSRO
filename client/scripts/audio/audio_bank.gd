@@ -40,50 +40,157 @@ static var _cache: Dictionary = {}
 ## "data" / "music" / "media" -> Pk2Reader, or null once opening failed.
 static var _archives: Dictionary = {}
 
+## Normalised cache key -> decoded bytes held, for the size line (round 612
+## review follow-up; the cache is never evicted, so its size is logged).
+static var _sizes: Dictionary = {}
+## One lock for the cache and the archive handles: prefetch() decodes on a
+## WorkerThreadPool task while the main thread may read the cache. (Each
+## Pk2Reader has its own lock for its file position, round 565.)
+static var _lock := Mutex.new()
+
 ## THE CONTRACT. See the file's top comment.
 static func stream(path: String) -> AudioStream:
 	var key := normalise(path)
 	if key == "":
 		return null
-	if _cache.has(key):
-		return _cache[key]
-	var result: AudioStream = null
-	var which := "music" if is_music_path(key) else "data"
-	var archive := _archive(which)
-	if archive != null:
-		var entry := ObjectLoader.find_file(archive, key)
-		if entry == null or entry.is_dir:
-			print("AUDIO: no %s in %s -- that sound is silent" % [key, _archive_label(which)])
-		else:
-			var bytes := archive.read_file(entry)
-			if which == "music":
-				result = AudioStreamOggVorbis.load_from_buffer(bytes)
-			else:
-				result = wav_from_bytes(bytes, key)
-			if result == null:
-				print("AUDIO: %s did not decode (%d bytes) -- that sound is silent" % [key, bytes.size()])
-	_cache[key] = result
+	_lock.lock()
+	var hit := _cache.has(key)
+	var cached: AudioStream = _cache.get(key)
+	_lock.unlock()
+	if hit:
+		return cached
+	var result := _decode(key, false)
+	_store(key, result)
 	return result
 
-## The sound at `path`, set to loop from its start to its end.
+## The sound at `path`, set to loop from its start to its end. Decoded as a
+## looping stream of its own and cached ONCE: until the review follow-up it
+## duplicated the one-shot stream, and an AudioStreamWAV keeps its own copy
+## of the samples, so a bed was held twice (hellfire.wav 5.3 MB x 2). Only
+## when the same file is already cached as a one-shot does it copy.
 static func looping(path: String) -> AudioStream:
-	var key := "loop:" + normalise(path)
-	if _cache.has(key):
-		return _cache[key]
-	var base := stream(path)
+	var plain := normalise(path)
+	var key := "loop:" + plain
+	_lock.lock()
+	var hit := _cache.has(key)
+	var cached: AudioStream = _cache.get(key)
+	var base: AudioStream = _cache.get(plain)
+	_lock.unlock()
+	if hit:
+		return cached
 	var result: AudioStream = null
 	if base is AudioStreamWAV:
-		var wav := (base as AudioStreamWAV).duplicate() as AudioStreamWAV
+		result = (base as AudioStreamWAV).duplicate() as AudioStreamWAV
+	elif base is AudioStreamOggVorbis:
+		result = (base as AudioStreamOggVorbis).duplicate() as AudioStreamOggVorbis
+	else:
+		result = _decode(plain, true)
+	_set_loop(result)
+	_store(key, result)
+	return result
+
+## Whether stream(path) / looping(path) would answer without decoding.
+## A looping request counts as cached when the one-shot is: looping() then
+## only copies it, it does not decode.
+static func is_cached(path: String, loop: bool = false) -> bool:
+	var plain := normalise(path)
+	_lock.lock()
+	var hit := _cache.has("loop:" + plain) or _cache.has(plain) if loop else _cache.has(plain)
+	_lock.unlock()
+	return hit
+
+## Decodes these sounds on a WorkerThreadPool task, so no large file decodes
+## on a gameplay frame. Returns the task id (-1 when nothing needed it);
+## poll WorkerThreadPool.is_task_completed and then wait_for_task_completion.
+static func prefetch(looped: Array, plain: Array) -> int:
+	var todo_loop := looped.filter(func(p): return not is_cached(p, true))
+	var todo_plain := plain.filter(func(p): return not is_cached(p, false))
+	if todo_loop.is_empty() and todo_plain.is_empty():
+		return -1
+	return WorkerThreadPool.add_task(_prefetch_task.bind(todo_loop, todo_plain), true, "audio prefetch")
+
+static func _prefetch_task(todo_loop: Array, todo_plain: Array) -> void:
+	for p in todo_loop:
+		looping(p)
+	for p in todo_plain:
+		stream(p)
+
+## Opens Data.pk2 and walks its directory down to prim\snd\<dir> for each
+## given dir, so the first sound of a kind does not pay for the archive's
+## directory reads on a gameplay frame (review follow-up). Behind a loading
+## screen only.
+static func warm_directories(dirs: Array) -> void:
+	var archive := _archive("data")
+	if archive == null:
+		return
+	for d in dirs:
+		# A name no folder holds: the walk reads the folder's own listing
+		# (1,700+ entries in player\, 60 ms measured) and finds nothing.
+		ObjectLoader.find_file(archive, "prim\\snd\\" + str(d) + "\\ ")
+
+## "<n> sounds, <x> MB" held by the cache.
+static func cache_summary() -> String:
+	_lock.lock()
+	var total := 0
+	for k in _sizes:
+		total += int(_sizes[k])
+	var n := _cache.size()
+	_lock.unlock()
+	return "%d sounds, %.1f MB" % [n, total / 1048576.0]
+
+## Test seam: raw file bytes served in place of the archives, per path.
+static var _test_bytes: Dictionary = {}
+
+static func inject_bytes_for_test(path: String, bytes: PackedByteArray) -> void:
+	_lock.lock()
+	_test_bytes[normalise(path)] = bytes
+	_lock.unlock()
+
+static func _decode(key: String, _loop: bool) -> AudioStream:
+	_lock.lock()
+	var test_bytes: PackedByteArray = _test_bytes.get(key, PackedByteArray())
+	_lock.unlock()
+	if not test_bytes.is_empty():
+		return wav_from_bytes(test_bytes, key)
+	var which := "music" if is_music_path(key) else "data"
+	var archive := _archive(which)
+	if archive == null:
+		return null
+	var entry := ObjectLoader.find_file(archive, key)
+	if entry == null or entry.is_dir:
+		print("AUDIO: no %s in %s -- that sound is silent" % [key, _archive_label(which)])
+		return null
+	var bytes := archive.read_file(entry)
+	var result: AudioStream = null
+	if which == "music":
+		result = AudioStreamOggVorbis.load_from_buffer(bytes)
+	else:
+		result = wav_from_bytes(bytes, key)
+	if result == null:
+		print("AUDIO: %s did not decode (%d bytes) -- that sound is silent" % [key, bytes.size()])
+	return result
+
+static func _set_loop(s: AudioStream) -> void:
+	if s is AudioStreamWAV:
+		var wav := s as AudioStreamWAV
 		wav.loop_mode = AudioStreamWAV.LOOP_FORWARD
 		wav.loop_begin = 0
 		wav.loop_end = wav_frames(wav)
-		result = wav
-	elif base is AudioStreamOggVorbis:
-		var ogg := (base as AudioStreamOggVorbis).duplicate() as AudioStreamOggVorbis
-		ogg.loop = true
-		result = ogg
-	_cache[key] = result
-	return result
+	elif s is AudioStreamOggVorbis:
+		(s as AudioStreamOggVorbis).loop = true
+
+static func _store(key: String, s: AudioStream) -> void:
+	var size := 0
+	if s is AudioStreamWAV:
+		size = (s as AudioStreamWAV).data.size()
+	elif s is AudioStreamOggVorbis and (s as AudioStreamOggVorbis).packet_sequence != null:
+		for page in (s as AudioStreamOggVorbis).packet_sequence.packet_data:
+			for packet in page:
+				size += (packet as PackedByteArray).size()
+	_lock.lock()
+	_cache[key] = s
+	_sizes[key] = size
+	_lock.unlock()
 
 ## A table file's bytes from Media.pk2 or Data.pk2 (the sound tables,
 ## regioninfo.txt, option.txt), or empty with one log line.
@@ -189,17 +296,27 @@ static func wav_frames(wav: AudioStreamWAV) -> int:
 ## Test seam: puts a ready stream in the cache under `path`, so a headless
 ## test can drive the players without any game data.
 static func inject_for_test(path: String, audio: AudioStream) -> void:
-	_cache[normalise(path)] = audio
+	_store(normalise(path), audio)
 
 ## Forgets every cached sound and archive handle (tests; a new pk2 folder).
 static func clear() -> void:
+	_lock.lock()
 	_cache.clear()
+	_sizes.clear()
+	_test_bytes.clear()
+	_lock.unlock()
 	for archive in _archives.values():
 		if archive != null:
 			(archive as Pk2Reader).close()
 	_archives.clear()
 
 static func _archive(which: String) -> Pk2Reader:
+	_lock.lock()
+	var result := _archive_locked(which)
+	_lock.unlock()
+	return result
+
+static func _archive_locked(which: String) -> Pk2Reader:
 	if _archives.has(which):
 		return _archives[which]
 	var path := ""

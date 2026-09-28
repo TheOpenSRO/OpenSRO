@@ -56,6 +56,19 @@ func _initialize() -> void:
 	bad.set_value("audio", "bgm", 400)
 	_check(ao.from_config(bad).bgm == 100, "a saved value past 100 is clamped on load")
 
+	# Review follow-up: a settings file that does not parse is not rewritten.
+	var bad_path := "user://audio_options_test_settings.cfg"
+	var f := FileAccess.open(bad_path, FileAccess.WRITE)
+	f.store_string("[world]\nseasonal=christmas,halloween\n[server]\naddress=\"x\"\n")
+	f.close()
+	var before := FileAccess.get_file_as_string(bad_path)
+	_check(o.save(bad_path) == false, "save() refuses a settings file that does not parse")
+	_check(FileAccess.get_file_as_string(bad_path) == before, "and leaves it as it was (its other settings are not lost)")
+	DirAccess.remove_absolute(bad_path)
+	var ok_path := "user://audio_options_test_settings2.cfg"
+	_check(o.save(ok_path) and ao.from_config(_load(ok_path)).bgm == 7, "a missing file is created with the values")
+	DirAccess.remove_absolute(ok_path)
+
 	# The buses: BGM, Effect, Env under Master, volume = slider dB, mute.
 	ao.ensure_buses()
 	ao.ensure_buses() # idempotent
@@ -78,6 +91,11 @@ func _initialize() -> void:
 	AudioServer.set_bus_volume_db(AudioServer.get_bus_index("BGM"), saved_state[0])
 	AudioServer.set_bus_mute(AudioServer.get_bus_index("Env"), saved_state[1])
 	_finish()
+
+func _load(path: String) -> ConfigFile:
+	var c := ConfigFile.new()
+	c.load(path)
+	return c
 
 func _finish() -> void:
 	if _failures == 0:

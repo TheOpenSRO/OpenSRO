@@ -115,6 +115,31 @@ func _run() -> void:
 			voices_2d += 1
 	_check(voices_2d == st.VOICES_PER_SOUND, "ten plays of one sound use %d 2-D voices (got %d)" % [st.VOICES_PER_SOUND, voices_2d])
 
+	# Review follow-up: many different sounds share a capped set of players.
+	var many := {}
+	for i in range(40):
+		var r = st.Row.new()
+		r.path = "prim\\snd\\test\\many%d.wav" % i
+		bank.inject_for_test(r.path, wav)
+		many["TESTOBJ:snd_many%d:-:-:-:-" % i] = [r]
+	many.merge(table)
+	svc.set_effect_table(many)
+	for c in svc.get_children():
+		if c is AudioStreamPlayer:
+			c.stop()
+	for i in range(40):
+		st.play_key("TESTOBJ:snd_many%d:-:-:-:-" % i)
+	var players_2d := 0
+	for c in svc.get_children():
+		if c is AudioStreamPlayer:
+			players_2d += 1
+	_check(players_2d <= svc.MAX_EFFECT_VOICES, "40 different sounds use at most %d 2-D players (got %d)" % [svc.MAX_EFFECT_VOICES, players_2d])
+	for c in svc.get_children():
+		if c is AudioStreamPlayer or c is AudioStreamPlayer3D:
+			c.stop()
+	st.play_key("TESTOBJ:snd_many39:-:-:-:-")
+	_check(svc.effect_voices_playing() == 1, "past the cap an idle player is reused and plays")
+
 	# A missing key, and the mute.
 	playing_before = svc.effect_voices_playing()
 	st.play_key("TESTOBJ:snd_missing:-:-:-:-")
