@@ -98,6 +98,22 @@ signal learn_skill_result(ok: bool, reason: String)
 signal skill_list_result(skills: Array, error: String)
 signal skill_state_result(state: SkillNet.SkillState)
 signal raise_mastery_result(result: SkillNet.RaiseMasteryResult)
+## Buffs and skill moves (round 617; the skills epic's shared contract,
+## SkillNet has the byte layouts). Round 618's buff bar and round 619's auras
+## consume these -- the names are part of that contract, keep them:
+##   buff_started(start: SkillNet.BuffStart)  OpBuffStart 0x00F5: a buff began
+##     on an owner (character or monster), keyed (owner_id, token), with its
+##     duration, the time left, and the owner's new run speed (0 = unchanged).
+##   buff_ended(ended: SkillNet.BuffEnd)      OpBuffEnd 0x00F6: tokens ended on
+##     an owner, and its new run speed (0 = unchanged).
+##   skill_moved(moved: SkillNet.SkillMove)   OpSkillMove 0x00F8: a skill (Ghost
+##     Walk) put a character at a point, in OpMove's coordinates.
+## A payload too short for its layout is dropped with a warning, not emitted.
+## The one sender that goes with them is send_buff_cancel(skill_id, token)
+## (OpBuffCancel 0x00F7, the buff icon's right-click).
+signal buff_started(start: SkillNet.BuffStart)
+signal buff_ended(ended: SkillNet.BuffEnd)
+signal skill_moved(moved: SkillNet.SkillMove)
 
 signal party_create_result(result: PartyNet.Result)
 signal party_join_result(result: PartyNet.Result)
@@ -259,6 +275,7 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	_peer = null
 	_reader = PacketReader.new()
 	_attack_targets_in_flight.clear()
+	_attack_types_in_flight.clear()
 	_unhandled_warned.clear()
 	_use_tls = use_tls
 	_tls_host = host
@@ -287,6 +304,7 @@ func disconnect_from_server() -> void:
 	_connected = false
 	_tls_handshaking = false
 	_attack_targets_in_flight.clear()
+	_attack_types_in_flight.clear()
 	_forget_session_lists()
 	disconnected.emit()
 
@@ -440,12 +458,19 @@ func storage_gold(char_name: String, op: int, amount: int) -> void:
 ## whatever it is targeting by the time the result lands. Pushed only when the
 ## send actually went out, so the queue stays aligned with the replies.
 var _attack_targets_in_flight: Array[int] = []
+## The targetType of each request in _attack_targets_in_flight, in step with
+## it (round 617): a plain swing and an entity cast are SkillNet.TARGET_ENTITY,
+## a self-cast TARGET_NONE and a ground cast TARGET_GROUND. The reply is
+## tagged with it (CombatNet.AttackResult.target_type), so World3D can tell a
+## self-cast's reply from a blow on the monster it is targeting.
+var _attack_types_in_flight: Array[int] = []
 
 func attack(char_name: String, target_monster_id: int) -> void:
 	if not is_connected_to_server():
 		return
 	_send(CombatNet.OP_ATTACK, CombatNet.encode_attack(char_name, target_monster_id))
 	_attack_targets_in_flight.append(target_monster_id)
+	_attack_types_in_flight.append(SkillNet.TARGET_ENTITY)
 
 func berserk(char_name: String) -> void:
 	_send(CombatNet.OP_BERSERK, CombatNet.encode_berserk(char_name))
@@ -465,11 +490,36 @@ func learn_skill(char_name: String, skill_id: int) -> void:
 
 ## Response arrives as attack_result (see SkillNet's doc comment: using a
 ## skill reuses OpAttackResult, since it's just an attack with a bonus).
-func use_skill(char_name: String, skill_id: int, target_monster_id: int) -> void:
+## target_type is SkillNet.TARGET_ENTITY (the monster), TARGET_NONE (a
+## self-cast: Grass Walk, the imbues) or TARGET_GROUND (Ghost Walk, at
+## `point`). Every send is logged -- "CAST send ..." -- so a tester's log
+## shows what went out.
+func use_skill(char_name: String, skill_id: int, target_monster_id: int,
+		target_type: int = SkillNet.TARGET_ENTITY, point: Vector3 = Vector3.ZERO) -> void:
+	if not is_connected_to_server():
+		print("CAST send skipped (not connected): skill %d targetType %d" % [skill_id, target_type])
+		return
+	_send(SkillNet.OP_USE, SkillNet.encode_use(char_name, skill_id, target_monster_id, target_type, point))
+	_attack_targets_in_flight.append(target_monster_id)
+	_attack_types_in_flight.append(target_type)
+	match target_type:
+		SkillNet.TARGET_NONE:
+			print("CAST send: skill %d targetType 0 (self; monster field %d)" % [skill_id, target_monster_id])
+		SkillNet.TARGET_GROUND:
+			print("CAST send: skill %d targetType 2 (ground) at (%.1f, %.1f, %.1f)" % [
+				skill_id, point.x, point.y, point.z])
+		_:
+			print("CAST send: skill %d targetType 1 (monster %d)" % [skill_id, target_monster_id])
+
+## Asks the server to end one of this character's buffs: the skill and the
+## token OpBuffStart gave it (round 618's buff bar calls this on a right
+## click). Uses the logged-in character's name, as the other senders are
+## handed it.
+func send_buff_cancel(skill_id: int, token: int) -> void:
 	if not is_connected_to_server():
 		return
-	_send(SkillNet.OP_USE, SkillNet.encode_use(char_name, skill_id, target_monster_id))
-	_attack_targets_in_flight.append(target_monster_id)
+	_send(SkillNet.OP_BUFF_CANCEL, SkillNet.encode_buff_cancel(current_character_name, skill_id, token))
+	print("BUFF cancel send: skill %d token %d" % [skill_id, token])
 
 func list_skills(char_name: String) -> void:
 	_send(SkillNet.OP_LIST, SkillNet.encode_list(char_name))
@@ -689,6 +739,8 @@ func _dispatch(p: Packet) -> void:
 			var sent_at := -1
 			if not _attack_targets_in_flight.is_empty():
 				sent_at = _attack_targets_in_flight.pop_front()
+			if not _attack_types_in_flight.is_empty():
+				ar.target_type = _attack_types_in_flight.pop_front()
 			if ar.monster_id == 0 and sent_at != -1:
 				ar.monster_id = sent_at
 			attack_result.emit(ar)
@@ -750,6 +802,29 @@ func _dispatch(p: Packet) -> void:
 			skill_state_result.emit(SkillNet.decode_state_result(p.data))
 		SkillNet.OP_RAISE_RESULT:
 			raise_mastery_result.emit(SkillNet.decode_raise_mastery_result(p.data))
+		SkillNet.OP_BUFF_START:
+			var bs := SkillNet.decode_buff_start(p.data)
+			if bs == null:
+				push_warning("NetClient: short OpBuffStart (%d bytes) dropped" % p.data.size())
+			else:
+				print("BUFF start: owner %d skill %d token %d duration %d ms remaining %d ms runSpeed %d" % [
+					bs.owner_id, bs.skill_id, bs.token, bs.duration_ms, bs.remaining_ms, bs.run_speed])
+				buff_started.emit(bs)
+		SkillNet.OP_BUFF_END:
+			var be := SkillNet.decode_buff_end(p.data)
+			if be == null:
+				push_warning("NetClient: short OpBuffEnd (%d bytes) dropped" % p.data.size())
+			else:
+				print("BUFF end: owner %d tokens %s runSpeed %d" % [be.owner_id, str(be.tokens), be.run_speed])
+				buff_ended.emit(be)
+		SkillNet.OP_SKILL_MOVE:
+			var sm := SkillNet.decode_skill_move(p.data)
+			if sm == null:
+				push_warning("NetClient: short OpSkillMove (%d bytes) dropped" % p.data.size())
+			else:
+				print("SKILL move: character %d skill %d to (%.1f, %.1f, %.1f)" % [
+					sm.character_id, sm.skill_id, sm.x, sm.y, sm.z])
+				skill_moved.emit(sm)
 		PartyNet.OP_CREATE_RESULT:
 			party_create_result.emit(PartyNet.decode_result(p.data))
 		PartyNet.OP_JOIN_RESULT:

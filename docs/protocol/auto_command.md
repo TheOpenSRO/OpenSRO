@@ -353,3 +353,48 @@ A skill-less blow remains the fallback when there is no base row to read: a
 store that cannot look skills up, or a weapon type the table does not list. A
 base row with no percentage (an export predating the damage columns) adds
 nothing, and a row whose mask names no damage half stays physical.
+
+## srrevamp's cast and buff messages (round 617, the client half)
+
+srrevamp does not speak 0x7074. The skills epic's shared contract (rounds
+616-619; OURS, with the retail analogues named) extends `OpUseSkill` and adds
+four messages. The client half is `client/scripts/net/skill.gd` (codec) and
+`net_client.gd` (signals `buff_started`, `buff_ended`, `skill_moved`, and
+`send_buff_cancel(skill_id, token)`), all little-endian:
+
+| opcode | direction | payload | retail analogue |
+|---|---|---|---|
+| `OpUseSkill 0x0072` | C->S | `{name, i64 skillId, i64 targetMonsterId, u8 targetType (0 none/self, 1 entity, 2 ground), [2: f32 x, f32 y, f32 z]}` -- the type byte and point are a strict suffix, so a request without them reads as 1 | 0x7074 kind 4 |
+| `OpBuffStart 0x00F5` | S->C | `{i64 ownerId, i64 skillId, u32 token, i64 durationMs (-1 none), i64 remainingMs, u32 runSpeed (0 unchanged)}` (40 bytes) | 0xB0BD |
+| `OpBuffEnd 0x00F6` | S->C | `{i64 ownerId, u8 count, count x u32 token, u32 runSpeed}` | 0xB072 |
+| `OpBuffCancel 0x00F7` | C->S | `{name, i64 skillId, u32 token}` | 0x7074 kind 5 (sender 0x81c5b0) |
+| `OpSkillMove 0x00F8` | S->C | `{i64 characterId, i64 skillId, f32 x, f32 y, f32 z}` (28 bytes), OpMove's coordinates | 0xB070 with a position (inferred) |
+
+What the client sends, by the skill's own columns (the skill tick's phase-0
+rule above, READ; `SelfCast.plan`):
+
+- **Target_Required 0** (Grass Walk, the imbues, the shields, a self-heal):
+  targetType 0 at once, from where the player stands, whether or not a monster
+  is selected. The monster field carries the selection when there is one --
+  OURS, so a server that predates the byte still reach-gates a damaging
+  Target_Required 0 row against it as before; a server that reads the byte
+  ignores it for type 0.
+- **Target_Required 1 + TargetType_Land 1** (the 19 Ghost Walk rows):
+  ground-pick mode; the left click's point on the ground (the click-to-move
+  ray) goes out as targetType 2. Right click or Escape cancels. The cursor is
+  OURS (the system cross); retail's ground-cast cursor and decal are OPEN.
+- **Every other row**: targetType 1 at the selection, after the walk into
+  reach, as before; refused with nothing selected. The retail fallback for a
+  Target_Required 1 heal with nothing selected is OPEN.
+
+The reply to a type-0 or type-2 cast is still an `OpAttackResult`. The client
+tags each reply with the targetType of the request it answers (the in-flight
+queue), and a type-0/2 reply that reports no damage is not drawn as a blow on
+the selected monster.
+
+`OpSkillMove` snaps the character to the point (the move's duration is OPEN:
+`tele` value[0] = 500 is unread by the server's clamp). `runSpeed` from a
+buff start or end becomes the player's `_move_speed` -- the characterdata
+Speed2 units the client already moves by; 0 leaves it. The client is not told
+its own character id, so it learns it from the first start or move answering
+one of its own casts within 10 s (OURS; `SelfCast`).

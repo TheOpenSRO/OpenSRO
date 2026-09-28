@@ -3494,6 +3494,11 @@ func _load_skill_catalog() -> void:
 						"range": int(bs.level_range[i]),
 						"approach": CombatNet.skill_tick_approaches(
 							int(bs.level_target_required[i]), int(bs.level_target_land[i])),
+						# The two columns themselves (round 617): SelfCast.plan
+						# casts a Target_Required 0 row with nothing selected
+						# and puts a land row into ground-pick mode.
+						"target_required": int(bs.level_target_required[i]),
+						"target_land": int(bs.level_target_land[i]),
 					}
 	print("HudPanels: skill catalog -- %d masteries with groups, %d group-rows of skills"
 		% [_skill_groups.size(), _skill_grid.size()])

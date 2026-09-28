@@ -7094,6 +7094,111 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-seventeenth round: Grass Walk and the self-buffs cast with nothing selected, and Ghost Walk casts at a point picked on the ground
+
+"Some skills don't require you attack a monster like grass walk, ghost walk, and a bunch of
+buffs." The client refused every one of them: `World3D._cast_skill` answered "Select a target
+first" whenever nothing was selected, before the skill's own columns were looked at. This round is
+the client half of the skills epic (rounds 616-619; the shared contract is in
+`docs/protocol/auto_command.md`, "srrevamp's cast and buff messages").
+
+**What decides it (READ).** The skill tick (server `0x4ae590`, phase 0) sends a row with
+Target_Required 0 (skilldata col 22), or Target_Required 1 with TargetType_Land 1 (col 24), straight
+to the cast with no approach. The client already read both columns for the approach walk
+(`HudPanels.skill_reach`); it now keeps them, and `SelfCast.plan` (new, `scripts/world/self_cast.gd`)
+decides:
+- **Target_Required 0** (Grass Walk 113, the imbues, the shields, the self-heals; 669 kind-3 and 80
+  kind-0 China rows, skills_spec §1.5, MEASURED earlier): OpUseSkill **targetType 0** at once, from
+  where the player stands, with the cast clip and cast sounds on the player. A selected monster
+  stays selected and is not re-shown as the target.
+- **Target_Required 1 + Land 1** (Ghost Walk 114, the 19 rows): **ground-pick mode**. The next left
+  click on the world takes its point from the click-to-move ray (`_ground_point_at`, factored out of
+  `_try_set_move_target`) and sends **targetType 2** with it; the click does not also walk, attack or
+  talk. Right click or Escape cancels (Escape is read in `_input`, before HudPanels would close a
+  window or open the System menu with it). The cursor is the system cross -- **OURS**; retail's
+  ground-cast cursor and decal were not read (OPEN).
+- Everything else: the old flow (walk into reach, then cast at the selection; refused with none).
+
+**The reply is not a blow (OURS).** srrevamp's server still answers a cast with OpAttackResult, and
+World3D drew every reply as a hit on the selected monster -- a swing, a flinch, the counter. NetClient
+now tags each reply with the targetType of the request it answers (a queue in step with the
+existing in-flight target queue; `AttackResult.target_type`), and a type-0/2 reply with no damage is
+logged and dropped by `_on_attack_result` (the HP bar still takes its HP). A monster cast still in
+flight keeps its hit effect, and the selection is untouched. A self cast's monster field carries the
+selection when there is one, so a server that predates the type byte reach-gates a damaging
+Target_Required 0 row against it as before (OURS; disclosed in the contract doc).
+
+**The new messages.** SkillNet decodes OpBuffStart 0x00F5, OpBuffEnd 0x00F6 and OpSkillMove 0x00F8
+exactly per the contract, NetClient emits them as `buff_started`, `buff_ended` and `skill_moved`
+(documented at the top of `net_client.gd` for round 618), and `send_buff_cancel(skill_id, token)`
+encodes OpBuffCancel 0x00F7. World3D applies a buff's `runSpeed` (0 = unchanged) to `_move_speed`,
+which is the characterdata Speed2 value the client already moves by (round 231; the server does not
+police speed), so the two agree in units. OpSkillMove **snaps** this player to the point -- the move's
+duration is OPEN (`tele` value[0] = 500 is not read by the server's clamp) -- and puts another
+player's body there. The client is not told its own character id (MonsterStrikes has the same gap),
+so it LEARNS it: a start or move for a skill it cast within 10 s (OURS), naming no other player drawn
+here, is its own; an end is its own when its owner is that id or it ends a claimed token.
+
+**Log lines** for the tester's log: `CAST send: skill N targetType 0|1|2 ...` on every OpUseSkill,
+`CAST reply: ...` for a self/ground reply, `GROUND PICK: on|off|cancelled (...)`, `BUFF start: ...`,
+`BUFF end: ...`, `SKILL move: ...` for each packet, `BUFF ... handled`, `SKILL move handled` and
+`SPEED: run speed A -> B (...)`.
+
+**Tests (MEASURED).** `scripts/world/self_cast_test.gd` (World3D.tscn with a stubbed subclass, a real
+HudPanels whose catalog holds the three rows' real columns, the real NetClient autoload writing to a
+StreamPeerBuffer): Grass Walk with nothing selected writes one OpUseSkill whose bytes are the
+contract's targetType 0 layout; with monster 555 selected it is still type 0 and the selection stays;
+Smash with none sends nothing; Ghost Walk's key sends nothing, the click sends targetType 2 with the
+point as three f32 and does not walk; Escape and a right click cancel; the decoders round-trip the
+§4.0 layouts built byte by byte (a u32 token above 2^31, durationMs -1, an empty token list, short
+payloads refused); NetClient's dispatch emits the three signals; a Grass Walk start with runSpeed 60
+sets the speed to 60 and the end with 50 puts it back, someone else's does not; OpSkillMove snaps the
+player; a type-0 reply plays no swing. ALL PASS. **Negative** against dev b50a7b9 (the same suite in
+a second worktree; SkillNet is called by name so it runs there):
+
+```
+FAIL self_cast.gd loads
+FAIL NetClient has buff_started, buff_ended and skill_moved
+FAIL Grass Walk with nothing selected sends one OpUseSkill (got 0)
+FAIL the cast clip plays on the player (got [])
+FAIL the reply is expected as a self cast's (got [])
+FAIL with monster 555 selected it is still targetType 0 (got [4, 0, 65, 114, 105, 97, 113, 0, 0, 0, 0, 0, 0, 0, 43, 2, 0, 0, 0, 0, 0, 0])
+FAIL no hit effect is armed for the target
+FAIL it enters ground-pick mode
+FAIL the left click is the ground pick, not a walk (got walk)
+FAIL the click sends one OpUseSkill (got 0)
+FAIL and the player does not walk there
+FAIL World3D has _self_cast
+FAIL a self cast's reply plays no swing (step 0 -> 1)
+FAIL and leaves the monster cast's hit effect armed
+14 FAILURES
+```
+plus `SCRIPT ERROR: Invalid call to function 'encode_use (via call)' ... Expected 3 arguments.` in the
+codec block. `remote_godot.sh check`: 344 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`: 133
+suites, 0 failing. Go: `go build ./...`, `go test -count=1 -p 1 ./...` 59 packages ok (no server change).
+
+**Real input (MEASURED, box, `/var/tmp/selfcast/rk/`).** Xvfb + xdotool on the Login ->
+CharacterSelect route (`SRREVAMP_QA_RECONNECT_VIA_LOGIN=1`), dev's server in memory with the QA
+account a GM: a first run made the character level 35, learned Lightning to 32 and skills 113 and 114
+(`ok true`); the second opened the skill window with a real S (which fetches the learned skills the
+bar's gate reads), the hook put 113 and 114 on quick slots 1 and 2, and with nothing selected:
+- key 1: `KEYMAP 1 -> quickslot_key 1`, `CAST send: skill 113 targetType 0 (self; monster field 0)`,
+  `CAST reply: self/ground cast (targetType 0) accepted, HP 1059`;
+- key 2 then a left click: `GROUND PICK: on for skill 114`, `GROUND PICK: skill 114 at (42.0, -30.1,
+  -56.8), 3.2 from the player`, `CAST send: skill 114 targetType 2 (ground) at (42.0, -30.1, -56.8)`;
+- key 2 then Escape: `GROUND PICK: cancelled (Escape)`, and no System window opened;
+- key 2 then a right click: `GROUND PICK: cancelled (right click)`.
+
+That server predates round 616: it accepts both casts as non-damaging rows and sends no buff start,
+no end and no move, so the speed change and the snap were **not** seen live -- the server's response
+is out of this round's scope and is measured only by the headless suite.
+
+**Open:** the live check against round 616's server (speed 50 -> 60, the Ghost Walk landing); the
+move's duration and its WAIT effect; the ground-pick cursor and decal; the retail target fallback for
+a Target_Required 1 heal with nothing selected (still refused); the client's own id (learned, not
+told); whether a self cast should end the server's auto-attack (dev's `useSkillHandler` cancels the
+keep-up on any cast).
+
 ## Six-hundred-and-sixteenth round: the server starts buffs -- Grass Walk runs at 60 instead of 50 until it runs out or is cancelled -- and Ghost Walk moves the caster to the ground point
 
 "Some skills don't require you attack a monster like grass walk, ghost walk, and a bunch of
@@ -7248,6 +7353,7 @@ Negatives (each fix removed on the new tree):
 	(stale disconnect clears)  buffs_test.go:666: the stale session's disconnect left 0 records, want the live one's 1
 	(no identity check)        buffs_test.go:637: a cast naming Bria answered &{Error: ... PlayerHP:200 ...}
 	(zone change sends 0)      buffs_test.go:691: after the zone change: &{... RunSpeed:0 ...}, want token 1 at run speed 60
+
 
 ## Six-hundred-and-fifteenth round: windows swoosh where the original's do, the item and level-up sounds play, and the Option window's Audio page sets the three volumes
 

@@ -137,6 +137,11 @@ class AttackResult:
 	## counterattacked). 0 when the server predates the field or refused
 	## before resolving a target; World3D then falls back to the id it sent.
 	var monster_id: int = 0
+	## What the request this answers was aimed at (round 617): 1
+	## (SkillNet.TARGET_ENTITY) for a swing or an entity cast, 0 for a
+	## self-cast, 2 for a ground cast. Not on the wire -- NetClient tags the
+	## reply from the request it sent, as it fills monster_id.
+	var target_type: int = 1
 
 ## Result of decode_monster_damaged().
 class MonsterDamaged:

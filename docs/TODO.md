@@ -335,6 +335,18 @@ In order. Each is checked off here when it ships in a release, with its round in
       type 0), so the departure costs the hand-off on the 463 type-1 true heads. (Round 502's "1,012 chain heads"
       was the type-1 rows with a non-zero column 9: 463 heads and 549 intermediate links.) Next:
       resolve each link's blow on its own timing, then apply the last link's hand-off rule.
+- [x] **Self-cast and ground-cast skills (client) -- round 617.** Grass Walk, the imbues and every
+      Target_Required 0 row cast with nothing selected (OpUseSkill targetType 0); Ghost Walk picks a
+      ground point (targetType 2; right click / Escape cancels); OpBuffStart/End/OpSkillMove are
+      decoded (`NetClient.buff_started` / `buff_ended` / `skill_moved`, `send_buff_cancel`), the
+      buff's `runSpeed` sets the run speed and OpSkillMove snaps the player. Still open:
+      the server half (round 616) was not live-tested with it; the Ghost Walk move is a snap
+      (duration OPEN, `tele` value[0] = 500 unread); retail's ground-pick cursor and decal (the
+      cross is ours); the retail fallback for a Target_Required 1 heal with nothing selected
+      (refused, as before); the client learns its own character id from its own casts'
+      answers, because no message tells it (a buff it did not cast moves no speed until then);
+      an old server's keep-up ends on any cast, a self-cast included (`keepUp.Cancel` in
+      `useSkillHandler`) -- whether retail's auto-attack survives a buff cast is not read.
 - [ ] **Duel swings are not the base attack skill.** Round 505 made a plain PvE swing a cast of
       the weapon's base attack row (`session.plainSwingOf`: its `att` percent, `mc` hit count and
       mask). `session/duel.go`'s `handleDuelAttack` still deals one skill-less physical blow. Next:

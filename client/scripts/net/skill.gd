@@ -17,6 +17,22 @@ const OP_STATE := 0x0075          # client -> server
 const OP_STATE_RESULT := 0x0076   # server -> client
 const OP_RAISE := 0x0077          # client -> server
 const OP_RAISE_RESULT := 0x0078   # server -> client
+# Buffs and the Ghost Walk move (round 617, the client half of the skills
+# epic's shared contract, docs/protocol/auto_command.md "srrevamp's cast and
+# buff messages"; OURS -- srrevamp's own
+# protocol, with retail analogues 0xB0BD / 0xB072 / 0x7074 kind 5 / 0xB070).
+const OP_BUFF_START := 0x00F5     # server -> client (the region)
+const OP_BUFF_END := 0x00F6       # server -> client (the region)
+const OP_BUFF_CANCEL := 0x00F7    # client -> server
+const OP_SKILL_MOVE := 0x00F8     # server -> client (the region)
+
+## OpUseSkill's targetType suffix (round 617, §4.0 of the contract): what the
+## cast is aimed at. 0 nothing / the caster itself, 1 an entity (the
+## targetMonsterId field), 2 a point on the ground (three f32 follow). A
+## request without the byte -- every client before round 617 -- reads as 1.
+const TARGET_NONE := 0
+const TARGET_ENTITY := 1
+const TARGET_GROUND := 2
 
 ## Encodes an OpLearnSkill request.
 static func encode_learn(character_name: String, skill_id: int) -> PackedByteArray:
@@ -32,8 +48,14 @@ static func encode_learn(character_name: String, skill_id: int) -> PackedByteArr
 	out.append_array(id_buf)
 	return out
 
-## Encodes an OpUseSkill request.
-static func encode_use(character_name: String, skill_id: int, target_monster_id: int) -> PackedByteArray:
+## Encodes an OpUseSkill request: {name, i64 skillId, i64 targetMonsterId,
+## u8 targetType, [targetType 2: f32 x, f32 y, f32 z]}. The type byte and the
+## point are a strict suffix (round 617), so a server that predates them
+## reads the first three fields exactly as before and ignores the rest.
+## `point` is read only for TARGET_GROUND, and is in the coordinates OpMove
+## sends (World3D's player.position space).
+static func encode_use(character_name: String, skill_id: int, target_monster_id: int,
+		target_type: int = TARGET_ENTITY, point: Vector3 = Vector3.ZERO) -> PackedByteArray:
 	var name_bytes := character_name.to_utf8_buffer()
 	var out := PackedByteArray()
 	out.resize(2)
@@ -41,11 +63,105 @@ static func encode_use(character_name: String, skill_id: int, target_monster_id:
 	out.append_array(name_bytes)
 
 	var buf := PackedByteArray()
-	buf.resize(16)
+	buf.resize(17 if target_type != TARGET_GROUND else 29)
 	buf.encode_s64(0, skill_id)
 	buf.encode_s64(8, target_monster_id)
+	buf[16] = target_type
+	if target_type == TARGET_GROUND:
+		buf.encode_float(17, point.x)
+		buf.encode_float(21, point.y)
+		buf.encode_float(25, point.z)
 	out.append_array(buf)
 	return out
+
+## Encodes an OpBuffCancel request: {name, i64 skillId, u32 token} -- the
+## right-click on a buff icon (retail 0x7074 kind 5, sender 0x81c5b0). The
+## server refuses an `nbuf` skill silently (skills_spec §2.5 item 7).
+static func encode_buff_cancel(character_name: String, skill_id: int, token: int) -> PackedByteArray:
+	var name_bytes := character_name.to_utf8_buffer()
+	var out := PackedByteArray()
+	out.resize(2)
+	out.encode_u16(0, name_bytes.size())
+	out.append_array(name_bytes)
+	var buf := PackedByteArray()
+	buf.resize(12)
+	buf.encode_s64(0, skill_id)
+	buf.encode_u32(8, token)
+	out.append_array(buf)
+	return out
+
+## OpBuffStart: a buff began on an owner (a character or a monster) --
+## {i64 ownerId, i64 skillId, u32 token, i64 durationMs (-1 = none),
+## i64 remainingMs, u32 runSpeed (the owner's new, 0 = unchanged)}.
+## The token is the server's own per-application id; icons and auras are
+## keyed by (owner_id, token).
+class BuffStart:
+	var owner_id: int
+	var skill_id: int
+	var token: int
+	var duration_ms: int
+	var remaining_ms: int
+	var run_speed: int
+
+const BUFF_START_SIZE := 40
+
+## Decodes an OpBuffStart payload; null when it is short.
+static func decode_buff_start(data: PackedByteArray) -> BuffStart:
+	if data.size() < BUFF_START_SIZE:
+		return null
+	var b := BuffStart.new()
+	b.owner_id = data.decode_s64(0)
+	b.skill_id = data.decode_s64(8)
+	b.token = data.decode_u32(16)
+	b.duration_ms = data.decode_s64(20)
+	b.remaining_ms = data.decode_s64(28)
+	b.run_speed = data.decode_u32(36)
+	return b
+
+## OpBuffEnd: buffs ended on an owner -- {i64 ownerId, u8 count,
+## count x u32 token, u32 runSpeed (the owner's new, 0 = unchanged)}.
+class BuffEnd:
+	var owner_id: int
+	var tokens: Array[int] = []
+	var run_speed: int
+
+## Decodes an OpBuffEnd payload; null when it is short.
+static func decode_buff_end(data: PackedByteArray) -> BuffEnd:
+	if data.size() < 9:
+		return null
+	var e := BuffEnd.new()
+	e.owner_id = data.decode_s64(0)
+	var count: int = data[8]
+	if data.size() < 9 + count * 4 + 4:
+		return null
+	for i in count:
+		e.tokens.append(data.decode_u32(9 + i * 4))
+	e.run_speed = data.decode_u32(9 + count * 4)
+	return e
+
+## OpSkillMove: a skill moved a character to a point -- Ghost Walk's landing
+## {i64 characterId, i64 skillId, f32 x, f32 y, f32 z}, in OpMove's
+## coordinates.
+class SkillMove:
+	var character_id: int
+	var skill_id: int
+	var x: float
+	var y: float
+	var z: float
+
+const SKILL_MOVE_SIZE := 28
+
+## Decodes an OpSkillMove payload; null when it is short.
+static func decode_skill_move(data: PackedByteArray) -> SkillMove:
+	if data.size() < SKILL_MOVE_SIZE:
+		return null
+	var m := SkillMove.new()
+	m.character_id = data.decode_s64(0)
+	m.skill_id = data.decode_s64(8)
+	m.x = data.decode_float(16)
+	m.y = data.decode_float(20)
+	m.z = data.decode_float(24)
+	return m
 
 ## Result of decode_learn_result().
 class LearnResult:

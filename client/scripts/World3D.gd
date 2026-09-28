@@ -1026,6 +1026,10 @@ const DEAD_INPUT_LINE := "You are dead. Revive first."
 ## believes about its own motion and when movement is held -- SitState holds
 ## the rules, on _player_anim_time's clock.
 var _sit := SitState.new()
+## Self and ground casts (round 617): the ground-pick mode's waiting skill,
+## and this player's own id as learned from its own buffs and moves
+## (SelfCast has why it is learned).
+var _self_cast := SelfCast.new()
 ## Other players known to sit: character id -> true (round 607). Kept apart from
 ## _other_gaits, which only an assembled body has.
 var _other_seated: Dictionary = {}
@@ -1268,6 +1272,9 @@ func _ready() -> void:
 	NetClient.attack_result.connect(_on_attack_result)
 	NetClient.revive_result.connect(_on_revive_result)
 	NetClient.state_changed.connect(_on_state_changed)
+	NetClient.buff_started.connect(_on_buff_started)
+	NetClient.buff_ended.connect(_on_buff_ended)
+	NetClient.skill_moved.connect(_on_skill_moved)
 	NetClient.monster_damaged.connect(_on_monster_damaged)
 	NetClient.monster_died.connect(_on_monster_died)
 	NetClient.level_up.connect(_on_level_up)
@@ -6925,21 +6932,121 @@ func _qa_learn(spec: String) -> void:
 	await NetClient.skill_state_result
 	print("QA LEARN: skill state re-read (skill 3 known: %s)" % str(_hud_panels != null and _hud_panels.is_skill_known(3)))
 
-## Casts a skill at the current target: for a skill that needs a target, walks
-## into its reach first when the target is out of it (_attack_monster; a
-## Target_Required 0 or land-targeted skill is cast where the player stands,
-## CombatNet.skill_tick_approaches), then plays its real cast animation (from
-## basic_code) and sends the use-skill request -- the animation goes with the
-## request, in _send_attack, so it does not play at the start of a walk. The
-## server applies the skill's real cooldown and damage.
+## Casts a skill. How depends on the skill's own Target_Required and
+## TargetType_Land (SelfCast.plan, round 617):
+## - Target_Required 0 (Grass Walk, the imbues, the shields): cast at once
+##   where the player stands, selected monster or not, as OpUseSkill
+##   targetType 0 (_send_self_cast). The selection is left alone.
+## - Target_Required 1 with TargetType_Land 1 (Ghost Walk): ground-pick mode
+##   -- the next left click on the ground casts it there (targetType 2);
+##   right click or Escape cancels.
+## - Any other skill at the current target: walks into its reach first when
+##   the target is out of it (_attack_monster), then plays its real cast
+##   animation (from basic_code) and sends the use-skill request -- the
+##   animation goes with the request, in _send_attack, so it does not play at
+##   the start of a walk. With nothing selected it is refused, as before.
+## The server applies the skill's real cooldown and damage.
 func _cast_skill(skill_id: int, basic_code: String) -> void:
-	if _last_attack_target == -1:
-		# Nothing selected: the original refuses too ("no target"), and a
-		# swing at nothing only looked like a cast that did nothing.
-		_log_system("Select a target first (click a monster), then use the skill.")
+	var reach: Dictionary = _hud_panels.skill_reach(skill_id) if _hud_panels != null else {}
+	var how := SelfCast.plan(reach, _last_attack_target != -1)
+	# Any cast replaces a ground pick still waiting for its click.
+	if how != SelfCast.PLAN_GROUND and _self_cast.cancel_pick():
+		_end_ground_pick_cursor()
+		print("GROUND PICK: off (another skill, %d, was cast)" % skill_id)
+	match how:
+		SelfCast.PLAN_SELF:
+			print("World3D: skill %d: Target_Required 0 -- cast on the player, no target needed (selection %d kept)" % [
+				skill_id, _last_attack_target])
+			_send_self_cast(skill_id, basic_code, SkillNet.TARGET_NONE, Vector3.ZERO)
+		SelfCast.PLAN_GROUND:
+			_self_cast.begin_pick(skill_id, basic_code)
+			_begin_ground_pick_cursor()
+			print("GROUND PICK: on for skill %d (%s) -- left click the ground to cast, right click or Escape cancels" % [
+				skill_id, basic_code])
+			_log_system("Click on the ground to use the skill (right click or Esc cancels).")
+		SelfCast.PLAN_TARGET:
+			_show_target(_last_attack_target)
+			_attack_monster(_last_attack_target, skill_id, basic_code)
+		_:
+			# Nothing selected: the original refuses too ("no target"), and a
+			# swing at nothing only looked like a cast that did nothing.
+			_log_system("Select a target first (click a monster), then use the skill.")
+
+## Sends a self cast (targetType 0) or a ground cast (targetType 2, at
+## `point`) from where the player stands, with the cast animation and sounds
+## on the player -- the send-at-once path of _attack_monster, without a
+## monster. The current selection is kept and nothing about this cast is
+## pinned to it: _pending_skill_hit_code / _pending_skill_id stay with the
+## monster's own cast, and the reply is recognised as this cast's
+## (SelfCast.is_self_reply) rather than a blow on the target.
+##
+## The monster field of a self cast carries the selection when there is one.
+## A server that reads targetType ignores it for type 0 (§4.0); one that
+## predates the byte reach-gates a damaging Target_Required 0 row against it
+## (session/skill.go skillInReach), as it did before this round. OURS.
+func _send_self_cast(skill_id: int, basic_code: String, target_type: int, point: Vector3) -> void:
+	if _player_dead:
+		print("World3D: skill %d while dead -- not sent" % skill_id)
 		return
-	_show_target(_last_attack_target)
-	_attack_monster(_last_attack_target, skill_id, basic_code)
+	# A cast ends a walk into reach that was for another attack (round 519's
+	# rule, as the no_walk path of _attack_monster does).
+	_drop_pending_attack()
+	_flush_position()
+	var anim_base := basic_code.to_lower()
+	var us := anim_base.rfind("_")
+	if us > 0 and anim_base.substr(us + 1).is_valid_int():
+		anim_base = anim_base.substr(0, us)
+	_last_combat_time = _player_anim_time
+	_play_skill_cast_anim(anim_base)
+	_audio_cast_start(skill_id)
+	_self_cast.note_cast(skill_id, Time.get_ticks_msec())
+	var monster_field := 0
+	if target_type == SkillNet.TARGET_NONE and _last_attack_target > 0:
+		monster_field = _last_attack_target
+	NetClient.use_skill(NetClient.current_character_name, skill_id, monster_field, target_type, point)
+
+## The ground-pick mode's cursor. OURS: retail's ground-cast cursor (and its
+## decal) is not read (skills_spec §6, OPEN), so the mode shows the system
+## cross in place of the game's arrow, and the hover cursor is not settled
+## while it lasts (_settle_hover_cursor).
+func _begin_ground_pick_cursor() -> void:
+	Input.set_custom_mouse_cursor(null, Input.CURSOR_ARROW)
+	Input.set_default_cursor_shape(Input.CURSOR_CROSS)
+	print("GROUND PICK: cursor -> cross (ours)")
+
+func _end_ground_pick_cursor() -> void:
+	Input.set_default_cursor_shape(Input.CURSOR_ARROW)
+	# Force the game's arrow back on (it is only re-applied on a change).
+	_cursor_kind = ""
+	if not _cursor_textures.is_empty():
+		_apply_cursor("normal")
+
+## Ends ground-pick mode, if it is on, saying why in the log.
+func _cancel_ground_pick(why: String) -> bool:
+	if not _self_cast.cancel_pick():
+		return false
+	_end_ground_pick_cursor()
+	print("GROUND PICK: cancelled (%s)" % why)
+	return true
+
+## A left click on the world while ground-pick mode is on: the point on the
+## ground under it (the walk's own ray, _ground_point_at) is where the skill
+## is cast. A click that finds no ground leaves the mode on.
+func _ground_pick_click(screen_pos: Vector2) -> String:
+	if _player_dead:
+		_cancel_ground_pick("dead")
+		return "dead"
+	var point = _ground_point_at(screen_pos)
+	if point == null:
+		print("GROUND PICK: no ground under the click at %s -- still waiting" % str(screen_pos))
+		return "ground_pick_miss"
+	var pick := _self_cast.take_pick()
+	_end_ground_pick_cursor()
+	var at: Vector3 = point
+	print("GROUND PICK: skill %d at (%.1f, %.1f, %.1f), %.1f from the player" % [
+		int(pick["id"]), at.x, at.y, at.z, Vector2(at.x, at.z).distance_to(Vector2(player.position.x, player.position.z))])
+	_send_self_cast(int(pick["id"]), String(pick["code"]), SkillNet.TARGET_GROUND, at)
+	return "ground_pick"
 
 ## Attacks a monster -- a plain swing, or a cast when skill_id is not 0 --
 ## after walking into reach if it is out of it.
@@ -11676,6 +11783,10 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_RIGHT:
+			# A right click cancels a ground pick (round 617); the press still
+			# starts an orbit as any right press does.
+			if event.pressed:
+				_cancel_ground_pick("right click")
 			_right_button_held = event.pressed
 		elif event.button_index == MOUSE_BUTTON_LEFT:
 			# Either button orbits when dragged. A left press only becomes a
@@ -11776,6 +11887,16 @@ var _hover_reached_world := false
 var _hover_settle_queued := false
 
 func _input(event: InputEvent) -> void:
+	# Escape cancels a ground pick (round 617) before anything else sees it --
+	# HudPanels would otherwise close a window or open the System menu with
+	# the same press. Read here, before the GUI (the real-input rule of round
+	# 609: a key left to the unhandled stage can be eaten by a focused
+	# control).
+	if _self_cast.picking() and event is InputEventKey and (event as InputEventKey).pressed \
+			and not (event as InputEventKey).echo and (event as InputEventKey).keycode == KEY_ESCAPE:
+		_cancel_ground_pick("Escape")
+		get_viewport().set_input_as_handled()
+		return
 	# The orbit turns the camera here, before the GUI can consume the motion
 	# (orbit_motion_applies has why). The event is not marked handled: the
 	# control under the cursor still sees it, as before.
@@ -11795,6 +11916,9 @@ func _input(event: InputEvent) -> void:
 
 func _settle_hover_cursor() -> void:
 	_hover_settle_queued = false
+	# Ground-pick mode keeps its own cursor (round 617).
+	if _self_cast.picking():
+		return
 	var now := Time.get_ticks_msec()
 	if now - _cursor_last_check_ms < CURSOR_HOVER_INTERVAL_MS:
 		return
@@ -11867,6 +11991,10 @@ func _dispatch_left_click(screen_pos: Vector2) -> String:
 		# Dead (round 548): a click on the world does nothing -- no pick-up,
 		# attack, talk or walk; the Revive button is what there is to click.
 		return "dead"
+	# Ground-pick mode (round 617): the click is the skill's point, not a
+	# pick-up, an attack, a talk or a walk.
+	if _self_cast.picking():
+		return _ground_pick_click(screen_pos)
 	# An item lying on the ground first: it sits at a monster's feet inside
 	# the monster's tall click capsule, so testing the monster first would
 	# make a drop unpickable while its killer's next target stands over it.
@@ -12122,6 +12250,18 @@ func _on_guild_leave_requested() -> void:
 	NetClient.leave_guild(NetClient.current_character_name)
 
 func _try_set_move_target(screen_pos: Vector2) -> void:
+	var point = _ground_point_at(screen_pos)
+	if point == null:
+		return
+	_move_target = point
+	_has_move_target = true
+	# A walk somewhere else supersedes an attack that was walking into reach.
+	_pending_attack = {}
+	_released_attack = {}
+
+## The point on the ground or a placed object under a screen point, or null:
+## the click-to-move ray, shared with the ground-pick cast (round 617).
+func _ground_point_at(screen_pos: Vector2) -> Variant:
 	var from := camera_3d.project_ray_origin(screen_pos)
 	var dir := camera_3d.project_ray_normal(screen_pos)
 	var space_state := get_world_3d().direct_space_state
@@ -12135,12 +12275,8 @@ func _try_set_move_target(screen_pos: Vector2) -> void:
 	query.collision_mask = TERRAIN_COLLISION_LAYER
 	var hit := space_state.intersect_ray(query)
 	if hit.is_empty():
-		return
-	_move_target = hit["position"]
-	_has_move_target = true
-	# A walk somewhere else supersedes an attack that was walking into reach.
-	_pending_attack = {}
-	_released_attack = {}
+		return null
+	return hit["position"]
 
 func _on_send_pressed() -> void:
 	var text := chat_input.text.strip_edges()
@@ -13098,6 +13234,16 @@ func _on_attack_pressed() -> void:
 func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	if result == null:
 		return
+	# A self or ground cast's reply (round 617) is not a blow on the target:
+	# no swing, no flinch, no counter, and the monster cast still in flight
+	# keeps its hit effect. The health bar is painted by the other handler.
+	if SelfCast.is_self_reply(result.target_type, result.monster_damage, result.monster_died):
+		if result.error != "":
+			print("CAST reply: self/ground cast (targetType %d) refused: %s" % [result.target_type, result.error])
+		else:
+			print("CAST reply: self/ground cast (targetType %d) accepted, HP %d" % [result.target_type, result.player_hp])
+			NetClient.list_skills(NetClient.current_character_name)
+		return
 	if result.error != "":
 		monster_status_label.text = "Attack failed: %s" % result.error
 		print("World3D: attack refused: %s" % result.error)
@@ -14046,6 +14192,60 @@ func _qa_pelvis_height() -> String:
 ## OP_STATE_CHANGE: kind 1 is the motion state. This player's own id is not in
 ## the enter-world result, so the first answer to its own N teaches it; any
 ## other id is another player's body.
+## A buff began (OpBuffStart, round 617). Only its run speed is applied here
+## -- the icon is round 618's buff bar and the aura round 619's -- and only
+## for this player (SelfCast.claims_start). runSpeed is the owner's new run
+## speed in the units _move_speed moves by (characterdata Speed2, the same
+## number the server moves the character by); 0 means unchanged.
+func _on_buff_started(start: SkillNet.BuffStart) -> void:
+	var mine := _self_cast.claims_start(start.owner_id, start.skill_id, start.token, _other_bodies, Time.get_ticks_msec())
+	print("BUFF start handled: owner %d is %s" % [start.owner_id, "this player" if mine else "someone else"])
+	if mine:
+		_apply_buff_run_speed(start.run_speed, "OpBuffStart skill %d token %d" % [start.skill_id, start.token])
+
+## Buffs ended (OpBuffEnd, round 617): this player's run speed, as for a start.
+func _on_buff_ended(ended: SkillNet.BuffEnd) -> void:
+	var mine := _self_cast.claims_end(ended.owner_id, ended.tokens)
+	print("BUFF end handled: owner %d is %s" % [ended.owner_id, "this player" if mine else "someone else"])
+	if mine:
+		_apply_buff_run_speed(ended.run_speed, "OpBuffEnd tokens %s" % str(ended.tokens))
+
+## Sets the player's run speed from a buff packet; 0 leaves it.
+func _apply_buff_run_speed(run_speed: int, why: String) -> void:
+	if run_speed <= 0:
+		print("SPEED: run speed stays %.0f (%s: runSpeed 0 = unchanged)" % [_move_speed, why])
+		return
+	print("SPEED: run speed %.0f -> %d (%s)" % [_move_speed, run_speed, why])
+	_move_speed = float(run_speed)
+
+## A skill moved a character (OpSkillMove, round 617: Ghost Walk's landing).
+## This player is put at the point at once. The move's duration is OPEN
+## (skills_spec §2.3: tele value[0] = 500 is unread by the server's clamp,
+## perhaps milliseconds), so it is a SNAP, not a tween -- ours, until that is
+## read. Another player's body is put there and its walk target with it.
+func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
+	var to := Vector3(moved.x, moved.y, moved.z)
+	if _other_bodies.has(moved.character_id):
+		var body: Node3D = _other_bodies[moved.character_id]
+		body.position = to
+		_other_body_targets[moved.character_id] = to
+		print("SKILL move handled: player %d snapped to (%.1f, %.1f, %.1f) by skill %d" % [
+			moved.character_id, to.x, to.y, to.z, moved.skill_id])
+		return
+	if not _self_cast.claims_move(moved.character_id, moved.skill_id, _other_bodies, Time.get_ticks_msec()):
+		print("SKILL move handled: character %d is neither drawn here nor this player's cast -- ignored" % moved.character_id)
+		return
+	var from := player.position
+	_drop_pending_attack()
+	_has_move_target = false
+	player.velocity = Vector3.ZERO
+	player.position = to
+	# The server already has the player there; do not send it back.
+	_last_sent_pos = to
+	_time_since_send = 0.0
+	print("SKILL move handled: this player snapped (duration OPEN) from (%.1f, %.1f, %.1f) to (%.1f, %.1f, %.1f), %.1f units, by skill %d" % [
+		from.x, from.y, from.z, to.x, to.y, to.z, from.distance_to(to), moved.skill_id])
+
 func _on_state_changed(change: WorldNet.StateChange) -> void:
 	if change == null or change.kind != WorldNet.STATE_KIND_MOTION:
 		return
