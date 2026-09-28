@@ -364,12 +364,13 @@ four messages. The client half is `client/scripts/net/skill.gd` (codec) and
 
 | opcode | direction | payload | retail analogue |
 |---|---|---|---|
-| `OpUseSkill 0x0072` | C->S | `{name, i64 skillId, i64 targetMonsterId, u8 targetType (0 none/self, 1 entity, 2 ground), [2: f32 x, f32 y, f32 z]}` -- the type byte and point are a strict suffix, so a request without them reads as 1 | 0x7074 kind 4 |
+| `OpUseSkill 0x0072` | C->S | `{name, i64 skillId, i64 targetMonsterId, u8 targetType (0 none/self, 1 entity, 2 ground, 3 a character -- round 622), [2: f32 x, f32 y, f32 z]}` -- the type byte and point are a strict suffix, so a request without them reads as 1; for 3 the id field names a character | 0x7074 kind 4 |
 | `OpAttackResult` (existing) | S->C | trailing `u8 targetType` after `i64 monsterId`: the echo of the request's 0/1/2; a keep-up repeat sends 1 | -- |
 | `OpBuffStart 0x00F5` | S->C | `{i64 ownerId, i64 skillId, u32 token, i64 durationMs (-1 none), i64 remainingMs, u32 runSpeed (0 unchanged), u8 ownerKind (0 character, 1 monster)}` | 0xB0BD |
 | `OpBuffEnd 0x00F6` | S->C | `{i64 ownerId, u8 count, count x u32 token, u32 runSpeed, u8 ownerKind}` | 0xB072 |
 | `OpBuffCancel 0x00F7` | C->S | `{name, i64 skillId, u32 token}` | 0x7074 kind 5 (sender 0x81c5b0) |
 | `OpSkillMove 0x00F8` | S->C | `{i64 characterId, i64 skillId, f32 x, f32 y, f32 z}` (28 bytes), OpMove's coordinates | 0xB070 with a position (inferred) |
+| `OpSkillCast 0x00FA` (round 622) | S->C, the caster's zone without the caster | `{i64 casterId, u8 casterKind, i64 skillId, u32 castId, u8 phase (0 start, 1 act), u8 targetType (0-3), i64 targetId, f32 x, f32 y, f32 z}` (43 bytes); the act follows the start by the row's PreparingTime + CastingTime (`NetClient.skill_cast`, `World3D._on_skill_cast`; skill_buffs.md, "The cast broadcast") | 0xB070 result 1 / 0xB071 kind 1 |
 | `OpSelfId 0x00F9` | S->C, on world entry | `{i64 characterId}` -- this client's own id (`NetClient.self_id_received`, `own_character_id`) | the character-data packet's own id |
 
 The four trailing fields (targetType echo, both ownerKinds, and OpSelfId itself) were added by
@@ -389,9 +390,18 @@ rule above, READ; `SelfCast.plan`):
   ground-pick mode; the left click's point on the ground (the click-to-move
   ray) goes out as targetType 2. Right click or Escape cancels. The cursor is
   OURS (the system cross); retail's ground-cast cursor and decal are OPEN.
+- **Target_Required 1 with a friendly group** (Heal, the party buffs; round
+  622, READ in the retail client's skill use `FUN_0081ba10`): at a selected
+  player, targetType 3 naming them, after the walk into reach; at a monster,
+  targetType 1 at once with no cast drawn, which the server refuses "Invalid
+  target" (FUN_0058d7a0); with nothing selected, refused client-side with the
+  retail client's own 0x3011 text, "The target is not selected." -- **retail
+  does not fall back to the caster** (skill_buffs.md, "Friendly targets").
 - **Every other row**: targetType 1 at the selection, after the walk into
-  reach, as before; refused with nothing selected. The retail fallback for a
-  Target_Required 1 heal with nothing selected is OPEN.
+  reach, as before; refused with nothing selected (with the 0x3011 text when
+  the row has Target_Required, Animal, no Land and no Building, as retail
+  refuses it); at a selected player, refused (player-versus-player is not
+  modelled, OURS).
 
 The reply to a type-0 or type-2 cast is still an `OpAttackResult`. Its
 echoed targetType says which request it answers; a type-0/2 reply that

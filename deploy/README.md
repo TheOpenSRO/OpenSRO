@@ -91,6 +91,10 @@ rm -f itemdata_* skilldata_* npcpos.txt teleport*.txt   # the extracted tables a
 # `SELECT count(*) FROM skills WHERE action_kind = 3;` answers 2348, and
 # `SELECT count(*) FROM skills WHERE tele1 <> 0;` answers 19, and
 # `SELECT count(*) FROM skills WHERE lks2;` answers 160, on a retail archive.
+# ROUND 622 (Heal on another player) adds two more columns, TargetHealHP/MP (the CSV is 64
+# columns; the store adds skills.target_heal_hp and target_heal_mp): the same re-export and
+# re-import. Until then Heal is cast at the named player and heals nobody. Check:
+# `SELECT count(*) FROM skills WHERE target_heal_hp > 0;` answers 27 on a retail archive.
 
 # 3. On the server host (CSVs and import-refdata copied to ~/srrevamp-data; Postgres is pinned to
 #    127.0.0.1:5432 by docker-compose.override.yml):

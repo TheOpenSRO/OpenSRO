@@ -57,6 +57,7 @@ const (
 	TargetNone   uint8 = 0
 	TargetEntity uint8 = 1
 	TargetGround uint8 = 2
+	// TargetCharacter (3, round 622) is in friendlycast.go.
 )
 
 // PlayerRunSpeed is a player character's base run speed, characterdata
@@ -284,8 +285,9 @@ func buffSpec(ref *refdata.Skill, casterID int64) buff.Spec {
 // action kind 3 (SkillAction_Buff) with Target_Required 0 -- its targets are
 // the caster (Skill_CollectTargetsByEffect with no 'efr', INFERRED in the
 // spec §2.2) -- or with Target_Required 1 and a friendly target group (Self,
-// Ally or Party), whose target resolution when nothing friendly is selected
-// is OPEN: it lands on the caster. A Target_Required 1 row whose groups are
+// Ally or Party), which since round 622 starts on the character the cast
+// names (friendlycast.go; nothing named is refused, as the retail client
+// refuses it). A Target_Required 1 row whose groups are
 // all hostile (the DOTs, Water Cancel -- a debuff on the target) is not a
 // caster buff and is not modelled: it keeps the path it had before.
 func startsCasterBuff(ref *refdata.Skill) bool {
@@ -363,13 +365,20 @@ func broadcastBuffEnd(to []world.Entity, ownerID int64, ended []buff.Record, sp 
 // here, so the refusal cannot change in between; false is returned only if
 // it did anyway.
 func startCasterBuffLocked(zone []world.Entity, ref *refdata.Skill, casterID int64, now time.Time) bool {
-	rec, ended, refused, sp := buffBooks.Start(casterID, buffSpec(ref, casterID), now)
+	return startCasterBuffOn(zone, ref, casterID, casterID, now)
+}
+
+// startCasterBuffOn starts ref's buff, cast by casterID, on ownerID's book and
+// tells zone (the owner's). The caller holds ownerID's buff lock. Round 622:
+// the owner is the named character for a friendly Target_Required 1 row.
+func startCasterBuffOn(zone []world.Entity, ref *refdata.Skill, casterID, ownerID int64, now time.Time) bool {
+	rec, ended, refused, sp := buffBooks.Start(ownerID, buffSpec(ref, casterID), now)
 	if refused != buff.NotRefused {
 		return false
 	}
 	// Both packets carry the speed the one operation left: the end's and the
 	// start's agree, whichever the client applies last.
-	broadcastBuffEnd(zone, casterID, ended, sp)
+	broadcastBuffEnd(zone, ownerID, ended, sp)
 	sendToAll(zone, OpBuffStart, buffStartPacket(rec, now, speedField(sp)))
 	return true
 }

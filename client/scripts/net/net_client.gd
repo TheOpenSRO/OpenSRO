@@ -121,6 +121,9 @@ signal self_id_received(character_id: int)
 var own_character_id := -1
 signal buff_ended(ended: SkillNet.BuffEnd)
 signal skill_moved(moved: SkillNet.SkillMove)
+## OpSkillCast 0x00FA (round 622): another player (or a monster) in the zone
+## cast a skill -- its start, then its act.
+signal skill_cast(cast: SkillNet.SkillCast)
 
 signal party_create_result(result: PartyNet.Result)
 signal party_join_result(result: PartyNet.Result)
@@ -519,6 +522,8 @@ func use_skill(char_name: String, skill_id: int, target_monster_id: int,
 		SkillNet.TARGET_GROUND:
 			print("CAST send: skill %d targetType 2 (ground) at (%.1f, %.1f, %.1f)" % [
 				skill_id, point.x, point.y, point.z])
+		SkillNet.TARGET_CHARACTER:
+			print("CAST send: skill %d targetType 3 (character %d)" % [skill_id, target_monster_id])
 		_:
 			print("CAST send: skill %d targetType 1 (monster %d)" % [skill_id, target_monster_id])
 
@@ -842,6 +847,16 @@ func _dispatch(p: Packet) -> void:
 				own_character_id = sid
 				print("SELF id: this character is %d" % sid)
 				self_id_received.emit(sid)
+		SkillNet.OP_SKILL_CAST:
+			var sc := SkillNet.decode_skill_cast(p.data)
+			if sc == null:
+				push_warning("NetClient: short OpSkillCast (%d bytes) dropped" % p.data.size())
+			else:
+				print("SKILL cast: %s %d skill %d cast %d %s, target type %d id %d" % [
+					"monster" if sc.caster_kind == SkillNet.OWNER_MONSTER else "character", sc.caster_id,
+					sc.skill_id, sc.cast_id, "start" if sc.phase == SkillNet.CAST_START else "act",
+					sc.target_type, sc.target_id])
+				skill_cast.emit(sc)
 		SkillNet.OP_SKILL_MOVE:
 			var sm := SkillNet.decode_skill_move(p.data)
 			if sm == null:

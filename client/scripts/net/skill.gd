@@ -26,6 +26,10 @@ const OP_BUFF_END := 0x00F6       # server -> client (the region)
 const OP_BUFF_CANCEL := 0x00F7    # client -> server
 const OP_SKILL_MOVE := 0x00F8     # server -> client (the region)
 const OP_SELF_ID := 0x00F9        # server -> client, on world entry: {i64 characterId}
+## OpSkillCast (round 622): someone else in the zone cast a skill -- its
+## start, then its act (retail 0xB070 result 1 / 0xB071 kind 1). The caster's
+## own client is not sent it.
+const OP_SKILL_CAST := 0x00FA     # server -> client (the zone, not the caster)
 
 ## OpBuffStart / OpBuffEnd's trailing ownerKind (the contract's review
 ## follow-up): whose id ownerId is.
@@ -39,6 +43,14 @@ const OWNER_MONSTER := 1
 const TARGET_NONE := 0
 const TARGET_ENTITY := 1
 const TARGET_GROUND := 2
+## Round 622: the targetMonsterId field names a CHARACTER (a heal or a party
+## buff on another player, or on oneself). Monster and character ids overlap,
+## so the kind travels with the id. No point follows.
+const TARGET_CHARACTER := 3
+
+## OpSkillCast's phases.
+const CAST_START := 0
+const CAST_ACT := 1
 
 ## Encodes an OpLearnSkill request.
 static func encode_learn(character_name: String, skill_id: int) -> PackedByteArray:
@@ -181,6 +193,42 @@ static func decode_skill_move(data: PackedByteArray) -> SkillMove:
 	m.y = data.decode_float(20)
 	m.z = data.decode_float(24)
 	return m
+
+## OpSkillCast (round 622): {i64 casterId, u8 casterKind (0 character,
+## 1 monster), i64 skillId, u32 castId, u8 phase (0 start, 1 act),
+## u8 targetType (0 none, 1 monster, 2 ground, 3 character), i64 targetId,
+## f32 x, f32 y, f32 z} -- 43 bytes. castId pairs a start with its act; the
+## point is the ground target for targetType 2.
+class SkillCast:
+	var caster_id: int
+	var caster_kind: int
+	var skill_id: int
+	var cast_id: int
+	var phase: int
+	var target_type: int
+	var target_id: int
+	var x: float
+	var y: float
+	var z: float
+
+const SKILL_CAST_SIZE := 43
+
+## Decodes an OpSkillCast payload; null when it is short.
+static func decode_skill_cast(data: PackedByteArray) -> SkillCast:
+	if data.size() < SKILL_CAST_SIZE:
+		return null
+	var c := SkillCast.new()
+	c.caster_id = data.decode_s64(0)
+	c.caster_kind = data[8]
+	c.skill_id = data.decode_s64(9)
+	c.cast_id = data.decode_u32(17)
+	c.phase = data[21]
+	c.target_type = data[22]
+	c.target_id = data.decode_s64(23)
+	c.x = data.decode_float(31)
+	c.y = data.decode_float(35)
+	c.z = data.decode_float(39)
+	return c
 
 ## Result of decode_learn_result().
 class LearnResult:

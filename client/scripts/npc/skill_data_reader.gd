@@ -77,6 +77,16 @@ const S_RANGE := 21               # 0 = melee
 # among the 2,185 China board rows.
 const S_TARGET_REQUIRED := 22
 const S_TARGET_LAND := 24
+## TargetType_Animal (23), _Building (25) and TargetGroup_Self / _Ally /
+## _Party (26-28), round 622: whether a Target_Required 1 row is aimed at a
+## friend (a heal, a party buff) and whether retail refuses it with nothing
+## selected (the client's 0x3011 test, FUN_0081ba10 0x81be5e: Target_Required,
+## Animal, no Land, no Building -- SelfCast.plan).
+const S_TARGET_ANIMAL := 23
+const S_TARGET_BUILDING := 25
+const S_TARGET_SELF := 26
+const S_TARGET_ALLY := 27
+const S_TARGET_PARTY := 28
 const S_MASTERY := 34
 const S_REQ_MASTERY_LEVEL := 36
 # The learn prerequisites: up to three (skill GROUP id, level) pairs a level
@@ -146,6 +156,10 @@ class BaseSkill:
 	## into reach before the cast (CombatNet.skill_tick_approaches).
 	var level_target_required: PackedInt32Array = PackedInt32Array()
 	var level_target_land: PackedInt32Array = PackedInt32Array()
+	## Each level's target groups (round 622), aligned with level_ids: bit 0
+	## TargetType_Animal, 1 _Building, 2 TargetGroup_Self, 3 _Ally, 4 _Party
+	## (TARGET_BIT_*).
+	var level_target_groups: PackedInt32Array = PackedInt32Array()
 	## Cast timing / range as the level-1 row gives them: cast time and
 	## cooldown in ms (constant across levels, verified for SMASH_A), range in
 	## game units (0 = melee; constant but for four China skills -- level_range
@@ -263,7 +277,7 @@ static func parse_skills(datas: Array, mastery_ids: PackedInt32Array) -> Diction
 				if g > 0:
 					prereqs.append([g, _int_at(cols, pair[1])])
 			var level_info: Array = [unique_id, req, sp, mp, prereqs, _int_at(cols, S_RANGE),
-				_int_at(cols, S_TARGET_REQUIRED), _int_at(cols, S_TARGET_LAND)]
+				_int_at(cols, S_TARGET_REQUIRED), _int_at(cols, S_TARGET_LAND), target_groups(cols)]
 			if by_base.has(base_id):
 				var existing: BaseSkill = by_base[base_id]
 				existing.max_level = maxi(existing.max_level, level)
@@ -332,6 +346,7 @@ static func _finalize_levels(s: BaseSkill) -> void:
 	s.level_range.resize(top)
 	s.level_target_required.resize(top)
 	s.level_target_land.resize(top)
+	s.level_target_groups.resize(top)
 	for i in range(top):
 		s.level_prereqs[i] = []
 	for lv in s._levels:
@@ -346,6 +361,25 @@ static func _finalize_levels(s: BaseSkill) -> void:
 			s.level_range[int(lv) - 1] = int(info[5])
 			s.level_target_required[int(lv) - 1] = int(info[6])
 			s.level_target_land[int(lv) - 1] = int(info[7])
+		if info.size() > 8:
+			s.level_target_groups[int(lv) - 1] = int(info[8])
+
+## The target-group bits of level_target_groups.
+const TARGET_BIT_ANIMAL := 1
+const TARGET_BIT_BUILDING := 2
+const TARGET_BIT_SELF := 4
+const TARGET_BIT_ALLY := 8
+const TARGET_BIT_PARTY := 16
+
+## A row's TargetType_Animal/_Building and TargetGroup_Self/_Ally/_Party as
+## TARGET_BIT_* bits.
+static func target_groups(cols: PackedStringArray) -> int:
+	var bits := 0
+	for pair in [[S_TARGET_ANIMAL, TARGET_BIT_ANIMAL], [S_TARGET_BUILDING, TARGET_BIT_BUILDING],
+			[S_TARGET_SELF, TARGET_BIT_SELF], [S_TARGET_ALLY, TARGET_BIT_ALLY], [S_TARGET_PARTY, TARGET_BIT_PARTY]]:
+		if _int_at(cols, int(pair[0])) != 0:
+			bits |= int(pair[1])
+	return bits
 
 static func _int_at(cols: PackedStringArray, col: int) -> int:
 	if col >= cols.size():

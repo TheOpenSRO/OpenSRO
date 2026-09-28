@@ -905,7 +905,29 @@ func skillRecord(cols []string) ([]string, bool) {
 		cooldownGroup(cols),        // 45 CooldownGroup -- Overlap's high byte, CRefSkill+0x8f (round 504)
 		sitGate(cols),              // 46 SitGate -- the skill gate's motion-state refusals (round 607)
 		// 47..61: the buff and self-cast columns (round 616, buffColumns).
-	}, buffColumns(cols)...), true
+	}, append(buffColumns(cols), targetHeal(cols)...)...), true
+}
+
+// targetHeal is skill CSV columns 62/63 (round 622), TargetHealHP and
+// TargetHealMP: what one cast restores to EACH character it names --
+// skillparam.TargetHealAmounts over the row's action kind, Target_Required
+// and Param block. Anything it cannot read answers ("0", "0"), which is also
+// what an export predating the columns loads: no heal on a target.
+func targetHeal(cols []string) []string {
+	words, ok := paramWords(cols)
+	if !ok {
+		return []string{"0", "0"}
+	}
+	kind, err := strconv.ParseInt(strings.TrimSpace(cols[skActionKind]), 10, 32)
+	if err != nil {
+		return []string{"0", "0"}
+	}
+	tr, err := strconv.Atoi(strings.TrimSpace(cols[skTargetRequired]))
+	if err != nil {
+		return []string{"0", "0"}
+	}
+	h, m := skillparam.TargetHealAmounts(int32(kind), tr != 0, words)
+	return []string{strconv.Itoa(h), strconv.Itoa(m)}
 }
 
 // buffColumns are skill CSV columns 47..61 (round 616,
@@ -921,6 +943,8 @@ func skillRecord(cols []string) ([]string, bool) {
 //	60 BuffParams      every publishing run (skillparam.Contributions) as
 //	                   code:v0,v1;...
 //	61 Lks2            the 'lks2' marker (+0x374), 1 when present
+//
+// Columns 62/63 (TargetHealHP/MP, round 622) follow, from targetHeal.
 //
 // The Param block is WALKED (skillparam.Walk), never scanned. A walk that
 // does not finish -- none does on the 33,632 retail rows (skill_params.md) --

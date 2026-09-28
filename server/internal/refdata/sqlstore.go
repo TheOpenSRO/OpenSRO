@@ -188,6 +188,8 @@ ALTER TABLE skills ADD COLUMN IF NOT EXISTS tele0 INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS tele1 INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS buff_params TEXT NOT NULL DEFAULT '';
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS lks2 BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS target_heal_hp INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS target_heal_mp INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS monster_drops (
 	monster_id      BIGINT NOT NULL,
@@ -487,8 +489,8 @@ func (s *SQLStore) ImportSkills(ctx context.Context, skills []Skill) error {
 			req_cast_list, req_cast_all, no_combat_param, zero_damage, floor_blow,
 			req_learn_skill1, req_learn_skill_level1, req_learn_skill2, req_learn_skill_level2, req_learn_skill3, req_learn_skill_level3,
 			self_heal_hp, self_heal_mp, cooldown_group, sit_gate,
-			action_kind, target_required, target_land, target_self, target_ally, target_party, dura_ms, cbuf, nbuf, bbuf, lnks, tele0, tele1, buff_params, lks2
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62)
+			action_kind, target_required, target_land, target_self, target_ally, target_party, dura_ms, cbuf, nbuf, bbuf, lnks, tele0, tele1, buff_params, lks2, target_heal_hp, target_heal_mp
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64)
 		ON CONFLICT (id) DO UPDATE SET
 			group_id=excluded.group_id, basic_code=excluded.basic_code, basic_name=excluded.basic_name,
 			basic_level=excluded.basic_level, basic_chain_code=excluded.basic_chain_code,
@@ -514,7 +516,7 @@ func (s *SQLStore) ImportSkills(ctx context.Context, skills []Skill) error {
 			req_learn_skill3=excluded.req_learn_skill3, req_learn_skill_level3=excluded.req_learn_skill_level3,
 			self_heal_hp=excluded.self_heal_hp, self_heal_mp=excluded.self_heal_mp,
 			cooldown_group=excluded.cooldown_group, sit_gate=excluded.sit_gate,
-			action_kind=excluded.action_kind, target_required=excluded.target_required, target_land=excluded.target_land, target_self=excluded.target_self, target_ally=excluded.target_ally, target_party=excluded.target_party, dura_ms=excluded.dura_ms, cbuf=excluded.cbuf, nbuf=excluded.nbuf, bbuf=excluded.bbuf, lnks=excluded.lnks, tele0=excluded.tele0, tele1=excluded.tele1, buff_params=excluded.buff_params, lks2=excluded.lks2
+			action_kind=excluded.action_kind, target_required=excluded.target_required, target_land=excluded.target_land, target_self=excluded.target_self, target_ally=excluded.target_ally, target_party=excluded.target_party, dura_ms=excluded.dura_ms, cbuf=excluded.cbuf, nbuf=excluded.nbuf, bbuf=excluded.bbuf, lnks=excluded.lnks, tele0=excluded.tele0, tele1=excluded.tele1, buff_params=excluded.buff_params, lks2=excluded.lks2, target_heal_hp=excluded.target_heal_hp, target_heal_mp=excluded.target_heal_mp
 	`)
 	if err != nil {
 		return fmt.Errorf("refdata: preparing insert: %w", err)
@@ -534,7 +536,7 @@ func (s *SQLStore) ImportSkills(ctx context.Context, skills []Skill) error {
 			sk.ReqLearnSkill1, sk.ReqLearnSkillLevel1, sk.ReqLearnSkill2, sk.ReqLearnSkillLevel2, sk.ReqLearnSkill3, sk.ReqLearnSkillLevel3,
 			sk.SelfHealHP, sk.SelfHealMP, sk.CooldownGroup, sk.SitGate,
 			sk.ActionKind, sk.TargetRequired, sk.TargetLand, sk.TargetSelf, sk.TargetAlly, sk.TargetParty,
-			sk.DuraMs, sk.Cbuf, sk.Nbuf, sk.Bbuf, sk.Lnks, sk.Tele0, sk.Tele1, sk.BuffParams, sk.Lks2,
+			sk.DuraMs, sk.Cbuf, sk.Nbuf, sk.Bbuf, sk.Lnks, sk.Tele0, sk.Tele1, sk.BuffParams, sk.Lks2, sk.TargetHealHP, sk.TargetHealMP,
 		); err != nil {
 			return fmt.Errorf("refdata: inserting skill %d: %w", sk.ID, err)
 		}
@@ -556,7 +558,7 @@ func (s *SQLStore) GetSkill(ctx context.Context, id int64) (*Skill, error) {
 			req_cast_list, req_cast_all, no_combat_param, zero_damage, floor_blow,
 			req_learn_skill1, req_learn_skill_level1, req_learn_skill2, req_learn_skill_level2, req_learn_skill3, req_learn_skill_level3,
 			self_heal_hp, self_heal_mp, cooldown_group, sit_gate,
-			action_kind, target_required, target_land, target_self, target_ally, target_party, dura_ms, cbuf, nbuf, bbuf, lnks, tele0, tele1, buff_params, lks2
+			action_kind, target_required, target_land, target_self, target_ally, target_party, dura_ms, cbuf, nbuf, bbuf, lnks, tele0, tele1, buff_params, lks2, target_heal_hp, target_heal_mp
 		FROM skills WHERE id = $1`, id)
 	if err := row.Scan(
 		&sk.ID, &sk.GroupID, &sk.BasicCode, &sk.BasicName, &sk.BasicLevel, &sk.BasicChainCode,
@@ -570,7 +572,7 @@ func (s *SQLStore) GetSkill(ctx context.Context, id int64) (*Skill, error) {
 		&sk.ReqLearnSkill1, &sk.ReqLearnSkillLevel1, &sk.ReqLearnSkill2, &sk.ReqLearnSkillLevel2, &sk.ReqLearnSkill3, &sk.ReqLearnSkillLevel3,
 		&sk.SelfHealHP, &sk.SelfHealMP, &sk.CooldownGroup, &sk.SitGate,
 		&sk.ActionKind, &sk.TargetRequired, &sk.TargetLand, &sk.TargetSelf, &sk.TargetAlly, &sk.TargetParty,
-		&sk.DuraMs, &sk.Cbuf, &sk.Nbuf, &sk.Bbuf, &sk.Lnks, &sk.Tele0, &sk.Tele1, &sk.BuffParams, &sk.Lks2,
+		&sk.DuraMs, &sk.Cbuf, &sk.Nbuf, &sk.Bbuf, &sk.Lnks, &sk.Tele0, &sk.Tele1, &sk.BuffParams, &sk.Lks2, &sk.TargetHealHP, &sk.TargetHealMP,
 	); err != nil {
 		return nil, fmt.Errorf("refdata: querying skill %d: %w", id, err)
 	}
@@ -591,7 +593,7 @@ func (s *SQLStore) ListAllSkills(ctx context.Context) ([]*Skill, error) {
 			req_cast_list, req_cast_all, no_combat_param, zero_damage, floor_blow,
 			req_learn_skill1, req_learn_skill_level1, req_learn_skill2, req_learn_skill_level2, req_learn_skill3, req_learn_skill_level3,
 			self_heal_hp, self_heal_mp, cooldown_group, sit_gate,
-			action_kind, target_required, target_land, target_self, target_ally, target_party, dura_ms, cbuf, nbuf, bbuf, lnks, tele0, tele1, buff_params, lks2
+			action_kind, target_required, target_land, target_self, target_ally, target_party, dura_ms, cbuf, nbuf, bbuf, lnks, tele0, tele1, buff_params, lks2, target_heal_hp, target_heal_mp
 		FROM skills ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("refdata: listing skills: %w", err)
@@ -613,7 +615,7 @@ func (s *SQLStore) ListAllSkills(ctx context.Context) ([]*Skill, error) {
 			&sk.ReqLearnSkill1, &sk.ReqLearnSkillLevel1, &sk.ReqLearnSkill2, &sk.ReqLearnSkillLevel2, &sk.ReqLearnSkill3, &sk.ReqLearnSkillLevel3,
 			&sk.SelfHealHP, &sk.SelfHealMP, &sk.CooldownGroup, &sk.SitGate,
 			&sk.ActionKind, &sk.TargetRequired, &sk.TargetLand, &sk.TargetSelf, &sk.TargetAlly, &sk.TargetParty,
-			&sk.DuraMs, &sk.Cbuf, &sk.Nbuf, &sk.Bbuf, &sk.Lnks, &sk.Tele0, &sk.Tele1, &sk.BuffParams, &sk.Lks2,
+			&sk.DuraMs, &sk.Cbuf, &sk.Nbuf, &sk.Bbuf, &sk.Lnks, &sk.Tele0, &sk.Tele1, &sk.BuffParams, &sk.Lks2, &sk.TargetHealHP, &sk.TargetHealMP,
 		); err != nil {
 			return nil, fmt.Errorf("refdata: scanning skill: %w", err)
 		}

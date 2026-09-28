@@ -17,12 +17,13 @@ All little-endian, in srrevamp's own encoders (`session/wire.go`: a string is u1
 
 | opcode | direction | payload | retail analogue |
 |---|---|---|---|
-| `OpUseSkill 0x0072` (extended) | C→S | `{name, i64 skillId, i64 targetMonsterId, u8 targetType, [targetType 2: f32 x, f32 y, f32 z]}` — targetType 0 none/self, 1 entity, 2 ground. **A request without the suffix decodes as targetType 1.** Any other targetType, or a ground point cut short, is a malformed request. | 0x7074 kind 4 |
+| `OpUseSkill 0x0072` (extended) | C→S | `{name, i64 skillId, i64 targetMonsterId, u8 targetType, [targetType 2: f32 x, f32 y, f32 z]}` — targetType 0 none/self, 1 entity (a monster), 2 ground, **3 a character (round 622): the id field names a character**, no point follows. **A request without the suffix decodes as targetType 1.** Any other targetType, or a ground point cut short, is a malformed request (a server before round 622 answers a type-3 request so). | 0x7074 kind 4 |
 | `OpAttackResult` (extended) | S→C, the requester | the existing payload, then a trailing `u8 targetType`: a skill reply echoes the request's 0, 1 or 2 (an old-format request: 1); a plain swing, a keep-up repeat, a duel blow and a monster-initiated result carry 1. A 42-byte result from an older server decodes as 1 | — |
 | `OpBuffStart 0x00F5` | S→C, every session in the owner's zone | `{i64 ownerId, i64 skillId, u32 token, i64 durationMs, i64 remainingMs, u32 runSpeed, u8 ownerKind}` — 41 bytes; `ownerKind` 0 a character, 1 a monster (monster ids from `combat.Hub` and character ids from the database overlap; every buff is a character's today); a 40-byte payload decodes as a character; `durationMs`/`remainingMs` are −1 for a buff with no `dura`; `runSpeed` is the owner's new run speed when this buff wrote to it, else 0 (unchanged) | 0xB0BD |
 | `OpBuffEnd 0x00F6` | S→C, the owner's zone | `{i64 ownerId, u8 count, count × u32 token, u32 runSpeed, u8 ownerKind}` — `ownerKind` as in `OpBuffStart`, optional to a decoder; `runSpeed` the owner's new run speed when an ended buff had written to it, else 0 | 0xB072 |
 | `OpBuffCancel 0x00F7` | C→S | `{name, i64 skillId, u32 token}` — token 0 cancels the first record of that skill, as retail matches any record for a zero token. **No reply**: success is the `OpBuffEnd` broadcast; a refusal is silent, as retail's is | 0x7074 kind 5 |
 | `OpSkillMove 0x00F8` | S→C, the caster's zone, the caster included | `{i64 characterId, i64 skillId, f32 x, f32 y, f32 z}` — where the ground cast put the caster | the 0xB070 result with a position (INFERRED) |
+| `OpSkillCast 0x00FA` (round 622) | S→C, the caster's zone **except the caster** | `{i64 casterId, u8 casterKind (0 character, 1 monster), i64 skillId, u32 castId, u8 phase (0 start, 1 act), u8 targetType (0 none, 1 monster, 2 ground, 3 character), i64 targetId, f32 x, f32 y, f32 z}` — 43 bytes; see "The cast broadcast" below | 0xB070 result 1 (start) / 0xB071 kind 1 (act) |
 | `OpSelfID 0x00F9` | S→C, the entering session only | `{i64 characterId}` — the entering client's own character id, the id `OpBuffStart`/`OpBuffEnd` carry as `ownerId` and `OpSkillMove` as `characterId`. Sent once per `OpEnterWorld` (a reconnect included), after `OpEnterWorldResult` and the `OpEntityEntered` broadcasts, before the in-view buffs. Added to the contract during round 616 at the coordinator's request; `0x00F9` was free (the same grep) | not looked for (OURS) |
 
 The token is a server-wide u32 counter that never yields 0 (OURS).
@@ -76,6 +77,7 @@ an instant action, no buff, no ground move, no marker):
 | 58-59 | Tele0 / Tele1 | `tele` value[0], value[1] (`+0x2ec`) |
 | 60 | BuffParams | every run whose code publishes a ParamKeeper param (`skillparam.Contributions`), `code:v0,v1;...` |
 | 61 | Lks2 | the `lks2` marker (`+0x374`) present -- added in the review, for the recast rule; 160 retail rows, all kind 3 |
+| 62-63 | TargetHealHP / TargetHealMP | round 622: what one cast restores to **each character it names** (`skillparam.TargetHealAmounts`, heal.md): a Target_Required 1, action kind 0 row with one flat `heal` and none of `efr`/`nmh`/`mwhh`/`mwmh`/getv `HLRU`/`resu`/a combat parameter, v1 = 0 for HP and v3 = 0 for MP. MEASURED on the box's export (33,698 rows): 27 rows, `SKILL_CH_WATER_HEAL_A/B/C_01..09`; Heal A lv1 (id 149) 369 HP, 0 MP |
 
 The Param block is walked (`skillparam.Walk`), never scanned.
 
@@ -109,8 +111,8 @@ buff starts. `deploy/README.md` has the steps and a check query.
      imbue's `att` acts on the caster's later blows — **OPEN, not modelled**;
    - costs, cooldown and the group timer as before; then the record starts and the zone hears it.
    - Target_Required 0: the targets are the caster (INFERRED, spec §2.2: no `efr`).
-     Target_Required 1 with a friendly group: whom retail picks with nothing friendly selected is
-     **OPEN**; srrevamp puts it on the caster.
+     Target_Required 1 with a friendly group: **the character the cast names** (round 622,
+     "Friendly targets" below); nothing named is refused, as the retail client refuses it.
    - Target_Required 1 with only hostile groups (Water Cancel, the Warlock DOTs — a debuff on the
      target): **not modelled**, the path is unchanged.
 2. **A targetType 0 cast** that is neither a caster buff nor a ground cast applies to the caster
@@ -122,8 +124,9 @@ buff starts. `deploy/README.md` has the steps and a check query.
      `SKILL_EU_BARD_BATTLAA_EXPLOSION_A/B` (`efr` kind 1, radius 80, five targets, 35 % falloff —
      MEASURED). Its costs are paid, and a self-heal row heals as before;
    - a Target_Required 1 row with no friendly group needs a hostile target and is **refused**
-     (`"select a target first"`, OURS text) before anything is spent; a friendly one lands on the
-     caster, as the buffs do;
+     (`"select a target first"`, OURS text) before anything is spent; a friendly one is refused
+     too since round 622 (`"The target is not selected."`, "Friendly targets" below) -- until then
+     it landed on the caster;
    - an **imbue** (kind 3 with `att`, e.g. Ice River Force) is a caster buff whatever targetType it
      is sent with: SkillAction_Buff resolves no blow when it engages, and its `att` acts on the
      caster's later blows (OPEN, not modelled).
@@ -311,3 +314,130 @@ reach not yet known (the skill index loading) refuses the cast (OURS). The clien
 footing at once on `OpSkillMove`. The refusal cases above are not modelled (the client stops where
 its graph ends instead). `tele` value[0] (500 on every
 Ghost Walk row) is not read there — **OPEN** (a delay or a duration in ms, perhaps).
+
+## Friendly targets (round 622)
+
+A Target_Required 1 row with TargetGroup_Self, _Ally or _Party and no land target -- Heal, the party
+buffs -- is aimed at a **character**. How retail handles it, READ from both binaries on the RE box.
+
+**The client** (`sro_client.exe`, the skill use `FUN_0081ba10`, asm 0x81ba10..0x81c577). Its skill
+row is `FUN_0093f250(skillId) + 0x774` (`FUN_0095f4d0`). In that copy Target_Required is `+0x98`,
+TargetType_Animal `+0x99`, Land `+0x9a`, Building `+0x9b` and the eight groups Self..SelectDeadBody
+`+0x9c..+0xa3`: the server's `+0x94..+0x9f` moved by 4. That layout is INFERRED from three uses:
+`+0x98 == 0` sends the no-target form (0x81bf45); `FUN_0095f510` tests `+0x80c` (= `0x774 +
+0x98`) as the Target_Required of an offensive row; the 8-byte test at 0x81bea3 covers exactly eight
+groups. The selected object's id is `0x110f80c + 0x628` (`FUN_00778b70`); `FUN_00778650` writes it
+from a clicked object, and 0 when nothing is selected.
+
+- **Nothing selected.** With the selected id 0, Target_Required, Animal, no Land and no Building,
+  the client shows `0x3011` and sends nothing (0x81be5e..0x81be99: `push 0x3011; call 0x778190`).
+  `UIIT_SKILL_USE_FAIL_NONESELECTETARGET` is "The target is not selected." (MEASURED,
+  textuisystem.txt's English column). **It does not fall back to the caster.** Every Service-1
+  Target_Required 1 row with a friendly group (412 rows) carries Animal 1, Land 0 and Building 0
+  (MEASURED), so this is their answer. Heal is one of them.
+- **A monster selected** (`CICMonsterNPC`, descriptor 0xee77ac). An offensive row
+  (`FUN_0095f510`) asks the monster's vslot 0xdc. A non-offensive one passes, and the request goes
+  out: Heal carries only `heal` (client `+0x100`), which `FUN_0095f510` does not test.
+- **Another player selected** (`CICUser`, 0xef1bc0). A non-offensive Target_Required 1 row first
+  compares the two players' PK/job flag bytes (`FUN_009dd8f0` on each; different -> `0x3006`).
+  Outside the caster's party (`FUN_00992940`) it then asks the target's vslot 0xa8 (-> `0x3006`).
+  Otherwise the request goes out at that player. srrevamp has no murder or job states, so those
+  two checks have nothing to test.
+- **The request.** A Target_Required 0 row sends `01 04 u32 skillId 00`; a targeted one
+  `01 04 u32 skillId 01 u32 targetId` (0x81c02c..0x81c0ea). A row with no target group at all
+  takes the player's own id (`DAT_00eef5e8`, 0x81beeb) as its target.
+
+**The server** (`SR_GameServer.exe`). The skill tick's phase 0 runs `PrepareAction` (`0x4ad030`)
+case 4. That runs the target test `FUN_0058cc70`, and a refusal is sent in phase 0 -- before the
+approach walk and before anything is spent. For each target in the context, `FUN_0058cc70`
+refuses `0x3006` a target that does not resolve, one that fails the region test, and -- without
+SelectDeadBody -- a dead one (life state 2 or 3). Then comes `FUN_0058d7a0` (ESI the skill, EBX
+the caster, EDI the target, 0x58cf3f):
+
+1. DontCare (`+0x9e`) passes anything;
+2. a caster that is not a PC (vtable `+0x1c`) passes;
+3. a target that is an NPC-NPC (`+0x24`) fails;
+4. **Ally or Party (`+0x99`/`+0x9a`) with a target that is not a PC fails** -- a monster;
+5. **no Self (`+0x98`) with the caster as the target fails**;
+6. SelectDeadBody (`+0x9f`) with a living target fails;
+7. no Enemy_M (`+0x9b`) with a monster target (`+0x28`) fails; Enemy_M without Enemy_P (`+0x9c`)
+   with a PC target fails; Enemy_P without Enemy_M with a target that is not a PC fails;
+8. **Party alone (no Ally, no Self): both must be in the same party** (`GObjPC::PartyID` on each);
+9. a target in motion state 8 fails unless `+0x240`.
+
+Every failure is `0x3006` `UIIT_SKILL_USE_FAIL_WRONGTARGET`, "Invalid target" (MEASURED). So **Heal
+at a monster is refused by the server** in phase 0, and it costs nothing. MEASURED: the only
+friendly rows with Self alone carry no Enemy_M, and no friendly row carries Enemy_M without
+Enemy_P. So a monster fails every friendly row, and a character passes step 7.
+
+**srrevamp** (`session/friendlycast.go`, `useSkillHandler`):
+
+- **The request.** `OpUseSkill` targetType **3** names a character in the id field. This is OURS:
+  monster and character ids overlap, so the kind travels with the id, as OpBuffStart's ownerKind
+  does.
+- **Refusals**, all before anything is spent:
+  - targetType 0 on a friendly row: `"The target is not selected."`;
+  - targetType 1 (a monster; a request without the suffix too): `"Invalid target"`;
+  - targetType 3: `"Invalid target"` unless the target is in the world, in the caster's zone and
+    alive, is not the caster unless the row has Self, and for a Party-only row shares the caster's
+    party;
+  - a **hostile** row at a character: `"Invalid target"` (OURS: player-versus-player is not
+    modelled).
+- **Reach.** The skill tick's band, with both BCRadius the player body's (`characterInReach`). Out
+  of reach: `"too far away"`, before anything is spent. Retail walks the caster (phase 1); the
+  client walks first, as round 534 arranged for monsters.
+- **A friendly buff** (kind 3) starts on the **target's** book, cast by the caster. The target's
+  zone hears `OpBuffStart`/`OpBuffEnd` with the target as ownerId. A Target_Required 1 row gets no
+  recast check: row 16 tests only Target_Required 0 rows without `lnks`. If the row has `nbuf`, its
+  owner cannot cancel it, because the record's caster is not its owner (READ, `FUN_0059eff0`).
+- **A heal** (kind 0, columns 62/63) restores `TargetHealHP`/`MP` to the named living character,
+  capped at its maximum. This is Skill_ApplyEffectsAndNotify's target branch (`0x59461b`). It runs
+  under the target's kill lock and pushes the target `OpCharacterStatsResult`, so its bars move.
+  The caster's reply carries the caster's HP when it healed itself. p170/p171 are 0 (nothing
+  grants `rhru` here), so the amount is exactly `v0`/`v2`.
+- **Parties** use srrevamp's `party.Hub` (step 8). Server-side, retail's **Ally** means only "a PC".
+  The client's PK/job checks are not modelled: there are no states to test.
+- **Not modelled (OPEN):**
+  - selecting one's own body in the world: whether retail's click can pick the player's own
+    character was not read, so here a Target_Required 1 heal reaches oneself only through a request
+    naming oneself;
+  - resurrections (SelectDeadBody, `resu`);
+  - the percent, bonus, weapon-term and `HLRU` heal shapes (heal.md);
+  - the PK/job-flag and guild checks of the client's CICUser branch.
+
+## The cast broadcast (round 622)
+
+Retail tells every client in view that a cast started, and then that it acted (READ, the client):
+
+- **0xB070**, `NetProcessInNavAndSkill::FUN_008a5fd0`. It reads `u8 result`:
+  - result 1: `u16 kind` (0x3000 or 0x3002), `u32 skillId`, `u32 casterId` (asserted to resolve:
+    `"pChar"`), `u32`, then the rest, parsed by the cast's own reader (`FUN_00a54f00` ->
+    `FUN_00a54be0`). It builds the caster's `IDecoSkill` -- the cast clip and its READY/WAIT
+    effects -- for **any** caster. Only for the player's own id does it add the cooldown and pet
+    bookkeeping.
+  - result 2: `u16` error, shown with `FUN_00778190` (the requester's refusal).
+- **0xB071**, `FUN_008a4960` -> `FUN_00a56680`. It reads `u8 kind`, `[u16 if kind != 1]` and
+  `u32 castId`, and finds the cast by id (`FUN_00a565b0`). Kind 1 reads the target/damage block
+  (`FUN_00a54be0`) and forces SHOT (`FUN_00a53090`); kind 2 runs `FUN_00a50a00`.
+
+srrevamp resolves a cast at once, so its broadcast is its own message, **OpSkillCast 0x00FA**
+(OURS). 0x00FA was free: the highest session opcode in use was OpSelfID 0x00F9, and no file under
+`server/` or `client/scripts/` used 0x00FA.
+
+- **When.** Once a cast is accepted and paid for, `announceCast` sends the **start** (phase 0) to
+  the caster's zone, the caster excepted. It sends the **act** (phase 1) after the row's
+  PreparingTime + CastingTime, bounded at 5 s (OURS). The retail server sends 0xB071 when the
+  context builder engages the cast, which waits CastingTime; the server's `+0x74` already holds
+  PreparingTime + CastingTime.
+- **Which casts.** A refused cast is not announced. Every accepted cast is: self casts, ground
+  casts, casts at a monster (after the blow) and casts at a character. `casterKind` 1 is carried
+  for monsters, but no monster cast is announced yet: srrevamp's monster AI strikes through its own
+  push (OPEN).
+- **The client** (`World3D._on_skill_cast`). The start plays the caster's body clip (chosen the way
+  the player's own cast chooses it), its READY/SHOT-0 sounds and `SkillEffects.cast`. The act forces
+  SHOT, fires SHOT/1 at the target, and plays ACT_S on the body the skill acts on: the named
+  character or monster, else the caster. It adds one ACT_L cycle unless that owner's buff of the
+  skill has already started, in which case the buff's token holds the aura. A client before round
+  622 drops the unknown opcode.
+- **The caster's own client** acts a cast at a character the same way: on the accepted reply, after
+  the row's PreparingTime + CastingTime from the send, or at once on the buff's own OpBuffStart.

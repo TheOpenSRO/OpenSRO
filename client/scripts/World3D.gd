@@ -188,6 +188,10 @@ const NPC_COLLISION_LAYER := NAVMESH_WALL_COLLISION_LAYER
 ## Monsters sit on their own layer so a click can pick one out to attack it
 ## without a monster blocking movement or catching the ground-snap ray.
 const MONSTER_COLLISION_LAYER := 0b100000 # layer 6 only
+## Another player's click body (round 622), on its own layer (8; 7 is the
+## ground items'), so a click can select that player -- the target a heal or
+## a party buff is cast at -- without blocking movement or any other ray.
+const OTHER_PLAYER_COLLISION_LAYER := 0b10000000 # layer 8 only
 
 ## Smallest capsule an NPC gets, in world units, so a model whose bones all
 ## sit near the origin still stops someone.
@@ -983,6 +987,14 @@ var _player_one_shot_start := 0.0
 ## The monster the last attack was sent at, so its swing and the player's
 ## reaction to it can be played when the result comes back.
 var _last_attack_target := -1
+## The selected PLAYER (round 622): another character clicked in the world,
+## the target of a friendly skill (Heal, a party buff). -1 when none. A
+## monster selection clears it and it clears the monster selection: one
+## target at a time, as retail's one selected id (0x110f80c+0x628).
+var _selected_character := -1
+## A friendly cast walking into reach of its player target (round 622):
+## {character, skill, code, stop, reach}; empty when none.
+var _pending_friend_cast: Dictionary = {}
 ## Monsters the local player's own blow is about to make flinch, keyed to the
 ## scene-time (ms) until which _on_attack_result owns that reaction. The zone
 ## broadcast for the same hit arrives right behind the result, and used to
@@ -1289,6 +1301,7 @@ func _ready() -> void:
 	NetClient.buff_started.connect(_on_buff_started)
 	NetClient.buff_ended.connect(_on_buff_ended)
 	NetClient.skill_moved.connect(_on_skill_moved)
+	NetClient.skill_cast.connect(_on_skill_cast)
 	NetClient.self_id_received.connect(_on_self_id_received)
 	NetClient.monster_damaged.connect(_on_monster_damaged)
 	NetClient.monster_died.connect(_on_monster_died)
@@ -5155,7 +5168,9 @@ func _build_target_window() -> void:
 	# Where it goes is the window's own business: CIFTargetWindow places
 	# itself, centred at the top, each time it shows a target (HudTarget.place,
 	# read at 0x69a161). The registry's 442,10 is not used.
-	_hud_target.closed.connect(func() -> void: _last_attack_target = -1)
+	_hud_target.closed.connect(func() -> void:
+		_last_attack_target = -1
+		_selected_character = -1)
 	ui_control.add_child(_hud_target)
 
 ## The target-window rank icon for a rarity -- kept as the one place callers
@@ -5166,6 +5181,8 @@ func _rank_icon_path(rarity: int) -> String:
 ## Shows the target window for a monster id, or hides it if the id is not a
 ## known live monster.
 func _show_target(monster_id: int) -> void:
+	# A monster selection replaces a selected player (round 622).
+	_selected_character = -1
 	if _hud_target == null:
 		return
 	var snap = _monster_snapshots.get(monster_id)
@@ -7061,7 +7078,8 @@ func _qa_learn(spec: String) -> void:
 ## The server applies the skill's real cooldown and damage.
 func _cast_skill(skill_id: int, basic_code: String) -> void:
 	var reach: Dictionary = _hud_panels.skill_reach(skill_id) if _hud_panels != null else {}
-	var how := SelfCast.plan(reach, _last_attack_target != -1)
+	var character_selected := _selected_character != -1 and _other_bodies.has(_selected_character)
+	var how := SelfCast.plan(reach, _last_attack_target != -1 and not character_selected, character_selected)
 	# Any cast replaces a ground pick still waiting for its click.
 	if how != SelfCast.PLAN_GROUND and _self_cast.cancel_pick():
 		_end_ground_pick_cursor()
@@ -7080,6 +7098,29 @@ func _cast_skill(skill_id: int, basic_code: String) -> void:
 		SelfCast.PLAN_TARGET:
 			_show_target(_last_attack_target)
 			_attack_monster(_last_attack_target, skill_id, basic_code)
+		SelfCast.PLAN_FRIEND:
+			print("World3D: skill %d: a friendly Target_Required 1 row -- cast at player %d" % [skill_id, _selected_character])
+			_cast_on_character(skill_id, basic_code, _selected_character)
+		SelfCast.PLAN_FRIEND_AT_MONSTER:
+			# Retail's client sends it (a non-offensive row passes the monster
+			# branch of FUN_0081ba10) and the server refuses it 0x3006 in the
+			# skill tick's phase 0, before any walk (FUN_0058d7a0). So: sent at
+			# once, no walk and no cast drawn -- the retail caster's own cast
+			# starts only from the server's 0xB070 -- and the refusal is shown.
+			print("World3D: skill %d: a friendly row at monster %d -- sent for the server's target test" % [
+				skill_id, _last_attack_target])
+			_drop_pending_attack()
+			_flush_position()
+			NetClient.use_skill(NetClient.current_character_name, skill_id, _last_attack_target, SkillNet.TARGET_ENTITY)
+		SelfCast.PLAN_NO_TARGET:
+			# READ: the retail client's own refusal, 0x3011 (FUN_0081ba10).
+			print("World3D: skill %d: nothing selected -- refused as the retail client refuses it (0x3011)" % skill_id)
+			_log_system(SelfCast.NO_TARGET_TEXT)
+		SelfCast.PLAN_HOSTILE_AT_CHARACTER:
+			# OURS: a hostile cast at a player is player-versus-player, not modelled.
+			print("World3D: skill %d at player %d: a hostile row at a player -- not modelled, refused" % [
+				skill_id, _selected_character])
+			_log_system(SelfCast.INVALID_TARGET_TEXT)
 		_:
 			# Nothing selected: the original refuses too ("no target"), and a
 			# swing at nothing only looked like a cast that did nothing.
@@ -7127,6 +7168,277 @@ func _send_self_cast(skill_id: int, basic_code: String, target_type: int, point:
 	if target_type == SkillNet.TARGET_NONE and _last_attack_target > 0:
 		monster_field = _last_attack_target
 	NetClient.use_skill(NetClient.current_character_name, skill_id, monster_field, target_type, point)
+
+# --- Friendly targets and other players' casts (round 622) ---------------------
+
+## A click body for another player (round 622): a capsule as tall as the
+## body, on OTHER_PLAYER_COLLISION_LAYER only, so a ray can select the player
+## while it blocks no movement and catches no other ray. Sized as a monster's
+## click capsule is (OURS, as that one is).
+func _other_player_collider(height: float) -> StaticBody3D:
+	var shape := CapsuleShape3D.new()
+	shape.height = maxf(height, 1.0)
+	shape.radius = maxf(height * 0.3, 1.0)
+	var sb := StaticBody3D.new()
+	sb.name = "PlayerClickBody"
+	sb.collision_layer = OTHER_PLAYER_COLLISION_LAYER
+	sb.collision_mask = 0
+	var cs := CollisionShape3D.new()
+	cs.shape = shape
+	cs.position = Vector3(0.0, shape.height * 0.5, 0.0)
+	sb.add_child(cs)
+	return sb
+
+## A left click on another player selects them (round 622): the one selected
+## id (retail's 0x110f80c+0x628, set by FUN_00778650 from the clicked object)
+## becomes that player, the monster selection ends, and the target window
+## shows the player's piece. Nothing is sent: a selection is the client's.
+func _try_select_player(screen_pos: Vector2) -> bool:
+	if _objects_hidden:
+		return false
+	var node := _ray_hit_tagged(screen_pos, OTHER_PLAYER_COLLISION_LAYER, "character_id")
+	if _qa_click_logging:
+		print("QA CLICK   player ray: %s" % ("player %s" % str(node.get_meta("character_id")) if node != null else "no hit"))
+	if node == null:
+		return false
+	_select_character(int(node.get_meta("character_id")), String(node.get_meta("character_name", "")))
+	return true
+
+func _select_character(character_id: int, char_name: String) -> void:
+	_last_attack_target = -1
+	_selected_character = character_id
+	if _hud_target != null:
+		_hud_target.show_player(char_name)
+	print("World3D: selected player %d (%s)" % [character_id, char_name])
+
+## Where the server measures a player target from: the position it last sent
+## for them (the body interpolates toward it).
+func _other_player_ground(character_id: int) -> Vector2:
+	var at = _other_body_targets.get(character_id)
+	if at == null:
+		var body = _other_bodies.get(character_id)
+		at = (body as Node3D).position if body != null and is_instance_valid(body) else player.position
+	return Vector2((at as Vector3).x, (at as Vector3).z)
+
+## The reach band of a friendly cast at a player, as the server measures it
+## (session/friendlycast.go characterInReach): both BCRadius the player
+## body's, and the skill level's Range or the weapon's. {} when the skill's
+## row is unknown.
+func _friend_band(skill_id: int) -> Dictionary:
+	var skill: Dictionary = _hud_panels.skill_reach(skill_id) if _hud_panels != null else {}
+	if skill.is_empty():
+		return {}
+	var body_code: String = GENDER_BODY_CODE.get(_player_gender, GENDER_BODY_CODE[DEFAULT_GENDER])
+	var caster_bc := int(_bc_radius_by_code.get(body_code, CombatNet.PLAYER_BC_RADIUS))
+	return {"band": CombatNet.approach_band(caster_bc, CombatNet.PLAYER_BC_RADIUS,
+		CombatNet.effective_range(int(skill["range"]), _equipped_weapon_range()))}
+
+## Casts a friendly skill at a selected player (round 622): walks into the
+## skill's reach first when the player is out of it -- the skill tick's
+## phase 1 walk (MoveTowardObject), done here because srrevamp's server does
+## not walk players, as for a monster (_attack_monster) -- then sends it.
+func _cast_on_character(skill_id: int, basic_code: String, character_id: int) -> void:
+	if _player_dead:
+		print("World3D: skill %d at player %d while dead -- not sent" % [skill_id, character_id])
+		return
+	_drop_pending_attack()
+	if not _other_bodies.has(character_id):
+		_log_system(SelfCast.INVALID_TARGET_TEXT)
+		return
+	var planned := _friend_band(skill_id)
+	if planned.is_empty():
+		print("World3D: skill %d's Range is not known here -- sending at once; the server judges the distance" % skill_id)
+		_flush_position()
+		_send_character_cast(skill_id, basic_code, character_id)
+		return
+	var band: Vector2 = planned["band"]
+	_pending_friend_cast = {"character": character_id, "skill": skill_id, "code": basic_code,
+		"stop": band.x, "reach": band.y}
+	if not _step_pending_friend_cast() and not _pending_friend_cast.is_empty():
+		print("World3D: player %d is %.1f away, out of reach %.1f (+%d) -- walking to %.1f short of them before casting skill %d" % [
+			character_id, Vector2(player.position.x, player.position.z).distance_to(_other_player_ground(character_id)),
+			band.y, CombatNet.REACH_SLACK, band.x, skill_id])
+
+## One tick of the walk into a friendly cast's reach: in reach, it is sent
+## (true); out of it, the walk is re-aimed at the player (false).
+func _step_pending_friend_cast() -> bool:
+	var character_id := int(_pending_friend_cast["character"])
+	if not _other_bodies.has(character_id):
+		print("World3D: player %d left before the walk reached them -- friendly cast dropped" % character_id)
+		_drop_pending_attack()
+		return false
+	var here := Vector2(player.position.x, player.position.z)
+	var there := _other_player_ground(character_id)
+	var stop := float(_pending_friend_cast["stop"])
+	if CombatNet.approach_releases(here.distance_to(there), stop, float(_pending_friend_cast["reach"]), false):
+		_release_friend_cast()
+		return true
+	var point := CombatNet.approach_point(here, there, CombatNet.approach_aim(stop, false, MOVE_TARGET_STOP_DISTANCE))
+	_move_target = Vector3(point.x, player.position.y, point.y)
+	_has_move_target = true
+	return false
+
+## Sends the pending friendly cast from where the player stands.
+func _release_friend_cast() -> void:
+	var c := _pending_friend_cast
+	_pending_friend_cast = {}
+	_has_move_target = false
+	player.velocity.x = 0.0
+	player.velocity.z = 0.0
+	var character_id := int(c["character"])
+	print("World3D: player %d in reach at %.1f (reach %.1f +%d) -- casting skill %d" % [character_id,
+		Vector2(player.position.x, player.position.z).distance_to(_other_player_ground(character_id)),
+		float(c["reach"]), CombatNet.REACH_SLACK, int(c["skill"])])
+	_flush_position()
+	_send_character_cast(int(c["skill"]), String(c["code"]), character_id)
+
+## Sends a friendly cast at a player (OpUseSkill targetType 3, round 622),
+## facing them, with the cast clip, sounds and READY effects on the player.
+## The reply is recognised as this cast's (SelfCast.is_self_reply: not an
+## entity reply); its SHOT and ACT play on the target's body
+## (_fx_self_cast_acts) -- when its buff starts (OpBuffStart), or for any
+## other row once the server accepts, after the row's own PreparingTime +
+## CastingTime from the send (READ: the retail caster's cast is SHOT by the
+## server's action message 0xB071, which the server sends when the context
+## builder engages the cast after CastingTime; the server here resolves at
+## once, so the wait is the client's).
+func _send_character_cast(skill_id: int, basic_code: String, character_id: int) -> void:
+	if _player_dead:
+		return
+	var there := _other_player_ground(character_id)
+	var dir := there - Vector2(player.position.x, player.position.z)
+	if not dir.is_zero_approx():
+		player.rotation.y = atan2(dir.x, dir.y)
+	var anim_base := basic_code.to_lower()
+	var us := anim_base.rfind("_")
+	if us > 0 and anim_base.substr(us + 1).is_valid_int():
+		anim_base = anim_base.substr(0, us)
+	_last_combat_time = _player_anim_time
+	var clip := _play_self_cast_anim(basic_code, anim_base)
+	var fx_timings := SelfCast.effect_timings(SkillEffectReader.aniset_for(_skill_anisets(), basic_code), clip)
+	_audio_cast_start(skill_id, -1, fx_timings)
+	var t: Array = SkillEffects._timings.get(skill_id, [0, 0])
+	_fx_self_cast = {"skill": skill_id, "ground": false, "acted": false, "character": character_id,
+		"sent_ms": Time.get_ticks_msec(), "act_after_ms": int(t[0]) + int(t[1])}
+	print("EFFECTS friendly cast: skill %d at player %d, acts %d ms after the send (prep + cast)" % [
+		skill_id, character_id, int(t[0]) + int(t[1])])
+	_self_cast.note_cast(skill_id, Time.get_ticks_msec())
+	NetClient.use_skill(NetClient.current_character_name, skill_id, character_id, SkillNet.TARGET_CHARACTER)
+
+## Casts by others in the zone (OpSkillCast, round 622): cast id -> {body,
+## target, skill}, from the start to the act.
+var _other_casts: Dictionary = {}
+## "<owner key>|<skill>" -> when its OpBuffStart arrived: an act of a cast
+## whose buff already started plays no ACT_L cycle (the token holds the aura).
+var _recent_buff_starts: Dictionary = {}
+const RECENT_BUFF_START_MS := 8000
+
+## Someone else cast a skill (OpSkillCast, round 622; the retail analogues
+## 0xB070 result 1 and 0xB071, NetProcessInNavAndSkill FUN_008a5fd0 and
+## FUN_008a4960). The start plays the cast on the caster's body -- its body
+## clip (as this player's own cast picks it, _play_other_cast_anim), its
+## READY/SHOT-0 sounds and SkillEffects.cast with the skilldata phase timing;
+## the act forces SHOT (READ: FUN_00a56680 kind 1 -> FUN_00a53090), fires
+## SHOT/1 at the target and ACT_S on the body the skill acts on: the named
+## character or monster, else the caster. An act whose start never arrived
+## (a player who came into view mid-cast) plays the act alone.
+func _on_skill_cast(sc: SkillNet.SkillCast) -> void:
+	_sync_own_id()
+	var body := _fx_owner_body(sc.caster_id, sc.caster_kind)
+	if body == null or body == player:
+		print("SKILL cast handled: caster %s is %s -- nothing drawn" % [_fx_owner_key(sc.caster_id, sc.caster_kind),
+			"this player" if body == player else "not in view"])
+		return
+	var target: Node3D = null
+	match sc.target_type:
+		SkillNet.TARGET_ENTITY:
+			target = _fx_monster_body(sc.target_id)
+		SkillNet.TARGET_CHARACTER:
+			target = _fx_owner_body(sc.target_id, SkillNet.OWNER_CHARACTER)
+	var what := "%s's cast" % _fx_owner_key(sc.caster_id, sc.caster_kind)
+	if sc.phase == SkillNet.CAST_START:
+		if target != null and target != body:
+			var d := Vector2(target.global_position.x - body.global_position.x, target.global_position.z - body.global_position.z)
+			if not d.is_zero_approx() and sc.caster_kind == SkillNet.OWNER_CHARACTER:
+				body.rotation.y = atan2(d.x, d.y)
+		var clip := 0.0
+		if sc.caster_kind == SkillNet.OWNER_CHARACTER:
+			clip = _play_other_cast_anim(sc.caster_id, sc.skill_id)
+		SkillAudio.play_phase(sc.skill_id, SkillAudio.READY, -1, body, what)
+		SkillAudio.play_phase(sc.skill_id, SkillAudio.SHOT, 0, body, what)
+		var n := SkillEffects.cast(sc.skill_id, body, target).size()
+		_other_casts[sc.cast_id] = {"body": body, "target": target, "skill": sc.skill_id}
+		print("SKILL cast handled: %s of skill %d started on its body (clip %.2fs, %d READY effect(s)), target %s" % [
+			what, sc.skill_id, clip, n, _describe_fx_target(sc)])
+		return
+	_other_casts.erase(sc.cast_id)
+	var on: Node3D = target if target != null else body
+	# The owner its buff (if it is one) went to: the named character or
+	# monster, else the caster.
+	var owner_key := _fx_owner_key(sc.caster_id, sc.caster_kind)
+	if sc.target_type == SkillNet.TARGET_CHARACTER:
+		owner_key = _fx_owner_key(sc.target_id, SkillNet.OWNER_CHARACTER)
+	elif sc.target_type == SkillNet.TARGET_ENTITY:
+		owner_key = _fx_owner_key(sc.target_id, SkillNet.OWNER_MONSTER)
+	var aura_key := "%s|%d" % [owner_key, sc.skill_id]
+	var buff_held := _recent_buff_starts.has(aura_key) and Time.get_ticks_msec() - int(_recent_buff_starts[aura_key]) < RECENT_BUFF_START_MS
+	SkillEffects.shot(body)
+	SkillEffects.hit(body, on, sc.skill_id)
+	SkillAudio.play_phase(sc.skill_id, SkillAudio.SHOT, 1, body, what)
+	SkillAudio.play_phase(sc.skill_id, SkillAudio.ACT_S, -1, body, what)
+	var n := SkillEffects.act(sc.skill_id, on, on, not buff_held).size()
+	print("SKILL cast handled: %s of skill %d acts on %s (%d ACT effect(s)%s)" % [what, sc.skill_id,
+		_describe_fx_target(sc), n, ", its aura held by the buff's token" if buff_held else ""])
+
+func _describe_fx_target(sc: SkillNet.SkillCast) -> String:
+	match sc.target_type:
+		SkillNet.TARGET_ENTITY:
+			return "monster %d" % sc.target_id
+		SkillNet.TARGET_CHARACTER:
+			return "this player" if _buff_owner_is_self(sc.target_id, SkillNet.OWNER_CHARACTER) else "player %d" % sc.target_id
+		SkillNet.TARGET_GROUND:
+			return "the ground at (%.1f, %.1f, %.1f)" % [sc.x, sc.y, sc.z]
+	return "its caster"
+
+## Another player's cast body clip (round 622), picked as this player's own
+## is (_play_self_cast_anim, SkillEffectReader.cast_body_anim): nothing for a
+## row with no READY/WAIT/SHOT animation; the WAIT entry of their body in the
+## row's group; otherwise the clip named after the skill's Basic_Code in
+## their gender's folder, falling back to their weapon group's swing, as the
+## player's own cast falls back (a DISCLOSED stand-in). Returns its length.
+func _play_other_cast_anim(character_id: int, skill_id: int) -> float:
+	var gait: Dictionary = _other_gaits.get(character_id, {})
+	if gait.is_empty() or not is_instance_valid(gait["skeleton"]):
+		return 0.0
+	var code := String(SkillAudio.context_for(skill_id)["code"])
+	if code == "" or code == SkillAudio.NONE:
+		return 0.0
+	var skel: Skeleton3D = gait["skeleton"]
+	var gender := String(gait["gender"])
+	var group := String(gait["group"])
+	var plan := SkillEffectReader.cast_body_anim(SkillEffectReader.aniset_for(_skill_anisets(), code))
+	match String(plan["kind"]):
+		"none":
+			return 0.0
+		"wait":
+			var g := String(plan.get("group", ""))
+			var wait := _body_animation_for(gender, int(plan["type"]), g if g != "" else group)
+			return _play_once(skel, wait) if wait != null else 0.0
+	var anim_base := code.to_lower()
+	var us := anim_base.rfind("_")
+	if us > 0 and anim_base.substr(us + 1).is_valid_int():
+		anim_base = anim_base.substr(0, us)
+	var anim: BanReader.ParsedAnimation = null
+	if _data_pk2 != null:
+		var path := "Prim\\Ani\\Char\\China\\%s\\%s.ban" % ["woman" if gender == "china_woman" else "man", anim_base]
+		var bytes := AssetSource.read_bytes(path, _data_pk2)
+		if not bytes.is_empty():
+			anim = BanReader.parse(bytes)
+			if anim != null and anim.bones.is_empty():
+				anim = null
+	if anim == null:
+		anim = _body_animation_for(gender, BsrReader.AnimationEntry.TYPE_ATTACK, group)
+	return _play_once(skel, anim) if anim != null else 0.0
 
 ## The ground-pick mode's cursor. OURS: retail's ground-cast cursor (and its
 ## decal) is not read (skills_spec §6, OPEN), so the mode shows the system
@@ -7395,6 +7707,9 @@ func _step_pending_attack() -> bool:
 ## target instead and only clears _pending_attack.
 func _drop_pending_attack() -> void:
 	_released_attack = {}
+	if not _pending_friend_cast.is_empty():
+		_pending_friend_cast = {}
+		_has_move_target = false
 	if _pending_attack.is_empty():
 		return
 	_pending_attack = {}
@@ -10993,6 +11308,8 @@ func _physics_step(delta: float) -> void:
 		# OpMove, which would cancel the keep-up it starts (_attack_monster).
 		if not _pending_attack.is_empty():
 			_step_pending_attack()
+		if not _pending_friend_cast.is_empty():
+			_step_pending_friend_cast()
 		var to_target := _move_target - player.position
 		to_target.y = 0.0
 		if not _has_move_target:
@@ -11014,6 +11331,8 @@ func _physics_step(delta: float) -> void:
 			# still judges it.
 			if not _pending_attack.is_empty():
 				_release_pending_attack()
+			if not _pending_friend_cast.is_empty():
+				_release_friend_cast()
 		else:
 			var dir := to_target.normalized()
 			player.velocity.x = dir.x * _move_speed
@@ -11272,6 +11591,11 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	var top := _skeleton_top(skeleton) if skeleton != null else 1.8 * PLAYER_SCALE_RATIO
 	body.add_child(_name_plate(char_name, top))
 
+	# A click body on its own layer (round 622), so the player can be selected.
+	body.set_meta("character_id", character_id)
+	body.set_meta("character_name", char_name)
+	body.add_child(_other_player_collider(top))
+
 	other_entities.add_child(body)
 	_other_bodies[character_id] = body
 	_other_body_targets[character_id] = pos
@@ -11285,6 +11609,12 @@ func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 		_other_body_targets[moved.character_id] = Vector3(moved.x, moved.y, moved.z)
 
 func _on_entity_left(character_id: int) -> void:
+	if character_id == _selected_character:
+		_selected_character = -1
+		_clear_target()
+	if not _pending_friend_cast.is_empty() and int(_pending_friend_cast["character"]) == character_id:
+		print("World3D: player %d left before the walk reached them -- friendly cast dropped" % character_id)
+		_drop_pending_attack()
 	_other_gaits.erase(character_id)
 	SkillEffects.detach_owner(_fx_owner_key(character_id, 0))
 	_other_seated.erase(character_id)
@@ -12210,6 +12540,8 @@ func _dispatch_left_click(screen_pos: Vector2) -> String:
 		return "pickup"
 	if _try_attack_monster(screen_pos):
 		return "attack"
+	if _try_select_player(screen_pos):
+		return "select_player"
 	if _try_talk_to_npc(screen_pos):
 		return "talk"
 	_try_set_move_target(screen_pos)
@@ -13454,6 +13786,8 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 			print("CAST reply: self/ground cast (targetType %d, %s) refused: %s" % [result.target_type,
 				"echoed" if result.target_type_echoed else "from the request queue", result.error])
 			_fx_self_cast_refused()
+			if result.target_type == SkillNet.TARGET_CHARACTER:
+				_log_system(result.error)
 		else:
 			print("CAST reply: self/ground cast (targetType %d, %s) accepted, HP %d" % [result.target_type,
 				"echoed" if result.target_type_echoed else "from the request queue", result.player_hp])
@@ -13463,6 +13797,9 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	if result.error != "":
 		monster_status_label.text = "Attack failed: %s" % result.error
 		print("World3D: attack refused: %s" % result.error)
+		# The server's target test (round 622): a friendly skill at a monster.
+		if result.error == SelfCast.INVALID_TARGET_TEXT or result.error == SelfCast.NO_TARGET_TEXT:
+			_log_system(result.error)
 		SkillEffects.cancel_cast(player)
 		_rewalk_after_refusal(result)
 		return
@@ -14026,6 +14363,7 @@ static func _fx_owner_key(owner_id: int, owner_kind: int) -> String:
 func _fx_on_buff_started(start: SkillNet.BuffStart) -> void:
 	var kind := start.owner_kind
 	var owner_id := start.owner_id
+	_recent_buff_starts["%s|%d" % [_fx_owner_key(owner_id, kind), start.skill_id]] = Time.get_ticks_msec()
 	var body := _fx_owner_body(owner_id, kind)
 	if body == null:
 		print("EFFECTS aura: buff token %d skill %d on %s, not in view -- no aura" % [
@@ -14033,6 +14371,11 @@ func _fx_on_buff_started(start: SkillNet.BuffStart) -> void:
 		return
 	if body == player:
 		_fx_self_cast_acts(start.skill_id, "OpBuffStart token %d" % start.token, false)
+	elif not _fx_self_cast.is_empty() and kind == SkillNet.OWNER_CHARACTER \
+			and int(_fx_self_cast.get("character", -1)) == owner_id:
+		# This player's friendly buff on another player (round 622) acts
+		# when it applies, its aura held by the token below.
+		_fx_self_cast_acts(start.skill_id, "OpBuffStart token %d on player %d" % [start.token, owner_id], false)
 	# The buff's remaining time bounds the aura in case its end never
 	# arrives (SkillEffects.AURA_GRACE_MS, OURS).
 	var remaining := start.remaining_ms if start.remaining_ms > 0 else start.duration_ms
@@ -14061,15 +14404,40 @@ func _fx_self_cast_acts(skill_id: int, why: String, with_aura: bool) -> void:
 	if _fx_self_cast.is_empty() or int(_fx_self_cast["skill"]) != skill_id or bool(_fx_self_cast["acted"]):
 		return
 	_fx_self_cast["acted"] = true
+	# A cast at a player (round 622) acts on that player's body: the object
+	# the skill acts on (Heal's ACT_S water_hpheal_effect_a.efp at Bip01).
+	var on: Node3D = player
+	var target_id := int(_fx_self_cast.get("character", -1))
+	if target_id >= 0:
+		var body = _other_bodies.get(target_id)
+		if body != null and is_instance_valid(body):
+			on = body
 	SkillEffects.shot(player)
-	SkillEffects.hit(player, player, skill_id)
-	var n := SkillEffects.act(skill_id, player, player, with_aura).size()
-	print("EFFECTS self cast: skill %d acts on %s (%d ACT effect(s))" % [skill_id, why, n])
+	SkillEffects.hit(player, on, skill_id)
+	# ACT plays on the object the skill acts on (skills_spec §1.2, INFERRED
+	# from the rows: Heal's ACT_S at the healed body's Bip01), so that body is
+	# both host arguments: an AT_ONE_FOLLOW row would otherwise go on the
+	# caster (SkillEffects.host_for).
+	var n := SkillEffects.act(skill_id, on, on, with_aura).size()
+	print("EFFECTS self cast: skill %d acts on %s (%d ACT effect(s)%s)" % [skill_id, why, n,
+		", on player %d" % target_id if on != player else ""])
 
 ## The accepted reply to a self or ground cast: a skill no OpBuffStart or
 ## OpSkillMove answered (a self-heal, a zero-damage self row) acts now, with
 ## its ACT_L one cycle.
 func _fx_self_cast_accepted() -> void:
+	if not _fx_self_cast.is_empty() and _fx_self_cast.has("character") and not bool(_fx_self_cast["acted"]):
+		# A cast at a player (round 622) acts after its own prep + cast from
+		# the send (_send_character_cast).
+		var fx := _fx_self_cast
+		var left := int(fx["act_after_ms"]) - (Time.get_ticks_msec() - int(fx["sent_ms"]))
+		_after(maxf(float(left), 0.0) / 1000.0, func() -> void:
+			var keep := _fx_self_cast
+			_fx_self_cast = fx
+			_fx_self_cast_acts(int(fx["skill"]), "the accepted reply, %d ms after the send" % int(fx["act_after_ms"]), true)
+			_fx_self_cast = keep)
+		_fx_self_cast = {}
+		return
 	if not _fx_self_cast.is_empty():
 		_fx_self_cast_acts(int(_fx_self_cast["skill"]), "the accepted reply", true)
 	_fx_self_cast = {}

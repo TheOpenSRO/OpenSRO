@@ -587,8 +587,16 @@ func TestSkillCSVBuffColumnsAreAStrictSuffix(t *testing.T) {
 	if err != nil || sk.ActionKind != 0 || sk.TargetLand || sk.DuraMs != 0 || sk.HasTele() || sk.BuffParams != "" || sk.Lks2 {
 		t.Fatalf("an export predating the buff columns: %+v, %v", sk, err)
 	}
-	if skillCSVColumns[47] != "ActionKind" || skillCSVColumns[60] != "BuffParams" || skillCSVColumns[61] != "Lks2" || len(skillCSVColumns) != 62 {
+	if skillCSVColumns[47] != "ActionKind" || skillCSVColumns[60] != "BuffParams" || skillCSVColumns[61] != "Lks2" || skillCSVColumns[63] != "TargetHealMP" || len(skillCSVColumns) != 64 {
 		t.Fatalf("test premise: columns %q..%q, %d in all", skillCSVColumns[47], skillCSVColumns[len(skillCSVColumns)-1], len(skillCSVColumns))
+	}
+	// Round 622's TargetHealHP/MP after them: absent, no heal on a target.
+	if sk.TargetHealHP != 0 || sk.TargetHealMP != 0 {
+		t.Fatalf("an export predating the target-heal columns heals: %+v", sk)
+	}
+	healRow := append(append([]string{}, old...), "0", "1", "0", "1", "1", "1", "0", "0", "0", "0", "0", "0", "0", "", "0", "369", "0")
+	if sk, err = parseSkillRow(healRow); err != nil || sk.TargetHealHP != 369 || !sk.TargetAlly {
+		t.Fatalf("Heal A lv1's columns: %+v, %v", sk, err)
 	}
 	ghost := append(append([]string{}, old...), "0", "1", "1", "0", "0", "0", "0", "0", "0", "0", "0", "500", "100", "", "0")
 	if sk, err = parseSkillRow(ghost); err != nil || !sk.TargetRequired || !sk.TargetLand || sk.Tele0 != 500 || sk.Tele1 != 100 || !sk.HasTele() {
