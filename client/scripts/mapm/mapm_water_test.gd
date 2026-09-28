@@ -141,10 +141,12 @@ func _initialize() -> void:
 	_check(W.shoreline_nibble(50.0, 50.0) == 0, "ground at the surface is dry (nibble 0)")
 	_check(W.shoreline_nibble(50.0, 60.0) == 0, "ground above the surface is dry")
 	_check(W.shoreline_nibble(50.0, 44.0) == 3, "6 deep is nibble 3 ((50 - 44) * 0.5)")
-	_check(W.shoreline_nibble(50.0, 49.0) == 0, "1 deep is 0.5, which rounds to even: 0")
-	_check(W.shoreline_nibble(50.0, 47.0) == 2, "3 deep is 1.5, which rounds to even: 2")
+	# READ: the fistp runs with RC=11 (truncate), 0x9fb338-0x9fb34e.
+	_check(W.shoreline_nibble(50.0, 49.0) == 0, "1 deep is 0.5, truncated: 0")
+	_check(W.shoreline_nibble(50.0, 47.0) == 1, "3 deep is 1.5, truncated: 1")
+	_check(W.shoreline_nibble(50.0, 43.0) == 3, "7 deep is 3.5, truncated: 3")
+	_check(W.shoreline_nibble(50.0, 20.1) == 14, "29.9 deep is 14.95, truncated: 14")
 	_check(W.shoreline_nibble(50.0, 19.0) == 15, "31 deep is 15.5, past 15: clamped to 15")
-	_check(W.round_half_even(2.5) == 2 and W.round_half_even(3.5) == 4 and W.round_half_even(2.6) == 3, "x87 rounding: half to even")
 	_check(absf(W.nibble_alpha(15) - 1.0) < 0.0001 and W.nibble_alpha(0) == 0.0, "nibble 15 is alpha 1, nibble 0 alpha 0")
 
 	# --- Block states, as the client writes block+0x7ee.
@@ -168,7 +170,9 @@ func _initialize() -> void:
 	_check(built.water_blocks == 1 and built.still_blocks == 0 and built.dry_blocks == 0,
 		"one animated block, nothing else (got %d/%d/%d)" % [built.water_blocks, built.still_blocks, built.dry_blocks])
 	var wv: PackedVector3Array = built.water.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
-	_check(wv.size() == MapmReader.VERTEX_COUNT, "the block is its 17x17 vertices (got %d)" % wv.size())
+	_check(built.deep_blocks == 1 and wv.size() == 4 and W.facing_counts(built.water) == Vector2i(2, 0),
+		"a block deep at every vertex is one quad: 4 vertices, 2 triangles, both up (got %d verts)" % wv.size())
+	_check(W.all_deep(lake) and not W.all_deep(shore), "all_deep: the lake yes, a block with a dry row no")
 
 	var shore_region := _mapm_region(-30.0)
 	var sb: MapmReader.Block = shore_region.blocks[0]
@@ -177,6 +181,9 @@ func _initialize() -> void:
 	for i in range(MapmReader.GRID_WIDTH):
 		sb.vertices[i].height = 60.0
 	var shore_built = W.build(shore_region)
+	var shore_v: PackedVector3Array = shore_built.water.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+	_check(shore_built.deep_blocks == 0 and shore_v.size() == MapmReader.VERTEX_COUNT,
+		"a shore block keeps its 17x17 vertices for the alpha (got %d)" % shore_v.size())
 	var sc: PackedColorArray = shore_built.water.surface_get_arrays(0)[Mesh.ARRAY_COLOR]
 	var sp: PackedVector3Array = shore_built.water.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
 	var dry_ok := true
@@ -212,6 +219,21 @@ func _initialize() -> void:
 		_check(sf.y == 0 and sf.x == 2, "the still quad faces up too (got %s)" % sf)
 	_check(W.build(null).water == null and W.build(MapmReader.ParsedRegion.new()).water == null,
 		"a null or short region builds nothing")
+
+	# --- Dungeon worlds: no block water (READ, the object-water branch
+	# jumps past both block loops when the region id has bit 15).
+	_check(W.draws_block_water(97 << 8 | 168) and W.draws_block_water(127 << 8 | 255), "field regions (x < 128) draw block water")
+	_check(not W.draws_block_water(0x8000) and not W.draws_block_water(0x80a8), "dungeon ids (bit 15) do not")
+
+	# --- The environment follows the camera's block.
+	var env_region := _mapm_region(0.0)
+	for i in range(MapmReader.BLOCK_COUNT):
+		env_region.blocks[i].environment_id = 100 + i
+	var ids: PackedInt32Array = W.block_environment_ids(env_region)
+	_check(ids.size() == 36 and ids[7] == 107, "block_environment_ids is col + row * 6")
+	_check(W.environment_at(ids, 330.0, 330.0) == 107, "local (330, 330) is block row 1, col 1: environment 107")
+	_check(W.environment_at(ids, 1919.0, 5.0) == 105, "local (1919, 5) is row 0, col 5")
+	_check(W.environment_at(ids, -1.0, 5.0) == -1 and W.environment_at(PackedInt32Array(), 5.0, 5.0) == -1, "outside the region, or no ids: -1")
 
 	# --- The materials: both sides drawn, unshaded, blended.
 	var tex := ImageTexture.create_from_image(Image.create(4, 4, false, Image.FORMAT_RGBA8))

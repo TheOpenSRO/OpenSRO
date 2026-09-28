@@ -2110,6 +2110,7 @@ func _refresh_zone_label_position() -> void:
 	if _zone_label_tick % 10 != 0:
 		return
 	_audio_area_tick()
+	_water_env_tick()
 	if zone_label != null:
 		zone_label.text = "Zone: %s%s" % [_current_zone_name, _zone_label_position_suffix()]
 
@@ -2577,6 +2578,37 @@ func _load_still_water_texture(archive: Pk2Reader) -> Texture2D:
 ## READ render state they follow.
 var _water_material: StandardMaterial3D = null
 var _water_still_material: StandardMaterial3D = null
+## The EnvironmentID the water's colour was last taken from (-1 none).
+var _water_env_id := -1
+
+## Retail's water colour follows the environment of the block under the
+## camera (MapmWater.environment_at has the READ chain), one value for the
+## whole world. Checked on the zone label's throttle; a change re-samples
+## channel 14 into the shared material.
+func _water_env_tick() -> void:
+	if _water_material == null or _environment_table == null:
+		return
+	var cam := get_viewport().get_camera_3d() if get_viewport() != null else null
+	if cam == null:
+		return
+	var pair := _nav_graph_for(cam.global_position)
+	if pair.is_empty():
+		return
+	var group: Node3D = pair[1]
+	if not group.has_meta("block_env_ids"):
+		return
+	var local := group.to_local(cam.global_position)
+	var env_id := MapmWater.environment_at(group.get_meta("block_env_ids"), local.x, local.z)
+	if env_id < 0 or env_id == _water_env_id:
+		return
+	for rec in _environment_table.records:
+		if rec.key == env_id:
+			_water_env_id = env_id
+			_env_water_color = EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_WATER_COLOR, ENVIRONMENT_REFERENCE_TIME)
+			MapmWater.set_water_color(_water_material, _env_water_color)
+			print("World3D: water colour follows the camera's block, environment %d: %s" % [env_id, str(_env_water_color)])
+			return
+
 ## The environment's WaterColor (MapmWater.set_water_color clamps it). White
 ## until an environment is applied -- the neutral fallback
 ## sample_color_channel already uses, not a colour anyone read.
@@ -2592,44 +2624,9 @@ func _water_still_surface_material(tex: Texture2D) -> StandardMaterial3D:
 		_water_still_material = MapmWater.still_material(tex)
 	return _water_still_material
 
-## Adds this region's real navmesh walls: every real blocking edge in its
-## `.nvm` cell/edge graph, extruded into a vertical quad by NvmCollision.
-##
-## This is real *walkability*, which the terrain mesh's own geometric
-## collision does not reproduce -- it is the boundary the real game
-## actually enforces, and it exists in places no geometry does.
-##
-## Parented to terrain_group rather than positioned itself, so it inherits
-## that node's own rotation and vertical anchoring exactly. The wall
-## triangles are built in the same region-local space the terrain mesh uses
-## (MapmTerrainBuilder's col -> X, row -> Z): the two formats share a
-## byte-identical heightmap, and the local-axis correspondence is measured
-## rather than assumed -- see docs/protocol/NVM_FORMAT.md's "Real
-## local-axis orientation" section.
-##
-## Does nothing (and says so) when Data.pk2 isn't set or the region has no
-## real navmesh file -- the same honest "nothing to load" behavior as the
-## rest of this scene, never a guess.
-## Real per-region parsed navmesh, loaded once and shared by everything
-## that needs it -- real walkability walls and real water surfaces both come
-## out of the same real file, so it is not worth reading twice. A null entry
-## means "already tried, nothing usable", and is cached too. Held in
-## _grid.navmesh_cache and dropped with the region (round 563).
-func _load_region_navmesh(mapm_path: String) -> NvmReader.ParsedRegion:
-	var coords := _parse_region_coords(mapm_path)
-	if coords.is_empty():
-		return null
-	var key: int = RegionGridState.navmesh_key(int(coords["x"]), int(coords["y"]))
-	if _grid.navmesh_cache.has(key):
-		return _grid.navmesh_cache[key]
-	var lines: Array = []
-	var parsed := _read_region_navmesh(_open_pk2_if_set(), key, lines)
-	_print_job_log(lines)
-	_grid.navmesh_cache[key] = parsed
-	return parsed
-
-## A region's real `.nvm` read and parsed, uncached -- _load_region_navmesh's
-## read, and the terrain prepare's (round 565), which runs on a
+## A region's real `.nvm` read and parsed, uncached -- the terrain
+## prepare's read (round 565; the cache it fills is _grid.navmesh_cache,
+## dropped with the region since round 563), which runs on a
 ## WorkerThreadPool task and so reports through `lines` ([["out"|"err",
 ## line]], printed by the commit) instead of printing. Null with no
 ## Data.pk2, no file or no parse.
@@ -2865,6 +2862,24 @@ static func _prepare_navmesh_walls(job: Dictionary) -> void:
 	job["wall_line"] = "World3D: loaded real navmesh walls for %s (%d real blocking of %d internal + %d global edges)" % [
 		job["mapm_path"], NvmCollision.blocking_edges(region).size(), region.internal_edges.size(), region.global_edges.size()]
 
+## Adds this region's real navmesh walls: every real blocking edge in its
+## `.nvm` cell/edge graph, extruded into a vertical quad by NvmCollision.
+##
+## This is real *walkability*, which the terrain mesh's own geometric
+## collision does not reproduce -- it is the boundary the real game
+## actually enforces, and it exists in places no geometry does.
+##
+## Parented to terrain_group rather than positioned itself, so it inherits
+## that node's own rotation and vertical anchoring exactly. The wall
+## triangles are built in the same region-local space the terrain mesh uses
+## (MapmTerrainBuilder's col -> X, row -> Z): the two formats share a
+## byte-identical heightmap, and the local-axis correspondence is measured
+## rather than assumed -- see docs/protocol/NVM_FORMAT.md's "Real
+## local-axis orientation" section.
+##
+## Does nothing (and says so) when Data.pk2 isn't set or the region has no
+## real navmesh file -- the same honest "nothing to load" behavior as the
+## rest of this scene, never a guess.
 func _add_navmesh_walls(terrain_group: Node3D, job: Dictionary) -> void:
 	var faces: PackedVector3Array = job["wall_faces"]
 	if faces.is_empty():
@@ -2918,6 +2933,14 @@ func _add_navmesh_wall_debug_mesh(terrain_group: Node3D, faces: PackedVector3Arr
 ## in 3,846 blocks the `.m` says have none, and leaves out 6,259 the client
 ## draws (MEASURED, waterat -census) -- the `.m` is what the client reads.
 func _try_add_real_water(terrain_group: Node3D, region: MapmReader.ParsedRegion, mapm_path: String) -> void:
+	var coords := _parse_region_coords(mapm_path)
+	if not coords.is_empty():
+		var region_id := RegionGridState.navmesh_key(int(coords["x"]), int(coords["y"]))
+		if not MapmWater.draws_block_water(region_id):
+			print("World3D: %s -- region id 0x%04x is a dungeon id: retail draws no block water there" % [mapm_path, region_id])
+			return
+	# The environment the water's colour follows (_water_env_tick).
+	terrain_group.set_meta("block_env_ids", MapmWater.block_environment_ids(region))
 	var built := MapmWater.build(region)
 	if built.water == null and built.still == null:
 		if built.dry_blocks > 0:
@@ -2932,8 +2955,8 @@ func _try_add_real_water(terrain_group: Node3D, region: MapmReader.ParsedRegion,
 	# group's z mirror does not change it: Godot flips its cull test for a
 	# negative determinant), printed so a run measures it instead of a picture.
 	var facing := MapmWater.facing_counts(built.water) + MapmWater.facing_counts(built.still)
-	print("World3D: %s -- water: %d animated block(s), %d still, %d dry skipped, plane height(s) %s, triangles %d up / %d down" % [
-		mapm_path, built.water_blocks, built.still_blocks, built.dry_blocks, str(heights), facing.x, facing.y])
+	print("World3D: %s -- water: %d animated block(s) (%d fully deep, one quad each), %d still, %d dry skipped, plane height(s) %s, triangles %d up / %d down" % [
+		mapm_path, built.water_blocks, built.deep_blocks, built.still_blocks, built.dry_blocks, str(heights), facing.x, facing.y])
 	if built.water != null:
 		var anim := _load_real_water_animation(archive)
 		if anim != null:
@@ -3220,7 +3243,10 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	# The water's tint: channel 14 (READ: the record reader stores it at
 	# record+0x228, and `Map::FUN_00a1baf0` evaluates that graph into
 	# world+0x688f, the texture factor FUN_00a220b0 draws water with).
+	# A starting value from the region's block 0; _water_env_tick then
+	# follows the camera's block, as retail does.
 	_env_water_color = EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_WATER_COLOR, ENVIRONMENT_REFERENCE_TIME)
+	_water_env_id = env_id
 	if _water_material != null:
 		MapmWater.set_water_color(_water_material, _env_water_color)
 	print("World3D: environment %d water colour (channel 14) %s" % [env_id, str(_env_water_color)])
@@ -4794,6 +4820,7 @@ func _exit_tree() -> void:
 	_water_material = null
 	_water_still_material = null
 	_env_water_color = Color(1, 1, 1)
+	_water_env_id = -1
 	_environment_table = null
 	_environment_load_attempted = false
 	if _loading_screen != null:

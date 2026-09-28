@@ -20,8 +20,10 @@ class_name MapmWater
 ##   first byte of a per-region object list); what that list is, and so which
 ##   regions it hides water in, is OPEN.
 ## - For PlaneType 0, `Map::FUN_009fb280` gives each of the block's 17x17
-##   vertices a shoreline alpha nibble, clamp(round((PlaneHeight - height) *
-##   0.5), 0, 15), writes it into a 17x17 alpha texture, and overwrites
+##   vertices a shoreline alpha nibble, clamp(trunc((PlaneHeight - height) *
+##   0.5), 0, 15) -- truncated: the `fistp` at 0x9fb34e runs under a control
+##   word the code sets to RC=11 (fnstcw / or 0xc00 / fldcw at 0x9fb338) --
+##   writes it into a 17x17 alpha texture, and overwrites
 ##   +0x7ee with the block's state: 0 every vertex dry, 1 no vertex dry, 2 dry
 ##   and partial, 3 dry and fully deep. A state-0 block is not drawn.
 ## - `Map::FUN_00a220b0` then draws ONE flat quad over the whole 320x320
@@ -75,19 +77,10 @@ static func shoreline_nibble(plane_height: float, ground: float) -> int:
 		return 0
 	if f > float(NIBBLE_MAX):
 		return NIBBLE_MAX
-	return round_half_even(f)
-
-## The x87 `fistp` behind the decompile's ROUND(), in its default
-## round-to-nearest-even mode. INFERRED: nothing in FUN_009fb280 changes the
-## FPU control word; that no caller does is not checked.
-static func round_half_even(f: float) -> int:
-	var lo := floorf(f)
-	var frac := f - lo
-	if frac > 0.5:
-		return int(lo) + 1
-	if frac < 0.5:
-		return int(lo)
-	return int(lo) if int(lo) % 2 == 0 else int(lo) + 1
+	# READ: truncation. FUN_009fb280 sets the x87 rounding control to
+	# RC=11 (chop) right before the `fistp` (0x9fb338-0x9fb34e); f is
+	# positive here, so truncating is flooring.
+	return int(f)
 
 ## The nibble as a vertex alpha. The client packs it as A4R4G4B4 (n/15) or,
 ## on the other branch of `DAT_0110f728 < 3`, as the top nibble of an
@@ -120,6 +113,54 @@ static func block_state(block: MapmReader.Block) -> int:
 		return 2
 	return 0
 
+## Whether every vertex of a block is nibble 15 -- fully opaque water.
+static func all_deep(block: MapmReader.Block) -> bool:
+	for v in block.vertices:
+		if shoreline_nibble(block.plane_height, (v as MapmReader.Vertex).height) != NIBBLE_MAX:
+			return false
+	return true
+
+## Whether the client draws block water at all for a world whose current
+## region id is `region_id` (READ, `Map::FUN_00a220b0`): with bit 15 set --
+## a dungeon, whose ids world+0x237e's own setter (`SWorld::vslot_001`)
+## routes to the dungeon manager -- the object-water branch runs and jumps
+## past both block loops. No `.m` region has x >= 128 (MEASURED: Map.pk2's
+## 4,721 `.m` files top out at x = 127), so this never hides a field region.
+static func draws_block_water(region_id: int) -> bool:
+	return (region_id & 0x8000) == 0
+
+## A region's 36 block EnvironmentIDs, block index col + row * 6 -- what
+## environment_at reads, kept per region so the whole parsed region need not
+## be.
+static func block_environment_ids(region: MapmReader.ParsedRegion) -> PackedInt32Array:
+	var ids := PackedInt32Array()
+	if region == null or region.blocks.size() != MapmReader.BLOCK_COUNT:
+		return ids
+	for block in region.blocks:
+		ids.append((block as MapmReader.Block).environment_id)
+	return ids
+
+## The EnvironmentID of the block containing region-local (x, z), or -1.
+## Retail takes its environment -- WaterColor included -- from the first
+## entry of its drawn-block list: `Map::FUN_00a1baf0` reads
+## `**(world+0x2783) + 4`, the block's EnvironmentID (READ). That list is
+## copied in order from an ordered map (`Map::FUN_00a2b030`) that
+## `Map::FUN_00a2b370` fills with every block passing the view test, keyed
+## by its squared block-grid distance from the camera's block
+## (world+0x6914/0x6910; READ). So the first entry is the camera's own block
+## whenever that block passes the view test (INFERRED: it nearly always
+## does, the camera standing over it), and ONE environment drives the whole
+## world's water, not one per region.
+static func environment_at(ids: PackedInt32Array, x: float, z: float) -> int:
+	var side := MapmReader.BLOCKS_PER_SIDE
+	if ids.size() != side * side:
+		return -1
+	var bx := int(floorf(x / BLOCK_SPAN))
+	var bz := int(floorf(z / BLOCK_SPAN))
+	if bx < 0 or bz < 0 or bx >= side or bz >= side:
+		return -1
+	return ids[bz * side + bx]
+
 ## Whether the client draws this block, and as which surface.
 static func block_kind(block: MapmReader.Block) -> int:
 	if block.plane_type == PLANE_WATER:
@@ -137,6 +178,9 @@ class Built:
 	var still_blocks := 0
 	## PlaneType-0 blocks the client skips because every vertex is dry.
 	var dry_blocks := 0
+	## Drawn PlaneType-0 blocks that are fully deep (nibble 15 at every
+	## vertex), built as one quad instead of a 16x16 grid.
+	var deep_blocks := 0
 	## Distinct plane heights drawn, for the log.
 	var heights := {}
 
@@ -168,19 +212,37 @@ static func build(region: MapmReader.ParsedRegion) -> Built:
 					out.water_blocks += 1
 					out.heights[block.plane_height] = true
 					var base := w_pos.size()
-					for r in range(GRID_WIDTH):
-						for c in range(GRID_WIDTH):
-							var ground: float = block.vertices[r * GRID_WIDTH + c].height
-							w_pos.append(Vector3(x0 + c * TILE_SPAN, block.plane_height, z0 + r * TILE_SPAN))
-							w_uv.append(Vector2(float(c), float(r)) / float(GRID_WIDTH - 1) * FRAME_UV_REPEAT)
-							w_col.append(Color(1, 1, 1, nibble_alpha(shoreline_nibble(block.plane_height, ground))))
-					for r in range(GRID_WIDTH - 1):
-						for c in range(GRID_WIDTH - 1):
-							var i00 := base + r * GRID_WIDTH + c
-							var i10 := i00 + 1
-							var i01 := i00 + GRID_WIDTH
-							var i11 := i01 + 1
-							w_idx.append_array(PackedInt32Array([i00, i10, i11, i00, i11, i01]))
+					if all_deep(block):
+						# Every vertex is nibble 15, so the alpha is 1 all over
+						# and one quad draws the same thing as 512 triangles
+						# (OURS: a mesh economy, not a retail rule -- retail
+						# draws one quad per block anyway).
+						out.deep_blocks += 1
+						var h := block.plane_height
+						w_pos.append_array(PackedVector3Array([
+							Vector3(x0, h, z0), Vector3(x0 + BLOCK_SPAN, h, z0),
+							Vector3(x0 + BLOCK_SPAN, h, z0 + BLOCK_SPAN), Vector3(x0, h, z0 + BLOCK_SPAN),
+						]))
+						w_uv.append_array(PackedVector2Array([
+							Vector2(0, 0), Vector2(FRAME_UV_REPEAT, 0),
+							Vector2(FRAME_UV_REPEAT, FRAME_UV_REPEAT), Vector2(0, FRAME_UV_REPEAT),
+						]))
+						w_col.append_array(PackedColorArray([Color(1, 1, 1, 1), Color(1, 1, 1, 1), Color(1, 1, 1, 1), Color(1, 1, 1, 1)]))
+						w_idx.append_array(PackedInt32Array([base, base + 1, base + 2, base, base + 2, base + 3]))
+					else:
+						for r in range(GRID_WIDTH):
+							for c in range(GRID_WIDTH):
+								var ground: float = block.vertices[r * GRID_WIDTH + c].height
+								w_pos.append(Vector3(x0 + c * TILE_SPAN, block.plane_height, z0 + r * TILE_SPAN))
+								w_uv.append(Vector2(float(c), float(r)) / float(GRID_WIDTH - 1) * FRAME_UV_REPEAT)
+								w_col.append(Color(1, 1, 1, nibble_alpha(shoreline_nibble(block.plane_height, ground))))
+						for r in range(GRID_WIDTH - 1):
+							for c in range(GRID_WIDTH - 1):
+								var i00 := base + r * GRID_WIDTH + c
+								var i10 := i00 + 1
+								var i01 := i00 + GRID_WIDTH
+								var i11 := i01 + 1
+								w_idx.append_array(PackedInt32Array([i00, i10, i11, i00, i11, i01]))
 				PLANE_STILL:
 					out.still_blocks += 1
 					out.heights[block.plane_height] = true

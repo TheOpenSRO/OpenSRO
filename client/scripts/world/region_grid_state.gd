@@ -76,7 +76,7 @@ static func region_key(region_x: int, region_y: int) -> String:
 	return "%d_%d" % [region_x, region_y]
 
 ## The navmesh file's own id: `nv_%04x.nvm` is (x << 8) | y, the key
-## World3D._load_region_navmesh has always cached by.
+## navmesh_cache is kept by.
 static func navmesh_key(region_x: int, region_y: int) -> int:
 	return (region_x << 8) | region_y
 

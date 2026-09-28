@@ -1083,14 +1083,33 @@ Retail draws water from each `.m` block's PlaneType/PlaneHeight, not from the `.
 
 ### Water — what round 627 left (WORLD_ISSUES.md's six-hundred-and-twenty-seventh round)
 - **The region flag at region+0x2475.** `FUN_00a35c50` forces PlaneType -1 on a whole region when
-  it is set. `FUN_00a361b0` sets it from the first byte of a per-region object list that has not
-  been identified. Until it is, a region the client keeps dry this way draws water here.
+  it is set.
+  - READ in the review follow-up: `FUN_00a361b0` copies it from byte 0 of the region's entry in
+    the world's runtime map at world+0x7b64. Only `SWorld::vslot_046(1, regionId)` sets that
+    byte; `SWorld::vslot_045` (a named object added to a region at run time) creates the entry
+    with it at 0.
+  - It is game state set at run time, not map data. Nothing that calls slot 46 was found through
+    the world pointer's vtable, so which regions it hides, and when, is OPEN.
 - **The shoreline alpha format.** `DAT_0110f728 < 3` picks A8R8G8B8, where deep water's alpha is at
   most 240/255; the other branch is A4R4G4B4, where it is 1.0. This build uses the second. What
   sets the value is not found.
-- **The reflection path `FUN_00a2df70`**, taken with option +0x2e68 and +0x68df, is not traced.
-- **The per-object water branch** (`+0x237e & 0x8000`) and the `wave1..3.ddj` textures are not
-  traced.
+- **The reflection path `FUN_00a2df70` is not implemented; that waits on the user's decision.**
+  - READ: world+0x2e68 is world option 6 = the **Water Reflection** video option. The chain:
+    - `CIFOption_Video::Create` labels control 4 `UIIT_STT_WATER_REFLECTION`;
+    - `FUN_006f4210` stores control *i* at record byte 4 + *i*, so byte 8;
+    - `CGame::FUN_00835000` passes record byte 8 to `SWorld::vslot_043(6, v)`;
+    - its case 6 builds the render target (`FUN_009f2050(0x3c)`) plus two 512x512 textures, and
+      `vslot_037` passes `param_1[0xb9a]` = +0x2e68.
+  - It is stored in `<client>\Setting\SROptionSet.dat`: a u32 13, then tagged fields.
+    - Tag 9999 is one byte, the record selector.
+    - Tag 5 is two bytes: record 0's byte 8 and byte 0x18. Tag 105 is the same for record 1.
+  - The shipped file on the box (identical in `/opt/sro-files/client/setting` and the pserver
+    client) has selector 0 and tag 5 = 01, so **reflection ON**. Record 1 has it at 00.
+  - The client's own default with no file is not found. `CGInterface::FUN_0077c190` leaves the
+    struct as it was when the load fails, and the launcher may write the file.
+- **The per-object water branch** (`+0x237e & 0x8000`, dungeon region ids) is mirrored by skipping
+  block water there. No `.m` region has that bit, since x tops out at 127. The dungeon object water
+  itself (a `.dof` world) and the `wave1..3.ddj` textures are not traced.
 - **WaterColor's timing.** It is sampled at the fixed environment reference time, and the special
   modes (+0x2eb4, +0x2e5c) are not applied.
 - **Walking under water is authentic** (the user, 2026-09-28): it happens in the original game too.
@@ -1160,5 +1179,5 @@ before contradicting one.
 - `.bmt` layer flag **bit 0** marks an alpha layer.
 - A `.ban` keyframe **replaces** a bone's local transform; it is not a delta.
 - Navmesh plane **type 1 is not water** — it covers a quarter to all of every region.
-- Water is the `.m` block's **PlaneType 0** at its PlaneHeight, shoreline alpha `clamp(round((plane - h) * 0.5), 0, 15) / 15`, drawn two-sided at 10 fps (round 627).
+- Water is the `.m` block's **PlaneType 0** at its PlaneHeight, shoreline alpha `clamp(trunc((plane - h) * 0.5), 0, 15) / 15`, drawn two-sided at 10 fps (round 627).
 - A bind pose is a poor test of a rig: both character bugs this project had were invisible at rest.

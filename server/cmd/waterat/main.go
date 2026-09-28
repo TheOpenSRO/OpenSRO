@@ -5,7 +5,7 @@
 //
 // The rules it applies are the client's own (docs/protocol/MAPM_FORMAT.md,
 // "Water"): a block is drawn as water when PlaneType is 0; each of its 17x17
-// vertices gets a shoreline alpha nibble clamp(round((PlaneHeight - height) *
+// vertices gets a shoreline alpha nibble clamp(trunc((PlaneHeight - height) *
 // 0.5), 0, 15) (Map::FUN_009fb280); a block whose every vertex is dry (all
 // nibbles 0) is not drawn.
 //
@@ -38,7 +38,9 @@ const (
 	tileSpan      = blockSpan / (gridWidth - 1)
 )
 
-// nibble is Map::FUN_009fb280's per-vertex shoreline alpha, 0..15.
+// nibble is Map::FUN_009fb280's per-vertex shoreline alpha, 0..15. The
+// conversion truncates: the function sets the x87 rounding control to RC=11
+// (chop) before its fistp (0x9fb338-0x9fb34e).
 func nibble(plane, h float32) int {
 	f := (plane - h) * 0.5
 	if f <= 0 {
@@ -47,7 +49,7 @@ func nibble(plane, h float32) int {
 	if f > 15 {
 		return 15
 	}
-	return int(math.Round(float64(f)))
+	return int(f)
 }
 
 // state is the client's block+0x7ee after FUN_009fb280: 0 all dry (not
@@ -78,6 +80,16 @@ func state(b *mapm.Block) (int, [16]int) {
 		return 3, hist
 	}
 	return 0, hist
+}
+
+// allDeep reports whether every vertex of a block is nibble 15.
+func allDeep(b *mapm.Block) bool {
+	for _, v := range b.Vertices {
+		if nibble(b.PlaneHeight, v.Height) != 15 {
+			return false
+		}
+	}
+	return true
 }
 
 type nvmPlanes struct {
@@ -204,6 +216,12 @@ func runCensus(mapArc, dataArc *pk2.Archive, column int) {
 	stateCount := map[int]int{}
 	nvPair := map[string]int{}
 	heightMatch, heightDiff := 0, 0
+	// Triangles the client's builder emits per region: a drawn PlaneType-0
+	// block is a 16x16 grid (512 triangles) unless it is deep at every
+	// vertex, when it is one quad (2); a still block is one quad.
+	type tris struct{ grid, quad int }
+	perRegion := map[[2]int]tris{}
+	drawn, deepDrawn := 0, 0
 	type1Regions := map[string]int{}
 	regions := 0
 	for _, dir := range root {
@@ -253,6 +271,23 @@ func runCensus(mapArc, dataArc *pk2.Archive, column int) {
 				if b.PlaneType == 0 {
 					st, _ = state(b)
 					stateCount[st]++
+					if st != 0 {
+						drawn++
+						t := perRegion[[2]int{rx, ry}]
+						t.grid += 512
+						if allDeep(b) {
+							deepDrawn++
+							t.quad += 2
+						} else {
+							t.quad += 512
+						}
+						perRegion[[2]int{rx, ry}] = t
+					}
+				} else if b.PlaneType == 1 && b.WaveID != 0 {
+					t := perRegion[[2]int{rx, ry}]
+					t.grid += 2
+					t.quad += 2
+					perRegion[[2]int{rx, ry}] = t
 				}
 				if nv != nil {
 					nvPair[fmt.Sprintf(".m %d -> .nvm %d", b.PlaneType, nv.types[i])]++
@@ -277,6 +312,29 @@ func runCensus(mapArc, dataArc *pk2.Archive, column int) {
 		}
 	}
 	fmt.Printf("\n%d regions\n", regions)
+	fmt.Printf("drawn PlaneType-0 blocks: %d, deep at every vertex: %d (%.1f%%)\n", drawn, deepDrawn, 100*float64(deepDrawn)/float64(max(drawn, 1)))
+	// The worst 5x5 window of loaded regions, as a streamed grid of radius 2
+	// holds: the most water triangles, grid-only and with deep quads.
+	bestGrid, bestQuad := 0, 0
+	var atGrid, atQuad [2]int
+	for c := range perRegion {
+		g, q := 0, 0
+		for dx := -2; dx <= 2; dx++ {
+			for dy := -2; dy <= 2; dy++ {
+				t := perRegion[[2]int{c[0] + dx, c[1] + dy}]
+				g += t.grid
+				q += t.quad
+			}
+		}
+		if g > bestGrid {
+			bestGrid, atGrid = g, c
+		}
+		if q > bestQuad {
+			bestQuad, atQuad = q, c
+		}
+	}
+	fmt.Printf("worst 5x5 window: %d water triangles as grids (centred %d/%d), %d with deep blocks as quads (centred %d/%d)\n",
+		bestGrid, atGrid[0], atGrid[1], bestQuad, atQuad[0], atQuad[1])
 	printMap("PlaneType", typeCount)
 	printMap("state of type-0 blocks", stateCount)
 	printMap("type/wave", waveByType)

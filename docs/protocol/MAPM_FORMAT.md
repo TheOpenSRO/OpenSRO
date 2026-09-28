@@ -105,7 +105,8 @@ record, so the record keeps the file's own offsets. The block's origin is (col*3
 its index is col + row*6.
 
 The shoreline (READ, `Map::FUN_009fb280`): each vertex gets
-`clamp(round((PlaneHeight - height) * 0.5), 0, 15)`, stored as a 17x17 alpha texture. The block's
+`clamp(trunc((PlaneHeight - height) * 0.5), 0, 15)` (truncated: the code sets the x87 rounding
+control to RC=11 before its `fistp`, 0x9fb338-0x9fb34e), stored as a 17x17 alpha texture. The block's
 state is:
 - 0: all dry, so the block is not drawn;
 - 1: no vertex is dry;

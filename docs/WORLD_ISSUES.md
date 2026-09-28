@@ -7094,6 +7094,87 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twenty-seventh round, review follow-up: the shoreline truncates, a deep block is one quad, and the water's colour follows the camera's block
+
+The review confirmed that the olive lake is authentic for the path without reflection. 98/159 is
+environment 1, whose WaterColor is tan all day, and stage 1 is a plain MODULATE with the texture
+factor. The review also found the items below. Labels are as in the round.
+
+- **The shoreline nibble truncates (READ).** At 0x9fb338-0x9fb34e, `fnstcw` / `or eax,0xc00` /
+  `fldcw` / `fistp` sets RC=11 (chop) for the conversion. The nibble is therefore
+  `clamp(trunc((PlaneHeight - h) * 0.5), 0, 15)`, not round-half-to-even as the round inferred.
+  - Fixed in `MapmWater.shoreline_nibble`, `waterat`'s `nibble()`, MAPM_FORMAT.md and the round's
+    text.
+  - The test now expects 3 deep → 1, 7 deep → 3 and 29.9 deep → 14.
+  - The block states do not depend on the conversion, so the census's 39,486-of-39,510 match
+    stands.
+- **Dead code:** `World3D._load_region_navmesh` is deleted. Its only caller was the old water.
+  The orphaned navmesh-walls doc comment above it moved to `_add_navmesh_walls`, where it
+  belongs.
+- **A block deep at every vertex is one quad (OURS, a mesh economy).** Its alpha is 1 everywhere,
+  so 2 triangles draw what 512 did.
+  - MEASURED, `waterat -census`: 22,284 of the 33,056 drawn type-0 blocks are deep at every vertex
+    (67.4%).
+  - A fully flooded, fully deep 5x5 window of loaded regions goes from 25 x 36 x 512 = **460,800**
+    triangles to 25 x 36 x 2 = **1,800**.
+  - The real map's worst 5x5 window was 460,800 triangles, centred 111/230. Its worst is now
+    **243,292**, centred 89/140, where most water is shore.
+  - The reported lake's 3x3 load went from 119,296 triangles to **47,386**. 98/159 alone went from
+    18,432 to 2,622.
+- **Dungeon worlds draw no block water (READ).** In `FUN_00a220b0`, `world+0x237e & 0x8000`
+  selects the object-water branch, which jumps past both block loops.
+  - world+0x237e is the current region id: `SWorld::vslot_001` sets it and hands bit-15 ids to the
+    dungeon manager.
+  - `MapmWater.draws_block_water(region_id)` mirrors this, and `_try_add_real_water` skips such a
+    region.
+  - MEASURED: Map.pk2's 4,721 `.m` files top out at x = 127. So no field region has the bit;
+    dungeons are `.dof`.
+- **WaterColor follows the camera's block.**
+  - READ: `Map::FUN_00a1baf0` takes the environment from `**(world+0x2783) + 4`, the EnvironmentID
+    of the first block in the drawn-block list. `Map::FUN_00a2b030` copies that list in order from
+    an ordered map. `Map::FUN_00a2b370` fills that map with every block that passes the view test,
+    keyed by `dx^2 + dz^2` from the camera's block (world+0x6914/0x6910).
+  - INFERRED: that block comes from the frustum's apex, the camera eye at world+0x220a/0x2212.
+  - So one environment drives the whole world's water; it is not one per region.
+  - What changed:
+    - `_try_add_real_water` keeps each region's 36 block EnvironmentIDs as group metadata.
+    - `_water_env_tick` runs on the zone label's 10-tick throttle. It finds the block under the
+      camera and re-samples channel 14 into the shared material when the EnvironmentID changes.
+  - MEASURED in the lake run: from the "above" viewpoint the camera stood over an environment-5
+    block. The log read `water colour follows the camera's block, environment 5: (0.8928, 0.5766,
+    0.2321, 1)`. At the shallow viewpoint it read environment 1 again.
+- **The region flag at +0x2475 stays OPEN.**
+  - READ: `FUN_00a361b0` copies it from byte 0 of the region's entry in the world's runtime map at
+    world+0x7b64. Only `SWorld::vslot_046(1, regionId)` sets that byte. `SWorld::vslot_045` (a
+    named object added to a region at run time) creates the entry with the byte at 0.
+  - It is game state, not map data. No call to slot 46 was found through the world pointer.
+- **The reflection path is the Water Reflection option (READ); it is not implemented.**
+  - The chain:
+    - `CIFOption_Video::Create` labels video control 4 `UIIT_STT_WATER_REFLECTION`.
+    - `FUN_006f4210` stores control *i* at settings-record byte 4 + *i*, so byte 8.
+    - `CGame::FUN_00835000` passes byte 8 to `SWorld::vslot_043(6, v)`, whose case 6 creates the
+      reflection target (`FUN_009f2050(0x3c)` into +0x68df) and two 512x512 textures.
+    - `SWorld::vslot_037` passes `param_1[0xb9a]`, which is +0x2e68.
+    - `FUN_00a220b0`'s caller takes `FUN_00a2df70` when +0x2e68 and +0x68df are both set.
+  - Storage: `<client>\Setting\SROptionSet.dat` (`FUN_00502680`). It is a u32 13, then tagged
+    fields.
+    - Tag 9999 is one byte, the record selector.
+    - Tag 5 is two bytes: record 0's byte 8, then its byte 0x18. Tag 105 is the same for record
+      1.
+  - **The shipped file on the box** is identical in `/opt/sro-files/client/setting` and the
+    pserver client. It has selector 0 and tag 5 = `01 00`, so **reflection ON**. Record 1 has it
+    at 00.
+  - The client's default with no file is not found. `CGInterface::FUN_0077c190` does not
+    initialise the struct when the load fails. Whether the launcher writes the file is not
+    checked.
+
+**Tests:**
+- `mapm_water_test.gd`: 43 ok, ALL PASS. New checks cover truncation, the deep quad, the dungeon
+  guard and `environment_at`.
+- `remote_godot.sh check`: ALL LOAD.
+- `remote_godot.sh tests`: 144 suites, 0 failing.
+- `go test -count=1 -p 1 ./...`: green.
+
 ## Six-hundred-and-twenty-seventh round: water is seen from above, drawn where and how the game draws it
 
 **The report (v0.1.457).** "Water has mostly been working but you can't see it from above, only
@@ -7151,7 +7232,7 @@ user, and this round leaves movement alone.
   What that list is remains OPEN.
 - **The shoreline.** `Map::FUN_009fb280` handles PlaneType 0 only; it returns early for any other
   type. For each of the 17x17 vertices it computes
-  `nibble = clamp(ROUND((PlaneHeight - height) * 0.5), 0, 15)`, with `_DAT_00e1b7d0` = 0.5 and
+  `nibble = clamp(trunc((PlaneHeight - height) * 0.5), 0, 15)` (truncated: see the review follow-up), with `_DAT_00e1b7d0` = 0.5 and
   `_DAT_00d878a0` = 15.0. `FUN_009f6ef0` is only the plane height here, because all four corners
   are set to it. The nibble goes into a 17x17 texture: A8R8G8B8 `n << 28` when
   `DAT_0110f728 < 3`, otherwise A4R4G4B4 `n << 12`.
@@ -7202,7 +7283,8 @@ user, and this round leaves movement alone.
     other gives at most 240/255.
   - The mesh is wound so the front faces up, and the material draws both sides anyway, as retail
     does.
-  - `ROUND` is round-half-to-even. INFERRED: this is the x87 default.
+  - The conversion truncates (READ in the review follow-up: RC=11 at 0x9fb338; this entry first said
+    round-half-to-even, an INFERRED x87 default that the code overrides).
   - The per-vertex alpha stands in for the 17x17 texture (OURS). The two agree at every vertex.
 - **The materials** (`MapmWater.water_material` / `still_material`) are unshaded: stage 1 never
   reads the diffuse, so lighting cannot reach the water. They are alpha-blended with
