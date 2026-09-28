@@ -7094,6 +7094,560 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twenty-eighth round, review follow-up: the reflection is as bright as the game's, clips at the water, leaves out characters, and the sky is the game's cloud layer
+
+The review confirmed the mirror's geometry: its marker's reflection lands where predicted, within
+retail's own 14 px bias. It found six problems, and this follow-up fixes them. Labels are as in
+the round.
+
+### 1. The reflection was tone-mapped twice
+
+The target holds what the screen shows, already tone-mapped. The water pass sent it through the
+tone map again, so a reflecting lake came out about 1.27x too bright.
+
+**How the output is transformed (MEASURED).** A grey ramp written as an unshaded ALBEDO was read
+back from the screen.
+- This renderer shows `srgb(T(lin(a) * exposure))`, where T is Godot 4.2's filmic curve (A 0.88,
+  B 0.6, C 0.1, D 0.2, E 0.01, F 0.3). The fit is 1.7/255 rms over 19 steps.
+- The candidates without the sRGB legs fit at 7.5/255 or worse.
+
+**The fix.** The shader now samples the target raw and writes `srgb(T^-1(lin(s x WaterColor)) /
+exposure)`. The screen therefore shows s x WaterColor: retail's MODULATE of displayed values,
+with WaterColor as the gamma-space texture factor.
+
+**The deep-water pixel fit** (lake, from above, no fog, bump zeroed; screen against the target at
+retail's mapping):
+
+| Output | rms against s x WaterColor | Ratio of screen to s x WaterColor (R, G, B) |
+|---|---|---|
+| The displayed value written straight, the double tone map | 23.7/255 | 1.23, 1.28, 1.28 |
+| After the fix | **0.7/255** | 0.98, 1.00, 1.00 |
+
+Hooks: `SRREVAMP_QA_WATER_DUMP=<dir>:<frame>` saves the target and the screen, and
+`SRREVAMP_QA_WATER_NOBUMP=1` zeroes the bump. `SRREVAMP_QA_WATER_OUTMODE` = 1 writes the
+displayed value straight and 2 writes the ramp.
+
+### 2. The sky is the game's cloud layer
+
+The curved band was our CloudDome, a finite 3000-unit hemisphere over the player, showing its rim
+in the sky and in the water.
+
+**What retail draws (READ).**
+- **The sky step** (`FUN_00a26f60`) zeroes the camera's position, sets the far plane to
+  5,000,000, and turns Z and lighting off before drawing. The cloud layer is drawn by
+  `FUN_00a19330` -> `FUN_00a3f570`.
+- **The mesh:** the vertex buffer built in `FUN_00a3de90` is a flat 5x5-vertex grid at y = 20000.
+  x and z run from -4,000,000 to 4,000,000 in 2,000,000 steps, and u and v from -32 to 32 in steps
+  of 16. That is one `cloud1.ddj` repeat per 125,000 units.
+- **Scrolling:** u scrolls by `frac(GetTickCount() / 500000)` (texture matrix _31, TTFF COUNT2).
+- **Colour and alpha:** colour is MODULATE(texture, TFACTOR), whose RGB is environment channel 4
+  (`FUN_00a3eb40`'s sixth argument, world+0x685f from record+0x158). Alpha is MODULATE(texture,
+  TFACTOR alpha), where TFACTOR alpha is world+0x68c7 = (channel 12 + 1) / 2.
+- **Fog:** linear from 90,000 to 200,000.
+
+**What changed.**
+- `cloud_dome.gdshader` places the layer relative to the eye (view rotation only) and pins it to
+  the far plane with the depth test on.
+  - That draws it behind everything. OURS: a transparent material cannot be ordered before
+    Godot's opaque pass.
+  - It is drawn in both the main view and the mirror.
+- `World3D.cloud_layer_mesh` builds the grid.
+- The scroll is READ; the old 0.008 UV/s drift is gone.
+- The colour and alpha come from channels 4 and 12, sampled at the reference time. Jangan
+  measured colour (1.00, 1.00, 1.00) and alpha 0.755; environment 1 measured (0.91, 0.99, 0.99)
+  and alpha 0.743.
+- Pictures (`water_shots/r628rv_{before,after}_jangan_main.png`): the arc is gone, and clouds
+  cover the sky.
+- The sun glow billboard is still OURS.
+
+### 3. The clip plane
+
+`FUN_0045e0d0` builds a plane through three points, with the points' order swapped between the
+two cases: above water it keeps y >= h, underwater y <= h. The round's text is corrected.
+
+Godot 4.2 has no user clip planes, no custom projection, and no public way to get a
+StandardMaterial3D's generated shader (`get_shader_rid` is absent, MEASURED on the box). So:
+- **Terrain:** each region's terrain gets a mirror-only copy, `MirrorTerrain`. It is the same
+  mesh on layer 18, which the main camera now excludes.
+  - Its surfaces use `WaterReflection.clip_material`: a shader that reproduces what the terrain's
+    StandardMaterial3D uses (albedo texture, vertex colour, the MUL lightmap detail layer on UV2,
+    shaded or unshaded, blend, render priority).
+  - It discards fragments on the wrong side of `global uniform vec4 water_clip_plane`, which is
+    set each frame.
+  - The main view's terrain is untouched.
+- **Scenery objects** are drawn into the mirror unclipped (OPEN): their materials are
+  ObjectLoader's.
+- **Measured**, at the reviewer's view (lake, yaw 90, pitch -45, distance 300, no fog): non-sky
+  pixels in the top 85% of the target went from **2.01%** (the lake-bed strips and the player
+  under the water) to **0.31%**. What is left is the far bank's poplars, which stand above the
+  water.
+- **The WRAP strip.** With retail's squeezed mapping, `v = 0.48 + 0.8 y/z` stays inside
+  [0.018, 0.942] across the screen, so only the bump (at most +-0.057) can reach past an edge. That
+  wrap is retail's own (stage 1 is WRAP, READ).
+
+### 4. What the reflection draws, and when
+
+**READ.** While world+0x26c3 is set, the reflection render skips the game's draw callback
+`DAT_01101920`, which is `LAB_0084c700`. It is registered through `SWorld::vslot_040` (0x009f7040, which stores it) from the client's startup, `Client_LoadAllRefData` at 0x00844cd0.
+- Stage 1 of that callback calls vtable +0x28 of the object at `[0xeecea4]+0x120`.
+- Stage 2 calls the world's vtable +0x60 and +0x30 with 0xec24c0 and 0xec24e4.
+- Which objects these are is INFERRED: the characters and the effects. The landscape pass keeps
+  the sky, the terrain and the scenery.
+
+**What changed.**
+- The mirror's `cull_mask` is `MIRROR_TERRAIN_BIT | REFLECTED_BIT`.
+- The cloud layer and the scenery containers (`mark_reflected`) are on REFLECTED_BIT.
+- Characters, NPCs, monsters and effects stay on layer 1, which the mirror leaves out.
+- The plane is now chosen, and the target enabled, only among water blocks **in the camera's
+  frustum**: a bounding sphere per block, against `Camera3D.get_frustum()`. This matches retail's
+  view-tested list. With none in view, the target is `UPDATE_DISABLED`.
+- The block list is cached and rebuilt only when a region registers, leaves or moves; it was
+  rebuilt every frame.
+- The bump sampler CLAMPs, as retail's stage 0 does (sampler state (0, 1/2, 3), READ).
+
+**Frame times.** Averages of 15 ten-frame windows (frames 59-199), main + target in ms per frame,
+reflection on in both. Before is 1b2d317.
+
+| Spot | Before | After |
+|---|---|---|
+| Lake, shallow | 2.80 + 2.52 = 5.31 | 3.35 + 1.73 = **5.09** |
+| Moat, along it | 4.56 + 5.36 = 9.93 | 6.04 + 3.52 = **9.56** |
+| Jangan square | 5.88 + 7.67 = 13.55 | 7.30 + 5.64 = **12.94** |
+
+The target's share falls by about 30% without the characters and effects. Jangan's square keeps
+the reflection on because the plaza pool (plane -33, under the paving) and the moat are in the
+frustum. Retail's list is view-tested, not occlusion-tested, so it would keep it on too.
+
+### 5. Doc fixes
+
+The mirror fields are the orbit camera's look-at y (0x221a) and orbit angle (0x223a), and the
+v mapping is squeezed (0.8 against 0.866). The round's text is corrected in place.
+
+**Tests:**
+- `water_reflection_test.gd`: 30 ok, ALL PASS. New checks cover the clip plane both ways, the
+  clip shader's code, the mirror's layers, and the cloud mesh.
+- `remote_godot.sh check`: ALL LOAD.
+- `remote_godot.sh tests`: 145 suites, 0 failing. Go tests: green.
+
+**Still OPEN:**
+- Clipping the scenery objects in the mirror.
+- The identity of the two skipped callbacks' objects.
+- The cloud layer's draw order against Godot's opaque pass.
+
+## Six-hundred-and-twenty-eighth round: water reflects the sky, the banks and the trees, as the game's own Water Reflection option draws it
+
+The shipped `Setting\SROptionSet.dat` has Water Reflection ON (round 627's follow-up), and the user
+wants the authentic look. This round implements retail's reflection pass, `Map::FUN_00a2df70`, and
+makes it the default. The plain animated water of round 627 stays behind the same option.
+
+**Labels.** READ means recovered from `sro_client.exe` (decompile, asm, constants read out of the
+exe). MEASURED means counted on the box. INFERRED follows from what was read but was not itself
+read. OURS is this project's choice.
+
+### What FUN_00a2df70 does (READ)
+
+- **When it runs.** `FUN_00a2b370` sets the reflection plane (world+0x26c4) to the PlaneHeight of
+  the first drawn-list block that has water: PlaneType != -1 and state != 0. The list is ordered
+  by block distance from the camera's block.
+  - world+0x26bf ("reflect this frame") is set when option 6 (world+0x2e68) is on and such a plane
+    exists.
+  - world+0x26bb ("underwater") is set when also `eye.y - 0.5 < plane` and the camera's own block
+    has water. 0.5 is `_DAT_00e1b7d0`.
+  - With 0x26bf clear, the function draws nothing.
+- **The reflection render, `FUN_00a2dc20`.**
+  - Target and depth: the 512x512 target world+0x27bb, with its own 512x512 D16 depth buffer
+    +0x27bf. Both are created by option case 6. Only depth is cleared (Clear flags 2).
+  - The camera: above water, the orbit camera's look-at y (world+0x221a) becomes `2h - y` and its
+    orbit angle (world+0x223a) is negated, which mirrors the camera in the plane (corrected in the
+    review follow-up; this first said "eye y" and "look vector"). Underwater, the camera is left as
+    it is.
+  - Clipping: a user clip plane is enabled (SetClipPlane, D3DRS_CLIPPLANEENABLE 0x98). It is built
+    by `FUN_0045e0d0`, a plane through three points, with the points' order swapped between the two
+    cases: above water it keeps y >= h, underwater y <= h. (Corrected in the review follow-up: this
+    first read `_DAT_00e1b878` = -1 as the normal's y.)
+  - What is drawn: the landscape pass `FUN_00a26f60`, the same routine as the main view (sky,
+    terrain, objects), over the block list the mirrored camera sees (world+0x2793). World+0x26c3
+    is set during the render; the water pass's caller skips water when it is set.
+- **The bump map** (world+0x68df, `FUN_009f2050(0x3c)`): `skybox\waterbump3.ddj` converted to
+  D3DFMT_V8U8. du = (left - right) / 2 and dv = (row above - row below) / 2 on byte 0 (blue),
+  wrapping at the edges, C division.
+- **Stage setup, above water, PlaneType 0 (pass A).**
+  - Stage 0: COLOROP BUMPENVMAPLUMINANCE, ARG1 TEXTURE (the bump). BUMPENVMAT00/01/10/11 are
+    world+0x2c10/0x2c14/0x2c20/0x2c24, LSCALE 1, LOFFSET 0.
+  - The bump matrix is `[[0.04 cos, -0.04 sin], [0.04 sin, 0.04 cos]]` of `t * 0.5 * 9`. 0.04 is
+    `_DAT_00de4f70` as a double, and t is `*(float*)(DAT_0110f7d0 + 0xa0)` (`SWorld::vslot_004`, 0x00a2cf60).
+  - Stage 1: MODULATE(TEXTURE = the reflection target, TFACTOR). Its texture coordinates are
+    TCI_CAMERASPACEPOSITION with TTFF COUNT3 | PROJECTED, through the texture matrix
+    `u = 0.65 x/z + 0.5`, `v = 0.8 y/z - 0.52`, sampled WRAP. So v is 0.48 + 0.8 y/z: the screen
+    position, flipped, 0.02 off.
+  - The texture factor is `0x8C | WaterColor x 255`. Its alpha 0x8C is read by no stage.
+  - Stage 2: colour SELECTARG1 CURRENT, alpha SELECTARG1 TEXTURE (the block's 17x17 shoreline
+    alpha, texcoord set 1).
+  - Result: colour = reflection x WaterColor, alpha = shoreline. **The water1NN frames are not
+    used** in this path.
+- **PlaneType 1 above water (pass B).**
+  - The texture factor is `0xC8000000`. Stage 0 is SELECTARG1 TEXTURE (water201), with alpha
+    SELECTARG1 TFACTOR.
+  - Stage 1 is BLENDCURRENTALPHA(CURRENT, reflection). Stage 2 was disabled after pass A.
+  - Result: colour = 0.784 water201 + 0.216 reflection, alpha 0.784, no bump.
+- **Underwater (world+0x26bb).**
+  - Texture matrix `u = 0.65 x/z + 0.5`, `v = -0.8 y/z + 0.52`, which is not flipped.
+  - Texture factor `0xC8 | WaterColor x 128` (`_DAT_00d8e480` = 128.0). Alpha is SELECTARG1
+    TFACTOR = 200/255.
+  - Drawn over every block with PlaneType != -1 and state != 0.
+- **Render state:** cull NONE, SRCALPHA/INVSRCALPHA, ZWRITE 0 during the pass (set back to 1
+  after it). The stage-0 to stage-2 samplers are LINEAR.
+- **Water Reflection is option 6.** Video control 4, `UIIT_STT_WATER_REFLECTION`, stored as
+  SROptionSet.dat tag 5. The shipped file has it at 1 (the round 627 follow-up).
+- **`wave1..3.ddj`** are not used by either water pass. They are loaded to world+0x295b and handed
+  out only through `SWorld::vslot_027`, whose callers were not traced.
+
+### What changed
+
+- **`client/scripts/mapm/water_reflection.gd` (new, class `WaterReflection`).** It holds the rules
+  above.
+  - A SubViewport and a Camera3D render the mirrored view; the camera is `mirror_transform`, with
+    the up axis negated so the camera stays a rotation.
+  - `pick_plane` chooses the nearest water block's plane; `is_underwater` is world+0x26bb.
+  - `bump_image` and `bump_matrix` build the bump.
+  - The target updates only while a plane exists; with no water loaded it is `UPDATE_DISABLED`.
+- **`water_reflection.gdshader` (new).** It samples the target at the flipped screen position
+  (plain underwater) plus the bump offset, with the v bias of 0.02. It draws the three cases above.
+- **`World3D`.** It reads the option once per world scene:
+  - `ClientSettings` `[world] water_reflection`, default **true**;
+  - `SRREVAMP_WATER_REFLECTION=0/1` overrides it for a run.
+  - With the option on, each region's water gets the reflection materials and registers its drawn
+    blocks for the plane choice.
+  - Water meshes sit on visual layer 20, which the mirror camera leaves out. Off draws round 627's
+    animated water, unchanged.
+- **`MapmWater.Built.drawn`** lists each drawn block's (x0, z0, plane).
+- **`SRREVAMP_QA_WATER_TIMING`** prints the main viewport's and the target's measured render time
+  (CPU + GPU) every 10 frames.
+
+### What is OURS or INFERRED
+
+- **No user clip plane (OURS).** Godot 4.2 has none. Geometry under the plane stays out of the
+  mirror only when it is back-face culled; the terrain is, a two-sided prop is not.
+- **The target's width (OURS).** It is 512 rows by `512 x aspect` (910 at 16:9), not a stretched
+  512x512. A Godot camera cannot stretch its frustum into a square target, so the same projection
+  needs the screen's aspect.
+- **Sampling (corrected in the review follow-up).** Retail's fovy is 60 degrees, so its
+  projection's P22 / 2 is 0.866, not 0.8. The texture matrix's 0.65 is exact for u at 4:3, but its
+  0.8 squeezes the reflection vertically to 0.924 and shifts it 0.02. That misregistration is now
+  reproduced. This first sampled the exact flipped screen position.
+- **The bump (OURS / INFERRED).** V8U8 is read as `s / 128`. The bump time is Godot's seconds, and
+  that retail's t is seconds is INFERRED.
+- **BUMPENVMAPLUMINANCE (INFERRED).** Its luminance term is left out, because V8U8 has no L
+  channel and stage 1 never reads stage 0's colour.
+- **The plane choice (OURS).** It ignores retail's view test and picks among the loaded water
+  blocks.
+
+### Measured
+
+- **Tests:**
+  - `water_reflection_test.gd`: 22 ok, ALL PASS. It covers the option, bump derivation and
+    wrapping, C division, the bump matrix at 0 and a quarter turn, the mirrored camera (eye,
+    determinant, look direction, straight down), the plane choice, underwater, and the shader and
+    material.
+  - `remote_godot.sh check`: ALL LOAD.
+  - `remote_godot.sh tests`: 145 suites, 0 failing.
+  - Go tests: green.
+- **Negative:** the same test file on a68a03a:
+
+```
+note: res://scripts/mapm/water_reflection.gd is missing -- checking what the tree draws instead
+FAIL a Water Reflection option exists and is ON by default, as the shipped SROptionSet.dat has it
+FAIL the default water surface samples a reflection (got StandardMaterial3D)
+2 FAILURES
+```
+
+- **Pictures** (`water_shots/r628_{before,after}_{lake,moat}_{above,shallow}.png`; before is the
+  option off, which is round 627's water). Numbers are the mean colour of the band under the HUD
+  (800x250 at 420,320).
+  - **Lake 98/159, from above:** before (0.30, 0.38, 0.25), after (0.43, 0.58, 0.44). That is the
+    sky mirrored and tinted by environment 1's tan WaterColor.
+  - **Lake, shallow angle:** before (0.41, 0.38, 0.15), after (0.67, 0.60, 0.25). The far bank's
+    poplars now stand upside down in the water. The strip under the bank has a standard deviation
+    of 0.093, against 0.041 without the reflection.
+  - **Moat 96/168, looking along it:** the water strip goes from (0.23, 0.37, 0.33) to (0.24, 0.45,
+    0.45), the sky reflected in Jangan's teal.
+- **Cost:** the average of 15 ten-frame windows at the held viewpoint, frames 59-199, in the
+  box's GL Compatibility on its RX 5700 XT. Numbers are main + target, in ms per frame.
+
+| Spot | Option off | Option on |
+|---|---|---|
+| lake, shallow | 3.33 | 2.67 + 2.64 = **5.31** (+2.0) |
+| moat, along the moat | 6.49 | 4.91 + 6.05 = **10.96** (+4.5) |
+| moat, first viewpoint (wall and field) | 4.15 | 3.43 + 3.35 = **6.78** (+2.6) |
+
+  The reflection roughly doubles the scene's render cost, as retail's does, because it draws the
+  landscape twice. One moat run beside the wall measured 12.7 off against 25.7 on.
+
+### Still OPEN
+
+- The clip plane: an oblique projection would need Godot 4.3's `Camera3D` projection override, or
+  a shader discard.
+- Whether `FUN_00a26f60` in the reflection render draws characters. `CIFCharacterWnd::FUN_0080beb0`
+  runs after it, which was not traced.
+- The option's default when SROptionSet.dat is absent.
+- Retail's time base t.
+- The `wave1..3.ddj` callers.
+
+## Six-hundred-and-twenty-seventh round, review follow-up: the shoreline truncates, a deep block is one quad, and the water's colour follows the camera's block
+
+The review confirmed that the olive lake is authentic for the path without reflection. 98/159 is
+environment 1, whose WaterColor is tan all day, and stage 1 is a plain MODULATE with the texture
+factor. The review also found the items below. Labels are as in the round.
+
+- **The shoreline nibble truncates (READ).** At 0x9fb338-0x9fb34e, `fnstcw` / `or eax,0xc00` /
+  `fldcw` / `fistp` sets RC=11 (chop) for the conversion. The nibble is therefore
+  `clamp(trunc((PlaneHeight - h) * 0.5), 0, 15)`, not round-half-to-even as the round inferred.
+  - Fixed in `MapmWater.shoreline_nibble`, `waterat`'s `nibble()`, MAPM_FORMAT.md and the round's
+    text.
+  - The test now expects 3 deep → 1, 7 deep → 3 and 29.9 deep → 14.
+  - The block states do not depend on the conversion, so the census's 39,486-of-39,510 match
+    stands.
+- **Dead code:** `World3D._load_region_navmesh` is deleted. Its only caller was the old water.
+  The orphaned navmesh-walls doc comment above it moved to `_add_navmesh_walls`, where it
+  belongs.
+- **A block deep at every vertex is one quad (OURS, a mesh economy).** Its alpha is 1 everywhere,
+  so 2 triangles draw what 512 did.
+  - MEASURED, `waterat -census`: 22,284 of the 33,056 drawn type-0 blocks are deep at every vertex
+    (67.4%).
+  - A fully flooded, fully deep 5x5 window of loaded regions goes from 25 x 36 x 512 = **460,800**
+    triangles to 25 x 36 x 2 = **1,800**.
+  - The real map's worst 5x5 window was 460,800 triangles, centred 111/230. Its worst is now
+    **243,292**, centred 89/140, where most water is shore.
+  - The reported lake's 3x3 load went from 119,296 triangles to **47,386**. 98/159 alone went from
+    18,432 to 2,622.
+- **Dungeon worlds draw no block water (READ).** In `FUN_00a220b0`, `world+0x237e & 0x8000`
+  selects the object-water branch, which jumps past both block loops.
+  - world+0x237e is the current region id: `SWorld::vslot_001` sets it and hands bit-15 ids to the
+    dungeon manager.
+  - `MapmWater.draws_block_water(region_id)` mirrors this, and `_try_add_real_water` skips such a
+    region.
+  - MEASURED: Map.pk2's 4,721 `.m` files top out at x = 127. So no field region has the bit;
+    dungeons are `.dof`.
+- **WaterColor follows the camera's block.**
+  - READ: `Map::FUN_00a1baf0` takes the environment from `**(world+0x2783) + 4`, the EnvironmentID
+    of the first block in the drawn-block list. `Map::FUN_00a2b030` copies that list in order from
+    an ordered map. `Map::FUN_00a2b370` fills that map with every block that passes the view test,
+    keyed by `dx^2 + dz^2` from the camera's block (world+0x6914/0x6910).
+  - INFERRED: that block comes from the frustum's apex, the camera eye at world+0x220a/0x2212.
+  - So one environment drives the whole world's water; it is not one per region.
+  - What changed:
+    - `_try_add_real_water` keeps each region's 36 block EnvironmentIDs as group metadata.
+    - `_water_env_tick` runs on the zone label's 10-tick throttle. It finds the block under the
+      camera and re-samples channel 14 into the shared material when the EnvironmentID changes.
+  - MEASURED in the lake run: from the "above" viewpoint the camera stood over an environment-5
+    block. The log read `water colour follows the camera's block, environment 5: (0.8928, 0.5766,
+    0.2321, 1)`. At the shallow viewpoint it read environment 1 again.
+- **The region flag at +0x2475 stays OPEN.**
+  - READ: `FUN_00a361b0` copies it from byte 0 of the region's entry in the world's runtime map at
+    world+0x7b64. Only `SWorld::vslot_046(1, regionId)` sets that byte. `SWorld::vslot_045` (a
+    named object added to a region at run time) creates the entry with the byte at 0.
+  - It is game state, not map data. No call to slot 46 was found through the world pointer.
+- **The reflection path is the Water Reflection option (READ); it is not implemented.**
+  - The chain:
+    - `CIFOption_Video::Create` labels video control 4 `UIIT_STT_WATER_REFLECTION`.
+    - `FUN_006f4210` stores control *i* at settings-record byte 4 + *i*, so byte 8.
+    - `CGame::FUN_00835000` passes byte 8 to `SWorld::vslot_043(6, v)`, whose case 6 creates the
+      reflection target (`FUN_009f2050(0x3c)` into +0x68df) and two 512x512 textures.
+    - `SWorld::vslot_037` passes `param_1[0xb9a]`, which is +0x2e68.
+    - `FUN_00a220b0`'s caller takes `FUN_00a2df70` when +0x2e68 and +0x68df are both set.
+  - Storage: `<client>\Setting\SROptionSet.dat` (`FUN_00502680`). It is a u32 13, then tagged
+    fields.
+    - Tag 9999 is one byte, the record selector.
+    - Tag 5 is two bytes: record 0's byte 8, then its byte 0x18. Tag 105 is the same for record
+      1.
+  - **The shipped file on the box** is identical in `/opt/sro-files/client/setting` and the
+    pserver client. It has selector 0 and tag 5 = `01 00`, so **reflection ON**. Record 1 has it
+    at 00.
+  - The client's default with no file is not found. `CGInterface::FUN_0077c190` does not
+    initialise the struct when the load fails. Whether the launcher writes the file is not
+    checked.
+
+**Tests:**
+- `mapm_water_test.gd`: 43 ok, ALL PASS. New checks cover truncation, the deep quad, the dungeon
+  guard and `environment_at`.
+- `remote_godot.sh check`: ALL LOAD.
+- `remote_godot.sh tests`: 144 suites, 0 failing.
+- `go test -count=1 -p 1 ./...`: green.
+
+## Six-hundred-and-twenty-seventh round: water is seen from above, drawn where and how the game draws it
+
+**The report (v0.1.457).** "Water has mostly been working but you can't see it from above, only
+from underneath." The tester's screenshot reads X 4680, which is region y 159, local x 720. From
+the lake bed, a teal sheet hangs overhead and the banks sit below it. From above, there is no
+water.
+
+**Labels.** READ means recovered from `sro_client.exe` (decompile at `/var/tmp/decomp_client`,
+constants read out of the exe). MEASURED means counted on the box's real archives or a real run.
+INFERRED follows from what was read but was not itself read. OURS is this project's choice.
+
+### Why it was invisible from above (MEASURED)
+
+`NvmWater.build_water_mesh` wound every quad `base, base+2, base+1`. By Godot's own front-face rule,
+`Plane(a, b, c)`, all 512 triangles of a flooded block face **down**. The terrain is wound
+`i00, i10, i11`, and its triangles face up. The material culled back faces, which is the default.
+
+The world group's `scale.z = -1` mirror does not change which side is the front. Godot flips its
+cull test for a negative-determinant transform, and the terrain proves it: the terrain has the
+opposite winding to the water and renders from above. So a player saw the water only from below.
+This is the negative:
+
+```
+FAIL every drawn water triangle faces up, the side a player above sees (got 0 up, 512 down)
+FAIL every vertex carries the shoreline alpha
+FAIL the frame repeats 4 times across a block, 0..4 (READ _DAT_00e1b860; got max (1, 1))
+FAIL MapmWater exists (the rest of this suite needs it)
+4 FAILURES
+```
+
+This is `mapm_water_test.gd` run on dev b22edf5, with only the test file copied in. There, the
+"drawn water" checks fall back to NvmWater, the builder World3D drew with. The same file passes
+all 34 checks on this branch.
+
+### The height was right (MEASURED)
+
+`waterat -region 98/159` gives the height for all 36 blocks of the reported region: PlaneType 0,
+PlaneHeight **50**. The `.nvm` plane map carries the same 50. At local (720, 500) the ground is
+-22.80, so the water there is 72.8 deep. At (720, 640) it is 53.5 deep.
+
+The tester was standing on a lake bed about 70 units down, under a correctly placed surface. The
+banks sit below the plane only as seen from under it. Walking on the bed is authentic, per the
+user, and this round leaves movement alone.
+
+### How retail draws water (READ)
+
+- **Where the fields live.** `FUN_00a35c50`, the block loader, seeks to `index * 0xa0f + 0xc` and
+  reads the block's 0xa0f bytes straight into its record. So PlaneType is at block+0x7ed, WaveID at
+  +0x7ee and PlaneHeight at +0x7ef. That is +6 for Flag and EnvironmentID, then 289 7-byte
+  vertices.
+- **The block's layout.** Block index = col + row*6. The block's origin is (col*320, row*320), with
+  `_DAT_00e1b908` = 320.0.
+- **A region flag.** The same loader forces PlaneType to -1 on every block when a region flag at
+  +0x2475 is set. `FUN_00a361b0` sets that flag from the first byte of a per-region object list.
+  What that list is remains OPEN.
+- **The shoreline.** `Map::FUN_009fb280` handles PlaneType 0 only; it returns early for any other
+  type. For each of the 17x17 vertices it computes
+  `nibble = clamp(trunc((PlaneHeight - height) * 0.5), 0, 15)` (truncated: see the review follow-up), with `_DAT_00e1b7d0` = 0.5 and
+  `_DAT_00d878a0` = 15.0. `FUN_009f6ef0` is only the plane height here, because all four corners
+  are set to it. The nibble goes into a 17x17 texture: A8R8G8B8 `n << 28` when
+  `DAT_0110f728 < 3`, otherwise A4R4G4B4 `n << 12`.
+- **The block state.** The same function overwrites +0x7ee with the block's state:
+  - 0: every vertex is dry; the block is not drawn.
+  - 1: no vertex is dry.
+  - 2: some vertices are dry and some partial.
+  - 3: some vertices are dry and some fully deep.
+- **The draw** (`Map::FUN_00a220b0`, the path without reflection; `FUN_00a2df70` is the other path):
+  - Geometry: ONE flat quad over the whole block, drawn as a triangle fan at PlaneHeight.
+  - Stage 0 is the alpha texture: colour SELECTARG1 CURRENT, alpha SELECTARG1 TEXTURE.
+  - Stage 1 is the frame `water\water1NN.ddj`, index `(GetTickCount() / 100) % 30`, so **10 fps**.
+    Colour is MODULATE(TEXTURE, TFACTOR) and the alpha op is disabled.
+  - The texture factor is `0xB4RRGGBB`. Its RGB is world+0x688f/93/97 x 255.
+  - Stage-1 UV runs 0..4 across the block (`_DAT_00e1b860` = 4.0), so one frame repeats every 80
+    units. Stage-0 UV runs 1/32..31/32.
+  - Render states: ALPHABLENDENABLE 1, SRCBLEND SRCALPHA, DESTBLEND INVSRCALPHA, **CULLMODE 1
+    (NONE)**. CULLMODE goes back to 3 and ZWRITE back to 1 after the pass.
+- **PlaneType 1 blocks** are drawn only when their own WaveID byte is non-zero. They use
+  `water\water201.ddj` for colour, SELECTARG1 TFACTOR for alpha (0xB4), the same UVs, and no
+  culling.
+- **The water colour.** world+0x688f is environment channel **14** (WaterColor).
+  - The record reader `FUN_00a1b650` reads channels 0-6, 7, 8, 9, 10, 11, 12 and then, for version
+    >= 1002, the ColorGraphs at record+0x1f4 and +0x228 and the FloatGraph at +0x36c. So +0x228 is
+    channel 14.
+  - `Map::FUN_00a1baf0` evaluates +0x228 into world+0x688f..0x6897 and clamps it to [0, 1].
+
+### How often each case occurs (MEASURED; `waterat -census`, 4,704 regions, 169,344 blocks)
+
+- **PlaneType:** -1 on 128,879 blocks, 0 on 39,510, 1 on 955. The type-1 blocks sit at plane 800,
+  filling whole regions around 88-92/124-129.
+- **Shoreline state:** the state recomputed from the heights matches the file's own WaveID on
+  39,486 of the 39,510 type-0 blocks. The tool that authored the maps ran the same rule, which
+  checks the reading of FUN_009fb280.
+- **The navmesh plane map disagrees with the `.m`:**
+  - It marks 3,846 blocks as water where the `.m` has -1.
+  - It marks 6,259 drawn type-0 blocks as not water.
+  - The two sources disagree on plane height 217 times.
+- **Frame alpha:** `water101.ddj` and `water115.ddj` are 64x64 A8R8G8B8 with every alpha 255.
+  `water201.ddj` is 512x512 DXT1.
+
+### What changed
+
+- **`client/scripts/mapm/mapm_water.gd` (new):** builds water from the `.m` blocks by the rules
+  above.
+  - Each drawn type-0 block is its 17x17 vertices at PlaneHeight. Each vertex's alpha is its
+    nibble / 15. OURS: this is the A4R4G4B4 branch; which branch a machine takes is OPEN, and the
+    other gives at most 240/255.
+  - The mesh is wound so the front faces up, and the material draws both sides anyway, as retail
+    does.
+  - The conversion truncates (READ in the review follow-up: RC=11 at 0x9fb338; this entry first said
+    round-half-to-even, an INFERRED x87 default that the code overrides).
+  - The per-vertex alpha stands in for the 17x17 texture (OURS). The two agree at every vertex.
+- **The materials** (`MapmWater.water_material` / `still_material`) are unshaded: stage 1 never
+  reads the diffuse, so lighting cannot reach the water. They are alpha-blended with
+  `CULL_DISABLED`.
+  - The animated material's albedo is WaterColor, sampled at `ENVIRONMENT_REFERENCE_TIME`. Its
+    alpha comes from the vertex colour.
+  - The still material is water201 at alpha 0xB4.
+  - World3D keeps one of each per world. The player's environment writes WaterColor into the shared
+    material, as retail writes one texture factor.
+- **The frame rate** is 10 fps (READ), replacing the 8 fps guess. The frame repeats 4 times a block
+  (READ), replacing a repeat every 5 units.
+- **Logging:** World3D logs, per region, the drawn and skipped blocks, the plane heights, and the
+  triangles facing up and down. It also logs the environment's water colour.
+- **`server/cmd/waterat` (new):** per-block fields and shoreline state, the `.nvm` comparison,
+  `-census`, `-column`, and a `-dump` of one Map.pk2 file.
+
+### Verified
+
+- **Tests:**
+  - `mapm_water_test.gd`: 34 ok, ALL PASS.
+  - `remote_godot.sh check`: 365 scripts, ALL LOAD.
+  - `remote_godot.sh tests`: 144 suites, 0 failing.
+  - `go build ./... && go test -count=1 -p 1 ./...`: green, after adding `waterat` to
+    server/README.md's tools table (the README probe caught it).
+- **Runs** (lane box copies, `--shots`, radius 1; the frames are in the session's
+  `water_shots/`):
+  - **98/159 at the reported spot (720, 500), X 4680 in the HUD:**
+    - The log reads `98\159.m -- water: 36 animated block(s), 0 still, 0 dry skipped, plane
+      height(s) [50], triangles 18432 up / 0 down`. Environment 1's water colour is (0.64, 0.56,
+      0.38).
+    - From above, frame 41, the band under the HUD averages (0.26, 0.28, 0.13), which is the lake
+      bed, before the fix. After the fix it averages (0.30, 0.37, 0.24), which is the water.
+    - The shallow-angle shots show a lake surface to the far bank.
+    - From under the water, the view is unchanged, as the report described.
+  - **97/168 with the farmland moat in 96/168 (640, -380 from 97/168):**
+    - Before the fix, `96\168.m -- no real water surface built (30 real water plane cell(s))`: the
+      navmesh tiles carry no water texture, so the moat was dry.
+    - After the fix, `96\168.m -- water: 6 animated block(s) ... [-20], triangles 3072 up / 0
+      down`. The moat's pixels go from (0.32, 0.29, 0.26), which is stone, to (0.22, 0.39, 0.35),
+      which is teal water. Jangan's environment 15 water colour is (0.36, 0.69, 0.62).
+  - **The Jangan square:** the pool quad at -33 lies under the plaza. The fountain's own water is
+    the fountain model's, and the frame is identical before and after.
+- **The parked "Moat water" item is resolved by the `.m` (MEASURED).** In 96/168, only block row
+  4, which is the moat band, is PlaneType 0 at -20.
+  - Rows 0-3 are the farmland at -43 to -80 that the plane level would have flooded. The `.m` marks
+    them -1, although the `.nvm` marks them type 1.
+  - Row 4's blocks are state 2: dry and partial.
+
+### Still OPEN
+
+- **The region flag at +0x2475**, which hides every block's water. Its source list is not
+  identified.
+- **Which alpha-texture format a machine gets:** `DAT_0110f728`.
+- **The reflection path:** `FUN_00a2df70`, taken when option +0x2e68 and +0x68df are set.
+- **The per-object water branch:** when `+0x237e & 0x8000`, lists of water quads come per object,
+  with their own fog.
+- **The `wave1..3.ddj` textures** are loaded to world+0x295b, but their draw was not traced.
+- **The two environment special modes** (+0x2eb4 == 1, +0x2e5c == 2/3) that replace or damp the
+  colours.
+- **Time of day:** WaterColor is sampled at the fixed reference time, like the sky.
+- **Depth writes:** whether retail writes depth during the water pass is INFERRED. ZWRITE is set
+  back to 1 after the pass, so it was presumably off. Godot's alpha pass does not write depth
+  either.
+
 ## Six-hundred-and-twenty-fifth and -sixth rounds, material review follow-up: blended canopies keep their leaves at distance, and the MTRL shader draws what the mod says
 
 The combined review of c1bc28a confirmed every READ claim. Performance was flat: 864 materials,

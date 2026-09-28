@@ -42,6 +42,11 @@ const SECTION_WORLD := "world"
 ## setting's default, and the next set_value rewrites the file from only
 ## the keys above the bad line plus its own, losing that line and the rest.
 const KEY_SEASONAL := "seasonal"
+## The Water Reflection video option (round 628; WaterReflection): true, the
+## default, draws retail's reflection pass, as the game's shipped
+## Setting\SROptionSet.dat has it (tag 5 = 1); false draws the plain animated
+## water. Read once per world scene.
+const KEY_WATER_REFLECTION := "water_reflection"
 
 static func get_value(section: String, key: String, default_val: Variant) -> Variant:
 	var file := ConfigFile.new()

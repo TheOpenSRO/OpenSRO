@@ -1140,16 +1140,44 @@ Still open, by the files each would add:
 
 ## Parked, with the state written down
 
-### Moat water
-The moat is real, located exactly (96/168 local 1490, 1470 — the ninety-seventh round), and the
-terrain carries its trench: **-40.00** in a narrow band against **+0.65** either side, with the
-plane cell over it at level **-20**, which would fill the trench and nothing else.
+### Moat water — **resolved by the `.m` (round 627)**
+Retail draws water from each `.m` block's PlaneType/PlaneHeight, not from the `.nvm` plane map. In
+96/168, only block row 4, the moat band, is PlaneType 0 at -20. Rows 0-3, the farmland at -43 to
+-80, are -1, so they stay dry, although the `.nvm` marks them water. The moat draws since round
+627.
 
-**Why it is parked**: the same region sits at about **-45 across its southern third**, which that
-same level would flood, and the art there is farmland. Neither the plane map (30 of 36 cells are
-type 1) nor the tile map (no water tiles anywhere in the region) can separate the two.
-**Cheapest next step**: a reference screenshot standing in that southern area — if it is dry in
-the real game, the plane level alone cannot be the rule, and that halves the search.
+### Water — what round 627 left (WORLD_ISSUES.md's six-hundred-and-twenty-seventh round)
+- **The region flag at region+0x2475.** `FUN_00a35c50` forces PlaneType -1 on a whole region when
+  it is set.
+  - READ in the review follow-up: `FUN_00a361b0` copies it from byte 0 of the region's entry in
+    the world's runtime map at world+0x7b64. Only `SWorld::vslot_046(1, regionId)` sets that
+    byte; `SWorld::vslot_045` (a named object added to a region at run time) creates the entry
+    with it at 0.
+  - It is game state set at run time, not map data. Nothing that calls slot 46 was found through
+    the world pointer's vtable, so which regions it hides, and when, is OPEN.
+- **The shoreline alpha format.** `DAT_0110f728 < 3` picks A8R8G8B8, where deep water's alpha is at
+  most 240/255; the other branch is A4R4G4B4, where it is 1.0. This build uses the second. What
+  sets the value is not found.
+- **The Water Reflection option (world option 6) is drawn since round 628** (`WaterReflection`,
+  default ON as the shipped SROptionSet.dat has it). What is left of it:
+  - **The scenery objects in the mirror are unclipped.** The terrain clips (a mirror-only
+    `MirrorTerrain` copy with `WaterReflection.clip_material`, round 628 review). The objects'
+    materials are ObjectLoader's.
+  - **The target is screen-aspect**, not retail's stretched 512x512.
+  - **The callbacks the reflection skips** (`LAB_0084c700` stages 1 and 2) are INFERRED to be
+    the characters and the effects. The mirror leaves them out.
+  - **Retail's bump time base** `*(float*)(DAT_0110f7d0 + 0xa0)` is assumed to be seconds.
+  - **The option's default with no file** is still not found.
+  - **The saved file:** the option is SROptionSet.dat tag 5 in retail, and a player sets it here in
+    `user://settings.cfg` `[world] water_reflection`.
+- **`wave1..3.ddj`** are used by neither water pass; only `SWorld::vslot_027` hands them out.
+- **The per-object water branch** (`+0x237e & 0x8000`, dungeon region ids) is mirrored by skipping
+  block water there. No `.m` region has that bit, since x tops out at 127. The dungeon object water
+  itself (a `.dof` world) and the `wave1..3.ddj` textures are not traced.
+- **WaterColor's timing.** It is sampled at the fixed environment reference time, and the special
+  modes (+0x2eb4, +0x2e5c) are not applied.
+- **Walking under water is authentic** (the user, 2026-09-28): it happens in the original game too.
+  Leave movement alone.
 
 ### Scenery still off the ground
 83 objects fell to 60 once each `.o2` entry was assigned to the region whose heightmap explains
@@ -1215,4 +1243,5 @@ before contradicting one.
 - `.bmt` layer flag **bit 0** marks an alpha layer.
 - A `.ban` keyframe **replaces** a bone's local transform; it is not a delta.
 - Navmesh plane **type 1 is not water** — it covers a quarter to all of every region.
+- Water is the `.m` block's **PlaneType 0** at its PlaneHeight, shoreline alpha `clamp(trunc((plane - h) * 0.5), 0, 15) / 15`, drawn two-sided at 10 fps (round 627).
 - A bind pose is a poor test of a rig: both character bugs this project had were invisible at rest.

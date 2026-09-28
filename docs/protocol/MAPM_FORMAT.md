@@ -88,6 +88,56 @@ the field name `EnvironmentID` itself is publicly documented, in `.m`'s own spec
 structure was reverse-engineered from scratch and is now fully solved (byte-exact, zero leftover
 across all 74 real records) — see `ENVIRONMENT_FORMAT.md`.
 
+## Water: PlaneType, WaveID, PlaneHeight (read 2026-09-28, round 627)
+
+The client draws water from these three block fields. It does not use the `.nvm` plane map for
+this. The evidence and addresses are in WORLD_ISSUES.md's six-hundred-and-twenty-seventh round, and
+`client/scripts/mapm/mapm_water.gd` implements the rules.
+
+| Field | Offset in the block record | Meaning |
+|---|---|---|
+| PlaneType (int8) | +0x7ed | -1 no water; **0 animated water**; 1 a still surface (`water\water201.ddj`) |
+| WaveID (uint8) | +0x7ee | for type 0, the client overwrites it with the shoreline state below; for type 1 it is kept, and 0 means not drawn |
+| PlaneHeight (float32) | +0x7ef | the flat surface level of the block's whole 320x320 quad |
+
+These offsets are READ: `FUN_00a35c50` reads each block's 0xa0f file bytes straight into its
+record, so the record keeps the file's own offsets. The block's origin is (col*320, row*320), and
+its index is col + row*6.
+
+The shoreline (READ, `Map::FUN_009fb280`): each vertex gets
+`clamp(trunc((PlaneHeight - height) * 0.5), 0, 15)` (truncated: the code sets the x87 rounding
+control to RC=11 before its `fistp`, 0x9fb338-0x9fb34e), stored as a 17x17 alpha texture. The block's
+state is:
+- 0: all dry, so the block is not drawn;
+- 1: no vertex is dry;
+- 2: some vertices are dry and some partial;
+- 3: some vertices are dry and some fully deep.
+
+The file's own WaveID equals that state on 39,486 of 39,510 type-0 blocks (MEASURED, `waterat
+-census`), so the authoring tool ran the same rule.
+
+The draw (READ, `Map::FUN_00a220b0`):
+- **Frame:** `water\water1NN.ddj`, frame `(GetTickCount()/100) % 30`, at UV 0..4 across the block.
+- **Colour:** the frame times environment channel 14, WaterColor.
+- **Alpha:** the shoreline texture.
+- **Blending:** SRCALPHA/INVSRCALPHA.
+- **Culling:** none.
+
+Census (MEASURED, 4,704 regions): PlaneType -1 on 128,879 blocks, 0 on 39,510, 1 on 955. The type-1
+blocks are all at plane 800, in whole regions around 88-92/124-129. The `.nvm` plane map is a poor
+stand-in:
+- it marks 3,846 blocks as water where the `.m` has -1;
+- it misses 6,259 drawn type-0 blocks.
+
+With the Water Reflection option on (world option 6, the shipped default), the client draws water
+through `Map::FUN_00a2df70` instead. It uses the same block fields and shoreline alpha, but the
+colour is a mirrored render of the landscape, bumped by `waterbump3.ddj` and tinted by WaterColor.
+The water frames are not used. See WORLD_ISSUES.md's six-hundred-and-twenty-eighth round and
+`client/scripts/mapm/water_reflection.gd`.
+
+OPEN: a region-level flag at region+0x2475 makes the loader force -1 on every block; it is set in
+`FUN_00a361b0` from a per-region object list that has not been identified.
+
 ## Real per-region world size confirmed: 1920.0 units
 
 Found via a real class, `CRegionManagerBody` (`sro_client.exe`), located through the full RTTI

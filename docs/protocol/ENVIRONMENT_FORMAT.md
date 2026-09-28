@@ -104,7 +104,7 @@ decompiled from a binary in this repo's own history), documents this exact forma
 11 FOG FAR PLANE,  as a fraction of the view distance (read from the client, below)
 12 (unnamed -- "Graph12", added v1001)
 13 SkyBottomColor        (4-float ColorGraph, added v1002)
-14 WaterColor            (4-float ColorGraph, added v1002)
+14 WaterColor            (4-float ColorGraph, added v1002)  -- READ round 627: the water texture factor, see below
 15 (unnamed -- "Graph15", added v1002)
 ```
 
@@ -236,3 +236,28 @@ above) via public documentation whose structure independently matches this proje
 decompiled channel-size sequence exactly. Renderer wiring using `SkyTopColor`/`SkyBottomColor`/
 `FogColor` is now real, justified work (not a guess) — see `docs/WORLD_ISSUES.md`'s next round for
 whether/how it was implemented.
+
+## WaterColor is the water's tint (read 2026-09-28, round 627)
+
+The record reader `Map::FUN_00a1b650` reads the ColorGraphs for channels 13 and 14 into
+record+0x1f4 and record+0x228. It reads them after channel 12, and only for version >= 1002. Its
+channel order is 0-6 at +0x88..+0x1c0; 7 and 8 at +0x25c and +0x288; 9 at +0x2b4; 10-12 at
++0x2e8..+0x340; 13 and 14 at +0x1f4 and +0x228; 15 at +0x36c.
+
+`Map::FUN_00a1baf0` evaluates +0x228 into world+0x688f..0x6897 and clamps it to [0, 1].
+`Map::FUN_00a220b0` then sets that colour, times 255, as the D3D texture factor's RGB. The alpha
+byte is 0xB4. The water's frame texture is modulated by it. MEASURED values at the reference time:
+- environment 1 (the 98/159 lake): (0.64, 0.56, 0.38);
+- environment 15 (Jangan): (0.36, 0.69, 0.62).
+
+## Channels 4 and 12 are the cloud layer's (read 2026-09-28, round 628 review follow-up)
+
+The cloud layer (`Map::FUN_00a3f570`) draws `cloud1.ddj` modulated by a texture factor.
+- Its RGB is the sky object's +0x18c..+0x194. `FUN_00a3eb40` copies that from its sixth argument,
+  world+0x685f, which `Map::FUN_00a1baf0` evaluates from record+0x158: **channel 4**.
+- Its alpha is world+0x68c7 x 255, and world+0x68c7 = **(channel 12 + 1) / 2**.
+
+MEASURED at the reference time 0.5:
+- environment 15 (Jangan): colour (1.00, 1.00, 1.00), alpha 0.755;
+- environment 1: colour (0.91, 0.99, 0.99), alpha 0.743.
+

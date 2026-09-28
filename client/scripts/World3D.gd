@@ -1218,6 +1218,16 @@ func _ready() -> void:
 	# process environment (SRREVAMP_WORLD_ENTRY), never a static.
 	_world_entry = GroundProbe.next_entry()
 	print(GroundProbe.entry_line(_world_entry, get_instance_id()))
+	# The Water Reflection option (round 628): the node always exists, so
+	# SRREVAMP_QA_WATER_TIMING can time a run with the option off too.
+	_water_reflection_on = WaterReflection.enabled()
+	WaterReflection.ensure_globals()
+	# The mirror-only terrain copies are the reflection's, never the screen's.
+	camera_3d.cull_mask &= ~WaterReflection.MIRROR_TERRAIN_BIT
+	_water_reflection = WaterReflection.new()
+	_water_reflection.name = "WaterReflection"
+	add_child(_water_reflection)
+	print("World3D: water reflection %s" % ("on (retail's Water Reflection option, the shipped default)" if _water_reflection_on else "off"))
 	# Sound (round 611): distances are measured from the player, left and
 	# right from the camera -- AudioService's header says why (ours).
 	SoundTable.set_listener(player, camera_3d)
@@ -1913,8 +1923,8 @@ func _hide_debug_ui_replaced_by_hud() -> void:
 ##
 ## Derived from the same real constants that decide how much world is
 ## loaded, so it stays correct if the streaming radius or region size ever
-## change, with margin to also clear the real sky dome (which sits
-## SKY_DOME_HEIGHT_ABOVE_PLAYER up with SKY_DOME_RADIUS reach).
+## change. (The cloud layer no longer needs it: it is pinned to the far
+## plane by its own shader since round 628's review.)
 func _apply_camera_far_plane() -> void:
 	camera_3d.far = REGION_SPAN * (_region_load_radius() + 1) * 2.0
 
@@ -2110,6 +2120,7 @@ func _refresh_zone_label_position() -> void:
 	if _zone_label_tick % 10 != 0:
 		return
 	_audio_area_tick()
+	_water_env_tick()
 	if zone_label != null:
 		zone_label.text = "Zone: %s%s" % [_current_zone_name, _zone_label_position_suffix()]
 
@@ -2513,12 +2524,11 @@ var _water_frames_load_attempted := false
 ## (Water\water101.ddj..water130.ddj -- a real numbered-frame sequence, not
 ## a shader effect) into an AnimatedTexture, or null if none of the 30 real
 ## frames were found (e.g. SRREVAMP_MAP_PK2_PATH unset, or a real archive
-## that doesn't ship this folder). Frame duration is an honest guess (not
-## reverse-engineered from any real client timing data) picked to read as
-## a gentle, plausible water ripple rather than a claim about the real
-## client's own exact animation speed.
-const WATER_FRAME_COUNT := 30
-const WATER_FRAME_FPS := 8.0
+## that doesn't ship this folder). Frame timing READ (round 627): the client
+## picks frame (GetTickCount() / 100) % 30 in `Map::FUN_00a220b0`, so 100 ms
+## a frame -- 10 fps, not the 8 fps this used to guess.
+const WATER_FRAME_COUNT := MapmWater.FRAME_COUNT
+const WATER_FRAME_FPS := 1000.0 / float(MapmWater.FRAME_MS)
 
 func _load_real_water_animation(archive: Pk2Reader) -> AnimatedTexture:
 	if not _water_frames_load_attempted:
@@ -2553,50 +2563,110 @@ func _load_real_water_animation(archive: Pk2Reader) -> AnimatedTexture:
 		anim.set_frame_duration(i, 1.0 / WATER_FRAME_FPS)
 	return anim
 
-## Builds and attaches a real animated water surface (see
-## MapmTerrainBuilder.build_full_region_water_mesh) to terrain_group, if
-## this region has any real WATER/DEEP_WATER tiles at all -- a no-op
-## (nothing added) otherwise, or if SRREVAMP_MAP_PK2_PATH isn't set / the
-## real water frames can't be found, so a region with no real water (most
-## of them) or a caller with no archive access isn't penalized.
-## Adds this region's real navmesh walls: every real blocking edge in its
-## `.nvm` cell/edge graph, extruded into a vertical quad by NvmCollision.
-##
-## This is real *walkability*, which the terrain mesh's own geometric
-## collision does not reproduce -- it is the boundary the real game
-## actually enforces, and it exists in places no geometry does.
-##
-## Parented to terrain_group rather than positioned itself, so it inherits
-## that node's own rotation and vertical anchoring exactly. The wall
-## triangles are built in the same region-local space the terrain mesh uses
-## (MapmTerrainBuilder's col -> X, row -> Z): the two formats share a
-## byte-identical heightmap, and the local-axis correspondence is measured
-## rather than assumed -- see docs/protocol/NVM_FORMAT.md's "Real
-## local-axis orientation" section.
-##
-## Does nothing (and says so) when Data.pk2 isn't set or the region has no
-## real navmesh file -- the same honest "nothing to load" behavior as the
-## rest of this scene, never a guess.
-## Real per-region parsed navmesh, loaded once and shared by everything
-## that needs it -- real walkability walls and real water surfaces both come
-## out of the same real file, so it is not worth reading twice. A null entry
-## means "already tried, nothing usable", and is cached too. Held in
-## _grid.navmesh_cache and dropped with the region (round 563).
-func _load_region_navmesh(mapm_path: String) -> NvmReader.ParsedRegion:
-	var coords := _parse_region_coords(mapm_path)
-	if coords.is_empty():
-		return null
-	var key: int = RegionGridState.navmesh_key(int(coords["x"]), int(coords["y"]))
-	if _grid.navmesh_cache.has(key):
-		return _grid.navmesh_cache[key]
-	var lines: Array = []
-	var parsed := _read_region_navmesh(_open_pk2_if_set(), key, lines)
-	_print_job_log(lines)
-	_grid.navmesh_cache[key] = parsed
-	return parsed
+## The still surface a PlaneType-1 block draws: `water\water201.ddj`
+## (READ, the texture the client loads into world+0x28a7 and binds for those
+## blocks). Loaded once per world; null when the archive lacks it.
+var _water_still_texture: Texture2D = null
+var _water_still_load_attempted := false
 
-## A region's real `.nvm` read and parsed, uncached -- _load_region_navmesh's
-## read, and the terrain prepare's (round 565), which runs on a
+func _load_still_water_texture(archive: Pk2Reader) -> Texture2D:
+	if not _water_still_load_attempted:
+		_water_still_load_attempted = true
+		var bytes := AssetSource.read_bytes("Water\\water201.ddj", archive)
+		var parsed := DdjReader.parse(bytes) if not bytes.is_empty() else null
+		if parsed != null:
+			_water_still_texture = DdjReader.to_texture(parsed)
+		if _water_still_texture == null:
+			print("World3D: no Water\\water201.ddj -- PlaneType-1 still surfaces are not drawn")
+	return _water_still_texture
+
+## The two water materials, one per world like the client's own render
+## state: every region's water shares them, and the environment's WaterColor
+## (channel 14) is written into the animated one whenever the player's
+## environment is applied (_apply_real_environment_lighting), as the client
+## sets one world-wide texture factor. MapmWater builds them and holds the
+## READ render state they follow.
+var _water_material: StandardMaterial3D = null
+## Round 628: the Water Reflection option, its node, and its two materials.
+var _water_reflection_on := true
+var _water_reflection: WaterReflection = null
+var _water_reflect_material: ShaderMaterial = null
+var _water_reflect_still_material: ShaderMaterial = null
+var _water_bump_texture: Texture2D = null
+var _water_bump_attempted := false
+
+## waterbump3.ddj turned into the bump stage's du/dv (READ, FUN_009f2050).
+func _load_water_bump(archive: Pk2Reader) -> Texture2D:
+	if not _water_bump_attempted:
+		_water_bump_attempted = true
+		var started := Time.get_ticks_msec()
+		var bytes := AssetSource.read_bytes("SkyBox\\waterbump3.ddj", archive)
+		var parsed := DdjReader.parse(bytes) if not bytes.is_empty() else null
+		var img := DdjReader.to_image(parsed) if parsed != null else null
+		var bump := WaterReflection.bump_image(img)
+		if bump != null:
+			_water_bump_texture = ImageTexture.create_from_image(bump)
+			print("World3D: water bump from SkyBox\\waterbump3.ddj, %dx%d, in %d ms" % [bump.get_width(), bump.get_height(), Time.get_ticks_msec() - started])
+		else:
+			print("World3D: no SkyBox\\waterbump3.ddj -- the reflection is drawn without its bump")
+	return _water_bump_texture
+
+## Writes the water colour into whichever water materials exist.
+func _set_water_color(c: Color) -> void:
+	if _water_material != null:
+		MapmWater.set_water_color(_water_material, c)
+	if _water_reflection != null:
+		_water_reflection.set_water_color(c)
+var _water_still_material: StandardMaterial3D = null
+## The EnvironmentID the water's colour was last taken from (-1 none).
+var _water_env_id := -1
+
+## Retail's water colour follows the environment of the block under the
+## camera (MapmWater.environment_at has the READ chain), one value for the
+## whole world. Checked on the zone label's throttle; a change re-samples
+## channel 14 into the shared material.
+func _water_env_tick() -> void:
+	if (_water_material == null and _water_reflect_material == null) or _environment_table == null:
+		return
+	var cam := get_viewport().get_camera_3d() if get_viewport() != null else null
+	if cam == null:
+		return
+	var pair := _nav_graph_for(cam.global_position)
+	if pair.is_empty():
+		return
+	var group: Node3D = pair[1]
+	if not group.has_meta("block_env_ids"):
+		return
+	var local := group.to_local(cam.global_position)
+	var env_id := MapmWater.environment_at(group.get_meta("block_env_ids"), local.x, local.z)
+	if env_id < 0 or env_id == _water_env_id:
+		return
+	for rec in _environment_table.records:
+		if rec.key == env_id:
+			_water_env_id = env_id
+			_env_water_color = EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_WATER_COLOR, ENVIRONMENT_REFERENCE_TIME)
+			_set_water_color(_env_water_color)
+			print("World3D: water colour follows the camera's block, environment %d: %s" % [env_id, str(_env_water_color)])
+			return
+
+## The environment's WaterColor (MapmWater.set_water_color clamps it). White
+## until an environment is applied -- the neutral fallback
+## sample_color_channel already uses, not a colour anyone read.
+var _env_water_color := Color(1, 1, 1)
+
+func _water_surface_material(anim: AnimatedTexture) -> StandardMaterial3D:
+	if _water_material == null:
+		_water_material = MapmWater.water_material(anim, _env_water_color)
+	return _water_material
+
+func _water_still_surface_material(tex: Texture2D) -> StandardMaterial3D:
+	if _water_still_material == null:
+		_water_still_material = MapmWater.still_material(tex)
+	return _water_still_material
+
+## A region's real `.nvm` read and parsed, uncached -- the terrain
+## prepare's read (round 565; the cache it fills is _grid.navmesh_cache,
+## dropped with the region since round 563), which runs on a
 ## WorkerThreadPool task and so reports through `lines` ([["out"|"err",
 ## line]], printed by the commit) instead of printing. Null with no
 ## Data.pk2, no file or no parse.
@@ -2832,6 +2902,24 @@ static func _prepare_navmesh_walls(job: Dictionary) -> void:
 	job["wall_line"] = "World3D: loaded real navmesh walls for %s (%d real blocking of %d internal + %d global edges)" % [
 		job["mapm_path"], NvmCollision.blocking_edges(region).size(), region.internal_edges.size(), region.global_edges.size()]
 
+## Adds this region's real navmesh walls: every real blocking edge in its
+## `.nvm` cell/edge graph, extruded into a vertical quad by NvmCollision.
+##
+## This is real *walkability*, which the terrain mesh's own geometric
+## collision does not reproduce -- it is the boundary the real game
+## actually enforces, and it exists in places no geometry does.
+##
+## Parented to terrain_group rather than positioned itself, so it inherits
+## that node's own rotation and vertical anchoring exactly. The wall
+## triangles are built in the same region-local space the terrain mesh uses
+## (MapmTerrainBuilder's col -> X, row -> Z): the two formats share a
+## byte-identical heightmap, and the local-axis correspondence is measured
+## rather than assumed -- see docs/protocol/NVM_FORMAT.md's "Real
+## local-axis orientation" section.
+##
+## Does nothing (and says so) when Data.pk2 isn't set or the region has no
+## real navmesh file -- the same honest "nothing to load" behavior as the
+## rest of this scene, never a guess.
 func _add_navmesh_walls(terrain_group: Node3D, job: Dictionary) -> void:
 	var faces: PackedVector3Array = job["wall_faces"]
 	if faces.is_empty():
@@ -2876,62 +2964,93 @@ func _add_navmesh_wall_debug_mesh(terrain_group: Node3D, faces: PackedVector3Arr
 	print("World3D: navmesh wall debug mesh local aabb %s .. %s, global origin %s" % [
 		local_aabb.position, local_aabb.end, debug_mesh.to_global(local_aabb.position)])
 
-## **Rebuilt 2026-09-05** (see docs/WORLD_ISSUES.md): real water used to be
-## classified per *terrain tile* and each quad placed at that tile's own
-## terrain height, because this project had no real reference height for a
-## body of water. It therefore followed the ground instead of lying flat,
-## and real ponds rendered as jagged tile-shaped sheets cutting through the
-## terrain -- reported from a real playtest of the real Jangan temple
-## garden.
-##
-## The real `.nvm`'s own 6x6 `PlaneTypeMap`/`PlaneHeightMap` is that missing
-## reference: where the real plane type is water, the real plane height is
-## that body of water's own flat surface level. See NvmWater, which measured
-## the type across 264 real files rather than assuming it.
-##
-## No artificial vertical lift is applied any more either. The old one
-## existed because water shared the ground's exact vertices; a real water
-## plane sits at its own real level and is simply occluded by whatever
-## terrain stands above it, which is what makes a real shoreline.
-func _try_add_real_water(terrain_group: Node3D, mapm_path: String) -> void:
-	var region := _load_region_navmesh(mapm_path)
-	if region == null:
+## A region's water, from its own `.m` blocks (round 627; MapmWater has the
+## rules and their labels). Until round 627 it came from the `.nvm` plane
+## map, with each quad's shape taken from the navmesh tiles' texture type,
+## and its triangles faced down under a material that culled back faces, so
+## a lake was a sheet seen only from underneath (the v0.1.457 report at
+## 98/159, plane 50 over a bed at -30). The `.nvm` plane map also marks water
+## in 3,846 blocks the `.m` says have none, and leaves out 6,259 the client
+## draws (MEASURED, waterat -census) -- the `.m` is what the client reads.
+func _try_add_real_water(terrain_group: Node3D, region: MapmReader.ParsedRegion, mapm_path: String) -> void:
+	var coords := _parse_region_coords(mapm_path)
+	if not coords.is_empty():
+		var region_id := RegionGridState.navmesh_key(int(coords["x"]), int(coords["y"]))
+		if not MapmWater.draws_block_water(region_id):
+			print("World3D: %s -- region id 0x%04x is a dungeon id: retail draws no block water there" % [mapm_path, region_id])
+			return
+	# The environment the water's colour follows (_water_env_tick).
+	terrain_group.set_meta("block_env_ids", MapmWater.block_environment_ids(region))
+	var built := MapmWater.build(region)
+	if built.water == null and built.still == null:
+		if built.dry_blocks > 0:
+			print("World3D: %s -- no water drawn (%d PlaneType-0 block(s), every vertex dry)" % [mapm_path, built.dry_blocks])
 		return
-	# The real per-tile water flags decide the water's shape and the real
-	# plane map its level -- see NvmWater's own "Why both sources" comment.
-	var tile_table := _load_tile_index()
-	if tile_table == null:
-		print("World3D: no real tile2d.ifo -- real water shape can't be resolved, skipping water")
-		return
-	var water_mesh := NvmWater.build_water_mesh(region, tile_table)
-	if water_mesh == null:
-		# Says so, because "this region has no water" and "this region's
-		# water failed to build" look identical in a screenshot -- a real
-		# playtest found a willow pond with a stone bridge over dry ground
-		# and there was nothing in the log either way.
-		print("World3D: %s -- no real water surface built (%d real water plane cell(s) in its navmesh)" % [
-			mapm_path, NvmWater.water_plane_cell_count(region)])
-		return
-	print("World3D: %s -- built real water from %d real quad(s)" % [
-		mapm_path, water_mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size() / 4])
 	var archive := _open_map_pk2_if_set()
 	if archive == null:
 		return
-	var anim := _load_real_water_animation(archive)
-	if anim == null:
+	var heights: Array = built.heights.keys()
+	heights.sort()
+	# The facing is Godot's own front-face rule on the built triangles (the
+	# group's z mirror does not change it: Godot flips its cull test for a
+	# negative determinant), printed so a run measures it instead of a picture.
+	var facing := MapmWater.facing_counts(built.water) + MapmWater.facing_counts(built.still)
+	print("World3D: %s -- water: %d animated block(s) (%d fully deep, one quad each), %d still, %d dry skipped, plane height(s) %s, triangles %d up / %d down" % [
+		mapm_path, built.water_blocks, built.deep_blocks, built.still_blocks, built.dry_blocks, str(heights), facing.x, facing.y])
+	if _water_reflection_on and _water_reflection != null:
+		# Round 628: retail's reflection pass (WaterReflection). The frames
+		# are not used there (READ); water201 still is, for PlaneType 1.
+		var bump := _load_water_bump(archive)
+		var still_tex := _load_still_water_texture(archive) if built.still != null else _water_still_texture
+		if _water_reflect_material == null:
+			_water_reflect_material = _water_reflection.make_material(false, bump, still_tex, _env_water_color)
+		if built.still != null and _water_reflect_still_material == null:
+			_water_reflect_still_material = _water_reflection.make_material(true, bump, still_tex, _env_water_color)
+		_water_reflection.register_region(terrain_group, built.drawn)
+		if built.water != null:
+			_add_water_instance(terrain_group, "Water", built.water, _water_reflect_material)
+		if built.still != null:
+			_add_water_instance(terrain_group, "WaterStill", built.still, _water_reflect_still_material)
 		return
+	if built.water != null:
+		var anim := _load_real_water_animation(archive)
+		if anim != null:
+			_add_water_instance(terrain_group, "Water", built.water, _water_surface_material(anim))
+	if built.still != null:
+		var tex := _load_still_water_texture(archive)
+		if tex != null:
+			_add_water_instance(terrain_group, "WaterStill", built.still, _water_still_surface_material(tex))
 
-	var mat := StandardMaterial3D.new()
-	mat.albedo_texture = anim
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.albedo_color = Color(1, 1, 1, 0.85)
-	mat.uv1_scale = Vector3(4.0, 4.0, 1.0) # real per-quad UV already 0..1; repeats the real frame texture a few times per quad instead of stretching one tile over it, same rationale as the ground-texture uv1_scale nearby
+## The water reflection's copy of a region's terrain (round 628 review): the
+## same mesh on the mirror-only layer, each surface's material swapped for
+## WaterReflection.clip_material's, which discards below (or above) the
+## water plane as retail's user clip plane does. The main view's terrain is
+## untouched.
+func _add_mirror_terrain(terrain_group: Node3D, patch: MeshInstance3D) -> void:
+	if not _water_reflection_on or _water_reflection == null or patch.mesh == null:
+		return
+	var mirror := MeshInstance3D.new()
+	mirror.name = "MirrorTerrain"
+	mirror.mesh = patch.mesh
+	mirror.layers = WaterReflection.MIRROR_TERRAIN_BIT
+	mirror.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	for i in range(patch.mesh.get_surface_count()):
+		var src: Material = patch.material_override if patch.material_override != null else patch.mesh.surface_get_material(i)
+		if src != null:
+			mirror.set_surface_override_material(i, _water_reflection.clip_material(src))
+	terrain_group.add_child(mirror)
 
-	var water_instance := MeshInstance3D.new()
-	water_instance.name = "Water"
-	water_instance.mesh = water_mesh
-	water_instance.material_override = mat
-	terrain_group.add_child(water_instance)
+## One water surface: on WaterReflection's layer, so the mirror camera leaves
+## water out of its image as retail's reflection pass does (READ; the layer is
+## OURS).
+func _add_water_instance(terrain_group: Node3D, node_name: String, mesh: ArrayMesh, mat: Material) -> void:
+	var inst := MeshInstance3D.new()
+	inst.name = node_name
+	inst.mesh = mesh
+	inst.material_override = mat
+	inst.layers = WaterReflection.WATER_LAYER_BIT
+	inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	terrain_group.add_child(inst)
 
 ## Real sky assets found under Map.pk2's own SkyBox\ folder (2026-08-28,
 ## see docs/WORLD_ISSUES.md and docs/NEXT_STEPS_RENDERING.md's "Terrain"
@@ -2950,32 +3069,23 @@ func _try_add_real_water(terrain_group: Node3D, mapm_path: String) -> void:
 ## from data alone without further client-side RE (a real, flagged gap, see
 ## docs/NEXT_STEPS_RENDERING.md).
 ##
-## What's implemented here is therefore an honest engineering approximation
-## using the *real* cloud/glow textures (not fabricated ones), not a claim
-## about reproducing the original algorithm: a large inverted-hemisphere
-## dome around the player textured with the real cloud1.ddj (its own real
-## alpha channel gives real soft cloud edges), slowly drifting, plus a
-## simple additive glow billboard aimed at the DirectionalLight's real
-## direction as a stand-in sun. cloud99/shadowsphere/waterbump3 are left
-## unused -- their real purpose within the sky system is still unconfirmed
-## (shadowsphere's tiny 64x64 size in particular reads more like a
-## soft ambient-shadow blob than a sky-color asset, but that's not
-## confirmed either).
-const SKY_DOME_RADIUS := 3000.0
-## How far above the player the real cloud dome's centre is placed.
-##
-## **Added 2026-09-02** (see docs/WORLD_ISSUES.md's fifty-first round): the
-## dome is a hemisphere, so centring it exactly on the player put its base
-## plane at the player's own feet, where it sliced straight through real
-## terrain. That intersection rendered as translucent shards fanning across
-## the ground away from the player -- a real, confirmed artifact (disabling
-## the sky removed it completely and left clean ground, while everything
-## else was unchanged). Lifting the centre well above head height keeps the
-## whole dome above real terrain, which is also where a real cloud layer
-## belongs. Chosen relative to the dome's own radius rather than as a loose
-## constant so the two stay in proportion if the radius is ever retuned.
-const SKY_DOME_HEIGHT_ABOVE_PLAYER := SKY_DOME_RADIUS * 0.5
-const CLOUD_DRIFT_UV_PER_SECOND := 0.008
+## **Superseded for the clouds in round 628's review follow-up**: the client
+## is decompiled now, and its cloud layer is read (cloud_dome.gdshader,
+## cloud_layer_mesh): a flat textured grid 20000 above the eye, drawn with
+## the eye at the origin, so it has no rim and no parallax. The finite
+## 3000-unit hemisphere that stood in for it showed its rim as an arc across
+## the sky and in the water's reflection. The sun glow billboard below is
+## still this project's stand-in.
+## The cloud layer (READ, Map::FUN_00a3de90 / FUN_00a3f570; round 628 review):
+## its height above the eye, its grid step and UV step, and the u scroll
+## period -- frac(GetTickCount() / 500000).
+const CLOUD_LAYER_HEIGHT := 20000.0
+const CLOUD_LAYER_STEP := 2000000.0
+const CLOUD_LAYER_UV_STEP := 16.0
+const CLOUD_SCROLL_MS := 500000.0
+## environment.ifo channels the cloud layer reads (READ, round 628 review).
+const CHANNEL_CLOUD_COLOR := 4
+const CHANNEL_CLOUD_ALPHA := 12
 const SUN_GLOW_DISTANCE := 2800.0
 const SUN_GLOW_SIZE := 500.0
 
@@ -3073,26 +3183,48 @@ func _try_add_real_sky() -> void:
 				_build_sun_glow(glow_tex)
 
 func _build_cloud_dome(cloud_tex: Texture2D) -> void:
-	var dome := SphereMesh.new()
-	dome.radius = SKY_DOME_RADIUS
-	dome.height = SKY_DOME_RADIUS
-	dome.is_hemisphere = true
-	dome.radial_segments = 32
-	dome.rings = 16
-
-	# ShaderMaterial, not StandardMaterial3D -- see cloud_dome.gdshader's own
-	# comment for why a custom shader is needed (fading the real texture out
-	# before the dome's real polar-UV singularity comes into view).
 	_sky_dome_material = ShaderMaterial.new()
 	_sky_dome_material.shader = _cloud_dome_shader
 	_sky_dome_material.set_shader_parameter("cloud_tex", cloud_tex)
 	_sky_dome_material.set_shader_parameter("uv_offset", Vector2.ZERO)
-
+	# Drawn behind everything else transparent (cloud_dome.gdshader).
+	_sky_dome_material.render_priority = -128
 	_sky_dome = MeshInstance3D.new()
 	_sky_dome.name = "CloudDome"
-	_sky_dome.mesh = dome
+	_sky_dome.mesh = cloud_layer_mesh()
 	_sky_dome.material_override = _sky_dome_material
+	_sky_dome.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# The shader places it relative to the eye, so the node's own bounds mean
+	# nothing: never cull it.
+	_sky_dome.custom_aabb = AABB(Vector3(-1.0e7, -1.0e7, -1.0e7), Vector3(2.0e7, 2.0e7, 2.0e7))
+	# Retail's reflection pass draws the sky too (round 628 review).
+	_sky_dome.layers = 1 | WaterReflection.REFLECTED_BIT
 	add_child(_sky_dome)
+
+## The cloud layer's mesh (READ, Map::FUN_00a3de90): a flat 5x5-vertex grid,
+## 20000 above the eye, x and z from -4,000,000 to 4,000,000 in 2,000,000
+## steps, u and v from -32 to 32 in 16s; four triangles' worth of quads a
+## side. Positions are offsets from the eye (cloud_dome.gdshader).
+static func cloud_layer_mesh() -> ArrayMesh:
+	var pos := PackedVector3Array()
+	var uv := PackedVector2Array()
+	for zi in range(5):
+		for xi in range(5):
+			pos.append(Vector3((xi - 2) * CLOUD_LAYER_STEP, CLOUD_LAYER_HEIGHT, (zi - 2) * CLOUD_LAYER_STEP))
+			uv.append(Vector2((xi - 2) * CLOUD_LAYER_UV_STEP, (zi - 2) * CLOUD_LAYER_UV_STEP))
+	var idx := PackedInt32Array()
+	for r in range(4):
+		for c in range(4):
+			var i := r * 5 + c
+			idx.append_array(PackedInt32Array([i, i + 1, i + 6, i, i + 6, i + 5]))
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = pos
+	arrays[Mesh.ARRAY_TEX_UV] = uv
+	arrays[Mesh.ARRAY_INDEX] = idx
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
 
 func _build_sun_glow(glow_tex: Texture2D) -> void:
 	# Real DirectionalLight3D direction (see World3D.tscn) -- the sun's
@@ -3199,6 +3331,15 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	_env_terrain_ambient = EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_TERRAIN_AMBIENT_COLOR, ENVIRONMENT_REFERENCE_TIME)
 	_env_terrain_shadow = EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_TERRAIN_SHADOW_COLOR, ENVIRONMENT_REFERENCE_TIME)
 	_env_light_ready = true
+	# The water's tint: channel 14 (READ: the record reader stores it at
+	# record+0x228, and `Map::FUN_00a1baf0` evaluates that graph into
+	# world+0x688f, the texture factor FUN_00a220b0 draws water with).
+	# A starting value from the region's block 0; _water_env_tick then
+	# follows the camera's block, as retail does.
+	_env_water_color = EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_WATER_COLOR, ENVIRONMENT_REFERENCE_TIME)
+	_water_env_id = env_id
+	_set_water_color(_env_water_color)
+	print("World3D: environment %d water colour (channel 14) %s" % [env_id, str(_env_water_color)])
 
 	# Real per-zone aerial-perspective haze (2026-09-03). The real client's
 	# own terrain shaders were found shipped as readable source inside
@@ -3225,6 +3366,17 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	# they are computed, logged and shown by QA_LOOK, and the density stays
 	# the bounded choice described at FOG_DENSITY.
 	var fog_color := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_FOG_COLOR, ENVIRONMENT_REFERENCE_TIME)
+	# The cloud layer's texture factor (READ, round 628 review): RGB is
+	# channel 4 (FUN_00a3eb40's param_6 = world+0x685f, evaluated from
+	# record+0x158), alpha is world+0x68c7 = (channel 12 + 1) / 2. Its fog is
+	# the world's fog colour between 90,000 and 200,000.
+	if _sky_dome_material != null:
+		var cc := EnvironmentReader.sample_color_channel(record, CHANNEL_CLOUD_COLOR, ENVIRONMENT_REFERENCE_TIME)
+		var ca := clampf((EnvironmentReader.sample_float_channel(record, CHANNEL_CLOUD_ALPHA, ENVIRONMENT_REFERENCE_TIME) + 1.0) * 0.5, 0.0, 1.0)
+		_sky_dome_material.set_shader_parameter("cloud_color", Vector3(clampf(cc.r, 0, 1), clampf(cc.g, 0, 1), clampf(cc.b, 0, 1)))
+		_sky_dome_material.set_shader_parameter("cloud_alpha", ca)
+		_sky_dome_material.set_shader_parameter("fog_color", Vector3(fog_color.r, fog_color.g, fog_color.b))
+		print("World3D: cloud layer colour (channel 4) %s, alpha (channel 12) %.3f" % [str(cc), ca])
 	_fog_near_real = EnvironmentReader.sample_float_channel(record, EnvironmentReader.CHANNEL_FOG_NEAR_PLANE, ENVIRONMENT_REFERENCE_TIME) * EnvironmentReader.VIEW_DISTANCE_DEFAULT
 	_fog_far_real = EnvironmentReader.sample_float_channel(record, EnvironmentReader.CHANNEL_FOG_FAR_PLANE, ENVIRONMENT_REFERENCE_TIME) * EnvironmentReader.VIEW_DISTANCE_DEFAULT
 	print("World3D: environment fog planes (real, channels 10/11 x view distance %.0f): near %.0f, far %.0f -- drawn with Godot density %.5f (disclosed)" % [
@@ -4762,6 +4914,16 @@ func _exit_tree() -> void:
 	_ground_texture_cache.clear()
 	_water_frames_cache.clear()
 	_water_frames_load_attempted = false
+	_water_still_texture = null
+	_water_still_load_attempted = false
+	_water_material = null
+	_water_reflect_material = null
+	_water_reflect_still_material = null
+	_water_bump_texture = null
+	_water_bump_attempted = false
+	_water_still_material = null
+	_env_water_color = Color(1, 1, 1)
+	_water_env_id = -1
 	_environment_table = null
 	_environment_load_attempted = false
 	if _loading_screen != null:
@@ -6222,10 +6384,11 @@ func _terrain_commit(job: Dictionary) -> float:
 	single_patch.material_override = mat
 	single_patch.add_child(patch_body)
 	terrain_group.add_child(single_patch)
+	_add_mirror_terrain(terrain_group, single_patch)
 
 	_add_navmesh_walls(terrain_group, job)
 	sw = _load_timings.lap("terrain", "wallshape", sw)
-	_try_add_real_water(terrain_group, mapm_path)
+	_try_add_real_water(terrain_group, job["region"], mapm_path)
 	sw = _load_timings.lap("terrain", "water", sw)
 	var graph: NavGraph = job.get("nav_graph")
 	if graph != null:
@@ -8417,6 +8580,9 @@ func _objects_commit(job: Dictionary) -> void:
 		container.add_child(node)
 		loaded += 1
 	_prepared_models = {}
+	# Retail's reflection draws the scenery too (round 628 review).
+	if _water_reflection_on:
+		WaterReflection.mark_reflected(container)
 
 	_load_timings.phase("objects", "place",
 		Time.get_ticks_usec() - sw - (_load_timings.phase_usec("objects", "templates") - templates_before))
@@ -9273,11 +9439,12 @@ func _qa_step() -> void:
 				env.fog_aerial_perspective = 0.0
 				env.fog_density = 0.0
 			camera_3d.far = 40000.0
-			# So is the cloud layer, and for a more interesting reason: the
-			# dome is a hemisphere of SKY_DOME_RADIUS centred
-			# SKY_DOME_HEIGHT_ABOVE_PLAYER overhead, so a camera far enough
-			# up to frame a region ends up *above* the clouds looking down
-			# through them. That is the pale veil over the city in every
+			# So is the cloud layer, and for a more interesting reason: until
+			# round 628's review it was a finite dome over the player, so a
+			# camera far enough up to frame a region ended up *above* the
+			# clouds looking down through them. (Retail's layer is 20000
+			# above the eye wherever the eye is; hidden here all the same, so
+			# overview shots stay comparable.) That is the pale veil over the city in every
 			# overview shot this project has taken -- correct rendering of
 			# a real cloud layer, mistaken for a defect in the world for
 			# long enough to be written up as one.
@@ -11354,8 +11521,9 @@ func _physics_process(delta: float) -> void:
 ## input and walk, the QA hooks, region streaming and the position send.
 func _physics_step(delta: float) -> void:
 	if _sky_dome != null:
-		_sky_dome.global_position = player.global_position + Vector3(0.0, SKY_DOME_HEIGHT_ABOVE_PLAYER, 0.0)
-		_cloud_uv_offset.x += CLOUD_DRIFT_UV_PER_SECOND * delta
+		# READ: u += frac(GetTickCount() / 500000); the layer itself follows
+		# the eye in its shader.
+		_cloud_uv_offset.x = fposmod(Time.get_ticks_msec() / CLOUD_SCROLL_MS, 1.0)
 		_sky_dome_material.set_shader_parameter("uv_offset", _cloud_uv_offset)
 	if _sun_glow != null:
 		_sun_glow.global_position = player.global_position + _sun_glow_offset

@@ -1,5 +1,12 @@
 class_name NvmWater
 
+## **Not what the world draws since round 627.** The client draws water from
+## the `.m` blocks' PlaneType/PlaneHeight (MapmWater, docs/protocol/
+## MAPM_FORMAT.md "Water"). This plane map marks 3,846 blocks water that the
+## `.m` does not and misses 6,259 it draws, and the quads below face down
+## (Godot's front face is Plane(a, b, c)), which hid them from above. Kept
+## for its reader-side tests and as round 627's negative's baseline.
+##
 ## Builds a real region's water surfaces from its `.nvm` plane maps.
 ##
 ## The real `.nvm` carries a 6x6 `PlaneTypeMap` and `PlaneHeightMap`

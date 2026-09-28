@@ -87,6 +87,7 @@ The full recipe, as actually run on the public server, is `deploy/README.md`.
 | `efpcensus` | decode every `.efp` in a Particles.pk2 and report coverage by feature; `-show` prints one file's tree |
 | `heightat` | the raw terrain height a real `.m` heightmap gives at a spot |
 | `wherecoord` | convert the position the real client displays to region/local/world coordinates |
+| `waterat` | a region's `.m` water fields per block (PlaneType, WaveID, PlaneHeight), the client's shoreline state, the `.nvm` plane map beside them; `-census` over every region |
 | `whatishere` | the real objects placed near one spot in one region |
 | `findregionassets` | scan every region's `.o`/`.o2` placements for an asset |
 | `scanlandmarks` | scan placements for landmark objects (world map work) |

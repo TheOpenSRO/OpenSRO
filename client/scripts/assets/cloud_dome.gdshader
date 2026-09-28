@@ -1,37 +1,49 @@
+// The cloud layer, drawn as the retail client draws it (round 628 review
+// follow-up): Map::FUN_00a3f570, reached from the sky step of the landscape
+// pass (FUN_00a26f60 -> FUN_00a19330). READ:
+// - the camera's position is zeroed for the sky step and the far plane is
+//   5,000,000, so the layer sits at a fixed offset from the eye: no parallax;
+// - the mesh is a flat 5x5-vertex grid at y = 20000, x and z in
+//   [-4,000,000, 4,000,000] (step 2,000,000), u and v in [-32, 32] (step 16)
+//   -- one cloud1.ddj repeat per 125,000 units (FUN_00a3de90);
+// - u scrolls by frac(GetTickCount() / 500000) (texture matrix _31, TTFF
+//   COUNT2);
+// - colour = texture x TFACTOR RGB (environment channel 4), alpha = texture
+//   alpha x TFACTOR alpha (world+0x68c7 = (channel 12 + 1) / 2);
+// - linear fog from 90,000 to 200,000 (D3DRS_FOGSTART / FOGEND), with the
+//   world's fog colour;
+// - Z off, drawn before the terrain. Here the layer is pinned to the far
+//   plane with its depth test on, which draws it behind everything the same
+//   way (OURS: a transparent material cannot be ordered before the opaque
+//   pass in Godot).
 shader_type spatial;
-render_mode unshaded, cull_front, blend_mix, depth_draw_never;
+render_mode unshaded, cull_disabled, blend_mix, depth_draw_never, fog_disabled, skip_vertex_transform;
 
-// Real cloud1.ddj texture (see World3D._build_cloud_dome's doc comment for
-// where this asset comes from). SphereMesh's auto-generated UV is a polar
-// projection that compresses an entire ring of the mesh into a single point
-// at the dome's pole (the zenith, since is_hemisphere=true puts the pole
-// straight up) -- a real, confirmed projection singularity (see
-// docs/WORLD_ISSUES.md's thirty-fifth/forty-second rounds), not fixable by
-// UV tiling/scale alone. This shader doesn't try to fix the projection
-// itself (no real per-pixel sky-dome UV data exists to build a better one
-// from) -- it instead fades the real cloud texture's alpha to zero before
-// the singularity is ever visible, so the compressed/sunburst pixels never
-// render at all. Below pole_fade_start, the real texture shows completely
-// normally, unmodified.
-uniform sampler2D cloud_tex : source_color, filter_linear, repeat_enable;
+uniform sampler2D cloud_tex : source_color, filter_linear_mipmap, repeat_enable;
 uniform vec2 uv_offset = vec2(0.0);
-uniform float pole_fade_start : hint_range(0.0, 1.0) = 0.8;
-uniform float base_alpha : hint_range(0.0, 1.0) = 0.6;
+uniform vec3 cloud_color = vec3(1.0);
+uniform float cloud_alpha = 0.6;
+uniform vec3 fog_color = vec3(1.0);
+uniform float fog_start = 90000.0;
+uniform float fog_end = 200000.0;
 
-varying float pole_closeness;
+varying float eye_dist;
 
 void vertex() {
-	// Object-space vertex direction from the dome's own center -- for a
-	// sphere/hemisphere this is exactly the surface normal, and its Y
-	// component is 1.0 only at the true pole (straight up), falling off
-	// smoothly toward the horizon ring at Y=0. Real, exact geometry, not an
-	// approximation.
-	pole_closeness = normalize(VERTEX).y;
+	// VERTEX is the offset from the eye (the mesh sits at the origin). Rotate
+	// it into view space without the camera's translation.
+	vec3 v = (VIEW_MATRIX * vec4(VERTEX, 0.0)).xyz;
+	VERTEX = v;
+	eye_dist = length(v);
+	vec4 p = PROJECTION_MATRIX * vec4(v, 1.0);
+	// At the far plane: behind every surface, never clipped by it.
+	p.z = p.w * 0.99999;
+	POSITION = p;
 }
 
 void fragment() {
 	vec4 tex = texture(cloud_tex, UV + uv_offset);
-	float fade = 1.0 - smoothstep(pole_fade_start, 1.0, pole_closeness);
-	ALBEDO = tex.rgb;
-	ALPHA = tex.a * base_alpha * fade;
+	float f = clamp((fog_end - eye_dist) / (fog_end - fog_start), 0.0, 1.0);
+	ALBEDO = mix(fog_color, tex.rgb * cloud_color, f);
+	ALPHA = tex.a * cloud_alpha;
 }
