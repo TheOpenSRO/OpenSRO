@@ -343,8 +343,9 @@ In order. Each is checked off here when it ships in a release, with its round in
       the server half (round 616) was not live-tested with it; the Ghost Walk move is a snap
       (duration OPEN, `tele` value[0] = 500 unread); retail's ground-pick cursor and decal (the
       cross is ours); the retail fallback for a Target_Required 1 heal with nothing selected
-      (refused, as before); the client learns its own character id from its own casts'
-      answers, because no message tells it (a buff it did not cast moves no speed until then);
+      (refused, as before); the targetType echo, ownerKind and OpSelfId 0x00F9 (review
+      follow-up) need round 616's server to send them -- until then the client falls back to the
+      request queue and learns its own id from its own casts' answers;
       an old server's keep-up ends on any cast, a self-cast included (`keepUp.Cancel` in
       `useSkillHandler`) -- whether retail's auto-attack survives a buff cast is not read.
 - [ ] **Duel swings are not the base attack skill.** Round 505 made a plain PvE swing a cast of

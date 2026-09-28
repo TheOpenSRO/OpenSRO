@@ -138,10 +138,15 @@ class AttackResult:
 	## before resolving a target; World3D then falls back to the id it sent.
 	var monster_id: int = 0
 	## What the request this answers was aimed at (round 617): 1
-	## (SkillNet.TARGET_ENTITY) for a swing or an entity cast, 0 for a
-	## self-cast, 2 for a ground cast. Not on the wire -- NetClient tags the
-	## reply from the request it sent, as it fills monster_id.
+	## (SkillNet.TARGET_ENTITY) for a swing, an entity cast or a keep-up
+	## repeat, 0 for a self-cast, 2 for a ground cast. The server echoes it as
+	## a trailing u8 after monster_id (the contract's review follow-up);
+	## target_type_echoed says it did. From a server that does not, NetClient
+	## fills it from the request queue, which a keep-up repeat or a dropped
+	## swing can put out of step -- so an unechoed value is only a hint
+	## (SelfCast.is_self_reply).
 	var target_type: int = 1
+	var target_type_echoed: bool = false
 
 ## Result of decode_monster_damaged().
 class MonsterDamaged:
@@ -422,6 +427,10 @@ static func decode_attack_result(data: PackedByteArray) -> AttackResult:
 		result.player_blocked = data[offset + 33] != 0
 	if offset + 42 <= data.size():
 		result.monster_id = data.decode_s64(offset + 34)
+	# Round 617's review: the request's targetType, echoed.
+	if offset + 43 <= data.size():
+		result.target_type = data[offset + 42]
+		result.target_type_echoed = true
 
 	return result
 

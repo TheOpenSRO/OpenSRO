@@ -365,10 +365,16 @@ four messages. The client half is `client/scripts/net/skill.gd` (codec) and
 | opcode | direction | payload | retail analogue |
 |---|---|---|---|
 | `OpUseSkill 0x0072` | C->S | `{name, i64 skillId, i64 targetMonsterId, u8 targetType (0 none/self, 1 entity, 2 ground), [2: f32 x, f32 y, f32 z]}` -- the type byte and point are a strict suffix, so a request without them reads as 1 | 0x7074 kind 4 |
-| `OpBuffStart 0x00F5` | S->C | `{i64 ownerId, i64 skillId, u32 token, i64 durationMs (-1 none), i64 remainingMs, u32 runSpeed (0 unchanged)}` (40 bytes) | 0xB0BD |
-| `OpBuffEnd 0x00F6` | S->C | `{i64 ownerId, u8 count, count x u32 token, u32 runSpeed}` | 0xB072 |
+| `OpAttackResult` (existing) | S->C | trailing `u8 targetType` after `i64 monsterId`: the echo of the request's 0/1/2; a keep-up repeat sends 1 | -- |
+| `OpBuffStart 0x00F5` | S->C | `{i64 ownerId, i64 skillId, u32 token, i64 durationMs (-1 none), i64 remainingMs, u32 runSpeed (0 unchanged), u8 ownerKind (0 character, 1 monster)}` | 0xB0BD |
+| `OpBuffEnd 0x00F6` | S->C | `{i64 ownerId, u8 count, count x u32 token, u32 runSpeed, u8 ownerKind}` | 0xB072 |
 | `OpBuffCancel 0x00F7` | C->S | `{name, i64 skillId, u32 token}` | 0x7074 kind 5 (sender 0x81c5b0) |
 | `OpSkillMove 0x00F8` | S->C | `{i64 characterId, i64 skillId, f32 x, f32 y, f32 z}` (28 bytes), OpMove's coordinates | 0xB070 with a position (inferred) |
+| `OpSelfId 0x00F9` | S->C, on world entry | `{i64 characterId}` -- this client's own id (`NetClient.self_id_received`, `own_character_id`) | the character-data packet's own id |
+
+The four trailing fields (targetType echo, both ownerKinds, and OpSelfId itself) were added by
+round 617's review. Each is a suffix or a new message: a client reads them when present and
+falls back when absent.
 
 What the client sends, by the skill's own columns (the skill tick's phase-0
 rule above, READ; `SelfCast.plan`):
@@ -387,14 +393,20 @@ rule above, READ; `SelfCast.plan`):
   reach, as before; refused with nothing selected. The retail fallback for a
   Target_Required 1 heal with nothing selected is OPEN.
 
-The reply to a type-0 or type-2 cast is still an `OpAttackResult`. The client
-tags each reply with the targetType of the request it answers (the in-flight
-queue), and a type-0/2 reply that reports no damage is not drawn as a blow on
-the selected monster.
+The reply to a type-0 or type-2 cast is still an `OpAttackResult`. Its
+echoed targetType says which request it answers; a type-0/2 reply that
+reports no damage, no kill and no death is not drawn as a blow on the
+selected monster. From a server without the echo the client falls back to
+the in-flight request queue, which a keep-up repeat or a swing dropped inside
+its re-use delay can put out of step -- so an unechoed reply is swallowed only
+when it carries no damage, no kill, no death and no error (`SelfCast.is_self_reply`).
 
 `OpSkillMove` snaps the character to the point (the move's duration is OPEN:
 `tele` value[0] = 500 is unread by the server's clamp). `runSpeed` from a
 buff start or end becomes the player's `_move_speed` -- the characterdata
-Speed2 units the client already moves by; 0 leaves it. The client is not told
-its own character id, so it learns it from the first start or move answering
-one of its own casts within 10 s (OURS; `SelfCast`).
+Speed2 units the client already moves by; 0 leaves it. A buff whose ownerKind
+is 1 (a monster) is never this player's. This player's id is OpSelfId's; the
+sit state (`SitState.own_id`) is checked against it and takes it. Before any
+OpSelfId (an older server) the sit answer's id is used, and failing that the
+id is learned from the first start or move answering one of the client's own
+casts within 10 s (OURS; `SelfCast`).

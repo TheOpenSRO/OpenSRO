@@ -7193,6 +7193,50 @@ That server predates round 616: it accepts both casts as non-damaging rows and s
 no end and no move, so the speed change and the snap were **not** seen live -- the server's response
 is out of this round's scope and is measured only by the headless suite.
 
+**Review follow-up.** The review found five things; the contract gained four trailing fields
+for them (`docs/protocol/auto_command.md`), and round 616's server is told the same:
+- **A self cast's reply drawn as a blow, and a death swallowed.** The reply's type came from a
+  FIFO of sent requests, which a server keep-up repeat (sent unasked) or a swing dropped inside
+  its re-use delay puts out of step: mid-fight the repeat took the self cast's 0, and a 0-damage
+  repeat on which the monster killed the player was swallowed as the cast's reply. OpAttackResult
+  now echoes the request's targetType as a trailing u8 (a repeat sends 1), read into
+  `AttackResult.target_type` / `target_type_echoed`; the queue only fills a reply that carries no
+  echo, and such a reply is swallowed only when it carries no damage, kill, death or error. Even
+  echoed, a death is always drawn.
+- **Own id.** OpSelfId 0x00F9 `{i64 characterId}` on world entry, NetClient
+  `self_id_received(character_id)` and `own_character_id` (reset on connect, disconnect and each
+  enter_world). `World3D._sync_own_id` gives it to SelfCast and to the sit state, logging a
+  disagreement with an id either had learned; before one arrives the sit answer's id is used, and
+  the learn-from-own-cast heuristic is the last fallback only. OpBuffStart/End carry a trailing
+  ownerKind: a monster's buff (kind 1) is never this player's, whatever its id.
+- **Cursor leak.** A pick left on when the world leaves (`_exit_tree`) or the session ends
+  (`_on_disconnected`, which the System menu's Restart and Exit reach) is cancelled and the
+  default shape reset (`_leave_ground_pick`).
+- **Orphaned comment.** `_on_state_changed`'s doc comment is back on its function.
+- **Hit effect of a Target_Required 0 `att` row cast at a selection.** Not restored: once a
+  server applies a type-0 cast to the caster the effect has no target. What is pinned is that an
+  echoed type-0, no-damage reply naming the selection is a quiet accept (no swing, selection kept).
+
+Tests: `self_cast_test.gd` gains `_test_interleaved_replies` (an unsolicited keep-up repeat between
+a self cast and its reply, echoed and not; the unechoed death), `_test_own_id` and
+`_test_leave_world`, and the codec checks for the four fields -- 96 checks, ALL PASS. Against
+round 617's first commit (70470a8) it fails:
+```
+FAIL NetClient has self_id_received
+FAIL 0x00F9 emits self_id_received and keeps own_character_id (got [])
+FAIL the unsolicited keep-up repeat keeps its echoed type 1 (got 0)
+FAIL the self cast's reply keeps its echoed 0 (got 1)
+FAIL the self cast's echoed reply is not
+FAIL World3D has _self_cast and NetClient own_character_id
+FAIL World3D has _leave_ground_pick
+7 FAILURES
+```
+with SCRIPT ERRORs where the old signatures stop a block (`is_self_reply ... Expected 3
+arguments`, `Invalid get index 'owner_kind'`, `Invalid get index 'target_type_echoed'` -- the last
+stops the unechoed-death check before it runs there). `remote_godot.sh check`: 344 scripts and 5
+scenes, ALL LOAD; `remote_godot.sh tests`: 133 suites, 0 failing. The cursor's shape is read from World3D's
+own `_default_cursor_shape`, since a headless display server reports none.
+
 **Open:** the live check against round 616's server (speed 50 -> 60, the Ghost Walk landing); the
 move's duration and its WAIT effect; the ground-pick cursor and decal; the retail target fallback for
 a Target_Required 1 heal with nothing selected (still refused); the client's own id (learned, not

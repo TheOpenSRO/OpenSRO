@@ -1275,6 +1275,7 @@ func _ready() -> void:
 	NetClient.buff_started.connect(_on_buff_started)
 	NetClient.buff_ended.connect(_on_buff_ended)
 	NetClient.skill_moved.connect(_on_skill_moved)
+	NetClient.self_id_received.connect(_on_self_id_received)
 	NetClient.monster_damaged.connect(_on_monster_damaged)
 	NetClient.monster_died.connect(_on_monster_died)
 	NetClient.level_up.connect(_on_level_up)
@@ -1541,6 +1542,10 @@ func _try_initialize_pk2_ui() -> void:
 			# than the last one this client played (round 607).
 			_sit.own_id = -1
 			_sit.reset()
+			# And whose buffs are whose (round 617): OpSelfId for this entry,
+			# when it has come, is taken again by _sync_own_id.
+			_self_cast.forget_owner()
+			_sync_own_id()
 		if result != null and result.ok and result.max_hp > 0:
 			_last_enter_world_hp = result.hp
 			_last_enter_world_max_hp = result.max_hp
@@ -4656,6 +4661,7 @@ func _load_object_template(model_path: String) -> Node3D:
 ## Also called on quit, where all of it is harmless.
 func _exit_tree() -> void:
 	SoundTable.set_listener(null)
+	_leave_ground_pick("the world left the tree")
 	var exit_music := _audio_music()
 	if exit_music != null:
 		exit_music.leave_world()
@@ -7009,13 +7015,22 @@ func _send_self_cast(skill_id: int, basic_code: String, target_type: int, point:
 ## decal) is not read (skills_spec §6, OPEN), so the mode shows the system
 ## cross in place of the game's arrow, and the hover cursor is not settled
 ## while it lasts (_settle_hover_cursor).
+## The default cursor shape this world last set -- kept because a headless
+## display server reports none back (Input.get_current_cursor_shape), so the
+## suite reads this.
+var _default_cursor_shape := Input.CURSOR_ARROW
+
+func _set_default_cursor(shape: Input.CursorShape) -> void:
+	Input.set_default_cursor_shape(shape)
+	_default_cursor_shape = shape
+
 func _begin_ground_pick_cursor() -> void:
 	Input.set_custom_mouse_cursor(null, Input.CURSOR_ARROW)
-	Input.set_default_cursor_shape(Input.CURSOR_CROSS)
+	_set_default_cursor(Input.CURSOR_CROSS)
 	print("GROUND PICK: cursor -> cross (ours)")
 
 func _end_ground_pick_cursor() -> void:
-	Input.set_default_cursor_shape(Input.CURSOR_ARROW)
+	_set_default_cursor(Input.CURSOR_ARROW)
 	# Force the game's arrow back on (it is only re-applied on a change).
 	_cursor_kind = ""
 	if not _cursor_textures.is_empty():
@@ -7028,6 +7043,14 @@ func _cancel_ground_pick(why: String) -> bool:
 	_end_ground_pick_cursor()
 	print("GROUND PICK: cancelled (%s)" % why)
 	return true
+
+## The world is going (_exit_tree) or the session ended (_on_disconnected,
+## which the System menu's Restart and Exit reach): a pick left on would keep
+## its cross cursor over the login screen (round 617's review). The pick ends
+## and the default shape goes back whether or not one was on.
+func _leave_ground_pick(why: String) -> void:
+	_cancel_ground_pick(why)
+	_set_default_cursor(Input.CURSOR_ARROW)
 
 ## A left click on the world while ground-pick mode is on: the point on the
 ## ground under it (the walk's own ray, _ground_point_at) is where the skill
@@ -12326,6 +12349,9 @@ func _unstuck_player() -> void:
 	_log_system("Unstuck: returned to the zone entry point.")
 
 func _on_disconnected() -> void:
+	# Restart / Exit from the System menu and a dropped peer all come here
+	# before the scene changes: no ground pick outlives the session.
+	_leave_ground_pick("disconnected")
 	get_tree().change_scene_to_file("res://scenes/Login.tscn")
 
 # --- Monsters tab ---------------------------------------------------------
@@ -13237,11 +13263,14 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	# A self or ground cast's reply (round 617) is not a blow on the target:
 	# no swing, no flinch, no counter, and the monster cast still in flight
 	# keeps its hit effect. The health bar is painted by the other handler.
-	if SelfCast.is_self_reply(result.target_type, result.monster_damage, result.monster_died):
+	if SelfCast.is_self_reply(result.target_type, result.target_type_echoed, result.monster_damage,
+			result.monster_died, result.player_died, result.error):
 		if result.error != "":
-			print("CAST reply: self/ground cast (targetType %d) refused: %s" % [result.target_type, result.error])
+			print("CAST reply: self/ground cast (targetType %d, %s) refused: %s" % [result.target_type,
+				"echoed" if result.target_type_echoed else "from the request queue", result.error])
 		else:
-			print("CAST reply: self/ground cast (targetType %d) accepted, HP %d" % [result.target_type, result.player_hp])
+			print("CAST reply: self/ground cast (targetType %d, %s) accepted, HP %d" % [result.target_type,
+				"echoed" if result.target_type_echoed else "from the request queue", result.player_hp])
 			NetClient.list_skills(NetClient.current_character_name)
 		return
 	if result.error != "":
@@ -14189,26 +14218,48 @@ func _qa_pelvis_height() -> String:
 	var at := _player_skeleton.global_transform * _player_skeleton.get_bone_global_pose(bone)
 	return "%.2f" % (at.origin.y - player.global_position.y)
 
-## OP_STATE_CHANGE: kind 1 is the motion state. This player's own id is not in
-## the enter-world result, so the first answer to its own N teaches it; any
-## other id is another player's body.
 ## A buff began (OpBuffStart, round 617). Only its run speed is applied here
 ## -- the icon is round 618's buff bar and the aura round 619's -- and only
 ## for this player (SelfCast.claims_start). runSpeed is the owner's new run
 ## speed in the units _move_speed moves by (characterdata Speed2, the same
 ## number the server moves the character by); 0 means unchanged.
 func _on_buff_started(start: SkillNet.BuffStart) -> void:
-	var mine := _self_cast.claims_start(start.owner_id, start.skill_id, start.token, _other_bodies, Time.get_ticks_msec())
+	_sync_own_id()
+	var mine := _self_cast.claims_start(start.owner_id, start.owner_kind, start.skill_id, start.token, _other_bodies, Time.get_ticks_msec())
 	print("BUFF start handled: owner %d is %s" % [start.owner_id, "this player" if mine else "someone else"])
 	if mine:
 		_apply_buff_run_speed(start.run_speed, "OpBuffStart skill %d token %d" % [start.skill_id, start.token])
 
 ## Buffs ended (OpBuffEnd, round 617): this player's run speed, as for a start.
 func _on_buff_ended(ended: SkillNet.BuffEnd) -> void:
-	var mine := _self_cast.claims_end(ended.owner_id, ended.tokens)
+	_sync_own_id()
+	var mine := _self_cast.claims_end(ended.owner_id, ended.owner_kind, ended.tokens)
 	print("BUFF end handled: owner %d is %s" % [ended.owner_id, "this player" if mine else "someone else"])
 	if mine:
 		_apply_buff_run_speed(ended.run_speed, "OpBuffEnd tokens %s" % str(ended.tokens))
+
+## OpSelfId arrived (round 617's review): this player's own id, for the buff
+## and move handlers and the sit state alike.
+func _on_self_id_received(_character_id: int) -> void:
+	_sync_own_id()
+
+## Brings the two holders of this player's own id into line with the best
+## source: OpSelfId (NetClient.own_character_id) when the server sent it --
+## the sit state's learned id is checked against it and replaced -- else the
+## id the sit answer taught, which SelfCast then takes as told instead of
+## guessing from its own casts.
+func _sync_own_id() -> void:
+	var told := int(NetClient.own_character_id)
+	if told >= 0:
+		if _sit.own_id >= 0 and _sit.own_id != told:
+			print("SELF id: the sit state had learned %d, OpSelfId says %d -- using %d" % [_sit.own_id, told, told])
+		_sit.own_id = told
+		if _self_cast.own_id != told or not _self_cast.own_id_told:
+			if _self_cast.own_id >= 0 and _self_cast.own_id != told:
+				print("SELF id: buffs had taught %d, OpSelfId says %d -- using %d" % [_self_cast.own_id, told, told])
+			_self_cast.tell_own_id(told)
+	elif _sit.own_id >= 0 and not _self_cast.own_id_told:
+		_self_cast.tell_own_id(_sit.own_id)
 
 ## Sets the player's run speed from a buff packet; 0 leaves it.
 func _apply_buff_run_speed(run_speed: int, why: String) -> void:
@@ -14224,6 +14275,7 @@ func _apply_buff_run_speed(run_speed: int, why: String) -> void:
 ## perhaps milliseconds), so it is a SNAP, not a tween -- ours, until that is
 ## read. Another player's body is put there and its walk target with it.
 func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
+	_sync_own_id()
 	var to := Vector3(moved.x, moved.y, moved.z)
 	if _other_bodies.has(moved.character_id):
 		var body: Node3D = _other_bodies[moved.character_id]
@@ -14246,7 +14298,12 @@ func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
 	print("SKILL move handled: this player snapped (duration OPEN) from (%.1f, %.1f, %.1f) to (%.1f, %.1f, %.1f), %.1f units, by skill %d" % [
 		from.x, from.y, from.z, to.x, to.y, to.z, from.distance_to(to), moved.skill_id])
 
+## OP_STATE_CHANGE: kind 1 is the motion state. This player's own id is
+## OpSelfId's when the server sent one (round 617's review, _sync_own_id);
+## otherwise the first answer to its own N teaches it; any other id is another
+## player's body.
 func _on_state_changed(change: WorldNet.StateChange) -> void:
+	_sync_own_id()
 	if change == null or change.kind != WorldNet.STATE_KIND_MOTION:
 		return
 	match _sit.classify(change.object_id, _other_bodies.has(change.object_id), _player_anim_time):

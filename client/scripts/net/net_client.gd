@@ -111,7 +111,14 @@ signal raise_mastery_result(result: SkillNet.RaiseMasteryResult)
 ## A payload too short for its layout is dropped with a warning, not emitted.
 ## The one sender that goes with them is send_buff_cancel(skill_id, token)
 ## (OpBuffCancel 0x00F7, the buff icon's right-click).
+##   self_id_received(character_id: int)      OpSelfId 0x00F9, on world entry:
+##     this client's own character id (also kept in own_character_id).
+## OpBuffStart / OpBuffEnd carry a trailing ownerKind (SkillNet.OWNER_*).
 signal buff_started(start: SkillNet.BuffStart)
+signal self_id_received(character_id: int)
+## This client's own character id from OpSelfId; -1 until one arrives on this
+## connection (and from a server that does not send it).
+var own_character_id := -1
 signal buff_ended(ended: SkillNet.BuffEnd)
 signal skill_moved(moved: SkillNet.SkillMove)
 
@@ -276,6 +283,7 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	_reader = PacketReader.new()
 	_attack_targets_in_flight.clear()
 	_attack_types_in_flight.clear()
+	own_character_id = -1
 	_unhandled_warned.clear()
 	_use_tls = use_tls
 	_tls_host = host
@@ -305,6 +313,7 @@ func disconnect_from_server() -> void:
 	_tls_handshaking = false
 	_attack_targets_in_flight.clear()
 	_attack_types_in_flight.clear()
+	own_character_id = -1
 	_forget_session_lists()
 	disconnected.emit()
 
@@ -374,6 +383,8 @@ var current_zone := ""
 func enter_world(char_name: String) -> void:
 	current_character_name = char_name
 	_forget_session_lists()
+	# The OpSelfId that answers this entry names the character entering now.
+	own_character_id = -1
 	_send(WorldNet.OP_ENTER_WORLD, WorldNet.encode_enter_world(char_name))
 
 func move_to(x: float, y: float, z: float) -> void:
@@ -739,8 +750,12 @@ func _dispatch(p: Packet) -> void:
 			var sent_at := -1
 			if not _attack_targets_in_flight.is_empty():
 				sent_at = _attack_targets_in_flight.pop_front()
+			# The server's own echo wins; the queue only fills a reply that
+			# carries none (an older server).
 			if not _attack_types_in_flight.is_empty():
-				ar.target_type = _attack_types_in_flight.pop_front()
+				var queued: int = _attack_types_in_flight.pop_front()
+				if not ar.target_type_echoed:
+					ar.target_type = queued
 			if ar.monster_id == 0 and sent_at != -1:
 				ar.monster_id = sent_at
 			attack_result.emit(ar)
@@ -807,16 +822,26 @@ func _dispatch(p: Packet) -> void:
 			if bs == null:
 				push_warning("NetClient: short OpBuffStart (%d bytes) dropped" % p.data.size())
 			else:
-				print("BUFF start: owner %d skill %d token %d duration %d ms remaining %d ms runSpeed %d" % [
-					bs.owner_id, bs.skill_id, bs.token, bs.duration_ms, bs.remaining_ms, bs.run_speed])
+				print("BUFF start: owner %d (kind %s) skill %d token %d duration %d ms remaining %d ms runSpeed %d" % [
+					bs.owner_id, str(bs.owner_kind) if bs.owner_kind_sent else "unsent", bs.skill_id, bs.token,
+					bs.duration_ms, bs.remaining_ms, bs.run_speed])
 				buff_started.emit(bs)
 		SkillNet.OP_BUFF_END:
 			var be := SkillNet.decode_buff_end(p.data)
 			if be == null:
 				push_warning("NetClient: short OpBuffEnd (%d bytes) dropped" % p.data.size())
 			else:
-				print("BUFF end: owner %d tokens %s runSpeed %d" % [be.owner_id, str(be.tokens), be.run_speed])
+				print("BUFF end: owner %d (kind %s) tokens %s runSpeed %d" % [be.owner_id,
+					str(be.owner_kind) if be.owner_kind_sent else "unsent", str(be.tokens), be.run_speed])
 				buff_ended.emit(be)
+		SkillNet.OP_SELF_ID:
+			var sid := SkillNet.decode_self_id(p.data)
+			if sid < 0:
+				push_warning("NetClient: short OpSelfId (%d bytes) dropped" % p.data.size())
+			else:
+				own_character_id = sid
+				print("SELF id: this character is %d" % sid)
+				self_id_received.emit(sid)
 		SkillNet.OP_SKILL_MOVE:
 			var sm := SkillNet.decode_skill_move(p.data)
 			if sm == null:

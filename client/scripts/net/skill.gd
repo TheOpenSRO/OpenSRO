@@ -25,6 +25,12 @@ const OP_BUFF_START := 0x00F5     # server -> client (the region)
 const OP_BUFF_END := 0x00F6       # server -> client (the region)
 const OP_BUFF_CANCEL := 0x00F7    # client -> server
 const OP_SKILL_MOVE := 0x00F8     # server -> client (the region)
+const OP_SELF_ID := 0x00F9        # server -> client, on world entry: {i64 characterId}
+
+## OpBuffStart / OpBuffEnd's trailing ownerKind (the contract's review
+## follow-up): whose id ownerId is.
+const OWNER_CHARACTER := 0
+const OWNER_MONSTER := 1
 
 ## OpUseSkill's targetType suffix (round 617, §4.0 of the contract): what the
 ## cast is aimed at. 0 nothing / the caster itself, 1 an entity (the
@@ -92,7 +98,9 @@ static func encode_buff_cancel(character_name: String, skill_id: int, token: int
 
 ## OpBuffStart: a buff began on an owner (a character or a monster) --
 ## {i64 ownerId, i64 skillId, u32 token, i64 durationMs (-1 = none),
-## i64 remainingMs, u32 runSpeed (the owner's new, 0 = unchanged)}.
+## i64 remainingMs, u32 runSpeed (the owner's new, 0 = unchanged),
+## u8 ownerKind (0 character, 1 monster; a trailing suffix -- absent, it
+## reads 0 and owner_kind_sent is false)}.
 ## The token is the server's own per-application id; icons and auras are
 ## keyed by (owner_id, token).
 class BuffStart:
@@ -102,6 +110,8 @@ class BuffStart:
 	var duration_ms: int
 	var remaining_ms: int
 	var run_speed: int
+	var owner_kind: int = OWNER_CHARACTER
+	var owner_kind_sent: bool = false
 
 const BUFF_START_SIZE := 40
 
@@ -116,14 +126,20 @@ static func decode_buff_start(data: PackedByteArray) -> BuffStart:
 	b.duration_ms = data.decode_s64(20)
 	b.remaining_ms = data.decode_s64(28)
 	b.run_speed = data.decode_u32(36)
+	if data.size() >= BUFF_START_SIZE + 1:
+		b.owner_kind = data[BUFF_START_SIZE]
+		b.owner_kind_sent = true
 	return b
 
 ## OpBuffEnd: buffs ended on an owner -- {i64 ownerId, u8 count,
-## count x u32 token, u32 runSpeed (the owner's new, 0 = unchanged)}.
+## count x u32 token, u32 runSpeed (the owner's new, 0 = unchanged),
+## u8 ownerKind (trailing, as OpBuffStart's)}.
 class BuffEnd:
 	var owner_id: int
 	var tokens: Array[int] = []
 	var run_speed: int
+	var owner_kind: int = OWNER_CHARACTER
+	var owner_kind_sent: bool = false
 
 ## Decodes an OpBuffEnd payload; null when it is short.
 static func decode_buff_end(data: PackedByteArray) -> BuffEnd:
@@ -137,6 +153,9 @@ static func decode_buff_end(data: PackedByteArray) -> BuffEnd:
 	for i in count:
 		e.tokens.append(data.decode_u32(9 + i * 4))
 	e.run_speed = data.decode_u32(9 + count * 4)
+	if data.size() >= 9 + count * 4 + 5:
+		e.owner_kind = data[9 + count * 4 + 4]
+		e.owner_kind_sent = true
 	return e
 
 ## OpSkillMove: a skill moved a character to a point -- Ghost Walk's landing
@@ -356,3 +375,11 @@ static func decode_raise_mastery_result(data: PackedByteArray) -> RaiseMasteryRe
 	r.new_level = data.decode_u32(offset + 8)
 	r.skill_points = data.decode_u32(offset + 12)
 	return r
+
+## Decodes an OpSelfId payload -- this client's own character id, the one
+## OpBuffStart / OpSkillMove / the state change name it by -- or -1 when it
+## is short.
+static func decode_self_id(data: PackedByteArray) -> int:
+	if data.size() < 8:
+		return -1
+	return data.decode_s64(0)

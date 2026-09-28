@@ -13,6 +13,11 @@ extends SceneTree
 ## NetClient is the real autoload with a StreamPeerBuffer standing in for the
 ## socket, so the bytes checked are the bytes the client would send.
 ##
+## Review follow-up: the attack result's targetType echo and the reply queue
+## out of step (_test_interleaved_replies), OpSelfId and ownerKind
+## (_test_own_id), and the pick's cursor leaving with the world
+## (_test_leave_world).
+##
 ## NEGATIVE (round 617): against dev b50a7b9 the Grass Walk key with nothing
 ## selected sends nothing ("Select a target first"), and the Ghost Walk key
 ## does the same, so the ground click walks instead of casting -- the
@@ -54,6 +59,9 @@ func _initialize() -> void:
 			_test_cancel(world)
 			_test_buffs_and_move(world)
 			_test_self_reply(world)
+			_test_interleaved_replies(world)
+			_test_own_id(world)
+			_test_leave_world(world)
 			root.remove_child(world)
 			world.free()
 		_net.set("_connected", false)
@@ -83,9 +91,17 @@ func _test_plan() -> void:
 	_check(sc.call("plan", smash, false) == "need_target", "and is refused with none")
 	_check(sc.call("plan", {}, false) == "need_target", "a skill the catalog does not know is refused with nothing selected")
 	_check(sc.call("plan", {}, true) == "target", "and cast at a selection, as before")
-	_check(sc.call("is_self_reply", 0, 0, false), "a type-0 reply with no damage is the self cast's")
-	_check(not sc.call("is_self_reply", 0, 12, false), "one that reports damage is a blow")
-	_check(not sc.call("is_self_reply", 1, 0, false), "an entity cast's reply is never a self reply")
+	# is_self_reply(target_type, echoed, monster_damage, monster_died, player_died, error)
+	_check(sc.call("is_self_reply", 0, true, 0, false, false, ""), "an echoed type-0 reply with no damage is the self cast's")
+	_check(sc.call("is_self_reply", 0, true, 0, false, false, "skill on cooldown"), "and so is its echoed refusal")
+	_check(sc.call("is_self_reply", 2, true, 0, false, false, ""), "an echoed type-2 reply is the ground cast's")
+	_check(not sc.call("is_self_reply", 0, true, 12, false, false, ""), "one that reports damage is a blow")
+	_check(not sc.call("is_self_reply", 1, true, 0, false, false, ""), "an entity cast's reply is never a self reply")
+	_check(sc.call("is_self_reply", 0, false, 0, false, false, ""), "unechoed, a clean type-0 reply is the cast's")
+	_check(not sc.call("is_self_reply", 0, false, 0, false, true, ""), "unechoed, one carrying the player's death is never swallowed")
+	_check(not sc.call("is_self_reply", 0, false, 0, false, false, "too far away"), "unechoed, one carrying an error is never swallowed")
+	_check(not sc.call("is_self_reply", 0, false, 30, false, false, ""), "unechoed, one carrying damage is never swallowed")
+	_check(not sc.call("is_self_reply", 0, true, 0, false, true, ""), "even echoed, the player's death is drawn")
 
 # --- The §4.0 byte layouts -----------------------------------------------------
 
@@ -131,6 +147,36 @@ func _buff_start_bytes(owner: int, skill: int, token: int, dura: int, remaining:
 	out.append_array(_u32(speed))
 	return out
 
+## The same with the trailing u8 ownerKind.
+func _with_kind(bytes: PackedByteArray, kind: int) -> PackedByteArray:
+	var out := bytes.duplicate()
+	out.append(kind)
+	return out
+
+## An OpAttackResult as the server encodes it (session/combat.go
+## AttackResult.Encode): {str error, u32 dmg, u32 remaining, u8 died,
+## u32 taken, u32 hp, u8 player_died, u32 gauge, u8 berserk, i64 exp lost,
+## u8 mcrit, u8 pcrit, u8 blocked, i64 monsterId}, then round 617's u8
+## targetType echo when `echo` >= 0.
+func _attack_result_bytes(error: String, dmg: int, player_died: bool, hp: int, monster: int, echo: int) -> PackedByteArray:
+	var e := error.to_utf8_buffer()
+	var out := PackedByteArray([e.size() & 0xff, e.size() >> 8])
+	out.append_array(e)
+	out.append_array(_u32(dmg))
+	out.append_array(_u32(0))
+	out.append(0)
+	out.append_array(_u32(0))
+	out.append_array(_u32(hp))
+	out.append(1 if player_died else 0)
+	out.append_array(_u32(0))
+	out.append(0)
+	out.append_array(_u64(0))
+	out.append_array(PackedByteArray([0, 0, 0]))
+	out.append_array(_u64(monster))
+	if echo >= 0:
+		out.append(echo)
+	return out
+
 func _buff_end_bytes(owner: int, tokens: Array, speed: int) -> PackedByteArray:
 	var out := _u64(owner)
 	out.append(tokens.size())
@@ -173,6 +219,20 @@ func _test_codec() -> void:
 	_check(be0 != null and be0.tokens.is_empty() and be0.run_speed == 0, "an OpBuffEnd with no tokens decodes")
 	_check(_S.call("decode_buff_end", _buff_end_bytes(77, [5, 9], 50).slice(0, 20)) == null,
 		"a short OpBuffEnd is refused")
+	var bsk = _S.call("decode_buff_start", _with_kind(_buff_start_bytes(77, 113, 5, 1, 1, 0), 1))
+	_check(bsk != null and bsk.owner_kind == 1 and bsk.owner_kind_sent, "OpBuffStart's trailing ownerKind 1 (monster) is read")
+	_check(bs != null and bs.owner_kind == 0 and not bs.owner_kind_sent, "without it the owner reads as a character, marked unsent")
+	var bek = _S.call("decode_buff_end", _with_kind(_buff_end_bytes(77, [5, 9], 50), 1))
+	_check(bek != null and bek.owner_kind == 1 and bek.owner_kind_sent and bek.run_speed == 50 and bek.tokens == [5, 9],
+		"OpBuffEnd's trailing ownerKind is read after runSpeed")
+	_check(_S.call("decode_self_id", _u64(4242)) == 4242, "OpSelfId decodes {i64 characterId}")
+	_check(_S.call("decode_self_id", _u64(4242).slice(0, 7)) == -1, "a short OpSelfId is refused")
+	var ar_echo := CombatNet.decode_attack_result(_attack_result_bytes("", 0, false, 100, 555, 0))
+	_check(ar_echo.monster_id == 555 and ar_echo.target_type == 0 and ar_echo.target_type_echoed,
+		"OpAttackResult's trailing targetType echo is read after monsterId")
+	var ar_old := CombatNet.decode_attack_result(_attack_result_bytes("", 7, false, 100, 555, -1))
+	_check(ar_old.monster_damage == 7 and not ar_old.target_type_echoed and ar_old.target_type == 1,
+		"a result without the echo reads type 1, marked unechoed")
 	var sm = _S.call("decode_skill_move", _skill_move_bytes(77, 114, GROUND_POINT))
 	_check(sm != null and sm.character_id == 77 and sm.skill_id == 114
 		and Vector3(sm.x, sm.y, sm.z) == GROUND_POINT, "OpSkillMove decodes the character, skill and point")
@@ -195,6 +255,16 @@ func _test_dispatch() -> void:
 	_net.call("_dispatch", Packet.new(0x00F5, _buff_start_bytes(91, 113, 7, 355462, 1000, 60)))
 	_net.call("_dispatch", Packet.new(0x00F6, _buff_end_bytes(91, [7], 50)))
 	_net.call("_dispatch", Packet.new(0x00F8, _skill_move_bytes(91, 114, GROUND_POINT)))
+	var ids: Array = []
+	var on_id := func(i) -> void: ids.append(i)
+	_check(_net.has_signal("self_id_received"), "NetClient has self_id_received")
+	if _net.has_signal("self_id_received"):
+		_net.connect("self_id_received", on_id)
+		_net.call("_dispatch", Packet.new(0x00F9, _u64(9191)))
+		_net.disconnect("self_id_received", on_id)
+	_check(ids == [9191] and int(_net.get("own_character_id")) == 9191,
+		"0x00F9 emits self_id_received and keeps own_character_id (got %s)" % str(ids))
+	_net.set("own_character_id", -1)
 	_check(got.has("start") and got["start"].token == 7 and got["start"].run_speed == 60, "0x00F5 emits buff_started")
 	_check(got.has("end") and got["end"].tokens == [7], "0x00F6 emits buff_ended")
 	_check(got.has("move") and got["move"].skill_id == 114, "0x00F8 emits skill_moved")
@@ -400,3 +470,116 @@ func _test_self_reply(world: Node) -> void:
 	_check(int(world.get("_attack_step")) == step, "a self cast's reply plays no swing (step %d -> %d)" % [step, int(world.get("_attack_step"))])
 	_check(world.get("_pending_skill_hit_code") == "SKILL_CH_SWORD_SMASH_A_01", "and leaves the monster cast's hit effect armed")
 	_check(int(world.get("_last_attack_target")) == 555, "and the selection")
+
+## Round 617's review: the reply queue out of step. A keep-up repeat the client
+## never asked for lands between a self cast and its reply.
+func _test_interleaved_replies(world: Node) -> void:
+	var got: Array = []
+	var on_result := func(r) -> void: got.append(r)
+	_net.connect("attack_result", on_result)
+	world.set("_last_attack_target", 555)
+	# 1. A server that echoes: the repeat says type 1 though the queue's head
+	# is the self cast's 0, and is drawn as a blow; the cast's reply says 0.
+	var buf := _fresh_socket()
+	_net.set("_attack_targets_in_flight", [] as Array[int])
+	_net.set("_attack_types_in_flight", [] as Array[int])
+	world.call("_cast_skill", 113, "SKILL_CH_LIGHTNING_GYEONGGONG_A_01")
+	_net.call("_dispatch", Packet.new(CombatNet.OP_ATTACK_RESULT, _attack_result_bytes("", 30, false, 90, 555, 1)))
+	_net.call("_dispatch", Packet.new(CombatNet.OP_ATTACK_RESULT, _attack_result_bytes("", 0, false, 90, 0, 0)))
+	_check(got.size() == 2, "two replies dispatched (got %d)" % got.size())
+	if got.size() == 2:
+		_check(got[0].target_type == 1, "the unsolicited keep-up repeat keeps its echoed type 1 (got %d)" % got[0].target_type)
+		_check(got[1].target_type == 0, "the self cast's reply keeps its echoed 0 (got %d)" % got[1].target_type)
+		var step := int(world.get("_attack_step"))
+		world.call("_on_attack_result", got[0])
+		_check(int(world.get("_attack_step")) == step + 1, "the repeat is drawn as a blow")
+		world.call("_on_attack_result", got[1])
+		_check(int(world.get("_attack_step")) == step + 1, "the self cast's echoed reply is not")
+	# 2. A server that does not echo: the queue hands the repeat the self
+	# cast's 0. A repeat on which the monster killed the player carries no
+	# damage -- it must still be drawn, not swallowed as the cast's reply.
+	got.clear()
+	_net.set("_attack_targets_in_flight", [] as Array[int])
+	_net.set("_attack_types_in_flight", [] as Array[int])
+	world.call("_cast_skill", 113, "SKILL_CH_LIGHTNING_GYEONGGONG_A_01")
+	_net.call("_dispatch", Packet.new(CombatNet.OP_ATTACK_RESULT, _attack_result_bytes("", 0, true, 100, 555, -1)))
+	if got.size() == 1:
+		_check(got[0].target_type == 0 and not got[0].target_type_echoed, "unechoed, the repeat is handed the queue's 0")
+		var step2 := int(world.get("_attack_step"))
+		world.call("_on_attack_result", got[0])
+		_check(int(world.get("_attack_step")) == step2 + 1, "but carrying player_died it is drawn, not swallowed")
+	else:
+		_check(false, "one reply dispatched (got %d)" % got.size())
+	# 3. Review item 5: a server that applies a type-0 cast to the caster
+	# echoes 0 with no damage even when a monster was selected -- a quiet
+	# accept, no swing, nothing refused.
+	got.clear()
+	_net.set("_attack_targets_in_flight", [] as Array[int])
+	_net.set("_attack_types_in_flight", [] as Array[int])
+	world.call("_cast_skill", 113, "SKILL_CH_LIGHTNING_GYEONGGONG_A_01")
+	_net.call("_dispatch", Packet.new(CombatNet.OP_ATTACK_RESULT, _attack_result_bytes("", 0, false, 100, 555, 0)))
+	if got.size() == 1:
+		var step3 := int(world.get("_attack_step"))
+		world.call("_on_attack_result", got[0])
+		_check(int(world.get("_attack_step")) == step3, "an echoed type-0, no-damage reply naming the selection plays no swing")
+		_check(int(world.get("_last_attack_target")) == 555, "and keeps the selection")
+	else:
+		_check(false, "one reply dispatched (got %d)" % got.size())
+	_net.disconnect("attack_result", on_result)
+	_net.set("_attack_targets_in_flight", [] as Array[int])
+	_net.set("_attack_types_in_flight", [] as Array[int])
+
+## Round 617's review: the own id from OpSelfId, and a monster's buff never
+## moves this player's speed.
+func _test_own_id(world: Node) -> void:
+	var sc = world.get("_self_cast")
+	if sc == null or not ("own_character_id" in _net):
+		_check(false, "World3D has _self_cast and NetClient own_character_id")
+		return
+	var now := Time.get_ticks_msec()
+	world.set("_move_speed", 50.0)
+	# The fallback learned 4242 in _test_buffs_and_move; OpSelfId says 7777.
+	(world.get("_sit") as RefCounted).set("own_id", 4242)
+	_net.call("_dispatch", Packet.new(0x00F9, _u64(7777)))
+	world.call("_on_self_id_received", 7777)
+	_check(sc.own_id == 7777 and sc.own_id_told, "OpSelfId replaces the learned id (got %d)" % sc.own_id)
+	_check(int((world.get("_sit") as RefCounted).get("own_id")) == 7777, "and the sit state's")
+	sc.note_cast(113, now)
+	world.call("_on_buff_started", _S.call("decode_buff_start", _with_kind(_buff_start_bytes(4242, 113, 41, 1000, 1000, 70), 0)))
+	_check(is_equal_approx(float(world.get("_move_speed")), 50.0), "a buff on 4242 is not this player's any more, recent cast or not")
+	world.call("_on_buff_started", _S.call("decode_buff_start", _with_kind(_buff_start_bytes(7777, 113, 42, 1000, 1000, 99), 1)))
+	_check(is_equal_approx(float(world.get("_move_speed")), 50.0), "a MONSTER 7777's buff moves nothing, though the id matches")
+	world.call("_on_buff_ended", _S.call("decode_buff_end", _with_kind(_buff_end_bytes(7777, [42], 99), 1)))
+	_check(is_equal_approx(float(world.get("_move_speed")), 50.0), "nor does a monster's buff end")
+	world.call("_on_buff_started", _S.call("decode_buff_start", _with_kind(_buff_start_bytes(7777, 113, 43, 1000, 1000, 60), 0)))
+	_check(is_equal_approx(float(world.get("_move_speed")), 60.0), "character 7777's buff is this player's (got %s)" % str(world.get("_move_speed")))
+	# Before any OpSelfId, a monster-kind owner is never learned as this player.
+	sc.forget_owner()
+	_net.set("own_character_id", -1)
+	(world.get("_sit") as RefCounted).set("own_id", -1)
+	sc.note_cast(113, now)
+	world.set("_move_speed", 50.0)
+	world.call("_on_buff_started", _S.call("decode_buff_start", _with_kind(_buff_start_bytes(8888, 113, 44, 1000, 1000, 99), 1)))
+	_check(is_equal_approx(float(world.get("_move_speed")), 50.0) and sc.own_id == -1,
+		"with no OpSelfId, a monster's buff after our cast is neither applied nor learned")
+	world.set("_move_speed", 50.0)
+
+## Round 617's review: a pick left on leaves with the world, cursor and all.
+func _test_leave_world(world: Node) -> void:
+	var sc = world.get("_self_cast")
+	if sc == null or not world.has_method("_leave_ground_pick"):
+		_check(false, "World3D has _leave_ground_pick")
+		return
+	world.call("_cast_skill", 114, "SKILL_CH_LIGHTNING_GYEONGGONG_B_01")
+	_check(sc.picking() and int(world.get("_default_cursor_shape")) == Input.CURSOR_CROSS,
+		"a pick shows the cross (got shape %d)" % int(world.get("_default_cursor_shape")))
+	world.call("_leave_ground_pick", "test")
+	_check(not sc.picking() and int(world.get("_default_cursor_shape")) == Input.CURSOR_ARROW,
+		"leaving ends the pick and puts the arrow back (got shape %d)" % int(world.get("_default_cursor_shape")))
+	var src := (load("res://scripts/World3D.gd") as GDScript).source_code
+	var exit_at := src.find("func _exit_tree() -> void:")
+	var disc_at := src.find("func _on_disconnected() -> void:")
+	_check(exit_at >= 0 and src.find("_leave_ground_pick(", exit_at) - exit_at < 400,
+		"_exit_tree ends the pick first thing")
+	_check(disc_at >= 0 and src.find("_leave_ground_pick(", disc_at) - disc_at < 400,
+		"_on_disconnected (Restart, Exit, a dropped peer) ends it too")
