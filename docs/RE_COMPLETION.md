@@ -46682,3 +46682,58 @@ Monster hit sounds (the server names no monster attack skill); `snd_ddmg` (no ab
 a cast's result is paired by order, not by id (OpAttackResult carries no skill); WAIT, SHOT past
 StartEvent 1, ACT_OS/OL/OE, DEACT, S_RETURN; the +0x10 moving-row queue; the ~100 ms decoration
 delay; retail's block-sound gate; a live block (needs a shield on the QA character).
+
+## The interface swooshes where retail plays them, the item and event sounds, and the Option window's audio page (round 615)
+
+Client only; round 5 of the audio plan, on round 611's contract. The record, with every address
+and label, is `docs/protocol/SOUND_FORMAT.md` ("Interface sounds" and "The Option window"). Code:
+`client/scripts/audio/ui_sounds.gd` (`UiSounds`: the keys, the helper rule, the item-type and
+drop tokens, the durability rule, the rate-limited `AUDIO ui` log), `client/scripts/ui/hud/
+option_window.gd` (`OptionWindow`, CNIFOption from `res_ui\optionwnd.2dt`), hooks in
+`HudPanels` (toggle, Escape, close buttons, NPC store/storage, confirm boxes, item moves, use,
+repair, the Option toggle), `HudWorldmap.toggle`, `World3D` (level-up, use reply, drops, System ->
+Option) and `Login` (refusals).
+
+### Read, measured, inferred, ours
+
+- **READ:** the toggle helper 0x79a7e0/0x79ab80 (open when shown, close when hidden, silent while
+  the interface is hidden); both window strings have 38 references (asm grep and raw pointer
+  scan agree) and the helper 78 call sites; per window: the popup tab keys (a tab switch sounds
+  the open), M, E, T, Y (0x79af20 open, 0x798e20 close), Escape's list (0x79d620), CIFWnd's close
+  0x652c00 behind CIFCloseButton id 2 (message map 0xec21a0 -> 0x817240 -> vslot_043), the
+  storage/package-store closes, 0x79dbd0's open of the store and storage, the message box's
+  ShowWindow 0x63b630; Q, U, the community item and the NPC talk box's open are silent; level-up
+  0x8a7020/0xa72580 (`:-:CHINESS:-:-`); potion 0x87a7b0 (TypeID 3/3/1-2); item moves 0x87ba20
+  with the token table 0xa64560 (three jump tables and eleven predicates decoded); drops
+  0xa72880 (GOLD, ELIXIR, RARE by +0x260); the durability reply 0x8adf50 (revive = a broken item
+  repaired, not the player); snd_error in the front-end box 0x8613b0; snd_quest on the reward
+  reply 0xb0d8 and the event guides, snd_quest_end on SN_TALK_COMMON_END; snd_button_click only on
+  the item mall and the title's server list (id 51, 0x806e); the Option button -> 0x6f5190 ->
+  optionwnd.2dt, the audio page 0x5f7680 / 0x5f66c0 / 0x5f6570 / 0x5f6800 / 0x5f6660 (Default
+  50/50/50), the first tab video (0x600850), CNIFSliderCtrl's pieces and thumb law.
+- **MEASURED:** optionwnd.2dt's 208 records (ids, types, parents, rects); `snd_pickup` is in the
+  character `.bsr` files (pk2grep), so it is animation-fired.
+- **INFERRED:** that `ground_item_spawned` is retail's fresh drop; the talk box's end line = its
+  close; the login refusals = the front-end error box; this client's confirm boxes stand for
+  CIFMessageBox; slider moves apply live; `_ftol` truncates.
+- **OURS:** the log's rate limit; the pending item a use/move reply sounds for; slider drag and
+  track click; putting the saved volumes back on a close without Confirm/Apply; the unwired
+  video/input/game panes; the Option window taking Escape first.
+
+### Tests and negatives
+
+`client/scripts/audio/ui_sounds_test.gd` (synthetic rows, WAVs and layouts; push_input): I opens
+with one open and no close, S switches the tab with an open, S closes with one close, a plain
+button and Q are silent, the level-up key, the token/drop/durability rules, and the Option
+window's Audio tab driving the buses (BGM 80 -> -4 dB, Effect mute, Env 25 -> -15 dB, Default
+50s, Cancel restores, closes silently). Against base 23baaf0 it fails 6: `ui_sounds.gd loads`,
+`I (hotkey) sounds snd_window_open once (0)`, `a tab switch by key sounds snd_window_open`,
+`closing by its key sounds snd_window_close once (0)`, `the level-up plays ...`, `the Option
+window builds from res_ui\optionwnd.2dt`.
+
+### Open
+
+RARE drops (+0x260 not read, no byte in this client's drop); snd_eqbreak/eqdanger (no wear
+events); quest, elixir, socket, gacha and button-click sounds (their windows and events do not
+exist here); the exchange's close button (0x7b24d0 not traced); whether retail restores the live
+volume after Cancel; the video/input/game panes of the Option window.

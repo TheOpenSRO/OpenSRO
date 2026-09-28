@@ -1650,10 +1650,12 @@ func _try_initialize_pk2_ui() -> void:
 	# settings panel (the same Ctrl+F3 debug panel that carries the working UI
 	# scale, chat font, name range and camera view), Restart returns to the
 	# login screen, Exit quits, and Help prints where to look.
+	# Round 615: the Option button is the retail one -- id 10 -> 0x6f5190,
+	# which toggles CNIFOption from res_ui\optionwnd.2dt and hides the System
+	# window, silently (HudPanels.toggle_option). The debug panel stays on
+	# Ctrl+F3.
 	_hud_panels.system_option_requested.connect(func():
-		_hud_panels.close("system")
-		if _debug_panel != null:
-			_debug_panel.visible = true)
+		_hud_panels.toggle_option())
 	# Restart is one scene change: NetClient.disconnect_from_server() emits
 	# `disconnected` unconditionally, and _on_disconnected is what takes this
 	# instance to Login -- for a dropped peer, for the Log Out button
@@ -6862,6 +6864,8 @@ func _on_quickslot_activated(slot_index: int) -> void:
 	# 2026-09-20).
 	var item = _quickslot_items.get(slot_index)
 	if item != null and NetClient.current_character_name != "":
+		if _hud_panels != null:
+			UiSounds.expect_use(_hud_panels.bag_item_types(int(item["slot"])))
 		NetClient.use_item(NetClient.current_character_name, int(item["slot"]))
 
 ## A bag item was dragged onto the quickslot bar: remember which bag slot it
@@ -12626,6 +12630,11 @@ func _on_ground_item_spawned(snap: GroundItemsNet.Snapshot) -> void:
 	if _ground_items == null:
 		return
 	_ground_items.spawn(snap)
+	# CIItem::vslot_024: a drop sounds its kind -- gold and elixirs only, the
+	# box and bag rows are commented out (read; UiSounds.item_dropped). That
+	# this signal is retail's fresh drop (its +0xec == 0) is inferred.
+	if _hud_panels != null:
+		UiSounds.item_dropped(_hud_panels.item_types(snap.item_id), snap.gold, "ground item %d dropped" % snap.id)
 	print("World3D: ground item %d (%s) at %.1f,%.1f,%.1f owner %d (%.1f from the player)" % [
 		snap.id, _ground_items.label_text(snap), snap.x, snap.y, snap.z, snap.owner_id,
 		_ground_items.position_of(snap.id).distance_to(player.global_position)])
@@ -14270,6 +14279,8 @@ func _on_level_up(new_level: int, _stat_points: int) -> void:
 		if template != "":
 			msg = template.replace("[%d]", str(new_level))
 	_log_system(msg)
+	# 0x3054's handler 0x8a7020: snd_levup, 2-D (read; UiSounds.level_up).
+	UiSounds.level_up("level up to %d" % new_level)
 	_play_level_up_effect()
 	# Refresh the HUD to the new level: the HP bar's higher maximum, the level
 	# label, the reset EXP gauge and any new SP all come from the stats packet.
@@ -15078,6 +15089,8 @@ func _on_friend_pending_list_result(requests: Array, error: String) -> void:
 func _on_use_item_result(result) -> void:
 	if result == null:
 		return
+	# A potion's success sounds snd_potion (0xb04c's handler, read; UiSounds).
+	UiSounds.use_replied(result.error == "")
 	if result.error != "":
 		_log_system(result.error)
 		return
@@ -15108,5 +15121,7 @@ func _qa_use_first_potion(slots: Array, _error: String) -> void:
 		var slot: InventoryNet.Slot = entry
 		if slot.item_id in [4, 6, 11, 13]:
 			_qa_used_potion = true
+			if _hud_panels != null:
+				UiSounds.expect_use(_hud_panels.item_types(slot.item_id))
 			NetClient.use_item(NetClient.current_character_name, slot.slot_index)
 			return

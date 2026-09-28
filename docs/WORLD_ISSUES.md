@@ -7094,6 +7094,34 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-fifteenth round: windows swoosh where the original's do, the item and level-up sounds play, and the Option window's Audio page sets the three volumes
+
+"Some interface elements when opened make a swoosh sound." They are `uiwinopen.wav` /
+`uiwinclose.wav`, played by one toggle helper (0x79a7e0) that a window's routine calls after it
+has shown or hid the window. Rather than put a swoosh on every window, each of this client's
+windows was checked against its retail routine (the table is in `docs/protocol/SOUND_FORMAT.md`,
+"Interface sounds"): the popup's tab keys, M, E, T, Y, Escape, close buttons and the NPC shop and
+warehouse sound; **Q, U and the NPC talk box's opening are silent in retail** (their routines
+only ShowWindow), and so are ordinary buttons. A key that switches the tab of the popup already
+up sounds the open again (read, 0x79b062).
+
+Three things the plan had assumed turned out otherwise, each settled by reading the code:
+`snd_revive` is a broken item being repaired, not the player's resurrection (0x8adf50);
+`snd_button_click` is the title screen's server list, not its confirm (message map 0xec36d8,
+control id 51 of pstitle.txt); and `snd_pickup` is named by no code at all -- the character
+`.bsr` pick-up animations carry it (measured with pk2grep), so it is the animation round's.
+
+The Option window is the one the button really opens: `res_ui\optionwnd.2dt` (CNIFOption,
+0x6f5190), not the `ifoption_audio.txt` layout the research note named -- that family is
+declared but never opened by the button. It opens on Video (0x600850); the Audio tab has the
+three sliders (0..100, travel 452 px, the thumb at prev + 1 + v*452/100) and mute boxes, bound
+to `AudioOptions`; Default is 50/50/50 (0x5f6660, not the 30/50/50 first-run defaults).
+
+Measured: `ui_sounds_test.gd` passes (and fails 6 against 23baaf0); the client suite runs 129
+suites, 0 failing; a live run against the server pressed I, S, M, T, Q, U and Escape through
+push_input and logged the `AUDIO ui` lines. Open: RARE drops, wear sounds, quest/elixir/socket
+sounds (no such events here), the exchange's close button, the Option window's other tabs.
+
 ## Six-hundred-and-fourteenth round: a blow sounds when it lands -- the sword's own hit, a critical's crack, a block's clang -- and a skill plays its own cast sounds
 
 **Built** (`docs/RE_COMPLETION.md`, round 614; `docs/protocol/SOUND_FORMAT.md`, "Combat and

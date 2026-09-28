@@ -405,3 +405,102 @@ AUDIO hit: PLAYER:snd_dmg:SKILL_CH_SWORD_SMASH_A:-:-:- at (208, 41, -220) (skill
 and from the code: `AUDIO block: PLAYER:snd_blocking:-:-:<NORMAL|CRITYCAL>:- at ...`, `AUDIO
 activate: ...`, `AUDIO cast: skill <id> rows this client does not fire: ...`. A tag repeated
 within a second is held and counted on its next line (`(+N more since the last line)`).
+
+## Interface sounds (round 615; `UiSounds`)
+
+Every key below is played 2-D through `SoundTable.play_key` and logged as
+`AUDIO ui <key> -- <why>` (at most one line a second per key, with a count of the rest; ours).
+
+### The call (READ)
+
+A UI sound is the sound manager's (`DAT_0110aad8`) slot +0x28 with a wide name; it builds
+`UI:<name>:-:-:-:-` and plays it with no position (`FUN_00a6f7f0(key, NULL, 0.0)`). Item and
+level-up sounds go through the name dispatcher (+0x24 / +0x2c) to a handler that builds the key
+and plays it the same way. No base widget class plays a sound: **buttons are silent**.
+
+### Windows
+
+The toggle helper `0x79a7e0` (twin `0x79ab80`) runs after a toggle routine: nothing if the
+interface is hidden, else `snd_window_open` if the window is now shown, `snd_window_close` if not.
+Census: the two wide strings (0xd9b1b0, 0xd9b18c) are referenced 38 times, by an asm grep and by
+a raw pointer scan alike (7 + 31, none from data); the helper has 78 call sites. This client's
+windows, each checked against its routine:
+
+| Window / action | Retail routine | Sound |
+|---|---|---|
+| C I S A P L (popup tabs), the underbar menu's same items | 0x79ace0, 0x79b020, 0x79ae00, 0x79d5b0, 0x79ae90, 0x79b0b0 -> helper | open when shown, close when hidden; **a key that switches the tab of a popup already up sounds the open** (ShowWindow(1) again, 0x79b062..0x79b09d) |
+| M, the minimap's map button | 0x79abe0 -> 0x79ab80 | open / close |
+| E party matching, T auto potion | 0x79c170 (helper; its close plays the string itself), 0x79c750 | open / close |
+| Y alchemy | open: the file's OnCreate ends in 0x79af20 (inventory, helper on the popup); close: 0x798e20(0) plays the close itself | open / close |
+| Q quest (0x7990e0), U guild / community (0x799120 -> 0x5b4980, 0x5b49c0) | ShowWindow only | **silent** |
+| Escape | 0x79d620: System hidden -> helper; world map -> 0x79ab80; storage and NPC window -> their vslot_043; main popup -> helper; nothing open -> System shown -> helper | close / open |
+| a window's close button (CIFCloseButton id 2 -> 0x817240 -> vslot_043) | CIFWnd's 0x652c00 (236 classes): hide + helper; CIFStorageRoom 0x6cc080 and CIFStoreForPackage 0x6d2800 play the close themselves during an NPC conversation; CIFExchange 0x7b2660 not traced | close (the exchange's: silent here) |
+| .2dt windows' close buttons (quest, world map, community 0x46d7c0; guild 0x5b4cc0; Option 0x5f63b0) | hide only | silent |
+| the NPC store / storage opened from the talk box | 0x79dbd0 -> helper on the store (0x79dcfe) / storage (0x79dd8f) | open |
+| the NPC talk box opening | nothing that shows GDR_NPCWINDOW (+0x724) calls the helper | silent |
+| the talk box's end line | **inferred** to be its close (CIF_NPCWindow vslot_043 -> 0x652c00) | close |
+| message box | CIFMessageBox::vslot_023 (0x63b630): show -> open, hide -> close | this client's buy / sell / quantity / gold boxes stand in (**inferred**) |
+| System -> Option | 0x6f5190 -> 0x6f5100 | silent |
+
+### Items and events (READ unless marked)
+
+- **Level-up** (0x3054 -> 0x8a7020 -> handler 0xa72580): `UI:snd_levup:-:CHINESS:-:-` whatever
+  the race (the other rows are commented out).
+- **Potion** (0xb04c -> `Item_OnUseItemResult` 0x87a7b0): on success, for TypeID 3/3/1 or
+  3/3/2, `UI:snd_potion:-:-:-:-` (0x87ac14).
+- **Moving an item** (item-move reply 0x87ba20): bag -> bag, bag -> equipment and equipment ->
+  bag play `ITEM:snd_equip:-:<TYPE>:-:-` with the moved item's type (0xa6fb60). `<TYPE>` is
+  `FUN_00a64560`: shield 3/1/4/1-2; garments 3/1/{1,9} TypeID4 1..6 CAP GLOVES ROBE GLOVES
+  GLOVES SHOES; armour 3/1/{2,3,10,11} HELM PAULDRONS BREASTPLATE CUISSE GAUNTLET GREAVE;
+  weapons 3/1/6 TypeID4 2..16 SWORD BLADE SPEAR TBLADE BOW SWORD TSWORD DUELAXE WAND STAFF
+  CROSSBOW DAGGER HARP WAND HAMMER; accessories 3/1/{5,12} EARRING NECKLACE RING; potions
+  3/3/1/1-3 POTION; 3/3/4/1-2 QUIVER; 3/3/3 SCROLL; 3/3/5 (not /1) GOLD; job suits 3/1/7/1-3
+  TRADER THIEF HUNTER; anything else "" (no row: silent).
+- **A drop** (`CIItem::vslot_024` 0x9e1460 -> 0xa72880): GOLD for 3/3/5 (not /1), ELIXIR for
+  3/3/10/{1,4} and 3/3/11/{1,2}, RARE when the object's byte +0x260 is 2 or 6, else `-` (no row).
+  The BOX and BAG rows are commented out and no code builds them. OPEN: what +0x260 is; this
+  client's drop carries no such byte, so RARE never fires. **Inferred:** that
+  `ground_item_spawned` is retail's fresh drop.
+- **Repair / revive** (durability reply 0x3052 -> 0x8adf50), per slot: durability rose from 0 ->
+  `snd_revive`, rose otherwise -> `snd_repair` (three random rows); on a worn item a fall to 0 ->
+  `snd_eqbreak`, to exactly 6 -> `snd_eqdanger` (not played: this client learns of no wear).
+  **snd_revive is an item's, not the player's resurrection** (0xddefc0 has no other reference).
+- **Pick-up**: `snd_pickup` is named by no code, only by the handler table (0xec6940); the
+  character `.bsr` files carry it on their pick-up animation (MEASURED: `pk2grep` finds
+  "snd_pickup" in `Res\Char\China\*.bsr`). It belongs to the animation-sound round, not here.
+- **Error**: the front-end message box 0x8613b0 plays `snd_error`; the login screen's refusals
+  stand for it (**inferred**: CPSTitle::vslot_006 calls it three times, unidentified).
+  `CIFOption_Quit::vslot_023` and the character-create errors (0x84ed50, 0x8527e0) also play it;
+  neither exists here.
+- **Quest**: `snd_quest` plays on the quest-reward reply 0xb0d8 (after CIFQuestReward's confirm,
+  0x6e4ec0 -> 0x70d8) and in the seasonal event guides (0x765330, 0x765450); `snd_quest_end` when
+  an NPC talk line is `SN_TALK_COMMON_END` (0x30ec -> 0x884a30). None of these exists in this
+  client: not played.
+- **Button click**: only the item mall (0x656160) and the title screen's server list
+  (GDR_LIST_SERVER, id 51, notification 0x806e -> 0x866f80). Neither exists here: not played.
+- **Silent by the table**: `snd_warp` (called at 0x78cf03, row commented out), the BOX/BAG drops,
+  `SND_WARNING` (a row, but no code names it).
+- Not built: elixir / socket / gacha / set-item sounds (no event in this client).
+
+## The Option window (round 615; `OptionWindow`)
+
+**Which window (READ).** System's Option button (id 10, message map 0xeba938) -> 0x6f5190:
+toggle `.2dt` window 0x62 = `res_ui\optionwnd.2dt` (CNIFOption), centred (0x798c50), System
+hidden. The `resinfo\ifoption*.txt` family (CIFOption, CIFOption_Audio) is declared as
+GDR_OPTION in ifsystemwnd.txt but not opened by the button. MEASURED: optionwnd.2dt has 208
+records; tabs 10/14/15/16 (video 78, audio 269, input 109, game 149); buttons 5 Default,
+6 Confirm, 8 Cancel, 9 Apply; audio frames 250/259/264 (BGM, Effect, Environment) each with a
+CNIFSliderCtrl 258 (`opt_volume2.ddj`) and check box 254.
+
+- Setup 0x5f7680: range 0..100 step 1, travel 452 px; values loaded from the option struct
+  (0x5f66c0). The window opens on the **Video** tab (0x600850, message 0x8065).
+- Slider pieces (CNIFSliderCtrl 0x4886e0, 0x489090): `_prev` at the origin, `_next` at the right
+  edge, `_thumb` at prev's right + 1, y + 4; thumb offset = (v - min) * 452 / 100, truncated
+  (truncation **inferred**, `_ftol`).
+- A mute box's click (0x5f6800) applies at once; a slider is pushed while it differs from the
+  saved value and its box is clear (0x5f6570; applying as it moves is **inferred**).
+- Default on the audio tab (0x5fda90 -> 0x5f6660): **50/50/50**, boxes cleared.
+  Confirm / Apply store the values (0x5f6750); saved in `settings.cfg` (ours).
+- **Ours:** a click or drag on the track sets the value under the pointer; prev/next step 1;
+  closing without Confirm/Apply (Cancel, the close button, Escape) puts the saved values back;
+  the video, input and game panes are drawn but not wired.

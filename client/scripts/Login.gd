@@ -339,6 +339,9 @@ func _send_pending_action() -> void:
 func _on_connection_failed() -> void:
 	status_label.text = "Could not connect to server."
 	_qa_report(status_label.text)
+	# The front-end message box sounds snd_error (0x8613b0, read); that the
+	# title screen's refusals go through it is inferred (UiSounds.error_box).
+	UiSounds.error_box("login screen: no connection")
 
 func _on_login_result(ok: bool, reason: String) -> void:
 	if ok:
@@ -348,9 +351,11 @@ func _on_login_result(ok: bool, reason: String) -> void:
 	else:
 		status_label.text = "Login failed: %s" % reason
 		_qa_report(status_label.text)
+		UiSounds.error_box("login screen: login refused")
 
 func _on_register_result(ok: bool, reason: String) -> void:
 	if ok:
 		status_label.text = "Registered - you can log in now."
 	else:
 		status_label.text = "Registration failed: %s" % reason
+		UiSounds.error_box("login screen: registration refused")

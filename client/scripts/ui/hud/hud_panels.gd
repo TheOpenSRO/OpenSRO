@@ -23,6 +23,7 @@ const ErrorText = preload("res://scripts/net/error_text.gd")
 const GuildWindow = preload("res://scripts/ui/hud/guild_window.gd")
 const QuestWindow = preload("res://scripts/ui/hud/quest_window.gd")
 const AlchemyWindow = preload("res://scripts/ui/hud/alchemy_window.gd")
+const OptionWindow = preload("res://scripts/ui/hud/option_window.gd")
 
 ## key: the panel id used by the underbar's menu_action and by the keys.
 ## Each entry is [layout path, window title].
@@ -406,6 +407,7 @@ func open(panel_id: String) -> HudWindow:
 		_windows[panel_id] = window
 		if panel_id == "system":
 			_wire_system(window)
+		_wire_close_sound(panel_id, window)
 		_populate(panel_id)
 	if panel_id == "exchange" and not was_shown:
 		# CIFExchange::vslot_023, showing: the alchemy window is destroyed if
@@ -455,8 +457,11 @@ func open_alchemy() -> AlchemyWindow:
 	_alchemy = window
 	window.show()
 	window.move_to_front()
-	# 0x79af20: the inventory.
-	open("inventory")
+	# 0x79af20: the inventory -- ShowWindow(1), its tab, then the toggle
+	# helper 0x79a7e0 on the main popup, which sounds snd_window_open (read).
+	var popup_window := open("inventory")
+	if popup_window != null:
+		UiSounds.window_toggled(popup_window.visible, _interface_shown(), "alchemy opened: 0x79af20 raises the inventory")
 	return window
 
 ## 0x798e20(0): Y from open, the window's close button (CNIFEnchantWnd
@@ -470,6 +475,52 @@ func close_alchemy() -> void:
 	if window.get_parent() == self:
 		remove_child(window)
 	window.queue_free()
+	# 0x798e20(0) plays snd_window_close itself (0x798eb2), before it destroys
+	# the windows (read). Every caller asks first whether the window exists.
+	UiSounds.window_closed("alchemy closed: 0x798e20(0)")
+
+## The Option window (OptionWindow, res_ui\optionwnd.2dt), while it exists.
+## Like the alchemy window it is loaded at every open and destroyed at every
+## close (0x6f5100(1) / (0)).
+var _option: OptionWindow = null
+
+## The System window's Option button (id 10 -> 0x6f5190): destroy window 0x62
+## if it exists, else load it, centre it, bring it forward and hide the
+## System window. Silent both ways (read; OptionWindow's header).
+func toggle_option() -> OptionWindow:
+	if option_window() != null:
+		close_option()
+		return null
+	var window := OptionWindow.new(_builder)
+	window.name = "Window_option"
+	add_child(window)
+	if not window.build_option():
+		print("HudPanels: option window unavailable (%s did not build)" % OptionWindow.OPTION_2DT)
+		remove_child(window)
+		window.queue_free()
+		return null
+	window.closed.connect(close_option)
+	_option = window
+	window.show()
+	window.place_centred()
+	window.move_to_front()
+	var system: HudWindow = _windows.get("system")
+	if system != null:
+		system.hide()
+	print("HudPanels: option window opened (%s)" % OptionWindow.OPTION_2DT)
+	return window
+
+func close_option() -> void:
+	var window := _option
+	_option = null
+	if window == null or not is_instance_valid(window):
+		return
+	if window.get_parent() == self:
+		remove_child(window)
+	window.queue_free()
+
+func option_window() -> OptionWindow:
+	return _option if _option != null and is_instance_valid(_option) else null
 
 ## The alchemy window, or null when it is closed (tests, tools).
 func alchemy_window() -> AlchemyWindow:
@@ -529,6 +580,7 @@ func _open_main_popup(panel_id: String) -> HudWindow:
 		for id in HudMainPopup.TABS.keys() + HudMainPopup.ALIASES.keys():
 			_windows[id] = window
 		_hide_at_create("academy", window)
+		_wire_close_sound(MAIN_POPUP_ID, window)
 		_wire_equipment_modes(window, popup.pane_control("GDR_EQUIPMENT"))
 		_apply_equipment_slot_backgrounds()
 		_place_paper_doll_docked()
@@ -739,6 +791,11 @@ func _on_npc_talk_choice(meta: Variant) -> void:
 	var key := str(meta)
 	if key == "end":
 		close("npctalk")
+		# Inferred: the talk menu's end line closes the NPC window the way its
+		# close button does (CIF_NPCWindow::vslot_043 -> 0x652c00: the close).
+		# The talk box's OPEN is silent: nothing that shows GDR_NPCWINDOW
+		# (+0x724) calls the helper or names a sound (read).
+		UiSounds.window_toggled(false, _interface_shown(), "npctalk end line")
 		return
 	# A gate's destination line (round 603): the request goes at once, as the
 	# client's does, and the talk box stays up.
@@ -1222,6 +1279,10 @@ func open_shop(npc_name: String, tabs: Array, npc_code: String = "") -> void:
 	_select_shop_tab(0)
 	window.show()
 	window.move_to_front()
+	# 0x79dbd0(1, kind): the store (registry 0xf) shown, the inventory tab of
+	# the main popup shown, then the helper on the store: the open (read,
+	# 0x79dcfe). The popup gets no helper call of its own there.
+	UiSounds.window_toggled(window.visible, _interface_shown(), "store opened (0x79dbd0)")
 	# Open the bag alongside, so the player can sell from it -- the client sells
 	# by clicking an inventory item while the shop is open. Set side by side so
 	# the shop and the bag both read (the client pairs them the same way).
@@ -1372,9 +1433,13 @@ func _on_repair_one_pressed() -> void:
 ## scripts/net/error_text.gd.
 ## Until round 515 a refusal went to the log file only and the store showed
 ## nothing.
-func _on_repair_result(code: int, gold_spent: int, _durabilities: Array) -> void:
+func _on_repair_result(code: int, gold_spent: int, durabilities: Array) -> void:
 	var who := NetClient.current_character_name
 	if code == 0:
+		# Per worn slot whose durability rose: snd_revive from 0, else
+		# snd_repair (0x3052's handler 0x8adf50, read).
+		UiSounds.durability_changed(_durability_by_slot(NetClient.last_equipment_durabilities),
+			_durability_by_slot(durabilities), "repair reply")
 		print("HudPanels: repaired for %d gold" % gold_spent)
 		_set_shop_status("Repaired for %s gold." % _grouped(gold_spent))
 		if who != "":
@@ -1573,6 +1638,7 @@ func _confirm_buy(item_id: int) -> void:
 	row.add_child(cancel)
 
 	window.add_child(panel)
+	_message_box_sounds(panel)
 	# Centre it over the window once it has a size.
 	panel.reset_size()
 	await panel.get_tree().process_frame
@@ -1703,6 +1769,7 @@ func _confirm_sell(slot: int, item_id: int, slot_qty: int) -> void:
 	row.add_child(cancel)
 
 	window.add_child(panel)
+	_message_box_sounds(panel)
 	panel.reset_size()
 	await panel.get_tree().process_frame
 	panel.position = ((window.size - panel.size) * 0.5).round()
@@ -1828,6 +1895,8 @@ func open_storage(npc_name: String) -> void:
 	_wire_storage_page_spinner(window)
 	window.show()
 	window.move_to_front()
+	# 0x79dbd0 with the storage (registry 0x13): the helper on it (0x79dd8f).
+	UiSounds.window_toggled(window.visible, _interface_shown(), "storage opened (0x79dbd0)")
 	var bag: HudWindow = open("inventory")
 	if bag != null:
 		var view := get_viewport_rect().size
@@ -1988,6 +2057,7 @@ func _quantity_move_confirm(dialog_name: String, title: String, max_qty: int, ac
 	row.add_child(cancel)
 
 	window.add_child(panel)
+	_message_box_sounds(panel)
 	panel.reset_size()
 	await panel.get_tree().process_frame
 	panel.position = ((window.size - panel.size) * 0.5).round()
@@ -2124,6 +2194,7 @@ func _open_gold_dialog() -> void:
 	row.add_child(close)
 
 	window.add_child(panel)
+	_message_box_sounds(panel)
 	panel.reset_size()
 	await panel.get_tree().process_frame
 	panel.position = ((window.size - panel.size) * 0.5).round()
@@ -2349,7 +2420,17 @@ func toggle(panel_id: String) -> void:
 			_popup.window.hide()
 		else:
 			open(panel_id)
+		# Every tab key's routine (C 0x79ace0, I 0x79b020, S 0x79ae00,
+		# A 0x79d5b0, P 0x79ae90, L 0x79b0b0) ends in the toggle helper
+		# 0x79a7e0 on the popup: a key that hides it sounds the close, and a
+		# key that shows it -- or switches the tab of a popup already up,
+		# ShowWindow(1) again (0x79b062..0x79b09d) -- sounds the open (read).
+		if _popup != null:
+			UiSounds.window_toggled(_popup.window.visible, _interface_shown(), "main popup (%s key)" % panel_id)
 		return
+	# U and the community item (0x799120 -> 0x5b4980, 0x5b49c0) and Q
+	# (0x7990e0) only ShowWindow: no call to the helper and no sound string
+	# in either (read) -- the guild and quest windows open and close silently.
 	if panel_id in GUILD_VIEWS:
 		_toggle_guild_window(panel_id)
 		return
@@ -2363,12 +2444,53 @@ func toggle(panel_id: String) -> void:
 	var window: HudWindow = _windows.get(panel_id)
 	if window != null and window.visible:
 		window.hide()
+		_toggle_sound(panel_id, false)
 		return
-	open(panel_id)
+	var shown := open(panel_id)
+	if shown != null:
+		_toggle_sound(panel_id, shown.visible)
+
+## Keys whose toggle routine ends in the helper 0x79a7e0 (read): E, party
+## matching (0x79c170: open through the helper, close with its own
+## snd_window_close at 0x79c299) and T, auto potion (0x79c750, the helper on
+## both paths). The system item of the underbar menu reaches no helper
+## (0x60cd10 shows the window itself), and Q's window is silent (above).
+const TOGGLE_SOUNDS := {"partymatch": "0x79c170", "autopotion": "0x79c750"}
+
+func _toggle_sound(panel_id: String, shown_now: bool) -> void:
+	if TOGGLE_SOUNDS.has(panel_id):
+		UiSounds.window_toggled(shown_now, _interface_shown(), "%s (%s)" % [panel_id, TOGGLE_SOUNDS[panel_id]])
+
+## The interface's own shown flag, which the helper tests first (0x79a7e0's
+## first 0xb8f530 is on the interface): hidden with the rest of the UI, the
+## windows toggle silently.
+func _interface_shown() -> bool:
+	return is_visible_in_tree()
+
+## A window's close button (CIFCloseButton, id 2 -> 0x817240 -> vslot_043,
+## read). CIFWnd's vslot_043 (0x652c00, shared by 236 classes, the main
+## popup, the system window, CIF_NPCWindow after its own checks, CIFStore,
+## the message box) hides the window and runs the helper: snd_window_close.
+## CIFStorageRoom (0x6cc080) and CIFStoreForPackage (0x6d2800) play it
+## themselves while an NPC conversation is open, which is the only way this
+## client opens them; CIFPartyMatch (0x7333f0) and CIFAutoPotion (0x7413b0)
+## run 0x652c00 first. CIFExchange's (0x7b2660 -> 0x7b24d0) was not traced
+## to a sound, so its close button stays silent. The .2dt windows (quest,
+## world map, community: 0x46d7c0; the guild: 0x5b4cc0) only hide, silently;
+## the alchemy window's is close_alchemy.
+const SILENT_CLOSE_BUTTONS := ["exchange"]
+
+func _wire_close_sound(panel_id: String, window: HudWindow) -> void:
+	if panel_id in SILENT_CLOSE_BUTTONS or not window.has_signal("closed"):
+		return
+	window.closed.connect(func() -> void:
+		UiSounds.window_toggled(false, _interface_shown(), "%s close button (vslot_043)" % panel_id))
 
 ## True if any panel is currently on screen -- World3D uses this to decide
 ## whether Escape should close a window or fall through.
 func any_open() -> bool:
+	if option_window() != null:
+		return true
 	if alchemy_window() != null:
 		return true
 	for id in _windows:
@@ -2385,6 +2507,16 @@ func close_topmost() -> bool:
 	if best == null:
 		return false
 	best.hide()
+	# The rest of the client's Escape list closes each of these through the
+	# helper or its vslot_043 (read, see _escape_close); the quest and guild
+	# windows are not in that list, and their own close is silent.
+	var closed_id := ""
+	for id in _windows:
+		if _windows[id] == best:
+			closed_id = id
+			break
+	if best == (_popup.window if _popup != null else null) or closed_id in ["store", "partymatch", "autopotion", "system", "npctalk", "storage"]:
+		UiSounds.window_toggled(false, _interface_shown(), "Escape: %s" % (closed_id if closed_id != "" else best.name))
 	return true
 
 ## One Escape press. The client's VK_ESCAPE (0x78b6c7) calls 0x79d620, which
@@ -2411,18 +2543,35 @@ func close_topmost() -> bool:
 ## clears it; here the storage is closed when it is up. Every other window
 ## this client builds keeps its own rule after these: the topmost one
 ## closes (ours).
+##
+## The sounds (read): the System window and the world map are hidden and
+## then handed to the helper (0x79d657..0x79d698 -> 0x79a7e0, 0x79d785..
+## 0x79d7c2 -> 0x79ab80): snd_window_close. The storage and the NPC window
+## are closed through their vslot_043 (0xac), which sounds the close (see
+## _wire_close_sound); the exchange's is not traced, so it is silent. The
+## main popup is hidden and handed to the helper (0x79db29). With nothing
+## open, the System window is shown and handed to the helper: the open.
 func _escape_close() -> bool:
+	# Ours: the Option window takes Escape first -- its own key handler
+	# (0x5f6470, character 0x1b) closes it -- and it closes silently.
+	if option_window() != null:
+		option_window().press_cancel()
+		return true
 	var system: HudWindow = _windows.get("system")
 	if system != null and system.visible:
 		system.hide()
+		UiSounds.window_toggled(false, _interface_shown(), "Escape: system")
 		return true
 	if world_map != null and is_instance_valid(world_map) and world_map.visible:
 		world_map.hide()
+		UiSounds.window_toggled(false, _interface_shown(), "Escape: world map")
 		return true
 	for panel_id in ["storage", "npctalk", "exchange"]:
 		var window: HudWindow = _windows.get(panel_id)
 		if window != null and window.visible:
 			window.hide()
+			if panel_id != "exchange":
+				UiSounds.window_toggled(false, _interface_shown(), "Escape: %s (vslot_043)" % panel_id)
 			return true
 	if alchemy_window() != null:
 		close_alchemy()
@@ -2441,7 +2590,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		# Escape closes one window (_escape_close); with nothing open it
 		# raises the System menu, the way the original does.
 		if not _escape_close():
-			open("system")
+			var system := open("system")
+			if system != null:
+				UiSounds.window_toggled(system.visible, _interface_shown(), "Escape: system")
 		get_viewport().set_input_as_handled()
 		return
 	# The windows' keys, from the one key table (KeyMap, round 608). A text
@@ -2504,6 +2655,46 @@ func _load_items() -> void:
 	if names_entry != null:
 		_object_names = UiTextTable.parse(archive.read_file(names_entry))
 	print("HudPanels: %d item(s) resolvable by id" % _items.size())
+
+## The confirm boxes this client draws itself (buy, sell, a quantity to
+## move, the warehouse's gold). Retail's CIFMessageBox sounds
+## snd_window_open when shown and snd_window_close when hidden, if the
+## interface is up (its ShowWindow, 0x63b630, read). **Inferred:** that
+## retail raises a message box at these four points is not read; these boxes
+## stand in for it. A box freed with the whole HUD (a scene change) is
+## silent.
+func _message_box_sounds(box: Control) -> void:
+	UiSounds.window_toggled(true, _interface_shown(), "message box %s shown (0x63b630)" % box.name)
+	var what := String(box.name)
+	box.tree_exiting.connect(func() -> void:
+		if is_inside_tree() and not is_queued_for_deletion() and is_visible_in_tree():
+			UiSounds.window_toggled(false, true, "message box %s hidden (0x63b630)" % what))
+
+## An item's TypeID1..4 (itemdata), or empty when the item is not known.
+func item_types(item_id: int) -> PackedInt32Array:
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	return item.type_ids if item != null else PackedInt32Array()
+
+## The TypeIDs of what lies in a bag slot, or empty.
+func bag_item_types(slot: int) -> PackedInt32Array:
+	var id := _bag_item_id_at_slot(slot)
+	return item_types(id) if id >= 0 else PackedInt32Array()
+
+## The TypeIDs of what is worn in an equipment slot, or empty.
+func worn_item_types(worn_slot: int) -> PackedInt32Array:
+	for e in _equipped_items:
+		if e is EquipmentNet.Equipped and (e as EquipmentNet.Equipped).slot == worn_slot:
+			return item_types((e as EquipmentNet.Equipped).item_id)
+	return PackedInt32Array()
+
+## slot -> current durability, from InventoryNet.Durability entries.
+static func _durability_by_slot(entries: Array) -> Dictionary:
+	var out := {}
+	for d in entries:
+		if d != null and d.get("slot") != null:
+			out[int(d.get("slot"))] = int(d.get("current"))
+	return out
 
 ## The icon for an item id, or null. Icons are ordinary .ddj textures, so
 ## the builder's own cache serves them.
@@ -2628,6 +2819,7 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 			system_notice.emit(DEAD_INPUT_LINE)
 			return
 		if NetClient.current_character_name != "":
+			UiSounds.expect_use(item_types(item_id))
 			NetClient.use_item(NetClient.current_character_name, slot)
 		return
 	if button != MOUSE_BUTTON_LEFT:
@@ -2886,6 +3078,7 @@ func _drop_worn_item(worn_slot: int, at: Vector2) -> void:
 	# changes where you may let go, not where the item lands.
 	if _bag_slot_at(at) < 0 and not _over_inventory_window(at):
 		return
+	UiSounds.expect_move(worn_item_types(worn_slot), "unequipped (equipment -> bag)")
 	NetClient.unequip(who, worn_slot)
 	NetClient.list_inventory(who)
 
@@ -2904,6 +3097,7 @@ func _drop_bag_item(from: int, at: Vector2) -> void:
 	var to := _bag_slot_at(at)
 	if to >= 0:
 		if to != from:
+			UiSounds.expect_move(bag_item_types(from), "moved in the bag")
 			NetClient.move_item(who, from, to)
 		return
 	var worn := _equipment_slot_at(at)
@@ -2911,6 +3105,7 @@ func _drop_bag_item(from: int, at: Vector2) -> void:
 		# Equip out of that bag slot; the server refuses a wrong kind of
 		# item for the slot. Its equipment result redraws the doll, and the
 		# bag is re-read since the item left it.
+		UiSounds.expect_move(bag_item_types(from), "equipped (bag -> equipment)")
 		NetClient.equip(who, worn, from)
 		NetClient.list_inventory(who)
 		return
@@ -2950,6 +3145,7 @@ func _bag_item_id_at_slot(slot: int) -> int:
 ## The server's answer to a move: the whole bag as it now stands, or the
 ## refusal. Drawn from the answer, so a refused move leaves the grid as it was.
 func _on_inventory_move_result(slots: Array, error: String) -> void:
+	UiSounds.move_replied(error == "")
 	if error != "":
 		push_warning("HudPanels: bag move refused: %s" % error)
 		print("HudPanels: bag move refused: %s" % error)
@@ -4016,6 +4212,9 @@ func connect_net() -> void:
 	# A drag's outcome comes back as the whole bag (see _drop_bag_item).
 	NetClient.inventory_move_result.connect(_on_inventory_move_result)
 	NetClient.equipment_result.connect(func(items: Array, error: String) -> void:
+		# An equip or unequip reply sounds the moved item (0x87ba20, read).
+		if UiSounds.has_pending_move():
+			UiSounds.move_replied(error == "")
 		# A refusal carries no item list. Redrawing from it blanked every
 		# worn slot on the doll while the body stayed dressed -- so a refused
 		# equip is logged and the last known equipment stays on screen.

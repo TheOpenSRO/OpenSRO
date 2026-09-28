@@ -126,14 +126,29 @@ its own wind, birds and other ambience from `Data.pk2`; the login, character
 select and character create screens play the title theme. Changing area
 fades the old music out over about two and a half seconds and starts the new
 one; areas that share a track keep it playing. The loading screen is silent.
-Footsteps, combat and interface sounds are not in yet.
 
-The volumes are the original's three: **Music 30, Effects 50, Environment 50**
-out of 100 (0 is -20 dB, 100 is full). There is no options page for them yet;
-to change one, edit the `[audio]` section of `settings.cfg` (next to the log)
--- `bgm=30`, `effect=50`, `env=50`, and `bgm_muted=true` to silence the music
--- and restart. Without `Music.pk2` in your `pk2` folder the world is silent
-and the log says so.
+The interface makes the original's sounds, and only where the original does:
+a swoosh when the character, inventory, skill, action, party or academy window
+opens or closes by its key (switching between them by key swooshes too), for
+the world map (M), party matching (E), auto potion (T), the alchemy window
+(Y), the System menu (Escape), a shop or warehouse opened from an NPC, and a
+window's close button. The quest (Q) and guild (U) windows, the NPC talk box
+opening and ordinary buttons are silent, as in the original. You also hear the
+level-up, drinking a potion, moving or wearing an item (by kind: sword, robe,
+ring...), gold and elixir drops, repairs, and an error beep when the login is
+refused. Footsteps and combat sounds come from their own rounds.
+
+**Options:** Escape -> System -> **Option** opens the original Option window.
+It opens on its Video tab; click **Audio** for three sliders -- Music (BGM),
+Effects and Environment, 0 to 100 -- each with a mute box beside it. Changes
+are heard at once. **Confirm** saves and closes, **Apply** saves, **Default**
+sets all three to 50 and clears the mutes, and **Cancel**, the close button or
+Escape put back what was saved. The starting volumes are the original's:
+**Music 30, Effects 50, Environment 50** (0 is -20 dB, 100 is full). They are
+kept in the `[audio]` section of `settings.cfg` (next to the log). The Video,
+Input and Game tabs are drawn but do nothing yet; the debug panel (Ctrl+F3)
+still has the UI scale and camera settings. Without `Music.pk2` in your `pk2`
+folder the world is silent and the log says so.
 
 ## Developer and debug panels
 

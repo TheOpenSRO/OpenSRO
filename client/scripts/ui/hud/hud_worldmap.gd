@@ -854,8 +854,9 @@ func _mouse_turns_auto_off() -> void:
 ## visible (its first 0xb8f530 is on `this`, the interface), calls the
 ## window's vslot 0x50 (bringing it to the front is **inferred**), 0x79a620
 ## and snd_window_open if the window is now shown, or snd_window_close if
-## not; this client plays no UI sounds -- and then the window centred on the
-## screen (0x798c50), on a hide as well.
+## not (UiSounds.window_toggled, round 615) -- and then the window centred on
+## the screen (0x798c50), on a hide as well. The window's own close button
+## only hides it (CNIFWorldMap's vslot_043 is CNIFWnd's 0x46d7c0): silent.
 func toggle() -> void:
 	if visible:
 		hide()
@@ -863,6 +864,8 @@ func toggle() -> void:
 		_on_show()
 		show()
 		move_to_front()
+	var parent := get_parent() as CanvasItem
+	UiSounds.window_toggled(visible, parent == null or parent.is_visible_in_tree(), "world map (0x79abe0)")
 	place_centred()
 
 ## Opens the window (the QA hook and the GUI audit): ShowWindow(1) and the
