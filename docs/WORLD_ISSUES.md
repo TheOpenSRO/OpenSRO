@@ -7094,6 +7094,61 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twenty-third round, review follow-up: a kept aura refused by the particle budget comes back, a one-shot that never ends is ended, and the emitters cost less
+
+The review upheld every READ claim of round 623 and found that the 9 ACT_L files still blank are
+gaps in the files' own timing. It also raised five points.
+
+**1. A kept aura lost for good when the budget refused its root.** Retail has no particle budget,
+so this is OURS. When the budget refused the root, the kept effect finished and was released,
+because there was nothing to revive. It now retries its root every frame while the budget is
+full, and comes on once there is room (`EfpEffect._process`, `sim.dropped > 0`; `restart()`
+clears `dropped`). A kept effect that emits nothing with nothing refused still ends.
+
+**2. `mad_general_at03`, a SHOT one-shot, held 45 particles for ever.** Its NormalTimeLoop node
+re-arms its children every wrap, which the READ non-latched done flag requires.
+
+READ, how retail ends a one-shot (EFP_FORMAT.md, "A one-shot that its owner lets go"):
+- `CRTModParticle::FUN_00c80f60` asks slot 5 (`CEFEffect::vslot_005` = +0x49). A kept effect is
+  released through slot 2.
+- A one-shot goes to its body's leftover list (`FUN_00c31f80`, list +0x198). There
+  `CObjRendererVS::FUN_00c2a700` updates it every frame and drops it only when slot 0 returns 0.
+- The whole list is released only by `FUN_00c2a670`, which is called from:
+  - the body's destructor (`FUN_00c323e0`, reached from `CCompoundObj::ScalarDeletingDestructor`);
+  - `CCompChar::FUN_00c33230` / `FUN_00c33430`, on an update whose third argument is 0. What that
+    argument means is OPEN.
+
+So retail plays such an effect until its body goes.
+
+This client already frees an effect with its body. It also ends a one-shot after
+`EfpEffect.ONESHOT_MAX_LIFE` = 30 s (OURS). The longest one-shot that ends by itself lasts 238
+frames, 11.9 s (MEASURED over the 883 ACT_S and SHOT files).
+
+After the fix, the SHOT one-shot census has 736 of 736 ended (it was 735): `mad_general_at03` at
+600 frames. ACT_S has 147 of 147. The ACT_L census is unchanged at 306 of 315, and READY at 28 of
+30.
+
+**3. A wrong address.** The lifetime executor (node +0x12c) is called at `0x00c8638b`. The child
+updaters are called at `0x00c86367`. `0x00c86311` is the +0x130 program-list call. The citation
+is corrected in `efp_sim.gd` and in round 623's entry.
+
+**4. Cost.** A kept aura's done emitters called `EfpReader.emit_tick` every frame, and each call
+allocated a Dictionary. The emitter's five values are now read once into the node template.
+`EfpSim.emit_spawns` runs the same rules with no allocation, and a finished emitter costs one
+compare. A test checks it against `emit_tick` across ages, accumulators and all three quality
+settings: 0 mismatches.
+
+**5. New tests** in `efp_keep_test.gd` (synthetic trees):
+- the budget retry;
+- child particles of a kept effect still die: none of the first cycle's 4 is alive 26 frames on;
+- through 3 revivals, u2/u6 followers stay 5 units from a moving, turning root (worst error 0.0000
+  over 201 particle-frames);
+- a Link child keeps one unbroken chain of 2 or more through the root's revivals;
+- the one-shot guard ends at 30.00 s, and a kept effect is not ended by it;
+- the inline emitter frame against `emit_tick`.
+
+The box: `remote_godot.sh check` and `tests`, with the lane env inline.
+
 ## Six-hundred-and-twenty-third round: a buff's aura stays on for the whole buff -- Grass Walk's ring and an imbue's hand glow no longer blink out every second or so
 
 The user's report on v0.1.457: "It appears the persistent skills visually appear and disappear
@@ -7134,7 +7189,7 @@ and "A particle's life", has it all):
   draw, so every particle was drawn one frame short and an emitter's replacement came one frame
   late: the one-frame hole at each cycle boundary.
 - **The node's lifetime executor runs last** in its update (node +0x12c, after the child updaters,
-  `0x00c86311`). The emission (+0xb4 list) and the program (+0x130) run before them. So a child
+  `0x00c8638b`; the child updaters are called at `0x00c86367`). The emission (+0xb4 list) and the program (+0x130) run before them. So a child
   emitter reads its owner's age before the owner ages.
 - **A kept effect that finishes is released, not restarted.** `CRTModParticle::FUN_00c80ff0`
   drops the effect when `vslot_000` returns 0, keep flag or not. Round 620's "slot 4 with 1 ...

@@ -1040,7 +1040,9 @@ WAIT loops 20 of 20 (0). The rest are gaps in the files' own timing under the RE
 100-frame status root with a 25-frame child, a 50-frame circle root with 20-frame children).
 Still open there: whether retail's draw really shows those gaps (the READ rules say so; not seen
 on a retail client), and the ACT_L played once when no buff token will come (`SkillEffects.act`
-with `with_aura`), which is OURS.
+with `with_aura`), which is OURS. One-shots that never finish (`mad_general_at03`) end after 30 s
+(OURS guard). Retail keeps them on the body's leftover list until the body goes, or until an
+update with its third argument 0 (`CCompChar::FUN_00c33230`). What that argument means is OPEN.
 
 Still open, by the files each would add:
 - **Nodes with no texture** (75 files; EFP_FORMAT.md "Assets that do not load"). Retail binds a

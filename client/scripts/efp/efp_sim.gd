@@ -58,7 +58,8 @@ class_name EfpSim
 ## N frames is drawn N times, and its emitter can replace it in the same
 ## update that removes it.
 ## The extinct executor is the node's +0x12c object, run LAST in the node's
-## update, after its child updaters (0x00c86311); the emission (+0xb4 list,
+## update, after its child updaters (the call at 0x00c8638b; the children
+## at 0x00c86367, the program list at 0x00c86311); the emission (+0xb4 list,
 ## 0x00c84e70) and the program (+0x130 list, 0x00c84f90) run before them.
 ## A KEPT effect (the keep flag +0x49, set by IEasyFxEffect slot 4 with 1:
 ## AT_LOOP and AT_STOP) never lets its ROOT node's particles die: after each
@@ -253,6 +254,13 @@ class Tpl:
 	var frames: int
 	var life: int
 	var emit = null ## {delay, duration, interval, max_live, per_trigger} or null
+	## The emitter's five values as ints / a float, read once (round 623's
+	## review: the per-frame tick allocated a Dictionary per emitter).
+	var e_delay := 0
+	var e_dur := 0
+	var e_int := 0
+	var e_max := 0
+	var e_per := 0.0
 	var schedule: Array = [] ## frame -> Array of [kind, space, payload] (see _payload)
 	var scale_graph = null ## the node's first BlendScaleGraph var, or null
 	## The follow levels and flags of the node's 20-byte block (READ, see the header).
@@ -378,6 +386,12 @@ static func _compile_node(t: Template, n: EfpReader.EfpNode, parent: int) -> voi
 	tp.frames = maxi(n.frames, 0)
 	tp.life = LIFE_LOOP if n.loops() else (LIFE_NEVER if n.never_extinct() else LIFE_EXTINCT)
 	tp.emit = n.emission()
+	if tp.emit is Dictionary:
+		tp.e_delay = int(tp.emit["delay"])
+		tp.e_dur = EfpReader.i32(int(tp.emit["duration"]))
+		tp.e_int = EfpReader.i32(int(tp.emit["interval"]))
+		tp.e_max = EfpReader.i32(int(tp.emit["max_live"]))
+		tp.e_per = float(tp.emit["per_trigger"])
 	# A node without the block (synthetic trees) follows its parent's
 	# translation, round 620's behaviour (OURS default); retail always has it.
 	var fl: Dictionary = n.flags
@@ -487,6 +501,7 @@ func _init(tmpl: Template = null, seed_value: int = 0) -> void:
 func restart() -> void:
 	clear()
 	age = 0
+	dropped = 0
 	_acc = 0.0
 	if template != null and not template.tpls.is_empty():
 		var e := Emitter.new()
@@ -765,14 +780,40 @@ func _emit(e: Emitter) -> void:
 	if tp.emit == null:
 		e.done = true
 		return
-	var r := EfpReader.emit_tick(tp.emit, _owner_age(e), e.acc, interval_mul, threshold)
-	e.acc = float(r["acc"])
-	# READ, 0x00c84e9c / 0x00c84ea5: done is set or cleared every frame.
-	e.done = bool(r["stopped"])
-	if e.done:
-		return
-	for _k in range(maxi(int(r["spawn"]), 0)):
+	var n := emit_spawns(tp, _owner_age(e), e)
+	for _k in range(n):
 		_spawn(e.tpl, e.owner, e)
+
+## One emitter frame: EfpReader.emit_tick's rules (READ, 0x00c84e70) on the
+## template's precomputed values, with no Dictionary per call. Sets e.done
+## (READ, 0x00c84e9c / 0x00c84ea5: set or cleared every frame) and e.acc and
+## returns how many particles spawn. efp_keep_test checks it against
+## emit_tick.
+static func emit_spawns(tp: Tpl, owner_age: int, e: Emitter) -> int:
+	var t := EfpReader.i32(owner_age - tp.e_delay)
+	if t >= tp.e_dur:
+		e.done = true # the cheap early-out: a finished emitter costs one compare
+		return 0
+	e.done = false
+	var interval := tp.e_int
+	if interval <= 0 or t < 0:
+		return 0
+	if interval_mul > 1:
+		var m := EfpReader.i32(interval * interval_mul)
+		if m < tp.e_dur:
+			interval = m
+	if t % interval != 0:
+		return 0
+	var cap := tp.e_max
+	if threshold > 0 and float(threshold) < tp.e_per and cap > 0:
+		cap = maxi(EfpReader.ftol(EfpReader.f32(float(cap) * 0.5)), 1)
+	var old := EfpReader.ftol(e.acc)
+	var nxt := EfpReader.f32(tp.e_per + e.acc)
+	var capf := EfpReader.f32(float(cap))
+	if capf < nxt:
+		nxt = capf
+	e.acc = nxt
+	return maxi(EfpReader.i32(EfpReader.ftol(nxt) - old), 0)
 
 ## A particle dies: the global count drops and its emitter's acc gives back
 ## 1.0, so `max_live` caps the live particles (READ, FUN_00c87a20).

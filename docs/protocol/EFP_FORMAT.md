@@ -513,6 +513,25 @@ every other particle dies as usual. The retail auras rely on it: `cold_gigongta_
 for 20 frames, so each child particle is replaced in the update its predecessor is flushed and the
 aura never blinks.
 
+**A one-shot that its owner lets go** (READ, round 623's review follow-up).
+`CRTModParticle::FUN_00c80f60` asks the effect for its keep flag (slot 5, `CEFEffect::vslot_005`
+returns +0x49). A kept effect is released at once through slot 2. A one-shot (keep 0) is handed to
+its body's list of leftover effects (`FUN_00c31f80`: the list at +0x198 of the object at
+mod +4 → +8) to play out. `CObjRendererVS::FUN_00c2a700` updates that list every frame through
+slot 0 and drops an effect only when slot 0 returns 0, that is, when it finishes.
+`FUN_00c2a670` releases the whole list, from the body's destructor (`FUN_00c323e0`, reached from
+`CCompoundObj::ScalarDeletingDestructor`) and from `CCompChar::FUN_00c33230` / `FUN_00c33430` on
+an update whose third argument is 0. What that argument means is OPEN. So in retail a one-shot
+that never finishes plays until its body goes. `mad_general_at03`, a SHOT file whose NormalTimeLoop
+node re-arms its children every wrap, is one. This client frees an effect with its body (it is
+the body's child). It also ends a one-shot after `EfpEffect.ONESHOT_MAX_LIFE` = 30 s (OURS). The
+longest one-shot that ends by itself lasts 238 frames (MEASURED over the 883 ACT_S and SHOT
+files).
+
+**The particle budget and a kept root** (OURS). Retail has no particle budget. When this client's
+budget refuses a kept effect's root, nothing is left to revive. Such an effect retries its root
+every frame until the budget has room, instead of ending.
+
 The owner ends an effect through one of two slots:
 - **Slot 2** (`CEFEffect::vslot_002`) frees its particles (`EFEffect::FUN_00c85ea0`) and releases
   it at once.

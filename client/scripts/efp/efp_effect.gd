@@ -86,6 +86,12 @@ var sim: EfpSim
 var skipped: PackedStringArray = PackedStringArray()
 ## Seconds after which a looping effect stops by itself (0 = never; OURS guard).
 var max_life := 0.0
+## OURS (round 623's review): a one-shot (not kept) ends after this many
+## seconds whatever its particles do. The longest retail one-shot that ends
+## by itself lasts 238 frames (11.9 s, MEASURED over the 883 ACT_S and SHOT
+## files); `mad_general_at03` never ends (its NormalTimeLoop node re-arms
+## its children every wrap).
+const ONESHOT_MAX_LIFE := 30.0
 ## The local player's own effect: may use EfpSim's reserved particle share.
 var reserved := false:
 	set(v):
@@ -534,7 +540,28 @@ func _process(delta: float) -> void:
 	# effect blinked every aura out once a cycle, round 623). A kept effect
 	# does not finish: its root particles never die.
 	if sim.finished():
-		_end()
+		if loop and sim.dropped > 0:
+			# OURS (round 623's review): the budget refused the kept effect's
+			# root, so there is nothing to revive. Retail has no budget; a
+			# kept aura retries its root each frame until the budget has room
+			# rather than being lost for the rest of the buff.
+			sim.restart()
+		else:
+			_end()
+			return
+	# OURS guard (round 623's review): a one-shot that never finishes by
+	# itself. Retail hands a finished-with one-shot (keep 0) to its body's
+	# list of leftover effects (CRTModParticle::FUN_00c80f60 ->
+	# FUN_00c31f80), updates it there every frame and drops it only when it
+	# finishes (CObjRendererVS::FUN_00c2a700) or the whole list is released
+	# (FUN_00c2a670: the body's destructor FUN_00c323e0, and
+	# CCompChar::FUN_00c33230 / FUN_00c33430 on an update whose third
+	# argument is 0 -- what that argument means is OPEN). So retail plays
+	# such an effect until its body goes; this client frees it with its
+	# body too (the effect is the body's child) and ends it after
+	# ONESHOT_MAX_LIFE besides, because a player's body lives all session.
+	if not loop and _life >= ONESHOT_MAX_LIFE:
+		stop()
 		return
 	# The MultiMeshes change only when the simulation stepped -- or, for a
 	# billboarded node, when the camera turned (else it would lag the view).
