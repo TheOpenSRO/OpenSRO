@@ -43,51 +43,63 @@ class_name EfpSim
 ## Its age counts frames from 0. NormalTimeExtinct (FUN_00c84e20): after the
 ## age passes N-1 the particle dies. NormalTimeLoop (FUN_00c84dd0): the age
 ## wraps modulo N. NeverExtinct (FUN_00c84d80): the age advances until it is
-## 1 and then stays (READ literally: `if age != 1: age += frames`).
+## 1 and then stays (`if age != 1: age += frames`), and a node whose N is 0
+## kills the particle (the executor's `[def+0x7c] == 0` branch).
 ##
 ## == The per-particle program (READ, EFEffect::FUN_00c893f0) ==
-## Each command runs at the frames of its range (FUN_00ca0f40; value i of a
-## Frame* parameter at frame start + i*step, INFERRED from the MEASURED key
-## counts). The command's `space` byte is added to its opcode by its factory
-## (READ: FUN_00ca8140 registrations, e.g. SetConeVel = 0x3e + space), and the
+## Scheduling (READ, the loop at 0x00ca9276-0x00ca9354): a command's key i
+## runs at frame ftol(f_i), where f_0 = start and f_{i+1} = f32(f_i + step),
+## while f_i <= end -- a single-precision running sum, truncated by the fldcw
+## at 0x00ca92b0. Value i of a Frame* parameter is key i.
+## The command's `space` byte is added to its opcode by its factory (READ:
+## FUN_00ca8140 registrations, e.g. SetConeVel = 0x3e + space), and the
 ## interpreter's switch gives each opcode its meaning:
 ##   position commands (SetPosition, SetConePos, SetBANPos): space = r*3 + o;
 ##     o: 0 add to the current position, 1 start from the parent particle's
 ##     position, 2 from the "link" object's; r: the value is rotated by 0 no
 ##     matrix, 1 the particle's own rotation, 2 the parent's, 3 the link's.
-##   SetSpherePos: a uniform point in the unit ball (rejection sampling of
-##     (r - 0.5) * 2 from the 5000-entry random table) times the value,
-##     added to 0 the position, 1 the parent's position, 2 the link's.
+##   SetSpherePos: a point in the unit ball by rejection sampling of
+##     (r - 0.5) * 2 from the 5000-entry random table. Space 1 / 2: the point
+##     times the value, added to the parent's / link's position. Space 0
+##     (0x00c8a4c5-0x00c8a5d4): the point is written straight INTO the
+##     position, and then position += value * a stack vector the case never
+##     sets. That vector is whatever an earlier command of the same frame's
+##     run left there -- the cone cases, ConeForce, Attraction and SetSpherePos
+##     itself write it -- and uninitialised when none did. This client keeps
+##     that vector per particle run (`_scratch`) and starts it at zero (OURS
+##     for the uninitialised case: 66 retail commands use space 0).
 ##   SetVelocity / SetConeVel: velocity = the value rotated by space 0 none,
-##     1 own, 2 parent, 3 link. Force / ConeForce: the same, added
-##     (INFERRED: the add's target is implied in the decompile).
+##     1 own, 2 parent, 3 link. Force / ConeForce add the same to the velocity
+##     (READ, the add at 0x00c8aae8). ConeForce space 0 (case 0x46) falls
+##     through into case 0x47 (READ, 0x00c8ac1d -> 0x00c8ac23), so it adds a
+##     second cone rotated by the particle's own rotation.
 ##   Attraction: velocity += normalize(pos - parent pos) * value (space 0),
 ##     the link's (space 1).
 ##   Cone (AngleVector1 {a, b}): the vector (0, lerp(b.x, b.y, r1), 0) turned
-##     r2 * b.z about Z (IDecoSkill::FUN_00a4d820 builds a Z rotation) then
-##     r3 * 2*pi about Y (FUN_0043cda0). b.z is a.z in radians in every
-##     retail value (MEASURED); that the trig takes b is INFERRED.
+##     r2 * b.z about Z (IDecoSkill::FUN_00a4d820: FUN_00b44b40 fsin,
+##     FUN_00b44a10 fcos) then r3 * 2*pi about Y (FUN_0043cda0). b.z is a.z in
+##     radians in every retail value (MEASURED); that the trig takes b is
+##     INFERRED.
 ##   SetRotation* / SetBANRot: rotation = M (space 0), M then own (1), M then
 ##     the parent's (2), then the link's (3). SetRVelocity*: the per-frame
 ##     rotation. SetShapeRot / SetShapeRotVel: the shape's rotation and its
 ##     per-frame step.
 ##   SetGraphScale: scale = the key's Vector3. SetGraphDiffuse: colour = the
-##     key's D3DCOLOR. TextureSlide: the UV rectangle (u, v, du, dv) = the key
-##     (INFERRED: the decompile loses the store; MEASURED head (3,2,..) with
-##     key (0,0,1/3,1/2) is a 3x2 atlas cell). SetGraphRandomScale: scale =
-##     the node's BlendScaleGraph at a random time (FUN_00c89140: first key
-##     before a, last after b, linear between; which var the pointer names is
-##     INFERRED to be the node's first BlendScaleGraph).
+##     key's D3DCOLOR. TextureSlide: the UV rectangle (u0, v0, du, dv) at
+##     particle +0x22c = the key (READ, 0x00c8af77). Its head is unused here
+##     (OPEN). SetGraphRandomScale: scale = the node's BlendScaleGraph at a
+##     random time (FUN_00c89140: first key before a, last after b, linear
+##     between; which var the pointer names is INFERRED to be the node's first
+##     BlendScaleGraph).
 ##   The link (+0x34) is the particle the same emitter spawned before this
 ##     one that is still alive (READ, round 621: the emitter's particle list
 ##     at emitter+0x30 has prev offset 0x34 and next offset 0x38,
 ##     FUN_00c88320; the particle init FUN_00c88490 appends at the tail;
 ##     a death unlinks). Every variant that names the link does nothing
 ##     when the particle has none -- the oldest live one of its emitter
-##     (READ: cases 0x03, 0x15, 0x18, 0x1b-0x1e, 0x39, 0x3d, 0x41, 0x45,
-##     0x49, 0x4b test +0x34 first). See EfpLinks for the chain's drawing.
-##   ConeForce's case 0x46 falls through into 0x47 in the decompile; this
-##   client does not reproduce that (OPEN whether it is real).
+##     (READ: the interpreter tests +0x34 first in every such case; the
+##     full list is names_link below and EFP_FORMAT.md "The link"). See
+##     EfpLinks for the chain's drawing.
 ##
 ## == Motion per frame (READ, CEFUpdater::vslot_002) ==
 ## A particle follows its parent's movement (OURS: translation only; retail
@@ -103,13 +115,18 @@ class_name EfpSim
 ## parent's origin first), 4 ages advance.
 ##
 ## == Caps (OURS) ==
-## MAX_PARTICLES per effect and MAX_TOTAL across all live effects; a spawn
-## past either is dropped and counted in `dropped`.
+## MAX_PARTICLES per effect. Across all live effects, MAX_TOTAL - RESERVE
+## for everyone else's effects and the full MAX_TOTAL for `reserved` ones
+## (the local player's casts, hits and level-up), so a crowd's auras cannot
+## starve the player's own effects. A refused spawn is counted in `dropped`
+## and gives its 1.0 back to the emitter.
 
 const FRAME_SEC := 0.05 ## READ: 50 ms, see the header
 const MAX_STEPS_PER_ADVANCE := 10 ## OURS: a long hitch catches up at most 0.5 s
 const MAX_PARTICLES := 300 ## OURS
-const MAX_TOTAL := 3000 ## OURS
+const MAX_TOTAL := 2000 ## OURS: ~7 us a particle-frame in GDScript (MEASURED), so <= ~14 ms a 50 ms frame
+const RESERVE := 600 ## OURS: of MAX_TOTAL, kept for reserved (own) effects
+const MAX_KEYS := 100000 ## OURS: bound on one command's scheduling loop
 
 const LIFE_EXTINCT := 0
 const LIFE_LOOP := 1
@@ -133,6 +150,22 @@ const OP_BASE := {
 	"SetGraphDiffuse": 0x4f, "SetShapeRot": 0x50, "SetShapeRotVel": 0x51,
 }
 
+# The command families _run dispatches on (compiled once, not a string match
+# per particle per frame).
+enum { K_POS, K_CONEPOS, K_BANPOS, K_SPHERE, K_VEL, K_CONEVEL, K_FORCE, K_CONEFORCE,
+	K_ATTRACT, K_ROT, K_BANROT, K_RVEL, K_SHAPE, K_SHAPEVEL, K_SCALE, K_DIFFUSE, K_SLIDE,
+	K_RANDSCALE }
+const KIND := {
+	"SetPosition": K_POS, "SetConePos": K_CONEPOS, "SetBANPos": K_BANPOS,
+	"SetSpherePos": K_SPHERE, "SetVelocity": K_VEL, "SetConeVel": K_CONEVEL,
+	"Force": K_FORCE, "ConeForce": K_CONEFORCE, "Attraction": K_ATTRACT,
+	"SetRotationMat": K_ROT, "SetRotation": K_ROT, "SetRotationAxis": K_ROT,
+	"SetBANRot": K_BANROT, "SetRVelocityMat": K_RVEL, "SetRVelocity": K_RVEL,
+	"SetRVelocityAxis": K_RVEL, "SetShapeRot": K_SHAPE, "SetShapeRotVel": K_SHAPEVEL,
+	"SetGraphScale": K_SCALE, "SetGraphDiffuse": K_DIFFUSE, "TextureSlide": K_SLIDE,
+	"SetGraphRandomScale": K_RANDSCALE,
+}
+
 ## One node, compiled once per file and shared by every playing copy.
 class Tpl:
 	var node: EfpReader.EfpNode
@@ -142,7 +175,7 @@ class Tpl:
 	var frames: int
 	var life: int
 	var emit = null ## {delay, duration, interval, max_live, per_trigger} or null
-	var schedule: Array = [] ## frame -> Array of [EfpCommand, key]
+	var schedule: Array = [] ## frame -> Array of [kind, space, payload] (see _payload)
 	var scale_graph = null ## the node's first BlendScaleGraph var, or null
 	var unsupported: PackedStringArray = PackedStringArray()
 
@@ -164,6 +197,8 @@ class Particle:
 	var rvel := Basis.IDENTITY
 	var shape := Basis.IDENTITY
 	var shape_vel := Basis.IDENTITY
+	var has_rvel := false
+	var has_shape_vel := false
 	var scale := Vector3.ONE
 	var color := 0xFFFFFFFF
 	var uv := Vector4(0, 0, 1, 1)
@@ -185,9 +220,12 @@ var emitters: Array[Emitter] = []
 var age := 0 ## the effect's own age, in frames
 var dropped := 0 ## spawns refused by a cap
 var spawned := 0
+## The local player's own effect: may use the RESERVE share of MAX_TOTAL.
+var reserved := false
 var _root := Particle.new() ## the effect's origin: owner of the root emitter
 var _acc := 0.0
 var _rng := RandomNumberGenerator.new()
+var _scratch := Vector3.ZERO ## the interpreter's stack vector (see SetSpherePos)
 
 ## Compiles a decoded file (or its root node) into a template. Unsupported
 ## command names are listed, not fatal.
@@ -213,26 +251,81 @@ static func _compile_node(t: Template, n: EfpReader.EfpNode, parent: int) -> voi
 	for f in range(tp.frames):
 		tp.schedule[f] = []
 	for c in n.commands:
-		if not OP_BASE.has(c.name):
+		if not KIND.has(c.name):
 			if not tp.unsupported.has(c.name):
 				tp.unsupported.append(c.name)
 			if not t.unsupported.has(c.name):
 				t.unsupported.append(c.name)
 			continue
-		var fr := c.frame_range(tp.frames)
-		if not bool(fr["ok"]):
-			continue
-		var st: float = fr["step"]
-		for i in range(int(fr["keys"])):
-			var f: int = int(fr["start"]) + int(float(i) * st)
-			if f > int(fr["end"]) or f >= tp.frames:
-				break
-			(tp.schedule[f] as Array).append([c, i])
+		var kind: int = KIND[c.name]
+		for pair in key_frames(c, tp.frames):
+			var pl = _payload(kind, c, int(pair[1]))
+			if pl == null:
+				continue
+			(tp.schedule[int(pair[0])] as Array).append([kind, int(c.space), pl])
 	t.tpls.append(tp)
 	if parent >= 0:
 		t.tpls[parent].children.append(tp.index)
 	for k in n.children:
 		_compile_node(t, k, tp.index)
+
+## The value one key of a command runs with, resolved once at compile time
+## so the per-particle loop does no dictionary or key lookups: a Vector3, a
+## Basis, a colour int, a Vector4, the cone's b Vector3, or true; null when
+## the key has no value (the command then does nothing, as before).
+static func _payload(kind: int, c: EfpReader.EfpCommand, key: int):
+	var val = c.value
+	if not (val is Dictionary):
+		return true if kind == K_RANDSCALE else null
+	match kind:
+		K_POS, K_SPHERE, K_VEL, K_FORCE:
+			return val.get("value", Vector3.ZERO)
+		K_CONEPOS, K_CONEVEL, K_CONEFORCE:
+			return val.get("b", Vector3.ZERO)
+		K_BANPOS:
+			var ps: PackedVector3Array = val.get("positions", PackedVector3Array())
+			return ps[key] if key < ps.size() else null
+		K_ATTRACT:
+			return float(val.get("value", 0.0))
+		K_ROT, K_RVEL, K_SHAPE, K_SHAPEVEL:
+			return basis_of(val.get("matrix"))
+		K_BANROT:
+			var ms: Array = val.get("matrices", [])
+			return basis_of(ms[key]) if key < ms.size() else null
+		K_SCALE:
+			var fs: PackedVector3Array = val.get("frames", PackedVector3Array())
+			return fs[key] if key < fs.size() else null
+		K_DIFFUSE:
+			var cs: PackedInt64Array = val.get("colors", PackedInt64Array())
+			return cs[key] if key < cs.size() else null
+		K_SLIDE:
+			var ks: Array = val.get("keys", [])
+			return ks[key] if key < ks.size() else null
+		K_RANDSCALE:
+			return true
+	return null
+
+## [frame, key] pairs a command runs at over a program of n frames (READ, the
+## scheduling loop: see the header). Frames outside [0, n) are dropped.
+static func key_frames(c: EfpReader.EfpCommand, n: int) -> Array:
+	var out: Array = []
+	var fr := c.frame_range(n)
+	if not bool(fr["ok"]):
+		return out
+	var st := EfpReader.f32(float(fr["step"]))
+	var endf := float(int(fr["end"]))
+	var f := EfpReader.f32(float(int(fr["start"])))
+	var key := 0
+	while f <= endf and key < MAX_KEYS:
+		var fi := EfpReader.ftol(f)
+		if fi >= 0 and fi < n:
+			out.append([fi, key])
+		key += 1
+		var nf := EfpReader.f32(f + st)
+		if nf <= f:
+			break
+		f = nf
+	return out
 
 func _init(tmpl: Template = null, seed_value: int = 0) -> void:
 	template = tmpl
@@ -253,11 +346,13 @@ func restart() -> void:
 		e.owner = _root
 		emitters.append(e)
 
-## Drops every particle (and its share of the global count).
+## Drops every particle (and its share of the global count) and every
+## emitter: the effect is finished.
 func clear() -> void:
 	for p in particles:
 		if p.alive:
 			live_total -= 1
+			p.alive = false
 	particles.clear()
 	emitters.clear()
 
@@ -292,19 +387,22 @@ func step() -> void:
 	for p in particles:
 		p.prev_pos = p.pos
 	for p in particles:
-		if p.parent != null and p.parent != _root and p.parent.alive:
-			p.pos += p.parent.pos - p.parent.prev_pos
+		var par := p.parent
+		if par != null and par != _root and par.alive:
+			p.pos += par.pos - par.prev_pos
 		p.pos += p.vel
-		p.rot = p.rvel * p.rot
-		p.shape = p.shape_vel * p.shape
+		if p.has_rvel:
+			p.rot = p.rvel * p.rot
+		if p.has_shape_vel:
+			p.shape = p.shape_vel * p.shape
 	# 2 commands for each particle's age
 	for p in particles:
-		var tp: Tpl = tpls[p.tpl]
-		if p.age >= 0 and p.age < tp.schedule.size():
-			for entry in tp.schedule[p.age]:
-				_run(p, tp, entry[0], int(entry[1]))
+		var sched: Array = tpls[p.tpl].schedule
+		if p.age >= 0 and p.age < sched.size():
+			var list: Array = sched[p.age]
+			if not list.is_empty():
+				_run_list(p, tpls[p.tpl], list)
 	# 3 emission (the list grows as particles spawn child emitters)
-	var born := particles.size()
 	var i := 0
 	while i < emitters.size():
 		_emit(emitters[i])
@@ -325,20 +423,22 @@ func step() -> void:
 			LIFE_NEVER:
 				if p.age != 1:
 					p.age += 1
+				if tp.frames == 0:
+					p.alive = false
 		if p.alive:
 			keep.append(p)
 		else:
 			_on_death(p)
 	particles = keep
-	# emitters whose owner died stop (OURS)
+	# emitters whose owner died stop (OURS); finished ones are dropped, so a
+	# frame walks only the emitters that can still spawn
 	var live_emitters: Array[Emitter] = []
 	for e in emitters:
-		if e.owner == _root or e.owner.alive:
+		if not e.done and (e.owner == _root or e.owner.alive):
 			live_emitters.append(e)
 	emitters = live_emitters
 	age += 1
 	_root.prev_pos = _root.pos
-	var _unused := born
 
 func _owner_age(e: Emitter) -> int:
 	return age if e.owner == _root else e.owner.age
@@ -359,7 +459,7 @@ func _emit(e: Emitter) -> void:
 		_spawn(e.tpl, e.owner, e)
 
 ## A particle dies: the global count drops and its emitter's acc gives back
-## 1.0, so `count` caps the live particles (READ, FUN_00c87a20).
+## 1.0, so `max_live` caps the live particles (READ, FUN_00c87a20).
 func _on_death(p: Particle) -> void:
 	live_total -= 1
 	if p.emitter != null:
@@ -386,8 +486,15 @@ static func _unlink(p: Particle) -> void:
 	p.link = null
 	p.next_link = null
 
+## Whether one more particle fits the caps (see the header).
+func can_spawn() -> bool:
+	if particles.size() >= MAX_PARTICLES:
+		return false
+	var limit := MAX_TOTAL if reserved else MAX_TOTAL - RESERVE
+	return live_total < limit
+
 func _spawn(tpl_index: int, owner: Particle, from: Emitter = null) -> void:
-	if particles.size() >= MAX_PARTICLES or live_total >= MAX_TOTAL:
+	if not can_spawn():
 		dropped += 1
 		if from != null:
 			from.acc = maxf(from.acc - 1.0, 0.0) # OURS: a refused spawn is not live
@@ -405,9 +512,8 @@ func _spawn(tpl_index: int, owner: Particle, from: Emitter = null) -> void:
 	particles.append(p)
 	live_total += 1
 	spawned += 1
-	if tp.schedule.size() > 0:
-		for entry in tp.schedule[0]:
-			_run(p, tp, entry[0], int(entry[1]))
+	if tp.schedule.size() > 0 and not (tp.schedule[0] as Array).is_empty():
+		_run_list(p, tp, tp.schedule[0])
 	for k in tp.children:
 		var e := Emitter.new()
 		e.tpl = k
@@ -442,23 +548,26 @@ func _frame(p: Particle, sel: int) -> Basis:
 ## the variants the interpreter runs only when the particle has one (READ,
 ## see the header).
 static func names_link(name: String, space: int) -> bool:
-	match name:
-		"SetPosition", "SetConePos", "SetBANPos":
+	return KIND.has(name) and kind_names_link(int(KIND[name]), space)
+
+## The same by command family (what _run dispatches on).
+static func kind_names_link(kind: int, space: int) -> bool:
+	match kind:
+		K_POS, K_CONEPOS, K_BANPOS:
 			return space % 3 == 2 or space / 3 == 3
-		"SetSpherePos":
+		K_SPHERE:
 			return space == 2
-		"SetVelocity", "SetConeVel", "Force", "ConeForce", \
-				"SetRotationMat", "SetRotation", "SetRotationAxis", "SetBANRot":
+		K_VEL, K_CONEVEL, K_FORCE, K_CONEFORCE, K_ROT, K_BANROT:
 			return space == 3
-		"Attraction":
+		K_ATTRACT:
 			return space == 1
 	return false
 
 func _rand() -> float:
 	return _rng.randf()
 
-func _cone(v: Dictionary) -> Vector3:
-	var b: Vector3 = v.get("b", Vector3.ZERO)
+## A cone vector from AngleVector1's b = (min, max, angle in radians).
+func _cone(b: Vector3) -> Vector3:
 	var r := lerpf(b.x, b.y, _rand())
 	var tilt := _rand() * b.z
 	var spin := _rand() * TAU
@@ -474,90 +583,81 @@ func _ball() -> Vector3:
 			return q
 	return Vector3.ZERO
 
-func _set_pos(p: Particle, space: int, v: Vector3) -> void:
+## A position command: origin o, rotation frame r (space = r*3 + o).
+## SetConePos's o=0 cases (0x1f/0x22/0x25/0x28) build the vector in the
+## interpreter's stack vector (0x00c899a1), so `stack` records it there.
+func _set_pos(p: Particle, space: int, v: Vector3, stack: bool = false) -> void:
 	var o := space % 3
 	var r := space / 3
+	var d := _frame(p, r) * v
 	if o == 1:
 		p.pos = _parent_of(p).pos
 	elif o == 2:
 		p.pos = p.link.pos
-	p.pos += _frame(p, r) * v
+	elif stack:
+		_scratch = d
+	p.pos += d
 
-func _run(p: Particle, tp: Tpl, c: EfpReader.EfpCommand, key: int) -> void:
-	var val = c.value
-	var s: int = c.space
-	if p.link == null and names_link(c.name, s):
-		return
-	match c.name:
-		"SetPosition":
-			if val is Dictionary:
-				_set_pos(p, s, val.get("value", Vector3.ZERO))
-		"SetConePos":
-			if val is Dictionary:
-				_set_pos(p, s, _cone(val))
-		"SetBANPos":
-			if val is Dictionary:
-				var ps: PackedVector3Array = val.get("positions", PackedVector3Array())
-				if key < ps.size():
-					_set_pos(p, s, ps[key])
-		"SetSpherePos":
-			if val is Dictionary:
-				var off := _ball() * (val.get("value", Vector3.ZERO) as Vector3)
-				if s == 1:
-					p.pos = _parent_of(p).pos
-				elif s == 2:
-					p.pos = p.link.pos
-				p.pos += off
-		"SetVelocity":
-			if val is Dictionary:
-				p.vel = _frame(p, s) * (val.get("value", Vector3.ZERO) as Vector3)
-		"SetConeVel":
-			if val is Dictionary:
-				p.vel = _frame(p, s) * _cone(val)
-		"Force":
-			if val is Dictionary:
-				p.vel += _frame(p, s) * (val.get("value", Vector3.ZERO) as Vector3)
-		"ConeForce":
-			if val is Dictionary:
-				p.vel += _frame(p, s) * _cone(val)
-		"Attraction":
-			if val is Dictionary:
-				var d := p.pos - (p.link.pos if s == 1 else _parent_of(p).pos)
-				if d.length_squared() > 0.0:
-					p.vel += d.normalized() * float(val.get("value", 0.0))
-		"SetRotationMat", "SetRotation", "SetRotationAxis":
-			if val is Dictionary:
-				_set_rot(p, s, basis_of(val.get("matrix")))
-		"SetBANRot":
-			if val is Dictionary:
-				var ms: Array = val.get("matrices", [])
-				if key < ms.size():
-					_set_rot(p, s, basis_of(ms[key]))
-		"SetRVelocityMat", "SetRVelocity", "SetRVelocityAxis":
-			if val is Dictionary:
-				p.rvel = basis_of(val.get("matrix"))
-		"SetShapeRot":
-			if val is Dictionary:
-				p.shape = basis_of(val.get("matrix"))
-		"SetShapeRotVel":
-			if val is Dictionary:
-				p.shape_vel = basis_of(val.get("matrix"))
-		"SetGraphScale":
-			if val is Dictionary:
-				var fs: PackedVector3Array = val.get("frames", PackedVector3Array())
-				if key < fs.size():
-					p.scale = fs[key]
-		"SetGraphDiffuse":
-			if val is Dictionary:
-				var cs: PackedInt64Array = val.get("colors", PackedInt64Array())
-				if key < cs.size():
-					p.color = cs[key]
-		"TextureSlide":
-			if val is Dictionary:
-				var ks: Array = val.get("keys", [])
-				if key < ks.size():
-					p.uv = ks[key]
-		"SetGraphRandomScale":
+func _run_list(p: Particle, tp: Tpl, list: Array) -> void:
+	_scratch = Vector3.ZERO # OURS: the stack vector's uninitialised start
+	for entry in list:
+		_run(p, tp, entry[0], entry[1], entry[2])
+
+func _run(p: Particle, tp: Tpl, kind: int, s: int, v) -> void:
+	if p.link == null and kind_names_link(kind, s):
+		return # READ: every link variant tests +0x34 first (round 621)
+	match kind:
+		K_POS, K_BANPOS:
+			_set_pos(p, s, v)
+		K_CONEPOS:
+			_set_pos(p, s, _cone(v), true)
+		K_SPHERE:
+			if s == 0:
+				# READ, 0x00c8a4c5: position = the ball point, then
+				# position += value * the stack vector (see the header).
+				p.pos = _ball()
+				_scratch = (v as Vector3) * _scratch
+				p.pos += _scratch
+			else:
+				var o: Vector3 = p.link.pos if s == 2 else _parent_of(p).pos
+				p.pos = o + _ball() * (v as Vector3)
+		K_VEL:
+			p.vel = _frame(p, s) * (v as Vector3)
+		K_CONEVEL:
+			p.vel = _frame(p, s) * _cone(v)
+		K_FORCE:
+			p.vel += _frame(p, s) * (v as Vector3)
+		K_CONEFORCE:
+			var c1 := _cone(v)
+			_scratch = c1
+			p.vel += _frame(p, s) * c1
+			if s == 0:
+				# READ: case 0x46 falls through into 0x47 (own rotation).
+				var c2 := p.rot * _cone(v)
+				_scratch = c2
+				p.vel += c2
+		K_ATTRACT:
+			var d := p.pos - (p.link.pos if s == 1 else _parent_of(p).pos)
+			if d.length_squared() > 0.0:
+				_scratch = d.normalized() * float(v)
+				p.vel += _scratch
+		K_ROT, K_BANROT:
+			_set_rot(p, s, v)
+		K_RVEL:
+			p.rvel = v
+			p.has_rvel = p.rvel != Basis.IDENTITY
+		K_SHAPE:
+			p.shape = v
+		K_SHAPEVEL:
+			p.shape_vel = v
+			p.has_shape_vel = p.shape_vel != Basis.IDENTITY
+		K_SCALE:
+			p.scale = v
+		K_DIFFUSE:
+			p.color = v
+		K_SLIDE:
+			p.uv = v
+		K_RANDSCALE:
 			if tp.scale_graph is Dictionary:
 				p.scale = sample_scale_graph(tp.scale_graph, _rand())
 

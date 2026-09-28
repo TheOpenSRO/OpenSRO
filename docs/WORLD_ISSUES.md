@@ -7275,6 +7275,185 @@ Nothing here was compared with the retail client.
 - which face of a Link strip D3D culls;
 - which side of a pipe gets v = 0 after the handedness mirror.
 
+## Six-hundred-and-twentieth round, review follow-up: effects follow the game's own cast phases, end when their buff or cast ends, and survive an equipment change
+
+The review of round 620 checked its READ claims against the asm and found real defects. This follow-up fixes them.
+
+**READ** (sro_client.exe, box decompile and asm):
+- **The cast's phase machine** (IDecoSkill, funcs_015):
+  - A cast (`GlobalDataManager::FUN_00a53610`) enters phase 0 through `FUN_00a534d0`.
+  - Each phase plays its clip, advances +0xbe, and fires its StartEvent 0 rows at once
+    (`FUN_00a53480` → `FUN_00a52fe0`).
+  - Each animation event of the current clip fires the next StartEvent (`FUN_00a59970`, type 1).
+    The clip's end (type 100) moves on: READY → WAIT → SHOT.
+  - A phase with no clip of its own advances at once. This is the skill record's per-phase clip
+    count at +8 + phase.
+  - WAIT holds only while the skill has WAIT clips, until the server's skill-action message
+    (`FUN_00a56680` kind 1 → `FUN_00a53090`) forces SHOT.
+  - ACT_S and ACT_L fire when the skill acts (`FUN_00a53850`).
+- **Ending a kept effect.** It ends through the interface's slot 2 (`CEFEffect::vslot_002`), which
+  frees its particles at once, or through slot 4 with 0 (`vslot_004`), which clears the restart
+  flag +0x49 and releases the effect at keep count 0.
+  - Slot 4 with 1 is AT_LOOP's restart (`vslot_000` resets the ages).
+  - So `EfpEffect.stop()` now drops every particle at once. Round 620 let a looping effect finish
+    its cycle, which never ended the 18 loop and never-extinct files the review found (among them
+    `status_bad_temptation` and `pet2_dragon_j`).
+- **Frame scheduling** is a single-precision running sum of the step, truncated. Key i runs at
+  `ftol(f_i)`, where `f_{i+1} = f32(f_i + step)`, while `f_i ≤ end` (the loop at `0x00ca9276`, the
+  fldcw at `0x00ca92b0`).
+- **NeverExtinct with N = 0** kills the particle (`FUN_00c84d80`).
+- **SetSpherePos space 0** (`0x00c8a4c5`):
+  - The ball point is written straight into the position.
+  - Then `position += value × V`. V is a stack vector the case never sets. It holds what an earlier
+    command of the same frame's run left there: the o = 0 cone positions, ConeForce, Attraction or
+    SetSpherePos itself.
+  - With nothing earlier, V is uninitialised. EfpSim keeps V per particle run and starts it at zero,
+    which is OURS for that case. 66 retail commands use space 0.
+- **ConeForce space 0** falls through into 0x47 (`0x00c8ac1d` → `0x00c8ac23`), so it adds a second
+  cone rotated by the particle's own rotation (121 commands).
+- **Round 620's INFERRED claims the review confirmed:**
+  - Force adds to the velocity (`0x00c8aae8`).
+  - TextureSlide stores the UV rectangle (`0x00c8af77`).
+  - The billboard matrices come from `CEFSystem::FUN_00cb0ee0`, as the inverse view with its
+    translation zeroed. YBillboard has only its row 1 forced to (0, 1, 0), and its rows 0 and 2 are
+    kept. Round 620 rebuilt YBillboard as an orthonormal upright basis, which was wrong.
+
+**INFERRED:**
+- **Billboard look direction.** The inverse view's rows are right, up and look. The client keeps
+  the game's coordinates unconverted, so look is Godot's −camera.z. Round 620 used +camera.z, which
+  put a billboarded mesh's depth backwards.
+- **Phase timing.** With no per-phase clips, the phases are timed from skilldata: READY spans
+  Action_PreparingTime (col 11) and WAIT spans Action_CastingTime (col 12).
+
+**MEASURED:**
+- **Colour.** A white texture under a 0x80 particle colour, a 0x80 texture under a white colour, and
+  an unshaded StandardMaterial3D with albedo 0x80 all render 128 on the box's GL Compatibility
+  renderer. The colours match D3D's fixed pipeline, so the suspected sRGB defect is not one.
+- **The simulation costs about 7 µs a particle-frame in GDScript.** `water_assist_motion_wait`
+  took 466 µs for 64 particles. The review's bench (20 copies of each file):
+
+  | file | before | after |
+  |---|---|---|
+  | `cos\p2skill_critical_defense.efp` | 12 ms for 2,092 particles | 10.4 ms for 1,292 (capped) |
+  | `cold_gigongta_keep_a.efp` | | 3.5 ms for 160 |
+
+  Precompiling each command's key value out of the per-particle loop and dropping finished emitters
+  gained about 5–10 %. The rest is GDScript per-particle work.
+
+**What changed:**
+1. **Phase timing.** `SkillEffects.cast(skill, caster, target, timings)` is the cast sequencer:
+   - READY at once;
+   - WAIT at prep;
+   - SHOT at once when the skill has no WAIT row, else at `shot(caster)` (the server's answer) or
+     at prep + cast (the OURS fallback);
+   - the cast's READY/WAIT loops end when SHOT starts;
+   - `hit(caster, target, skill)` fires SHOT/1 and later, and `act(skill, caster, target,
+     with_aura)` fires ACT_S (plus one ACT_L cycle);
+   - `cancel_cast(caster)` ends a refused or interrupted cast.
+
+   `play_phase` no longer stops READY loops on any later phase. World3D's monster cast now uses the
+   sequencer: `cast` at the request, `hit` and `act` when the blow lands, and `cancel_cast` on a
+   refusal. The target is the monster the request names, where round 620 used the stale
+   `_last_attack_target`. The self-cast wiring is left to the int/skills merge.
+2. **Ending effects.** `stop()` ends at once. An aura also ends by itself `AURA_GRACE_MS` (2 s,
+   OURS) after its buff's remaining time, in case OpBuffEnd never arrives.
+3. **Equipment changes.** An effect is now a child of the body, not of its skeleton. Each frame it
+   takes the frame of the body's current skeleton at its bone (`EfpEffect.follow_host`).
+   - An equipment change no longer frees the auras.
+   - An aura attached before the skeleton exists finds it when the skeleton arrives.
+   - `skeleton_of` skips skeletons queued for deletion.
+4. **Cap priority** (OURS):
+   - 2,000 particles in all, of which 600 are reserved for the local player's own effects
+     (`reserved`: its casts, hits and level-up); everyone else's stop at 1,400;
+   - a MultiMesh is rewritten only after a simulation frame, or when the camera turns for a
+     billboarded node.
+5. **Hitches and caches.**
+   - A skill's effect files decode on a WorkerThreadPool task when the skill state arrives (known
+     skills) and on a hotbar assignment (`SkillEffects.preload_skill`, `EfpEffect.preload_paths`).
+     The task produces plain data, and the resources are made on first use.
+   - The caches are bounded by least-recent use, OURS: templates 256, textures 384, meshes 256. An
+     evicted texture takes its materials with it.
+6. **Smaller fixes.**
+   - Casts and auras of freed bodies are pruned in `process()`.
+   - The world's `_exit_tree` clears every live effect and the own-body reference (`clear_live`),
+     which covers leave and relog.
+   - An effect that draws nothing is freed rather than orphaned, in `play_phase`, `attach_aura`,
+     the hit and the level-up.
+   - The QA cast hook drives the sequencer.
+
+**API changes** (for round 621's merge):
+- *Behaviour:*
+  - `EfpEffect.stop()` now ends at once;
+  - `SkillEffects.play_phase` no longer stops phase loops;
+  - `SkillEffects.attach` parents to the body and uses `follow_host`.
+- *Removed:* `EfpEffect.follow(skel, bone, offset)`, replaced by `follow_host(host, bone_name,
+  offset)`; `SkillEffects.stop_phase_loops`.
+- *New in SkillEffects:* `cast`, `shot`, `hit`, `act`, `cancel_cast`, `cast_phase`, `process`, `tick`,
+  `preload_skill`, `preload_skills`, `paths_for`, `parse_timings`, `clear_live`, `tracked_count`
+  and `own_body`.
+- *Extended in SkillEffects:* `attach_aura(..., remaining_ms, now_ms)` and
+  `set_rows(rows, timings)`.
+- *New in EfpEffect:* `reserved`, `draw_updates`, `preload_paths`, `wait_preloads`, `cache_sizes`
+  and `CACHE_*`.
+- *New in EfpSim:* `reserved`, `RESERVE`, `key_frames`, `can_spawn`; `MAX_TOTAL` is now 2000.
+- *World3D:* `_audio_cast_start(skill_id, monster_id)`. `combat_audio_test.gd`'s source probe
+  follows it.
+
+**Tests.**
+- **`efp_sim_test.gd`** adds:
+  - the immediate stop of loop and never-extinct effects;
+  - draws rewritten only on a stepped frame;
+  - the billboard rows, and YBillboard's forced row 1;
+  - NeverExtinct N = 0;
+  - the float32 schedule (step 0.3 → frames 0,0,0,0,1,1,1);
+  - SetSpherePos space 0, with and without a preceding cone;
+  - ConeForce space 0 adding twice;
+  - the reserved share.
+- **`skill_effects_test.gd`** (now run on the first frame, so the tree is live) adds:
+  - an effect as the body's child at the bone;
+  - a skeleton rebuilt under an aura, and a queued skeleton being skipped;
+  - an aura attached before the skeleton exists;
+  - the sequencer: READY holding for prep, WAIT holding, `shot`, the prep + cast fallback, prep 0
+    with no WAIT, and `hit` on the struck body;
+  - `cancel_cast`, and `act` with and without the aura cycle;
+  - a nothing-drawing effect freed;
+  - aura replacement, detach and detach_owner;
+  - the aura's grace expiry, freed-body pruning, and the bounded template cache.
+- **Results.**
+  - `remote_godot.sh check`: ALL LOAD.
+  - `remote_godot.sh tests`: 135 suites, 0 failing.
+  - `go test -count=1 -p 1 ./...`: ok. The server is unchanged.
+- Against round 620 (41163cb), the new checks fail: see below.
+
+The new checks fail against 41163cb (the same test files, run on round 620's code):
+
+```
+== efp_sim_test.gd
+SCRIPT ERROR: Invalid get index 'RESERVE' (on base: 'GDScript').
+FAIL NeverExtinct with N == 0 kills the particle
+SCRIPT ERROR: Invalid call. Nonexistent function 'key_frames' in base 'GDScript'.
+FAIL the plate node's particle is in its MultiMesh
+FAIL stop() ends a looping effect at once: every particle goes, the node frees (READ: the interface's release)
+FAIL a never-extinct effect lives on by itself
+SCRIPT ERROR: Invalid get index 'draw_updates' (on base: 'Node3D (EfpEffect)').
+FAILURES: 4
+== skill_effects_test.gd
+SCRIPT ERROR: Parse Error: Static function "cache_sizes()" not found in base "EfpEffect".
+SCRIPT ERROR: Parse Error: Cannot find member "CACHE_TEMPLATES" in base "EfpEffect".
+```
+
+**Render** (`efp_shots/F_grid.png`; it shows, it does not prove). `SRREVAMP_QA_CAST=149,90` through
+the sequencer:
+- the Heal's READY column (skilldata prep 1000 ms) is up through its preparing time;
+- it is gone at the `shot`;
+- ACT_S's swirl follows;
+- the imbue's ACT_S burst and its hand aura follow.
+
+The first try used the wall clock, and the READY phase ended within three movie frames: a movie
+render runs slower than real time. The sequencer now runs on scene time (`SkillEffects.tick(delta)`
+from `_physics_process`), the same clock the effects simulate in.
+
+
 ## Six-hundred-and-twentieth round: skills play their own particle effects -- the cast glow, the imbue's hand aura, the heal's burst -- drawn from the game's own .efp files
 
 The user asked for skill visual effects on activation, and for "most of the particles loaded in".

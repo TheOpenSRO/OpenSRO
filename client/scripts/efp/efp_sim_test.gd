@@ -83,6 +83,7 @@ func _initialize() -> void:
 	_children()
 	_commands()
 	_caps()
+	_review_rules()
 	_blend()
 	_effect_nodes()
 	_finish()
@@ -268,11 +269,69 @@ func _caps() -> void:
 		var o = _sim(_node(100, "NormalTimeLoop", _emit(0, 10, 1, 100000, 1000.0)))
 		o.step()
 		others.append(o)
-	_check(S.live_total == S.MAX_TOTAL, "every effect together holds at most MAX_TOTAL (%d)" % S.live_total)
+	_check(S.live_total == S.MAX_TOTAL - S.RESERVE, "other effects together hold at most MAX_TOTAL - RESERVE (%d)" % S.live_total)
 	for o in others:
 		o.clear()
 	big.clear()
 	_check(S.live_total == 0, "clearing the effects returns their share of the total")
+
+func _review_rules() -> void:
+	# NeverExtinct with N == 0 kills the particle (FUN_00c84d80).
+	var n0 = _sim(_node(0, "NeverExtinct", _emit(0, 1, 1, 1, 1.0)))
+	n0.step()
+	_check(n0.particles.is_empty() and n0.spawned == 1, "NeverExtinct with N == 0 kills the particle")
+	# Scheduling is a float32 running sum of the step, truncated.
+	var c := _cmd("SetGraphScale", {"type": "FrameScale", "frames": PackedVector3Array()}, 0, 0, 0.0, 0.3, 2.0)
+	var fr: Array = S.key_frames(c, 10)
+	var frames: Array = []
+	for pair in fr:
+		frames.append(pair[0])
+	_check(frames == [0, 0, 0, 0, 1, 1, 1], "step 0.3 from 0 to 2: keys at ftol of the float32 sum: %s" % str(frames))
+	# SetSpherePos space 0: position = the ball point, + value * the stack vector.
+	var sp = _sim(_node(10, "NormalTimeExtinct", _emit(0, 1, 1, 20, 20.0), "RenderNone", [
+		_cmd("SetPosition", {"type": "Vector", "value": Vector3(100, 0, 0)}),
+		_cmd("SetSpherePos", {"type": "Vector", "value": Vector3(50, 50, 50)})]))
+	sp.step()
+	var inside := true
+	for q in sp.particles:
+		if q.pos.length() > 1.0001:
+			inside = false
+	_check(inside and sp.particles.size() == 20,
+		"SetSpherePos space 0 overwrites the position with a unit-ball point; with no stack vector the value adds nothing")
+	var sp2 = _sim(_node(10, "NormalTimeExtinct", _emit(0, 1, 1, 20, 20.0), "RenderNone", [
+		_cmd("SetConePos", {"type": "AngleVector1", "a": Vector3(3, 3, 0), "b": Vector3(3, 3, 0)}),
+		_cmd("SetSpherePos", {"type": "Vector", "value": Vector3(2, 2, 2)})]))
+	sp2.step()
+	var shifted := true
+	for q in sp2.particles:
+		if absf(q.pos.y - 6.0) > 1.0001 or Vector2(q.pos.x, q.pos.z).length() > 1.0001:
+			shifted = false
+	_check(shifted, "... after a cone position the stack vector is that cone: pos = ball + value * (0, 3, 0)")
+	# ConeForce space 0 falls through into 0x47: two cones.
+	var cf = _sim(_node(10, "NormalTimeExtinct", _emit(0, 1, 1, 1, 1.0), "RenderNone", [
+		_cmd("ConeForce", {"type": "AngleVector1", "a": Vector3(1, 1, 0), "b": Vector3(1, 1, 0)})]))
+	cf.step()
+	_check(cf.particles[0].vel.is_equal_approx(Vector3(0, 2, 0)), "ConeForce space 0 adds its cone twice (0x46 falls into 0x47): %s" % str(cf.particles[0].vel))
+	var cf1 = _sim(_node(10, "NormalTimeExtinct", _emit(0, 1, 1, 1, 1.0), "RenderNone", [
+		_cmd("ConeForce", {"type": "AngleVector1", "a": Vector3(1, 1, 0), "b": Vector3(1, 1, 0)}, 1)]))
+	cf1.step()
+	_check(cf1.particles[0].vel.is_equal_approx(Vector3(0, 1, 0)), "ConeForce space 1 adds one")
+	# The reserved share: others stop at MAX_TOTAL - RESERVE, own effects may go on.
+	S.live_total = 0
+	var crowd: Array = []
+	for _i in range(20):
+		var o = _sim(_node(100, "NormalTimeLoop", _emit(0, 10, 1, 100000, 1000.0)))
+		o.step()
+		crowd.append(o)
+	_check(S.live_total == S.MAX_TOTAL - S.RESERVE, "everyone else's effects stop at MAX_TOTAL - RESERVE (%d)" % S.live_total)
+	var mine = _sim(_node(100, "NormalTimeLoop", _emit(0, 10, 1, 100000, 1000.0)))
+	mine.reserved = true
+	mine.step()
+	_check(mine.particles.size() == S.MAX_PARTICLES, "the player's own effect still gets its particles (%d)" % mine.particles.size())
+	mine.clear()
+	for o in crowd:
+		o.clear()
+	_check(S.live_total == 0, "... and the count returns to 0")
 
 func _blend() -> void:
 	_check(E.blend_class(5, 2) == "add" and E.godot_blend("add") == BaseMaterial3D.BLEND_MODE_ADD,
@@ -325,23 +384,39 @@ func _effect_nodes() -> void:
 			restarted = true
 	_check(not looping.is_queued_for_deletion(), "a looping (AT_LOOP) effect does not end")
 	_check(restarted or looping.sim.age < 20, "... it restarts when its particles run out (age %d)" % looping.sim.age)
+	var live_before: int = S.live_total
+	var held: int = looping.sim.particles.size()
 	looping.stop()
-	var stopped := false
-	for _i in range(10):
-		looping._process(0.05)
-		if looping.is_queued_for_deletion():
-			stopped = true
-			break
-	_check(stopped, "stop() lets a looping effect finish its cycle and free itself")
+	_check(looping.is_queued_for_deletion() and looping.sim.particles.is_empty() and S.live_total == live_before - held,
+		"stop() ends a looping effect at once: every particle goes, the node frees (READ: the interface's release)")
+	var never = E.from_template(S.compile(_node(5, "NeverExtinct", _emit(0, 1, 1, 1, 1.0), "RenderPlate")), load_tex, load_mesh, 3)
+	host.add_child(never)
+	for _i in range(30):
+		never._process(0.05)
+	_check(not never.is_queued_for_deletion() and never.sim.particles.size() == 1, "a never-extinct effect lives on by itself")
+	never.stop()
+	_check(never.is_queued_for_deletion(), "... and stop() ends it too (the review's 18 never-ending files)")
+	# Draws are rewritten only after a simulation frame.
+	var lazy = E.from_template(S.compile(_node(40, "NormalTimeExtinct", _emit(0, 1, 1, 1, 1.0), "RenderPlate")), load_tex, load_mesh, 3)
+	host.add_child(lazy)
+	lazy._process(0.01)
+	lazy._process(0.01)
+	var d0: int = lazy.draw_updates
+	lazy._process(0.04)
+	_check(d0 == 0 and lazy.draw_updates == 1, "the MultiMeshes are rewritten only on a frame that stepped (%d, %d)" % [d0, lazy.draw_updates])
+	lazy.stop()
 	# The view modes.
 	var p = S.Particle.new()
 	p.vel = Vector3(1, 0, 0)
 	var vb: Basis = E.view_basis(p, "ViewVBillboard", Basis.IDENTITY)
 	_check(vb.y.is_equal_approx(Vector3(1, 0, 0)), "ViewVBillboard turns the shape's Y along the velocity")
-	var cam := Basis(Vector3(0, 1, 0), 0.7)
-	_check(E.view_basis(p, "ViewBillboard", cam).is_equal_approx(cam), "ViewBillboard takes the camera's rotation")
+	var cam := Basis(Vector3(1, 0, 0), -0.4) * Basis(Vector3(0, 1, 0), 0.7)
+	var bb: Basis = E.view_basis(p, "ViewBillboard", cam)
+	_check(bb.x.is_equal_approx(cam.x) and bb.y.is_equal_approx(cam.y) and bb.z.is_equal_approx(-cam.z),
+		"ViewBillboard is the inverse view's rows: camera right, up and look (= -back)")
 	var yb: Basis = E.view_basis(p, "ViewYBillboard", cam)
-	_check(yb.y.is_equal_approx(Vector3.UP), "ViewYBillboard keeps the shape upright")
+	_check(yb.y.is_equal_approx(Vector3.UP) and yb.x.is_equal_approx(cam.x) and yb.z.is_equal_approx(-cam.z),
+		"ViewYBillboard forces only row 1 to (0,1,0), rows 0 and 2 unchanged (READ, FUN_00cb0ee0)")
 	host.queue_free()
 
 func _finish() -> void:

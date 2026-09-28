@@ -1210,6 +1210,12 @@ func _ready() -> void:
 	# 616-618); without them ACT_L plays once where its sound plays.
 	SkillEffects.set_archive(_open_particles_pk2_if_set())
 	SkillEffects.warm()
+	SkillEffects.own_body = player
+	# Known skills' effect files decode on a worker thread when the skill
+	# state arrives, so a first cast does not (round 620 review).
+	NetClient.skill_state_result.connect(func(state) -> void:
+		if state != null and state.error == "":
+			SkillEffects.preload_skills(state.known_skills.keys()))
 	if NetClient.has_signal("buff_started"):
 		NetClient.connect("buff_started", _fx_on_buff_started)
 	if NetClient.has_signal("buff_ended"):
@@ -4659,6 +4665,9 @@ func _load_object_template(model_path: String) -> Node3D:
 ## Also called on quit, where all of it is harmless.
 func _exit_tree() -> void:
 	SoundTable.set_listener(null)
+	# Every live skill effect and aura goes with the world, and the bodies
+	# SkillEffects remembers are forgotten (a relog builds a new World3D).
+	SkillEffects.clear_live()
 	var exit_music := _audio_music()
 	if exit_music != null:
 		exit_music.leave_world()
@@ -6812,6 +6821,7 @@ func _play_weapon_swing_anim() -> float:
 func _on_skill_assign_requested(skill_id: int, basic_code: String, icon: Texture2D) -> void:
 	if not _skill_is_assignable(skill_id):
 		return
+	SkillEffects.preload_skill(skill_id)
 	for k in range(HudUnderbar.SLOTS_PER_PAGE):
 		var slot := HudUnderbar.slot_index(1, k)
 		if not _quickslot_skills.has(slot) and not _quickslot_items.has(slot):
@@ -7225,7 +7235,7 @@ func _send_attack(monster_id: int, skill_id: int, basic_code: String) -> void:
 	_play_skill_cast_anim(anim_base)
 	_pending_skill_hit_code = basic_code
 	_pending_skill_id = skill_id
-	_audio_cast_start(skill_id)
+	_audio_cast_start(skill_id, monster_id)
 	if OS.get_environment("SRREVAMP_QA_HOTKEY") != "":
 		print("QA CAST: use_skill %d (%s) on monster %d" % [skill_id, basic_code, monster_id])
 	NetClient.use_skill(NetClient.current_character_name, skill_id, monster_id)
@@ -8684,10 +8694,10 @@ func _qa_step() -> void:
 	# (default 40) native units apart along the body's X -- a render shows
 	# EfpEffect drawing them. SRREVAMP_QA_CAST="<skill id>[,<id>...]" plays each
 	# skill's effect phases on the player in turn, every
-	# SRREVAMP_QA_CAST_PERIOD ticks (default 160): READY at +0, WAIT (Ghost
-	# Walk's only effect row; World3D does not fire WAIT in play), SHOT/0 and
-	# SHOT/1 at +30, ACT_S at +40 and the ACT_L aura (token 1) from +41 to the
-	# next skill. Each step prints a `QA CAST` line with its tick.
+	# SRREVAMP_QA_CAST_PERIOD ticks (default 160) through SkillEffects' cast
+	# sequencer: cast at +0 (READY now, WAIT and SHOT by the skill's timing
+	# columns), shot + hit (SHOT/1) at +30, act (ACT_S) at +40 and the ACT_L
+	# aura (token 1) from +41 to the next skill. Each step prints a `QA CAST` line with its tick.
 	var qa_fx := OS.get_environment("SRREVAMP_QA_EFFECT")
 	if qa_fx != "" and _qa_tick == 20 and player != null:
 		_qa_play_effects(qa_fx)
@@ -10647,6 +10657,7 @@ func _is_typing() -> bool:
 ## client/tools/README.md, "Load benchmark".
 func _physics_process(delta: float) -> void:
 	var sw := Time.get_ticks_usec()
+	SkillEffects.tick(delta)
 	var cells_before := _load_timings.cell_work_usec
 	_physics_step(delta)
 	var now := Time.get_ticks_usec()
@@ -13129,6 +13140,7 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	if result.error != "":
 		monster_status_label.text = "Attack failed: %s" % result.error
 		print("World3D: attack refused: %s" % result.error)
+		SkillEffects.cancel_cast(player)
 		_rewalk_after_refusal(result)
 		return
 	_released_attack = {}
@@ -13690,7 +13702,12 @@ func _fx_on_buff_started(start) -> void:
 		print("EFFECTS aura: buff token %d skill %d on %s, not in view -- no aura" % [
 			int(start.get("token")), int(start.get("skill_id")), _fx_owner_key(owner_id, kind)])
 		return
-	SkillEffects.attach_aura(_fx_owner_key(owner_id, kind), int(start.get("token")), int(start.get("skill_id")), body)
+	# The buff's remaining time bounds the aura in case its end never
+	# arrives (SkillEffects.AURA_GRACE_MS, OURS).
+	var remaining := int(start.get("remaining_ms")) if start.get("remaining_ms") != null else -1
+	if remaining <= 0 and start.get("duration_ms") != null:
+		remaining = int(start.get("duration_ms"))
+	SkillEffects.attach_aura(_fx_owner_key(owner_id, kind), int(start.get("token")), int(start.get("skill_id")), body, remaining)
 
 ## OpBuffEnd: each ended token's aura finishes its cycle and goes.
 func _fx_on_buff_ended(ended) -> void:
@@ -13733,16 +13750,16 @@ func _qa_cast_step(spec: String) -> void:
 	match at:
 		0:
 			SkillEffects.detach_aura("qa:player", 1)
-			print("QA CAST tick %d skill %d READY" % [_qa_tick, skill])
-			SkillEffects.play_phase(skill, SkillAudio.READY, -1, player, player, what)
+			print("QA CAST tick %d skill %d cast (READY now, WAIT/SHOT by its timing %s)" % [_qa_tick, skill,
+				str(SkillEffects._timings.get(skill, "none"))])
+			SkillEffects.cast(skill, player, player)
 		30:
-			print("QA CAST tick %d skill %d WAIT SHOT/0 SHOT/1" % [_qa_tick, skill])
-			SkillEffects.play_phase(skill, SkillAudio.WAIT, -1, player, player, what)
-			SkillEffects.play_phase(skill, SkillAudio.SHOT, 0, player, player, what)
-			SkillEffects.play_phase(skill, SkillAudio.SHOT, 1, player, player, what)
+			print("QA CAST tick %d skill %d shot + hit (SHOT/1)" % [_qa_tick, skill])
+			SkillEffects.shot(player)
+			SkillEffects.hit(player, player, skill)
 		40:
-			print("QA CAST tick %d skill %d ACT_S" % [_qa_tick, skill])
-			SkillEffects.play_phase(skill, SkillAudio.ACT_S, -1, player, player, what)
+			print("QA CAST tick %d skill %d act (ACT_S)" % [_qa_tick, skill])
+			SkillEffects.act(skill, player, player)
 		41:
 			var n := SkillEffects.attach_aura("qa:player", 1, skill, player).size()
 			print("QA CAST tick %d skill %d ACT_L aura: %d effect(s)" % [_qa_tick, skill, n])
@@ -13771,14 +13788,16 @@ func _player_weapon_token() -> String:
 ## A cast starts (its clip starts and OpUseSkill goes out): the skill becomes
 ## the player's current one, and its READY and first SHOT rows sound
 ## (SkillAudio's header: the phase timing is INFERRED).
-func _audio_cast_start(skill_id: int) -> void:
+func _audio_cast_start(skill_id: int, monster_id: int = -1) -> void:
 	SkillAudio.set_current(player, skill_id)
 	var what := "cast start"
 	SkillAudio.play_phase(skill_id, SkillAudio.READY, -1, player, what)
 	SkillAudio.play_phase(skill_id, SkillAudio.SHOT, 0, player, what)
-	var fx_target := _fx_monster_body(_last_attack_target)
-	SkillEffects.play_phase(skill_id, SkillAudio.READY, -1, player, fx_target, what)
-	SkillEffects.play_phase(skill_id, SkillAudio.SHOT, 0, player, fx_target, what)
+	# The effects run on SkillEffects' cast sequencer (round 620 review): READY
+	# now, WAIT and SHOT by the skill's timing columns, SHOT/1 when the blow
+	# lands (_audio_blow_lands), and a refusal cancels it (_on_attack_result).
+	# The target is the monster this request names, not the last selection.
+	SkillEffects.cast(skill_id, player, _fx_monster_body(monster_id))
 	var left := SkillAudio.unplayed_rows(skill_id)
 	if not left.is_empty():
 		AudioLog.line("cast-unplayed:%d" % skill_id, "AUDIO cast: skill %d rows this client does not fire: %s" % [
@@ -13812,10 +13831,8 @@ func _audio_blow_lands(blow: Dictionary, dealt: int, monster: int) -> void:
 	# aura, held by token from OpBuffStart when the build has it; without it
 	# the aura plays one cycle here (OURS).
 	var fx_target := _fx_monster_body(monster)
-	SkillEffects.play_phase(skill, SkillAudio.SHOT, 1, player, fx_target, what)
-	SkillEffects.play_phase(skill, SkillAudio.ACT_S, -1, player, player, what)
-	if not NetClient.has_signal("buff_started"):
-		SkillEffects.play_phase(skill, SkillAudio.ACT_L, -1, player, player, what)
+	SkillEffects.hit(player, fx_target, skill)
+	SkillEffects.act(skill, player, player, not NetClient.has_signal("buff_started"))
 
 ## A monster's blow lands on a character: its hit sound at the monster (the
 ## attacker), keyed by its sound object and its attack skill. srrevamp's
@@ -14484,9 +14501,12 @@ func _play_level_up_effect() -> void:
 	if USE_EFP_LEVELUP:
 		var efp := EfpEffect.create(LEVELUP_EFP, particles)
 		if efp != null and efp.draw_count() > 0:
+			efp.reserved = true
 			SkillEffects.attach(efp, player, "none", Vector3.ZERO)
 			print("World3D: level-up plays %s (%d nodes drawn)" % [LEVELUP_EFP, efp.draw_count()])
 			return
+		if efp != null:
+			efp.free()
 	var fx := LevelUpEffect.create(particles, _player_world_height())
 	if fx == null:
 		return
@@ -14509,11 +14529,13 @@ func _play_skill_hit_effect_on(body: Node3D, world_height: float, basic_code: St
 	if USE_EFP_HITS and efp != "":
 		var decoded := EfpEffect.create(efp, particles)
 		if decoded != null and decoded.draw_count() > 0:
-			SkillEffects.attach(decoded, body, "none", Vector3.ZERO)
 			var skel := SkillEffects.skeleton_of(body)
 			var sy: float = skel.global_transform.basis.get_scale().y if skel != null else 1.0
-			decoded.position.y += world_height * 0.5 / maxf(sy, 0.0001)
+			decoded.reserved = true
+			SkillEffects.attach(decoded, body, "none", Vector3(0, world_height * 0.5 / maxf(sy, 0.0001), 0))
 			return
+		if decoded != null:
+			decoded.free()
 	var fx: HitEffect = null
 	if efp != "":
 		fx = HitEffect.create_from_efp(particles, efp, world_height)
