@@ -4096,13 +4096,11 @@ func _finish_cell_job(flight: Dictionary) -> void:
 ## the snapshot carried it in (ObjectLoader.commit_textures merges a
 ## prepare's statistics into a texture already cached). A snapshot taken
 ## after that commit would have spared the decode only if EVERY such
-## statistic had been carried in. The two differ only when one job measures
-## two statistics on one held texture, which needs SRREVAMP_QA_MATS:
-## ObjectLoader._prepare_material then also measures `fraction` beside a
-## DXT3/DXT5 layer's `variance` or an uncompressed one's `binary_cutout`;
-## without it each fourCC needs exactly one. So under QA_MATS this count can
-## run over by such a texture -- a log line, QA runs only (round 568's
-## review; this said the any-rule spared the decode until round 574).
+## statistic had been carried in. Since round 625 there is one statistic,
+## `fraction`, measured only under SRREVAMP_QA_MATS (the material rule reads
+## the layer's flag word, not the pixels), so the two rules agree. (Round
+## 568's review: with the old pixel rule a QA_MATS job could measure two
+## statistics on one held texture and this count could run over by it.)
 ## Until round 568 the counter skipped every snapshot-held key, and this
 ## comment said no later commit could have spared such a decode -- wrong,
 ## by commit_textures (round 566's second review, re-read in round 568).
@@ -5311,7 +5309,8 @@ func _skeleton_bounds(skeleton: Skeleton3D) -> Vector2:
 		# say how tall the thing is.
 		var top := 0.0
 		for i in range(skeleton.get_bone_count()):
-			top = maxf(top, skeleton.get_bone_global_pose(i).origin.y)
+			if Skeleton3DBuilder.is_skeleton_bone(skeleton, i):
+				top = maxf(top, skeleton.get_bone_global_pose(i).origin.y)
 		return Vector2(NPC_MIN_RADIUS, top * skeleton.scale.y)
 	var depth: float = minf(aabb.size.x, aabb.size.z) * skeleton.scale.x
 	return Vector2(depth * 0.5, aabb.end.y * skeleton.scale.y)
@@ -10556,6 +10555,9 @@ func _qa_rig_report() -> void:
 	var lowest_bone := ""
 	var highest_bone := ""
 	for i in range(skeleton.get_bone_count()):
+		# The model-space bone build_skin adds sits at the origin: not a foot.
+		if not Skeleton3DBuilder.is_skeleton_bone(skeleton, i):
+			continue
 		var y: float = (skeleton.global_transform * skeleton.get_bone_global_pose(i).origin).y
 		if y < lowest:
 			lowest = y
@@ -13230,7 +13232,8 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 		body.add_child(monster_skeleton)
 		var max_y := 0.0
 		for i in range(monster_skeleton.get_bone_count()):
-			max_y = max(max_y, monster_skeleton.get_bone_global_pose(i).origin.y)
+			if Skeleton3DBuilder.is_skeleton_bone(monster_skeleton, i):
+				max_y = max(max_y, monster_skeleton.get_bone_global_pose(i).origin.y)
 		label_height = max_y + max_y * 0.15
 	else:
 		var mesh := MeshInstance3D.new()

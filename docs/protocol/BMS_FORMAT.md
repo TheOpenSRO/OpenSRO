@@ -158,6 +158,46 @@ Immediately after it, one 6-byte record per vertex, running up to the index sect
 
 Two influences per vertex, maximum.
 
+**`0xFF` can be in EITHER slot, and the client's builder is the rule (round 626, READ and
+MEASURED).** A bone index of `0xFF` means "no influence in this slot", and the slot is skipped,
+not taken as the end of the list. The builder a skinned body, character or item goes through is
+READ: `CompoundObj::FUN_00be7640` passes 1 for object types 0, 1 and 5 down `FUN_00be3940` →
+`FUN_00be37e0` → `ResObject::FUN_00be3540`, which then builds with `ResObject::FUN_00be2f80`.
+Per vertex that builder does this:
+
+1. It starts from palette entries 0/0 and blend weight 0.
+2. For each slot whose index is not `0xFF`, it reads the weight (`0xFFFF` is exactly 1.0,
+   anything else is w / full scale).
+3. It looks the bone up. The entry is the bone's matrix + 1; entry 0 is not a bone.
+4. It adds the weight to the sum.
+5. The blend weight is slot 0's own weight over that sum, or 0 when the sum is 0. D3D gives
+   entry 1 the rest.
+
+So an empty slot, or a vertex whose weights sum to 0, lands on entry 0. `BmsReader` models entry
+0 as `OBJECT_SPACE`: the vertex keeps its bind position in the model's own space, bound to a
+still bone that `Skeleton3DBuilder.build_skin` adds. That entry 0 is the object's own transform is
+INFERRED from the `+ 1`.
+
+`ResObject::FUN_00be28d0` is the builder for the other object types. It differs in one way: it
+does not reset the entries per vertex, so an empty slot keeps the previous vertex's entry. The
+client's other reader of these records, `PrimGeometry::FUN_00c1b1c0`, `break`s at a `0xFF`. The
+review traced it to the cloth path only: under graphics option `0xe`, with cloth sections, and
+with mesh flag `0x400` clear.
+
+Real files use both shapes:
+- **First slot empty**, `(0xFF, 0, bone, 0xFFFF)`: 3 of `heavy_11_la.bms`'s 876 vertices, 1 of
+  `heavy_11_ba.bms`'s 530 and 6 of `heavy_11_set_b_la.bms`'s 638. A reader that took this for a
+  misread palette dropped the whole mesh's skin, and an unweighted armour piece is not drawn:
+  the missing Degree-11 chest and legs.
+- **Both slots empty**: `heavy_15_ba` 14 vertices, `sd_t_area_smith_part1` 7,
+  `avatar_m_headknightshigher_*` 2.
+
+Across a real Data.pk2's 24,984 meshes, the change turns **158** meshes from unskinned to skinned
+(the round-626 review's sweep). They are not only armour: NPCs (`npc\sd`), monsters
+(`mob\jupiter\immotal`, `fanaticism`), pets and carts (`COS\cart\t_buffalo01_part2`). Renders of
+some of them before and after are in docs/WORLD_ISSUES.md, round 626. Any other index past the
+palette is refused, because the client range-checks it (`FUN_00b4dd85`).
+
 ### How it was confirmed
 
 Not by pattern-matching a plausible layout — by measuring every byte position across a real file's

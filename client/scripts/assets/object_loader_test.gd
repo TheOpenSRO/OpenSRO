@@ -6,6 +6,12 @@ extends SceneTree
 
 var _failures := 0
 
+## A constant of ObjectLoader looked up at run time, so this suite still
+## compiles against a loader that lacks it -- which is how round 625's
+## negative runs it against BASE and gets FAIL lines, not a parse error.
+func _ol_const(name: String) -> Variant:
+	return (load("res://scripts/assets/object_loader.gd") as GDScript).get_script_constant_map().get(name)
+
 func _check(cond: bool, msg: String) -> void:
 	if cond:
 		print("ok  " + msg)
@@ -117,7 +123,7 @@ const TEST_BMT_HEX := "71000000789cf3f28d0873f20d5130303430626460606003e29cc4cad
 ## how the meshes referencing them are built, the same real
 ## don't-assume-positional-order shape confirmed against a real 27-piece/
 ## 28-layer building (bagh_city_palace.bsr/.bmt).
-func _build_uncompressed_bmt(layer_names: Array) -> PackedByteArray:
+func _build_uncompressed_bmt(layer_names: Array, flags: Dictionary = {}) -> PackedByteArray:
 	var dec := PackedByteArray()
 	dec.append_array("JMXVBMT 0102".to_ascii_buffer())
 	var count := PackedByteArray()
@@ -133,8 +139,12 @@ func _build_uncompressed_bmt(layer_names: Array) -> PackedByteArray:
 		dec = _append_f32_arr(dec, 0.0) # power
 		var unk := PackedByteArray()
 		unk.resize(4)
+		_put_u32(unk, 0, int(flags.get(name, 0)))
 		dec.append_array(unk)
 		dec = _append_len_prefixed(dec, "%s.ddj" % name)
+		# The seven trailer bytes every real layer carries (round 625, READ
+		# from CPrimMtrl FUN_00bf91b0): a uint32 and three bytes.
+		dec.append_array(_zeros(7)) # BmtReader.LAYER_TRAILER_BYTES
 	return dec
 
 func _append_f32_arr(buf: PackedByteArray, v: float) -> PackedByteArray:
@@ -540,17 +550,185 @@ func _distinct_albedo_textures(objects: Array) -> int:
 ##   which.
 
 ## The pre-split loader's fingerprints (BASE f8704c4's load_object on the
-## render box, 2026-09-25).
+## render box, 2026-09-25), with round 625's material rule applied: the
+## scissor is 128/255 (0.5020), the shader says which cull it is (`two` /
+## `one`), and dxt1solid's 0x141 layer is the two-sided shader untested.
+## Everything else in them is the pre-split loader's, unchanged.
 const EXPECTED_FINGERPRINTS := {
-	"testobj": "0:Node3D:TestObj | 1:MeshInstance3D:wall01 surfaces=1 [v=3 i=3 isum=3 psum=1.0000,0.0000,1.0000] mat=Shader(layer0,shader=true,tex=4x4,scissor=0.5,albedo=(0.588, 0.588, 0.588, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=1.0000,0.0000,1.0000 backface=false | 1:MeshInstance3D:wall02 surfaces=1 [v=3 i=3 isum=3 psum=1.0000,0.0000,1.0000] mat=Shader(layer0,shader=true,tex=4x4,scissor=0.5,albedo=(0.588, 0.588, 0.588, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=1.0000,0.0000,1.0000 backface=false",
+	"testobj": "0:Node3D:TestObj | 1:MeshInstance3D:wall01 surfaces=1 [v=3 i=3 isum=3 psum=1.0000,0.0000,1.0000] mat=Shader(layer0,shader=two,tex=4x4,scissor=0.5020,albedo=(0.588, 0.588, 0.588, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=1.0000,0.0000,1.0000 backface=false | 1:MeshInstance3D:wall02 surfaces=1 [v=3 i=3 isum=3 psum=1.0000,0.0000,1.0000] mat=Shader(layer0,shader=two,tex=4x4,scissor=0.5020,albedo=(0.588, 0.588, 0.588, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=1.0000,0.0000,1.0000 backface=false",
 	"namematch": "0:Node3D:NameMatchObj | 1:MeshInstance3D:pieceA surfaces=1 [v=3 i=3 isum=3 psum=1.0000,0.0000,1.0000] mat=Standard(piece_a,tex=null,albedo=(1, 1, 1, 1),transparency=0,cull=0) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=1.0000,0.0000,1.0000 backface=false | 1:MeshInstance3D:pieceB surfaces=1 [v=3 i=3 isum=3 psum=1.0000,0.0000,1.0000] mat=Standard(piece_b,tex=null,albedo=(1, 1, 1, 1),transparency=0,cull=0) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=1.0000,0.0000,1.0000 backface=false",
 	"compound": "0:Node3D:TestCompound | 1:Node3D:TestCompoundPiece | 2:MeshInstance3D:simple surfaces=1 [v=3 i=3 isum=3 psum=1.0000,0.0000,1.0000] mat=null | 3:StaticBody3D:@ | 4:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=1.0000,0.0000,1.0000 backface=false",
-	"alphaobj": "0:Node3D:AlphaObj | 1:MeshInstance3D:bin surfaces=1 [v=3 i=6 isum=4 psum=0.5468,5.4445,1.2655] mat=Shader(bin,shader=true,tex=4x4,scissor=0.5,albedo=(1, 1, 1, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=6 fsum=3.9354,7.4444,5.0309 backface=false | 1:MeshInstance3D:graded surfaces=1 [v=3 i=3 isum=3 psum=0.5468,5.4445,1.2655] mat=Standard(graded,tex=4x4,albedo=(1, 1, 1, 1),transparency=0,cull=0) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=0.5468,5.4444,1.2655 backface=false | 1:MeshInstance3D:dxt1cut surfaces=1 [v=3 i=3 isum=3 psum=0.5468,5.4445,1.2655] mat=Shader(dxt1cut,shader=true,tex=4x4,scissor=0.5,albedo=(1, 1, 1, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=0.5468,5.4444,1.2655 backface=false | 1:MeshInstance3D:dxt1solid surfaces=1 [v=3 i=3 isum=3 psum=0.5468,5.4445,1.2655] mat=Standard(dxt1solid,tex=4x4,albedo=(1, 1, 1, 1),transparency=0,cull=0) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=0.5468,5.4444,1.2655 backface=false",
+	"alphaobj": "0:Node3D:AlphaObj | 1:MeshInstance3D:bin surfaces=1 [v=3 i=6 isum=4 psum=0.5468,5.4445,1.2655] mat=Shader(bin,shader=two,tex=4x4,scissor=0.5020,albedo=(1, 1, 1, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=6 fsum=3.9354,7.4444,5.0309 backface=false | 1:MeshInstance3D:graded surfaces=1 [v=3 i=3 isum=3 psum=0.5468,5.4445,1.2655] mat=Standard(graded,tex=4x4,albedo=(1, 1, 1, 1),transparency=0,cull=0) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=0.5468,5.4444,1.2655 backface=false | 1:MeshInstance3D:dxt1cut surfaces=1 [v=3 i=3 isum=3 psum=0.5468,5.4445,1.2655] mat=Shader(dxt1cut,shader=one,tex=4x4,scissor=0.5020,albedo=(1, 1, 1, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=0.5468,5.4444,1.2655 backface=false | 1:MeshInstance3D:dxt1solid surfaces=1 [v=3 i=3 isum=3 psum=0.5468,5.4445,1.2655] mat=Shader(dxt1solid,shader=two,tex=4x4,scissor=0.0000,albedo=(1, 1, 1, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=0.5468,5.4444,1.2655 backface=false",
 }
 
 ## The four alpha layers of the r566 archive, by piece: whether the rule
-## makes it a cutout.
+## makes it a cutout. Since round 625 the LAYER's flag word decides, as the
+## client does (ObjectLoader.layer_draw_rule), and the textures only carry
+## alpha a pixel rule would have read the other way for two of them:
+## `graded` (all 128) is untested, `dxt1solid` (opaque) is two-sided.
+const LAYER_FLAGS := {"bin": 0x341, "graded": 0x140, "dxt1cut": 0x340, "dxt1solid": 0x141}
 const ALPHA_EXPECTED := {"bin": true, "graded": false, "dxt1cut": true, "dxt1solid": false}
+const TWO_SIDED_EXPECTED := {"bin": true, "graded": false, "dxt1cut": false, "dxt1solid": true}
+
+## Round 625: THE MATERIAL RULE, READ from the client (ObjectLoader's
+## comment above layer_draw_rule): flag 0x200 is the alpha test at
+## ALPHAREF 0x80 / GREATEREQUAL, flag 0x1 is cull none, and the two are
+## independent; an ENVMAP mod replaces the test with its own (ref 1, or
+## none). The texture is the same DXT3
+## leaf with real transparency in every case -- only the flag word differs.
+## NEGATIVE: before this round bit 0 was the "alpha" bit, so a 0x340 needle
+## card (alpha test, one-sided) drew as a solid StandardMaterial3D.
+func _test_round_625() -> void:
+	var path := "user://srrevamp_objloader_r625.pk2"
+	_build_alpha_archive(path)
+	var archive := Pk2Reader.open(path)
+	_check(archive != null, "r625: opens the alpha archive")
+	if archive == null:
+		return
+	var layer_for := func(flags: int) -> BmtReader.Layer:
+		var l := BmtReader.Layer.new()
+		l.layer_name = "leaf_%x" % flags
+		l.ambient = Color.WHITE
+		l.texture_path = "leaf.ddj"
+		l.unknown = flags
+		return l
+	# The needle card first, with the three-argument call BASE also has.
+	var needle: Material = ObjectLoader.build_godot_material(archive, "", layer_for.call(0x340))
+	var sm := needle as ShaderMaterial
+	_check(sm != null and sm.shader == _ol_const("FOLIAGE_SHADER_ONE_SIDED")
+			and is_equal_approx(float(sm.get_shader_parameter("alpha_scissor")), 128.0 / 255.0),
+		"r625: a 0x340 layer is alpha-tested at 128/255 and ONE-sided (got %s)" % needle)
+	var OL = load("res://scripts/assets/object_loader.gd")
+	var names := {}
+	for m in (OL as GDScript).get_script_method_list():
+		names[m["name"]] = true
+	if not names.has("layer_draw_rule"):
+		_check(false, "r625: ObjectLoader.layer_draw_rule exists")
+		archive.close()
+		DirAccess.remove_absolute(path)
+		return
+	var cases := [
+		# flags, env map, expected alpha ref, expected two-sided
+		[0x341, -1, 128, true],
+		[0x340, -1, 128, false],
+		[0x141, -1, 0, true],
+		[0x140, -1, 0, false],
+		[0x040, -1, 0, false],
+		[0x2345, -1, 128, true],
+		[0x341, 0x1, 0, true],
+		[0x340, 0x3, 1, false],
+	]
+	for c in cases:
+		var rule: Dictionary = OL.layer_draw_rule(c[0], c[1])
+		_check(rule.get("alpha_ref") == c[2] and rule.get("two_sided") == c[3],
+			"r625: flags 0x%x env %d -> ref %d two-sided %s (got %s)" % [c[0], c[1], c[2], c[3], rule])
+		var mat: Material = OL.build_godot_material(archive, "", layer_for.call(c[0]), {}, c[1])
+		if c[2] > 0 or c[3]:
+			var shader := mat as ShaderMaterial
+			_check(shader != null
+					and shader.shader == (ObjectLoader.FOLIAGE_SHADER if c[3] else _ol_const("FOLIAGE_SHADER_ONE_SIDED"))
+					and is_equal_approx(float(shader.get_shader_parameter("alpha_scissor")), float(c[2]) / 255.0),
+				"r625: flags 0x%x env %d builds the %s foliage shader at %d/255 (got %s)" % [c[0], c[1],
+					"two-sided" if c[3] else "one-sided", c[2], mat])
+		else:
+			_check(mat is StandardMaterial3D and (mat as StandardMaterial3D).cull_mode == BaseMaterial3D.CULL_BACK
+					and (mat as StandardMaterial3D).transparency == BaseMaterial3D.TRANSPARENCY_DISABLED,
+				"r625: flags 0x%x env %d is solid and one-sided whatever the texture's alpha (got %s)" % [
+					c[0], c[1], mat])
+	_test_round_625_mods(OL, archive, layer_for)
+	archive.close()
+	DirAccess.remove_absolute(path)
+
+## Round 625 review follow-up (READ, CRTModMtrl::vslot_004 and
+## CObjRendererVS::FUN_00bf5780): an MTRL mod replaces the flag word's
+## states with its own -- here SRCALPHA/ONE blending, z-write off, cull
+## none, no test, on a 0x341 layer whose flag word alone would cut it --
+## and a two-pass object draws back faces, then front faces.
+func _test_round_625_mods(OL, archive: Pk2Reader, layer_for: Callable) -> void:
+	var mtrl := {"alpha_test": false, "blend": true, "zwrite_off": true, "tfactor": false,
+		"src_blend": 5, "dest_blend": 2, "color_op": 5, "color_arg1": 0, "color_arg2": 2,
+		"alpha_op": 2, "alpha_arg1": 2, "alpha_arg2": 0, "alpha_ref": 128, "alpha_func": 7, "cull_none": true}
+	var rule: Dictionary = OL.layer_draw_rule(0x341, -1, mtrl, false)
+	_check(rule["alpha_ref"] == 0 and rule["blend"] == "add" and rule["zwrite"] == false and rule["two_sided"] == true
+			and rule["color_op"] == 5,
+		"r625 review: an MTRL mod's own states replace the flag word's (got %s)" % str(rule))
+	var mat: Material = OL.build_godot_material(archive, "", layer_for.call(0x341), {}, -1, mtrl, false)
+	var sm := mat as ShaderMaterial
+	_check(sm != null and sm.shader.code.contains("blend_add") and sm.shader.code.contains("depth_draw_never")
+			and sm.shader.code.contains("cull_disabled") and sm.next_pass == null
+			and int(sm.get_shader_parameter("color_op")) == 5,
+		"r625 review: it builds an additive, depth-write-off, two-sided shader with the mod's stage ops (got %s)" % mat)
+	var two: Material = OL.build_godot_material(archive, "", layer_for.call(0x340), {}, -1, mtrl, true)
+	var first := two as ShaderMaterial
+	_check(first != null and first.shader.code.contains("cull_front") and first.next_pass is ShaderMaterial
+			and (first.next_pass as ShaderMaterial).shader.code.contains("cull_back"),
+		"r625 review: a two-pass blended object draws back faces, then front faces (got %s)" % two)
+	var leaf_mod := mtrl.duplicate()
+	leaf_mod.merge({"zwrite_off": false, "alpha_test": true, "alpha_ref": 137, "src_blend": 5, "dest_blend": 6}, true)
+	var written: Material = OL.build_godot_material(archive, "", layer_for.call(0x341), {}, -1, leaf_mod, false)
+	var ws := written as ShaderMaterial
+	_check(ws != null and ws.shader.code.contains("blend_mix") and ws.shader.code.contains("depth_draw_always")
+			and is_equal_approx(float(ws.get_shader_parameter("alpha_scissor")), 137.0 / 255.0),
+		"r625 review: a tree's leaf mod (test 137, SRCALPHA/INVSRCALPHA, z-write on) blends, writes depth and cuts at 137 (got %s)" % written)
+	_test_material_review(OL, archive, layer_for, mtrl)
+	var solid_two: Dictionary = OL.layer_draw_rule(0x340, -1, {}, true)
+	_check(solid_two["two_sided"] == true and solid_two["alpha_ref"] == 128,
+		"r625 review: an unblended two-pass layer is two-sided and keeps its test (got %s)" % str(solid_two))
+	var env_all: Dictionary = OL.layer_draw_rule(0x341, 0x1, {}, false)
+	_check(env_all["alpha_ref"] == 0, "r625 review: an env-map mod with no test of its own drops the 0x200 test (got %s)" % str(env_all))
+
+## Round 625-626 material review follow-up:
+## 1. the MTRL shader's alpha test reads mip 0, not the mipmapped alpha
+##    that makes a blended canopy vanish at distance (tre_bamboo01: 0 pixels
+##    at 16x);
+## 2. all six stage bytes reach the shader, D3DTA_DIFFUSE (0) included, and
+##    DIFFUSE is the lit colour (ALBEDO) while TEXTURE-only results are
+##    unlit (EMISSION);
+## 3. MODULATE2X of TEXTURE and DIFFUSE draws exactly the flag-word path's
+##    brightness (ALBEDO = ambient x texture);
+## 4. a two-pass object's front faces carry a higher render_priority, so the
+##    back faces draw first whatever the transparent sort does;
+## 5. every D3DCMPFUNC is compared exactly;
+## 6. every census blend pair has an emulation, labelled.
+func _test_material_review(OL, archive: Pk2Reader, layer_for: Callable, base_mod: Dictionary) -> void:
+	var leaf := base_mod.duplicate()
+	leaf.merge({"zwrite_off": false, "alpha_test": true, "alpha_ref": 128, "alpha_func": 7,
+		"src_blend": 5, "dest_blend": 6, "color_op": 5, "color_arg1": 0, "color_arg2": 2,
+		"alpha_op": 3, "alpha_arg1": 0, "alpha_arg2": 2}, true)
+	var m := OL.build_godot_material(archive, "", layer_for.call(0x341), {}, -1, leaf, false) as ShaderMaterial
+	_check(m != null and m.shader.code.contains("textureLod(albedo_texture, UV, 0.0)")
+			and m.shader.code.contains("keep(") and m.shader.code.contains("tex0"),
+		"review 1: the MTRL test reads full-resolution alpha (mip 0), so a leaf card keeps its shape at distance")
+	_check(m != null and int(m.get_shader_parameter("color_arg1")) == 0 and int(m.get_shader_parameter("alpha_arg1")) == 0,
+		"review 2: D3DTA_DIFFUSE (0) is sent, not skipped (got color_arg1 %s alpha_arg1 %s)" % [
+			m.get_shader_parameter("color_arg1") if m != null else "-", m.get_shader_parameter("alpha_arg1") if m != null else "-"])
+	_check(m != null and m.shader.code.contains("ALBEDO = lit;") and m.shader.code.contains("EMISSION = unlit;")
+			and m.shader.code.contains("albedo.rgb * 0.5"),
+		"review 2-3: DIFFUSE is the lit term (ALBEDO, lit by the scene), TEXTURE alone unlit (EMISSION), MODULATE2X = the flag-word brightness")
+	var two := OL.build_godot_material(archive, "", layer_for.call(0x340), {}, -1, leaf, true) as ShaderMaterial
+	_check(two != null and two.next_pass is ShaderMaterial and two.shader.code.contains("cull_front")
+			and (two.next_pass as ShaderMaterial).render_priority > two.render_priority,
+		"review 4: the front-face pass has the higher render_priority (back faces first)")
+	# 5: every func survives into the material exactly.
+	for f in [1, 2, 3, 4, 5, 6]:
+		var t := base_mod.duplicate()
+		t.merge({"alpha_test": true, "alpha_ref": 128 if f != 4 else 148, "alpha_func": f, "blend": false}, true)
+		var tm := OL.build_godot_material(archive, "", layer_for.call(0x140), {}, -1, t, false) as ShaderMaterial
+		_check(tm != null and int(tm.get_shader_parameter("alpha_func")) == f and not tm.shader.code.contains("ALPHA =")
+				and is_equal_approx(float(tm.get_shader_parameter("alpha_scissor")), float(t["alpha_ref"]) / 255.0),
+			"review 5: an unblended MTRL test with D3DCMPFUNC %d draws opaque with that exact func (got %s)" % [f, tm])
+	# 6: every census pair is mapped, and each is labelled.
+	var pairs := [[5, 6], [5, 2], [5, 13], [3, 3], [5, 7], [3, 14], [3, 6], [5, 14], [2, 4], [5, 5],
+		[5, 4], [12, 2], [13, 6], [15, 15], [2, 3], [2, 11], [10, 2], [2, 9]]
+	var all_mapped := true
+	for p in pairs:
+		var e: Dictionary = OL.blend_emulation(p[0], p[1])
+		if not OL.BLEND_EMULATION.has("%d/%d" % p) or not (e["kind"] in ["exact", "given", "ours"]) or String(e["note"]) == "":
+			all_mapped = false
+	_check(all_mapped, "review 6: all 18 census D3DBLEND pairs have a labelled emulation")
+	var inv: Dictionary = OL.blend_emulation(13, 6)
+	_check(inv["godot"] == "mix" and inv["alpha"] == 2 and inv["kind"] == "exact",
+		"review 6: BOTHINVSRCALPHA is mix at 1-As, exactly (got %s)" % str(inv))
 
 func _test_round_566() -> void:
 	var OL = load("res://scripts/assets/object_loader.gd")
@@ -611,13 +789,19 @@ func _check_alpha_classes(root: Node, via: String) -> void:
 		if mi == null:
 			continue
 		var cutout: bool = ALPHA_EXPECTED[piece]
+		var two: bool = TWO_SIDED_EXPECTED[piece]
 		var mat := mi.material_override
-		if cutout:
-			_check(mat is ShaderMaterial and (mat as ShaderMaterial).get_shader_parameter("albedo_texture") != null,
-				"%s: %s.ddj's alpha makes %s a cutout (got %s)" % [via, piece, piece, mat])
+		if cutout or two:
+			var sm := mat as ShaderMaterial
+			_check(sm != null and sm.get_shader_parameter("albedo_texture") != null
+					and is_equal_approx(float(sm.get_shader_parameter("alpha_scissor")), 128.0 / 255.0 if cutout else 0.0)
+					and sm.shader == (ObjectLoader.FOLIAGE_SHADER if two else _ol_const("FOLIAGE_SHADER_ONE_SIDED")),
+				"%s: flags 0x%x make %s %s, %s (got %s)" % [via, LAYER_FLAGS[piece], piece,
+					"alpha-tested at 128" if cutout else "untested", "two-sided" if two else "one-sided", mat])
 		else:
-			_check(mat is StandardMaterial3D and (mat as StandardMaterial3D).albedo_texture != null,
-				"%s: %s.ddj's alpha leaves %s solid (got %s)" % [via, piece, piece, mat])
+			_check(mat is StandardMaterial3D and (mat as StandardMaterial3D).albedo_texture != null
+					and (mat as StandardMaterial3D).cull_mode == BaseMaterial3D.CULL_BACK,
+				"%s: flags 0x%x leave %s solid and one-sided (got %s)" % [via, LAYER_FLAGS[piece], piece, mat])
 
 ## Each prepared piece's faces against the trimesh the engine builds from
 ## the same arrays once uploaded -- the readback they replace.
@@ -659,38 +843,31 @@ func _test_alpha_on_the_image(OL, archive: Pk2Reader) -> void:
 		plans[piece["name"]] = piece["material"]
 	for piece in ALPHA_EXPECTED:
 		var plan = plans.get(piece)
-		_check(plan != null and plan["cutout"] == ALPHA_EXPECTED[piece] and plan["texture_key"] == piece + ".ddj",
-			"prepare: %s's plan is cutout=%s on %s.ddj (got %s)" % [piece, ALPHA_EXPECTED[piece], piece, plan])
+		_check(plan != null and plan["cutout"] == ALPHA_EXPECTED[piece] and plan["two_sided"] == TWO_SIDED_EXPECTED[piece]
+				and plan["texture_key"] == piece + ".ddj",
+			"prepare: %s's plan is cutout=%s two_sided=%s on %s.ddj (got %s)" % [piece, ALPHA_EXPECTED[piece],
+				TWO_SIDED_EXPECTED[piece], piece, plan])
 	var textures: Dictionary = prepared["textures"]
 	_check(textures.size() == 4, "prepare: the four textures decoded once each (got %d)" % textures.size())
 	for key in textures:
 		_check(textures[key]["image"] is Image, "prepare: %s decoded to an Image" % key)
-	_check(textures.get("bin.ddj", {}).get("alpha", {}) == {"binary_cutout": true}
-			and textures.get("graded.ddj", {}).get("alpha", {}) == {"binary_cutout": false},
-		"the uncompressed textures measured by the binary-cutout rule (got %s / %s)" % [
-			textures.get("bin.ddj", {}).get("alpha"), textures.get("graded.ddj", {}).get("alpha")])
-	_check(is_equal_approx(float(textures.get("dxt1cut.ddj", {}).get("alpha", {}).get("fraction", -1.0)), 1.0)
-			and is_equal_approx(float(textures.get("dxt1solid.ddj", {}).get("alpha", {}).get("fraction", -1.0)), 0.0),
-		"the DXT1 textures measured by their below-opaque fraction, 1.0 and 0.0 (got %s / %s)" % [
-			textures.get("dxt1cut.ddj", {}).get("alpha"), textures.get("dxt1solid.ddj", {}).get("alpha")])
+		# Round 625: the rule reads the flag word, never the pixels.
+		_check((textures[key]["alpha"] as Dictionary).is_empty(),
+			"prepare: no pixel statistic measured on %s (got %s)" % [key, textures[key]["alpha"]])
 	var log_text := "\n".join(PackedStringArray(prepared["log"]))
-	_check(log_text.contains("QA ALPHA: bin.ddj (uncompressed) binary_cutout true -- from the decoded Image")
-			and log_text.contains("QA ALPHA: dxt1cut.ddj (DXT1) fraction 1.0000 -- from the decoded Image"),
-		"SRREVAMP_QA_ALPHA_LOG: each probe says it measured the decoded Image (log: %s)" % log_text)
+	_check(not log_text.contains("QA ALPHA"), "SRREVAMP_QA_ALPHA_LOG: nothing consulted the pixels (log: %s)" % log_text)
 
-	# Committed into a cache, the statistics travel with the textures; a
-	# second prepare over the snapshot decodes nothing and measures nothing,
-	# and classifies the same.
+	# Committed into a cache, the textures travel; a second prepare over the
+	# snapshot decodes nothing and classifies the same.
 	var cache := {}
 	var first: Node3D = OL.commit_object(prepared, cache)
-	_check(first != null and cache.size() == 4 and cache["bin.ddj"]["alpha"] == {"binary_cutout": true}
-			and cache["bin.ddj"]["texture"] is ImageTexture,
-		"the cache holds each texture with the statistic measured on its Image")
+	_check(first != null and cache.size() == 4 and cache["bin.ddj"]["texture"] is ImageTexture,
+		"the cache holds each texture")
 	if first != null:
 		_check_alpha_classes(first, "commit_object")
 		first.free()
 	var snapshot: Dictionary = OL.snapshot_textures(cache)
-	_check(_forbidden(snapshot).is_empty() and snapshot["bin.ddj"] == {"four_cc": "", "alpha": {"binary_cutout": true}},
+	_check(_forbidden(snapshot).is_empty() and snapshot["bin.ddj"] == {"four_cc": "", "alpha": {}},
 		"the snapshot names each texture by fourCC and statistics, never the texture (got %s)" % str(snapshot.get("bin.ddj")))
 	var again: Dictionary = OL.prepare_object(archive, "alphaobj.bsr", snapshot)
 	var decoded_again := 0
@@ -698,23 +875,23 @@ func _test_alpha_on_the_image(OL, archive: Pk2Reader) -> void:
 		if again["textures"][key]["image"] != null:
 			decoded_again += 1
 	_check(decoded_again == 0, "a texture the cache holds is not decoded again (%d were)" % decoded_again)
-	var again_log := "\n".join(PackedStringArray(again["log"]))
-	_check(again_log.contains("QA ALPHA: bin.ddj (uncompressed) binary_cutout true -- from a statistic measured earlier")
-			and not again_log.contains("from the decoded Image"),
-		"... nor measured again (log: %s)" % again_log)
 	var second: Node3D = OL.commit_object(again, cache)
 	if second != null:
 		_check_alpha_classes(second, "commit over the snapshot")
 		second.free()
 
-	# A statistic the snapshot lacks is measured from the file again -- never
-	# from a readback of the cached texture.
-	var partial: Dictionary = OL.snapshot_textures(cache)
-	partial["graded.ddj"]["alpha"] = {}
-	var third: Dictionary = OL.prepare_object(archive, "alphaobj.bsr", partial)
+	# SRREVAMP_QA_MATS still measures -- the one statistic left, `fraction`,
+	# on an untested layer -- and a cached texture lacking it is decoded
+	# from the file for it, never read back from the cached texture.
+	OS.set_environment("SRREVAMP_QA_MATS", "1")
+	var third: Dictionary = OL.prepare_object(archive, "alphaobj.bsr", OL.snapshot_textures(cache))
+	OS.set_environment("SRREVAMP_QA_MATS", "")
+	var third_log := "\n".join(PackedStringArray(third["log"]))
 	_check(third["textures"]["graded.ddj"]["image"] is Image
-			and third["textures"]["graded.ddj"]["alpha"] == {"binary_cutout": false},
-		"a cached texture missing its statistic is decoded and measured for it")
+			and is_equal_approx(float(third["textures"]["graded.ddj"]["alpha"].get("fraction", -1.0)), 1.0)
+			and third_log.contains("QA MAT: graded (graded.ddj, ) is 100.0% non-opaque, flags 0x0140, no alpha test"),
+		"QA_MATS: an untested layer's texture is decoded and measured, and reported (got %s / %s)" % [
+			third["textures"]["graded.ddj"]["alpha"], third_log])
 	OS.set_environment("SRREVAMP_QA_ALPHA_LOG", "")
 
 	# build_godot_material (SkinnedBsrAssembler's path) takes the same rule.
@@ -724,9 +901,10 @@ func _test_alpha_on_the_image(OL, archive: Pk2Reader) -> void:
 	if material != null:
 		for layer in material.layers:
 			var mat: Material = ObjectLoader.build_godot_material(archive, "alpha.bmt", layer)
-			_check((mat is ShaderMaterial) == ALPHA_EXPECTED[layer.layer_name],
+			var shader_expected: bool = ALPHA_EXPECTED[layer.layer_name] or TWO_SIDED_EXPECTED[layer.layer_name]
+			_check((mat is ShaderMaterial) == shader_expected,
 				"build_godot_material: %s is %s (got %s)" % [layer.layer_name,
-					"a cutout" if ALPHA_EXPECTED[layer.layer_name] else "solid", mat])
+					"the foliage material" if shader_expected else "solid", mat])
 
 ## The prepare on a WorkerThreadPool task, the way World3D's cell task runs
 ## it: it finishes, holds no Node and no Resource but Image, and commits to
@@ -825,7 +1003,8 @@ func _mat_fp(mat: Material) -> String:
 	if mat is ShaderMaterial:
 		var sm := mat as ShaderMaterial
 		var tex: Texture2D = sm.get_shader_parameter("albedo_texture")
-		return "Shader(%s,shader=%s,tex=%s,scissor=%s,albedo=%s)" % [sm.resource_name, sm.shader == ObjectLoader.FOLIAGE_SHADER,
+		return "Shader(%s,shader=%s,tex=%s,scissor=%.4f,albedo=%s)" % [sm.resource_name,
+			"two" if sm.shader == ObjectLoader.FOLIAGE_SHADER else ("one" if sm.shader == _ol_const("FOLIAGE_SHADER_ONE_SIDED") else "other"),
 			"%dx%d" % [tex.get_width(), tex.get_height()] if tex != null else "null",
 			sm.get_shader_parameter("alpha_scissor"), sm.get_shader_parameter("albedo")]
 	if mat is StandardMaterial3D:
@@ -885,7 +1064,7 @@ func _build_r566_archive(path: String) -> void:
 	files["graded.bms"] = _build_bms_tris("graded", "graded", corners, [[0, 2, 1]])
 	files["dxt1cut.bms"] = _build_bms_tris("dxt1cut", "dxt1cut", corners, [[1, 2, 0]])
 	files["dxt1solid.bms"] = _build_bms_tris("dxt1solid", "dxt1solid", corners, [[2, 1, 0]])
-	files["alpha.bmt"] = _build_uncompressed_bmt(["bin", "graded", "dxt1cut", "dxt1solid"])
+	files["alpha.bmt"] = _build_uncompressed_bmt(["bin", "graded", "dxt1cut", "dxt1solid"], LAYER_FLAGS)
 	var binary := PackedByteArray()
 	var graded := PackedByteArray()
 	for i in range(16):
@@ -1049,10 +1228,10 @@ func _init() -> void:
 				_check(child is MeshInstance3D, "child %s is a MeshInstance3D" % child.name)
 				var mi := child as MeshInstance3D
 				_check(mi.mesh != null, "child %s has a mesh assigned" % child.name)
-				# TEST_BMT_HEX's own layer carries flag word 0x0341, i.e.
-				# bit 0 set -- a real alpha layer (see
-				# ObjectLoader.LAYER_FLAG_ALPHA). The fixture was taken
-				# from real data, so it exercises the cutout path, and the
+				# TEST_BMT_HEX's own layer carries flag word 0x0341: 0x200,
+				# the alpha test, and 0x1, two-sided (round 625,
+				# ObjectLoader.layer_draw_rule). The fixture was taken from
+				# real data, so it exercises the cutout path, and the
 				# material it yields is the foliage ShaderMaterial rather
 				# than a StandardMaterial3D.
 				_check(mi.material_override != null, "child %s has a material applied" % child.name)
@@ -1125,6 +1304,16 @@ func _init() -> void:
 		layer.layer_name = "leaf"
 		layer.diffuse = Color.WHITE
 		layer.texture_path = "leaf.ddj"
+		layer.unknown = 0x341
+		# Round 625: the same DXT3 texture under a layer whose flag word asks
+		# for no alpha test draws solid -- the client never looks at the
+		# pixels (ObjectLoader.layer_draw_rule).
+		var untested := BmtReader.Layer.new()
+		untested.layer_name = "leaf_untested"
+		untested.texture_path = "leaf.ddj"
+		untested.unknown = 0x140
+		var solid := ObjectLoader.build_godot_material(alpha_archive, "", untested)
+		_check(solid is StandardMaterial3D, "a 0x140 layer over an alpha texture is solid (got %s)" % solid.get_class())
 		var mat := ObjectLoader.build_godot_material(alpha_archive, "", layer)
 		# A real texture carrying real alpha now yields the real cutout
 		# foliage material, not a StandardMaterial3D -- see
@@ -1180,6 +1369,7 @@ func _init() -> void:
 	DirAccess.remove_absolute(cpd_path)
 
 	_test_round_566()
+	_test_round_625()
 
 	if _failures == 0:
 		print("ALL PASS")

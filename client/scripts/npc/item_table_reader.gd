@@ -150,6 +150,15 @@ class Item:
 	## prefix). Empty for an item with no worn model -- consumables, and a
 	## few equipment rows that write `xxx`.
 	var model_path: String
+	## Every model the column lists, in file order. Almost every row names
+	## one; 88 Degree-11 SET_A/SET_B rows name two, comma-separated
+	## (`heavy_11_set_b_ba.bsr,heavy_11_set_b_ba_fullset.bsr`). READ in the
+	## client (round 626): the row parser (GlobalDataManager::FUN_00972910)
+	## splits the column on "," into a list and makes element [0] the drawn
+	## model; FUN_00a60c60 switches a worn item to element [1] only while the
+	## whole set (refsetitemgroup) is worn, and back to [0] when any piece
+	## comes off. model_path is element [0]; the full-set switch is OPEN here.
+	var model_paths: PackedStringArray = PackedStringArray()
 	## The `.bsr` drawn when the item lies on the ground.
 	var drop_model_path: String
 	## TypeID1..4 -- the game's own classification, four levels deep.
@@ -313,7 +322,8 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		var icon := _find_icon_path(cols)
 		if icon != "":
 			item.icon_path = ICON_PREFIX + icon
-		item.model_path = _model_at(cols, COL_MODEL)
+		item.model_paths = _models_at(cols, COL_MODEL)
+		item.model_path = item.model_paths[0] if not item.model_paths.is_empty() else ""
 		item.drop_model_path = _model_at(cols, COL_DROP_MODEL)
 		for col in range(COL_TYPE_ID1, COL_TYPE_ID4 + 1):
 			item.type_ids.append(_int_at(cols, col))
@@ -347,6 +357,21 @@ static func _model_at(cols: PackedStringArray, col: int) -> String:
 		return ""
 	var value := cols[col].strip_edges()
 	return value.replace("/", "\\") if value.to_lower().ends_with(".bsr") else ""
+
+## The column's `.bsr` paths, comma-separated as the client splits it
+## (round 626, see Item.model_paths): each token passes _model_at's own
+## test, so `xxx` or a stray token yields nothing. Until round 626 the whole
+## "a.bsr,b.bsr" string was taken as one path, which is no file, so a set
+## chest drew nothing.
+static func _models_at(cols: PackedStringArray, col: int) -> PackedStringArray:
+	var out := PackedStringArray()
+	if col >= cols.size():
+		return out
+	for token in cols[col].split(",", false):
+		var one := _model_at(PackedStringArray([token]), 0)
+		if one != "":
+			out.append(one)
+	return out
 
 static func _int_at(cols: PackedStringArray, col: int) -> int:
 	if col >= cols.size():

@@ -157,8 +157,12 @@ static func assemble_from_archive(
 			var layer_idx := ObjectLoader._find_layer_by_name(material.layers, mesh.material_name)
 			if layer_idx == -1:
 				layer_idx = i if material.layers.size() == mesh_paths.size() else 0
+			# The draw rule's object inputs (ObjectLoader.layer_draw_rule,
+			# round 625 and its review): the env-map mod governing all its
+			# materials, the material's MTRL mod, and the two-pass flag.
 			godot_material = ObjectLoader.build_godot_material(
-				archive, parsed.material_path, material.layers[layer_idx]
+				archive, parsed.material_path, material.layers[layer_idx], {},
+				parsed.env_map_flags, parsed.mtrl_mod_for(layer_idx), parsed.two_pass()
 			)
 
 		# Real skinning when the mesh carries weights, rigid attachment when
@@ -171,7 +175,7 @@ static func assemble_from_archive(
 		# properly and can be animated; without it, every piece hangs
 		# rigidly off one bone and animating tears the model apart.
 		if mesh.is_skinned():
-			var skin := Skeleton3DBuilder.build_skin(skeleton, mesh.bone_names)
+			var skin := Skeleton3DBuilder.build_skin(skeleton, mesh.bone_names, mesh.object_space_vertices > 0)
 			if skin != null:
 				var mi := MeshInstance3D.new()
 				mi.mesh = BmsReader.to_array_mesh(mesh)
@@ -299,8 +303,12 @@ static func attach_item_from_archive(
 			var layer_idx := ObjectLoader._find_layer_by_name(material.layers, mesh.material_name)
 			if layer_idx == -1:
 				layer_idx = i if material.layers.size() == mesh_paths.size() else 0
+			# The draw rule's object inputs (ObjectLoader.layer_draw_rule,
+			# round 625 and its review): the env-map mod governing all its
+			# materials, the material's MTRL mod, and the two-pass flag.
 			godot_material = ObjectLoader.build_godot_material(
-				archive, parsed.material_path, material.layers[layer_idx]
+				archive, parsed.material_path, material.layers[layer_idx], {},
+				parsed.env_map_flags, parsed.mtrl_mod_for(layer_idx), parsed.two_pass()
 			)
 		meshes.append([mesh, godot_material])
 	if meshes.is_empty():
@@ -401,7 +409,7 @@ static func _skinned_instance(
 ) -> MeshInstance3D:
 	if not mesh.is_skinned():
 		return null
-	var skin := Skeleton3DBuilder.build_skin(skeleton, mesh.bone_names)
+	var skin := Skeleton3DBuilder.build_skin(skeleton, mesh.bone_names, mesh.object_space_vertices > 0)
 	if skin == null:
 		return null
 	var mi := MeshInstance3D.new()

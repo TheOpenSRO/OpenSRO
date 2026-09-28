@@ -183,3 +183,39 @@ func TestParseRejectsNonZlibData(t *testing.T) {
 		t.Fatal("expected error parsing non-zlib data, got nil")
 	}
 }
+
+// TestParseLayerTrailer is round 625's: a layer ends with seven bytes after
+// its texture path — a uint32 and three bytes, READ from CPrimMtrl
+// FUN_00bf91b0 — and the next layer's name starts right after them. The
+// trailer here is a uint32 of 3 and the bytes "xyz", itself a plausible
+// length-prefixed name, which the forward scan used before this round stops
+// on: it read a second layer called "xyz" with a garbage flag word.
+func TestParseLayerTrailer(t *testing.T) {
+	var dec []byte
+	dec = append(dec, []byte(magic)...)
+	dec = appendU32(dec, 2)
+	for _, l := range []Layer{{Name: "tre_leaf", Unknown: 0x341, TexturePath: "tre_leaf.ddj"}, {Name: "tre_bark", Unknown: 0x140, TexturePath: "tre_bark.ddj"}} {
+		dec = appendLenPrefixed(dec, l.Name)
+		for i := 0; i < 4; i++ {
+			dec = appendVec4(dec, [4]float32{1, 1, 1, 1})
+		}
+		dec = appendF32(dec, 0)
+		dec = appendU32(dec, l.Unknown)
+		dec = appendLenPrefixed(dec, l.TexturePath)
+		dec = appendU32(dec, 3)
+		dec = append(dec, 'x', 'y', 'z')
+	}
+	m, err := Parse(dec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Layers) != 2 {
+		t.Fatalf("layers = %d, want 2", len(m.Layers))
+	}
+	if got := m.Layers[1]; got.Name != "tre_bark" || got.Unknown != 0x140 || got.TexturePath != "tre_bark.ddj" {
+		t.Errorf("second layer = %q 0x%x %q, want tre_bark 0x140 tre_bark.ddj", got.Name, got.Unknown, got.TexturePath)
+	}
+	if got := m.Layers[0]; got.TextureWord != 3 || string(got.TextureBytes[:]) != "xyz" {
+		t.Errorf("trailer = %d %q, want 3 \"xyz\"", got.TextureWord, got.TextureBytes[:])
+	}
+}

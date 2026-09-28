@@ -7094,6 +7094,654 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twenty-fifth and -sixth rounds, material review follow-up: blended canopies keep their leaves at distance, and the MTRL shader draws what the mod says
+
+The combined review of c1bc28a confirmed every READ claim. Performance was flat: 864 materials,
+8 shaders, the same draw calls. It found real bugs in the MTRL mod shader, fixed here.
+
+**1. Blended canopies vanished at distance.** The mod shader discarded on mipmapped alpha, so the
+72 tree models that blend their leaves lost them as they receded. The test now reads mip 0
+(`textureLod(albedo_texture, UV, 0.0)`), as `foliage.gdshaderinc` does; the blend still uses the
+filtered alpha.
+
+MEASURED with the new `tools/render_material_distance.gd` (non-background pixels, dev c1bc28a →
+now):
+
+| Model | 1× | 8× | 16× |
+|---|---|---|---|
+| `tre_bamboo01` | 2234 → 2273 | 20 → 48 | **0 → 11** |
+| `tre_maple01` | 5781 → 5781 | 89 → 89 | 26 → 26 |
+
+The maple's leaves are not an MTRL layer, so it is unchanged. Renders:
+`equip_shots/material/bamboo01_cmp.png`, `bamboo01_far_zoom.png`, `maple01_cmp.png` and
+`maple01_far_zoom.png`; the top row is dev.
+
+**2. The stage bytes.** `_mod_pass` skipped zero values, so D3DTA_DIFFUSE (0) never reached the
+shader, and MODULATE(DIFFUSE, TEXTURE) computed texture × texture. All six bytes are now sent
+whenever the mod blends.
+
+DIFFUSE is the lit vertex colour. READ from `Shader\vertexshader0.c`:
+`oD0 = saturate(N.L) · c11 + c10`, where c11 = material Diffuse × the D3DLIGHT9 Diffuse (READ:
+`FUN_00bf0e20` and siblings, from the globals `CObjRendererVS::vslot_025` copies from the light
+it passes to `SetLight(0)`). Its alpha is 1, because both registers' w is 1.0 and oD0 saturates.
+
+The shader splits the stage result:
+- the part that multiplies DIFFUSE is drawn as ALBEDO, lit by the scene like every other
+  material;
+- the part that does not is drawn as EMISSION, unlit, as a SELECTARG1 TEXTURE draw is.
+
+OURS: DIFFUSE × DIFFUSE is drawn as DIFFUSE, and TFACTOR is white.
+
+**3. MODULATE2X.** READ: the renderer seeds flag 0x1000 on every object draw (`vslot_024`,
+`vslot_038`), and `FUN_00c42a60` turns it into stage-0 COLOROP MODULATE2X, so the client's
+object colour is texture × lit diffuse × 2. Both paths now agree with each other:
+- the flag-word path draws ALBEDO = layer ambient × texture for that MODULATE2X;
+- the MTRL shader draws a lit coefficient L as L × ambient / 2 (OURS: the anchor), so its
+  MODULATE2X equals the flag-word path and its MODULATE is half of it.
+
+A mod that only tests keeps the renderer's MODULATE2X. Whether the flag-word path matches the
+client is **not changed and not settled**:
+- Its brightness was tuned by eye: `light_energy` 0.3 against a Dunhuang wash (round 43), with
+  ambient energy 1.
+- The client's formula is read only in part. c11 is READ. c10's product (the object's own colour
+  × the light's Ambient, built in `vslot_024`) is INFERRED. The env record → D3DLIGHT9 mapping
+  was not traced.
+- A measured comparison needs those values. No global change was made.
+
+Jangan before and after (`jangan_cmp.png`): 2–3% of pixels differ by more than 12/255, and the
+means move by under 1/255. Those pixels are the MTRL-drawn pieces.
+
+**4. Pass order.** Godot 4.2 does not keep a `next_pass` after its material in the transparent
+sort. A two-pass object's front-face pass now has a higher `render_priority`, so the back faces
+draw first.
+
+**5. Alpha funcs.** Every D3DCMPFUNC is compared exactly, on the alpha byte against the ref
+byte. The census has 5 NOTEQUAL (for example `khotanshop_designer`, `arabia_malak` and
+`rocmountainquest_youngwoman2`, at 128) and 1 LESSEQUAL (`samarkand_potion_etc01`, 148). An
+MTRL mod that tests without blending now draws through the mod shader in opaque mode, with its
+own func.
+
+**6. Blend pairs.** The census has 18 D3DBLEND pairs, not one unmapped pair. Godot 4.2's GL
+Compatibility has mix, add and mul (`rasterizer_scene_gles3.cpp`). Each pair is drawn through
+them by what the shader writes as colour and alpha, and labelled (`ObjectLoader.BLEND_EMULATION`,
+BMT_FORMAT.md):
+- 8 are exact;
+- 5 are exact given BLENDFACTOR white or a destination alpha of 1. The client sets BLENDFACTOR
+  only in `Map::FUN_00a1d790`, and whether that is live for objects is OPEN;
+- 7 are OURS, with the dropped term named.
+
+The dungeon water is unchanged in shape (`water_cmp.png`, frames 20/48/76): 0.4–1.1% of pixels
+differ by more than 12/255.
+
+**7. Minor.**
+- A new `Skeleton3DBuilder.is_skeleton_bone` excludes `OBJECT_SPACE_BONE` from the loops that
+  measure a body by its bones: the paper doll's framing, the QA feet report, the NPC bounds
+  fallback and the monster label height.
+- `census_item_envmap.gd` counts MTRL-governed layers apart.
+
+**Tests** (`object_loader_test.gd`, "review 1–6"):
+- the mod shader tests mip 0;
+- a DIFFUSE byte of 0 reaches the material;
+- lit is ALBEDO and unlit is EMISSION, anchored to the flag-word brightness;
+- the front pass has the higher `render_priority`;
+- each of the six funcs is kept exactly on an unblended mod;
+- all 18 pairs are labelled.
+
+The distance behaviour is measured by the render tool above; the headless test runner cannot
+rasterize.
+
+## Six-hundred-and-twenty-sixth round, review follow-up: hats and fringes are cut again, armour stays whole, and the reason is READ
+
+The review confirmed round 626's chest and legs fix and the comma split. It also found a
+regression: "draw every item layer solid" drew 95 DXT1 hat and flag layers as opaque black
+cards, and 590 formerly cut layers solid (`rv626_shots/hats_zoom.png`). Round 625 had made the
+same inference the other way, "items draw untested", and drew 91 avatar cutouts solid. This
+follow-up merges feat/foliage (4f65715) and replaces both guesses with the client's rule.
+`ObjectLoader.layer_draw_rule` is now the only material rule; round 626's `equipment_material`
+is removed.
+
+**How retail spares armour (READ).** The mechanism is the item's own **ENVMAP mod**.
+
+- `CRTModEnvMap::vslot_004` (0x00c83690) ORs `0x60000000` into the draw flags, which switches
+  off the material's own `0x200` test. It then sets its own test from the mod's flag word:
+  ALPHAREF 1 / GREATEREQUAL when bit 1 is set, no test otherwise.
+- It does this before it compares its material index, so it covers every material. The index
+  only decides where the reflection texture is bound. Round 625 read the index as the scope.
+- Items write index `0xFFFFFFFF` and header word 1 = 1. `CObjRendererVS::vslot_038` runs
+  word-1 = 1 mods once per part, before any material, through `FUN_00c45110` → `FUN_00c7b4e0`
+  with index −1.
+- Per-material mods (word 1 = 2) run through `FUN_00c451e0` → `FUN_00c7b540` in every draw
+  path, also before `FUN_00c42a60`.
+- `CRTModBumpEnv` sets no alpha state.
+- `CRTModProgEquipPow` (the `0xe21f0000` override) is the +N glow. It is attached only through
+  `CObjCharacter::FUN_00a5f3e0`, for a non-zero per-slot byte with a matching row, so it does
+  not explain plain gear.
+- MTRL mods (kind 0) appear on no item checked.
+- Stage-0 alpha is the texture's (`FUN_00c42860` sets `ALPHAARG1` = TEXTURE). So without the
+  mod, the gloss alpha really would be cut.
+
+**MEASURED** with `tools/census_item_envmap.gd`, over all 1,421 item `.bsr` files the table
+names:
+
+| ENVMAP flag word | Item `.bsr` files |
+|---|---|
+| 1 | 602 |
+| 3 | 465 |
+| 0 or 2 | 3 |
+| none | 351 |
+
+Of the 2,890 bit-9 layers on item models:
+- 1,315 are under a no-test mod;
+- 1,220 are under a ref-1 mod;
+- 355 keep their own 0x80 test.
+
+Those 355 are the 1-bit hats, Santa hats, mittens and flags. Joined with the review's
+`itemalpha.tsv`, only 2 of the 85 that join have mostly graded alpha: `light_02_ha` and an
+`_ef` layer (OPEN in TODO).
+
+Examples:
+
+| Item | Layer flags | ENVMAP word | Drawn as |
+|---|---|---|---|
+| `sword_01` | 0x0340 | 1 | solid |
+| `spear_11` | 0x0141 | 1 | solid, two-sided |
+| `heavy_11_la` | 0x0341 | 3 | cut at alpha 0 only |
+| `clothes_04_ha` | 0x0341 | none | cut at 128 |
+
+The code change is `BsrReader.ParsedObject.env_map_flags`, the object's last ENVMAP flag word.
+`layer_draw_rule(flags, env_map)` applies it to every layer, and the `item` argument is gone.
+
+**The skin rule, finished (READ).** The review traced the path: `CompoundObj::FUN_00be7640`
+passes 1 for object types 0, 1 and 5, which reaches `ResObject::FUN_00be3540`, which builds
+with `FUN_00be2f80`. That builder resets the palette entries to 0/0 per vertex, skips a 0xFF
+slot, and blends slot 0's weight over the sum; a zero sum gives blend 0.
+
+So an empty slot, or a weightless vertex, lands on entry 0, which is not a bone. Both slots
+empty occurs: `heavy_15_ba` 14 vertices, `sd_t_area_smith_part1` 7. The reader now mirrors
+this. Entry 0 becomes `BmsReader.OBJECT_SPACE`: `to_arrays` puts it one past the palette, and
+`Skeleton3DBuilder.build_skin` binds that index to a parentless bone that never moves. That
+entry 0 is the object's own transform is INFERRED. `FUN_00be28d0`, used for other object types,
+keeps the previous vertex's entry instead; that difference is recorded in BMS_FORMAT.md.
+
+The review's sweep counts **158 meshes** made skinned by the 0xFF change: NPCs, monsters, pets
+and carts, not only armour. MEASURED with `tools/probe_skinning.gd` at the idle's 0.5 s, dev →
+now:
+
+| Model | Skinned pieces | Pieces that were missing their skin on dev |
+|---|---|---|
+| NPC `sd_t_area_smith` | 3 → 4 | `sd_t_area_smith_part1`, 717 vertices: the whole lower body, posed y 0.02..13.51, feet on the ground |
+| monster `immotal` | 5 → 7 | two parts |
+
+The unchanged pieces pose identically. Renders are in `equip_shots/followup/`
+(`npcs_cmp.png`, `gear_cmp.png`, `gear_zoom_3.png`, `hats_zoom_3.png`; rows are dev b22edf5,
+round 626 d345414, now):
+- the hats' spikes and fringe are cut again, as on dev, where round 626 drew their cards solid;
+- the Degree-11 set is whole, with its cloak cut only at alpha 0;
+- `spear_11` is solid.
+
+**Tests.**
+- `skinned_bsr_assembler_test.gd` is rewritten on `layer_draw_rule`, using the measured flag
+  words, and the foliage shader at scissor 0 or 1/255.
+- `bms_reader_test.gd`: both slots empty → OBJECT_SPACE, one past the palette, bound to a still
+  bone.
+- `bsr_reader_test.gd`: `env_map_flags` is object-wide.
+- `object_loader_test.gd`: round 625's cases without the item column.
+
+`probe_equipment.gd` now walks `Item.model_paths` instead of re-splitting `model_path`, which
+had become dead code. `render_lineup.gd` takes a `.bsr` path as a body.
+
+**After merging round 625's follow-up (87b5066).** Round 625's reader and rule now carry the
+object's input. The item branch is gone; `env_map_flags` is the last ENVMAP mod in the ambient
+set with word 1 of 1 or 2; the MTRL mod and the two-pass flag are added. Re-run under that
+reader, the census is unchanged (`envcensus3.log`):
+
+| ENVMAP flag word | Item `.bsr` files |
+|---|---|
+| 1 | 602 |
+| 3 | 465 |
+| 0 or 2 | 3 |
+| none | 351 |
+
+The bit-9 layers are unchanged too: 1,315 no test, 1,220 ref 1, 355 own test.
+
+- The item ENVMAP mods have two shapes. 1,041 are ambient-set, word 1 = 1, material
+  `0xFFFFFFFF` (once per part). 29 are word 1 = 2 on a named material (per material). The
+  reader counts both, as READ.
+- 32 item `.bsr` files carry an MTRL mod, which the merged rule applies. No item is two-pass.
+
+Checked after the merge:
+- `probe_equipment.gd`:
+
+| Piece | Drawn as |
+|---|---|
+| `spear_11` | foliage shader, scissor 0 (two-sided, uncut) |
+| `heavy_11_la` | scissor 1/255 |
+| `heavy_11_ba`, `sword_01` | standard, opaque |
+| `clothes_04_ha` | scissor 128/255 (its two-sided `_2s` card and the one-sided brim) |
+
+- `probe_skinning.gd`: the smith and `immotal` pose exactly as they did before the merge.
+- Renders: `hats_zoom_4.png`, `gear_zoom_4.png` and `npcs_cmp_merged.png` in
+  `equip_shots/followup/`. Their fourth row is the merge; it matches the third.
+
+## Six-hundred-and-twenty-sixth round: a full Degree-11 set is worn whole -- chest and legs drawn, and the spear solid
+
+> **Corrected by the review follow-up above.** The chest/legs fix and the comma split stand. "Draw
+> every item layer solid" and the INFERRED "the test cannot see texture alpha" were wrong: retail
+> spares armour with the item's ENVMAP mod and cuts the hats; the both-0xFF records exist.
+
+The v0.1.457 report: "some armor pieces don't fully render in and some weapons or shields look
+like they are extra transparent when they shouldn't be." In the screenshot a Chinese man wears a
+dark red and black spiked set. The helm, shoulders, gauntlets and boots draw. The chest and legs are
+missing (bare torso, underwear), and the spear is see-through and washed out. (There is no shield:
+a spear is two-handed.)
+
+**Which items (MEASURED).** No tester log names the ids. A new tool, `client/tools/probe_equipment.gd`,
+walks each item the way the world does: model column -> `.bsr` -> meshes -> `.bmt` layer -> `.ddj`.
+It attaches the item to a body with `SkinnedBsrAssembler.attach_item_from_archive` and counts what
+was drawn. For the plain Degree-11 heavy set (`ITEM_CH_M_HEAVY_11_*_A`, ids 317/389/425/461/497/533)
+the result matches the report exactly. HA 324 vertices, SA 458, AA 482 and FA 376 drew. **BA and LA
+drew nothing.** `heavy_11_ba.bms` and `heavy_11_la.bms` parsed with `skinned=false`, and an item with
+no skeleton of its own whose mesh is not weighted onto the body is refused:
+`names no skeleton and its mesh is not weighted onto the body`. The in-world run of that loadout
+logged `china_man wears 5/7 item(s)` on dev and `7/7` after the fix.
+
+**Cause 1: a 0xFF first bone slot (READ + MEASURED).** Both meshes' skin sections fit exactly: the
+palette plus `vertex_count * 6` bytes up to `hdr[1]`. A few records are `(0xFF, 0, bone, 0xFFFF)`,
+with the first slot empty and the second at full weight:
+
+| Mesh | Records with an empty first slot |
+|---|---|
+| `heavy_11_la` | 3 of 876 |
+| `heavy_11_ba` | 1 of 530 |
+| `heavy_11_set_b_la` | 6 of 638 |
+
+`BmsReader._parse_skin` read `b0 >= palette size` as a misread palette and dropped the whole skin.
+The client's skinned vertex-buffer builders do not. `ResObject::FUN_00be28d0` and `FUN_00be2f80`
+test `index != 0xff` around each influence, skip an empty slot and still read the next, and store
+slot 0's weight over the used sum. So that vertex goes wholly to the second bone.
+`PrimGeometry::FUN_00c1b1c0` `break`s instead. Which reader a worn item's draw uses was not traced.
+The reader now skips an empty slot in either position. A first index that is neither 0xFF nor in
+the palette is still refused.
+
+**Cause 2: a comma in the model column (READ by a subagent, addresses in ITEM_FORMAT.md).** 88
+Degree-11 SET_A/SET_B rows name two models, for example
+`heavy_11_set_b_ba.bsr,heavy_11_set_b_ba_fullset.bsr`. The whole string was taken as one path,
+which names no file, so the set chest drew nothing. The client splits the column on `","`
+(`GlobalDataManager::FUN_00972910`) and draws element [0]. It switches to element [1] only while
+the whole set is worn (`FUN_00a60c60`, `ItemSet_IsComplete` 0xa60220). `ItemTableReader` now keeps
+the list and draws [0]. The switch is OPEN.
+
+**The transparency (READ).** `CObjRendererVS::FUN_00c42a60` is the per-layer render-state setter.
+Every object draw path calls it with the layer's flag word (`material + 0x70` = the file layer's
+`+0x60`). It reads the bits like this:
+
+| Bit | Effect |
+|---|---|
+| bit 0 | `CULLMODE` NONE (two-sided) |
+| bit 9 (`0x200`) | `ALPHATESTENABLE` with `ALPHAREF 0x80`, GREATEREQUAL (`FUN_00c42860`) |
+| bit 2 | specular |
+| bit 12 | MODULATE2X |
+
+No material bit enables blending. So **bit 0 is not an alpha bit**, which corrects BMT_FORMAT.md's
+2026-09-08 correlation. Every alpha layer it listed is `0x341`, which also has bit 9. `spear_11`
+(MEASURED `0x0141`: bit 0, no bit 9) is never alpha-tested by the client. `object_loader.gd`'s rule
+made it a 0.5 cutout through the foliage shader: holes, and the foliage shader's light.
+
+An item's texture alpha is a graded gloss mask. MEASURED at every triangle's UV centroid, the share
+of the surface below `0x80` is:
+
+| Item | Layer flags | Surface below 0x80 |
+|---|---|---|
+| `spear_11` | `0x0141` | 49.1% |
+| `sword_01` | `0x0340` | 81.4% |
+| `heavy_11_la` | `0x0341` | 89.1% |
+| `heavy_11_ha` | `0x0340` | 82.5% |
+
+An alpha test on that alpha would erase a bit-9 item. So on worn items the test cannot see texture
+alpha (INFERRED). What the item path feeds it is OPEN.
+
+**OURS:** `SkinnedBsrAssembler.equipment_material` draws item layers solid, two-sided when bit 0 is
+set, keeping the loader's texture and the layer's ambient as albedo. `object_loader.gd` is not
+touched: its scenery alpha rule is round 625's. The READ bit table is in BMT_FORMAT.md for that
+lane.
+
+**Also READ/MEASURED:** a `.bmt` layer ends with a fixed 7-byte tail after its texture path
+(`CPrimMtrl::FUN_00bf91b0`): a `uint32`, then three bytes, the third being the "full path" flag
+(`FUN_00bf9090`). On `heavy_11.bmt` the tails land exactly on the file's end (694 bytes); the
+`uint32` is 1.0f on all six layers. This is the "gap" BMT_FORMAT.md could not size.
+
+**Verified.** Renders are in scratchpad `equip_shots/`:
+
+| File | What it shows |
+|---|---|
+| `crop_f30.png`, `crop_f58.png`, `crop_f86.png` | Jangan spawn (1002, 1020), front, back and side, dev on the left and this round on the right |
+| `lineup_cmp.png` | D11 + spear_11, SET_B + set spear, newbie heavy + spear_01; dev on top |
+
+On dev, the in-world character is the report's: bare torso and a see-through spear. After, the
+chest, the long leg armour and a solid spear are drawn. The measurement behind the pictures is the
+probe's per-part vertex counts, dev -> after:
+
+| Part | Dev | After |
+|---|---|---|
+| BA | 0 | 530 |
+| LA | 0 | 876 |
+| set_b BA | 0 (comma) | 826 |
+| set_b LA | 0 | 638 |
+| set_b FA | 0 | 462 |
+
+`spear_11` went from `cutout(shader foliage.gdshader)` to `standard transparency=0 cull=2`.
+
+**Tests.** The new tests are:
+- `bms_reader_test.gd`: an empty first slot keeps the mesh skinned and binds the vertex to bone 1
+  alone.
+- `item_table_reader_test.gd`: a two-model column draws [0] and keeps both.
+- `skinned_bsr_assembler_test.gd`, new: flags `0x0141` / `0x0341` / `0x0140` / `0x0340` give a solid
+  material, with cull set by bit 0.
+
+The negative ran against dev b22edf5 with the new tests copied in:
+```
+FAIL a skin record with an empty (0xFF) first slot keeps the mesh skinned
+FAIL a two-model column draws its first model (got item\common\man_item\heavy_11_set_b_ba.bsr,item\common\man_item\heavy_11_set_b_ba_fullset.bsr)
+SCRIPT ERROR: Invalid get index 'model_paths' (on base: 'RefCounted (Item)').
+SCRIPT ERROR: Parse Error: Static function "equipment_material()" not found in base "SkinnedBsrAssembler".
+```
+
+**Not from the equipment chain:** the faint translucent shape beside the tester's character. No
+worn piece reaches there, and the only translucent-authored item mesh found (`heavy_11_set_b_fly`)
+is in a `_fullset` model v0.1.457 could never load. It is probably a buff effect; unmeasured.
+docs/TODO.md lists what is still OPEN.
+## Six-hundred-and-twenty-fifth round, review follow-up: water that had vanished blends again, env maps govern the whole object, and some objects draw in two passes
+
+The review confirmed the leaf fix. The 450 newly chained files are exactly those with flag bit 0.
+Every mesh list is a strict superset of the old one, with no duplicates and no LODs, and Jangan's
+`cj_pub01` tavern went from 2 pieces to 7. The review also found four gaps in the material rule;
+all four are READ in `sro_client.exe` and implemented here.
+
+**1. An env-map mod governs every material of its object (READ).** `CRTModEnvMap::vslot_004` ORs
+`0x60000000` and sets its own alpha test before it compares the material index (asm 0xc836a5,
+compare at 0xc83715).
+- It runs per material when header word 1 is 2 (`FUN_00c451e0` → `FUN_00c7b540`).
+- It runs once per object, with index −1 and the renderer's flag word, when word 1 is 1
+  (`vslot_038` → `FUN_00c45110` → `FUN_00c7b4e0`).
+- Round 625 had applied it to the named index only. `BsrReader.ParsedObject.env_map_flags` is now
+  the object's word, with the ambient set and a word 1 of 1 or 2. The field is round 626's shape,
+  and 626 read the same rule for items.
+- MEASURED: `bagh_masin_lf`'s ENVMAP (flags 3) names material 2. Its 0x341 layers `_03`/`_04`,
+  with 88 % and 68 % of their UV surface below alpha 128, were cut at 128. They are now tested
+  at 1.
+
+**2. BUMPENV is not an env map (READ).** `CRTModBumpEnv::vslot_004` (0x00c83c30) sets texture
+stages only, so it no longer counts.
+
+**3. The MTRL mod (READ).** `CRTModMtrl::vslot_004` (0x00c821f0) sets, for its material:
+- its own alpha test (ref and func);
+- ALPHABLENDENABLE, with its own blend factors and stage-0 ops;
+- z-write off and cull none;
+- and ORs `0x10000000`, so the flag word sets nothing.
+
+The body is `ModDataMtrl::vslot_004` (0xc626c0); its last 36 bytes are tabled in BMT_FORMAT.md.
+Implemented:
+- `BsrReader._read_mtrl_state` and `ParsedObject.mtrl_mod_for`.
+- `ObjectLoader.layer_draw_rule(flags, env_map, mtrl, two_pass)`.
+- One shader per cull, blend and depth combination (`_mod_shader`): D3D z-write maps to
+  `depth_draw_always`, and the stage-0 ops are uniforms.
+- The blend pairs: SRCALPHA/INVSRCALPHA is mix, SRCALPHA/ONE add, ONE/ONE add with alpha 1, and
+  the DESTCOLOR pairs multiply. OURS: any other pair is drawn as mix; the one seen is
+  `alex_potion_potion1`'s SRCALPHA/BOTHINVSRCALPHA. **Corrected by the material review
+  follow-up:** the census has 18 pairs, not one unmapped; each now has its own labelled
+  emulation (`ObjectLoader.BLEND_EMULATION`).
+
+MEASURED with `foliage_census.gd` (`MTRL(...)` per piece):
+- **Every water object the review named carries a live MTRL mod** and now blends instead of
+  vanishing under the 0x340 test:
+  - `dun_cen_water01`..`06` (SRCALPHA/ONE);
+  - `air_garden8_water01/02`;
+  - `air_garden40_water_ani01/02` and their `gngwc_` copies;
+  - the nine `waterfall-turtle*` (mix or add, z-write off);
+  - `dun_waterfall_*`, `cj_waterfall02_*`, `oa_ho_waterfall01_*`, `waterline01`.
+- `dun_cen_water03` is type 0 with no skeleton, so it takes the forward scan. Its mod was lost with
+  the table. `BsrReader.parse` now reads the header's flag word and mod section for scan-path files
+  too, since the pointer at 0x24 reaches them whatever the mesh layout.
+- **72 of the map's tree models blend their leaves in retail:**
+  - `tre_bamboo01` has test 128 with SRCALPHA/INVSRCALPHA, z-write on and cull none, object-wide;
+  - `tre_maple01` has test 137 on its leaf material.
+  - Before this follow-up they were cut hard; now they are cut at the mod's ref and blended.
+    `plan_disagrees_with_0x200` counts 45 pieces where the mod's test differs from the flag word's.
+
+**4. Two passes (READ).** When `.bsr` header 0x2C has bit 1, `CObjRendererVS::vslot_038` draws
+with `FUN_00bf5780`: each material with CULLMODE CW, then CCW, i.e. back faces then front. An
+unblended layer is then two-sided. A blended one gets a `next_pass`: cull front, then back.
+(**Corrected by the material review follow-up:** Godot 4.2 does not keep a `next_pass` after
+its material in the transparent sort; the front pass now carries a higher `render_priority`.)
+MEASURED: `euro_esteuro_fountain01` (its MTRL mod is object-wide) and all 23 pieces of
+`alex_potion`.
+
+**Doc fixes:**
+- The layer trailer's uint32 is the runtime material's +0x90, not +0x80.
+- 12 China weapon and shield files carry a live ENVMAP of their own, not two.
+- ProgEquipPow is attached only for enhanced gear (`FUN_00a5f3e0` → slot 50, gated on a per-slot
+  byte).
+- The "gateway roof" in 97/167 is `cj_pub01_roof`.
+
+**Tests and pictures:**
+- Box: `check` is ALL LOAD, `tests` ran 143 suites with 0 failing, and Go is green.
+- Pictures: the 97/168 and 97/167 viewpoints were re-rendered on the GPU path with 0
+  `SCRIPT ERROR`s, into `foliage_shots/*_review.png`. They show the plaza and grove trees still in
+  leaf under the blended leaf mods; that is a picture, not a measurement. The `maple` viewpoint
+  came back with the player at another spot (minimap Y 985 against 1125), so no before/after is
+  claimed there.
+
+**The item branch is gone.** Round 626 read that items spare their armour through their own
+ENVMAP mods (602 item files with flag word 1, 465 with 3), which rule 1 above now applies. So
+`layer_draw_rule` takes round 626's `(flags, env_map)` shape, extended by `mtrl` and `two_pass`.
+
+**Functions changed**, for round 626's merge:
+- `BsrReader.parse`: now a wrapper over `_parse`.
+- `ParsedObject`:
+  - new: `env_map_flags` (var), `header_flags`, `material_mods`, `mtrl_mod_for`, `two_pass`;
+  - kept: `env_map_materials`.
+- `parse_sound_section`: returns `material_mods` beside `env_maps`.
+- `_read_mod_set`, plus the new `material_mods`, `env_map_flags(data)` and `_read_mtrl_state`.
+- `ObjectLoader`:
+  - `layer_draw_rule(flags, env_map, mtrl, two_pass)`;
+  - new: `blend_mode`, `_mod_shader`, `_build_mod_material`, `_mod_pass`;
+  - `build_godot_material` and `_prepare_material` take `(…, env_map, mtrl, two_pass)`;
+  - `_commit_material`, and the `_prepare_node` call site;
+  - `SkinnedBsrAssembler`: its two `build_godot_material` calls.
+
+**Tests:**
+- `bsr_reader_test` `_test_round_625_mods`: MTRL tail fields, per-material vs object-wide
+  dispatch, the two-pass flag, and ambient-set env maps.
+- `object_loader_test` `_test_round_625_mods`: MTRL replaces the flag word; the additive
+  depth-off two-sided shader; the leaf mod's `depth_draw_always` at 137; two-pass `next_pass`
+  ordering; and an env map dropping 0x200.
+- The item cases are removed from the round-625 table.
+
+**Open:**
+- The MTRL mod's animated colour (its keys) and the texture-factor argument.
+- Its flag bit 2 (specular).
+- Env-map reflection itself.
+- Which non-ambient sets play when.
+
+## Six-hundred-and-twenty-fifth round: trees have their leaves again, needle cards stop drawing as slabs, and a spear is no longer cut to ribbons
+
+A player reported on v0.1.457 that "trees and assets around the map aren't fully visible or are
+missing their leaves". Their screenshot was of Jangan's grass strip by the plaza: four bare dark
+trunks. The round measured first, read the client second, and fixed what the reading grounds.
+A second report came in the same session: a spear draws full of holes, and a shield is nearly
+invisible. That falls under the same material rule.
+
+### 1. The leaves were never loaded (MEASURED, then READ)
+
+`client/tools/foliage_census.gd` (new) reads every tree and foliage model named by Map.pk2's
+`object.ifo` the way `ObjectLoader` does. For each mesh piece it prints the vertex and triangle
+counts, the skin, the layer and flag word, the texture's fourCC, and its alpha statistics.
+
+- **Before:** 326 models, 309 parsed, **580 pieces**. 149 of the 309 had `type=-1`, meaning the
+  `.bsr` section table did not chain and the file fell back to the forward scan. For a nature file
+  that scan returns **only the first mesh**, which is the trunk.
+  - Jangan's `tre_maple01`/`02`/`03`, `tre_tree01`, `tre_smalltree01`, `tre_bank01`/`02`,
+    `tre_frie01`, the willows and `tre_pine01`..`04` all loaded one piece.
+  - `tre_maple03` is placed three times at the grass strip by the plaza (97/168, local 563,443 /
+    635,436 / 568,517): the user's bare trees. Their trunk (`tre_maple03_brn`) was drawn and
+    `tre_maple03_leaf` was never read.
+- **Why (READ):** `ResObject::FUN_00be41d0`, `CResObject::Load`, copies the header word at
+  **0x2C** to the object. Then, for each mesh entry, it calls the mesh's `CPrimMesh` slot 4
+  (`FUN_00c12510`) with `flags & 1`. That slot reads **one more `uint32` after the path** when the
+  bit is set. The swaying trees carry 1 there. The old doc said "those files fail the chaining
+  check and fall back to the forward scan, which is why no special case is needed". That note was
+  where the leaves were lost.
+- **After:** the two readers (`BsrReader`, `server/internal/bsr`) step over the word when the flag
+  asks for it.
+  - Census: **0 fallbacks and 779 pieces** loaded.
+  - Archive-wide `tools/sweep_bsr.gd --verify` over Data.pk2's 8,539 files: header table
+    failures went from **491 to 41**, and unresolved paths stayed at **27 before and after**, so
+    no invented paths. The 450 files the table now reads include buildings (`w_cd_inn`,
+    `cj_adult_brg`, ...). In the 97/167 "grove" frame the tavern's roof, `cj_pub01_roof` of
+    `cj_pub01` at local (739.6, 429.8), which the scan had dropped, now stands (the review:
+    `cj_pub01` went from 2 pieces to 7).
+- **The shadow:** in the user's picture a canopy-shaped shadow lay under the bare trunks. It was
+  not our leaf geometry. The census shows no leaf mesh was loaded at all on the base, so the
+  shadow has another source. INFERRED, not measured: most likely the terrain's own baked
+  shadowing.
+
+### 2. The material rule, READ
+
+The loader used to decide a cutout from the `.bmt` flag word's bit 0 (a correlation), and fell back
+to pixel heuristics when bit 6 was clear. The client's own rule is now read:
+
+- **The reader.** `CPrimMtrl::FUN_00bf9270` reads the flag word into the runtime material's +0x70.
+- **The draw paths.** Every `CObjRendererVS` draw path passes `material+0x70 | renderer flags` to
+  `FUN_00c42a60`:
+  - **`0x200` → `ALPHATESTENABLE`, `ALPHAREF 0x80`**, unless `0x20000000` is set;
+  - **`0x1` → `CULLMODE NONE`**;
+  - `0x4` → specular;
+  - `0x8` → lighting off.
+- **The alpha function.** The renderer's begin (`FUN_00c42860`) sets **`ALPHAFUNC GREATEREQUAL`**.
+- **No blending from the flag word.** `ALPHABLENDENABLE` comes from an MTRL mod or the whole-object
+  fade (`FUN_00c428c0`). This entry first said "no per-material blend exists"; the review follow-up
+  corrects that.
+- **Env-map mods override the test.** `CRTModEnvMap::vslot_004` ORs `0x60000000` (so the material
+  test is off) and sets its own test at `ALPHAREF 1` when its mod flag word has bit 1. The mod is
+  matched by material index: IModData header word 3 is the index, word 5 the flags
+  (`FUN_00c5c2a0`).
+- **What was wrong before.** Bit 0 is cull, and the test is bit 9. The census (after the reader
+  fix):
+  - **69 pieces in 44 tree models disagreed**. Mostly `0x340`, alpha-tested **one-sided**: the
+    pine and bamboo needle cards and `oas_kk_tree06_al01`. They drew as solid slabs, with
+    51–69 % of their texels below alpha 128.
+  - The 15 `0x141` pieces (two-sided, untested) were already opaque DXT1, so the READ rule agrees
+    with their pixels everywhere.
+  - **After:** 0 disagree. 392 pieces are alpha-tested, 54 of them one-sided.
+- **Implemented** in `ObjectLoader.layer_draw_rule`:
+  - scissor at **128/255** (READ; the old 0.5 cut the same texels);
+  - `foliage.gdshader` two-sided or `foliage_one_sided.gdshader`, sharing `foliage.gdshaderinc`;
+  - a two-sided untested layer gets the shader with a scissor of 0;
+  - no pixel statistic decides anything any more. `_alpha_is_binary_cutout`,
+    `_has_real_alpha_variance`, `_ALPHA_FOURCCS` and the DXT1 fraction are gone;
+    `SRREVAMP_QA_MATS` still reports.
+- **OURS:** the test reads mip 0's alpha. Retail tests the filtered alpha; mip 0 is round 83's
+  answer to canopies dissolving with distance.
+- **The `.bmt` layer trailer (READ,** `CPrimMtrl::FUN_00bf91b0`**).** It is a `uint32` and three
+  bytes after the texture path; the third byte is the full-path flag. Both readers now step exactly
+  seven bytes and scan only when that misses. The scan could stop inside the trailer and read a
+  phantom layer.
+
+### 3. Equipment (INFERRED, stated as such)
+
+**Superseded in the review follow-up above.** Items take no rule of their own: round 626 READ that
+their own ENVMAP mods spare the graded alpha, and ProgEquipPow is for enhanced gear only. The
+measurement below stands.
+
+The flag word asks for `0x200` on most weapon, shield and armour layers. Measured under each
+piece's own UV triangles (the census's `uv_alpha<128`), the share of alpha-tested layers with more
+than 30 % of their surface below 128 is:
+
+| Group | Layers | Over 30 % below 128 | Median surface below 128 |
+|---|---|---|---|
+| armour (`res\item`) | 700 | 602 | 75 % |
+| weapons | 369 | 242 | 52 % |
+| shields | 25 | 14 | 64 % |
+| avatars | 1,328 | 951 | 72 % |
+| monsters (`res\mob`), `0x200` layers | 756 + 1,050 | — | 0 % / 2 % |
+| NPCs | 313 + 374 | — | 0 % / 4 % |
+| player bodies (`res\char`) | 435 + 58 | — | 0 % / 9 % |
+
+Sampled examples:
+
+| Layer | Flags | Surface below 128 |
+|---|---|---|
+| `spear_1_5` | `0x341` | 49–89 % across `spear_01`..`07` |
+| `shield_02_2` | `0x341` | 97.6 % |
+| `sword1_2_3` | `0x340` | 73 % |
+
+The item textures' alpha is a graded mask, not a cutout. A test at 128 leaves a spear at a sixth
+of a spear, which is the reported "see-through holes", and the old bit-0 rule did exactly that to
+every `0x341` item. The client has an override: `CRTModProgEquipPow::vslot_004` ORs `0xe21f0000`
+(`0x10000000`, no material state at all). It is attached by `CCompChar::FUN_00c350a0` through the
+compound's slot 50. **When it is attached is OPEN**, so items (type 5) are drawn with **no
+material alpha test** (INFERRED). Items keep their `.bsr`'s own env-map mods (READ); only
+`blade_14` and `tblade_14` carry one among the China weapons and shields sampled. Round 626 owns
+the equipment rendering; this is the rule it builds on.
+
+### Pictures (for a human; the numbers above are the measurement)
+
+`qa_shot --shots` ran base (dev b22edf5) and this branch. Run A was 97/168 at `--radius 1` with 7
+viewpoints including a hop into farmland 96/168. Run B was the 97/167 grove with 3 viewpoints.
+Frames and side-by-sides are in the session scratchpad under `foliage_shots/`. GL was the RX 5700
+XT through VirtualGL on every run, with 0 `SCRIPT ERROR`s.
+
+- **`maple`** (the report's spot): bare trunks become full maples, and pine needles and blossom
+  appear. Changed pixels: **74,261**. Green pixels in the upper frame: **14,673 → 23,102**.
+- **`plaza` / `plazaw`:** 12,417 → 14,608 and 9,308 → 10,090 green.
+- **`grove`:** 251,090 changed. The restored tavern roof (`cj_pub01_roof`) covers part of the view, so green fell
+  15,432 → 9,596.
+- **`farm` and `tree02b`:** about 1,800 changed each, which is time-of-day noise only. The one tree
+  there (`tre_tree08`, `0x141`, opaque) was already right.
+
+### Tests
+
+- New:
+  - `bsr_reader_test` `_test_round_625`: the per-mesh word, and env-map headers;
+  - `bmt_reader_test` `_check_layer_trailer`;
+  - `object_loader_test` `_test_round_625`: the rule table, and the materials over one DXT3 leaf
+    for ten flag, env and item cases;
+  - Go `TestParseMeshEntryWord` and `TestParseLayerTrailer`.
+- Updated for the new rule:
+  - `object_loader_test`'s round-566 alpha case now uses flag words and asserts that no pixel is
+    consulted;
+  - its fingerprints: scissor 0.5020, and the shader names its cull;
+  - `objects_prepare_test`'s held-texture case uses `fraction` under `SRREVAMP_QA_MATS`.
+- Box: `remote_godot.sh check` gives ALL LOAD (364 scripts), and `tests` ran **143 suites, 0
+  failing**. Go: `go test -count=1 -p 1 ./...` is green.
+
+**NEGATIVE: the same three suites against dev b22edf5** (copied into the base client on the box):
+
+```
+FAIL r625: the section table chains with the per-mesh word, so the header is trusted -- type 4 (got -1)
+FAIL r625: both meshes, the trunk AND the leaves (got prim\mesh\tre_synth_brn.bms + [])
+FAIL r625: its skeleton and sway animation are read too (got '', 0)
+FAIL r625: the ENVMAP mod on material 1 with flag word 0x3 is read (got <null>)
+FAIL r625: 4 trailing bytes per mesh only under the flag
+FAIL r625: two layers with their trailers (got 1)
+FAIL load_object: flags 0x340 make dxt1cut alpha-tested at 128, one-sided (got <StandardMaterial3D#...>)
+FAIL load_object: flags 0x141 make dxt1solid untested, two-sided (got <ShaderMaterial#...>)
+FAIL r625: a 0x340 layer is alpha-tested at 128/255 and ONE-sided (got <StandardMaterial3D#...>)
+FAIL r625: ObjectLoader.layer_draw_rule exists
+```
+
+Go against base: `--- FAIL: TestParseMeshEntryWord ... meshes = "prim\\mesh\\tre_synth_brn.bms" + [], want the trunk and the leaves`.
+
+### Open
+
+- **Tree sway.** The trees now read their `.bsk` and `.ban`, but pieces are placed rigid, and the
+  skinned leaf meshes draw in bind pose.
+- **When ProgEquipPow is attached.** It decides whether items are ever tested.
+- **Flag bits `0x40`, `0x100`, `0x2000`** are not tested in `FUN_00c42a60`, and their meaning is
+  not read. Bits `0x4` (specular) and `0x8` (lighting off) are read but not drawn.
+- **17 foliage models in `object.ifo` are missing from Data.pk2** (`st_tree_hamada_*`,
+  `tre_palm03_copy`, ...). They are absent from the archive and have nothing to load.
+
 ## Six-hundred-and-twenty-fourth round, review follow-up: the point filter is read for the game's own window order, and all 622 skill icons decode
 
 The review confirmed round 624's reading and settled its OPEN item. It also found four errors.

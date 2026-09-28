@@ -601,6 +601,35 @@ tracks them); characters have a level but no way to gain one; accessories (slots
 modelled; the item `.bsr`'s effect attachments (`.efp` on `Bone04`/`Bone06` of a shoulder piece)
 are not drawn.
 
+**Round 626 (a full Degree-11 set drew bare-chested with a see-through spear) left these open:**
+- **The full-set model switch.** 88 Degree-11 SET_A/SET_B rows list two models; the client draws
+  the second (`*_fullset.bsr`, the same mesh plus e.g. `heavy_11_set_b_fly.bms`) only while the
+  whole refsetitemgroup set is worn, and plays `ITEM_SETITEM_ACTIVE` (ITEM_FORMAT.md has the
+  addresses). We draw the first always. Building it needs the item's set id (record+0x1d4) and
+  refsetitemgroup's slot count; the full-set layers (`heavy_11_set_b_fly` 59.6% transparent,
+  `*_ef_alpha`) are authored translucent, so their draw state (any MTRL mod in the fullset
+  `.bsr`) has to be read first.
+- **Enhanced-gear glow.** `CRTModProgEquipPow` (BMT_FORMAT.md) is attached only to a +N item
+  with a matching glow row; it overrides the material state entirely. Not modelled.
+- **Object-space skin entry.** An empty skin slot lands on the client's palette entry 0, drawn
+  here in the model's own space (BMS_FORMAT.md). That entry 0 is the object transform is
+  INFERRED, not read from the vertex shader's constant upload.
+- **Object brightness against the client** (material review follow-up). The client draws
+  texture × lit diffuse × 2. Our flag-word path is tuned by eye (light energy 0.3, round 43).
+  Before any global change, read c10's upload, the env record → D3DLIGHT9 mapping and the object
+  colour, then compare numerically in Jangan. The decision is the user's.
+- **MTRL blend pairs drawn OURS** (BMT_FORMAT.md): 7 pairs drop a term. BLENDFACTOR's live
+  value for objects is OPEN. TFACTOR is drawn white, although the mod's own colour is available.
+- **The 355 bit-9 item layers with no ENVMAP mod** are cut at 128 by the READ rule. That is right
+  for the 1-bit hats. `light_02_ha` (91% graded alpha) is cut the same way; a render of it
+  against the original would confirm it.
+- **The body under armour.** The body's own pieces are still drawn beneath every worn piece.
+  Whether the client hides any body piece under armour was not looked at.
+- **The faint translucent shape beside the tester's character** (v0.1.457 screenshot) is not
+  from the equipment chain: no worn piece's mesh reaches there, and the one translucent-authored
+  item mesh found (`heavy_11_set_b_fly`) belongs to a `_fullset` model v0.1.457 could not load.
+  Likely a buff's effect (the efp lane); unmeasured.
+
 ### Rendering against a real server
 `qa_shot.sh --server` starts the server in memory on a spare port and signs the client in
 (`SRREVAMP_QA_SERVER`, `--say` to send a chat message). Every render before this was of a client
@@ -1095,6 +1124,19 @@ Still open, by the files each would add:
   - `StartBone` `*` and `#…`;
   - the effect's alpha byte `DAT_00edbd40`.
 - **The 58 `F8FILE` containers** (`system\arksolid_*`) and **the 7 `0000` files**.
+
+### Trees and materials (round 625 and its review): leaves load, and the material rule is the client's (flag word, env map, MTRL mod, two passes). These are left:
+
+- **Tree sway:** swaying trees now expose their `.bsk` and `.ban`, but pieces are still placed
+  rigid and skinned leaves draw in bind pose.
+- **MTRL mod details:**
+  - its animated colour (the keyframes) replaces the layer's in retail, and that is not drawn;
+  - the TEXTUREFACTOR argument is taken as white;
+  - D3DBLEND pairs other than mix, add and multiply are drawn as mix.
+- **Env-map reflection:** the mod's own texture stages are not drawn; only its alpha rule is.
+- **Unread flag bits:** `0x40`, `0x100` and `0x2000` are not read. `0x4` (specular) and `0x8`
+  (lighting off) are read but not drawn.
+- **Mod sets:** only the always-on `ambient` set is applied; clip-bound sets are not.
 
 ## Parked, with the state written down
 

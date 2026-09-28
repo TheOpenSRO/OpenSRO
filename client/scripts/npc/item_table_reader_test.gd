@@ -95,6 +95,23 @@ func _init() -> void:
 		_check(suit.required_character_level() == 1,
 			"a type-1 pair is the character's own level (got %d)" % suit.required_character_level())
 
+	# Round 626: a Degree-11 set piece lists TWO models, comma-separated,
+	# and the client splits them (GlobalDataManager::FUN_00972910): the
+	# first is the one drawn, the second only while the whole set is worn.
+	# Taking the whole string as one path named no file and drew nothing --
+	# a set chest missing from the body.
+	var set_chest: ItemTableReader.Item = ItemTableReader.parse(_row("25541", "Set Chest",
+		"item\\common\\man_item\\x.ddj", 54,
+		"item\\common\\man_item\\heavy_11_set_b_ba.bsr,item\\common\\man_item\\heavy_11_set_b_ba_fullset.bsr").to_utf16_buffer()).get(25541)
+	_check(set_chest != null and set_chest.model_path == "item\\common\\man_item\\heavy_11_set_b_ba.bsr",
+		"a two-model column draws its first model (got %s)" % (set_chest.model_path if set_chest != null else "-"))
+	_check(set_chest != null and set_chest.model_paths.size() == 2
+		and set_chest.model_paths[1] == "item\\common\\man_item\\heavy_11_set_b_ba_fullset.bsr",
+		"both models are kept, in file order (got %s)" % (str(set_chest.model_paths) if set_chest != null else "-"))
+	if suit != null:
+		_check(suit.model_paths == PackedStringArray([suit.model_path]),
+			"a one-model column lists exactly that model (got %s)" % str(suit.model_paths))
+
 	# A row that writes `xxx` where its model would be is not equipment --
 	# the Cotton Hood does exactly that -- and no `.bsr` is invented for it.
 	var hood: ItemTableReader.Item = ItemTableReader.parse(_row("4770", "Cotton Hood", "item\\china\\man_item\\clothes_01_ca.ddj", 54, "xxx").to_utf16_buffer()).get(4770)

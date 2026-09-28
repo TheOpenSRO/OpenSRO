@@ -23,7 +23,20 @@ class Layer:
 	var emissive: Color
 	## Unconfirmed meaning -- see docs/protocol/BMT_FORMAT.md.
 	var power: float
+	## The layer's flag word (the name is historical). READ in round 625:
+	## the client's material reader (CPrimMtrl FUN_00bf9270) stores it at
+	## the runtime material's +0x70, and every draw path of CObjRendererVS
+	## hands it to FUN_00c42a60, which sets the render states from it --
+	## see ObjectLoader.LAYER_FLAG_ALPHA_TEST / LAYER_FLAG_TWO_SIDED and
+	## docs/protocol/BMT_FORMAT.md.
 	var unknown: int
+	## The seven bytes after the texture path, READ in round 625 from
+	## CPrimMtrl FUN_00bf91b0: a uint32 (runtime material +0x90, meaning not
+	## read) and three bytes (+0x94..+0x96);
+	## the third says the path is a full archive path (non-zero) rather
+	## than a name beside the .bmt (zero, FUN_00bf9090).
+	var texture_word: int
+	var texture_bytes: PackedByteArray = PackedByteArray()
 	## A bare filename (not a path), e.g. "avatar_m_zombie.ddj" -- resolve
 	## against whatever directory this .bmt itself lives in. Empty if this
 	## layer has no texture.
@@ -90,10 +103,16 @@ static func _parse_decompressed(dec: PackedByteArray) -> ParsedMaterial:
 		m.layers.append(layer)
 
 		if i + 1 < count:
-			var name_off := _scan_for_name_string(dec, off)
-			if name_off < 0:
+			# READ (round 625): the layer ends with a uint32 and three bytes
+			# after its texture path (FUN_00bf91b0), so the next name starts
+			# LAYER_TRAILER_BYTES on. The forward scan is kept only for a
+			# file where that does not land on a plausible name.
+			var next := off + LAYER_TRAILER_BYTES
+			if not _name_at(dec, next):
+				next = _scan_for_name_string(dec, off)
+			if next < 0:
 				break
-			off = name_off
+			off = next
 
 	return m
 
@@ -124,8 +143,22 @@ static func _parse_layer(dec: PackedByteArray, off: int):
 	# real file checked -- trim it.
 	l.texture_path = (tex_result[0] as String).rstrip(char(0))
 	off = tex_result[1]
+	if off + LAYER_TRAILER_BYTES <= dec.size():
+		l.texture_word = _le_u32(dec, off)
+		l.texture_bytes = dec.slice(off + 4, off + LAYER_TRAILER_BYTES)
 
 	return [l, off]
+
+## Bytes after a layer's texture path: a uint32 and three bytes (READ,
+## CPrimMtrl FUN_00bf91b0).
+const LAYER_TRAILER_BYTES := 7
+
+static func _name_at(data: PackedByteArray, pos: int) -> bool:
+	if pos < 0 or pos + 4 > data.size():
+		return false
+	var n := _le_u32(data, pos)
+	return n > 0 and n <= MAX_NAME_LEN and pos + 4 + n <= data.size() \
+		and _is_plausible_name(data.slice(pos + 4, pos + 4 + n))
 
 static func _scan_for_name_string(data: PackedByteArray, off: int) -> int:
 	var pos := off

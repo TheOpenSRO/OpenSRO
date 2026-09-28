@@ -126,7 +126,9 @@ func _build_synthetic_character(
 	animation_paths: Array,
 	skeleton_paths: Array,
 	object_type: int = BsrReader.TYPE_CHARACTER,
-	attach_bones: Array = []
+	attach_bones: Array = [],
+	mesh_words: Array = [],
+	env_maps: Array = []
 ) -> PackedByteArray:
 	var buf := PackedByteArray()
 	buf.resize(BsrReader.PREAMBLE_END)
@@ -160,12 +162,19 @@ func _build_synthetic_character(
 		buf.append_array(index_bytes)
 		buf = _append_len_prefixed(buf, material_paths[i])
 
-	# Meshes: a count, then the paths back to back.
+	# Meshes: a count, then the paths back to back -- or, when mesh_words is
+	# given, each path followed by its word and the header's flag word at
+	# 0x2C with bit 0 set (round 625, READ from CPrimMesh slot 4).
 	_put_u32(buf, BsrReader.OFF_PTR_MESH, buf.size())
 	_put_u32(count_bytes, 0, mesh_paths.size())
 	buf.append_array(count_bytes)
-	for p in mesh_paths:
-		buf = _append_len_prefixed(buf, p)
+	if not mesh_words.is_empty():
+		_put_u32(buf, 0x2C, 1)
+	for i in range(mesh_paths.size()):
+		buf = _append_len_prefixed(buf, mesh_paths[i])
+		if not mesh_words.is_empty():
+			_put_u32(count_bytes, 0, mesh_words[i])
+			buf.append_array(count_bytes)
 
 	# Animations: two unconfirmed words, then the usual count.
 	_put_u32(buf, BsrReader.OFF_PTR_ANIMATION, buf.size())
@@ -239,10 +248,48 @@ func _build_synthetic_character(
 			buf.append_array(walk)
 
 	# The sound section is where the animation groups end; a count of
-	# zero is enough to prove the reader lands on it.
+	# zero is enough to prove the reader lands on it. env_maps adds one set,
+	# the always-on `ambient` one (set kind 2), holding a mod per entry:
+	# [material index, flag word] is an ENVMAP (IModData header words 3 and
+	# 5, word 1 = 2), and [material index, "mtrl", w1] an MTRL mod whose body
+	# asks for SRCALPHA/ONE blending, z-write off and cull none (round 625
+	# and its review).
 	_put_u32(buf, BsrReader.OFF_PTR_SOUND, buf.size())
-	_put_u32(count_bytes, 0, 0)
+	_put_u32(count_bytes, 0, 1 if not env_maps.is_empty() else 0)
 	buf.append_array(count_bytes)
+	if not env_maps.is_empty():
+		var set_head := PackedByteArray()
+		set_head.resize(8)
+		_put_u32(set_head, 0, 2)
+		_put_u32(set_head, 4, 0xFFFFFFFF)
+		buf.append_array(set_head)
+		buf = _append_len_prefixed(buf, "ambient")
+		_put_u32(count_bytes, 0, env_maps.size())
+		buf.append_array(count_bytes)
+		for e in env_maps:
+			var mod := PackedByteArray()
+			if e[1] is String:
+				# MTRL: header, three words, n = 0 keys, then the 36-byte tail.
+				mod.resize(4 + BsrReader.MOD_HEADER_BYTES + 16 + 36)
+				_put_u32(mod, 0, 0)
+				_put_u32(mod, 4 + 4, e[2])
+				_put_u32(mod, 4 + 12, e[0])
+				var tail := 4 + BsrReader.MOD_HEADER_BYTES + 16
+				_put_u32(mod, tail + 4, 1) # blend on
+				_put_u32(mod, tail + 8, 1) # z-write off
+				var state := [5, 2, 4, 2, 0, 2, 2, 0, 128, 7]
+				for k in range(state.size()):
+					mod[tail + 16 + k] = state[k]
+				_put_u32(mod, tail + 32, 1) # cull none
+			else:
+				mod.resize(4 + BsrReader.MOD_HEADER_BYTES + 16)
+				_put_u32(mod, 0, BsrReader.MOD_ENVMAP)
+				_put_u32(mod, 4 + 4, 2)
+				_put_u32(mod, 4 + 12, e[0])
+				_put_u32(mod, 4 + 20, e[1])
+			buf.append_array(mod)
+		_put_u32(count_bytes, 0, 0)
+		buf.append_array(count_bytes)
 	return buf
 
 func _init() -> void:
@@ -478,9 +525,86 @@ func _init() -> void:
 		_check(not broken_obj.is_character, "fallback: not claimed as a character")
 		_check(broken_obj.skeleton_path == "", "fallback: no skeleton path invented (got %s)" % broken_obj.skeleton_path)
 
+	_test_round_625()
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
 	else:
 		print("%d FAILURES" % _failures)
 		quit(1)
+
+## Round 625: the header's flag word at 0x2C (BsrReader.OFF_FLAGS). READ in
+## the client (ResObject::FUN_00be41d0 -> CPrimMesh slot 4, FUN_00c12510):
+## with bit 0 set each mesh entry is its path and ONE MORE uint32. A swaying
+## tree (tre_maple01: a trunk and a leaf mesh, a skeleton and one animation)
+## is laid out that way; before this round the section table did not chain
+## for it, the file fell back to the forward scan, and the scan returns only
+## a nature file's first mesh -- the trunk. 149 of the map's 309 tree models
+## drew without their leaves (docs/WORLD_ISSUES.md, round 625).
+##
+## And the ENVMAP mods of the mod section, which switch a material's own
+## alpha test off (BsrReader.ParsedObject.env_map_materials).
+func _test_round_625() -> void:
+	var tree := _build_synthetic_character("tre_synth",
+		["prim\\mtrl\\tre_synth.bmt"],
+		["prim\\mesh\\tre_synth_brn.bms", "prim\\mesh\\tre_synth_leaf.bms"],
+		["prim\\ani\\tre_synth.ban"], ["prim\\skel\\tre_synth.bsk"],
+		BsrReader.TYPE_NATURE, [], [1, 0], [[1, 0x3]])
+	var obj := BsrReader.parse(tree)
+	_check(obj != null, "r625: the tree parses")
+	if obj == null:
+		return
+	_check(obj.object_type == BsrReader.TYPE_NATURE,
+		"r625: the section table chains with the per-mesh word, so the header is trusted -- type 4 (got %d)" % obj.object_type)
+	_check(obj.mesh_path == "prim\\mesh\\tre_synth_brn.bms" and obj.sub_mesh_paths.size() == 1
+			and obj.sub_mesh_paths[0] == "prim\\mesh\\tre_synth_leaf.bms",
+		"r625: both meshes, the trunk AND the leaves (got %s + %s)" % [obj.mesh_path, obj.sub_mesh_paths])
+	_check(obj.skeleton_path == "prim\\skel\\tre_synth.bsk" and obj.animation_paths.size() == 1,
+		"r625: its skeleton and sway animation are read too (got '%s', %d)" % [obj.skeleton_path, obj.animation_paths.size()])
+	_check(obj.get("env_map_flags") == 0x3,
+		"r625: the object's ENVMAP flag word 0x3 is read, for every material (got %s)" % obj.get("env_map_flags"))
+	_test_round_625_mods()
+	# Without the flag word the same bytes are a list whose entries abut, so
+	# the extra words break the chain: the flag, not a guess, decides.
+	var unflagged := tree.duplicate()
+	_put_u32(unflagged, 0x2C, 0)
+	var sections = BsrReader.parse_sections(unflagged)
+	_check(sections == null, "r625: with bit 0 of 0x2C clear the per-mesh words do not chain (got %s)" % str(sections))
+	# A file with no flag and no words (every character above) still reads.
+	var BR = load("res://scripts/bsr/bsr_reader.gd")
+	var has_trail := false
+	for m in (BR as GDScript).get_script_method_list():
+		has_trail = has_trail or m["name"] == "mesh_trail_bytes"
+	_check(has_trail and BR.mesh_trail_bytes(unflagged) == 0 and BR.mesh_trail_bytes(tree) == 4,
+		"r625: 4 trailing bytes per mesh only under the flag")
+
+## Round 625 review follow-up (READ): an env-map mod governs every material
+## of its object; BUMPENV is not one; an MTRL mod applies to the material
+## its header names when word 1 is 2 and to all of them when word 1 is 1
+## (material 0xFFFFFFFF); header flag bit 1 is two passes.
+func _test_round_625_mods() -> void:
+	var paths := ["prim\\mesh\\m_a.bms", "prim\\mesh\\m_b.bms"]
+	var per_material := BsrReader.parse(_build_synthetic_character("m", ["prim\\mtrl\\m.bmt"], paths, [], [],
+		BsrReader.TYPE_BUILDING, [], [], [[1, "mtrl", 2]]))
+	_check(per_material != null and per_material.has_method("mtrl_mod_for"), "r625 review: parses, mtrl_mod_for exists")
+	if per_material == null or not per_material.has_method("mtrl_mod_for"):
+		return
+	var state: Dictionary = per_material.mtrl_mod_for(1)
+	_check(state.get("blend") == true and state.get("zwrite_off") == true and state.get("cull_none") == true
+			and state.get("src_blend") == 5 and state.get("dest_blend") == 2 and state.get("alpha_ref") == 128
+			and state.get("alpha_func") == 7 and state.get("color_op") == 4,
+		"r625 review: the MTRL body's tail is read field by field (got %s)" % str(state))
+	_check(per_material.mtrl_mod_for(0).is_empty(), "r625 review: a word-1-of-2 MTRL mod applies to its own material only")
+	_check(per_material.env_map_flags == -1 and not per_material.two_pass(),
+		"r625 review: no env map, one pass")
+	var object_wide := BsrReader.parse(_build_synthetic_character("m", ["prim\\mtrl\\m.bmt"], paths, [], [],
+		BsrReader.TYPE_BUILDING, [], [], [[0xFFFFFFFF, "mtrl", 1]]))
+	_check(object_wide != null and not object_wide.mtrl_mod_for(0).is_empty() and not object_wide.mtrl_mod_for(1).is_empty(),
+		"r625 review: a word-1-of-1 MTRL mod (material 0xFFFFFFFF) applies to every material")
+	var flagged := _build_synthetic_character("m", ["prim\\mtrl\\m.bmt"], paths, [], [], BsrReader.TYPE_BUILDING)
+	_put_u32(flagged, 0x2C, 2)
+	var two := BsrReader.parse(flagged)
+	_check(two != null and two.two_pass() and two.sub_mesh_paths.size() == 1,
+		"r625 review: header flag 0x2 is two passes, and without bit 0 the meshes abut")
+

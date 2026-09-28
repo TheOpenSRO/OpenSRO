@@ -39,9 +39,16 @@ type Layer struct {
 	// Power is a single trailing float after the four colors — plausibly
 	// specular power/shininess, not confirmed.
 	Power float32
-	// Unknown is a uint32 field of unconfirmed meaning between Power and
-	// the texture filename.
+	// Unknown is the layer's flag word (the name is historical). READ in
+	// round 625: the client's renderer (CObjRendererVS FUN_00c42a60) sets
+	// alpha test (0x200, ALPHAREF 0x80, GREATEREQUAL) and cull none (0x1)
+	// from it. See docs/protocol/BMT_FORMAT.md.
 	Unknown uint32
+	// TextureWord and TextureBytes are the seven bytes after the texture
+	// path (READ, CPrimMtrl FUN_00bf91b0): a uint32 and three bytes, the
+	// third non-zero when the path is a full archive path.
+	TextureWord  uint32
+	TextureBytes [3]byte
 	// TexturePath is a bare filename (not a full path), e.g.
 	// "avatar_m_zombie.ddj" — resolved against whatever directory the
 	// .bmt itself lives in, same as a .bsr's mesh/material references.
@@ -121,6 +128,12 @@ func parseDecompressed(dec []byte) (*Material, error) {
 		off = next
 
 		if i+1 < count {
+			// READ (round 625): the next name follows the seven trailer
+			// bytes; the scan stays for a file where it does not.
+			if next := off + layerTrailerBytes; nameAt(dec, next) {
+				off = next
+				continue
+			}
 			nameOff, ok := scanForNameString(dec, off)
 			if !ok {
 				break
@@ -160,8 +173,24 @@ func parseLayer(dec []byte, off int) (*Layer, int, error) {
 	// real file checked (20-byte filename, 26-byte declared length) —
 	// trim it rather than exposing padding bytes as part of the path.
 	l.TexturePath = strings.TrimRight(texPath, "\x00")
+	if off+layerTrailerBytes <= len(dec) {
+		l.TextureWord = binary.LittleEndian.Uint32(dec[off:])
+		copy(l.TextureBytes[:], dec[off+4:off+layerTrailerBytes])
+	}
 
 	return l, off, nil
+}
+
+// layerTrailerBytes is the uint32 and three bytes after a layer's texture
+// path (READ, CPrimMtrl FUN_00bf91b0).
+const layerTrailerBytes = 7
+
+func nameAt(data []byte, pos int) bool {
+	if pos < 0 || pos+4 > len(data) {
+		return false
+	}
+	n := int(binary.LittleEndian.Uint32(data[pos:]))
+	return n > 0 && n <= maxNameLen && pos+4+n <= len(data) && isPlausibleName(data[pos+4:pos+4+n])
 }
 
 func scanForNameString(data []byte, off int) (int, bool) {

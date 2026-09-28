@@ -34,6 +34,13 @@ const (
 	offPtrSkeleton  = 0x14
 	offPtrAnimation = 0x18
 
+	// offFlags is the header's flag word. READ in sro_client.exe:
+	// CResObject::Load (FUN_00be41d0) keeps it, and each mesh entry's
+	// CPrimMesh slot 4 (FUN_00c12510) reads one more uint32 after the path
+	// when bit 0 is set. See docs/protocol/BSR_FORMAT.md (round 625).
+	offFlags          = 0x2C
+	flagMeshExtraWord = 0x1
+
 	// offType holds the object type in its low uint16 — the game's own
 	// classification, authored in the file, not inferred from the path or
 	// from which order the fields happen to appear in.
@@ -337,8 +344,9 @@ func parseSections(data []byte) (*Sections, bool) {
 		return nil, false
 	}
 
-	// Meshes: a count, then the paths back to back with no per-entry field.
-	meshes, end, ok := readStringList(data, ptrMesh, ".bms", 0)
+	// Meshes: a count, then the paths, each followed by one uint32 when the
+	// header's flag word has bit 0 set (offFlags).
+	meshes, end, ok := readStringListTrail(data, ptrMesh, ".bms", 0, meshTrailBytes(data))
 	if !ok || len(meshes) == 0 || end != ptrAnimation {
 		return nil, false
 	}
@@ -361,6 +369,24 @@ func parseSections(data []byte) (*Sections, bool) {
 // parsed" into "these bytes are the list the header promised". It returns
 // the paths and the offset just past the list.
 func readStringList(data []byte, off int, suffix string, leadBytes int) ([]string, int, bool) {
+	return readStringListTrail(data, off, suffix, leadBytes, 0)
+}
+
+// meshTrailBytes is 4 when the header's flag word has flagMeshExtraWord
+// set — each mesh path is then followed by one uint32 — and 0 otherwise.
+func meshTrailBytes(data []byte) int {
+	if len(data) < offFlags+4 {
+		return 0
+	}
+	if binary.LittleEndian.Uint32(data[offFlags:])&flagMeshExtraWord != 0 {
+		return 4
+	}
+	return 0
+}
+
+// readStringListTrail is readStringList with trailBytes of unread
+// per-entry data after each path.
+func readStringListTrail(data []byte, off int, suffix string, leadBytes, trailBytes int) ([]string, int, bool) {
 	if off+4 > len(data) {
 		return nil, 0, false
 	}
@@ -380,7 +406,10 @@ func readStringList(data []byte, off int, suffix string, leadBytes int) ([]strin
 			return nil, 0, false
 		}
 		paths = append(paths, path)
-		off = next
+		off = next + trailBytes
+		if off > len(data) {
+			return nil, 0, false
+		}
 	}
 	return paths, off, true
 }
