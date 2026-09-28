@@ -264,7 +264,10 @@ static func _prepare_node(archive: Pk2Reader, path: String, known: Dictionary, p
 			var layer_idx := _find_layer_by_name(material.layers, mesh.material_name)
 			if layer_idx == -1:
 				layer_idx = i if material.layers.size() == mesh_paths.size() else 0
-			piece["material"] = _prepare_material(archive, obj.material_path, material.layers[layer_idx], known, prepared)
+			# The draw rule's two inputs from the object (round 625): an
+			# env-map mod on this material index, and whether it is an item.
+			piece["material"] = _prepare_material(archive, obj.material_path, material.layers[layer_idx], known, prepared,
+				int(obj.env_map_materials.get(layer_idx, -1)), obj.is_item())
 
 		(node["pieces"] as Array).append(piece)
 		loaded_count += 1
@@ -451,82 +454,94 @@ static func _read_material(archive: Pk2Reader, bmt_path: String, missing: Array)
 		return null
 	return BmtReader.parse(archive.read_file(entry))
 
-## Real DDS FourCCs that carry a genuine per-pixel alpha channel Godot's
-## decoder actually preserves (DXT1 has no alpha in Godot's built-in
-## decoder even though the format nominally supports 1-bit punch-through
-## alpha, so it's deliberately not included here -- see this function's
-## own doc comment for how this was confirmed, and DDJ_FORMAT.md).
-## **DXT1 added 2026-09-02** (see docs/WORLD_ISSUES.md's fifty-second
-## round). BC1/DXT1 carries a real 1-bit alpha channel and real foliage uses
-## it: a real willow's own leaf textures (`tre_willow02_leaf01`/`_leaf02`)
-## are DXT1 with **79%** of their texels below opaque, but DXT1 being absent
-## here meant they never got cutout and rendered as huge solid rectangles --
-## the real dark slabs standing behind real trees in a live render, traced
-## to `tre_willow03_leaf01` by raycasting into them.
-## **DXT2 added 2026-09-08.** DdjReader decodes DXT2 as DXT3 -- the two are
-## bit-identical block formats, differing only in whether colour is
-## premultiplied by alpha -- but this list did not say so, so any texture
-## whose real fourCC is literally `DXT2` was drawn opaque no matter what its
-## alpha held. Found by reporting every texture about to be drawn opaque
-## despite carrying transparency (SRREVAMP_QA_MATS): real
-## `c_swamp_tree02_01.ddj` is DXT2 with **75.5%** of its texels below
-## opaque, which is a leaf card rendered as a solid slab -- exactly the
-## black cards a real playtest reported standing in the fields.
-const _ALPHA_FOURCCS := ["DXT1", "DXT2", "DXT3", "DXT5"]
-
-## Minimum fraction of a real texture's texels that must be below opaque
-## before a real **DXT1** texture is treated as a cutout.
+## THE MATERIAL RULE (round 625): what the client itself does with a layer,
+## READ from sro_client.exe rather than guessed from the texture's pixels.
 ##
-## DXT3/DXT5 carry graded alpha, where even a small amount is meaningful, so
-## they keep the original "any texel below opaque" rule. DXT1's alpha is
-## 1-bit -- a real texture either uses it clearly or not at all -- and real
-## measurements separate the two cases cleanly, with no middle ground: real
-## willow leaves 79%, real grass 79%, against real palace wall and roof
-## DXT1 textures at exactly **0%**. Requiring a real fraction rather than a
-## single stray texel keeps genuinely solid real masonry solid even if a
-## block decodes with one imperfect texel.
-const _DXT1_CUTOUT_MIN_ALPHA_FRACTION := 0.05
+## - The layer's flag word (BmtReader.Layer.unknown, the dword the .bmt
+##   stores after Power) is read by `CPrimMtrl::FUN_00bf9270` into the
+##   runtime material's +0x70. Every draw path of `CObjRendererVS`
+##   (FUN_00bf0e20, FUN_00bf1250, FUN_00bf1840, FUN_00bf29a0, FUN_00bf3e00
+##   ...) passes `material+0x70 | renderer flags` to `FUN_00c42a60`, which
+##   sets the render states, and to `FUN_00c42b40` after the draw, which
+##   undoes them:
+##     flags & 0x1    -> D3DRS_CULLMODE = D3DCULL_NONE (restored to CCW)
+##     flags & 0x200  -> D3DRS_ALPHATESTENABLE = TRUE, D3DRS_ALPHAREF = 0x80,
+##                       unless flags & 0x20000000
+##   and the renderer's begin (`FUN_00c42860`, CObjRendererVS slot 3) sets
+##   D3DRS_ALPHAFUNC = D3DCMP_GREATEREQUAL. No per-material blend is set
+##   there: a layer without 0x200 is drawn opaque whatever its texture's
+##   alpha holds (ALPHABLENDENABLE is only turned on by the object-fade
+##   path, FUN_00c428c0, for a whole object fading in or out).
+## - So: LAYER_FLAG_ALPHA_TEST cuts the texture at alpha >= 128/255, and
+##   LAYER_FLAG_TWO_SIDED draws both faces. The two are independent: 0x340
+##   is an alpha-tested ONE-sided card (pine needles, bamboo leaves), 0x141
+##   a two-sided solid one. Until this round bit 0 was read as "alpha" --
+##   a correlation that held for the willows and broke on 44 tree models
+##   whose 0x340 needle cards drew as solid slabs.
+## - An environment-map mod on the material (BsrReader.ParsedObject.
+##   env_map_materials, READ from `CRTModEnvMap::vslot_004`) ORs 0x60000000
+##   into the flags -- the 0x20000000 that switches the material's own test
+##   off -- and turns on its own test, ALPHAREF 1 / GREATEREQUAL, only when
+##   its flag word has ENV_MAP_FLAG_ALPHA_TEST. The texture's alpha is then
+##   the reflection mask, not a cutout.
+## - EQUIPMENT (a type-5 item's pieces, SkinnedBsrAssembler) is drawn with
+##   NO material alpha test. INFERRED, not read: the flag word says 0x200 on
+##   most weapon, shield and armour layers, yet measured under each piece's
+##   own UV triangles 3 of 4 such layers have more than 30% of their surface
+##   below alpha 128 (median 75% for armour, 52% for weapons, 64% shields;
+##   `tools/foliage_census.gd --under=res/item`), where monsters, NPCs and
+##   characters sit at a median of 0-4%. A test at 128 would leave a spear
+##   15% of a spear -- the shredded spear and see-through shield of the
+##   round-625 report. The client has the mechanism: `CRTModProgEquipPow::
+##   vslot_004` ORs 0xe21f0000 into an equipped item's flags (0x20000000
+##   and 0x10000000: no material state at all) and attaches through
+##   `CCompChar::FUN_00c350a0`; WHEN it is attached is OPEN.
+const LAYER_FLAG_TWO_SIDED := 0x1
+const LAYER_FLAG_ALPHA_TEST := 0x200
+## D3DRS_ALPHAREF 0x80 against D3DCMP_GREATEREQUAL: a texel is kept when its
+## alpha byte is at least 128. Godot's scissor discards below the
+## threshold, so the threshold is 128/255. READ (FUN_00c42a60, FUN_00c42860).
+const ALPHA_TEST_REF := 0x80
+## CRTModEnvMap's own test: ALPHAREF 1, GREATEREQUAL, when bit 1 of the
+## mod's flag word (IModData +0x1c) is set. READ.
+const ENV_MAP_FLAG_ALPHA_TEST := 0x2
+const ENV_MAP_ALPHA_REF := 1
 
-## Builds a Godot StandardMaterial3D from a parsed material layer, resolving
-## its texture (a bare filename) against the same directory bmt_path lives
-## in. bmt_path is only used for that directory resolution. Returns a
-## colors-only material (no albedo texture) if the layer has no texture or
-## it can't be found/decoded.
-##
-## Real alpha-cutout foliage (2026-08-23): confirmed by pulling a real leaf
-## card material (`tre_leaf01.bmt` -> `tre_leaf_01.ddj`) and finding its
-## real DDS FourCC is DXT3 -- a format with a genuine per-pixel alpha
-## channel -- while this function previously never set any transparency
-## mode at all, so Godot rendered the full opaque RGB data (including the
-## parts real alpha is supposed to cut out), showing as a solid dark
-## quad/cross around the leaf card instead of a cutout leaf cluster. Now
-## enables real alpha-scissor transparency (a hard cutout, matching how a
-## real leaf card's alpha channel is used -- fully in or fully out, not a
-## soft blend) and disables backface culling whenever the real decoded
-## texture format carries real alpha, since a real foliage/leaf card is
-## meant to be visible from both sides. `layer.unknown`'s real BMT_FORMAT.md
-## meaning remains unconfirmed and isn't used here -- the real DDS FourCC
-## the texture file itself already carries is a directly confirmed, more
-## reliable signal.
-## Real cutout foliage shader -- see foliage.gdshader's own top comment for
-## why a real double-sided leaf card cannot be a StandardMaterial3D and
-## still light the way the real client lights it.
+## Real cutout foliage shaders -- see foliage.gdshaderinc's top comment for
+## why a real double-sided card cannot be a StandardMaterial3D and still
+## light the way the real client lights it. One per cull mode, because a
+## Godot shader's cull mode is a compile-time render_mode.
 const FOLIAGE_SHADER := preload("res://scripts/assets/foliage.gdshader")
+const FOLIAGE_SHADER_ONE_SIDED := preload("res://scripts/assets/foliage_one_sided.gdshader")
 
-## Real alpha-cutout threshold. A real leaf card's alpha is used fully in
-## or fully out, so the exact midpoint is the natural cut.
-const FOLIAGE_ALPHA_SCISSOR := 0.5
+## The scissor threshold of an alpha-tested layer: ALPHA_TEST_REF / 255.
+## (The 0.5 it replaced drew the same texels; this is the client's number.)
+const FOLIAGE_ALPHA_SCISSOR := float(ALPHA_TEST_REF) / 255.0
 
-## Builds the real cutout-foliage material for a real texture that carries
-## real alpha, in place of the StandardMaterial3D used for everything else.
-static func _build_foliage_material(layer: BmtReader.Layer, tex: Texture2D) -> ShaderMaterial:
+## How a layer is drawn, from its flag word and what the object says about
+## it -- THE MATERIAL RULE above. `env_map`: the flag word of an
+## environment-map mod on this layer's material index, -1 for none. `item`:
+## the layer belongs to a type-5 item. Returns {"alpha_ref": 0 for no test
+## or the byte a texel must reach, "two_sided": bool}.
+static func layer_draw_rule(flags: int, env_map: int = -1, item: bool = false) -> Dictionary:
+	var alpha_ref := ALPHA_TEST_REF if flags & LAYER_FLAG_ALPHA_TEST != 0 else 0
+	if env_map >= 0:
+		alpha_ref = ENV_MAP_ALPHA_REF if env_map & ENV_MAP_FLAG_ALPHA_TEST != 0 else 0
+	elif item:
+		alpha_ref = 0
+	return {"alpha_ref": alpha_ref, "two_sided": flags & LAYER_FLAG_TWO_SIDED != 0}
+
+## The material for a layer the rule draws alpha-tested or two-sided.
+static func _build_foliage_material(layer: BmtReader.Layer, tex: Texture2D, alpha_ref: int, two_sided: bool) -> ShaderMaterial:
 	var mat := ShaderMaterial.new()
 	mat.resource_name = layer.layer_name
-	mat.shader = FOLIAGE_SHADER
+	mat.shader = FOLIAGE_SHADER if two_sided else FOLIAGE_SHADER_ONE_SIDED
 	# The ambient colour, for the reason build_godot_material gives.
 	mat.set_shader_parameter("albedo", layer.ambient)
 	mat.set_shader_parameter("albedo_texture", tex)
-	mat.set_shader_parameter("alpha_scissor", FOLIAGE_ALPHA_SCISSOR)
+	# 0 means no alpha test (a two-sided solid layer): the shader then keeps
+	# every texel.
+	mat.set_shader_parameter("alpha_scissor", float(alpha_ref) / 255.0)
 	return mat
 
 ## `texture_cache`: see load_object. Only a texture that decoded is
@@ -535,12 +550,12 @@ static func _build_foliage_material(layer: BmtReader.Layer, tex: Texture2D) -> S
 ##
 ## Since round 566 the same two halves as load_object, back to back on the
 ## caller's thread -- SkinnedBsrAssembler builds its NPC and item pieces'
-## materials through here: _prepare_material decodes the texture to an Image
-## and classifies its alpha on that Image, _commit_material builds the
-## material from the uploaded texture.
-static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: BmtReader.Layer, texture_cache: Dictionary = {}) -> Material:
+## materials through here: _prepare_material decodes the texture to an Image,
+## _commit_material builds the material from the uploaded texture.
+## `env_map` / `item`: see layer_draw_rule (round 625).
+static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: BmtReader.Layer, texture_cache: Dictionary = {}, env_map: int = -1, item: bool = false) -> Material:
 	var prepared := {"textures": {}, "missing": [], "log": []}
-	var plan := _prepare_material(archive, bmt_path, layer, snapshot_textures(texture_cache), prepared)
+	var plan := _prepare_material(archive, bmt_path, layer, snapshot_textures(texture_cache), prepared, env_map, item)
 	for what in prepared["missing"]:
 		_missing(what)
 	for line in prepared["log"]:
@@ -550,14 +565,15 @@ static func build_godot_material(archive: Pk2Reader, bmt_path: String, layer: Bm
 
 ## The prepare half of a layer's material (round 566): its texture resolved
 ## and -- unless `known` says the commit's cache holds it -- decoded to an
-## Image into prepared["textures"], and whether the layer is an alpha
-## cutout, decided on that Image. Returns the plan _commit_material builds
-## from: `{"layer", "texture_key", "cutout"}`, the key "" for a layer drawn
-## without a texture (none named, not found, not decodable -- exactly the
-## cases the one-piece build_godot_material returned its colours-only
-## material for).
-static func _prepare_material(archive: Pk2Reader, bmt_path: String, layer: BmtReader.Layer, known: Dictionary, prepared: Dictionary) -> Dictionary:
-	var plan := {"layer": layer, "texture_key": "", "cutout": false}
+## Image into prepared["textures"], and the layer's draw rule
+## (layer_draw_rule). Returns the plan _commit_material builds from:
+## `{"layer", "texture_key", "alpha_ref", "two_sided", "cutout"}` --
+## `cutout` is alpha_ref > 0 -- the key "" for a layer drawn without a
+## texture (none named, not found, not decodable).
+static func _prepare_material(archive: Pk2Reader, bmt_path: String, layer: BmtReader.Layer, known: Dictionary, prepared: Dictionary, env_map: int = -1, item: bool = false) -> Dictionary:
+	var rule := layer_draw_rule(layer.unknown, env_map, item)
+	var plan := {"layer": layer, "texture_key": "", "alpha_ref": rule["alpha_ref"],
+		"two_sided": rule["two_sided"], "cutout": int(rule["alpha_ref"]) > 0}
 	if layer.texture_path == "":
 		return plan
 
@@ -570,7 +586,8 @@ static func _prepare_material(archive: Pk2Reader, bmt_path: String, layer: BmtRe
 	# Prefixing that with the .bmt's own directory produced a nonsensical
 	# double path that could never resolve. A real path already contains a
 	# separator; a bare filename never does, so that's what distinguishes
-	# the two real cases.
+	# the two real cases. (The client says it with a byte of its own,
+	# BmtReader.Layer.texture_bytes[2], READ in round 625.)
 	var tex_path: String
 	if layer.texture_path.contains("\\") or layer.texture_path.contains("/"):
 		tex_path = layer.texture_path
@@ -597,59 +614,25 @@ static func _prepare_material(archive: Pk2Reader, bmt_path: String, layer: BmtRe
 	plan["texture_key"] = cache_key
 	var four_cc: String = decoded["four_cc"]
 
-	# **Corrected 2026-08-26** (see docs/WORLD_ISSUES.md): this used to
-	# trigger cutout transparency + disabled backface culling purely
-	# from the texture's real compression *format* (DXT3/DXT5) -- but
-	# that format only means the format *supports* an alpha channel,
-	# not that this specific real texture actually uses it for cutout.
-	# A real, fully-opaque DXT3/DXT5 texture (an ordinary, unremarkable
-	# format choice for plain opaque art, e.g. real character skin) was
-	# getting backface culling disabled for no real reason -- on a real
-	# closed/solid body mesh, that lets a viewer see straight through
-	# to the mesh's own real back-facing surface, showing the wrong
-	# side's real texture region (a real, reported bug: front/back
-	# appearing swapped depending on viewing angle). Now actually
-	# decodes the real pixel data and only applies cutout+no-culling if
-	# a real texel's alpha is genuinely below opaque, instead of
-	# assuming from the format alone.
-	# The material itself says whether this layer is an alpha layer --
-	# see LAYER_FLAG_ALPHA. Everything below it is the older
-	# guess-from-the-pixels path, kept only for layers whose flag word
-	# does not look like a real flag word. Since round 566 the pixels are
-	# the decoded Image's, not a readback of the uploaded texture
-	# (_alpha_stat): the same rules and thresholds on the same texels.
-	var needs_cutout := false
-	if layer.unknown & LAYER_FLAG_MASK != 0:
-		needs_cutout = layer.unknown & LAYER_FLAG_ALPHA != 0
-	elif _ALPHA_FOURCCS.has(four_cc):
-		if four_cc == "DXT1":
-			needs_cutout = float(_alpha_stat(decoded, "fraction", archive, tex_path, bmt_path, prepared)) >= _DXT1_CUTOUT_MIN_ALPHA_FRACTION
-		else:
-			needs_cutout = bool(_alpha_stat(decoded, "variance", archive, tex_path, bmt_path, prepared))
-	elif four_cc == "":
-		needs_cutout = bool(_alpha_stat(decoded, "binary_cutout", archive, tex_path, bmt_path, prepared))
-	# Says so whenever a texture that plainly carries transparency is
-	# nonetheless about to be drawn opaque, which is what a leaf card
-	# rendering as a solid black rectangle looks like from here.
-	# Gated so an ordinary run costs nothing.
-	# Surfaces the case worth a human look: a texture that is heavily
-	# transparent while its own layer flag says the layer is solid.
-	# Some disagreement is expected and correct -- a gloss ramp is
-	# mostly non-opaque and rightly not a cutout -- so the bar is set
-	# well above that. Gated, so an ordinary run costs nothing.
-	if not needs_cutout and OS.get_environment("SRREVAMP_QA_MATS") != "":
+	# The decision above needs no pixels. SRREVAMP_QA_MATS still reports a
+	# texture that is heavily transparent while its layer is drawn without
+	# a test -- which the client does too (a gloss or glow mask on an item,
+	# an env-map mask), so the line is a pointer for a human, not an error.
+	# Gated, so an ordinary run measures nothing.
+	if not plan["cutout"] and OS.get_environment("SRREVAMP_QA_MATS") != "":
 		var fraction := float(_alpha_stat(decoded, "fraction", archive, tex_path, bmt_path, prepared))
 		if fraction > _QA_MATS_REPORT_MIN_ALPHA_FRACTION:
-			(prepared["log"] as Array).append("QA MAT: %s (%s, %s) is %.1f%% non-opaque, flags 0x%04x, no cutout" % [
+			(prepared["log"] as Array).append("QA MAT: %s (%s, %s) is %.1f%% non-opaque, flags 0x%04x, no alpha test%s" % [
 				layer.layer_name, tex_path.get_file(), four_cc,
-				fraction * 100.0, layer.unknown])
-	plan["cutout"] = needs_cutout
+				fraction * 100.0, layer.unknown,
+				" (env map 0x%x)" % env_map if env_map >= 0 else (" (item)" if item else "")])
 	return plan
 
 ## The commit half of a layer's material, on the main thread: the
 ## StandardMaterial3D the layer's colours make, textured from
 ## `texture_cache` (commit_textures has put the prepare's upload there), or
-## the cutout foliage material when the prepare classified the layer so.
+## the foliage material when the rule draws the layer alpha-tested or
+## two-sided.
 static func _commit_material(plan: Dictionary, texture_cache: Dictionary) -> Material:
 	var layer: BmtReader.Layer = plan["layer"]
 	var mat := StandardMaterial3D.new()
@@ -667,6 +650,8 @@ static func _commit_material(plan: Dictionary, texture_cache: Dictionary) -> Mat
 	# a sunlit face of such a layer draws brighter here than in the original
 	# by diffuse/ambient; an exact split needs a shader's light() function.
 	mat.albedo_color = layer.ambient
+	if plan.get("two_sided", false):
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 
 	var key: String = plan["texture_key"]
 	if key == "" or not texture_cache.has(key):
@@ -675,12 +660,13 @@ static func _commit_material(plan: Dictionary, texture_cache: Dictionary) -> Mat
 	if godot_tex == null:
 		return mat
 	mat.albedo_texture = godot_tex
-	if plan["cutout"]:
+	var alpha_ref := int(plan.get("alpha_ref", 0))
+	if alpha_ref > 0 or plan.get("two_sided", false):
 		# Not a StandardMaterial3D: a real double-sided card has to keep
 		# its authored normal on both faces to light the way the real
-		# client lights it, which StandardMaterial3D cannot express.
-		# See foliage.gdshader.
-		return _build_foliage_material(layer, godot_tex)
+		# client lights it, which StandardMaterial3D cannot express, and
+		# the alpha test reads full-resolution alpha (foliage.gdshaderinc).
+		return _build_foliage_material(layer, godot_tex, alpha_ref, plan.get("two_sided", false))
 	return mat
 
 ## A texture read and decoded for a prepare: `{"image", "four_cc", "alpha":
@@ -705,25 +691,19 @@ static func _decode_texture(archive: Pk2Reader, tex_path: String, bmt_path: Stri
 		return {}
 	return {"image": image, "four_cc": parsed_tex.four_cc, "alpha": {}}
 
-## One alpha statistic of a decoded texture -- `binary_cutout`
-## (_alpha_is_binary_cutout), `variance` (_has_real_alpha_variance) or
-## `fraction` (_real_alpha_fraction) -- measured on its decoded Image once
-## and remembered in `decoded["alpha"]`, which commit_textures carries into
-## the texture cache, so a texture is measured once per world. Until round
-## 566 each probe read the uploaded texture back (`Texture2D.get_image()`,
-## RenderingServer.texture_2d_get: a readback from the GPU on the GL
-## renderer) on every material that consulted it, which a WorkerThreadPool
-## task may not do and which the decoded Image makes unnecessary: the probes
-## scan the texels that Image was uploaded from. A texture the cache already
-## holds but whose statistic was never measured is read and decoded again
-## from the archive for it (the layer flag decides almost every real layer,
-## LAYER_FLAG_MASK, so this is rare), and an undecodable one measures as
-## the probes' own "no" (false, 0.0).
+## One alpha statistic of a decoded texture -- only `fraction`
+## (_real_alpha_fraction) since round 625, which SRREVAMP_QA_MATS reports --
+## measured on its decoded Image once and remembered in `decoded["alpha"]`,
+## which commit_textures carries into the texture cache, so a texture is
+## measured once per world. A texture the cache already holds but whose
+## statistic was never measured is read and decoded again from the archive
+## for it, and an undecodable one measures as 0.0. (Until round 625 the
+## material decision itself consulted `binary_cutout` and `variance` too;
+## the client decides from the layer's flag word alone.)
 ##
 ## SRREVAMP_QA_ALPHA_LOG=1 logs every consult -- `QA ALPHA: <file> (<fourCC>)
 ## <stat> <value> -- from the decoded Image | from a statistic measured
-## earlier` -- the benchmark's count of alpha probes in the load path, all
-## of them on Images (client/tools/README.md, "Load benchmark").
+## earlier`.
 static func _alpha_stat(decoded: Dictionary, stat: String, archive: Pk2Reader, tex_path: String, bmt_path: String, prepared: Dictionary) -> Variant:
 	var alpha: Dictionary = decoded["alpha"]
 	var source := "a statistic measured earlier"
@@ -734,13 +714,7 @@ static func _alpha_stat(decoded: Dictionary, stat: String, archive: Pk2Reader, t
 			if not again.is_empty():
 				image = again["image"]
 				decoded["image"] = image
-		match stat:
-			"binary_cutout":
-				alpha[stat] = _alpha_is_binary_cutout(image)
-			"variance":
-				alpha[stat] = _has_real_alpha_variance(image)
-			_:
-				alpha[stat] = _real_alpha_fraction(image)
+		alpha[stat] = _real_alpha_fraction(image)
 		source = "the decoded Image"
 	if OS.get_environment("SRREVAMP_QA_ALPHA_LOG") != "":
 		var value = alpha[stat]
@@ -749,174 +723,15 @@ static func _alpha_stat(decoded: Dictionary, stat: String, archive: Pk2Reader, t
 			("%.4f" % value) if value is float else str(value), source])
 	return alpha[stat]
 
-## Bit 0 of a real .bmt layer's own flag word: **this layer is an alpha
-## layer**, i.e. its texture's alpha is a cutout mask to be honoured rather
-## than ignored.
-##
-## The field was recorded in BMT_FORMAT.md as "unconfirmed meaning
-## (observed values 64, 321, 832, 833 -- not obviously a flags bitmask)".
-## Written in hex those are 0x040, 0x141, 0x340, 0x341, which is plainly a
-## bitmask: bit 6 always set, bits 8/9 varying, and bit 0 varying
-## independently of both.
-##
-## Bit 0 separates real alpha layers from real solid ones with no
-## exceptions across every real material checked:
-##
-## | layer | flag | measured alpha |
-## |---|---|---|
-## | `tre_willow02_leaf01`/`_leaf02` | 0x341 | 79% below opaque |
-## | `c_swamp_tree02_01`/`_02` | 0x341 | 75.5% |
-## | `tre_tree02_01` (leaf card) | 0x341 | 68,299 texels transparent |
-## | `tre_dry02` | 0x341 | 39,749 transparent |
-## | `CJ_w_alpha` (a gate's alpha mesh) | 0x341 | -- |
-## | `CJ_pal_bigdoor_roof02_al`/`roof03_al` | 0x341 | -- |
-## | `tre_willow02_will01` (branches) | 0x340 | solid |
-## | `tre_tree02_02`/`_03` (bark) | 0x140 | solid |
-## | `blade_14` (a graded gloss ramp, **not** a cutout) | 0x340 | 97.8% *partial* |
-## | `CJ_w_wall01`..`05`, `CJ_w_stair`, `cj_pal_bigdoor_wall01` | 0x140 | solid |
-##
-## The authored naming corroborates it independently: every real layer
-## whose name ends in `_al` -- the artists' own abbreviation for alpha --
-## has bit 0 set, and no solid layer does. It also draws the line the
-## pixels cannot: `blade_14` is 97.8% non-opaque yet is not an alpha
-## layer, because that alpha is a gloss ramp rather than a mask.
-##
-## **Not yet confirmed against the client binary.** The correlation is
-## across ~25 real layers in four unrelated real materials with zero
-## contradictions, plus the naming convention, which is why it is used --
-## but reading the flag out of the real material loader would settle it,
-## and that is worth doing.
-const LAYER_FLAG_ALPHA := 0x1
-
-## Bit 6 is set in every real flag word observed, so a layer whose word has
-## it is one this project knows how to read. A layer whose word does not
-## look like a real flag word at all falls back to inspecting the texture,
-## rather than being silently treated as solid.
-const LAYER_FLAG_MASK := 0x40
-
 ## How transparent a texture has to be before SRREVAMP_QA_MATS bothers
-## reporting that it is being drawn solid.
+## reporting that it is being drawn without an alpha test.
 const _QA_MATS_REPORT_MIN_ALPHA_FRACTION := 0.20
 
-## Is an **uncompressed** texture's alpha a cutout mask rather than a
-## graded blend?
-##
-## Uncompressed real textures carry a full 8-bit alpha channel, so unlike
-## the block formats their fourCC says nothing at all about intent -- the
-## same channel holds a leaf card's punch-out mask and a blade's gloss
-## ramp. Treating every one of them as cutout would chop up real weapons;
-## treating none of them as cutout is what this project was doing, and it
-## drew real foliage cards as solid slabs.
-##
-## Real measurements separate the two with no overlap. A real
-## `grs_weed07.ddj` is **7,600 opaque, 57,936 fully transparent, 0
-## partial** -- a perfectly binary mask. A real `blade_14.ddj` is **1,459
-## opaque, 0 fully transparent, 64,077 partial** -- entirely graded, with
-## no punched-out texels at all. A real `shield_16.ddj` sits at 27,984 /
-## 5,116 / 32,436, graded despite having some transparent texels. So a
-## cutout is recognised by having a real share of *fully* transparent
-## texels **and** essentially no partial ones, which admits the weed and
-## rejects both the blade and the shield by wide margins.
-##
-## Measured on the decoded Image since round 566 (_alpha_stat), not on a
-## `Texture2D.get_image()` readback of the uploaded texture; a copy is
-## decompressed, so the Image the texture is uploaded from stays as it was.
-static func _alpha_is_binary_cutout(source: Image) -> bool:
-	if source == null:
-		return false
-	var image := source.duplicate() as Image
-	if image.is_compressed() and image.decompress() != OK:
-		return false
-	if image.get_format() != Image.FORMAT_RGBA8:
-		return false
-	var data := image.get_data()
-	var transparent := 0
-	var partial := 0
-	var total := 0
-	var i := 3
-	while i < data.size():
-		if data[i] <= _ALPHA_TRANSPARENT_MAX:
-			transparent += 1
-		elif data[i] < _ALPHA_OPAQUE_MIN:
-			partial += 1
-		total += 1
-		i += 4
-	if total == 0:
-		return false
-	var opaque := total - transparent - partial
-	var transparent_fraction := float(transparent) / float(total)
-	var partial_fraction := float(partial) / float(total)
-	var opaque_fraction := float(opaque) / float(total)
-	# A cutout has to leave something behind once it is cut. A texture with
-	# no opaque texels at all is either degenerate or a fully-blended
-	# effect -- a real waterfall's own textures are 100% non-opaque -- and
-	# neither is a card to punch holes in.
-	return transparent_fraction >= _UNCOMPRESSED_CUTOUT_MIN_TRANSPARENT \
-		and partial_fraction <= _UNCOMPRESSED_CUTOUT_MAX_PARTIAL \
-		and opaque_fraction >= _UNCOMPRESSED_CUTOUT_MIN_OPAQUE
-
-## Alpha byte at or below which a texel counts as fully punched out, and at
-## or above which it counts as fully opaque. Anything between the two is a
-## graded texel, which is what distinguishes a blend map from a cutout mask.
-const _ALPHA_TRANSPARENT_MAX := 5
-const _ALPHA_OPAQUE_MIN := 250
-
-## Thresholds for _alpha_is_binary_cutout. The measured real textures are
-## nowhere near either boundary -- the weed is 88.4% transparent with 0%
-## partial, the blade 0% transparent with 97.8% partial -- so these sit in
-## a wide empty gap rather than being tuned to a sample.
-const _UNCOMPRESSED_CUTOUT_MIN_TRANSPARENT := 0.05
-const _UNCOMPRESSED_CUTOUT_MAX_PARTIAL := 0.01
-## ...and it must keep a real share of solid texels: the measured weed card
-## is 11.6% opaque, while a fully-blended effect texture is 0%.
-const _UNCOMPRESSED_CUTOUT_MIN_OPAQUE := 0.01
-
-## Decodes texture's real pixel data and returns true only if at least one
-## real texel's alpha is meaningfully below fully opaque -- see
-## build_godot_material's own doc comment for why format alone
-## (_ALPHA_FOURCCS) isn't a reliable signal that a real texture actually
-## needs cutout transparency. 250/255 (not a stricter 255) as the opaque
-## threshold tolerates real DXT compression's own lossy rounding on a
-## genuinely fully-opaque real source image. The decoded Image since round
-## 566 (see _alpha_is_binary_cutout); only a compressed one is copied, to
-## decompress, as before.
-static func _has_real_alpha_variance(source: Image) -> bool:
-	var image := source
-	if image == null:
-		return false
-	if image.is_compressed():
-		image = image.duplicate() as Image
-		if image.decompress() != OK:
-			return false
-	var data := image.get_data()
-	var format := image.get_format()
-	if format != Image.FORMAT_RGBA8 and format != Image.FORMAT_RGBAF and format != Image.FORMAT_RGBAH:
-		return false
-	# RGBA8 is the real, common case decompress() actually produces here --
-	# a bare byte-stride scan is far cheaper than per-pixel get_pixel()
-	# calls for a real texture that can be hundreds of pixels per side.
-	if format == Image.FORMAT_RGBA8:
-		var i := 3
-		while i < data.size():
-			if data[i] < 250:
-				return true
-			i += 4
-		return false
-	# A real non-RGBA8 decompressed format (uncommon here) -- fall back to
-	# the slower but always-correct per-pixel path.
-	for y in range(image.get_height()):
-		for x in range(image.get_width()):
-			if image.get_pixel(x, y).a < 250.0 / 255.0:
-				return true
-	return false
-
-## Fraction of a real texture's texels whose alpha is below opaque -- the
-## real signal _DXT1_CUTOUT_MIN_ALPHA_FRACTION is compared against. Same
-## real 250/255 opaque threshold _has_real_alpha_variance uses (tolerating
-## real DXT block-compression rounding), just counted rather than
-## short-circuited on the first hit. Returns 0.0 for a texture that can't be
-## decoded, so an undecodable real texture is never treated as a cutout.
-## The decoded Image since round 566 (see _alpha_is_binary_cutout).
+## Fraction of a texture's texels whose alpha is below 250/255 (a
+## tolerance for DXT rounding on a fully opaque source) -- what
+## SRREVAMP_QA_MATS reports, never what decides a material (round 625).
+## 0.0 for a texture that can't be decoded. The decoded Image since round
+## 566; a copy is decompressed, so the uploaded Image stays as it was.
 static func _real_alpha_fraction(source: Image) -> float:
 	if source == null:
 		return 0.0

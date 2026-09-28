@@ -195,6 +195,28 @@ ssh root@192.168.5.78 'su - ghidra -c "cd /opt/srrevamp-client && P=/opt/sro-fil
   /opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64 --headless --path . --script res://tools/probe_audio.gd"'
 ```
 
+### Scenery materials: the foliage census
+
+`foliage_census.gd` (round 625) reads models the way `ObjectLoader` does. For each mesh piece it
+prints:
+
+- the vertex and triangle counts;
+- the skin;
+- the layer and its flag word, with `[test=.. two=..]` from the client's rule
+  (`ObjectLoader.layer_draw_rule`);
+- any env-map mod;
+- the texture's fourCC, and its alpha below 250 and below 128, over the whole texture and under the
+  mesh's own UV triangles (`uv_alpha<128`: what the alpha test would really cut).
+
+It ends with a `CLASS` count of each failure kind. By default it covers the tree and foliage models
+of Map.pk2's `object.ifo`. `--under=res/item --all` covers everything under a Data.pk2 directory,
+and `--near=97/168:x,z,r` lists a region's placements around a spot, with their models:
+
+```
+client/tools/remote_godot.sh script res://tools/foliage_census.gd -- \
+  --pk2=/opt/sro-files/client/Data.pk2 --map=/opt/sro-files/client/Map.pk2 [--under=res/item --all]
+```
+
 ### Particle effects: the `.efp` census
 
 `EfpReader.decode` (and its Go twin `efp.Decode`) reads the typed tree of every particle
