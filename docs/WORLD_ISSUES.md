@@ -7094,6 +7094,21 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-thirteenth round: footsteps sound by the ground underfoot, and swings, hurt and death voices play on the animation that makes them
+
+- **What:** each character `.bsr`'s sound tracks (the mod-data section at header 0x24, now parsed:
+  `BsrReader.parse_sound_section`) fire at their key times on the clip that plays, through the
+  client's own 52-name handler table, as effect-table keys spelled by `SoundTable.make_key` and played by the round-611 core
+  (`SoundTable.play_key`, through `AnimSoundSeam`). Local player, other players and
+  monsters; footsteps keyed by the cell's material (object floors DIRT, terrain the tile2d type).
+- **Proof:** the parse-all sweep (1,006 of 1,012 character files, every one consumed exactly or
+  followed by the attachment block; the 6 failures are 5 truncated archive entries and
+  `tt.bsr`), `anim_sounds_test.gd` (synthetic bytes; fails its load checks on a9ab6e7), and a
+  live run logging DIRT/GRASS/STONE footsteps, SWORD swings, moans and a monster's
+  `voc_death`/`snd_death`. Full record: `docs/RE_COMPLETION.md`, same title.
+- **Open:** key-time scaling with playback speed; the set lookup (inferred); skill swings and
+  shouts; monster swings (need the skill's Basic_Code).
+
 ## Six-hundred-and-twelfth round: each town and area plays its own music and ambience; a zone change fades out and hard-starts, shared tracks keep playing, and the title theme spans the front end
 
 **Built** (`docs/RE_COMPLETION.md`, round 612; `docs/protocol/SOUND_FORMAT.md`): the zone under

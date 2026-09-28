@@ -209,6 +209,11 @@ static func assemble_from_archive(
 				# it as absent rather than ticking it every frame for free.
 				if parsed_anim != null and not parsed_anim.bones.is_empty():
 					result.idle_animation = parsed_anim
+					# The stand entry of `default`, for its sound tracks; an
+					# idle found by the name hints belongs to no entry.
+					var idle_group := parsed.animation_group_for(BsrReader.AnimationEntry.TYPE_STAND)
+					if idle_group != "":
+						parsed_anim.set_meta(BsrReader.CLIP_META, [BsrReader.AnimationEntry.TYPE_STAND, idle_group])
 	return result
 
 ## What attaching one item produced, for a caller that wants to report it.
@@ -420,12 +425,20 @@ static func animation_for(
 	var path := assembled.parsed.animation_for(action_type, group)
 	if path == "":
 		return null
+	# The entry the clip was found as, for its sound tracks
+	# (BsrReader.CLIP_META; AnimSounds).
+	var found := [action_type, assembled.parsed.animation_group_for(action_type, group)]
 	if assembled.animation_cache.has(path):
-		return assembled.animation_cache[path]
+		var cached = assembled.animation_cache[path]
+		if cached != null:
+			(cached as Object).set_meta(BsrReader.CLIP_META, found)
+		return cached
 	var bytes := _read(archive, path)
 	var anim: BanReader.ParsedAnimation = BanReader.parse(bytes) if not bytes.is_empty() else null
 	if anim != null and anim.bones.is_empty():
 		anim = null
+	if anim != null:
+		anim.set_meta(BsrReader.CLIP_META, found)
 	assembled.animation_cache[path] = anim
 	return anim
 

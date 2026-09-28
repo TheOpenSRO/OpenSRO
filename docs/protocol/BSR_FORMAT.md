@@ -44,7 +44,7 @@ bytes ahead of the bounding-box floats.
 | 0x18 | 4 | Offset of the **animation** section |
 | 0x1C | 4 | Offset of the **mesh group** section (2026-09-10; see below) |
 | 0x20 | 4 | Offset of the **animation group** section (2026-09-10; see below) |
-| 0x24 | 4 | Offset of the **sound effect** section: a count, then entries this reader does not parse (the `"ambient"` / `.efp` effect block lives here) |
+| 0x24 | 4 | Offset of the **mod-data** section, which carries the per-animation **sound tracks** (and material, particle and dynamics mods): see "Sound tracks" below |
 | 0x28 | 4 | Offset of the bounding-box block; equals `name_end + 48` in every file checked |
 | 0x2C-0x3C | 16 | Reserved (observed 0) |
 | 0x40 | 2 | **Object type** — eight values across the archive; `1` is character (see below) |
@@ -481,3 +481,115 @@ the skill -> **action type** link, still unfound after four routes
 
 `char+0x18c` holds the current group string, which is the field to watch when
 tracing further.
+
+
+## Sound tracks: the section at 0x24 (round 613)
+
+**READ** from `sro_client.exe` (decompile `/var/tmp/decomp_client`, asm `/var/tmp/sro_client.asm`)
+and **verified against every character `.bsr` in the box's Data.pk2** with
+`client/tools/sweep_bsr_sound.gd`, which runs `BsrReader.parse_sound_section` -- the reader the
+client uses. Nothing here is guessed; what is inferred is marked.
+
+### Layout
+
+The loader is `ResObject::FUN_00c0b740`, called from `ResObject::FUN_00be41d0` right after the
+bounding box and before `CResAttachable::vslot_007`:
+
+```
+i32 set count      -- list 1, kept in a map by name
+  set x count
+i32 set count      -- list 2, kept in an array
+  set x count
+```
+
+A **set** (`FUN_00c0b640`):
+
+```
+u32 kind           -- 1 in list 2; 0 in list 1, or 2 for the set named "ambient" (FUN_00c0b060)
+i32 action type    -- list 2: the animation entry's action type; list 1: -1
+lp  name           -- list 2: the animation group ("default", "sword", ...); list 1: a clip name
+i32 mod count
+  per mod: u32 kind word, then that kind's body
+```
+
+The kind word is `category << 16 | subtype`, the switch of the factory `FUN_00c0b460`. Every body
+starts with `IModData`'s header (`FUN_00c5c2a0`: six words and four bytes, 28 bytes):
+
+| Kind | Class | Body after the 28-byte header (each class's `vslot_004`) |
+|---|---|---|
+| 0x00000 | ModDataMtrl (`0xc626c0`) | u32, u32 flags, u32; i32 n, n x 20 bytes; if `flags & 4`: i32 m, m x 8 bytes; then 36 bytes |
+| 0x10000 | ModDataTexAni (`0xc5c5a0`) | five u32, 64 bytes |
+| 0x10001 / 0x10002 | ModDataMultiTex / Rev (`0xc613b0` / `0xc61430`) | u32, lp-string, u32 |
+| 0x30000 | ModDataParticle (`0xc643b0`) | i32 n; per entry u32, lp, lp, 12 bytes, u32, 4 bytes, and 12 more bytes when the fourth of those is non-zero |
+| 0x40000 | ModDataEnvMap (`0xc5c4e0`) | four u32 |
+| 0x40001 | ModDataBumpEnv (`0xc62cf0`) | the EnvMap body, six floats, i32 n; per entry a byte and, when it is 1, an lp-string |
+| **0x50000** | **ModDataSound** (`0xc63f30`) | i32 n; **only if n > 0**: 44 bytes (`FUN_00bbe240`), then n x { lp key, track list } |
+| 0x60000..0x60002 | ModDataDyVertex / DyJoint / DyLattice | nothing |
+| 0x70000 | ModDataProgEquipPow | nothing |
+
+A **track list** (`IResModData::FUN_00c62ff0`): i32 count, asserted `0 <= n <= 15`
+(`MAX_SOUND_TRACK_PER_ANI`, `IResModData.cpp` line 0x344), then that many tracks. A **track**
+(`FUN_00c614b0`; the writer `FUN_00c60000` agrees):
+
+```
+u32 flag           -- when it is not 1, nothing else follows
+lp  wav            -- only when flag == 1
+u32 key time
+lp  event name
+```
+
+So a flag-0 track is **four bytes**. (The research notes said the key time and name always
+follow; they do not -- 989 flag-0 tracks in the archive prove the four-byte reading, since the
+sections chain only with it.) The embedded `.wav` is loaded only when the resource manager's
+`+0x190` flag is 1, which nothing sets (INFERRED, strongly): the game plays the effect-table row
+behind the **event name**, not this file. Every ModDataSound in the archive has exactly one
+list, keyed `default`; the runtime takes the list by key and falls back to the first
+(`CRTModSound::FUN_00c5fa20`).
+
+After the section a character file ends, or carries the block `CResAttachable::vslot_007` reads
+next -- three words, i32 n, n x 8 bytes -- and the one word `CResChar::vslot_007` asserts is 0
+(`nComboNum == 0`).
+
+### The parse-all check (MEASURED)
+
+`sweep_bsr_sound.gd --pk2=/opt/sro-files/client/Data.pk2 --durations`, over the **1,012** `.bsr`
+files of object type 0 or 1:
+
+- **1,006 parse.** Of those, the section ends **exactly at EOF in 724**, and exactly where the
+  attachment block begins -- which itself ends at EOF -- in **270**. **12** leave bytes that do
+  not form that block (2 to 27 bytes of zeros, or a `-1, 13, 0, ...` block with extra bytes; all
+  under `Res\COS\` and `Res\pet2\`, mounts and pet saddles): the section ends there, what the
+  client makes of those tails is not read.
+- **6 do not parse.** Five are **4,096 bytes long in the archive's own directory** (`c_lunar`,
+  `lavahound`, `nightfury`, `pet_cyberdog_a`, `pet_lunar_a`): truncated files, the section runs
+  past their end. The sixth, `Res\NPC\NPC\tt.bsr` (1,215 bytes), breaks inside its first list.
+- **Counts:** 3,730 sets by clip (list 1), **19,733 by type** (list 2); tracks with an event:
+  4,357 in list 1, **35,894 in list 2**; 989 flag-0 tracks. Mod kinds: 20,637 sound, 1,270
+  particle, 158 dyvertex, 117 material, 33 envmap, 29 texani, 8 multitexrev, 5 bumpenv,
+  4 multitex. (Whether any set carries two sound mods was not counted; the reader would join
+  their tracks.)
+- **Event names:** in list 2 the top names are `snd_swing_s1` 12,473, `snd_swing_s2` 4,525,
+  `voc_shout2` 4,365, `snd_swing1` 3,556, `voc_shout1` 2,513, `snd_swing2` 1,727, `snd_walk1`
+  1,490, `snd_run1` 1,186, `voc_moan` 770, `voc_death` 409, `voc_emo` 400, `snd_death` 390,
+  `snd_stand` 227. Names the handler table does not have (so silent in retail): 628 empty names,
+  `snd_swing_s` 279, `snd_run` 101, `snd_walk` 94, `snd_swing_2` 36, `snd_shout2` 16,
+  `voc_moan1/2` 9 each, `snd_stand5/6`, typos (`snd_swign1`, `smd_swing1`). **`voc_avoid` occurs
+  in no track at all.** List 1 is dominated by `snd_run` 2,274 and `snd_walk` 1,056 -- names
+  with no handler, which is why the type-keyed list is the one that plays.
+- **Key times against clip lengths:** of the list-2 tracks whose entry resolves to a clip in
+  the same group, **25,166 fall within the clip's own length and 39 past it** (for example a
+  walk's `snd_walk1` at 1,336 of a 1,333 ms clip, and the China woman's die clip `snd_death` at
+  2,496 of 1,666). That is the evidence for reading key times as **milliseconds of the clip**
+  (INFERRED; how they scale with playback speed is OPEN).
+
+### Which set plays (INFERRED)
+
+The runtime lookup of a list-2 set was not found in the decompile. srrevamp plays the set keyed
+by **the entry the clip was found as**: the action type and the group
+`ParsedObject.animation_group_for` finds it in (the weapon group, or `default` when the weapon
+group has no entry of that type). Measured over the same files, for the basic types
+(0-9, 16, 17, 36): 5,600 sets match an entry in their own group; weapon-group entries with their
+own set 1,580, without one but with a `default` set 794, with none 320. A weapon group's own clip
+therefore never borrows the default clip's key times, at the cost of silence in those 794 cases
+(avatar groups, mostly). 747 of 20,108 (file, clip) pairs are reachable as more than one entry,
+nearly all skill clips.

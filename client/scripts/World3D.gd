@@ -1561,6 +1561,8 @@ func _try_initialize_pk2_ui() -> void:
 			_log_system(result.error)
 			if OS.get_environment("SRREVAMP_QA_HOTKEY") != "":
 				print("QA ATTACK RESULT: refused (%s)" % result.error)
+		if result != null and result.error == "":
+			_audio_set_hwan(result.berserk_active)
 		if result != null and result.error == "" and _last_enter_world_max_hp > 0:
 			if _hud_player_info != null:
 				_hud_player_info.set_hp(result.player_hp, _last_enter_world_max_hp)
@@ -1598,6 +1600,7 @@ func _try_initialize_pk2_ui() -> void:
 		print("World3D: berserk result: activated %s, gauge %d, active %s" % [str(activated), gauge, str(active)])
 		if _hud_player_info != null:
 			_hud_player_info.set_berserk(gauge, active)
+		_audio_set_hwan(active)
 		if activated:
 			_log_system("Berserk!")
 		elif not active:
@@ -4562,6 +4565,13 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 ## a fixed offset from its own instance count, so it is stable across frames
 ## rather than jittering.
 var _animated: Array = []
+## The sounds the playing clips fire (AnimSounds): the local player, other
+## players and monsters are registered by skeleton, and _tick_idle_animations
+## and the player's own tick report each clip's time to it.
+var _anim_sounds := AnimSounds.new()
+## Berserk (hwan) is on for the local player -- the last attack or berserk
+## result said so. Kept here so a re-dressed body's sound owner starts with it.
+var _audio_hwan := false
 # Assembled NPC bodies kept as detached templates, one per model path, and
 # duplicated per spawn. Assembling a skinned .bsr is what made each region
 # take seconds; most NPCs in a region share a model, and duplicating a node
@@ -4758,21 +4768,35 @@ func _tick_idle_animations(delta: float) -> void:
 		var loops: bool = entry[4]
 		if loops:
 			Skeleton3DBuilder.apply_ban_pose_at(skeleton, anim, _idle_anim_time + phase, true)
+			_anim_sounds.advance(skeleton, anim, float(entry[5]), _loop_ms(anim, _idle_anim_time + phase), true)
 		else:
 			# A one-shot runs from when it started, on the clip's own clock,
 			# and holds its last keyframe; once there, hand back to what it
 			# interrupted.
 			var elapsed := _idle_anim_time - float(entry[5])
 			if elapsed >= anim.duration_seconds() and entry[6] != null:
+				# Its last tracks first: the frame that ends it is the frame
+				# that would pass them.
+				_anim_sounds.advance(skeleton, anim, float(entry[5]), float(anim.duration_ms), false)
 				var resume: Array = entry[6]
 				resume[5] = _idle_anim_time
 				alive.append(resume)
 				Skeleton3DBuilder.apply_ban_pose_at(skeleton, resume[1], _idle_anim_time + float(resume[3]), true)
+				_anim_sounds.advance(skeleton, resume[1], float(resume[5]),
+					_loop_ms(resume[1], _idle_anim_time + float(resume[3])), true)
 				continue
 			Skeleton3DBuilder.apply_ban_pose_at(skeleton, anim, elapsed, false)
+			_anim_sounds.advance(skeleton, anim, float(entry[5]), elapsed * 1000.0, false)
 		alive.append(entry)
 	if alive.size() != _animated.size():
 		_animated = alive
+
+## Where a loop posed at `seconds` is in its clip, in milliseconds -- the
+## wrap apply_ban_pose_at makes for a looping clip.
+static func _loop_ms(anim: BanReader.ParsedAnimation, seconds: float) -> float:
+	if anim == null or anim.duration_ms <= 0:
+		return 0.0
+	return fposmod(seconds * 1000.0, float(anim.duration_ms))
 
 var _idle_anim_time := 0.0
 ## monster id -> the assembled character behind its body, for playing its
@@ -6394,8 +6418,11 @@ func _body_animation_for(gender: String, action_type: int, group: String = "defa
 		path = _hinted_animation_path(parsed.animation_paths, action_type)
 	if path == "":
 		return null
+	# Which entry the clip was found as, for its sound tracks (AnimSounds).
+	var found_group := parsed.animation_group_for(action_type, group)
 	var cache: Dictionary = assets["animations"]
 	if cache.has(path):
+		_tag_clip(cache[path], action_type, found_group)
 		return cache[path]
 	var bytes := AssetSource.read_bytes(path, _data_pk2)
 	if bytes.is_empty():
@@ -6404,6 +6431,7 @@ func _body_animation_for(gender: String, action_type: int, group: String = "defa
 	if anim != null and anim.bones.is_empty():
 		anim = null
 	cache[path] = anim
+	_tag_clip(anim, action_type, found_group)
 	return anim
 
 ## The name-hint fallback: the first animation path matching the earliest
@@ -6436,6 +6464,86 @@ func _weapon_group_for(equipped: Dictionary) -> String:
 	if weapon_id == 0:
 		return "default"
 	return WEAPON_ANIMATION_GROUP.get(int(_item_kinds.get(weapon_id, 0)), "default")
+
+# --- Animation-fired sounds (AnimSounds) ---------------------------------------
+
+## A player character's sound owner: the PLAYER key family, the sound object
+## of the body's characterdata row (GENDER_BODY_CODE -> PCM_FIGHTER), the
+## body's own .bsr for its tracks, and the held weapon for its swings.
+func _audio_pc_owner(label: String, gender: String, equipped: Dictionary, node: Node3D) -> AnimSounds.Owner:
+	var owner := AnimSounds.Owner.new()
+	owner.label = label
+	owner.is_pc = true
+	owner.token = _sound_object_for(String(GENDER_BODY_CODE.get(gender, GENDER_BODY_CODE[DEFAULT_GENDER])))
+	var assets: Dictionary = _character_assets.get(gender, _character_assets.get(DEFAULT_GENDER, {}))
+	owner.parsed = assets.get("parsed")
+	owner.node = node
+	owner.weapon_kind = _audio_weapon_kind(equipped)
+	return owner
+
+## The TypeID4 of the weapon in slot 6 (AnimSounds.WEAPON_TOKENS), or
+## WEAPON_NONE for an empty slot, or WEAPON_UNKNOWN for an item the table
+## does not know -- which swings silently rather than as a guessed weapon.
+func _audio_weapon_kind(equipped: Dictionary) -> int:
+	var weapon_id: int = int(equipped.get(EquipmentNet.SLOT_WEAPON, 0))
+	if weapon_id == 0:
+		return AnimSounds.WEAPON_NONE
+	return int(_item_kinds.get(weapon_id, AnimSounds.WEAPON_UNKNOWN))
+
+## The sound object for a characterdata code (the core's characterInfo map,
+## SoundTable.sound_object), "" when skilleffect.txt has no row for it.
+func _sound_object_for(code: String) -> String:
+	return SoundTable.sound_object(code)
+
+## The footstep material under the local player: the cell the walk carries
+## (_nav_footing) when it is for the region the player is in, else the one
+## the height finds.
+func _audio_player_material() -> int:
+	var pair := _nav_graph_for(player.global_position)
+	var footing := -2
+	if not pair.is_empty() and pair[0] == _nav_footing_graph:
+		footing = _nav_footing
+	return _audio_material_at(player.global_position, footing)
+
+## The footstep material id (AnimSounds.MATERIALS) at a world position, or
+## -1 where no navmesh is loaded. `footing` is what the body stands on --
+## NavGraph.ON_TERRAIN, an object index, or -2 to find it from the height.
+## An object's cell is always 0, DIRT (READ, 0x0040ecb0); a terrain cell's
+## is the tile2d.ifo type of the region's 20-unit .nvm tile under the point
+## (READ, 0x00403940 and the load-time rewrite). No water depth enters it.
+func _audio_material_at(world_position: Vector3, footing: int) -> int:
+	var pair := _nav_graph_for(world_position)
+	if pair.is_empty():
+		return -1
+	var graph: NavGraph = pair[0]
+	var local := (pair[1] as Node3D).to_local(world_position)
+	if footing == -2:
+		footing = graph.surface_at(local.x, local.z, local.y).object_index
+	return AnimSounds.material_at(graph.region, local.x, local.z, footing, _load_tile_index())
+
+## The critical flag voc_moan reads, set on the body a hit is about to play
+## on (false for a hit that says nothing about it).
+func _audio_mark_hit(skeleton: Variant, critical: bool) -> void:
+	if skeleton == null or not is_instance_valid(skeleton):
+		return
+	var owner := _anim_sounds.owner_of(skeleton)
+	if owner != null:
+		owner.critical = critical
+
+## The local player's berserk state, for the hwan swing.
+func _audio_set_hwan(active: bool) -> void:
+	_audio_hwan = active
+	if _player_skeleton == null or not is_instance_valid(_player_skeleton):
+		return
+	var owner := _anim_sounds.owner_of(_player_skeleton)
+	if owner != null:
+		owner.hwan = active
+
+## Tags a clip with the entry it was found as (BsrReader.CLIP_META), so its
+## sound set can be found while it plays.
+static func _tag_clip(anim: Object, action_type: int, group: String) -> void:
+	if anim != null and group != "":
+		anim.set_meta(BsrReader.CLIP_META, [action_type, group])
 
 ## Builds one fresh character: the gender's body assembled from its own
 ## `.bsr` with real skinning, then every worn item hung on it the way its
@@ -6516,6 +6624,7 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	# change redresses the character, leaving it would stack a second dressed
 	# body on the player every time anything was equipped or taken off.
 	if _player_skeleton != null and is_instance_valid(_player_skeleton):
+		_anim_sounds.unregister(_player_skeleton)
 		_player_skeleton.queue_free()
 		_player_skeleton = null
 	# The assembled body's visual front is its own local -Z, but the player
@@ -6534,6 +6643,12 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	_refresh_player_name_plate()
 	_player_gender = gender
 	_player_weapon_group = _weapon_group_for(equipped)
+	# The body's sounds: the footstep material is the cell the walk carries
+	# (_nav_footing), the swing's token the weapon just equipped.
+	var sound_owner := _audio_pc_owner("player", gender, equipped, player)
+	sound_owner.material = func() -> int: return _audio_player_material()
+	sound_owner.hwan = _audio_hwan
+	_anim_sounds.register(skeleton, sound_owner)
 	print("World3D: player animation group %s (stand %s, run %s)" % [
 		_player_weapon_group,
 		_body_animation_path(gender, BsrReader.AnimationEntry.TYPE_STAND, _player_weapon_group),
@@ -10735,12 +10850,16 @@ func _physics_step(delta: float) -> void:
 		if _player_one_shot != null:
 			var elapsed := _player_anim_time - _player_one_shot_start
 			if elapsed >= _player_one_shot.duration_seconds() and not _player_one_shot_hold:
+				# Its last tracks, on the frame that ends it.
+				_anim_sounds.advance(_player_skeleton, _player_one_shot, _player_one_shot_start,
+					float(_player_one_shot.duration_ms), false)
 				_player_one_shot = null
 			else:
 				# A held one-shot (the die clip, round 548) keeps its last
 				# keyframe past its end: apply_ban_pose_at pins a non-looping
 				# clip on it once `seconds` reaches the duration.
 				Skeleton3DBuilder.apply_ban_pose_at(_player_skeleton, _player_one_shot, elapsed, false)
+				_anim_sounds.advance(_player_skeleton, _player_one_shot, _player_one_shot_start, elapsed * 1000.0, false)
 		if _player_one_shot == null and anim != null and not anim.bones.is_empty():
 			var ref_track: BanReader.Bone = anim.bones[0]
 			if not ref_track.keyframes.is_empty():
@@ -10756,6 +10875,7 @@ func _physics_step(delta: float) -> void:
 					# a fixed 30 keyframes a second ran the idle five times
 					# too fast.
 					Skeleton3DBuilder.apply_ban_pose_at(_player_skeleton, anim, _player_anim_time, true)
+					_anim_sounds.advance(_player_skeleton, anim, 0.0, _loop_ms(anim, _player_anim_time), true)
 
 func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, equipped: Dictionary = {}, gender: String = DEFAULT_GENDER) -> void:
 	if not equipped.is_empty():
@@ -10788,6 +10908,13 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 		# in the bind pose, arms out, which no character in the game does.
 		var group := _weapon_group_for(equipped)
 		_other_gaits[character_id] = {"skeleton": skeleton, "gender": gender, "group": group, "moving": false}
+		# Their sounds come from where their body is; the cell under them is
+		# found from the height (_audio_material_at), not carried as the
+		# local player's is. Berserk is not sent for another player, so their
+		# swings are never the hwan ones here.
+		var owner := _audio_pc_owner("player %d" % character_id, gender, equipped, body)
+		owner.material = func() -> int: return _audio_material_at(body.global_position, -2) if is_instance_valid(body) else -1
+		_anim_sounds.register(skeleton, owner)
 		var idle := _body_animation_for(gender, BsrReader.AnimationEntry.TYPE_STAND, group)
 		var frames := _frame_count(idle)
 		if frames > 1:
@@ -12340,6 +12467,16 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 
 	other_entities.add_child(body)
 	_monster_bodies[monster.monster_id] = body
+	# Its sounds: keyed by its own sound object (MOB_CH_MANGNYANG ->
+	# MOB_MANGNYANG), with no footstep material -- the handler builds a
+	# monster's key without one.
+	if monster_skeleton != null and _monster_assembled.has(monster.monster_id):
+		var sound_owner := AnimSounds.Owner.new()
+		sound_owner.label = "monster %d %s" % [monster.monster_id, monster.code_name]
+		sound_owner.token = _sound_object_for(monster.code_name)
+		sound_owner.parsed = (_monster_assembled[monster.monster_id] as SkinnedBsrAssembler.AssembledCharacter).parsed
+		sound_owner.node = body
+		_anim_sounds.register(monster_skeleton, sound_owner)
 
 ## A click-target collider for a monster: a capsule as tall as the model,
 ## on the monster layer only, so a ray can pick it out for an attack while
@@ -13016,6 +13153,9 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 			if died:
 				_begin_monster_death(monster)
 			else:
+				var hit_assembled = _monster_assembled.get(monster)
+				if hit_assembled != null:
+					_audio_mark_hit(hit_assembled.skeleton, result.player_critical)
 				_play_monster_action(monster, BsrReader.AnimationEntry.TYPE_HIT)
 			var hit_body = _monster_bodies.get(monster)
 			if hit_body != null and is_instance_valid(hit_body):
@@ -13149,6 +13289,7 @@ func _draw_counter_from_result(monster: int, result: CombatNet.AttackResult) -> 
 	_after(strike_after, func() -> void:
 		# The hit reaction -- or the held die clip when this blow left the
 		# player dead (round 548).
+		_audio_mark_hit(_player_skeleton, result.monster_critical)
 		_play_player_struck()
 		# The damage the player took, over the player's own head (human
 		# head height from the same PLAYER_SCALE_RATIO calibration the
@@ -13380,8 +13521,10 @@ func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool) ->
 		if on_self:
 			# The hit reaction -- or the held die clip when this blow left
 			# the player dead (round 548).
+			_audio_mark_hit(_player_skeleton, attacked.critical)
 			_play_player_struck()
 		else:
+			_audio_mark_hit(_other_gaits.get(target_id, {}).get("skeleton"), attacked.critical)
 			_play_other_hit(target_id)
 		# Over the head, at the height the player's own number uses.
 		_floating_damage(anchor, 2.0 * PLAYER_SCALE_RATIO, attacked.damage, DAMAGE_TAKEN_COLOUR))
@@ -13907,6 +14050,10 @@ func _on_monster_damaged(damaged: CombatNet.MonsterDamaged) -> void:
 	# "whatever I am targeting now", which is a different monster after a
 	# retarget.
 	if damaged != null and int(_own_hit_until.get(damaged.monster_id, 0)) < Time.get_ticks_msec():
+		# MonsterDamaged carries no critical flag: the NORMAL moan.
+		var damaged_assembled = _monster_assembled.get(damaged.monster_id)
+		if damaged_assembled != null:
+			_audio_mark_hit(damaged_assembled.skeleton, false)
 		_play_monster_action(damaged.monster_id, BsrReader.AnimationEntry.TYPE_HIT)
 	# Shrink the HP bar at once, before the list round-trip, so it tracks
 	# each hit. The max comes from the last snapshot of this monster.

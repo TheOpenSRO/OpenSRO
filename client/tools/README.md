@@ -121,6 +121,15 @@ SRREVAMP_GM_ACCOUNTS=qa SRREVAMP_QA_COMMANDS="/level 20;/sp 100000" SRREVAMP_QA_
   SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames 620 --out /var/tmp/hotbar
 ```
 
+**Sounds are logged, not heard** (round 613). The box's Godot runs the dummy audio driver, so every
+animation-fired sound prints one `AUDIO <effect key> t=<key ms> clip <type>:<group> <body> at
+<x,y,z>` line (at most one per key per second, the swallowed count appended), and a silent one
+`AUDIO skip <event> (<why>)`. `SRREVAMP_QA_AUDIO_TRACE=1` adds an `AUDIO clip` line each time a
+body starts a clip, saying which entry it is and whether it has a sound set. Footsteps on several
+materials: `SRREVAMP_QA_WALK=180 qa_shot.sh --server --region '97\168.m' --radius 1 --at 1002,1020
+--frames 1200`; swings, moans and deaths: the attack loop with `SRREVAMP_GM_ACCOUNTS=qa
+SRREVAMP_QA_COMMANDS="/level 60" SRREVAMP_QA_ATTACK_FAST=1 SRREVAMP_QA_ATTACK_GOTO=1`.
+
 **So is a player's input** (round 605). `SRREVAMP_QA_INPUT="<tick>:<action>;..."` plays clicks
 (`click:x,y`, `rclick:x,y`, `node:<control name>`, `drag:x,y,x2,y2`), keys (`key:i`, `key:shift+q`,
 `type:hello`, with the keycode, physical keycode, label and character an OS key carries), hovers

@@ -46452,3 +46452,77 @@ the old track is quieter (0.0 dB)`.
 
 The level-2 BGM source table; the exact fade wall time; a game clock (night lists); the
 fortress-war and script callers; retail's loop gap.
+
+## Footsteps, swings, hurt and death voices are fired by the animations that play, from each body's own .bsr sound tracks (round 613)
+
+Client only (plus a dev tool). Built on the audio core (round 611): every key is spelled by
+`SoundTable.make_key` and sent through one seam, `AnimSoundSeam`, to `SoundTable.play_key(key,
+pos, obj)` with the body's position and node; the sound objects come from the core's
+characterInfo map (`SoundTable.sound_object`). The tests route the seam to a recording double
+(`AnimSoundStub`). The box's Godot runs the dummy audio driver, so the `AUDIO` log lines are the
+verification.
+
+### The format (read, then verified over the archive)
+
+The section at `.bsr` header 0x24 is a **mod-data** section, not a bare sound list: two
+count-prefixed lists of sets (`ResObject::FUN_00c0b740`), each set `u32 kind, i32 action type,
+lp name, i32 mod count` (`FUN_00c0b640`), each mod a kind word (`category << 16 | subtype`, the
+factory `FUN_00c0b460`) and that class's body. Every class's reader was read (Mtrl, TexAni,
+MultiTex/Rev, Particle, EnvMap, BumpEnv, Sound, DyVertex/Joint/Lattice, ProgEquipPow) so the
+non-sound mods can be stepped over exactly; the table is in `docs/protocol/BSR_FORMAT.md`,
+"Sound tracks". A track (`FUN_00c614b0`, writer `FUN_00c60000`) is `u32 flag` and, **only when
+it is 1**, `lp wav, u32 key time, lp event name` -- a flag-0 track is four bytes, correcting the
+research notes. List 1 is keyed by clip name (kind 0, or 2 for `ambient`), list 2 by
+(action type, animation group) with kind 1.
+
+**Parse-all** (`client/tools/sweep_bsr_sound.gd`, through `BsrReader.parse_sound_section`), the
+1,012 type-0/1 `.bsr` in Data.pk2: 1,006 parse; the section ends at EOF in 724 and exactly where
+the `CResAttachable`/`CResChar` block begins (itself ending at EOF) in 270; 12 mount/saddle files
+leave 2-27 stray bytes after it; 6 do not parse -- five are 4,096 bytes long in the archive's own
+directory (truncated), the sixth is `Res\NPC\NPC\tt.bsr`. 3,730 + 19,733 sets, 4,357 + 35,894
+tracks, 989 flag-0 tracks. Of the list-2 tracks whose clip resolves, 25,166 key times lie within
+the clip and 39 past its end: the millisecond reading (INFERRED).
+
+### The dispatch (read)
+
+`CGEffSoundBody::vslot_009` (0x00a72a70) looks the event name up in 52 records at 0x00ec6660;
+the four `0x0` entries of the first dump are `a708d0`/`a708e0` (snd_death1/2), `a714f0`
+(snd_stand3), `a720b0` (voc_moan), `a748b0` (snd_struct2), and every short one is a `jmp` to its
+family's handler. Keys built here:
+
+| Handler | Key |
+|---|---|
+| snd_walk1-3, snd_run1-3 (0xa6ffc0) | PC: `PLAYER:<h>:-:FIELD:<MAT>:-`; else `<obj>:<h>:-:-:-:-`; nothing when the body has no cell (obj+0x74) |
+| snd_swing1-4 (0xa71510) | PC: `PLAYER:<h>:-:<WEAPON>:-:-`, berserk `PLAYER:snd_swing3:-:HWAN:<WEAPON>:-`; else `<obj>:<h>:<Basic_Code>:-:-:-` (not built: no skill id is sent for a monster) |
+| voc_moan (0xa720b0) | `<obj>:voc_moan:-:<NORMAL|CRITYCAL>:-:-` (FUN_00a63560, obj+0x441 & 2) |
+| snd_death*, snd_stand*, voc_avoid, voc_death | `<obj>:<h>:-:-:-:-` |
+| snd_down, snd_help, snd_hwan*, snd_deactivate, snd_throw, voc_emo | no-op: silent |
+
+`<MAT>` is the table at 0x00ec6608 by the cell's material: an object cell is 0, DIRT
+(0x0040ecb0 `xor eax,eax`); a terrain cell the tile2d type of the .nvm tile. `<WEAPON>` is
+FUN_00a64560 on slot 6's TypeID4 (0xde63a0 is `BOW`; the default 0xe17460 is an empty string),
+`PUNCH` for an empty slot (FUN_00a648d0). `<obj>` is skilleffect.txt's characterInfo token
+(`SoundTable.sound_object`, the core's parse of skilleffect.txt; 1,447 codes). A code written
+twice takes its later row there, the core's choice; which one retail keeps is not read.
+
+### What is ours or inferred
+
+- **Which set plays:** the list-2 set of the entry the clip was found as (type, and the group
+  `animation_group_for` finds it in). The client's runtime lookup was not found (INFERRED).
+- **Key time:** milliseconds of the clip, played as written; scaling with speed OPEN.
+- **Ours:** a loop swapped in mid-cycle fires nothing until its next key; a one-shot fires from
+  0, is flushed to its end when it hands back; a held death keeps its clock (so a `snd_death`
+  written past the clip's end still plays while the body lies there). Another player's cell is
+  found from the height; berserk is not known for another player.
+- **Not built:** snd_swing_s*, voc_shout* (need a skill's Basic_Code/Group), the code-fired
+  handlers (hits, blocking, pick-up, UI) -- they log `AUDIO skip`; NPCs are not registered
+  (their object is PLAYER and no material-less PLAYER footstep row exists).
+
+### Measured live (box, --server)
+
+Walk north from the Jangan spawn (`SRREVAMP_QA_WALK=180`): `PLAYER:snd_run1:-:FIELD:DIRT:-`
+on the gate object, then `GRASS` and `STONE` on terrain tiles, `DIRT` again on `cj_pal_bigdoor`
+(NAV `onto`/`off` lines bracket it). Attack loop (`SRREVAMP_QA_ATTACK_GOTO=1`, level 60):
+`PLAYER:snd_swing1/2:-:SWORD:-:-` at 185/559 (type 2), 213/565 (5), 257/564 (16), 183/560 (17);
+`PCM_FIGHTER:voc_moan:-:NORMAL|CRITYCAL:-:-` and `MOB_YEOHA:voc_moan:...`;
+`MOB_GYO:voc_death` at 0 and `MOB_GYO:snd_death:-:-:-:-` at 1754 ms of its die clip.

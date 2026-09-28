@@ -118,6 +118,77 @@ class AnimationEntry:
 	## A trailing float, 1.0 in every entry checked.
 	var trail: float = 1.0
 
+## The name `set_meta` puts on a parsed animation clip to say which entry it
+## was looked up as: [action type, the group the entry was found in]. The
+## lookups that know both (World3D._body_animation_for,
+## SkinnedBsrAssembler.animation_for) write it; the animation-fired sounds
+## read it to find the clip's sound set (sound_set_for). A clip can be
+## reached as more than one entry -- 747 of 20,108 (file, clip) pairs across
+## the archive's character files are, nearly all skill clips -- and then the
+## last lookup's tag is the one it carries.
+const CLIP_META := "bsr_entry"
+
+## One sound track of an animation (docs/protocol/BSR_FORMAT.md, "Sound
+## tracks"): an event name fired at a key time of the clip. READ from the
+## client's reader `IResModData::FUN_00c614b0`.
+class SoundTrack:
+	## Milliseconds into the clip -- INFERRED from the numbers (a run's two
+	## footsteps at 289 and 619), not read from the client's use of them.
+	var key_ms: int = 0
+	## The event name the client dispatches (`snd_run1`, `voc_moan`, ...);
+	## what it plays is the effect table's row behind it, not `wav`.
+	var name: String = ""
+	## The `.wav` the file names beside the event. Loaded only when the
+	## resource manager's +0x190 flag is 1, which nothing in the game sets
+	## (INFERRED, strongly: docs/protocol/BSR_FORMAT.md), so it is not played.
+	var wav: String = ""
+
+## One set of sound tracks: the tracks one animation fires.
+class SoundSet:
+	## SET_BY_CLIP (the first list, keyed by a clip name, the kind 0/2 word)
+	## or SET_BY_TYPE (the second list, keyed by action type and animation
+	## group, the kind 1 word).
+	var kind: int = 0
+	## The action type for a SET_BY_TYPE set, -1 for a set keyed by name.
+	var action_type: int = -1
+	## The animation group (SET_BY_TYPE) or the clip name (SET_BY_CLIP).
+	var name: String = ""
+	## Tracks with an event, in file order (not sorted by time). A track
+	## whose flag word is not 1 carries nothing and is not kept.
+	var tracks: Array[SoundTrack] = []
+	## Tracks the file wrote with flag 0: a bare word, no time and no name.
+	var empty_tracks: int = 0
+
+const SET_BY_CLIP := 0
+const SET_BY_TYPE := 1
+
+## The most tracks one animation may carry: `MAX_SOUND_TRACK_PER_ANI`, from
+## the client's asserts `(nTrackNum >= 0) && (nTrackNum <=
+## MAX_SOUND_TRACK_PER_ANI)` (IResModData.cpp line 0x344, FUN_00c62ff0) and
+## `m_pSndSet->Tracks.size() <= MAX_SOUND_TRACK_PER_ANI` (RTModSound.cpp),
+## both tested as `> 0xf`.
+const MAX_SOUND_TRACKS := 15
+
+## The mod-data kinds the section carries, as the client's factory
+## (FUN_00c0b460) builds them from the word in front of each: high 16 bits
+## a category, low 16 a subtype. Every kind's reader is READ (its class's
+## slot-4 `vslot_004`); see _skip_mod_body. Only MOD_SOUND carries tracks.
+const MOD_MTRL := 0x00000
+const MOD_TEXANI := 0x10000
+const MOD_MULTITEX := 0x10001
+const MOD_MULTITEXREV := 0x10002
+const MOD_PARTICLE := 0x30000
+const MOD_ENVMAP := 0x40000
+const MOD_BUMPENV := 0x40001
+const MOD_SOUND := 0x50000
+const MOD_DYVERTEX := 0x60000
+const MOD_DYJOINT := 0x60001
+const MOD_DYLATTICE := 0x60002
+const MOD_PROGEQUIPPOW := 0x70000
+## IModData's own header, read by every kind first (FUN_00c5c2a0): six
+## words and four bytes.
+const MOD_HEADER_BYTES := 28
+
 class ParsedObject:
 	var object_name: String
 	var mesh_path: String
@@ -152,6 +223,12 @@ class ParsedObject:
 	## by entry type in the group for the weapon in hand, falling back to
 	## `default`; see animation_for().
 	var animation_groups: Dictionary = {}
+	## The sound-track sets of the section at OFF_PTR_SOUND, read for
+	## character files only: the SET_BY_TYPE sets keyed "<type>:<group>",
+	## and the SET_BY_CLIP sets keyed by clip name. Empty when the section
+	## did not parse (parse_sound_section).
+	var sound_sets_by_type: Dictionary = {}
+	var sound_sets_by_clip: Dictionary = {}
 
 	func is_item() -> bool:
 		return object_type == TYPE_ITEM
@@ -172,6 +249,26 @@ class ParsedObject:
 				if (entry as AnimationEntry).action_type == action_type:
 					return entry
 		return null
+
+	## The group the same lookup finds its entry in -- group_name, or
+	## `default` when group_name has no entry of that type -- or "" when
+	## neither has one.
+	func animation_group_for(action_type: int, group_name: String = "default") -> String:
+		for name in [group_name, "default"]:
+			for entry in animation_groups.get(name, []):
+				if (entry as AnimationEntry).action_type == action_type:
+					return name
+		return ""
+
+	## The sound tracks of the entry (action_type, group_name) -- the
+	## SET_BY_TYPE set keyed by exactly that pair, or null. No fallback:
+	## the caller passes the group the animation was actually found in
+	## (animation_group_for), so a weapon group's own clip never borrows
+	## the default clip's key times. That pairing is INFERRED (the client's
+	## runtime lookup of the set was not found); it is what the data
+	## supports -- see docs/protocol/BSR_FORMAT.md, "Sound tracks".
+	func sound_set_for(action_type: int, group_name: String) -> SoundSet:
+		return sound_sets_by_type.get("%d:%s" % [action_type, group_name])
 
 	## Every mesh piece, primary included -- the same paths as
 	## mesh_path + sub_mesh_paths, in file order, for callers that don't
@@ -248,6 +345,8 @@ static func parse(data: PackedByteArray) -> ParsedObject:
 			built.mesh_groups = sections["mesh_groups"]
 			built.animation_groups = _animation_groups(sections["animation_groups"], built.animation_paths)
 			built.is_character = is_character_type and built.skeleton_path != ""
+			if built.is_character:
+				_attach_sound_sets(built, data)
 			return built
 
 	# The exact byte layout between the name and the mesh/material paths
@@ -550,6 +649,246 @@ static func _animation_groups(raw_groups: Dictionary, animation_paths: Array) ->
 			entries.append(entry)
 		out[name] = entries
 	return out
+
+## Reads the sound section into obj's sound_sets_by_type / _by_clip. A
+## section that does not parse leaves both empty: the body still draws, it
+## is only silent.
+static func _attach_sound_sets(obj: ParsedObject, data: PackedByteArray) -> void:
+	if data.size() < PREAMBLE_END:
+		return
+	var section = parse_sound_section(data, _le_u32(data, OFF_PTR_SOUND))
+	if section == null:
+		return
+	for s in section["by_clip"]:
+		obj.sound_sets_by_clip[(s as SoundSet).name] = s
+	for s in section["by_type"]:
+		var sset := s as SoundSet
+		obj.sound_sets_by_type["%d:%s" % [sset.action_type, sset.name]] = sset
+
+## The section at OFF_PTR_SOUND (docs/protocol/BSR_FORMAT.md, "Sound
+## tracks"), READ from the client's loader `ResObject::FUN_00c0b740`: two
+## count-prefixed lists of mod sets -- the first kept in a map by name, the
+## second in an array -- each set read by FUN_00c0b640:
+##
+##   u32 kind (0 or 2 in the first list -- 2 for the set named `ambient`,
+##       FUN_00c0b060; 1 in the second), i32 action type (-1 in the first
+##       list), lp-string name (a clip name; an animation group in the
+##       second), i32 mod count, then per mod a u32 kind word and that
+##       kind's own body (_skip_mod_body / _read_sound_mod).
+##
+## Returns {"by_clip": Array[SoundSet], "by_type": Array[SoundSet], "end":
+## the offset after the section, "mods": {kind word: count}}, or null if
+## anything does not parse -- an unknown mod kind, a string or count out of
+## range, a track count above MAX_SOUND_TRACKS, or a read past the end.
+static func parse_sound_section(data: PackedByteArray, off: int):
+	if off < PREAMBLE_END or off + 4 > data.size():
+		return null
+	var cursor := [off]
+	var mods := {}
+	var lists: Array = []
+	for list_index in range(2):
+		var count = _take_i32(data, cursor)
+		if count == null or count < 0 or count > 100000:
+			return null
+		var sets: Array[SoundSet] = []
+		for _i in range(count):
+			var sset = _read_mod_set(data, cursor, mods)
+			if sset == null:
+				return null
+			sets.append(sset)
+		lists.append(sets)
+	return {"by_clip": lists[0], "by_type": lists[1], "end": cursor[0], "mods": mods}
+
+## What follows the sound section in a character file: the attachment block
+## `CResAttachable::vslot_007` reads after the object itself -- three
+## words, a count and that many word pairs -- then the one word
+## `CResChar::vslot_007` reads and asserts zero (`nComboNum == 0`). READ.
+## Returns the offset after it, or -1 when it does not parse or the combo
+## word is not 0. For the parse-all check (client/tools/sweep_bsr_sound.gd),
+## which uses it to show the sound section ends where the next block starts.
+static func attachable_tail_end(data: PackedByteArray, off: int) -> int:
+	var cursor := [off]
+	for _i in range(3):
+		if _take_i32(data, cursor) == null:
+			return -1
+	var pairs = _take_i32(data, cursor)
+	if pairs == null or pairs < 0 or cursor[0] + pairs * 8 > data.size():
+		return -1
+	cursor[0] += pairs * 8
+	var combo = _take_i32(data, cursor)
+	if combo == null or combo != 0:
+		return -1
+	return cursor[0]
+
+## One mod set (FUN_00c0b640). A set with no sound mod comes back with no
+## tracks; one with several would have their tracks joined, which no
+## character file does (client/tools/sweep_bsr_sound.gd counts it).
+static func _read_mod_set(data: PackedByteArray, cursor: Array, mods: Dictionary):
+	var kind = _take_i32(data, cursor)
+	var action_type = _take_i32(data, cursor)
+	if kind == null or action_type == null:
+		return null
+	var name = _take_string(data, cursor)
+	var count = _take_i32(data, cursor)
+	if name == null or count == null or count < 0 or count > 1000:
+		return null
+	var sset := SoundSet.new()
+	sset.kind = SET_BY_TYPE if kind == 1 else SET_BY_CLIP
+	sset.action_type = action_type if kind == 1 else -1
+	sset.name = name
+	for _m in range(count):
+		var mod_kind = _take_i32(data, cursor)
+		if mod_kind == null:
+			return null
+		mod_kind = mod_kind & 0xFFFFFFFF
+		mods[mod_kind] = int(mods.get(mod_kind, 0)) + 1
+		if mod_kind == MOD_SOUND:
+			if not _read_sound_mod(data, cursor, sset):
+				return null
+		elif not _skip_mod_body(data, cursor, mod_kind):
+			return null
+	return sset
+
+## ModDataSound::vslot_004 (0x00c63f30): the IModData header, a count, and
+## -- only when the count is above zero -- 44 bytes (ModDataSound::
+## FUN_00bbe240: six words, 16 bytes, a word) and then per entry an
+## lp-string key and a track list (IResModData::FUN_00c62ff0: an i32 count,
+## 0..MAX_SOUND_TRACKS, then that many tracks). Each track
+## (FUN_00c614b0): a u32 flag, and only when it is 1 an lp-string `.wav`, a
+## u32 key time and an lp-string event name. Every character file checked
+## keys its one track list `default`; the client takes the list by key and
+## falls back to the first (CRTModSound::FUN_00c5fa20), so the tracks of
+## every list are kept.
+static func _read_sound_mod(data: PackedByteArray, cursor: Array, sset: SoundSet) -> bool:
+	if not _skip(data, cursor, MOD_HEADER_BYTES):
+		return false
+	var lists = _take_i32(data, cursor)
+	if lists == null or lists < 0 or lists > 1000:
+		return false
+	if lists == 0:
+		return true
+	if not _skip(data, cursor, 44):
+		return false
+	for _l in range(lists):
+		if _take_string(data, cursor) == null:
+			return false
+		var n = _take_i32(data, cursor)
+		if n == null or n < 0 or n > MAX_SOUND_TRACKS:
+			return false
+		for _t in range(n):
+			var flag = _take_i32(data, cursor)
+			if flag == null:
+				return false
+			if flag != 1:
+				sset.empty_tracks += 1
+				continue
+			var wav = _take_string(data, cursor)
+			var key = _take_i32(data, cursor)
+			var event_name = _take_string(data, cursor)
+			if wav == null or key == null or event_name == null:
+				return false
+			var track := SoundTrack.new()
+			track.wav = wav
+			track.key_ms = key
+			track.name = event_name
+			sset.tracks.append(track)
+	return true
+
+## Steps over one non-sound mod's body, each READ from its class's reader:
+## - MTRL (ModDataMtrl, 0xc626c0): header, three words (the second a flag
+##   word), an i32 count of 20-byte entries, and when flag bit 4 is set an
+##   i32 count of 8-byte entries, then 36 bytes.
+## - TEXANI (0xc5c5a0): header, five words, 64 bytes.
+## - MULTITEX / MULTITEXREV (0xc613b0 / 0xc61430): header, a word, an
+##   lp-string, a word.
+## - PARTICLE (0xc643b0): header, an i32 count, per entry a word, two
+##   lp-strings, 12 bytes, a word, four bytes, and 12 more bytes when the
+##   fourth of those is not 0.
+## - ENVMAP (0xc5c4e0): header, four words.
+## - BUMPENV (0xc62cf0): the ENVMAP body, six floats, an i32 count, per
+##   entry a byte and, when it is 1, an lp-string.
+## - DYVERTEX / DYJOINT / DYLATTICE / PROGEQUIPPOW: the header alone.
+static func _skip_mod_body(data: PackedByteArray, cursor: Array, kind: int) -> bool:
+	match kind:
+		MOD_DYVERTEX, MOD_DYJOINT, MOD_DYLATTICE, MOD_PROGEQUIPPOW:
+			return _skip(data, cursor, MOD_HEADER_BYTES)
+		MOD_ENVMAP:
+			return _skip(data, cursor, MOD_HEADER_BYTES + 16)
+		MOD_TEXANI:
+			return _skip(data, cursor, MOD_HEADER_BYTES + 20 + 64)
+		MOD_MULTITEX, MOD_MULTITEXREV:
+			return _skip(data, cursor, MOD_HEADER_BYTES + 4) \
+				and _take_string(data, cursor) != null and _skip(data, cursor, 4)
+		MOD_MTRL:
+			if not _skip(data, cursor, MOD_HEADER_BYTES + 4):
+				return false
+			var flags = _take_i32(data, cursor)
+			if flags == null or not _skip(data, cursor, 4):
+				return false
+			var n = _take_i32(data, cursor)
+			if n == null or n < 0 or not _skip(data, cursor, n * 20):
+				return false
+			if flags & 4:
+				var m = _take_i32(data, cursor)
+				if m == null or m < 0 or not _skip(data, cursor, m * 8):
+					return false
+			return _skip(data, cursor, 36)
+		MOD_PARTICLE:
+			if not _skip(data, cursor, MOD_HEADER_BYTES):
+				return false
+			var n = _take_i32(data, cursor)
+			if n == null or n < 0 or n > 10000:
+				return false
+			for _i in range(n):
+				if not _skip(data, cursor, 4):
+					return false
+				if _take_string(data, cursor) == null or _take_string(data, cursor) == null:
+					return false
+				if not _skip(data, cursor, 12 + 4) or cursor[0] + 4 > data.size():
+					return false
+				var fourth: int = data[cursor[0] + 3]
+				cursor[0] += 4
+				if fourth != 0 and not _skip(data, cursor, 12):
+					return false
+			return true
+		MOD_BUMPENV:
+			if not _skip(data, cursor, MOD_HEADER_BYTES + 16 + 24):
+				return false
+			var n = _take_i32(data, cursor)
+			if n == null or n < 0 or n > 10000:
+				return false
+			for _i in range(n):
+				if cursor[0] + 1 > data.size():
+					return false
+				var has: int = data[cursor[0]]
+				cursor[0] += 1
+				if has == 1 and _take_string(data, cursor) == null:
+					return false
+			return true
+	return false
+
+## Cursor helpers for the sound section: each reads at cursor[0], advances
+## it, and returns null (or false) instead of reading past the end.
+static func _take_i32(data: PackedByteArray, cursor: Array):
+	var at: int = cursor[0]
+	if at < 0 or at + 4 > data.size():
+		return null
+	cursor[0] = at + 4
+	return data.decode_s32(at)
+
+static func _take_string(data: PackedByteArray, cursor: Array):
+	var n = _take_i32(data, cursor)
+	if n == null or n < 0 or n > MAX_PATH_LEN or cursor[0] + n > data.size():
+		return null
+	var at: int = cursor[0]
+	cursor[0] = at + n
+	return data.slice(at, at + n).get_string_from_ascii()
+
+static func _skip(data: PackedByteArray, cursor: Array, n: int) -> bool:
+	if n < 0 or cursor[0] + n > data.size():
+		return false
+	cursor[0] += n
+	return true
 
 ## Parses a TYPE_CHARACTER file through the header's section offset table.
 ##
