@@ -39,9 +39,11 @@ func _init() -> void:
 		["a solid one-sided piece", 0x0140, -1, 0, false],
 	]
 	for c in cases:
-		var rule: Dictionary = OL.layer_draw_rule(c[1], c[2])
-		_check(rule == {"alpha_ref": c[3], "two_sided": c[4]},
-			"%s: flags 0x%04x env %d -> ALPHAREF %d, two-sided %s (got %s)" % [c[0], c[1], c[2], c[3], c[4], rule])
+		# No MTRL mod and one pass: items carry neither (census, round 626).
+		var rule: Dictionary = OL.layer_draw_rule(c[1], c[2], {}, false)
+		_check(int(rule["alpha_ref"]) == c[3] and bool(rule["two_sided"]) == c[4] and String(rule["blend"]) == "",
+			"%s: flags 0x%04x env %d -> ALPHAREF %d, two-sided %s, no blend (got ref %s two-sided %s blend '%s')" % [
+				c[0], c[1], c[2], c[3], c[4], rule["alpha_ref"], rule["two_sided"], rule["blend"]])
 	# A two-sided layer with no test is the foliage shader at scissor 0 --
 	# authored normals on both faces -- not a cull-disabled standard material.
 	var layer := BmtReader.Layer.new()

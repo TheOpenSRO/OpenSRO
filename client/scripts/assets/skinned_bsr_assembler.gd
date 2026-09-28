@@ -157,12 +157,12 @@ static func assemble_from_archive(
 			var layer_idx := ObjectLoader._find_layer_by_name(material.layers, mesh.material_name)
 			if layer_idx == -1:
 				layer_idx = i if material.layers.size() == mesh_paths.size() else 0
-			# The draw rule's object input (ObjectLoader.layer_draw_rule,
-			# rounds 625, 626): the object's env-map mod, which overrides
-			# every material's alpha test.
+			# The draw rule's object inputs (ObjectLoader.layer_draw_rule,
+			# round 625 and its review): the env-map mod governing all its
+			# materials, the material's MTRL mod, and the two-pass flag.
 			godot_material = ObjectLoader.build_godot_material(
 				archive, parsed.material_path, material.layers[layer_idx], {},
-				parsed.env_map_flags
+				parsed.env_map_flags, parsed.mtrl_mod_for(layer_idx), parsed.two_pass()
 			)
 
 		# Real skinning when the mesh carries weights, rigid attachment when
@@ -303,12 +303,12 @@ static func attach_item_from_archive(
 			var layer_idx := ObjectLoader._find_layer_by_name(material.layers, mesh.material_name)
 			if layer_idx == -1:
 				layer_idx = i if material.layers.size() == mesh_paths.size() else 0
-			# The draw rule's object input (ObjectLoader.layer_draw_rule,
-			# rounds 625, 626): the object's env-map mod, which overrides
-			# every material's alpha test.
+			# The draw rule's object inputs (ObjectLoader.layer_draw_rule,
+			# round 625 and its review): the env-map mod governing all its
+			# materials, the material's MTRL mod, and the two-pass flag.
 			godot_material = ObjectLoader.build_godot_material(
 				archive, parsed.material_path, material.layers[layer_idx], {},
-				parsed.env_map_flags
+				parsed.env_map_flags, parsed.mtrl_mod_for(layer_idx), parsed.two_pass()
 			)
 		meshes.append([mesh, godot_material])
 	if meshes.is_empty():

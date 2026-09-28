@@ -46,7 +46,7 @@ output is stored in this repo — only the resulting facts about the container f
 | Emissive | 4× `float32` (RGBA) |
 | Power | `float32`, unconfirmed meaning (observed constant `0.0` in every real layer checked — plausibly specular power/shininess, never actually populated in these samples) |
 | Flags | `uint32` bitmask — **the layer's render-state word, READ in round 625** (see "The flag word, READ" below): `0x200` = alpha test (ALPHAREF 0x80, GREATEREQUAL), `0x1` = two-sided (cull none), `0x4` = specular on, `0x8` = lighting off. Values seen across the map's trees and the item, character, monster and NPC trees of Data.pk2: `0x0340`, `0x0341`, `0x0140`, `0x0141`, `0x0040`, `0x0041`, `0x0345`, `0x2345`, `0x2145`, `0x2341` |
-| Texture trailer | **READ (round 625)**, `CPrimMtrl::FUN_00bf91b0`, which reads the texture path and then, unconditionally: a `uint32` (into member +0x80; meaning not read) and three bytes (+0x84..+0x86). The third byte non-zero means the path is a full archive path used as is; zero means a name beside the `.bmt` (`CPrimMtrl::FUN_00bf9090`). **These seven bytes are the "gap" this document used to call unknown** (next row's note); the readers now step over exactly seven and scan only if that does not land on a name |
+| Texture trailer | **READ (round 625)**, `CPrimMtrl::FUN_00bf91b0`, which reads the texture path and then, unconditionally: a `uint32` (into the runtime material's **+0x90** — the layer struct's +0x80, the struct sitting at material +0x10; meaning not read) and three bytes (runtime +0x94..+0x96). The third byte non-zero means the path is a full archive path used as is; zero means a name beside the `.bmt` (`CPrimMtrl::FUN_00bf9090`). **These seven bytes are the "gap" this document used to call unknown** (next row's note); the readers now step over exactly seven and scan only if that does not land on a name |
 | Texture path | `uint32` length + ASCII bytes — **usually a bare filename** (e.g. `"avatar_m_zombie.ddj"`), resolved against whatever directory the `.bmt` itself lives in. **Correction (2026-08-23, live-tested against real Jangan palace materials)**: at least one real layer carries a real **full path** instead (`"prim\mtrl\bldg\china\dunhuang\buildings\naru_obj.ddj"`, pointing at a real directory completely unrelated to the `.bmt` referencing it) — a bare-filename texture path never contains a `\` or `/`, so that's the real, reliable way to tell the two cases apart before resolving. Some layers have no texture (`length` reads as a small value pointing at unrelated data, or the layer is otherwise a pure color/tint layer) — treat a texture-read failure on validation as "no texture" rather than a hard error only when it's clearly not a real string |
 
 Real layers were seen to share the exact same default color set (`ambient=diffuse=(0.588, 0.588,
@@ -133,50 +133,73 @@ The reader and the render path are both in `sro_client.exe`:
   `D3DTSS_ALPHAARG1` = `D3DTA_TEXTURE`, and `FUN_00c429f0` leaves stage 0 `ALPHAOP` =
   `SELECTARG1` after any object fade. So the alpha test compares the **texture's** alpha. Only the
   fade path, `FUN_00c428c0`, mixes in the texture factor.
-- No per-material blend: `D3DRS_ALPHABLENDENABLE` is set only by `FUN_00c428c0` for an object's
-  own fade colour (SRCALPHA / INVSRCALPHA with a texture factor), not from the flag word. A layer
-  without `0x200` is drawn opaque whatever its texture's alpha holds.
-- **Environment-map mods override the test — for every material of the object** (round 626,
-  READ). `CRTModEnvMap::vslot_004` (0x00c83690), unless the flags already carry `0x10000`, ORs
-  `0x60000000` into the flags — the `0x20000000` above — and sets its own test:
+- **The flag word never blends.** `D3DRS_ALPHABLENDENABLE` comes only from an **MTRL mod** (below)
+  or from `FUN_00c428c0` for an object's own fade colour (SRCALPHA / INVSRCALPHA with a texture
+  factor). A layer without `0x200` and without an MTRL mod is drawn opaque whatever its texture's
+  alpha holds. (Round 625 first wrote "no per-material blend exists"; that is true of the flag word
+  only. Corrected in its review follow-up.)
+- **Environment-map mods override the test, for the whole object.** `CRTModEnvMap::vslot_004`
+  (0x00c83690) ORs `0x60000000` into the flags (the `0x20000000` above) and sets its own test:
   `ALPHATESTENABLE` = (header word 5, +0x1c, `& 2`), and when on, `ALPHAFUNC` GREATEREQUAL with
-  `ALPHAREF` **1**. It does all of that **before** it compares its material index (header word 3,
-  +0x14) with the material being drawn; the index gates only binding the reflection texture. Round
-  625 read the index as the scope; it is not. `CRTModEnvMap::vslot_005` undoes the test (off, ref
-  `0x80`). `CRTModBumpEnv::vslot_004` touches no alpha state.
-- **How mods reach the flags (READ).** The renderer runs an object's mods in two places, both
-  before `FUN_00c42a60`:
-  - once per part: `CObjRendererVS::vslot_038` → `FUN_00c45110(part, ctx, &object flags)` →
-    `FUN_00c7b4e0`, which calls slot 4 of every mod whose header word 1 (+0x0c) is **1** with
-    material index −1;
-  - once per material: every draw path's `FUN_00c451e0(part, material index, ctx, &flags)` →
-    `FUN_00c7b540`, the same for header word 1 = **2**.
-  Undone after the draw by `FUN_00c45360` / `FUN_00c452b0` (slot 5).
-- **This is what spares armour** (round 626, READ + MEASURED). Worn items carry an ENVMAP mod in
-  their `ambient` mod set, with header word 1 = 1 and material index `0xFFFFFFFF`. Across the
-  item table's 1,421 item `.bsr` files: 602 have flag word 1 (no test: drawn solid), 465 flag word
-  3 (test at 1: only alpha-0 texels cut), 3 others, and 351 none. Of 2,890 bit-9 layers on item
-  models, 2,535 are under a mod, and only 355 are left to their own `0x80` test. Those 355 are the
-  1-bit DXT1 hats, Santa hats, mittens and flags the review found, and they stay cut. Joined with
-  the review's alpha census, 2 of 85 are graded: `light_02_ha` 91%, `clothes_11_set_a_sa_ef` 71%.
-  Examples: `sword_01`, 0x0340 + env 1 → solid; `spear_11`, 0x0141 + env 1 → solid, two-sided;
-  `heavy_11_la`, 0x0341 + env 3 → cut at alpha 0 only; `clothes_04_ha`'s card, 0x0341, no mod →
-  cut at 128.
-- **Stage-0 alpha is the texture's** (READ, world objects and characters alike): `FUN_00c42860`
-  sets `D3DTSS_ALPHAARG1` = `D3DTA_TEXTURE`, and the object path leaves `ALPHAOP` as the fade path
-  `FUN_00c428c0` / `FUN_00c429f0` sets it. The measured gloss alpha is what the test would see,
-  so the mod, not the texture, is what keeps armour whole.
-- **`CRTModProgEquipPow`** (`vslot_004` 0x00c848a0) ORs `0xe21f0000` (so `0x10000000`: no
-  material state), sets stage-0 `ALPHAOP` DISABLE, and tests at 1 or not at all by its record.
-  It is attached only by `CObjCharacter::FUN_00a5f3e0` → the compound's slot 50 (`CCompChar::
-  FUN_00c2b260` → `FUN_00c350a0`), and only for a non-zero per-slot byte with a matching row
-  (`FUN_00a93900` picks the highest threshold not above it). That is the enhanced-gear glow, not
-  modelled here (OPEN).
+  `ALPHAREF` **1**. **Both happen before it compares its header's material index (word 3, +0x14)**
+  (asm 0xc836a5, compare at 0xc83715); the compare gates only the reflection texture. It runs:
+  - for header word 1 = 2, on every material's draw (`FUN_00c451e0` → `FUN_00c7b540`);
+  - for word 1 = 1, once per object with index −1 and the renderer's own flag word
+    (`CObjRendererVS::vslot_038` → `FUN_00c45110` → `FUN_00c7b4e0`).
 
-`client/scripts/assets/object_loader.gd` (`layer_draw_rule`) implements this: `0x200` → the
-foliage shader's scissor at 128/255, `0x1` → two-sided, and the object's ENVMAP mod
-(`BsrReader.ParsedObject.env_map_flags`) → its own reference (1/255 or none) for every layer.
-Round 625's "items draw untested" rule was an inference and is gone.
+  Either way it governs every material of the object. The round-625 reading ("applied to the
+  material whose index equals word 3") was wrong. Its measured victims were the 0x341 layers of
+  `bagh_masin_lf` (`_03`/`_04`, 88 % and 68 % of their UV surface below 128), cut at 128 where
+  the client cuts at 1, and `fort_stone_ct05`.
+- **BUMPENV (0x40001) is not an env map here.** `CRTModBumpEnv::vslot_004` (0x00c83c30) sets
+  texture stages only, never the flags or the alpha test.
+- **MTRL mods (kind 0) set a material's states themselves.** READ, `CRTModMtrl::vslot_004`
+  (0x00c821f0), for the material its header names (word 1 = 2) or for every material (word 1 = 1,
+  material 0xFFFFFFFF, applied once per object as above). The body is read by
+  `ModDataMtrl::vslot_004` (0xc626c0), and its last 36 bytes are:
+
+  | Offset | Size | Meaning | What the client sets |
+  |---|---|---|---|
+  | +0x50 | u32 | alpha test | `ALPHATESTENABLE`, with `ALPHAREF` = byte +0x68 and `ALPHAFUNC` = byte +0x69 |
+  | +0x54 | u32 | blend | `ALPHABLENDENABLE`, with `SRCBLEND` = +0x60, `DESTBLEND` = +0x61, and stage 0 `COLOROP`/`ARG1`/`ARG2`/`ALPHAOP`/`ARG1`/`ARG2` = +0x62..+0x67 |
+  | +0x58 | u32 | z-write off | `ZWRITEENABLE` FALSE |
+  | +0x5c | u32 | texture factor | `TEXTUREFACTOR` = the mod's colour |
+  | +0x60 | 16 bytes | the bytes above, two unread, a u32 unread | |
+  | +0x70 | u32 | 1 = cull none | `CULLMODE` NONE |
+
+  It also ORs `0x10000000`, so the flag word's own states (`FUN_00c42a60`) are not set at all.
+  Header flag bit 2 (`& 4`) of the mod adds specular, and the mod's animated colour replaces the
+  layer's (both OPEN here). The water objects (`dun_cen_water01`..`06`,
+  `air_garden8_water01/02`, `air_garden40_water_ani01/02` and the `gngwc_` copies, the turtle
+  waterfalls) are all SRCALPHA/ONE or SRCALPHA/INVSRCALPHA MTRL mods over 0x340 layers whose
+  texture alpha is 38–100 % below 128. Under the flag word alone they vanished.
+- **Two passes (`.bsr` header 0x2C bit 1).** `CObjRendererVS::vslot_038` draws such an object with
+  `FUN_00bf5780`: every material with `CULLMODE` CW (back faces), then CCW (front faces), in place
+  of `FUN_00bf5700`'s single pass (`euro_esteuro_fountain01`, `alex_potion`).
+- **ProgEquipPow.** `CRTModProgEquipPow::vslot_004` ORs `0xe21f0000` (so `0x10000000` too: no
+  material state at all). It is attached only for enhanced gear (`FUN_00a5f3e0` → the compound's
+  slot 50 → `CCompChar::FUN_00c350a0`, gated on a per-slot byte).
+
+`client/scripts/assets/object_loader.gd` (`layer_draw_rule`) implements this:
+- `0x200` → the foliage shader's scissor at 128/255;
+- `0x1` → two-sided;
+- the object's env-map mod → its own reference (1/255 or none) on every material;
+- an MTRL mod → its own test, blend (mix, add, add with alpha 1, or multiply; any other D3DBLEND
+  pair is drawn as mix, OURS), z-write, cull and stage-0 ops, in a shader built per combination;
+- two-pass → back faces then front faces (a `next_pass`) when blended, and two-sided otherwise.
+
+Items take no rule of their own: their own ENVMAP mods spare their graded alpha (round 626, READ).
+
+**The item census behind that (round 626, MEASURED, `client/tools/census_item_envmap.gd`).**
+Across the item table's 1,421 item `.bsr` files: 602 have an ENVMAP flag word of 1 (no test:
+solid), 465 of 3 (test at 1: only alpha-0 texels cut), 3 others, and 351 none. Every one checked
+is in the `ambient` set with header word 1 = 1 and material `0xFFFFFFFF`: run once per part, as
+above. Of 2,890 bit-9 layers on item models, 2,535 are under a mod; the 355 left to their own
+test at `0x80` are the 1-bit DXT1 hats, Santa hats, mittens and flags. Examples: `sword_01`
+0x0340 + env 1 → solid; `spear_11` 0x0141 + env 1 → solid, two-sided; `heavy_11_la` 0x0341 + env
+3 → cut at alpha 0; `clothes_04_ha`'s card 0x0341, no mod → cut at 128. Stage-0 alpha is the
+texture's (`FUN_00c42860` sets `ALPHAARG1` = TEXTURE), so without the mod the gloss alpha would be
+cut.
 
 ## Bit 0: the alpha layer flag (superseded by the READ above)
 

@@ -47,6 +47,7 @@ bytes ahead of the bounding-box floats.
 | 0x24 | 4 | Offset of the **mod-data** section, which carries the per-animation **sound tracks** (and material, particle and dynamics mods): see "Sound tracks" below |
 | 0x28 | 4 | Offset of the bounding-box block; equals `name_end + 48` in every file checked |
 | 0x2C | 4 | **Flag word** (round 625, READ): `CResObject::Load` (`ResObject::FUN_00be41d0`) copies it to the object (`param_1[1]`); **bit 0 set means every mesh entry carries one more `uint32` after its path** (see "Mesh entries" below). 1 on the swaying trees, 0 in the files checked before |
+| 0x2C bit 1 | | **Two passes** (round 625 review, READ): `CObjRendererVS::vslot_038` then draws with `FUN_00bf5780` — every material back faces (CULLMODE CW), then front faces (CCW) |
 | 0x30 | 4 | Copied beside it (`param_1[2]`); meaning not read |
 | 0x34-0x3C | 12 | Reserved (observed 0) |
 | 0x40 | 2 | **Object type** — eight values across the archive; `1` is character (see below) |
@@ -239,15 +240,27 @@ names fell back that way, 580 of 779 pieces loaded; with the word read, 0 fall b
 load.** Every swaying tree in Jangan — `tre_maple01`/`02`/`03`, `tre_tree01`, `tre_smalltree01`,
 `tre_bank01`/`02`, `tre_frie01`, the willows, `tre_pine01`..`04` — drew its trunk alone.
 
-### Environment-map mods (round 625, READ)
+### Material-state mods (round 625 and its review, READ)
 
-The mod-data section below carries `ENVMAP` (0x40000) and `BUMPENV` (0x40001) mods whose
-`IModData` header (`FUN_00c5c2a0`: six words into +0x08..+0x1c, four bytes) names the material they
-apply to — **word 3, +0x14**, compared with the draw's material index by `CRTModEnvMap::vslot_004`
-— and a flag word, **word 5, +0x1c**: bit 1 turns on an alpha test of the mod's own at ALPHAREF 1,
-and the mod always switches the material's test off (BMT_FORMAT.md, "The flag word, READ").
-`BsrReader.ParsedObject.env_map_materials` holds material index → flag word. Among the China
-weapons and shields sampled only `blade_14` and `tblade_14` carry one in their own file.
+The mod-data section below carries `ENVMAP` (0x40000) and `MTRL` (0) mods that change how a
+material is drawn. Each has an `IModData` header (`FUN_00c5c2a0`: six words into +0x08..+0x1c,
+then four bytes):
+- **word 1, +0x0c** — the dispatch. `FUN_00c7b540` runs a mod with 2 on each material's draw, and
+  `FUN_00c7b4e0` runs one with 1 once per object with material index −1.
+- **word 3, +0x14** — the material index.
+- **word 5, +0x1c** — the flag word.
+
+`BsrReader.ParsedObject` keeps them:
+- `material_mods` holds every such mod.
+- `env_map_flags` holds the last live ENVMAP (ambient set, word 1 of 1 or 2). **It governs every
+  material of the object.** `CRTModEnvMap::vslot_004` switches the material's test off and sets
+  its own before its index compare.
+- `mtrl_mod_for(index)` gives the MTRL body's states for a material.
+- `two_pass()` gives header flag bit 1.
+
+`BUMPENV` (0x40001) sets no alpha state and is not counted. BMT_FORMAT.md, "The flag word, READ",
+has the states. **12 China weapon and shield files carry a live ENVMAP of their own**
+(`blade_14` and `tblade_14` among them; round 625 had said "only those two").
 
 ## Every type is read through the table
 

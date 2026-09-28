@@ -253,9 +253,20 @@ func _census_model(data: Pk2Reader, path: String, texture_cache: Dictionary, ver
 				out["ambient_alpha_low"] = int(out.get("ambient_alpha_low", 0)) + 1
 			if layer.unknown & 0x40 == 0:
 				out["flags_unrecognised"] = int(out.get("flags_unrecognised", 0)) + 1
-			if obj.env_map_materials.has(li):
-				line += " ENVMAP(flags=0x%x)" % obj.env_map_materials[li]
+			if obj.env_map_flags >= 0:
+				line += " ENVMAP(flags=0x%x)" % obj.env_map_flags
 				out["env_map"] = int(out.get("env_map", 0)) + 1
+			var mtrl := obj.mtrl_mod_for(li)
+			if not mtrl.is_empty():
+				var rule := ObjectLoader.layer_draw_rule(layer.unknown, obj.env_map_flags, mtrl, obj.two_pass())
+				line += " MTRL(test=%s ref=%d blend=%s zwrite=%s cull_none=%s)" % [mtrl["alpha_test"], mtrl["alpha_ref"],
+					rule["blend"] if rule["blend"] != "" else "none", rule["zwrite"], mtrl["cull_none"]]
+				out["mtrl_mod"] = int(out.get("mtrl_mod", 0)) + 1
+				if rule["blend"] != "":
+					out["mtrl_blend_" + String(rule["blend"])] = int(out.get("mtrl_blend_" + String(rule["blend"]), 0)) + 1
+			if obj.two_pass():
+				line += " TWO-PASS"
+				out["two_pass"] = int(out.get("two_pass", 0)) + 1
 			var piece = plans.get(mesh.mesh_name)
 			if piece != null and piece["material"] != null:
 				var plan: Dictionary = piece["material"]

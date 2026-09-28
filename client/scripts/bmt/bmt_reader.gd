@@ -31,7 +31,8 @@ class Layer:
 	## docs/protocol/BMT_FORMAT.md.
 	var unknown: int
 	## The seven bytes after the texture path, READ in round 625 from
-	## CPrimMtrl FUN_00bf91b0: a uint32 (meaning not read) and three bytes;
+	## CPrimMtrl FUN_00bf91b0: a uint32 (runtime material +0x90, meaning not
+	## read) and three bytes (+0x94..+0x96);
 	## the third says the path is a full archive path (non-zero) rather
 	## than a name beside the .bmt (zero, FUN_00bf9090).
 	var texture_word: int

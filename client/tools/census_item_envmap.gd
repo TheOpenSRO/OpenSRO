@@ -18,6 +18,9 @@ func _initialize() -> void:
 		if e != null:
 			ItemTableReader.parse(media.read_file(e), items)
 	var seen := {}
+	var mtrl_items := 0
+	var two_pass_items := 0
+	var env_shapes := {}
 	var hist := {}
 	var layers := {"bit9_env_none": 0, "bit9_env_test": 0, "bit9_env_notest": 0}
 	for id in items:
@@ -34,6 +37,17 @@ func _initialize() -> void:
 				continue
 			var f := o.env_map_flags
 			hist[f] = int(hist.get(f, 0)) + 1
+			# What else governs the draw: an MTRL mod or the two-pass flag.
+			for mm in o.material_mods:
+				if int(mm["kind"]) == BsrReader.MOD_MTRL:
+					mtrl_items += 1
+					break
+			if o.two_pass():
+				two_pass_items += 1
+			for mm in o.material_mods:
+				if int(mm["kind"]) == BsrReader.MOD_ENVMAP:
+					var key := "set%d_w1_%d_mat%s" % [int(mm["set_kind"]), int(mm["w1"]), "all" if int(mm["material"]) == 0xFFFFFFFF else "n"]
+					env_shapes[key] = int(env_shapes.get(key, 0)) + 1
 			var mat := ObjectLoader.load_material(data, o.material_path) if o.material_path != "" else null
 			if mat == null:
 				continue
@@ -46,4 +60,6 @@ func _initialize() -> void:
 					print("NOENV\t%s\t%s" % [o.material_path, l.layer_name])
 	print("ITEM BSRS by env flag word: ", hist)
 	print("BIT9 LAYERS: ", layers)
+	print("ENVMAP MOD SHAPES (set kind, header word 1, material): ", env_shapes)
+	print("ITEMS WITH AN MTRL MOD: %d, TWO-PASS ITEMS: %d" % [mtrl_items, two_pass_items])
 	quit(0)

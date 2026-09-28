@@ -574,7 +574,7 @@ const TWO_SIDED_EXPECTED := {"bin": true, "graded": false, "dxt1cut": false, "dx
 ## comment above layer_draw_rule): flag 0x200 is the alpha test at
 ## ALPHAREF 0x80 / GREATEREQUAL, flag 0x1 is cull none, and the two are
 ## independent; an ENVMAP mod replaces the test with its own (ref 1, or
-## none) -- for every material of the object (round 626, READ). The texture is the same DXT3
+## none). The texture is the same DXT3
 ## leaf with real transparency in every case -- only the flag word differs.
 ## NEGATIVE: before this round bit 0 was the "alpha" bit, so a 0x340 needle
 ## card (alpha test, one-sided) drew as a solid StandardMaterial3D.
@@ -607,8 +607,6 @@ func _test_round_625() -> void:
 		archive.close()
 		DirAccess.remove_absolute(path)
 		return
-	# The item column is gone (round 626): an item is drawn by the same rule
-	# as anything else; what spares armour is its ENVMAP mod (the env column).
 	var cases := [
 		# flags, env map, expected alpha ref, expected two-sided
 		[0x341, -1, 128, true],
@@ -622,7 +620,7 @@ func _test_round_625() -> void:
 	]
 	for c in cases:
 		var rule: Dictionary = OL.layer_draw_rule(c[0], c[1])
-		_check(rule == {"alpha_ref": c[2], "two_sided": c[3]},
+		_check(rule.get("alpha_ref") == c[2] and rule.get("two_sided") == c[3],
 			"r625: flags 0x%x env %d -> ref %d two-sided %s (got %s)" % [c[0], c[1], c[2], c[3], rule])
 		var mat: Material = OL.build_godot_material(archive, "", layer_for.call(c[0]), {}, c[1])
 		if c[2] > 0 or c[3]:
@@ -637,8 +635,46 @@ func _test_round_625() -> void:
 					and (mat as StandardMaterial3D).transparency == BaseMaterial3D.TRANSPARENCY_DISABLED,
 				"r625: flags 0x%x env %d is solid and one-sided whatever the texture's alpha (got %s)" % [
 					c[0], c[1], mat])
+	_test_round_625_mods(OL, archive, layer_for)
 	archive.close()
 	DirAccess.remove_absolute(path)
+
+## Round 625 review follow-up (READ, CRTModMtrl::vslot_004 and
+## CObjRendererVS::FUN_00bf5780): an MTRL mod replaces the flag word's
+## states with its own -- here SRCALPHA/ONE blending, z-write off, cull
+## none, no test, on a 0x341 layer whose flag word alone would cut it --
+## and a two-pass object draws back faces, then front faces.
+func _test_round_625_mods(OL, archive: Pk2Reader, layer_for: Callable) -> void:
+	var mtrl := {"alpha_test": false, "blend": true, "zwrite_off": true, "tfactor": false,
+		"src_blend": 5, "dest_blend": 2, "color_op": 5, "color_arg1": 0, "color_arg2": 2,
+		"alpha_op": 2, "alpha_arg1": 2, "alpha_arg2": 0, "alpha_ref": 128, "alpha_func": 7, "cull_none": true}
+	var rule: Dictionary = OL.layer_draw_rule(0x341, -1, mtrl, false)
+	_check(rule["alpha_ref"] == 0 and rule["blend"] == "add" and rule["zwrite"] == false and rule["two_sided"] == true
+			and rule["color_op"] == 5,
+		"r625 review: an MTRL mod's own states replace the flag word's (got %s)" % str(rule))
+	var mat: Material = OL.build_godot_material(archive, "", layer_for.call(0x341), {}, -1, mtrl, false)
+	var sm := mat as ShaderMaterial
+	_check(sm != null and sm.shader.code.contains("blend_add") and sm.shader.code.contains("depth_draw_never")
+			and sm.shader.code.contains("cull_disabled") and sm.next_pass == null
+			and int(sm.get_shader_parameter("color_op")) == 5,
+		"r625 review: it builds an additive, depth-write-off, two-sided shader with the mod's stage ops (got %s)" % mat)
+	var two: Material = OL.build_godot_material(archive, "", layer_for.call(0x340), {}, -1, mtrl, true)
+	var first := two as ShaderMaterial
+	_check(first != null and first.shader.code.contains("cull_front") and first.next_pass is ShaderMaterial
+			and (first.next_pass as ShaderMaterial).shader.code.contains("cull_back"),
+		"r625 review: a two-pass blended object draws back faces, then front faces (got %s)" % two)
+	var leaf_mod := mtrl.duplicate()
+	leaf_mod.merge({"zwrite_off": false, "alpha_test": true, "alpha_ref": 137, "src_blend": 5, "dest_blend": 6}, true)
+	var written: Material = OL.build_godot_material(archive, "", layer_for.call(0x341), {}, -1, leaf_mod, false)
+	var ws := written as ShaderMaterial
+	_check(ws != null and ws.shader.code.contains("blend_mix") and ws.shader.code.contains("depth_draw_always")
+			and is_equal_approx(float(ws.get_shader_parameter("alpha_scissor")), 137.0 / 255.0),
+		"r625 review: a tree's leaf mod (test 137, SRCALPHA/INVSRCALPHA, z-write on) blends, writes depth and cuts at 137 (got %s)" % written)
+	var solid_two: Dictionary = OL.layer_draw_rule(0x340, -1, {}, true)
+	_check(solid_two["two_sided"] == true and solid_two["alpha_ref"] == 128,
+		"r625 review: an unblended two-pass layer is two-sided and keeps its test (got %s)" % str(solid_two))
+	var env_all: Dictionary = OL.layer_draw_rule(0x341, 0x1, {}, false)
+	_check(env_all["alpha_ref"] == 0, "r625 review: an env-map mod with no test of its own drops the 0x200 test (got %s)" % str(env_all))
 
 func _test_round_566() -> void:
 	var OL = load("res://scripts/assets/object_loader.gd")
