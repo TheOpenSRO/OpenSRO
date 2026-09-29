@@ -1090,14 +1090,27 @@ is the berserk key, activation lights the flames/face/glow and drains one orb pe
 button toggles the stat panel (live from the stats packet, balances by the client's own formula),
 the race emblem follows characterdata's Country, the "+" opens the character window, and the HP/MP
 bars use `pmi_hp.ddj` / `pmi_mp.ddj`. Left:
-- [x] **The portrait** (round 635): the player's own dressed body, posed with ANI_POSE, from the
-      READ camera (the head + 1.0, a 0.2 rad yaw, 6.5 away, 30 degree vertical FOV; the avatar
-      at 0.1 rad) and light (0.7 diffuse / 0.3 ambient, frontal, through the object shader's
-      MODULATE2X), rendered once per dress into 128x128 and shown through `pmi_face.ddj`'s
-      alpha (`player_portrait.gd`). Still OPEN: whether a vertex-shader device lights it with
-      the zone's light instead (the portrait sets only the device light; `vslot_025` feeds the
-      shader); the game camera's near/far; the party and academy slots' portraits (same
-      constants, not drawn); the device-reset re-render (Godot keeps the buffer).
+- [x] **The portrait** (round 635 and its review follow-up): the player's own dressed body, posed
+      with ANI_POSE, from the READ camera (the head + 1.0, a 0.2 rad yaw, 6.5 away, 30 degree
+      vertical FOV; the avatar at 0.1 rad), lit by the ZONE's light as retail's vertex-shader
+      renderer does. The light comes from above and the +x side (normalize(1,1,0)), with diffuse =
+      channel 2 × 0.6 and ambient = channel 3 × the object's own 0.6, through MODULATE2X. It
+      renders once per dress and per zone load into 128x128, and is shown through
+      `pmi_face.ddj`'s alpha (`player_portrait.gd`). The face gets the ambient only: in Jangan
+      `0.81 × texel`, in the darkest environment (58) `0.33 × texel`. Still OPEN:
+      - the world flags +0x2e54 (diffuse 0.8), +0x26bb (halved) and +0x2eb4 (constant targets);
+      - the renderer's +0x120 bit (raw object colour);
+      - whether anything changes the avatar's object colour from 0.6;
+      - the time of day (World3D's fixed reference time);
+      - the game camera's near/far;
+      - the party and academy slots' portraits (same constants, not drawn);
+      - the device-reset re-render (Godot keeps the buffer).
+- [ ] **The world's directional light has a READ direction** (round 635's review): World3D.gd's
+      comment at `_apply_real_environment_lighting` says its angle "has no confirmed real
+      source". It is DAT_01109510 = normalize(−1, −1, 0) in the file's (D3D) coordinates:
+      `Map::FUN_00a2f370`, 0x00a300c2..0x00a301c4, handed to the renderer by
+      `Map::FUN_00a19160` / `vslot_025`. The diffuse is channel 2 clamped × 0.6, not channel 2 as
+      it is. NOT changed yet: it changes the whole world's look, and the user sees it first.
 - [x] **Hit rate / Parry ratio** -- round 629's review: the stats packet's fifth and sixth tails,
       the rates combat already uses, in both windows. Since the 629-632 integration review each
       item's OWN value: the weapon's HitRateMin..Max by its variance group 3, the body armour's

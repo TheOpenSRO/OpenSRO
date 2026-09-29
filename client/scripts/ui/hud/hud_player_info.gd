@@ -834,8 +834,15 @@ shader_type canvas_item;
 // CIFStaticWithPictureClip::vslot_013: colour from the render, alpha from
 // the mask (pmi_face.ddj).
 uniform sampler2D mask_tex : filter_linear;
+// The item's modulate (the block's fades and hides), which the picture takes
+// like every other control. Read in vertex(): in fragment() COLOR already
+// holds the texture times it.
+varying vec4 modulate;
+void vertex() {
+	modulate = COLOR;
+}
 void fragment() {
-	COLOR = vec4(texture(TEXTURE, UV).rgb, texture(mask_tex, UV).a);
+	COLOR = vec4(texture(TEXTURE, UV).rgb, texture(mask_tex, UV).a) * modulate;
 }
 """
 
@@ -884,6 +891,17 @@ func set_portrait(skeleton: Skeleton3D, pose: BanReader.ParsedAnimation) -> void
 	if _portrait_view != null:
 		_portrait_view.texture = _portrait.get_texture()
 		_portrait_view.visible = skeleton != null
+
+## The zone's light for the portrait: environment channel 2 (DiffuseColor)
+## and channel 3 (ObjectAmbientColor) as World3D samples them. Retail's
+## avatar is lit by the world's light (PlayerPortrait's header); a change
+## re-renders a dressed portrait, as retail's world entry and teleport do.
+func set_portrait_zone_light(diffuse_channel: Color, ambient_channel: Color) -> void:
+	if _portrait == null:
+		_portrait = PlayerPortrait.new()
+		_portrait.name = "Portrait"
+		add_child(_portrait)
+	_portrait.set_zone_light(diffuse_channel, ambient_channel)
 
 func portrait() -> PlayerPortrait:
 	return _portrait

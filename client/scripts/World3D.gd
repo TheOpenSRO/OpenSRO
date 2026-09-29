@@ -1603,6 +1603,9 @@ func _try_initialize_pk2_ui() -> void:
 		if open:
 			_request_world_stats())
 	_apply_player_race()
+	if _portrait_zone_light.size() == 2:
+		_hud_player_info.set_portrait_zone_light(_portrait_zone_light[0], _portrait_zone_light[1])
+		print("World3D: portrait zone light at block creation: diffuse channel %s ambient channel %s" % _portrait_zone_light)
 	# Round 635: a body dressed before the block existed gets its portrait now
 	# (retail's block is created dirty: +0x38c = 1 in its constructor).
 	if _player_skeleton != null and is_instance_valid(_player_skeleton):
@@ -2171,6 +2174,9 @@ var _env_terrain_ambient := Color.BLACK
 ## (MapmTerrainBuilder.lightmap_term, round 610).
 var _env_terrain_shadow := Color.BLACK
 var _env_light_ready := false
+## The zone light the portrait is lit by: [channel 2, channel 3] of the
+## current zone's environment record, or empty before one is applied.
+var _portrait_zone_light: Array = []
 
 var _tile_index_load_attempted := false
 
@@ -3517,6 +3523,16 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	# where it flattened shading instead of directing it.
 	directional_light.light_color = diffuse_color
 	world_environment.environment.ambient_light_color = ambient_color
+	# Round 635's review follow-up: the player block's portrait is lit by this
+	# zone light (retail's avatar draws with the world's vslot_025 light), and
+	# re-renders when it changes -- a zone load is world entry or a teleport,
+	# when retail's FUN_00786f30 -> FUN_006abc50 dirties it.
+	_portrait_zone_light = [diffuse_color, ambient_color]
+	if _hud_player_info != null:
+		_hud_player_info.set_portrait_zone_light(diffuse_color, ambient_color)
+		var pp := _hud_player_info.portrait()
+		print("World3D: portrait zone light (EnvironmentID %d): diffuse channel %s ambient channel %s, renders %d" % [
+			env_id, diffuse_color, ambient_color, pp.renders_requested if pp != null else -1])
 
 	# Kept so the terrain mesh built moments later can bake the real client's
 	# own per-vertex terrain lighting -- see MapmTerrainBuilder's

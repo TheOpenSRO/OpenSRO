@@ -7,9 +7,13 @@ extends SceneTree
 ## What is checked is what FUN_007b7740 and CIFStaticWithPictureClip do
 ## (READ; player_portrait.gd has the addresses): a 128x128 buffer, ANI_POSE,
 ## a camera 6.5 from the head + 1.0 at a 0.2 rad yaw with a 30 degree field of
-## view, the avatar turned 0.1 rad, the frontal 0.7 / 0.3 light through the
-## object shader's MODULATE2X, one render per dress, and the render shown in
-## GDR_PMI_PICTURE through the mask's alpha.
+## view, the avatar turned 0.1 rad, the ZONE's light (round 635's review
+## follow-up: to-light (0.707, 0.707, 0), diffuse = channel 2 clamped x 0.6,
+## ambient = channel 3 x the object's own 0.6) through the object shader's
+## MODULATE2X, one render per dress and per zone-light change, every body
+## material mapped (blended and MTRL mod passes included), and the render
+## shown in GDR_PMI_PICTURE through the mask's alpha under the block's
+## modulate.
 ##
 ## The script is loaded by path and driven untyped so that the same file runs
 ## against a tree without the portrait and reports FAIL lines there rather
@@ -84,16 +88,27 @@ func _skeleton() -> Skeleton3D:
 	sm.albedo_color = Color(0.6, 0.5, 0.4, 1.0)
 	item.material_override = sm
 	sk.add_child(item)
-	# A blended mod pass: left as it is.
+	# A blended layer (StandardMaterial3D, alpha blend): mapped, blending.
 	var glow := MeshInstance3D.new()
 	glow.name = "glow"
 	glow.mesh = box
-	var glow_mat := ShaderMaterial.new()
-	var gsh := Shader.new()
-	gsh.code = "shader_type spatial;\nrender_mode cull_back, blend_add, depth_draw_never;\nvoid fragment() { ALBEDO = vec3(1.0); }\n"
-	glow_mat.shader = gsh
+	var glow_mat := StandardMaterial3D.new()
+	glow_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	glow_mat.albedo_color = Color(1, 1, 1, 0.5)
 	glow.material_override = glow_mat
 	sk.add_child(glow)
+	# An MTRL mod pass as ObjectLoader builds it (additive, its own ops).
+	var mod := MeshInstance3D.new()
+	mod.name = "mod"
+	mod.mesh = box
+	var mod_mat := ShaderMaterial.new()
+	mod_mat.shader = ObjectLoader._mod_shader("back", "add", false)
+	mod_mat.set_shader_parameter("albedo", Color(0.588, 0.588, 0.588, 1.0))
+	mod_mat.set_shader_parameter("alpha_func", 5)
+	mod_mat.set_shader_parameter("alpha_scissor", 0.25)
+	mod_mat.set_shader_parameter("color_op", 4)
+	mod.material_override = mod_mat
+	sk.add_child(mod)
 	return sk
 
 ## A one-key clip that lifts the head to (0, 20, 0) relative to its parent.
@@ -136,9 +151,11 @@ func _constants(script) -> void:
 	_check(_near(float(c.get("CAMERA_DISTANCE", 0.0)), 6.5), "camera distance 6.5 (0x00da95f4)")
 	_check(_near(float(c.get("CAMERA_FOV_DEG", 0.0)), 30.0), "vertical field of view 30 degrees (0x00d82ef0)")
 	_check(_near(float(c.get("MODEL_YAW", 0.0)), 0.1), "avatar yaw 0.1 (0x00e1b7fc)")
-	_check(_near(float(c.get("LIGHT_DIFFUSE", 0.0)), 0.7) and _near(float(c.get("LIGHT_AMBIENT", 0.0)), 0.3),
-		"light diffuse 0.7 / ambient 0.3 (0x00d82f04 / 0x00d82f00)")
-	_check(c.get("LIGHT_DIRECTION", Vector3.ZERO) == Vector3(0, 0, 1), "light direction (0, 0, 1)")
+	var dir: Vector3 = c.get("WORLD_LIGHT_DIRECTION", Vector3.ZERO)
+	_check(_near3(dir, Vector3(-1, -1, 0).normalized()), "the zone light's direction normalize(-1,-1,0) (DAT_01109510): %s" % str(dir))
+	_check(_near(float(c.get("DIFFUSE_SCALE", 0.0)), 0.6), "diffuse = channel 2 x 0.6 (0x00d86fc0)")
+	_check(_near(float(c.get("OBJECT_COLOR", 0.0)), 0.6), "the object's own colour 0.6 (CCompoundObj constructor)")
+	_check(not c.has("LIGHT_DIRECTION") and not c.has("LIGHT_DIFFUSE"), "the portrait's own device light (dead state) is not used")
 	_check(c.get("CLEAR_COLOR", Color(1, 1, 1, 1)) == Color(0, 0, 0, 1), "clear to opaque black (0xff000000)")
 	_check(_near(float(c.get("MODULATE_SCALE", 0.0)), 2.0), "the object draw's MODULATE2X")
 
@@ -159,17 +176,26 @@ func _camera_math(script) -> void:
 	var x := Basis(Vector3.UP, ry) * Vector3(1, 0, 0)
 	_check(_near3(x, Vector3(cos(0.1), 0.0, sin(0.1))), "avatar yaw maps (1,0,0) to (cos .1, 0, sin .1): %s" % str(x))
 	_check(script.to_godot(Vector3(1, 2, 3)) == Vector3(1, 2, -3), "file space mirrored z -> -z")
-	_check(script.to_light_godot() == Vector3(0, 0, 1), "to-light = -direction, mirrored: (0,0,1)")
+	_check(_near3(script.to_light_godot(), Vector3(0.70710678, 0.70710678, 0.0)), "to-light = -direction (vslot_025), mirrored: (0.707, 0.707, 0)")
+	# The face (normal -z in the file's coordinates) is square to the camera
+	# and edge-on to that light: n.l = 0, ambient only.
+	_check(_near(Vector3(0, 0, -1).dot(-Vector3(-1, -1, 0).normalized()), 0.0), "the face front gets no diffuse")
 
 func _shading(script) -> void:
-	# Face square to the light: 2 x 0.5 x 0.588 x (0.3 + 0.7).
-	_check(_near(script.shade(0.5, 0.588, 1.0), 0.588), "lit texel 0.5 -> 0.588")
-	# Facing away: ambient only, 2 x 0.5 x 0.588 x 0.3.
-	_check(_near(script.shade(0.5, 0.588, -1.0), 0.1764), "unlit texel 0.5 -> 0.1764")
-	_check(_near(script.shade(1.0, 0.588, 1.0), 1.0), "a white texel clamps at 1.0")
-	# Brighter than the texture itself where it faces the light (the fix for
-	# the dark circle): 1.176 x texel.
-	_check(script.shade(0.4, 0.588, 1.0) > 0.4, "the lit face is brighter than its texture")
+	if not script.get_script_constant_map().has("OBJECT_COLOR"):
+		_check(false, "shade() takes the zone light and the object colour")
+		return
+	# Jangan-like channels: diffuse 0.7 -> 0.42, ambient 0.58.
+	var z: Dictionary = script.zone_light_colors(Color(0.7, 0.6, 1.3), Color(0.58, 0.58, 0.58))
+	_check(_near3(z["diffuse"], Vector3(0.42, 0.36, 0.6)), "diffuse = clamp(channel 2) x 0.6: %s" % str(z["diffuse"]))
+	_check(_near3(z["ambient"], Vector3(0.58, 0.58, 0.58)), "ambient = channel 3")
+	# Face front: 2 x 0.5 x (0.6 x 0.58).
+	_check(_near(script.shade(0.5, 0.588, 0.6, 0.58, 0.42, 0.0), 0.348), "face texel 0.5 -> 0.348 (ambient only)")
+	# Square to the light: + 0.588 x 0.42.
+	_check(_near(script.shade(0.5, 0.588, 0.6, 0.58, 0.42, 1.0), 0.59496), "lit texel 0.5 -> 0.595")
+	_check(_near(script.shade(1.0, 0.588, 0.6, 1.0, 1.0, 1.0), 1.0), "a white texel clamps at 1.0")
+	# The old frontal 0.7 / 0.3 device light would have given 0.588 on the face.
+	_check(not _near(script.shade(0.5, 0.588, 0.6, 0.58, 0.42, 0.0), 0.588), "not the dead device light's 0.588")
 
 func _render_setup(script) -> void:
 	var p = script.new()
@@ -208,15 +234,35 @@ func _render_setup(script) -> void:
 	var im := (sk.get_node("item") as MeshInstance3D).material_override as ShaderMaterial
 	_check(im != null and (im.get_shader_parameter("material_color") as Color).is_equal_approx(Color(0.6, 0.5, 0.4, 1)),
 		"a StandardMaterial3D item keeps its colour")
-	var gm := (sk.get_node("glow") as MeshInstance3D).material_override
-	_check(gm is ShaderMaterial and (gm as ShaderMaterial).shader.code.contains("blend_add"), "a blended mod pass is left as it is")
-	_check(int(p.unmapped_materials) == 1, "one material left unmapped (the blend)")
+	var gm := (sk.get_node("glow") as MeshInstance3D).material_override as ShaderMaterial
+	_check(gm != null and gm.shader.code.contains("blend_mix") and gm.shader.code.contains("ALPHA = t.a"), "a blended layer is mapped and still blends")
+	var mm := (sk.get_node("mod") as MeshInstance3D).material_override as ShaderMaterial
+	_check(mm != null and mm.shader.code.contains("portrait_od0") and mm.shader.code.contains("unshaded") and mm.shader.code.contains("blend_add"),
+		"an MTRL mod keeps its shader, blend and ops, lit by the portrait's vertex colour")
+	if mm != null:
+		_check(int(mm.get_shader_parameter("alpha_func")) == 5 and _near(float(mm.get_shader_parameter("alpha_scissor")), 0.25) and int(mm.get_shader_parameter("color_op")) == 4,
+			"the mod's alpha func, ref and stage ops are carried over")
+	_check(int(p.unmapped_materials) == 0, "no material left unmapped (%d)" % int(p.unmapped_materials))
+	if bm != null and p.has_method("set_zone_light"):
+		var before := int(p.renders_requested)
+		p.set_zone_light(Color(0.7, 0.7, 0.7), Color(0.58, 0.58, 0.58))
+		_check(int(p.renders_requested) == before + 1, "a new zone light re-renders the dressed portrait")
+		_check(_near3(bm.get_shader_parameter("light_ambient"), Vector3(0.58, 0.58, 0.58)) and _near3(bm.get_shader_parameter("light_diffuse"), Vector3(0.42, 0.42, 0.42)),
+			"the materials take the zone light")
+		_check(_near3(bm.get_shader_parameter("to_light"), Vector3(0.70710678, 0.70710678, 0.0)) and _near3(bm.get_shader_parameter("object_color"), Vector3(0.6, 0.6, 0.6)),
+			"light from above and +x; object colour 0.6")
+		p.set_zone_light(Color(0.7, 0.7, 0.7), Color(0.58, 0.58, 0.58))
+		_check(int(p.renders_requested) == before + 1, "the same light does not render again")
+		if mm != null:
+			_check(_near3(mm.get_shader_parameter("portrait_light_ambient"), Vector3(0.58, 0.58, 0.58)), "the mod pass takes the zone light too")
+	else:
+		_check(false, "PlayerPortrait.set_zone_light exists")
 	# A second dress replaces the first body and renders once more.
 	var sk2 := _skeleton()
 	p.set_character(sk2, null)
 	await process_frame
 	_check(not is_instance_valid(sk) or sk.is_queued_for_deletion() or sk.get_parent() == null, "the old body is dropped")
-	_check(int(p.renders_requested) == 2, "a second dress renders again")
+	_check(int(p.renders_requested) >= 2, "a second dress renders again")
 	p.queue_free()
 
 ## The block shows the render in GDR_PMI_PICTURE through the mask.
@@ -244,6 +290,9 @@ func _hud_integration() -> void:
 	var mat := view.material as ShaderMaterial
 	_check(mat != null and mat.shader.code.contains("texture(mask_tex, UV).a"), "alpha comes from the mask (stage 1 SELECTARG1(TEXTURE))")
 	_check(mat != null and mat.shader.code.contains("texture(TEXTURE, UV).rgb"), "colour comes from the render (stage 0)")
+	_check(mat != null and mat.shader.code.contains("modulate = COLOR;") and mat.shader.code.contains("* modulate;"),
+		"the picture follows the block's modulate (read in vertex(), not the texture-multiplied fragment COLOR)")
+	_check(pmi.has_method("set_portrait_zone_light"), "HudPlayerInfo.set_portrait_zone_light exists")
 	pmi.call("set_portrait", _skeleton(), _pose())
 	await process_frame
 	var p = pmi.call("portrait")

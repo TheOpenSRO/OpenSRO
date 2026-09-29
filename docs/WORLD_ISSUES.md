@@ -7094,6 +7094,118 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-thirty-fifth round, review follow-up: the portrait is lit by the zone's light, as the client lights it, and every body layer draws
+
+The review of acd31b6 confirmed the camera, the yaw, the mask, the dirty triggers, the re-render on
+equip, the berserk overlay, the relog and the cost. It found the light wrong. It also read the
+camera's rotation axes: the dispatch table at 0x00ec7840 resolves them to RotationX / Y / Z, and
+`FUN_00bae580` forms `M0 = RZ·RX`, then `R = M0·RY`. They are READ now, not INFERRED. Labels:
+READ, MEASURED, INFERRED, OURS, OPEN. Addresses are in `docs/protocol/player_mini_info.md`, "The
+portrait".
+
+**1. The portrait's own light never reaches the avatar (READ).**
+- The render's D3DLIGHT9 (frontal, 0.7 / 0.3) goes to the DEVICE's SetLight (0x007b7a2b).
+- `CGame::FUN_00bc13d0` always builds CObjRendererVS, and every object draw uses a vertex shader
+  (`CObjRendererVS::FUN_00bf05e0`).
+- The shader's light constants come only from `vslot_025` (0x00beecc0). Only the world draw
+  (`Map::FUN_00a19160`) and the dungeon draw (`Map::FUN_00a255c0`) call it.
+- So retail's avatar is lit by the zone's light as it stands when the portrait renders.
+
+**The zone light (READ):**
+
+| part | value | where |
+|---|---|---|
+| Direction | normalize(−1, −1, 0) (DAT_01109510; to-light (0.707, 0.707, 0)) | `Map::FUN_00a2f370`, 0x00a300c2 |
+| Diffuse | world+0x6847 clamped to [0, 1], × 0.6 | 0x00d86fc0, applied at 0x00a1d1b6.. |
+| Ambient | world+0x6853 | 0x00a19262 |
+
+- I traced the two world fields to their environment channels in `Map::FUN_00a1baf0`:
+  - +0x6847 comes from record+0xf0, **channel 2** (DiffuseColor), 0x00a1bbf3;
+  - +0x6853 comes from record+0x124, **channel 3** (ObjectAmbientColor), 0x00a1bc29.
+  - Both ease toward their targets by frame time.
+- OPEN: the 0.8 factor when world+0x2e54 is set, the halving when world+0x26bb is set, and the
+  constant targets when world+0x2eb4 == 1. All three are taken as clear.
+
+**2. c10 multiplies the object's own colour (READ), not the material's.**
+- The colour is `[[renderer+0xc4]+0x14..0x1c]` (0x00bf59ce..0x00bf5a04).
+- CCompoundObj slot 21 (`CCompChar::FUN_00c255e0`) sets it.
+- The constructor `FUN_00c32e50` stores **0.6** there (0x00d86fc0, at 0x00c330ed).
+- c11 is the material colour (+0x10, MEASURED 0.588) × the diffuse (`FUN_00bf2360`, 0x00bf2504).
+- The face is square to the camera, so it has n·l = 0 and gets `2 × 0.6 × channel 3 × texel`.
+  The diffuse falls on the top of the head and the camera-right side.
+
+**3. The plausible fixes.**
+- Blended layers are now mapped. A StandardMaterial3D with alpha blending gets a blending variant
+  of the portrait shader.
+- MTRL mod passes are now mapped. The portrait keeps the mod's own shader (stage ops, alpha func
+  and ref, blend) and injects its vertex colour as the DIFFUSE, unshaded.
+- `unmapped_materials` is 0 on all four bodies.
+- The mask shader takes the block's modulate.
+  - The first try multiplied by fragment `COLOR`. That COLOR already holds the texture, so it
+    darkened the picture.
+  - MEASURED: the first r2 block renders came out visibly darker than their own buffers.
+  - The modulate is now read in `vertex()`.
+
+**4. The world's own directional light is not changed here.** Its angle is READ now, but changing
+it changes the whole world's look. `docs/TODO.md` records it as a world-lighting item for the
+user to see first.
+
+**Shipped.**
+- `PlayerPortrait.set_zone_light(channel 2, channel 3)` takes the zone light and re-renders a
+  dressed portrait when the light changes.
+- `World3D._apply_real_environment_lighting` pushes the zone's two channels at the same
+  reference time the world uses (OURS: retail's day clock is not modelled). That function runs
+  on a zone load, i.e. world entry or a teleport — when retail's `FUN_00786f30` → `FUN_006abc50`
+  dirties the portrait.
+- The block's creation pushes a light applied before it existed.
+- MEASURED, in-world (Jangan): `portrait zone light at block creation: diffuse channel (0.7255,
+  0.7214, 0.7165) ambient channel (0.6784, 0.6745, 0.6627)`, then `portrait dressed (...)`.
+- The tool calibration now uses the zone light: expected 160, got 160.
+
+**How bright it is now — the honest answer** (`portrait_shots/r2_*`, four bodies each in Jangan,
+environment 15, and in environment 58, the darkest ambient in `environment.ifo`):
+- The authentic result is **darker than acd31b6's**.
+  - Jangan face: `0.81 × texel`, against `1.18 × texel` before.
+  - MEASURED at the centre texel: CH man 0.627 against 0.773, and EU woman 0.690 against 0.894.
+  - Buffer means are about the same (0.152 against 0.141). The top of the head and the right
+    side now catch the diffuse.
+- The comparison against retail is rough: a different zone (retail's is Hotan), a hat, and a
+  scaled screenshot. It is the luma of the circle's lit pixels (> 25):
+
+| | mean | median | 90th percentile |
+|---|---|---|---|
+| retail `retail_stats.png` | 74.6 | 77.9 | 114.5 |
+| ours, acd31b6 (CH woman) | 96.7 | 77.6 | 180.1 |
+| ours, now, Jangan | 91.0 | 77.7 | 158.2 |
+| ours, now, env 58 | 52.0 | 49.1 | 75.4 |
+
+- So in a town the face still reads clearly and is no darker than retail's circle.
+- In a dark zone it reads dim: a purple-tinted face at about a third of its texture.
+
+**Tests.** `player_portrait_test.gd` run against acd31b6 (base worktree, test file copied in):
+
+    FAIL the zone light's direction normalize(-1,-1,0) (DAT_01109510): (0, 0, 0)
+    FAIL diffuse = channel 2 x 0.6 (0x00d86fc0)
+    FAIL the object's own colour 0.6 (CCompoundObj constructor)
+    FAIL the portrait's own device light (dead state) is not used
+    FAIL to-light = -direction (vslot_025), mirrored: (0.707, 0.707, 0)
+    FAIL shade() takes the zone light and the object colour
+    FAIL a blended layer is mapped and still blends
+    FAIL an MTRL mod keeps its shader, blend and ops, lit by the portrait's vertex colour
+    FAIL no material left unmapped (2)
+    FAIL PlayerPortrait.set_zone_light exists
+    FAIL the picture follows the block's modulate (read in vertex(), not the texture-multiplied fragment COLOR)
+    FAIL HudPlayerInfo.set_portrait_zone_light exists
+    player_portrait_test: 12 failure(s)
+
+Results on feat/portrait:
+- `player_portrait_test.gd`: 0 failures;
+- `remote_godot.sh check`: ALL LOAD;
+- `remote_godot.sh tests`: 154 suites, 0 failing.
+
+Cost, MEASURED: re-rendering every frame would cost 0.14–0.17 ms CPU and 0.03 ms GPU for the
+viewport; it renders once per dress and per zone load.
+
 ## Six-hundred-and-thirty-fifth round: the player block's circle shows the character's own face, bright, the way the client renders it
 
 The user asked for the black circle at the top left to show the character, bright and visible.
@@ -7138,6 +7250,10 @@ INFERRED, OURS, OPEN. Addresses are in `docs/protocol/player_mini_info.md`, "The
 - INFERRED: the avatar object belongs to that family.
 
 **3. The light (READ, 0x007b796d..0x007b7a64).**
+
+> **Corrected by the review follow-up above.** This light is dead fixed-function state. The avatar
+> is lit by the zone's light through `vslot_025`, and c10 uses the object's colour (0.6).
+
 - A D3DLIGHT9 of type 3, set as light 0 and enabled:
 
 | part | value | address |

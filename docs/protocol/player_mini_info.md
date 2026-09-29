@@ -187,16 +187,16 @@ render starts from a copy of the game camera (copy constructor `FUN_006d8000`) a
 - The aspect is the viewport's (INFERRED 1.0: `SetRenderTarget` resets the viewport to the
   128x128 surface before `FUN_00bae810(1)` reads it).
 - Near and far (+0x48/+0x4c) are the game camera's (OPEN).
-- INFERRED: that 0x00ec7798 / 779c / 77a0 are D3DX RotationX / Y / Z. They are D3DX's
-  declaration order, and the mode presets (RotX ±pi/2 up/down, RotY pi/2, 3pi/2, pi) only make
-  sense that way.
+- READ (round 635's review): the dispatch table at 0x00ec7840 resolves 0x00ec7798 / 779c / 77a0
+  to D3DX RotationX / Y / Z. `FUN_00bae580` forms M0 = RZ · RX, then R = M0 · RY.
 
 **The avatar's yaw (READ).** `FUN_00a5a8c0(f)` calls `vt+0x30(f)` on the object. For the
 CCompoundObj family (`CCompChar::FUN_00c26e70`, vtable slot 12) that setter builds the rotation
 `[[cos,0,sin],[0,1,0],[-sin,0,cos]]` (cos 0x00b44a10, sin 0x00b44b40). INFERRED: the avatar
 object is of that family.
 
-**The light (READ, 0x007b796d..0x007b7a64).** The D3DLIGHT9 at `esp+0x2c`:
+**The portrait's own light is dead state (READ, round 635's review follow-up).** The render
+fills a D3DLIGHT9 at `esp+0x2c`:
 
 | part | value | address |
 |---|---|---|
@@ -207,28 +207,59 @@ object is of that family.
 | Direction | (0, 0, 1) | |
 | Range | 1000.0 | 0x00da95ec |
 
-The render then:
-- sets `SetLight(0)` and `LightEnable(0, 1)`;
-- sets render states 0x24/0x25 (fog start/end) to 1000.0, and the renderer's fog slot
-  (`CObjRendererVS::vslot_014`, vertex constant c16) to (1000, 1000, 0);
-- sets 0x89 LIGHTING = 1, 0x1b ALPHABLENDENABLE = 0 and 7 ZENABLE = 1;
-- sets stage 0 to MODULATE(TEXTURE, CURRENT) and disables stage 1.
+and passes it to the DEVICE's `SetLight(0)` (0x007b7a2b) and `LightEnable(0, 1)`. It also sets
+fog start = end = 1000 (render states 0x24/0x25 and the renderer's fog slot, `vslot_014`, vertex
+constant c16), LIGHTING = 1, ALPHABLENDENABLE = 0, ZENABLE = 1, and stage 0 MODULATE(TEXTURE,
+CURRENT).
 
-**How the object renderer uses it.**
-- The skinned-object vertex shader (`vertexshader2.c`) lights with
-  `oD0 = c10 + max(0, N.c9) * c11`.
-- `CObjRendererVS::vslot_025` (0x00beecc0) is the renderer's light setter. It stores
-  Direction x -1.0 (0x00e1b8e8) at renderer+0x130 for c9, and Diffuse and Ambient in globals
-  (0x01112e18, 0x01112e28).
-- `vslot_038` multiplies the material colour by those for c10 (0x00bf59e1). It uploads c9 in
-  object space and sets stage 0 to D3DTOP_MODULATE2X (0x00bf5e1e).
-- MEASURED: player body materials are ambient = diffuse = 0.588, so a lit face is
-  `2 x 0.588 x texel`.
-- INFERRED / OPEN: the portrait calls the device's SetLight, not `vslot_025`. The world's
-  environment code calls both (`Map::FUN_00a19160`). On a vertex-shader device, retail may
-  therefore light the portrait with the zone's current light. srrevamp uses the portrait's own
-  READ light.
-- The specular term is not drawn: the shader writes no oD1 from it.
+No object draw reads that light:
+- `CGame::FUN_00bc13d0` always builds CObjRendererVS;
+- every object draw goes through a vertex shader (`CObjRendererVS::FUN_00bf05e0`);
+- the shader's light constants come only from `CObjRendererVS::vslot_025` (0x00beecc0), which
+  only the world draw calls (`Map::FUN_00a19160`; the dungeon's `Map::FUN_00a255c0`).
+
+**The light that does draw the avatar: the zone's (READ).**
+
+| part | value | where |
+|---|---|---|
+| Direction | DAT_01109510..18 = normalize(−1, −1, 0) | `Map::FUN_00a2f370`, 0x00a300c2..0x00a301c4 |
+| Diffuse | world+0x6847.. clamped to [0, 1] (0x00a1cb96..), × 0.6 (0x00d86fc0) | 0x00a1d1b6..0x00a1d20b |
+| Ambient | world+0x6853.. | put in the light at 0x00a19262 |
+
+- `Map::FUN_00a1baf0` evaluates the zone's environment record: +0xf0 (**channel 2**,
+  DiffuseColor, 0x00a1bbf3) into the target for +0x6847, and +0x124 (**channel 3**,
+  ObjectAmbientColor, 0x00a1bc29) into the target for +0x6853. The world fields ease toward the
+  targets by the frame time (0x00a1c33d..).
+- The diffuse factor is 0.8 (0x00de4c64) instead of 0.6 when world+0x2e54 is set, and it is
+  halved when world+0x26bb is set. Both flags are OPEN.
+- When world+0x2eb4 is 1, the targets are constants (0x00a1be9f..). OPEN what that mode is.
+- `vslot_025` stores Direction × −1.0 (0x00e1b8e8) as c9, so the direction TO the light is
+  (0.707, 0.707, 0): above the model and toward its +x side.
+
+**The object shader** (`vertexshader2.c`) computes `oD0 = c10 + max(0, N·c9) × c11`, saturated:
+- c9 is that to-light direction in object space (`vslot_038`).
+- c10 is the OBJECT's colour × the ambient (`vslot_038`, 0x00bf59ce..0x00bf5a04:
+  `[[renderer+0xc4]+0x14..0x1c]`; used raw when renderer+0x120 bit 0 is set, OPEN).
+  - CCompoundObj slot 21 (`CCompChar::FUN_00c255e0`) sets that colour.
+  - Its constructor `FUN_00c32e50` stores 0.6 (0x00d86fc0, at 0x00c330ed).
+  - OPEN whether anything changes it for the equipment avatar.
+- c11 is the material colour (+0x10.., MEASURED 0.588 on every player body layer) × the diffuse
+  (`FUN_00bf2360`, 0x00bf2504).
+- The draw then sets stage 0 to MODULATE2X (0x00bf5e1e).
+
+The portrait's face, square to the camera, has n·l = 0 against this light, so it gets the ambient
+term only: `2 × 0.6 × channel 3 × texel`. The top of the head and the camera-right side also get
+the diffuse term.
+
+The portrait takes the world's light as it stands when the render runs. Retail dirties it on
+world entry and on a teleport (`FUN_00786f30` → `FUN_006abc50` → `FUN_007b4c00`).
+
+MEASURED channel values at the reference time 0.5:
+
+| environment | channel 2 | channel 3 | the face |
+|---|---|---|---|
+| 15 (Jangan) | (0.726, 0.721, 0.717) | (0.678, 0.675, 0.663) | `0.814 × texel` |
+| 58 (the darkest in `environment.ifo`) | — | (0.278, 0.239, 0.333) | `0.33 × texel` |
 
 **The picture control (READ).**
 - Create (0x007b5600) gives GDR_PMI_PICTURE (a `CIFStaticWithPictureClip`) the texture
@@ -260,8 +291,13 @@ code creates a BufRender (INFERRED from the xref list of `BufRender::FUN_009edae
 **srrevamp** (round 635), in `client/scripts/ui/hud/player_portrait.gd`:
 - it copies the player's dressed body and hangs it under a z -> -z node;
 - it poses ANI_POSE at the first key (INFERRED: within one frame of retail's step);
-- it applies the READ camera, yaw and light;
-- its own shader does the lighting and MODULATE2X in gamma space. MEASURED: the SubViewport
-  neither decodes nor encodes sRGB (a 0.5-grey calibration quad came out at the expected 150);
+- it applies the READ camera and yaw;
+- its own shader does the zone light (World3D's environment channels 2 and 3, at its reference
+  time) and MODULATE2X in gamma space. MEASURED: the SubViewport neither decodes nor encodes sRGB
+  (a 0.5-grey calibration quad came out at the expected value, 150 and then 160 with the zone
+  light);
+- blended layers and MTRL mod passes are mapped too; a mod keeps its own stage ops, alpha func and
+  blend, with the portrait's vertex colour as its DIFFUSE;
+- it re-renders when the zone light changes (a zone load: world entry or a teleport);
 - it renders with `UPDATE_ONCE` on every dress;
 - the camera's near and far are OURS (0.5 / 1000).

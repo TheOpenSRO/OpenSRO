@@ -10,6 +10,9 @@ extends SceneTree
 ##     --out=/var/tmp/portrait/shots \
 ##     --body="CHAR_CH_MAN_FIGHTER:3643,3644,3645,3632" \
 ##     --body="CHAR_CH_WOMAN_FIGHTER:3652,3653,3654,3632"
+##   --env=<EnvironmentID> lights the portrait with that environment.ifo
+##   record's zone light (channels 2 and 3 at World3D's reference time 0.5,
+##   from SRREVAMP_MAP_PK2_PATH); --list-env prints every record's two.
 ##   (items by id or by exact code name; --list=<substring> prints matching
 ##   item code names and quits; --cost=<code> times the frame with the
 ##   portrait idle and re-rendering every frame)
@@ -24,6 +27,8 @@ var _media: Pk2Reader
 var _bodies := {}
 var _items := {}          # id -> Item
 var _by_code := {}        # code_name -> id
+var _env: EnvironmentReader.ParsedFile = null
+var _zone: Array = []     # [channel 2, channel 3] of --env
 
 func _args(flag: String) -> Array:
 	var out := []
@@ -49,6 +54,25 @@ func _init() -> void:
 			for item in ItemTableReader.parse(_media.read_file(entry)).values():
 				_items[item.id] = item
 				_by_code[item.code_name] = item.id
+	var map_pk2 := Pk2Reader.open(OS.get_environment("SRREVAMP_MAP_PK2_PATH"))
+	if map_pk2 != null:
+		var env_bytes := AssetSource.read_bytes("environment.ifo", map_pk2)
+		if not env_bytes.is_empty():
+			_env = EnvironmentReader.parse(env_bytes)
+	if not _args("--list-env").is_empty() and _env != null:
+		for rec in _env.records:
+			var d := EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_DIFFUSE_COLOR, 0.5)
+			var a := EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_OBJECT_AMBIENT_COLOR, 0.5)
+			print("ENV %d %s diffuse %s ambient %s" % [rec.key, rec.name1, str(d), str(a)])
+		quit(0)
+		return
+	var envs := _args("--env")
+	if not envs.is_empty() and _env != null:
+		for rec in _env.records:
+			if rec.key == int(envs[0]):
+				_zone = [EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_DIFFUSE_COLOR, 0.5),
+					EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_OBJECT_AMBIENT_COLOR, 0.5)]
+				print("ZONE %d %s: diffuse channel %s ambient channel %s" % [rec.key, rec.name1, str(_zone[0]), str(_zone[1])])
 	var lists := _args("--list")
 	if not lists.is_empty():
 		for code in _by_code.keys():
@@ -138,19 +162,22 @@ func _shoot(spec: String, out_dir: String, builder: UiBuilder) -> void:
 	pmi.set_hp(214, 214)
 	pmi.set_mp(214, 214)
 	pmi.set_race(1 if code.begins_with("CHAR_EU") else 0)
+	if _zone.size() == 2:
+		pmi.set_portrait_zone_light(_zone[0], _zone[1])
 	pmi.set_portrait(assembled.skeleton, pose)
 	var p := pmi.portrait()
 	RenderingServer.viewport_set_measure_render_time(p.get_viewport_rid(), true)
 	for i in range(4):
 		await process_frame
 	var raw := p.get_texture().get_image()
-	raw.save_png("%s/%s_raw128.png" % [out_dir, code])
+	var tag: String = code + ("_env%s" % _args("--env")[0] if not _args("--env").is_empty() else "")
+	raw.save_png("%s/%s_raw128.png" % [out_dir, tag])
 	var cpu := RenderingServer.viewport_get_measured_render_time_cpu(p.get_viewport_rid())
 	var gpu := RenderingServer.viewport_get_measured_render_time_gpu(p.get_viewport_rid())
 	var shot := root.get_texture().get_image()
 	var block := shot.get_region(Rect2i(0, 0, 230, 90))
 	block.resize(690, 270, Image.INTERPOLATE_NEAREST)
-	block.save_png("%s/%s_block.png" % [out_dir, code])
+	block.save_png("%s/%s_block.png" % [out_dir, tag])
 	# The centre texel of the buffer, as a number (the face under the camera).
 	var c := raw.get_pixel(64, 64)
 	var lum := 0.0
@@ -204,7 +231,11 @@ func _calibrate(out_dir: String) -> void:
 		await process_frame
 	var raw := p.get_texture().get_image()
 	var c := raw.get_pixel(64, 64)
-	var want := PlayerPortrait.shade(128.0 / 255.0, 0.588, cos(0.1))
+	# The quad's normal (0,0,-1) after the avatar's yaw, against the zone
+	# light's to-light (0.707, 0.707, 0), under the fallback channels (1.0).
+	var n := Vector3(sin(0.1), 0.0, -cos(0.1))
+	var ndl := n.dot(-PlayerPortrait.WORLD_LIGHT_DIRECTION)
+	var want := PlayerPortrait.shade(128.0 / 255.0, 0.588, PlayerPortrait.OBJECT_COLOR, 1.0, PlayerPortrait.DIFFUSE_SCALE, ndl)
 	print("CALIBRATE: centre %.4f %.4f %.4f (%d), expected %.4f (%d)" % [c.r, c.g, c.b, int(round(c.r * 255.0)), want, int(round(want * 255.0))])
 	raw.save_png("%s/calibrate.png" % out_dir)
 	p.queue_free()
