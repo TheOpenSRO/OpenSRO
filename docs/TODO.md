@@ -1239,8 +1239,12 @@ What round 639 read and built is in `docs/protocol/system_message.md`.
 - **The filter board** (GDR_SYETEM_MESSAGE_OPTBOARD, CIFChatOptionBoard, `ifchatoptionboard.txt`):
   its five checkboxes, their art (set in code, not read) and `Setting\chop.dat`. The filter button
   does nothing yet; the filters stay at the no-file defaults (FIGHT off, the rest on).
-- **The frame's hover-only option** (`0x4f9d00`+7, `0x77b385..0x77b3db`): which option it is and its
-  default. The frame always shows here.
+- **The system window's auto-hide option** (round 641 read it: `settings+7`, the Game options'
+  "System UI Autohide", `Setting\SROptionSet.dat` tag 0x7d8). srrevamp keeps auto-hide always on at
+  the user's request, with no option. OPEN: retail's default with no file (the block's initializer
+  was not found), and the Game options checkbox itself, if the user later wants the toggle.
+- **The chat's whisper list** (ID 51) and its button (ID 14, `0x7a99d0`) are not built. The
+  auto-hide's rect test already counts the list's hidden rect above the window (READ, round 641).
 - **Guide lines and unique notices.** The window shows retail's type-6 "[Guide]" tips
   (`0x789e53`) and the uniques' appearance and death lines (`0x874ea0`) when they arrive; srrevamp's
   server sends neither.

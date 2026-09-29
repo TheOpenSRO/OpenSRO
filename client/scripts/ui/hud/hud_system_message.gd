@@ -111,6 +111,35 @@ const SIZE_BTN := "GDR_SYETEM_MESSAGE_SIZE_BTN"
 const FILTER_BTN := "GDR_SYETEM_MESSAGE_CHATOPTION_BTN"
 const OPTBOARD := "GDR_SYETEM_MESSAGE_OPTBOARD"
 
+# --- Auto-hide (round 641; docs/protocol/system_message.md "Auto-hide") ----
+#
+# READ. CGInterface's update (CGInterface::vslot_012, 0x77b385..0x77b3db)
+# runs every frame and fetches child 0x44 (this window). With the game
+# option at settings+7 set (0x4f9d00 -> CGame 0xeece80 + 0x543), the frame
+# is shown while 0x7b85a0 holds -- the mouse inside the window's rect
+# (0xb8f3d0, both edges inclusive), or the filter board shown (+0x61,
+# 0xb8f530) and the mouse inside its rect -- and hidden otherwise; with the
+# option clear, it is shown whenever it is not. Decided every frame: no
+# delay and no fade. The frame (0x7b84e0(show), state kept at +0x36c) is
+# the three bands (IDs 5, 6, 7), the filter button (+0x378), the size
+# button (+0x37c), the scroll bar (+0x388) unless mode 1, and the board
+# (+0x380) only when it is shown; the text box (+0x384) is never touched, so
+# the lines stay, with their shadow and no background. A mode change
+# (0x7b87a0, 0x7b8885) shows the scroll bar only while the frame is shown.
+#
+# Retail's toggle is that option: the Game options' checkbox
+# UIIT_MSG_SYSTEM_WND_HIDEMSG "System UI Autohide" (0x600140 lists it,
+# entry +0x197c <-> settings+7 in 0x5fddd0 / 0x5f6a30; CIFOption_Game
+# 0x6efe60 / 0x6f0210 read and write it through checkbox 4), saved in
+# Setting\SROptionSet.dat as tag 0x7d8 (0x502680's handler 0x502cb2 reads
+# one byte to +7; 0x5f7ce0 saves). Its default with no file is OPEN; the
+# box's file (a private server's client) holds 1 (MEASURED).
+#
+# OURS (the user's decision, round 641): auto-hide is always on here and
+# there is no option to clear it.
+const AUTO_HIDE := true
+const FRAME_NODES := [BG_UP, BG_MID, BG_DOWN, FILTER_BTN, SIZE_BTN]
+
 var _builder: UiBuilder
 var _root: Control
 var _list: HudChat.ChatList
@@ -124,6 +153,8 @@ var filters := FILTER_DEFAULTS.duplicate()
 ## Every line added and every line dropped, for the log and the tests:
 ## {type, text, shown}.
 var history: Array = []
+## Whether the frame is shown now (+0x36c; see "Auto-hide" above).
+var frame_shown := true
 
 func _init(builder: UiBuilder = null) -> void:
 	_builder = builder
@@ -174,7 +205,64 @@ func setup() -> void:
 	var vscroll := _root.get_node_or_null(VSCROLL) as Control
 	if vscroll != null:
 		vscroll.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var watch := HudChat.FrameWatch.new()
+	watch.name = "FrameWatch"
+	watch.target = self
+	add_child(watch)
 	_apply_mode(mode)
+
+# --- Auto-hide (0x77b385, 0x7b85a0, 0x7b84e0) --------------------------------
+
+## The update's frame test, every frame: the real mouse against the window.
+func _process(_delta: float) -> void:
+	update_frame(get_global_mouse_position())
+
+## OURS: a mouse event also runs the test at once, at its own position
+## (HudChat.FrameWatch, added in setup), as the chat's does.
+
+## One pass of CGInterface's update for this window, with the mouse at
+## `point` (global).
+func update_frame(point: Vector2) -> void:
+	var want := frame_wanted(point) if AUTO_HIDE else true
+	if want != frame_shown:
+		set_frame_shown(want)
+
+## 0x7b85a0: the mouse inside the window's rect, or inside the filter board
+## while the board is shown.
+func frame_wanted(point: Vector2) -> bool:
+	if HudChat._inside(get_global_rect(), point):
+		return true
+	var board := _root.get_node_or_null(OPTBOARD) as Control if _root != null else null
+	return board != null and board.visible and HudChat._inside(board.get_global_rect(), point)
+
+## The window keeps a click on its inclusive edges, as 0xb8f3d0 does
+## (HudChat._has_point).
+func _has_point(point: Vector2) -> bool:
+	return HudChat._inside(Rect2(Vector2.ZERO, size), point)
+
+## 0x7b84e0(show).
+func set_frame_shown(show: bool) -> void:
+	if show != frame_shown and is_inside_tree() and HudChat.frame_log():
+		print("SYSTEM FRAME %s rect=%s" % ["shown" if show else "hidden", get_global_rect()])
+	frame_shown = show
+	if _root == null:
+		return
+	for n in FRAME_NODES:
+		var c := _root.get_node_or_null(n) as CanvasItem
+		if c != null:
+			c.visible = show
+	if mode != MODE_MIN:
+		_set_scroll_visible(show)
+	var board := _root.get_node_or_null(OPTBOARD) as CanvasItem
+	if board != null and board.visible:
+		board.visible = show
+
+func _set_scroll_visible(v: bool) -> void:
+	var vscroll := _root.get_node_or_null(VSCROLL) as CanvasItem if _root != null else null
+	if vscroll != null:
+		vscroll.visible = v
+	if _scroll != null:
+		_scroll.visible = v
 
 func _install_list() -> void:
 	var box := _root.get_node_or_null(TEXTBOX) as Control
@@ -289,12 +377,13 @@ func _apply_mode(m: int) -> void:
 			_list.size.y = float(g["list_h"])
 	var shown := bool(g["scroll_shown"])
 	var vscroll := _root.get_node_or_null(VSCROLL) as Control if _root != null else null
-	if vscroll != null:
-		vscroll.visible = shown
-		if shown:
-			_place(VSCROLL, -1, float(g["scroll_len"]))
+	if vscroll != null and shown:
+		_place(VSCROLL, -1, float(g["scroll_len"]))
+	# 0x7b8885: the scroll bar's visibility is set only while the frame is
+	# shown -- hidden in mode 1, shown otherwise.
+	if frame_shown:
+		_set_scroll_visible(shown)
 	if _scroll != null:
-		_scroll.visible = shown
 		_scroll.length = maxf(0.0, float(g["scroll_len"]))
 		_scroll.size = Vector2(SCROLL_BUTTON.x, SCROLL_BUTTON.y * 3 + _scroll.length)
 		_scroll.queue_redraw()

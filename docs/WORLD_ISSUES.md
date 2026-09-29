@@ -7094,6 +7094,124 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-forty-first round: the chat and the system log hide their frames when the mouse is away, and the chat's lock button keeps the chat's frame shown
+
+The user asked for retail's auto-hide on the two bottom windows. Their screenshot shows both
+windows hidden: the lines float at the bottom left and the bottom right, with no frame, tabs or
+background. The chat's second top-left icon, whose tooltip is "Lock Chat window/Auto hide",
+switches it. The system log is to keep auto-hide always on. Everything below was read from
+`sro_client.exe` on the box. The full reading, with addresses, is in `docs/protocol/chat.md`
+("Auto-hide") and `docs/protocol/system_message.md` ("Auto-hide").
+
+**READ:**
+- **One test, every frame.** CGInterface's update (`vslot_012`, `0x77b140`) asks each window
+  whether its frame is wanted:
+  - the chat (`0x7a9d10`): the mouse inside its rect, or its input line holding the keyboard
+    (`0x634ea0`), or the mouse inside the whisper list's rect, even hidden;
+  - the system window (`0x7b85a0`): the mouse inside its rect, or inside the filter board's rect
+    while the board is shown.
+
+  The rect test `0xb8f3d0` is inclusive at both edges. There is no delay and no fade: the update
+  calls each control's show (vslot 0x5c) directly, and CIFWnd's show (`0x652b70`) starts no timer.
+- **What hides.**
+  - Chat (`0x7a9bd0`): the bands, the tabs and their lamps (`0x7a9a80`), the scroll bar, the two
+    top-left buttons, the size button, the chat-mode button and the input box.
+  - System window (`0x7b84e0`): the bands, the filter button, the size button, the scroll bar
+    (unless mode 1) and an open filter board.
+  - Neither touches its lists, so the lines stay, with their shadow and no background.
+- **The lock.** It is `GDR_BUTTON_CHATTABHIDE` (ID 12, `chat_hide_button.ddj` at 30,0), with the
+  tooltip UIIT_STT_CHATING_VIEW_AUTO_OFF (`0x7ac168`).
+  - Its handler `0x7a99b0` only flips the byte +0x48c; shown = locked or wanted.
+  - The constructor sets the byte to 0 (`0x7ad3e4`), so auto-hide starts on.
+  - Only the constructor, the toggle and the update's getter touch it: it is not saved, and the
+    button's art does not change with it.
+- **The system window's switch** is the game option `settings+7`, "System UI Autohide"
+  (UIIT_MSG_SYSTEM_WND_HIDEMSG). It is saved in `Setting\SROptionSet.dat` as tag 0x7d8
+  (`0x502cb2`). That settles round 639's OPEN "hover-only option".
+
+**MEASURED:** the box's `SROptionSet.dat` holds 1 for tag 0x7d8 (on).
+
+**INFERRED:** that `0xb8f3d0`'s insets (+0x50..+0x5c) are the ClientRect. They are 0 for both
+windows.
+
+**OURS:**
+- The system window's auto-hide is always on, at the user's request (`HudSystemMessage.AUTO_HIDE`).
+- Godot will not focus a hidden control. So Enter and R's reply show the chat's frame before
+  focusing the line: the same frame, one update early.
+- The lock's state lives only in the window (`HudChat.locked`), as in retail.
+- A mouse event also runs the frame test at once, at its own position (`HudChat.FrameWatch`, a
+  child node, because the chat's `_input` name is its line edit). A click that arrives with the move
+  into the window then finds the line shown. Retail tests only once a frame; with a real mouse the
+  move comes first either way.
+  - This is also what lets pushed clicks reach the line in the headless suites
+    (`hud_keys_after_chat_test`, `hud_stack_test`): a headless viewport reports its centre as the
+    mouse position.
+  - Without it, those two suites failed ("clicking the chat's input line focuses it").
+
+**Built.**
+- **`HudChat`.** `update_frame` runs from `_process` on the real mouse, with `frame_wanted`,
+  `set_frame_shown`, `toggle_lock` and the three buttons' READ tooltips. Mode and frame visibility
+  are now applied in one place (`_apply_visibility`). Enter and R's reply work while the frame is
+  hidden: `can_open` tests the window, not the line.
+- **`HudSystemMessage`.** The same `update_frame`, with the board rule and the mode-1 scroll rule.
+- **The log.** Each window prints `CHAT FRAME` / `SYSTEM FRAME` with its rect when its frame
+  changes, and `CHAT LOCK` when the lock is pressed.
+
+**Real input on the box** (Login -> CharacterSelect, xdotool, 1280x720; the dev server in memory;
+`/var/tmp/autohide/e2e`; screenshots in the session's `autohide_shots/`). The client's own log, in
+order:
+
+    CHAT FRAME hidden rect=[P: (2, 477), S: (399, 175)]       (the mouse on the world)
+    SYSTEM FRAME hidden rect=[P: (923, 513), S: (350, 117)]
+    CHAT FRAME shown ...                                       (hover the chat)
+    CHAT FRAME hidden ...
+    SYSTEM FRAME shown ... / SYSTEM FRAME hidden               (hover the log, then away)
+    CHAT FRAME shown ...                                       (Enter, the mouse away)
+    CHAT SEND: type 3 index 1 to '': hello_autohide            (typed and sent; still shown)
+    CHAT FRAME hidden ...                                      (Escape)
+    CHAT FRAME shown ... / CHAT LOCK on (auto-hide off)        (hover, click the lock, away: stays)
+    CHAT LOCK off (auto-hide on) / CHAT FRAME hidden ...       (click again, away: hides)
+    CHAT FRAME shown ... / CHAT FRAME hidden ...               (a click on the line straight from the
+                                                                world focuses it; Escape, away)
+
+The screenshots show what `autohide.png` shows: the chat line bottom-left and the log's lines
+bottom-right, bare with their shadow. The hover over the lock shows its tooltip, "Lock Chat
+window/Auto hide". (Pictures for a human; the log lines above are the measurement.)
+
+**Tests.** `client/scripts/ui/hud/hud_autohide_test.gd` has 40 checks on synthetic layouts: what
+hides and what stays; the inclusive rect; the whisper-list rect; Enter and Escape through
+`push_input`; R's reply; the lock and its tooltip; mode 0; the system window's board and mode-1
+rules; a pushed mouse move. The negative, against dev 8658370 with the new test copied in:
+
+    FAIL the lock's tooltip is UIIT_STT_CHATING_VIEW_AUTO_OFF's (got )
+    FAIL HudChat has update_frame()
+    FAIL HudChat has frame_wanted()
+    FAIL HudChat has set_frame_shown()
+    FAIL HudChat has toggle_lock()
+    FAIL HudSystemMessage has update_frame()
+    FAIL HudSystemMessage has frame_wanted()
+    FAIL HudSystemMessage has set_frame_shown()
+    FAILURES: 8
+
+**OPEN:**
+- the retail default of "System UI Autohide" with no settings file;
+- the Game options checkbox, which srrevamp does not offer, by the user's choice;
+- the whisper list (ID 51) and its button, not built.
+
+**Review follow-up.**
+- **The edge pixel.** `0xb8f3d0` is inclusive, but Godot's hit test is half-open, so a click on
+  x = end.x reached the world. Both windows now override `_has_point` with the inclusive test.
+- **Log noise.** `CHAT FRAME` / `SYSTEM FRAME` print only with `SRREVAMP_QA_FRAME_LOG` set.
+  `CHAT LOCK` stays.
+- **The update's cadence.** Retail calls `0x7a9bd0(1)` on every frame while the frame is wanted and
+  unlocked (`0x77b407`). Its show returns early when nothing changes (`0x652b70`), so calling only
+  on a change is equivalent. Noted in chat.md.
+- The test now has 42 checks.
+
+**Checks.**
+- Client: `check` loads 402 scripts, and `tests` runs 162 suites with 0 failing.
+- Go: build, vet and `go test -count=1 -p 1 ./...` pass (60 packages ok; no server change).
+
 ## Rounds 636-640 integration review (feat/walls): a death ends the wall on the default respawn path, a re-bound hotbar slot takes its level's code, and the wall's refusal tests 'tel2' and 'tel3'
 
 The final review of feat/walls (dev 5a82339 + rounds 636-640 and their follow-ups, at b38b358) read
