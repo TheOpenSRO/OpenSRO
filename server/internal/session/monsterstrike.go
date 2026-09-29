@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/OpenSRO/srrevamp/server/internal/buff"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
@@ -66,6 +68,10 @@ type MonsterAttacked struct {
 	TargetDied        bool
 	TargetHP          int32
 	DeathExpLost      int64
+	// Wall is the blow's meeting with the target's protection wall (round
+	// 640, walls.go): a strict suffix after the 33 bytes, present only when
+	// the blow met a wall.
+	Wall WallInfo
 }
 
 func (m *MonsterAttacked) Encode() []byte {
@@ -86,7 +92,12 @@ func (m *MonsterAttacked) Encode() []byte {
 	out[20] = flags
 	binary.LittleEndian.PutUint32(out[21:25], uint32(m.TargetHP))
 	binary.LittleEndian.PutUint64(out[25:33], uint64(m.DeathExpLost))
-	return out
+	if m.Wall == (WallInfo{}) {
+		// No wall: the 33 bytes as they were (round 640's suffix is only
+		// there when the blow met one).
+		return out
+	}
+	return append(out, m.Wall.encode()...)
 }
 
 // DecodeMonsterAttacked refuses a payload shorter than 33 bytes and ignores
@@ -106,7 +117,14 @@ func DecodeMonsterAttacked(data []byte) (*MonsterAttacked, error) {
 		TargetDied:        flags&StrikeTargetDied != 0,
 		TargetHP:          int32(binary.LittleEndian.Uint32(data[21:25])),
 		DeathExpLost:      int64(binary.LittleEndian.Uint64(data[25:33])),
+		Wall:              wallFrom(data[33:]),
 	}, nil
+}
+
+// wallFrom decodes the wall suffix, zero when a payload predates it.
+func wallFrom(b []byte) WallInfo {
+	w, _ := decodeWallInfo(b)
+	return w
 }
 
 // monsterStrikePush is cmd/server's -monster-strike-push, OFF by default. An
@@ -156,6 +174,9 @@ type monsterStrikeOutcome struct {
 	// state is not 1 (`cmp al,0x1` at 0x4a87e8) being the nearest thing to it
 	// (round 555 corrected "nothing landed"). The other fields are zero.
 	dropped bool
+	// wall is the blow's meeting with the target's protection wall (round
+	// 640): when Absorbed, the wall took it and the target nothing.
+	wall WallInfo
 }
 
 // killLocks holds one mutex per character a blow has ever left at 0 HP: the
@@ -221,7 +242,7 @@ func (o monsterStrikeOutcome) message(monsterID, targetID int64) *MonsterAttacke
 	return &MonsterAttacked{
 		MonsterID: monsterID, TargetCharacterID: targetID,
 		Damage: int32(o.damage), Critical: o.critical, Blocked: o.blocked, TargetDied: o.died,
-		TargetHP: int32(o.hp), DeathExpLost: o.deathExpLost,
+		TargetHP: int32(o.hp), DeathExpLost: o.deathExpLost, Wall: o.wall,
 	}
 }
 
@@ -316,6 +337,41 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	// monster is the attacker, so its Critical applies and the player's
 	// shield is what blocks. combat.ResolveBlow does not care which side
 	// is a player, which is the point of it being one function.
+	// THE PROTECTION WALL (round 640, walls.go). Combat_ResolveDamage
+	// (0x58e5f0, READ) looks at the target's wall (pc+0xc0c) before anything
+	// else touches the target's own entry: while the wall has HP it resolves
+	// the blow against the wall -- FUN_0040ebe0 / FUN_0040eef0, the
+	// mitigation formulas with the defender's params 5 and 7 replaced by
+	// 'pw' value[2] (flat) and value[3] (percent), the critical flag shared
+	// with the target's entry -- and when the blow's type is one the wall
+	// covers (buff.WallAbsorbs) the target's entry is marked 8 and skips the
+	// rest: no block roll, no mitigation, no armour or shield wear, no HP.
+	// Combat_ApplyActionEffects then takes the damage off the wall's HP.
+	// Otherwise the wall is not touched and the blow lands as below.
+	var wallCrit bool
+	if hit, ok := buffBooks.HitWall(characterID, monsterBlowType(ctx, monster, skill), func(w buff.Wall) int {
+		b := resolveBlow(raw, w.DefPct, w.Def,
+			combat.EvadedChance(monster.Critical, playerEvasion), 0,
+			monster.Level, playerLevel, monster.ID, characterID)
+		wallCrit = b.Critical
+		return b.Damage
+	}); ok {
+		hp, _, err := chars.ApplyDamage(ctx, characterID, 0)
+		if err != nil {
+			return monsterStrikeOutcome{}, fmt.Errorf("combat: reading the walled target: %w", err)
+		}
+		out.hp = hp
+		out.critical = wallCrit
+		out.wall = WallInfo{Absorbed: true, Broke: hit.Broke, Critical: wallCrit,
+			Damage: int32(hit.Damage), HP: int32(hit.HP), Max: int32(hit.Max)}
+		slog.Info("wall: took a blow", "character", characterID, "monster", monster.ID, "damage", hit.Damage,
+			"wall", hit.HP, "max", hit.Max, "critical", wallCrit, "caster hp", hp)
+		// A broken wall is ended by the caller once this blow's messages are
+		// out (endBrokenWall), as retail's book update ends it after the
+		// action's packet: the client draws the breaking blow on the wall
+		// first, then the wall's end. The toggle ticker catches any other.
+		return out, nil
+	}
 	counter := resolveBlow(raw, playerMitigationPercent, armor,
 		combat.EvadedChance(monster.Critical, playerEvasion),
 		combat.EvadedChance(defenderBlock(ctx, characterID, eq, items), monsterEvasion),

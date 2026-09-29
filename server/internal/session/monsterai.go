@@ -1243,6 +1243,11 @@ func (a *monsterAI) runStrike(id int64, job strikeJob) {
 		a.mu.Unlock()
 	}
 	a.push(job.m.Zone, &proto.Packet{Opcode: OpMonsterAttacked, Data: out.message(id, job.target).Encode()})
+	// Round 640: a blow that broke the target's wall ends it now, after the
+	// push that reports the blow (walls.go endBrokenWall).
+	if out.wall.Broke {
+		endBrokenWall(a.world, job.target)
+	}
 }
 
 // heldKey names one keep-up as the release test sees it: the monster it is

@@ -151,6 +151,23 @@ func _test_leaves_dead() -> void:
 	_check(not MonsterStrikes.leaves_dead(true, 80), "a kill reported with the respawned HP (today's server) does not")
 	_check(not MonsterStrikes.leaves_dead(false, 0), "a blow that did not kill never does, whatever the HP")
 
+	# Round 640: a counter the player's wall took whole is a counter; the push
+	# repeating it pairs with it by the wall's damage too.
+	var walled := _result(0, 100)
+	walled.wall = CombatNet.WallHit.new()
+	walled.wall.absorbed = true
+	walled.wall.damage = 64
+	_check(MonsterStrikes.result_countered(walled), "a counter the wall took (0 on the player) is a counter")
+	var waits := {}
+	var wait := MonsterStrikes.expect(waits, 7, walled)
+	var push := _push_for(walled, 42)
+	push.wall = CombatNet.WallHit.new()
+	push.wall.absorbed = true
+	push.wall.damage = 63
+	_check(not MonsterStrikes.repeats(wait, push), "a push whose wall took another amount does not repeat it")
+	push.wall.damage = 64
+	_check(MonsterStrikes.repeats(wait, push), "a push whose wall took the same amount repeats it")
+
 func _init() -> void:
 	_test_result_countered()
 	_test_drawn_once()
@@ -332,6 +349,11 @@ func _test_world_exchange_line(world_script: GDScript) -> void:
 	_check(String(world.call("_exchange_line", _result(12, 88))).ends_with("Took 12 damage (HP 88)."), "a counter says what it took")
 	_check(String(world.call("_exchange_line", _result(24, 76, false, true))).contains("Took 24 -- critical!"), "a critical says so")
 	_check(String(world.call("_exchange_line", _result(0, 100, true))).ends_with("Blocked it (HP 100)."), "a block says so")
+	var walled := _result(0, 100)
+	walled.wall = CombatNet.WallHit.new()
+	walled.wall.absorbed = true
+	walled.wall.damage = 64
+	_check(String(world.call("_exchange_line", walled)).ends_with("Your wall took 64 (HP 100)."), "a wall's blow says so")
 	world.free()
 
 ## Round 548, the dead state: a killing blow reported at HP 0 enters it --

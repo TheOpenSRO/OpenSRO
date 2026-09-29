@@ -72,10 +72,8 @@
 4	005f5b60	CMainProcess::FUN_005f5b60	3996	docs/WORLD_ISSUES.md,docs/protocol/described_but_unnamed.tsv
 4	0049f590	GObjPC::FUN_0049f590	2434	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
 4	0049f090	GObjPC::FUN_0049f090	1278	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md
-4	0040ebe0	FUN_0040ebe0	781	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/param_readers.md,docs/protocol/param_writers.md
 4	004fbae0	GObjPC::FUN_004fbae0	748	docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv,docs/protocol/timed_jobs.md
 4	005079c0	FUN_005079c0	703	docs/protocol/described_but_unnamed.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/server_dispatch.md,docs/protocol/server_handlers.tsv
-4	0040eef0	FUN_0040eef0	697	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/param_readers.md,docs/protocol/param_writers.md
 4	0050faf0	FUN_0050faf0	616	docs/protocol/described_but_unnamed.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/message_handlers.tsv,docs/protocol/server_dispatch.md,docs/protocol/server_handlers.tsv
 4	0040f3d0	FUN_0040f3d0	538	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/param_registry.md,docs/protocol/param_writers.md
 4	0040f1b0	FUN_0040f1b0	535	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/param_registry.md,docs/protocol/param_writers.md

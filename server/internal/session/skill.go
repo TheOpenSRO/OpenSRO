@@ -742,8 +742,27 @@ func useSkillHandler(
 			// is refused to a seated caster -- 59 of the 33,660 rows,
 			// measured. Every other skill is cast from the seat, as the
 			// engine's gate lets it be.
+			// THE TOGGLE (round 640, walls.go toggleOffOnCast): an 'onff'
+			// skill whose record the caster runs is switched off -- before
+			// the gate (the motion-state refusal below included), the costs
+			// and the cooldown: the 0x7074 handler skips its gate for an
+			// 'onff' row (0x4acec0) and Tick_UseSkill's phase 0 ends the
+			// record before it runs its own (0x4ae622..0x4ae64d), both READ. The
+			// handler resolves the learned row first (0x59d600), so the
+			// skill must be known.
+			if known, kerr := skills.Knows(ctx, characterID, req.SkillID); kerr == nil && known && toggleOffOnCast(hub, characterID, ref) {
+				hp := int32(0)
+				if c, err := chars.GetByID(ctx, characterID); err == nil && c != nil {
+					hp = int32(c.HP)
+				}
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: toggledOffResult(req, hp).Encode()})
+			}
 			if seatedCastRefused(ref.SitGate, characterID, time.Now()) {
-				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: seatedRefusal}).Encode()})
+				refusal := seatedRefusal
+				if motions.state(characterID, time.Now()) == MotionProtectionWall {
+					refusal = wallStateRefusal
+				}
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: refusal}).Encode()})
 			}
 			castRow = ref
 			skillRange = ref.Range

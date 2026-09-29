@@ -19,6 +19,7 @@ All little-endian, in srrevamp's own encoders (`session/wire.go`: a string is u1
 |---|---|---|---|
 | `OpUseSkill 0x0072` (extended) | C→S | `{name, i64 skillId, i64 targetMonsterId, u8 targetType, [targetType 2: f32 x, f32 y, f32 z]}` — targetType 0 none/self, 1 entity (a monster), 2 ground, **3 a character (round 622): the id field names a character**, no point follows. **A request without the suffix decodes as targetType 1.** Any other targetType, or a ground point cut short, is a malformed request (a server before round 622 answers a type-3 request so). | 0x7074 kind 4 |
 | `OpAttackResult` (extended) | S→C, the requester | the existing payload, then a trailing `u8 targetType`: a skill reply echoes the request's 0, 1 or 2 (an old-format request: 1); a plain swing, a keep-up repeat, a duel blow and a monster-initiated result carry 1. A 42-byte result from an older server decodes as 1 | — |
+| `OpAttackResult` / `OpMonsterAttacked` wall suffix (round 640) | S→C | present **only** when the blow met a protection wall, or on the reply to a toggle-off: `u8 flags` (1 absorbed, 2 the wall broke, 4 critical, 8 toggled off), `i32` the damage the wall took, `i32` the wall's HP left, `i32` its maximum -- after `targetType` on `OpAttackResult`, after the 33 bytes of `OpMonsterAttacked`. A payload without it decodes as no wall (OURS layout) | the damage entry of kind 7 (`FUN_00a55e00`: `u32` hit type \| damage << 8, `u16` remaining, `u16` maximum; 0x80 on the kind for a break) |
 | `OpBuffStart 0x00F5` | S→C, every session in the owner's zone | `{i64 ownerId, i64 skillId, u32 token, i64 durationMs, i64 remainingMs, u32 runSpeed, u8 ownerKind}` — 41 bytes; `ownerKind` 0 a character, 1 a monster (monster ids from `combat.Hub` and character ids from the database overlap; every buff is a character's today); a 40-byte payload decodes as a character; `durationMs`/`remainingMs` are −1 for a buff with no `dura`; `runSpeed` is the owner's new run speed when this buff wrote to it, else 0 (unchanged) | 0xB0BD |
 | `OpBuffEnd 0x00F6` | S→C, the owner's zone | `{i64 ownerId, u8 count, count × u32 token, u32 runSpeed, u8 ownerKind}` — `ownerKind` as in `OpBuffStart`, optional to a decoder; `runSpeed` the owner's new run speed when an ended buff had written to it, else 0 | 0xB072 |
 | `OpBuffCancel 0x00F7` | C→S | `{name, i64 skillId, u32 token}` — token 0 cancels the first record of that skill, as retail matches any record for a zero token. **No reply**: success is the `OpBuffEnd` broadcast; a refusal is silent, as retail's is | 0x7074 kind 5 |
@@ -79,6 +80,7 @@ an instant action, no buff, no ground move, no marker):
 | 61 | Lks2 | the `lks2` marker (`+0x374`) present -- added in the review, for the recast rule; 160 retail rows, all kind 3 |
 | 62-63 | TargetHealHP / TargetHealMP | round 622: what one cast restores to **each character it names** (`skillparam.TargetHealAmounts`, heal.md): a Target_Required 1, action kind 0 row with one flat `heal` and none of `efr`/`nmh`/`mwhh`/`mwmh`/getv `HLRU`/`resu`/a combat parameter, v1 = 0 for HP and v3 = 0 for MP. MEASURED on the box's export (33,698 rows): 27 rows, `SKILL_CH_WATER_HEAL_A/B/C_01..09`; Heal A lv1 (id 149) 369 HP, 0 MP |
 | 64-76 | ActionOverlap, Ovl2, HasDttp, Dttp0, Dttp1, Efr2, Offensive, Msch1, Hide, SkcEnd, BasicGroup, Activity, Dtt | round 636, the recast rule's: Action_Overlap `+0x8c` AND `0xffffff`, `ovl2` value[0] `+0x37c`, `dttp` `+0x424`, an `efr` of kind 2 (`+0x290`), `FUN_00589d20`, `msch` value[0] == 1, `hide` `+0x428`, `skc` value[1] & 0xff, Basic_Group (column 5, `+0x44`), Basic_Activity (column 8, `+0x65`), `dtt` `+0x420` (`cmd/export-refdata` `stackColumns`). An older export loads them zero: no state bytes |
+| 83-86 | Pw0, Pw1, Pw2, Pw3 | round 640: `pw` value[0..3] (`+0x2b4`, `cmd/export-refdata` `wallColumns`) -- the wall's damage-type mask, HP, flat defence and defence percent ("The protection walls" below). MEASURED on the export: 55 rows, 28 Crystal Wall (`SKILL_CH_COLD_BINGBYEOK_*`, mask 7) and 27 Fire Wall (`SKILL_CH_FIRE_HWABYEOK_*`, mask 11). An older export loads 0: no wall. `onff` needs no column: `BuffParams` (60) already carries it |
 
 The Param block is walked (`skillparam.Walk`), never scanned.
 
@@ -404,9 +406,9 @@ the book today.
   keeps no passive records, so the extension stays 0 -- **OPEN, not modelled**.
   `session.RunBuffTicker` polls every 100 ms (OURS, as regen's poll is; retail's book update runs
   per server frame, period OPEN); the test itself is exact to the millisecond.
-- **Toggles and summons** (kind 3 without `dura`: `onff` drains MP every onff[0] ms and ends when MP
-  runs short; `summ` ends at summ[0]): **OPEN, not modelled** — such a buff runs until cancelled,
-  a death or a logout.
+- **Toggles** (kind 3 without `dura`, carrying `onff`): the MP drain and its end are modelled since
+  round 640 ("The toggles" below). **Summons** (`summ` ends at summ[0]): **OPEN, not modelled** --
+  such a buff runs until cancelled, a death or a logout.
 - **Cancel**: `0x4ae520` → `FUN_0059ef90` finds the record of that skill id in sub-state 1 or 2,
   matching the token unless it is 0; `FUN_0059eff0(0)` returns **without ending it** when the skill
   carries `nbuf` (`+0x35c`) and the record's `ctx+0x20 != 1`. SkillAction_Buff writes `ctx+0x20`
@@ -658,3 +660,133 @@ srrevamp resolves a cast at once, so its broadcast is its own message, **OpSkill
   622 drops the unknown opcode.
 - **The caster's own client** acts a cast at a character the same way: on the accepted reply, after
   the row's PreparingTime + CastingTime from the send, or at once on the buff's own OpBuffStart.
+
+## The toggles (round 640, READ)
+
+116 rows of the export carry `onff` (MEASURED, `TestToggleAndWallCensus` over the RE box's export):
+the walls (55) and the Bard's songs and dances (`SKILL_EU_BARD_BATTLAA_GUARD_*`,
+`_SPEEDUPA_HITRATE_*`, `_DANCEA_*`, 61). Every one is action kind 3, a caster buff with Target_Required
+0, and carries **no `dura`**; the 61 Bard rows carry an `efr` of kind 2 (targets gathered by the `efr`
+collector, which srrevamp does not build -- it starts them on the caster only, as before), none an
+`efr` of kind 3.
+The same code runs all of them:
+
+- **The drain** -- `SkillAction_Buff` sub-state 2 (`0x5851bc..0x5852ee`): a row with `onff`
+  (`+0x284`), no `dura` (`+0x280`) and a record its owner cast on itself (ctx `+0x20 == 1`) is
+  drained; any other `onff` record goes to the `summ` test only. EngageSkill (`0x593540`) builds the
+  drain clock at ctx `+0x60` and stamps `GetTickCount` into its `+8` at the engage. Each pass:
+  `if (now - clock <= onff[0]) nothing` (`jbe`, 0x585268 -- the drain is due strictly after the
+  interval); `if (MP < onff[1]) SkillAction_BuffEnd` (`jl` on the signed compare, 0x585284 -- a pool
+  equal to the cost pays it, to 0); otherwise `vslot 0x308(0, cost, 4)` takes the MP and the clock is
+  re-stamped (0x5852df..0x5852eb). Between the test and the take a row with `BDMD` (`+0x554`) scales
+  the cost by `(1 - v/100)` with `v` from the entry `FUN_005a0330` finds in the caster's book map
+  (0x58528a..0x5852cb) -- the MP test is against the unscaled cost. **Not modelled (OPEN):** srrevamp
+  keeps none of the passive entries that map holds.
+- **The recast is the switch-off** -- `CGCharAutoCommandActor::Tick_UseSkill` phase 0
+  (0x4ae622..0x4ae64d): for a row with `onff`, `FUN_0059ef90` finds the first record of the skill on
+  the caster's book; when its ctx `+0x20 == 1`, `FUN_0059eff0(0)` ends it and the tick returns 0 --
+  before `Skill_CheckUseConditions`, so no gate, no cost and no cooldown; and the 0x7074 handler skips
+  its own gate for an `onff` row (`cmp [edi+0x284],0` at 0x4acec0). No 0xB070 follows (phase 2's
+  0x7070 is never posted), so no cast is drawn.
+- **Other ends:** a cancel from the buff bar (the dispel, above -- no wall row carries `nbuf`), a
+  death (srrevamp's `EndAll`, OURS as before), a logout, and the wall's own break (below).
+
+srrevamp: `buff.Record.DrainDue` / `Books.DueDrains` / `Drained` / `ToggleOff`; `session/walls.go`
+`RunToggleTicker` polls every 100 ms (OURS, as the buff ticker does) and pushes the owner's
+`OpCharacterStatsResult` after a drain, as regen does; `toggleOffOnCast` runs in `useSkillHandler`
+before the motion-state gate, answering `OpAttackResult` with the wall suffix's toggled-off flag
+(OURS: retail answers 0xB074 result 1 and nothing more).
+
+## The protection walls (round 640)
+
+Fire Wall (`SKILL_CH_FIRE_HWABYEOK_*`) and Crystal Wall (`SKILL_CH_COLD_BINGBYEOK_*`) carry `onff`
+and `pw` and nothing else (MEASURED). Fire Wall - Tower lv1 (136): `onff` 5000,58, `pw` 11,1159,0,17;
+Crystal Wall lv1 (99): `onff` 5000,41, `pw` 7,824,0,11. Action_Overlap byte 11 (the recast rule's bit
+test keeps one wall at a time) and SitGate 1.
+
+**What `pw` is (READ).**
+
+| value | meaning | where |
+|---|---|---|
+| [0] | the damage types the wall covers: bit 4 physical, bit 8 magical (7 = 1\|2\|4, 11 = 1\|2\|8) | `Combat_ResolveDamage` 0x58f03e..0x58f0a6 against the attacker's `att` value[0]; `FUN_0040ebe0` / `FUN_0040eef0` compute a half only when both carry its bit |
+| [1] | the wall's HP | EngageSkill 0x593540: `FUN_005aa330()` into ctx `+0x5c`, `*(pw+4)` into its `+8` |
+| [2] | the wall's flat defence | `FUN_0040ebe0` subtracts `*(pw+8)` where `Formula_MitigatePhysicalDamage` subtracts the defender's param 5 |
+| [3] | the wall's defence percent | `FUN_0040ebe0` divides by `1 + *(pw+0xc)/100` where the formula divides by the defender's param 7 |
+
+The holder is the **target** (settles skill_params.md's open question): EngageSkill writes the record
+into `pc+0xc0c` (`in_EAX[0x303]`, book `+0x1dc`) and `Combat_ResolveDamage` reads `target[0x303]`
+(`piVar12[0x303]`, the object each target id resolves to).
+
+**A blow on a walled character (READ, `Combat_ResolveDamage` 0x58e5f0 and `Combat_ApplyActionEffects`
+0x593800).**
+1. The wall meets every blow except one whose skill carries `ck`, `lfst`, `pdmg` or `pdm2`
+   (`FUN_00589ee0`: `+0x248`, `+0x400`, `+0x234`, `+0x238`); it builds a second entry for the target
+   (kind 7) while the wall's HP is not 0.
+2. Per hit, the wall entry's damage is `FUN_0040ebe0` + `FUN_0040eef0` (the mitigation twins against
+   `pw` [2]/[3]) with the target entry's critical flag; it accumulates over the hits of one action;
+   the entry carries the remaining HP (`HP - accumulated`, floored at 0) and the maximum as u16s, and
+   0x80 on its kind when `HP <= accumulated`.
+3. **Absorbed** when `(att has no bit 4 or pw has bit 4) and (att has no bit 8 or pw has bit 8)`:
+   the target's own entry is marked 8 and jumps past the block roll, the mitigation, the durability
+   counters and the damage (`goto LAB_005905fb`). A second-record term (`att +0x10` with the
+   context's `+0x78`) joins the second clause -- **not modelled (OPEN)**, srrevamp's blows have none.
+4. Not absorbed: the wall entry is marked 8 (nothing), the blow resolves on the target as usual, and
+   the halves `pw` covers are zeroed (bit 4 physical, bit 8 magical) -- the covered half of a
+   single-type blow that is not absorbed is 0 anyway.
+5. `Combat_ApplyActionEffects`, the wall entry (`+0x10 != 0`): `if (HP < dmg) HP = 0; else HP -= dmg`.
+   The caster's HP is untouched; no stand-up, no wear.
+6. `SkillAction_Buff` sub-state 2 (0x5851e9..0x585372): a record whose wall object's HP is 0 clears
+   its state bits, zeroes `book[0x77]`, resets the motion (`vslot 0x55c(0, 0xff, 0)`) and returns 3
+   -- the book update ends it (0xB072).
+
+**The motion state (READ).** EngageSkill sets 0x11 `SKILL_PROTECTIONWALL` (`vslot 0x55c(0x11, 0xff,
+0)`); `GObjPC::FUN_004a9d00` broadcasts nothing for it (only its AJStateChanger path, taken when the
+second argument is not 0xff, does). In it: the skill gate refuses an `ao`/`pw` row (0x58e0cb, 0x3009),
+the sit request refuses (`FUN_004b1480`: 4 from any state but STAND/SIT), and the regen tick restores
+nothing (`CGObjPC::vslot_362` only in STAND and SIT). `SkillAction_BuffEnd` for a `pw` row zeroes
+`book[0x77]` whichever record held it and resets the motion to STAND.
+
+**Nothing roots the caster (READ, both binaries -- a negative from these probes).**
+- The server's movement handler `GObjPC::FUN_004b0ea0` (slot 377 of every mobile class, CGObjPC's
+  included -- its vtable 0xaf59fc read) refuses a move for the `stns` stun holder `pc+0xc44` (set
+  only from `stns`, `+0x448`, which 11 monster stun attacks carry), motion states 8, 0x10 and 0x12,
+  `vslot 0x5a0` (a running action `pc+0xc08` or `pc+0xc44` or a queued chain), abnormal bits
+  0xc1/0x4000, and a failed path; the disassembly (0x4b0ea0..0x4b11f9) has no compare with 0x11.
+  The skill tick's approach walk `GObjPC::MoveTowardObject` refuses only on `pc+0xc44`.
+- `SkillAction_Buff` sets the running action `book+0x1d8` for an `onff` row (or one with a
+  CastingTime) at registration (`mov [edi+0x1d8],ebx` at 0x58357b) and clears it once CastingTime
+  has passed (`cmp eax,[esi+0x74]` at 0x5835fa, then `mov [edi+0x1d8],0` at 0x5835ff), as for any
+  buff.
+- The 11 byte compares with 0x11 in `srv.asm` (`cmp r8,0x11`) sit in item-use checks, inventory
+  and storage operation code and the skill gate -- none in movement.
+- The client's move gates -- the body-state mask `FUN_009eb140` (`(player+0x65c & 0x2476) == 0`), the
+  500 ms lock after a send (move manager `+0x48`), the modal checks `FUN_0077c8e0` -- read neither
+  `pw` (client `+0x90`) nor `onff` (`+0x58`); no bit of 0x2476 is set for a wall (every setter of
+  states 1, 2, 4, 6, 10, 13 listed; state 2, the cast deco's, clears when its shot animation ends;
+  the 0xB0BD buff deco sets no state); the client's 0x30BF motion handler has no case for 0x11.
+- So srrevamp roots nobody: a move while a wall stands is accepted, leaves SKILL_PROTECTIONWALL
+  (the movement handler's SetMotionState(WALK/RUN)) and the wall keeps absorbing. Attacks and
+  skills are not refused either (the gate's motion test covers only `ao`/`pw` rows).
+
+**The client (READ, `sro_client.exe`).** The wall's aura is the buff's ACT_L loop
+(`fire_hwabyeok_keep_a.efp`, `cold_bingbyeok_keep_a.efp`). A kind-7 entry (`FUN_00a55e00`) clears the
+entry's dead flag even with 0x80; `FUN_00a49290` skips the HP change (`FUN_009c78b0`) and the hit
+reaction (state 0xb) for it, and `FUN_00a47720` shows its damage as an ordinary number (display type
+0, or 1 critical). The wall's HP is shown nowhere. While a buff deco whose anim set has `+0x80` is
+attached, a blow on that body plays the highest-Priority deco's `+0x80` efp (`IDecoSkill::FUN_009cd480`
+from `FUN_00a4f720`); that `+0x80` is skillaniset2's DefenseEfp column is INFERRED (it sits beside
+`+0x84`, the DamageEfp `FUN_00a54f00` reads) -- `fire_ganggi_damage_a.efp` and `hit_2_ice.efp` for the
+walls.
+
+**srrevamp.** `buff.Books.HitWall` / `EndBrokenWalls` (the holder `book.wallHolder`);
+`session.monsterStrike` resolves an absorbed blow with `resolveBlow(raw, pw[3], pw[2], crit, 0, ...)`
+-- the same pipeline as a landed blow, the wall's defence in the player's place, no block roll -- and
+the strike's caller ends a broken wall right after the messages that report the blow (retail: the
+next book update, one frame later, so the blow's packet goes first); the toggle ticker catches any
+other. A monster blow's type is its
+skill's `att` value[0] through the skill table (`SetMonsterSkillRefs`); a counter with no named skill
+takes the monster's first skill whose range is the monster's own (INFERRED: the col-83 primary), and
+an unknown type is physical (OURS, `combat.AttackType`'s reading of 0). The motion tracker keeps
+SKILL_PROTECTIONWALL (`motions.setWall` / `endWall`); the gate answers `"cannot use that skill while a
+wall is up"` (OURS text; the engine's 0x3009 string is not identified).
+

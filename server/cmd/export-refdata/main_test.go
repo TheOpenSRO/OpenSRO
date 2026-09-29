@@ -748,8 +748,8 @@ func TestSelfHealColumns(t *testing.T) {
 			if !ok {
 				t.Fatal("skillRecord rejected a valid row")
 			}
-			if len(rec) != 83 {
-				t.Fatalf("record has %d fields, want 83 (SelfHealHP at 43, SelfHealMP at 44, CooldownGroup at 45, SitGate at 46, the buff columns 47-61, TargetHealHP/MP at 62/63, the recast-rule columns 64-76, the lnks columns 77-82)", len(rec))
+			if len(rec) != 87 {
+				t.Fatalf("record has %d fields, want 87 (SelfHealHP at 43, SelfHealMP at 44, CooldownGroup at 45, SitGate at 46, the buff columns 47-61, TargetHealHP/MP at 62/63, the recast-rule columns 64-76, the lnks columns 77-82, the wall columns 83-86)", len(rec))
 			}
 			if rec[43] != tc.hp || rec[44] != tc.mp {
 				t.Errorf("record[43:45] = %v, want [%s %s]", rec[43:45], tc.hp, tc.mp)
@@ -838,7 +838,7 @@ func TestSitGateColumn(t *testing.T) {
 			t.Errorf("%s: sitGate = %s, want %s", c.name, got, c.want)
 		}
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 83 || rec[46] != c.want {
+		if !ok || len(rec) != 87 || rec[46] != c.want {
 			t.Errorf("%s: record column 46 = %v (ok %v, %d fields), want %s", c.name, rec, ok, len(rec), c.want)
 			continue
 		}
@@ -879,7 +879,7 @@ func TestBuffColumns(t *testing.T) {
 		{"nbuf, lnks, defr and lks2", marked, []string{"3", "0", "0", "0", "0", "0", "0", "0", "1", "0", "1", "0", "0", "defr:10,12", "1"}},
 	} {
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 83 {
+		if !ok || len(rec) != 87 {
 			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
 		}
 		if got := strings.Join(rec[47:62], "|"); got != strings.Join(c.want, "|") {
@@ -922,7 +922,7 @@ func TestTargetHealColumns(t *testing.T) {
 		{"a resurrection", res, "0", "0"},
 	} {
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 83 {
+		if !ok || len(rec) != 87 {
 			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
 		}
 		if rec[43] != c.self || rec[62] != c.target || rec[63] != "0" {
@@ -970,7 +970,7 @@ func TestStackColumns(t *testing.T) {
 		{"att is offensive", attack, "0|0|0|0|0|1|1|0|0|0|0|0|0"},
 	} {
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 83 {
+		if !ok || len(rec) != 87 {
 			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
 		}
 		if got := strings.Join(rec[64:77], "|"); got != c.want {
@@ -1052,7 +1052,7 @@ func TestLinkColumns(t *testing.T) {
 		{"Grass Walk - Flow", plain, "0|0|0|0|0|0"},
 	} {
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 83 {
+		if !ok || len(rec) != 87 {
 			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
 		}
 		if got := strings.Join(rec[77:83], "|"); got != c.want {
@@ -1071,6 +1071,51 @@ func TestLinkColumns(t *testing.T) {
 			b01(sk.Efr3), b01(sk.Qest), b01(sk.Trap), b01(sk.Efr1)}, "|")
 		if got != c.want {
 			t.Errorf("%s: imported %s, want %s", c.name, got, c.want)
+		}
+	}
+}
+
+// Round 640: columns 83..86, 'pw' value[0..3] (wallColumns). The rows are
+// the retail shapes MEASURED on the RE box's skilldata, typed here as test
+// data: Fire Wall - Tower lv1 ('onff' 5000,58, 'pw' 11,1159,0,17) and Crystal
+// Wall lv1 ('onff' 5000,41, 'pw' 7,824,0,11); Grass Walk - Flow lv1 has no
+// 'pw'.
+func TestWallColumns(t *testing.T) {
+	w := skillparam.WordOf
+	for _, c := range []struct {
+		name string
+		row  []string
+		want string
+	}{
+		{"Fire Wall - Tower lv1", skillRow(w("onff"), 5000, 58, w("pw"), 11, 1159, 0, 17), "11|1159|0|17"},
+		{"Crystal Wall lv1", skillRow(w("onff"), 5000, 41, w("pw"), 7, 824, 0, 11), "7|824|0|11"},
+		{"Grass Walk - Flow lv1", skillRow(w("dura"), 355462, w("hste"), 20), "0|0|0|0"},
+	} {
+		rec, ok := skillRecord(c.row)
+		if !ok || len(rec) != 87 {
+			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
+		}
+		if got := strings.Join(rec[83:87], "|"); got != c.want {
+			t.Errorf("%s: columns 83..86 = %s, want %s", c.name, got, c.want)
+		}
+		var buf strings.Builder
+		cw := csv.NewWriter(&buf)
+		cw.Write(rec)
+		cw.Flush()
+		skills, err := refdata.LoadSkillsCSV(strings.NewReader(buf.String()))
+		if err != nil || len(skills) != 1 {
+			t.Fatalf("%s: the importer rejected the export: %v", c.name, err)
+		}
+		sk := skills[0]
+		got := strings.Join([]string{strconv.FormatInt(sk.Pw0, 10), strconv.FormatInt(sk.Pw1, 10),
+			strconv.FormatInt(sk.Pw2, 10), strconv.FormatInt(sk.Pw3, 10)}, "|")
+		if got != c.want || sk.HasWall() != (c.want != "0|0|0|0") {
+			t.Errorf("%s: imported %s (HasWall %v), want %s", c.name, got, sk.HasWall(), c.want)
+		}
+		if c.want != "0|0|0|0" {
+			if v, ok := sk.BuffParam("onff"); !ok || len(v) != 2 || v[0] != 5000 {
+				t.Errorf("%s: 'onff' in BuffParams %v %v", c.name, v, ok)
+			}
 		}
 	}
 }

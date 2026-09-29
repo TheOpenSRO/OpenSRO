@@ -233,7 +233,11 @@ every body.
   read); a character alive at HP 0 (being killed, or an HP-cost caster)
   regenerates no HP -- MP still -- because srrevamp's blow and death are not
   one step as the engine's are (the window is narrowed, not closed); the gate's
-  KNOCKDOWN, SKILL_ACTIONOFF and SKILL_PROTECTIONWALL states do not exist here.
+  KNOCKDOWN and SKILL_ACTIONOFF states do not exist here. SKILL_PROTECTIONWALL
+  (0x11) does since round 640: a wall's engage sets it, its end stands the
+  caster, a move leaves it (the wall stays), and in it the gate refuses an
+  'ao'/'pw' skill, the sit request is refused and regen restores nothing --
+  docs/protocol/skill_buffs.md, "The protection walls".
 - **Not modelled:** the PK-penalty drain, zombie, the timed-effect switch, skill
   buffs on params 25/26, params 143/144, the stall's stand-up (no stalls).
 - **Client** (`client/scripts/World3D.gd`, `world/sit_state.gd`): N sends

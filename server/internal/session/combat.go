@@ -401,6 +401,11 @@ type AttackResult struct {
 	// fields zero. Read it through EchoedTargetType.
 	TargetType    uint8
 	HasTargetType bool
+
+	// Wall is the monster's counter meeting the player's protection wall
+	// (round 640, walls.go WallInfo), or the toggle-off marker; a strict
+	// suffix after TargetType, all zero when neither.
+	Wall WallInfo
 }
 
 // EchoedTargetType is the targetType the result carries on the wire.
@@ -442,6 +447,11 @@ func (r *AttackResult) Encode() []byte {
 	buf = append(buf, encodeInt64(r.MonsterID)...)
 	// Trailing again (round 616): the echoed targetType.
 	buf = append(buf, r.EchoedTargetType())
+	// Trailing again (round 640): the wall suffix, only when there is one,
+	// so every result without a wall is byte for byte what it was.
+	if r.Wall != (WallInfo{}) {
+		buf = append(buf, r.Wall.encode()...)
+	}
 	return append(out, buf...)
 }
 
@@ -484,6 +494,9 @@ func DecodeAttackResult(data []byte) (*AttackResult, error) {
 	}
 	if len(rest) >= 43 && rest[42] != TargetEntity {
 		r.TargetType, r.HasTargetType = rest[42], true
+	}
+	if w, ok := decodeWallInfo(rest[min(len(rest), 43):]); ok {
+		r.Wall = w
 	}
 	return r, nil
 }
@@ -1587,6 +1600,7 @@ func performAttack(
 			result.PlayerDied = out.died
 			result.PlayerHP = int32(out.hp)
 			result.DeathExpLost = out.deathExpLost
+			result.Wall = out.wall
 			strike = out.message(monster.ID, characterID)
 		}
 	}
@@ -1660,6 +1674,11 @@ func performAttack(
 	// while -monster-strike-push is off). See pushMonsterStrike.
 	if strike != nil {
 		pushMonsterStrike(sess, others, strike)
+		// Round 640: a counter that broke the player's wall ends it now,
+		// after the messages that report the blow (walls.go endBrokenWall).
+		if strike.Wall.Broke {
+			endBrokenWall(hub, characterID)
+		}
 	}
 	return nil
 }

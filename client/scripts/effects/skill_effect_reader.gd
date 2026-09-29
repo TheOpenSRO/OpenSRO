@@ -104,6 +104,16 @@ static func hit_efp_for(effects: Dictionary, basic_code: String) -> String:
 # resolve to nothing, as the loader's -1 does.
 
 const ANIM_SECTIONS := ["skillaniset", "skillaniset2"]
+## Priority (col 3) and DefenseEfp (col 13), round 640. The retail client
+## plays, on a body hit while it holds a buff deco, the highest-Priority
+## attached deco's efp at anim-set +0x80 in place of the attacker's hit
+## effect (IDecoSkill::FUN_009cd480 from FUN_00a4f720, READ); that +0x80 is
+## this column is INFERRED -- it sits beside +0x84, which FUN_00a54f00 reads
+## as the hit efp (DamageEfp, col 14). The walls' rows name one
+## (SKILL_CH_FIRE_HWABYEOK_A: skill\china\fire_ganggi_damage_a.efp,
+## SKILL_CH_COLD_BINGBYEOK_A: hiteffect\hit_2_ice.efp -- MEASURED).
+const A_PRIORITY := 3
+const A_DEFENSE_EFP := 13
 const A_GROUP := 6
 const A_READY := 7
 const A_WAIT := 8
@@ -179,6 +189,12 @@ static func _aniset_row(cols: PackedStringArray, section: String, sets: Dictiona
 		return
 	var row: Dictionary = sets.get(code, {"group": "", "ready": [], "wait": [], "shot": []})
 	row["group"] = cols[A_GROUP + shift].strip_edges().to_lower()
+	var prio := cols[A_PRIORITY + shift].strip_edges()
+	row["priority"] = int(prio) if prio.is_valid_int() else 0
+	if cols.size() > A_DEFENSE_EFP + shift:
+		var defense := cols[A_DEFENSE_EFP + shift].strip_edges()
+		if defense.to_lower().ends_with(".efp"):
+			row["defense"] = defense
 	(row["ready"] as Array).append_array(_ani_list(cols[A_READY + shift]))
 	(row["wait"] as Array).append_array(_ani_list(cols[A_WAIT + shift]))
 	(row["shot"] as Array).append_array(_ani_list(cols[A_SHOT + shift]))
@@ -204,6 +220,24 @@ static func aniset_for(sets: Dictionary, basic_code: String) -> Dictionary:
 	if us > 0 and code.substr(us + 1).is_valid_int():
 		code = code.substr(0, us)
 	return sets.get(code, {})
+
+## The DefenseEfp a body holding buffs of `basic_codes` shows when it is hit
+## (round 640): the one of the highest Priority among the rows that name one,
+## the earliest listed on a tie (retail's pick keeps the first it meets at the
+## highest byte, `>`, FUN_009cd480 -- the order it meets its decos in is not
+## read, OPEN). "" when none names one.
+static func defense_efp_for(sets: Dictionary, basic_codes: Array) -> String:
+	var best := ""
+	var best_prio := -1
+	for code in basic_codes:
+		var row := aniset_for(sets, String(code))
+		if not row.has("defense"):
+			continue
+		var p := int(row.get("priority", 0))
+		if p > best_prio:
+			best_prio = p
+			best = String(row["defense"])
+	return best
 
 ## What the body plays when the skill's deco starts, from its aniset row
 ## (FUN_00a54f00, READ): {"kind": "none"} when READY, WAIT and SHOT are all

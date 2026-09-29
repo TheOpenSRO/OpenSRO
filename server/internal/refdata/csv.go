@@ -464,6 +464,9 @@ var skillCSVColumns = []string{
 	// Appended in round 636's review follow-up: an 'efr' of kind 1, which
 	// sends a buff down SkillAction_Buff's collector path (Skill.Efr1).
 	"Efr1",
+	// Appended in round 640: 'pw' value[0..3] (Skill.Pw0..Pw3), the protection
+	// walls. A strict suffix: an older export loads 0, no wall.
+	"Pw0", "Pw1", "Pw2", "Pw3",
 }
 
 // skillCSVRequiredColumns is the prefix every skill export must carry; the
@@ -693,6 +696,10 @@ func parseSkillRow(f []string) (Skill, error) {
 	boolAt(80, &sk.Qest)
 	boolAt(81, &sk.Trap)
 	boolAt(82, &sk.Efr1)
+	int64At(83, &sk.Pw0)
+	int64At(84, &sk.Pw1)
+	int64At(85, &sk.Pw2)
+	int64At(86, &sk.Pw3)
 
 	if err != nil {
 		return Skill{}, err

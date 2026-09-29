@@ -355,6 +355,12 @@ type Skill struct {
 	// sub-state 0 collects targets and charges before any bit test
 	// (0x5830b0, READ). An older export loads false.
 	Efr1 bool
+	// Pw is 'pw' value[0..3] (+0x2b4; round 640, CSV 83..86, cmd/
+	// export-refdata wallColumns): the protection wall's damage-type mask
+	// (bit 4 physical, bit 8 magical), its HP, its flat defence and its
+	// defence percent -- all READ, docs/protocol/skill_buffs.md "The
+	// protection walls". All zero on a row without the run (HasWall false).
+	Pw0, Pw1, Pw2, Pw3 int64
 
 	// The mastery this skill belongs to and the mastery level required to learn
 	// it (ReqCommon_Mastery1 / ReqCommon_MasteryLevel1). These are what the
@@ -408,6 +414,11 @@ func (s *Skill) BuffParam(code string) ([]int, bool) {
 	}
 	return nil, false
 }
+
+// HasWall reports whether the row carries 'pw', a protection wall (round
+// 640). The mask is never 0 on a real row (7 or 11, MEASURED); a zero mask is
+// an export predating the columns.
+func (s *Skill) HasWall() bool { return s != nil && s.Pw0 != 0 }
 
 // HasTele reports whether the row carries 'tele', the ground-cast move.
 func (s *Skill) HasTele() bool { return s != nil && (s.Tele0 != 0 || s.Tele1 != 0) }

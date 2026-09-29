@@ -183,6 +183,10 @@ static func parse_row(cols: PackedStringArray) -> Dictionary:
 	}
 	for tag in BUFF_TAGS:
 		info[tag] = codes.has(tag)
+	# Round 640: whether the row is an 'onff' toggle (client +0x58), and its
+	# Basic_Code (col 3) for the skilleffect rows the walls' DefenseEfp is on.
+	info["onff"] = codes.has("onff")
+	info["basic_code"] = cols[3].strip_edges() if cols.size() > 3 else ""
 	# 'tele' value[0] and value[1] (round 616-618 integration): value[1] is
 	# the ground-cast move's reach, D in the server's FUN_005862e0 (READ);
 	# value[0] is not read there (OPEN). [] when the row has no 'tele'.

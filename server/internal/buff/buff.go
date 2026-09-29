@@ -126,6 +126,14 @@ type Spec struct {
 	// sub-state 0 takes the target-collector path, which charges before any bit
 	// test (see CheckEngage).
 	Efr1 bool
+	// The toggle and the protection wall (round 640, walls.go):
+	// HasOnff/OnffMs/OnffMP are 'onff' (+0x284) value[0] (the drain
+	// interval, ms) and value[1] (the MP each drain takes); Wall is 'pw'
+	// (+0x2b4), HasWall whether the row carries it.
+	HasOnff        bool
+	OnffMs, OnffMP int
+	HasWall        bool
+	Wall           Wall
 }
 
 // Record is one active buff.
@@ -171,6 +179,29 @@ type Record struct {
 	// LinkSource is a record a Target_Required 1 'lnks' row put on another
 	// character: its caster holds a link for it (Books.links) until it ends.
 	LinkSource bool
+	// The toggle (round 640): 'onff' and when its MP was last taken --
+	// EngageSkill (0x593540) stamps GetTickCount into ctx+0x60 +8 at the
+	// engage, and SkillAction_Buff's sub-state 2 re-stamps it at each drain.
+	HasOnff        bool
+	OnffMs, OnffMP int
+	LastDrain      time.Time
+	// The protection wall (round 640): the row's 'pw' and the HP left in the
+	// wall object EngageSkill builds at ctx+0x5c (+8 = 'pw' value[1]).
+	HasWall bool
+	Wall    Wall
+	WallHP  int
+}
+
+// Wall is a row's 'pw' (+0x2b4), READ (docs/protocol/skill_buffs.md "The
+// protection walls"): Mask the damage types it covers (bit 4 physical, bit
+// 8 magical), HP its hit points, Def and DefPct the flat defence and the
+// defence percent the absorbed blow is mitigated by in place of the
+// caster's own params 5 and 7.
+type Wall struct {
+	Mask   uint32
+	HP     int
+	Def    int
+	DefPct int
 }
 
 // Timed reports whether the record ends on its own.
@@ -281,6 +312,11 @@ type book struct {
 	// them. It is not reference-counted: clearing a bit clears it whoever
 	// else set it, as retail's does.
 	bits [4]uint64
+	// wallHolder is book+0x1dc (pc+0xc0c, `in_EAX[0x303]`), the token of the
+	// record whose wall the owner's blows meet (round 640): EngageSkill writes
+	// it for a 'pw' row, SkillAction_BuffEnd and the wall's break clear it.
+	// 0 when none.
+	wallHolder uint32
 }
 
 // setGroupBits is SkillBook::SetGroupBits (0x59dc00): for each of the three
@@ -345,6 +381,11 @@ func (bk *book) factor(p int) float64 {
 func (bk *book) endLocked(r Record) {
 	bk.setGroupBits(r.endBits(), true)
 	bk.setGroupBits(r.Ovl2, true)
+	// SkillAction_BuffEnd (0x5829d0): a 'pw' row's end writes 0 into
+	// book[0x77] -- whichever record held it (READ: no comparison).
+	if r.HasWall {
+		bk.wallHolder = 0
+	}
 	switch {
 	case r.HasHste:
 		bk.speedHolder = 0
@@ -895,6 +936,17 @@ func (b *Books) Start(ownerID int64, spec Spec, now time.Time) (rec Record, ende
 	}
 	if spec.DuraMs > 0 {
 		rec.Dura = time.Duration(spec.DuraMs) * time.Millisecond
+	}
+	// EngageSkill (0x593540, READ): an 'onff' row's drain clock starts at the
+	// engage; a 'pw' row builds the wall object with 'pw' value[1] as its HP
+	// and becomes the owner's wall (`in_EAX[0x303] = record`, overwriting any
+	// other).
+	if spec.HasOnff {
+		rec.HasOnff, rec.OnffMs, rec.OnffMP, rec.LastDrain = true, spec.OnffMs, spec.OnffMP, now
+	}
+	if spec.HasWall {
+		rec.HasWall, rec.Wall, rec.WallHP = true, spec.Wall, spec.Wall.HP
+		bk.wallHolder = rec.Token
 	}
 	bk.setGroupBits(engageBits(spec, self), false)
 	bk.setGroupBits(spec.Ovl2, false)

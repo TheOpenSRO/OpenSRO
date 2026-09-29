@@ -254,6 +254,27 @@ func (t *motionTracker) request(characterID int64, req byte, now time.Time) (byt
 	return req, true
 }
 
+// setWall is EngageSkill's SetMotionState(0x11, 0xff, 0) for a 'pw' row
+// (round 640, walls.go): SKILL_PROTECTIONWALL at once, no transition.
+func (t *motionTracker) setWall(characterID int64, now time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.entryLocked(characterID, now).state = MotionProtectionWall
+}
+
+// endWall is the wall's end's SetMotionState(0, 0xff, 0): STAND, when the
+// character is still in SKILL_PROTECTIONWALL. A move since the wall went up
+// has already left the state (the movement handler's SetMotionState(WALK or
+// RUN), `moved`), and srrevamp counts a walker as standing, so a character in
+// any other state is left as it is.
+func (t *motionTracker) endWall(characterID int64, now time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if e := t.m[characterID]; e != nil && e.state == MotionProtectionWall {
+		e.state = MotionStand
+	}
+}
+
 // moved records an OpMove. It is refused in the transition, as the movement
 // handler refuses state 0x12; otherwise a sitter is on its feet at once (the
 // handler's SetMotionState(WALK/RUN)) and the move is accepted. leftSit
@@ -314,8 +335,8 @@ func (t *motionTracker) regenDue(characterID int64, now time.Time) bool {
 //
 //   - SitGateActionOff (the skill carries 'ao' at +0x274 or 'pw' at +0x2b4):
 //     for a PC, refused in SIT, CHANGEMOTION, KNOCKDOWN, SKILL_ACTIONOFF and
-//     SKILL_PROTECTIONWALL (0x58e0a0..0x58e0ed). srrevamp has only the first
-//     two.
+//     SKILL_PROTECTIONWALL (0x58e0a0..0x58e0ed). srrevamp has SIT,
+//     CHANGEMOTION and, since round 640, SKILL_PROTECTIONWALL (walls.go).
 //   - SitGateTransform ('msch' value[0] == 1, +0x4a4): refused in SIT
 //     (0x58de46..0x58ded4); the same branch also refuses when vtable slot
 //     0x540 or the state changer's test 0x406750(1) answers non-zero, neither
@@ -330,7 +351,7 @@ func seatedCastRefused(gate int, characterID int64, now time.Time) bool {
 		return false
 	}
 	s := motions.state(characterID, now)
-	if gate&refdata.SitGateActionOff != 0 && (s == MotionSit || s == MotionChangeMotion) {
+	if gate&refdata.SitGateActionOff != 0 && (s == MotionSit || s == MotionChangeMotion || s == MotionProtectionWall) {
 		return true
 	}
 	return gate&refdata.SitGateTransform != 0 && s == MotionSit

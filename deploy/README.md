@@ -107,6 +107,10 @@ rm -f itemdata_* skilldata_* npcpos.txt teleport*.txt   # the extracted tables a
 # runs and a Warrior guard links any number of party members. Check:
 # `SELECT count(*) FROM skills WHERE efr3 AND lnks;` answers 32 on a retail archive (every one a
 # Target_Required 0 row: the Fire Traps and seven quest traps).
+# ROUND 640 (the protection walls) adds four columns, 'pw' value[0..3] (the CSV is 87 columns; the
+# store adds skills.pw0..pw3): the same re-export and re-import, then restart. Until then no wall
+# takes a blow (the toggles' MP drain and switch-off work without them: 'onff' rides in
+# BuffParams). Check: `SELECT count(*) FROM skills WHERE pw0 <> 0;` answers 55 on a retail archive.
 # ROUND 632 (berserk potions, the Energy of life scroll) NEEDS THE ITEMS RE-EXPORT ON srrevamp-01:
 # re-run `export-refdata -mode items` with the NEW binary (step 1; items.csv grows to 72 columns --
 # column 70 CodeName, round 497, which an older CSV may also lack, and the new column 71

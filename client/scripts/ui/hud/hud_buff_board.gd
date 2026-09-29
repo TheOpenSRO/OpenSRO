@@ -373,9 +373,12 @@ func add_buff(owner_id: int, skill_id: int, token: int, duration_ms: int, remain
 	b.slot.gauge.value = b.gauge_value()
 	b.slot.gauge.visible = b.total_ms > 0
 	_layout()
-	print("HudBuffBoard: buff %d (skill %d, %s, %s list)%s" % [token, skill_id,
+	# Where the icon is on screen (round 640: a real-input run aims its
+	# right-click at it).
+	var at: Vector2 = b.slot.get_global_rect().get_center() if b.slot.is_inside_tree() else position + b.slot.position
+	print("HudBuffBoard: buff %d (skill %d, %s, %s list)%s at screen %s" % [token, skill_id,
 		("%d ms" % b.total_ms) if b.total_ms > 0 else "no duration",
-		"main" if b.main_list else "second", "" if not info.is_empty() else " -- skill not in the archive"])
+		"main" if b.main_list else "second", "" if not info.is_empty() else " -- skill not in the archive", str(at)])
 	return b
 
 ## Ends a buff: the burst and the sound for a main-list one, straight

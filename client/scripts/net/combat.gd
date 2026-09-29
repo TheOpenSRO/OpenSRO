@@ -68,6 +68,50 @@ class MonsterAttacked:
 	var target_hp: int
 	## The death penalty's experience loss, 0 when the target did not die.
 	var death_exp_lost: int
+	## The blow's meeting with the target's protection wall (round 640), or
+	## null when it met none -- see WallHit.
+	var wall: WallHit = null
+
+## A monster's blow on a protection wall (round 640, the server's
+## session/walls.go WallInfo): a strict suffix on OpAttackResult (after the
+## echoed targetType) and on OpMonsterAttacked (after its 33 bytes), present
+## only when there is one. u8 flags, s32 the damage the wall took, s32 the
+## wall's HP left, s32 its maximum. Retail's damage entry of kind 7
+## (FUN_00a55e00, READ) carries the same numbers; this layout is srrevamp's.
+class WallHit:
+	## The wall took the whole blow: the target's HP did not move.
+	var absorbed: bool = false
+	## This blow emptied the wall (retail's 0x80 on the entry kind).
+	var broke: bool = false
+	## The blow against the wall was a critical.
+	var critical: bool = false
+	## Not a blow at all: the reply to a recast that switched an 'onff'
+	## toggle off (Tick_UseSkill's phase 0) -- no cast is drawn.
+	var toggled_off: bool = false
+	var damage: int = 0
+	var hp: int = 0
+	var max_hp: int = 0
+
+const WALL_ABSORBED := 0x01
+const WALL_BROKE := 0x02
+const WALL_CRITICAL := 0x04
+const WALL_TOGGLED_OFF := 0x08
+const WALL_SUFFIX_SIZE := 13
+
+## Decodes the wall suffix at offset, or null when the payload stops short.
+static func decode_wall_suffix(data: PackedByteArray, offset: int) -> WallHit:
+	if offset < 0 or offset + WALL_SUFFIX_SIZE > data.size():
+		return null
+	var w := WallHit.new()
+	var f: int = data[offset]
+	w.absorbed = (f & WALL_ABSORBED) != 0
+	w.broke = (f & WALL_BROKE) != 0
+	w.critical = (f & WALL_CRITICAL) != 0
+	w.toggled_off = (f & WALL_TOGGLED_OFF) != 0
+	w.damage = data.decode_s32(offset + 1)
+	w.hp = data.decode_s32(offset + 5)
+	w.max_hp = data.decode_s32(offset + 9)
+	return w
 
 ## Result of decode_berserk_result(). activated is true only when this request
 ## actually started a berserk (the gauge was full); gauge/active are the state.
@@ -147,6 +191,9 @@ class AttackResult:
 	## (SelfCast.is_self_reply).
 	var target_type: int = 1
 	var target_type_echoed: bool = false
+	## The counter's meeting with the player's protection wall, or the
+	## toggle-off marker (round 640); null when neither.
+	var wall: WallHit = null
 
 ## Result of decode_monster_damaged().
 class MonsterDamaged:
@@ -431,6 +478,8 @@ static func decode_attack_result(data: PackedByteArray) -> AttackResult:
 	if offset + 43 <= data.size():
 		result.target_type = data[offset + 42]
 		result.target_type_echoed = true
+	# Round 640: the wall suffix, only when there is one.
+	result.wall = decode_wall_suffix(data, offset + 43)
 
 	return result
 
@@ -578,7 +627,7 @@ const STRIKE_BLOCKED := 0x02
 const STRIKE_TARGET_DIED := 0x04
 
 ## Decodes an OpMonsterAttacked payload, or null when it is shorter than 33
-## bytes. Bytes past the 33rd are ignored.
+## bytes. Past the 33rd, only round 640's wall suffix is read.
 static func decode_monster_attacked(data: PackedByteArray) -> MonsterAttacked:
 	if data.size() < MONSTER_ATTACKED_SIZE:
 		return null
@@ -592,6 +641,8 @@ static func decode_monster_attacked(data: PackedByteArray) -> MonsterAttacked:
 	m.target_died = (flags & STRIKE_TARGET_DIED) != 0
 	m.target_hp = data.decode_s32(21)
 	m.death_exp_lost = data.decode_s64(25)
+	# Round 640: the wall suffix, only when the blow met one.
+	m.wall = decode_wall_suffix(data, MONSTER_ATTACKED_SIZE)
 	return m
 
 ## Decodes an OpMonsterSpawned payload: one record in OpMonsterListResult's

@@ -330,6 +330,8 @@ func buffSpec(ref *refdata.Skill, casterID int64) buff.Spec {
 	if v, ok := ref.BuffParam("hst3"); ok && len(v) > 0 {
 		s.HasHst3, s.Hst3 = true, v[0]
 	}
+	// Round 640: the toggle's drain and the protection wall (walls.go).
+	wallSpec(&s, ref)
 	return s
 }
 
@@ -394,6 +396,8 @@ func speedField(sp buff.Speed) uint32 {
 // of its book) to the owner's zone, with the speed the ending operation
 // computed. The caller holds buffLock(ownerID).
 func broadcastBuffEnd(to []world.Entity, ownerID int64, ended []buff.Record, sp buff.Speed) {
+	// A wall's end stands its owner (round 640, walls.go).
+	wallsEnded(ownerID, ended)
 	speed := speedField(sp)
 	// The count is a byte on the wire; a book this large does not occur,
 	// but a split keeps the packet honest if it ever does.
@@ -435,6 +439,7 @@ func startCasterBuffOn(zone []world.Entity, ref *refdata.Skill, casterID, ownerI
 	// start's agree, whichever the client applies last.
 	broadcastBuffEnd(zone, ownerID, ended, sp)
 	sendToAll(zone, OpBuffStart, buffStartPacket(rec, now, speedField(sp)))
+	wallStarted(ownerID, rec, now)
 	return startDone
 }
 

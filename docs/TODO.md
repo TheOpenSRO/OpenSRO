@@ -1216,8 +1216,12 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       without ParamKeeper slots, so each needs its own hook into `combat`/`stats.go`.
 - [ ] **The imbues' `att`** on the caster's later blows (Ice River Force & co.): the buff starts,
       the extra damage is not dealt.
-- [ ] **Toggles and summons** (kind 3 without `dura`): `onff`'s MP drain and end, `summ`'s lifetime.
-      Today they run until cancelled, a death or a logout.
+- [x] **Toggles -- round 640.** `onff`'s MP drain (onff[1] every onff[0] ms, strictly after), its
+      end when the MP is short, and the recast that switches a toggle off (Tick_UseSkill's phase 0),
+      for all 116 `onff` rows (the walls and the Bard songs and dances). Left open: the `BDMD`
+      drain reduction (needs the passive entries of the book map at `+0x244`).
+- [ ] **Summons** (kind 3 without `dura`, `summ`): the lifetime. Today they run until cancelled, a
+      death or a logout.
 - [ ] **Debuffs on a hostile target** (Target_Required 1 with only enemy groups -- Water Cancel,
       the Warlock DOTs): not started; they keep the old path. Monsters would need books.
 - [x] **Whom a friendly TR-1 buff or heal lands on -- round 622.** READ: with nothing selected the
@@ -1267,12 +1271,17 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       - the category end's other callers: movement (mask 1) and berserk (mask 4) end nothing by the
         data (no `skc` carries them) and are not wired; `GObjPC::FUN_004d2200`'s mask (8,
         `SKILL_FORT_REPAIR_KIT`) was not traced.
-- [ ] **The wall skills** (the user's report, parked to round 640): Fire Wall / Crystal Wall
-      (`SKILL_CH_FIRE_HWABYEOK_*`, `SKILL_CH_COLD_BINGBYEOK_*`, state byte 11) root the caster, keep
-      attacks within a radius, and end on a cancel or when the wall's own HP runs out. Needs the
-      rows' `pw` / `eshp` / `esht` runs read, the protection-wall motion state (SKILL_PROTECTIONWALL,
-      round 607's sit-gate list) and the movement refusal (`GObjPC::FUN_004b0ea0` returns early on
-      `pc+0xc44`), and the wall's HP and its end.
+- [x] **The wall skills -- round 640.** Fire Wall / Crystal Wall: `pw` read (mask, HP, flat
+      defence, defence percent), the wall takes the monster blows of the type it covers until its HP
+      runs out, the MP drain, the recast switch-off, the right-click cancel, SKILL_PROTECTIONWALL for
+      the gate / sit / regen, the kind-7 number and the DefenseEfp on the client. **The user's
+      "they don't let you move / attack within a radius" was NOT found in either binary** (the
+      movement handler never tests 0x11; the client's move gates read neither `pw` nor `onff`;
+      `pc+0xc44` is the `stns` stun holder) -- so nothing roots the caster. Left open:
+      - a user decision: root the caster anyway (OURS), or keep retail's code as read;
+      - the absorb test's second-record term (`att +0x10` with the context's `+0x78`);
+      - player-versus-player blows on a wall (srrevamp has none);
+      - which sounds retail plays for a kind-7 entry (the monster's blow sound is kept).
 - [ ] **The duration extension** (`ctx+0x24`): `RPBU`/`STDU`/`DTDR` through `FUN_005a0330`'s map at
       book `+0x244` -- needs whatever files entries there (passive skills, INFERRED).
 - [ ] **Retail's death and teleport rules for buffs** (ours: a death clears, a zone change keeps),

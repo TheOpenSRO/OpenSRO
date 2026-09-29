@@ -1,0 +1,336 @@
+package session
+
+// The toggles and the protection walls (round 640; docs/protocol/
+// skill_buffs.md "The toggles" and "The protection walls"). Fire Wall
+// (SKILL_CH_FIRE_HWABYEOK_*) and Crystal Wall (SKILL_CH_COLD_BINGBYEOK_*) are
+// action-kind-3 toggles with no 'dura': 'onff' drains their MP and 'pw'
+// raises a wall that takes the blows of the damage type it covers in the
+// caster's place until its own HP runs out. The Bard songs and dances carry
+// 'onff' too and drain the same way.
+//
+// READ in SR_GameServer.exe, and where:
+//
+//   - the wall: EngageSkill (0x593540) builds it (HP = 'pw' value[1]) and
+//     makes it the owner's (pc+0xc0c) and sets the motion state 0x11
+//     SKILL_PROTECTIONWALL; Combat_ResolveDamage (0x58e5f0) computes the
+//     blow against the wall's own defence ('pw' value[2]/value[3]) and, when
+//     the types agree, the caster's own entry takes nothing;
+//     Combat_ApplyActionEffects (0x593800) takes the damage off the wall's
+//     HP; SkillAction_Buff's sub-state 2 ends the record once it is 0.
+//   - the drain: SkillAction_Buff's sub-state 2 (0x585250..0x5852cc) takes
+//     onff[1] MP every onff[0] ms and ends the toggle when the MP is short.
+//   - the toggle: Tick_UseSkill's phase 0 (0x4ae590) ends a running 'onff'
+//     record of the skill instead of casting it again.
+//
+// NOT found in either binary, and so not done: anything that stops a walled
+// caster from moving. The server's movement handler (GObjPC::FUN_004b0ea0,
+// CGObjPC's slot 377) refuses motion states 8, 0x10 and 0x12 and the 'stns'
+// stun holder pc+0xc44, not 0x11; the client's move gates (the body-state
+// mask FUN_009eb140 & 0x2476, the 500 ms send lock, the modal UI) read
+// neither 'pw' nor 'onff'. docs/protocol/skill_buffs.md has the probes.
+
+import (
+	"context"
+	"log/slog"
+	"time"
+
+	"github.com/OpenSRO/srrevamp/server/internal/buff"
+	"github.com/OpenSRO/srrevamp/server/internal/character"
+	"github.com/OpenSRO/srrevamp/server/internal/combat"
+	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/srrevamp/server/internal/world"
+)
+
+// MotionProtectionWall is MOTIONSTATE_SKILL_PROTECTIONWALL (0x11, the
+// engine's table at .rdata 0x00c63f90): EngageSkill sets it for a 'pw' row
+// through SetMotionState(0x11, 0xff, 0) -- which broadcasts nothing (0x4a9d00
+// sends only through AJStateChanger, taken when the second argument is not
+// 0xff). What it does here: the skill gate refuses an 'ao'/'pw' row in it
+// (0x58e0cb), the sit request (FUN_004b1480) refuses from it, and the regen
+// tick restores nothing in it (CGObjPC::vslot_362 regenerates only in STAND
+// and SIT) -- all three READ.
+const MotionProtectionWall byte = 0x11
+
+// wallStateRefusal answers an 'ao'/'pw' cast refused because its caster
+// stands in SKILL_PROTECTIONWALL. The engine answers 0x3009 there, as for a
+// sitter (the gate's one branch, 0x58e0a0..0x58e0ed); the client's text for
+// 0x3009 is not identified, so the wording is OURS.
+const wallStateRefusal = "cannot use that skill while a wall is up"
+
+// wallSpec fills s's toggle and wall fields from ref: 'onff' from the buff
+// parameter column, 'pw' from its own four columns.
+func wallSpec(s *buff.Spec, ref *refdata.Skill) {
+	if v, ok := ref.BuffParam("onff"); ok && len(v) >= 2 {
+		s.HasOnff, s.OnffMs, s.OnffMP = true, v[0], v[1]
+	}
+	if ref.HasWall() {
+		s.HasWall = true
+		s.Wall = buff.Wall{Mask: uint32(ref.Pw0), HP: int(ref.Pw1), Def: int(ref.Pw2), DefPct: int(ref.Pw3)}
+	}
+}
+
+// wallStarted is EngageSkill's SetMotionState(0x11, 0xff, 0) for a 'pw'
+// record on ownerID.
+func wallStarted(ownerID int64, rec buff.Record, now time.Time) {
+	if rec.HasWall {
+		motions.setWall(ownerID, now)
+	}
+}
+
+// wallsEnded is SkillAction_BuffEnd's (and the break's) SetMotionState(0,
+// 0xff, 0) for an ended 'pw' record: the owner stands. Neither broadcasts.
+func wallsEnded(ownerID int64, ended []buff.Record) {
+	for _, r := range ended {
+		if r.HasWall {
+			motions.endWall(ownerID, time.Now())
+			return
+		}
+	}
+}
+
+// toggleOffOnCast is Tick_UseSkill's phase 0 for an 'onff' row (READ,
+// 0x4ae590): when the caster already runs a record of the skill, its own
+// cast, the record ends -- its token goes out as the ordinary OpBuffEnd --
+// and the cast stops there: no gate, no cost, no cooldown, no cast
+// broadcast (the 0x7070 of phase 2 that starts the cast is never posted).
+// It reports whether it ended one.
+func toggleOffOnCast(hub *world.Hub, casterID int64, ref *refdata.Skill) bool {
+	if ref == nil {
+		return false
+	}
+	if v, ok := ref.BuffParam("onff"); !ok || len(v) < 2 {
+		return false
+	}
+	l := buffLock(casterID)
+	l.Lock()
+	defer l.Unlock()
+	rec, sp, ok := buffBooks.ToggleOff(casterID, ref.ID)
+	if !ok {
+		return false
+	}
+	slog.Info("toggle: the recast switched it off", "character", casterID, "skill", ref.ID, "token", rec.Token)
+	broadcastBuffEnd(zoneOf(hub, casterID), casterID, []buff.Record{rec}, sp)
+	return true
+}
+
+// toggledOffResult answers the OpUseSkill a toggle-off consumed. The retail
+// server answers the 0x7074 request with 0xB074 result 1 when it queues the
+// action (before the tick ends the toggle) and sends no 0xB070, so the
+// client draws no cast; srrevamp's request has one reply, and this one
+// carries no error, no costs and no blow. OURS: the marker Error text is
+// empty and ToggledOff tells the client not to draw a cast.
+func toggledOffResult(req *UseSkillRequest, hp int32) *AttackResult {
+	r := echoed(req, &AttackResult{PlayerHP: hp})
+	r.Wall.ToggledOff = true
+	return r
+}
+
+// endBrokenWall ends ownerID's wall once its HP is 0 and tells the zone:
+// the sub-state 2 tail (buff.Books.EndBrokenWalls). Retail's book update runs
+// it on the next server frame after the blow, so the blow's packet goes
+// first; srrevamp runs it right after the messages that report the breaking
+// blow (performAttack's counter, the AI's strike), and the toggle ticker
+// catches any other within its poll.
+func endBrokenWall(hub *world.Hub, ownerID int64) {
+	l := buffLock(ownerID)
+	l.Lock()
+	defer l.Unlock()
+	ended, sp := buffBooks.EndBrokenWalls(ownerID)
+	if len(ended) > 0 {
+		slog.Info("wall: broken, ended", "character", ownerID, "skill", ended[0].SkillID, "token", ended[0].Token)
+		broadcastBuffEnd(zoneOf(hub, ownerID), ownerID, ended, sp)
+	}
+}
+
+// monsterSkillRefs resolves a monster skill's 'att' mask for the wall test.
+// cmd/server sets it once at boot (SetMonsterSkillRefs); nil leaves every
+// monster blow of an unknown type.
+var monsterSkillRefs SkillRefStore
+
+// SetMonsterSkillRefs gives the wall test the skill table the monster
+// skills' 'att' masks come from.
+func SetMonsterSkillRefs(s SkillRefStore) { monsterSkillRefs = s }
+
+// monsterBlowType is the 'att' value[0] of the skill monster swings: skill
+// itself when named, else the monster's primary range's -- the col-83
+// skill's, which srrevamp knows only through its range: the first of the
+// monster's skills whose AttMin/AttMax are the monster's own (INFERRED; the
+// Jangan ladder's primaries match that way, cmd/server). A mask with neither
+// bit 4 nor bit 8 known -- no table, an export predating the column -- is
+// taken as physical, the reading combat.AttackType already gives a 0 (OURS,
+// as it is there).
+func monsterBlowType(ctx context.Context, monster combat.Monster, skill combat.MonsterSkill) uint32 {
+	id := skill.ID
+	if id == 0 {
+		for _, s := range monster.Skills {
+			if s.AttMin == monster.AttackMin && s.AttMax == monster.AttackMax {
+				id = s.ID
+				break
+			}
+		}
+	}
+	var t combat.AttackType
+	if id != 0 && monsterSkillRefs != nil {
+		if ref, err := monsterSkillRefs.GetSkill(ctx, id); err == nil && ref != nil {
+			t = combat.AttackType(ref.AttackType)
+		}
+	}
+	if !t.Known() {
+		return buff.TypePhysical
+	}
+	return uint32(t)
+}
+
+// WallInfo is a blow's meeting with a protection wall, carried on the two
+// messages a monster's blow reaches the client by (OpAttackResult's counter
+// and OpMonsterAttacked) as a strict suffix, sent only when non-zero: u8 flags (WallAbsorbed,
+// WallBroke, WallCritical, WallToggledOff), i32 the damage the wall took,
+// i32 the wall's HP left, i32 its maximum. Retail's damage entry of kind 7
+// carries the same three numbers (FUN_00a55e00: u32 hit type | damage << 8,
+// u16 remaining, u16 maximum, and 0x80 on the kind for a break -- READ); the
+// layout here is OURS.
+type WallInfo struct {
+	Absorbed   bool
+	Broke      bool
+	Critical   bool
+	ToggledOff bool
+	Damage     int32
+	HP         int32
+	Max        int32
+}
+
+// The WallInfo flag bits.
+const (
+	WallAbsorbed   uint8 = 0x01
+	WallBroke      uint8 = 0x02
+	WallCritical   uint8 = 0x04
+	WallToggledOff uint8 = 0x08
+)
+
+// wallInfoSize is WallInfo's length on the wire.
+const wallInfoSize = 13
+
+func (w WallInfo) flags() uint8 {
+	var f uint8
+	if w.Absorbed {
+		f |= WallAbsorbed
+	}
+	if w.Broke {
+		f |= WallBroke
+	}
+	if w.Critical {
+		f |= WallCritical
+	}
+	if w.ToggledOff {
+		f |= WallToggledOff
+	}
+	return f
+}
+
+func (w WallInfo) encode() []byte {
+	out := []byte{w.flags()}
+	out = appendInt32(out, w.Damage)
+	out = appendInt32(out, w.HP)
+	return appendInt32(out, w.Max)
+}
+
+func decodeWallInfo(b []byte) (WallInfo, bool) {
+	if len(b) < wallInfoSize {
+		return WallInfo{}, false
+	}
+	f := b[0]
+	return WallInfo{
+		Absorbed: f&WallAbsorbed != 0, Broke: f&WallBroke != 0, Critical: f&WallCritical != 0, ToggledOff: f&WallToggledOff != 0,
+		Damage: readInt32(b[1:]), HP: readInt32(b[5:]), Max: readInt32(b[9:]),
+	}, true
+}
+
+func appendInt32(out []byte, v int32) []byte {
+	u := uint32(v)
+	return append(out, byte(u), byte(u>>8), byte(u>>16), byte(u>>24))
+}
+
+func readInt32(b []byte) int32 {
+	return int32(uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24)
+}
+
+// RunToggleTicker is the rest of SkillAction_Buff's sub-state 2 for the
+// toggles (READ, 0x5830b0): every poll, each owner with a drain due takes
+// onff[1] MP for each due record -- or, short of it, loses the record -- and
+// each owner with a broken wall loses it. It polls every buffPoll (OURS, as
+// the buff ticker does); the tests themselves are exact.
+func RunToggleTicker(ctx context.Context, hub *world.Hub, chars character.Store, deps RegenDeps, logger *slog.Logger) {
+	t := time.NewTicker(buffPoll)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			togglePass(ctx, hub, chars, deps, now)
+		}
+	}
+}
+
+// togglePass is one pass of RunToggleTicker at now.
+func togglePass(ctx context.Context, hub *world.Hub, chars character.Store, deps RegenDeps, now time.Time) {
+	for _, owner := range buffBooks.DueToggles(now) {
+		endBrokenWall(hub, owner)
+		drainOwner(ctx, hub, chars, deps, owner, now)
+	}
+}
+
+// drainOwner takes ownerID's due toggle drains at now (READ, sub-state 2,
+// 0x585253..0x5852ee): `if (MP < onff[1]) end (0x585284, signed jl); else {
+// MP -= cost (vslot 0x308(0, cost, 4)); stamp now }` -- a pool equal to the
+// cost pays it and stays at 0. Between the test and the take, a row with
+// 'BDMD' (+0x554) scales the cost by (1 - v/100) with v from the entry
+// FUN_005a0330 finds in the caster's book map (0x58528a..0x5852cb); srrevamp
+// keeps no such entries (the passives that file them are not modelled), so
+// the cost is onff[1] (OPEN). The owner's bar is pushed afterwards, as regen
+// pushes it.
+func drainOwner(ctx context.Context, hub *world.Hub, chars character.Store, deps RegenDeps, ownerID int64, now time.Time) {
+	if deps.Mana == nil || chars == nil {
+		return
+	}
+	due := buffBooks.DueDrains(ownerID, now)
+	if len(due) == 0 {
+		return
+	}
+	c, err := chars.GetByID(ctx, ownerID)
+	if err != nil || c == nil {
+		return
+	}
+	maxMP := c.MaxMP()
+	drained := false
+	l := buffLock(ownerID)
+	l.Lock()
+	for _, r := range due {
+		if left, ok := deps.Mana.Spend(ownerID, maxMP, r.OnffMP); ok {
+			buffBooks.Drained(ownerID, r.Token, now)
+			drained = true
+			slog.Info("toggle: drain", "character", ownerID, "skill", r.SkillID, "mp", r.OnffMP, "left", left)
+			continue
+		}
+		slog.Info("toggle: MP short of the drain, ended", "character", ownerID, "skill", r.SkillID, "mp", r.OnffMP,
+			"have", deps.Mana.Current(ownerID, maxMP))
+		ended, sp := buffBooks.EndToken(ownerID, r.Token)
+		if len(ended) > 0 {
+			broadcastBuffEnd(zoneOf(hub, ownerID), ownerID, ended, sp)
+		}
+	}
+	l.Unlock()
+	if !drained || hub == nil {
+		return
+	}
+	e, ok := hub.EntityByCharacterID(ownerID)
+	if !ok || e.Session == nil {
+		return
+	}
+	result, err := buildCharacterStats(ctx, c, c.ID, deps.Equipment, deps.Items, deps.Skills, deps.Mana)
+	if err != nil {
+		return
+	}
+	_ = e.Session.Send(&proto.Packet{Opcode: OpCharacterStatsResult, Data: result.Encode()})
+}

@@ -945,7 +945,7 @@ func skillRecord(cols []string) ([]string, bool) {
 		cooldownGroup(cols),        // 45 CooldownGroup -- Overlap's high byte, CRefSkill+0x8f (round 504)
 		sitGate(cols),              // 46 SitGate -- the skill gate's motion-state refusals (round 607)
 		// 47..61: the buff and self-cast columns (round 616, buffColumns).
-	}, append(append(append(buffColumns(cols), targetHeal(cols)...), stackColumns(cols)...), linkColumns(cols)...)...), true
+	}, append(append(append(append(buffColumns(cols), targetHeal(cols)...), stackColumns(cols)...), linkColumns(cols)...), wallColumns(cols)...)...), true
 }
 
 // targetHeal is skill CSV columns 62/63 (round 622), TargetHealHP and
@@ -1242,6 +1242,45 @@ func linkColumns(cols []string) []string {
 		return "0"
 	}
 	return []string{strconv.FormatInt(group, 10), strconv.FormatInt(max, 10), b(efr3), b(qest), b(trap), b(efr1)}
+}
+
+// wallColumns are skill CSV columns 83..86 (round 640, docs/protocol/
+// skill_buffs.md "The protection walls"): the four values of 'pw' (+0x2b4),
+// 0 without the run. What each is, READ in SR_GameServer.exe:
+//
+//	83 Pw0  the damage-type mask the wall covers: bit 4 physical, bit 8
+//	        magical (Combat_ResolveDamage 0x58e5f0 tests it against the
+//	        attacker's 'att' value[0]; FUN_0040ebe0 / FUN_0040eef0 compute a
+//	        half only when both carry its bit)
+//	84 Pw1  the wall's HP: EngageSkill (0x593540) copies `*(pw+4)` into the
+//	        wall object at ctx+0x5c, +8; Combat_ApplyActionEffects subtracts
+//	        each absorbed blow from it
+//	85 Pw2  the wall's flat defence: FUN_0040ebe0 subtracts `*(pw+8)` where
+//	        Formula_MitigatePhysicalDamage subtracts the defender's param 5
+//	86 Pw3  the wall's defence percent: FUN_0040ebe0 divides by
+//	        `1 + *(pw+0xc)/100` where the formula divides by the defender's
+//	        param 7
+//
+// 55 rows of the retail export carry it (MEASURED, round 640's census): 28
+// SKILL_CH_COLD_BINGBYEOK_* with mask 7 and 27 SKILL_CH_FIRE_HWABYEOK_* with
+// mask 11, every one with 'onff' too. An older export loads 0: no wall.
+func wallColumns(cols []string) []string {
+	out := []string{"0", "0", "0", "0"}
+	words, ok := paramWords(cols)
+	if !ok {
+		return out
+	}
+	entries, _, _ := skillparam.Walk(words)
+	for _, e := range entries {
+		if e.Code != "pw" {
+			continue
+		}
+		for k := 0; k < 4 && k+1 < e.Run && e.Index+1+k < len(words); k++ {
+			out[k] = strconv.FormatInt(int64(words[e.Index+1+k]), 10)
+		}
+		break
+	}
+	return out
 }
 
 // offensiveCodes is FUN_00589d20 (READ, round 636): with no 'abnb' (+0x41c)

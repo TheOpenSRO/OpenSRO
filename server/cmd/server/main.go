@@ -1115,6 +1115,14 @@ func main() {
 	// Timed buffs end at their end time (round 616): the book's expiry
 	// pass, broadcasting OpBuffEnd and the owner's new run speed.
 	go session.RunBuffTicker(ctx, hub, logger)
+	// The toggles and the protection walls (round 640, session/walls.go):
+	// each 'onff' toggle's MP drain and its end when the MP runs short, and
+	// a wall's end once its HP is gone. The walls read the monster skills'
+	// 'att' masks from the same skill table the casts use.
+	session.SetMonsterSkillRefs(refItems)
+	go session.RunToggleTicker(ctx, hub, chars, session.RegenDeps{
+		Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker,
+	}, logger)
 	// The potion queue (round 509): an absolute HP/MP potion lands in five
 	// steps of amount/5, the first at once and the rest one per second
 	// (FUN_0049a5b0 / FUN_0049a510 from CGObjPC::PeriodicUpdate), each step

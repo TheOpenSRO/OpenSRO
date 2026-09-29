@@ -79,7 +79,14 @@ const CLAIM_DRAWN := 2
 static func result_countered(result: CombatNet.AttackResult) -> bool:
 	if result == null or result.error != "" or result.monster_died:
 		return false
-	return result.player_damage_taken > 0 or result.player_blocked
+	# Round 640: a counter the player's protection wall took whole deals the
+	# player nothing and still is one.
+	return result.player_damage_taken > 0 or result.player_blocked \
+		or (result.wall != null and result.wall.absorbed)
+
+## The damage a protection wall took in a result or a push, 0 when none.
+static func wall_damage(wall: CombatNet.WallHit) -> int:
+	return wall.damage if wall != null and wall.absorbed else 0
 
 ## Starts waiting for `result`'s counter from `monster_id`, and returns the
 ## wait for World3D to settle when the blow lands. Waits the result already
@@ -99,6 +106,7 @@ static func expect(waits: Dictionary, monster_id: int, result: CombatNet.AttackR
 		"critical": result.monster_critical,
 		"blocked": result.player_blocked,
 		"died": result.player_died,
+		"wall": wall_damage(result.wall),
 		"push": null,
 		"drawn": false,
 	}
@@ -114,7 +122,8 @@ static func repeats(wait: Dictionary, attacked: CombatNet.MonsterAttacked) -> bo
 		and int(wait["hp"]) == attacked.target_hp \
 		and bool(wait["critical"]) == attacked.critical \
 		and bool(wait["blocked"]) == attacked.blocked \
-		and bool(wait["died"]) == attacked.target_died
+		and bool(wait["died"]) == attacked.target_died \
+		and int(wait.get("wall", 0)) == wall_damage(attacked.wall)
 
 ## A push claims the oldest unclaimed wait on its monster that it repeats
 ## (repeats), and says what became of it (CLAIM_*). A wait the result already

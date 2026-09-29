@@ -794,12 +794,14 @@ Both authored values are from the 4/8 axis, which is why the parser filled in
 bits 1|2 on every one of them — the `1/2/3` arm of that branch exists in the
 code and is used by nothing that shipped.
 
-**What is not settled:** whether `+0xC0C` hangs off the attacker or off the
-target. The decompiler reuses one variable for both the `mc` param pointer and,
-later, an object returned from a lookup, so the receiver cannot be read off the
-C without following the lookup. A barrier that removes one damage type reads
-naturally as a buff on the *target*, and the skill names agree with that, but a
-name is not a use-site and this one is left open rather than asserted.
+**Settled in round 640: the target.** `Combat_ResolveDamage` reads
+`piVar12[0x303]`, where `piVar12` is the object each target id of the blow
+resolves to (`FUN_00485d90(*local_d4)`), and EngageSkill (`0x593540`) writes the
+`pw` record into its own object's `+0xc0c` (`in_EAX[0x303]`). `pw` value[1] is the
+wall's HP, value[2] and value[3] its flat defence and defence percent (the
+mitigation twins `FUN_0040ebe0` / `FUN_0040eef0` read them where the formula
+reads the defender's params 5 and 7). The whole rule is in
+`docs/protocol/skill_buffs.md`, "The protection walls".
 
 ### `skc` is the same vocabulary used as a filter
 

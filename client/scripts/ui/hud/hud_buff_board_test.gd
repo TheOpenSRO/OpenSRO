@@ -309,6 +309,21 @@ func _test_catalog() -> void:
 	var row := SkillBuffCatalog.parse_row(cols)
 	_check(row["id"] == 7001 and row["level"] == 4 and row["icon"] == "skill\\china\\y.ddj", "row: id, level, icon")
 	_check(row["bbuf"] and row["nbuf"] and not row["cbuf"] and not row["lnks"], "row: bbuf and nbuf set, cbuf and lnks not")
+	_check(not row["onff"], "row: no 'onff', not a toggle")
+	# Round 640: a toggle's row -- Fire Wall - Tower lv1's block, 'onff'
+	# 5000,58 then 'pw' 11,1159,0,17 (the retail row's values, typed here).
+	var wall_cols := PackedStringArray()
+	wall_cols.resize(69)
+	for i in 69:
+		wall_cols[i] = "0"
+	wall_cols[1] = "136"
+	wall_cols[3] = "SKILL_CH_FIRE_HWABYEOK_A_01"
+	wall_cols[7] = "1"
+	for v in [_word("onff"), 5000, 58, _word("pw"), 11, 1159, 0, 17]:
+		wall_cols.append(str(v))
+	var wall_row := SkillBuffCatalog.parse_row(wall_cols)
+	_check(wall_row["onff"] and wall_row["walk_complete"] and wall_row["basic_code"] == "SKILL_CH_FIRE_HWABYEOK_A_01",
+		"a wall's row: 'onff' set, the walk complete, its Basic_Code kept")
 	# The client parser's table (188 codes; the Go test compares them all).
 	_check(SkillBuffCatalog.RUN.size() == 188 and SkillBuffCatalog.RUN["lnks"] == 5 and SkillBuffCatalog.RUN["bldr"] == 5,
 		"the run table is the client's: 188 codes, lnks 5, bldr 5")

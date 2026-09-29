@@ -357,6 +357,38 @@ func _test_decode_monster_attacked() -> void:
 	longer.append(0xff)
 	_check(CombatNet.decode_monster_attacked(longer) != null, "a byte past the 33rd is ignored")
 
+## Round 640: the wall suffix on OpMonsterAttacked (after 33 bytes) and on
+## OpAttackResult (after the echoed targetType), and its absence.
+func _test_decode_wall_suffix() -> void:
+	var data := PackedByteArray(STRIKE_FIXTURE)
+	var m := CombatNet.decode_monster_attacked(data)
+	_check(m != null and m.wall == null, "a 33-byte OpMonsterAttacked has no wall")
+	var walled := data.duplicate()
+	var suffix := PackedByteArray()
+	suffix.resize(13)
+	suffix[0] = CombatNet.WALL_ABSORBED | CombatNet.WALL_BROKE
+	suffix.encode_s32(1, 321)
+	suffix.encode_s32(5, 0)
+	suffix.encode_s32(9, 1159)
+	walled.append_array(suffix)
+	m = CombatNet.decode_monster_attacked(walled)
+	_check(m != null and m.wall != null and m.wall.absorbed and m.wall.broke and not m.wall.critical,
+		"the wall suffix's flags: absorbed and broke")
+	_check(m != null and m.wall != null and m.wall.damage == 321 and m.wall.hp == 0 and m.wall.max_hp == 1159,
+		"the wall suffix's numbers: 321 on a 1159-HP wall, 0 left")
+	var ar := _build_attack_result("", 0, 0, false, 0, 150, false)
+	var tail := PackedByteArray()
+	tail.resize(25) # berserk 5, exp 8, three flags, monster id 8, target type 1
+	tail[24] = 0
+	ar.append_array(tail)
+	_check(CombatNet.decode_attack_result(ar).wall == null, "an OpAttackResult ending at its targetType has no wall")
+	var toggled := suffix.duplicate()
+	toggled[0] = CombatNet.WALL_TOGGLED_OFF
+	ar.append_array(toggled)
+	var r := CombatNet.decode_attack_result(ar)
+	_check(r.wall != null and r.wall.toggled_off and not r.wall.absorbed and r.player_hp == 150,
+		"an OpAttackResult with the toggle-off marker")
+
 func _test_decode_monster_spawned() -> void:
 	var data := PackedByteArray(SPAWN_FIXTURE)
 	_check(data.size() == 55, "the OpMonsterSpawned fixture is 55 bytes")
@@ -454,6 +486,7 @@ func _init() -> void:
 	_test_approach_release_rules()
 	_test_net_client_dispatch()
 	_test_decode_monster_attacked()
+	_test_decode_wall_suffix()
 	_test_decode_monster_spawned()
 	_test_net_client_dispatch_strike_spawn()
 	_test_encode_attack()

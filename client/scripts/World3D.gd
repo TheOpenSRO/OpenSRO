@@ -5144,6 +5144,7 @@ func _exit_tree() -> void:
 	# Every live skill effect and aura goes with the world, and the bodies
 	# SkillEffects remembers are forgotten (a relog builds a new World3D).
 	SkillEffects.clear_live()
+	_fx_owner_buffs.clear()
 	var exit_music := _audio_music()
 	if exit_music != null:
 		exit_music.leave_world()
@@ -7618,6 +7619,12 @@ func _send_self_cast(skill_id: int, basic_code: String, target_type: int, point:
 	# rule, as the no_walk path of _attack_monster does).
 	_drop_pending_attack()
 	_flush_position()
+	# Round 640: a recast of a running 'onff' toggle is its switch-off --
+	# sent as the same request, with no cast drawn (_own_toggle_running).
+	if target_type == SkillNet.TARGET_NONE and _own_toggle_running(skill_id):
+		print("TOGGLE: skill %d is running -- the recast switches it off (Tick_UseSkill phase 0); no cast drawn" % skill_id)
+		NetClient.use_skill(NetClient.current_character_name, skill_id, 0, target_type, point)
+		return
 	var anim_base := basic_code.to_lower()
 	var us := anim_base.rfind("_")
 	if us > 0 and anim_base.substr(us + 1).is_valid_int():
@@ -12259,6 +12266,7 @@ func _on_entity_left(character_id: int) -> void:
 		_drop_pending_attack()
 	_other_gaits.erase(character_id)
 	SkillEffects.detach_owner(_fx_owner_key(character_id, 0))
+	_fx_owner_buffs.erase(_fx_owner_key(character_id, 0))
 	_other_seated.erase(character_id)
 	# A monster's blow on this player may cross the notice (round 546,
 	# MonsterStrikes.is_own_unpaired); remembered for the grace window.
@@ -14175,6 +14183,7 @@ func _sync_monster_bodies(live: Array) -> void:
 		_monster_bodies[monster_id].queue_free()
 		_monster_bodies.erase(monster_id)
 		SkillEffects.detach_owner(_fx_owner_key(monster_id, 1))
+		_fx_owner_buffs.erase(_fx_owner_key(monster_id, 1))
 		_monster_assembled.erase(monster_id)
 		_dying_until.erase(monster_id)
 		_monster_motion.erase(monster_id)
@@ -14487,6 +14496,10 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 			_fx_self_cast_refused()
 			if result.target_type == SkillNet.TARGET_CHARACTER:
 				_log_system(result.error)
+		elif result.wall != null and result.wall.toggled_off:
+			# Round 640: the recast switched a running toggle off; its
+			# OpBuffEnd ends the icon and the aura, and no cast is drawn.
+			print("CAST reply: the toggle was switched off (no cast, no cost), HP %d" % result.player_hp)
 		else:
 			print("CAST reply: self/ground cast (targetType %d, %s) accepted, HP %d" % [result.target_type,
 				"echoed" if result.target_type_echoed else "from the request queue", result.player_hp])
@@ -14663,7 +14676,10 @@ func _death_line(exp_lost: int) -> String:
 ## a blow that did nothing.
 func _exchange_line(result: CombatNet.AttackResult) -> String:
 	var taken := ""
-	if result.player_blocked:
+	if result.wall != null and result.wall.absorbed:
+		taken = " Your wall took %d%s (HP %d)." % [result.wall.damage,
+			" -- critical!" if result.wall.critical else "", result.player_hp]
+	elif result.player_blocked:
 		taken = " Blocked it (HP %d)." % result.player_hp
 	elif result.player_damage_taken > 0:
 		taken = " Took %d%s (HP %d)." % [result.player_damage_taken,
@@ -14726,6 +14742,15 @@ func _draw_counter_from_result(monster: int, result: CombatNet.AttackResult) -> 
 		_after(block_after, func() -> void:
 			_audio_block(player, result.monster_critical, "monster %d's counter, from the result" % monster)
 			_audio_monster_blow(monster, result.monster_critical, "blocked counter on the player, from the result"))
+	if result.wall != null and result.wall.absorbed:
+		# Round 640: the player's wall took the counter whole.
+		var wall_after := 0.0
+		if monster != -1:
+			wall_after = _monster_strike_seconds(monster)
+			_play_monster_action(monster, BsrReader.AnimationEntry.TYPE_ATTACK)
+		var own_key := _fx_owner_key(_own_id(), SkillNet.OWNER_CHARACTER)
+		_after(wall_after, _draw_wall_blow.bind(player, own_key, result.wall, monster, "the player (from the result)"))
+		return
 	if result.player_damage_taken <= 0 or _player_skeleton == null:
 		return
 	var strike_after := 0.0
@@ -14741,6 +14766,10 @@ func _draw_counter_from_result(monster: int, result: CombatNet.AttackResult) -> 
 		_audio_mark_hit(_player_skeleton, result.monster_critical)
 		_play_player_struck()
 		_audio_monster_blow(monster, result.monster_critical, "counter on the player, from the result")
+		# Round 640: a buff naming a DefenseEfp (a wall's) shows it.
+		var own_efp := _defense_efp_on(_fx_owner_key(_own_id(), SkillNet.OWNER_CHARACTER))
+		if own_efp != "":
+			_play_hit_efp_on(player, 2.0 * PLAYER_SCALE_RATIO, own_efp)
 		# The damage the player took, over the player's own head (human
 		# head height from the same PLAYER_SCALE_RATIO calibration the
 		# monster fallback uses), timed to when the counter-blow lands.
@@ -14977,11 +15006,24 @@ func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool) ->
 					"the player" if on_self else "character %d" % target_id]))
 	if target == null or attacked.blocked:
 		return
+	var target_key := _fx_owner_key(_own_id() if on_self else target_id, SkillNet.OWNER_CHARACTER)
+	if attacked.wall != null and attacked.wall.absorbed:
+		# Round 640: the target's wall took the blow whole.
+		_after(strike_after, func() -> void:
+			var wall_anchor = player if on_self else _other_bodies.get(target_id)
+			if wall_anchor != null and is_instance_valid(wall_anchor):
+				_draw_wall_blow(wall_anchor, target_key, attacked.wall, monster,
+					"the player" if on_self else "character %d" % target_id))
+		return
 	_after(strike_after, func() -> void:
 		# Looked up again: another player may have left the zone meanwhile.
 		var anchor = player if on_self else _other_bodies.get(target_id)
 		if anchor == null or not is_instance_valid(anchor):
 			return
+		# Round 640: a buff naming a DefenseEfp (a wall's) shows it.
+		var landed_efp := _defense_efp_on(target_key)
+		if landed_efp != "":
+			_play_hit_efp_on(anchor, 2.0 * PLAYER_SCALE_RATIO, landed_efp)
 		if on_self:
 			# The hit reaction -- or the held die clip when this blow left
 			# the player dead (round 548).
@@ -15072,6 +15114,7 @@ func _fx_on_buff_started(start: SkillNet.BuffStart) -> void:
 		if now_ms - int(_recent_buff_starts[k]) >= RECENT_BUFF_START_MS:
 			_recent_buff_starts.erase(k)
 	_recent_buff_starts["%s|%d" % [_fx_owner_key(owner_id, kind), start.skill_id]] = now_ms
+	_note_owner_buff(_fx_owner_key(owner_id, kind), start.token, start.skill_id)
 	var body := _fx_owner_body(owner_id, kind)
 	if body == null:
 		print("EFFECTS aura: buff token %d skill %d on %s, not in view -- no aura" % [
@@ -15094,6 +15137,85 @@ func _fx_on_buff_ended(ended: SkillNet.BuffEnd) -> void:
 	var key := _fx_owner_key(ended.owner_id, ended.owner_kind)
 	for t in ended.tokens:
 		SkillEffects.detach_aura(key, int(t))
+	_forget_owner_buffs(key, ended.tokens)
+
+# --- The protection walls (round 640) -------------------------------------
+#
+# Fire Wall and Crystal Wall (server session/walls.go): 'onff' toggles whose
+# 'pw' wall takes the monster blows of the type it covers. What the retail
+# client does with them, READ in sro_client.exe (docs/protocol/skill_buffs.md
+# "The protection walls"):
+#   - the wall's aura is the buff's own ACT_L loop, held by its token (above);
+#   - a blow the wall took arrives as a damage entry of kind 7 (FUN_00a55e00):
+#     its number shows over the caster as an ordinary damage number
+#     (FUN_00a47720, display type 0, or 1 for a critical), the HP bar does not
+#     move (FUN_00a49290 skips FUN_009c78b0 for kind 7) and no hit reaction
+#     plays (state 0xb is skipped too); the wall's remaining HP is shown
+#     nowhere (its two u16s are not kept);
+#   - while a buff deco whose skill names a DefenseEfp is attached, a blow on
+#     that body plays that efp in place of the attacker's hit effect
+#     (IDecoSkill::FUN_009cd480, the highest Priority);
+#   - nothing stops the walled player from moving: neither the client's move
+#     gates (FUN_009eb140's body-state mask 0x2476, the 500 ms send lock,
+#     the modal checks) nor the server's movement handler read the wall.
+#     So this client does not refuse a move while a wall stands either.
+
+## owner key -> {token: skill id} of every buff this client has seen start
+## and not end: which DefenseEfp a blow on that body plays.
+var _fx_owner_buffs: Dictionary = {}
+
+func _note_owner_buff(key: String, token: int, skill_id: int) -> void:
+	var m: Dictionary = _fx_owner_buffs.get(key, {})
+	m[token] = skill_id
+	_fx_owner_buffs[key] = m
+
+func _forget_owner_buffs(key: String, tokens: Array) -> void:
+	var m: Dictionary = _fx_owner_buffs.get(key, {})
+	for t in tokens:
+		m.erase(int(t))
+	if m.is_empty():
+		_fx_owner_buffs.erase(key)
+
+## The DefenseEfp a blow on the owner `key` plays (SkillEffectReader.
+## defense_efp_for over the owner's running buffs), "" when none names one.
+func _defense_efp_on(key: String) -> String:
+	var m: Dictionary = _fx_owner_buffs.get(key, {})
+	if m.is_empty() or _hud_buff_board == null or _hud_buff_board.catalog == null:
+		return ""
+	var codes: Array = []
+	for t in m:
+		var code := String(_hud_buff_board.catalog.info(int(m[t])).get("basic_code", ""))
+		if code != "":
+			codes.append(code)
+	return SkillEffectReader.defense_efp_for(_skill_anisets(), codes)
+
+## Whether this player runs an 'onff' toggle of `skill_id` (round 640): a
+## recast of it switches it off on the server (Tick_UseSkill's phase 0,
+## 0x4ae622..0x4ae64d, READ) and draws no cast -- the retail caster's cast is
+## drawn from the server's 0xB070, which a toggle-off never sends.
+func _own_toggle_running(skill_id: int) -> bool:
+	if _hud_buff_board == null or _hud_buff_board.catalog == null:
+		return false
+	if not bool(_hud_buff_board.catalog.info(skill_id).get("onff", false)):
+		return false
+	var key := _fx_owner_key(_own_id(), SkillNet.OWNER_CHARACTER)
+	return (_fx_owner_buffs.get(key, {}) as Dictionary).values().has(skill_id)
+
+## A monster's blow a protection wall took (round 640): the number over
+## `anchor` as an ordinary damage number, the DefenseEfp of the body's
+## buffs, the monster's own blow sound -- and no hit reaction and no HP
+## change (kind 7, READ). Which sounds retail plays for kind 7 was not read
+## (OPEN): the monster's blow sound is kept, the "struck" one is not.
+func _draw_wall_blow(anchor: Node3D, owner_key: String, wall: CombatNet.WallHit, monster: int, who: String) -> void:
+	if anchor == null or not is_instance_valid(anchor):
+		return
+	var efp := _defense_efp_on(owner_key)
+	print("WALL: monster %d's blow on %s taken by the wall: %d%s, wall HP %d/%d%s; DefenseEfp '%s'" % [monster, who,
+		wall.damage, " CRIT" if wall.critical else "", wall.hp, wall.max_hp, " -- BROKEN" if wall.broke else "", efp])
+	_audio_monster_blow(monster, wall.critical, "blow on %s's wall" % who)
+	if efp != "":
+		_play_hit_efp_on(anchor, 2.0 * PLAYER_SCALE_RATIO, efp)
+	_floating_damage(anchor, 2.0 * PLAYER_SCALE_RATIO, wall.damage, DAMAGE_TAKEN_COLOUR)
 
 ## This player's self or ground cast whose effects wait for the server's
 ## answer (_send_self_cast): {skill, ground, acted}; empty when none.
@@ -16195,7 +16317,17 @@ func _play_skill_hit_effect_on(body: Node3D, world_height: float, basic_code: St
 	var particles := _open_particles_pk2_if_set()
 	if particles == null:
 		return
-	var efp := SkillEffectReader.hit_efp_for(_skill_effects(), basic_code)
+	_play_hit_efp_on(body, world_height, SkillEffectReader.hit_efp_for(_skill_effects(), basic_code))
+
+## A hit effect `efp` on `body` (round 640: split out of
+## _play_skill_hit_effect_on, so a wall's DefenseEfp plays the same way); ""
+## plays HitEffect's fallback.
+func _play_hit_efp_on(body: Node3D, world_height: float, efp: String) -> void:
+	if body == null or not is_instance_valid(body):
+		return
+	var particles := _open_particles_pk2_if_set()
+	if particles == null:
+		return
 	# Round 620: the skill's own hit .efp through EfpEffect when it decodes
 	# and draws something, at the same mid-height HitEffect uses (OURS: the
 	# characterInfo DamageBone/DamagePos is not read yet); HitEffect is the

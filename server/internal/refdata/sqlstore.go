@@ -213,6 +213,10 @@ ALTER TABLE skills ADD COLUMN IF NOT EXISTS efr3 BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS qest BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS trap BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS efr1 BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS pw0 BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS pw1 BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS pw2 BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS pw3 BIGINT NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS monster_drops (
 	monster_id      BIGINT NOT NULL,
@@ -532,8 +536,8 @@ func (s *SQLStore) ImportSkills(ctx context.Context, skills []Skill) error {
 			self_heal_hp, self_heal_mp, cooldown_group, sit_gate,
 			action_kind, target_required, target_land, target_self, target_ally, target_party, dura_ms, cbuf, nbuf, bbuf, lnks, tele0, tele1, buff_params, lks2, target_heal_hp, target_heal_mp,
 			action_overlap, ovl2, has_dttp, dttp0, dttp1, efr2, offensive, msch1, hide, skc_end, basic_group, activity, dtt,
-			lnks_group, lnks_max, efr3, qest, trap, efr1
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,$76,$77,$78,$79,$80,$81,$82,$83)
+			lnks_group, lnks_max, efr3, qest, trap, efr1, pw0, pw1, pw2, pw3
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,$76,$77,$78,$79,$80,$81,$82,$83,$84,$85,$86,$87)
 		ON CONFLICT (id) DO UPDATE SET
 			group_id=excluded.group_id, basic_code=excluded.basic_code, basic_name=excluded.basic_name,
 			basic_level=excluded.basic_level, basic_chain_code=excluded.basic_chain_code,
@@ -561,7 +565,8 @@ func (s *SQLStore) ImportSkills(ctx context.Context, skills []Skill) error {
 			cooldown_group=excluded.cooldown_group, sit_gate=excluded.sit_gate,
 			action_kind=excluded.action_kind, target_required=excluded.target_required, target_land=excluded.target_land, target_self=excluded.target_self, target_ally=excluded.target_ally, target_party=excluded.target_party, dura_ms=excluded.dura_ms, cbuf=excluded.cbuf, nbuf=excluded.nbuf, bbuf=excluded.bbuf, lnks=excluded.lnks, tele0=excluded.tele0, tele1=excluded.tele1, buff_params=excluded.buff_params, lks2=excluded.lks2, target_heal_hp=excluded.target_heal_hp, target_heal_mp=excluded.target_heal_mp,
 			action_overlap=excluded.action_overlap, ovl2=excluded.ovl2, has_dttp=excluded.has_dttp, dttp0=excluded.dttp0, dttp1=excluded.dttp1, efr2=excluded.efr2, offensive=excluded.offensive, msch1=excluded.msch1, hide=excluded.hide, skc_end=excluded.skc_end, basic_group=excluded.basic_group, activity=excluded.activity, dtt=excluded.dtt,
-			lnks_group=excluded.lnks_group, lnks_max=excluded.lnks_max, efr3=excluded.efr3, qest=excluded.qest, trap=excluded.trap, efr1=excluded.efr1
+			lnks_group=excluded.lnks_group, lnks_max=excluded.lnks_max, efr3=excluded.efr3, qest=excluded.qest, trap=excluded.trap, efr1=excluded.efr1,
+			pw0=excluded.pw0, pw1=excluded.pw1, pw2=excluded.pw2, pw3=excluded.pw3
 	`)
 	if err != nil {
 		return fmt.Errorf("refdata: preparing insert: %w", err)
@@ -582,7 +587,7 @@ func (s *SQLStore) ImportSkills(ctx context.Context, skills []Skill) error {
 			sk.SelfHealHP, sk.SelfHealMP, sk.CooldownGroup, sk.SitGate,
 			sk.ActionKind, sk.TargetRequired, sk.TargetLand, sk.TargetSelf, sk.TargetAlly, sk.TargetParty,
 			sk.DuraMs, sk.Cbuf, sk.Nbuf, sk.Bbuf, sk.Lnks, sk.Tele0, sk.Tele1, sk.BuffParams, sk.Lks2, sk.TargetHealHP, sk.TargetHealMP,
-			sk.ActionOverlap, sk.Ovl2, sk.HasDttp, sk.Dttp0, sk.Dttp1, sk.Efr2, sk.Offensive, sk.Msch1, sk.Hide, sk.SkcEnd, sk.BasicGroup, sk.Activity, sk.Dtt, sk.LnksGroup, sk.LnksMax, sk.Efr3, sk.Qest, sk.Trap, sk.Efr1,
+			sk.ActionOverlap, sk.Ovl2, sk.HasDttp, sk.Dttp0, sk.Dttp1, sk.Efr2, sk.Offensive, sk.Msch1, sk.Hide, sk.SkcEnd, sk.BasicGroup, sk.Activity, sk.Dtt, sk.LnksGroup, sk.LnksMax, sk.Efr3, sk.Qest, sk.Trap, sk.Efr1, sk.Pw0, sk.Pw1, sk.Pw2, sk.Pw3,
 		); err != nil {
 			return fmt.Errorf("refdata: inserting skill %d: %w", sk.ID, err)
 		}
@@ -606,7 +611,7 @@ func (s *SQLStore) GetSkill(ctx context.Context, id int64) (*Skill, error) {
 			self_heal_hp, self_heal_mp, cooldown_group, sit_gate,
 			action_kind, target_required, target_land, target_self, target_ally, target_party, dura_ms, cbuf, nbuf, bbuf, lnks, tele0, tele1, buff_params, lks2, target_heal_hp, target_heal_mp,
 			action_overlap, ovl2, has_dttp, dttp0, dttp1, efr2, offensive, msch1, hide, skc_end, basic_group, activity, dtt,
-			lnks_group, lnks_max, efr3, qest, trap, efr1
+			lnks_group, lnks_max, efr3, qest, trap, efr1, pw0, pw1, pw2, pw3
 		FROM skills WHERE id = $1`, id)
 	if err := row.Scan(
 		&sk.ID, &sk.GroupID, &sk.BasicCode, &sk.BasicName, &sk.BasicLevel, &sk.BasicChainCode,
@@ -621,7 +626,7 @@ func (s *SQLStore) GetSkill(ctx context.Context, id int64) (*Skill, error) {
 		&sk.SelfHealHP, &sk.SelfHealMP, &sk.CooldownGroup, &sk.SitGate,
 		&sk.ActionKind, &sk.TargetRequired, &sk.TargetLand, &sk.TargetSelf, &sk.TargetAlly, &sk.TargetParty,
 		&sk.DuraMs, &sk.Cbuf, &sk.Nbuf, &sk.Bbuf, &sk.Lnks, &sk.Tele0, &sk.Tele1, &sk.BuffParams, &sk.Lks2, &sk.TargetHealHP, &sk.TargetHealMP,
-		&sk.ActionOverlap, &sk.Ovl2, &sk.HasDttp, &sk.Dttp0, &sk.Dttp1, &sk.Efr2, &sk.Offensive, &sk.Msch1, &sk.Hide, &sk.SkcEnd, &sk.BasicGroup, &sk.Activity, &sk.Dtt, &sk.LnksGroup, &sk.LnksMax, &sk.Efr3, &sk.Qest, &sk.Trap, &sk.Efr1,
+		&sk.ActionOverlap, &sk.Ovl2, &sk.HasDttp, &sk.Dttp0, &sk.Dttp1, &sk.Efr2, &sk.Offensive, &sk.Msch1, &sk.Hide, &sk.SkcEnd, &sk.BasicGroup, &sk.Activity, &sk.Dtt, &sk.LnksGroup, &sk.LnksMax, &sk.Efr3, &sk.Qest, &sk.Trap, &sk.Efr1, &sk.Pw0, &sk.Pw1, &sk.Pw2, &sk.Pw3,
 	); err != nil {
 		return nil, fmt.Errorf("refdata: querying skill %d: %w", id, err)
 	}
@@ -644,7 +649,7 @@ func (s *SQLStore) ListAllSkills(ctx context.Context) ([]*Skill, error) {
 			self_heal_hp, self_heal_mp, cooldown_group, sit_gate,
 			action_kind, target_required, target_land, target_self, target_ally, target_party, dura_ms, cbuf, nbuf, bbuf, lnks, tele0, tele1, buff_params, lks2, target_heal_hp, target_heal_mp,
 			action_overlap, ovl2, has_dttp, dttp0, dttp1, efr2, offensive, msch1, hide, skc_end, basic_group, activity, dtt,
-			lnks_group, lnks_max, efr3, qest, trap, efr1
+			lnks_group, lnks_max, efr3, qest, trap, efr1, pw0, pw1, pw2, pw3
 		FROM skills ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("refdata: listing skills: %w", err)
@@ -667,7 +672,7 @@ func (s *SQLStore) ListAllSkills(ctx context.Context) ([]*Skill, error) {
 			&sk.SelfHealHP, &sk.SelfHealMP, &sk.CooldownGroup, &sk.SitGate,
 			&sk.ActionKind, &sk.TargetRequired, &sk.TargetLand, &sk.TargetSelf, &sk.TargetAlly, &sk.TargetParty,
 			&sk.DuraMs, &sk.Cbuf, &sk.Nbuf, &sk.Bbuf, &sk.Lnks, &sk.Tele0, &sk.Tele1, &sk.BuffParams, &sk.Lks2, &sk.TargetHealHP, &sk.TargetHealMP,
-			&sk.ActionOverlap, &sk.Ovl2, &sk.HasDttp, &sk.Dttp0, &sk.Dttp1, &sk.Efr2, &sk.Offensive, &sk.Msch1, &sk.Hide, &sk.SkcEnd, &sk.BasicGroup, &sk.Activity, &sk.Dtt, &sk.LnksGroup, &sk.LnksMax, &sk.Efr3, &sk.Qest, &sk.Trap, &sk.Efr1,
+			&sk.ActionOverlap, &sk.Ovl2, &sk.HasDttp, &sk.Dttp0, &sk.Dttp1, &sk.Efr2, &sk.Offensive, &sk.Msch1, &sk.Hide, &sk.SkcEnd, &sk.BasicGroup, &sk.Activity, &sk.Dtt, &sk.LnksGroup, &sk.LnksMax, &sk.Efr3, &sk.Qest, &sk.Trap, &sk.Efr1, &sk.Pw0, &sk.Pw1, &sk.Pw2, &sk.Pw3,
 		); err != nil {
 			return nil, fmt.Errorf("refdata: scanning skill: %w", err)
 		}

@@ -7155,6 +7155,146 @@ Tahoma: its first row says Arial) and hud_panels.gd (the doll's turn direction i
 Not done: the dungeon light (`Map::FUN_00a255c0` gives the object shader an ambient-only light in a
 dungeon). This client loads no dungeon, so there is nowhere for it to apply yet (OPEN).
 
+## Six-hundred-and-fortieth round: Fire Wall and Crystal Wall take the blows of their type until their own HP runs out, drain MP until it runs short, and switch off when recast or cancelled
+
+The user's request: "There's also skill lines like fire wall and crystal (ice) wall that don't let
+you move but you can attack within a certain radius. You have to cancel those skills to be able to
+move or have those walls run out of hp (not player hp)."
+
+Labels: READ (`SR_GameServer.exe` -- the dump and `srv.asm` on the RE box -- and `sro_client.exe`,
+the dump and `sro_client.asm`), MEASURED (the retail export), INFERRED, OURS, OPEN. The rules with
+every address are in `docs/protocol/skill_buffs.md`, "The toggles" and "The protection walls".
+
+**1. What `pw` is (READ).** Round 636's hand-off had `pw` 11,1159,0,17 (Fire Wall - Tower lv1) and
+7,824,0,11 (Crystal Wall lv1), with value[1] "likely the wall's HP". All four are now read:
+- value[0], the damage types the wall covers: bit 4 physical, bit 8 magical -- the same bits as
+  `att` value[0]. So Fire Wall (11) covers **magical** blows and Crystal Wall (7) **physical** ones;
+  the tooltips agree ("Absorbs the magical attack by creating a wall of fire", MEASURED).
+- value[1], the wall's HP: EngageSkill (`0x593540`) builds the wall object at ctx `+0x5c` with it.
+- value[2] and value[3], the wall's flat defence and defence percent: the two mitigation twins
+  `FUN_0040ebe0` / `FUN_0040eef0` (filed as `Formula_Mitigate{Physical,Magical}DamageOnWall`) run
+  the ordinary formula with them in place of the defender's params 5 and 7.
+- The holder is the **target** (`pc+0xc0c`), which settles skill_params.md's open question.
+
+**2. A blow on a walled caster (READ).** `Combat_ResolveDamage` builds a second, kind-7 entry for
+the wall while its HP is not 0 and resolves the blow against the wall's own defence. When the blow's
+types are ones the wall covers, the caster's own entry is marked 8 and skips everything: no block
+roll, no mitigation, no wear, no damage. `Combat_ApplyActionEffects` then takes the damage off the
+wall (`if (HP < dmg) HP = 0; else HP -= dmg`). A blow of another type leaves the wall alone and lands
+on the caster as usual. The next book update ends a wall whose HP is 0 (0xB072) and resets the
+motion. **So yes: the wall's HP drops and the caster's does not, until the wall breaks.**
+
+**3. The toggle (READ).** Every `onff` row -- the 55 walls and 61 Bard songs and dances, 116 in all
+(MEASURED) -- has no `dura` and is drained by `SkillAction_Buff`'s sub-state 2: onff[1] MP each
+time more than onff[0] ms have passed; with less MP than that, the buff ends (a pool of exactly the
+cost pays it, to 0). A recast of a running `onff` skill **ends it** (`Tick_UseSkill` phase 0,
+0x4ae622..0x4ae64d) before the gate, the cost and the cooldown -- that is how retail "cancels" a wall
+from the hotbar; the buff bar's right-click is the dispel round 616 built.
+
+**4. The motion state (READ).** EngageSkill sets 0x11 SKILL_PROTECTIONWALL (no broadcast). In it
+the gate refuses another `ao`/`pw` skill, the sit key does nothing and the regen tick restores
+nothing. MEASURED in the run below: MP fell by exactly 58 every 5 s while standing walled.
+
+**5. What was NOT found: anything that roots the caster.** The user remembers the walls stopping
+movement and allowing attacks "within a certain radius". Neither binary does that, by these probes:
+- Server: the movement handler `GObjPC::FUN_004b0ea0` (slot 377, CGObjPC's too -- vtable 0xaf59fc
+  read) refuses motion states 8, 0x10 and 0x12, the `stns` stun holder `pc+0xc44`, a running action,
+  abnormal bits and a failed path -- **no compare with 0x11 anywhere in 0x4b0ea0..0x4b11f9**. The
+  hand-off's `pc+0xc44` is written only from `stns` (`+0x448`), which only 11 monster stun attacks
+  carry (MEASURED). The approach walk (`MoveTowardObject`) refuses on `pc+0xc44` only. The 11
+  byte compares with 0x11 in the server's asm sit in item-use checks, inventory and storage
+  operation code and the skill gate -- none in movement.
+- Client (a fork's dig, READ): the move gates are the body-state mask `FUN_009eb140` (`& 0x2476`),
+  a 500 ms lock after a send, and the modal checks. No wall sets any of those bits (every setter of
+  states 1, 2, 4, 6, 10, 13 listed; the cast deco's state 2 clears at its shot; the 0xB0BD buff deco
+  sets none); the 0x30BF motion handler has no case for 0x11; no read of `pw` (+0x90) or `onff`
+  (+0x58) on a skill ref was found in the move, attack or skill paths.
+- So, per the rule "never present a guess as real", **this round does not root the caster**: a move
+  with a wall up is accepted and the wall keeps absorbing (the motion leaves 0x11, as the movement
+  handler's SetMotionState(WALK/RUN) does). Attacks were never refused. If the user wants the root
+  anyway it is a small OURS switch -- their decision, in docs/TODO.md. It is a negative from probes,
+  not a proof of absence.
+
+**6. The client (READ).** A kind-7 entry's damage shows as an ordinary number over the caster, the
+HP bar does not move, and no hit reaction plays; the wall's HP is shown nowhere. While a buff deco
+naming a DefenseEfp is attached, a blow on that body plays that efp (`IDecoSkill::FUN_009cd480`, the
+highest Priority) -- that it is skillaniset2's DefenseEfp column is INFERRED (+0x80 beside the
+DamageEfp's +0x84): `fire_ganggi_damage_a.efp` / `hit_2_ice.efp` for the walls.
+
+**Built.**
+- Export: skill CSV columns 83..86, `pw` value[0..3] (`onff` was already in BuffParams). **The VM
+  needs the skills CSV re-exported and re-imported.**
+- Server: `buff` keeps the wall holder, the wall's HP, the drain clock (`HitWall`, `EndBrokenWalls`,
+  `DueDrains`, `ToggleOff`); `session/walls.go` runs the drain and the broken-wall end every 100 ms
+  (OURS poll), switches a running toggle off on a recast, and keeps SKILL_PROTECTIONWALL;
+  `monsterStrike` sends an absorbed blow into the wall -- `resolveBlow(raw, pw[3], pw[2], crit, no
+  block)`, the same pipeline -- and a broken wall ends right after the messages reporting the
+  breaking blow (retail's book update: the next frame, after the blow's packet). A monster
+  skill's type comes from the skill table; the counter's unnamed swing takes the monster's first
+  skill whose range is its own (INFERRED: the col-83 primary); an unknown type is physical (OURS, as
+  `combat.AttackType` reads 0).
+- Wire (OURS): a 13-byte suffix on `OpAttackResult` and `OpMonsterAttacked`, sent only when the blow
+  met a wall or the reply is a toggle-off -- every other message is byte for byte what it was.
+- Client: the kind-7 drawing (number, DefenseEfp, no reaction, no HP change), the DefenseEfp on any
+  monster blow on a body holding such a buff, no cast drawn for a toggle-off, the exchange line.
+
+**Tests.**
+- The negative, `walls640_test.go` run against feat/buffstack (ff30b8b, and again at the review
+  follow-up ef56b28 after merging it -- the same two failures; the file compiles on both):
+  ```
+  --- FAIL: TestRound640CrystalWallTakesAPhysicalBlow (0.10s)
+      walls640_test.go:157: Mangyang's blow landed 23 on the walled caster (HP 200 -> 177), want 0: the wall takes it
+  --- FAIL: TestRound640RecastSwitchesTheWallOff (2.10s)
+      walls640_test.go:174: the recast answered "skill on cooldown", want it accepted as the toggle-off
+      walls640_test.go:177: 1 records after the recast, want the wall switched off
+      walls640_test.go:179: waiting for 0x00F6: read tcp 127.0.0.1:34492->127.0.0.1:46195: i/o timeout
+  ```
+- After: `walls640_test.go`, `walls640_unit_test.go` (the magical blow through the table until the
+  break, Crystal Wall letting magic through, the wall-state refusal and no regen, the toggle-off
+  marker, the drain to 0 and then the end, the suffix round trips), `buff/wall_test.go`,
+  `TestWallColumns`, and `TestToggleAndWallCensus` (run on the box with the export: 116 `onff` rows,
+  55 `pw` rows -- masks 7:28, 11:27 -- every one a drained toggle, every wall absorbing its type).
+  Client suites: combat, skill_effect_reader, monster_strikes, hud_buff_board, self_cast(_fx).
+
+**Real input** (`/var/tmp/walls/run640.sh`, Login -> CharacterSelect, a server from the branch with
+the monster AI aggressive, level 40, Fire Wall key 1, Crystal Wall key 2; shots in the round's
+scratch `wall_shots/`):
+- The route: Login -> CharacterSelect, xdotool keys and clicks, a server built from the branch with
+  the skills CSV exported from Media.pk2 on the box (deleted afterwards), `-monster-ai
+  -monster-battle -monster-aggro -monster-strike-push`. Runs 2, 5 and 6 of `run640.sh` (run 6 is
+  phase C alone; runs 1, 3 and 4 lost keys or a `/spawn` to the chat, round 636's OPEN chat issue).
+- **The wall, and a move (run 5):** key 1 -> `BUFF start ... skill 136`, `EFFECTS aura ... skill 136,
+  1 effect(s)` (`fire_hwabyeok_keep_a.efp`, shot `01_firewall_up`); a ground click then **moved** the
+  player (local z 1020 -> 990 in the log) with the wall up -- not refused, as neither binary
+  refuses it (shot `02_moved_with_wall`).
+- **The recast (run 5):** key 1 again -> `TOGGLE: skill 136 is running -- the recast switches it off`,
+  the server's `toggle: the recast switched it off`, `BUFF end ... tokens [1]`, `CAST reply: the toggle
+  was switched off (no cast, no cost)`, and no cast drawn -- inside Fire Wall's 5 s re-use delay.
+- **The right-click cancel (run 5):** the icon at (230, 22) -> `HudBuffBoard: right-click on buff 2
+  (skill 136) -> cancel`, `cancel sent`, `BUFF end ... tokens [2]` (shot `05_cancelled`).
+- **The drain to its end (run 5):** `toggle: drain ... mp=58 left=535`, then 477, 419, ... every 5 s
+  exactly 58 (no regen while walled), down to `left=13`, then `toggle: MP short of the drain, ended
+  ... have=13` and `BUFF end ... tokens [3]` (shots `06`..`08`).
+- **The break (run 6; run 2 the same):** Crystal Wall (key 2) up, an Earth Ghost (`/spawn`, its
+  `MSKILL_WC_EARTHGHOST_ATTACK02`, 'att' 5 -- physical) struck on its own:
+  `wall: took a blow ... damage=205 wall=619 max=824 "caster hp"=1277`, then 418, 196, `wall=0`, `wall:
+  broken, ended`; the client `WALL: ... 205, wall HP 619/824; DefenseEfp 'hiteffect\hit_2_ice.efp'`
+  with `strikes 1 for 0 (HP 1277)` each time; then `strikes 1 for 476 (HP 801) CRIT`, 250 (551), 233
+  (328). **The wall's HP went 824 -> 0 while the player's stayed 1277; then the player's dropped.**
+  The breaking blow is drawn when the ghost's clip lands, after the wall's `OpBuffEnd` (which the
+  server sends right after the push), so that one blow shows no DefenseEfp; retail's timing of the
+  same pair was not read (OPEN).
+- **Attacks while walled (run 2):** the QA attack loop's swings on the ghost landed with the wall up
+  (`attack hit for 3 (1446 left), took 0 (HP 1277)`); in run 6 they were out of reach (`too far
+  away`), which is the ordinary reach rule, not the wall.
+- The pictures (`wall_shots/`) are for a human; the log lines above are the measurement. Two of run
+  6's shots have a window over them (keys the chat leaked opened the Help window, and the X click
+  that closed it hit an NPC).
+
+Not done / OPEN: the root itself (the user's call); the `BDMD` drain reduction; the absorb test's
+second-record term; walls against player blows (srrevamp has no PvP); the kind-7 sounds; the
+`summ` lifetime.
+
 ## Six-hundred-and-thirty-sixth round, review follow-up: a refused cast no longer ends a stealth, a Fire Trap or a Warrior guard link can't be doubled, and a second Fire Detect is charged and does nothing, as retail does
 
 The review of ff30b8b confirmed:

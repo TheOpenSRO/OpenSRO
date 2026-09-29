@@ -25,6 +25,32 @@ func _row(code: String, hit_efp_col: String, extra_efp: String = "") -> String:
 		cols[17] = extra_efp
 	return "\t".join(cols)
 
+## Round 640: skillaniset2's Priority (col 3) and DefenseEfp (col 13), and
+## the highest-Priority pick. SYNTHETIC rows in the section's shape (the wall
+## codes and efp names as the retail rows spell them).
+func _test_defense_efp() -> void:
+	var fire := PackedStringArray(["1", "wall", "SKILL_CH_FIRE_HWABYEOK_A", "0", "FALSE", "1", "DEFAULT",
+		"ANI_READY04", "ANI_WAIT04", "ANI_SKILL_4", "none", "none", "none",
+		"skill\\china\\fire_ganggi_damage_a.efp", "none"])
+	var cold := PackedStringArray(["1", "wall", "SKILL_CH_COLD_BINGBYEOK_A", "0", "FALSE", "1", "DEFAULT",
+		"ANI_READY04", "ANI_WAIT04", "ANI_SKILL_4", "none", "none", "none", "hiteffect\\hit_2_ice.efp", "none"])
+	var high := PackedStringArray(["1", "x", "SKILL_TEST_HIGH", "5", "FALSE", "0", "DEFAULT",
+		"none", "none", "none", "none", "none", "none", "hiteffect\\high.efp", "none"])
+	var plain := PackedStringArray(["1", "x", "SKILL_TEST_PLAIN", "9", "FALSE", "0", "DEFAULT",
+		"none", "none", "ANI_ATTACK1", "none", "none", "none", "none", "hiteffect\\hit.efp"])
+	var rows := PackedStringArray(["#section\tskillaniset2", "\t".join(fire), "\t".join(cold),
+		"\t".join(high), "\t".join(plain)])
+	var sets := SkillEffectReader.parse_aniset(("\n".join(rows) + "\n").to_utf16_buffer())
+	_check(SkillEffectReader.defense_efp_for(sets, ["SKILL_CH_FIRE_HWABYEOK_A_01"]) == "skill\\china\\fire_ganggi_damage_a.efp",
+		"Fire Wall's DefenseEfp is col 13, by its level id")
+	_check(SkillEffectReader.defense_efp_for(sets, ["SKILL_CH_COLD_BINGBYEOK_A_03"]) == "hiteffect\\hit_2_ice.efp",
+		"Crystal Wall's DefenseEfp is col 13")
+	_check(SkillEffectReader.defense_efp_for(sets, ["SKILL_TEST_PLAIN", "SKILL_CH_COLD_BINGBYEOK_A"]) == "hiteffect\\hit_2_ice.efp",
+		"a row naming none (a DamageEfp only) is passed over")
+	_check(SkillEffectReader.defense_efp_for(sets, ["SKILL_CH_FIRE_HWABYEOK_A", "SKILL_TEST_HIGH"]) == "hiteffect\\high.efp",
+		"the highest Priority wins")
+	_check(SkillEffectReader.defense_efp_for(sets, []) == "", "no buffs, no DefenseEfp")
+
 func _init() -> void:
 	var rows := PackedStringArray([
 		"#section\tcharacterInfo",
@@ -49,6 +75,7 @@ func _init() -> void:
 	_check(SkillEffectReader.hit_efp_for(effects, "SKILL_CH_SWORD_UNKNOWN_03") == "",
 		"hit_efp_for returns empty for an unknown skill")
 
+	_test_defense_efp()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
