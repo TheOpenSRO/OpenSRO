@@ -203,6 +203,55 @@ const SCROLL_THUMB_DDJ := "interface\\ifcommon\\com_scroll_button.ddj"
 ## pixel's lower-right neighbour is black -- a one-pixel drop shadow.
 const SHADOW_OFFSET := Vector2(1, 1)
 
+# --- Auto-hide (round 641; docs/protocol/chat.md "Auto-hide") -------------
+#
+# READ. CGInterface's update (CGInterface::vslot_012, 0x77b3e2..0x77b41c)
+# runs every frame, fetches child 1 (this window) and asks 0x7a9d10 whether
+# the frame is wanted: the mouse inside the window's rect (0xb8f3d0, a rect
+# test with both edges inclusive), or the input line holding the keyboard
+# (0x634ea0 on +0x4a0: GetFocus() is its edit control and it is the UI's
+# focused control), or the mouse inside the whisper list's rect (+0x498, ID
+# 51 -- a rect test, so its hidden rect above the window counts too). Not
+# wanted, the frame is set to the lock byte +0x48c (0x7a9d00); wanted, it is
+# shown unless the lock already shows it. So: shown = locked or wanted,
+# decided every frame -- no delay and no fade (0x7a9bd0 calls each child's
+# show, vslot 0x5c; CIFWnd's 0x652b70 only flips the flag).
+#
+# 0x7a9bd0(show) sets IDs 12 and 14 (the two top-left buttons), the size
+# button (15, +0x464), the input box (11, +0x4a0) and the chat-mode button
+# (41, +0x490) to `show`; hiding also hides the whisper list (51) and the
+# chat-mode viewer (42). In mode 0 (+0x428 == 0) it then hides 12, 14 and 42
+# and stops; otherwise the three bands (5, 6, 7), the scroll bar (24, +0x49c)
+# follow `show`, and 0x7a9a80(!show) shows or hides the five tabs and shows
+# only the selected tab's lamp. The lists (16..19, 30) are never touched:
+# their lines stay, with their shadow and no background.
+#
+# The lock is GDR_BUTTON_CHATTABHIDE (ID 12, `chat_hide_button.ddj` at
+# 30,0): its message-map entry (0xebebb0, filled at 0xd7188a) runs 0x7a99b0,
+# which only flips +0x48c. The constructor sets +0x48c = 0 (0x7ad3e4, ebx
+# zeroed at 0x7ad305): auto-hide is on by default. Nothing else writes the
+# byte and nothing saves it (no Setting file): every new window starts
+# unlocked. Nothing reads it but the update, so the button's art does not
+# change with the state. Create gives it the tooltip
+# UIIT_STT_CHATING_VIEW_AUTO_OFF (0x7ac168 -> +0x444).
+const LOCK_BUTTON := "GDR_BUTTON_CHATTABHIDE"
+## The three buttons' tooltips, set by Create (0x7ac157..0x7ac21f): ID 12
+## (+0x444), ID 14 (+0x448) and ID 15 (+0x464), with the English rows'
+## words as the fallback.
+const BUTTON_TOOLTIPS := {
+	"GDR_BUTTON_CHATTABHIDE": ["UIIT_STT_CHATING_VIEW_AUTO_OFF", "Lock Chat window/Auto hide"],
+	"GDR_BUTTON_WHISPERLIST": ["UIIT_CTL_WHISPER_LIST", "Whisper list"],
+	"GDR_BTN_CHAT_SIZE": ["UIIT_STT_TOGGLE_CHATING_WINDOW_SETING", "Extend/lessen chatting window"],
+}
+## Shown with the frame in every mode (0x7a9bd0's first five calls, less the
+## two buttons mode 0 hides again).
+const FRAME_ROW := ["GDR_BTN_CHAT_SIZE", "GDR_CHAT_MODE_BTN", "GDR_CHAT_INPUTBOX"]
+## Shown with the frame in modes 1..6 only.
+const FRAME_OPEN := ["GDR_CHAT_BG_UP", "GDR_CHAT_BG_MID", "GDR_CHAT_BG_DOWN", "GDR_BUTTON_WHISPERLIST",
+	"GDR_BUTTON_CHATTABHIDE", "GDR_CHAT_VSCROLL"]
+## Hidden when the frame hides, never shown by it.
+const FRAME_HIDE_ONLY := ["GDR_WHISPERLIST", "GDR_CHAT_MODE_VIEW_WND"]
+
 var _builder: UiBuilder
 var _input: LineEdit
 var _root: Control
@@ -237,6 +286,13 @@ var is_gm := false
 ## for 0xB025's handler, which looks them up through 0x787db0).
 var _pending := {}
 var _next_index := 0
+
+## The lock (+0x48c): true keeps the frame shown; false (the constructor's)
+## lets it hide whenever the mouse is off the window and the line is not
+## being typed in. Not saved.
+var locked := false
+## Whether the frame is shown now (see "Auto-hide" above).
+var frame_shown := true
 
 func _init(builder: UiBuilder = null) -> void:
 	_builder = builder
@@ -298,7 +354,104 @@ func setup() -> void:
 		size_btn.pressed.connect(cycle_mode)
 		# No keyboard focus on buttons (the client has none; round 606).
 		size_btn.focus_mode = Control.FOCUS_NONE
+	var lock_btn := _root.get_node_or_null(LOCK_BUTTON) as BaseButton
+	if lock_btn != null:
+		lock_btn.pressed.connect(toggle_lock)
+		lock_btn.focus_mode = Control.FOCUS_NONE
+	for n in BUTTON_TOOLTIPS:
+		var b := _root.get_node_or_null(n) as Control
+		if b != null:
+			b.tooltip_text = _text(BUTTON_TOOLTIPS[n][0], BUTTON_TOOLTIPS[n][1])
+	var watch := FrameWatch.new()
+	watch.name = "FrameWatch"
+	watch.target = self
+	add_child(watch)
 	_apply_mode(mode, false)
+
+# --- Auto-hide (0x77b3e2, 0x7a9d10, 0x7a9bd0, 0x7a99b0) -------------------
+
+## The update's frame test, every frame: the real mouse against the window.
+func _process(_delta: float) -> void:
+	update_frame(get_global_mouse_position())
+
+## OURS: a mouse event runs the same test at once, at the event's own
+## position, so a click that arrives with the move into the window finds the
+## frame (and the input line) already shown. Retail runs the test only in the
+## per-frame update; with a real mouse the move comes first either way. It
+## also lets pushed events (the headless tests, whose viewport reports its
+## centre as the mouse) reach the line. A child node carries the `_input`
+## callback, since this class's `_input` is the line edit.
+class FrameWatch extends Node:
+	var target: Control
+
+	func _input(event: InputEvent) -> void:
+		var m := event as InputEventMouse
+		if m != null and target != null and target.is_visible_in_tree():
+			target.call("update_frame", m.position)
+
+## One pass of CGInterface's update for this window, with the mouse at
+## `point` (global): the frame shown when locked or wanted, hidden otherwise.
+func update_frame(point: Vector2) -> void:
+	var want := locked or frame_wanted(point)
+	if want != frame_shown:
+		set_frame_shown(want)
+
+## 0x7a9d10: the mouse inside the window's rect, or the input line holding
+## the keyboard, or the mouse inside the whisper list's rect (shown or not).
+func frame_wanted(point: Vector2) -> bool:
+	if _inside(get_global_rect(), point):
+		return true
+	if _input != null and _input.has_focus():
+		return true
+	var whisper := _root.get_node_or_null("GDR_WHISPERLIST") as Control if _root != null else null
+	return whisper != null and _inside(whisper.get_global_rect(), point)
+
+## 0xb8f3d0's test: both edges inclusive (`x0 <= x <= x0 + w`). The insets
+## it adds (+0x50..+0x5c) are zero here: GDR_CHAT_BOARD's ClientRect is
+## 0,0,0,0 (INFERRED that those fields are the ClientRect).
+static func _inside(r: Rect2, p: Vector2) -> bool:
+	return p.x >= r.position.x and p.x <= r.end.x and p.y >= r.position.y and p.y <= r.end.y
+
+## 0x7a9bd0(show).
+func set_frame_shown(show: bool) -> void:
+	if show != frame_shown and is_inside_tree():
+		print("CHAT FRAME %s rect=%s" % ["shown" if show else "hidden", get_global_rect()])
+	frame_shown = show
+	if _root != null and not show:
+		for n in FRAME_HIDE_ONLY:
+			var c := _root.get_node_or_null(n) as CanvasItem
+			if c != null:
+				c.visible = false
+	_apply_visibility()
+
+## The lock button (0x7a99b0): flips +0x48c. The frame follows on the next
+## update.
+func toggle_lock() -> void:
+	locked = not locked
+	print("CHAT LOCK %s (auto-hide %s)" % ["on" if locked else "off", "off" if locked else "on"])
+
+## What the mode and the frame together show: the input row with the frame;
+## the tabs, the selected tab's lamp, the bands, the two top-left buttons
+## and the scroll bar with the frame in modes 1..6 (0x7a9bd0, 0x7aac20).
+func _apply_visibility() -> void:
+	if _root == null:
+		return
+	var framed := mode > 0 and frame_shown
+	for t in _tabs:
+		(t as Control).visible = framed
+	for n in FRAME_OPEN:
+		var c := _root.get_node_or_null(n) as CanvasItem
+		if c != null:
+			c.visible = framed
+	if _scroll != null:
+		_scroll.visible = framed
+	for n in FRAME_ROW:
+		var c := _root.get_node_or_null(n) as CanvasItem
+		if c != null:
+			c.visible = frame_shown
+	for i in _lamps.size():
+		if _lamps[i] != null:
+			(_lamps[i] as CanvasItem).visible = framed and i == _tab
 
 ## A ChatList over each authored list box, at exactly its rect.
 ##
@@ -423,7 +576,7 @@ func select_tab(index: int) -> void:
 		(_list_boxes[i] as Control).visible = i == index and mode > 0
 	for i in _lamps.size():
 		if _lamps[i] != null:
-			(_lamps[i] as CanvasItem).visible = i == index and mode > 0
+			(_lamps[i] as CanvasItem).visible = i == index and mode > 0 and frame_shown
 	for i in _tabs.size():
 		(_tabs[i] as ChatTab).selected = i == index
 	if index < _lists.size():
@@ -480,16 +633,10 @@ func _apply_mode(m: int, keep_bottom: bool) -> void:
 	if _root == null:
 		return
 	var open := m > 0
-	# 0x7a9a80: the tabs shown unless mode 0.
-	for t in _tabs:
-		(t as Control).visible = open
-	for n in ["GDR_CHAT_BG_UP", "GDR_CHAT_BG_MID", "GDR_CHAT_BG_DOWN", "GDR_BUTTON_WHISPERLIST",
-			"GDR_BUTTON_CHATTABHIDE"]:
-		var c := _root.get_node_or_null(n) as Control
-		if c != null:
-			c.visible = open
-	if _scroll != null:
-		_scroll.visible = open
+	# 0x7a9a80: the tabs shown unless mode 0; the bands, the two top-left
+	# buttons and the scroll bar with them -- all while the frame is shown
+	# (the auto-hide, _apply_visibility).
+	_apply_visibility()
 	# The authored scroll control is a plain container here (ChatScroll
 	# draws and takes the input); at its layout height, 308, it lay over the
 	# size button in the smaller modes and ate its click (found on the live
@@ -497,7 +644,7 @@ func _apply_mode(m: int, keep_bottom: bool) -> void:
 	var vscroll := _root.get_node_or_null("GDR_CHAT_VSCROLL") as Control
 	if vscroll != null:
 		vscroll.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		vscroll.visible = open
+		vscroll.visible = open and frame_shown
 		if open:
 			_place("GDR_CHAT_VSCROLL", -1, float(g["scroll_len"]))
 	var row_y := float(g["row_y"])
@@ -916,18 +1063,32 @@ func is_typing() -> bool:
 	return _input != null and _input.has_focus() and _input.is_visible_in_tree()
 
 ## Puts the caret in the input line, for the Enter-to-chat convention.
+##
+## With the frame auto-hidden the line is hidden too; retail gives it the
+## focus anyway (0x7a9a70 -> 0xb9d9f0) and the next update shows the frame
+## because the line holds the keyboard (0x7a9d10). Godot will not focus a
+## hidden control, so the frame is shown first -- the same frame, one update
+## early.
 func focus_input() -> void:
-	if _input != null:
-		_input.grab_focus()
+	if _input == null:
+		return
+	if not frame_shown:
+		set_frame_shown(true)
+	_input.grab_focus()
+
+## Whether Enter or R can open the line: the window is on screen, whether or
+## not its frame is auto-hidden.
+func can_open() -> bool:
+	return _input != null and is_visible_in_tree()
 
 ## R's reply (round 608, KeyMap.reply_line): the input line opened with
 ## `text` in it and the caret after it. False when there is no line to open
 ## (not built, or the chat hidden), as Enter opens nothing then.
 func open_with(text: String) -> bool:
-	if _input == null or not _input.is_visible_in_tree():
+	if not can_open():
 		return false
 	_input.text = text
-	_input.grab_focus()
+	focus_input()
 	_input.caret_column = text.length()
 	return true
 
@@ -965,7 +1126,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 	if key.keycode != KEY_ENTER and key.keycode != KEY_KP_ENTER:
 		return
-	if _input == null or not _input.is_visible_in_tree():
+	if not can_open():
 		return
 	focus_input()
 	get_viewport().set_input_as_handled()

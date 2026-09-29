@@ -46,11 +46,44 @@ Mode 6 is the layout's own geometry (285 = 4 + 277 + 4; 195 = 6 * 42 - 57). MEAS
 (1280x720): the window at (923, 513) 350x117 in mode 2, and the size button stepping 2 -> 3 -> 4
 -> 5 -> 6 by real clicks.
 
-**The frame's visibility (`0x7b84e0`).** It shows or hides children 5, 6, 7 and the two buttons
-and keeps the state at +0x36c. Create calls it with `settings+7 == 0` (`0x4f9d00`); with that
-option set, CGInterface's update (`0x77b385..0x77b3db`) shows the frame only while the mouse is
-over the window (`0x7b85a0`). Which option +7 is, and its default, are OPEN; srrevamp always shows
-the frame, as the user's screenshot does.
+**Auto-hide (round 641).** READ unless marked:
+
+- **The frame (`0x7b84e0(show)`).** It shows or hides the three bands (IDs 5, 6, 7), the filter
+  button (+0x378) and the size button (+0x37c); the scroll bar (+0x388) unless the mode (+0x370) is
+  1; and the filter board (+0x380) only when the board is shown (`0xb8f530` reads +0x61, the shown
+  flag). The state is kept at +0x36c. The text box (+0x384) is never touched, so the lines stay,
+  with their shadow and no background. A mode change (`0x7b87a0`, `0x7b8885`) sets the scroll bar's
+  visibility only while the frame is shown.
+- **The update (`CGInterface::vslot_012`, `0x77b140`: `0x77b385..0x77b3db`), every frame.** It
+  fetches child 0x44 and tests the game-option byte `settings+7` (`0x4f9d00` -> CGame `0xeece80`
+  + 0x543):
+  - option clear: the frame is shown whenever it is not;
+  - option set: the frame is shown while `0x7b85a0` holds and hidden otherwise.
+- **`0x7b85a0`, the hover test.** It holds when the mouse is inside the window's rect, or when the
+  board is shown and the mouse is inside the board's rect. Both use `0xb8f3d0`, whose test is
+  inclusive at both edges (`x0 + l <= x <= x0 + w + r`). The insets it adds (+0x50..+0x5c) are
+  INFERRED to be the ClientRect; they are 0,0,0,0 for this window.
+- **No delay, no fade.** The test runs every frame and calls each control's show (vslot 0x5c).
+  CIFWnd's show (`0x652b70`) flips the shown flag and redraws. It starts no timer.
+- **The option.** The Game options' checkbox UIIT_MSG_SYSTEM_WND_HIDEMSG "System UI Autohide", with
+  the tooltip UIIT_STT_GAME_OPTION_TTDESC_04 "Hides system window automatically. If you click the
+  check box, system window's frame will disappear automatically and will be activated when you put
+  your mouse on."
+  - The option list `0x600140` files it at entry +0x197c.
+  - `0x5fddd0` copies `settings+7` into that entry and `0x5f6a30` copies it back.
+  - `CIFOption_Game` reads and writes it through its checkbox 4 (`0x6f0182`, `0x6f02fa`).
+  - It is saved in `Setting\SROptionSet.dat` (`0x5f7ce0` -> `0x501720`). The loader `0x502680`
+    reads tagged records (u32 tag, then the value); tag 0x7d8's handler (`0x502cb2`) reads one byte
+    into the option block + 7.
+  - The default with no file is OPEN: the no-file path saves what the block holds, and its
+    initializer was not found.
+  - MEASURED: the box's `SROptionSet.dat` (a private server's client) is 681 bytes, and tags
+    0x7d1..0x7ec are 5-byte records. Tag 0x7d8 holds 1, which matches the user's screenshot with the
+    log auto-hidden.
+
+**srrevamp (OURS, the user's decision in round 641):** auto-hide is always on, with no option
+(`HudSystemMessage.AUTO_HIDE`). Otherwise it follows the reading above: `update_frame` runs from
+`_process` every frame on the real mouse position.
 
 **The mouse (READ, with one inference).** CGWndBase's mouse slot (vslot 17, `0xb91440`) offers a
 message to the children first, then keeps it for the window when the point is inside the

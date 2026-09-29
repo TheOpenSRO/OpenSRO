@@ -128,6 +128,64 @@ hidden. Mode 6 is the layout's geometry (the registry's 398 against the formula'
 the client's own code gives). The user's retail screenshot is mode 5 (its down arrow at 304 =
 36 + 252 + 16).
 
+**Auto-hide (READ unless marked, round 641).**
+
+- **The lock button.** It is `GDR_BUTTON_CHATTABHIDE`: ID 12, `chat_hide_button.ddj` at 30,0, the
+  second icon from the top left.
+  - Create gives it the tooltip UIIT_STT_CHATING_VIEW_AUTO_OFF "Lock Chat window/Auto hide"
+    (`push 0xdbbc28` at `0x7ac168`, onto +0x444, the ID-12 control).
+  - The other two tooltips are ID 14's UIIT_CTL_WHISPER_LIST "Whisper list" (`0xdbbbfc`, +0x448)
+    and the size button's UIIT_STT_TOGGLE_CHATING_WINDOW_SETING (`0xdbbbb0`, +0x464).
+  - Its message-map entry (`0xebebb0`, pointer written at `0xd7188a`) runs `0x7a99b0`, which only
+    flips the byte +0x48c: `cmp [ecx+0x48c],0; sete al; mov [ecx+0x48c],al`.
+  - The constructor sets +0x48c = 0 (`0x7ad3e4`, with ebx zeroed at `0x7ad305`), so **auto-hide is
+    on by default**.
+  - Only four instructions in the binary touch the byte `[reg+0x48c]` through a register other
+    than esp: the constructor's store, the toggle's two instructions and the getter `0x7a9d00`.
+    The 24 wider accesses to +0x489..+0x48c are all outside CIFChatViewer's code. The getter's
+    callers are the update's two calls (`0x77b3fe`, `0x77b40b`). So nothing saves the state (no
+    Setting file), and nothing changes the button's art with it: the button looks the same in both
+    states.
+- **The update (`CGInterface::vslot_012`, `0x77b3e2..0x77b41c`), every frame.** It fetches child 1
+  and asks `0x7a9d10(mouse x, y)` whether the frame is wanted. That test holds when any of these
+  does:
+  - the mouse is inside the window's rect (`0xb8f3d0`, inclusive at both edges; the insets are 0
+    here, and INFERRED to be the ClientRect);
+  - the input line holds the keyboard (`0x634ea0` on +0x4a0: `GetFocus()` is its edit control's
+    HWND, and it is the UI's focused control, `0xb9da40`);
+  - the mouse is inside the whisper list's rect (+0x498, ID 51). This is a pure rect test, so the
+    list's rect above the window (16,-152,141,153) counts even while the list is hidden.
+
+  If the frame is not wanted, it is set to +0x48c (`0x7a9bd0(+0x48c)`). If it is wanted, it is shown
+  unless the lock already shows it. In short, shown = locked or wanted.
+- **No delay, no fade.** The test runs every frame, and `0x7a9bd0` calls each control's show
+  (vslot 0x5c). CIFWnd's show `0x652b70` flips the flag and redraws, with no timer.
+  CIFChatViewer's own slot 23 (`0x7a9b60`) shows its ID-12 button along with the whole window.
+- **What `0x7a9bd0(show)` hides.**
+  - It sets these to `show`: ID 12, ID 14, the size button (15, +0x464), the input box (11,
+    +0x4a0) and the chat-mode button (41, +0x490).
+  - When hiding, it also hides the whisper list (51) and the chat-mode viewer (42).
+  - In mode 0 (+0x428 == 0) it then hides 12, 14 and 42 and returns.
+  - Otherwise it sets the three bands (5, 6, 7) and the scroll bar (24, +0x49c) to `show`, and
+    calls `0x7a9a80(!show)`. That call shows or hides the five tabs, hides the five lamps, and
+    shows the selected tab's lamp when showing.
+  - **The lists are never touched.** Their lines stay, drawn with their one-pixel shadow and no
+    background, as in the user's screenshot.
+- **Enter.** Enter gives the focus to +0x4a0 (see "Input"). On the next update the focus makes the
+  frame wanted. Escape ends the input, and the update after that hides the frame.
+- **srrevamp.** `HudChat.update_frame` runs this test from `_process` on the real mouse position.
+  Enter and R's reply open the line while the frame is hidden, so the check is now whether the
+  window is shown, not the line. Godot will not focus a hidden control, so `focus_input` shows the
+  frame first (OURS: one update early). The lock is `locked`, false at start and never saved.
+  A mouse event also runs the test at once, at its own position (`HudChat.FrameWatch`; OURS: retail
+  tests only once a frame), so a click that comes with the move into the window finds the line
+  shown.
+- **MEASURED on the box**, by real X input through Login -> CharacterSelect (round 641):
+  - the frame hid with the mouse on the world and showed on hover over the chat;
+  - Enter showed it with the frame hidden, and a sent line kept it;
+  - Escape hid it;
+  - the lock kept it with the mouse away, and a second click let it hide.
+
 **Refusals before sending (READ, `0x7ad400`).** A party, guild or academy line with no such group
 is refused by the client: UIIT_MSG_PARTYERR_CANT_FIND_PARTY "Cannot find the corresponding
 party.", UIIT_MSG_GUILD_NON_EXISTING "Cannot carry this function out because you do not belong to
@@ -135,8 +193,9 @@ the guild.", UIIT_MSG_TC_ERROR_NOT_POSITION "You do not belong to an Academy.", 
 emptied (SetText "" at `0x7ad875`). srrevamp's client knows the party and guild from their info
 answers; the server still refuses with its own codes.
 
-**Not built (OPEN):** the whisper list (`GDR_WHISPERLIST`, `0x7acfd0` adds to it), the chat-mode
-button and viewer (IDs 41/42), the hide button, speech balloons
+**Not built (OPEN):** the whisper list (`GDR_WHISPERLIST`, `0x7acfd0` adds to it; its button,
+ID 14, runs `0x7a99d0`, which shows the list when it is hidden and hides it otherwise), the
+chat-mode button and viewer (IDs 41/42), speech balloons
 (`0x9c77c0` for types 1, 3, 6, 0xd). The system message window (interface child 0x44, `0x7781b0`)
 is built since round 639 (docs/protocol/system_message.md): the chat's refusals go there, the
 group refusals with type 4 (`0x7ad866`) and the server's with type 0 (`0x877798`), and srrevamp's
