@@ -126,6 +126,13 @@ signal raise_mastery_result(result: SkillNet.RaiseMasteryResult)
 ##     this client's own character id (also kept in own_character_id).
 ## OpBuffStart / OpBuffEnd carry a trailing ownerKind (SkillNet.OWNER_*).
 signal buff_started(start: SkillNet.BuffStart)
+## Every owner's active buffs as this connection was last told (round 646,
+## BuffRoster): kept here, beside the connection, so a scene built after the
+## server's in-view buffs arrived (World3D, swapped in by CharacterSelect on
+## OpEnterWorldResult) can replay them, and a body rebuilt later can take its
+## auras back. Updated before buff_started / buff_ended / entity_left /
+## change_zone_result are emitted.
+var buff_roster := BuffRoster.new()
 signal self_id_received(character_id: int)
 ## This client's own character id from OpSelfId; -1 until one arrives on this
 ## connection (and from a server that does not send it).
@@ -305,6 +312,7 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	_attack_targets_in_flight.clear()
 	_attack_types_in_flight.clear()
 	own_character_id = -1
+	buff_roster.clear()
 	_unhandled_warned.clear()
 	_use_tls = use_tls
 	_tls_host = host
@@ -336,6 +344,7 @@ func disconnect_from_server() -> void:
 	_attack_types_in_flight.clear()
 	_pending_learns.clear()
 	own_character_id = -1
+	buff_roster.clear()
 	_forget_session_lists()
 	disconnected.emit()
 
@@ -734,17 +743,26 @@ func _dispatch(p: Packet) -> void:
 			last_enter_world_result = result
 			if result.ok:
 				current_zone = result.zone
+				# The zone's buffs follow this result (round 646): the roster
+				# starts over from them.
+				buff_roster.clear()
 			enter_world_result.emit(result)
 		WorldNet.OP_ENTITY_ENTERED:
 			entity_entered.emit(WorldNet.decode_entity_entered(p.data))
 		WorldNet.OP_ENTITY_MOVED:
 			entity_moved.emit(WorldNet.decode_entity_moved(p.data))
 		WorldNet.OP_ENTITY_LEFT:
-			entity_left.emit(WorldNet.decode_entity_left(p.data))
+			var left_id := WorldNet.decode_entity_left(p.data)
+			# Its buffs went with its body (round 646, BuffRoster.drop).
+			buff_roster.drop(BuffRoster.key_of(left_id, SkillNet.OWNER_CHARACTER))
+			entity_left.emit(left_id)
 		WorldNet.OP_CHANGE_ZONE_RESULT:
 			var zone_result := WorldNet.decode_change_zone_result(p.data)
 			if zone_result.ok:
 				current_zone = zone_result.zone
+				# The new zone's buffs, this player's own included, follow
+				# this result (round 646; sendBuffsInView).
+				buff_roster.clear()
 			change_zone_result.emit(zone_result)
 		WorldNet.OP_REVIVE_RESULT:
 			revive_result.emit(WorldNet.decode_revive_result(p.data))
@@ -826,7 +844,10 @@ func _dispatch(p: Packet) -> void:
 		CombatNet.OP_MONSTER_DAMAGED:
 			monster_damaged.emit(CombatNet.decode_monster_damaged(p.data))
 		CombatNet.OP_MONSTER_DIED:
-			monster_died.emit(CombatNet.decode_monster_died(p.data))
+			var died := CombatNet.decode_monster_died(p.data)
+			if died >= 0:
+				buff_roster.drop(BuffRoster.key_of(died, SkillNet.OWNER_MONSTER))
+			monster_died.emit(died)
 		CombatNet.OP_LOOT_DROPPED:
 			loot_dropped.emit(CombatNet.decode_loot_dropped(p.data))
 		CombatNet.OP_MONSTER_LIST_RESULT:
@@ -888,6 +909,7 @@ func _dispatch(p: Packet) -> void:
 				print("BUFF start: owner %d (kind %s) skill %d token %d duration %d ms remaining %d ms runSpeed %d" % [
 					bs.owner_id, str(bs.owner_kind) if bs.owner_kind_sent else "unsent", bs.skill_id, bs.token,
 					bs.duration_ms, bs.remaining_ms, bs.run_speed])
+				buff_roster.start(bs, Time.get_ticks_msec())
 				buff_started.emit(bs)
 		SkillNet.OP_BUFF_END:
 			var be := SkillNet.decode_buff_end(p.data)
@@ -896,6 +918,7 @@ func _dispatch(p: Packet) -> void:
 			else:
 				print("BUFF end: owner %d (kind %s) tokens %s runSpeed %d" % [be.owner_id,
 					str(be.owner_kind) if be.owner_kind_sent else "unsent", str(be.tokens), be.run_speed])
+				buff_roster.end(be)
 				buff_ended.emit(be)
 		SkillNet.OP_SELF_ID:
 			var sid := SkillNet.decode_self_id(p.data)

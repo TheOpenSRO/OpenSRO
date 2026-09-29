@@ -1148,6 +1148,9 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 	// object's re-creation is inferred). The client drops its own sit on the
 	// zone change too.
 	motions.stand(old.CharacterID, time.Now())
+	// A walled caster's landing is its client's to report (round 646,
+	// walls.go noteWarpLanding): the root holds it where it lands.
+	noteWarpLanding(old.CharacterID, time.Now())
 	// The new label and frame are what a later save writes under, and the
 	// arrival itself is saved at once under -persist-position (round 573).
 	rememberPlace(sess, zone, frame, time.Now())
@@ -1220,7 +1223,13 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 	// SetMotionState(WALK/RUN) does (round 607, motion.go). Neither the store
 	// nor the zone hears a refused one, as for the dead.
 	if e, inWorld := hub.EntityBySession(sess.ID()); inWorld {
-		if accepted, _ := motions.moved(e.CharacterID, time.Now()); !accepted {
+		moved := motions.moved
+		// Round 646, OURS: a rooted caster's warp landing is taken
+		// (walls.go warpLandingAdmits); a walk is still dropped.
+		if warpLandingAdmits(e.CharacterID, req.Relocated, time.Now()) {
+			moved = motions.movedUnrooted
+		}
+		if accepted, _ := moved(e.CharacterID, time.Now()); !accepted {
 			// Round 640, OURS: a move the wall's root dropped is answered
 			// with the held position (walls.go rootedMoveAnswer).
 			if wallRoots(e.CharacterID) {

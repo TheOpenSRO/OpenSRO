@@ -43,6 +43,7 @@ package session
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/buff"
@@ -82,6 +83,52 @@ func rootedMoveAnswer(sess *gateway.Session, e world.Entity) {
 	msg := &SkillMove{CharacterID: e.CharacterID, SkillID: rec.SkillID,
 		X: float32(e.Pos.X), Y: float32(e.Pos.Y), Z: float32(e.Pos.Z)}
 	_ = sess.Send(&proto.Packet{Opcode: OpSkillMove, Data: msg.Encode()})
+}
+
+// warpLandings holds, per rooted character, until when a relocated move is
+// its warp's landing (round 646, OURS -- the root is OURS too). A zone change
+// or a gate teleport lands the character at the server's arrival point, and
+// the client then stands it on its own walkable ground (the zone's spawn
+// spot, a /goto's point, a gate's point on the graph) and reports that as a
+// relocated OpMove -- the server has no map. The root dropped that report, so
+// the server kept the arrival point while the client drew the caster
+// elsewhere: every other player saw the walled caster, and its wall, where it
+// was not (MEASURED live in round 646: A's client at the Jangan spawn, local
+// 1002,1020, the server and B's client at the town's landing). A warp is not
+// a walk; the root holds a caster in place, it does not hold it where it
+// never stood.
+var warpLandings sync.Map // int64 -> time.Time (the deadline)
+
+// warpLandingGrace is how long after a warp its landing is taken. OURS: long
+// enough for a slow machine's zone load (round 646's box took 5-18 s).
+const warpLandingGrace = 2 * time.Minute
+
+// noteWarpLanding marks characterID's next relocated moves, until the grace
+// runs out, as its warp's landing -- only while its wall roots it.
+func noteWarpLanding(characterID int64, now time.Time) {
+	if wallRoots(characterID) {
+		warpLandings.Store(characterID, now.Add(warpLandingGrace))
+		return
+	}
+	warpLandings.Delete(characterID)
+}
+
+// warpLandingAdmits reports whether a move is a rooted character's warp
+// landing: relocated, inside the grace after its last warp. A walk is never
+// one -- the root still drops it.
+func warpLandingAdmits(characterID int64, relocated bool, now time.Time) bool {
+	if !relocated {
+		return false
+	}
+	v, ok := warpLandings.Load(characterID)
+	if !ok {
+		return false
+	}
+	if now.After(v.(time.Time)) {
+		warpLandings.Delete(characterID)
+		return false
+	}
+	return true
 }
 
 // wallTeleRefusal answers a 'tele'/'tel2'/'tel3' cast (Ghost Walk) while the

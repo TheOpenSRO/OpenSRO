@@ -1352,6 +1352,8 @@ func _ready() -> void:
 	NetClient.skill_moved.connect(_on_skill_moved)
 	NetClient.skill_cast.connect(_on_skill_cast)
 	NetClient.self_id_received.connect(_on_self_id_received)
+	# What arrived before this scene could hear it (round 646).
+	_replay_held_buffs("world entry")
 	NetClient.monster_damaged.connect(_on_monster_damaged)
 	NetClient.monster_died.connect(_on_monster_died)
 	NetClient.level_up.connect(_on_level_up)
@@ -1966,6 +1968,12 @@ func _build_buff_board() -> void:
 	_hud_buff_board.preload_catalog()
 	if not _hud_buff_board.connect_net(NetClient):
 		print("World3D: NetClient has no buff_started signal -- the buff bar is fed by SRREVAMP_QA_BUFFS only")
+	# This player's buffs that started before the bar was built (round 646):
+	# the board keys by token, so one it already shows is not added twice.
+	var roster: BuffRoster = NetClient.get("buff_roster") as BuffRoster
+	if roster != null:
+		for bs in roster.all_starts(Time.get_ticks_msec()):
+			_hud_buff_board.on_buff_started(bs)
 	var qa := OS.get_environment("SRREVAMP_QA_BUFFS")
 	if qa != "":
 		_hud_buff_board.qa_inject(qa, OS.get_environment("SRREVAMP_QA_BUFFS_END"))
@@ -5043,21 +5051,7 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	# spot in the old zone's coordinates.
 	_drop_pending_attack()
 
-	# Whoever was rendered as an "other" belonged to the *old* zone -- the
-	# server only broadcasts OpEntityLeft to people left behind, never back
-	# to the mover, so without this their stale capsules/bodies would keep
-	# showing here even though this player can no longer interact with them
-	# (see docs/PROGRESS.md for this bug, caught right after the initial
-	# OpChangeZone implementation shipped).
-	for character_id in _other_bodies.keys():
-		_other_bodies[character_id].queue_free()
-	_other_bodies.clear()
-	_other_gaits.clear()
-	_other_seated.clear()
-	# Their buffs went with them (round 638): the new zone's owners, this
-	# player included, are re-sent on arrival (sendBuffsInView).
-	_target_buff_book.clear()
-	_spawn_result_others(result.others, result.seated)
+	_replace_others_for_arrival(result.others, result.seated)
 
 	# Same stale-body bug as _other_bodies above, for monsters -- the old
 	# zone's monster list result never gets superseded on its own, so
@@ -5125,6 +5119,32 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 			print("World3D: no walkable graph under the teleport point (%.1f, %.1f) after the zone loaded -- released to the ground snap" % [
 				unlanded.x, unlanded.y])
 			_teleport_landing = null
+
+## A zone change's arrival list replaces whoever was drawn (split out of
+## _on_change_zone_result in round 646, so a test can run it without a
+## loading screen).
+func _replace_others_for_arrival(others: Array, seated: Array) -> void:
+	# Whoever was rendered as an "other" belonged to the *old* zone -- the
+	# server only broadcasts OpEntityLeft to people left behind, never back
+	# to the mover, so without this their stale capsules/bodies would keep
+	# showing here even though this player can no longer interact with them
+	# (see docs/PROGRESS.md for this bug, caught right after the initial
+	# OpChangeZone implementation shipped).
+	for character_id in _other_bodies.keys():
+		_other_bodies[character_id].queue_free()
+	_other_bodies.clear()
+	_other_gaits.clear()
+	_other_seated.clear()
+	# Their buffs went with them (round 638): the new zone's owners, this
+	# player included, are re-sent on arrival (sendBuffsInView). Round 646:
+	# the re-sent starts can arrive during _on_change_zone_result's loading-
+	# screen await, before this, and went to the old bodies -- the book is rebuilt from what NetClient holds for the new
+	# zone (BuffRoster, started over at the result), and each body built
+	# below, and this player's, takes its auras from it.
+	_target_buff_book.clear()
+	_fx_owner_buffs.clear()
+	_spawn_result_others(others, seated)
+	_fx_resync_all("the zone change's arrival")
 
 ## Everything in the world that plays an animation -- NPCs and monsters.
 ## Each entry is [Skeleton3D, ParsedAnimation, frame count, phase, loops,
@@ -9634,6 +9654,8 @@ func _update_blob_shadow() -> void:
 ##                          (round 577) is the nearest teleport gate
 ##                          _bind_region_gates bound, aimed at the middle of
 ##                          its drawn box
+##   SRREVAMP_QA_CLICK_WAIT=<ticks> (round 646) the ticks before the first
+##                          click (default 120)
 ##   SRREVAMP_QA_TELEPORT=<dest id> (round 578; with SRREVAMP_QA_CLICK=gate
 ##                          and a server) choose the gate's teleport line,
 ##                          then click the talk box's line for that teleportdata
@@ -10051,6 +10073,11 @@ func _qa_step() -> void:
 				_qa_click_queue.append(String(kind).strip_edges())
 			# The monster list arrives after the connect; give it two seconds.
 			_qa_click_wait = 120
+			# SRREVAMP_QA_CLICK_WAIT=<ticks> (round 646) waits longer, so a
+			# live run can cast buffs by real input before a gate's click.
+			var qa_click_wait := OS.get_environment("SRREVAMP_QA_CLICK_WAIT")
+			if qa_click_wait.is_valid_int() and int(qa_click_wait) > 0:
+				_qa_click_wait = int(qa_click_wait)
 		# SRREVAMP_QA_LEVELUP=<level> fires the real level-up burst a moment
 		# after the player is placed, so a movie render catches it mid-play
 		# (it lasts LevelUpEffect.LIFE). Movie mode advances 1/60 a frame, so
@@ -12691,6 +12718,10 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	other_entities.add_child(body)
 	_other_bodies[character_id] = body
 	_other_body_targets[character_id] = pos
+	# The auras of the buffs this client holds for them go on the new body
+	# (round 646): a zone change's arrival list and the world entry build the
+	# body after the server's replay may already have arrived.
+	_fx_resync_owner(_fx_owner_key(character_id, SkillNet.OWNER_CHARACTER), "their body was built")
 
 func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.equipped, snapshot.gender, snapshot.heading)
@@ -12845,7 +12876,14 @@ func _place_at_region_local(region_x: int, region_y: int, local_x: float, local_
 	player.global_position = group.to_global(
 		Vector3(local_x, graph.landing_height_at(local_x, local_z), local_z))
 	player.velocity = Vector3.ZERO
-	_last_sent_pos = player.position
+	# Round 646: _last_sent_pos stays what the server has (the arrival point
+	# a zone change or the world entry set it to), so the send loop reports
+	# this placement at once. It used to be set to the placement, and nothing
+	# went out until the player walked: the server -- and every other client
+	# -- kept the character, and its buffs' auras, at the server's landing
+	# (MEASURED live: after /goto jangan, A's client at the spawn spot, local
+	# 1002,1020, and B drawing A and its Fire Wall inside the dragon's
+	# pedestal at the square's centre).
 	_walked_since_send = 0.0
 	# The server still has the old position: the next OpMove is a relocation
 	# (round 637's review follow-up).
@@ -14369,6 +14407,8 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 
 	other_entities.add_child(body)
 	_monster_bodies[monster.monster_id] = body
+	# Its buffs' auras, if the zone told any (round 646, BuffRoster).
+	_fx_resync_owner(_fx_owner_key(monster.monster_id, SkillNet.OWNER_MONSTER), "its body was built")
 	# Its sounds: keyed by its own sound object (MOB_CH_MANGNYANG ->
 	# MOB_MANGNYANG), with no footstep material -- the handler builds a
 	# monster's key without one.
@@ -15667,7 +15707,63 @@ func _fx_on_buff_started(start: SkillNet.BuffStart) -> void:
 	# The buff's remaining time bounds the aura in case its end never
 	# arrives (SkillEffects.AURA_GRACE_MS, OURS).
 	var remaining := start.remaining_ms if start.remaining_ms > 0 else start.duration_ms
-	SkillEffects.attach_aura(_fx_owner_key(owner_id, kind), start.token, start.skill_id, body, remaining)
+	# A re-sent start of a buff whose aura already draws on this body keeps it
+	# (round 646, SkillEffects.ensure_aura).
+	SkillEffects.ensure_aura(_fx_owner_key(owner_id, kind), start.token, start.skill_id, body, remaining)
+
+## Round 646: every buff NetClient holds for `key` (BuffRoster, the server's
+## word since the last entry or zone change) is in the target window's book,
+## in the DefenseEfp / wall / toggle table, and -- when the owner's body is
+## drawn here -- its aura on that body. Called when a body is built and when
+## a zone change's arrival is laid out; a start already applied changes
+## nothing (Book.start and _note_owner_buff key by token, ensure_aura keeps a
+## live aura). The retail client applies a spawned object's buff list to the
+## new body with the start effect skipped (FUN_009cf270 -> FUN_00a54020 with
+## arg4 1, READ): only the ACT_L aura is put back here, no cast or act.
+func _fx_resync_owner(key: String, why: String) -> int:
+	var roster: BuffRoster = NetClient.get("buff_roster") as BuffRoster
+	if roster == null:
+		return 0
+	var starts := roster.starts_of(key, Time.get_ticks_msec())
+	if starts.is_empty():
+		return 0
+	var n := 0
+	for bs in starts:
+		var start: SkillNet.BuffStart = bs
+		_target_buff_book.start(key, start.token, start.skill_id)
+		_note_owner_buff(key, start.token, start.skill_id)
+		var body := _fx_owner_body(start.owner_id, start.owner_kind)
+		if body == null:
+			continue
+		var remaining := start.remaining_ms if start.remaining_ms > 0 else start.duration_ms
+		SkillEffects.ensure_aura(key, start.token, start.skill_id, body, remaining)
+		n += 1
+	print("EFFECTS resync %s (%s): %d buff(s) held, %d on a drawn body" % [key, why, starts.size(), n])
+	return n
+
+## _fx_resync_owner for every owner NetClient holds buffs for.
+func _fx_resync_all(why: String) -> void:
+	var roster: BuffRoster = NetClient.get("buff_roster") as BuffRoster
+	if roster == null:
+		return
+	for key in roster.owners():
+		_fx_resync_owner(String(key), why)
+
+## Round 646: the buffs the server sent before this world existed -- the
+## in-view replay that follows OpEnterWorldResult, dispatched while
+## CharacterSelect was swapping this scene in, when nothing heard
+## buff_started -- go through the ordinary start handler now, once the
+## bodies of the arrival list are built. Their auras, the book, this
+## player's own run speed and ownership; the buff bar is seeded when it is
+## built (_build_buff_board).
+func _replay_held_buffs(why: String) -> void:
+	var roster: BuffRoster = NetClient.get("buff_roster") as BuffRoster
+	if roster == null:
+		return
+	var starts := roster.all_starts(Time.get_ticks_msec())
+	print("BUFF replay (%s): %d buff(s) held for %d owner(s)" % [why, starts.size(), roster.owners().size()])
+	for bs in starts:
+		_on_buff_started(bs)
 
 ## OpBuffEnd: each ended token's aura ends at once.
 func _fx_on_buff_ended(ended: SkillNet.BuffEnd) -> void:

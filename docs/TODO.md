@@ -1392,9 +1392,23 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       - which sounds retail plays for a kind-7 entry (the monster's blow sound is kept).
 - [ ] **The duration extension** (`ctx+0x24`): `RPBU`/`STDU`/`DTDR` through `FUN_005a0330`'s map at
       book `+0x244` -- needs whatever files entries there (passive skills, INFERRED).
-- [ ] **Retail's death and teleport rules for buffs** (ours: a death clears, a zone change keeps),
-      buffs restored at login (ctx+0xc bits 4|8), and whether retail re-sends buffs on entering view
-      (ours: yes). (The `skc` category end on a skill use is built, round 636.)
+- [ ] **Retail's death and teleport rules for buffs** (ours: a death clears, a zone change keeps)
+      and buffs restored at login (ctx+0xc bits 4|8). (The `skc` category end on a skill use is
+      built, round 636.)
+- [x] **Buffs on entering view -- round 646.** READ: retail's spawn record (0x3015 / the group
+      spawn) carries the owner's buffs and the client attaches them to the new body with the start
+      effect skipped (skill_buffs.md "Entering view"). srrevamp's replay of `OpBuffStart`s after the
+      body was already sent; the client now keeps them per connection (`BuffRoster`) and applies
+      them whenever a body is built (world entry, a zone change's arrival, `OpEntityEntered`, a
+      monster body), and a walled caster's warp landing is taken. Left open:
+      - whether a retail teleport re-spawns the object for observers (0x3016 then 0x3015; the view
+        wrappers `0x534340` / `0x5344b0` were not traced to the teleport code);
+      - `OpEntityEntered` carrying the buff block itself, as retail's spawn does (a contract change;
+        the separate replay stands in for it);
+      - the `efta` creator byte (the Bard guards and dances, the Cleric group recovery pick a
+        different effect variant for their caster, `FUN_00a53850` `+0xbc`), not on srrevamp's wire;
+      - view ranges: srrevamp's server has none (a zone -- under `-single-frame` the whole world --
+        is one broadcast bucket), so "walks out of view and back" does not occur yet.
 
 ### Berserk potions and Energy of life (round 632 and its review) -- **built**
 
