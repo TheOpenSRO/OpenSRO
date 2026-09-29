@@ -124,6 +124,10 @@ func handleBerserk(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 	if errStr != "" {
 		return sess.Send(&proto.Packet{Opcode: OpBerserkResult, Data: (&BerserkResult{}).Encode()})
 	}
+	// The berserk turn (round 632 review): the activation and its persisted
+	// spend run as one against a potion or fill of the same character.
+	release := zerk.Turn(characterID)
+	defer release()
 	if c, err := chars.GetByID(ctx, characterID); err == nil {
 		zerk.EnsureSeeded(characterID, c.HwanCount)
 	}
@@ -1288,6 +1292,7 @@ func performAttack(
 				// seed-once, so orbs earned this session are not undone.
 				zerk.EnsureSeeded(characterID, kc.HwanCount)
 			}
+			releaseTurn := zerk.Turn(characterID)
 			if gained := zerk.EarnOnKill(characterID, berserk.Kill{
 				KillerLevel: killerLevel, VictimLevel: monster.Level,
 				VictimIsMonster: true, VictimRarity: monster.Rarity,
@@ -1295,9 +1300,11 @@ func performAttack(
 				// The engine's count is a character-row column, so a gain has
 				// to reach the row -- see character.Character.HwanCount.
 				if err := chars.SetHwanCount(ctx, characterID, zerk.Charges(characterID)); err != nil {
+					releaseTurn()
 					return fmt.Errorf("combat: persisting berserk orbs: %w", err)
 				}
 			}
+			releaseTurn()
 			result.BerserkGauge = int32(zerk.Gauge(characterID))
 		}
 		// No damage taken, but the client still wants to know current HP.

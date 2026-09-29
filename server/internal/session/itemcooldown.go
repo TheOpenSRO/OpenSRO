@@ -15,6 +15,10 @@ import (
 type itemCooldownTracker struct {
 	mu    sync.Mutex
 	until map[int64]map[uint32]time.Time
+	// perItem is the block's per-ITEM map at +0x10 (round 632 review),
+	// keyed by character and item ref id: where a COOLTIME whose key is 0
+	// lives. See ReadyItem.
+	perItem map[int64]map[int64]time.Time
 }
 
 var itemCooldowns = newItemCooldownTracker()
@@ -39,10 +43,72 @@ var itemCooldowns = newItemCooldownTracker()
 var skillGroupCooldowns = itemCooldowns
 
 func newItemCooldownTracker() *itemCooldownTracker {
-	return &itemCooldownTracker{until: map[int64]map[uint32]time.Time{}}
+	return &itemCooldownTracker{until: map[int64]map[uint32]time.Time{}, perItem: map[int64]map[int64]time.Time{}}
 }
 
-// Ready reports whether the character's timer for the group has run out.
+// ReadyItem is ItemCooldowns::IsReady (0x64c040) for an item whose row
+// carries a COOLTIME (round 632 review). The key is the descriptor's value,
+// ref+0x520, which Item_HandleUseItem hands over in EAX (0x510d8f):
+//
+//   - key 0: the per-item map at block+0x10, looked up by the item -- so
+//     every COOLTIME:0x00000000 row keeps its OWN timer (37 retail ids carry
+//     key 0; before this they all shared a "group 0" and blocked each
+//     other, e.g. 22936 and 22941/23977).
+//   - key non-zero: each non-zero BYTE of it (shifts 0, 8, 16, 24) is a
+//     group looked up in the group map at block+0x2c; a running group is
+//     "not ready". The engine returns ready at the first byte whose group
+//     has run out; every retail key is a single byte (0x71, 0xA7, 0xC8-0xCB,
+//     0xF0-0xF2, 0xF6), where the two readings agree.
+func (t *itemCooldownTracker) ReadyItem(characterID, itemID int64, key uint32, now time.Time) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if key == 0 {
+		if until, ok := t.perItem[characterID][itemID]; ok && now.Before(until) {
+			return false
+		}
+		return true
+	}
+	for shift := 0; shift < 32; shift += 8 {
+		b := (key >> shift) & 0xff
+		if b == 0 {
+			continue
+		}
+		if until, ok := t.until[characterID][b]; ok && now.Before(until) {
+			return false
+		}
+	}
+	return true
+}
+
+// ArmItem is ItemCooldowns::Arm (0x64c320) for an item: it always stores
+// the per-item entry, and links each non-zero byte of the key to a group
+// timer as well.
+func (t *itemCooldownTracker) ArmItem(characterID, itemID int64, key uint32, d time.Duration, now time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	pi := t.perItem[characterID]
+	if pi == nil {
+		pi = map[int64]time.Time{}
+		t.perItem[characterID] = pi
+	}
+	pi[itemID] = now.Add(d)
+	for shift := 0; shift < 32; shift += 8 {
+		b := (key >> shift) & 0xff
+		if b == 0 {
+			continue
+		}
+		m := t.until[characterID]
+		if m == nil {
+			m = map[uint32]time.Time{}
+			t.until[characterID] = m
+		}
+		m[b] = now.Add(d)
+	}
+}
+
+// Ready reports whether the character's timer for the group has run out --
+// the group map alone, which is what a skill's cooldown group reads.
+// Items go through ReadyItem.
 func (t *itemCooldownTracker) Ready(characterID int64, group uint32, now time.Time) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()

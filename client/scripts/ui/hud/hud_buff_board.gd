@@ -159,6 +159,10 @@ const NAME_ONLY_CODES := [
 
 ## A right-click asked for a cancel (after the confirm box, for a `cbuf`).
 signal cancel_requested(skill_id: int, token: int)
+## A left-click on an item-grant icon (kind 5, round 632 review): retail's
+## CIFMagicStateBoard::vslot_029 (0x800430, WM_LBUTTONUP) opens the
+## CompositeItem window for it (FUN_0079d390(1, id) at 0x80051b).
+signal item_state_clicked(token: int)
 
 ## One icon on the board.
 class Buff:
@@ -175,6 +179,9 @@ class Buff:
 	var tick := 0
 	var alpha := 0xFF
 	var tick_accum_ms := 0.0
+	## 5 for an item grant (a composite item's used-item limit), 0 for a
+	## skill buff.
+	var kind := 0
 
 	## (total - elapsed) / total; 1.0 without a duration (0x8056a0).
 	func gauge_value() -> float:
@@ -199,6 +206,10 @@ class BuffSlot extends Control:
 	func _gui_input(event: InputEvent) -> void:
 		if event is InputEventMouseButton:
 			var mb := event as InputEventMouseButton
+			if mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed and board != null:
+				accept_event()
+				board.on_slot_left_click(token)
+				return
 			if mb.button_index == MOUSE_BUTTON_RIGHT:
 				accept_event()
 				# WM_RBUTTONUP: vslot_033 is the button-up (0x46c8e0's 0x205
@@ -465,10 +476,67 @@ func _remove(b: Buff) -> void:
 	b.slot = null
 	_layout()
 
+## An item grant's icon (kind 5, round 632 review), added or refreshed.
+## Retail's 0x3159 handler (FUN_008992b0) adds it through FUN_00777f20(5,
+## compositeRefId, 1, secs): the icon is the COMPOSITE item's icon path
+## (ref+0x15c, FUN_007ff240) and the gauge's total is its Param1 x 1000 ms
+## (ref+0x2b4), elapsed = total - secs x 1000. `token` is ours (the granted
+## item's id, negated, so it never meets a server buff token). The main list
+## is INFERRED: FUN_00805a40's list choice for kind 5 was not read.
+func add_item_state(token: int, icon: String, total_ms: int, remaining_ms: int, tooltip: String) -> Buff:
+	var b: Buff = _by_token.get(token)
+	var fresh := b == null
+	if fresh:
+		b = Buff.new()
+	b.kind = 5
+	b.owner_id = -1
+	b.skill_id = 0
+	b.token = token
+	b.total_ms = total_ms if total_ms > 0 else -1
+	b.elapsed_ms = 0.0
+	if b.total_ms > 0 and remaining_ms >= 0:
+		b.elapsed_ms = float(clampi(b.total_ms - remaining_ms, 0, b.total_ms))
+	b.info = {"icon": icon, "tooltip": tooltip}
+	if fresh:
+		b.main_list = true
+		_main.append(b)
+		_by_token[token] = b
+		b.slot = _make_slot(b)
+		add_child(b.slot)
+	b.slot.gauge.value = b.gauge_value()
+	b.slot.gauge.visible = b.total_ms > 0
+	_layout()
+	print("HudBuffBoard: item grant %d icon '%s' (%d ms of %d)" % [token, icon, remaining_ms, total_ms])
+	return b
+
+## Removes an item grant's icon at once (0x315B's handler, FUN_008993b0,
+## removes the entry and its icon; no burst is read for it).
+func remove_item_state(token: int) -> void:
+	var b: Buff = _by_token.get(token)
+	if b != null and b.kind == 5:
+		_remove(b)
+
+## The item-grant tokens on the board.
+func item_state_tokens() -> Array:
+	var out: Array = []
+	for t in _by_token:
+		if (_by_token[t] as Buff).kind == 5:
+			out.append(t)
+	return out
+
+func on_slot_left_click(token: int) -> void:
+	var b: Buff = _by_token.get(token)
+	if b != null and b.kind == 5:
+		item_state_clicked.emit(token)
+
 ## What a right-click on the icon with `token` does (vslot_033).
 func right_click_action(token: int) -> String:
 	var b: Buff = _by_token.get(token)
 	if b == null or not b.main_list or b.ending:
+		return ACTION_NONE
+	# OURS: an item grant is not a skill buff; vslot_033's kind-5 branch was
+	# not read, so a right-click on it does nothing rather than send a cancel.
+	if b.kind == 5:
 		return ACTION_NONE
 	if bool(b.info.get("nbuf", false)) and not bool(b.info.get("lnks", false)):
 		return ACTION_NONE
@@ -570,6 +638,11 @@ func tooltip_for(token: int) -> String:
 	var b: Buff = _by_token.get(token)
 	if b == null:
 		return ""
+	if b.kind == 5:
+		var item_lines := PackedStringArray([String(b.info.get("tooltip", ""))])
+		if b.total_ms >= 0:
+			item_lines.append(remain_line(b.remaining_ms(), _unit_texts()))
+		return "\n".join(item_lines)
 	var lines := PackedStringArray()
 	var code := String(b.info.get("name_code", ""))
 	var skill_name: String = catalog.text_of(code) if catalog != null else ""

@@ -334,10 +334,97 @@ type Tracker struct {
 	mu          sync.Mutex
 	charges     map[int64]int
 	activeUntil map[int64]time.Time
+	// durationBonus is each character's timed contribution to param 60, the
+	// berserk duration's base (see DurationBonus).
+	durationBonus map[int64]timedBonus
+	// turns serialise one character's orb changes with their persistence
+	// (see Turn).
+	turnsMu  sync.Mutex
+	turns    map[int64]*sync.Mutex
+	bonusGen uint64
+}
+
+type timedBonus struct {
+	seconds int
+	until   time.Time
+	gen     uint64
 }
 
 func NewTracker() *Tracker {
-	return &Tracker{charges: map[int64]int{}, activeUntil: map[int64]time.Time{}}
+	return &Tracker{charges: map[int64]int{}, activeUntil: map[int64]time.Time{},
+		durationBonus: map[int64]timedBonus{}, turns: map[int64]*sync.Mutex{}}
+}
+
+// Turn takes the character's berserk turn and returns its release (round 632
+// review). A caller that reads the orbs or the berserk state, spends an item,
+// changes the orbs and persists them holds the turn across all of it, so a
+// potion cannot be spent against a state a concurrent activation is changing.
+// The engine needs no lock: the use and the activation both run on the PC's
+// own thread. The tracker's own mu is never held across a store call.
+func (t *Tracker) Turn(characterID int64) func() {
+	t.turnsMu.Lock()
+	m := t.turns[characterID]
+	if m == nil {
+		m = &sync.Mutex{}
+		t.turns[characterID] = m
+	}
+	t.turnsMu.Unlock()
+	m.Lock()
+	return m.Unlock
+}
+
+// SetDurationBonus records a timed contribution of seconds to param 60 until
+// the given time (round 632 review). Param 60 is the berserk duration's base
+// (Duration's note: the activation reads EvaluateParam(60) +
+// EvaluateParam(195), and GObjPC_InitStats sets 60 to 60.0). The Energy of
+// life scroll's buff is a CTJ_CharParamKeeper timed job whose FourCC
+// 0x706874 its table (CTJ_CharParamKeeper::FUN_006552d0, 0x6552fe) maps to
+// param 0x3c = 60, slot 0, index 0; the job's apply (vslot_012, 0x655045 ->
+// 0x655430 -> ParamKeeper_SetParam 0x4b3510) writes the job's value there,
+// keyed by the job, and slot 0 SUMS its entries. So the value is seconds
+// added to the base while the job runs. One per character: the engine
+// refuses a second job with the same FourCC (FUN_00411560(10, fourcc),
+// 0x49fd09 -> 0x1894).
+func (t *Tracker) SetDurationBonus(characterID int64, seconds int, now time.Time, lasts time.Duration) {
+	t.mu.Lock()
+	t.bonusGen++
+	gen := t.bonusGen
+	t.durationBonus[characterID] = timedBonus{seconds: seconds, until: now.Add(lasts), gen: gen}
+	t.mu.Unlock()
+	// The job's own end (composite review): the entry goes when it runs out,
+	// on real time, so a character who never returns leaves nothing behind.
+	time.AfterFunc(lasts, func() {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		if b, ok := t.durationBonus[characterID]; ok && b.gen == gen {
+			delete(t.durationBonus, characterID)
+		}
+	})
+}
+
+// ClearDurationBonus ends the param-60 job early (the fill's last use does,
+// CUsedItemLimit::vslot_007 -> FUN_004dd620 finds the type-10 job with
+// FourCC 0x706874 and ends it).
+func (t *Tracker) ClearDurationBonus(characterID int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.durationBonus, characterID)
+}
+
+// DurationBonus returns the running param-60 contribution in seconds and
+// when it ends, or 0 when none runs.
+func (t *Tracker) DurationBonus(characterID int64, now time.Time) (int, time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	b, ok := t.durationBonus[characterID]
+	if !ok {
+		return 0, time.Time{}
+	}
+	if !now.Before(b.until) {
+		delete(t.durationBonus, characterID)
+		return 0, time.Time{}
+	}
+	return b.seconds, b.until
 }
 
 // EarnOnKill rolls the engine's hwan gain for a killing blow the character
@@ -403,6 +490,37 @@ func (t *Tracker) Gauge(characterID int64) int {
 	return t.Charges(characterID) * (Max / Orbs)
 }
 
+// PotionCharges is what a berserk potion adds: the literal 5 CGItemExpendable
+// slot 308 hands AddHwanCount for TypeID 3/3/1/8 (0x0049b9d1 `mov esi,0x5`,
+// then 0x49b9d6 `call 0x4e4d00`), READ from srv.asm (round 632). It is not
+// the row's Param1, although every 3/3/1/8 row in Media.pk2's itemdata
+// carries 5 there too; the composite-item path (CUsedItemLimit::FUN_004a0600,
+// 0x4a062b `movzx esi,BYTE [esp+0x14]`) is the one that reads Param1.
+const PotionCharges = 5
+
+// Add is GObjPC::AddHwanCount (0x004e4d00): delta orbs, refused outright when
+// positive while berserk is active (the GetBodyMode()==1 test at its head),
+// the result clamped to [0, Orbs]. It returns the orbs actually added.
+func (t *Tracker) Add(characterID int64, delta int) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if delta == 0 {
+		return 0
+	}
+	if delta > 0 && time.Now().Before(t.activeUntil[characterID]) {
+		return 0
+	}
+	before := t.charges[characterID]
+	after := before + delta
+	if after < 0 {
+		after = 0
+	} else if after > Orbs {
+		after = Orbs
+	}
+	t.charges[characterID] = after
+	return after - before
+}
+
 // Activate goes berserk if all Orbs charges are held, spending all of them
 // (the handler's FUN_004e4d00(-5)) and returning true. Fewer charges leave
 // the count untouched and return false (the handler's error 1).
@@ -413,7 +531,12 @@ func (t *Tracker) Activate(characterID int64) bool {
 		return false
 	}
 	t.charges[characterID] = 0
-	t.activeUntil[characterID] = time.Now().Add(Duration)
+	now := time.Now()
+	d := Duration
+	if b, ok := t.durationBonus[characterID]; ok && now.Before(b.until) {
+		d += time.Duration(b.seconds) * time.Second
+	}
+	t.activeUntil[characterID] = now.Add(d)
 	return true
 }
 
@@ -439,10 +562,26 @@ func (t *Tracker) Boost(characterID int64, damage int) int {
 	return damage * DamageNumerator / DamageDenominator
 }
 
-// Clear drops a character's state (on disconnect).
-func (t *Tracker) Clear(characterID int64) {
+// Forget drops a character's state (on disconnect).
+func (t *Tracker) Forget(characterID int64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	delete(t.charges, characterID)
 	delete(t.activeUntil, characterID)
+	// A RUNNING durationBonus is kept: it is a timed job, which the engine
+	// keeps across a relog (its jobs carry __time32_t stamps), and its own
+	// timer (SetDurationBonus) deletes it when it runs out. An expired one
+	// goes now. srrevamp keeps it in memory, so a restart loses it --
+	// disclosed.
+	if b, ok := t.durationBonus[characterID]; ok && !time.Now().Before(b.until) {
+		delete(t.durationBonus, characterID)
+	}
+	// The turn goes too (composite review), unless someone holds it -- a
+	// request still in flight for this character keeps the mutex it locked.
+	t.turnsMu.Lock()
+	if m, ok := t.turns[characterID]; ok && m.TryLock() {
+		delete(t.turns, characterID)
+		m.Unlock()
+	}
+	t.turnsMu.Unlock()
 }

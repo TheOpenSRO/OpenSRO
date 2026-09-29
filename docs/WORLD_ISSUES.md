@@ -7094,6 +7094,358 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-thirty-second round, composite review follow-up: a grant's icon goes when the grant ends, the window has its Cancel, and a failed store changes nothing
+
+The review of 5b362d2 confirmed every READ claim. It also confirmed, with real input, the GM
+path, the non-GM path and the +5 s bonus. This follow-up fixes what it found. Labels: READ,
+MEASURED, INFERRED, OURS.
+
+**1. The grant's end is pushed (READ: 0x653e80 sends 0x315B; the client's FUN_008993b0 removes the
+entry and the icon).**
+- `CompositeKeeper.put` now starts a real-time timer for each grant. The timer and the last use
+  both end the grant. Each end pushes `OpCompositeEnd` (0x0108, OURS) {item, scroll} to the
+  session the character last used the keeper through.
+- A generation stamp stops a stale timer from ending a newer grant.
+- The last use pushes the end BEFORE its result, because vslot_007 ends the job before it
+  answers 0xB15F.
+- A refused fill is now followed by the state too.
+- The client's `_on_composite_ended` removes the kind-5 icon.
+
+**2. The Cancel button (READ: FUN_007af830 builds count + 1 buttons, and the extra one is
+labelled from `UIIT_CTL_CANCEL` at 0x7afb57; FUN_007b03e0 hit-tests all count + 1).**
+- `CompositeItemWindow` adds it one step below the last item button. Pressing it closes the
+  window.
+- The file's header now describes the count + 1 buttons.
+
+**3. Leaks.**
+- `BerserkDisconnectHandler` runs before `worldDisconnect`. It skips a character still live on
+  another session. It calls:
+  - `Tracker.Forget` (renamed from Clear; a method named Clear is on the orphan list for the threat table): drops the charges (they are persisted and reseeded), the active window, the
+    turn (unless a request holds it; `TryLock`) and an expired bonus;
+  - `CompositeKeeper.Forget`: drops the session binding, expired grants and the empty map.
+- The berserk tracker was never cleared on logout before this round.
+- A RUNNING grant or bonus stays until its own timer deletes it, because retail keeps timed
+  jobs across a relog. So what stays in memory is bounded by the jobs still running.
+- `SetDurationBonus` now takes (now, lasts) and deletes its entry on real time.
+
+**4. No partial state on a store error.**
+- The fill persists `SetHwanCount(after)` FIRST. On an error it answers "using failed" and
+  leaves the grant, the bonus, the cooldown and the live orbs as they were.
+- The bag potion does the same: on an error the potion is handed back and the orbs are
+  untouched.
+
+**5. The pieces that had been skipped.**
+- *The FUN_00488db0 gate (READ, 0x488db0).* It answers 1 for TID bit 1 clear and TypeID
+  3/3/3/10. On 0, `0x49fc94 je 0x49fd55` skips the type-10 job with no error. srrevamp now skips
+  such a UIU1 entry the same way.
+  - The type-3 branch's class is `FUN_004929c0` (0x4929c0: TypeID 3/3/13) with TID4 4. This
+    corrects the previous round's "TypeID4 4" to **3/3/13/4**. Such rows are still refused, as
+    not modelled.
+- *FUN_004a0600's vslot_300 (READ, OPEN).*
+  - `CGObjPC::vslot_300` (0x4ef340) is `GObjPC::FUN_004a9430`. It calls
+    `CGObjMobile::vslot_300` (0x48b730), which is both move controllers' +0x18. It may send
+    0xB023, copies the position block, and resets the stance from body state 2/3.
+  - That this is a movement stop is INFERRED. Not mirrored, labelled OPEN in code and in
+    TODO.md.
+- *board+0x390 (READ + INFERRED).*
+  - At 0x800501 it guards the click. The board's grant map is the std::map at +0x388: its
+    iterators compare against the head at +0x38c (FUN_008052f0 / FUN_00805430). So +0x390 is
+    the map's size under MSVC's layout.
+  - That means "some grant exists". Ours opens only for an icon whose grant it holds, which
+    implies the same.
+
+**6. Minor.**
+- An `items_code_name_idx` index for `GetItemByCode`.
+- 0x185b's authored text, `UIIT_MSG_STRGERR_WAIT_FOR_REUSE_DELAY` "Still have time to reuse the
+  item.", now replaces srrevamp's "wait for the reuse delay" on every item path.
+- The client prints `World3D: use item refused: <text>`, so tester logs show refusals.
+
+**7. deploy/README.md: the ROUND 632 note.** The item CSV grows to 72 columns (70 CodeName, 71
+CompositeDesc). It needs a re-export and a re-import on srrevamp-01. The note gives the check
+queries (23944's list, 23937's code).
+
+**Tests.**
+- Go, `composite_test.go`:
+  - `TestEnergyOfLifeEndPushOnUse`: the end comes before the result, and a refusal is followed
+    by the state;
+  - `TestCompositeGrantExpiresByTimer`;
+  - `TestCompositeGrantExpiryIsPushed`: the timer's end reaches the wire;
+  - `TestCompositeForget`;
+  - `TestEnergyOfLifeFillStoreErrorChangesNothing`;
+  - `TestBerserkPotionStoreErrorChangesNothing`.
+- Go, `berserk_test.go`: `TestForgetDropsTurnAndExpiredBonus`.
+- Client, `composite_test.gd`: the end push decodes; Cancel follows the item button one step
+  down and closes the window.
+- **Negative against 5b362d2**, through its own fixture:
+
+      --- FAIL: TestCompositeReviewNegative (0.11s)
+          review2_neg_test.go:18: the last use pushed no grant end first: opcode 0x105, want 0x0108
+          review2_neg_test.go:24: the reuse refusal reads "wait for the reuse delay", want the authored UIIT_MSG_STRGERR_WAIT_FOR_REUSE_DELAY text
+
+**Real input on the box (MEASURED from the log; the screenshot only confirms the closed
+window).** The setup is the same as before (a GM, `/give 23944 2`). The run went: right-click
+the scroll, left-click the icon, click **Cancel**, left-click the icon again, click the fill,
+press Tab.
+
+    QA COMPOSITE: grant item 23937 from 23944, 1/1 uses, 3600 s left, ...
+    CompositeItemWindow: 1 button(s): Hwan regeneration fill(1), Cancel
+      (Cancel: no use sent, window closed)
+    CompositeItemWindow: 1 button(s): Hwan regeneration fill(1), Cancel
+    World3D: composite grant ended: item 23937 from 23944 -- icon removed
+    World3D: composite use: item 23937, 0 left, gauge 100, active false, error ''
+    World3D: berserk result: activated true, gauge 0, active true
+
+An expiry through the client was not driven: the grant lasts 3600 s. The wire test covers the
+timer's push.
+
+**OPEN.**
+- The movement stop in FUN_004a0600 and in Item_HandleUseItem.
+- The jobs are in memory only, so a restart loses them.
+- The window's resize is not recovered.
+- Who registers the event-0xc listeners is not traced.
+
+## Six-hundred-and-thirty-second round, review follow-up: the Energy of life scroll works as the game's does, and cooldowns of key 0 are per item
+
+The review confirmed every READ claim of round 632 and asked for five changes. All five are
+done here. Labels: READ (seen in the decompile, the asm or the data), MEASURED, INFERRED, OURS.
+
+**1. A COOLTIME key of 0 is per item (READ).**
+- `Item_HandleUseItem` hands ref+0x520 to `ItemCooldowns::IsReady` (`0x64c040`) in EAX
+  (`0x510d8f`).
+- Key 0 reads the per-item map at block+0x10. A non-zero key reads the group map at +0x2c,
+  once for each non-zero byte of the key.
+- `Arm` (`0x64c320`) always stores the per-item entry. It adds a group link for each non-zero
+  byte.
+- `itemcooldown.go` now has `ReadyItem`/`ArmItem` doing the same. Round 632's "group 0x00" was
+  wrong: it let 22936 block every other key-0 row (37 of them, by the review's count).
+- Skills keep `Ready`/`Arm` on the group map, which is the map they read.
+
+**2. The refusal text has an authored source (READ).** textuisystem's
+`UIIT_MSG_QUEST_ERR_USE_WHANITEM` is "Selected item cannot be used during berserk mode." The
+new composite refusals also use authored texts:
+- `0x1894`: "The selected item cannot be used together or the skill is already in use."
+- `0x18c6`: "Exceeded one day use limit."
+- `0x183e`: "The selected item is unusable."
+
+**3. The Energy of life scroll is built (READ; the full chain is in `docs/protocol/ITEM_FORMAT.md`,
+"The composite path, end to end").**
+- *Which rows carry a list.* ExtractData parses a Desc as a composite list only for 3/3/13/14
+  and 3/3/13/15, and only beside a Param of 1. The list is exported as item column 71,
+  `CompositeDesc`. It is stored in SQL, and `GetItemByCode` resolves the parts it names.
+- *The scroll's use.* `UseByKind` case 0xe → `FUN_0049f090`'s `0x1894` refusals →
+  `FUN_0049f590`, which creates two timed jobs:
+  - a UIL1 job: one use of 23937 for 3600 s (flag "A" → 0, read at `0xb12aa4`);
+  - a UIU1 job: `ITEM_ETC_INCREASE_HWAN_TIME_0n`. Its Param1 is the seconds, Param2 the FourCC
+    and Param3 the value.
+- *The FourCC is traced.* `0x706874` is not a `Stat_ApplyTaggedModifier` tag. It keys
+  `CTJ_CharParamKeeper`'s table (`FUN_006552d0`, `0x6552fe`), whose record is {index 0,
+  **param 60**, slot 0}.
+  - The apply is `vslot_012`, `0x655045` → `0x655430`, with EDX = param, calling
+    `ParamKeeper_SetParam`. Removal is `vslot_015`.
+  - Param 60 is the berserk duration's base (60.0 from InitStats; the activation reads
+    60 + 195). So a 1st-degree scroll lasts **65 s** of berserk while its hour runs.
+  - `berserk.Tracker.SetDurationBonus` carries it.
+- *The fill.* The chain is `0x511640` → `CUsedItemLimit::vslot_007` → `FUN_004a05b0`
+  (dead / berserk / five orbs). The last use:
+  - ends the UIL1 job;
+  - ends the `0x706874` job (`FUN_004dd620`, `mov ebx,0x706874` at `0x654310`);
+  - arms 23937's COOLTIME (group 0xC9, 20 minutes);
+  - then runs `AddHwanCount(Param1 byte)`.
+
+  vslot_007 does not call IsReady. The 20 minutes block the next scroll, which shares group
+  0xC9.
+- *What the client shows (READ in the retail client, by a sub-agent this round).*
+  - `0x3159` adds a kind-5 buff-bar icon: the SCROLL's icon, with a gauge over the scroll's
+    Param1.
+  - A left-click (`CIFMagicStateBoard::vslot_029`, `0x800430`) opens `CIFCompositeItemWnd`
+    (`GDR_COMPOSITE_ITEM`, `resinfo\ifcompositeitemwnd.txt`).
+  - The window's "%s(%d)" buttons, 150 × 25 on `sys_button.ddj`, send `0x715F`.
+  - The UIU1 buff has no icon: Param4 is -1 on 23938-23941.
+- *Built.*
+  - Server: `session/composite.go` (`CompositeKeeper`, `useCompositeScroll`,
+    `CompositeHandler`) on opcodes 0x0104-0x0107. The opcodes are OURS; retail uses
+    0x715F/0xB15F/0x3159/0x315B.
+  - Client: `CompositeNet`, `HudBuffBoard.add_item_state` (kind 5, left-click →
+    `item_state_clicked`, right-click does nothing), `CompositeItemWindow`, and
+    `ItemTableReader.Item.param1`.
+- *OURS, the user's request:* a GM account neither checks nor arms the scroll's or the fill's
+  COOLTIME.
+- *Not recovered:*
+  - the window's resize arithmetic for several buttons;
+  - what a zero-count button looks like (ours is disabled);
+  - which list FUN_00805a40 puts a kind-5 icon on (ours: the main list, INFERRED).
+
+**4. The berserk turn.** `berserk.Tracker.Turn(characterID)` is a per-character lock. Four paths
+hold it across the whole read, spend, change and `SetHwanCount`:
+- the bag potion;
+- the scroll;
+- the fill;
+- `handleBerserk`, plus the kill-earn block.
+
+A potion can no longer be spent against a state that a concurrent activation is changing. The
+engine needs no lock, because all of these run on the PC's own thread.
+
+**5. Quest items 5921/10491 (READ).** No gate in the use path is specific to them:
+- `0x185f` is `CGObjPC::QB_IsBlocked(8)` (`0x4ddd30`) over a quest-script block mask at
+  `pc+0x217c`, set and cleared by `QB_SetBlocked`/`QB_ClearBlocked`.
+- The event-0xc listener list (`FUN_0063d4a0` → `FUN_0063d190(0, 0xc)`) can veto a use with 3.
+
+srrevamp has neither state, so there is nothing to mirror: their fill works, as the bag path
+reads. Who registers event-0xc listeners is not traced (OPEN).
+
+**Tests.**
+- Go, `composite_test.go`:
+  - key 0 is per item: tracker and handler, 22936 then a second key-0 row;
+  - the scroll: grant 1/1 for 3600 s and +5 s; a second scroll gives `0x1894`; the fill gives
+    100, ends the grant and the bonus; a fill with no grant is refused; the scroll is refused at
+    19 min and works at 20 min;
+  - the fill's refusals at five orbs and while berserk keep the grant;
+  - GM: scroll, fill, scroll, fill back to back;
+  - `TestBerserkPotionWaitsForTheTurn`: a potion under a held turn does not run for 150 ms and
+    runs after release;
+  - `TestParseCompositeDesc`.
+- Go, other packages: `berserk_test.go`'s `TestDurationBonusLengthensBerserk` (60 + 5 s;
+  cleared → 60 s) and `export-refdata/composite_test.go`.
+- Client: `scripts/net/composite_test.gd` (codecs; the board's kind-5 icon added, left-click
+  routed, no right-click cancel, removed).
+- **Negative against round 632 (86f66c4)**, cut to its nine-argument handler:
+
+      --- FAIL: TestReviewNegative (0.13s)
+          review_neg_test.go:66: a second key-0 row right after 22936 was refused "wait for the reuse delay"; key 0 must be per item
+          review_neg_test.go:69: the Energy of life scroll was refused: "that cannot be used"
+
+  The turn test does not compile there (`zerk.Turn` undefined).
+
+**Real input on the box (MEASURED from the log).**
+- Setup:
+  - Xvfb `:93`;
+  - the lane's server build with `-gm-accounts qa`;
+  - an items CSV exported from the box's Media.pk2 by this round's exporter (column 71 carries
+    `[UIL1:ITEM_ETC_SECOND_HWAN,A,3600,1],[UIU1:ITEM_ETC_INCREASE_HWAN_TIME_01]`), deleted
+    afterwards;
+  - signed in through `Login.tscn`.
+- Steps, with xdotool: type `/give 23944 2` in the chat, press `i`, right-click the scroll,
+  left-click the buff-bar icon, click the window's button, press Tab. Then, as a GM inside the
+  20 minutes: the second scroll, and after the berserk the icon and the button again, then Tab.
+
+      GM REPLY: gave 2 x item 23944
+      HudBuffBoard: item grant -23937 icon 'icon\item\etc\etc_second_hwan_scroll_01.ddj' (3600000 ms of 3600000)
+      QA COMPOSITE: grant item 23937 from 23944, 1/1 uses, 3600 s left, icon token -23937 at screen (220, 10) size (20, 24)
+      World3D: composite state: 1 grant(s), berserk bonus 5 s (3600 s left)
+      CompositeItemWindow: 1 button(s): Hwan regeneration fill(1)
+      World3D: composite use: item 23937, 0 left, gauge 100, active false, error ''
+      KEYMAP Tab -> berserk 8: berserk requested
+      World3D: berserk result: activated true, gauge 0, active true
+      (second scroll, GM:) World3D: composite state: 1 grant(s), berserk bonus 5 s (3600 s left)
+      World3D: composite use: item 23937, 0 left, gauge 100, active false, error ''
+      World3D: berserk result: activated true, gauge 0, active true
+
+- Only from screenshots: the icon sat right of the player block; the window's frame and title
+  came from its registry entry; the button read "Hwan regeneration fill(1)".
+
+**OPEN.**
+- The jobs live in memory only, so a server restart loses them.
+- Other composite FourCCs are not modelled.
+- The window's resize is not recovered.
+- Who registers event-0xc listeners is not traced.
+- The 300 s cooldown persistence (round 263) is not built.
+
+## Six-hundred-and-thirty-second round: a berserk potion fills the five orbs, so a GM can test berserk with `/give 23937`
+
+The request: "allow me to use energy of life potions so I can test berserk. I think it usually has
+a 30 minute cooldown on that but remove that limit for GMs." Before this round every berserk
+potion was refused as "that cannot be used" (round 491 listed it as a disclosed gap).
+
+**Which item (READ, Media.pk2 `textdata_object.txt` and `itemdata_*.txt`).** "Energy of life" is
+`SN_ITEM_ETC_SECOND_HWAN_SCROLL_01..06` -> `ITEM_ETC_SECOND_HWAN_SCROLL_01..04` (ids 23944-23947,
+TypeID 3/3/13/14; 05 and 06 have names but no rows). The scroll is not what fills the gauge. Its
+Param2 descriptor is `[UIL1:ITEM_ETC_SECOND_HWAN,A,3600,1],[UIU1:ITEM_ETC_INCREASE_HWAN_TIME_0n]`,
+and its tooltip reads "Option : During the Effect, 100% gauge charge can be used once. (After use
+of 100% Gauge charge, extend time will be removed and unable to use Energy of life for 20 Mins)".
+The fill it grants is `ITEM_ETC_SECOND_HWAN`, **id 23937, TypeID 3/3/1/8, "Hwan regeneration
+fill"**: Param1 5 ("? ???"), then Param2 **1,200,000** with `COOLTIME:0x000000C9`. The scrolls
+carry `COOLTIME:0x000000C9` too (1 ms). So **the retail delay is 20 minutes, not 30** -- the data
+and the tooltip agree. The other 3/3/1/8 rows are the Berserker Regeneration Potions 24331, 24993,
+33884 (no COOLTIME; tooltip "Fills berserk gage to 100%. Cannot be used during berserk mode."),
+22936 Berserk Regeneration Potion (`COOLTIME:0x00000000`, 180,000 ms) and the quest items 5921
+and 10491. Full table: `docs/protocol/ITEM_FORMAT.md`, "Berserk potions and Energy of life".
+
+**What using one does (READ, SR_GameServer.exe).** `CGItemExpendable` slot 308 (`0x0049b710`),
+TypeID3 1, TypeID4 8, in srv.asm `0x49b9a4..0x49b9e9`: `GetBodyMode()` (vtable `+0x100`) == 1
+writes `0x18ce` and returns (DoJob keeps the item); otherwise `push 0; mov esi,0x5; call
+0x4e4d00` -- `GObjPC::AddHwanCount(+5)`, which clamps at 5 -- and the answer is 1. It skips the
+per-kind potion lock (`FUN_004eb410` is asked only on the other kinds) and never reads the orb
+count, so a potion at five orbs is spent for nothing. The delay is the generic COOLTIME:
+`Item_HandleUseItem` (`0x00510980`) asks `ItemCooldowns::IsReady` before DoJob (`0x185b`) and
+calls `ItemCooldowns::Arm` after a success, for any item whose ref `+0x524` is non-zero.
+
+The scroll's own path was read and is **not** built: `UseByKind` (`0x0049c2b0`) case `0xe` ->
+`GObjPC::FUN_0049f590` walks the FourCC list (`'UIL1'` `0x55494c31`, `'UIU1'` `0x55495531`) and
+queues timed jobs; the fill is then spent through `CUsedItemLimit::vslot_007` (`0x00654080`),
+which additionally refuses five orbs (`FUN_004a05b0`, `0x183e`), arms group 0xC9, and adds the
+row's Param1 byte (`FUN_004a0600`, `0x4a062b movzx esi,BYTE [esp+0x14]`). INFERRED: because the
+scroll carries group 0xC9, the fill's 20 minutes also block the next scroll -- the tooltip's
+"unable to use Energy of life for 20 Mins".
+
+**Built.**
+- `berserk.Tracker.Add` is `AddHwanCount`: clamp [0, 5], no gain while berserk.
+  `berserk.PotionCharges = 5` is slot 308's literal.
+- `session.useBerserkPotion` (`server/internal/session/berserkpotion.go`) runs the engine's order:
+  COOLTIME gate, `0x18ce` while berserk (item kept), spend, +5 orbs persisted through
+  `SetHwanCount`, arm COOLTIME. `UseItemHandler` takes the berserk tracker and the GM gate.
+- **OURS, the user's request:** a GM account's berserk potion neither checks nor arms its
+  COOLTIME. It is scoped to TypeID 3/3/1/8; every other cooltime item keeps its delay for a GM.
+- `UseItemResult` gains an appended `HasBerserk`/`BerserkGauge`/`BerserkActive` tail (6 bytes
+  after the 28). The client's `UseItemNet.decode_result` reads it when present, and
+  `World3D._on_use_item_result` drives `set_berserk` with it. The refusal text "that cannot be
+  used during berserk mode" is OURS: `0x18ce` has no case in the client's error switch, so it is
+  taken from the tooltip.
+
+**Tests.**
+- Go (`server/internal/session/berserkpotion_test.go`, synthetic rows shaped like 23937/24331):
+  - the gauge fills to 100 and persists 5;
+  - a potion at full orbs is still spent;
+  - Tab's `Activate` then works;
+  - a potion during berserk is refused and kept;
+  - a normal player's second fill 19:59 later is refused and kept, and at 20:00 it is used;
+  - a GM's second fill goes through at once;
+  - `Tracker.Add` clamps and refuses while berserk.
+- Client (`client/scripts/net/useitem_test.gd`): the old 28-byte reply decodes without berserk
+  state, and the tail round-trips.
+- **Negative against dev cfddf39** (the gauge test cut to the old seven-argument handler, in a
+  detached worktree):
+
+      --- FAIL: TestBerserkPotionFillsTheGauge (0.10s)
+          berserkpotion_neg_test.go:48: the berserk potion was refused: "that cannot be used"
+
+  The test file verbatim does not compile there (`too many arguments in call to
+  UseItemHandler`, `res.HasBerserk undefined`).
+
+**Real input on the box (MEASURED from the logs).** Xvfb `:93`, the lane's own server build with
+`-gm-accounts qa` and an items CSV exported from the box's Media.pk2 (deleted afterwards).
+Signed in through `Login.tscn` (`SRREVAMP_QA_RECONNECT_VIA_LOGIN=1`). Then, with xdotool:
+typed `/give 23937` in the chat, pressed `i`, right-clicked the bag cell, and pressed Tab.
+
+    GM REPLY: gave 1 x item 23937
+    World3D: berserk potion: gauge 100, active false
+    GM REPLY: gave 1 x item 23937
+    KEYMAP Tab -> berserk 8: berserk requested
+    World3D: berserk result: activated true, gauge 0, active true
+      (right-click during berserk: the chat line "that cannot be used during berserk mode" and
+       the fill still in its cell -- read off a screenshot, since _log_system does not print)
+    World3D: berserk potion: gauge 100, active false      <- 65 s later, same GM, inside the 20 min
+    KEYMAP Tab -> berserk 8: berserk requested
+    World3D: berserk result: activated true, gauge 0, active true
+
+The orbs' drawing is round 629's lane. This round only checks the value in the log.
+
+**OPEN.**
+- The Energy of life scroll (3/3/13/14) and its UIL1/UIU1 composite are still refused.
+- The berserk-time FourCC `0x706874` on `ITEM_ETC_INCREASE_HWAN_TIME_0n` (5/8/11/14) is not in
+  `param_tags.md`; which param it reaches is untraced.
+- The 20-minute delay is in memory only. The engine persists delays of 300 s or more across a
+  relog; srrevamp does not yet (round 263's gap).
+
 ## Six-hundred-and-thirtieth round, review follow-up: no seams or holes in the map, text sits in each control's ClientRect, the purse amount has its own field, and Style-64 controls start hidden
 
 The review confirmed round 630's readings and traced the heading: `0x9ed130` / `0x9c4260` store it

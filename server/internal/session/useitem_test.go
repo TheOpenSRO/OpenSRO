@@ -103,7 +103,7 @@ func TestUseItemRefusesAnItemWhoseCanUseIsClear(t *testing.T) {
 		return -1, 0
 	}
 
-	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, nil, nil, nil, nil))
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, nil, nil, nil, nil, nil, nil, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -259,7 +259,7 @@ func TestUseItemRestoresOnlyForRecoveryKinds(t *testing.T) {
 		return -1, 0
 	}
 
-	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mp, nil, nil, nil))
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mp, nil, nil, nil, nil, nil, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -462,7 +462,7 @@ func TestUseItemScalesPotionByLevelAndStr(t *testing.T) {
 	}
 
 	potions := NewPotionQueue()
-	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mana.NewTracker(), nil, potions, nil))
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mana.NewTracker(), nil, potions, nil, nil, nil, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -558,7 +558,7 @@ func TestUseWarehouseExpansionItem(t *testing.T) {
 	warehouse.SetCapacityFunc(storage.CapacityOf(accounts))
 	svc := &storage.Service{Bag: inv, Warehouse: warehouse, Gold: chars, Accounts: accounts, ChestSizes: accounts}
 
-	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mana.NewTracker(), svc, nil, nil), StorageHandler(chars, svc, nil))
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mana.NewTracker(), svc, nil, nil, nil, nil, nil), StorageHandler(chars, svc, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -784,7 +784,7 @@ func TestPotionReuseDelayPerKind(t *testing.T) {
 		}
 	}
 
-	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mp, nil, potions, nil))
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mp, nil, potions, nil, nil, nil, nil))
 	addr, cleanup := startTestServer(t, handle)
 	defer cleanup()
 	conn := dialTestServer(t, addr)
@@ -838,8 +838,8 @@ func TestPotionReuseDelayPerKind(t *testing.T) {
 		_, before := qtyOf(id)
 		hpBefore, _ := chars.GetByID(ctx, c.ID)
 		mpBefore := mp.Current(c.ID, maxMP)
-		if res := use(id); res.Error != "wait for the reuse delay" {
-			t.Errorf("%s: got %+v, want the 0x185b refusal %q", label, res, "wait for the reuse delay")
+		if res := use(id); res.Error != reuseDelayRefusal {
+			t.Errorf("%s: got %+v, want the 0x185b refusal %q", label, res, reuseDelayRefusal)
 		}
 		if _, after := qtyOf(id); after != before {
 			t.Errorf("%s: the refused potion was consumed: %d left, want %d", label, after, before)
@@ -1158,7 +1158,7 @@ func newPotionFixture(t *testing.T) *potionFixture {
 	f.store = &flakyHeal{MemStore: f.chars}
 
 	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(f.chars, nil, f.hub),
-		UseItemHandler(f.store, f.bag, items, f.mp, nil, f.potions, f.hub))
+		UseItemHandler(f.store, f.bag, items, f.mp, nil, f.potions, f.hub, nil, nil, nil))
 	addr, cleanup := startTestServer(t, handle)
 	t.Cleanup(cleanup)
 	f.conn = dialTestServer(t, addr)

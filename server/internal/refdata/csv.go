@@ -102,6 +102,11 @@ var itemCSVColumns = []string{
 	// decide who besides a quest item's owner may pick it. A strict suffix;
 	// an older export loads every item with an empty code name.
 	"CodeName",
+	// Appended later still (round 632 review): CompositeDesc, the composite
+	// item's FourCC list, e.g. "[UIL1:ITEM_ETC_SECOND_HWAN,A,3600,1],[UIU1:
+	// ITEM_ETC_INCREASE_HWAN_TIME_01]" -- see Item.CompositeDesc. Empty on
+	// every other row and on an older export.
+	"CompositeDesc",
 }
 
 // ItemCSVColumnCount is how many columns LoadItemsCSV currently knows. Every
@@ -365,6 +370,9 @@ func parseItemRow(f []string) (Item, error) {
 	// name as "cannot tell", not as "not exempt").
 	if len(f) > 70 {
 		it.CodeName = strings.TrimSpace(f[70])
+	}
+	if len(f) > 71 {
+		it.CompositeDesc = strings.TrimSpace(f[71])
 	}
 
 	if err != nil {

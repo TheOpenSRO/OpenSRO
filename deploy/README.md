@@ -95,6 +95,16 @@ rm -f itemdata_* skilldata_* npcpos.txt teleport*.txt   # the extracted tables a
 # columns; the store adds skills.target_heal_hp and target_heal_mp): the same re-export and
 # re-import. Until then Heal is cast at the named player and heals nobody. Check:
 # `SELECT count(*) FROM skills WHERE target_heal_hp > 0;` answers 27 on a retail archive.
+# ROUND 632 (berserk potions, the Energy of life scroll) NEEDS THE ITEMS RE-EXPORT ON srrevamp-01:
+# re-run `export-refdata -mode items` with the NEW binary (step 1; items.csv grows to 72 columns --
+# column 70 CodeName, round 497, which an older CSV may also lack, and the new column 71
+# CompositeDesc), then the NEW `import-refdata` (step 3) -- its store adds items.composite_desc and
+# the items_code_name_idx index before it writes the rows -- then restart the server. Until then
+# the scroll (23944-23947) is refused and the fill it grants cannot be resolved by code. Check:
+# `SELECT composite_desc FROM items WHERE id = 23944;` answers
+# `[UIL1:ITEM_ETC_SECOND_HWAN,A,3600,1],[UIU1:ITEM_ETC_INCREASE_HWAN_TIME_01]`, and
+# `SELECT code_name FROM items WHERE id = 23937;` answers `ITEM_ETC_SECOND_HWAN`, on a retail
+# archive. A client that predates round 632 ignores the new opcodes 0x0104-0x0108.
 
 # 3. On the server host (CSVs and import-refdata copied to ~/srrevamp-data; Postgres is pinned to
 #    127.0.0.1:5432 by docker-compose.override.yml):

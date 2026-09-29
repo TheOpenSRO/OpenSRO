@@ -56,6 +56,25 @@ func (m *MemStore) GetItem(_ context.Context, id int64) (*Item, error) {
 	return &cp, nil
 }
 
+// GetItemByCode returns the item whose CodeName is code (round 632 review:
+// a composite item names its parts by code, and the engine resolves them by
+// code at use time).
+func (m *MemStore) GetItemByCode(_ context.Context, code string) (*Item, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var best *Item
+	for _, it := range m.items {
+		if it.CodeName == code && (best == nil || it.ID < best.ID) {
+			cp := it
+			best = &cp
+		}
+	}
+	if best == nil || code == "" {
+		return nil, fmt.Errorf("refdata: querying item %q: %w", code, ErrItemNotFound)
+	}
+	return best, nil
+}
+
 // ListAll returns every imported item, ordered by ID.
 func (m *MemStore) ListAll(_ context.Context) ([]*Item, error) {
 	m.mu.RLock()

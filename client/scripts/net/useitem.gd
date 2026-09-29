@@ -27,6 +27,12 @@ class Result extends RefCounted:
 	var restored_hp: int = 0
 	var restored_mp: int = 0
 	var remaining: int = 0
+	## A berserk potion's reply (round 632): the orb gauge (0..100, orbs x 20)
+	## and whether berserk is active after the use. has_berserk is false on
+	## every other reply, and on a server older than the tail.
+	var has_berserk: bool = false
+	var berserk_gauge: int = 0
+	var berserk_active: bool = false
 
 ## Encodes an OpUseItem request: the character's name and the bag slot.
 static func encode_use(character_name: String, inventory_slot: int) -> PackedByteArray:
@@ -61,4 +67,9 @@ static func decode_result(data: PackedByteArray) -> Result:
 	res.restored_hp = data.decode_s32(offset + 16)
 	res.restored_mp = data.decode_s32(offset + 20)
 	res.remaining = data.decode_s32(offset + 24)
+	if offset + 34 > data.size():
+		return res
+	res.has_berserk = data[offset + 28] != 0
+	res.berserk_gauge = data.decode_s32(offset + 29)
+	res.berserk_active = data[offset + 33] != 0
 	return res

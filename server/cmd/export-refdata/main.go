@@ -740,6 +740,8 @@ func itemRecord(cols []string) ([]string, bool) {
 		// 70: CodeName (round 497, see fCodeName), verbatim: an empty cell
 		// stays empty rather than becoming get's "0".
 		str(fCodeName), // 70 CodeName (col 2)
+		// 71: CompositeDesc (round 632 review, see compositeDescOf).
+		compositeDescOf(cols, get(fTypeID1), get(fTypeID1+1), get(fTypeID1+2), get(fTypeID1+3)),
 	}, true
 }
 
@@ -785,6 +787,36 @@ func canDrop(trade, drop string) string {
 		return "1"
 	}
 	return "0"
+}
+
+// compositeDescOf is the composite item's timed-job list: RefObjItem's
+// ExtractData (the loop at 0x6a558e..0x6a55aa) hands Desc_k to the list
+// parser ReferenceData::FUN_00864bc0 for k = 2..5 on TypeID 3/3/13/14 and
+// k = 2..3 on 3/3/13/15, only where Param_k (the dword before the desc,
+// `cmp [esi-0x4],1`) is 1. Joined with "," (each list is itself
+// "[...],[...]"); empty for every other row.
+func compositeDescOf(cols []string, t1, t2, t3, t4 string) string {
+	if t1 != "3" || t2 != "3" || t3 != "13" || (t4 != "14" && t4 != "15") {
+		return ""
+	}
+	last := 5
+	if t4 == "15" {
+		last = 3
+	}
+	var parts []string
+	for k := 2; k <= last; k++ {
+		vi, di := fParam1+2*(k-1), fParam1+2*(k-1)+1
+		if di >= len(cols) {
+			break
+		}
+		if strings.TrimSpace(cols[vi]) != "1" {
+			continue
+		}
+		if d := strings.TrimSpace(cols[di]); d != "" && d != "xxx" {
+			parts = append(parts, d)
+		}
+	}
+	return strings.Join(parts, ",")
 }
 
 // cooltimeOf finds the (Param, Desc128) pair whose descriptor reads

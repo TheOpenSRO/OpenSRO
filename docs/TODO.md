@@ -1160,6 +1160,30 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       buffs restored at login (ctx+0xc bits 4|8), the `skc` category ends (`FUN_005a16c0`), and
       whether retail re-sends buffs on entering view (ours: yes).
 
+### Berserk potions and Energy of life (round 632 and its review) -- **built**
+
+Done: every TypeID 3/3/1/8 bag item fills the five orbs; the Energy of life scroll (23944-23947)
+grants one fill for an hour (a buff-bar icon -> the CompositeItem window -> the fill) and +5..14 s
+of berserk (param 60); COOLTIME keys are per item for key 0; a GM account skips the reuse delays
+(OURS). GMs test with `/give 23944 5`. Left:
+
+- **The jobs are in memory.** A server restart loses a granted fill and the berserk-time bonus
+  (retail keeps timed jobs with `__time32_t` stamps across relogs; ours survive a relog only).
+  Their timers end them on real time (OpCompositeEnd), and logout forgets a character's turn,
+  charges and expired entries.
+- **FUN_004a0600's movement stop.** `CGObjPC::vslot_300` (`0x4ef340` -> `FUN_004a9430`) runs before
+  AddHwanCount -- INFERRED a movement stop (it may send `0xB023`); no srrevamp item use stops
+  movement. Read what `0xB023` carries and what `+0x4c0` tests before mirroring it.
+- **Other composite kinds** (UIU1 of a TypeID4-4 item, BCS1, BFI1, PSU1, UQL1, USL1, USU1) are
+  refused; only the Energy of life's UIL1 + 0x706874 UIU1 is modelled. UIL1's "P" flag and the
+  0x3161 refill (`0x653a40`) are read but unused by any modelled row.
+- **CIFCompositeItemWnd's resize** for several buttons and a zero-count button's look
+  (`UI_SILKMALL::FUN_00655ec0`) are not recovered; ours disables it.
+- **Quest items 5921/10491**: the use path's quest gates are item-agnostic -- `0x185f` is
+  `CGObjPC::QB_IsBlocked(8)` over a quest-script block mask (`pc+0x217c`), and the event-0xc
+  listener list (`FUN_0063d4a0`/`FUN_0063d190`) can veto -- srrevamp has neither state, so
+  nothing stops their fill. Who registers event-0xc listeners is not traced.
+
 ### Particle effects (`.efp`): **decoder done (round 619), renderer and skill effects (round 620), Link modes (round 621)**
 Both readers decode 4,103 of the 4,170 files in the retail Particles.pk2
 (`docs/protocol/EFP_FORMAT.md`). Round 620 plays them:
