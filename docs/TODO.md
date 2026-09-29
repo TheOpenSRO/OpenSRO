@@ -969,29 +969,42 @@ whose flip conditions these items feed).
       others' under the one frame, until the mover's own client lifts or drops it and sends an
       `OpMove`. Snapping another player's body the way a monster's is snapped would close it.
 
-### Other bodies' facing (round 637) — **built: other players and monsters turn to face where they go, at 3 pi rad/s; these are left**
+### Other bodies' facing (round 637 and its review follow-up) — **built: every body, this player's too, turns to face where it goes at 3 pi rad/s, and an arrival faces the way it last walked; these are left**
 
 READ and measured in `docs/WORLD_ISSUES.md`'s 637th round; the rule is `RemoteFacing`.
 `SRREVAMP_QA_FACING_LOG=1` plus `client/tools/facing_measure.py` is the measurement.
 
-- [ ] **The local player still snaps its own facing** (`_physics_process`:
-      `rotation.y = atan2(dir.x, dir.z)`). Retail's own character goes through the same mover
-      (`FUN_009e0550` -> `FUN_009e02f0`), so it turns at 3 pi rad/s too (INFERRED from the shared
-      mover; the click path into `FUN_009e0550` is not traced). Left out of round 637, which kept
-      to the remote-entity code.
-- [ ] **A player coming into view faces heading 0 (world +z) until they move.** srrevamp's
-      `OpEntityEntered` snapshot carries no angle, and the server keeps none: it receives positions
-      only. Retail's spawn carries one (wire angle `a`, heading `a + pi/2`: `FUN_009c3a70`,
-      `FUN_009c40b0`). A fix needs the server to keep each character's last movement heading and
-      send it.
-- [ ] **The retail re-aim guard is not applied.** `0xB021` re-aims only past 25.0 squared distance
-      from the held destination, or when `obj+0x714` is set (unread). srrevamp streams positions
-      2.5 units apart, so the guard would never re-aim. Revisit if the move packet becomes a
-      destination (`0x7021`/`0xB021`, this file's movement item).
-- [ ] **Three turns still snap:** the cast start toward the target (`_on_skill_cast`), a standing
-      monster turned to its target (`_face_monster_toward`) and a monster's spawn heading
-      (`_face_monster_heading`). Each cancels a turn in progress. Whether retail turns or snaps in
-      these cases is not read.
+- [x] ~~The local player still snaps its own facing~~ -- **done in round 637's review follow-up**:
+      it turns at 3 pi rad/s (READ: the echoed `0xB021` -> `FUN_008a5750` -> `FUN_009e0550`), with
+      `FUN_009eb2a0`'s snap exception and its 5-unit idle filter (`RemoteFacing.click_rule`).
+- [x] ~~A player coming into view faces heading 0~~ -- **done in the review follow-up for
+      `OpEntityEntered`**. The server keeps a heading per character (`world.Entity.Heading`, from
+      each walk) and carries it through a zone change. The arrival snaps to it (`FUN_009d17e0` ->
+      `FUN_009c4260`). Left:
+  - [ ] **The lists carry no heading.** `EnterWorldResult` and `ChangeZoneResult` embed
+        snapshots with fields after the list, so a per-snapshot value would shift them for an older
+        client. Someone already standing in the zone you enter still faces heading 0 until they
+        move. A trailing heading block after `Seated` (with `Seated` always written) would carry
+        it.
+  - [ ] **A fresh world entry faces heading 0.** A heading is not saved with the position.
+- [ ] **The retail re-aim guard is not applied.** `0xB021` aims only when the order is in effect
+      (mover `+0xac`, `obj+0x714`) or the destination is more than 5 units (squared 25.0) from the
+      mover's current POSITION (`+0x54/+0x58`). srrevamp streams positions about 2.5 units apart
+      and has no stop message, so the guard would only drop the first sample of each walk after a
+      spawn or placement. Revisit if the move packet becomes a destination (`0x7021`/`0xB021`).
+- [ ] **The cast start's and a standing monster's turns toward a target are OURS snaps.** They
+      leave a turn in progress running, as the skill action reader's bare `FUN_009c4260` does
+      (`FUN_00a54be0`, READ). Two things are INFERRED: that they are that path, and the angle (ours
+      points at the target; retail's comes in the message). The monster spawn heading is a snap
+      that ends the turn (a new object, READ). A monster's stop snaps to its turn's target and ends
+      it: `FUN_009e00f0`'s snap to the server's angle, with the turn's target standing in for the
+      angle (INFERRED).
+- [ ] **The relocation rule is OURS.** An `OpMove` is flagged relocated when:
+      - the sender knows it is one (a gap recovery, a region-local placement); or
+      - its displacement exceeds the walk since the last send by `RELOCATE_MARGIN` (1.0).
+
+      The server keeps the heading on a relocated move and relays the flag, and the other clients
+      place the body without turning it.
 - [ ] **A monster the list moves mid-leg keeps its leg's facing.** Seen once at world entry: 7.4
       degrees off for 0.6 s. The client's facing changes only on a message, so this may be right;
       not established.

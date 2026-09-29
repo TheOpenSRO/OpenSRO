@@ -73,6 +73,10 @@ class EntitySnapshot:
 	## slot -> item id, for every slot with something in it.
 	var equipped: Dictionary = {}
 	var gender: String
+	## The client heading the character faces (RemoteFacing's frame), from
+	## OpEntityEntered's trailing wire angle (round 637's review follow-up);
+	## NAN from a list or an older server, which send none.
+	var heading: float = NAN
 
 	func item_in(slot: int) -> int:
 		return int(equipped.get(slot, 0))
@@ -87,12 +91,18 @@ static func encode_enter_world(character_name: String) -> PackedByteArray:
 	return out
 
 ## Encodes an OpMove request: three float32 fields, no length prefix.
-static func encode_move(x: float, y: float, z: float) -> PackedByteArray:
+## `relocated` (round 637's review follow-up) adds a trailing flags byte, bit
+## 0: the position is one the player was put at, not walked to
+## (World3D._position_relocated). Sent only when set; an older server reads
+## the three floats and ignores it.
+static func encode_move(x: float, y: float, z: float, relocated: bool = false) -> PackedByteArray:
 	var out := PackedByteArray()
-	out.resize(12)
+	out.resize(13 if relocated else 12)
 	out.encode_float(0, x)
 	out.encode_float(4, y)
 	out.encode_float(8, z)
+	if relocated:
+		out[12] = 1
 	return out
 
 ## Result of decode_enter_world_result(): either an error, or the assigned
@@ -308,10 +318,18 @@ static func _decode_frame(data: PackedByteArray, offset: int) -> Array:
 		return ["", "truncated frame", offset]
 	return [data.slice(offset, offset + frame_len).get_string_from_utf8(), "", offset + frame_len]
 
-## Decodes an OpEntityEntered broadcast payload (a single EntitySnapshot).
+## Decodes an OpEntityEntered broadcast payload (a single EntitySnapshot),
+## and the heading after it when the server sends one (round 637's review
+## follow-up: server EntitySnapshot.EncodeEntered): retail's u16 wire angle,
+## turned into the client's heading as NetProcessInNavAndSkill::FUN_008a5640
+## and FUN_009c40b0 turn it (RemoteFacing.from_wire_angle).
 static func decode_entity_entered(data: PackedByteArray) -> EntitySnapshot:
 	var decoded := _decode_entity_snapshot(data, 0)
-	return decoded[0]
+	var snap: EntitySnapshot = decoded[0]
+	var end: int = decoded[1]
+	if snap != null and end >= 0 and end + 2 <= data.size():
+		snap.heading = RemoteFacing.from_wire_angle(data.decode_u16(end))
+	return snap
 
 ## Result of decode_entity_moved().
 class EntityMoved:
@@ -319,6 +337,10 @@ class EntityMoved:
 	var x: float
 	var y: float
 	var z: float
+	## The mover was put here, not walked here (server EntityMoved.Relocated,
+	## a trailing flags byte; round 637's review follow-up): the body is placed
+	## and not turned. False from an older server.
+	var relocated: bool = false
 
 static func decode_entity_moved(data: PackedByteArray) -> EntityMoved:
 	if data.size() < 20:
@@ -328,6 +350,7 @@ static func decode_entity_moved(data: PackedByteArray) -> EntityMoved:
 	m.x = data.decode_float(8)
 	m.y = data.decode_float(12)
 	m.z = data.decode_float(16)
+	m.relocated = data.size() > 20 and (data[20] & 1) != 0
 	return m
 
 ## One OP_STATE_CHANGE broadcast: whose state, which kind, what value.

@@ -149,9 +149,18 @@ Read from `sro_client.exe` (`docs/WORLD_ISSUES.md`, 637th round, has the full tr
     region (`[0xeef5ec]+0x7c`) has its high bit set. The decompile divides both by 10.0
     (`0xe1b840`). `FUN_009e11e0` places the object there.
   - The component types were not settled from the disassembly; this is the decompile's reading.
-  - A destination goes to the mover's `FUN_009e0550`. It is used when `obj+0x714 != 0` or when it
-    is more than 25.0 in squared distance (`0xe1b8a0`, `FUN_009ed1e0`) from the destination
-    already held. Unread: what `+0x714` is.
+  - A destination goes to the mover's `FUN_009e0550`. That happens when `obj+0x714 != 0`, or when
+    the destination is more than 25.0 in squared distance (`0xe1b8a0`, `FUN_009ed1e0`) from the
+    mover's CURRENT POSITION. That position is `obj+0x6bc/+0x6c0` = mover `+0x54/+0x58`; the
+    mover is at `obj+0x668`.
+  - `obj+0x714` is mover `+0xac`, the **movement order in effect**:
+    - `FUN_009e0550`, `FUN_009e04b0` and `FUN_009e08a0` set it;
+    - these clear it: the stop/position message (`FUN_008a4f80` -> `FUN_009e00f0`),
+      `FUN_009e0150`, `FUN_009e11e0` and the skill-driven step `FUN_009e0960`;
+    - the ordinary tick's arrival does NOT clear it. `FUN_009e0e60` clears `+0x84` only.
+
+    So a still object that never had an order ignores a destination within 5 units of where it
+    stands. Once it has had an order, every destination aims it.
 - **The wire angle.** `FUN_008a5640` turns the u16 into radians (`/65535 * 360 * (pi/180)`).
   `FUN_009c40b0` then adds pi/2 (`0xe1b8f0`) and wraps into `[0, 2 pi)` to make the object's
   heading `h` (`+0x8c`). The spawn reader `FUN_009c3a70` does the same.
@@ -171,6 +180,42 @@ Read from `sro_client.exe` (`docs/WORLD_ISSUES.md`, 637th round, has the full tr
     target, which then becomes the heading.
   - The heading-only form (`FUN_009e08a0`) turns the same way.
   - Nothing turns an object that has stopped.
+- **Which paths snap and which turn** (round 637's review follow-up):
+  - **Spawn.** `FUN_009d17e0` stores the spawn's angle (`+0x10c`, from `FUN_009c3a70`) with a bare
+    `FUN_009c4260`, a SNAP. `FUN_009ca320` then aims the object only if it spawned moving: a
+    destination -> `FUN_009e0550`, a heading -> `FUN_009e08a0`.
+    - A new mover starts with no turn: its initialiser `0x9e0cd0` zeroes `+0xa4`.
+  - **The stop/position message.** `FUN_008a4f80` -> `FUN_009e00f0` -> `FUN_009e0050` SNAPS the
+    heading to the message's angle and ENDS the turn (`+0x88` bit 0 and `+0xa4` cleared). It also
+    clears the order (`+0xac`) and `+0x84`.
+  - **The angle-only message.** `FUN_008a4ec0` (object id, u16 angle, not for the local player)
+    TURNS at 3 pi through `FUN_009e02f0(h, 0)`, unless mover `+0x94` is set. Either way it points
+    the travel direction along `h` (`FUN_009e0090`).
+  - **The byte-angle message.** `FUN_008a78b0` (object id, u8 angle over `0xd83108`) SNAPS with a
+    bare `FUN_009c4260` and sets state 10.
+  - **The skill action reader.** `FUN_00a54be0` SNAPS the caster with a bare `FUN_009c4260`,
+    either to the message's angle (flag bit 0 clear) or toward a position (flag bit 8). The bare
+    call does NOT end a turn in progress; the tick goes on turning toward `+0xa8`.
+- **The local player's click** (`UI_SILKMALL::FUN_009ec240` -> `FUN_009eb2a0`; a return of 1
+  sends the move):
+  - **With no order in effect,** a click closer than 5 units (squared 25.0, 3-D, `FUN_009ed1e0`)
+    is not sent.
+  - **With an order in effect,** the move is not sent when all three of these hold:
+    - the click is 100 or more units away (squared 10000.0, `0xd82efc`);
+    - the order's destination (`obj+0x684/+0x688`) is also 100 or more away;
+    - the angle between the two ground vectors (`FUN_0045c590`, y zeroed) is 0.0872664600610733
+      (`0xdb9828`, 5 degrees) or less.
+
+    Instead `FUN_009e04b0` re-aims the local mover at once, SNAPPING the heading through
+    `FUN_009e0050`, and sets the caller's `+0x2c`.
+  - **Every other click** is sent. Its echo (`0xB021` -> `FUN_008a5750` -> `FUN_009e0550`) turns
+    the player at 3 pi, as it turns anyone else.
+- **srrevamp's protocol** (OURS) does not match retail's here:
+  - `OpEntityEntered` carries the heading as this page's u16 wire angle, AFTER the snapshot (older
+    clients stop at the gender and ignore it).
+  - `OpMove`/`OpEntityMoved` carry a trailing relocated flag, so a placement is relayed as one and
+    turns nobody.
+  - Lists (`EnterWorldResult` and `ChangeZoneResult` others) carry no heading yet.
 
 ## Not read
 

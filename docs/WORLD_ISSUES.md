@@ -7094,6 +7094,177 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-thirty-seventh round, review follow-up: your own character turns as others do, an arrival faces the way it last walked, and a teleport turns nobody
+
+The review confirmed the round's core: the 3 pi rate, the millisecond clock, the shorter way, the
+1e-6 keep and no axis flip. It found no jitter in a real-input curve and zig-zag. It asked for six
+things. Labels: READ, MEASURED, INFERRED, OURS, OPEN.
+
+**1. The re-aim guard, corrected (READ).**
+- `0xB021`'s reader aims when `obj+0x714 != 0`, or when the new destination is more than 5 units
+  (squared 25.0) from the mover's CURRENT POSITION. The mover is at `obj+0x668`, so
+  `obj+0x6bc/+0x6c0` is mover `+0x54/+0x58`. The round had called this the held destination.
+- `obj+0x714` is mover `+0xac`, the movement order in effect:
+  - `FUN_009e0550`, `FUN_009e04b0` and `FUN_009e08a0` set it;
+  - the stop/position message (`FUN_008a4f80` -> `FUN_009e00f0`), `FUN_009e0150`, `FUN_009e11e0`
+    and `FUN_009e0960` clear it;
+  - arrival in the ordinary tick does not: `FUN_009e0e60` clears `+0x84` only.
+- Fixed in `docs/protocol/opcodes/movement.md`, the round's entry below, and `docs/TODO.md`. The
+  guard stays unapplied (OURS; the reason is in TODO).
+
+**2. The local player turns at 3 pi (READ).**
+- A ground click goes `UI_SILKMALL::FUN_009ec240` -> `FUN_009eb2a0`; a return of 1 sends the move.
+  The server's echo, `0xB021` -> `FUN_008a5750` -> `FUN_009e0550`, turns the player's own mover as
+  it turns anyone's.
+- `FUN_009eb2a0` has two exceptions:
+  - With no order in effect, a click under 5 units away (squared 25.0, `0xe1b8a0`) is not sent.
+  - With an order in effect, a click that meets all three of these is not sent:
+    - it is 100 or more units away (squared 10000.0, `0xd82efc`);
+    - the order's destination (`obj+0x684/+0x688`) is 100 or more away too;
+    - the angle between the two (`FUN_0045c590`, y zeroed) is 5 degrees or less
+      (`0xdb9828` = 0.0872664600610733).
+
+    Instead `FUN_009e04b0` re-aims the local mover and SNAPS the heading (`FUN_009e0050`).
+- `RemoteFacing.click_rule` is that rule. `World3D._try_set_move_target` applies it: "ignore"
+  moves nothing and "snap" sets `_player_turn_snap`. `_aim_local_player` and `_step_local_turn`
+  replace `rotation.y = atan2(dir.x, dir.z)`.
+- The turn runs while standing too, as `FUN_009e0e60` runs it when `+0x88 & 0x31`.
+- `_player_move_order` is set by an accepted click and cleared by a zone change or the player's own
+  skill move. Both mappings are INFERRED: srrevamp has no stop message.
+- A ground click still drops a pending attack or friendly cast even when the filter does not send
+  it. That keeps round 622's behaviour (OURS: where retail drops a pending action is not read).
+  `friend_cast_test` caught the first ordering.
+
+**3. The spawn heading, end to end.**
+- Server:
+  - `world.Entity.Heading` holds the client's heading.
+  - `Hub.MoveFacing` updates it from each walk's delta with `world.HeadingToward`, which is
+    `FUN_009ed130` in srrevamp's frame: +z is 0, +x is pi/2, and a step of 1e-6 or less keeps it.
+  - `Hub.Move`, used for relocations and skill moves, leaves it alone.
+  - `Hub.ChangeZone` carries it.
+  - A fresh entry has heading 0; it is not saved with the position.
+- The wire:
+  - `EntitySnapshot.EncodeEntered` appends the u16 wire angle,
+    `proto.EncodeMovementAngle(world.WireAngle(h))`, where the wire angle is `h - pi/2`.
+  - It goes AFTER the snapshot rather than after x/y/z. An older client's
+    `decode_entity_entered` reads one snapshot and stops. The same snapshot sits inside the
+    `EnterWorldResult`/`ChangeZoneResult` lists, which have fields after them, so those lists carry
+    no heading (OPEN in TODO).
+- Client:
+  - `WorldNet.decode_entity_entered` reads the angle with `RemoteFacing.from_wire_angle`: READ
+    `FUN_008a5640` + `FUN_009c40b0`, the wire angle times 360/65535 degrees, plus pi/2, wrapped
+    with the float constants.
+  - `_spawn_or_update_other` places a new body facing it and snaps a drawn one, ending any turn.
+    This is READ: `FUN_009d17e0` stores the spawn's angle with a bare `FUN_009c4260`, and a new
+    mover has no turn (`0x9e0cd0` zeroes `+0xa4`).
+  - `FUN_009ca320` aims a body that spawned moving. srrevamp's arrivals never do, so nothing aims.
+
+**4. Snap or turn, per path (READ, then matched).**
+- The stop/position message snaps to the server's angle AND ends the turn (`FUN_009e00f0` ->
+  `FUN_009e0050`). srrevamp's monster stop has no angle. It now snaps to the turn's own target and
+  ends the turn (INFERRED: the server's heading is the last leg's).
+- The angle-only message `FUN_008a4ec0` turns at 3 pi unless mover `+0x94` is set. `FUN_008a78b0`
+  (a u8 angle) snaps with a bare `FUN_009c4260`. srrevamp sends neither; both are documented.
+- The skill action reader `FUN_00a54be0` snaps with a bare `FUN_009c4260`, which does NOT end a
+  turn. So two snaps no longer cancel a turn:
+  - the cast start's snap toward the target;
+  - a standing monster's snap toward its target (`_face_monster_toward`).
+
+  Labelled INFERRED as that path. The angle is OURS: it points at the target, where retail's
+  comes in the message.
+- The monster spawn heading still ends the turn (a new object, READ).
+- "Each snap cancels a turn" in the round's entry is corrected there.
+
+**5. A relocation turns nobody (OURS rule, READ reason).**
+- Before this, the entry placement ((0,0) -> the first position) and the gap-recovery snap-back
+  turned the puppet toward the jump. Measured in round 637's run: the entry leg read "move 145.0,
+  face 145.0".
+- Retail places an object at a message's source position (`FUN_009e11e0`) without aiming it.
+- srrevamp's `OpMove` now has a trailing flags byte, bit 0 = relocated. Older servers read three
+  floats and ignore it.
+  - `World3D._position_relocated` sets it when the sender knows (`_relocated_pending`: the gap
+    recovery, `_place_at_region_local`).
+  - It also sets it when the displacement since the last send exceeds the physics step's walk
+    since then (`_walked_since_send`) by `RELOCATE_MARGIN` (1.0, OURS). This catches QA/GM
+    placements and the unstuck landing.
+- The server skips the heading on a relocated move and relays the flag on `OpEntityMoved`. Older
+  clients read 20 bytes and ignore it.
+- The receiver places the body at once and does not turn it.
+- A skill's move already snapped (`OpSkillMove`).
+
+**6.** A dying monster's turn is dropped (OURS). The player's own turn stops at death (OURS).
+
+### Tests
+
+- `remote_facing_test.gd` now has 57 checks, ALL PASS. New in this follow-up:
+  - wire angles 0, 16384 and 49151, and 64 headings round-tripped within one unit;
+  - the click rule's six cases;
+  - a relocation placed and not turned;
+  - a spawn facing its heading, with no turn;
+  - a monster's stop snapping to its turn's target and ending it;
+  - a bare snap leaving a turn;
+  - the player's own quarter turn at 90 degrees in 10 frames;
+  - a reverse click still facing the old way one frame in;
+  - a snap click at once;
+  - the relocation rule both ways.
+- Go:
+  - `world/heading_test.go`: the rule, the wire angle, and MoveFacing / Move / ChangeZone.
+  - `session/facing_test.go` (end to end through a real server, written against payload bytes so
+    it runs on older commits): an arrival's wire angle after a walk toward -z is 16384; a
+    relocation is relayed with the flag and keeps the heading.
+  - `session/facing_codec_test.go`: the codecs.
+- NEGATIVE, the client file against 56840cb (this round's first commit):
+
+      FAIL RemoteFacing reads a wire angle
+      FAIL RemoteFacing has the click rule
+      FAIL a relocation puts the body there at once (got (0, 0, 0))
+      FAIL and does not turn it toward the jump (front 180.00 deg)
+      FAIL a spawn with heading pi/2 is placed facing +x (rotation 0)
+      FAIL a stop mid-turn snaps to the turn's heading, +x (FUN_009e00f0 -> FUN_009e0050) (got (0, 0, 1))
+      FAIL and ends the turn
+      FAIL a standing monster turned to its target keeps its turn (a bare FUN_009c4260, INFERRED)
+      FAIL World3D has no _aim_local_player
+      9 FAILURES
+
+- NEGATIVE, `session/facing_test.go` against dev 5a82339 (the server is the same at 56840cb):
+
+      --- FAIL: TestArrivalFacesTheLastWalk (0.19s)
+          facing_test.go:47: OpEntityEntered carries 0 byte(s) after the snapshot, want the 2-byte wire angle
+      --- FAIL: TestRelocationIsRelayedAndKeepsTheHeading (0.19s)
+          facing_test.go:72: the relocation is relayed as 20 bytes (last 0xc3), want 21 with the relocated flag
+          facing_test.go:93: OpEntityEntered carries 0 byte(s) after the snapshot, want 2
+
+### Real input, measured (two clients on the box, this branch's server and client)
+
+- The setup was round 637's Login -> CharacterSelect run, with A logging its own facing too
+  (`QA FACING self`, the review follow-up's addition to the hook).
+- **A's own reverse click.** A clicked east, then west. A's model turned -80 -> -62 -> -35 -> 1 ->
+  37 -> 64 -> 80 degrees in about 300 ms, the shorter way through 0.
+  - At 60 frames a second, 3 pi rad/s is 9 degrees a frame. The samples moved 27 or 36 degrees
+    between log lines (3 or 4 frames), and 540 degrees a second where a sample spans a whole turn
+    step.
+  - On a later turn the rate was 27.0 degrees per 50 ms, 540 degrees a second.
+  - B saw both legs within 0.12 degrees once turned: E -80.0 / -80.0, W 80.0 / 80.0.
+- **A's entry placement.** It jumped (0,0) -> (42,-60) in one sample, and B's puppet kept facing
+  0.0 degrees. Before this follow-up it turned to face 145 degrees.
+- **The spawn.** B went to Donwhang (`/goto donwhang`). A walked, ending at -126.50 degrees (A's own
+  model and movement agree), then went to Donwhang too. B's first sample of A there faced
+  **-126.49 degrees**: the wire angle's quantisation, 0.01 degrees.
+- A trap for the next run: A's chat lost keys (`/goto donwha`, then `donwhan/g////...`). Its log
+  wrote a line per monster every 50 ms, which slowed its frames, and X autorepeat turned held keys
+  into runs. `xset r off`, one `xdotool key` per character, and closing the Help window the stray
+  keys had opened got the command through.
+- Screenshots: `facing_shots/review_*.jpg` in the session scratchpad. In Donwhang both characters
+  stand on the same landing spot, so the picture shows them overlapping; the numbers are the
+  evidence.
+
+### Checks
+
+- `remote_godot.sh check`: ALL LOAD. `remote_godot.sh tests`: 157 suites, 0 failing (after the
+  click-ordering fix).
+- `go build ./... && go test -count=1 -p 1 ./...`: every package ok. It ran with a private
+  GOCACHE, removed afterwards.
+
 ## Six-hundred-and-thirty-seventh round: other players face the way they run, and they and monsters turn toward it at the game's own rate
 
 The user's report on v0.1.460: "when I see other players on the server it doesn't show them running
@@ -7148,7 +7319,10 @@ INFERRED, OURS, OPEN.
   - reads an optional source position; when it is present, `FUN_009e11e0` places the object;
   - for a destination (kind 1), calls `FUN_009e0550(region, dest)` on the object's mover. It does
     this when `obj+0x714` is non-zero or when `FUN_009ed1e0`'s SQUARED distance between the mover's
-    current destination (`+0x6bc/+0x6c0`) and the new one exceeds 25.0 (`0xe1b8a0`).
+    current POSITION (`+0x6bc/+0x6c0`, mover `+0x54/+0x58`) and the new destination exceeds 25.0
+    (`0xe1b8a0`). Corrected by the review. This entry first called `+0x6bc/+0x6c0` the held
+    destination; `+0x714` is mover `+0xac`, the movement order in effect (see the follow-up
+    above).
 - **The aim.** `FUN_009e0550`:
   - takes the vector from the object's position (`+0x74`) to the destination
     (`FUN_009ecc70`, which zeroes the y);
@@ -7216,10 +7390,14 @@ INFERRED, OURS, OPEN.
 - Another player: each `OpEntityMoved` (and a snapshot for a body already drawn) aims the body from
   where it is drawn toward the new position.
   - OURS: srrevamp streams positions, so each position is treated as the destination.
-  - The retail 25.0 squared-distance re-aim guard is NOT applied. It compares destinations, and
-    with ours 2.5 units apart it would never re-aim.
+  - The retail 25.0 squared-distance guard is NOT applied. Corrected by the review: it compares
+    the new destination with the body's current POSITION, and only while no movement order is in
+    effect (see the follow-up above). Applied to srrevamp's stream, it would drop the first
+    sample (about 2.5 units away) of each walk after a spawn or placement, and nothing after
+    that.
 - A monster's leg now turns at the same rate instead of snapping (`_apply_monster_leg`). The
-  snapping turns stay snaps, and each cancels a turn in progress:
+  snapping turns stay snaps. Each cancelled a turn in progress; the review follow-up (above) now
+  matches each path to the client instead:
   - the cast start's turn toward the target;
   - a standing monster turned to its target (`_face_monster_toward`);
   - a spawn heading (`_face_monster_heading`).
@@ -7298,7 +7476,7 @@ INFERRED, OURS, OPEN.
 See `docs/TODO.md`, "Other bodies' facing (round 637)":
 - the local player still snaps its own facing;
 - a player coming into view faces heading 0, since no angle is sent;
-- the re-aim guard and what `+0x714` is;
+- the re-aim guard (what `+0x714` is was read in the review follow-up);
 - the three snapping turns;
 - the list-placement case.
 

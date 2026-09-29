@@ -115,3 +115,47 @@ static func heading_of_yaw(yaw: float, front_yaw: float) -> float:
 ## The ground direction heading `h` faces, in world space (x, z).
 static func facing_of(h: float) -> Vector2:
 	return Vector2(sin(h), cos(h))
+
+## A u16 wire angle as the client turns it into a heading (round 637's review
+## follow-up): FUN_008a5640 makes radians of it, (a / 65535.0) * 360.0 *
+## 0.01745329238474369 (0xdde7b0, 0xdde7a8, 0xe1b8d8), and FUN_009c40b0 adds
+## pi/2 (0xe1b8f0, 1.5707963705062866) and takes 2 pi (0xd81930,
+## 6.2831854820251465) off while the result is 2 pi or more. The spawn reader
+## FUN_009c3a70 converts its angle the same way, and FUN_009d17e0 stores it
+## with a bare FUN_009c4260: a spawn is placed facing it, not turned.
+const WIRE_QUARTER_TURN := 1.5707963705062866
+const WIRE_FULL_TURN := 6.2831854820251465
+
+static func from_wire_angle(a: int) -> float:
+	var h := (float(a & 0xffff) / 65535.0) * 360.0 * 0.01745329238474369 + WIRE_QUARTER_TURN
+	while h >= WIRE_FULL_TURN:
+		h -= WIRE_FULL_TURN
+	return h
+
+## The player's own ground click, UI_SILKMALL::FUN_009eb2a0 (called by
+## FUN_009ec240 before it sends the move; a 1 sends it):
+##   no movement order in effect (the player's +0x714, mover +0xac): a click
+##     whose squared distance from the player is under 25.0 (0xe1b8a0) is not
+##     sent -- "ignore";
+##   an order in effect, the click and the order's destination both 10000.0
+##     (0xd82efc, 100 units) or more away in squared distance, and the angle
+##     between the two ground vectors (FUN_0045c590, y zeroed) 0.0872664600610733
+##     (0xdb9828, 5 degrees) or less: the local mover is re-aimed at once by
+##     FUN_009e04b0, whose FUN_009e0050 SNAPS the heading and ends a turn --
+##     "snap";
+##   otherwise the move is sent, and its echo (0xB021 -> FUN_008a5750 ->
+##     FUN_009e0550) turns the player at TURN_RATE_PER_SECOND -- "turn".
+## The distances are FUN_009ed1e0's, 3-D.
+const CLICK_IDLE_MIN_SQ := 25.0
+const SNAP_FAR_SQ := 10000.0
+const SNAP_MAX_ANGLE := 0.0872664600610733
+
+static func click_rule(order_in_effect: bool, to_click: Vector3, to_dest: Vector3) -> String:
+	if not order_in_effect:
+		return "ignore" if to_click.length_squared() < CLICK_IDLE_MIN_SQ else "turn"
+	if to_click.length_squared() >= SNAP_FAR_SQ and to_dest.length_squared() >= SNAP_FAR_SQ:
+		var a := Vector3(to_click.x, 0.0, to_click.z)
+		var b := Vector3(to_dest.x, 0.0, to_dest.z)
+		if not a.is_zero_approx() and not b.is_zero_approx() and a.angle_to(b) <= SNAP_MAX_ANGLE:
+			return "snap"
+	return "turn"

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -60,6 +61,16 @@ type EntitySnapshot struct {
 	// same thing on the wire.
 	Equipped []EquippedSnapshot
 	Gender   string
+	// Heading is the character's heading (world.Entity.Heading), sent only
+	// by EncodeEntered, after the rest of the snapshot, as retail's u16 wire
+	// angle (round 637's review follow-up). Encode leaves it out: a snapshot
+	// in a list (EnterWorldResult, ChangeZoneResult) is followed by more
+	// fields, so a trailing value there would shift them for an older
+	// client; OpEntityEntered is one snapshot, whose older decoders stop at
+	// the gender and ignore what follows. HasHeading is false when the
+	// payload had none.
+	Heading    float64
+	HasHeading bool
 }
 
 // EquippedIn reports the item id in slot, or 0 if nothing is worn there.
@@ -86,6 +97,34 @@ func (e *EntitySnapshot) Encode() []byte {
 	}
 	out = append(out, encodeStrings(e.Gender)...)
 	return out
+}
+
+// EncodeEntered is the OpEntityEntered payload: the snapshot, then the
+// heading as a u16 wire angle -- proto.EncodeMovementAngle of
+// world.WireAngle(Heading), the client's FUN_009c40b0 adding pi/2 back.
+// Retail's spawn carries the angle among its position fields (FUN_009c3a70);
+// srrevamp's goes last so an older client, whose decode_entity_entered reads
+// one snapshot and stops, is unaffected.
+func (e *EntitySnapshot) EncodeEntered() []byte {
+	out := e.Encode()
+	angle := proto.EncodeMovementAngle(world.WireAngle(e.Heading))
+	return append(out, byte(angle), byte(angle>>8))
+}
+
+// DecodeEntityEntered parses an OpEntityEntered payload: one snapshot and,
+// from a server that sends it, the trailing wire angle, turned back into the
+// client's heading (the wire angle plus pi/2, wrapped into [0, 2 pi)).
+func DecodeEntityEntered(data []byte) (*EntitySnapshot, error) {
+	snap, rest, err := decodeEntitySnapshot(data)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding EntityEntered: %w", err)
+	}
+	if len(rest) >= 2 {
+		wire := float64(binary.LittleEndian.Uint16(rest)) / 65535.0 * 2 * math.Pi
+		snap.Heading = math.Mod(wire+math.Pi/2, 2*math.Pi)
+		snap.HasHeading = true
+	}
+	return snap, nil
 }
 
 // decodeEntitySnapshot parses one EntitySnapshot from the front of data,
@@ -500,12 +539,24 @@ func arrival(zone string) (bucket string, pos world.Position, frame string, oneW
 // MoveRequest is the OpMove payload: a new position, no reply expected.
 type MoveRequest struct {
 	X, Y, Z float32
+	// Relocated (round 637's review follow-up) marks a position the client
+	// put its character at rather than walked to -- a recovery from a gap,
+	// the world entry's placement, a QA or GM relocation. It is a trailing
+	// flags byte (bit 0), sent only when set: an older server's decoder reads
+	// three floats and ignores it. A relocated move keeps the heading
+	// (world.Hub.Move, not MoveFacing) and is relayed with the flag, so no
+	// client turns the body toward it: the retail client places an object at
+	// a message's source position (FUN_009e11e0) without aiming it.
+	Relocated bool
 }
 
 func (r *MoveRequest) Encode() []byte {
 	out := encodeFloat32(r.X)
 	out = append(out, encodeFloat32(r.Y)...)
 	out = append(out, encodeFloat32(r.Z)...)
+	if r.Relocated {
+		out = append(out, 1)
+	}
 	return out
 }
 
@@ -518,17 +569,21 @@ func DecodeMoveRequest(data []byte) (*MoveRequest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding MoveRequest: y: %w", err)
 	}
-	z, _, err := decodeFloat32(rest)
+	z, rest, err := decodeFloat32(rest)
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding MoveRequest: z: %w", err)
 	}
-	return &MoveRequest{X: x, Y: y, Z: z}, nil
+	return &MoveRequest{X: x, Y: y, Z: z, Relocated: len(rest) > 0 && rest[0]&1 != 0}, nil
 }
 
 // EntityMoved is the OpEntityMoved broadcast payload.
 type EntityMoved struct {
 	CharacterID int64
 	X, Y, Z     float32
+	// Relocated is MoveRequest.Relocated relayed: a trailing flags byte (bit
+	// 0), sent only when set, which an older client (decode_entity_moved
+	// reads 20 bytes) ignores.
+	Relocated bool
 }
 
 func (r *EntityMoved) Encode() []byte {
@@ -536,6 +591,9 @@ func (r *EntityMoved) Encode() []byte {
 	out = append(out, encodeFloat32(r.X)...)
 	out = append(out, encodeFloat32(r.Y)...)
 	out = append(out, encodeFloat32(r.Z)...)
+	if r.Relocated {
+		out = append(out, 1)
+	}
 	return out
 }
 
@@ -552,11 +610,11 @@ func DecodeEntityMoved(data []byte) (*EntityMoved, error) {
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding EntityMoved: %w", err)
 	}
-	z, _, err := decodeFloat32(rest)
+	z, rest, err := decodeFloat32(rest)
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding EntityMoved: %w", err)
 	}
-	return &EntityMoved{CharacterID: id, X: x, Y: y, Z: z}, nil
+	return &EntityMoved{CharacterID: id, X: x, Y: y, Z: z, Relocated: len(rest) > 0 && rest[0]&1 != 0}, nil
 }
 
 // ChangeZoneRequest is the OpChangeZone payload: a target zone identifier,
@@ -883,14 +941,17 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		return err
 	}
 
+	// A fresh entry faces heading 0: the hub's new entity has no heading,
+	// and none is saved with the position (world.Entity.Heading).
 	entered := &EntitySnapshot{
 		CharacterID: owned.ID, Name: owned.Name,
 		X: float32(pos.X), Y: float32(pos.Y), Z: float32(pos.Z),
-		Equipped: equippedItems(ctx, eq, owned.ID),
-		Gender:   owned.Gender,
+		Equipped:   equippedItems(ctx, eq, owned.ID),
+		Gender:     owned.Gender,
+		HasHeading: true,
 	}
 	for _, other := range others {
-		other.Session.Send(&proto.Packet{Opcode: OpEntityEntered, Data: entered.Encode()})
+		other.Session.Send(&proto.Packet{Opcode: OpEntityEntered, Data: entered.EncodeEntered()})
 	}
 	// The client's own character id (round 616, OpSelfID), after the
 	// world-entry messages and before any buff that may name it.
@@ -995,14 +1056,17 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 		other.Session.Send(&proto.Packet{Opcode: OpEntityLeft, Data: leftMsg.Encode()})
 	}
 
+	// The arrival faces the way the character last moved: the hub carries
+	// the heading through the change (world.Hub.ChangeZone).
 	entered := &EntitySnapshot{
 		CharacterID: old.CharacterID, Name: old.Name,
 		X: float32(pos.X), Y: float32(pos.Y), Z: float32(pos.Z),
 		Equipped: equippedItems(ctx, eq, old.CharacterID),
 		Gender:   genderOf(ctx, chars, old.CharacterID),
+		Heading:  old.Heading, HasHeading: true,
 	}
 	for _, other := range othersNew {
-		other.Session.Send(&proto.Packet{Opcode: OpEntityEntered, Data: entered.Encode()})
+		other.Session.Send(&proto.Packet{Opcode: OpEntityEntered, Data: entered.EncodeEntered()})
 	}
 	// A zone change keeps the book (OURS: whether retail's teleport keeps
 	// buffs was not read); the new zone learns them, and the mover learns its
@@ -1047,7 +1111,13 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 		return nil
 	}
 	pos := world.Position{X: float64(req.X), Y: float64(req.Y), Z: float64(req.Z)}
-	entity, others, ok := hub.Move(sess, pos)
+	// A walk turns the character to face the way it moved; a relocation keeps
+	// its heading (round 637's review follow-up; world.Hub.MoveFacing).
+	move := hub.MoveFacing
+	if req.Relocated {
+		move = hub.Move
+	}
+	entity, others, ok := move(sess, pos)
 	if !ok {
 		return nil // not in the world yet (no OpEnterWorld) -- ignore
 	}
@@ -1058,7 +1128,7 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 	// positionSaveInterval (round 573), so a crash loses little of it.
 	savePositionEvery(chars, sess, entity, time.Now())
 
-	msg := &EntityMoved{CharacterID: entity.CharacterID, X: req.X, Y: req.Y, Z: req.Z}
+	msg := &EntityMoved{CharacterID: entity.CharacterID, X: req.X, Y: req.Y, Z: req.Z, Relocated: req.Relocated}
 	for _, other := range others {
 		other.Session.Send(&proto.Packet{Opcode: OpEntityMoved, Data: msg.Encode()})
 	}
