@@ -1046,7 +1046,7 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// a composite item's timed jobs.
 		if isCompositeScroll(it) {
 			username, _ := AuthenticatedUsername(sess)
-			return useCompositeScroll(ctx, sess, fail, inv, items, keeper, zerk, gate.Allows(username), characterID, it, held, have)
+			return useCompositeScroll(ctx, sess, fail, inv, items, keeper, zerk, hub, gate.Allows(username), characterID, it, held, have)
 		}
 		// Only a recovery kind's Param block is a restore amount (round 491,
 		// restoresUserPool); any other kind's effect is not modelled.

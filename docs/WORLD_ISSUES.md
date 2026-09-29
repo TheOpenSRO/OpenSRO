@@ -7280,6 +7280,265 @@ The negative, against dev 5a82339 (the same tests in a base worktree):
 On the round: `remote_godot.sh check` ALL LOAD (396 scripts); `remote_godot.sh tests` ran 158
 suites, 0 failing; `go build ./... && go test -count=1 -p 1 ./...` all ok.
 
+## Six-hundred-and-thirty-eighth round, review follow-up: a player's premium shows on their target row, the server starts it from the item, and a target that is gone closes the window
+
+The review of round 638 upheld every READ claim except one: **the premium does show on a
+target.** The first icon of the user's retail target row is `icon\item\etc\mall_pre_apru_4w.ddj`
+(correlation 0.978, the reviewer's measurement). This follow-up corrects that, makes the server
+start the premium's buff, and mirrors the target window's per-frame check. Labels: READ,
+MEASURED, INFERRED, OURS, OPEN. Record: `docs/protocol/target_window_buffs.md`.
+
+**1. The premium is a skill buff (READ, SR_GameServer.exe; MEASURED, the box's data).**
+- The premium items carry `[USU1:SKILL_MALL_PRE_APRU_4W_01]` or `…_GLOBAL_4W_01`: skilldata 5412,
+  29723 and 46405, `SN_SKILL_MALL_PRE_APRU_4W` / `…_GLOBAL_4W`, icon `item\etc\mall_pre_apru_4w.ddj`.
+  Examples: `ITEM_MALL_PREMIUM_GOLDTIME` 9277 and `ITEM_MALL_PREMIUM_GLOBAL_SILVERTIME` 22925.
+- USU1 in `GObjPC::FUN_0049f590` (0x49fad0):
+  - It queues a type-0 timed job keyed by the skill id, lasting 'dura' / 1000 s. The division is
+    unsigned (`mul 0x10624dd3; shr 6`): the 4-week rows hold 2,419,200,000 ms as −1875767296.
+  - The manager's switch (0x6565f0, table 0x656690) makes type 0 a **CTJ_SkillKeeper**.
+  - Its slot 12 (0x650e70), run as the factory 0x655be0 makes it, calls RegisterSkillInBook,
+    EngageSkill and **Skill_BroadcastBuffAdded_B0BD**.
+- The pre-check (0x49f4ab..0x49f4ef):
+  - the skill by code (0x495690);
+  - 0x1894 if the same skill's type-0 job runs (FUN_00411560(0, id));
+  - 0x650d40: no 'dura' is 0x3003, then the skill gate 0x58d8f0.
+- So the premium reaches every client as 0xB0BD and sits in its owner's buff list like any buff.
+  Only the item-time kinds 3/4/5 (the UIL1/UIU1 grants) never reach the viewer.
+- The four wrong statements are corrected: target_window_buffs.md, the round 638 entry's §3, the
+  viewer's header, and the round's commit note repeated there.
+
+**2. The server starts it (built; `session/composite.go`).**
+- A composite item's USU1 entry resolves its skill by code (new `GetSkillByCode`, the lowest id,
+  as items are). It refuses with 0x1894's text while the same skill's buff runs, and refuses a skill
+  with no 'dura'. After the spend, it starts the buff on the user's own book (`startUsu1Buff`, under
+  the owner's buff lock) for 'dura' read unsigned / 1000 s, and tells the zone with OpBuffStart.
+- **OURS, changed from round 632:** an entry srrevamp does not model is now skipped and logged
+  instead of refusing the whole item. These are a UIU1 3/3/13/4 (the premium time, a
+  CTJ_PremiumKeeper type-3 job), a UIU1 3/3/3/10 with a FourCC other than 0x706874, BCS1, BFI1,
+  PSU1, UQL1 and USL1. An item with nothing modelled is still refused and not spent.
+- Not modelled: the skill gate 0x58d8f0; the buff's params (dru, odar, hr, luck, alcu, inti, stri),
+  since the book models only run speed; the premium time, BFI1 and UQL1.
+
+**3. A skill name in the second text file (READ/MEASURED).**
+- `SN_SKILL_MALL_PRE_APRU_4W` ("Premium") is only in `textdata_object.txt`, not
+  `textdata_equip&skill.txt` (MEASURED on the box's Media.pk2).
+- The client's TextStringManager loads both into one map.
+- `SkillBuffCatalog.text_of` now falls back to the object-name table (World3D's `_object_names`),
+  for the buff bar and the viewer alike.
+- The live run below still showed the code (it began before this fix). The fix is covered by the
+  test.
+- The viewer's name-only list (0x7fc412..) has no `SN_SKILL_MALL_PRE_APRU_4W`, so a target's
+  premium reads "Premium Lv 1" (READ; the buff bar's own list has it).
+
+**4. A target that is gone closes the window (READ, CIFTargetWindow::vslot_012 0x698ae0).**
+- Each frame the window looks its id up.
+  - Not found: it hides.
+  - A CICharactor whose vslot 0x54 answers 0: it hides and deselects (0x778650(0)).
+- `HudTarget.check_target` mirrors this with `World3D._target_exists`. That is a monster body or
+  snapshot, another player's body, or this player.
+- World3D then drops its selection. Dropping the id is OURS: retail keeps it unshown.
+- A zone change also clears `_monster_snapshots`, and world entry clears the target outright.
+
+**5. The review's smaller items.**
+- **0xB0BD attaches only when the owner's `+0x21c` is not −1** (0x8a5d58; otherwise the object is
+  destroyed). What `+0x21c` is, is OPEN.
+- **The item-use effects (0x8735d0) use ids 0x80000023..25**, which the collector's `js` skips.
+- **`_show_target` is re-called for every HP update.** The viewer now diffs when the owner and
+  piece are the same, instead of rebuilding (OURS, equivalent to retail's select running only on
+  a change).
+- **This player selected before OpSelfId** (key `character:-1`) is re-keyed when the id arrives
+  (`set_buff_owner`).
+
+**Live (MEASURED; two clients, Login → CharacterSelect, real X input; `tb_run.sh`, run r2;
+screenshots in `scratchpad/targetbuff_shots/review/`):**
+- A gets the premium with `/give 9277` (`ITEM_MALL_PREMIUM_GOLDTIME`; the reply was "gave 1 x item
+  9277").
+- B left-clicks A. The log reads `buffs of character:1 -- 0 main` (03).
+- A opens the inventory (I) and right-clicks the premium. The server logs `composite: USU1 skill
+  buff item=9277 character=1 skill=5412 seconds=2419200 started=true`, then `entries not
+  modelled, skipped [UIU1:ITEM_PRE_GOLTAM_4W BFI1:… UQL1:QSP_ALL_POTION_3]`.
+- A's own bar shows the premium icon beside its three UIL1 grants (04, A side).
+- B's log: `BUFF start: owner 1 … skill 5412 token 1 duration 2419200000 ms`, then `HudTarget:
+  buffs of character:1 -- 1 main, 0 second: 5412@(0, 0)`. B's row shows the premium icon, the same
+  art as the retail row's first icon (04).
+- Hovering it showed the raw code, before the text-map fix (05).
+- B, with A selected, types `/goto donwhang` into chat (a zone change). The log reads `HudTarget:
+  target character:1 is gone -- window hidden (vslot_012)` and `World3D: target character:1 gone
+  -- deselected`, and the window is gone (09).
+- An earlier `/goto mangyang` moved B within Jangan's zone. A stayed in the zone's entity list,
+  so the window rightly stayed.
+- There were no SCRIPT ERRORs.
+
+**Tests and negatives.**
+- Server: `server/internal/session/usu1_test.go`, with synthetic rows in the premium's shape.
+  1. The premium is used; its skill's buff is on the user's book at 2,419,200 s; a second is
+     refused with 0x1894's text and not spent.
+  2. A BFI1-only item is refused and not spent.
+  3. The unsigned duration.
+
+  Against c89f758, with the fixture change copied in:
+  ```
+  --- FAIL: TestUsu1StartsTheSkillBuff (0.10s)
+      usu1_test.go:32: premium: "that cannot be used", want used (UIU1 3/3/13/4 and BFI1 skipped, USU1 started)
+  ```
+- Client: `hud_target_buffs_test.gd` gains these checks:
+  - the text-map fallback and the skill table first;
+  - the premium's "<name> Lv 1";
+  - the same target re-shown keeping its slots;
+  - re-keying;
+  - vslot_012 hiding the window and naming the lost owner.
+
+  Against c89f758:
+  ```
+  FAIL showing the same target again keeps its icons (a diff, not a rebuild)
+  FAIL HudTarget can re-key its owner
+  FAIL HudTarget checks its target each frame (vslot_012)
+  3 FAILURE(S)
+  ```
+- On this branch: ALL PASS. `remote_godot.sh check` → ALL LOAD; `remote_godot.sh tests` → 157
+  suites, 0 failing; `go build ./... && go test -count=1 -p 1 ./...` → all ok.
+
+## Six-hundred-and-thirty-eighth round: clicking a player or a monster shows its buffs under its name at the top middle, and a player's race emblem at the left
+
+The user asked for a clicked character's or monster's running buffs to show at the top middle of
+the screen, the way the top-left bar shows this player's, with the race emblem at the left of that
+window. The retail reference (`target_buffs.png`) shows a target window "DragonDive": the emblem at
+the left and a row of 20x20 icons under the name bar that wraps onto a second row. Labels: READ,
+MEASURED, INFERRED, OURS, OPEN. The full record, with every address, is
+`docs/protocol/target_window_buffs.md`.
+
+**1. It is a separate class, CIFBuffViewer (READ).**
+- `resinfo\iftargetwindow.txt` declares `GDR_TW_BUFF:CIFBuffViewer` (ID 100, `Rect=0,37,0,0`).
+  `CIFTargetWindow::Create` keeps it at `+0x388`.
+- Its vtable (0xdcf59c, 49 slots) overrides only slots 0, 1, 2 and 10. So it takes no clicks: no
+  right-click cancel, unlike the buff bar.
+- Its icons are the buff bar's own `CIFStateSlot` class (0xeec948).
+
+**2. Which targets and where (READ, the select function 0x699540).**
+- A flag is set in the monster branch (every rarity), the pet/horse branch and the player branch.
+  It is not set for NPCs or structures.
+- With the flag set, the viewer is moved to (window x, the shown piece's y + height + 1),
+  directly under the piece (0x69a1ab..0x69a1cb). The layout's `0,37` is not used.
+- Then the target's buffs are filled in, and timer 1 is armed at 1000 ms (0x69a215).
+- MEASURED on the retail crop: the icons repeat every 23 px, and the first row starts 36 px below
+  the 35-tall player bar's top.
+- MEASURED live (below): the icon cells start at (522, 43) on a 1280-wide screen. That is the
+  window's x = (1280 − 236) / 2 and y = 7 + 35 + 1.
+
+**3. What it shows (READ).**
+- The fill (0x9d25e0 → 0x699480) walks the target object's list of skill objects (`+0x284`, a
+  std::list in arrival order, appended by 0x9cd050).
+- Type 2 objects are made by 0xa54020, which the 0xB0BD buff-start handler calls for whatever
+  owner the packet names (0x8a5d49). So every buff the zone hears of belongs to its owner.
+- Type 3 objects come from 0xB0BE (a buff carrying a name; unread, and srrevamp sends none).
+  The abnormal-state bits go into the second list (none are sent).
+- ~~Item states are never among the sources, so a target's premium does not show.~~ **Wrong;
+  corrected by the review follow-up above:** the premium is a USU1 skill buff (0xB0BD) and does
+  show. Only the item-time kinds 3/4/5 (the UIL1/UIU1 grants) never reach the viewer.
+
+**4. The grid (READ, 0x699480 / 0x7fbea0 / 0x7fd020).**
+- 8 per row, a 23 x 23 pitch, 20 x 20 icons.
+- A skill with `bbuf` (row `+0x184`) goes to a second list, which starts one row down plus 2 px.
+- **An empty main list counts no rows here** (0x7fbff1), unlike the buff bar's board.
+- **No time gauge:** 0x806d50's first argument, "make the gauge", is 1 from the board and 0 from
+  the viewer. So a target's icons have no expiry bar, and the slot is the bare 20x20 icon.
+
+**5. Live (READ, 0x6993a0 → 0x7fd640).**
+- Every 1000 ms the target's list is diffed into the viewer by skill id.
+- A buff that stays keeps its slot. One that ended is removed at once, with no burst or sound.
+- New ones are appended, and the grid is laid out again. A target that is gone clears it.
+
+**6. The tooltip (READ, 0x7fc260, shown by CIFStateSlot::vslot_048 0x806640 through the generic
+tooltip because the slot's parent is not the board).**
+- `"%s Lv %d\n\n"`, with a LITERAL "Lv", unlike the board's `UIIT_STT_LEVEL_LV`. Twelve codes
+  print the name alone: the board's list less `SN_SKILL_MALL_PRE_APRU_4W`.
+- Then the description plus `"\n\n"`.
+- Then 0x96e480's parameter lines (OPEN: not built).
+- No remaining-time line: the entry's `+0x28` stays 0.
+
+**7. The race emblem (READ, 0x69b0d0 → 0x98caa0).**
+- The player piece's `GDR_TW_KINDRED_MARK` (ID 10, 3,0 24x24) gets `FUN_0098caa0(ref +0x9c, 0)`.
+- That is Country: 0 → `com_kindred_china.ddj`, 1 → `com_kindred_europe.ddj`, anything else no
+  file.
+- The monster pieces have no such control.
+- **No server change was needed for race.** Retail reads it from the object's reference data, not
+  from a packet field. srrevamp's entity snapshot already carries Gender, its stand-in for the
+  reference object. Gender maps to the body code, and characterdata column 14 gives Country (0 on
+  every `CHAR_CH_*` row, MEASURED round 629).
+
+**8. The 0xB0BD handler, READ this round.** It is noted here because it settles "are others'
+buffs known": the start handler attaches a skill object to the owner it finds for every start,
+not only this player's. srrevamp's server already broadcasts OpBuffStart/End to the zone, and
+replays them on zone entry both ways (rounds 616/622). The server starts no monster buffs, so a
+monster's row is empty (OPEN, a server feature).
+
+**Built (OURS where marked):**
+- `client/scripts/ui/hud/hud_target_buffs.gd` holds `HudTargetBuffs`, the viewer (grid, diff,
+  tooltip, the point-sampled icons of round 624), and `HudTargetBuffs.Book`. The book keeps every
+  owner's buffs in start order, keyed like the auras.
+- `HudTarget` changes:
+  - it creates the viewer with the buff bar's skill index;
+  - it places the viewer under the monster or player piece;
+  - it runs timer 1 (`advance_buffs`);
+  - it hides and empties the viewer on close;
+  - it sets the kindred mark (`set_kindred`, `kindred_mark_path`).
+- `World3D` changes:
+  - it feeds the book from `_on_buff_started` / `_on_buff_ended`;
+  - it drops an owner on `entity_left`, on a monster's death, and all owners on world entry and on
+    a zone change;
+  - it passes the owner key and the race (`_race_of_gender`, from the body's new `gender` meta).
+- OURS:
+  - a zone re-send of a token counts once;
+  - the viewer waits for the skill index before its first fill;
+  - a rarity-2 monster's viewer is hidden (retail leaves its position undefined);
+  - the trailing blank lines of the tooltip are trimmed;
+  - the slots take the mouse only for the tooltip.
+
+**Live (MEASURED, two clients on the box through Login → CharacterSelect, real X input;
+`/var/tmp/targetbuffs/e2e/tb_run.sh`, screenshots in `scratchpad/targetbuff_shots/`):**
+- B left-clicks A (`PICK … PlayerClickBody`). The log reads `HudTarget: buffs of character:1 --
+  0 main, 0 second` and `selected player 1 (QaTester), race 0`. The emblem is China's (04).
+- A presses 1 (Grass Walk) and then 2 (Lightning Force A, id 107). B's log reads `1 main: 113@(0,
+  0)`, then `2 main: 113@(0, 0), 107@(23, 0)` (05). Pixel-measured in the frame: the icon cells
+  are x 522 and 545, y 43.
+- 15 s later the imbue's OpBuffEnd arrives, and B's viewer drops to `1 main: 113@(0, 0)` (06).
+- Hovering the icon shows "Grass Walk - Flow Lv 1", a blank line and the description (07).
+- B then left-clicks a Mangyang (`ClickBody … monster_id=48`). The log reads `HudTarget: buffs of
+  monster:48 -- 0 main, 0 second`. The special-mob piece shows, with nothing under it (21).
+- There were no SCRIPT ERRORs in either log.
+- Compared with the retail crop: the same emblem at the bar's left, 20x20 icons directly under
+  the bar at its left edge, and a 23 px pitch.
+- Five earlier clicks on monsters said "no hit". The Mangyangs had wandered off between the
+  screenshot and the click; the sixth, straight after a `/spawn`, hit.
+- Not verified live: the zone-change clear (added after the run). The book clear is one line, and
+  the viewer's emptying on the next tick is the tested `sync`.
+
+**Tests.** `client/scripts/ui/hud/hud_target_buffs_test.gd`, with synthetic rows and a synthetic
+text table. It checks the book's order, re-send and drop; the grid (wrap at 8, 23 px, the second
+list at y 2 under an empty main list and at 25 under one row, the sizes); no gauge child; the diff
+keeping a slot and appending; the three tooltip forms; the viewer offset (0, 36) and (0, 79); the
+kindred paths; and HudTarget's 1000 ms tick (not at 999 ms, at 1000 ms; an end goes on the next
+tick; no piece hides it; close empties it).
+
+Against dev 5a82339 (a second worktree, the test copied in), it fails with:
+```
+FAIL hud_target_buffs.gd exists (the CIFBuffViewer port)
+FAIL a per-owner buff book exists
+FAIL the viewer builds without an archive
+FAIL HudTarget places a buff viewer
+FAIL HudTarget knows the race emblem
+FAIL HudTarget refreshes the viewer every 1000 ms
+6 FAILURE(S)
+```
+On this branch it gives ALL PASS (45 checks). The full client suite: `remote_godot.sh tests` → 157
+suites, 0 failing. `go build ./... && go test -count=1 -p 1 ./...` passes (no server change).
+
+**Open:** the tooltip's parameter lines (0x96e480); monster buffs (a server feature); abnormal
+states; 0xB0BE; the `+0x36c` comparison; the `lnks` frame; a rarity-2 monster's position; the
+window keeping a stale name after a zone change (predates this round); pets. All are in
+`docs/TODO.md`, "The target window's buffs and race emblem".
+
+
 ## Rounds 633-635 integration review (int/ui2): nothing new lands past a lowered bag size, the portrait's ambient is clamped, the chat's penalty line sits where the client puts it, and the text table loads rows as the client does
 
 The final review of int/ui2 (dev b9bbf07 + rounds 633-635 and their follow-ups, merged at 14c4889)

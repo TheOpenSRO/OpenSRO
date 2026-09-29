@@ -117,6 +117,14 @@ var _names_loaded := false
 ## Returns the shared skill-name table (World3D hands HudPanels'), so the
 ## tooltip does not parse textdata_equip&skill.txt a second time.
 var names_provider: Callable = Callable()
+## Returns the object-name table (textdata_object.txt; World3D hands its
+## own). Round 638 review, READ/MEASURED: the client's TextStringManager
+## loads textdataname.txt's list -- TextData_Equip&Skill.txt then
+## TextData_Object.txt -- into ONE map, so a skill code found only in the
+## second resolves too: SN_SKILL_MALL_PRE_APRU_4W ("Premium") is in
+## textdata_object.txt and not in textdata_equip&skill.txt (MEASURED, the
+## box's Media.pk2). The first file keeps a key both carry (first row wins).
+var object_names_provider: Callable = Callable()
 
 func _init(archive: Pk2Reader = null) -> void:
 	_archive = archive
@@ -317,8 +325,15 @@ func set_names(table: UiTextTable) -> void:
 
 ## A code's text through the skill-name table, or "" when it has none.
 func text_of(code: String) -> String:
-	var t := names()
-	if t == null or code == "" or code == "xxx":
+	if code == "" or code == "xxx":
 		return ""
-	var s := t.get_text(code)
-	return s if s != code else ""
+	var t := names()
+	if t != null and t.has(code):
+		var s := t.get_text(code)
+		return s if s != code else ""
+	if object_names_provider.is_valid():
+		var o = object_names_provider.call()
+		if o != null and (o as UiTextTable).has(code):
+			var s2 := (o as UiTextTable).get_text(code)
+			return s2 if s2 != code else ""
+	return ""
