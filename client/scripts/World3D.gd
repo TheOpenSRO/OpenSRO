@@ -1603,6 +1603,13 @@ func _try_initialize_pk2_ui() -> void:
 		if open:
 			_request_world_stats())
 	_apply_player_race()
+	if _portrait_zone_light.size() == 2:
+		_hud_player_info.set_portrait_zone_light(_portrait_zone_light[0], _portrait_zone_light[1])
+		print("World3D: portrait zone light at block creation: diffuse channel %s ambient channel %s" % _portrait_zone_light)
+	# Round 635: a body dressed before the block existed gets its portrait now
+	# (retail's block is created dirty: +0x38c = 1 in its constructor).
+	if _player_skeleton != null and is_instance_valid(_player_skeleton):
+		_refresh_player_portrait(_player_skeleton, _player_equipped_last, _player_gender)
 	_hud_player_info.set_character(NetClient.current_character_name, 1)
 
 	# The active-buff icons right of the player block (round 618): retail's
@@ -2167,6 +2174,9 @@ var _env_terrain_ambient := Color.BLACK
 ## (MapmTerrainBuilder.lightmap_term, round 610).
 var _env_terrain_shadow := Color.BLACK
 var _env_light_ready := false
+## The zone light the portrait is lit by: [channel 2, channel 3] of the
+## current zone's environment record, or empty before one is applied.
+var _portrait_zone_light: Array = []
 
 var _tile_index_load_attempted := false
 
@@ -3513,6 +3523,16 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	# where it flattened shading instead of directing it.
 	directional_light.light_color = diffuse_color
 	world_environment.environment.ambient_light_color = ambient_color
+	# Round 635's review follow-up: the player block's portrait is lit by this
+	# zone light (retail's avatar draws with the world's vslot_025 light), and
+	# re-renders when it changes -- a zone load is world entry or a teleport,
+	# when retail's FUN_00786f30 -> FUN_006abc50 dirties it.
+	_portrait_zone_light = [diffuse_color, ambient_color]
+	if _hud_player_info != null:
+		_hud_player_info.set_portrait_zone_light(diffuse_color, ambient_color)
+		var pp := _hud_player_info.portrait()
+		print("World3D: portrait zone light (EnvironmentID %d): diffuse channel %s ambient channel %s, renders %d" % [
+			env_id, diffuse_color, ambient_color, pp.renders_requested if pp != null else -1])
 
 	# Kept so the terrain mesh built moments later can bake the real client's
 	# own per-vertex terrain lighting -- see MapmTerrainBuilder's
@@ -7123,6 +7143,7 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 		_body_animation_path(gender, BsrReader.AnimationEntry.TYPE_STAND, _player_weapon_group),
 		_body_animation_path(gender, BsrReader.AnimationEntry.TYPE_RUN, _player_weapon_group)])
 	_refresh_paper_doll(equipped, gender)
+	_refresh_player_portrait(skeleton, equipped, gender)
 
 ## Builds a fresh dressed character (a second copy, not the one on the
 ## player) into the PaperDoll so the equipment window can show it, the way
@@ -7156,6 +7177,24 @@ func _refresh_paper_doll(equipped: Dictionary, gender: String) -> void:
 		Skeleton3DBuilder.apply_ban_pose_at(doll_skeleton, idle, 0.0, true)
 		_animated.append([doll_skeleton, idle, _frame_count(idle), 0.0, true, _idle_anim_time, null])
 	_hud_panels.set_paper_doll_texture(_paper_doll.get_texture())
+
+## The player block's portrait (round 635, PlayerPortrait): a copy of the
+## body just dressed -- the world's own, so it wears what the world shows --
+## posed with ANI_POSE in the held weapon's group, rendered once. Retail
+## re-renders on the same occasions: the item-move reply and the avatar's
+## reset mark the block dirty (FUN_007b4c00), and this runs on every dress.
+func _refresh_player_portrait(body: Skeleton3D, equipped: Dictionary, gender: String) -> void:
+	if _hud_player_info == null or body == null or not is_instance_valid(body):
+		return
+	var copy := body.duplicate() as Skeleton3D
+	if copy == null:
+		return
+	var pose := _body_animation_for(gender, PlayerPortrait.ANI_POSE, _weapon_group_for(equipped))
+	_hud_player_info.set_portrait(copy, pose)
+	var p := _hud_player_info.portrait()
+	print("World3D: portrait dressed (%s, pose %s, %d us, %d material(s) left as they were)" % [
+		gender, _body_animation_path(gender, PlayerPortrait.ANI_POSE, _weapon_group_for(equipped)),
+		p.last_build_usec if p != null else -1, p.unmapped_materials if p != null else -1])
 
 ## Switches another player's looping animation between stand and run as
 ## their body starts and stops moving. The entry keeps its phase so a

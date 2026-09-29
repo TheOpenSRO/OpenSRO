@@ -168,6 +168,7 @@ func setup() -> void:
 	_setup_hwan(root)
 	_setup_cinfo(root)
 	_setup_race_and_statup(root)
+	_setup_portrait(root)
 
 ## Fills a gauge with the client's own bar artwork.
 ##
@@ -803,3 +804,107 @@ func set_race(country: int) -> void:
 
 func race_mark_path() -> String:
 	return RACE_MARK_DDJ[_race] if _race >= 0 and _race < RACE_MARK_DDJ.size() else ""
+
+# ---------------------------------------------------------------------------
+# The portrait, round 635.
+#
+# READ (docs/protocol/player_mini_info.md, "The portrait"): Create (0x007b5600)
+# takes GDR_PMI_PICTURE (id 12, a CIFStaticWithPictureClip at 15,7, 48x48),
+# loads interface\playerminiinfo\pmi_face.ddj into the control's +0x380 and
+# hands it the 128x128 render buffer's texture (+0x15c, through the
+# interface's slot +0x3c). CIFStaticWithPictureClip::vslot_013 (0x0064de80)
+# draws one quad over the control's rect with BOTH textures at full UV:
+# stage 0 SELECTARG1(TEXTURE) -- the render's colour -- and alpha
+# SELECTARG1(CURRENT), which with an FVF of XYZRHW|TEX2 (0x204, no diffuse)
+# is 1.0; stage 1 keeps that colour (SELECTARG1(CURRENT)) and takes its
+# ALPHA from pmi_face.ddj (SELECTARG1(TEXTURE)); alpha blending on. So the
+# 128x128 render is scaled into the 48x48 circle and cut by the face art's
+# alpha. MEASURED: pmi_face.ddj is 48x48 ARGB8888, every texel black, alpha
+# 255 on a disc of 1804 texels and 0 on the other 500 -- a hard round mask,
+# not a picture (the "black circle" was the empty buffer's socket).
+# INFERRED: the blend is the UI's SRCALPHA/INVSRCALPHA and the samplers
+# filter linearly (the draw sets neither).
+# ---------------------------------------------------------------------------
+
+const PORTRAIT_CONTROL := "GDR_PMI_PICTURE"
+const PORTRAIT_MASK_DDJ := "interface\\playerminiinfo\\pmi_face.ddj"
+
+const PORTRAIT_MASK_SHADER := """
+shader_type canvas_item;
+// CIFStaticWithPictureClip::vslot_013: colour from the render, alpha from
+// the mask (pmi_face.ddj).
+uniform sampler2D mask_tex : filter_linear;
+// The item's modulate (the block's fades and hides), which the picture takes
+// like every other control. Read in vertex(): in fragment() COLOR already
+// holds the texture times it.
+varying vec4 modulate;
+void vertex() {
+	modulate = COLOR;
+}
+void fragment() {
+	COLOR = vec4(texture(TEXTURE, UV).rgb, texture(mask_tex, UV).a) * modulate;
+}
+"""
+
+var _portrait: PlayerPortrait
+var _portrait_view: TextureRect
+
+func _setup_portrait(root: Control) -> void:
+	var pic := root.find_child(PORTRAIT_CONTROL, true, false) as Control
+	if pic == null:
+		return
+	if _portrait == null:
+		_portrait = PlayerPortrait.new()
+		_portrait.name = "Portrait"
+		add_child(_portrait)
+	_portrait_view = TextureRect.new()
+	_portrait_view.name = "PortraitView"
+	_portrait_view.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_portrait_view.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_portrait_view.stretch_mode = TextureRect.STRETCH_SCALE
+	_portrait_view.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_portrait_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var mask := _builder.load_texture(PORTRAIT_MASK_DDJ) if _builder != null else null
+	var mat := ShaderMaterial.new()
+	var sh := Shader.new()
+	sh.code = PORTRAIT_MASK_SHADER
+	mat.shader = sh
+	mat.set_shader_parameter("mask_tex", mask)
+	_portrait_view.material = mat
+	# Nothing to show until the first dress (set_portrait): an empty buffer
+	# would draw the clear colour, which is what retail shows for the frames
+	# before its avatar loads.
+	_portrait_view.visible = false
+	pic.add_child(_portrait_view)
+
+## The player's dressed body for the portrait: `skeleton` is a copy this
+## block takes ownership of, `pose` its ANI_POSE clip (PlayerPortrait.ANI_POSE)
+## or null. Renders once; called on every dress (World3D), which is when
+## retail marks the block dirty (FUN_007b4c00 after the item-move reply and
+## the avatar's reset).
+func set_portrait(skeleton: Skeleton3D, pose: BanReader.ParsedAnimation) -> void:
+	if _portrait == null:
+		_portrait = PlayerPortrait.new()
+		_portrait.name = "Portrait"
+		add_child(_portrait)
+	_portrait.set_character(skeleton, pose)
+	if _portrait_view != null:
+		_portrait_view.texture = _portrait.get_texture()
+		_portrait_view.visible = skeleton != null
+
+## The zone's light for the portrait: environment channel 2 (DiffuseColor)
+## and channel 3 (ObjectAmbientColor) as World3D samples them. Retail's
+## avatar is lit by the world's light (PlayerPortrait's header); a change
+## re-renders a dressed portrait, as retail's world entry and teleport do.
+func set_portrait_zone_light(diffuse_channel: Color, ambient_channel: Color) -> void:
+	if _portrait == null:
+		_portrait = PlayerPortrait.new()
+		_portrait.name = "Portrait"
+		add_child(_portrait)
+	_portrait.set_zone_light(diffuse_channel, ambient_channel)
+
+func portrait() -> PlayerPortrait:
+	return _portrait
+
+func portrait_view() -> TextureRect:
+	return _portrait_view
